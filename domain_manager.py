@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import time
 
 # =========================================================
 # 기본값 및 경로 설정
@@ -73,7 +74,8 @@ def _create_new_domain():
             "active": [], 
             "memo": [], 
             "archive": [],
-            "lore": []  # AI 분석을 통해 박제된 기록 (JSON 데이터)
+            "lore": [],
+            "last_export_time": 0.0
         }
     }
 
@@ -91,6 +93,8 @@ def get_domain(channel_id):
                     data["quest_board"] = _create_new_domain()["quest_board"]
                 elif "lore" not in data["quest_board"]:
                     data["quest_board"]["lore"] = []
+                elif "last_export_time" not in data["quest_board"]:
+                    data["quest_board"]["last_export_time"] = 0.0
                 return data
         except Exception as e:
             logging.error(f"로드 실패 ({channel_id}): {e}")
@@ -109,13 +113,14 @@ def save_domain(channel_id, data):
 # 참가자 및 상태 관리
 # =========================================================
 def update_participant(channel_id, user, is_new_char=False):
-    """참가자의 정보를 업데이트하거나 새로 등록합니다."""
+    """참가자의 정보를 업데이트하거나 새로 등록합니다. (잠금 시 신규 유저 차단)"""
     d = get_domain(channel_id)
     uid = str(user.id)
     
+    # [기능] 새 캐릭터 생성 시 기존 데이터 삭제 및 로어 박제
     if is_new_char and uid in d["participants"]:
         old_mask = d["participants"][uid].get("mask", "Unknown")
-        record_historical_event(channel_id, f"새로운 운명이 시작되었습니다. (이전 캐릭터: {old_mask})")
+        record_historical_event(channel_id, f"운명의 수레바퀴가 돌며, 새로운 영웅이 등장했습니다. (이전 캐릭터: {old_mask} -> 은퇴/사망)")
         del d["participants"][uid]
 
     if uid in d["participants"]:
@@ -127,10 +132,10 @@ def update_participant(channel_id, user, is_new_char=False):
         save_domain(channel_id, d)
         return True
     
-    # 세션이 잠겨있으면 신규 참가 불가
-    if d["settings"].get("session_locked", False): return False
+    # 세션이 잠겨있으면 신규 참가 불가 (단, is_new_char로 들어온 기존 유저는 위에서 처리됨)
+    if d["settings"].get("session_locked", False) and not is_new_char: return False
     
-    # 신규 참가자 초기화
+    # 신규 캐릭터 초기화
     d["participants"][uid] = {
         "name": user.display_name, "mask": user.display_name,
         "level": 1, "xp": 0, "next_xp": 100, "stats": {"근력":10,"지능":10,"매력":10,"스트레스":0},
@@ -157,6 +162,11 @@ def leave_participant(channel_id, uid):
     """참가자를 이탈 상태(left)로 설정합니다."""
     return set_participant_status(channel_id, uid, "left", "자발적 휴식")
 
+def get_participant_status(channel_id, uid):
+    """참가자의 현재 상태 반환"""
+    p = get_domain(channel_id)["participants"].get(str(uid))
+    return p.get("status", "unknown") if p else "unknown"
+
 def get_active_participants_summary(channel_id):
     """AI 서사 주입용 요약. 이탈자는 제외, 잠수자는 태그 표시."""
     d = get_domain(channel_id)
@@ -169,8 +179,8 @@ def get_active_participants_summary(channel_id):
 
 def get_party_status_context(channel_id):
     """
-    [신규] world_manager에서 호출하는 파티 상태 요약 함수
-    파티의 체력, 스트레스, 상태이상을 요약하여 반환합니다.
+    world_manager에서 호출하는 파티 상태 요약 함수.
+    [기능] 관계도(Relations) 정보도 포함하여 AI에게 전달합니다.
     """
     d = get_domain(channel_id)
     parts = []
@@ -181,10 +191,15 @@ def get_party_status_context(channel_id):
         stats = p.get("stats", {})
         stress = stats.get("스트레스", 0)
         effects = p.get("status_effects", [])
+        relations = p.get("relations", {}) # 관계도 가져오기
         
         status_str = f"{mask}(Stress: {stress})"
         if effects:
             status_str += f" [Effects: {', '.join(effects)}]"
+        if relations:
+            rel_str = ", ".join([f"{npc}:{val:+}" for npc, val in relations.items()])
+            status_str += f" [Rel: {rel_str}]"
+            
         parts.append(status_str)
         
     return " | ".join(parts) if parts else "No active party members."
@@ -264,13 +279,10 @@ def append_lore(channel_id, text):
         f.write(f"{cur}\n{text}".strip())
 
 def reset_lore(channel_id):
-    """[신규] 로어 파일을 삭제하여 기본값으로 되돌립니다."""
     path = get_lore_file_path(channel_id)
     if os.path.exists(path):
-        try:
-            os.remove(path)
-        except Exception as e:
-            logging.error(f"로어 초기화 실패: {e}")
+        try: os.remove(path)
+        except Exception as e: logging.error(f"로어 초기화 실패: {e}")
 
 def get_rules(channel_id):
     path = get_rules_file_path(channel_id)
@@ -286,16 +298,12 @@ def append_rules(channel_id, text):
         f.write(f"{cur}\n{text}".strip())
 
 def reset_rules(channel_id):
-    """[신규] 룰 파일을 삭제하여 기본값으로 되돌립니다."""
     path = get_rules_file_path(channel_id)
     if os.path.exists(path):
-        try:
-            os.remove(path)
-        except Exception as e:
-            logging.error(f"룰 초기화 실패: {e}")
+        try: os.remove(path)
+        except Exception as e: logging.error(f"룰 초기화 실패: {e}")
 
 def append_history(channel_id, role, content):
-    """대화 기록을 세션 데이터에 추가합니다 (최근 40개 유지)."""
     d = get_domain(channel_id)
     d['history'].append({"role": role, "content": content})
     if len(d['history']) > 40:
@@ -303,10 +311,7 @@ def append_history(channel_id, role, content):
     save_domain(channel_id, d)
 
 def reset_domain(channel_id):
-    """모든 채널 데이터 및 파일을 삭제하여 초기화합니다."""
     for f in [get_session_file_path(channel_id), get_lore_file_path(channel_id), get_rules_file_path(channel_id)]:
         if os.path.exists(f):
-            try:
-                os.remove(f)
-            except Exception as e:
-                logging.error(f"파일 삭제 실패 ({f}): {e}")
+            try: os.remove(f)
+            except Exception as e: logging.error(f"파일 삭제 실패 ({f}): {e}")

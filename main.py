@@ -2,293 +2,205 @@ import discord
 import os
 import asyncio
 import logging
+import io
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
 # 필수 모듈 임포트
-# 주의: 이 파일들을 모두 같은 폴더에 두어야 합니다.
 try:
-    import persona
-    import domain_manager
-    import character_sheet
-    import input_handler
-    import simulation_manager
-    import memory_system
-    import session_manager
-    import world_manager
-    import quest_manager
+    import persona, domain_manager, character_sheet, input_handler, simulation_manager, memory_system, session_manager, world_manager, quest_manager
 except ImportError as e:
-    print(f"CRITICAL ERROR: 필수 모듈을 찾을 수 없습니다. {e}")
-    exit(1)
+    print(f"CRITICAL ERROR: 필수 모듈을 찾을 수 없습니다. {e}"); exit(1)
 
-# 로깅 설정
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
-# 환경 변수 로드 (.env 파일 필요)
 load_dotenv()
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 MODEL_ID = os.getenv('GEMINI_MODEL_VERSION', 'gemini-2.0-flash-exp')
 
-# 클라이언트 초기화
-# API 키가 없으면 에러가 발생할 수 있으니 .env 파일을 꼭 확인하세요.
-if not GEMINI_API_KEY:
-    logging.warning("GEMINI_API_KEY가 설정되지 않았습니다.")
+if not GEMINI_API_KEY: logging.warning("GEMINI_API_KEY Missing!")
+try: client_genai = genai.Client(api_key=GEMINI_API_KEY)
+except: client_genai = None
 
-try:
-    client_genai = genai.Client(api_key=GEMINI_API_KEY)
-except Exception as e:
-    logging.error(f"Gemini Client 초기화 실패: {e}")
-    client_genai = None
-
-intents = discord.Intents.default()
-intents.message_content = True
+intents = discord.Intents.default(); intents.message_content = True
 client_discord = discord.Client(intents=intents)
 
 async def send_long_message(channel, text):
-    """2000자가 넘는 메시지를 분할하여 전송합니다."""
-    last_msg = None
-    if len(text) <= 2000:
-        last_msg = await channel.send(text)
-    else:
-        chunks = [text[i:i+2000] for i in range(0, len(text), 2000)]
-        for chunk in chunks:
-            last_msg = await channel.send(chunk)
-    return last_msg
+    if len(text) <= 2000: return await channel.send(text)
+    for i in range(0, len(text), 2000): await channel.send(text[i:i+2000])
 
 @client_discord.event
 async def on_ready():
-    """봇이 준비되었을 때 실행됩니다."""
     domain_manager.initialize_folders()
-    print(f"--- Lorekeeper TRPG System Online ---")
-    print(f"Logged in as: {client_discord.user.name}")
+    print(f"--- Lorekeeper V2.0 Online ({client_discord.user}) ---")
     print(f"Model: {MODEL_ID}")
 
 @client_discord.event
 async def on_message(message):
-    """메시지를 수신했을 때 실행되는 메인 로직입니다."""
-    if message.author == client_discord.user or not message.content:
-        return
+    if message.author == client_discord.user or not message.content: return
 
     try:
         channel_id = str(message.channel.id)
         
-        # 0. 봇 전원 관리
-        if message.content.strip() == "!off":
-            domain_manager.set_bot_disabled(channel_id, True)
-            return await message.channel.send("🔇 **봇 비활성화.**")
-        if message.content.strip() == "!on":
-            domain_manager.set_bot_disabled(channel_id, False)
-            return await message.channel.send("🔊 **봇 활성화.**")
-        
-        if domain_manager.is_bot_disabled(channel_id):
-            return
+        # 0. 봇 전원
+        if message.content == "!off": domain_manager.set_bot_disabled(channel_id, True); return await message.channel.send("🔇 Off")
+        if message.content == "!on": domain_manager.set_bot_disabled(channel_id, False); return await message.channel.send("🔊 On")
+        if domain_manager.is_bot_disabled(channel_id): return
 
         # 1. 입력 분석
         parsed = input_handler.parse_input(message.content)
-        if not parsed:
-            return
+        if not parsed: return
 
-        # 2. 게이트키퍼 (준비 상태 확인)
-        cmd_name = parsed.get('command') if parsed['type'] == 'command' else None
-        is_ready = domain_manager.is_prepared(channel_id)
-        
-        # 준비 전에도 허용되는 명령어
-        allowed_pre_ready = [
-            'ready', '준비', 'reset', '리셋', '초기화', 
-            'lore', '로어', 'rule', '룰', 'mask', '가면', 'info', '정보'
-        ]
-        
-        if not is_ready:
-            if parsed['type'] == 'command' and cmd_name in allowed_pre_ready:
-                pass
-            else:
-                return await message.channel.send("⚠️ 세션이 준비되지 않았습니다. `!로어`와 `!룰` 설정 후 `!준비`를 입력하세요.")
+        # 2. 준비 상태 확인
+        cmd = parsed.get('command')
+        if not domain_manager.is_prepared(channel_id):
+            allowed = ['준비', 'ready', '로어', 'lore', '룰', 'rule', 'reset', '리셋']
+            if parsed['type'] != 'command' or cmd not in allowed:
+                return await message.channel.send("⚠️ `!준비`를 먼저 해주세요.")
 
-        system_trigger_msg = None 
+        system_trigger = None
 
         # 3. 명령어 처리
         if parsed['type'] == 'command':
-            # --- 세션 흐름 관리 ---
-            if cmd_name in ['reset', '리셋', '초기화']:
-                return await session_manager.manager.execute_reset(message, client_discord, domain_manager, character_sheet)
-            
-            elif cmd_name in ['ready', '준비']:
-                return await session_manager.manager.check_preparation(message, domain_manager)
-            
-            elif cmd_name in ['start', '시작']:
+            # 세션 관리
+            if cmd in ['reset', '리셋']: return await session_manager.manager.execute_reset(message, client_discord, domain_manager, character_sheet)
+            if cmd in ['ready', '준비']: return await session_manager.manager.check_preparation(message, domain_manager)
+            if cmd in ['start', '시작']:
                 if await session_manager.manager.start_session(message, client_genai, MODEL_ID, domain_manager):
-                    system_trigger_msg = "[System: Generate a visceral opening scene for the campaign.]"
-                else:
-                    return
-            
-            elif cmd_name in ['unlock', '잠금해제']:
-                domain_manager.set_session_lock(channel_id, False)
-                return await message.channel.send("🔓 **세션 잠금 해제:** 이제 새로운 플레이어가 참가할 수 있습니다.")
-            
-            elif cmd_name in ['next', '진행', '건너뛰기']:
-                system_trigger_msg = "[System: Advance the narrative to the next meaningful event.]"
-            
-            # --- 참가자 상태 관리 ---
-            elif cmd_name in ['afk', '잠수']:
-                m = domain_manager.set_participant_status(channel_id, message.author.id, "afk")
-                return await message.channel.send(f"💤 **[{m}]** 잠수 상태로 전환.")
-            
-            elif cmd_name in ['leave', '이탈', '퇴장']:
-                m = domain_manager.set_participant_status(channel_id, message.author.id, "left", "자발적 이탈")
-                return await message.channel.send(f"🚪 **[{m}]** 캐릭터가 대열을 이탈했습니다.")
-            
-            elif cmd_name in ['back', '복귀']:
-                domain_manager.update_participant(channel_id, message.author)
-                mask = domain_manager.get_user_mask(channel_id, message.author.id)
-                return await message.channel.send(f"✨ **[{mask}]** 복귀 완료!")
+                    system_trigger = "[System: Opening Scene]"
+                else: return
+            if cmd in ['unlock', '잠금해제']: domain_manager.set_session_lock(channel_id, False); return await message.channel.send("🔓 **세션 잠금 해제:** 새로운 참가자가 입장할 수 있습니다.")
+            if cmd in ['lock', '잠금']: domain_manager.set_session_lock(channel_id, True); return await message.channel.send("🔒 **세션 잠금:** 현재 참가자 외에는 대화에 참여할 수 없습니다.")
+                
+            if cmd in ['next', '진행']: 
+                # [신규] 시간 진행 및 위기 수치 변화
+                world_msg = world_manager.advance_time(channel_id)
+                await message.channel.send(world_msg)
+                system_trigger = "[System: Describe the changing atmosphere and any events triggered by time progression.]"
 
-            # --- 프로필 및 설정 ---
-            elif cmd_name in ['mask', '가면']:
-                if not parsed['content']:
+            # 캐릭터 관리
+            if cmd in ['mask', '가면']: 
+                target_mask = parsed['content']
+                if not target_mask:
                     return await message.channel.send(f"🎭 현재 가면: {domain_manager.get_user_mask(channel_id, message.author.id)}")
-                domain_manager.set_user_mask(channel_id, message.author.id, parsed['content'])
-                return await message.channel.send(f"🎭 가면 설정 완료: {parsed['content']}")
-            
-            elif cmd_name in ['desc', '설명']:
-                if not parsed['content']:
-                    return await message.channel.send(f"📝 묘사: {domain_manager.get_user_description(channel_id, message.author.id)}")
-                domain_manager.set_user_description(channel_id, message.author.id, parsed['content'])
-                return await message.channel.send(f"📝 외형 설명이 업데이트되었습니다.")
-            
-            elif cmd_name in ['info', '정보', '내정보']:
-                mask = domain_manager.get_user_mask(channel_id, message.author.id)
-                desc = domain_manager.get_user_description(channel_id, message.author.id)
-                return await message.channel.send(f"👤 **캐릭터 프로필**\n- 이름: {mask}\n- 설정: {desc if desc else '내용 없음'}")
-
-            # --- 로어 & 룰 주입 ---
-            elif cmd_name in ['lore', '로어']:
-                if not parsed['content']:
-                    return await message.channel.send(f"📜 **현재 로어:**\n{domain_manager.get_lore(channel_id)}")
                 
-                # [신규] 로어 초기화 기능
-                if parsed['content'].strip() == "초기화":
-                    domain_manager.reset_lore(channel_id)
-                    return await message.channel.send("📜 **로어 초기화 완료.** (기본값으로 복구됨)")
+                # 이탈 상태 확인 및 새 캐릭터 생성
+                p_status = domain_manager.get_participant_status(channel_id, message.author.id)
+                if p_status == "left":
+                    domain_manager.update_participant(channel_id, message.author, is_new_char=True)
+                    domain_manager.set_user_mask(channel_id, message.author.id, target_mask)
+                    return await message.channel.send(f"🆕 **새로운 운명:** 이전 캐릭터의 기록을 뒤로하고, **'{target_mask}'**(으)로 새롭게 시작합니다.")
                 
-                domain_manager.append_lore(channel_id, parsed['content'])
-                return await message.channel.send("📜 로어가 추가되었습니다.")
+                domain_manager.set_user_mask(channel_id, message.author.id, target_mask)
+                return await message.channel.send(f"🎭 가면 설정 완료: {target_mask}")
+
+            if cmd in ['desc', '설명']: domain_manager.set_user_description(channel_id, message.author.id, parsed['content']); return await message.channel.send("📝 설명 저장됨")
+            if cmd in ['info', '내정보']: return await message.channel.send(f"👤 {domain_manager.get_user_mask(channel_id, message.author.id)}")
+            if cmd in ['afk', '잠수']: domain_manager.set_participant_status(channel_id, message.author.id, "afk"); return await message.channel.send("💤 잠수")
+            if cmd in ['leave', '이탈', '퇴장']: 
+                m = domain_manager.set_participant_status(channel_id, message.author.id, "left", "자발적 이탈")
+                return await message.channel.send(f"🚪 **[{m}]** 이탈 처리됨. (복귀하려면 `!가면`으로 새 캐릭터 생성)")
+            if cmd in ['back', '복귀']: domain_manager.update_participant(channel_id, message.author); return await message.channel.send("✨ 복귀")
+
+            # 로어/룰 관리
+            if cmd in ['lore', '로어']:
+                if parsed['content'] == "초기화": domain_manager.reset_lore(channel_id); return await message.channel.send("📜 로어 초기화")
+                if parsed['content']: domain_manager.append_lore(channel_id, parsed['content']); return await message.channel.send("📜 로어 추가")
+                return await message.channel.send(f"📜 {domain_manager.get_lore(channel_id)}")
             
-            elif cmd_name in ['rule', '룰']:
-                if not parsed['content']:
-                    return await message.channel.send(f"📘 **현재 룰:**\n{domain_manager.get_rules(channel_id)}")
+            if cmd in ['rule', '룰']:
+                if parsed['content'] == "초기화": domain_manager.reset_rules(channel_id); return await message.channel.send("📘 룰 초기화")
+                if parsed['content']: domain_manager.append_rules(channel_id, parsed['content']); return await message.channel.send("📘 룰 추가")
+                return await message.channel.send(f"📘 {domain_manager.get_rules(channel_id)}")
+
+            # 퀘스트/메모 관리
+            if cmd in ['quest', '퀘스트']: return await message.channel.send(quest_manager.add_quest(channel_id, parsed['content']) or "❌ 중복")
+            if cmd in ['memo', '메모']: return await message.channel.send(quest_manager.add_memo(channel_id, parsed['content']) or "❌ 중복")
+            if cmd in ['complete', '완료']: return await message.channel.send(quest_manager.complete_quest(channel_id, parsed['content']) or "❌ 실패")
+            if cmd in ['status', '상태']: return await message.channel.send(quest_manager.get_status_message(channel_id))
+            if cmd in ['archive', '보관']: return await message.channel.send(quest_manager.archive_memo_with_ai(channel_id, parsed['content']))
+            if cmd in ['lores', '연대기']: return await message.channel.send(quest_manager.get_lore_book(channel_id))
+            
+            # 내보내기 기능
+            if cmd in ['export', '추출']:
+                mode = parsed.get('content', '').strip()
+                lore_content = domain_manager.get_lore(channel_id)
+                chronicle_text, status_msg = quest_manager.export_chronicles_incremental(channel_id, mode)
                 
-                # [신규] 룰 초기화 기능
-                if parsed['content'].strip() == "초기화":
-                    domain_manager.reset_rules(channel_id)
-                    return await message.channel.send("📘 **룰 초기화 완료.** (기본값으로 복구됨)")
-                    
-                domain_manager.append_rules(channel_id, parsed['content'])
-                return await message.channel.send("📘 규칙이 추가되었습니다.")
-
-            # --- 퀘스트 & 로어 박제 ---
-            elif cmd_name in ['상태', 'status']:
-                return await message.channel.send(quest_manager.get_status_message(channel_id))
-            
-            elif cmd_name in ['퀘스트', 'quest']:
-                content = parsed.get('content')
-                if not content:
-                    return await message.channel.send("❌ 내용을 입력하세요.")
-                board = domain_manager.get_quest_board(channel_id)
-                board["active"].append(content)
-                domain_manager.update_quest_board(channel_id, board)
-                return await message.channel.send(f"⚔️ **새로운 퀘스트:** {content}")
+                if not chronicle_text: return await message.channel.send(status_msg)
                 
-            elif cmd_name in ['메모', 'memo']:
-                content = parsed.get('content')
-                if not content:
-                    return await message.channel.send(quest_manager.get_status_message(channel_id))
-                if content == '기록':
-                    # get_archived_memos 함수는 quest_manager에 없는 것 같으므로 확인 필요 (누락 가능성)
-                    # 여기서는 임시로 에러 처리 혹은 구현된 함수 호출
-                    # return await message.channel.send(quest_manager.get_archived_memos(channel_id))
-                    pass
-                return await message.channel.send(quest_manager.add_memo(channel_id, content))
+                full_text = f"=== WORLD SETTINGS (LORE) ===\n{lore_content}\n\n{chronicle_text}"
+                with io.BytesIO(full_text.encode('utf-8')) as f:
+                    file = discord.File(f, filename=f"lorekeeper_export_{channel_id}.txt")
+                    return await message.channel.send(status_msg, file=file)
 
-            elif cmd_name in ['완료', 'complete']:
-                target = parsed.get('content')
-                if not target:
-                    return await message.channel.send("❌ 번호를 입력하세요.")
-                return await message.channel.send(quest_manager.resolve_quest_to_lore(channel_id, target))
+        if parsed['type'] == 'dice': return await message.channel.send(parsed['content'])
 
-            elif cmd_name in ['보관', 'archive']:
-                target = parsed.get('content')
-                if not target:
-                    return await message.channel.send("❌ 번호를 입력하세요.")
-                await message.channel.send("⏳ 기록관(AI)이 사념의 가치를 평가 중입니다...")
-                return await message.channel.send(quest_manager.archive_memo_with_ai(channel_id, target))
-
-            elif cmd_name in ['연대기', 'lores']:
-                return await message.channel.send(quest_manager.get_lore_book(channel_id))
-            
-            else:
-                pass
-
-        # 4. 주사위 처리
-        if parsed['type'] == 'dice':
-            return await message.channel.send(parsed['content'])
-
-        # 5. 세션 잠금 가드 (채팅 모드일 때)
+        # 4. AI 서사 루프
         domain = domain_manager.get_domain(channel_id)
-        if not domain['settings'].get('session_locked', False) and not system_trigger_msg:
-            if parsed['type'] == 'chat':
+        if not domain['settings'].get('session_locked', False) and not system_trigger: return
+
+        async with message.channel.typing():
+            # [핵심] 잠금 상태일 때, 등록되지 않은 유저의 채팅은 완전히 무시
+            if not domain_manager.update_participant(channel_id, message.author):
                 return
 
-        # 6. AI 서사 생성 (NVC 분석 포함)
-        async with message.channel.typing():
-            domain_manager.update_participant(channel_id, message.author)
-            lore, rules = domain_manager.get_lore(channel_id), domain_manager.get_rules(channel_id)
-            world_ctx, obj_ctx = world_manager.get_world_context(channel_id), quest_manager.get_objective_context(channel_id)
+            lore_txt, rule_txt = domain_manager.get_lore(channel_id), domain_manager.get_rules(channel_id)
+            world_ctx = world_manager.get_world_context(channel_id)
+            obj_ctx = quest_manager.get_objective_context(channel_id)
             user_mask = domain_manager.get_user_mask(channel_id, message.author.id)
-            
-            current_action = system_trigger_msg if system_trigger_msg else f"[{user_mask}]: {parsed['content']}"
-            
-            # 히스토리 구성 및 NVC 분석
-            history_list = domain.get('history', [])[-10:]
-            history_text = "\n".join([f"{h['role']}: {h['content']}" for h in history_list]) + f"\nUser: {current_action}"
-            
+            action_text = system_trigger if system_trigger else f"[{user_mask}]: {parsed['content']}"
+
+            history = domain.get('history', [])[-10:]
+            hist_text = "\n".join([f"{h['role']}: {h['content']}" for h in history]) + f"\nUser: {action_text}"
+
+            # 1단계: NVC 및 유동적 시스템 액션
+            nvc_res = {}
             if client_genai:
-                nvc = await memory_system.analyze_context_nvc(client_genai, MODEL_ID, history_text, lore, rules)
-            else:
-                nvc = "System Error: Gemini Client Not Initialized"
+                nvc_res = await memory_system.analyze_context_nvc(client_genai, MODEL_ID, hist_text, lore_txt, rule_txt)
             
-            # 최종 프롬프트 조립
+            # AI 판단에 따른 자동 메모/퀘스트 관리
+            sys_action = nvc_res.get("SystemAction", {})
+            auto_msg = None
+            if sys_action and isinstance(sys_action, dict):
+                tool = sys_action.get("tool")
+                atype = sys_action.get("type")
+                content = sys_action.get("content")
+                if tool == "Memo":
+                    if atype == "Add": auto_msg = quest_manager.add_memo(channel_id, content)
+                    elif atype == "Remove": auto_msg = quest_manager.remove_memo(channel_id, content)
+                elif tool == "Quest":
+                    if atype == "Add": auto_msg = quest_manager.add_quest(channel_id, content)
+                    elif atype == "Complete": auto_msg = quest_manager.complete_quest(channel_id, content)
+            
+            # 2단계: 서사 생성
             full_prompt = (
-                f"### WORLD & OBJECTIVES\n{world_ctx}\n{obj_ctx}\n\n"
-                f"### NVC GUIDANCE\n{nvc}\n\n"
-                f"### CURRENT ACTION\n{current_action}\n\n"
-                f"GM으로서 서사를 이어가세요. 한국어로 응답하십시오."
+                f"### [WORLD & MEMORY]\n{world_ctx}\n{obj_ctx}\n\n"
+                f"### [GM BRAIN ANALYSIS]\nObs: {nvc_res.get('Observation')}\nNeed: {nvc_res.get('Need')}\n\n"
+                f"### [ACTION]\n{action_text}\n\n"
+                "Respond in Korean as the Narrator."
             )
 
             if client_genai:
-                # 페르소나 세션 생성 및 히스토리 수동 주입 (Risu 스타일)
-                session = persona.create_risu_style_session(client_genai, MODEL_ID, lore, rules)
+                session = persona.create_risu_style_session(client_genai, MODEL_ID, lore_txt, rule_txt)
                 for h in domain.get('history', []):
-                    role = "user" if h['role'] == "User" else "model"
-                    session.history.append(types.Content(role=role, parts=[types.Part(text=h['content'])]))
+                    r = "user" if h['role'] == "User" else "model"
+                    session.history.append(types.Content(role=r, parts=[types.Part(text=h['content'])]))
                 
                 response = await persona.generate_response_with_retry(client_genai, session, full_prompt)
             else:
-                response = "⚠️ Gemini API 클라이언트가 초기화되지 않아 응답을 생성할 수 없습니다."
+                response = "⚠️ AI Error: Gemini Client is not initialized."
 
+            if auto_msg: await message.channel.send(f"🤖 **[AI 판단]** {auto_msg}")
             if response:
-                last_msg = await send_long_message(message.channel, response)
-                if last_msg:
-                    await last_msg.add_reaction("✅")
-                domain_manager.append_history(channel_id, "User", current_action)
+                await send_long_message(message.channel, response)
+                domain_manager.append_history(channel_id, "User", action_text)
                 domain_manager.append_history(channel_id, "Char", response)
 
     except Exception as e:
-        logging.error(f"Error in on_message: {e}")
+        logging.error(f"Main Error: {e}")
 
 if __name__ == "__main__":
-    if DISCORD_TOKEN:
-        client_discord.run(DISCORD_TOKEN)
-    else:
-        print("❌ DISCORD_TOKEN이 환경 변수에 설정되지 않았습니다.")
+    if DISCORD_TOKEN: client_discord.run(DISCORD_TOKEN)
