@@ -14,7 +14,15 @@ class SessionManager:
             await client.wait_for('reaction_add', timeout=5.0, check=check)
             domain_manager.reset_domain(channel_id)
             character_sheet.reset_npc_status(channel_id)
-            await message.channel.send("✅ **리셋 완료.** `!준비`를 입력하세요.")
+            
+            try:
+                deleted = await message.channel.purge(limit=100, check=lambda m: not m.pinned)
+                await message.channel.send(f"✅ **리셋 완료.** (메시지 {len(deleted)}개 삭제됨)\n`!준비`를 입력하세요.")
+            except discord.Forbidden:
+                await message.channel.send("✅ **데이터 초기화 완료.** (메시지 삭제 권한 없음)")
+            except discord.HTTPException as e:
+                await message.channel.send(f"✅ **데이터 초기화 완료.** (메시지 삭제 오류: {e})")
+
         except asyncio.TimeoutError:
             await message.channel.send("❌ 취소됨.")
 
