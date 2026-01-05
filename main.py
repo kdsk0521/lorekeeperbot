@@ -87,7 +87,8 @@ async def on_message(message):
                         await message.channel.send(msg)
                         eval_msg = await message.channel.send("🤔 **커스텀 룰 판정 중...**")
                         if client_genai:
-                            res = quest_manager.evaluate_custom_growth(new_data['level'], new_data['xp'], domain_manager.get_rules(channel_id))
+                            # [수정] 비동기 호출 및 클라이언트 전달
+                            res = await quest_manager.evaluate_custom_growth(client_genai, MODEL_ID, new_data['level'], new_data['xp'], domain_manager.get_rules(channel_id))
                             if res.get("leveled_up"):
                                 new_data['level'] = res.get("new_level", new_data['level'] + 1)
                                 await eval_msg.edit(content=f"🎉 **레벨 업!** Lv.{new_data['level']} ({res.get('reason')})")
@@ -174,11 +175,16 @@ async def on_message(message):
             if cmd in ['memo', '메모']: return await message.channel.send(quest_manager.add_memo(channel_id, parsed['content']) or "❌")
             if cmd in ['complete', '완료']: return await message.channel.send(quest_manager.complete_quest(channel_id, parsed['content']) or "❌")
             if cmd in ['status', '상태']: return await message.channel.send(quest_manager.get_status_message(channel_id))
-            if cmd in ['archive', '보관']: return await message.channel.send(quest_manager.archive_memo_with_ai(channel_id, parsed['content']))
+            if cmd in ['archive', '보관']:
+                # [수정] 비동기 호출 및 클라이언트 전달
+                if not client_genai: return await message.channel.send("⚠️ AI 미연동")
+                return await message.channel.send(await quest_manager.archive_memo_with_ai(client_genai, MODEL_ID, channel_id, parsed['content']))
             if cmd in ['lores', '연대기']: 
                 if parsed['content'] == "생성":
                     msg = await message.channel.send("⏳ 연대기 생성 중...")
-                    return await msg.edit(content=quest_manager.generate_chronicle_from_history(channel_id))
+                    # [수정] 비동기 호출 및 클라이언트 전달
+                    if not client_genai: return await msg.edit(content="⚠️ AI 미연동")
+                    return await msg.edit(content=await quest_manager.generate_chronicle_from_history(client_genai, MODEL_ID, channel_id))
                 return await message.channel.send(quest_manager.get_lore_book(channel_id))
             if cmd in ['export', '추출']:
                 mode = parsed.get('content', '').strip(); lore = domain_manager.get_lore(channel_id)

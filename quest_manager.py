@@ -1,31 +1,36 @@
 import domain_manager
 import json
-import requests
 import time
-import os
-import re
+import asyncio
+import logging
+from google.genai import types
 
-API_KEY = os.getenv("GEMINI_API_KEY", "")
+# requests 라이브러리 제거 -> main.py의 client 객체 공유 사용
 
-def call_gemini_api(prompt, system_instruction=""):
-    if not API_KEY: return None
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key={API_KEY}"
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "systemInstruction": {"parts": [{"text": system_instruction}]},
-        "generationConfig": {"responseMimeType": "application/json"}
-    }
+async def call_gemini_api(client, model_id, prompt, system_instruction=""):
+    """
+    [수정] requests 대신 google.genai 클라이언트를 사용하는 비동기 함수
+    """
+    if not client: return None
+    
+    config = types.GenerateContentConfig(
+        system_instruction=system_instruction,
+        response_mime_type="application/json"
+    )
+    
     for i in range(3):
         try:
-            response = requests.post(url, json=payload, timeout=10)
-            if response.status_code == 200:
-                result = response.json()
-                if 'candidates' in result and result['candidates']:
-                    raw_text = result['candidates'][0]['content']['parts'][0]['text']
-                    clean_text = re.sub(r"```(json)?", "", raw_text).strip()
-                    return json.loads(clean_text)
-            time.sleep(1)
-        except Exception: time.sleep(1)
+            response = await client.models.generate_content(
+                model=model_id,
+                contents=[types.Content(role="user", parts=[types.Part(text=prompt)])],
+                config=config
+            )
+            # 텍스트 추출 및 JSON 파싱
+            result_text = response.text
+            return json.loads(result_text)
+        except Exception as e:
+            logging.error(f"AI API Call Error: {e}")
+            await asyncio.sleep(1)
     return None
 
 def get_objective_context(channel_id):
@@ -129,8 +134,8 @@ def resolve_memo_auto(channel_id, content):
         return f"📂 **[메모 해결]** '{target}' -> 연대기로 이동됨."
     return None
 
-def archive_memo_with_ai(channel_id, content_or_index):
-    """수동 보관용 함수 (기존 유지)"""
+async def archive_memo_with_ai(client, model_id, channel_id, content_or_index):
+    """[수정] AI 클라이언트를 인자로 받아 비동기 처리"""
     board = domain_manager.get_quest_board(channel_id)
     memos = board.get("memo", [])
     target = None
@@ -150,7 +155,9 @@ def archive_memo_with_ai(channel_id, content_or_index):
         f"Current: {current_genres}"
     )
     user_prompt = f"Lore: {current_lore[:200]}...\nMemo: {target}"
-    analysis = call_gemini_api(user_prompt, system_prompt)
+    
+    # 수정된 비동기 호출 사용
+    analysis = await call_gemini_api(client, model_id, user_prompt, system_prompt)
     
     msg = f"📂 **보관:** {target}"
     if analysis:
@@ -184,13 +191,16 @@ def get_lore_book(channel_id):
     if not lore: return "📖 기록 없음"
     return "📖 **[연대기]**\n" + "\n".join([f"{i+1}. {l['content']}" for i, l in enumerate(lore)])
 
-def generate_chronicle_from_history(channel_id):
+async def generate_chronicle_from_history(client, model_id, channel_id):
+    """[수정] AI 클라이언트를 인자로 받아 비동기 처리"""
     domain = domain_manager.get_domain(channel_id)
     history = domain.get('history', [])
     if not history: return "❌ 대화 기록 없음"
     history_text = "\n".join([f"{h['role']}: {h['content']}" for h in history[-20:]])
     system_prompt = "Summarize session to lore entry. JSON: {title, content}"
-    res = call_gemini_api(f"History:\n{history_text}", system_prompt)
+    
+    res = await call_gemini_api(client, model_id, f"History:\n{history_text}", system_prompt)
+    
     if res:
         board = domain_manager.get_quest_board(channel_id)
         if "lore" not in board: board["lore"] = []
@@ -213,5 +223,8 @@ def export_chronicles_incremental(channel_id, mode="new"):
         domain_manager.update_quest_board(channel_id, board)
     return txt, "📜 추출 완료"
 
-def evaluate_custom_growth(lvl, xp, rule):
-    return call_gemini_api(f"Lv:{lvl}, XP:{xp}\nRule:{rule}", "Judge level up. JSON: {leveled_up:bool, new_level:int, reason:str}") or {"leveled_up": False}
+async def evaluate_custom_growth(client, model_id, lvl, xp, rule):
+    """[수정] AI 클라이언트를 인자로 받아 비동기 처리"""
+    if not client: return {"leveled_up": False}
+    res = await call_gemini_api(client, model_id, f"Lv:{lvl}, XP:{xp}\nRule:{rule}", "Judge level up. JSON: {leveled_up:bool, new_level:int, reason:str}")
+    return res or {"leveled_up": False}
