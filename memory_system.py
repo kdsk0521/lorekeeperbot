@@ -20,16 +20,19 @@ async def analyze_context_nvc(client, model_id, history_text, lore, rules):
         "  \"Need\": \"What needs to happen next for the story?\",\n"
         "  \"SystemAction\": {\n"
         "      \"tool\": \"None\" | \"Memo\" | \"Quest\" | \"NPC\",\n"
-        "      \"type\": \"Add\" | \"Remove\" | \"Complete\",\n"
+        "      \"type\": \"Add\" | \"Remove\" | \"Complete\" | \"Archive\",\n"
         "      \"content\": \"Summary of the item to add/remove\"\n"
         "  }\n"
         "}\n\n"
-        "### GUIDELINES\n"
-        "1. **CurrentLocation/Risk**: Infer location and safety based on context (High=Combat/Monster).\n"
-        "2. **InteractionType**: Detect if user is silent/ignoring (passive) or acting (active).\n"
-        "3. **SystemAction**:\n"
-        "   - **NPC**: Add when a NEW named character appears.\n"
-        "   - **Memo/Quest**: Update clues and objectives.\n"
+        "### GUIDELINES FOR SystemAction\n"
+        "1. **Memo**:\n"
+        "   - **Add**: New clues, locations, or important facts.\n"
+        "   - **Remove**: Information that is false or completely irrelevant.\n"
+        "   - **Archive**: If a mystery in a memo is SOLVED or an event is CONCLUDED. (This moves it to History)\n"
+        "2. **Quest**:\n"
+        "   - **Add**: Major objectives given to the party.\n"
+        "   - **Complete**: When the party fulfills an objective (Moves to History).\n"
+        "3. **NPC**: Add when a NEW named character appears.\n"
     )
 
     user_prompt = (
@@ -60,101 +63,56 @@ async def analyze_context_nvc(client, model_id, history_text, lore, rules):
     return None
 
 async def analyze_genre_from_lore(client, model_id, lore_text):
-    """
-    [수정] 로어 텍스트를 분석하여 가장 적합한 장르 태그와 커스텀 톤을 추출합니다.
-    """
+    """[기존] 장르 분석"""
     system_instruction = (
-        "You are a Genre & Atmosphere Analyzer. Read the provided World Lore.\n"
-        "1. **Genres**: Select 1-3 tags from the list below that best match the world.\n"
-        "   ['noir', 'sf', 'wuxia', 'cyberpunk', 'high_fantasy', 'low_fantasy', "
-        "    'cosmic_horror', 'post_apocalypse', 'urban_fantasy', 'steampunk', 'school_life']\n\n"
-        "2. **Custom Tone**: If the lore contains specific subculture elements (e.g., Magical Girls, Superheroes, Isekai, Vampire Romance) that are NOT fully covered by the tags, summarize the unique atmosphere in one English sentence.\n"
-        "   - If no special subculture is found, set 'custom_tone': null.\n\n"
-        "Respond ONLY with a JSON object: {\"genres\": [\"tag1\", \"tag2\"], \"custom_tone\": \"string\"}"
+        "Genre Analyzer. Select 1-3 tags from: "
+        "['noir', 'sf', 'wuxia', 'cyberpunk', 'high_fantasy', 'low_fantasy', "
+        "'cosmic_horror', 'post_apocalypse', 'urban_fantasy', 'steampunk', 'school_life']\n"
+        "Also extract 'custom_tone'. JSON Only."
     )
-
-    user_prompt = f"### WORLD LORE\n{lore_text}\n\nAnalyze the genre and unique tone."
-
+    user_prompt = f"Lore: {lore_text}\nAnalyze genre."
     for i in range(3):
         try:
             response = client.models.generate_content(
                 model=model_id,
                 contents=[types.Content(role="user", parts=[types.Part(text=user_prompt)])],
-                config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    response_mime_type="application/json",
-                )
+                config=types.GenerateContentConfig(system_instruction=system_instruction, response_mime_type="application/json")
             )
-            result = json.loads(response.candidates[0].content.parts[0].text)
-            
-            genres = result.get("genres", ["noir"])
-            custom_tone = result.get("custom_tone")
-            return {"genres": genres, "custom_tone": custom_tone}
-            
-        except Exception as e:
-            await asyncio.sleep(1)
-            
+            res = json.loads(response.candidates[0].content.parts[0].text)
+            return {"genres": res.get("genres", ["noir"]), "custom_tone": res.get("custom_tone")}
+        except: await asyncio.sleep(1)
     return {"genres": ["noir"], "custom_tone": None}
 
 async def analyze_npcs_from_lore(client, model_id, lore_text):
-    """
-    [신규] 로어 텍스트에서 NPC 정보를 추출합니다.
-    """
+    """[기존] NPC 추출"""
     system_instruction = (
-        "You are an NPC Profiler. Read the provided World Lore.\n"
-        "Identify key NPCs (names, roles, brief descriptions) mentioned in the text.\n"
-        "Ignore generic groups. Focus on specific named or titled individuals.\n\n"
-        "Respond ONLY with a JSON object: {\"npcs\": [{\"name\": \"String\", \"description\": \"String (Role & Trait)\"}]}"
+        "NPC Profiler. Extract key named NPCs. JSON: {\"npcs\": [{\"name\": \"str\", \"description\": \"str\"}]}"
     )
-
-    user_prompt = f"### WORLD LORE\n{lore_text}\n\nExtract key NPCs."
-
+    user_prompt = f"Lore: {lore_text}\nExtract NPCs."
     for i in range(3):
         try:
             response = client.models.generate_content(
                 model=model_id,
                 contents=[types.Content(role="user", parts=[types.Part(text=user_prompt)])],
-                config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    response_mime_type="application/json",
-                )
+                config=types.GenerateContentConfig(system_instruction=system_instruction, response_mime_type="application/json")
             )
-            result = json.loads(response.candidates[0].content.parts[0].text)
-            return result.get("npcs", [])
-        except Exception as e:
-            await asyncio.sleep(1)
+            return json.loads(response.candidates[0].content.parts[0].text).get("npcs", [])
+        except: await asyncio.sleep(1)
     return []
 
 async def analyze_location_rules_from_lore(client, model_id, lore_text):
-    """
-    [신규] 로어 텍스트에서 '장소별 위험 규칙'을 추출합니다.
-    """
+    """[기존] 장소 규칙 추출"""
     system_instruction = (
-        "You are a World Analyst. Read the Lore and identify specific locations with special environmental rules or risks.\n"
-        "Focus on: Dangerous places, restricted areas, or locations that change properties based on time/condition.\n\n"
-        "Respond ONLY with a JSON object:\n"
-        "{\n"
-        "  \"rules\": {\n"
-        "    \"Location Name\": {\"risk\": \"High/Medium/Low\", \"condition\": \"Night/Rain/Always\", \"effect\": \"Description of threat\"}\n"
-        "  }\n"
-        "}\n"
-        "Example: {\"rules\": {\"Western Ruins\": {\"risk\": \"High\", \"condition\": \"Night\", \"effect\": \"Ghosts appear\"}}}"
+        "World Analyst. Extract dangerous location rules. JSON: {\"rules\": {\"LocName\": {\"risk\": \"High\", \"condition\": \"Night\", \"effect\": \"str\"}}}"
     )
-
-    user_prompt = f"### WORLD LORE\n{lore_text}\n\nExtract location-based rules."
-
+    user_prompt = f"Lore: {lore_text}\nExtract location rules."
     for i in range(3):
         try:
             response = client.models.generate_content(
                 model=model_id,
                 contents=[types.Content(role="user", parts=[types.Part(text=user_prompt)])],
-                config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    response_mime_type="application/json",
-                )
+                config=types.GenerateContentConfig(system_instruction=system_instruction, response_mime_type="application/json")
             )
-            result = json.loads(response.candidates[0].content.parts[0].text)
-            return result.get("rules", {})
-        except Exception as e:
-            await asyncio.sleep(1)
+            return json.loads(response.candidates[0].content.parts[0].text).get("rules", {})
+        except: await asyncio.sleep(1)
     return {}
