@@ -18,7 +18,7 @@ DEFAULT_RULES = """
 DATA_DIR = "data"
 SESSIONS_DIR = os.path.join(DATA_DIR, "sessions")
 LORE_DIR = os.path.join(DATA_DIR, "lores")
-LORE_SUMMARY_DIR = os.path.join(DATA_DIR, "lore_summaries") # 요약본 저장 경로 추가
+LORE_SUMMARY_DIR = os.path.join(DATA_DIR, "lore_summaries") # 요약본 저장 경로
 RULES_DIR = os.path.join(DATA_DIR, "rules")
 
 def initialize_folders():
@@ -139,7 +139,7 @@ def reset_lore(channel_id):
     if os.path.exists(get_lore_summary_file_path(channel_id)):
         os.remove(get_lore_summary_file_path(channel_id))
 
-# === [NEW] 로어 요약 관리 함수 ===
+# 로어 요약 관리 함수
 def get_lore_summary(channel_id):
     """압축된 로어 요약본을 가져옵니다. 없으면 None 반환."""
     path = get_lore_summary_file_path(channel_id)
@@ -150,7 +150,6 @@ def get_lore_summary(channel_id):
 def save_lore_summary(channel_id, summary_text):
     """압축된 로어 요약본을 저장합니다."""
     save_text(get_lore_summary_file_path(channel_id), summary_text)
-# ==============================
 
 def get_rules(channel_id): return load_text(get_rules_file_path(channel_id), DEFAULT_RULES)
 def append_rules(channel_id, text):
@@ -204,7 +203,7 @@ def reset_domain(channel_id):
     for f in [get_session_file_path(channel_id), get_lore_file_path(channel_id), get_rules_file_path(channel_id), get_lore_summary_file_path(channel_id)]:
         if os.path.exists(f): os.remove(f)
 
-# NPC 데이터
+# NPC 및 기타 데이터
 def update_npc(cid, name, data): d = get_domain(cid); d["npcs"][name] = data; save_domain(cid, d)
 def get_npcs(cid): return get_domain(cid).get("npcs", {})
 
@@ -216,3 +215,30 @@ def get_user_mask(cid, uid): return get_domain(cid)["participants"].get(str(uid)
 def set_user_mask(cid, uid, mask): d = get_domain(cid); uid=str(uid); d["participants"][uid]["mask"] = mask; save_domain(cid, d)
 def set_user_description(cid, uid, desc): d = get_domain(cid); uid=str(uid); d["participants"][uid]["description"] = desc; save_domain(cid, d)
 def set_location_rules(cid, rules): d = get_domain(cid); d["location_rules"] = rules; save_domain(cid, d)
+
+# [필수 추가 함수] 파티 상태 컨텍스트 반환 (world_manager에서 사용)
+def get_party_status_context(channel_id):
+    """
+    현재 참가자들의 상태(체력, 스트레스, 위치 등)를 요약하여 텍스트로 반환합니다.
+    """
+    d = get_domain(channel_id)
+    participants = d.get("participants", {})
+    if not participants:
+        return "파티 상태: 참가자 없음"
+    
+    summary = []
+    for uid, p_data in participants.items():
+        mask = p_data.get("mask", "Unknown")
+        status = p_data.get("status", "active")
+        if status != "active": continue # 활성 참가자만 표시
+        
+        stats = p_data.get("stats", {})
+        stress = stats.get("스트레스", 0)
+        effects = p_data.get("status_effects", [])
+        
+        status_text = f"[{mask}] 스트레스: {stress}"
+        if effects:
+            status_text += f" | 상태이상: {', '.join(effects)}"
+        summary.append(status_text)
+        
+    return "\n".join(summary)

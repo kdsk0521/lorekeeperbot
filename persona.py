@@ -167,7 +167,11 @@ def construct_system_prompt(active_genres=None, custom_tone=None):
         'urban_fantasy': "Magic in modern world, Masquerade, Secret societies.",
         'steampunk': "Steam power, Victorian aesthetics, Retro-futurism.",
         'school_life': "Youth, Relationships, Exams, Social hierarchy.",
-        'superhero': "Power & Responsibility, Secret identities, Origins."
+        'superhero': "Power & Responsibility, Secret identities, Origins.",
+        'space_opera': "Space Opera: Epic adventures in space, alien civilizations, advanced technology, and interstellar conflict.",
+        'western': "Western: Frontier life, outlaws, justice with a revolver, desolate landscapes, and the struggle for survival.",
+        'occult': "Occult/Horror: Supernatural entities, ghosts, curses, psychological terror, and the struggle against unseen malevolent forces.",
+        'military': "Military: Tactical combat, hierarchy, brotherhood, warfare realism, and strategic operations."
     }
 
     if active_genres:
