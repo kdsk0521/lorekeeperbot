@@ -1,4 +1,4 @@
-"""
+﻿"""
 Lorekeeper TRPG Bot - Input Handler Module
 사용자 입력을 파싱하고 명령어를 매핑합니다.
 """
@@ -139,8 +139,8 @@ def parse_input(content: str) -> Optional[Dict[str, Any]]:
             '진행': 'next',
             '건너뛰기': 'next',
             'next': 'next',
-            '턴': 'next',
-            'turn': 'next',
+            '턴': 'turn',
+            'turn': 'turn',
             '모드': 'mode',
             'mode': 'mode',
             
@@ -161,45 +161,48 @@ def parse_input(content: str) -> Optional[Dict[str, Any]]:
             '컴백': 'back',
             'back': 'back',
             
-            # === 시스템 설정 ===
-            '시스템': 'system',
-            '설정': 'system',
-            'system': 'system',
-            
-            # === 치트/GM 모드 ===
-            '치트': 'cheat',
-            'cheat': 'cheat',
-            '디버그': 'cheat',
-            'debug': 'cheat',
-            'gm': 'cheat',
-            
             # === 세계관 설정 ===
             '로어': 'lore',
             'lore': 'lore',
             '룰': 'rule',
             'rule': 'rule',
             
-            # === 상태 조회 ===
-            '상태': 'status',
-            'status': 'status',
+            # === 퀘스트/메모 (직접 추가용) ===
+            '퀘스트': 'quest',
+            'quest': 'quest',
+            '메모': 'memo',
+            'memo': 'memo',
             '연대기': 'lores',
             'lores': 'lores',
-            
-            # === 내보내기 기능 ===
-            '추출': 'export',
-            '내보내기': 'export',
-            'export': 'export',
             
             # === NPC 정보 ===
             'npc': 'npc',
             'npc정보': 'npc',
             '엔피씨': 'npc',
             
+            # === AI 분석 도구 ===
+            '분석': 'analyze',
+            'analyze': 'analyze',
+            '일관성': 'consistency',
+            'consistency': 'consistency',
+            '세계규칙': 'worldrules',
+            'worldrules': 'worldrules',
+            '예측': 'forecast',
+            'forecast': 'forecast',
+            '둠': 'doom',
+            'doom': 'doom',
+            
             # === 주사위 ===
             '주사위': 'roll',
             '굴림': 'roll',
             'r': 'roll',
             'roll': 'roll',
+            
+            # === 도움말 ===
+            '도움': 'help',
+            '도움말': 'help',
+            'help': 'help',
+            '명령어': 'help',
         }
         
         # 매핑 확인
@@ -233,7 +236,8 @@ def parse_input(content: str) -> Optional[Dict[str, Any]]:
                 else:
                     msg = (
                         f"🎲 **Roll**: `{args}`\n"
-                        f"Result: {total} (Dice: {rolls} {mod_txt})"
+                        f"Result: {total} (Dice: {rolls} {mod_txt})\n"
+                        f"_💡 높을수록 좋은 결과 - AI가 상황에 맞게 해석합니다_"
                     )
                 
                 return {'type': 'dice', 'content': msg}
@@ -242,26 +246,34 @@ def parse_input(content: str) -> Optional[Dict[str, Any]]:
                 'type': 'dice',
                 'content': (
                     "❌ 주사위 형식 오류\n"
-                    "예시: `!r 1d20+5`, `!r 2d6`, `!r 1d20 유리`\n"
-                    f"(최대 {MAX_DICE_COUNT}개, {MAX_DICE_SIDES}면)"
+                    "예시: `!r 1d20`, `!r 1d100`, `!r 2d6+3`, `!r 1d20 유리`\n"
+                    "_💡 주사위는 선택 사항입니다. AI가 상황을 보고 판정합니다._"
                 )
             }
         
         return {'type': 'command', 'command': command, 'content': args}
     
-    # 2. OOC 감지 (괄호로 시작하는 경우)
-    ooc_patterns = [
-        (r'^\(OOC[:\s]*(.*)\)$', True),      # (OOC: 내용)
-        (r'^\(ooc[:\s]*(.*)\)$', True),      # (ooc: 내용)  
-        (r'^\(\((.+)\)\)$', True),            # ((내용))
-        (r'^OOC[:\s]+(.+)$', False),          # OOC: 내용
-        (r'^ooc[:\s]+(.+)$', False),          # ooc: 내용
-    ]
+    # 2. OOC 감지 - 메시지 내 (OOC: 내용) 패턴 추출
+    # 메시지 어디에든 (OOC: ...) 가 있으면 추출
+    ooc_pattern = r'\((?:OOC|ooc)[:\s]+(.+?)\)'
+    ooc_match = re.search(ooc_pattern, clean_content, re.IGNORECASE | re.DOTALL)
     
-    for pattern, _ in ooc_patterns:
-        match = re.match(pattern, clean_content, re.IGNORECASE | re.DOTALL)
-        if match:
-            ooc_content = match.group(1).strip()
+    if ooc_match:
+        ooc_content = ooc_match.group(1).strip()
+        # OOC 부분을 제거한 나머지 텍스트
+        remaining_text = re.sub(ooc_pattern, '', clean_content, flags=re.IGNORECASE | re.DOTALL).strip()
+        
+        if remaining_text:
+            # OOC + 행동/대사가 함께 있음 → 둘 다 처리
+            style = analyze_style(raw_content, remaining_text)
+            return {
+                'type': 'chat_with_ooc',
+                'ooc_content': ooc_content,
+                'chat_content': remaining_text,
+                'style': style
+            }
+        else:
+            # OOC만 있음
             return {'type': 'ooc', 'content': ooc_content}
     
     # 3. 일반 채팅

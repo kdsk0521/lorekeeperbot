@@ -1,4 +1,4 @@
-"""
+﻿"""
 Lorekeeper TRPG Bot - Domain Manager Module
 세션 데이터, 로어, 룰북 등의 영구 저장을 담당합니다.
 """
@@ -14,31 +14,51 @@ from typing import Optional, Dict, Any, List
 MAX_HISTORY_LENGTH = 40  # 히스토리 최대 보관 개수
 MAX_DESC_LENGTH = 50  # 설명 요약 시 최대 길이
 
-DEFAULT_LORE = "[장르: 설정되지 않음]"
+DEFAULT_LORE = ""  # 로어는 반드시 사용자가 설정해야 함
 DEFAULT_RULES = """
-[게임 규칙: 서사 중심 성장 시스템]
+[Lorekeeper 기본 룰: 서사 중심 TRPG]
 
-## 판정
-- AI가 캐릭터의 패시브, 적응도, 상황을 고려해 자연스럽게 결과 판정
-- 주사위(!r)는 불확실성 연출용, 결과의 참고 자료로 활용
-- 숫자 스탯 없음 — 서사적 맥락이 판정 기준
+## 📜 판정 시스템
+**기본 원칙: 주사위 없이 서사적 판정**
+- AI가 캐릭터의 패시브, 칭호, 현재 상황을 종합하여 성공/실패를 판단
+- 캐릭터의 능력, 경험, 상황적 유불리가 결과에 영향
 
-## 성장
-- 경험치/레벨 시스템 없음
-- 반복된 경험 → 패시브 획득 (예: 독에 여러 번 중독 → "독 내성")
-- 의미 있는 성취 → 칭호 획득 (예: 드래곤 처치 → "용 사냥꾼")
-- AI가 적절한 시점에 패시브/칭호 부여
+**선택적 주사위 사용 (플레이어 요청 시)**
+- `!r 1d20` 또는 `!r 1d100`: 높을수록 좋은 결과
+- 주사위 결과는 참고 자료이며, AI가 서사적으로 해석
+- 커스텀 룰에서 별도 판정 규칙을 정의할 수 있음
 
-## 적응 (비일상 적응도)
-- 초자연적/비일상적 경험에 반복 노출 시 적응도 상승
-- 적응도에 따라 캐릭터 반응 변화 (공포 → 경계 → 익숙함)
-- 세계관에 따라 적응 대상 다름 (마법, 괴물, 이세계 등)
+## 🎭 캐릭터 성장
+성장은 경험치나 레벨이 아닌 **서사적 성취**를 통해 이루어집니다:
+- **패시브**: 반복된 행동이나 경험을 통해 습득하는 특성
+  예) "독 내성" - 독에 여러 번 노출된 후 획득
+  예) "야간 시야" - 어둠 속에서 오래 활동한 후 획득
+- **칭호**: 특별한 업적이나 인정을 통해 얻는 명예
+  예) "드래곤 슬레이어" - 드래곤을 처치한 후 획득
+  예) "숲의 친구" - 엘프들에게 인정받은 후 획득
 
-## 주사위
-- `!r 1d20` — 20면체 주사위
-- `!r 2d6+3` — 6면체 2개 + 3
-- `!r 3d6k2` — 6면체 3개 중 높은 2개
-- 결과는 서사 연출의 참고, 절대적 기준 아님
+## 🌓 비일상 적응
+초자연적/비일상적 존재나 현상에 반복 노출되면 점차 익숙해집니다:
+- 처음: 공포, 혼란, 패닉
+- 적응 중: 경계하지만 대처 가능
+- 일상화: 담담하게 받아들임
+AI가 캐릭터의 노출 횟수와 반응을 추적하여 자연스럽게 적응도를 부여합니다.
+
+## ⚔️ 전투
+- 선제권: 상황과 캐릭터 특성에 따라 판단
+- 성공/실패: 캐릭터 능력, 패시브, 상황을 종합하여 서사적으로 결정
+- 피해: 서사적으로 묘사 (HP 수치 없음)
+- 상태이상: 부상, 중독, 공포 등이 행동에 영향
+
+## 💰 소지품
+- 화폐: 세계관에 맞는 단위 사용 (골드, 은화, 크레딧 등)
+- 인벤토리: 소지품 목록
+- 거래: 협상과 상황에 따라 가격 변동
+- AI가 세계관에 맞게 화폐 단위를 자동 판단
+
+## 📝 특수 규칙
+- OOC 수정: `(OOC: 요청)` 형식으로 캐릭터 정보 수정 가능
+- 정보 확인: `!정보`로 캐릭터 상태 조회
 """
 
 # 디렉토리 경로
@@ -47,6 +67,9 @@ SESSIONS_DIR = os.path.join(DATA_DIR, "sessions")
 LORE_DIR = os.path.join(DATA_DIR, "lores")
 LORE_SUMMARY_DIR = os.path.join(DATA_DIR, "lore_summaries")
 RULES_DIR = os.path.join(DATA_DIR, "rules")
+
+# 기본 참가자 스탯 (레거시 - 제거 예정)
+# DEFAULT_STATS = {} # 스탯 시스템 제거됨
 
 # 기본 월드 스테이트 (누락 키 추가됨)
 DEFAULT_WORLD_STATE = {
@@ -174,7 +197,7 @@ def _get_default_session() -> Dict[str, Any]:
         "settings": {
             "response_mode": "auto",
             "session_locked": False,
-            "growth_system": "standard"
+            "growth_system": "default"  # "default" 또는 "custom"
         },
         "active_genres": ["noir"],
         "custom_tone": None,
@@ -229,19 +252,21 @@ def _create_default_participant(display_name: str) -> Dict[str, Any]:
     """
     기본 참가자 데이터 구조를 생성합니다.
     
-    [하이브리드 구조]
-    - core_stats: 코드가 관리 (정확한 숫자)
-    - ai_memory: AI가 관리 (유연한 서사)
+    [서사 중심 구조]
+    - economy: 골드, 인벤토리 (코드 관리)
+    - ai_memory: AI가 관리 (유연한 서사, 패시브/칭호 포함)
     """
     return {
         # === 기본 정보 ===
         "mask": display_name,
         "status": "active",
         
-        # === 코드 관리 영역 (숫자, 정확해야 함) ===
-        # === 기본 정보 ===
+        # === 경제 시스템 (코드 관리) ===
+        "economy": {
+            "gold": 0
+        },
         "inventory": {},  # {"검": 1, "포션": 3}
-        "status_effects": [],  # ["중독", "출혈"]
+        "status_effects": [],  # ["중독", "출혈"] - 상태이상은 유지
         
         # === AI 관리 영역 (서사, 유연해야 함) ===
         "ai_memory": {
@@ -249,21 +274,20 @@ def _create_default_participant(display_name: str) -> Dict[str, Any]:
             "personality": "",  # "과묵하지만 정의로움"
             "background": "",  # "고향이 불탄 뒤 복수를 다짐"
             "relationships": {},  # {"리엘": "서로 호감, 신뢰 쌓는 중", "상인 길드장": "적대적"}
-            "passives": [],  # ["독 내성", "엘프의 친구"]
+            "passives": [],  # ["독 내성", "엘프의 친구"] - 패시브/칭호
             "known_info": [],  # ["마왕의 부하가 북쪽에 있다", "비밀 통로 위치"]
             "foreshadowing": [],  # ["봉인된 편지의 내용", "리엘의 과거"]
             "normalization": {},  # {"드래곤": "이제 익숙함", "마법": "아직 신기함"}
             "notes": ""  # 자유 형식 메모
         },
         
-        # === 호환성 (기존 코드용) ===
+        # === 호환성 (기존 코드용, 점진적 제거 예정) ===
         "description": "",
         "relations": {},  # 숫자 기반 → ai_memory.relationships로 이전
         "summary_data": {},
         "abnormal_exposure": {},
         "passives": [],
-        "experience_counters": {},
-        "xp": 0  # 커스텀 모드용
+        "experience_counters": {}
     }
 
 
@@ -302,17 +326,13 @@ def update_participant(channel_id: str, user, reset: bool = False) -> bool:
                 "notes": ""
             }
         
-        # core_stats 필드 없으면 추가 (마이그레이션)
-        if "core_stats" not in d["participants"][uid]:
-            d["participants"][uid]["core_stats"] = {
-                "hp": 100,
-                "max_hp": 100,
-                "mp": 50,
-                "max_mp": 50,
-                "level": d["participants"][uid].get("level", 1),
-                "xp": d["participants"][uid].get("xp", 0),
-                "next_xp": d["participants"][uid].get("next_xp", 100),
-                "gold": 0
+        # economy 필드 없으면 추가 (마이그레이션)
+        if "economy" not in d["participants"][uid]:
+            # 기존 core_stats나 gold에서 가져오기
+            old_core = d["participants"][uid].get("core_stats", {})
+            old_gold = old_core.get("gold", 0) if old_core else 0
+            d["participants"][uid]["economy"] = {
+                "gold": old_gold
             }
     
     save_domain(channel_id, d)
@@ -404,25 +424,100 @@ def save_lore_summary(channel_id: str, summary_text: str) -> None:
 
 
 # =========================================================
-# 룰 관리
+# 룰 관리 (3가지 모드)
+# 1. 기본룰만: 아무 설정 없음 → DEFAULT_RULES 반환
+# 2. 기본룰+커스텀: !룰 추가 → 기본룰 + 커스텀룰 병합
+# 3. 완전 커스텀: txt 파일 업로드 → 파일 내용만 사용
 # =========================================================
+
 def get_rules(channel_id: str) -> str:
     """룰을 가져옵니다."""
     return load_text(get_rules_file_path(channel_id), DEFAULT_RULES)
 
 
+def get_rules_mode(channel_id: str) -> str:
+    """
+    현재 룰 모드를 반환합니다.
+    
+    Returns:
+        'default': 기본룰만
+        'hybrid': 기본룰 + 커스텀룰
+        'custom': 완전 커스텀 (파일 업로드)
+    """
+    return get_domain(channel_id).get("rules_mode", "default")
+
+
+def set_rules_mode(channel_id: str, mode: str) -> None:
+    """룰 모드를 설정합니다."""
+    d = get_domain(channel_id)
+    d["rules_mode"] = mode
+    save_domain(channel_id, d)
+
+
 def append_rules(channel_id: str, text: str) -> None:
-    """룰을 추가합니다."""
-    current = get_rules(channel_id)
-    new_text = text if current == DEFAULT_RULES else f"{current}\n\n{text}"
+    """
+    룰을 추가합니다 (기본룰 + 커스텀룰 병합).
+    """
+    current_mode = get_rules_mode(channel_id)
+    
+    if current_mode == "custom":
+        # 완전 커스텀 모드면 기존 커스텀에 추가
+        current = get_rules(channel_id)
+        new_text = f"{current}\n\n{text}"
+    else:
+        # 기본룰 또는 하이브리드 모드
+        # 기본룰은 항상 유지하고 커스텀 파트만 관리
+        d = get_domain(channel_id)
+        custom_rules = d.get("custom_rules", "")
+        
+        if custom_rules:
+            custom_rules = f"{custom_rules}\n\n{text}"
+        else:
+            custom_rules = text
+        
+        d["custom_rules"] = custom_rules
+        save_domain(channel_id, d)
+        
+        # 하이브리드 모드로 전환
+        set_rules_mode(channel_id, "hybrid")
+        
+        # 병합된 룰 저장
+        new_text = f"{DEFAULT_RULES}\n\n[커스텀 추가 규칙]\n{custom_rules}"
+    
     save_text(get_rules_file_path(channel_id), new_text)
 
 
+def set_custom_rules_from_file(channel_id: str, file_content: str) -> None:
+    """
+    파일에서 완전 커스텀 룰을 설정합니다.
+    기본룰을 완전히 대체합니다.
+    """
+    save_text(get_rules_file_path(channel_id), file_content)
+    set_rules_mode(channel_id, "custom")
+    
+    # 커스텀 추가분 초기화
+    d = get_domain(channel_id)
+    d["custom_rules"] = ""
+    save_domain(channel_id, d)
+
+
 def reset_rules(channel_id: str) -> None:
-    """룰을 초기화합니다."""
+    """룰을 초기화합니다 (기본룰로 복귀)."""
     path = get_rules_file_path(channel_id)
     if os.path.exists(path):
         os.remove(path)
+    
+    set_rules_mode(channel_id, "default")
+    
+    # 커스텀 추가분도 초기화
+    d = get_domain(channel_id)
+    d["custom_rules"] = ""
+    save_domain(channel_id, d)
+
+
+def get_custom_rules_part(channel_id: str) -> str:
+    """커스텀 추가된 룰 부분만 반환합니다."""
+    return get_domain(channel_id).get("custom_rules", "")
 
 
 # =========================================================
@@ -491,18 +586,36 @@ def set_response_mode(channel_id: str, mode: str) -> None:
     save_domain(channel_id, d)
 
 
+# =========================================================
+# 성장 시스템 설정 (v4.0: default / custom만 지원)
+# =========================================================
+
 def get_growth_system(channel_id: str) -> str:
-    """성장 시스템을 가져옵니다."""
-    return get_domain(channel_id)["settings"].get("growth_system", "standard")
+    """
+    성장 시스템 모드를 가져옵니다.
+    
+    Returns:
+        'default': 기본 룰북 + AI 패시브/칭호 자동 부여
+        'custom': 사용자 룰북만 적용 (AI가 룰에 따라 판단)
+    """
+    return get_domain(channel_id)["settings"].get("growth_system", "default")
 
 
 def set_growth_system(channel_id: str, mode: str) -> None:
-    """성장 시스템을 설정합니다."""
+    """
+    성장 시스템 모드를 설정합니다.
+    
+    Args:
+        mode: 'default' 또는 'custom'
+    """
+    if mode not in ("default", "custom"):
+        mode = "default"
     d = get_domain(channel_id)
     d["settings"]["growth_system"] = mode
     save_domain(channel_id, d)
 
 
+# =========================================================
 def set_session_lock(channel_id: str, locked: bool) -> None:
     """세션 잠금 상태를 설정합니다."""
     d = get_domain(channel_id)
@@ -648,6 +761,7 @@ def get_party_status_context(channel_id: str) -> str:
     현재 참가자들의 상세 상태를 요약하여 반환합니다.
     AI에게 컨텍스트로 제공됩니다.
     다중 플레이어를 명확하게 구분합니다.
+    서사 중심 - 패시브/칭호, 관계, 상태이상 중심
     """
     d = get_domain(channel_id)
     participants = d.get("participants", {})
@@ -666,33 +780,35 @@ def get_party_status_context(channel_id: str) -> str:
             inactive_players.append(f"{mask} ({status})")
             continue
         
-        desc = p_data.get("description", "특이사항 없음")
-        level = p_data.get("level", 1)
-        stats = p_data.get("stats", {})
-        status_effects = p_data.get("status_effects", [])
-        
-        # 스탯 문자열 (핵심만)
-        core_stats = ["근력", "민첩", "지능", "매력"]
-        stats_str = ", ".join([f"{k}:{stats.get(k, 10)}" for k in core_stats if k in stats])
+        # AI 메모리에서 서사 정보 가져오기
+        ai_mem = p_data.get("ai_memory", {})
+        appearance = ai_mem.get("appearance", "")
+        personality = ai_mem.get("personality", "")
+        passives = ai_mem.get("passives", [])
+        relationships = ai_mem.get("relationships", {})
         
         # 상태이상
-        effects_str = ", ".join(status_effects[:3]) if status_effects else "없음"
-        
-        # 저장된 요약 정보
-        summary_data = p_data.get("summary_data", {})
-        appearance = summary_data.get("appearance_summary", "")
+        status_effects = p_data.get("status_effects", [])
+        effects_str = ", ".join(status_effects[:3]) if status_effects else "정상"
         
         # 외형 (짧게)
-        if appearance:
-            look = appearance[:50] + "..." if len(appearance) > 50 else appearance
-        else:
-            look = desc[:50] + "..." if len(desc) > 50 else desc
+        look = appearance[:50] + "..." if len(appearance) > 50 else appearance if appearance else "미설정"
+        
+        # 패시브/칭호 (최대 3개)
+        passives_str = ", ".join(passives[:3]) if passives else "없음"
+        if len(passives) > 3:
+            passives_str += f" 외 {len(passives)-3}개"
+        
+        # 주요 관계 (최대 2개)
+        rel_list = [f"{k}: {v}" for k, v in list(relationships.items())[:2]]
+        rel_str = " | ".join(rel_list) if rel_list else "없음"
         
         # 플레이어 정보 (AI가 [이름] 형식으로 인식하도록)
         player_info = (
-            f"**[{mask}]** (Lv.{level})\n"
+            f"**[{mask}]**\n"
             f"  Look: {look}\n"
-            f"  Stats: {stats_str}\n"
+            f"  Passives: {passives_str}\n"
+            f"  Relations: {rel_str}\n"
             f"  Conditions: {effects_str}"
         )
         active_players.append(player_info)
@@ -862,82 +978,65 @@ def remove_from_ai_memory_list(channel_id: str, user_id: str, field: str, item: 
     return False
 
 
-def get_core_stats(channel_id: str, user_id: str) -> Dict[str, Any]:
-    """플레이어의 코어 스탯을 가져옵니다."""
+def get_economy(channel_id: str, user_id: str) -> Dict[str, Any]:
+    """플레이어의 경제 정보(골드)를 가져옵니다."""
     p_data = get_participant_data(channel_id, user_id)
     if not p_data:
         return {}
-    return p_data.get("core_stats", {})
+    return p_data.get("economy", {})
 
 
-def update_core_stats(channel_id: str, user_id: str, updates: Dict[str, Any]) -> None:
-    """플레이어의 코어 스탯을 업데이트합니다."""
+def update_economy(channel_id: str, user_id: str, updates: Dict[str, Any]) -> None:
+    """플레이어의 경제 정보를 업데이트합니다."""
     d = get_domain(channel_id)
     uid = str(user_id)
     
     if uid not in d["participants"]:
         return
     
-    if "core_stats" not in d["participants"][uid]:
-        d["participants"][uid]["core_stats"] = {}
+    if "economy" not in d["participants"][uid]:
+        d["participants"][uid]["economy"] = {}
     
-    d["participants"][uid]["core_stats"].update(updates)
+    d["participants"][uid]["economy"].update(updates)
     save_domain(channel_id, d)
 
 
 def get_unified_player_info(channel_id: str, user_id: str) -> str:
     """
     통합된 플레이어 정보를 반환합니다.
-    숫자 데이터 + AI 메모리 서사를 하나로 합침.
+    서사 중심 - 골드/인벤토리 + AI 메모리
     """
     p_data = get_participant_data(channel_id, user_id)
     if not p_data:
         return "❌ 캐릭터 정보가 없습니다."
     
     mask = p_data.get("mask", "Unknown")
-    core = p_data.get("core_stats", {})
-    stats = p_data.get("stats", {})
+    economy = p_data.get("economy", {})
     inventory = p_data.get("inventory", {})
     effects = p_data.get("status_effects", [])
     ai_mem = p_data.get("ai_memory", {})
     
-    # === 숫자 영역 (코드 관리) ===
     result = f"## 🎭 **{mask}**\n\n"
     
-    # 레벨/경험치
-    result += f"**📊 레벨:** {core.get('level', 1)} (XP: {core.get('xp', 0)}/{core.get('next_xp', 100)})\n"
-    
-    # HP/MP
-    hp = core.get('hp', 100)
-    max_hp = core.get('max_hp', 100)
-    mp = core.get('mp', 50)
-    max_mp = core.get('max_mp', 50)
-    result += f"**❤️ HP:** {hp}/{max_hp} | **💙 MP:** {mp}/{max_mp}\n"
-    
-    # 골드
-    gold = core.get('gold', 0)
-    if gold > 0:
-        result += f"**💰 골드:** {gold}\n"
-    
-    # 스탯
-    stat_str = " / ".join([f"{k}: {v}" for k, v in stats.items() if k != "스트레스"])
-    stress = stats.get("스트레스", 0)
-    result += f"**📈 스탯:** {stat_str}\n"
-    result += f"**😰 스트레스:** {stress}\n"
-    
-    # 상태이상
-    if effects:
-        result += f"**⚠️ 상태:** {', '.join(effects)}\n"
+    # === 경제/소지품 ===
+    gold = economy.get('gold', 0)
+    result += f"**💰 골드:** {gold}\n"
     
     # 인벤토리
     if inventory:
         inv_str = ", ".join([f"{k} x{v}" for k, v in inventory.items()])
         result += f"**🎒 인벤토리:** {inv_str}\n"
+    else:
+        result += "**🎒 인벤토리:** (비어있음)\n"
     
-    result += "\n"
+    # 상태이상
+    if effects:
+        result += f"**⚠️ 상태:** {', '.join(effects)}\n"
+    
+    result += "\n---\n"
     
     # === 서사 영역 (AI 관리) ===
-    result += "---\n**📝 AI 기억 (서사)**\n\n"
+    result += "**📝 캐릭터 서사**\n\n"
     
     # 외형
     appearance = ai_mem.get("appearance", "")
@@ -964,7 +1063,7 @@ def get_unified_player_info(channel_id: str, user_id: str) -> str:
     # 패시브/칭호
     passives = ai_mem.get("passives", [])
     if passives:
-        result += f"**🏆 패시브:** {', '.join(passives)}\n"
+        result += f"**🏆 패시브/칭호:** {', '.join(passives)}\n"
     
     # 알고 있는 정보
     known_info = ai_mem.get("known_info", [])
@@ -1129,7 +1228,7 @@ def get_full_ai_context(channel_id: str, user_id: str) -> str:
 def get_integrated_status(channel_id: str, user_id: str) -> str:
     """
     !정보 명령어용 통합 상태 출력
-    코드 관리(숫자) + AI 관리(서사) 결합
+    서사 중심 - 경제/인벤토리 + AI 메모리
     """
     d = get_domain(channel_id)
     p_data = d["participants"].get(str(user_id))
@@ -1139,40 +1238,25 @@ def get_integrated_status(channel_id: str, user_id: str) -> str:
     
     result = f"# 📋 [{p_data.get('mask', 'Unknown')}] 상태\n\n"
     
-    # === 1. 코드 관리 영역 (숫자) ===
-    result += "## ⚔️ 스탯\n"
+    # === 1. 경제/소지품 ===
+    result += "## 💰 소지품\n"
     
-    core = p_data.get("core_stats", {})
-    if core:
-        hp = core.get("hp", 100)
-        max_hp = core.get("max_hp", 100)
-        mp = core.get("mp", 50)
-        max_mp = core.get("max_mp", 50)
-        level = core.get("level", 1)
-        xp = core.get("xp", 0)
-        next_xp = core.get("next_xp", 100)
-        gold = core.get("gold", 0)
-        
-        result += f"  • HP: {hp}/{max_hp} | MP: {mp}/{max_mp}\n"
-        result += f"  • Lv.{level} (XP: {xp}/{next_xp})\n"
-        result += f"  • 골드: {gold}\n"
-    
-    stats = p_data.get("stats", {})
-    if stats:
-        stat_str = ", ".join([f"{k}: {v}" for k, v in stats.items()])
-        result += f"  • {stat_str}\n"
+    economy = p_data.get("economy", {})
+    gold = economy.get("gold", 0)
+    result += f"  • 골드: {gold}\n"
     
     # 인벤토리
     inv = p_data.get("inventory", {})
     if inv:
-        result += "\n## 🎒 인벤토리\n"
         inv_str = ", ".join([f"{k} x{v}" for k, v in inv.items()])
-        result += f"  {inv_str}\n"
+        result += f"  • 인벤토리: {inv_str}\n"
+    else:
+        result += "  • 인벤토리: (비어있음)\n"
     
     # 상태이상
     effects = p_data.get("status_effects", [])
     if effects:
-        result += "\n## 💀 상태이상\n"
+        result += f"\n## ⚠️ 상태이상\n"
         result += f"  {', '.join(effects)}\n"
     
     # === 2. AI 관리 영역 (서사) ===
@@ -1193,7 +1277,7 @@ def get_integrated_status(channel_id: str, user_id: str) -> str:
         for name, desc in relationships.items():
             result += f"  • **{name}:** {desc}\n"
     
-    # 패시브
+    # 패시브/칭호
     passives = ai_mem.get("passives", [])
     if passives:
         result += "\n## 🏆 패시브/칭호\n"
@@ -1230,288 +1314,11 @@ def get_integrated_status(channel_id: str, user_id: str) -> str:
 
 
 # =========================================================
-# AI 메모리 관리 함수들 (하이브리드 시스템)
+# 세션 메모리 추가 함수
 # =========================================================
-
-def get_ai_memory(channel_id: str, user_id: str) -> Dict[str, Any]:
-    """
-    참가자의 AI 메모리를 가져옵니다.
-    
-    Returns:
-        ai_memory 딕셔너리 (없으면 빈 구조 반환)
-    """
-    p_data = get_participant_data(channel_id, str(user_id))
-    if not p_data:
-        return {}
-    
-    return p_data.get("ai_memory", {
-        "appearance": "",
-        "personality": "",
-        "background": "",
-        "relationships": {},
-        "passives": [],
-        "known_info": [],
-        "foreshadowing": [],
-        "normalization": {},
-        "notes": ""
-    })
-
-
-def update_ai_memory(
-    channel_id: str, 
-    user_id: str, 
-    updates: Dict[str, Any],
-    merge: bool = True
-) -> bool:
-    """
-    참가자의 AI 메모리를 업데이트합니다.
-    
-    Args:
-        channel_id: 채널 ID
-        user_id: 유저 ID
-        updates: 업데이트할 내용 딕셔너리
-        merge: True면 기존 데이터와 병합, False면 덮어쓰기
-    
-    Returns:
-        성공 여부
-    
-    Example:
-        update_ai_memory(cid, uid, {
-            "relationships": {"리엘": "서로 신뢰하는 사이"},
-            "passives": ["엘프의 친구"]
-        })
-    """
-    d = get_domain(channel_id)
-    uid = str(user_id)
-    
-    if uid not in d["participants"]:
-        return False
-    
-    if "ai_memory" not in d["participants"][uid]:
-        d["participants"][uid]["ai_memory"] = {}
-    
-    ai_mem = d["participants"][uid]["ai_memory"]
-    
-    for key, value in updates.items():
-        if merge:
-            if isinstance(value, dict) and isinstance(ai_mem.get(key), dict):
-                # 딕셔너리: 기존 + 새 값 병합
-                ai_mem[key].update(value)
-            elif isinstance(value, list) and isinstance(ai_mem.get(key), list):
-                # 리스트: 기존에 없는 것만 추가
-                for item in value:
-                    if item not in ai_mem[key]:
-                        ai_mem[key].append(item)
-            else:
-                # 단일 값: 덮어쓰기
-                ai_mem[key] = value
-        else:
-            # merge=False: 무조건 덮어쓰기
-            ai_mem[key] = value
-    
-    d["participants"][uid]["ai_memory"] = ai_mem
-    save_domain(channel_id, d)
-    return True
-
-
-def add_to_ai_memory_list(
-    channel_id: str,
-    user_id: str,
-    list_key: str,
-    item: str
-) -> bool:
-    """
-    AI 메모리의 리스트에 항목을 추가합니다.
-    
-    Args:
-        list_key: "passives", "known_info", "foreshadowing" 중 하나
-        item: 추가할 항목
-    """
-    if list_key not in ["passives", "known_info", "foreshadowing"]:
-        return False
-    
-    return update_ai_memory(channel_id, user_id, {list_key: [item]})
-
-
-def remove_from_ai_memory_list(
-    channel_id: str,
-    user_id: str,
-    list_key: str,
-    item: str
-) -> bool:
-    """
-    AI 메모리의 리스트에서 항목을 제거합니다.
-    """
-    d = get_domain(channel_id)
-    uid = str(user_id)
-    
-    if uid not in d["participants"]:
-        return False
-    
-    ai_mem = d["participants"][uid].get("ai_memory", {})
-    if list_key in ai_mem and isinstance(ai_mem[list_key], list):
-        if item in ai_mem[list_key]:
-            ai_mem[list_key].remove(item)
-            save_domain(channel_id, d)
-            return True
-    
-    return False
-
-
-def update_relationship(
-    channel_id: str,
-    user_id: str,
-    npc_name: str,
-    description: str
-) -> bool:
-    """
-    특정 NPC와의 관계를 업데이트합니다.
-    
-    Args:
-        npc_name: NPC 이름
-        description: 관계 설명 (예: "서로 신뢰하는 동료", "적대적")
-    """
-    return update_ai_memory(channel_id, user_id, {
-        "relationships": {npc_name: description}
-    })
-
-
-def update_normalization(
-    channel_id: str,
-    user_id: str,
-    thing: str,
-    status: str
-) -> bool:
-    """
-    비일상 요소의 적응 상태를 업데이트합니다.
-    
-    Args:
-        thing: 비일상 요소 (예: "드래곤", "마법")
-        status: 적응 상태 (예: "이제 익숙함", "아직 놀라움")
-    """
-    return update_ai_memory(channel_id, user_id, {
-        "normalization": {thing: status}
-    })
-
-
-def get_ai_memory_for_prompt(channel_id: str, user_id: str) -> str:
-    """
-    AI 프롬프트에 전달할 형태로 AI 메모리를 문자열로 변환합니다.
-    
-    Returns:
-        AI용 컨텍스트 문자열
-    """
-    ai_mem = get_ai_memory(channel_id, str(user_id))
-    if not ai_mem:
-        return ""
-    
-    lines = ["### [PLAYER AI MEMORY]"]
-    
-    if ai_mem.get("appearance"):
-        lines.append(f"외형: {ai_mem['appearance']}")
-    if ai_mem.get("personality"):
-        lines.append(f"성격: {ai_mem['personality']}")
-    if ai_mem.get("background"):
-        lines.append(f"배경: {ai_mem['background']}")
-    
-    rels = ai_mem.get("relationships", {})
-    if rels:
-        rel_strs = [f"{k}: {v}" for k, v in rels.items()]
-        lines.append(f"관계: {', '.join(rel_strs)}")
-    
-    passives = ai_mem.get("passives", [])
-    if passives:
-        lines.append(f"패시브: {', '.join(passives)}")
-    
-    known = ai_mem.get("known_info", [])
-    if known:
-        lines.append(f"알고 있는 정보: {'; '.join(known[:5])}")
-    
-    foreshadow = ai_mem.get("foreshadowing", [])
-    if foreshadow:
-        lines.append(f"미해결 복선: {'; '.join(foreshadow[:3])}")
-    
-    norm = ai_mem.get("normalization", {})
-    if norm:
-        norm_strs = [f"{k}({v})" for k, v in norm.items()]
-        lines.append(f"비일상 적응: {', '.join(norm_strs)}")
-    
-    if ai_mem.get("notes"):
-        lines.append(f"메모: {ai_mem['notes']}")
-    
-    return "\n".join(lines)
-
-
-# =========================================================
-# 세션 레벨 AI 메모리 관리 (퀘스트, 월드, NPC 등)
-# =========================================================
-
-def get_session_ai_memory(channel_id: str) -> Dict[str, Any]:
-    """
-    세션 레벨 AI 메모리를 가져옵니다.
-    
-    Returns:
-        ai_session_memory 딕셔너리
-    """
-    d = get_domain(channel_id)
-    return d.get("ai_session_memory", {
-        "world_summary": "",
-        "current_arc": "",
-        "active_threads": [],
-        "resolved_threads": [],
-        "key_events": [],
-        "foreshadowing": [],
-        "world_changes": [],
-        "npc_summaries": {},
-        "party_dynamics": "",
-        "last_updated": ""
-    })
-
-
-def update_session_ai_memory(
-    channel_id: str,
-    updates: Dict[str, Any],
-    merge: bool = True
-) -> bool:
-    """
-    세션 레벨 AI 메모리를 업데이트합니다.
-    
-    Args:
-        updates: 업데이트할 내용
-        merge: True면 병합, False면 덮어쓰기
-    """
-    import time
-    
-    d = get_domain(channel_id)
-    
-    if "ai_session_memory" not in d:
-        d["ai_session_memory"] = {}
-    
-    session_mem = d["ai_session_memory"]
-    
-    for key, value in updates.items():
-        if merge:
-            if isinstance(value, dict) and isinstance(session_mem.get(key), dict):
-                session_mem[key].update(value)
-            elif isinstance(value, list) and isinstance(session_mem.get(key), list):
-                for item in value:
-                    if item not in session_mem[key]:
-                        session_mem[key].append(item)
-            else:
-                session_mem[key] = value
-        else:
-            session_mem[key] = value
-    
-    session_mem["last_updated"] = time.strftime('%Y-%m-%d %H:%M')
-    d["ai_session_memory"] = session_mem
-    save_domain(channel_id, d)
-    return True
-
 
 def resolve_thread(channel_id: str, thread: str) -> bool:
-    """
-    스토리 스레드를 해결됨으로 이동합니다.
-    """
+    """스토리 스레드를 해결됨으로 이동합니다."""
     d = get_domain(channel_id)
     session_mem = d.get("ai_session_memory", {})
     active = session_mem.get("active_threads", [])
@@ -1522,30 +1329,28 @@ def resolve_thread(channel_id: str, thread: str) -> bool:
         resolved.append(thread)
         session_mem["active_threads"] = active
         session_mem["resolved_threads"] = resolved
+        d["ai_session_memory"] = session_mem
         save_domain(channel_id, d)
         return True
     return False
 
 
 def add_key_event(channel_id: str, event: str) -> bool:
-    """
-    주요 이벤트를 기록합니다.
-    """
+    """주요 이벤트를 기록합니다."""
     d = get_domain(channel_id)
     world_state = d.get("world_state", {})
     day = world_state.get("day", 1)
     
     event_with_day = f"{day}일차: {event}"
     
-    return update_session_ai_memory(channel_id, {
+    update_session_ai_memory(channel_id, {
         "key_events": [event_with_day]
     })
+    return True
 
 
 def get_session_ai_memory_for_prompt(channel_id: str) -> str:
-    """
-    AI 프롬프트에 전달할 형태로 세션 AI 메모리를 문자열로 변환합니다.
-    """
+    """AI 프롬프트에 전달할 형태로 세션 AI 메모리를 문자열로 변환합니다."""
     session_mem = get_session_ai_memory(channel_id)
     if not session_mem:
         return ""
@@ -1578,16 +1383,3 @@ def get_session_ai_memory_for_prompt(channel_id: str) -> str:
         lines.append(f"파티 상황: {session_mem['party_dynamics']}")
     
     return "\n".join(lines)
-
-
-def get_full_ai_context(channel_id: str, user_id: str) -> str:
-    """
-    AI에게 전달할 전체 AI 메모리 컨텍스트를 생성합니다.
-    (플레이어 + 세션 메모리 통합)
-    """
-    player_ctx = get_ai_memory_for_prompt(channel_id, user_id)
-    session_ctx = get_session_ai_memory_for_prompt(channel_id)
-    
-    if player_ctx or session_ctx:
-        return f"{session_ctx}\n\n{player_ctx}".strip()
-    return ""

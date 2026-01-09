@@ -1,4 +1,4 @@
-"""
+﻿"""
 Lorekeeper TRPG Bot - Main Module
 Version: 3.1 (Refactored)
 """
@@ -131,217 +131,6 @@ async def safe_delete_message(message) -> None:
 # =========================================================
 # 명령어 핸들러
 # =========================================================
-async def handle_cheat_command(message, channel_id: str, args: List[str], client_genai, MODEL_ID: str) -> Optional[str]:
-    """
-    치트/GM 명령어를 처리합니다.
-    AI 분석 도구 및 게임 마스터 기능을 통합합니다.
-    
-    Args:
-        message: Discord 메시지 객체
-        channel_id: 채널 ID
-        args: 명령어 인자 리스트
-        client_genai: Gemini API 클라이언트
-        MODEL_ID: 모델 ID
-    
-    Returns:
-        응답 메시지 또는 None
-    """
-    if not args or args[0] == '':
-        return (
-            "🛠️ **치트/GM 명령어:**\n"
-            "━━━━━━━━━━━━━━━\n"
-            "**데이터 조작:**\n"
-            "`!치트 xp [숫자]` - 경험치 부여\n"
-            "`!치트 퀘스트 [추가/완료] [내용]`\n"
-            "`!치트 메모 [추가/삭제] [내용]`\n"
-            "`!치트 npc [이름] [설명]` - NPC 추가\n"
-            "`!치트 버프 [이름]` / `!치트 디버프 [이름]`\n"
-            "`!치트 둠 [+/-숫자]` - 위기 수치 조절\n\n"
-            "**AI 분석:**\n"
-            "`!치트 분석 [질문]` - OOC 브레인스토밍\n"
-            "`!치트 일관성` - 서사 일관성 검사\n"
-            "`!치트 세계` - 세계관 규칙 추출"
-        )
-    
-    category = args[0].lower()
-    
-    # === 경험치 치트 ===
-    if category in ['xp', '경험치']:
-        if len(args) < 2:
-            return "❌ 사용법: `!치트 xp [숫자]`"
-        
-        try:
-            amount = int(args[1])
-        except ValueError:
-            return "❌ 경험치는 숫자로 입력해주세요."
-        
-        uid = str(message.author.id)
-        p_data = domain_manager.get_participant_data(channel_id, uid)
-        
-        if not p_data:
-            return "❌ 캐릭터가 없습니다. `!가면`으로 먼저 등록하세요."
-        
-        growth_system = domain_manager.get_growth_system(channel_id)
-        new_data, msg, _ = simulation_manager.gain_experience(p_data, amount, growth_system)
-        domain_manager.save_participant_data(channel_id, uid, new_data)
-        return f"🛠️ **[GM]** {msg}"
-    
-    # === 퀘스트 치트 ===
-    elif category in ['quest', '퀘스트']:
-        if len(args) < 2:
-            return "❌ 사용법: `!치트 퀘스트 [추가/완료] [내용]`"
-        
-        action = args[1]
-        content = " ".join(args[2:]) if len(args) > 2 else ""
-        
-        if action in ['추가', 'add', '+']:
-            if not content:
-                return "❌ 퀘스트 내용을 입력하세요."
-            result = quest_manager.add_quest(channel_id, content)
-            return f"🛠️ {result}"
-        elif action in ['완료', 'complete', 'done']:
-            if not content:
-                return "❌ 완료할 퀘스트 키워드를 입력하세요."
-            result = quest_manager.complete_quest(channel_id, content)
-            return f"🛠️ {result}"
-        else:
-            return "❌ `추가` 또는 `완료`만 가능합니다."
-    
-    # === 메모 치트 ===
-    elif category in ['memo', '메모']:
-        if len(args) < 2:
-            return "❌ 사용법: `!치트 메모 [추가/삭제] [내용]`"
-        
-        action = args[1]
-        content = " ".join(args[2:]) if len(args) > 2 else ""
-        
-        if action in ['추가', 'add', '+']:
-            if not content:
-                return "❌ 메모 내용을 입력하세요."
-            result = quest_manager.add_memo(channel_id, content)
-            return f"🛠️ {result}"
-        elif action in ['삭제', 'remove', 'delete', '-']:
-            if not content:
-                return "❌ 삭제할 메모 키워드를 입력하세요."
-            result = quest_manager.remove_memo(channel_id, content)
-            return f"🛠️ {result}"
-        else:
-            return "❌ `추가` 또는 `삭제`만 가능합니다."
-    
-    # === NPC 치트 ===
-    elif category == 'npc':
-        if len(args) < 2:
-            return "❌ 사용법: `!치트 npc [이름] [설명]`"
-        
-        npc_name = args[1]
-        npc_desc = " ".join(args[2:]) if len(args) > 2 else "GM이 추가한 NPC"
-        
-        character_sheet.npc_memory.add_npc(channel_id, npc_name, npc_desc)
-        return f"🛠️ **NPC 추가:** {npc_name} - {npc_desc}"
-    
-    # === 버프/디버프 치트 ===
-    elif category in ['버프', 'buff']:
-        if len(args) < 2:
-            return (
-                "🛠️ **버프 추가/제거**\n"
-                "AI가 서사에 맞게 자유롭게 상태를 판단합니다.\n\n"
-                "사용법:\n"
-                "• `!치트 버프 [이름]` - 버프 추가\n"
-                "• `!치트 버프 제거 [이름]` - 버프 제거\n\n"
-                "예시: 집중, 영감, 보호, 축복, 가속, 행운 등"
-            )
-        
-        action = args[1]
-        uid = str(message.author.id)
-        p_data = domain_manager.get_participant_data(channel_id, uid)
-        
-        if not p_data:
-            return "❌ 캐릭터가 없습니다."
-        
-        # 제거 명령
-        if action in ['제거', 'remove', '-']:
-            if len(args) < 3:
-                return "❌ 제거할 버프 이름을 입력하세요."
-            effect_name = args[2]
-            p_data, msg = simulation_manager.remove_status_effect(p_data, effect_name)
-        else:
-            effect_name = action
-            p_data, msg = simulation_manager.add_status_effect(p_data, effect_name, "GM 부여")
-        
-        domain_manager.save_participant_data(channel_id, uid, p_data)
-        return f"🛠️ {msg}"
-    
-    elif category in ['디버프', 'debuff']:
-        if len(args) < 2:
-            return (
-                "🛠️ **디버프 추가/제거**\n"
-                "AI가 서사에 맞게 자유롭게 상태를 판단합니다.\n\n"
-                "사용법:\n"
-                "• `!치트 디버프 [이름]` - 디버프 추가\n"
-                "• `!치트 디버프 제거 [이름]` - 디버프 제거\n\n"
-                "예시: 부상, 중독, 공포, 피로, 출혈, 저주 등"
-            )
-        
-        action = args[1]
-        uid = str(message.author.id)
-        p_data = domain_manager.get_participant_data(channel_id, uid)
-        
-        if not p_data:
-            return "❌ 캐릭터가 없습니다."
-        
-        # 제거 명령
-        if action in ['제거', 'remove', '-']:
-            if len(args) < 3:
-                return "❌ 제거할 디버프 이름을 입력하세요."
-            effect_name = args[2]
-            p_data, msg = simulation_manager.remove_status_effect(p_data, effect_name)
-        else:
-            effect_name = action
-            p_data, msg = simulation_manager.add_status_effect(p_data, effect_name, "GM 부여")
-        
-        domain_manager.save_participant_data(channel_id, uid, p_data)
-        return f"🛠️ {msg}"
-    
-    # === Doom 치트 ===
-    elif category in ['doom', '둠', '위기']:
-        if len(args) < 2:
-            status = world_manager.get_doom_status(channel_id)
-            return f"📊 **위기 수치:** {status['value']}% ({status['description']})"
-        
-        try:
-            amount = int(args[1])
-            result = world_manager.change_doom(channel_id, amount)
-            return f"🛠️ {result}"
-        except ValueError:
-            return "❌ 숫자를 입력하세요. 예: `!치트 둠 +10`"
-    
-    # === AI 분석: OOC 브레인스토밍 ===
-    elif category in ['분석', 'analyze', 'ooc']:
-        question = " ".join(args[1:]) if len(args) > 1 else ""
-        if not question:
-            return "❌ 사용법: `!치트 분석 [질문]`\n예: `!치트 분석 이 NPC의 진짜 목적은?`"
-        
-        if not client_genai:
-            return "⚠️ AI가 연결되지 않았습니다."
-        
-        # 로딩 메시지는 None 반환 후 별도 처리 필요
-        return f"__ANALYZE__{question}"
-    
-    # === AI 분석: 일관성 검사 ===
-    elif category in ['일관성', 'consistency']:
-        if not client_genai:
-            return "⚠️ AI가 연결되지 않았습니다."
-        return "__CONSISTENCY__"
-    
-    # === AI 분석: 세계 규칙 ===
-    elif category in ['세계', 'world', 'worldrules']:
-        if not client_genai:
-            return "⚠️ AI가 연결되지 않았습니다."
-        return "__WORLDRULES__"
-    
-    return "⚠️ 알 수 없는 치트 명령입니다. `!치트`로 목록을 확인하세요."
-
-
 async def handle_lore_command(message, channel_id: str, arg: str) -> None:
     """로어 명령어를 처리합니다."""
     file_text = ""
@@ -372,16 +161,52 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
     # 로어 조회
     if not full:
         summary = domain_manager.get_lore_summary(channel_id)
-        display_text = summary if summary else domain_manager.get_lore(channel_id)
-        title = "[핵심 요약본]" if summary else "[원본 로어]"
+        raw_lore = domain_manager.get_lore(channel_id)
         
-        if display_text == domain_manager.DEFAULT_LORE:
+        if raw_lore == domain_manager.DEFAULT_LORE or not raw_lore.strip():
             await message.channel.send(
                 "📜 저장된 로어가 없습니다. `!로어 [내용]` 또는 텍스트 파일을 업로드하세요."
             )
             return
         
-        await send_long_message(message.channel, f"📜 **{title}**\n{display_text}")
+        # 장르 및 톤 정보
+        genres = domain_manager.get_active_genres(channel_id)
+        custom_tone = domain_manager.get_custom_tone(channel_id)
+        
+        info_msg = f"📜 **로어 정보**\n\n"
+        info_msg += f"**📊 원본 크기:** {len(raw_lore):,}자\n"
+        
+        if summary:
+            info_msg += f"**📦 요약본 크기:** {len(summary):,}자\n"
+            info_msg += f"**🗜️ 압축률:** {len(raw_lore) // max(len(summary), 1)}:1\n"
+        
+        info_msg += f"\n**🎭 장르:** {', '.join(genres) if genres else '미분석'}\n"
+        
+        if custom_tone:
+            info_msg += f"**🎨 톤:** {custom_tone}\n"
+        
+        await message.channel.send(info_msg)
+        
+        # 요약본이 있으면 파일로 첨부
+        if summary:
+            file_content = f"=== Lorekeeper 로어 요약본 ===\n"
+            file_content += f"원본: {len(raw_lore):,}자 → 요약: {len(summary):,}자\n"
+            file_content += f"장르: {', '.join(genres) if genres else '미분석'}\n"
+            file_content += f"{'=' * 40}\n\n"
+            file_content += summary
+            
+            file_buffer = io.BytesIO(file_content.encode('utf-8'))
+            file_buffer.seek(0)
+            
+            await message.channel.send(
+                "📄 **요약본 파일:**",
+                file=discord.File(file_buffer, filename="lore_summary.txt")
+            )
+        else:
+            # 요약본이 없으면 원본 미리보기
+            preview = raw_lore[:500] + "..." if len(raw_lore) > 500 else raw_lore
+            await message.channel.send(f"📄 **원본 미리보기:**\n```\n{preview}\n```")
+        
         return
     
     # 로어 초기화
@@ -389,22 +214,15 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
         domain_manager.reset_lore(channel_id)
         domain_manager.set_active_genres(channel_id, ["noir"])
         domain_manager.set_custom_tone(channel_id, None)
-        await message.channel.send("📜 초기화됨")
+        await message.channel.send("📜 **로어 초기화됨** - 장르도 기본값으로 복귀")
         return
     
-    # 로어 저장 모드 확인
-    if full.startswith("추가 ") or full.startswith("append "):
-        # 추가 모드: 기존 로어에 덧붙임
-        add_text = full.split(maxsplit=1)[1] if len(full.split(maxsplit=1)) > 1 else ""
-        if add_text:
-            domain_manager.append_lore(channel_id, add_text)
-            await message.channel.send(f"📜 로어에 추가됨:\n```{add_text[:200]}{'...' if len(add_text) > 200 else ''}```")
-        else:
-            await message.channel.send("⚠️ 추가할 내용을 입력하세요. 예: `!로어 추가 [내용]`")
-        return
+    # 로어 저장
+    is_append = not file_text and domain_manager.get_lore(channel_id).strip()
     
-    # 기본: 덮어쓰기 모드
-    domain_manager.reset_lore(channel_id)
+    if file_text:
+        domain_manager.reset_lore(channel_id)  # 파일 업로드 시 기존 로어 리셋
+    
     domain_manager.append_lore(channel_id, full)
     
     # 로어 크기 확인
@@ -414,15 +232,21 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
     # 대용량 로어 여부 판단 (15000자 이상)
     is_massive = lore_length > 15000
     
+    action_word = "추가됨" if is_append else "저장됨"
+    
     if is_massive:
         estimated_chunks = (lore_length // 15000) + 1
         status_msg = await message.channel.send(
-            f"📜 **로어 저장됨** ({lore_length:,}자 감지)\n"
-            f"📚 대용량 로어 처리 모드 활성화 (약 {estimated_chunks}개 청크)\n"
-            f"⏳ 처리 시간: 약 {estimated_chunks * 10}~{estimated_chunks * 20}초 예상..."
+            f"📜 **로어 {action_word}** ({lore_length:,}자)\n"
+            f"📚 대용량 로어 처리 모드 (약 {estimated_chunks}개 청크)\n"
+            f"⏳ 예상 시간: {estimated_chunks * 10}~{estimated_chunks * 20}초\n"
+            f"🔄 **전체 재분석 진행 중...**"
         )
     else:
-        status_msg = await message.channel.send("📜 **로어 저장됨.** (AI 분석 준비 중...)")
+        status_msg = await message.channel.send(
+            f"📜 **로어 {action_word}** ({lore_length:,}자)\n"
+            f"🔄 **AI 재분석 중...** (장르, NPC, 규칙)"
+        )
     
     # AI 분석
     if client_genai:
@@ -514,18 +338,43 @@ async def handle_rule_command(message, channel_id: str, arg: str) -> None:
     if file_text or arg:
         if arg == "초기화":
             domain_manager.reset_rules(channel_id)
-            await message.channel.send("📘 초기화됨")
+            await message.channel.send("📘 **룰 초기화** - 기본 룰로 복귀했습니다.")
             return
         
-        content = file_text if file_text else arg
-        domain_manager.append_rules(channel_id, content)
-        await message.channel.send("📘 룰 업데이트")
+        # 파일 업로드: 완전 커스텀 모드
+        if file_text:
+            domain_manager.set_custom_rules_from_file(channel_id, file_text)
+            await message.channel.send(
+                "📘 **완전 커스텀 룰 설정됨**\n"
+                "기본 룰이 파일 내용으로 대체되었습니다.\n"
+                "_기본 룰로 돌아가려면 `!룰 초기화`_"
+            )
+            return
+        
+        # 텍스트 입력: 기본룰 + 커스텀 (하이브리드)
+        domain_manager.append_rules(channel_id, arg)
+        rules_mode = domain_manager.get_rules_mode(channel_id)
+        
+        if rules_mode == "hybrid":
+            await message.channel.send(
+                "📘 **커스텀 룰 추가됨** (기본 룰 + 커스텀)\n"
+                f"추가된 내용: {arg[:50]}{'...' if len(arg) > 50 else ''}"
+            )
+        else:
+            await message.channel.send("📘 룰 업데이트됨")
         return
     
     # 룰 조회
+    rules_mode = domain_manager.get_rules_mode(channel_id)
+    mode_display = {
+        "default": "📗 기본 룰",
+        "hybrid": "📘 기본 룰 + 커스텀",
+        "custom": "📙 완전 커스텀"
+    }
+    
     await send_long_message(
         message.channel,
-        f"📘 **현재 룰:**\n{domain_manager.get_rules(channel_id)}"
+        f"**[{mode_display.get(rules_mode, '📘')}]**\n\n{domain_manager.get_rules(channel_id)}"
     )
 
 
@@ -544,20 +393,27 @@ async def handle_chronicle_command(message, channel_id: str, arg: str) -> None:
         await send_long_message(message.channel, result_text)
         return
     
-    # 연대기 추출 (파일 다운로드)
-    elif arg == "추출":
-        txt_data, msg = quest_manager.export_lore_book_file(channel_id)
+    # 연대기 추출 (대화 로그 파일 다운로드 - 증분 지원)
+    elif arg.startswith("추출"):
+        # "추출 전체" 또는 "추출"
+        mode = arg.replace("추출", "").strip()
+        ch, msg = quest_manager.export_chronicles_incremental(channel_id, mode)
         
-        if not txt_data:
+        if not ch:
             await message.channel.send(msg)
             return
         
-        with io.BytesIO(txt_data.encode('utf-8')) as f:
+        # 로어도 함께 포함
+        lore = domain_manager.get_lore(channel_id)
+        content = f"=== LORE ===\n{lore}\n\n{ch}" if lore else ch
+        
+        with io.BytesIO(content.encode('utf-8')) as f:
             await message.channel.send(msg, file=discord.File(f, filename="chronicles.txt"))
         return
     
-    # 연대기 목록 조회 (기본)
-    await send_long_message(message.channel, quest_manager.get_lore_book(channel_id))
+    # 연대기 조회 (기본)
+    lore_book = quest_manager.get_lore_book(channel_id)
+    await send_long_message(message.channel, lore_book)
 
 
 async def handle_npc_info_command(message, channel_id: str, npc_name: str) -> None:
@@ -583,10 +439,16 @@ async def handle_npc_info_command(message, channel_id: str, npc_name: str) -> No
         await message.channel.send(f"⚠️ '{npc_name}'라는 NPC를 찾을 수 없습니다.")
 
 
-async def handle_info_command(message, channel_id: str) -> None:
+async def handle_info_command(message, channel_id: str, sub_command: str = "") -> None:
     """
-    통합 캐릭터 정보 명령어를 처리합니다.
-    이름, 설명, 상태이상, 패시브, 적응도, 인벤토리, NPC 관계 상위 3~4개를 표시합니다.
+    통합 정보 명령어를 처리합니다.
+    
+    서브 명령어:
+    - (없음): 전체 정보
+    - 캐릭터: 외형, 성격, 배경, 소지품
+    - 관계: NPC 관계도
+    - 패시브: 패시브, 칭호, 비일상 적응
+    - 세계: 퀘스트, 메모, 세계상황, 복선, 아는 정보
     """
     uid = str(message.author.id)
     p = domain_manager.get_participant_data(channel_id, uid)
@@ -596,111 +458,182 @@ async def handle_info_command(message, channel_id: str) -> None:
         return
     
     mask = p.get('mask', 'Unknown')
-    desc = p.get('description', '')
     ai_mem = p.get('ai_memory', {})
+    sub = sub_command.strip().lower()
     
-    # === 기본 정보 ===
-    header = f"👤 **[{mask}]**"
-    if desc:
-        header += f"\n_{desc}_"
+    # 서브 명령어 별칭 매핑
+    sub_aliases = {
+        '캐릭터': 'character', 'char': 'character', 'character': 'character', 'c': 'character',
+        '관계': 'relation', 'rel': 'relation', 'relation': 'relation', 'r': 'relation',
+        '패시브': 'passive', 'passive': 'passive', 'p': 'passive', '칭호': 'passive',
+        '세계': 'world', 'world': 'world', 'w': 'world', '월드': 'world',
+    }
+    sub_type = sub_aliases.get(sub, 'all')
     
-    # AI가 업데이트한 외모/성격 정보
-    appearance = ai_mem.get('appearance', '')
-    personality = ai_mem.get('personality', '')
-    if appearance or personality:
-        header += "\n"
+    result = f"👤 **[{mask}]**\n\n"
+    
+    # =========================================================
+    # 캐릭터 섹션: 외형, 성격, 배경, 소지품
+    # =========================================================
+    if sub_type in ['all', 'character']:
+        result += "**━━━ 🎭 캐릭터 ━━━**\n"
+        
+        # 외형
+        appearance = ai_mem.get('appearance', '')
         if appearance:
-            header += f"\n👁️ {appearance}"
+            result += f"👁️ **외형:** {appearance}\n"
+        
+        # 성격
+        personality = ai_mem.get('personality', '')
         if personality:
-            header += f"\n💭 {personality}"
-    
-    # === 상태이상 (단순 목록 표시) ===
-    status_effects = p.get('status_effects', [])
-    status_section = ""
-    if status_effects:
-        status_section = f"📋 상태: {', '.join(status_effects)}\n"
-    else:
-        status_section = "✅ 상태: 정상\n"
-    
-    # === 패시브 (간략 표시) ===
-    passives = p.get('passives', [])
-    passive_section = ""
-    if passives:
-        passive_names = [ps.get('name', '???') for ps in passives[:4]]
-        passive_section = f"🏆 패시브: {', '.join(passive_names)}"
-        if len(passives) > 4:
-            passive_section += f" 외 {len(passives) - 4}개"
-        passive_section += "\n"
-    
-    # === 비일상 적응도 (간략 표시) ===
-    exposure = p.get('abnormal_exposure', {})
-    adapt_section = ""
-    if exposure:
-        adapt_items = []
-        for ab_type, data in sorted(exposure.items(), key=lambda x: x[1].get('normality', 0), reverse=True)[:3]:
-            normality = data.get('normality', 0)
-            stage = simulation_manager.get_normality_stage(normality)
-            adapt_items.append(f"{ab_type}({stage['name']})")
-        adapt_section = f"🌓 적응: {', '.join(adapt_items)}\n"
-    
-    # === 인벤토리 ===
-    inventory = p.get('inventory', {})
-    inv_section = ""
-    if inventory:
-        inv_items = [f"{k} x{v}" for k, v in list(inventory.items())[:5]]
-        inv_section = f"🎒 소지품: {', '.join(inv_items)}"
-        if len(inventory) > 5:
-            inv_section += f" 외 {len(inventory) - 5}개"
-        inv_section += "\n"
-    
-    # === NPC 관계 상위 3~4개 ===
-    relations = p.get('relations', {})
-    ai_relationships = ai_mem.get('relationships', {})
-    
-    # 코드 관계 + AI 관계 병합 (AI 관계 우선)
-    merged_relations = {}
-    for npc, val in relations.items():
-        merged_relations[npc] = {"score": val, "desc": ""}
-    for npc, desc in ai_relationships.items():
-        if npc in merged_relations:
-            merged_relations[npc]["desc"] = desc
+            result += f"💭 **성격:** {personality}\n"
+        
+        # 배경
+        background = ai_mem.get('background', '')
+        if background:
+            result += f"📖 **배경:** {background}\n"
+        
+        # 소지품 (화폐 + 인벤토리 통합)
+        economy = p.get('economy', {})
+        inventory = p.get('inventory', {})
+        status_effects = p.get('status_effects', [])
+        
+        # 화폐 표시 (세계관에 따라 다를 수 있음, 기본은 골드)
+        gold = economy.get('gold', 0)
+        currency_name = economy.get('currency_name', '골드')  # AI가 세계관에 맞게 설정
+        
+        result += f"🎒 **소지품**\n"
+        result += f"  💰 {currency_name}: {gold}\n"
+        
+        if inventory:
+            for item, count in inventory.items():
+                result += f"  • {item} x{count}\n"
         else:
-            merged_relations[npc] = {"score": 0, "desc": desc}
+            result += "  _(인벤토리 비어있음)_\n"
+        
+        if status_effects:
+            result += f"\n💫 **상태이상:** {', '.join(status_effects)}\n"
+        
+        # 캐릭터 섹션이 비어있으면
+        empty_check = f"👤 **[{mask}]**\n\n**━━━ 🎭 캐릭터 ━━━**\n🎒 **소지품**\n  💰 {currency_name}: 0\n  _(인벤토리 비어있음)_\n"
+        if result == empty_check:
+            result += "_아직 설정된 정보가 없습니다._\n"
+        
+        result += "\n"
     
-    rel_section = ""
-    if merged_relations:
-        # 점수 기준 정렬, 상위 4개
-        sorted_rels = sorted(merged_relations.items(), key=lambda x: abs(x[1].get("score", 0)), reverse=True)[:4]
-        rel_items = []
-        for npc, data in sorted_rels:
-            score = data.get("score", 0)
-            desc = data.get("desc", "")
-            if score != 0:
-                emoji = "💖" if score > 0 else "💔"
-                rel_items.append(f"{npc} {emoji}{score:+}")
-            elif desc:
-                rel_items.append(f"{npc}: {desc[:15]}...")
-            else:
-                rel_items.append(npc)
-        rel_section = f"🤝 관계: {' | '.join(rel_items)}\n"
+    # =========================================================
+    # 관계 섹션: NPC 관계도
+    # =========================================================
+    if sub_type in ['all', 'relation']:
+        result += "**━━━ 💞 관계 ━━━**\n"
+        
+        relationships = ai_mem.get('relationships', {})
+        if relationships:
+            for name, desc in relationships.items():
+                result += f"  • **{name}:** {desc}\n"
+        else:
+            result += "_아직 형성된 관계가 없습니다._\n"
+        
+        # 숫자 기반 관계도도 표시 (레거시)
+        relations_numeric = p.get('relations', {})
+        if relations_numeric:
+            result += "\n📊 **호감도:**\n"
+            for name, value in sorted(relations_numeric.items(), key=lambda x: x[1], reverse=True)[:5]:
+                bar = "█" * max(0, (value + 100) // 20) + "░" * (10 - max(0, (value + 100) // 20))
+                result += f"  • {name}: [{bar}] {value:+}\n"
+        
+        result += "\n"
     
-    # === 최종 조합 ===
-    final_msg = f"{header}\n\n"
-    final_msg += f"**━━━ 상태 ━━━**\n"
-    final_msg += status_section
+    # =========================================================
+    # 패시브 섹션: 패시브, 칭호, 비일상 적응
+    # =========================================================
+    if sub_type in ['all', 'passive']:
+        result += "**━━━ 🏆 패시브/칭호 ━━━**\n"
+        
+        passives = ai_mem.get('passives', [])
+        if passives:
+            for p_name in passives:
+                result += f"  • {p_name}\n"
+        else:
+            result += "_획득한 패시브/칭호가 없습니다._\n"
+        
+        # 비일상 적응
+        normalization = ai_mem.get('normalization', {})
+        if normalization:
+            result += "\n🌓 **비일상 적응:**\n"
+            for thing, status in normalization.items():
+                result += f"  • **{thing}:** {status}\n"
+        
+        result += "\n"
     
-    if passive_section:
-        final_msg += passive_section
-    if adapt_section:
-        final_msg += adapt_section
-    if inv_section:
-        final_msg += inv_section
-    if rel_section:
-        final_msg += rel_section
+    # =========================================================
+    # 세계 섹션: 퀘스트, 메모, 세계상황, 복선, 아는 정보
+    # =========================================================
+    if sub_type in ['all', 'world']:
+        result += "**━━━ 🌍 세계 ━━━**\n"
+        
+        # 퀘스트
+        quests = quest_manager.get_active_quests(channel_id)
+        if quests:
+            result += "📜 **활성 퀘스트:**\n"
+            for q in quests[:5]:
+                result += f"  • {q}\n"
+            if len(quests) > 5:
+                result += f"  _... 외 {len(quests) - 5}개_\n"
+        
+        # 메모
+        memos = quest_manager.get_memos(channel_id)
+        if memos:
+            result += "📝 **메모:**\n"
+            for m in memos[:5]:
+                result += f"  • {m}\n"
+            if len(memos) > 5:
+                result += f"  _... 외 {len(memos) - 5}개_\n"
+        
+        # 알고 있는 정보
+        known_info = ai_mem.get('known_info', [])
+        if known_info:
+            result += "💡 **알고 있는 정보:**\n"
+            for info in known_info:
+                result += f"  • {info}\n"
+        
+        # 복선
+        foreshadowing = ai_mem.get('foreshadowing', [])
+        if foreshadowing:
+            result += "🔮 **미해결 복선:**\n"
+            for fs in foreshadowing:
+                result += f"  • {fs}\n"
+        
+        # 세션 AI 메모리 (세계 상황)
+        session_mem = domain_manager.get_session_ai_memory(channel_id)
+        if session_mem:
+            current_arc = session_mem.get('current_arc', '')
+            if current_arc:
+                result += f"\n🎬 **현재 스토리:** {current_arc}\n"
+            
+            active_threads = session_mem.get('active_threads', [])
+            if active_threads:
+                result += f"🧵 **진행 중인 이야기:** {', '.join(active_threads[:3])}\n"
+            
+            world_changes = session_mem.get('world_changes', [])
+            if world_changes:
+                result += "🌐 **세계 변화:**\n"
+                for change in world_changes[:3]:
+                    result += f"  • {change}\n"
+        
+        # 세계 섹션이 비어있으면
+        if not any([quests, memos, known_info, foreshadowing, session_mem.get('current_arc') if session_mem else False]):
+            result += "_아직 기록된 세계 정보가 없습니다._\n"
+        
+        result += "\n"
     
-    final_msg += f"\n💡 _수정: `(OOC: 요청 내용)` 입력_"
+    # 도움말 (전체 보기일 때만)
+    if sub_type == 'all':
+        result += "━━━━━━━━━━━━━━━━━━━\n"
+        result += "💡 `!정보 캐릭터` `!정보 관계` `!정보 패시브` `!정보 세계`\n"
+        result += "✏️ 수정: `(OOC: 요청 내용)` 형식으로 입력"
     
-    await send_long_message(message.channel, final_msg)
+    await send_long_message(message.channel, result)
 
 
 async def process_ai_system_action(message, channel_id: str, sys_action: dict) -> Optional[str]:
@@ -740,24 +673,10 @@ async def process_ai_system_action(message, channel_id: str, sys_action: dict) -
             character_sheet.npc_memory.add_npc(channel_id, content, "Auto")
             auto_msg = f"👥 NPC: {content}"
     
+    # XP Award 제거됨 - 성과는 패시브/칭호로 표현
     elif tool == "XP" and atype == "Award":
-        try:
-            match = re.match(r"(\d+)\s*(?:\((.*)\))?", str(content))
-            if match:
-                xp_amount = int(match.group(1))
-                reason = match.group(2) or "Activity"
-                uid = str(message.author.id)
-                p_data = domain_manager.get_participant_data(channel_id, uid)
-                
-                if p_data:
-                    growth_system = domain_manager.get_growth_system(channel_id)
-                    new_data, xp_msg, _ = simulation_manager.gain_experience(
-                        p_data, xp_amount, growth_system
-                    )
-                    domain_manager.save_participant_data(channel_id, uid, new_data)
-                    auto_msg = f"⚔️ **성과 확인:** {reason}\n{xp_msg}"
-        except Exception as e:
-            logging.error(f"Auto XP Error: {e}")
+        # 경험치 시스템 제거됨 - 성과 로깅만
+        logging.info(f"[Achievement] {content}")
     
     return auto_msg
 
@@ -842,6 +761,55 @@ async def on_message(message):
         # =========================================================
         if parsed['type'] == 'command':
             
+            # --- 도움말 ---
+            if cmd == 'help':
+                help_msg = (
+                    "📚 **Lorekeeper 명령어 목록**\n\n"
+                    
+                    "**━━━ 🎭 캐릭터 ━━━**\n"
+                    "`!가면 [이름]` - 캐릭터 이름 설정\n"
+                    "`!설명 [내용]` - 캐릭터 설명 설정\n"
+                    "`!정보` - 캐릭터 정보 조회\n"
+                    "  ↳ `!정보 캐릭터` `관계` `패시브` `세계`\n\n"
+                    
+                    "**━━━ 📜 세션 ━━━**\n"
+                    "`!준비` - 세션 준비 상태 확인\n"
+                    "`!시작` - 세션 시작\n"
+                    "`!진행` - 기록된 행동 종합 후 다음 장면\n"
+                    "`!리셋` - 세션 초기화\n\n"
+                    
+                    "**━━━ 🌍 세계관 ━━━**\n"
+                    "`!로어 [파일]` - 세계관 설정\n"
+                    "`!룰 [내용]` - 룰 추가 (기본룰 자동 적용)\n"
+                    "`!퀘스트 [내용]` - 퀘스트 추가/조회\n"
+                    "`!메모 [내용]` - 메모 추가/조회\n"
+                    "`!연대기` - 연대기 조회\n"
+                    "`!연대기 생성` - AI가 스토리 요약\n"
+                    "`!연대기 추출` - 대화 로그 파일 저장 (증분)\n\n"
+                    
+                    "**━━━ 🎲 기타 ━━━**\n"
+                    "`!r [주사위]` - 선택적 주사위 (예: !r 1d20, !r 1d100)\n"
+                    "  └ 높을수록 좋은 결과, AI가 서사적으로 해석\n"
+                    "`!npc [이름]` - NPC 정보 조회\n"
+                    "`!분석 [질문]` - AI OOC 분석\n\n"
+                    
+                    "**━━━ ✏️ OOC 수정 ━━━**\n"
+                    "`(OOC: 요청 내용)` - 캐릭터 정보 수정\n"
+                    "예: `(OOC: 리엘이랑 친해진 걸로)`\n\n"
+                    
+                    "**━━━ 📖 성장 시스템 ━━━**\n"
+                    "레벨/경험치 대신 **패시브/칭호**로 성장!\n"
+                    "• 패시브: 반복 경험으로 습득 (독 내성, 야간 시야...)\n"
+                    "• 칭호: 특별한 업적으로 획득 (드래곤 슬레이어...)\n"
+                    "• 적응: 비일상에 노출될수록 익숙해짐\n\n"
+                    
+                    "**━━━ ⚖️ 판정 시스템 ━━━**\n"
+                    "기본: AI가 패시브/칭호/상황으로 판정\n"
+                    "선택: 주사위 결과를 AI가 참고하여 해석"
+                )
+                await send_long_message(message.channel, help_msg)
+                return
+            
             # --- 세션 관리 ---
             if cmd == 'reset':
                 await session_manager.manager.execute_reset(
@@ -872,116 +840,6 @@ async def on_message(message):
                 await message.channel.send("🔒 **세션 잠금**")
                 return
             
-            # --- 시스템 설정 ---
-            if cmd == 'system':
-                args = parsed['content'].strip().split()
-                if not args:
-                    await message.channel.send("⚙️ 사용법: `!시스템 성장 [기본/커스텀]`\n• 기본: 패시브/칭호 기반 (숫자 없음)\n• 커스텀: !룰에 정의한 규칙 사용")
-                    return
-                
-                if args[0] in ['성장', 'growth']:
-                    if len(args) < 2:
-                        current = domain_manager.get_growth_system(channel_id)
-                        await message.channel.send(f"📊 **현재 성장:** `{current}`")
-                        return
-                    
-                    growth_type = args[1].lower()
-                    if growth_type in ['기본', 'standard', '표준']:
-                        growth_type = 'standard'
-                    elif growth_type in ['커스텀', 'custom', '사용자']:
-                        growth_type = 'custom'
-                    else:
-                        await message.channel.send("⚠️ `기본` 또는 `커스텀`만 가능합니다.")
-                        return
-                    
-                    domain_manager.set_growth_system(channel_id, growth_type)
-                    await message.channel.send(f"✅ 성장 시스템: `{growth_type}`")
-                return
-            
-            # --- 치트/GM 모드 ---
-            if cmd == 'cheat':
-                args = parsed['content'].strip().split()
-                result = await handle_cheat_command(message, channel_id, args, client_genai, MODEL_ID)
-                
-                if result:
-                    # AI 분석 특수 처리 (비동기 작업 필요)
-                    if result.startswith("__ANALYZE__"):
-                        question = result[11:]
-                        loading = await message.channel.send("🔍 **[OOC 분석 중...]**")
-                        
-                        domain = domain_manager.get_domain(channel_id)
-                        lore = domain_manager.get_lore(channel_id)
-                        history = domain.get('history', [])[-20:]
-                        hist_text = "\n".join([f"{h['role']}: {h['content']}" for h in history])
-                        
-                        analysis = await memory_system.analyze_brainstorming(
-                            client_genai, MODEL_ID, hist_text, lore, question
-                        )
-                        await safe_delete_message(loading)
-                        
-                        if analysis.get("analysis_type") == "error":
-                            await message.channel.send(f"⚠️ 분석 실패: {analysis.get('recommendation')}")
-                        else:
-                            response_text = f"🔍 **[OOC 분석]**\n\n**상황:** {analysis.get('current_state_summary', 'N/A')}\n"
-                            if analysis.get('potential_paths'):
-                                response_text += "\n**가능한 경로:**\n"
-                                for i, path in enumerate(analysis.get('potential_paths', [])[:3], 1):
-                                    response_text += f"{i}. {path.get('path', 'N/A')}\n"
-                            if analysis.get('recommendation'):
-                                response_text += f"\n**추천:** {analysis.get('recommendation')}"
-                            await send_long_message(message.channel, response_text)
-                    
-                    elif result == "__CONSISTENCY__":
-                        loading = await message.channel.send("🔍 **[일관성 검사 중...]**")
-                        
-                        domain = domain_manager.get_domain(channel_id)
-                        lore = domain_manager.get_lore(channel_id)
-                        history = domain.get('history', [])[-30:]
-                        hist_text = "\n".join([f"{h['role']}: {h['content']}" for h in history])
-                        
-                        analysis = await memory_system.check_narrative_consistency(
-                            client_genai, MODEL_ID, hist_text, lore
-                        )
-                        await safe_delete_message(loading)
-                        
-                        response_text = f"📋 **[일관성 검사]**\n\n**전체:** {analysis.get('overall_consistency', 'Unknown')}\n"
-                        issues = analysis.get('issues', [])
-                        if issues:
-                            response_text += "\n**문제점:**\n"
-                            for issue in issues[:5]:
-                                severity = "🔴" if issue.get('severity') == 'critical' else "🟡"
-                                response_text += f"{severity} {issue.get('description')}\n"
-                        else:
-                            response_text += "✅ 문제 없음\n"
-                        await send_long_message(message.channel, response_text)
-                    
-                    elif result == "__WORLDRULES__":
-                        loading = await message.channel.send("🌍 **[세계 규칙 추출 중...]**")
-                        
-                        lore = domain_manager.get_lore(channel_id)
-                        analysis = await memory_system.extract_world_constraints(
-                            client_genai, MODEL_ID, lore
-                        )
-                        await safe_delete_message(loading)
-                        
-                        if analysis:
-                            response_text = "🌍 **[세계 규칙]**\n\n"
-                            if analysis.get('setting'):
-                                s = analysis['setting']
-                                response_text += f"**배경:** {s.get('era', 'N/A')} / {s.get('location', 'N/A')}\n"
-                            if analysis.get('theme'):
-                                t = analysis['theme']
-                                response_text += f"**장르:** {', '.join(t.get('genres', []))}\n"
-                            await send_long_message(message.channel, response_text)
-                        else:
-                            await message.channel.send("⚠️ 세계 규칙 추출 실패")
-                    
-                    else:
-                        await message.channel.send(result)
-                return
-            
-            # --- 경험치 확인 ---
-            # --- 경험치 (치트로 통합) ---
             # --- 로어 명령어 ---
             if cmd == 'lore':
                 await handle_lore_command(message, channel_id, parsed['content'].strip())
@@ -990,20 +848,31 @@ async def on_message(message):
             # --- 모드 전환 ---
             if cmd == 'mode':
                 arg = parsed['content'].strip()
-                if '수동' in arg:
-                    domain_manager.set_response_mode(channel_id, 'manual')
-                    await message.channel.send("🛑 수동 모드")
+                if '대기' in arg or '수동' in arg:
+                    domain_manager.set_response_mode(channel_id, 'waiting')
+                    await message.channel.send(
+                        "⏸️ **대기 모드**\n"
+                        "플레이어 채팅은 기록만 됩니다. (✏️)\n"
+                        "`!진행`으로 AI 응답을 받으세요."
+                    )
                 elif '자동' in arg:
                     domain_manager.set_response_mode(channel_id, 'auto')
-                    await message.channel.send("⏩ 자동 모드")
+                    await message.channel.send("▶️ **자동 모드** - 매 채팅마다 AI가 응답합니다.")
                 else:
                     current = domain_manager.get_response_mode(channel_id)
-                    await message.channel.send(f"⚙️ 현재: {current}")
+                    mode_name = "대기" if current == "waiting" else "자동"
+                    await message.channel.send(
+                        f"⚙️ **현재 모드:** {mode_name}\n"
+                        f"• `!모드 자동` - 매 채팅마다 AI 응답\n"
+                        f"• `!모드 대기` - `!진행` 전까지 기록만"
+                    )
                 return
             
-            # --- 진행 ---
-            if cmd == 'next':
-                system_trigger = "[System: Resolve pending actions and advance the scene.]"
+            # --- 진행/턴 ---
+            # 대기 모드에서 모든 플레이어 행동을 모아서 한 번에 처리
+            # "아무 말 없이 다음 장면을 본다" - 기록된 모든 행동을 AI가 종합
+            if cmd in ['next', 'turn']:
+                system_trigger = "[System: 기록된 모든 플레이어 행동을 종합하여 다음 장면을 진행하세요. 각 캐릭터의 행동과 침묵 모두 고려하여 서사적으로 전개합니다.]"
                 await message.add_reaction("🎬")
             
             # --- 캐릭터 관리 ---
@@ -1029,14 +898,42 @@ async def on_message(message):
                 return
             
             if cmd == 'info':
-                await handle_info_command(message, channel_id)
+                sub_cmd = parsed['content'].strip()
+                
+                # 기존 명령어에서 리다이렉트된 경우 서브 명령어 자동 매핑
+                # (input_handler에서 passive, adaptation, status → info로 매핑됨)
+                # 하지만 content가 비어있으면 전체 정보 표시
+                
+                await handle_info_command(message, channel_id, sub_cmd)
                 return
             
-            if cmd == 'status':
-                await send_long_message(
-                    message.channel,
-                    quest_manager.get_status_message(channel_id)
-                )
+            # --- 퀘스트/메모 직접 명령어 ---
+            if cmd == 'quest':
+                arg = parsed['content'].strip()
+                if not arg:
+                    # 퀘스트 목록 표시
+                    await send_long_message(
+                        message.channel,
+                        quest_manager.get_active_quests_text(channel_id)
+                    )
+                else:
+                    # 퀘스트 추가
+                    result = quest_manager.add_quest(channel_id, arg)
+                    await message.channel.send(result)
+                return
+            
+            if cmd == 'memo':
+                arg = parsed['content'].strip()
+                if not arg:
+                    # 메모 목록 표시
+                    await send_long_message(
+                        message.channel,
+                        quest_manager.get_memos_text(channel_id)
+                    )
+                else:
+                    # 메모 추가
+                    result = quest_manager.add_memo(channel_id, arg)
+                    await message.channel.send(result)
                 return
             
             # --- 참가자 상태 ---
@@ -1067,21 +964,6 @@ async def on_message(message):
                 await handle_chronicle_command(message, channel_id, parsed['content'].strip())
                 return
             
-            # --- 내보내기 ---
-            if cmd == 'export':
-                mode = parsed.get('content', '').strip()
-                lore = domain_manager.get_lore(channel_id)
-                ch, msg = quest_manager.export_chronicles_incremental(channel_id, mode)
-                
-                if not ch:
-                    await message.channel.send(msg)
-                    return
-                
-                content = f"=== LORE ===\n{lore}\n\n{ch}"
-                with io.BytesIO(content.encode('utf-8')) as f:
-                    await message.channel.send(msg, file=discord.File(f, filename="export.txt"))
-                return
-            
             # --- NPC 정보 ---
             if cmd == 'npc':
                 await handle_npc_info_command(
@@ -1089,7 +971,169 @@ async def on_message(message):
                 )
                 return
             
-            # --- Thinking Level 설정 ---
+            # --- AI 분석 도구 (신규) ---
+            if cmd == 'analyze' or cmd == 'ooc':
+                question = parsed.get('content', '').strip()
+                if not question:
+                    await message.channel.send(
+                        "🔍 **OOC 분석 모드**\n"
+                        "사용법: `!분석 [질문]` 또는 `!ooc [질문]`\n"
+                        "예: `!분석 이 NPC의 동기는 뭘까?`"
+                    )
+                    return
+                
+                if not client_genai:
+                    await message.channel.send("⚠️ AI가 연결되지 않았습니다.")
+                    return
+                
+                loading = await message.channel.send("🔍 **[OOC 분석 중...]**")
+                
+                # 컨텍스트 수집
+                lore = domain_manager.get_lore(channel_id)
+                history = domain.get('history', [])[-20:]
+                hist_text = "\n".join([f"{h['role']}: {h['content']}" for h in history])
+                
+                # 브레인스토밍 분석 호출
+                result = await memory_system.analyze_brainstorming(
+                    client_genai, MODEL_ID, hist_text, lore, question
+                )
+                
+                await safe_delete_message(loading)
+                
+                # 결과 포맷팅
+                if result.get("analysis_type") == "error":
+                    await message.channel.send(f"⚠️ 분석 실패: {result.get('recommendation')}")
+                else:
+                    response_text = (
+                        f"🔍 **[OOC 분석 결과]**\n\n"
+                        f"**현재 상황:** {result.get('current_state_summary', 'N/A')}\n\n"
+                    )
+                    
+                    if result.get('potential_paths'):
+                        response_text += "**가능한 경로:**\n"
+                        for i, path in enumerate(result.get('potential_paths', [])[:3], 1):
+                            response_text += f"{i}. {path.get('path', 'N/A')}\n"
+                    
+                    if result.get('recommendation'):
+                        response_text += f"\n**추천:** {result.get('recommendation')}\n"
+                    
+                    if result.get('open_questions'):
+                        response_text += "\n**열린 질문:**\n"
+                        for q in result.get('open_questions', [])[:3]:
+                            response_text += f"• {q}\n"
+                    
+                    await send_long_message(message.channel, response_text)
+                return
+            
+            if cmd == 'consistency':
+                if not client_genai:
+                    await message.channel.send("⚠️ AI가 연결되지 않았습니다.")
+                    return
+                
+                loading = await message.channel.send("🔍 **[일관성 검사 중...]**")
+                
+                lore = domain_manager.get_lore(channel_id)
+                history = domain.get('history', [])[-30:]
+                hist_text = "\n".join([f"{h['role']}: {h['content']}" for h in history])
+                
+                result = await memory_system.check_narrative_consistency(
+                    client_genai, MODEL_ID, hist_text, lore
+                )
+                
+                await safe_delete_message(loading)
+                
+                response_text = f"📋 **[일관성 검사 결과]**\n\n"
+                response_text += f"**전체 일관성:** {result.get('overall_consistency', 'Unknown')}\n\n"
+                
+                issues = result.get('issues', [])
+                if issues:
+                    response_text += "**발견된 문제:**\n"
+                    for issue in issues[:5]:
+                        severity = "🔴" if issue.get('severity') == 'critical' else "🟡"
+                        response_text += f"{severity} [{issue.get('category')}] {issue.get('description')}\n"
+                else:
+                    response_text += "✅ 발견된 문제 없음\n"
+                
+                threads = result.get('plot_threads', [])
+                if threads:
+                    response_text += f"\n**활성 플롯 스레드:** {', '.join(threads[:5])}\n"
+                
+                await send_long_message(message.channel, response_text)
+                return
+            
+            if cmd == 'worldrules':
+                if not client_genai:
+                    await message.channel.send("⚠️ AI가 연결되지 않았습니다.")
+                    return
+                
+                loading = await message.channel.send("🌍 **[세계 규칙 추출 중...]**")
+                
+                lore = domain_manager.get_lore(channel_id)
+                
+                # World Constraints 추출 (memory_system의 새 함수 필요)
+                result = await memory_system.extract_world_constraints(
+                    client_genai, MODEL_ID, lore
+                )
+                
+                await safe_delete_message(loading)
+                
+                if result:
+                    response_text = "🌍 **[세계 규칙]**\n\n"
+                    
+                    if result.get('setting'):
+                        s = result['setting']
+                        response_text += f"**배경:** {s.get('era', 'N/A')} / {s.get('location', 'N/A')}\n"
+                    
+                    if result.get('theme'):
+                        t = result['theme']
+                        response_text += f"**장르:** {', '.join(t.get('genres', []))}\n"
+                        response_text += f"**분위기:** {t.get('tone', 'N/A')}\n"
+                    
+                    if result.get('systems'):
+                        response_text += "\n**시스템 규칙:**\n"
+                        for key, val in result['systems'].items():
+                            if val:
+                                response_text += f"• {key}: {val}\n"
+                    
+                    if result.get('social', {}).get('taboos'):
+                        response_text += f"\n**금기:** {', '.join(result['social']['taboos'][:5])}\n"
+                    
+                    await send_long_message(message.channel, response_text)
+                else:
+                    await message.channel.send("⚠️ 세계 규칙 추출 실패")
+                return
+            
+            # --- Doom 예측 ---
+            if cmd == 'forecast':
+                forecast_msg = world_manager.get_doom_forecast(channel_id)
+                await send_long_message(message.channel, forecast_msg)
+                return
+            
+            # --- Doom 수동 조절 ---
+            if cmd == 'doom':
+                arg = parsed.get('content', '').strip()
+                if not arg:
+                    # 현재 상태 표시
+                    status = world_manager.get_doom_status(channel_id)
+                    await message.channel.send(
+                        f"📊 **위기 수치:** {status['value']}% ({status['description']})\n"
+                        f"{'🚨 위험!' if status['is_danger'] else '✅ 안전'}"
+                    )
+                    return
+                
+                try:
+                    amount = int(arg)
+                    result = world_manager.change_doom(channel_id, amount)
+                    await message.channel.send(result)
+                    
+                    # 이벤트 트리거 확인
+                    event = world_manager.trigger_doom_event(channel_id)
+                    if event:
+                        await message.channel.send(event)
+                except ValueError:
+                    await message.channel.send("⚠️ 사용법: `!둠 [+/-숫자]` 또는 `!둠` (현재 상태)")
+                return
+        
         # =========================================================
         # 주사위 처리
         # =========================================================
@@ -1127,22 +1171,87 @@ async def on_message(message):
                 updated_mem = memory_system.apply_memory_edits(ai_mem, edit_result["edits"])
                 domain_manager.update_ai_memory(channel_id, uid, updated_mem)
                 
-                confirm_msg = edit_result.get("confirmation_message", "수정 완료!")
+                confirm_msg = edit_result.get("confirmation_message", "✅ 수정 완료!")
                 interpretation = edit_result.get("interpretation", "")
+                
+                # 수정된 필드 목록 생성
+                edited_fields = list(set(e.get("field", "") for e in edit_result["edits"]))
+                field_emoji = {
+                    "relationships": "💞", "passives": "🏆", "known_info": "💡",
+                    "foreshadowing": "🔮", "normalization": "🌓", "appearance": "👁️",
+                    "personality": "💭", "background": "📖", "notes": "📋"
+                }
+                fields_str = " ".join([field_emoji.get(f, "📝") for f in edited_fields])
                 
                 await safe_delete_message(wait_msg)
                 await message.channel.send(
-                    f"✅ **[OOC 수정 완료]**\n"
+                    f"✅ **[OOC 수정 완료]** {fields_str}\n"
                     f"_{interpretation}_\n\n"
-                    f"{confirm_msg}"
+                    f"{confirm_msg}\n\n"
+                    f"💡 `!정보`로 변경사항을 확인하세요."
                 )
             else:
+                # 실패 시 더 친절한 안내
+                interpretation = edit_result.get("interpretation", "") if edit_result else ""
                 await safe_delete_message(wait_msg)
                 await message.channel.send(
-                    "❌ **[OOC]** 요청을 이해하지 못했습니다.\n"
-                    "예시: `(OOC: 리엘이랑 친해진 걸로 해줘)`, `((마법 적응됐어))`"
+                    f"❌ **[OOC]** 요청을 이해하지 못했습니다.\n"
+                    f"{f'_({interpretation})_' if interpretation else ''}\n\n"
+                    f"**사용법:** `(OOC: 요청 내용)`\n\n"
+                    f"**예시:**\n"
+                    f"• `(OOC: 리엘이랑 친해진 걸로)` → 관계 수정\n"
+                    f"• `(OOC: 독 내성 패시브 얻었어)` → 패시브 추가\n"
+                    f"• `(OOC: 드래곤 이제 익숙해)` → 적응도 수정\n"
+                    f"• `(OOC: 마왕 약점 알게 됐어)` → 정보 추가\n"
+                    f"• `(OOC: 얼굴에 흉터 생긴 걸로)` → 외형 수정"
                 )
             return
+        
+        # =========================================================
+        # OOC + 행동/대사 함께 처리 (chat_with_ooc)
+        # 예: "우린 친구잖아 (OOC: 철수는 나를 동료라 생각한다)"
+        # → OOC 먼저 적용 후 AI 응답 생성
+        # =========================================================
+        if parsed['type'] == 'chat_with_ooc':
+            ooc_content = parsed.get('ooc_content', '')
+            chat_content = parsed.get('chat_content', '')
+            uid = str(message.author.id)
+            
+            # 1단계: OOC 수정 먼저 적용
+            ai_mem = domain_manager.get_ai_memory(channel_id, uid)
+            ooc_applied = False
+            
+            if ai_mem and client_genai and ooc_content:
+                try:
+                    edit_result = await memory_system.process_ooc_memory_edit(
+                        client_genai, MODEL_ID, ooc_content, ai_mem
+                    )
+                    
+                    if edit_result and edit_result.get("edits"):
+                        updated_mem = memory_system.apply_memory_edits(ai_mem, edit_result["edits"])
+                        domain_manager.update_ai_memory(channel_id, uid, updated_mem)
+                        ooc_applied = True
+                        
+                        # 간단한 OOC 적용 알림
+                        edited_fields = list(set(e.get("field", "") for e in edit_result["edits"]))
+                        field_emoji = {
+                            "relationships": "💞", "passives": "🏆", "known_info": "💡",
+                            "foreshadowing": "🔮", "normalization": "🌓", "appearance": "👁️",
+                            "personality": "💭", "background": "📖", "notes": "📋"
+                        }
+                        fields_str = " ".join([field_emoji.get(f, "📝") for f in edited_fields])
+                        await message.channel.send(f"✅ **[OOC 적용]** {fields_str}")
+                except Exception as e:
+                    logging.warning(f"OOC 적용 실패: {e}")
+            
+            # 2단계: 행동/대사는 일반 chat으로 처리 계속 진행
+            # parsed를 chat 타입으로 변환하여 아래 AI 응답 생성으로 넘김
+            parsed = {
+                'type': 'chat',
+                'content': chat_content,
+                'style': parsed.get('style', {})
+            }
+            # return 하지 않고 아래 AI 응답 생성으로 계속 진행
         
         # =========================================================
         # AI 응답 생성
@@ -1161,9 +1270,9 @@ async def on_message(message):
             user_mask = domain_manager.get_user_mask(channel_id, message.author.id)
             action_text = system_trigger if system_trigger else f"[{user_mask}]: {parsed['content']}"
             
-            # 수동 모드에서는 기록만 하고 AI 응답 생성 안 함
+            # 대기 모드에서는 기록만 하고 AI 응답 생성 안 함
             response_mode = domain_manager.get_response_mode(channel_id)
-            if response_mode == 'manual' and not system_trigger:
+            if response_mode == 'waiting' and not system_trigger:
                 domain_manager.append_history(channel_id, "User", action_text)
                 await message.add_reaction("✏️")
                 return
@@ -1208,49 +1317,14 @@ async def on_message(message):
             sys_action = nvc_res.get("SystemAction", {})
             auto_msg = await process_ai_system_action(message, channel_id, sys_action)
             
-            # === 비일상 적응 시스템 처리 ===
-            # uid와 p_data는 이미 위에서 가져옴
-            abnormal_msgs = []
-            abnormal_ctx = ""
-            passive_ctx = ""
+            # === AI 메모리 자동 갱신 (하이브리드 시스템) ===
+            # 좌뇌 분석 결과에서 PlayerMemoryUpdate, SessionMemoryUpdate 추출하여 적용
+            memory_msgs = memory_system.apply_ai_memory_updates(
+                channel_id, uid, nvc_res, domain_manager
+            )
             
-            if p_data:
-                current_day = domain_manager.get_world_state(channel_id).get("day", 1)
-                
-                # 비일상 요소 노출 처리
-                abnormal_elements = nvc_res.get("AbnormalElements", [])
-                for ab_element in abnormal_elements:
-                    p_data, stage_msg, stage_info = simulation_manager.expose_to_abnormal(
-                        p_data, ab_element, current_day
-                    )
-                    if stage_msg:
-                        abnormal_msgs.append(stage_msg)
-                
-                # 경험 카운터 처리 (AI가 패시브 제안)
-                exp_counters = nvc_res.get("ExperienceCounters", {})
-                for counter_name, count in exp_counters.items():
-                    p_data, _ = simulation_manager.increment_experience_counter(
-                        p_data, counter_name, count, current_day
-                    )
-                
-                # === AI 자율 패시브 제안 처리 ===
-                passive_suggestion = nvc_res.get("PassiveSuggestion")
-                if passive_suggestion and isinstance(passive_suggestion, dict):
-                    p_data, ai_passive_msg = simulation_manager.grant_ai_passive(
-                        p_data, passive_suggestion, current_day
-                    )
-                    if ai_passive_msg:
-                        abnormal_msgs.append(ai_passive_msg)
-                
-                # 업데이트된 데이터 저장
-                domain_manager.save_participant_data(channel_id, uid, p_data)
-                
-                # 비일상 적응도 컨텍스트 생성 (AI에게 전달)
-                if abnormal_elements:
-                    abnormal_ctx = simulation_manager.get_abnormal_context(p_data, abnormal_elements)
-                
-                # 패시브 컨텍스트 생성 (AI에게 전달)
-                passive_ctx = simulation_manager.get_passive_context(p_data)
+            # AI 메모리 컨텍스트 생성 (우뇌에게 전달)
+            ai_memory_ctx = domain_manager.get_full_ai_context(channel_id, uid)
             
             # Temporal Orientation 추출
             temporal = nvc_res.get("TemporalOrientation", {})
@@ -1304,11 +1378,11 @@ async def on_message(message):
                     )
             
             # AI 응답 생성 (우뇌) - 강화된 프롬프트
+            ai_memory_part = f"{ai_memory_ctx}\n\n" if ai_memory_ctx else ""
             full_prompt = (
                 f"### [WORLD STATE]\n{world_ctx}\n{obj_ctx}\n\n"
                 f"{temporal_ctx}"
-                f"{abnormal_ctx}"
-                f"{passive_ctx}"
+                f"{ai_memory_part}"
                 f"{npc_attitude_ctx}"
                 f"{npc_interaction_ctx}"
                 f"### [LEFT HEMISPHERE ANALYSIS]\n"
@@ -1363,10 +1437,10 @@ async def on_message(message):
             if auto_msg:
                 await message.channel.send(f"🤖 {auto_msg}")
             
-            # 비일상 적응/패시브 메시지 출력
-            if abnormal_msgs:
-                for ab_msg in abnormal_msgs:
-                    await message.channel.send(ab_msg)
+            # AI 메모리 갱신 메시지 출력
+            if memory_msgs:
+                for mem_msg in memory_msgs:
+                    await message.channel.send(mem_msg)
             
             if response:
                 await send_long_message(message.channel, response)

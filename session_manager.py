@@ -1,4 +1,4 @@
-"""
+﻿"""
 Lorekeeper TRPG Bot - Session Manager Module
 세션 초기화, 준비, 시작 등 세션 생명주기를 관리합니다.
 """
@@ -152,6 +152,7 @@ class SessionManager:
     async def check_preparation(self, message: discord.Message, domain_manager) -> None:
         """
         세션 시작 전 필수 요소가 준비되었는지 확인합니다.
+        룰이 없으면 기본 룰을 자동으로 적용합니다.
         
         Args:
             message: Discord 메시지 객체
@@ -166,33 +167,33 @@ class SessionManager:
         msg = "🔍 **시스템 점검**\n"
         ready = True
         
-        # 로어 확인
-        has_lore = (lore and lore != domain_manager.DEFAULT_LORE) or summary
+        # 로어 확인 (로어는 반드시 사용자가 설정해야 함)
+        has_lore = (lore and lore.strip()) or summary
         if has_lore:
             msg += "✅ 로어 OK\n"
         else:
-            msg += "❌ 로어 부족\n"
+            msg += "❌ 로어 부족 (`!로어`로 세계관을 설정하세요)\n"
             ready = False
         
-        # 룰 확인 (기본 룰도 OK)
-        has_rules = rules and len(rules.strip()) > 0
-        is_custom = rules != domain_manager.DEFAULT_RULES
-        if has_rules:
-            if is_custom:
-                msg += "✅ 룰북 OK (커스텀)\n"
-            else:
-                msg += "✅ 룰북 OK (기본 규칙)\n"
+        # 룰 확인 - 3가지 모드 표시
+        rules_mode = domain_manager.get_rules_mode(channel_id)
+        
+        if rules_mode == "custom":
+            msg += "✅ 룰북 OK (📙 완전 커스텀)\n"
+        elif rules_mode == "hybrid":
+            msg += "✅ 룰북 OK (📘 기본 + 커스텀)\n"
         else:
-            msg += "❌ 룰북 부족\n"
-            ready = False
+            msg += "✅ 룰북 OK (📗 기본 규칙)\n"
         
         # 결과 처리
         if ready:
             domain_manager.set_prepared(channel_id, True)
             msg += "\n✨ **준비 완료!** `!가면` 설정 후 `!시작` 하세요."
+            if rules_mode == "default":
+                msg += "\n💡 _커스텀 룰: `!룰 [내용]` 추가 또는 `!룰 [파일]` 업로드_"
         else:
             domain_manager.set_prepared(channel_id, False)
-            msg += "\n❗ **준비 실패** - 로어를 먼저 설정해주세요."
+            msg += "\n❗ **준비 실패** - `!로어 [파일]`로 세계관을 먼저 설정해주세요."
         
         await message.channel.send(msg)
     

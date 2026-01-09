@@ -1,4 +1,4 @@
-"""
+﻿"""
 Lorekeeper TRPG Bot - Memory System Module (Left Hemisphere)
 논리, 분석, 인과율 계산을 담당하는 '좌뇌' 모듈입니다.
 
@@ -819,18 +819,11 @@ async def analyze_context_nvc(
         "2. **CAUSALITY BOUND:** Apply physics and logic strictly.\n"
         "3. **ASYNCHRONOUS WORLD:** Consider what NPCs might be doing concurrently.\n\n"
         
-        "### COGNITIVE ARCHITECTURE REFERENCE\n"
-        "When analyzing character states, consider:\n"
-        "- **Physical Instinct:** Polyvagal state (Ventral/Sympathetic/Dorsal)\n"
-        "- **Emotional Instinct:** Plutchik emotions (Anger/Fear/Joy/Sadness/etc.)\n"
-        "- **Logos State:** Monolithic (core identity) vs Transient (surface mood)\n"
-        "- **Value Dynamics:** Binary Trade-off / Alignment / Dissonance / Synergy\n"
-        "- **Cognition Mode:** Resonance / Inertia / Analysis / Overload / Insight\n"
-        "NOTE: Infer these from OBSERVABLE behavior, never assert directly.\n\n"
+        f"{COGNITIVE_ARCHITECTURE_MODEL}\n\n"
         
-        "### MEMORY HIERARCHY CHECK\n"
-        "- FRESH (Recent) overrides FERMENTED (Past) overrides LORE (Initial)\n"
-        "- When conflicts exist, use the highest priority source.\n\n"
+        f"{STATE_TRACKING_FORMAT}\n\n"
+        
+        f"{TEMPORAL_ORIENTATION_PROTOCOL}\n\n"
         
         "### OBSERVATION PROTOCOLS\n"
         "1. **Physics Check (Hard Limits):** Verify physical/logical possibility. "
@@ -1709,19 +1702,20 @@ async def process_ooc_memory_edit(
         수정 명령 딕셔너리 또는 None
     """
     system_instruction = (
-        "[AI Memory Editor]\n"
-        "Parse the user's natural language request and convert to memory edit commands.\n\n"
+        "[AI Memory Editor - OOC Request Parser]\n"
+        "Parse the user's natural language request and convert to memory edit commands.\n"
+        "The user speaks Korean. Be generous in interpretation.\n\n"
         
         "### EDITABLE FIELDS\n"
-        "- appearance: 외모 설명\n"
-        "- personality: 성격\n"
-        "- background: 배경 스토리\n"
-        "- relationships: {NPC이름: 관계설명} 딕셔너리\n"
-        "- passives: [패시브/칭호 이름] 리스트\n"
-        "- known_info: [알고 있는 정보] 리스트\n"
-        "- foreshadowing: [복선/떡밥] 리스트\n"
-        "- normalization: {비일상요소: 적응상태} 딕셔너리\n"
-        "- notes: 자유 메모\n\n"
+        "- appearance: 외모 설명 (string)\n"
+        "- personality: 성격 (string)\n"
+        "- background: 배경 스토리 (string)\n"
+        "- relationships: NPC와의 관계 (dict: {NPC이름: 관계설명})\n"
+        "- passives: 패시브/칭호 (list)\n"
+        "- known_info: 알고 있는 정보 (list)\n"
+        "- foreshadowing: 복선/떡밥 (list)\n"
+        "- normalization: 비일상 적응 (dict: {요소: 적응상태})\n"
+        "- notes: 자유 메모 (string)\n\n"
         
         "### OPERATIONS\n"
         "- set: 필드 값을 완전히 교체\n"
@@ -1729,25 +1723,36 @@ async def process_ooc_memory_edit(
         "- remove: 리스트/딕셔너리에서 항목 제거\n"
         "- update: 딕셔너리의 특정 키만 수정\n\n"
         
+        "### INTERPRETATION EXAMPLES\n"
+        "User: '리엘이랑 친해진 걸로' → relationships.update('리엘', '친밀한 동료')\n"
+        "User: '독 내성 얻었어' → passives.add('독 내성')\n"
+        "User: '드래곤 이제 익숙해' → normalization.update('드래곤', '이제 익숙함')\n"
+        "User: '마왕 약점이 빛이래' → known_info.add('마왕의 약점은 빛')\n"
+        "User: '비밀통로 잊어버렸어' → known_info.remove('비밀 통로...')\n"
+        "User: '흉터 생긴 걸로' → appearance.set('...흉터가 있다')\n"
+        "User: '엘프의 친구 칭호!' → passives.add('엘프의 친구')\n"
+        "User: '그 편지 복선으로 기억해' → foreshadowing.add('봉인된 편지')\n\n"
+        
         "### OUTPUT FORMAT (JSON)\n"
         "{\n"
-        '  "understood": true/false,\n'
-        '  "interpretation": "유저 요청 해석 (한국어)",\n'
+        '  "understood": true,\n'
+        '  "interpretation": "요청 해석 (간결하게)",\n'
         '  "edits": [\n'
-        '    {"field": "relationships", "operation": "update", "key": "리엘", "value": "사이가 멀어짐"},\n'
-        '    {"field": "passives", "operation": "add", "value": "배신자의 낙인"},\n'
-        '    {"field": "known_info", "operation": "remove", "value": "비밀 통로 위치"}\n'
+        '    {"field": "...", "operation": "...", "key": "...(optional)", "value": "..."}\n'
         '  ],\n'
-        '  "confirmation_message": "수정 완료 메시지 (한국어)"\n'
-        "}\n"
+        '  "confirmation_message": "✅ 이모지와 함께 수정 내용 요약"\n'
+        "}\n\n"
+        
+        "If unclear, return {\"understood\": false, \"interpretation\": \"이해 못한 이유\"}.\n"
+        "Be generous - try to understand casual Korean expressions."
     )
     
     current_mem_str = json.dumps(current_ai_memory, ensure_ascii=False, indent=2)
     
     user_prompt = (
         f"### CURRENT AI MEMORY\n{current_mem_str}\n\n"
-        f"### USER REQUEST\n{user_request}\n\n"
-        "Parse this request and generate edit commands."
+        f"### USER OOC REQUEST\n\"{user_request}\"\n\n"
+        "Parse and generate edit commands."
     )
     
     contents = [
@@ -1818,6 +1823,125 @@ def apply_memory_edits(ai_memory: Dict[str, Any], edits: List[Dict]) -> Dict[str
                 current_value[key] = value
     
     return updated
+
+
+def apply_ai_memory_updates(
+    channel_id: str,
+    user_id: str,
+    nvc_result: Dict[str, Any],
+    domain_manager_module
+) -> List[str]:
+    """
+    좌뇌 분석 결과에서 PlayerMemoryUpdate, SessionMemoryUpdate를 추출하여 적용합니다.
+    
+    Args:
+        channel_id: 채널 ID
+        user_id: 사용자 ID
+        nvc_result: 좌뇌 분석 결과
+        domain_manager_module: domain_manager 모듈 참조
+    
+    Returns:
+        변경 알림 메시지 리스트
+    """
+    messages = []
+    
+    if not nvc_result:
+        return messages
+    
+    # === 플레이어 메모리 업데이트 ===
+    player_update = nvc_result.get("PlayerMemoryUpdate", {})
+    if player_update:
+        current_mem = domain_manager_module.get_ai_memory(channel_id, user_id)
+        
+        # relationships 업데이트
+        if player_update.get("relationships"):
+            for name, desc in player_update["relationships"].items():
+                if name and desc:
+                    current_mem.setdefault("relationships", {})[name] = desc
+                    messages.append(f"💞 **{name}**: {desc}")
+        
+        # passives 추가
+        if player_update.get("passives"):
+            for passive in player_update["passives"]:
+                if passive and passive not in current_mem.get("passives", []):
+                    current_mem.setdefault("passives", []).append(passive)
+                    messages.append(f"🏆 **패시브 획득:** {passive}")
+        
+        # known_info 추가
+        if player_update.get("known_info"):
+            for info in player_update["known_info"]:
+                if info and info not in current_mem.get("known_info", []):
+                    current_mem.setdefault("known_info", []).append(info)
+                    messages.append(f"💡 **새로운 정보:** {info}")
+        
+        # foreshadowing 추가
+        if player_update.get("foreshadowing"):
+            for fs in player_update["foreshadowing"]:
+                if fs and fs not in current_mem.get("foreshadowing", []):
+                    current_mem.setdefault("foreshadowing", []).append(fs)
+                    messages.append(f"🔮 **복선:** {fs}")
+        
+        # normalization 업데이트
+        if player_update.get("normalization"):
+            for thing, status in player_update["normalization"].items():
+                if thing and status:
+                    current_mem.setdefault("normalization", {})[thing] = status
+                    messages.append(f"🌓 **[{thing}]** {status}")
+        
+        # notes 업데이트
+        if player_update.get("notes"):
+            current_mem["notes"] = player_update["notes"]
+        
+        # 저장
+        if player_update:
+            domain_manager_module.update_ai_memory(channel_id, user_id, current_mem)
+    
+    # === 세션 메모리 업데이트 ===
+    session_update = nvc_result.get("SessionMemoryUpdate", {})
+    if session_update:
+        current_session = domain_manager_module.get_session_ai_memory(channel_id)
+        
+        # current_arc 업데이트
+        if session_update.get("current_arc"):
+            current_session["current_arc"] = session_update["current_arc"]
+        
+        # active_threads 업데이트
+        if session_update.get("active_threads"):
+            for thread in session_update["active_threads"]:
+                if thread and thread not in current_session.get("active_threads", []):
+                    current_session.setdefault("active_threads", []).append(thread)
+        
+        # resolved_threads 처리 (active에서 제거)
+        if session_update.get("resolved_threads"):
+            for thread in session_update["resolved_threads"]:
+                if thread in current_session.get("active_threads", []):
+                    current_session["active_threads"].remove(thread)
+                    messages.append(f"✅ **스토리 해결:** {thread}")
+        
+        # key_events 추가
+        if session_update.get("key_events"):
+            for event in session_update["key_events"]:
+                if event and event not in current_session.get("key_events", []):
+                    current_session.setdefault("key_events", []).append(event)
+        
+        # world_changes 추가
+        if session_update.get("world_changes"):
+            for change in session_update["world_changes"]:
+                if change and change not in current_session.get("world_changes", []):
+                    current_session.setdefault("world_changes", []).append(change)
+                    messages.append(f"🌍 **세계 변화:** {change}")
+        
+        # npc_summaries 업데이트
+        if session_update.get("npc_summaries"):
+            for name, summary in session_update["npc_summaries"].items():
+                if name and summary:
+                    current_session.setdefault("npc_summaries", {})[name] = summary
+        
+        # 저장
+        if session_update:
+            domain_manager_module.update_session_ai_memory(channel_id, current_session)
+    
+    return messages
 
 
 # =========================================================

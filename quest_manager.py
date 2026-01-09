@@ -120,6 +120,18 @@ def get_objective_context(channel_id: str) -> str:
     return txt
 
 
+def get_active_quests(channel_id: str) -> List[str]:
+    """활성 퀘스트 목록을 리스트로 반환합니다."""
+    board = domain_manager.get_quest_board(channel_id) or {}
+    return board.get("active", [])
+
+
+def get_memos(channel_id: str) -> List[str]:
+    """메모 목록을 리스트로 반환합니다."""
+    board = domain_manager.get_quest_board(channel_id) or {}
+    return board.get("memos", [])
+
+
 def get_active_quests_text(channel_id: str) -> str:
     """활성 퀘스트 목록을 텍스트로 반환합니다."""
     board = domain_manager.get_quest_board(channel_id) or {}
@@ -488,7 +500,7 @@ def get_lore_book(channel_id: str) -> str:
     lore = board.get("lore", [])
     
     if not lore:
-        return "📖 기록된 연대기가 없습니다."
+        return "📖 **연대기 없음**\n\n💡 `!연대기 생성`으로 현재까지의 이야기를 요약할 수 있습니다."
     
     msg = "📖 **[연대기 목록]**\n"
     
@@ -498,7 +510,7 @@ def get_lore_book(channel_id: str) -> str:
         title = entry.get('title', 'Untitled')
         msg += f"{i + 1}. [{date_str}] {title}\n"
     
-    msg += "\n💡 `!추출`은 대화 로그를, `!연대기 추출`은 이 요약본을 파일로 저장합니다."
+    msg += "\n💡 `!연대기 생성` - 새 요약 추가 | `!연대기 추출` - 대화 로그 파일 저장"
     return msg
 
 

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Lorekeeper TRPG Bot - Character Sheet Module
 NPC 데이터를 관리합니다.
 """

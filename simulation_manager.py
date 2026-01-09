@@ -1,212 +1,167 @@
-"""
+﻿"""
 Lorekeeper TRPG Bot - Simulation Manager Module
-패시브, 적응, 상태이상, 인벤토리 관리를 담당합니다.
+인벤토리, 상태이상, AI 패시브 관리를 담당합니다.
+
+[v4.0 최종본]
+경험치/레벨/스탯/훈련 시스템이 완전히 제거되었습니다.
+성장은 AI 메모리의 패시브/칭호로 표현됩니다.
+
+=== 성장 시스템 ===
+- "기본": 기본 룰북 + AI 패시브/칭호 자동 부여
+- "커스텀": 사용자 룰북만 적용 (AI가 룰에 따라 판단)
+
+=== 사용 중인 함수 ===
+상태이상:
+- STATUS_EFFECTS: 상태이상 상수
+- get_status_summary(): 상태 요약
+- update_status_effect(): 상태이상 추가/제거
+- get_all_status_effects_by_category(): 카테고리별 상태이상
+
+인벤토리:
+- update_inventory(): 인벤토리 관리
+
+AI 패시브:
+- get_passives_for_context(): AI용 패시브 컨텍스트
+- grant_ai_passive(): AI 패시브 부여
+- get_passive_list(): 패시브 목록
+- get_passive_context(): 패시브 컨텍스트
+
+비일상 적응:
+- expose_to_abnormal(): 비일상 노출 처리
+- get_normality_stage(): 적응 단계 확인
+- get_abnormal_context(): 적응도 컨텍스트
 """
 
 import random
-from typing import Dict, Any, Tuple, List, Union, Optional
+from typing import Dict, Any, Tuple, List, Optional
 
 # =========================================================
-# 상수 정의
+# 성장 시스템 타입 (v4.0: 두 가지만 지원)
 # =========================================================
-
-# 성장 시스템 타입
-GROWTH_SYSTEM_STANDARD = "standard"  # 패시브/칭호 기반 (기본)
-GROWTH_SYSTEM_CUSTOM = "custom"      # 사용자 정의 룰
+GROWTH_SYSTEM_DEFAULT = "default"  # 기본 룰북 + AI 패시브
+GROWTH_SYSTEM_CUSTOM = "custom"    # 커스텀 룰북만 사용
 
 # =========================================================
-# 상태이상 시스템 (AI 자율 판단)
-# AI가 서사에 맞게 상태이상을 부여/해제
+# 상태이상 분류 시스템
+# world_manager의 doom 계산에 사용됨
 # =========================================================
 
-# AI 참고용 가이드라인 (하드코딩 아님)
-STATUS_EFFECT_GUIDELINES = """
-[상태이상 가이드라인 - AI가 자유롭게 판단]
-
-## 부정적 상태 (서사적 위기 요소)
-신체적: 부상, 중상, 출혈, 골절, 화상, 동상, 중독, 피로, 기절, 마비
-정신적: 공포, 공황, 혼란, 분노, 절망, 트라우마, 광기
-환경적: 질식, 실명, 청각상실, 굶주림, 갈증, 수면부족
-사회적: 수배, 추적당함, 오명, 빚, 배신당함
-마법적: 저주, 마력고갈, 영혼손상, 빙의
-
-## 긍정적 상태 (서사적 이점)
-신체적: 보호, 회복중, 강화, 재생, 은신, 가속
-정신적: 집중, 영감, 평온, 용기, 결의, 희망
-사회적: 보호받음, 동맹, 신뢰받음
-마법적: 축복, 마력충전, 신의가호
-
-## AI 판단 기준
-1. 서사적 맥락에서 자연스러운가?
-2. 캐릭터의 행동/상황에 적합한가?
-3. 플레이어에게 의미 있는 영향을 주는가?
-4. 기존 상태와 중복/상충되지 않는가?
-
-## Doom 영향 (AI가 심각도 판단)
-- 경미한 상태: Doom 영향 없음
-- 중간 상태: Doom +1~2
-- 심각한 상태: Doom +2~3
-- 긍정적 상태: Doom -1~2
-"""
-
-
-def get_status_context_for_ai(user_data: Dict[str, Any]) -> str:
-    """AI에게 전달할 상태이상 컨텍스트를 생성합니다."""
-    effects = user_data.get("status_effects", [])
+# 부정적 상태이상 (doom 증가 요인)
+NEGATIVE_STATUS_EFFECTS = {
+    # 신체적 부상 (심각도별)
+    "중상": 3,
+    "부상": 2,
+    "가벼운 부상": 1,
+    "출혈": 2,
+    "골절": 3,
+    "화상": 2,
+    "동상": 2,
+    "중독": 2,
+    "질병": 2,
+    "감염": 2,
     
-    if not effects:
-        return ""
+    # 정신적/심리적
+    "공포": 2,
+    "패닉": 3,
+    "혼란": 1,
+    "광기": 3,
+    "절망": 2,
+    "트라우마": 2,
+    "악몽": 1,
     
-    return (
-        f"### [현재 상태이상]\n"
-        f"{', '.join(effects)}\n"
-        f"*상태이상의 서사적 영향을 자연스럽게 반영하세요.*\n"
-    )
+    # 신체 상태
+    "피로": 1,
+    "탈진": 2,
+    "지침": 1,
+    "굶주림": 2,
+    "갈증": 2,
+    "수면 부족": 1,
+    "기절": 2,
+    "마비": 2,
+    "실명": 3,
+    "청각 상실": 2,
+    
+    # 저주/마법적 (판타지용)
+    "저주": 2,
+    "마력 고갈": 1,
+    "영혼 손상": 3,
+    "빙의": 3,
+    
+    # 사회적
+    "수배": 2,
+    "추적당함": 2,
+    "배신당함": 1,
+}
+
+# 긍정적 상태 (doom 감소 요인)
+POSITIVE_STATUS_EFFECTS = {
+    # 신체적 버프
+    "치료됨": 1,
+    "회복 중": 1,
+    "강화": 1,
+    "축복": 2,
+    "보호막": 1,
+    "재생": 2,
+    
+    # 정신적/심리적
+    "집중": 1,
+    "평온": 1,
+    "용기": 1,
+    "결의": 1,
+    "영감": 1,
+    "희망": 2,
+    
+    # 신체 상태
+    "휴식함": 1,
+    "포만감": 1,
+    "숙면": 1,
+    "활력": 1,
+    
+    # 마법적 (판타지용)
+    "마력 충전": 1,
+    "신의 가호": 2,
+    "투명화": 1,
+    
+    # 사회적
+    "은신 중": 1,
+    "보호받음": 2,
+    "동맹": 1,
+}
 
 
-def add_status_effect(
-    user_data: Dict[str, Any],
-    effect_name: str,
-    reason: str = ""
-) -> Tuple[Dict[str, Any], str]:
+def get_status_doom_modifier(status_effects: List[str]) -> Tuple[int, int, List[str], List[str]]:
     """
-    상태이상을 추가합니다.
+    상태이상 목록에서 doom 수정치를 계산합니다.
     
     Args:
-        user_data: 사용자 데이터
-        effect_name: 상태이상 이름
-        reason: 부여 사유
+        status_effects: 현재 상태이상 목록
     
     Returns:
-        (업데이트된 user_data, 메시지)
+        (increase, decrease, negative_list, positive_list)
     """
-    effects = user_data.get("status_effects", [])
+    increase = 0
+    decrease = 0
+    negative_found = []
+    positive_found = []
     
-    if effect_name in effects:
-        return user_data, f"⚠️ 이미 '{effect_name}' 상태입니다."
-    
-    effects.append(effect_name)
-    user_data["status_effects"] = effects
-    
-    msg = f"⚡ **상태 부여:** {effect_name}"
-    if reason:
-        msg += f" ({reason})"
-    
-    return user_data, msg
-
-
-def remove_status_effect(
-    user_data: Dict[str, Any],
-    effect_name: str,
-    reason: str = ""
-) -> Tuple[Dict[str, Any], str]:
-    """
-    상태이상을 제거합니다.
-    
-    Args:
-        user_data: 사용자 데이터
-        effect_name: 상태이상 이름
-        reason: 해제 사유
-    
-    Returns:
-        (업데이트된 user_data, 메시지)
-    """
-    effects = user_data.get("status_effects", [])
-    
-    if effect_name not in effects:
-        return user_data, f"⚠️ '{effect_name}' 상태가 없습니다."
-    
-    effects.remove(effect_name)
-    user_data["status_effects"] = effects
-    
-    msg = f"✨ **상태 해제:** {effect_name}"
-    if reason:
-        msg += f" ({reason})"
-    
-    return user_data, msg
-
-
-def get_status_list(user_data: Dict[str, Any]) -> str:
-    """현재 상태이상 목록을 문자열로 반환합니다."""
-    effects = user_data.get("status_effects", [])
-    
-    if not effects:
-        return "📋 **상태이상:** 없음"
-    
-    return f"📋 **상태이상:** {', '.join(effects)}"
-
-
-def estimate_doom_from_status(status_effects: List[str]) -> int:
-    """
-    상태이상 목록에서 대략적인 Doom 영향을 추정합니다.
-    AI가 더 정확한 판단을 내리기 위한 참고용.
-    
-    Returns:
-        추정 Doom 변화량
-    """
-    if not status_effects:
-        return 0
-    
-    # 키워드 기반 간단한 추정
-    severe_keywords = ["중상", "골절", "광기", "트라우마", "빙의", "영혼", "질식"]
-    moderate_keywords = ["부상", "출혈", "중독", "공포", "절망", "저주", "수배"]
-    positive_keywords = ["축복", "보호", "희망", "회복", "치료", "가호"]
-    
-    doom = 0
     for effect in status_effects:
         effect_lower = effect.lower()
-        if any(kw in effect_lower for kw in severe_keywords):
-            doom += 2
-        elif any(kw in effect_lower for kw in moderate_keywords):
-            doom += 1
-        elif any(kw in effect_lower for kw in positive_keywords):
-            doom -= 1
+        
+        # 부정적 상태 체크
+        for neg_effect, value in NEGATIVE_STATUS_EFFECTS.items():
+            if neg_effect in effect_lower or effect_lower in neg_effect:
+                increase += value
+                negative_found.append(f"{effect} (+{value})")
+                break
+        else:
+            # 긍정적 상태 체크
+            for pos_effect, value in POSITIVE_STATUS_EFFECTS.items():
+                if pos_effect in effect_lower or effect_lower in pos_effect:
+                    decrease += value
+                    positive_found.append(f"{effect} (-{value})")
+                    break
     
-    return doom
-
-
-# =========================================================
-# 헌터 랭크 시스템
-# =========================================================
-def gain_experience(
-    user_data: Dict[str, Any],
-    amount: int,
-    system_type: str = GROWTH_SYSTEM_STANDARD
-) -> Tuple[Dict[str, Any], str, Union[bool, str]]:
-    """
-    경험치 획득 함수입니다. (치트 전용)
-    
-    기본 시스템에서는 패시브/칭호 기반이므로 경험치 수치는 참고용입니다.
-    커스텀 시스템에서는 !룰에 정의한 규칙을 AI가 판단합니다.
-    
-    Args:
-        user_data: 사용자 데이터
-        amount: 획득 경험치
-        system_type: 성장 시스템 타입 ('standard', 'custom')
-    
-    Returns:
-        (업데이트된 사용자 데이터, 결과 메시지, 레벨업 여부 또는 "CheckAI")
-    """
-    if "xp" not in user_data:
-        user_data["xp"] = 0
-    
-    mask = user_data.get("mask", "Unknown")
-    user_data["xp"] += amount
-    
-    # 커스텀 모드: AI가 룰에 따라 판정
-    if system_type == GROWTH_SYSTEM_CUSTOM:
-        msg = (
-            f"🆙 **경험치:** {mask} +{amount} "
-            f"(총 {user_data['xp']}, 룰에 따른 판정 대기)"
-        )
-        return user_data, msg, "CheckAI"
-    
-    # 기본 모드: 경험치는 참고용, 패시브/칭호가 실제 성장
-    msg = (
-        f"🆙 **경험치:** {mask} +{amount} "
-        f"(총 {user_data['xp']}) — 패시브/칭호로 성장 반영"
-    )
-    return user_data, msg, False
+    return increase, decrease, negative_found, positive_found
 
 
 # =========================================================
@@ -253,6 +208,239 @@ def update_inventory(
     
     user_data["inventory"] = inv
     return user_data, msg
+
+
+# =========================================================
+# 상태이상 관리
+# =========================================================
+
+# 상태이상 정의
+STATUS_EFFECTS = {
+    # === 부정적 상태 (Debuff) ===
+    # 물리적 상태
+    "부상": {"type": "debuff", "category": "physical", "severity": 1, "recoverable": True, "description": "가벼운 부상"},
+    "중상": {"type": "debuff", "category": "physical", "severity": 2, "recoverable": False, "description": "심각한 부상, 치료 필요"},
+    "출혈": {"type": "debuff", "category": "physical", "severity": 2, "tick_damage": 1, "description": "매 턴 체력 감소"},
+    "골절": {"type": "debuff", "category": "physical", "severity": 3, "recoverable": False, "description": "이동/전투 불가"},
+    "피로": {"type": "debuff", "category": "physical", "severity": 1, "recoverable": True, "description": "행동력 저하"},
+    "지침": {"type": "debuff", "category": "physical", "severity": 1, "recoverable": True, "description": "집중력 저하"},
+    "기절": {"type": "debuff", "category": "physical", "severity": 2, "duration": 1, "description": "행동 불가"},
+    
+    # 정신적 상태
+    "공포": {"type": "debuff", "category": "mental", "severity": 2, "description": "특정 대상/상황 회피"},
+    "공황": {"type": "debuff", "category": "mental", "severity": 3, "description": "판단력 상실"},
+    "혼란": {"type": "debuff", "category": "mental", "severity": 2, "duration": 2, "description": "행동 예측 불가"},
+    "분노": {"type": "debuff", "category": "mental", "severity": 1, "description": "이성적 판단 저하"},
+    "절망": {"type": "debuff", "category": "mental", "severity": 2, "description": "의지력 저하"},
+    "트라우마": {"type": "debuff", "category": "mental", "severity": 3, "recoverable": False, "description": "영구적 정신적 상처"},
+    
+    # 환경적 상태
+    "중독": {"type": "debuff", "category": "environmental", "severity": 2, "tick_damage": 2, "description": "매 턴 피해"},
+    "화상": {"type": "debuff", "category": "environmental", "severity": 2, "tick_damage": 1, "description": "화상 피해"},
+    "동상": {"type": "debuff", "category": "environmental", "severity": 2, "description": "행동 둔화"},
+    "질식": {"type": "debuff", "category": "environmental", "severity": 3, "tick_damage": 3, "description": "긴급 상황"},
+    "실명": {"type": "debuff", "category": "environmental", "severity": 2, "description": "시야 상실"},
+    "청각상실": {"type": "debuff", "category": "environmental", "severity": 1, "description": "소리 인식 불가"},
+    
+    # 사회적 상태
+    "수배": {"type": "debuff", "category": "social", "severity": 2, "description": "당국에 추적당함"},
+    "오명": {"type": "debuff", "category": "social", "severity": 1, "description": "평판 하락"},
+    "빚": {"type": "debuff", "category": "social", "severity": 1, "description": "경제적 압박"},
+    
+    # === 긍정적 상태 (Buff) ===
+    "집중": {"type": "buff", "category": "mental", "severity": 1, "description": "판정 보너스"},
+    "영감": {"type": "buff", "category": "mental", "severity": 2, "duration": 3, "description": "창의적 행동 보너스"},
+    "보호": {"type": "buff", "category": "physical", "severity": 2, "description": "피해 감소"},
+    "은신": {"type": "buff", "category": "physical", "severity": 1, "description": "발견되기 어려움"},
+    "가속": {"type": "buff", "category": "physical", "severity": 1, "duration": 2, "description": "행동 속도 증가"},
+    "행운": {"type": "buff", "category": "special", "severity": 2, "duration": 1, "description": "다음 판정 유리"},
+}
+
+# 심각도별 Doom 영향
+SEVERITY_DOOM_IMPACT = {
+    1: 0,   # 경미: Doom 영향 없음
+    2: 1,   # 중간: Doom +1
+    3: 2,   # 심각: Doom +2
+}
+
+
+def get_status_effect_info(effect_name: str) -> Optional[Dict[str, Any]]:
+    """상태이상 정보를 반환합니다."""
+    return STATUS_EFFECTS.get(effect_name)
+
+
+def get_all_status_effects_by_category(category: str) -> List[str]:
+    """특정 카테고리의 모든 상태이상 이름을 반환합니다."""
+    return [
+        name for name, data in STATUS_EFFECTS.items()
+        if data.get("category") == category
+    ]
+
+
+def get_active_debuffs(user_data: Dict[str, Any]) -> List[str]:
+    """현재 활성화된 디버프 목록을 반환합니다."""
+    effects = user_data.get("status_effects", [])
+    return [e for e in effects if STATUS_EFFECTS.get(e, {}).get("type") == "debuff"]
+
+
+def get_active_buffs(user_data: Dict[str, Any]) -> List[str]:
+    """현재 활성화된 버프 목록을 반환합니다."""
+    effects = user_data.get("status_effects", [])
+    return [e for e in effects if STATUS_EFFECTS.get(e, {}).get("type") == "buff"]
+
+
+def calculate_status_doom_contribution(user_data: Dict[str, Any]) -> Tuple[int, List[str]]:
+    """
+    상태이상이 Doom에 미치는 영향을 계산합니다.
+    
+    Returns:
+        (doom_delta, reasons)
+    """
+    effects = user_data.get("status_effects", [])
+    total_doom = 0
+    reasons = []
+    
+    for effect_name in effects:
+        effect_data = STATUS_EFFECTS.get(effect_name, {})
+        if effect_data.get("type") == "debuff":
+            severity = effect_data.get("severity", 1)
+            doom_impact = SEVERITY_DOOM_IMPACT.get(severity, 0)
+            
+            if doom_impact > 0:
+                total_doom += doom_impact
+                reasons.append(f"💀 {effect_name} (심각도 {severity})")
+    
+    return total_doom, reasons
+
+
+def update_status_effect(
+    user_data: Dict[str, Any],
+    action: str,
+    effect_name: str
+) -> Tuple[Dict[str, Any], str]:
+    """
+    상태이상을 업데이트합니다.
+    
+    Args:
+        user_data: 사용자 데이터
+        action: "add" 또는 "remove"
+        effect_name: 상태이상 이름
+    
+    Returns:
+        (업데이트된 사용자 데이터, 결과 메시지)
+    """
+    effects = user_data.get("status_effects", [])
+    effect_info = STATUS_EFFECTS.get(effect_name, {})
+    
+    if action == "add":
+        if effect_name not in effects:
+            effects.append(effect_name)
+            
+            # 상태이상 타입에 따른 메시지
+            if effect_info.get("type") == "buff":
+                msg = f"✨ **버프 획득:** [{effect_name}]"
+                if effect_info.get("description"):
+                    msg += f" - {effect_info['description']}"
+            else:
+                severity = effect_info.get("severity", 1)
+                severity_icon = "⚠️" if severity == 1 else "🔴" if severity == 2 else "💀"
+                msg = f"{severity_icon} **상태이상 발생:** [{effect_name}]"
+                if effect_info.get("description"):
+                    msg += f" - {effect_info['description']}"
+        else:
+            msg = f"⚠️ 이미 [{effect_name}] 상태입니다."
+    
+    elif action == "remove":
+        if effect_name in effects:
+            effects.remove(effect_name)
+            msg = f"✨ **상태 해제:** [{effect_name}] 제거됨"
+        else:
+            msg = f"⚠️ [{effect_name}] 상태가 아닙니다."
+    else:
+        msg = "⚠️ 알 수 없는 동작"
+    
+    user_data["status_effects"] = effects
+    return user_data, msg
+
+
+def process_tick_effects(user_data: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
+    """
+    턴/시간 경과 시 상태이상 효과를 처리합니다.
+    
+    Returns:
+        (업데이트된 사용자 데이터, 메시지 목록)
+    """
+    effects = user_data.get("status_effects", [])
+    messages = []
+    effects_to_remove = []
+    
+    for effect_name in effects:
+        effect_info = STATUS_EFFECTS.get(effect_name, {})
+        
+        # 틱 데미지 처리
+        tick_damage = effect_info.get("tick_damage", 0)
+        if tick_damage > 0:
+            # 스트레스로 데미지 적용 (체력 시스템이 없으므로)
+            stats = user_data.get("stats", {})
+            current_stress = stats.get("스트레스", 0)
+            stats["스트레스"] = current_stress + tick_damage * 5
+            user_data["stats"] = stats
+            messages.append(f"💔 [{effect_name}] 효과: 스트레스 +{tick_damage * 5}")
+        
+        # 지속시간 처리
+        duration = effect_info.get("duration")
+        if duration is not None:
+            # duration 카운터 관리 (user_data에 별도 저장)
+            duration_key = f"_duration_{effect_name}"
+            remaining = user_data.get(duration_key, duration)
+            remaining -= 1
+            
+            if remaining <= 0:
+                effects_to_remove.append(effect_name)
+                messages.append(f"⏰ [{effect_name}] 효과 종료")
+                if duration_key in user_data:
+                    del user_data[duration_key]
+            else:
+                user_data[duration_key] = remaining
+                messages.append(f"⏳ [{effect_name}] 남은 시간: {remaining}턴")
+    
+    # 만료된 효과 제거
+    for effect_name in effects_to_remove:
+        if effect_name in effects:
+            effects.remove(effect_name)
+    
+    user_data["status_effects"] = effects
+    return user_data, messages
+
+
+def get_status_summary(user_data: Dict[str, Any]) -> str:
+    """
+    캐릭터의 상태이상 요약을 반환합니다.
+    """
+    effects = user_data.get("status_effects", [])
+    
+    if not effects:
+        return "✅ **상태:** 정상"
+    
+    buffs = []
+    debuffs = []
+    
+    for effect_name in effects:
+        effect_info = STATUS_EFFECTS.get(effect_name, {"type": "unknown"})
+        if effect_info.get("type") == "buff":
+            buffs.append(effect_name)
+        else:
+            debuffs.append(effect_name)
+    
+    result = ""
+    
+    if debuffs:
+        result += "💀 **디버프:** " + ", ".join(debuffs) + "\n"
+    
+    if buffs:
+        result += "✨ **버프:** " + ", ".join(buffs)
+    
+    return result.strip() if result else "✅ **상태:** 정상"
 
 
 # =========================================================
@@ -435,92 +623,33 @@ def get_abnormal_context(user_data: Dict[str, Any], abnormal_types: List[str]) -
 
 
 # =========================================================
-# 패시브 성장 시스템 (Passive Growth System)
+# AI 패시브 시스템 (AI-Driven Passive System)
 # =========================================================
-
-# 기본 패시브 정의 (경험 기반 자동 획득)
-# =========================================================
-# 경험 카운터 시스템 (Experience Counter System)
-# AI가 참고하는 예시 트리거 - 실제 패시브 부여는 AI가 자율적으로 결정
-# =========================================================
-
-# AI 참고용 예시 (하드코딩 아님, 가이드라인)
-EXAMPLE_PASSIVE_TRIGGERS = """
-[경험 기반 패시브 예시 - AI가 자유롭게 변형/창작 가능]
-
-생존 계열:
-- 독에 여러 번 노출 → "독 내성" (독 피해 감소)
-- 화상/동상 반복 경험 → "온도 적응" (극한 환경 저항)
-- 낙하 경험 → "낙법" (충격 분산)
-- 굶주림/갈증 경험 → "소식가" (적은 자원으로 버팀)
-
-정신 계열:
-- 배신 경험 → "의심의 눈" (거짓말 감지)
-- 죽을 고비 → "구사일생" (위기 대처력)
-- 협박/공포 경험 → "배짱" (위협 저항)
-
-초자연 계열:
-- 마법 피격 → "마력 친화" (마법 감지/저항)
-- 괴물 조우 → "용기" 또는 관련 적응
-- 영적 존재 목격 → "영시" (비물질 감지)
-
-[AI 판단 기준]
-1. 반복된 경험인가? (3회 이상 유사 상황)
-2. 캐릭터가 해당 상황을 극복했는가?
-3. 서사적으로 자연스러운가?
-"""
-
-
-def increment_experience_counter(
-    user_data: Dict[str, Any],
-    counter_name: str,
-    amount: int = 1,
-    current_day: int = 1
-) -> Tuple[Dict[str, Any], Optional[str]]:
-    """
-    경험 카운터를 증가시킵니다.
-    패시브 부여는 AI가 자율적으로 판단합니다.
-    
-    Args:
-        user_data: 사용자 데이터
-        counter_name: 카운터 이름 (예: "독_중독", "드래곤조우")
-        amount: 증가량
-        current_day: 현재 게임 내 일차
-    
-    Returns:
-        (업데이트된 user_data, None)
-    """
-    counters = user_data.get("experience_counters", {})
-    
-    # 카운터 증가
-    current = counters.get(counter_name, 0)
-    counters[counter_name] = current + amount
-    user_data["experience_counters"] = counters
-    
-    # 패시브 부여는 AI가 자율적으로 판단 (하드코딩 제거)
-    return user_data, None
-
+# v4.0: 하드코딩된 트리거 제거, AI가 서사적으로 패시브 부여
 
 def get_passive_list(user_data: Dict[str, Any]) -> str:
     """보유 패시브 목록을 문자열로 반환합니다."""
     passives = user_data.get("passives", [])
+    ai_mem = user_data.get("ai_memory", {})
+    ai_passives = ai_mem.get("passives", [])
     
-    if not passives:
-        return "📋 **보유 패시브:** 없음\n(경험을 쌓으면 패시브를 획득합니다)"
+    # 두 소스 통합
+    all_passives = passives + [{"name": p, "effect": "", "category": "AI"} for p in ai_passives if isinstance(p, str)]
     
-    # 카테고리별 분류
-    by_category: Dict[str, List] = {}
-    for p in passives:
-        cat = p.get("category", "기타")
-        if cat not in by_category:
-            by_category[cat] = []
-        by_category[cat].append(p)
+    if not all_passives:
+        return "📋 **보유 패시브:** 없음\n(경험을 쌓으면 AI가 패시브를 부여합니다)"
     
     result = "📋 **보유 패시브:**\n"
-    for cat, passive_list in by_category.items():
-        result += f"\n**[{cat}]**\n"
-        for p in passive_list:
-            result += f"  • **{p['name']}**: {p['effect']}\n"
+    for p in all_passives:
+        if isinstance(p, dict):
+            name = p.get("name", "???")
+            effect = p.get("effect", "")
+            if effect:
+                result += f"  • **{name}**: {effect}\n"
+            else:
+                result += f"  • **{name}**\n"
+        else:
+            result += f"  • **{p}**\n"
     
     return result
 
@@ -528,54 +657,26 @@ def get_passive_list(user_data: Dict[str, Any]) -> str:
 def get_passive_context(user_data: Dict[str, Any]) -> str:
     """AI에게 전달할 패시브 컨텍스트를 생성합니다."""
     passives = user_data.get("passives", [])
+    ai_mem = user_data.get("ai_memory", {})
+    ai_passives = ai_mem.get("passives", [])
     
-    if not passives:
+    all_names = []
+    for p in passives:
+        if isinstance(p, dict):
+            all_names.append(p.get("name", ""))
+        else:
+            all_names.append(str(p))
+    all_names.extend([p for p in ai_passives if isinstance(p, str)])
+    
+    if not all_names:
         return ""
-    
-    passive_effects = [f"[{p['name']}]: {p['effect']}" for p in passives]
     
     return (
         "### [캐릭터 패시브]\n"
-        f"{chr(10).join(passive_effects)}\n"
+        f"{', '.join(all_names)}\n"
         "*패시브 효과를 서사에 자연스럽게 반영하세요.*\n\n"
     )
 
-
-def get_experience_progress(user_data: Dict[str, Any]) -> str:
-    """경험 카운터 진행도를 문자열로 반환합니다."""
-    counters = user_data.get("experience_counters", {})
-    passives = user_data.get("passives", [])
-    
-    if not counters and not passives:
-        return "📊 **경험 진행도:** 아직 기록된 경험이 없습니다."
-    
-    # 보유한 패시브 이름 목록
-    owned_passives = {p["name"] for p in passives}
-    
-    result = "📊 **경험 진행도:**\n"
-    
-    # 카운터 기반 진행도 (하드코딩 폴백)
-    if counters:
-        result += "\n**[경험 카운터]**\n"
-        for counter_name, count in sorted(counters.items()):
-            result += f"  • {counter_name}: {count}회\n"
-    
-    # 보유 패시브 목록
-    if passives:
-        result += "\n**[획득한 패시브]**\n"
-        for p in passives:
-            source = p.get("source", "")
-            source_tag = " (AI)" if source == "AI" else ""
-            result += f"  🏆 **{p['name']}**{source_tag}\n"
-            if p.get("trigger"):
-                result += f"     _{p.get('trigger')}_\n"
-    
-    return result
-
-
-# =========================================================
-# AI 자율 패시브 시스템 (AI-Driven Passive System)
-# =========================================================
 
 def grant_ai_passive(
     user_data: Dict[str, Any],
@@ -642,9 +743,25 @@ def get_passives_for_context(user_data: Dict[str, Any]) -> str:
     AI 분석에 전달할 현재 보유 패시브 목록을 생성합니다.
     중복 부여 방지용.
     """
+    # 레거시 passives (List[Dict] 또는 List[str])
     passives = user_data.get("passives", [])
-    if not passives:
+    # 새 시스템 ai_memory.passives (List[str])
+    ai_mem = user_data.get("ai_memory", {})
+    ai_passives = ai_mem.get("passives", [])
+    
+    # 모든 패시브 이름 수집
+    all_names = []
+    for p in passives:
+        if isinstance(p, dict):
+            all_names.append(p.get("name", ""))
+        elif isinstance(p, str):
+            all_names.append(p)
+    
+    for p in ai_passives:
+        if isinstance(p, str) and p not in all_names:
+            all_names.append(p)
+    
+    if not all_names:
         return "보유 패시브: 없음"
     
-    passive_names = [p["name"] for p in passives]
-    return f"보유 패시브: {', '.join(passive_names)}"
+    return f"보유 패시브: {', '.join(all_names)}"
