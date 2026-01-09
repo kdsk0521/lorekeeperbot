@@ -896,7 +896,8 @@ def create_risu_style_session(
     lore_text: str,
     rule_text: str = "",
     active_genres: Optional[List[str]] = None,
-    custom_tone: Optional[str] = None
+    custom_tone: Optional[str] = None,
+    deep_memory: str = ""
 ) -> ChatSessionAdapter:
     """
     RisuAI 스타일의 세션을 생성합니다.
@@ -908,16 +909,29 @@ def create_risu_style_session(
         rule_text: 게임 규칙 텍스트
         active_genres: 활성 장르 리스트
         custom_tone: 커스텀 분위기/톤
+        deep_memory: 심층 기억 (초압축 장기 기억) - HIGH 인식률 위치에 배치
     
     Returns:
         설정된 ChatSessionAdapter 인스턴스
     """
     system_prompt_content = construct_system_prompt(active_genres, custom_tone)
     
-    # 컨텍스트 포맷팅
+    # DEEP MEMORY 섹션 (있을 경우만)
+    deep_memory_section = ""
+    if deep_memory and deep_memory.strip():
+        deep_memory_section = f"""
+<Deep_Memory priority="HIGH">
+### 장기 기억 (Deep Memory)
+이것은 오래전부터 축적된 핵심 기억입니다. 스토리 연속성을 위해 반드시 참조하세요.
+
+{deep_memory}
+</Deep_Memory>
+"""
+    
+    # 컨텍스트 포맷팅 - DEEP MEMORY를 앞쪽 HIGH 위치에 배치
     formatted_context = f"""
 {system_prompt_content}
-
+{deep_memory_section}
 <World_Data>
 ### Lore (세계관)
 {lore_text}
@@ -927,8 +941,8 @@ def create_risu_style_session(
 </World_Data>
 
 <Memory_Layers>
-### Fermented (장기 기억)
-(Refer to Context History for long-term memories and chronicles)
+### Fermented (중기 기억)
+(Will be provided near DIRECTIVE for high recognition)
 
 ### Fresh (단기 기억)
 (Refer to Recent Conversation below)
@@ -1060,3 +1074,79 @@ def get_available_genres() -> List[str]:
 def get_genre_description(genre: str) -> Optional[str]:
     """특정 장르의 설명을 반환합니다."""
     return GENRE_DEFINITIONS.get(genre.lower())
+
+
+# =========================================================
+# 캐싱 지원 세션 생성
+# =========================================================
+async def create_cached_session(
+    client,
+    model_version: str,
+    channel_id: str,
+    lore_text: str,
+    rule_text: str = "",
+    active_genres: Optional[List[str]] = None,
+    custom_tone: Optional[str] = None,
+    deep_memory: str = "",
+    fermentation_module=None
+) -> Tuple[ChatSessionAdapter, bool]:
+    """
+    캐싱을 지원하는 세션을 생성합니다.
+    로어가 충분히 크면 캐싱을 사용하고, 아니면 일반 세션을 반환합니다.
+    
+    Args:
+        client: Gemini 클라이언트
+        model_version: 모델 버전
+        channel_id: 채널 ID (캐시 식별용)
+        lore_text: 로어 텍스트
+        rule_text: 룰 텍스트
+        active_genres: 활성 장르
+        custom_tone: 커스텀 톤
+        deep_memory: DEEP 메모리
+        fermentation_module: fermentation 모듈 (캐싱 함수용)
+    
+    Returns:
+        (세션, 캐싱 사용 여부) 튜플
+    """
+    system_prompt_content = construct_system_prompt(active_genres, custom_tone)
+    
+    # 캐싱 시도 (fermentation 모듈이 있고 로어가 충분히 클 때)
+    cache_name = None
+    if fermentation_module and hasattr(fermentation_module, 'get_or_create_cache'):
+        try:
+            cache_name = await fermentation_module.get_or_create_cache(
+                client, model_version, channel_id,
+                lore_text, rule_text, deep_memory,
+                system_prompt_content
+            )
+        except Exception as e:
+            logging.warning(f"[Caching] 캐시 생성 실패, 일반 세션 사용: {e}")
+    
+    if cache_name:
+        # 캐시 사용 세션
+        logging.info(f"[Caching] 캐시 세션 생성 - {channel_id}")
+        
+        config = types.GenerateContentConfig(
+            temperature=DEFAULT_TEMPERATURE,
+            safety_settings=SAFETY_SETTINGS,
+            cached_content=cache_name
+        )
+        
+        # 캐시 세션은 초기 히스토리가 캐시에 포함됨
+        session = ChatSessionAdapter(
+            client=client,
+            model_version=model_version,
+            config=config,
+            history=[]  # 캐시에 이미 포함됨
+        )
+        
+        return session, True
+    
+    else:
+        # 일반 세션 (캐싱 불가능)
+        session = create_risu_style_session(
+            client, model_version, lore_text, rule_text,
+            active_genres, custom_tone, deep_memory
+        )
+        return session, False
+

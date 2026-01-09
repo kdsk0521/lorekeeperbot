@@ -217,7 +217,12 @@ def _get_default_session() -> Dict[str, Any]:
             "npc_summaries": {},  # {"리엘": "엘프 궁수, 비밀이 있음", "길드장": "탐욕스러움"}
             "party_dynamics": "",  # "서로 신뢰 쌓는 중, 갈등 요소 없음"
             "last_updated": ""  # 마지막 갱신 시점
-        }
+        },
+        
+        # === 발효 메모리 시스템 (장기 기억) ===
+        # RisuAI SupaMemory/HypaMemory 스타일
+        "fermented_history": [],  # 압축된 중기 기억 [{timestamp, summary, message_count}]
+        "deep_memory": ""  # 초압축 장기 기억 (요약의 요약)
     }
 
 

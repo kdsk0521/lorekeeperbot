@@ -34,6 +34,7 @@ try:
     import session_manager
     import world_manager
     import quest_manager
+    import fermentation
 except ImportError as e:
     print(f"CRITICAL ERROR: 필수 모듈을 찾을 수 없습니다. {e}")
     exit(1)
@@ -1379,6 +1380,16 @@ async def on_message(message):
             
             # AI 응답 생성 (우뇌) - 강화된 프롬프트
             ai_memory_part = f"{ai_memory_ctx}\n\n" if ai_memory_ctx else ""
+            
+            # === 발효 메모리 컨텍스트 (장기 기억) ===
+            fermented_memory_ctx = ""
+            try:
+                fermented_memory_ctx = fermentation.build_memory_context(domain)
+                if fermented_memory_ctx:
+                    fermented_memory_ctx = f"{fermented_memory_ctx}\n\n"
+            except Exception as fme:
+                logging.warning(f"[Fermentation] 메모리 컨텍스트 빌드 실패: {fme}")
+            
             full_prompt = (
                 f"### [WORLD STATE]\n{world_ctx}\n{obj_ctx}\n\n"
                 f"{temporal_ctx}"
@@ -1393,12 +1404,14 @@ async def on_message(message):
                 f"Need: {nvc_res.get('Need', 'N/A')}\n\n"
                 f"### [MATERIAL]\n"
                 f"<material>\n{action_text}\n</material>\n\n"
+                f"{fermented_memory_ctx}"
                 f"### [DIRECTIVE]\n"
                 f"Process <material> as the player's attempt. "
                 f"Players are identified by [Name]: prefix (e.g., [잭]:, [리사]:). "
                 f"Generate NPC reactions and world response ONLY. "
                 f"**Apply NPC attitudes to their speech and behavior.** "
                 f"**If NPC Interaction is suggested, include their ambient dialogue.** "
+                f"**CRITICAL: Reference the FERMENTED/DEEP MEMORY above for story continuity.** "
                 f"Do NOT generate ANY player's dialogue, thoughts, or decisions. "
                 f"Track each player separately. 3rd person narration. Korean output."
             )
@@ -1409,11 +1422,25 @@ async def on_message(message):
                     f"⏳ **[Lorekeeper]** 집필 중..."
                 )
                 
-                # 세션 생성
-                session = persona.create_risu_style_session(
-                    client_genai, MODEL_ID, lore_txt, rule_txt, 
-                    active_genres, custom_tone
-                )
+                # DEEP MEMORY 추출 (HIGH 인식률 위치에 배치됨)
+                deep_memory = domain.get("deep_memory", "")
+                
+                # 캐싱 세션 생성 시도 (로어가 크면 캐싱 사용)
+                try:
+                    session, used_cache = await persona.create_cached_session(
+                        client_genai, MODEL_ID, channel_id,
+                        lore_txt, rule_txt,
+                        active_genres, custom_tone, deep_memory,
+                        fermentation_module=fermentation
+                    )
+                    if used_cache:
+                        logging.info(f"[Session] 캐싱 세션 사용 - {channel_id}")
+                except Exception as cache_err:
+                    logging.warning(f"[Session] 캐싱 실패, 일반 세션 사용: {cache_err}")
+                    session = persona.create_risu_style_session(
+                        client_genai, MODEL_ID, lore_txt, rule_txt, 
+                        active_genres, custom_tone, deep_memory
+                    )
                 
                 # 히스토리 추가
                 for h in domain.get('history', []):
@@ -1446,6 +1473,21 @@ async def on_message(message):
                 await send_long_message(message.channel, response)
                 domain_manager.append_history(channel_id, "User", action_text)
                 domain_manager.append_history(channel_id, "Char", response)
+                
+                # === 자동 발효 시스템 (장기 기억 관리) ===
+                try:
+                    session_data = domain_manager.get_domain(channel_id)
+                    fermentation.ensure_memory_fields(session_data)
+                    
+                    # 발효 필요 여부 체크 및 실행
+                    if fermentation.should_ferment_fresh(session_data):
+                        logging.info(f"[Fermentation] 자동 발효 시작 - {channel_id}")
+                        await fermentation.auto_ferment(
+                            client, MODEL_ID, session_data,
+                            save_callback=lambda: domain_manager.save_domain(channel_id, session_data)
+                        )
+                except Exception as fe:
+                    logging.warning(f"[Fermentation] 자동 발효 실패 (무시됨): {fe}")
     
     except Exception as e:
         logging.error(f"Main Error: {e}", exc_info=True)
