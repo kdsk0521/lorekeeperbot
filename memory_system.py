@@ -897,9 +897,36 @@ async def analyze_context_nvc(
         '  "AbnormalElements": ["드래곤", "마법", "고백"] OR [],\n'
         '  "ExperienceCounters": {"독중독": 1, "백병전": 1} OR {},\n'
         '  "Need": "Logical next step for Right Hemisphere",\n'
-        '  "SystemAction": { "tool": "Quest/Memo/NPC", "type": "Add/Complete/Archive", "content": "..." } OR null\n'
+        '  "SystemAction": { "tool": "Quest/Memo/NPC", "type": "Add/Complete/Archive", "content": "..." } OR null,\n'
+        '  "PlayerUpdate": {\n'
+        '    "inventory_add": {"아이템이름": 수량} OR null,\n'
+        '    "inventory_remove": {"아이템이름": 수량} OR null,\n'
+        '    "gold_change": +100 OR -50 OR null,\n'
+        '    "status_add": ["중독", "피로"] OR null,\n'
+        '    "status_remove": ["출혈"] OR null\n'
+        '  } OR null\n'
         "}\n"
         "\n"
+        "### PLAYER UPDATE SYSTEM (자동 인벤토리/골드/상태이상 관리)\n"
+        "PlayerUpdate triggers automatically based on narrative events.\n\n"
+        
+        "**When to update:**\n"
+        "- Player picks up item → inventory_add\n"
+        "- Player uses/loses item → inventory_remove\n"
+        "- Player receives payment/reward → gold_change: +amount\n"
+        "- Player pays/loses money → gold_change: -amount\n"
+        "- Player gets poisoned/injured/cursed → status_add\n"
+        "- Player heals/recovers/cured → status_remove\n\n"
+        
+        "**Examples:**\n"
+        "- Player finds a sword → inventory_add: {\"검\": 1}\n"
+        "- Player drinks potion → inventory_remove: {\"포션\": 1}\n"
+        "- Player sells item for 50 gold → gold_change: 50\n"
+        "- Player gets bitten by snake → status_add: [\"중독\"]\n"
+        "- Player rests at inn → status_remove: [\"피로\"]\n\n"
+        
+        "**IMPORTANT:** Return null if no update needed. Don't force updates.\n\n"
+
         "### ABNORMAL ELEMENTS & EXPERIENCE DETECTION\n"
         "**AbnormalElements:** List any supernatural, unusual, or extraordinary elements in the scene.\n"
         "Examples: 드래곤, 마법, 귀신, 상태창, 이세계, 몬스터, 초능력, 고백, 결투, 납치\n\n"
@@ -1687,7 +1714,8 @@ async def process_ooc_memory_edit(
     client,
     model_id: str,
     user_request: str,
-    current_ai_memory: Dict[str, Any]
+    current_ai_memory: Dict[str, Any],
+    current_participant_data: Dict[str, Any] = None
 ) -> Dict[str, Any]:
     """
     유저의 OOC 자연어 요청을 파싱하여 AI 메모리 수정 명령으로 변환합니다.
@@ -1697,6 +1725,7 @@ async def process_ooc_memory_edit(
         model_id: 모델 ID
         user_request: 유저의 OOC 요청 (예: "리엘이랑 사이 안 좋아진 걸로 해줘")
         current_ai_memory: 현재 AI 메모리 상태
+        current_participant_data: 현재 참가자 데이터 (골드, 인벤토리, 상태이상)
     
     Returns:
         수정 명령 딕셔너리 또는 None
@@ -1706,7 +1735,7 @@ async def process_ooc_memory_edit(
         "Parse the user's natural language request and convert to memory edit commands.\n"
         "The user speaks Korean. Be generous in interpretation.\n\n"
         
-        "### EDITABLE FIELDS\n"
+        "### EDITABLE FIELDS (AI Memory)\n"
         "- appearance: 외모 설명 (string)\n"
         "- personality: 성격 (string)\n"
         "- background: 배경 스토리 (string)\n"
@@ -1717,21 +1746,30 @@ async def process_ooc_memory_edit(
         "- normalization: 비일상 적응 (dict: {요소: 적응상태})\n"
         "- notes: 자유 메모 (string)\n\n"
         
+        "### EDITABLE FIELDS (Participant Data)\n"
+        "- inventory: 소지품 (dict: {아이템이름: 수량})\n"
+        "- economy.gold: 화폐 수량 (int)\n"
+        "- economy.currency_name: 화폐 단위 이름 (string, 예: '골드', '은화', '크레딧')\n"
+        "- status_effects: 상태이상 목록 (list: ['중독', '피로', ...])\n\n"
+        
         "### OPERATIONS\n"
         "- set: 필드 값을 완전히 교체\n"
-        "- add: 리스트/딕셔너리에 항목 추가\n"
-        "- remove: 리스트/딕셔너리에서 항목 제거\n"
+        "- add: 리스트/딕셔너리에 항목 추가 (숫자면 더하기)\n"
+        "- remove: 리스트/딕셔너리에서 항목 제거 (숫자면 빼기)\n"
         "- update: 딕셔너리의 특정 키만 수정\n\n"
         
         "### INTERPRETATION EXAMPLES\n"
         "User: '리엘이랑 친해진 걸로' → relationships.update('리엘', '친밀한 동료')\n"
         "User: '독 내성 얻었어' → passives.add('독 내성')\n"
         "User: '드래곤 이제 익숙해' → normalization.update('드래곤', '이제 익숙함')\n"
-        "User: '마왕 약점이 빛이래' → known_info.add('마왕의 약점은 빛')\n"
-        "User: '비밀통로 잊어버렸어' → known_info.remove('비밀 통로...')\n"
-        "User: '흉터 생긴 걸로' → appearance.set('...흉터가 있다')\n"
-        "User: '엘프의 친구 칭호!' → passives.add('엘프의 친구')\n"
-        "User: '그 편지 복선으로 기억해' → foreshadowing.add('봉인된 편지')\n\n"
+        "User: '골드 500 줘' → economy.gold.add(500)\n"
+        "User: '돈 200 잃었어' → economy.gold.remove(200)\n"
+        "User: '화폐 단위 은화로' → economy.currency_name.set('은화')\n"
+        "User: '마법검 얻었어' → inventory.add('마법검', 1)\n"
+        "User: '포션 2개 썼어' → inventory.remove('포션', 2)\n"
+        "User: '중독 상태야' → status_effects.add('중독')\n"
+        "User: '피로 풀렸어' → status_effects.remove('피로')\n"
+        "User: '상태이상 전부 해제' → status_effects.set([])\n\n"
         
         "### OUTPUT FORMAT (JSON)\n"
         "{\n"
@@ -1749,8 +1787,19 @@ async def process_ooc_memory_edit(
     
     current_mem_str = json.dumps(current_ai_memory, ensure_ascii=False, indent=2)
     
+    # participant 데이터 포함
+    participant_str = ""
+    if current_participant_data:
+        participant_info = {
+            "economy": current_participant_data.get("economy", {"gold": 0}),
+            "inventory": current_participant_data.get("inventory", {}),
+            "status_effects": current_participant_data.get("status_effects", [])
+        }
+        participant_str = f"### CURRENT PARTICIPANT DATA\n{json.dumps(participant_info, ensure_ascii=False, indent=2)}\n\n"
+    
     user_prompt = (
         f"### CURRENT AI MEMORY\n{current_mem_str}\n\n"
+        f"{participant_str}"
         f"### USER OOC REQUEST\n\"{user_request}\"\n\n"
         "Parse and generate edit commands."
     )
@@ -1777,33 +1826,98 @@ async def process_ooc_memory_edit(
     return None
 
 
-def apply_memory_edits(ai_memory: Dict[str, Any], edits: List[Dict]) -> Dict[str, Any]:
+def apply_memory_edits(
+    ai_memory: Dict[str, Any], 
+    edits: List[Dict],
+    participant_data: Dict[str, Any] = None
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
-    파싱된 수정 명령을 AI 메모리에 적용합니다.
+    파싱된 수정 명령을 AI 메모리와 참가자 데이터에 적용합니다.
     
     Args:
         ai_memory: 현재 AI 메모리
         edits: 수정 명령 리스트
+        participant_data: 현재 참가자 데이터 (골드, 인벤토리, 상태이상)
     
     Returns:
-        수정된 AI 메모리
+        (수정된 AI 메모리, 수정된 참가자 데이터) 튜플
     """
     import copy
-    updated = copy.deepcopy(ai_memory)
+    updated_mem = copy.deepcopy(ai_memory)
+    updated_participant = copy.deepcopy(participant_data) if participant_data else {}
+    
+    # participant 데이터 필드 목록
+    participant_fields = {'inventory', 'economy', 'economy.gold', 'economy.currency_name', 'status_effects'}
     
     for edit in edits:
-        field = edit.get("field")
+        field = edit.get("field", "")
         operation = edit.get("operation")
         value = edit.get("value")
         key = edit.get("key")
         
-        if field not in updated:
+        # economy.gold, economy.currency_name 처리
+        if field.startswith("economy."):
+            sub_field = field.split(".", 1)[1]
+            if "economy" not in updated_participant:
+                updated_participant["economy"] = {"gold": 0}
+            
+            if sub_field == "gold":
+                current_gold = updated_participant["economy"].get("gold", 0)
+                if operation == "set":
+                    updated_participant["economy"]["gold"] = int(value) if value else 0
+                elif operation == "add":
+                    updated_participant["economy"]["gold"] = current_gold + int(value)
+                elif operation == "remove":
+                    updated_participant["economy"]["gold"] = max(0, current_gold - int(value))
+            elif sub_field == "currency_name":
+                updated_participant["economy"]["currency_name"] = value
             continue
         
-        current_value = updated[field]
+        # inventory 처리
+        if field == "inventory":
+            if "inventory" not in updated_participant:
+                updated_participant["inventory"] = {}
+            inv = updated_participant["inventory"]
+            
+            if operation == "set":
+                updated_participant["inventory"] = value if isinstance(value, dict) else {}
+            elif operation == "add":
+                item_name = key if key else value
+                amount = int(value) if key and isinstance(value, (int, str)) else 1
+                inv[item_name] = inv.get(item_name, 0) + amount
+            elif operation == "remove":
+                item_name = key if key else value
+                amount = int(value) if key and isinstance(value, (int, str)) else 1
+                if item_name in inv:
+                    inv[item_name] = max(0, inv[item_name] - amount)
+                    if inv[item_name] <= 0:
+                        del inv[item_name]
+            continue
+        
+        # status_effects 처리
+        if field == "status_effects":
+            if "status_effects" not in updated_participant:
+                updated_participant["status_effects"] = []
+            effects = updated_participant["status_effects"]
+            
+            if operation == "set":
+                updated_participant["status_effects"] = value if isinstance(value, list) else []
+            elif operation == "add":
+                if value and value not in effects:
+                    effects.append(value)
+            elif operation == "remove":
+                if value in effects:
+                    effects.remove(value)
+            continue
+        
+        # AI 메모리 필드 처리 (기존 로직)
+        if field not in updated_mem:
+            continue
+        
+        current_value = updated_mem[field]
         
         if operation == "set":
-            updated[field] = value
+            updated_mem[field] = value
             
         elif operation == "add":
             if isinstance(current_value, list):
@@ -1822,7 +1936,7 @@ def apply_memory_edits(ai_memory: Dict[str, Any], edits: List[Dict]) -> Dict[str
             if isinstance(current_value, dict) and key:
                 current_value[key] = value
     
-    return updated
+    return updated_mem, updated_participant
 
 
 def apply_ai_memory_updates(
@@ -1847,6 +1961,70 @@ def apply_ai_memory_updates(
     
     if not nvc_result:
         return messages
+    
+    # === AbnormalElements → normalization + abnormal_exposure 자동 업데이트 ===
+    abnormal_elements = nvc_result.get("AbnormalElements", [])
+    if abnormal_elements:
+        # AI 메모리 normalization 업데이트
+        current_mem = domain_manager_module.get_ai_memory(channel_id, user_id)
+        normalization = current_mem.get("normalization", {})
+        
+        # 참가자 데이터 abnormal_exposure 업데이트
+        p_data = domain_manager_module.get_participant_data(channel_id, user_id)
+        if not p_data:
+            p_data = {}
+        exposure = p_data.get("abnormal_exposure", {})
+        
+        for element in abnormal_elements:
+            if not element:
+                continue
+            
+            # 노출 카운트 업데이트
+            if element not in exposure:
+                exposure[element] = {"count": 0, "normality": 0}
+            exposure[element]["count"] += 1
+            count = exposure[element]["count"]
+            
+            # 적응도 계산 (간단 버전: 10회당 10%)
+            normality = min(100, count * 10)
+            exposure[element]["normality"] = normality
+            
+            # normalization 텍스트 업데이트 (단계별)
+            if count == 1:
+                normalization[element] = "처음 접함"
+                messages.append(f"👁️ **비일상 접촉:** {element}")
+            elif normality < 30:
+                normalization[element] = "아직 낯섦"
+            elif normality < 60:
+                normalization[element] = "익숙해지는 중"
+            elif normality < 100:
+                normalization[element] = "거의 익숙함"
+            else:
+                if normalization.get(element) != "완전히 일상":
+                    normalization[element] = "완전히 일상"
+                    messages.append(f"🌙 **[{element}]** 이제 일상이 되었다.")
+        
+        # 저장
+        current_mem["normalization"] = normalization
+        domain_manager_module.update_ai_memory(channel_id, user_id, current_mem)
+        
+        p_data["abnormal_exposure"] = exposure
+        domain_manager_module.save_participant_data(channel_id, user_id, p_data)
+    
+    # === ExperienceCounters 누적 ===
+    experience_counters = nvc_result.get("ExperienceCounters", {})
+    if experience_counters:
+        p_data = domain_manager_module.get_participant_data(channel_id, user_id)
+        if p_data:
+            if "experience_counters" not in p_data:
+                p_data["experience_counters"] = {}
+            
+            for exp_type, count in experience_counters.items():
+                if exp_type and count:
+                    p_data["experience_counters"][exp_type] = \
+                        p_data["experience_counters"].get(exp_type, 0) + int(count)
+            
+            domain_manager_module.save_participant_data(channel_id, user_id, p_data)
     
     # === 플레이어 메모리 업데이트 ===
     player_update = nvc_result.get("PlayerMemoryUpdate", {})
@@ -1940,6 +2118,71 @@ def apply_ai_memory_updates(
         # 저장
         if session_update:
             domain_manager_module.update_session_ai_memory(channel_id, current_session)
+    
+    # === 플레이어 데이터 업데이트 (인벤토리, 골드, 상태이상) ===
+    player_data_update = nvc_result.get("PlayerUpdate", {})
+    if player_data_update:
+        p_data = domain_manager_module.get_participant_data(channel_id, user_id)
+        if p_data:
+            updated = False
+            
+            # 인벤토리 추가
+            if player_data_update.get("inventory_add"):
+                if "inventory" not in p_data:
+                    p_data["inventory"] = {}
+                for item, amount in player_data_update["inventory_add"].items():
+                    if item and amount:
+                        p_data["inventory"][item] = p_data["inventory"].get(item, 0) + int(amount)
+                        messages.append(f"🎒 **획득:** {item} x{amount}")
+                        updated = True
+            
+            # 인벤토리 제거
+            if player_data_update.get("inventory_remove"):
+                if "inventory" not in p_data:
+                    p_data["inventory"] = {}
+                for item, amount in player_data_update["inventory_remove"].items():
+                    if item and amount and item in p_data["inventory"]:
+                        p_data["inventory"][item] = max(0, p_data["inventory"][item] - int(amount))
+                        if p_data["inventory"][item] <= 0:
+                            del p_data["inventory"][item]
+                        messages.append(f"🎒 **사용/소실:** {item} x{amount}")
+                        updated = True
+            
+            # 골드 변경
+            if player_data_update.get("gold_change") is not None:
+                if "economy" not in p_data:
+                    p_data["economy"] = {"gold": 0}
+                change = int(player_data_update["gold_change"])
+                p_data["economy"]["gold"] = max(0, p_data["economy"].get("gold", 0) + change)
+                if change > 0:
+                    messages.append(f"💰 **획득:** +{change}")
+                elif change < 0:
+                    messages.append(f"💰 **지출:** {change}")
+                updated = True
+            
+            # 상태이상 추가
+            if player_data_update.get("status_add"):
+                if "status_effects" not in p_data:
+                    p_data["status_effects"] = []
+                for status in player_data_update["status_add"]:
+                    if status and status not in p_data["status_effects"]:
+                        p_data["status_effects"].append(status)
+                        messages.append(f"💫 **상태이상:** {status}")
+                        updated = True
+            
+            # 상태이상 제거
+            if player_data_update.get("status_remove"):
+                if "status_effects" not in p_data:
+                    p_data["status_effects"] = []
+                for status in player_data_update["status_remove"]:
+                    if status and status in p_data["status_effects"]:
+                        p_data["status_effects"].remove(status)
+                        messages.append(f"✨ **회복:** {status} 해제")
+                        updated = True
+            
+            # 저장
+            if updated:
+                domain_manager_module.save_participant_data(channel_id, user_id, p_data)
     
     return messages
 

@@ -1162,25 +1162,41 @@ async def on_message(message):
             
             wait_msg = await message.channel.send("⏳ **[OOC]** 요청 처리 중...")
             
+            # 현재 참가자 데이터 가져오기
+            p_data = domain_manager.get_participant_data(channel_id, uid)
+            
             # AI에게 수정 요청 파싱
             edit_result = await memory_system.process_ooc_memory_edit(
-                client_genai, MODEL_ID, ooc_content, ai_mem
+                client_genai, MODEL_ID, ooc_content, ai_mem, p_data
             )
             
             if edit_result and edit_result.get("edits"):
-                # 수정 적용
-                updated_mem = memory_system.apply_memory_edits(ai_mem, edit_result["edits"])
+                # 수정 적용 (AI 메모리 + 참가자 데이터)
+                updated_mem, updated_participant = memory_system.apply_memory_edits(
+                    ai_mem, edit_result["edits"], p_data
+                )
                 domain_manager.update_ai_memory(channel_id, uid, updated_mem)
+                
+                # 참가자 데이터 업데이트 (인벤토리, 골드, 상태이상)
+                if updated_participant:
+                    if "economy" in updated_participant:
+                        p_data["economy"] = updated_participant["economy"]
+                    if "inventory" in updated_participant:
+                        p_data["inventory"] = updated_participant["inventory"]
+                    if "status_effects" in updated_participant:
+                        p_data["status_effects"] = updated_participant["status_effects"]
+                    domain_manager.save_participant_data(channel_id, uid, p_data)
                 
                 confirm_msg = edit_result.get("confirmation_message", "✅ 수정 완료!")
                 interpretation = edit_result.get("interpretation", "")
                 
                 # 수정된 필드 목록 생성
-                edited_fields = list(set(e.get("field", "") for e in edit_result["edits"]))
+                edited_fields = list(set(e.get("field", "").split(".")[0] for e in edit_result["edits"]))
                 field_emoji = {
                     "relationships": "💞", "passives": "🏆", "known_info": "💡",
                     "foreshadowing": "🔮", "normalization": "🌓", "appearance": "👁️",
-                    "personality": "💭", "background": "📖", "notes": "📋"
+                    "personality": "💭", "background": "📖", "notes": "📋",
+                    "inventory": "🎒", "economy": "💰", "status_effects": "💫"
                 }
                 fields_str = " ".join([field_emoji.get(f, "📝") for f in edited_fields])
                 
@@ -1201,10 +1217,10 @@ async def on_message(message):
                     f"**사용법:** `(OOC: 요청 내용)`\n\n"
                     f"**예시:**\n"
                     f"• `(OOC: 리엘이랑 친해진 걸로)` → 관계 수정\n"
-                    f"• `(OOC: 독 내성 패시브 얻었어)` → 패시브 추가\n"
-                    f"• `(OOC: 드래곤 이제 익숙해)` → 적응도 수정\n"
-                    f"• `(OOC: 마왕 약점 알게 됐어)` → 정보 추가\n"
-                    f"• `(OOC: 얼굴에 흉터 생긴 걸로)` → 외형 수정"
+                    f"• `(OOC: 골드 500 줘)` → 💰 경제 수정\n"
+                    f"• `(OOC: 마법검 얻었어)` → 🎒 인벤토리 추가\n"
+                    f"• `(OOC: 중독 상태야)` → 💫 상태이상 추가\n"
+                    f"• `(OOC: 피로 풀렸어)` → 상태이상 제거"
                 )
             return
         
@@ -1220,25 +1236,40 @@ async def on_message(message):
             
             # 1단계: OOC 수정 먼저 적용
             ai_mem = domain_manager.get_ai_memory(channel_id, uid)
+            p_data = domain_manager.get_participant_data(channel_id, uid)
             ooc_applied = False
             
             if ai_mem and client_genai and ooc_content:
                 try:
                     edit_result = await memory_system.process_ooc_memory_edit(
-                        client_genai, MODEL_ID, ooc_content, ai_mem
+                        client_genai, MODEL_ID, ooc_content, ai_mem, p_data
                     )
                     
                     if edit_result and edit_result.get("edits"):
-                        updated_mem = memory_system.apply_memory_edits(ai_mem, edit_result["edits"])
+                        updated_mem, updated_participant = memory_system.apply_memory_edits(
+                            ai_mem, edit_result["edits"], p_data
+                        )
                         domain_manager.update_ai_memory(channel_id, uid, updated_mem)
+                        
+                        # 참가자 데이터 업데이트
+                        if updated_participant:
+                            if "economy" in updated_participant:
+                                p_data["economy"] = updated_participant["economy"]
+                            if "inventory" in updated_participant:
+                                p_data["inventory"] = updated_participant["inventory"]
+                            if "status_effects" in updated_participant:
+                                p_data["status_effects"] = updated_participant["status_effects"]
+                            domain_manager.save_participant_data(channel_id, uid, p_data)
+                        
                         ooc_applied = True
                         
                         # 간단한 OOC 적용 알림
-                        edited_fields = list(set(e.get("field", "") for e in edit_result["edits"]))
+                        edited_fields = list(set(e.get("field", "").split(".")[0] for e in edit_result["edits"]))
                         field_emoji = {
                             "relationships": "💞", "passives": "🏆", "known_info": "💡",
                             "foreshadowing": "🔮", "normalization": "🌓", "appearance": "👁️",
-                            "personality": "💭", "background": "📖", "notes": "📋"
+                            "personality": "💭", "background": "📖", "notes": "📋",
+                            "inventory": "🎒", "economy": "💰", "status_effects": "💫"
                         }
                         fields_str = " ".join([field_emoji.get(f, "📝") for f in edited_fields])
                         await message.channel.send(f"✅ **[OOC 적용]** {fields_str}")
