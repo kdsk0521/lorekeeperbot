@@ -1133,6 +1133,8 @@ async def create_cached_session(
     else:
         session = create_risu_style_session(
             client, model_version, lore_text, rule_text,
-            active_genres, custom_tone, deep_memory
+            active_genres, custom_tone, deep_memory,
+            fermented_summary="",
+            character_descriptions=""
         )
         return session, False
