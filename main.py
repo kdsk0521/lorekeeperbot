@@ -9,6 +9,7 @@ import asyncio
 import logging
 import io
 import re
+import json
 from typing import Optional, Tuple, List
 from dotenv import load_dotenv
 from google import genai
@@ -534,14 +535,6 @@ async def handle_info_command(message, channel_id: str, sub_command: str = "") -
                 result += f"  • **{name}:** {desc}\n"
         else:
             result += "_아직 형성된 관계가 없습니다._\n"
-        
-        # 숫자 기반 관계도도 표시 (레거시)
-        relations_numeric = p.get('relations', {})
-        if relations_numeric:
-            result += "\n📊 **호감도:**\n"
-            for name, value in sorted(relations_numeric.items(), key=lambda x: x[1], reverse=True)[:5]:
-                bar = "█" * max(0, (value + 100) // 20) + "░" * (10 - max(0, (value + 100) // 20))
-                result += f"  • {name}: [{bar}] {value:+}\n"
         
         result += "\n"
     
@@ -1409,43 +1402,101 @@ async def on_message(message):
                         f"that players can overhear. This adds atmosphere and may reveal information.\n\n"
                     )
             
-            # AI 응답 생성 (우뇌) - 강화된 프롬프트
-            ai_memory_part = f"{ai_memory_ctx}\n\n" if ai_memory_ctx else ""
+            # AI 응답 생성 (우뇌) - 프리셋 순서 적용
             
-            # === 발효 메모리 컨텍스트 (장기 기억) ===
-            fermented_memory_ctx = ""
+            # === [5] FERMENTED 메모리 컨텍스트 ===
+            fermented_ctx = ""
             try:
-                fermented_memory_ctx = fermentation.build_memory_context(domain)
-                if fermented_memory_ctx:
-                    fermented_memory_ctx = f"{fermented_memory_ctx}\n\n"
+                fermented_ctx = fermentation.build_fermented_context(domain)
             except Exception as fme:
-                logging.warning(f"[Fermentation] 메모리 컨텍스트 빌드 실패: {fme}")
+                logging.warning(f"[Fermentation] Fermented 컨텍스트 빌드 실패: {fme}")
             
-            full_prompt = (
-                f"### [WORLD STATE]\n{world_ctx}\n{obj_ctx}\n\n"
-                f"{temporal_ctx}"
-                f"{ai_memory_part}"
-                f"{npc_attitude_ctx}"
-                f"{npc_interaction_ctx}"
-                f"### [LEFT HEMISPHERE ANALYSIS]\n"
+            # === [10] Current Context 구성 ===
+            current_context_parts = []
+            
+            # World State
+            if world_ctx or obj_ctx:
+                current_context_parts.append(f"### World State\n{world_ctx}\n{obj_ctx}")
+            
+            # Temporal Orientation
+            if temporal_ctx:
+                current_context_parts.append(temporal_ctx.strip())
+            
+            # AI Memory Context
+            if ai_memory_ctx:
+                current_context_parts.append(f"### AI Memory\n{ai_memory_ctx}")
+            
+            # NPC Attitudes
+            if npc_attitude_ctx:
+                current_context_parts.append(npc_attitude_ctx.strip())
+            
+            # NPC Interaction
+            if npc_interaction_ctx:
+                current_context_parts.append(npc_interaction_ctx.strip())
+            
+            # Left Hemisphere Analysis (NVC)
+            nvc_summary = (
+                f"### Left Hemisphere Analysis\n"
                 f"Location: {nvc_res.get('CurrentLocation', 'Unknown')} "
                 f"(Risk: {nvc_res.get('LocationRisk', 'Low')})\n"
                 f"Physical State: {nvc_res.get('PhysicalState', 'N/A')}\n"
                 f"Observation: {nvc_res.get('Observation', 'N/A')}\n"
-                f"Need: {nvc_res.get('Need', 'N/A')}\n\n"
-                f"### [MATERIAL]\n"
-                f"<material>\n{action_text}\n</material>\n\n"
-                f"{fermented_memory_ctx}"
-                f"### [DIRECTIVE]\n"
-                f"Process <material> as the player's attempt. "
-                f"Players are identified by [Name]: prefix (e.g., [잭]:, [리사]:). "
-                f"Generate NPC reactions and world response ONLY. "
-                f"**Apply NPC attitudes to their speech and behavior.** "
-                f"**If NPC Interaction is suggested, include their ambient dialogue.** "
-                f"**CRITICAL: Reference the FERMENTED/DEEP MEMORY above for story continuity.** "
-                f"Do NOT generate ANY player's dialogue, thoughts, or decisions. "
-                f"Track each player separately. 3rd person narration. Korean output."
+                f"Need: {nvc_res.get('Need', 'N/A')}"
             )
+            current_context_parts.append(nvc_summary)
+            
+            current_context = "\n\n".join(current_context_parts)
+            
+            # DEEP MEMORY 추출
+            deep_memory = domain.get("deep_memory", "")
+            
+            # 발효 요약 추출
+            fermented_summaries = []
+            for entry in domain.get("fermented_history", []):
+                if entry.get("summary"):
+                    fermented_summaries.append(entry["summary"])
+            fermented_summary_text = "\n---\n".join(fermented_summaries)
+            
+            # === 프리셋 순서 기반 full_prompt 구성 ===
+            # [5] Fermented (Deep Memory + Episode Summary)
+            # [8] Scripts (장르/톤 기반 동적 생성 - 세션에서 처리)
+            # [10] Current Context
+            # [11] User Message
+            # [12] Output Generation Request
+            
+            full_prompt = ""
+            
+            # Fermented Context (참조용)
+            if fermented_ctx:
+                full_prompt += f"{fermented_ctx}\n\n"
+            
+            # Current Context
+            full_prompt += f"""<Current-Context>
+{current_context}
+</Current-Context>
+
+"""
+            
+            # User Message (Material)
+            full_prompt += f"""<User_Message>
+### Material (플레이어 입력)
+<material>
+{action_text}
+</material>
+</User_Message>
+
+"""
+            
+            # Output Generation Request (Directive)
+            full_prompt += """### [OUTPUT DIRECTIVE]
+Process <material> as the player's attempt.
+Players are identified by [Name]: prefix (e.g., [잭]:, [리사]:).
+Generate NPC reactions and world response ONLY.
+**Apply NPC attitudes to their speech and behavior.**
+**If NPC Interaction is suggested, include their ambient dialogue.**
+**CRITICAL: Reference the FERMENTED/DEEP MEMORY above for story continuity.**
+Do NOT generate ANY player's dialogue, thoughts, or decisions.
+Track each player separately. 3rd person narration. Korean output."""
             
             response = "⚠️ AI Error"
             if client_genai:
@@ -1453,10 +1504,7 @@ async def on_message(message):
                     f"⏳ **[Lorekeeper]** 집필 중..."
                 )
                 
-                # DEEP MEMORY 추출 (HIGH 인식률 위치에 배치됨)
-                deep_memory = domain.get("deep_memory", "")
-                
-                # 캐싱 세션 생성 시도 (로어가 크면 캐싱 사용)
+                # 캐싱 세션 생성 시도 (프리셋 순서 적용)
                 try:
                     session, used_cache = await persona.create_cached_session(
                         client_genai, MODEL_ID, channel_id,
@@ -1470,7 +1518,8 @@ async def on_message(message):
                     logging.warning(f"[Session] 캐싱 실패, 일반 세션 사용: {cache_err}")
                     session = persona.create_risu_style_session(
                         client_genai, MODEL_ID, lore_txt, rule_txt, 
-                        active_genres, custom_tone, deep_memory
+                        active_genres, custom_tone, deep_memory,
+                        fermented_summary=fermented_summary_text
                     )
                 
                 # 히스토리 추가
@@ -1486,6 +1535,190 @@ async def on_message(message):
                 )
                 
                 await safe_delete_message(loading)
+                
+                # === 우뇌 응답에서 SYSTEM_UPDATE 파싱 ===
+                if response:
+                    # system_update 블록 추출
+                    import re
+                    system_update_match = re.search(
+                        r'```system_update\s*\n?\s*(\{.*?\})\s*\n?```',
+                        response, 
+                        re.DOTALL
+                    )
+                    
+                    if system_update_match:
+                        try:
+                            update_json = json.loads(system_update_match.group(1))
+                            
+                            # 참가자 데이터 및 AI 메모리 가져오기
+                            p_data = domain_manager.get_participant_data(channel_id, uid)
+                            ai_mem = domain_manager.get_ai_memory(channel_id, uid)
+                            
+                            if p_data and ai_mem:
+                                update_msgs = []
+                                p_updated = False
+                                mem_updated = False
+                                
+                                # ========== 참가자 데이터 (p_data) ==========
+                                
+                                # 인벤토리 추가
+                                if update_json.get("inventory_add"):
+                                    if "inventory" not in p_data:
+                                        p_data["inventory"] = {}
+                                    for item, amount in update_json["inventory_add"].items():
+                                        p_data["inventory"][item] = p_data["inventory"].get(item, 0) + int(amount)
+                                        update_msgs.append(f"🎒 **+{item}**")
+                                    p_updated = True
+                                
+                                # 인벤토리 제거
+                                if update_json.get("inventory_remove"):
+                                    if "inventory" not in p_data:
+                                        p_data["inventory"] = {}
+                                    for item, amount in update_json["inventory_remove"].items():
+                                        if item in p_data["inventory"]:
+                                            p_data["inventory"][item] = max(0, p_data["inventory"][item] - int(amount))
+                                            if p_data["inventory"][item] <= 0:
+                                                del p_data["inventory"][item]
+                                            update_msgs.append(f"🎒 **-{item}**")
+                                    p_updated = True
+                                
+                                # 골드 변경
+                                if update_json.get("gold_change") is not None:
+                                    if "economy" not in p_data:
+                                        p_data["economy"] = {"gold": 0}
+                                    change = int(update_json["gold_change"])
+                                    p_data["economy"]["gold"] = max(0, p_data["economy"].get("gold", 0) + change)
+                                    if change > 0:
+                                        update_msgs.append(f"💰 **+{change}**")
+                                    elif change < 0:
+                                        update_msgs.append(f"💰 **{change}**")
+                                    p_updated = True
+                                
+                                # 상태이상 추가
+                                if update_json.get("status_add"):
+                                    if "status_effects" not in p_data:
+                                        p_data["status_effects"] = []
+                                    for status in update_json["status_add"]:
+                                        if status not in p_data["status_effects"]:
+                                            p_data["status_effects"].append(status)
+                                            update_msgs.append(f"💫 **{status}**")
+                                    p_updated = True
+                                
+                                # 상태이상 제거
+                                if update_json.get("status_remove"):
+                                    if "status_effects" not in p_data:
+                                        p_data["status_effects"] = []
+                                    for status in update_json["status_remove"]:
+                                        if status in p_data["status_effects"]:
+                                            p_data["status_effects"].remove(status)
+                                            update_msgs.append(f"✨ **{status} 해제**")
+                                    p_updated = True
+                                
+                                # ========== AI 메모리 (ai_mem) ==========
+                                
+                                # 관계 업데이트
+                                if update_json.get("relationship_update"):
+                                    if "relationships" not in ai_mem:
+                                        ai_mem["relationships"] = {}
+                                    for npc, desc in update_json["relationship_update"].items():
+                                        ai_mem["relationships"][npc] = desc
+                                        update_msgs.append(f"💞 **{npc}**")
+                                    mem_updated = True
+                                
+                                # 패시브 추가
+                                if update_json.get("passive_add"):
+                                    if "passives" not in ai_mem:
+                                        ai_mem["passives"] = []
+                                    for passive in update_json["passive_add"]:
+                                        if passive not in ai_mem["passives"]:
+                                            ai_mem["passives"].append(passive)
+                                            update_msgs.append(f"🏆 **{passive}**")
+                                    mem_updated = True
+                                
+                                # 알고있는 정보 추가
+                                if update_json.get("info_add"):
+                                    if "known_info" not in ai_mem:
+                                        ai_mem["known_info"] = []
+                                    for info in update_json["info_add"]:
+                                        if info not in ai_mem["known_info"]:
+                                            ai_mem["known_info"].append(info)
+                                            update_msgs.append(f"💡 **정보**")
+                                    mem_updated = True
+                                
+                                # 복선 추가
+                                if update_json.get("foreshadow_add"):
+                                    if "foreshadowing" not in ai_mem:
+                                        ai_mem["foreshadowing"] = []
+                                    for fs in update_json["foreshadow_add"]:
+                                        if fs not in ai_mem["foreshadowing"]:
+                                            ai_mem["foreshadowing"].append(fs)
+                                            update_msgs.append(f"🔮 **복선**")
+                                    mem_updated = True
+                                
+                                # 적응도 업데이트
+                                if update_json.get("adaptation_update"):
+                                    if "normalization" not in ai_mem:
+                                        ai_mem["normalization"] = {}
+                                    for element, status in update_json["adaptation_update"].items():
+                                        ai_mem["normalization"][element] = status
+                                        update_msgs.append(f"🌓 **{element}**")
+                                    mem_updated = True
+                                
+                                # 외형 업데이트
+                                if update_json.get("appearance_update"):
+                                    current = ai_mem.get("appearance", "")
+                                    new_appearance = update_json["appearance_update"]
+                                    if current:
+                                        ai_mem["appearance"] = f"{current} {new_appearance}"
+                                    else:
+                                        ai_mem["appearance"] = new_appearance
+                                    update_msgs.append(f"👁️ **외형 변화**")
+                                    mem_updated = True
+                                
+                                # 성격 업데이트
+                                if update_json.get("personality_update"):
+                                    current = ai_mem.get("personality", "")
+                                    new_personality = update_json["personality_update"]
+                                    if current:
+                                        ai_mem["personality"] = f"{current} {new_personality}"
+                                    else:
+                                        ai_mem["personality"] = new_personality
+                                    update_msgs.append(f"💭 **성격 변화**")
+                                    mem_updated = True
+                                
+                                # 배경 업데이트
+                                if update_json.get("background_update"):
+                                    current = ai_mem.get("background", "")
+                                    new_background = update_json["background_update"]
+                                    if current:
+                                        ai_mem["background"] = f"{current} {new_background}"
+                                    else:
+                                        ai_mem["background"] = new_background
+                                    update_msgs.append(f"📖 **배경 추가**")
+                                    mem_updated = True
+                                
+                                # 저장
+                                if p_updated:
+                                    domain_manager.save_participant_data(channel_id, uid, p_data)
+                                if mem_updated:
+                                    domain_manager.update_ai_memory(channel_id, uid, ai_mem)
+                                
+                                # 업데이트 메시지 출력
+                                if update_msgs:
+                                    await message.channel.send(" | ".join(update_msgs))
+                        
+                        except json.JSONDecodeError as je:
+                            logging.warning(f"[SYSTEM_UPDATE] JSON 파싱 실패: {je}")
+                        except Exception as ue:
+                            logging.warning(f"[SYSTEM_UPDATE] 업데이트 실패: {ue}")
+                        
+                        # 응답에서 system_update 블록 제거 (출력에서 숨김)
+                        response = re.sub(
+                            r'\s*```system_update\s*\n?\s*\{.*?\}\s*\n?```\s*',
+                            '',
+                            response,
+                            flags=re.DOTALL
+                        ).strip()
                 
                 # 응답 길이 로깅
                 if response:

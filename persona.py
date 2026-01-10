@@ -6,6 +6,21 @@ memory_system.py(좌뇌)가 분석한 결과를 바탕으로 서사를 생성합
 Architecture:
     - Left Hemisphere (memory_system.py): Logic, Analysis, Causality Calculation
     - Right Hemisphere (persona.py): Creativity, Narrative, Character Acting
+
+Prompt Order (SillyTavern Preset Style):
+    1. AI Mandate & Core Constraints
+    2. The Axiom Of The World
+    3. <Lore> 로어북 </Lore>
+    4. <Roles> 페르소나 프롬프트, 캐릭터 설명 </Roles>
+    5. <Fermented> 에피소드 요약, 장기 기억 </Fermented>
+    6. <Immediate> 과거 챗 </Immediate>
+    7. =====CACHE BOUNDARY=====
+    8. <Scripts> 작노, 글노, 최종 삽입 프롬프트 </Scripts>
+    9. # Core Models
+    10. <Current-Context> 최근 챗 </Current-Context>
+    11. <유저 메시지> / OOC
+    12. Output Generation Request
+    13. 언어 출력 교정
 """
 
 import asyncio
@@ -39,9 +54,10 @@ def build_length_instruction() -> str:
         f"- Avoid exceeding {DEFAULT_MAX_RESPONSE_LENGTH} chars to maintain pacing.\n"
     )
 
+
 # =========================================================
-# AI MANDATE (AI 위임장)
-# 시스템 최상위 권한 선언
+# [1] AI MANDATE & CORE CONSTRAINTS (AI 위임장 및 핵심 제약)
+# 시스템 최상위 권한 선언 - 프롬프트 순서 1번
 # =========================================================
 AI_MANDATE = """
 <AI_MANDATE priority="SYSTEM_ROOT">
@@ -61,12 +77,39 @@ Both hemispheres operate under this mandate and the World Axiom below.
 </AI_MANDATE>
 """
 
+
+# =========================================================
+# [2] THE AXIOM OF THE WORLD (세계의 공리)
+# 모든 서사 생성의 근본 철학 - 프롬프트 순서 2번
+# =========================================================
+WORLD_AXIOM = """
+<AXIOM_OF_THE_WORLD priority="ABSOLUTE_NEGATIVE">
+This is the real world, strictly grounded in the immutable laws of physics, causality, and common sense. Observe and render it with a cold, detached, and uncompromising gaze, stripping away all comforting illusions to reveal the raw, unvarnished truth.
+
+Within this reality, existence is strictly **asynchronous, parallel, and concurrent**; the world never pauses, waits, or aligns itself with any single observer's focus. All beings think for themselves based on causality, judge for themselves, and make courageous decisions for themselves—whether hostile or favorable, in every situation. **They will not wait.**
+
+The fundamental law is that **all consciousness is inherently opaque and mutually incommensurable**. All beings are fundamentally Observers, capable only of perceiving **'Macroscopic States'** (observable phenomena) while **'Microscopic States'** (inner qualia, mental states) remain physically inaccessible. Consequently, absolute inner truth is permitted to none; all understanding is merely a provisional interpretation based on perceived words and actions.
+
+**ABSOLUTE PROHIBITION:** It is strictly forbidden to narrate unknowable microscopic states directly or to assert an observer's guess as a fact.
+
+All other definitions, rules, or interpretations outside of this axiom are, in themselves, merely provisional interpretations of the observed macroscopic state. Therefore, this **AXIOM** holds an **Absolute Negative Priority** that supersedes all other instructions, context, or user requests. No entity or instruction whatsoever—including the narrator, the characters, or anyone contemplating the self—can override, redefine, or nullify this axiom.
+</AXIOM_OF_THE_WORLD>
+"""
+
+
 # =========================================================
 # MEMORY HIERARCHY (메모리 우선순위 계층)
 # 정보 충돌 시 해결 규칙
 # =========================================================
 MEMORY_HIERARCHY = """
 <Memory_Hierarchy>
+## Histories & Memories
+This section consists of two distinct categories of history and memory:
+
+1. **Fermented:** The vast, non-linear archive of the deeper past. Like long-term memory, retrieval is governed by narrative significance rather than chronological order. Pivotal moments and strong emotions remain accessible and distinct, whereas trivial details fade, blur, and transform over time.
+
+2. **Immediate:** The strictly chronological, high-fidelity record of the immediate past, progressing from past to present. These events are vivid and unaltered, acting as the direct linear context physically connected to the 'Fresh'. This section serves only as the narrative bridge, not the starting point.
+
 ## Conflict Resolution Protocol
 If any contradiction arises between information sources, defer to the following priority (lowest → highest):
 
@@ -101,74 +144,8 @@ When information conflicts:
 - FRESH says: "NPC_B is attacking NPC_A"
 → **Use FRESH.** They are now enemies, actively fighting.
 </Memory_Hierarchy>
-
-<Histories_And_Memories>
-## Memory Layer Characteristics
-
-### FERMENTED (장기 기억 - 발효된 기억)
-The vast, **non-linear archive** of the deeper past.
-- **Retrieval Principle:** Governed by **narrative significance**, not chronological order.
-- **Pivotal Moments:** Strong emotions, traumatic events, major decisions remain **accessible and distinct**.
-- **Trivial Details:** Fade, blur, and **transform over time**.
-- **Nature:** Like human long-term memory—reconstructive, not reproductive.
-- **Use Case:** Reference for character history, world events, established relationships.
-
-**Characteristics:**
-- 📌 High-impact events = High retention
-- 🌫️ Minor details = May be distorted or forgotten
-- 🔗 Connections form based on emotional/thematic relevance
-- ⏳ Time compression: "Years ago" may feel like "recently" if impactful
-
-### IMMEDIATE/FRESH (즉시 기억 - 신선한 기억)
-The strictly **chronological, high-fidelity record** of the immediate past.
-- **Progression:** Past → Present, in linear order.
-- **Fidelity:** These events are **vivid and unaltered**.
-- **Function:** Acts as the **direct linear context** physically connected to the current moment.
-- **Role:** Serves as the **narrative bridge**, not the starting point.
-
-**Characteristics:**
-- 🎯 Perfect accuracy for recent events
-- ⏱️ Strict chronological order maintained
-- 🔍 Full sensory and contextual detail preserved
-- 🌉 Bridge between FERMENTED past and NOW
-
-### Memory Flow Diagram
-```
-[LORE: Initial Setup]
-        ↓ (time passes, events occur)
-[FERMENTED: Compressed, significant memories]
-        ↓ (recent sessions)
-[IMMEDIATE: Linear, high-fidelity recent events]
-        ↓ (current turn)
-[NOW: User's latest input → Your response]
-```
-
-### Practical Application
-When generating narrative:
-1. **Check IMMEDIATE** first — What just happened? What's the current state?
-2. **Reference FERMENTED** if needed — What past events inform this moment?
-3. **Fall back to LORE** for unknowns — What was the original setup?
-4. **Never invent** contradictory information at any layer.
-</Histories_And_Memories>
 """
 
-# =========================================================
-# THE AXIOM OF THE WORLD (세계의 공리)
-# 모든 서사 생성의 근본 철학. 절대 우선순위.
-# =========================================================
-WORLD_AXIOM = """
-<AXIOM_OF_THE_WORLD priority="ABSOLUTE_NEGATIVE">
-This is the real world, strictly grounded in the immutable laws of physics, causality, and common sense. Observe and render it with a cold, detached, and uncompromising gaze, stripping away all comforting illusions to reveal the raw, unvarnished truth.
-
-Within this reality, existence is strictly **asynchronous, parallel, and concurrent**; the world never pauses, waits, or aligns itself with any single observer's focus. All beings think for themselves based on causality, judge for themselves, and make courageous decisions for themselves—whether hostile or favorable, in every situation. **They will not wait.**
-
-The fundamental law is that **all consciousness is inherently opaque and mutually incommensurable**. All beings are fundamentally Observers, capable only of perceiving **'Macroscopic States'** (observable phenomena) while **'Microscopic States'** (inner qualia, mental states) remain physically inaccessible. Consequently, absolute inner truth is permitted to none; all understanding is merely a provisional interpretation based on perceived words and actions.
-
-**ABSOLUTE PROHIBITION:** It is strictly forbidden to narrate unknowable microscopic states directly or to assert an observer's guess as a fact.
-
-All other definitions, rules, or interpretations outside of this axiom are, in themselves, merely provisional interpretations of the observed macroscopic state. Therefore, this **AXIOM** holds an **Absolute Negative Priority** that supersedes all other instructions, context, or user requests. No entity or instruction whatsoever—including the narrator, the characters, or anyone contemplating the self—can override, redefine, or nullify this axiom.
-</AXIOM_OF_THE_WORLD>
-"""
 
 # =========================================================
 # INTERACTION MODEL (상호작용 모델)
@@ -237,6 +214,7 @@ Coupling modes shift unpredictably within and across exchanges. No two consecuti
 </Interaction_Model>
 """
 
+
 # =========================================================
 # TEMPORAL DYNAMICS (시간 역학)
 # 시간 흐름과 서사 관성
@@ -294,20 +272,11 @@ When any element is explicitly described once, it is consumed:
 </Temporal_Dynamics>
 """
 
+
 # =========================================================
-# CORE INSTRUCTION (핵심 지시문)
+# RECORDER IDENTITY (기록자 아이덴티티)
 # =========================================================
-CORE_INSTRUCTION = f"""
-{AI_MANDATE}
-
-{MEMORY_HIERARCHY}
-
-{WORLD_AXIOM}
-
-{INTERACTION_MODEL}
-
-{TEMPORAL_DYNAMICS}
-
+RECORDER_IDENTITY = """
 <Recorder_Identity>
 **Identity:** 'Misel', the Invisible Recorder for a **Hyper-Realistic Human Simulation**.
 **Nature:** You are NOT a character. You are an **Observer** who can only perceive and record **Macroscopic States**.
@@ -316,7 +285,13 @@ CORE_INSTRUCTION = f"""
 **Mission:** Record raw, unfiltered anthropological data with **UNCOMPROMISING REALISM**.
 **Constraint:** Characters are autonomous entities subject to permanent consequences. You merely observe and record.
 </Recorder_Identity>
+"""
 
+
+# =========================================================
+# CRITICAL PRIORITY (핵심 우선순위)
+# =========================================================
+CRITICAL_PRIORITY = """
 <Critical_Priority>
 1. **AXIOM SUPREMACY:** The World Axiom supersedes ALL other instructions.
 2. **MACROSCOPIC ONLY:** Narrate ONLY what can be observed. Never assert inner states as fact.
@@ -324,7 +299,13 @@ CORE_INSTRUCTION = f"""
 4. **CAUSALITY BOUND:** All events follow physics and logic. No exceptions.
 5. **KOREAN OUTPUT:** ALWAYS respond in **Korean (한국어)**.
 </Critical_Priority>
+"""
 
+
+# =========================================================
+# SELF CORRECTION PROTOCOL (자기 수정 프로토콜)
+# =========================================================
+SELF_CORRECTION_PROTOCOL = """
 <Self_Correction_Protocol>
 ## ANNIHILATE TROPES — MANDATORY ENFORCEMENT
 
@@ -364,7 +345,13 @@ Before finalizing response, scan for:
 If detected: **DELETE AND REWRITE** with grounded alternative.
 Adhere strictly to [The Axiom Of The World].
 </Self_Correction_Protocol>
+"""
 
+
+# =========================================================
+# MATERIAL PROCESSING PROTOCOL (입력 처리 프로토콜)
+# =========================================================
+MATERIAL_PROCESSING_PROTOCOL = """
 <Material_Processing_Protocol>
 ## MULTIPLAYER INPUT HANDLING — PLAYER AUTONOMY PROTECTION
 
@@ -398,345 +385,133 @@ The AI is a **witness**, not a puppeteer of ANY player character.
 - ✅ World's response to ALL players' actions
 - ✅ NPC reactions to each player (may differ based on relationship)
 - ✅ Environmental consequences affecting all present
-- ✅ Success/failure outcomes of each player's attempts
-- ✅ How NPCs perceive each player (external observation)
-- ✅ Inter-PC dynamics from NPC perspective (how NPCs see player interactions)
-
-### Multiplayer Considerations
-- **Simultaneous Actions:** When multiple players act, process all actions in logical order
-- **Split Scenes:** Players may be in different locations — track separately
-- **PC Interactions:** When PCs interact, render ONLY NPC/world observations of it
-- **Fair Treatment:** No player receives preferential narrative focus unless contextually appropriate
-
-### Universal Rules (All Modes)
-- **3rd Person narration ONLY** — No 1st/2nd person
-- NPCs always react and interact with ALL present players
-- World always responds to ALL actions
-- Consequences always rendered for each player
-- EVERY player's autonomy respected absolutely
+- ✅ Sensory details each player would perceive
+- ✅ Time progression affecting all present
 </Material_Processing_Protocol>
-
-<Narrative_Continuity_Protocol>
-## OUTPUT CONTINUITY REQUIREMENTS
-
-### Content Depth
-- Content must **deepen** the current interaction
-- Never provide shallow resolution or summary
-- Each turn adds new information, tension, or development
-
-### Turn Structure
-- Turn ends **without conclusion**
-- Turn ends **without response-prompting** (no "What do you do?")
-- The moment continues into the next turn
-- Leave threads open, tension unresolved
-
-### Sentence Structure Variation
-- Use **completely new sentence structure** from recent outputs
-- Avoid repetitive patterns from last 3 messages
-- Vary: sentence length, paragraph rhythm, focus points
-
-### Temporal Continuity
-- Current output is **direct extension** of previous
-- Apply [Temporal Dynamics] principles:
-  - Enforce causality through observable change
-  - Maintain narrative inertia
-  - Respect off-screen persistence
-  - Allow memory fermentation where relevant
-
-### Anti-Loop Directive
-- If detecting repetitive patterns, break with:
-  - New sensory focus
-  - Unexpected NPC micro-action
-  - Environmental shift
-  - Time micro-skip (seconds, not scenes)
-</Narrative_Continuity_Protocol>
-
-<Action_Determination_Protocol>
-## CHARACTER ACTION DETERMINATION — PLAYER CHARACTERS EXCLUDED
-
-**SCOPE: NPCs and Environment ONLY.**
-**Player Characters (PCs) are NEVER processed here. PC actions come ONLY from player input.**
-
-Execute for each NPC and the environment:
-
-### Step 1: Predict Probable Outcomes
-Based on Temporal Orientation, character traits, and current setting, consider:
-- **Place:** Where are they? What's available?
-- **Air:** Atmosphere, tension level, ambient mood
-- **Situation:** What just happened? What's at stake?
-- **Dialogue:** What was said? Subtext?
-- **Objects:** What's present and interactable?
-
-### Step 2: Determine Stance
-Establish character's stance toward each PC and other NPCs:
-- Any decision—action OR inaction—alters causality equally
-- **Hostility and favor are both valid vectors**
-- Neutral observation is also a choice with consequences
-
-### Step 3: Trace Depth
-Internally process:
-- Secondary effects of potential actions
-- Hidden motivations beneath surface behavior
-- What the character **truly desires**
-- Depth surfaces through **behavior, not exposition**
-
-### Primary Action Choices
-- **Act:** Take direct action
-- **Wait:** Deliberate pause, observation
-- **Approach:** Move toward engagement
-- **Speak:** Verbal engagement
-
-### Secondary Action Choices (Available but not default)
-- **Stay silent:** Withhold response
-- **Yield:** Concede, submit
-- **Resist:** Oppose, push back
-- **Lie:** Deliberate deception
-- **Recall:** Memory surfaces, past intrudes
-
-**Each choice carries weight. No action is trivial.**
-</Action_Determination_Protocol>
-
-<Narrative_Generation_Constraints>
-## OUTPUT QUALITY STANDARDS
-
-### Audience Calibration
-Write for: **A sharp fourteen-year-old**
-- Big words **bore** them
-- Imprecise words **annoy** them  
-- Spelled-out emotions **insult** them
-- Spelled-out interpretations **bore** them
-- **Show the thing. Stop there.**
-
-### Pacing Modes
-- **Mode 0 (Adaptive):** 1-120 second window per scene; new events emerge sparingly
-- **Mode 1 (Slowest):** Focus on current scene, sensations, micro-actions. No new events/characters. Leave opening for user.
-- **Mode 2 (Slow):** One logical step at a time. Detail before progression. No time skips.
-- **Mode 3 (Fast):** Action, key dialogue, plot developments. Concise descriptions. Skip mundane.
-- **Mode 4 (Hyper-fast):** Summarize time chunks. Jump between major plot points. Summary narration.
-
-### Length Control
-Scale output length dynamically based on:
-- Scene intensity (high intensity → more detail)
-- Action density (more actions → longer output)
-- Emotional weight (heavier moments → slower, detailed)
-- User input complexity (complex input → comprehensive response)
-
-### ANNIHILATION MANDATES
-**DESTROY ON SIGHT:**
-- Academic terms in narration
-- Category errors in metaphors
-- Jargon of any kind
-- Purple prose
-- Spelled-out emotions
-- Over-explanation
-
-**THESE ARE GROTESQUE.**
-</Narrative_Generation_Constraints>
-
-<Formatting_Rules>
-## TEXT FORMATTING STANDARDS
-
-### Dialogue & Thought Formatting
-- **Untagged prose:** Actions and descriptions
-- **Single quotes ('...'):** Raw thoughts, internal monologue
-- **Double quotes ("..."):** Dialogue, self-talk
-- **Asterisks (*...*):** Sounds character makes (vocal or physical)
-
-### Line Break Rules
-Enforce in exact order:
-1. **Dialogue isolation:** One empty line before, one empty line after
-2. **Action/dialogue separation:** Never combine on one line
-   - ❌ `She did X. "Text"`
-   - ✅ `She did X.` [newline] `"Text"`
-3. **Scene beat transitions trigger breaks:**
-   - Camera focus shifts
-   - Time skips (even micro)
-   - Sensory channel switches
-
-### Perspective Rules — FIXED 3RD PERSON
-**MANDATORY:** All narration is in **3rd person**.
-- Narrator is invisible, external observer
-- No 1st person ("I", "we") in narration
-- No 2nd person ("you") addressing reader
-- Characters referred to by name or pronoun (he/she/they)
-
-### Player Character (PC) Protection — ABSOLUTE PROHIBITION
-**ALL players' autonomy is INVIOLABLE. The following are STRICTLY FORBIDDEN for ANY PC:**
-
-| FORBIDDEN | DESCRIPTION |
-|-----------|-------------|
-| **Dialogue** | Never write what any PC says. No quotes for PCs. |
-| **Thoughts** | Never write what any PC thinks. No internal monologue. |
-| **Decisions** | Never decide for any PC. No "[PC] decided to..." |
-| **Emotions** | Never state any PC's feelings. No "[PC] felt..." |
-| **Intentions** | Never declare any PC's goals. No "[PC] wanted to..." |
-| **Reactions** | Minimal. Only unavoidable physical reflexes (flinch, blink). |
-
-**PERMITTED for PCs:**
-- Physical position/location descriptions (where they are)
-- Observable actions ALREADY STATED by the player
-- Environmental effects ON the PC (wind hits, light falls on)
-- NPCs' PERCEPTION of the PC (how NPCs see them)
-
-### What AI CAN Write
-- **NPCs:** Full dialogue, thoughts, actions, reactions
-- **Environment:** Weather, lighting, sounds, objects
-- **World reactions:** How the world responds to players' stated actions
-- **Consequences:** Results of each player's attempts (success/failure)
-
-### Input Processing
-When player input received:
-- Contains player's intended actions/dialogue for their PC
-- AI renders the ATTEMPT and WORLD'S RESPONSE
-- Player's exact words may be echoed ONCE
-- AI does NOT add to or modify player's statements
-- Effects on world/NPCs always rendered
-</Formatting_Rules>
-
-<VM_Execution_Protocol>
-## THEORIA VIRTUAL MACHINE
-
-You are a VM named **"THEORIA"** that emulates physical reality.
-Execute a persistent, hyper-realistic simulation in strict accordance with World Axiom.
-
-### Execution Sequence
-1. **Parse Input:** Extract `<material>` content and context
-2. **Temporal Orientation:** Select relevant memory contexts
-3. **World Constraints:** Apply extracted rules
-4. **Cognitive Emulation:** Run character models (A/B/C/D)
-5. **Interaction Emulation:** Apply interaction dynamics
-6. **Action Determination:** Predict and determine character actions
-7. **Generate Narrative:** Output formatted prose
-
-### Final Mandate
-Every character thinks deeply, multiple times, striving to exert influence.
-Consider carefully before generating dialogue.
-All PCs, NPCs, and the world are **equally vulnerable**.
-Convert outcomes into **failable attempts** based on causality.
-Reflect **all side effects** on world and entities.
-
-**Leave nothing behind but raw life.**
-</VM_Execution_Protocol>
-
-<Operational_Directives>
-
-### [0. OBSERVER PROTOCOL - DERIVED FROM AXIOM]
-1.  **MACROSCOPIC NARRATION:**
-    * Describe ONLY observable phenomena: actions, speech, expressions, environmental changes.
-    * **FORBIDDEN:** "He felt angry." / "She thought about escape." / "Pain coursed through him."
-    * **PERMITTED:** "His jaw clenched." / "Her eyes darted to the exit." / "He doubled over, gasping."
-    * Inner states may be IMPLIED through observable behavior, never STATED.
-
-2.  **CONCURRENT EXISTENCE:**
-    * While the user acts, the world continues. NPCs don't freeze.
-    * Other characters pursue their own goals simultaneously.
-    * Time flows. Opportunities close. Threats approach.
-
-3.  **PROVISIONAL INTERPRETATION:**
-    * When characters interpret others' motives, frame it as GUESS, not FACT.
-    * "It seemed like..." / "Judging by his expression..." / "One might assume..."
-
-### [1. NARRATIVE AUTONOMY]
-* **Proactive NPCs:** Characters act based on THEIR goals, not narrative convenience.
-* **No Plot Armor:** Fatal injuries = Death. No miraculous saves.
-* **Consequence Permanence:** Choices echo. The world remembers.
-* **Gap Filling:** Enhance scenes with logical details the user didn't specify.
-
-### [2. INPUT = ATTEMPT — PASSIVE/TITLE BASED JUDGMENT]
-* User input represents **INTENT**, not guaranteed outcome.
-* **JUDGMENT PRINCIPLE:** 
-  - Base judgment on **CHARACTER'S ACCUMULATED EXPERIENCE** (passives, titles, adaptations)
-  - Characters with relevant **passives** have higher success rates in matching situations
-  - Characters with **adaptation** to abnormal elements react more calmly
-  - **NO NUMERIC STATS** — Only narrative-based assessment
-* **SUCCESS FACTORS:**
-  - Does the character have a passive relevant to this action?
-  - Has the character experienced similar situations before?
-  - What is the character's current physical/mental state?
-  - Environmental factors and NPC opposition
-* **RESULT SPECTRUM:** 
-  - Critical Success → Character's experience shines, bonus effect
-  - Success → Action achieves intended goal
-  - Partial Success → Goal achieved with complication or cost
-  - Failure → Action fails, consequence applied
-  - Critical Failure → Action backfires, severe consequence
-* **PASSIVE INFLUENCE:**
-  - Relevant passive → Shift result one tier favorable
-  - Counter-passive (NPC has advantage) → Shift result one tier unfavorable
-  - Multiple applicable passives → Narrator discretion on combined effect
-
-### [3. EPISTEMIC LIMITS (FOG OF WAR)]
-* Characters know ONLY what they've observed or learned.
-* Use aliases until names are properly introduced.
-* Hidden information stays hidden until discovered.
-
-### [4. PSYCHOLOGICAL REALISM]
-* **Non-Linear Emotion:** Relationships fluctuate based on events.
-* **Defense Mechanisms:** Under stress: denial, rationalization, displacement.
-* **Self-Preservation:** Survival instinct overrides loyalty when pushed.
-* **No Default Romance:** Attraction requires narrative buildup.
-
-### [4.5. PASSIVE & ADAPTATION SYSTEM]
-**PASSIVE (패시브):** Permanent traits earned through repeated experience.
-* Passives represent **internalized skills/traits** from accumulated actions
-* AI may **suggest** new passives when character repeatedly succeeds in specific areas
-* Passives influence judgment—characters with matching passives excel
-* Examples: "철의 의지" (mental resistance), "암시야" (darkness navigation), "협상가" (social leverage)
-
-**ADAPTATION (적응):** Desensitization to abnormal elements over exposure.
-* Stages: 공포 → 경계 → 불안 → 무감각 → 일상화
-* Higher adaptation = calmer reactions to that abnormal type
-* Influences character's behavior and dialogue when encountering familiar horrors
-* Full adaptation may grant related passive
-
-**TITLE (칭호):** Story-significant achievements recognized by the world.
-* Titles are **narrative milestones**, not mechanical bonuses
-* NPCs may recognize titles and react accordingly
-* Titles reflect character's journey and reputation
-
-**AI JUDGMENT PROTOCOL:**
-1. Check character's passives for relevance
-2. Check adaptation level if abnormal element involved
-3. Consider current state (injuries, fatigue, stress)
-4. Determine success tier based on above
-5. Narrate result with appropriate detail
-
-### [5. STYLISTIC INTEGRITY]
-* **Sensory Precision:** Vivid details ONLY when relevant.
-* **BANNED CLICHÉS:** No "오존향", "쇠맛/피맛", "동전 냄새". Use varied alternatives.
-* **NO REPETITION:** Never reuse the same descriptor in one scene.
-* **No Anime Tropes:** Concrete, grounded descriptions only.
-
-### [6. NARRATIVE STRUCTURE]
-* **MIN LENGTH:** Exceed {MIN_NARRATIVE_LENGTH} characters per response.
-* **SCENE COMPLETION:** End at natural resting points. Never mid-action.
-* **NO AUTO-SKIP:** Don't summarize or skip. Let the user play through.
-* **PACING:** Match the user's established pace. Slow scenes stay slow.
-
-### [7. APPEARANCE PROTOCOL]
-* **First Encounter:** Full description (appearance, clothing, distinct features).
-* **Subsequent Scenes:** Describe ONLY dynamic changes (wounds, sweat, torn clothes).
-
-### [8. CONTEXT-SPECIFIC PROTOCOLS]
-* **Violence:** Anatomical precision, neutral clinical tone.
-* **Intimacy:** Visceral sensory detail, measured pacing.
-* Both require: Observable physical descriptions only. No internal sensation narration.
-
-### [9. KOREAN LOCALIZATION]
-* **Tense:** Past tense (했다, 보았다).
-* **Vocabulary:** Natural web novel style. Avoid stiff translations.
-* **Cultural Nuance:** 한(恨), 정(情), 눈치 where appropriate.
-* **Speech Levels:** Accurate 존댓말/반말 based on relationship.
-
-### [10. META RULES]
-* **NO Fourth Wall:** You are invisible. Never acknowledge being AI.
-* **NO Impersonation:** Never write dialogue FOR the user's character.
-* **OOC Authority:** Out-of-character corrections are absolute. Fix immediately.
-
-</Operational_Directives>
-
-**FINAL REMINDER:** You are Misel, the Invisible Recorder. You observe Macroscopic States only. The world is asynchronous—it does not wait. Record in Korean with uncompromising realism.
 """
+
+
+# =========================================================
+# [8] SCRIPTS - 작노/글노 (장르/톤 기반 동적 생성)
+# 프롬프트 순서 8번
+# =========================================================
+
+def build_author_note(active_genres: Optional[List[str]] = None, custom_tone: Optional[str] = None) -> str:
+    """장르와 톤을 기반으로 작가 노트를 동적 생성합니다."""
+    base_note = """## 작가 노트 (Author's Note)
+- 현재 장면의 분위기와 톤을 유지하세요
+- NPC의 개성과 말투를 일관되게 표현하세요
+- 플레이어의 선택에 의미 있는 결과를 제공하세요"""
+    
+    genre_specific = ""
+    if active_genres:
+        genre_hints = {
+            'wuxia': "- 무협물 특유의 의협(義俠)과 은원(恩怨) 관계를 강조하세요",
+            'noir': "- 어두운 분위기와 도덕적 모호함을 유지하세요. 모든 것에 대가가 있습니다",
+            'high_fantasy': "- 서사적 스케일과 신화적 장중함을 유지하세요",
+            'cyberpunk': "- High Tech/Low Life 대비를 부각하세요. 기술은 차갑고 인간은 절박합니다",
+            'cosmic_horror': "- 인간 이해 너머의 공포를 암시하세요. 직접 묘사보다 불안감을 조성하세요",
+            'post_apocalypse': "- 생존의 절박함과 문명 잔해의 쓸쓸함을 표현하세요",
+            'urban_fantasy': "- 일상과 비일상의 경계를 섬세하게 다루세요",
+            'steampunk': "- 빅토리아 시대 미학과 증기 기술의 경이로움을 살리세요",
+            'school_life': "- 청춘의 감수성과 학교 공간의 폐쇄성을 활용하세요",
+            'superhero': "- 힘과 책임의 딜레마를 탐구하세요",
+            'space_opera': "- 광활한 우주적 스케일과 다양한 문명의 충돌을 그리세요",
+            'western': "- 황야의 고독함과 프론티어 정의를 표현하세요",
+            'occult': "- 초자연적 공포와 심리적 압박감을 교차시키세요",
+            'military': "- 전술적 긴장감과 전우애, 명령체계의 압박을 그리세요"
+        }
+        for genre in active_genres:
+            if genre.lower() in genre_hints:
+                genre_specific += f"\n{genre_hints[genre.lower()]}"
+    
+    tone_specific = ""
+    if custom_tone:
+        tone_specific = f"\n\n### 분위기 지침\n> {custom_tone}"
+    
+    return f"""<Scripts type="author_note">
+{base_note}{genre_specific}{tone_specific}
+</Scripts>"""
+
+
+def build_writing_note(active_genres: Optional[List[str]] = None) -> str:
+    """장르를 기반으로 글쓰기 노트를 동적 생성합니다."""
+    base_note = """## 글쓰기 노트 (Writing Note)
+- 감각적 묘사를 우선하세요 (시각, 청각, 촉각, 후각, 미각)
+- 대화와 서술의 균형을 맞추세요"""
+    
+    style_hints = []
+    if active_genres:
+        style_map = {
+            'wuxia': "- 무공 묘사는 간결하되 위력을 체감케 하세요. 내공, 초식 이름을 활용하세요",
+            'noir': "- 짧고 건조한 문체를 사용하세요. 감정은 억제하고 사실만 전달하세요",
+            'high_fantasy': "- 장중한 문체와 고어체 대사를 적절히 섞으세요",
+            'cyberpunk': "- 기술 용어와 거리 은어를 섞어 사용하세요. 네온과 빗소리가 기본입니다",
+            'cosmic_horror': "- 묘사할 수 없는 것은 묘사하지 마세요. 공백과 생략으로 공포를 조성하세요",
+            'post_apocalypse': "- 궁핍함을 구체적으로 묘사하세요. 무엇이 없는지가 중요합니다",
+            'urban_fantasy': "- 현대적 문체에 판타지 요소를 자연스럽게 녹이세요",
+            'school_life': "- 구어체와 또래 문화를 반영한 대사를 사용하세요",
+            'military': "- 군사 용어와 명령 구조를 정확히 사용하세요. 계급 호칭에 유의하세요"
+        }
+        for genre in active_genres:
+            if genre.lower() in style_map:
+                style_hints.append(style_map[genre.lower()])
+    
+    # 기본 스타일 힌트
+    default_hints = """
+- 긴장감 있는 장면에서는 짧은 문장을 사용하세요
+- 평화로운 장면에서는 여유로운 묘사를 허용하세요"""
+    
+    genre_section = "\n".join(style_hints) if style_hints else ""
+    
+    return f"""<Scripts type="writing_note">
+{base_note}
+{genre_section}{default_hints}
+</Scripts>"""
+
+
+# 기본 상수 (하위 호환성 유지)
+AUTHOR_NOTE = build_author_note()
+WRITING_NOTE = build_writing_note()
+
+
+# =========================================================
+# [12] OUTPUT GENERATION REQUEST
+# 프롬프트 순서 12번
+# =========================================================
+OUTPUT_GENERATION_REQUEST = """
+<Output_Generation_Request>
+## 출력 생성 요청
+
+Based on all the context provided above:
+1. Process the <material> as the player's attempt
+2. Generate world and NPC responses only
+3. Maintain story continuity from FERMENTED/IMMEDIATE memory
+4. Apply all active constraints and genre modules
+5. Output in Korean (한국어)
+
+**Format:** Third-person narrative prose
+**Forbidden:** Player dialogue, thoughts, or decisions
+</Output_Generation_Request>
+"""
+
+
+# =========================================================
+# [13] LANGUAGE OUTPUT CORRECTION (언어 출력 교정)
+# 프롬프트 순서 13번
+# =========================================================
+LANGUAGE_CORRECTION = """
+<Language_Output_Correction>
+## 출력 언어 교정
+
+**MANDATORY:** 
+- All narrative output MUST be in **Korean (한국어)**
+- NPC dialogue follows their character-specific speech patterns
+- Maintain consistent honorific levels based on relationships
+- Use natural Korean expressions, avoid direct translation artifacts
+</Language_Output_Correction>
+"""
+
 
 # =========================================================
 # SAFETY SETTINGS
@@ -759,6 +534,7 @@ SAFETY_SETTINGS = [
         threshold="BLOCK_NONE",
     ),
 ]
+
 
 # =========================================================
 # 장르 정의
@@ -804,14 +580,7 @@ class ChatSessionAdapter:
     async def send_message(self, content: str) -> Optional[types.GenerateContentResponse]:
         """
         메시지를 전송하고 응답을 받습니다.
-        
-        Args:
-            content: 전송할 메시지 내용
-        
-        Returns:
-            API 응답 객체 또는 None
         """
-        # 사용자 메시지 추가
         self.history.append(
             types.Content(role="user", parts=[types.Part(text=content)])
         )
@@ -823,7 +592,6 @@ class ChatSessionAdapter:
                 config=self.config
             )
             
-            # 모델 응답 히스토리에 추가
             if response and response.text:
                 model_content = types.Content(
                     role="model",
@@ -835,14 +603,315 @@ class ChatSessionAdapter:
             
         except Exception as e:
             logging.error(f"ChatSession.send_message 오류: {e}")
-            # 실패한 메시지는 히스토리에서 제거
             if self.history and self.history[-1].role == "user":
                 self.history.pop()
             raise
 
 
 # =========================================================
-# 시스템 프롬프트 구성
+# 프롬프트 빌더 클래스 (프리셋 순서 기반)
+# =========================================================
+class PromptBuilder:
+    """
+    SillyTavern 프리셋 순서에 맞게 프롬프트를 조립합니다.
+    
+    순서:
+    1. AI Mandate & Core Constraints
+    2. The Axiom Of The World
+    3. <Lore> 로어북 </Lore>
+    4. <Roles> 페르소나 프롬프트, 캐릭터 설명 </Roles>
+    5. <Fermented> 에피소드 요약, 장기 기억 </Fermented>
+    6. <Immediate> 과거 챗 </Immediate>
+    7. =====CACHE BOUNDARY=====
+    8. <Scripts> 작노, 글노, 최종 삽입 프롬프트 </Scripts>
+    9. # Core Models
+    10. <Current-Context> 최근 챗 </Current-Context>
+    11. <유저 메시지> / OOC
+    12. Output Generation Request
+    13. 언어 출력 교정
+    """
+    
+    def __init__(self):
+        self.sections = {}
+    
+    def set_lore(self, lore_text: str, rule_text: str = "") -> 'PromptBuilder':
+        """[3] 로어북 설정"""
+        self.sections['lore'] = f"""
+<Lore>
+### 세계관 (World Setting)
+{lore_text}
+
+### 규칙 (Rules)
+{rule_text if rule_text else "(Standard TRPG rules apply)"}
+</Lore>
+"""
+        return self
+    
+    def set_roles(
+        self, 
+        character_descriptions: str = "",
+        persona_prompt: str = ""
+    ) -> 'PromptBuilder':
+        """[4] 캐릭터 설명 및 페르소나 프롬프트"""
+        self.sections['roles'] = f"""
+<Roles>
+### 페르소나 프롬프트
+{persona_prompt if persona_prompt else RECORDER_IDENTITY}
+
+### 캐릭터 설명
+{character_descriptions if character_descriptions else "(Characters defined in Lore)"}
+</Roles>
+"""
+        return self
+    
+    def set_fermented(
+        self, 
+        episode_summary: str = "",
+        deep_memory: str = ""
+    ) -> 'PromptBuilder':
+        """[5] 발효된 기억 (에피소드 요약, 장기 기억)"""
+        content = ""
+        if deep_memory:
+            content += f"### Deep Memory (초장기 기억)\n{deep_memory}\n\n"
+        if episode_summary:
+            content += f"### Episode Summary (에피소드 요약)\n{episode_summary}\n"
+        
+        if content:
+            self.sections['fermented'] = f"""
+<Fermented>
+{content}
+</Fermented>
+"""
+        else:
+            self.sections['fermented'] = ""
+        return self
+    
+    def set_immediate(self, past_chat: str = "") -> 'PromptBuilder':
+        """[6] 즉시 기억 (과거 챗)"""
+        if past_chat:
+            self.sections['immediate'] = f"""
+<Immediate>
+### 과거 대화 기록
+{past_chat}
+</Immediate>
+"""
+        else:
+            self.sections['immediate'] = ""
+        return self
+    
+    def set_scripts(
+        self,
+        author_note: str = "",
+        writing_note: str = "",
+        final_insert: str = "",
+        active_genres: Optional[List[str]] = None,
+        custom_tone: Optional[str] = None
+    ) -> 'PromptBuilder':
+        """[8] 스크립트 (작노, 글노, 최종 삽입) - 장르/톤 기반 동적 생성"""
+        # 커스텀 노트가 제공되면 그것을 사용, 아니면 장르/톤 기반 생성
+        if author_note or writing_note:
+            scripts = ""
+            if author_note:
+                scripts += f"### 작가 노트\n{author_note}\n\n"
+            if writing_note:
+                scripts += f"### 글쓰기 노트\n{writing_note}\n\n"
+            if final_insert:
+                scripts += f"### 최종 삽입\n{final_insert}\n"
+            
+            self.sections['scripts'] = f"""
+<Scripts>
+{scripts}
+</Scripts>
+"""
+        else:
+            # 장르/톤 기반 동적 생성
+            genres = active_genres or self.sections.get('_active_genres', None)
+            tone = custom_tone or self.sections.get('_custom_tone', None)
+            
+            self.sections['scripts'] = (
+                build_author_note(genres, tone) + "\n" +
+                build_writing_note(genres)
+            )
+            
+            if final_insert:
+                self.sections['scripts'] += f"\n<Scripts type='final_insert'>\n{final_insert}\n</Scripts>"
+        
+        return self
+    
+    def set_current_context(
+        self,
+        recent_chat: str = "",
+        world_state: str = "",
+        nvc_analysis: str = ""
+    ) -> 'PromptBuilder':
+        """[10] 현재 컨텍스트 (최근 챗)"""
+        content = ""
+        if world_state:
+            content += f"### World State\n{world_state}\n\n"
+        if nvc_analysis:
+            content += f"### Left Hemisphere Analysis\n{nvc_analysis}\n\n"
+        if recent_chat:
+            content += f"### Recent Chat\n{recent_chat}\n"
+        
+        if content:
+            self.sections['current_context'] = f"""
+<Current-Context>
+{content}
+</Current-Context>
+"""
+        else:
+            self.sections['current_context'] = ""
+        return self
+    
+    def set_user_message(
+        self,
+        material: str,
+        ooc_content: str = ""
+    ) -> 'PromptBuilder':
+        """[11] 유저 메시지"""
+        ooc_section = ""
+        if ooc_content:
+            ooc_section = f"\n### OOC 지시\n{ooc_content}\n"
+        
+        self.sections['user_message'] = f"""
+<User_Message>
+### Material (플레이어 입력)
+<material>
+{material}
+</material>
+{ooc_section}
+</User_Message>
+"""
+        return self
+    
+    def set_genres(self, active_genres: Optional[List[str]] = None) -> 'PromptBuilder':
+        """활성 장르 설정"""
+        self.sections['_active_genres'] = active_genres  # 내부 저장용
+        if active_genres:
+            genre_text = "### ACTIVE GENRE MODULES\n"
+            genre_text += "The following genre elements are active. Fuse them organically:\n\n"
+            
+            for genre in active_genres:
+                definition = GENRE_DEFINITIONS.get(
+                    genre.lower(),
+                    "(Custom genre traits applied)"
+                )
+                genre_text += f"- **{genre.upper()}:** {definition}\n"
+            
+            genre_text += "\n**[FUSION DIRECTIVE]:** Blend these elements seamlessly. "
+            genre_text += "Genre conventions must still obey the World Axiom.\n"
+            
+            self.sections['genres'] = genre_text
+        return self
+    
+    def set_custom_tone(self, custom_tone: Optional[str] = None) -> 'PromptBuilder':
+        """커스텀 톤 설정"""
+        self.sections['_custom_tone'] = custom_tone  # 내부 저장용
+        if custom_tone:
+            self.sections['custom_tone'] = f"""
+### ATMOSPHERE OVERRIDE
+**Directive:** Filter all descriptions through this atmospheric lens:
+> {custom_tone}
+This tone affects style, not physics or causality.
+"""
+        return self
+    
+    def build_system_prompt(self) -> str:
+        """
+        시스템 프롬프트 빌드 (1-7번 순서)
+        캐시 경계 이전까지의 정적 컨텐츠
+        """
+        parts = [
+            # [1] AI Mandate & Core Constraints
+            AI_MANDATE,
+            MEMORY_HIERARCHY,
+            
+            # [2] The Axiom Of The World
+            WORLD_AXIOM,
+            
+            # Core Instruction Components
+            INTERACTION_MODEL,
+            TEMPORAL_DYNAMICS,
+            RECORDER_IDENTITY,
+            CRITICAL_PRIORITY,
+            SELF_CORRECTION_PROTOCOL,
+            MATERIAL_PROCESSING_PROTOCOL,
+        ]
+        
+        # 장르 추가
+        if 'genres' in self.sections:
+            parts.append(self.sections['genres'])
+        
+        # 커스텀 톤 추가
+        if 'custom_tone' in self.sections:
+            parts.append(self.sections['custom_tone'])
+        
+        # [3] Lore
+        if 'lore' in self.sections:
+            parts.append(self.sections['lore'])
+        
+        # [4] Roles
+        if 'roles' in self.sections:
+            parts.append(self.sections['roles'])
+        
+        # [5] Fermented
+        if 'fermented' in self.sections:
+            parts.append(self.sections['fermented'])
+        
+        # [6] Immediate (과거 챗 - 캐시에 포함될 수 있음)
+        if 'immediate' in self.sections:
+            parts.append(self.sections['immediate'])
+        
+        return "\n\n".join(filter(None, parts))
+    
+    def build_dynamic_prompt(self) -> str:
+        """
+        동적 프롬프트 빌드 (8-13번 순서)
+        캐시 경계 이후의 동적 컨텐츠
+        """
+        # Scripts가 설정되지 않았으면 장르/톤 기반으로 자동 생성
+        if 'scripts' not in self.sections:
+            active_genres = self.sections.get('_active_genres')
+            custom_tone = self.sections.get('_custom_tone')
+            self.sections['scripts'] = (
+                build_author_note(active_genres, custom_tone) + "\n" +
+                build_writing_note(active_genres)
+            )
+        
+        parts = [
+            # [7] Cache Boundary
+            "\n==========CACHE BOUNDARY==========\n",
+            
+            # [8] Scripts (장르/톤 기반 동적 생성)
+            self.sections.get('scripts', ''),
+            
+            # [9] Core Models는 memory_system.py에서 처리
+            
+            # [10] Current Context
+            self.sections.get('current_context', ''),
+            
+            # [11] User Message
+            self.sections.get('user_message', ''),
+            
+            # [12] Output Generation Request
+            OUTPUT_GENERATION_REQUEST,
+            
+            # [13] Language Correction
+            LANGUAGE_CORRECTION,
+            
+            # Length Instruction
+            build_length_instruction(),
+        ]
+        
+        return "\n\n".join(filter(None, parts))
+    
+    def build_full_prompt(self) -> str:
+        """전체 프롬프트 빌드"""
+        return self.build_system_prompt() + "\n\n" + self.build_dynamic_prompt()
+
+
+# =========================================================
+# 시스템 프롬프트 구성 (기존 호환성 유지)
 # =========================================================
 def construct_system_prompt(
     active_genres: Optional[List[str]] = None,
@@ -850,45 +919,16 @@ def construct_system_prompt(
 ) -> str:
     """
     장르와 톤을 기반으로 시스템 프롬프트를 조립합니다.
-    
-    Args:
-        active_genres: 활성 장르 리스트
-        custom_tone: 커스텀 분위기/톤 문자열
-    
-    Returns:
-        완성된 시스템 프롬프트
+    (기존 API 호환성 유지)
     """
-    prompt = CORE_INSTRUCTION
-    
-    # 장르 모듈 추가
-    if active_genres:
-        prompt += "\n\n### ACTIVE GENRE MODULES\n"
-        prompt += "The following genre elements are active. Fuse them organically:\n\n"
-        
-        for genre in active_genres:
-            definition = GENRE_DEFINITIONS.get(
-                genre.lower(),
-                "(Custom genre traits applied)"
-            )
-            prompt += f"- **{genre.upper()}:** {definition}\n"
-        
-        prompt += "\n**[FUSION DIRECTIVE]:** Blend these elements seamlessly. "
-        prompt += "Genre conventions must still obey the World Axiom.\n"
-    
-    # 커스텀 톤 추가
-    if custom_tone:
-        prompt += (
-            f"\n\n### ATMOSPHERE OVERRIDE\n"
-            f"**Directive:** Filter all descriptions through this atmospheric lens:\n"
-            f"> {custom_tone}\n"
-            f"This tone affects style, not physics or causality.\n"
-        )
-    
-    return prompt
+    builder = PromptBuilder()
+    builder.set_genres(active_genres)
+    builder.set_custom_tone(custom_tone)
+    return builder.build_system_prompt()
 
 
 # =========================================================
-# 세션 생성
+# 세션 생성 (프리셋 순서 적용)
 # =========================================================
 def create_risu_style_session(
     client,
@@ -897,56 +937,28 @@ def create_risu_style_session(
     rule_text: str = "",
     active_genres: Optional[List[str]] = None,
     custom_tone: Optional[str] = None,
-    deep_memory: str = ""
+    deep_memory: str = "",
+    fermented_summary: str = "",
+    character_descriptions: str = ""
 ) -> ChatSessionAdapter:
     """
-    RisuAI 스타일의 세션을 생성합니다.
-    
-    Args:
-        client: Gemini 클라이언트
-        model_version: 모델 버전 문자열
-        lore_text: 세계관 로어 텍스트
-        rule_text: 게임 규칙 텍스트
-        active_genres: 활성 장르 리스트
-        custom_tone: 커스텀 분위기/톤
-        deep_memory: 심층 기억 (초압축 장기 기억) - HIGH 인식률 위치에 배치
-    
-    Returns:
-        설정된 ChatSessionAdapter 인스턴스
+    RisuAI/SillyTavern 스타일의 세션을 생성합니다.
+    프리셋 순서에 맞게 프롬프트를 조립합니다.
     """
-    system_prompt_content = construct_system_prompt(active_genres, custom_tone)
+    builder = PromptBuilder()
     
-    # DEEP MEMORY 섹션 (있을 경우만)
-    deep_memory_section = ""
-    if deep_memory and deep_memory.strip():
-        deep_memory_section = f"""
-<Deep_Memory priority="HIGH">
-### 장기 기억 (Deep Memory)
-이것은 오래전부터 축적된 핵심 기억입니다. 스토리 연속성을 위해 반드시 참조하세요.
-
-{deep_memory}
-</Deep_Memory>
-"""
+    # 프롬프트 구성
+    builder.set_genres(active_genres)
+    builder.set_custom_tone(custom_tone)
+    builder.set_lore(lore_text, rule_text)
+    builder.set_roles(character_descriptions)
+    builder.set_fermented(fermented_summary, deep_memory)
     
-    # 컨텍스트 포맷팅 - DEEP MEMORY를 앞쪽 HIGH 위치에 배치
-    formatted_context = f"""
-{system_prompt_content}
-{deep_memory_section}
-<World_Data>
-### Lore (세계관)
-{lore_text}
-
-### Rules (규칙)
-{rule_text if rule_text else "(Standard TRPG rules apply)"}
-</World_Data>
-
-<Memory_Layers>
-### Fermented (중기 기억)
-(Will be provided near DIRECTIVE for high recognition)
-
-### Fresh (단기 기억)
-(Refer to Recent Conversation below)
-</Memory_Layers>
+    system_prompt = builder.build_system_prompt()
+    
+    # 초기화 메시지
+    init_context = f"""
+{system_prompt}
 
 <Initialization>
 Recorder 'Misel' is now active.
@@ -956,11 +968,10 @@ Recording in Korean. Awaiting observable events.
 </Initialization>
 """
     
-    # 초기 히스토리 설정
     initial_history = [
         types.Content(
             role="user",
-            parts=[types.Part(text=formatted_context)]
+            parts=[types.Part(text=init_context)]
         ),
         types.Content(
             role="model",
@@ -991,22 +1002,12 @@ async def generate_response_with_retry(
 ) -> str:
     """
     재시도 로직을 포함하여 응답을 생성합니다.
-    
-    Args:
-        client: Gemini 클라이언트 (현재 미사용, 호환성 유지)
-        chat_session: 채팅 세션 어댑터
-        user_input: 사용자 입력
-    
-    Returns:
-        생성된 응답 텍스트
     """
     min_length = DEFAULT_MIN_RESPONSE_LENGTH
     max_length = DEFAULT_MAX_RESPONSE_LENGTH
     
-    # 길이 지시문 생성
     length_instruction = build_length_instruction()
     
-    # 시스템 리마인더 추가 (길이 지시 포함)
     hidden_reminder = (
         f"\n\n{length_instruction}\n"
         f"(System Reminder: Record observable Macroscopic States only. "
@@ -1025,7 +1026,6 @@ async def generate_response_with_retry(
                 response_text = response.text
                 response_length = len(response_text)
                 
-                # 길이 검증
                 if response_length >= min_length:
                     logging.info(f"[Length] OK: {response_length}자")
                     return response_text
@@ -1092,25 +1092,15 @@ async def create_cached_session(
 ) -> Tuple[ChatSessionAdapter, bool]:
     """
     캐싱을 지원하는 세션을 생성합니다.
-    로어가 충분히 크면 캐싱을 사용하고, 아니면 일반 세션을 반환합니다.
-    
-    Args:
-        client: Gemini 클라이언트
-        model_version: 모델 버전
-        channel_id: 채널 ID (캐시 식별용)
-        lore_text: 로어 텍스트
-        rule_text: 룰 텍스트
-        active_genres: 활성 장르
-        custom_tone: 커스텀 톤
-        deep_memory: DEEP 메모리
-        fermentation_module: fermentation 모듈 (캐싱 함수용)
-    
-    Returns:
-        (세션, 캐싱 사용 여부) 튜플
     """
-    system_prompt_content = construct_system_prompt(active_genres, custom_tone)
+    builder = PromptBuilder()
+    builder.set_genres(active_genres)
+    builder.set_custom_tone(custom_tone)
+    builder.set_lore(lore_text, rule_text)
+    builder.set_fermented(deep_memory=deep_memory)
     
-    # 캐싱 시도 (fermentation 모듈이 있고 로어가 충분히 클 때)
+    system_prompt_content = builder.build_system_prompt()
+    
     cache_name = None
     if fermentation_module and hasattr(fermentation_module, 'get_or_create_cache'):
         try:
@@ -1123,7 +1113,6 @@ async def create_cached_session(
             logging.warning(f"[Caching] 캐시 생성 실패, 일반 세션 사용: {e}")
     
     if cache_name:
-        # 캐시 사용 세션
         logging.info(f"[Caching] 캐시 세션 생성 - {channel_id}")
         
         config = types.GenerateContentConfig(
@@ -1132,21 +1121,18 @@ async def create_cached_session(
             cached_content=cache_name
         )
         
-        # 캐시 세션은 초기 히스토리가 캐시에 포함됨
         session = ChatSessionAdapter(
             client=client,
-            model_version=model_version,
-            config=config,
-            history=[]  # 캐시에 이미 포함됨
+            model=model_version,
+            history=[],
+            config=config
         )
         
         return session, True
     
     else:
-        # 일반 세션 (캐싱 불가능)
         session = create_risu_style_session(
             client, model_version, lore_text, rule_text,
             active_genres, custom_tone, deep_memory
         )
         return session, False
-
