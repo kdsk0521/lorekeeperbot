@@ -867,8 +867,7 @@ async def on_message(message):
                     "`!npc` - 전체 NPC 목록 조회\n"
                     "`!npc [이름]` - 특정 NPC 정보 조회\n"
                     "`!npc추가 이름:설명` - 수동으로 NPC 추가\n"
-                    "`!npc추가 이름` + txt파일 - 파일로 NPC 추가\n"
-                    "  └ 긴 설명은 AI가 2줄로 자동 압축\n\n"
+                    "`!npc추가 이름` + txt파일 - 파일로 NPC 추가\n\n"
                     
                     "**━━━ 🎲 기타 ━━━**\n"
                     "`!r [주사위]` - 선택적 주사위 (예: !r 1d20, !r 1d100)\n"
@@ -1097,22 +1096,9 @@ async def on_message(message):
                     name = content
                     desc = "설명 없음"
                 
-                # 긴 설명은 AI로 압축 (150자 초과 시)
-                if len(desc) > 150 and client_genai:
-                    loading = await message.channel.send(f"⏳ **{name}** 설명 압축 중...")
-                    compressed_desc = await memory_system.summarize_npc_description(
-                        client_genai, MODEL_ID, name, desc
-                    )
-                    await safe_delete_message(loading)
-                    
-                    character_sheet.npc_memory.add_npc(channel_id, name, compressed_desc)
-                    await message.channel.send(
-                        f"✅ NPC 추가됨: **{name}**\n{compressed_desc}\n"
-                        f"*(원본 {len(desc)}자 → {len(compressed_desc)}자로 압축됨)*"
-                    )
-                else:
-                    character_sheet.npc_memory.add_npc(channel_id, name, desc)
-                    await message.channel.send(f"✅ NPC 추가됨: **{name}**\n{desc}")
+                # NPC 추가 (원본 그대로 저장)
+                character_sheet.npc_memory.add_npc(channel_id, name, desc)
+                await message.channel.send(f"✅ NPC 추가됨: **{name}**\n{desc}")
                 return
             
             # --- AI 분석 도구 ---
