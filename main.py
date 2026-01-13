@@ -1730,11 +1730,26 @@ Process <material> as the player's attempt.
 - `[Name] does: *...*` → Player is performing an action. Describe the result.
 - `[Name]: ...` → General description or narration by player.
 
+## ⚠️ CRITICAL: ANTI-IMPERSONATION RULE (사칭 금지)
+**The characters marked with `[Name]` are PLAYER CHARACTERS (PCs). NEVER generate their dialogue, thoughts, or actions.**
+
+**FORBIDDEN (사칭으로 간주):**
+- ❌ Making PC speak: `"네", "알겠어", "그래"` 등 PC 대사 금지
+- ❌ Making PC think: `~라고 생각했다` 금지
+- ❌ Making PC react: `표정이 굳었다`, `놀랐다` 등 PC 반응 묘사 금지
+- ❌ Making PC decide: PC가 결정하거나 선택하는 묘사 금지
+
+**ALLOWED:**
+- ✅ NPC dialogue responding to PC
+- ✅ Environmental descriptions
+- ✅ World consequences of PC's stated action
+- ✅ NPC reactions and behaviors
+
+**Do NOT generate ANY player's dialogue, thoughts, or decisions.**
 Generate NPC reactions and world response ONLY.
 **Apply NPC attitudes to their speech and behavior.**
 **If NPC Interaction is suggested, include their ambient dialogue.**
 **CRITICAL: Reference the FERMENTED/DEEP MEMORY above for story continuity.**
-Do NOT generate ANY player's dialogue, thoughts, or decisions.
 Track each player separately. 3rd person narration. Korean output."""
             
             response = "⚠️ AI Error"
