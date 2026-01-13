@@ -496,6 +496,7 @@ def set_custom_rules_from_file(channel_id: str, file_content: str) -> None:
     """
     파일에서 완전 커스텀 룰을 설정합니다.
     기본룰을 완전히 대체합니다.
+    성장 시스템도 "custom"으로 변경되어 AI가 커스텀 룰에 정의된 성장 규칙을 따릅니다.
     """
     save_text(get_rules_file_path(channel_id), file_content)
     set_rules_mode(channel_id, "custom")
@@ -503,11 +504,15 @@ def set_custom_rules_from_file(channel_id: str, file_content: str) -> None:
     # 커스텀 추가분 초기화
     d = get_domain(channel_id)
     d["custom_rules"] = ""
+    # 성장 시스템도 커스텀으로 변경 (settings 키 보장)
+    if "settings" not in d:
+        d["settings"] = {}
+    d["settings"]["growth_system"] = "custom"
     save_domain(channel_id, d)
 
 
 def reset_rules(channel_id: str) -> None:
-    """룰을 초기화합니다 (기본룰로 복귀)."""
+    """룰을 초기화합니다 (기본룰로 복귀). 성장 시스템도 기본값으로 복귀합니다."""
     path = get_rules_file_path(channel_id)
     if os.path.exists(path):
         os.remove(path)
@@ -517,6 +522,10 @@ def reset_rules(channel_id: str) -> None:
     # 커스텀 추가분도 초기화
     d = get_domain(channel_id)
     d["custom_rules"] = ""
+    # 성장 시스템도 기본값으로 복귀 (settings 키 보장)
+    if "settings" not in d:
+        d["settings"] = {}
+    d["settings"]["growth_system"] = "default"
     save_domain(channel_id, d)
 
 

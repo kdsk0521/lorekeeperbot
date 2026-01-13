@@ -326,6 +326,12 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
 
 async def handle_rule_command(message, channel_id: str, arg: str) -> None:
     """룰 명령어를 처리합니다."""
+    # 성장 시스템 표시 문자열 상수
+    growth_display = {
+        "default": "🎭 기본 (패시브/칭호 자동 부여)",
+        "custom": "🎭 커스텀 (룰에 따름)"
+    }
+    
     file_text = ""
     
     # 첨부파일 처리
@@ -344,7 +350,10 @@ async def handle_rule_command(message, channel_id: str, arg: str) -> None:
     if file_text or arg:
         if arg == "초기화":
             domain_manager.reset_rules(channel_id)
-            await message.channel.send("📘 **룰 초기화** - 기본 룰로 복귀했습니다.")
+            await message.channel.send(
+                "📘 **룰 초기화** - 기본 룰로 복귀했습니다.\n"
+                f"{growth_display['default']}으로 복귀"
+            )
             return
         
         # 파일 업로드: 완전 커스텀 모드
@@ -353,6 +362,7 @@ async def handle_rule_command(message, channel_id: str, arg: str) -> None:
             await message.channel.send(
                 "📘 **완전 커스텀 룰 설정됨**\n"
                 "기본 룰이 파일 내용으로 대체되었습니다.\n"
+                f"**성장 시스템도 커스텀으로 변경됨** - AI가 룰에 정의된 성장 규칙을 따릅니다.\n"
                 "_기본 룰로 돌아가려면 `!룰 초기화`_"
             )
             return
@@ -372,6 +382,8 @@ async def handle_rule_command(message, channel_id: str, arg: str) -> None:
     
     # 룰 조회
     rules_mode = domain_manager.get_rules_mode(channel_id)
+    growth_system = domain_manager.get_growth_system(channel_id)
+    
     mode_display = {
         "default": "📗 기본 룰",
         "hybrid": "📘 기본 룰 + 커스텀",
@@ -380,7 +392,9 @@ async def handle_rule_command(message, channel_id: str, arg: str) -> None:
     
     await send_long_message(
         message.channel,
-        f"**[{mode_display.get(rules_mode, '📘')}]**\n\n{domain_manager.get_rules(channel_id)}"
+        f"**[{mode_display.get(rules_mode, '📘')}]**\n"
+        f"**[{growth_display.get(growth_system, growth_display['default'])}]**\n\n"
+        f"{domain_manager.get_rules(channel_id)}"
     )
 
 
