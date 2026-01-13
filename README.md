@@ -23,3 +23,9 @@ Personal and educational use is welcome, but commercial use is prohibited.
 11. !시작이후 즐긴다.
 
 다인플레이 적용은 했는데 되는지는테스트 안해봄
+
+
+## Acknowledgments
+This project was developed with the assistance of AI coding tools. While the code was generated with AI support, the overall logic, structure, and verification were conducted by the author.
+
+Please note that this project is licensed under the **PolyForm Noncommercial License 1.0.0**, meaning it is free for personal and educational use, but commercial use is prohibited.
