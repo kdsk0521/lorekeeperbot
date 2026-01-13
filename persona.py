@@ -36,14 +36,14 @@ from google.genai import types
 MAX_RETRY_COUNT = 3
 RETRY_DELAY_SECONDS = 1
 DEFAULT_TEMPERATURE = 1.0
-MIN_NARRATIVE_LENGTH = 1000  # 최소 서사 길이 (문자)
+MIN_NARRATIVE_LENGTH = 500  # 최소 서사 길이 (문자)
 
 
 # =========================================================
 # 응답 길이 설정
 # =========================================================
-DEFAULT_MIN_RESPONSE_LENGTH = 1000
-DEFAULT_MAX_RESPONSE_LENGTH = 2000
+DEFAULT_MIN_RESPONSE_LENGTH = 500
+DEFAULT_MAX_RESPONSE_LENGTH = 7000
 
 def build_length_instruction() -> str:
     """응답 길이 지시문을 생성합니다."""
