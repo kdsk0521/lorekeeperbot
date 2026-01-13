@@ -326,6 +326,12 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
 
 async def handle_rule_command(message, channel_id: str, arg: str) -> None:
     """룰 명령어를 처리합니다."""
+    # 성장 시스템 표시 문자열 상수
+    growth_display = {
+        "default": "🎭 기본 (패시브/칭호 자동 부여)",
+        "custom": "🎭 커스텀 (룰에 따름)"
+    }
+    
     file_text = ""
     
     # 첨부파일 처리
@@ -344,7 +350,10 @@ async def handle_rule_command(message, channel_id: str, arg: str) -> None:
     if file_text or arg:
         if arg == "초기화":
             domain_manager.reset_rules(channel_id)
-            await message.channel.send("📘 **룰 초기화** - 기본 룰로 복귀했습니다.")
+            await message.channel.send(
+                "📘 **룰 초기화** - 기본 룰로 복귀했습니다.\n"
+                f"{growth_display['default']}으로 복귀"
+            )
             return
         
         # 파일 업로드: 완전 커스텀 모드
@@ -353,6 +362,7 @@ async def handle_rule_command(message, channel_id: str, arg: str) -> None:
             await message.channel.send(
                 "📘 **완전 커스텀 룰 설정됨**\n"
                 "기본 룰이 파일 내용으로 대체되었습니다.\n"
+                f"**성장 시스템도 커스텀으로 변경됨** - AI가 룰에 정의된 성장 규칙을 따릅니다.\n"
                 "_기본 룰로 돌아가려면 `!룰 초기화`_"
             )
             return
@@ -372,6 +382,8 @@ async def handle_rule_command(message, channel_id: str, arg: str) -> None:
     
     # 룰 조회
     rules_mode = domain_manager.get_rules_mode(channel_id)
+    growth_system = domain_manager.get_growth_system(channel_id)
+    
     mode_display = {
         "default": "📗 기본 룰",
         "hybrid": "📘 기본 룰 + 커스텀",
@@ -380,7 +392,9 @@ async def handle_rule_command(message, channel_id: str, arg: str) -> None:
     
     await send_long_message(
         message.channel,
-        f"**[{mode_display.get(rules_mode, '📘')}]**\n\n{domain_manager.get_rules(channel_id)}"
+        f"**[{mode_display.get(rules_mode, '📘')}]**\n"
+        f"**[{growth_display.get(growth_system, growth_display['default'])}]**\n\n"
+        f"{domain_manager.get_rules(channel_id)}"
     )
 
 
@@ -853,8 +867,7 @@ async def on_message(message):
                     "`!npc` - 전체 NPC 목록 조회\n"
                     "`!npc [이름]` - 특정 NPC 정보 조회\n"
                     "`!npc추가 이름:설명` - 수동으로 NPC 추가\n"
-                    "`!npc추가 이름` + txt파일 - 파일로 NPC 추가\n"
-                    "  └ 긴 설명은 AI가 2줄로 자동 압축\n\n"
+                    "`!npc추가 이름` + txt파일 - 파일로 NPC 추가\n\n"
                     
                     "**━━━ 🎲 기타 ━━━**\n"
                     "`!r [주사위]` - 선택적 주사위 (예: !r 1d20, !r 1d100)\n"
@@ -1083,22 +1096,9 @@ async def on_message(message):
                     name = content
                     desc = "설명 없음"
                 
-                # 긴 설명은 AI로 압축 (150자 초과 시)
-                if len(desc) > 150 and client_genai:
-                    loading = await message.channel.send(f"⏳ **{name}** 설명 압축 중...")
-                    compressed_desc = await memory_system.summarize_npc_description(
-                        client_genai, MODEL_ID, name, desc
-                    )
-                    await safe_delete_message(loading)
-                    
-                    character_sheet.npc_memory.add_npc(channel_id, name, compressed_desc)
-                    await message.channel.send(
-                        f"✅ NPC 추가됨: **{name}**\n{compressed_desc}\n"
-                        f"*(원본 {len(desc)}자 → {len(compressed_desc)}자로 압축됨)*"
-                    )
-                else:
-                    character_sheet.npc_memory.add_npc(channel_id, name, desc)
-                    await message.channel.send(f"✅ NPC 추가됨: **{name}**\n{desc}")
+                # NPC 추가 (원본 그대로 저장)
+                character_sheet.npc_memory.add_npc(channel_id, name, desc)
+                await message.channel.send(f"✅ NPC 추가됨: **{name}**\n{desc}")
                 return
             
             # --- AI 분석 도구 ---
