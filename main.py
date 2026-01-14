@@ -382,8 +382,8 @@ async def handle_chronicle_command(message, channel_id: str, arg: str) -> None:
             await message.channel.send(msg_text)
             return
         
-        # 로어도 함께 포함
-        lore = domain_manager.get_lore(channel_id)
+        # 로어도 함께 포함 (NPC 포함)
+        lore = domain_manager.get_lore_with_npcs(channel_id)
         content = f"=== LORE ===\n{lore}\n\n{ch}" if lore else ch
         
         with io.BytesIO(content.encode('utf-8')) as f:
@@ -1124,7 +1124,7 @@ async def on_message(message):
                 loading = await message.channel.send("🔍 **[OOC 분석 중...]**")
                 
                 # 컨텍스트 수집 - domain_data 사용
-                lore = domain_manager.get_lore(channel_id)
+                lore = domain_manager.get_lore_with_npcs(channel_id)  # NPC 포함
                 history = domain_data.get('history', [])[-20:]
                 hist_text = "\n".join([f"{h['role']}: {h['content']}" for h in history])
                 
@@ -1167,7 +1167,7 @@ async def on_message(message):
                 
                 loading = await message.channel.send("🔍 **[일관성 검사 중...]**")
                 
-                lore = domain_manager.get_lore(channel_id)
+                lore = domain_manager.get_lore_with_npcs(channel_id)  # NPC 포함
                 history = domain_data.get('history', [])[-30:]
                 hist_text = "\n".join([f"{h['role']}: {h['content']}" for h in history])
                 
@@ -1203,7 +1203,7 @@ async def on_message(message):
                 
                 loading = await message.channel.send("🌍 **[세계 규칙 추출 중...]**")
                 
-                lore = domain_manager.get_lore(channel_id)
+                lore = domain_manager.get_lore_with_npcs(channel_id)  # NPC 포함
                 
                 result = await memory_system.extract_world_constraints(
                     client_genai, MODEL_ID, lore
