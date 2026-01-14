@@ -434,6 +434,17 @@ def get_lore_with_npcs(channel_id: str) -> str:
     
     Returns:
         정리된 로어 + NPC 섹션이 포함된 텍스트
+        
+    NPC 섹션 형식:
+        ### 📋 NPC 정보 (캐릭터들)
+        
+        **NPC이름** (✅ Active)
+        NPC 설명...
+        
+    Status Emojis:
+        ✅ Active - 활동 중인 NPC
+        💀 Dead - 사망한 NPC
+        ❓ 기타 상태
     """
     lore = get_lore(channel_id)
     npcs = get_npcs(channel_id)
