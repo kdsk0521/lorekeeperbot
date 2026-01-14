@@ -1666,7 +1666,7 @@ async def on_message(message):
             current_context_parts = []
             
             # 퀘스트/메모를 별도로 강조 (AI가 더 잘 인식하도록)
-            if obj_ctx and obj_ctx.strip() != "No active quests or memos.":
+            if obj_ctx and obj_ctx.strip() != quest_manager.EMPTY_QUEST_MEMO_MSG:
                 current_context_parts.append(f"### [ACTIVE QUESTS & MEMOS - CRITICAL INFO]\n{obj_ctx}\n**⚠️ Always reference active quests and memos when relevant to the scene.**")
             
             if world_ctx:

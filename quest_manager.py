@@ -20,6 +20,7 @@ MAX_RETRY_COUNT = 3
 RETRY_DELAY_SECONDS = 1
 MAX_ARCHIVE_DISPLAY = 3  # 보관함에서 표시할 최대 항목 수
 MAX_HISTORY_FOR_CHRONICLE = 50  # 연대기 생성 시 사용할 최대 히스토리
+EMPTY_QUEST_MEMO_MSG = "No active quests or memos."  # 빈 퀘스트/메모 메시지
 
 
 # =========================================================
@@ -89,7 +90,7 @@ def get_objective_context(channel_id: str) -> str:
     """
     board = domain_manager.get_quest_board(channel_id)
     if not board:
-        return "No active quests or memos."
+        return EMPTY_QUEST_MEMO_MSG
     
     active = board.get("active", [])
     memos = board.get("memos", [])
@@ -97,7 +98,7 @@ def get_objective_context(channel_id: str) -> str:
     
     # 퀘스트나 메모가 하나도 없으면 기본 메시지
     if not active and not memos and not archives:
-        return "No active quests or memos."
+        return EMPTY_QUEST_MEMO_MSG
     
     txt = "### [QUESTS & MEMOS]\n"
     txt += "**⚠️ IMPORTANT: These are persistent records. Always reference them when relevant.**\n\n"
