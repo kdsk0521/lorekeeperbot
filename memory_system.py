@@ -897,7 +897,7 @@ async def analyze_context_nvc(
         "- `{\"tool\": \"Quest\", \"type\": \"Complete\", \"content\": \"기존 퀘스트의 일부 텍스트\"}` — When objective achieved, mission accomplished\n\n"
         
         "**Memo Actions:**\n"
-        "- `{\"tool\": \"Memo\", \"type\": \"Add\", \"content\": \"메모 내용\"}` — Important info: clues, NPC names, codes, locations, items acquired\n"
+        "- `{\"tool\": \"Memo\", \"type\": \"Add\", \"content\": \"메모 내용\"}` — Important info: clues, NPC names, codes, locations, items acquired, rumors/gossip heard\n"
         "- `{\"tool\": \"Memo\", \"type\": \"Archive\", \"content\": \"기존 메모의 일부 텍스트\"}` — When memo becomes obsolete (item used, info no longer relevant)\n\n"
         
         "**NPC Actions:**\n"
@@ -907,6 +907,8 @@ async def analyze_context_nvc(
         "- Player receives letter with mission → Quest Add\n"
         "- Player defeats boss mentioned in quest → Quest Complete\n"
         "- Player finds password \"1234\" → Memo Add\n"
+        "- Player hears rumor about \"haunted forest at night\" → Memo Add\n"
+        "- NPC mentions \"black market in the sewers\" → Memo Add\n"
         "- Player uses the password successfully → Memo Archive\n"
         "- Player meets \"철수\" the blacksmith → NPC Add\n\n"
         
@@ -967,7 +969,7 @@ async def analyze_context_nvc(
         '    "appearance": "외형 설명 (변경시에만)" OR null,\n'
         '    "relationships": {"NPC이름": "관계 설명"} OR null,\n'
         '    "passives": ["새 패시브/칭호"] OR null,\n'
-        '    "known_info": ["새로 알게 된 정보"] OR null,\n'
+        '    "known_info": ["새로 알게 된 정보/소문/단서"] OR null,\n'
         '    "foreshadowing": ["복선/떡밥"] OR null,\n'
         '    "normalization": {"비일상요소": "적응 단계"} OR null,\n'
         '    "companions": ["동행자이름: 설명"] OR null\n'
