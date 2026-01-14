@@ -1427,10 +1427,14 @@ async def extract_npcs_with_segments(
         npcs = data.get("npcs", [])
         cleaned_lore = data.get("cleaned_lore", lore_text)
         
-        # 유효한 NPC만 필터링 (이름이 비어있지 않은 것만)
+        # 유효한 NPC만 필터링 (이름과 설명이 비어있지 않은 것만)
         if isinstance(npcs, list):
             valid_npcs = [
-                npc for npc in npcs
+                {
+                    "name": npc.get("name", "").strip(),
+                    "description": npc.get("description", "설명 없음").strip()
+                }
+                for npc in npcs
                 if isinstance(npc, dict) and npc.get("name") and npc.get("name").strip()
             ]
             return valid_npcs, cleaned_lore
@@ -1498,6 +1502,7 @@ def parse_bulk_npcs_from_text(text: str) -> List[Dict[str, str]]:
                     "name": current_npc_name,
                     "description": " ".join(current_npc_desc)
                 })
+                current_npc_name = None
                 current_npc_desc = []
             
             # 새 NPC 파싱
@@ -1518,6 +1523,7 @@ def parse_bulk_npcs_from_text(text: str) -> List[Dict[str, str]]:
                     "name": current_npc_name,
                     "description": " ".join(current_npc_desc)
                 })
+                current_npc_name = None
                 current_npc_desc = []
             
             current_npc_name = line.lstrip('#').strip()

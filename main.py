@@ -20,6 +20,7 @@ from google.genai import types
 # =========================================================
 MAX_DISCORD_MESSAGE_LENGTH = 2000
 SUPPORTED_TEXT_EXTENSIONS = ['.txt', '.md', '.json', '.log', '.py', '.yaml', '.yml']
+NPC_PREVIEW_LIMIT = 5  # 일괄 추가 시 미리보기 NPC 개수
 VERSION = "3.1"
 
 # =========================================================
@@ -1145,9 +1146,9 @@ async def on_message(message):
                                 npc_names.append(name)
                         
                         if added_count > 0:
-                            names_preview = ", ".join(npc_names[:5])
-                            if added_count > 5:
-                                names_preview += f" 외 {added_count - 5}명"
+                            names_preview = ", ".join(npc_names[:NPC_PREVIEW_LIMIT])
+                            if added_count > NPC_PREVIEW_LIMIT:
+                                names_preview += f" 외 {added_count - NPC_PREVIEW_LIMIT}명"
                             await message.channel.send(
                                 f"✅ **{added_count}명의 NPC 일괄 추가 완료**\n"
                                 f"**추가된 NPC:** {names_preview}"
