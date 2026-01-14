@@ -1393,7 +1393,7 @@ async def extract_npcs_with_segments(
         NPCs: [{"name": "...", "description": "..."}, ...]
         Cleaned Lore: NPC 설명이 제거된 순수 세계관 로어
     """
-    system_instruction = (
+    user_prompt = (
         "You are a lore analyzer. Your task is to:\n"
         "1. Extract all NPCs/characters with their descriptions\n"
         "2. Identify which text segments describe NPCs\n"
@@ -1405,10 +1405,9 @@ async def extract_npcs_with_segments(
         '{\n'
         '  "npcs": [{"name": "character name", "description": "full description"}],\n'
         '  "cleaned_lore": "lore text with NPC descriptions removed"\n'
-        '}'
+        '}\n\n'
+        f"Lore Data:\n{lore_text}"
     )
-    
-    user_prompt = f"Lore Data:\n{lore_text}"
     
     contents = [
         types.Content(role="user", parts=[types.Part(text=user_prompt)])
@@ -1428,11 +1427,11 @@ async def extract_npcs_with_segments(
         npcs = data.get("npcs", [])
         cleaned_lore = data.get("cleaned_lore", lore_text)
         
-        # 유효한 NPC만 필터링
+        # 유효한 NPC만 필터링 (이름이 비어있지 않은 것만)
         if isinstance(npcs, list):
             valid_npcs = [
                 npc for npc in npcs
-                if isinstance(npc, dict) and npc.get("name")
+                if isinstance(npc, dict) and npc.get("name") and npc.get("name").strip()
             ]
             return valid_npcs, cleaned_lore
     

@@ -273,10 +273,8 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
             )
             
             # NPC 추가
-            npc_count = 0
             for n in npcs_extracted:
                 character_sheet.npc_memory.add_npc(channel_id, n.get("name"), n.get("description"))
-                npc_count += 1
             
             # 정리된 로어 저장 (NPC 제거됨)
             domain_manager.append_lore(channel_id, cleaned_lore)
@@ -331,7 +329,7 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
                 domain_manager.set_location_rules(channel_id, rules)
             
             # 최종 메시지
-            final_msg = f"✅ **[분석 완료]**\n**장르:** {res.get('genres')}\n**NPC 추출:** {npc_count}명"
+            final_msg = f"✅ **[분석 완료]**\n**장르:** {res.get('genres')}\n**NPC 추출:** {len(npcs_extracted)}명"
             if is_massive:
                 final_msg += f"\n**압축률:** {metadata['compression_ratio']}:1 ({metadata['original_length']:,}자 → {metadata['final_length']:,}자)"
             
