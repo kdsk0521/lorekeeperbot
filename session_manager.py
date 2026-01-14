@@ -162,13 +162,12 @@ class SessionManager:
         
         lore = domain_manager.get_lore(channel_id)
         rules = domain_manager.get_rules(channel_id)
-        summary = domain_manager.get_lore_summary(channel_id)
         
         msg = "🔍 **시스템 점검**\n"
         ready = True
         
         # 로어 확인 (로어는 반드시 사용자가 설정해야 함)
-        has_lore = (lore and lore.strip()) or summary
+        has_lore = lore and lore.strip()
         if has_lore:
             msg += "✅ 로어 OK\n"
         else:

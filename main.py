@@ -167,7 +167,6 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
     
     # 로어 조회
     if not full:
-        summary = domain_manager.get_lore_summary(channel_id)
         raw_lore = domain_manager.get_lore(channel_id)
         original_lore = domain_manager.get_lore_original(channel_id)
         
@@ -187,11 +186,6 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
             info_msg += f"**📚 원본 (NPC 포함):** {len(original_lore):,}자\n"
         info_msg += f"**📖 정리된 로어 (NPC 제외):** {len(raw_lore):,}자\n"
         
-        if summary:
-            info_msg += f"**📦 요약본 크기:** {len(summary):,}자\n"
-            if original_lore:
-                info_msg += f"**🗜️ 압축률:** {len(original_lore) // max(len(summary), 1)}:1\n"
-        
         info_msg += f"\n**🎭 장르:** {', '.join(genres) if genres else '미분석'}\n"
         
         if custom_tone:
@@ -199,28 +193,9 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
         
         await message.channel.send(info_msg)
         
-        # 요약본이 있으면 파일로 첨부
-        if summary:
-            file_content = f"=== Lorekeeper 로어 요약본 ===\n"
-            if original_lore:
-                file_content += f"원본 (NPC 포함): {len(original_lore):,}자\n"
-            file_content += f"정리된 로어 (NPC 제외): {len(raw_lore):,}자\n"
-            file_content += f"요약: {len(summary):,}자\n"
-            file_content += f"장르: {', '.join(genres) if genres else '미분석'}\n"
-            file_content += f"{'=' * 40}\n\n"
-            file_content += summary
-            
-            file_buffer = io.BytesIO(file_content.encode('utf-8'))
-            file_buffer.seek(0)
-            
-            await message.channel.send(
-                "📄 **요약본 파일:**",
-                file=discord.File(file_buffer, filename="lore_summary.txt")
-            )
-        else:
-            # 요약본이 없으면 원본 미리보기
-            preview = raw_lore[:500] + "..." if len(raw_lore) > 500 else raw_lore
-            await message.channel.send(f"📄 **정리된 로어 미리보기:**\n```\n{preview}\n```")
+        # 로어 미리보기
+        preview = raw_lore[:500] + "..." if len(raw_lore) > 500 else raw_lore
+        await message.channel.send(f"📄 **정리된 로어 미리보기:**\n```\n{preview}\n```")
         
         return
     
@@ -245,24 +220,12 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
     raw_lore = full
     lore_length = len(raw_lore)
     
-    # 대용량 로어 여부 판단 (15000자 이상)
-    is_massive = lore_length > 15000
-    
     action_word = "추가됨" if is_append else "저장됨"
     
-    if is_massive:
-        estimated_chunks = (lore_length // 15000) + 1
-        status_msg = await message.channel.send(
-            f"📜 **로어 {action_word}** ({lore_length:,}자)\n"
-            f"📚 대용량 로어 처리 모드 (약 {estimated_chunks}개 청크)\n"
-            f"⏳ 예상 시간: {estimated_chunks * 10}~{estimated_chunks * 20}초\n"
-            f"🔄 **전체 재분석 진행 중...**"
-        )
-    else:
-        status_msg = await message.channel.send(
-            f"📜 **로어 {action_word}** ({lore_length:,}자)\n"
-            f"🔄 **AI 재분석 중...** (NPC 분리, 장르, 규칙)"
-        )
+    status_msg = await message.channel.send(
+        f"📜 **로어 {action_word}** ({lore_length:,}자)\n"
+        f"🔄 **AI 재분석 중...** (NPC 분리, 장르, 규칙)"
+    )
     
     # AI 분석
     if client_genai:
@@ -280,59 +243,19 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
             # 정리된 로어 저장 (NPC 제거됨)
             domain_manager.append_lore(channel_id, cleaned_lore)
             
-            # 대용량 로어 처리
-            if is_massive:
-                async def progress_callback(stage, current, total):
-                    stage_names = {
-                        "splitting": "📂 청크 분할",
-                        "compressing": "🗜️ 청크 압축",
-                        "merging": "🔗 중간 병합",
-                        "finalizing": "✨ 최종 통합"
-                    }
-                    stage_name = stage_names.get(stage, stage)
-                    await status_msg.edit(
-                        content=f"📚 **[대용량 로어 처리 중]**\n"
-                                f"{stage_name}: {current}/{total}"
-                    )
-                
-                summary, metadata = await memory_system.process_massive_lore(
-                    client_genai, MODEL_ID, cleaned_lore, progress_callback
-                )
-                
-                domain_manager.save_lore_summary(channel_id, summary)
-                
-                await status_msg.edit(
-                    content=f"📚 **[대용량 처리 완료]**\n"
-                            f"• 원본: {metadata['original_length']:,}자\n"
-                            f"• 압축: {metadata['final_length']:,}자\n"
-                            f"• 압축률: {metadata['compression_ratio']}:1\n"
-                            f"• 처리 시간: {metadata['processing_time']}초\n"
-                            f"• 방식: {metadata['method']}\n\n"
-                            f"⏳ 장르 분석 중..."
-                )
-            else:
-                await status_msg.edit(content="⏳ **[AI]** 세계관 압축 중...")
-                summary = await memory_system.compress_lore_core(client_genai, MODEL_ID, cleaned_lore)
-                domain_manager.save_lore_summary(channel_id, summary)
-            
-            # 장르 분석 (요약본 기반으로 수행 - 토큰 절약)
+            # 장르 분석 (정리된 로어 기반)
             await status_msg.edit(content="⏳ **[AI]** 장르 분석 중...")
             
-            # 대용량일 경우 요약본으로 분석, 아니면 정리된 로어로
-            analysis_text = summary if is_massive else cleaned_lore
-            
-            res = await memory_system.analyze_genre_from_lore(client_genai, MODEL_ID, analysis_text)
+            res = await memory_system.analyze_genre_from_lore(client_genai, MODEL_ID, cleaned_lore)
             domain_manager.set_active_genres(channel_id, res.get("genres", ["noir"]))
             domain_manager.set_custom_tone(channel_id, res.get("custom_tone"))
             
-            rules = await memory_system.analyze_location_rules_from_lore(client_genai, MODEL_ID, analysis_text)
+            rules = await memory_system.analyze_location_rules_from_lore(client_genai, MODEL_ID, cleaned_lore)
             if rules:
                 domain_manager.set_location_rules(channel_id, rules)
             
             # 최종 메시지
             final_msg = f"✅ **[분석 완료]**\n**장르:** {res.get('genres')}\n**NPC 추출:** {len(npcs_extracted)}명"
-            if is_massive:
-                final_msg += f"\n**압축률:** {metadata['compression_ratio']}:1 ({metadata['original_length']:,}자 → {metadata['final_length']:,}자)"
             
             await status_msg.edit(content=final_msg)
             
@@ -1612,8 +1535,7 @@ async def on_message(message):
                 return
             
             # 컨텍스트 수집
-            summary = domain_manager.get_lore_summary(channel_id)
-            lore_txt = summary if summary else domain_manager.get_lore(channel_id)
+            lore_txt = domain_manager.get_lore(channel_id)
             rule_txt = domain_manager.get_rules(channel_id)
             world_ctx = world_manager.get_world_context(channel_id)
             obj_ctx = quest_manager.get_objective_context(channel_id)
