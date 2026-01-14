@@ -65,7 +65,6 @@ AI가 캐릭터의 노출 횟수와 반응을 추적하여 자연스럽게 적�
 DATA_DIR = "data"
 SESSIONS_DIR = os.path.join(DATA_DIR, "sessions")
 LORE_DIR = os.path.join(DATA_DIR, "lores")
-LORE_SUMMARY_DIR = os.path.join(DATA_DIR, "lore_summaries")
 RULES_DIR = os.path.join(DATA_DIR, "rules")
 
 # 기본 참가자 스탯 (레거시 - 제거 예정)
@@ -92,7 +91,7 @@ DEFAULT_WORLD_STATE = {
 # =========================================================
 def initialize_folders() -> None:
     """봇 실행에 필요한 데이터 폴더들을 초기화합니다."""
-    folders = [SESSIONS_DIR, LORE_DIR, LORE_SUMMARY_DIR, RULES_DIR]
+    folders = [SESSIONS_DIR, LORE_DIR, RULES_DIR]
     
     for path in folders:
         if not os.path.exists(path):
@@ -112,11 +111,6 @@ def get_session_file_path(channel_id: str) -> str:
 
 def get_lore_file_path(channel_id: str) -> str:
     return os.path.join(LORE_DIR, f"{channel_id}.txt")
-
-
-def get_lore_summary_file_path(channel_id: str) -> str:
-    """요약된 로어 파일 경로"""
-    return os.path.join(LORE_SUMMARY_DIR, f"{channel_id}_summary.txt")
 
 
 def get_lore_original_file_path(channel_id: str) -> str:
@@ -409,31 +403,14 @@ def append_lore(channel_id: str, text: str) -> None:
 
 
 def reset_lore(channel_id: str) -> None:
-    """로어와 요약본을 초기화합니다."""
+    """로어를 초기화합니다."""
     lore_path = get_lore_file_path(channel_id)
-    summary_path = get_lore_summary_file_path(channel_id)
     original_path = get_lore_original_file_path(channel_id)
     
     if os.path.exists(lore_path):
         os.remove(lore_path)
-    if os.path.exists(summary_path):
-        os.remove(summary_path)
     if os.path.exists(original_path):
         os.remove(original_path)
-
-
-def get_lore_summary(channel_id: str) -> Optional[str]:
-    """요약된 로어를 가져옵니다."""
-    path = get_lore_summary_file_path(channel_id)
-    if os.path.exists(path):
-        content = load_text(path, "")
-        return content if content else None
-    return None
-
-
-def save_lore_summary(channel_id: str, summary_text: str) -> None:
-    """요약된 로어를 저장합니다."""
-    save_text(get_lore_summary_file_path(channel_id), summary_text)
 
 
 def save_lore_original(channel_id: str, original_text: str) -> None:
@@ -907,8 +884,8 @@ def reset_domain(channel_id: str) -> None:
     files_to_remove = [
         get_session_file_path(channel_id),
         get_lore_file_path(channel_id),
-        get_rules_file_path(channel_id),
-        get_lore_summary_file_path(channel_id)
+        get_lore_original_file_path(channel_id),
+        get_rules_file_path(channel_id)
     ]
     
     for filepath in files_to_remove:
