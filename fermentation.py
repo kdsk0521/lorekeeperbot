@@ -41,14 +41,21 @@ except ImportError:
 # =========================================================
 
 # 발효 트리거 임계값
-FRESH_THRESHOLD = 40          # FRESH 최대 개수 (초과 시 발효)
-FERMENT_CHUNK_SIZE = 20       # 한 번에 발효할 메시지 수
-FERMENTED_THRESHOLD = 5       # FERMENTED 최대 개수 (초과 시 DEEP 압축)
+# NOTE: FRESH_THRESHOLD를 증가시키면 메모리 사용량도 증가합니다.
+# 각 메시지는 평균 200-500자 정도이므로, 80개 = 16KB-40KB 추가 메모리 범위
+# 트래픽이 많은 환경에서는 모니터링 필요
+FRESH_THRESHOLD = 80          # FRESH 최대 개수 (초과 시 발효) - 40에서 80으로 증가
+FERMENT_CHUNK_SIZE = 30       # 한 번에 발효할 메시지 수 - 20에서 30으로 증가
+FERMENTED_THRESHOLD = 8       # FERMENTED 최대 개수 (초과 시 DEEP 압축) - 5에서 8로 증가
 
 # 컨텍스트 비율 (HypaMemory V3 참고)
 DEEP_RATIO = 0.10             # 10% - 장기 기억
 FERMENTED_RATIO = 0.30        # 30% - 중기 기억
 FRESH_RATIO = 0.60            # 60% - 최근 대화
+
+# AI 컨텍스트 윈도우
+RECENT_HISTORY_FOR_ANALYSIS = 20  # 좌뇌 분석용 최근 히스토리
+IMMEDIATE_DISPLAY_COUNT = 30      # Immediate 섹션에 표시할 메시지 수
 
 # 토큰 추정용
 MAX_CONTEXT_TOKENS = 8000     # 메모리용 최대 토큰 (전체 컨텍스트의 일부)
@@ -576,8 +583,10 @@ def build_fermented_context(
     
     # Deep Memory (장기 기억) - 서사적 중요도 기반
     if deep_memory:
-        content_parts.append(f"""### Deep Memory
+        content_parts.append(f"""### Deep Memory (CRITICAL - Must Reference)
+**⚠️ STORY CONTINUITY DEPENDS ON THIS INFORMATION ⚠️**
 The foundational narrative archive. Pivotal moments crystallized into permanent memory.
+**You MUST reference and maintain consistency with these established events.**
 
 {deep_memory}""")
     
@@ -601,7 +610,8 @@ The foundational narrative archive. Pivotal moments crystallized into permanent 
             total_chars += len(entry_text)
         
         if fermented_texts:
-            content_parts.append(f"""### Episode Summary
+            content_parts.append(f"""### Episode Summary (IMPORTANT - Reference Past Events)
+**📜 Past sessions that shape current context. Reference these events for continuity.**
 Significant sessions preserved by emotional weight. Details may blur, but core events persist.
 
 """ + "\n---\n".join(fermented_texts))
@@ -612,7 +622,9 @@ Significant sessions preserved by emotional weight. Details may blur, but core e
     return f"""
 <Fermented>
 ## Histories & Memories: The Deeper Past
+**⚠️ CRITICAL FOR STORY CONTINUITY ⚠️**
 Non-linear archive governed by narrative significance. Pivotal moments remain distinct; trivial details fade and transform.
+**ALWAYS check these memories before generating responses to ensure consistency.**
 
 {chr(10).join(content_parts)}
 </Fermented>
@@ -621,7 +633,7 @@ Non-linear archive governed by narrative significance. Pivotal moments remain di
 
 def build_immediate_context(
     session_data: Dict[str, Any],
-    recent_count: int = 20
+    recent_count: int = None
 ) -> str:
     """
     [6] <Immediate> 섹션을 빌드합니다.
@@ -634,7 +646,14 @@ def build_immediate_context(
     vivid and unaltered, acting as the direct linear context physically 
     connected to the 'Fresh'. This section serves only as the narrative 
     bridge, not the starting point.
+    
+    Args:
+        session_data: 세션 데이터
+        recent_count: 표시할 메시지 수 (기본값: IMMEDIATE_DISPLAY_COUNT)
     """
+    if recent_count is None:
+        recent_count = IMMEDIATE_DISPLAY_COUNT
+    
     history = session_data.get("history", [])
     
     if not history:
@@ -652,6 +671,7 @@ def build_immediate_context(
     return f"""
 <Immediate>
 ## Histories & Memories: The Immediate Past
+**📍 Recent context leading to current moment**
 Strictly chronological, high-fidelity record. Vivid and unaltered—the narrative bridge to NOW.
 
 ### Recent Dialogue ({len(recent_history)} exchanges)
@@ -769,9 +789,9 @@ def get_memory_display(session_data: Dict[str, Any]) -> str:
     ]
     
     if stats['needs_fermentation']:
-        lines.append("⚠️ FRESH 발효 필요 (40개 초과)")
+        lines.append(f"⚠️ FRESH 발효 필요 ({FRESH_THRESHOLD}개 초과)")
     if stats['needs_deep_compression']:
-        lines.append("⚠️ DEEP 압축 필요 (FERMENTED 5개 초과)")
+        lines.append(f"⚠️ DEEP 압축 필요 (FERMENTED {FERMENTED_THRESHOLD}개 초과)")
     
     return "\n".join(lines)
 

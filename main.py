@@ -1554,7 +1554,8 @@ async def on_message(message):
             custom_tone = domain_manager.get_custom_tone(channel_id)
             scene_type = domain_manager.get_scene_type(channel_id)  # 장면 유형 가져오기
             
-            history = domain_data.get('history', [])[-10:]
+            # 좌뇌 분석용 최근 히스토리 (상수 사용)
+            history = domain_data.get('history', [])[-fermentation.RECENT_HISTORY_FOR_ANALYSIS:]
             hist_text = "\n".join([f"{h['role']}: {h['content']}" for h in history])
             hist_text += f"\nUser: {action_text}"
             
@@ -1730,14 +1731,27 @@ Process <material> as the player's attempt.
 - `[Name] does: *...*` → Player is performing an action. Describe the result.
 - `[Name]: ...` → General description or narration by player.
 
-## ⚠️ CRITICAL: ANTI-IMPERSONATION RULE (사칭 금지)
+## ⚠️ CRITICAL: STORY CONTINUITY & MEMORY
+**BEFORE generating any response, you MUST:**
+1. ✅ Check <Fermented> section for relevant past events
+2. ✅ Verify current response doesn't contradict established history
+3. ✅ Reference past NPCs, locations, and events mentioned in <Fermented>
+4. ✅ Maintain consistency with Deep Memory and Episode Summaries
+
+**Common Mistakes to AVOID:**
+- ❌ Forgetting NPCs already introduced in past sessions
+- ❌ Contradicting established relationships or events
+- ❌ Ignoring plot threads mentioned in <Fermented>
+- ❌ Treating recurring locations as if they're new
+
+## ⚠️ CRITICAL: ANTI-IMPERSONATION RULE
 **The characters marked with `[Name]` are PLAYER CHARACTERS (PCs). NEVER generate their dialogue, thoughts, or actions.**
 
-**FORBIDDEN (사칭으로 간주):**
-- ❌ Making PC speak: `"네", "알겠어", "그래"` 등 PC 대사 금지
-- ❌ Making PC think: `~라고 생각했다` 금지
-- ❌ Making PC react: `표정이 굳었다`, `놀랐다` 등 PC 반응 묘사 금지
-- ❌ Making PC decide: PC가 결정하거나 선택하는 묘사 금지
+**FORBIDDEN:**
+- ❌ Making PC speak (no dialogue like "yes", "okay", "I agree")
+- ❌ Making PC think (no internal monologue)
+- ❌ Making PC react emotionally (no "was surprised", "felt sad")
+- ❌ Making PC decide or choose actions
 
 **ALLOWED:**
 - ✅ NPC dialogue responding to PC
