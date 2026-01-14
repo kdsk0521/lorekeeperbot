@@ -20,6 +20,7 @@ from google.genai import types
 # =========================================================
 MAX_DISCORD_MESSAGE_LENGTH = 2000
 SUPPORTED_TEXT_EXTENSIONS = ['.txt', '.md', '.json', '.log', '.py', '.yaml', '.yml']
+NPC_PREVIEW_LIMIT = 5  # 일괄 추가 시 미리보기 NPC 개수
 VERSION = "3.1"
 
 # =========================================================
@@ -168,6 +169,7 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
     if not full:
         summary = domain_manager.get_lore_summary(channel_id)
         raw_lore = domain_manager.get_lore(channel_id)
+        original_lore = domain_manager.get_lore_original(channel_id)
         
         if raw_lore == domain_manager.DEFAULT_LORE or not raw_lore.strip():
             await message.channel.send(
@@ -180,11 +182,15 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
         custom_tone = domain_manager.get_custom_tone(channel_id)
         
         info_msg = f"📜 **로어 정보**\n\n"
-        info_msg += f"**📊 원본 크기:** {len(raw_lore):,}자\n"
+        
+        if original_lore:
+            info_msg += f"**📚 원본 (NPC 포함):** {len(original_lore):,}자\n"
+        info_msg += f"**📖 정리된 로어 (NPC 제외):** {len(raw_lore):,}자\n"
         
         if summary:
             info_msg += f"**📦 요약본 크기:** {len(summary):,}자\n"
-            info_msg += f"**🗜️ 압축률:** {len(raw_lore) // max(len(summary), 1)}:1\n"
+            if original_lore:
+                info_msg += f"**🗜️ 압축률:** {len(original_lore) // max(len(summary), 1)}:1\n"
         
         info_msg += f"\n**🎭 장르:** {', '.join(genres) if genres else '미분석'}\n"
         
@@ -196,7 +202,10 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
         # 요약본이 있으면 파일로 첨부
         if summary:
             file_content = f"=== Lorekeeper 로어 요약본 ===\n"
-            file_content += f"원본: {len(raw_lore):,}자 → 요약: {len(summary):,}자\n"
+            if original_lore:
+                file_content += f"원본 (NPC 포함): {len(original_lore):,}자\n"
+            file_content += f"정리된 로어 (NPC 제외): {len(raw_lore):,}자\n"
+            file_content += f"요약: {len(summary):,}자\n"
             file_content += f"장르: {', '.join(genres) if genres else '미분석'}\n"
             file_content += f"{'=' * 40}\n\n"
             file_content += summary
@@ -211,7 +220,7 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
         else:
             # 요약본이 없으면 원본 미리보기
             preview = raw_lore[:500] + "..." if len(raw_lore) > 500 else raw_lore
-            await message.channel.send(f"📄 **원본 미리보기:**\n```\n{preview}\n```")
+            await message.channel.send(f"📄 **정리된 로어 미리보기:**\n```\n{preview}\n```")
         
         return
     
@@ -229,10 +238,11 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
     if file_text:
         domain_manager.reset_lore(channel_id)  # 파일 업로드 시 기존 로어 리셋
     
-    domain_manager.append_lore(channel_id, full)
+    # 원본 로어 저장 (NPC 포함)
+    domain_manager.save_lore_original(channel_id, full)
     
     # 로어 크기 확인
-    raw_lore = domain_manager.get_lore(channel_id)
+    raw_lore = full
     lore_length = len(raw_lore)
     
     # 대용량 로어 여부 판단 (15000자 이상)
@@ -251,12 +261,25 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
     else:
         status_msg = await message.channel.send(
             f"📜 **로어 {action_word}** ({lore_length:,}자)\n"
-            f"🔄 **AI 재분석 중...** (장르, NPC, 규칙)"
+            f"🔄 **AI 재분석 중...** (NPC 분리, 장르, 규칙)"
         )
     
     # AI 분석
     if client_genai:
         try:
+            # NPC 추출 및 로어 분리
+            await status_msg.edit(content="⏳ **[AI]** NPC 추출 및 로어 분리 중...")
+            npcs_extracted, cleaned_lore = await memory_system.extract_npcs_with_segments(
+                client_genai, MODEL_ID, raw_lore
+            )
+            
+            # NPC 추가
+            for n in npcs_extracted:
+                character_sheet.npc_memory.add_npc(channel_id, n.get("name"), n.get("description"))
+            
+            # 정리된 로어 저장 (NPC 제거됨)
+            domain_manager.append_lore(channel_id, cleaned_lore)
+            
             # 대용량 로어 처리
             if is_massive:
                 async def progress_callback(stage, current, total):
@@ -273,7 +296,7 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
                     )
                 
                 summary, metadata = await memory_system.process_massive_lore(
-                    client_genai, MODEL_ID, raw_lore, progress_callback
+                    client_genai, MODEL_ID, cleaned_lore, progress_callback
                 )
                 
                 domain_manager.save_lore_summary(channel_id, summary)
@@ -285,33 +308,29 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
                             f"• 압축률: {metadata['compression_ratio']}:1\n"
                             f"• 처리 시간: {metadata['processing_time']}초\n"
                             f"• 방식: {metadata['method']}\n\n"
-                            f"⏳ 장르/NPC 분석 중..."
+                            f"⏳ 장르 분석 중..."
                 )
             else:
                 await status_msg.edit(content="⏳ **[AI]** 세계관 압축 중...")
-                summary = await memory_system.compress_lore_core(client_genai, MODEL_ID, raw_lore)
+                summary = await memory_system.compress_lore_core(client_genai, MODEL_ID, cleaned_lore)
                 domain_manager.save_lore_summary(channel_id, summary)
             
             # 장르 분석 (요약본 기반으로 수행 - 토큰 절약)
-            await status_msg.edit(content="⏳ **[AI]** 장르 및 NPC 데이터 추출 중...")
+            await status_msg.edit(content="⏳ **[AI]** 장르 분석 중...")
             
-            # 대용량일 경우 요약본으로 분석, 아니면 원본으로
-            analysis_text = summary if is_massive else raw_lore
+            # 대용량일 경우 요약본으로 분석, 아니면 정리된 로어로
+            analysis_text = summary if is_massive else cleaned_lore
             
             res = await memory_system.analyze_genre_from_lore(client_genai, MODEL_ID, analysis_text)
             domain_manager.set_active_genres(channel_id, res.get("genres", ["noir"]))
             domain_manager.set_custom_tone(channel_id, res.get("custom_tone"))
-            
-            npcs = await memory_system.analyze_npcs_from_lore(client_genai, MODEL_ID, analysis_text)
-            for n in npcs:
-                character_sheet.npc_memory.add_npc(channel_id, n.get("name"), n.get("description"))
             
             rules = await memory_system.analyze_location_rules_from_lore(client_genai, MODEL_ID, analysis_text)
             if rules:
                 domain_manager.set_location_rules(channel_id, rules)
             
             # 최종 메시지
-            final_msg = f"✅ **[분석 완료]**\n**장르:** {res.get('genres')}"
+            final_msg = f"✅ **[분석 완료]**\n**장르:** {res.get('genres')}\n**NPC 추출:** {len(npcs_extracted)}명"
             if is_massive:
                 final_msg += f"\n**압축률:** {metadata['compression_ratio']}:1 ({metadata['original_length']:,}자 → {metadata['final_length']:,}자)"
             
@@ -321,6 +340,8 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
             logging.error(f"Lore Analysis Error: {e}")
             await status_msg.edit(content=f"⚠️ **분석 중 오류 발생:** {e}")
     else:
+        # AI 없으면 그냥 원본 로어 저장
+        domain_manager.append_lore(channel_id, full)
         await status_msg.edit(content="📜 저장 완료 (⚠️ API 키 없음: AI 분석 건너뜀)")
 
 
@@ -867,7 +888,9 @@ async def on_message(message):
                     "`!npc` - 전체 NPC 목록 조회\n"
                     "`!npc [이름]` - 특정 NPC 정보 조회\n"
                     "`!npc추가 이름:설명` - 수동으로 NPC 추가\n"
-                    "`!npc추가 이름` + txt파일 - 파일로 NPC 추가\n\n"
+                    "`!npc추가 이름` + txt파일 - 파일로 NPC 추가\n"
+                    "`!npc추가` + txt파일 - 여러 NPC 일괄 추가\n"
+                    "  └ 파일 형식: `이름: 설명` (각 줄)\n\n"
                     
                     "**━━━ 🎲 기타 ━━━**\n"
                     "`!r [주사위]` - 선택적 주사위 (예: !r 1d20, !r 1d100)\n"
@@ -1077,28 +1100,72 @@ async def on_message(message):
                     await message.channel.send(
                         "📝 **NPC 추가**\n"
                         "사용법:\n"
-                        "• `!npc추가 이름:설명`\n"
-                        "• `!npc추가 이름` + txt 파일 첨부\n\n"
-                        "예: `!npc추가 리엘:엘프 궁수, 과묵하고 비밀이 있음`"
+                        "• `!npc추가 이름:설명` - 단일 NPC 추가\n"
+                        "• `!npc추가 이름` + txt 파일 첨부 - 단일 NPC에 상세 설명\n"
+                        "• `!npc추가` + txt 파일 첨부 - 여러 NPC 일괄 추가\n\n"
+                        "**일괄 추가 파일 형식:**\n"
+                        "```\n"
+                        "리엘: 엘프 궁수, 과묵하고 비밀이 있음\n"
+                        "가렌: 용감한 전사, 정의감이 강함\n"
+                        "```\n"
+                        "또는\n"
+                        "```\n"
+                        "# 리엘\n"
+                        "엘프 궁수, 과묵하고 비밀이 있음\n\n"
+                        "# 가렌\n"
+                        "용감한 전사, 정의감이 강함\n"
+                        "```"
                     )
                     return
                 
                 # 이름과 설명 분리
                 if file_text:
-                    # 파일에서 설명 가져옴
-                    name = content if content else "이름없음"
-                    desc = file_text
+                    # 파일이 있는 경우
+                    if content:
+                        # 이름이 지정된 경우: 단일 NPC (파일은 설명으로 사용)
+                        name = content
+                        desc = file_text
+                        character_sheet.npc_memory.add_npc(channel_id, name, desc)
+                        await message.channel.send(f"✅ NPC 추가됨: **{name}**\n{desc[:100]}{'...' if len(desc) > 100 else ''}")
+                    else:
+                        # 이름이 없는 경우: 일괄 추가
+                        npcs = memory_system.parse_bulk_npcs_from_text(file_text)
+                        if not npcs:
+                            await message.channel.send("⚠️ 파일에서 NPC를 찾을 수 없습니다. 형식을 확인해주세요.")
+                            return
+                        
+                        # 모든 NPC 추가
+                        added_count = 0
+                        npc_names = []
+                        for npc in npcs:
+                            name = npc.get("name", "").strip()
+                            desc = npc.get("description", "").strip()
+                            if name:
+                                character_sheet.npc_memory.add_npc(channel_id, name, desc)
+                                added_count += 1
+                                npc_names.append(name)
+                        
+                        if added_count > 0:
+                            names_preview = ", ".join(npc_names[:NPC_PREVIEW_LIMIT])
+                            if added_count > NPC_PREVIEW_LIMIT:
+                                names_preview += f" 외 {added_count - NPC_PREVIEW_LIMIT}명"
+                            await message.channel.send(
+                                f"✅ **{added_count}명의 NPC 일괄 추가 완료**\n"
+                                f"**추가된 NPC:** {names_preview}"
+                            )
+                        else:
+                            await message.channel.send("⚠️ 유효한 NPC를 찾을 수 없습니다.")
                 elif ':' in content:
                     name, desc = content.split(':', 1)
                     name = name.strip()
                     desc = desc.strip()
+                    character_sheet.npc_memory.add_npc(channel_id, name, desc)
+                    await message.channel.send(f"✅ NPC 추가됨: **{name}**\n{desc}")
                 else:
                     name = content
                     desc = "설명 없음"
-                
-                # NPC 추가 (원본 그대로 저장)
-                character_sheet.npc_memory.add_npc(channel_id, name, desc)
-                await message.channel.send(f"✅ NPC 추가됨: **{name}**\n{desc}")
+                    character_sheet.npc_memory.add_npc(channel_id, name, desc)
+                    await message.channel.send(f"✅ NPC 추가됨: **{name}**\n{desc}")
                 return
             
             # --- AI 분석 도구 ---
