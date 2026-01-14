@@ -427,6 +427,33 @@ def get_lore_original(channel_id: str) -> Optional[str]:
     return None
 
 
+def get_lore_with_npcs(channel_id: str) -> str:
+    """
+    로어와 NPC 정보를 합쳐서 반환합니다.
+    AI에게 전달할 때 사용합니다.
+    
+    Returns:
+        정리된 로어 + NPC 섹션이 포함된 텍스트
+    """
+    lore = get_lore(channel_id)
+    npcs = get_npcs(channel_id)
+    
+    # NPC가 없으면 로어만 반환
+    if not npcs:
+        return lore
+    
+    # NPC 섹션 생성
+    npc_section = "\n\n### 📋 NPC 정보 (캐릭터들)\n\n"
+    for name, data in npcs.items():
+        desc = data.get("desc", "설명 없음")
+        status = data.get("status", "Active")
+        status_emoji = "✅" if status == "Active" else "💀" if status == "Dead" else "❓"
+        npc_section += f"**{name}** ({status_emoji} {status})\n{desc}\n\n"
+    
+    # 로어 + NPC 섹션 결합
+    return lore + npc_section
+
+
 # =========================================================
 # 룰 관리 (3가지 모드)
 # 1. 기본룰만: 아무 설정 없음 → DEFAULT_RULES 반환

@@ -169,6 +169,7 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
     if not full:
         raw_lore = domain_manager.get_lore(channel_id)
         original_lore = domain_manager.get_lore_original(channel_id)
+        npcs = domain_manager.get_npcs(channel_id)
         
         if raw_lore == domain_manager.DEFAULT_LORE or not raw_lore.strip():
             await message.channel.send(
@@ -185,6 +186,7 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
         if original_lore:
             info_msg += f"**📚 원본 (NPC 포함):** {len(original_lore):,}자\n"
         info_msg += f"**📖 정리된 로어 (NPC 제외):** {len(raw_lore):,}자\n"
+        info_msg += f"**👥 추출된 NPC:** {len(npcs)}명\n"
         
         info_msg += f"\n**🎭 장르:** {', '.join(genres) if genres else '미분석'}\n"
         
@@ -192,6 +194,19 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
             info_msg += f"**🎨 톤:** {custom_tone}\n"
         
         await message.channel.send(info_msg)
+        
+        # NPC 목록 미리보기 (최대 5명)
+        if npcs:
+            npc_preview = []
+            for i, (name, data) in enumerate(list(npcs.items())[:5]):
+                desc = data.get('desc', '설명 없음')
+                short_desc = desc[:50] + "..." if len(desc) > 50 else desc
+                npc_preview.append(f"• **{name}**: {short_desc}")
+            
+            npc_msg = "👥 **NPC 목록 (미리보기):**\n" + "\n".join(npc_preview)
+            if len(npcs) > 5:
+                npc_msg += f"\n_... 외 {len(npcs) - 5}명 (`!npc`로 전체 확인)_"
+            await message.channel.send(npc_msg)
         
         # 로어 미리보기
         preview = raw_lore[:500] + "..." if len(raw_lore) > 500 else raw_lore
@@ -1535,7 +1550,7 @@ async def on_message(message):
                 return
             
             # 컨텍스트 수집
-            lore_txt = domain_manager.get_lore(channel_id)
+            lore_txt = domain_manager.get_lore_with_npcs(channel_id)  # NPC 포함된 로어 사용
             rule_txt = domain_manager.get_rules(channel_id)
             world_ctx = world_manager.get_world_context(channel_id)
             obj_ctx = quest_manager.get_objective_context(channel_id)
