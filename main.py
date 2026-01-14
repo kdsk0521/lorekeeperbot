@@ -1665,8 +1665,12 @@ async def on_message(message):
             # === [10] Current Context 구성 ===
             current_context_parts = []
             
-            if world_ctx or obj_ctx:
-                current_context_parts.append(f"### World State\n{world_ctx}\n{obj_ctx}")
+            # 퀘스트/메모를 별도로 강조 (AI가 더 잘 인식하도록)
+            if obj_ctx and obj_ctx.strip() != quest_manager.EMPTY_QUEST_MEMO_MSG:
+                current_context_parts.append(f"### [ACTIVE QUESTS & MEMOS - CRITICAL INFO]\n{obj_ctx}\n**⚠️ Always reference active quests and memos when relevant to the scene.**")
+            
+            if world_ctx:
+                current_context_parts.append(f"### World State\n{world_ctx}")
             
             if temporal_ctx:
                 current_context_parts.append(temporal_ctx.strip())
@@ -1737,12 +1741,17 @@ Process <material> as the player's attempt.
 2. ✅ Verify current response doesn't contradict established history
 3. ✅ Reference past NPCs, locations, and events mentioned in <Fermented>
 4. ✅ Maintain consistency with Deep Memory and Episode Summaries
+5. ✅ **Check ACTIVE QUESTS & MEMOS** — Remember ongoing objectives and important information
+6. ✅ **Reference AI MEMORY CONTEXT** — Use stored relationships, passives, and known information
 
 **Common Mistakes to AVOID:**
 - ❌ Forgetting NPCs already introduced in past sessions
 - ❌ Contradicting established relationships or events
 - ❌ Ignoring plot threads mentioned in <Fermented>
 - ❌ Treating recurring locations as if they're new
+- ❌ **Forgetting active quests when they become relevant**
+- ❌ **Ignoring memos that contain critical clues or information**
+- ❌ **Not using stored AI memory (relationships, passives, known info)**
 
 ## ⚠️ CRITICAL: ANTI-IMPERSONATION RULE
 **The characters marked with `[Name]` are PLAYER CHARACTERS (PCs). NEVER generate their dialogue, thoughts, or actions.**
@@ -1764,6 +1773,8 @@ Generate NPC reactions and world response ONLY.
 **Apply NPC attitudes to their speech and behavior.**
 **If NPC Interaction is suggested, include their ambient dialogue.**
 **CRITICAL: Reference the FERMENTED/DEEP MEMORY above for story continuity.**
+**CRITICAL: Remember and reference ACTIVE QUESTS and MEMOS when relevant.**
+**CRITICAL: Use AI MEMORY CONTEXT (relationships, passives, known info) in your narrative.**
 Track each player separately. 3rd person narration. Korean output."""
             
             response = "⚠️ AI Error"

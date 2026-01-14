@@ -1418,6 +1418,10 @@ def get_full_ai_context(channel_id: str, user_id: str) -> str:
         if player_mem.get("known_info"):
             result += f"**알고 있는 정보:** {', '.join(player_mem['known_info'][:5])}\n"
         
+        if player_mem.get("foreshadowing"):
+            foreshadow_str = ', '.join(player_mem['foreshadowing'][:3])
+            result += f"**캐릭터 복선:** {foreshadow_str}\n"
+        
         if player_mem.get("normalization"):
             norm_str = ", ".join([f"{k}={v}" for k, v in player_mem["normalization"].items()])
             result += f"**비일상 적응:** {norm_str}\n"

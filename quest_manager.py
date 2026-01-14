@@ -20,6 +20,7 @@ MAX_RETRY_COUNT = 3
 RETRY_DELAY_SECONDS = 1
 MAX_ARCHIVE_DISPLAY = 3  # 보관함에서 표시할 최대 항목 수
 MAX_HISTORY_FOR_CHRONICLE = 50  # 연대기 생성 시 사용할 최대 히스토리
+EMPTY_QUEST_MEMO_MSG = "No active quests or memos."  # 빈 퀘스트/메모 메시지
 
 
 # =========================================================
@@ -85,39 +86,42 @@ async def call_gemini_api(
 def get_objective_context(channel_id: str) -> str:
     """
     현재 퀘스트와 메모 상태를 AI가 읽기 좋은 텍스트로 변환합니다.
+    AI가 이를 기억하고 참조하도록 명확한 지시문 포함.
     """
     board = domain_manager.get_quest_board(channel_id)
     if not board:
-        return "No active quests or memos."
+        return EMPTY_QUEST_MEMO_MSG
     
     active = board.get("active", [])
     memos = board.get("memos", [])
     archives = board.get("archive", [])
     
+    # 퀘스트나 메모가 하나도 없으면 기본 메시지
+    if not active and not memos and not archives:
+        return EMPTY_QUEST_MEMO_MSG
+    
     txt = "### [QUESTS & MEMOS]\n"
+    txt += "**⚠️ IMPORTANT: These are persistent records. Always reference them when relevant.**\n\n"
     
     # 활성 퀘스트
     if active:
-        txt += "**Active Objectives:**\n"
+        txt += "**Active Objectives (Remember these and reference when relevant):**\n"
         txt += "\n".join([f"- {q}" for q in active])
-        txt += "\n"
-    else:
-        txt += "- No active quests.\n"
+        txt += "\n\n"
     
     # 활성 메모
     if memos:
-        txt += "**Active Memos:**\n"
+        txt += "**Active Memos (Important clues and information to remember):**\n"
         txt += "\n".join([f"- {m}" for m in memos])
-        txt += "\n"
-    else:
-        txt += "- No active memos.\n"
+        txt += "\n\n"
     
     # 보관된 메모 (최근 항목만)
     if archives:
-        txt += "**Archived Info (Reference):**\n"
+        txt += "**Archived Info (Past information for reference):**\n"
         txt += "\n".join([f"- {m}" for m in archives[-MAX_ARCHIVE_DISPLAY:]])
+        txt += "\n"
     
-    return txt
+    return txt.strip()
 
 
 def get_active_quests(channel_id: str) -> List[str]:
