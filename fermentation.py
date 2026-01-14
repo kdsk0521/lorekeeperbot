@@ -42,7 +42,7 @@ except ImportError:
 
 # 발효 트리거 임계값
 # NOTE: FRESH_THRESHOLD를 증가시키면 메모리 사용량도 증가합니다.
-# 각 메시지는 평균 200-500자 정도이므로, 80개 = ~40KB 추가 메모리
+# 각 메시지는 평균 200-500자 정도이므로, 80개 = 16KB-40KB 추가 메모리 범위
 # 트래픽이 많은 환경에서는 모니터링 필요
 FRESH_THRESHOLD = 80          # FRESH 최대 개수 (초과 시 발효) - 40에서 80으로 증가
 FERMENT_CHUNK_SIZE = 30       # 한 번에 발효할 메시지 수 - 20에서 30으로 증가
@@ -583,7 +583,7 @@ def build_fermented_context(
     
     # Deep Memory (장기 기억) - 서사적 중요도 기반
     if deep_memory:
-        content_parts.append(f"""### Deep Memory (CRITICAL - 반드시 참조)
+        content_parts.append(f"""### Deep Memory (CRITICAL - Must Reference)
 **⚠️ STORY CONTINUITY DEPENDS ON THIS INFORMATION ⚠️**
 The foundational narrative archive. Pivotal moments crystallized into permanent memory.
 **You MUST reference and maintain consistency with these established events.**
@@ -610,7 +610,7 @@ The foundational narrative archive. Pivotal moments crystallized into permanent 
             total_chars += len(entry_text)
         
         if fermented_texts:
-            content_parts.append(f"""### Episode Summary (IMPORTANT - 과거 사건 참조)
+            content_parts.append(f"""### Episode Summary (IMPORTANT - Reference Past Events)
 **📜 Past sessions that shape current context. Reference these events for continuity.**
 Significant sessions preserved by emotional weight. Details may blur, but core events persist.
 
@@ -622,7 +622,7 @@ Significant sessions preserved by emotional weight. Details may blur, but core e
     return f"""
 <Fermented>
 ## Histories & Memories: The Deeper Past
-**⚠️ CRITICAL FOR STORY CONTINUITY - 스토리 연속성을 위해 필수 참조 ⚠️**
+**⚠️ CRITICAL FOR STORY CONTINUITY ⚠️**
 Non-linear archive governed by narrative significance. Pivotal moments remain distinct; trivial details fade and transform.
 **ALWAYS check these memories before generating responses to ensure consistency.**
 
@@ -671,7 +671,7 @@ def build_immediate_context(
     return f"""
 <Immediate>
 ## Histories & Memories: The Immediate Past
-**📍 Recent context leading to current moment - 직전 문맥**
+**📍 Recent context leading to current moment**
 Strictly chronological, high-fidelity record. Vivid and unaltered—the narrative bridge to NOW.
 
 ### Recent Dialogue ({len(recent_history)} exchanges)
