@@ -41,6 +41,9 @@ except ImportError:
 # =========================================================
 
 # 발효 트리거 임계값
+# NOTE: FRESH_THRESHOLD를 증가시키면 메모리 사용량도 증가합니다.
+# 각 메시지는 평균 200-500자 정도이므로, 80개 = ~40KB 추가 메모리
+# 트래픽이 많은 환경에서는 모니터링 필요
 FRESH_THRESHOLD = 80          # FRESH 최대 개수 (초과 시 발효) - 40에서 80으로 증가
 FERMENT_CHUNK_SIZE = 30       # 한 번에 발효할 메시지 수 - 20에서 30으로 증가
 FERMENTED_THRESHOLD = 8       # FERMENTED 최대 개수 (초과 시 DEEP 압축) - 5에서 8로 증가
@@ -49,6 +52,10 @@ FERMENTED_THRESHOLD = 8       # FERMENTED 최대 개수 (초과 시 DEEP 압축)
 DEEP_RATIO = 0.10             # 10% - 장기 기억
 FERMENTED_RATIO = 0.30        # 30% - 중기 기억
 FRESH_RATIO = 0.60            # 60% - 최근 대화
+
+# AI 컨텍스트 윈도우
+RECENT_HISTORY_FOR_ANALYSIS = 20  # 좌뇌 분석용 최근 히스토리
+IMMEDIATE_DISPLAY_COUNT = 30      # Immediate 섹션에 표시할 메시지 수
 
 # 토큰 추정용
 MAX_CONTEXT_TOKENS = 8000     # 메모리용 최대 토큰 (전체 컨텍스트의 일부)
@@ -626,7 +633,7 @@ Non-linear archive governed by narrative significance. Pivotal moments remain di
 
 def build_immediate_context(
     session_data: Dict[str, Any],
-    recent_count: int = 30
+    recent_count: int = None
 ) -> str:
     """
     [6] <Immediate> 섹션을 빌드합니다.
@@ -639,13 +646,20 @@ def build_immediate_context(
     vivid and unaltered, acting as the direct linear context physically 
     connected to the 'Fresh'. This section serves only as the narrative 
     bridge, not the starting point.
+    
+    Args:
+        session_data: 세션 데이터
+        recent_count: 표시할 메시지 수 (기본값: IMMEDIATE_DISPLAY_COUNT)
     """
+    if recent_count is None:
+        recent_count = IMMEDIATE_DISPLAY_COUNT
+    
     history = session_data.get("history", [])
     
     if not history:
         return ""
     
-    # 최근 N개만 추출 - 20에서 30으로 증가
+    # 최근 N개만 추출
     recent_history = history[-recent_count:] if len(history) > recent_count else history
     
     chat_lines = []
@@ -775,9 +789,9 @@ def get_memory_display(session_data: Dict[str, Any]) -> str:
     ]
     
     if stats['needs_fermentation']:
-        lines.append("⚠️ FRESH 발효 필요 (80개 초과)")
+        lines.append(f"⚠️ FRESH 발효 필요 ({FRESH_THRESHOLD}개 초과)")
     if stats['needs_deep_compression']:
-        lines.append("⚠️ DEEP 압축 필요 (FERMENTED 8개 초과)")
+        lines.append(f"⚠️ DEEP 압축 필요 (FERMENTED {FERMENTED_THRESHOLD}개 초과)")
     
     return "\n".join(lines)
 

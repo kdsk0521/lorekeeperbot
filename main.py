@@ -1554,8 +1554,8 @@ async def on_message(message):
             custom_tone = domain_manager.get_custom_tone(channel_id)
             scene_type = domain_manager.get_scene_type(channel_id)  # 장면 유형 가져오기
             
-            # 최근 20개 메시지로 증가 (10→20) - AI 메모리 개선
-            history = domain_data.get('history', [])[-20:]
+            # 좌뇌 분석용 최근 히스토리 (상수 사용)
+            history = domain_data.get('history', [])[-fermentation.RECENT_HISTORY_FOR_ANALYSIS:]
             hist_text = "\n".join([f"{h['role']}: {h['content']}" for h in history])
             hist_text += f"\nUser: {action_text}"
             
