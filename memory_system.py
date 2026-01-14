@@ -1373,6 +1373,171 @@ async def analyze_location_rules_from_lore(
 
 
 # =========================================================
+# [NPC TEXT EXTRACTOR] NPC 정보 추출 및 텍스트 분리
+# =========================================================
+async def extract_npcs_with_segments(
+    client,
+    model_id: str,
+    lore_text: str
+) -> Tuple[List[Dict[str, str]], str]:
+    """
+    [Logic Core] 로어에서 NPC 정보를 추출하고, NPC 설명을 제거한 순수 로어를 반환합니다.
+    
+    Args:
+        client: Gemini 클라이언트
+        model_id: 모델 ID
+        lore_text: 로어 텍스트
+    
+    Returns:
+        Tuple[NPC 리스트, NPC가 제거된 로어 텍스트]
+        NPCs: [{"name": "...", "description": "..."}, ...]
+        Cleaned Lore: NPC 설명이 제거된 순수 세계관 로어
+    """
+    system_instruction = (
+        "You are a lore analyzer. Your task is to:\n"
+        "1. Extract all NPCs/characters with their descriptions\n"
+        "2. Identify which text segments describe NPCs\n"
+        "3. Provide the lore text with NPC descriptions removed\n\n"
+        "NPC descriptions include: character backstory, personality, appearance, "
+        "motivations, relationships. Keep world-building, locations, history, "
+        "factions, and plot information in the cleaned lore.\n\n"
+        'Output JSON format:\n'
+        '{\n'
+        '  "npcs": [{"name": "character name", "description": "full description"}],\n'
+        '  "cleaned_lore": "lore text with NPC descriptions removed"\n'
+        '}'
+    )
+    
+    user_prompt = f"Lore Data:\n{lore_text}"
+    
+    contents = [
+        types.Content(role="user", parts=[types.Part(text=user_prompt)])
+    ]
+    config = types.GenerateContentConfig(
+        response_mime_type="application/json",
+        temperature=0.3
+    )
+    
+    result = await api_call_with_retry(
+        client, model_id, contents, config,
+        operation_name="NPC Extraction with Segment Removal"
+    )
+    
+    if result:
+        data = safe_parse_json(result)
+        npcs = data.get("npcs", [])
+        cleaned_lore = data.get("cleaned_lore", lore_text)
+        
+        # 유효한 NPC만 필터링
+        if isinstance(npcs, list):
+            valid_npcs = [
+                npc for npc in npcs
+                if isinstance(npc, dict) and npc.get("name")
+            ]
+            return valid_npcs, cleaned_lore
+    
+    # 실패 시 원본 반환
+    return [], lore_text
+
+
+def parse_bulk_npcs_from_text(text: str) -> List[Dict[str, str]]:
+    """
+    텍스트 파일에서 여러 NPC를 파싱합니다.
+    
+    지원하는 형식:
+    1. "이름: 설명" (각 줄)
+    2. "# 이름\n설명" (마크다운 스타일)
+    3. "이름 - 설명" (각 줄)
+    4. JSON 형식: [{"name": "...", "description": "..."}]
+    
+    Args:
+        text: NPC 정보가 포함된 텍스트
+    
+    Returns:
+        NPC 리스트 [{"name": "...", "description": "..."}, ...]
+    """
+    npcs = []
+    
+    # JSON 형식 시도
+    try:
+        data = json.loads(text)
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, dict) and item.get("name"):
+                    npcs.append({
+                        "name": item.get("name", "").strip(),
+                        "description": item.get("description", "").strip()
+                    })
+            if npcs:
+                return npcs
+    except json.JSONDecodeError:
+        pass
+    
+    # 라인별 파싱
+    lines = text.split('\n')
+    current_npc_name = None
+    current_npc_desc = []
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            # 빈 줄이면 현재 NPC 저장
+            if current_npc_name and current_npc_desc:
+                npcs.append({
+                    "name": current_npc_name,
+                    "description": " ".join(current_npc_desc)
+                })
+                current_npc_name = None
+                current_npc_desc = []
+            continue
+        
+        # 패턴 1: "이름: 설명" 또는 "이름 - 설명"
+        if ':' in line or ' - ' in line:
+            # 이전 NPC 저장
+            if current_npc_name and current_npc_desc:
+                npcs.append({
+                    "name": current_npc_name,
+                    "description": " ".join(current_npc_desc)
+                })
+                current_npc_desc = []
+            
+            # 새 NPC 파싱
+            if ':' in line:
+                parts = line.split(':', 1)
+            else:
+                parts = line.split(' - ', 1)
+            
+            current_npc_name = parts[0].strip()
+            if len(parts) > 1:
+                current_npc_desc = [parts[1].strip()]
+        
+        # 패턴 2: "# 이름" (마크다운 헤더)
+        elif line.startswith('#'):
+            # 이전 NPC 저장
+            if current_npc_name and current_npc_desc:
+                npcs.append({
+                    "name": current_npc_name,
+                    "description": " ".join(current_npc_desc)
+                })
+                current_npc_desc = []
+            
+            current_npc_name = line.lstrip('#').strip()
+        
+        # 현재 NPC의 설명 계속
+        elif current_npc_name:
+            current_npc_desc.append(line)
+    
+    # 마지막 NPC 저장
+    if current_npc_name and current_npc_desc:
+        npcs.append({
+            "name": current_npc_name,
+            "description": " ".join(current_npc_desc)
+        })
+    
+    return npcs
+
+
+# =========================================================
 # [OOC BRAINSTORMING] 메타 분석 모드
 # =========================================================
 OOC_BRAINSTORMING_PROMPT = """
