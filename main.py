@@ -1554,7 +1554,8 @@ async def on_message(message):
             custom_tone = domain_manager.get_custom_tone(channel_id)
             scene_type = domain_manager.get_scene_type(channel_id)  # 장면 유형 가져오기
             
-            history = domain_data.get('history', [])[-10:]
+            # 최근 20개 메시지로 증가 (10→20) - AI 메모리 개선
+            history = domain_data.get('history', [])[-20:]
             hist_text = "\n".join([f"{h['role']}: {h['content']}" for h in history])
             hist_text += f"\nUser: {action_text}"
             
@@ -1729,6 +1730,19 @@ Process <material> as the player's attempt.
 - `[Name] says: "..."` → Player is speaking dialogue. NPCs should hear and respond.
 - `[Name] does: *...*` → Player is performing an action. Describe the result.
 - `[Name]: ...` → General description or narration by player.
+
+## ⚠️ CRITICAL: STORY CONTINUITY & MEMORY (스토리 연속성 필수)
+**BEFORE generating any response, you MUST:**
+1. ✅ Check <Fermented> section for relevant past events
+2. ✅ Verify current response doesn't contradict established history
+3. ✅ Reference past NPCs, locations, and events mentioned in <Fermented>
+4. ✅ Maintain consistency with Deep Memory and Episode Summaries
+
+**Common Mistakes to AVOID:**
+- ❌ Forgetting NPCs already introduced in past sessions
+- ❌ Contradicting established relationships or events
+- ❌ Ignoring plot threads mentioned in <Fermented>
+- ❌ Treating recurring locations as if they're new
 
 ## ⚠️ CRITICAL: ANTI-IMPERSONATION RULE (사칭 금지)
 **The characters marked with `[Name]` are PLAYER CHARACTERS (PCs). NEVER generate their dialogue, thoughts, or actions.**
