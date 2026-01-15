@@ -1421,8 +1421,17 @@ async def on_message(message):
                 
                 confirm_msg = edit_result.get("confirmation_message", "✅ 수정 완료!")
                 interpretation = edit_result.get("interpretation", "")
-                
-                edited_fields = list(set(e.get("field", "").split(".")[0] for e in edit_result["edits"]))
+
+                # API 응답 구조 검증
+                edited_fields = []
+                if isinstance(edit_result.get("edits"), list):
+                    for e in edit_result["edits"]:
+                        if isinstance(e, dict):
+                            field = e.get("field", "")
+                            if field and isinstance(field, str):
+                                edited_fields.append(field.split(".")[0])
+                edited_fields = list(set(edited_fields))
+
                 field_emoji = {
                     "relationships": "💞", "passives": "🏆", "known_info": "💡",
                     "foreshadowing": "🔮", "normalization": "🌓", "appearance": "👁️",
