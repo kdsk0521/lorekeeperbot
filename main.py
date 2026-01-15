@@ -469,7 +469,7 @@ async def handle_npc_info_command(message, channel_id: str, npc_name: str) -> No
     """NPC 정보 조회 명령어를 처리합니다."""
     # domain NPCs와 session_mem의 npc_summaries를 모두 확인
     npcs = domain_manager.get_npcs(channel_id)
-    session_mem = domain_manager.get_session_memory(channel_id)
+    session_mem = domain_manager.get_session_ai_memory(channel_id)
     npc_summaries = session_mem.get("npc_summaries", {}) if session_mem else {}
     
     # npc_summaries를 npcs에 병합 (세션 중 감지된 NPC 포함)
@@ -601,7 +601,7 @@ async def handle_info_command(message, channel_id: str, sub_command: str = "") -
         
         # 모든 출처의 NPC 수집 (domain NPCs + session npc_summaries)
         all_npcs = domain_manager.get_npcs(channel_id).copy()
-        session_mem = domain_manager.get_session_memory(channel_id)
+        session_mem = domain_manager.get_session_ai_memory(channel_id)
         if session_mem:
             npc_summaries = session_mem.get("npc_summaries", {})
             for name, summary in npc_summaries.items():

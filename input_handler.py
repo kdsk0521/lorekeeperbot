@@ -204,6 +204,7 @@ def parse_input(content: str) -> Optional[Dict[str, Any]]:
             # === AI 분석 도구 ===
             '분석': 'analyze',
             'analyze': 'analyze',
+            'ooc': 'ooc',
             '일관성': 'consistency',
             'consistency': 'consistency',
             '세계규칙': 'worldrules',
