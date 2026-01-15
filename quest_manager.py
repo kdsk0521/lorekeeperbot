@@ -89,9 +89,9 @@ def get_objective_context(channel_id: str) -> str:
     AI가 이를 기억하고 참조하도록 명확한 지시문 포함.
     """
     board = domain_manager.get_quest_board(channel_id)
-    if board is None or not isinstance(board, dict):
+    if not board:
         return EMPTY_QUEST_MEMO_MSG
-
+    
     active = board.get("active", [])
     memos = board.get("memos", [])
     archives = board.get("archive", [])
@@ -126,26 +126,19 @@ def get_objective_context(channel_id: str) -> str:
 
 def get_active_quests(channel_id: str) -> List[str]:
     """활성 퀘스트 목록을 리스트로 반환합니다."""
-    board = domain_manager.get_quest_board(channel_id)
-    if board is None:
-        return []
+    board = domain_manager.get_quest_board(channel_id) or {}
     return board.get("active", [])
 
 
 def get_memos(channel_id: str) -> List[str]:
     """메모 목록을 리스트로 반환합니다."""
-    board = domain_manager.get_quest_board(channel_id)
-    if board is None:
-        return []
+    board = domain_manager.get_quest_board(channel_id) or {}
     return board.get("memos", [])
 
 
 def get_active_quests_text(channel_id: str) -> str:
     """활성 퀘스트 목록을 텍스트로 반환합니다."""
-    board = domain_manager.get_quest_board(channel_id)
-    if board is None:
-        return "📭 현재 진행 중인 퀘스트가 없습니다."
-
+    board = domain_manager.get_quest_board(channel_id) or {}
     active = board.get("active", [])
     
     if not active:
@@ -157,10 +150,7 @@ def get_active_quests_text(channel_id: str) -> str:
 
 def get_memos_text(channel_id: str) -> str:
     """메모 목록을 텍스트로 반환합니다."""
-    board = domain_manager.get_quest_board(channel_id)
-    if board is None:
-        return "📭 저장된 메모가 없습니다."
-
+    board = domain_manager.get_quest_board(channel_id) or {}
     memos = board.get("memos", [])
     
     if not memos:

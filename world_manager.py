@@ -62,24 +62,20 @@ def advance_time(channel_id: str) -> str:
     world = domain_manager.get_world_state(channel_id)
     if not world:
         return "⚠️ 데이터 없음"
-
+    
     time_slots = get_time_slots(channel_id)
     weather_types = get_weather_types(channel_id)
-
-    # 시간대 목록이 비어있는 경우 방어 처리
-    if not time_slots or not weather_types:
-        return "⚠️ 시간대 또는 날씨 설정 오류"
-
+    
     # 현재 시간대 인덱스 찾기
-    current_slot = world.get("time_slot", time_slots[1] if len(time_slots) > 1 else time_slots[0])
+    current_slot = world.get("time_slot", time_slots[1])
     try:
         current_idx = time_slots.index(current_slot)
     except ValueError:
         current_idx = 0
-
+    
     msg = ""
     next_idx = current_idx + 1
-
+    
     # 자정이 지나면 다음 날로
     if next_idx >= len(time_slots):
         world["time_slot"] = time_slots[0]

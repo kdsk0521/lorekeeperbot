@@ -406,17 +406,11 @@ def reset_lore(channel_id: str) -> None:
     """로어를 초기화합니다."""
     lore_path = get_lore_file_path(channel_id)
     original_path = get_lore_original_file_path(channel_id)
-
+    
     if os.path.exists(lore_path):
-        try:
-            os.remove(lore_path)
-        except Exception as e:
-            logging.error(f"파일 삭제 실패 {lore_path}: {e}")
+        os.remove(lore_path)
     if os.path.exists(original_path):
-        try:
-            os.remove(original_path)
-        except Exception as e:
-            logging.error(f"파일 삭제 실패 {original_path}: {e}")
+        os.remove(original_path)
 
 
 def save_lore_original(channel_id: str, original_text: str) -> None:
@@ -558,10 +552,7 @@ def reset_rules(channel_id: str) -> None:
     """룰을 초기화합니다 (기본룰로 복귀). 성장 시스템도 기본값으로 복귀합니다."""
     path = get_rules_file_path(channel_id)
     if os.path.exists(path):
-        try:
-            os.remove(path)
-        except Exception as e:
-            logging.error(f"파일 삭제 실패 {path}: {e}")
+        os.remove(path)
     
     set_rules_mode(channel_id, "default")
     
