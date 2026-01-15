@@ -117,6 +117,11 @@ def parse_input(content: str) -> Optional[Dict[str, Any]]:
     # 1. 명령어 인식 (! 로 시작)
     if clean_content.startswith('!'):
         parts = clean_content[1:].split(maxsplit=1)
+
+        # 빈 명령어 체크 (예: "!" 단독 입력)
+        if not parts:
+            return None
+
         command = parts[0].lower()
         args = parts[1] if len(parts) > 1 else ""
         
