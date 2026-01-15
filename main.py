@@ -10,15 +10,20 @@ import logging
 import io
 import re
 import json
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Dict
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from collections import defaultdict, deque
+from time import time
 
 # =========================================================
 # 상수 정의
 # =========================================================
 MAX_DISCORD_MESSAGE_LENGTH = 2000
+MAX_FILE_SIZE_MB = 10  # 최대 파일 크기 (MB)
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+MAX_TEXT_INPUT_LENGTH = 50000  # 최대 텍스트 입력 길이
 SUPPORTED_TEXT_EXTENSIONS = ['.txt', '.md', '.json', '.log', '.py', '.yaml', '.yml']
 NPC_PREVIEW_LIMIT = 5  # 일괄 추가 시 미리보기 NPC 개수
 VERSION = "3.1"
@@ -81,6 +86,44 @@ intents = discord.Intents.default()
 intents.message_content = True
 client_discord = discord.Client(intents=intents)
 
+# =========================================================
+# Per-channel locks to prevent race conditions
+# =========================================================
+channel_locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+# =========================================================
+# Discord Rate Limiting Protection
+# =========================================================
+class RateLimiter:
+    """Discord API rate limiting 방지를 위한 간단한 rate limiter"""
+
+    def __init__(self, max_messages: int = 5, time_window: float = 5.0):
+        self.max_messages = max_messages
+        self.time_window = time_window
+        self.message_times: Dict[str, deque] = defaultdict(lambda: deque(maxlen=max_messages))
+
+    async def wait_if_needed(self, channel_id: str) -> None:
+        """필요 시 대기하여 rate limit을 준수합니다."""
+        now = time()
+        times = self.message_times[channel_id]
+
+        # 오래된 타임스탬프 제거
+        while times and now - times[0] > self.time_window:
+            times.popleft()
+
+        # Rate limit 초과 시 대기
+        if len(times) >= self.max_messages:
+            oldest = times[0]
+            wait_time = self.time_window - (now - oldest)
+            if wait_time > 0:
+                logging.debug(f"Rate limit 대기: {wait_time:.2f}초")
+                await asyncio.sleep(wait_time)
+
+        # 현재 메시지 타임스탬프 기록
+        self.message_times[channel_id].append(time())
+
+rate_limiter = RateLimiter()
+
 
 # =========================================================
 # 유틸리티 함수
@@ -89,14 +132,18 @@ async def send_long_message(channel, text: str) -> None:
     """2000자가 넘는 메시지를 나누어 전송하는 함수"""
     if not text:
         return
-    
+
+    channel_id = str(channel.id)
+
     if len(text) <= MAX_DISCORD_MESSAGE_LENGTH:
+        await rate_limiter.wait_if_needed(channel_id)
         await channel.send(text)
         return
-    
+
     # 메시지 분할 전송
     for i in range(0, len(text), MAX_DISCORD_MESSAGE_LENGTH):
         chunk = text[i:i + MAX_DISCORD_MESSAGE_LENGTH]
+        await rate_limiter.wait_if_needed(channel_id)
         await channel.send(chunk)
 
 
@@ -108,17 +155,40 @@ async def read_attachment_text(attachment) -> Tuple[Optional[str], Optional[str]
         Tuple[Optional[str], Optional[str]]: (텍스트 내용, 에러 메시지)
     """
     filename_lower = attachment.filename.lower()
-    
+
+    # 파일 크기 확인
+    if attachment.size > MAX_FILE_SIZE_BYTES:
+        return None, f"⚠️ 파일이 너무 큽니다. 최대 크기: {MAX_FILE_SIZE_MB}MB"
+
     # 지원되는 확장자인지 확인
     if not any(filename_lower.endswith(ext) for ext in SUPPORTED_TEXT_EXTENSIONS):
         return None, f"⚠️ **지원하지 않는 파일입니다.**\n지원 확장자: {', '.join(SUPPORTED_TEXT_EXTENSIONS)}"
-    
+
     try:
         data = await attachment.read()
-        text = data.decode('utf-8')
+
+        # 여러 인코딩 시도 (한국어 파일 지원)
+        encodings = ['utf-8', 'cp949', 'euc-kr', 'utf-8-sig']
+        text = None
+        last_error = None
+
+        for encoding in encodings:
+            try:
+                text = data.decode(encoding)
+                logging.info(f"파일 '{attachment.filename}' 인코딩: {encoding}")
+                break
+            except (UnicodeDecodeError, LookupError) as e:
+                last_error = e
+                continue
+
+        if text is None:
+            return None, f"⚠️ 파일 `{attachment.filename}` 읽기 실패: 지원하지 않는 인코딩입니다."
+
+        # 텍스트 길이 검증
+        if len(text) > MAX_TEXT_INPUT_LENGTH:
+            return None, f"⚠️ 파일 내용이 너무 깁니다. 최대 {MAX_TEXT_INPUT_LENGTH:,}자까지 지원합니다."
+
         return text, None
-    except UnicodeDecodeError:
-        return None, f"⚠️ 파일 `{attachment.filename}` 읽기 실패: UTF-8 인코딩이 아닙니다."
     except Exception as e:
         return None, f"⚠️ 파일 `{attachment.filename}` 읽기 실패: {e}"
 
@@ -733,10 +803,18 @@ async def on_message(message):
     # 봇 자신의 메시지 또는 빈 메시지 무시
     if message.author == client_discord.user or not message.content:
         return
-    
+
+    channel_id = str(message.channel.id)
+
+    # Per-channel lock으로 race condition 방지
+    async with channel_locks[channel_id]:
+        await _process_message(message, channel_id)
+
+
+async def _process_message(message, channel_id: str):
+    """메시지 처리 로직 (lock 내부에서 실행)"""
     try:
-        channel_id = str(message.channel.id)
-        
+
         # 봇 On/Off 명령어
         if message.content == "!off":
             domain_manager.set_bot_disabled(channel_id, True)
@@ -1998,8 +2076,10 @@ Track each player separately. 3rd person narration. Korean output."""
                         
                         except json.JSONDecodeError as je:
                             logging.warning(f"[SYSTEM_UPDATE] JSON 파싱 실패: {je}")
+                            await message.channel.send("⚠️ 시스템 업데이트 처리 중 오류 발생 (JSON 파싱 실패)")
                         except Exception as ue:
                             logging.warning(f"[SYSTEM_UPDATE] 업데이트 실패: {ue}")
+                            await message.channel.send(f"⚠️ 시스템 업데이트 처리 중 오류: {str(ue)[:50]}")
                         
                         # 응답에서 system_update 블록 제거 (출력에서 숨김)
                         response = re.sub(
@@ -2046,15 +2126,47 @@ Track each player separately. 3rd person narration. Korean output."""
         logging.error(f"Error: {e}", exc_info=True)
         try:
             await message.channel.send(f"⚠️ **오류:** {str(e)[:100]}")
-        except:
-            pass
+        except (discord.HTTPException, discord.Forbidden) as send_error:
+            logging.error(f"오류 메시지 전송 실패: {send_error}")
 
 
 # =========================================================
 # 메인 실행
 # =========================================================
+def validate_environment() -> bool:
+    """환경 변수 검증"""
+    errors = []
+
+    if not DISCORD_TOKEN:
+        errors.append("DISCORD_TOKEN이 설정되지 않았습니다.")
+
+    if not GEMINI_API_KEY:
+        errors.append("GEMINI_API_KEY가 설정되지 않았습니다.")
+
+    if not client_genai:
+        errors.append("Gemini 클라이언트 초기화에 실패했습니다.")
+
+    if errors:
+        print("=" * 60)
+        print("🚨 환경 설정 오류:")
+        print("=" * 60)
+        for error in errors:
+            print(f"  ❌ {error}")
+        print("=" * 60)
+        print("💡 .env 파일을 확인하고 필요한 환경 변수를 설정해주세요.")
+        print("   예시:")
+        print("   DISCORD_TOKEN=your_discord_token_here")
+        print("   GEMINI_API_KEY=your_gemini_api_key_here")
+        print("=" * 60)
+        return False
+
+    return True
+
+
 if __name__ == "__main__":
-    if DISCORD_TOKEN:
+    if validate_environment():
+        logging.info("환경 변수 검증 완료")
         client_discord.run(DISCORD_TOKEN)
     else:
-        print("ERROR: DISCORD_TOKEN이 설정되지 않았습니다.")
+        logging.error("환경 변수 검증 실패 - 봇을 시작할 수 없습니다.")
+        exit(1)
