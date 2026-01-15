@@ -53,23 +53,25 @@ class NPCManager:
     ) -> bool:
         """
         NPC의 상태를 변경합니다.
-        
+
         Args:
             channel_id: 채널 ID
             name: NPC 이름
             status: 새 상태 (Active, Dead, Missing 등)
-        
+
         Returns:
             성공 여부
         """
         npcs = domain_manager.get_npcs(channel_id)
-        
+
         if name not in npcs:
             logging.warning(f"NPC를 찾을 수 없음: {name}")
             return False
-        
-        npcs[name]["status"] = status
-        domain_manager.update_npc(channel_id, name, npcs[name])
+
+        # NPC 데이터를 복사하여 상태 업데이트 (이중 수정 방지)
+        npc_data = npcs[name].copy()
+        npc_data["status"] = status
+        domain_manager.update_npc(channel_id, name, npc_data)
         logging.info(f"NPC 상태 변경: {name} -> {status}")
         return True
     

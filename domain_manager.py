@@ -402,7 +402,8 @@ def get_lore(channel_id: str) -> str:
 def append_lore(channel_id: str, text: str) -> None:
     """로어를 추가합니다."""
     current = get_lore(channel_id)
-    new_text = text if current == DEFAULT_LORE else f"{current}\n\n{text}"
+    # 공백을 무시하고 기본 로어와 비교 (TRPG 세션에서 공백만 다른 경우 처리)
+    new_text = text if current.strip() == DEFAULT_LORE.strip() else f"{current}\n\n{text}"
     save_text(get_lore_file_path(channel_id), new_text)
 
 
@@ -432,8 +433,8 @@ def get_lore_original(channel_id: str) -> Optional[str]:
     """원본 로어를 가져옵니다 (NPC 포함)."""
     path = get_lore_original_file_path(channel_id)
     if os.path.exists(path):
-        content = load_text(path, "")
-        return content if content else None
+        # TRPG 세션에서는 빈 파일도 유효한 상태로 간주 (파일 존재 = 로어 설정됨)
+        return load_text(path, "")
     return None
 
 
