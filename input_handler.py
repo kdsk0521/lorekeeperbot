@@ -13,18 +13,32 @@ from typing import Optional, Dict, Any, Tuple, List
 MAX_DICE_COUNT = 100  # 최대 주사위 개수
 MAX_DICE_SIDES = 1000  # 최대 주사위 면 수
 
+# 정규식 패턴을 미리 컴파일 (성능 최적화)
+_MARKDOWN_PATTERNS = [
+    re.compile(r'\*\*\*'),
+    re.compile(r'\*\*'),
+    re.compile(r'___'),
+    re.compile(r'__'),
+    re.compile(r'~~'),
+    re.compile(r'\|\|'),
+    re.compile(r'`')
+]
+
+# OOC 및 주사위 패턴 미리 컴파일
+_OOC_PATTERN = re.compile(r'\((?:OOC|ooc)[:\s]+(.+?)\)', re.IGNORECASE | re.DOTALL)
+_DICE_PATTERN = re.compile(r"(\d+)d(\d+)([+-]\d+)?")
+
 
 def strip_discord_markdown(text: str) -> str:
     """메시지 앞뒤 및 내부의 디스코드 마크다운 기호를 제거합니다."""
     if not text:
         return ""
-    
-    patterns = [r'\*\*\*', r'\*\*', r'___', r'__', r'~~', r'\|\|', r'`']
+
     clean_text = text
-    
-    for p in patterns:
-        clean_text = re.sub(p, '', clean_text)
-    
+
+    for pattern in _MARKDOWN_PATTERNS:
+        clean_text = pattern.sub('', clean_text)
+
     return clean_text.strip()
 
 
@@ -45,16 +59,16 @@ def analyze_style(text: str, clean_text: str) -> str:
 def roll_dice(dice_str: str, mode: str = "normal") -> Optional[Tuple[int, Any, int, Optional[str]]]:
     """
     주사위 식(예: 1d20+3)을 파싱하여 결과를 계산합니다.
-    
+
     Args:
         dice_str: 주사위 식 문자열 (예: "2d6+3", "1d20")
         mode: 굴림 모드 - 'normal', 'adv' (유리함), 'dis' (불리함)
-    
+
     Returns:
         Tuple[최종값, 굴림결과, 수정치, 상세설명] 또는 None (파싱 실패 시)
     """
-    # 정규식: 숫자d숫자(+/-숫자)
-    match = re.search(r"(\d+)d(\d+)([+-]\d+)?", dice_str.lower())
+    # 미리 컴파일된 정규식 사용
+    match = _DICE_PATTERN.search(dice_str.lower())
     if not match:
         return None
     
@@ -270,13 +284,12 @@ def parse_input(content: str) -> Optional[Dict[str, Any]]:
     
     # 2. OOC 감지 - 메시지 내 (OOC: 내용) 패턴 추출
     # 메시지 어디에든 (OOC: ...) 가 있으면 추출
-    ooc_pattern = r'\((?:OOC|ooc)[:\s]+(.+?)\)'
-    ooc_match = re.search(ooc_pattern, clean_content, re.IGNORECASE | re.DOTALL)
-    
+    ooc_match = _OOC_PATTERN.search(clean_content)
+
     if ooc_match:
         ooc_content = ooc_match.group(1).strip()
         # OOC 부분을 제거한 나머지 텍스트
-        remaining_text = re.sub(ooc_pattern, '', clean_content, flags=re.IGNORECASE | re.DOTALL).strip()
+        remaining_text = _OOC_PATTERN.sub('', clean_content).strip()
         
         if remaining_text:
             # OOC + 행동/대사가 함께 있음 → 둘 다 처리

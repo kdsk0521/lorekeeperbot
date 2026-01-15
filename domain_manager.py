@@ -229,18 +229,22 @@ def get_domain(channel_id: str) -> Dict[str, Any]:
     """채널의 도메인 데이터를 가져옵니다."""
     default_session = _get_default_session()
     data = load_json(get_session_file_path(channel_id), default_session)
-    
-    # 누락된 키 보정
-    for key, default_value in default_session.items():
-        if key not in data:
-            data[key] = default_value
-    
-    # world_state 내부 키 보정
-    if "world_state" in data:
-        for ws_key, ws_default in DEFAULT_WORLD_STATE.items():
-            if ws_key not in data["world_state"]:
-                data["world_state"][ws_key] = ws_default
-    
+
+    # 누락된 키 보정 (최적화: 없는 키만 체크)
+    if not isinstance(data, dict):
+        return default_session
+
+    # 1단계: 최상위 키 보정
+    missing_keys = set(default_session.keys()) - set(data.keys())
+    for key in missing_keys:
+        data[key] = default_session[key]
+
+    # 2단계: world_state 내부 키 보정
+    if "world_state" in data and isinstance(data["world_state"], dict):
+        missing_ws_keys = set(DEFAULT_WORLD_STATE.keys()) - set(data["world_state"].keys())
+        for ws_key in missing_ws_keys:
+            data["world_state"][ws_key] = DEFAULT_WORLD_STATE[ws_key]
+
     return data
 
 
