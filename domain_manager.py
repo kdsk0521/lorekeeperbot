@@ -11,7 +11,8 @@ from typing import Optional, Dict, Any, List
 # =========================================================
 # 상수 정의
 # =========================================================
-MAX_HISTORY_LENGTH = 40  # 히스토리 최대 보관 개수
+# NOTE: fermentation.py의 FRESH_THRESHOLD (80)와 일치해야 합니다
+MAX_HISTORY_LENGTH = 80  # 히스토리 최대 보관 개수 (발효 시스템과 동기화)
 MAX_DESC_LENGTH = 50  # 설명 요약 시 최대 길이
 
 DEFAULT_LORE = ""  # 로어는 반드시 사용자가 설정해야 함
@@ -346,12 +347,18 @@ def update_participant(channel_id: str, user, reset: bool = False) -> bool:
 def get_participant_data(channel_id: str, user_id: str) -> Optional[Dict[str, Any]]:
     """참가자 데이터를 가져옵니다."""
     d = get_domain(channel_id)
+    if not d or "participants" not in d:
+        logging.warning(f"도메인 데이터가 올바르지 않습니다: {channel_id}")
+        return None
     return d["participants"].get(str(user_id))
 
 
 def save_participant_data(channel_id: str, user_id: str, data: Dict[str, Any]) -> None:
     """참가자 데이터를 저장합니다."""
     d = get_domain(channel_id)
+    if not d or "participants" not in d:
+        logging.error(f"도메인 데이터가 올바르지 않습니다: {channel_id}")
+        return
     d["participants"][str(user_id)] = data
     save_domain(channel_id, d)
 
