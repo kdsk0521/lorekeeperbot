@@ -293,7 +293,7 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
         return
 
     # 로어 추출 (텍스트 파일로 내보내기)
-    if full == "추출":
+    if full.lower() in ['추출', '내보내기', 'export', 'dump']:
         import io
         export_text, msg = quest_manager.export_lore_data(channel_id)
         if export_text:
@@ -326,27 +326,27 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
     # AI 분석
     if client_genai:
         try:
-            # NPC 추출 및 로어 분리
-            await status_msg.edit(content="⏳ **[AI]** NPC 추출 및 로어 분리 중...")
-            npcs_extracted, cleaned_lore = await memory_system.extract_npcs_with_segments(
+            # NPC만 추출 (원본 로어는 수정하지 않음, PC 제외)
+            await status_msg.edit(content="⏳ **[AI]** NPC 추출 중 (PC 제외)...")
+            npcs_extracted = await memory_system.extract_npcs_only(
                 client_genai, MODEL_ID, raw_lore
             )
-            
+
             # NPC 추가
             for n in npcs_extracted:
                 character_sheet.npc_memory.add_npc(channel_id, n.get("name"), n.get("description"))
-            
-            # 정리된 로어 저장 (NPC 제거됨)
-            domain_manager.append_lore(channel_id, cleaned_lore)
-            
-            # 장르 분석 (정리된 로어 기반)
+
+            # 원본 로어 그대로 저장 (AI가 재작성하지 않음)
+            domain_manager.append_lore(channel_id, raw_lore)
+
+            # 장르 분석 (원본 로어 기반)
             await status_msg.edit(content="⏳ **[AI]** 장르 분석 중...")
-            
-            res = await memory_system.analyze_genre_from_lore(client_genai, MODEL_ID, cleaned_lore)
+
+            res = await memory_system.analyze_genre_from_lore(client_genai, MODEL_ID, raw_lore)
             domain_manager.set_active_genres(channel_id, res.get("genres", ["noir"]))
             domain_manager.set_custom_tone(channel_id, res.get("custom_tone"))
-            
-            rules = await memory_system.analyze_location_rules_from_lore(client_genai, MODEL_ID, cleaned_lore)
+
+            rules = await memory_system.analyze_location_rules_from_lore(client_genai, MODEL_ID, raw_lore)
             if rules:
                 domain_manager.set_location_rules(channel_id, rules)
             
@@ -479,7 +479,7 @@ async def handle_chronicle_command(message, channel_id: str, arg: str) -> None:
 async def handle_npc_info_command(message, channel_id: str, npc_name: str) -> None:
     """NPC 정보 조회 명령어를 처리합니다."""
     # NPC 추출 (텍스트 파일로 내보내기)
-    if npc_name == "추출":
+    if npc_name.lower() in ['추출', '내보내기', 'export', 'dump']:
         import io
         export_text, msg = quest_manager.export_npc_data(channel_id)
         if export_text:
