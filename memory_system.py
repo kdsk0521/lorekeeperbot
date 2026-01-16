@@ -1117,6 +1117,96 @@ async def extract_npcs_with_segments(
     return [], lore_text
 
 
+async def extract_npcs_only(
+    client,
+    model_id: str,
+    lore_text: str
+) -> List[Dict[str, str]]:
+    """
+    [Logic Core] 로어에서 NPC 정보만 추출합니다. (로어 자체는 수정하지 않음)
+    PC(플레이어 캐릭터)는 제외합니다.
+
+    Args:
+        client: Gemini 클라이언트
+        model_id: 모델 ID
+        lore_text: 로어 텍스트
+
+    Returns:
+        NPC 리스트: [{"name": "...", "description": "..."}, ...]
+    """
+    user_prompt = """You are an NPC extractor for a TRPG lore document.
+
+### TASK
+Extract all NPCs (Non-Player Characters) from the lore.
+
+### CRITICAL RULES
+1. **EXCLUDE Player Characters (PC)** - Characters marked as:
+   - [PLAYER CHARACTER]
+   - "PC"
+   - "PLAYER CHARACTER"
+   - Characters that players control
+   - Characters in sections labeled "PLAYER CHARACTER"
+
+2. **INCLUDE only NPCs** - Characters that:
+   - The game master/AI controls
+   - Have defined personalities, roles, or descriptions
+   - Interact with player characters
+   - Are in sections labeled "NPC" or "NPCs"
+
+3. **For each NPC, extract:**
+   - name: Character name (including any aliases/titles)
+   - description: Full description including species, role, personality, background, abilities
+
+### OUTPUT FORMAT (JSON only)
+{
+  "npcs": [
+    {"name": "캐릭터명", "description": "전체 설명..."},
+    ...
+  ],
+  "excluded_pcs": ["PC로 판단하여 제외한 캐릭터명"]
+}
+
+### LORE DATA
+""" + lore_text
+
+    contents = [
+        types.Content(role="user", parts=[types.Part(text=user_prompt)])
+    ]
+    config = types.GenerateContentConfig(
+        response_mime_type="application/json",
+        temperature=0.3
+    )
+
+    result = await api_call_with_retry(
+        client, model_id, contents, config,
+        operation_name="NPC Extraction (PC Excluded)"
+    )
+
+    if result:
+        data = safe_parse_json(result)
+        npcs = data.get("npcs", [])
+        excluded_pcs = data.get("excluded_pcs", [])
+
+        # 제외된 PC 로깅
+        if excluded_pcs:
+            logging.info(f"[NPC Extraction] Excluded PCs: {excluded_pcs}")
+
+        # 유효한 NPC만 필터링 (이름과 설명이 비어있지 않은 것만)
+        if isinstance(npcs, list):
+            valid_npcs = [
+                {
+                    "name": npc.get("name", "").strip(),
+                    "description": npc.get("description", "설명 없음").strip()
+                }
+                for npc in npcs
+                if isinstance(npc, dict) and npc.get("name") and npc.get("name").strip()
+            ]
+            return valid_npcs
+
+    # 실패 시 빈 리스트 반환
+    return []
+
+
 def parse_bulk_npcs_from_text(text: str) -> List[Dict[str, str]]:
     """
     텍스트 파일에서 여러 NPC를 파싱합니다.
