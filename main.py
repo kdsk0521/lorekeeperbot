@@ -291,6 +291,17 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
         domain_manager.set_custom_tone(channel_id, None)
         await message.channel.send("📜 **로어 초기화됨** - 장르도 기본값으로 복귀")
         return
+
+    # 로어 추출 (텍스트 파일로 내보내기)
+    if full == "추출":
+        import io
+        export_text, msg = quest_manager.export_lore_data(channel_id)
+        if export_text:
+            f = io.BytesIO(export_text.encode('utf-8'))
+            await message.channel.send(msg, file=discord.File(f, filename="lore_export.txt"))
+        else:
+            await message.channel.send(msg)
+        return
     
     # 로어 저장
     is_append = not file_text and domain_manager.get_lore(channel_id).strip()
@@ -467,16 +478,27 @@ async def handle_chronicle_command(message, channel_id: str, arg: str) -> None:
 
 async def handle_npc_info_command(message, channel_id: str, npc_name: str) -> None:
     """NPC 정보 조회 명령어를 처리합니다."""
+    # NPC 추출 (텍스트 파일로 내보내기)
+    if npc_name == "추출":
+        import io
+        export_text, msg = quest_manager.export_npc_data(channel_id)
+        if export_text:
+            f = io.BytesIO(export_text.encode('utf-8'))
+            await message.channel.send(msg, file=discord.File(f, filename="npc_export.txt"))
+        else:
+            await message.channel.send(msg)
+        return
+
     # domain NPCs와 session_mem의 npc_summaries를 모두 확인
     npcs = domain_manager.get_npcs(channel_id)
     session_mem = domain_manager.get_session_ai_memory(channel_id)
     npc_summaries = session_mem.get("npc_summaries", {}) if session_mem else {}
-    
+
     # npc_summaries를 npcs에 병합 (세션 중 감지된 NPC 포함)
     for name, summary in npc_summaries.items():
         if name not in npcs:
             npcs[name] = {"desc": summary, "status": "Active"}
-    
+
     if not npc_name:
         # 전체 NPC 목록
         if not npcs:
@@ -903,6 +925,7 @@ async def _process_message(message, channel_id: str):
                     "**━━━ 🌍 세계관 ━━━**\n"
                     "`!로어 [파일]` - 세계관 설정 (파일 업로드 또는 텍스트)\n"
                     "  └ NPC 자동 추출, 장르 분석 포함\n"
+                    "`!로어 추출` - 로어 데이터 텍스트 파일로 저장\n"
                     "`!룰 [내용]` - 룰 추가 (기본룰 자동 적용)\n"
                     "`!룰 초기화` - 기본 룰로 복귀\n"
                     "`!퀘스트 [내용]` - 퀘스트 추가/조회\n"
@@ -914,6 +937,7 @@ async def _process_message(message, channel_id: str):
                     "**━━━ 👥 NPC 관리 ━━━**\n"
                     "`!npc` - 전체 NPC 목록 조회\n"
                     "`!npc [이름]` - 특정 NPC 정보 조회\n"
+                    "`!npc 추출` - NPC 데이터 텍스트 파일로 저장\n"
                     "`!npc추가 이름:설명` - 수동으로 NPC 추가\n"
                     "`!npc추가 이름` + txt파일 - 파일로 NPC 추가\n"
                     "`!npc추가` + txt파일 - 여러 NPC 일괄 추가\n"
