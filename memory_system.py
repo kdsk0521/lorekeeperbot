@@ -1207,6 +1207,99 @@ Extract all NPCs (Non-Player Characters) from the lore.
     return []
 
 
+async def extract_pc_info(
+    client,
+    model_id: str,
+    lore_text: str
+) -> Optional[Dict[str, Any]]:
+    """
+    [Logic Core] 로어에서 PC(플레이어 캐릭터) 정보를 추출합니다.
+
+    Args:
+        client: Gemini 클라이언트
+        model_id: 모델 ID
+        lore_text: 로어 텍스트
+
+    Returns:
+        PC 정보가 있으면 dict, 없으면 None
+        {
+            "name": "케인 (Kain)",
+            "appearance": "외형 설명...",
+            "personality": "성격 설명...",
+            "background": "배경 설명...",
+            "known_info": ["알고 있는 정보1", "정보2"],
+            "relationships": {"NPC이름": "관계 설명"},
+            "species": "Human",
+            "role": "Landlord"
+        }
+    """
+    user_prompt = """You are a PC (Player Character) info extractor for TRPG lore.
+
+### TASK
+Extract the Player Character's information from the lore document.
+
+### HOW TO IDENTIFY PC
+Look for these markers:
+- Section headers: "[PLAYER CHARACTER]", "PLAYER CHARACTER -", "PC:"
+- Explicit statements: "controlled by player", "플레이어 캐릭터"
+- Protection rules mentioning a specific character name
+
+### IMPORTANT
+- If NO Player Character is defined in the lore, return {"pc_found": false}
+- Only extract info that is EXPLICITLY stated, do not invent details
+- Some fields may be empty if not mentioned in lore
+
+### OUTPUT FORMAT (JSON)
+If PC found:
+{
+  "pc_found": true,
+  "name": "캐릭터명",
+  "species": "종족 (if mentioned)",
+  "role": "역할/직업 (if mentioned)",
+  "appearance": "외형 설명 (if mentioned)",
+  "personality": "성격 설명 (if mentioned)",
+  "background": "배경 스토리 (if mentioned)",
+  "known_info": ["PC가 알고 있는 정보들"],
+  "relationships": {
+    "NPC이름": "관계 설명"
+  },
+  "secret_info": "다른 캐릭터가 모르는 PC의 비밀 (if mentioned)"
+}
+
+If NO PC found:
+{
+  "pc_found": false
+}
+
+### LORE DATA
+""" + lore_text
+
+    contents = [
+        types.Content(role="user", parts=[types.Part(text=user_prompt)])
+    ]
+    config = types.GenerateContentConfig(
+        response_mime_type="application/json",
+        temperature=0.3
+    )
+
+    result = await api_call_with_retry(
+        client, model_id, contents, config,
+        operation_name="PC Info Extraction"
+    )
+
+    if result:
+        data = safe_parse_json(result)
+        if data.get("pc_found") == True:
+            # pc_found 필드 제거하고 반환
+            data.pop("pc_found", None)
+            logging.info(f"[PC Extraction] Found PC: {data.get('name', 'Unknown')}")
+            return data
+        else:
+            logging.info("[PC Extraction] No PC found in lore")
+
+    return None
+
+
 def parse_bulk_npcs_from_text(text: str) -> List[Dict[str, str]]:
     """
     텍스트 파일에서 여러 NPC를 파싱합니다.

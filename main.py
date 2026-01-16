@@ -259,10 +259,18 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
         info_msg += f"**👥 추출된 NPC:** {len(npcs)}명\n"
         
         info_msg += f"\n**🎭 장르:** {', '.join(genres) if genres else '미분석'}\n"
-        
+
         if custom_tone:
             info_msg += f"**🎨 톤:** {custom_tone}\n"
-        
+
+        # PC 정보 표시
+        pc_info = domain_manager.get_default_pc_info(channel_id)
+        if pc_info:
+            pc_name = pc_info.get('name', 'Unknown')
+            info_msg += f"**🧑 PC:** {pc_name}\n"
+        else:
+            info_msg += f"**🧑 PC:** 없음\n"
+
         await message.channel.send(info_msg)
         
         # NPC 목록 미리보기 (최대 5명)
@@ -289,7 +297,8 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
         domain_manager.reset_lore(channel_id)
         domain_manager.set_active_genres(channel_id, ["noir"])
         domain_manager.set_custom_tone(channel_id, None)
-        await message.channel.send("📜 **로어 초기화됨** - 장르도 기본값으로 복귀")
+        domain_manager.clear_default_pc_info(channel_id)
+        await message.channel.send("📜 **로어 초기화됨** - 장르, PC 정보도 기본값으로 복귀")
         return
 
     # 로어 추출 (텍스트 파일로 내보내기)
@@ -349,10 +358,23 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
             rules = await memory_system.analyze_location_rules_from_lore(client_genai, MODEL_ID, raw_lore)
             if rules:
                 domain_manager.set_location_rules(channel_id, rules)
-            
+
+            # PC 정보 추출 (있는 경우에만)
+            await status_msg.edit(content="⏳ **[AI]** PC 정보 확인 중...")
+            pc_info = await memory_system.extract_pc_info(client_genai, MODEL_ID, raw_lore)
+
             # 최종 메시지
             final_msg = f"✅ **[분석 완료]**\n**장르:** {res.get('genres')}\n**NPC 추출:** {len(npcs_extracted)}명"
-            
+
+            if pc_info:
+                # 채널의 기본 PC 정보로 저장
+                domain_manager.set_default_pc_info(channel_id, pc_info)
+                pc_name = pc_info.get('name', 'Unknown')
+                final_msg += f"\n**PC 감지:** {pc_name}"
+            else:
+                # PC 정보 없음 - 정상 케이스, 에러 아님
+                final_msg += f"\n**PC 정보:** 없음 (수동 설정 필요)"
+
             await status_msg.edit(content=final_msg)
             
         except Exception as e:
@@ -1062,16 +1084,36 @@ async def _process_message(message, channel_id: str):
             if cmd == 'mask':
                 target = parsed['content']
                 status = domain_manager.get_participant_status(channel_id, message.author.id)
-                
+
                 if status == "left":
                     domain_manager.update_participant(channel_id, message.author, True)
                     await message.channel.send("🆕 환생 완료")
-                
+
                 domain_manager.update_participant(channel_id, message.author)
                 domain_manager.set_user_mask(channel_id, message.author.id, target)
+
+                # PC 정보 자동 적용 (가면 이름이 PC 이름과 일치하거나 포함되면)
+                pc_info = domain_manager.get_default_pc_info(channel_id)
+                if pc_info:
+                    pc_name = pc_info.get('name', '')
+                    # 가면 이름이 PC 이름과 일치하거나 포함되면 자동 적용
+                    if pc_name and (target.lower() in pc_name.lower() or pc_name.lower() in target.lower()):
+                        applied = domain_manager.apply_pc_info_to_user(channel_id, message.author.id)
+                        if applied:
+                            await message.channel.send(f"🎭 가면: {target}\n✨ 로어의 PC 정보가 자동 적용되었습니다!")
+                            return
+
                 await message.channel.send(f"🎭 가면: {target}")
                 return
-            
+
+            if cmd in ['pc적용', 'applypc', 'pcapply']:
+                applied = domain_manager.apply_pc_info_to_user(channel_id, message.author.id)
+                if applied:
+                    await message.channel.send("✨ 로어의 PC 정보가 내 캐릭터에 적용되었습니다!\n`!내정보`로 확인하세요.")
+                else:
+                    await message.channel.send("⚠️ 적용할 PC 정보가 없습니다.\n로어에 PC 정보가 포함되어 있는지 확인하세요.")
+                return
+
             if cmd == 'desc':
                 domain_manager.update_participant(channel_id, message.author)
                 domain_manager.set_user_description(

@@ -484,6 +484,91 @@ def get_lore_with_npcs(channel_id: str) -> str:
 
 
 # =========================================================
+# PC(플레이어 캐릭터) 정보 관리
+# =========================================================
+
+def set_default_pc_info(channel_id: str, pc_info: Dict[str, Any]) -> None:
+    """
+    채널의 기본 PC 정보를 저장합니다.
+    !가면 명령어 시 자동으로 ai_memory에 적용됩니다.
+
+    Args:
+        channel_id: 채널 ID
+        pc_info: PC 정보 딕셔너리
+    """
+    d = get_domain(channel_id)
+    d["default_pc_info"] = pc_info
+    save_domain(channel_id, d)
+
+
+def get_default_pc_info(channel_id: str) -> Optional[Dict[str, Any]]:
+    """채널의 기본 PC 정보를 가져옵니다."""
+    return get_domain(channel_id).get("default_pc_info")
+
+
+def clear_default_pc_info(channel_id: str) -> None:
+    """채널의 기본 PC 정보를 삭제합니다."""
+    d = get_domain(channel_id)
+    d.pop("default_pc_info", None)
+    save_domain(channel_id, d)
+
+
+def apply_pc_info_to_user(channel_id: str, user_id: str) -> bool:
+    """
+    기본 PC 정보를 특정 유저의 ai_memory에 적용합니다.
+
+    Args:
+        channel_id: 채널 ID
+        user_id: 유저 ID
+
+    Returns:
+        적용 성공 시 True, PC 정보 없으면 False
+    """
+    pc_info = get_default_pc_info(channel_id)
+    if not pc_info:
+        return False
+
+    # ai_memory에 매핑
+    updates = {}
+
+    if pc_info.get('appearance'):
+        updates['appearance'] = pc_info['appearance']
+    if pc_info.get('personality'):
+        updates['personality'] = pc_info['personality']
+    if pc_info.get('background'):
+        updates['background'] = pc_info['background']
+    if pc_info.get('known_info'):
+        updates['known_info'] = pc_info['known_info']
+    if pc_info.get('relationships'):
+        updates['relationships'] = pc_info['relationships']
+    if pc_info.get('secret_info'):
+        # secret_info는 known_info에 추가
+        if 'known_info' not in updates:
+            updates['known_info'] = []
+        updates['known_info'].append(f"[비밀] {pc_info['secret_info']}")
+
+    # species와 role 정보도 appearance나 background에 추가
+    extra_info = []
+    if pc_info.get('species'):
+        extra_info.append(f"종족: {pc_info['species']}")
+    if pc_info.get('role'):
+        extra_info.append(f"역할: {pc_info['role']}")
+
+    if extra_info:
+        # appearance가 있으면 앞에 추가, 없으면 새로 생성
+        if updates.get('appearance'):
+            updates['appearance'] = f"{' / '.join(extra_info)}\n{updates['appearance']}"
+        else:
+            updates['appearance'] = ' / '.join(extra_info)
+
+    if updates:
+        update_ai_memory(channel_id, user_id, updates)
+        return True
+
+    return False
+
+
+# =========================================================
 # 룰 관리 (3가지 모드)
 # 1. 기본룰만: 아무 설정 없음 → DEFAULT_RULES 반환
 # 2. 기본룰+커스텀: !룰 추가 → 기본룰 + 커스텀룰 병합
