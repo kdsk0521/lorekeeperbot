@@ -625,16 +625,16 @@ def export_chronicles_incremental(
 def export_lore_book_file(channel_id: str) -> Tuple[Optional[str], str]:
     """
     [연대기 추출] 요약된 연대기(Lore) 목록을 텍스트 파일로 추출합니다.
-    
+
     Returns:
         (추출 텍스트, 상태 메시지) 튜플
     """
     board = _get_board(channel_id)
     lore = board.get("lore", [])
-    
+
     if not lore:
         return None, "❌ 기록된 연대기가 없습니다. `!연대기 생성`을 먼저 진행해주세요."
-    
+
     # 헤더 생성
     export_lines = [
         "=== Lorekeeper Chronicles (Summary) ===",
@@ -643,20 +643,151 @@ def export_lore_book_file(channel_id: str) -> Tuple[Optional[str], str]:
         "",
         "-" * 40
     ]
-    
+
     # 내용 추가
     for i, entry in enumerate(lore):
         title = entry.get("title", "Untitled")
         content = entry.get("content", "")
         timestamp = entry.get("timestamp", 0)
         date_str = time.strftime('%Y-%m-%d %H:%M', time.localtime(timestamp))
-        
+
         export_lines.append(f"#{i + 1}. {title} [{date_str}]")
         export_lines.append(content)
         export_lines.append("-" * 20)
         export_lines.append("")
-    
+
     result_text = "\n".join(export_lines)
     msg = f"📖 **연대기 추출 완료** (총 {len(lore)}개의 기록)"
-    
+
+    return result_text, msg
+
+
+# =========================================================
+# 로어/NPC 데이터 추출 (검토용)
+# =========================================================
+def export_lore_data(channel_id: str) -> Tuple[Optional[str], str]:
+    """
+    [로어 추출] AI가 정리한 로어 데이터를 텍스트 파일로 추출합니다.
+    원본과 정리본 모두 포함하여 검토할 수 있게 합니다.
+
+    Returns:
+        (추출 텍스트, 상태 메시지) 튜플
+    """
+    # 원본 로어 (NPC 포함)
+    original_lore = domain_manager.get_lore_original(channel_id)
+    # 정리된 로어 (NPC 제외)
+    cleaned_lore = domain_manager.get_lore(channel_id)
+
+    if not original_lore and (not cleaned_lore or cleaned_lore == domain_manager.DEFAULT_LORE):
+        return None, "❌ 저장된 로어가 없습니다. `!로어`로 먼저 설정해주세요."
+
+    # 헤더 생성
+    export_lines = [
+        "=== Lorekeeper Lore Data Export ===",
+        f"Export Time: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+        "",
+        "=" * 50
+    ]
+
+    # 원본 로어 (AI 처리 전)
+    if original_lore:
+        export_lines.append("")
+        export_lines.append("### [ORIGINAL LORE - AI 처리 전 원본]")
+        export_lines.append(f"(길이: {len(original_lore):,}자)")
+        export_lines.append("-" * 40)
+        export_lines.append(original_lore)
+        export_lines.append("")
+        export_lines.append("=" * 50)
+
+    # 정리된 로어 (NPC 제외)
+    if cleaned_lore and cleaned_lore != domain_manager.DEFAULT_LORE:
+        export_lines.append("")
+        export_lines.append("### [CLEANED LORE - AI가 NPC 제외하고 정리한 로어]")
+        export_lines.append(f"(길이: {len(cleaned_lore):,}자)")
+        export_lines.append("-" * 40)
+        export_lines.append(cleaned_lore)
+        export_lines.append("")
+        export_lines.append("=" * 50)
+
+    result_text = "\n".join(export_lines)
+
+    original_len = len(original_lore) if original_lore else 0
+    cleaned_len = len(cleaned_lore) if cleaned_lore else 0
+    msg = f"📜 **로어 추출 완료**\n• 원본: {original_len:,}자\n• 정리본: {cleaned_len:,}자"
+
+    return result_text, msg
+
+
+def export_npc_data(channel_id: str) -> Tuple[Optional[str], str]:
+    """
+    [NPC 추출] AI가 추출/정리한 NPC 데이터를 텍스트 파일로 추출합니다.
+    JSON 형태의 데이터를 읽기 쉬운 텍스트로 변환합니다.
+
+    Returns:
+        (추출 텍스트, 상태 메시지) 튜플
+    """
+    # domain NPCs (로어에서 추출된 NPC)
+    npcs = domain_manager.get_npcs(channel_id)
+
+    # session_mem의 npc_summaries (세션 중 감지된 NPC)
+    session_mem = domain_manager.get_session_ai_memory(channel_id)
+    npc_summaries = session_mem.get("npc_summaries", {}) if session_mem else {}
+
+    if not npcs and not npc_summaries:
+        return None, "❌ 등록된 NPC가 없습니다."
+
+    # 헤더 생성
+    export_lines = [
+        "=== Lorekeeper NPC Data Export ===",
+        f"Export Time: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+        "",
+        "=" * 50
+    ]
+
+    # 로어에서 추출된 NPC
+    if npcs:
+        export_lines.append("")
+        export_lines.append("### [LORE NPCs - 로어에서 AI가 추출한 NPC]")
+        export_lines.append(f"(총 {len(npcs)}명)")
+        export_lines.append("-" * 40)
+
+        for name, data in npcs.items():
+            status = data.get('status', 'Active')
+            desc = data.get('desc', '설명 없음')
+
+            export_lines.append(f"")
+            export_lines.append(f"## {name}")
+            export_lines.append(f"상태: {status}")
+            export_lines.append(f"설명:")
+            export_lines.append(desc)
+            export_lines.append("-" * 20)
+
+        export_lines.append("")
+        export_lines.append("=" * 50)
+
+    # 세션 중 감지된 NPC
+    if npc_summaries:
+        export_lines.append("")
+        export_lines.append("### [SESSION NPCs - 세션 중 AI가 감지한 NPC]")
+        export_lines.append(f"(총 {len(npc_summaries)}명)")
+        export_lines.append("-" * 40)
+
+        for name, summary in npc_summaries.items():
+            # 이미 로어 NPC에 있으면 스킵
+            if name in npcs:
+                continue
+
+            export_lines.append(f"")
+            export_lines.append(f"## {name}")
+            export_lines.append(f"요약: {summary}")
+            export_lines.append("-" * 20)
+
+        export_lines.append("")
+        export_lines.append("=" * 50)
+
+    result_text = "\n".join(export_lines)
+
+    total_npcs = len(npcs) + len([n for n in npc_summaries if n not in npcs])
+    msg = f"👥 **NPC 추출 완료** (총 {total_npcs}명)"
+
     return result_text, msg
