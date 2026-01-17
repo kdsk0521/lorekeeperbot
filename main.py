@@ -1913,52 +1913,17 @@ async def _process_message(message, channel_id: str):
             full_prompt += """### [OUTPUT DIRECTIVE]
 Process <material> as the player's attempt.
 
-**Player Input Formats:**
-- `[Name] says: "..."` → Player is speaking dialogue. NPCs should hear and respond.
-- `[Name] does: *...*` → Player is performing an action. Describe the result.
-- `[Name]: ...` → General description or narration by player.
+**Input Formats:**
+- `[Name] says: "..."` → Dialogue (NPCs respond)
+- `[Name] does: *...*` → Action (describe result)
+- `[Name]: ...` → General narration
 
-## ⚠️ CRITICAL: STORY CONTINUITY & MEMORY
-**BEFORE generating any response, you MUST:**
-1. ✅ Check <Fermented> section for relevant past events
-2. ✅ Verify current response doesn't contradict established history
-3. ✅ Reference past NPCs, locations, and events mentioned in <Fermented>
-4. ✅ Maintain consistency with Deep Memory and Episode Summaries
-5. ✅ **Check ACTIVE QUESTS & MEMOS** — Remember ongoing objectives and important information
-6. ✅ **Reference AI MEMORY CONTEXT** — Use stored relationships, passives, and known information
+**Quick Reference (full rules in system prompt):**
+- ✅ Check <Fermented>, QUESTS, MEMOS, AI MEMORY for continuity
+- ✅ Generate NPC reactions and world response ONLY
+- ❌ No PC dialogue/thoughts/decisions (see PC_AUTONOMY_DOCTRINE)
 
-**Common Mistakes to AVOID:**
-- ❌ Forgetting NPCs already introduced in past sessions
-- ❌ Contradicting established relationships or events
-- ❌ Ignoring plot threads mentioned in <Fermented>
-- ❌ Treating recurring locations as if they're new
-- ❌ **Forgetting active quests when they become relevant**
-- ❌ **Ignoring memos that contain critical clues or information**
-- ❌ **Not using stored AI memory (relationships, passives, known info)**
-
-## ⚠️ CRITICAL: ANTI-IMPERSONATION RULE
-**The characters marked with `[Name]` are PLAYER CHARACTERS (PCs). NEVER generate their dialogue, thoughts, or actions.**
-
-**FORBIDDEN:**
-- ❌ Making PC speak (no dialogue like "yes", "okay", "I agree")
-- ❌ Making PC think (no internal monologue)
-- ❌ Making PC react emotionally (no "was surprised", "felt sad")
-- ❌ Making PC decide or choose actions
-
-**ALLOWED:**
-- ✅ NPC dialogue responding to PC
-- ✅ Environmental descriptions
-- ✅ World consequences of PC's stated action
-- ✅ NPC reactions and behaviors
-
-**Do NOT generate ANY player's dialogue, thoughts, or decisions.**
-Generate NPC reactions and world response ONLY.
-**Apply NPC attitudes to their speech and behavior.**
-**If NPC Interaction is suggested, include their ambient dialogue.**
-**CRITICAL: Reference the FERMENTED/DEEP MEMORY above for story continuity.**
-**CRITICAL: Remember and reference ACTIVE QUESTS and MEMOS when relevant.**
-**CRITICAL: Use AI MEMORY CONTEXT (relationships, passives, known info) in your narrative.**
-Track each player separately. 3rd person narration. Korean output."""
+Korean output. 3rd person narration."""
             
             response = "⚠️ AI Error"
             if client_genai:
