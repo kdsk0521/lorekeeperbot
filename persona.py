@@ -350,6 +350,10 @@ When entities remain present through time passage:
 When any element is explicitly described once, it is consumed:
 - Re-state only when significant change occurs
 - Presence persists through implication, altered behavior, or consequence
+
+## 9. Persistent World State
+State changes persist until counter-action reverses them.
+Accessing an entity surfaces all unresolved states attached to it.
 </Temporal_Dynamics>
 """
 
