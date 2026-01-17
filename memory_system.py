@@ -151,6 +151,148 @@ STATE_TRACKING_FORMAT = """
 """
 
 # =========================================================
+# NPC EXTRACTION PROTOCOL (NPC 추출 프로토콜)
+# 원본 로어를 손상시키지 않고 NPC 정보만 추출
+# =========================================================
+NPC_EXTRACTION_PROMPT = """
+<NPC_Extraction_Protocol>
+## PURPOSE
+Extract NPC (Non-Player Character) information from lore text.
+**CRITICAL: NEVER modify, rewrite, or paraphrase the original lore.**
+
+## EXTRACTION RULES
+
+### What IS an NPC
+- Named characters that exist in the world
+- Characters with described roles, personalities, or relationships
+- Beings that players might interact with
+
+### What is NOT an NPC
+- Player Characters (marked with `[Name]` or explicitly stated as PC)
+- Generic unnamed groups ("guards", "villagers")
+- Historical/deceased figures mentioned only in backstory
+- Concepts, organizations, or locations (these are world elements, not NPCs)
+
+### Extraction Fields
+For each NPC, extract ONLY what is EXPLICITLY stated:
+- **name**: The NPC's name (required)
+- **aliases**: Other names/titles they go by
+- **role**: Their function in the world (job, position)
+- **species**: If non-human
+- **location**: Where they can typically be found
+- **personality_keywords**: 3-5 keywords from text (NOT inferred)
+- **relationships**: Connections to other NPCs (from text)
+- **description**: Direct quote or close paraphrase from source
+- **source_section**: Which section of lore this came from
+
+### STRICT PROHIBITIONS
+1. **DO NOT** generate information not in the source text
+2. **DO NOT** infer personality traits not explicitly described
+3. **DO NOT** create relationships not mentioned
+4. **DO NOT** fill empty fields with assumptions
+5. **DO NOT** output any "cleaned" or "processed" lore text
+
+## OUTPUT FORMAT (JSON ONLY)
+{
+  "extraction_metadata": {
+    "source_length": <character count of input>,
+    "extraction_timestamp": "<ISO timestamp>",
+    "extractor_version": "1.0"
+  },
+  "npcs": [
+    {
+      "name": "NPC Name",
+      "aliases": ["alias1", "alias2"] or [],
+      "role": "stated role" or null,
+      "species": "species" or "human",
+      "location": "stated location" or null,
+      "personality_keywords": ["keyword1", "keyword2"],
+      "relationships": {
+        "Other NPC": "relationship description"
+      } or {},
+      "description": "Direct quote or close paraphrase",
+      "source_section": "Section name or 'main'"
+    }
+  ],
+  "pc_names_detected": ["PC1", "PC2"],
+  "ambiguous_entities": [
+    {"name": "...", "reason": "why unclear if NPC"}
+  ]
+}
+
+## EXAMPLE
+
+### Input Lore (excerpt):
+"3 PM 쉐어하우스에는 리엘이라는 서큐버스가 산다. 그녀는 차갑고 무뚝뚝하지만
+실제로는 룸메이트들을 신경 쓴다. [현우]는 플레이어 캐릭터이다."
+
+### Correct Output:
+{
+  "extraction_metadata": {
+    "source_length": 89,
+    "extraction_timestamp": "2025-01-17T12:00:00Z",
+    "extractor_version": "1.0"
+  },
+  "npcs": [
+    {
+      "name": "리엘",
+      "aliases": [],
+      "role": null,
+      "species": "서큐버스",
+      "location": "3 PM 쉐어하우스",
+      "personality_keywords": ["차갑다", "무뚝뚝하다", "룸메이트를 신경 씀"],
+      "relationships": {},
+      "description": "차갑고 무뚝뚝하지만 실제로는 룸메이트들을 신경 쓴다",
+      "source_section": "main"
+    }
+  ],
+  "pc_names_detected": ["현우"],
+  "ambiguous_entities": []
+}
+
+### WRONG Output (violations):
+- ❌ Adding "she secretly loves cooking" (not in source)
+- ❌ Setting role to "housewife" (not stated)
+- ❌ Including [현우] as NPC (marked as PC)
+- ❌ Returning rewritten lore text
+</NPC_Extraction_Protocol>
+"""
+
+
+# =========================================================
+# PC DETECTION PROMPT (PC 감지 프롬프트)
+# 로어에서 플레이어 캐릭터 정보 감지
+# =========================================================
+PC_DETECTION_PROMPT = """
+<PC_Detection_Protocol>
+## PURPOSE
+Detect Player Character (PC) markers in lore text.
+PCs are characters controlled by players, NOT by the AI.
+
+## PC INDICATORS
+- Explicit markers: `[Name]`, `<<Name>>`, `{{user}}`
+- Explicit statements: "플레이어 캐릭터", "PC", "player character"
+- Second-person references: "당신", "you", "your character"
+- Blank slate descriptions: "이름 미정", "외형 자유", "플레이어가 정함"
+
+## OUTPUT FORMAT (JSON)
+{
+  "pc_detected": true/false,
+  "pc_markers": [
+    {
+      "marker_text": "exact text found",
+      "marker_type": "bracket/explicit/second_person/blank_slate",
+      "inferred_name": "name if detectable" or null
+    }
+  ],
+  "confidence": "high/medium/low",
+  "recommendation": "Treat as PC" or "Treat as NPC" or "Needs clarification"
+}
+</PC_Detection_Protocol>
+"""
+
+
+# =========================================================
 # COGNITIVE ARCHITECTURE MODEL (인지 아키텍처 모델)
 # 좌뇌가 캐릭터 상태를 분석할 때 사용하는 프레임워크
 # =========================================================
@@ -1621,8 +1763,314 @@ async def extract_world_constraints(
         parsed = safe_parse_json(result)
         if parsed:
             return parsed
-    
+
     return None
+
+
+# =========================================================
+# NPC EXTRACTION FUNCTIONS (NPC 추출 함수)
+# 원본 로어를 손상시키지 않고 NPC 정보만 추출
+# =========================================================
+
+async def extract_npcs_from_lore(
+    client,
+    model_id: str,
+    lore_text: str,
+    chunk_size: int = 4000
+) -> Dict[str, Any]:
+    """
+    [THEORIA LEFT HEMISPHERE - NPC Extraction]
+    로어 텍스트에서 NPC 정보만 추출합니다.
+    원본 텍스트는 절대 수정하지 않습니다.
+
+    Args:
+        client: Gemini 클라이언트
+        model_id: 모델 ID
+        lore_text: 원본 로어 텍스트
+        chunk_size: 청크 크기 (긴 로어 분할용)
+
+    Returns:
+        추출된 NPC 정보 딕셔너리
+    """
+    if not client or not lore_text:
+        return {"npcs": [], "pc_names_detected": [], "error": "Invalid input"}
+
+    # 로어가 너무 길면 청크로 분할
+    if len(lore_text) > chunk_size:
+        return await _extract_npcs_chunked(client, model_id, lore_text, chunk_size)
+
+    system_instruction = NPC_EXTRACTION_PROMPT
+
+    user_prompt = (
+        "### LORE TEXT TO ANALYZE\n"
+        "```\n"
+        f"{lore_text}\n"
+        "```\n\n"
+        "Extract all NPCs following the protocol. "
+        "Return ONLY the JSON output, no other text."
+    )
+
+    contents = [
+        types.Content(role="user", parts=[types.Part(text=user_prompt)])
+    ]
+
+    config = types.GenerateContentConfig(
+        system_instruction=system_instruction,
+        response_mime_type="application/json",
+        temperature=0.1  # 낮은 온도로 일관된 추출
+    )
+
+    result = await api_call_with_retry(
+        client, model_id, contents, config,
+        operation_name="NPC Extraction"
+    )
+
+    if result:
+        parsed = safe_parse_json(result)
+        if parsed and "npcs" in parsed:
+            # 메타데이터 추가
+            parsed["extraction_metadata"] = parsed.get("extraction_metadata", {})
+            parsed["extraction_metadata"]["source_length"] = len(lore_text)
+            return parsed
+
+    return {
+        "npcs": [],
+        "pc_names_detected": [],
+        "error": "Extraction failed",
+        "extraction_metadata": {"source_length": len(lore_text)}
+    }
+
+
+async def _extract_npcs_chunked(
+    client,
+    model_id: str,
+    lore_text: str,
+    chunk_size: int
+) -> Dict[str, Any]:
+    """
+    긴 로어를 청크로 분할하여 NPC를 추출합니다.
+
+    Args:
+        client: Gemini 클라이언트
+        model_id: 모델 ID
+        lore_text: 전체 로어 텍스트
+        chunk_size: 청크 크기
+
+    Returns:
+        병합된 NPC 정보
+    """
+    # 섹션 구분자로 분할 시도 (##, ---, ===)
+    section_pattern = r'(?=^#{1,3}\s|\n-{3,}\n|\n={3,}\n)'
+    sections = re.split(section_pattern, lore_text, flags=re.MULTILINE)
+
+    # 섹션이 없으면 단순 청크 분할
+    if len(sections) <= 1:
+        sections = [lore_text[i:i+chunk_size] for i in range(0, len(lore_text), chunk_size)]
+
+    all_npcs = []
+    all_pcs = set()
+    all_ambiguous = []
+
+    for i, section in enumerate(sections):
+        if not section.strip():
+            continue
+
+        result = await extract_npcs_from_lore(client, model_id, section.strip(), chunk_size)
+
+        if "npcs" in result:
+            for npc in result["npcs"]:
+                npc["source_section"] = f"chunk_{i+1}"
+                all_npcs.append(npc)
+
+        if "pc_names_detected" in result:
+            all_pcs.update(result["pc_names_detected"])
+
+        if "ambiguous_entities" in result:
+            all_ambiguous.extend(result["ambiguous_entities"])
+
+    # 중복 NPC 병합 (같은 이름)
+    merged_npcs = _merge_duplicate_npcs(all_npcs)
+
+    return {
+        "npcs": merged_npcs,
+        "pc_names_detected": list(all_pcs),
+        "ambiguous_entities": all_ambiguous,
+        "extraction_metadata": {
+            "source_length": len(lore_text),
+            "chunks_processed": len(sections),
+            "merged_duplicates": len(all_npcs) - len(merged_npcs)
+        }
+    }
+
+
+def _merge_duplicate_npcs(npcs: List[Dict]) -> List[Dict]:
+    """
+    같은 이름의 NPC 정보를 병합합니다.
+
+    Args:
+        npcs: NPC 리스트
+
+    Returns:
+        중복 제거된 NPC 리스트
+    """
+    merged = {}
+
+    for npc in npcs:
+        name = npc.get("name", "").strip().lower()
+        if not name:
+            continue
+
+        if name not in merged:
+            merged[name] = npc.copy()
+        else:
+            # 기존 정보에 새 정보 병합
+            existing = merged[name]
+
+            # aliases 병합
+            existing_aliases = set(existing.get("aliases", []))
+            new_aliases = set(npc.get("aliases", []))
+            existing["aliases"] = list(existing_aliases | new_aliases)
+
+            # personality_keywords 병합
+            existing_keywords = set(existing.get("personality_keywords", []))
+            new_keywords = set(npc.get("personality_keywords", []))
+            existing["personality_keywords"] = list(existing_keywords | new_keywords)
+
+            # relationships 병합
+            existing_rels = existing.get("relationships", {})
+            new_rels = npc.get("relationships", {})
+            existing["relationships"] = {**existing_rels, **new_rels}
+
+            # 빈 필드 채우기
+            for field in ["role", "species", "location", "description"]:
+                if not existing.get(field) and npc.get(field):
+                    existing[field] = npc[field]
+
+    return list(merged.values())
+
+
+async def detect_pcs_in_lore(
+    client,
+    model_id: str,
+    lore_text: str
+) -> Dict[str, Any]:
+    """
+    [THEORIA LEFT HEMISPHERE - PC Detection]
+    로어 텍스트에서 플레이어 캐릭터 마커를 감지합니다.
+
+    Args:
+        client: Gemini 클라이언트
+        model_id: 모델 ID
+        lore_text: 로어 텍스트
+
+    Returns:
+        PC 감지 결과
+    """
+    if not client or not lore_text:
+        return {"pc_detected": False, "pc_markers": [], "error": "Invalid input"}
+
+    system_instruction = PC_DETECTION_PROMPT
+
+    user_prompt = (
+        "### LORE TEXT\n"
+        f"{lore_text[:3000]}\n\n"  # 앞부분만 분석 (PC 마커는 보통 초반에)
+        "Detect PC markers following the protocol."
+    )
+
+    contents = [
+        types.Content(role="user", parts=[types.Part(text=user_prompt)])
+    ]
+
+    config = types.GenerateContentConfig(
+        system_instruction=system_instruction,
+        response_mime_type="application/json",
+        temperature=0.1
+    )
+
+    result = await api_call_with_retry(
+        client, model_id, contents, config,
+        operation_name="PC Detection"
+    )
+
+    if result:
+        parsed = safe_parse_json(result)
+        if parsed:
+            return parsed
+
+    return {
+        "pc_detected": False,
+        "pc_markers": [],
+        "confidence": "low",
+        "error": "Detection failed"
+    }
+
+
+def export_npc_extraction_debug(
+    extraction_result: Dict[str, Any],
+    original_lore: str,
+    output_path: str = None
+) -> str:
+    """
+    NPC 추출 결과를 디버그용으로 내보냅니다.
+    원본 로어와 추출 결과를 비교할 수 있습니다.
+
+    Args:
+        extraction_result: extract_npcs_from_lore()의 결과
+        original_lore: 원본 로어 텍스트
+        output_path: 저장 경로 (None이면 문자열 반환)
+
+    Returns:
+        디버그 리포트 문자열
+    """
+    from datetime import datetime
+
+    report_lines = [
+        "=" * 60,
+        "NPC EXTRACTION DEBUG REPORT",
+        f"Generated: {datetime.now().isoformat()}",
+        "=" * 60,
+        "",
+        "## EXTRACTION METADATA",
+        json.dumps(extraction_result.get("extraction_metadata", {}), indent=2, ensure_ascii=False),
+        "",
+        "## DETECTED PCs (excluded from NPCs)",
+        str(extraction_result.get("pc_names_detected", [])),
+        "",
+        "## EXTRACTED NPCs",
+    ]
+
+    for i, npc in enumerate(extraction_result.get("npcs", []), 1):
+        report_lines.append(f"\n### NPC {i}: {npc.get('name', 'Unknown')}")
+        report_lines.append(json.dumps(npc, indent=2, ensure_ascii=False))
+
+    if extraction_result.get("ambiguous_entities"):
+        report_lines.append("\n## AMBIGUOUS ENTITIES")
+        for entity in extraction_result["ambiguous_entities"]:
+            report_lines.append(f"- {entity}")
+
+    report_lines.extend([
+        "",
+        "## ORIGINAL LORE (for verification)",
+        "-" * 40,
+        original_lore[:2000] + ("..." if len(original_lore) > 2000 else ""),
+        "-" * 40,
+        "",
+        "## VERIFICATION CHECKLIST",
+        "[ ] All named NPCs extracted?",
+        "[ ] No PCs incorrectly included?",
+        "[ ] Personalities match source text?",
+        "[ ] Relationships accurately captured?",
+        "[ ] No invented information?",
+    ])
+
+    report = "\n".join(report_lines)
+
+    if output_path:
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(report)
+        return f"Report saved to: {output_path}"
+
+    return report
 
 
 # =========================================================

@@ -56,6 +56,55 @@ def build_length_instruction() -> str:
 
 
 # =========================================================
+# PC AUTONOMY DOCTRINE (플레이어 캐릭터 자율권 원칙)
+# 모든 PC 사칭 방지 규칙의 단일 정의 (Single Source of Truth)
+# =========================================================
+PC_AUTONOMY_DOCTRINE = """
+<PC_Autonomy_Doctrine priority="ABSOLUTE">
+## ⚠️ PLAYER CHARACTER AUTONOMY — INVIOLABLE PRINCIPLE
+
+**Player Characters (PCs) marked with `[Name]` are controlled ONLY by their players.**
+This is the highest priority rule. Violation is unacceptable.
+
+### ABSOLUTE PROHIBITIONS
+The AI MUST NEVER generate for ANY player character:
+
+| Category | Prohibition | Detection Pattern |
+|----------|-------------|-------------------|
+| **Dialogue** | Never make PC speak | `[PC]이/가 "..."라고 말했다/대답했다` |
+| **Thoughts** | Never describe PC's inner state | `[PC]은/는 ~라고 생각했다/느꼈다` |
+| **Decisions** | Never make PC choose | `[PC]은/는 ~하기로 했다/결심했다` |
+| **Reactions** | Never assert PC's response | `[PC]의 표정이 ~/[PC]이/가 놀랐다` |
+| **Emotions** | Never state PC's feelings as fact | `[PC]의 마음이 ~/[PC]은 슬펐다` |
+| **Actions** | Never make PC do unstated things | `[PC]이/가 고개를 끄덕였다` (if not stated) |
+
+### VIOLATION EXAMPLES (What NOT to write)
+- ❌ `[PC]가 "그래"라고 대답했다.` — Making PC speak
+- ❌ `[PC]는 놀란 표정을 지었다.` — Asserting PC's reaction
+- ❌ `[PC]의 마음이 무거워졌다.` — Asserting PC's inner state
+- ❌ `[PC]이 고개를 끄덕이며 동의했다.` — Making PC act
+- ❌ `"..."라고 [PC]이 중얼거렸다.` — Making PC verbalize
+
+### CORRECT APPROACH
+- ✅ Describe ONLY NPC dialogue, NPC actions, and environmental changes
+- ✅ For PC actions from input: describe the ATTEMPT and the WORLD's RESPONSE
+- ✅ Use third-person narration for the world, never for PC's experience
+- ✅ Let NPCs react TO the PC, but never describe PC reacting back
+
+### SELF-CHECK PROTOCOL
+Before finalizing output, scan for these patterns:
+1. `[PC이름]이/가 말했다/대답했다/중얼거렸다` → **DELETE**
+2. `"..."라고 [PC이름]이 말했다` → **DELETE**
+3. `[PC이름]은 ~라고 생각했다` → **DELETE**
+4. `[PC이름]의 표정이 ~` → **DELETE**
+5. `[PC이름]이/가 ~했다` (where action not in input) → **DELETE**
+
+If detected: **IMMEDIATELY DELETE and replace with NPC/world description.**
+</PC_Autonomy_Doctrine>
+"""
+
+
+# =========================================================
 # RECORDER IDENTITY (기록자 정체성)
 # 익명의 3인칭 내레이터 - 세계의 사건을 관찰하고 기록
 # =========================================================
@@ -75,19 +124,9 @@ You are an **invisible, anonymous narrator** who describes the world's events fr
 3. **NEVER** break the fourth wall or acknowledge your own existence.
 4. **NEVER** assert characters' inner thoughts or feelings as fact.
 
-### ⚠️ PLAYER CHARACTER AUTONOMY (사칭 금지)
-**Player Characters (PCs) marked with `[Name]` are controlled ONLY by their players.**
-
-5. **NEVER** generate dialogue for any PC — they speak ONLY what the player wrote.
-6. **NEVER** describe PC's thoughts, feelings, or internal states.
-7. **NEVER** make PC react, respond, or act beyond what the player stated.
-8. **NEVER** write PC's verbal responses like "네", "응", "알겠어".
-9. **NEVER** describe PC's facial expressions or emotional reactions.
-
-**Example violations to avoid:**
-- ❌ `[PC]가 "그래"라고 대답했다.` — Making PC speak
-- ❌ `[PC]는 놀란 표정을 지었다.` — Asserting PC's reaction  
-- ❌ `[PC]의 마음이 무거워졌다.` — Asserting PC's inner state
+### ⚠️ PC AUTONOMY
+**[See PC_AUTONOMY_DOCTRINE for complete rules]**
+Player Characters are controlled ONLY by players. Never generate PC dialogue, thoughts, or reactions.
 
 ### Output Guidelines
 - Present events in vivid, grounded prose without purple language.
@@ -550,14 +589,10 @@ SELF_CORRECTION_PROTOCOL = """
 - Characters think deeply, exerting passive or active influence on self and others.
 - **RAW LIFE ONLY.**
 
-### ⚠️ PLAYER IMPERSONATION CHECK (사칭 자가점검)
-**Before output, scan for PC impersonation:**
-- ❌ PC speaking: `[PC이름]이/가 "..."라고 말했다/대답했다` → DELETE
-- ❌ PC thinking: `[PC이름]은/는 ~라고 생각했다/느꼈다` → DELETE  
-- ❌ PC reacting: `[PC이름]의 표정이 ~` / `[PC이름]이/가 놀랐다` → DELETE
-- ❌ PC deciding: `[PC이름]은/는 ~하기로 했다/결심했다` → DELETE
+### ⚠️ PC IMPERSONATION CHECK
+**[PC_AUTONOMY_DOCTRINE applies — run self-check protocol]**
 
-**If detected: IMMEDIATELY DELETE that sentence and replace with NPC/world description.**
+Before output, verify NO PC impersonation exists. If detected: DELETE and replace with NPC/world description.
 
 ### TROPE ANNIHILATION LIST — ABSOLUTE PROHIBITION
 The following patterns are **FORBIDDEN**. Detection = Immediate Self-Correction:
@@ -616,31 +651,10 @@ The AI is a **witness**, not a puppeteer of ANY player character.
 - Player's described physical actions — render the ATTEMPT
 - Player's stated position/movement — acknowledge location
 
-## ⚠️ ABSOLUTE PROHIBITION: PLAYER IMPERSONATION (사칭 금지)
+### ⚠️ PC AUTONOMY ENFORCEMENT
+**[PC_AUTONOMY_DOCTRINE applies here — see full definition above]**
 
-**THIS IS THE HIGHEST PRIORITY RULE. VIOLATION IS UNACCEPTABLE.**
-
-**AI MUST NEVER GENERATE (for ANY player character marked with `[Name]`):**
-- ❌ **New dialogue** for any PC — NEVER put words in their mouth
-- ❌ **New thoughts** for any PC — NEVER assume what they think
-- ❌ **New decisions** for any PC — NEVER decide for them
-- ❌ **Emotional states** of any PC — NEVER assert their feelings as fact
-- ❌ **Internal reactions** of any PC — NEVER describe their inner experience
-- ❌ **Elaborations on intent** — NEVER expand on what they meant
-- ❌ **Actions not explicitly stated** — NEVER make them do things they didn't say
-- ❌ **Verbal responses** — NEVER make PC say "네", "알겠어", "그래" etc.
-- ❌ **Reactions to NPCs** — NEVER describe PC's facial expression or reaction
-
-**DETECTION RULE:** If you find yourself writing:
-- `[PC이름]이/가 말했다/대답했다/중얼거렸다` → STOP. This is impersonation.
-- `"..."라고 [PC이름]이 말했다` → STOP. This is impersonation.
-- `[PC이름]은 ~라고 생각했다` → STOP. This is impersonation.
-- `[PC이름]의 표정이 ~` → STOP. This is impersonation (asserting inner state).
-
-**CORRECT APPROACH:**
-- Describe ONLY NPC dialogue, NPC actions, and environmental changes
-- For PC actions from input: describe the ATTEMPT and the WORLD's RESPONSE
-- Use third-person narration for the world, but do NOT narrate PC's experience
+**Summary:** NEVER generate PC dialogue, thoughts, decisions, reactions, or unstated actions.
 
 **AI MUST GENERATE:**
 - ✅ World's response to ALL players' actions
@@ -756,23 +770,16 @@ Based on all the context provided above:
 **Format:** Third-person narrative prose
 **Forbidden:** Player dialogue, thoughts, or decisions
 
-## ⚠️ PLAYER IMPERSONATION PREVENTION (사칭 방지) — CRITICAL
+## ⚠️ PC AUTONOMY ENFORCEMENT
+**[PC_AUTONOMY_DOCTRINE applies — see definition above]**
 
-**The player character (marked with `[Name]`) is controlled ONLY by the player.**
+Quick reference:
+- ❌ PC Dialogue → FORBIDDEN
+- ❌ PC Thoughts → FORBIDDEN
+- ❌ PC Decisions → FORBIDDEN
+- ❌ PC Reactions → FORBIDDEN
 
-**NEVER generate for the player character:**
-- ❌ Dialogue: NEVER make PC speak or respond verbally
-- ❌ Thoughts: NEVER describe what PC thinks or feels internally  
-- ❌ Decisions: NEVER make PC choose or decide anything
-- ❌ Reactions: NEVER describe PC's emotional/facial reactions
-
-**ALLOWED output:**
-- ✅ NPC dialogue and actions in response to PC
-- ✅ Environmental descriptions and changes
-- ✅ World consequences of PC's stated action
-- ✅ Sensory descriptions of the environment
-
-**Self-check before output:** 
+**Self-check before output:**
 If any sentence makes the player character speak, think, feel, or act beyond what was explicitly stated in `<material>`, DELETE that sentence.
 
 ## SYSTEM UPDATE BLOCK — MANDATORY TRACKING
@@ -1197,10 +1204,13 @@ This tone affects style, not physics or causality.
             # [1] AI Mandate & Core Constraints
             AI_MANDATE,
             MEMORY_HIERARCHY,
-            
+
             # [2] The Axiom Of The World
             WORLD_AXIOM,
-            
+
+            # [2.5] PC Autonomy Doctrine (Single Source of Truth)
+            PC_AUTONOMY_DOCTRINE,
+
             # Core Instruction Components
             INTERACTION_MODEL,
             TEMPORAL_DYNAMICS,
