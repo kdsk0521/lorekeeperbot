@@ -1969,20 +1969,52 @@ Korean output. 3rd person narration."""
                 
                 # === 우뇌 응답에서 SYSTEM_UPDATE 파싱 ===
                 if response:
+                    # 디버그: system_update 블록 존재 여부 확인
+                    logging.info(f"[SYSTEM_UPDATE] 응답 길이: {len(response)}")
+                    logging.info(f"[SYSTEM_UPDATE] 'system_update' 포함: {'system_update' in response.lower()}")
+
+                    # 더 유연한 정규식 패턴 (공백, 줄바꿈 처리 강화)
                     system_update_match = re.search(
-                        r'```system_update\s*\n?\s*(\{.*?\})\s*\n?```',
+                        r'```\s*system_update\s*\n([\s\S]*?)\n\s*```',
                         response,
-                        re.DOTALL
+                        re.IGNORECASE
                     )
+
+                    # 첫 번째 패턴 실패 시 대체 패턴 시도
+                    if not system_update_match:
+                        system_update_match = re.search(
+                            r'```system_update\s*\n?\s*(\{.*?\})\s*\n?```',
+                            response,
+                            re.DOTALL
+                        )
+
+                    # 백틱 없이 JSON만 있는 경우도 시도
+                    if not system_update_match:
+                        system_update_match = re.search(
+                            r'system_update[:\s]*(\{[^}]+\})',
+                            response,
+                            re.DOTALL | re.IGNORECASE
+                        )
+
+                    if system_update_match:
+                        logging.info(f"[SYSTEM_UPDATE] 매칭 성공: {system_update_match.group(1)[:200]}...")
+                    else:
+                        # 디버그: 왜 매칭 실패했는지 확인
+                        if 'system_update' in response.lower():
+                            logging.warning(f"[SYSTEM_UPDATE] 블록 있지만 파싱 실패!")
+                            start = response.lower().find('system_update')
+                            logging.warning(f"[SYSTEM_UPDATE] 실제 내용: {response[start:start+300]}")
                     
                     if system_update_match:
                         try:
                             update_json = json.loads(system_update_match.group(1))
                             
                             p_data = domain_manager.get_participant_data(channel_id, uid)
-                            ai_mem = domain_manager.get_ai_memory(channel_id, uid)
-                            
-                            if p_data and ai_mem:
+                            ai_mem = domain_manager.get_ai_memory(channel_id, uid) or {}  # None 방지
+
+                            logging.info(f"[SYSTEM_UPDATE] p_data 존재: {p_data is not None}, ai_mem 타입: {type(ai_mem)}")
+
+                            if p_data is not None:  # ai_mem은 빈 딕셔너리여도 OK
                                 update_msgs = []
                                 p_updated = False
                                 mem_updated = False
@@ -2046,12 +2078,16 @@ Korean output. 3rd person narration."""
                                 
                                 # 관계 업데이트
                                 if update_json.get("relationship_update"):
+                                    logging.info(f"[RELATIONSHIP] 업데이트 감지: {update_json['relationship_update']}")
                                     if "relationships" not in ai_mem:
                                         ai_mem["relationships"] = {}
                                     for npc, desc in update_json["relationship_update"].items():
+                                        old_rel = ai_mem["relationships"].get(npc, "(없음)")
                                         ai_mem["relationships"][npc] = desc
-                                        update_msgs.append(f"💞 **{npc}**")
+                                        logging.info(f"[RELATIONSHIP] {npc}: {old_rel} → {desc}")
+                                        update_msgs.append(f"💞 **{npc}**: {desc}")  # 상세 내용도 표시
                                     mem_updated = True
+                                    logging.info(f"[RELATIONSHIP] 저장 예정 - ai_mem['relationships']: {ai_mem.get('relationships', {})}")
                                 
                                 # 패시브 추가
                                 if update_json.get("passive_add"):
@@ -2125,7 +2161,9 @@ Korean output. 3rd person narration."""
                                 if p_updated:
                                     domain_manager.save_participant_data(channel_id, uid, p_data)
                                 if mem_updated:
+                                    logging.info(f"[SYSTEM_UPDATE] AI 메모리 저장 중... ai_mem keys: {list(ai_mem.keys())}")
                                     domain_manager.update_ai_memory(channel_id, uid, ai_mem)
+                                    logging.info(f"[SYSTEM_UPDATE] AI 메모리 저장 완료")
                                 
                                 # 업데이트 메시지 출력
                                 if update_msgs:
@@ -2139,6 +2177,13 @@ Korean output. 3rd person narration."""
                             await message.channel.send(f"⚠️ 시스템 업데이트 처리 중 오류: {str(ue)[:50]}")
                         
                         # 응답에서 system_update 블록 제거 (출력에서 숨김)
+                        # 여러 패턴을 순차적으로 시도
+                        response = re.sub(
+                            r'\s*```\s*system_update\s*\n[\s\S]*?\n\s*```\s*',
+                            '',
+                            response,
+                            flags=re.IGNORECASE
+                        ).strip()
                         response = re.sub(
                             r'\s*```system_update\s*\n?\s*\{.*?\}\s*\n?```\s*',
                             '',
