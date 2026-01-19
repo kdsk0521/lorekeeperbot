@@ -788,7 +788,22 @@ If any sentence makes the player character speak, think, feel, or act beyond wha
 
 ## SYSTEM UPDATE BLOCK — MANDATORY TRACKING
 
-**CRITICAL: You MUST append this block at the END of your response if ANY of the following changed:**
+**⚠️ CRITICAL: This is NOT optional! ⚠️**
+
+After EVERY narrative response, check if ANY of these changed:
+- Items gained/lost
+- Gold changed
+- Status effects changed
+- **Relationships changed (NEW NPC met, existing relationship evolved)**
+- Passives/titles earned
+- New information learned
+
+If YES to any → **MUST append the block. No exceptions.**
+If NO to all → Do NOT append the block.
+
+**Common mistake:** Forgetting to track relationship changes when NPCs are introduced or bonds form/break.
+
+**You MUST append this block at the END of your response if ANY of the following changed:**
 
 ```system_update
 {
