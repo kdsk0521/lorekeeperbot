@@ -64,7 +64,13 @@ logging.basicConfig(
 load_dotenv()
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
-MODEL_ID = os.getenv('GEMINI_MODEL_VERSION', 'gemini-2.0-flash')
+
+# 듀얼 모델 시스템: Pro는 중요한 작업, Flash는 간단한 분석
+MODEL_ID_PRO = os.getenv('GEMINI_MODEL_PRO', 'gemini-2.5-pro-preview-05-06')
+MODEL_ID_FLASH = os.getenv('GEMINI_MODEL_FLASH', 'gemini-2.5-flash-preview-05-20')
+
+# 하위 호환성 유지 (기존 코드에서 MODEL_ID 사용 시)
+MODEL_ID = MODEL_ID_PRO
 
 # =========================================================
 # API 클라이언트 초기화
@@ -838,7 +844,8 @@ async def on_ready():
     domain_manager.initialize_folders()
     logging.info(f"로그인 성공: {client_discord.user}")
     print(f"--- Lorekeeper V{VERSION} Online ({client_discord.user}) ---")
-    print(f"Model: {MODEL_ID}")
+    print(f"Model (Pro): {MODEL_ID_PRO}")
+    print(f"Model (Flash): {MODEL_ID_FLASH}")
 
 
 @client_discord.event
@@ -1768,21 +1775,9 @@ async def _process_message(message, channel_id: str):
             # 시스템 액션 처리
             sys_action = nvc_res.get("SystemAction", {})
             auto_msg = await process_ai_system_action(message, channel_id, sys_action)
-            
-            # === 좌뇌 결과 → character_sheet로 직접 저장 ===
-            player_update = nvc_res.get("PlayerUpdate", {})
-            player_mem_update = nvc_res.get("PlayerMemoryUpdate", {})
-            quest_update = nvc_res.get("QuestUpdate", {})
 
-            update_msgs = []
-            update_msgs.extend(character_sheet.apply_player_updates(channel_id, uid, player_update))
-            update_msgs.extend(character_sheet.apply_memory_updates(channel_id, uid, player_mem_update))
-            update_msgs.extend(character_sheet.apply_quest_updates(channel_id, quest_update))
-
-            # 업데이트 알림 출력
-            if update_msgs:
-                update_text = " | ".join(update_msgs)
-                await message.channel.send(f"📊 {update_text}")
+            # === 업데이트 추출은 서사 완료 후 별도 처리 (좌뇌 B) ===
+            # PlayerUpdate, PlayerMemoryUpdate, QuestUpdate는 이제 extract_updates()에서 처리
 
             # 기존 memory_system 호출 (SessionMemoryUpdate 등 세션 레벨 처리용)
             memory_msgs = memory_system.apply_ai_memory_updates(
@@ -2016,7 +2011,46 @@ Korean output. 3rd person narration."""
                 await send_long_message(message.channel, response)
                 domain_manager.append_history(channel_id, "User", action_text)
                 domain_manager.append_history(channel_id, "Char", response)
-                
+
+                # === [좌뇌 B] 업데이트 추출 (Flash 모델) ===
+                try:
+                    # 현재 상태 가져오기 (참조용)
+                    current_quests = quest_manager.get_active_quests(channel_id)
+                    ai_mem = domain_manager.get_ai_memory(channel_id, uid) or {}
+                    current_relationships = ai_mem.get("relationships", {})
+
+                    # Flash 모델로 업데이트 추출
+                    update_result = await memory_system.extract_updates(
+                        client_genai,
+                        MODEL_ID_FLASH,
+                        action_text,  # 플레이어 입력
+                        response,     # AI 서사 응답
+                        current_quests=current_quests,
+                        current_relationships=current_relationships
+                    )
+
+                    # character_sheet로 저장
+                    extract_msgs = []
+                    if update_result.get("PlayerUpdate"):
+                        extract_msgs.extend(
+                            character_sheet.apply_player_updates(channel_id, uid, update_result["PlayerUpdate"])
+                        )
+                    if update_result.get("PlayerMemoryUpdate"):
+                        extract_msgs.extend(
+                            character_sheet.apply_memory_updates(channel_id, uid, update_result["PlayerMemoryUpdate"])
+                        )
+                    if update_result.get("QuestUpdate"):
+                        extract_msgs.extend(
+                            character_sheet.apply_quest_updates(channel_id, update_result["QuestUpdate"])
+                        )
+
+                    # 업데이트 알림
+                    if extract_msgs:
+                        await message.channel.send(f"📊 {' | '.join(extract_msgs)}")
+
+                except Exception as ue:
+                    logging.warning(f"[UpdateExtractor] 실패 (무시됨): {ue}")
+
                 # === 자동 발효 시스템 (장기 기억 관리) ===
                 try:
                     session_data = domain_manager.get_domain(channel_id)

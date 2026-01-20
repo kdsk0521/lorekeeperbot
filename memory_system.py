@@ -774,27 +774,6 @@ async def analyze_context_nvc(
         '  "SceneType": "normal/gore/nsfw/gore_nsfw",\n'
         '  "Need": "Logical next step for Right Hemisphere",\n'
         '  "SystemAction": { "tool": "Quest/Memo/NPC", "type": "Add/Complete/Archive", "content": "..." } OR null,\n'
-        '  "PlayerUpdate": {\n'
-        '    "inventory_add": {"아이템이름": 수량} OR null,\n'
-        '    "inventory_remove": {"아이템이름": 수량} OR null,\n'
-        '    "gold_change": +100 OR -50 OR null,\n'
-        '    "status_add": ["중독", "피로"] OR null,\n'
-        '    "status_remove": ["출혈"] OR null\n'
-        '  } OR null,\n'
-        '  "PlayerMemoryUpdate": {\n'
-        '    "appearance": "외형 설명 (변경시에만)" OR null,\n'
-        '    "relationships": {"NPC이름": "관계 설명"} OR null,\n'
-        '    "passives": ["새 패시브/칭호"] OR null,\n'
-        '    "known_info": ["새로 알게 된 정보/소문/단서"] OR null,\n'
-        '    "foreshadowing": ["복선/떡밥"] OR null,\n'
-        '    "normalization": {"비일상요소": "적응 단계"} OR null,\n'
-        '    "companions": ["동행자이름: 설명"] OR null\n'
-        '  } OR null,\n'
-        '  "QuestUpdate": {\n'
-        '    "quest_add": ["새 퀘스트/목표"] OR null,\n'
-        '    "quest_complete": ["완료된 퀘스트 이름"] OR null,\n'
-        '    "memo_add": ["중요 메모/단서"] OR null\n'
-        '  } OR null,\n'
         '  "SessionMemoryUpdate": {\n'
         '    "world_summary": "현재 세계 상황 요약 (변경시에만)" OR null,\n'
         '    "world_changes": ["세계에 일어난 변화"] OR null,\n'
@@ -805,131 +784,8 @@ async def analyze_context_nvc(
         '  } OR null\n'
         "}\n"
         "\n"
-        "### PLAYER UPDATE SYSTEM (자동 인벤토리/골드/상태이상 관리)\n"
-        "PlayerUpdate triggers automatically based on narrative events.\n\n"
-        
-        "**When to update:**\n"
-        "- Player picks up item → inventory_add\n"
-        "- Player uses/loses item → inventory_remove\n"
-        "- Player receives payment/reward → gold_change: +amount\n"
-        "- Player pays/loses money → gold_change: -amount\n"
-        "- Player gets poisoned/injured/cursed → status_add\n"
-        "- Player heals/recovers/cured → status_remove\n\n"
-        
-        "**Examples:**\n"
-        "- Player finds a sword → inventory_add: {\"검\": 1}\n"
-        "- Player drinks potion → inventory_remove: {\"포션\": 1}\n"
-        "- Player sells item for 50 gold → gold_change: 50\n"
-        "- Player gets bitten by snake → status_add: [\"중독\"]\n"
-        "- Player rests at inn → status_remove: [\"피로\"]\n\n"
-        
-        "**IMPORTANT:** Return null if no update needed. Don't force updates.\n\n"
-
-        "### PLAYER MEMORY UPDATE SYSTEM (관계/패시브/정보 자동 관리)\n"
-        "PlayerMemoryUpdate triggers when character-level changes occur.\n\n"
-
-        "**⚠️ CRITICAL: You MUST output PlayerMemoryUpdate when ANY of these happen:**\n\n"
-
-        "**relationships - 관계 변화 (가장 중요!):**\n"
-        "- New NPC introduced/met → relationships: {\"NPC이름\": \"첫 만남, 간단한 인상\"}\n"
-        "- Relationship improved → relationships: {\"NPC이름\": \"친해짐, 이유\"}\n"
-        "- Relationship worsened → relationships: {\"NPC이름\": \"사이가 틀어짐, 이유\"}\n"
-        "- Family/adoption → relationships: {\"이름\": \"입양한 딸\", \"가족\"}\n"
-        "- ANY meaningful NPC interaction → UPDATE RELATIONSHIP\n\n"
-
-        "**passives - 패시브/칭호 획득:**\n"
-        "- Repeated exposure to danger → passives: [\"독 내성\"]\n"
-        "- Achievement unlocked → passives: [\"드래곤 슬레이어\"]\n"
-        "- Skill learned → passives: [\"기초 검술\"]\n"
-        "- Title earned → passives: [\"영웅\", \"현상수배범\"]\n\n"
-
-        "**known_info - 새로운 정보:**\n"
-        "- Secret discovered → known_info: [\"비밀 통로 위치\"]\n"
-        "- Rumor heard → known_info: [\"길드장 음모 소문\"]\n"
-        "- Clue found → known_info: [\"범인의 단서\"]\n"
-        "- Location learned → known_info: [\"도적 소굴 위치\"]\n\n"
-
-        "**foreshadowing - 복선/떡밥:**\n"
-        "- Unresolved mystery → foreshadowing: [\"봉인된 편지\"]\n"
-        "- Suspicious event → foreshadowing: [\"검은 로브의 남자\"]\n"
-        "- Hint dropped → foreshadowing: [\"왕의 병환\"]\n\n"
-
-        "**normalization - 비일상 적응:**\n"
-        "- First supernatural encounter → normalization: {\"드래곤\": \"충격받음\"}\n"
-        "- Repeated exposure → normalization: {\"마법\": \"익숙해지는 중\"}\n"
-        "- Fully adapted → normalization: {\"몬스터\": \"일상\"}\n\n"
-
-        "**companions - 동행자:**\n"
-        "- Pet/mount acquired → companions: [\"섀도우: 검은 늑대\"]\n"
-        "- Familiar summoned → companions: [\"핍: 불의 정령\"]\n"
-        "- Child adopted → companions: [\"미나: 입양한 딸\"]\n\n"
-
-        "### CRITICAL EXAMPLES\n\n"
-
-        "**Scene:** Player meets tavern keeper for first time\n"
-        "→ PlayerMemoryUpdate: {\"relationships\": {\"마르코\": \"술집 주인, 첫 만남\"}}\n\n"
-
-        "**Scene:** Player saves NPC from danger\n"
-        "→ PlayerMemoryUpdate: {\"relationships\": {\"엘리나\": \"목숨의 은인으로 감사해함\"}}\n\n"
-
-        "**Scene:** Player adopts orphan child\n"
-        "→ PlayerMemoryUpdate: {\n"
-        "    \"relationships\": {\"미나\": \"입양한 딸, 소중한 가족\"},\n"
-        "    \"companions\": [\"미나: 입양한 어린 딸\"]\n"
-        "  }\n\n"
-
-        "**Scene:** Player learns guild has secret base\n"
-        "→ PlayerMemoryUpdate: {\"known_info\": [\"도적 길드 비밀 기지가 북쪽 숲에 있음\"]}\n\n"
-
-        "**Scene:** Player survives poison for third time\n"
-        "→ PlayerMemoryUpdate: {\"passives\": [\"독 내성 (초급)\"]}\n\n"
-
-        "**Scene:** Player buys sword and befriends merchant\n"
-        "→ PlayerUpdate: {\"inventory_add\": {\"검\": 1}, \"gold_change\": -50}\n"
-        "→ PlayerMemoryUpdate: {\"relationships\": {\"상인\": \"단골 고객\"}}\n\n"
-
-        "**⚠️ IMPORTANT RULES:**\n"
-        "1. If NPC appears in scene → ALWAYS consider relationship update\n"
-        "2. If player learns something new → known_info or foreshadowing\n"
-        "3. If player gains/loses item or money → PlayerUpdate\n"
-        "4. If significant event happens → consider passives\n"
-        "5. If new objective given → QuestUpdate.quest_add\n"
-        "6. If objective completed → QuestUpdate.quest_complete\n"
-        "7. If important clue found → QuestUpdate.memo_add\n"
-        "8. Return null for fields with no changes, but NEVER skip when changes occur!\n\n"
-
-        "### QUEST & MEMO UPDATE SYSTEM (퀘스트/메모 자동 관리)\n"
-        "QuestUpdate triggers when objectives or important notes change.\n\n"
-
-        "**quest_add - 새 퀘스트/목표:**\n"
-        "- NPC gives mission → quest_add: [\"고블린 소굴 정리\"]\n"
-        "- New objective discovered → quest_add: [\"잃어버린 검 찾기\"]\n"
-        "- Player accepts request → quest_add: [\"마을 방어전 참가\"]\n\n"
-
-        "**quest_complete - 퀘스트 완료:**\n"
-        "- Mission accomplished → quest_complete: [\"고블린 소굴 정리\"]\n"
-        "- Objective achieved → quest_complete: [\"잃어버린 검 찾기\"]\n"
-        "- Use the EXACT quest name that was added\n\n"
-
-        "**memo_add - 중요 메모/단서:**\n"
-        "- Important clue found → memo_add: [\"비밀문 비밀번호: 1234\"]\n"
-        "- Key information learned → memo_add: [\"길드장은 매주 목요일 부재\"]\n"
-        "- Plot-relevant detail → memo_add: [\"드래곤은 불보다 얼음에 약함\"]\n\n"
-
-        "### QUEST EXAMPLES\n\n"
-
-        "**Scene:** NPC asks player to clear goblin cave\n"
-        "→ QuestUpdate: {\"quest_add\": [\"고블린 동굴 정리 - 의뢰인: 마을촌장\"]}\n\n"
-
-        "**Scene:** Player defeats goblin boss\n"
-        "→ QuestUpdate: {\"quest_complete\": [\"고블린 동굴 정리 - 의뢰인: 마을촌장\"]}\n\n"
-
-        "**Scene:** Player finds secret code on wall\n"
-        "→ QuestUpdate: {\"memo_add\": [\"비밀금고 암호: 7749\"]}\n"
-        "→ PlayerMemoryUpdate: {\"known_info\": [\"비밀금고 암호를 알게 됨\"]}\n\n"
-
-        "**Scene:** Player learns about hidden treasure\n"
-        "→ QuestUpdate: {\"quest_add\": [\"숨겨진 보물 찾기\"], \"memo_add\": [\"보물은 북쪽 폐허에 있다는 소문\"]}\n\n"
+        "**NOTE:** PlayerUpdate, PlayerMemoryUpdate, QuestUpdate are now handled by a separate\n"
+        "extraction process after narrative generation. Focus only on scene analysis fields above.\n\n"
 
         "### SCENE TYPE DETECTION (자동 장면 유형 감지)\n"
         "**SceneType:** Automatically detect the nature of the current scene.\n"
@@ -1036,6 +892,154 @@ async def analyze_context_nvc(
         "Need": "Proceed with Caution",
         "SystemAction": None
     }
+
+
+# =========================================================
+# [UPDATE EXTRACTOR] 업데이트 추출 전용 - Flash 모델 사용
+# =========================================================
+async def extract_updates(
+    client,
+    model_id_flash: str,
+    player_input: str,
+    ai_response: str,
+    current_quests: List[str] = None,
+    current_relationships: Dict[str, str] = None
+) -> Dict[str, Any]:
+    """
+    [좌뇌 B] 업데이트 추출 전용 - Flash 모델 사용
+    서사 완료 후 입력+출력을 분석하여 변화 추출
+
+    Args:
+        client: Gemini 클라이언트
+        model_id_flash: Flash 모델 ID
+        player_input: 플레이어 입력 텍스트
+        ai_response: AI 서사 응답
+        current_quests: 현재 활성 퀘스트 목록 (참조용)
+        current_relationships: 현재 관계 목록 (참조용)
+
+    Returns:
+        {
+            "PlayerUpdate": {...},
+            "PlayerMemoryUpdate": {...},
+            "QuestUpdate": {...}
+        }
+    """
+
+    system_prompt = (
+        "You are an update extractor for a TRPG system.\n"
+        "Analyze the player input and AI narrative response.\n"
+        "Extract ANY changes that occurred.\n\n"
+
+        "### OUTPUT FORMAT (JSON ONLY)\n"
+        "{\n"
+        '  "PlayerUpdate": {\n'
+        '    "inventory_add": {"아이템": 수량} OR null,\n'
+        '    "inventory_remove": {"아이템": 수량} OR null,\n'
+        '    "gold_change": +100 OR -50 OR null,\n'
+        '    "status_add": ["상태"] OR null,\n'
+        '    "status_remove": ["상태"] OR null\n'
+        '  } OR null,\n'
+        '  "PlayerMemoryUpdate": {\n'
+        '    "relationships": {"NPC이름": "관계 설명"} OR null,\n'
+        '    "passives": ["새 패시브"] OR null,\n'
+        '    "known_info": ["새 정보"] OR null,\n'
+        '    "foreshadowing": ["복선"] OR null,\n'
+        '    "companions": ["동행자: 설명"] OR null\n'
+        '  } OR null,\n'
+        '  "QuestUpdate": {\n'
+        '    "quest_add": ["새 퀘스트"] OR null,\n'
+        '    "quest_complete": ["완료 퀘스트"] OR null,\n'
+        '    "memo_add": ["메모"] OR null\n'
+        '  } OR null\n'
+        "}\n\n"
+
+        "### CRITICAL RULES\n"
+        "1. **NPC 등장 = 관계 업데이트 필수**\n"
+        "   - 새 NPC 만남 → relationships: {\"이름\": \"첫 만남, 인상\"}\n"
+        "   - 기존 NPC 상호작용 → relationships: {\"이름\": \"변화된 관계\"}\n\n"
+
+        "2. **아이템/돈 변화 = PlayerUpdate 필수**\n"
+        "   - 획득 → inventory_add / gold_change: +금액\n"
+        "   - 소비/지불 → inventory_remove / gold_change: -금액\n\n"
+
+        "3. **새 목표/의뢰 = QuestUpdate 필수**\n"
+        "   - NPC가 부탁 → quest_add\n"
+        "   - 목표 달성 → quest_complete\n"
+        "   - 중요 단서 → memo_add\n\n"
+
+        "4. **변화 없으면 null, 있으면 반드시 기록**\n\n"
+
+        "### EXAMPLES\n\n"
+
+        "**Input:** 상인에게 검을 50골드에 산다\n"
+        "**Response:** 상인이 검을 건네며 미소짓는다...\n"
+        "→ {\n"
+        '    "PlayerUpdate": {"inventory_add": {"검": 1}, "gold_change": -50},\n'
+        '    "PlayerMemoryUpdate": {"relationships": {"상인": "단골 고객"}},\n'
+        '    "QuestUpdate": null\n'
+        "  }\n\n"
+
+        "**Input:** 길드장에게 의뢰를 받는다\n"
+        "**Response:** 길드장이 고블린 소탕을 부탁한다...\n"
+        "→ {\n"
+        '    "PlayerUpdate": null,\n'
+        '    "PlayerMemoryUpdate": {"relationships": {"길드장": "의뢰 관계"}},\n'
+        '    "QuestUpdate": {"quest_add": ["고블린 소탕 - 길드장 의뢰"]}\n'
+        "  }\n\n"
+
+        "**Input:** 낯선 여행자와 대화한다\n"
+        "**Response:** 여행자 마르코가 자신을 소개하며...\n"
+        "→ {\n"
+        '    "PlayerUpdate": null,\n'
+        '    "PlayerMemoryUpdate": {"relationships": {"마르코": "방금 만난 여행자"}},\n'
+        '    "QuestUpdate": null\n'
+        "  }\n"
+    )
+
+    # 현재 상태 컨텍스트 추가
+    context_parts = []
+    if current_quests:
+        context_parts.append(f"현재 퀘스트: {', '.join(current_quests[:5])}")
+    if current_relationships:
+        rel_str = ', '.join([f"{k}({v})" for k, v in list(current_relationships.items())[:5]])
+        context_parts.append(f"현재 관계: {rel_str}")
+
+    context_info = "\n".join(context_parts) if context_parts else "없음"
+
+    user_prompt = (
+        f"### 현재 상태\n{context_info}\n\n"
+        f"### 플레이어 입력\n{player_input}\n\n"
+        f"### AI 서사 응답\n{ai_response[:2000]}\n\n"  # 응답이 길 경우 잘라내기
+        "위 내용을 분석하여 변화를 추출하세요. JSON만 출력."
+    )
+
+    try:
+        config = types.GenerateContentConfig(
+            response_mime_type="application/json",
+            temperature=0.1  # 낮은 온도로 정확한 추출
+        )
+
+        contents = [
+            types.Content(role="user", parts=[
+                types.Part(text=f"{system_prompt}\n\n{user_prompt}")
+            ])
+        ]
+
+        result = await api_call_with_retry(
+            client, model_id_flash, contents, config,
+            operation_name="Update Extraction (Flash)"
+        )
+
+        if result:
+            parsed = safe_parse_json(result)
+            if parsed:
+                logging.info(f"[UpdateExtractor] 추출 성공: {list(parsed.keys())}")
+                return parsed
+
+    except Exception as e:
+        logging.warning(f"[UpdateExtractor] 추출 실패: {e}")
+
+    return {"PlayerUpdate": None, "PlayerMemoryUpdate": None, "QuestUpdate": None}
 
 
 # =========================================================
