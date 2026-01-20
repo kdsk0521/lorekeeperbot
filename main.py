@@ -66,8 +66,8 @@ DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
 # 듀얼 모델 시스템: Pro는 중요한 작업, Flash는 간단한 분석
-MODEL_ID_PRO = os.getenv('GEMINI_MODEL_PRO', 'gemini-2.5-pro-preview-05-06')
-MODEL_ID_FLASH = os.getenv('GEMINI_MODEL_FLASH', 'gemini-2.5-flash-preview-05-20')
+MODEL_ID_PRO = os.getenv('gemini-3-pro-preview')
+MODEL_ID_FLASH = os.getenv('gemini-3-flash-preview')
 
 # 하위 호환성 유지 (기존 코드에서 MODEL_ID 사용 시)
 MODEL_ID = MODEL_ID_PRO
@@ -2114,3 +2114,4 @@ if __name__ == "__main__":
     else:
         logging.error("환경 변수 검증 실패 - 봇을 시작할 수 없습니다.")
         exit(1)
+
