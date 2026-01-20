@@ -96,19 +96,13 @@ class PlayerCharacterManager:
             messages.append(f"👤 **외형:** {short}...")
             mem_updated = True
 
-        # relationships (관계) - 가장 중요
+        # relationships (관계) - domain.npcs로 통합 저장
         if player_mem_update.get("relationships"):
-            if "relationships" not in current_mem:
-                current_mem["relationships"] = {}
             for name, desc in player_mem_update["relationships"].items():
                 if name and desc:
-                    old = current_mem["relationships"].get(name)
-                    current_mem["relationships"][name] = desc
-                    if old:
-                        messages.append(f"💞 **{name}**: {old} → {desc}")
-                    else:
-                        messages.append(f"💞 **{name}**: {desc}")
-                    mem_updated = True
+                    # domain.npcs에 통합 저장 (NPC relationship 필드 업데이트)
+                    npc_memory.update_npc_relationship(channel_id, name, desc)
+                    messages.append(f"💞 **{name}**: {desc}")
 
         # passives (패시브/칭호)
         if player_mem_update.get("passives"):
@@ -398,24 +392,53 @@ def get_player_for_prompt(channel_id: str, user_id: str) -> str:
 class NPCManager:
     """
     NPC 데이터를 domain_manager를 통해 파일에 영구 저장/관리합니다.
+
+    NPC 스키마:
+    {
+        "desc": "NPC 설명",
+        "status": "Active" | "Dead" | "Missing" | "Away",
+        "source": "lore" | "session",      # 출처 구분
+        "relationship": "관계 설명" | None, # 플레이어와의 관계
+        "last_seen": "ISO timestamp" | None # 마지막 등장 시간
+    }
     """
 
     def add_npc(
         self,
         channel_id: str,
         name: str,
-        description: str
+        description: str,
+        source: str = "session",
+        relationship: str = None
     ) -> None:
+        """
+        NPC 추가 또는 업데이트 (기존 데이터 보존)
+
+        Args:
+            channel_id: 채널 ID
+            name: NPC 이름
+            description: NPC 설명
+            source: "lore" | "session" (기본값: "session")
+            relationship: 초기 관계 설명
+        """
         if not name:
             logging.warning("NPC 이름이 비어있어 추가하지 않음")
             return
 
+        npcs = domain_manager.get_npcs(channel_id)
+        existing = npcs.get(name, {})
+
+        # 기존 데이터가 있으면 보존, 없으면 새로 설정
         npc_data = {
-            "desc": description or "설명 없음",
-            "status": DEFAULT_NPC_STATUS
+            "desc": description or existing.get("desc", "설명 없음"),
+            "status": existing.get("status", DEFAULT_NPC_STATUS),
+            "source": existing.get("source", source),  # 기존 출처 유지
+            "relationship": relationship or existing.get("relationship"),
+            "last_seen": existing.get("last_seen")
         }
+
         domain_manager.update_npc(channel_id, name, npc_data)
-        logging.info(f"NPC 추가/업데이트: {name}")
+        logging.info(f"NPC 추가/업데이트: {name} (source: {npc_data['source']})")
 
     def update_npc_status(
         self,
@@ -432,6 +455,51 @@ class NPCManager:
         npc_data["status"] = status
         domain_manager.update_npc(channel_id, name, npc_data)
         logging.info(f"NPC 상태 변경: {name} -> {status}")
+        return True
+
+    def update_npc_relationship(
+        self,
+        channel_id: str,
+        name: str,
+        relationship: str,
+        description: str = None
+    ) -> bool:
+        """
+        NPC 관계 업데이트 (없으면 새로 생성)
+
+        Args:
+            channel_id: 채널 ID
+            name: NPC 이름
+            relationship: 관계 설명
+            description: NPC 설명 (새로 생성 시에만 사용)
+
+        Returns:
+            성공 여부
+        """
+        import time
+
+        if not name or not relationship:
+            return False
+
+        npcs = domain_manager.get_npcs(channel_id)
+
+        if name in npcs:
+            # 기존 NPC 업데이트
+            npc_data = npcs[name].copy()
+            npc_data["relationship"] = relationship
+            npc_data["last_seen"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        else:
+            # 새 NPC 생성 (세션 출처)
+            npc_data = {
+                "desc": description or "세션 중 만난 NPC",
+                "status": DEFAULT_NPC_STATUS,
+                "source": "session",
+                "relationship": relationship,
+                "last_seen": time.strftime("%Y-%m-%dT%H:%M:%S")
+            }
+
+        domain_manager.update_npc(channel_id, name, npc_data)
+        logging.info(f"NPC 관계 업데이트: {name} → {relationship}")
         return True
 
     def get_npc(
@@ -493,6 +561,52 @@ class NPCManager:
         d["npcs"] = {}
         domain_manager.save_domain(channel_id, d)
         logging.info(f"채널 {channel_id}의 모든 NPC 초기화됨")
+
+    def clear_npcs_by_source(self, channel_id: str, source: str = None) -> int:
+        """
+        출처별 NPC 삭제
+
+        Args:
+            channel_id: 채널 ID
+            source: "lore" | "session" | None (None이면 전체 삭제)
+
+        Returns:
+            삭제된 NPC 수
+        """
+        d = domain_manager.get_domain(channel_id)
+        npcs = d.get("npcs", {})
+
+        if source is None:
+            # 전체 삭제
+            count = len(npcs)
+            d["npcs"] = {}
+        else:
+            # 특정 출처만 삭제
+            to_delete = [name for name, data in npcs.items() if data.get("source") == source]
+            for name in to_delete:
+                del npcs[name]
+            count = len(to_delete)
+
+        domain_manager.save_domain(channel_id, d)
+        logging.info(f"NPC 삭제: {count}명 (source: {source or 'all'})")
+        return count
+
+    def get_relationships(self, channel_id: str) -> Dict[str, str]:
+        """
+        모든 NPC 관계를 가져옵니다 (!정보 관계용)
+
+        Returns:
+            {"NPC이름": "관계 설명", ...}
+        """
+        npcs = domain_manager.get_npcs(channel_id)
+        relationships = {}
+
+        for name, data in npcs.items():
+            rel = data.get("relationship")
+            if rel:
+                relationships[name] = rel
+
+        return relationships
 
 
 # 싱글톤 인스턴스 생성

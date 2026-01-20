@@ -347,9 +347,14 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
                 client_genai, MODEL_ID, raw_lore
             )
 
-            # NPC 추가
+            # NPC 추가 (로어 출처 명시)
             for n in npcs_extracted:
-                character_sheet.npc_memory.add_npc(channel_id, n.get("name"), n.get("description"))
+                character_sheet.npc_memory.add_npc(
+                    channel_id,
+                    n.get("name"),
+                    n.get("description"),
+                    source="lore"
+                )
 
             # 원본 로어 그대로 저장 (AI가 재작성하지 않음)
             domain_manager.append_lore(channel_id, raw_lore)
@@ -517,39 +522,101 @@ async def handle_npc_info_command(message, channel_id: str, npc_name: str) -> No
             await message.channel.send(msg)
         return
 
-    # domain NPCs와 session_mem의 npc_summaries를 모두 확인
-    npcs = domain_manager.get_npcs(channel_id)
-    session_mem = domain_manager.get_session_ai_memory(channel_id)
-    npc_summaries = session_mem.get("npc_summaries", {}) if session_mem else {}
+    # NPC 초기화 (선택적)
+    if npc_name.lower().startswith('초기화') or npc_name.lower().startswith('reset') or npc_name.lower().startswith('clear'):
+        option = npc_name.replace('초기화', '').replace('reset', '').replace('clear', '').strip().lower()
 
-    # npc_summaries를 npcs에 병합 (세션 중 감지된 NPC 포함)
-    for name, summary in npc_summaries.items():
-        if name not in npcs:
-            npcs[name] = {"desc": summary, "status": "Active"}
+        if option in ['로어', 'lore']:
+            count = character_sheet.npc_memory.clear_npcs_by_source(channel_id, "lore")
+            await message.channel.send(f"📖 로어 NPC {count}명 삭제됨")
+        elif option in ['세션', 'session']:
+            count = character_sheet.npc_memory.clear_npcs_by_source(channel_id, "session")
+            await message.channel.send(f"🎭 세션 NPC {count}명 삭제됨")
+        else:
+            count = character_sheet.npc_memory.clear_npcs_by_source(channel_id, None)
+            await message.channel.send(f"👥 전체 NPC {count}명 삭제됨")
+        return
+
+    # domain NPCs 조회
+    npcs = domain_manager.get_npcs(channel_id)
 
     if not npc_name:
-        # 전체 NPC 목록
+        # 전체 NPC 목록 (출처별 분류)
         if not npcs:
             await message.channel.send("⚠️ 등록된 NPC가 없습니다.")
             return
-        
-        summary_list = []
-        for name, data in npcs.items():
-            status = data.get('status', 'Active')
-            desc = data.get('desc', '')
-            short_desc = desc[:50] + "..." if len(desc) > 50 else desc
-            summary_list.append(f"• **{name}** ({status}): {short_desc}")
-        
-        await send_long_message(message.channel, f"👥 **NPC 목록**\n" + "\n".join(summary_list))
+
+        result = "**━━━ 👥 NPC 목록 ━━━**\n\n"
+
+        # 로어 NPC
+        lore_npcs = [(n, d) for n, d in npcs.items() if d.get("source") == "lore"]
+        if lore_npcs:
+            result += "**📖 로어 NPC:**\n"
+            for name, data in lore_npcs:
+                status = data.get("status", "Active")
+                rel = data.get("relationship")
+                desc = data.get("desc", "")[:50]
+                rel_str = f" [{rel}]" if rel else ""
+                result += f"  • **{name}** ({status}){rel_str}"
+                if desc:
+                    result += f" - {desc}..."
+                result += "\n"
+            result += "\n"
+
+        # 세션 NPC
+        session_npcs = [(n, d) for n, d in npcs.items() if d.get("source") == "session"]
+        if session_npcs:
+            result += "**🎭 세션 NPC:**\n"
+            for name, data in session_npcs:
+                status = data.get("status", "Active")
+                rel = data.get("relationship")
+                desc = data.get("desc", "")[:50]
+                rel_str = f" [{rel}]" if rel else ""
+                result += f"  • **{name}** ({status}){rel_str}"
+                if desc:
+                    result += f" - {desc}..."
+                result += "\n"
+            result += "\n"
+
+        # 출처 미정 NPC (기존 데이터 호환)
+        other_npcs = [(n, d) for n, d in npcs.items() if not d.get("source")]
+        if other_npcs:
+            result += "**👤 기타 NPC:**\n"
+            for name, data in other_npcs:
+                status = data.get("status", "Active")
+                rel = data.get("relationship")
+                desc = data.get("desc", "")[:50]
+                rel_str = f" [{rel}]" if rel else ""
+                result += f"  • **{name}** ({status}){rel_str}"
+                if desc:
+                    result += f" - {desc}..."
+                result += "\n"
+
+        result += "\n💡 `!npc 초기화 [로어|세션]` - 선택적 삭제"
+
+        await send_long_message(message.channel, result)
         return
-    
+
     # 특정 NPC 조회
     npc_data = npcs.get(npc_name)
-    
+
     if npc_data:
         status = npc_data.get('status', 'Active')
         desc = npc_data.get('desc', '설명 없음')
-        await message.channel.send(f"👤 **{npc_name}** ({status})\n{desc}")
+        source = npc_data.get('source', '미정')
+        rel = npc_data.get('relationship')
+        last_seen = npc_data.get('last_seen')
+
+        source_tag = "📖 로어" if source == "lore" else ("🎭 세션" if source == "session" else "👤 기타")
+        result = f"**{npc_name}** ({status})\n"
+        result += f"출처: {source_tag}\n"
+        if rel:
+            result += f"관계: {rel}\n"
+        if last_seen:
+            result += f"마지막 등장: {last_seen}\n"
+        result += f"\n{desc}"
+
+        await message.channel.send(result)
     else:
         await message.channel.send(f"⚠️ '{npc_name}'라는 NPC를 찾을 수 없습니다.")
 
@@ -642,51 +709,47 @@ async def handle_info_command(message, channel_id: str, sub_command: str = "") -
         result += "\n"
     
     # =========================================================
-    # 관계 섹션: NPC 관계도 (모든 출처의 NPC 통합)
+    # 관계 섹션: NPC 관계도 (domain.npcs 통합)
     # =========================================================
     if sub_type in ['all', 'relation']:
         result += "**━━━ 💞 관계 ━━━**\n"
-        
-        relationships = ai_mem.get('relationships', {})
-        
-        # 모든 출처의 NPC 수집 (domain NPCs + session npc_summaries)
-        all_npcs = domain_manager.get_npcs(channel_id).copy()
-        session_mem = domain_manager.get_session_ai_memory(channel_id)
-        if session_mem:
-            npc_summaries = session_mem.get("npc_summaries", {})
-            for name, summary in npc_summaries.items():
-                if name not in all_npcs:
-                    all_npcs[name] = {"desc": summary, "status": "Active"}
-        
-        # relationships에 있는 NPC들 먼저 표시
-        displayed_npcs = set()
-        if relationships:
-            for name, rel_desc in relationships.items():
-                displayed_npcs.add(name)
-                npc_info = all_npcs.get(name, {})
-                npc_desc = npc_info.get('desc', '') if npc_info else ''
-                short_desc = (npc_desc[:30] + "...") if len(npc_desc) > 30 else npc_desc
+
+        # 통합된 NPC 데이터에서 관계 읽기 (domain.npcs에서 직접)
+        npcs = domain_manager.get_npcs(channel_id)
+
+        has_relationship = False
+        for name, data in npcs.items():
+            rel = data.get("relationship")
+            if rel:
+                has_relationship = True
+                desc = data.get("desc", "")
+                short_desc = (desc[:30] + "...") if len(desc) > 30 else desc
+                source_tag = "📖" if data.get("source") == "lore" else "🎭"
+                result += f"  {source_tag} **{name}** ({rel})"
                 if short_desc:
-                    result += f"  • **{name}** ({rel_desc}) - _{short_desc}_\n"
-                else:
-                    result += f"  • **{name}:** {rel_desc}\n"
-        
-        # relationships에 없지만 알려진 NPC들 (관계 미정)
-        other_npcs = [n for n in all_npcs.keys() if n not in displayed_npcs]
-        if other_npcs:
-            if relationships:
+                    result += f" - _{short_desc}_"
+                result += "\n"
+
+        # 관계 없는 NPC들
+        no_rel_npcs = [name for name, data in npcs.items() if not data.get("relationship")]
+        if no_rel_npcs:
+            if has_relationship:
                 result += "\n👥 **기타 알려진 NPC:**\n"
-            for name in other_npcs[:10]:  # 최대 10명까지만
-                npc_info = all_npcs.get(name, {})
-                npc_desc = npc_info.get('desc', '')
-                short_desc = (npc_desc[:30] + "...") if len(npc_desc) > 30 else npc_desc
-                result += f"  • **{name}** _(관계 미정)_ - {short_desc}\n" if short_desc else f"  • **{name}** _(관계 미정)_\n"
-            if len(other_npcs) > 10:
-                result += f"  _... 외 {len(other_npcs) - 10}명_\n"
-        
-        if not relationships and not all_npcs:
-            result += "_아직 형성된 관계가 없습니다._\n"
-        
+            for name in no_rel_npcs[:10]:
+                data = npcs[name]
+                desc = data.get("desc", "")
+                short_desc = (desc[:30] + "...") if len(desc) > 30 else desc
+                source_tag = "📖" if data.get("source") == "lore" else "🎭"
+                result += f"  {source_tag} **{name}** _(관계 미정)_"
+                if short_desc:
+                    result += f" - {short_desc}"
+                result += "\n"
+            if len(no_rel_npcs) > 10:
+                result += f"  _... 외 {len(no_rel_npcs) - 10}명_\n"
+
+        if not npcs:
+            result += "_아직 알려진 NPC가 없습니다._\n"
+
         result += "\n"
     
     # =========================================================
@@ -822,11 +885,11 @@ async def process_ai_system_action(message, channel_id: str, sys_action: dict) -
     elif tool == "NPC" and atype == "Add":
         if ":" in content:
             name, desc = content.split(":", 1)
-            character_sheet.npc_memory.add_npc(channel_id, name.strip(), desc.strip())
-            auto_msg = f"👥 NPC: {name.strip()}"
+            character_sheet.npc_memory.add_npc(channel_id, name.strip(), desc.strip(), source="session")
+            auto_msg = f"🎭 NPC: {name.strip()}"
         else:
-            character_sheet.npc_memory.add_npc(channel_id, content, "Auto")
-            auto_msg = f"👥 NPC: {content}"
+            character_sheet.npc_memory.add_npc(channel_id, content, "Auto", source="session")
+            auto_msg = f"🎭 NPC: {content}"
     
     # XP Award 제거됨 - 성과는 패시브/칭호로 표현
     elif tool == "XP" and atype == "Award":
@@ -1240,8 +1303,8 @@ async def _process_message(message, channel_id: str):
                         # 이름이 지정된 경우: 단일 NPC (파일은 설명으로 사용)
                         name = content
                         desc = file_text
-                        character_sheet.npc_memory.add_npc(channel_id, name, desc)
-                        await message.channel.send(f"✅ NPC 추가됨: **{name}**\n{desc[:100]}{'...' if len(desc) > 100 else ''}")
+                        character_sheet.npc_memory.add_npc(channel_id, name, desc, source="session")
+                        await message.channel.send(f"✅ 🎭 세션 NPC 추가됨: **{name}**\n{desc[:100]}{'...' if len(desc) > 100 else ''}")
                     else:
                         # 이름이 없는 경우: 일괄 추가
                         npcs = memory_system.parse_bulk_npcs_from_text(file_text)
@@ -1249,14 +1312,14 @@ async def _process_message(message, channel_id: str):
                             await message.channel.send("⚠️ 파일에서 NPC를 찾을 수 없습니다. 형식을 확인해주세요.")
                             return
                         
-                        # 모든 NPC 추가
+                        # 모든 NPC 추가 (세션 출처)
                         added_count = 0
                         npc_names = []
                         for npc in npcs:
                             name = npc.get("name", "").strip()
                             desc = npc.get("description", "").strip()
                             if name:
-                                character_sheet.npc_memory.add_npc(channel_id, name, desc)
+                                character_sheet.npc_memory.add_npc(channel_id, name, desc, source="session")
                                 added_count += 1
                                 npc_names.append(name)
                         
@@ -1274,13 +1337,13 @@ async def _process_message(message, channel_id: str):
                     name, desc = content.split(':', 1)
                     name = name.strip()
                     desc = desc.strip()
-                    character_sheet.npc_memory.add_npc(channel_id, name, desc)
-                    await message.channel.send(f"✅ NPC 추가됨: **{name}**\n{desc}")
+                    character_sheet.npc_memory.add_npc(channel_id, name, desc, source="session")
+                    await message.channel.send(f"✅ 🎭 세션 NPC 추가됨: **{name}**\n{desc}")
                 else:
                     name = content
                     desc = "설명 없음"
-                    character_sheet.npc_memory.add_npc(channel_id, name, desc)
-                    await message.channel.send(f"✅ NPC 추가됨: **{name}**\n{desc}")
+                    character_sheet.npc_memory.add_npc(channel_id, name, desc, source="session")
+                    await message.channel.send(f"✅ 🎭 세션 NPC 추가됨: **{name}**\n{desc}")
                 return
             
             # --- AI 분석 도구 ---
