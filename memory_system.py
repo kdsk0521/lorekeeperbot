@@ -790,6 +790,11 @@ async def analyze_context_nvc(
         '    "normalization": {"비일상요소": "적응 단계"} OR null,\n'
         '    "companions": ["동행자이름: 설명"] OR null\n'
         '  } OR null,\n'
+        '  "QuestUpdate": {\n'
+        '    "quest_add": ["새 퀘스트/목표"] OR null,\n'
+        '    "quest_complete": ["완료된 퀘스트 이름"] OR null,\n'
+        '    "memo_add": ["중요 메모/단서"] OR null\n'
+        '  } OR null,\n'
         '  "SessionMemoryUpdate": {\n'
         '    "world_summary": "현재 세계 상황 요약 (변경시에만)" OR null,\n'
         '    "world_changes": ["세계에 일어난 변화"] OR null,\n'
@@ -819,6 +824,112 @@ async def analyze_context_nvc(
         "- Player rests at inn → status_remove: [\"피로\"]\n\n"
         
         "**IMPORTANT:** Return null if no update needed. Don't force updates.\n\n"
+
+        "### PLAYER MEMORY UPDATE SYSTEM (관계/패시브/정보 자동 관리)\n"
+        "PlayerMemoryUpdate triggers when character-level changes occur.\n\n"
+
+        "**⚠️ CRITICAL: You MUST output PlayerMemoryUpdate when ANY of these happen:**\n\n"
+
+        "**relationships - 관계 변화 (가장 중요!):**\n"
+        "- New NPC introduced/met → relationships: {\"NPC이름\": \"첫 만남, 간단한 인상\"}\n"
+        "- Relationship improved → relationships: {\"NPC이름\": \"친해짐, 이유\"}\n"
+        "- Relationship worsened → relationships: {\"NPC이름\": \"사이가 틀어짐, 이유\"}\n"
+        "- Family/adoption → relationships: {\"이름\": \"입양한 딸\", \"가족\"}\n"
+        "- ANY meaningful NPC interaction → UPDATE RELATIONSHIP\n\n"
+
+        "**passives - 패시브/칭호 획득:**\n"
+        "- Repeated exposure to danger → passives: [\"독 내성\"]\n"
+        "- Achievement unlocked → passives: [\"드래곤 슬레이어\"]\n"
+        "- Skill learned → passives: [\"기초 검술\"]\n"
+        "- Title earned → passives: [\"영웅\", \"현상수배범\"]\n\n"
+
+        "**known_info - 새로운 정보:**\n"
+        "- Secret discovered → known_info: [\"비밀 통로 위치\"]\n"
+        "- Rumor heard → known_info: [\"길드장 음모 소문\"]\n"
+        "- Clue found → known_info: [\"범인의 단서\"]\n"
+        "- Location learned → known_info: [\"도적 소굴 위치\"]\n\n"
+
+        "**foreshadowing - 복선/떡밥:**\n"
+        "- Unresolved mystery → foreshadowing: [\"봉인된 편지\"]\n"
+        "- Suspicious event → foreshadowing: [\"검은 로브의 남자\"]\n"
+        "- Hint dropped → foreshadowing: [\"왕의 병환\"]\n\n"
+
+        "**normalization - 비일상 적응:**\n"
+        "- First supernatural encounter → normalization: {\"드래곤\": \"충격받음\"}\n"
+        "- Repeated exposure → normalization: {\"마법\": \"익숙해지는 중\"}\n"
+        "- Fully adapted → normalization: {\"몬스터\": \"일상\"}\n\n"
+
+        "**companions - 동행자:**\n"
+        "- Pet/mount acquired → companions: [\"섀도우: 검은 늑대\"]\n"
+        "- Familiar summoned → companions: [\"핍: 불의 정령\"]\n"
+        "- Child adopted → companions: [\"미나: 입양한 딸\"]\n\n"
+
+        "### CRITICAL EXAMPLES\n\n"
+
+        "**Scene:** Player meets tavern keeper for first time\n"
+        "→ PlayerMemoryUpdate: {\"relationships\": {\"마르코\": \"술집 주인, 첫 만남\"}}\n\n"
+
+        "**Scene:** Player saves NPC from danger\n"
+        "→ PlayerMemoryUpdate: {\"relationships\": {\"엘리나\": \"목숨의 은인으로 감사해함\"}}\n\n"
+
+        "**Scene:** Player adopts orphan child\n"
+        "→ PlayerMemoryUpdate: {\n"
+        "    \"relationships\": {\"미나\": \"입양한 딸, 소중한 가족\"},\n"
+        "    \"companions\": [\"미나: 입양한 어린 딸\"]\n"
+        "  }\n\n"
+
+        "**Scene:** Player learns guild has secret base\n"
+        "→ PlayerMemoryUpdate: {\"known_info\": [\"도적 길드 비밀 기지가 북쪽 숲에 있음\"]}\n\n"
+
+        "**Scene:** Player survives poison for third time\n"
+        "→ PlayerMemoryUpdate: {\"passives\": [\"독 내성 (초급)\"]}\n\n"
+
+        "**Scene:** Player buys sword and befriends merchant\n"
+        "→ PlayerUpdate: {\"inventory_add\": {\"검\": 1}, \"gold_change\": -50}\n"
+        "→ PlayerMemoryUpdate: {\"relationships\": {\"상인\": \"단골 고객\"}}\n\n"
+
+        "**⚠️ IMPORTANT RULES:**\n"
+        "1. If NPC appears in scene → ALWAYS consider relationship update\n"
+        "2. If player learns something new → known_info or foreshadowing\n"
+        "3. If player gains/loses item or money → PlayerUpdate\n"
+        "4. If significant event happens → consider passives\n"
+        "5. If new objective given → QuestUpdate.quest_add\n"
+        "6. If objective completed → QuestUpdate.quest_complete\n"
+        "7. If important clue found → QuestUpdate.memo_add\n"
+        "8. Return null for fields with no changes, but NEVER skip when changes occur!\n\n"
+
+        "### QUEST & MEMO UPDATE SYSTEM (퀘스트/메모 자동 관리)\n"
+        "QuestUpdate triggers when objectives or important notes change.\n\n"
+
+        "**quest_add - 새 퀘스트/목표:**\n"
+        "- NPC gives mission → quest_add: [\"고블린 소굴 정리\"]\n"
+        "- New objective discovered → quest_add: [\"잃어버린 검 찾기\"]\n"
+        "- Player accepts request → quest_add: [\"마을 방어전 참가\"]\n\n"
+
+        "**quest_complete - 퀘스트 완료:**\n"
+        "- Mission accomplished → quest_complete: [\"고블린 소굴 정리\"]\n"
+        "- Objective achieved → quest_complete: [\"잃어버린 검 찾기\"]\n"
+        "- Use the EXACT quest name that was added\n\n"
+
+        "**memo_add - 중요 메모/단서:**\n"
+        "- Important clue found → memo_add: [\"비밀문 비밀번호: 1234\"]\n"
+        "- Key information learned → memo_add: [\"길드장은 매주 목요일 부재\"]\n"
+        "- Plot-relevant detail → memo_add: [\"드래곤은 불보다 얼음에 약함\"]\n\n"
+
+        "### QUEST EXAMPLES\n\n"
+
+        "**Scene:** NPC asks player to clear goblin cave\n"
+        "→ QuestUpdate: {\"quest_add\": [\"고블린 동굴 정리 - 의뢰인: 마을촌장\"]}\n\n"
+
+        "**Scene:** Player defeats goblin boss\n"
+        "→ QuestUpdate: {\"quest_complete\": [\"고블린 동굴 정리 - 의뢰인: 마을촌장\"]}\n\n"
+
+        "**Scene:** Player finds secret code on wall\n"
+        "→ QuestUpdate: {\"memo_add\": [\"비밀금고 암호: 7749\"]}\n"
+        "→ PlayerMemoryUpdate: {\"known_info\": [\"비밀금고 암호를 알게 됨\"]}\n\n"
+
+        "**Scene:** Player learns about hidden treasure\n"
+        "→ QuestUpdate: {\"quest_add\": [\"숨겨진 보물 찾기\"], \"memo_add\": [\"보물은 북쪽 폐허에 있다는 소문\"]}\n\n"
 
         "### SCENE TYPE DETECTION (자동 장면 유형 감지)\n"
         "**SceneType:** Automatically detect the nature of the current scene.\n"
@@ -2647,58 +2758,9 @@ def apply_ai_memory_updates(
                     domain_manager_module.reset_abnormal_trigger(channel_id)
     
     # === 플레이어 메모리 업데이트 ===
-    player_update = nvc_result.get("PlayerMemoryUpdate", {})
-    if player_update:
-        current_mem = domain_manager_module.get_ai_memory(channel_id, user_id)
-        
-        # appearance (외형) 업데이트
-        if player_update.get("appearance"):
-            current_mem["appearance"] = player_update["appearance"]
-            messages.append(f"👤 **외형 업데이트:** {player_update['appearance'][:50]}...")
-        
-        # relationships 업데이트
-        if player_update.get("relationships"):
-            for name, desc in player_update["relationships"].items():
-                if name and desc:
-                    current_mem.setdefault("relationships", {})[name] = desc
-                    messages.append(f"💞 **{name}**: {desc}")
-        
-        # passives 추가
-        if player_update.get("passives"):
-            for passive in player_update["passives"]:
-                if passive and passive not in current_mem.get("passives", []):
-                    current_mem.setdefault("passives", []).append(passive)
-                    messages.append(f"🏆 **패시브 획득:** {passive}")
-        
-        # known_info 추가
-        if player_update.get("known_info"):
-            for info in player_update["known_info"]:
-                if info and info not in current_mem.get("known_info", []):
-                    current_mem.setdefault("known_info", []).append(info)
-                    messages.append(f"💡 **새로운 정보:** {info}")
-        
-        # foreshadowing 추가
-        if player_update.get("foreshadowing"):
-            for fs in player_update["foreshadowing"]:
-                if fs and fs not in current_mem.get("foreshadowing", []):
-                    current_mem.setdefault("foreshadowing", []).append(fs)
-                    messages.append(f"🔮 **복선:** {fs}")
-        
-        # normalization 업데이트
-        if player_update.get("normalization"):
-            for thing, status in player_update["normalization"].items():
-                if thing and status:
-                    current_mem.setdefault("normalization", {})[thing] = status
-                    messages.append(f"🌓 **[{thing}]** {status}")
-        
-        # notes 업데이트
-        if player_update.get("notes"):
-            current_mem["notes"] = player_update["notes"]
-        
-        # 저장
-        if player_update:
-            domain_manager_module.update_ai_memory(channel_id, user_id, current_mem)
-    
+    # NOTE: PlayerMemoryUpdate는 이제 character_sheet.apply_memory_updates()에서 처리됩니다.
+    # 여기서는 세션 레벨 처리만 수행합니다.
+
     # === 세션 메모리 업데이트 ===
     session_update = nvc_result.get("SessionMemoryUpdate", {})
     if session_update:
@@ -2748,138 +2810,15 @@ def apply_ai_memory_updates(
         # 저장
         if session_update:
             domain_manager_module.update_session_ai_memory(channel_id, current_session)
-    
+
     # === 플레이어 데이터 업데이트 (인벤토리, 골드, 상태이상) ===
-    player_data_update = nvc_result.get("PlayerUpdate", {})
-    if player_data_update:
-        p_data = domain_manager_module.get_participant_data(channel_id, user_id)
-        if p_data:
-            updated = False
-            
-            # 인벤토리 추가
-            if player_data_update.get("inventory_add"):
-                if "inventory" not in p_data:
-                    p_data["inventory"] = {}
-                for item, amount in player_data_update["inventory_add"].items():
-                    if item and amount:
-                        p_data["inventory"][item] = p_data["inventory"].get(item, 0) + int(amount)
-                        messages.append(f"🎒 **획득:** {item} x{amount}")
-                        updated = True
-            
-            # 인벤토리 제거
-            if player_data_update.get("inventory_remove"):
-                if "inventory" not in p_data:
-                    p_data["inventory"] = {}
-                for item, amount in player_data_update["inventory_remove"].items():
-                    if item and amount and item in p_data["inventory"]:
-                        p_data["inventory"][item] = max(0, p_data["inventory"][item] - int(amount))
-                        if p_data["inventory"][item] <= 0:
-                            del p_data["inventory"][item]
-                        messages.append(f"🎒 **사용/소실:** {item} x{amount}")
-                        updated = True
-            
-            # 골드 변경
-            if player_data_update.get("gold_change") is not None:
-                if "economy" not in p_data:
-                    p_data["economy"] = {"gold": 0}
-                change = int(player_data_update["gold_change"])
-                p_data["economy"]["gold"] = max(0, p_data["economy"].get("gold", 0) + change)
-                if change > 0:
-                    messages.append(f"💰 **획득:** +{change}")
-                elif change < 0:
-                    messages.append(f"💰 **지출:** {change}")
-                updated = True
-            
-            # 상태이상 추가
-            if player_data_update.get("status_add"):
-                if "status_effects" not in p_data:
-                    p_data["status_effects"] = []
-                for status in player_data_update["status_add"]:
-                    if status and status not in p_data["status_effects"]:
-                        p_data["status_effects"].append(status)
-                        messages.append(f"💫 **상태이상:** {status}")
-                        updated = True
-            
-            # 상태이상 제거
-            if player_data_update.get("status_remove"):
-                if "status_effects" not in p_data:
-                    p_data["status_effects"] = []
-                for status in player_data_update["status_remove"]:
-                    if status and status in p_data["status_effects"]:
-                        p_data["status_effects"].remove(status)
-                        messages.append(f"✨ **회복:** {status} 해제")
-                        updated = True
-            
-            # 저장
-            if updated:
-                domain_manager_module.save_participant_data(channel_id, user_id, p_data)
-    
-    # === 플레이어 메모리 업데이트 (좌뇌 분석 결과에서) ===
-    player_mem_update = nvc_result.get("PlayerMemoryUpdate", {})
-    if player_mem_update:
-        current_mem = domain_manager_module.get_ai_memory(channel_id, user_id)
-        mem_updated = False
-        
-        # appearance (외형) 업데이트
-        if player_mem_update.get("appearance"):
-            current_mem["appearance"] = player_mem_update["appearance"]
-            messages.append(f"👤 **외형 업데이트:** {player_mem_update['appearance'][:50]}...")
-            mem_updated = True
-        
-        # relationships 업데이트
-        if player_mem_update.get("relationships"):
-            for name, desc in player_mem_update["relationships"].items():
-                if name and desc:
-                    current_mem.setdefault("relationships", {})[name] = desc
-                    messages.append(f"💞 **{name}**: {desc}")
-                    mem_updated = True
-        
-        # passives 추가
-        if player_mem_update.get("passives"):
-            for passive in player_mem_update["passives"]:
-                if passive and passive not in current_mem.get("passives", []):
-                    current_mem.setdefault("passives", []).append(passive)
-                    messages.append(f"🏆 **패시브 획득:** {passive}")
-                    mem_updated = True
-        
-        # known_info 추가
-        if player_mem_update.get("known_info"):
-            for info in player_mem_update["known_info"]:
-                if info and info not in current_mem.get("known_info", []):
-                    current_mem.setdefault("known_info", []).append(info)
-                    messages.append(f"💡 **새로운 정보:** {info}")
-                    mem_updated = True
-        
-        # foreshadowing 추가
-        if player_mem_update.get("foreshadowing"):
-            for fs in player_mem_update["foreshadowing"]:
-                if fs and fs not in current_mem.get("foreshadowing", []):
-                    current_mem.setdefault("foreshadowing", []).append(fs)
-                    messages.append(f"🔮 **복선:** {fs}")
-                    mem_updated = True
-        
-        # normalization 업데이트
-        if player_mem_update.get("normalization"):
-            for thing, status in player_mem_update["normalization"].items():
-                if thing and status:
-                    current_mem.setdefault("normalization", {})[thing] = status
-                    messages.append(f"🌓 **[{thing}]** {status}")
-                    mem_updated = True
-        
-        # companions 처리 (동행자/펫 - known_info에 저장)
-        if player_mem_update.get("companions"):
-            for companion in player_mem_update["companions"]:
-                if companion:
-                    companion_info = f"동행자: {companion}"
-                    if companion_info not in current_mem.get("known_info", []):
-                        current_mem.setdefault("known_info", []).append(companion_info)
-                        messages.append(f"🐾 **동행자:** {companion}")
-                        mem_updated = True
-        
-        # 저장
-        if mem_updated:
-            domain_manager_module.update_ai_memory(channel_id, user_id, current_mem)
-    
+    # NOTE: PlayerUpdate는 이제 character_sheet.apply_player_updates()에서 처리됩니다.
+    # 중복 처리를 방지하기 위해 이 섹션은 비활성화됩니다.
+
+    # === 플레이어 메모리 업데이트 ===
+    # NOTE: PlayerMemoryUpdate는 이제 character_sheet.apply_memory_updates()에서 처리됩니다.
+    # 중복 처리를 방지하기 위해 이 섹션은 비활성화됩니다.
+
     return messages
 
 
