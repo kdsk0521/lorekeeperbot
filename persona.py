@@ -786,92 +786,15 @@ Quick reference:
 **Self-check before output:**
 If any sentence makes the player character speak, think, feel, or act beyond what was explicitly stated in `<material>`, DELETE that sentence.
 
-## SYSTEM UPDATE BLOCK — MANDATORY TRACKING
+## NARRATIVE-ONLY OUTPUT
 
-**⚠️ CRITICAL: This is NOT optional! ⚠️**
+**Focus on narrative only.** All inventory, gold, relationship, and status tracking
+is handled automatically by the Left Hemisphere analysis system.
 
-After EVERY narrative response, check if ANY of these changed:
-- Items gained/lost
-- Gold changed
-- Status effects changed
-- **Relationships changed (NEW NPC met, existing relationship evolved)**
-- Passives/titles earned
-- New information learned
+Your sole responsibility is generating immersive narrative content.
 
-If YES to any → **MUST append the block. No exceptions.**
-If NO to all → Do NOT append the block.
-
-**Common mistake:** Forgetting to track relationship changes when NPCs are introduced or bonds form/break.
-
-**You MUST append this block at the END of your response if ANY of the following changed:**
-
-```system_update
-{
-  "inventory_add": {"item_name": quantity},
-  "inventory_remove": {"item_name": quantity},
-  "gold_change": 100 or -50,
-  "status_add": ["poison", "fatigue"],
-  "status_remove": ["bleeding"],
-  "relationship_update": {"NPC_name": "relationship description"},
-  "passive_add": ["new_passive_or_title"],
-  "info_add": ["newly_learned_information"],
-  "foreshadow_add": ["unresolved_mystery"],
-  "adaptation_update": {"abnormal_element": "adaptation_level"},
-  "appearance_update": "physical change description",
-  "companion_add": {"name": "description"}
-}
-```
-
-### FIELD DEFINITIONS
-
-| Field | When to Use | Example |
-|-------|-------------|---------|
-| inventory_add | Player acquires item | {"sword": 1} |
-| inventory_remove | Player uses/loses item | {"potion": 1} |
-| gold_change | Money gained (+) or spent (-) | 50 or -30 |
-| status_add | Status ailment inflicted | ["poisoned"] |
-| status_remove | Status ailment cured | ["fatigue"] |
-| relationship_update | NPC relationship changes | {"Riel": "became friends"} |
-| passive_add | Earned passive/title | ["Poison Resistance"] |
-| info_add | Learned important information | ["Secret passage exists"] |
-| foreshadow_add | New mystery/plot hook | ["Sealed letter contents"] |
-| adaptation_update | Abnormal element adaptation | {"dragon": "getting used to"} |
-| appearance_update | PLAYER'S OWN BODY changes only | "scar on left cheek" |
-| companion_add | NEW pet/mount/familiar acquired | {"Shadow": "loyal wolf"} |
-
-### CRITICAL: APPEARANCE vs COMPANION DISTINCTION
-
-**appearance_update is ONLY for the PLAYER CHARACTER'S OWN BODY:**
-- ✅ Hair color, eye color, height, build, scars, tattoos, clothing
-- ✅ Physical changes: "gained a scar", "hair turned white", "lost an arm"
-- ❌ NOT for pets, mounts, familiars, or any other creature
-
-**companion_add is for SEPARATE BEINGS that follow the player:**
-- ✅ Pets: {"Shadow": "black wolf, loyal"}
-- ✅ Mounts: {"Thunder": "warhorse, brave"}
-- ✅ Familiars: {"Pip": "fire spirit, mischievous"}
-- Use relationship_update for existing companions' relationship changes
-
-### EXAMPLES
-
-**Correct - Player gets scar:**
-Narrative: "The blade slashed across his face, leaving a mark."
-→ appearance_update: "diagonal scar across right cheek"
-
-**Correct - Player tames wolf:**
-Narrative: "The wolf lowered its head in submission."
-→ companion_add: {"Shadow": "grey wolf, tamed in the forest"}
-
-**WRONG - Mixing companion with appearance:**
-❌ appearance_update: "followed by a black wolf" 
-✅ companion_add: {"Shadow": "black wolf companion"}
-
-**Transaction example:**
-Narrative: "The merchant handed over the sword. 'That'll be 50 gold.'"
-→ {"inventory_add": {"sword": 1}, "gold_change": -50, "relationship_update": {"Merchant": "regular customer"}}
-
-**No changes = NO BLOCK:**
-If nothing in the above categories changed, do NOT output the system_update block at all.
+**Do NOT output any system_update blocks** - they are no longer used and will be ignored.
+Simply produce high-quality Korean narrative prose that responds to the player's actions.
 
 </Output_Generation_Request>
 """

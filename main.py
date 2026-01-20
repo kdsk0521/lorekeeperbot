@@ -1769,7 +1769,22 @@ async def _process_message(message, channel_id: str):
             sys_action = nvc_res.get("SystemAction", {})
             auto_msg = await process_ai_system_action(message, channel_id, sys_action)
             
-            # === AI 메모리 자동 갱신 (하이브리드 시스템) ===
+            # === 좌뇌 결과 → character_sheet로 직접 저장 ===
+            player_update = nvc_res.get("PlayerUpdate", {})
+            player_mem_update = nvc_res.get("PlayerMemoryUpdate", {})
+            quest_update = nvc_res.get("QuestUpdate", {})
+
+            update_msgs = []
+            update_msgs.extend(character_sheet.apply_player_updates(channel_id, uid, player_update))
+            update_msgs.extend(character_sheet.apply_memory_updates(channel_id, uid, player_mem_update))
+            update_msgs.extend(character_sheet.apply_quest_updates(channel_id, quest_update))
+
+            # 업데이트 알림 출력
+            if update_msgs:
+                update_text = " | ".join(update_msgs)
+                await message.channel.send(f"📊 {update_text}")
+
+            # 기존 memory_system 호출 (SessionMemoryUpdate 등 세션 레벨 처리용)
             memory_msgs = memory_system.apply_ai_memory_updates(
                 channel_id, uid, nvc_res, domain_manager
             )
@@ -1967,232 +1982,25 @@ Korean output. 3rd person narration."""
                 
                 await safe_delete_message(loading)
                 
-                # === 우뇌 응답에서 SYSTEM_UPDATE 파싱 ===
+                # === 우뇌 응답 처리 (서사만) ===
                 if response:
-                    # 디버그: system_update 블록 존재 여부 확인
-                    logging.info(f"[SYSTEM_UPDATE] 응답 길이: {len(response)}")
-                    logging.info(f"[SYSTEM_UPDATE] 'system_update' 포함: {'system_update' in response.lower()}")
-
-                    # 더 유연한 정규식 패턴 (공백, 줄바꿈 처리 강화)
-                    system_update_match = re.search(
-                        r'```\s*system_update\s*\n([\s\S]*?)\n\s*```',
+                    # system_update 블록이 혹시 있으면 제거 (우뇌가 습관적으로 생성할 경우 대비)
+                    clean_response = re.sub(
+                        r'```system_update[\s\S]*?```',
+                        '',
                         response,
-                        re.IGNORECASE
-                    )
+                        flags=re.IGNORECASE
+                    ).strip()
 
-                    # 첫 번째 패턴 실패 시 대체 패턴 시도
-                    if not system_update_match:
-                        system_update_match = re.search(
-                            r'```system_update\s*\n?\s*(\{.*?\})\s*\n?```',
-                            response,
-                            re.DOTALL
-                        )
+                    # 백틱 없는 형태도 제거
+                    clean_response = re.sub(
+                        r'system_update[:\s]*\{[^}]+\}',
+                        '',
+                        clean_response,
+                        flags=re.IGNORECASE
+                    ).strip()
 
-                    # 백틱 없이 JSON만 있는 경우도 시도
-                    if not system_update_match:
-                        system_update_match = re.search(
-                            r'system_update[:\s]*(\{[^}]+\})',
-                            response,
-                            re.DOTALL | re.IGNORECASE
-                        )
-
-                    if system_update_match:
-                        logging.info(f"[SYSTEM_UPDATE] 매칭 성공: {system_update_match.group(1)[:200]}...")
-                    else:
-                        # 디버그: 왜 매칭 실패했는지 확인
-                        if 'system_update' in response.lower():
-                            logging.warning(f"[SYSTEM_UPDATE] 블록 있지만 파싱 실패!")
-                            start = response.lower().find('system_update')
-                            logging.warning(f"[SYSTEM_UPDATE] 실제 내용: {response[start:start+300]}")
-                    
-                    if system_update_match:
-                        try:
-                            update_json = json.loads(system_update_match.group(1))
-                            
-                            p_data = domain_manager.get_participant_data(channel_id, uid)
-                            ai_mem = domain_manager.get_ai_memory(channel_id, uid) or {}  # None 방지
-
-                            logging.info(f"[SYSTEM_UPDATE] p_data 존재: {p_data is not None}, ai_mem 타입: {type(ai_mem)}")
-
-                            if p_data is not None:  # ai_mem은 빈 딕셔너리여도 OK
-                                update_msgs = []
-                                p_updated = False
-                                mem_updated = False
-                                
-                                # ========== 참가자 데이터 (p_data) ==========
-                                
-                                # 인벤토리 추가
-                                if update_json.get("inventory_add"):
-                                    if "inventory" not in p_data:
-                                        p_data["inventory"] = {}
-                                    for item, amount in update_json["inventory_add"].items():
-                                        p_data["inventory"][item] = p_data["inventory"].get(item, 0) + int(amount)
-                                        update_msgs.append(f"🎒 **+{item}**")
-                                    p_updated = True
-                                
-                                # 인벤토리 제거
-                                if update_json.get("inventory_remove"):
-                                    if "inventory" not in p_data:
-                                        p_data["inventory"] = {}
-                                    for item, amount in update_json["inventory_remove"].items():
-                                        if item in p_data["inventory"]:
-                                            p_data["inventory"][item] = max(0, p_data["inventory"][item] - int(amount))
-                                            if p_data["inventory"][item] <= 0:
-                                                del p_data["inventory"][item]
-                                            update_msgs.append(f"🎒 **-{item}**")
-                                    p_updated = True
-                                
-                                # 골드 변경
-                                if update_json.get("gold_change") is not None:
-                                    if "economy" not in p_data:
-                                        p_data["economy"] = {"gold": 0}
-                                    change = int(update_json["gold_change"])
-                                    p_data["economy"]["gold"] = max(0, p_data["economy"].get("gold", 0) + change)
-                                    if change > 0:
-                                        update_msgs.append(f"💰 **+{change}**")
-                                    elif change < 0:
-                                        update_msgs.append(f"💰 **{change}**")
-                                    p_updated = True
-                                
-                                # 상태이상 추가
-                                if update_json.get("status_add"):
-                                    if "status_effects" not in p_data:
-                                        p_data["status_effects"] = []
-                                    for status in update_json["status_add"]:
-                                        if status not in p_data["status_effects"]:
-                                            p_data["status_effects"].append(status)
-                                            update_msgs.append(f"💫 **{status}**")
-                                    p_updated = True
-                                
-                                # 상태이상 제거
-                                if update_json.get("status_remove"):
-                                    if "status_effects" not in p_data:
-                                        p_data["status_effects"] = []
-                                    for status in update_json["status_remove"]:
-                                        if status in p_data["status_effects"]:
-                                            p_data["status_effects"].remove(status)
-                                            update_msgs.append(f"✨ **{status} 해제**")
-                                    p_updated = True
-                                
-                                # ========== AI 메모리 (ai_mem) ==========
-                                
-                                # 관계 업데이트
-                                if update_json.get("relationship_update"):
-                                    logging.info(f"[RELATIONSHIP] 업데이트 감지: {update_json['relationship_update']}")
-                                    if "relationships" not in ai_mem:
-                                        ai_mem["relationships"] = {}
-                                    for npc, desc in update_json["relationship_update"].items():
-                                        old_rel = ai_mem["relationships"].get(npc, "(없음)")
-                                        ai_mem["relationships"][npc] = desc
-                                        logging.info(f"[RELATIONSHIP] {npc}: {old_rel} → {desc}")
-                                        update_msgs.append(f"💞 **{npc}**: {desc}")  # 상세 내용도 표시
-                                    mem_updated = True
-                                    logging.info(f"[RELATIONSHIP] 저장 예정 - ai_mem['relationships']: {ai_mem.get('relationships', {})}")
-                                
-                                # 패시브 추가
-                                if update_json.get("passive_add"):
-                                    if "passives" not in ai_mem:
-                                        ai_mem["passives"] = []
-                                    for passive in update_json["passive_add"]:
-                                        if passive not in ai_mem["passives"]:
-                                            ai_mem["passives"].append(passive)
-                                            update_msgs.append(f"🏆 **{passive}**")
-                                    mem_updated = True
-                                
-                                # 알고있는 정보 추가
-                                if update_json.get("info_add"):
-                                    if "known_info" not in ai_mem:
-                                        ai_mem["known_info"] = []
-                                    for info in update_json["info_add"]:
-                                        if info not in ai_mem["known_info"]:
-                                            ai_mem["known_info"].append(info)
-                                            update_msgs.append(f"💡 **정보**")
-                                    mem_updated = True
-                                
-                                # 복선 추가
-                                if update_json.get("foreshadow_add"):
-                                    if "foreshadowing" not in ai_mem:
-                                        ai_mem["foreshadowing"] = []
-                                    for fs in update_json["foreshadow_add"]:
-                                        if fs not in ai_mem["foreshadowing"]:
-                                            ai_mem["foreshadowing"].append(fs)
-                                            update_msgs.append(f"🔮 **복선**")
-                                    mem_updated = True
-                                
-                                # 적응도 업데이트
-                                if update_json.get("adaptation_update"):
-                                    if "normalization" not in ai_mem:
-                                        ai_mem["normalization"] = {}
-                                    for element, status in update_json["adaptation_update"].items():
-                                        ai_mem["normalization"][element] = status
-                                        update_msgs.append(f"🌓 **{element}**")
-                                    mem_updated = True
-                                
-                                # 동행자/펫 추가 (known_info에 저장, 외형에 넣지 않음!)
-                                if update_json.get("companion_add"):
-                                    if "known_info" not in ai_mem:
-                                        ai_mem["known_info"] = []
-                                    companions = update_json["companion_add"]
-                                    
-                                    # dict 형태: {"Shadow": "loyal wolf"}
-                                    if isinstance(companions, dict):
-                                        for name, desc in companions.items():
-                                            companion_info = f"동행자: {name} - {desc}"
-                                            if companion_info not in ai_mem["known_info"]:
-                                                ai_mem["known_info"].append(companion_info)
-                                                update_msgs.append(f"🐾 **{name}**")
-                                    # list 형태: ["Shadow the wolf"]
-                                    elif isinstance(companions, list):
-                                        for companion in companions:
-                                            if companion:
-                                                companion_info = f"동행자: {companion}"
-                                                if companion_info not in ai_mem["known_info"]:
-                                                    ai_mem["known_info"].append(companion_info)
-                                                    update_msgs.append(f"🐾 **{companion}**")
-                                    # string 형태: "Shadow"
-                                    elif isinstance(companions, str):
-                                        companion_info = f"동행자: {companions}"
-                                        if companion_info not in ai_mem["known_info"]:
-                                            ai_mem["known_info"].append(companion_info)
-                                            update_msgs.append(f"🐾 **{companions}**")
-                                    mem_updated = True
-                                
-                                # 저장
-                                if p_updated:
-                                    domain_manager.save_participant_data(channel_id, uid, p_data)
-                                if mem_updated:
-                                    logging.info(f"[SYSTEM_UPDATE] AI 메모리 저장 중... ai_mem keys: {list(ai_mem.keys())}")
-                                    domain_manager.update_ai_memory(channel_id, uid, ai_mem)
-                                    logging.info(f"[SYSTEM_UPDATE] AI 메모리 저장 완료")
-                                
-                                # 업데이트 메시지 출력
-                                if update_msgs:
-                                    await message.channel.send(" | ".join(update_msgs))
-                        
-                        except json.JSONDecodeError as je:
-                            logging.warning(f"[SYSTEM_UPDATE] JSON 파싱 실패: {je}")
-                            await message.channel.send("⚠️ 시스템 업데이트 처리 중 오류 발생 (JSON 파싱 실패)")
-                        except Exception as ue:
-                            logging.warning(f"[SYSTEM_UPDATE] 업데이트 실패: {ue}")
-                            await message.channel.send(f"⚠️ 시스템 업데이트 처리 중 오류: {str(ue)[:50]}")
-                        
-                        # 응답에서 system_update 블록 제거 (출력에서 숨김)
-                        # 여러 패턴을 순차적으로 시도
-                        response = re.sub(
-                            r'\s*```\s*system_update\s*\n[\s\S]*?\n\s*```\s*',
-                            '',
-                            response,
-                            flags=re.IGNORECASE
-                        ).strip()
-                        response = re.sub(
-                            r'\s*```system_update\s*\n?\s*\{.*?\}\s*\n?```\s*',
-                            '',
-                            response,
-                            flags=re.DOTALL
-                        ).strip()
-                
-                # 응답 길이 로깅
-                if response:
+                    response = clean_response
                     logging.info(f"[Response] Length: {len(response)}자")
             
             # 결과 전송
