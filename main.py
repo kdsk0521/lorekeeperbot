@@ -2077,19 +2077,23 @@ Korean output. 3rd person narration."""
 
                 # === [좌뇌 B] 업데이트 추출 (Flash 모델) ===
                 try:
-                    # 현재 상태 가져오기 (참조용)
+                    # 현재 상태 가져오기 (참조용 - 중복 방지)
                     current_quests = quest_manager.get_active_quests(channel_id)
                     ai_mem = domain_manager.get_ai_memory(channel_id, uid) or {}
                     current_relationships = ai_mem.get("relationships", {})
+                    current_known_info = ai_mem.get("known_info", [])
+                    current_foreshadowing = ai_mem.get("foreshadowing", [])
 
-                    # Flash 모델로 업데이트 추출
+                    # Flash 모델로 업데이트 추출 (선별적 추출)
                     update_result = await memory_system.extract_updates(
                         client_genai,
                         MODEL_ID_FLASH,
                         action_text,  # 플레이어 입력
                         response,     # AI 서사 응답
                         current_quests=current_quests,
-                        current_relationships=current_relationships
+                        current_relationships=current_relationships,
+                        current_known_info=current_known_info,
+                        current_foreshadowing=current_foreshadowing
                     )
 
                     # character_sheet로 저장
