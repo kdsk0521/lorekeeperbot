@@ -903,19 +903,23 @@ async def extract_updates(
     player_input: str,
     ai_response: str,
     current_quests: List[str] = None,
-    current_relationships: Dict[str, str] = None
+    current_relationships: Dict[str, str] = None,
+    current_known_info: List[str] = None,
+    current_foreshadowing: List[str] = None
 ) -> Dict[str, Any]:
     """
     [좌뇌 B] 업데이트 추출 전용 - Flash 모델 사용
-    서사 완료 후 입력+출력을 분석하여 변화 추출
+    서사 완료 후 입력+출력을 분석하여 **의미 있는** 변화만 추출
 
     Args:
         client: Gemini 클라이언트
         model_id_flash: Flash 모델 ID
         player_input: 플레이어 입력 텍스트
         ai_response: AI 서사 응답
-        current_quests: 현재 활성 퀘스트 목록 (참조용)
-        current_relationships: 현재 관계 목록 (참조용)
+        current_quests: 현재 활성 퀘스트 목록 (중복 방지)
+        current_relationships: 현재 관계 목록 (단계 변화 감지)
+        current_known_info: 현재 알고 있는 정보 목록 (중복 방지)
+        current_foreshadowing: 현재 복선 목록 (중복 방지)
 
     Returns:
         {
@@ -926,9 +930,9 @@ async def extract_updates(
     """
 
     system_prompt = (
-        "You are an update extractor for a TRPG system.\n"
-        "Analyze the player input and AI narrative response.\n"
-        "Extract ANY changes that occurred.\n\n"
+        "You are a SELECTIVE update extractor for a TRPG system.\n"
+        "Extract ONLY SIGNIFICANT changes. When in doubt, return null.\n"
+        "Less is more. Trivial updates waste resources.\n\n"
 
         "### OUTPUT FORMAT (JSON ONLY)\n"
         "{\n"
@@ -940,69 +944,115 @@ async def extract_updates(
         '    "status_remove": ["상태"] OR null\n'
         '  } OR null,\n'
         '  "PlayerMemoryUpdate": {\n'
-        '    "relationships": {"NPC이름": "관계 설명"} OR null,\n'
+        '    "relationships": {"NPC이름": "관계단계"} OR null,\n'
         '    "passives": ["새 패시브"] OR null,\n'
-        '    "known_info": ["새 정보"] OR null,\n'
+        '    "known_info": ["중요 정보"] OR null,\n'
         '    "foreshadowing": ["복선"] OR null,\n'
         '    "companions": ["동행자: 설명"] OR null\n'
         '  } OR null,\n'
         '  "QuestUpdate": {\n'
         '    "quest_add": ["새 퀘스트"] OR null,\n'
         '    "quest_complete": ["완료 퀘스트"] OR null,\n'
-        '    "memo_add": ["메모"] OR null\n'
+        '    "memo_add": ["중요 메모"] OR null\n'
         '  } OR null\n'
         "}\n\n"
 
-        "### CRITICAL RULES\n"
-        "1. **NPC 등장 = 관계 업데이트 필수**\n"
-        "   - 새 NPC 만남 → relationships: {\"이름\": \"첫 만남, 인상\"}\n"
-        "   - 기존 NPC 상호작용 → relationships: {\"이름\": \"변화된 관계\"}\n\n"
+        "========================================\n"
+        "### RELATIONSHIP RULES (관계)\n"
+        "========================================\n"
+        "Relationship has 5 LEVELS:\n"
+        "  hostile(적대) → unfriendly(비우호) → neutral(중립) → friendly(우호) → intimate(친밀)\n\n"
 
-        "2. **아이템/돈 변화 = PlayerUpdate 필수**\n"
-        "   - 획득 → inventory_add / gold_change: +금액\n"
-        "   - 소비/지불 → inventory_remove / gold_change: -금액\n\n"
+        "✅ UPDATE when:\n"
+        "- First meeting with NEW NPC (record initial level)\n"
+        "- Level CHANGES (e.g., neutral → friendly)\n"
+        "- Major event changes relationship (betrayal, saved life, etc.)\n\n"
 
-        "3. **새 목표/의뢰 = QuestUpdate 필수**\n"
-        "   - NPC가 부탁 → quest_add\n"
-        "   - 목표 달성 → quest_complete\n"
-        "   - 중요 단서 → memo_add\n\n"
+        "❌ DO NOT UPDATE when:\n"
+        "- Same level as before (already friendly, still friendly = null)\n"
+        "- Simple greeting/conversation with known NPC\n"
+        "- No meaningful interaction occurred\n\n"
 
-        "4. **변화 없으면 null, 있으면 반드시 기록**\n\n"
+        "Format: {\"NPC이름\": \"관계단계(이유)\"}\n"
+        "Example: {\"마르코\": \"friendly(위기에서 도움받음)\"}\n\n"
 
-        "### EXAMPLES\n\n"
+        "========================================\n"
+        "### KNOWN_INFO RULES (알고 있는 정보)\n"
+        "========================================\n"
+        "Only record information that CHANGES GAMEPLAY OPTIONS.\n\n"
 
-        "**Input:** 상인에게 검을 50골드에 산다\n"
-        "**Response:** 상인이 검을 건네며 미소짓는다...\n"
-        "→ {\n"
-        '    "PlayerUpdate": {"inventory_add": {"검": 1}, "gold_change": -50},\n'
-        '    "PlayerMemoryUpdate": {"relationships": {"상인": "단골 고객"}},\n'
-        '    "QuestUpdate": null\n'
-        "  }\n\n"
+        "✅ RECORD (actionable secrets):\n"
+        "- \"시장이 뱀파이어다\" (affects how to deal with mayor)\n"
+        "- \"책장 뒤에 비밀 통로\" (new path available)\n"
+        "- \"금고 비밀번호 1234\" (enables action)\n"
+        "- \"약초는 북쪽 숲에만 있다\" (quest-relevant location)\n"
+        "- NPC's weakness, secret identity, hidden motive\n\n"
 
-        "**Input:** 길드장에게 의뢰를 받는다\n"
-        "**Response:** 길드장이 고블린 소탕을 부탁한다...\n"
-        "→ {\n"
-        '    "PlayerUpdate": null,\n'
-        '    "PlayerMemoryUpdate": {"relationships": {"길드장": "의뢰 관계"}},\n'
-        '    "QuestUpdate": {"quest_add": ["고블린 소탕 - 길드장 의뢰"]}\n'
-        "  }\n\n"
+        "❌ IGNORE (trivial/obvious):\n"
+        "- \"상인은 차를 좋아한다\" (doesn't affect gameplay)\n"
+        "- \"오늘 날씨가 흐리다\" (obvious observation)\n"
+        "- \"이 마을은 작다\" (general description)\n"
+        "- Information player already knows\n"
+        "- NPC's personal preferences (unless exploitable)\n\n"
 
-        "**Input:** 낯선 여행자와 대화한다\n"
-        "**Response:** 여행자 마르코가 자신을 소개하며...\n"
-        "→ {\n"
-        '    "PlayerUpdate": null,\n'
-        '    "PlayerMemoryUpdate": {"relationships": {"마르코": "방금 만난 여행자"}},\n'
-        '    "QuestUpdate": null\n'
-        "  }\n"
+        "Test: \"Does knowing this open NEW options for the player?\"\n"
+        "If NO → null\n\n"
+
+        "========================================\n"
+        "### FORESHADOWING RULES (복선)\n"
+        "========================================\n"
+        "Foreshadowing = hints about FUTURE plot developments.\n"
+        "Must be NARRATIVELY SIGNIFICANT.\n\n"
+
+        "✅ RECORD (genuine foreshadowing):\n"
+        "- \"유물을 만진 후 팔에 이상한 문양이 나타났다\" (mysterious change)\n"
+        "- \"NPC가 '선택받은 자'에 대한 예언을 언급했다\" (prophecy)\n"
+        "- \"마을 사람들이 갑자기 침묵했다\" (suspicious behavior)\n"
+        "- Unexplained phenomena tied to main plot\n"
+        "- Cryptic warnings from NPCs\n\n"
+
+        "❌ IGNORE (not foreshadowing):\n"
+        "- \"NPC가 긴장해 보였다\" (simple observation)\n"
+        "- \"날씨가 나빠지고 있다\" (unless plot-relevant)\n"
+        "- \"거리가 붐빈다\" (scene description)\n"
+        "- Mundane events or atmosphere\n"
+        "- Already-known information\n\n"
+
+        "Test: \"Does this hint at something that will matter LATER?\"\n"
+        "If NO → null\n\n"
+
+        "========================================\n"
+        "### QUEST RULES (퀘스트) - Keep Sensitive\n"
+        "========================================\n"
+        "Quests are important. Record when:\n"
+        "- NPC explicitly gives a task/request\n"
+        "- Player discovers a goal worth pursuing\n"
+        "- Quest objective is completed\n\n"
+
+        "========================================\n"
+        "### GENERAL PRINCIPLE\n"
+        "========================================\n"
+        "Compare with CURRENT STATE provided below.\n"
+        "If the extracted value is the SAME as current → return null\n"
+        "If nothing significant happened → return all null\n\n"
+
+        "Remember: A response with mostly null values is GOOD.\n"
+        "Over-extraction wastes tokens and buries important info.\n"
     )
 
-    # 현재 상태 컨텍스트 추가
+    # 현재 상태 컨텍스트 추가 (확장 - 중복 방지용)
     context_parts = []
     if current_quests:
         context_parts.append(f"현재 퀘스트: {', '.join(current_quests[:5])}")
     if current_relationships:
         rel_str = ', '.join([f"{k}({v})" for k, v in list(current_relationships.items())[:5]])
         context_parts.append(f"현재 관계: {rel_str}")
+    if current_known_info:
+        info_str = ', '.join(current_known_info[:5])
+        context_parts.append(f"이미 아는 정보: {info_str}")
+    if current_foreshadowing:
+        fore_str = ', '.join(current_foreshadowing[:3])
+        context_parts.append(f"기존 복선: {fore_str}")
 
     context_info = "\n".join(context_parts) if context_parts else "없음"
 
