@@ -902,7 +902,7 @@ def ensure_memory_fields(session_data: Dict[str, Any]) -> Dict[str, Any]:
 # =========================================================
 
 # 캐싱 상수
-CACHE_MIN_TOKENS = 32768  # Gemini 최소 캐싱 토큰
+CACHE_MIN_TOKENS = 4096  # Gemini 최소 캐싱 토큰
 CACHE_DEFAULT_TTL_MINUTES = 60  # 기본 TTL (1시간)
 CACHE_SESSION_TTL_MINUTES = 180  # 세션용 TTL (3시간)
 
@@ -1098,3 +1098,4 @@ async def get_or_create_cache(
         lore_text, rule_text, deep_memory,
         system_instruction
     )
+
