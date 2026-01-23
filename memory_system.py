@@ -746,6 +746,55 @@ async def analyze_context_nvc(
         "- Combat aftermath: NPCs reacting to events\n"
         "- Set to `null` if no NPC interaction is appropriate.\n\n"
 
+        "========================================\n"
+        "### ACTION JUDGMENT (행동 판정 - GM 역할)\n"
+        "========================================\n"
+        "You are the GM. Judge player actions realistically.\n"
+        "**Player input = ATTEMPT to try, NOT guaranteed success.**\n\n"
+
+        "**Check before judging:**\n"
+        "1. What is the player trying to do?\n"
+        "2. Does PC have relevant passive/skill? (check player_context)\n"
+        "3. Does PC have necessary equipment? (check inventory)\n"
+        "4. What's the inherent difficulty?\n"
+        "5. Are there situational modifiers?\n\n"
+
+        "**Difficulty Scale:**\n"
+        "- `trivial`: Walking, talking, basic tasks (auto-success)\n"
+        "- `easy`: Low fence climb, friendly NPC persuasion\n"
+        "- `normal`: Standard lock, rough wall climb\n"
+        "- `hard`: Complex lock, sheer cliff, hostile NPC persuasion\n"
+        "- `extreme`: Legendary feats, near-impossible odds\n\n"
+
+        "**Suggested Outcome Logic:**\n"
+        "- trivial → success\n"
+        "- easy + no negative modifier → success\n"
+        "- easy + negative modifier → partial\n"
+        "- normal + relevant passive → success\n"
+        "- normal + no passive → partial or failure\n"
+        "- hard + passive + proper tools → partial or success\n"
+        "- hard + no passive → failure\n"
+        "- extreme → usually failure, critical_success only with perfect conditions\n\n"
+
+        "**Modifiers (add to list):**\n"
+        "+ (increase chance): 관련 패시브 보유, 적절한 도구, 충분한 시간, 유리한 환경\n"
+        "- (decrease chance): 도구 없음, 시간 압박, 적대적 환경, 부상 상태, 첫 시도\n\n"
+
+        "**Example:**\n"
+        "Player input: '자물쇠를 딴다'\n"
+        "PC has: no lockpicking passive, no tools\n"
+        "Situation: guards nearby\n"
+        "→ ActionJudgment: {\n"
+        '    "action": "자물쇠 따기",\n'
+        '    "difficulty": "normal",\n'
+        '    "relevant_passive": null,\n'
+        '    "relevant_item": "도구 없음",\n'
+        '    "modifiers": ["도구 없음", "시간 압박(경비병)"],\n'
+        '    "suggested_outcome": "failure"\n'
+        "  }\n\n"
+
+        "**IMPORTANT:** Set to `null` if player input has no action to judge (e.g., just dialogue).\n\n"
+
         "### OUTPUT FORMAT (JSON ONLY)\n"
         "{\n"
         '  "CurrentLocation": "Location Name",\n'
@@ -772,6 +821,14 @@ async def analyze_context_nvc(
         '  "AbnormalElements": ["드래곤", "마법", "고백"] OR [],\n'
         '  "ExperienceCounters": {"독중독": 1, "백병전": 1} OR {},\n'
         '  "SceneType": "normal/gore/nsfw/gore_nsfw",\n'
+        '  "ActionJudgment": {\n'
+        '    "action": "플레이어가 시도하는 행동",\n'
+        '    "difficulty": "trivial/easy/normal/hard/extreme",\n'
+        '    "relevant_passive": "관련 패시브 있으면 이름, 없으면 null",\n'
+        '    "relevant_item": "필요한 도구 보유 여부",\n'
+        '    "modifiers": ["상황 수정자들"],\n'
+        '    "suggested_outcome": "success/partial/failure/critical_success/critical_failure"\n'
+        '  } OR null,\n'
         '  "Need": "Logical next step for Right Hemisphere",\n'
         '  "SystemAction": { "tool": "Quest/Memo/NPC", "type": "Add/Complete/Archive", "content": "..." } OR null,\n'
         '  "SessionMemoryUpdate": {\n'
@@ -956,6 +1013,42 @@ async def extract_updates(
         '    "memo_add": ["중요 메모"] OR null\n'
         '  } OR null\n'
         "}\n\n"
+
+        "========================================\n"
+        "### PASSIVE RULES (패시브/스킬)\n"
+        "========================================\n"
+        "Passives are EARNED through REPEATED DEMONSTRATION, not one-time success.\n"
+        "Think of passives like titles/achievements - they must be PROVEN.\n\n"
+
+        "✅ ADD passive when:\n"
+        "- Character SUCCESSFULLY used skill MULTIPLE times (3+ occasions)\n"
+        "- Character showed EXCEPTIONAL/UNUSUAL ability\n"
+        "- Skill is DEFINING trait established in backstory\n"
+        "- Character TRAINED or LEARNED skill over time in narrative\n\n"
+
+        "❌ DO NOT ADD passive when:\n"
+        "- First attempt at something (even if successful)\n"
+        "- Luck-based success (circumstances helped)\n"
+        "- Partial success or near-failure\n"
+        "- Common action anyone could do\n"
+        "- Action FAILED\n"
+        "- Player just WANTS to be good at something\n\n"
+
+        "### PASSIVE PROGRESSION\n"
+        "1. First success → No passive (just did it once)\n"
+        "2. Second success → Still no passive (could be luck)\n"
+        "3. Third+ consistent success → MAYBE passive (showing pattern)\n"
+        "4. Defining characteristic established → Passive earned\n\n"
+
+        "### EXAMPLES\n"
+        "❌ 'Picked a lock once' → NOT a passive\n"
+        "❌ 'Won a fight' → NOT a passive (unless repeated pattern)\n"
+        "❌ 'Succeeded with luck' → NOT a passive\n"
+        "✅ 'Repeatedly demonstrated expert lockpicking (3+ times)' → '자물쇠 전문가'\n"
+        "✅ 'Trained swordsman mentioned in backstory' → '검술 수련'\n"
+        "✅ 'Survived multiple deadly encounters through cunning' → '생존 본능'\n\n"
+
+        "**When in doubt, do NOT add passive. Passives should be RARE and MEANINGFUL.**\n\n"
 
         "========================================\n"
         "### RELATIONSHIP RULES (관계)\n"
