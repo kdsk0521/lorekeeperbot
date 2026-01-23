@@ -1899,7 +1899,33 @@ async def _process_message(message, channel_id: str):
                         f"**Instruction:** Include ambient dialogue between these NPCs "
                         f"that players can overhear. This adds atmosphere and may reveal information.\n\n"
                     )
-            
+
+            # === ActionJudgment 컨텍스트 생성 (GM 판정 - 우뇌에 전달) ===
+            action_judgment = nvc_res.get("ActionJudgment")
+            action_judgment_ctx = ""
+            if action_judgment and isinstance(action_judgment, dict):
+                action = action_judgment.get("action", "N/A")
+                difficulty = action_judgment.get("difficulty", "normal")
+                relevant_passive = action_judgment.get("relevant_passive")
+                relevant_item = action_judgment.get("relevant_item", "N/A")
+                modifiers = action_judgment.get("modifiers", [])
+                suggested_outcome = action_judgment.get("suggested_outcome", "partial")
+
+                action_judgment_ctx = (
+                    f"### [GM JUDGMENT - MUST FOLLOW]\n"
+                    f"**Action:** {action}\n"
+                    f"**Difficulty:** {difficulty}\n"
+                    f"**Relevant Passive:** {relevant_passive if relevant_passive else 'None'}\n"
+                    f"**Equipment:** {relevant_item}\n"
+                    f"**Modifiers:** {', '.join(modifiers) if modifiers else 'None'}\n"
+                    f"**⚠️ SUGGESTED OUTCOME: {suggested_outcome.upper()}**\n\n"
+                    f"**INSTRUCTION:** You MUST narrate according to this judgment.\n"
+                    f"- Do NOT auto-succeed if outcome is 'failure' or 'partial'\n"
+                    f"- Describe the ATTEMPT and the RESULT based on suggested_outcome\n"
+                    f"- Failure creates drama and choices, not punishment\n\n"
+                )
+                logging.info(f"[ActionJudgment] {action} -> {suggested_outcome} (difficulty: {difficulty})")
+
             # === 장면 유형 자동 감지 (좌뇌 분석 결과 사용) ===
             detected_scene_type = nvc_res.get("SceneType", "normal")
             if detected_scene_type and detected_scene_type != "normal":
@@ -1939,7 +1965,11 @@ async def _process_message(message, channel_id: str):
             
             if npc_interaction_ctx:
                 current_context_parts.append(npc_interaction_ctx.strip())
-            
+
+            # ActionJudgment 컨텍스트 추가 (GM 판정 - 가장 중요하므로 nvc_summary 앞에)
+            if action_judgment_ctx:
+                current_context_parts.append(action_judgment_ctx.strip())
+
             nvc_summary = (
                 f"### Left Hemisphere Analysis\n"
                 f"Location: {nvc_res.get('CurrentLocation', 'Unknown')} "
