@@ -2191,7 +2191,7 @@ Korean output. 3rd person narration."""
                     if fermentation.should_ferment_fresh(session_data):
                         logging.info(f"[Fermentation] 자동 발효 시작 - {channel_id}")
                         await fermentation.auto_ferment(
-                            client_genai, MODEL_ID, session_data,
+                            client_genai, MODEL_ID_FLASH, session_data,
                             save_callback=lambda: domain_manager.save_domain(channel_id, session_data)
                         )
                 except Exception as fe:

@@ -986,8 +986,8 @@ async def extract_physical_updates(
         "}\n\n"
         
         "### RULES\n"
-        "✅ inventory_add: Player RECEIVED/TOOK/BOUGHT item\n"
-        "✅ inventory_remove: Player GAVE/SOLD/USED item\n"
+        "✅ inventory_add: Player RECEIVED/TOOK/BOUGHT item (NET GAIN)\n"
+        "✅ inventory_remove: Player GAVE/SOLD/USED item (NET LOSS)\n"
         "✅ gold_change: Actual payment made (+received, -paid)\n"
         "✅ status_add: New condition (poisoned, blessed, etc.)\n"
         "✅ status_remove: Condition ended\n\n"
@@ -996,6 +996,10 @@ async def extract_physical_updates(
         "- Items offered but not taken\n"
         "- Gold mentioned but not exchanged\n"
         "- Status that already exists\n"
+        "- Items merely moved (e.g., hand -> bag, bag -> safe)\n"
+        "- Items given to companions (This is REMOVE, not ADD)\n"
+        "- Items already in 'current_inventory' (unless quantity increases)\n"
+        "- Re-description of an item acquired in the same turn\n"
     )
     
     context = f"현재 인벤토리: {current_inventory}\n현재 골드: {current_gold}\n현재 상태: {current_status}"
