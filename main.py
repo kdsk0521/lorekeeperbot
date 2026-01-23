@@ -1641,7 +1641,7 @@ async def _process_message(message, channel_id: str):
             p_data = domain_manager.get_participant_data(channel_id, uid)
             
             edit_result = await memory_system.process_ooc_memory_edit(
-                client_genai, MODEL_ID, ooc_content, ai_mem, p_data
+                client_genai, MODEL_ID_FLASH, ooc_content, ai_mem, p_data
             )
             
             if edit_result and edit_result.get("edits"):
@@ -1718,7 +1718,7 @@ async def _process_message(message, channel_id: str):
             if ai_mem and client_genai and ooc_content:
                 try:
                     edit_result = await memory_system.process_ooc_memory_edit(
-                        client_genai, MODEL_ID, ooc_content, ai_mem, p_data
+                        client_genai, MODEL_ID_FLASH, ooc_content, ai_mem, p_data
                     )
                     
                     if edit_result and edit_result.get("edits"):
