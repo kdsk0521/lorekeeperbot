@@ -2113,6 +2113,14 @@ Korean output. 3rd person narration."""
                     current_relationships = ai_mem.get("relationships", {})
                     current_known_info = ai_mem.get("known_info", [])
                     current_foreshadowing = ai_mem.get("foreshadowing", [])
+                    current_passives = ai_mem.get("passives", [])
+
+                    # 로어 NPC 목록 가져오기
+                    lore_npcs = domain_manager.get_npcs(channel_id)
+                    lore_npc_names = list(lore_npcs.keys()) if lore_npcs else []
+                    
+                    # 현재 장면 NPC (좌뇌 A 결과에서 추출)
+                    scene_npc_names = list(nvc_res.get("NPCAttitudes", {}).keys())
 
                     # Flash 모델로 업데이트 추출 (선별적 추출)
                     update_result = await memory_system.extract_updates(
@@ -2123,7 +2131,10 @@ Korean output. 3rd person narration."""
                         current_quests=current_quests,
                         current_relationships=current_relationships,
                         current_known_info=current_known_info,
-                        current_foreshadowing=current_foreshadowing
+                        current_foreshadowing=current_foreshadowing,
+                        current_passives=current_passives,        # NEW
+                        lore_npc_names=lore_npc_names,            # NEW
+                        scene_npc_names=scene_npc_names           # NEW
                     )
 
                     # character_sheet로 저장

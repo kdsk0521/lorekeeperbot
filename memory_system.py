@@ -962,7 +962,10 @@ async def extract_updates(
     current_quests: List[str] = None,
     current_relationships: Dict[str, str] = None,
     current_known_info: List[str] = None,
-    current_foreshadowing: List[str] = None
+    current_foreshadowing: List[str] = None,
+    current_passives: List[str] = None,       # NEW
+    lore_npc_names: List[str] = None,         # NEW
+    scene_npc_names: List[str] = None         # NEW
 ) -> Dict[str, Any]:
     """
     [좌뇌 B] 업데이트 추출 전용 - Flash 모델 사용
@@ -977,6 +980,9 @@ async def extract_updates(
         current_relationships: 현재 관계 목록 (단계 변화 감지)
         current_known_info: 현재 알고 있는 정보 목록 (중복 방지)
         current_foreshadowing: 현재 복선 목록 (중복 방지)
+        current_passives: 현재 보유 패시브 목록 (중복 방지)
+        lore_npc_names: 로어에 등록된 NPC 이름 목록
+        scene_npc_names: 현재 장면에 등장한 NPC 이름 목록 (좌뇌 A에서)
 
     Returns:
         {
@@ -1013,6 +1019,52 @@ async def extract_updates(
         '    "memo_add": ["중요 메모"] OR null\n'
         '  } OR null\n'
         "}\n\n"
+
+        "========================================\n"
+        "### NPC IDENTITY RULES (NPC 동일인 인식)\n"
+        "========================================\n"
+        "Use the context lists to identify NPCs correctly.\n\n"
+
+        "**[LORE NPCs]:** These are KNOWN characters from worldbuilding.\n"
+        "- If NPC name matches lore → Use the EXACT lore name\n"
+        "- Do NOT create new entries for lore NPCs\n"
+        "- Example: Lore has '마르코' → '마르코' in narrative = same person\n\n"
+
+        "**[SCENE NPCs]:** These are characters in the CURRENT scene.\n"
+        "- All references to same role = SAME person\n"
+        "- '환자', '그 환자', '김씨', '돈 낸 사람' in one scene = ONE NPC\n"
+        "- Use the MOST SPECIFIC name (proper name > role)\n\n"
+
+        "✅ CORRECT:\n"
+        "- Scene: 환자 김씨 치료 → {\"김씨\": \"치료해준 환자\"}\n"
+        "- Lore NPC 마르코 등장 → {\"마르코\": \"대화함\"}\n\n"
+
+        "❌ WRONG:\n"
+        "- {\"치료 요청한 환자\": \"...\", \"돈 낸 환자\": \"...\"} (같은 사람)\n"
+        "- {\"알 수 없는 NPC\": \"...\"} (로어에 있는 NPC인데)\n\n"
+
+        "========================================\n"
+        "### PASSIVE vs KNOWN_INFO (패시브/정보 구분)\n"
+        "========================================\n"
+        "Check [EXISTING PASSIVES] before adding to known_info.\n\n"
+
+        "**Passives** = Player character's SKILLS/ABILITIES\n"
+        "**Known_info** = EXTERNAL information about world/NPCs\n\n"
+
+        "❌ DO NOT add to known_info:\n"
+        "- Anything in EXISTING PASSIVES list\n"
+        "- Player's own abilities mentioned in narrative\n"
+        "- '의술을 사용했다' when '의술' is already a passive\n\n"
+
+        "✅ ADD to known_info ONLY:\n"
+        "- Secrets about NPCs (weakness, true identity)\n"
+        "- Hidden locations, passwords, codes\n"
+        "- World facts that unlock new options\n"
+        "- Information EXTERNAL to player character\n\n"
+
+        "Test: \"Is this about ME (passive) or about the WORLD (info)?\"\n"
+        "About me → Check passives, don't duplicate\n"
+        "About world → Maybe add to known_info\n\n"
 
         "========================================\n"
         "### PASSIVE RULES (패시브/스킬)\n"
@@ -1133,19 +1185,37 @@ async def extract_updates(
         "Over-extraction wastes tokens and buries important info.\n"
     )
 
-    # 현재 상태 컨텍스트 추가 (확장 - 중복 방지용)
+    # 현재 상태 컨텍스트 추가 (확장)
     context_parts = []
+
+    # 로어 NPC 목록 (알려진 캐릭터) - New
+    if lore_npc_names:
+        context_parts.append(f"[LORE NPCs - 알려진 캐릭터]: {', '.join(lore_npc_names[:15])}")
+
+    # 현재 장면 NPC (좌뇌 A가 분석한 - 이 장면의 등장인물) - New
+    if scene_npc_names:
+        context_parts.append(f"[SCENE NPCs - 현재 장면 등장인물]: {', '.join(scene_npc_names)}")
+
+    # 현재 패시브 (중복 방지용) - New
+    if current_passives:
+        context_parts.append(f"[EXISTING PASSIVES - 이미 보유]: {', '.join(current_passives[:10])}")
+
+    # 현재 퀘스트
     if current_quests:
-        context_parts.append(f"현재 퀘스트: {', '.join(current_quests[:5])}")
+        context_parts.append(f"[ACTIVE QUESTS]: {', '.join(current_quests[:5])}")
+
+    # 현재 관계
     if current_relationships:
-        rel_str = ', '.join([f"{k}({v})" for k, v in list(current_relationships.items())[:5]])
-        context_parts.append(f"현재 관계: {rel_str}")
+        rel_str = ', '.join([f"{k}({v})" for k, v in list(current_relationships.items())[:10]])
+        context_parts.append(f"[EXISTING RELATIONSHIPS]: {rel_str}")
+
+    # 이미 아는 정보
     if current_known_info:
-        info_str = ', '.join(current_known_info[:5])
-        context_parts.append(f"이미 아는 정보: {info_str}")
+        context_parts.append(f"[EXISTING INFO]: {', '.join(current_known_info[:5])}")
+
+    # 기존 복선
     if current_foreshadowing:
-        fore_str = ', '.join(current_foreshadowing[:3])
-        context_parts.append(f"기존 복선: {fore_str}")
+        context_parts.append(f"[EXISTING FORESHADOWING]: {', '.join(current_foreshadowing[:3])}")
 
     context_info = "\n".join(context_parts) if context_parts else "없음"
 
