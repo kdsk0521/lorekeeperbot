@@ -954,305 +954,387 @@ async def analyze_context_nvc(
 # =========================================================
 # [UPDATE EXTRACTOR] 업데이트 추출 전용 - Flash 모델 사용
 # =========================================================
-async def extract_updates(
+# =========================================================
+# [LEFT BRAIN B] SELECTIVE UPDATE EXTRACTORS (4-Way Parallel)
+# =========================================================
+
+async def extract_physical_updates(
+    client,
+    model_id_flash: str,
+    player_input: str,
+    ai_response: str,
+    current_inventory: Dict[str, int] = None,
+    current_gold: int = 0,
+    current_status: List[str] = None
+) -> Dict[str, Any]:
+    """
+    [좌뇌 B-1] 물리적 변화 추출 - 인벤토리, 골드, 상태이상
+    """
+    
+    system_prompt = (
+        "You are a PHYSICAL CHANGE extractor for TRPG.\n"
+        "Extract ONLY inventory, gold, and status changes.\n"
+        "Focus on ACTUAL ownership transfer, not offers or mentions.\n\n"
+        
+        "### OUTPUT FORMAT (JSON ONLY)\n"
+        "{\n"
+        '  "inventory_add": {"아이템": 수량} OR null,\n'
+        '  "inventory_remove": {"아이템": 수량} OR null,\n'
+        '  "gold_change": +100 OR -50 OR null,\n'
+        '  "status_add": ["상태"] OR null,\n'
+        '  "status_remove": ["상태"] OR null\n'
+        "}\n\n"
+        
+        "### RULES\n"
+        "✅ inventory_add: Player RECEIVED/TOOK/BOUGHT item\n"
+        "✅ inventory_remove: Player GAVE/SOLD/USED item\n"
+        "✅ gold_change: Actual payment made (+received, -paid)\n"
+        "✅ status_add: New condition (poisoned, blessed, etc.)\n"
+        "✅ status_remove: Condition ended\n\n"
+        
+        "❌ DO NOT add:\n"
+        "- Items offered but not taken\n"
+        "- Gold mentioned but not exchanged\n"
+        "- Status that already exists\n"
+    )
+    
+    context = f"현재 인벤토리: {current_inventory}\n현재 골드: {current_gold}\n현재 상태: {current_status}"
+    
+    user_prompt = (
+        f"### 현재 상태\n{context}\n\n"
+        f"### 플레이어 입력\n{player_input}\n\n"
+        f"### AI 서사\n{ai_response[:1500]}\n\n"
+        "물리적 변화만 추출. JSON만 출력."
+    )
+    
+    try:
+        config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.1)
+        contents = [types.Content(role="user", parts=[types.Part(text=f"{system_prompt}\n\n{user_prompt}")])]
+        
+        result = await api_call_with_retry(
+            client, model_id_flash, contents, config, operation_name="B-1 Physical"
+        )
+        if result:
+            return safe_parse_json(result)
+    except Exception as e:
+        logging.warning(f"[B-1 Physical] Error: {e}")
+        
+    return {}
+
+
+async def extract_social_updates(
+    client,
+    model_id_flash: str,
+    player_input: str,
+    ai_response: str,
+    current_relationships: Dict[str, str] = None,
+    current_companions: List[str] = None,
+    lore_npc_names: List[str] = None,
+    scene_npc_names: List[str] = None
+) -> Dict[str, Any]:
+    """
+    [좌뇌 B-2] 사회적 변화 추출 - 관계, 동행자
+    """
+    
+    system_prompt = (
+        "You are a SOCIAL CHANGE extractor for TRPG.\n"
+        "Extract ONLY relationship and companion changes.\n\n"
+        
+        "### OUTPUT FORMAT (JSON ONLY)\n"
+        "{\n"
+        '  "relationships": {"NPC이름": "관계단계(이유)"} OR null,\n'
+        '  "companions": ["동행자: 설명"] OR null\n'
+        "}\n\n"
+        
+        "### NPC IDENTITY RULES\n"
+        "- [LORE NPCs]: Use EXACT name from lore\n"
+        "- [SCENE NPCs]: Same person throughout scene\n"
+        "- Multiple references = ONE person\n\n"
+        
+        "### RELATIONSHIP LEVELS\n"
+        "hostile → unfriendly → neutral → friendly → intimate\n\n"
+        
+        "✅ UPDATE when:\n"
+        "- First meeting with NEW NPC\n"
+        "- Relationship LEVEL changes\n"
+        "- Major event (betrayal, saved life)\n\n"
+        
+        "❌ DO NOT UPDATE when:\n"
+        "- Same level as before\n"
+        "- Simple greeting/conversation\n"
+    )
+    
+    context_parts = []
+    if lore_npc_names:
+        context_parts.append(f"[LORE NPCs]: {', '.join(lore_npc_names[:15])}")
+    if scene_npc_names:
+        context_parts.append(f"[SCENE NPCs]: {', '.join(scene_npc_names)}")
+    if current_relationships:
+        rel_str = ', '.join([f"{k}({v})" for k, v in list(current_relationships.items())[:10]])
+        context_parts.append(f"[현재 관계]: {rel_str}")
+    if current_companions:
+        context_parts.append(f"[현재 동행자]: {', '.join(current_companions)}")
+    
+    context = "\n".join(context_parts) if context_parts else "없음"
+    
+    user_prompt = (
+        f"### 현재 상태\n{context}\n\n"
+        f"### 플레이어 입력\n{player_input}\n\n"
+        f"### AI 서사\n{ai_response[:1500]}\n\n"
+        "관계/동행자 변화만 추출. JSON만 출력."
+    )
+    
+    try:
+        config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.1)
+        contents = [types.Content(role="user", parts=[types.Part(text=f"{system_prompt}\n\n{user_prompt}")])]
+        
+        result = await api_call_with_retry(
+            client, model_id_flash, contents, config, operation_name="B-2 Social"
+        )
+        if result:
+            return safe_parse_json(result)
+    except Exception as e:
+        logging.warning(f"[B-2 Social] Error: {e}")
+        
+    return {}
+
+
+async def extract_narrative_updates(
+    client,
+    model_id_flash: str,
+    player_input: str,
+    ai_response: str,
+    current_passives: List[str] = None,
+    current_known_info: List[str] = None,
+    current_foreshadowing: List[str] = None
+) -> Dict[str, Any]:
+    """
+    [좌뇌 B-3] 서사적 변화 추출 - 정보, 복선, 패시브
+    """
+    
+    system_prompt = (
+        "You are a NARRATIVE CHANGE extractor for TRPG.\n"
+        "Extract ONLY knowledge, foreshadowing, and passive changes.\n\n"
+        
+        "### OUTPUT FORMAT (JSON ONLY)\n"
+        "{\n"
+        '  "known_info": ["중요 정보"] OR null,\n'
+        '  "foreshadowing": ["복선"] OR null,\n'
+        '  "passives": ["패시브"] OR null\n'
+        "}\n\n"
+        
+        "### KNOWN_INFO RULES\n"
+        "✅ RECORD: Secrets, passwords, hidden locations, NPC weaknesses\n"
+        "❌ IGNORE: Trivial facts, already known, player's own abilities\n"
+        "Test: Does this unlock NEW OPTIONS for player?\n\n"
+        
+        "### FORESHADOWING RULES\n"
+        "✅ RECORD: Prophecies, mysterious marks, cryptic warnings\n"
+        "❌ IGNORE: Simple mood, atmosphere, ordinary events\n"
+        "Test: Does this hint at FUTURE plot?\n\n"
+        
+        "### PASSIVE RULES\n"
+        "✅ RECORD: REPEATED demonstration (3+), exceptional ability\n"
+        "❌ IGNORE: First attempt, luck-based, failed attempts\n"
+        "Passives are RARE achievements, not easy unlocks.\n"
+    )
+    
+    context_parts = []
+    if current_passives:
+        context_parts.append(f"[기존 패시브 - 중복 금지]: {', '.join(current_passives)}")
+    if current_known_info:
+        context_parts.append(f"[이미 아는 정보]: {', '.join(current_known_info[:5])}")
+    if current_foreshadowing:
+        context_parts.append(f"[기존 복선]: {', '.join(current_foreshadowing[:3])}")
+    
+    context = "\n".join(context_parts) if context_parts else "없음"
+    
+    user_prompt = (
+        f"### 현재 상태\n{context}\n\n"
+        f"### 플레이어 입력\n{player_input}\n\n"
+        f"### AI 서사\n{ai_response[:1500]}\n\n"
+        "정보/복선/패시브 변화만 추출. JSON만 출력."
+    )
+    
+    try:
+        config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.1)
+        contents = [types.Content(role="user", parts=[types.Part(text=f"{system_prompt}\n\n{user_prompt}")])]
+        
+        result = await api_call_with_retry(
+            client, model_id_flash, contents, config, operation_name="B-3 Narrative"
+        )
+        if result:
+            return safe_parse_json(result)
+    except Exception as e:
+        logging.warning(f"[B-3 Narrative] Error: {e}")
+        
+    return {}
+
+
+async def extract_quest_updates(
     client,
     model_id_flash: str,
     player_input: str,
     ai_response: str,
     current_quests: List[str] = None,
-    current_relationships: Dict[str, str] = None,
-    current_known_info: List[str] = None,
-    current_foreshadowing: List[str] = None,
-    current_passives: List[str] = None,       # NEW
-    lore_npc_names: List[str] = None,         # NEW
-    scene_npc_names: List[str] = None         # NEW
+    current_memos: List[str] = None
 ) -> Dict[str, Any]:
     """
-    [좌뇌 B] 업데이트 추출 전용 - Flash 모델 사용
-    서사 완료 후 입력+출력을 분석하여 **의미 있는** 변화만 추출
-
-    Args:
-        client: Gemini 클라이언트
-        model_id_flash: Flash 모델 ID
-        player_input: 플레이어 입력 텍스트
-        ai_response: AI 서사 응답
-        current_quests: 현재 활성 퀘스트 목록 (중복 방지)
-        current_relationships: 현재 관계 목록 (단계 변화 감지)
-        current_known_info: 현재 알고 있는 정보 목록 (중복 방지)
-        current_foreshadowing: 현재 복선 목록 (중복 방지)
-        current_passives: 현재 보유 패시브 목록 (중복 방지)
-        lore_npc_names: 로어에 등록된 NPC 이름 목록
-        scene_npc_names: 현재 장면에 등장한 NPC 이름 목록 (좌뇌 A에서)
-
-    Returns:
-        {
-            "PlayerUpdate": {...},
-            "PlayerMemoryUpdate": {...},
-            "QuestUpdate": {...}
-        }
+    [좌뇌 B-4] 퀘스트/메모 변화 추출
     """
-
+    
     system_prompt = (
-        "You are a SELECTIVE update extractor for a TRPG system.\n"
-        "Extract ONLY SIGNIFICANT changes. When in doubt, return null.\n"
-        "Less is more. Trivial updates waste resources.\n\n"
-
+        "You are a QUEST/MEMO extractor for TRPG.\n"
+        "Extract quest and memo changes.\n\n"
+        
         "### OUTPUT FORMAT (JSON ONLY)\n"
         "{\n"
-        '  "PlayerUpdate": {\n'
-        '    "inventory_add": {"아이템": 수량} OR null,\n'
-        '    "inventory_remove": {"아이템": 수량} OR null,\n'
-        '    "gold_change": +100 OR -50 OR null,\n'
-        '    "status_add": ["상태"] OR null,\n'
-        '    "status_remove": ["상태"] OR null\n'
-        '  } OR null,\n'
-        '  "PlayerMemoryUpdate": {\n'
-        '    "relationships": {"NPC이름": "관계단계"} OR null,\n'
-        '    "passives": ["새 패시브"] OR null,\n'
-        '    "known_info": ["중요 정보"] OR null,\n'
-        '    "foreshadowing": ["복선"] OR null,\n'
-        '    "companions": ["동행자: 설명"] OR null\n'
-        '  } OR null,\n'
-        '  "QuestUpdate": {\n'
-        '    "quest_add": ["새 퀘스트"] OR null,\n'
-        '    "quest_complete": ["완료 퀘스트"] OR null,\n'
-        '    "memo_add": ["중요 메모"] OR null\n'
-        '  } OR null\n'
+        '  "quest_add": ["새 퀘스트"] OR null,\n'
+        '  "quest_complete": ["완료 퀘스트"] OR null,\n'
+        '  "memo_add": ["새 메모"] OR null,\n'
+        '  "memo_remove": ["삭제할 메모"] OR null,\n'
+        '  "memo_archive": ["보관할 메모"] OR null\n'
         "}\n\n"
-
-        "========================================\n"
-        "### NPC IDENTITY RULES (NPC 동일인 인식)\n"
-        "========================================\n"
-        "Use the context lists to identify NPCs correctly.\n\n"
-
-        "**[LORE NPCs]:** These are KNOWN characters from worldbuilding.\n"
-        "- If NPC name matches lore → Use the EXACT lore name\n"
-        "- Do NOT create new entries for lore NPCs\n"
-        "- Example: Lore has '마르코' → '마르코' in narrative = same person\n\n"
-
-        "**[SCENE NPCs]:** These are characters in the CURRENT scene.\n"
-        "- All references to same role = SAME person\n"
-        "- '환자', '그 환자', '김씨', '돈 낸 사람' in one scene = ONE NPC\n"
-        "- Use the MOST SPECIFIC name (proper name > role)\n\n"
-
-        "✅ CORRECT:\n"
-        "- Scene: 환자 김씨 치료 → {\"김씨\": \"치료해준 환자\"}\n"
-        "- Lore NPC 마르코 등장 → {\"마르코\": \"대화함\"}\n\n"
-
-        "❌ WRONG:\n"
-        "- {\"치료 요청한 환자\": \"...\", \"돈 낸 환자\": \"...\"} (같은 사람)\n"
-        "- {\"알 수 없는 NPC\": \"...\"} (로어에 있는 NPC인데)\n\n"
-
-        "========================================\n"
-        "### PASSIVE vs KNOWN_INFO (패시브/정보 구분)\n"
-        "========================================\n"
-        "Check [EXISTING PASSIVES] before adding to known_info.\n\n"
-
-        "**Passives** = Player character's SKILLS/ABILITIES\n"
-        "**Known_info** = EXTERNAL information about world/NPCs\n\n"
-
-        "❌ DO NOT add to known_info:\n"
-        "- Anything in EXISTING PASSIVES list\n"
-        "- Player's own abilities mentioned in narrative\n"
-        "- '의술을 사용했다' when '의술' is already a passive\n\n"
-
-        "✅ ADD to known_info ONLY:\n"
-        "- Secrets about NPCs (weakness, true identity)\n"
-        "- Hidden locations, passwords, codes\n"
-        "- World facts that unlock new options\n"
-        "- Information EXTERNAL to player character\n\n"
-
-        "Test: \"Is this about ME (passive) or about the WORLD (info)?\"\n"
-        "About me → Check passives, don't duplicate\n"
-        "About world → Maybe add to known_info\n\n"
-
-        "========================================\n"
-        "### PASSIVE RULES (패시브/스킬)\n"
-        "========================================\n"
-        "Passives are EARNED through REPEATED DEMONSTRATION, not one-time success.\n"
-        "Think of passives like titles/achievements - they must be PROVEN.\n\n"
-
-        "✅ ADD passive when:\n"
-        "- Character SUCCESSFULLY used skill MULTIPLE times (3+ occasions)\n"
-        "- Character showed EXCEPTIONAL/UNUSUAL ability\n"
-        "- Skill is DEFINING trait established in backstory\n"
-        "- Character TRAINED or LEARNED skill over time in narrative\n\n"
-
-        "❌ DO NOT ADD passive when:\n"
-        "- First attempt at something (even if successful)\n"
-        "- Luck-based success (circumstances helped)\n"
-        "- Partial success or near-failure\n"
-        "- Common action anyone could do\n"
-        "- Action FAILED\n"
-        "- Player just WANTS to be good at something\n\n"
-
-        "### PASSIVE PROGRESSION\n"
-        "1. First success → No passive (just did it once)\n"
-        "2. Second success → Still no passive (could be luck)\n"
-        "3. Third+ consistent success → MAYBE passive (showing pattern)\n"
-        "4. Defining characteristic established → Passive earned\n\n"
-
-        "### EXAMPLES\n"
-        "❌ 'Picked a lock once' → NOT a passive\n"
-        "❌ 'Won a fight' → NOT a passive (unless repeated pattern)\n"
-        "❌ 'Succeeded with luck' → NOT a passive\n"
-        "✅ 'Repeatedly demonstrated expert lockpicking (3+ times)' → '자물쇠 전문가'\n"
-        "✅ 'Trained swordsman mentioned in backstory' → '검술 수련'\n"
-        "✅ 'Survived multiple deadly encounters through cunning' → '생존 본능'\n\n"
-
-        "**When in doubt, do NOT add passive. Passives should be RARE and MEANINGFUL.**\n\n"
-
-        "========================================\n"
-        "### RELATIONSHIP RULES (관계)\n"
-        "========================================\n"
-        "Relationship has 5 LEVELS:\n"
-        "  hostile(적대) → unfriendly(비우호) → neutral(중립) → friendly(우호) → intimate(친밀)\n\n"
-
-        "✅ UPDATE when:\n"
-        "- First meeting with NEW NPC (record initial level)\n"
-        "- Level CHANGES (e.g., neutral → friendly)\n"
-        "- Major event changes relationship (betrayal, saved life, etc.)\n\n"
-
-        "❌ DO NOT UPDATE when:\n"
-        "- Same level as before (already friendly, still friendly = null)\n"
-        "- Simple greeting/conversation with known NPC\n"
-        "- No meaningful interaction occurred\n\n"
-
-        "Format: {\"NPC이름\": \"관계단계(이유)\"}\n"
-        "Example: {\"마르코\": \"friendly(위기에서 도움받음)\"}\n\n"
-
-        "========================================\n"
-        "### KNOWN_INFO RULES (알고 있는 정보)\n"
-        "========================================\n"
-        "Only record information that CHANGES GAMEPLAY OPTIONS.\n\n"
-
-        "✅ RECORD (actionable secrets):\n"
-        "- \"시장이 뱀파이어다\" (affects how to deal with mayor)\n"
-        "- \"책장 뒤에 비밀 통로\" (new path available)\n"
-        "- \"금고 비밀번호 1234\" (enables action)\n"
-        "- \"약초는 북쪽 숲에만 있다\" (quest-relevant location)\n"
-        "- NPC's weakness, secret identity, hidden motive\n\n"
-
-        "❌ IGNORE (trivial/obvious):\n"
-        "- \"상인은 차를 좋아한다\" (doesn't affect gameplay)\n"
-        "- \"오늘 날씨가 흐리다\" (obvious observation)\n"
-        "- \"이 마을은 작다\" (general description)\n"
-        "- Information player already knows\n"
-        "- NPC's personal preferences (unless exploitable)\n\n"
-
-        "Test: \"Does knowing this open NEW options for the player?\"\n"
-        "If NO → null\n\n"
-
-        "========================================\n"
-        "### FORESHADOWING RULES (복선)\n"
-        "========================================\n"
-        "Foreshadowing = hints about FUTURE plot developments.\n"
-        "Must be NARRATIVELY SIGNIFICANT.\n\n"
-
-        "✅ RECORD (genuine foreshadowing):\n"
-        "- \"유물을 만진 후 팔에 이상한 문양이 나타났다\" (mysterious change)\n"
-        "- \"NPC가 '선택받은 자'에 대한 예언을 언급했다\" (prophecy)\n"
-        "- \"마을 사람들이 갑자기 침묵했다\" (suspicious behavior)\n"
-        "- Unexplained phenomena tied to main plot\n"
-        "- Cryptic warnings from NPCs\n\n"
-
-        "❌ IGNORE (not foreshadowing):\n"
-        "- \"NPC가 긴장해 보였다\" (simple observation)\n"
-        "- \"날씨가 나빠지고 있다\" (unless plot-relevant)\n"
-        "- \"거리가 붐빈다\" (scene description)\n"
-        "- Mundane events or atmosphere\n"
-        "- Already-known information\n\n"
-
-        "Test: \"Does this hint at something that will matter LATER?\"\n"
-        "If NO → null\n\n"
-
-        "========================================\n"
-        "### QUEST RULES (퀘스트) - Keep Sensitive\n"
-        "========================================\n"
-        "Quests are important. Record when:\n"
-        "- NPC explicitly gives a task/request\n"
-        "- Player discovers a goal worth pursuing\n"
-        "- Quest objective is completed\n\n"
-
-        "========================================\n"
-        "### GENERAL PRINCIPLE\n"
-        "========================================\n"
-        "Compare with CURRENT STATE provided below.\n"
-        "If the extracted value is the SAME as current → return null\n"
-        "If nothing significant happened → return all null\n\n"
-
-        "Remember: A response with mostly null values is GOOD.\n"
-        "Over-extraction wastes tokens and buries important info.\n"
+        
+        "### QUEST RULES\n"
+        "✅ quest_add: NPC gives task, player discovers goal\n"
+        "✅ quest_complete: Objective achieved, task done\n\n"
+        
+        "### MEMO RULES\n"
+        "✅ memo_add: Important clue, reminder, temporary note\n"
+        "✅ memo_remove: Information no longer relevant, consumed\n"
+        "✅ memo_archive: Important info to keep permanently (equipment, key relationships)\n\n"
+        
+        "**memo_remove vs memo_archive:**\n"
+        "- remove: 소모품 사용, 일회성 정보, 완료된 단서\n"
+        "- archive: 영구 보관할 장비, 관계, 스토리 단서\n"
     )
-
-    # 현재 상태 컨텍스트 추가 (확장)
+    
     context_parts = []
-
-    # 로어 NPC 목록 (알려진 캐릭터) - New
-    if lore_npc_names:
-        context_parts.append(f"[LORE NPCs - 알려진 캐릭터]: {', '.join(lore_npc_names[:15])}")
-
-    # 현재 장면 NPC (좌뇌 A가 분석한 - 이 장면의 등장인물) - New
-    if scene_npc_names:
-        context_parts.append(f"[SCENE NPCs - 현재 장면 등장인물]: {', '.join(scene_npc_names)}")
-
-    # 현재 패시브 (중복 방지용) - New
-    if current_passives:
-        context_parts.append(f"[EXISTING PASSIVES - 이미 보유]: {', '.join(current_passives[:10])}")
-
-    # 현재 퀘스트
     if current_quests:
-        context_parts.append(f"[ACTIVE QUESTS]: {', '.join(current_quests[:5])}")
-
-    # 현재 관계
-    if current_relationships:
-        rel_str = ', '.join([f"{k}({v})" for k, v in list(current_relationships.items())[:10]])
-        context_parts.append(f"[EXISTING RELATIONSHIPS]: {rel_str}")
-
-    # 이미 아는 정보
-    if current_known_info:
-        context_parts.append(f"[EXISTING INFO]: {', '.join(current_known_info[:5])}")
-
-    # 기존 복선
-    if current_foreshadowing:
-        context_parts.append(f"[EXISTING FORESHADOWING]: {', '.join(current_foreshadowing[:3])}")
-
-    context_info = "\n".join(context_parts) if context_parts else "없음"
-
+        context_parts.append(f"[활성 퀘스트]: {', '.join(current_quests[:5])}")
+    if current_memos:
+        context_parts.append(f"[현재 메모]: {', '.join(current_memos[:5])}")
+    
+    context = "\n".join(context_parts) if context_parts else "없음"
+    
     user_prompt = (
-        f"### 현재 상태\n{context_info}\n\n"
+        f"### 현재 상태\n{context}\n\n"
         f"### 플레이어 입력\n{player_input}\n\n"
-        f"### AI 서사 응답\n{ai_response[:2000]}\n\n"  # 응답이 길 경우 잘라내기
-        "위 내용을 분석하여 변화를 추출하세요. JSON만 출력."
+        f"### AI 서사\n{ai_response[:1500]}\n\n"
+        "퀘스트/메모 변화만 추출. JSON만 출력."
     )
-
+    
     try:
-        config = types.GenerateContentConfig(
-            response_mime_type="application/json",
-            temperature=0.1  # 낮은 온도로 정확한 추출
-        )
-
-        contents = [
-            types.Content(role="user", parts=[
-                types.Part(text=f"{system_prompt}\n\n{user_prompt}")
-            ])
-        ]
-
+        config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.1)
+        contents = [types.Content(role="user", parts=[types.Part(text=f"{system_prompt}\n\n{user_prompt}")])]
+        
         result = await api_call_with_retry(
-            client, model_id_flash, contents, config,
-            operation_name="Update Extraction (Flash)"
+            client, model_id_flash, contents, config, operation_name="B-4 Quest"
         )
-
         if result:
-            parsed = safe_parse_json(result)
-            if parsed:
-                logging.info(f"[UpdateExtractor] 추출 성공: {list(parsed.keys())}")
-                return parsed
-
+            return safe_parse_json(result)
     except Exception as e:
-        logging.warning(f"[UpdateExtractor] 추출 실패: {e}")
+        logging.warning(f"[B-4 Quest] Error: {e}")
+        
+    return {}
 
-    return {"PlayerUpdate": None, "PlayerMemoryUpdate": None, "QuestUpdate": None}
+
+async def extract_all_updates(
+    client,
+    model_id_flash: str,
+    player_input: str,
+    ai_response: str,
+    # 모든 컨텍스트 파라미터
+    current_inventory: Dict[str, int] = None,
+    current_gold: int = 0,
+    current_status: List[str] = None,
+    current_relationships: Dict[str, str] = None,
+    current_companions: List[str] = None,
+    current_passives: List[str] = None,
+    current_known_info: List[str] = None,
+    current_foreshadowing: List[str] = None,
+    current_quests: List[str] = None,
+    current_memos: List[str] = None,
+    lore_npc_names: List[str] = None,
+    scene_npc_names: List[str] = None
+) -> Dict[str, Any]:
+    """
+    [좌뇌 B 통합] 4개의 분리된 추출 함수를 병렬 호출하고 결과를 통합합니다.
+    """
+    
+    # 4개 호출을 병렬로 실행
+    results = await asyncio.gather(
+        extract_physical_updates(
+            client, model_id_flash, player_input, ai_response,
+            current_inventory, current_gold, current_status
+        ),
+        extract_social_updates(
+            client, model_id_flash, player_input, ai_response,
+            current_relationships, current_companions,
+            lore_npc_names, scene_npc_names
+        ),
+        extract_narrative_updates(
+            client, model_id_flash, player_input, ai_response,
+            current_passives, current_known_info, current_foreshadowing
+        ),
+        extract_quest_updates(
+            client, model_id_flash, player_input, ai_response,
+            current_quests, current_memos
+        ),
+        return_exceptions=True
+    )
+    
+    # 결과 통합
+    physical, social, narrative, quest = results
+    
+    # 에러 처리 (결과가 Exception인 경우)
+    if isinstance(physical, Exception):
+        logging.warning(f"[B-1 Physical] 실패: {physical}")
+        physical = {}
+    if isinstance(social, Exception):
+        logging.warning(f"[B-2 Social] 실패: {social}")
+        social = {}
+    if isinstance(narrative, Exception):
+        logging.warning(f"[B-3 Narrative] 실패: {narrative}")
+        narrative = {}
+    if isinstance(quest, Exception):
+        logging.warning(f"[B-4 Quest] 실패: {quest}")
+        quest = {}
+    
+    # None 체크 (각 함수가 None을 반환할 수 있음)
+    physical = physical or {}
+    social = social or {}
+    narrative = narrative or {}
+    quest = quest or {}
+
+    return {
+        "PlayerUpdate": {
+            "inventory_add": physical.get("inventory_add"),
+            "inventory_remove": physical.get("inventory_remove"),
+            "gold_change": physical.get("gold_change"),
+            "status_add": physical.get("status_add"),
+            "status_remove": physical.get("status_remove")
+        } if any(physical.values()) else None,
+        
+        "PlayerMemoryUpdate": {
+            "relationships": social.get("relationships"),
+            "companions": social.get("companions"),
+            "passives": narrative.get("passives"),
+            "known_info": narrative.get("known_info"),
+            "foreshadowing": narrative.get("foreshadowing")
+        } if any([social.get("relationships"), social.get("companions"),
+                  narrative.get("passives"), narrative.get("known_info"),
+                  narrative.get("foreshadowing")]) else None,
+        
+        "QuestUpdate": {
+            "quest_add": quest.get("quest_add"),
+            "quest_complete": quest.get("quest_complete"),
+            "memo_add": quest.get("memo_add"),
+            "memo_remove": quest.get("memo_remove"),
+            "memo_archive": quest.get("memo_archive")
+        } if any(quest.values()) else None
+    }
 
 
 # =========================================================

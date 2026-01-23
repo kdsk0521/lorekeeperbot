@@ -355,6 +355,37 @@ def apply_quest_updates(channel_id: str, quest_update: Dict[str, Any]) -> List[s
                 messages.append(f"📝 **메모:** {memo}")
                 updated = True
 
+    # memo_remove - 메모 삭제 (NEW)
+    if quest_update.get("memo_remove"):
+        for memo in quest_update["memo_remove"]:
+            if memo:
+                # quest_manager의 remove_memo 함수 활용 (직접 board 수정하지 않고 관리자 통해)
+                # 여기서는 board를 직접 수정하는 방식 유지 (일관성 위해)
+                # 또는 quest_manager 함수 호출로 변경 가능하나, 위 로직(직접 수정)과 통일성 유지.
+                # 하지만, quest_manager에 이미 로직이 있으니 함수 호출이 더 안전할 수 있음.
+                # 기존 코드가 직접 board 수정을 하고 있으므로 여기서도 직접 board 수정을 하되,
+                # quest_manager 모듈이 관리하는 데이터 구조를 따름.
+                if "memos" in board and memo in board["memos"]:
+                    board["memos"].remove(memo)
+                    messages.append(f"🗑️ **메모 삭제:** {memo}")
+                    updated = True
+
+    # memo_archive - 메모 보관 (NEW)
+    if quest_update.get("memo_archive"):
+        for memo in quest_update["memo_archive"]:
+            if memo:
+                # 메모 목록에서 제거하고 보관함으로 이동
+                if "memos" in board and memo in board["memos"]:
+                    board["memos"].remove(memo)
+                
+                if "archive" not in board:
+                    board["archive"] = []
+                
+                if memo not in board["archive"]:
+                    board["archive"].append(memo)
+                    messages.append(f"🗄️ **메모 보관:** {memo}")
+                    updated = True
+
     # 저장
     if updated:
         domain_manager.update_quest_board(channel_id, board)

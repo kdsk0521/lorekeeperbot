@@ -2105,15 +2105,25 @@ Korean output. 3rd person narration."""
                 domain_manager.append_history(channel_id, "User", action_text)
                 domain_manager.append_history(channel_id, "Char", response)
 
-                # === [좌뇌 B] 업데이트 추출 (Flash 모델) ===
+                # === [좌뇌 B] 업데이트 추출 (Flash 모델, 4개 병렬) ===
                 try:
                     # 현재 상태 가져오기 (참조용 - 중복 방지)
+                    p_data = domain_manager.get_participant_data(channel_id, uid) or {}
+                    current_inventory = p_data.get("inventory", {})
+                    current_gold = p_data.get("economy", {}).get("gold", 0)
+                    current_status = p_data.get("status_effects", [])
+
                     current_quests = quest_manager.get_active_quests(channel_id)
+                    current_memos = quest_manager.get_memos(channel_id)  # NEW
+
                     ai_mem = domain_manager.get_ai_memory(channel_id, uid) or {}
                     current_relationships = ai_mem.get("relationships", {})
                     current_known_info = ai_mem.get("known_info", [])
                     current_foreshadowing = ai_mem.get("foreshadowing", [])
                     current_passives = ai_mem.get("passives", [])
+                    current_companions = ai_mem.get("companions", []) # NEW: though companions is stored in known_info basically, checking if we need separate field in ai_mem or just consistent extraction.
+                    # Note: Original implementation might mixed companions into known_info or had it separate. 
+                    # Let's assume ai_mem structure. If not present, it's fine.
 
                     # 로어 NPC 목록 가져오기
                     lore_npcs = domain_manager.get_npcs(channel_id)
@@ -2122,19 +2132,32 @@ Korean output. 3rd person narration."""
                     # 현재 장면 NPC (좌뇌 A 결과에서 추출)
                     scene_npc_names = list(nvc_res.get("NPCAttitudes", {}).keys())
 
-                    # Flash 모델로 업데이트 추출 (선별적 추출)
-                    update_result = await memory_system.extract_updates(
+                    # Flash 모델로 업데이트 추출 (통합 병렬 호출)
+                    update_result = await memory_system.extract_all_updates(
                         client_genai,
                         MODEL_ID_FLASH,
                         action_text,  # 플레이어 입력
                         response,     # AI 서사 응답
-                        current_quests=current_quests,
+                        
+                        # 물리적 (B-1)
+                        current_inventory=current_inventory,
+                        current_gold=current_gold,
+                        current_status=current_status,
+                        
+                        # 사회적 (B-2)
                         current_relationships=current_relationships,
+                        current_companions=current_companions,
+                        lore_npc_names=lore_npc_names,
+                        scene_npc_names=scene_npc_names,
+
+                        # 서사적 (B-3)
+                        current_passives=current_passives,
                         current_known_info=current_known_info,
                         current_foreshadowing=current_foreshadowing,
-                        current_passives=current_passives,        # NEW
-                        lore_npc_names=lore_npc_names,            # NEW
-                        scene_npc_names=scene_npc_names           # NEW
+
+                        # 퀘스트/메모 (B-4)
+                        current_quests=current_quests,
+                        current_memos=current_memos
                     )
 
                     # character_sheet로 저장
