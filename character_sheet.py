@@ -156,6 +156,36 @@ class PlayerCharacterManager:
                         messages.append(f"🐾 **{companion}**")
                         mem_updated = True
 
+        # info_archive (NEW)
+        if player_mem_update.get("info_archive"):
+            if "archived_info" not in current_mem:
+                current_mem["archived_info"] = []
+            for info in player_mem_update["info_archive"]:
+                if info:
+                    # active list에서 제거
+                    if info in current_mem.get("known_info", []):
+                        current_mem["known_info"].remove(info)
+                    
+                    if info not in current_mem["archived_info"]:
+                        current_mem["archived_info"].append(info)
+                        # messages.append(f"🗄️ **정보 보관:** {info}") # 너무 시끄러울 수 있어 생략
+                        mem_updated = True
+
+        # foreshadowing_archive (NEW)
+        if player_mem_update.get("foreshadowing_archive"):
+            if "archived_foreshadowing" not in current_mem:
+                current_mem["archived_foreshadowing"] = []
+            for item in player_mem_update["foreshadowing_archive"]:
+                if item:
+                    # active list에서 제거
+                    if item in current_mem.get("foreshadowing", []):
+                        current_mem["foreshadowing"].remove(item)
+                    
+                    if item not in current_mem["archived_foreshadowing"]:
+                        current_mem["archived_foreshadowing"].append(item)
+                        # messages.append(f"🗄️ **복선 해결:** {item}")
+                        mem_updated = True
+
         # 저장
         if mem_updated:
             domain_manager.update_ai_memory(channel_id, user_id, current_mem)

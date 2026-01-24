@@ -1139,6 +1139,8 @@ async def extract_narrative_updates(
         '  "known_info": ["중요 정보"] OR null,\n'
         '  "foreshadowing": ["복선"] OR null,\n'
         '  "passives": ["패시브"] OR null,\n'
+        '  "info_archive": ["보관할 정보 (더 이상 안 중요함)"] OR null,\n'
+        '  "foreshadowing_archive": ["보관할 복선 (해결됨/지나감)"] OR null,\n'
         '  "passive_suggestion": {\n'
         '    "name": "패시브/칭호 이름",\n'
         '    "trigger": "획득 조건 설명",\n'
@@ -1417,10 +1419,13 @@ async def extract_all_updates(
             "companions": social.get("companions"),
             "passives": narrative.get("passives"),
             "known_info": narrative.get("known_info"),
-            "foreshadowing": narrative.get("foreshadowing")
+            "foreshadowing": narrative.get("foreshadowing"),
+            "info_archive": narrative.get("info_archive"),
+            "foreshadowing_archive": narrative.get("foreshadowing_archive")
         } if any([social.get("relationships"), social.get("companions"),
                   narrative.get("passives"), narrative.get("known_info"),
-                  narrative.get("foreshadowing")]) else None,
+                  narrative.get("foreshadowing"),
+                  narrative.get("info_archive"), narrative.get("foreshadowing_archive")]) else None,
         
         "PassiveSuggestion": narrative.get("passive_suggestion"),
         

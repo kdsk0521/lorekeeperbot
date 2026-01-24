@@ -287,7 +287,9 @@ def _create_default_participant(display_name: str) -> Dict[str, Any]:
             "known_info": [],  # ["마왕의 부하가 북쪽에 있다", "비밀 통로 위치"]
             "foreshadowing": [],  # ["봉인된 편지의 내용", "리엘의 과거"]
             "normalization": {},  # {"드래곤": "이제 익숙함", "마법": "아직 신기함"}
-            "notes": ""  # 자유 형식 메모
+            "notes": "",  # 자유 형식 메모
+            "archived_info": [],  # [NEW] 보관된 정보 (Deep Memory용)
+            "archived_foreshadowing": []  # [NEW] 보관된 복선
         },
         
         # === 호환성 (기존 코드용, 점진적 제거 예정) ===
@@ -332,7 +334,9 @@ def update_participant(channel_id: str, user, reset: bool = False) -> bool:
                 "known_info": [],
                 "foreshadowing": [],
                 "normalization": {},
-                "notes": ""
+                "notes": "",
+                "archived_info": [],
+                "archived_foreshadowing": []
             }
         
         # economy 필드 없으면 추가 (마이그레이션)

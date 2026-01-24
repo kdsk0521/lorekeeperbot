@@ -411,7 +411,8 @@ async def compress_fermented_to_deep(
     client,
     model_id: str,
     fermented_list: List[Dict[str, Any]],
-    current_deep: str = ""
+    current_deep: str = "",
+    archived_context: str = ""
 ) -> Optional[str]:
     """FERMENTED 메모리들을 DEEP 메모리로 초압축합니다."""
     if not client or not fermented_list:
@@ -428,15 +429,14 @@ async def compress_fermented_to_deep(
     
     system_instruction = DEEP_COMPRESS_PROMPT
     
-    # 기존 DEEP이 있으면 컨텍스트로 제공
+    # Existing DEEP Context
     context_part = ""
     if current_deep:
-        context_part = f"""# Existing Deep Memory (to be integrated)
-{current_deep}
-
----
-
-"""
+        context_part += f"# Existing Deep Memory (to be integrated)\n{current_deep}\n\n---\n\n"
+    
+    # Archived Info/Foreshadowing Context (to be woven in)
+    if archived_context:
+        context_part += f"# Archived Details (Include significant parts)\n{archived_context}\n\n---\n\n"
     
     user_prompt = f"""{context_part}# Fermented Session Extracts to Merge ({len(fermented_list)} sessions)
 
@@ -534,14 +534,43 @@ async def auto_ferment(
         fermented = session_data["fermented_history"]
         current_deep = session_data.get("deep_memory", "")
         
+        # [NEW] 모든 참가자의 아카이브 데이터 수집
+        archived_context_parts = []
+        participants = session_data.get("participants", {})
+        
+        for uid, p_data in participants.items():
+            ai_mem = p_data.get("ai_memory", {})
+            mask = p_data.get("mask", "Unknown")
+            
+            # 정보와 복선 아카이브 가져오기
+            archived_info = ai_mem.get("archived_info", [])
+            archived_foreshadowing = ai_mem.get("archived_foreshadowing", [])
+            
+            if archived_info or archived_foreshadowing:
+                p_context = f"### [{mask}'s Archived Details]\n"
+                if archived_info:
+                    p_context += f"- Info: {', '.join(archived_info)}\n"
+                if archived_foreshadowing:
+                    p_context += f"- Foreshadowing: {', '.join(archived_foreshadowing)}\n"
+                archived_context_parts.append(p_context)
+        
+        archived_context_str = "\n".join(archived_context_parts)
+        
         deep_summary = await compress_fermented_to_deep(
             client, model_id,
-            fermented, current_deep
+            fermented, current_deep, archived_context_str
         )
         
         if deep_summary:
             session_data["deep_memory"] = deep_summary
             session_data["fermented_history"] = []
+            
+            # [NEW] 사용된 아카이브 비우기 (Deep Memory로 통합되었으므로)
+            for uid in participants:
+                if "ai_memory" in participants[uid]:
+                    participants[uid]["ai_memory"]["archived_info"] = []
+                    participants[uid]["ai_memory"]["archived_foreshadowing"] = []
+            
             changes_made = True
             
             logger.info(f"[Fermentation] DEEP 압축 완료: "
