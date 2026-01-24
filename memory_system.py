@@ -308,12 +308,16 @@ async def api_call_with_retry(
     logging.error(f"[{operation_name}] 모든 재시도 실패")
     return None
 
-def safe_parse_json(text: Optional[str]) -> Dict[str, Any]:
+def safe_parse_json(text: Optional[str], expect_list: bool = False) -> Any:
     """
     AI 응답 텍스트에서 JSON 객체나 리스트를 정밀하게 찾아 파싱합니다.
+    
+    Args:
+        text: JSON 문자열
+        expect_list: True면 리스트 반환을 허용 (기본값: False - 딕셔너리 강제)
     """
     if not text:
-        return {}
+        return [] if expect_list else {}
     
     try:
         # 마크다운 코드 블록 제거
@@ -328,7 +332,7 @@ def safe_parse_json(text: Optional[str]) -> Dict[str, Any]:
                 break
         
         if start_idx == -1:
-            return {}
+            return [] if expect_list else {}
         
         # 대응하는 종료점 찾기
         target_end = '}' if cleaned_text[start_idx] == '{' else ']'
@@ -340,12 +344,21 @@ def safe_parse_json(text: Optional[str]) -> Dict[str, Any]:
                 break
         
         if end_idx == -1:
-            return {}
+            return [] if expect_list else {}
         
         json_str = cleaned_text[start_idx:end_idx]
         data = json.loads(json_str)
         
-        # 리스트인 경우 첫 번째 딕셔너리 요소 반환
+        if expect_list:
+            if isinstance(data, list):
+                return data
+            if isinstance(data, dict):
+                # 딕셔너리로 왔지만 리스트를 기대하는 경우 감싸줌 (또는 호출처 처리 맡김)
+                return [data]
+            return []
+            
+        # 기본 모드: 딕셔너리 반환 보장
+        # 리스트인 경우 첫 번째 딕셔너리 요소 반환 (LLM이 [dict]로 줄 때가 많음)
         if isinstance(data, list):
             if len(data) > 0 and isinstance(data[0], dict):
                 return data[0]
@@ -358,10 +371,10 @@ def safe_parse_json(text: Optional[str]) -> Dict[str, Any]:
     
     except json.JSONDecodeError as e:
         logging.debug(f"JSON 파싱 실패: {e}")
-        return {}
+        return [] if expect_list else {}
     except Exception as e:
         logging.warning(f"safe_parse_json 예외: {e}")
-        return {}
+        return [] if expect_list else {}
 
 # =========================================================
 # Legacy Wrappers (Backward Compatibility)
@@ -418,7 +431,8 @@ async def extract_npcs_only(client, model_id: str, text: str) -> List[Dict[str, 
         
         result = await api_call_with_retry(client, model_id, contents, config, operation_name="Extract NPCs")
         if result:
-            parsed = safe_parse_json(result)
+            # 리스트 기대 모드 활성화
+            parsed = safe_parse_json(result, expect_list=True)
             if isinstance(parsed, list):
                 return parsed
             if isinstance(parsed, dict) and 'npcs' in parsed:
