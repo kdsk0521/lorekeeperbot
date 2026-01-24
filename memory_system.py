@@ -528,7 +528,8 @@ async def extract_pc_info(client, model_id: str, text: str) -> Optional[Dict[str
         "  \"personality\": \"Personality traits\",\n"
         "  \"background\": \"Backstory\",\n"
         "  \"secret_info\": \"Hidden facts (if any)\",\n"
-        "  \"relationships\": {\"NPC Name\": \"Relation\"}\n"
+        "  \"relationships\": {\"NPC Name\": \"Relation\"},\n"
+        "  \"passives\": [\"List of passives or abilities\"]\n"
         "}\n"
         "OR null if no clear PC."
     )

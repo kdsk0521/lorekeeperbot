@@ -546,6 +546,10 @@ def apply_pc_info_to_user(channel_id: str, user_id: str) -> bool:
         if 'known_info' not in updates:
             updates['known_info'] = []
         updates['known_info'].append(f"[비밀] {pc_info['secret_info']}")
+        
+    # passives 적용
+    if pc_info.get('passives'):
+        updates['passives'] = pc_info['passives']
 
     # species와 role 정보도 appearance나 background에 추가
     extra_info = []
