@@ -1415,6 +1415,7 @@ async def _process_message(message, channel_id: str):
                 return
             
             
+            
             # --- 세션 초기화 (Partial Reset: Lore Safe) ---
             if cmd == 'clear':
                 domain_manager.reset_session_data(channel_id)
@@ -1422,13 +1423,20 @@ async def _process_message(message, channel_id: str):
                 # 세션 NPC만 삭제 (로어/수동 NPC 유지)
                 removed_count = character_sheet.npc_memory.clear_npcs_by_source(channel_id, "session")
                 
+                # 채팅 청소 (최근 500개)
+                try:
+                    await message.channel.purge(limit=500, check=lambda m: not m.pinned)
+                except Exception as e:
+                    logging.warning(f"메시지 청소 실패: {e}")
+
                 await message.channel.send(
                     "🧹 **세션 클리어 완료** (부분 초기화)\n"
                     "• 히스토리/기억 삭제 ✅\n"
                     "• 참여자 정보 초기화 ✅\n"
                     "• 퀘스트/메모 초기화 ✅\n"
                     f"• 세션 NPC 삭제 ({removed_count}명) ✅\n"
-                    "• **로어/수동추가 NPC, 룰 유지** 🛡️\n\n"
+                    "• **로어/수동추가 NPC, 룰 유지** 🛡️\n"
+                    "• 최근 메시지 청소 완료 (최대 500개) 🗑️\n\n"
                     "_※ 완전 초기화(폭파)를 원하시면 `!리셋`을 입력하세요._"
                 )
                 return

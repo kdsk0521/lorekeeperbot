@@ -1827,7 +1827,16 @@ def reset_session_data(channel_id: str) -> None:
     d["participants"] = {}
     
     # 3. Session Lock Reset
-    d["session_locked"] = False
+    # Lock is stored in settings usually
+    if "settings" in d:
+        d["settings"]["session_locked"] = False
+    else:
+        # Fallback if settings dict is missing (should not happen but safe)
+        d["settings"] = {"session_locked": False}
+    
+    # Remove root key if accidentaly created by previous bad logic
+    if "session_locked" in d:
+        del d["session_locked"]
     
     # 4. Quest Board Reset (Lore excluded from wipe? User snippet wipes it)
     d["quest_board"] = {
