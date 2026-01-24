@@ -1079,6 +1079,16 @@ def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
     save_domain(channel_id, d)
 
 
+def delete_npc(channel_id: str, name: str) -> bool:
+    """NPC를 삭제합니다."""
+    d = get_domain(channel_id)
+    if name in d.get("npcs", {}):
+        del d["npcs"][name]
+        save_domain(channel_id, d)
+        return True
+    return False
+
+
 def rename_npc(channel_id: str, old_name: str, new_name: str) -> bool:
     """
     NPC의 이름을 변경합니다 (Key Rename).
@@ -1793,3 +1803,42 @@ def get_session_ai_memory_for_prompt(channel_id: str) -> str:
         lines.append(f"파티 상황: {session_mem['party_dynamics']}")
     
     return "\n".join(lines)
+
+
+# =========================================================
+# 세션 초기화 (Partial Reset)
+# =========================================================
+def reset_session_data(channel_id: str) -> None:
+    """
+    세션 데이터만 초기화합니다. (로어, 규칙, 장르 유지)
+    - 히스토리 삭제
+    - 참여자 데이터 삭제
+    - 세션 락 해제
+    - 퀘스트 보드 초기화
+    """
+    d = get_domain(channel_id)
+    
+    # 1. History Wipe
+    d["history"] = []
+    d["fermented_history"] = []
+    d["deep_memory"] = ""
+    
+    # 2. Participants Wipe
+    d["participants"] = {}
+    
+    # 3. Session Lock Reset
+    d["session_locked"] = False
+    
+    # 4. Quest Board Reset (Lore excluded from wipe? User snippet wipes it)
+    d["quest_board"] = {
+        "active": [],
+        "completed": [],
+        "memos": [],
+        "archive": [],
+        "lore": []
+    }
+    
+    d["ai_session_memory"] = {}
+    
+    save_domain(channel_id, d)
+

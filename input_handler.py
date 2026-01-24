@@ -147,6 +147,8 @@ def parse_input(content: str) -> Optional[Dict[str, Any]]:
             '리셋': 'reset',
             '초기화': 'reset',
             'reset': 'reset',
+            '클리어': 'clear',
+            'clear': 'clear',
             '시작': 'start',
             'start': 'start',
             '잠금해제': 'unlock',

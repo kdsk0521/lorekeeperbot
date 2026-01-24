@@ -1340,17 +1340,20 @@ async def _process_message(message, channel_id: str):
                             )
                         else:
                             await message.channel.send("⚠️ 유효한 NPC를 찾을 수 없습니다.")
-                elif ':' in content:
-                    name, desc = content.split(':', 1)
-                    name = name.strip()
-                    desc = desc.strip()
-                    character_sheet.npc_memory.add_npc(channel_id, name, desc, source="session")
-                    await message.channel.send(f"✅ 🎭 세션 NPC 추가됨: **{name}**\n{desc}")
-                else:
-                    name = content
-                    desc = "설명 없음"
-                    character_sheet.npc_memory.add_npc(channel_id, name, desc, source="session")
-                    await message.channel.send(f"✅ 🎭 세션 NPC 추가됨: **{name}**\n{desc}")
+                else: # 파일이 없는 경우
+                    if not content:
+                        await message.channel.send("⚠️ NPC 이름과 설명을 입력해주세요. 예: `!npc 리엘: 숲의 정령`")
+                        return
+                    
+                    if ":" in content:
+                        name, desc = content.split(":", 1)
+                        character_sheet.npc_memory.add_npc(channel_id, name.strip(), desc.strip(), source="manual")
+                        await message.channel.send(f"✅ 🎭 NPC 추가됨 (수동): **{name.strip()}**\n{desc.strip()}")
+                    else:
+                        name = content
+                        desc = "설명 없음"
+                        character_sheet.npc_memory.add_npc(channel_id, name, desc, source="manual")
+                        await message.channel.send(f"✅ 🎭 NPC 추가됨 (수동): **{name}**\n{desc}")
                 return
             
             # --- AI 분석 도구 ---
@@ -1407,6 +1410,35 @@ async def _process_message(message, channel_id: str):
                     await send_long_message(message.channel, response_text)
                 return
             
+                return
+            
+                return
+            
+            
+            # --- 세션 초기화 (Partial Reset: Lore Safe) ---
+            if cmd == 'clear':
+                domain_manager.reset_session_data(channel_id)
+                
+                # 세션 NPC만 삭제 (로어/수동 NPC 유지)
+                removed_count = character_sheet.npc_memory.clear_npcs_by_source(channel_id, "session")
+                
+                await message.channel.send(
+                    "🧹 **세션 클리어 완료** (부분 초기화)\n"
+                    "• 히스토리/기억 삭제 ✅\n"
+                    "• 참여자 정보 초기화 ✅\n"
+                    "• 퀘스트/메모 초기화 ✅\n"
+                    f"• 세션 NPC 삭제 ({removed_count}명) ✅\n"
+                    "• **로어/수동추가 NPC, 룰 유지** 🛡️\n\n"
+                    "_※ 완전 초기화(폭파)를 원하시면 `!리셋`을 입력하세요._"
+                )
+                return
+
+            # --- 세션 완전 초기화 (Full Reset: Nuke) ---
+            if cmd == 'reset':
+                # session_manager.execute_reset will handle the confirmation and nuking
+                await session_manager.manager.execute_reset(message, client, domain_manager, character_sheet)
+                return
+
             if cmd == 'consistency':
                 if not client_genai:
                     await message.channel.send("⚠️ AI가 연결되지 않았습니다.")

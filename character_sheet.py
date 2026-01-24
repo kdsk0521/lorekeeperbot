@@ -533,6 +533,13 @@ class NPCManager:
             logging.warning("NPC 이름이 비어있어 추가하지 않음")
             return
 
+        # Rename Logic (Identity Reveal for Lore/Manual Add)
+        if " > " in name:
+            old_name, new_name = name.split(" > ", 1)
+            if domain_manager.rename_npc(channel_id, old_name.strip(), new_name.strip()):
+                logging.info(f"🔄 Identity Revealed: {old_name} ➔ {new_name}")
+                name = new_name.strip() # Update target name for subsequent logic
+
         npcs = domain_manager.get_npcs(channel_id)
         
         # Check for similar existing NPC to prevent duplication
@@ -629,6 +636,26 @@ class NPCManager:
     ) -> Optional[Dict[str, Any]]:
         npcs = domain_manager.get_npcs(channel_id)
         return npcs.get(name)
+
+    def get_npc_list_string(self, channel_id: str) -> str:
+        """프롬프트용 NPC 목록 문자열을 생성합니다."""
+        npcs = domain_manager.get_npcs(channel_id)
+        if not npcs:
+            return "없음"
+            
+        lines = []
+        for name, data in npcs.items():
+            desc = data.get("desc", "설명 없음")
+            # 긴 설명은 요약
+            if len(desc) > 30:
+                desc = desc[:30] + "..."
+            
+            info = f"- {name}: {desc}"
+            if data.get("status") != DEFAULT_NPC_STATUS:
+                info += f" [{data['status']}]"
+            lines.append(info)
+            
+        return "\n".join(lines)
 
     def get_npc_summary(self, channel_id: str) -> Optional[str]:
         npcs = domain_manager.get_npcs(channel_id)
