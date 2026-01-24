@@ -873,38 +873,6 @@ async def analyze_context_nvc(
         "- Social/emotional: 배신당함, 거절당함, 협박당함, 죽을고비 등\n"
         "- Supernatural: 마법피격, 드래곤조우, 귀신목격, 차원이동 등\n"
         "Only count if it ACTUALLY HAPPENED to the player character.\n"
-        "\n"
-        "### PASSIVE SUGGESTION SYSTEM (AI-DRIVEN)\n"
-        "Analyze the player's cumulative experiences and suggest a NEW passive/title if warranted.\n\n"
-        
-        "**When to suggest a passive:**\n"
-        "- Repeated similar experiences (5+ times): 독에 자주 중독 → [독 내성]\n"
-        "- Significant relationship milestone: 엘프와 10+ 우호 상호작용 → [엘프의 친구]\n"
-        "- Survival of extreme situation: 죽을 고비 3회 → [구사일생]\n"
-        "- Unique achievement: 드래곤 처치 → [용 사냥꾼]\n"
-        "- Behavioral pattern: 항상 협상 선택 → [외교관의 혀]\n"
-        "- World-specific adaptation: 던전 50층 돌파 → [심연의 주민]\n\n"
-        
-        "**Passive structure:**\n"
-        "- name: Creative Korean title (e.g., '엘프의 친구', '불굴의 정신')\n"
-        "- trigger: What earned this (e.g., '엘프와 우호적 상호작용 10회')\n"
-        "- effect: Concrete in-world effect (e.g., '엘프에게 호감도 보너스, 엘프어 기초 이해')\n"
-        "- category: 생존/전투/사회/초자연/지식/기타\n\n"
-        
-        "**Rules:**\n"
-        "- Only suggest if TRULY earned through gameplay, not arbitrary\n"
-        "- Be creative but grounded in what actually happened\n"
-        "- Don't repeat passives player already has (check context)\n"
-        "- Suggest at most 1 passive per analysis\n"
-        "- Set to null if no passive is warranted\n\n"
-        
-        '  "PassiveSuggestion": {\n'
-        '    "name": "패시브/칭호 이름",\n'
-        '    "trigger": "획득 조건 설명",\n'
-        '    "effect": "구체적 효과",\n'
-        '    "category": "카테고리",\n'
-        '    "reasoning": "왜 이 패시브를 제안하는지 간단 설명"\n'
-        '  } OR null,\n'
     )
 
     # player_context가 있으면 추가 (중복 패시브 방지용)
@@ -1170,8 +1138,25 @@ async def extract_narrative_updates(
         "{\n"
         '  "known_info": ["중요 정보"] OR null,\n'
         '  "foreshadowing": ["복선"] OR null,\n'
-        '  "passives": ["패시브"] OR null\n'
+        '  "passives": ["패시브"] OR null,\n'
+        '  "passive_suggestion": {\n'
+        '    "name": "패시브/칭호 이름",\n'
+        '    "trigger": "획득 조건 설명",\n'
+        '    "effect": "구체적 효과",\n'
+        '    "category": "카테고리",\n'
+        '    "reasoning": "왜 이 패시브를 제안하는지 간단 설명"\n'
+        '  } OR null\n'
         "}\n\n"
+        
+        "### PASSIVE SUGGESTION SYSTEM (NEW)\n"
+        "If the player has achieved something SIGNIFICANT or REPEATED (5+ times), suggest a NEW passive.\n"
+        "This is different from 'passives' list (which tracks usage of EXISTING passives).\n\n"
+        
+        "**When to suggest:**\n"
+        "- Repeated experiences: 독에 자주 중독(5회) → [독 내성]\n"
+        "- Relationship milestone: 엘프와 10회 우호적 → [엘프의 친구]\n"
+        "- Survival: 죽을 고비 3회 넘김 → [구사일생]\n"
+        "- Unique feat: 드래곤 처치 → [용 사냥꾼]\n\n"
         
         "========================================\n"
         "### KNOWN_INFO: Single Principle\n"
@@ -1436,6 +1421,8 @@ async def extract_all_updates(
         } if any([social.get("relationships"), social.get("companions"),
                   narrative.get("passives"), narrative.get("known_info"),
                   narrative.get("foreshadowing")]) else None,
+        
+        "PassiveSuggestion": narrative.get("passive_suggestion"),
         
         "QuestUpdate": {
             "quest_add": quest.get("quest_add"),

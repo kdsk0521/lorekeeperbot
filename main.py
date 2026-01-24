@@ -2179,6 +2179,16 @@ Korean output. 3rd person narration."""
                     if extract_msgs:
                         await message.channel.send(f"📊 {' | '.join(extract_msgs)}")
 
+                    # 패시브 제안 처리 (NEW)
+                    if update_result.get("PassiveSuggestion"):
+                        suggestion = update_result["PassiveSuggestion"]
+                        p_data, p_msg = simulation_manager.grant_ai_passive(
+                            p_data, suggestion, current_day=1  # current_day 로직은 추후 보강 필요
+                        )
+                        if p_msg:
+                            await message.channel.send(p_msg)
+                            domain_manager.save_participant_data(channel_id, uid, p_data)
+
                 except Exception as ue:
                     logging.warning(f"[UpdateExtractor] 실패 (무시됨): {ue}")
 
