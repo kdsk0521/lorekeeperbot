@@ -63,12 +63,12 @@ async def extract_physical_updates(
         "- NO (consumed, service, others' property) → null\n\n"
         
         "Examples:\n"
-        "- '검을 받았다' → Can take to next scene → ✅ add\n"
-        "- '급식을 받았다' → Eaten, can't take → ❌ null\n"
-        "- '치료를 받았다' → Service, can't take → ❌ null\n"
-        "- '동료가 대신 챙겼다' → Party can access → ✅ add\n"
-        "- 'NPC가 자기 주머니에' → Can't access → ❌ null\n"
-        "- '물약을 마셨다' → Used, gone → ✅ remove\n\n"
+        "- 'Received a sword' → Can take to next scene → ✅ add\n"
+        "- 'Received school lunch' → Eaten, can't take → ❌ null\n"
+        "- 'Received treatment' → Service, can't take → ❌ null\n"
+        "- 'Companion took it instead' → Party can access → ✅ add\n"
+        "- 'NPC put it in their pocket' → Can't access → ❌ null\n"
+        "- 'Drank a potion' → Used, gone → ✅ remove\n\n"
         
         "========================================\n"
         "### GOLD: Single Principle\n"
@@ -94,10 +94,10 @@ async def extract_physical_updates(
     )
     
     user_prompt = (
-        f"### 현재 상태\n{context}\n\n"
-        f"### 플레이어 입력\n{player_input}\n\n"
-        f"### AI 서사\n{ai_response[:1500]}\n\n"
-        "물리적 변화만 추출. JSON만 출력."
+        f"### Current State\n{context}\n\n"
+        f"### Player Input\n{player_input}\n\n"
+        f"### AI Narrative\n{ai_response[:1500]}\n\n"
+        "Extract physical changes only. Output JSON only."
     )
     
     try:
@@ -139,8 +139,8 @@ async def extract_social_updates(
         
         "### OUTPUT FORMAT (JSON ONLY)\n"
         "{\n"
-        '  "relationships": {"NPC이름": "관계단계(이유)"} OR null,\n'
-        '  "companions": ["동행자: 설명"] OR null\n'
+        '  "relationships": {"NPC_Name": "Level(Reason)"} OR null,\n'
+        '  "companions": ["Companion: Description"] OR null\n'
         "}\n\n"
         
         "### NPC IDENTITY RULES\n"
@@ -182,10 +182,10 @@ async def extract_social_updates(
     context = "\n".join(context_parts) if context_parts else "없음"
     
     user_prompt = (
-        f"### 현재 상태\n{context}\n\n"
-        f"### 플레이어 입력\n{player_input}\n\n"
-        f"### AI 서사\n{ai_response[:1500]}\n\n"
-        "관계/동행자 변화만 추출. JSON만 출력."
+        f"### Current State\n{context}\n\n"
+        f"### Player Input\n{player_input}\n\n"
+        f"### AI Narrative\n{ai_response[:1500]}\n\n"
+        "Extract relationship/companion changes only. Output JSON only."
     )
     
     try:
@@ -225,13 +225,13 @@ async def extract_narrative_updates(
         
         "### OUTPUT FORMAT (JSON ONLY)\n"
         "{\n"
-        '  "passives": ["패시브"] OR null,\n'
+        '  "passives": ["PassiveName"] OR null,\n'
         '  "passive_suggestion": {\n'
-        '    "name": "패시브/칭호 이름",\n'
-        '    "trigger": "획득 조건 설명",\n'
-        '    "effect": "구체적 효과",\n'
-        '    "category": "카테고리",\n'
-        '    "reasoning": "왜 이 패시브를 제안하는지 간단 설명"\n'
+        '    "name": "Passive/Title Name",\n'
+        '    "trigger": "Acquisition Condition",\n'
+        '    "effect": "Specific Effect",\n'
+        '    "category": "Category",\n'
+        '    "reasoning": "Brief reason for suggestion"\n'
         '  } OR null\n'
         "}\n\n"
         
@@ -240,10 +240,10 @@ async def extract_narrative_updates(
         "This is different from 'passives' list (which tracks usage of EXISTING passives).\n\n"
         
         "**When to suggest:**\n"
-        "- Repeated experiences: 독에 자주 중독(5회) → [독 내성]\n"
-        "- Relationship milestone: 엘프와 10회 우호적 → [엘프의 친구]\n"
-        "- Survival: 죽을 고비 3회 넘김 → [구사일생]\n"
-        "- Unique feat: 드래곤 처치 → [용 사냥꾼]\n\n"
+        "- Repeated experiences: Poisoned often (5x) → [Poison Resistance]\n"
+        "- Relationship milestone: Friendly with Elves (10x) → [Elf Friend]\n"
+        "- Survival: Survived near-death (3x) → [Survivor]\n"
+        "- Unique feat: Killed a Dragon → [Dragon Slayer]\n\n"
         
         "========================================\n"
         "### PASSIVES: Single Principle\n"
@@ -270,10 +270,10 @@ async def extract_narrative_updates(
     context = "\n".join(context_parts) if context_parts else "없음"
     
     user_prompt = (
-        f"### 현재 상태\n{context}\n\n"
-        f"### 플레이어 입력\n{player_input}\n\n"
-        f"### AI 서사\n{ai_response[:1500]}\n\n"
-        "패시브 변화만 추출. JSON만 출력."
+        f"### Current State\n{context}\n\n"
+        f"### Player Input\n{player_input}\n\n"
+        f"### AI Narrative\n{ai_response[:1500]}\n\n"
+        "Extract passive changes only. Output JSON only."
     )
     
     try:
@@ -313,11 +313,11 @@ async def extract_quest_updates(
         
         "### OUTPUT FORMAT (JSON ONLY)\n"
         "{\n"
-        '  "quest_add": ["새 퀘스트"] OR null,\n'
-        '  "quest_complete": ["완료 퀘스트"] OR null,\n'
-        '  "memo_add": ["새 메모"] OR null,\n'
-        '  "memo_remove": ["삭제할 메모"] OR null,\n'
-        '  "memo_archive": ["보관할 메모"] OR null\n'
+        '  "quest_add": ["New Quest"] OR null,\n'
+        '  "quest_complete": ["Completed Quest"] OR null,\n'
+        '  "memo_add": ["New Memo"] OR null,\n'
+        '  "memo_remove": ["Memo to delete"] OR null,\n'
+        '  "memo_archive": ["Memo to archive"] OR null\n'
         "}\n\n"
         
         "========================================\n"
@@ -329,9 +329,9 @@ async def extract_quest_updates(
         "- NO (just information, no action needed) → null\n\n"
         
         "Examples:\n"
-        "- 'NPC가 고블린 소탕을 부탁했다' → Goal exists → ✅ add\n"
-        "- '던전이 있다는 소문을 들었다' → No explicit goal → ❌ null\n"
-        "- '보상을 약속했다' → Motivation, but what's the task? → needs explicit goal\n\n"
+        "- 'NPC asked to slay goblins' → Goal exists → ✅ add\n"
+        "- 'Heard rumor about a dungeon' → No explicit goal → ❌ null\n"
+        "- 'Promised a reward' → Motivation, but what's the task? → needs explicit goal\n\n"
         
         "========================================\n"
         "### QUEST_COMPLETE: Single Principle\n"
@@ -342,8 +342,8 @@ async def extract_quest_updates(
         "- NO (in progress, partially done) → null\n\n"
         
         "Examples:\n"
-        "- '고블린을 모두 처치했다' (objective was extermination) → ✅ complete\n"
-        "- '고블린 3마리를 잡았다' (objective was 10) → ❌ null (not done)\n\n"
+        "- 'Killed all goblins' (objective was extermination) → ✅ complete\n"
+        "- 'Caught 3 goblins' (objective was 10) → ❌ null (not done)\n\n"
         
         "========================================\n"
         "### MEMO: Single Principle\n"
@@ -358,9 +358,9 @@ async def extract_quest_updates(
         "- archive: Important to KEEP permanently (equipment, key relationships)\n\n"
         
         "Examples:\n"
-        "- '열쇠를 찾아야 한다' → Useful reminder → ✅ memo_add\n"
-        "- '열쇠를 사용했다' → No longer needed → ✅ memo_remove\n"
-        "- '전설의 검을 획득' → Keep forever → ✅ memo_archive\n"
+        "- 'Must find the key' → Useful reminder → ✅ memo_add\n"
+        "- 'Used the key' → No longer needed → ✅ memo_remove\n"
+        "- 'Acquired Legendary Sword' → Keep forever → ✅ memo_archive\n"
     )
     
     context_parts = []
@@ -372,10 +372,10 @@ async def extract_quest_updates(
     context = "\n".join(context_parts) if context_parts else "없음"
     
     user_prompt = (
-        f"### 현재 상태\n{context}\n\n"
-        f"### 플레이어 입력\n{player_input}\n\n"
-        f"### AI 서사\n{ai_response[:1500]}\n\n"
-        "퀘스트/메모 변화만 추출. JSON만 출력."
+        f"### Current State\n{context}\n\n"
+        f"### Player Input\n{player_input}\n\n"
+        f"### AI Narrative\n{ai_response[:1500]}\n\n"
+        "Extract Quest/Memo changes only. Output JSON only."
     )
     
     try:

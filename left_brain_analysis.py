@@ -75,19 +75,19 @@ async def analyze_context_nvc(
         "3. **Causal Integrity:** Verify causes existed BEFORE effects.\n"
         "4. **Experience Recognition:** Note significant achievements, repeated experiences, and growth moments.\n\n"
 
-        "### SYSTEM ACTION RULES (자동 퀘스트/메모/NPC 관리)\n"
+        "### SYSTEM ACTION RULES (manage Quests/Memos/NPCs automatically)\n"
         "SystemAction triggers automatically based on narrative events.\n\n"
         
         "**Quest Actions:**\n"
-        "- `{\"tool\": \"Quest\", \"type\": \"Add\", \"content\": \"퀘스트 내용\"}` — When NPC gives mission, player discovers objective\n"
-        "- `{\"tool\": \"Quest\", \"type\": \"Complete\", \"content\": \"기존 퀘스트의 일부 텍스트\"}` — When objective achieved, mission accomplished\n\n"
+        "- `{\"tool\": \"Quest\", \"type\": \"Add\", \"content\": \"Quest Description\"}` — When NPC gives mission, player discovers objective\n"
+        "- `{\"tool\": \"Quest\", \"type\": \"Complete\", \"content\": \"Part of existing quest text\"}` — When objective achieved, mission accomplished\n\n"
         
         "**Memo Actions:**\n"
-        "- `{\"tool\": \"Memo\", \"type\": \"Add\", \"content\": \"메모 내용\"}` — Important info: clues, NPC names, codes, locations, items acquired, rumors/gossip heard\n"
-        "- `{\"tool\": \"Memo\", \"type\": \"Archive\", \"content\": \"기존 메모의 일부 텍스트\"}` — When memo becomes obsolete (item used, info no longer relevant)\n\n"
+        "- `{\"tool\": \"Memo\", \"type\": \"Add\", \"content\": \"Memo Content\"}` — Important info: clues, NPC names, codes, locations, items acquired, rumors/gossip heard\n"
+        "- `{\"tool\": \"Memo\", \"type\": \"Archive\", \"content\": \"Part of existing memo text\"}` — When memo becomes obsolete (item used, info no longer relevant)\n\n"
         
         "**NPC Actions:**\n"
-        "- `{\"tool\": \"NPC\", \"type\": \"Add\", \"content\": \"이름: 설명\"}` — When new named NPC introduced\n\n"
+        "- `{\"tool\": \"NPC\", \"type\": \"Add\", \"content\": \"Name: Description\"}` — When new named NPC introduced\n\n"
         
         "**Examples:**\n"
         "- Player receives letter with mission → Quest Add\n"
@@ -96,7 +96,7 @@ async def analyze_context_nvc(
         "- Player hears rumor about \"haunted forest at night\" → Memo Add\n"
         "- NPC mentions \"black market in the sewers\" → Memo Add\n"
         "- Player uses the password successfully → Memo Archive\n"
-        "- Player meets \"철수\" the blacksmith → NPC Add\n\n"
+        "- Player meets \"Cheolsu\" the blacksmith → NPC Add\n\n"
         
         "**IMPORTANT:** Return `null` if no action needed. Don't force actions.\n\n"
 
@@ -117,7 +117,7 @@ async def analyze_context_nvc(
         "- Set to `null` if no NPC interaction is appropriate.\n\n"
 
         "========================================\n"
-        "### ACTION JUDGMENT (행동 판정 - GM 역할)\n"
+        "### ACTION JUDGMENT (Game Master Role)\n"
         "========================================\n"
         "You are the GM. Judge player actions realistically.\n"
         "**Player input = ATTEMPT to try, NOT guaranteed success.**\n\n"
@@ -152,13 +152,13 @@ async def analyze_context_nvc(
         "- Use `no_tool`: -10~-20\n\n"
 
         "**Example:**\n"
-        "Player input: '자물쇠를 딴다'\n"
+        "Player input: 'Picking the lock'\n"
         "PC has: no lockpicking passive, no tools\n"
         "Situation: guards nearby\n"
         "→ ActionJudgment: {\n"
-        '    "action": "자물쇠 따기",\n'
+        '    "action": "Picking lock",\n'
         '    "difficulty": "normal",\n'
-        '    "difficulty_reason": "일반적인 자물쇠지만 도구가 없음",\n'
+        '    "difficulty_reason": "Standard lock but no tools",\n'
         '    "modifiers": [\n'
         '        {"no_tool": -15},\n'
         '        {"time_pressure": -10}\n'
@@ -181,7 +181,7 @@ async def analyze_context_nvc(
         '    "suggested_focus": "What the Right Hemisphere should emphasize"\n'
         '  },\n'
         '  "NPCAttitudes": {\n'
-        '    "NPC이름": {"attitude": "hostile/unfriendly/neutral/friendly/devoted", "reason": "why"},\n'
+        '    "NPC_Name": {"attitude": "hostile/unfriendly/neutral/friendly/devoted", "reason": "why"},\n'
         '    "...": {...}\n'
         '  },\n'
         '  "NPCInteraction": {\n'
@@ -190,43 +190,43 @@ async def analyze_context_nvc(
         '    "topic": "What they might discuss",\n'
         '    "mood": "tense/casual/heated/secretive"\n'
         '  } OR null,\n'
-        '  "AbnormalElements": ["드래곤", "마법", "고백"] OR [],\n'
-        '  "ExperienceCounters": {"독중독": 1, "백병전": 1} OR {},\n'
+        '  "AbnormalElements": ["Dragon", "Magic", "Confession"] OR [],\n'
+        '  "ExperienceCounters": {"Poisoning": 1, "MeleeCombat": 1} OR {},\n'
         '  "SceneType": "normal/gore/nsfw/gore_nsfw",\n'
         '  "ActionJudgment": {\n'
-        '    "action": "플레이어가 시도하는 행동",\n'
+        '    "action": "Player Action being attempted",\n'
         '    "difficulty": "trivial/easy/normal/hard/extreme",\n'
-        '    "difficulty_reason": "이 난이도를 선택한 근거 (필수)",\n'
+        '    "difficulty_reason": "Rationale for difficulty (required)",\n'
         '    "modifiers": [\n'
-        '        {"passive_패시브명": 20},\n'
-        '        {"tool_도구명": 10},\n'
-        '        {"condition_상태": -10}\n'
+        '        {"passive_PassiveName": 20},\n'
+        '        {"tool_ToolName": 10},\n'
+        '        {"condition_Status": -10}\n'
         '    ]\n'
         '  } OR null,\n'
         '  "Need": "Logical next step for Right Hemisphere",\n'
         '  "SystemAction": { "tool": "Quest/Memo/NPC", "type": "Add/Complete/Archive", "content": "..." } OR null,\n'
         '  "SessionMemoryUpdate": {\n'
-        '    "world_summary": "현재 세계 상황 요약 (변경시에만)" OR null,\n'
-        '    "world_changes": ["세계에 일어난 변화"] OR null,\n'
-        '    "current_arc": "현재 스토리 아크 설명" OR null,\n'
-        '    "active_threads": ["새로 시작된 플롯 스레드"] OR null,\n'
-        '    "resolved_threads": ["해결된 플롯 스레드"] OR null,\n'
-        '    "npc_summaries": {"NPC이름": "NPC 요약 설명"} OR null\n'
+        '    "world_summary": "Summary of current world state (only if changed)" OR null,\n'
+        '    "world_changes": ["Changes in the world"] OR null,\n'
+        '    "current_arc": "Current Story Arc description" OR null,\n'
+        '    "active_threads": ["Newly started plot threads"] OR null,\n'
+        '    "resolved_threads": ["Resolved plot threads"] OR null,\n'
+        '    "npc_summaries": {"NPC_Name": "NPC summary description"} OR null\n'
         '  } OR null\n'
         "}\n"
         "\n"
         "**NOTE:** PlayerUpdate, PlayerMemoryUpdate, QuestUpdate are now handled by a separate\n"
         "extraction process after narrative generation. Focus only on scene analysis fields above.\n\n"
 
-        "### SCENE TYPE DETECTION (자동 장면 유형 감지)\n"
+        "### SCENE TYPE DETECTION (Auto-Detect)\n"
         "**SceneType:** Automatically detect the nature of the current scene.\n"
         "Based on narrative context, determine if mature content descriptions are appropriate:\n\n"
         
         "- `normal`: Standard scene - default narrative style\n"
         "- `gore`: Scene involves graphic violence, torture, severe injury, body horror\n"
-        "  Examples: 전투 중 심각한 부상, 고문, 처형, 신체 훼손, 잔혹한 죽음\n"
+        "  Examples: Severe combat injury, torture, execution, mutilation, brutal death\n"
         "- `nsfw`: Scene involves intimate/romantic situations between consenting adults\n"
-        "  Examples: 연인 간 친밀한 장면, 성인 로맨스, 관능적 상황\n"
+        "  Examples: Intimacy between lovers, adult romance, sensual situations\n"
         "- `gore_nsfw`: Scene involves both elements\n\n"
         
         "**Detection criteria:**\n"
@@ -239,13 +239,13 @@ async def analyze_context_nvc(
 
         "### ABNORMAL ELEMENTS & EXPERIENCE DETECTION\n"
         "**AbnormalElements:** List any supernatural, unusual, or extraordinary elements in the scene.\n"
-        "Examples: 드래곤, 마법, 귀신, 상태창, 이세계, 몬스터, 초능력, 고백, 결투, 납치\n\n"
+        "Examples: Dragon, Magic, Ghost, Status Window, Isekai, Monster, Superpower, Confession, Duel, Kidnapping\n\n"
         "**ExperienceCounters:** Detect significant experiences that contribute to character growth.\n"
         "Use descriptive names based on what actually happened:\n"
-        "- Physical trials: 독중독, 화상, 동상, 낙하, 기절, 굶주림 등\n"
-        "- Combat experiences: 백병전, 암살시도, 포위당함 등\n"
-        "- Social/emotional: 배신당함, 거절당함, 협박당함, 죽을고비 등\n"
-        "- Supernatural: 마법피격, 드래곤조우, 귀신목격, 차원이동 등\n"
+        "- Physical trials: Poisoning, Burn, Frostbite, Falling, Fainting, Starvation etc.\n"
+        "- Combat experiences: MeleeCombat, AssassinationAttempt, Surrounded etc.\n"
+        "- Social/emotional: Betrayal, Rejection, Blackmail, NearDeath etc.\n"
+        "- Supernatural: MagicHit, DragonEncounter, GhostSighting, DimensionShift etc.\n"
         "Only count if it ACTUALLY HAPPENED to the player character.\n"
     )
 
