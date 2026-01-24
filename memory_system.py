@@ -11,7 +11,7 @@ import json
 import asyncio
 import logging
 import re
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from google.genai import types
 
 MAX_RETRY_COUNT = 3
