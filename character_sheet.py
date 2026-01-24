@@ -118,9 +118,13 @@ class PlayerCharacterManager:
         current_mem = domain_manager.get_ai_memory(channel_id, user_id) or {}
         mem_updated = False
 
+
+        # We will collect successful updates here to save them
+        updates_to_save = {}
+
         # appearance (외형)
         if player_mem_update.get("appearance"):
-            current_mem["appearance"] = player_mem_update["appearance"]
+            updates_to_save["appearance"] = player_mem_update["appearance"]
             short = player_mem_update['appearance'][:30]
             messages.append(f"👤 **외형:** {short}...")
             mem_updated = True
@@ -129,16 +133,25 @@ class PlayerCharacterManager:
         if player_mem_update.get("relationships"):
             for name, desc in player_mem_update["relationships"].items():
                 if name and desc:
+                    # Rename Logic (Identity Reveal)
+                    if " > " in name:
+                        old_name, new_name = name.split(" > ", 1)
+                        if domain_manager.rename_npc(channel_id, old_name.strip(), new_name.strip()):
+                            messages.append(f"🔄 **Identity Revealed:** {old_name} ➔ {new_name}")
+                            name = new_name.strip() # Update target name for relationship update logic
+                    
                     # domain.npcs에 통합 저장 (NPC relationship 필드 업데이트)
                     npc_memory.update_npc_relationship(channel_id, name, desc)
                     messages.append(f"💞 **{name}**: {desc}")
 
         # passives (패시브/칭호)
         if player_mem_update.get("passives"):
-            if "passives" not in current_mem:
-                current_mem["passives"] = []
-            # Normalize existing passives for comparison
-            current_passives_norm = {p.strip().lower() for p in current_mem.get("passives", [])}
+            # Load current valid passives from domain (to check duplicates)
+            # changes to updates_to_save['passives'] will be merged by update_ai_memory later
+            current_passives = current_mem.get("passives", [])
+            current_passives_norm = {p.strip().lower() for p in current_passives}
+            
+            new_passives = []
             
             for passive in player_mem_update["passives"]:
                 if not passive:
@@ -148,57 +161,71 @@ class PlayerCharacterManager:
                 p_clean = passive.strip()
                 p_norm = p_clean.lower()
                 
-                # Check if it's already in the list (case-insensitive)
+                # Check against CURRENT memory
                 if p_norm not in current_passives_norm:
-                    current_mem["passives"].append(p_clean)
-                    current_passives_norm.add(p_norm) # Update local set
+                    new_passives.append(p_clean)
+                    current_passives_norm.add(p_norm) 
                     messages.append(f"🏆 **{p_clean}**")
                     mem_updated = True
-
-
+            
+            if new_passives:
+                updates_to_save["passives"] = new_passives
 
         # normalization (비일상 적응)
         if player_mem_update.get("normalization"):
-            if "normalization" not in current_mem:
-                current_mem["normalization"] = {}
+            if "normalization" not in updates_to_save:
+                updates_to_save["normalization"] = {}
+                
             for thing, status in player_mem_update["normalization"].items():
                 if thing and status:
-                    current_mem["normalization"][thing] = status
+                    updates_to_save["normalization"][thing] = status
                     messages.append(f"🌓 **{thing}**: {status}")
                     mem_updated = True
-
+        
         # companions (동행자)
         if player_mem_update.get("companions"):
-            if "companions" not in current_mem:
-                current_mem["companions"] = []
+            new_companions = []
+            current_companions = current_mem.get("companions", [])
+            
             for companion in player_mem_update["companions"]:
-                if companion:
-                    if companion not in current_mem["companions"]:
-                        current_mem["companions"].append(companion)
-                        messages.append(f"🐾 **{companion}**")
-                        mem_updated = True
+                if companion and companion not in current_companions:
+                     new_companions.append(companion)
+                     messages.append(f"🐾 **{companion}**")
+                     mem_updated = True
+            
+            if new_companions:
+                updates_to_save["companions"] = new_companions
 
         # info_archive (NEW)
         if player_mem_update.get("info_archive"):
-            if "archived_info" not in current_mem:
-                current_mem["archived_info"] = []
+            new_info = []
+            current_info = current_mem.get("archived_info", [])
+            
             for info in player_mem_update["info_archive"]:
-                if info:
-                    if info not in current_mem["archived_info"]:
-                        current_mem["archived_info"].append(info)
-                        mem_updated = True
+                if info and info not in current_info:
+                    new_info.append(info)
+                    mem_updated = True
+            
+            if new_info:
+                updates_to_save["archived_info"] = new_info
 
         # foreshadowing_archive (NEW)
         if player_mem_update.get("foreshadowing_archive"):
-            if "archived_foreshadowing" not in current_mem:
-                current_mem["archived_foreshadowing"] = []
+            new_items = []
+            current_fore = current_mem.get("archived_foreshadowing", [])
+            
             for item in player_mem_update["foreshadowing_archive"]:
-                if item:
-                    if item not in current_mem["archived_foreshadowing"]:
-                        current_mem["archived_foreshadowing"].append(item)
-                        mem_updated = True
+                if item and item not in current_fore:
+                    new_items.append(item)
+                    mem_updated = True
+                    
+            if new_items:
+                updates_to_save["archived_foreshadowing"] = new_items
 
         # 저장
+        if updates_to_save:
+            domain_manager.update_ai_memory(channel_id, user_id, updates_to_save)
+
         if mem_updated:
             domain_manager.update_ai_memory(channel_id, user_id, current_mem)
             logging.info(f"[CharacterSheet] 메모리 업데이트: {messages}")

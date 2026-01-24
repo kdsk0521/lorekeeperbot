@@ -153,6 +153,11 @@ async def extract_social_updates(
         "2. DO NOT create relationships with Organizations (e.g., 'The Guild').\n"
         "3. DO NOT create duplicates (e.g., if 'Clara' exists, do not add 'Nurse Clara').\n\n"
         
+        "### IDENTITY REVEAL (RENAMING)\n"
+        "If a character reveals a new name/identity, use format: 'Old Name > New Name'\n"
+        "Example: {'Stranger > Geralt': 'Friendly'}\n"
+        "This merges the old entry into the new one.\n\n"
+        
         "========================================\n"
         "### RELATIONSHIPS: Single Principle\n"
         "========================================\n"

@@ -1079,6 +1079,36 @@ def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
     save_domain(channel_id, d)
 
 
+def rename_npc(channel_id: str, old_name: str, new_name: str) -> bool:
+    """
+    NPC의 이름을 변경합니다 (Key Rename).
+    기존 데이터는 유지되며, 새로운 이름으로 이동합니다.
+    """
+    if not old_name or not new_name or old_name == new_name:
+        return False
+        
+    d = get_domain(channel_id)
+    npcs = d.get("npcs", {})
+    
+    # 1. Check if old exists
+    if old_name not in npcs:
+        return False
+        
+    data = npcs.pop(old_name)
+    
+    if new_name in npcs:
+        # Merge old history into new
+        existing_new = npcs[new_name]
+        existing_new.update(data) 
+        npcs[new_name] = existing_new
+    else:
+        npcs[new_name] = data
+        
+    d["npcs"] = npcs
+    save_domain(channel_id, d)
+    return True
+
+
 # =========================================================
 # 퀘스트 보드 관리
 # =========================================================
