@@ -1905,30 +1905,34 @@ async def _process_message(message, channel_id: str):
                     )
 
             # === ActionJudgment 컨텍스트 생성 (GM 판정 - 우뇌에 전달) ===
+            # === ActionJudgment 컨텍스트 생성 (GM 판정 - 우뇌에 전달) ===
             action_judgment = nvc_res.get("ActionJudgment")
             action_judgment_ctx = ""
-            if action_judgment and isinstance(action_judgment, dict):
-                action = action_judgment.get("action", "N/A")
-                difficulty = action_judgment.get("difficulty", "normal")
-                relevant_passive = action_judgment.get("relevant_passive")
-                relevant_item = action_judgment.get("relevant_item", "N/A")
-                modifiers = action_judgment.get("modifiers", [])
-                suggested_outcome = action_judgment.get("suggested_outcome", "partial")
+            final_roll_result = None
 
-                action_judgment_ctx = (
-                    f"### [GM JUDGMENT - MUST FOLLOW]\n"
-                    f"**Action:** {action}\n"
-                    f"**Difficulty:** {difficulty}\n"
-                    f"**Relevant Passive:** {relevant_passive if relevant_passive else 'None'}\n"
-                    f"**Equipment:** {relevant_item}\n"
-                    f"**Modifiers:** {', '.join(modifiers) if modifiers else 'None'}\n"
-                    f"**⚠️ SUGGESTED OUTCOME: {suggested_outcome.upper()}**\n\n"
-                    f"**INSTRUCTION:** You MUST narrate according to this judgment.\n"
-                    f"- Do NOT auto-succeed if outcome is 'failure' or 'partial'\n"
-                    f"- Describe the ATTEMPT and the RESULT based on suggested_outcome\n"
-                    f"- Failure creates drama and choices, not punishment\n\n"
+            if action_judgment and isinstance(action_judgment, dict):
+                # 구버전/신버전 호환성 체크 (modifiers가 dict인지 list인지)
+                # 신버전에서는 modifiers가 list of dicts: [{"passive_...": 20}]
+                modifiers_raw = action_judgment.get("modifiers", [])
+                
+                # AI가 List[str]로 줄 경우 (구버전 호환)
+                # 예: ["도구 없음"] -> {"tool_missing": -10} 변환이 어려우므로 무시하거나 기본값 처리
+                # 하지만 프롬프트가 바뀌어서 List[Dict]를 줄 것임.
+                
+                # 주사위 굴림 실행
+                rolled_judgment = left_brain_analysis.build_action_judgment_with_roll(
+                    action=action_judgment.get("action", "Unknown Action"),
+                    difficulty=action_judgment.get("difficulty", "normal"),
+                    difficulty_reason=action_judgment.get("difficulty_reason", "No reason provided"),
+                    modifiers_list=modifiers_raw
                 )
-                logging.info(f"[ActionJudgment] {action} -> {suggested_outcome} (difficulty: {difficulty})")
+                
+                # 우뇌용 컨텍스트 생성
+                action_judgment_ctx = left_brain_analysis.build_judgment_context_with_roll(rolled_judgment)
+                
+                final_roll_result = rolled_judgment # 결과 저장용
+
+                logging.info(f"[ActionJudgment] {rolled_judgment['action']} -> Roll: {rolled_judgment['final_roll']} (DC {rolled_judgment['dc']}) Result: {rolled_judgment['result']}")
 
             # === 장면 유형 자동 감지 (좌뇌 분석 결과 사용) ===
             detected_scene_type = nvc_res.get("SceneType", "normal")
@@ -2098,6 +2102,24 @@ Korean output. 3rd person narration."""
             # 결과 전송
             if auto_msg:
                 await message.channel.send(f"🤖 {auto_msg}")
+            
+            # [Dice] 판정 결과 출력 (서사보다 먼저)
+            if final_roll_result:
+                r_kr = {
+                    "critical_success": "✨ 대성공",
+                    "success": "✅ 성공",
+                    "partial": "⚠️ 부분 성공",
+                    "failure": "❌ 실패"
+                }.get(final_roll_result['result'], final_roll_result['result'])
+
+                dice_msg = (
+                    f"🎲 **[판정] {final_roll_result['action']}**\n"
+                    f"난이도: {final_roll_result['difficulty']} (DC {final_roll_result['dc']})\n"
+                    f"굴림: {final_roll_result['base_roll']} + ({final_roll_result['modifier_total']}) = **{final_roll_result['final_roll']}**\n"
+                    f"결과: **{r_kr}**\n"
+                    f"📜 *{final_roll_result['difficulty_reason']}*"
+                )
+                await message.channel.send(dice_msg)
             
             # AI 메모리 갱신 메시지 출력
             if memory_msgs:

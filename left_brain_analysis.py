@@ -11,6 +11,7 @@
 
 import json
 import logging
+import random
 from typing import Dict, Any, List, Optional
 from google.genai import types
 
@@ -134,20 +135,21 @@ async def analyze_context_nvc(
         "- `normal`: Standard lock, rough wall climb\n"
         "- `hard`: Complex lock, sheer cliff, hostile NPC persuasion\n"
         "- `extreme`: Legendary feats, near-impossible odds\n\n"
-
-        "**Suggested Outcome Logic:**\n"
-        "- trivial → success\n"
-        "- easy + no negative modifier → success\n"
-        "- easy + negative modifier → partial\n"
-        "- normal + relevant passive → success\n"
-        "- normal + no passive → partial or failure\n"
-        "- hard + passive + proper tools → partial or success\n"
-        "- hard + no passive → failure\n"
-        "- extreme → usually failure, critical_success only with perfect conditions\n\n"
+        
+        "**Judge Required:**\n"
+        "- Combat, Stealth, Lockpicking, Persuading unwilling NPCs, Dangerous physical feats\n"
+        "- Any action with MEANINGFUL consequence of failure\n\n"
+        
+        "**No Judge Needed:**\n"
+        "- Walking/Talking safely, Buying items, Friendly interactions\n\n"
 
         "**Modifiers (add to list):**\n"
-        "+ (increase chance): 관련 패시브 보유, 적절한 도구, 충분한 시간, 유리한 환경\n"
-        "- (decrease chance): 도구 없음, 시간 압박, 적대적 환경, 부상 상태, 첫 시도\n\n"
+        "- Use `passive_[name]`: +15~+25 (relevant skill)\n"
+        "- Use `tool_[name]`: +10~+15 (proper tool)\n"
+        "- Use `condition_[status]`: -10~-20 (injury/fatigue)\n"
+        "- Use `environment_[desc]`: +/- 5~15 (darkness, noise, rain)\n"
+        "- Use `time_pressure`: -10~-15\n"
+        "- Use `no_tool`: -10~-20\n\n"
 
         "**Example:**\n"
         "Player input: '자물쇠를 딴다'\n"
@@ -156,10 +158,11 @@ async def analyze_context_nvc(
         "→ ActionJudgment: {\n"
         '    "action": "자물쇠 따기",\n'
         '    "difficulty": "normal",\n'
-        '    "relevant_passive": null,\n'
-        '    "relevant_item": "도구 없음",\n'
-        '    "modifiers": ["도구 없음", "시간 압박(경비병)"],\n'
-        '    "suggested_outcome": "failure"\n'
+        '    "difficulty_reason": "일반적인 자물쇠지만 도구가 없음",\n'
+        '    "modifiers": [\n'
+        '        {"no_tool": -15},\n'
+        '        {"time_pressure": -10}\n'
+        '    ]\n'
         "  }\n\n"
 
         "**IMPORTANT:** Set to `null` if player input has no action to judge (e.g., just dialogue).\n\n"
@@ -193,10 +196,12 @@ async def analyze_context_nvc(
         '  "ActionJudgment": {\n'
         '    "action": "플레이어가 시도하는 행동",\n'
         '    "difficulty": "trivial/easy/normal/hard/extreme",\n'
-        '    "relevant_passive": "관련 패시브 있으면 이름, 없으면 null",\n'
-        '    "relevant_item": "필요한 도구 보유 여부",\n'
-        '    "modifiers": ["상황 수정자들"],\n'
-        '    "suggested_outcome": "success/partial/failure/critical_success/critical_failure"\n'
+        '    "difficulty_reason": "이 난이도를 선택한 근거 (필수)",\n'
+        '    "modifiers": [\n'
+        '        {"passive_패시브명": 20},\n'
+        '        {"tool_도구명": 10},\n'
+        '        {"condition_상태": -10}\n'
+        '    ]\n'
         '  } OR null,\n'
         '  "Need": "Logical next step for Right Hemisphere",\n'
         '  "SystemAction": { "tool": "Quest/Memo/NPC", "type": "Add/Complete/Archive", "content": "..." } OR null,\n'
@@ -278,7 +283,6 @@ async def analyze_context_nvc(
         if parsed:
             return parsed
     
-    # 기본값 반환
     return {
         "CurrentLocation": "Unknown",
         "LocationRisk": "Low",
@@ -288,23 +292,120 @@ async def analyze_context_nvc(
         "SystemAction": None
     }
 
-def build_judgment_context(action_judgment: Dict[str, Any]) -> str:
+
+# =========================================================
+# 주사위 시스템 (Dice System v5.0)
+# =========================================================
+
+def roll_dice(sides: int = 100) -> int:
+    """주사위를 굴립니다."""
+    return random.randint(1, sides)
+
+def determine_result(final_roll: int, dc: int) -> str:
+    """최종 결과를 판정합니다."""
+    if final_roll >= dc + 30:
+        return "critical_success"
+    elif final_roll >= dc:
+        return "success"
+    elif final_roll >= dc - 20:
+        return "partial"
+    else:
+        return "failure"
+
+def build_action_judgment_with_roll(
+    action: str,
+    difficulty: str,
+    difficulty_reason: str,
+    modifiers_list: List[Dict[str, int]]
+) -> Dict[str, Any]:
     """
-    ActionJudgment를 우뇌에 전달할 컨텍스트 문자열로 변환
+    ActionJudgment를 생성합니다. (주사위 굴림 포함)
+    
+    Args:
+        action: 플레이어 행동
+        difficulty: 난이도 문자열
+        difficulty_reason: 난이도 이유
+        modifiers_list: AI가 분석한 수정치 리스트 [{"passive_X": 20}, ...]
     """
-    if not action_judgment:
+    
+    # DC 결정
+    dc_table = {
+        "trivial": 10,
+        "easy": 30,
+        "normal": 50,
+        "hard": 70,
+        "extreme": 90
+    }
+    dc = dc_table.get(difficulty.lower(), 50)
+    
+    # 주사위 굴림
+    base_roll = roll_dice(100)
+    
+    # 수정치 계산
+    modifiers = {}
+    modifier_total = 0
+    if modifiers_list:
+        for mod in modifiers_list:
+            if isinstance(mod, dict):
+                for k, v in mod.items():
+                    modifiers[k] = v
+                    modifier_total += v
+    
+    final_roll = base_roll + modifier_total
+    
+    # 결과 판정
+    result = determine_result(final_roll, dc)
+    
+    return {
+        "action": action,
+        "difficulty": difficulty,
+        "difficulty_reason": difficulty_reason,
+        "base_roll": base_roll,
+        "modifiers": modifiers,
+        "modifier_total": modifier_total,
+        "final_roll": final_roll,
+        "dc": dc,
+        "result": result
+    }
+
+def build_judgment_context_with_roll(judgment: Dict[str, Any]) -> str:
+    """
+    ActionJudgment를 우뇌에 전달할 컨텍스트 문자열로 변환 (주사위 결과 포함)
+    """
+    if not judgment:
         return ""
+    
+    # 수정치 문자열 생성
+    mod_strs = []
+    for name, value in judgment.get("modifiers", {}).items():
+        sign = "+" if value >= 0 else ""
+        mod_strs.append(f"{name}({sign}{value})")
+    mod_text = ", ".join(mod_strs) if mod_strs else "없음"
+    
+    # 결과 한글화
+    result_kr = {
+        "critical_success": "대성공",
+        "success": "성공",
+        "partial": "부분 성공",
+        "failure": "실패"
+    }.get(judgment.get("result"), "판정 불가")
     
     return (
         f"### [GM JUDGMENT - MUST FOLLOW]\n"
-        f"**Action:** {action_judgment.get('action', 'N/A')}\n"
-        f"**Difficulty:** {action_judgment.get('difficulty', 'normal')}\n"
-        f"**Relevant Passive:** {action_judgment.get('relevant_passive') if action_judgment.get('relevant_passive') else 'None'}\n"
-        f"**Equipment:** {action_judgment.get('relevant_item', 'N/A')}\n"
-        f"**Modifiers:** {', '.join(action_judgment.get('modifiers', [])) if action_judgment.get('modifiers') else 'None'}\n"
-        f"**⚠️ SUGGESTED OUTCOME: {action_judgment.get('suggested_outcome', 'partial').upper()}**\n\n"
-        f"**INSTRUCTION:** You MUST narrate according to this judgment.\n"
-        f"- Do NOT auto-succeed if outcome is 'failure' or 'partial'\n"
-        f"- Describe the ATTEMPT and the RESULT based on suggested_outcome\n"
-        f"- Failure creates drama and choices, not punishment\n\n"
+        f"**Action:** {judgment.get('action', 'N/A')}\n"
+        f"**Difficulty:** {judgment.get('difficulty', 'normal')} (DC {judgment.get('dc', 50)})\n"
+        f"**Reason:** {judgment.get('difficulty_reason', 'N/A')}\n"
+        f"**Roll:** 🎲 {judgment.get('base_roll', 0)} {'+' if judgment.get('modifier_total', 0) >= 0 else ''}{judgment.get('modifier_total', 0)} = {judgment.get('final_roll', 0)}\n"
+        f"**Modifiers:** {mod_text}\n"
+        f"**RESULT: {result_kr}**\n\n"
+        f"**INSTRUCTION:** You MUST narrate according to this result.\n"
+        f"- 대성공: Exceptional outcome, bonus effects\n"
+        f"- 성공: Achieved as intended\n"
+        f"- 부분 성공: Partial achievement, complication or cost\n"
+        f"- 실패: Failed, possible negative consequences\n\n"
     )
+
+def build_judgment_context(action_judgment: Dict[str, Any]) -> str:
+    """Legacy wrapper for backward compatibility"""
+    # Simply ignore this if we are using the new system, but keep for safety
+    return ""
