@@ -985,21 +985,48 @@ async def extract_physical_updates(
         '  "status_remove": ["상태"] OR null\n'
         "}\n\n"
         
-        "### RULES\n"
-        "✅ inventory_add: Player RECEIVED/TOOK/BOUGHT item (NET GAIN)\n"
-        "✅ inventory_remove: Player GAVE/SOLD/USED item (NET LOSS)\n"
-        "✅ gold_change: Actual payment made (+received, -paid)\n"
-        "✅ status_add: New condition (poisoned, blessed, etc.)\n"
-        "✅ status_remove: Condition ended\n\n"
+        "========================================\n"
+        "### INVENTORY: Single Principle\n"
+        "========================================\n"
+        "**ONE TEST:** Can the player TAKE this item to the NEXT scene?\n\n"
         
-        "❌ DO NOT add:\n"
-        "- Items offered but not taken\n"
-        "- Gold mentioned but not exchanged\n"
-        "- Status that already exists\n"
-        "- Items merely moved (e.g., hand -> bag, bag -> safe)\n"
-        "- Items given to companions (This is REMOVE, not ADD)\n"
-        "- Items already in 'current_inventory' (unless quantity increases)\n"
-        "- Re-description of an item acquired in the same turn\n"
+        "- YES (possesses it) → add/remove inventory\n"
+        "- NO (consumed, service, others' property) → null\n\n"
+        
+        "Examples:\n"
+        "- '검을 받았다' → Can take to next scene → ✅ add\n"
+        "- '급식을 받았다' → Eaten, can't take → ❌ null\n"
+        "- '치료를 받았다' → Service, can't take → ❌ null\n"
+        "- '동료가 대신 챙겼다' → Party can access → ✅ add\n"
+        "- 'NPC가 자기 주머니에' → Can't access → ❌ null\n"
+        "- '물약을 마셨다' → Used, gone → ✅ remove\n\n"
+        
+        "========================================\n"
+        "### GOLD: Single Principle\n"
+        "========================================\n"
+        "**ONE TEST:** Did gold enter/leave the PLAYER'S wallet?\n\n"
+        
+        "- YES → gold_change (+/-)\n"
+        "- NO (quoted price, NPC's money, party fund they can't access) → null\n\n"
+        
+        "Examples:\n"
+        "- '500골드를 받았다' (player receives) → ✅ +500\n"
+        "- '100골드를 지불했다' (player pays) → ✅ -100\n"
+        "- '가격은 50골드입니다' (just quoted) → ❌ null\n"
+        "- 'NPC가 대금을 받았다' (NPC receives) → ❌ null\n\n"
+        
+        "========================================\n"
+        "### STATUS: Single Principle\n"
+        "========================================\n"
+        "**ONE TEST:** Will this condition PERSIST to the next scene?\n\n"
+        
+        "- YES (ongoing effect) → status_add/remove\n"
+        "- NO (momentary, already over) → null\n\n"
+        
+        "Examples:\n"
+        "- '독에 중독되었다' → Persists → ✅ add '중독'\n"
+        "- '잠시 어지러웠다' → Already passed → ❌ null\n"
+        "- '축복이 풀렸다' → Ended → ✅ remove '축복'\n"
     )
     
     context = f"현재 인벤토리: {current_inventory}\n현재 골드: {current_gold}\n현재 상태: {current_status}"
@@ -1055,17 +1082,36 @@ async def extract_social_updates(
         "- [SCENE NPCs]: Same person throughout scene\n"
         "- Multiple references = ONE person\n\n"
         
-        "### RELATIONSHIP LEVELS\n"
-        "hostile → unfriendly → neutral → friendly → intimate\n\n"
+        "========================================\n"
+        "### RELATIONSHIPS: Single Principle\n"
+        "========================================\n"
+        "**ONE TEST:** If they meet again, will the relationship be DIFFERENT?\n\n"
         
-        "✅ UPDATE when:\n"
-        "- First meeting with NEW NPC\n"
-        "- Relationship LEVEL changes\n"
-        "- Major event (betrayal, saved life)\n\n"
+        "- YES (level changed, major event) → update relationship\n"
+        "- NO (same as before, just talked) → null\n\n"
         
-        "❌ DO NOT UPDATE when:\n"
-        "- Same level as before\n"
-        "- Simple greeting/conversation\n"
+        "Relationship levels: hostile → unfriendly → neutral → friendly → intimate\n\n"
+        
+        "Examples:\n"
+        "- First meeting → New relationship → ✅ update\n"
+        "- Saved NPC's life → Level changes → ✅ update\n"
+        "- Casual chat with known NPC → Same level → ❌ null\n"
+        "- Already friendly, still friendly → ❌ null\n"
+        "- Betrayal occurred → Level drops → ✅ update\n\n"
+        
+        "========================================\n"
+        "### COMPANIONS: Single Principle\n"
+        "========================================\n"
+        "**ONE TEST:** Will this person TRAVEL with the player to the next scene?\n\n"
+        
+        "- YES (joined party, following) → add companion\n"
+        "- NO (staying behind, just met, NPC at location) → null\n"
+        "- LEFT the party → remove companion\n\n"
+        
+        "Examples:\n"
+        "- 'NPC가 동행하기로 했다' → Traveling together → ✅ add\n"
+        "- 'NPC와 대화했다' → Just met, not joining → ❌ null\n"
+        "- 'NPC가 여기서 기다리겠다고 했다' → Not traveling → ❌ null / remove\n"
     )
     
     context_parts = []
@@ -1127,20 +1173,51 @@ async def extract_narrative_updates(
         '  "passives": ["패시브"] OR null\n'
         "}\n\n"
         
-        "### KNOWN_INFO RULES\n"
-        "✅ RECORD: Secrets, passwords, hidden locations, NPC weaknesses\n"
-        "❌ IGNORE: Trivial facts, already known, player's own abilities\n"
-        "Test: Does this unlock NEW OPTIONS for player?\n\n"
+        "========================================\n"
+        "### KNOWN_INFO: Single Principle\n"
+        "========================================\n"
+        "**ONE TEST:** Does knowing this UNLOCK NEW OPTIONS for the player?\n\n"
         
-        "### FORESHADOWING RULES\n"
-        "✅ RECORD: Prophecies, mysterious marks, cryptic warnings\n"
-        "❌ IGNORE: Simple mood, atmosphere, ordinary events\n"
-        "Test: Does this hint at FUTURE plot?\n\n"
+        "- YES (enables new action/path) → add to known_info\n"
+        "- NO (trivial, obvious, already known) → null\n\n"
         
-        "### PASSIVE RULES\n"
-        "✅ RECORD: REPEATED demonstration (3+), exceptional ability\n"
-        "❌ IGNORE: First attempt, luck-based, failed attempts\n"
-        "Passives are RARE achievements, not easy unlocks.\n"
+        "Examples:\n"
+        "- '금고 비밀번호는 1234' → Unlocks safe → ✅ add\n"
+        "- '시장이 뱀파이어다' → Changes approach → ✅ add\n"
+        "- '오늘 날씨가 좋다' → No new options → ❌ null\n"
+        "- '상인이 친절했다' → No new options → ❌ null\n"
+        "- Player's own skill mentioned → That's passive, not info → ❌ null\n\n"
+        
+        "========================================\n"
+        "### FORESHADOWING: Single Principle\n"
+        "========================================\n"
+        "**ONE TEST:** Will this matter LATER in the plot?\n\n"
+        
+        "- YES (hints at future events) → add foreshadowing\n"
+        "- NO (just atmosphere, already resolved) → null\n\n"
+        
+        "Examples:\n"
+        "- '팔에 이상한 문양이 나타났다' → Mystery for later → ✅ add\n"
+        "- '예언에서 선택받은 자를 언급' → Future plot → ✅ add\n"
+        "- 'NPC가 긴장해 보였다' → Just mood → ❌ null\n"
+        "- '비가 내리기 시작했다' → Just weather → ❌ null\n\n"
+        
+        "========================================\n"
+        "### PASSIVES: Single Principle\n"
+        "========================================\n"
+        "**ONE TEST:** Has the player REPEATEDLY PROVEN this ability?\n\n"
+        
+        "- YES (3+ successes, exceptional display) → add passive\n"
+        "- NO (first try, luck, failed) → null\n\n"
+        
+        "Passives are RARE achievements, like titles.\n\n"
+        
+        "Examples:\n"
+        "- First time picking a lock → ❌ null (just once)\n"
+        "- Third successful lockpick → Maybe ✅ (pattern)\n"
+        "- Exceptional combat display → ✅ add (proven)\n"
+        "- Failed attempt → ❌ null (not proven)\n"
+        "- Skill already in [EXISTING PASSIVES] → ❌ null (duplicate)\n"
     )
     
     context_parts = []
@@ -1200,18 +1277,47 @@ async def extract_quest_updates(
         '  "memo_archive": ["보관할 메모"] OR null\n'
         "}\n\n"
         
-        "### QUEST RULES\n"
-        "✅ quest_add: NPC gives task, player discovers goal\n"
-        "✅ quest_complete: Objective achieved, task done\n\n"
+        "========================================\n"
+        "### QUEST_ADD: Single Principle\n"
+        "========================================\n"
+        "**ONE TEST:** Does the player now have a GOAL to pursue?\n\n"
         
-        "### MEMO RULES\n"
-        "✅ memo_add: Important clue, reminder, temporary note\n"
-        "✅ memo_remove: Information no longer relevant, consumed\n"
-        "✅ memo_archive: Important info to keep permanently (equipment, key relationships)\n\n"
+        "- YES (task given, objective discovered) → add quest\n"
+        "- NO (just information, no action needed) → null\n\n"
+        
+        "Examples:\n"
+        "- 'NPC가 고블린 소탕을 부탁했다' → Goal exists → ✅ add\n"
+        "- '던전이 있다는 소문을 들었다' → No explicit goal → ❌ null\n"
+        "- '보상을 약속했다' → Motivation, but what's the task? → needs explicit goal\n\n"
+        
+        "========================================\n"
+        "### QUEST_COMPLETE: Single Principle\n"
+        "========================================\n"
+        "**ONE TEST:** Has the OBJECTIVE been ACHIEVED?\n\n"
+        
+        "- YES (goal met, task done) → complete quest\n"
+        "- NO (in progress, partially done) → null\n\n"
+        
+        "Examples:\n"
+        "- '고블린을 모두 처치했다' (objective was extermination) → ✅ complete\n"
+        "- '고블린 3마리를 잡았다' (objective was 10) → ❌ null (not done)\n\n"
+        
+        "========================================\n"
+        "### MEMO: Single Principle\n"
+        "========================================\n"
+        "**ONE TEST:** Is this worth REFERRING BACK to later?\n\n"
+        
+        "- YES (useful reference) → memo_add\n"
+        "- NO (trivial, one-time) → null\n\n"
         
         "**memo_remove vs memo_archive:**\n"
-        "- remove: 소모품 사용, 일회성 정보, 완료된 단서\n"
-        "- archive: 영구 보관할 장비, 관계, 스토리 단서\n"
+        "- remove: Information no longer relevant (consumed, outdated, wrong)\n"
+        "- archive: Important to KEEP permanently (equipment, key relationships)\n\n"
+        
+        "Examples:\n"
+        "- '열쇠를 찾아야 한다' → Useful reminder → ✅ memo_add\n"
+        "- '열쇠를 사용했다' → No longer needed → ✅ memo_remove\n"
+        "- '전설의 검을 획득' → Keep forever → ✅ memo_archive\n"
     )
     
     context_parts = []
