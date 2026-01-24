@@ -1,0 +1,63 @@
+{
+  "participants": {},
+  "npcs": {
+    "Nyx": {
+      "desc": "Dragonian hatchling, slave status.",
+      "status": "Active",
+      "source": "lore",
+      "relationship": null,
+      "last_seen": null,
+      "appearance": "Small stature (137cm), slender but toned. Purplish-black tail and horns. Black glossy bodysuit.",
+      "personality": "Shy, passive, obedient due to slave education. Hidden 'playful sadism' and possessiveness.",
+      "sexual_characteristics": "Virgin. Sensitive tail. Likes restraint/bondage.",
+      "abilities": "Latent Dragonian instincts."
+    }
+  },
+  "history": [],
+  "quest_board": {
+    "active": [],
+    "completed": [],
+    "memos": [],
+    "archive": [],
+    "lore": []
+  },
+  "world_state": {
+    "time_slot": "오후",
+    "weather": "맑음",
+    "day": 1,
+    "doom": 0,
+    "doom_name": "위기",
+    "risk_level": "None",
+    "current_location": "Unknown",
+    "location_rules": {},
+    "world_constraints": {},
+    "active_threads": [],
+    "last_temporal_context": {}
+  },
+  "settings": {
+    "response_mode": "auto",
+    "session_locked": false,
+    "growth_system": "default"
+  },
+  "active_genres": [
+    "noir"
+  ],
+  "custom_tone": null,
+  "prepared": false,
+  "disabled": false,
+  "last_export_idx": 0,
+  "ai_session_memory": {
+    "world_summary": "",
+    "current_arc": "",
+    "active_threads": [],
+    "resolved_threads": [],
+    "key_events": [],
+    "foreshadowing": [],
+    "world_changes": [],
+    "npc_summaries": {},
+    "party_dynamics": "",
+    "last_updated": ""
+  },
+  "fermented_history": [],
+  "deep_memory": ""
+}

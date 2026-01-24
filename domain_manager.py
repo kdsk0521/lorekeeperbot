@@ -531,39 +531,46 @@ def apply_pc_info_to_user(channel_id: str, user_id: str) -> bool:
     # ai_memory에 매핑
     updates = {}
 
-    if pc_info.get('appearance'):
-        updates['appearance'] = pc_info['appearance']
+    # 1. Core Identity (외형, 역할, 종족)
+    base_desc = []
+    if pc_info.get('species'):
+        base_desc.append(f"종족: {pc_info['species']}")
+    if pc_info.get('role'):
+        base_desc.append(f"역할: {pc_info['role']}")
+    
+    appearance_text = pc_info.get('appearance', '')
+    if base_desc:
+        appearance_text = f"{' / '.join(base_desc)}\n{appearance_text}".strip()
+    
+    if appearance_text:
+        updates['appearance'] = appearance_text
+
+    # 2. Narrative Info (성격, 배경)
     if pc_info.get('personality'):
         updates['personality'] = pc_info['personality']
     if pc_info.get('background'):
         updates['background'] = pc_info['background']
-    if pc_info.get('known_info'):
-        updates['known_info'] = pc_info['known_info']
+
+    # 3. Extended Traits (v5.0 - 성적 특성, 능력)
+    if pc_info.get('sexual_characteristics'):
+        updates['sexual_characteristics'] = pc_info['sexual_characteristics']
+    if pc_info.get('abilities'):
+        updates['abilities'] = pc_info['abilities']
+
+    # 4. Social & Secrets (관계, 비밀 정보)
     if pc_info.get('relationships'):
         updates['relationships'] = pc_info['relationships']
+    
+    known_info_list = pc_info.get('known_info', [])
     if pc_info.get('secret_info'):
-        # secret_info는 known_info에 추가
-        if 'known_info' not in updates:
-            updates['known_info'] = []
-        updates['known_info'].append(f"[비밀] {pc_info['secret_info']}")
-        
-    # passives 적용
+        known_info_list.append(f"[비밀] {pc_info['secret_info']}")
+    
+    if known_info_list:
+        updates['known_info'] = known_info_list
+
+    # 5. Skills & Passives
     if pc_info.get('passives'):
         updates['passives'] = pc_info['passives']
-
-    # species와 role 정보도 appearance나 background에 추가
-    extra_info = []
-    if pc_info.get('species'):
-        extra_info.append(f"종족: {pc_info['species']}")
-    if pc_info.get('role'):
-        extra_info.append(f"역할: {pc_info['role']}")
-
-    if extra_info:
-        # appearance가 있으면 앞에 추가, 없으면 새로 생성
-        if updates.get('appearance'):
-            updates['appearance'] = f"{' / '.join(extra_info)}\n{updates['appearance']}"
-        else:
-            updates['appearance'] = ' / '.join(extra_info)
 
     if updates:
         update_ai_memory(channel_id, user_id, updates)
@@ -1568,6 +1575,12 @@ def get_full_ai_context(channel_id: str, user_id: str) -> str:
         if player_mem.get("foreshadowing"):
             foreshadow_str = ', '.join(player_mem['foreshadowing'][:3])
             result += f"**캐릭터 복선:** {foreshadow_str}\n"
+
+        if player_mem.get("abilities"):
+            result += f"**능력/기술:** {player_mem['abilities']}\n"
+
+        if player_mem.get("sexual_characteristics"):
+            result += f"**[NSFW] 성적 특성:** {player_mem['sexual_characteristics']}\n"
         
         if player_mem.get("normalization"):
             norm_str = ", ".join([f"{k}={v}" for k, v in player_mem["normalization"].items()])

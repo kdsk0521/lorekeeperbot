@@ -57,7 +57,8 @@ class PlayerCharacterManager:
             "background": ai_mem.get("background", ""),
             "relationships": ai_mem.get("relationships", {}),
             "passives": ai_mem.get("passives", []),
-            "passives": ai_mem.get("passives", []),
+            "abilities": ai_mem.get("abilities", ""),
+            "sexual_characteristics": ai_mem.get("sexual_characteristics", ""),
             "normalization": ai_mem.get("normalization", {}),
             "inventory": p_data.get("inventory", {}),
             "economy": p_data.get("economy", {"gold": 0}),
@@ -277,6 +278,12 @@ class PlayerCharacterManager:
             norm_str = ", ".join([f"{k}={v}" for k, v in char["normalization"].items()])
             parts.append(f"비일상 적응: {norm_str}")
 
+        if char.get("abilities"):
+            parts.append(f"능력/기술: {char['abilities']}")
+
+        if char.get("sexual_characteristics"):
+            parts.append(f"성적 특성 (NSFW): {char['sexual_characteristics']}")
+
         return "\n".join(parts) + "\n"
 
 
@@ -440,7 +447,12 @@ class NPCManager:
         name: str,
         description: str,
         source: str = "session",
-        relationship: str = None
+        relationship: str = None,
+        appearance: str = None,
+        personality: str = None,
+        sexual_characteristics: str = None,
+        abilities: str = None,
+        passives: List[str] = None
     ) -> None:
         """
         NPC 추가 또는 업데이트 (기존 데이터 보존)
@@ -451,6 +463,11 @@ class NPCManager:
             description: NPC 설명
             source: "lore" | "session" (기본값: "session")
             relationship: 초기 관계 설명
+            appearance: 외형 묘사
+            personality: 성격 묘사
+            sexual_characteristics: 성적 특성 (NSFW)
+            abilities: 능력 및 특기
+            passives: 패시브 및 칭호 리스트
         """
         if not name:
             logging.warning("NPC 이름이 비어있어 추가하지 않음")
@@ -465,7 +482,14 @@ class NPCManager:
             "status": existing.get("status", DEFAULT_NPC_STATUS),
             "source": existing.get("source", source),  # 기존 출처 유지
             "relationship": relationship or existing.get("relationship"),
-            "last_seen": existing.get("last_seen")
+            "last_seen": existing.get("last_seen"),
+            
+            # Detailed Fields (v5.0)
+            "appearance": appearance or existing.get("appearance"),
+            "personality": personality or existing.get("personality"),
+            "sexual_characteristics": sexual_characteristics or existing.get("sexual_characteristics"),
+            "abilities": abilities or existing.get("abilities"),
+            "passives": passives or existing.get("passives", [])
         }
 
         domain_manager.update_npc(channel_id, name, npc_data)
@@ -655,8 +679,26 @@ def reset_npc_status(channel_id: str) -> None:
     npc_memory.clear(channel_id)
 
 
-def add_npc(channel_id: str, name: str, description: str) -> None:
-    npc_memory.add_npc(channel_id, name, description)
+def add_npc(
+    channel_id: str, 
+    name: str, 
+    description: str, 
+    appearance: str = None,
+    personality: str = None,
+    sexual_characteristics: str = None,
+    abilities: str = None,
+    passives: List[str] = None
+) -> None:
+    npc_memory.add_npc(
+        channel_id, 
+        name, 
+        description, 
+        appearance=appearance,
+        personality=personality,
+        sexual_characteristics=sexual_characteristics,
+        abilities=abilities,
+        passives=passives
+    )
 
 
 def get_npc(channel_id: str, name: str) -> Optional[Dict[str, Any]]:

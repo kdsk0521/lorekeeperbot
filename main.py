@@ -349,13 +349,18 @@ async def handle_lore_command(message, channel_id: str, arg: str) -> None:
                 client_genai, MODEL_ID, raw_lore
             )
 
-            # NPC 추가 (로어 출처 명시)
+            # NPC 추가 (로어 출처 명시, 상세 정보 포함)
             for n in npcs_extracted:
                 character_sheet.npc_memory.add_npc(
                     channel_id,
-                    n.get("name"),
-                    n.get("description"),
-                    source="lore"
+                    name=n.get("name"),
+                    description=n.get("description"),
+                    source="lore",
+                    appearance=n.get("appearance"),
+                    personality=n.get("personality"),
+                    sexual_characteristics=n.get("sexual_characteristics"),
+                    abilities=n.get("abilities"),
+                    passives=n.get("passives")
                 )
 
             # 원본 로어 그대로 저장 (AI가 재작성하지 않음)
