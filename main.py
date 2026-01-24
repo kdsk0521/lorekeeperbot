@@ -42,6 +42,8 @@ try:
     import world_manager
     import quest_manager
     import fermentation
+    import left_brain_analysis
+    import left_brain_extraction
 except ImportError as e:
     print(f"CRITICAL ERROR: 필수 모듈을 찾을 수 없습니다. {e}")
     exit(1)
@@ -1824,8 +1826,10 @@ async def _process_message(message, channel_id: str):
             
             # AI 분석 (좌뇌)
             nvc_res = {}
+            # AI 분석 (좌뇌)
+            nvc_res = {}
             if client_genai:
-                nvc_res = await memory_system.analyze_context_nvc(
+                nvc_res = await left_brain_analysis.analyze_context_nvc(
                     client_genai, MODEL_ID, hist_text, lore_txt, rule_txt, quest_txt,
                     player_context=player_context
                 )
@@ -2133,7 +2137,7 @@ Korean output. 3rd person narration."""
                     scene_npc_names = list(nvc_res.get("NPCAttitudes", {}).keys())
 
                     # Flash 모델로 업데이트 추출 (통합 병렬 호출)
-                    update_result = await memory_system.extract_all_updates(
+                    update_result = await left_brain_extraction.extract_all_updates(
                         client_genai,
                         MODEL_ID_FLASH,
                         action_text,  # 플레이어 입력
