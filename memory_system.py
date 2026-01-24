@@ -529,4 +529,318 @@ async def extract_pc_info(client, model_id: str, text: str) -> Optional[Dict[str
     except Exception as e:
         logging.error(f"[Extract PC] Failed: {e}")
         
-    return None
+
+# =========================================================
+# OOC & Analysis Functions (Restored)
+# =========================================================
+
+async def analyze_brainstorming(
+    client, 
+    model_id: str, 
+    history_text: str, 
+    lore_text: str, 
+    question: str
+) -> Dict[str, Any]:
+    """
+    OOC 질문에 대해 플롯 브레인스토밍을 수행합니다.
+    """
+    if not question:
+        return {"analysis_type": "error", "recommendation": "질문이 없습니다."}
+
+    system_prompt = (
+        "You are a Co-Author for a TRPG scenario.\n"
+        "Analyze the current story context and the user's question.\n"
+        "Provide creative, logical, and lore-consistent answers/suggestions.\n\n"
+        
+        "Output Format (JSON):\n"
+        "{\n"
+        "  \"current_state_summary\": \"Brief summary of relevant situation\",\n"
+        "  \"potential_paths\": [\n"
+        "    {\"path\": \"Possible development 1\", \"pros\": \"...\", \"cons\": \"...\"},\n"
+        "    {\"path\": \"Possible development 2\", \"...\"}\n"
+        "  ],\n"
+        "  \"recommendation\": \"Your best suggestion\",\n"
+        "  \"open_questions\": [\"Clues to consider\", \"Unresolved mysteries\"]\n"
+        "}"
+    )
+    
+    user_prompt = f"""
+[Lore]
+{lore_text}
+
+[Recent History]
+{history_text}
+
+[User Question]
+{question}
+"""
+
+    try:
+        config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.7)
+        contents = [types.Content(role="user", parts=[types.Part(text=f"{system_prompt}\n\n{user_prompt}")])]
+        
+        result = await api_call_with_retry(client, model_id, contents, config, operation_name="Brainstorming")
+        if result:
+            return safe_parse_json(result)
+    except Exception as e:
+        logging.error(f"[Brainstorming] Failed: {e}")
+        
+    return {"analysis_type": "error", "recommendation": f"분석 실패: {e}"}
+
+
+async def check_narrative_consistency(
+    client, 
+    model_id: str, 
+    history_text: str, 
+    lore_text: str
+) -> Dict[str, Any]:
+    """
+    내러티브 일관성을 검사합니다.
+    """
+    system_prompt = (
+        "You are a Continuity Editor.\n"
+        "Check the recent story consistency against the established Lore.\n"
+        "Identify any contradictions, plot holes, or out-of-character behaviors.\n\n"
+        
+        "Output Format (JSON):\n"
+        "{\n"
+        "  \"overall_consistency\": \"High/Medium/Low\",\n"
+        "  \"issues\": [\n"
+        "    {\"severity\": \"critical/minor\", \"category\": \"Lore/Character/Logic\", \"description\": \"...\"}\n"
+        "  ],\n"
+        "  \"plot_threads\": [\"Active thread 1\", \"Active thread 2\"]\n"
+        "}"
+    )
+
+    try:
+        config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2)
+        contents = [types.Content(role="user", parts=[types.Part(text=f"{system_prompt}\n\n[Lore]\n{lore_text}\n\n[History]\n{history_text}")])]
+        
+        result = await api_call_with_retry(client, model_id, contents, config, operation_name="Consistency Check")
+        if result:
+            return safe_parse_json(result)
+    except Exception as e:
+        logging.error(f"[Consistency] Failed: {e}")
+        
+    return {"overall_consistency": "Unknown", "issues": []}
+
+
+async def extract_world_constraints(
+    client, 
+    model_id: str, 
+    lore_text: str
+) -> Dict[str, Any]:
+    """
+    로어에서 세계 규칙(제약 사항)을 추출합니다.
+    """
+    system_prompt = (
+        "You are a World Builder.\n"
+        "Extract structured world rules, constraints, and setting details from the text.\n\n"
+        
+        "Output Format (JSON):\n"
+        "{\n"
+        "  \"setting\": {\"era\": \"...\", \"location\": \"...\"},\n"
+        "  \"theme\": {\"genres\": [...], \"tone\": \"...\"},\n"
+        "  \"systems\": {\"magic\": \"...\", \"technology\": \"...\"},\n"
+        "  \"social\": {\"taboos\": [...], \"hierarchy\": \"...\"}\n"
+        "}"
+    )
+
+    try:
+        config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2)
+        contents = [types.Content(role="user", parts=[types.Part(text=f"{system_prompt}\n\n[Lore Text]\n{lore_text}")])]
+        
+        result = await api_call_with_retry(client, model_id, contents, config, operation_name="World Constraints")
+        if result:
+            return safe_parse_json(result)
+    except Exception as e:
+        logging.error(f"[World Constraints] Failed: {e}")
+        
+    return {}
+
+
+# =========================================================
+# OOC Memory Edit Functions
+# =========================================================
+
+async def process_ooc_memory_edit(
+    client, 
+    model_id: str, 
+    ooc_content: str, 
+    ai_mem: Dict[str, Any], 
+    p_data: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    사용자의 OOC 요청을 해석하여 캐릭터 메모리 수정 명령을 생성합니다.
+    """
+    current_state = {
+        "appearance": ai_mem.get("appearance", ""),
+        "personality": ai_mem.get("personality", ""),
+        "background": ai_mem.get("background", ""),
+        "relationships": ai_mem.get("relationships", {}),
+        "passives": ai_mem.get("passives", []),
+        "inventory": p_data.get("inventory", {}),
+        "economy": p_data.get("economy", {}),
+        "status_effects": p_data.get("status_effects", [])
+    }
+    
+    system_prompt = (
+        "You are a Game Master Assistant handling OOC (Out-Of-Character) requests.\n"
+        "Interpret the user's request and generate specific edits to the character data.\n"
+        "Supports adding/removing items, changing gold, relationships, passives, descriptions, etc.\n\n"
+        
+        "Output Format (JSON):\n"
+        "{\n"
+        "  \"interpretation\": \"What the user wants (Korean)\",\n"
+        "  \"edits\": [\n"
+        "    {\"field\": \"inventory\", \"action\": \"add\", \"key\": \"ItemName\", \"value\": 1},\n"
+        "    {\"field\": \"economy.gold\", \"action\": \"set\", \"value\": 100},\n"
+        "    {\"field\": \"relationships\", \"action\": \"update\", \"key\": \"NPCName\", \"value\": \"New Relation\"},\n"
+        "    {\"field\": \"status_effects\", \"action\": \"remove\", \"value\": \"Poison\"}\n"
+        "  ],\n"
+        "  \"confirmation_message\": \"Response to user (Korean)\"\n"
+        "}\n"
+        "Valid fields: appearance, personality, background, relationships, passives, inventory, economy.gold, status_effects, known_info, notes."
+    )
+    
+    user_prompt = f"Current State: {json.dumps(current_state, ensure_ascii=False)}\n\nOOC Request: {ooc_content}"
+
+    try:
+        config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.1)
+        contents = [types.Content(role="user", parts=[types.Part(text=f"{system_prompt}\n\n{user_prompt}")])]
+        
+        result = await api_call_with_retry(client, model_id, contents, config, operation_name="OOC Edit")
+        if result:
+            return safe_parse_json(result)
+    except Exception as e:
+        logging.error(f"[OOC Edit] Failed: {e}")
+        
+    return {"interpretation": "Error", "edits": []}
+
+
+def apply_memory_edits(
+    ai_mem: Dict[str, Any], 
+    edits: List[Dict[str, Any]], 
+    p_data: Dict[str, Any]
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """
+    실제로 메모리 수정 사항을 적용합니다.
+    ai_mem과 p_data(inventory, economy 등)를 모두 수정하여 반환합니다.
+    """
+    import copy
+    new_mem = copy.deepcopy(ai_mem)
+    new_p_data = copy.deepcopy(p_data)
+    
+    # p_data 내의 economy가 없으면 초기화
+    if "economy" not in new_p_data:
+        new_p_data["economy"] = {"gold": 0}
+        
+    for edit in edits:
+        field = edit.get("field")
+        action = edit.get("action")
+        value = edit.get("value")
+        key = edit.get("key")
+        
+        # 1. AI Memory Fields
+        if field in ["appearance", "personality", "background", "notes"]:
+            if action == "set":
+                new_mem[field] = value
+            elif action == "append":
+                new_mem[field] = (new_mem.get(field, "") + " " + str(value)).strip()
+                
+        elif field == "relationships":
+            if action in ["set", "update"] and key:
+                if "relationships" not in new_mem: new_mem["relationships"] = {}
+                new_mem["relationships"][key] = value
+            elif action == "remove" and key:
+                if "relationships" in new_mem: new_mem["relationships"].pop(key, None)
+                
+        elif field in ["passives", "known_info", "foreshadowing", "status_effects"]:
+            # status_effects는 p_data에 있음
+            target = new_p_data["status_effects"] if field == "status_effects" else new_mem.get(field, [])
+            
+            if field != "status_effects" and field not in new_mem:
+                new_mem[field] = []
+                target = new_mem[field]
+                
+            if action == "add":
+                if value not in target: target.append(value)
+            elif action == "remove":
+                if value in target: target.remove(value)
+                
+        elif field == "normalization":
+            if "normalization" not in new_mem: new_mem["normalization"] = {}
+            if action in ["set", "update"] and key:
+                new_mem["normalization"][key] = value
+                
+        # 2. Player Data Fields (Inventory, Economy)
+        elif field == "inventory":
+            if "inventory" not in new_p_data: new_p_data["inventory"] = {}
+            inv = new_p_data["inventory"]
+            if action == "add" and key:
+                inv[key] = inv.get(key, 0) + int(value if value else 1)
+            elif action == "remove" and key:
+                if key in inv:
+                    inv[key] = max(0, inv[key] - int(value if value else 1))
+                    if inv[key] == 0: del inv[key]
+            elif action == "set" and key:
+                inv[key] = int(value)
+                
+        elif field == "economy.gold":
+            if action == "set":
+                new_p_data["economy"]["gold"] = int(value)
+            elif action == "add":
+                new_p_data["economy"]["gold"] += int(value)
+            elif action == "subtract":
+                new_p_data["economy"]["gold"] = max(0, new_p_data["economy"]["gold"] - int(value))
+                
+    return new_mem, new_p_data
+
+
+# =========================================================
+# Session Memory Update (Left Brain to World State)
+# =========================================================
+
+def apply_ai_memory_updates(
+    channel_id: str, 
+    uid: str, 
+    nvc_res: Dict[str, Any], 
+    domain_mgr
+) -> List[str]:
+    """
+    좌뇌 분석 결과(WorldState, 등)를 세션 메모리에 반영합니다.
+    """
+    msgs = []
+    
+    # 1. Update Session AI Memory (World Summary)
+    session_mem = domain_mgr.get_session_ai_memory(channel_id) or {}
+    updated = False
+    
+    # World Context from Left Brain
+    world_ctx = nvc_res.get("WorldContext", {})
+    if world_ctx:
+        if world_ctx.get("world_summary"):
+            session_mem["world_summary"] = world_ctx["world_summary"]
+            updated = True
+        if world_ctx.get("current_arc"):
+            session_mem["current_arc"] = world_ctx["current_arc"]
+            updated = True
+        if world_ctx.get("active_threads"):
+            session_mem["active_threads"] = world_ctx["active_threads"]
+            updated = True
+            
+        # NPC Summaries update
+        if world_ctx.get("npc_summaries"):
+            if "npc_summaries" not in session_mem: session_mem["npc_summaries"] = {}
+            for name, summ in world_ctx["npc_summaries"].items():
+                session_mem["npc_summaries"][name] = summ
+            updated = True
+            
+    if updated:
+        from datetime import datetime
+        session_mem["last_updated"] = datetime.now().isoformat()
+        domain_mgr.set_session_ai_memory(channel_id, session_mem)
+        # msgs.append("Updated Session Memory") # 로그가 너무 많아질 수 있어 생략
+        
+    return msgs
+
