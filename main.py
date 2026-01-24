@@ -2122,8 +2122,7 @@ Korean output. 3rd person narration."""
 
                     ai_mem = domain_manager.get_ai_memory(channel_id, uid) or {}
                     current_relationships = ai_mem.get("relationships", {})
-                    current_known_info = ai_mem.get("known_info", [])
-                    current_foreshadowing = ai_mem.get("foreshadowing", [])
+
                     current_passives = ai_mem.get("passives", [])
                     current_companions = ai_mem.get("companions", []) # NEW: though companions is stored in known_info basically, checking if we need separate field in ai_mem or just consistent extraction.
                     # Note: Original implementation might mixed companions into known_info or had it separate. 
@@ -2156,8 +2155,6 @@ Korean output. 3rd person narration."""
 
                         # 서사적 (B-3)
                         current_passives=current_passives,
-                        current_known_info=current_known_info,
-                        current_foreshadowing=current_foreshadowing,
 
                         # 퀘스트/메모 (B-4)
                         current_quests=current_quests,

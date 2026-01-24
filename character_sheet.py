@@ -57,8 +57,7 @@ class PlayerCharacterManager:
             "background": ai_mem.get("background", ""),
             "relationships": ai_mem.get("relationships", {}),
             "passives": ai_mem.get("passives", []),
-            "known_info": ai_mem.get("known_info", []),
-            "foreshadowing": ai_mem.get("foreshadowing", []),
+            "passives": ai_mem.get("passives", []),
             "normalization": ai_mem.get("normalization", {}),
             "inventory": p_data.get("inventory", {}),
             "economy": p_data.get("economy", {"gold": 0}),
@@ -114,25 +113,7 @@ class PlayerCharacterManager:
                     messages.append(f"🏆 **{passive}**")
                     mem_updated = True
 
-        # known_info (알고 있는 정보)
-        if player_mem_update.get("known_info"):
-            if "known_info" not in current_mem:
-                current_mem["known_info"] = []
-            for info in player_mem_update["known_info"]:
-                if info and info not in current_mem["known_info"]:
-                    current_mem["known_info"].append(info)
-                    messages.append(f"💡 **{info}**")
-                    mem_updated = True
 
-        # foreshadowing (복선)
-        if player_mem_update.get("foreshadowing"):
-            if "foreshadowing" not in current_mem:
-                current_mem["foreshadowing"] = []
-            for fs in player_mem_update["foreshadowing"]:
-                if fs and fs not in current_mem["foreshadowing"]:
-                    current_mem["foreshadowing"].append(fs)
-                    messages.append(f"🔮 **{fs}**")
-                    mem_updated = True
 
         # normalization (비일상 적응)
         if player_mem_update.get("normalization"):
@@ -146,13 +127,12 @@ class PlayerCharacterManager:
 
         # companions (동행자)
         if player_mem_update.get("companions"):
-            if "known_info" not in current_mem:
-                current_mem["known_info"] = []
+            if "companions" not in current_mem:
+                current_mem["companions"] = []
             for companion in player_mem_update["companions"]:
                 if companion:
-                    companion_info = f"동행자: {companion}"
-                    if companion_info not in current_mem["known_info"]:
-                        current_mem["known_info"].append(companion_info)
+                    if companion not in current_mem["companions"]:
+                        current_mem["companions"].append(companion)
                         messages.append(f"🐾 **{companion}**")
                         mem_updated = True
 
@@ -162,13 +142,8 @@ class PlayerCharacterManager:
                 current_mem["archived_info"] = []
             for info in player_mem_update["info_archive"]:
                 if info:
-                    # active list에서 제거
-                    if info in current_mem.get("known_info", []):
-                        current_mem["known_info"].remove(info)
-                    
                     if info not in current_mem["archived_info"]:
                         current_mem["archived_info"].append(info)
-                        # messages.append(f"🗄️ **정보 보관:** {info}") # 너무 시끄러울 수 있어 생략
                         mem_updated = True
 
         # foreshadowing_archive (NEW)
@@ -177,13 +152,8 @@ class PlayerCharacterManager:
                 current_mem["archived_foreshadowing"] = []
             for item in player_mem_update["foreshadowing_archive"]:
                 if item:
-                    # active list에서 제거
-                    if item in current_mem.get("foreshadowing", []):
-                        current_mem["foreshadowing"].remove(item)
-                    
                     if item not in current_mem["archived_foreshadowing"]:
                         current_mem["archived_foreshadowing"].append(item)
-                        # messages.append(f"🗄️ **복선 해결:** {item}")
                         mem_updated = True
 
         # 저장

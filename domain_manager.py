@@ -284,8 +284,6 @@ def _create_default_participant(display_name: str) -> Dict[str, Any]:
             "background": "",  # "고향이 불탄 뒤 복수를 다짐"
             "relationships": {},  # {"리엘": "서로 호감, 신뢰 쌓는 중", "상인 길드장": "적대적"}
             "passives": [],  # ["독 내성", "엘프의 친구"] - 패시브/칭호
-            "known_info": [],  # ["마왕의 부하가 북쪽에 있다", "비밀 통로 위치"]
-            "foreshadowing": [],  # ["봉인된 편지의 내용", "리엘의 과거"]
             "normalization": {},  # {"드래곤": "이제 익숙함", "마법": "아직 신기함"}
             "notes": "",  # 자유 형식 메모
             "archived_info": [],  # [NEW] 보관된 정보 (Deep Memory용)
@@ -331,8 +329,6 @@ def update_participant(channel_id: str, user, reset: bool = False) -> bool:
                 "background": "",
                 "relationships": {},
                 "passives": [p.get("name", "") for p in d["participants"][uid].get("passives", [])],
-                "known_info": [],
-                "foreshadowing": [],
                 "normalization": {},
                 "notes": "",
                 "archived_info": [],

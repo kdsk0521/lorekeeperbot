@@ -213,8 +213,7 @@ async def extract_narrative_updates(
     player_input: str,
     ai_response: str,
     current_passives: List[str] = None,
-    current_known_info: List[str] = None,
-    current_foreshadowing: List[str] = None
+    current_passives: List[str] = None
 ) -> Dict[str, Any]:
     """
     [좌뇌 B-3] 서사적 변화 추출 - 정보, 복선, 패시브
@@ -222,15 +221,11 @@ async def extract_narrative_updates(
     
     system_prompt = (
         "You are a NARRATIVE CHANGE extractor for TRPG.\n"
-        "Extract ONLY knowledge, foreshadowing, and passive changes.\n\n"
+        "Extract ONLY passive changes.\n\n"
         
         "### OUTPUT FORMAT (JSON ONLY)\n"
         "{\n"
-        '  "known_info": ["중요 정보"] OR null,\n'
-        '  "foreshadowing": ["복선"] OR null,\n'
         '  "passives": ["패시브"] OR null,\n'
-        '  "info_archive": ["보관할 정보 (더 이상 안 중요함)"] OR null,\n'
-        '  "foreshadowing_archive": ["보관할 복선 (해결됨/지나감)"] OR null,\n'
         '  "passive_suggestion": {\n'
         '    "name": "패시브/칭호 이름",\n'
         '    "trigger": "획득 조건 설명",\n'
@@ -249,35 +244,6 @@ async def extract_narrative_updates(
         "- Relationship milestone: 엘프와 10회 우호적 → [엘프의 친구]\n"
         "- Survival: 죽을 고비 3회 넘김 → [구사일생]\n"
         "- Unique feat: 드래곤 처치 → [용 사냥꾼]\n\n"
-        
-        "========================================\n"
-        "### KNOWN_INFO: Single Principle\n"
-        "========================================\n"
-        "**ONE TEST:** Does knowing this UNLOCK NEW OPTIONS for the player?\n\n"
-        
-        "- YES (enables new action/path) → add to known_info\n"
-        "- NO (trivial, obvious, already known) → null\n\n"
-        
-        "Examples:\n"
-        "- '금고 비밀번호는 1234' → Unlocks safe → ✅ add\n"
-        "- '시장이 뱀파이어다' → Changes approach → ✅ add\n"
-        "- '오늘 날씨가 좋다' → No new options → ❌ null\n"
-        "- '상인이 친절했다' → No new options → ❌ null\n"
-        "- Player's own skill mentioned → That's passive, not info → ❌ null\n\n"
-        
-        "========================================\n"
-        "### FORESHADOWING: Single Principle\n"
-        "========================================\n"
-        "**ONE TEST:** Will this matter LATER in the plot?\n\n"
-        
-        "- YES (hints at future events) → add foreshadowing\n"
-        "- NO (just atmosphere, already resolved) → null\n\n"
-        
-        "Examples:\n"
-        "- '팔에 이상한 문양이 나타났다' → Mystery for later → ✅ add\n"
-        "- '예언에서 선택받은 자를 언급' → Future plot → ✅ add\n"
-        "- 'NPC가 긴장해 보였다' → Just mood → ❌ null\n"
-        "- '비가 내리기 시작했다' → Just weather → ❌ null\n\n"
         
         "========================================\n"
         "### PASSIVES: Single Principle\n"
@@ -300,10 +266,6 @@ async def extract_narrative_updates(
     context_parts = []
     if current_passives:
         context_parts.append(f"[기존 패시브 - 중복 금지]: {', '.join(current_passives)}")
-    if current_known_info:
-        context_parts.append(f"[이미 아는 정보]: {', '.join(current_known_info[:5])}")
-    if current_foreshadowing:
-        context_parts.append(f"[기존 복선]: {', '.join(current_foreshadowing[:3])}")
     
     context = "\n".join(context_parts) if context_parts else "없음"
     
@@ -311,7 +273,7 @@ async def extract_narrative_updates(
         f"### 현재 상태\n{context}\n\n"
         f"### 플레이어 입력\n{player_input}\n\n"
         f"### AI 서사\n{ai_response[:1500]}\n\n"
-        "정보/복선/패시브 변화만 추출. JSON만 출력."
+        "패시브 변화만 추출. JSON만 출력."
     )
     
     try:
@@ -451,8 +413,7 @@ async def extract_all_updates(
     scene_npc_names: List[str] = None,
     # 서사적
     current_passives: List[str] = None,
-    current_known_info: List[str] = None,
-    current_foreshadowing: List[str] = None,
+    current_passives: List[str] = None,
     # 퀘스트/메모
     current_quests: List[str] = None,
     current_memos: List[str] = None
@@ -474,7 +435,7 @@ async def extract_all_updates(
         ),
         extract_narrative_updates(
             client, model_id_flash, player_input, ai_response,
-            current_passives, current_known_info, current_foreshadowing
+            current_passives
         ),
         extract_quest_updates(
             client, model_id_flash, player_input, ai_response,
@@ -520,15 +481,9 @@ async def extract_all_updates(
         "PlayerMemoryUpdate": {
             "relationships": social.get("relationships"),
             "companions": social.get("companions"),
-            "passives": narrative.get("passives"),
-            "known_info": narrative.get("known_info"),
-            "foreshadowing": narrative.get("foreshadowing"),
-            "info_archive": narrative.get("info_archive"),
-            "foreshadowing_archive": narrative.get("foreshadowing_archive")
+            "passives": narrative.get("passives")
         } if any([social.get("relationships"), social.get("companions"),
-                  narrative.get("passives"), narrative.get("known_info"),
-                  narrative.get("foreshadowing"),
-                  narrative.get("info_archive"), narrative.get("foreshadowing_archive")]) else None,
+                  narrative.get("passives")]) else None,
         
         "PassiveSuggestion": narrative.get("passive_suggestion"),
         
