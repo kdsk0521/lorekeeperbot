@@ -574,6 +574,19 @@ def apply_pc_info_to_user(channel_id: str, user_id: str) -> bool:
 
     if updates:
         update_ai_memory(channel_id, user_id, updates)
+        
+        # 6. Inventory (인벤토리) - AI Memory 아님, Participant Data
+        if pc_info.get('inventory'):
+            p_data = get_participant_data(channel_id, user_id)
+            if p_data:
+                # 기존 인벤토리 유지하면서 병합
+                current_inv = p_data.get('inventory', {})
+                for item, qty in pc_info['inventory'].items():
+                    current_inv[str(item)] = qty
+                
+                p_data['inventory'] = current_inv
+                save_participant_data(channel_id, user_id, p_data)
+
         return True
 
     return False

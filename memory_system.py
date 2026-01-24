@@ -431,7 +431,14 @@ async def extract_npcs_only(client, model_id: str, text: str) -> List[Dict[str, 
         "    \"abilities\": \"Powers/Skills/Magic (Maps to '능력', '기술')\",\n"
         "    \"passives\": \"Passive traits/Titles (Maps to '패시브', '특성', '칭호')\"\n"
         "  }\n"
-        "]"
+        "]\n\n"
+        
+        "### NEGATIVE CONSTRAINTS (CRITICAL)\n"
+        "1. DO NOT extract Generic Roles (e.g., 'Guard', 'Passerby', 'Salesman') unless they have a NAME.\n"
+        "2. DO NOT extract Crowds/Groups (e.g., 'The Crowd', 'The Guild', 'The Council').\n"
+        "3. DO NOT extract the same person twice (e.g., 'Clara' and 'The Nurse' -> Just 'Clara').\n"
+        "4. DO NOT extract the Player Character (Protagonist).\n"
+        "5. If a character is mentioned only as a reference (not present), exclude them unless critical to lore.\n"
     )
 
     try:
@@ -540,7 +547,8 @@ async def extract_pc_info(client, model_id: str, text: str) -> Optional[Dict[str
         "  \"background\": \"Backstory\",\n"
         "  \"secret_info\": \"Hidden facts\",\n"
         "  \"relationships\": {\"NPC Name\": \"Relation\"},\n"
-        "  \"passives\": [\"List of passives or abilities (Maps to '패시브', '특성')\"]\n"
+        "  \"passives\": [\"List of passives or abilities (Maps to '패시브', '특성')\"],\n"
+        "  \"inventory\": {\"Item Name\": Quantity} // Extract specific equipment/items mentioned\n"
         "}\n"
         "OR null if no clear PC."
     )

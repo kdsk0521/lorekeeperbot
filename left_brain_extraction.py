@@ -148,6 +148,11 @@ async def extract_social_updates(
         "- [SCENE NPCs]: Same person throughout scene\n"
         "- Multiple references to same role = ONE person\n\n"
         
+        "### NEGATIVE CONSTRAINTS (CRITICAL)\n"
+        "1. DO NOT create relationships with Mobs/Crowds (e.g., 'The Crowd', 'Villagers').\n"
+        "2. DO NOT create relationships with Organizations (e.g., 'The Guild').\n"
+        "3. DO NOT create duplicates (e.g., if 'Clara' exists, do not add 'Nurse Clara').\n\n"
+        
         "========================================\n"
         "### RELATIONSHIPS: Single Principle\n"
         "========================================\n"
@@ -245,21 +250,24 @@ async def extract_narrative_updates(
         "- Unique feat: Killed a Dragon → [Dragon Slayer]\n\n"
         
         "========================================\n"
-        "### PASSIVES: Single Principle\n"
+        "### PASSIVES / TITLES: Single Principle\n"
         "========================================\n"
-        "**ONE TEST:** Has the player REPEATEDLY PROVEN this ability?\n\n"
+        "**ONE TEST:** Has the player achieved a DEFINITIVE MILESTONE?\n\n"
         
-        "- YES (3+ successes, exceptional display) → add passive\n"
-        "- NO (first try, luck, failed) → null\n\n"
+        "- YES (Clear narrative reward, system message style event) → add passive/title\n"
+        "- NO (Just doing something well) → null\n\n"
         
-        "Passives are RARE achievements, like titles.\n\n"
+        "**STRICT CRITERIA:**\n"
+        "1. Must be a PERMANENT trait or Honorific.\n"
+        "2. Do NOT add temporary buffs.\n"
+        "3. Do NOT add skills just because they were used once.\n\n"
         
         "Examples:\n"
-        "- First time picking a lock → ❌ null (just once)\n"
-        "- Third successful lockpick → Maybe ✅ (pattern)\n"
-        "- Exceptional combat display → ✅ add (proven)\n"
-        "- Failed attempt → ❌ null (not proven)\n"
-        "- Skill already in [EXISTING PASSIVES] → ❌ null (duplicate)\n"
+        "- 'You have become the Slayer of Goblins!' → ✅ [Goblin Slayer] (Title)\n"
+        "- 'You feel your skin harden permanently.' → ✅ [Iron Skin] (Passive)\n"
+        "- 'You slashed the goblin perfectly.' → ❌ null (Just an action)\n"
+        "- 'People now call you the Hero of Town.' → ✅ [Hero of Town] (Title)\n"
+        "- 'You are moving silently.' → ❌ null (Temporary state)\n"
     )
     
     context_parts = []

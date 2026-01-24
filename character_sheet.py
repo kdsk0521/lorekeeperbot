@@ -14,6 +14,35 @@ import domain_manager
 MAX_DESC_PREVIEW_LENGTH = 20
 DEFAULT_NPC_STATUS = "Active"
 
+# =========================================================
+# 유틸리티 함수
+# =========================================================
+def find_similar_key(existing_keys: list, target: str) -> str:
+    """
+    유사한 키를 찾습니다. (중복 방지)
+    - 대소문자 무시, 공백 무시
+    - 포함 관계 (e.g. 'Stethoscope' <-> 'Old Stethoscope')
+    """
+    if not target:
+        return None
+        
+    target_clean = target.strip().lower()
+    if not target_clean:
+        return None
+        
+    # 1. Exact match (insensitive)
+    for key in existing_keys:
+        if key.strip().lower() == target_clean:
+            return key
+            
+    # 2. Containment match (Riskier, but solves descriptions causing dupes)
+    if len(target_clean) >= 3:
+        for key in existing_keys:
+            existing_clean = key.strip().lower()
+            if target_clean in existing_clean or existing_clean in target_clean:
+                return key
+                
+    return None
 
 # =========================================================
 # 플레이어 캐릭터 관리자 (NEW)
@@ -108,10 +137,22 @@ class PlayerCharacterManager:
         if player_mem_update.get("passives"):
             if "passives" not in current_mem:
                 current_mem["passives"] = []
+            # Normalize existing passives for comparison
+            current_passives_norm = {p.strip().lower() for p in current_mem.get("passives", [])}
+            
             for passive in player_mem_update["passives"]:
-                if passive and passive not in current_mem["passives"]:
-                    current_mem["passives"].append(passive)
-                    messages.append(f"🏆 **{passive}**")
+                if not passive:
+                    continue
+                
+                # Check normalized to prevent "Skill" vs "Skill " duplication
+                p_clean = passive.strip()
+                p_norm = p_clean.lower()
+                
+                # Check if it's already in the list (case-insensitive)
+                if p_norm not in current_passives_norm:
+                    current_mem["passives"].append(p_clean)
+                    current_passives_norm.add(p_norm) # Update local set
+                    messages.append(f"🏆 **{p_clean}**")
                     mem_updated = True
 
 
@@ -188,8 +229,12 @@ class PlayerCharacterManager:
             if "inventory" not in p_data:
                 p_data["inventory"] = {}
             for item, amount in player_update["inventory_add"].items():
-                p_data["inventory"][item] = p_data["inventory"].get(item, 0) + int(amount)
-                messages.append(f"🎒 **+{item}** x{amount}")
+                # Check for similar item
+                similar = find_similar_key(p_data["inventory"].keys(), item)
+                target_item = similar if similar else item
+                
+                p_data["inventory"][target_item] = p_data["inventory"].get(target_item, 0) + int(amount)
+                messages.append(f"🎒 **+{target_item}** x{amount}")
             updated = True
 
         # inventory_remove
@@ -456,25 +501,18 @@ class NPCManager:
     ) -> None:
         """
         NPC 추가 또는 업데이트 (기존 데이터 보존)
-
-        Args:
-            channel_id: 채널 ID
-            name: NPC 이름
-            description: NPC 설명
-            source: "lore" | "session" (기본값: "session")
-            relationship: 초기 관계 설명
-            appearance: 외형 묘사
-            personality: 성격 묘사
-            sexual_characteristics: 성적 특성 (NSFW)
-            abilities: 능력 및 특기
-            passives: 패시브 및 칭호 리스트
         """
         if not name:
             logging.warning("NPC 이름이 비어있어 추가하지 않음")
             return
 
         npcs = domain_manager.get_npcs(channel_id)
-        existing = npcs.get(name, {})
+        
+        # Check for similar existing NPC to prevent duplication
+        similar_name = find_similar_key(npcs.keys(), name)
+        target_name = similar_name if similar_name else name
+        
+        existing = npcs.get(target_name, {})
 
         # 기존 데이터가 있으면 보존, 없으면 새로 설정
         npc_data = {
@@ -492,8 +530,8 @@ class NPCManager:
             "passives": passives or existing.get("passives", [])
         }
 
-        domain_manager.update_npc(channel_id, name, npc_data)
-        logging.info(f"NPC 추가/업데이트: {name} (source: {npc_data['source']})")
+        domain_manager.update_npc(channel_id, target_name, npc_data)
+        logging.info(f"NPC 추가/업데이트: {target_name} (source: {npc_data['source']})")
 
     def update_npc_status(
         self,
