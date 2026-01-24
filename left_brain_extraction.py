@@ -212,7 +212,6 @@ async def extract_narrative_updates(
     model_id_flash: str,
     player_input: str,
     ai_response: str,
-    current_passives: List[str] = None,
     current_passives: List[str] = None
 ) -> Dict[str, Any]:
     """
@@ -412,7 +411,6 @@ async def extract_all_updates(
     lore_npc_names: List[str] = None,
     scene_npc_names: List[str] = None,
     # 서사적
-    current_passives: List[str] = None,
     current_passives: List[str] = None,
     # 퀘스트/메모
     current_quests: List[str] = None,
