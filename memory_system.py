@@ -389,3 +389,144 @@ extract_updates = extract_all_updates
 # =========================================================
 # (Removed large logic blocks, keeping small utilities if any were not moved)
 # Assuming analyze_context_nvc and extract_updates were the main bulk.
+
+# =========================================================
+# Lore Analysis Functions (Restored)
+# =========================================================
+
+async def extract_npcs_only(client, model_id: str, text: str) -> List[Dict[str, str]]:
+    """
+    텍스트에서 NPC 정보만 추출합니다.
+    """
+    if not text:
+        return []
+
+    system_prompt = (
+        "You are an NPC Extractor.\n"
+        "Extract ALL Non-Player Characters (NPCs) from the text.\n"
+        "Do NOT extract the main protagonist (Player Character).\n\n"
+        
+        "Output Format (JSON List):\n"
+        "[\n"
+        "  {\"name\": \"NPC Name\", \"description\": \"Brief summary of traits/role\"}\n"
+        "]"
+    )
+
+    try:
+        config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.1)
+        contents = [types.Content(role="user", parts=[types.Part(text=f"{system_prompt}\n\n[Text]:\n{text}")])]
+        
+        result = await api_call_with_retry(client, model_id, contents, config, operation_name="Extract NPCs")
+        if result:
+            parsed = safe_parse_json(result)
+            if isinstance(parsed, list):
+                return parsed
+            if isinstance(parsed, dict) and 'npcs' in parsed:
+                return parsed['npcs']
+            return []
+    except Exception as e:
+        logging.error(f"[Extract NPCs] Failed: {e}")
+        
+    return []
+
+
+async def analyze_genre_from_lore(client, model_id: str, text: str) -> Dict[str, Any]:
+    """
+    텍스트에서 장르와 톤을 분석합니다.
+    """
+    if not text:
+        return {"genres": ["noir"], "custom_tone": None}
+
+    system_prompt = (
+        "You are a Genre Analyzer.\n"
+        "Analyze the text and determine the most fitting genres and atmospheric tone.\n\n"
+        
+        f"Supported Genres: {', '.join(SUPPORTED_GENRES)}\n\n"
+        
+        "Output Format (JSON):\n"
+        "{\n"
+        "  \"genres\": [\"genre1\", \"genre2\"],  // Max 2-3 genres\n"
+        "  \"custom_tone\": \"Descriptive sentence about the atmosphere (Korean)\"\n"
+        "}"
+    )
+
+    try:
+        config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2)
+        contents = [types.Content(role="user", parts=[types.Part(text=f"{system_prompt}\n\n[Text]:\n{text}")])]
+        
+        result = await api_call_with_retry(client, model_id, contents, config, operation_name="Analyze Genre")
+        if result:
+            return safe_parse_json(result)
+    except Exception as e:
+        logging.error(f"[Analyze Genre] Failed: {e}")
+        
+    return {"genres": ["noir"], "custom_tone": None}
+
+
+async def analyze_location_rules_from_lore(client, model_id: str, text: str) -> Dict[str, str]:
+    """
+    텍스트에서 장소별 규칙을 추출합니다.
+    """
+    if not text:
+        return {}
+
+    system_prompt = (
+        "You are a Setting Analyzer.\n"
+        "Extract special rules or atmospheric traits for specific locations mentioned in the text.\n\n"
+        
+        "Output Format (JSON):\n"
+        "{\n"
+        "  \"Location Name\": \"Rule or atmosphere description (Korean)\"\n"
+        "}"
+    )
+
+    try:
+        config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2)
+        contents = [types.Content(role="user", parts=[types.Part(text=f"{system_prompt}\n\n[Text]:\n{text}")])]
+        
+        result = await api_call_with_retry(client, model_id, contents, config, operation_name="Analyze Location Rules")
+        if result:
+            return safe_parse_json(result)
+    except Exception as e:
+        logging.error(f"[Analyze Rules] Failed: {e}")
+        
+    return {}
+
+
+async def extract_pc_info(client, model_id: str, text: str) -> Optional[Dict[str, Any]]:
+    """
+    텍스트에서 주인공(PC) 정보를 추출합니다.
+    """
+    if not text:
+        return None
+
+    system_prompt = (
+        "You are a Character Profiler.\n"
+        "Identify the Main Protagonist (Player Character) from the text, if one exists.\n"
+        "If the text is just a world setting without a specific protagonist, return null.\n\n"
+        
+        "Output Format (JSON):\n"
+        "{\n"
+        "  \"name\": \"Name\",\n"
+        "  \"role\": \"Role/Job\",\n"
+        "  \"species\": \"Species (Human, Elf, etc.)\",\n"
+        "  \"appearance\": \"Visual description\",\n"
+        "  \"personality\": \"Personality traits\",\n"
+        "  \"background\": \"Backstory\",\n"
+        "  \"secret_info\": \"Hidden facts (if any)\",\n"
+        "  \"relationships\": {\"NPC Name\": \"Relation\"}\n"
+        "}\n"
+        "OR null if no clear PC."
+    )
+
+    try:
+        config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.1)
+        contents = [types.Content(role="user", parts=[types.Part(text=f"{system_prompt}\n\n[Text]:\n{text}")])]
+        
+        result = await api_call_with_retry(client, model_id, contents, config, operation_name="Extract PC Info")
+        if result:
+            return safe_parse_json(result)
+    except Exception as e:
+        logging.error(f"[Extract PC] Failed: {e}")
+        
+    return None
