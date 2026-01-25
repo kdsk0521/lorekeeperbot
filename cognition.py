@@ -223,14 +223,10 @@ async def extract_all_updates(
 
 async def _extract_physical(client, model_id, p_in, ai_out, inv, gold, status):
     sys = (
-        "EXTRACT PHYSICAL CHANGES (Inventory, Gold, Status).\n"
-        "Formats: inventory_add/remove, gold_change, status_add/remove.\n"
-        "Principle: Can Player TAKE it to next scene? YES->inv. (Ignore items consumed immediately like meals unless significant).\n"
-        "Rules:\n"
-        "1. ADD: Only distinct items kept for later (Weapons, Key Items, Rations packed).\n"
-        "2. REMOVE: Items used/consumed from EXISTING inventory.\n"
-        "3. IGNORE: Trivial consumables eaten on spot (e.g. 'drinking water', 'eating lunch' at tavern).\n"
-        "4. GOLD: ALWAYS track payment for services/meals even if item is ignored. (e.g. Pay 10g for ignored lunch -> Gold -10, Inv no change)."
+        "EXTRACT PHYSICAL CHANGES.\n"
+        "Return JSON with keys: inventory_add {name: count}, inventory_remove {name: count}, gold_change (int), status_add [list], status_remove [list].\n"
+        "Rules: Add ONLY significant items (Not trivial food). Track ALL gold info.\n"
+        'Example: {"inventory_add": {"Sword": 1}, "gold_change": -50, "status_add": [], "inventory_remove": {}, "status_remove": []}'
     )
     ctx = f"Inv:{inv}, Gold:{gold}, Status:{status}"
     usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON."
@@ -238,13 +234,10 @@ async def _extract_physical(client, model_id, p_in, ai_out, inv, gold, status):
 
 async def _extract_social(client, model_id, p_in, ai_out, rels, comps, lore_npcs, scene_npcs):
     sys = (
-        "EXTRACT SOCIAL CHANGES (Relationships, Companions).\n"
-        "Formats: relationships (Name: Level), companions (List).\n"
-        "Principle: Will relationship be DIFFERENT next time? YES->update. Will person TRAVEL with player? YES->companion.\n"
-        "Rules:\n"
-        "1. DEDUPLICATE: Check 'LoreNPCs' first. If 'The Merchant' is likely 'Arthur', use 'Arthur'.\n"
-        "2. MERGE: Do not create new entries for roles (e.g. 'Guard') if they map to a known NPC in the scene.\n"
-        "3. UPDATE: Only output if the relationship level actually changes."
+        "EXTRACT SOCIAL CHANGES.\n"
+        "Return JSON with keys: relationships {Name: Level}, companions [list].\n"
+        "Rules: Deduplicate Names. Only output changes.\n"
+        'Example: {"relationships": {"Arthur": "Friendly"}, "companions": ["Arthur"]}'
     )
     ctx = f"Rels:{rels}, Comps:{comps}, LoreNPCs:{lore_npcs}, SceneNPCs:{scene_npcs}"
     usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON."
@@ -252,14 +245,10 @@ async def _extract_social(client, model_id, p_in, ai_out, rels, comps, lore_npcs
 
 async def _extract_narrative(client, model_id, p_in, ai_out, passives, fermented):
     sys = (
-        "EXTRACT NARRATIVE CHANGES (Passives, Abnormal Events, Plot Hints).\n"
-        "Formats: passives (New traits obtained), passive_suggestion (Suggest new passive), abnormal_trigger (One keyword if significant abnormal event occurred).\n"
-        "Rules:\n"
-        "1. Passives: Traits gained from REPEATED actions (3+ times) or SIGNIFICANT achievements. (Check History/Fermented).\n"
-        "   - Examples: 'Merciful' (Spared 3+ villains), 'Goblin Slayer' (Killed boss).\n"
-        "2. Abnormal Trigger: A significant Non-Routine element the player encounters (Monsters, Magic, Genre Shift).\n"
-        "   - Output the Keyword (e.g., 'Zombie', 'Magic', 'Surrounded by Girls').\n"
-        "3. STRICT: Do NOT award titles for single actions.\n"
+        "EXTRACT NARRATIVE CHANGES.\n"
+        "Return JSON with keys: passives [list], passive_suggestion {name, reason}, abnormal_trigger (string or null).\n"
+        "Rules: Passives for REPEATED(3+) or MAJOR events only. Abnormal Trigger for Genre Shift/Monsters.\n"
+        'Example: {"passives": ["Dragonslayer"], "passive_suggestion": null, "abnormal_trigger": "Zombie"}'
     )
     ctx = f"Passives:{passives}, FermentedSnippet:{fermented[:2000]}"
     usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON."
@@ -268,8 +257,9 @@ async def _extract_narrative(client, model_id, p_in, ai_out, passives, fermented
 async def _extract_quest(client, model_id, p_in, ai_out, quests, memos):
     sys = (
         "EXTRACT QUEST/MEMO CHANGES.\n"
-        "Formats: quest_add/complete, memo_add/remove/archive.\n"
-        "Principle: Does player have NEW GOAL? YES->Quest. Is info worth KEEPING? YES->Memo."
+        "Return JSON with keys: quest_add [list], quest_complete [list], memo_add [list], memo_remove [list], memo_archive [list].\n"
+        "Rules: precise quest strings. simple memos.\n"
+        'Example: {"quest_add": ["Find the key"], "quest_complete": [], "memo_add": ["Code is 1234"], "memo_remove": [], "memo_archive": []}'
     )
     ctx = f"Quests:{quests}, Memos:{memos}"
     usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON."
