@@ -1114,6 +1114,18 @@ class PromptBuilder:
 {rule_text if rule_text else "(Standard TRPG rules apply)"}
 </Lore>
 """
+    def set_player_info(self, name: str, desc: str = "") -> 'PromptBuilder':
+        """[3.5] 플레이어 캐릭터 정보 설정 (PC 사칭 방지 핵심)"""
+        if not name or name == "Unknown": return self
+        
+        self.sections['player_info'] = f"""
+<Player_Character>
+Name: {name}
+Description: {desc}
+⚠️ CRITICAL: This character is the PLAYER. Controlled ONLY by User input.
+🛑 ABSOLUTELY FORBIDDEN: Do NOT write dialogue or actions for {name}.
+</Player_Character>
+"""
         return self
     
     def set_roles(
@@ -1347,6 +1359,10 @@ This tone affects style, not physics or causality.
         # [3] Lore
         if 'lore' in self.sections:
             parts.append(self.sections['lore'])
+
+        # [3.5] Player Info
+        if 'player_info' in self.sections:
+            parts.append(self.sections['player_info'])
         
         # [4] Roles
         if 'roles' in self.sections:
@@ -1438,14 +1454,13 @@ def create_risu_style_session(
     deep_memory: str = "",
     fermented_summary: str = "",
     character_descriptions: str = "",
-    scene_type: Optional[str] = None
+    scene_type: Optional[str] = None,
+    player_name: str = "",
+    player_desc: str = ""
 ) -> ChatSessionAdapter:
     """
     RisuAI/SillyTavern 스타일의 세션을 생성합니다.
     프리셋 순서에 맞게 프롬프트를 조립합니다.
-    
-    Args:
-        scene_type: 장면 유형 ('normal', 'gore', 'nsfw', 'gore_nsfw')
     """
     builder = PromptBuilder()
     
@@ -1454,6 +1469,7 @@ def create_risu_style_session(
     builder.set_custom_tone(custom_tone)
     builder.set_scene_type(scene_type)  # 장면 유형 설정
     builder.set_lore(lore_text, rule_text)
+    builder.set_player_info(player_name, player_desc)
     builder.set_roles(character_descriptions)
     builder.set_fermented(fermented_summary, deep_memory)
     

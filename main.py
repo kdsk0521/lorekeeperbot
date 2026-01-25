@@ -231,10 +231,15 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
             custom_tone = domain_manager.get_custom_tone(channel_id)
             scene_type = nvc_res.get("SceneType", "normal")
             
+            # Extract Player Info for Anti-Impersonation
+            p_name = p_data.get("mask", "Unknown") if p_data else "Unknown"
+            p_desc = p_data.get("ai_memory", {}).get("appearance", "") if p_data else ""
+
             session = persona.create_risu_style_session(
                 client_genai, MODEL_ID, lore_txt, rule_txt, active_genres, custom_tone,
                 domain_data.get("deep_memory", ""), fermented_summary=fermented_summary_text,
-                character_descriptions="", scene_type=scene_type
+                character_descriptions="", scene_type=scene_type,
+                player_name=p_name, player_desc=p_desc
             )
             
             # Inject History
