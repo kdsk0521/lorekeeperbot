@@ -318,7 +318,8 @@ async def handle_participant_command(message, channel_id: str, cmd: str, arg: st
             domain_manager.save_domain(channel_id, d)
             
         icon = {'afk': '💤', 'leave': '👋', 'back': '✅'}.get(cmd, '')
-        await message.channel.send(f"{icon} 상태 변경: **{new_status}**")
+        status_kr = {'Away': '자리 비움', 'Left': '퇴장', 'Active': '활동 중'}.get(new_status, new_status)
+        await message.channel.send(f"{icon} 상태 변경: **{status_kr}**")
 
 
 async def handle_system_command(message, channel_id: str, cmd: str, arg: str) -> None:
@@ -328,7 +329,7 @@ async def handle_system_command(message, channel_id: str, cmd: str, arg: str) ->
             d = domain_manager.get_domain(channel_id)
             curr = d['settings'].get('mode', 'auto')
             mode_kr = {'auto': '자동', 'waiting': '수동', 'manual': '수동', 'assist': '보조'}.get(curr, curr)
-            await message.channel.send(f"⚙️ 현재 모드: **{mode_kr}**\n사용법: `!모드 [자동/수동]` 또는 `!mode [auto/waiting]`")
+            await message.channel.send(f"⚙️ 현재 모드: **{mode_kr}**\n사용법: `!모드 [자동/수동]`")
             return
         
         # Korean to English mapping
@@ -337,7 +338,7 @@ async def handle_system_command(message, channel_id: str, cmd: str, arg: str) ->
         mode_kr = {'auto': '자동', 'waiting': '수동', 'assist': '보조'}.get(mode, mode)
         
         domain_manager.update_settings(channel_id, mode=mode)
-        await message.channel.send(f"⚙️ 모드 변경: **{mode_kr}** ({mode})")
+        await message.channel.send(f"⚙️ 모드 변경: **{mode_kr}**")
         return
 
     if cmd == 'scene':
@@ -348,10 +349,10 @@ async def handle_system_command(message, channel_id: str, cmd: str, arg: str) ->
             await message.channel.send(
                 f"🎬 현재 장면: **{scene_kr}**\n"
                 f"사용법: `!장면 [일반/고어/nsfw/전체]`\n"
-                f"• 일반(normal): 일반적인 서술\n"
-                f"• 고어(gore): 폭력/잔혹 묘사 허용\n"
-                f"• NSFW(nsfw): 성인 묘사 허용\n"
-                f"• 전체(all/gore_nsfw): 모든 묘사 허용"
+                f"• 일반: 기본 묘사\n"
+                f"• 고어: 폭력/잔혹 허용\n"
+                f"• NSFW: 성인 묘사 허용\n"
+                f"• 전체: 모든 묘사 허용"
             )
             return
         
@@ -397,7 +398,7 @@ async def handle_analysis_command(message, channel_id: str, cmd: str, arg: str, 
                 msg = "📜 **세계 규칙 목록**\n" + "\n".join([f"- {k}: {v.get('desc','')}" for k, v in rules.items()])
                 await message.channel.send(msg)
         else:
-            await message.channel.send(f"🔍 기밀 규칙 '{arg}' 검색 결과: (Security Clearance Required)")
+            await message.channel.send(f"🔍 기밀 규칙 '{arg}' 검색 결과: (보안 등급 필요)")
         return
 
     if cmd == 'lores':

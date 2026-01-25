@@ -97,7 +97,8 @@ class SessionManager:
                  msg += "✅ 세계관 로드됨\n"
 
         rules_mode = domain_manager.get_rules_mode(channel_id)
-        msg += f"✅ 룰 설정: {rules_mode.capitalize()}\n"
+        mode_kr = "기본 (Default)" if rules_mode == "default" else "사용자 설정 (Custom)"
+        msg += f"✅ 룰 설정: {mode_kr}\n"
         
         if ready:
             d = domain_manager.get_domain(channel_id)
