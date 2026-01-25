@@ -863,7 +863,7 @@ async def extract_npcs_only(
         
         result = await api_call_with_retry(client, model_id, contents, config, operation_name="Extract NPCs")
         if result:
-            parsed = safe_parse_json(result)
+            parsed = safe_parse_json(result, expect_list=True)
             if isinstance(parsed, list): return parsed
             if isinstance(parsed, dict) and "npcs" in parsed: return parsed["npcs"]
             return []
