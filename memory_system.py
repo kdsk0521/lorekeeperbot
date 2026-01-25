@@ -280,7 +280,7 @@ async def api_call_with_retry(
     client,
     model_id: str,
     contents: List[types.Content],
-    config: types.GenerateContentConfig,
+    gen_config: types.GenerateContentConfig,
     operation_name: str = "API Call"
 ) -> Optional[str]:
     """
@@ -292,7 +292,7 @@ async def api_call_with_retry(
             response = await client.aio.models.generate_content(
                 model=model_id,
                 contents=contents,
-                config=config
+                config=gen_config
             )
             
             if response and response.text:
