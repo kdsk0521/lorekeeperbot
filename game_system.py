@@ -173,7 +173,25 @@ def get_world_context(channel_id: str) -> str:
     )
 
 def get_doom_forecast(channel_id: str) -> str:
-    return f"🛡️ Doom Forecast not implemented yet." # Placeholder to save tokens 
+    world = domain_manager.get_world_state(channel_id)
+    current = world.get("doom", 0)
+    desc = _get_doom_description(current)
+    
+    # Calculate trend
+    # This logic assumes we want to show what might increase doom.
+    # Reusing calculate_doom_increase logic partially or just giving a static report.
+    # For now, let's give a static status report.
+    
+    msg = f"🛡️ **위기 예보**\n현재 수치: {current}% ({desc})\n"
+    
+    if current >= config.DOOM_THRESHOLD_CRITICAL:
+        msg += "⚠️ **경고:** 파멸이 임박했습니다. 모든 행동에 위험이 따릅니다."
+    elif current >= config.DOOM_THRESHOLD_DANGER:
+        msg += "⚠️ **주의:** 세계의 적의가 느껴집니다."
+    else:
+        msg += "✅ 아직은 안전합니다."
+        
+    return msg 
 
 # =========================================================
 # QUEST SYSTEM (From quest_manager.py)
@@ -318,6 +336,45 @@ async def generate_chronicle_from_history(client, model_id, channel_id: str) -> 
         _save_board(channel_id, board)
         return f"📜 **[연대기 기록됨]** {entry['title']}\n{entry['content'][:100]}..."
     return "연대기 생성 실패"
+
+def export_lore_data(channel_id: str) -> Tuple[str, str]:
+    """
+    로어 데이터를 텍스트 파일 형식으로 내보냅니다.
+    """
+    lore = domain_manager.get_lore(channel_id)
+    npcs = domain_manager.get_npcs(channel_id)
+    
+    if not lore and not npcs:
+        return None, "⚠️ 내보낼 데이터가 없습니다."
+        
+    lines = []
+    lines.append(f"# Lore Export - {channel_id}")
+    lines.append(f"Date: {time.strftime('%Y-%m-%d %H:%M')}\n")
+    
+    lines.append("## LORE")
+    lines.append(lore)
+    lines.append("\n## NPC LIST")
+    
+    for name, data in npcs.items():
+        lines.append(f"### {name}")
+        lines.append(f"Desc: {data.get('desc', '-')}")
+        if data.get('appearance'): lines.append(f"Look: {data.get('appearance')}")
+        if data.get('personality'): lines.append(f"Personality: {data.get('personality')}")
+        lines.append("")
+
+    # [Restored] Session-detected NPCs
+    mem = domain_manager.get_session_ai_memory(channel_id)
+    npc_summaries = mem.get("npc_summaries", {})
+    if npc_summaries:
+        lines.append("\n### [SESSION NPCs - AI Detected]")
+        for name, summary in npc_summaries.items():
+            if name in npcs: continue # Skip if promoted
+            lines.append(f"#### {name}")
+            lines.append(f"Summary: {summary}")
+            lines.append("")
+
+    export_content = "\n".join(lines)
+    return export_content, f"✅ **데이터 추출 완료** (NPC {len(npcs)}명 + 감지 {len(npc_summaries)}명)"
 
 def get_lore_book(channel_id: str) -> str:
     board = _get_board(channel_id)

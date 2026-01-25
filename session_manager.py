@@ -69,6 +69,16 @@ class SessionManager:
         except Exception as e:
             await channel.send(f"❌ Purge failed: {e}")
 
+    async def execute_clear(self, message: discord.Message) -> None:
+        """Clears chat messages but keeps session data."""
+        try:
+            await message.channel.send("🧹 **Cleaning up chat...**")
+            await asyncio.sleep(1)
+            deleted = await message.channel.purge(limit=None, check=lambda m: not m.pinned)
+            await message.channel.send(f"✨ **Chat Cleared.** ({len(deleted)} msgs removed)", delete_after=5)
+        except Exception as e:
+            await message.channel.send(f"⚠️ Clear failed: {e}")
+
     async def check_preparation(self, message: discord.Message) -> None:
         """Checks if session is ready to start (Lore/Rules)."""
         channel_id = str(message.channel.id)

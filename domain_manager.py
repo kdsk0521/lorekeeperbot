@@ -170,6 +170,9 @@ def get_lore_with_npcs(channel_id: str) -> str:
 def get_npcs(channel_id: str) -> Dict[str, Dict[str, Any]]:
     return get_domain(channel_id).get("npcs", {})
 
+def get_npc(channel_id: str, name: str) -> Optional[Dict[str, Any]]:
+    return get_npcs(channel_id).get(name)
+
 def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
     d = get_domain(channel_id)
     d.setdefault("npcs", {})[name] = data
@@ -398,6 +401,13 @@ def update_quest_board(channel_id: str, board: Dict[str, Any]) -> None:
 def set_session_lock(channel_id: str, locked: bool) -> None:
     d = get_domain(channel_id)
     d["settings"]["session_locked"] = locked
+    save_domain(channel_id, d)
+
+def update_settings(channel_id: str, **kwargs) -> None:
+    d = get_domain(channel_id)
+    if "settings" not in d: d["settings"] = {}
+    for k, v in kwargs.items():
+        d["settings"][k] = v
     save_domain(channel_id, d)
 
 def get_response_mode(channel_id: str) -> str:
