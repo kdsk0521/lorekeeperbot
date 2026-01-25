@@ -357,7 +357,16 @@ def update_ai_memory(channel_id: str, uid: str, updates: Dict[str, Any]) -> None
     if not p: return
     
     mem = p.get("ai_memory", {})
-    mem.update(updates)
+    
+    # Special handling for dictionaries (deep merge)
+    for k, v in updates.items():
+        if k == "relationships" and isinstance(v, dict):
+            current_rels = mem.get("relationships", {})
+            current_rels.update(v)
+            mem[k] = current_rels
+        else:
+            mem[k] = v
+            
     p["ai_memory"] = mem
     save_participant_data(channel_id, uid, p)
 

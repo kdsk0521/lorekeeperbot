@@ -63,7 +63,8 @@ async def analyze_context_nvc(
         "### SYSTEM ACTION RULES (Auto-trigger)\n"
         "**Quest:** Add/Complete based on narrative events.\n"
         "**Memo:** Add clues/names/codes. Archive obsolete info.\n"
-        "**NPC:** Add new named characters.\n"
+        "**Memo:** Add clues/names/codes. Archive obsolete info.\n"
+        "**NPC:** Add new named characters. WARNING: CHECK EXISTING NPCS FIRST. Do not add 'Merchant' if 'Arthur' is already a known merchant. Link role to name.\n"
         "Important: Return `null` if no action needed.\n\n"
 
         "### NPC INTERACTION SYSTEM\n"

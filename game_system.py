@@ -496,9 +496,26 @@ def update_status_effect(user_data: Dict[str, Any], action: str, effect_name: st
     return user_data, msg
 
 def get_status_summary(user_data: Dict[str, Any]) -> str:
+    """Returns a concise summary of player status for AI analysis."""
+    parts = []
+    
+    # 1. Status Effects
     effects = user_data.get("status_effects", [])
-    if not effects: return "✅ **상태:** 정상"
-    return f"🧬 **상태:** {', '.join(effects)}"
+    if effects: parts.append(f"State: {', '.join(effects)}")
+    else: parts.append("State: Normal")
+    
+    # 2. Passives (Helper utilized)
+    passives = get_passives_for_context(user_data) # Returns "Passives: ..."
+    parts.append(passives)
+    
+    # 3. Inventory (Tools/Weapons)
+    inv = user_data.get("inventory", {})
+    if inv:
+        # Simple list for context
+        items = [f"{k}" for k in inv.keys()]
+        parts.append(f"Inv: {', '.join(items)}")
+        
+    return "\n".join(parts)
 
 # Abnormal Exposure
 def get_normality_stage(normality: int) -> Dict[str, str]:
