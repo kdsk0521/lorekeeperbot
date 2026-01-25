@@ -210,6 +210,11 @@ NORMALITY_STAGES = {
 }
 
 def get_normality_stage_info(val):
+    try:
+        val = int(val)
+    except (ValueError, TypeError):
+        val = 0
+        
     for (l, h), info in NORMALITY_STAGES.items():
         if l <= val < h: return info
     return NORMALITY_STAGES[(90, 101)]

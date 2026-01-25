@@ -123,7 +123,12 @@ def calculate_doom_increase(channel_id: str, world: dict, next_idx: int, time_sl
         ai_mem = p.get("ai_memory", {})
         rels = ai_mem.get("relationships", {})
         for npc_name, score in rels.items():
-            if score <= config.NEMESIS_THRESHOLD:
+            try:
+                score_val = int(score)
+            except (ValueError, TypeError):
+                continue # Skip invalid scores
+                
+            if score_val <= config.NEMESIS_THRESHOLD:
                 nemesis_detected = True; break
         if nemesis_detected: break
     
