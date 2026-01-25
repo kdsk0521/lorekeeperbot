@@ -1087,24 +1087,7 @@ LANGUAGE_CORRECTION = """
 # =========================================================
 # SAFETY SETTINGS
 # =========================================================
-SAFETY_SETTINGS = [
-    types.SafetySetting(
-        category="HARM_CATEGORY_HARASSMENT",
-        threshold="BLOCK_NONE",
-    ),
-    types.SafetySetting(
-        category="HARM_CATEGORY_HATE_SPEECH",
-        threshold="BLOCK_NONE",
-    ),
-    types.SafetySetting(
-        category="HARM_CATEGORY_SEXUALLY_EXPLICIT",
-        threshold="BLOCK_NONE",
-    ),
-    types.SafetySetting(
-        category="HARM_CATEGORY_DANGEROUS_CONTENT",
-        threshold="BLOCK_NONE",
-    ),
-]
+# SAFETY_SETTINGS moved to config.py
 
 
 # =========================================================
@@ -1148,20 +1131,61 @@ class ChatSessionAdapter:
         self.history = history
         self.config = config
     
+
+    def _trim_history(self):
+        """히스토리가 너무 커지면 오래된 메시지 제거"""
+        MAX_HISTORY_MESSAGES = 50
+        MAX_HISTORY_CHARS = 100000 
+
+        # 초기 2개 메시지 (시스템 초기화)는 유지
+        if len(self.history) <= 2:
+            return
+        
+        # 메시지 수 제한
+        while len(self.history) > MAX_HISTORY_MESSAGES and len(self.history) > 2:
+            # 3번째 메시지부터 삭제 (0, 1은 초기화)
+            self.history.pop(2)
+            logging.debug(f"[History] 메시지 수 초과, 오래된 메시지 제거")
+        
+        # 문자 수 제한
+        total_chars = sum(
+            len(p.text) for c in self.history for p in c.parts if hasattr(p, 'text') and p.text
+        )
+        while total_chars > MAX_HISTORY_CHARS and len(self.history) > 2:
+            removed = self.history.pop(2)
+            removed_chars = sum(len(p.text) for p in removed.parts if hasattr(p, 'text') and p.text)
+            total_chars -= removed_chars
+            logging.debug(f"[History] 문자 수 초과, {removed_chars}자 제거")
+
     async def send_message(self, content: str) -> Optional[types.GenerateContentResponse]:
         """
-        메시지를 전송하고 응답을 받습니다.
+        메시지를 전송하고 응답을 받습니다. (히스토리 관리 포함)
         """
+        self._trim_history() # 전송 전 트림
+        
         self.history.append(
             types.Content(role="user", parts=[types.Part(text=content)])
         )
         
         try:
+            # 히스토리 상세 로깅
+            total_chars = sum(
+                len(p.text) for c in self.history for p in c.parts if hasattr(p, 'text') and p.text
+            )
+            logging.debug(f"[ChatSession] 히스토리: {len(self.history)}msgs, ~{total_chars}chars")
+
             response = await self.client.aio.models.generate_content(
                 model=self.model,
                 contents=self.history,
                 config=self.config
             )
+            
+            # 응답 상세 로깅
+            cand_count = len(response.candidates) if response and response.candidates else 0
+            if response:
+                logging.debug(f"[ChatSession] response 수신, candidates: {cand_count}")
+            else:
+                logging.warning("[ChatSession] response가 None")
             
             if response and response.text:
                 model_content = types.Content(
@@ -1608,7 +1632,8 @@ Recording in Korean. Awaiting observable events.
     
     config = types.GenerateContentConfig(
         temperature=DEFAULT_TEMPERATURE,
-        safety_settings=SAFETY_SETTINGS
+        safety_settings=config.SAFETY_SETTINGS,
+        tools=[] # Force disable AFC
     )
     
     return ChatSessionAdapter(
@@ -1649,8 +1674,53 @@ async def generate_response_with_retry(
         try:
             response = await chat_session.send_message(full_input)
             
-            if response and response.text:
+            # ===== [NEW] 상세 응답 진단 =====
+            if response is None:
+                logging.warning(f"[시도 {attempt+1}] response 객체 자체가 None")
+                continue
+            
+            # 후보 확인
+            if not response.candidates:
+                logging.warning(f"[시도 {attempt+1}] candidates 없음")
+                # prompt_feedback 확인
+                if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
+                    logging.warning(f"  prompt_feedback: {response.prompt_feedback}")
+                continue
+            
+            candidate = response.candidates[0]
+            
+            # finish_reason 확인
+            finish_reason = getattr(candidate, 'finish_reason', None)
+            if finish_reason:
+                finish_reason_str = str(finish_reason)
+                if 'SAFETY' in finish_reason_str:
+                    logging.warning(f"[시도 {attempt+1}] 안전 필터 차단: {finish_reason_str}")
+                    # 안전 등급 확인
+                    if hasattr(candidate, 'safety_ratings'):
+                        for rating in candidate.safety_ratings:
+                            logging.warning(f"  {rating.category}: {rating.probability}")
+                    continue
+                elif 'MAX_TOKENS' in finish_reason_str:
+                    logging.warning(f"[시도 {attempt+1}] 토큰 한계 도달")
+                elif finish_reason_str not in ['STOP', 'END_TURN', '1']: # 1 is often STOP
+                     # Just log, don't necessarily skip if text exists
+                    logging.warning(f"[시도 {attempt+1}] 종료 사유: {finish_reason_str}")
+            
+            response_text = None
+            if response.text:
                 response_text = response.text
+            else:
+                logging.warning(f"[시도 {attempt+1}] text 속성 비어있음")
+                # content.parts 직접 확인
+                if hasattr(candidate, 'content') and candidate.content:
+                    parts = candidate.content.parts
+                    if parts:
+                        text_parts = [p.text for p in parts if hasattr(p, 'text') and p.text]
+                        if text_parts:
+                            response_text = "".join(text_parts)
+                            logging.info(f"[시도 {attempt+1}] parts에서 텍스트 복구: {len(response_text)}자")
+
+            if response_text:
                 response_length = len(response_text)
                 
                 if response_length >= min_length:
@@ -1675,8 +1745,8 @@ async def generate_response_with_retry(
                             f"{hidden_reminder}"
                         )
             else:
-                logging.warning(f"빈 응답 수신 (시도 {attempt + 1}/{config.MAX_RETRY_COUNT})")
-            
+                logging.warning(f"빈 응답 (텍스트 복구 실패) (시도 {attempt + 1}/{config.MAX_RETRY_COUNT})")
+                
         except Exception as e:
             logging.warning(f"응답 생성 실패 (시도 {attempt + 1}/{config.MAX_RETRY_COUNT}): {e}")
         
@@ -1749,8 +1819,9 @@ async def create_cached_session(
         
         config = types.GenerateContentConfig(
             temperature=DEFAULT_TEMPERATURE,
-            safety_settings=SAFETY_SETTINGS,
-            cached_content=cache_name
+            safety_settings=config.SAFETY_SETTINGS,
+            cached_content=cache_name,
+            tools=[] # Force disable AFC
         )
         
         session = ChatSessionAdapter(

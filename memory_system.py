@@ -287,6 +287,13 @@ async def api_call_with_retry(
     Gemini API 호출을 재시도 로직과 함께 수행합니다.
     ResourceExhausted(429) 등 특정 에러를 우아하게 처리합니다.
     """
+    # [Patch] Enforce Safety Settings & Disable AFC
+    if not gen_config.safety_settings:
+        gen_config.safety_settings = config.SAFETY_SETTINGS
+    
+    if gen_config.tools is None:
+        gen_config.tools = [] # Explicitly disable AFC
+        
     for attempt in range(config.MAX_RETRY_COUNT):
         try:
             response = await client.aio.models.generate_content(
@@ -295,19 +302,51 @@ async def api_call_with_retry(
                 config=gen_config
             )
             
-            if response and response.text:
+            # ===== [NEW] 상세 진단 =====
+            if response is None:
+                logging.warning(f"[{operation_name}] response None (시도 {attempt+1})")
+                continue
+            
+            if not response.candidates:
+                logging.warning(f"[{operation_name}] candidates 없음 (시도 {attempt+1})")
+                if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
+                    logging.warning(f"  feedback: {response.prompt_feedback}")
+                continue
+            
+            candidate = response.candidates[0]
+            finish_reason = getattr(candidate, 'finish_reason', None)
+            
+            if finish_reason:
+                fr_str = str(finish_reason)
+                if 'SAFETY' in fr_str:
+                    logging.warning(f"[{operation_name}] 안전 필터 (시도 {attempt+1}): {fr_str}")
+                    if hasattr(candidate, 'safety_ratings'):
+                         for rating in candidate.safety_ratings:
+                             logging.warning(f"  {rating.category}: {rating.probability}")
+                    continue
+                elif fr_str not in ['STOP', 'END_TURN', '1']:
+                     logging.warning(f"[{operation_name}] 비정상 종료 (시도 {attempt+1}): {fr_str}")
+            
+            if response.text:
                 return response.text.strip()
             
-            logging.warning(f"[{operation_name}] 빈 응답 수신 (시도 {attempt + 1}/{config.MAX_RETRY_COUNT})")
+            # text 없으면 parts 직접 확인
+            if hasattr(candidate, 'content') and candidate.content:
+                parts = candidate.content.parts
+                if parts:
+                    text_parts = [p.text for p in parts if hasattr(p, 'text') and p.text]
+                    if text_parts:
+                        return "".join(text_parts).strip()
+            
+            logging.warning(f"[{operation_name}] 빈 응답 (시도 {attempt+1})")
             
         except google_exceptions.ResourceExhausted as e:
             logging.error(f"[{operation_name}] 쿼터 초과 (ResourceExhausted): {e}")
-            # 쿼터 초과는 즉시 중단하거나 긴 대기 필요. 여기서는 즉시 중단.
             return None
             
         except google_exceptions.ServiceUnavailable as e:
             logging.warning(f"[{operation_name}] 서비스 일시적 불가 (503): {e} - 재시도 중...")
-            await asyncio.sleep(config.RETRY_DELAY_SECONDS * (attempt + 1)) # Backoff check
+            await asyncio.sleep(config.RETRY_DELAY_SECONDS * (attempt + 1))
             continue
 
         except Exception as e:

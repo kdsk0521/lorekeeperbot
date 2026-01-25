@@ -5,6 +5,7 @@ Consolidates all constants and configuration settings.
 
 import os
 from dotenv import load_dotenv
+from google.genai import types
 
 # Load Environment Variables
 load_dotenv()
@@ -212,3 +213,25 @@ def get_normality_stage_info(val):
     for (l, h), info in NORMALITY_STAGES.items():
         if l <= val < h: return info
     return NORMALITY_STAGES[(90, 101)]
+
+# =========================================================
+# Safety Settings
+# =========================================================
+SAFETY_SETTINGS = [
+    types.SafetySetting(
+        category="HARM_CATEGORY_HARASSMENT",
+        threshold="BLOCK_NONE",
+    ),
+    types.SafetySetting(
+        category="HARM_CATEGORY_HATE_SPEECH",
+        threshold="BLOCK_NONE",
+    ),
+    types.SafetySetting(
+        category="HARM_CATEGORY_SEXUALLY_EXPLICIT",
+        threshold="BLOCK_NONE",
+    ),
+    types.SafetySetting(
+        category="HARM_CATEGORY_DANGEROUS_CONTENT",
+        threshold="BLOCK_NONE",
+    ),
+]
