@@ -720,7 +720,10 @@ async def dispatch_command(cmd, message, channel_id, parsed, client_discord, cli
         action_desc = parsed['content'] if parsed else ""
         result_msg = game_system.perform_check(channel_id, str(message.author.id), action_desc)
         await message.channel.send(result_msg)
-        return None
+        
+        # Log to history and trigger AI narrative
+        domain_manager.append_history(channel_id, "System", result_msg)
+        return f"[System: Dice Roll Result - {action_desc if action_desc else 'Standard Check'}] {result_msg}"
         
     if cmd == 'doom':
         await message.channel.send(game_system.get_doom_forecast(channel_id))

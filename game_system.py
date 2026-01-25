@@ -663,18 +663,30 @@ def perform_check(channel_id: str, user_id: str, action_desc: str = "") -> str:
     
     header = f"🎲 **판정: {action_desc}**" if action_desc else "🎲 **판정**"
     
+    # Critical Detection
+    crit_msg = ""
+    if dice_val <= 5: 
+        crit_msg = " [⚠️ **대실패**]"
+    elif dice_val >= 96:
+        crit_msg = " [✨ **대성공 가능!**]" # Only if final >= DC (assumed 50)
+    
     calc_str = f"**{dice_val}**"
     if modifier != 0:
         sign = "+" if modifier > 0 else ""
         calc_str += f" {sign}{modifier} ({', '.join(mod_details)})"
         
-    result_str = f"{header}\n결과: {calc_str} = **{final_val}**"
+    result_str = f"{header}\n결과: {calc_str} = **{final_val}**{crit_msg}\n(보통 기준: DC 40)"
     
-    # 패시브 컨텍스트 (AI/GM 참고용)
-    passives = p_data.get("passives", [])
+    # 패시브 & 소지품 컨텍스트 (AI/GM 참고용)
+    passives = p_data.get("ai_memory", {}).get("passives", [])
     if passives:
         p_names = [p.get("name") if isinstance(p, dict) else str(p) for p in passives]
         result_str += f"\n💡 참고 특성: {', '.join(p_names)}"
+    
+    inv = p_data.get("inventory", {})
+    if inv:
+        i_names = [f"{k}({v})" if isinstance(v, int) and v > 1 else str(k) for k, v in inv.items()]
+        result_str += f"\n📦 관련 소지품: {', '.join(i_names)}"
         
     return result_str
 

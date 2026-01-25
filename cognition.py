@@ -185,8 +185,8 @@ def determine_result(final_roll: int, dc: int) -> str:
     else: return "failure"
 
 def build_action_judgment_with_roll(action: str, difficulty: str, difficulty_reason: str, modifiers_list: List[Dict[str, int]]) -> Dict[str, Any]:
-    dc_table = {"trivial": 10, "easy": 30, "normal": 50, "hard": 70, "extreme": 90}
-    dc = dc_table.get(difficulty.lower(), 50)
+    dc_table = {"trivial": 0, "easy": 20, "normal": 40, "hard": 60, "extreme": 80}
+    dc = dc_table.get(difficulty.lower(), 40)
     
     base_roll = roll_dice(100)
     
