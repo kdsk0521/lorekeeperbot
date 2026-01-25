@@ -1633,7 +1633,13 @@ Recording in Korean. Awaiting observable events.
     gen_config = types.GenerateContentConfig(
         temperature=DEFAULT_TEMPERATURE,
         safety_settings=config.SAFETY_SETTINGS,
-        tools=[] 
+        tools=[],
+        # Aggressively disable AFC
+        tool_config=types.ToolConfig(
+            function_calling_config=types.FunctionCallingConfig(
+                mode=types.FunctionCallingConfigMode.NONE
+            )
+        )
     )
     
     return ChatSessionAdapter(

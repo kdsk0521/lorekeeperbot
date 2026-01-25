@@ -293,6 +293,14 @@ async def api_call_with_retry(
     
     if gen_config.tools is None:
         gen_config.tools = [] # Explicitly disable AFC
+    
+    # Aggressively disable AFC
+    if not gen_config.tool_config:
+        gen_config.tool_config = types.ToolConfig(
+            function_calling_config=types.FunctionCallingConfig(
+                mode=types.FunctionCallingConfigMode.NONE
+            )
+        )
         
     for attempt in range(config.MAX_RETRY_COUNT):
         try:
