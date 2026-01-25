@@ -2,12 +2,13 @@
 Lorekeeper TRPG Bot - Domain Content Module
 Handles lore, NPCs, rules, genres, and world settings.
 Merges previous domain_lore and domain_rules modules.
+Includes Simulation Data (Status Effects, Normality Stages) [NEW]
 """
 
 import os
 import logging
 import config
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 from domain_io import (
     get_lore_file_path, get_lore_original_file_path, get_rules_file_path,
     load_text, save_text, _lore_cache, _lore_original_cache, _rules_cache,
@@ -246,3 +247,187 @@ def set_scene_type(channel_id: str, scene_type: str) -> None:
 # =========================================================
 def get_growth_system(channel_id: str) -> str:
     return get_domain(channel_id).get("settings", {}).get("growth_system", "default")
+
+
+# =========================================================
+# 상태이상 및 적응도 데이터 (Simulation Data) [NEW]
+# =========================================================
+
+# 부정적 상태이상 (doom 증가 요인)
+NEGATIVE_STATUS_EFFECTS = {
+    # 신체적 부상 (심각도별)
+    "중상": 3,
+    "부상": 2,
+    "가벼운 부상": 1,
+    "출혈": 2,
+    "골절": 3,
+    "화상": 2,
+    "동상": 2,
+    "중독": 2,
+    "질병": 2,
+    "감염": 2,
+    
+    # 정신적/심리적
+    "공포": 2,
+    "패닉": 3,
+    "혼란": 1,
+    "광기": 3,
+    "절망": 2,
+    "트라우마": 2,
+    "악몽": 1,
+    
+    # 신체 상태
+    "피로": 1,
+    "탈진": 2,
+    "지침": 1,
+    "굶주림": 2,
+    "갈증": 2,
+    "수면 부족": 1,
+    "기절": 2,
+    "마비": 2,
+    "실명": 3,
+    "청각 상실": 2,
+    
+    # 저주/마법적 (판타지용)
+    "저주": 2,
+    "마력 고갈": 1,
+    "영혼 손상": 3,
+    "빙의": 3,
+    
+    # 사회적
+    "수배": 2,
+    "추적당함": 2,
+    "배신당함": 1,
+}
+
+# 긍정적 상태 (doom 감소 요인)
+POSITIVE_STATUS_EFFECTS = {
+    # 신체적 버프
+    "치료됨": 1,
+    "회복 중": 1,
+    "강화": 1,
+    "축복": 2,
+    "보호막": 1,
+    "재생": 2,
+    
+    # 정신적/심리적
+    "집중": 1,
+    "평온": 1,
+    "용기": 1,
+    "결의": 1,
+    "영감": 1,
+    "희망": 2,
+    
+    # 신체 상태
+    "휴식함": 1,
+    "포만감": 1,
+    "숙면": 1,
+    "활력": 1,
+    
+    # 마법적 (판타지용)
+    "마력 충전": 1,
+    "신의 가호": 2,
+    "투명화": 1,
+    
+    # 사회적
+    "은신 중": 1,
+    "보호받음": 2,
+    "동맹": 1,
+}
+
+# 상태이상 정의
+STATUS_EFFECTS = {
+    # === 부정적 상태 (Debuff) ===
+    # 물리적 상태
+    "부상": {"type": "debuff", "category": "physical", "severity": 1, "recoverable": True, "description": "가벼운 부상"},
+    "중상": {"type": "debuff", "category": "physical", "severity": 2, "recoverable": False, "description": "심각한 부상, 치료 필요"},
+    "출혈": {"type": "debuff", "category": "physical", "severity": 2, "tick_damage": 1, "description": "매 턴 체력 감소"},
+    "골절": {"type": "debuff", "category": "physical", "severity": 3, "recoverable": False, "description": "이동/전투 불가"},
+    "피로": {"type": "debuff", "category": "physical", "severity": 1, "recoverable": True, "description": "행동력 저하"},
+    "지침": {"type": "debuff", "category": "physical", "severity": 1, "recoverable": True, "description": "집중력 저하"},
+    "기절": {"type": "debuff", "category": "physical", "severity": 2, "duration": 1, "description": "행동 불가"},
+    
+    # 정신적 상태
+    "공포": {"type": "debuff", "category": "mental", "severity": 2, "description": "특정 대상/상황 회피"},
+    "공황": {"type": "debuff", "category": "mental", "severity": 3, "description": "판단력 상실"},
+    "혼란": {"type": "debuff", "category": "mental", "severity": 2, "duration": 2, "description": "행동 예측 불가"},
+    "분노": {"type": "debuff", "category": "mental", "severity": 1, "description": "이성적 판단 저하"},
+    "절망": {"type": "debuff", "category": "mental", "severity": 2, "description": "의지력 저하"},
+    "트라우마": {"type": "debuff", "category": "mental", "severity": 3, "recoverable": False, "description": "영구적 정신적 상처"},
+    
+    # 환경적 상태
+    "중독": {"type": "debuff", "category": "environmental", "severity": 2, "tick_damage": 2, "description": "매 턴 피해"},
+    "화상": {"type": "debuff", "category": "environmental", "severity": 2, "tick_damage": 1, "description": "화상 피해"},
+    "동상": {"type": "debuff", "category": "environmental", "severity": 2, "description": "행동 둔화"},
+    "질식": {"type": "debuff", "category": "environmental", "severity": 3, "tick_damage": 3, "description": "긴급 상황"},
+    "실명": {"type": "debuff", "category": "environmental", "severity": 2, "description": "시야 상실"},
+    "청각상실": {"type": "debuff", "category": "environmental", "severity": 1, "description": "소리 인식 불가"},
+    
+    # 사회적 상태
+    "수배": {"type": "debuff", "category": "social", "severity": 2, "description": "당국에 추적당함"},
+    "오명": {"type": "debuff", "category": "social", "severity": 1, "description": "평판 하락"},
+    "빚": {"type": "debuff", "category": "social", "severity": 1, "description": "경제적 압박"},
+    
+    # === 긍정적 상태 (Buff) ===
+    "집중": {"type": "buff", "category": "mental", "severity": 1, "description": "판정 보너스"},
+    "영감": {"type": "buff", "category": "mental", "severity": 2, "duration": 3, "description": "창의적 행동 보너스"},
+    "보호": {"type": "buff", "category": "physical", "severity": 2, "description": "피해 감소"},
+    "은신": {"type": "buff", "category": "physical", "severity": 1, "description": "발견되기 어려움"},
+    "가속": {"type": "buff", "category": "physical", "severity": 1, "duration": 2, "description": "행동 속도 증가"},
+    "행운": {"type": "buff", "category": "special", "severity": 2, "duration": 1, "description": "다음 판정 유리"},
+}
+
+# 심각도별 Doom 영향
+SEVERITY_DOOM_IMPACT = {
+    1: 0,   # 경미: Doom 영향 없음
+    2: 1,   # 중간: Doom +1
+    3: 2,   # 심각: Doom +2
+}
+
+# 적응 단계 정의
+NORMALITY_STAGES = {
+    (0, 20): {
+        "stage": "shock",
+        "name": "충격",
+        "reaction_hint": "경악, 공포, 믿을 수 없다는 반응",
+        "tone": "dramatic"
+    },
+    (20, 40): {
+        "stage": "confusion",
+        "name": "당황",
+        "reaction_hint": "혼란, '이게 뭐지?', 어찌할 바를 모름",
+        "tone": "uncertain"
+    },
+    (40, 60): {
+        "stage": "acceptance",
+        "name": "체념",
+        "reaction_hint": "'...또야?', 한숨, 피로감",
+        "tone": "resigned"
+    },
+    (60, 80): {
+        "stage": "adaptation",
+        "name": "적응",
+        "reaction_hint": "담담함, '알았어', 별 감흥 없음",
+        "tone": "calm"
+    },
+    (80, 101): {
+        "stage": "normalized",
+        "name": "일상화",
+        "reaction_hint": "아무 반응 없음, 자연스럽게 처리",
+        "tone": "mundane"
+    }
+}
+
+# =========================================================
+# 유틸리티 함수 (Simulation Data Logic)
+# =========================================================
+def get_normality_stage_info(normality: int) -> Dict[str, str]:
+    """적응도에 따른 단계 정보를 반환합니다."""
+    for (low, high), stage_info in NORMALITY_STAGES.items():
+        if low <= normality < high:
+            return stage_info
+    return NORMALITY_STAGES[(80, 101)]  # 기본값: 일상화
+
+def get_status_effect_info(effect_name: str) -> Optional[Dict[str, Any]]:
+    """상태이상 정보를 반환합니다."""
+    return STATUS_EFFECTS.get(effect_name)

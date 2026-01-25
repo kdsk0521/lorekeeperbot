@@ -643,18 +643,18 @@ async def dispatch_command(cmd, message, channel_id, parsed, client_discord, cli
     # --- 세션 관리 ---
     if cmd == 'reset':
         await session_manager.manager.execute_reset(
-            message, client_discord, domain_manager, character_sheet
+            message, client_discord
         )
         return None
     
     if cmd == 'ready':
-        await session_manager.manager.check_preparation(message, domain_manager)
+        await session_manager.manager.check_preparation(message)
         return None
     
     if cmd == 'start':
         domain_manager.update_participant(channel_id, message.author)
         if await session_manager.manager.start_session(
-            message, client_genai, model_id, domain_manager
+            message, client_genai, model_id
         ):
             return "[System: Generate a visceral opening scene for the campaign.]"
         return None

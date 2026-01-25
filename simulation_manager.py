@@ -46,98 +46,25 @@ GROWTH_SYSTEM_CUSTOM = "custom"    # 커스텀 룰북만 사용
 # world_manager의 doom 계산에 사용됨
 # =========================================================
 
-# 부정적 상태이상 (doom 증가 요인)
-NEGATIVE_STATUS_EFFECTS = {
-    # 신체적 부상 (심각도별)
-    "중상": 3,
-    "부상": 2,
-    "가벼운 부상": 1,
-    "출혈": 2,
-    "골절": 3,
-    "화상": 2,
-    "동상": 2,
-    "중독": 2,
-    "질병": 2,
-    "감염": 2,
-    
-    # 정신적/심리적
-    "공포": 2,
-    "패닉": 3,
-    "혼란": 1,
-    "광기": 3,
-    "절망": 2,
-    "트라우마": 2,
-    "악몽": 1,
-    
-    # 신체 상태
-    "피로": 1,
-    "탈진": 2,
-    "지침": 1,
-    "굶주림": 2,
-    "갈증": 2,
-    "수면 부족": 1,
-    "기절": 2,
-    "마비": 2,
-    "실명": 3,
-    "청각 상실": 2,
-    
-    # 저주/마법적 (판타지용)
-    "저주": 2,
-    "마력 고갈": 1,
-    "영혼 손상": 3,
-    "빙의": 3,
-    
-    # 사회적
-    "수배": 2,
-    "추적당함": 2,
-    "배신당함": 1,
-}
+from domain_content import (
+    NEGATIVE_STATUS_EFFECTS,
+    POSITIVE_STATUS_EFFECTS,
+    STATUS_EFFECTS,
+    SEVERITY_DOOM_IMPACT,
+    NORMALITY_STAGES,
+    get_normality_stage_info
+)
 
-# 긍정적 상태 (doom 감소 요인)
-POSITIVE_STATUS_EFFECTS = {
-    # 신체적 버프
-    "치료됨": 1,
-    "회복 중": 1,
-    "강화": 1,
-    "축복": 2,
-    "보호막": 1,
-    "재생": 2,
-    
-    # 정신적/심리적
-    "집중": 1,
-    "평온": 1,
-    "용기": 1,
-    "결의": 1,
-    "영감": 1,
-    "희망": 2,
-    
-    # 신체 상태
-    "휴식함": 1,
-    "포만감": 1,
-    "숙면": 1,
-    "활력": 1,
-    
-    # 마법적 (판타지용)
-    "마력 충전": 1,
-    "신의 가호": 2,
-    "투명화": 1,
-    
-    # 사회적
-    "은신 중": 1,
-    "보호받음": 2,
-    "동맹": 1,
-}
+# =========================================================
+# 상태이상 분류 시스템
+# world_manager의 doom 계산에 사용됨
+# =========================================================
 
+# (Data moved to domain_content.py)
 
 def get_status_doom_modifier(status_effects: List[str]) -> Tuple[int, int, List[str], List[str]]:
     """
     상태이상 목록에서 doom 수정치를 계산합니다.
-    
-    Args:
-        status_effects: 현재 상태이상 목록
-    
-    Returns:
-        (increase, decrease, negative_list, positive_list)
     """
     increase = 0
     decrease = 0
@@ -162,106 +89,6 @@ def get_status_doom_modifier(status_effects: List[str]) -> Tuple[int, int, List[
                     break
     
     return increase, decrease, negative_found, positive_found
-
-
-# =========================================================
-# 인벤토리 관리
-# =========================================================
-def update_inventory(
-    user_data: Dict[str, Any],
-    action: str,
-    item_name: str,
-    count: int = 1
-) -> Tuple[Dict[str, Any], str]:
-    """
-    인벤토리를 업데이트합니다.
-    
-    Args:
-        user_data: 사용자 데이터
-        action: "add" 또는 "remove"
-        item_name: 아이템 이름
-        count: 수량 (기본값: 1)
-    
-    Returns:
-        (업데이트된 사용자 데이터, 결과 메시지)
-    """
-    inv = user_data.get("inventory", {})
-    current_qty = inv.get(item_name, 0)
-    
-    if action == "add":
-        inv[item_name] = current_qty + count
-        msg = f"🎒 **획득:** {item_name} x{count} (현재: {inv[item_name]})"
-    
-    elif action == "remove":
-        if current_qty < count:
-            msg = f"❌ **사용 실패:** {item_name} 부족 (보유: {current_qty})"
-        else:
-            inv[item_name] = current_qty - count
-            
-            if inv[item_name] <= 0:
-                del inv[item_name]
-                msg = f"🗑️ **사용/버림:** {item_name} x{count} (남음: 0)"
-            else:
-                msg = f"📉 **사용:** {item_name} x{count} (남음: {inv[item_name]})"
-    else:
-        msg = "⚠️ 알 수 없는 동작"
-    
-    user_data["inventory"] = inv
-    return user_data, msg
-
-
-# =========================================================
-# 상태이상 관리
-# =========================================================
-
-# 상태이상 정의
-STATUS_EFFECTS = {
-    # === 부정적 상태 (Debuff) ===
-    # 물리적 상태
-    "부상": {"type": "debuff", "category": "physical", "severity": 1, "recoverable": True, "description": "가벼운 부상"},
-    "중상": {"type": "debuff", "category": "physical", "severity": 2, "recoverable": False, "description": "심각한 부상, 치료 필요"},
-    "출혈": {"type": "debuff", "category": "physical", "severity": 2, "tick_damage": 1, "description": "매 턴 체력 감소"},
-    "골절": {"type": "debuff", "category": "physical", "severity": 3, "recoverable": False, "description": "이동/전투 불가"},
-    "피로": {"type": "debuff", "category": "physical", "severity": 1, "recoverable": True, "description": "행동력 저하"},
-    "지침": {"type": "debuff", "category": "physical", "severity": 1, "recoverable": True, "description": "집중력 저하"},
-    "기절": {"type": "debuff", "category": "physical", "severity": 2, "duration": 1, "description": "행동 불가"},
-    
-    # 정신적 상태
-    "공포": {"type": "debuff", "category": "mental", "severity": 2, "description": "특정 대상/상황 회피"},
-    "공황": {"type": "debuff", "category": "mental", "severity": 3, "description": "판단력 상실"},
-    "혼란": {"type": "debuff", "category": "mental", "severity": 2, "duration": 2, "description": "행동 예측 불가"},
-    "분노": {"type": "debuff", "category": "mental", "severity": 1, "description": "이성적 판단 저하"},
-    "절망": {"type": "debuff", "category": "mental", "severity": 2, "description": "의지력 저하"},
-    "트라우마": {"type": "debuff", "category": "mental", "severity": 3, "recoverable": False, "description": "영구적 정신적 상처"},
-    
-    # 환경적 상태
-    "중독": {"type": "debuff", "category": "environmental", "severity": 2, "tick_damage": 2, "description": "매 턴 피해"},
-    "화상": {"type": "debuff", "category": "environmental", "severity": 2, "tick_damage": 1, "description": "화상 피해"},
-    "동상": {"type": "debuff", "category": "environmental", "severity": 2, "description": "행동 둔화"},
-    "질식": {"type": "debuff", "category": "environmental", "severity": 3, "tick_damage": 3, "description": "긴급 상황"},
-    "실명": {"type": "debuff", "category": "environmental", "severity": 2, "description": "시야 상실"},
-    "청각상실": {"type": "debuff", "category": "environmental", "severity": 1, "description": "소리 인식 불가"},
-    
-    # 사회적 상태
-    "수배": {"type": "debuff", "category": "social", "severity": 2, "description": "당국에 추적당함"},
-    "오명": {"type": "debuff", "category": "social", "severity": 1, "description": "평판 하락"},
-    "빚": {"type": "debuff", "category": "social", "severity": 1, "description": "경제적 압박"},
-    
-    # === 긍정적 상태 (Buff) ===
-    "집중": {"type": "buff", "category": "mental", "severity": 1, "description": "판정 보너스"},
-    "영감": {"type": "buff", "category": "mental", "severity": 2, "duration": 3, "description": "창의적 행동 보너스"},
-    "보호": {"type": "buff", "category": "physical", "severity": 2, "description": "피해 감소"},
-    "은신": {"type": "buff", "category": "physical", "severity": 1, "description": "발견되기 어려움"},
-    "가속": {"type": "buff", "category": "physical", "severity": 1, "duration": 2, "description": "행동 속도 증가"},
-    "행운": {"type": "buff", "category": "special", "severity": 2, "duration": 1, "description": "다음 판정 유리"},
-}
-
-# 심각도별 Doom 영향
-SEVERITY_DOOM_IMPACT = {
-    1: 0,   # 경미: Doom 영향 없음
-    2: 1,   # 중간: Doom +1
-    3: 2,   # 심각: Doom +2
-}
 
 
 def get_status_effect_info(effect_name: str) -> Optional[Dict[str, Any]]:
@@ -479,38 +306,7 @@ def modify_relationship(
 # =========================================================
 
 # 적응 단계 정의
-NORMALITY_STAGES = {
-    (0, 20): {
-        "stage": "shock",
-        "name": "충격",
-        "reaction_hint": "경악, 공포, 믿을 수 없다는 반응",
-        "tone": "dramatic"
-    },
-    (20, 40): {
-        "stage": "confusion",
-        "name": "당황",
-        "reaction_hint": "혼란, '이게 뭐지?', 어찌할 바를 모름",
-        "tone": "uncertain"
-    },
-    (40, 60): {
-        "stage": "acceptance",
-        "name": "체념",
-        "reaction_hint": "'...또야?', 한숨, 피로감",
-        "tone": "resigned"
-    },
-    (60, 80): {
-        "stage": "adaptation",
-        "name": "적응",
-        "reaction_hint": "담담함, '알았어', 별 감흥 없음",
-        "tone": "calm"
-    },
-    (80, 101): {
-        "stage": "normalized",
-        "name": "일상화",
-        "reaction_hint": "아무 반응 없음, 자연스럽게 처리",
-        "tone": "mundane"
-    }
-}
+# (NORMALITY_STAGES definition moved to domain_content.py)
 
 def get_normality_stage(normality: int) -> Dict[str, str]:
     """적응도에 따른 단계 정보를 반환합니다."""

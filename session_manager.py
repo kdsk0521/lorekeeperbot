@@ -8,6 +8,9 @@ import asyncio
 import logging
 from typing import Optional
 
+import domain_manager
+import character_sheet  # Imported for execute_reset
+
 # =========================================================
 # 상수 정의
 # =========================================================
@@ -22,9 +25,7 @@ class SessionManager:
     async def execute_reset(
         self,
         message: discord.Message,
-        client: discord.Client,
-        domain_manager,
-        character_sheet
+        client: discord.Client
     ) -> None:
         """
         데이터를 리셋하고, 채널을 재생성(Nuke)하여 완벽히 초기화합니다.
@@ -149,7 +150,7 @@ class SessionManager:
         except discord.HTTPException:
             pass
     
-    async def check_preparation(self, message: discord.Message, domain_manager) -> None:
+    async def check_preparation(self, message: discord.Message) -> None:
         """
         세션 시작 전 필수 요소가 준비되었는지 확인합니다.
         룰이 없으면 기본 룰을 자동으로 적용합니다.
@@ -200,8 +201,7 @@ class SessionManager:
         self,
         message: discord.Message,
         client_genai,
-        model_id: str,
-        domain_manager
+        model_id: str
     ) -> bool:
         """
         세션을 시작하고 외부인의 접근을 차단합니다.

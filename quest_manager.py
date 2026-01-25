@@ -14,13 +14,16 @@ import domain_manager
 from google.genai import types
 
 # =========================================================
-# 상수 정의
+import config
+
 # =========================================================
-MAX_RETRY_COUNT = 3
-RETRY_DELAY_SECONDS = 1
-MAX_ARCHIVE_DISPLAY = 3  # 보관함에서 표시할 최대 항목 수
-MAX_HISTORY_FOR_CHRONICLE = 50  # 연대기 생성 시 사용할 최대 히스토리
-EMPTY_QUEST_MEMO_MSG = "No active quests or memos."  # 빈 퀘스트/메모 메시지
+# 상수 정의 (config.py에서 가져옴)
+# =========================================================
+MAX_RETRY_COUNT = config.MAX_RETRY_COUNT
+RETRY_DELAY_SECONDS = config.RETRY_DELAY_SECONDS
+MAX_ARCHIVE_DISPLAY = config.MAX_ARCHIVE_DISPLAY
+MAX_HISTORY_FOR_CHRONICLE = config.MAX_HISTORY_FOR_CHRONICLE
+EMPTY_QUEST_MEMO_MSG = config.EMPTY_QUEST_MEMO_MSG
 
 
 # =========================================================

@@ -9,27 +9,30 @@ from typing import List, Dict, Any, Optional
 import domain_manager
 
 # =========================================================
-# 상수 정의
+import config
+
 # =========================================================
-DEFAULT_TIME_SLOTS = ["새벽", "오전", "오후", "황혼", "저녁", "심야"]
-DEFAULT_WEATHER_TYPES = ["맑음", "구름 조금", "흐림", "비", "안개", "폭풍우"]
+# 상수 정의 (config.py에서 가져옴)
+# =========================================================
+DEFAULT_TIME_SLOTS = config.DEFAULT_TIME_SLOTS
+DEFAULT_WEATHER_TYPES = config.DEFAULT_WEATHER_TYPES
 
 # 위기 수치 임계값
-DOOM_THRESHOLD_WARNING = 30
-DOOM_THRESHOLD_DANGER = 70
-DOOM_THRESHOLD_CRITICAL = 90
-DOOM_MAX = 100
+DOOM_THRESHOLD_WARNING = config.DOOM_THRESHOLD_WARNING
+DOOM_THRESHOLD_DANGER = config.DOOM_THRESHOLD_DANGER
+DOOM_THRESHOLD_CRITICAL = config.DOOM_THRESHOLD_CRITICAL
+DOOM_MAX = config.DOOM_MAX
 
 # 위험도별 doom 증가량
-DOOM_INCREASE_NIGHT = 1
-DOOM_INCREASE_NEMESIS_MIN = 1
-DOOM_INCREASE_NEMESIS_MAX = 2
-DOOM_INCREASE_HIGH_RISK = 3
-DOOM_INCREASE_MEDIUM_RISK = 2
-DOOM_INCREASE_LORE_RULE = 1
+DOOM_INCREASE_NIGHT = config.DOOM_INCREASE_NIGHT
+DOOM_INCREASE_NEMESIS_MIN = config.DOOM_INCREASE_NEMESIS_MIN
+DOOM_INCREASE_NEMESIS_MAX = config.DOOM_INCREASE_NEMESIS_MAX
+DOOM_INCREASE_HIGH_RISK = config.DOOM_INCREASE_HIGH_RISK
+DOOM_INCREASE_MEDIUM_RISK = config.DOOM_INCREASE_MEDIUM_RISK
+DOOM_INCREASE_LORE_RULE = config.DOOM_INCREASE_LORE_RULE
 
 # 적대 관계 임계값
-NEMESIS_THRESHOLD = -10
+NEMESIS_THRESHOLD = config.NEMESIS_THRESHOLD
 
 
 # =========================================================
