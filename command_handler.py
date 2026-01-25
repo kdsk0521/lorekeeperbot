@@ -5,6 +5,7 @@ Replaces: command_handler.py, system_handler.py
 """
 
 import discord
+import asyncio
 import logging
 import io
 import time
