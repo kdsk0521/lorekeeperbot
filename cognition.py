@@ -225,7 +225,11 @@ async def _extract_physical(client, model_id, p_in, ai_out, inv, gold, status):
     sys = (
         "EXTRACT PHYSICAL CHANGES.\n"
         "Return JSON with keys: inventory_add {name: count}, inventory_remove {name: count}, gold_change (int), status_add [list], status_remove [list].\n"
-        "Rules: Add ONLY significant items (Not trivial food). Track ALL gold info.\n"
+        "Principle: Can Player TAKE it to next scene? YES->inv. NO->Ignore (Consumed/Service).\n"
+        "Rules:\n"
+        "1. DEDUPLICATE: Check 'Inv'. Do NOT add if item exists unless quantity INCREASES.\n"
+        "2. IGNORE: Consumables eaten immediately (e.g. 'School Lunch', 'Coffee'), Services ('Healing'), Viewing ('Saw a sword').\n"
+        "3. DELTA ONLY: Only track NET change. (e.g. 'You hold the sword' -> No Change if already owned).\n"
         'Example: {"inventory_add": {"Sword": 1}, "gold_change": -50, "status_add": [], "inventory_remove": {}, "status_remove": []}'
     )
     ctx = f"Inv:{inv}, Gold:{gold}, Status:{status}"
