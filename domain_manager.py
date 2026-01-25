@@ -533,3 +533,28 @@ def update_session_ai_memory(channel_id: str, updates: Dict[str, Any]) -> None:
     mem["last_updated"] = time.strftime('%Y-%m-%d %H:%M')
     d["ai_session_memory"] = mem
     save_domain(channel_id, d)
+
+def set_session_ai_memory(channel_id: str, data: Dict[str, Any]) -> None:
+    d = get_domain(channel_id)
+    d["ai_session_memory"] = data
+    save_domain(channel_id, d)
+
+# Missing Accessors
+def is_session_locked(channel_id: str) -> bool:
+    d = get_domain(channel_id)
+    return d.get("settings", {}).get("session_locked", False)
+
+def set_session_lock(channel_id: str, locked: bool) -> None:
+    d = get_domain(channel_id)
+    d["settings"]["session_locked"] = locked
+    save_domain(channel_id, d)
+
+def set_current_location(channel_id: str, location: str) -> None:
+    w = get_world_state(channel_id)
+    w["current_location"] = location
+    save_world_state(channel_id, w)
+
+def set_current_risk(channel_id: str, risk: str) -> None:
+    w = get_world_state(channel_id)
+    w["risk_level"] = risk
+    save_world_state(channel_id, w)

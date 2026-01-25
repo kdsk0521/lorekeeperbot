@@ -409,56 +409,7 @@ def safe_parse_json(text: Optional[str], expect_list: bool = False) -> Any:
 # Lore Analysis Functions (Restored)
 # =========================================================
 
-async def extract_npcs_only(client, model_id: str, text: str) -> List[Dict[str, str]]:
-    """
-    텍스트에서 NPC 정보만 추출합니다.
-    """
-    if not text:
-        return []
 
-    system_prompt = (
-        "You are an NPC Extractor.\n"
-        "Extract ALL Non-Player Characters (NPCs) from the text.\n"
-        "Do NOT extract the main protagonist (Player Character).\n\n"
-        
-        "Output Format (JSON List):\n"
-        "[\n"
-        "  {\n"
-        "    \"name\": \"NPC Name\", \n"
-        "    \"description\": \"Brief summary\",\n"
-        "    \"appearance\": \"Visuals\",\n"
-        "    \"personality\": \"Traits, Habits\",\n"
-        "    \"sexual_characteristics\": \"NSFW traits if present\",\n"
-        "    \"abilities\": \"Powers/Skills/Magic (Maps to '능력', '기술')\",\n"
-        "    \"passives\": \"Passive traits/Titles (Maps to '패시브', '특성', '칭호')\"\n"
-        "  }\n"
-        "]\n\n"
-        
-        "### NEGATIVE CONSTRAINTS (CRITICAL)\n"
-        "1. DO NOT extract Generic Roles (e.g., 'Guard', 'Passerby', 'Salesman') unless they have a NAME.\n"
-        "2. DO NOT extract Crowds/Groups (e.g., 'The Crowd', 'The Guild', 'The Council').\n"
-        "3. DO NOT extract the same person twice (e.g., 'Clara' and 'The Nurse' -> Just 'Clara').\n"
-        "4. DO NOT extract the Player Character (Protagonist).\n"
-        "5. If a character is mentioned only as a reference (not present), exclude them unless critical to lore.\n"
-    )
-
-    try:
-        config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.1)
-        contents = [types.Content(role="user", parts=[types.Part(text=f"{system_prompt}\n\n[Text]:\n{text}")])]
-        
-        result = await api_call_with_retry(client, model_id, contents, config, operation_name="Extract NPCs")
-        if result:
-            # 리스트 기대 모드 활성화
-            parsed = safe_parse_json(result, expect_list=True)
-            if isinstance(parsed, list):
-                return parsed
-            if isinstance(parsed, dict) and 'npcs' in parsed:
-                return parsed['npcs']
-            return []
-    except Exception as e:
-        logging.error(f"[Extract NPCs] Failed: {e}")
-        
-    return []
 
 
 async def analyze_genre_from_lore(client, model_id: str, text: str) -> Dict[str, Any]:
@@ -878,4 +829,81 @@ def apply_ai_memory_updates(
         # msgs.append("Updated Session Memory") # 로그가 너무 많아질 수 있어 생략
         
     return msgs
+
+
+# =========================================================
+# ENTITY EXTRACTION (Restored/New)
+# =========================================================
+
+async def extract_npcs_only(
+    client, 
+    model_id: str, 
+    lore_text: str
+) -> List[Dict[str, Any]]:
+    """
+    로어 텍스트에서 NPC 정보만 추출합니다. (List[Dict])
+    """
+    system_prompt = (
+        "You are an Entity Extractor.\n"
+        "Identify Non-Player Characters (NPCs) from the text.\n"
+        "Exclude the Main Protagonist/Player Character.\n\n"
+        
+        "Output Format (JSON List):\n"
+        "[\n"
+        "  {\"name\": \"Name\", \"description\": \"Role, appearance, personality\"},\n"
+        "  ...\n"
+        "]"
+    )
+
+    try:
+        config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.1)
+        contents = [types.Content(role="user", parts=[types.Part(text=f"{system_prompt}\n\n[Lore Text]\n{lore_text}")])]
+        
+        result = await api_call_with_retry(client, model_id, contents, config, operation_name="Extract NPCs")
+        if result:
+            parsed = safe_parse_json(result)
+            if isinstance(parsed, list): return parsed
+            if isinstance(parsed, dict) and "npcs" in parsed: return parsed["npcs"]
+            return []
+    except Exception as e:
+        logging.error(f"[Extract NPCs] Failed: {e}")
+        
+    return []
+
+
+async def extract_pc_info(
+    client, 
+    model_id: str, 
+    lore_text: str
+) -> Dict[str, Any]:
+    """
+    로어 텍스트에서 주인공(Player Character) 정보만 추출합니다.
+    """
+    system_prompt = (
+        "You are an Entity Extractor.\n"
+        "Identify the Main Protagonist (Player Character) from the text.\n"
+        "Look for sections labeled 'PC', 'Protagonist', 'Player', or the central character of the lore.\n\n"
+        
+        "Output Format (JSON):\n"
+        "{\n"
+        "  \"name\": \"Name\",\n"
+        "  \"appearance\": \"...\",\n"
+        "  \"personality\": \"...\",\n"
+        "  \"backstory\": \"...\",\n"
+        "  \"passives\": [\"trait1\", \"trait2\"]\n"
+        "}\n"
+        "If no clear protagonist is found, return empty JSON {}."
+    )
+
+    try:
+        config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.1)
+        contents = [types.Content(role="user", parts=[types.Part(text=f"{system_prompt}\n\n[Lore Text]\n{lore_text}")])]
+        
+        result = await api_call_with_retry(client, model_id, contents, config, operation_name="Extract PC")
+        if result:
+            return safe_parse_json(result)
+    except Exception as e:
+        logging.error(f"[Extract PC] Failed: {e}")
+        
+    return {}
 

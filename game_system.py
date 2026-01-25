@@ -731,3 +731,13 @@ def export_chronicle_book(channel_id: str, incremental: bool = False) -> Tuple[s
         domain_manager.set_last_chronicle_idx(channel_id, len(lore_entries))
 
     return "\n".join(lines), f"✅ **연대기 추출 완료** ({mode_text}, {len(target_entries)} entries)"
+
+# Wrappers / Aliases
+def get_quest_board(channel_id: str) -> Dict[str, Any]:
+    return _get_board(channel_id)
+
+def get_active_quests(channel_id: str) -> List[str]:
+    return _get_board(channel_id).get("active", [])
+
+def get_memos(channel_id: str) -> List[str]:
+    return _get_board(channel_id).get("memos", [])
