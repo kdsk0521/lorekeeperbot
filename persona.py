@@ -1725,7 +1725,7 @@ Recording in Korean. Awaiting observable events.
         temperature=DEFAULT_TEMPERATURE,
         safety_settings=config.SAFETY_SETTINGS,
         tools=[],
-        automatic_function_calling=False,
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         # Aggressively disable AFC
         tool_config=types.ToolConfig(
             function_calling_config=types.FunctionCallingConfig(
@@ -1923,7 +1923,7 @@ async def create_cached_session(
             safety_settings=config.SAFETY_SETTINGS,
             cached_content=cache_name,
             tools=[],
-            automatic_function_calling=False
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
         )
         
         session = ChatSessionAdapter(
