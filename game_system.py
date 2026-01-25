@@ -35,52 +35,69 @@ def get_weather_types(channel_id: str) -> List[str]:
     return config.DEFAULT_WEATHER_TYPES
 
 def advance_time(channel_id: str) -> str:
+    """시간을 다음 슬롯으로 진행하고 세계 변화를 반환"""
     world = domain_manager.get_world_state(channel_id)
-    if not world:
-        return "⚠️ 데이터 없음"
-
     time_slots = get_time_slots(channel_id)
-    weather_types = get_weather_types(channel_id)
-
-    if not time_slots or not weather_types:
-        return "⚠️ 시간대 또는 날씨 설정 오류"
-
-    current_slot = world.get("time_slot", time_slots[1] if len(time_slots) > 1 else time_slots[0])
+    
+    current_slot = world.get("time_slot", "오후")
     try:
         current_idx = time_slots.index(current_slot)
     except ValueError:
-        current_idx = 0
+        current_idx = 2 # Default to Afternoon
 
-    msg = ""
     next_idx = current_idx + 1
-
-    # 자정이 지나면 다음 날로
+    
+    # 이모지 매핑
+    time_emoji = {
+        "새벽": "🌅", "오전": "☀️", "오후": "🌤️",
+        "황혼": "🌆", "저녁": "🌙", "심야": "🌑"
+    }
+    
+    msg = ""
+    
     if next_idx >= len(time_slots):
+        # 날짜 변경
         world["time_slot"] = time_slots[0]
         world["day"] = world.get("day", 1) + 1
-        new_weather = random.choice(weather_types)
+        new_weather = random.choice(get_weather_types(channel_id))
         world["weather"] = new_weather
-        msg = f"🌙 밤이 지나고 **{world['day']}일차 {time_slots[0]}**이 되었습니다. (날씨: {new_weather})"
+        
+        emoji = time_emoji.get(time_slots[0], "🌅")
+        msg = (
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🌙 **밤이 지나고...**\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📅 **{world['day']}일차** {emoji} **{time_slots[0]}**\n"
+            f"🌤️ 날씨: {new_weather}\n"
+            f"━━━━━━━━━━━━━━━━━━━━"
+        )
     else:
         world["time_slot"] = time_slots[next_idx]
-        msg = f"🕰️ 시간이 흘러 **{world['time_slot']}**가 되었습니다."
+        emoji = time_emoji.get(time_slots[next_idx], "⏰")
+        
+        # 시간대별 분위기 메시지
+        atmosphere = {
+            "새벽": "동이 트기 시작합니다...",
+            "오전": "아침 햇살이 비춥니다.",
+            "오후": "태양이 중천에 떠 있습니다.",
+            "황혼": "해가 저물어갑니다...",
+            "저녁": "어둠이 내려앉습니다.",
+            "심야": "깊은 밤이 찾아왔습니다..."
+        }
+        atm = atmosphere.get(time_slots[next_idx], "")
+        
+        msg = f"{emoji} **{time_slots[next_idx]}** — {atm}"
     
-    # Doom Logic
+    # Doom 체크
     doom_increase, doom_reasons = calculate_doom_increase(channel_id, world, next_idx, time_slots)
     if doom_increase > 0:
         current_doom = world.get("doom", 0)
         world["doom"] = min(config.DOOM_MAX, current_doom + doom_increase)
-        
         for reason in doom_reasons:
             if "위험 지역" in reason or "로어 규칙" in reason:
-                msg += f"\n⚠️ **경고:** {reason}"
-    
-    # Update Context
-    if next_idx >= len(time_slots) or "황혼" in world["time_slot"]:
-         if "황혼" in world["time_slot"]:
-             msg += " (🌅 해가 저물며 그림자가 길어집니다...)"
-         else:
-             msg += " (🌑 어둠이 짙어집니다...)"
+                 msg += f"\n⚠️ **경고:** {reason}"
+            else:
+                 msg += f"\n⚠️ {reason}"
 
     domain_manager.update_world_state(channel_id, world)
     return msg
@@ -235,6 +252,41 @@ def get_doom_forecast(channel_id: str) -> str:
         msg += "✅ 아직은 안전합니다."
         
     return msg 
+
+def get_npc_time_progression(channel_id: str) -> List[str]:
+    """
+    시간 경과에 따른 NPC 상태 변화 힌트 생성
+    
+    Returns:
+        NPC 상태 변화 힌트 리스트
+    """
+    npcs = domain_manager.get_npcs(channel_id)
+    world = domain_manager.get_world_state(channel_id)
+    time_slot = world.get("time_slot", "오후")
+    
+    hints = []
+    
+    # 시간대별 일반적 NPC 활동
+    time_activities = {
+        "새벽": ["잠들어 있다", "이른 기상 준비", "야간 근무 마무리", "깊은 잠에 빠져 있다"],
+        "오전": ["아침 식사", "일과 시작", "청소/정리", "분주하게 움직임"],
+        "오후": ["업무 중", "점심 후 활동", "외출", "나른하게 휴식"],
+        "황혼": ["퇴근 준비", "저녁 준비", "휴식", "하루를 정리함"],
+        "저녁": ["저녁 식사", "여가 활동", "TV 시청", "술자리"],
+        "심야": ["잠자리 준비", "야식", "늦은 작업", "비밀스러운 만남"]
+    }
+    
+    activities = time_activities.get(time_slot, ["활동 중"])
+    
+    # Random selection to avoid static feel (simple simulation)
+    # The actual behavior is refined by AI reasoning, this gives a baseline.
+    import random
+    
+    for npc_name, npc_data in npcs.items():
+        activity = random.choice(activities)
+        hints.append(f"{npc_name}: {activity}")
+    
+    return hints 
 
 # =========================================================
 # QUEST SYSTEM (From quest_manager.py)

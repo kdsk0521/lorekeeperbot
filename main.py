@@ -134,6 +134,58 @@ async def _process_message(message):
 # =========================================================
 # AI GENERATION CORE
 # =========================================================
+
+async def process_time_flow(channel_id: str, time_flow: Dict) -> Optional[str]:
+    """
+    시간 흐름을 처리하고 필요시 시간대를 진행합니다.
+    """
+    if not time_flow:
+        return None
+    
+    duration = time_flow.get("duration", "instant")
+    ticks = time_flow.get("ticks", 0)
+    explicit_hours = time_flow.get("explicit_hours")
+    
+    # 명시적 시간 경과 처리
+    if duration == "explicit" and explicit_hours:
+        # Approximate: 1 slot = 4 hours.
+        slots_to_advance = max(1, int(explicit_hours / 4))
+        messages = []
+        for _ in range(slots_to_advance):
+            msg = game_system.advance_time(channel_id)
+            messages.append(msg)
+        return "\n".join(messages) if messages else None
+    
+    # 틱 기반 시간 경과
+    if ticks <= 0:
+        return None
+    
+    # 현재 틱 카운터 가져오기
+    world = domain_manager.get_world_state(channel_id)
+    current_ticks = world.get("time_ticks", 0)
+    new_ticks = current_ticks + ticks
+    
+    # 시간대 진행 필요 여부 확인
+    if new_ticks >= config.TIME_TICKS_PER_SLOT:
+        # 시간대 진행
+        slots_to_advance = new_ticks // config.TIME_TICKS_PER_SLOT
+        remaining_ticks = new_ticks % config.TIME_TICKS_PER_SLOT
+        
+        world["time_ticks"] = remaining_ticks
+        domain_manager.update_world_state(channel_id, world)
+        
+        messages = []
+        for _ in range(slots_to_advance):
+            msg = game_system.advance_time(channel_id)
+            messages.append(msg)
+        
+        return "\n".join(messages)
+    else:
+        # 틱만 누적
+        world["time_ticks"] = new_ticks
+        domain_manager.update_world_state(channel_id, world)
+        return None
+
 async def generate_ai_response(message, channel_id: str, system_trigger: str = None) -> None:
     if not client_genai:
         await message.channel.send("⚠️ No AI Configured")
@@ -196,14 +248,90 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
             p_ctx = game_system.get_status_summary(p_data) if p_data else "" # Simplified
             
             # 3. COGNITION: ANALYSIS (Theoria)
+            # [NEW] Inject NPC Time Hints for better inference
+            npc_hints = game_system.get_npc_time_progression(channel_id)
+            if npc_hints:
+                rule_txt += "\n\n### [NPC ACTIVITY HINTS (Time-based)]\n" + "\n".join(npc_hints)
+
+            # [NEW] Retrieve Existing NPC Attitudes
+            existing_attitudes = domain_manager.get_npc_attitudes(channel_id)
+
             nvc_res = await cognition.analyze_context_nvc(
-                client_genai, MODEL_ID, hist_text, lore_txt, rule_txt, quest_txt, player_context=p_ctx
+                client_genai, MODEL_ID, hist_text, lore_txt, rule_txt, quest_txt, player_context=p_ctx,
+                existing_npc_attitudes=existing_attitudes
             )
             
             # Updates from Analysis
             if nvc_res.get("CurrentLocation"): domain_manager.set_current_location(channel_id, nvc_res["CurrentLocation"])
             if nvc_res.get("LocationRisk"): domain_manager.set_current_risk(channel_id, nvc_res["LocationRisk"])
             
+            # [NEW] Check & Update NPC Attitudes
+            new_attitudes = nvc_res.get("NPCAttitudes")
+            if new_attitudes:
+                for n_name, n_data in new_attitudes.items():
+                    # Update only if changed or new. Logic handled in domain_manager roughly, but here we just overwrite.
+                    domain_manager.update_npc_attitude(channel_id, n_name, n_data.get("attitude", "neutral"), n_data.get("reason", ""))
+                
+                # Refresh existing_attitudes for use in prompt
+                existing_attitudes = domain_manager.get_npc_attitudes(channel_id)
+            
+            # [NEW] Automatic Time Flow Processing
+            time_flow = nvc_res.get("TimeFlow", {})
+            time_msg = await process_time_flow(channel_id, time_flow)
+            
+            if time_msg:
+                # Send time update message to channel
+                await message.channel.send(time_msg)
+                
+                # Refresh World Context immediately if time changed
+                world_ctx = game_system.get_world_context(channel_id)
+                # Re-inject NPC hints based on NEW time
+                new_npc_hints = game_system.get_npc_time_progression(channel_id)
+                if new_npc_hints:
+                    # Update rule_txt with new hints to influence narrative
+                    rule_txt += "\n\n### [UPDATED NPC ACTIVITY HINTS]\n" + "\n".join(new_npc_hints)
+            
+            # [NEW] Automatic Time Flow Processing
+            time_flow = nvc_res.get("TimeFlow", {})
+            time_msg = await process_time_flow(channel_id, time_flow)
+            
+            if time_msg:
+                # Send time update message to channel
+                await message.channel.send(time_msg)
+                
+                # Refresh World Context immediately if time changed
+                world_ctx = game_system.get_world_context(channel_id)
+                # Re-inject NPC hints based on NEW time
+                new_npc_hints = game_system.get_npc_time_progression(channel_id)
+                if new_npc_hints:
+                    # Replace the old hints section in rule_txt to update context for generation
+                    # Simple heuristic replacement or just append new one (Logic might be slightly duplicated but acceptable)
+                    # Ideally, we reconstruct rule_txt, but simpler is to just append new info or rely on world_ctx update
+                    pass 
+
+            # [NEW] GM Judgment System Integration
+            judgment_context = ""
+            action_judgment = nvc_res.get("ActionJudgment")
+            if action_judgment and isinstance(action_judgment, dict):
+                 # Perform the roll
+                 full_judgment = cognition.build_action_judgment_with_roll(
+                     action=action_judgment.get("action", "Unknown Action"),
+                     difficulty=action_judgment.get("difficulty", "normal"),
+                     difficulty_reason=action_judgment.get("difficulty_reason", ""),
+                     modifiers_list=action_judgment.get("modifiers", [])
+                 )
+                 # Format into text
+                 judgment_context = cognition.build_judgment_context_with_roll(full_judgment)
+                 # Log to channel so user sees the roll
+                 roll_log = (
+                     f"🎲 **[{full_judgment['result'].upper()}]** {full_judgment['action']} (Diff: {full_judgment['difficulty']})\n"
+                     f"`Roll: {full_judgment['base_roll']} + {full_judgment['modifier_total']} = {full_judgment['final_roll']} vs DC {full_judgment['dc']}`"
+                 )
+                 try:
+                     await message.channel.send(roll_log)
+                 except Exception as e:
+                     logging.error(f"Failed to send roll log: {e}")
+
             # System Action (Quest/Memo from logic)
             sys_action = nvc_res.get("SystemAction")
             if sys_action:
@@ -211,10 +339,49 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                  if auto_msg: await message.channel.send(f"🤖 {auto_msg}")
             
             # Build Context String for Generation
-            # (Skipping complex manual context builders to save token/complexity, trusting NVC summary + raw inputs)
+            # [NEW] Temporal Orientation & Offscreen World
+            temporal = nvc_res.get("TemporalOrientation", {})
+            suggested_focus = temporal.get("suggested_focus", "")
             
-            nvc_summary = f"Loc: {nvc_res.get('CurrentLocation')}\nObs: {nvc_res.get('Observation')}\nNeed: {nvc_res.get('Need')}"
+            nvc_summary = (
+                f"Loc: {nvc_res.get('CurrentLocation')}\n"
+                f"Obs: {nvc_res.get('Observation')}\n"
+                f"Need: {nvc_res.get('Need')}\n"
+                f"Focus: {suggested_focus}"
+            )
+
+            # [NEW] Inject Attitude Context for Narrative (Persona)
+            if existing_attitudes:
+                att_lines = [f"- {n}: {d['attitude']} ({d['reason']})" for n, d in existing_attitudes.items()]
+                nvc_summary += f"\n\n### [NPC ATTITUDES TOWARD PC]\n" + "\n".join(att_lines)
             
+            # Append Judgment to Analysis Summary if it exists
+            if judgment_context:
+                nvc_summary += f"\n\n{judgment_context}"
+            
+            # [NEW] Offscreen NPC Context construction
+            offscreen_npcs = temporal.get("offscreen_npcs", [])
+            offscreen_context = ""
+            if offscreen_npcs:
+                offscreen_context = (
+                    "### [OFFSCREEN WORLD]\n"
+                    "While this scene unfolds, elsewhere:\n"
+                    + "\n".join([f"- {npc}" for npc in offscreen_npcs])
+                    + "\n\n"
+                    "**Instruction:** Naturally weave 1-2 of these background events into the narrative. "
+                    "Show the world continuing without the PC (sounds, distant voices, NPCs passing by, etc.)\n\n"
+                )
+
+            # [NEW] Active Threads Context
+            active_threads = temporal.get("active_threads", [])
+            threads_context = ""
+            if active_threads:
+                threads_context = (
+                    "### [ACTIVE PLOT THREADS]\n"
+                    + "\n".join([f"- {thread}" for thread in active_threads])
+                    + "\n\n"
+                )
+
             fermented_summaries = [e["summary"] for e in domain_data.get("fermented_history", []) if e.get("summary")]
             fermented_summary_text = "\n---\n".join(fermented_summaries)
             
@@ -228,6 +395,8 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                 f"### World State\n{world_ctx}\n\n"
                 f"### Player Status\n{p_ctx}\n\n"
                 f"### Analysis\n{nvc_summary}\n\n"
+                f"{offscreen_context}"
+                f"{threads_context}"
                 f"{pc_reminder}\n\n"
                 f"### User Action\n{action_text}\n\n"
                 "Generate narrative response in Korean. 3rd person."
@@ -360,24 +529,17 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                     asyncio.create_task(background_update())
 
                 except Exception as ue:
-                     logging.warning(f"Extraction Error: {ue}")
+                    logging.warning(f"Extraction Error: {ue}")
 
                     # Abnormal Adaptation (If Enabled)
                     if domain_manager.get_abnormal_mode(channel_id):
-                        trigger = u_res.get("AbnormalTrigger")
+                        trigger = nvc_res.get("AbnormalTrigger") # Use nvc_res from earlier scope if available, or just skip if local var missing
                         if trigger:
-                             # Re-load participant data to be safe or reuse p_data if updated
-                             # Assuming p_data is fresh enough or reused. 
-                             # We updated p_data in PlayerUpdate block, so reuse p_data dict 
-                             # but re-save is needed if we change it again.
                              p_data, p_msg = game_system.expose_to_abnormal(p_data, trigger)
                              if p_msg: msgs.append(p_msg)
                              domain_manager.save_participant_data(channel_id, uid, p_data)
 
                     if msgs: await message.channel.send(" | ".join(msgs))
-                    
-                except Exception as ue:
-                     logging.warning(f"Extraction Error: {ue}")
 
         except Exception as e:
             logging.error(f"Generation Error: {e}", exc_info=True)

@@ -63,6 +63,8 @@ NPC_PREVIEW_LIMIT = 5               # Max NPCs shown in preview
 DEFAULT_TIME_SLOTS = ["새벽", "오전", "오후", "황혼", "저녁", "심야"]
 DEFAULT_WEATHER_TYPES = ["맑음", "구름 조금", "흐림", "비", "안개", "폭풍우"]
 
+TIME_TICKS_PER_SLOT = 4  # 4 Ticks = 1 Time Slot advancement
+
 # Doom Thresholds
 DOOM_THRESHOLD_WARNING = 30
 DOOM_THRESHOLD_DANGER = 70

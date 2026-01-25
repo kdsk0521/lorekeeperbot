@@ -478,6 +478,74 @@ async def handle_analysis_command(message, channel_id: str, cmd: str, arg: str, 
         await msg.edit(content=f"⚠️ 오류 발생: {e}")
 
 
+async def handle_time_command(message, channel_id: str, arg: str) -> None:
+    """
+    !시간 [진행/설정/조회]
+    !시간 - 현재 시간 조회
+    !시간 진행 - 다음 시간대로
+    !시간 3 - 3시간대 진행
+    !시간 설정 오후 - 특정 시간대로 설정
+    """
+    world = domain_manager.get_world_state(channel_id)
+    
+    if not arg:
+        # 현재 시간 조회
+        time_emoji = {"새벽": "🌅", "오전": "☀️", "오후": "🌤️", "황혼": "🌆", "저녁": "🌙", "심야": "🌑"}
+        emoji = time_emoji.get(world.get("time_slot", "오후"), "⏰")
+        
+        msg = (
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📅 **{world.get('day', 1)}일차**\n"
+            f"{emoji} 시간: **{world.get('time_slot', '오후')}**\n"
+            f"🌤️ 날씨: {world.get('weather', '맑음')}\n"
+            f"⚠️ 위기: {world.get('doom', 0)}/100\n"
+            f"━━━━━━━━━━━━━━━━━━━━"
+        )
+        await message.channel.send(msg)
+        return
+    
+    if arg == "진행" or arg == "next":
+        msg = game_system.advance_time(channel_id)
+        await message.channel.send(msg)
+        return
+    
+    if arg.isdigit():
+        # N 시간대 진행
+        count = int(arg)
+        if count > 12:
+            await message.channel.send("⚠️ 최대 12시간대까지 진행 가능합니다.")
+            return
+        
+        messages = []
+        for _ in range(count):
+            messages.append(game_system.advance_time(channel_id))
+        await message.channel.send("\n".join(messages))
+        return
+    
+    if arg.startswith("설정 "):
+        target = arg[3:].strip()
+        time_slots = game_system.get_time_slots(channel_id)
+        if target in time_slots:
+            world["time_slot"] = target
+            domain_manager.update_world_state(channel_id, world)
+            await message.channel.send(f"⏰ 시간 설정: **{target}**")
+        else:
+            await message.channel.send(f"⚠️ 유효한 시간대: {', '.join(time_slots)}")
+        return
+    
+    if arg.startswith("set "):
+        target = arg[4:].strip()
+        time_slots = game_system.get_time_slots(channel_id)
+        # Try english mapping but default Korean
+        if target in time_slots:
+             world["time_slot"] = target
+             domain_manager.update_world_state(channel_id, world)
+             await message.channel.send(f"⏰ 시간 설정: **{target}**")
+        else:
+             await message.channel.send(f"⚠️ 유효한 시간대: {', '.join(time_slots)}")
+        return
+
+
 async def dispatch_command(cmd, message, channel_id, parsed, client_discord, client_genai, model_id, model_id_flash, domain_data):
     if cmd == 'help':
         help_text = (
@@ -617,8 +685,13 @@ async def dispatch_command(cmd, message, channel_id, parsed, client_discord, cli
         return None
 
     # Analysis/Tools dispatch
-    if cmd in ['analyze', 'consistency', 'forecast', 'rule', 'lores']:
+    if cmd in ['analyze', 'consistency', 'forecast', 'rule', 'lores', 'abnormal', '비일상']:
         await handle_analysis_command(message, channel_id, cmd, parsed['content'], client_genai, model_id)
+        return None
+
+    # Time dispatch
+    if cmd in ['time', '시간', 'time_adv', '시간진행']:
+        await handle_time_command(message, channel_id, parsed['content'])
         return None
 
     return None

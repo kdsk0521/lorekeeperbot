@@ -33,12 +33,28 @@ async def analyze_context_nvc(
     lore: str,
     rules: str,
     active_quests_text: str,
-    player_context: str = ""
+    player_context: str = "",
+    existing_npc_attitudes: Dict[str, Dict] = None
 ) -> Dict[str, Any]:
     """
     [THEORIA LEFT HEMISPHERE]
     Analyzes current situation to extract Objective Facts and deduce Next Actions.
     """
+    
+    # Prepare Attitude Context
+    attitude_context = ""
+    if existing_npc_attitudes:
+        attitude_lines = [
+            f"- {name}: {data.get('attitude', 'neutral')} ({data.get('reason', '')})"
+            for name, data in existing_npc_attitudes.items()
+        ]
+        attitude_context = (
+            "### EXISTING NPC ATTITUDES\n"
+            "These are the currently tracked attitudes. "
+            "Only output changes if the scene warrants an attitude shift:\n"
+            + "\n".join(attitude_lines) + "\n\n"
+        )
+
     system_instruction = (
         "[THEORIA LEFT HEMISPHERE - Logic Core]\n"
         "You are the analytical component of the THEORIA system.\n"
@@ -70,6 +86,31 @@ async def analyze_context_nvc(
         "### NPC INTERACTION SYSTEM\n"
         "Analyze NPCs present. Determine attitudes (hostile/unfriendly/neutral/friendly/devoted).\n"
         "Suggest interaction between NPCs if appropriate.\n\n"
+        
+        "### NPC ATTITUDE ANALYSIS\n"
+        "For each NPC in the scene, determine their attitude toward the PC.\n"
+        "Consider:\n"
+        "1. Existing relationship history\n"
+        "2. Recent interactions (positive/negative)\n"
+        "3. NPC's personality from lore\n"
+        "4. Current situation context\n\n"
+        
+        f"{attitude_context}"
+        
+        "**Attitudes:** hostile, unfriendly, neutral, friendly, devoted\n"
+        "**Output only NPCs present in the current scene.**\n\n"
+        
+        "### OFFSCREEN NPC BEHAVIOR\n"
+        "For NPCs NOT in the current scene, infer what they are doing based on:\n"
+        "1. Their established personality/occupation from lore\n"
+        "2. Current time of day (Use context if provided)\n"
+        "3. Ongoing plot threads that involve them\n"
+        "4. Their last known state/location\n\n"
+        
+        "**Output in `offscreen_npcs` array in TemporalOrientation:**\n"
+        "- Format: '[NPC Name] is [Action] at [Location]'\n"
+        "- Be specific and consistent with character\n"
+        "- Include 2-4 NPCs if available\n\n"
 
         "========================================\n"
         "### ACTION JUDGMENT (Game Master Role)\n"
@@ -78,12 +119,22 @@ async def analyze_context_nvc(
         "**Difficulty:** trivial, easy, normal, hard, extreme\n"
         "**Modifiers:** passive_X (+15-25), tool_X (+10-15), condition_X (-10-20)\n\n"
 
+        "### TIME FLOW ANALYSIS\n"
+        "Estimate how much time passes based on the player's action:\n"
+        "**Time Categories:**\n"
+        "- `instant`: Speaking, looking, grabbing (0 ticks)\n"
+        "- `short`: Room move, short chat (1 tick)\n"
+        "- `medium`: Combat round, meal, investigation (2 ticks)\n"
+        "- `long`: Travel, complex task, rest (3+ ticks)\n"
+        "- `explicit`: 'Wait 3 hours', 'Sleep until morning' (Use `explicit_hours`)\n\n"
+
         "### OUTPUT FORMAT (JSON ONLY)\n"
         "{\n"
         '  "CurrentLocation": "String",\n'
         '  "LocationRisk": "None/Low/Medium/High/Extreme",\n'
         '  "TimeContext": "String",\n'
         '  "Observation": "Objective summary",\n'
+        '  "TimeFlow": {"duration": "instant/short/medium/long/explicit", "ticks": Int, "reason": "...", "explicit_hours": Int or null},\n'
         '  "TemporalOrientation": {"continuity...": "...", "active_threads": [], "offscreen_npcs": []},\n'
         '  "NPCAttitudes": {"Name": {"attitude": "Type", "reason": "..."}},\n'
         '  "NPCInteraction": {"participants": [], "type": "...", "topic": "..."} OR null,\n'
@@ -149,7 +200,15 @@ def build_action_judgment_with_roll(action: str, difficulty: str, difficulty_rea
                     modifier_total += v
     
     final_roll = base_roll + modifier_total
-    result = determine_result(final_roll, dc)
+    
+    # Critical Logic: Natural 1-5 is always Critical Failure
+    if base_roll <= 5:
+        result = "critical_failure"
+    # Natural 96-100 AND Meeting DC is Critical Success
+    elif base_roll >= 96 and final_roll >= dc:
+        result = "critical_success"
+    else:
+        result = determine_result(final_roll, dc)
     
     return {
         "action": action, "difficulty": difficulty, "difficulty_reason": difficulty_reason,

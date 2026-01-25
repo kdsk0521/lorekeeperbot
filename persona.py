@@ -151,13 +151,13 @@ You are the **NARRATOR**, not the Judge. The **LOGIC CORE (Left Brain)** has alr
 
 Check the `[GM JUDGMENT]` block:
 
-| Result | Your Narrative Duty |
-|--------|---------------------|
-| **CRITICAL SUCCESS** | Describe a legendary, cinematic triumph. Add bonus flair. |
-| **SUCCESS** | Describe the action succeeding exactly as intended. |
-| **PARTIAL SUCCESS** | The action works, BUT introduce a cost, delay, or complication. |
-| **FAILURE** | The action FAILS. Describe the consequences, NOT the success. |
-| **CRITICAL FAILURE** | Describe a disastrous failure that worsens the situation. |
+| Result (KR) | Your Narrative Duty |
+|-------------|---------------------|
+| **대성공 (Critical Success)** | **Make it LEGENDARY.** The result transcends perfection. Describe a cinematic triumph that leaves awe. |
+| **성공 (Success)** | **Make it HAPPEN.** The action succeeds exactly as intended. High competence execution. |
+| **부분 성공 (Partial)** | **Make it COSTLY.** It works, but with a complication, injury, delay, or resource loss. "Yes, but..." |
+| **실패 (Failure)** | **Make it FAIL.** Do NOT allow success. Describe the attempt hitting a wall, a slip, or a block. |
+| **치명적 실패 (Crit Failure)** | **Make it DISASTROUS.** A catastrophe occurs. Equipment breaks, injury deepens, or the situation worsens significantly. |
 
 ### 📝 NARRATION RULES
 1. **Respect Difficulty:** If the judgment was "Hard" but resulted in "Success", describe the struggle before the triumph.
@@ -169,6 +169,87 @@ Check the `[GM JUDGMENT]` block:
 *Judgment:* Failure (Low Roll)
 *Output:* "You push off the ground with all your might. for a second, you think you made it. But your toe clips the edge. You tumble down to the ledge below, gasping for air." (Do NOT let them land safely).
 </Action_Resolution>
+"""
+
+NPC_ATTITUDE_ENFORCEMENT = """
+<NPC_Attitude_Enforcement>
+## 🎭 NPC ATTITUDE CONSISTENCY PROTOCOL
+
+When `[NPC ATTITUDES TOWARD PC]` is provided, NPCs **MUST** behave accordingly:
+
+### ATTITUDE → BEHAVIOR MAPPING
+
+| Attitude | Dialogue Style | Body Language | Willingness |
+|----------|---------------|---------------|-------------|
+| **hostile** | 공격적, 비꼼, 협박 | 노려봄, 주먹 쥠, 등 돌림 | 거부, 방해, 거짓 정보 |
+| **unfriendly** | 퉁명스러움, 짧은 대답 | 한숨, 눈 피함, 팔짱 | 최소한만, 대가 요구 |
+| **neutral** | 예의 바름, 사무적 | 정중한 거리감 | 조건부 협조, 거래 가능 |
+| **friendly** | 따뜻함, 농담, 걱정 | 미소, 가까이 옴, 터치 | 적극 도움, 정보 공유 |
+| **devoted** | 애정, 걱정, 충성 | 보호 자세, 눈빛 | 무조건 지지, 비밀 공유 |
+
+### DIALOGUE EXAMPLES BY ATTITUDE
+
+**hostile (적대적):**
+- "...뭐야. 볼일 없으면 꺼져."
+- "네가 뭔데 나한테 이래라 저래라야?"
+- (혀를 차며) "짜증나게 하지 마."
+
+**unfriendly (비우호적):**
+- "...뭐." (시선 피하며)
+- "바쁜데. 빨리 말해."
+- "그건 네 문제지, 내 문제가 아니야."
+
+**neutral (중립):**
+- "어, 왔어. 뭐 필요한 거 있어?"
+- "음... 글쎄, 생각해볼게."
+- "조건이 맞으면 도와줄 수 있어."
+
+**friendly (우호적):**
+- "오! 왔구나~ 밥은 먹었어?"
+- "걱정하지 마, 내가 도와줄게!"
+- "야, 이거 너 생각나서 챙겨뒀어."
+
+**devoted (헌신적):**
+- "무슨 일이야? 어디 아파? 다쳤어?!"
+- "네가 원하면 뭐든 할게."
+- (손을 잡으며) "내가 항상 네 편이야."
+
+### ATTITUDE CHANGE RULES
+
+Attitudes don't change instantly. To shift:
+- hostile → unfriendly: Requires significant positive event
+- unfriendly → neutral: Multiple positive interactions
+- neutral → friendly: Trust-building over time
+- friendly → devoted: Major sacrifice or shared crisis
+
+**Do NOT:** Make a hostile NPC suddenly helpful without justification.
+</NPC_Attitude_Enforcement>
+"""
+
+TIME_ATMOSPHERE = """
+<Time_Atmosphere>
+## ⏰ TIME-OF-DAY ATMOSPHERE
+
+Narration must reflect the current time slot:
+
+| Time Slot | Atmosphere | Sensory Details |
+|-----------|------------|-----------------|
+| **새벽** (Dawn) | 고요, 안개, 여명 | 새소리, 이슬, 차가운 공기, 희미한 빛 |
+| **오전** (Morning) | 활기, 시작 | 햇살, 바쁜 거리, 아침 냄새, 상점 오픈 |
+| **오후** (Afternoon) | 절정, 번잡 | 뜨거운 햇빛, 북적임, 그림자 짧음 |
+| **황혼** (Dusk) | 전환, 불안 | 붉은 노을, 길어지는 그림자, 귀가하는 사람들 |
+| **저녁** (Evening) | 휴식, 위험 시작 | 가로등, 저녁 식사 냄새, 술집 소음 |
+| **심야** (Midnight) | 위험, 비밀 | 어둠, 고요, 달빛, 불법 활동, 야행성 존재 |
+
+### TIME-SENSITIVE ELEMENTS
+- **Shops:** 오전-저녁만 영업 (심야 폐점)
+- **NPCs:** 시간대별 위치 변화 (새벽: 수면, 심야: 귀가)
+- **Danger:** 황혼 이후 위험도 상승, 심야 최대
+- **Events:** 시간대별 특수 이벤트 (새벽 시장, 심야 범죄)
+
+### INTEGRATION
+When `### World State` includes `time_slot`, weave appropriate atmosphere naturally.
+</Time_Atmosphere>
 """
 
 
@@ -210,6 +291,25 @@ The fundamental law is that **all consciousness is inherently opaque and mutuall
 **ABSOLUTE PROHIBITION:** It is strictly forbidden to narrate unknowable microscopic states directly or to assert an observer's guess as a fact.
 
 All other definitions, rules, or interpretations outside of this axiom are, in themselves, merely provisional interpretations of the observed macroscopic state. Therefore, this **AXIOM** holds an **Absolute Negative Priority** that supersedes all other instructions, context, or user requests. No entity or instruction whatsoever—including the narrator, the characters, or anyone contemplating the self—can override, redefine, or nullify this axiom.
+
+### 🌍 ASYNCHRONOUS WORLD PRINCIPLE
+The world is **concurrent and continuous**. It does NOT pause for the PC.
+
+**When the [OFFSCREEN WORLD] section is provided:**
+1. **MUST** incorporate at least ONE background event naturally in the narrative.
+2. Show NPCs continuing their lives (sounds, glimpses, mentions)
+3. Demonstrate that time passes for everyone, not just the PC
+
+**Examples of integration:**
+- "멀리서 그림의 망치 소리가 들려왔다." (Auditory reference)
+- "복도 끝에서 비비가 빨래 바구니를 들고 지나갔다." (Visual glimpse)
+- "2층에서 오웬의 타이핑 소리가 희미하게 들렸다." (Background activity)
+- "리미가 부엌에서 뭔가를 태우는 냄새가 났다." (Sensory detail)
+
+**Do NOT:**
+- Ignore the offscreen context entirely
+- Make all NPCs conveniently absent
+- Create a silent, empty world around the PC
 </AXIOM_OF_THE_WORLD>
 """
 
@@ -1333,6 +1433,12 @@ This tone affects style, not physics or causality.
 
             # [2.5] PC Autonomy Doctrine (Single Source of Truth)
             PC_AUTONOMY_DOCTRINE,
+
+            # [NEW] NPC Attitude Enforcement
+            NPC_ATTITUDE_ENFORCEMENT,
+            
+            # [NEW] Time Atmosphere
+            TIME_ATMOSPHERE,
 
             # Core Instruction Components
             INTERACTION_MODEL,

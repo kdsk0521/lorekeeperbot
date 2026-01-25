@@ -209,6 +209,30 @@ def delete_npc(channel_id: str, name: str) -> bool:
         return True
     return False
 
+# NPC Attitude System
+def update_npc_attitude(channel_id: str, npc_name: str, attitude: str, reason: str = "") -> None:
+    """NPC의 PC에 대한 태도 업데이트"""
+    d = get_domain(channel_id)
+    if "npc_attitudes" not in d:
+        d["npc_attitudes"] = {}
+    
+    d["npc_attitudes"][npc_name] = {
+        "attitude": attitude,
+        "reason": reason,
+        "last_updated": time.strftime('%Y-%m-%d %H:%M')
+    }
+    save_domain(channel_id, d)
+
+def get_npc_attitudes(channel_id: str) -> Dict[str, Dict]:
+    """저장된 NPC 태도 조회"""
+    d = get_domain(channel_id)
+    return d.get("npc_attitudes", {})
+
+def get_npc_attitude(channel_id: str, npc_name: str) -> Optional[Dict]:
+    """특정 NPC의 태도 조회"""
+    attitudes = get_npc_attitudes(channel_id)
+    return attitudes.get(npc_name)
+
 # Rules & Genres
 def get_rules(channel_id: str) -> str:
     if channel_id in _rules_cache: return _rules_cache[channel_id]
