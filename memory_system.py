@@ -9,6 +9,7 @@ Refactored Structure:
 import json
 import asyncio
 import logging
+import config
 import re
 from typing import Optional, Dict, Any, List, Tuple
 from google.genai import types
@@ -421,13 +422,14 @@ async def analyze_genre_from_lore(client, model_id: str, text: str) -> Dict[str,
 
     system_prompt = (
         "You are a Genre Analyzer.\n"
-        "Analyze the text and determine the most fitting genres and atmospheric tone.\n\n"
+        "Analyze the text and determine the most fitting genres and atmospheric tone.\n"
+        "Select the best matching genres from the list, or suggest a new one if strongly applicable.\n\n"
         
         f"Supported Genres: {', '.join(SUPPORTED_GENRES)}\n\n"
         
         "Output Format (JSON):\n"
         "{\n"
-        "  \"genres\": [\"genre1\", \"genre2\"],  // Max 2-3 genres\n"
+        "  \"genres\": [\"primary_genre\", \"secondary_genre\"],  // Max 2-3 genres\n"
         "  \"custom_tone\": \"Descriptive sentence about the atmosphere (Korean)\"\n"
         "}"
     )
