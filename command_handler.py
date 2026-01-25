@@ -13,6 +13,7 @@ from typing import Optional, Dict
 import re
 
 # Unified Modules
+import config
 import domain_manager
 import game_system
 # session_manager and memory_system are still external for now, or integrated?
@@ -591,7 +592,7 @@ async def dispatch_command(cmd, message, channel_id, parsed, client_discord, cli
     
     # NPC dispatch
     if cmd in ['npc', 'addnpc']:
-        await handle_npc_command(message, channel_id, cmd, parsed['content'])
+        await handle_npc_command(message, channel_id, cmd, parsed['content'], client_genai, model_id)
         return None
 
     # Participant dispatch
