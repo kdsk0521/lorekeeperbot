@@ -249,7 +249,7 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                 response = re.sub(r'```system_update[\s\S]*?```', '', response, flags=re.IGNORECASE).strip()
             
             if response:
-                await send_long_message(message.channel, response)
+                await bot_utils.send_long_message(message.channel, response)
                 domain_manager.append_history(channel_id, "User", action_text)
                 domain_manager.append_history(channel_id, "Char", response)
                 
