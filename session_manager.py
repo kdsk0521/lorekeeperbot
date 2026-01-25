@@ -24,9 +24,9 @@ class SessionManager:
         channel_id = str(message.channel.id)
         
         confirm_msg = await message.channel.send(
-            "🧨 **[WARNING: NUCLEAR RESET]**\n"
-            "This will **DELETE THE CHANNEL** and wipe all history permanently.\n"
-            f"React with {RESET_CONFIRM_EMOJI} within {RESET_CONFIRM_TIMEOUT}s to confirm."
+            "🧨 **[경고: 세션 초기화]**\n"
+            "이 채널의 모든 데이터와 기억이 **영구적으로 삭제**되며 채널이 재생성됩니다.\n"
+            f"{RESET_CONFIRM_EMOJI} 이모지를 눌러 {RESET_CONFIRM_TIMEOUT}초 내에 확정하십시오."
         )
         await confirm_msg.add_reaction(RESET_CONFIRM_EMOJI)
         
@@ -45,7 +45,7 @@ class SessionManager:
         except asyncio.TimeoutError:
             try:
                 await confirm_msg.delete()
-                await message.channel.send("❌ Reset cancelled (Timeout).", delete_after=5)
+                await message.channel.send("❌ 초기화 취소됨 (시간 초과).", delete_after=5)
             except: pass
     
     async def _recreate_channel(self, message: discord.Message) -> None:
@@ -56,28 +56,28 @@ class SessionManager:
             except: pass
             
             await original.delete(reason="Session Reset (Old)")
-            await new_ch.send("✨ **Session Reset Complete.**\nNew timeline started.\nType `!ready` to begin setup.")
+            await new_ch.send("✨ **세션 초기화 완료.**\n새로운 타임라인이 시작되었습니다.\n`!준비` (`!ready`)를 입력하여 설정을 시작하세요.")
         except Exception as e:
             await self._fallback_purge(original, e)
 
     async def _fallback_purge(self, channel, error) -> None:
-        await channel.send(f"⚠️ **Regeneration Failed:** {error}\nFalling back to message purge in {FALLBACK_PURGE_DELAY}s...")
+        await channel.send(f"⚠️ **채널 재생성 실패:** {error}\n{FALLBACK_PURGE_DELAY}초 후 메시지 청소를 시도합니다...")
         await asyncio.sleep(FALLBACK_PURGE_DELAY)
         try:
             deleted = await channel.purge(limit=None, check=lambda m: not m.pinned)
-            await channel.send(f"🧹 **Purged {len(deleted)} messages.**\nType `!ready`.")
+            await channel.send(f"🧹 **{len(deleted)}개의 메시지를 청소했습니다.**\n`!준비`를 입력하세요.")
         except Exception as e:
-            await channel.send(f"❌ Purge failed: {e}")
+            await channel.send(f"❌ 청소 실패: {e}")
 
     async def execute_clear(self, message: discord.Message) -> None:
         """Clears chat messages but keeps session data."""
         try:
-            await message.channel.send("🧹 **Cleaning up chat...**")
+            await message.channel.send("🧹 **채팅 청소 중...**")
             await asyncio.sleep(1)
             deleted = await message.channel.purge(limit=None, check=lambda m: not m.pinned)
-            await message.channel.send(f"✨ **Chat Cleared.** ({len(deleted)} msgs removed)", delete_after=5)
+            await message.channel.send(f"✨ **청소 완료.** ({len(deleted)}개 삭제됨)", delete_after=5)
         except Exception as e:
-            await message.channel.send(f"⚠️ Clear failed: {e}")
+            await message.channel.send(f"⚠️ 청소 실패: {e}")
 
     async def check_preparation(self, message: discord.Message) -> None:
         """Checks if session is ready to start (Lore/Rules)."""
@@ -85,39 +85,31 @@ class SessionManager:
         lore = domain_manager.get_lore(channel_id)
         
         ready = True
-        msg = "🔍 **System Check**\n"
+        msg = "🔍 **시스템 준비 확인**\n"
         
         if lore and lore.strip() and lore != "No Lore Saved": # Check default
-             msg += "✅ Lore OK\n"
+             msg += "✅ 세계관(Lore) 로드됨\n"
         else:
-             # Actually config.DEFAULT_LORE is what we check against?
-             # Just checking if valid string length > 100 or something?
-             # domain_manager.get_lore returns default if file missing.
-             # We assume if it equals default constant, it's not ready?
-             # Let's simple check length.
              if len(lore) < 50:
-                 msg += "❌ Lore Missing (`!lore [file/text] required`)\n"
+                 msg += "❌ 세계관 미설정 (`!lore [내용/파일]` 필요)\n"
                  ready = False
              else:
-                 msg += "✅ Lore OK\n"
+                 msg += "✅ 세계관 로드됨\n"
 
         rules_mode = domain_manager.get_rules_mode(channel_id)
-        msg += f"✅ Rules: {rules_mode.capitalize()}\n"
+        msg += f"✅ 룰 설정: {rules_mode.capitalize()}\n"
         
         if ready:
-            # We don't have set_prepared in new domain_manager?
-            # We should probably add it or just check manually in start.
-            # Using data dict directly for now.
             d = domain_manager.get_domain(channel_id)
             d["prepared"] = True
             domain_manager.save_domain(channel_id, d)
             
-            msg += "\n✨ **Ready!** Set commands: `!mask [Name]` then `!start`."
+            msg += "\n✨ **준비 완료!** 다음 명령어로 시작하세요: `!가면 [이름]` -> `!시작`"
         else:
             d = domain_manager.get_domain(channel_id)
             d["prepared"] = False
             domain_manager.save_domain(channel_id, d)
-            msg += "\n❗ **Not Ready.**"
+            msg += "\n❗ **준비 미비.** 필수 항목을 확인해주세요."
             
         await message.channel.send(msg)
 
@@ -126,15 +118,15 @@ class SessionManager:
         d = domain_manager.get_domain(channel_id)
         
         if not d.get("prepared"):
-            await message.channel.send("⚠️ Please run `!ready` first.")
+            await message.channel.send("⚠️ 먼저 `!준비` 명령어로 상태를 확인해주세요.")
             return False
             
         if d["settings"].get("session_locked"):
-            await message.channel.send("⚠️ Session already in progress.")
+            await message.channel.send("⚠️ 세션이 이미 진행 중입니다.")
             return False
             
         domain_manager.set_session_lock(channel_id, True)
-        await message.channel.send("🎬 **Session Started.**\nExternal interference locked. AI generating opening...")
+        await message.channel.send("🎬 **세션 시작.**\n외부 개입이 차단되었습니다. 오프닝 생성 중...")
         return True
 
 manager = SessionManager()

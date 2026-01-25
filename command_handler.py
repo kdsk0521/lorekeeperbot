@@ -499,7 +499,7 @@ async def dispatch_command(cmd, message, channel_id, parsed, client_discord, cli
     if cmd == 'start':
         domain_manager.update_participant(channel_id, message.author)
         if await session_manager.manager.start_session(message, client_genai, model_id):
-            return "[System: Opening Scene]"
+            return "[System: 오프닝 장면 생성]"
         return None
         
     if cmd == 'lore':
