@@ -139,6 +139,48 @@ def calculate_doom_increase(channel_id: str, world: dict, next_idx: int, time_sl
                 
     return doom_increase, doom_reasons
 
+def get_random_doom_event(doom: int) -> str:
+    """둠 수치에 따른 랜덤 플레이버 텍스트 이벤트를 반환합니다."""
+    
+    critical_events = [
+        "🌌 하늘이 찢어지며 공허가 쏟아져 내립니다.",
+        "👁️ 세상의 모든 눈이 당신을 주시하고 있습니다.",
+        "🩸 대지가 비명을 지르며 붉은 균열을 일으킵니다.",
+        "🌑 태양이 검게 물들고 영원한 밤이 시작되려 합니다.",
+    ]
+    
+    danger_events = [
+        "👹 그림자 속에서 끔찍한 형체가 꿈틀거립니다.",
+        "🌪️ 피 냄새 섞인 바람이 불어옵니다.",
+        "🔥 멀리서 원인 모를 화재가 발생했습니다.",
+        "💀 까마귀 떼가 하늘을 뒤덮습니다.",
+    ]
+    
+    warning_events = [
+        "🦅 정찰병이 수상한 움직임을 보고했습니다.",
+        "📜 불길한 예언이 전해지고 있습니다.",
+        "🌫️ 기이한 안개가 피어오르고 있습니다.",
+        "🔔 먼 곳에서 종소리가 울려옵니다.",
+    ]
+    
+    calm_events = [
+        "🌸 평화로운 하루입니다. 특별한 일이 없습니다.",
+        "🐦 새들이 노래하고 있습니다. 좋은 징조입니다.",
+        "☀️ 맑은 날씨가 계속되고 있습니다.",
+        "🏠 마을 사람들이 일상을 보내고 있습니다.",
+    ]
+    
+    if doom >= config.DOOM_THRESHOLD_CRITICAL:
+        event = random.choice(critical_events)
+    elif doom >= config.DOOM_THRESHOLD_DANGER:
+        event = random.choice(danger_events)
+    elif doom >= config.DOOM_THRESHOLD_WARNING:
+        event = random.choice(warning_events)
+    else:
+        event = random.choice(calm_events)
+    
+    return f"🎲 **[둠 이벤트]**\n{event}"
+
 def change_doom(channel_id: str, amount: int) -> str:
     world = domain_manager.get_world_state(channel_id)
     current = world.get("doom", 0)

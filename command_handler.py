@@ -157,11 +157,27 @@ async def handle_info_command(message, channel_id: str, sub_command: str = "") -
 
 async def handle_npc_command(message, channel_id: str, cmd: str, arg: str, client_genai=None, model_id=None) -> None:
     """NPC 관련 명령어 처리 (!npc, !addnpc)"""
+    # 1. 파일 내용 확인
+    file_text = ""
+    if message.attachments:
+        for att in message.attachments:
+            text, error = await read_attachment_text(att)
+            if error:
+                await message.channel.send(error)
+                return
+            if text:
+                file_text = text
+                break
+
+    # 2. 내용 합치기
+    full_content = (arg + "\n" + file_text).strip()
+
     if cmd == 'addnpc':
-        if ":" not in arg:
-            await message.channel.send("⚠️ 형식 오류: `!npc추가 [이름]: [설명]`")
+        if ":" not in full_content:
+            await message.channel.send("⚠️ 형식 오류: `!npc추가 [이름]: [설명]` (텍스트 파일 포함 가능)")
             return
-        name, desc = arg.split(":", 1)
+        
+        name, desc = full_content.split(":", 1)
         domain_manager.update_npc(channel_id, name.strip(), {"desc": desc.strip(), "source": "manual", "status": "Active"})
         await message.channel.send(f"👥 **NPC 등록:** {name.strip()}")
         return

@@ -348,6 +348,31 @@ def apply_pc_info_to_user(channel_id: str, user_id: str) -> bool:
     save_participant_data(channel_id, user_id, p)
     return True
 
+def get_ai_memory(channel_id: str, uid: str) -> Dict[str, Any]:
+    p = get_participant_data(channel_id, uid)
+    return p.get("ai_memory", {}) if p else {}
+
+def update_ai_memory(channel_id: str, uid: str, updates: Dict[str, Any]) -> None:
+    p = get_participant_data(channel_id, uid)
+    if not p: return
+    
+    mem = p.get("ai_memory", {})
+    mem.update(updates)
+    p["ai_memory"] = mem
+    save_participant_data(channel_id, uid, p)
+
+def add_to_ai_memory_list(channel_id: str, uid: str, key: str, item: str) -> None:
+    p = get_participant_data(channel_id, uid)
+    if not p: return
+    
+    mem = p.get("ai_memory", {})
+    if key not in mem: mem[key] = []
+    if isinstance(mem[key], list) and item not in mem[key]:
+        mem[key].append(item)
+        
+    p["ai_memory"] = mem
+    save_participant_data(channel_id, uid, p)
+
 # UI Helpers
 def get_unified_player_info(channel_id: str, user_id: str) -> str:
     p = get_participant_data(channel_id, user_id)
