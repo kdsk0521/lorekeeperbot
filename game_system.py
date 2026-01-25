@@ -620,6 +620,64 @@ def update_status_effect(user_data: Dict[str, Any], action: str, effect_name: st
     user_data["status_effects"] = effects
     return user_data, msg
 
+def perform_check(channel_id: str, user_id: str, action_desc: str = "") -> str:
+    """
+    주사위 판정 (1d100) + 상태 이상 보정
+    """
+    import random
+    
+    # 1. 데이터 로드
+    p_data = domain_manager.get_participant_data(channel_id, user_id)
+    if not p_data:
+        return "⚠️ 먼저 `!가면`으로 캐릭터를 등록하세요."
+        
+    # 2. 보정치 계산
+    effects = p_data.get("status_effects", [])
+    modifier = 0
+    mod_details = []
+    
+    for eff in effects:
+        # Buff
+        if eff in POSITIVE_STATUS_EFFECTS:
+            val = 10 # 기본 버프 보정치
+            modifier += val
+            mod_details.append(f"{eff}(+{val})")
+            continue
+            
+        # Debuff
+        if eff in NEGATIVE_STATUS_EFFECTS:
+            severity = NEGATIVE_STATUS_EFFECTS[eff]
+            val = severity * -5 # 심각도당 -5
+            modifier += val
+            mod_details.append(f"{eff}({val})")
+            continue
+            
+    # 3. 주사위 굴림
+    dice_val = random.randint(1, 100)
+    final_val = max(1, dice_val + modifier) # 최소 1
+    
+    # 4. 결과 포맷팅
+    # [행동] 판정
+    # 🎲 1d100(45) - 10 (부상, 탈진) = 35
+    # 보유 패시브: [검술, 야간시야]
+    
+    header = f"🎲 **판정: {action_desc}**" if action_desc else "🎲 **판정**"
+    
+    calc_str = f"**{dice_val}**"
+    if modifier != 0:
+        sign = "+" if modifier > 0 else ""
+        calc_str += f" {sign}{modifier} ({', '.join(mod_details)})"
+        
+    result_str = f"{header}\n결과: {calc_str} = **{final_val}**"
+    
+    # 패시브 컨텍스트 (AI/GM 참고용)
+    passives = p_data.get("passives", [])
+    if passives:
+        p_names = [p.get("name") if isinstance(p, dict) else str(p) for p in passives]
+        result_str += f"\n💡 참고 특성: {', '.join(p_names)}"
+        
+    return result_str
+
 def get_status_summary(user_data: Dict[str, Any]) -> str:
     """Returns a concise summary of player status for AI analysis."""
     parts = []

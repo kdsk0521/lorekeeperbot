@@ -715,12 +715,11 @@ async def dispatch_command(cmd, message, channel_id, parsed, client_discord, cli
         await message.channel.send(f"🎭 가면: {target}")
         return None
 
-    if cmd == 'r': # Roll
-        # Simple roll or handled by game_system?
-        # Just simple dice for now.
-        import random
-        val = random.randint(1, 100)
-        await message.channel.send(f"🎲 **{val}**")
+    if cmd == 'r' or cmd == 'dice' or cmd == '주사위' or cmd == '판정': 
+        # Advanced roll with modifiers
+        action_desc = parsed['content'] if parsed else ""
+        result_msg = game_system.perform_check(channel_id, str(message.author.id), action_desc)
+        await message.channel.send(result_msg)
         return None
         
     if cmd == 'doom':
