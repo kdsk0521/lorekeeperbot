@@ -215,13 +215,17 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
             
             nvc_summary = f"Loc: {nvc_res.get('CurrentLocation')}\nObs: {nvc_res.get('Observation')}\nNeed: {nvc_res.get('Need')}"
             
-            fermented_summaries = [e["summary"] for e in domain_data.get("fermented_history", []) if e.get("summary")]
-            fermented_summary_text = "\n---\n".join(fermented_summaries)
+            # Extract Player Info Early
+            p_name = p_data.get("mask", "Unknown") if p_data else "Unknown"
             
+            # Request 2: PC Protection Reminder
+            pc_reminder = f"### CRITICAL WARNING: DO NOT WRITE FOR [{p_name}]\n{p_name} is the PLAYER. You must NOT generate their dialogue or actions."
+
             full_prompt = (
                 f"### World State\n{world_ctx}\n\n"
                 f"### Player Status\n{p_ctx}\n\n"
                 f"### Analysis\n{nvc_summary}\n\n"
+                f"{pc_reminder}\n\n"
                 f"### User Action\n{action_text}\n\n"
                 "Generate narrative response in Korean. 3rd person."
             )
@@ -231,8 +235,6 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
             custom_tone = domain_manager.get_custom_tone(channel_id)
             scene_type = nvc_res.get("SceneType", "normal")
             
-            # Extract Player Info for Anti-Impersonation
-            p_name = p_data.get("mask", "Unknown") if p_data else "Unknown"
             p_desc = p_data.get("ai_memory", {}).get("appearance", "") if p_data else ""
 
             session = persona.create_risu_style_session(
@@ -254,6 +256,13 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                 response = re.sub(r'```system_update[\s\S]*?```', '', response, flags=re.IGNORECASE).strip()
             
             if response:
+                # Request 3: Post-Response Impersonation Filter
+                response, violations = persona.filter_pc_impersonation(response, [p_name])
+                if violations:
+                     warning_msg = "\n".join(violations)
+                     # Warn user but keep text (safer than auto-delete for now)
+                     await message.channel.send(f"{warning_msg}")
+
                 await bot_utils.send_long_message(message.channel, response)
                 domain_manager.append_history(channel_id, "User", action_text)
                 domain_manager.append_history(channel_id, "Char", response)

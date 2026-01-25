@@ -1665,3 +1665,61 @@ async def create_cached_session(
             scene_type=scene_type
         )
         return session, False
+
+# =========================================================
+# [Request 3] Post-Response Impersonation Filter
+# =========================================================
+import re
+
+def detect_pc_impersonation(response: str, pc_names: List[str]) -> List[Dict]:
+    """PC 사칭 패턴 검출 (Regex Based)"""
+    violations = []
+    if not pc_names: return violations
+    
+    for pc in pc_names:
+        if not pc or pc == "Unknown": continue
+        
+        # Escape PC name for regex
+        safe_pc = re.escape(pc)
+        
+        patterns = [
+            # 1. Dialogue (대사)
+            # "말했다", "대답했다" referring to PC
+            (rf'{safe_pc}[이가은는]?\s*["\'].*?["\'].*?(?:말했다|대답했다|중얼거렸다|외쳤다|물었다)', 'dialogue'),
+            # "..." 라고 PC가...
+            (rf'["\'].*?["\'].*?(?:라고|하고)\s*{safe_pc}', 'dialogue'),
+            
+            # 2. Action (행동) - Common narrative patterns
+            (rf'{safe_pc}[이가은는]?\s*(?:고개를|손을|몸을).*?(?:끄덕|흔들|돌렸|뻗었)', 'action'),
+            (rf'{safe_pc}[이가은는]?\s*(?:일어났다|앉았다|걸었다|뛰었다|멈췄다|바라보았다)', 'action'),
+            
+            # 3. Reaction/Emotion (반응/내면)
+            (rf'{safe_pc}[의]?\s*(?:표정|눈|얼굴)[이가]?\s*(?:굳|밝|어두|놀)', 'reaction'),
+            (rf'{safe_pc}[은는이가]?\s*(?:생각했다|느꼈다|깨달았다|결심했다)', 'thought'),
+        ]
+        
+        for pattern, vtype in patterns:
+            matches = re.findall(pattern, response, re.IGNORECASE)
+            for match in matches:
+                violations.append({
+                    'pc': pc,
+                    'type': vtype,
+                    'matched': match[:50]
+                })
+    
+    return violations
+
+def filter_pc_impersonation(response: str, pc_names: List[str]) -> Tuple[str, List[str]]:
+    """PC 사칭 부분 제거 및 경고 반환"""
+    warnings = []
+    filtered = response
+    
+    violations = detect_pc_impersonation(response, pc_names)
+    
+    if violations:
+        # For now, we return existing text but WARN heavily.
+        # Removing sentences is complex without tearing logic.
+        for v in violations:
+            warnings.append(f"⚠️ **PC 사칭 검출 [{v['type']}]:** `{v['matched']}...`")
+            
+    return filtered, warnings
