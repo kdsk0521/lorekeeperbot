@@ -14,7 +14,7 @@ from typing import List, Dict, Any, Optional, Tuple
 
 import config
 import domain_manager
-from domain_content import (
+from config import (
     NEGATIVE_STATUS_EFFECTS,
     POSITIVE_STATUS_EFFECTS,
     STATUS_EFFECTS,
@@ -450,11 +450,11 @@ def get_abnormal_context(user_data: Dict[str, Any], abnormal_types: List[str]) -
 
 # Passive System
 def get_passives_for_context(user_data: Dict[str, Any]) -> str:
-    p_ list = user_data.get("passives", [])
+    p_list = user_data.get("passives", [])
     ai_p = user_data.get("ai_memory", {}).get("passives", [])
     
     names = set()
-    for p in p_ list:
+    for p in p_list:
         names.add(p.get("name") if isinstance(p, dict) else str(p))
     for p in ai_p:
         names.add(str(p))

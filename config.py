@@ -153,3 +153,60 @@ DEFAULT_WORLD_STATE = {
     "active_threads": [],
     "last_temporal_context": {}
 }
+
+# =========================================================
+# Simulation Constants (Restored)
+# =========================================================
+
+STATUS_EFFECTS = {
+    # Debuffs (Severity 1-3)
+    "부상": {"type": "debuff", "severity": 1},
+    "중상": {"type": "debuff", "severity": 2},
+    "치명상": {"type": "debuff", "severity": 3},
+    "중독": {"type": "debuff", "severity": 1},
+    "맹독": {"type": "debuff", "severity": 2},
+    "화상": {"type": "debuff", "severity": 1},
+    "동상": {"type": "debuff", "severity": 1},
+    "공포": {"type": "debuff", "severity": 1},
+    "패닉": {"type": "debuff", "severity": 2},
+    "실명": {"type": "debuff", "severity": 2},
+    "골절": {"type": "debuff", "severity": 2},
+    "출혈": {"type": "debuff", "severity": 1},
+    "탈진": {"type": "debuff", "severity": 1},
+    "기절": {"type": "debuff", "severity": 3},
+    "혼란": {"type": "debuff", "severity": 1},
+    
+    # Buffs
+    "활력": {"type": "buff", "severity": 0},
+    "방어태세": {"type": "buff", "severity": 0},
+    "집중": {"type": "buff", "severity": 0},
+    "은신": {"type": "buff", "severity": 0},
+    "비행": {"type": "buff", "severity": 0},
+    "야간시야": {"type": "buff", "severity": 0},
+    "가호": {"type": "buff", "severity": 0},
+    "신속": {"type": "buff", "severity": 0},
+}
+
+NEGATIVE_STATUS_EFFECTS = {k: v["severity"] for k, v in STATUS_EFFECTS.items() if v["type"] == "debuff"}
+POSITIVE_STATUS_EFFECTS = {k: 1 for k, v in STATUS_EFFECTS.items() if v["type"] == "buff"}
+
+SEVERITY_DOOM_IMPACT = {
+    1: 1, # Minor -> +1 Doom
+    2: 3, # Major -> +3 Doom
+    3: 5, # Critical -> +5 Doom
+}
+
+# Normality Stages (Range: 0-100)
+# Key: (min_inclusive, max_exclusive)
+NORMALITY_STAGES = {
+    (0, 10): {"stage": 0, "name": "초기", "reaction_hint": "Shock, Fear, Confusion"},
+    (10, 30): {"stage": 1, "name": "접촉", "reaction_hint": "Wariness, Unease"},
+    (30, 60): {"stage": 2, "name": "적응", "reaction_hint": "Acceptance, Coping"},
+    (60, 90): {"stage": 3, "name": "익숙함", "reaction_hint": "Familiarity, Routine"},
+    (90, 101): {"stage": 4, "name": "일상화", "reaction_hint": "Indifference, Mastery"},
+}
+
+def get_normality_stage_info(val):
+    for (l, h), info in NORMALITY_STAGES.items():
+        if l <= val < h: return info
+    return NORMALITY_STAGES[(90, 101)]
