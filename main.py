@@ -271,8 +271,9 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                 domain_manager.append_history(channel_id, "Char", response)
                 
                 # 5. COGNITION: EXTRACTION (Logos)
+                # 5. COGNITION: EXTRACTION (Logos) - Optimized
                 try:
-                    # Gather data for extraction
+                    # Gather data
                     inv = p_data.get("inventory", {}) if p_data else {}
                     gold = p_data.get("economy", {}).get("gold", 0) if p_data else 0
                     status = p_data.get("status_effects", []) if p_data else []
@@ -281,65 +282,85 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                     rels = mem.get("relationships", {})
                     passives = mem.get("passives", [])
                     
-                    u_res = await cognition.extract_all_updates(
-                        client_genai, MODEL_ID_FLASH, action_text, response,
-                        current_inventory=inv, current_gold=gold, current_status=status,
-                        current_relationships=rels, current_passives=passives,
-                        current_quests=game_system.get_active_quests(channel_id),
-                        current_memos=game_system.get_memos(channel_id),
-                        lore_npc_names=list(domain_manager.get_npcs(channel_id).keys()),
-                        fermented_context=fermented_summary_text
-                    )
-                    
-                    # Apply Updates
-                    # (Simplified application - could be moved to game_system helpers)
-                    msgs = []
-                    
-                    # Player Update
-                    pu = u_res.get("PlayerUpdate")
-                    if pu:
-                        if pu.get("inventory_add"): 
-                            for k,v in pu["inventory_add"].items(): 
-                                _, m = game_system.update_inventory(p_data, "add", k, v); msgs.append(m)
-                        if pu.get("inventory_remove"):
-                            for k,v in pu["inventory_remove"].items(): 
-                                _, m = game_system.update_inventory(p_data, "remove", k, v); msgs.append(m)
-                        if pu.get("gold_change"):
-                             economy = p_data.get("economy", {"gold":0})
-                             economy["gold"] += pu["gold_change"]
-                             p_data["economy"] = economy
-                             msgs.append(f"💰 Gold {pu['gold_change']:+}")
-                        if pu.get("status_add"):
-                             for s in pu["status_add"]:
-                                 _, m = game_system.update_status_effect(p_data, "add", s); msgs.append(m)
-                        if pu.get("status_remove"):
-                             for s in pu["status_remove"]:
-                                 _, m = game_system.update_status_effect(p_data, "remove", s); msgs.append(m)
-                        
-                        domain_manager.save_participant_data(channel_id, uid, p_data)
-                    
-                    # Memory Update
-                    pmu = u_res.get("PlayerMemoryUpdate")
-                    if pmu:
-                        if pmu.get("relationships"):
-                             domain_manager.update_ai_memory(channel_id, uid, {"relationships": pmu["relationships"]})
-                             msgs.append("💞 관계도 업데이트됨")
-                        if pmu.get("passives"):
-                             added_passives = []
-                             for p_item in pmu["passives"]:
-                                 domain_manager.add_to_ai_memory_list(channel_id, uid, "passives", p_item)
-                                 added_passives.append(p_item)
-                             msgs.append(f"🏆 패시브/칭호: {', '.join(added_passives)}")
+                    # Hint Generation Heuristics
+                    extraction_hints = {
+                        "physical": any(kw in response for kw in ['아이템','골드','금화','은화','돈','획득','주웠','얻었','잃었','버렸','사용','먹었','마셨','부상','치료','회복','피해']),
+                        "social": (list(domain_manager.get_npcs(channel_id).keys()) and any(n in response for n in domain_manager.get_npcs(channel_id).keys())) or ('"' in response or '「' in response),
+                        "narrative": any(kw in response for kw in ['처음으로','마침내','성공','실패','죽','살','마법','괴물','이상한','기이한']) or bool(nvc_res.get("AbnormalElements")),
+                        "quest": any(kw in response for kw in ['퀘스트','임무','목표','의뢰','부탁','완료','달성','단서','정보','비밀'])
+                    }
 
-                    # Quest Update
-                    qu = u_res.get("QuestUpdate")
-                    if qu:
-                        if qu.get("quest_add"): 
-                            for q in qu["quest_add"]: game_system.add_quest(channel_id, q); msgs.append(f"🔥 New Quest: {q}")
-                        if qu.get("quest_complete"): 
-                            for q in qu["quest_complete"]: game_system.complete_quest(channel_id, q); msgs.append(f"✅ Completed: {q}")
-                        if qu.get("memo_add"):
-                             for m in qu["memo_add"]: game_system.add_memo(channel_id, m); msgs.append(f"📝 Memo: {m}")
+                    # Phase 1: Immediate Physical Update
+                    if extraction_hints["physical"]:
+                        phys_res = await cognition._extract_physical(client_genai, MODEL_ID_FLASH, action_text, response, inv, gold, status)
+                        if phys_res:
+                            msgs = []
+                            changed = False
+                            if phys_res.get("inventory_add"):
+                                for k, v in phys_res["inventory_add"].items(): _, m = game_system.update_inventory(p_data, "add", k, v); msgs.append(m); changed = True
+                            if phys_res.get("inventory_remove"):
+                                for k, v in phys_res["inventory_remove"].items(): _, m = game_system.update_inventory(p_data, "remove", k, v); msgs.append(m); changed = True
+                            if phys_res.get("gold_change"):
+                                eco = p_data.get("economy", {"gold": 0}); eco["gold"] += phys_res["gold_change"]; p_data["economy"] = eco; changed = True
+                                msgs.append(f"💰 Gold {phys_res['gold_change']:+}")
+                            
+                            if changed:
+                                domain_manager.save_participant_data(channel_id, uid, p_data)
+                                if msgs: await message.channel.send(" | ".join(msgs))
+                    
+                    # Phase 2: Background Extraction (Async)
+                    async def background_update():
+                        try:
+                            bg_hints = {k: v for k, v in extraction_hints.items() if k != "physical" and v}
+                            if not bg_hints: return
+                            
+                            bg_res = await cognition.extract_all_updates(
+                                client_genai, MODEL_ID_FLASH, action_text, response,
+                                current_inventory=inv, current_gold=gold, current_status=status,
+                                current_relationships=rels, current_passives=passives,
+                                current_quests=game_system.get_active_quests(channel_id),
+                                current_memos=game_system.get_memos(channel_id),
+                                lore_npc_names=list(domain_manager.get_npcs(channel_id).keys()),
+                                fermented_context=fermented_summary_text,
+                                extraction_hints=bg_hints
+                            )
+                            
+                            bg_msgs = []
+                            # Memory
+                            pmu = bg_res.get("PlayerMemoryUpdate")
+                            if pmu:
+                                if pmu.get("relationships"):
+                                    domain_manager.update_ai_memory(channel_id, uid, {"relationships": pmu["relationships"]})
+                                    bg_msgs.append("💞 관계도")
+                                if pmu.get("passives"):
+                                    for p in pmu["passives"]: domain_manager.add_to_ai_memory_list(channel_id, uid, "passives", p)
+                                    bg_msgs.append(f"🏆 패시브: {len(pmu['passives'])}개")
+                            
+                            # Quests
+                            qu = bg_res.get("QuestUpdate")
+                            if qu:
+                                if qu.get("quest_add"): 
+                                    for q in qu["quest_add"]: game_system.add_quest(channel_id, q); bg_msgs.append(f"🔥 New: {q}")
+                                if qu.get("quest_complete"):
+                                    for q in qu["quest_complete"]: game_system.complete_quest(channel_id, q); bg_msgs.append(f"✅ Done: {q}")
+                                if qu.get("memo_add"):
+                                    for m in qu["memo_add"]: game_system.add_memo(channel_id, m); bg_msgs.append(f"📝 {m}")
+
+                            # Abnormal
+                            if domain_manager.get_abnormal_mode(channel_id) and bg_res.get("AbnormalTrigger"):
+                                fp_data = domain_manager.get_participant_data(channel_id, uid) # Fresh load
+                                fp_data, p_msg = game_system.expose_to_abnormal(fp_data, bg_res["AbnormalTrigger"])
+                                if p_msg: bg_msgs.append(p_msg)
+                                domain_manager.save_participant_data(channel_id, uid, fp_data)
+
+                            if bg_msgs: await message.channel.send("📋 " + " | ".join(bg_msgs))
+                        except Exception as e:
+                            logging.error(f"Background Extraction Error: {e}")
+
+                    asyncio.create_task(background_update())
+
+                except Exception as ue:
+                     logging.warning(f"Extraction Error: {ue}")
 
                     # Abnormal Adaptation (If Enabled)
                     if domain_manager.get_abnormal_mode(channel_id):

@@ -185,19 +185,49 @@ async def extract_all_updates(
     current_relationships: Dict[str, str] = None, current_companions: List[str] = None,
     lore_npc_names: List[str] = None, scene_npc_names: List[str] = None,
     current_passives: List[str] = None, current_quests: List[str] = None, current_memos: List[str] = None,
-    fermented_context: str = ""
+    fermented_context: str = "",
+    extraction_hints: Dict[str, bool] = None
 ) -> Dict[str, Any]:
     
-    # Run specialized extractors in parallel
-    results = await asyncio.gather(
-        _extract_physical(client, model_id_flash, player_input, ai_response, current_inventory, current_gold, current_status),
-        _extract_social(client, model_id_flash, player_input, ai_response, current_relationships, current_companions, lore_npc_names, scene_npc_names),
-        _extract_narrative(client, model_id_flash, player_input, ai_response, current_passives, fermented_context),
-        _extract_quest(client, model_id_flash, player_input, ai_response, current_quests, current_memos),
-        return_exceptions=True
-    )
+    # Default: Run ALL if no hints provided
+    if extraction_hints is None:
+        extraction_hints = {"physical": True, "social": True, "narrative": True, "quest": True}
+
+    tasks = []
+    task_keys = []
+
+    if extraction_hints.get("physical", False):
+        tasks.append(_extract_physical(client, model_id_flash, player_input, ai_response, current_inventory, current_gold, current_status))
+        task_keys.append("physical")
     
-    phys, soc, nar, qst = [r if not isinstance(r, Exception) else {} for r in results]
+    if extraction_hints.get("social", False):
+        tasks.append(_extract_social(client, model_id_flash, player_input, ai_response, current_relationships, current_companions, lore_npc_names, scene_npc_names))
+        task_keys.append("social")
+
+    if extraction_hints.get("narrative", False):
+        tasks.append(_extract_narrative(client, model_id_flash, player_input, ai_response, current_passives, fermented_context))
+        task_keys.append("narrative")
+
+    if extraction_hints.get("quest", False):
+        tasks.append(_extract_quest(client, model_id_flash, player_input, ai_response, current_quests, current_memos))
+        task_keys.append("quest")
+
+    # If nothing to extract
+    if not tasks:
+        return {"PlayerUpdate": None, "PlayerMemoryUpdate": None, "PassiveSuggestion": None, "AbnormalTrigger": None, "QuestUpdate": None}
+
+    # Run selected in parallel
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # Map results back to keys
+    result_map = {}
+    for key, res in zip(task_keys, results):
+        result_map[key] = res if not isinstance(res, Exception) else {}
+
+    phys = result_map.get("physical", {})
+    soc = result_map.get("social", {})
+    nar = result_map.get("narrative", {})
+    qst = result_map.get("quest", {})
     
     # Consolidate
     return {
