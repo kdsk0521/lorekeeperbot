@@ -274,6 +274,8 @@ GENRE_KEYWORD_MAP = {
 # Common Utilities
 # =========================================================
 
+from google.api_core import exceptions as google_exceptions
+
 async def api_call_with_retry(
     client,
     model_id: str,
@@ -283,6 +285,7 @@ async def api_call_with_retry(
 ) -> Optional[str]:
     """
     Gemini API 호출을 재시도 로직과 함께 수행합니다.
+    ResourceExhausted(429) 등 특정 에러를 우아하게 처리합니다.
     """
     for attempt in range(MAX_RETRY_COUNT):
         try:
@@ -297,6 +300,16 @@ async def api_call_with_retry(
             
             logging.warning(f"[{operation_name}] 빈 응답 수신 (시도 {attempt + 1}/{MAX_RETRY_COUNT})")
             
+        except google_exceptions.ResourceExhausted as e:
+            logging.error(f"[{operation_name}] 쿼터 초과 (ResourceExhausted): {e}")
+            # 쿼터 초과는 즉시 중단하거나 긴 대기 필요. 여기서는 즉시 중단.
+            return None
+            
+        except google_exceptions.ServiceUnavailable as e:
+            logging.warning(f"[{operation_name}] 서비스 일시적 불가 (503): {e} - 재시도 중...")
+            await asyncio.sleep(RETRY_DELAY_SECONDS * (attempt + 1)) # Backoff check
+            continue
+
         except Exception as e:
             logging.warning(
                 f"[{operation_name}] API 호출 실패 (시도 {attempt + 1}/{MAX_RETRY_COUNT}): {e}"
@@ -380,22 +393,12 @@ def safe_parse_json(text: Optional[str], expect_list: bool = False) -> Any:
 # Legacy Wrappers (Backward Compatibility)
 # =========================================================
 
-async def analyze_context_nvc(*args, **kwargs):
-    """
-    DEPRECATED: left_brain_analysis.analyze_context_nvc 사용 권장
-    """
-    from left_brain_analysis import analyze_context_nvc as _analyze_context_nvc
-    return await _analyze_context_nvc(*args, **kwargs)
 
-async def extract_all_updates(*args, **kwargs):
-    """
-    DEPRECATED: left_brain_extraction.extract_all_updates 사용 권장
-    """
-    from left_brain_extraction import extract_all_updates as _extract_all_updates
-    return await _extract_all_updates(*args, **kwargs)
+# =========================================================
+# Legacy Wrappers Removed
+# Direct calls to left_brain_analysis and left_brain_extraction are now required.
+# =========================================================
 
-# Alias for old name if used elsewhere
-extract_updates = extract_all_updates
 
 # =========================================================
 # OTHER SYSTEM FUNCTIONS (Still in memory_system.py if needed)

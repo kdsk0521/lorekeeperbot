@@ -1,0 +1,78 @@
+{
+  "participants": {
+    "test_user_456": {
+      "mask": "TestPlayer",
+      "status": "active",
+      "economy": {
+        "gold": 100
+      },
+      "inventory": {},
+      "status_effects": [],
+      "ai_memory": {
+        "appearance": "",
+        "personality": "",
+        "background": "",
+        "relationships": {},
+        "passives": [],
+        "normalization": {},
+        "notes": "",
+        "archived_info": [],
+        "archived_foreshadowing": []
+      },
+      "description": "",
+      "relations": {},
+      "summary_data": {},
+      "abnormal_exposure": {},
+      "passives": [],
+      "experience_counters": {}
+    }
+  },
+  "npcs": {},
+  "history": [],
+  "quest_board": {
+    "active": [],
+    "completed": [],
+    "memos": [],
+    "archive": [],
+    "lore": []
+  },
+  "world_state": {
+    "time_slot": "오후",
+    "weather": "맑음",
+    "day": 1,
+    "doom": 0,
+    "doom_name": "위기",
+    "risk_level": "None",
+    "current_location": "Unknown",
+    "location_rules": {},
+    "world_constraints": {},
+    "active_threads": [],
+    "last_temporal_context": {}
+  },
+  "settings": {
+    "response_mode": "auto",
+    "session_locked": false,
+    "growth_system": "default"
+  },
+  "active_genres": [
+    "noir"
+  ],
+  "custom_tone": null,
+  "prepared": false,
+  "disabled": false,
+  "last_export_idx": 0,
+  "ai_session_memory": {
+    "world_summary": "",
+    "current_arc": "",
+    "active_threads": [],
+    "resolved_threads": [],
+    "key_events": [],
+    "foreshadowing": [],
+    "world_changes": [],
+    "npc_summaries": {},
+    "party_dynamics": "",
+    "last_updated": ""
+  },
+  "fermented_history": [],
+  "deep_memory": ""
+}

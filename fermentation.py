@@ -40,13 +40,17 @@ except ImportError:
 # 상수 정의
 # =========================================================
 
+import config
+
+# =========================================================
+# 상수 정의
+# =========================================================
+
 # 발효 트리거 임계값
-# NOTE: FRESH_THRESHOLD를 증가시키면 메모리 사용량도 증가합니다.
-# 각 메시지는 평균 200-500자 정도이므로, 80개 = 16KB-40KB 추가 메모리 범위
-# 트래픽이 많은 환경에서는 모니터링 필요
-FRESH_THRESHOLD = 80          # FRESH 최대 개수 (초과 시 발효) - 40에서 80으로 증가
-FERMENT_CHUNK_SIZE = 30       # 한 번에 발효할 메시지 수 - 20에서 30으로 증가
-FERMENTED_THRESHOLD = 8       # FERMENTED 최대 개수 (초과 시 DEEP 압축) - 5에서 8로 증가
+FRESH_THRESHOLD = config.FRESH_THRESHOLD
+FERMENT_CHUNK_SIZE = config.FERMENT_CHUNK_SIZE
+FERMENTED_THRESHOLD = config.FERMENTED_THRESHOLD
+RECENT_HISTORY_FOR_ANALYSIS = config.RECENT_HISTORY_FOR_ANALYSIS
 
 # 컨텍스트 비율 (HypaMemory V3 참고)
 DEEP_RATIO = 0.10             # 10% - 장기 기억
