@@ -1630,17 +1630,17 @@ Recording in Korean. Awaiting observable events.
         )
     ]
     
-    config = types.GenerateContentConfig(
+    gen_config = types.GenerateContentConfig(
         temperature=DEFAULT_TEMPERATURE,
         safety_settings=config.SAFETY_SETTINGS,
-        tools=[] # Force disable AFC
+        tools=[] 
     )
     
     return ChatSessionAdapter(
         client=client,
         model=model_version,
         history=initial_history,
-        config=config
+        config=gen_config
     )
 
 
@@ -1817,7 +1817,7 @@ async def create_cached_session(
     if cache_name:
         logging.info(f"[Caching] 캐시 세션 생성 - {channel_id}")
         
-        config = types.GenerateContentConfig(
+        gen_config = types.GenerateContentConfig(
             temperature=DEFAULT_TEMPERATURE,
             safety_settings=config.SAFETY_SETTINGS,
             cached_content=cache_name,
@@ -1828,7 +1828,7 @@ async def create_cached_session(
             client=client,
             model=model_version,
             history=[],
-            config=config
+            config=gen_config
         )
         
         return session, True
