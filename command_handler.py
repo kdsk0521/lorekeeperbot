@@ -130,23 +130,35 @@ async def handle_lore_command(message, channel_id: str, arg: str, client_genai=N
     
     if client_genai:
         try:
-            # NPC Extraction (Using memory_system)
-            npcs = await memory_system.extract_npcs_only(client_genai, model_id, full)
+            # Entity Extraction (Parallel)
+            # 1. NPCs (Legacy: extract_npcs_only)
+            # 2. PC Info (New: extract_pc_info)
+            npc_task = memory_system.extract_npcs_only(client_genai, model_id, full)
+            pc_task = memory_system.extract_pc_info(client_genai, model_id, full)
+            
+            npcs, pc_info = await asyncio.gather(npc_task, pc_task)
+            
+            # Update NPCs
             for n in npcs:
                 domain_manager.update_npc(channel_id, n.get("name"), {
                     "desc": n.get("description"), "source": "lore", "status": "Active"
                 })
+                
+            # Update PC Info
+            pc_msg = ""
+            if pc_info and pc_info.get("name"):
+                 # Save as default PC info for !mask to pick up
+                 domain_manager.set_default_pc_info(channel_id, pc_info)
+                 pc_msg = f"\n주인공 식별: {pc_info.get('name')} (가면 설정 시 자동 적용)"
             
-            domain_manager.append_lore(channel_id, full) # Logic to append or overwrite? Usually overwrite if massive.
-            # actually logic in domain_manager.append_lore handles append.
-            # handle_lore_command logic should probably reset and then append processed.
+            domain_manager.append_lore(channel_id, full) 
             
             # Genre Analysis
             res = await memory_system.analyze_genre_from_lore(client_genai, model_id, full)
             domain_manager.set_active_genres(channel_id, res.get("genres", ["noir"]))
             domain_manager.set_custom_tone(channel_id, res.get("custom_tone"))
             
-            await msg.edit(content=f"✅ **로어 분석 완료**\nNPC: {len(npcs)}명 추출\n장르: {res.get('genres')}")
+            await msg.edit(content=f"✅ **로어 분석 완료**\nNPC: {len(npcs)}명 추출{pc_msg}\n장르: {res.get('genres')}")
         except Exception as e:
             await msg.edit(content=f"⚠️ 분석 오류: {e}")
     else:
