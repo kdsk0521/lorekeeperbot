@@ -103,7 +103,8 @@ def calculate_doom_increase(channel_id: str, world: dict, next_idx: int, time_sl
     nemesis_detected = False
     for uid, p in participants.items():
         if p.get("status") == "left": continue
-        rels = p.get("relations", {})
+        ai_mem = p.get("ai_memory", {})
+        rels = ai_mem.get("relationships", {})
         for npc_name, score in rels.items():
             if score <= config.NEMESIS_THRESHOLD:
                 nemesis_detected = True; break
@@ -432,20 +433,7 @@ def get_lore_book(channel_id: str) -> str:
 # ABNORMAL ADAPTATION SYSTEM (Restored Feature)
 # =========================================================
 
-# Normality Stages (Range: 0-100)
-# Key: (min_inclusive, max_exclusive)
-NORMALITY_STAGES = {
-    (0, 10): {"stage": 0, "name": "초기(Shock)", "reaction_hint": "경악, 공포, 이해 거부"},
-    (10, 30): {"stage": 1, "name": "접촉(Contact)", "reaction_hint": "경계, 긴장, 식은땀"},
-    (30, 60): {"stage": 2, "name": "적응(Coping)", "reaction_hint": "대처 가능, 무덤덤한 척"},
-    (60, 90): {"stage": 3, "name": "익숙함(Routine)", "reaction_hint": "능숙함, 분석적 태도"},
-    (90, 101): {"stage": 4, "name": "일상화(Normal)", "reaction_hint": "하품, 지루함, 무감각"},
-}
-
-def get_normality_stage_info(val: int) -> Dict[str, Any]:
-    for (l, h), info in NORMALITY_STAGES.items():
-        if l <= val < h: return info
-    return NORMALITY_STAGES[(90, 101)]
+# NORMALITY_STAGES and get_normality_stage_info are imported from config.py
 
 def calculate_normality(count: int, base_threshold: int = 10) -> int:
     """
@@ -593,53 +581,6 @@ def get_status_summary(user_data: Dict[str, Any]) -> str:
         parts.append(f"소지품: {', '.join(items)}")
         
     return "\n".join(parts)
-
-# Abnormal Exposure
-def get_normality_stage(normality: int) -> Dict[str, str]:
-    for (l, h), info in NORMALITY_STAGES.items():
-        if l <= normality < h: return info
-    return NORMALITY_STAGES[(80, 101)]
-
-def calculate_normality(count: int) -> int:
-    if count <= 0: return 0
-    import math
-    return min(100, int((math.log(count + 1) / math.log(11)) * 100))
-
-def expose_to_abnormal(user_data: Dict[str, Any], abnormal_type: str, current_day: int = 1) -> Tuple[Dict[str, Any], Optional[str], Optional[Dict]]:
-    exp = user_data.get("abnormal_exposure", {})
-    if abnormal_type not in exp:
-        exp[abnormal_type] = {"count": 0, "normality": 0, "first_day": current_day}
-    
-    d = exp[abnormal_type]
-    d["count"] += 1
-    old_n = d["normality"]
-    new_n = calculate_normality(d["count"])
-    d["normality"] = new_n
-    
-    user_data["abnormal_exposure"] = exp
-    
-    old_s = get_normality_stage(old_n)
-    new_s = get_normality_stage(new_n)
-    
-    msg = None
-    if old_s["stage"] != new_s["stage"]:
-        msg = f"🌓 **[{abnormal_type}]** 적응: {old_s['name']} → {new_s['name']}"
-    
-    return user_data, msg, new_s
-
-def get_abnormal_context(user_data: Dict[str, Any], abnormal_types: List[str]) -> str:
-    if not abnormal_types: return ""
-    exp = user_data.get("abnormal_exposure", {})
-    ctxs = []
-    
-    for ab in abnormal_types:
-        if ab in exp:
-            n = exp[ab]["normality"]
-            s = get_normality_stage(n)
-            ctxs.append(f"- {ab}: {n}% ({s['name']}) -> {s['reaction_hint']}")
-        else:
-            ctxs.append(f"- {ab}: 0% (New) -> Shock/Fear")
-    return "### [Abnormal Adaptation]\n" + "\n".join(ctxs) + "\n"
 
 # Passive System
 def get_passives_for_context(user_data: Dict[str, Any]) -> str:

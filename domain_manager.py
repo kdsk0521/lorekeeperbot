@@ -110,16 +110,21 @@ def get_domain(channel_id: str) -> Dict[str, Any]:
     return data
 
 def save_domain(channel_id: str, data: Dict[str, Any]) -> bool:
+    # 파일 저장 성공 후 캐시 업데이트 (동기화 안전성)
+    if not save_json(get_session_file_path(channel_id), data):
+        return False
     _session_cache[channel_id] = data
-    return save_json(get_session_file_path(channel_id), data)
+    return True
 
 def reset_domain(channel_id: str) -> None:
     paths = [get_session_file_path(channel_id), get_lore_file_path(channel_id),
              get_lore_original_file_path(channel_id), get_rules_file_path(channel_id)]
     for p in paths:
-        if os.path.exists(p): 
-            try: os.remove(p)
-            except: pass
+        if os.path.exists(p):
+            try:
+                os.remove(p)
+            except Exception as e:
+                logging.warning(f"Failed to delete {p}: {e}")
             
     _session_cache.pop(channel_id, None)
     _lore_cache.pop(channel_id, None)
@@ -299,7 +304,8 @@ def get_participant_data(channel_id: str, user_id: str) -> Optional[Dict[str, An
     return get_domain(channel_id).get("participants", {}).get(str(user_id))
 
 def get_participant_status(channel_id: str, uid: str) -> str:
-    return get_participant_data(channel_id, uid).get("status", "active")
+    p = get_participant_data(channel_id, uid)
+    return p.get("status", "active") if p else "unknown"
 
 def set_participant_status(channel_id: str, uid: str, status: str, reason: str = "") -> None:
     d = get_domain(channel_id)
@@ -327,7 +333,8 @@ def clear_default_pc_info(channel_id: str) -> None:
     save_domain(channel_id, d)
 
 def get_user_mask(channel_id: str, uid: str) -> str:
-    return get_participant_data(channel_id, uid).get("mask", "Unknown")
+    p = get_participant_data(channel_id, uid)
+    return p.get("mask", "Unknown") if p else "Unknown"
 
 def set_user_mask(channel_id: str, uid: str, mask: str) -> None:
     d = get_domain(channel_id)
@@ -552,9 +559,9 @@ def set_session_lock(channel_id: str, locked: bool) -> None:
 def set_current_location(channel_id: str, location: str) -> None:
     w = get_world_state(channel_id)
     w["current_location"] = location
-    save_world_state(channel_id, w)
+    update_world_state(channel_id, w)
 
 def set_current_risk(channel_id: str, risk: str) -> None:
     w = get_world_state(channel_id)
     w["risk_level"] = risk
-    save_world_state(channel_id, w)
+    update_world_state(channel_id, w)
