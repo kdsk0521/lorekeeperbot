@@ -215,6 +215,9 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
             
             nvc_summary = f"Loc: {nvc_res.get('CurrentLocation')}\nObs: {nvc_res.get('Observation')}\nNeed: {nvc_res.get('Need')}"
             
+            fermented_summaries = [e["summary"] for e in domain_data.get("fermented_history", []) if e.get("summary")]
+            fermented_summary_text = "\n---\n".join(fermented_summaries)
+            
             # Extract Player Info Early
             p_name = p_data.get("mask", "Unknown") if p_data else "Unknown"
             
