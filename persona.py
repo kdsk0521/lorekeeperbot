@@ -1659,6 +1659,7 @@ Recording in Korean. Awaiting observable events.
         temperature=DEFAULT_TEMPERATURE,
         safety_settings=config.SAFETY_SETTINGS,
         tools=[],
+        automatic_function_calling=False,
         # Aggressively disable AFC
         tool_config=types.ToolConfig(
             function_calling_config=types.FunctionCallingConfig(
@@ -1715,7 +1716,10 @@ async def generate_response_with_retry(
                 logging.warning(f"[시도 {attempt+1}] candidates 없음")
                 # prompt_feedback 확인
                 if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
-                    logging.warning(f"  prompt_feedback: {response.prompt_feedback}")
+                    feedback = response.prompt_feedback
+                    logging.warning(f"  prompt_feedback: {feedback}")
+                    if hasattr(feedback, 'block_reason') and str(feedback.block_reason) == 'PROHIBITED_CONTENT':
+                        logging.error("🚫 [CRITICAL] Prompt blocked by PROHIBITED_CONTENT filter. Check guidelines/lore.")
                 continue
             
             candidate = response.candidates[0]
@@ -1852,7 +1856,8 @@ async def create_cached_session(
             temperature=DEFAULT_TEMPERATURE,
             safety_settings=config.SAFETY_SETTINGS,
             cached_content=cache_name,
-            tools=[] # Force disable AFC
+            tools=[],
+            automatic_function_calling=False
         )
         
         session = ChatSessionAdapter(

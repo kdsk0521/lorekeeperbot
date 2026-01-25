@@ -294,6 +294,8 @@ async def api_call_with_retry(
     if gen_config.tools is None:
         gen_config.tools = [] # Explicitly disable AFC
     
+    gen_config.automatic_function_calling = False
+    
     # Aggressively disable AFC
     if not gen_config.tool_config:
         gen_config.tool_config = types.ToolConfig(
@@ -318,7 +320,10 @@ async def api_call_with_retry(
             if not response.candidates:
                 logging.warning(f"[{operation_name}] candidates 없음 (시도 {attempt+1})")
                 if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
-                    logging.warning(f"  feedback: {response.prompt_feedback}")
+                    feedback = response.prompt_feedback
+                    logging.warning(f"  feedback: {feedback}")
+                    if hasattr(feedback, 'block_reason') and str(feedback.block_reason) == 'PROHIBITED_CONTENT':
+                        logging.error(f"🚫 [{operation_name}] 차단됨: PROHIBITED_CONTENT. 프롬프트를 확인하세요.")
                 continue
             
             candidate = response.candidates[0]
