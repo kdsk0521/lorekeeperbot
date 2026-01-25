@@ -429,6 +429,83 @@ def get_lore_book(channel_id: str) -> str:
     return msg
 
 # =========================================================
+# ABNORMAL ADAPTATION SYSTEM (Restored Feature)
+# =========================================================
+
+# Normality Stages (Range: 0-100)
+# Key: (min_inclusive, max_exclusive)
+NORMALITY_STAGES = {
+    (0, 10): {"stage": 0, "name": "초기(Shock)", "reaction_hint": "경악, 공포, 이해 거부"},
+    (10, 30): {"stage": 1, "name": "접촉(Contact)", "reaction_hint": "경계, 긴장, 식은땀"},
+    (30, 60): {"stage": 2, "name": "적응(Coping)", "reaction_hint": "대처 가능, 무덤덤한 척"},
+    (60, 90): {"stage": 3, "name": "익숙함(Routine)", "reaction_hint": "능숙함, 분석적 태도"},
+    (90, 101): {"stage": 4, "name": "일상화(Normal)", "reaction_hint": "하품, 지루함, 무감각"},
+}
+
+def get_normality_stage_info(val: int) -> Dict[str, Any]:
+    for (l, h), info in NORMALITY_STAGES.items():
+        if l <= val < h: return info
+    return NORMALITY_STAGES[(90, 101)]
+
+def calculate_normality(count: int, base_threshold: int = 10) -> int:
+    """
+    노출 횟수에 따른 적응도(0-100)를 계산합니다 (로그 스케일).
+    1회: ~20%, 3회: ~45%, 5회: ~60%, 10회: ~100%
+    """
+    if count <= 0: return 0
+    import math
+    # math.log(count + 1) -> 1=0.69, 3=1.38, 5=1.79, 10=2.39
+    # math.log(base_threshold + 1) -> 10=2.39
+    normality = min(100, int((math.log(count + 1) / math.log(base_threshold + 1)) * 100))
+    return normality
+
+def expose_to_abnormal(user_data: Dict[str, Any], abnormal_type: str) -> Tuple[Dict[str, Any], Optional[str]]:
+    """
+    비일상 적응도 업데이트
+    Returns: (update_user_data, notification_msg)
+    """
+    exposure = user_data.get("abnormal_exposure", {})
+    if abnormal_type not in exposure:
+        exposure[abnormal_type] = {"count": 0, "normality": 0}
+        
+    # Increment
+    exposure[abnormal_type]["count"] += 1
+    count = exposure[abnormal_type]["count"]
+    
+    # Calculate
+    old_norm = exposure[abnormal_type]["normality"]
+    new_norm = calculate_normality(count)
+    exposure[abnormal_type]["normality"] = new_norm
+    
+    user_data["abnormal_exposure"] = exposure
+    
+    # Stage Change Check
+    old_stage = get_normality_stage_info(old_norm)
+    new_stage = get_normality_stage_info(new_norm)
+    
+    msg = None
+    if old_stage["stage"] != new_stage["stage"]:
+        msg = f"🧠 **[{abnormal_type}]** 심리 적응: {old_stage['name']} → {new_stage['name']}"
+    elif count == 1:
+        msg = f"🧠 **[{abnormal_type}]** 첫 조우! (적응도 시작)"
+        
+    return user_data, msg
+
+def get_abnormal_context(user_data: Dict[str, Any]) -> str:
+    """AI에게 전달할 비일상 적응 현황"""
+    exposure = user_data.get("abnormal_exposure", {})
+    if not exposure: return ""
+    
+    lines = []
+    for k, v in exposure.items():
+        norm = v["normality"]
+        stage = get_normality_stage_info(norm)
+        lines.append(f"- {k}: {norm}% ({stage['reaction_hint']})")
+        
+    if not lines: return ""
+    return "### [Mental Adaptation]\n" + "\n".join(lines) + "\n*Adjust reaction based on adaptation level.*"
+
+# =========================================================
 # SIMULATION SYSTEM (From simulation_manager.py)
 # =========================================================
 

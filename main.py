@@ -324,6 +324,18 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                         if qu.get("memo_add"):
                              for m in qu["memo_add"]: game_system.add_memo(channel_id, m); msgs.append(f"📝 Memo: {m}")
 
+                    # Abnormal Adaptation (If Enabled)
+                    if domain_manager.get_abnormal_mode(channel_id):
+                        trigger = u_res.get("AbnormalTrigger")
+                        if trigger:
+                             # Re-load participant data to be safe or reuse p_data if updated
+                             # Assuming p_data is fresh enough or reused. 
+                             # We updated p_data in PlayerUpdate block, so reuse p_data dict 
+                             # but re-save is needed if we change it again.
+                             p_data, p_msg = game_system.expose_to_abnormal(p_data, trigger)
+                             if p_msg: msgs.append(p_msg)
+                             domain_manager.save_participant_data(channel_id, uid, p_data)
+
                     if msgs: await message.channel.send(" | ".join(msgs))
                     
                 except Exception as ue:

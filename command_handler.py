@@ -414,6 +414,21 @@ async def handle_analysis_command(message, channel_id: str, cmd: str, arg: str, 
             await message.channel.send(msg)
         return
 
+    if cmd == 'abnormal' or cmd == '비일상':
+        if not arg:
+            current = domain_manager.get_abnormal_mode(channel_id)
+            status = "✅ ON" if current else "❌ OFF"
+            await message.channel.send(f"🧠 **비일상 적응도 시스템**: {status}\n(사용법: `!비일상 on`, `!비일상 off`)")
+            return
+            
+        if arg.lower() in ['on', '켜기', 'true']:
+            domain_manager.set_abnormal_mode(channel_id, True)
+            await message.channel.send("🧠 **비일상 적응도 시스템**: ✅ 켜짐\n이제 공포/스트레스 요소에 대한 적응도가 추적됩니다.")
+        elif arg.lower() in ['off', '끄기', 'false']:
+            domain_manager.set_abnormal_mode(channel_id, False)
+            await message.channel.send("🧠 **비일상 적응도 시스템**: ❌ 꺼짐")
+        return
+
     domain = domain_manager.get_domain(channel_id)
     history = domain.get('history', [])
     if not history:

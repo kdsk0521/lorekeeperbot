@@ -211,6 +211,7 @@ async def extract_all_updates(
         } if soc or nar.get("passives") else None,
         
         "PassiveSuggestion": nar.get("passive_suggestion"),
+        "AbnormalTrigger": nar.get("abnormal_trigger"),
         
         "QuestUpdate": {
             "quest_add": qst.get("quest_add"), "quest_complete": qst.get("quest_complete"),
@@ -248,6 +249,20 @@ async def _extract_social(client, model_id, p_in, ai_out, rels, comps, lore_npcs
     ctx = f"Rels:{rels}, Comps:{comps}, LoreNPCs:{lore_npcs}, SceneNPCs:{scene_npcs}"
     usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out[:1500]}\nOutput JSON."
     return await _call_extract(client, model_id, sys, usr, "B-2 Social")
+
+async def _extract_narrative(client, model_id, p_in, ai_out, passives, fermented):
+    sys = (
+        "EXTRACT NARRATIVE CHANGES (Passives, Abnormal Events, Plot Hints).\n"
+        "Formats: passives (New traits obtained), passive_suggestion (Suggest new passive), abnormal_trigger (One keyword if significant abnormal event occurred).\n"
+        "Rules:\n"
+        "1. Passives: Traits gained from REPEATED actions or SIGNIFICANT achievements.\n"
+        "2. Abnormal Trigger: A significant Non-Routine element the player encounters.\n"
+        "   - Examples: Monsters (Zombie, Ghost), Supernatural Phenomenon (Magic in Modern era), Sudden Genre Shift (Sudden Harem, Comedy), or any 'Abnormal' situation defined by current lore.\n"
+        "   - Output the Keyword (e.g., 'Zombie', 'Magic', 'Surrounded by Girls').\n"
+    )
+    ctx = f"Passives:{passives}, FermentedSnippet:{fermented[:500]}"
+    usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out[:1500]}\nOutput JSON."
+    return await _call_extract(client, model_id, sys, usr, "B-3 Narrative")
 
 async def _extract_narrative(client, model_id, p_in, ai_out, passives, fermented_ctx):
     sys = (

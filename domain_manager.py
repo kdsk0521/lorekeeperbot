@@ -470,6 +470,15 @@ def set_response_mode(channel_id: str, mode: str) -> None:
     d["settings"]["response_mode"] = mode
     save_domain(channel_id, d)
 
+def get_abnormal_mode(channel_id: str) -> bool:
+    """비일상 적응도 시스템 활성화 여부 (Default: False)"""
+    return get_domain(channel_id).get("settings", {}).get("abnormal_mode", False)
+
+def set_abnormal_mode(channel_id: str, enabled: bool) -> None:
+    d = get_domain(channel_id)
+    d["settings"]["abnormal_mode"] = enabled
+    save_domain(channel_id, d)
+
 # History
 def append_history(channel_id: str, role: str, content: str) -> None:
     d = get_domain(channel_id)
