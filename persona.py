@@ -953,8 +953,11 @@ OUTPUT_GENERATION_REQUEST = """
 Based on all context:
 1. Process `<material>` as player's attempt.
 2. Generate World/NPC responses via `<Left_Hemisphere>` analysis.
-3. **PC AUTONOMY:** STRICTLY ENFORCE `<PC_Autonomy_Doctrine>`.
-   - **Self-Correction:** If you generated PC dialogue/thoughts, DELETE IT.
+3. **PC AUTONOMY PROTOCOL (CRITICAL!):**
+   - 🛑 **NEVER** GENERATE DIALOGUE FOR THE PLAYER.
+   - 🛑 **NEVER** REWRITE THE PLAYER'S ACTION.
+   - **YOUR TASK:** Describe ONLY the reaction of the NPCs and the World.
+   - **Self-Correction:** Scan output for ANY text inside quotes spoken by PC. If found, DELETE IT.
 
 **Format:** Third-person narrative prose in **Korean**.
 **Focus:** Narrative only. No system updates. No choice lists.
