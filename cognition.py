@@ -233,7 +233,7 @@ async def _extract_physical(client, model_id, p_in, ai_out, inv, gold, status):
         "4. GOLD: ALWAYS track payment for services/meals even if item is ignored. (e.g. Pay 10g for ignored lunch -> Gold -10, Inv no change)."
     )
     ctx = f"Inv:{inv}, Gold:{gold}, Status:{status}"
-    usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out[:1500]}\nOutput JSON."
+    usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON."
     return await _call_extract(client, model_id, sys, usr, "B-1 Physical")
 
 async def _extract_social(client, model_id, p_in, ai_out, rels, comps, lore_npcs, scene_npcs):
@@ -247,7 +247,7 @@ async def _extract_social(client, model_id, p_in, ai_out, rels, comps, lore_npcs
         "3. UPDATE: Only output if the relationship level actually changes."
     )
     ctx = f"Rels:{rels}, Comps:{comps}, LoreNPCs:{lore_npcs}, SceneNPCs:{scene_npcs}"
-    usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out[:1500]}\nOutput JSON."
+    usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON."
     return await _call_extract(client, model_id, sys, usr, "B-2 Social")
 
 async def _extract_narrative(client, model_id, p_in, ai_out, passives, fermented):
@@ -255,29 +255,14 @@ async def _extract_narrative(client, model_id, p_in, ai_out, passives, fermented
         "EXTRACT NARRATIVE CHANGES (Passives, Abnormal Events, Plot Hints).\n"
         "Formats: passives (New traits obtained), passive_suggestion (Suggest new passive), abnormal_trigger (One keyword if significant abnormal event occurred).\n"
         "Rules:\n"
-        "1. Passives: Traits gained from REPEATED actions or SIGNIFICANT achievements.\n"
-        "2. Abnormal Trigger: A significant Non-Routine element the player encounters.\n"
-        "   - Examples: Monsters (Zombie, Ghost), Supernatural Phenomenon (Magic in Modern era), Sudden Genre Shift (Sudden Harem, Comedy), or any 'Abnormal' situation defined by current lore.\n"
+        "1. Passives: Traits gained from REPEATED actions (3+ times) or SIGNIFICANT achievements. (Check History/Fermented).\n"
+        "   - Examples: 'Merciful' (Spared 3+ villains), 'Goblin Slayer' (Killed boss).\n"
+        "2. Abnormal Trigger: A significant Non-Routine element the player encounters (Monsters, Magic, Genre Shift).\n"
         "   - Output the Keyword (e.g., 'Zombie', 'Magic', 'Surrounded by Girls').\n"
+        "3. STRICT: Do NOT award titles for single actions.\n"
     )
-    ctx = f"Passives:{passives}, FermentedSnippet:{fermented[:500]}"
-    usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out[:1500]}\nOutput JSON."
-    return await _call_extract(client, model_id, sys, usr, "B-3 Narrative")
-
-async def _extract_narrative(client, model_id, p_in, ai_out, passives, fermented_ctx):
-    sys = (
-        "EXTRACT NARRATIVE CHANGES (Passives).\n"
-        "Formats: passives (List), passive_suggestion (Object).\n"
-        "Principle: Has player achieved a MAJOR MILESTONE or demonstrated CONSISTENT LONG-TERM BEHAVIOR?\n"
-        "Reference 'History' (Fermented) to count repeated past actions.\n"
-        "Rules:\n"
-        "1. STRICT: Do NOT award titles for single actions (e.g. killing one goblin != 'Goblin Slayer').\n"
-        "2. SIGNIFICANT: Only award for Arc Completions, Boss Kills, or transformative character growth.\n"
-        "3. CONSISTENT: CHECK HISTORY. Award behavioral titles only if action repeats 3+ times across history (e.g. 'Merciful' after sparing 3+ villains).\n"
-        "4. EXISTING: Check existing Passives. Do not add duplicates or synonyms."
-    )
-    ctx = f"Passives:{passives}\nHistory(Deeds):{fermented_ctx[-2000:]}" # Truncate to save tokens, keep recent deeds
-    usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out[:1500]}\nOutput JSON."
+    ctx = f"Passives:{passives}, FermentedSnippet:{fermented[:2000]}"
+    usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON."
     return await _call_extract(client, model_id, sys, usr, "B-3 Narrative")
 
 async def _extract_quest(client, model_id, p_in, ai_out, quests, memos):
@@ -287,7 +272,7 @@ async def _extract_quest(client, model_id, p_in, ai_out, quests, memos):
         "Principle: Does player have NEW GOAL? YES->Quest. Is info worth KEEPING? YES->Memo."
     )
     ctx = f"Quests:{quests}, Memos:{memos}"
-    usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out[:1500]}\nOutput JSON."
+    usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON."
     return await _call_extract(client, model_id, sys, usr, "B-4 Quest")
 
 async def _call_extract(client, model_id, sys, usr, op_name):

@@ -175,6 +175,17 @@ async def handle_info_command(message, channel_id: str, sub_command: str = "") -
         return
 
     res = domain_manager.get_unified_player_info(channel_id, uid)
+    
+    # Append Quest & Memo Info
+    quests = game_system.get_active_quests(channel_id)
+    memos = game_system.get_memos(channel_id)
+    
+    if quests:
+        res += "\n**🛡️ 진행 중인 퀘스트:**\n" + "\n".join([f"- {q}" for q in quests]) + "\n"
+    
+    if memos:
+        res += "\n**📝 메모:**\n" + "\n".join([f"- {m}" for m in memos]) + "\n"
+
     await send_long_message(message.channel, res)
 
 
