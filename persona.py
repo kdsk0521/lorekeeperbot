@@ -1083,6 +1083,22 @@ LANGUAGE_CORRECTION = """
 </Language_Output_Correction>
 """
 
+# =========================================================
+# [14] FINAL AUTONOMY ENFORCEMENT (최종 자율권 강제)
+# =========================================================
+FINAL_AUTONOMY_ENFORCEMENT = """
+<Final_Autonomy_Check priority="HIGHEST">
+STOP. READ THIS BEFORE GENERATING:
+1. Did you write dialogue for the user's character? -> DELETE IT.
+2. Did you decide an action for the user's character? -> DELETE IT.
+3. Did you simulate the user's inner thoughts? -> DELETE IT.
+
+YOU ARE THE GAME MASTER, NOT THE PLAYER.
+Your output must END after the world/NPCs react.
+DO NOT CONTINUE THE SCENE ON BEHALF OF THE PLAYER.
+</Final_Autonomy_Check>
+"""
+
 
 # =========================================================
 # SAFETY SETTINGS
@@ -1544,6 +1560,9 @@ This tone affects style, not physics or causality.
             
             # [13] Language Correction
             LANGUAGE_CORRECTION,
+            
+            # [14] Final Autonomy Check
+            FINAL_AUTONOMY_ENFORCEMENT,
             
             # Length Instruction
             build_length_instruction(),
