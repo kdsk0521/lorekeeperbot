@@ -546,6 +546,87 @@ async def handle_time_command(message, channel_id: str, arg: str) -> None:
         return
 
 
+def classify_ooc_type(ooc_content: str) -> str:
+    """OOC 내용 분류"""
+    content_lower = ooc_content.lower()
+    
+    # 수정, 설정 관련 키워드
+    edit_keywords = [
+        "추가", "삭제", "수정", "설정", "인벤토리", "골드", "돈", "아이템", 
+        "획득", "잃음", "관계", "호감도", "패시브", "특성", "제거", "변경"
+    ]
+    if any(kw in content_lower for kw in edit_keywords):
+        return "edit"
+    
+    # 서사 요청 키워드
+    narrative_keywords = ["해줘", "보여줘", "묘사", "장면", "진행", "스킵", "넘어가"]
+    if any(kw in content_lower for kw in narrative_keywords):
+        return "narrative_request"
+    
+    return "general"
+
+
+async def handle_ooc_command(message, channel_id, ooc_content, client_genai, model_id):
+    """OOC 요청 처리"""
+    if not ooc_content: return None
+    
+    uid = str(message.author.id)
+    
+    # OOC 타입 분류
+    ooc_type = classify_ooc_type(ooc_content)
+    
+    if ooc_type == "edit":
+        # 데이터 로드
+        ai_mem = domain_manager.get_ai_memory(channel_id, uid)
+        p_data = domain_manager.get_participant_data(channel_id, uid)
+        
+        if not p_data:
+            await message.channel.send("⚠️ 먼저 세션에 참가해주세요 (`!가면`).")
+            return None
+            
+        await message.channel.send("🔄 **OOC 데이터 수정 중...**")
+        
+        # AI 처리
+        result = await memory_system.process_ooc_memory_edit(
+            client_genai, model_id, ooc_content, ai_mem, p_data
+        )
+        
+        if result and result.get("edits"):
+            # 수정 적용
+            new_mem, new_p_data = memory_system.apply_memory_edits(
+                ai_mem, result["edits"], p_data
+            )
+            
+            # 저장
+            domain_manager.update_ai_memory(channel_id, uid, new_mem)
+            domain_manager.save_participant_data(channel_id, uid, new_p_data)
+            
+            # 결과 알림
+            confirm = result.get('confirmation_message', '수정 완료')
+            interp = result.get('interpretation', '')
+            
+            msg = f"📝 **OOC 처리 완료**\n"
+            if interp: msg += f"> *{interp}*\n"
+            msg += f"└ {confirm}"
+            
+            await message.channel.send(msg)
+            return None # RP 생성 중단 (필요시 반환값으로 조절)
+            
+        else:
+             await message.channel.send("⚠️ OOC 수정 사항을 인식하지 못했습니다.")
+             return None
+    
+    elif ooc_type == "narrative_request":
+        # 서사 지시는 프롬프트에 주입하기 위해 반환
+        return f"[OOC Directive: {ooc_content}]"
+    
+    else:
+        # 단순 잡담 (General)
+        # 봇이 굳이 반응하지 않거나, 간단히 이모지 반응
+        await message.add_reaction("👀")
+        return None
+
+
 async def dispatch_command(cmd, message, channel_id, parsed, client_discord, client_genai, model_id, model_id_flash, domain_data):
     if cmd == 'help':
         help_text = (
@@ -666,6 +747,42 @@ async def dispatch_command(cmd, message, channel_id, parsed, client_discord, cli
     if cmd in ['next', 'turn']:
         await message.add_reaction("🎬")
         return "[System: Proceed to next scene.]"
+
+    # OOC Processing
+    if parsed and parsed.get('type') == 'ooc':
+        return await handle_ooc_command(
+            message, channel_id, parsed['content'],
+            client_genai, model_id
+        )
+    
+    if parsed and parsed.get('type') == 'chat_with_ooc':
+        # OOC 먼저 처리
+        ooc_result = await handle_ooc_command(
+            message, channel_id, parsed['ooc_content'],
+            client_genai, model_id
+        )
+        
+        # 만약 OOC가 서사 지시(string 반환)라면 RP 생성 프롬프트에 추가될 수 있도록 반환
+        # (현재 구조상 dispatch_command의 반환값은 즉시 출력 메시지 용도임)
+        # 따라서 RP 생성 흐름(process_message)에서 이를 받아야 함.
+        # 일단은 OOC 처리가 끝났고 RP 컨텐츠가 있다면 None을 반환하여 RP 흐름을 타게 함.
+        
+        if ooc_result and isinstance(ooc_result, str) and not ooc_result.startswith("[OOC Directive"):
+             # 메시지가 반환되었다면 출력 (시스템 메시지 등)
+             return ooc_result
+             
+        # RP 컨텐츠가 있으면 계속 진행 (None 반환)
+        if parsed.get('chat_content'):
+            # OOC 지시사항이 있다면 이를 어딘가에 저장하거나 전달해야 하는데,
+            # 현재 구조에서는 dispatch가 RP 생성을 직접 호출하지 않음.
+            # main.py에서 dispatch의 반환값이 None이면 generate_ai_response를 호출함.
+            # 하지만 OOC 지시사항을 넘길 방법이 모호함.
+            # 임시 해결: OOC 지시사항은 handle_ooc_command 내부에서 처리되거나,
+            # main.py 수정이 필요할 수 있음.
+            # 여기서는 "edit" 타입은 처리 후 종료, "narrative"는 무시(RP에 반영되길 기대)로 처리.
+            return None 
+            
+        return ooc_result
 
     # --- [NEW] Dispatch to Handlers ---
     
