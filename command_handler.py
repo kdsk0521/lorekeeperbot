@@ -9,6 +9,7 @@ import logging
 import io
 import time
 from typing import Optional, Dict
+import re
 
 # Unified Modules
 import domain_manager
@@ -105,14 +106,23 @@ async def handle_lore_command(message, channel_id: str, arg: str, client_genai=N
         
     # 추출
     if full.lower() in ['추출', 'export']:
-        export_text, msg = game_system.export_lore_data(channel_id) # Need to implement this in game_system or move logic?
-        # Wait, export_lore_data was in quest_manager.py, merged to game_system.py?
-        # I didn't verify if I copied *everything* from quest_manager to game_system.
-        # Let's assume I did or should have.
-        # Checking game_system creation... I might have missed export functions.
-        # If missed, I'll need to add them or simplified version.
-        # For now, let's assume game_system handles it or we skip.
-        pass # Placeholder
+        # Check for incremental argument
+        incremental = False
+        # Remove primary command and check leftovers
+        args = full.split()
+        if len(args) > 1 and args[1].lower() in ['new', 'inc', '증분', '최신']:
+            incremental = True
+            
+        export_text, msg = game_system.export_session_history(channel_id, incremental=incremental)
+        if hasattr(game_system, 'export_session_history'):
+             fname = f"SessionHistory_{channel_id}_{'INC' if incremental else 'FULL'}.txt"
+             if export_text:
+                await message.channel.send(msg, file=discord.File(io.StringIO(export_text), filename=fname))
+             else:
+                await message.channel.send(msg)   
+        else:
+             await message.channel.send("⚠️ 대화 내역 추출 기능 로드 실패.")
+        return
         
     # 저장
     domain_manager.save_lore_original(channel_id, full)
@@ -169,17 +179,77 @@ async def handle_npc_command(message, channel_id: str, cmd: str, arg: str, clien
                 file_text = text
                 break
 
-    # 2. 내용 합치기
-    full_content = (arg + "\n" + file_text).strip()
-
+    # 2. 일괄 처리 로직 (Batch Processing)
+    # 텍스트 파일이나 인자에서 여러 줄의 NPC 정의를 읽어들임
+    raw_lines = (arg + "\n" + file_text).strip().splitlines()
+    processed_count = 0
+    
     if cmd == 'addnpc':
-        if ":" not in full_content:
-            await message.channel.send("⚠️ 형식 오류: `!npc추가 [이름]: [설명]` (텍스트 파일 포함 가능)")
+        if not raw_lines:
+            await message.channel.send("⚠️ 등록할 내용이 없습니다. `!npc추가 [이름]: [설명]` 또는 파일 첨부.")
             return
+
+        last_name = None
         
-        name, desc = full_content.split(":", 1)
-        domain_manager.update_npc(channel_id, name.strip(), {"desc": desc.strip(), "source": "manual", "status": "Active"})
-        await message.channel.send(f"👥 **NPC 등록:** {name.strip()}")
+        # [Smart Parsing Logic]
+        # Detect if this is a "Deep Profile" (e.g. Character Card) or "Batch List"
+        # Heuristic: Presence of explicit "Name:" or "이름:" triggers suggests a profile.
+        full_text = "\n".join(raw_lines)
+        is_deep_profile = bool(re.search(r"(?:^|\n)\s*(?:\*|-)?\s*(?:Name|이름)\s*:", full_text, re.IGNORECASE))
+        
+        for line in raw_lines:
+            line = line.strip()
+            if not line: continue
+            
+            # 1. Explicit Name Trigger (Start of New NPC in Profile Mode)
+            # Matches: "Name: Nyx", "* 이름: 닉스", "- Name : Arthur"
+            name_match = re.match(r"^(?:\*|-)?\s*(?:Name|이름)\s*:\s*(.+)$", line, re.IGNORECASE)
+            
+            if name_match:
+                name = name_match.group(1).strip()
+                # Create/Reset NPC. Description starts with this line (preserving the Name line in bio is good)
+                domain_manager.update_npc(channel_id, name, {"desc": line, "source": "manual", "status": "Active"})
+                processed_count += 1
+                last_name = name
+                continue
+
+            # 2. Key-Value Line (Property or New NPC)
+            if ":" in line:
+                # If we are in Deep Profile Mode and have a current target, treat this as a property
+                if is_deep_profile and last_name:
+                     curr_npc = domain_manager.get_npc(channel_id, last_name)
+                     if curr_npc:
+                         new_desc = curr_npc.get("desc", "") + "\n" + line
+                         domain_manager.update_npc(channel_id, last_name, {"desc": new_desc, "source": "manual", "status": "Active"})
+                     continue
+                
+                # If NOT in Deep Profile Mode (or no active target), treat "Key: Value" as "Name: Desc"
+                # This supports the simple batch format: "Arthur: Merchant", "* Merlin: Wizard"
+                key, val = line.split(":", 1)
+                clean_key = key.lstrip("*-> ").strip() # Remove bullets if user bulleted the list
+                val = val.strip()
+                
+                if clean_key and val:
+                    domain_manager.update_npc(channel_id, clean_key, {"desc": val, "source": "manual", "status": "Active"})
+                    processed_count += 1
+                    last_name = clean_key
+                    continue
+
+            # 3. Continuation Text (No colon)
+            # Appends to the last defined NPC's description
+            if last_name:
+                 curr_npc = domain_manager.get_npc(channel_id, last_name)
+                 if curr_npc:
+                     new_desc = curr_npc.get("desc", "") + "\n" + line
+                     domain_manager.update_npc(channel_id, last_name, {"desc": new_desc, "source": "manual", "status": "Active"})
+
+        if processed_count > 0:
+            if processed_count == 1:
+                await message.channel.send(f"👥 **NPC 등록:** {last_name}")
+            else:
+                await message.channel.send(f"👥 **NPC 일괄 등록 완료:** 총 {processed_count}명")
+        else:
+             await message.channel.send("⚠️ 유효한 형식을 찾을 수 없습니다. (예: `이름: 설명`)")
         return
 
     # Look up NPC
@@ -245,27 +315,50 @@ async def handle_system_command(message, channel_id: str, cmd: str, arg: str) ->
         if not arg:
             d = domain_manager.get_domain(channel_id)
             curr = d['settings'].get('mode', 'auto')
-            await message.channel.send(f"⚙️ 현재 모드: **{curr}**\n사용법: `!mode [auto/manual/assist]`")
+            mode_kr = {'auto': '자동', 'waiting': '수동', 'manual': '수동', 'assist': '보조'}.get(curr, curr)
+            await message.channel.send(f"⚙️ 현재 모드: **{mode_kr}**\n사용법: `!모드 [자동/수동]` 또는 `!mode [auto/waiting]`")
             return
         
-        domain_manager.update_settings(channel_id, mode=arg.lower())
-        await message.channel.send(f"⚙️ 모드 변경: **{arg.lower()}**")
+        # Korean to English mapping
+        mode_map = {'자동': 'auto', '수동': 'waiting', 'auto': 'auto', 'waiting': 'waiting', 'manual': 'waiting', 'assist': 'assist'}
+        mode = mode_map.get(arg.lower(), arg.lower())
+        mode_kr = {'auto': '자동', 'waiting': '수동', 'assist': '보조'}.get(mode, mode)
+        
+        domain_manager.update_settings(channel_id, mode=mode)
+        await message.channel.send(f"⚙️ 모드 변경: **{mode_kr}** ({mode})")
         return
 
     if cmd == 'scene':
         if not arg:
             d = domain_manager.get_domain(channel_id)
             curr = d['settings'].get('scene_type', 'normal')
-            await message.channel.send(f"🎬 현재 장면: **{curr}**\n사용법: `!scene [normal/gore/nsfw]`")
+            scene_kr = {'normal': '일반', 'gore': '고어', 'nsfw': 'NSFW', 'gore_nsfw': '전체(고어+NSFW)'}.get(curr, curr)
+            await message.channel.send(
+                f"🎬 현재 장면: **{scene_kr}**\n"
+                f"사용법: `!장면 [일반/고어/nsfw/전체]`\n"
+                f"• 일반(normal): 일반적인 서술\n"
+                f"• 고어(gore): 폭력/잔혹 묘사 허용\n"
+                f"• NSFW(nsfw): 성인 묘사 허용\n"
+                f"• 전체(all/gore_nsfw): 모든 묘사 허용"
+            )
             return
-            
-        scene_type = arg.lower()
-        if scene_type not in ['normal', 'gore', 'nsfw', 'gore_nsfw']:
-             await message.channel.send("⚠️ 지원하지 않는 장면 유형입니다. (normal, gore, nsfw)")
+        
+        # Korean to English mapping
+        scene_map = {
+            '일반': 'normal', 'normal': 'normal', '노말': 'normal',
+            '고어': 'gore', 'gore': 'gore',
+            'nsfw': 'nsfw', '성인': 'nsfw',
+            '전체': 'gore_nsfw', 'all': 'gore_nsfw', 'gore_nsfw': 'gore_nsfw', '올': 'gore_nsfw'
+        }
+        scene_type = scene_map.get(arg.lower())
+        
+        if not scene_type:
+             await message.channel.send("⚠️ 지원하지 않는 장면 유형입니다.\n`일반`, `고어`, `nsfw`, `전체` 중 선택하세요.")
              return
              
+        scene_kr = {'normal': '일반', 'gore': '고어', 'nsfw': 'NSFW', 'gore_nsfw': '전체(고어+NSFW)'}.get(scene_type, scene_type)
         domain_manager.update_settings(channel_id, scene_type=scene_type)
-        await message.channel.send(f"🎬 장면 유형 변경: **{scene_type}**")
+        await message.channel.send(f"🎬 장면 유형 변경: **{scene_kr}**")
         return
 
     if cmd == 'lock':
@@ -296,8 +389,17 @@ async def handle_analysis_command(message, channel_id: str, cmd: str, arg: str, 
         return
 
     if cmd == 'lores':
-        # Ensure game_system has get_lore_book
-        await message.channel.send(game_system.get_lore_book(channel_id))
+        # Check for incremental argument "new", "inc"
+        incremental = False
+        if arg and arg.lower() in ['new', 'inc', '증분', '최신']:
+             incremental = True
+             
+        export_text, msg = game_system.export_chronicle_book(channel_id, incremental=incremental)
+        if export_text:
+            fname = f"Chronicles_{channel_id}_{'INC' if incremental else 'FULL'}.txt"
+            await message.channel.send(msg, file=discord.File(io.StringIO(export_text), filename=fname))
+        else:
+            await message.channel.send(msg)
         return
 
     domain = domain_manager.get_domain(channel_id)
@@ -338,13 +440,48 @@ async def handle_analysis_command(message, channel_id: str, cmd: str, arg: str, 
 async def dispatch_command(cmd, message, channel_id, parsed, client_discord, client_genai, model_id, model_id_flash, domain_data):
     if cmd == 'help':
         help_text = (
-            "📚 **명령어 목록**\n"
-            "**[세션]** `!준비`(!ready), `!시작`(!start), `!리셋`(!reset), `!클리어`(!clear)\n"
-            "**[참가자]** `!가면`(!mask), `!설명`(!desc), `!정보`(!info), `!잠수`(!afk), `!복귀`(!back)\n"
-            "**[진행]** `!진행`(!next), `!모드`(!mode), `!장면`(!scene), `!주사위`(!r)\n"
-            "**[세계관]** `!로어`(!lore), `!엔피씨`(!npc), `!룰`(!rule), `!연대기`(!lores)\n"
-            "**[분석]** `!분석`(!analyze), `!예측`(!forecast), `!일관성`(!consistency)\n"
-            "**[퀘스트]** `!퀘스트`(!quest), `!메모`(!memo), `!추출`(!export)"
+            "📚 **로어키퍼 봇 명령어 안내**\n\n"
+            
+            "**━━ 세션 관리 ━━**\n"
+            "`!준비` (`!ready`) - 세션 시작 조건(로어, 룰 등)이 갖춰졌는지 점검합니다.\n"
+            "`!시작` (`!start`) - 새로운 세션을 시작하고 오프닝 장면을 생성합니다.\n"
+            "`!리셋` (`!reset`) - 현재 세션을 종료하고 모든 진행 데이터를 초기화합니다.\n"
+            "`!클리어` (`!clear`) - 채팅 히스토리만 비웁니다. (데이터 유지)\n\n"
+            
+            "**━━ 내 캐릭터 ━━**\n"
+            "`!가면 [이름]` (`!mask`) - 채팅 시 표시될 캐릭터 이름(가면)을 설정합니다.\n"
+            "`!설명 [내용]` (`!desc`) - 내 캐릭터의 외모/성격 설명을 등록합니다.\n"
+            "`!정보` (`!info`) - 현재 내 캐릭터 상태(인벤토리, 관계, 패시브 등)를 확인합니다.\n"
+            "`!잠수` (`!afk`) - 잠시 세션을 떠납니다. (AI가 캐릭터를 조종하지 않음)\n"
+            "`!복귀` (`!back`) - 잠수 상태에서 돌아옵니다.\n\n"
+            
+            "**━━ 진행 ━━**\n"
+            "`!진행` (`!next`) - AI에게 다음 장면으로 넘어가라고 지시합니다.\n"
+            "`!모드 [자동/수동]` (`!mode`) - AI 응답 모드. 자동=즉시응답, 수동=대기.\n"
+            "`!장면 [일반/고어/nsfw/전체]` (`!scene`) - 현재 장면의 묘사 수위 설정.\n"
+            "`!주사위` (`!r`) - 1d100 주사위를 굴립니다.\n\n"
+            
+            "**━━ 세계관 설정 ━━**\n"
+            "`!로어` (`!lore`) - 현재 로어 정보를 조회하거나, 내용 입력 시 새 로어를 저장합니다.\n"
+            "`!로어 [내용/파일]` - 세계관, 배경, 캐릭터 설정 등을 등록합니다. (.txt 첨부 가능)\n"
+            "`!엔피씨 [이름]` (`!npc`) - 특정 NPC의 정보를 조회합니다.\n"
+            "`!npc추가 [이름]: [설명]` (`!addnpc`) - 새 NPC를 수동으로 등록합니다. (.txt 첨부 가능)\n"
+            "`!룰 [내용]` (`!rule`) - 세계관 고유 규칙을 추가합니다.\n"
+            "`!연대기` (`!lores`) - 세션 중 기록된 연대기 목록을 확인합니다.\n\n"
+            
+            "**━━ 퀘스트 & 메모 ━━**\n"
+            "`!퀘스트` (`!quest`) - 현재 진행 중인 퀘스트 목록을 확인합니다.\n"
+            "`!퀘스트 [내용]` - 새 퀘스트를 수동으로 추가합니다.\n"
+            "`!메모` (`!memo`) - 저장된 메모 목록을 확인합니다.\n"
+            "`!메모 [내용]` - 새 메모(단서, 이름, 비밀번호 등)를 추가합니다.\n"
+            "`!추출` (`!export`) - 로어, NPC, 퀘스트 데이터를 텍스트 파일로 추출합니다.\n\n"
+            
+            "**━━ 분석 도구 ━━**\n"
+            "`!분석` (`!analyze`) - AI가 현재 상황을 분석하여 객관적 요약을 제공합니다.\n"
+            "`!예측` (`!forecast`) - 현재 위기 수치(Doom)와 세계 상태를 예보합니다.\n"
+            "`!일관성` (`!consistency`) - 최근 서사의 논리/인과적 일관성을 검사합니다.\n\n"
+            
+            "**💡 팁:** 대부분의 기능은 AI가 대화 중 자동으로 처리합니다 (퀘스트/메모/NPC 추가 등)."
         )
         await send_long_message(message.channel, help_text)
         return None

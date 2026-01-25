@@ -219,7 +219,8 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
             fermented_summary_text = "\n---\n".join(fermented_summaries)
             
             full_prompt = (
-                f"### World & Quests\n{world_ctx}\n{obj_ctx}\n\n"
+                f"### World State\n{world_ctx}\n\n"
+                f"### Player Status\n{p_ctx}\n\n"
                 f"### Analysis\n{nvc_summary}\n\n"
                 f"### User Action\n{action_text}\n\n"
                 "Generate narrative response in Korean. 3rd person."
@@ -269,7 +270,8 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                         current_relationships=rels, current_passives=passives,
                         current_quests=game_system.get_active_quests(channel_id),
                         current_memos=game_system.get_memos(channel_id),
-                        lore_npc_names=list(domain_manager.get_npcs(channel_id).keys())
+                        lore_npc_names=list(domain_manager.get_npcs(channel_id).keys()),
+                        fermented_context=fermented_summary_text
                     )
                     
                     # Apply Updates
@@ -306,8 +308,11 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                              domain_manager.update_ai_memory(channel_id, uid, {"relationships": pmu["relationships"]})
                              msgs.append("💞 Relationships Updated")
                         if pmu.get("passives"):
-                             domain_manager.add_to_ai_memory_list(channel_id, uid, "passives", pmu["passives"][0]) # simplistic
-                             msgs.append(f"🏆 Passive: {pmu['passives']}")
+                             added_passives = []
+                             for p_item in pmu["passives"]:
+                                 domain_manager.add_to_ai_memory_list(channel_id, uid, "passives", p_item)
+                                 added_passives.append(p_item)
+                             msgs.append(f"🏆 Passive: {', '.join(added_passives)}")
 
                     # Quest Update
                     qu = u_res.get("QuestUpdate")

@@ -184,14 +184,15 @@ async def extract_all_updates(
     current_inventory: Dict[str, int] = None, current_gold: int = 0, current_status: List[str] = None,
     current_relationships: Dict[str, str] = None, current_companions: List[str] = None,
     lore_npc_names: List[str] = None, scene_npc_names: List[str] = None,
-    current_passives: List[str] = None, current_quests: List[str] = None, current_memos: List[str] = None
+    current_passives: List[str] = None, current_quests: List[str] = None, current_memos: List[str] = None,
+    fermented_context: str = ""
 ) -> Dict[str, Any]:
     
     # Run specialized extractors in parallel
     results = await asyncio.gather(
         _extract_physical(client, model_id_flash, player_input, ai_response, current_inventory, current_gold, current_status),
         _extract_social(client, model_id_flash, player_input, ai_response, current_relationships, current_companions, lore_npc_names, scene_npc_names),
-        _extract_narrative(client, model_id_flash, player_input, ai_response, current_passives),
+        _extract_narrative(client, model_id_flash, player_input, ai_response, current_passives, fermented_context),
         _extract_quest(client, model_id_flash, player_input, ai_response, current_quests, current_memos),
         return_exceptions=True
     )
@@ -223,7 +224,12 @@ async def _extract_physical(client, model_id, p_in, ai_out, inv, gold, status):
     sys = (
         "EXTRACT PHYSICAL CHANGES (Inventory, Gold, Status).\n"
         "Formats: inventory_add/remove, gold_change, status_add/remove.\n"
-        "Principle: Can Player TAKE it to next scene? YES->inv. Did Gold leave wallet? YES->gold. Will Status persist? YES->status."
+        "Principle: Can Player TAKE it to next scene? YES->inv. (Ignore items consumed immediately like meals unless significant).\n"
+        "Rules:\n"
+        "1. ADD: Only distinct items kept for later (Weapons, Key Items, Rations packed).\n"
+        "2. REMOVE: Items used/consumed from EXISTING inventory.\n"
+        "3. IGNORE: Trivial consumables eaten on spot (e.g. 'drinking water', 'eating lunch' at tavern).\n"
+        "4. GOLD: ALWAYS track payment for services/meals even if item is ignored. (e.g. Pay 10g for ignored lunch -> Gold -10, Inv no change)."
     )
     ctx = f"Inv:{inv}, Gold:{gold}, Status:{status}"
     usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out[:1500]}\nOutput JSON."
@@ -233,19 +239,29 @@ async def _extract_social(client, model_id, p_in, ai_out, rels, comps, lore_npcs
     sys = (
         "EXTRACT SOCIAL CHANGES (Relationships, Companions).\n"
         "Formats: relationships (Name: Level), companions (List).\n"
-        "Principle: Will relationship be DIFFERENT next time? YES->update. Will person TRAVEL with player? YES->companion."
+        "Principle: Will relationship be DIFFERENT next time? YES->update. Will person TRAVEL with player? YES->companion.\n"
+        "Rules:\n"
+        "1. DEDUPLICATE: Check 'LoreNPCs' first. If 'The Merchant' is likely 'Arthur', use 'Arthur'.\n"
+        "2. MERGE: Do not create new entries for roles (e.g. 'Guard') if they map to a known NPC in the scene.\n"
+        "3. UPDATE: Only output if the relationship level actually changes."
     )
     ctx = f"Rels:{rels}, Comps:{comps}, LoreNPCs:{lore_npcs}, SceneNPCs:{scene_npcs}"
     usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out[:1500]}\nOutput JSON."
     return await _call_extract(client, model_id, sys, usr, "B-2 Social")
 
-async def _extract_narrative(client, model_id, p_in, ai_out, passives):
+async def _extract_narrative(client, model_id, p_in, ai_out, passives, fermented_ctx):
     sys = (
         "EXTRACT NARRATIVE CHANGES (Passives).\n"
         "Formats: passives (List), passive_suggestion (Object).\n"
-        "Principle: Has player achieved DEFINITIVE MILESTONE? YES->passive/title."
+        "Principle: Has player achieved a MAJOR MILESTONE or demonstrated CONSISTENT LONG-TERM BEHAVIOR?\n"
+        "Reference 'History' (Fermented) to count repeated past actions.\n"
+        "Rules:\n"
+        "1. STRICT: Do NOT award titles for single actions (e.g. killing one goblin != 'Goblin Slayer').\n"
+        "2. SIGNIFICANT: Only award for Arc Completions, Boss Kills, or transformative character growth.\n"
+        "3. CONSISTENT: CHECK HISTORY. Award behavioral titles only if action repeats 3+ times across history (e.g. 'Merciful' after sparing 3+ villains).\n"
+        "4. EXISTING: Check existing Passives. Do not add duplicates or synonyms."
     )
-    ctx = f"Passives:{passives}"
+    ctx = f"Passives:{passives}\nHistory(Deeds):{fermented_ctx[-2000:]}" # Truncate to save tokens, keep recent deeds
     usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out[:1500]}\nOutput JSON."
     return await _call_extract(client, model_id, sys, usr, "B-3 Narrative")
 

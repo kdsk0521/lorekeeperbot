@@ -577,3 +577,80 @@ def get_passives_for_context(user_data: Dict[str, Any]) -> str:
         
     if not names: return "Passives: None"
     return f"Passives: {', '.join(names)}"
+
+def export_session_history(channel_id: str, incremental: bool = False) -> Tuple[str, str]:
+    """
+    세션의 대화 내역(History)을 텍스트 파일 형식으로 내보냅니다.
+    incremental=True일 경우, 지난번 추출 이후의 데이터만 내보냅니다.
+    """
+    history = domain_manager.get_history(channel_id)
+    if not history:
+        return "", "⚠️ 기록된 대화 내역이 없습니다."
+    
+    start_idx = 0
+    mode_text = "전체"
+    
+    if incremental:
+        start_idx = domain_manager.get_last_export_idx(channel_id)
+        if start_idx >= len(history):
+            return "", "✅ 새로운 대화 내역이 없습니다."
+        mode_text = "증분"
+        
+    target_history = history[start_idx:]
+    lines = []
+    lines.append(f"# Session History Export ({mode_text}) - {channel_id}")
+    lines.append(f"Date: {time.strftime('%Y-%m-%d %H:%M')}")
+    lines.append(f"Range: #{start_idx+1} ~ #{len(history)}\n")
+    
+    for i, h in enumerate(target_history):
+        role = h.get('role', 'Unknown')
+        content = h.get('content', '')
+        lines.append(f"[{role}] {content}")
+        lines.append("") # Spacer
+
+    # Update index if incremental
+    if incremental:
+        domain_manager.set_last_export_idx(channel_id, len(history))
+        
+    return "\n".join(lines), f"✅ **대화 내역 추출 완료** ({mode_text}, {len(target_history)} lines)"
+
+def export_chronicle_book(channel_id: str, incremental: bool = False) -> Tuple[str, str]:
+    """
+    기록된 연대기(Fermented Chronicles)를 텍스트 파일 형식으로 내보냅니다.
+    incremental=True일 경우, 지난번 추출 이후의 연대기만 내보냅니다.
+    """
+    board = _get_board(channel_id)
+    lore_entries = board.get("lore", [])
+    
+    if not lore_entries:
+        return "", "⚠️ 기록된 연대기가 없습니다."
+
+    start_idx = 0
+    mode_text = "전체"
+
+    if incremental:
+        start_idx = domain_manager.get_last_chronicle_idx(channel_id)
+        if start_idx >= len(lore_entries):
+             return "", "✅ 새로운 연대기 기록이 없습니다."
+        mode_text = "증분"
+
+    target_entries = lore_entries[start_idx:]
+    lines = []
+    lines.append(f"# Chronicle Export ({mode_text}) - {channel_id}")
+    lines.append(f"Date: {time.strftime('%Y-%m-%d %H:%M')}")
+    lines.append(f"Range: #{start_idx+1} ~ #{len(lore_entries)}\n")
+    
+    for entry in target_entries:
+        title = entry.get("title", "Untitled")
+        date_str = time.strftime('%Y-%m-%d', time.localtime(entry.get('timestamp', 0)))
+        content = entry.get("content", "")
+        
+        lines.append(f"## [{date_str}] {title}")
+        lines.append(content)
+        lines.append("\n" + "="*30 + "\n")
+
+    # Update index if incremental
+    if incremental:
+        domain_manager.set_last_chronicle_idx(channel_id, len(lore_entries))
+
+    return "\n".join(lines), f"✅ **연대기 추출 완료** ({mode_text}, {len(target_entries)} entries)"

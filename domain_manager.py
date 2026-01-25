@@ -90,7 +90,8 @@ def _get_default_session() -> Dict[str, Any]:
         },
         "fermented_history": [],
         "deep_memory": "",
-        "last_export_idx": 0
+        "last_export_idx": 0,
+        "last_chronicle_idx": 0
     }
 
 def get_domain(channel_id: str) -> Dict[str, Any]:
@@ -124,6 +125,23 @@ def reset_domain(channel_id: str) -> None:
     _lore_cache.pop(channel_id, None)
     _lore_original_cache.pop(channel_id, None)
     _rules_cache.pop(channel_id, None)
+
+# Export Indices
+def get_last_export_idx(channel_id: str) -> int:
+    return get_domain(channel_id).get("last_export_idx", 0)
+
+def set_last_export_idx(channel_id: str, idx: int) -> None:
+    d = get_domain(channel_id)
+    d["last_export_idx"] = idx
+    save_domain(channel_id, d)
+
+def get_last_chronicle_idx(channel_id: str) -> int:
+    return get_domain(channel_id).get("last_chronicle_idx", 0)
+
+def set_last_chronicle_idx(channel_id: str, idx: int) -> None:
+    d = get_domain(channel_id)
+    d["last_chronicle_idx"] = idx
+    save_domain(channel_id, d)
 
 # =========================================================
 # 3. LORE & CONTENT MANAGEMENT (Formerly domain_content.py)
