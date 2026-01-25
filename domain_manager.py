@@ -407,25 +407,25 @@ def get_unified_player_info(channel_id: str, user_id: str) -> str:
     
     mem = p["ai_memory"]
     res = f"## 🎭 **{p.get('mask')}**\n\n"
-    res += f"**💰 Gold:** {p['economy'].get('gold', 0)}\n"
+    res += f"**💰 골드:** {p['economy'].get('gold', 0)}\n"
     
     inv = p.get('inventory', {})
-    res += f"**🎒 Inv:** {', '.join([f'{k}x{v}' for k,v in inv.items()]) if inv else '(Empty)'}\n"
+    res += f"**🎒 소지품:** {', '.join([f'{k}x{v}' for k,v in inv.items()]) if inv else '(없음)'}\n"
     
     eff = p.get('status_effects', [])
-    if eff: res += f"**⚠️ Status:** {', '.join(eff)}\n"
+    if eff: res += f"**⚠️ 상태:** {', '.join(eff)}\n"
     
     res += "\n---\n"
-    if mem.get("appearance"): res += f"**👤 Look:** {mem['appearance']}\n"
-    if mem.get("personality"): res += f"**💭 Mind:** {mem['personality']}\n"
-    if mem.get("background"): res += f"**📖 BG:** {mem['background']}\n"
+    if mem.get("appearance"): res += f"**👤 외모:** {mem['appearance']}\n"
+    if mem.get("personality"): res += f"**💭 성격:** {mem['personality']}\n"
+    if mem.get("background"): res += f"**📖 배경:** {mem['background']}\n"
     
     rels = mem.get("relationships", {})
     if rels: 
-        res += "**🤝 Rels:**\n" + "\n".join([f"• {k}: {v}" for k,v in rels.items()]) + "\n"
+        res += "**🤝 관계:**\n" + "\n".join([f"• {k}: {v}" for k,v in rels.items()]) + "\n"
         
     passives = mem.get("passives", [])
-    if passives: res += f"**🏆 Passives:** {', '.join(passives)}\n"
+    if passives: res += f"**🏆 패시브/칭호:** {', '.join(passives)}\n"
     
     return res
 

@@ -306,13 +306,13 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                     if pmu:
                         if pmu.get("relationships"):
                              domain_manager.update_ai_memory(channel_id, uid, {"relationships": pmu["relationships"]})
-                             msgs.append("💞 Relationships Updated")
+                             msgs.append("💞 관계도 업데이트됨")
                         if pmu.get("passives"):
                              added_passives = []
                              for p_item in pmu["passives"]:
                                  domain_manager.add_to_ai_memory_list(channel_id, uid, "passives", p_item)
                                  added_passives.append(p_item)
-                             msgs.append(f"🏆 Passive: {', '.join(added_passives)}")
+                             msgs.append(f"🏆 패시브/칭호: {', '.join(added_passives)}")
 
                     # Quest Update
                     qu = u_res.get("QuestUpdate")

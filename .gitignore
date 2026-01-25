@@ -24,3 +24,7 @@ secrets.json
 # --- 5. (선택) 로그나 데이터 파일 ---
 *.log
 *.sqlite3
+data/lores/1464890214202740759_original.txt
+.gitignore
+data/sessions/1464890214202740759.json
+data/lores/1464890214202740759.txt

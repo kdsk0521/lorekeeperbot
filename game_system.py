@@ -204,14 +204,14 @@ def get_world_context(channel_id: str) -> str:
     location = world.get("current_location", "Unknown")
     
     return (
-        f"[Current World State]\n"
-        f"- Location: {location}\n"
-        f"- Risk Level: {world.get('risk_level', 'None')}\n"
-        f"- Time: Day {world.get('day', 1)}, {world.get('time_slot', '오후')}\n"
-        f"- Weather: {world.get('weather', '맑음')}\n"
-        f"- Doom Level: {world.get('doom', 0)}% ({_get_doom_description(world.get('doom', 0))})\n"
-        f"- **Atmosphere Context**: {party_context}\n"
-        f"*Instruction: Adjust the narrative tone based on Location, Time, Doom, and Party Condition.*"
+        f"[현재 세계 상태]\n"
+        f"- 위치: {location}\n"
+        f"- 위험도: {world.get('risk_level', 'None')}\n"
+        f"- 시간: {world.get('day', 1)}일차, {world.get('time_slot', '오후')}\n"
+        f"- 날씨: {world.get('weather', '맑음')}\n"
+        f"- 위기 수치: {world.get('doom', 0)}% ({_get_doom_description(world.get('doom', 0))})\n"
+        f"- **파티 분위기**: {party_context}\n"
+        f"*지침: 이 위치, 시간, 위기 수치, 파티 상태를 반영하여 서술 톤을 조절하십시오.*"
     )
 
 def get_doom_forecast(channel_id: str) -> str:
@@ -328,13 +328,13 @@ def get_objective_context(channel_id: str) -> str:
     if not active and not memos and not archive:
         return config.EMPTY_QUEST_MEMO_MSG
         
-    txt = "### [QUESTS & MEMOS]\n"
+    txt = "### [퀘스트 및 메모]\n"
     if active:
-        txt += "**Active Objectives:**\n" + "\n".join([f"- {q}" for q in active]) + "\n\n"
+        txt += "**진행 중인 목표:**\n" + "\n".join([f"- {q}" for q in active]) + "\n\n"
     if memos:
-        txt += "**Active Memos:**\n" + "\n".join([f"- {m}" for m in memos]) + "\n\n"
+        txt += "**저장된 메모:**\n" + "\n".join([f"- {m}" for m in memos]) + "\n\n"
     if archive:
-        txt += "**Archived Info:**\n" + "\n".join([f"- {m}" for m in archive[-config.MAX_ARCHIVE_DISPLAY:]]) + "\n"
+        txt += "**보관된 정보:**\n" + "\n".join([f"- {m}" for m in archive[-config.MAX_ARCHIVE_DISPLAY:]]) + "\n"
     return txt.strip()
 
 # AI/Chronicle Features
@@ -390,29 +390,29 @@ def export_lore_data(channel_id: str) -> Tuple[str, str]:
         return None, "⚠️ 내보낼 데이터가 없습니다."
         
     lines = []
-    lines.append(f"# Lore Export - {channel_id}")
-    lines.append(f"Date: {time.strftime('%Y-%m-%d %H:%M')}\n")
+    lines.append(f"# 세계관 데이터 내보내기 - {channel_id}")
+    lines.append(f"일시: {time.strftime('%Y-%m-%d %H:%M')}\n")
     
-    lines.append("## LORE")
+    lines.append("## 세계관(LORE)")
     lines.append(lore)
-    lines.append("\n## NPC LIST")
+    lines.append("\n## NPC 목록")
     
     for name, data in npcs.items():
         lines.append(f"### {name}")
-        lines.append(f"Desc: {data.get('desc', '-')}")
-        if data.get('appearance'): lines.append(f"Look: {data.get('appearance')}")
-        if data.get('personality'): lines.append(f"Personality: {data.get('personality')}")
+        lines.append(f"설명: {data.get('desc', '-')}")
+        if data.get('appearance'): lines.append(f"외모: {data.get('appearance')}")
+        if data.get('personality'): lines.append(f"성격: {data.get('personality')}")
         lines.append("")
 
     # [Restored] Session-detected NPCs
     mem = domain_manager.get_session_ai_memory(channel_id)
     npc_summaries = mem.get("npc_summaries", {})
     if npc_summaries:
-        lines.append("\n### [SESSION NPCs - AI Detected]")
+        lines.append("\n### [세션 감지 NPC - AI Detected]")
         for name, summary in npc_summaries.items():
             if name in npcs: continue # Skip if promoted
             lines.append(f"#### {name}")
-            lines.append(f"Summary: {summary}")
+            lines.append(f"요약: {summary}")
             lines.append("")
 
     export_content = "\n".join(lines)
@@ -501,8 +501,8 @@ def get_status_summary(user_data: Dict[str, Any]) -> str:
     
     # 1. Status Effects
     effects = user_data.get("status_effects", [])
-    if effects: parts.append(f"State: {', '.join(effects)}")
-    else: parts.append("State: Normal")
+    if effects: parts.append(f"상태: {', '.join(effects)}")
+    else: parts.append("상태: 정상")
     
     # 2. Passives (Helper utilized)
     passives = get_passives_for_context(user_data) # Returns "Passives: ..."
@@ -513,7 +513,7 @@ def get_status_summary(user_data: Dict[str, Any]) -> str:
     if inv:
         # Simple list for context
         items = [f"{k}" for k in inv.keys()]
-        parts.append(f"Inv: {', '.join(items)}")
+        parts.append(f"소지품: {', '.join(items)}")
         
     return "\n".join(parts)
 
