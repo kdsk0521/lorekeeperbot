@@ -13,7 +13,6 @@ my_env/
 # --- 3. 보안 파일 (API 키가 들어있을 수 있음) ---
 .env
 .env.local
-config.py
 secrets.json
 *.key
 
