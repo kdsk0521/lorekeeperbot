@@ -3,8 +3,7 @@ Lorekeeper TRPG Bot - Memory System Module (Common Utilities)
 공통 유틸리티 및 레거시 호환 래퍼를 제공합니다.
 
 Refactored Structure:
-- left_brain_analysis.py: 장면 분석 (좌뇌 A)
-- left_brain_extraction.py: 업데이트 추출 (좌뇌 B)
+- cognition.py: Cognition Module (Theoria & Logos)
 """
 
 import json
@@ -13,9 +12,9 @@ import logging
 import re
 from typing import Optional, Dict, Any, List, Tuple
 from google.genai import types
+import config
 
-MAX_RETRY_COUNT = 3
-RETRY_DELAY_SECONDS = 1
+# Constants now imported from config
 
 # =========================================================
 # Shared Prompts / Constants
@@ -287,7 +286,7 @@ async def api_call_with_retry(
     Gemini API 호출을 재시도 로직과 함께 수행합니다.
     ResourceExhausted(429) 등 특정 에러를 우아하게 처리합니다.
     """
-    for attempt in range(MAX_RETRY_COUNT):
+    for attempt in range(config.MAX_RETRY_COUNT):
         try:
             response = await client.aio.models.generate_content(
                 model=model_id,
@@ -298,7 +297,7 @@ async def api_call_with_retry(
             if response and response.text:
                 return response.text.strip()
             
-            logging.warning(f"[{operation_name}] 빈 응답 수신 (시도 {attempt + 1}/{MAX_RETRY_COUNT})")
+            logging.warning(f"[{operation_name}] 빈 응답 수신 (시도 {attempt + 1}/{config.MAX_RETRY_COUNT})")
             
         except google_exceptions.ResourceExhausted as e:
             logging.error(f"[{operation_name}] 쿼터 초과 (ResourceExhausted): {e}")
@@ -307,16 +306,16 @@ async def api_call_with_retry(
             
         except google_exceptions.ServiceUnavailable as e:
             logging.warning(f"[{operation_name}] 서비스 일시적 불가 (503): {e} - 재시도 중...")
-            await asyncio.sleep(RETRY_DELAY_SECONDS * (attempt + 1)) # Backoff check
+            await asyncio.sleep(config.RETRY_DELAY_SECONDS * (attempt + 1)) # Backoff check
             continue
 
         except Exception as e:
             logging.warning(
-                f"[{operation_name}] API 호출 실패 (시도 {attempt + 1}/{MAX_RETRY_COUNT}): {e}"
+                f"[{operation_name}] API 호출 실패 (시도 {attempt + 1}/{config.MAX_RETRY_COUNT}): {e}"
             )
         
-        if attempt < MAX_RETRY_COUNT - 1:
-            await asyncio.sleep(RETRY_DELAY_SECONDS)
+        if attempt < config.MAX_RETRY_COUNT - 1:
+            await asyncio.sleep(config.RETRY_DELAY_SECONDS)
     
     logging.error(f"[{operation_name}] 모든 재시도 실패")
     return None
@@ -429,7 +428,6 @@ async def extract_npcs_only(client, model_id: str, text: str) -> List[Dict[str, 
         "    \"description\": \"Brief summary\",\n"
         "    \"appearance\": \"Visuals\",\n"
         "    \"personality\": \"Traits, Habits\",\n"
-        "    \"sexual_characteristics\": \"NSFW traits if present\",\n"
         "    \"sexual_characteristics\": \"NSFW traits if present\",\n"
         "    \"abilities\": \"Powers/Skills/Magic (Maps to '능력', '기술')\",\n"
         "    \"passives\": \"Passive traits/Titles (Maps to '패시브', '특성', '칭호')\"\n"

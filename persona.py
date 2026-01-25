@@ -29,12 +29,14 @@ import re
 from typing import Optional, List, Dict, Any, Tuple
 from google import genai
 from google.genai import types
+import config
 
 # =========================================================
 # 상수 정의
 # =========================================================
-MAX_RETRY_COUNT = 3
-RETRY_DELAY_SECONDS = 1
+# Constants now imported from config
+# MAX_RETRY_COUNT = config.MAX_RETRY_COUNT
+# RETRY_DELAY_SECONDS = config.RETRY_DELAY_SECONDS
 DEFAULT_TEMPERATURE = 1.0
 MIN_NARRATIVE_LENGTH = 500  # 최소 서사 길이 (문자)
 
@@ -1515,7 +1517,7 @@ async def generate_response_with_retry(
     best_response = None
     best_length = 0
     
-    for attempt in range(MAX_RETRY_COUNT):
+    for attempt in range(config.MAX_RETRY_COUNT):
         try:
             response = await chat_session.send_message(full_input)
             
@@ -1529,14 +1531,14 @@ async def generate_response_with_retry(
                 else:
                     logging.warning(
                         f"[Length] SHORT: {response_length}자 < {min_length}자 "
-                        f"(시도 {attempt + 1}/{MAX_RETRY_COUNT})"
+                        f"(시도 {attempt + 1}/{config.MAX_RETRY_COUNT})"
                     )
                     
                     if response_length > best_length:
                         best_response = response_text
                         best_length = response_length
                     
-                    if attempt < MAX_RETRY_COUNT - 1:
+                    if attempt < config.MAX_RETRY_COUNT - 1:
                         full_input = (
                             f"{user_input}\n\n"
                             f"⚠️ **[LENGTH WARNING]** Previous response was {response_length} chars. "
@@ -1545,13 +1547,13 @@ async def generate_response_with_retry(
                             f"{hidden_reminder}"
                         )
             else:
-                logging.warning(f"빈 응답 수신 (시도 {attempt + 1}/{MAX_RETRY_COUNT})")
+                logging.warning(f"빈 응답 수신 (시도 {attempt + 1}/{config.MAX_RETRY_COUNT})")
             
         except Exception as e:
-            logging.warning(f"응답 생성 실패 (시도 {attempt + 1}/{MAX_RETRY_COUNT}): {e}")
+            logging.warning(f"응답 생성 실패 (시도 {attempt + 1}/{config.MAX_RETRY_COUNT}): {e}")
         
-        if attempt < MAX_RETRY_COUNT - 1:
-            await asyncio.sleep(RETRY_DELAY_SECONDS)
+        if attempt < config.MAX_RETRY_COUNT - 1:
+            await asyncio.sleep(config.RETRY_DELAY_SECONDS)
     
     if best_response:
         logging.warning(f"[Length] FALLBACK: 최소 길이 미달이지만 반환 ({best_length}자)")

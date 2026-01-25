@@ -58,7 +58,7 @@ FERMENTED_RATIO = 0.30        # 30% - 중기 기억
 FRESH_RATIO = 0.60            # 60% - 최근 대화
 
 # AI 컨텍스트 윈도우
-RECENT_HISTORY_FOR_ANALYSIS = 20  # 좌뇌 분석용 최근 히스토리
+# RECENT_HISTORY_FOR_ANALYSIS = 20 (Removed: shadowed config)
 IMMEDIATE_DISPLAY_COUNT = 30      # Immediate 섹션에 표시할 메시지 수
 
 # 토큰 추정용
