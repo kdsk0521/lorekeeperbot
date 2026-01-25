@@ -313,6 +313,9 @@ def add_quest(channel_id: str, content: str) -> str:
 def complete_quest(channel_id: str, content: str) -> str:
     return _move_op(channel_id, "active", "completed", content, "✅", "퀘스트", "완료")
 
+def remove_quest(channel_id: str, content: str) -> str:
+    return _del_op(channel_id, "active", content, "🗑️", "퀘스트")
+
 def add_memo(channel_id: str, content: str) -> str:
     return _list_op(channel_id, "memos", content, "📝", "메모")
 

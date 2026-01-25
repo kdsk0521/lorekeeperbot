@@ -728,20 +728,52 @@ async def dispatch_command(cmd, message, channel_id, parsed, client_discord, cli
         return None
 
     # Quest/Memo Direct
+    # Quest Command
     if cmd == 'quest':
         arg = parsed['content']
         if not arg:
-             await send_long_message(message.channel, game_system.get_active_quests_text(channel_id))
+            await send_long_message(message.channel, game_system.get_active_quests_text(channel_id))
+            return None
+            
+        # Parse Subcommands
+        subCmd = arg.split()[0].lower()
+        content = arg[len(subCmd):].strip()
+        
+        if subCmd in ['remove', 'delete', '삭제', '제거', '취소']:
+            if not content: await message.channel.send("⚠️ 삭제할 퀘스트 내용을 입력하세요.")
+            else: await message.channel.send(game_system.remove_quest(channel_id, content))
+            
+        elif subCmd in ['complete', 'finish', 'done', '완료', '달성']:
+            if not content: await message.channel.send("⚠️ 완료한 퀘스트 내용을 입력하세요.")
+            else: await message.channel.send(game_system.complete_quest(channel_id, content))
+            
         else:
-             await message.channel.send(game_system.add_quest(channel_id, arg))
+            # Default: Add
+            await message.channel.send(game_system.add_quest(channel_id, arg))
         return None
 
+    # Memo Command
     if cmd == 'memo':
         arg = parsed['content']
         if not arg:
-             await send_long_message(message.channel, game_system.get_memos_text(channel_id))
+            await send_long_message(message.channel, game_system.get_memos_text(channel_id))
+            return None
+            
+        # Parse Subcommands
+        subCmd = arg.split()[0].lower()
+        content = arg[len(subCmd):].strip()
+        
+        if subCmd in ['remove', 'delete', '삭제', '제거']:
+            if not content: await message.channel.send("⚠️ 삭제할 메모 내용을 입력하세요.")
+            else: await message.channel.send(game_system.remove_memo(channel_id, content))
+            
+        elif subCmd in ['archive', 'complete', 'done', '보관', '해결', '완료']:
+            if not content: await message.channel.send("⚠️ 보관할 메모 내용을 입력하세요.")
+            else: await message.channel.send(game_system.resolve_memo_auto(channel_id, content))
+            
         else:
-             await message.channel.send(game_system.add_memo(channel_id, arg))
+            # Default: Add
+            await message.channel.send(game_system.add_memo(channel_id, arg))
         return None
 
     if cmd in ['next', 'turn']:
