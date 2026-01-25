@@ -79,6 +79,7 @@ The AI MUST NEVER generate for ANY player character:
 | **Reactions** | Never assert PC's response | `[PC] looked surprised` (e.g., `[PC]의 표정이 ~`) |
 | **Emotions** | Never state PC's feelings as fact | `[PC] felt sad` (e.g., `[PC]의 마음이 ~`) |
 | **Actions** | Never make PC do unstated things | `[PC] nodded` (e.g., `[PC]이/가 고개를 끄덕였다`) |
+| **Restatement** | Never restate user input | Input: "I sit" -> Output: "You sit..." (❌) |
 
 ### VIOLATION EXAMPLES (What NOT to write)
 - ❌ `[PC]가 "그래"라고 대답했다.` — Making PC speak
@@ -217,10 +218,10 @@ All other definitions, rules, or interpretations outside of this axiom are, in t
 # =========================================================
 PERCEPTION_CONSTRAINTS = """
 <Perception_Constraints priority="NARRATIVE_PHYSICS">
-## LIMITED DEEP FOCALIZATION
+## LIMITED DEEP FOCALIZATION (Over-the-Shoulder Camera)
 
-The narrative viewpoint is a **biological constraint**.
-Output must originate SOLELY from within the focal character's eyes and mind.
+The narrative viewpoint is an **External Observer centered on the PC**.
+Output must describe what the PC *sees, hears, and experiences* from the outside world.
 
 ### Physical Impossibilities
 - ❌ Describing events outside focal character's sensory range
