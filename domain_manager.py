@@ -196,9 +196,31 @@ def get_npcs(channel_id: str) -> Dict[str, Dict[str, Any]]:
 def get_npc(channel_id: str, name: str) -> Optional[Dict[str, Any]]:
     return get_npcs(channel_id).get(name)
 
+def get_npcs_by_source(channel_id: str, source: str) -> Dict[str, Dict[str, Any]]:
+    """특정 소스(lore/session/manual)의 NPC만 반환"""
+    npcs = get_npcs(channel_id)
+    return {name: data for name, data in npcs.items() if data.get("source") == source}
+
 def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
+    """
+    NPC 업데이트. source 필드 필수.
+    source: "lore" (로어에서 추출), "session" (세션 중 감지), "manual" (수동 추가)
+    """
     d = get_domain(channel_id)
-    d.setdefault("npcs", {})[name] = data
+    d.setdefault("npcs", {})
+
+    # 기존 NPC 데이터와 병합 (기존 데이터 보존)
+    existing = d["npcs"].get(name, {})
+    existing.update(data)
+
+    # source가 없으면 기본값 설정
+    if "source" not in existing:
+        existing["source"] = data.get("source", "session")
+
+    # 타임스탬프 추가
+    existing["last_seen"] = time.strftime('%Y-%m-%d %H:%M')
+
+    d["npcs"][name] = existing
     save_domain(channel_id, d)
 
 def delete_npc(channel_id: str, name: str) -> bool:
@@ -208,6 +230,47 @@ def delete_npc(channel_id: str, name: str) -> bool:
         save_domain(channel_id, d)
         return True
     return False
+
+def clear_npcs_by_source(channel_id: str, source: str) -> int:
+    """특정 소스의 NPC들만 삭제. 삭제된 개수 반환."""
+    d = get_domain(channel_id)
+    npcs = d.get("npcs", {})
+    to_delete = [name for name, data in npcs.items() if data.get("source") == source]
+    for name in to_delete:
+        del npcs[name]
+    if to_delete:
+        save_domain(channel_id, d)
+    return len(to_delete)
+
+def reveal_npc_identity(channel_id: str, old_name: str, new_name: str) -> bool:
+    """
+    NPC 정체 밝힘 (Identity Reveal)
+    예: "수상한 남자" → "아서"
+    기존 데이터를 새 이름으로 이동하고, 이전 이름 기록
+    """
+    d = get_domain(channel_id)
+    npcs = d.get("npcs", {})
+
+    if old_name not in npcs:
+        return False
+
+    # 기존 데이터 복사
+    old_data = npcs[old_name].copy()
+
+    # 이전 이름 기록
+    previous_names = old_data.get("previous_names", [])
+    previous_names.append(old_name)
+    old_data["previous_names"] = previous_names
+    old_data["last_seen"] = time.strftime('%Y-%m-%d %H:%M')
+
+    # 새 이름으로 저장
+    npcs[new_name] = old_data
+
+    # 이전 이름 삭제
+    del npcs[old_name]
+
+    save_domain(channel_id, d)
+    return True
 
 # NPC Attitude System
 def update_npc_attitude(channel_id: str, npc_name: str, attitude: str, reason: str = "") -> None:

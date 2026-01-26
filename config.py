@@ -128,7 +128,12 @@ NPC_PREVIEW_LIMIT = 5               # Max NPCs shown in preview
 DEFAULT_TIME_SLOTS = ["새벽", "오전", "오후", "황혼", "저녁", "심야"]
 DEFAULT_WEATHER_TYPES = ["맑음", "구름 조금", "흐림", "비", "안개", "폭풍우"]
 
-TIME_TICKS_PER_SLOT = 4  # 4 Ticks = 1 Time Slot advancement
+# Time Tick System
+# 1 tick = 약 3-5분 (게임 내 시간)
+# 예: short 행동(1 tick) = 3-5분, medium(2 ticks) = 6-10분
+TIME_MINUTES_PER_TICK = 4  # 1 tick = 약 4분 (3-5분 중간값)
+TIME_TICKS_PER_SLOT = 15   # 15 ticks = 1시간 (60분 / 4분 = 15)
+                           # 1 시간대(4시간) = 60 ticks
 
 # Doom Thresholds
 DOOM_THRESHOLD_WARNING = 30

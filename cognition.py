@@ -120,13 +120,15 @@ async def analyze_context_nvc(
         "**Modifiers:** passive_X (+15-25), tool_X (+10-15), condition_X (-10-20)\n\n"
 
         "### TIME FLOW ANALYSIS\n"
-        "Estimate how much time passes based on the player's action:\n"
+        "Estimate how much time passes based on the player's action.\n"
+        "**1 tick ≈ 4분 (게임 내 시간)**\n"
         "**Time Categories:**\n"
-        "- `instant`: Speaking, looking, grabbing (0 ticks)\n"
-        "- `short`: Room move, short chat (1 tick)\n"
-        "- `medium`: Combat round, meal, investigation (2 ticks)\n"
-        "- `long`: Travel, complex task, rest (3+ ticks)\n"
-        "- `explicit`: 'Wait 3 hours', 'Sleep until morning' (Use `explicit_hours`)\n\n"
+        "- `instant`: Speaking, looking, grabbing (0 ticks, 0분)\n"
+        "- `short`: Room move, short chat (1 tick, ~4분)\n"
+        "- `medium`: Combat round, brief conversation (2-3 ticks, ~8-12분)\n"
+        "- `long`: Meal, investigation, short travel (4-6 ticks, ~16-24분)\n"
+        "- `extended`: Complex task, rest, long travel (10+ ticks, ~40분+)\n"
+        "- `explicit`: 'Wait 1 hour', 'Sleep until morning' (Use `explicit_minutes`)\n\n"
 
         "### OUTPUT FORMAT (JSON ONLY)\n"
         "{\n"
@@ -134,7 +136,7 @@ async def analyze_context_nvc(
         '  "LocationRisk": "None/Low/Medium/High/Extreme",\n'
         '  "TimeContext": "String",\n'
         '  "Observation": "Objective summary",\n'
-        '  "TimeFlow": {"duration": "instant/short/medium/long/explicit", "ticks": Int, "reason": "...", "explicit_hours": Int or null},\n'
+        '  "TimeFlow": {"duration": "instant/short/medium/long/extended/explicit", "ticks": Int, "reason": "...", "explicit_minutes": Int or null},\n'
         '  "TemporalOrientation": {"continuity...": "...", "active_threads": [], "offscreen_npcs": []},\n'
         '  "NPCAttitudes": {"Name": {"attitude": "Type", "reason": "..."}},\n'
         '  "NPCInteraction": {"participants": [], "type": "...", "topic": "..."} OR null,\n'
