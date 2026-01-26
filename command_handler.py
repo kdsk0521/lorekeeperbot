@@ -628,10 +628,25 @@ async def handle_ooc_command(message, channel_id, ooc_content, client_genai, mod
 
 
 async def dispatch_command(cmd, message, channel_id, parsed, client_discord, client_genai, model_id, model_id_flash, domain_data):
+    # 봇 활성화/비활성화 (채널별)
+    if cmd == 'off':
+        config.disable_channel(channel_id)
+        await message.channel.send("🔴 **봇 비활성화**: 이 채널에서 봇이 더 이상 응답하지 않습니다.\n`!on`으로 다시 활성화할 수 있습니다.")
+        return None
+
+    if cmd == 'on':
+        config.enable_channel(channel_id)
+        await message.channel.send("🟢 **봇 활성화**: 이 채널에서 봇이 다시 응답합니다.")
+        return None
+
     if cmd == 'help':
         help_text = (
             "📚 **로어키퍼 봇 명령어 안내**\n\n"
-            
+
+            "**━━ 봇 제어 ━━**\n"
+            "`!off` - 이 채널에서 봇을 비활성화합니다.\n"
+            "`!on` - 이 채널에서 봇을 다시 활성화합니다.\n\n"
+
             "**━━ 세션 관리 ━━**\n"
             "`!준비` (`!ready`) - 세션 시작 조건(로어, 룰 등)이 갖춰졌는지 점검합니다.\n"
             "`!시작` (`!start`) - 새로운 세션을 시작하고 오프닝 장면을 생성합니다.\n"

@@ -681,62 +681,69 @@ lorekeeperbot/
 
 ---
 
-## 7. 추가 기능: 채널 화이트리스트
+## 7. 추가 기능: 채널별 봇 활성화/비활성화
 
 ### 7.1 기능 설명
 
-봇이 특정 채널에서만 활동하도록 제한하는 기능입니다.
-불필요한 채널에서의 봇 반응을 방지하고, 리소스를 절약합니다.
+명령어로 특정 채널에서 봇을 켜고 끌 수 있는 기능입니다.
+- **기본 상태**: ON (모든 채널에서 활동)
+- **!off**: 해당 채널에서 봇 비활성화
+- **!on**: 해당 채널에서 봇 다시 활성화
 
-### 7.2 구현 내용
+### 7.2 사용 방법
 
-#### config.py 설정
+```
+!off  → 🔴 봇 비활성화 (이 채널에서 봇이 응답하지 않음)
+!on   → 🟢 봇 활성화 (이 채널에서 봇이 다시 응답)
+```
+
+### 7.3 구현 내용
+
+#### config.py (블랙리스트 관리)
 ```python
-# 환경 변수로 설정
-ALLOWED_CHANNELS = os.getenv('ALLOWED_CHANNELS', '')  # 쉼표 구분 채널 ID
-CHANNEL_WHITELIST_ENABLED = os.getenv('CHANNEL_WHITELIST_ENABLED', 'false')
+# 비활성화된 채널 목록 (JSON 파일로 영구 저장)
+_DISABLED_CHANNELS_FILE = "data/disabled_channels.json"
 
 # 함수
-is_channel_allowed(channel_id)      # 채널 허용 여부 확인
-add_allowed_channel(channel_id)     # 런타임 채널 추가
-remove_allowed_channel(channel_id)  # 런타임 채널 제거
-get_allowed_channels()              # 허용 채널 목록 조회
+is_channel_allowed(channel_id)  # 채널 활성화 여부 확인
+disable_channel(channel_id)     # 채널 비활성화 (!off)
+enable_channel(channel_id)      # 채널 활성화 (!on)
+is_channel_disabled(channel_id) # 비활성화 여부 확인
 ```
 
-#### main.py 적용
+#### main.py (메시지 처리)
 ```python
-@client_discord.event
-async def on_message(message):
-    # ... 기존 체크 ...
-
-    # 채널 화이트리스트 체크
-    if not config.is_channel_allowed(message.channel.id):
-        return  # 허용되지 않은 채널에서는 봇 무시
+# 비활성화된 채널에서도 !on 명령어만 허용
+if not config.is_channel_allowed(message.channel.id):
+    if content.lower() == '!on':
+        config.enable_channel(message.channel.id)
+        await message.channel.send("🟢 봇 활성화")
+    return  # 다른 메시지는 무시
 ```
 
-### 7.3 사용 방법
-
-#### 환경 변수 설정 (.env)
-```bash
-# 화이트리스트 활성화
-CHANNEL_WHITELIST_ENABLED=true
-
-# 허용할 채널 ID 목록 (쉼표 구분)
-ALLOWED_CHANNELS=123456789012345678,987654321098765432
+#### command_handler.py (명령어)
+```python
+!off → config.disable_channel(channel_id)
+!on  → config.enable_channel(channel_id)
 ```
 
-#### 동작 방식
-| 설정 상태 | 동작 |
-|----------|------|
-| `ENABLED=false` | 모든 채널에서 활동 (기본) |
-| `ENABLED=true` + 목록 비어있음 | 모든 채널에서 활동 |
-| `ENABLED=true` + 목록 있음 | 목록에 있는 채널에서만 활동 |
+### 7.4 데이터 저장
 
-### 7.4 확장 가능성
+비활성화된 채널 목록은 `data/disabled_channels.json`에 저장되어
+봇 재시작 후에도 설정이 유지됩니다.
 
-- 관리자 명령어로 런타임 채널 추가/제거
-- 서버별 화이트리스트 설정
-- 카테고리별 허용/차단
+```json
+{
+  "disabled_channels": ["123456789012345678", "987654321098765432"]
+}
+```
+
+### 7.5 동작 방식
+
+| 상태 | !off | !on | 다른 명령어 |
+|------|------|-----|-----------|
+| 활성화 (기본) | 비활성화로 전환 | 무변화 | 정상 동작 |
+| 비활성화 | 무시 | 활성화로 전환 | 무시 |
 
 ---
 

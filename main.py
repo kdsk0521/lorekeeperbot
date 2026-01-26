@@ -74,9 +74,14 @@ async def on_message(message):
     if message.author == client_discord.user: return
     if not isinstance(message.channel, (discord.TextChannel, discord.Thread)): return
 
-    # 채널 화이트리스트 체크
+    # 채널 비활성화 체크 (!on 명령어는 예외 처리)
+    content = message.content.strip()
     if not config.is_channel_allowed(message.channel.id):
-        return  # 허용되지 않은 채널에서는 봇 무시
+        # !on 명령어만 허용
+        if content.lower() == '!on':
+            config.enable_channel(message.channel.id)
+            await message.channel.send("🟢 **봇 활성화**: 이 채널에서 봇이 다시 응답합니다.")
+        return  # 다른 모든 메시지는 무시
 
     asyncio.create_task(_process_message(message))
 

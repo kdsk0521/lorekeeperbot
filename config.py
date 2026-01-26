@@ -16,49 +16,68 @@ load_dotenv()
 VERSION = "3.2"
 
 # =========================================================
-# Channel Whitelist (허용된 채널에서만 봇 활동)
+# Channel Blacklist (비활성화된 채널 관리)
 # =========================================================
-# 환경 변수 또는 직접 설정
-# 형식: 쉼표로 구분된 채널 ID 문자열 (예: "123456789,987654321")
-# 비어있으면 모든 채널에서 활동
-_ALLOWED_CHANNELS_STR = os.getenv('ALLOWED_CHANNELS', '')
-ALLOWED_CHANNELS: set = set(
-    ch.strip() for ch in _ALLOWED_CHANNELS_STR.split(',')
-    if ch.strip()
-)
+# 기본: 모든 채널에서 활동 (ON)
+# !off 명령어로 해당 채널 비활성화
+# !on 명령어로 해당 채널 다시 활성화
 
-# 화이트리스트 모드 활성화 여부
-# True: 허용 목록에 있는 채널에서만 활동
-# False: 모든 채널에서 활동 (기본값)
-CHANNEL_WHITELIST_ENABLED = os.getenv('CHANNEL_WHITELIST_ENABLED', 'false').lower() == 'true'
+import json
 
-def is_channel_allowed(channel_id: str) -> bool:
+_DISABLED_CHANNELS_FILE = os.path.join("data", "disabled_channels.json")
+_DISABLED_CHANNELS: set = set()
+
+def _load_disabled_channels():
+    """시작 시 비활성화된 채널 목록 로드"""
+    global _DISABLED_CHANNELS
+    try:
+        if os.path.exists(_DISABLED_CHANNELS_FILE):
+            with open(_DISABLED_CHANNELS_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                _DISABLED_CHANNELS = set(str(ch) for ch in data.get('disabled_channels', []))
+    except Exception:
+        _DISABLED_CHANNELS = set()
+
+def _save_disabled_channels():
+    """비활성화된 채널 목록 저장"""
+    try:
+        os.makedirs(os.path.dirname(_DISABLED_CHANNELS_FILE), exist_ok=True)
+        with open(_DISABLED_CHANNELS_FILE, 'w', encoding='utf-8') as f:
+            json.dump({'disabled_channels': list(_DISABLED_CHANNELS)}, f, indent=2)
+    except Exception:
+        pass
+
+def is_channel_allowed(channel_id) -> bool:
     """
-    채널이 허용 목록에 있는지 확인합니다.
+    채널이 활성화되어 있는지 확인합니다.
 
     Returns:
-        bool: 화이트리스트가 비활성화되면 항상 True,
-              활성화된 경우 채널이 목록에 있으면 True
+        bool: 채널이 비활성화 목록에 없으면 True (기본 ON)
     """
-    if not CHANNEL_WHITELIST_ENABLED:
-        return True
-    if not ALLOWED_CHANNELS:
-        return True  # 목록이 비어있으면 모든 채널 허용
-    return str(channel_id) in ALLOWED_CHANNELS
+    return str(channel_id) not in _DISABLED_CHANNELS
 
-def add_allowed_channel(channel_id: str) -> bool:
-    """런타임에 허용 채널 추가 (재시작 시 초기화됨)"""
-    ALLOWED_CHANNELS.add(str(channel_id))
+def disable_channel(channel_id) -> bool:
+    """채널 비활성화 (!off)"""
+    _DISABLED_CHANNELS.add(str(channel_id))
+    _save_disabled_channels()
     return True
 
-def remove_allowed_channel(channel_id: str) -> bool:
-    """런타임에 허용 채널 제거"""
-    ALLOWED_CHANNELS.discard(str(channel_id))
+def enable_channel(channel_id) -> bool:
+    """채널 활성화 (!on)"""
+    _DISABLED_CHANNELS.discard(str(channel_id))
+    _save_disabled_channels()
     return True
 
-def get_allowed_channels() -> set:
-    """현재 허용된 채널 목록 반환"""
-    return ALLOWED_CHANNELS.copy()
+def is_channel_disabled(channel_id) -> bool:
+    """채널이 비활성화되어 있는지 확인"""
+    return str(channel_id) in _DISABLED_CHANNELS
+
+def get_disabled_channels() -> set:
+    """비활성화된 채널 목록 반환"""
+    return _DISABLED_CHANNELS.copy()
+
+# 시작 시 로드
+_load_disabled_channels()
 
 # =========================================================
 # API Keys & Models
