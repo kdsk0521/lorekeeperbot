@@ -108,6 +108,10 @@ async def _process_message(message):
                 )
                 return
 
+            # [NEW] Whitelist Check (Ignore if bot inactive)
+            if not domain_manager.get_bot_active(channel_id):
+                return
+
             # 4. CHAT LOGGING / RESPONSE
             mode = domain_manager.get_response_mode(channel_id)
             
@@ -309,16 +313,25 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                     # Ideally, we reconstruct rule_txt, but simpler is to just append new info or rely on world_ctx update
                     pass 
 
-            # [NEW] GM Judgment System Integration
+             # [NEW] GM Judgment System Integration
             judgment_context = ""
             action_judgment = nvc_res.get("ActionJudgment")
             if action_judgment and isinstance(action_judgment, dict):
+                 # Calculate Doom Modifier
+                 w_state = domain_manager.get_world_state(channel_id)
+                 c_doom = w_state.get("doom", 0)
+                 doom_mod_val = ((config.DOOM_DICE_BASELINE - c_doom) // 10) * config.DOOM_DICE_MODIFIER_STEP
+                 
+                 mods = action_judgment.get("modifiers", [])
+                 if doom_mod_val != 0:
+                     mods.append({"name": "Doom", "value": doom_mod_val})
+
                  # Perform the roll
                  full_judgment = cognition.build_action_judgment_with_roll(
                      action=action_judgment.get("action", "Unknown Action"),
                      difficulty=action_judgment.get("difficulty", "normal"),
                      difficulty_reason=action_judgment.get("difficulty_reason", ""),
-                     modifiers_list=action_judgment.get("modifiers", [])
+                     modifiers_list=mods
                  )
                  # Format into text
                  judgment_context = cognition.build_judgment_context_with_roll(full_judgment)

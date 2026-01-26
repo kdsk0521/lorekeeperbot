@@ -61,10 +61,17 @@ NPC_PREVIEW_LIMIT = 5               # Max NPCs shown in preview
 # =========================================================
 # World Manager Constants
 # =========================================================
+# Domain & Session Defaults
 DEFAULT_TIME_SLOTS = ["새벽", "오전", "오후", "황혼", "저녁", "심야"]
-DEFAULT_WEATHER_TYPES = ["맑음", "구름 조금", "흐림", "비", "안개", "폭풍우"]
+DEFAULT_WEATHER_TYPES = ["맑음", "흐림", "비", "안개", "돌풍"]
+DEFAULT_LORE = "기본 세계관: 어두운 도시, 수수께끼의 사건들..."
+DEFAULT_RULES = "1. 플레이어의 행동을 존중하십시오.\n2. 주사위 결과를 따르십시오."
 
-TIME_TICKS_PER_SLOT = 4  # 4 Ticks = 1 Time Slot advancement
+# Time Settings
+TICK_DURATION_MIN = 7  # Minutes
+TICK_DURATION_MAX = 10 # Minutes
+
+TIME_TICKS_PER_SLOT = 24  # 4 hours / 10 mins = 24 ticks
 
 # Doom Thresholds
 DOOM_THRESHOLD_WARNING = 30
@@ -81,6 +88,13 @@ DOOM_INCREASE_MEDIUM_RISK = 2
 DOOM_INCREASE_LORE_RULE = 1
 
 NEMESIS_THRESHOLD = -10
+
+# Doom Dice Modifier
+DOOM_DICE_BASELINE = 50
+DOOM_DICE_MODIFIER_STEP = 5
+
+# Memory Optimization
+FRESH_THRESHOLD = 70  # Increased from 50 (V2 Restoration)
 
 # =========================================================
 # Quest Manager Constants

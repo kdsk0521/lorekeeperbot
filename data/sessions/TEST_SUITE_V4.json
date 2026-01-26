@@ -1,0 +1,77 @@
+{
+  "participants": {
+    "TEST_USER_01": {
+      "mask": "Tester",
+      "passives": [],
+      "status_effects": [
+        "부상"
+      ],
+      "ai_memory": {
+        "passives": [
+          {
+            "name": "Veteran",
+            "tags": [
+              "Combat",
+              "Leadership"
+            ],
+            "desc": "Experienced fighter",
+            "acquired_at": "2026-01-26"
+          }
+        ]
+      }
+    }
+  },
+  "npcs": {
+    "Gandalf": {
+      "desc": "Mysterious old man",
+      "identity_history": [
+        {
+          "old_name": "OldMan",
+          "revealed_at": "2026-01-26 18:27",
+          "reason": "He summoned light."
+        }
+      ]
+    }
+  },
+  "history": [],
+  "quest_board": {
+    "active": [],
+    "completed": [
+      "Kill the Dragon"
+    ],
+    "memos": [],
+    "archive": [],
+    "lore": []
+  },
+  "world_state": {
+    "doom": 66,
+    "time_slot": "황혼",
+    "day": 1
+  },
+  "settings": {
+    "response_mode": "auto",
+    "session_locked": false,
+    "growth_system": "default"
+  },
+  "active_genres": [
+    "noir"
+  ],
+  "custom_tone": null,
+  "ai_session_memory": {
+    "world_summary": "",
+    "current_arc": "",
+    "active_threads": [],
+    "resolved_threads": [],
+    "key_events": [],
+    "foreshadowing": [],
+    "world_changes": [],
+    "npc_summaries": {},
+    "party_dynamics": "",
+    "last_updated": ""
+  },
+  "fermented_history": [],
+  "deep_memory": "",
+  "last_export_idx": 0,
+  "last_chronicle_idx": 0,
+  "bot_active": true
+}

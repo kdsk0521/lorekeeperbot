@@ -90,8 +90,10 @@ def _get_default_session() -> Dict[str, Any]:
         },
         "fermented_history": [],
         "deep_memory": "",
+        "deep_memory": "",
         "last_export_idx": 0,
-        "last_chronicle_idx": 0
+        "last_chronicle_idx": 0,
+        "bot_active": True  # Default: Bot is ON
     }
 
 def get_domain(channel_id: str) -> Dict[str, Any]:
@@ -198,7 +200,19 @@ def get_npc(channel_id: str, name: str) -> Optional[Dict[str, Any]]:
 
 def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
     d = get_domain(channel_id)
-    d.setdefault("npcs", {})[name] = data
+    npcs = d.setdefault("npcs", {})
+    
+    # [Restored Logic] Identity Reveal Tracking
+    # If name changes (OldName > NewName), handle it (Logic usually in higher layer, 
+    # but we support preserving 'source' and 'identity' fields here).
+    
+    # Ensure source field exists (Default: 'session' if created dynamically, 'lore' if loaded initially?)
+    # Callers should specify source. If not present and updating, keep existing.
+    if name in npcs:
+        existing_source = npcs[name].get("source", "session")
+        if "source" not in data: data["source"] = existing_source
+        
+    npcs[name] = data
     save_domain(channel_id, d)
 
 def delete_npc(channel_id: str, name: str) -> bool:
@@ -585,7 +599,14 @@ def set_current_location(channel_id: str, location: str) -> None:
     w["current_location"] = location
     update_world_state(channel_id, w)
 
-def set_current_risk(channel_id: str, risk: str) -> None:
-    w = get_world_state(channel_id)
     w["risk_level"] = risk
     update_world_state(channel_id, w)
+
+# Bot Active State
+def get_bot_active(channel_id: str) -> bool:
+    return get_domain(channel_id).get("bot_active", True)
+
+def set_bot_active(channel_id: str, active: bool) -> None:
+    d = get_domain(channel_id)
+    d["bot_active"] = active
+    save_domain(channel_id, d)

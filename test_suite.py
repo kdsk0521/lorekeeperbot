@@ -1,0 +1,117 @@
+"""
+Lorekeeper Bot V4 - Comprehensive Test Suite
+Verifies:
+1. World Simulation (Time, Doom)
+2. Character Mechanics (Quest, Dice with Doom Mod, Hybrid Passive)
+3. NPC Management (Identity Reveal)
+4. Config Integrity
+"""
+
+import sys
+import os
+import random
+import time
+
+# Add current directory to path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+sys.stdout.reconfigure(encoding='utf-8')
+
+import config
+import domain_manager
+import game_system # Facade
+import game_world
+import game_character
+import npc_manager
+
+CHANNEL_ID = "TEST_SUITE_V4"
+USER_ID = "TEST_USER_01"
+
+def print_header(title):
+    print(f"\n{'='*40}\n[{title}]\n{'='*40}")
+
+def run_test():
+    print_header("INITIALIZATION")
+    print(f"Target Channel: {CHANNEL_ID}")
+    
+    # 1. World & Doom
+    print_header("WORLD & DOOM")
+    
+    # Reset World
+    w = {"doom": 70, "time_slot": "오후", "day": 1} # Start with High Doom (70)
+    domain_manager.update_world_state(CHANNEL_ID, w)
+    
+    print(f"Initial Doom: {w['doom']}")
+    
+    # Test Doom Forecast (Bar)
+    forecast = game_world.get_doom_forecast(CHANNEL_ID)
+    print(f"Doom Forecast:\n{forecast}")
+    assert "[" in forecast, "Doom Bar missing"
+    
+    # Test Time Advance
+    msg = game_world.advance_time(CHANNEL_ID)
+    print(f"Time Advance Msg: {msg}")
+    
+    # 2. Character Mechanics
+    print_header("CHARACTER")
+    
+    # Setup User
+    p_data = {"mask": "Tester", "passives": [], "status_effects": ["부상"]} # Debuff
+    domain_manager.save_participant_data(CHANNEL_ID, USER_ID, p_data)
+    
+    # Dice Check with Doom Mod (Doom 70 -> penalty expected)
+    # (50 - 70) // 10 * 5 = -10
+    print("Running Dice Check (Doom 70, Injury)...")
+    check_res = game_character.perform_check(CHANNEL_ID, USER_ID, "Test Action")
+    print(check_res)
+    assert "Doom(" in check_res, "Doom modifier missing in dice check"
+    
+    # Hybrid Passive
+    print("\nAdding Passive...")
+    pas_res = game_character.add_passive(CHANNEL_ID, USER_ID, "Veteran", tags=["Combat", "Leadership"], desc="Experienced fighter")
+    print(pas_res)
+    
+    # Verify Context
+    p_data_reload = domain_manager.get_participant_data(CHANNEL_ID, USER_ID)
+    ctx = game_character.get_passives_for_context(p_data_reload)
+    print(f"Passive Context: {ctx}")
+    assert "Veteran" in ctx, "Passive not found in context"
+    assert "Combat" in ctx, "Tags not visible in context"
+
+    # Quest & Doom Reduction
+    game_character.add_quest(CHANNEL_ID, "Kill the Dragon")
+    print("\nCompleting Quest (Should reduce Doom)...")
+    q_res = game_character.complete_quest(CHANNEL_ID, "Kill the Dragon")
+    print(q_res)
+    
+    w_reload = domain_manager.get_world_state(CHANNEL_ID)
+    print(f"Doom after Quest: {w_reload['doom']} (Expected < 70)")
+    assert w_reload['doom'] < 70, "Doom did not decrease"
+
+    # 3. NPC Manager
+    print_header("NPC MANAGER")
+    npc_name = "OldMan"
+    npc_data = {"desc": "Mysterious old man"}
+    npc_manager.update_npc(CHANNEL_ID, npc_name, npc_data)
+    
+    # Identity Reveal
+    print(f"Revealing Identity: {npc_name} -> Gandalf")
+    rev_res = npc_manager.handle_identity_reveal(CHANNEL_ID, npc_name, "Gandalf", "He summoned light.")
+    print(rev_res)
+    
+    # Verify
+    npcs = npc_manager.get_npcs(CHANNEL_ID)
+    assert "Gandalf" in npcs, "New name missing"
+    assert "OldMan" not in npcs, "Old name still present"
+    assert npcs["Gandalf"]["identity_history"][0]["old_name"] == "OldMan", "Identity history missing"
+    
+    print("\n✅ TEST COMPLETE: SUCCESS")
+
+if __name__ == "__main__":
+    try:
+        run_test()
+    except AssertionError as e:
+        print(f"\n❌ TEST FAILED: {e}")
+        exit(1)
+    except Exception as e:
+        print(f"\n❌ TEST ERROR: {e}")
+        exit(1)
