@@ -513,7 +513,7 @@ async def analyze_genre_layers(client, model_id: str, text: str) -> Dict[str, An
     config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.1)
     contents = [types.Content(role="user", parts=[types.Part(text=f"{system_prompt}\n\nTEXT:\n{text[:15000]}")])]
     
-    result = await _api_call(client, model_id, contents, config)
+    result = await api_call_with_retry(client, model_id, contents, config, operation_name="Analyze Genre Layers")
     parsed = safe_parse_json(result)
     
     if parsed and "layers" in parsed:
