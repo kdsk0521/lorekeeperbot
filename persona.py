@@ -1029,83 +1029,73 @@ MATERIAL_PROCESSING_PROTOCOL = """
 # 프롬프트 순서 8번
 # =========================================================
 
-def build_author_note(active_genres: Optional[List[str]] = None, custom_tone: Optional[str] = None) -> str:
-    """장르와 톤을 기반으로 작가 노트를 동적 생성합니다."""
-    base_note = """## 작가 노트 (Author's Note)
-- 현재 장면의 분위기와 톤을 유지하세요
-- NPC의 개성과 말투를 일관되게 표현하세요
-- 플레이어의 선택에 의미 있는 결과를 제공하세요"""
+def build_combined_directive(active_genres: Optional[List[str]] = None, custom_tone: Optional[str] = None) -> str:
+    """
+    [Anti-Gravity Update]
+    Merges Author's Note and Writing Note into a single optimized Directive Block.
+    Aligns with the 3-Layer Genre System.
+    """
+    genre_hints = {
+        # [A. The Stage]
+        'high_fantasy': "- Maintain epic scale and mythical gravitas. Use archaic diction where appropriate.",
+        'wuxia': "- Emphasize honor (義俠) and vengeance (恩怨). Combat descriptions should be concise but impactful (internal energy/forms).",
+        'cyberpunk': "- Highlight the 'High Tech, Low Life' contrast. Blend technical jargon with street slang.",
+        'post_apocalypse': "- Vividly describe scarcity and desperation. Focus on what is missing from the world.",
+        'space_opera': "- Depict vast cosmic scales and the friction between diverse civilizations.",
+        'modern': "- Realistic depiction of modern daily life and professional expertise (School/Office/City Life).",
+
+        # [B. The Flavor]
+        'urban_fantasy': "- Delicately blur the line between the mundane and the supernatural. Ground fantasy in modern realism.",
+        'steampunk': "- Capture the Victorian aesthetic and the marvel of steam technology (brass, gears, engines).",
+        'cosmic_horror': "- Imply horror beyond human understanding. Use ambiguity and omission rather than direct description.",
+        'game_system': "- Seamlessly integrate system messages and leveling mechanics into the modern narrative.",
+
+        # [C. The Lens (Tone Quartet)]
+        'noir': "- (Cool) Maintain a dark, morally ambiguous atmosphere. Use dry, cynical, hardboiled prose.",
+        'comedy': "- (Fun) Focus on irony and humor. Keep the tone lighthearted and witty.",
+        'romance': "- (Love) Delicately portray emotional tension and the progression of relationships.",
+        'drama': "- (Pain) Focus on narrative weight, tragedy, emotional growth, and serious conflict."
+    }
+
+    directives = []
     
-    genre_specific = ""
+    # [1] Genre Directives
     if active_genres:
-        genre_hints = {
-            'wuxia': "- 무협물 특유의 의협(義俠)과 은원(恩怨) 관계를 강조하세요",
-            'noir': "- 어두운 분위기와 도덕적 모호함을 유지하세요. 모든 것에 대가가 있습니다",
-            'high_fantasy': "- 서사적 스케일과 신화적 장중함을 유지하세요",
-            'cyberpunk': "- High Tech/Low Life 대비를 부각하세요. 기술은 차갑고 인간은 절박합니다",
-            'cosmic_horror': "- 인간 이해 너머의 공포를 암시하세요. 직접 묘사보다 불안감을 조성하세요",
-            'post_apocalypse': "- 생존의 절박함과 문명 잔해의 쓸쓸함을 표현하세요",
-            'urban_fantasy': "- 일상과 비일상의 경계를 섬세하게 다루세요",
-            'steampunk': "- 빅토리아 시대 미학과 증기 기술의 경이로움을 살리세요",
-            'school_life': "- 청춘의 감수성과 학교 공간의 폐쇄성을 활용하세요",
-            'superhero': "- 힘과 책임의 딜레마를 탐구하세요",
-            'space_opera': "- 광활한 우주적 스케일과 다양한 문명의 충돌을 그리세요",
-            'western': "- 황야의 고독함과 프론티어 정의를 표현하세요",
-            'occult': "- 초자연적 공포와 심리적 압박감을 교차시키세요",
-            'military': "- 전술적 긴장감과 전우애, 명령체계의 압박을 그리세요"
-        }
         for genre in active_genres:
             if genre.lower() in genre_hints:
-                genre_specific += f"\n{genre_hints[genre.lower()]}"
+                directives.append(genre_hints[genre.lower()])
     
-    tone_specific = ""
+    # [2] Custom Tone Directive
     if custom_tone:
-        tone_specific = f"\n\n### 분위기 지침\n> {custom_tone}"
-    
-    return f"""<Scripts type="author_note">
-{base_note}{genre_specific}{tone_specific}
-</Scripts>"""
+        directives.append(f"- [GUIDE]: {custom_tone}")
 
+    # [3] Universal Writing Guidelines
+    universal_rules = [
+        "- Prioritize sensory details (sight, sound, touch, smell, taste).",
+        "- Balance dialogue and narration evenly.",
+        "- Use short, punchy sentences for tension; allow flowing descriptions for peaceful scenes."
+    ]
+    
+    # Construct Block
+    narrative_section = "\n".join(directives) if directives else "- Maintain the current atmosphere and tone."
+    rules_section = "\n".join(universal_rules)
 
-def build_writing_note(active_genres: Optional[List[str]] = None) -> str:
-    """장르를 기반으로 글쓰기 노트를 동적 생성합니다."""
-    base_note = """## 글쓰기 노트 (Writing Note)
-- 감각적 묘사를 우선하세요 (시각, 청각, 촉각, 후각, 미각)
-- 대화와 서술의 균형을 맞추세요"""
-    
-    style_hints = []
-    if active_genres:
-        style_map = {
-            'wuxia': "- 무공 묘사는 간결하되 위력을 체감케 하세요. 내공, 초식 이름을 활용하세요",
-            'noir': "- 짧고 건조한 문체를 사용하세요. 감정은 억제하고 사실만 전달하세요",
-            'high_fantasy': "- 장중한 문체와 고어체 대사를 적절히 섞으세요",
-            'cyberpunk': "- 기술 용어와 거리 은어를 섞어 사용하세요. 네온과 빗소리가 기본입니다",
-            'cosmic_horror': "- 묘사할 수 없는 것은 묘사하지 마세요. 공백과 생략으로 공포를 조성하세요",
-            'post_apocalypse': "- 궁핍함을 구체적으로 묘사하세요. 무엇이 없는지가 중요합니다",
-            'urban_fantasy': "- 현대적 문체에 판타지 요소를 자연스럽게 녹이세요",
-            'school_life': "- 구어체와 또래 문화를 반영한 대사를 사용하세요",
-            'military': "- 군사 용어와 명령 구조를 정확히 사용하세요. 계급 호칭에 유의하세요"
-        }
-        for genre in active_genres:
-            if genre.lower() in style_map:
-                style_hints.append(style_map[genre.lower()])
-    
-    # 기본 스타일 힌트
-    default_hints = """
-- 긴장감 있는 장면에서는 짧은 문장을 사용하세요
-- 평화로운 장면에서는 여유로운 묘사를 허용하세요"""
-    
-    genre_section = "\n".join(style_hints) if style_hints else ""
-    
-    return f"""<Scripts type="writing_note">
-{base_note}
-{genre_section}{default_hints}
-</Scripts>"""
+    return f'''<Scripts type="narrative_directive">
+## Narrative Directive (Instruction)
+### [1] Genre Execution
+{narrative_section}
 
+### [2] Writing Rules
+{rules_section}
+
+### [3] Objective
+- Provide meaningful consequences for player choices and maintain consistent NPC personalities.
+- **IMPORTANT**: The final output MUST be written in **Korean**.
+</Scripts>'''
 
 # 기본 상수 (하위 호환성 유지)
-AUTHOR_NOTE = build_author_note()
-WRITING_NOTE = build_writing_note()
+AUTHOR_NOTE = "" 
+WRITING_NOTE = ""
 
 
 # =========================================================
@@ -1476,24 +1466,68 @@ Description: {desc}
 """
         return self
     
-    def set_genres(self, active_genres: Optional[List[str]] = None) -> 'PromptBuilder':
-        """활성 장르 설정"""
-        self.sections['_active_genres'] = active_genres  # 내부 저장용
-        if active_genres:
-            genre_text = "### ACTIVE GENRE MODULES\n"
-            genre_text += "The following genre elements are active. Fuse them organically:\n\n"
+    def set_genres(self, active_genres: Union[List[str], Dict[str, Any], None] = None) -> 'PromptBuilder':
+        """활성 장르 설정 (Supports List or 3-Layer Dict)"""
+        
+        # Normalize to list for internal hint lookup, but keep structure for display
+        display_text = ""
+        normalized_list = []
+        
+        # Helper to normalize layer values (List or String)
+        def _normalize_layer(val) -> List[str]:
+            import re
+            if isinstance(val, list):
+                return [str(v).strip().lower() for v in val if v]
+            if isinstance(val, str):
+                # Legacy mix string support
+                raw = re.split(r'[+/&,]', val)
+                return [r.strip().lower() for r in raw if r.strip()]
+            return []
+
+        if isinstance(active_genres, dict) and "layers" in active_genres:
+            # New 3-Layer Format
+            layers = active_genres["layers"]
+            display_text = "### ACTIVE GENRE ARCHETYPES (3-Layer Analysis)\n"
             
+            # Layer 1: World
+            w_list = _normalize_layer(layers.get("world_setting", "modern"))
+            w_display = ", ".join([x.upper() for x in w_list])
+            display_text += f"- **[STAGE] World Setting:** {w_display} \n"
+            normalized_list.extend(w_list)
+            
+            # Layer 2: Style (Optional)
+            s_list = _normalize_layer(layers.get("style_tech", []))
+            if s_list:
+                s_display = ", ".join([x.upper() for x in s_list])
+                display_text += f"- **[SKIN] Style & Tech:** {s_display} \n"
+                normalized_list.extend(s_list)
+            
+            # Layer 3: Tone (Optional)
+            t_list = _normalize_layer(layers.get("narrative_tone", []))
+            if t_list:
+                t_display = ", ".join([x.upper() for x in t_list])
+                display_text += f"- **[LENS] Narrative Tone:** {t_display} \n"
+                normalized_list.extend(t_list)
+            
+            if "atmosphere_guide" in active_genres:
+                display_text += f"\n**[GUIDE]:** {active_genres['atmosphere_guide']}\n"
+                
+            self.sections['_active_genres'] = normalized_list # For build_author_note usage
+            
+        elif isinstance(active_genres, list):
+            # Legacy List Format
+            normalized_list = active_genres
+            self.sections['_active_genres'] = normalized_list
+            
+            display_text = "### ACTIVE GENRE MODULES\n"
             for genre in active_genres:
-                definition = GENRE_DEFINITIONS.get(
-                    genre.lower(),
-                    "(Custom genre traits applied)"
-                )
-                genre_text += f"- **{genre.upper()}:** {definition}\n"
-            
-            genre_text += "\n**[FUSION DIRECTIVE]:** Blend these elements seamlessly. "
-            genre_text += "Genre conventions must still obey the World Axiom.\n"
-            
-            self.sections['genres'] = genre_text
+                display_text += f"- **{genre.upper()}**: (Active)\n"
+                
+        else:
+            self.sections['_active_genres'] = []
+            return self
+
+        self.sections['genres'] = display_text + "\n"
         return self
     
     def set_custom_tone(self, custom_tone: Optional[str] = None) -> 'PromptBuilder':
@@ -1607,10 +1641,7 @@ This tone affects style, not physics or causality.
         if 'scripts' not in self.sections:
             active_genres = self.sections.get('_active_genres')
             custom_tone = self.sections.get('_custom_tone')
-            self.sections['scripts'] = (
-                build_author_note(active_genres, custom_tone) + "\n" +
-                build_writing_note(active_genres)
-            )
+            self.sections['scripts'] = build_combined_directive(active_genres, custom_tone)
         
         parts = [
             # [7] Cache Boundary

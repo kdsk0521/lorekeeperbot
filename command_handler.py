@@ -158,12 +158,17 @@ async def handle_lore_command(message, channel_id: str, arg: str, client_genai=N
             
             domain_manager.append_lore(channel_id, full) 
             
-            # Genre Analysis
-            res = await memory_system.analyze_genre_from_lore(client_genai, model_id, full)
-            domain_manager.set_active_genres(channel_id, res.get("genres", ["noir"]))
-            domain_manager.set_custom_tone(channel_id, res.get("custom_tone"))
+            # Genre Analysis (3-Layer)
+            res = await memory_system.analyze_genre_layers(client_genai, model_id, full)
+            # Store the FULL structure so persona.py can use it
+            domain_manager.set_active_genres(channel_id, res) 
+            domain_manager.set_custom_tone(channel_id, res.get("atmosphere_guide"))
             
-            await msg.edit(content=f"✅ **로어 분석 완료**\nNPC: {len(npcs)}명 추출{pc_msg}\n장르: {res.get('genres')}")
+            # Formatted Output
+            layers = res.get("layers", {})
+            genre_summary = f"{layers.get('world_setting', '?')} / {layers.get('style_tech', '?')} / {layers.get('narrative_tone', '?')}"
+            
+            await msg.edit(content=f"✅ **로어 분석 완료**\nNPC: {len(npcs)}명 추출{pc_msg}\n장르(3계층): {genre_summary}")
         except Exception as e:
             await msg.edit(content=f"⚠️ 분석 오류: {e}")
     else:

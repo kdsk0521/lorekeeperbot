@@ -205,68 +205,68 @@ As time passes → IMMEDIATE compresses into FERMENTED.
 </Temporal_Orientation_Protocol>
 """
 
+# =========================================================
+# Lorekeeper Genre System (The "Essential 12")
+# =========================================================
+
+# 1. 정예 장르 리스트 (12개)
+# =========================================================
+# Lorekeeper Genre System (The "Perfect 14")
+# =========================================================
+
+# 1. 최종 정예 장르 리스트 (14개)
 SUPPORTED_GENRES = [
-    'wuxia', 'noir', 'high_fantasy', 'cyberpunk', 'cosmic_horror',
-    'post_apocalypse', 'urban_fantasy', 'steampunk', 'school_life',
-    'superhero', 'space_opera', 'western', 'occult', 'military'
+    # [A. The Stage] 배경과 무대 (6개)
+    'high_fantasy',    # 정통 판타지
+    'wuxia',           # 무협
+    'cyberpunk',       # 사이버펑크
+    'post_apocalypse', # 아포칼립스
+    'space_opera',     # 스페이스 오페라
+    'modern',          # [CHANGE] 현대물 (학교, 직장, 일상)
+
+    # [B. The Flavor] 스타일과 기술 (4개)
+    'urban_fantasy',   # 어반 판타지 (히어로/오컬트 통합)
+    'steampunk',       # 스팀펑크
+    'cosmic_horror',   # 코즈믹 호러
+    'game_system',     # 게임 시스템 (성좌/인방/루프 통합)
+
+    # [C. The Lens] 톤과 감정선 (4대장)
+    'noir',            # 쿨함/냉소 (Cool)
+    'comedy',          # 웃음/가벼움 (Fun)
+    'romance',         # 사랑/설렘 (Love)
+    'drama'            # 아픔/진지함 (Pain/Weight)
 ]
 
+# 2. 키워드 매핑 (Drama 추가)
 GENRE_KEYWORD_MAP = {
-    "high_fantasy": [
-        "dragon", "elf", "orc", "magic", "wizard", "spell", "kingdom", 
-        "mana", "legion", "드래곤", "엘프", "마법", "왕국", "하이판타지", "판타지"
+    # --- Existing Mappings ---
+    "high_fantasy": ["dragon", "magic", "wizard", "elf", "orc", "kingdom", "드래곤", "마법", "판타지"],
+    "wuxia": ["murim", "qi", "martial", "sect", "jianghu", "무협", "무림", "내공", "강호"],
+    "cyberpunk": ["cyber", "neon", "corp", "implant", "android", "dystopia", "사이버", "네온", "디스토피아"],
+    "post_apocalypse": ["wasteland", "survival", "zombie", "ruins", "military", "아포칼립스", "생존", "폐허"],
+    "space_opera": ["spaceship", "galaxy", "alien", "warp", "우주", "SF", "함선"],
+    
+    # [CHANGE] Modern (School Life + Office + Daily Life)
+    "modern": [
+        "school", "academy", "student", "office", "company", "salaryman", 
+        "hospital", "doctor", "modern day", "realistic", "slice of life",
+        "학교", "학원", "학생", "회사", "직장", "오피스", "현대", "리얼리즘", "청춘"
     ],
-    "steampunk": [
-        "steam", "gear", "brass", "industrial", "engine", "victorian", 
-        "clockwork", "airship", "스팀", "증기", "톱니", "기관"
-    ],
-    "cyberpunk": [
-        "cyber", "neon", "hacker", "corp", "implant", "android", 
-        "chrome", "사이버", "해커", "네온", "임플란트"
-    ],
-    "wuxia": [
-        "murim", "cultivation", "sect", "qi", "martial", "jianghu", 
-        "무협", "무림", "강호", "내공", "문파"
-    ],
-    "cosmic_horror": [
-        "cthulhu", "eldritch", "sanity", "cult", "madness", "ancient one", 
-        "크툴루", "코즈믹", "광기", "고대신"
-    ],
-    "post_apocalypse": [
-        "wasteland", "radiation", "ruins", "survival", "scavenge", "mutant", 
-        "아포칼립스", "황무지", "방사능", "폐허"
-    ],
-    "urban_fantasy": [
-        "modern magic", "masquerade", "secret society", "vampire", "hunter", 
-        "어반", "이능", "뱀파이어", "헌터"
-    ],
-    "school_life": [
-        "school", "academy", "student", "class", "club", "campus",
-        "학교", "학생", "학원", "동아리"
-    ],
-    "superhero": [
-        "superhero", "villain", "superpower", "costume", "justice", "hero", 
-        "히어로", "초능력", "빌런"
-    ],
-    "space_opera": [
-        "spaceship", "galaxy", "planet", "alien", "warp", "starship", 
-        "우주", "은하", "외계인", "함선"
-    ],
-    "western": [
-        "cowboy", "revolver", "saloon", "sheriff", "outlaw", "wild west", 
-        "카우보이", "서부", "총잡이"
-    ],
-    "occult": [
-        "ghost", "spirit", "curse", "exorcism", "haunted", "ritual", "demon", 
-        "유령", "오컬트", "저주", "퇴마"
-    ],
-    "military": [
-        "soldier", "special forces", "tactical", "warfare", "squad", "mercenary", 
-        "군인", "특수부대", "용병", "전술"
-    ],
-    "noir": [
-        "detective", "noir", "crime", "shadow", "mystery", "hardboiled",
-        "탐정", "느와르", "범죄", "미스터리"
+
+    "urban_fantasy": ["modern magic", "vampire", "hunter", "ghost", "superhero", "villain", "myth", "어반", "오컬트", "히어로"],
+    "steampunk": ["steam", "gear", "brass", "engine", "victorian", "스팀", "증기", "태엽"],
+    "cosmic_horror": ["ancient one", "madness", "fear", "tentacle", "eldritch", "코즈믹", "광기", "공포", "기괴"],
+    "game_system": ["status window", "level up", "quest", "system", "streaming", "time loop", "상태창", "회귀", "인방", "성좌"],
+    
+    # --- Tone Quartet ---
+    "noir": ["detective", "shadow", "crime", "hardboiled", "mystery", "thriller", "느와르", "탐정", "하드보일드", "추리"],
+    "comedy": ["sitcom", "gag", "humor", "lighthearted", "daily life", "healing", "코미디", "개그", "시트콤", "일상", "힐링"],
+    "romance": ["love", "dating", "harem", "kiss", "relationship", "seducer", "로맨스", "연애", "사랑", "하렘", "썸"],
+    
+    # [NEW] Drama (The Emotional Weight)
+    "drama": [
+        "tragedy", "angst", "emotional", "politics", "growth", "conflict", "tearjerker", "serious",
+        "드라마", "피폐", "서사", "비극", "성장", "정치", "암투", "감동", "신파"
     ]
 }
 
@@ -457,38 +457,89 @@ def safe_parse_json(text: Optional[str], expect_list: bool = False) -> Any:
 
 
 
-async def analyze_genre_from_lore(client, model_id: str, text: str) -> Dict[str, Any]:
+async def analyze_genre_layers(client, model_id: str, text: str) -> Dict[str, Any]:
     """
-    텍스트에서 장르와 톤을 분석합니다.
+    [Anti-Gravity Update]
+    14개 정예 태그를 사용하되, 계층당 최대 2개로 제한하여 '선명한 컨셉'을 추출합니다.
     """
     if not text:
-        return {"genres": ["noir"], "custom_tone": None}
+        return {
+            "layers": {"world_setting": ["modern"], "style_tech": [], "narrative_tone": ["drama"]},
+            "atmosphere_guide": "기본적인 분위기로 묘사하세요."
+        }
 
     system_prompt = (
-        "You are a Genre Analyzer.\n"
-        "Analyze the text and determine the most fitting genres and atmospheric tone.\n"
-        "Select the best matching genres from the list, or suggest a new one if strongly applicable.\n\n"
+        "You are a Genre Architect for a TRPG scenario.\n"
+        "Analyze the text and map it to the 14 Core Archetypes.\n"
+        "Apply the 'Safety Lock Protocol' to prevent concept dilution.\n\n"
+        
+        "### SAFETY LOCK PROTOCOL (CRITICAL)\n"
+        "1. **Select MAXIMUM 2 tags per layer.** (1 Primary, 1 Optional Secondary).\n"
+        "2. Do NOT select contradictory tags unless the lore explicitly mixes them.\n"
+        "3. If a layer is not explicitly defined, select the most implicit default or leave empty.\n\n"
+        
+        "### EXAMPLES (Follow this logic)\n"
+        "Input: 'A chaotic world mixed with magic, cyberpunk cyborgs, zombies, space aliens, and detectives.'\n"
+        "Output (Safe): {\n"
+        "  \"layers\": {\n"
+        "    \"world_setting\": [\"cyberpunk\", \"post_apocalypse\"], // Aliens/Magic ignored to keep focus\n"
+        "    \"style_tech\": [\"urban_fantasy\"],\n"
+        "    \"narrative_tone\": [\"noir\", \"drama\"] \n"
+        "  },\n"
+        "  \"atmosphere_guide\": \"사이보그와 좀비가 뒤섞인 어두운 도시에서 탐정물을 수행하세요.\"\n"
+        "}\n\n"
+        
+        "### Layer Definitions\n"
+        "1. **World Setting (The Stage):** Where/When?\n"
+        "   - Choices: high_fantasy, wuxia, cyberpunk, post_apocalypse, space_opera, modern\n"
+        "2. **Style & Tech (The Skin):** What powers/visuals?\n"
+        "   - Choices: urban_fantasy, steampunk, cosmic_horror, game_system\n"
+        "3. **Narrative Tone (The Lens):** Emotional weight?\n"
+        "   - Choices: noir, comedy, romance, drama\n\n"
         
         f"Supported Genres: {', '.join(SUPPORTED_GENRES)}\n\n"
         
         "Output Format (JSON):\n"
         "{\n"
-        "  \"genres\": [\"primary_genre\", \"secondary_genre\"],  // Max 2-3 genres\n"
-        "  \"custom_tone\": \"Descriptive sentence about the atmosphere (Korean)\"\n"
+        "  \"layers\": {\n"
+        "    \"world_setting\": [\"Primary\", \"Secondary(Optional)\"],\n"
+        "    \"style_tech\": [\"Primary\", \"Secondary(Optional)\"],\n"
+        "    \"narrative_tone\": [\"Primary\", \"Secondary(Optional)\"]\n"
+        "  },\n"
+        "  \"atmosphere_guide\": \"Brief instruction for the narrator focusing on the selected combinations (MUST BE IN KOREAN).\"\n"
         "}"
     )
+    
+    config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.1)
+    contents = [types.Content(role="user", parts=[types.Part(text=f"{system_prompt}\n\nTEXT:\n{text[:15000]}")])]
+    
+    result = await _api_call(client, model_id, contents, config)
+    parsed = safe_parse_json(result)
+    
+    if parsed and "layers" in parsed:
+        # [Safety Mechanism] Enforce Max Limits (List Version)
+        layers = parsed["layers"]
+        for key in ["world_setting", "style_tech", "narrative_tone"]:
+            if key in layers:
+                val = layers[key]
+                # Ensure it's a list
+                if isinstance(val, str): val = [val] # Flexible handling
+                if not isinstance(val, list): val = []
+                
+                # Truncate to Max 2
+                if len(val) > 2:
+                    layers[key] = val[:2]
+                else:
+                    layers[key] = val
+                    
+        return parsed
+    
+    # Fallback
+    return {
+        "layers": {"world_setting": ["urban_fantasy"], "style_tech": ["modern"], "narrative_tone": ["adventure"]},
+        "atmosphere_guide": "분석 실패. 기본 어반 판타지 톤으로 설정합니다."
+    }
 
-    try:
-        config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2)
-        contents = [types.Content(role="user", parts=[types.Part(text=f"{system_prompt}\n\n[Text]:\n{text}")])]
-        
-        result = await api_call_with_retry(client, model_id, contents, config, operation_name="Analyze Genre")
-        if result:
-            return safe_parse_json(result)
-    except Exception as e:
-        logging.error(f"[Analyze Genre] Failed: {e}")
-        
-    return {"genres": ["noir"], "custom_tone": None}
 
 
 async def analyze_location_rules_from_lore(client, model_id: str, text: str) -> Dict[str, str]:
