@@ -249,6 +249,11 @@ def update_npc_attitude(channel_id: str, npc_name: str, attitude: str, reason: s
     d = get_domain(channel_id)
     return d.get("npc_attitudes", {})
 
+def get_npc_attitudes(channel_id: str) -> Dict[str, Dict]:
+    """저장된 NPC 태도 조회"""
+    d = get_domain(channel_id)
+    return d.get("npc_attitudes", {})
+
 # Active Genres & Tone
 def set_active_genres(channel_id: str, genres: Any) -> None:
     """활성 장르 설정 (List[str] or Dict)"""
@@ -265,7 +270,6 @@ def set_custom_tone(channel_id: str, tone: Optional[str]) -> None:
     d = get_domain(channel_id)
     d["custom_tone"] = tone
     save_domain(channel_id, d)
-    return d.get("npc_attitudes", {})
 
 def get_npc_attitude(channel_id: str, npc_name: str) -> Optional[Dict]:
     """특정 NPC의 태도 조회"""
