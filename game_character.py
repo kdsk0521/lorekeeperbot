@@ -184,6 +184,19 @@ def perform_check(channel_id: str, user_id: str, action_desc: str = "") -> str:
             mod_details.append(f"{eff}({val})")
             continue
 
+    # [Anti-Gravity Feature] Hidden Passive Modifiers
+    passives = p_data.get("ai_memory", {}).get("passives", [])
+    passive_bonus = 0
+    for p in passives:
+        if isinstance(p, dict):
+            val = p.get("modifier", 0)
+            if val != 0:
+                passive_bonus += val
+                mod_details.append(f"{p.get('name')}(+{val})")
+    
+    if passive_bonus != 0:
+        modifier += passive_bonus
+
     # [NEW] Doom Modifier
     world = domain_manager.get_world_state(channel_id)
     doom = world.get("doom", 0)

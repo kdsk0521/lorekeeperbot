@@ -155,6 +155,40 @@ async def handle_lore_command(message, channel_id: str, arg: str, client_genai=N
                  # Save as default PC info for !mask to pick up
                  domain_manager.set_default_pc_info(channel_id, pc_info)
                  pc_msg = f"\n주인공 식별: {pc_info.get('name')} (가면 설정 시 자동 적용)"
+                 
+                 # [Anti-Gravity Fix] Auto-apply to existing participants with matching name
+                 d = domain_manager.get_domain(channel_id)
+                 updated_players = []
+                 for uid, p_data in d.get("participants", {}).items():
+                     if p_data.get("mask", "").lower() == pc_info.get("name").lower():
+                         # Merge passives
+                         new_passives = pc_info.get("passives", [])
+                         if new_passives:
+                             # Ensure ai_memory exists
+                             if "ai_memory" not in p_data: p_data["ai_memory"] = {}
+                             if "passives" not in p_data["ai_memory"]: p_data["ai_memory"]["passives"] = []
+                             
+                             # Append non-duplicate passives
+                             current_names = [p['name'] if isinstance(p, dict) else str(p) for p in p_data["ai_memory"]["passives"]]
+                             for np in new_passives:
+                                 # Standardize to Dict
+                                 np_obj = np if isinstance(np, dict) else {"name": str(np), "modifier": 0, "desc": "Extracted"}
+                                 name_key = np_obj.get("name", "Unknown")
+                                 
+                                 if name_key not in current_names:
+                                     p_data["ai_memory"]["passives"].append({
+                                         "name": name_key,
+                                         "tags": ["Lore", "+Auto"],
+                                         "modifier": np_obj.get("modifier", 0), # Store the hidden stat
+                                         "desc": np_obj.get("desc", "Extracted from Lore"),
+                                         "acquired_at": time.strftime('%Y-%m-%d')
+                                     })
+                             
+                             updated_players.append(pc_info.get("name"))
+                             domain_manager.save_participant_data(channel_id, uid, p_data)
+                 
+                 if updated_players:
+                     pc_msg += f"\n✅ 캐릭터 업데이트: {', '.join(updated_players)} (패시브 적용, Hidden Stat 포함)"
             
             domain_manager.append_lore(channel_id, full) 
             
