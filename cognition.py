@@ -153,11 +153,12 @@ def build_action_judgment_with_roll(action: str, difficulty: str, difficulty_rea
         for mod in modifiers_list:
             if isinstance(mod, dict):
                 for k, v in mod.items():
-                    modifiers[k] = v
                     try:
-                        val_int = int(str(v).replace('+', '')) # Handle "+5"
+                        val_int = int(str(v).replace('+', '').replace(',', '').strip())
+                        modifiers[k] = val_int
                         modifier_total += val_int
                     except (ValueError, TypeError):
+                        modifiers[k] = 0
                         logging.warning(f"Invalid modifier value for {k}: {v} (treated as 0)")
     
     final_roll = base_roll + modifier_total
@@ -180,7 +181,15 @@ def build_action_judgment_with_roll(action: str, difficulty: str, difficulty_rea
 def build_judgment_context_with_roll(judgment: Dict[str, Any]) -> str:
     if not judgment: return ""
     
-    mod_strs = [f"{n}({'+' if v>=0 else ''}{v})" for n, v in judgment.get("modifiers", {}).items()]
+    mod_strs = []
+    for n, v in judgment.get("modifiers", {}).items():
+        try:
+            val = int(v)
+            prefix = '+' if val >= 0 else ''
+            mod_strs.append(f"{n}({prefix}{val})")
+        except:
+            mod_strs.append(f"{n}({v})")
+    
     mod_text = ", ".join(mod_strs) if mod_strs else "None"
     
     result_kr = {"critical_success": "대성공", "success": "성공", "partial": "부분 성공", "failure": "실패"}.get(judgment.get("result"), "N/A")
