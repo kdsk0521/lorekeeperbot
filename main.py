@@ -31,7 +31,11 @@ try:
     import cognition
     import command_handler 
     import session_manager
+    import session_manager
     import memory_system
+    import game_character
+    import game_world
+    import npc_manager
 
 except ImportError as e:
     print(f"CRITICAL ERROR: Failed to import modules. {e}")
