@@ -154,7 +154,11 @@ def build_action_judgment_with_roll(action: str, difficulty: str, difficulty_rea
             if isinstance(mod, dict):
                 for k, v in mod.items():
                     modifiers[k] = v
-                    modifier_total += v
+                    try:
+                        val_int = int(str(v).replace('+', '')) # Handle "+5"
+                        modifier_total += val_int
+                    except (ValueError, TypeError):
+                        logging.warning(f"Invalid modifier value for {k}: {v} (treated as 0)")
     
     final_roll = base_roll + modifier_total
     
@@ -245,12 +249,28 @@ async def extract_all_updates(
     nar = result_map.get("narrative", {})
     qst = result_map.get("quest", {})
     
+    # Sanitize Physical
+    p_upd = None
+    if phys:
+        def _safe_int(v):
+            try: return int(str(v).replace(',', '').replace('+', '').strip())
+            except: return 0
+            
+        def _safe_inv(d):
+            if not isinstance(d, dict): return None
+            return {k: _safe_int(v) for k, v in d.items()}
+
+        p_upd = {
+            "inventory_add": _safe_inv(phys.get("inventory_add")), 
+            "inventory_remove": _safe_inv(phys.get("inventory_remove")),
+            "gold_change": _safe_int(phys.get("gold_change")) if phys.get("gold_change") is not None else 0, 
+            "status_add": phys.get("status_add"), 
+            "status_remove": phys.get("status_remove")
+        }
+
     # Consolidate
     return {
-        "PlayerUpdate": {
-            "inventory_add": phys.get("inventory_add"), "inventory_remove": phys.get("inventory_remove"),
-            "gold_change": phys.get("gold_change"), "status_add": phys.get("status_add"), "status_remove": phys.get("status_remove")
-        } if phys else None,
+        "PlayerUpdate": p_upd,
         
         "PlayerMemoryUpdate": {
             "relationships": soc.get("relationships"), "companions": soc.get("companions"), "passives": nar.get("passives")

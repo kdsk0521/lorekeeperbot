@@ -337,7 +337,7 @@ async def api_call_with_retry(
                          for rating in candidate.safety_ratings:
                              logging.warning(f"  {rating.category}: {rating.probability}")
                     continue
-                elif fr_str not in ['STOP', 'END_TURN', '1']:
+                elif 'STOP' not in fr_str and 'END_TURN' not in fr_str and fr_str != '1':
                      logging.warning(f"[{operation_name}] 비정상 종료 (시도 {attempt+1}): {fr_str}")
             
             if response.text:

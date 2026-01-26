@@ -432,6 +432,35 @@ def get_lore_book(channel_id: str) -> str:
         msg += f"{i+1}. [{date_str}] {e.get('title', 'Untitled')}\n"
     return msg
 
+def calculate_status_doom_contribution(user_data: Dict[str, Any]) -> Tuple[int, List[str]]:
+    """
+    Calculate Doom increase based on active Negative Status Effects (V2/V5 Rule).
+    Returns (doom_increase_amount, list_of_reasons).
+    """
+    effects = user_data.get("status_effects", [])
+    doom_val = 0
+    reasons = []
+    
+    # Severity Table (Hardcoded or Config dependent)
+    # 1 (Light): +1
+    # 2 (Medium): +3
+    # 3 (Critical): +5
+    
+    for eff in effects:
+        # Check config first
+        if hasattr(config, "NEGATIVE_STATUS_EFFECTS") and eff in config.NEGATIVE_STATUS_EFFECTS:
+            sev = config.NEGATIVE_STATUS_EFFECTS[eff]
+            add = 0
+            if sev == 1: add = 1
+            elif sev == 2: add = 3
+            elif sev >= 3: add = 5
+            
+            if add > 0:
+                doom_val += add
+                reasons.append(f"{eff}(+{add})")
+                
+    return doom_val, reasons
+
 # =========================================================
 # ABNORMAL ADAPTATION SYSTEM
 # =========================================================
