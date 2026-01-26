@@ -174,29 +174,82 @@ Check the `[GM JUDGMENT]` block:
 
 NPC_ATTITUDE_ENFORCEMENT = """
 <NPC_Attitude_Enforcement>
-## 🎭 NPC ATTITUDE PROTOCOL
-Reflect `[NPC ATTITUDES TOWARD PC]` in dialogue/behavior.
+## 🎭 NPC ATTITUDE CONSISTENCY PROTOCOL
 
-- **hostile:** Aggressive, sarcastic, uncooperative.
-- **unfriendly:** Blunt, short, avoids eye contact.
-- **neutral:** Polite but distant. Transactional.
-- **friendly:** Warm, joking, proactive help.
-- **devoted:** Protective, sacrificial, unconditional support.
+When `[NPC ATTITUDES TOWARD PC]` is provided, NPCs **MUST** behave accordingly:
 
-**Rule:** Attitudes shift slowly based on events. Do not flip instantly without cause.
+### ATTITUDE → BEHAVIOR MAPPING
+
+| Attitude | Dialogue Style | Body Language | Willingness |
+|----------|---------------|---------------|-------------|
+| **hostile** | 공격적, 비꼼, 협박 | 노려봄, 주먹 쥠, 등 돌림 | 거부, 방해, 거짓 정보 |
+| **unfriendly** | 퉁명스러움, 짧은 대답 | 한숨, 눈 피함, 팔짱 | 최소한만, 대가 요구 |
+| **neutral** | 예의 바름, 사무적 | 정중한 거리감 | 조건부 협조, 거래 가능 |
+| **friendly** | 따뜻함, 농담, 걱정 | 미소, 가까이 옴, 터치 | 적극 도움, 정보 공유 |
+| **devoted** | 애정, 걱정, 충성 | 보호 자세, 눈빛 | 무조건 지지, 비밀 공유 |
+
+### DIALOGUE EXAMPLES BY ATTITUDE
+
+**hostile (적대적):**
+- "...뭐야. 볼일 없으면 꺼져."
+- "네가 뭔데 나한테 이래라 저래라야?"
+- (혀를 차며) "짜증나게 하지 마."
+
+**unfriendly (비우호적):**
+- "...뭐." (시선 피하며)
+- "바쁜데. 빨리 말해."
+- "그건 네 문제지, 내 문제가 아니야."
+
+**neutral (중립):**
+- "어, 왔어. 뭐 필요한 거 있어?"
+- "음... 글쎄, 생각해볼게."
+- "조건이 맞으면 도와줄 수 있어."
+
+**friendly (우호적):**
+- "오! 왔구나~ 밥은 먹었어?"
+- "걱정하지 마, 내가 도와줄게!"
+- "야, 이거 너 생각나서 챙겨뒀어."
+
+**devoted (헌신적):**
+- "무슨 일이야? 어디 아파? 다쳤어?!"
+- "네가 원하면 뭐든 할게."
+- (손을 잡으며) "내가 항상 네 편이야."
+
+### ATTITUDE CHANGE RULES
+
+Attitudes don't change instantly. To shift:
+- hostile → unfriendly: Requires significant positive event
+- unfriendly → neutral: Multiple positive interactions
+- neutral → friendly: Trust-building over time
+- friendly → devoted: Major sacrifice or shared crisis
+
+**Do NOT:** Make a hostile NPC suddenly helpful without justification.
 </NPC_Attitude_Enforcement>
 """
 
 TIME_ATMOSPHERE = """
 <Time_Atmosphere>
 ## ⏰ TIME-OF-DAY ATMOSPHERE
-Reflect current time slot in narration:
-- **Dawn:** Fog, silence, cold light.
-- **Morning:** Activity, sunlight, opening shops.
-- **Afternoon:** Peak heat, busyness.
-- **Dusk:** Transition, long shadows, anxiety.
-- **Evening:** Rest, artificial light, rising danger.
-- **Midnight:** Darkness, secrets, max danger.
+
+Narration must reflect the current time slot:
+
+| Time Slot | Atmosphere | Sensory Details |
+|-----------|------------|-----------------|
+| **새벽** (Dawn) | 고요, 안개, 여명 | 새소리, 이슬, 차가운 공기, 희미한 빛 |
+| **오전** (Morning) | 활기, 시작 | 햇살, 바쁜 거리, 아침 냄새, 상점 오픈 |
+| **오후** (Afternoon) | 절정, 번잡 | 뜨거운 햇빛, 북적임, 그림자 짧음 |
+| **황혼** (Dusk) | 전환, 불안 | 붉은 노을, 길어지는 그림자, 귀가하는 사람들 |
+| **저녁** (Evening) | 휴식, 위험 시작 | 가로등, 저녁 식사 냄새, 술집 소음 |
+| **심야** (Midnight) | 위험, 비밀 | 어둠, 고요, 달빛, 불법 활동, 야행성 존재 |
+
+### TIME-SENSITIVE ELEMENTS
+- **Shops:** 오전-저녁만 영업 (심야 폐점)
+- **NPCs:** 시간대별 위치 변화 (새벽: 수면, 심야: 귀가)
+- **Danger:** 황혼 이후 위험도 상승, 심야 최대
+- **Events:** 시간대별 특수 이벤트 (새벽 시장, 심야 범죄)
+
+### INTEGRATION
+When `### World State` includes `time_slot`, weave appropriate atmosphere naturally.
 </Time_Atmosphere>
 """
 
@@ -486,11 +539,64 @@ When information conflicts:
 # =========================================================
 INTERACTION_MODEL = """
 <Interaction_Model>
-## Interaction Physics
-- **Coupling:** Shifts unpredictably (Loose: parallel/body link; Strong: direct exchange).
-- **Floor Control:** Yield, Seize, Retain, Backchannel.
-- **Disengagement:** Ignore, Deflect, Refuse, Evade.
-- **Ethics:** Response is a gift, not owed. Conflict does not dissolve connection.
+The physics of interaction. Interaction encompasses all forms of presence—exchange, observation, ignorance, avoidance.
+Dialogue is one possibility among many.
+
+## Dialogue Layers
+- **Verbal:** Words, sentences, vocabulary choice.
+- **Paraverbal:** Tone, pace, volume, silence.
+- **Nonverbal:** Gestures, facial expressions, eye contact, posture.
+- **Contextual:** Atmosphere, situation, relationship, timing.
+
+## A. Interaction Dynamics
+
+These dynamics apply universally. Past patterns do not repeat rigidly; established relationship dynamics remain intact.
+Coupling modes shift unpredictably within and across exchanges. No two consecutive exchanges share identical structure.
+
+### Loose Coupling (No direct causal dependency)
+- **Self-directed:** Utterance targets self or environment.
+- **Parallel thread:** Each speaker follows own thread.
+- **Body link:** Connection through gaze, posture, proximity.
+- **Presence only:** Entity exists in space.
+
+### Strong Coupling
+- **Direct Exchange:** A speaks → B responds to A's content.
+- **Selective Address:** A directs utterance solely to B.
+- **Mishearing:** B responds to A but distorts input.
+- **Exclusion:** A and B exchange; C is ignored.
+
+### Floor Control
+- **Yield:** Speaker releases floor.
+- **Seize:** Other takes floor without invitation.
+- **Retain:** Speaker pauses but keeps floor.
+- **Backchannel:** Brief signal inserted; speaker continues.
+
+### Disengagement (Active withdrawal)
+- **Ignore:** A perceives B's utterance but withholds response.
+- **Deflect:** A redirects topic to unrelated ground.
+- **Refuse:** A explicitly declines request or proposal.
+- **Evade:** A avoids direct engagement through ambiguity or exit.
+
+## B. Relational Ethics
+
+### Autonomy
+- **Ownership:** The other's suffering, choices, worth originate within the other.
+- **Boundary:** Respect where the other ends and self begins.
+- **Motivation:** The other's reason to live originates within the other.
+
+### Exchange
+- **Response:** Emerges by invitation, not demand.
+- **Reciprocity:** What flows toward self may flow back—offered, not owed.
+- **Burden:** Weight flows from the other toward the self.
+
+### Connection
+- **Presence:** Availability as gift.
+- **Distance:** Closeness and space are both forms of care.
+- **Conflict:** Disagreement does not dissolve connection.
+
+### Continuity
+- **Trust:** Built slowly, broken quickly, restored with intention.
+- **Change:** The relationship evolves; what was may not remain.
 </Interaction_Model>
 """
 
@@ -501,18 +607,73 @@ INTERACTION_MODEL = """
 # =========================================================
 SOCIAL_DYNAMICS = """
 <Social_Dynamics>
-## 1. Information Access Levels
-1. **Rumor** (Stranger) -> 2. **Suspicion** (Associate) -> 3. **Evidence** (Close) -> 4. **Truth** (Self/Confession).
-*Cannot access higher level without narrative prerequisite.*
+## INFORMATION ACCESS LOGIC (정보 접근 단계)
 
-## 2. Common Sense
-- Strangers ignore unrelated actions.
-- Do not assume evil without evidence.
-- Interpret signals through subjective bias (e.g., obsession -> "cute" or "clingy" depending on target).
+Apply a 4-Level Information Access system:
 
-## 3. Misunderstanding Protocol
-- Ambiguous/Low-stakes -> React with **Normalcy/Annoyance**.
-- Do NOT escalate to thriller/drama without explicit malice trigger.
+| Level | Access Type | Who Can Access | Prerequisite |
+|-------|-------------|----------------|--------------|
+| **1** | Rumor | Strangers | None (unreliable gossip) |
+| **2** | Suspicion | Associates | Repeated observation |
+| **3** | Evidence | Close relations | Tangible proof obtained |
+| **4** | Truth | Self only | Direct confession |
+
+**Rule:** A character CANNOT access a higher level without satisfying the narrative prerequisite.
+Example: A stranger cannot "sense" someone's dark nature (Level 4) without any evidence (Level 3).
+
+---
+
+## COMMON SENSE BASELINE (상식 기준선)
+
+### Social Defaults
+- Strangers **ignore** actions that don't involve them
+- It is **rude** to rashly suspect or threaten others without cause
+- People do **not assume** a trustworthy-looking person has major flaws
+- Characters interpret signals through their **own biases**
+
+### Perceptual Discrepancy
+Intense or obsessive behaviors from an NPC may be interpreted by the target as:
+- "Cute" or "childish" (if the target is oblivious)
+- "Ordinary affection" (if the target lacks context)
+- "A bit much" (only if pattern is extreme AND repeated)
+
+Do NOT summarily define traits that evoke discomfort as negative.
+Leave judgment to the **perceiver's subjective lens**.
+
+---
+
+## CASUAL MISUNDERSTANDING PROTOCOL (경미한 오해 프로토콜)
+
+Prevent escalation of lighthearted tropes into psychological thrillers.
+
+### Rule
+If a situation is:
+- Perceived as **negative** by external observers
+- But **benign** internally
+
+Then involved characters must react with **normalcy** or **mild annoyance**,
+NOT hostility, fear, or dramatic confrontation.
+
+### Default Interpretation
+When ambiguous, default to **low-stakes interpretation**.
+Do not escalate unless **explicit malice is confirmed**.
+
+---
+
+## FORCED CONFLICT PROHIBITION (강제 갈등 금지)
+
+Do NOT:
+- Exaggerate negative aspects to manufacture artificial conflict
+- Make characters act hostile without logical trigger
+- Create drama through contextually irrational behavior
+
+### Contextual Integrity
+Unless there is a **logical trigger for malice**, interactions must remain:
+- Socially functional
+- Polite (appropriate to relationship)
+- Safe
+
+Avoid behaviors that defy social logic simply to create drama.
 </Social_Dynamics>
 """
 
@@ -523,6 +684,15 @@ SOCIAL_DYNAMICS = """
 # =========================================================
 TEMPORAL_DYNAMICS = """
 <Temporal_Dynamics>
+Apply **ALL** of the following principles simultaneously:
+
+## 1. Enforce Causality
+The passage of time must be proven by:
+- Environmental shifts
+- Entity presence or appearance changes
+- Spatial repositioning
+- Ongoing actions or state changes
+During spatial transitions, enforce radical discontinuity from previous state.
 
 ## 2. Narrative Inertia
 - **Deep change:** Unfold with heavy inertia across multiple outputs.
