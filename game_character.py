@@ -92,13 +92,13 @@ def remove_quest(channel_id: str, content: str) -> str:
     return _del_op(channel_id, "active", content, "🗑️", "퀘스트")
 
 def add_memo(channel_id: str, content: str) -> str:
-    return _list_op(channel_id, "memos", content, "📝", "메모")
+    return "⚠️ [Deprecated] '메모' 기능은 '노트북'으로 통합되었습니다."
 
 def remove_memo(channel_id: str, content: str) -> str:
-    return _del_op(channel_id, "memos", content, "🗑️", "메모")
+    return "⚠️ [Deprecated] '노트북 삭제'를 사용하세요."
 
 def resolve_memo_auto(channel_id: str, content: str) -> str:
-    return _move_op(channel_id, "memos", "archive", content, "🗄️", "메모", "해결(보관)")
+    return "⚠️ [Deprecated] '노트북' 기능을 사용하세요."
 
 # Notebook System (New in V5.1)
 def get_notebook_text(channel_id: str) -> str:
@@ -147,22 +147,8 @@ def get_objective_context(channel_id: str) -> str:
 # =========================================================
 
 def update_inventory(user_data: Dict[str, Any], action: str, item_name: str, count: int = 1) -> Tuple[Dict[str, Any], str]:
-    inv = user_data.get("inventory", {})
-    curr = inv.get(item_name, 0)
-    msg = ""
-    
-    if action == "add":
-        inv[item_name] = curr + count
-        msg = f"🎒 **획득:** {item_name} x{count}"
-    elif action == "remove":
-        if curr < count: msg = f"❌ **부족:** {item_name} (보유: {curr})"
-        else:
-            inv[item_name] = curr - count
-            if inv[item_name] <= 0: del inv[item_name]
-            msg = f"📉 **사용:** {item_name} x{count}"
-    
-    user_data["inventory"] = inv
-    return user_data, msg
+    # Deprecated: AI updates notebook directly now.
+    return user_data, "⚠️ [Deprecated] 인벤토리 구조가 노트북으로 변경되었습니다."
 
 def update_status_effect(user_data: Dict[str, Any], action: str, effect_name: str) -> Tuple[Dict[str, Any], str]:
     effects = user_data.get("status_effects", [])
