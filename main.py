@@ -314,24 +314,6 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                 if new_npc_hints:
                     # Update rule_txt with new hints to influence narrative
                     rule_txt += "\n\n### [UPDATED NPC ACTIVITY HINTS]\n" + "\n".join(new_npc_hints)
-            
-            # [NEW] Automatic Time Flow Processing
-            time_flow = nvc_res.get("TimeFlow", {})
-            time_msg = await process_time_flow(channel_id, time_flow)
-            
-            if time_msg:
-                # Send time update message to channel
-                await message.channel.send(time_msg)
-                
-                # Refresh World Context immediately if time changed
-                world_ctx = game_system.get_world_context(channel_id)
-                # Re-inject NPC hints based on NEW time
-                new_npc_hints = game_system.get_npc_time_progression(channel_id)
-                if new_npc_hints:
-                    # Replace the old hints section in rule_txt to update context for generation
-                    # Simple heuristic replacement or just append new one (Logic might be slightly duplicated but acceptable)
-                    # Ideally, we reconstruct rule_txt, but simpler is to just append new info or rely on world_ctx update
-                    pass 
 
              # [NEW] GM Judgment System Integration
             judgment_context = ""

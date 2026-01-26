@@ -92,6 +92,10 @@ def check_instantiation():
             raise AttributeError("get_quest_board missing in game_system facade")
         if not hasattr(game_system, "get_world_context"):
             raise AttributeError("get_world_context missing in game_system facade")
+        if not hasattr(game_system, "get_active_quests"):
+            raise AttributeError("get_active_quests missing in game_system facade")
+        if not hasattr(game_system, "get_memos"):
+            raise AttributeError("get_memos missing in game_system facade")
         print(f"✅ Game System Facade   : OK")
     except Exception as e:
         print(f"❌ Game System Facade   : FAILED ({e})")

@@ -277,12 +277,37 @@ async def extract_all_updates(
             "status_remove": phys.get("status_remove")
         }
 
+    # Sanitize/Map Social (Relationships: String to Int for Nemesis System)
+    rels_processed = {}
+    if soc and soc.get("relationships"):
+        rel_map = {
+            "nemesis": -20, "hostile": -15, "enemy": -15, "unfriendly": -5,
+            "neutral": 0, "friendly": 10, "buddy": 10, "loyal": 20, "devoted": 25,
+            "적대": -15, "경계": -5, "친밀": 10, "충성": 20
+        }
+        for n, v in soc["relationships"].items():
+            if isinstance(v, (int, float)):
+                rels_processed[n] = int(v)
+            else:
+                # String to Int Mapping
+                v_low = str(v).lower()
+                matched = False
+                for key, score in rel_map.items():
+                    if key in v_low:
+                        rels_processed[n] = score
+                        matched = True
+                        break
+                if not matched:
+                    rels_processed[n] = 0 # Default to neutral if unknown string
+    
     # Consolidate
     return {
         "PlayerUpdate": p_upd,
         
         "PlayerMemoryUpdate": {
-            "relationships": soc.get("relationships"), "companions": soc.get("companions"), "passives": nar.get("passives")
+            "relationships": rels_processed if rels_processed else soc.get("relationships"), 
+            "companions": soc.get("companions"), 
+            "passives": nar.get("passives")
         } if soc or nar.get("passives") else None,
         
         "PassiveSuggestion": nar.get("passive_suggestion"),

@@ -28,6 +28,8 @@ get_doom_forecast = game_world.get_doom_forecast
 
 # Character / Quest
 get_quest_board = domain_manager.get_quest_board
+get_active_quests = game_character.get_active_quests
+get_memos = game_character.get_memos
 
 # Character / Quest
 add_quest = game_character.add_quest

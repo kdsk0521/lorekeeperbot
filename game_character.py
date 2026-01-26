@@ -100,6 +100,12 @@ def resolve_memo_auto(channel_id: str, content: str) -> str:
     return _move_op(channel_id, "memos", "archive", content, "🗄️", "메모", "해결(보관)")
 
 # Text Views
+def get_active_quests(channel_id: str) -> List[str]:
+    return _get_board(channel_id).get("active", [])
+
+def get_memos(channel_id: str) -> List[str]:
+    return _get_board(channel_id).get("memos", [])
+
 def get_active_quests_text(channel_id: str) -> str:
     board = _get_board(channel_id)
     active = board.get("active", [])
@@ -320,18 +326,6 @@ def get_passives_for_context(user_data: Dict[str, Any]) -> str:
         lines.append(f"{p['name']}{tags}")
         
     return f"Passives: {', '.join(lines)}"
-
-def calculate_status_doom_contribution(user_data: Dict[str, Any]) -> Tuple[int, List[str]]:
-    effects = user_data.get("status_effects", [])
-    total, reasons = 0, []
-    for ename in effects:
-        info = STATUS_EFFECTS.get(ename, {})
-        if info.get("type") == "debuff":
-            imp = SEVERITY_DOOM_IMPACT.get(info.get("severity", 1), 0)
-            if imp > 0:
-                total += imp
-                reasons.append(f"💀 {ename}")
-    return total, reasons
 
 # =========================================================
 # CHRONICLE & EXPORTS (Moved from game_system.py)
