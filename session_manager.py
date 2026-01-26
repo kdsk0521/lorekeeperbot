@@ -10,6 +10,7 @@ import logging
 from typing import Optional
 
 import domain_manager
+import config
 # game_system might be needed if logic requires it, but for now mostly domain IO
 
 RESET_CONFIRM_TIMEOUT = 5.0
@@ -87,14 +88,11 @@ class SessionManager:
         ready = True
         msg = "🔍 **시스템 준비 확인**\n"
         
-        if lore and lore.strip() and lore != "No Lore Saved": # Check default
+        if lore and lore.strip() and lore != "No Lore Saved" and lore != config.DEFAULT_LORE:
              msg += "✅ 세계관(Lore) 로드됨\n"
         else:
-             if len(lore) < 50:
-                 msg += "❌ 세계관 미설정 (`!lore [내용/파일]` 필요)\n"
-                 ready = False
-             else:
-                 msg += "✅ 세계관 로드됨\n"
+             msg += "❌ 세계관 미설정 (`!lore [내용/파일]` 필요)\n"
+             ready = False
 
         rules_mode = domain_manager.get_rules_mode(channel_id)
         mode_kr = "기본 (Default)" if rules_mode == "default" else "사용자 설정 (Custom)"
