@@ -130,6 +130,22 @@ def run_test():
     w_after = domain_manager.get_world_state(CHANNEL_ID)
     assert w_after['doom'] < doom_before, f"Doom did not decrease: {w_after['doom']} vs {doom_before}"
     
+    # 5. Whitelist Logic (!bot on/off)
+    print_header("WHITELIST LOGIC")
+    print("Checking default state (ON)...")
+    assert domain_manager.get_bot_active(CHANNEL_ID) is True, "Default should be True"
+    
+    print("Setting Bot OFF...")
+    domain_manager.set_bot_active(CHANNEL_ID, False)
+    assert domain_manager.get_bot_active(CHANNEL_ID) is False, "Set False failed"
+    
+    print("Setting Bot ON...")
+    domain_manager.set_bot_active(CHANNEL_ID, True)
+    assert domain_manager.get_bot_active(CHANNEL_ID) is True, "Set True failed"
+    
+    # Since main.py logic is hard to integration test without full bot mock, 
+    # we verify the domain state change which main.py relies on.
+    
     print("\n✅ TEST COMPLETE: SUCCESS")
 
 if __name__ == "__main__":

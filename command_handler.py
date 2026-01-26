@@ -397,6 +397,21 @@ async def handle_system_command(message, channel_id: str, cmd: str, arg: str) ->
         await message.channel.send("🔓 **세션 잠금 해제**: 자유롭게 참여 가능합니다.")
         return
 
+    if cmd == 'bot':
+        if not arg:
+            curr = domain_manager.get_bot_active(channel_id)
+            status = "✅ ON" if curr else "❌ OFF"
+            await message.channel.send(f"🤖 봇 상태: **{status}**\n사용법: `!bot [on/off]`")
+            return
+            
+        if arg.lower() in ['on', '켜기', 'true']:
+            domain_manager.set_bot_active(channel_id, True)
+            await message.channel.send("🤖 **봇 활성화:** ✅ ON")
+        elif arg.lower() in ['off', '끄기', 'false']:
+            domain_manager.set_bot_active(channel_id, False)
+            await message.channel.send("🤖 **봇 비활성화:** ❌ OFF (명령어만 반응)")
+        return
+
 
 async def handle_analysis_command(message, channel_id: str, cmd: str, arg: str, client_genai, model_id) -> None:
     """AI 분석 도구 (!analyze, !consistency, !forecast, !rule, !lores)"""
@@ -831,7 +846,7 @@ async def dispatch_command(cmd, message, channel_id, parsed, client_discord, cli
         return None
 
     # System dispatch
-    if cmd in ['mode', 'scene', 'lock', 'unlock']:
+    if cmd in ['mode', 'scene', 'lock', 'unlock', 'bot']:
         await handle_system_command(message, channel_id, cmd, parsed['content'])
         return None
 
