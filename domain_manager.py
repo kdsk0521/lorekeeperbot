@@ -460,10 +460,6 @@ def get_unified_player_info(channel_id: str, user_id: str) -> str:
     
     mem = p["ai_memory"]
     res = f"## 🎭 **{p.get('mask')}**\n\n"
-    res += f"**💰 골드:** {p['economy'].get('gold', 0)}\n"
-    
-    inv = p.get('inventory', {})
-    res += f"**🎒 소지품:** {', '.join([f'{k}x{v}' for k,v in inv.items()]) if inv else '(없음)'}\n"
     
     eff = p.get('status_effects', [])
     if eff: res += f"**⚠️ 상태:** {', '.join(eff)}\n"

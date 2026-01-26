@@ -222,10 +222,6 @@ async def handle_notebook_command(message, channel_id: str, arg: str) -> None:
         else:
             await message.channel.send("⚠️ 삭제할 내용을 찾을 수 없습니다. (정확히 일치해야 합니다)")
             
-    elif sub in ['마이그레이션', 'migrate', '통합']:
-        res = game_system.migrate_to_notebook(channel_id)
-        await message.channel.send(res)
-        
     else:
         # Default: Add if no sub-command recognized but content exists
         curr = game_system.get_notebook_text(channel_id)

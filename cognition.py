@@ -324,15 +324,15 @@ async def _extract_physical(client, model_id, p_in, ai_out, notebook, gold, stat
         "EXTRACT NOTEBOOK & PHYSICAL CHANGES.\n"
         "Return JSON with keys: notebook_update (string or null), gold_change (int), status_add [list], status_remove [list].\n"
         "Principle: Convert narrative actions into a concise Notebook summary.\n"
-        "\n### [NOTEBOOK UPDATE RULES]\n"
-        "1. **Summarize**: If the player gets an item or a secret, update the notebook text organically.\n"
-        "2. **Ownership**: ONLY record items explicitly acquired (YES: pick up, NO: see).\n"
-        "3. **Format**: Maintain the '— [소지품] —' and '— [메모] —' sections.\n"
-        "4. **Full Text**: Return the FULL UPDATED CONTENT of the notebook, not just a delta.\n"
+        "\n### [GOLD & ITEM RULES]\n"
+        "1. **Gold Tracking**: If the narrative mentions gaining or losing gold/coins, update the Gold balance EXPLICITLY inside the '— [소지품] —' section. (e.g., '골드: 150G')\n"
+        "2. **Summarize**: Keep descriptions concise but useful for future bonuses.\n"
+        "3. **Format**: Maintain '— [소지품] —' and '— [메모] —'.\n"
+        "4. **Ownership**: ONLY add items/gold if ACQUIRED.\n"
         "\nExample:\n"
-        '{"notebook_update": "— [소지품] —\\n- Rusty Key\\n\\n— [메모] —\\n- Code is 1234", "gold_change": 0, ...}'
+        '{"notebook_update": "— [소지품] —\\n- 골드: 200G\\n- Rusty Sword\\n\\n— [메모] —\\n- Code: 5566", "gold_change": 0, ...}'
     )
-    ctx = f"Notebook Content:\n{notebook}\nGold:{gold}, Status:{status}"
+    ctx = f"Notebook Content:\n{notebook}\nGold_Ref:{gold}, Status:{status}"
     usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput FULL UPDATED Notebook JSON."
     return await _call_extract(client, model_id, sys, usr, "B-1 Notebook")
 

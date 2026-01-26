@@ -32,41 +32,6 @@ def _get_board(channel_id: str) -> Dict[str, Any]:
         d["quest_board"] = {"active": [], "completed": [], "memos": [], "archive": [], "lore": []}
     return d["quest_board"]
 
-def migrate_to_notebook(channel_id: str) -> str:
-    """기존 인벤토리와 메모 데이터를 새 노트북 시스템으로 이전합니다."""
-    d = domain_manager.get_domain(channel_id)
-    notebook = d.get("notebook", "")
-    
-    # 이미 데이터가 풍부하면 (기본값이 아니면) 스킵
-    if notebook and not notebook.startswith("— [소지품] —"):
-         return "이미 마이그레이션되었거나 내용이 존재합니다."
-
-    items_list = []
-    # 1. 모든 참가자의 인벤토리 수집
-    for uid, p in d.get("participants", {}).items():
-        inv = p.get("inventory", {})
-        if inv:
-            p_name = p.get("mask", f"User_{uid[-4:]}")
-            items_list.append(f"[{p_name}] " + ", ".join([f"{k}x{v}" for k, v in inv.items()]))
-    
-    # 2. 퀘스트 보드의 메모 수집
-    board = _get_board(channel_id)
-    memos = board.get("memos", [])
-    
-    new_notebook = "— [소지품] —\n"
-    if items_list:
-        new_notebook += "\n".join(items_list) + "\n"
-    else:
-        new_notebook += "(비어 있음)\n"
-        
-    new_notebook += "\n— [메모] —\n"
-    if memos:
-        new_notebook += "\n".join([f"- {m}" for m in memos]) + "\n"
-    else:
-        new_notebook += "(비어 있음)\n"
-    
-    domain_manager.update_notebook(channel_id, new_notebook)
-    return "✅ 인벤토리 및 메모가 노트북으로 통합되었습니다."
 
 def _save_board(channel_id: str, board: Dict[str, Any]) -> None:
     domain_manager.update_quest_board(channel_id, board)
@@ -284,16 +249,17 @@ def perform_check(channel_id: str, user_id: str, action_desc: str = "") -> str:
         
     result_str = f"{header}\n결과: {calc_str} = **{final_val}**{crit_msg}\n(보통 기준: DC 40)"
     
-    # 패시브 & 소지품 컨텍스트 (AI/GM 참고용)
+    # 패시브 & 노트북 컨텍스트 (AI/GM 참고용)
     passives = p_data.get("ai_memory", {}).get("passives", [])
     if passives:
         p_names = [p.get("name") if isinstance(p, dict) else str(p) for p in passives]
         result_str += f"\n💡 참고 특성: {', '.join(p_names)}"
     
-    inv = p_data.get("inventory", {})
-    if inv:
-        i_names = [f"{k}({v})" if isinstance(v, int) and v > 1 else str(k) for k, v in inv.items()]
-        result_str += f"\n📦 관련 소지품: {', '.join(i_names)}"
+    notebook_ctx = domain_manager.get_notebook(channel_id)
+    if notebook_ctx and "(비어 있음)" not in notebook_ctx:
+        # Show first 5 lines of notebook as context preview
+        nb_preview = "\n".join(notebook_ctx.splitlines()[:5]) 
+        result_str += f"\n📔 **노트북 참고:**\n{nb_preview}"
         
     return result_str
 
@@ -310,13 +276,6 @@ def get_status_summary(user_data: Dict[str, Any]) -> str:
     passives = get_passives_for_context(user_data) # Returns "Passives: ..."
     parts.append(passives)
     
-    # 3. Inventory (Tools/Weapons)
-    inv = user_data.get("inventory", {})
-    if inv:
-        # Simple list for context
-        items = [f"{k}" for k in inv.keys()]
-        parts.append(f"소지품: {', '.join(items)}")
-        
     return "\n".join(parts)
 
 def add_passive(channel_id: str, user_id: str, name: str, tags: List[str] = None, desc: str = "") -> str:

@@ -32,7 +32,6 @@ get_active_quests = game_character.get_active_quests
 get_memos = game_character.get_memos
 get_notebook_text = game_character.get_notebook_text
 update_notebook_text = game_character.update_notebook_text
-migrate_to_notebook = game_character.migrate_to_notebook
 
 # Character / Quest
 add_quest = game_character.add_quest
