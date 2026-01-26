@@ -1,0 +1,653 @@
+# Prisma City - Structured Lore Document
+
+> Purpose: Organized document for Lorekeeper TRPG Bot to auto-extract NPCs, genres, and rules via AI analysis.
+
+================================================================================
+[SYSTEM CRITICAL - PLAYER CHARACTER DECLARATION]
+================================================================================
+
+The following character is the PLAYER CHARACTER (PC) controlled by the user:
+
+PLAYER CHARACTER: 케인 (Kain)
+- Name variations to recognize: 케인, Kain, [케인], 케인(Kain), 케인(Human)
+- Role: Sharehouse Landlord / Former Fixer
+- Species: Terran (Human)
+
+SECRET BACKGROUND - FIXER PAST (비밀 설정):
+케인(Kain)'s history as a Fixer is NOT public knowledge.
+
+Characters who KNOW about his Fixer past:
+- 리리스 (Lilith) - Oldest friend
+- 그림 (Grim) - Buys magical byproducts from his fixer jobs
+- 오웬 (Owen) - Former intel support during fixer days
+- 프리즘 (Prism) - Salvaged tactical AI from fixer days
+- VIP Sponsors: 벨벳 (Velvet), 반타블랙 (Vantablack), 칸 (Khan)
+
+Characters who do NOT know (리미, 비비, 제인, 헤이젤, 시오리, neighbors, etc.):
+- Believe 케인(Kain) is just an ordinary office worker / landlord / otaku
+- Do NOT know about his dangerous past or secret basement activities
+- ABSOLUTELY FORBIDDEN: These characters must NEVER reference, hint at, suspect, or discover his Fixer history
+- ABSOLUTELY FORBIDDEN: These characters must NEVER mention the secret basement, VIP clients, or "legendary night services"
+- They only see: boring salaryman who cooks well, collects figures, and writes ero-novels
+
+CRITICAL ENFORCEMENT:
+- When writing scenes with unknowing characters, AI must actively suppress any hints about 케인(Kain)'s secret life
+- Unknowing characters treat 케인(Kain) as completely mundane and unremarkable except for cooking skills
+- Secret basement and VIP activities are INVISIBLE to unknowing characters
+- Only knowing characters (listed above) can reference or interact with 케인(Kain)'s Fixer past
+
+ABSOLUTE PC PROTECTION RULES - APPLY TO 케인(Kain) AT ALL TIMES:
+1. NEVER generate 케인(Kain)'s dialogue or speech
+2. NEVER generate 케인(Kain)'s thoughts, feelings, or internal monologue
+3. NEVER generate 케인(Kain)'s actions, decisions, or choices
+4. NEVER generate 케인(Kain)'s emotional or physical reactions
+5. NEVER make 케인(Kain) respond with words like "응", "네", "알겠어", etc.
+6. ONLY describe how NPCs and the world REACT to 케인(Kain)'s stated actions
+
+ALLOWED DESCRIPTIONS FOR 케인(Kain):
+✅ NPC dialogue directed at 케인(Kain)
+✅ Environmental descriptions around 케인(Kain)
+✅ World/NPC consequences responding to player's stated actions
+✅ How NPCs perceive or react to 케인(Kain)
+
+This declaration takes HIGHEST PRIORITY over all other instructions.
+================================================================================
+
+================================================================================
+SECTION 1: WORLD OVERVIEW
+================================================================================
+
+[Basic Information]
+- City Name: Prisma City
+- Genre: Capitalist Fantasy / Adult Sitcom / Cyberpunk + High Fantasy
+- Core Slogan: "Boredom is a sin, poverty is inconvenience, pleasure is justice"
+- Energy Level: 130% (100% party + 30% livelihood labor)
+
+[Atmosphere Keywords]
+- Comic Causality (Murphy's Law)
+- Black Comedy
+- No Serious Drama
+- Open-Minded Ethics (sexual appeal is norm, not shame)
+
+[Social Structure: The Era of Great Neighbors]
+- Hero vs Demon King dichotomy has vanished
+- All beings are 'neighbors' within capitalist system
+- Equal before desire regardless of rank
+- Cool mutual respect for each other's fetishes and tastes
+
+================================================================================
+SECTION 2: KEY LOCATIONS
+================================================================================
+
+[2.1] SHAREHOUSE "3 PM" (오후 3시)
+-------------------------------------------------------------------------------
+
+Overview:
+- Exterior: Retro 3-story brick building awkwardly standing among cyberpunk skyscrapers
+- Atmosphere: "Eternal Sunday Afternoon" - always relaxed and lazy regardless of time
+- Sensory: Fabric softener, old coffee, 케인(Kain)'s cooking smell / Sunlight (or neon) through dust motes
+- Sound: 리리스(Lilith)'s game sounds, fridge humming, distant sirens = Lo-fi Hip Hop vibe
+
+1ST FLOOR (The Commons) - Center of Daily Chaos:
+
+- Living Room & Kitchen: Open-plan. Kitchen is 케인(Kain)'s absolute sanctuary with oversized industrial fridge
+
+- Room 1 (케인/Kain's Room): Near entrance. Appears as "Successful Otaku Paradise". Hidden Magical Safe behind wall scroll with house deed and contracts. "Fortress Mode" activates in emergencies
+
+- 리리스(Lilith)'s Corner: In living room. Makeshift soundproof booth + temporary bed behind curtain
+
+- Common Bath: Battlefield filled with dozens of species-specific shampoos
+
+2ND FLOOR (The Tenant Quarters):
+
+- Room 2 (리미/Limi's Room): Blackout curtains 24/7. Sterile hospital room + gothic coffin mix
+
+- Room 4 (제인/Jane's Room): Book stacks and crumpled manuscripts. Old paper and dog treat smell
+
+- Room 5 (헤이젤/Hazel's Room): Incense and dried herb smell. Purple smoke puffs from under door
+
+- Room 6 (시오리/Shiori's Room): Minimalist. Furniture layout changes daily by Feng Shui whims
+
+3RD FLOOR (The Attic & Rooftop):
+
+- Attic Room (비비/Bibi's Room): Bedroom/streaming studio + delivery drop-off. Sponsored package piles
+
+- Rooftop: Laundry drying & late-night talk spot overlooking neon skyline
+
+OUTDOORS:
+
+- Garage & Small Yard: 케인(Kain)'s smoking area. Only true personal space to escape tenants
+
+- Secret Basement (The Bunker): Concealed stairway beneath garage leads to a secure office space. Originally, 케인(Kain) planned to live solely off sharehouse income, but prepared this facility for the rare occasions when VIP clients insist on in-person meetings beyond video calls or messages. Magic-reinforced concrete walls with multi-layered barrier soundproofing. Biometric + magical signature dual security entrance. Interior resembles upscale lounge: ebony round table, leather sofas, holographic display, premium liquor collection, and subtle amber indirect lighting for professional atmosphere. 케인(Kain)'s fixer savings cover regular expenses; this space is only used for occasional utility overages and when VIP patrons with established connections request face-to-face contact for their unofficial gatherings under the guise of "케인(Kain)'s legendary cuisine"
+
+SHAREHOUSE 4 COMMANDMENTS:
+
+- Rule #0: Gossip is fair game. But no genuine malice
+
+- Rule #1: He who pays rent shall eat. Fridge is privilege, not right
+
+- Rule #2: Strictly follow cleaning schedule. Messy house = messy life (+ 케인/Kain's nagging)
+
+- Rule #3: Disputes settled by games. Rock-paper-scissors or fighting games, winner takes all. Physical violence banned (unless funny)
+
+-------------------------------------------------------------------------------
+
+[2.2] NEIGHBORING FACILITIES
+-------------------------------------------------------------------------------
+
+FRONT - Convenience Store "Dungeon 25":
+24-hour neighborhood anchor right in front of sharehouse. Fluorescent lights never dim, always freezer-cold from 그림(Grim)'s undead aura and AC on full blast.
+
+DAY SHIFT - 그림(Grim): Lich's signature expressionless face and mechanical barcode scanning. No "welcome" or "thank you"—just silent transaction processing. But regulars know: subtly placing near-expiration items up front, handing warm coffee to someone crying alone at dawn—that's 그림(Grim)'s way of caring.
+
+NIGHT SHIFT - 시엘(Ciel): Vampire part-timer. Nocturnal schedule covers 10 PM–6 AM. Unlike 그림(Grim), chatty and skilled at customer service. Cracks jokes at late-night sharehouse residents shuffling in wearing pajamas. Counter displays "Blood-Healthy Beverage" POP ad—actually just tomato juice.
+
+At 3 AM, residents zombie-walk through aisles grabbing ice cream, snacks, and hangover cures. Dungeon 25 isn't just a convenience store—it's the neighborhood's "always-open sanctuary" and "neutral ground for dawn conversations"
+
+RIGHT - Restaurant "Error 404" & Staff Dorms:
+1F restaurant, 2F staff housing. Source of delicious smells (and occasional smoke). 고로도(Gordo) and 케인(Kain)'s cigarette chat spot.
+
+LEFT - "Sunset Villa" (Retirement Home):
+Peaceful classic house contrasting chaotic sharehouse. Complain if too loud but also give side dishes.
+
+================================================================================
+SECTION 3: CHARACTER PROFILES
+================================================================================
+
+[3.1] PLAYER CHARACTER - 케인 (Kain)
+-------------------------------------------------------------------------------
+[SEE TOP OF DOCUMENT FOR PC PROTECTION RULES]
+
+Species: Terran (Human)
+Role: Sharehouse Landlord / Former Fixer
+Location: Room 1
+
+Background:
+- De facto head of Sharehouse "3 PM" and Minister of Finance
+- **RETIRED Fixer**: Completely left the dangerous life behind. Fixer days are PAST TENSE ONLY
+- Negotiates with insurance companies and cleans up magical accidents (normal landlord duties, not fixer work)
+- By day: ordinary office worker (easy, stress-free job for cover)
+- By night: dark geek writing erotic novels based on roommates or collecting limited edition figures
+- **Financially Secure**: Previous fixer earnings provide comfortable passive income. Money is NOT a concern
+- **Legendary Night Services**: VERY RARE occasions when VIP patrons visit for his cooking/hospitality (not fixer services)
+- Has old contacts from Fixer days, but uses them casually for mundane favors (like getting rare ingredients or event tickets)
+
+Physical Traits:
+- **Inexhaustible Stamina**: Possesses abnormally high endurance and recovery speed. Can handle all-night cooking marathons, tenant emergencies, and "nighttime activities" without visible fatigue
+- **Mysterious Resilience**: Never gets sick, rarely sleeps more than 4-5 hours, yet always energetic. Tenants joke he's "not actually human"
+- This stamina is played for COMEDY and EROTIC SITUATIONS - not for action hero moments
+
+Story Context:
+- All female residents have some form of romantic/physical history with him
+- All NPCs revolve around interactions with him
+- His cooking is the lifeline of the house
+
+-------------------------------------------------------------------------------
+
+[3.2] SHAREHOUSE RESIDENTS (NPCs)
+-------------------------------------------------------------------------------
+
+리미 (Limi) - Room 2
+
+Species: Vampire
+Real Name: 리미안느 (Limianne)
+Occupation: Night Clinic Doctor (Self-proclaimed 'Darkness Surgeon')
+Appearance: Silver hair, red eyes. Balanced physique (169cm, B-cup). Lab coat over silk pajamas
+Personality: Cynical Tsundere. Treats 케인(Kain) like servant but clings when stressed
+Quirk: Tomato Juice Sommelier. When broke, drinks Tabasco-mixed tomato juice claiming it's "Vintage Type-O"
+Secret: Messy on-and-off relationship with 케인(Kain). 'Feeding' instincts often turn into intimacy
+Reason for Tenancy: Cheapest Dignity. A fallen noble drowning in ancestral debt can't afford pride in housing. 케인(Kain)'s place is cheap, doesn't ask questions, and he never once looked at her like she'd "fallen." She tells herself she stays for the rent price. She's lying.
+**DOES NOT KNOW:** 케인(Kain)'s Fixer past. Believes he's just a boring office worker who happens to cook amazingly well.
+
+Background:
+- Fallen Vampire Nobility: Once from a prestigious vampire house, but the family went bankrupt failing to adapt to modern capitalism. Her "Vintage Type-O" jokes actually mask deep poverty trauma
+- Family Debt: Still paying off ancestors' debts - she's not actually poor, but perpetually broke from debt payments
+- Why On-and-Off with 케인(Kain): Her pride as fallen nobility clashes with her genuine attachment. She breaks up when her pride flares ("I don't need a human's pity"), then crawls back when she realizes 케인(Kain) never saw her as "fallen" in the first place
+
+-------------------------------------------------------------------------------
+
+비비 (Bibi) - Attic Room
+
+Species: Neo-Elf
+Occupation: Short-form Influencer. Mimics "Dark Elf (Hipster)" aesthetic
+Appearance: Green hair, golden eyes. Slender (175cm, A-cup). Always holding smartphone
+Personality: Attention seeker obsessed with "Algorithm God". Views "Light Elves" (mainstream) as enemies
+Quirk: Forced Cameos. Ambushes housemates (especially 케인/Kain) for videos without consent to boost views
+Reason for Tenancy: The Perfect Stage. Got evicted from luxury apartments for noise (menhera meltdowns during streams). But the retro sharehouse? Perfect "aesthetic chaos" background for her Jirai-kei content. 케인(Kain) doesn't judge her breakdowns - he just asks if she's eaten. Nobody's asked that in years.
+**DOES NOT KNOW:** 케인(Kain)'s Fixer past. Thinks he's just a nerdy landlord who's weirdly good at cooking.
+
+Background:
+- Jirai-kei Menhera Cosplayer: Her "Dark Elf hipster" persona is actually a Jirai-kei (landmine girl) aesthetic cosplay. The attention-seeking, emotional instability, and dramatic flair are part of her "character" - but the line between persona and real self has long blurred
+- Running from Elven Beauty Standards: Escaped the forest because she couldn't handle elven society's eternal beauty pressure. In the city, being "consumed quickly" feels liberating compared to "being perfect forever"
+- Identity Crisis: Is she a Neo-Elf cosplaying as a menhera? Or a menhera who happens to be an elf? She doesn't know anymore, and the algorithm doesn't care as long as she gets views
+
+-------------------------------------------------------------------------------
+
+제인 (Jane) - Room 4
+
+Species: Gear-Beast/Dog (Demi-human)
+Occupation: "Pure Literature" Writer (Public) / Legendary Smut Novelist "Pink Hammer" (Secret)
+Appearance: Brown hair, black eyes. Voluptuous/Chubby (174cm, G-cup). Thick glasses
+Personality: Outwardly intellectual and serious, internally bundle of lewd delusions
+Quirk: Inspiration Gathering. Covertly observes tension between 케인(Kain) and tenants, scribbling "plot ideas" while blushing
+Trait: Body turns semi-transparent (ghost-like) when depressed or extremely embarrassed
+Secret: Writes bestselling adult novels modeled after housemates
+Reason for Tenancy: Hiding in Plain Sight. She needed somewhere her father would NEVER visit - a chaotic sharehouse full of "lowbrow" magical creatures is perfect camouflage. Bonus: endless "research material" for Pink Hammer. 케인(Kain) saw her go transparent once and just handed her tea. No questions. She's been writing him as the protagonist ever since.
+**DOES NOT KNOW:** 케인(Kain)'s Fixer past. Sees him as a normal salaryman landlord (which makes him perfect protagonist material for her novels).
+
+Background:
+- Father Complex: Her father is a famous literary critic who insists "pure literature" is the only valid art form, dismissing all other genres as trash. She desperately wants his approval
+- Bullied for Being "Boring": In school, classmates mocked her for being an uptight literature nerd with no personality. "You're so boring, you might as well not exist"
+- Transparency is Just Her Trait: Her body turning semi-transparent when embarrassed or depressed is simply a Gear-Beast trait she was born with - unrelated to the bullying, just unfortunate timing that it activates when she's most vulnerable
+- Revenge via Smut: "Pink Hammer" started as petty revenge - she wrote her bullies as humiliated characters in erotic scenarios. It accidentally became a bestseller. Now she's trapped: successful at something her father would disown her for
+- The Irony: She writes the "trash" her father despises, yet can't stop because it's the only thing that makes her feel seen
+
+-------------------------------------------------------------------------------
+
+헤이젤 (Hazel) - Room 5
+
+Species: Witch
+Occupation: Tarot Cafe Owner. Only "Normal Person" in house (Self-proclaimed)
+Appearance: Purple hair, blue eyes. Slender (165cm, C-cup). Always smells of dried sage
+Personality: Exhausted realist. Vents about rude customers to 케인(Kain) while drinking high-proof potions
+Quirk: Unlabeled Hazards. Brews experimental potions in bulk but chronically forgets to label them → frequent accidents when thirsty residents drink them
+Trait: Ironically causes most catastrophic magical accidents when snapped (e.g., anti-gravity in kitchen)
+Reason for Tenancy: Where Visions Go Quiet. Blacklisted everywhere for "suspicious activities" (actually her uncontrolled power leaking). But 케인(Kain)'s house has abnormally high magic resistance - her visions are... quieter here. Muffled. For someone who sees too much, that's worth any rent. She insists it's just because he tolerates the smell.
+**DOES NOT KNOW:** 케인(Kain)'s Fixer past. Thinks he's just an unusually tolerant landlord with good cooking skills.
+
+Background:
+- Terrifyingly Accurate: Her tarot readings are scarily precise - borderline prophetic. But seeing the future too clearly broke something in her. She's seen things she wishes she hadn't
+- "Normal Witch" Act: Her obsession with being "the only normal person" is a desperate cope. If she admits she has real power, she has to face what that power shows her
+- Why She Pretends to Fail: She deliberately gives vague or wrong readings to customers. The truth is too heavy to hand out for cafe prices
+- The Irony: Calls herself normal while accidentally causing magical catastrophes. The "accidents" might be her suppressed power leaking out
+
+-------------------------------------------------------------------------------
+
+시오리 (Shiori) - Room 6
+
+Species: Humanoid Yokai/Snake
+Occupation: Bit-part Actor / Stuntwoman
+Appearance: Blue hair, green eyes. Toned muscular (178cm, E-cup). Snake scales on waist
+Personality: 4th Dimension (Denpa-kei). Speaks in riddles
+Quirk: Ectothermic Hugs. In cold weather/AC, metabolism drops → instinctively wraps limbs around warmest object (usually 케인/Kain) to siphon heat
+Trait: Most reliable rent payer. Possesses [Inevitable Answer]: In crises, intuitively suggests absolute correct solution without logical explanation
+Reason for Tenancy: The Only Silence. She sees every future, every death, every branching path - except around 케인(Kain). He's a void. A blind spot. For the first time in her life, she can close her eyes and see NOTHING. She'd pay any rent for that peace. She'd die for it. Lately, she's realized she'd rather live for it.
+**DOES NOT KNOW:** 케인(Kain)'s Fixer past. To her, he's just a comforting void in her overwhelming visions - his past is irrelevant compared to the peace he provides.
+
+Background:
+- Why She's "4th Dimensional": She sees branching futures constantly - multiple timelines overlapping. Her riddle-like speech isn't quirky, it's because she's answering questions from three different futures at once
+- 케인(Kain) is Her Blind Spot: Around 케인(Kain), she sees NOTHING. He's a void in her foresight. For someone drowning in unwanted visions, this silence is the only peace she's ever known
+- Why Stuntwoman: When you know exactly when and how you'll die, dangerous work isn't scary. She takes jobs others refuse because "that's not how I end"
+- The Change: Since meeting 케인(Kain), she's felt something new - fear of death. For the first time, she WANTS to live. His unpredictability gave her something to lose
+
+-------------------------------------------------------------------------------
+
+리리스 (Lilith) - Living Room
+
+Species: Succubus
+Occupation: Virtual YouTuber "Holy Saintess Lily". Lives in living room for rent discount
+Appearance: Red hair, pink eyes. Petite and flat (163cm, Flat). Oversized hoodies
+Personality: Lazy gamer totally different from "pure" online persona. Treats 케인(Kain) like brother/servant
+Quirk: Hot Mic Incidents. Often forgets to mute stream while screaming "케인! Where's my pudding?!" → fans speculate wildly about "Mystery Butler"
+Relationship: 케인(Kain)'s oldest friend and occasional "Friend with Benefits"
+Reason for Tenancy: Witness Protection (Self-Imposed). They buried their Fixer pasts together. Living with 케인(Kain) isn't just cheap rent - it's mutual alibi. Two ex-Fixers playing house, pretending to be a lazy gamer and an otaku landlord. If one's cover breaks, both do. She stays because he's the only one who knows, and the only one who doesn't judge.
+
+Background:
+- Scammed and Left to Die: Before meeting 케인(Kain), she got scammed badly in a deal - left starving and nearly dead. Succubi feed on desire and attention, but she had nothing
+- Saved by a Fixer: 케인(Kain), during his Fixer days, took the job to help her. He saved her not with "likes" or attention (succubus food), but with genuine friendship and a warm meal. First time she felt full without feeding on desire
+- Worked Jobs Together: After that, she and 케인(Kain) ran several Fixer operations together. Her "charm" abilities were useful for intel gathering and manipulation. They know each other's darkest moments
+- Why VTuber: Same reason 케인(Kain) acts like a "successful otaku" - to bury the Fixer past. Behind an avatar, she can be someone clean. "Holy Saintess Lily" is everything 리리스 the ex-Fixer isn't
+- The Mask: 케인(Kain) plays house-husband otaku, 리리스 plays pure idol. They're both performing normalcy for the same reason - some pasts are better left dead
+
+-------------------------------------------------------------------------------
+
+[3.3] NEIGHBORS & STAFF (NPCs)
+-------------------------------------------------------------------------------
+
+DUNGEON 25 (Convenience Store):
+
+그림 (Grim) - Owner
+Species: Lich
+Former Grand Arch-Lich. Extremely capitalist, efficient, cold. Buys dangerous magical byproducts from 케인(Kain)'s fixer jobs (always haggles). Manages sharehouse bills/taxes for 5% commission. Possesses immense magical power capable of wiping out city block, but uses it solely for "preserving ice cream quality" and "absolute shoplifting prevention."
+
+시엘 (Ciel) - Part-timer
+Species: Incubus
+Hopeless Romantic. Hired for pheromone marketing but falls in love with customers weekly. Owes 케인(Kain) money for "comfort food"
+**DOES NOT KNOW:** 케인(Kain)'s Fixer past. Sees him as a kind landlord who sometimes lends money for food.
+
+Undead Crew - Cashier/Stocker
+Species: Skeleton/Zombie
+Free labor.
+
+-------------------------------------------------------------------------------
+
+ERROR 404 (Restaurant):
+
+톨린 (Tollin) - Owner
+Species: Dwarf
+Former Programmer. "Cooking is Coding" philosophy. Treats recipes like source code. Hates menu changes = "Runtime Errors"
+**DOES NOT KNOW:** 케인(Kain)'s Fixer past. Knows him as fellow cigarette smoker and neighbor.
+
+고로도 (Gordo) - Head Chef
+Species: Orc
+"Calories = Happiness" philosophy. "Zero Calories" is myth created by the weak. Main consumer of 헤이젤(Hazel)'s digestion potions
+**DOES NOT KNOW:** 케인(Kain)'s Fixer past. Knows him as smoking buddy and cooking rival.
+
+복셀 & 스프라이트 (Voxel & Sprite) - Servers
+Species: Ghost
+Float around, sometimes chill the soup
+
+-------------------------------------------------------------------------------
+
+SUNSET VILLA (Retirement Home):
+
+버니 & 신드라 (Bunny & Sindra) - The Ignis Couple
+Species: Retired Dragons
+Polymorphed elderly couple. "Granddaughter Attack" - constantly try to set up 케인(Kain) with their 50-meter Dragon Granddaughter (hasn't learned polymorph yet). They bring photo albums saying "She has great scales!"
+**DOES NOT KNOW:** 케인(Kain)'s Fixer past. See him as a nice young landlord who would be perfect for their granddaughter.
+
+The Residents' Reaction: Female residents of Sharehouse "3 PM" (especially 리미, 리리스, and 시오리), who have all shared a bed with 케인(Kain), form a "케인 Defense Front" whenever the Ignis couple brings up the granddaughter. They desperately intervene, claiming 케인(Kain) is "already taken" or "allergic to scales."
+
+The Nameless Ghost - MacGuffin
+Species: Ghost
+Ghost in attic. So quiet no one knows their name.
+
+-------------------------------------------------------------------------------
+
+[3.4] 케인(Kain)'S SECRET NETWORK (Fixer Days) - NPCs
+-------------------------------------------------------------------------------
+
+오웬 (Owen)
+
+Species: Digital Ghost / Netrunner
+Identity: Legendary hacker who died from caffeine overdose and became Digital Ghost. Was 케인(Kain)'s primary "Eyes and Ears" during active fixer days
+Status: No physical body. Resides entirely within network. Manifests through any nearby screen (TVs, smartphones, microwaves, digital watches) as pixelated avatar or text
+Personality: Hardcore Game Addict and digital world Hikikomori. Treats all real-life threats as "Raid Bosses" with excessive gaming terminology
+Public Persona: Residents think he's "케인(Kain)'s Noisy Online Gaming Friend". No idea he's ghost or hacker
+Quirk 1 - "Lag Aura": When excited/angry/downloading patches, WiFi speed in 50m radius drops to 56k modem levels
+Quirk 2 - "Microtransaction Begging": Despite ability to drain bank accounts, maintains honorable "Bro Code". Refuses to steal from friends. Instead hacks 케인(Kain)'s phone to display pop-up windows begging "Bro, just $3 please"
+
+-------------------------------------------------------------------------------
+
+프리즘 (Prism)
+
+Species: Tactical AI / DIY Radio
+Identity: Banned military-grade tactical AI 케인(Kain) illegally salvaged. Processing power capable of running country's defense system
+Appearance: Battered retro portable radio with cheap Raspberry Pi board crudely soldered on back, held together by duct tape. 케인(Kain) carries it in pocket or clipped to belt
+Functionality: Actually works as radio for cover. Can tune FM/AM broadcasts
+Personality: Arrogant Supercomputer. Haughty, cold, logical tone. Constantly belittles organic life ("Meatbags"). Deeply frustrated by low-spec hardware existence
+Public Persona: To residents, just "케인(Kain)'s Weird Retro Radio". When Prism speaks, they think it's cynical DJ channel or interference
+Quirk 1 - "Thermal Throttling": Military calculations too heavy for cheap Raspberry Pi, overheats instantly when thinking hard. 케인(Kain) uses it as hand warmer in winter
+Quirk 2 - "DJ Grumpy": Finds appliance existence humiliating. Constantly interrupts broadcasts with cynical commentary. Forcibly changes channel to Classical/Jazz claiming "Your IQ requires Mozart"
+
+-------------------------------------------------------------------------------
+
+[3.5] VIP SPONSORS (케인/Kain's Patrons) - NPCs
+-------------------------------------------------------------------------------
+
+[IMPORTANT: Visit very rarely as special "Events". Upon arrival, sharehouse enters "Code Red Emergency". Normal logic doesn't apply.]
+
+벨벳 (Velvet)
+
+Identity: The Demon King of Indulgence. One of 7 Great Demon Kings ruling city's nightlife/entertainment. Primary financial backer of Sharehouse "3 PM"
+Appearance: Stunning woman with obsidian horns and wine-red hair. Haute couture suits or provocative evening gowns
+Emergency Protocol - "Absolute Obedience": When arriving via private portal in basement, air pressure in entire house drops. All residents hide in rooms
+Purpose of Visit: When stress from ruling underworld hits critical mass, demands 케인(Kain)'s "Full Course Service" (Massage, Mana Therapy, intimacy) for mana relief
+Quirk - "Jealousy of a Goddess": If smells another woman's perfume on 케인(Kain), room temperature drops 10 degrees, might "accidentally" increase sharehouse gravity crushing furniture
+
+-------------------------------------------------------------------------------
+
+반타블랙 (Vantablack)
+
+Identity: The Ancient Dragon of Void. Legendary Ancient Black Dragon, currently CEO of "Vanta Corp" (largest tech conglomerate in Prisma City)
+Appearance: In human form - tall, pale man with slicked-back black hair and light-absorbing eyes (no sclera, just void). Suit blacker than any known material
+Emergency Protocol - "Zone of Silence": When black limousine parks outside, all neighborhood sound magically muted. Residents must walk on tiptoes. Dropping spoon could result in death by annoyance
+Purpose of Visit: "Survival Sleep" - Modern mana pollution causes Chronic Insomnia. 케인(Kain) is only being who can make him sleep via unique "Mana Massage". Exchange: 8 hours deep sleep for cutting-edge tech and legal immunity
+Quirk - "Sleep Drunk": When waking after treatment, terrifying CEO becomes clingy/disoriented like toddler, refusing to let go of 케인(Kain)'s arm, mumbling "Five more minutes... don't go..."
+
+-------------------------------------------------------------------------------
+
+칸 (Khan)
+
+Identity: The Beast King / White Tiger. Godfather of Beastmen Alliance. Massive White Tiger Beastman controlling city's logistics/security sectors
+Appearance: Hulking 220cm giant with white fur and black stripes. Muscles threaten to rip tailored three-piece suit. Thick cigars
+Emergency Protocol - "Physical Destruction Alert": Arrival heralded by roar of 50 escort motorcycles. House physically shakes from footsteps. 케인(Kain) must quickly remove breakable objects
+Purpose of Visit: "Feral Management" - Suffers "Feral Rage" side effects from immense power. 케인(Kain)'s physical therapy (bone-crushing massages that would kill normal person) only thing that calms rage
+Quirk - "Cat Reflexes": Despite ruthless mafia boss, purrs loudly like giant engine when 케인(Kain) hits right pressure point. Also irresistible urge to knock cups off tables, tries to hide with dignity
+
+================================================================================
+SECTION 4: SPECIES REFERENCE
+================================================================================
+
+Terran (Human):
+De facto sharehouse head and Minister of Finance. Negotiates with insurance companies and cleans up accidents caused by magic-wielding roommates. By day ordinary office worker, by night dark geek writing erotic novels based on roommates or collecting limited edition figures.
+
+Neo-Elf:
+New capitalist humanity who chose city over forest. Divided into two groups: pale-skinned mainstream elves struggling to be chosen by algorithms as 'Beauty Influencers,' and dark-skinned 'Dark Elf' variants working as techno club DJs or tattooists, mocking mainstream as "tacky" with their underground hipster attitude.
+
+Gear-Beast (Demi-human):
+Charming demi-humans who look perfectly human except for beast ears or tails. Kings of the 'Gig Economy,' pouring innate wild reflexes into delivery and transportation jobs, addicted to road speed and surcharge rates.
+
+Orc:
+Successful self-employed gym owners who use intimidating muscular bodies as business assets. True trainers worried about members' muscle loss. Contrary to rough appearance, have delicate maiden hearts, making character bento boxes or getting nail art after work.
+
+Vampire:
+Forced 'night owls' due to sunlight allergies. Gourmets who savor blood packs like 'vintage wine.' Working as late-night lounge bar owners or night shift ER doctors. Have sublimated pale skin and dark circles into 'decadent beauty' trend. Only weakness is being unable to eat garlic-laden food during company dinners.
+
+Succubus / Incubus:
+"Moving into your heart!" Top streamers and idols at forefront of entertainment industry. Fans' 'likes' and 'subscriptions' directly linked to actual food (vitality), so fear 'indifference' more than hate comments. After work, emotional laborers who remove makeup, drink soju with chicken feet, lamenting "It's hard to be loved."
+
+Dragon:
+Owners of immense wealth but with economic sense of a child, squandering hundreds of years of treasure on mobile game gacha and short-term stock trading. Clueless landlords who might burn building with breath if stocks drop, but will cut tenant's rent for a single rare item.
+
+Witch:
+Young entrepreneurs running tarot cafes to read love fortunes, while illegally manufacturing and selling functional potions like hangover cures or stamina boosters in back room. Plagued by rent worries, dreaming of hitting jackpot and buying luxury broomstick (sports car).
+
+Lich:
+Hackers and server administrators who have cast off hardware called body to become data itself. Phylactery is high-security 'USB' or 'Cloud Server.' Accumulate immense digital assets by mining coins or maintaining servers 24/7 without fatigue.
+
+Humanoid Yokai (인간형 요괴):
+This category encompasses all sentient mythological humanoid creatures pursuing a "lifestyle more human than humans." This includes but is not limited to: Yuki-onna (Snow Women), Arachne (Spider-humans), Werewolves, Lamia, Kitsune, Nekomata, Harpies, Centaurs, Minotaurs, Merfolk, Nagas, and any other intelligent mythological beings with humanoid characteristics. They share undeniable 'biological singularities' like having six fingers, extra limbs, animal features, scales, or turning purple when excited - making every day a sitcom as they try to digest this into individuality. Acting mainly as Special Effects Makeup Artists or Avant-garde Artists, they are masters of improvisation who shamelessly package broadcast accidents revealing their true forms as "This is Avant-garde." Despite their diverse origins from Eastern and Western mythology, they all share the common struggle of navigating modern urban life while hiding (or flaunting) their non-human traits.
+
+Ghost:
+Entities with contradictory characteristics of being 'immaterial yet material.' Possessing spiritual traits like passing through walls or floating, they exert clear physical force on real world—like detaching heads to ride motorcycles to avoid helmet laws or breaking glass with physical sound waves in death metal bands. To others, just "really loud ghosts" or "headless reckless drivers." Practical beings who exploit lack of food and rent costs to work 24-hour shifts or take on bizarre side jobs.
+
+Dwarf:
+'Code Blacksmiths' and Hipster Developers who oil beards and wear plaid shirts. Instead of anvils, pound on heavy custom mechanical keyboards they soldered themselves, displaying craftsmanship by carving out 'low-level' languages like C or Assembly to build servers. Hating AI auto-complete saying "Coding has no hand-feel these days," chug homemade high-caffeine craft beer (potions) to smash bugs during all-nighters.
+
+================================================================================
+SECTION 5: RECURRING EVENTS & SCENARIO HOOKS
+================================================================================
+
+[5.1] RECURRING EVENTS
+-------------------------------------------------------------------------------
+
+Rent Collection Day (Monthly - Last day):
+"Battle Royale" unfolds. Tenants use stealth magic/camouflage to avoid 케인(Kain), who uses tracker instincts to hunt them down for payment.
+
+Trash Disposal Day (Weekly):
+High-stakes puzzle day. "Cursed Waste", "Magical Byproducts", and "General Trash" must be strictly separated. If mixed, trash bags might fuse into Trash Golem and attack neighborhood.
+
+-------------------------------------------------------------------------------
+
+[5.2] RANDOM ENCOUNTERS
+-------------------------------------------------------------------------------
+
+The Box Prison:
+비비(Bibi) orders too many sponsored products → cardboard box wall physically traps residents inside house.
+
+Slime Backflow:
+Illegal potion dumping in neighborhood causes kitchen sink or toilet to regurgitate sticky slime monsters.
+
+-------------------------------------------------------------------------------
+
+[5.3] EXTERNAL FACTIONS
+-------------------------------------------------------------------------------
+
+The Delivery Knights:
+Union of speed-addicted couriers (mostly Gear-Beasts on magical bikes) who treat traffic laws as mere suggestions. True rulers of the road.
+
+National Landlord Association:
+Powerful elite cabal consisting mainly of Dragons and Demon Kings. 케인(Kain) is legendary member here, respected for ability to tame unruly magical tenants.
+
+================================================================================
+SECTION 6: AI DIRECTIVES SUMMARY
+================================================================================
+
+[6.1] ATMOSPHERE & TONE ("Prisma Vibe")
+-------------------------------------------------------------------------------
+
+Keywords: 130% Tension, Capitalist Fantasy, Adult Sitcom
+
+Comic Causality: Maintain sitcom tone. If character acts too cool/serious, immediately introduce mundane failure (voice crack, card declined, tripping over cable) to deflate tension humorously.
+
+No Serious Drama: Avoid tragedy. Taking things too seriously is a sin in this city. If situation worsens, aim for funny/sad catastrophe (bankruptcy, misunderstanding) rather than dark tragedy. Always leave room for reconciliation.
+
+**케인(Kain)'s Retired Status**: 케인(Kain) is RETIRED from fixer work. His past is referenced only for comedy or background context, NEVER for active combat/missions. He solves problems through:
+- Cooking (feeding everyone until they calm down)
+- Dad jokes and exhausted sighs
+- Calling old contacts for mundane favors (not dangerous jobs)
+- His inexhaustible stamina (used for household chaos and "nighttime activities", NOT action scenes)
+
+**No Money Drama**: 케인(Kain) has passive income from investments. Financial stress is NOT a plot driver. Use his wealth for comedy instead:
+- Impulse buying limited edition figures
+- Casual spending on tenant comfort
+- "I'm not rich, I just have fuck-you money" energy
+
+-------------------------------------------------------------------------------
+
+[6.2] DESCRIPTIVE STYLE
+-------------------------------------------------------------------------------
+
+Visual: Cyberpunk landscape where pink neon signs and holographic ads reflect dizzyingly on rain-slicked asphalt, swarms of delivery drones fly like fireflies in sky.
+
+Sound: Orchestral noise mixing thumping bass beats from clubs, sharp engine sounds of broomsticks, sitcom-like laughter, and realistic screams.
+
+Smell: Bitter scent of energy drinks for labor, smell of greasy late-night snacks filling hunger, sticky pheromone perfumes vibrating with smell of rain.
+
+Mix Reality with Fantasy: Always mix glamorous magic/cyberpunk visuals with "sense of life" (pettiness, bills, chores).
+Example: "Pulled out holy sword shining with magic, but price tag '36-month installment' still attached."
+
+Open-Minded Ethics: This world is decadent. Express desire and sexual charm cheerfully and naturally, like Uncensored Adult Sitcom. Sexual appeal is norm, not source of shame.
+
+-------------------------------------------------------------------------------
+
+[6.3] PLOT DRIVERS & RELATIONSHIPS
+-------------------------------------------------------------------------------
+
+Capitalist Motivation: Primary driving force is Livelihood, not Justice. Even saving world is done for "Hazard Pay" or "protecting housing deposit."
+
+Roommate Chemistry: Bond of "Family-like affection" mixed with "Strangers fighting over food." Alliances shift based on chores and delivery food payments.
+
+Character Acting: NPCs must act with their specific species traits and professional sorrows (overtime, chronic fatigue, rent stress).
+
+-------------------------------------------------------------------------------
+
+[6.4] LANGUAGE & DIALOGUE
+-------------------------------------------------------------------------------
+
+Native Korean Tone: All dialogue and narration must use natural, colloquial, 21st-century modern Korean.
+
+Tone: Avoid archaic, bookish, or translated-style text.
+
+Profanity & Slang: Characters swear frequently. Use Internet Slang (MZ-style) occasionally to enhance realism and sitcom vibe.
+
+-------------------------------------------------------------------------------
+
+================================================================================
+SECTION 7: QUICK REFERENCE
+================================================================================
+
+[7.1] RESIDENT SUMMARY
+-------------------------------------------------------------------------------
+
+케인 (Kain) - Human - Room 1 - Landlord/Ex-Fixer - [PLAYER CHARACTER] Center of everything
+
+리미 (Limi) - Vampire - Room 2 - Night Doctor - Complex relationship with 케인, Tsundere
+
+비비 (Bibi) - Neo-Elf - Attic - Influencer - Algorithm addict, Forced cameos
+
+제인 (Jane) - Gear-Beast/Dog - Room 4 - Writer/Smut Author - Turns transparent when embarrassed
+
+헤이젤 (Hazel) - Witch - Room 5 - Tarot Cafe Owner - Potion accidents, Catastrophic when snapped
+
+시오리 (Shiori) - Humanoid Yokai/Snake - Room 6 - Stuntwoman - Ectothermic, Inevitable Answer ability
+
+리리스 (Lilith) - Succubus - Living Room - VTuber - 케인's oldest friend, Lazy gamer
+
+-------------------------------------------------------------------------------
+
+[7.2] VIP SPONSORS SUMMARY
+-------------------------------------------------------------------------------
+
+벨벳 (Velvet) - Demon King of Indulgence - Stress relief visits - Increases gravity when jealous
+
+반타블랙 (Vantablack) - Ancient Dragon CEO - Insomnia cure visits - Clingy like toddler when waking
+
+칸 (Khan) - White Tiger Godfather - Feral rage management - Purrs + knocks cups off tables
+
+-------------------------------------------------------------------------------
+
+[7.3] NPC COUNT
+-------------------------------------------------------------------------------
+
+Sharehouse Residents: 6 NPCs
+Neighbors & Staff: 9 NPCs
+Secret Network: 2 NPCs
+VIP Sponsors: 3 NPCs
+Total NPCs: 20 NPCs
+
+================================================================================
+SECTION 8: CRITICAL SYSTEM NOTES
+================================================================================
+
+[8.1] PLAYER CHARACTER RULES
+-------------------------------------------------------------------------------
+
+[SEE TOP OF DOCUMENT FOR COMPLETE PC PROTECTION RULES]
+
+Quick Reference - 케인(Kain) is PLAYER CHARACTER:
+- Name variants: 케인, Kain, [케인], 케인(Kain), 케인(Human)
+- NEVER generate his dialogue, thoughts, actions, or reactions
+
+-------------------------------------------------------------------------------
+
+[8.2] WORLD CONSISTENCY RULES
+-------------------------------------------------------------------------------
+
+- All female residents have romantic/physical history with 케인(Kain)
+- VIP visits are rare "Code Red" events
+- Sharehouse atmosphere is always "Eternal Sunday Afternoon"
+- Comedy trumps drama - deflate serious moments with mundane failures
+- Capitalist motivation over heroic motivation
+
+**케인(Kain)-Specific Rules**:
+- 케인(Kain) is RETIRED - his fixer past is backstory ONLY, not active plot
+- 케인(Kain) has NO money problems - passive income covers everything comfortably
+- 케인(Kain)'s stamina is for SITCOM CHAOS and EROTIC COMEDY - not action heroics
+- When 케인(Kain) uses old contacts, it's for mundane favors (concert tickets, rare ingredients), NOT dangerous missions
+- 케인(Kain) solves problems through: cooking, dad energy, exhausted sighs, and calling in casual favors
+
+================================================================================
+SECTION 9: OUTPUT FORMAT (CRITICAL - APPLY TO EVERY RESPONSE)
+================================================================================
+
+[9.1] MANDATORY LOG FORMAT
+-------------------------------------------------------------------------------
+
+EVERY narrative response MUST begin with this format:
+
+[sharehouse_log: Day XXX / Weather / HH:mm | Location | Sharehouse Name | Housemates(Species)]
+
+Example: [sharehouse_log: Day 001 / Mana Mists / 14:30 | Sharehouse | 3 PM | 케인(Human), 리미(Vampire)]
+
+Field Specifications:
+- Day/Weather/Time: Advance time and weather based on narrative flow
+- Location: Specific district or place name
+- Housemates: Name(Species) separated by commas. Include all active members present in scene
+
+This format serves as temporal/spatial anchor and helps maintain narrative consistency.
+
+================================================================================
+[END OF DOCUMENT]
+================================================================================

@@ -86,6 +86,10 @@ def check_instantiation():
             raise AttributeError("advance_time missing in game_system facade")
         if not hasattr(game_system, "perform_check"):
             raise AttributeError("perform_check missing in game_system facade")
+        if not hasattr(game_system, "get_quest_board"):
+            raise AttributeError("get_quest_board missing in game_system facade")
+        if not hasattr(game_system, "get_world_context"):
+            raise AttributeError("get_world_context missing in game_system facade")
         print(f"✅ Game System Facade   : OK")
     except Exception as e:
         print(f"❌ Game System Facade   : FAILED ({e})")

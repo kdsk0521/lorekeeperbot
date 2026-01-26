@@ -12,6 +12,7 @@ from npc_manager import *
 import game_world
 import game_character
 import npc_manager
+import domain_manager
 
 # Ensure all original functions are available
 # World
@@ -24,6 +25,9 @@ change_doom = game_world.change_doom
 _get_doom_description = game_world._get_doom_description
 get_world_context = game_world.get_world_context
 get_doom_forecast = game_world.get_doom_forecast
+
+# Character / Quest
+get_quest_board = domain_manager.get_quest_board
 
 # Character / Quest
 add_quest = game_character.add_quest
