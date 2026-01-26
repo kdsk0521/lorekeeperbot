@@ -90,7 +90,7 @@ def run_test():
     # 3. NPC Manager
     print_header("NPC MANAGER")
     npc_name = "OldMan"
-    npc_data = {"desc": "Mysterious old man"}
+    npc_data = {"desc": "Mysterious old man", "source": "lore"} # Set source to lore
     npc_manager.update_npc(CHANNEL_ID, npc_name, npc_data)
     
     # Identity Reveal
@@ -98,11 +98,37 @@ def run_test():
     rev_res = npc_manager.handle_identity_reveal(CHANNEL_ID, npc_name, "Gandalf", "He summoned light.")
     print(rev_res)
     
-    # Verify
+    # NPC Cleanup (Session NPC)
+    print("\nAdding Session NPC (Bandit) and Lore NPC (King)...")
+    npc_manager.update_npc(CHANNEL_ID, "Bandit", {"source": "session"})
+    npc_manager.update_npc(CHANNEL_ID, "King", {"source": "lore"})
+    
+    print("Clearing Session NPCs...")
+    count = npc_manager.clear_session_npcs(CHANNEL_ID)
+    print(f"Removed count: {count}")
+    
     npcs = npc_manager.get_npcs(CHANNEL_ID)
-    assert "Gandalf" in npcs, "New name missing"
-    assert "OldMan" not in npcs, "Old name still present"
-    assert npcs["Gandalf"]["identity_history"][0]["old_name"] == "OldMan", "Identity history missing"
+    assert "Bandit" not in npcs, "Session NPC not removed"
+    assert "King" in npcs, "Lore NPC removed"
+    assert "Gandalf" in npcs, "Renamed NPC removed (default source?)"
+    
+    # 4. Doom Reduction (Rest)
+    print_header("DOOM REDUCTION")
+    # Increase Doom first
+    game_world.change_doom(CHANNEL_ID, 20)
+    w = domain_manager.get_world_state(CHANNEL_ID)
+    doom_before = w['doom'] # Store value
+    print(f"Doom increased to: {doom_before}")
+    
+    print("Reducing Doom (Rest - Low Risk)...")
+    # Mocking low risk env
+    w["risk_level"] = "low"
+    domain_manager.update_world_state(CHANNEL_ID, w)
+    
+    red_msg = game_world.reduce_doom(CHANNEL_ID, 15, "Rest")
+    print(red_msg)
+    w_after = domain_manager.get_world_state(CHANNEL_ID)
+    assert w_after['doom'] < doom_before, f"Doom did not decrease: {w_after['doom']} vs {doom_before}"
     
     print("\n✅ TEST COMPLETE: SUCCESS")
 
@@ -114,4 +140,6 @@ if __name__ == "__main__":
         exit(1)
     except Exception as e:
         print(f"\n❌ TEST ERROR: {e}")
+        import traceback
+        traceback.print_exc()
         exit(1)

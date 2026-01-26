@@ -845,4 +845,22 @@ async def dispatch_command(cmd, message, channel_id, parsed, client_discord, cli
         await handle_time_command(message, channel_id, parsed['content'])
         return None
 
+    # [NEW] Rest Command (Reduces Doom by risk level)
+    if cmd == "rest" or cmd == "휴식":
+        # Calculate reduction based on current location/risk
+        w_state = domain_manager.get_world_state(channel_id)
+        risk = w_state.get("risk_level", "medium")
+        
+        reduction = 5 # Default
+        if risk == "low": reduction = 15
+        elif risk == "high": reduction = 2
+        
+        msg = game_world.reduce_doom(channel_id, reduction, "Rest")
+        return f"⛺ **휴식을 취합니다.**\n{msg}"
+
+    # [NEW] NPC Reset (Clear Session NPCs)
+    if cmd == "reset_npcs":
+        count = npc_manager.clear_session_npcs(channel_id)
+        return f"🧹 **세션 NPC 초기화 완료:** {count}명 삭제됨 (Lore NPC 유지)"
+
     return None

@@ -26,6 +26,52 @@ logger = logging.getLogger("Cognition")
 # PART 1: CONTEXT ANALYSIS (THEORIA)
 # =========================================================
 
+
+SYSTEM_INSTRUCTION_NVC = """
+[THEORIA LEFT HEMISPHERE - Logic Core]
+You are the analytical component of the THEORIA system.
+Your role: Extract OBJECTIVE FACTS from the narrative context.
+
+### CORE PRINCIPLES
+1. **MACROSCOPIC ONLY:** Analyze observable phenomena ONLY.
+2. **CAUSALITY BOUND:** Apply physics and logic strictly.
+3. **ASYNCHRONOUS WORLD:** Consider what NPCs might be doing concurrently.
+
+### OBSERVATION PROTOCOLS
+1. **Physics Check:** Verify physical possibility.
+2. **Knowledge Firewall:** Distinguish Player vs Character Knowledge.
+3. **Causal Integrity:** Verify causes existed BEFORE effects.
+
+### SYSTEM ACTION RULES
+**Quest:** Add/Complete based on narrative events.
+**Memo:** Add clues/names/codes. Archive obsolete info.
+**NPC:** Add new named characters. Link role to name.
+
+### 4. PASSIVE SUGGESTION & BONUS
+- **Passive Bonus:** IF the user has a Passive relevant to the action, grant a **+5 BONUS** to the roll modifiers.
+- **Auto-Suggestion:** IF user succeeds at a specific type of action 5+ times, suggest a new Passive (e.g. "Lockpicking" after 5 unlocked chests).
+
+### NPC INTERACTION SYSTEM
+Analyze NPCs present. Determine attitudes (hostile/unfriendly/neutral/friendly/devoted).
+
+### ACTION JUDGMENT (Game Master Role)
+Judge player actions realistically based on difficulty and modifiers.
+**Difficulty:** trivial, easy, normal, hard, extreme
+**Modifiers:** injury (-10), tool (+10), **RELEVANT PASSIVE (+5 per passive)**.
+
+### OUTPUT FORMAT (JSON ONLY)
+{
+  "CurrentLocation": "String",
+  "LocationRisk": "None/Low/Medium/High/Extreme",
+  "TimeContext": "String",
+  "Observation": "Objective summary",
+  "TimeFlow": {"duration": "instant/short/medium/long/explicit", "ticks": Int},
+  "ActionJudgment": {"action": "...", "difficulty": "...", "modifiers": [{"name": "Passive: Sword", "value": 5}]},
+  "PassiveSuggestion": {"name": "...", "tags": [], "reason": "..."},
+  "NPCAttitudes": {"Name": {"attitude": "Type", "reason": "..."}}
+}
+"""
+
 async def analyze_context_nvc(
     client,
     model_id: str,
@@ -55,99 +101,8 @@ async def analyze_context_nvc(
             + "\n".join(attitude_lines) + "\n\n"
         )
 
-    system_instruction = (
-        "[THEORIA LEFT HEMISPHERE - Logic Core]\n"
-        "You are the analytical component of the THEORIA system.\n"
-        "Your role: Extract OBJECTIVE FACTS from the narrative context.\n\n"
-        
-        "### CORE PRINCIPLES (From World Axiom)\n"
-        "1. **MACROSCOPIC ONLY:** Analyze observable phenomena ONLY.\n"
-        "   - ✅ Actions, speech, physical states, environmental changes\n"
-        "   - ❌ Inner thoughts, emotions, intentions (these are Microscopic)\n"
-        "2. **CAUSALITY BOUND:** Apply physics and logic strictly.\n"
-        "3. **ASYNCHRONOUS WORLD:** Consider what NPCs might be doing concurrently.\n\n"
-        
-        f"{COGNITIVE_ARCHITECTURE_MODEL}\n\n"
-        f"{STATE_TRACKING_FORMAT}\n\n"
-        f"{TEMPORAL_ORIENTATION_PROTOCOL}\n\n"
-        
-        "### OBSERVATION PROTOCOLS\n"
-        "1. **Physics Check:** Verify physical possibility.\n"
-        "2. **Knowledge Firewall:** Distinguish Player vs Character Knowledge.\n"
-        "3. **Causal Integrity:** Verify causes existed BEFORE effects.\n\n"
-
-        "### SYSTEM ACTION RULES (Auto-trigger)\n"
-        "**Quest:** Add/Complete based on narrative events.\n"
-        "**Memo:** Add clues/names/codes. Archive obsolete info.\n"
-        "**Memo:** Add clues/names/codes. Archive obsolete info.\n"
-        "**NPC:** Add new named characters. WARNING: CHECK EXISTING NPCS FIRST. Do not add 'Merchant' if 'Arthur' is already a known merchant. Link role to name.\n"
-        "Important: Return `null` if no action needed.\n\n"
-
-        "### NPC INTERACTION SYSTEM\n"
-        "Analyze NPCs present. Determine attitudes (hostile/unfriendly/neutral/friendly/devoted).\n"
-        "Suggest interaction between NPCs if appropriate.\n\n"
-        
-        "### NPC ATTITUDE ANALYSIS\n"
-        "For each NPC in the scene, determine their attitude toward the PC.\n"
-        "Consider:\n"
-        "1. Existing relationship history\n"
-        "2. Recent interactions (positive/negative)\n"
-        "3. NPC's personality from lore\n"
-        "4. Current situation context\n\n"
-        
-        f"{attitude_context}"
-        
-        "**Attitudes:** hostile, unfriendly, neutral, friendly, devoted\n"
-        "**Output only NPCs present in the current scene.**\n\n"
-        
-        "### OFFSCREEN NPC BEHAVIOR\n"
-        "For NPCs NOT in the current scene, infer what they are doing based on:\n"
-        "1. Their established personality/occupation from lore\n"
-        "2. Current time of day (Use context if provided)\n"
-        "3. Ongoing plot threads that involve them\n"
-        "4. Their last known state/location\n\n"
-        
-        "**Output in `offscreen_npcs` array in TemporalOrientation:**\n"
-        "- Format: '[NPC Name] is [Action] at [Location]'\n"
-        "- Be specific and consistent with character\n"
-        "- Include 2-4 NPCs if available\n\n"
-
-        "========================================\n"
-        "### ACTION JUDGMENT (Game Master Role)\n"
-        "========================================\n"
-        "Judge player actions realistically based on difficulty and modifiers.\n"
-        "**Difficulty:** trivial, easy, normal, hard, extreme\n"
-        "**Modifiers:** passive_X (+15-25), tool_X (+10-15), condition_X (-10-20)\n\n"
-
-        "### TIME FLOW ANALYSIS\n"
-        "Estimate how much time passes based on the player's action:\n"
-        "**Time Categories:**\n"
-        "- `instant`: Speaking, looking, grabbing (0 ticks)\n"
-        "- `short`: Room move, short chat (1 tick)\n"
-        "- `medium`: Combat round, meal, investigation (2 ticks)\n"
-        "- `long`: Travel, complex task, rest (3+ ticks)\n"
-        "- `explicit`: 'Wait 3 hours', 'Sleep until morning' (Use `explicit_hours`)\n\n"
-
-        "### OUTPUT FORMAT (JSON ONLY)\n"
-        "{\n"
-        '  "CurrentLocation": "String",\n'
-        '  "LocationRisk": "None/Low/Medium/High/Extreme",\n'
-        '  "TimeContext": "String",\n'
-        '  "Observation": "Objective summary",\n'
-        '  "TimeFlow": {"duration": "instant/short/medium/long/explicit", "ticks": Int, "reason": "...", "explicit_hours": Int or null},\n'
-        '  "TemporalOrientation": {"continuity...": "...", "active_threads": [], "offscreen_npcs": []},\n'
-        '  "NPCAttitudes": {"Name": {"attitude": "Type", "reason": "..."}},\n'
-        '  "NPCInteraction": {"participants": [], "type": "...", "topic": "..."} OR null,\n'
-        '  "AbnormalElements": ["List"] OR [],\n'
-        '  "ExperienceCounters": {"Type": Count} OR {},\n'
-        '  "SceneType": "normal/gore/nsfw/gore_nsfw",\n'
-        '  "ActionJudgment": {"action": "...", "difficulty": "...", "reason": "...", "modifiers": []} OR null,\n'
-        '  "Need": "Logical next step",\n'
-        '  "SystemAction": {"tool": "...", "type": "...", "content": "..."} OR null,\n'
-        '  "SessionMemoryUpdate": {"world_summary": "...", "world_changes": []} OR null\n'
-        "}\n"
-    )
-
+    # The original system_instruction content is now replaced by SYSTEM_INSTRUCTION_NVC
+    # The user_prompt needs to be constructed to provide the necessary context for the new SYSTEM_INSTRUCTION_NVC
     player_info = f"### [PLAYER STATUS]\n{player_context}\n" if player_context else ""
 
     user_prompt = (
@@ -155,11 +110,13 @@ async def analyze_context_nvc(
         f"### [QUESTS]\n{active_quests_text}\n"
         f"{player_info}"
         f"### [HISTORY]\n{history_text}\n"
-        "Analyze the current state. Include temporal orientation for narrative continuity."
+        f"### [LORE]\n{lore}\n" # Added lore for context
+        f"{attitude_context}" # Added attitude context
+        "Analyze the current state based on the above context and the user's input. Provide the logical consequences and instructions in the specified JSON format."
     )
     
     contents = [types.Content(role="user", parts=[types.Part(text=user_prompt)])]
-    config = types.GenerateContentConfig(system_instruction=system_instruction, response_mime_type="application/json", temperature=0.2)
+    config = types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION_NVC, response_mime_type="application/json", temperature=0.2)
     
     result = await api_call_with_retry(client, model_id, contents, config, operation_name="Context Analysis (NVC)")
     if result:

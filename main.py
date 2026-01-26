@@ -240,6 +240,11 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
             world_ctx = game_system.get_world_context(channel_id)
             obj_ctx = game_system.get_objective_context(channel_id)
             
+            # [NEW] Passives Context for Cognition
+            uid = str(message.author.id)
+            user_data = domain_manager.get_participant_data(channel_id, uid)
+            passives_txt = game_character.get_passives_for_context(user_data)
+            
             # History for Analysis
             history = domain_data.get('history', [])[-fermentation.RECENT_HISTORY_FOR_ANALYSIS:]
             hist_text = "\n".join([f"{h['role']}: {h['content']}" for h in history]) + f"\nUser: {action_text}"

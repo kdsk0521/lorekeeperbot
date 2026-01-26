@@ -200,13 +200,24 @@ def get_random_doom_event(doom: int) -> str:
     
     return f"🎲 **[둠 이벤트]**\n{event}"
 
-def change_doom(channel_id: str, amount: int) -> str:
+def reduce_doom(channel_id: str, amount: int, reason: str = "") -> str:
+    """Doom 수치 감소 (최소 0)"""
+    return change_doom(channel_id, -amount)
+
+def change_doom(channel_id: str, delta: int) -> str:
     world = domain_manager.get_world_state(channel_id)
-    current = world.get("doom", 0)
-    new_val = max(0, min(config.DOOM_MAX, current + amount))
+    old = world.get("doom", 0)
+    new_val = max(0, min(config.DOOM_MAX, old + delta))
+    
+    if old == new_val:
+        return ""
+        
     world["doom"] = new_val
     domain_manager.update_world_state(channel_id, world)
-    return f"📉 **위기 수치 변경:** {current}% -> {new_val}% ({_get_doom_description(new_val)})"
+    
+    icon = "📈" if delta > 0 else "📉"
+    desc = _get_doom_description(new_val)
+    return f"{icon} **위기 수치 변경:** {old}% -> {new_val}% ({desc})"
 
 def _get_doom_description(doom: int) -> str:
     if doom >= config.DOOM_MAX: return "💥 파멸 💥"

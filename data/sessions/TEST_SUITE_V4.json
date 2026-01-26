@@ -22,12 +22,16 @@
     }
   },
   "npcs": {
+    "King": {
+      "source": "lore"
+    },
     "Gandalf": {
       "desc": "Mysterious old man",
+      "source": "lore",
       "identity_history": [
         {
           "old_name": "OldMan",
-          "revealed_at": "2026-01-26 18:27",
+          "revealed_at": "2026-01-26 18:46",
           "reason": "He summoned light."
         }
       ]
@@ -37,6 +41,9 @@
   "quest_board": {
     "active": [],
     "completed": [
+      "Kill the Dragon",
+      "Kill the Dragon",
+      "Kill the Dragon",
       "Kill the Dragon"
     ],
     "memos": [],
@@ -44,9 +51,10 @@
     "lore": []
   },
   "world_state": {
-    "doom": 66,
+    "doom": 71,
     "time_slot": "황혼",
-    "day": 1
+    "day": 1,
+    "risk_level": "low"
   },
   "settings": {
     "response_mode": "auto",

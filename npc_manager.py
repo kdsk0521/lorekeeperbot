@@ -40,6 +40,11 @@ def handle_identity_reveal(channel_id: str, old_name: str, new_name: str, reason
         
     # 데이터 복사 및 메타데이터 추가
     new_data = npc_data.copy()
+    
+    # [FIX] Source 보존 (기본값 보존)
+    if "source" not in new_data:
+        new_data["source"] = "session"
+        
     new_data["identity_history"] = new_data.get("identity_history", [])
     new_data["identity_history"].append({
         "old_name": old_name,
@@ -109,3 +114,22 @@ def get_npc_time_progression(channel_id: str) -> List[str]:
         hints.append(f"{npc_name}: {activity}")
     
     return hints
+
+def clear_session_npcs(channel_id: str) -> int:
+    """
+    세션 전용 NPC (source != 'lore') 일괄 삭제
+    Returns: 삭제된 NPC 수
+    """
+    d = domain_manager.get_domain(channel_id)
+    npcs = d.get("npcs", {})
+    to_delete = []
+    
+    for name, data in npcs.items():
+        if data.get("source", "session") != "lore":
+            to_delete.append(name)
+            
+    for name in to_delete:
+        del npcs[name]
+        
+    domain_manager.save_domain(channel_id, d)
+    return len(to_delete)
