@@ -32,6 +32,42 @@ def _get_board(channel_id: str) -> Dict[str, Any]:
         d["quest_board"] = {"active": [], "completed": [], "memos": [], "archive": [], "lore": []}
     return d["quest_board"]
 
+def migrate_to_notebook(channel_id: str) -> str:
+    """기존 인벤토리와 메모 데이터를 새 노트북 시스템으로 이전합니다."""
+    d = domain_manager.get_domain(channel_id)
+    notebook = d.get("notebook", "")
+    
+    # 이미 데이터가 풍부하면 (기본값이 아니면) 스킵
+    if notebook and not notebook.startswith("— [소지품] —"):
+         return "이미 마이그레이션되었거나 내용이 존재합니다."
+
+    items_list = []
+    # 1. 모든 참가자의 인벤토리 수집
+    for uid, p in d.get("participants", {}).items():
+        inv = p.get("inventory", {})
+        if inv:
+            p_name = p.get("mask", f"User_{uid[-4:]}")
+            items_list.append(f"[{p_name}] " + ", ".join([f"{k}x{v}" for k, v in inv.items()]))
+    
+    # 2. 퀘스트 보드의 메모 수집
+    board = _get_board(channel_id)
+    memos = board.get("memos", [])
+    
+    new_notebook = "— [소지품] —\n"
+    if items_list:
+        new_notebook += "\n".join(items_list) + "\n"
+    else:
+        new_notebook += "(비어 있음)\n"
+        
+    new_notebook += "\n— [메모] —\n"
+    if memos:
+        new_notebook += "\n".join([f"- {m}" for m in memos]) + "\n"
+    else:
+        new_notebook += "(비어 있음)\n"
+    
+    domain_manager.update_notebook(channel_id, new_notebook)
+    return "✅ 인벤토리 및 메모가 노트북으로 통합되었습니다."
+
 def _save_board(channel_id: str, board: Dict[str, Any]) -> None:
     domain_manager.update_quest_board(channel_id, board)
 
@@ -99,12 +135,22 @@ def remove_memo(channel_id: str, content: str) -> str:
 def resolve_memo_auto(channel_id: str, content: str) -> str:
     return _move_op(channel_id, "memos", "archive", content, "🗄️", "메모", "해결(보관)")
 
-# Text Views
+# Notebook System (New in V5.1)
+def get_notebook_text(channel_id: str) -> str:
+    return domain_manager.get_notebook(channel_id)
+
+def update_notebook_text(channel_id: str, new_text: str) -> None:
+    domain_manager.update_notebook(channel_id, new_text)
+
 def get_active_quests(channel_id: str) -> List[str]:
     return _get_board(channel_id).get("active", [])
 
+# Legacy Compatibility (V5.1 Unified into Notebook)
 def get_memos(channel_id: str) -> List[str]:
-    return _get_board(channel_id).get("memos", [])
+    return []
+
+def get_memos_text(channel_id: str) -> str:
+    return ""
 
 def get_active_quests_text(channel_id: str) -> str:
     board = _get_board(channel_id)
@@ -112,31 +158,23 @@ def get_active_quests_text(channel_id: str) -> str:
     if not active: return "📭 현재 진행 중인 퀘스트가 없습니다."
     return "🔥 **진행 중인 퀘스트:**\n" + "\n".join([f"{i+1}. {q}" for i, q in enumerate(active)])
 
-def get_memos_text(channel_id: str) -> str:
-    board = _get_board(channel_id)
-    memos = board.get("memos", [])
-    if not memos: return "📭 저장된 메모가 없습니다."
-    return "📝 **메모 목록:**\n" + "\n".join([f"- {m}" for m in memos])
-
 def get_status_message(channel_id: str) -> str:
-    return f"{get_active_quests_text(channel_id)}\n\n{get_memos_text(channel_id)}"
+    quests = get_active_quests_text(channel_id)
+    notebook = get_notebook_text(channel_id)
+    return f"{quests}\n\n{notebook}"
 
 def get_objective_context(channel_id: str) -> str:
-    board = _get_board(channel_id)
-    active = board.get("active", [])
-    memos = board.get("memos", [])
-    archive = board.get("archive", [])
+    """AI를 위한 가독성 중심의 세계 상태 정보 (퀘스트 + 노트북)"""
+    active = get_active_quests(channel_id)
+    notebook = get_notebook_text(channel_id)
     
-    if not active and not memos and not archive:
-        return config.EMPTY_QUEST_MEMO_MSG
-        
-    txt = "### [퀘스트 및 메모]\n"
+    txt = "### [진행 목표 (QUESTS)]\n"
     if active:
-        txt += "**진행 중인 목표:**\n" + "\n".join([f"- {q}" for q in active]) + "\n\n"
-    if memos:
-        txt += "**저장된 메모:**\n" + "\n".join([f"- {m}" for m in memos]) + "\n\n"
-    if archive:
-        txt += "**보관된 정보:**\n" + "\n".join([f"- {m}" for m in archive[-config.MAX_ARCHIVE_DISPLAY:]]) + "\n"
+        txt += "\n".join([f"- {q}" for q in active]) + "\n"
+    else:
+        txt += "None\n"
+        
+    txt += f"\n### [노트북 (INVENTORY & MEMOS)]\n{notebook}"
     return txt.strip()
 
 # =========================================================

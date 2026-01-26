@@ -90,11 +90,19 @@ def _get_default_session() -> Dict[str, Any]:
         },
         "fermented_history": [],
         "deep_memory": "",
-        "deep_memory": "",
         "last_export_idx": 0,
         "last_chronicle_idx": 0,
-        "bot_active": True  # Default: Bot is ON
+        "bot_active": True,  # Default: Bot is ON
+        "notebook": "— [소지품] —\n\n— [메모] —" # [V5.1] Unified Notebook
     }
+
+def get_notebook(channel_id: str) -> str:
+    return get_domain(channel_id).get("notebook", "— [소지품] —\n\n— [메모] —")
+
+def update_notebook(channel_id: str, text: str) -> None:
+    d = get_domain(channel_id)
+    d["notebook"] = text
+    save_domain(channel_id, d)
 
 def get_domain(channel_id: str) -> Dict[str, Any]:
     if channel_id in _session_cache: return _session_cache[channel_id]

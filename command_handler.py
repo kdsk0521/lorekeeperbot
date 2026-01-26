@@ -179,17 +179,59 @@ async def handle_info_command(message, channel_id: str, sub_command: str = "") -
 
     res = domain_manager.get_unified_player_info(channel_id, uid)
     
-    # Append Quest & Memo Info
+    # Append Quest & Notebook Info
     quests = game_system.get_active_quests(channel_id)
-    memos = game_system.get_memos(channel_id)
+    notebook = game_system.get_notebook_text(channel_id)
     
     if quests:
         res += "\n**🛡️ 진행 중인 퀘스트:**\n" + "\n".join([f"- {q}" for q in quests]) + "\n"
     
-    if memos:
-        res += "\n**📝 메모:**\n" + "\n".join([f"- {m}" for m in memos]) + "\n"
+    if notebook:
+        res += f"\n**📔 노트북:**\n{notebook}\n"
 
     await send_long_message(message.channel, res)
+
+async def handle_notebook_command(message, channel_id: str, arg: str) -> None:
+    """노트북 관리 명령어 (!노트북 [추가/수정/삭제/마이그레이션])"""
+    if not arg:
+        text = game_system.get_notebook_text(channel_id)
+        await send_long_message(message.channel, f"📔 **현재 노트북 내용:**\n\n{text}")
+        return
+
+    # sub_command parsing
+    parts = arg.split(None, 1)
+    sub = parts[0]
+    content = parts[1] if len(parts) > 1 else ""
+
+    if sub in ['추가', 'add']:
+        curr = game_system.get_notebook_text(channel_id)
+        new_text = f"{curr}\n- {content}"
+        game_system.update_notebook_text(channel_id, new_text)
+        await message.channel.send("✅ 노트북에 내용이 추가되었습니다.")
+        
+    elif sub in ['수정', 'edit', 'set']:
+        game_system.update_notebook_text(channel_id, content)
+        await message.channel.send("✅ 노트북 내용이 전체 수정되었습니다.")
+        
+    elif sub in ['삭제', 'del', 'remove']:
+        curr = game_system.get_notebook_text(channel_id)
+        if content in curr:
+            new_text = curr.replace(content, "").replace("\n\n\n", "\n\n").strip()
+            game_system.update_notebook_text(channel_id, new_text)
+            await message.channel.send(f"🗑️ 노트북에서 '{content[:20]}...' 내용을 삭제했습니다.")
+        else:
+            await message.channel.send("⚠️ 삭제할 내용을 찾을 수 없습니다. (정확히 일치해야 합니다)")
+            
+    elif sub in ['마이그레이션', 'migrate', '통합']:
+        res = game_system.migrate_to_notebook(channel_id)
+        await message.channel.send(res)
+        
+    else:
+        # Default: Add if no sub-command recognized but content exists
+        curr = game_system.get_notebook_text(channel_id)
+        new_text = f"{curr}\n- {arg}"
+        game_system.update_notebook_text(channel_id, new_text)
+        await message.channel.send("✅ 노트북에 내용이 기록되었습니다.")
 
 
 
@@ -747,8 +789,7 @@ async def dispatch_command(cmd, message, channel_id, parsed, client_discord, cli
         await message.channel.send(game_system.get_doom_forecast(channel_id))
         return None
 
-    # Quest/Memo Direct
-    # Quest Command
+    # Quest/Notebook Command
     if cmd == 'quest':
         arg = parsed['content']
         if not arg:
@@ -772,28 +813,9 @@ async def dispatch_command(cmd, message, channel_id, parsed, client_discord, cli
             await message.channel.send(game_system.add_quest(channel_id, arg))
         return None
 
-    # Memo Command
-    if cmd == 'memo':
-        arg = parsed['content']
-        if not arg:
-            await send_long_message(message.channel, game_system.get_memos_text(channel_id))
-            return None
-            
-        # Parse Subcommands
-        subCmd = arg.split()[0].lower()
-        content = arg[len(subCmd):].strip()
-        
-        if subCmd in ['remove', 'delete', '삭제', '제거']:
-            if not content: await message.channel.send("⚠️ 삭제할 메모 내용을 입력하세요.")
-            else: await message.channel.send(game_system.remove_memo(channel_id, content))
-            
-        elif subCmd in ['archive', 'complete', 'done', '보관', '해결', '완료']:
-            if not content: await message.channel.send("⚠️ 보관할 메모 내용을 입력하세요.")
-            else: await message.channel.send(game_system.resolve_memo_auto(channel_id, content))
-            
-        else:
-            # Default: Add
-            await message.channel.send(game_system.add_memo(channel_id, arg))
+    # Notebook Command (Unified Inventory/Memos)
+    if cmd in ['notebook', '노트북', 'note', 'n', 'memo', '메모', 'inven', '인벤', 'i']:
+        await handle_notebook_command(message, channel_id, parsed['content'])
         return None
 
     if cmd in ['next', 'turn']:

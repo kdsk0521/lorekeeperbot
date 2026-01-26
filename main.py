@@ -255,10 +255,11 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
             
             active_quests = game_system.get_quest_board(channel_id).get("active", [])
             quest_txt = " | ".join(active_quests) if active_quests else "None"
+            notebook_txt = game_system.get_notebook_text(channel_id) # [V5.1]
             
             uid = str(message.author.id)
             p_data = domain_manager.get_participant_data(channel_id, uid)
-            p_ctx = game_system.get_status_summary(p_data) if p_data else "" # Simplified
+            p_ctx = game_system.get_status_summary(p_data) if p_data else "" 
             
             # 3. COGNITION: ANALYSIS (Theoria)
             # [NEW] Inject NPC Time Hints for better inference
@@ -270,7 +271,8 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
             existing_attitudes = domain_manager.get_npc_attitudes(channel_id)
 
             nvc_res = await cognition.analyze_context_nvc(
-                client_genai, MODEL_ID, hist_text, lore_txt, rule_txt, quest_txt, player_context=p_ctx,
+                client_genai, MODEL_ID, hist_text, lore_txt, rule_txt, quest_txt, 
+                notebook=notebook_txt, player_context=p_ctx, # [V5.1]
                 existing_npc_attitudes=existing_attitudes
             )
             
@@ -474,23 +476,30 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                         "quest": any(kw in response for kw in ['퀘스트','임무','목표','의뢰','부탁','완료','달성','단서','정보','비밀'])
                     }
 
-                    # Phase 1: Immediate Physical Update
+                    # Phase 1: Immediate Notebook/Physical Update
                     if extraction_hints["physical"]:
-                        phys_res = await cognition._extract_physical(client_genai, MODEL_ID_FLASH, action_text, response, inv, gold, status)
+                        phys_res = await cognition._extract_physical(
+                            client_genai, MODEL_ID_FLASH, action_text, response, 
+                            notebook_txt, gold, status # [V5.1] Use notebook_txt
+                        )
                         if phys_res:
                             msgs = []
                             changed = False
-                            if phys_res.get("inventory_add"):
-                                for k, v in phys_res["inventory_add"].items(): _, m = game_system.update_inventory(p_data, "add", k, v); msgs.append(m); changed = True
-                            if phys_res.get("inventory_remove"):
-                                for k, v in phys_res["inventory_remove"].items(): _, m = game_system.update_inventory(p_data, "remove", k, v); msgs.append(m); changed = True
+                            
+                            # [V5.1] Notebook Update
+                            nb_upd = phys_res.get("notebook_update")
+                            if nb_upd and nb_upd != notebook_txt:
+                                game_system.update_notebook_text(channel_id, nb_upd)
+                                msgs.append("📔 노트북 기록됨")
+                            
                             if phys_res.get("gold_change"):
                                 eco = p_data.get("economy", {"gold": 0}); eco["gold"] += phys_res["gold_change"]; p_data["economy"] = eco; changed = True
                                 msgs.append(f"💰 Gold {phys_res['gold_change']:+}")
                             
                             if changed:
                                 domain_manager.save_participant_data(channel_id, uid, p_data)
-                                if msgs: await message.channel.send(" | ".join(msgs))
+                            
+                            if msgs: await message.channel.send(" | ".join(msgs))
                     
                     # Phase 2: Background Extraction (Async)
                     async def background_update():
@@ -500,10 +509,10 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                             
                             bg_res = await cognition.extract_all_updates(
                                 client_genai, MODEL_ID_FLASH, action_text, response,
-                                current_inventory=inv, current_gold=gold, current_status=status,
+                                notebook=game_system.get_notebook_text(channel_id), # [V5.1] Refresh nb
+                                current_gold=gold, current_status=status,
                                 current_relationships=rels, current_passives=passives,
                                 current_quests=game_system.get_active_quests(channel_id),
-                                current_memos=game_system.get_memos(channel_id),
                                 lore_npc_names=list(domain_manager.get_npcs(channel_id).keys()),
                                 fermented_context=fermented_summary_text,
                                 extraction_hints=bg_hints

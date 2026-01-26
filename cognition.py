@@ -44,12 +44,13 @@ Your role: Extract OBJECTIVE FACTS from the narrative context.
 
 ### SYSTEM ACTION RULES
 **Quest:** Add/Complete based on narrative events.
-**Memo:** Add clues/names/codes. Archive obsolete info.
+**Notebook:** This is the unified record of items, tools, and memos.
 **NPC:** Add new named characters. Link role to name.
 
-### 4. PASSIVE SUGGESTION & BONUS
-- **Passive Bonus:** IF the user has a Passive relevant to the action, grant a **+5 BONUS** to the roll modifiers.
-- **Auto-Suggestion:** IF user succeeds at a specific type of action 5+ times, suggest a new Passive (e.g. "Lockpicking" after 5 unlocked chests).
+### 4. PASSIVE & NOTEBOOK BONUSES
+- **Passive Bonus:** IF the user has a Passive relevant to the action, grant a **+5 BONUS**.
+- **Notebook/Item Bonus:** IF the user uses an item, tool, or secret recorded in the **Notebook**, grant a bonus from **+5 to +30** depending on importance.
+- **Auto-Suggestion:** IF user succeeds at a specific type of action 5+ times, suggest a new Passive.
 
 ### NPC INTERACTION SYSTEM
 Analyze NPCs present. Determine attitudes (hostile/unfriendly/neutral/friendly/devoted).
@@ -57,7 +58,7 @@ Analyze NPCs present. Determine attitudes (hostile/unfriendly/neutral/friendly/d
 ### ACTION JUDGMENT (Game Master Role)
 Judge player actions realistically based on difficulty and modifiers.
 **Difficulty:** trivial, easy, normal, hard, extreme
-**Modifiers:** injury (-10), tool (+10), **RELEVANT PASSIVE (+5 per passive)**.
+**Modifiers:** injury (-10), tool/item (Notebook: +5~+30), **RELEVANT PASSIVE (+5)**.
 
 ### OUTPUT FORMAT (JSON ONLY)
 {
@@ -66,7 +67,7 @@ Judge player actions realistically based on difficulty and modifiers.
   "TimeContext": "String",
   "Observation": "Objective summary",
   "TimeFlow": {"duration": "instant/short/medium/long/explicit", "ticks": Int},
-  "ActionJudgment": {"action": "...", "difficulty": "...", "modifiers": [{"name": "Passive: Sword", "value": 5}]},
+  "ActionJudgment": {"action": "...", "difficulty": "...", "modifiers": [{"name": "Item: Magic Sword", "value": 30}]},
   "PassiveSuggestion": {"name": "...", "tags": [], "reason": "..."},
   "NPCAttitudes": {"Name": {"attitude": "Type", "reason": "..."}}
 }
@@ -79,6 +80,7 @@ async def analyze_context_nvc(
     lore: str,
     rules: str,
     active_quests_text: str,
+    notebook: str = "", # [V5.1] Added notebook
     player_context: str = "",
     existing_npc_attitudes: Dict[str, Dict] = None
 ) -> Dict[str, Any]:
@@ -108,10 +110,11 @@ async def analyze_context_nvc(
     user_prompt = (
         f"### [RULES]\n{rules}\n"
         f"### [QUESTS]\n{active_quests_text}\n"
+        f"### [NOTEBOOK (ITEMS & MEMOS)]\n{notebook}\n" # [V5.1]
         f"{player_info}"
         f"### [HISTORY]\n{history_text}\n"
-        f"### [LORE]\n{lore}\n" # Added lore for context
-        f"{attitude_context}" # Added attitude context
+        f"### [LORE]\n{lore}\n" 
+        f"{attitude_context}" 
         "Analyze the current state based on the above context and the user's input. Provide the logical consequences and instructions in the specified JSON format."
     )
     
@@ -210,6 +213,7 @@ def build_judgment_context_with_roll(judgment: Dict[str, Any]) -> str:
 async def extract_all_updates(
     client, model_id_flash: str, player_input: str, ai_response: str,
     # Contexts
+    notebook: str = "", # [V5.1]
     current_inventory: Dict[str, int] = None, current_gold: int = 0, current_status: List[str] = None,
     current_relationships: Dict[str, str] = None, current_companions: List[str] = None,
     lore_npc_names: List[str] = None, scene_npc_names: List[str] = None,
@@ -226,7 +230,7 @@ async def extract_all_updates(
     task_keys = []
 
     if extraction_hints.get("physical", False):
-        tasks.append(_extract_physical(client, model_id_flash, player_input, ai_response, current_inventory, current_gold, current_status))
+        tasks.append(_extract_physical(client, model_id_flash, player_input, ai_response, notebook, current_gold, current_status))
         task_keys.append("physical")
     
     if extraction_hints.get("social", False):
@@ -258,20 +262,15 @@ async def extract_all_updates(
     nar = result_map.get("narrative", {})
     qst = result_map.get("quest", {})
     
-    # Sanitize Physical
+    # Sanitize Physical (Now Notebook + Gold + Status)
     p_upd = None
     if phys:
         def _safe_int(v):
             try: return int(str(v).replace(',', '').replace('+', '').strip())
             except: return 0
             
-        def _safe_inv(d):
-            if not isinstance(d, dict): return None
-            return {k: _safe_int(v) for k, v in d.items()}
-
         p_upd = {
-            "inventory_add": _safe_inv(phys.get("inventory_add")), 
-            "inventory_remove": _safe_inv(phys.get("inventory_remove")),
+            "notebook_update": phys.get("notebook_update"), # [V5.1]
             "gold_change": _safe_int(phys.get("gold_change")) if phys.get("gold_change") is not None else 0, 
             "status_add": phys.get("status_add"), 
             "status_remove": phys.get("status_remove")
@@ -314,32 +313,28 @@ async def extract_all_updates(
         "AbnormalTrigger": nar.get("abnormal_trigger"),
         
         "QuestUpdate": {
-            "quest_add": qst.get("quest_add"), "quest_complete": qst.get("quest_complete"),
-            "memo_add": qst.get("memo_add"), "memo_remove": qst.get("memo_remove"), "memo_archive": qst.get("memo_archive")
+            "quest_add": qst.get("quest_add"), "quest_complete": qst.get("quest_complete")
         } if qst else None
     }
 
 # Internal Extractors (Private)
 
-async def _extract_physical(client, model_id, p_in, ai_out, inv, gold, status):
+async def _extract_physical(client, model_id, p_in, ai_out, notebook, gold, status):
     sys = (
-        "EXTRACT PHYSICAL CHANGES.\n"
-        "Return JSON with keys: inventory_add {name: count}, inventory_remove {name: count}, gold_change (int), status_add [list], status_remove [list].\n"
-        "Principle: Can Player TAKE it to next scene? YES->inv. NO->Ignore (Consumed/Service).\n"
-        "\n### [OWNERSHIP RULE - CRITICAL]\n"
-        "ONLY add an item if the narrative EXPLICITLY states the player ACQUIRED it.\n"
-        "- YES: 'You pick up the key', 'He hands you a potion', 'You buy the sword', 'Found a coin in your pocket'.\n"
-        "- NO: 'You see a key on the table', 'There is a potion in the cabinet', 'He is holding a sword'.\n"
-        "- NO: Describing an item's appearance or location is NOT acquisition.\n"
-        "\nRules:\n"
-        "1. DEDUPLICATE: Check 'Inv'. Do NOT add if item exists unless quantity INCREASES.\n"
-        "2. IGNORE: Consumables eaten immediately (e.g. 'School Lunch', 'Coffee'), Services ('Healing'), Viewing ('Saw a sword').\n"
-        "3. DELTA ONLY: Only track NET change. (e.g. 'You hold the sword' -> No Change if already owned).\n"
-        'Example: {"inventory_add": {"Sword": 1}, "gold_change": -50, "status_add": [], "inventory_remove": {}, "status_remove": []}'
+        "EXTRACT NOTEBOOK & PHYSICAL CHANGES.\n"
+        "Return JSON with keys: notebook_update (string or null), gold_change (int), status_add [list], status_remove [list].\n"
+        "Principle: Convert narrative actions into a concise Notebook summary.\n"
+        "\n### [NOTEBOOK UPDATE RULES]\n"
+        "1. **Summarize**: If the player gets an item or a secret, update the notebook text organically.\n"
+        "2. **Ownership**: ONLY record items explicitly acquired (YES: pick up, NO: see).\n"
+        "3. **Format**: Maintain the '— [소지품] —' and '— [메모] —' sections.\n"
+        "4. **Full Text**: Return the FULL UPDATED CONTENT of the notebook, not just a delta.\n"
+        "\nExample:\n"
+        '{"notebook_update": "— [소지품] —\\n- Rusty Key\\n\\n— [메모] —\\n- Code is 1234", "gold_change": 0, ...}'
     )
-    ctx = f"Inv:{inv}, Gold:{gold}, Status:{status}"
-    usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON."
-    return await _call_extract(client, model_id, sys, usr, "B-1 Physical")
+    ctx = f"Notebook Content:\n{notebook}\nGold:{gold}, Status:{status}"
+    usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput FULL UPDATED Notebook JSON."
+    return await _call_extract(client, model_id, sys, usr, "B-1 Notebook")
 
 async def _extract_social(client, model_id, p_in, ai_out, rels, comps, lore_npcs, scene_npcs):
     sys = (
@@ -365,12 +360,12 @@ async def _extract_narrative(client, model_id, p_in, ai_out, passives, fermented
 
 async def _extract_quest(client, model_id, p_in, ai_out, quests, memos):
     sys = (
-        "EXTRACT QUEST/MEMO CHANGES.\n"
-        "Return JSON with keys: quest_add [list], quest_complete [list], memo_add [list], memo_remove [list], memo_archive [list].\n"
-        "Rules: precise quest strings. simple memos.\n"
-        'Example: {"quest_add": ["Find the key"], "quest_complete": [], "memo_add": ["Code is 1234"], "memo_remove": [], "memo_archive": []}'
+        "EXTRACT QUEST CHANGES.\n"
+        "Return JSON with keys: quest_add [list], quest_complete [list].\n"
+        "Rules: precise quest strings. (Memos are now handled by Notebook, ignore them here).\n"
+        'Example: {"quest_add": ["Find the key"], "quest_complete": []}'
     )
-    ctx = f"Quests:{quests}, Memos:{memos}"
+    ctx = f"Quests:{quests}"
     usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON."
     return await _call_extract(client, model_id, sys, usr, "B-4 Quest")
 
