@@ -142,6 +142,18 @@ def calculate_doom_increase(channel_id: str, world: dict, next_idx: int, time_sl
     elif "medium" in ai_risk:
         doom_increase += config.DOOM_INCREASE_MEDIUM_RISK
         doom_reasons.append(f"⚠️ 위험 지역({location}): 주의 필요")
+
+    # 4. Participant Status Severity (Restored V2 Feature)
+    import game_character
+    participants = domain.get("participants", {})
+    for uid, p in participants.items():
+        if p.get("status") != "active": continue
+        
+        severity_doom, sev_reasons = game_character.calculate_status_doom_contribution(p)
+        if severity_doom > 0:
+            doom_increase += severity_doom
+            p_name = p.get("mask", "Unknown")
+            doom_reasons.append(f"🩸 {p_name}: {', '.join(sev_reasons)}")
         
     # 4. Lore Rules
     loc_rules = world.get("location_rules", {})

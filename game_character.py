@@ -351,10 +351,12 @@ async def call_gemini_api(client, model_id, prompt, sys_instruction=""):
             )
             if resp and resp.text:
                 clean = re.sub(r"```(json)?", "", resp.text).strip().strip("`")
-                return eval(clean) # Using eval as json.loads can be strict, but stick to json.loads if preferred. json.loads is safer.
-                # Reverting to original implementation
+                # Using json.loads for safety
                 import json
-                return json.loads(clean)
+                try:
+                    return json.loads(clean)
+                except json.JSONDecodeError:
+                    return {"summary": resp.text} # Fallback for non-JSON text
         except Exception as e:
             logging.warning(f"API Error: {e}")
             await asyncio.sleep(config.RETRY_DELAY_SECONDS)

@@ -33,6 +33,18 @@ def run_test():
     print_header("INITIALIZATION")
     print(f"Target Channel: {CHANNEL_ID}")
     
+    # Reset User State (Prevent state pollution)
+    class MockUser:
+        def __init__(self, uid): 
+            self.id = uid
+            self.display_name = "Tester"
+        
+    domain_manager.update_participant(CHANNEL_ID, MockUser(USER_ID), "Tester")
+    p_data = domain_manager.get_participant_data(CHANNEL_ID, USER_ID)
+    p_data["status_effects"] = [] 
+    p_data["ai_memory"] = {} 
+    domain_manager.save_participant_data(CHANNEL_ID, USER_ID, p_data)
+
     # 1. World & Doom
     print_header("WORLD & DOOM")
     
@@ -146,6 +158,63 @@ def run_test():
     # Since main.py logic is hard to integration test without full bot mock, 
     # we verify the domain state change which main.py relies on.
     
+    
+    # 6. Doom Increase from Status Severity (Restored V2 Feature)
+    print_header("DOOM SEVERITY CHECK")
+    # Reset Doom & Time
+    w = {"doom": 0, "time_slot": "오전", "day": 1}
+    domain_manager.update_world_state(CHANNEL_ID, w)
+    
+    # Inflict Critical Injury (Severity 3 -> +5 Doom)
+    p_data = domain_manager.get_participant_data(CHANNEL_ID, USER_ID)
+    p_data["status_effects"] = ["치명상"] 
+    p_data["status"] = "active"
+    domain_manager.save_participant_data(CHANNEL_ID, USER_ID, p_data)
+    
+    print("Advancing Time with 'Critical Injury' (Severity 3)...")
+    msg = game_world.advance_time(CHANNEL_ID)
+    print(msg)
+    
+    w_after = domain_manager.get_world_state(CHANNEL_ID)
+    print(f"Doom Result: {w_after['doom']} (Expected >= 5)")
+    assert w_after['doom'] >= 5, "Doom impact from severity missing"
+
+    # 7. Chronicle Generation Check (Restored V2 Feature)
+    print_header("CHRONICLE CHECK")
+    
+    # Mock Client
+    class MockClient:
+        class aio:
+            class models:
+                async def generate_content(*args, **kwargs):
+                    class Resp:
+                        text = '{"title": "Test Chronicle", "summary": "This is a summary of the session."}'
+                    return Resp()
+    
+    # Add dummy history
+    domain_manager.append_history(CHANNEL_ID, "User", "Hello World")
+    domain_manager.append_history(CHANNEL_ID, "Model", "Welcome to the RPG.")
+    
+    import asyncio
+    # We need to run async function in sync test_suite
+    # Simple wrapper
+    async def test_chronicle():
+        client = MockClient()
+        msg = await game_character.generate_chronicle_from_history(client, "dummy-model", CHANNEL_ID)
+        print(msg)
+        return msg
+
+    loop = asyncio.new_event_loop()
+    res = loop.run_until_complete(test_chronicle())
+    
+    assert "Test Chronicle" in res, "Chronicle title missing"
+    assert "연대기 기록됨" in res, "Success message missing"
+    
+    # Verify Board Update
+    board = game_character._get_board(CHANNEL_ID)
+    assert len(board["lore"]) > 0, "Lore entry not saved to board"
+    print("Chronicle saved successfully.")
+
     print("\n✅ TEST COMPLETE: SUCCESS")
 
 if __name__ == "__main__":

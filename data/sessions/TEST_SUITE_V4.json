@@ -4,7 +4,7 @@
       "mask": "Tester",
       "passives": [],
       "status_effects": [
-        "부상"
+        "치명상"
       ],
       "ai_memory": {
         "passives": [
@@ -18,7 +18,8 @@
             "acquired_at": "2026-01-26"
           }
         ]
-      }
+      },
+      "status": "active"
     }
   },
   "npcs": {
@@ -31,16 +32,37 @@
       "identity_history": [
         {
           "old_name": "OldMan",
-          "revealed_at": "2026-01-26 19:17",
+          "revealed_at": "2026-01-26 19:38",
           "reason": "He summoned light."
         }
       ]
     }
   },
-  "history": [],
+  "history": [
+    {
+      "role": "User",
+      "content": "Hello World"
+    },
+    {
+      "role": "Model",
+      "content": "Welcome to the RPG."
+    },
+    {
+      "role": "User",
+      "content": "Hello World"
+    },
+    {
+      "role": "Model",
+      "content": "Welcome to the RPG."
+    }
+  ],
   "quest_board": {
     "active": [],
     "completed": [
+      "Kill the Dragon",
+      "Kill the Dragon",
+      "Kill the Dragon",
+      "Kill the Dragon",
       "Kill the Dragon",
       "Kill the Dragon",
       "Kill the Dragon",
@@ -50,13 +72,23 @@
     ],
     "memos": [],
     "archive": [],
-    "lore": []
+    "lore": [
+      {
+        "title": "Test Chronicle",
+        "content": "This is a summary of the session.",
+        "timestamp": 1769423837.634986
+      },
+      {
+        "title": "Test Chronicle",
+        "content": "This is a summary of the session.",
+        "timestamp": 1769423913.9887474
+      }
+    ]
   },
   "world_state": {
-    "doom": 71,
-    "time_slot": "황혼",
-    "day": 1,
-    "risk_level": "low"
+    "doom": 5,
+    "time_slot": "오후",
+    "day": 1
   },
   "settings": {
     "response_mode": "auto",

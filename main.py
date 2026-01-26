@@ -282,7 +282,18 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
             new_attitudes = nvc_res.get("NPCAttitudes")
             if new_attitudes:
                 for n_name, n_data in new_attitudes.items():
-                    # Update only if changed or new. Logic handled in domain_manager roughly, but here we just overwrite.
+                    # [V5 Restoration] Auto-register Session NPCs
+                    existing_npc = npc_manager.get_npc(channel_id, n_name)
+                    if not existing_npc:
+                        # Create new Session NPC
+                        npc_manager.update_npc(channel_id, n_name, {
+                            "source": "session", 
+                            "desc": "Auto-detected by AI",
+                            "status": "active"
+                        })
+                        logging.info(f"Auto-created Session NPC: {n_name}")
+
+                    # Update Attitude
                     domain_manager.update_npc_attitude(channel_id, n_name, n_data.get("attitude", "neutral"), n_data.get("reason", ""))
                 
                 # Refresh existing_attitudes for use in prompt
