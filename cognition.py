@@ -58,7 +58,7 @@ Analyze NPCs present. Determine attitudes (hostile/unfriendly/neutral/friendly/d
 ### ACTION JUDGMENT (Game Master Role)
 Judge player actions realistically based on difficulty and modifiers.
 **Difficulty:** trivial, easy, normal, hard, extreme
-**Modifiers:** injury (-10), tool/item (Notebook: +5~+30), **RELEVANT PASSIVE (+5)**.
+**Modifiers:** injury (-10), tool/item (Notebook: +5~+30), **PASSSIVE/SKILL/TRAIT (+5)**.
 
 ### OUTPUT FORMAT (JSON ONLY)
 {
@@ -355,8 +355,14 @@ async def _extract_narrative(client, model_id, p_in, ai_out, passives, fermented
     sys = (
         "EXTRACT NARRATIVE CHANGES.\n"
         "Return JSON with keys: passives [list], passive_suggestion {name, reason}, abnormal_trigger (string or null).\n"
-        "Rules: Passives for REPEATED(3+) or MAJOR events only. Abnormal Trigger for Genre Shift/Monsters.\n"
-        'Example: {"passives": ["Dragonslayer"], "passive_suggestion": null, "abnormal_trigger": "Zombie"}'
+        "Rules: 'Passive' here means ANY PERMANENT CAPABILITY or TRAIT.\n"
+        "Include:\n"
+        "1. **Skills/Abilities**: Learned techniques (e.g. 'Fireball', 'Lockpicking', 'Swordsmanship').\n"
+        "2. **Physical Traits**: Body mods, mutations, inherent stats (e.g. 'Cyber-Arm', 'Night Vision').\n"
+        "3. **Mental Traits**: Personality quirks, learned knowledge (e.g. 'Iron Will', 'Chemistry').\n"
+        "4. **Achievements**: Titles or major status (e.g. 'Dragonslayer').\n"
+        "Abnormal Trigger: For Genre Shifts or appearing Monsters.\n"
+        'Example: {"passives": ["Fireball", "Cold Logic", "Cyber-Eye"], "passive_suggestion": null, "abnormal_trigger": "Zombie"}'
     )
     ctx = f"Passives:{passives}, FermentedSnippet:{fermented[:2000]}"
     usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON."
