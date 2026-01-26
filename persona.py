@@ -26,7 +26,7 @@ Prompt Order (SillyTavern Preset Style):
 import asyncio
 import logging
 import re
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Tuple, Union
 from google import genai
 from google.genai import types
 import config
