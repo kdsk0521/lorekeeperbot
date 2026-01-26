@@ -16,6 +16,51 @@ load_dotenv()
 VERSION = "3.2"
 
 # =========================================================
+# Channel Whitelist (허용된 채널에서만 봇 활동)
+# =========================================================
+# 환경 변수 또는 직접 설정
+# 형식: 쉼표로 구분된 채널 ID 문자열 (예: "123456789,987654321")
+# 비어있으면 모든 채널에서 활동
+_ALLOWED_CHANNELS_STR = os.getenv('ALLOWED_CHANNELS', '')
+ALLOWED_CHANNELS: set = set(
+    ch.strip() for ch in _ALLOWED_CHANNELS_STR.split(',')
+    if ch.strip()
+)
+
+# 화이트리스트 모드 활성화 여부
+# True: 허용 목록에 있는 채널에서만 활동
+# False: 모든 채널에서 활동 (기본값)
+CHANNEL_WHITELIST_ENABLED = os.getenv('CHANNEL_WHITELIST_ENABLED', 'false').lower() == 'true'
+
+def is_channel_allowed(channel_id: str) -> bool:
+    """
+    채널이 허용 목록에 있는지 확인합니다.
+
+    Returns:
+        bool: 화이트리스트가 비활성화되면 항상 True,
+              활성화된 경우 채널이 목록에 있으면 True
+    """
+    if not CHANNEL_WHITELIST_ENABLED:
+        return True
+    if not ALLOWED_CHANNELS:
+        return True  # 목록이 비어있으면 모든 채널 허용
+    return str(channel_id) in ALLOWED_CHANNELS
+
+def add_allowed_channel(channel_id: str) -> bool:
+    """런타임에 허용 채널 추가 (재시작 시 초기화됨)"""
+    ALLOWED_CHANNELS.add(str(channel_id))
+    return True
+
+def remove_allowed_channel(channel_id: str) -> bool:
+    """런타임에 허용 채널 제거"""
+    ALLOWED_CHANNELS.discard(str(channel_id))
+    return True
+
+def get_allowed_channels() -> set:
+    """현재 허용된 채널 목록 반환"""
+    return ALLOWED_CHANNELS.copy()
+
+# =========================================================
 # API Keys & Models
 # =========================================================
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')

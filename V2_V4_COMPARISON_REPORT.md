@@ -681,5 +681,65 @@ lorekeeperbot/
 
 ---
 
+## 7. 추가 기능: 채널 화이트리스트
+
+### 7.1 기능 설명
+
+봇이 특정 채널에서만 활동하도록 제한하는 기능입니다.
+불필요한 채널에서의 봇 반응을 방지하고, 리소스를 절약합니다.
+
+### 7.2 구현 내용
+
+#### config.py 설정
+```python
+# 환경 변수로 설정
+ALLOWED_CHANNELS = os.getenv('ALLOWED_CHANNELS', '')  # 쉼표 구분 채널 ID
+CHANNEL_WHITELIST_ENABLED = os.getenv('CHANNEL_WHITELIST_ENABLED', 'false')
+
+# 함수
+is_channel_allowed(channel_id)      # 채널 허용 여부 확인
+add_allowed_channel(channel_id)     # 런타임 채널 추가
+remove_allowed_channel(channel_id)  # 런타임 채널 제거
+get_allowed_channels()              # 허용 채널 목록 조회
+```
+
+#### main.py 적용
+```python
+@client_discord.event
+async def on_message(message):
+    # ... 기존 체크 ...
+
+    # 채널 화이트리스트 체크
+    if not config.is_channel_allowed(message.channel.id):
+        return  # 허용되지 않은 채널에서는 봇 무시
+```
+
+### 7.3 사용 방법
+
+#### 환경 변수 설정 (.env)
+```bash
+# 화이트리스트 활성화
+CHANNEL_WHITELIST_ENABLED=true
+
+# 허용할 채널 ID 목록 (쉼표 구분)
+ALLOWED_CHANNELS=123456789012345678,987654321098765432
+```
+
+#### 동작 방식
+| 설정 상태 | 동작 |
+|----------|------|
+| `ENABLED=false` | 모든 채널에서 활동 (기본) |
+| `ENABLED=true` + 목록 비어있음 | 모든 채널에서 활동 |
+| `ENABLED=true` + 목록 있음 | 목록에 있는 채널에서만 활동 |
+
+### 7.4 확장 가능성
+
+- 관리자 명령어로 런타임 채널 추가/제거
+- 서버별 화이트리스트 설정
+- 카테고리별 허용/차단
+
+---
+
 *이 리포트는 V2(eb3ea76)와 V4(6e41877) 커밋을 기준으로 분석되었습니다.*
+*업데이트: 채널 화이트리스트 기능 추가*
 *작성일: 2026-01-26*
