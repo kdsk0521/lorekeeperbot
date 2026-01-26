@@ -16,6 +16,9 @@ import re
 import config
 import domain_manager
 import game_system
+import game_world
+import game_character
+import npc_manager
 # session_manager and memory_system are still external for now, or integrated?
 # Plan said session_manager is modified to import domain_manager directly.
 # memory_system seems to be next or treated separately. I will assume memory_system exists.

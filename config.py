@@ -51,7 +51,7 @@ MAX_DESC_LENGTH = 50                # Summary description length
 RECENT_HISTORY_FOR_ANALYSIS = 20    # Number of recent messages sent to Left Brain Analysis
 
 # Fermentation (Memory) Settings
-FRESH_THRESHOLD = 50                # Max fresh messages before fermentation triggers
+
 FERMENT_CHUNK_SIZE = 25             # Chunk size for fermentation
 FERMENTED_THRESHOLD = 8             # Max fermented summaries before Deep Memory compression
 
@@ -65,7 +65,7 @@ NPC_PREVIEW_LIMIT = 5               # Max NPCs shown in preview
 DEFAULT_TIME_SLOTS = ["새벽", "오전", "오후", "황혼", "저녁", "심야"]
 DEFAULT_WEATHER_TYPES = ["맑음", "흐림", "비", "안개", "돌풍"]
 DEFAULT_LORE = "기본 세계관: 어두운 도시, 수수께끼의 사건들..."
-DEFAULT_RULES = "1. 플레이어의 행동을 존중하십시오.\n2. 주사위 결과를 따르십시오."
+
 
 # Time Settings
 TICK_DURATION_MIN = 7  # Minutes
@@ -109,7 +109,7 @@ EMPTY_QUEST_MEMO_MSG = "No active quests or memos."
 # =========================================================
 # Default Contents
 # =========================================================
-DEFAULT_LORE = ""
+
 
 DEFAULT_RULES = """
 [Lorekeeper 기본 룰: 서사 중심 TRPG]

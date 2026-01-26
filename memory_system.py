@@ -441,15 +441,7 @@ def safe_parse_json(text: Optional[str], expect_list: bool = False) -> Any:
         logging.warning(f"safe_parse_json 예외: {e}")
         return [] if expect_list else {}
 
-# =========================================================
-# Legacy Wrappers (Backward Compatibility)
-# =========================================================
 
-
-# =========================================================
-# Legacy Wrappers Removed
-# Direct calls to left_brain_analysis and left_brain_extraction are now required.
-# =========================================================
 
 
 # =========================================================
@@ -549,11 +541,10 @@ async def extract_pc_info(client, model_id: str, text: str) -> Optional[Dict[str
         "  \"appearance\": \"Visual description (Hair, Eyes, Physique, Attire...)\",\n"
         "  \"personality\": \"Personality, Values, Likes/Dislikes, Habits\",\n"
         "  \"sexual_characteristics\": \"Fetishes, Sensitive zones, Reactions (NSFW allowed if present)\",\n"
-        "  \"abilities\": \"Powers, Skills, Magic source (Maps to '능력', '기술')\",\n"
         "  \"background\": \"Backstory\",\n"
         "  \"secret_info\": \"Hidden facts\",\n"
         "  \"relationships\": {\"NPC Name\": \"Relation\"},\n"
-        "  \"passives\": [\"List of passives or abilities (Maps to '패시브', '특성')\"],\n"
+        "  \"passives\": [\"List of traits, abilities, skills, and physical modifications (Everything that defines capability)\"],\n"
         "  \"inventory\": {\"Item Name\": Quantity} // Extract specific equipment/items mentioned\n"
         "}\n"
         "OR null if no clear PC."

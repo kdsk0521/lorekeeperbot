@@ -31,7 +31,7 @@
       "identity_history": [
         {
           "old_name": "OldMan",
-          "revealed_at": "2026-01-26 18:58",
+          "revealed_at": "2026-01-26 19:17",
           "reason": "He summoned light."
         }
       ]
@@ -41,6 +41,7 @@
   "quest_board": {
     "active": [],
     "completed": [
+      "Kill the Dragon",
       "Kill the Dragon",
       "Kill the Dragon",
       "Kill the Dragon",

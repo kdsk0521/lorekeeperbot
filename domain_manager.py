@@ -599,9 +599,6 @@ def set_current_location(channel_id: str, location: str) -> None:
     w["current_location"] = location
     update_world_state(channel_id, w)
 
-    w["risk_level"] = risk
-    update_world_state(channel_id, w)
-
 # Bot Active State
 def get_bot_active(channel_id: str) -> bool:
     return get_domain(channel_id).get("bot_active", True)
