@@ -91,14 +91,6 @@ def complete_quest(channel_id: str, content: str) -> str:
 def remove_quest(channel_id: str, content: str) -> str:
     return _del_op(channel_id, "active", content, "🗑️", "퀘스트")
 
-def add_memo(channel_id: str, content: str) -> str:
-    return "⚠️ [Deprecated] '메모' 기능은 '노트북'으로 통합되었습니다."
-
-def remove_memo(channel_id: str, content: str) -> str:
-    return "⚠️ [Deprecated] '노트북 삭제'를 사용하세요."
-
-def resolve_memo_auto(channel_id: str, content: str) -> str:
-    return "⚠️ [Deprecated] '노트북' 기능을 사용하세요."
 
 # Notebook System (New in V5.1)
 def get_notebook_text(channel_id: str) -> str:
@@ -110,12 +102,6 @@ def update_notebook_text(channel_id: str, new_text: str) -> None:
 def get_active_quests(channel_id: str) -> List[str]:
     return _get_board(channel_id).get("active", [])
 
-# Legacy Compatibility (V5.1 Unified into Notebook)
-def get_memos(channel_id: str) -> List[str]:
-    return []
-
-def get_memos_text(channel_id: str) -> str:
-    return ""
 
 def get_active_quests_text(channel_id: str) -> str:
     board = _get_board(channel_id)
@@ -146,9 +132,6 @@ def get_objective_context(channel_id: str) -> str:
 # CHARACTER STATUS & INVENTORY
 # =========================================================
 
-def update_inventory(user_data: Dict[str, Any], action: str, item_name: str, count: int = 1) -> Tuple[Dict[str, Any], str]:
-    # Deprecated: AI updates notebook directly now.
-    return user_data, "⚠️ [Deprecated] 인벤토리 구조가 노트북으로 변경되었습니다."
 
 def update_status_effect(user_data: Dict[str, Any], action: str, effect_name: str) -> Tuple[Dict[str, Any], str]:
     effects = user_data.get("status_effects", [])

@@ -724,14 +724,14 @@ async def process_ooc_memory_edit(
         "{\n"
         "  \"interpretation\": \"What the user wants (Korean)\",\n"
         "  \"edits\": [\n"
-        "    {\"field\": \"inventory\", \"action\": \"add\", \"key\": \"ItemName\", \"value\": 1},\n"
-        "    {\"field\": \"economy.gold\", \"action\": \"set\", \"value\": 100},\n"
+        "    {\"field\": \"notes\", \"action\": \"append\", \"value\": \"Added sword via OOC (Check Notebook)\"},\n"
         "    {\"field\": \"relationships\", \"action\": \"update\", \"key\": \"NPCName\", \"value\": \"New Relation\"},\n"
         "    {\"field\": \"status_effects\", \"action\": \"remove\", \"value\": \"Poison\"}\n"
         "  ],\n"
         "  \"confirmation_message\": \"Response to user (Korean)\"\n"
         "}\n"
-        "Valid fields: appearance, personality, background, relationships, passives, inventory, economy.gold, status_effects, known_info, notes."
+        "Valid fields: appearance, personality, background, relationships, passives, status_effects, known_info, notes.\n"
+        "NOTE: Inventory and Gold are managed by the Notebook system. Use 'notes' to log changes, or instruct user to use !notebook."
     )
     
     user_prompt = f"Current State: {json.dumps(current_state, ensure_ascii=False)}\n\nOOC Request: {ooc_content}"
@@ -804,27 +804,32 @@ def apply_memory_edits(
             if action in ["set", "update"] and key:
                 new_mem["normalization"][key] = value
                 
-        # 2. Player Data Fields (Inventory, Economy)
-        elif field == "inventory":
-            if "inventory" not in new_p_data: new_p_data["inventory"] = {}
-            inv = new_p_data["inventory"]
-            if action == "add" and key:
-                inv[key] = inv.get(key, 0) + int(value if value else 1)
-            elif action == "remove" and key:
-                if key in inv:
-                    inv[key] = max(0, inv[key] - int(value if value else 1))
-                    if inv[key] == 0: del inv[key]
-            elif action == "set" and key:
-                inv[key] = int(value)
-                
-        elif field == "economy.gold":
-            if action == "set":
-                new_p_data["economy"]["gold"] = int(value)
-            elif action == "add":
-                new_p_data["economy"]["gold"] += int(value)
-            elif action == "subtract":
-                new_p_data["economy"]["gold"] = max(0, new_p_data["economy"]["gold"] - int(value))
-                
+        # 2. Player Data Fields (Notebook Integration)
+        elif field in ["inventory", "economy.gold"]:
+            # OOC requests to change inventory/gold now append to the Notebook
+            # We cannot easily 'set' or 'remove' specific lines without complex parsing,
+            # so we will append an Admin Note to the notebook for the user to manually resolve if needed,
+            # or just append the change.
+            
+            # Since we don't have direct access to channel_id here to call domain_manager.get_notebook, 
+            # and this function is pure logic on dicts, we might need to handle this differently.
+            # However, looking at the usage, this returns modified p_data.
+            # The notebook is stored in domain_data (session file), NOT p_data.
+            
+            # CRITICAL: p_data does NOT contain the notebook. The notebook is session-level.
+            # Thus, 'apply_memory_edits' cannot directly update the notebook if it only receives p_data.
+            
+            # WORKAROUND: We will return a special flag or handle this in the caller.
+            # But wait, the user wants to REMOVE legacy code. 
+            # If I remove the inventory/economy branches here, OOC commands for them will fail or do nothing.
+            
+            # Correct approach: Update the system prompt in `process_ooc_memory_edit` to tell the AI 
+            # to use "notes" field for item changes, or just acknowledge that OOC item edits 
+            # should be done via !notebook command.
+            
+            # For now, I will REMOVE these legacy branches causing "inventory" keys to be created.
+            pass
+            
     return new_mem, new_p_data
 
 

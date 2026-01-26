@@ -29,7 +29,6 @@ get_doom_forecast = game_world.get_doom_forecast
 # Character / Quest
 get_quest_board = domain_manager.get_quest_board
 get_active_quests = game_character.get_active_quests
-get_memos = game_character.get_memos
 get_notebook_text = game_character.get_notebook_text
 update_notebook_text = game_character.update_notebook_text
 
@@ -38,10 +37,8 @@ add_quest = game_character.add_quest
 complete_quest = game_character.complete_quest
 remove_quest = game_character.remove_quest
 get_active_quests_text = game_character.get_active_quests_text
-get_memos_text = game_character.get_memos_text
 get_status_message = game_character.get_status_message
 get_objective_context = game_character.get_objective_context
-update_inventory = game_character.update_inventory
 update_status_effect = game_character.update_status_effect
 perform_check = game_character.perform_check
 get_status_summary = game_character.get_status_summary
