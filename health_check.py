@@ -73,6 +73,8 @@ def check_instantiation():
         # Attempt to access a safe read-only function
         # Using a dummy channel ID
         _ = domain_manager.get_domain("HEALTH_CHECK_DUMMY")
+        if not hasattr(domain_manager, "set_current_risk"):
+             raise AttributeError("set_current_risk missing in domain_manager")
         print(f"✅ Domain Manager       : OK")
     except Exception as e:
         print(f"❌ Domain Manager       : FAILED ({e})")
