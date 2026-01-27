@@ -366,7 +366,7 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                             domain_manager.save_participant_data(channel_id, uid, p_data)
                             
                             # Format Message
-                            user_name = p_data.get("name", "Unknown")
+                            user_name = p_data.get("mask") or p_data.get("name", "Unknown")
                             adapt_results.append(f"**{user_name}**: {adapt_msg.split('▶')[1].strip()}")
 
                     # Send Bulk Result
