@@ -698,7 +698,8 @@ def classify_ooc_type(ooc_content: str) -> str:
     # 수정, 설정 관련 키워드
     edit_keywords = [
         "추가", "삭제", "수정", "설정", "인벤토리", "골드", "돈", "아이템", 
-        "획득", "잃음", "관계", "호감도", "패시브", "특성", "제거", "변경"
+        "획득", "잃음", "관계", "호감도", "패시브", "특성", "제거", "변경",
+        "합쳐", "정리", "통합"
     ]
     if any(kw in content_lower for kw in edit_keywords):
         return "edit"
