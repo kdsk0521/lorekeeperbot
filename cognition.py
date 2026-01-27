@@ -195,7 +195,7 @@ def build_judgment_context_with_roll(judgment: Dict[str, Any]) -> str:
     
     mod_text = ", ".join(mod_strs) if mod_strs else "None"
     
-    result_kr = {"critical_success": "대성공", "success": "성공", "partial": "부분 성공", "failure": "실패"}.get(judgment.get("result"), "N/A")
+    result_kr = {"critical_success": "대성공", "success": "성공", "partial": "부분 성공", "failure": "실패", "critical_failure": "대실패"}.get(judgment.get("result"), "N/A")
     
     return (
         f"### [GM JUDGMENT]\n"
