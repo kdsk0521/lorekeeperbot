@@ -8,6 +8,7 @@ import logging
 import random
 import time
 import json
+import re
 from typing import List, Tuple, Dict, Any, Optional
 from google.genai import types
 
@@ -334,7 +335,22 @@ async def generate_anomaly_event(
         
         if response.text:
             cleaned = bot_utils.clean_json_text(response.text)
-            return json.loads(cleaned)
+            data = json.loads(cleaned)
+            
+            # [Sanitize Tag] Force Single Word Format
+            if "tag" in data:
+                raw = data["tag"].replace("[", "").replace("]", "").strip()
+                # Remove (...) parenthesis content
+                raw = re.sub(r'\(.*?\)', '', raw).strip()
+                # Take first word only
+                if " " in raw: raw = raw.split()[0]
+                
+                # Check for empty result
+                if not raw: raw = "Unknown"
+                
+                data["tag"] = f"[{raw}]"
+                
+            return data
             
     except Exception as e:
         logging.error(f"[Anomaly] Generation Failed: {e}")
