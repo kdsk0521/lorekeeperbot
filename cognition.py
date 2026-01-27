@@ -163,7 +163,6 @@ def build_action_judgment_with_roll(action: str, difficulty: str, difficulty_rea
     if modifiers_list:
         for mod in modifiers_list:
             if isinstance(mod, dict):
-            if isinstance(mod, dict):
                 # Correct parsing for format {"name": "...", "value": 10}
                 m_name = mod.get("name", "Unknown")
                 m_val = mod.get("value", 0)
