@@ -288,6 +288,36 @@ def check_deprecated_patterns(base_dir):
         print("❌ Legacy patterns detected. Please review.")
         return False
 
+def check_event_lore_pipeline():
+    """
+    Verifies that the Event Lore Summary components are correctly wired.
+    """
+    print("\n" + "="*40)
+    print("[EVENT LORE PIPELINE CHECK]")
+    print("="*40)
+    
+    try:
+        # 1. Check Domain Manager
+        import domain_manager
+        if not hasattr(domain_manager, "get_event_lore_summary"):
+            print("❌ domain_manager.get_event_lore_summary missing.")
+            return False
+        if not hasattr(domain_manager, "set_event_lore_summary"):
+            print("❌ domain_manager.set_event_lore_summary missing.")
+            return False
+            
+        # 2. Check Memory System
+        import memory_system
+        if not hasattr(memory_system, "summarize_lore_for_events"):
+            print("❌ memory_system.summarize_lore_for_events missing.")
+            return False
+            
+        print("✅ Pipeline Components Detected: OK")
+        return True
+    except Exception as e:
+        print(f"❌ Pipeline Check Failed: {e}")
+        return False
+
 if __name__ == "__main__":
     import os # Ensure os is imported
     import sys # Ensure sys is imported
@@ -306,6 +336,8 @@ if __name__ == "__main__":
     if not check_static_analysis():
         all_checks_passed = False
     if not check_deprecated_patterns(os.getcwd()):
+        all_checks_passed = False
+    if not check_event_lore_pipeline():
         all_checks_passed = False
     
     print_header("DIAGNOSIS REPORT")

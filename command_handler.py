@@ -198,16 +198,22 @@ async def handle_lore_command(message, channel_id: str, arg: str, client_genai=N
             domain_manager.set_active_genres(channel_id, res) 
             domain_manager.set_custom_tone(channel_id, res.get("atmosphere_guide"))
             
+            # [NEW] Event Lore Summarization
+            event_summary = await memory_system.summarize_lore_for_events(client_genai, model_id, full)
+            domain_manager.set_event_lore_summary(channel_id, event_summary)
+            
             # Formatted Output
             layers = res.get("layers", {})
             genre_summary = f"{layers.get('world_setting', '?')} / {layers.get('style_tech', '?')} / {layers.get('narrative_tone', '?')}"
             
-            await msg.edit(content=f"✅ **로어 분석 완료**\nNPC: {len(npcs)}명 추출{pc_msg}\n장르(3계층): {genre_summary}")
+            await msg.edit(content=f"✅ **로어 분석 완료**\nNPC: {len(npcs)}명 추출{pc_msg}\n장르(3계층): {genre_summary}\n이벤트 요약: 생성됨 ({len(event_summary)}자)")
         except Exception as e:
             await msg.edit(content=f"⚠️ 분석 오류: {e}")
     else:
         domain_manager.append_lore(channel_id, full)
-        await msg.edit(content="📜 저장 완료 (AI 미사용)")
+        # Attempt to save a naive summary if AI not available
+        domain_manager.set_event_lore_summary(channel_id, full[:1000])
+        await msg.edit(content="📜 저장 완료 (AI 미사용 - 단순 요약)")
 
 
 async def handle_info_command(message, channel_id: str, sub_command: str = "") -> None:

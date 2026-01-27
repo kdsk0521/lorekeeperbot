@@ -327,7 +327,7 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                 logging.info(f"[Anomaly] Triggered at Doom {c_doom}")
                 
                 # Context for Generation
-                anom_lore = domain_manager.get_lore(channel_id)
+                anom_lore = domain_manager.get_event_lore_summary(channel_id) or domain_manager.get_lore(channel_id)[:1000]
                 anom_loc = domain_manager.get_current_location(channel_id)
                 anom_genres = domain_data.get("active_genres", ["Unknown"])
                 

@@ -190,6 +190,17 @@ def get_lore_original(channel_id: str) -> Optional[str]:
         return t
     return None
 
+def get_event_lore_summary_file_path(channel_id: str) -> str:
+    return os.path.join(get_channel_dir(channel_id), "_lore_summary.txt")
+
+def get_event_lore_summary(channel_id: str) -> str:
+    path = get_event_lore_summary_file_path(channel_id)
+    return load_text(path, "")
+
+def set_event_lore_summary(channel_id: str, text: str) -> None:
+    path = get_event_lore_summary_file_path(channel_id)
+    save_text(path, text)
+
 def get_lore_with_npcs(channel_id: str) -> str:
     lore = get_lore(channel_id)
     npcs = get_npcs(channel_id)

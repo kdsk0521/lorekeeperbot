@@ -298,7 +298,7 @@ async def generate_anomaly_event(
         "Generate a brief, atmospheric event based on the current World State and Doom Level.\n\n"
         
         f"### Current Context\n"
-        f"- World Lore: {lore_text[:500]}...\n"
+        f"- World Lore Summary: {lore_text}\n"
         f"- Location: {location}\n"
         f"- Helper Genres: {', '.join(active_genres)}\n"
         f"- Doom Level: {doom_val}/100 ({tone_cat.upper()} Tension)\n"

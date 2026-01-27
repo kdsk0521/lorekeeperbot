@@ -948,6 +948,41 @@ async def extract_npcs_only(
         
     return []
 
+async def summarize_lore_for_events(client, model_id: str, full_lore: str) -> str:
+    """
+    Summarizes the full lore into a concise context for Event Generation.
+    Focuses on: Atmosphere, Threats, Magic/Rules, and Key Locations.
+    Target: ~1000 characters.
+    """
+    if not full_lore: return ""
+    
+    sys_prompt = (
+        "You are the 'Lorekeeper'. Your task is to compress the provided World Setting (Lore) "
+        "into a prioritized summary for Random Event Generation.\n"
+        "Ignore specific character backstories unless they are world-defining.\n\n"
+        "### Focus Areas\n"
+        "1. **Atmosphere/Genre**: What is the mood? (e.g. Grimdark, High Fantasy, Cyberpunk).\n"
+        "2. **Threats**: What monsters, factions, or forces are active dangers?\n"
+        "3. **Rules/Magic**: Key laws of physics/magic that affect daily life.\n"
+        "4. **Key Locations**: Brief mention of major zones if relevant.\n\n"
+        "### Output Format\n"
+        "Return ONLY the summary text (Korean preferred if Lore is Korean)."
+    )
+    
+    try:
+        cfg = types.GenerateContentConfig(temperature=0.3, max_output_tokens=500)
+        resp = await client.aio.models.generate_content(
+            model=model_id,
+            contents=[types.Content(role="user", parts=[types.Part(text=f"{sys_prompt}\n\n[LORE START]\n{full_lore}\n[LORE END]")])],
+            config=cfg
+        )
+        if resp and resp.text:
+            return resp.text.strip()
+    except Exception as e:
+        logging.error(f"Lore Summarization Failed: {e}")
+        
+    return full_lore[:1000] # Fallback
+
 
 
 
