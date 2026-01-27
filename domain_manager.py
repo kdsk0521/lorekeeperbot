@@ -535,6 +535,10 @@ def update_quest_board(channel_id: str, board: Dict[str, Any]) -> None:
     save_domain(channel_id, d)
 
 # Settings
+def is_session_locked(channel_id: str) -> bool:
+    d = get_domain(channel_id)
+    return d.get("settings", {}).get("session_locked", False)
+
 def set_session_lock(channel_id: str, locked: bool) -> None:
     d = get_domain(channel_id)
     d["settings"]["session_locked"] = locked
@@ -625,14 +629,9 @@ def set_session_ai_memory(channel_id: str, data: Dict[str, Any]) -> None:
     save_domain(channel_id, d)
 
 # Missing Accessors
-def is_session_locked(channel_id: str) -> bool:
-    d = get_domain(channel_id)
-    return d.get("settings", {}).get("session_locked", False)
 
-def set_session_lock(channel_id: str, locked: bool) -> None:
-    d = get_domain(channel_id)
-    d["settings"]["session_locked"] = locked
-    save_domain(channel_id, d)
+
+
 
 def set_current_location(channel_id: str, location: str) -> None:
     w = get_world_state(channel_id)
