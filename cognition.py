@@ -177,8 +177,13 @@ def build_action_judgment_with_roll(action: str, difficulty: str, difficulty_rea
     
     final_roll = base_roll + modifier_total
     
-    # Critical Logic: Natural 1-5 is always Critical Failure
-    if base_roll <= 5:
+    # Critical Logic
+    # Standard: 1-5 (5%)
+    # Easy/Trivial (DC <= 20): 1 ONLY (1%)
+    crit_threshold = 5
+    if dc <= 20: crit_threshold = 1
+    
+    if base_roll <= crit_threshold:
         result = "critical_failure"
     # Natural 96-100 AND Meeting DC is Critical Success
     elif base_roll >= 96 and final_roll >= dc:
@@ -206,13 +211,20 @@ def build_judgment_context_with_roll(judgment: Dict[str, Any]) -> str:
     
     mod_text = ", ".join(mod_strs) if mod_strs else "None"
     
-    result_kr = {"critical_success": "대성공", "success": "성공", "partial": "부분 성공", "failure": "실패", "critical_failure": "대실패"}.get(judgment.get("result"), "N/A")
+    res_key = judgment.get("result")
+    result_kr_map = {
+        "critical_success": "대성공", "success": "성공", "partial": "부분 성공", 
+        "failure": "실패", "critical_failure": "대실패", "automatic_success": "자동 성공"
+    }
+    result_kr = result_kr_map.get(res_key, "N/A")
+    
+    roll_line = f"Roll: {judgment.get('base_roll')} {'+' if judgment.get('modifier_total')>=0 else ''}{judgment.get('modifier_total')} = {judgment.get('final_roll')}\n"
     
     return (
         f"### [GM JUDGMENT]\n"
         f"Action: {judgment.get('action')}\n"
         f"Diff: {judgment.get('difficulty')} (DC {judgment.get('dc')})\n"
-        f"Roll: {judgment.get('base_roll')} {'+' if judgment.get('modifier_total')>=0 else ''}{judgment.get('modifier_total')} = {judgment.get('final_roll')}\n"
+        f"{roll_line}"
         f"Mods: {mod_text}\n"
         f"**RESULT: {result_kr}**\n\n"
     )
