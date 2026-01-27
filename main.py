@@ -371,7 +371,8 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
 
                     # Send Bulk Result
                     if adapt_results:
-                        await message.channel.send(f"🎲 **적응 판정 결과**\n" + "\n".join(adapt_results))
+                        tag = anom_evt.get('tag', 'Unknown')
+                        await message.channel.send(f"🎲 **적응 판정 결과: [{tag}]**\n" + "\n".join(adapt_results))
 
             # [NEW] GM Judgment System Integration
             judgment_context = ""

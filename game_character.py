@@ -157,7 +157,7 @@ def resolve_memo_auto(channel_id: str, content: str) -> str:
 # Alias for V6
 def expose_to_abnormal(user_data: Dict[str, Any], trigger: str) -> Tuple[Dict[str, Any], str]:
     # Wraps check_adaptation_roll with default difficulty
-    return check_adaptation_roll(user_data, trigger, difficulty=50)
+    return check_adaptation_roll(user_data, trigger, difficulty=30)
 
 
 # Notebook System (New in V5.1)
@@ -574,7 +574,7 @@ def calculate_adaptation_percentage(count: int) -> int:
     val = math.log(count + 1) / math.log(base)
     return min(100, int(val * 100))
 
-def check_adaptation_roll(user_data: Dict[str, Any], tag: str, difficulty: int = 50) -> Tuple[Dict[str, Any], str]:
+def check_adaptation_roll(user_data: Dict[str, Any], tag: str, difficulty: int = 30) -> Tuple[Dict[str, Any], str]:
     """
     Performs an Adaptation Check against a generic Anomaly Tag.
     Formula: 1d100 + Adaptation% >= Difficulty
@@ -599,11 +599,18 @@ def check_adaptation_roll(user_data: Dict[str, Any], tag: str, difficulty: int =
     if total >= difficulty:
         # Success: Gain XP (Count +2 for faster mastery on success)
         count_inc = 2
-        msg += f" ▶ **성공!** (익숙한 풍경입니다)\n"
+        msg += f" ▶ **성공!** (익숙해집니다)\n"
     else:
-        # Fail: Mental Hit + Small XP (Count +1)
+        # Fail logic
         count_inc = 1
+        
+        # Buffer: difficulty 30 is base.
+        # If Stage 0 -> 1 (Always happen on fail)
+        # If Stage 1 -> 2 (Only if fail by margin > 10?)
+        # For now, keeping it simple: Just lower the CALLER's default difficulty.
+        
         new_mental = min(3, current_mental + 1)
+
         
         # Check Break
         if current_mental == 3 and new_mental == 3:

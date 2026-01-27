@@ -305,10 +305,12 @@ async def generate_anomaly_event(
         f"- Target Tone: {', '.join(tone_keywords)} (Pick one that fits)\n\n"
         
         "### Instructions\n"
-        "1. **Tag**: Create a unique keyword [Tag] for this event (e.g., [Glitch], [Romance], [Tentacle]).\n"
-        "   - The Tag MUST be based on the provided LORE and LOCATION.\n"
+        "1. **Tag**: Use a BROAD category keyword (e.g., [Machine], [Psychic], [Bio], [Ghost]).\n"
+        "   - Do NOT use unique/poetic names like 'Merciful Echo'. Use 'Magic' or 'Sound' instead.\n"
+        "   - Reuse tags if the event is similar to previous ones to allow player adaptation.\n"
         "2. **Description**: 1-2 sentences describing the event. vivid and sensory.\n"
-        "3. **Effect Hint**: A short hint on what happens (e.g., 'Mental Check', 'Gain Item', 'Social Encounter').\n\n"
+        "3. **Effect Hint**: A short hint on what happens (e.g., 'Mental Check', 'Gain Item', 'Social Encounter').\n"
+        "4. **Language**: ALL OUTPUT MUST BE IN KOREAN.\n\n"
 
         "### Output Format (JSON Only)\n"
         "{\n"
