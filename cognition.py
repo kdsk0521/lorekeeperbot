@@ -60,6 +60,13 @@ Judge player actions realistically based on difficulty and modifiers.
 **Difficulty:** trivial, easy, normal, hard, extreme
 **Modifiers:** injury (-10), tool/item (Notebook: +5~+30), **PASSSIVE/SKILL/TRAIT (+5)**.
 
+### SCENE CLASSIFICATION
+- **normal**: Standard roleplay, exploration, or dialogue.
+- **combat**: Active fighting or physical confrontation.
+- **social**: Pure diplomatic or party interactions.
+- **summary**: Timeskips (e.g., "3 days later"), travel montages, or recap. (Disables Anomalies)
+- **intimate**: Romantic, sexual (NSFW), or deeply private emotional moments where interruption ruins the mood. (Disables Anomalies & Crit Fails)
+
 ### OUTPUT FORMAT (JSON ONLY)
 {
   "CurrentLocation": "String",
