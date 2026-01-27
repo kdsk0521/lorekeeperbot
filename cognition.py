@@ -325,7 +325,8 @@ async def _extract_physical(client, model_id, p_in, ai_out, notebook, status):
         "Return JSON with keys: notebook_update (string or null), status_add [list], status_remove [list].\n"
         "Principle: Convert narrative actions into a concise Notebook summary.\n"
         "\n### [STRICT OWNERSHIP RULES - CRITICAL]\n"
-        "1. **Gold Tracking**: Explicitly update Gold balance in '— [소지품] —' (e.g., '골드: 150G').\n"
+        "1. **Currency/Item Tracking**: Track items and currency based on context (e.g., Gold, Dollars, Credits).\n"
+        "   - Do NOT enforce 'Gold: 0G' if the setting uses a different currency or none at all.\n"
         "2. **ACQUISITION ONLY**: Record items ONLY if the player PHYSICALLY takes them.\n"
         "   - ✅ YES: 'Pick up', 'Take', 'Received', 'Bought', 'Stole', 'Put in pocket'.\n"
         "   - ❌ NO: 'See', 'Spot', 'Identify', 'Look at', 'Examine'. (Mere observation != Owning)\n"
@@ -334,7 +335,7 @@ async def _extract_physical(client, model_id, p_in, ai_out, notebook, status):
         "   - Rule: Check the *Existing Notebook* first. If item is already there, DO NOT add again unless quantity increases.\n"
         "4. **Format**: Maintain '— [소지품] —' and '— [메모] —'.\n"
         "\nExample:\n"
-        '{"notebook_update": "— [소지품] —\\n- 골드: 200G\\n- Rusty Sword\\n\\n— [메모] —\\n- Code: 5566", "status_add": [], ...}'
+        '{"notebook_update": "— [소지품] —\\n- 100 Credits\\n- Rusty Sword\\n\\n— [메모] —\\n- Code: 5566", "status_add": [], ...}'
     )
     ctx = f"Notebook Content:\n{notebook}\nStatus:{status}"
     usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput FULL UPDATED Notebook JSON."
