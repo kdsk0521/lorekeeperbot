@@ -508,8 +508,24 @@ def add_to_ai_memory_list(channel_id: str, uid: str, key: str, item: str) -> Non
     
     mem = p.get("ai_memory", {})
     if key not in mem: mem[key] = []
-    if isinstance(mem[key], list) and item not in mem[key]:
-        mem[key].append(item)
+    
+    if isinstance(mem[key], list):
+        # [Fix] Deep Deduplication for Passives (Dict)
+        is_duplicate = False
+        if key == "passives" and isinstance(item, dict):
+            new_name = item.get("name", "Unknown")
+            for existing in mem[key]:
+                if isinstance(existing, dict) and existing.get("name") == new_name:
+                    is_duplicate = True
+                    break
+                elif isinstance(existing, str) and existing == new_name:
+                    is_duplicate = True
+                    break
+        elif item in mem[key]:
+             is_duplicate = True
+             
+        if not is_duplicate:
+            mem[key].append(item)
         
     p["ai_memory"] = mem
     save_participant_data(channel_id, uid, p)
