@@ -163,14 +163,18 @@ def build_action_judgment_with_roll(action: str, difficulty: str, difficulty_rea
     if modifiers_list:
         for mod in modifiers_list:
             if isinstance(mod, dict):
-                for k, v in mod.items():
-                    try:
-                        val_int = int(str(v).replace('+', '').replace(',', '').strip())
-                        modifiers[k] = val_int
-                        modifier_total += val_int
-                    except (ValueError, TypeError):
-                        modifiers[k] = 0
-                        logging.warning(f"Invalid modifier value for {k}: {v} (treated as 0)")
+            if isinstance(mod, dict):
+                # Correct parsing for format {"name": "...", "value": 10}
+                m_name = mod.get("name", "Unknown")
+                m_val = mod.get("value", 0)
+                
+                try:
+                    val_int = int(str(m_val).replace('+', '').replace(',', '').strip())
+                    modifiers[m_name] = val_int
+                    modifier_total += val_int
+                except (ValueError, TypeError):
+                    modifiers[m_name] = 0
+                    logging.warning(f"Invalid modifier value for {m_name}: {m_val} (treated as 0)")
     
     final_roll = base_roll + modifier_total
     
