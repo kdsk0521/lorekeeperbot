@@ -526,6 +526,24 @@ def update_world_state(channel_id: str, state: Dict[str, Any]) -> None:
     d["world_state"] = state
     save_domain(channel_id, d)
 
+def get_current_location(channel_id: str) -> str:
+    ws = get_world_state(channel_id)
+    return ws.get("current_location") or ws.get("location", "Unknown")
+
+def set_current_location(channel_id: str, location: str) -> None:
+    ws = get_world_state(channel_id)
+    ws["current_location"] = location
+    update_world_state(channel_id, ws)
+
+def get_current_risk(channel_id: str) -> str:
+    ws = get_world_state(channel_id)
+    return ws.get("risk_level", "Low")
+
+def set_current_risk(channel_id: str, risk: str) -> None:
+    ws = get_world_state(channel_id)
+    ws["risk_level"] = risk
+    update_world_state(channel_id, ws)
+
 def get_quest_board(channel_id: str) -> Dict[str, Any]:
     return get_domain(channel_id).get("quest_board")
 
