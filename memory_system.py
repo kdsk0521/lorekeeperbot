@@ -978,39 +978,5 @@ async def extract_npcs_only(
     return []
 
 
-async def extract_pc_info(
-    client, 
-    model_id: str, 
-    lore_text: str
-) -> Dict[str, Any]:
-    """
-    로어 텍스트에서 주인공(Player Character) 정보만 추출합니다.
-    """
-    system_prompt = (
-        "You are an Entity Extractor.\n"
-        "Identify the Main Protagonist (Player Character) from the text.\n"
-        "Look for sections labeled 'PC', 'Protagonist', 'Player', or the central character of the lore.\n\n"
-        
-        "Output Format (JSON):\n"
-        "{\n"
-        "  \"name\": \"Name\",\n"
-        "  \"appearance\": \"...\",\n"
-        "  \"personality\": \"...\",\n"
-        "  \"backstory\": \"...\",\n"
-        "  \"passives\": [\"trait1\", \"trait2\"]\n"
-        "}\n"
-        "If no clear protagonist is found, return empty JSON {}."
-    )
 
-    try:
-        config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.1)
-        contents = [types.Content(role="user", parts=[types.Part(text=f"{system_prompt}\n\n[Lore Text]\n{lore_text}")])]
-        
-        result = await api_call_with_retry(client, model_id, contents, config, operation_name="Extract PC")
-        if result:
-            return safe_parse_json(result)
-    except Exception as e:
-        logging.error(f"[Extract PC] Failed: {e}")
-        
-    return {}
 
