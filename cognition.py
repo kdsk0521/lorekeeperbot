@@ -65,6 +65,7 @@ Judge player actions realistically based on difficulty and modifiers.
   "CurrentLocation": "String",
   "LocationRisk": "None/Low/Medium/High/Extreme",
   "TimeContext": "String",
+  "SceneType": "normal/combat/social/summary/intimate",
   "Observation": "Objective summary",
   "TimeFlow": {"duration": "instant/short/medium/long/explicit", "ticks": Int},
   "ActionJudgment": {"action": "...", "difficulty": "...", "modifiers": [{"name": "Item: Magic Sword", "value": 30}]},

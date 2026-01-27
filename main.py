@@ -322,8 +322,11 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
             w_state = domain_manager.get_world_state(channel_id)
             c_doom = w_state.get("doom", 0)
             
-            # Check Trigger (Every Turn)
-            if game_world.should_trigger_anomaly(c_doom):
+            # Check SceneType (Skip if Summary/TimeSkip or Intimate)
+            scene_type = nvc_res.get("SceneType", "normal")
+            
+            # Check Trigger (Every Turn, unless Summary/Intimate)
+            if scene_type not in ["summary", "intimate"] and game_world.should_trigger_anomaly(c_doom):
                 logging.info(f"[Anomaly] Triggered at Doom {c_doom}")
                 
                 # Context for Generation
@@ -388,6 +391,12 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                      
                      judgment_data = cognition.build_action_judgment_with_roll(act, diff, reason, mods)
                      
+                     # [Safety Logic] Downgrade Critical Failure in Intimate Scenes
+                     if scene_type == "intimate" and judgment_data.get("result") == "critical_failure":
+                         judgment_data["result"] = "failure"
+                         judgment_data["final_roll"] = max(2, judgment_data["final_roll"]) # Min 2 to avoid crit range visual confusion if relevant
+                         logging.info("Downgraded Critical Failure due to Intimate Scene.")
+
                      # Build Log & Context
                      roll_log = cognition.build_judgment_context_with_roll(judgment_data)
                      
