@@ -829,6 +829,7 @@ def apply_memory_edits(
         value = edit.get("value")
         key = edit.get("key")
         
+        if field in ["appearance", "personality", "background"]:
             if action == "set":
                 new_mem[field] = value
             elif action == "append":
