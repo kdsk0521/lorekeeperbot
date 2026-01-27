@@ -769,7 +769,8 @@ async def process_ooc_memory_edit(
         "background": ai_mem.get("background", ""),
         "relationships": ai_mem.get("relationships", {}),
         "passives": ai_mem.get("passives", []),
-        "status_effects": p_data.get("status_effects", [])
+        "status_effects": p_data.get("status_effects", []),
+        "abnormal_exposure": p_data.get("abnormal_exposure", {})
     }
     
     system_prompt = (
@@ -786,11 +787,12 @@ async def process_ooc_memory_edit(
         "  \"edits\": [\n"
         "    {\"field\": \"notebook\", \"action\": \"append\", \"value\": \"- Obtained Holy Sword\"},\n"
         "    {\"field\": \"relationships\", \"action\": \"update\", \"key\": \"NPCName\", \"value\": \"New Relation\"},\n"
+        "    {\"field\": \"abnormal_exposure\", \"action\": \"update\", \"key\": \"[Tag]\", \"value\": {\"count\": 10}},\n"
         "    {\"field\": \"status_effects\", \"action\": \"remove\", \"value\": \"Poison\"}\n"
         "  ],\n"
         "  \"confirmation_message\": \"Response to user (Korean)\"\n"
         "}\n"
-        "Valid fields: appearance, personality, background, relationships, passives, status_effects, notebook, notes.\n"
+        "Valid fields: appearance, personality, background, relationships, passives, status_effects, notebook, abnormal_exposure.\n"
     )
     
     user_prompt = f"Current State: {json.dumps(current_state, ensure_ascii=False)}\nNotebook:\n{notebook_text}\n\nOOC Request: {ooc_content}"
@@ -827,11 +829,18 @@ def apply_memory_edits(
         value = edit.get("value")
         key = edit.get("key")
         
-        if field in ["appearance", "personality", "background"]:
             if action == "set":
                 new_mem[field] = value
             elif action == "append":
                 new_mem[field] = (new_mem.get(field, "") + " " + str(value)).strip()
+        
+        elif field == "abnormal_exposure":
+            target = new_p_data.get("abnormal_exposure", {})
+            if action in ["set", "update"] and key:
+                target[key] = value
+            elif action == "remove" and key:
+                target.pop(key, None)
+            new_p_data["abnormal_exposure"] = target
                 
         elif field == "relationships":
             if action in ["set", "update"] and key:

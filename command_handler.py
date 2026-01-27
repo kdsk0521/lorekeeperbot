@@ -1051,36 +1051,92 @@ async def dispatch_command(cmd, message, channel_id, parsed, client_discord, cli
 
     # [NEW] Manual Mental Control
     if cmd == "mental" or cmd == "멘탈":
-        # !mental <user_name> <set> <0-3>
-        # !mental <user_name> <check>
+        # Usage: 
+        # !mental (Check Self)
+        # !mental <Target> (Check Target)
+        # !mental <State> (Set Self to State)
+        # !mental <Target> <State> (Set Target to State)
+        # !mental <Target> <set> <State> (Explicit Set)
+        
         args = parsed['content'].split() if parsed['content'] else []
-        if len(args) < 1:
-            return "⚠️ 사용법: `!멘탈 [이름] [설정/확인] [구간 0-3]`"
-            
-        target_name = args[0]
-        subcmd = args[1] if len(args) > 1 else "check"
+        uid = str(message.author.id)
         
-        target_uid = domain_manager.find_participant_id_by_name(channel_id, target_name)
-        if not target_uid:
-            return f"⚠️ 참가자 '{target_name}'을(를) 찾을 수 없습니다."
+        target_uid = None
+        target_name = None
+        subcmd = "check"
+        val_arg = None
+        
+        # Helper: Build State Map
+        state_map = {}
+        for k, v in game_character.MENTAL_STAGES.items():
+            state_map[v["name"]] = k
+            state_map[str(k)] = k
             
+        # 1. Determine Target
+        if not args:
+            # !mental -> Check Self
+            target_uid = uid
+        else:
+            first = args[0]
+            found_uid = domain_manager.find_participant_id_by_name(channel_id, first)
+            
+            if found_uid:
+                # Arg0 is User
+                target_uid = found_uid
+                target_name = first
+                
+                # Check next args for Set/Check
+                if len(args) > 1:
+                    second = args[1]
+                    if second in ["set", "설정"]:
+                        subcmd = "set"
+                        if len(args) > 2: val_arg = args[2]
+                    elif second in ["check", "확인"]:
+                        subcmd = "check"
+                    elif second in state_map:
+                        # !mental User PyungJeong
+                        subcmd = "set"
+                        val_arg = second
+            else:
+                # Arg0 is NOT User -> Assume Self Target and Arg0 is State/Cmd
+                target_uid = uid
+                if first in ["check", "확인"]:
+                    subcmd = "check"
+                elif first in state_map:
+                    subcmd = "set"
+                    val_arg = first
+                    # Handle "!mental 평정 확인" case -> Confirm/Check isn't strictly used as 'Set', but user intent is likely Set.
+                    # Or valid arg parsing for safety.
+                elif first in ["set", "설정"]:
+                    subcmd = "set"
+                    if len(args) > 1: val_arg = args[1]
+                else:
+                    return f"⚠️ 참가자 '{first}'을(를) 찾을 수 없거나, 올바른 상태명이 아닙니다."
+
+        # Verify Target
         p_data = domain_manager.get_participant_data(channel_id, target_uid)
-        
-        if subcmd in ["check", "확인"]:
+        if not p_data:
+             return "❌ 등록된 캐릭터가 없습니다. (`!가면`)"
+        target_name = p_data.get("mask", "Unknown")
+
+        # Execute
+        if subcmd == "check":
             ms = game_character.get_mental_status_text(p_data)
             await message.channel.send(f"🧠 **{target_name}님의 멘탈:** {ms}")
             
-        elif subcmd in ["set", "설정"]:
-            if len(args) < 3: return "⚠️ 설정할 단계(0-3)를 입력하세요."
-            try:
-                new_stage = int(args[2])
-                if not (0 <= new_stage <= 3): raise ValueError
-                p_data["mental_stage"] = new_stage
-                domain_manager.save_participant_data(channel_id, target_uid, p_data)
-                ms = game_character.get_mental_status_text(p_data)
-                await message.channel.send(f"🧠 **{target_name}** 멘탈 조정 완료: {ms}")
-            except ValueError:
-                return "⚠️ 올바른 단계(0~3)를 입력하세요."
+        elif subcmd == "set":
+            if val_arg is None: return "⚠️ 설정할 단계(0-3)나 상태명(평정 등)을 입력하세요."
+            
+            if val_arg not in state_map:
+                 return f"⚠️ 올바른 상태명이 아닙니다. ({', '.join(game_character.MENTAL_STAGES[i]['name'] for i in range(4))})"
+            
+            new_stage = state_map[val_arg]
+            p_data["mental_stage"] = new_stage
+            domain_manager.save_participant_data(channel_id, target_uid, p_data)
+            
+            ms = game_character.get_mental_status_text(p_data)
+            await message.channel.send(f"🧠 **{target_name}** 멘탈 조정 완료: {ms}")
+            
         return None
 
     # [NEW] Rest Command (Reduces Doom by risk level)
