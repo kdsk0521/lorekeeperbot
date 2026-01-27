@@ -439,42 +439,88 @@ def calculate_status_doom_contribution(user_data: Dict[str, Any]) -> Tuple[int, 
     return doom_val, reasons
 
 # =========================================================
-# ABNORMAL ADAPTATION SYSTEM
+# =========================================================
+# MENTAL & ADAPTATION SYSTEM (V6)
 # =========================================================
 
-def calculate_normality(count: int, base_threshold: int = 10) -> int:
+MENTAL_STAGES = {
+    0: {"name": "평정", "emoji": "🟢", "desc": "안정된 상태입니다."},
+    1: {"name": "동요", "emoji": "🟡", "desc": "손이 떨리고 식은땀이 흐릅니다."},
+    2: {"name": "공황", "emoji": "🔴", "desc": "이성적인 판단이 불가능합니다. (지능/관찰 -20)"},
+    3: {"name": "붕괴", "emoji": "💔", "desc": "정신이 부서졌습니다. (영구 트라우마 위험)"}
+}
+
+def calculate_adaptation_percentage(count: int) -> int:
+    """
+    Logarithmic growth for adaptation percentage.
+    Formula: (log(count + 1) / log(11)) * 100
+    - 0 count -> 0%
+    - 1 count -> 20%
+    - 3 count -> 50%
+    - 10 count -> 100%
+    """
     if count <= 0: return 0
     import math
-    normality = min(100, int((math.log(count + 1) / math.log(base_threshold + 1)) * 100))
-    return normality
+    base = 11
+    val = math.log(count + 1) / math.log(base)
+    return min(100, int(val * 100))
 
-def expose_to_abnormal(user_data: Dict[str, Any], abnormal_type: str) -> Tuple[Dict[str, Any], Optional[str]]:
+def check_adaptation_roll(user_data: Dict[str, Any], tag: str, difficulty: int = 50) -> Tuple[Dict[str, Any], str]:
+    """
+    Performs an Adaptation Check against a generic Anomaly Tag.
+    Formula: 1d100 + Adaptation% >= Difficulty
+    """
+    import random
+    
+    # 1. Get current adaptation
     exposure = user_data.get("abnormal_exposure", {})
-    if abnormal_type not in exposure:
-        exposure[abnormal_type] = {"count": 0, "normality": 0}
+    tag_data = exposure.get(tag, {"count": 0})
+    adapt_pct = calculate_adaptation_percentage(tag_data.get("count", 0))
+    
+    # 2. Roll
+    dice = random.randint(1, 100)
+    total = dice + adapt_pct
+    
+    current_mental = user_data.get("mental_stage", 0)
+    mental_info = MENTAL_STAGES.get(current_mental, MENTAL_STAGES[0])
+    
+    msg = f"🧠 **[{tag}] 적응 판정** (난이도 {difficulty})\n"
+    msg += f"`1d100({dice}) + 적응도({adapt_pct}%) = {total}`"
+    
+    if total >= difficulty:
+        # Success: Gain XP (Count +2 for faster mastery on success)
+        count_inc = 2
+        msg += f" ▶ **성공!** (익숙한 풍경입니다)\n"
+    else:
+        # Fail: Mental Hit + Small XP (Count +1)
+        count_inc = 1
+        new_mental = min(3, current_mental + 1)
         
-    # Increment
-    exposure[abnormal_type]["count"] += 1
-    count = exposure[abnormal_type]["count"]
-    
-    # Calculate
-    old_norm = exposure[abnormal_type]["normality"]
-    new_norm = calculate_normality(count)
-    exposure[abnormal_type]["normality"] = new_norm
-    
+        # Check Break
+        if current_mental == 3 and new_mental == 3:
+             msg += f" ▶ **실패!** 💔 이미 정신이 붕괴되었습니다...\n"
+        else:
+            user_data["mental_stage"] = new_mental
+            new_info = MENTAL_STAGES.get(new_mental)
+            msg += f" ▶ **실패!** 멘탈 악화: {mental_info['emoji']} → {new_info['emoji']} **{new_info['name']}**\n"
+            
+    # Update Adaptation Count
+    old_count = tag_data.get("count", 0)
+    new_count = old_count + count_inc
+    exposure[tag] = {"count": new_count}
     user_data["abnormal_exposure"] = exposure
     
-    # Stage Change Check
-    old_stage = get_normality_stage_info(old_norm)
-    new_stage = get_normality_stage_info(new_norm)
-    
-    msg = None
-    if old_stage["stage"] != new_stage["stage"]:
-        msg = f"🧠 **[{abnormal_type}]** 심리 적응: {old_stage['name']} → {new_stage['name']}"
-    elif count == 1:
-        msg = f"🧠 **[{abnormal_type}]** 첫 조우! (적응도 시작)"
+    # Report growth
+    new_pct = calculate_adaptation_percentage(new_count)
+    if new_pct > adapt_pct:
+        msg += f"📈 **적응도 상승:** {adapt_pct}% → {new_pct}%"
         
     return user_data, msg
+
+def get_mental_status_text(user_data: Dict[str, Any]) -> str:
+    stage = user_data.get("mental_stage", 0)
+    info = MENTAL_STAGES.get(stage, MENTAL_STAGES[0])
+    return f"{info['emoji']} {info['name']}"
 
 def get_abnormal_context(user_data: Dict[str, Any]) -> str:
     exposure = user_data.get("abnormal_exposure", {})

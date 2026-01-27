@@ -311,13 +311,69 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                 
                 # Refresh World Context immediately if time changed
                 world_ctx = game_system.get_world_context(channel_id)
-                # Re-inject NPC hints based on NEW time
-                new_npc_hints = game_system.get_npc_time_progression(channel_id)
-                if new_npc_hints:
-                    # Update rule_txt with new hints to influence narrative
-                    rule_txt += "\n\n### [UPDATED NPC ACTIVITY HINTS]\n" + "\n".join(new_npc_hints)
+                re_npc_hints = game_system.get_npc_time_progression(channel_id)
+                if re_npc_hints:
+                     rule_txt += "\n\n### [UPDATED NPC ACTIVITY HINTS]\n" + "\n".join(re_npc_hints)
 
-             # [NEW] GM Judgment System Integration
+
+            # =========================================================
+            # [NEW] V6 ANOMALY SYSTEM TRIGGER
+            # =========================================================
+            w_state = domain_manager.get_world_state(channel_id)
+            c_doom = w_state.get("doom", 0)
+            
+            # Check Trigger (Every Turn)
+            if game_world.should_trigger_anomaly(c_doom):
+                logging.info(f"[Anomaly] Triggered at Doom {c_doom}")
+                
+                # Context for Generation
+                anom_lore = domain_manager.get_lore(channel_id)
+                anom_loc = domain_manager.get_current_location(channel_id)
+                anom_genres = domain_data.get("active_genres", ["Unknown"])
+                
+                # Generate Event (Async, Flash Model)
+                anom_evt = await game_world.generate_anomaly_event(
+                    client_genai, channel_id, c_doom, anom_lore, anom_loc, anom_genres,
+                    model_id=MODEL_ID_FLASH
+                )
+                
+                if anom_evt:
+                    # 1. Announce Event
+                    evt_msg = (
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"⚡ **이변 발생: [{anom_evt.get('tag', 'Unknown')}]**\n"
+                        f"{anom_evt.get('description', '...')}\n"
+                        f"💡 *{anom_evt.get('effect_hint', '대처하십시오.')}*\n"
+                        f"━━━━━━━━━━━━━━━━━━━━"
+                    )
+                    await message.channel.send(evt_msg)
+                    
+                    # 2. Tension Release (Doom -5)
+                    doom_fb = game_world.change_doom(channel_id, config.ANOMALY_DOOM_COST)
+                    if doom_fb: await message.channel.send(doom_fb)
+                    
+                    # 3. Adaptation Checks (For all active participants)
+                    participants = domain_data.get("participants", {})
+                    adapt_results = []
+                    
+                    for uid, p_data in participants.items():
+                        if p_data.get("status") == "active":
+                            # Perform Roll
+                            p_data, adapt_msg = game_character.check_adaptation_roll(
+                                p_data, anom_evt.get('tag', 'Unknown')
+                            )
+                            # Save User Data
+                            domain_manager.update_participant_data(channel_id, uid, p_data)
+                            
+                            # Format Message
+                            user_name = p_data.get("name", "Unknown")
+                            adapt_results.append(f"**{user_name}**: {adapt_msg.split('▶')[1].strip()}")
+
+                    # Send Bulk Result
+                    if adapt_results:
+                        await message.channel.send(f"🎲 **적응 판정 결과**\n" + "\n".join(adapt_results))
+
+            # [NEW] GM Judgment System Integration
             judgment_context = ""
             action_judgment = nvc_res.get("ActionJudgment")
             if action_judgment and isinstance(action_judgment, dict):

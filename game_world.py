@@ -7,10 +7,13 @@ Extracted from game_system.py
 import logging
 import random
 import time
-from typing import List, Tuple, Dict, Any
+import json
+from typing import List, Tuple, Dict, Any, Optional
+from google.genai import types
 
 import config
 import domain_manager
+import bot_utils
 
 # =========================================================
 # WORLD TIME & WEATHER
@@ -238,3 +241,95 @@ def get_doom_forecast(channel_id: str) -> str:
         msg += "✅ 아직은 안전합니다."
         
     return msg
+
+# =========================================================
+# ANOMALY SYSTEM (Integrated)
+# =========================================================
+
+# Tone/Genre Mappings
+ANOMALY_TONE_MAP = {
+    "low": ["Fortune", "Romance", "Miracle", "SliceOfLife"],     # Doom 0-30
+    "mid": ["Bizarre", "Chaos", "Mystery", "SocialDrama"],       # Doom 31-70
+    "high": ["Horror", "Disaster", "Crisis", "Thriller"]         # Doom 71-100
+}
+
+def should_trigger_anomaly(doom_val: int) -> bool:
+    """
+    Checks if an anomaly should trigger based on Doom.
+    Formula: Chance(%) = MAX(20, Doom) * Multiplier
+    """
+    base_chance = max(20, doom_val)
+    final_chance = base_chance * config.ANOMALY_TRIGGER_CHANCE_MULTIPLIER
+    
+    roll = random.randint(1, 100)
+    logging.info(f"[Anomaly] Trigger Check: Roll {roll} <= Chance {final_chance} (Doom {doom_val})")
+    return roll <= final_chance
+
+def _get_anomaly_tone(doom_val: int) -> str:
+    """Selects a tone category based on Doom value."""
+    if doom_val <= 30: return "low"
+    elif doom_val <= 70: return "mid"
+    else: return "high"
+
+async def generate_anomaly_event(
+    client, 
+    channel_id: str,
+    doom_val: int, 
+    lore_text: str, 
+    location: str,
+    active_genres: list,
+    model_id: str = config.MODEL_ID_FLASH
+) -> Optional[Dict[str, Any]]:
+    """
+    Generates an Anomaly Event using AI.
+    Returns Dict with keys: type, tag, description, effect_hint
+    """
+    if not client: return None
+
+    tone_cat = _get_anomaly_tone(doom_val)
+    tone_keywords = ANOMALY_TONE_MAP.get(tone_cat, ["Mystery"])
+    
+    # Dynamic Prompt Construction
+    system_prompt = (
+        "You are a 'Random Event Generator' for a TRPG.\n"
+        "Generate a brief, atmospheric event based on the current World State and Doom Level.\n\n"
+        
+        f"### Current Context\n"
+        f"- World Lore: {lore_text[:500]}...\n"
+        f"- Location: {location}\n"
+        f"- Helper Genres: {', '.join(active_genres)}\n"
+        f"- Doom Level: {doom_val}/100 ({tone_cat.upper()} Tension)\n"
+        f"- Target Tone: {', '.join(tone_keywords)} (Pick one that fits)\n\n"
+        
+        "### Instructions\n"
+        "1. **Tag**: Create a unique keyword [Tag] for this event (e.g., [Glitch], [Romance], [Tentacle]).\n"
+        "   - The Tag MUST be based on the provided LORE and LOCATION.\n"
+        "2. **Description**: 1-2 sentences describing the event. vivid and sensory.\n"
+        "3. **Effect Hint**: A short hint on what happens (e.g., 'Mental Check', 'Gain Item', 'Social Encounter').\n\n"
+
+        "### Output Format (JSON Only)\n"
+        "{\n"
+        "  \"tag\": \"[TagName]\",\n"
+        "  \"tone\": \"Horror/Romance/Comedy/etc\",\n"
+        "  \"description\": \"The event description...\",\n"
+        "  \"effect_hint\": \"What player should do or feel\"\n"
+        "}"
+    )
+
+    try:
+        gen_config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.7)
+        contents = [types.Content(role="user", parts=[types.Part(text=system_prompt)])]
+        
+        response = await client.aio.models.generate_content(
+            model=model_id,
+            contents=contents,
+            config=gen_config
+        )
+        
+        if response.text:
+            cleaned = bot_utils.clean_json_text(response.text)
+            return json.loads(cleaned)
+            
+    except Exception as e:
+        logging.error(f"[Anomaly] Generation Failed: {e}")
+        return None
