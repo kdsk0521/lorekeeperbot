@@ -598,7 +598,15 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                                 # [Sanitize Tag] Force Single Word Format (Same as game_world.py)
                                 clean_trigger = raw_trigger.replace("[", "").replace("]", "").strip()
                                 clean_trigger = re.sub(r'\(.*?\)', '', clean_trigger).strip()
-                                if " " in clean_trigger: clean_trigger = clean_trigger.split()[0]
+                                
+                                # Take first word only (skip articles 'The', 'A', 'An')
+                                words = clean_trigger.split()
+                                if words:
+                                    if words[0].lower() in ["the", "a", "an"] and len(words) > 1:
+                                        clean_trigger = words[1]
+                                    else:
+                                        clean_trigger = words[0]
+                                
                                 if not clean_trigger: clean_trigger = "Unknown"
                                 
                                 effective_tag = f"[{clean_trigger}]"

@@ -342,8 +342,13 @@ async def generate_anomaly_event(
                 raw = data["tag"].replace("[", "").replace("]", "").strip()
                 # Remove (...) parenthesis content
                 raw = re.sub(r'\(.*?\)', '', raw).strip()
-                # Take first word only
-                if " " in raw: raw = raw.split()[0]
+                # Take first word only (skip articles 'The', 'A', 'An')
+                words = raw.split()
+                if words:
+                    if words[0].lower() in ["the", "a", "an"] and len(words) > 1:
+                        raw = words[1]
+                    else:
+                        raw = words[0]
                 
                 # Check for empty result
                 if not raw: raw = "Unknown"
