@@ -68,7 +68,7 @@ DEFAULT_LORE = "기본 세계관: 어두운 도시, 수수께끼의 사건들...
 
 
 # Time Settings
-TICK_DURATION_MIN = 7  # Minutes
+TICK_DURATION_MIN = 5  # Minutes
 TICK_DURATION_MAX = 10 # Minutes
 
 TIME_TICKS_PER_SLOT = 24  # 4 hours / 10 mins = 24 ticks
@@ -168,7 +168,7 @@ DEFAULT_WORLD_STATE = {
     "time_slot": "오후",
     "weather": "맑음",
     "day": 1,
-    "doom": 0,
+    "doom": 30, # [Unsettled Start] User Request
     "doom_name": "위기",
     "risk_level": "None",
     "current_location": "Unknown",
@@ -181,6 +181,10 @@ DEFAULT_WORLD_STATE = {
 # =========================================================
 # Simulation Constants (Restored)
 # =========================================================
+
+# Anomaly / Doom Equilibrium Settings
+ANOMALY_TRIGGER_CHANCE_MULTIPLIER = 1.0 # Doom * 1.0 = % Chance
+ANOMALY_DOOM_COST = -5 # Tension Release when Anomaly occurs
 
 STATUS_EFFECTS = {
     # Debuffs (Severity 1-3)

@@ -343,7 +343,7 @@ def get_growth_system(channel_id: str) -> str: return get_domain(channel_id).get
 def _create_default_participant(display_name: str) -> Dict[str, Any]:
     return {
         "mask": display_name, "status": "active",
-        "economy": {"gold": 0}, "inventory": {}, "status_effects": [],
+        "inventory": {}, "status_effects": [],
         "ai_memory": {
             "appearance": "", "personality": "", "background": "", "relationships": {},
             "passives": [], "normalization": {}, "notes": "", "archived_info": []
@@ -361,8 +361,6 @@ def update_participant(channel_id: str, user, reset: bool = False) -> bool:
         # Ensure schema
         if "ai_memory" not in d["participants"][uid]:
              d["participants"][uid]["ai_memory"] = _create_default_participant("")["ai_memory"]
-        if "economy" not in d["participants"][uid]:
-             d["participants"][uid]["economy"] = {"gold": 0}
              
     save_domain(channel_id, d)
     return True
