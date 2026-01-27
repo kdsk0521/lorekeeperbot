@@ -234,26 +234,85 @@ def check_static_analysis():
             
     if not failed:
         print("✅ Static Analysis Check  : OK")
+    return not failed # Return True if no failures, False otherwise
+
+def check_deprecated_patterns(base_dir):
+    """
+    Scans codebase for banned/legacy patterns that should no longer exist.
+    """
+    print("\n" + "="*40)
+    print("[DEPRECATED PATTERN SCAN]")
+    print("="*40)
+    
+    banned_patterns = {
+        r"p_data\['inventory'\]\s*=": "Legacy Inventory Set",
+        r"p_data\.get\('inventory'\)": "Legacy Inventory Get (Check context)",
+        r"p_data\['economy'\]": "Legacy Economy Usage",
+        r"gold_change": "Legacy Gold Logic",
+        r"memo_add": "Legacy Memo Logic",
+        r"current_inventory": "Legacy AI Param",
+        r"current_gold": "Legacy AI Param"
+    }
+    
+    found_issues = False
+    
+    for root, _, files in os.walk(base_dir):
+        if "venv" in root or "__pycache__" in root: continue
         
-    return failed
+        for file in files:
+            if not file.endswith(".py") or file == "health_check.py": continue
+            
+            path = os.path.join(root, file)
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    content = f.readlines()
+                    
+                for i, line in enumerate(content):
+                    for pattern, desc in banned_patterns.items():
+                        if re.search(pattern, line):
+                            # Exemptions (Migration code in domain_manager is allowed)
+                            if "domain_manager.py" in file and "Legacy" in line: continue 
+                            # If it's a comment, skip
+                            if line.strip().startswith("#"): continue
+                            
+                            print(f"⚠️ [Legacy Found] {file}:{i+1} -> {desc}")
+                            print(f"   Line: {line.strip()}")
+                            found_issues = True
+            except Exception as e:
+                pass
+                
+    if not found_issues:
+        print("✨ CLEAN. No obvious legacy patterns found.")
+        return True
+    else:
+        print("❌ Legacy patterns detected. Please review.")
+        return False
 
 if __name__ == "__main__":
-    print("🏥 Lorekeeper V5 Health Check Initiated...")
+    import os # Ensure os is imported
+    import sys # Ensure sys is imported
+    import re # Ensure re is imported
+    print("🏥 Lorekeeper V5 Health Check Initiated...\n")
     
-    import_fails = check_imports()
-    logic_fails = check_instantiation()
-    v6_fails = check_v6_features()
-    static_fails = check_static_analysis()
+    # Run all checks and combine results
+    all_checks_passed = True
+    
+    if not check_imports():
+        all_checks_passed = False
+    if not check_instantiation():
+        all_checks_passed = False
+    if not check_v6_features():
+        all_checks_passed = False
+    if not check_static_analysis():
+        all_checks_passed = False
+    if not check_deprecated_patterns(os.getcwd()):
+        all_checks_passed = False
     
     print_header("DIAGNOSIS REPORT")
     
-    if not import_fails and not logic_fails and not v6_fails and not static_fails:
+    if all_checks_passed:
         print("🎉 SYSTEM HEALTHY. READY FOR DEPLOYMENT.")
-        exit(0)
+        sys.exit(0)
     else:
-        print("⚠️ SYSTEM UNSTABLE.")
-        if import_fails: print(f"Import Failures: {import_fails}")
-        if logic_fails: print(f"Logic Failures: {logic_fails}")
-        if v6_fails: print(f"V6 Feature Failures: {v6_fails}") # Added this line for clarity
-        if static_fails: print(f"Static Failures: {static_fails}")
-        exit(1)
+        print("❌ SYSTEM UNSTABLE. Please review the failures above.")
+        sys.exit(1)
