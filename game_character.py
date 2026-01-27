@@ -91,6 +91,74 @@ def complete_quest(channel_id: str, content: str) -> str:
 def remove_quest(channel_id: str, content: str) -> str:
     return _del_op(channel_id, "active", content, "🗑️", "퀘스트")
 
+# Memo Operations (Integrated into Notebook)
+def add_memo(channel_id: str, content: str) -> str:
+    current_nb = get_notebook_text(channel_id)
+    # Check if duplicate line exists to avoid clutter
+    if f"- {content}" in current_nb:
+        return f"⚠️ 이미 노트북에 있는 내용입니다: {content}"
+        
+    # Append to [메모] section if possible, else append to end
+    new_nb = ""
+    if "— [메모] —" in current_nb:
+        parts = current_nb.split("— [메모] —")
+        # Ensure we append to the second part (the memo section)
+        new_nb = parts[0] + "— [메모] —" + parts[1] + f"\n- {content}"
+    else:
+        new_nb = current_nb + f"\n\n— [메모] —\n- {content}"
+        
+    update_notebook_text(channel_id, new_nb)
+    return f"📝 **노트북 기록:** {content}"
+
+def remove_memo(channel_id: str, content: str) -> str:
+    current_nb = get_notebook_text(channel_id)
+    lines = current_nb.splitlines()
+    new_lines = []
+    removed = False
+    
+    for line in lines:
+        if content in line and line.strip().startswith("-"):
+            removed = True
+            continue # Skip this line
+        new_lines.append(line)
+        
+    if removed:
+        update_notebook_text(channel_id, "\n".join(new_lines))
+        return f"🗑️ **노트북 삭제:** {content}"
+    return f"⚠️ '{content}' 내용을 찾을 수 없습니다."
+
+def edit_memo(channel_id: str, old_content: str, new_content: str) -> str:
+    current_nb = get_notebook_text(channel_id)
+    lines = current_nb.splitlines()
+    new_lines = []
+    edited = False
+    
+    for line in lines:
+        if old_content in line:
+            # Replace logic: If line was a bullet item, keep bullet
+            if line.strip().startswith("-"):
+                 new_lines.append(f"- {new_content}")
+            else:
+                 # Just replace the text part if it wasn't a bullet (unlikely for memos but possible for free text)
+                 new_lines.append(line.replace(old_content, new_content))
+            edited = True
+        else:
+            new_lines.append(line)
+            
+    if edited:
+         update_notebook_text(channel_id, "\n".join(new_lines))
+         return f"📝 **노트북 수정:** {old_content} -> {new_content}"
+    return f"⚠️ '{old_content}' 내용을 찾을 수 없습니다."
+
+def resolve_memo_auto(channel_id: str, content: str) -> str:
+    # Just remove for now, archiving text is complex
+    return remove_memo(channel_id, content) + " (자동 해결)"
+
+# Alias for V6
+def expose_to_abnormal(user_data: Dict[str, Any], trigger: str) -> Tuple[Dict[str, Any], str]:
+    # Wraps check_adaptation_roll with default difficulty
+    return check_adaptation_roll(user_data, trigger, difficulty=50)
+
 
 # Notebook System (New in V5.1)
 def get_notebook_text(channel_id: str) -> str:

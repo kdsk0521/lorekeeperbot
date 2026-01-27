@@ -177,20 +177,83 @@ def check_v6_features():
         
     return failed
 
+def check_static_analysis():
+    print_header("STATIC ANALYSIS (AST)")
+    
+    import ast
+    # Import modules for hasattr checks
+    import domain_manager
+    import game_system
+    import game_character
+    import game_world
+    import npc_manager
+    import session_manager
+    import cognition
+    import persona
+    
+    files_to_scan = ["main.py", "command_handler.py", "game_system.py"]
+    modules_to_check = {
+        "domain_manager": domain_manager, 
+        "game_system": game_system,
+        "game_character": game_character,
+        "game_world": game_world,
+        "npc_manager": npc_manager,
+        "session_manager": session_manager,
+        "cognition": cognition,
+        "persona": persona
+    }
+    
+    failed = []
+    
+    for filename in files_to_scan:
+        if not os.path.exists(filename):
+            print(f"⚠️ Skipping {filename}: File not found.")
+            continue
+            
+        print(f"🔍 Scanning {filename}...")
+        try:
+            with open(filename, 'r', encoding='utf-8') as f:
+                tree = ast.parse(f.read(), filename=filename)
+                
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call):
+                    if isinstance(node.func, ast.Attribute):
+                        # check for module.method()
+                        if isinstance(node.func.value, ast.Name):
+                            mod_name = node.func.value.id
+                            method_name = node.func.attr
+                            
+                            if mod_name in modules_to_check:
+                                module = modules_to_check[mod_name]
+                                if not hasattr(module, method_name):
+                                    print(f"❌ {filename}:{node.lineno} -> {mod_name}.{method_name} NOT FOUND")
+                                    failed.append(f"{filename}::{mod_name}.{method_name}")
+        except Exception as e:
+            print(f"❌ Failed to parse {filename}: {e}")
+            failed.append(filename)
+            
+    if not failed:
+        print("✅ Static Analysis Check  : OK")
+        
+    return failed
+
 if __name__ == "__main__":
     print("🏥 Lorekeeper V5 Health Check Initiated...")
     
     import_fails = check_imports()
     logic_fails = check_instantiation()
     v6_fails = check_v6_features()
+    static_fails = check_static_analysis()
     
     print_header("DIAGNOSIS REPORT")
     
-    if not import_fails and not logic_fails and not v6_fails:
+    if not import_fails and not logic_fails and not v6_fails and not static_fails:
         print("🎉 SYSTEM HEALTHY. READY FOR DEPLOYMENT.")
         exit(0)
     else:
         print("⚠️ SYSTEM UNSTABLE.")
         if import_fails: print(f"Import Failures: {import_fails}")
         if logic_fails: print(f"Logic Failures: {logic_fails}")
+        if v6_fails: print(f"V6 Feature Failures: {v6_fails}") # Added this line for clarity
+        if static_fails: print(f"Static Failures: {static_fails}")
         exit(1)

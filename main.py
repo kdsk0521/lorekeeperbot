@@ -363,7 +363,7 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                                 p_data, anom_evt.get('tag', 'Unknown')
                             )
                             # Save User Data
-                            domain_manager.update_participant_data(channel_id, uid, p_data)
+                            domain_manager.save_participant_data(channel_id, uid, p_data)
                             
                             # Format Message
                             user_name = p_data.get("name", "Unknown")

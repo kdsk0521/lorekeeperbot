@@ -134,3 +134,17 @@ async def safe_delete_message(message) -> None:
         logging.warning("메시지 삭제 권한이 없습니다.")
     except Exception as e:
         logging.warning(f"메시지 삭제 실패: {e}")
+
+def clean_json_text(text: str) -> str:
+    """JSON 문자열에서 코드 블록 마커(```json) 등을 제거합니다."""
+    text = text.strip()
+    if text.startswith("```"):
+        lines = text.split("\n")
+        # 첫 줄이 ```json 등이면 제거
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        # 마지막 줄이 ``` 이면 제거
+        if lines and lines[-1].startswith("```"):
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    return text

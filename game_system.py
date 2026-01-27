@@ -43,11 +43,18 @@ perform_check = game_character.perform_check
 get_status_summary = game_character.get_status_summary
 calculate_status_doom_contribution = game_character.calculate_status_doom_contribution
 
+# Memo (Restored)
+add_memo = game_character.add_memo
+edit_memo = game_character.edit_memo
+remove_memo = game_character.remove_memo
+resolve_memo_auto = game_character.resolve_memo_auto
+
 # Mental & Adaptation (V6) (Replaces Normality)
 calculate_adaptation_percentage = game_character.calculate_adaptation_percentage
 check_adaptation_roll = game_character.check_adaptation_roll
 get_mental_status_text = game_character.get_mental_status_text
 get_abnormal_context = game_character.get_abnormal_context # Exists
+expose_to_abnormal = game_character.expose_to_abnormal
 
 export_session_history = game_character.export_session_history
 export_chronicle_book = game_character.export_chronicle_book

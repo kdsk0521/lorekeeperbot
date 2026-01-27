@@ -472,6 +472,14 @@ def add_to_ai_memory_list(channel_id: str, uid: str, key: str, item: str) -> Non
     p["ai_memory"] = mem
     save_participant_data(channel_id, uid, p)
 
+def find_participant_id_by_name(channel_id: str, name: str) -> Optional[str]:
+    d = get_domain(channel_id)
+    target = name.strip().lower()
+    for uid, p in d.get("participants", {}).items():
+        if p.get("mask", "").lower() == target:
+            return uid
+    return None
+
 # UI Helpers
 def get_unified_player_info(channel_id: str, user_id: str) -> str:
     p = get_participant_data(channel_id, user_id)

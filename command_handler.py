@@ -249,8 +249,14 @@ async def handle_notebook_command(message, channel_id: str, arg: str) -> None:
         await message.channel.send("✅ 노트북에 내용이 추가되었습니다.")
         
     elif sub in ['수정', 'edit', 'set']:
-        game_system.update_notebook_text(channel_id, content)
-        await message.channel.send("✅ 노트북 내용이 전체 수정되었습니다.")
+        # Check for specific edit syntax: "old -> new"
+        if "->" in content:
+            old_val, new_val = content.split("->", 1)
+            await message.channel.send(game_system.edit_memo(channel_id, old_val.strip(), new_val.strip()))
+        else:
+            # Fallback: Replace All
+            game_system.update_notebook_text(channel_id, content)
+            await message.channel.send("✅ 노트북 내용이 전체 수정되었습니다. (부분 수정은 `구형 -> 신형` 형식 사용)")
         
     elif sub in ['삭제', 'del', 'remove']:
         curr = game_system.get_notebook_text(channel_id)
@@ -1026,7 +1032,7 @@ async def dispatch_command(cmd, message, channel_id, parsed, client_discord, cli
                 new_stage = int(args[2])
                 if not (0 <= new_stage <= 3): raise ValueError
                 p_data["mental_stage"] = new_stage
-                domain_manager.update_participant_data(channel_id, target_uid, p_data)
+                domain_manager.save_participant_data(channel_id, target_uid, p_data)
                 ms = game_character.get_mental_status_text(p_data)
                 await message.channel.send(f"🧠 **{target_name}** 멘탈 조정 완료: {ms}")
             except ValueError:

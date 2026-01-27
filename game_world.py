@@ -261,8 +261,11 @@ def should_trigger_anomaly(doom_val: int) -> bool:
     base_chance = max(20, doom_val)
     final_chance = base_chance * config.ANOMALY_TRIGGER_CHANCE_MULTIPLIER
     
+    final_chance = base_chance * config.ANOMALY_TRIGGER_CHANCE_MULTIPLIER
+    
     roll = random.randint(1, 100)
-    logging.info(f"[Anomaly] Trigger Check: Roll {roll} <= Chance {final_chance} (Doom {doom_val})")
+    msg = f"[Anomaly] Trigger Check: Roll {roll} <= Chance {final_chance} (Doom {doom_val})"
+    logging.info(msg)
     return roll <= final_chance
 
 def _get_anomaly_tone(doom_val: int) -> str:
