@@ -593,8 +593,18 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
 
                             # Abnormal
                             if domain_manager.get_abnormal_mode(channel_id) and bg_res.get("AbnormalTrigger"):
+                                raw_trigger = bg_res["AbnormalTrigger"]
+                                
+                                # [Sanitize Tag] Force Single Word Format (Same as game_world.py)
+                                clean_trigger = raw_trigger.replace("[", "").replace("]", "").strip()
+                                clean_trigger = re.sub(r'\(.*?\)', '', clean_trigger).strip()
+                                if " " in clean_trigger: clean_trigger = clean_trigger.split()[0]
+                                if not clean_trigger: clean_trigger = "Unknown"
+                                
+                                effective_tag = f"[{clean_trigger}]"
+                                
                                 fp_data = domain_manager.get_participant_data(channel_id, uid) # Fresh load
-                                fp_data, p_msg = game_system.expose_to_abnormal(fp_data, bg_res["AbnormalTrigger"])
+                                fp_data, p_msg = game_system.expose_to_abnormal(fp_data, effective_tag)
                                 if p_msg: bg_msgs.append(p_msg)
                                 domain_manager.save_participant_data(channel_id, uid, fp_data)
 
