@@ -71,14 +71,48 @@ class SessionManager:
             await channel.send(f"❌ 청소 실패: {e}")
 
     async def execute_clear(self, message: discord.Message) -> None:
-        """Clears chat messages but keeps session data."""
+        """
+        [Soft Reset] Clears chat messages AND resets session state (History/World/NPCs).
+        Keeps Lore and Participants.
+        """
+        content = message.content.lower().strip()
+        args = content.split()
+        
+        # Confirmation Check
+        if len(args) < 2 or args[1] not in ['confirm', '확인', 'y', 'yes']:
+            await message.channel.send(
+                "⚠️ **[세션 초기화 경고]**\n"
+                "`!클리어` 명령어는 단순 채팅 청소가 아닙니다.\n"
+                "**현재 세션의 진행 상황(히스토리, 퀘스트, 월드 상태)을 모두 초기화합니다.**\n"
+                "(단, 로어북과 참가자는 유지됩니다.)\n\n"
+                "진행하시려면: `!클리어 확인` 또는 `!클리어 confirm` 입력."
+            )
+            return
+
+        channel_id = str(message.channel.id)
         try:
-            await message.channel.send("🧹 **채팅 청소 중...**")
-            await asyncio.sleep(1)
+            # 1. Soft Reset State
+            domain_manager.reset_session_state(channel_id)
+            
+            # 2. Visual Wipe
+            await message.channel.send("🧹 **세션 초기화 중... (데이터 리셋 + 채팅 청소)**")
+            await asyncio.sleep(2)
             deleted = await message.channel.purge(limit=None, check=lambda m: not m.pinned)
-            await message.channel.send(f"✨ **청소 완료.** ({len(deleted)}개 삭제됨)", delete_after=5)
+            
+            # 3. Success Message
+            await message.channel.send(
+                "✨ **세션이 리셋되었습니다.**\n"
+                f"• 삭제됨: {len(deleted)}개 메시지, 히스토리, 진행 상황\n"
+                "• 유지됨: 로어북, 참가자, 룰\n"
+                "이제 **!시작**을 입력하여 새 이야기를 시작하세요.",
+                delete_after=10
+            )
+            
+            # Ensure bot is active again
+            domain_manager.set_bot_active(channel_id, True)
+            
         except Exception as e:
-            await message.channel.send(f"⚠️ 청소 실패: {e}")
+            await message.channel.send(f"⚠️ 초기화 실패: {e}")
 
     async def check_preparation(self, message: discord.Message) -> None:
         """Checks if session is ready to start (Lore/Rules)."""

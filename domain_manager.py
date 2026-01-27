@@ -669,3 +669,38 @@ def set_bot_active(channel_id: str, active: bool) -> None:
     d = get_domain(channel_id)
     d["bot_active"] = active
     save_domain(channel_id, d)
+def reset_session_state(channel_id: str) -> None:
+    """
+    세션을 '준비 완료' 상태로 초기화합니다.
+    - 로어, 룰, 참가자 명단 유지
+    - 히스토리, 발효 기억, 심층 기억 삭제
+    - 월드 상태 초기화 (1일차, 오후)
+    - 세션 NPC 및 퀘스트 초기화
+    """
+    d = get_domain(channel_id)
+    
+    # 1. Reset History
+    d["history"] = []
+    d["fermented_history"] = []
+    d["deep_memory"] = ""
+    d["ai_session_memory"] = _get_default_session()["ai_session_memory"]
+    
+    # 2. Reset World State
+    d["world_state"] = config.DEFAULT_WORLD_STATE.copy()
+    d["settings"]["session_locked"] = False # Unlock for re-start
+    
+    # 3. Reset Quests & Notebook (Keep Lore Items if any? No, reset all dynamic)
+    d["quest_board"] = {"active": [], "completed": [], "memos": [], "archive": [], "lore": []}
+    d["notebook"] = "— [소지품] —\n\n— [메모] —"
+    
+    # 4. Reset Session NPCs (Keep 'lore' NPCs)
+    # Filter NPCs ensuring we keep only source="lore"
+    # Note: 'npcs' dict keys are names.
+    if "npcs" in d:
+        kept_npcs = {}
+        for name, data in d["npcs"].items():
+            if data.get("source") == "lore":
+                kept_npcs[name] = data
+        d["npcs"] = kept_npcs
+        
+    save_domain(channel_id, d)

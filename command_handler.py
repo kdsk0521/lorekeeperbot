@@ -492,6 +492,27 @@ async def handle_system_command(message, channel_id: str, cmd: str, arg: str) ->
             await message.channel.send("🤖 **봇 비활성화:** ❌ OFF (명령어만 반응)")
         return
 
+    if cmd in ['reset', 'clear', '클리어', '초기화']:
+        if not arg or arg.lower() not in ['confirm', '확인']:
+            await message.channel.send(
+                "⚠️ **세션 초기화 경고**\n"
+                "모든 진행 상황(히스토리, 시간, 날씨, 퀘스트, 아이템)이 초기화됩니다.\n"
+                "(단, 로어와 참가자 명단은 유지됩니다)\n\n"
+                "진행하시려면: `!초기화 확인` 또는 `!reset confirm`을 입력하세요."
+            )
+            return
+            
+        domain_manager.reset_session_state(channel_id)
+        
+        # Reset Complete Message
+        await message.channel.send(
+            "♻️ **세션이 초기화되었습니다.**\n"
+            "• **유지**: 로어북, 룰, 참가자 설정\n"
+            "• **삭제**: 대화 내역, 퀘스트, 아이템(노트북), NPC(세션), 월드 상태(1일차로 복귀)\n\n"
+            "이제 새로운 마음으로 **!스타트** 또는 바로 롤플레잉을 시작하실 수 있습니다."
+        )
+        return
+
 
 async def handle_analysis_command(message, channel_id: str, cmd: str, arg: str, client_genai, model_id) -> None:
     """AI 분석 도구 (!analyze, !consistency, !forecast, !rule, !lores)"""
@@ -792,11 +813,11 @@ async def dispatch_command(cmd, message, channel_id, parsed, client_discord, cli
             await message.channel.send(msg)
         return None
 
-    if cmd == 'clear':
+    if cmd in ['clear', '클리어', '청소']:
         await session_manager.manager.execute_clear(message)
         return None
         
-    if cmd == 'reset':
+    if cmd in ['reset', '리셋', '초기화']:
         await session_manager.manager.execute_reset(message, client_discord)
         return None
     if cmd == 'ready':
