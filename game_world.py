@@ -312,7 +312,7 @@ async def generate_anomaly_event(
         "   - **CRITICAL**: Do NOT describe the event in the tag. Classify it.\n"
         "2. **Description**: 1-2 sentences describing the event. vivid and sensory.\n"
         "3. **Effect Hint**: A short hint on what happens (e.g., 'Mental Check', 'Gain Item', 'Social Encounter').\n"
-        "4. **Language**: ALL OUTPUT MUST BE IN KOREAN.\n\n"
+        "4. **Language**: **Tag MUST be in ENGLISH** (e.g. [Soul], [Bio]). Description/Hint MUST be in KOREAN.\n\n"
 
         "### Output Format (JSON Only)\n"
         "{\n"

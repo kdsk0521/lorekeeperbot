@@ -375,7 +375,7 @@ async def _extract_narrative(client, model_id, p_in, ai_out, passives, fermented
         "3. **Mental Traits**: Personality quirks, learned knowledge (e.g. 'Iron Will', 'Chemistry').\n"
         "4. **Achievements**: Titles or major status (e.g. 'Dragonslayer').\n"
         "Abnormal Trigger Rules:\n"
-        "- Identify Genre Shifts or Monsters appearing.\n"
+        "- Identify Genre Shifts or Monsters appearing. **MUST BE IN ENGLISH**.\n"
         "- **CRITICAL**: CONSIDER THE CHARACTER'S BACKGROUND. Do NOT trigger for events that are routine for their profession.\n"
         "  - E.g., A Doctor seeing gore/wounds is NORMAL (No Trigger).\n"
         "  - E.g., A Soldier seeing battle is NORMAL (No Trigger).\n"
