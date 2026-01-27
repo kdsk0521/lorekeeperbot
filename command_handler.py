@@ -228,6 +228,23 @@ async def handle_info_command(message, channel_id: str, sub_command: str = "") -
     quests = game_system.get_active_quests(channel_id)
     notebook = game_system.get_notebook_text(channel_id)
     
+    # [NEW] Append Mental & Adaptation Info
+    p_data = domain_manager.get_participant_data(channel_id, uid)
+    if p_data:
+        # Mental
+        m_stage = p_data.get("mental_stage", 0)
+        m_info = game_character.MENTAL_STAGES.get(m_stage, {"name": "??", "emoji": "❓", "desc": ""})
+        res += f"\n**🧠 멘탈:** {m_info['emoji']} {m_info['name']} (Lv.{m_stage})\n"
+        
+        # Adaptation
+        exposure = p_data.get("abnormal_exposure", {})
+        if exposure:
+            res += "**🦠 적응도:**\n"
+            for tag, data in exposure.items():
+                count = data.get("count", 0)
+                pct = game_character.calculate_adaptation_percentage(count)
+                res += f"• [{tag}]: {pct}%\n"
+
     if quests:
         res += "\n**🛡️ 진행 중인 퀘스트:**\n" + "\n".join([f"- {q}" for q in quests]) + "\n"
     

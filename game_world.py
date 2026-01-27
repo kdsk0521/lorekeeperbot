@@ -305,9 +305,10 @@ async def generate_anomaly_event(
         f"- Target Tone: {', '.join(tone_keywords)} (Pick one that fits)\n\n"
         
         "### Instructions\n"
-        "1. **Tag**: Use a BROAD category keyword (e.g., [Machine], [Psychic], [Bio], [Ghost]).\n"
-        "   - Do NOT use unique/poetic names like 'Merciful Echo'. Use 'Magic' or 'Sound' instead.\n"
-        "   - Reuse tags if the event is similar to previous ones to allow player adaptation.\n"
+        "1. **Tag**: ONE WORD Category ONLY. (e.g., [Machine], [Ghost], [Bio], [Psychic], [Magic]).\n"
+        "   - ❌ BAD: [Ghost Signal detected], [Strange Echo], [Red Light]\n"
+        "   - ✅ GOOD: [Ghost], [Sound], [Light]\n"
+        "   - **CRITICAL**: Do NOT describe the event in the tag. Classify it.\n"
         "2. **Description**: 1-2 sentences describing the event. vivid and sensory.\n"
         "3. **Effect Hint**: A short hint on what happens (e.g., 'Mental Check', 'Gain Item', 'Social Encounter').\n"
         "4. **Language**: ALL OUTPUT MUST BE IN KOREAN.\n\n"
