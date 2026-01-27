@@ -708,20 +708,41 @@ async def handle_ooc_command(message, channel_id, ooc_content, client_genai, mod
             
         await message.channel.send("🔄 **OOC 데이터 수정 중...**")
         
+        # [V5.3] Notebook Integration
+        notebook_txt = game_system.get_notebook_text(channel_id)
+        
         # AI 처리
         result = await memory_system.process_ooc_memory_edit(
-            client_genai, model_id, ooc_content, ai_mem, p_data
+            client_genai, model_id, ooc_content, ai_mem, p_data, notebook_text=notebook_txt
         )
         
         if result and result.get("edits"):
-            # 수정 적용
-            new_mem, new_p_data = memory_system.apply_memory_edits(
-                ai_mem, result["edits"], p_data
-            )
+            # 1. Separate Notebook Edits vs Memory Edits
+            mem_edits = []
             
-            # 저장
-            domain_manager.update_ai_memory(channel_id, uid, new_mem)
-            domain_manager.save_participant_data(channel_id, uid, new_p_data)
+            for edit in result["edits"]:
+                field = edit.get("field")
+                action = edit.get("action")
+                value = edit.get("value")
+                
+                # Notebook Handling
+                if field in ["notebook", "notes", "note"]:
+                    if action == "append":
+                        game_system.add_memo(channel_id, value) # add_memo appends line
+                    elif action == "replace" or action == "set":
+                         # Dangerous but allowed
+                         game_system.update_notebook_text(channel_id, value)
+                    continue # handled
+                    
+                mem_edits.append(edit)
+            
+            # 2. Apply Memory Edits
+            if mem_edits:
+                new_mem, new_p_data = memory_system.apply_memory_edits(
+                    ai_mem, mem_edits, p_data
+                )
+                domain_manager.update_ai_memory(channel_id, uid, new_mem)
+                domain_manager.save_participant_data(channel_id, uid, new_p_data)
             
             # 결과 알림
             confirm = result.get('confirmation_message', '수정 완료')

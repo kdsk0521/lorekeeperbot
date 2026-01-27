@@ -378,9 +378,24 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
             action_judgment = nvc_res.get("ActionJudgment")
             if action_judgment and isinstance(action_judgment, dict):
                  try:
+                     # Calculate Roll
+                     # Ensure fields exist
+                     act = action_judgment.get("action", "Unknown Action")
+                     diff = action_judgment.get("difficulty", "normal")
+                     reason = action_judgment.get("difficulty_reason", "")
+                     mods = action_judgment.get("modifiers", [])
+                     
+                     judgment_data = cognition.build_action_judgment_with_roll(act, diff, reason, mods)
+                     
+                     # Build Log & Context
+                     roll_log = cognition.build_judgment_context_with_roll(judgment_data)
+                     
+                     # We only need the string context for the prompt, but the user sees the log immediately
+                     judgment_context = roll_log # Synced
+                     
                      await message.channel.send(roll_log)
                  except Exception as e:
-                     logging.error(f"Failed to send roll log: {e}")
+                     logging.error(f"Failed to process/send roll log: {e}")
 
             # System Action (Quest/Memo from logic)
             sys_action = nvc_res.get("SystemAction")
@@ -488,13 +503,9 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                 await bot_utils.send_long_message(message.channel, response)
                 domain_manager.append_history(channel_id, "User", action_text)
                 domain_manager.append_history(channel_id, "Char", response)
-                
-                # 5. COGNITION: EXTRACTION (Logos)
-                # 5. COGNITION: EXTRACTION (Logos) - Optimized
                 try:
                     # Gather data
-                    inv = p_data.get("inventory", {}) if p_data else {}
-                    gold = p_data.get("economy", {}).get("gold", 0) if p_data else 0
+                    # inv/gold removed [V5.3 Refactor]
                     status = p_data.get("status_effects", []) if p_data else []
                     
                     mem = domain_manager.get_ai_memory(channel_id, uid)
@@ -513,7 +524,7 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                     if extraction_hints["physical"]:
                         phys_res = await cognition._extract_physical(
                             client_genai, MODEL_ID_FLASH, action_text, response, 
-                            notebook_txt, gold, status # [V5.1] Use notebook_txt
+                            notebook_txt, status 
                         )
                         if phys_res:
                             msgs = []
@@ -525,12 +536,7 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                                 game_system.update_notebook_text(channel_id, nb_upd)
                                 msgs.append("📔 노트북 기록됨")
                             
-                            if phys_res.get("gold_change"):
-                                eco = p_data.get("economy", {"gold": 0}); eco["gold"] += phys_res["gold_change"]; p_data["economy"] = eco; changed = True
-                                msgs.append(f"💰 Gold {phys_res['gold_change']:+}")
-                            
-                            if changed:
-                                domain_manager.save_participant_data(channel_id, uid, p_data)
+                            # gold_change removed [V5.3 Refactor] - relying on Notebook text
                             
                             if msgs: await message.channel.send(" | ".join(msgs))
                     
@@ -540,15 +546,20 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                             bg_hints = {k: v for k, v in extraction_hints.items() if k != "physical" and v}
                             if not bg_hints: return
                             
+                            # [V5.2] Context Aware Extraction
+                            p_desc = p_data.get("desc", "") if p_data else ""
+                            
                             bg_res = await cognition.extract_all_updates(
                                 client_genai, MODEL_ID_FLASH, action_text, response,
-                                notebook=game_system.get_notebook_text(channel_id), # [V5.1] Refresh nb
-                                current_gold=gold, current_status=status,
-                                current_relationships=rels, current_passives=passives,
+                                notebook=game_system.get_notebook_text(channel_id), 
+                                current_status=status,
+                                current_relationships=rels,
+                                current_passives=passives,
                                 current_quests=game_system.get_active_quests(channel_id),
                                 lore_npc_names=list(domain_manager.get_npcs(channel_id).keys()),
                                 fermented_context=fermented_summary_text,
-                                extraction_hints=bg_hints
+                                extraction_hints=bg_hints,
+                                player_context=p_desc # Info for subjective judgment
                             )
                             
                             bg_msgs = []
@@ -569,8 +580,6 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                                     for q in qu["quest_add"]: game_system.add_quest(channel_id, q); bg_msgs.append(f"🔥 New: {q}")
                                 if qu.get("quest_complete"):
                                     for q in qu["quest_complete"]: game_system.complete_quest(channel_id, q); bg_msgs.append(f"✅ Done: {q}")
-                                if qu.get("memo_add"):
-                                    for m in qu["memo_add"]: game_system.add_memo(channel_id, m); bg_msgs.append(f"📝 {m}")
 
                             # Abnormal
                             if domain_manager.get_abnormal_mode(channel_id) and bg_res.get("AbnormalTrigger"):

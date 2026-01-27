@@ -343,7 +343,7 @@ def get_growth_system(channel_id: str) -> str: return get_domain(channel_id).get
 def _create_default_participant(display_name: str) -> Dict[str, Any]:
     return {
         "mask": display_name, "status": "active",
-        "inventory": {}, "status_effects": [],
+        "status_effects": [],
         "ai_memory": {
             "appearance": "", "personality": "", "background": "", "relationships": {},
             "passives": [], "normalization": {}, "notes": "", "archived_info": []
@@ -428,12 +428,43 @@ def apply_pc_info_to_user(channel_id: str, user_id: str) -> bool:
     if pc_info.get("personality"): mem["personality"] = pc_info["personality"]
     if pc_info.get("background"): mem["background"] = pc_info["background"]
     if pc_info.get("relationships"): mem["relationships"] = pc_info["relationships"]
+    if pc_info.get("relationships"): mem["relationships"] = pc_info["relationships"]
     if pc_info.get("passives"): mem["passives"] = pc_info["passives"]
     
-    # Inventory Merge
+    # Notes/Memos Merge (Notebook Integration)
+    if pc_info.get("notes") or pc_info.get("memos"):
+        notes = pc_info.get("notes") or pc_info.get("memos")
+        if notes:
+            # Append to Notebook [메모] section
+            import game_system
+            if isinstance(notes, list):
+                for n in notes: game_system.add_memo(channel_id, n)
+            else:
+                game_system.add_memo(channel_id, str(notes))
+    
+    # Inventory Merge (Notebook Integration)
     if pc_info.get("inventory"):
+        # Convert legacy dict inventory to Notebook format
+        items = []
         for k, v in pc_info["inventory"].items():
-            p["inventory"][k] = v
+            if v > 1: items.append(f"{k} x{v}")
+            else: items.append(k)
+            
+        if items:
+            import game_system # Avoid circular import if possible, or use domain_manager helper
+            current_nb = get_notebook(channel_id)
+            
+            # Simple Append
+            new_lines = [f"- {i} (초기 장비)" for i in items]
+            
+            if "— [소지품] —" in current_nb:
+                # Insert after header if possible
+                parts = current_nb.split("— [소지품] —")
+                new_nb = parts[0] + "— [소지품] —\n" + "\n".join(new_lines) + parts[1]
+            else:
+                 new_nb = current_nb + "\n\n— [소지품] —\n" + "\n".join(new_lines)
+            
+            update_notebook(channel_id, new_nb)
             
     save_participant_data(channel_id, user_id, p)
     return True

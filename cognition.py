@@ -214,11 +214,12 @@ async def extract_all_updates(
     client, model_id_flash: str, player_input: str, ai_response: str,
     # Contexts
     notebook: str = "", # [V5.1]
-    current_inventory: Dict[str, int] = None, current_gold: int = 0, current_status: List[str] = None,
+    current_status: List[str] = None,
     current_relationships: Dict[str, str] = None, current_companions: List[str] = None,
     lore_npc_names: List[str] = None, scene_npc_names: List[str] = None,
     current_passives: List[str] = None, current_quests: List[str] = None, current_memos: List[str] = None,
     fermented_context: str = "",
+    player_context: str = "", # [V5.2] Added player context for subjective trigger check
     extraction_hints: Dict[str, bool] = None
 ) -> Dict[str, Any]:
     
@@ -230,7 +231,7 @@ async def extract_all_updates(
     task_keys = []
 
     if extraction_hints.get("physical", False):
-        tasks.append(_extract_physical(client, model_id_flash, player_input, ai_response, notebook, current_gold, current_status))
+        tasks.append(_extract_physical(client, model_id_flash, player_input, ai_response, notebook, current_status))
         task_keys.append("physical")
     
     if extraction_hints.get("social", False):
@@ -238,7 +239,7 @@ async def extract_all_updates(
         task_keys.append("social")
 
     if extraction_hints.get("narrative", False):
-        tasks.append(_extract_narrative(client, model_id_flash, player_input, ai_response, current_passives, fermented_context))
+        tasks.append(_extract_narrative(client, model_id_flash, player_input, ai_response, current_passives, fermented_context, player_context))
         task_keys.append("narrative")
 
     if extraction_hints.get("quest", False):
@@ -271,7 +272,6 @@ async def extract_all_updates(
             
         p_upd = {
             "notebook_update": phys.get("notebook_update"), # [V5.1]
-            "gold_change": _safe_int(phys.get("gold_change")) if phys.get("gold_change") is not None else 0, 
             "status_add": phys.get("status_add"), 
             "status_remove": phys.get("status_remove")
         }
@@ -319,10 +319,10 @@ async def extract_all_updates(
 
 # Internal Extractors (Private)
 
-async def _extract_physical(client, model_id, p_in, ai_out, notebook, gold, status):
+async def _extract_physical(client, model_id, p_in, ai_out, notebook, status):
     sys = (
         "EXTRACT NOTEBOOK & PHYSICAL CHANGES.\n"
-        "Return JSON with keys: notebook_update (string or null), gold_change (int), status_add [list], status_remove [list].\n"
+        "Return JSON with keys: notebook_update (string or null), status_add [list], status_remove [list].\n"
         "Principle: Convert narrative actions into a concise Notebook summary.\n"
         "\n### [STRICT OWNERSHIP RULES - CRITICAL]\n"
         "1. **Gold Tracking**: Explicitly update Gold balance in '— [소지품] —' (e.g., '골드: 150G').\n"
@@ -334,9 +334,9 @@ async def _extract_physical(client, model_id, p_in, ai_out, notebook, gold, stat
         "   - Rule: Check the *Existing Notebook* first. If item is already there, DO NOT add again unless quantity increases.\n"
         "4. **Format**: Maintain '— [소지품] —' and '— [메모] —'.\n"
         "\nExample:\n"
-        '{"notebook_update": "— [소지품] —\\n- 골드: 200G\\n- Rusty Sword\\n\\n— [메모] —\\n- Code: 5566", "gold_change": 0, ...}'
+        '{"notebook_update": "— [소지품] —\\n- 골드: 200G\\n- Rusty Sword\\n\\n— [메모] —\\n- Code: 5566", "status_add": [], ...}'
     )
-    ctx = f"Notebook Content:\n{notebook}\nGold_Ref:{gold}, Status:{status}"
+    ctx = f"Notebook Content:\n{notebook}\nStatus:{status}"
     usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput FULL UPDATED Notebook JSON."
     return await _call_extract(client, model_id, sys, usr, "B-1 Notebook")
 
@@ -351,7 +351,7 @@ async def _extract_social(client, model_id, p_in, ai_out, rels, comps, lore_npcs
     usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON."
     return await _call_extract(client, model_id, sys, usr, "B-2 Social")
 
-async def _extract_narrative(client, model_id, p_in, ai_out, passives, fermented):
+async def _extract_narrative(client, model_id, p_in, ai_out, passives, fermented, player_context=""):
     sys = (
         "EXTRACT NARRATIVE CHANGES.\n"
         "Return JSON with keys: passives [list], passive_suggestion {name, reason}, abnormal_trigger (string or null).\n"
@@ -361,10 +361,15 @@ async def _extract_narrative(client, model_id, p_in, ai_out, passives, fermented
         "2. **Physical Traits**: Body mods, mutations, inherent stats (e.g. 'Cyber-Arm', 'Night Vision').\n"
         "3. **Mental Traits**: Personality quirks, learned knowledge (e.g. 'Iron Will', 'Chemistry').\n"
         "4. **Achievements**: Titles or major status (e.g. 'Dragonslayer').\n"
-        "Abnormal Trigger: For Genre Shifts or appearing Monsters.\n"
+        "Abnormal Trigger Rules:\n"
+        "- Identify Genre Shifts or Monsters appearing.\n"
+        "- **CRITICAL**: CONSIDER THE CHARACTER'S BACKGROUND. Do NOT trigger for events that are routine for their profession.\n"
+        "  - E.g., A Doctor seeing gore/wounds is NORMAL (No Trigger).\n"
+        "  - E.g., A Soldier seeing battle is NORMAL (No Trigger).\n"
+        "  - Only trigger if the event is truly shocking, supernatural, or fundamentally 'wrong' to THEM.\n"
         'Example: {"passives": ["Fireball", "Cold Logic", "Cyber-Eye"], "passive_suggestion": null, "abnormal_trigger": "Zombie"}'
     )
-    ctx = f"Passives:{passives}, FermentedSnippet:{fermented[:2000]}"
+    ctx = f"Passives:{passives}, PlayerContext:{player_context}, FermentedSnippet:{fermented[:2000]}"
     usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON."
     return await _call_extract(client, model_id, sys, usr, "B-3 Narrative")
 
@@ -372,7 +377,7 @@ async def _extract_quest(client, model_id, p_in, ai_out, quests, memos):
     sys = (
         "EXTRACT QUEST CHANGES.\n"
         "Return JSON with keys: quest_add [list], quest_complete [list].\n"
-        "Rules: precise quest strings. (Memos are now handled by Notebook, ignore them here).\n"
+        "Rules: precise quest strings. (Memos are managed via Notebook; DO NOT output them here).\n"
         'Example: {"quest_add": ["Find the key"], "quest_complete": []}'
     )
     ctx = f"Quests:{quests}"

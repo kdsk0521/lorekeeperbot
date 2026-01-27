@@ -756,10 +756,12 @@ async def process_ooc_memory_edit(
     model_id: str, 
     ooc_content: str, 
     ai_mem: Dict[str, Any], 
-    p_data: Dict[str, Any]
+    p_data: Dict[str, Any],
+    notebook_text: str = "" # [New] Notebook Context
 ) -> Dict[str, Any]:
     """
     사용자의 OOC 요청을 해석하여 캐릭터 메모리 수정 명령을 생성합니다.
+    (Notebook 지원 추가)
     """
     current_state = {
         "appearance": ai_mem.get("appearance", ""),
@@ -767,31 +769,31 @@ async def process_ooc_memory_edit(
         "background": ai_mem.get("background", ""),
         "relationships": ai_mem.get("relationships", {}),
         "passives": ai_mem.get("passives", []),
-        "inventory": p_data.get("inventory", {}),
-        "economy": p_data.get("economy", {}),
         "status_effects": p_data.get("status_effects", [])
     }
     
     system_prompt = (
         "You are a Game Master Assistant handling OOC (Out-Of-Character) requests.\n"
-        "Interpret the user's request and generate specific edits to the character data.\n"
-        "Supports adding/removing items, changing gold, relationships, passives, descriptions, etc.\n\n"
+        "Interpret the user's request and generate specific edits to the character data or Notebook.\n"
+        "Supports adding/removing items (via Notebook), changing relationships, passives, descriptions, etc.\n\n"
+        "### Notebook Rules\n"
+        "Items, Inventory, and Gold are tracked in the **Notebook**.\n"
+        "To change items/gold, use field='notebook' with action='append' (to add log) or 'replace' (rarely used).\n\n"
         
         "Output Format (JSON):\n"
         "{\n"
         "  \"interpretation\": \"What the user wants (Korean)\",\n"
         "  \"edits\": [\n"
-        "    {\"field\": \"notes\", \"action\": \"append\", \"value\": \"Added sword via OOC (Check Notebook)\"},\n"
+        "    {\"field\": \"notebook\", \"action\": \"append\", \"value\": \"- Obtained Holy Sword\"},\n"
         "    {\"field\": \"relationships\", \"action\": \"update\", \"key\": \"NPCName\", \"value\": \"New Relation\"},\n"
         "    {\"field\": \"status_effects\", \"action\": \"remove\", \"value\": \"Poison\"}\n"
         "  ],\n"
         "  \"confirmation_message\": \"Response to user (Korean)\"\n"
         "}\n"
-        "Valid fields: appearance, personality, background, relationships, passives, status_effects, known_info, notes.\n"
-        "NOTE: Inventory and Gold are managed by the Notebook system. Use 'notes' to log changes, or instruct user to use !notebook."
+        "Valid fields: appearance, personality, background, relationships, passives, status_effects, notebook, notes.\n"
     )
     
-    user_prompt = f"Current State: {json.dumps(current_state, ensure_ascii=False)}\n\nOOC Request: {ooc_content}"
+    user_prompt = f"Current State: {json.dumps(current_state, ensure_ascii=False)}\nNotebook:\n{notebook_text}\n\nOOC Request: {ooc_content}"
 
     try:
         config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.1)
@@ -818,10 +820,6 @@ def apply_memory_edits(
     import copy
     new_mem = copy.deepcopy(ai_mem)
     new_p_data = copy.deepcopy(p_data)
-    
-    # p_data 내의 economy가 없으면 초기화
-    if "economy" not in new_p_data:
-        new_p_data["economy"] = {"gold": 0}
         
     for edit in edits:
         field = edit.get("field")
@@ -829,8 +827,7 @@ def apply_memory_edits(
         value = edit.get("value")
         key = edit.get("key")
         
-        # 1. AI Memory Fields
-        if field in ["appearance", "personality", "background", "notes"]:
+        if field in ["appearance", "personality", "background"]:
             if action == "set":
                 new_mem[field] = value
             elif action == "append":
@@ -860,32 +857,6 @@ def apply_memory_edits(
             if "normalization" not in new_mem: new_mem["normalization"] = {}
             if action in ["set", "update"] and key:
                 new_mem["normalization"][key] = value
-                
-        # 2. Player Data Fields (Notebook Integration)
-        elif field in ["inventory", "economy.gold"]:
-            # OOC requests to change inventory/gold now append to the Notebook
-            # We cannot easily 'set' or 'remove' specific lines without complex parsing,
-            # so we will append an Admin Note to the notebook for the user to manually resolve if needed,
-            # or just append the change.
-            
-            # Since we don't have direct access to channel_id here to call domain_manager.get_notebook, 
-            # and this function is pure logic on dicts, we might need to handle this differently.
-            # However, looking at the usage, this returns modified p_data.
-            # The notebook is stored in domain_data (session file), NOT p_data.
-            
-            # CRITICAL: p_data does NOT contain the notebook. The notebook is session-level.
-            # Thus, 'apply_memory_edits' cannot directly update the notebook if it only receives p_data.
-            
-            # WORKAROUND: We will return a special flag or handle this in the caller.
-            # But wait, the user wants to REMOVE legacy code. 
-            # If I remove the inventory/economy branches here, OOC commands for them will fail or do nothing.
-            
-            # Correct approach: Update the system prompt in `process_ooc_memory_edit` to tell the AI 
-            # to use "notes" field for item changes, or just acknowledge that OOC item edits 
-            # should be done via !notebook command.
-            
-            # For now, I will REMOVE these legacy branches causing "inventory" keys to be created.
-            pass
             
     return new_mem, new_p_data
 
