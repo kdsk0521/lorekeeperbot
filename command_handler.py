@@ -725,50 +725,71 @@ async def handle_ooc_command(message, channel_id, ooc_content, client_genai, mod
 async def dispatch_command(cmd, message, channel_id, parsed, client_discord, client_genai, model_id, model_id_flash, domain_data):
     if cmd == 'help':
         help_text = (
-            "📚 **로어키퍼 봇 명령어 안내**\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "📜 **Lorekeeper Bot V6 명령어 (통합)**\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            
+            "**━━ 캐릭터 & 멘탈 ━━**\n"
+            "`!가면 [이름]` (`!mask`) - 캐릭터(NPC/PC)로 변신합니다. (자동 프로필 연결)\n"
+            "`!정보` (`!me`, `!desc`) - 자신의 캐릭터 정보(멘탈, 상태, 패시브)를 확인합니다.\n"
+            "`!멘탈 [이름] [확인/설정 X]` - 멘탈 상태를 확인하거나 강제로 조정합니다. (GM)\n"
+            "`!칭호 [이름] [추가/제거] [칭호명]` - 캐릭터에게 칭호를 부여하거나 박탈합니다.\n"
+            "`!휴식` (`!rest`) - 휴식을 취하여 위기(Doom)를 낮춥니다. (장소 위험도에 따라 다름)\n\n"
+            
+            "**━━ 월드 & 시스템 ━━**\n"
+            "`!시간 [진행/N/설정]` - 시간을 흐르게 하거나 강제로 설정합니다.\n"
+            "`!둠` (`!doom`) - 현재 위기 수치를 확인하거나 조정합니다. (`!둠 10`, `!둠 set 50`)\n"
+            "`!모드 [자동/수동]` - AI 응답 모드를 변경합니다.\n"
+            "`!장면 [일반/고어/NSFW]` - 장면 수위를 설정합니다.\n"
+            "`!잠금` (`!lock`) / `!해제` (`!unlock`) - 세션 참여를 제한하거나 풉니다.\n"
+            "`!엔피씨 초기화` (`!reset_npcs`) - 세션에서 생성된 임시 NPC를 삭제합니다.\n"
+            "`!비일상 [on/off]` - 비일상 적응도 시스템을 켜거나 끕니다.\n\n"
+            
+            "**━━ 데이터 & 기록 ━━**\n"
+            "`!노트북` (`!memo`) - 인벤토리와 메모를 통합 관리합니다. (아이템/단서 확인)\n"
+            "`!노트북 [내용]` - 새 메모나 아이템을 추가합니다.\n"
+            "`!로어 [내용/파일]` - 세계관 정보를 조회하거나 추가합니다.\n"
+            "`!퀘스트` - 퀘스트 목록을 확인하거나 관리합니다.\n"
+            "`!연대기` (`!lores`) - 작성된 연대기(소설)를 TXT 파일로 저장합니다. (증분 지원)\n"
+            "`!추출` (`!export`) - 전체 대화 내역(로그)을 TXT 파일로 저장합니다. (증분 지원)\n\n"
             
             "**━━ 세션 관리 ━━**\n"
-            "`!준비` (`!ready`) - 세션 시작 조건(로어, 룰 등)이 갖춰졌는지 점검합니다.\n"
-            "`!시작` (`!start`) - 새로운 세션을 시작하고 오프닝 장면을 생성합니다.\n"
-            "`!리셋` (`!reset`) - 현재 세션을 종료하고 모든 진행 데이터를 초기화합니다.\n"
-            "`!클리어` (`!clear`) - 채팅 히스토리만 비웁니다. (데이터 유지)\n\n"
+            "`!준비` (`!ready`) - 세션 시작 전 준비 상태를 점검합니다.\n"
+            "`!시작` (`!start`) - 오프닝을 생성하고 세션을 시작합니다.\n"
+            "`!리셋` (`!reset`) - **[주의]** 모든 데이터를 초기화하고 세션을 종료합니다.\n"
+            "`!클리어` (`!clear`) - 화면의 채팅 내역만 지웁니다. (데이터 유지)\n\n"
             
-            "**━━ 내 캐릭터 ━━**\n"
-            "`!가면 [이름]` (`!mask`) - 채팅 시 표시될 캐릭터 이름(가면)을 설정합니다.\n"
-            "`!설명 [내용]` (`!desc`) - 내 캐릭터의 외모/성격 설명을 등록합니다.\n"
-            "`!정보` (`!info`) - 현재 내 캐릭터 상태(인벤토리, 관계, 패시브 등)를 확인합니다.\n"
-            "`!잠수` (`!afk`) - 잠시 세션을 떠납니다. (AI가 캐릭터를 조종하지 않음)\n"
-            "`!복귀` (`!back`) - 잠수 상태에서 돌아옵니다.\n\n"
+            "**━━ 주사위 & 판정 ━━**\n"
+            "`!판정 [행동]` (`!r`) - 주사위(1d100)를 굴립니다. (상태이상/패시브/위기 반영)\n"
+            "`!분석` (`!analyze`) - 현재 상황을 AI가 객관적으로 분석합니다.\n"
             
-            "**━━ 진행 ━━**\n"
-            "`!진행` (`!next`) - AI에게 다음 장면으로 넘어가라고 지시합니다.\n"
-            "`!모드 [자동/수동]` (`!mode`) - AI 응답 모드. 자동=즉시응답, 수동=대기.\n"
-            "`!장면 [일반/고어/nsfw/전체]` (`!scene`) - 현재 장면의 묘사 수위 설정.\n"
-            "`!주사위` (`!r`) - 1d100 주사위를 굴립니다.\n\n"
-            
-            "**━━ 세계관 설정 ━━**\n"
-            "`!로어` (`!lore`) - 현재 로어 정보를 조회하거나, 내용 입력 시 새 로어를 저장합니다.\n"
-            "`!로어 [내용/파일]` - 세계관, 배경, 캐릭터 설정 등을 등록합니다. (.txt 첨부 가능)\n"
-            "`!엔피씨 [이름]` (`!npc`) - 특정 NPC의 정보를 조회합니다.\n"
-            "`!npc추가 [이름]: [설명]` (`!addnpc`) - 새 NPC를 수동으로 등록합니다. (.txt 첨부 가능)\n"
-            "`!룰 [내용]` (`!rule`) - 세계관 고유 규칙을 추가합니다.\n"
-            "`!연대기` (`!lores`) - 세션 중 기록된 연대기 목록을 확인합니다.\n\n"
-            
-            "**━━ 퀘스트 & 메모 ━━**\n"
-            "`!퀘스트` (`!quest`) - 현재 진행 중인 퀘스트 목록을 확인합니다.\n"
-            "`!퀘스트 [내용]` - 새 퀘스트를 수동으로 추가합니다.\n"
-            "`!메모` (`!memo`) - 저장된 메모 목록을 확인합니다.\n"
-            "`!메모 [내용]` - 새 메모(단서, 이름, 비밀번호 등)를 추가합니다.\n"
-            "`!추출` (`!export`) - 로어, NPC, 퀘스트 데이터를 텍스트 파일로 추출합니다.\n\n"
-            
-            "**━━ 분석 도구 ━━**\n"
-            "`!분석` (`!analyze`) - AI가 현재 상황을 분석하여 객관적 요약을 제공합니다.\n"
-            "`!예측` (`!forecast`) - 현재 위기 수치(Doom)와 세계 상태를 예보합니다.\n"
-            "`!일관성` (`!consistency`) - 최근 서사의 논리/인과적 일관성을 검사합니다.\n\n"
-            
-            "**💡 팁:** 대부분의 기능은 AI가 대화 중 자동으로 처리합니다 (퀘스트/메모/NPC 추가 등)."
+            "**💡 팁:** 대부분의 기능은 AI가 대화 중 자동으로 처리합니다."
         )
         await send_long_message(message.channel, help_text)
+        return None
+
+    # [NEW] Export Command (Session History Default)
+    if cmd in ['export', '추출']:
+        # Args: [lore/chat] [new/inc]
+        arg_lower = parsed['content'].lower() if parsed['content'] else ""
+        
+        # 1. Lore Export Override
+        if "lore" in arg_lower or "로어" in arg_lower:
+            content, msg = game_character.export_lore_data(channel_id)
+            fname = f"LoreData_{channel_id}.txt"
+            
+        # 2. Chat History Export (Default)
+        else:
+            # Check Incremental
+            is_inc = any(x in arg_lower for x in ['new', 'inc', '증분', '최신'])
+            content, msg = game_character.export_session_history(channel_id, incremental=is_inc)
+            mode_str = "INC" if is_inc else "FULL"
+            fname = f"SessionLog_{channel_id}_{mode_str}.txt"
+
+        if content:
+            await message.channel.send(msg, file=discord.File(io.StringIO(content), filename=fname))
+        else:
+            await message.channel.send(msg)
         return None
 
     if cmd == 'clear':
@@ -918,6 +939,77 @@ async def dispatch_command(cmd, message, channel_id, parsed, client_discord, cli
     # Time dispatch
     if cmd in ['time', '시간', 'time_adv', '시간진행']:
         await handle_time_command(message, channel_id, parsed['content'])
+        return None
+
+    # [NEW] Manual Doom Control
+    if cmd == "doom" or cmd == "둠" or cmd == "위기":
+        args = parsed['content'].split() if parsed['content'] else []
+        if not args:
+            # Query
+            await message.channel.send(game_world.get_doom_forecast(channel_id))
+        else:
+            # Set/Mod
+            # !doom set 50
+            # !doom +10
+            # !doom -5
+            op = args[0]
+            val = 0
+            
+            if op.lower() == "set":
+                if len(args) < 2: return "⚠️ 값을 입력하세요 (예: `!doom set 50`)"
+                try:
+                    val = int(args[1])
+                    game_world.change_doom(channel_id, 0) # Clear existing? No, direct set needed.
+                    # Direct Set Helper
+                    w = domain_manager.get_world_state(channel_id)
+                    old_v = w.get("doom", 0)
+                    w["doom"] = max(0, min(100, val))
+                    domain_manager.update_world_state(channel_id, w)
+                    await message.channel.send(f"🛡️ **위기 수치 재설정:** {old_v}% → {val}%")
+                except ValueError: return "⚠️ 올바른 숫자가 아닙니다."
+            else:
+                # Assuming operator-like syntax within arg check, but usually users type "!doom 10" or "!doom -10"
+                # Let's handle generic inputs
+                try:
+                    val = int(op)
+                    res = game_world.change_doom(channel_id, val)
+                    await message.channel.send(res)
+                except:
+                     return "⚠️ 사용법: `!doom 10` (증가/감소), `!doom set 50` (설정)"
+        return None
+
+    # [NEW] Manual Mental Control
+    if cmd == "mental" or cmd == "멘탈":
+        # !mental <user_name> <set> <0-3>
+        # !mental <user_name> <check>
+        args = parsed['content'].split() if parsed['content'] else []
+        if len(args) < 1:
+            return "⚠️ 사용법: `!멘탈 [이름] [설정/확인] [구간 0-3]`"
+            
+        target_name = args[0]
+        subcmd = args[1] if len(args) > 1 else "check"
+        
+        target_uid = domain_manager.find_participant_id_by_name(channel_id, target_name)
+        if not target_uid:
+            return f"⚠️ 참가자 '{target_name}'을(를) 찾을 수 없습니다."
+            
+        p_data = domain_manager.get_participant_data(channel_id, target_uid)
+        
+        if subcmd in ["check", "확인"]:
+            ms = game_character.get_mental_status_text(p_data)
+            await message.channel.send(f"🧠 **{target_name}님의 멘탈:** {ms}")
+            
+        elif subcmd in ["set", "설정"]:
+            if len(args) < 3: return "⚠️ 설정할 단계(0-3)를 입력하세요."
+            try:
+                new_stage = int(args[2])
+                if not (0 <= new_stage <= 3): raise ValueError
+                p_data["mental_stage"] = new_stage
+                domain_manager.update_participant_data(channel_id, target_uid, p_data)
+                ms = game_character.get_mental_status_text(p_data)
+                await message.channel.send(f"🧠 **{target_name}** 멘탈 조정 완료: {ms}")
+            except ValueError:
+                return "⚠️ 올바른 단계(0~3)를 입력하세요."
         return None
 
     # [NEW] Rest Command (Reduces Doom by risk level)

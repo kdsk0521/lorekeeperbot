@@ -80,7 +80,7 @@ def _get_default_session() -> Dict[str, Any]:
         "history": [],
         "quest_board": {"active": [], "completed": [], "memos": [], "archive": [], "lore": []},
         "world_state": config.DEFAULT_WORLD_STATE.copy(),
-        "settings": {"response_mode": "auto", "session_locked": False, "growth_system": "default"},
+        "settings": {"response_mode": "auto", "session_locked": False, "growth_system": "default", "abnormal_mode": True},
         "active_genres": ["noir"],
         "custom_tone": None,
         "ai_session_memory": {
@@ -556,8 +556,8 @@ def set_response_mode(channel_id: str, mode: str) -> None:
     save_domain(channel_id, d)
 
 def get_abnormal_mode(channel_id: str) -> bool:
-    """비일상 적응도 시스템 활성화 여부 (Default: False)"""
-    return get_domain(channel_id).get("settings", {}).get("abnormal_mode", False)
+    """비일상 적응도 시스템 활성화 여부 (Default: True)"""
+    return get_domain(channel_id).get("settings", {}).get("abnormal_mode", True)
 
 def set_abnormal_mode(channel_id: str, enabled: bool) -> None:
     d = get_domain(channel_id)
