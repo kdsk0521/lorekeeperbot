@@ -938,4 +938,93 @@ async def dispatch_command(cmd, message, channel_id, parsed, client_discord, cli
         count = npc_manager.clear_session_npcs(channel_id)
         return f"🧹 **세션 NPC 초기화 완료:** {count}명 삭제됨 (Lore NPC 유지)"
 
+    # [NEW] Title System
+    if cmd in ['title', '칭호']:
+        await handle_title_command(message, channel_id, parsed['content'])
+        return None
+
     return None
+
+async def handle_title_command(message, channel_id: str, arg: str) -> None:
+    """칭호 관리 명령어 (!칭호 [대상] [동작] [칭호명])"""
+    # Ex: !칭호 리라 추가 용사냥꾼
+    # Ex: !칭호 리라 제거 용사냥꾼
+    
+    if not arg:
+        await message.channel.send("⚠️ 사용법: `!칭호 [캐릭터] [추가/제거] [칭호명]`")
+        return
+
+    parts = arg.split(None, 2)
+    if len(parts) < 3:
+        await message.channel.send("⚠️ 인자가 부족합니다. (예: `!칭호 리라 추가 용사냥꾼`)")
+        return
+
+    target_name = parts[0]
+    action = parts[1]
+    title_name = parts[2]
+
+    # 1. Find Participant
+    d = domain_manager.get_domain(channel_id)
+    target_uid = None
+    target_p = None
+    
+    for uid, p in d.get("participants", {}).items():
+        if p.get("mask", "").lower() == target_name.lower():
+            target_uid = uid
+            target_p = p
+            break
+            
+    if not target_p:
+        await message.channel.send(f"⚠️ 캐릭터 '{target_name}'를 찾을 수 없습니다.")
+        return
+
+    # 2. Add/Remove Title (as Passive)
+    mem = target_p.get("ai_memory", {})
+    if "passives" not in mem: mem["passives"] = []
+    
+    current_passives = mem["passives"]
+    
+    if action in ['추가', 'add']:
+        # Check duplicate
+        exists = False
+        for p in current_passives:
+            p_name = p.get("name") if isinstance(p, dict) else str(p)
+            if p_name == title_name:
+                exists = True
+                break
+        
+        if exists:
+            await message.channel.send(f"⚠️ '{title_name}' 칭호(특성)를 이미 보유하고 있습니다.")
+            return
+            
+        # Add new Title Passive
+        new_passive = {
+            "name": title_name,
+            "tags": ["Title", "Lore"], # Explicit Title Tag
+            "modifier": 0, # No mechanical impact
+            "desc": "칭호",
+            "acquired_at": time.strftime('%Y-%m-%d')
+        }
+        current_passives.append(new_passive)
+        domain_manager.save_participant_data(channel_id, target_uid, target_p)
+        await message.channel.send(f"🏆 **칭호 수여:** [{title_name}] -> {target_name}")
+
+    elif action in ['제거', 'remove', 'del']:
+        # Find and remove
+        found_idx = -1
+        for i, p in enumerate(current_passives):
+            p_name = p.get("name") if isinstance(p, dict) else str(p)
+            if p_name == title_name:
+                found_idx = i
+                break
+        
+        if found_idx != -1:
+            removed = current_passives.pop(found_idx)
+            domain_manager.save_participant_data(channel_id, target_uid, target_p)
+            r_name = removed.get("name") if isinstance(removed, dict) else str(removed)
+            await message.channel.send(f"🗑️ **칭호 박탈:** [{r_name}] <- {target_name}")
+        else:
+            await message.channel.send(f"⚠️ '{title_name}' 칭호를 보유하고 있지 않습니다.")
+            
+    else:
+         await message.channel.send("⚠️ 알 수 없는 동작입니다. (`추가`, `제거` 중 선택)")

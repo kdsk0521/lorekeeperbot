@@ -189,6 +189,10 @@ def perform_check(channel_id: str, user_id: str, action_desc: str = "") -> str:
     passive_bonus = 0
     for p in passives:
         if isinstance(p, dict):
+            # [NEW] Skip Titles
+            if "Title" in p.get("tags", []):
+                continue
+
             val = p.get("modifier", 0)
             if val != 0:
                 passive_bonus += val

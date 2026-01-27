@@ -495,7 +495,24 @@ def get_unified_player_info(channel_id: str, user_id: str) -> str:
         res += "**🤝 관계:**\n" + "\n".join([f"• {k}: {v}" for k,v in rels.items()]) + "\n"
         
     passives = mem.get("passives", [])
-    if passives: res += f"**🏆 패시브/칭호:** {', '.join(passives)}\n"
+    if passives: 
+        real_passives = []
+        titles = []
+        
+        for p in passives:
+            if isinstance(p, dict):
+                p_name = p.get("name", "Unknown")
+                tags = p.get("tags", [])
+                if "Title" in tags:
+                    titles.append(f"[{p_name}]")
+                else:
+                    real_passives.append(p_name)
+            else:
+                # String format legacy
+                real_passives.append(str(p))
+                
+        if titles: res += f"**🏆 칭호:** {', '.join(titles)}\n"
+        if real_passives: res += f"**✨ 패시브:** {', '.join(real_passives)}\n"
     
     return res
 
