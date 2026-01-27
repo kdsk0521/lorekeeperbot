@@ -221,12 +221,20 @@ def perform_check(channel_id: str, user_id: str, action_desc: str = "") -> str:
     
     header = f"🎲 **판정: {action_desc}**" if action_desc else "🎲 **판정**"
     
-    # Critical Detection
+    # Critical Detection & Doom Trigger
     crit_msg = ""
+    doom_fb = ""
+    import game_world # Local import to avoid circular dependency
+    
     if dice_val <= 5: 
         crit_msg = " [⚠️ **대실패**]"
+        doom_fb = game_world.change_doom(channel_id, 5) # +5 Doom (Accident)
     elif dice_val >= 96:
-        crit_msg = " [✨ **대성공 가능!**]" # Only if final >= DC (assumed 50)
+        crit_msg = " [✨ **대성공!**]"
+        doom_fb = game_world.change_doom(channel_id, -5) # -5 Doom (Heroism)
+
+    if doom_fb:
+        crit_msg += f"\n{doom_fb}"
     
     calc_str = f"**{dice_val}**"
     if modifier != 0:

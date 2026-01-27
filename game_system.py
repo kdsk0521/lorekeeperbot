@@ -20,7 +20,6 @@ get_time_slots = game_world.get_time_slots
 get_weather_types = game_world.get_weather_types
 advance_time = game_world.advance_time
 calculate_doom_increase = game_world.calculate_doom_increase
-get_random_doom_event = game_world.get_random_doom_event
 change_doom = game_world.change_doom
 _get_doom_description = game_world._get_doom_description
 get_world_context = game_world.get_world_context
@@ -32,7 +31,7 @@ get_active_quests = game_character.get_active_quests
 get_notebook_text = game_character.get_notebook_text
 update_notebook_text = game_character.update_notebook_text
 
-# Character / Quest
+# Character / Quest (Ops)
 add_quest = game_character.add_quest
 complete_quest = game_character.complete_quest
 remove_quest = game_character.remove_quest
@@ -43,9 +42,13 @@ update_status_effect = game_character.update_status_effect
 perform_check = game_character.perform_check
 get_status_summary = game_character.get_status_summary
 calculate_status_doom_contribution = game_character.calculate_status_doom_contribution
-calculate_normality = game_character.calculate_normality
-expose_to_abnormal = game_character.expose_to_abnormal
-get_abnormal_context = game_character.get_abnormal_context
+
+# Mental & Adaptation (V6) (Replaces Normality)
+calculate_adaptation_percentage = game_character.calculate_adaptation_percentage
+check_adaptation_roll = game_character.check_adaptation_roll
+get_mental_status_text = game_character.get_mental_status_text
+get_abnormal_context = game_character.get_abnormal_context # Exists
+
 export_session_history = game_character.export_session_history
 export_chronicle_book = game_character.export_chronicle_book
 generate_chronicle_from_history = game_character.generate_chronicle_from_history

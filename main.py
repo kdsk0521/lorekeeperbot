@@ -377,29 +377,6 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
             judgment_context = ""
             action_judgment = nvc_res.get("ActionJudgment")
             if action_judgment and isinstance(action_judgment, dict):
-                 # Calculate Doom Modifier
-                 w_state = domain_manager.get_world_state(channel_id)
-                 c_doom = w_state.get("doom", 0)
-                 doom_mod_val = ((config.DOOM_DICE_BASELINE - c_doom) // 10) * config.DOOM_DICE_MODIFIER_STEP
-                 
-                 mods = action_judgment.get("modifiers", [])
-                 if doom_mod_val != 0:
-                     mods.append({"name": "Doom", "value": doom_mod_val})
-
-                 # Perform the roll
-                 full_judgment = cognition.build_action_judgment_with_roll(
-                     action=action_judgment.get("action", "Unknown Action"),
-                     difficulty=action_judgment.get("difficulty", "normal"),
-                     difficulty_reason=action_judgment.get("difficulty_reason", ""),
-                     modifiers_list=mods
-                 )
-                 # Format into text
-                 judgment_context = cognition.build_judgment_context_with_roll(full_judgment)
-                 # Log to channel so user sees the roll
-                 roll_log = (
-                     f"🎲 **[{full_judgment['result'].upper()}]** {full_judgment['action']} (Diff: {full_judgment['difficulty']})\n"
-                     f"`Roll: {full_judgment['base_roll']} + {full_judgment['modifier_total']} = {full_judgment['final_roll']} vs DC {full_judgment['dc']}`"
-                 )
                  try:
                      await message.channel.send(roll_log)
                  except Exception as e:
