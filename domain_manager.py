@@ -191,7 +191,7 @@ def get_lore_original(channel_id: str) -> Optional[str]:
     return None
 
 def get_event_lore_summary_file_path(channel_id: str) -> str:
-    return os.path.join(get_channel_dir(channel_id), "_lore_summary.txt")
+    return os.path.join(config.LORE_DIR, f"{channel_id}_summary.txt")
 
 def get_event_lore_summary(channel_id: str) -> str:
     path = get_event_lore_summary_file_path(channel_id)
