@@ -114,15 +114,79 @@ def check_instantiation():
 
     return failed
 
+def check_v6_features():
+    print_header("V6 FEATURE CHECK (Anomaly, Mental, Doom)")
+    
+    failed = []
+    
+    # 5. Anomaly System (game_world)
+    try:
+        import game_world
+        if not hasattr(game_world, "ANOMALY_TONE_MAP"):
+            raise AttributeError("ANOMALY_TONE_MAP missing")
+        if not hasattr(game_world, "should_trigger_anomaly"):
+            raise AttributeError("should_trigger_anomaly logic missing")
+        if not hasattr(game_world, "generate_anomaly_event"):
+            raise AttributeError("generate_anomaly_event generator missing")
+        print(f"✅ Anomaly System       : OK")
+    except Exception as e:
+        print(f"❌ Anomaly System       : FAILED ({e})")
+        failed.append("AnomalySystem")
+
+    # 6. Mental & Adaptation (game_character)
+    try:
+        import game_character
+        if not hasattr(game_character, "MENTAL_STAGES"):
+            raise AttributeError("MENTAL_STAGES dict missing")
+        if not hasattr(game_character, "check_adaptation_roll"):
+            raise AttributeError("check_adaptation_roll logic missing")
+        if not hasattr(game_character, "get_mental_status_text"):
+             raise AttributeError("get_mental_status_text helper missing")
+        print(f"✅ Mental System        : OK")
+        
+        # 6-1. Relationship & Export Helpers
+        if not hasattr(game_character, "get_recent_relationships"):
+            raise AttributeError("get_recent_relationships helper missing")
+        if not hasattr(game_character, "export_session_history"):
+            raise AttributeError("export_session_history missing")
+        if not hasattr(game_character, "export_chronicle_book"):
+            raise AttributeError("export_chronicle_book missing")
+        print(f"✅ Info/Export Helpers  : OK")
+        
+    except Exception as e:
+        print(f"❌ Mental/Info System   : FAILED ({e})")
+        failed.append("MentalSystem")
+
+    # 7. Abnormal Mode (domain_manager)
+    try:
+        import domain_manager
+        # Manual check of default value (mock)
+        dummy_dom = domain_manager._get_default_session()
+        if not dummy_dom["settings"].get("abnormal_mode", False):
+            # It should be True by default now
+            print(f"⚠️ Abnormal Mode Default: False (Expected True?)")
+        else:
+            print(f"✅ Abnormal Mode Default: True (OK)")
+            
+        if not hasattr(domain_manager, "get_abnormal_mode"):
+            raise AttributeError("get_abnormal_mode accessor missing")
+        print(f"✅ Domain Settings      : OK")
+    except Exception as e:
+        print(f"❌ Domain Settings      : FAILED ({e})")
+        failed.append("DomainSettings")
+        
+    return failed
+
 if __name__ == "__main__":
     print("🏥 Lorekeeper V5 Health Check Initiated...")
     
     import_fails = check_imports()
     logic_fails = check_instantiation()
+    v6_fails = check_v6_features()
     
     print_header("DIAGNOSIS REPORT")
     
-    if not import_fails and not logic_fails:
+    if not import_fails and not logic_fails and not v6_fails:
         print("🎉 SYSTEM HEALTHY. READY FOR DEPLOYMENT.")
         exit(0)
     else:

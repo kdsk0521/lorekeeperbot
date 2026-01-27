@@ -272,6 +272,39 @@ def get_status_summary(user_data: Dict[str, Any]) -> str:
     
     return "\n".join(parts)
 
+def get_recent_relationships(user_data: Dict[str, Any], limit: int = 5) -> str:
+    """Returns the last N updated relationships from AI memory."""
+    mem = user_data.get("ai_memory", {})
+    rels = mem.get("relationships", [])
+    
+    if not rels:
+        return ""
+        
+    items = []
+    if isinstance(rels, list):
+        # Allow string or dict items
+        raw_items = rels[-limit:]
+        raw_items.reverse() # Newest first
+        for r in raw_items:
+            if isinstance(r, dict):
+                # {name: ..., desc: ...} or similar
+                items.append(f"{r.get('name', '???')}: {r.get('desc', '')}")
+            else:
+                items.append(str(r))
+    elif isinstance(rels, dict):
+        # Dictionary format (Name -> Desc)
+        # Using list(dict) preserves insertion order in Python 3.7+
+        keys = list(rels.keys())[-limit:]
+        keys.reverse()
+        for k in keys:
+            items.append(f"{k}: {rels[k]}")
+    else:
+        # String fallback
+        return str(rels)[:100] + "..."
+        
+    if not items: return ""
+    return ", ".join(items)
+
 def add_passive(channel_id: str, user_id: str, name: str, tags: List[str] = None, desc: str = "") -> str:
     """하이브리드 패시브 추가 (태그 시스템 포함)"""
     if tags is None: tags = []
