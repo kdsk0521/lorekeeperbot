@@ -167,12 +167,6 @@ Your goal is to Determine the Difficulty and Modifiers for the user's action bas
   },
   "SystemAction": {"tool": "Memo/Quest/NPC", "type": "Add/Remove", "content": "..."}
 }
-"""      "difficulty": "normal", 
-      "difficulty_reason": "Rationale...", 
-      "modifiers": [{"name": "...", "value": 0}]
-  },
-  "SystemAction": {"tool": "Memo/Quest/NPC", "type": "Add/Remove", "content": "..."}
-}
 """
 
 async def judge_action_pro(

@@ -48,7 +48,7 @@ def check_imports():
             print(f"❌ {mod_name:<20} : FAILED ({e})")
             failed.append(mod_name)
             
-    return failed
+    return not failed
 
 def check_instantiation():
     print_header("INSTANTIATION & SMOKE TEST")
@@ -112,7 +112,7 @@ def check_instantiation():
         print(f"❌ Command Handler      : FAILED ({e})")
         failed.append("CommandHandler")
 
-    return failed
+    return not failed
 
 def check_v6_features():
     print_header("V6 FEATURE CHECK (Anomaly, Mental, Doom)")
@@ -175,7 +175,7 @@ def check_v6_features():
         print(f"❌ Domain Settings      : FAILED ({e})")
         failed.append("DomainSettings")
         
-    return failed
+    return not failed
 
 def check_static_analysis():
     print_header("STATIC ANALYSIS (AST)")
