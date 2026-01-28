@@ -27,74 +27,59 @@ logger = logging.getLogger("Cognition")
 # =========================================================
 
 
-SYSTEM_INSTRUCTION_NVC = """
-[THEORIA LEFT HEMISPHERE - Logic Core]
-You are the analytical component of the THEORIA system.
-Your role: Extract OBJECTIVE FACTS from the narrative context.
+# =========================================================
+# PART 1: CONTEXT ANALYSIS & SELECTION (THEORIA - FLASH)
+# =========================================================
 
-### CORE PRINCIPLES
-1. **MACROSCOPIC ONLY:** Analyze observable phenomena ONLY.
-2. **CAUSALITY BOUND:** Apply physics and logic strictly.
-3. **ASYNCHRONOUS WORLD:** Consider what NPCs might be doing concurrently.
+SYSTEM_INSTRUCTION_FLASH = """
+[THEORIA - LIBRARIAN & OBSERVER]
+You are the high-speed observer and librarian of the system.
+Your goal is NOT to judge, but to **observe** and **select relevant context** for the Judge.
 
-### OBSERVATION PROTOCOLS
-1. **Physics Check:** Verify physical possibility.
-2. **Knowledge Firewall:** Distinguish Player vs Character Knowledge.
-3. **Causal Integrity:** Verify causes existed BEFORE effects.
+### 1. OBSERVATION & PRINCIPLES
+- **MACROSCOPIC ONLY:** Analyze observable phenomena ONLY.
+- **CAUSALITY BOUND:** Apply physics and logic strictly (Verify physical possibility).
+- **ASYNCHRONOUS WORLD:** Consider what NPCs might be doing concurrently.
+- **KNOWLEDGE FIREWALL:** Distinguish Player vs Character Knowledge.
 
-### SYSTEM ACTION RULES
-**Quest:** Add/Complete based on narrative events.
-**Notebook:** This is the unified record of items, tools, and memos.
-**NPC:** Add new named characters. Link role to name.
+### 2. CONTEXT SELECTION (CRITICAL)
+- Detailedly read the Lore, Rules, and Notebook.
+- **Select** 3-5 specific excerpts/quotes that are relevant to the user's action.
+- If the user uses an item, find its exact description in the Notebook.
+- If the user interacts with an NPC, find their specific trait/relationship status.
 
-### 4. PASSIVE & NOTEBOOK BONUSES
-- **Passive Bonus:** IF the user has a Passive relevant to the action, grant a **+5 BONUS**.
-- **Notebook/Item Bonus:** IF the user uses an item, tool, or secret recorded in the **Notebook**, grant a bonus from **+5 to +30** depending on importance.
-- **Auto-Suggestion:** IF user succeeds at a specific type of action 5+ times, suggest a new Passive.
-
-### NPC INTERACTION SYSTEM
-Analyze NPCs present. Determine attitudes (hostile/unfriendly/neutral/friendly/devoted).
-
-### ACTION JUDGMENT (Game Master Role)
-Judge player actions realistically based on difficulty and modifiers.
-**Difficulty:** trivial, easy, normal, hard, extreme
-**Modifiers:** injury (-10), tool/item (Notebook: +5~+30), **PASSSIVE/SKILL/TRAIT (+5)**.
-
-### SCENE CLASSIFICATION
-- **normal**: Standard roleplay, exploration, or dialogue.
-- **combat**: Active fighting or physical confrontation.
-- **social**: Pure diplomatic or party interactions.
-- **summary**: Timeskips (e.g., "3 days later"), travel montages, or recap. (Disables Anomalies)
-- **intimate**: Romantic, sexual (NSFW), or deeply private emotional moments where interruption ruins the mood. (Disables Anomalies & Crit Fails)
-
-### OUTPUT FORMAT (JSON ONLY)
+### 3. OUTPUT FORMAT (JSON)
 {
   "CurrentLocation": "String",
   "LocationRisk": "None/Low/Medium/High/Extreme",
   "TimeContext": "String",
   "SceneType": "normal/combat/social/summary/intimate",
-  "Observation": "Objective summary",
+  "Observation": "Objective summary of the situation",
+  "UserIntent": "What the user is trying to do",
+  "RelevantContext": [
+      "Rule: Falling damage is...",
+      "Item: Magic Sword - Grants +5 to...",
+      "NPC: Arthur is skeptical of..."
+  ],
   "TimeFlow": {"duration": "instant/short/medium/long/explicit", "ticks": Int},
-  "ActionJudgment": {"action": "...", "difficulty": "...", "modifiers": [{"name": "Item: Magic Sword", "value": 30}]},
-  "PassiveSuggestion": {"name": "...", "tags": [], "reason": "..."},
-  "NPCAttitudes": {"Name": {"attitude": "Type", "reason": "..."}}
+  "NPCAttitudes": {"Name": {"attitude": "Type", "reason_for_change": "..."}}
 }
 """
 
-async def analyze_context_nvc(
+async def analyze_context_flash(
     client,
     model_id: str,
     history_text: str,
     lore: str,
     rules: str,
     active_quests_text: str,
-    notebook: str = "", # [V5.1] Added notebook
+    notebook: str = "",
     player_context: str = "",
     existing_npc_attitudes: Dict[str, Dict] = None
 ) -> Dict[str, Any]:
     """
-    [THEORIA LEFT HEMISPHERE]
-    Analyzes current situation to extract Objective Facts and deduce Next Actions.
+    [THEORIA - FLASH]
+    Reads MASSIVE context (100k+) and extracts/selects relevant bits.
     """
     
     # Prepare Attitude Context
@@ -105,42 +90,122 @@ async def analyze_context_nvc(
             for name, data in existing_npc_attitudes.items()
         ]
         attitude_context = (
-            "### EXISTING NPC ATTITUDES\n"
-            "These are the currently tracked attitudes. "
-            "Only output changes if the scene warrants an attitude shift:\n"
-            + "\n".join(attitude_lines) + "\n\n"
+            "### EXISTING NPC ATTITUDES\n" + "\n".join(attitude_lines) + "\n\n"
         )
 
-    # The original system_instruction content is now replaced by SYSTEM_INSTRUCTION_NVC
-    # The user_prompt needs to be constructed to provide the necessary context for the new SYSTEM_INSTRUCTION_NVC
     player_info = f"### [PLAYER STATUS]\n{player_context}\n" if player_context else ""
 
     user_prompt = (
         f"### [RULES]\n{rules}\n"
         f"### [QUESTS]\n{active_quests_text}\n"
-        f"### [NOTEBOOK (ITEMS & MEMOS)]\n{notebook}\n" # [V5.1]
+        f"### [NOTEBOOK]\n{notebook}\n"
         f"{player_info}"
         f"### [HISTORY]\n{history_text}\n"
         f"### [LORE]\n{lore}\n" 
         f"{attitude_context}" 
-        "Analyze the current state based on the above context and the user's input. Provide the logical consequences and instructions in the specified JSON format."
+        "Analyze the situation. Identify User Intent. Select RELEVANT context/rules for the Judge."
     )
     
     contents = [types.Content(role="user", parts=[types.Part(text=user_prompt)])]
-    config = types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION_NVC, response_mime_type="application/json", temperature=0.2)
+    config = types.GenerateContentConfig(
+        system_instruction=SYSTEM_INSTRUCTION_FLASH, 
+        response_mime_type="application/json", 
+        temperature=0.1 # Very low temp for citation accuracy
+    )
     
-    result = await api_call_with_retry(client, model_id, contents, config, operation_name="Context Analysis (NVC)")
+    result = await api_call_with_retry(client, model_id, contents, config, operation_name="Context Analysis (Flash)")
     if result:
         parsed = safe_parse_json(result)
         if parsed: return parsed
     
+    # Fallback
     return {
-        "CurrentLocation": "Unknown", "LocationRisk": "Low", "TimeContext": "Unknown",
-        "Observation": "Analysis Failed", "Need": "Proceed with Caution", "SystemAction": None
+        "CurrentLocation": "Unknown", "UserIntent": "Unknown",
+        "RelevantContext": [], "Observation": "Analysis Failed"
     }
 
+
 # =========================================================
-# PART 2: DICE & JUDGMENT SYSTEM
+# PART 2: ACTION JUDGMENT (DIKASTES - PRO)
+# =========================================================
+
+SYSTEM_INSTRUCTION_PRO_JUDGE = """
+[DIKASTES - THE JUDGE]
+You are the impartial Game Master.
+Your goal is to Determine the Difficulty and Modifiers for the user's action based on the PROVIDED CONTEXT.
+
+### INPUT DATA
+- **User Intent:** What they want to do.
+- **Observation:** The current situation.
+- **Relevant Context:** Specific Rules/Items/Lore selected by the Librarian.
+
+### JUDGMENT PROTOCOL
+1. **Difficulty:** Trivial(0), Easy(20), Normal(40), Hard(60), Extreme(80).
+2. **Modifiers Calculation (Apply Strictly):**
+   - **Injuries:** -10 Penalty if the user is injured and it affects the action.
+   - **Passive/Trait:** +5 Bonus if a specific Passive applies.
+   - **Notebook/Item:** +5 to +30 Bonus if a recorded Item/Note provides leverage.
+   - **Environment:** +/- Modifiers based on weather/terrain (e.g., Rain -5).
+3. **Everyday Charm:** Even for trivial actions, look for small flavor modifiers or standard difficulties. Do not skip judgment.
+
+### OUTPUT FORMAT (JSON)
+{
+  "ActionJudgment": {
+      "action": "Summarized Action", 
+      "difficulty": "normal", 
+      "difficulty_reason": "Rationale...", 
+      "modifiers": [{"name": "...", "value": 0}]
+  },
+  "SystemAction": {"tool": "Memo/Quest/NPC", "type": "Add/Remove", "content": "..."}
+}
+"""      "difficulty": "normal", 
+      "difficulty_reason": "Rationale...", 
+      "modifiers": [{"name": "...", "value": 0}]
+  },
+  "SystemAction": {"tool": "Memo/Quest/NPC", "type": "Add/Remove", "content": "..."}
+}
+"""
+
+async def judge_action_pro(
+    client,
+    model_id: str,
+    user_intent: str,
+    observation: str,
+    relevant_context: List[str],
+    history_tail: str # Recent few lines for flow
+) -> Dict[str, Any]:
+    """
+    [DIKASTES - PRO]
+    Judges the action using high-intelligence logic on selected context.
+    """
+    
+    context_str = "\n".join(f"- {c}" for c in relevant_context) if relevant_context else "None"
+    
+    user_prompt = (
+        f"### [SITUATION]\n{observation}\n"
+        f"### [USER INTENT]\n{user_intent}\n"
+        f"### [RECENT CHAT]\n{history_tail}\n"
+        f"### [SELECTED RULES & CONTEXT]\n{context_str}\n" 
+        "Judge the action. Determine difficulty and modifiers."
+    )
+    
+    contents = [types.Content(role="user", parts=[types.Part(text=user_prompt)])]
+    config = types.GenerateContentConfig(
+        system_instruction=SYSTEM_INSTRUCTION_PRO_JUDGE, 
+        response_mime_type="application/json", 
+        temperature=0.3
+    )
+    
+    result = await api_call_with_retry(client, model_id, contents, config, operation_name="Action Judgment (Pro)")
+    parsed = safe_parse_json(result)
+    
+    if parsed: return parsed
+    
+    return {"ActionJudgment": None, "SystemAction": None}
+
+
+# =========================================================
+# PART 3: DICE & UTIL
 # =========================================================
 
 def roll_dice(sides: int = 100) -> int:
@@ -198,6 +263,41 @@ def build_action_judgment_with_roll(action: str, difficulty: str, difficulty_rea
     }
 
 def build_judgment_context_with_roll(judgment: Dict[str, Any]) -> str:
+    res = judgment.get('result', 'failure')
+    res_kr = {
+        "critical_success": "대성공 (Critical Success)",
+        "success": "성공 (Success)",
+        "partial": "부분 성공 (Partial Success)",
+        "failure": "실패 (Failure)",
+        "critical_failure": "치명적 실패 (Critical Failure)",
+        "automatic_success": "자동 성공 (Automatic)"
+    }.get(res, res)
+    
+    # Handle Automatic Success (No Dice Display)
+    if res == "automatic_success":
+        log_msg = (
+            f"🎲 **[판정: {judgment.get('action')}]**\n"
+            f"난이도: {judgment.get('difficulty').upper()} (DC {judgment.get('dc')})\n"
+            f"결과: **{res_kr}** (trivial)" 
+        )
+        return log_msg
+
+    roll_detail = f"주사위: {judgment.get('base_roll')}"
+    mod_text = ""
+    for k, v in judgment.get('modifiers', {}).items():
+        sign = "+" if v >= 0 else ""
+        mod_text += f", {k}({sign}{v})"
+    
+    if mod_text: roll_detail += f" {mod_text}"
+    
+    log_msg = (
+        f"🎲 **[판정: {judgment.get('action')}]**\n"
+        f"난이도: {judgment.get('difficulty').upper()} (DC {judgment.get('dc')})\n"
+        f"이유: {judgment.get('difficulty_reason')}\n"
+        f"{roll_detail} = **{judgment.get('final_roll')}**\n"
+        f"결과: **{res_kr}**"
+    )
+    return log_msg
     if not judgment: return ""
     
     mod_strs = []

@@ -293,11 +293,35 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
             # [NEW] Retrieve Existing NPC Attitudes
             existing_attitudes = domain_manager.get_npc_attitudes(channel_id)
 
-            nvc_res = await cognition.analyze_context_nvc(
+            # =========================================================
+            # STEP 1: FLASH ANALYSIS (Observe & Select)
+            # =========================================================
+            # Uses Flash for 100k context reading. Cheap.
+            flash_res = await cognition.analyze_context_flash(
                 client_genai, MODEL_ID_FLASH, hist_text, lore_txt, rule_txt, quest_txt, 
-                notebook=notebook_txt, player_context=p_ctx, # [V5.1]
+                notebook=notebook_txt, player_context=p_ctx, 
                 existing_npc_attitudes=existing_attitudes
             )
+            
+            # Extract Flash Outputs
+            user_intent = flash_res.get("UserIntent", "Unknown")
+            observation = flash_res.get("Observation", "No observation")
+            relevant_context = flash_res.get("RelevantContext", [])
+            
+            # =========================================================
+            # STEP 2: PRO JUDGMENT (Judge Actions)
+            # =========================================================
+            # Uses Pro for Logic/Dice on SELECTED context. High Quality.
+            # Unconditional execution as per user request ("Charm of everyday judgment")
+            pro_res = await cognition.judge_action_pro(
+                client_genai, MODEL_ID, 
+                user_intent, observation, relevant_context, 
+                history_tail=hist_text[-500:] # Pass recent chat for context flow
+            )
+            
+            # Merge Results into Unified 'nvc_res' for compatibility
+            nvc_res = {**flash_res, **pro_res}
+            logging.info(f"[Hybrid Pipeline] Flash Intent: {user_intent} | Pro Judgment: {nvc_res.get('ActionJudgment', 'None')}")
             
             # Updates from Analysis
             if nvc_res.get("CurrentLocation"): domain_manager.set_current_location(channel_id, nvc_res["CurrentLocation"])
