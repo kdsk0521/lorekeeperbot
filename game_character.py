@@ -581,6 +581,23 @@ def check_adaptation_roll(user_data: Dict[str, Any], tag: str, difficulty: int =
     """
     import random
     
+    # [Robust Sanitization] Centralized Tag Cleaning
+    # Removes brackets, parens, and generic determiners (The, A, An)
+    raw = tag.replace("[", "").replace("]", "").strip()
+    # Remove (...) content if any remaining
+    import re
+    raw = re.sub(r'\(.*?\)', '', raw).strip()
+    
+    words = raw.split()
+    clean_tag = "Unknown"
+    if words:
+        if words[0].lower() in ["the", "a", "an"] and len(words) > 1:
+             clean_tag = words[1]
+        else:
+             clean_tag = words[0]
+             
+    tag = clean_tag # Update argument to clean version
+    
     # 1. Get current adaptation
     exposure = user_data.get("abnormal_exposure", {})
     tag_data = exposure.get(tag, {"count": 0})

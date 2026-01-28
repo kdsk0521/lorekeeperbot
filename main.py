@@ -249,8 +249,31 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
             user_data = domain_manager.get_participant_data(channel_id, uid)
             passives_txt = game_character.get_passives_for_context(user_data)
             
-            # History for Analysis
-            history = domain_data.get('history', [])[-fermentation.RECENT_HISTORY_FOR_ANALYSIS:]
+            # History for Analysis (Smart Context Window: Min 1500 chars)
+            # Re-implemented as per request for better memory retention
+            all_hist = domain_data.get('history', [])
+            target_len = 1500
+            # Start with default lines (20) defined in fermentation or config
+            default_lines = getattr(fermentation, "RECENT_HISTORY_FOR_ANALYSIS", 20)
+            slice_idx = -default_lines
+            
+            while True:
+                # Ensure slice_idx doesn't exceed bounds
+                if abs(slice_idx) > len(all_hist): 
+                     slice_idx = -len(all_hist)
+                
+                subset = all_hist[slice_idx:]
+                # Construct temp text to check length
+                hist_text = "\n".join([f"{h['role']}: {h['content']}" for h in subset])
+                
+                # Check exit conditions: Met target length OR Hit max history OR Hit safety cap (e.g. 60 lines)
+                if len(hist_text) >= target_len or abs(slice_idx) >= len(all_hist) or abs(slice_idx) >= 60:
+                    break
+                
+                slice_idx -= 5 # Expand window backwards
+            
+            # Final Text Construction
+            history = all_hist[slice_idx:]
             hist_text = "\n".join([f"{h['role']}: {h['content']}" for h in history]) + f"\nUser: {action_text}"
             
             active_quests = game_system.get_quest_board(channel_id).get("active", [])
