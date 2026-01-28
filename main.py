@@ -294,7 +294,7 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
             existing_attitudes = domain_manager.get_npc_attitudes(channel_id)
 
             nvc_res = await cognition.analyze_context_nvc(
-                client_genai, MODEL_ID, hist_text, lore_txt, rule_txt, quest_txt, 
+                client_genai, MODEL_ID_FLASH, hist_text, lore_txt, rule_txt, quest_txt, 
                 notebook=notebook_txt, player_context=p_ctx, # [V5.1]
                 existing_npc_attitudes=existing_attitudes
             )
