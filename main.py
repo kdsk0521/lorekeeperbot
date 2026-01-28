@@ -410,7 +410,9 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                         if p_data.get("status") == "active":
                             # Perform Roll
                             p_data, adapt_msg = game_character.check_adaptation_roll(
-                                p_data, anom_evt.get('tag', 'Unknown')
+                                p_data, 
+                                tag=anom_evt.get('tag', 'Unknown'),
+                                category=anom_evt.get('category') # Use category if AI world gen provided it (optional)
                             )
                             # Save User Data
                             domain_manager.save_participant_data(channel_id, uid, p_data)
@@ -644,26 +646,11 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
 
                             # Abnormal
                             if domain_manager.get_abnormal_mode(channel_id) and bg_res.get("AbnormalTrigger"):
-                                raw_trigger = bg_res["AbnormalTrigger"]
-                                
-                                # [Sanitize Tag] Force Single Word Format (Same as game_world.py)
-                                clean_trigger = raw_trigger.replace("[", "").replace("]", "").strip()
-                                clean_trigger = re.sub(r'\(.*?\)', '', clean_trigger).strip()
-                                
-                                # Take first word only (skip articles 'The', 'A', 'An')
-                                words = clean_trigger.split()
-                                if words:
-                                    if words[0].lower() in ["the", "a", "an"] and len(words) > 1:
-                                        clean_trigger = words[1]
-                                    else:
-                                        clean_trigger = words[0]
-                                
-                                if not clean_trigger: clean_trigger = "Unknown"
-                                
-                                effective_tag = f"[{clean_trigger}]"
+                                trigger_name = bg_res["AbnormalTrigger"]
+                                trigger_cat = bg_res.get("AbnormalCategory")
                                 
                                 fp_data = domain_manager.get_participant_data(channel_id, uid) # Fresh load
-                                fp_data, p_msg = game_system.expose_to_abnormal(fp_data, effective_tag)
+                                fp_data, p_msg = game_system.expose_to_abnormal(fp_data, trigger_name, category=trigger_cat)
                                 if p_msg: bg_msgs.append(p_msg)
                                 domain_manager.save_participant_data(channel_id, uid, fp_data)
 
@@ -676,11 +663,12 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                 except Exception as ue:
                     logging.warning(f"Extraction Error: {ue}")
 
-                    # Abnormal Adaptation (If Enabled)
+                    # Abnormal Adaptation (Fallback)
                     if domain_manager.get_abnormal_mode(channel_id):
-                        trigger = nvc_res.get("AbnormalTrigger") # Use nvc_res from earlier scope if available, or just skip if local var missing
+                        trigger = nvc_res.get("AbnormalTrigger") 
+                        category = nvc_res.get("AbnormalCategory")
                         if trigger:
-                             p_data, p_msg = game_system.expose_to_abnormal(p_data, trigger)
+                             p_data, p_msg = game_system.expose_to_abnormal(p_data, trigger, category=category)
                              if p_msg: msgs.append(p_msg)
                              domain_manager.save_participant_data(channel_id, uid, p_data)
 

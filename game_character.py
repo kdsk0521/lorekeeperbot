@@ -155,9 +155,9 @@ def resolve_memo_auto(channel_id: str, content: str) -> str:
     return remove_memo(channel_id, content) + " (자동 해결)"
 
 # Alias for V6
-def expose_to_abnormal(user_data: Dict[str, Any], trigger: str) -> Tuple[Dict[str, Any], str]:
+def expose_to_abnormal(user_data: Dict[str, Any], trigger: str, category: str = None) -> Tuple[Dict[str, Any], str]:
     # Wraps check_adaptation_roll with default difficulty
-    return check_adaptation_roll(user_data, trigger, difficulty=30)
+    return check_adaptation_roll(user_data, trigger, category=category, difficulty=30)
 
 
 # Notebook System (New in V5.1)
@@ -574,33 +574,58 @@ def calculate_adaptation_percentage(count: int) -> int:
     val = math.log(count + 1) / math.log(base)
     return min(100, int(val * 100))
 
-def check_adaptation_roll(user_data: Dict[str, Any], tag: str, difficulty: int = 30) -> Tuple[Dict[str, Any], str]:
+def check_adaptation_roll(user_data: Dict[str, Any], tag: str, category: str = None, difficulty: int = 30) -> Tuple[Dict[str, Any], str]:
     """
     Performs an Adaptation Check against a generic Anomaly Tag.
     Formula: 1d100 + Adaptation% >= Difficulty
+    
+    [V6.1 Hybrid Strategy]
+    1. Check Category (LLM provided)
+    2. Check Keyword Match (Search existing keys in new tag name)
+    3. Fallback to cleaned tag name
     """
     import random
-    
-    # [Robust Sanitization] Centralized Tag Cleaning
-    # Removes brackets, parens, and generic determiners (The, A, An)
-    raw = tag.replace("[", "").replace("]", "").strip()
-    # Remove (...) content if any remaining
     import re
-    raw = re.sub(r'\(.*?\)', '', raw).strip()
     
-    words = raw.split()
-    clean_tag = "Unknown"
-    if words:
-        if words[0].lower() in ["the", "a", "an"] and len(words) > 1:
-             clean_tag = words[1]
-        else:
-             clean_tag = words[0]
-             
-    tag = clean_tag # Update argument to clean version
+    # [1] Sanitization
+    def _clean(s: str):
+        if not s: return ""
+        # Remove brackets, parens, and leading articles
+        s = s.replace("[", "").replace("]", "").strip()
+        s = re.sub(r'\(.*?\)', '', s).strip()
+        s = re.sub(r'^(the|a|an)\s+', '', s, flags=re.IGNORECASE).strip()
+        return s
+
+    clean_tag = _clean(tag)
+    clean_cat = _clean(category) if category else None
+    
+    exposure = user_data.setdefault("abnormal_exposure", {})
+    
+    # [2] Match Resolution
+    target_key = None
+    
+    # Path A: LLM Category provided
+    if clean_cat and clean_cat in exposure:
+        target_key = clean_cat
+    # Path B: Keyword Match (Method 3)
+    elif not target_key:
+        # Sort existing keys by length (desc) to find most specific match first
+        existing_keys = sorted(exposure.keys(), key=len, reverse=True)
+        for k in existing_keys:
+            if k.lower() in clean_tag.lower():
+                target_key = k
+                break
+                
+    # Path C: LLM Category is new
+    if not target_key and clean_cat:
+        target_key = clean_cat
+        
+    # Path D: Use full cleaned name
+    if not target_key:
+        target_key = clean_tag if clean_tag else "Unknown"
     
     # 1. Get current adaptation
-    exposure = user_data.get("abnormal_exposure", {})
-    tag_data = exposure.get(tag, {"count": 0})
+    tag_data = exposure.get(target_key, {"count": 0})
     adapt_pct = calculate_adaptation_percentage(tag_data.get("count", 0))
     
     # 2. Roll
@@ -610,7 +635,11 @@ def check_adaptation_roll(user_data: Dict[str, Any], tag: str, difficulty: int =
     current_mental = user_data.get("mental_stage", 0)
     mental_info = MENTAL_STAGES.get(current_mental, MENTAL_STAGES[0])
     
-    msg = f"🧠 **[{tag}] 적응 판정** (난이도 {difficulty})\n"
+    display_tag = f"[{tag}]"
+    if target_key != tag and target_key != clean_tag:
+        display_tag = f"[{tag} (속성: {target_key})]"
+
+    msg = f"🧠 **{display_tag} 적응 판정** (난이도 {difficulty})\n"
     msg += f"`1d100({dice}) + 적응도({adapt_pct}%) = {total}`"
     
     if total >= difficulty:
@@ -640,7 +669,7 @@ def check_adaptation_roll(user_data: Dict[str, Any], tag: str, difficulty: int =
     # Update Adaptation Count
     old_count = tag_data.get("count", 0)
     new_count = old_count + count_inc
-    exposure[tag] = {"count": new_count}
+    exposure[target_key] = {"count": new_count}
     user_data["abnormal_exposure"] = exposure
     
     # Report growth
