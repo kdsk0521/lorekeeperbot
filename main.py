@@ -467,8 +467,11 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
             
             nvc_summary = (
                 f"Loc: {nvc_res.get('CurrentLocation')}\n"
-                f"Obs: {nvc_res.get('Observation')}\n"
-                f"Need: {nvc_res.get('Need')}\n"
+                f"### NVC ANALYSIS (Emotional Context)\n"
+                f"1. Observation: {nvc_res.get('Observation')}\n"
+                f"2. Feeling: {nvc_res.get('Feeling', 'Unknown')}\n"
+                f"3. Need: {nvc_res.get('Need', 'Unknown')}\n"
+                f"4. Request (Intent): {nvc_res.get('UserIntent', 'Unknown')}\n"
                 f"Focus: {suggested_focus}"
             )
 
