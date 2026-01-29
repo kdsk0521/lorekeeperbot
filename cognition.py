@@ -328,7 +328,7 @@ def determine_result(final_roll: int, dc: int) -> str:
     elif final_roll >= dc - 20: return "partial"
     else: return "failure"
 
-def build_action_judgment_with_roll(action: str, difficulty: str, difficulty_reason: str, modifiers_list: List[Dict[str, int]]) -> Dict[str, Any]:
+def build_action_judgment_with_roll(action: str, difficulty: str, difficulty_reason: str, modifiers_list: List[Dict[str, int]], bonus_dice: int = 0) -> Dict[str, Any]:
     dc_table = {"trivial": 0, "easy": 20, "normal": 40, "hard": 60, "extreme": 80}
     dc = dc_table.get(difficulty.lower(), 40)
     
@@ -351,6 +351,13 @@ def build_action_judgment_with_roll(action: str, difficulty: str, difficulty_rea
                     modifiers[m_name] = 0
                     logging.warning(f"Invalid modifier value for {m_name}: {m_val} (treated as 0)")
     
+    
+    # [NEW] Adaptation Bonus (Bonus Dice)
+    adaptation_bonus = bonus_dice * 10
+    if adaptation_bonus > 0:
+        modifiers["Adaptation Bonus"] = adaptation_bonus
+        modifier_total += adaptation_bonus
+
     final_roll = base_roll + modifier_total
     
     # Critical Logic

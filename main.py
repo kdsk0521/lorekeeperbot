@@ -429,12 +429,12 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                             
                             # Format Message
                             user_name = p_data.get("mask") or p_data.get("name", "Unknown")
-                            adapt_results.append(f"**{user_name}**: {adapt_msg.split('▶')[1].strip()}")
+                            adapt_results.append(f"**{user_name}**: {adapt_msg.strip()}")
 
                     # Send Bulk Result
                     if adapt_results:
                         tag = anom_evt.get('tag', 'Unknown')
-                        await message.channel.send(f"🎲 **적응 판정 결과: [{tag}]**\n" + "\n".join(adapt_results))
+                        await message.channel.send(f"━━━━━━━━━━━━━━━━━━━━\n🎲 **적응 판정 결과: [{tag}]**\n" + "\n".join(adapt_results) + "\n━━━━━━━━━━━━━━━━━━━━")
 
             # [NEW] GM Judgment System Integration
             judgment_context = ""
@@ -448,8 +448,15 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                      reason = action_judgment.get("difficulty_reason", "")
                      mods = action_judgment.get("modifiers", [])
                      
-                     judgment_data = cognition.build_action_judgment_with_roll(act, diff, reason, mods)
+                     # [NEW] Pass Bonus Dice
+                     b_dice = p_data.get("temp_bonus_dice", 0) if p_data else 0
+                     judgment_data = cognition.build_action_judgment_with_roll(act, diff, reason, mods, bonus_dice=b_dice)
                      
+                     # Reset Bonus Dice after use
+                     if b_dice > 0 and p_data:
+                         p_data["temp_bonus_dice"] = 0
+                         domain_manager.save_participant_data(channel_id, uid, p_data)
+
                      # [NEW] Inject GM Move info from GMMove field
                      gm_m = nvc_res.get("GMMove", {})
                      judgment_data["potential_gm_move"] = gm_m.get("type")

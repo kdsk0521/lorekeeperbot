@@ -646,6 +646,10 @@ def check_adaptation_roll(user_data: Dict[str, Any], tag: str, category: str = N
         # Success: Gain XP (Count +2 for faster mastery on success)
         count_inc = 2
         msg += f" ▶ **성공!** (익숙해집니다)\n"
+        
+        # [NEW] Grant Bonus Die for subsequent actions
+        user_data["temp_bonus_dice"] = user_data.get("temp_bonus_dice", 0) + 1
+        msg += "💡 **다음 행동 보전: 보너스 주사위 +1 부여**\n"
     else:
         # Fail logic
         count_inc = 1
