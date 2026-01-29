@@ -838,7 +838,14 @@ def apply_memory_edits(
         elif field == "abnormal_exposure":
             target = new_p_data.get("abnormal_exposure", {})
             if action in ["set", "update"] and key:
-                target[key] = value
+                # [V6.1 Fix] Handle both raw count and dict format
+                if isinstance(value, dict):
+                    target[key] = value
+                else:
+                    try:
+                        target[key] = {"count": int(value)}
+                    except:
+                        target[key] = {"count": 1} # Fallback
             elif action == "remove" and key:
                 target.pop(key, None)
             new_p_data["abnormal_exposure"] = target
@@ -864,9 +871,19 @@ def apply_memory_edits(
                 if value in target: target.remove(value)
                 
         elif field == "normalization":
-            if "normalization" not in new_mem: new_mem["normalization"] = {}
+            # [V6.1 Migration] Redirect legacy normalization to abnormal_exposure
+            target = new_p_data.get("abnormal_exposure", {})
             if action in ["set", "update"] and key:
-                new_mem["normalization"][key] = value
+                try:
+                    # Legacy value might be a percentage string or int. 
+                    # Convert to approximate count if possible, or just treat as raw count for safety.
+                    raw_val = int(str(value).replace('%', '').strip())
+                    # If it was a percentage (e.g. 74), we need to reverse the log formula or just store as count.
+                    # For OOC edits, usually users intend to set the LEVEL.
+                    target[key] = {"count": raw_val} 
+                except:
+                    target[key] = {"count": 1}
+            new_p_data["abnormal_exposure"] = target
             
     return new_mem, new_p_data
 

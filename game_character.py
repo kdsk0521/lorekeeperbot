@@ -690,9 +690,11 @@ def get_abnormal_context(user_data: Dict[str, Any]) -> str:
     
     lines = []
     for k, v in exposure.items():
-        norm = v["normality"]
-        stage = get_normality_stage_info(norm)
-        lines.append(f"- {k}: {norm}% ({stage['reaction_hint']})")
+        # [V6.1 Fix] Use 'count' to derive percentage, ensuring consistency with dice rules
+        count = v.get("count", 0)
+        norm_pct = calculate_adaptation_percentage(count)
+        stage = get_normality_stage_info(norm_pct)
+        lines.append(f"- {k}: {norm_pct}% ({stage['reaction_hint']})")
         
     if not lines: return ""
     return "### [Mental Adaptation]\n" + "\n".join(lines) + "\n*Adjust reaction based on adaptation level.*"
