@@ -859,16 +859,47 @@ def apply_memory_edits(
                 
         elif field in ["passives", "known_info", "foreshadowing", "status_effects"]:
             # status_effects는 p_data에 있음
-            target = new_p_data["status_effects"] if field == "status_effects" else new_mem.get(field, [])
+            is_p_data = (field == "status_effects")
+            target = new_p_data.get(field, []) if is_p_data else new_mem.get(field, [])
             
-            if field != "status_effects" and field not in new_mem:
+            if not is_p_data and field not in new_mem:
                 new_mem[field] = []
                 target = new_mem[field]
-                
+            
             if action == "add":
-                if value not in target: target.append(value)
+                # [V6.1 Fix] Deduplication for dict-based passives
+                if isinstance(value, dict) and "name" in value:
+                    name = value["name"]
+                    exists = False
+                    for i, item in enumerate(target):
+                        if isinstance(item, dict) and item.get("name") == name:
+                            target[i] = value # Update
+                            exists = True; break
+                        elif str(item) == name:
+                            target[i] = value # Replace legacy string with dict
+                            exists = True; break
+                    if not exists: target.append(value)
+                elif value not in target:
+                    target.append(value)
+                    
             elif action == "remove":
-                if value in target: target.remove(value)
+                if value in target:
+                    target.remove(value)
+                else:
+                    # [V6.1 Fix] Name-based removal for dict items
+                    for i, item in enumerate(target):
+                        if isinstance(item, dict) and item.get("name") == value:
+                            target.pop(i); break
+                            
+            elif action in ["set", "update"] and key:
+                # [V6.1 Fix] Update specific item by name/original value
+                for i, item in enumerate(target):
+                    if (isinstance(item, dict) and item.get("name") == key) or (str(item) == key):
+                        target[i] = value
+                        break
+                        
+            if not is_p_data: new_mem[field] = target
+            else: new_p_data[field] = target
                 
         elif field == "normalization":
             # [V6.1 Migration] Redirect legacy normalization to abnormal_exposure
