@@ -577,10 +577,11 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                 nvc_analysis=nvc_summary
             )
             
+            builder.set_cognition_data(nvc_summary)
             pc_reminder = f"### CRITICAL WARNING: DO NOT WRITE FOR [{p_name}]\n{p_name} is the PLAYER. You must NOT generate their dialogue or actions."
             builder.set_user_message(material=action_text, ooc_content=pc_reminder)
             
-            # 6. Build Final Prompt (Includes Explicit Caching Boundary)
+            # 6. Build Final Prompt
             full_prompt = builder.build_dynamic_prompt()
 
             # 4. GENERATION (Persona)
@@ -590,7 +591,8 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                 client_genai, MODEL_ID, lore_txt, rule_txt, active_genres, custom_tone,
                 domain_data.get("deep_memory", ""), fermented_summary=fermented_summary_text,
                 character_descriptions="", scene_type=scene_type,
-                player_name=p_name, player_desc=p_desc
+                player_name=p_name, player_desc=p_desc,
+                nvc_summary=nvc_summary
             )
             
             # Inject History
