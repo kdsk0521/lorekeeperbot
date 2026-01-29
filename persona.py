@@ -1356,13 +1356,16 @@ Description: {desc}
         persona_prompt: str = ""
     ) -> 'PromptBuilder':
         """[4] 캐릭터 설명 및 페르소나 프롬프트"""
+        # [V6 Refactor] Ensure persona prompt defaults to RECORDER_IDENTITY if empty
+        actual_persona = persona_prompt if persona_prompt.strip() else RECORDER_IDENTITY
+        
         self.sections['roles'] = f"""
 <Roles>
 ### 페르소나 프롬프트
-{persona_prompt if persona_prompt else RECORDER_IDENTITY}
+{actual_persona}
 
 ### 캐릭터 설명
-{character_descriptions if character_descriptions else "(Characters defined in Lore)"}
+{character_descriptions if character_descriptions.strip() else "(Characters defined in Lore)"}
 </Roles>
 """
         return self

@@ -462,8 +462,16 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                  auto_msg = await command_handler.process_ai_system_action(channel_id, sys_action)
                  if auto_msg: await message.channel.send(f"🤖 {auto_msg}")
             
-            # Build Context String for Generation
-            # [NEW] Temporal Orientation & Offscreen World
+            # [V6 Refactor] Use PromptBuilder for consistent structure & caching
+            builder = persona.PromptBuilder()
+            
+            # 1. Gather Basic Parameters
+            active_genres = domain_manager.get_active_genres(channel_id)
+            custom_tone = domain_manager.get_custom_tone(channel_id)
+            p_name = p_data.get("mask", "Unknown") if p_data else "Unknown"
+            p_desc = p_data.get("ai_memory", {}).get("appearance", "") if p_data else ""
+            
+            # 2. Build Analysis Summary (NVC)
             temporal = nvc_res.get("TemporalOrientation", {})
             suggested_focus = temporal.get("suggested_focus", "")
             
@@ -478,16 +486,14 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                 f"Focus: {suggested_focus}"
             )
 
-            # [NEW] Inject Attitude Context for Narrative (Persona)
             if existing_attitudes:
                 att_lines = [f"- {n}: {d['attitude']} ({d['reason']})" for n, d in existing_attitudes.items()]
                 nvc_summary += f"\n\n### [NPC ATTITUDES TOWARD PC]\n" + "\n".join(att_lines)
             
-            # Append Judgment to Analysis Summary if it exists
             if judgment_context:
                 nvc_summary += f"\n\n{judgment_context}"
-            
-            # [NEW] Offscreen NPC Context construction
+
+            # 3. Offscreen Context
             offscreen_npcs = temporal.get("offscreen_npcs", [])
             offscreen_context = ""
             if offscreen_npcs:
@@ -495,48 +501,53 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                     "### [OFFSCREEN WORLD]\n"
                     "While this scene unfolds, elsewhere:\n"
                     + "\n".join([f"- {npc}" for npc in offscreen_npcs])
-                    + "\n\n"
+                    + "\n"
                     "**Instruction:** Naturally weave 1-2 of these background events into the narrative. "
-                    "Show the world continuing without the PC (sounds, distant voices, NPCs passing by, etc.)\n\n"
+                    "Show the world continuing without the PC (sounds, distant voices, NPCs passing by, etc.)\n"
                 )
 
-            # [NEW] Active Threads Context
+            # 4. Active Threads Context
             active_threads = temporal.get("active_threads", [])
             threads_context = ""
             if active_threads:
                 threads_context = (
                     "### [ACTIVE PLOT THREADS]\n"
                     + "\n".join([f"- {thread}" for thread in active_threads])
-                    + "\n\n"
+                    + "\n"
                 )
 
+            # 5. Populate Builder
             fermented_summaries = [e["summary"] for e in domain_data.get("fermented_history", []) if e.get("summary")]
             fermented_summary_text = "\n---\n".join(fermented_summaries)
             
-            # Extract Player Info Early
-            p_name = p_data.get("mask", "Unknown") if p_data else "Unknown"
+            builder.set_genres(active_genres)
+            builder.set_custom_tone(custom_tone)
+            builder.set_scene_type(scene_type)
+            builder.set_lore(lore_txt, rule_txt)
+            builder.set_player_info(p_name, p_desc)
+            builder.set_roles(character_descriptions="")
+            builder.set_fermented(fermented_summary_text, domain_data.get("deep_memory", ""))
             
-            # Request 2: PC Protection Reminder
-            pc_reminder = f"### CRITICAL WARNING: DO NOT WRITE FOR [{p_name}]\n{p_name} is the PLAYER. You must NOT generate their dialogue or actions."
-
-            full_prompt = (
-                f"### World State\n{world_ctx}\n\n"
-                f"### Player Status\n{p_ctx}\n\n"
-                f"### Analysis\n{nvc_summary}\n\n"
-                f"{offscreen_context}"
-                f"{threads_context}"
-                f"{pc_reminder}\n\n"
-                f"### User Action\n{action_text}\n\n"
-                "Generate narrative response in Korean. 3rd person."
+            # Dynamic sections
+            dynamic_world_state = f"{world_ctx}\n\n"
+            if threads_context: dynamic_world_state += f"{threads_context}\n"
+            if offscreen_context: dynamic_world_state += f"{offscreen_context}\n"
+            
+            builder.set_current_context(
+                recent_chat="", # History injected via Session Adapter
+                world_state=dynamic_world_state,
+                nvc_analysis=nvc_summary
             )
+            
+            pc_reminder = f"### CRITICAL WARNING: DO NOT WRITE FOR [{p_name}]\n{p_name} is the PLAYER. You must NOT generate their dialogue or actions."
+            builder.set_user_message(material=action_text, ooc_content=pc_reminder)
+            
+            # 6. Build Final Prompt (Includes Explicit Caching Boundary)
+            full_prompt = builder.build_dynamic_prompt()
 
             # 4. GENERATION (Persona)
-            active_genres = domain_manager.get_active_genres(channel_id)
-            custom_tone = domain_manager.get_custom_tone(channel_id)
-            scene_type = nvc_res.get("SceneType", "normal")
+            # (Parameters already gathered in step 1-2 above)
             
-            p_desc = p_data.get("ai_memory", {}).get("appearance", "") if p_data else ""
-
             session = persona.create_risu_style_session(
                 client_genai, MODEL_ID, lore_txt, rule_txt, active_genres, custom_tone,
                 domain_data.get("deep_memory", ""), fermented_summary=fermented_summary_text,
