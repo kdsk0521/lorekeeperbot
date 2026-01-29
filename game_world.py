@@ -175,6 +175,27 @@ def calculate_doom_increase(channel_id: str, world: dict) -> Tuple[int, List[str
                 doom_increase += config.DOOM_INCREASE_LORE_RULE
                 doom_reasons.append(f"📜 로어 규칙({loc_name})")
                 
+    # [V6.2] Item 7: Adaptive Calm (Mitigate based on party experience)
+    if doom_increase > 0:
+        total_adapt = 0
+        p_count = 0
+        import game_character
+        for uid, p in participants.items():
+            if p.get("status") == "active":
+                exp_data = p.get("abnormal_exposure", {})
+                for tag, data in exp_data.items():
+                    total_adapt += game_character.calculate_adaptation_percentage(data.get("count", 0))
+                p_count += 1
+        
+        if p_count > 0:
+            avg_adapt = total_adapt / p_count
+            if avg_adapt >= 50: # High average adaptation
+                mitigation = 1 if avg_adapt < 80 else 2
+                before = doom_increase
+                doom_increase = max(0, doom_increase - mitigation)
+                if before > doom_increase:
+                    doom_reasons.append(f"🛡️ 적응형 평화 (-{mitigation})")
+
     return doom_increase, doom_reasons
 
 def reduce_doom(channel_id: str, amount: int, reason: str = "") -> str:

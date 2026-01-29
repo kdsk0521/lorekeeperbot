@@ -464,15 +464,20 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                      # Build Log & Context
                      roll_log = cognition.build_judgment_context_with_roll(judgment_data)
                      
-                     # [NEW] Doom Penalty for Failures & Action Tax (Silent Update)
+                     # [V6.2] Doom Penalty/Bonus & Action Tax (Silent Update)
                      res_key = judgment_data.get("result")
                      if res_key == "failure":
                          game_world.change_doom(channel_id, 1)
                      elif res_key == "critical_failure":
                          game_world.change_doom(channel_id, 4)
+                     elif res_key == "critical_success":
+                         # Item 1: Critical Success provides relief
+                         game_world.change_doom(channel_id, -1)
                      elif res_key in ["success", "partial"]:
                          # Action Tax: Every move increases entropy
-                         game_world.change_doom(channel_id, config.DOOM_ACTION_TAX)
+                         # Item 3: Buffer tax in Rest/Intimate scenes
+                         if scene_type not in ["rest", "intimate"]:
+                             game_world.change_doom(channel_id, config.DOOM_ACTION_TAX)
 
                      # We only need the string context for the prompt, but the user sees the log immediately
                      judgment_context = roll_log # Synced
@@ -702,7 +707,11 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                                 
                                 fp_data = domain_manager.get_participant_data(channel_id, uid) # Fresh load
                                 fp_data, p_msg = game_system.expose_to_abnormal(fp_data, trigger_name, category=trigger_cat)
-                                if p_msg: bg_msgs.append(p_msg)
+                                if p_msg: 
+                                    bg_msgs.append(p_msg)
+                                    # [V6.2] Item 6: Detect Mastery Signal and reduce Doom
+                                    if "마스터리 달성" in p_msg:
+                                        game_world.change_doom(channel_id, -5)
                                 domain_manager.save_participant_data(channel_id, uid, fp_data)
 
                             if bg_msgs: await message.channel.send("📋 " + " | ".join(bg_msgs))

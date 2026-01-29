@@ -47,13 +47,25 @@ async def process_ai_system_action(channel_id: str, sys_action: dict) -> Optiona
         
     elif tool == "Quest":
         if atype == "Add": auto_msg = game_system.add_quest(channel_id, content)
-        elif atype == "Complete": auto_msg = game_system.complete_quest(channel_id, content)
-        
+        elif atype == "Complete":
+            # [V6.2] Item 2: Quest Completion reduces Doom
+            auto_msg = game_system.complete_quest(channel_id, content)
+            game_world.change_doom(channel_id, -5) # Tension release
+            
     elif tool == "NPC" and atype == "Add":
         name = content.split(":", 1)[0].strip() if ":" in content else content
         desc = content.split(":", 1)[1].strip() if ":" in content else "Auto Registered"
         domain_manager.update_npc(channel_id, name, {"desc": desc, "source": "session", "status": "Active"})
         auto_msg = f"🎭 NPC: {name}"
+
+    elif tool == "Doom" and atype == "Reduce":
+        # [V6.2] Item 4: AI can explicitly request Doom reduction (e.g. via item use)
+        try:
+            amt = int(content)
+        except:
+            amt = 3
+        game_world.change_doom(channel_id, -amt)
+        auto_msg = f"📉 긴급 안정화 ({amt}%)"
         
     return auto_msg
 

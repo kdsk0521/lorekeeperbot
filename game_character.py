@@ -672,6 +672,13 @@ def check_adaptation_roll(user_data: Dict[str, Any], tag: str, category: str = N
     exposure[target_key] = {"count": new_count}
     user_data["abnormal_exposure"] = exposure
     
+    # [V6.2] Item 6: Adaptation Mastery (100% reached for the first time)
+    is_mastery = (old_count < 10 and new_count >= 10)
+    if is_mastery:
+        msg += " | 🌟 **마스터리 달성!** (위기 수치 감소)"
+        # Note: Actual Doom reduction will be triggered by this keyword in main.py or handled here
+        # Since p_data doesn't have channel_id, we use the signal in 'msg' which main.py can detect.
+    
     # Report growth
     new_pct = calculate_adaptation_percentage(new_count)
     if new_pct > adapt_pct:
