@@ -84,17 +84,6 @@ def advance_time(channel_id: str) -> str:
         
         msg = f"{emoji} **{time_slots[next_idx]}** — {atm}"
     
-    # Doom 체크
-    doom_increase, doom_reasons = calculate_doom_increase(channel_id, world, next_idx, time_slots)
-    if doom_increase > 0:
-        current_doom = world.get("doom", 0)
-        world["doom"] = min(config.DOOM_MAX, current_doom + doom_increase)
-        for reason in doom_reasons:
-            if "위험 지역" in reason or "로어 규칙" in reason:
-                 msg += f"\n⚠️ **경고:** {reason}"
-            else:
-                 msg += f"\n⚠️ {reason}"
-
     domain_manager.update_world_state(channel_id, world)
     return msg
 
@@ -102,17 +91,30 @@ def advance_time(channel_id: str) -> str:
 # DOOM SYSTEM
 # =========================================================
 
-def calculate_doom_increase(channel_id: str, world: dict, next_idx: int, time_slots: list) -> Tuple[int, List[str]]:
+def calculate_doom_increase(channel_id: str, world: dict) -> Tuple[int, List[str]]:
     doom_increase = 0
     doom_reasons = []
     
-    # 1. Time Check
-    is_night_time = next_idx >= len(time_slots) - 2
-    if "황혼" in world.get("time_slot", ""):
+    # 1. Time Check (Night logic)
+    time_slots = get_time_slots(channel_id)
+    current_slot = world.get("time_slot", "오후")
+    try:
+        idx = time_slots.index(current_slot)
+    except ValueError:
+        idx = 2
+
+    is_night_time = idx >= len(time_slots) - 2 # "저녁", "심야" or "황혼" onwards
+    if "황혼" in current_slot:
         is_night_time = True
     
     if is_night_time:
         doom_increase += config.DOOM_INCREASE_NIGHT
+    
+    # [V6.1] Rubber-banding Up (Entropy Check)
+    current_doom = world.get("doom", 0)
+    if current_doom < config.DOOM_FLOOR:
+        doom_increase += config.DOOM_FLOOR_RECOVERY
+        doom_reasons.append(f"🌌 세계의 엔트로피 (수치 {config.DOOM_FLOOR}% 미만 보정)")
     
     # 2. Nemesis Check
     domain = domain_manager.get_domain(channel_id)
@@ -200,6 +202,18 @@ def _get_doom_description(doom: int) -> str:
     elif doom >= config.DOOM_THRESHOLD_DANGER: return "임박한 위협"
     elif doom >= config.DOOM_THRESHOLD_WARNING: return "불길한 징조"
     else: return "평온함"
+
+def process_doom_tick(channel_id: str) -> Optional[str]:
+    """매 5틱 또는 특정 주기마다 실행되는 둠 계산 및 적용"""
+    world = domain_manager.get_world_state(channel_id)
+    inc, reasons = calculate_doom_increase(channel_id, world)
+    
+    if inc > 0:
+        fb = change_doom(channel_id, inc)
+        if fb:
+            reason_text = "\n".join([f"• {r}" for r in reasons])
+            return f"{fb}\n{reason_text}"
+    return None
 
 
 def get_world_context(channel_id: str) -> str:

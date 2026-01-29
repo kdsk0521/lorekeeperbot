@@ -145,7 +145,7 @@ async def _process_message(message):
 
 async def process_time_flow(channel_id: str, time_flow: Dict) -> Optional[str]:
     """
-    시간 흐름을 처리하고 필요시 시간대를 진행합니다.
+    시간 흐름을 처리하고 매 5틱마다 둠 수치를 계산하며, 필요시 시간대를 진행합니다.
     """
     if not time_flow:
         return None
@@ -154,45 +154,47 @@ async def process_time_flow(channel_id: str, time_flow: Dict) -> Optional[str]:
     ticks = time_flow.get("ticks", 0)
     explicit_hours = time_flow.get("explicit_hours")
     
-    # 명시적 시간 경과 처리
+    messages = []
+
+    # 1. 명시적 시간 경과 처리 (시간당 5틱으로 계산)
     if duration == "explicit" and explicit_hours:
-        # Approximate: 1 slot = 4 hours.
-        slots_to_advance = max(1, int(explicit_hours / 4))
-        messages = []
-        for _ in range(slots_to_advance):
-            msg = game_system.advance_time(channel_id)
-            messages.append(msg)
-        return "\n".join(messages) if messages else None
+        ticks = int(explicit_hours * 5)
     
-    # 틱 기반 시간 경과
     if ticks <= 0:
         return None
     
     # 현재 틱 카운터 가져오기
     world = domain_manager.get_world_state(channel_id)
     current_ticks = world.get("time_ticks", 0)
-    new_ticks = current_ticks + ticks
+    new_ticks_total = current_ticks + ticks
+
+    # 2. 둠 체크 (매 5틱 경계선 넘을 때마다 실행)
+    old_doom_period = current_ticks // 5
+    new_doom_period = new_ticks_total // 5
     
-    # 시간대 진행 필요 여부 확인
-    if new_ticks >= config.TIME_TICKS_PER_SLOT:
-        # 시간대 진행
-        slots_to_advance = new_ticks // config.TIME_TICKS_PER_SLOT
-        remaining_ticks = new_ticks % config.TIME_TICKS_PER_SLOT
+    if new_doom_period > old_doom_period:
+        for _ in range(new_doom_period - old_doom_period):
+            # 정산은 하되, 메시지는 수집하지 않음 (채팅창 정돈)
+            game_world.process_doom_tick(channel_id)
+    
+    # 3. 시간대 진행 (매 24틱마다)
+    if new_ticks_total >= config.TIME_TICKS_PER_SLOT:
+        slots_to_advance = new_ticks_total // config.TIME_TICKS_PER_SLOT
+        remaining_ticks = new_ticks_total % config.TIME_TICKS_PER_SLOT
         
         world["time_ticks"] = remaining_ticks
         domain_manager.update_world_state(channel_id, world)
         
-        messages = []
         for _ in range(slots_to_advance):
             msg = game_system.advance_time(channel_id)
-            messages.append(msg)
-        
-        return "\n".join(messages)
+            if msg:
+                messages.append(msg)
     else:
         # 틱만 누적
-        world["time_ticks"] = new_ticks
+        world["time_ticks"] = new_ticks_total
         domain_manager.update_world_state(channel_id, world)
-        return None
+        
+    return "\n".join(messages) if messages else None
 
 async def generate_ai_response(message, channel_id: str, system_trigger: str = None) -> None:
     if not client_genai:
@@ -398,9 +400,8 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                     )
                     await message.channel.send(evt_msg)
                     
-                    # 2. Tension Release (Doom -5)
-                    doom_fb = game_world.change_doom(channel_id, config.ANOMALY_DOOM_COST)
-                    if doom_fb: await message.channel.send(doom_fb)
+                    # 2. Tension Release (Doom -3)
+                    game_world.change_doom(channel_id, config.ANOMALY_DOOM_COST)
                     
                     # 3. Adaptation Checks (For all active participants)
                     participants = domain_data.get("participants", {})
@@ -449,6 +450,16 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                      # Build Log & Context
                      roll_log = cognition.build_judgment_context_with_roll(judgment_data)
                      
+                     # [NEW] Doom Penalty for Failures & Action Tax (Silent Update)
+                     res_key = judgment_data.get("result")
+                     if res_key == "failure":
+                         game_world.change_doom(channel_id, 1)
+                     elif res_key == "critical_failure":
+                         game_world.change_doom(channel_id, 4)
+                     elif res_key in ["success", "partial"]:
+                         # Action Tax: Every move increases entropy
+                         game_world.change_doom(channel_id, config.DOOM_ACTION_TAX)
+
                      # We only need the string context for the prompt, but the user sees the log immediately
                      judgment_context = roll_log # Synced
                      
