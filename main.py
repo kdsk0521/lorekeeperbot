@@ -323,7 +323,16 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
             
             # Merge Results into Unified 'nvc_res' for compatibility
             nvc_res = {**flash_res, **pro_res}
-            logging.info(f"[Hybrid Pipeline] Flash Intent: {user_intent} | Pro Judgment: {nvc_res.get('ActionJudgment', 'None')}")
+            
+            # [NEW] V2.5 / Implementation Request #1 v3 Compliant
+            pos_data = nvc_res.get("Position", {})
+            eff_data = nvc_res.get("Effect", {})
+            aspects = nvc_res.get("Aspects", [])
+            pos_val = pos_data.get("value", "N/A")
+            eff_val = eff_data.get("value", "N/A")
+            
+            logging.info(f"[IR#1 v3] Position: {pos_val} | Effect: {eff_val} | Intent: {user_intent}")
+            logging.info(f"[IR#1 v3] Action: {nvc_res.get('ActionJudgment', {}).get('action')} | GM Move: {nvc_res.get('GMMove', {}).get('type', 'None')}")
             
             # Updates from Analysis
             if nvc_res.get("CurrentLocation"): domain_manager.set_current_location(channel_id, nvc_res["CurrentLocation"])
@@ -441,6 +450,11 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
                      
                      judgment_data = cognition.build_action_judgment_with_roll(act, diff, reason, mods)
                      
+                     # [NEW] Inject GM Move info from GMMove field
+                     gm_m = nvc_res.get("GMMove", {})
+                     judgment_data["potential_gm_move"] = gm_m.get("type")
+                     judgment_data["gm_move_description"] = gm_m.get("description")
+                     
                      # [Safety Logic] Downgrade Critical Failure in Intimate Scenes
                      if scene_type == "intimate" and judgment_data.get("result") == "critical_failure":
                          judgment_data["result"] = "failure"
@@ -486,16 +500,29 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
             temporal = nvc_res.get("TemporalOrientation", {})
             suggested_focus = temporal.get("suggested_focus", "")
             
+            # [NEW] IR#1 v3 Segment
+            pos_data = nvc_res.get("Position", {})
+            eff_data = nvc_res.get("Effect", {})
+            aspects = nvc_res.get("Aspects", [])
+            gm_m = nvc_res.get("GMMove", {})
+            off_hint = nvc_res.get("OffscreenHint")
+            
             nvc_summary = (
-                f"Loc: {nvc_res.get('CurrentLocation')}\n"
-                f"### COGNITIVE ANALYSIS (Theoria)\n"
-                f"1. Observation: {nvc_res.get('Observation')}\n"
-                f"2. Instincts: {nvc_res.get('Instincts', 'Unknown')}\n"
-                f"3. Values: {nvc_res.get('Values', 'Unknown')}\n"
-                f"4. Intent: {nvc_res.get('UserIntent', 'Unknown')}\n"
-                f"5. State: {nvc_res.get('StateString', 'Unknown')}\n"
-                f"Focus: {suggested_focus}"
+                f"### COGNITIVE ANALYSIS (IR#1 v3)\n"
+                f"- **Observation**: {nvc_res.get('Observation')}\n"
+                f"- **User Intent**: {nvc_res.get('UserIntent')}\n"
+                f"- **Position (Risk/Stakes)**: {pos_data.get('value', 'N/A')} ({pos_data.get('reason', '')})\n"
+                f"- **Effect (Potential)**: {eff_data.get('value', 'N/A')} ({eff_data.get('reason', '')})\n"
+                f"- **Aspects**: {', '.join(aspects) if aspects else 'None'}\n"
             )
+            
+            if off_hint:
+                nvc_summary += f"\n- **Offscreen Hint**: {off_hint}\n"
+
+            if gm_m:
+                 nvc_summary += f"\n- **Proposed GM Move**: {gm_m.get('type')} ({gm_m.get('description', '')})\n"
+            
+            nvc_summary += f"\nFocus: {suggested_focus}"
 
             if existing_attitudes:
                 att_lines = [f"- {n}: {d['attitude']} ({d['reason']})" for n, d in existing_attitudes.items()]

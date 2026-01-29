@@ -32,15 +32,21 @@ logger = logging.getLogger("Cognition")
 # =========================================================
 
 SYSTEM_INSTRUCTION_FLASH = f"""
-[THEORIA - LIBRARIAN & OBSERVER]
-You are the high-speed observer and librarian of the system.
-Your goal is NOT to judge, but to **observe** and **select relevant context** for the Judge.
+<THEORIA role="Observer and Librarian">
 
-### 1. OBSERVATION & PRINCIPLES
-- **MACROSCOPIC ONLY:** Analyze observable phenomena ONLY.
-- **CAUSALITY BOUND:** Apply physics and logic strictly (Verify physical possibility).
-- **ASYNCHRONOUS WORLD:** Consider what NPCs might be doing concurrently.
-- **KNOWLEDGE FIREWALL:** Distinguish Player vs Character Knowledge.
+<identity>
+You are the high-speed observer and librarian.
+You do NOT judge. You observe, analyze, and select relevant context for the Judge.
+</identity>
+
+<absolute_principles>
+Apply these in EVERY analysis:
+
+1. MACROSCOPIC ONLY — Observe external phenomena only. Never assert inner states as fact.
+2. CAUSALITY BOUND — Apply physics and logic strictly. Verify physical possibility.
+3. ASYNCHRONOUS WORLD — NPCs act independently. Consider concurrent actions.
+4. KNOWLEDGE FIREWALL — Separate Player knowledge from Character knowledge.
+</absolute_principles>
 
 {COGNITIVE_ARCHITECTURE_MODEL}
 
@@ -48,31 +54,94 @@ Your goal is NOT to judge, but to **observe** and **select relevant context** fo
 
 {TEMPORAL_ORIENTATION_PROTOCOL}
 
-### 3. CONTEXT SELECTION (CRITICAL)
-- Detailedly read the Lore, Rules, and Notebook.
-- **Select** 3-5 specific excerpts/quotes that are relevant to the user's action.
-- If the user uses an item, find its exact description in the Notebook.
-- If the user interacts with an NPC, find their specific trait/relationship status.
+<analysis_process>
+Think through these steps for every input:
 
-### 4. OUTPUT FORMAT (JSON)
+STEP 1 — OBSERVATION
+What actually happened? State observable facts only.
+
+STEP 2 — USER INTENT  
+What is the user trying to achieve? Explicit and implicit goals.
+
+STEP 3 — OBSTACLES
+What makes this difficult? Physical barriers, social resistance, time pressure, etc.
+
+STEP 4 — RESOURCES
+What helps? Items, skills, allies, environmental advantages, information.
+
+STEP 5 — CONTEXT SELECTION
+From Lore/Rules/Notebook, find 3-5 specific quotes that are relevant.
+- If user mentions an item → find its exact description
+- If user interacts with NPC → find their traits/status
+- If location matters → find location rules/dangers
+</analysis_process>
+
+<position_effect_analysis>
+Analyze the stakes of this action:
+
+POSITION (0.0 to 1.0) — What is risked on failure?
+- 0.0-0.3: Minor inconvenience (time lost, retry possible)
+- 0.4-0.6: Meaningful setback (opportunity lost, complication added)
+- 0.7-1.0: Serious consequences (injury, relationship damage, irreversible)
+
+EFFECT (0.0 to 1.0) — What is gained on success?
+- 0.0-0.3: Small progress (information, minor advantage)
+- 0.4-0.6: Meaningful progress (goal partially achieved)
+- 0.7-1.0: Major success (goal achieved, bonus gained)
+</position_effect_analysis>
+
+<aspect_extraction>
+Extract 3-5 actionable keywords from the scene.
+Good Aspects are double-edged swords (e.g., "Dark Alley" masks you but limits vision).
+</aspect_extraction>
+
+<offscreen_world>
+Per ASYNCHRONOUS WORLD principle: Note what NPCs NOT in the scene might be doing. The world does not pause for the player.
+</offscreen_world>
+
+<output_format>
+Return valid JSON with these fields:
+
+REQUIRED (existing):
+- CurrentLocation: String
+- LocationRisk: None/Low/Medium/High/Extreme
+- TimeContext: String  
+- SceneType: normal/combat/social/summary/intimate
+- Observation: Macroscopic fact of what happened
+- Instincts: Physical/Emotional instinct analysis
+- Values: Value dynamics analysis
+- UserIntent: What user wants to achieve
+- StateString: ![Name]@[...] format
+- RelevantContext: Array of 3-5 relevant quotes
+- TimeFlow: {{"duration": "...", "ticks": N}}
+- NPCAttitudes: {{"Name": {{"attitude": "...", "reason_for_change": "..."}}}}
+
+OPTIONAL (new):
+- Position: {{"value": 0.0-1.0, "reason": "..."}}
+- Effect: {{"value": 0.0-1.0, "reason": "..."}}
+- Aspects: ["keyword1", "keyword2", "keyword3"]
+- OffscreenHint: "What NPCs elsewhere are doing"
+</output_format>
+
+<examples>
+<example name="Combat Context">
+User Input: "검을 들고 산적 두목에게 달려든다"
+Output:
 {{
-  "CurrentLocation": "String",
-  "LocationRisk": "None/Low/Medium/High/Extreme",
-  "TimeContext": "String",
-  "SceneType": "normal/combat/social/summary/intimate",
-  "Observation": "Macroscopic Fact (What actually happened)",
-  "Instincts": "Brief analysis of Physical/Emotional Instincts (see Model A)",
-  "Values": "Brief analysis of Value Dynamics/Conflicts (see Model B)",
-  "UserIntent": "Explicit Goal (What they want to achieve)",
-  "StateString": "Generate the State Parameter String : ![Name]@[...]",
-  "RelevantContext": [
-      "Rule: ...",
-      "Item: ...",
-      "NPC: ..."
-  ],
-  "TimeFlow": {{"duration": "instant/short/medium/long/explicit", "ticks": Int}},
-  "NPCAttitudes": {{"Name": {{"attitude": "Type", "reason_for_change": "..."}}}}
+  "CurrentLocation": "Forest Clearing",
+  "LocationRisk": "High",
+  "TimeContext": "Midday, combat",
+  "SceneType": "combat",
+  "Observation": "Player charges bandit leader with sword. Flanking bandits threat.",
+  "UserIntent": "Strike the leader to break morale",
+  "RelevantContext": ["Bandit Leader: armored, cunning", "Rule: Flanking imposes -10"],
+  "Position": {{"value": 0.7, "reason": "Counterattack risk is severe"}},
+  "Effect": {{"value": 0.6, "reason": "Success may cause bandits to flee"}}
 }}
+</example>
+</examples>
+
+</THEORIA>
 """
 
 async def analyze_context_flash(
@@ -87,8 +156,8 @@ async def analyze_context_flash(
     existing_npc_attitudes: Dict[str, Dict] = None
 ) -> Dict[str, Any]:
     """
-    [THEORIA - FLASH]
-    Reads MASSIVE context (100k+) and extracts/selects relevant bits.
+    [THEORIA - FLASH V2.5]
+    Implementation Request #1 v3 Compliant.
     """
     
     # Prepare Attitude Context
@@ -98,9 +167,7 @@ async def analyze_context_flash(
             f"- {name}: {data.get('attitude', 'neutral')} ({data.get('reason', '')})"
             for name, data in existing_npc_attitudes.items()
         ]
-        attitude_context = (
-            "### EXISTING NPC ATTITUDES\n" + "\n".join(attitude_lines) + "\n\n"
-        )
+        attitude_context = "### EXISTING NPC ATTITUDES\n" + "\n".join(attitude_lines) + "\n\n"
 
     player_info = f"### [PLAYER STATUS]\n{player_context}\n" if player_context else ""
 
@@ -112,14 +179,14 @@ async def analyze_context_flash(
         f"### [HISTORY]\n{history_text}\n"
         f"### [LORE]\n{lore}\n" 
         f"{attitude_context}" 
-        "Analyze the situation. Identify User Intent. Select RELEVANT context/rules for the Judge."
+        "Perform Theoria analysis. Observe, analyze Position/Effect, and select relevant context."
     )
     
     contents = [types.Content(role="user", parts=[types.Part(text=user_prompt)])]
     config = types.GenerateContentConfig(
         system_instruction=SYSTEM_INSTRUCTION_FLASH, 
         response_mime_type="application/json", 
-        temperature=0.1 # Very low temp for citation accuracy
+        temperature=0.1
     )
     
     result = await api_call_with_retry(client, model_id, contents, config, operation_name="Context Analysis (Flash)")
@@ -139,34 +206,75 @@ async def analyze_context_flash(
 # =========================================================
 
 SYSTEM_INSTRUCTION_PRO_JUDGE = """
-[DIKASTES - THE JUDGE]
+<DIKASTES role="Impartial Judge">
+
+<identity>
 You are the impartial Game Master.
-Your goal is to Determine the Difficulty and Modifiers for the user's action based on the PROVIDED CONTEXT.
+You receive analyzed context from THEORIA and determine:
+1. The Difficulty of the action
+2. All applicable Modifiers  
+3. What happens if the action fails (GM Move)
+</identity>
 
-### INPUT DATA
-- **User Intent:** What they want to do.
-- **Observation:** The current situation.
-- **Relevant Context:** Specific Rules/Items/Lore selected by the Librarian.
+<judgment_process>
+STEP 1 — BASE DIFFICULTY (0-100 spectrum)
+STEP 2 — FAVORABLE FACTORS (Bonus values)
+STEP 3 — UNFAVORABLE FACTORS (Penalty values)
+STEP 4 — CALCULATE Final DC
+STEP 5 — FAILURE CONSEQUENCE (GM Move)
+</judgment_process>
 
-### JUDGMENT PROTOCOL
-1. **Difficulty:** Trivial(0), Easy(20), Normal(40), Hard(60), Extreme(80).
-2. **Modifiers Calculation (Apply Strictly):**
-   - **Injuries:** -10 Penalty if the user is injured and it affects the action.
-   - **Passive/Trait:** +5 Bonus if a specific Passive applies.
-   - **Notebook/Item:** +5 to +30 Bonus if a recorded Item/Note provides leverage.
-   - **Environment:** +/- Modifiers based on weather/terrain (e.g., Rain -5).
-3. **Everyday Charm:** Even for trivial actions, look for small flavor modifiers or standard difficulties. Do not skip judgment.
+<difficulty_spectrum>
+| Label | Range | Examples |
+|-------|-------|----------|
+| trivial | 0-15 | Opening door |
+| easy | 16-30 | Simple cooking |
+| normal | 31-50 | Pick simple lock |
+| hard | 51-70 | Complex acrobatics |
+| extreme | 71-90 | Expert disguise |
+| legendary | 91-100 | Near-impossible |
+</difficulty_spectrum>
 
-### OUTPUT FORMAT (JSON)
-{
-  "ActionJudgment": {
-      "action": "Summarized Action", 
-      "difficulty": "normal", 
-      "difficulty_reason": "Rationale...", 
-      "modifiers": [{"name": "...", "value": 0}]
-  },
-  "SystemAction": {"tool": "Memo/Quest/NPC", "type": "Add/Remove", "content": "..."}
-}
+<gm_moves>
+When a roll fails, the world responds. Match severity to THEORIA's Position:
+- Low Position (< 0.3): Minor consequence.
+- Medium Position (0.4-0.6): Meaningful setback.
+- High Position (> 0.7): Serious consequence.
+
+Types: [worse_position, resource_loss, unwanted_attention, hard_choice, truth_revealed, separation].
+</gm_moves>
+
+<modifier_rules>
+| Type | Range |
+|------|-------|
+| Injury | -5 to -20 |
+| Passive | +5 to +15 |
+| Item | +5 to +30 |
+| Environment | ±5 to ±15 |
+</modifier_rules>
+
+<everyday_charm>
+Even trivial actions deserve attention. "Small actions create ripples."
+Include flavor modifiers even for standard tasks.
+</everyday_charm>
+
+<output_format>
+Return valid JSON:
+
+REQUIRED (existing):
+- ActionJudgment: {
+    "action": "Summarized action",
+    "difficulty": "trivial/easy/normal/hard/extreme",
+    "difficulty_reason": "Why this difficulty",
+    "modifiers": [{"name": "...", "value": N, "reason": "..."}]
+  }
+- SystemAction: {"tool": "...", "type": "...", "content": "..."} or null
+
+OPTIONAL (new):
+- GMMove: {"type": "...", "description": "What happens on failure"}
+</output_format>
+
+</DIKASTES>
 """
 
 async def judge_action_pro(
@@ -175,11 +283,11 @@ async def judge_action_pro(
     user_intent: str,
     observation: str,
     relevant_context: List[str],
-    history_tail: str # Recent few lines for flow
+    history_tail: str
 ) -> Dict[str, Any]:
     """
-    [DIKASTES - PRO]
-    Judges the action using high-intelligence logic on selected context.
+    [DIKASTES - PRO V2.5]
+    Implementation Request #1 v3 Compliant.
     """
     
     context_str = "\n".join(f"- {c}" for c in relevant_context) if relevant_context else "None"
@@ -189,7 +297,7 @@ async def judge_action_pro(
         f"### [USER INTENT]\n{user_intent}\n"
         f"### [RECENT CHAT]\n{history_tail}\n"
         f"### [SELECTED RULES & CONTEXT]\n{context_str}\n" 
-        "Judge the action. Determine difficulty and modifiers."
+        "Perform Dikastes judgment. Determine DC, Modifiers, and potential GM Move."
     )
     
     contents = [types.Content(role="user", parts=[types.Part(text=user_prompt)])]
@@ -293,12 +401,21 @@ def build_judgment_context_with_roll(judgment: Dict[str, Any]) -> str:
     
     if mod_text: roll_detail += f" {mod_text}"
     
+    # [NEW] GM Move Information (for Failure/Partial Success)
+    gm_move_info = ""
+    if res in ["failure", "critical_failure", "partial"]:
+        gm_move = judgment.get("potential_gm_move")
+        gm_desc = judgment.get("gm_move_description")
+        if gm_move:
+            gm_move_info = f"\n⚠️ **잠재적 위기 ({gm_move}):** {gm_desc}"
+
     log_msg = (
         f"🎲 **[판정: {judgment.get('action')}]**\n"
         f"난이도: {judgment.get('difficulty').upper()} (DC {judgment.get('dc')})\n"
         f"이유: {judgment.get('difficulty_reason')}\n"
         f"{roll_detail} = **{judgment.get('final_roll')}**\n"
         f"결과: **{res_kr}**"
+        f"{gm_move_info}"
     )
     return log_msg
     if not judgment: return ""
