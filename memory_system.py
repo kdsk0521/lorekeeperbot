@@ -976,11 +976,12 @@ def apply_ai_memory_updates(
 # =========================================================
 
 async def extract_npcs_only(
-    client, 
-    model_id: str, 
+    client,
+    model_id: str,
     lore_text: str
 ) -> List[Dict[str, Any]]:
     """
+    [DEPRECATED] npc_manager.extract_npcs_from_lore() 사용 권장.
     로어 텍스트에서 NPC 정보만 추출합니다. (List[Dict])
     """
     system_prompt = (
