@@ -12,6 +12,8 @@ import time
 from typing import Optional, Dict
 import re
 
+logger = logging.getLogger(__name__)
+
 # Unified Modules
 import config
 import domain_manager
@@ -62,7 +64,8 @@ async def process_ai_system_action(channel_id: str, sys_action: dict) -> Optiona
         # [V6.2] Item 4: AI can explicitly request Doom reduction (e.g. via item use)
         try:
             amt = int(content)
-        except:
+        except (ValueError, TypeError):
+            logger.debug(f"[무시됨] Doom 감소량 파싱 실패, 기본값(3) 사용: {content}")
             amt = 3
         game_world.change_doom(channel_id, -amt)
         auto_msg = f"📉 긴급 안정화 ({amt}%)"
@@ -1058,8 +1061,8 @@ async def dispatch_command(cmd, message, channel_id, parsed, client_discord, cli
                     val = int(op)
                     res = game_world.change_doom(channel_id, val)
                     await message.channel.send(res)
-                except:
-                     return "⚠️ 사용법: `!doom 10` (증가/감소), `!doom set 50` (설정)"
+                except (ValueError, TypeError):
+                    return "⚠️ 사용법: `!doom 10` (증가/감소), `!doom set 50` (설정)"
         return None
 
     # [NEW] Manual Mental Control
