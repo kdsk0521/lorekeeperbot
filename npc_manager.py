@@ -1,13 +1,41 @@
 """
 Lorekeeper TRPG Bot - NPC Manager
-Handles NPC creation, updates, attitude system, and extraction from domain.
-Extracted from domain_manager.py and game_system.py
+NPC의 완벽한 관리를 담당하는 비즈니스 로직 모듈.
+
+책임:
+- 로어 NPC / 수동 추가 NPC / AI 생성 NPC 구분 관리
+- NPC 이름 변경 추적 (정체 발각)
+- PC와의 관계(태도) 관리
+- NPC 추출 및 등록
+
+domain_manager.py는 저장소 역할만 담당.
 """
 
 import time
 import random
+import logging
 from typing import Dict, Any, Optional, List
 import domain_manager
+
+# =========================================================
+# NPC SOURCE TYPES (출처 구분)
+# =========================================================
+SOURCE_LORE = "lore"              # 로어 분석으로 추출된 NPC
+SOURCE_MANUAL = "manual"          # !npc add 등 수동 추가
+SOURCE_AI_GENERATED = "ai_generated"  # 세션 중 AI가 생성한 NPC
+
+VALID_SOURCES = {SOURCE_LORE, SOURCE_MANUAL, SOURCE_AI_GENERATED}
+
+# 태도 레벨 정의
+ATTITUDE_LEVELS = {
+    "hostile": -2,
+    "unfriendly": -1,
+    "neutral": 0,
+    "friendly": 1,
+    "loyal": 2
+}
+
+logger = logging.getLogger(__name__)
 
 # =========================================================
 # NPC CRUD operations (Wraps domain_manager for now)
@@ -24,6 +52,145 @@ def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
 
 def delete_npc(channel_id: str, name: str) -> bool:
     return domain_manager.delete_npc(channel_id, name)
+
+
+# =========================================================
+# NPC 추가 함수 (소스별 분리)
+# =========================================================
+
+def add_lore_npcs(channel_id: str, npc_list: List[Dict[str, Any]]) -> int:
+    """
+    로어 분석 결과로 NPC 일괄 등록.
+
+    Args:
+        channel_id: 채널 ID
+        npc_list: [{"name": "이름", "description": "설명"}, ...]
+
+    Returns:
+        등록된 NPC 수
+    """
+    count = 0
+    for npc in npc_list:
+        name = npc.get("name", "").strip()
+        if not name:
+            continue
+
+        data = {
+            "description": npc.get("description", ""),
+            "source": SOURCE_LORE,
+            "registered_at": time.strftime('%Y-%m-%d %H:%M'),
+        }
+
+        # 추가 필드 복사 (role, personality 등)
+        for key in ["role", "personality", "appearance", "location"]:
+            if key in npc:
+                data[key] = npc[key]
+
+        update_npc(channel_id, name, data)
+        count += 1
+        logger.debug(f"[NPC] 로어 NPC 등록: {name}")
+
+    return count
+
+
+def add_manual_npc(channel_id: str, name: str, description: str, **kwargs) -> bool:
+    """
+    수동으로 NPC 추가 (!npc add 명령 등).
+
+    Args:
+        channel_id: 채널 ID
+        name: NPC 이름
+        description: NPC 설명
+        **kwargs: 추가 필드 (role, personality 등)
+
+    Returns:
+        성공 여부
+    """
+    if not name.strip():
+        return False
+
+    data = {
+        "description": description,
+        "source": SOURCE_MANUAL,
+        "registered_at": time.strftime('%Y-%m-%d %H:%M'),
+    }
+    data.update(kwargs)
+
+    update_npc(channel_id, name.strip(), data)
+    logger.info(f"[NPC] 수동 NPC 추가: {name}")
+    return True
+
+
+def register_ai_npc(channel_id: str, name: str, description: str = "", context: str = "") -> bool:
+    """
+    세션 중 AI가 생성한 NPC 등록.
+    예: 이름 없던 '상인'이 '한스'로 이름이 밝혀졌을 때
+
+    Args:
+        channel_id: 채널 ID
+        name: NPC 이름
+        description: 간단한 설명
+        context: 등장 맥락 (어떤 상황에서 등장했는지)
+
+    Returns:
+        성공 여부
+    """
+    if not name.strip():
+        return False
+
+    # 이미 존재하는지 확인
+    existing = get_npc(channel_id, name)
+    if existing:
+        # 이미 있으면 context만 추가
+        existing.setdefault("appearances", []).append({
+            "context": context,
+            "at": time.strftime('%Y-%m-%d %H:%M')
+        })
+        update_npc(channel_id, name, existing)
+        return True
+
+    data = {
+        "description": description,
+        "source": SOURCE_AI_GENERATED,
+        "registered_at": time.strftime('%Y-%m-%d %H:%M'),
+        "appearances": [{"context": context, "at": time.strftime('%Y-%m-%d %H:%M')}] if context else []
+    }
+
+    update_npc(channel_id, name.strip(), data)
+    logger.info(f"[NPC] AI 생성 NPC 등록: {name}")
+    return True
+
+
+# =========================================================
+# NPC 조회 (소스별 필터링)
+# =========================================================
+
+def get_npcs_by_source(channel_id: str, source: str) -> Dict[str, Dict[str, Any]]:
+    """특정 소스의 NPC만 조회"""
+    all_npcs = get_npcs(channel_id)
+    return {
+        name: data for name, data in all_npcs.items()
+        if data.get("source", SOURCE_AI_GENERATED) == source
+    }
+
+
+def get_lore_npcs(channel_id: str) -> Dict[str, Dict[str, Any]]:
+    """로어 NPC만 조회"""
+    return get_npcs_by_source(channel_id, SOURCE_LORE)
+
+
+def get_session_npcs(channel_id: str) -> Dict[str, Dict[str, Any]]:
+    """세션 중 생성된 NPC (manual + ai_generated)"""
+    all_npcs = get_npcs(channel_id)
+    return {
+        name: data for name, data in all_npcs.items()
+        if data.get("source", SOURCE_AI_GENERATED) != SOURCE_LORE
+    }
+
+
+# =========================================================
+# NPC 정체 발각 (이름 변경 추적)
+# =========================================================
 
 def handle_identity_reveal(channel_id: str, old_name: str, new_name: str, reason: str = "") -> str:
     """
@@ -83,6 +250,82 @@ def get_npc_attitude(channel_id: str, npc_name: str) -> Optional[Dict]:
     """특정 NPC의 태도 조회"""
     return domain_manager.get_npc_attitude(channel_id, npc_name)
 
+
+def delete_npc_attitude(channel_id: str, npc_name: str) -> bool:
+    """NPC 태도 정보 삭제"""
+    d = domain_manager.get_domain(channel_id)
+    attitudes = d.get("npc_attitudes", {})
+    if npc_name in attitudes:
+        del attitudes[npc_name]
+        domain_manager.save_domain(channel_id, d)
+        return True
+    return False
+
+
+def get_relationship_summary(channel_id: str) -> str:
+    """
+    전체 NPC-PC 관계 요약 문자열 생성.
+    AI 프롬프트에 삽입하기 좋은 형태.
+    """
+    npcs = get_npcs(channel_id)
+    attitudes = get_npc_attitudes(channel_id)
+
+    if not npcs:
+        return "[No NPCs registered]"
+
+    lines = []
+    for npc_name, npc_data in npcs.items():
+        source = npc_data.get("source", "unknown")
+        source_tag = {"lore": "📜", "manual": "✏️", "ai_generated": "🤖"}.get(source, "❓")
+
+        att_info = attitudes.get(npc_name, {})
+        attitude = att_info.get("attitude", "neutral")
+        reason = att_info.get("reason", "")
+
+        # 태도 이모지
+        att_emoji = {
+            "hostile": "🔴",
+            "unfriendly": "🟠",
+            "neutral": "⚪",
+            "friendly": "🟢",
+            "loyal": "💚"
+        }.get(attitude, "⚪")
+
+        desc = npc_data.get("description", "")[:50]
+        if len(npc_data.get("description", "")) > 50:
+            desc += "..."
+
+        line = f"{source_tag} **{npc_name}** {att_emoji}{attitude}"
+        if reason:
+            line += f" ({reason})"
+        if desc:
+            line += f" - {desc}"
+
+        lines.append(line)
+
+    return "\n".join(lines) if lines else "[No NPCs]"
+
+
+def get_attitude_for_prompt(channel_id: str) -> str:
+    """
+    AI 프롬프트용 태도 요약 (간결한 형태).
+    """
+    attitudes = get_npc_attitudes(channel_id)
+    if not attitudes:
+        return ""
+
+    lines = ["[NPC ATTITUDES TOWARD PC]"]
+    for npc_name, att_info in attitudes.items():
+        attitude = att_info.get("attitude", "neutral")
+        reason = att_info.get("reason", "")
+        line = f"- {npc_name}: {attitude}"
+        if reason:
+            line += f" ({reason})"
+        lines.append(line)
+
+    return "\n".join(lines)
+
+
 # =========================================================
 # NPC SIMULATION
 # =========================================================
@@ -133,3 +376,94 @@ def clear_session_npcs(channel_id: str) -> int:
         
     domain_manager.save_domain(channel_id, d)
     return len(to_delete)
+
+
+# =========================================================
+# NPC 추출 (로어 분석)
+# =========================================================
+
+async def extract_npcs_from_lore(client, model_id: str, lore_text: str) -> List[Dict[str, Any]]:
+    """
+    로어 텍스트에서 NPC 정보를 추출합니다.
+
+    Args:
+        client: Gemini API 클라이언트
+        model_id: 사용할 모델 ID
+        lore_text: 로어 텍스트
+
+    Returns:
+        [{"name": "이름", "description": "설명"}, ...]
+    """
+    from google.genai import types
+    import json
+
+    system_prompt = (
+        "You are an Entity Extractor.\n"
+        "Identify Non-Player Characters (NPCs) from the text.\n"
+        "Exclude the Main Protagonist/Player Character.\n\n"
+        "Output Format (JSON List):\n"
+        "[\n"
+        "  {\"name\": \"Name\", \"description\": \"Role, appearance, personality\"},\n"
+        "  ...\n"
+        "]"
+    )
+
+    try:
+        config = types.GenerateContentConfig(
+            response_mime_type="application/json",
+            temperature=0.1
+        )
+        contents = [
+            types.Content(
+                role="user",
+                parts=[types.Part(text=f"{system_prompt}\n\n[Lore Text]\n{lore_text}")]
+            )
+        ]
+
+        result = await client.aio.models.generate_content(
+            model=model_id,
+            contents=contents,
+            config=config
+        )
+
+        if result and result.text:
+            text = result.text.strip()
+            # JSON 파싱
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                return parsed
+            if isinstance(parsed, dict) and "npcs" in parsed:
+                return parsed["npcs"]
+            return []
+
+    except json.JSONDecodeError as e:
+        logger.error(f"[NPC Extract] JSON 파싱 실패: {e}")
+    except Exception as e:
+        logger.error(f"[NPC Extract] 실패: {e}")
+
+    return []
+
+
+async def analyze_and_register_lore_npcs(
+    client,
+    model_id: str,
+    channel_id: str,
+    lore_text: str
+) -> int:
+    """
+    로어를 분석하여 NPC를 추출하고 등록하는 통합 함수.
+
+    Args:
+        client: Gemini API 클라이언트
+        model_id: 모델 ID
+        channel_id: 채널 ID
+        lore_text: 로어 텍스트
+
+    Returns:
+        등록된 NPC 수
+    """
+    npcs = await extract_npcs_from_lore(client, model_id, lore_text)
+    if not npcs:
+        return 0
+
+    return add_lore_npcs(channel_id, npcs)

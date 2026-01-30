@@ -11,6 +11,8 @@ from typing import Optional
 
 import domain_manager
 import config
+
+logger = logging.getLogger(__name__)
 # game_system might be needed if logic requires it, but for now mostly domain IO
 
 RESET_CONFIRM_TIMEOUT = 5.0
@@ -47,14 +49,17 @@ class SessionManager:
             try:
                 await confirm_msg.delete()
                 await message.channel.send("❌ 초기화 취소됨 (시간 초과).", delete_after=5)
-            except: pass
+            except Exception as e:
+                logger.debug(f"[무시됨] 초기화 취소 메시지 처리 실패: {e}")
     
     async def _recreate_channel(self, message: discord.Message) -> None:
         original = message.channel
         try:
             new_ch = await original.clone(reason="Session Reset")
-            try: await new_ch.edit(position=original.position)
-            except: pass
+            try:
+                await new_ch.edit(position=original.position)
+            except Exception as e:
+                logger.debug(f"[무시됨] 채널 위치 복원 실패: {e}")
             
             await original.delete(reason="Session Reset (Old)")
             await new_ch.send("✨ **세션 초기화 완료.**\n새로운 타임라인이 시작되었습니다.\n`!준비` (`!ready`)를 입력하여 설정을 시작하세요.")

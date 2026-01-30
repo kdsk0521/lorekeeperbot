@@ -15,6 +15,8 @@ from typing import Optional, Dict, Any, List, Tuple
 from google.genai import types
 import config
 
+logger = logging.getLogger(__name__)
+
 # Constants now imported from config
 
 # =========================================================
@@ -844,8 +846,9 @@ def apply_memory_edits(
                 else:
                     try:
                         target[key] = {"count": int(value)}
-                    except:
-                        target[key] = {"count": 1} # Fallback
+                    except (ValueError, TypeError):
+                        logger.debug(f"[무시됨] abnormal_exposure 값 변환 실패, 기본값 사용: {value}")
+                        target[key] = {"count": 1}  # Fallback
             elif action == "remove" and key:
                 target.pop(key, None)
             new_p_data["abnormal_exposure"] = target
@@ -906,13 +909,14 @@ def apply_memory_edits(
             target = new_p_data.get("abnormal_exposure", {})
             if action in ["set", "update"] and key:
                 try:
-                    # Legacy value might be a percentage string or int. 
+                    # Legacy value might be a percentage string or int.
                     # Convert to approximate count if possible, or just treat as raw count for safety.
                     raw_val = int(str(value).replace('%', '').strip())
                     # If it was a percentage (e.g. 74), we need to reverse the log formula or just store as count.
                     # For OOC edits, usually users intend to set the LEVEL.
-                    target[key] = {"count": raw_val} 
-                except:
+                    target[key] = {"count": raw_val}
+                except (ValueError, TypeError):
+                    logger.debug(f"[무시됨] normalization 값 변환 실패, 기본값 사용: {value}")
                     target[key] = {"count": 1}
             new_p_data["abnormal_exposure"] = target
             
@@ -972,11 +976,12 @@ def apply_ai_memory_updates(
 # =========================================================
 
 async def extract_npcs_only(
-    client, 
-    model_id: str, 
+    client,
+    model_id: str,
     lore_text: str
 ) -> List[Dict[str, Any]]:
     """
+    [DEPRECATED] npc_manager.extract_npcs_from_lore() 사용 권장.
     로어 텍스트에서 NPC 정보만 추출합니다. (List[Dict])
     """
     system_prompt = (

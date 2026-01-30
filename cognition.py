@@ -433,7 +433,8 @@ def build_judgment_context_with_roll(judgment: Dict[str, Any]) -> str:
             val = int(v)
             prefix = '+' if val >= 0 else ''
             mod_strs.append(f"{n}({prefix}{val})")
-        except:
+        except (ValueError, TypeError):
+            # 숫자 변환 실패 시 원본 값 사용
             mod_strs.append(f"{n}({v})")
     
     mod_text = ", ".join(mod_strs) if mod_strs else "None"
@@ -517,8 +518,10 @@ async def extract_all_updates(
     p_upd = None
     if phys:
         def _safe_int(v):
-            try: return int(str(v).replace(',', '').replace('+', '').strip())
-            except: return 0
+            try:
+                return int(str(v).replace(',', '').replace('+', '').strip())
+            except (ValueError, TypeError):
+                return 0
             
         p_upd = {
             "notebook_update": phys.get("notebook_update"), # [V5.1]

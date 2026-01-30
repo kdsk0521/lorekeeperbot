@@ -12,6 +12,8 @@ import time
 from typing import Optional, Dict
 import re
 
+logger = logging.getLogger(__name__)
+
 # Unified Modules
 import config
 import domain_manager
@@ -24,7 +26,8 @@ import npc_manager
 # memory_system seems to be next or treated separately. I will assume memory_system exists.
 import session_manager
 import memory_system 
-from bot_utils import send_long_message, read_attachment_text, safe_delete_message, SUPPORTED_TEXT_EXTENSIONS
+from bot_utils import send_long_message, read_attachment_text, safe_delete_message
+import config  # SUPPORTED_TEXT_EXTENSIONS 등은 config에서 직접 사용
 
 # =========================================================
 # SYSTEM HANDLER LOGIC (Absorbed)
@@ -62,7 +65,8 @@ async def process_ai_system_action(channel_id: str, sys_action: dict) -> Optiona
         # [V6.2] Item 4: AI can explicitly request Doom reduction (e.g. via item use)
         try:
             amt = int(content)
-        except:
+        except (ValueError, TypeError):
+            logger.debug(f"[무시됨] Doom 감소량 파싱 실패, 기본값(3) 사용: {content}")
             amt = 3
         game_world.change_doom(channel_id, -amt)
         auto_msg = f"📉 긴급 안정화 ({amt}%)"
@@ -87,7 +91,7 @@ async def handle_lore_command(message, channel_id: str, arg: str, client_genai=N
                 file_text = text
                 break
         if not file_text and not arg:
-             await message.channel.send(f"⚠️ 확장자 오류. 지원: {', '.join(SUPPORTED_TEXT_EXTENSIONS)}")
+             await message.channel.send(f"⚠️ 확장자 오류. 지원: {', '.join(config.SUPPORTED_TEXT_EXTENSIONS)}")
              return
 
     full = (arg + "\n" + file_text).strip()
@@ -148,18 +152,15 @@ async def handle_lore_command(message, channel_id: str, arg: str, client_genai=N
     if client_genai:
         try:
             # Entity Extraction (Parallel)
-            # 1. NPCs (Legacy: extract_npcs_only)
-            # 2. PC Info (New: extract_pc_info)
-            npc_task = memory_system.extract_npcs_only(client_genai, model_id, full)
+            # 1. NPCs (via npc_manager - 책임 명확화)
+            # 2. PC Info
+            npc_task = npc_manager.extract_npcs_from_lore(client_genai, model_id, full)
             pc_task = memory_system.extract_pc_info(client_genai, model_id, full)
-            
+
             npcs, pc_info = await asyncio.gather(npc_task, pc_task)
-            
-            # Update NPCs
-            for n in npcs:
-                domain_manager.update_npc(channel_id, n.get("name"), {
-                    "desc": n.get("description"), "source": "lore", "status": "Active"
-                })
+
+            # Update NPCs (npc_manager가 소스 타입 자동 설정)
+            npc_manager.add_lore_npcs(channel_id, npcs)
                 
             # Update PC Info
             pc_msg = ""
@@ -1058,8 +1059,8 @@ async def dispatch_command(cmd, message, channel_id, parsed, client_discord, cli
                     val = int(op)
                     res = game_world.change_doom(channel_id, val)
                     await message.channel.send(res)
-                except:
-                     return "⚠️ 사용법: `!doom 10` (증가/감소), `!doom set 50` (설정)"
+                except (ValueError, TypeError):
+                    return "⚠️ 사용법: `!doom 10` (증가/감소), `!doom set 50` (설정)"
         return None
 
     # [NEW] Manual Mental Control

@@ -10,20 +10,7 @@ from typing import Tuple, Optional, Dict
 from collections import defaultdict, deque
 from time import time
 
-# =========================================================
-# 상수 정의
-# =========================================================
 import config
-
-# =========================================================
-# 상수 정의
-# =========================================================
-# Imports from config
-MAX_DISCORD_MESSAGE_LENGTH = config.MAX_DISCORD_MESSAGE_LENGTH
-MAX_FILE_SIZE_MB = config.MAX_FILE_SIZE_MB
-MAX_FILE_SIZE_BYTES = config.MAX_FILE_SIZE_BYTES
-MAX_TEXT_INPUT_LENGTH = config.MAX_TEXT_INPUT_LENGTH
-SUPPORTED_TEXT_EXTENSIONS = config.SUPPORTED_TEXT_EXTENSIONS
 
 # =========================================================
 # Rate Limiter
@@ -66,14 +53,14 @@ async def send_long_message(channel, text: str) -> None:
 
     channel_id = str(channel.id)
 
-    if len(text) <= MAX_DISCORD_MESSAGE_LENGTH:
+    if len(text) <= config.MAX_DISCORD_MESSAGE_LENGTH:
         await rate_limiter.wait_if_needed(channel_id)
         await channel.send(text)
         return
 
     # 메시지 분할 전송
-    for i in range(0, len(text), MAX_DISCORD_MESSAGE_LENGTH):
-        chunk = text[i:i + MAX_DISCORD_MESSAGE_LENGTH]
+    for i in range(0, len(text), config.MAX_DISCORD_MESSAGE_LENGTH):
+        chunk = text[i:i + config.MAX_DISCORD_MESSAGE_LENGTH]
         await rate_limiter.wait_if_needed(channel_id)
         await channel.send(chunk)
 
@@ -88,12 +75,12 @@ async def read_attachment_text(attachment) -> Tuple[Optional[str], Optional[str]
     filename_lower = attachment.filename.lower()
 
     # 파일 크기 확인
-    if attachment.size > MAX_FILE_SIZE_BYTES:
-        return None, f"⚠️ 파일이 너무 큽니다. 최대 크기: {MAX_FILE_SIZE_MB}MB"
+    if attachment.size > config.MAX_FILE_SIZE_BYTES:
+        return None, f"⚠️ 파일이 너무 큽니다. 최대 크기: {config.MAX_FILE_SIZE_MB}MB"
 
     # 지원되는 확장자인지 확인
-    if not any(filename_lower.endswith(ext) for ext in SUPPORTED_TEXT_EXTENSIONS):
-        return None, f"⚠️ **지원하지 않는 파일입니다.**\n지원 확장자: {', '.join(SUPPORTED_TEXT_EXTENSIONS)}"
+    if not any(filename_lower.endswith(ext) for ext in config.SUPPORTED_TEXT_EXTENSIONS):
+        return None, f"⚠️ **지원하지 않는 파일입니다.**\n지원 확장자: {', '.join(config.SUPPORTED_TEXT_EXTENSIONS)}"
 
     try:
         data = await attachment.read()
@@ -116,8 +103,8 @@ async def read_attachment_text(attachment) -> Tuple[Optional[str], Optional[str]
             return None, f"⚠️ 파일 `{attachment.filename}` 읽기 실패: 지원하지 않는 인코딩입니다."
 
         # 텍스트 길이 검증
-        if len(text) > MAX_TEXT_INPUT_LENGTH:
-            return None, f"⚠️ 파일 내용이 너무 깁니다. 최대 {MAX_TEXT_INPUT_LENGTH:,}자까지 지원합니다."
+        if len(text) > config.MAX_TEXT_INPUT_LENGTH:
+            return None, f"⚠️ 파일 내용이 너무 깁니다. 최대 {config.MAX_TEXT_INPUT_LENGTH:,}자까지 지원합니다."
 
         return text, None
     except Exception as e:
