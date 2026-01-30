@@ -12,15 +12,11 @@ import math
 from typing import Dict, Any, Optional, List, Set
 
 import config
+from cache_manager import cache
 
 # =========================================================
 # 1. FILE I/O & CACHING (Formerly domain_io.py)
 # =========================================================
-
-_session_cache: Dict[str, Dict[str, Any]] = {}
-_lore_cache: Dict[str, str] = {}
-_lore_original_cache: Dict[str, str] = {}
-_rules_cache: Dict[str, str] = {}
 
 def initialize_folders() -> None:
     for path in [config.SESSIONS_DIR, config.LORE_DIR, config.RULES_DIR]:
@@ -105,28 +101,37 @@ def update_notebook(channel_id: str, text: str) -> None:
     save_domain(channel_id, d)
 
 def get_domain(channel_id: str) -> Dict[str, Any]:
-    if channel_id in _session_cache: return _session_cache[channel_id]
-    
+    # 캐시에서 먼저 조회
+    cached = cache.get_session(channel_id)
+    if cached is not None:
+        return cached
+
+    # 캐시 미스: 파일에서 로드
     default = _get_default_session()
     data = load_json(get_session_file_path(channel_id), default)
-    
-    if not isinstance(data, dict): data = default
-    
+
+    if not isinstance(data, dict):
+        data = default
+
     # Ensure keys
     for k in default:
-        if k not in data: data[k] = default[k]
-        
-    _session_cache[channel_id] = data
+        if k not in data:
+            data[k] = default[k]
+
+    # 캐시에 저장
+    cache.set_session(channel_id, data)
     return data
 
 def save_domain(channel_id: str, data: Dict[str, Any]) -> bool:
+    """세션 데이터 저장 (파일 + 캐시 동기화)"""
     # 파일 저장 성공 후 캐시 업데이트 (동기화 안전성)
     if not save_json(get_session_file_path(channel_id), data):
         return False
-    _session_cache[channel_id] = data
+    cache.set_session(channel_id, data)
     return True
 
 def reset_domain(channel_id: str) -> None:
+    """채널의 모든 데이터 초기화 (파일 삭제 + 캐시 무효화)"""
     paths = [get_session_file_path(channel_id), get_lore_file_path(channel_id),
              get_lore_original_file_path(channel_id), get_rules_file_path(channel_id)]
     for p in paths:
@@ -135,11 +140,9 @@ def reset_domain(channel_id: str) -> None:
                 os.remove(p)
             except Exception as e:
                 logging.warning(f"Failed to delete {p}: {e}")
-            
-    _session_cache.pop(channel_id, None)
-    _lore_cache.pop(channel_id, None)
-    _lore_original_cache.pop(channel_id, None)
-    _rules_cache.pop(channel_id, None)
+
+    # 모든 캐시 무효화
+    cache.invalidate_all(channel_id)
 
 # Export Indices
 def get_last_export_idx(channel_id: str) -> int:
@@ -163,30 +166,38 @@ def set_last_chronicle_idx(channel_id: str, idx: int) -> None:
 # =========================================================
 
 def get_lore(channel_id: str) -> str:
-    if channel_id in _lore_cache: return _lore_cache[channel_id]
+    """로어 텍스트 조회 (캐시 우선)"""
+    cached = cache.get_lore(channel_id)
+    if cached is not None:
+        return cached
     text = load_text(get_lore_file_path(channel_id), config.DEFAULT_LORE)
-    _lore_cache[channel_id] = text
+    cache.set_lore(channel_id, text)
     return text
 
 def append_lore(channel_id: str, text: str) -> None:
+    """로어에 텍스트 추가"""
     cur = get_lore(channel_id)
     new_t = text if cur.strip() == config.DEFAULT_LORE.strip() else f"{cur}\n\n{text}"
-    _lore_cache[channel_id] = new_t
+    cache.set_lore(channel_id, new_t)
     save_text(get_lore_file_path(channel_id), new_t)
 
 def reset_lore(channel_id: str) -> None:
     reset_domain(channel_id) # Simplify: reset all if lore reset requested usually implies restart
 
 def save_lore_original(channel_id: str, text: str) -> None:
-    _lore_original_cache[channel_id] = text
+    """원본 로어 저장"""
+    cache.set_lore_original(channel_id, text)
     save_text(get_lore_original_file_path(channel_id), text)
 
 def get_lore_original(channel_id: str) -> Optional[str]:
-    if channel_id in _lore_original_cache: return _lore_original_cache[channel_id]
+    """원본 로어 조회"""
+    cached = cache.get_lore_original(channel_id)
+    if cached is not None:
+        return cached
     path = get_lore_original_file_path(channel_id)
     if os.path.exists(path):
         t = load_text(path, "")
-        _lore_original_cache[channel_id] = t
+        cache.set_lore_original(channel_id, t)
         return t
     return None
 
@@ -289,12 +300,16 @@ def get_npc_attitude(channel_id: str, npc_name: str) -> Optional[Dict]:
 
 # Rules & Genres
 def get_rules(channel_id: str) -> str:
-    if channel_id in _rules_cache: return _rules_cache[channel_id]
+    """룰 텍스트 조회 (캐시 우선)"""
+    cached = cache.get_rules(channel_id)
+    if cached is not None:
+        return cached
     text = load_text(get_rules_file_path(channel_id), config.DEFAULT_RULES)
-    _rules_cache[channel_id] = text
+    cache.set_rules(channel_id, text)
     return text
 
 def append_rules(channel_id: str, text: str) -> None:
+    """룰에 텍스트 추가"""
     d = get_domain(channel_id)
     if d.get("rules_mode") == "custom":
         cur = get_rules(channel_id)
@@ -306,21 +321,24 @@ def append_rules(channel_id: str, text: str) -> None:
         d["rules_mode"] = "hybrid"
         save_domain(channel_id, d)
         new_t = f"{config.DEFAULT_RULES}\n\n[커스텀 추가]\n{cust}"
-    
-    _rules_cache[channel_id] = new_t
+
+    cache.set_rules(channel_id, new_t)
     save_text(get_rules_file_path(channel_id), new_t)
 
 def reset_rules(channel_id: str) -> None:
+    """룰 초기화"""
     path = get_rules_file_path(channel_id)
-    if os.path.exists(path): os.remove(path)
-    _rules_cache.pop(channel_id, None)
+    if os.path.exists(path):
+        os.remove(path)
+    cache.invalidate_rules(channel_id)
     d = get_domain(channel_id)
     d["custom_rules"] = ""
     d["rules_mode"] = "default"
     save_domain(channel_id, d)
 
 def set_custom_rules_from_file(channel_id: str, content: str) -> None:
-    _rules_cache[channel_id] = content
+    """파일에서 커스텀 룰 설정"""
+    cache.set_rules(channel_id, content)
     save_text(get_rules_file_path(channel_id), content)
     d = get_domain(channel_id)
     d["rules_mode"] = "custom"
