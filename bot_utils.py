@@ -46,7 +46,7 @@ class RateLimiter:
 rate_limiter = RateLimiter()
 
 
-async def send_long_message(channel, text: str) -> None:
+async def send_long_message(channel: discord.TextChannel, text: str) -> None:
     """2000자가 넘는 메시지를 나누어 전송하는 함수"""
     if not text:
         return
@@ -65,10 +65,10 @@ async def send_long_message(channel, text: str) -> None:
         await channel.send(chunk)
 
 
-async def read_attachment_text(attachment) -> Tuple[Optional[str], Optional[str]]:
+async def read_attachment_text(attachment: discord.Attachment) -> Tuple[Optional[str], Optional[str]]:
     """
     첨부파일에서 텍스트를 읽어옵니다.
-    
+
     Returns:
         Tuple[Optional[str], Optional[str]]: (텍스트 내용, 에러 메시지)
     """
