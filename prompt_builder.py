@@ -532,6 +532,8 @@ This tone affects style, not physics or causality.
             persona.WORLD_AXIOM,
             persona.PERCEPTION_CONSTRAINTS,
             persona.ANTI_DIDACTIC_PRINCIPLES,
+            persona.SENSORY_AND_ANTI_CLICHE_LAYER,
+            persona.FLOW_CONTROL_LAYER,
             persona.TELESCOPE_PROTOCOL,
             persona.AI_MORAL_BIAS_PROHIBITION,
 
