@@ -194,7 +194,7 @@ def create_risu_style_session(
     system_prompt = builder.build_system_prompt()
     
     # 초기화 메시지
-    init_context = f\"\"\"
+    init_context = f"""
 {system_prompt}
 
 <Initialization>
@@ -203,7 +203,7 @@ Observing Macroscopic States.
 The world is asynchronous—it does not wait.
 Recording in Korean.
 </Initialization>
-\"\"\"
+"""
     
     initial_history = [
         types.Content(
@@ -254,7 +254,7 @@ async def generate_response_with_retry(
     length_instruction = build_length_instruction()
     
     hidden_reminder = (
-        f"\\n\\n{length_instruction}\\n"
+        f"\n\n{length_instruction}\n"
         f"(System Reminder: Record observable Macroscopic States only. "
         f"The world continues asynchronously.)"
     )
@@ -334,10 +334,10 @@ async def generate_response_with_retry(
                     
                     if attempt < config.MAX_RETRY_COUNT - 1:
                         full_input = (
-                            f"{user_input}\\n\\n"
+                            f"{user_input}\n\n"
                             f"⚠️ **[LENGTH WARNING]** Previous response was {response_length} chars. "
                             f"MUST write at least {min_length} chars. "
-                            f"Add more sensory details, NPC reactions, and environmental descriptions.\\n"
+                            f"Add more sensory details, NPC reactions, and environmental descriptions.\n"
                             f"{hidden_reminder}"
                         )
             else:
