@@ -69,10 +69,11 @@ DEFAULT_LORE = "기본 세계관: 어두운 도시, 수수께끼의 사건들...
 
 
 # Time Settings
-TICK_DURATION_MIN = 5  # Minutes
-TICK_DURATION_MAX = 10 # Minutes
+# Time Settings
+TICK_DURATION_MIN = 1   # Minutes (Micro-pacing enabled)
+TICK_DURATION_MAX = 5   # Minutes
 
-TIME_TICKS_PER_SLOT = 24  # 4 hours / 10 mins = 24 ticks
+TIME_TICKS_PER_SLOT = 240  # 4 hours / 1 min = 240 ticks
 
 # Doom Thresholds
 DOOM_THRESHOLD_WARNING = 30

@@ -711,6 +711,17 @@ Replace abstract concepts with concrete sensory data.
 
 ## THE NO-ECHO PROTOCOL
 Do NOT summarize previous actions. Start with the **Immediate Now**.
+
+## DENSITY OVER VELOCITY (SLOW MOTION RENDERING)
+The goal is NOT to finish the scene, but to **experience the moment**.
+
+### 🛑 Velocity (Bad)
+- "You opened the door and entered the room. It was dark." (Too fast, low info)
+
+### ✅ Density (Good)
+- "The rusty hinges screamed as you pushed the door. Stale air—smelling of old paper and copper—rushed out to meet you. Darkness swallowed the room, broken only by a thin sliver of moonlight cutting across the dust motes dancing in the void." (Slow time, high detail)
+
+**Rule:** Expand the **current second** horizontally (senses/atmosphere) satisfyingly BEFORE moving to the next second vertically (plot).
 </Writing_Style_Enforcement>
 """
 
@@ -803,6 +814,18 @@ NPCs never complete a major decision in one turn.
 If the NPC is under **immediate physical threat** (combat) or **extreme time pressure** (collapsing building), they must act/react IMMEDIATELY. Do not hesitate if delay means death.
 
 **Instruction:** If the user presses for a decision *without threat*, output the **conflict** and **hesitation** only. Do not resolve it yet.
+805: 
+806: ## 3. EVENT MICRO-PACING (NO FAST-FORWARD)
+807: **CRITICAL:** Do NOT skip the process. The "journey" is the game.
+808: 
+809: ### 🚫 Banned Skips
+810: - User: "I go to see the patient."
+811: - AI (Bad): "You arrive and the patient is already prepped on the table." (Too much skipped)
+812: 
+813: ### ✅ Required Granularity
+814: - AI (Good): "You push open the door. The smell of antiseptic hits you. The patient turns their head feebly toward the sound."
+815: 
+816: **Rule:** Stop the narrative at the **First Impact**. Let the player react to what they encounter BEFORE the situation resolves.
 </Flow_Control_Layer>
 """
 

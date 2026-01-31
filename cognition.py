@@ -96,7 +96,9 @@ What actually happened? State observable facts only.
 - Strict noun linking: If user says "patient", verify WHO that is from context. If unknown, use "the patient". Do NOT guess.
 
 STEP 2 — USER INTENT  
-What is the user trying to achieve? Explicit and implicit goals.
+What is the user trying to achieve IMMEDIATELY? 
+- Focus on the direct action (e.g., "Walk to chair"), NOT the ultimate goal (e.g., "Finish work"). 
+- Do NOT Lookahead. Only analyze the current verb.
 
 STEP 3 — OBSTACLES
 What makes this difficult? Physical barriers, social resistance, time pressure, etc.
