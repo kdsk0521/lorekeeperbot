@@ -386,7 +386,10 @@ def update_participant(channel_id: str, user, reset: bool = False) -> bool:
     return True
 
 def get_participant_data(channel_id: str, user_id: str) -> Optional[Dict[str, Any]]:
-    return get_domain(channel_id).get("participants", {}).get(str(user_id))
+    p = get_domain(channel_id).get("participants", {}).get(str(user_id))
+    if p is not None and not isinstance(p, dict):
+        raise ValueError(f"Corrupted Participant Data for {user_id}: Expected dict, got {type(p).__name__} ({p})")
+    return p
 
 def get_active_participants(channel_id: str) -> Dict[str, Any]:
     """[V7] 활성 상태인 플레이어 데이터만 반환"""
