@@ -741,7 +741,9 @@ def apply_abnormal_impact(user_data: Dict[str, Any], tag: str, intensity: str = 
 
 # Legacy Wrappers (Shim Layer)
 def check_adaptation_roll(user_data, tag, category=None, difficulty=30):
-    return apply_abnormal_impact(user_data, tag)
+    # [Fix] shim must return (p_data, msg_str) to match game_system.py
+    msg, _ = apply_abnormal_impact(user_data, tag)
+    return user_data, msg
 
 def get_abnormal_context(user_data: Dict[str, Any]) -> str:
     """
