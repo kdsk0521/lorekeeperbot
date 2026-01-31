@@ -145,7 +145,7 @@ REQUIRED (existing):
 - UserIntent: What user wants to achieve
 - StateString: ![Name]@[...] format
 - RelevantContext: Array of 3-5 relevant quotes
-- TimeFlow: {{"duration": "...", "ticks": N}}
+- TimeFlow: {{"duration": "...", "ticks": N}} (For 'intimate' or 'combat' scenes, set ticks: 0 unless explicit time skip occurs)
 - NPCAttitudes: {{"Name": {{"attitude": "...", "reason_for_change": "..."}}}}
 
 OPTIONAL (new):

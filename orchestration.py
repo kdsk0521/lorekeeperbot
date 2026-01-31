@@ -258,14 +258,14 @@ class OrchestrationService:
 
         # 시간 흐름 처리
         time_flow = ctx.nvc_result.get("TimeFlow", {})
-        time_msg = await self._process_time_flow(channel_id, time_flow)
+        time_msg = await self._process_time_flow(channel_id, time_flow, ctx.scene_type)
         if time_msg:
             messages.append(time_msg)
             ctx.world_ctx = game_system.get_world_context(channel_id)
 
         return ctx, messages
 
-    async def _process_time_flow(self, channel_id: str, time_flow: Dict) -> Optional[str]:
+    async def _process_time_flow(self, channel_id: str, time_flow: Dict, scene_type: str = "normal") -> Optional[str]:
         """시간 흐름을 처리합니다."""
         if not time_flow:
             return None
@@ -278,6 +278,13 @@ class OrchestrationService:
 
         if duration == "explicit" and explicit_hours:
             ticks = int(explicit_hours * 5)
+            
+        # [Anti-Gravity Fix] Premature Turn Prevention for Intimate/Combat Scenes
+        # 성인/전투 장면에서는 명시적인 시간 경과("explicit")가 아닌 한, 자동 시간 진행을 막는다.
+        if scene_type in ["intimate", "combat"] and duration != "explicit":
+            if ticks > 0:
+                logger.info(f"[{scene_type}] Suppressing time flow ({ticks} ticks) to prevent premature turn advancement.")
+                ticks = 0
 
         if ticks <= 0:
             return None
