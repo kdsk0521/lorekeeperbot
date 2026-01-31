@@ -239,6 +239,10 @@ def get_lore_npcs(channel_id: str) -> Dict[str, Dict[str, Any]]:
     """로어 NPC만 조회"""
     return get_npcs_by_source(channel_id, SOURCE_LORE)
 
+def get_lore_npc_names(channel_id: str) -> List[str]:
+    """로어 NPC 이름 목록 반환 (Background Extraction용)"""
+    return list(get_lore_npcs(channel_id).keys())
+
 
 def get_session_npcs(channel_id: str) -> Dict[str, Dict[str, Any]]:
     """세션 중 생성된 NPC (manual + ai_generated)"""
