@@ -228,10 +228,10 @@ class PromptBuilder:
         self.sections = {}
 
     def set_lore(self, lore_text: str, rule_text: str = "") -> 'PromptBuilder':
-        """[3] 로어북 설정"""
+        """[3] 로어북 설정 (RAG Support: Can accept Filtered Context)"""
         self.sections['lore'] = f"""
 <Lore>
-### 세계관 (World Setting)
+### 세계관/설정 (World Setting / Context)
 {lore_text}
 
 ### 규칙 (Rules)

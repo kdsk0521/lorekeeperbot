@@ -102,11 +102,15 @@ What makes this difficult? Physical barriers, social resistance, time pressure, 
 STEP 4 — RESOURCES
 What helps? Items, skills, allies, environmental advantages, information.
 
-STEP 5 — CONTEXT SELECTION
-From Lore/Rules/Notebook, find 3-5 specific quotes that are relevant.
-- If user mentions an item → find its exact description
-- If user interacts with NPC → find their traits/status
-- If location matters → find location rules/dangers
+STEP 5 — CONTEXT SELECTION (CRITICAL)
+From Lore/Rules/Notebook, find 5-10 specific quotes that are relevant.
+- **Quantity**: Extract 5-10 items to cover complex interactions.
+- **Focus**:
+  - If user mentions an item → find its exact description.
+  - If user interacts with NPC → find their traits/status.
+  - If location matters → find location rules/dangers.
+  - **Rules**: Find specific DC checks or System Rules relevant to the action.
+
 </analysis_process>
 
 <position_effect_analysis>

@@ -58,7 +58,27 @@ def build_prompt(
     builder.set_genres(ctx.active_genres)
     builder.set_custom_tone(ctx.custom_tone)
     builder.set_scene_type(ctx.scene_type)
-    builder.set_lore(ctx.lore_txt, ctx.rule_txt)
+    # [Context Diet / RAG Implementation]
+    # Use Flash-extracted context instead of full lore if available
+    relevant_context = ctx.nvc_result.get("RelevantContext", [])
+    
+    # Validation: Ensure it's a list and has content
+    if isinstance(relevant_context, list) and relevant_context:
+        logger.info(f"[Context Diet] Using {len(relevant_context)} extracted items. Full Lore bypassed.")
+        
+        # Build optimized lore block
+        filtered_lore = (
+            "### [RAG: FILTERED CONTEXT] (Full Lore Hidden for Efficiency)\n"
+            "The following rules/lore are extracted as MOST RELEVANT for this turn:\n"
+            + "\n".join([f"- {item}" for item in relevant_context])
+            + "\n\n(Use this context faithfully. If information is missing, rely on General Logic.)"
+        )
+        # Pass filtered lore instead of full lore
+        builder.set_lore(filtered_lore, ctx.rule_txt)
+    else:
+        # Fallback: Use full lore if extraction failed or is empty
+        logger.warning("[Context Diet] No relevant context extracted. Falling back to Full Lore.")
+        builder.set_lore(ctx.lore_txt, ctx.rule_txt)
     builder.set_player_info(p_name, p_desc)
     builder.set_roles(character_descriptions="")
     builder.set_fermented(ctx.fermented_summary_text, ctx.domain_data.get("deep_memory", ""))
