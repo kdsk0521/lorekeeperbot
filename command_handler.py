@@ -91,7 +91,7 @@ async def handle_lore_command(message, channel_id: str, arg: str, client_genai=N
                 file_text = text
                 break
         if not file_text and not arg:
-             await message.channel.send(f"⚠️ 확장자 오류. 지원: {', '.join(config.SUPPORTED_TEXT_EXTENSIONS)}")
+             await send_long_message(message.channel, f"⚠️ 확장자 오류. 지원: {', '.join(config.SUPPORTED_TEXT_EXTENSIONS)}")
              return
 
     full = (arg + "\n" + file_text).strip()
@@ -874,7 +874,7 @@ async def dispatch_command(cmd, message, channel_id, parsed, client_discord, cli
         if content:
             await message.channel.send(msg, file=discord.File(io.StringIO(content), filename=fname))
         else:
-            await message.channel.send(msg)
+            await send_long_message(message.channel, msg)
         return None
 
     if cmd in ['clear', '클리어', '청소']:
@@ -910,24 +910,24 @@ async def dispatch_command(cmd, message, channel_id, parsed, client_discord, cli
         pc = domain_manager.get_default_pc_info(channel_id)
         if pc and (target in pc.get("name", "") or pc.get("name", "") in target):
              if domain_manager.apply_pc_info_to_user(channel_id, message.author.id):
-                 await message.channel.send(f"🎭 가면: {target} (PC 정보 적용됨)")
+                 await send_long_message(message.channel, f"🎭 가면: {target} (PC 정보 적용됨)")
                  return None
                  
-        await message.channel.send(f"🎭 가면: {target}")
+        await send_long_message(message.channel, f"🎭 가면: {target}")
         return None
 
     if cmd == 'r' or cmd == 'dice' or cmd == '주사위' or cmd == '판정': 
         # Advanced roll with modifiers
         action_desc = parsed['content'] if parsed else ""
         result_msg = game_system.perform_check(channel_id, str(message.author.id), action_desc)
-        await message.channel.send(result_msg)
+        await send_long_message(message.channel, result_msg)
         
         # Log to history and trigger AI narrative
         domain_manager.append_history(channel_id, "System", result_msg)
         return f"[System: Dice Roll Result - {action_desc if action_desc else 'Standard Check'}] {result_msg}"
         
     if cmd == 'doom':
-        await message.channel.send(game_system.get_doom_forecast(channel_id))
+        await send_long_message(message.channel, game_system.get_doom_forecast(channel_id))
         return None
 
     # Quest/Notebook Command
@@ -942,16 +942,16 @@ async def dispatch_command(cmd, message, channel_id, parsed, client_discord, cli
         content = arg[len(subCmd):].strip()
         
         if subCmd in ['remove', 'delete', '삭제', '제거', '취소']:
-            if not content: await message.channel.send("⚠️ 삭제할 퀘스트 내용을 입력하세요.")
-            else: await message.channel.send(game_system.remove_quest(channel_id, content))
+            if not content: await send_long_message(message.channel, "⚠️ 삭제할 퀘스트 내용을 입력하세요.")
+            else: await send_long_message(message.channel, game_system.remove_quest(channel_id, content))
             
         elif subCmd in ['complete', 'finish', 'done', '완료', '달성']:
-            if not content: await message.channel.send("⚠️ 완료한 퀘스트 내용을 입력하세요.")
-            else: await message.channel.send(game_system.complete_quest(channel_id, content))
+            if not content: await send_long_message(message.channel, "⚠️ 완료한 퀘스트 내용을 입력하세요.")
+            else: await send_long_message(message.channel, game_system.complete_quest(channel_id, content))
             
         else:
             # Default: Add
-            await message.channel.send(game_system.add_quest(channel_id, arg))
+            await send_long_message(message.channel, game_system.add_quest(channel_id, arg))
         return None
 
     # Notebook Command (Unified Inventory/Memos)
@@ -1031,7 +1031,7 @@ async def dispatch_command(cmd, message, channel_id, parsed, client_discord, cli
         args = parsed['content'].split() if parsed['content'] else []
         if not args:
             # Query
-            await message.channel.send(game_world.get_doom_forecast(channel_id))
+            await send_long_message(message.channel, game_world.get_doom_forecast(channel_id))
         else:
             # Set/Mod
             # !doom set 50
@@ -1050,7 +1050,7 @@ async def dispatch_command(cmd, message, channel_id, parsed, client_discord, cli
                     old_v = w.get("doom", 0)
                     w["doom"] = max(0, min(100, val))
                     domain_manager.update_world_state(channel_id, w)
-                    await message.channel.send(f"🛡️ **위기 수치 재설정:** {old_v}% → {val}%")
+                    await send_long_message(message.channel, f"🛡️ **위기 수치 재설정:** {old_v}% → {val}%")
                 except ValueError: return "⚠️ 올바른 숫자가 아닙니다."
             else:
                 # Assuming operator-like syntax within arg check, but usually users type "!doom 10" or "!doom -10"
@@ -1058,7 +1058,7 @@ async def dispatch_command(cmd, message, channel_id, parsed, client_discord, cli
                 try:
                     val = int(op)
                     res = game_world.change_doom(channel_id, val)
-                    await message.channel.send(res)
+                    await send_long_message(message.channel, res)
                 except (ValueError, TypeError):
                     return "⚠️ 사용법: `!doom 10` (증가/감소), `!doom set 50` (설정)"
         return None
@@ -1136,7 +1136,7 @@ async def dispatch_command(cmd, message, channel_id, parsed, client_discord, cli
         # Execute
         if subcmd == "check":
             ms = game_character.get_mental_status_text(p_data)
-            await message.channel.send(f"🧠 **{target_name}님의 멘탈:** {ms}")
+            await send_long_message(message.channel, f"🧠 **{target_name}님의 멘탈:** {ms}")
             
         elif subcmd == "set":
             if val_arg is None: return "⚠️ 설정할 단계(0-3)나 상태명(평정 등)을 입력하세요."
@@ -1149,7 +1149,7 @@ async def dispatch_command(cmd, message, channel_id, parsed, client_discord, cli
             domain_manager.save_participant_data(channel_id, target_uid, p_data)
             
             ms = game_character.get_mental_status_text(p_data)
-            await message.channel.send(f"🧠 **{target_name}** 멘탈 조정 완료: {ms}")
+            await send_long_message(message.channel, f"🧠 **{target_name}** 멘탈 조정 완료: {ms}")
             
         return None
 
@@ -1184,12 +1184,12 @@ async def handle_title_command(message, channel_id: str, arg: str) -> None:
     # Ex: !칭호 리라 제거 용사냥꾼
     
     if not arg:
-        await message.channel.send("⚠️ 사용법: `!칭호 [캐릭터] [추가/제거] [칭호명]`")
+        await send_long_message(message.channel, "⚠️ 사용법: `!칭호 [캐릭터] [추가/제거] [칭호명]`")
         return
 
     parts = arg.split(None, 2)
     if len(parts) < 3:
-        await message.channel.send("⚠️ 인자가 부족합니다. (예: `!칭호 리라 추가 용사냥꾼`)")
+        await send_long_message(message.channel, "⚠️ 인자가 부족합니다. (예: `!칭호 리라 추가 용사냥꾼`)")
         return
 
     target_name = parts[0]
@@ -1208,7 +1208,7 @@ async def handle_title_command(message, channel_id: str, arg: str) -> None:
             break
             
     if not target_p:
-        await message.channel.send(f"⚠️ 캐릭터 '{target_name}'를 찾을 수 없습니다.")
+        await send_long_message(message.channel, f"⚠️ 캐릭터 '{target_name}'를 찾을 수 없습니다.")
         return
 
     # 2. Add/Remove Title (as Passive)
@@ -1227,7 +1227,7 @@ async def handle_title_command(message, channel_id: str, arg: str) -> None:
                 break
         
         if exists:
-            await message.channel.send(f"⚠️ '{title_name}' 칭호(특성)를 이미 보유하고 있습니다.")
+            await send_long_message(message.channel, f"⚠️ '{title_name}' 칭호(특성)를 이미 보유하고 있습니다.")
             return
             
         # Add new Title Passive
@@ -1240,7 +1240,7 @@ async def handle_title_command(message, channel_id: str, arg: str) -> None:
         }
         current_passives.append(new_passive)
         domain_manager.save_participant_data(channel_id, target_uid, target_p)
-        await message.channel.send(f"🏆 **칭호 수여:** [{title_name}] -> {target_name}")
+        await send_long_message(message.channel, f"🏆 **칭호 수여:** [{title_name}] -> {target_name}")
 
     elif action in ['제거', 'remove', 'del']:
         # Find and remove
@@ -1255,9 +1255,9 @@ async def handle_title_command(message, channel_id: str, arg: str) -> None:
             removed = current_passives.pop(found_idx)
             domain_manager.save_participant_data(channel_id, target_uid, target_p)
             r_name = removed.get("name") if isinstance(removed, dict) else str(removed)
-            await message.channel.send(f"🗑️ **칭호 박탈:** [{r_name}] <- {target_name}")
+            await send_long_message(message.channel, f"🗑️ **칭호 박탈:** [{r_name}] <- {target_name}")
         else:
-            await message.channel.send(f"⚠️ '{title_name}' 칭호를 보유하고 있지 않습니다.")
+            await send_long_message(message.channel, f"⚠️ '{title_name}' 칭호를 보유하고 있지 않습니다.")
             
     else:
-         await message.channel.send("⚠️ 알 수 없는 동작입니다. (`추가`, `제거` 중 선택)")
+         await send_long_message(message.channel, "⚠️ 알 수 없는 동작입니다. (`추가`, `제거` 중 선택)")
