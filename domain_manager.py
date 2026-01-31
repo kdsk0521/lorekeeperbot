@@ -138,7 +138,7 @@ def reset_domain(channel_id: str) -> None:
         if os.path.exists(p):
             try:
                 os.remove(p)
-            except Exception as e:
+            except (OSError, PermissionError) as e:
                 logging.warning(f"Failed to delete {p}: {e}")
 
     # 모든 캐시 무효화

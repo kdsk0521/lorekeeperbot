@@ -4,6 +4,7 @@ Consolidates all constants and configuration settings.
 """
 
 import os
+from typing import Dict, Any, Union
 from dotenv import load_dotenv
 from google.genai import types
 
@@ -269,14 +270,16 @@ NORMALITY_STAGES = {
     (90, 101): {"stage": 4, "name": "일상화", "reaction_hint": "Indifference, Mastery"},
 }
 
-def get_normality_stage_info(val):
+def get_normality_stage_info(val: Union[int, str, float]) -> Dict[str, Any]:
+    """정상화 단계 정보를 반환합니다."""
     try:
         val = int(val)
     except (ValueError, TypeError):
         val = 0
-        
-    for (l, h), info in NORMALITY_STAGES.items():
-        if l <= val < h: return info
+
+    for (low, high), info in NORMALITY_STAGES.items():
+        if low <= val < high:
+            return info
     return NORMALITY_STAGES[(90, 101)]
 
 # =========================================================

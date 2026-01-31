@@ -40,8 +40,9 @@ def _save_board(channel_id: str, board: Dict[str, Any]) -> None:
     domain_manager.update_quest_board(channel_id, board)
 
 # Generic List Ops
-def _list_op(cid, key, content, emoji, name):
-    if not content: return None
+def _list_op(cid: str, key: str, content: str, emoji: str, name: str) -> Optional[str]:
+    if not content:
+        return None
     board = _get_board(cid)
     lst = board.get(key, [])
     if content not in lst:
@@ -51,11 +52,12 @@ def _list_op(cid, key, content, emoji, name):
         return f"{emoji} **{name} 등록:** {content}"
     return f"⚠️ 이미 등록된 {name}입니다."
 
-def _del_op(cid, key, content, emoji, name):
-    if not content: return None
+def _del_op(cid: str, key: str, content: str, emoji: str, name: str) -> Optional[str]:
+    if not content:
+        return None
     board = _get_board(cid)
     lst = board.get(key, [])
-    target = next((i for i in lst if content in i), None) # Partial Match
+    target = next((i for i in lst if content in i), None)  # Partial Match
     if target:
         lst.remove(target)
         board[key] = lst
@@ -63,8 +65,9 @@ def _del_op(cid, key, content, emoji, name):
         return f"{emoji} **{name} 제거:** {target}"
     return f"⚠️ 해당 {name}를 찾을 수 없습니다."
 
-def _move_op(cid, src, dst, content, emoji, name, action):
-    if not content: return None
+def _move_op(cid: str, src: str, dst: str, content: str, emoji: str, name: str, action: str) -> Optional[str]:
+    if not content:
+        return None
     board = _get_board(cid)
     s_lst = board.get(src, [])
     d_lst = board.get(dst, [])
