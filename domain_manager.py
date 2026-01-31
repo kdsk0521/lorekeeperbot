@@ -378,6 +378,10 @@ def _create_default_participant(display_name: str) -> Dict[str, Any]:
         "ai_memory": {
             "appearance": "", "personality": "", "background": "", "relationships": {},
             "passives": [], "normalization": {}, "notes": "", "archived_info": [],
+            # [V7] Core Systems
+            "mental": {"value": 100, "last_delta": 0}, # 0-100 Scale
+            "abnormal_exposure": {}, # {Tag: {count: N, level: N}}
+            
             # [Phase 2] Mnemosyne: PsychProfile
             "psych_profile": {
                 "needs": {"survival": 50, "safety": 50, "love": 50, "esteem": 50, "self_actualization": 50},
@@ -404,6 +408,15 @@ def update_participant(channel_id: str, user, reset: bool = False) -> bool:
 
 def get_participant_data(channel_id: str, user_id: str) -> Optional[Dict[str, Any]]:
     return get_domain(channel_id).get("participants", {}).get(str(user_id))
+
+def get_active_participants(channel_id: str) -> Dict[str, Any]:
+    """[V7] 활성 상태인 플레이어 데이터만 반환"""
+    d = get_domain(channel_id)
+    active = {}
+    for uid, p in d.get("participants", {}).items():
+        if p.get("status") == "active":
+            active[uid] = p
+    return active
 
 def get_participant_status(channel_id: str, uid: str) -> str:
     p = get_participant_data(channel_id, uid)
@@ -649,6 +662,24 @@ def get_unified_player_info(channel_id: str, user_id: str) -> str:
                 
         if titles: res += f"**🏆 칭호:** {', '.join(titles)}\n"
         if real_passives: res += f"**✨ 패시브:** {', '.join(real_passives)}\n"
+    
+    # [V7] Adaptation Stats
+    abnormal = mem.get("abnormal_exposure", {})
+    if abnormal:
+        res += "\n**🦠 비일상 적응도:**\n"
+        items = []
+        for tag, data in abnormal.items():
+            # Calculate % on the fly or store it
+            # Using data shown: {tag: {count: N}}
+            count = data.get("count", 0)
+            # Simple log calc for display (duplicated logic, but safe for pure display)
+            # Better to rely on stored 'level' if available, or just show raw count for now?
+            # Plan said: 20% (Lv.1)
+            # Let's show Count for now if % logic is in game_character.
+            items.append(f"• [{tag}]: {count}회 노출")
+        res += ", ".join(items) + "\n"
+
+    return res
     
     return res
 

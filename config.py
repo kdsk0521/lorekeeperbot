@@ -102,6 +102,36 @@ DOOM_DICE_MODIFIER_STEP = 5
 FRESH_THRESHOLD = 70  # Increased from 50 (V2 Restoration)
 
 # =========================================================
+# V7 Core Systems: Mental, Doom, Abnormal
+# =========================================================
+ABNORMAL_MIN_PROB = 10
+ABNORMAL_DOOM_COEFF = 0.5  # Prob = max(MIN, Doom * 0.5)
+
+# Mental Stages (0-100)
+# Key: Stage ID (0-3)
+MENTAL_STAGES = {
+    0: {"name": "평정", "emoji": "😌", "range": (70, 101), "desc": "안정적인 상태"},
+    1: {"name": "동요", "emoji": "😰", "range": (40, 70),  "desc": "불안감이 엄습합니다"},
+    2: {"name": "공황", "emoji": "😱", "range": (15, 40),  "desc": "이성적인 판단이 어렵습니다. (지능/관찰 -20)"},
+    3: {"name": "붕괴", "emoji": "🫥", "range": (0, 15),   "desc": "정신이 무너져내렸습니다. (영구 트라우마 위험)"}
+}
+
+# Doom Stages (0-5)
+DOOM_STAGES = {
+    0: {"name": "평온", "emoji": "🟢", "range": (0, 20)},
+    1: {"name": "불안", "emoji": "🟡", "range": (20, 40)},
+    2: {"name": "경계", "emoji": "🟠", "range": (40, 60)},
+    3: {"name": "위험", "emoji": "🔴", "range": (60, 80)},
+    4: {"name": "임계", "emoji": "⚫", "range": (80, 100)},
+    5: {"name": "파멸", "emoji": "💀", "range": (100, 101)}
+}
+
+# Doom Stage (0-5) -> Mental Recovery Multiplier
+DOOM_MENTAL_RECOVERY_MOD = {
+    0: 1.0, 1: 0.9, 2: 0.8, 3: 0.6, 4: 0.4, 5: 0.2
+}
+
+# =========================================================
 # Quest Manager Constants
 # =========================================================
 MAX_RETRY_COUNT = 3

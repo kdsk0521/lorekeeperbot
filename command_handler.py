@@ -246,8 +246,9 @@ async def handle_info_command(message, channel_id: str, sub_command: str = "") -
     if p_data:
         # Mental
         m_stage = p_data.get("mental_stage", 0)
-        m_info = game_character.MENTAL_STAGES.get(m_stage, {"name": "??", "emoji": "❓", "desc": ""})
-        res += f"\n**🧠 멘탈:** {m_info['emoji']} {m_info['name']} (Lv.{m_stage})\n"
+        m_info = game_character.get_mental_info(p_data.get("ai_memory", {}).get("mental", {}).get("value", 100))
+        # V7: Hide Level/Value. Show Name + Emoji
+        res += f"\n**🧠 멘탈:** {m_info['emoji']} **{m_info['name']}**\n"
         
         # Adaptation
         exposure = p_data.get("abnormal_exposure", {})
@@ -793,12 +794,45 @@ async def handle_ooc_command(message, channel_id, ooc_content, client_genai, mod
             return None # RP 생성 중단 (필요시 반환값으로 조절)
             
         else:
-             await message.channel.send("⚠️ OOC 수정 사항을 인식하지 못했습니다.")
+            await message.channel.send("⚠️ OOC 수정 사항을 인식하지 못했습니다.")
              return None
     
     elif ooc_type == "narrative_request":
         # 서사 지시는 프롬프트에 주입하기 위해 반환
-        return f"[OOC Directive: {ooc_content}]"
+        return "[OOC Directive: {ooc_content}]"
+
+async def handle_mental_command(message, channel_id: str, arg: str) -> None:
+    """!멘탈 [조회]"""
+    uid = str(message.author.id)
+    p_data = domain_manager.get_participant_data(channel_id, uid)
+    
+    if not p_data:
+        await message.channel.send("❌ 등록 필요 (`!가면`)")
+        return
+        
+    mem = p_data.get("ai_memory", {})
+    ment = mem.get("mental", {"value": 100})
+    val = ment.get("value", 100)
+    
+    info = game_character.get_mental_info(val)
+    # Hint at next stage
+    desc = info['desc']
+    
+    await message.channel.send(f"🧠 **정신 상태:** {info['emoji']} **{info['name']}**\n> {desc}")
+
+async def handle_doom_command(message, channel_id: str, arg: str) -> None:
+    """!둠 [조회] or !긴장도"""
+    world = domain_manager.get_world_state(channel_id)
+    doom = world.get("doom", 0)
+    
+    info = game_world.get_doom_info(doom)
+    bar = game_world._get_doom_bar(doom)
+    
+    # Hide Number
+    msg = f"🛡️ **세계 긴장도**\n{bar} {info['emoji']} **{info['name']}**"
+    
+    # If admin/debug, maybe show number? No, strict adherence to V7 Plan.
+    await message.channel.send(msg)
     
     else:
         # 단순 잡담 (General)

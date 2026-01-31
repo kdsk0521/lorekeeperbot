@@ -599,6 +599,7 @@ async def extract_all_updates(
         "PassiveSuggestion": nar.get("passive_suggestion"),
         "AbnormalTrigger": nar.get("abnormal_trigger"),
         "AbnormalCategory": nar.get("abnormal_category"),
+        "MentalSuggestion": nar.get("mental_suggestion"), # [V7]
         
         "QuestUpdate": {
             "quest_add": qst.get("quest_add"), "quest_complete": qst.get("quest_complete")
@@ -644,7 +645,7 @@ async def _extract_social(client, model_id, p_in, ai_out, rels, comps, lore_npcs
 async def _extract_narrative(client, model_id, p_in, ai_out, passives, fermented, player_context=""):
     sys = (
         "EXTRACT NARRATIVE CHANGES.\n"
-        "Return JSON with keys: passives [list], passive_suggestion {name, reason}, abnormal_trigger (string or null), abnormal_category (string or null).\n"
+        "Return JSON with keys: passives [list], passive_suggestion {name, reason}, abnormal_trigger (string or null), abnormal_category (string or null), mental_suggestion (string or null).\n"
         "Rules: 'Passive' here means ANY PERMANENT CAPABILITY or TRAIT.\n"
         "Include:\n"
         "1. **Skills/Abilities**: Learned techniques (e.g. 'Fireball', 'Lockpicking', 'Swordsmanship').\n"
@@ -655,11 +656,12 @@ async def _extract_narrative(client, model_id, p_in, ai_out, passives, fermented
         "- Identify Genre Shifts or Monsters appearing. **MUST BE IN ENGLISH**.\n"
         "- **abnormal_trigger**: The specific name of the anomaly (e.g., 'The Crimson Slime').\n"
         "- **abnormal_category**: The general species or type for the adaptation system (e.g., 'Slime', 'Machine', 'Ghost', 'Silence').\n"
+        "- **mental_suggestion**: If the AI narration explicitly depicts the PC breaking down, panicking, or stabilizing, suggest a stage name (e.g. 'Panic', 'Calm'). Default null.\n"
         "- **CRITICAL**: CONSIDER THE CHARACTER'S BACKGROUND. Do NOT trigger for events that are routine for their profession.\n"
         "  - E.g., A Doctor seeing gore/wounds is NORMAL (No Trigger).\n"
         "  - E.g., A Soldier seeing battle is NORMAL (No Trigger).\n"
         "  - Only trigger if the event is truly shocking, supernatural, or fundamentally 'wrong' to THEM.\n"
-        'Example: {"passives": ["Fireball"], "passive_suggestion": null, "abnormal_trigger": "Zombie Dragon", "abnormal_category": "Zombie"}'
+        'Example: {"passives": ["Fireball"], "passive_suggestion": null, "abnormal_trigger": "Zombie Dragon", "abnormal_category": "Zombie", "mental_suggestion": "Panic"}'
     )
     ctx = f"Passives:{passives}, PlayerContext:{player_context}, FermentedSnippet:{fermented[:2000]}"
     usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON."
