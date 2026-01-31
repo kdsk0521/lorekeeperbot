@@ -240,6 +240,15 @@ async def process_judgment(
         reason = action_judgment.get("difficulty_reason", "")
         mods = action_judgment.get("modifiers", [])
 
+        # [V7 Feature] Mental Dice Modifier injection
+        if player_data:
+            mem = player_data.get("ai_memory", {})
+            ment_val = mem.get("mental", {}).get("value", 100)
+            ment_mod = game_character.get_mental_dice_modifier(ment_val)
+            
+            if ment_mod != 0:
+                mods.append({"name": "Mental State", "value": ment_mod, "reason": "Psychological Impact"})
+
         # 보너스 다이스 적용
         b_dice = player_data.get("temp_bonus_dice", 0) if player_data else 0
         judgment_data = cognition.build_action_judgment_with_roll(act, diff, reason, mods, bonus_dice=b_dice)
