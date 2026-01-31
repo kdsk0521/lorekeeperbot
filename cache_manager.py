@@ -11,7 +11,7 @@ Thread-safe 캐시 관리 시스템
 import threading
 import copy
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +168,7 @@ class CacheManager:
                 "rules_cache_size": len(self._rules_cache),
             }
 
-    def get_cached_channels(self) -> Dict[str, list]:
+    def get_cached_channels(self) -> Dict[str, List[str]]:
         """캐시된 채널 목록 조회."""
         with self._lock:
             return {

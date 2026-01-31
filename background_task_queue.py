@@ -131,7 +131,7 @@ class ChannelTaskQueue:
             start_time = time.time()
 
             # 코루틴 팩토리를 호출하여 실제 코루틴 생성 및 실행
-            result = await task.coroutine()
+            await task.coroutine()
 
             elapsed = time.time() - start_time
             logger.debug(f"[{task.channel_id}] Completed: {task.task_name} ({elapsed:.2f}s)")

@@ -13,7 +13,6 @@ import config
 import re
 from typing import Optional, Dict, Any, List, Tuple
 from google.genai import types
-import config
 
 logger = logging.getLogger(__name__)
 

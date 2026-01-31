@@ -148,8 +148,6 @@ def filter_pc_impersonation(response: str, pc_names: List[str]) -> Tuple[str, Li
         (필터링된 응답, 경고 메시지 목록)
     """
     warnings = []
-    filtered = response
-
     violations = detect_pc_impersonation(response, pc_names)
 
     if violations:
@@ -158,7 +156,7 @@ def filter_pc_impersonation(response: str, pc_names: List[str]) -> Tuple[str, Li
         for v in violations:
             warnings.append(f"⚠️ **PC 사칭 검출 [{v['type']}]:** `{v['matched']}...`")
 
-    return filtered, warnings
+    return response, warnings
 
 
 # =========================================================

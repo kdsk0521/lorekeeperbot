@@ -59,7 +59,7 @@ class CommandRegistry:
         self._descriptions: Dict[str, str] = {}
         self._categories: Dict[str, str] = {} # cmd_name -> category
 
-    def register(self, name: str, category: str = "General", aliases: List[str] = None, description: str = ""):
+    def register(self, name: str, category: str = "General", aliases: Optional[List[str]] = None, description: str = ""):
         """
         Decorator to register a command handler.
         

@@ -207,7 +207,6 @@ def calculate_doom_increase(channel_id: str, world: dict) -> Tuple[int, List[str
     if doom_increase > 0:
         total_adapt = 0
         p_count = 0
-        import game_character
         for uid, p in participants.items():
             if p.get("status") == "active":
                 exp_data = p.get("abnormal_exposure", {})

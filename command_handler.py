@@ -27,11 +27,6 @@ import npc_manager
 import session_manager
 import memory_system 
 from bot_utils import send_long_message, read_attachment_text, safe_delete_message
-import config  # SUPPORTED_TEXT_EXTENSIONS 등은 config에서 직접 사용
-from command_registry import CommandRegistry, CommandContext
-
-# Registry Instance
-registry = CommandRegistry()
 from command_registry import CommandRegistry, CommandContext
 
 # Registry Instance

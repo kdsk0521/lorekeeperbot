@@ -353,11 +353,11 @@ class OrchestrationService:
             
             # Abnormal Trigger logic
             if updates.get("AbnormalTrigger"):
-                 trigger = updates["AbnormalTrigger"]
-                 categ = updates.get("AbnormalCategory")
-                 # We could trigger something here, but usually adaptation check is done during Anomaly Event phase.
-                 # If this is narrative extraction detecting a NEW anomaly that wasn't an event, maybe just log it.
-                 logger.info(f"[Background] Narrative Anomaly Detected: {trigger} ({categ})")
+                trigger = updates["AbnormalTrigger"]
+                category = updates.get("AbnormalCategory")
+                # We could trigger something here, but usually adaptation check is done during Anomaly Event phase.
+                # If this is narrative extraction detecting a NEW anomaly that wasn't an event, maybe just log it.
+                logger.info(f"[Background] Narrative Anomaly Detected: {trigger} ({category})")
 
         except Exception as e:
             logger.error(f"Background Extraction Failed: {e}")
