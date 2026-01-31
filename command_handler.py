@@ -367,9 +367,6 @@ async def cmd_mask(ctx: CommandContext) -> None:
     await ctx.send(f"🎭 **{target}**(으)로 변신했습니다.{mapped_msg}")
 
 
-    await ctx.send(f"🎭 **{target}**(으)로 변신했습니다.{mapped_msg}")
-
-
 @registry.register("notebook", category="Player", aliases=["노트북", "note", "memo", "메모", "inven", "인벤"], description="노트북/인벤토리 관리")
 async def cmd_notebook(ctx: CommandContext) -> None:
     """!노트북 [추가/수정/삭제] [내용]"""
