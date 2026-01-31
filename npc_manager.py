@@ -242,6 +242,41 @@ def update_npc_attitude(channel_id: str, npc_name: str, attitude: str, reason: s
     """NPC의 PC에 대한 태도 업데이트"""
     domain_manager.update_npc_attitude(channel_id, npc_name, attitude, reason)
 
+def sync_attitude_with_helena(channel_id: str, npc_name: str) -> Optional[str]:
+    """
+    [Phase 2] Helena Metrics (Depth, Tension) to Attitude Sync.
+    Updates the text-based attitude and returns a message if changed.
+    """
+    att_info = get_npc_attitude(channel_id, npc_name)
+    if not att_info: return None
+    
+    depth = att_info.get("depth", 0)
+    tension = att_info.get("tension", 0)
+    current_att = att_info.get("attitude", "neutral")
+    
+    # Simple Threshold Logic (Can be refined)
+    new_att = "neutral"
+    
+    if tension >= 80: 
+        new_att = "hostile"
+    elif tension >= 50: 
+        new_att = "unfriendly"
+    elif depth >= 80 and tension < 30: 
+        new_att = "loyal"
+    elif depth >= 40 and tension < 40: 
+        new_att = "friendly"
+    else:
+        new_att = "neutral"
+    
+    if new_att != current_att:
+        # Update without changing reason drastically, just appending sync note?
+        # Or keep original reason but update tag?
+        # Let's append Sync note for clarity.
+        update_npc_attitude(channel_id, npc_name, new_att, att_info.get("reason", "") + " [Helena]")
+        return f"🎭 **{npc_name}의 태도 변화:** {current_att} → {new_att} (심도:{depth}, 긴장:{tension})"
+        
+    return None
+
 def get_npc_attitudes(channel_id: str) -> Dict[str, Dict]:
     """저장된 NPC 태도 조회"""
     return domain_manager.get_npc_attitudes(channel_id)

@@ -487,9 +487,28 @@ This tone affects style, not physics or causality.
                 self.sections['mature_content'] = mature_prompt
         return self
 
-    def set_cognition_data(self, nvc_summary: str = "") -> 'PromptBuilder':
-        """인지 엔진(Left Brain)의 분석 데이터 설정"""
-        self.sections['nvc_summary'] = nvc_summary
+    def set_cognition_data(self, nvc_summary: str = "", psych_profile: Optional[Dict[str, Any]] = None) -> 'PromptBuilder':
+        """인지 엔진(Left Brain)의 분석 데이터 및 심리 프로필 설정"""
+        content = nvc_summary
+        
+        if psych_profile:
+            needs = psych_profile.get("needs", {})
+            values = psych_profile.get("values", [])
+            instinct = psych_profile.get("instinct", "neutral")
+            
+            # Format Psych Profile
+            psych_text = f"\n### PSYCHOLOGICAL PROFILE (Real-time State)\n"
+            psych_text += f"- **Dominant Instinct**: {instinct.upper()}\n"
+            psych_text += f"- **Core Values**: {', '.join(values) if values else 'None'}\n"
+            psych_text += "- **Need State**:\n"
+            for k, v in needs.items():
+                # Simple visualizer for needs (-50 to +50)
+                state_desc = "Satisfied" if v > 20 else "Deprived (CRITICAL)" if v < -20 else "Stable"
+                psych_text += f"  - {k.capitalize()}: {v} ({state_desc})\n"
+            
+            content += psych_text
+
+        self.sections['nvc_summary'] = content
         return self
 
     def build_system_prompt(self) -> str:
@@ -510,8 +529,10 @@ This tone affects style, not physics or causality.
 
             # [2] The Axiom Of The World
             persona.WORLD_AXIOM,
+            persona.WORLD_AXIOM,
             persona.PERCEPTION_CONSTRAINTS,
             persona.ANTI_DIDACTIC_PRINCIPLES,
+            persona.TELESCOPE_PROTOCOL,
             persona.AI_MORAL_BIAS_PROHIBITION,
 
             # [2.5] PC Autonomy Doctrine

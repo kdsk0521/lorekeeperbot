@@ -105,7 +105,7 @@ class OrchestrationService:
         self.model_id_flash = model_id_flash
         self.nvc_filter_config = NVCFilterConfig()
         # [Phase 1 Upgrade] Initialize Skilled GM Brain
-        self.gm_cognition = cognition.GMCognition(client, model_id, model_id_flash)
+        self.gm_cognition = cognition.GMCognition(client_genai, model_id, model_id_flash)
 
     # =========================================================
     # STEP 1: CONTEXT GATHERING
@@ -543,7 +543,9 @@ class OrchestrationService:
             nvc_analysis=nvc_summary
         )
 
-        builder.set_cognition_data(nvc_summary)
+        # [Phase 2] Inject Psych Profile
+        psych_profile = ctx.player_data.get("ai_memory", {}).get("psych_profile") if ctx.player_data else None
+        builder.set_cognition_data(nvc_summary, psych_profile)
         pc_reminder = f"### CRITICAL WARNING: DO NOT WRITE FOR [{p_name}]\n{p_name} is the PLAYER. You must NOT generate their dialogue or actions."
         builder.set_user_message(material=ctx.action_text, ooc_content=pc_reminder)
 
@@ -672,9 +674,18 @@ class OrchestrationService:
 
         response = await persona.generate_response_with_retry(self.client, session, prompt)
 
-        # 정리
+        # 정리 (System Update & Telescope Logic Block)
         if response:
+            # 1. system_update 블록 제거 (기존)
             response = re.sub(r'```system_update[\s\S]*?```', '', response, flags=re.IGNORECASE).strip()
+            
+            # 2. [Telescope] Hidden Logic Block 추출 및 로깅
+            logic_match = re.search(r'(┣[\s\S]*?┫)', response)
+            if logic_match:
+                logic_content = logic_match.group(1)
+                logger.info(f"\n[🔭 TELESCOPE LOGIC LAYER]\n{logic_content}\n[-----------------------]")
+                # 사용자에게는 숨김 (제거)
+                response = response.replace(logic_content, "").strip()
 
         # PC 사칭 필터
         if response:
@@ -765,6 +776,34 @@ class OrchestrationService:
                 background_extraction_task,
                 priority=TaskPriority.NORMAL
             )
+
+        # Phase 3: Mnemosyne Fermentation (Low Priority)
+        # Check if we should even schedule it to reduce queue noise?
+        # auto_ferment is cheap to check (len check), but requires loading domain.
+        # Just schedule it; the queue worker handles it asynchronously.
+        async def background_fermentation_task():
+            try:
+                # Reload latest state to avoid race conditions
+                fresh_data = domain_manager.get_domain(channel_id)
+                
+                # Pass a save callback that persists changes
+                def save_cb():
+                    domain_manager.save_domain(channel_id, fresh_data)
+
+                await fermentation.auto_ferment(
+                    self.client, self.model_id, 
+                    fresh_data, 
+                    save_callback=save_cb
+                )
+            except Exception as e:
+                logger.error(f"[Orchestrator] Fermentation task error: {e}")
+
+        await enqueue_background_task(
+            channel_id,
+            "MemoryFermentation",
+            background_fermentation_task,
+            priority=TaskPriority.LOW
+        )
 
     async def _execute_background_extraction(
         self,

@@ -263,6 +263,8 @@ def update_npc_attitude(channel_id: str, npc_name: str, attitude: str, reason: s
     d["npc_attitudes"][npc_name] = {
         "attitude": attitude,
         "reason": reason,
+        "depth": 0,    # [Phase 2] Helena Depth (0-100)
+        "tension": 0,  # [Phase 2] Helena Tension (0-100)
         "last_updated": time.strftime('%Y-%m-%d %H:%M')
     }
     save_domain(channel_id, d)
@@ -375,7 +377,13 @@ def _create_default_participant(display_name: str) -> Dict[str, Any]:
         "status_effects": [],
         "ai_memory": {
             "appearance": "", "personality": "", "background": "", "relationships": {},
-            "passives": [], "normalization": {}, "notes": "", "archived_info": []
+            "passives": [], "normalization": {}, "notes": "", "archived_info": [],
+            # [Phase 2] Mnemosyne: PsychProfile
+            "psych_profile": {
+                "needs": {"survival": 50, "safety": 50, "love": 50, "esteem": 50, "self_actualization": 50},
+                "values": ["security", "conformity"], # Default safe values
+                "instinct": "neutral"
+            }
         }
     }
 
@@ -547,6 +555,52 @@ def add_to_ai_memory_list(channel_id: str, uid: str, key: str, item: str) -> Non
         
     p["ai_memory"] = mem
     save_participant_data(channel_id, uid, p)
+
+# [Phase 2] PsychProfile Accessors
+def get_psych_profile(channel_id: str, uid: str) -> Dict[str, Any]:
+    p = get_participant_data(channel_id, uid)
+    if not p: return {}
+    return p.get("ai_memory", {}).get("psych_profile", {})
+
+def update_psych_profile(channel_id: str, uid: str, profile_updates: Dict[str, Any]) -> None:
+    p = get_participant_data(channel_id, uid)
+    if not p: return
+    
+    if "psych_profile" not in p["ai_memory"]:
+        p["ai_memory"]["psych_profile"] = {
+             "needs": {"survival": 50, "safety": 50, "love": 50, "esteem": 50, "self_actualization": 50},
+             "values": ["security"], "instinct": "neutral"
+        }
+    
+    current = p["ai_memory"]["psych_profile"]
+    
+    # Deep merge for 'needs'
+    if "needs" in profile_updates:
+        current["needs"].update(profile_updates["needs"])
+        del profile_updates["needs"]
+        
+    current.update(profile_updates)
+    p["ai_memory"]["psych_profile"] = current
+    save_participant_data(channel_id, uid, p)
+
+def update_helena_metric(channel_id: str, npc_name: str, depth_delta: int = 0, tension_delta: int = 0) -> None:
+    """[Phase 2] Update Helena metrics (Depth/Tension) for an NPC relation"""
+    d = get_domain(channel_id)
+    if "npc_attitudes" not in d: d["npc_attitudes"] = {}
+    if npc_name not in d["npc_attitudes"]: return # Must exist first
+    
+    target = d["npc_attitudes"][npc_name]
+    
+    # Initialize if missing (Migration support)
+    if "depth" not in target: target["depth"] = 0
+    if "tension" not in target: target["tension"] = 0
+    
+    # Update and Clamp (0-100)
+    target["depth"] = max(0, min(100, target["depth"] + depth_delta))
+    target["tension"] = max(0, min(100, target["tension"] + tension_delta))
+    target["last_updated"] = time.strftime('%Y-%m-%d %H:%M')
+    
+    save_domain(channel_id, d)
 
 def find_participant_id_by_name(channel_id: str, name: str) -> Optional[str]:
     d = get_domain(channel_id)

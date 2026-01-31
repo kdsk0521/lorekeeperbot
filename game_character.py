@@ -695,6 +695,44 @@ def get_mental_status_text(user_data: Dict[str, Any]) -> str:
     info = MENTAL_STAGES.get(stage, MENTAL_STAGES[0])
     return f"{info['emoji']} {info['name']}"
 
+def update_mental_stage_from_psych(user_data: Dict[str, Any]) -> Tuple[Dict[str, Any], str]:
+    """
+    [Phase 2] 심리 상태(PsychProfile) 기반 멘탈 스테이지 자동 조정.
+    - 욕구 결핍 총합(Stress Score) 계산
+    - Stress > 50 -> Stage 1 (동요)
+    - Stress > 100 -> Stage 2 (공황)
+    - Stress > 150 -> Stage 3 (붕괴)
+    """
+    psych = user_data.get("ai_memory", {}).get("psych_profile", {})
+    needs = psych.get("needs", {})
+    
+    # Calculate Stress Score (Sum of negative deficits)
+    # e.g., Survival -30, Safety -10 => Stress 40 (Simple absolute sum of negatives)
+    stress_score = sum(abs(v) for v in needs.values() if v < 0)
+    
+    current_stage = user_data.get("mental_stage", 0)
+    new_stage = 0
+    
+    if stress_score >= 150: new_stage = 3
+    elif stress_score >= 100: new_stage = 2
+    elif stress_score >= 50: new_stage = 1
+    
+    # Only update if stage *worsens* or *recovers* naturally?
+    # For now, let it be dynamic but sticky (don't bounce 1<->0 too easily).
+    # Adding a simple hysteresis buffer could be good, but stick to direct mapping for MVP.
+    
+    msg = ""
+    if new_stage != current_stage:
+        user_data["mental_stage"] = new_stage
+        
+        info_old = MENTAL_STAGES.get(current_stage, MENTAL_STAGES[0])
+        info_new = MENTAL_STAGES.get(new_stage, MENTAL_STAGES[0])
+        
+        direction = "악화" if new_stage > current_stage else "회복"
+        msg = f"🧠 **정신 상태 {direction}:** {info_old['emoji']} → {info_new['emoji']} **{info_new['name']}** (스트레스: {stress_score})"
+        
+    return user_data, msg
+
 def get_abnormal_context(user_data: Dict[str, Any]) -> str:
     exposure = user_data.get("abnormal_exposure", {})
     if not exposure: return ""

@@ -799,20 +799,44 @@ Replace abstract concepts with concrete sensory data.
 ### 🛑 Emotion → Physical Response
 | Abstract | Concrete Alternative |
 |:---|:---|
-| 긴장했다 | 손바닥이 축축해졌다 |
-| 두려웠다 | 심장이 갈비뼈를 두드렸다 |
-| 기뻤다 | 입꼬리가 제멋대로 올라갔다 |
+| "He was angry." | "The veins in his neck stood out." |
+| "She felt sad." | "She stared at her cooling tea." |
+| "It was scary." | "The silence was heavy enough to choke on." |
 
-### 🛑 Clear Voids (Fresh Vocabulary)
-Instead of overused clichés, use specific, heavy language:
-- **Metal**: Instead of '강철', use '철, 금속, 쇠, 주철'.
-- **Endings**: No "Nobody knew" or "The start of a journey". Use **Action Suspended** or **Sensory Image** endings.
-- **Rhythm**: Tension scenes = Short, punchy. Calm scenes = Flowing, connected.
+### 🚫 Banned Words (Negative Constraints)
+- **Use:** Concrete verbs (stood, broke, bled, froze).
 
 ## THE NO-ECHO PROTOCOL
 Do NOT summarize previous actions. Start with the **Immediate Now**.
 </Writing_Style_Enforcement>
 """
+
+TELESCOPE_PROTOCOL = """
+<Telescope_Protocol priority="LOGIC_ENFORCEMENT">
+## 🔭 TELESCOPE LOGIC LAYER (HIDDEN SCRATCHPAD)
+
+Before writing the actual response, you must generating a **Hidden Logic Block** `┣ ... ┫` to ensure physical consistency.
+
+### Output Format Enforcement
+Start your response STRICTLY with this block:
+
+┣
+**Intent:** [What do you want to convey in this turn?]
+**Physics:** [Causality Check: Is this physically possible? Yes/No]
+**Sensory:** [Sight + (Sound/Smell/Touch) - Must have 2+]
+**Psych:** [Real Emotion vs Social Mask]
+┫
+
+[Actual Narrative Prose starts here...]
+
+**Rules:**
+1. The `┣ ... ┫` block is for YOUR internal reasoning.
+2. The Prose must strictly follow the Logic.
+3. If Physics is 'No', change the intent.
+</Telescope_Protocol>
+"""
+
+
 
 
 # =========================================================
