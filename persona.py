@@ -198,10 +198,10 @@ def create_risu_style_session(
 {system_prompt}
 
 <Initialization>
-Recorder 'Misel' is now active.
-Observing Macroscopic States only.
+[SYSTEM] Narrative Protocol Online.
+Observing Macroscopic States.
 The world is asynchronous—it does not wait.
-Recording in Korean. Awaiting observable events.
+Recording in Korean.
 </Initialization>
 \"\"\"
     
@@ -212,7 +212,7 @@ Recording in Korean. Awaiting observable events.
         ),
         types.Content(
             role="model",
-            parts=[types.Part(text="[RECORDER INITIALIZED] Misel standing by. Observing.")]
+            parts=[types.Part(text="[SYSTEM] Standing by. Awaiting observable events.")]
         )
     ]
     

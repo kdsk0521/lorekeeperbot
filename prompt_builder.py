@@ -520,40 +520,43 @@ This tone affects style, not physics or causality.
         import text_resources
 
         parts = [
-            # [0] Content Authorization Mandate
+            # [Group 1: Authorization & Identity - The Foundation]
             text_resources.CONTENT_AUTHORIZATION_MANDATE,
-
-            # [1] AI Mandate & Core Constraints
             text_resources.AI_MANDATE,
-            text_resources.MEMORY_HIERARCHY,
+            text_resources.GM_IDENTITY,
 
-            # [2] The Axiom Of The World
+            # [Group 2: The Physics - The Laws]
             text_resources.WORLD_AXIOM,
-            text_resources.WORLD_AXIOM,
+            text_resources.MEMORY_HIERARCHY,
+            text_resources.CRITICAL_PRIORITY,
+
+            # [Group 3: The Lens - Perception & Rendering]
             text_resources.PERCEPTION_CONSTRAINTS,
             text_resources.ANTI_DIDACTIC_PRINCIPLES,
             text_resources.SENSORY_AND_ANTI_CLICHE_LAYER,
+            text_resources.WRITING_STYLE_ENFORCEMENT,
             text_resources.FLOW_CONTROL_LAYER,
-            text_resources.TELESCOPE_PROTOCOL,
-            text_resources.AI_MORAL_BIAS_PROHIBITION,
 
-            # [2.5] PC Autonomy Doctrine
+            # [Group 4: The Agents - Behavioral & Social]
             text_resources.PC_AUTONOMY_DOCTRINE,
-
-            # Core Instruction Components
-            text_resources.INTERACTION_MODEL,
-            text_resources.SOCIAL_DYNAMICS,
-            text_resources.TEMPORAL_DYNAMICS,
-            text_resources.RECORDER_IDENTITY,
-            text_resources.ACTION_RESOLUTION,
             text_resources.CHARACTER_CONSISTENCY_PROTOCOL,
             text_resources.NPC_ATTITUDE_ENFORCEMENT,
+            text_resources.AI_MORAL_BIAS_PROHIBITION,
+            text_resources.INTERACTION_MODEL,
+            text_resources.SOCIAL_DYNAMICS,
+
+            # [Group 5: The Mechanics - System & Time]
+            text_resources.TEMPORAL_DYNAMICS,
             text_resources.TIME_ATMOSPHERE,
+            text_resources.ACTION_RESOLUTION,
             text_resources.ASPECT_UTILIZATION,
-            text_resources.WRITING_STYLE_ENFORCEMENT,
+
+            # [Group 6: Safety & Integrity]
             text_resources.SELF_CORRECTION_PROTOCOL,
-            text_resources.CRITICAL_PRIORITY,
             text_resources.MATERIAL_PROCESSING_PROTOCOL,
+
+            # [Group 7: Output Protocol]
+            text_resources.TELESCOPE_PROTOCOL,
         ]
 
         # Add dynamic static content
