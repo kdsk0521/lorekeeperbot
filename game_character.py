@@ -393,7 +393,9 @@ def add_passive(channel_id: str, user_id: str, name: str, tags: List[str] = None
     tag_str = f" [{', '.join(tags)}]" if tags else ""
     return f"🏆 **패시브 획득:** {name}{tag_str}\n_{desc}_"
 
-def get_passives_for_context(user_data: Dict[str, Any]) -> str:
+def get_passives_for_context(user_data: Optional[Dict[str, Any]]) -> str:
+    if not user_data:
+        return "None"
     # Merge explicit user passives and ai_memory passives
     p_list = user_data.get("passives", [])
     ai_p = user_data.get("ai_memory", {}).get("passives", [])

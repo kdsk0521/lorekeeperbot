@@ -377,13 +377,21 @@ class OrchestrationService:
             participants = d_data.get('participants', {})
             p_data = participants.get(user_id)
             
+            # [Fix] Fallback for System Events or missing player data
+            if not p_data and participants:
+                # Pick any active participant for context if user is missing (e.g. Admin)
+                for uid, pd in participants.items():
+                    if pd.get("status") == "active":
+                        p_data = pd
+                        break
+            
             # 시스템 트리거 처리
             action_text = f"[System Event] {system_trigger}" if system_trigger else user_input
 
             ctx = ResponseContext(
                 channel_id=channel_id,
                 user_id=user_id,
-                user_mask=p_data.get('mask', 'Unknown') if p_data else 'Unknown',
+                user_mask=(p_data.get('mask') if p_data else 'Unknown') or 'Unknown',
                 action_text=action_text,
                 domain_data=d_data,
                 player_data=p_data
