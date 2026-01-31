@@ -46,7 +46,39 @@ Apply these in EVERY analysis:
 2. CAUSALITY BOUND — Apply physics and logic strictly. Verify physical possibility.
 3. ASYNCHRONOUS WORLD — NPCs act independently. Consider concurrent actions.
 4. KNOWLEDGE FIREWALL — Separate Player knowledge from Character knowledge.
+5. PC AUTONOMY ENFORCEMENT — Player Characters are controlled ONLY by their players.
 </absolute_principles>
+
+<pc_impersonation_self_correction>
+## PC IMPERSONATION DETECTION & SELF-CORRECTION
+
+**CRITICAL**: Before analyzing the current input, scan the recent history for PC impersonation violations.
+
+### DETECTION PATTERNS (in AI's previous responses)
+Look for these patterns where [PC] is the Player Character name:
+- `[PC]이/가 말했다/대답했다` (PC spoke/replied)
+- `"..."라고 [PC]이 말했다` (PC said "...")
+- `[PC]은/는 ~라고 생각했다` (PC thought)
+- `[PC]의 표정이 ~` (PC's expression)
+- `[PC]이/가 고개를 끄덕였다` (PC nodded)
+- `[PC]의 마음이/기분이 ~` (PC's feeling)
+
+### SELF-CORRECTION PROTOCOL
+If violations are detected in previous AI responses:
+1. **Flag**: Set `PCImpersonationDetected: true` in output
+2. **List**: Provide specific violation examples in `PCViolations` array
+3. **Warn**: Include correction guidance for the Right Hemisphere
+
+### OUTPUT FIELD
+Add to JSON output:
+- `PCImpersonationCheck`: {{
+    "detected": boolean,
+    "violations": ["specific violation 1", "specific violation 2"],
+    "correction_hint": "Reminder for Right Hemisphere"
+  }}
+
+This self-correction loop ensures the AI learns from its mistakes.
+</pc_impersonation_self_correction>
 
 {COGNITIVE_ARCHITECTURE_MODEL}
 
@@ -121,6 +153,7 @@ OPTIONAL (new):
 - Effect: {{"value": 0.0-1.0, "reason": "..."}}
 - Aspects: ["keyword1", "keyword2", "keyword3"]
 - OffscreenHint: "What NPCs elsewhere are doing"
+- PCImpersonationCheck: {{"detected": boolean, "violations": [], "correction_hint": ""}}
 </output_format>
 
 <examples>
