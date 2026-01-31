@@ -572,6 +572,18 @@ def get_mental_dice_modifier(value: int) -> int:
     elif stage == 3: return -10
     return 0
 
+def get_mental_status_text(p_data: Dict[str, Any]) -> str:
+    """
+    Returns a formatted string of the character's mental state.
+    e.g. "😌 평정"
+    """
+    mem = p_data.get("ai_memory", {})
+    ment = mem.get("mental", {"value": 100})
+    val = ment.get("value", 100)
+    info = get_mental_info(val)
+    return f"{info['emoji']} **{info['name']}**"
+
+
 def update_mental(user_data: Dict[str, Any], delta: int, reason: str) -> str:
     """
     V7 Mental Update Logic
@@ -719,6 +731,21 @@ def apply_abnormal_impact(user_data: Dict[str, Any], tag: str, intensity: str = 
 # Legacy Wrappers (Shim Layer)
 def check_adaptation_roll(user_data, tag, category=None, difficulty=30):
     return apply_abnormal_impact(user_data, tag)
+
+def get_abnormal_context(user_data: Dict[str, Any]) -> str:
+    """
+    Returns a formatted string of the character's abnormal exposure.
+    """
+    mem = user_data.get("ai_memory", {})
+    exp = mem.get("abnormal_exposure", {})
+    if not exp: return "None"
+    
+    entries = []
+    for tag, data in exp.items():
+        count = data.get("count", 0)
+        pct = calculate_adaptation_pct(count)
+        entries.append(f"{tag}({pct}%)")
+    return ", ".join(entries)
 
 
 # History/Archive Exports

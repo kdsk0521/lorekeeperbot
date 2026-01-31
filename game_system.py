@@ -60,11 +60,11 @@ remove_memo = game_character.remove_memo
 resolve_memo_auto = game_character.resolve_memo_auto
 
 # Mental & Adaptation
-calculate_adaptation_percentage = game_character.calculate_adaptation_percentage
+calculate_adaptation_percentage = game_character.calculate_adaptation_pct
 check_adaptation_roll = game_character.check_adaptation_roll
 get_mental_status_text = game_character.get_mental_status_text
 get_abnormal_context = game_character.get_abnormal_context
-expose_to_abnormal = game_character.expose_to_abnormal
+expose_to_abnormal = game_character.apply_abnormal_impact
 
 # Export
 export_session_history = game_character.export_session_history

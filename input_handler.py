@@ -26,7 +26,7 @@ _MARKDOWN_PATTERNS = [
 
 # OOC 및 주사위 패턴 미리 컴파일
 _OOC_PATTERN = re.compile(r'\((?:(?:OOC|ooc)[:\s]+)?(.+?)\)', re.IGNORECASE | re.DOTALL)
-_DICE_PATTERN = re.compile(r"(\d+)d(\d+)([+-]\d+)?")
+
 
 
 def strip_discord_markdown(text: str) -> str:
@@ -56,56 +56,6 @@ def analyze_style(text: str, clean_text: str) -> str:
     return "Description"
 
 
-def roll_dice(dice_str: str, mode: str = "normal") -> Optional[Tuple[int, Any, int, Optional[str]]]:
-    """
-    주사위 식(예: 1d20+3)을 파싱하여 결과를 계산합니다.
-
-    Args:
-        dice_str: 주사위 식 문자열 (예: "2d6+3", "1d20")
-        mode: 굴림 모드 - 'normal', 'adv' (유리함), 'dis' (불리함)
-
-    Returns:
-        Tuple[최종값, 굴림결과, 수정치, 상세설명] 또는 None (파싱 실패 시)
-    """
-    # 미리 컴파일된 정규식 사용
-    match = _DICE_PATTERN.search(dice_str.lower())
-    if not match:
-        return None
-    
-    count = int(match.group(1))
-    sides = int(match.group(2))
-    mod = int(match.group(3)) if match.group(3) else 0
-    
-    # 유효성 검사: 시스템 부하 및 비정상 입력 방지
-    if count > MAX_DICE_COUNT:
-        return None
-    if sides > MAX_DICE_SIDES or sides < 1:
-        return None
-    if count < 1:
-        return None
-    
-    def _roll_once() -> Tuple[int, List[int]]:
-        rolls = [random.randint(1, sides) for _ in range(count)]
-        return sum(rolls), rolls
-    
-    # 유리함/불리함 처리 (D&D 5e 방식: 2번 굴려서 선택)
-    if mode in ['adv', 'dis']:
-        val1, rolls1 = _roll_once()
-        val2, rolls2 = _roll_once()
-        
-        if mode == 'adv':
-            final_val = max(val1, val2)
-            detail = f"[{val1}, {val2}] ➔ **{final_val}** (유리함)"
-        else:  # dis
-            final_val = min(val1, val2)
-            detail = f"[{val1}, {val2}] ➔ **{final_val}** (불리함)"
-        
-        rolls_str = f"{rolls1} vs {rolls2}"
-        return final_val + mod, rolls_str, mod, detail
-    
-    # 일반 굴림
-    total, rolls = _roll_once()
-    return total + mod, rolls, mod, None
 
 
 def parse_input(content: str) -> Optional[Dict[str, Any]]:
@@ -173,14 +123,7 @@ def parse_input(content: str) -> Optional[Dict[str, Any]]:
             '정보': 'info',
             '내정보': 'info',
             'info': 'info',
-            '잠수': 'afk',
-            'afk': 'afk',
-            '이탈': 'leave',
-            '퇴장': 'leave',
-            'leave': 'leave',
-            '복귀': 'back',
-            '컴백': 'back',
-            'back': 'back',
+            'info': 'info',
             
             # === 세계관 설정 ===
             '로어': 'lore',
@@ -224,11 +167,7 @@ def parse_input(content: str) -> Optional[Dict[str, Any]]:
             '비일상': 'abnormal',
             'abnormal': 'abnormal',
             
-            # === 주사위 ===
-            '주사위': 'roll',
-            '굴림': 'roll',
-            'r': 'roll',
-            'roll': 'roll',
+            'abnormal': 'abnormal',
             
             # === 도움말 ===
             '도움': 'help',
@@ -242,46 +181,7 @@ def parse_input(content: str) -> Optional[Dict[str, Any]]:
             command = mapping[command]
         
         # 주사위 특수 처리 (!r, !주사위 등)
-        if command == 'roll':
-            # 모드 판별
-            mode = "normal"
-            args_lower = args.lower()
-            
-            if "adv" in args_lower or "유리" in args:
-                mode = "adv"
-            elif "dis" in args_lower or "불리" in args:
-                mode = "dis"
-            
-            res = roll_dice(args, mode)
-            
-            if res:
-                total, rolls, mod, detail = res
-                mod_txt = f"{mod:+}" if mod != 0 else ""
-                
-                # 출력 메시지 구성
-                if detail:
-                    msg = (
-                        f"🎲 **Roll ({mode.upper()})**: `{args}`\n"
-                        f"Process: {detail} {mod_txt}\n"
-                        f"**Final Result:** {total}"
-                    )
-                else:
-                    msg = (
-                        f"🎲 **Roll**: `{args}`\n"
-                        f"Result: {total} (Dice: {rolls} {mod_txt})\n"
-                        f"_💡 높을수록 좋은 결과 - AI가 상황에 맞게 해석합니다_"
-                    )
-                
-                return {'type': 'dice', 'content': msg}
-            
-            return {
-                'type': 'dice',
-                'content': (
-                    "❌ 주사위 형식 오류\n"
-                    "예시: `!r 1d20`, `!r 1d100`, `!r 2d6+3`, `!r 1d20 유리`\n"
-                    "_💡 주사위는 선택 사항입니다. AI가 상황을 보고 판정합니다._"
-                )
-            }
+        return {'type': 'command', 'command': command, 'content': args}
         
         return {'type': 'command', 'command': command, 'content': args}
     

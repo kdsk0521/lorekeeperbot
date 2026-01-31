@@ -15,6 +15,7 @@ import time
 import random
 import logging
 from typing import Dict, Any, Optional, List
+import difflib
 import domain_manager
 
 # =========================================================
@@ -54,26 +55,71 @@ def delete_npc(channel_id: str, name: str) -> bool:
     return domain_manager.delete_npc(channel_id, name)
 
 
-# =========================================================
-# NPC 추가 함수 (소스별 분리)
-# =========================================================
+
+def find_similar_npc(channel_id: str, new_name: str, threshold: float = 0.85) -> Optional[str]:
+    """
+    유사한 이름을 가진 NPC가 있는지 확인합니다.
+    (Exact -> Containment -> Fuzzy)
+    """
+    existing_npcs = get_npcs(channel_id)
+    if not existing_npcs: return None
+    
+    n_lower = new_name.lower()
+    
+    # 1. Exact Match (Case-insensitive)
+    for name in existing_npcs:
+        if name.lower() == n_lower:
+            return name
+            
+    # 2. Containment Check (Only for names >= 3 chars)
+    # "Dr. Strange" vs "Strange", "Arthur" vs "King Arthur"
+    if len(n_lower) >= 3:
+        for name in existing_npcs:
+             e_lower = name.lower()
+             if n_lower in e_lower or e_lower in n_lower:
+                 # Check if the overlap is significant? 
+                 # For now, strict containment is usually a sign of identity or relation.
+                 return name
+                 
+    # 3. Fuzzy Match
+    matches = difflib.get_close_matches(new_name, existing_npcs.keys(), n=1, cutoff=threshold)
+    if matches:
+        return matches[0]
+        
+    return None
+
 
 def add_lore_npcs(channel_id: str, npc_list: List[Dict[str, Any]]) -> int:
     """
     로어 분석 결과로 NPC 일괄 등록.
-
-    Args:
-        channel_id: 채널 ID
-        npc_list: [{"name": "이름", "description": "설명"}, ...]
-
-    Returns:
-        등록된 NPC 수
+    [Deduplication Added] 유사한 이름이 있으면 스킵하거나 병합합니다.
     """
     count = 0
     for npc in npc_list:
         name = npc.get("name", "").strip()
-        if not name:
-            continue
+        if not name: continue
+        
+        # [Check Duplicate]
+        sim_name = find_similar_npc(channel_id, name)
+        if sim_name:
+             logger.info(f"[NPC] 로어 NPC '{name}' -> 유사한 기존 NPC '{sim_name}' 발견. 병합/스킵 처리.")
+             # Merge logic: Append description if source matches or just update timestamps?
+             # For Lore extraction, usually we want to enrich existing if possible, 
+             # but often extract might be repetitive.
+             # Simple Strategy: Update description only if new one is longer?
+             # OR just skip to preserve manually edited data.
+             # Existing logic blindly overwrote.
+             # NEW Logic: Skip overwrite if manual source, strictly update if lore source.
+             
+             existing = get_npc(channel_id, sim_name)
+             if existing and existing.get("source") == SOURCE_MANUAL:
+                 continue # Manual overrides Lore usually
+             
+             # If both are Lore/AI, we merge descriptions?
+             # For now, let's just Log and Skip to prevent duplicates cluttering.
+             # Or maybe we DO want to update if the Lore has changed?
+             # Let's Skip for now to be safe against "Infinite Extraction Loop".
+             continue
 
         data = {
             "description": npc.get("description", ""),
@@ -91,6 +137,7 @@ def add_lore_npcs(channel_id: str, npc_list: List[Dict[str, Any]]) -> int:
         logger.debug(f"[NPC] 로어 NPC 등록: {name}")
 
     return count
+
 
 
 def add_manual_npc(channel_id: str, name: str, description: str, **kwargs) -> bool:
@@ -116,7 +163,21 @@ def add_manual_npc(channel_id: str, name: str, description: str, **kwargs) -> bo
     }
     data.update(kwargs)
 
-    update_npc(channel_id, name.strip(), data)
+    real_name = name.strip()
+    
+    # [Check Duplicate]
+    sim_name = find_similar_npc(channel_id, real_name)
+    if sim_name and sim_name.lower() != real_name.lower():
+        # Warn user? Currently returns bool. 
+        # But we assume the user intends to overwrite if they type exact name.
+        # If they type SIMILAR name, they might mean the existing one or a new one.
+        # Strict deduplication: prevent similar.
+        # But maybe they want "Guard A" and "Guard B".
+        # Let's only block if very high similarity or warn?
+        # For manual add, we should probably allow it BUT maybe standardise name?
+        pass
+
+    update_npc(channel_id, real_name, data)
     logger.info(f"[NPC] 수동 NPC 추가: {name}")
     return True
 

@@ -91,6 +91,34 @@ def advance_time(channel_id: str) -> str:
 # DOOM SYSTEM
 # =========================================================
 
+def change_doom(channel_id: str, amount: int) -> str:
+    """
+    위기 수치를 조정하고 메시지를 반환합니다.
+    """
+    world = domain_manager.get_world_state(channel_id)
+    old_val = world.get("doom", 0)
+    new_val = max(0, min(100, old_val + amount))
+    
+    if old_val == new_val:
+        return "" # No change
+        
+    world["doom"] = new_val
+    domain_manager.update_world_state(channel_id, world)
+    
+    # Emoji feedback
+    emoji = "📈" if amount > 0 else "📉"
+    
+    # Check Thresholds
+    diff_msg = ""
+    # Critical Transition
+    if old_val < config.DOOM_THRESHOLD_CRITICAL <= new_val:
+        diff_msg = "\n⚠️ **[경고] 파멸이 임박했습니다!**"
+    elif old_val < config.DOOM_THRESHOLD_DANGER <= new_val:
+        diff_msg = "\n⚠️ **[주의] 위험도가 상승했습니다.**"
+        
+    return f"{emoji} **위기 수치:** {old_val}% → **{new_val}%** {diff_msg}"
+
+
 def calculate_doom_increase(channel_id: str, world: dict) -> Tuple[int, List[str]]:
     doom_increase = 0
     doom_reasons = []
