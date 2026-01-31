@@ -9,6 +9,7 @@ import logging
 import random
 import asyncio
 from typing import Dict, Any, List, Optional
+import re
 from google.genai import types
 
 # Shared utilities from memory_system (Assuming this file remains external for now)
@@ -684,3 +685,151 @@ async def _call_extract(client, model_id, sys, usr, op_name):
     except Exception as e:
         logger.warning(f"[{op_name}] Error: {e}")
     return {}
+
+# =========================================================
+# PART 4: GM COGNITION (REACT ENGINE)
+# =========================================================
+
+SYSTEM_INSTRUCTION_CRISIS = """
+<CRISIS_JUDGE>
+Analyze the current situation for FATAL RISKS.
+Your job is to STOP the game if the player is about to die or face irreversible ruin, preventing "accidental" bad endings.
+
+Criteria for CRISIS_HALT (Score >= 8):
+1. **Lethality**: Incoming attack/situation will kill or permanently maim.
+2. **No Return**: The decision made now is irreversible.
+3. **Player Blindness**: The player seems unaware of the danger.
+
+Output JSON:
+{
+    "crisis_score": 0-10,
+    "reason": "Why is this dangerous?",
+    "halt_signal": boolean
+}
+</CRISIS_JUDGE>
+"""
+
+SYSTEM_INSTRUCTION_NARRATIVE_FLOW = """
+<NARRATIVE_PLANNER>
+Analyze the narrative flow based on the "Chain Principle" and "Spotlight".
+
+1. **Chain Principle**: Does the outcome CLOSE the loop (boring) or OPEN a new one (fun)?
+2. **Spotlight**: Which character has been silent?
+
+Output JSON:
+{
+    "chain_status": "OPEN" or "CLOSED",
+    "narrative_hook": "Suggestion for opening a new loop",
+    "spotlight_suggestion": "Ask Player B what they are doing"
+}
+</NARRATIVE_PLANNER>
+"""
+
+class GMCognition:
+    """
+    Skilled GM Brain implementing ReAct Loop.
+    Observation -> Thought -> Action
+    """
+    def __init__(self, client, model_id, model_id_flash):
+        self.client = client
+        self.model_id = model_id
+        self.model_id_flash = model_id_flash
+
+    async def process_turn(
+        self, 
+        history_text: str, 
+        lore: str, 
+        rules: str, 
+        quests: str, 
+        player_context: str,
+        user_input: str
+    ) -> Dict[str, Any]:
+        """
+        Executes the GM ReAct Loop.
+        """
+        # 1. IDENTIFY ACTORS (Who is speaking?)
+        actors = self._identify_actors(user_input, history_text)
+        
+        # 2. OBSERVATION (Theoria Flash)
+        # Use existing Flash engine for observation
+        observation_result = await analyze_context_flash(
+            self.client, self.model_id_flash, 
+            history_text, lore, rules, quests, 
+            player_context=player_context
+        )
+        
+        # 3. CRISIS CHECK (Yellow Protocol)
+        # Only run if risk seems high in observation
+        crisis_result = {"halt_signal": False}
+        if observation_result.get("LocationRisk", "Low") in ["High", "Extreme"]:
+            crisis_result = await self._evaluate_crisis_level(
+                user_input, observation_result.get("Observation", "")
+            )
+        
+        if crisis_result.get("halt_signal"):
+            return {
+                "type": "CRISIS_HALT",
+                "reason": crisis_result.get("reason"),
+                "observation": observation_result
+            }
+
+        # 4. JUDGMENT (Dikastes Pro)
+        # Always run judgment to prepare for mechanics
+        judgment_result = await judge_action_pro(
+            self.client, self.model_id,
+            observation_result.get("UserIntent", ""),
+            observation_result.get("Observation", ""),
+            observation_result.get("RelevantContext", []),
+            history_text[-500:]
+        )
+
+        # 5. NARRATIVE PLANNING (Man in the Mirror)
+        flow_plan = await self._plan_narrative_flow(
+            history_text[-1000:], 
+            str(judgment_result.get("ActionJudgment"))
+        )
+        
+        # Consolidate
+        return {
+            "type": "CONTINUE",
+            "observation": observation_result,
+            "judgment": judgment_result,
+            "flow_plan": flow_plan,
+            "actors": actors
+        }
+
+    def _identify_actors(self, user_input, history) -> List[str]:
+        # Simple regex heuristic for now, can be improved with Named Entity Recognition later
+        # Searching for names in brackets or standard RP formats
+        potential_names = re.findall(r"([A-Z][a-z]+)", user_input)
+        return list(set(potential_names))
+
+    async def _evaluate_crisis_level(self, user_input, observation) -> Dict[str, Any]:
+        """Runs the Crisis Judge prompt."""
+        try:
+            prompt = f"Situation: {observation}\nAction: {user_input}\nEvaluate Crisis Score."
+            contents = [types.Content(role="user", parts=[types.Part(text=prompt)])]
+            config = types.GenerateContentConfig(
+                system_instruction=SYSTEM_INSTRUCTION_CRISIS,
+                response_mime_type="application/json",
+                temperature=0.0
+            )
+            res = await api_call_with_retry(self.client, self.model_id_flash, contents, config, "Crisis Check")
+            return safe_parse_json(res) or {"halt_signal": False}
+        except Exception:
+            return {"halt_signal": False}
+
+    async def _plan_narrative_flow(self, recent_history, outcome) -> Dict[str, Any]:
+        """Runs the Narrative Planner prompt."""
+        try:
+            prompt = f"Recent History: {recent_history}\nOutcome: {outcome}\nPlan Narrative Flow."
+            contents = [types.Content(role="user", parts=[types.Part(text=prompt)])]
+            config = types.GenerateContentConfig(
+                system_instruction=SYSTEM_INSTRUCTION_NARRATIVE_FLOW,
+                response_mime_type="application/json",
+                temperature=0.5
+            )
+            res = await api_call_with_retry(self.client, self.model_id_flash, contents, config, "Narrative Plan")
+            return safe_parse_json(res) or {}
+        except Exception:
+            return {}

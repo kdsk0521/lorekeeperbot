@@ -523,6 +523,7 @@ This tone affects style, not physics or causality.
             persona.TEMPORAL_DYNAMICS,
             persona.RECORDER_IDENTITY,
             persona.ACTION_RESOLUTION,
+            persona.CHARACTER_CONSISTENCY_PROTOCOL,
             persona.NPC_ATTITUDE_ENFORCEMENT,
             persona.TIME_ATMOSPHERE,
             persona.ASPECT_UTILIZATION,
@@ -587,6 +588,7 @@ This tone affects style, not physics or causality.
             persona.LANGUAGE_CORRECTION,
             persona.FINAL_AUTONOMY_ENFORCEMENT,
             build_length_instruction(),
+            persona.EMOTION_BOOSTER,
         ]
 
         return "\n==========CACHE BOUNDARY==========\n" + "\n\n".join(filter(None, dynamic_parts))

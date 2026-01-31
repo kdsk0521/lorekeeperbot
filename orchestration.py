@@ -71,6 +71,10 @@ class ResponseContext:
 
     # NPC 태도
     existing_attitudes: Dict[str, Dict] = field(default_factory=dict)
+    
+    # Crisis Control
+    is_crisis: bool = False
+    crisis_reason: str = ""
 
 
 @dataclass
@@ -97,8 +101,11 @@ class OrchestrationService:
     def __init__(self, client_genai, model_id: str, model_id_flash: str):
         self.client = client_genai
         self.model_id = model_id
+        self.model_id = model_id
         self.model_id_flash = model_id_flash
         self.nvc_filter_config = NVCFilterConfig()
+        # [Phase 1 Upgrade] Initialize Skilled GM Brain
+        self.gm_cognition = cognition.GMCognition(client, model_id, model_id_flash)
 
     # =========================================================
     # STEP 1: CONTEXT GATHERING
@@ -184,42 +191,59 @@ class OrchestrationService:
         """
         channel_id = ctx.channel_id
 
-        # STEP 1: Flash Analysis (Observe & Select)
-        # PC 사칭 재확인을 위한 이전 응답 전달
-        ctx.flash_result = await cognition.analyze_context_flash(
-            self.client, self.model_id_flash,
-            ctx.hist_text, ctx.lore_txt, ctx.rule_txt, ctx.quest_txt,
-            notebook=ctx.notebook_txt,
-            player_context=game_system.get_status_summary(ctx.player_data) if ctx.player_data else "",
-            existing_npc_attitudes=ctx.existing_attitudes
+        # [Phase 1 Upgrade] Use GMCognition ReAct Loop
+        # 1. Gather Inputs
+        player_context_str = game_system.get_status_summary(ctx.player_data) if ctx.player_data else ""
+        
+        # 2. Execute ReAct Loop
+        gm_result = await self.gm_cognition.process_turn(
+            ctx.hist_text,
+            ctx.lore_txt, 
+            ctx.rule_txt, 
+            ctx.quest_txt,
+            player_context_str,
+            ctx.action_text
         )
-
-        # Flash 결과 추출
-        user_intent = ctx.flash_result.get("UserIntent", "Unknown")
-        observation = ctx.flash_result.get("Observation", "No observation")
-        relevant_context = ctx.flash_result.get("RelevantContext", [])
-
-        # STEP 2: Pro Judgment (Judge Actions)
-        ctx.pro_result = await cognition.judge_action_pro(
-            self.client, self.model_id,
-            user_intent, observation, relevant_context,
-            history_tail=ctx.hist_text[-500:]
-        )
-
-        # 결과 병합
+        
+        # 3. Handle Crisis Halt
+        if gm_result.get("type") == "CRISIS_HALT":
+            ctx.is_crisis = True
+            ctx.crisis_reason = gm_result.get("reason", "Unknown Crisis")
+            return ctx
+            
+        # 4. Map Results (CONTINUE)
+        ctx.flash_result = gm_result.get("observation", {})
+        ctx.pro_result = gm_result.get("judgment", {})
+        
+        # Merge NVC Results
         ctx.nvc_result = {**ctx.flash_result, **ctx.pro_result}
         ctx.scene_type = ctx.nvc_result.get("SceneType", "normal")
+        
+        # Map Narrative Flow & Actors
+        flow_plan = gm_result.get("flow_plan", {})
+        if flow_plan:
+            ctx.nvc_result["NarrativeFlow"] = flow_plan
+            # GM Move injection if Narrative Plan suggests it
+            if flow_plan.get("narrative_hook"):
+                 ctx.nvc_result["GMMove"] = {"type": "Narrative Hook", "description": flow_plan["narrative_hook"]}
 
-        # 로깅
+        actors = gm_result.get("actors", [])
+        if actors:
+             ctx.nvc_result["IdentifiedActors"] = actors
+
+        # Logging
         pos_data = ctx.nvc_result.get("Position", {})
         eff_data = ctx.nvc_result.get("Effect", {})
+        user_intent = ctx.flash_result.get("UserIntent", "Unknown")
+        
         logger.info(
-            f"[NVC] Position: {pos_data.get('value', 'N/A')} | "
-            f"Effect: {eff_data.get('value', 'N/A')} | "
-            f"Intent: {user_intent}"
+            f"[GMCognition] Result: {gm_result.get('type')} | "
+            f"Pos: {pos_data.get('value')} | Eff: {eff_data.get('value')} | "
+            f"Crisis: {ctx.is_crisis}"
         )
 
         return ctx
+
 
     # =========================================================
     # STEP 3: WORLD STATE UPDATE
@@ -893,8 +917,18 @@ class OrchestrationService:
                 # STEP 1: 컨텍스트 수집
                 ctx = await self.gather_context(ctx)
 
-                # STEP 2: NVC 분석
+                # STEP 2: NVC 분석 (GM ReAct)
                 ctx = await self.run_cognition_analysis(ctx)
+
+                # [CRISIS HALT CHECK]
+                if ctx.is_crisis:
+                    warn_msg = (
+                        f"🛑 **[GM INTERVENTION]**\n"
+                        f"**위기 감지 (Crisis Detected):** {ctx.crisis_reason}\n"
+                        f"⚠️ 진행을 멈춥니다. 이 상황은 치명적일 수 있습니다."
+                    )
+                    await message.channel.send(warn_msg)
+                    return None
 
                 # STEP 3: 월드 상태 업데이트
                 ctx, state_msgs = await self.update_world_state(ctx, message)
