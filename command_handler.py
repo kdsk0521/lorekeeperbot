@@ -83,8 +83,13 @@ async def process_ai_system_action(channel_id: str, sys_action: dict) -> Optiona
 
 
 # =========================================================
-# COMMAND HANDLERS
+# System Commands & Registry
 # =========================================================
+
+# Registry logic and dispatch (Restored for Health Check compatibility)
+async def handle_participant_command(ctx: CommandContext) -> bool:
+    """Legacy entry point, now uses registry dispatch."""
+    return await registry.execute(ctx)
 
 @registry.register("lore", category="World", aliases=["로어", "lore"], description="세계관 정보 조회 및 수정")
 async def cmd_lore(ctx: CommandContext) -> None:

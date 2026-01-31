@@ -9,12 +9,15 @@ import random
 import time
 import re
 import asyncio
-from typing import List, Dict, Any, Tuple, Optional
+import math
+from typing import List, Tuple, Dict, Any, Optional
 
 import config
 import domain_manager
 from config import (
-    STATUS_EFFECTS,
+    MENTAL_STAGES,
+    DOOM_STAGES,
+    DOOM_MENTAL_RECOVERY_MOD,
     NEGATIVE_STATUS_EFFECTS,
     POSITIVE_STATUS_EFFECTS,
     SEVERITY_DOOM_IMPACT,
@@ -670,6 +673,9 @@ def calculate_adaptation_pct(count: int) -> int:
     if count <= 0: return 0
     val = math.log(count + 1) * 25
     return min(100, int(val))
+
+# Alias for Health Check / Legacy
+calculate_adaptation_percentage = calculate_adaptation_pct
 
 def process_adaptation_encounter(user_data: Dict[str, Any], tag: str) -> Tuple[int, bool]:
     mem = user_data.setdefault("ai_memory", {})

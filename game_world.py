@@ -302,6 +302,20 @@ def get_doom_forecast(channel_id: str) -> str:
 # V7: ABNORMAL SYSTEM HUB (Pre-calculation)
 # =========================================================
 
+ANOMALY_TONE_MAP = {
+    "low": ["Mystery", "Unease", "Curiosity"],
+    "mid": ["Bizarre", "Surreal", "Tension", "Omen"],
+    "high": ["Horror", "Disaster", "Fear", "Despair"]
+}
+
+def should_trigger_anomaly(doom_val: int) -> bool:
+    """
+    위기 수치에 기반하여 이변 발생 여부를 결정합니다.
+    Prob = max(10, Doom * 0.5)
+    """
+    prob = max(config.ABNORMAL_MIN_PROB, doom_val * config.ABNORMAL_DOOM_COEFF)
+    return random.randint(1, 100) <= prob
+
 def process_abnormal_turn(channel_id: str, context_tags: list) -> str:
     """
     턴 처리 시 호출되는 중앙 허브 함수 (The Hub).
@@ -310,10 +324,7 @@ def process_abnormal_turn(channel_id: str, context_tags: list) -> str:
     doom = domain_manager.get_world_state(channel_id).get("doom", 0)
     
     # 1. 확률 체크
-    # Prob = max(10, doom * 0.5)
-    prob = max(config.ABNORMAL_MIN_PROB, doom * config.ABNORMAL_DOOM_COEFF)
-    
-    if random.randint(1, 100) > prob:
+    if not should_trigger_anomaly(doom):
         return "" # No event
         
     # 2. 태그 및 강도 선정 (Doom Based)
