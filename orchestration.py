@@ -367,8 +367,13 @@ class OrchestrationService:
     # =========================================================
     # EXECUTION ENTRY POINT
     # =========================================================
-    async def execute(self, message, channel_id: str, system_trigger: str = None) -> None:
-        """AI 응답 생성 파이프라인의 진입점입니다."""
+    async def execute(self, message, channel_id: str, system_trigger: str = None, feedback_msg=None) -> None:
+        """
+        AI 응답 생성 파이프라인을 실행합니다.
+        
+        Args:
+            feedback_msg: '서사 생성 중...' 안내 메시지 객체 (완료 후 삭제용)
+        """
         try:
             user_id = str(message.author.id)
             user_input = message.content
@@ -408,6 +413,7 @@ class OrchestrationService:
             if ctx.is_crisis:
                 logger.warning(f"Crisis Halted: {ctx.crisis_reason}")
                 await message.channel.send(f"⛔ **위기 감지**: {ctx.crisis_reason}\n진행이 중단되었습니다.")
+                if feedback_msg: await feedback_msg.delete()
                 return
 
             # async output (typing indicator)
@@ -430,6 +436,13 @@ class OrchestrationService:
                 response = await self.generate_response(ctx, full_prompt)
 
                 if response:
+                    # [UI Feedback] 완료 시 안내 메시지 삭제
+                    if feedback_msg:
+                        try:
+                            await feedback_msg.delete()
+                        except Exception:
+                            pass # 이미 삭제되었거나 권한 부족 시 무시
+
                     # 7. Send Response
                     await bot_utils.send_long_message(message.channel, response)
                     
@@ -437,6 +450,12 @@ class OrchestrationService:
                     await self.schedule_background_extraction(ctx, response, message)
 
         except Exception as e:
+            if feedback_msg:
+                try:
+                    await feedback_msg.delete()
+                except Exception:
+                    pass
+            
             import traceback
             error_traceback = traceback.format_exc()
             logger.error(f"AI Process Error: {e}\n{error_traceback}")

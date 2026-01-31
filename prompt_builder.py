@@ -497,7 +497,8 @@ This tone affects style, not physics or causality.
             instinct = psych_profile.get("instinct", "neutral")
             
             # Format Psych Profile
-            psych_text = f"\n### PSYCHOLOGICAL PROFILE (Real-time State)\n"
+            psych_text = f"\n### PSYCHOLOGICAL PROFILE (Internal Logic ONLY)\n"
+            psych_text += "⚠️ DO NOT NARRATE this block. Use it only to determine behavior/reactions.\n"
             psych_text += f"- **Dominant Instinct**: {instinct.upper()}\n"
             psych_text += f"- **Core Values**: {', '.join(values) if values else 'None'}\n"
             psych_text += "- **Need State**:\n"

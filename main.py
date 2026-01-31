@@ -164,7 +164,11 @@ async def generate_ai_response(message, channel_id: str, system_trigger: str = N
         await message.channel.send("⚠️ No AI Configured")
         return
 
-    await orchestration.execute(message, channel_id, system_trigger)
+    # [UI Feedback] 서사 생성 중 알림
+    feedback_msg = await message.channel.send("⏳ **서사를 생성하고 있습니다...**")
+
+    # Pass the feedback message to orchestration to delete it later
+    await orchestration.execute(message, channel_id, system_trigger, feedback_msg=feedback_msg)
 
 if __name__ == "__main__":
     if DISCORD_TOKEN and GEMINI_API_KEY:
