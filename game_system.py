@@ -187,6 +187,12 @@ async def process_anomaly(
         # 적응(Mental) 판정
         adapt_results = []
         for uid, p_data in participants.items():
+            # [Debug Strict Mode] If data is corrupted, halt and report.
+            if not isinstance(p_data, dict):
+                error_msg = f"[Critical Error] Participant Data Corruption for User {uid}. Expected dict, got {type(p_data)}: {p_data}"
+                logging.error(error_msg)
+                raise ValueError(error_msg)
+
             if p_data.get("status") == "active":
                 p_data, adapt_msg = game_character.check_adaptation_roll(
                     p_data,
