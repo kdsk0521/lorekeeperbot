@@ -308,8 +308,9 @@ class OrchestrationService:
             # (Though extraction mainly produces updates, merging is handled by domain_manager)
             
             # Prepare extended context
-            status = ctx.player_data.get("status_effects", []) if ctx.player_data else []
-            rels = domain_manager.get_npc_relationships(channel_id, ctx.user_id)
+            p_data_latest = domain_manager.get_participant_data(channel_id, ctx.user_id)
+            status = p_data_latest.get("status_effects", []) if p_data_latest else []
+            rels = p_data_latest.get("ai_memory", {}).get("relationships", {}) if p_data_latest else {}
             # ... (Assume these getters exist or use ctx if acceptable)
             # Actually, getting fresh data is safer for background tasks running later.
             
