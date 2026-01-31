@@ -7,8 +7,8 @@ AI 프롬프트 조립을 담당하는 모듈입니다.
 - 장르/톤 기반 지시문 생성
 - 성숙 콘텐츠 가이드라인 조립
 
-persona.py의 프롬프트 상수들을 사용하여 최종 프롬프트를 조립합니다.
-상수 자체는 persona.py에 유지되어 서사의 핵심이 손상되지 않습니다.
+text_resources.py의 프롬프트 상수들을 사용하여 최종 프롬프트를 조립합니다.
+상수 자체는 text_resources.py에 유지되어 서사의 핵심이 손상되지 않습니다.
 """
 
 import logging
@@ -173,7 +173,7 @@ def build_mature_content_prompt(scene_type: str) -> str:
         Prompt string for the scene (empty string if normal)
     """
     # Import constants from persona (lazy import to avoid circular dependency)
-    import persona
+    import text_resources
 
     if not scene_type or scene_type == 'normal':
         return ""
@@ -193,10 +193,10 @@ def build_mature_content_prompt(scene_type: str) -> str:
 
     # Add relevant guidelines
     if 'gore' in scene_type:
-        prompt_parts.append(persona.GORE_CONTENT_GUIDELINES)
+        prompt_parts.append(text_resources.GORE_CONTENT_GUIDELINES)
 
     if 'nsfw' in scene_type:
-        prompt_parts.append(persona.NSFW_CONTENT_GUIDELINES)
+        prompt_parts.append(text_resources.NSFW_CONTENT_GUIDELINES)
 
     return "\n".join(prompt_parts)
 
@@ -261,9 +261,9 @@ Description: {desc}
         persona_prompt: str = ""
     ) -> 'PromptBuilder':
         """[4] 캐릭터 설명 및 페르소나 프롬프트"""
-        import persona
+        import text_resources
         # [V6 Refactor] Ensure persona prompt defaults to RECORDER_IDENTITY if empty
-        actual_persona = persona_prompt if persona_prompt.strip() else persona.RECORDER_IDENTITY
+        actual_persona = persona_prompt if persona_prompt.strip() else text_resources.RECORDER_IDENTITY
 
         self.sections['roles'] = f"""
 <Roles>
@@ -517,43 +517,43 @@ This tone affects style, not physics or causality.
         Static content before cache boundary
         """
         # Import constants from persona (lazy import)
-        import persona
+        import text_resources
 
         parts = [
             # [0] Content Authorization Mandate
-            persona.CONTENT_AUTHORIZATION_MANDATE,
+            text_resources.CONTENT_AUTHORIZATION_MANDATE,
 
             # [1] AI Mandate & Core Constraints
-            persona.AI_MANDATE,
-            persona.MEMORY_HIERARCHY,
+            text_resources.AI_MANDATE,
+            text_resources.MEMORY_HIERARCHY,
 
             # [2] The Axiom Of The World
-            persona.WORLD_AXIOM,
-            persona.WORLD_AXIOM,
-            persona.PERCEPTION_CONSTRAINTS,
-            persona.ANTI_DIDACTIC_PRINCIPLES,
-            persona.SENSORY_AND_ANTI_CLICHE_LAYER,
-            persona.FLOW_CONTROL_LAYER,
-            persona.TELESCOPE_PROTOCOL,
-            persona.AI_MORAL_BIAS_PROHIBITION,
+            text_resources.WORLD_AXIOM,
+            text_resources.WORLD_AXIOM,
+            text_resources.PERCEPTION_CONSTRAINTS,
+            text_resources.ANTI_DIDACTIC_PRINCIPLES,
+            text_resources.SENSORY_AND_ANTI_CLICHE_LAYER,
+            text_resources.FLOW_CONTROL_LAYER,
+            text_resources.TELESCOPE_PROTOCOL,
+            text_resources.AI_MORAL_BIAS_PROHIBITION,
 
             # [2.5] PC Autonomy Doctrine
-            persona.PC_AUTONOMY_DOCTRINE,
+            text_resources.PC_AUTONOMY_DOCTRINE,
 
             # Core Instruction Components
-            persona.INTERACTION_MODEL,
-            persona.SOCIAL_DYNAMICS,
-            persona.TEMPORAL_DYNAMICS,
-            persona.RECORDER_IDENTITY,
-            persona.ACTION_RESOLUTION,
-            persona.CHARACTER_CONSISTENCY_PROTOCOL,
-            persona.NPC_ATTITUDE_ENFORCEMENT,
-            persona.TIME_ATMOSPHERE,
-            persona.ASPECT_UTILIZATION,
-            persona.WRITING_STYLE_ENFORCEMENT,
-            persona.SELF_CORRECTION_PROTOCOL,
-            persona.CRITICAL_PRIORITY,
-            persona.MATERIAL_PROCESSING_PROTOCOL,
+            text_resources.INTERACTION_MODEL,
+            text_resources.SOCIAL_DYNAMICS,
+            text_resources.TEMPORAL_DYNAMICS,
+            text_resources.RECORDER_IDENTITY,
+            text_resources.ACTION_RESOLUTION,
+            text_resources.CHARACTER_CONSISTENCY_PROTOCOL,
+            text_resources.NPC_ATTITUDE_ENFORCEMENT,
+            text_resources.TIME_ATMOSPHERE,
+            text_resources.ASPECT_UTILIZATION,
+            text_resources.WRITING_STYLE_ENFORCEMENT,
+            text_resources.SELF_CORRECTION_PROTOCOL,
+            text_resources.CRITICAL_PRIORITY,
+            text_resources.MATERIAL_PROCESSING_PROTOCOL,
         ]
 
         # Add dynamic static content
@@ -587,7 +587,7 @@ This tone affects style, not physics or causality.
         동적 프롬프트 빌드 (8-13번 순서)
         캐시 경계 이후의 동적 컨텐츠
         """
-        import persona
+        import text_resources
 
         # Scripts가 설정되지 않았으면 장르/톤 기반으로 자동 생성
         if 'scripts' not in self.sections:
@@ -607,11 +607,11 @@ This tone affects style, not physics or causality.
             f"<Cognition_Engine_Data>{self.sections.get('nvc_summary', '')}</Cognition_Engine_Data>",
 
             # [12-14] Requests & Enforcements
-            persona.OUTPUT_GENERATION_REQUEST,
-            persona.LANGUAGE_CORRECTION,
-            persona.FINAL_AUTONOMY_ENFORCEMENT,
+            text_resources.OUTPUT_GENERATION_REQUEST,
+            text_resources.LANGUAGE_CORRECTION,
+            text_resources.FINAL_AUTONOMY_ENFORCEMENT,
             build_length_instruction(),
-            persona.EMOTION_BOOSTER,
+            text_resources.EMOTION_BOOSTER,
         ]
 
         return "\n==========CACHE BOUNDARY==========\n" + "\n\n".join(filter(None, dynamic_parts))
