@@ -424,12 +424,32 @@ class OrchestrationService:
                 # 4. Anomaly & Judgment
                 ctx, game_msgs = await self.process_anomaly_and_judgment(ctx, message)
                 
-                # Log messages
+                # Log messages (User Facing)
                 system_logs = world_msgs + game_msgs
                 if system_logs:
                     await message.channel.send("\n".join(system_logs))
 
                 # 5. Prompt Building
+                # [Context Injection Fix] Wrap system logs in <System_Outcome> for the AI
+                system_outcome_block = ""
+                if system_logs:
+                    joined_logs = "\n".join(system_logs)
+                    system_outcome_block = f"<System_Outcome>\n{joined_logs}\n</System_Outcome>"
+                
+                # Pass the system outcome to the prompt builder via current_context or a new field
+                # For now, append to 'world_state' or inject directly
+                # Best approach: Inject into 'previous_log' logic in build_prompt or manually append
+                
+                # Let's verify 'build_prompt' signature. It takes 'ctx'.
+                # We should update ctx.world_state or similar field.
+                # Actually, ctx is immutable-ish dataclass but we can update it or passing it?
+                # looking at update_world_state, it returns new ctx.
+                # We can inject this into ctx.world_state for the prompt builder to pick up.
+                
+                if system_outcome_block:
+                    # Append to world state string which goes into <Current-Context>
+                    ctx.world_state += f"\n\n{system_outcome_block}"
+
                 full_prompt, builder = self.build_prompt(ctx)
 
                 # 6. Response Generation

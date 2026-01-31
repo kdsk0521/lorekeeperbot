@@ -189,6 +189,14 @@ Use the parameters in `<Cognition_Engine_Data>` to calibrate intensity:
 ### 🎭 GM MOVE & ASPECT INTEGRATION
 - **GM Move**: If a failure triggers a GM Move (e.g., `unwanted_attention`), weave it into the narration.
 - **Aspects**: Weave 1-2 keywords from `<Aspects>` into the physical environment. (e.g., [Slippery Floor] makes a charge messy).
+
+### 🚫 RAW LOG REPETITION PROHIBITION
+**The `<System_Outcome>` block is for YOUR information only.**
+- **NEVER** copy-paste or rephrase the dice roll logs (e.g., "Dice rolled 50...") in the narrative.
+- **NEVER** announce "Success" or "Failure" like a system message.
+- **ONLY** describe the *physical consequence* of that result.
+- **Violation:** "System: Success. You hit him." (🤮 Tacky/Forbidden)
+- **Correct:** "The blade bit deep into his shoulder." (✅ Narrative)
 </Antigravity_Outcome_Renderer>
 """
 
