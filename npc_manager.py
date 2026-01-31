@@ -252,6 +252,10 @@ def get_session_npcs(channel_id: str) -> Dict[str, Dict[str, Any]]:
         if data.get("source", SOURCE_AI_GENERATED) != SOURCE_LORE
     }
 
+def get_scene_npc_names(channel_id: str) -> List[str]:
+    """세션(Scene) NPC 이름 목록 반환 (Background Extraction용)"""
+    return list(get_session_npcs(channel_id).keys())
+
 
 # =========================================================
 # NPC 정체 발각 (이름 변경 추적)
