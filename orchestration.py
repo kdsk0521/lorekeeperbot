@@ -448,7 +448,7 @@ class OrchestrationService:
                 
                 if system_outcome_block:
                     # Append to world state string which goes into <Current-Context>
-                    ctx.world_state += f"\n\n{system_outcome_block}"
+                    ctx.world_ctx += f"\n\n{system_outcome_block}"
 
                 full_prompt, builder = self.build_prompt(ctx)
 
