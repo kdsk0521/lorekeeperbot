@@ -86,7 +86,7 @@ async def _process_message(message):
                     client_discord, client_genai, MODEL_ID, MODEL_ID_FLASH,
                     domain_manager.get_domain(channel_id)
                 )
-                if sys_trigger:
+                if sys_trigger and isinstance(sys_trigger, str):
                     await generate_ai_response(message, channel_id, sys_trigger)
                 return
 

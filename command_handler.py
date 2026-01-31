@@ -576,6 +576,7 @@ async def cmd_ready(ctx: CommandContext) -> None:
 @registry.register("start", category="Admin", aliases=["시작"], description="세션 시작")
 async def cmd_start(ctx: CommandContext) -> None:
     """!시작"""
+    domain_manager.update_participant(ctx.channel_id, ctx.message.author)
     if await session_manager.manager.start_session(ctx.message, ctx.genai_client, ctx.model_id):
         # Trigger opening generation
         return "Opening"

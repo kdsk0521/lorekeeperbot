@@ -428,8 +428,11 @@ class OrchestrationService:
                     await self.schedule_background_extraction(ctx, response, message)
 
         except Exception as e:
-            logger.error(f"Orchestration Execution Error: {e}", exc_info=True)
-            await message.channel.send(f"⚠️ **AI 처리 오류:** {e}")
+            import traceback
+            error_traceback = traceback.format_exc()
+            logger.error(f"AI Process Error: {e}\n{error_traceback}")
+            # Show the last part of the traceback to the user for debugging
+            await message.channel.send(f"⚠️ **AI 처리 오류:** {e}\n```python\n{error_traceback[-500:]}\n```")
 
 
 # =========================================================
