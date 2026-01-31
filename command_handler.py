@@ -32,10 +32,6 @@ from command_registry import CommandRegistry, CommandContext
 
 # Registry Instance
 registry = CommandRegistry()
-from command_registry import CommandRegistry, CommandContext
-
-# Registry Instance
-registry = CommandRegistry()
 
 # =========================================================
 # SYSTEM HANDLER LOGIC (Absorbed)

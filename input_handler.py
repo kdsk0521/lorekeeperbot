@@ -123,7 +123,6 @@ def parse_input(content: str) -> Optional[Dict[str, Any]]:
             '정보': 'info',
             '내정보': 'info',
             'info': 'info',
-            'info': 'info',
             
             # === 세계관 설정 ===
             '로어': 'lore',
@@ -166,9 +165,7 @@ def parse_input(content: str) -> Optional[Dict[str, Any]]:
             # === 비일상 감지 설정 ===
             '비일상': 'abnormal',
             'abnormal': 'abnormal',
-            
-            'abnormal': 'abnormal',
-            
+
             # === 도움말 ===
             '도움': 'help',
             '도움말': 'help',
@@ -182,9 +179,7 @@ def parse_input(content: str) -> Optional[Dict[str, Any]]:
         
         # 주사위 특수 처리 (!r, !주사위 등)
         return {'type': 'command', 'command': command, 'content': args}
-        
-        return {'type': 'command', 'command': command, 'content': args}
-    
+
     # 2. OOC 감지 - 메시지 내 (OOC: 내용) 패턴 추출
     # 메시지 어디에든 (OOC: ...) 가 있으면 추출
     ooc_match = _OOC_PATTERN.search(clean_content)

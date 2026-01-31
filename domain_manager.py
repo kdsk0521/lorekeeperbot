@@ -269,31 +269,10 @@ def update_npc_attitude(channel_id: str, npc_name: str, attitude: str, reason: s
     }
     save_domain(channel_id, d)
 
-    """저장된 NPC 태도 조회"""
-    d = get_domain(channel_id)
-    return d.get("npc_attitudes", {})
-
 def get_npc_attitudes(channel_id: str) -> Dict[str, Dict]:
     """저장된 NPC 태도 조회"""
     d = get_domain(channel_id)
     return d.get("npc_attitudes", {})
-
-# Active Genres & Tone
-def set_active_genres(channel_id: str, genres: Any) -> None:
-    """활성 장르 설정 (List[str] or Dict)"""
-    d = get_domain(channel_id)
-    d["active_genres"] = genres
-    save_domain(channel_id, d)
-
-def get_active_genres(channel_id: str) -> Any:
-    """활성 장르 조회"""
-    return get_domain(channel_id).get("active_genres")
-
-def set_custom_tone(channel_id: str, tone: Optional[str]) -> None:
-    """커스텀 톤 설정"""
-    d = get_domain(channel_id)
-    d["custom_tone"] = tone
-    save_domain(channel_id, d)
 
 def get_npc_attitude(channel_id: str, npc_name: str) -> Optional[Dict]:
     """특정 NPC의 태도 조회"""
@@ -680,8 +659,6 @@ def get_unified_player_info(channel_id: str, user_id: str) -> str:
         res += ", ".join(items) + "\n"
 
     return res
-    
-    return res
 
 # =========================================================
 # 5. STATE ACCESSORS (From legacy domain_manager)
@@ -814,21 +791,6 @@ def set_session_ai_memory(channel_id: str, data: Dict[str, Any]) -> None:
     d = get_domain(channel_id)
     d["ai_session_memory"] = data
     save_domain(channel_id, d)
-
-# Missing Accessors
-
-
-
-
-def set_current_location(channel_id: str, location: str) -> None:
-    w = get_world_state(channel_id)
-    w["current_location"] = location
-    update_world_state(channel_id, w)
-
-def set_current_risk(channel_id: str, risk: str) -> None:
-    w = get_world_state(channel_id)
-    w["risk_level"] = risk
-    update_world_state(channel_id, w)
 
 # Bot Active State
 def get_bot_active(channel_id: str) -> bool:

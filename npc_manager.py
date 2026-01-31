@@ -75,12 +75,12 @@ def find_similar_npc(channel_id: str, new_name: str, threshold: float = 0.85) ->
     # "Dr. Strange" vs "Strange", "Arthur" vs "King Arthur"
     if len(n_lower) >= 3:
         for name in existing_npcs:
-             e_lower = name.lower()
-             if n_lower in e_lower or e_lower in n_lower:
-                 # Check if the overlap is significant? 
-                 # For now, strict containment is usually a sign of identity or relation.
-                 return name
-                 
+            e_lower = name.lower()
+            if n_lower in e_lower or e_lower in n_lower:
+                # Check if the overlap is significant?
+                # For now, strict containment is usually a sign of identity or relation.
+                return name
+
     # 3. Fuzzy Match
     matches = difflib.get_close_matches(new_name, existing_npcs.keys(), n=1, cutoff=threshold)
     if matches:
