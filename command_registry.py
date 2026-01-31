@@ -108,8 +108,9 @@ class CommandRegistry:
         try:
             # 3. Execute
             logger.info(f"Dispatching command '{cmd_name}' for user {ctx.user_id}")
-            await handler(ctx)
-            return True
+            result = await handler(ctx)
+            # Return either the explicit handler result or True to indicate command was handled
+            return result if result is not None else True
         except Exception as e:
             logger.error(f"Error executing command '{cmd_name}': {e}", exc_info=True)
             await ctx.send(f"❌ 명령어 실행 중 오류가 발생했습니다: {e}")

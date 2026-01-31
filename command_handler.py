@@ -576,10 +576,10 @@ async def cmd_ready(ctx: CommandContext) -> None:
 @registry.register("start", category="Admin", aliases=["시작"], description="세션 시작")
 async def cmd_start(ctx: CommandContext) -> None:
     """!시작"""
-    domain_manager.update_participant(ctx.channel_id, ctx.message.author)
     if await session_manager.manager.start_session(ctx.message, ctx.genai_client, ctx.model_id):
-        # Result handled by start_session (usually sends intro)
-        pass
+        # Trigger opening generation
+        return "Opening"
+    return None
 
 
 @registry.register("mode", category="System", aliases=["모드"], description="AI 응답 모드 변경")
@@ -1119,6 +1119,5 @@ async def dispatch_command(cmd, message, channel_id, parsed, client_discord, cli
     )
     
     # 1. New Registry Dispatch
-    if await registry.dispatch(ctx):
-        return None
+    return await registry.dispatch(ctx)
 

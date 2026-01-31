@@ -769,10 +769,12 @@ class GMCognition:
             player_context=player_context
         )
         
-        # 3. CRISIS CHECK (Yellow Protocol)
-        # Only run if risk seems high in observation
+        # 3. CRISIS CHECK & SYSTEM EVENT BYPASS
+        is_system_event = user_input.startswith("[System Event]")
+        
+        # Crisis Check: Only run if risk seems high and NOT a system event
         crisis_result = {"halt_signal": False}
-        if observation_result.get("LocationRisk", "Low") in ["High", "Extreme"]:
+        if not is_system_event and observation_result.get("LocationRisk", "Low") in ["High", "Extreme"]:
             crisis_result = await self._evaluate_crisis_level(
                 user_input, observation_result.get("Observation", "")
             )
@@ -785,20 +787,37 @@ class GMCognition:
             }
 
         # 4. JUDGMENT (Dikastes Pro)
-        # Always run judgment to prepare for mechanics
-        judgment_result = await judge_action_pro(
-            self.client, self.model_id,
-            observation_result.get("UserIntent", ""),
-            observation_result.get("Observation", ""),
-            observation_result.get("RelevantContext", []),
-            history_text[-500:]
-        )
+        # Bypassed for System Events to reduce latency
+        if is_system_event:
+            judgment_result = {
+                "ActionJudgment": {
+                    "action": "Admin Action",
+                    "result": "automatic_success",
+                    "difficulty": "trivial",
+                    "dc": 0,
+                    "modifiers": {},
+                    "difficulty_reason": "System/Opening Event"
+                },
+                "SystemAction": None
+            }
+        else:
+            judgment_result = await judge_action_pro(
+                self.client, self.model_id,
+                observation_result.get("UserIntent", ""),
+                observation_result.get("Observation", ""),
+                observation_result.get("RelevantContext", []),
+                history_text[-500:]
+            )
 
         # 5. NARRATIVE PLANNING (Man in the Mirror)
-        flow_plan = await self._plan_narrative_flow(
-            history_text[-1000:], 
-            str(judgment_result.get("ActionJudgment"))
-        )
+        # Simplified for System Events
+        if is_system_event:
+            flow_plan = {"chain_status": "OPEN", "narrative_hook": "Session Start"}
+        else:
+            flow_plan = await self._plan_narrative_flow(
+                history_text[-1000:], 
+                str(judgment_result.get("ActionJudgment"))
+            )
         
         # Consolidate
         return {
