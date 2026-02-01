@@ -523,41 +523,32 @@ This tone affects style, not physics or causality.
         parts = [
             # [Group 1: Authorization & Identity - The Foundation]
             text_resources.CONTENT_AUTHORIZATION_MANDATE,
-            text_resources.AI_MANDATE,
-            text_resources.GM_IDENTITY,
+            text_resources.AI_CORE_IDENTITY,              # Consolidated (System Root + GM Identity)
 
-            # [Group 2: The Physics - The Laws]
+            # [Group 2: The Logic & Physics - The Laws]
             text_resources.WORLD_AXIOM,
             text_resources.MEMORY_HIERARCHY,
-            text_resources.CRITICAL_PRIORITY,
+            text_resources.CRITICAL_PROTOCOL,             # Consolidated (Critical + Self Correction)
+            text_resources.OBSERVER_NEUTRALITY_DOCTRINE,  # Consolidated
 
-            # [Group 3: The Lens - Perception & Rendering]
-            text_resources.PERCEPTION_CONSTRAINTS,
-            text_resources.ANTI_DIDACTIC_PRINCIPLES,
-            text_resources.SENSORY_AND_ANTI_CLICHE_LAYER,
-            text_resources.WRITING_STYLE_ENFORCEMENT,
-            text_resources.FLOW_CONTROL_LAYER,
+            # [Group 3: The Lens - Rendering Engine]
+            text_resources.PHYSICAL_RENDERING_DOCTRINE,   # Consolidated
+            text_resources.ANTI_CLICHE_PROTOCOL,          # Consolidated
+            text_resources.TEMPORAL_FLOW_DOCTRINE,        # Consolidated
 
-            # [Group 4: The Agents - Behavioral & Social]
-            text_resources.PC_AUTONOMY_DOCTRINE,
-            text_resources.CHARACTER_CONSISTENCY_PROTOCOL,
-            text_resources.NPC_ATTITUDE_ENFORCEMENT,
-            text_resources.AI_MORAL_BIAS_PROHIBITION,
-            text_resources.INTERACTION_MODEL,
-            text_resources.SOCIAL_DYNAMICS,
+            # [Group 4: The Agents - Social & Behavioral]
+            text_resources.PC_AUTONOMY_DOCTRINE,          # Consolidated
+            text_resources.INTERACTION_MODEL,             # Kept (Merged with Social Dynamics)
+            text_resources.NPC_ATTITUDE_ENFORCEMENT,      # Kept (Reduced)
 
-            # [Group 5: The Mechanics - System & Time]
-            text_resources.TEMPORAL_DYNAMICS,
-            text_resources.TIME_ATMOSPHERE,
-            text_resources.ACTION_RESOLUTION,
-            text_resources.ASPECT_UTILIZATION,
+            # [Group 5: The Atmosphere & Mechanics]
+            text_resources.TIME_ATMOSPHERE,               # Kept
+            text_resources.ACTION_RESOLUTION,             # Kept
+            text_resources.ASPECT_UTILIZATION,            # Kept
 
-            # [Group 6: Safety & Integrity]
-            text_resources.SELF_CORRECTION_PROTOCOL,
-            text_resources.MATERIAL_PROCESSING_PROTOCOL,
-
-            # [Group 7: Output Protocol]
-            text_resources.TELESCOPE_PROTOCOL,
+            # [Group 6: Output Protocol]
+            text_resources.TELESCOPE_PROTOCOL,            # Kept (Internal Logic)
+            text_resources.OUTPUT_PROTOCOL,               # Consolidated (Rendering Rules)
         ]
 
         # Add dynamic static content
