@@ -126,7 +126,7 @@ async def gather_context(ctx: ResponseContext) -> ResponseContext:
 def _build_smart_history(ctx: ResponseContext) -> str:
     """스마트 컨텍스트 윈도우로 히스토리를 구성합니다."""
     all_hist = ctx.domain_data.get('history', [])
-    target_len = 1500
+    target_len = 30000 # [Anti-Gravity] Expanded Context Window (1500 -> 30000)
     default_lines = getattr(fermentation, "RECENT_HISTORY_FOR_ANALYSIS", 20)
     slice_idx = -default_lines
 
