@@ -602,9 +602,9 @@ This tone affects style, not physics or causality.
             f"<Cognition_Engine_Data>{self.sections.get('nvc_summary', '')}</Cognition_Engine_Data>",
 
             # [12-14] Requests & Enforcements
-            text_resources.OUTPUT_GENERATION_REQUEST,
+            text_resources.OUTPUT_PROTOCOL,
             text_resources.LANGUAGE_CORRECTION,
-            text_resources.FINAL_AUTONOMY_ENFORCEMENT,
+            text_resources.PC_AUTONOMY_DOCTRINE,
             build_length_instruction(),
             text_resources.EMOTION_BOOSTER,
         ]
