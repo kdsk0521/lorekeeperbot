@@ -851,10 +851,9 @@ async def handle_ooc_command(message, channel_id, ooc_content, client_genai, mod
         # 서사 지시는 프롬프트에 주입하기 위해 반환
         return "[OOC Directive: {ooc_content}]"
 
-@registry.register("mental", category="Player", aliases=["멘탈", "mental"], description="멘탈 조회/조정")
+@registry.register("mental", category="Player", aliases=["멘탈", "mental"], description="멘탈 조회 및 설정")
 async def cmd_mental(ctx: CommandContext) -> None:
-    """!멘탈 [조회]"""
-    # Simple View implementation matching old logic
+    """!멘탈 [값] - 멘탈 수치를 특정 값으로 설정 (0-100)"""
     uid = ctx.user_id
     p_data = domain_manager.get_participant_data(ctx.channel_id, uid)
     
@@ -864,12 +863,38 @@ async def cmd_mental(ctx: CommandContext) -> None:
         
     mem = p_data.get("ai_memory", {})
     ment = mem.get("mental", {"value": 100})
-    val = ment.get("value", 100)
     
-    info = game_character.get_mental_info(val)
-    desc = info['desc']
-    
-    await ctx.send(f"🧠 **정신 상태:** {info['emoji']} **{info['name']}**\n> {desc}")
+    # [View Mode]
+    if not ctx.args:
+        val = ment.get("value", 100)
+        info = game_character.get_mental_info(val)
+        desc = info['desc']
+        await ctx.send(f"🧠 **정신 상태:** {info['emoji']} **{info['name']}** ({val}/100)\n> {desc}")
+        return
+
+    # [Set Mode]
+    try:
+        target_val = int(ctx.args[0])
+        # Clamp 0-100
+        target_val = max(0, min(100, target_val))
+        
+        # Direct Set (Bypass game logic mechanics like Trauma/Clamping for manual correction)
+        # However, we should respect the structure
+        if "mental" not in mem: mem["mental"] = {}
+        
+        mem["mental"]["value"] = target_val
+        mem["mental"]["last_delta"] = 0 # Reset delta on manual set
+        
+        # Save
+        p_data["ai_memory"] = mem # Ensure ref
+        domain_manager.save_participant_data(ctx.channel_id, uid, p_data)
+        
+        # Feedback
+        info = game_character.get_mental_info(target_val)
+        await ctx.send(f"🧠 **멘탈 설정 완료:** {target_val}/100\n현재 상태: {info['emoji']} **{info['name']}**")
+        
+    except ValueError:
+        await ctx.send("⚠️ 올바른 숫자를 입력하세요. (예: `!멘탈 50`)")
 
 
 
