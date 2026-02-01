@@ -85,8 +85,8 @@ class ChatSessionAdapter:
 
     def _trim_history(self):
         """히스토리가 너무 커지면 오래된 메시지 제거"""
-        MAX_HISTORY_MESSAGES = 50
-        MAX_HISTORY_CHARS = 100000 
+        MAX_HISTORY_MESSAGES = getattr(config, "MAX_HISTORY_LENGTH", 2000) # Sync with global config
+        MAX_HISTORY_CHARS = 100000 # [Anti-Gravity] Expanded Context
 
         # 초기 2개 메시지 (시스템 초기화)는 유지
         if len(self.history) <= 2:

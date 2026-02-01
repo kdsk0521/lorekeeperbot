@@ -40,6 +40,8 @@ class ResponseContext:
     hist_text: str = ""
     notebook_txt: str = ""
     quest_txt: str = "" 
+    # [Anti-Gravity] Sliced History List
+    smart_history: List[Dict] = field(default_factory=list)
 
     # NVC 분석 결과
     nvc_result: Dict[str, Any] = field(default_factory=dict)
@@ -143,6 +145,7 @@ def _build_smart_history(ctx: ResponseContext) -> str:
         slice_idx -= 5
 
     history = all_hist[slice_idx:]
+    ctx.smart_history = history # [Anti-Gravity] Store sliced list for response generation
     return "\n".join([f"{h['role']}: {h['content']}" for h in history]) + f"\nUser: {ctx.action_text}"
 
 

@@ -47,7 +47,7 @@ SUPPORTED_TEXT_EXTENSIONS = ['.txt', '.md', '.json', '.log', '.py', '.yaml', '.y
 # Domain & Session Defaults
 # =========================================================
 # Memory/History Limits
-MAX_HISTORY_LENGTH = 80             # Max history items stored in domain_data (sync with fermentation)
+MAX_HISTORY_LENGTH = 2000             # [Anti-Gravity] Expanded History (80 -> 2000)
 MAX_DESC_LENGTH = 50                # Summary description length
 RECENT_HISTORY_FOR_ANALYSIS = 20    # Number of recent messages sent to Left Brain Analysis
 
@@ -101,7 +101,7 @@ DOOM_DICE_BASELINE = 50
 DOOM_DICE_MODIFIER_STEP = 5
 
 # Memory Optimization
-FRESH_THRESHOLD = 70  # Increased from 50 (V2 Restoration)
+FRESH_THRESHOLD = 2000  # [Anti-Gravity] Expanded for Max Context (70 -> 2000)
 
 # =========================================================
 # V7 Core Systems: Mental, Doom, Abnormal

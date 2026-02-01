@@ -233,7 +233,9 @@ async def generate_response(
     )
 
     # 히스토리 주입
-    for h in ctx.domain_data.get('history', []):
+    # [Anti-Gravity] Use Smart Context Window
+    history_to_inject = ctx.smart_history if ctx.smart_history else ctx.domain_data.get('history', [])
+    for h in history_to_inject:
         role = "user" if h['role'] == "User" else "model"
         session.history.append(types.Content(role=role, parts=[types.Part(text=str(h['content']))]))
 
