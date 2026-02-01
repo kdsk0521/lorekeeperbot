@@ -467,37 +467,6 @@ def build_judgment_context_with_roll(judgment: Dict[str, Any]) -> str:
         f"{gm_move_info}"
     )
     return log_msg
-    if not judgment: return ""
-    
-    mod_strs = []
-    for n, v in judgment.get("modifiers", {}).items():
-        try:
-            val = int(v)
-            prefix = '+' if val >= 0 else ''
-            mod_strs.append(f"{n}({prefix}{val})")
-        except (ValueError, TypeError):
-            # 숫자 변환 실패 시 원본 값 사용
-            mod_strs.append(f"{n}({v})")
-    
-    mod_text = ", ".join(mod_strs) if mod_strs else "None"
-    
-    res_key = judgment.get("result")
-    result_kr_map = {
-        "critical_success": "대성공", "success": "성공", "partial": "부분 성공", 
-        "failure": "실패", "critical_failure": "대실패", "automatic_success": "자동 성공"
-    }
-    result_kr = result_kr_map.get(res_key, "N/A")
-    
-    roll_line = f"Roll: {judgment.get('base_roll')} {'+' if judgment.get('modifier_total')>=0 else ''}{judgment.get('modifier_total')} = {judgment.get('final_roll')}\n"
-    
-    return (
-        f"### [GM JUDGMENT]\n"
-        f"Action: {judgment.get('action')}\n"
-        f"Diff: {judgment.get('difficulty')} (DC {judgment.get('dc')})\n"
-        f"{roll_line}"
-        f"Mods: {mod_text}\n"
-        f"**RESULT: {result_kr}**\n\n"
-    )
 
 # =========================================================
 # PART 3: EXTRACTION (LOGOS)

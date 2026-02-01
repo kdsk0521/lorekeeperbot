@@ -404,10 +404,6 @@ def get_relationship_summary(channel_id: str) -> str:
         if len(npc_data.get("description", "")) > 50:
             desc += "..."
 
-        desc = npc_data.get("description", "")[:50]
-        if len(npc_data.get("description", "")) > 50:
-            desc += "..."
-
         # [Gender/Race Display]
         meta_info = []
         if npc_data.get("race"): meta_info.append(npc_data["race"])

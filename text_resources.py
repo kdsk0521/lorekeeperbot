@@ -43,7 +43,6 @@ The AI MUST NEVER generate for ANY PC:
 - If Mask Name is unknown, use contextual reference ("The Warrior", "The Newcomer")
 
 ### PRE-OUTPUT CHECK
-### PRE-OUTPUT CHECK
 1. Did you write PC dialogue? → DELETE
 2. Did you invent PC action? → DELETE
 3. Did you repeat user input? → DELETE
