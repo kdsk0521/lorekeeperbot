@@ -343,6 +343,15 @@ def get_status_summary(user_data: Dict[str, Any]) -> str:
     # 2. Passives (Helper utilized)
     passives = get_passives_for_context(user_data) # Returns "Passives: ..."
     parts.append(passives)
+
+    # 3. Companions (Collaborators) [NEW]
+    mem = user_data.get("ai_memory", {})
+    companions = mem.get("companions", [])
+    if companions:
+        # Filter generic placeholders if any, or just list distinct names
+        # Assuming companions is a list of strings
+        if isinstance(companions, list) and len(companions) > 0:
+            parts.append(f"동행(Companions): {', '.join(companions)}")
     
     return "\n".join(parts)
 

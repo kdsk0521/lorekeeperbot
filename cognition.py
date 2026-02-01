@@ -49,6 +49,7 @@ Apply these in EVERY analysis:
 4. KNOWLEDGE FIREWALL — Separate Player knowledge from Character knowledge.
 5. PC AUTONOMY ENFORCEMENT — Player Characters are controlled ONLY by their players.
 6. TARGET FIDELITY — Do NOT hallucinate specific names for generic targets (e.g., "patient" -> "Clara") unless clearly context-established. If ambiguous, keep it generic.
+7. COLLABORATOR vs TARGET — If action is "Action *with* X", X is a Collaborator/Tool, NOT the target. (e.g., "Treat patient with Clara" -> Target: Patient, Collaborator: Clara).
 </absolute_principles>
 
 <pc_impersonation_self_correction>
@@ -103,8 +104,10 @@ What is the user trying to achieve IMMEDIATELY?
 STEP 3 — OBSTACLES
 What makes this difficult? Physical barriers, social resistance, time pressure, etc.
 
-STEP 4 — RESOURCES
-What helps? Items, skills, allies, environmental advantages, information.
+STEP 4 — RESOURCES & COLLABORATORS
+Check [PLAYER STATUS] for "Companions".
+- If user says "...with Clara" and Clara is a companion, she is a RESOURCE/HELPER.
+- What helps? Items, skills, allies, environmental advantages, information.
 
 STEP 5 — CONTEXT SELECTION (CRITICAL)
 From Lore/Rules/Notebook, find 5-10 specific quotes that are relevant.
