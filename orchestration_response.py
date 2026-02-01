@@ -51,13 +51,10 @@ def build_prompt(
             + "\n"
         )
 
-    # 프롬프트 빌더 설정
-    p_name = ctx.player_data.get("mask", "Unknown") if ctx.player_data else "Unknown"
-    p_desc = ctx.player_data.get("ai_memory", {}).get("appearance", "") if ctx.player_data else ""
-
     builder.set_genres(ctx.active_genres)
     builder.set_custom_tone(ctx.custom_tone)
     builder.set_scene_type(ctx.scene_type)
+
     # [Context Diet / RAG Implementation]
     # Use Flash-extracted context instead of full lore if available
     relevant_context = ctx.nvc_result.get("RelevantContext", [])
@@ -79,7 +76,11 @@ def build_prompt(
         # Fallback: Use full lore if extraction failed or is empty
         logger.warning("[Context Diet] No relevant context extracted. Falling back to Full Lore.")
         builder.set_lore(ctx.lore_txt, ctx.rule_txt)
-    builder.set_player_info(p_name, p_desc)
+
+    # Combined Player Info (Status + Passives + Desc)
+    rich_player_info = domain_manager.get_unified_player_info(ctx.channel_id, ctx.user_id)
+    builder.set_player_info(name="", description=rich_player_info)
+
     builder.set_roles(character_descriptions="")
     builder.set_fermented(ctx.fermented_summary_text, ctx.domain_data.get("deep_memory", ""))
 

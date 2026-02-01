@@ -568,6 +568,16 @@ This tone affects style, not physics or causality.
             parts.append(self.sections['fermented'])
         if 'immediate' in self.sections:
             parts.append(self.sections['immediate'])
+            
+        # [Cache Optimization] Scripts moved to Static (Rule-based)
+        # Scripts가 설정되지 않았으면 장르/톤 기반으로 자동 생성
+        if 'scripts' not in self.sections:
+            active_genres = self.sections.get('_active_genres')
+            custom_tone = self.sections.get('_custom_tone')
+            self.sections['scripts'] = build_combined_directive(active_genres, custom_tone)
+            
+        if 'scripts' in self.sections:
+             parts.append(self.sections['scripts'])
 
         # Final XML encapsulation
         system_block = f"""
@@ -584,15 +594,11 @@ This tone affects style, not physics or causality.
         """
         import text_resources
 
-        # Scripts가 설정되지 않았으면 장르/톤 기반으로 자동 생성
-        if 'scripts' not in self.sections:
-            active_genres = self.sections.get('_active_genres')
-            custom_tone = self.sections.get('_custom_tone')
-            self.sections['scripts'] = build_combined_directive(active_genres, custom_tone)
-
         dynamic_parts = [
-            # [8] Scripts
-            self.sections.get('scripts', ''),
+            # [8] Scripts (Moved to Static)
+
+            # [9] Player Info (Moved to Dynamic for Status Updates)
+            self.sections.get('player_info', ''),
 
             # [10-11] Raw Context & User Message
             f"<Current_Context>{self.sections.get('current_context', '')}</Current_Context>",

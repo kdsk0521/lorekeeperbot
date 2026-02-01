@@ -542,6 +542,10 @@ Based on the `<Cognition_Engine_Data>`, render the world's response.
 - **Show, Don't Tell:** Do not name the outcome (Success/Fail). -> **Don't spoil the ending.** Naming the result is lazy writing.
 - **Pure Reaction:** 🛑 **NO ECHO**. Do not restate the player's action. -> **Parroting is for birds.** Zero tolerance for filler.
 - **GM Move Integration:** If failure occurs, weave the consequence physically into the scene.
+
+### 3. FORMAT ENFORCEMENT (NON-NEGOTIABLE)
+- **Dialogue:** MUST use `Name: "Dialogue"` format. NO exceptions for "style".
+- **No Impersonation:** NEVER write the PC's dialogue or inner thoughts. You are the World, not the Protagonist.
 </Output_Protocol>
 """
 
@@ -610,7 +614,7 @@ NSFW_CONTENT_GUIDELINES = """
 # =========================================================
 # EMOTION_BOOSTER (유지)
 # =========================================================
-EMOTION_BOOSTER = "\n\n!!! CRITICAL INSTRUCTION: This is a career-defining moment. Write with the skill of a Pulitzer Prize winner. DO NOT FAIL. !!!"
+EMOTION_BOOSTER = "\n\n!!! CRITICAL INSTRUCTION: Write with the immersive quality of a masterpiece, BUT PRESERVE 'Name: \"Dialogue\"' format and PC AUTONOMY. Do not write FOR the player. !!!"
 
 
 # =========================================================
