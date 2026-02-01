@@ -101,6 +101,9 @@ def build_prompt(
     # [Phase 2] Inject Psych Profile
     psych_profile = ctx.player_data.get("ai_memory", {}).get("psych_profile") if ctx.player_data else None
     builder.set_cognition_data(nvc_summary, psych_profile)
+    
+    # [Restored] Define p_name for Reminder
+    p_name = ctx.player_data.get("mask", "Unknown") if ctx.player_data else "Unknown"
     pc_reminder = f"### CRITICAL WARNING: DO NOT WRITE FOR [{p_name}]\n{p_name} is the PLAYER. You must NOT generate their dialogue or actions."
     builder.set_user_message(material=ctx.action_text, ooc_content=pc_reminder)
 
