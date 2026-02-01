@@ -612,61 +612,86 @@ def find_participant_id_by_name(channel_id: str, name: str) -> Optional[str]:
 
 # UI Helpers
 def get_unified_player_info(channel_id: str, user_id: str) -> str:
+    """
+    [V7] 통합 플레이어 정보 반환 (프롬프트 주입용)
+    - 캐릭터 이름/외모 (Description)
+    - 상태 이상 (Status Effects)
+    - 패시브 (Traits)
+    - 관계 (Relationships)
+    - 배경 (Background)
+    - 멘탈 (Mental)
+    - 노트북 (Notebook)
+    """
     p = get_participant_data(channel_id, user_id)
-    if not p: return "❌ 정보 없음"
+    if not p:
+        return "## 🎭 Unknown Player\n(No data available)"
+
+    name = p.get("mask", "Unknown")
+    mem = p.get("ai_memory", {})
     
-    mem = p["ai_memory"]
-    res = f"## 🎭 **{p.get('mask')}**\n\n"
+    # 1. Description (Appearance + Personality + Background)
+    desc_parts = []
+    if mem.get("appearance"): desc_parts.append(f"Appearance: {mem['appearance']}")
+    if mem.get("personality"): desc_parts.append(f"Personality: {mem['personality']}")
+    # [Restored] Background
+    if mem.get("background"): desc_parts.append(f"Background: {mem['background']}")
     
-    eff = p.get('status_effects', [])
-    if eff: res += f"**⚠️ 상태:** {', '.join(eff)}\n"
-    
-    res += "\n---\n"
-    if mem.get("appearance"): res += f"**👤 외모:** {mem['appearance']}\n"
-    if mem.get("personality"): res += f"**💭 성격:** {mem['personality']}\n"
-    if mem.get("background"): res += f"**📖 배경:** {mem['background']}\n"
-    
-    rels = mem.get("relationships", {})
-    if rels: 
-        res += "**🤝 관계:**\n" + "\n".join([f"• {k}: {v}" for k,v in rels.items()]) + "\n"
-        
+    desc_text = "\n".join(desc_parts) if desc_parts else "No description available."
+
+    # 2. Status Effects
+    status_effects = p.get("status_effects", [])
+    status_text = ", ".join(status_effects) if status_effects else "Healthy (Normal)"
+
+    # 3. Passives (Traits)
     passives = mem.get("passives", [])
-    if passives: 
-        real_passives = []
-        titles = []
-        
-        for p in passives:
-            if isinstance(p, dict):
-                p_name = p.get("name", "Unknown")
-                tags = p.get("tags", [])
-                if "Title" in tags:
-                    titles.append(f"[{p_name}]")
-                else:
-                    real_passives.append(p_name)
-            else:
-                # String format legacy
-                real_passives.append(str(p))
-                
-        if titles: res += f"**🏆 칭호:** {', '.join(titles)}\n"
-        if real_passives: res += f"**✨ 패시브:** {', '.join(real_passives)}\n"
+    p_names = []
+    for pas in passives:
+        if isinstance(pas, dict): p_names.append(pas.get("name", "Unknown"))
+        else: p_names.append(str(pas))
+    passive_text = ", ".join(p_names) if p_names else "None"
     
-    # [V7] Adaptation Stats
+    # 4. Adaptation Stats
     abnormal = mem.get("abnormal_exposure", {})
+    abnormal_text = ""
     if abnormal:
-        res += "\n**🦠 비일상 적응도:**\n"
         items = []
         for tag, data in abnormal.items():
-            # Calculate % on the fly or store it
-            # Using data shown: {tag: {count: N}}
             count = data.get("count", 0)
-            # Simple log calc for display (duplicated logic, but safe for pure display)
-            # Better to rely on stored 'level' if available, or just show raw count for now?
-            # Plan said: 20% (Lv.1)
-            # Let's show Count for now if % logic is in game_character.
-            items.append(f"• [{tag}]: {count}회 노출")
-        res += ", ".join(items) + "\n"
+            items.append(f"{tag}({count})")
+        if items:
+            abnormal_text = ", ".join(items)
 
-    return res
+    # 5. [Restored] Relationships
+    rels = mem.get("relationships", {})
+    rel_text = "None"
+    if rels:
+        rel_text = ", ".join([f"{k}: {v}" for k, v in rels.items()])
+
+    # 6. [Added] Mental Status
+    mental = mem.get("mental", {})
+    mental_val = mental.get("value", 100)
+    mental_text = f"{mental_val}/100"
+
+    # 7. [Added] Notebook
+    notebook = get_notebook(channel_id)
+
+    # 8. Construct Block
+    return f"""## 🎭 {name} (Player Character)
+- **Status Condition**: {status_text}
+- **Mental Status**: {mental_text}
+- **Passives**: {passive_text}
+- **Abnormal Adaptation**: {abnormal_text if abnormal_text else "None"}
+- **Relationships**: {rel_text}
+- **Description**:
+{desc_text}
+
+### 📓 Player Notebook (Inventory & Memos)
+{notebook}
+
+⚠️ CRITICAL: YOU ARE THE GM. {name} IS THE PLAYER.
+DO NOT speak for {name}. DO NOT describe {name}'s actions.
+Only describe the world's reaction to {name}.
+"""
 
 # =========================================================
 # 5. STATE ACCESSORS (From legacy domain_manager)
@@ -843,3 +868,6 @@ def reset_session_state(channel_id: str) -> None:
         d["npcs"] = kept_npcs
         
     save_domain(channel_id, d)
+
+
+
