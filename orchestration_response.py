@@ -80,7 +80,7 @@ def build_prompt(
 
     # Combined Player Info (Status + Passives + Desc)
     rich_player_info = domain_manager.get_unified_player_info(ctx.channel_id, ctx.user_id)
-    builder.set_player_info(name="", description=rich_player_info)
+    builder.set_player_info(name="", desc=rich_player_info)
 
     builder.set_roles(character_descriptions="")
     builder.set_fermented(ctx.fermented_summary_text, ctx.domain_data.get("deep_memory", ""))
