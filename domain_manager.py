@@ -479,7 +479,12 @@ def apply_pc_info_to_user(channel_id: str, user_id: str) -> bool:
         # Convert legacy dict inventory to Notebook format
         items = []
         for k, v in pc_info["inventory"].items():
-            if v > 1: items.append(f"{k} x{v}")
+            try:
+                count = int(v)
+            except (ValueError, TypeError):
+                count = 1
+            
+            if count > 1: items.append(f"{k} x{count}")
             else: items.append(k)
             
         if items:
