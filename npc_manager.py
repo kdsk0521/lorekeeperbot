@@ -14,6 +14,7 @@ domain_manager.py는 저장소 역할만 담당.
 import time
 import random
 import logging
+import text_resources  # [NEW] Import text resources
 from typing import Dict, Any, Optional, List
 import difflib
 import domain_manager
@@ -128,7 +129,7 @@ def add_lore_npcs(channel_id: str, npc_list: List[Dict[str, Any]]) -> int:
         }
 
         # 추가 필드 복사 (role, personality 등)
-        for key in ["role", "personality", "appearance", "location"]:
+        for key in ["role", "personality", "appearance", "location", "gender", "race"]:
             if key in npc:
                 data[key] = npc[key]
 
@@ -140,7 +141,7 @@ def add_lore_npcs(channel_id: str, npc_list: List[Dict[str, Any]]) -> int:
 
 
 
-def add_manual_npc(channel_id: str, name: str, description: str, **kwargs) -> bool:
+def add_manual_npc(channel_id: str, name: str, description: str, gender: str = None, race: str = None, **kwargs) -> bool:
     """
     수동으로 NPC 추가 (!npc add 명령 등).
 
@@ -161,6 +162,8 @@ def add_manual_npc(channel_id: str, name: str, description: str, **kwargs) -> bo
         "source": SOURCE_MANUAL,
         "registered_at": time.strftime('%Y-%m-%d %H:%M'),
     }
+    if gender: data["gender"] = gender
+    if race: data["race"] = race
     data.update(kwargs)
 
     real_name = name.strip()
@@ -182,7 +185,7 @@ def add_manual_npc(channel_id: str, name: str, description: str, **kwargs) -> bo
     return True
 
 
-def register_ai_npc(channel_id: str, name: str, description: str = "", context: str = "") -> bool:
+def register_ai_npc(channel_id: str, name: str, description: str = "", context: str = "", gender: str = None, race: str = None) -> bool:
     """
     세션 중 AI가 생성한 NPC 등록.
     예: 이름 없던 '상인'이 '한스'로 이름이 밝혀졌을 때
@@ -216,6 +219,8 @@ def register_ai_npc(channel_id: str, name: str, description: str = "", context: 
         "registered_at": time.strftime('%Y-%m-%d %H:%M'),
         "appearances": [{"context": context, "at": time.strftime('%Y-%m-%d %H:%M')}] if context else []
     }
+    if gender: data["gender"] = gender
+    if race: data["race"] = race
 
     update_npc(channel_id, name.strip(), data)
     logger.info(f"[NPC] AI 생성 NPC 등록: {name}")
@@ -399,11 +404,17 @@ def get_relationship_summary(channel_id: str) -> str:
         if len(npc_data.get("description", "")) > 50:
             desc += "..."
 
-        line = f"{source_tag} **{npc_name}** {att_emoji}{attitude}"
-        if reason:
-            line += f" ({reason})"
-        if desc:
-            line += f" - {desc}"
+        desc = npc_data.get("description", "")[:50]
+        if len(npc_data.get("description", "")) > 50:
+            desc += "..."
+
+        # [Gender/Race Display]
+        meta_info = []
+        if npc_data.get("race"): meta_info.append(npc_data["race"])
+        if npc_data.get("gender"): meta_info.append(npc_data["gender"])
+        meta_str = f"[{'/'.join(meta_info)}] " if meta_info else ""
+
+        line = f"{source_tag} **{npc_name}** {att_emoji}{attitude} - {meta_str}{desc}"
 
         lines.append(line)
 
@@ -505,9 +516,14 @@ async def extract_npcs_from_lore(client, model_id: str, lore_text: str) -> List[
         "You are an Entity Extractor.\n"
         "Identify Non-Player Characters (NPCs) from the text.\n"
         "Exclude the Main Protagonist/Player Character.\n\n"
-        "Output Format (JSON List):\n"
+        
+        "### OPTIMIZATION DIRECTIVES\n"
+        f"1. {text_resources.AI_OPTIMIZATION_PROMPTS['consistency']}\n"
+        f"2. {text_resources.AI_OPTIMIZATION_PROMPTS['optimize']}\n\n"
+        
+        "### Output Format (JSON List):\n"
         "[\n"
-        "  {\"name\": \"Name\", \"description\": \"Role, appearance, personality\"},\n"
+        "  {\"name\": \"Name\", \"gender\": \"Male/Female/Unknown\", \"race\": \"Human/Elf/etc\", \"description\": \"Optimized Description\"},\n"
         "  ...\n"
         "]"
     )

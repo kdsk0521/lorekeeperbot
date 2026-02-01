@@ -613,3 +613,30 @@ EMOTION_BOOSTER = "\n\n!!! CRITICAL INSTRUCTION: This is a career-defining momen
 
 # =========================================================
 
+
+# =========================================================
+# AI OPTIMIZATION PROMPTS (New Feature)
+# =========================================================
+AI_OPTIMIZATION_PROMPTS = {
+    "consistency": (
+        "Check for internal consistency.\n"
+        "Ensure Name, Gender, Race, and Traits do not contradict each other.\n"
+        "If contradictions (e.g., 'Boy' but 'Female') are found, resolve them based on the most descriptive part of the text."
+    ),
+    "optimize": (
+        "Optimize the description for density and impact.\n"
+        "Remove fluff, repetitive phrases, and weak adjectives.\n"
+        "Keep the content rich but concise (High Information Density).\n"
+        "Do NOT summarize into a generic list; maintain the narrative flavor."
+    ),
+    "expand": (
+        "Expand the content with sensory details and specific examples.\n"
+        "Add depth to the personality, appearance, and background.\n"
+        "Make it richer and more immersive."
+    ),
+    "simplify": (
+        "Simplify the content for clarity and readability.\n"
+        "Remove complex sentence structures and obscure words.\n"
+        "Focus on the core concept."
+    )
+}

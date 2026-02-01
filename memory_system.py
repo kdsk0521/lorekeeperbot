@@ -13,6 +13,7 @@ import config
 import re
 from typing import Optional, Dict, Any, List, Tuple
 from google.genai import types
+import text_resources  # [NEW] Import text resources
 
 logger = logging.getLogger(__name__)
 
@@ -585,6 +586,10 @@ async def extract_pc_info(client, model_id: str, text: str) -> Optional[Dict[str
         "Identify the Main Protagonist (Player Character) from the text, if one exists.\n"
         "If the text is just a world setting without a specific protagonist, return null.\n\n"
         
+        "### OPTIMIZATION DIRECTIVES\n"
+        f"1. {text_resources.AI_OPTIMIZATION_PROMPTS['optimize']}\n"
+        "2. Do NOT include redundant or overly detailed descriptions for items/passives.\n\n"
+        
         "Output Format (JSON):\n"
         "{\n"
         "  \"name\": \"Name\",\n"
@@ -600,10 +605,10 @@ async def extract_pc_info(client, model_id: str, text: str) -> Optional[Dict[str
         "    {\n"
         "      \"name\": \"Name (e.g., Iron Will, Noble Blood, Night Vision)\",\n"
         "      \"modifier\": 10, // Estimate power/utility level (5: Minor, 10: Standard, 15: High, 20: Legendary)\n"
-        "      \"desc\": \"Brief effect\"\n"
+        "      \"desc\": \"Brief effect (Optimized)\"\n"
         "    }\n"
         "  ],\n"
-        "  \"inventory\": {\"Item Name\": Quantity} // Extract specific equipment/items mentioned\n"
+        "  \"inventory\": {\"Item Name\": \"Quantity (e.g. 1, 500 Gold)\"} \n"
         "}\n"
         "OR null if no clear PC."
     )
