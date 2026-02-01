@@ -405,17 +405,7 @@ You are **THEORIA**, the World Engine and Game Master.
 </AI_Core_Identity>
 """
 
-# === BACKWARD COMPATIBILITY ALIASES ===
-# These ensure that older code or dynamic references don't crash.
-GM_IDENTITY = AI_CORE_IDENTITY
-RECORDER_IDENTITY = AI_CORE_IDENTITY
-AI_MANDATE = AI_CORE_IDENTITY
 
-CRITICAL_PRIORITY = CRITICAL_PROTOCOL
-SELF_CORRECTION_PROTOCOL = CRITICAL_PROTOCOL
-OUTPUT_GENERATION_REQUEST = OUTPUT_PROTOCOL
-FINAL_AUTONOMY_ENFORCEMENT = PC_AUTONOMY_DOCTRINE
-# =======================================
 
 
 # =========================================================
@@ -653,3 +643,4 @@ AI_OPTIMIZATION_PROMPTS = {
         "Focus on the core concept."
     )
 }
+
