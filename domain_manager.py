@@ -523,6 +523,11 @@ def update_ai_memory(channel_id: str, uid: str, updates: Dict[str, Any]) -> None
     p["ai_memory"] = mem
     save_participant_data(channel_id, uid, p)
 
+def update_npc_relationship(channel_id: str, uid: str, npc_name: str, rel_text: str) -> str:
+    """[Extracted from Memory] Update specific NPC relationship in Player AI Memory"""
+    update_ai_memory(channel_id, uid, {"relationships": {npc_name: rel_text}})
+    return rel_text
+
 def add_to_ai_memory_list(channel_id: str, uid: str, key: str, item: str) -> None:
     p = get_participant_data(channel_id, uid)
     if not p: return
