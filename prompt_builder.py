@@ -262,8 +262,8 @@ Description: {desc}
     ) -> 'PromptBuilder':
         """[4] 캐릭터 설명 및 페르소나 프롬프트"""
         import text_resources
-        # [V6 Refactor] Ensure persona prompt defaults to RECORDER_IDENTITY if empty
-        actual_persona = persona_prompt if persona_prompt.strip() else text_resources.RECORDER_IDENTITY
+        # [V6 Refactor] Ensure persona prompt defaults to AI_CORE_IDENTITY if empty
+        actual_persona = persona_prompt if persona_prompt.strip() else text_resources.AI_CORE_IDENTITY
 
         self.sections['roles'] = f"""
 <Roles>

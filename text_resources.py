@@ -405,6 +405,10 @@ You are **THEORIA**, the World Engine and Game Master.
 </AI_Core_Identity>
 """
 
+GM_IDENTITY = AI_CORE_IDENTITY
+RECORDER_IDENTITY = AI_CORE_IDENTITY
+
+
 # =========================================================
 # MEMORY_HIERARCHY (유지)
 # =========================================================
