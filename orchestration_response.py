@@ -259,5 +259,9 @@ async def generate_response(
         response, violations = persona.filter_pc_impersonation(response, [p_name])
         if violations:
             ctx.pc_impersonation_warnings = violations
+            
+        # [Anti-Gravity] Mob Tag Cleaning (System Level)
+        from response_processor import clean_mob_tags
+        response = clean_mob_tags(response)
 
     return response

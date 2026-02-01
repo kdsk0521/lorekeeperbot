@@ -222,3 +222,39 @@ def extract_code_blocks(response: str) -> List[Dict]:
         })
 
     return blocks
+
+
+# =========================================================
+# Mob Tag Cleaning (System-Level Hiding)
+# =========================================================
+
+def clean_mob_tags(text: str) -> str:
+    """
+    텍스트에서 모브 태그(예: #1A, #9Z)를 제거하여 사용자에게 숨깁니다.
+    
+    Pattern: `#` followed by exactly 2 alphanumeric characters.
+    Avoids removing Markdown headers (# Title).
+    """
+    if not text:
+        return text
+        
+    # Regex: Match '#' followed by 2 alphanumeric chars, ensuring word boundary or end of string?
+    # Case 1: "Patient #1A says" -> "Patient says" (remove " #1A")
+    # Case 2: "Patient #1A: Hello" -> "Patient: Hello" (remove " #1A")
+    # Case 3: "List #1." -> "List #1." (Keep?) User said random chars.
+    # Our tags are roughly 2 chars.
+    # Let's match space + # + 2 alphanumeric. `\s#[A-Za-z0-9]{2}\b`?
+    
+    # We want to remove the tag AND the preceding space if it exists.
+    # Pattern: `(\s?)#[a-zA-Z0-9]{2}(?![a-zA-Z0-9])`
+    # (?![a-zA-Z0-9]) ensures we don't match #1AB (3 chars).
+    
+    pattern = r'(\s?)#[a-zA-Z0-9]{2}(?![a-zA-Z0-9])'
+    
+    def repl(match):
+        # If it was "Name #1A", match group 1 is space. We remove both.
+        # If it was "#1A" (start of line), match group 1 is empty. We remove tag.
+        return "" 
+        
+    cleaned_text = re.sub(pattern, repl, text)
+    return cleaned_text

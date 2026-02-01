@@ -202,16 +202,45 @@ def register_ai_npc(channel_id: str, name: str, description: str = "", context: 
     if not name.strip():
         return False
 
-    # 이미 존재하는지 확인
+    # [Anti-Gravity] Mob Tagging Logic
+    # 1. Check for Exact Collision in Session NPCs
     existing = get_npc(channel_id, name)
-    if existing:
-        # 이미 있으면 context만 추가
-        existing.setdefault("appearances", []).append({
-            "context": context,
-            "at": time.strftime('%Y-%m-%d %H:%M')
-        })
-        update_npc(channel_id, name, existing)
-        return True
+    
+    # If it exists, we have a dilemma: Is it an update or a new mob?
+    # If the AI explicitly provides a generic name like "Soldier" that already exists,
+    # and the descriptions significantly differ, it's likely a new mob.
+    # However, for safety and user request, we will assume 'generic' names might need tagging.
+    # But we don't want to break updates to "John".
+    
+    # Heuristic: If it exists, and the source is technically ours (AI/Session), 
+    # AND we want to support multiple mobs... 
+    # Actually, the user wants distinction.
+    # Let's check if the name already HAS a tag.
+    if is_mob_tag(name):
+        # Update existing tagged mob
+        pass
+    elif existing:
+        # Collision! It's likely a generic mob collision (or a persistent NPC).
+        # We will generate a NEW tagged name for this NEW entry.
+        # But wait, what if it's just an update?
+        # We can't know for sure. 
+        # But usually `register_ai_npc` is called when a *new* entity is detected or explicitly named.
+        # Let's try to TAG the NEW one if the name is "simple" or collision happens.
+        
+        # Exception: Identity Reveal handled elsewhere.
+        
+        # Logic: Auto-tag the NEW one.
+        tag = generate_mob_tag()
+        tagged_name = f"{name} {tag}"
+        
+        # Recursive uniqueness check
+        while get_npc(channel_id, tagged_name):
+            tag = generate_mob_tag()
+            tagged_name = f"{name} {tag}"
+            
+        logger.info(f"[NPC] Name Collision '{name}' -> Auto-tagged as '{tagged_name}'")
+        name = tagged_name
+        # Proceed to register as NEW entry (data below)
 
     data = {
         "description": description,
@@ -225,6 +254,30 @@ def register_ai_npc(channel_id: str, name: str, description: str = "", context: 
     update_npc(channel_id, name.strip(), data)
     logger.info(f"[NPC] AI 생성 NPC 등록: {name}")
     return True
+
+
+def generate_mob_tag() -> str:
+    """
+    Generates a random mob tag (e.g., #1A, #B7).
+    User Requirement: Random Number + Letter (Random Order).
+    Format: #{Char1}{Char2}
+    """
+    chars = "0123456789"
+    alphas = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    
+    # Randomly decide order: (Digit, Letter) or (Letter, Digit)
+    if random.choice([True, False]):
+        c1 = random.choice(chars)
+        c2 = random.choice(alphas)
+    else:
+        c1 = random.choice(alphas)
+        c2 = random.choice(chars)
+        
+    return f"#{c1}{c2}"
+
+def is_mob_tag(name: str) -> bool:
+    """Checks if the name ends with a mob tag pattern."""
+    return "#" in name and len(name.split("#")[-1]) == 2
 
 
 # =========================================================
@@ -272,7 +325,16 @@ def handle_identity_reveal(channel_id: str, old_name: str, new_name: str, reason
     """
     if old_name == new_name: return "⚠️ 이름이 동일합니다."
     
+    # [Anti-Gravity] Mob Tag Handling
+    # If the user tries to rename "Patient" to "John", but we only have "Patient #1A",
+    # we might want to auto-detect. 
+    # But safer is to assume Exact Match first.
+    
     npc_data = get_npc(channel_id, old_name)
+    if not npc_data:
+        # Fallback: Check if there's a unique tagged version?
+        # (Optional, skipping for safety)
+        pass
     if not npc_data:
         # 혹시 이미 바뀌었거나 로어 NPC일 수 있음.
         # 로어 NPC라면 새 세션 NPC 항목을 생성?
