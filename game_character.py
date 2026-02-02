@@ -24,6 +24,7 @@ from config import (
     NEGATIVE_STATUS_EFFECTS,
     POSITIVE_STATUS_EFFECTS,
     SEVERITY_DOOM_IMPACT,
+    STATUS_EFFECTS,
     get_normality_stage_info
 )
 
