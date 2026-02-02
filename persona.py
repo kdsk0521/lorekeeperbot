@@ -94,21 +94,22 @@ class ChatSessionAdapter:
         if len(self.history) <= 2:
             return
         
-        # 메시지 수 제한
-        while len(self.history) > MAX_HISTORY_MESSAGES and len(self.history) > 2:
-            # 3번째 메시지부터 삭제 (0, 1은 초기화)
-            self.history.pop(2)
-            logging.debug(f"[History] 메시지 수 초과, 오래된 메시지 제거")
-        
-        # 문자 수 제한
+        # 문자 수 제한 (우선도 높음 - 먼저 확인)
         total_chars = sum(
             len(p.text) for c in self.history for p in c.parts if hasattr(p, 'text') and p.text
         )
         while total_chars > MAX_HISTORY_CHARS and len(self.history) > 2:
+            # 항상 인덱스 2 (초기화 후 첫 메시지)부터 삭제
             removed = self.history.pop(2)
             removed_chars = sum(len(p.text) for p in removed.parts if hasattr(p, 'text') and p.text)
             total_chars -= removed_chars
-            logging.debug(f"[History] 문자 수 초과, {removed_chars}자 제거")
+            logging.debug(f"[History] 문자 수 초과, {removed_chars}자 제거 (현재: {total_chars}/{MAX_HISTORY_CHARS})")
+        
+        # 메시지 수 제한
+        while len(self.history) > MAX_HISTORY_MESSAGES and len(self.history) > 2:
+            # 항상 인덱스 2부터 삭제
+            removed = self.history.pop(2)
+            logging.debug(f"[History] 메시지 수 초과, 오래된 메시지 제거 (남은 메시지: {len(self.history)})")
 
     async def send_message(self, content: str) -> Optional[types.GenerateContentResponse]:
         """

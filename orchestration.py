@@ -491,6 +491,12 @@ class OrchestrationService:
                     # Store message IDs for retry deletion
                     self._last_contexts[channel_id]["message_ids"] = [m.id for m in sent_msgs] if sent_msgs else []
                     
+                    # [IMPORTANT] 히스토리에 사용자 입력과 AI 응답 저장
+                    user_mask = ctx.user_mask or "User"
+                    domain_manager.append_history(channel_id, user_mask, ctx.action_text)
+                    domain_manager.append_history(channel_id, "Model", response)
+                    logger.debug(f"[History] Saved: {user_mask} + Model response ({len(response)} chars)")
+                    
                     # 8. Background Extraction
                     await self.schedule_background_extraction(ctx, response, message)
                 else:

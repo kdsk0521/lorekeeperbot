@@ -813,10 +813,22 @@ def set_abnormal_mode(channel_id: str, enabled: bool) -> None:
 
 # History
 def append_history(channel_id: str, role: str, content: str) -> None:
+    """히스토리에 메시지를 추가합니다 (중복 제거)"""
     d = get_domain(channel_id)
+    
+    # 중복 제거: 마지막 메시지와 동일한 content는 추가하지 않음
+    if d["history"] and d["history"][-1].get("role") == role and d["history"][-1].get("content") == content:
+        logging.debug(f"[History] 중복 메시지 무시: {role}")
+        return
+    
     d["history"].append({"role": role, "content": content})
+    
+    # 히스토리 길이 제한 (최근 항목 유지)
     if len(d["history"]) > config.MAX_HISTORY_LENGTH:
+        removed = d["history"][:len(d["history"]) - config.MAX_HISTORY_LENGTH]
         d["history"] = d["history"][-config.MAX_HISTORY_LENGTH:]
+        logging.debug(f"[History] 오래된 {len(removed)}개 메시지 제거 (최대: {config.MAX_HISTORY_LENGTH})")
+    
     save_domain(channel_id, d)
 
 def get_history(channel_id: str) -> List[Dict[str, str]]:
