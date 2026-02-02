@@ -193,11 +193,13 @@ def build_mature_content_prompt(scene_type: str) -> str:
 
     # Add relevant guidelines
     if 'gore' in scene_type:
-        prompt_parts.append(text_resources.GORE_CONTENT_GUIDELINES)
+        prompt_parts.append(text_resources.VISCERAL_CONTENT_GUIDELINES)
 
     if 'nsfw' in scene_type:
-        prompt_parts.append(text_resources.NSFW_CONTENT_GUIDELINES)
-
+        prompt_parts.append(text_resources.MATURE_CONTENT_GUIDELINES)
+    # Add hybrid protocol when both gore and nsfw are present
+    if 'gore' in scene_type and 'nsfw' in scene_type:
+        prompt_parts.append(text_resources.HYBRID_CONTENT_PROTOCOL)
     return "\n".join(prompt_parts)
 
 
@@ -535,18 +537,28 @@ This tone affects style, not physics or causality.
             text_resources.PHYSICAL_RENDERING_DOCTRINE,   # Consolidated
             text_resources.ANTI_CLICHE_PROTOCOL,          # Consolidated
             text_resources.TEMPORAL_FLOW_DOCTRINE,        # Consolidated
+            text_resources.ANTI_DIDACTIC_PRINCIPLES,      # 8 Principles of Narrative
 
             # [Group 4: The Agents - Social & Behavioral]
             text_resources.PC_AUTONOMY_DOCTRINE,          # Consolidated
             text_resources.INTERACTION_MODEL,             # Kept (Merged with Social Dynamics)
             text_resources.NPC_ATTITUDE_ENFORCEMENT,      # Kept (Reduced)
+            text_resources.NPC_AUTONOMY_ENGINE,           # NEW: NPC Decision Matrix
 
             # [Group 5: The Atmosphere & Mechanics]
             text_resources.TIME_ATMOSPHERE,               # Kept
             text_resources.ACTION_RESOLUTION,             # Kept
             text_resources.ASPECT_UTILIZATION,            # Kept
 
-            # [Group 6: Output Protocol]
+            # [Group 6: Cognition-Driven Rendering (NEW)]
+            text_resources.PACING_CONTROL_PROTOCOL,       # NEW: Narrative Rhythm Control
+            text_resources.PSYCHE_STATE_RENDERING,        # NEW: 6-Axis → Body Signal
+            text_resources.NARRATIVE_CHAIN_CONTROL,       # NEW: Chain/Topic Lock
+            text_resources.MEMORY_ALCHEMY_PROTOCOL,       # NEW: Memory Trigger Rendering
+            text_resources.AUTHOR_PERSONA_PROTOCOL,       # NEW: Style Calibration
+            text_resources.COGNITIVE_DATA_INTEGRATION,    # NEW: How to use Cognition Data
+
+            # [Group 7: Output Protocol]
             text_resources.TELESCOPE_PROTOCOL,            # Kept (Internal Logic)
             text_resources.OUTPUT_PROTOCOL,               # Consolidated (Rendering Rules)
         ]

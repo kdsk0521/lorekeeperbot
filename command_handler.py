@@ -598,36 +598,54 @@ async def cmd_mode(ctx: CommandContext) -> None:
     await ctx.send(f"⚙️ 모드 변경: **{mode_kr}**")
 
 
-@registry.register("scene", category="System", aliases=["장면"], description="장면 수위/유형 변경")
+@registry.register("scene", category="System", aliases=["장면", "수위", "mature"], description="장면 수위/유형 변경")
 async def cmd_scene(ctx: CommandContext) -> None:
-    """!장면 [일반/고어/NSFW/전체]"""
+    """!장면 [일반/고어/성인/전체]"""
     arg = ctx.raw_args.strip()
     
     if not arg:
         d = domain_manager.get_domain(ctx.channel_id)
         curr = d['settings'].get('scene_type', 'normal')
-        scene_kr = {'normal': '일반', 'gore': '고어', 'nsfw': 'NSFW', 'gore_nsfw': '전체(고어+NSFW)'}.get(curr, curr)
+        scene_info = {
+            'normal': ('🌿 일반', '모든 성인 콘텐츠 비활성화'),
+            'gore': ('🩸 고어', '폭력/잔혹 묘사 활성화'),
+            'nsfw': ('💋 NSFW', '성인 묘사 활성화'),
+            'gore_nsfw': ('⚠️ 전체', '고어 + NSFW + 하이브리드 모두 활성화')
+        }
+        info = scene_info.get(curr, ('❓ 알 수 없음', ''))
         await ctx.send(
-            f"🎬 현재 장면: **{scene_kr}**\n"
-            f"사용법: `!장면 [일반/고어/nsfw/전체]`"
+            f"🎬 **현재 장면 수위: {info[0]}**\n"
+            f"> {info[1]}\n\n"
+            f"**사용법:** `!장면 [일반/고어/성인/전체]`\n"
+            f"- `일반` (normal): 성인 콘텐츠 없음\n"
+            f"- `고어` (gore): 폭력/잔혹 묘사만\n"
+            f"- `성인` (nsfw): 성인 묘사만\n"
+            f"- `전체` (all): 고어+성인+하이브리드"
         )
         return
     
     scene_map = {
-        '일반': 'normal', 'normal': 'normal', '노말': 'normal',
-        '고어': 'gore', 'gore': 'gore',
-        'nsfw': 'nsfw', '성인': 'nsfw',
-        '전체': 'gore_nsfw', 'all': 'gore_nsfw', 'gore_nsfw': 'gore_nsfw', '올': 'gore_nsfw'
+        '일반': 'normal', 'normal': 'normal', '노말': 'normal', '안전': 'normal',
+        '고어': 'gore', 'gore': 'gore', '폭력': 'gore', '잔혹': 'gore',
+        'nsfw': 'nsfw', '성인': 'nsfw', '야한': 'nsfw', '19': 'nsfw',
+        '전체': 'gore_nsfw', 'all': 'gore_nsfw', 'gore_nsfw': 'gore_nsfw', 
+        '올': 'gore_nsfw', '하이브리드': 'gore_nsfw', 'hybrid': 'gore_nsfw'
     }
     scene_type = scene_map.get(arg.lower())
     
     if not scene_type:
-         await ctx.send("⚠️ 지원하지 않는 장면 유형입니다.\n`일반`, `고어`, `nsfw`, `전체` 중 선택하세요.")
+         await ctx.send("⚠️ 지원하지 않는 장면 유형입니다.\n`일반`, `고어`, `성인`, `전체` 중 선택하세요.")
          return
-         
-    scene_kr = {'normal': '일반', 'gore': '고어', 'nsfw': 'NSFW', 'gore_nsfw': '전체(고어+NSFW)'}.get(scene_type, scene_type)
+    
+    scene_info = {
+        'normal': ('🌿 일반', '모든 성인 콘텐츠가 비활성화되었습니다.'),
+        'gore': ('🩸 고어', '폭력/잔혹 묘사가 활성화되었습니다.\n해부학적 정밀도, 슬래셔 페이싱, 환경 통합이 적용됩니다.'),
+        'nsfw': ('💋 NSFW', '성인 묘사가 활성화되었습니다.\n오감 몰입, 감정 아키텍처, 호흡 메트로놈이 적용됩니다.'),
+        'gore_nsfw': ('⚠️ 전체(하이브리드)', '고어 + NSFW + 하이브리드 모드가 모두 활성화되었습니다.\n료나/구로/스너프 등 극단적 콘텐츠가 허용됩니다.')
+    }
+    info = scene_info.get(scene_type)
     domain_manager.update_settings(ctx.channel_id, scene_type=scene_type)
-    await ctx.send(f"🎬 장면 유형 변경: **{scene_kr}**")
+    await ctx.send(f"🎬 **장면 수위 변경: {info[0]}**\n> {info[1]}")
 
 
 @registry.register("lock", category="System", aliases=["잠금"], description="세션 잠금")

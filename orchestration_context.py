@@ -190,7 +190,15 @@ async def run_cognition_analysis(
     
     # Merge NVC Results
     ctx.nvc_result = {**ctx.flash_result, **ctx.pro_result}
-    ctx.scene_type = ctx.nvc_result.get("SceneType", "normal")
+    
+    # Scene Type: Use session's mature_mode setting (not cognition's SceneType)
+    # Cognition's SceneType (combat/social/intimate) is for narrative flow
+    # Session's mature_mode (normal/gore/nsfw/gore_nsfw) is for content restrictions
+    session_mature_mode = domain_manager.get_domain(ctx.channel_id).get("settings", {}).get("scene_type", "normal")
+    ctx.scene_type = session_mature_mode if session_mature_mode else "normal"
+    
+    # Store cognition's narrative scene type separately for potential use
+    ctx.nvc_result["NarrativeSceneType"] = ctx.nvc_result.get("SceneType", "normal")
     
     # Map Narrative Flow & Actors
     flow_plan = gm_result.get("flow_plan", {})

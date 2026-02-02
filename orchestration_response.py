@@ -119,63 +119,106 @@ def _build_nvc_summary(ctx: ResponseContext, filter_config: NVCFilterConfig) -> 
     gm_m = ctx.nvc_result.get("GMMove", {})
     off_hint = ctx.nvc_result.get("OffscreenHint")
 
-    nvc_summary = (
-        f"### COGNITIVE ANALYSIS (IR#1 v3)\n"
-        f"- **Observation**: {ctx.nvc_result.get('Observation')}\n"
-        f"- **User Intent**: {ctx.nvc_result.get('UserIntent')}\n"
-        f"- **Position (Risk/Stakes)**: {pos_data.get('value', 'N/A')} ({pos_data.get('reason', '')})\n"
-        f"- **Effect (Potential)**: {eff_data.get('value', 'N/A')} ({eff_data.get('reason', '')})\n"
-        f"- **Aspects**: {', '.join(aspects) if aspects else 'None'}\n"
+    # [V3 Restructured] Cognition Engine Data Block
+    nvc_summary = "### <Cognition_Engine_Data>\n"
+    
+    # --- Section 1: Input Analysis ---
+    input_analysis = ctx.nvc_result.get("InputAnalysis", {})
+    if input_analysis:
+        nvc_summary += (
+            f"#### INPUT_ANALYSIS\n"
+            f"- Original: {input_analysis.get('Original', 'N/A')}\n"
+            f"- Enhanced: {input_analysis.get('Enhanced', 'N/A')}\n"
+            f"- Plausibility: {input_analysis.get('Plausibility', 'N/A')}\n"
+            f"- Momentum: {input_analysis.get('Momentum', 'OPEN')}\n\n"
+        )
+    
+    # --- Section 2: Observation & Intent ---
+    nvc_summary += (
+        f"#### SITUATION_ASSESSMENT\n"
+        f"- Observation: {ctx.nvc_result.get('Observation', 'N/A')}\n"
+        f"- UserIntent: {ctx.nvc_result.get('UserIntent', 'N/A')}\n"
+        f"- Position (Risk): {pos_data.get('value', 'N/A')} — {pos_data.get('reason', '')}\n"
+        f"- Effect (Potential): {eff_data.get('value', 'N/A')} — {eff_data.get('reason', '')}\n"
+        f"- Aspects: [{', '.join(aspects) if aspects else 'None'}]\n\n"
     )
 
-    # [V3 Data Injection]
+    # --- Section 3: Psyche States (6-Axis) ---
     psyche = ctx.nvc_result.get("psyche_states")
     if psyche and isinstance(psyche, dict):
-        psyche_str = ", ".join([f"{k}: {v}" for k, v in psyche.items()])
-        nvc_summary += f"- **Psyche States**: {psyche_str}\n"
+        nvc_summary += "#### PSYCHE_STATES (Use for body signal rendering)\n"
+        for char_name, state in psyche.items():
+            if isinstance(state, str):
+                nvc_summary += f"- {char_name}: {state}\n"
+            elif isinstance(state, dict):
+                # Structured format
+                mental = state.get("mental", {})
+                soma = state.get("soma", {})
+                relation = state.get("relation", {})
+                nvc_summary += (
+                    f"- {char_name}: "
+                    f"Μ[{mental.get('descriptor', '?')}±{mental.get('value', 0)}] "
+                    f"Φ[{soma.get('descriptor', '?')}] "
+                    f"Ι[{relation.get('descriptor', '?')}±{relation.get('value', 0)}]\n"
+                )
+        nvc_summary += "\n"
 
+    # --- Section 4: Narrative Chain ---
     chain = ctx.nvc_result.get("narrative_chain")
     if chain and isinstance(chain, dict):
-        # Format: [OPEN] Topic Lock: No
         status = chain.get("chain_status", "OPEN")
         lock = chain.get("topic_lock", "None")
-        nvc_summary += f"- **Narrative Chain**: [{status}] Topic Lock: {lock}\n"
+        conclusion = chain.get("conclusion_proximity", "N/A")
+        nvc_summary += (
+            f"#### NARRATIVE_CHAIN\n"
+            f"- chain_status: {status}\n"
+            f"- topic_lock: {lock}\n"
+            f"- conclusion_proximity: {conclusion}\n\n"
+        )
 
+    # --- Section 5: Memory Triggers ---
     memory = ctx.nvc_result.get("memory_triggers")
-    if memory and isinstance(memory, list):
-        mem_str = ", ".join([m.get("trigger", "") for m in memory if isinstance(m, dict)])
-        if mem_str: nvc_summary += f"- **Memory Triggers**: {mem_str}\n"
+    if memory and isinstance(memory, list) and memory:
+        nvc_summary += "#### MEMORY_TRIGGERS (Render as involuntary recall)\n"
+        for m in memory[:3]:  # 최대 3개
+            if isinstance(m, dict):
+                trigger = m.get("trigger", "")
+                char = m.get("character", "")
+                echo = m.get("echo", "")
+                nvc_summary += f"- [{char}] Trigger: '{trigger}' → Echo: '{echo}'\n"
+        nvc_summary += "\n"
 
-    # PC 사칭 자가 수정 경고 (Flash 분석에서 검출된 경우)
+    # --- Section 6: PC Impersonation Warning ---
     pc_check = ctx.nvc_result.get("PCImpersonationCheck", {})
     if pc_check.get("detected"):
         violations = pc_check.get("violations", [])
         hint = pc_check.get("correction_hint", "")
         nvc_summary += (
-            f"\n### ⚠️ PC IMPERSONATION SELF-CORRECTION WARNING\n"
-            f"Previous AI responses contained PC impersonation violations:\n"
+            f"#### ⚠️ PC_IMPERSONATION_WARNING\n"
+            f"- detected: true\n"
+            f"- violations: {violations[:3]}\n"
+            f"- correction_hint: {hint}\n\n"
         )
-        for v in violations[:3]:  # 최대 3개만 표시
-            nvc_summary += f"- {v}\n"
-        if hint:
-            nvc_summary += f"\n**Correction Guidance**: {hint}\n"
-        nvc_summary += "**CRITICAL**: Do NOT repeat these patterns. Write ONLY NPC/world responses.\n"
 
-    if off_hint:
-        nvc_summary += f"\n- **Offscreen Hint**: {off_hint}\n"
-
+    # --- Section 7: GM Move & Offscreen ---
     if gm_m:
-        nvc_summary += f"\n- **Proposed GM Move**: {gm_m.get('type')} ({gm_m.get('description', '')})\n"
+        nvc_summary += f"#### GM_MOVE_SUGGESTION\n- type: {gm_m.get('type')}\n- description: {gm_m.get('description', '')}\n\n"
 
     temporal = ctx.nvc_result.get("TemporalOrientation", {})
     suggested_focus = temporal.get("suggested_focus", "")
-    nvc_summary += f"\nFocus: {suggested_focus}"
+    if suggested_focus:
+        nvc_summary += f"#### TEMPORAL_FOCUS\n- suggested_focus: {suggested_focus}\n\n"
+    
+    if off_hint:
+        nvc_summary += f"#### OFFSCREEN_HINT\n- {off_hint}\n\n"
 
-    # 유통기한 필터링된 NPC 태도
+    nvc_summary += "### </Cognition_Engine_Data>\n"
+
+    # --- Legacy Section: NPC Attitudes (Outside Cognition Block) ---
     filtered_attitudes = _filter_stale_nvc_data(ctx.existing_attitudes, filter_config)
     if filtered_attitudes:
         att_lines = [f"- {n}: {d['attitude']} ({d['reason']})" for n, d in filtered_attitudes.items()]
-        nvc_summary += f"\n\n### [NPC ATTITUDES TOWARD PC]\n" + "\n".join(att_lines)
+        nvc_summary += f"\n### [NPC ATTITUDES TOWARD PC]\n" + "\n".join(att_lines)
 
     if ctx.judgment_context:
         nvc_summary += f"\n\n{ctx.judgment_context}"

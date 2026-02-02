@@ -76,7 +76,13 @@ def _get_default_session() -> Dict[str, Any]:
         "history": [],
         "quest_board": {"active": [], "completed": [], "memos": [], "archive": [], "lore": []},
         "world_state": config.DEFAULT_WORLD_STATE.copy(),
-        "settings": {"response_mode": "auto", "session_locked": False, "growth_system": "default", "abnormal_mode": True},
+        "settings": {
+            "response_mode": "auto", 
+            "session_locked": False, 
+            "growth_system": "default", 
+            "abnormal_mode": True,
+            "scene_type": "normal"  # normal / gore / nsfw / gore_nsfw
+        },
         "active_genres": ["noir"],
         "custom_tone": None,
         "ai_session_memory": {
@@ -99,6 +105,32 @@ def update_notebook(channel_id: str, text: str) -> None:
     d = get_domain(channel_id)
     d["notebook"] = text
     save_domain(channel_id, d)
+
+# =========================================================
+# MATURE MODE MANAGEMENT (via settings.scene_type)
+# =========================================================
+VALID_MATURE_MODES = {"normal", "gore", "nsfw", "gore_nsfw"}
+
+def get_mature_mode(channel_id: str) -> str:
+    """현재 채널의 성인 콘텐츠 모드를 반환합니다. (settings.scene_type 사용)"""
+    return get_domain(channel_id).get("settings", {}).get("scene_type", "normal")
+
+def set_mature_mode(channel_id: str, mode: str) -> bool:
+    """
+    채널의 성인 콘텐츠 모드를 설정합니다.
+    
+    Args:
+        mode: 'normal', 'gore', 'nsfw', 'gore_nsfw' 중 하나
+    
+    Returns:
+        성공 여부
+    """
+    mode = mode.lower().strip()
+    if mode not in VALID_MATURE_MODES:
+        return False
+    
+    update_settings(channel_id, scene_type=mode)
+    return True
 
 def get_domain(channel_id: str) -> Dict[str, Any]:
     # 캐시에서 먼저 조회
