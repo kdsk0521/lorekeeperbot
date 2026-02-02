@@ -117,14 +117,12 @@ async def gather_context(ctx: ResponseContext) -> ResponseContext:
     ctx.existing_attitudes = domain_manager.get_npc_attitudes(channel_id)
 
     # 발효 요약 (V3 Hybrid - Mneme/Psyche)
-    fermented_history = ctx.domain_data.get("fermented_history", [])
-    deep_memory_data = ctx.domain_data.get("deep_memory_data", {})
+    # build_fermented_context expects session_data dict, not separate args
     ctx.fermented_summary_text = fermentation.build_fermented_context(
-        fermented_history, 
-        deep_memory_data
+        ctx.domain_data  # 전체 세션 데이터 전달
     )
     # Store deep_memory_data for prompt builder
-    ctx.deep_memory_data = deep_memory_data
+    ctx.deep_memory_data = ctx.domain_data.get("deep_memory_data", {})
 
     # 장르/톤
     ctx.active_genres = domain_manager.get_active_genres(channel_id)
