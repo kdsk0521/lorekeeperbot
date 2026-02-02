@@ -49,7 +49,7 @@ SUPPORTED_TEXT_EXTENSIONS = ['.txt', '.md', '.json', '.log', '.py', '.yaml', '.y
 # Memory/History Limits
 MAX_HISTORY_LENGTH = 2000             # [Anti-Gravity] Expanded History (80 -> 2000)
 MAX_DESC_LENGTH = 50                # Summary description length
-RECENT_HISTORY_FOR_ANALYSIS = 20    # Number of recent messages sent to Left Brain Analysis
+RECENT_HISTORY_FOR_ANALYSIS = 30    # Number of recent messages sent to Left Brain Analysis
 
 # Fermentation (Memory) Settings
 

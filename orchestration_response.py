@@ -93,6 +93,10 @@ def build_prompt(
         deep_memory_str = f"### [ACTIVE MEMORY TRIGGERS - Unresolved Narrative Hooks]\n{triggers_str}\n\n{deep_memory_str}"
     
     builder.set_fermented(ctx.fermented_summary_text, deep_memory_str)
+    
+    # [BUGFIX] Include conversation history in the prompt
+    # 히스토리를 "Immediate" 섹션으로 프롬프트에 추가
+    builder.set_immediate(ctx.hist_text)
 
     # 동적 섹션
     dynamic_world_state = f"{ctx.world_ctx}\n\n"
