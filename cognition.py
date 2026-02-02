@@ -431,6 +431,72 @@ Determine the outcome availability before rolling dice.
 </want_do_can_model>
 """
 
+DIKASTES_DIFFICULTY = """
+<difficulty_spectrum>
+| Label | Range | Examples |
+|-------|-------|----------|
+| trivial | 0-15 | Opening door |
+| easy | 16-30 | Simple cooking |
+| normal | 31-50 | Pick simple lock |
+| hard | 51-70 | Complex acrobatics |
+| extreme | 71-90 | Expert disguise |
+| legendary | 91-100 | Near-impossible |
+</difficulty_spectrum>
+"""
+
+DIKASTES_GM_MOVES = """
+<gm_moves>
+When a roll fails, the world responds. Match severity to THEORIA's Position:
+- Low Position (< 0.3): Minor consequence (Soft Move).
+- Medium Position (0.4-0.6): Meaningful setback (Hard Move).
+- High Position (> 0.7): Serious consequence (Irreversible/Lethal).
+
+Types: [worse_position, resource_loss, unwanted_attention, hard_choice, truth_revealed, separation].
+</gm_moves>
+"""
+
+DIKASTES_MODIFIERS = """
+<modifier_rules>
+| Type | Range |
+|------|-------|
+| Injury | -5 to -20 |
+| Passive | +5 to +15 |
+| Item | +5 to +30 |
+| Environment | ±5 to ±15 |
+| **Scene Aspect** | **±10 (Contextual)** |
+</modifier_rules>
+
+<fate_aspect_logic>
+**CRITICAL**: Aspects are double-edged swords. Judge based on CONTEXT.
+- If the Aspect *helps* the action (e.g. "Dark Alley" + Hiding) -> **INVOKE (+10)**.
+- If the Aspect *hinders* the action (e.g. "Dark Alley" + Lockpicking) -> **COMPEL (-10)**.
+- If unrelated, ignore.
+</fate_aspect_logic>
+
+<everyday_charm>
+Even trivial actions deserve attention. "Small actions create ripples."
+Include flavor modifiers even for standard tasks.
+</everyday_charm>
+"""
+
+DIKASTES_OUTPUT_FORMAT = """
+<output_format>
+Return valid JSON:
+
+REQUIRED (existing):
+- ActionJudgment: {
+    "action": "Summarized action",
+    "difficulty": "trivial/easy/normal/hard/extreme",
+    "difficulty_reason": "Why this difficulty",
+    "modifiers": [{"name": "...", "value": N, "reason": "..."}]
+  }
+- SystemAction: {"tool": "...", "type": "...", "content": "..."} or null
+
+OPTIONAL (new):
+- GMMove: {"type": "...", "description": "What happens on failure"}
+</output_format>
+"""
+
 def get_system_instruction_dikastes(features: Dict[str, bool] = None) -> str:
     """
     [Dikastes V3 Builder]
