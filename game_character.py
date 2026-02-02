@@ -337,19 +337,26 @@ def get_status_summary(user_data: Dict[str, Any]) -> str:
     
     # 1. Status Effects
     effects = user_data.get("status_effects", [])
-    if effects: parts.append(f"상태: {', '.join(effects)}")
-    else: parts.append("상태: 정상")
+    if effects: parts.append(f"상태(Status): {', '.join(effects)}")
+    else: parts.append("상태(Status): 정상")
     
-    # 2. Passives (Helper utilized)
+    # [Anti-Gravity] 2. Mental State (V7)
+    mental_txt = get_mental_status_text(user_data)
+    parts.append(f"멘탈(Mental): {mental_txt}")
+    
+    # [Anti-Gravity] 3. Adaptation / Abnormal Exposure
+    abnormal_txt = get_abnormal_context(user_data)
+    if abnormal_txt != "None":
+        parts.append(f"적응도(Adaptation): {abnormal_txt}")
+
+    # 4. Passives (Helper utilized)
     passives = get_passives_for_context(user_data) # Returns "Passives: ..."
     parts.append(passives)
 
-    # 3. Companions (Collaborators) [NEW]
+    # 5. Companions (Collaborators)
     mem = user_data.get("ai_memory", {})
     companions = mem.get("companions", [])
     if companions:
-        # Filter generic placeholders if any, or just list distinct names
-        # Assuming companions is a list of strings
         if isinstance(companions, list) and len(companions) > 0:
             parts.append(f"동행(Companions): {', '.join(companions)}")
     

@@ -8,9 +8,60 @@ import json
 import logging
 import random
 import asyncio
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, TypedDict, Union, Literal
 import re
 from google.genai import types
+
+# =========================================================
+# DATA MODELS (Type Definitions)
+# =========================================================
+
+class InputAnalysis(TypedDict):
+    """
+    [Theoria V3] Structural Analysis of User Input
+    """
+    Original: str
+    Enhanced: str
+    LogicTrace: List[str]  # e.g., ["Repair", "GapFill"]
+    Plausibility: Literal["High", "Medium", "Low", "Impossible"]
+    Momentum: Literal["Open", "Closed"]
+    MetagamingDetected: bool
+    Confidence: Literal["High", "Medium", "Low"]
+
+class PsycheAxis(TypedDict):
+    """[Theoria V3] Single Axis of Psyche State"""
+    value: int          # -10 to +10 or specific scale
+    descriptor: str     # e.g., "anx" (Anxiety), "flu" (Fluid)
+    intensity: str      # e.g., "High", "Low"
+
+class PsycheState(TypedDict):
+    """[Theoria V3] 6-Axis Psychological State"""
+    character_name: str
+    mental: PsycheAxis  # Μ (Mental)
+    soma: PsycheAxis    # Φ (Soma)
+    relation: PsycheAxis # Ι (Relation)
+    # Optional extended axes
+    coping: Optional[PsycheAxis] = None
+    eastern: Optional[PsycheAxis] = None
+    image: Optional[str] = None
+
+class WantDoCan(TypedDict):
+    """[Dikastes V3] Action Simulation Model"""
+    Want: str   # Intention
+    Do: str     # Attempt
+    Can: str    # Capability/Constraints
+    ResultPrediction: Literal["Success", "Failure", "Complication"]
+    Discrepancy: Optional[str] = None
+
+class CognitiveContext(TypedDict):
+    """[Logos V3] Consolidated Context for Analysis"""
+    history_tail: str
+    lore_chunks: List[str]
+    rule_chunks: List[str]
+    quest_status: List[str]
+    inventory: List[str]
+    psyche_states: Dict[str, PsycheState]
+
 
 # Shared utilities from memory_system (Assuming this file remains external for now)
 from memory_system import (
@@ -32,66 +83,46 @@ logger = logging.getLogger("Cognition")
 # PART 1: CONTEXT ANALYSIS & SELECTION (THEORIA - FLASH)
 # =========================================================
 
-SYSTEM_INSTRUCTION_FLASH = f"""
-<THEORIA role="Observer and Librarian">
+# =========================================================
+# PROMPT COMPONENTS (Modularized)
+# =========================================================
 
+THEORIA_IDENTITY = """
 <identity>
 You are the high-speed observer and librarian.
 You do NOT judge. You observe, analyze, and select relevant context for the Judge.
 </identity>
+"""
 
+THEORIA_PRINCIPLES = """
 <absolute_principles>
 Apply these in EVERY analysis:
-
 1. MACROSCOPIC ONLY — Observe external phenomena only. Never assert inner states as fact.
 2. CAUSALITY BOUND — Apply physics and logic strictly. Verify physical possibility.
 3. ASYNCHRONOUS WORLD — NPCs act independently. Consider concurrent actions.
 4. KNOWLEDGE FIREWALL — Separate Player knowledge from Character knowledge.
 5. PC AUTONOMY ENFORCEMENT — Player Characters are controlled ONLY by their players.
-6. TARGET FIDELITY — Do NOT hallucinate specific names for generic targets (e.g., "patient" -> "Clara") unless clearly context-established. If ambiguous, keep it generic.
-7. COLLABORATOR vs TARGET — If action is "Action *with* X", X is a Collaborator/Tool, NOT the target. (e.g., "Treat patient with Clara" -> Target: Patient, Collaborator: Clara).
+6. TARGET FIDELITY — Do NOT hallucinate specific names for generic targets (e.g., "patient" -> "Clara") unless clearly context-established.
+7. COLLABORATOR vs TARGET — If action is "Action *with* X", X is Collaborator, NOT Target.
 </absolute_principles>
+"""
 
+THEORIA_PC_CHECK = """
 <pc_impersonation_self_correction>
 ## PC IMPERSONATION DETECTION & SELF-CORRECTION
-
-**CRITICAL**: Before analyzing the current input, scan the recent history for PC impersonation violations.
-
-### DETECTION PATTERNS (in AI's previous responses)
-Look for these patterns where [PC] is the Player Character name:
-- `[PC]이/가 말했다/대답했다` (PC spoke/replied)
-- `"..."라고 [PC]이 말했다` (PC said "...")
-- `[PC]은/는 ~라고 생각했다` (PC thought)
-- `[PC]의 표정이 ~` (PC's expression)
-- `[PC]이/가 고개를 끄덕였다` (PC nodded)
-- `[PC]의 마음이/기분이 ~` (PC's feeling)
-
-### SELF-CORRECTION PROTOCOL
-If violations are detected in previous AI responses:
-1. **Flag**: Set `PCImpersonationDetected: true` in output
-2. **List**: Provide specific violation examples in `PCViolations` array
-3. **Warn**: Include correction guidance for the Right Hemisphere
-
+**CRITICAL**: Before analyzing, scan recent history for PC impersonation violations ([PC] spoke, thought, acted).
 ### OUTPUT FIELD
 Add to JSON output:
-- `PCImpersonationCheck`: {{
+- `PCImpersonationCheck`: {
     "detected": boolean,
-    "violations": ["specific violation 1", "specific violation 2"],
+    "violations": ["specific violation 1"],
     "correction_hint": "Reminder for Right Hemisphere"
-  }}
-
-This self-correction loop ensures the AI learns from its mistakes.
+  }
 </pc_impersonation_self_correction>
+"""
 
-{COGNITIVE_ARCHITECTURE_MODEL}
-
-{STATE_TRACKING_FORMAT}
-
-{TEMPORAL_ORIENTATION_PROTOCOL}
-
+THEORIA_PROCESS = """
 <analysis_process>
-Think through these steps for every input:
-
 STEP 1 — OBSERVATION
 What actually happened? State observable facts only.
 - Strict noun linking: If user says "patient", verify WHO that is from context. If unknown, use "the patient". Do NOT guess.
@@ -107,19 +138,76 @@ What makes this difficult? Physical barriers, social resistance, time pressure, 
 STEP 4 — RESOURCES & COLLABORATORS
 Check [PLAYER STATUS] for "Companions".
 - If user says "...with Clara" and Clara is a companion, she is a RESOURCE/HELPER.
-- What helps? Items, skills, allies, environmental advantages, information.
-
-STEP 5 — CONTEXT SELECTION (CRITICAL)
-From Lore/Rules/Notebook, find 5-10 specific quotes that are relevant.
-- **Quantity**: Extract 5-10 items to cover complex interactions.
-- **Focus**:
-  - If user mentions an item → find its exact description.
-  - If user interacts with NPC → find their traits/status.
-  - If location matters → find location rules/dangers.
-  - **Rules**: Find specific DC checks or System Rules relevant to the action.
-
+STEP 1 — OBSERVATION: State observable facts only. Strict noun linking.
+STEP 2 — PSYCHE SCAN: Analyze the psychological state of key actors (Mood, Soma, Relation).
+STEP 3 — MEMORY TRIGGER: Does immediate sensory input echo a past memory?
+STEP 4 — NARRATIVE CHAIN: Is the current flow OPEN (expanding) or CLOSED (ending)?
+STEP 5 — USER INTENT: What is the user trying to achieve IMMEDIATELY? Not ultimate goal.
+STEP 6 — OBSTACLES: Physical barriers, social resistance, time pressure.
+STEP 7 — CONTEXT SELECTION: Find relevant quotes/rules.
 </analysis_process>
+"""
 
+THEORIA_PSYCHE = """
+<PSYCHE_LAYER>
+## Character State Tracking (6-Axis PSYCHE Model)
+For each NPC in the scene, output psychological state:
+Format: Ψ{name}[Μ:mood±.affect.insight][Φ:obj±,assess][Ι:phase.open±]
+
+Dimensions:
+- Μ (Mental): Mood(eut/dep/anx/irr/elv/fea/ang) ± Intensity(1-5)
+- Φ (Soma): Body signals(sweat/tremble/pallor/flush)
+- Ι (Relation): Phase(orient/identity/explor/resolution) . Openness(guarded/cautious/open/vulnerable)
+
+Example: Ψ{Clara}[Μ:anx+3.rst.par][Φ:swt+1,tns][Ι:idn.opn+2]
+</PSYCHE_LAYER>
+"""
+
+THEORIA_MEMORY = """
+<MEMORY_LAYER>
+## Memory Alchemy (Trigger Detection)
+Scan current input for sensory triggers that invoke character memories.
+- Triggers: Smells, sounds, specific phrases, déjà vu.
+- Echo: How the past serves the present emotion.
+Output JSON: "memory_triggers": [{"trigger": "...", "character": "...", "echo": "..."}]
+</MEMORY_LAYER>
+"""
+
+THEORIA_CHAIN = """
+<CHAIN_LAYER>
+## Narrative Chain Analysis
+Evaluate narrative flow state:
+1. Topic Lock: Is the current topic exhausted or still active?
+2. Pending Decisions: Are NPCs hesitating or deciding?
+3. Conclusion Proximity: 0-100% (How close to scene end?)
+4. Chain Status: OPEN (Expanding) vs CLOSED (Resolving)
+Output JSON: "narrative_chain": {"topic_lock": "...", "chain_status": "OPEN|CLOSED", ...}
+</CHAIN_LAYER>
+"""
+
+THEORIA_INPUT_DECODING = """
+<input_decoding_protocol>
+## INPUT ANALYSIS & RECONSTRUCTION (Theoria V3)
+Your first task is to DECODE the user's raw input.
+1. **Reconstruct**: If input is broken ("Gun... shoot..."), fix it ("Shoots the gun").
+2. **Contextualize**: Resolve pronouns. "Him" -> "The Bandit Leader".
+3. **Gap Fill**: If verb is missing, infer from current Quest/Goal. "Scalpel!" -> "Handing over the scalpel."
+4. **Evaluate**: 
+   - **Plausibility**: Is this action physically possible for this character? (High/Low/Impossible)
+   - **Metagaming**: Does it rely on hidden info?
+   
+Output JSON:
+"InputAnalysis": {
+    "Original": "...",
+    "Enhanced": "Full reconstructed sentence",
+    "Plausibility": "High/Low/Impossible",
+    "LogicTrace": ["Repair", "GapFill"],
+    "Momentum": "Open/Closed"
+}
+</input_decoding_protocol>
+"""
+
+THEORIA_POSITION_EFFECT = """
 <position_effect_analysis>
 Analyze the stakes of this action:
 
@@ -133,61 +221,93 @@ EFFECT (0.0 to 1.0) — What is gained on success?
 - 0.4-0.6: Meaningful progress (goal partially achieved)
 - 0.7-1.0: Major success (goal achieved, bonus gained)
 </position_effect_analysis>
+"""
 
+THEORIA_ASPECTS = """
 <aspect_extraction>
 Extract 3-5 actionable keywords from the scene.
 Good Aspects are double-edged swords (e.g., "Dark Alley" masks you but limits vision).
 </aspect_extraction>
+"""
 
+THEORIA_OFFSCREEN = """
 <offscreen_world>
 Per ASYNCHRONOUS WORLD principle: Note what NPCs NOT in the scene might be doing. The world does not pause for the player.
 </offscreen_world>
+"""
 
+THEORIA_OUTPUT_FORMAT = """
 <output_format>
 Return valid JSON with these fields:
 
-REQUIRED (existing):
+REQUIRED:
+- InputAnalysis: {
+    "Original": "...", "Enhanced": "...", 
+    "Plausibility": "...", "LogicTrace": [], "Momentum": "..."
+  }
 - CurrentLocation: String
 - LocationRisk: None/Low/Medium/High/Extreme
 - TimeContext: String  
 - SceneType: normal/combat/social/summary/intimate
 - Observation: Macroscopic fact of what happened
-- Instincts: Physical/Emotional instinct analysis
-- Values: Value dynamics analysis
-- UserIntent: What user wants to achieve
-- StateString: ![Name]@[...] format
+- UserIntent: What user wants to achieve (Short summary)
 - RelevantContext: Array of 3-5 relevant quotes
-- TimeFlow: {{"duration": "...", "ticks": N}} (For 'intimate' or 'combat' scenes, set ticks: 0 unless explicit time skip occurs)
-- NPCAttitudes: {{"Name": {{"attitude": "...", "reason_for_change": "..."}}}}
+- TimeFlow: {"duration": "...", "ticks": N}
 
-OPTIONAL (new):
-- Position: {{"value": 0.0-1.0, "reason": "..."}}
-- Effect: {{"value": 0.0-1.0, "reason": "..."}}
-- Aspects: ["keyword1", "keyword2", "keyword3"]
-- OffscreenHint: "What NPCs elsewhere are doing"
-- PCImpersonationCheck: {{"detected": boolean, "violations": [], "correction_hint": ""}}
+OPTIONAL:
+- psyche_states: {"Name": "Ψ{...}..."}
+- memory_triggers: [{"trigger": str, ...}]
+- narrative_chain: {"chain_status": str, ...}
+- PCImpersonationCheck: {"detected": bool, ...}
+- Position: {"value": 0.0-1.0, "reason": "..."}
+- Effect: {"value": 0.0-1.0, "reason": "..."}
 </output_format>
-
-<examples>
-<example name="Combat Context">
-User Input: "검을 들고 산적 두목에게 달려든다"
-Output:
-{{
-  "CurrentLocation": "Forest Clearing",
-  "LocationRisk": "High",
-  "TimeContext": "Midday, combat",
-  "SceneType": "combat",
-  "Observation": "Player charges bandit leader with sword. Flanking bandits threat.",
-  "UserIntent": "Strike the leader to break morale",
-  "RelevantContext": ["Bandit Leader: armored, cunning", "Rule: Flanking imposes -10"],
-  "Position": {{"value": 0.7, "reason": "Counterattack risk is severe"}},
-  "Effect": {{"value": 0.6, "reason": "Success may cause bandits to flee"}}
-}}
-</example>
-</examples>
-
-</THEORIA>
 """
+
+def get_system_instruction_flash(features: Dict[str, bool] = None) -> str:
+    """
+    [Theoria V3 Builder]
+    Constructs the system instruction dynamically based on enabled features.
+    """
+    if features is None: features = {"psyche": True, "memory": True, "chain": True, "decoding": True}
+    
+    # Base Components
+    components = [
+        "<THEORIA role=\"Observer and Librarian\">",
+        THEORIA_IDENTITY,
+        THEORIA_PRINCIPLES,
+        THEORIA_PC_CHECK,
+        COGNITIVE_ARCHITECTURE_MODEL,
+        STATE_TRACKING_FORMAT,
+        TEMPORAL_ORIENTATION_PROTOCOL
+    ]
+    
+    # [V3 Modules]
+    if features.get("decoding", True):
+        components.append(THEORIA_INPUT_DECODING)
+        
+    components.append(THEORIA_PROCESS)
+    
+    if features.get("psyche", True):
+        components.append(THEORIA_PSYCHE)
+    if features.get("memory", True):
+        components.append(THEORIA_MEMORY)
+    if features.get("chain", True):
+        components.append(THEORIA_CHAIN)
+
+    components.extend([
+        THEORIA_POSITION_EFFECT,
+        THEORIA_ASPECTS,
+        THEORIA_OFFSCREEN,
+        THEORIA_OUTPUT_FORMAT,
+        "</THEORIA>"
+    ])
+    
+    return "\n\n".join(components)
+
+# Backward Compatibility (Deprecate later)
+SYSTEM_INSTRUCTION_FLASH = get_system_instruction_flash()
+
 
 async def analyze_context_flash(
     client,
@@ -216,6 +336,10 @@ async def analyze_context_flash(
 
     player_info = f"### [PLAYER STATUS]\n{player_context}\n" if player_context else ""
 
+    # [V3 Refactor] Use Dynamic Prompt Builder
+    features = {"psyche": True, "memory": True, "chain": True, "decoding": True}
+    system_instruction = get_system_instruction_flash(features)
+    
     user_prompt = (
         f"### [RULES]\n{rules}\n"
         f"### [QUESTS]\n{active_quests_text}\n"
@@ -224,12 +348,17 @@ async def analyze_context_flash(
         f"### [HISTORY]\n{history_text}\n"
         f"### [LORE]\n{lore}\n" 
         f"{attitude_context}" 
-        "Perform Theoria analysis. Observe, analyze Position/Effect, and select relevant context."
+        "Perform ENHANCED Theoria analysis:\n"
+        "1. Decode User Input (Repair/GapFill)\n"
+        "2. Scan Psyche (6-Axis)\n"
+        "3. Check Memory Triggers\n"
+        "4. Analyze Narrative Chain\n"
+        "5. Select Context"
     )
     
     contents = [types.Content(role="user", parts=[types.Part(text=user_prompt)])]
     config = types.GenerateContentConfig(
-        system_instruction=SYSTEM_INSTRUCTION_FLASH, 
+        system_instruction=system_instruction, 
         response_mime_type="application/json", 
         temperature=0.1
     )
@@ -237,12 +366,18 @@ async def analyze_context_flash(
     result = await api_call_with_retry(client, model_id, contents, config, operation_name="Context Analysis (Flash)")
     if result:
         parsed = safe_parse_json(result)
-        if parsed: return parsed
+        if parsed:
+            # [Legacy Adapter]
+            # Map V3 fields to V2 fields to prevent crashes until Phase 1-4
+            if "Instincts" not in parsed: parsed["Instincts"] = "See Psyche"
+            if "Values" not in parsed: parsed["Values"] = "See Psyche"
+            return parsed
     
     # Fallback
     return {
         "CurrentLocation": "Unknown", "UserIntent": "Unknown",
-        "RelevantContext": [], "Observation": "Analysis Failed"
+        "RelevantContext": [], "Observation": "Analysis Failed",
+        "InputAnalysis": {"Original": "Error", "Enhanced": "Analysis Failed", "Plausibility": "Low"}
     }
 
 
@@ -250,9 +385,7 @@ async def analyze_context_flash(
 # PART 2: ACTION JUDGMENT (DIKASTES - PRO)
 # =========================================================
 
-SYSTEM_INSTRUCTION_PRO_JUDGE = """
-<DIKASTES role="Impartial Judge">
-
+DIKASTES_IDENTITY = """
 <identity>
 You are the impartial Game Master.
 You receive analyzed context from THEORIA and determine:
@@ -260,94 +393,144 @@ You receive analyzed context from THEORIA and determine:
 2. All applicable Modifiers  
 3. What happens if the action fails (GM Move)
 </identity>
+"""
 
+DIKASTES_PROCESS = """
 <judgment_process>
-STEP 1 — BASE DIFFICULTY (0-100 spectrum)
-STEP 2 — FAVORABLE FACTORS (Bonus values)
-STEP 3 — UNFAVORABLE FACTORS (Penalty values)
+STEP 1 — WANT/DO/CAN SIMULATION
+- Want: What is the true intent? (Enhanced Input)
+- Do: What is the specific attempt?
+- Can: Is it plausible? (Check Theoria Plausibility)
+  - If Plausibility = Impossible -> AUTO FAIL.
+  - If Plausibility = Low -> DC must be HARD(60) or higher.
+
+STEP 2 — BASE DIFFICULTY (0-100 spectrum)
+STEP 3 — APPLY ASPECTS & MODIFIERS (FATE System)
+- Check [SCENE ASPECTS] from Theoria.
+- Apply Bonus (+10) or Penalty (-10) if Aspect is invoked/compelled.
+
 STEP 4 — CALCULATE Final DC
 STEP 5 — FAILURE CONSEQUENCE (GM Move)
+- Use [POSITION] to determine severity of failure.
+- Use [EFFECT] to determine scale of success.
 </judgment_process>
-
-<difficulty_spectrum>
-| Label | Range | Examples |
-|-------|-------|----------|
-| trivial | 0-15 | Opening door |
-| easy | 16-30 | Simple cooking |
-| normal | 31-50 | Pick simple lock |
-| hard | 51-70 | Complex acrobatics |
-| extreme | 71-90 | Expert disguise |
-| legendary | 91-100 | Near-impossible |
-</difficulty_spectrum>
-
-<gm_moves>
-When a roll fails, the world responds. Match severity to THEORIA's Position:
-- Low Position (< 0.3): Minor consequence.
-- Medium Position (0.4-0.6): Meaningful setback.
-- High Position (> 0.7): Serious consequence.
-
-Types: [worse_position, resource_loss, unwanted_attention, hard_choice, truth_revealed, separation].
-</gm_moves>
-
-<modifier_rules>
-| Type | Range |
-|------|-------|
-| Injury | -5 to -20 |
-| Passive | +5 to +15 |
-| Item | +5 to +30 |
-| Environment | ±5 to ±15 |
-</modifier_rules>
-
-<everyday_charm>
-Even trivial actions deserve attention. "Small actions create ripples."
-Include flavor modifiers even for standard tasks.
-</everyday_charm>
-
-<output_format>
-Return valid JSON:
-
-REQUIRED (existing):
-- ActionJudgment: {
-    "action": "Summarized action",
-    "difficulty": "trivial/easy/normal/hard/extreme",
-    "difficulty_reason": "Why this difficulty",
-    "modifiers": [{"name": "...", "value": N, "reason": "..."}]
-  }
-- SystemAction: {"tool": "...", "type": "...", "content": "..."} or null
-
-OPTIONAL (new):
-- GMMove: {"type": "...", "description": "What happens on failure"}
-</output_format>
-
-</DIKASTES>
 """
+
+DIKASTES_WANT_DO_CAN = """
+<want_do_can_model>
+## ACTION SIMULATION (Want/Do/Can)
+Determine the outcome availability before rolling dice.
+1. **Want**: Defined by [USER INTENT] (Enhanced).
+2. **Do**: The physical/social attempt.
+3. **Can**: The capability check. Matches Player Stats/Lore.
+
+**Logic Gate**:
+- If `Plausibility` is "Impossible": The action fails before it starts. Output 'automatic_failure'.
+- If `Plausibility` is "Low": The action is strained. Minimum DC is HARD (60).
+- If `Plausibility` is "High": The action is solid. Proceed with standard DC.
+</want_do_can_model>
+"""
+
+def get_system_instruction_dikastes(features: Dict[str, bool] = None) -> str:
+    """
+    [Dikastes V3 Builder]
+    Constructs the Judge prompt dynamically.
+    """
+    if features is None: features = {"want_do_can": True}
+    
+    components = [
+        "<DIKASTES role=\"Impartial Judge\">",
+        DIKASTES_IDENTITY,
+        DIKASTES_PROCESS
+    ]
+    
+    if features.get("want_do_can", True):
+        components.append(DIKASTES_WANT_DO_CAN)
+        
+    components.extend([
+        DIKASTES_DIFFICULTY,
+        DIKASTES_GM_MOVES,
+        DIKASTES_MODIFIERS,
+        "<!-- ASPECTS_INJECTION_HERE -->",
+        DIKASTES_OUTPUT_FORMAT,
+        "</DIKASTES>"
+    ])
+    return "\n\n".join(components)
+
+# Backward Compatibility
+SYSTEM_INSTRUCTION_PRO_JUDGE = get_system_instruction_dikastes()
 
 async def judge_action_pro(
     client,
     model_id: str,
-    user_intent: str,
+    user_intent: str, # Legacy (Raw intention)
     observation: str,
     relevant_context: List[str],
-    history_tail: str
+    history_tail: str,
+    input_analysis: Dict[str, Any] = None,
+    cognitive_data: Dict[str, Any] = None # Position, Effect, Aspects
 ) -> Dict[str, Any]:
     """
-    [DIKASTES - PRO V2.5]
-    Implementation Request #1 v3 Compliant.
+    [DIKASTES - PRO V3.0]
+    Powered by Want/Do/Can Model.
     """
+    # Prepare V3 Logic
+    features = {"want_do_can": True}
+    base_intent = user_intent
+    plausibility_info = ""
+    aspect_info = ""
+    position_info = ""
+    
+    if input_analysis:
+        # Override intent with Enhanced version if available
+        if input_analysis.get("Enhanced"):
+            base_intent = input_analysis["Enhanced"]
+            
+        p_val = input_analysis.get("Plausibility", "Medium")
+        p_reason = input_analysis.get("Reasoning", "None") 
+        plausibility_info = f"### [PLAUSIBILITY CHECK]\nRating: {p_val}\nNote: {p_reason}\n"
+
+        # [V3.5] Grandmaster DNA Injection (Aspects & Position)
+        # We need to pass 'observation_result' features here ideally, 
+        # but 'input_analysis' is the current pipe. 
+        # Refactoring to accept kwargs or extracting from input_analysis if bundled.
+        # Ideally, we should pass 'cognitive_data' dict.
+        pass
+
+    # [Patch] We assume input_analysis might carry these or we inject via 'relevant_context'
+    # Actually, I will add a new argument to `judge_action_pro` in the next chunk,
+    # but for now let's modify the signature to be robust.
     
     context_str = "\n".join(f"- {c}" for c in relevant_context) if relevant_context else "None"
     
+    # Build Cognitive Context (Position/Aspects)
+    if cognitive_data:
+        pos = cognitive_data.get("Position", {})
+        eff = cognitive_data.get("Effect", {})
+        asp = cognitive_data.get("Aspects", [])
+        
+        position_info = (
+            f"### [RISK & REWARD (BitD)]\n"
+            f"- Position (Risk): {pos.get('value')} ({pos.get('reason')})\n"
+            f"- Effect (Gain): {eff.get('value')} ({eff.get('reason')})\n"
+        )
+        if asp:
+            aspect_info = f"### [SCENE ASPECTS (FATE)]\nConsider these tags for modifiers:\n" + ", ".join(f"[{a}]" for a in asp) + "\n"
+
     user_prompt = (
         f"### [SITUATION]\n{observation}\n"
-        f"### [USER INTENT]\n{user_intent}\n"
+        f"### [USER INTENT (Optimized)]\n{base_intent}\n"
+        f"{plausibility_info}"
+        f"{position_info}"
+        f"{aspect_info}"
         f"### [RECENT CHAT]\n{history_tail}\n"
         f"### [SELECTED RULES & CONTEXT]\n{context_str}\n" 
-        "Perform Dikastes judgment. Determine DC, Modifiers, and potential GM Move."
+        "Perform Dikastes judgment. Apply Want/Do/Can logic."
     )
     
     contents = [types.Content(role="user", parts=[types.Part(text=user_prompt)])]
     config = types.GenerateContentConfig(
-        system_instruction=SYSTEM_INSTRUCTION_PRO_JUDGE, 
+        system_instruction=get_system_instruction_dikastes(features), 
         response_mime_type="application/json", 
         temperature=0.3
     )
@@ -781,12 +964,24 @@ class GMCognition:
                 "SystemAction": None
             }
         else:
+            # [V3 Integration]
+            input_analysis = observation_result.get("InputAnalysis")
+            
+            # [V3.5] Grandmaster DNA: Extract Position, Effect, Aspects
+            cognitive_data = {
+                "Position": observation_result.get("Position", {}),
+                "Effect": observation_result.get("Effect", {}),
+                "Aspects": observation_result.get("Aspects", [])
+            }
+            
             judgment_result = await judge_action_pro(
                 self.client, self.model_id,
                 observation_result.get("UserIntent", ""),
                 observation_result.get("Observation", ""),
                 observation_result.get("RelevantContext", []),
-                history_text[-500:]
+                history_text[-500:],
+                input_analysis=input_analysis,
+                cognitive_data=cognitive_data
             )
 
         # 5. NARRATIVE PLANNING (Man in the Mirror)

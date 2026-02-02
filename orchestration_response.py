@@ -128,6 +128,24 @@ def _build_nvc_summary(ctx: ResponseContext, filter_config: NVCFilterConfig) -> 
         f"- **Aspects**: {', '.join(aspects) if aspects else 'None'}\n"
     )
 
+    # [V3 Data Injection]
+    psyche = ctx.nvc_result.get("psyche_states")
+    if psyche and isinstance(psyche, dict):
+        psyche_str = ", ".join([f"{k}: {v}" for k, v in psyche.items()])
+        nvc_summary += f"- **Psyche States**: {psyche_str}\n"
+
+    chain = ctx.nvc_result.get("narrative_chain")
+    if chain and isinstance(chain, dict):
+        # Format: [OPEN] Topic Lock: No
+        status = chain.get("chain_status", "OPEN")
+        lock = chain.get("topic_lock", "None")
+        nvc_summary += f"- **Narrative Chain**: [{status}] Topic Lock: {lock}\n"
+
+    memory = ctx.nvc_result.get("memory_triggers")
+    if memory and isinstance(memory, list):
+        mem_str = ", ".join([m.get("trigger", "") for m in memory if isinstance(m, dict)])
+        if mem_str: nvc_summary += f"- **Memory Triggers**: {mem_str}\n"
+
     # PC 사칭 자가 수정 경고 (Flash 분석에서 검출된 경우)
     pc_check = ctx.nvc_result.get("PCImpersonationCheck", {})
     if pc_check.get("detected"):

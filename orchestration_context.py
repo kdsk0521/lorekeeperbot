@@ -108,6 +108,10 @@ async def gather_context(ctx: ResponseContext) -> ResponseContext:
     if npc_hints:
         ctx.rule_txt += "\n\n### [NPC ACTIVITY HINTS (Time-based)]\n" + "\n".join(npc_hints)
 
+    # [Anti-Gravity] Inject World Context (Doom, Time) into Rules for Cognition
+    if ctx.world_ctx:
+        ctx.rule_txt += f"\n\n{ctx.world_ctx}"
+
     # 기존 NPC 태도
     ctx.existing_attitudes = domain_manager.get_npc_attitudes(channel_id)
 
