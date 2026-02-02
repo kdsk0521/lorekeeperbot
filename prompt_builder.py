@@ -542,8 +542,7 @@ This tone affects style, not physics or causality.
             # [Group 4: The Agents - Social & Behavioral]
             text_resources.PC_AUTONOMY_DOCTRINE,          # Consolidated
             text_resources.INTERACTION_MODEL,             # Kept (Merged with Social Dynamics)
-            text_resources.NPC_ATTITUDE_ENFORCEMENT,      # Kept (Reduced)
-            text_resources.NPC_AUTONOMY_ENGINE,           # NEW: NPC Decision Matrix
+            text_resources.NPC_BEHAVIOR_SYSTEM,           # Merged: Attitude + Autonomy
 
             # [Group 5: The Atmosphere & Mechanics]
             text_resources.TIME_ATMOSPHERE,               # Kept
@@ -551,7 +550,7 @@ This tone affects style, not physics or causality.
             text_resources.ASPECT_UTILIZATION,            # Kept
 
             # [Group 6: Cognition-Driven Rendering (NEW)]
-            text_resources.PACING_CONTROL_PROTOCOL,       # NEW: Narrative Rhythm Control
+            # PACING_CONTROL_PROTOCOL moved to conditional (mature/visceral only)
             text_resources.PSYCHE_STATE_RENDERING,        # NEW: 6-Axis → Body Signal
             text_resources.NARRATIVE_CHAIN_CONTROL,       # NEW: Chain/Topic Lock
             text_resources.MEMORY_ALCHEMY_PROTOCOL,       # NEW: Memory Trigger Rendering
@@ -570,6 +569,7 @@ This tone affects style, not physics or causality.
             parts.append(self.sections['custom_tone'])
         if 'mature_content' in self.sections:
             parts.append(self.sections['mature_content'])
+            parts.append(text_resources.PACING_CONTROL_PROTOCOL)  # Pacing for mature/visceral
         if 'lore' in self.sections:
             parts.append(self.sections['lore'])
         if 'player_info' in self.sections:

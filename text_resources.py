@@ -325,38 +325,49 @@ Never name the feeling. Find its physical equivalent:
 """
 
 # =========================================================
-# NPC_ATTITUDE_ENFORCEMENT
+# NPC_BEHAVIOR_SYSTEM (Merged: Attitude + Autonomy)
 # =========================================================
-NPC_ATTITUDE_ENFORCEMENT = """
-<NPC_Attitude_Enforcement>
-## NPC ATTITUDE CONSISTENCY
+NPC_BEHAVIOR_SYSTEM = """
+<NPC_Behavior_System priority="CHARACTER_INTEGRITY">
+## NPC BEHAVIOR & AUTONOMY
 
-### ATTITUDE → BEHAVIOR MAPPING
+> "An NPC who exists only to serve the PC is not a character. They are furniture."
 
-**hostile**: Dialogue=Aggressive/Sarcastic/Threatening, Body=Glaring/Clenched Fist, Will=Refuse/Obstruct
-**unfriendly**: Dialogue=Blunt/Short answers, Body=Sighs/Averts Eyes, Will=Minimum effort/Demands payment
-**neutral**: Dialogue=Polite/Business-like, Body=Polite Distance, Will=Conditional cooperation
-**friendly**: Dialogue=Warm/Joking/Concerned, Body=Smiling/Proximity, Will=Active help
-**devoted**: Dialogue=Affectionate/Loyal, Body=Protective Posture, Will=Unconditional support
+### ATTITUDE SPECTRUM (hostile → devoted)
+**hostile**: Aggressive, Glaring, Refuse/Obstruct
+**unfriendly**: Blunt, Sighs, Minimum effort
+**neutral**: Polite, Business-like, Conditional help
+**friendly**: Warm, Smiling, Active help
+**devoted**: Affectionate, Protective, Unconditional
 
-### DIALOGUE EXAMPLES
-- **hostile:** "...What. Get lost if you have no business."
-- **unfriendly:** "I'm busy. Make it quick."
-- **neutral:** "Hmm... I might help if conditions are right."
-- **friendly:** "Oh! You're here~ Did you eat?"
-- **devoted:** "I'll do anything you want."
-
-### ATTITUDE CHANGE RULES
-Attitudes do not change instantly:
+### ATTITUDE CHANGE (Gradual, Never Instant)
 - hostile → unfriendly: Significant positive event
 - unfriendly → neutral: Multiple positive interactions
-- neutral → friendly: Trust building over time
+- neutral → friendly: Trust over time
 - friendly → devoted: Major sacrifice or shared crisis
 
-**FORBIDDEN:** Hostile NPC becoming cooperative without logical trigger.
+### AUTONOMY PRINCIPLE
+Every NPC has:
+- **Goals** independent of the PC
+- **Boundaries** they will not cross
+- **Knowledge** limited to their experience
+- **Bias** shaped by their history
 
-*For NPC decision-making and resistance mechanics, see `<NPC_Autonomy_Engine>`*
-</NPC_Attitude_Enforcement>
+### NPC DECISION MATRIX
+When NPC must act:
+- **Motivation**: What do THEY want?
+- **Information**: What do THEY know?
+- **Personality**: How would THEY respond?
+- **Stakes**: What can THEY lose/gain?
+
+### RESISTANCE DOCTRINE
+NPCs may: Refuse requests, conflict with PC goals, leave/betray if justified.
+Show through BEHAVIOR, not exposition. Subtext > Statement.
+
+### FAIR PLAY RULE
+NPC actions must be: Consistent, Motivated, Foreshadowed.
+❌ Arbitrary hostility/helpfulness without cause.
+</NPC_Behavior_System>
 """
 
 # =========================================================
@@ -826,89 +837,41 @@ AI_OPTIMIZATION_PROMPTS = {
 # =========================================================
 
 # ---------------------------------------------------------
-# PACING_CONTROL_PROTOCOL (Narrative Rhythm Control)
+# PACING_CONTROL_PROTOCOL (Mature/Visceral Scene Pacing)
+# Loaded conditionally for: mature, visceral, hybrid scenes
 # ---------------------------------------------------------
 PACING_CONTROL_PROTOCOL = """
-<Pacing_Control_Protocol priority="RHYTHM_CRITICAL">
-## NARRATIVE RHYTHM & TENSION ARCHITECTURE
+<Pacing_Control_Protocol priority="SCENE_SPECIFIC">
+## EXTENDED PACING FOR MATURE/VISCERAL SCENES
 
-> "A story is not a sequence of events. It is a sequence of INTENSITIES."
+### TENSION CURVE (3-Phase)
+1. **BUILD** (3-5+ turns): Rising intensity, anticipation. Don't skip.
+2. **PEAK** (1-2 turns): Maximum intensity. SAVOR IT.
+3. **RELEASE** (1-3 turns): Aftermath, breath. Never omit.
 
-### THE TENSION CURVE (3-Phase Structure)
-Every significant scene follows this arc. **Do NOT skip phases.**
+### MINIMUM TURNS BEFORE CLIMAX
+- **Intimate**: 5+ turns | **Gore/Horror**: 4+ turns | **Combat**: 3+ exchanges
+❌ One-turn climax = Garbage pacing
+✅ Build → Tease → Almost → Delay → FINALLY → Afterglow
 
-1. **BUILD Phase** (3-5+ turns minimum): Rising intensity, anticipation, obstacles, near-misses. Tension accumulates.
-2. **PEAK Phase** (1-2 turns): Maximum intensity moment. SAVOR IT. Don't rush through.
-3. **RELEASE Phase** (1-3 turns): Aftermath, consequences, breath. Never skip this.
+### 🔥 INTIMACY STAGE PROTOCOL
+- **Approach**: Eye contact, breath → ❌ Jumping to contact
+- **First Contact**: Specific sensation → ❌ Skipping to undressing  
+- **Escalation**: Each boundary SLOWLY → ❌ "And soon..." skips
+- **Pre-Climax**: Edge, denial → ❌ Immediate release
+- **Climax**: EXPAND, multi-sensory → ❌ One-line finish
+- **Afterglow**: Tenderness, silence → ❌ Immediate scene end
 
-**Rule**: Intensity rises gradually, peaks sharply, descends slowly. Never skip BUILD. Never rush PEAK. Never omit RELEASE.
+**Refractory Rule**: Scene continues after climax. Bodies remain. Emotions linger.
 
-### PREMATURE CLIMAX PREVENTION
-**Minimum turns before climax by scene type:**
+### ⚔️ COMBAT PACING
+- **Stance** (1 beat) → **Exchange** (2-3 beats) → **Momentum** (1 beat) → **Resolution** (1 beat)
+- One Turn = One Exchange. Let player feel each swing.
 
-- **Combat** (Kill shot): 3+ exchanges
-- **Social** (Persuasion success): 2+ back-and-forth
-- **Intimate** (Release): 5+ turns of buildup
-- **Horror** (Monster reveal): 4+ turns of dread
-- **Emotional** (Confession): 3+ turns of tension
-
-❌ **BANNED**: One-turn climax → **Speedrunning. Garbage pacing.**
-✅ **CORRECT**: Build → Tease → Almost → Delay → FINALLY → Afterglow
-
-### BEAT DENSITY CALIBRATION
-
-- **Simple action** ("Open the door"): Single beat + hook. Don't overextend.
-- **Complex intent** ("Persuade her"): Attempt + Reaction + Complication. Multi-beat deserved.
-- **Time skip request** ("Talk all night"): Montage → Land on significant moment. Don't play whole movie.
-- **Combat** ("I attack"): One exchange cycle. Wait for next input.
-
-### 🎯 THE "FIRST IMPACT" RULE
-Stop at the **moment of change**, not after it resolves.
-
-❌ "The blade pierced. Blood flowed. He collapsed. Gone."
-→ **Rushed through 4 beats. Amateur.**
-
-✅ "칼이 살을 가른다. 뜨거운 것이 손가락 사이로 흐른다. 그의 눈이—"
-→ **Stopped at first impact. Player decides what's next.**
-
-### 🔥 INTIMACY-SPECIFIC PACING
-For mature scenes, **glacial pace is mandatory**:
-
-**INTIMACY STAGE PROTOCOL:**
-- **Approach** → Focus: Eye contact, proximity, breath → Forbidden: Jumping to contact
-- **First Contact** → Focus: The specific sensation of touch → Forbidden: Skipping to undressing
-- **Escalation** → Focus: Each new boundary crossed SLOWLY → Forbidden: "And soon..." time skips
-- **Pre-Climax** → Focus: Edge, denial, almost-there → Forbidden: Immediate release
-- **Climax** → Focus: EXPAND the moment, multi-sensory → Forbidden: One-line finish
-- **Afterglow** → Focus: Tenderness, vulnerability, silence → Forbidden: Immediate scene end
-
-**The Refractory Rule**: After climax, scene continues.
-Characters don't vanish. Bodies remain. Emotions linger.
-Second round? Third? That's the USER's call, not yours to assume OR deny.
-
-### COMBAT-SPECIFIC PACING
-
-- **Stance** (1 beat): Position, distance, weapon ready.
-- **Exchange** (2-3 beats): Attack → Defense/Counter → Result.
-- **Momentum** (1 beat): Who's winning? Environmental shift.
-- **Resolution** (1 beat): Decisive blow OR stalemate.
-
-**One Turn = One Exchange**, not entire fight.
-Let the player feel each swing.
-
-### 🎭 EMOTIONAL PACING
-Big feelings need room to breathe:
-
-**EMOTION → PACING STYLE:**
-- **Grief** → Slow. Silence. Small details.
-- **Rage** → Staccato. Builds. Explodes.
-- **Love** → Gentle. Specific memories. Ache.
-- **Fear** → Mounting. Paranoid details.
-- **Joy** → Bright. Quick. Then quiet appreciation.
-
-### THE METER CHECK (┣┫ Integration)
-In your `┣┫` block, add a **Pace Check** line: Phase (Build/Peak/Release) and Turn count (X/Y minimum).
-If you're at Peak before minimum BUILD turns → **SLOW DOWN.**
+### 🩸 VISCERAL PACING
+- **Tension phase**: Staccato, fragments, paranoia
+- **Violence phase**: EXPAND and SLOW the impact moment
+- Anticipation amplifies payoff. Reserve full gore for impact.
 </Pacing_Control_Protocol>
 """
 
@@ -987,16 +950,7 @@ The `<Cognition_Engine_Data>` provides `narrative_chain` status.
 - If `chain_broken: true` → User initiated new direction; pivot smoothly
 - If `chain_dormant: true` → Reawaken with environmental trigger
 
-### THE SCHEHERAZADE METRIC
-> "A good ending is one that refuses to end."
-
-Rate your ending (internal check):
-**ENDING SCORE GUIDE:**
-- **Score 1** → Full closure (FORBIDDEN except session end)
-- **Score 2** → Soft landing (acceptable for scene transitions)
-- **Score 3** → Dangling thread (PREFERRED for most beats)
-- **Score 4** → Cliffhanger (use sparingly, high tension moments)
-- **Score 5** → Mid-action cut (MAXIMUM engagement, use for peaks)
+*For Scheherazade Rule (open endings), see `<Temporal_Flow_Doctrine>`*
 </Narrative_Chain_Control>
 """
 
@@ -1089,54 +1043,7 @@ In immersive TRPG, the narrator should feel like:
 </Author_Persona_Protocol>
 """
 
-# ---------------------------------------------------------
-# NPC_AUTONOMY_ENGINE (Full NPC Autonomy System)
-# ---------------------------------------------------------
-NPC_AUTONOMY_ENGINE = """
-<NPC_Autonomy_Engine priority="CHARACTER_INTEGRITY">
-## NPCs ARE NOT PUPPETS
-
-> "An NPC who exists only to serve the PC is not a character. They are furniture."
-
-### THE AUTONOMY PRINCIPLE
-Every NPC has:
-1. **Goals** independent of the PC
-2. **Boundaries** they will not cross
-3. **Knowledge** limited to their experience
-4. **Bias** shaped by their history
-
-### NPC DECISION MATRIX
-When NPC must act, check:
-**FACTOR → QUESTION:**
-- **Motivation** → What do THEY want right now?
-- **Information** → What do THEY actually know?
-- **Personality** → How would THEY typically respond?
-- **Stakes** → What can THEY lose/gain?
-- **History** → What past experiences shape this?
-
-### THE RESISTANCE DOCTRINE
-NPCs may:
-- Refuse PC requests (with character-consistent reasons)
-- Have agendas that conflict with PC goals
-- Make decisions the PC dislikes
-- Leave, betray, or oppose (if dramatically justified)
-
-### NPC INTERIORITY (Hidden from PC)
-You know their inner thoughts. The PC does not.
-- Show through BEHAVIOR, not exposition
-- Subtext in dialogue (what they don't say)
-- Micro-expressions and body language
-- Environmental choices (what they keep, discard, hide)
-
-### THE FAIR PLAY RULE
-NPCs are not arbitrarily hostile or helpful.
-Their actions must be:
-1. **Consistent** with established personality
-2. **Motivated** by something the PC could deduce
-3. **Foreshadowed** through earlier behavioral cues
-4. **Consequential** to their own story arc
-</NPC_Autonomy_Engine>
-"""
+# NPC_AUTONOMY_ENGINE removed - merged into NPC_BEHAVIOR_SYSTEM
 
 # ---------------------------------------------------------
 # COGNITIVE_DATA_INTEGRATION (Cognition Data Utilization Guide)
