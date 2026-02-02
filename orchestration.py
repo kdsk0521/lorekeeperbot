@@ -468,6 +468,15 @@ class OrchestrationService:
                 # 6. Response Generation
                 response = await self.generate_response(ctx, full_prompt)
 
+                # [!다시 기능] 마지막 컨텍스트 저장 (응답 존재 여부와 관계없이 저장)
+                self._last_contexts[channel_id] = {
+                    "action_text": ctx.action_text,
+                    "user_id": user_id,
+                    "original_message_id": message.id,
+                    "has_response": response is not None and response.strip() != ""
+                }
+                logger.debug(f"[!다시] Context saved for channel {channel_id}: action_text='{ctx.action_text[:50]}...', has_response={self._last_contexts[channel_id]['has_response']}")
+                
                 if response:
                     # [UI Feedback] 완료 시 안내 메시지 삭제
                     if feedback_msg:
@@ -479,16 +488,18 @@ class OrchestrationService:
                     # 7. Send Response
                     sent_msgs = await bot_utils.send_long_message(message.channel, response)
                     
-                    # [!다시 기능] 마지막 컨텍스트 저장
-                    self._last_contexts[channel_id] = {
-                        "action_text": ctx.action_text,
-                        "user_id": user_id,
-                        "message_ids": [m.id for m in sent_msgs] if sent_msgs else [],
-                        "original_message_id": message.id
-                    }
+                    # Store message IDs for retry deletion
+                    self._last_contexts[channel_id]["message_ids"] = [m.id for m in sent_msgs] if sent_msgs else []
                     
                     # 8. Background Extraction
                     await self.schedule_background_extraction(ctx, response, message)
+                else:
+                    logger.warning(f"[!다시] No response generated for channel {channel_id}")
+                    if feedback_msg:
+                        try:
+                            await feedback_msg.delete()
+                        except Exception:
+                            pass
 
         except Exception as e:
             if feedback_msg:
@@ -516,8 +527,10 @@ class OrchestrationService:
         Returns: 성공 여부
         """
         last_ctx = self._last_contexts.get(channel_id)
+        logger.debug(f"[!다시] channel_id={channel_id}, last_ctx={last_ctx is not None}, all_contexts={list(self._last_contexts.keys())}")
+        
         if not last_ctx:
-            await message.channel.send("⚠️ 재시도할 이전 응답이 없습니다.")
+            await message.channel.send("⚠️ 재시도할 이전 응답이 없습니다.\n💡 먼저 메시지를 보내서 AI 응답을 생성해주세요.")
             return False
         
         # 1. 이전 AI 메시지 삭제
