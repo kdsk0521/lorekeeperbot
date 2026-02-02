@@ -536,24 +536,8 @@ async def cmd_npc(ctx: CommandContext) -> None:
 
 @registry.register("reset", category="Admin", aliases=["리셋", "초기화"], description="세션 데이터 전체 초기화")
 async def cmd_reset(ctx: CommandContext) -> None:
-    """!리셋 [confirm/확인]"""
-    # session_manager.execute_reset takes (message, client)
-    # logic already handles confirm checks inside, wait...
-    # Checking handle_system logic: prompt confirm if arg missing.
-    # session_manager.execute_reset does NOT seem to take args for confirm?
-    # Let's check handle_system_command logic again.
-    # It checked args manually.
-    
-    arg = ctx.raw_args.strip().lower()
-    if arg not in ['confirm', '확인']:
-         await ctx.send(
-            "⚠️ **세션 초기화 경고**\n"
-            "모든 진행 상황(히스토리, 시간, 날씨, 퀘스트, 아이템)이 초기화됩니다.\n"
-            "(단, 로어와 참가자 명단은 유지됩니다)\n\n"
-            "진행하시려면: `!초기화 확인` 또는 `!reset confirm`을 입력하세요."
-        )
-         return
-
+    """!리셋 - 이모지 확인 후 전체 초기화 (채널 재생성)"""
+    # 이모지 확인은 session_manager에서 처리
     await session_manager.manager.execute_reset(ctx.message, ctx.client)
 
 

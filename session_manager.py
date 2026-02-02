@@ -23,12 +23,13 @@ class SessionManager:
     """Manages session lifecycle events."""
     
     async def execute_reset(self, message: discord.Message, client: discord.Client) -> None:
-        """Fully resets the session by blowing up the channel."""
+        """Fully resets the session by blowing up the channel. 이모지 확인 후 실행."""
         channel_id = str(message.channel.id)
         
+        # 이모지 확인
         confirm_msg = await message.channel.send(
-            "🧨 **[경고: 세션 초기화]**\n"
-            "이 채널의 모든 데이터와 기억이 **영구적으로 삭제**되며 채널이 재생성됩니다.\n"
+            "🧨 **[경고: 전체 초기화]**\n"
+            "이 채널의 **모든 데이터**가 삭제되고 채널이 재생성됩니다.\n"
             f"{RESET_CONFIRM_EMOJI} 이모지를 눌러 {RESET_CONFIRM_TIMEOUT}초 내에 확정하십시오."
         )
         await confirm_msg.add_reaction(RESET_CONFIRM_EMOJI)
@@ -38,19 +39,19 @@ class SessionManager:
         
         try:
             await client.wait_for('reaction_add', timeout=RESET_CONFIRM_TIMEOUT, check=check)
-            
-            # Reset Data
-            domain_manager.reset_domain(channel_id) # Clears cache and files
-            
-            # Recreate Channel
-            await self._recreate_channel(message)
-            
         except asyncio.TimeoutError:
             try:
                 await confirm_msg.delete()
                 await message.channel.send("❌ 초기화 취소됨 (시간 초과).", delete_after=5)
             except Exception as e:
                 logger.debug(f"[무시됨] 초기화 취소 메시지 처리 실패: {e}")
+            return
+        
+        # Reset Data
+        domain_manager.reset_domain(channel_id) # Clears cache and files
+        
+        # Recreate Channel
+        await self._recreate_channel(message)
     
     async def _recreate_channel(self, message: discord.Message) -> None:
         original = message.channel
