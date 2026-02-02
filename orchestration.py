@@ -60,6 +60,9 @@ class OrchestrationService:
         
         # [Phase 1 Upgrade] Initialize Skilled GM Brain
         self.gm_cognition = cognition.GMCognition(client_genai, model_id, model_id_flash)
+        
+        # [!다시 기능] 채널별 마지막 컨텍스트 저장
+        self._last_contexts: Dict[str, Dict[str, Any]] = {}
 
     # =========================================================
     # STEP 1: CONTEXT GATHERING
@@ -474,7 +477,15 @@ class OrchestrationService:
                             pass # 이미 삭제되었거나 권한 부족 시 무시
 
                     # 7. Send Response
-                    await bot_utils.send_long_message(message.channel, response)
+                    sent_msgs = await bot_utils.send_long_message(message.channel, response)
+                    
+                    # [!다시 기능] 마지막 컨텍스트 저장
+                    self._last_contexts[channel_id] = {
+                        "action_text": ctx.action_text,
+                        "user_id": user_id,
+                        "message_ids": [m.id for m in sent_msgs] if sent_msgs else [],
+                        "original_message_id": message.id
+                    }
                     
                     # 8. Background Extraction
                     await self.schedule_background_extraction(ctx, response, message)
@@ -491,6 +502,58 @@ class OrchestrationService:
             logger.error(f"AI Process Error: {e}\n{error_traceback}")
             # Show the last part of the traceback to the user for debugging
             await message.channel.send(f"⚠️ **AI 처리 오류:** {e}\n```python\n{error_traceback[-500:]}\n```")
+
+    # =========================================================
+    # RETRY / REROLL (!다시)
+    # =========================================================
+    async def retry_last(self, message: discord.Message, channel_id: str) -> bool:
+        """
+        마지막 AI 응답을 재생성합니다.
+        1. 이전 AI 메시지 삭제
+        2. history에서 마지막 AI 응답 제거
+        3. 동일 action으로 재실행
+        
+        Returns: 성공 여부
+        """
+        last_ctx = self._last_contexts.get(channel_id)
+        if not last_ctx:
+            await message.channel.send("⚠️ 재시도할 이전 응답이 없습니다.")
+            return False
+        
+        # 1. 이전 AI 메시지 삭제
+        for msg_id in last_ctx.get("message_ids", []):
+            try:
+                old_msg = await message.channel.fetch_message(msg_id)
+                await old_msg.delete()
+            except Exception as e:
+                logger.debug(f"[무시됨] 이전 메시지 삭제 실패: {e}")
+        
+        # 2. history에서 마지막 AI 응답 제거 (가장 최근 model 응답)
+        history = domain_manager.get_history(channel_id)
+        if history and history[-1].get("role") == "model":
+            history.pop()
+            d = domain_manager.get_domain(channel_id)
+            d["history"] = history
+            domain_manager.save_domain(channel_id, d)
+        
+        # 3. 재실행을 위한 fake message 생성
+        # (원본 action_text로 execute 호출)
+        await message.channel.send("🔄 **재판정 중...**", delete_after=2)
+        
+        # 원본 메시지 객체 가져오기 시도
+        try:
+            original_msg = await message.channel.fetch_message(last_ctx["original_message_id"])
+            await self.execute(original_msg, channel_id, system_trigger=None)
+        except Exception:
+            # 원본 메시지 못 찾으면 현재 메시지로 대체 실행
+            # action_text를 시스템 트리거로 전달
+            await self.execute(message, channel_id, system_trigger=last_ctx["action_text"])
+        
+        return True
+    
+    def get_last_context(self, channel_id: str) -> Optional[Dict[str, Any]]:
+        """채널의 마지막 컨텍스트 반환 (디버깅용)"""
+        return self._last_contexts.get(channel_id)
 
 
 # =========================================================

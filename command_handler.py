@@ -563,6 +563,19 @@ async def cmd_start(ctx: CommandContext) -> None:
     return None
 
 
+@registry.register("retry", category="System", aliases=["다시", "reroll", "재판정"], description="마지막 AI 응답 재생성")
+async def cmd_retry(ctx: CommandContext) -> None:
+    """!다시 - 마지막 AI 응답을 삭제하고 새로 굴림"""
+    from main import _get_orchestration
+    orchestration = _get_orchestration()
+    
+    if not orchestration:
+        await ctx.send("⚠️ AI 서비스가 초기화되지 않았습니다.")
+        return
+    
+    await orchestration.retry_last(ctx.message, ctx.channel_id)
+
+
 @registry.register("mode", category="System", aliases=["모드"], description="AI 응답 모드 변경")
 async def cmd_mode(ctx: CommandContext) -> None:
     """!모드 [자동/수동]"""

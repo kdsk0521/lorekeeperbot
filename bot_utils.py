@@ -6,7 +6,7 @@ Lorekeeper TRPG Bot - Utility Module
 import discord
 import logging
 import asyncio
-from typing import Tuple, Optional, Dict
+from typing import Tuple, Optional, Dict, List
 from collections import defaultdict, deque
 from time import time
 
@@ -46,23 +46,27 @@ class RateLimiter:
 rate_limiter = RateLimiter()
 
 
-async def send_long_message(channel: discord.TextChannel, text: str) -> None:
-    """2000자가 넘는 메시지를 나누어 전송하는 함수"""
+async def send_long_message(channel: discord.TextChannel, text: str) -> List[discord.Message]:
+    """2000자가 넘는 메시지를 나누어 전송하는 함수. 전송된 메시지 리스트 반환."""
     if not text:
-        return
+        return []
 
     channel_id = str(channel.id)
+    sent_messages: List[discord.Message] = []
 
     if len(text) <= config.MAX_DISCORD_MESSAGE_LENGTH:
         await rate_limiter.wait_if_needed(channel_id)
-        await channel.send(text)
-        return
+        msg = await channel.send(text)
+        return [msg]
 
     # 메시지 분할 전송
     for i in range(0, len(text), config.MAX_DISCORD_MESSAGE_LENGTH):
         chunk = text[i:i + config.MAX_DISCORD_MESSAGE_LENGTH]
         await rate_limiter.wait_if_needed(channel_id)
-        await channel.send(chunk)
+        msg = await channel.send(chunk)
+        sent_messages.append(msg)
+    
+    return sent_messages
 
 
 async def read_attachment_text(attachment: discord.Attachment) -> Tuple[Optional[str], Optional[str]]:
