@@ -12,6 +12,7 @@ import logging
 import config
 import re
 from typing import Optional, Dict, Any, List, Tuple
+from google import genai
 from google.genai import types
 import text_resources  # [NEW] Import text resources
 
@@ -279,7 +280,7 @@ GENRE_KEYWORD_MAP = {
 from google.api_core import exceptions as google_exceptions
 
 async def api_call_with_retry(
-    client,
+    client: genai.Client,
     model_id: str,
     contents: List[types.Content],
     gen_config: types.GenerateContentConfig,
@@ -459,7 +460,7 @@ def safe_parse_json(text: Optional[str], expect_list: bool = False) -> Any:
 
 
 
-async def analyze_genre_layers(client, model_id: str, text: str) -> Dict[str, Any]:
+async def analyze_genre_layers(client: genai.Client, model_id: str, text: str) -> Dict[str, Any]:
     """
     [Anti-Gravity Update]
     14개 정예 태그를 사용하되, 계층당 최대 2개로 제한하여 '선명한 컨셉'을 추출합니다.
@@ -544,7 +545,7 @@ async def analyze_genre_layers(client, model_id: str, text: str) -> Dict[str, An
 
 
 
-async def analyze_location_rules_from_lore(client, model_id: str, text: str) -> Dict[str, str]:
+async def analyze_location_rules_from_lore(client: genai.Client, model_id: str, text: str) -> Dict[str, str]:
     """
     텍스트에서 장소별 규칙을 추출합니다.
     """
@@ -574,7 +575,7 @@ async def analyze_location_rules_from_lore(client, model_id: str, text: str) -> 
     return {}
 
 
-async def extract_pc_info(client, model_id: str, text: str) -> Optional[Dict[str, Any]]:
+async def extract_pc_info(client: genai.Client, model_id: str, text: str) -> Optional[Dict[str, Any]]:
     """
     텍스트에서 주인공(PC) 정보를 추출합니다.
     """
@@ -758,12 +759,12 @@ async def extract_world_constraints(
 # =========================================================
 
 async def process_ooc_memory_edit(
-    client, 
+    client: genai.Client, 
     model_id: str, 
     ooc_content: str, 
     ai_mem: Dict[str, Any], 
     p_data: Dict[str, Any],
-    notebook_text: str = "" # [New] Notebook Context
+    notebook_text: str = ""
 ) -> Dict[str, Any]:
     """
     사용자의 OOC 요청을 해석하여 캐릭터 메모리 수정 명령을 생성합니다.
@@ -980,7 +981,7 @@ def apply_ai_memory_updates(
 # =========================================================
 
 async def extract_npcs_only(
-    client,
+    client: genai.Client,
     model_id: str,
     lore_text: str
 ) -> List[Dict[str, Any]]:
@@ -1015,7 +1016,7 @@ async def extract_npcs_only(
         
     return []
 
-async def summarize_lore_for_events(client, model_id: str, full_lore: str) -> str:
+async def summarize_lore_for_events(client: genai.Client, model_id: str, full_lore: str) -> str:
     """
     Summarizes the full lore into a concise context for Event Generation.
     Focuses on: Atmosphere, Threats, Magic/Rules, and Key Locations.

@@ -10,6 +10,7 @@ import random
 import asyncio
 from typing import Dict, Any, List, Optional, TypedDict, Union, Literal
 import re
+from google import genai
 from google.genai import types
 
 # =========================================================
@@ -310,7 +311,7 @@ SYSTEM_INSTRUCTION_FLASH = get_system_instruction_flash()
 
 
 async def analyze_context_flash(
-    client,
+    client: genai.Client,
     model_id: str,
     history_text: str,
     lore: str,
@@ -318,7 +319,7 @@ async def analyze_context_flash(
     active_quests_text: str,
     notebook: str = "",
     player_context: str = "",
-    existing_npc_attitudes: Dict[str, Dict] = None
+    existing_npc_attitudes: Optional[Dict[str, Dict]] = None
 ) -> Dict[str, Any]:
     """
     [THEORIA - FLASH V2.5]
@@ -527,14 +528,14 @@ def get_system_instruction_dikastes(features: Dict[str, bool] = None) -> str:
 SYSTEM_INSTRUCTION_PRO_JUDGE = get_system_instruction_dikastes()
 
 async def judge_action_pro(
-    client,
+    client: genai.Client,
     model_id: str,
-    user_intent: str, # Legacy (Raw intention)
+    user_intent: str,
     observation: str,
     relevant_context: List[str],
     history_tail: str,
-    input_analysis: Dict[str, Any] = None,
-    cognitive_data: Dict[str, Any] = None # Position, Effect, Aspects
+    input_analysis: Optional[Dict[str, Any]] = None,
+    cognitive_data: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     [DIKASTES - PRO V3.0]
@@ -725,16 +726,23 @@ def build_judgment_context_with_roll(judgment: Dict[str, Any]) -> str:
 # =========================================================
 
 async def extract_all_updates(
-    client, model_id_flash: str, player_input: str, ai_response: str,
+    client: genai.Client, 
+    model_id_flash: str, 
+    player_input: str, 
+    ai_response: str,
     # Contexts
-    notebook: str = "", # [V5.1]
-    current_status: List[str] = None,
-    current_relationships: Dict[str, str] = None, current_companions: List[str] = None,
-    lore_npc_names: List[str] = None, scene_npc_names: List[str] = None,
-    current_passives: List[str] = None, current_quests: List[str] = None, current_memos: List[str] = None,
+    notebook: str = "",
+    current_status: Optional[List[str]] = None,
+    current_relationships: Optional[Dict[str, str]] = None, 
+    current_companions: Optional[List[str]] = None,
+    lore_npc_names: Optional[List[str]] = None, 
+    scene_npc_names: Optional[List[str]] = None,
+    current_passives: Optional[List[str]] = None, 
+    current_quests: Optional[List[str]] = None, 
+    current_memos: Optional[List[str]] = None,
     fermented_context: str = "",
-    player_context: str = "", # [V5.2] Added player context for subjective trigger check
-    extraction_hints: Dict[str, bool] = None
+    player_context: str = "",
+    extraction_hints: Optional[Dict[str, bool]] = None
 ) -> Dict[str, Any]:
     
     # Default: Run ALL if no hints provided
@@ -772,10 +780,10 @@ async def extract_all_updates(
     for key, res in zip(task_keys, results):
         result_map[key] = res if not isinstance(res, Exception) else {}
 
-    phys = result_map.get("physical", {})
-    soc = result_map.get("social", {})
-    nar = result_map.get("narrative", {})
-    qst = result_map.get("quest", {})
+    phys: Dict[str, Any] = result_map.get("physical", {})
+    soc: Dict[str, Any] = result_map.get("social", {})
+    nar: Dict[str, Any] = result_map.get("narrative", {})
+    qst: Dict[str, Any] = result_map.get("quest", {})
     
     # Sanitize Physical (Now Notebook + Gold + Status)
     p_upd = None
@@ -839,7 +847,14 @@ async def extract_all_updates(
 
 # Internal Extractors (Private)
 
-async def _extract_physical(client, model_id, p_in, ai_out, notebook, status):
+async def _extract_physical(
+    client: genai.Client, 
+    model_id: str, 
+    p_in: str, 
+    ai_out: str, 
+    notebook: str, 
+    status: Optional[List[str]]
+) -> Dict[str, Any]:
     sys = (
         "EXTRACT NOTEBOOK & PHYSICAL CHANGES.\n"
         "Return JSON with keys: notebook_update (string or null), status_add [list], status_remove [list].\n"
@@ -863,7 +878,16 @@ async def _extract_physical(client, model_id, p_in, ai_out, notebook, status):
     usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput FULL UPDATED Notebook JSON."
     return await _call_extract(client, model_id, sys, usr, "B-1 Notebook")
 
-async def _extract_social(client, model_id, p_in, ai_out, rels, comps, lore_npcs, scene_npcs):
+async def _extract_social(
+    client: genai.Client, 
+    model_id: str, 
+    p_in: str, 
+    ai_out: str, 
+    rels: Optional[Dict[str, str]], 
+    comps: Optional[List[str]], 
+    lore_npcs: Optional[List[str]], 
+    scene_npcs: Optional[List[str]]
+) -> Dict[str, Any]:
     sys = (
         "EXTRACT SOCIAL CHANGES.\n"
         "Return JSON with keys: relationships {Name: Level}, companions [list].\n"
@@ -874,7 +898,15 @@ async def _extract_social(client, model_id, p_in, ai_out, rels, comps, lore_npcs
     usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON."
     return await _call_extract(client, model_id, sys, usr, "B-2 Social")
 
-async def _extract_narrative(client, model_id, p_in, ai_out, passives, fermented, player_context=""):
+async def _extract_narrative(
+    client: genai.Client, 
+    model_id: str, 
+    p_in: str, 
+    ai_out: str, 
+    passives: Optional[List[str]], 
+    fermented: str, 
+    player_context: str = ""
+) -> Dict[str, Any]:
     sys = (
         "EXTRACT NARRATIVE CHANGES.\n"
         "Return JSON with keys: passives [list], passive_suggestion {name, reason}, abnormal_trigger (string or null), abnormal_category (string or null), mental_suggestion (string or null).\n"
@@ -902,7 +934,14 @@ async def _extract_narrative(client, model_id, p_in, ai_out, passives, fermented
     usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON."
     return await _call_extract(client, model_id, sys, usr, "B-3 Narrative")
 
-async def _extract_quest(client, model_id, p_in, ai_out, quests, memos):
+async def _extract_quest(
+    client: genai.Client, 
+    model_id: str, 
+    p_in: str, 
+    ai_out: str, 
+    quests: Optional[List[str]], 
+    memos: Optional[List[str]]
+) -> Dict[str, Any]:
     sys = (
         "EXTRACT QUEST CHANGES.\n"
         "Return JSON with keys: quest_add [list], quest_complete [list].\n"
@@ -916,7 +955,13 @@ async def _extract_quest(client, model_id, p_in, ai_out, quests, memos):
     usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON."
     return await _call_extract(client, model_id, sys, usr, "B-4 Quest")
 
-async def _call_extract(client, model_id, sys, usr, op_name):
+async def _call_extract(
+    client: genai.Client, 
+    model_id: str, 
+    sys: str, 
+    usr: str, 
+    op_name: str
+) -> Dict[str, Any]:
     try:
         cfg = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.1)
         cnt = [types.Content(role="user", parts=[types.Part(text=f"{sys}\n\n{usr}")])]
@@ -970,7 +1015,7 @@ class GMCognition:
     Skilled GM Brain implementing ReAct Loop.
     Observation -> Thought -> Action
     """
-    def __init__(self, client, model_id, model_id_flash):
+    def __init__(self, client: genai.Client, model_id: str, model_id_flash: str) -> None:
         self.client = client
         self.model_id = model_id
         self.model_id_flash = model_id_flash
@@ -1069,13 +1114,13 @@ class GMCognition:
             "actors": actors
         }
 
-    def _identify_actors(self, user_input, history) -> List[str]:
+    def _identify_actors(self, user_input: str, history: str) -> List[str]:
         # Simple regex heuristic for now, can be improved with Named Entity Recognition later
         # Searching for names in brackets or standard RP formats
         potential_names = re.findall(r"([A-Z][a-z]+)", user_input)
         return list(set(potential_names))
 
-    async def _evaluate_crisis_level(self, user_input, observation) -> Dict[str, Any]:
+    async def _evaluate_crisis_level(self, user_input: str, observation: str) -> Dict[str, Any]:
         """Runs the Crisis Judge prompt."""
         try:
             prompt = f"Situation: {observation}\nAction: {user_input}\nEvaluate Crisis Score."
@@ -1090,7 +1135,7 @@ class GMCognition:
         except Exception:
             return {"halt_signal": False}
 
-    async def _plan_narrative_flow(self, recent_history, outcome) -> Dict[str, Any]:
+    async def _plan_narrative_flow(self, recent_history: str, outcome: str) -> Dict[str, Any]:
         """Runs the Narrative Planner prompt."""
         try:
             prompt = f"Recent History: {recent_history}\nOutcome: {outcome}\nPlan Narrative Flow."

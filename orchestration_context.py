@@ -56,8 +56,9 @@ class ResponseContext:
     # 판정 결과
     judgment_context: str = ""
 
-    # 발효된 요약
+    # 발효된 요약 (V3 Hybrid)
     fermented_summary_text: str = ""
+    deep_memory_data: Dict[str, Any] = field(default_factory=dict)
 
     # NPC 태도
     existing_attitudes: Dict[str, Dict] = field(default_factory=dict)
@@ -115,12 +116,15 @@ async def gather_context(ctx: ResponseContext) -> ResponseContext:
     # 기존 NPC 태도
     ctx.existing_attitudes = domain_manager.get_npc_attitudes(channel_id)
 
-    # 발효 요약
-    fermented_summaries = [
-        e["summary"] for e in ctx.domain_data.get("fermented_history", [])
-        if e.get("summary")
-    ]
-    ctx.fermented_summary_text = "\n---\n".join(fermented_summaries)
+    # 발효 요약 (V3 Hybrid - Mneme/Psyche)
+    fermented_history = ctx.domain_data.get("fermented_history", [])
+    deep_memory_data = ctx.domain_data.get("deep_memory_data", {})
+    ctx.fermented_summary_text = fermentation.build_fermented_context(
+        fermented_history, 
+        deep_memory_data
+    )
+    # Store deep_memory_data for prompt builder
+    ctx.deep_memory_data = deep_memory_data
 
     # 장르/톤
     ctx.active_genres = domain_manager.get_active_genres(channel_id)
@@ -194,7 +198,8 @@ async def run_cognition_analysis(
     # Scene Type: Use session's mature_mode setting (not cognition's SceneType)
     # Cognition's SceneType (combat/social/intimate) is for narrative flow
     # Session's mature_mode (normal/gore/nsfw/gore_nsfw) is for content restrictions
-    session_mature_mode = domain_manager.get_domain(ctx.channel_id).get("settings", {}).get("scene_type", "normal")
+    settings_ctx: Dict[str, Any] = domain_manager.get_domain(ctx.channel_id).get("settings", {})
+    session_mature_mode = settings_ctx.get("scene_type", "normal")
     ctx.scene_type = session_mature_mode if session_mature_mode else "normal"
     
     # Store cognition's narrative scene type separately for potential use

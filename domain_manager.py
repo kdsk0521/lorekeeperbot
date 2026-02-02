@@ -113,7 +113,8 @@ VALID_MATURE_MODES = {"normal", "gore", "nsfw", "gore_nsfw"}
 
 def get_mature_mode(channel_id: str) -> str:
     """현재 채널의 성인 콘텐츠 모드를 반환합니다. (settings.scene_type 사용)"""
-    return get_domain(channel_id).get("settings", {}).get("scene_type", "normal")
+    settings: Dict[str, Any] = get_domain(channel_id).get("settings", {})
+    return settings.get("scene_type", "normal")
 
 def set_mature_mode(channel_id: str, mode: str) -> bool:
     """
@@ -375,7 +376,10 @@ def set_custom_tone(channel_id: str, tone: Optional[str]) -> None:
     save_domain(channel_id, d)
 
 def get_rules_mode(channel_id: str) -> str: return get_domain(channel_id).get("rules_mode", "default")
-def get_growth_system(channel_id: str) -> str: return get_domain(channel_id).get("settings", {}).get("growth_system", "default")
+
+def get_growth_system(channel_id: str) -> str:
+    settings: Dict[str, Any] = get_domain(channel_id).get("settings", {})
+    return settings.get("growth_system", "default")
 
 
 # =========================================================
@@ -418,7 +422,8 @@ def update_participant(channel_id: str, user, reset: bool = False) -> bool:
     return True
 
 def get_participant_data(channel_id: str, user_id: str) -> Optional[Dict[str, Any]]:
-    p = get_domain(channel_id).get("participants", {}).get(str(user_id))
+    participants: Dict[str, Any] = get_domain(channel_id).get("participants", {})
+    p = participants.get(str(user_id))
     if p is not None and not isinstance(p, dict):
         raise ValueError(f"Corrupted Participant Data for {user_id}: Expected dict, got {type(p).__name__} ({p})")
     return p
@@ -597,7 +602,8 @@ def add_to_ai_memory_list(channel_id: str, uid: str, key: str, item: str) -> Non
 def get_psych_profile(channel_id: str, uid: str) -> Dict[str, Any]:
     p = get_participant_data(channel_id, uid)
     if not p: return {}
-    return p.get("ai_memory", {}).get("psych_profile", {})
+    ai_mem: Dict[str, Any] = p.get("ai_memory", {})
+    return ai_mem.get("psych_profile", {})
 
 def update_psych_profile(channel_id: str, uid: str, profile_updates: Dict[str, Any]) -> None:
     p = get_participant_data(channel_id, uid)
@@ -771,7 +777,8 @@ def update_quest_board(channel_id: str, board: Dict[str, Any]) -> None:
 # Settings
 def is_session_locked(channel_id: str) -> bool:
     d = get_domain(channel_id)
-    return d.get("settings", {}).get("session_locked", False)
+    settings: Dict[str, Any] = d.get("settings", {})
+    return settings.get("session_locked", False)
 
 def set_session_lock(channel_id: str, locked: bool) -> None:
     d = get_domain(channel_id)
@@ -786,7 +793,8 @@ def update_settings(channel_id: str, **kwargs) -> None:
     save_domain(channel_id, d)
 
 def get_response_mode(channel_id: str) -> str:
-    return get_domain(channel_id).get("settings", {}).get("response_mode", "auto")
+    settings: Dict[str, Any] = get_domain(channel_id).get("settings", {})
+    return settings.get("response_mode", "auto")
 
 def set_response_mode(channel_id: str, mode: str) -> None:
     d = get_domain(channel_id)
@@ -795,7 +803,8 @@ def set_response_mode(channel_id: str, mode: str) -> None:
 
 def get_abnormal_mode(channel_id: str) -> bool:
     """비일상 적응도 시스템 활성화 여부 (Default: True)"""
-    return get_domain(channel_id).get("settings", {}).get("abnormal_mode", True)
+    settings: Dict[str, Any] = get_domain(channel_id).get("settings", {})
+    return settings.get("abnormal_mode", True)
 
 def set_abnormal_mode(channel_id: str, enabled: bool) -> None:
     d = get_domain(channel_id)

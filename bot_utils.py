@@ -111,7 +111,7 @@ async def read_attachment_text(attachment: discord.Attachment) -> Tuple[Optional
         return None, f"⚠️ 파일 `{attachment.filename}` 읽기 실패: {e}"
 
 
-async def safe_delete_message(message) -> None:
+async def safe_delete_message(message: discord.Message) -> None:
     """메시지를 안전하게 삭제합니다."""
     try:
         await message.delete()

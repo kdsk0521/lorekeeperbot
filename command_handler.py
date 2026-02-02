@@ -35,7 +35,7 @@ registry = CommandRegistry()
 # =========================================================
 # SYSTEM HANDLER LOGIC (Absorbed)
 # =========================================================
-async def process_ai_system_action(channel_id: str, sys_action: dict) -> Optional[str]:
+async def process_ai_system_action(channel_id: str, sys_action: Dict[str, Any]) -> Optional[str]:
     """AI가 제안한 시스템 액션을 처리합니다."""
     if not sys_action or not isinstance(sys_action, dict): return None
     
@@ -310,7 +310,8 @@ async def cmd_info(ctx: CommandContext) -> None:
     # 4. Mental
     m_stage = p_data.get("mental_stage", 0)
     # Using game_character logic to get Emoji/Name
-    m_val = mem.get("mental", {}).get("value", 100)
+    mental_data: Dict[str, Any] = mem.get("mental", {})
+    m_val = mental_data.get("value", 100)
     m_info = game_character.get_mental_info(m_val)
     msg.append(f"\n**🧠 멘탈:** {m_info['emoji']} **{m_info['name']}**")
 
@@ -794,7 +795,13 @@ def classify_ooc_type(ooc_content: str) -> str:
     return "general"
 
 
-async def handle_ooc_command(message, channel_id, ooc_content, client_genai, model_id):
+async def handle_ooc_command(
+    message: discord.Message, 
+    channel_id: str, 
+    ooc_content: str, 
+    client_genai, 
+    model_id: str
+) -> Optional[str]:
     """OOC 요청 처리"""
     if not ooc_content: return None
     
@@ -1139,7 +1146,17 @@ async def cmd_help(ctx: CommandContext) -> None:
     await send_long_message(ctx.message.channel, "\n".join(msg))
 
 
-async def dispatch_command(cmd, message, channel_id, parsed, client_discord, client_genai, model_id, model_id_flash, domain_data):
+async def dispatch_command(
+    cmd: Optional[str], 
+    message: discord.Message, 
+    channel_id: str, 
+    parsed: Optional[Dict], 
+    client_discord: discord.Client, 
+    client_genai, 
+    model_id: str, 
+    model_id_flash: str, 
+    domain_data: Dict
+) -> Optional[str]:
     """
     중앙 명령어 처리 함수 (Pure Registry)
     """

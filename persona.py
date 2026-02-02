@@ -26,10 +26,12 @@ Prompt Order (SillyTavern Preset Style):
 import asyncio
 import logging
 import re
+import types as python_types
 from typing import Optional, List, Dict, Any, Tuple, Union
 from google import genai
 from google.genai import types
 import config
+import fermentation
 
 # Response processing functions (분리된 모듈에서 import)
 from response_processor import (
@@ -161,7 +163,7 @@ class ChatSessionAdapter:
 # 세션 생성 (프리셋 순서 적용)
 # =========================================================
 def create_risu_style_session(
-    client,
+    client: genai.Client,
     model_version: str,
     lore_text: str,
     rule_text: str = "",
@@ -241,7 +243,7 @@ Recording in Korean.
 # 응답 생성 (재시도 포함)
 # =========================================================
 async def generate_response_with_retry(
-    client,
+    client: genai.Client,
     chat_session: ChatSessionAdapter,
     user_input: str
 ) -> str:
@@ -366,7 +368,7 @@ async def generate_response_with_retry(
 # 캐싱 지원 세션 생성
 # =========================================================
 async def create_cached_session(
-    client,
+    client: genai.Client,
     model_version: str,
     channel_id: str,
     lore_text: str,
@@ -374,11 +376,11 @@ async def create_cached_session(
     active_genres: Optional[List[str]] = None,
     custom_tone: Optional[str] = None,
     deep_memory: str = "",
-    fermentation_module=None,
+    fermentation_module: Optional[python_types.ModuleType] = None,
     scene_type: Optional[str] = None,
-    player_name: str = "", # Added for consistency with create_risu_style_session
-    player_desc: str = "", # Added for consistency with create_risu_style_session
-    nvc_summary: str = "" # Added for consistency with create_risu_style_session
+    player_name: str = "",
+    player_desc: str = "",
+    nvc_summary: str = ""
 ) -> Tuple[ChatSessionAdapter, bool]:
     """
     캐싱을 지원하는 세션을 생성합니다.

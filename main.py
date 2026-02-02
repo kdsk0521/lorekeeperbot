@@ -66,13 +66,13 @@ async def on_ready():
     await client_discord.change_presence(activity=discord.Game(name="!help | TRPG"))
 
 @client_discord.event
-async def on_message(message):
+async def on_message(message: discord.Message) -> None:
     if message.author == client_discord.user: return
     if not isinstance(message.channel, (discord.TextChannel, discord.Thread)): return
     
     asyncio.create_task(_process_message(message))
 
-async def _process_message(message):
+async def _process_message(message: discord.Message) -> None:
     channel_id = str(message.channel.id)
     async with channel_locks[channel_id]:
         try:
@@ -147,7 +147,11 @@ def _get_orchestration():
     return _orchestration
 
 
-async def generate_ai_response(message, channel_id: str, system_trigger: str = None) -> None:
+async def generate_ai_response(
+    message: discord.Message, 
+    channel_id: str, 
+    system_trigger: Optional[str] = None
+) -> None:
     """
     AI 응답을 생성합니다.
 

@@ -12,6 +12,9 @@ import asyncio
 import math
 from typing import List, Tuple, Dict, Any, Optional
 
+from google import genai
+from google.genai import types
+
 import config
 import domain_manager
 from config import (
@@ -23,7 +26,6 @@ from config import (
     SEVERITY_DOOM_IMPACT,
     get_normality_stage_info
 )
-from google.genai import types
 
 # =========================================================
 # QUEST & MEMO SYSTEM
@@ -259,7 +261,8 @@ def perform_check(channel_id: str, user_id: str, action_desc: str = "") -> str:
             continue
 
     # [Anti-Gravity Feature] Hidden Passive Modifiers
-    passives = p_data.get("ai_memory", {}).get("passives", [])
+    ai_mem_passives: Dict[str, Any] = p_data.get("ai_memory", {})
+    passives: List[Any] = ai_mem_passives.get("passives", [])
     passive_bonus = 0
     for p in passives:
         if isinstance(p, dict):
@@ -318,7 +321,8 @@ def perform_check(channel_id: str, user_id: str, action_desc: str = "") -> str:
     result_str = f"{header}\n결과: {calc_str} = **{final_val}**{crit_msg}\n(보통 기준: DC 40)"
     
     # 패시브 & 노트북 컨텍스트 (AI/GM 참고용)
-    passives = p_data.get("ai_memory", {}).get("passives", [])
+    ai_mem_ctx: Dict[str, Any] = p_data.get("ai_memory", {})
+    passives = ai_mem_ctx.get("passives", [])
     if passives:
         p_names = [p.get("name") if isinstance(p, dict) else str(p) for p in passives]
         result_str += f"\n💡 참고 특성: {', '.join(p_names)}"
@@ -416,8 +420,9 @@ def get_passives_for_context(user_data: Optional[Dict[str, Any]]) -> str:
     if not user_data:
         return "None"
     # Merge explicit user passives and ai_memory passives
-    p_list = user_data.get("passives", [])
-    ai_p = user_data.get("ai_memory", {}).get("passives", [])
+    p_list: List[Any] = user_data.get("passives", [])
+    ai_mem: Dict[str, Any] = user_data.get("ai_memory", {})
+    ai_p: List[Any] = ai_mem.get("passives", [])
     
     # Dedup by name
     all_passives = {}
@@ -438,7 +443,8 @@ def get_passives_for_context(user_data: Optional[Dict[str, Any]]) -> str:
     
     lines = []
     for p in all_passives.values():
-        tags = f"({', '.join(p.get('tags', []))})" if p.get('tags') else ""
+        p_tags: List[str] = p.get('tags', [])
+        tags = f"({', '.join(p_tags)})" if p_tags else ""
         lines.append(f"{p['name']}{tags}")
         
     return f"Passives: {', '.join(lines)}"
@@ -447,7 +453,12 @@ def get_passives_for_context(user_data: Optional[Dict[str, Any]]) -> str:
 # CHRONICLE & EXPORTS (Moved from game_system.py)
 # =========================================================
 
-async def call_gemini_api(client, model_id, prompt, sys_instruction=""):
+async def call_gemini_api(
+    client: Optional[genai.Client], 
+    model_id: str, 
+    prompt: str, 
+    sys_instruction: str = ""
+) -> Optional[Dict[str, Any]]:
     if not client: return None
     full_prompt = f"{sys_instruction}\n\n{prompt}" if sys_instruction else prompt
     cfg = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.1)
@@ -472,7 +483,11 @@ async def call_gemini_api(client, model_id, prompt, sys_instruction=""):
             await asyncio.sleep(config.RETRY_DELAY_SECONDS)
     return None
 
-async def generate_chronicle_from_history(client, model_id, channel_id: str) -> str:
+async def generate_chronicle_from_history(
+    client: Optional[genai.Client], 
+    model_id: str, 
+    channel_id: str
+) -> str:
     domain = domain_manager.get_domain(channel_id)
     board = _get_board(channel_id)
     history = domain.get('history', [])
@@ -723,8 +738,9 @@ def apply_abnormal_impact(user_data: Dict[str, Any], tag: str, intensity: str = 
     """
     # 1. Adapt Check
     mem = user_data.setdefault("ai_memory", {})
-    exposure = mem.get("abnormal_exposure", {})
-    count = exposure.get(tag, {}).get("count", 0)
+    exposure: Dict[str, Any] = mem.get("abnormal_exposure", {})
+    tag_data: Dict[str, Any] = exposure.get(tag, {})
+    count = tag_data.get("count", 0)
     adapt_pct = calculate_adaptation_pct(count)
     
     # 2. Roll

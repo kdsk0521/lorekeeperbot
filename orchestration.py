@@ -14,6 +14,8 @@ import logging
 import re
 from typing import Dict, Any, Optional, List, Tuple
 
+import discord
+
 # 내부 모듈
 import config
 import bot_utils
@@ -80,7 +82,7 @@ class OrchestrationService:
     # =========================================================
     # STEP 3: WORLD STATE UPDATE
     # =========================================================
-    async def update_world_state(self, ctx: ResponseContext, message) -> Tuple[ResponseContext, List[str]]:
+    async def update_world_state(self, ctx: ResponseContext, message: discord.Message) -> Tuple[ResponseContext, List[str]]:
         """NVC 결과를 바탕으로 월드 상태를 업데이트합니다."""
         channel_id = ctx.channel_id
         messages = []
@@ -127,7 +129,7 @@ class OrchestrationService:
     async def process_anomaly_and_judgment(
         self,
         ctx: ResponseContext,
-        message
+        message: discord.Message
     ) -> Tuple[ResponseContext, List[str]]:
         """이변 시스템과 판정을 처리합니다."""
         channel_id = ctx.channel_id
@@ -187,7 +189,7 @@ class OrchestrationService:
         self,
         ctx: ResponseContext,
         response: str,
-        message
+        message: discord.Message
     ) -> None:
         """
         백그라운드 추출 작업을 큐에 예약합니다.
@@ -280,6 +282,7 @@ class OrchestrationService:
                 await fermentation.auto_ferment(
                     self.client, self.model_id, 
                     fresh_data, 
+                    channel_id=channel_id,
                     save_callback=save_cb
                 )
             except Exception as e:
@@ -297,9 +300,9 @@ class OrchestrationService:
         self,
         ctx: ResponseContext,
         response: str,
-        message,
+        message: discord.Message,
         hints: Dict[str, bool]
-    ):
+    ) -> None:
         """백그라운드 추출 실행 (실제 로직)"""
         channel_id = ctx.channel_id
         
@@ -310,7 +313,8 @@ class OrchestrationService:
             # Prepare extended context
             p_data_latest = domain_manager.get_participant_data(channel_id, ctx.user_id)
             status = p_data_latest.get("status_effects", []) if p_data_latest else []
-            rels = p_data_latest.get("ai_memory", {}).get("relationships", {}) if p_data_latest else {}
+            ai_mem: Dict[str, Any] = p_data_latest.get("ai_memory", {}) if p_data_latest else {}
+            rels = ai_mem.get("relationships", {})
             # ... (Assume these getters exist or use ctx if acceptable)
             # Actually, getting fresh data is safer for background tasks running later.
             
@@ -367,7 +371,13 @@ class OrchestrationService:
     # =========================================================
     # EXECUTION ENTRY POINT
     # =========================================================
-    async def execute(self, message, channel_id: str, system_trigger: str = None, feedback_msg=None) -> None:
+    async def execute(
+        self, 
+        message: discord.Message, 
+        channel_id: str, 
+        system_trigger: Optional[str] = None, 
+        feedback_msg: Optional[discord.Message] = None
+    ) -> None:
         """
         AI 응답 생성 파이프라인을 실행합니다.
         

@@ -83,7 +83,16 @@ def build_prompt(
     builder.set_player_info(name="", desc=rich_player_info)
 
     builder.set_roles(character_descriptions="")
-    builder.set_fermented(ctx.fermented_summary_text, ctx.domain_data.get("deep_memory", ""))
+    # V3 Hybrid: Pass structured deep_memory_data
+    deep_memory_str = ctx.domain_data.get("deep_memory", "")
+    deep_data = getattr(ctx, 'deep_memory_data', {})
+    
+    # Inject active_memory_triggers into prompt if present
+    if deep_data.get("active_memory_triggers"):
+        triggers_str = "\n".join(f"- {t}" for t in deep_data["active_memory_triggers"])
+        deep_memory_str = f"### [ACTIVE MEMORY TRIGGERS - Unresolved Narrative Hooks]\n{triggers_str}\n\n{deep_memory_str}"
+    
+    builder.set_fermented(ctx.fermented_summary_text, deep_memory_str)
 
     # 동적 섹션
     dynamic_world_state = f"{ctx.world_ctx}\n\n"
@@ -99,7 +108,8 @@ def build_prompt(
     )
 
     # [Phase 2] Inject Psych Profile
-    psych_profile = ctx.player_data.get("ai_memory", {}).get("psych_profile") if ctx.player_data else None
+    ai_mem_resp: Dict[str, Any] = ctx.player_data.get("ai_memory", {}) if ctx.player_data else {}
+    psych_profile = ai_mem_resp.get("psych_profile")
     builder.set_cognition_data(nvc_summary, psych_profile)
     
     # [Restored] Define p_name for Reminder
@@ -278,7 +288,8 @@ async def generate_response(
 ) -> Optional[str]:
     """AI 응답을 생성합니다."""
     p_name = ctx.player_data.get("mask", "Unknown") if ctx.player_data else "Unknown"
-    p_desc = ctx.player_data.get("ai_memory", {}).get("appearance", "") if ctx.player_data else ""
+    ai_mem_gen: Dict[str, Any] = ctx.player_data.get("ai_memory", {}) if ctx.player_data else {}
+    p_desc = ai_mem_gen.get("appearance", "")
 
     session = persona.create_risu_style_session(
         client, model_id,

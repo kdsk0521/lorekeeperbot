@@ -119,7 +119,7 @@ def change_doom(channel_id: str, amount: int) -> str:
     return f"{emoji} **위기 수치:** {old_val}% → **{new_val}%** {diff_msg}"
 
 
-def calculate_doom_increase(channel_id: str, world: dict) -> Tuple[int, List[str]]:
+def calculate_doom_increase(channel_id: str, world: Dict[str, Any]) -> Tuple[int, List[str]]:
     doom_increase = 0
     doom_reasons = []
     
@@ -369,7 +369,9 @@ def process_abnormal_turn(channel_id: str, context_tags: list) -> str:
                  current_doom_stage = sid
                  break
                  
-        start_mental = p.get("ai_memory", {}).get("mental", {}).get("value", 100)
+        ai_mem_world: Dict[str, Any] = p.get("ai_memory", {})
+        mental_world: Dict[str, Any] = ai_mem_world.get("mental", {})
+        start_mental = mental_world.get("value", 100)
         
         # EXECUTE LOGIC
         res_str, new_adapt = game_character.apply_abnormal_impact(p, tag, intensity, current_doom_stage)

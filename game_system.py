@@ -242,8 +242,9 @@ async def process_judgment(
 
         # [V7 Feature] Mental Dice Modifier injection
         if player_data:
-            mem = player_data.get("ai_memory", {})
-            ment_val = mem.get("mental", {}).get("value", 100)
+            mem: Dict[str, Any] = player_data.get("ai_memory", {})
+            mental_sys: Dict[str, Any] = mem.get("mental", {})
+            ment_val = mental_sys.get("value", 100)
             ment_mod = game_character.get_mental_dice_modifier(ment_val)
             
             if ment_mod != 0:
