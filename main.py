@@ -95,8 +95,9 @@ async def _process_message(message: discord.Message) -> None:
                 status = domain_manager.get_participant_status(channel_id, message.author.id)
                 if not status: return # Ignore non-participants
 
-            # 3. SPECIAL INPUTS (Dice, OOC -> handled by dispatch too)
-            if parsed and parsed['type'] in ['dice', 'ooc', 'chat_with_ooc']:
+            # 3. SPECIAL INPUTS (Dice, OOC only - not chat_with_ooc)
+            # Dice and pure OOC commands should work regardless of bot_active state
+            if parsed and parsed['type'] in ['dice', 'ooc']:
                 await command_handler.dispatch_command(
                     None, message, channel_id, parsed,
                     client_discord, client_genai, MODEL_ID, MODEL_ID_FLASH,
@@ -104,9 +105,27 @@ async def _process_message(message: discord.Message) -> None:
                 )
                 return
 
-            # [NEW] Whitelist Check (Ignore if bot inactive)
+            # [MOVED] Whitelist Check (Ignore if bot inactive)
+            # Now checked BEFORE chat_with_ooc processing
             if not domain_manager.get_bot_active(channel_id):
                 return
+
+            # 4. CHAT WITH OOC - Process OOC part and continue to AI response
+            if parsed and parsed['type'] == 'chat_with_ooc':
+                ooc_content = parsed.get('ooc_content', '')
+                chat_content = parsed.get('chat_content', '')
+
+                # Process OOC part if it's an edit command
+                if ooc_content:
+                    ooc_result = await command_handler.handle_ooc_command(
+                        message, channel_id, ooc_content, client_genai, MODEL_ID
+                    )
+                    # If OOC was edit type, it already handled the response
+                    if ooc_result is None and command_handler.classify_ooc_type(ooc_content) == "edit":
+                        return
+
+                # Continue with AI response for the chat part
+                # The chat_content will be included in generate_ai_response via message.content
 
             # 4. CHAT LOGGING / RESPONSE
             mode = domain_manager.get_response_mode(channel_id)

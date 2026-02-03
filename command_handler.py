@@ -1176,21 +1176,35 @@ async def cmd_help(ctx: CommandContext) -> None:
 
 
 async def dispatch_command(
-    cmd: Optional[str], 
-    message: discord.Message, 
-    channel_id: str, 
-    parsed: Optional[Dict], 
-    client_discord: discord.Client, 
-    client_genai, 
-    model_id: str, 
-    model_id_flash: str, 
+    cmd: Optional[str],
+    message: discord.Message,
+    channel_id: str,
+    parsed: Optional[Dict],
+    client_discord: discord.Client,
+    client_genai,
+    model_id: str,
+    model_id_flash: str,
     domain_data: Dict
 ) -> Optional[str]:
     """
-    중앙 명령어 처리 함수 (Pure Registry)
+    중앙 명령어 처리 함수
+    - 명령어: Registry Dispatch
+    - OOC: handle_ooc_command
     """
+    parsed_type = parsed.get('type', 'command') if parsed else 'command'
+
+    # Handle OOC type separately
+    if parsed_type == 'ooc':
+        ooc_content = parsed.get('content', '') if parsed else ''
+        return await handle_ooc_command(message, channel_id, ooc_content, client_genai, model_id)
+
+    # For command type, dispatch to registry
+    if cmd is None:
+        # No command to dispatch
+        return None
+
     arg_content = parsed.get('content', '') if parsed else ""
-    
+
     ctx = CommandContext(
         message=message,
         client=client_discord,
@@ -1202,7 +1216,7 @@ async def dispatch_command(
         args=arg_content.split(),
         raw_args=arg_content
     )
-    
-    # 1. New Registry Dispatch
+
+    # Registry Dispatch
     return await registry.dispatch(ctx)
 
