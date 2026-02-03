@@ -172,20 +172,59 @@ async def process_anomaly(
     )
 
     if anom_evt:
+        tag = anom_evt.get('tag', '이변')
+        category = anom_evt.get('category', 'Unknown')
+        description = anom_evt.get('description', '무언가 이상한 일이 벌어지고 있습니다...')
+        effect_hint = anom_evt.get('effect_hint', '대처하십시오.')
+        tone = anom_evt.get('tone', 'Mystery')
+
         evt_msg = (
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"⚡ **이변 발생: [{anom_evt.get('tag', 'Unknown')}]**\n"
-            f"{anom_evt.get('description', '...')}\n"
-            f"💡 *{anom_evt.get('effect_hint', '대처하십시오.')}*\n"
+            f"⚡ **이변 발생: [{tag}]** `{category}`\n"
+            f"\n"
+            f"{description}\n"
+            f"\n"
+            f"💡 *{effect_hint}*\n"
             f"━━━━━━━━━━━━━━━━━━━━"
         )
         messages.append(evt_msg)
 
-        # Doom Cost 적용
-        game_world.change_doom(channel_id, config.ANOMALY_DOOM_COST)
+        # [V7] 이변은 중립적 현상 - 둠 비용 제거, 판정 결과에 따라 둠 변화
 
-        # 적응(Mental) 판정
+        # 이변 강도(Intensity) 계산 - tone 기반
+        tone_to_intensity = {
+            "Mystery": "Low",
+            "Unease": "Low",
+            "Curiosity": "Low",
+            "Surreal": "Mid",
+            "Ominous": "Mid",
+            "Eerie": "Mid",
+            "Wonder": "Low",
+            "Bizarre": "Mid",
+            "Tension": "Mid",
+            "Omen": "Mid",
+            "Horror": "High",
+            "Disaster": "High",
+            "Fear": "High",
+            "Despair": "Extreme",
+            "Dread": "High",
+        }
+        intensity = tone_to_intensity.get(tone, "Mid")
+
+        # Doom Stage 계산 (0-5)
+        doom_stage = 0
+        for sid, info in config.DOOM_STAGES.items():
+            low, high = info["range"]
+            if low <= current_doom < high:
+                doom_stage = sid
+                break
+
+        logger.info(f"[Anomaly] Adaptation Check - Tag: {tag}, Intensity: {intensity}, DoomStage: {doom_stage}")
+
+        # 적응(Mental) 판정 및 둠 변화 추적
         adapt_results = []
+        total_doom_change = 0
+
         for uid, p_data in participants.items():
             # [Debug Strict Mode] If data is corrupted, halt and report.
             if not isinstance(p_data, dict):
@@ -194,23 +233,32 @@ async def process_anomaly(
                 raise ValueError(error_msg)
 
             if p_data.get("status") == "active":
-                p_data, adapt_msg = game_character.check_adaptation_roll(
+                p_data, adapt_msg, doom_delta = game_character.check_adaptation_roll(
                     p_data,
-                    tag=anom_evt.get('tag', 'Unknown'),
-                    category=anom_evt.get('category')
+                    tag=tag,
+                    category=category,
+                    intensity=intensity,
+                    doom_stage=doom_stage
                 )
                 domain_manager.save_participant_data(channel_id, uid, p_data)
+                total_doom_change += doom_delta
 
                 user_name = p_data.get("mask") or p_data.get("name", "Unknown")
                 adapt_results.append(f"**{user_name}**: {adapt_msg.strip()}")
 
+        # 적응 판정 결과에 따른 둠 변화 적용
+        if total_doom_change != 0:
+            doom_fb = game_world.change_doom(channel_id, total_doom_change)
+            if doom_fb:
+                adapt_results.append(f"\n{doom_fb}")
+
         if adapt_results:
-            tag = anom_evt.get('tag', 'Unknown')
             adapt_msg = (
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"🎲 **적응 판정 결과: [{tag}]**\n" +
-                "\n".join(adapt_results) +
-                "\n━━━━━━━━━━━━━━━━━━━━"
+                f"🎲 **적응 판정 결과: [{tag}]**\n"
+                f"\n"
+                + "\n".join(adapt_results) +
+                f"\n━━━━━━━━━━━━━━━━━━━━"
             )
             messages.append(adapt_msg)
 

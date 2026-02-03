@@ -203,7 +203,28 @@ def calculate_doom_increase(channel_id: str, world: Dict[str, Any]) -> Tuple[int
                 doom_increase += config.DOOM_INCREASE_LORE_RULE
                 doom_reasons.append(f"📜 로어 규칙({loc_name})")
                 
-    # [V6.2] Item 7: Adaptive Calm (Mitigate based on party experience)
+    # [V7] 삼각 연동 시스템: 멘탈 → 둠
+    # 파티원의 평균 멘탈이 낮으면 둠 증가
+    total_mental = 0
+    mental_count = 0
+    for uid, p in participants.items():
+        if p.get("status") == "active":
+            ai_mem = p.get("ai_memory", {})
+            mental_data = ai_mem.get("mental", {"value": 100})
+            total_mental += mental_data.get("value", 100)
+            mental_count += 1
+
+    if mental_count > 0:
+        avg_mental = total_mental / mental_count
+        # 멘탈이 낮을수록 둠 증가
+        if avg_mental < 40:  # 공황 상태
+            doom_increase += 2
+            doom_reasons.append(f"😱 파티 공황 상태 (+2)")
+        elif avg_mental < 70:  # 동요 상태
+            doom_increase += 1
+            doom_reasons.append(f"😰 파티 동요 상태 (+1)")
+
+    # [V6.2] Item 7: Adaptive Calm (적응 → 둠 완화)
     if doom_increase > 0:
         total_adapt = 0
         p_count = 0
@@ -213,10 +234,10 @@ def calculate_doom_increase(channel_id: str, world: Dict[str, Any]) -> Tuple[int
                 for tag, data in exp_data.items():
                     total_adapt += game_character.calculate_adaptation_percentage(data.get("count", 0))
                 p_count += 1
-        
+
         if p_count > 0:
             avg_adapt = total_adapt / p_count
-            if avg_adapt >= 50: # High average adaptation
+            if avg_adapt >= 50:  # High average adaptation
                 mitigation = 1 if avg_adapt < 80 else 2
                 before = doom_increase
                 doom_increase = max(0, doom_increase - mitigation)
@@ -397,52 +418,97 @@ def _get_anomaly_tone(doom_val: int) -> str:
     else: return "high"
 
 async def generate_anomaly_event(
-    client, 
+    client,
     channel_id: str,
-    doom_val: int, 
-    lore_text: str, 
+    doom_val: int,
+    lore_text: str,
     location: str,
     active_genres: list,
     model_id: str = config.MODEL_ID_FLASH
 ) -> Optional[Dict[str, Any]]:
     """
     Generates an Anomaly Event using AI.
-    Returns Dict with keys: type, tag, description, effect_hint
+    Returns Dict with keys: type, tag, category, description, effect_hint
     """
     if not client: return None
 
     tone_cat = _get_anomaly_tone(doom_val)
     tone_keywords = ANOMALY_TONE_MAP.get(tone_cat, ["Mystery"])
-    
-    # Dynamic Prompt Construction
-    system_prompt = (
-        "You are a 'Random Event Generator' for a TRPG.\n"
-        "Generate a brief, atmospheric event based on the current World State and Doom Level.\n\n"
-        
-        f"### Current Context\n"
-        f"- World Lore Summary: {lore_text}\n"
-        f"- Location: {location}\n"
-        f"- Helper Genres: {', '.join(active_genres)}\n"
-        f"- Doom Level: {doom_val}/100 ({tone_cat.upper()} Tension)\n"
-        f"- Target Tone: {', '.join(tone_keywords)} (Pick one that fits)\n\n"
-        
-        "### Instructions\n"
-        "1. **Tag**: ONE WORD Category ONLY. (e.g., [Machine], [Ghost], [Bio], [Psychic], [Magic]).\n"
-        "   - ❌ BAD: [Ghost Signal detected], [Strange Echo], [Red Light]\n"
-        "   - ✅ GOOD: [Ghost], [Sound], [Light]\n"
-        "   - **CRITICAL**: Do NOT describe the event in the tag. Classify it.\n"
-        "2. **Description**: 1-2 sentences describing the event. vivid and sensory.\n"
-        "3. **Effect Hint**: A short hint on what happens (e.g., 'Mental Check', 'Gain Item', 'Social Encounter').\n"
-        "4. **Language**: **Tag MUST be in ENGLISH** (e.g. [Soul], [Bio]). Description/Hint MUST be in KOREAN.\n\n"
 
-        "### Output Format (JSON Only)\n"
-        "{\n"
-        "  \"tag\": \"[TagName]\",\n"
-        "  \"tone\": \"Horror/Romance/Comedy/etc\",\n"
-        "  \"description\": \"The event description...\",\n"
-        "  \"effect_hint\": \"What player should do or feel\"\n"
-        "}"
-    )
+    # 장르별 이변 카테고리 힌트
+    genre_category_hints = {
+        "cosmic_horror": ["Void", "Entity", "Distortion", "Whisper", "Flesh"],
+        "urban_fantasy": ["Spirit", "Curse", "Omen", "Awakening", "Breach"],
+        "cyberpunk": ["Glitch", "Signal", "AI", "Virus", "Blackout"],
+        "high_fantasy": ["Magic", "Beast", "Prophecy", "Ruin", "Divine"],
+        "post_apocalypse": ["Mutation", "Storm", "Relic", "Swarm", "Collapse"],
+        "noir": ["Shadow", "Paranoia", "Fate", "Secret", "Dread"],
+        "wuxia": ["Qi", "Demon", "Heaven", "Fate", "Spirit"],
+    }
+
+    # 활성 장르에 맞는 카테고리 힌트 수집
+    category_hints = []
+    for genre in active_genres:
+        if genre.lower() in genre_category_hints:
+            category_hints.extend(genre_category_hints[genre.lower()])
+    if not category_hints:
+        category_hints = ["Unknown", "Strange", "Anomaly", "Phenomenon"]
+
+    # Dynamic Prompt Construction - 한국어 중심, 세계관 맥락 강화
+    system_prompt = f"""당신은 TRPG의 '이변(Anomaly) 생성기'입니다.
+현재 세계 상태에 기반하여 **비일상적인** 이벤트를 생성하세요.
+
+## 핵심 원칙
+**이변은 좋고 나쁨이 없습니다.** 단지 '일상적이지 않은 현상'일 뿐입니다.
+- 기회일 수도, 위험일 수도, 단순한 기이함일 수도 있습니다.
+- 플레이어가 어떻게 반응하느냐에 따라 결과가 달라집니다.
+
+## 현재 컨텍스트
+### 세계관 요약
+{lore_text}
+
+### 현재 상황
+- **위치**: {location}
+- **활성 장르**: {', '.join(active_genres)}
+- **세계 긴장도**: {doom_val}/100 ({tone_cat.upper()})
+- **분위기 키워드**: {', '.join(tone_keywords)}
+
+## 이변 생성 규칙
+
+### 1. 카테고리 (category)
+세계관에 맞는 이변 분류입니다. 다음 중 선택하거나 세계관에 맞게 생성:
+추천: {', '.join(category_hints[:5])}
+
+### 2. 태그 (tag)
+한 단어로 된 이변의 정체. 세계관 용어를 사용하면 더 좋습니다.
+- ✅ 좋은 예: [균열], [속삭임], [변이], [침묵], [그림자], [빛], [울림]
+- ❌ 나쁜 예: [이상한 소리가 들림], [갑자기 어두워짐]
+
+### 3. 설명 (description)
+**중요**: 이변은 '판단'이 아닌 '현상'입니다.
+- 2-3문장으로 생생하게 묘사
+- 감각적 디테일 포함 (시각, 청각, 촉각, 냄새 등)
+- **중립적 톤 유지**: "무섭다", "위험하다" 같은 판단 금지
+- 현상 자체만 객관적으로 묘사
+
+### 4. 효과 힌트 (effect_hint)
+플레이어의 선택지나 가능한 반응에 대한 힌트.
+- 예: "조사할 수 있다", "무시할 수도 있다", "기회일지도", "주의 필요"
+
+### 5. 톤 조절 (세계 긴장도 기반)
+- 낮은 긴장(~30%): 기묘함, 호기심을 자극하는 현상
+- 중간 긴장(30~70%): 긴장감, 불확실성이 있는 현상
+- 높은 긴장(70%+): 강렬함, 무시하기 어려운 현상
+
+## 출력 형식 (JSON만 출력)
+{{
+  "category": "이변 분류 (영어)",
+  "tag": "[한글 태그]",
+  "tone": "Mystery/Surreal/Ominous/Eerie/Wonder/etc",
+  "description": "이변에 대한 객관적 묘사...",
+  "effect_hint": "플레이어 선택지 힌트",
+  "nature": "neutral"
+}}""""""
 
     try:
         gen_config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.7)
@@ -457,25 +523,33 @@ async def generate_anomaly_event(
         if response.text:
             cleaned = bot_utils.clean_json_text(response.text)
             data = json.loads(cleaned)
-            
-            # [Sanitize Tag] Force Single Word Format
+
+            # [Sanitize Tag] Clean up and format
             if "tag" in data:
                 raw = data["tag"].replace("[", "").replace("]", "").strip()
                 # Remove (...) parenthesis content
                 raw = re.sub(r'\(.*?\)', '', raw).strip()
-                # Take first word only (skip articles 'The', 'A', 'An')
-                words = raw.split()
-                if words:
+                # Remove excessive description (take only first meaningful part)
+                # For Korean: 첫 번째 단어나 의미 단위만 취함
+                if ' ' in raw:
+                    # 한글이 포함된 경우 첫 단어만
+                    words = raw.split()
+                    # Skip English articles if mixed
                     if words[0].lower() in ["the", "a", "an"] and len(words) > 1:
                         raw = words[1]
                     else:
                         raw = words[0]
-                
+
+                # 너무 긴 태그 자르기 (최대 10자)
+                if len(raw) > 10:
+                    raw = raw[:10]
+
                 # Check for empty result
-                if not raw: raw = "Unknown"
-                
-                data["tag"] = f"[{raw}]"
-                
+                if not raw:
+                    raw = "이변"
+
+                data["tag"] = raw  # 대괄호 없이 저장 (표시할 때 추가)
+
             return data
             
     except Exception as e:
