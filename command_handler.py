@@ -680,7 +680,7 @@ async def cmd_modules(ctx: CommandContext) -> None:
 async def cmd_toggle_judgment(ctx: CommandContext) -> None:
     await _handle_module_toggle(ctx, "judgment", "판정")
 
-@registry.register("doom", category="System", aliases=["둠"], description="둠 모듈 제어")
+@registry.register("doom_mod", category="System", aliases=["둠모듈", "doommod"], description="둠 모듈 제어")
 async def cmd_toggle_doom(ctx: CommandContext) -> None:
     await _handle_module_toggle(ctx, "doom", "둠")
 
@@ -688,7 +688,7 @@ async def cmd_toggle_doom(ctx: CommandContext) -> None:
 async def cmd_toggle_anomaly(ctx: CommandContext) -> None:
     await _handle_module_toggle(ctx, "anomaly", "이변")
 
-@registry.register("mental", category="System", aliases=["멘탈"], description="멘탈 모듈 제어")
+@registry.register("mental_mod", category="System", aliases=["멘탈모듈", "mentalmod"], description="멘탈 모듈 제어")
 async def cmd_toggle_mental(ctx: CommandContext) -> None:
     await _handle_module_toggle(ctx, "mental", "멘탈")
 
