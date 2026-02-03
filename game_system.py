@@ -192,6 +192,33 @@ async def process_anomaly(
         # Doom Cost 적용
         game_world.change_doom(channel_id, config.ANOMALY_DOOM_COST)
 
+        # 이변 강도(Intensity) 계산 - tone 기반
+        tone_to_intensity = {
+            "Mystery": "Low",
+            "Unease": "Low",
+            "Curiosity": "Low",
+            "Bizarre": "Mid",
+            "Surreal": "Mid",
+            "Tension": "Mid",
+            "Omen": "Mid",
+            "Horror": "High",
+            "Disaster": "High",
+            "Fear": "High",
+            "Despair": "Extreme",
+            "Dread": "High",
+        }
+        intensity = tone_to_intensity.get(tone, "Mid")
+
+        # Doom Stage 계산 (0-5)
+        doom_stage = 0
+        for sid, info in config.DOOM_STAGES.items():
+            low, high = info["range"]
+            if low <= current_doom < high:
+                doom_stage = sid
+                break
+
+        logger.info(f"[Anomaly] Adaptation Check - Tag: {tag}, Intensity: {intensity}, DoomStage: {doom_stage}")
+
         # 적응(Mental) 판정
         adapt_results = []
         for uid, p_data in participants.items():
@@ -204,8 +231,10 @@ async def process_anomaly(
             if p_data.get("status") == "active":
                 p_data, adapt_msg = game_character.check_adaptation_roll(
                     p_data,
-                    tag=anom_evt.get('tag', 'Unknown'),
-                    category=anom_evt.get('category')
+                    tag=tag,
+                    category=category,
+                    intensity=intensity,
+                    doom_stage=doom_stage
                 )
                 domain_manager.save_participant_data(channel_id, uid, p_data)
 

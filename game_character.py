@@ -773,9 +773,22 @@ def apply_abnormal_impact(user_data: Dict[str, Any], tag: str, intensity: str = 
         return (f"**충격!** (멘탈 -{final_dmg}) {msg}", new_pct)
 
 # Legacy Wrappers (Shim Layer)
-def check_adaptation_roll(user_data, tag, category=None, difficulty=30):
-    # [Fix] shim must return (p_data, msg_str) to match game_system.py
-    msg, _ = apply_abnormal_impact(user_data, tag)
+def check_adaptation_roll(user_data, tag, category=None, difficulty=30, intensity: str = "Mid", doom_stage: int = 0):
+    """
+    이변에 대한 적응 판정을 수행합니다.
+
+    Args:
+        user_data: 플레이어 데이터
+        tag: 이변 태그
+        category: 이변 카테고리 (현재 미사용, 향후 확장용)
+        difficulty: 기본 난이도 (현재 doom_stage 기반으로 계산)
+        intensity: 이변 강도 - "Low", "Mid", "High", "Extreme"
+        doom_stage: 현재 둠 스테이지 (0-5) - DC 계산에 사용
+
+    Returns:
+        (user_data, result_message)
+    """
+    msg, _ = apply_abnormal_impact(user_data, tag, intensity=intensity, doom_stage=doom_stage)
     return user_data, msg
 
 def get_abnormal_context(user_data: Dict[str, Any]) -> str:
