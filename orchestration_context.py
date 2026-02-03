@@ -30,9 +30,9 @@ class RequestData:
 @dataclass
 class SharedBus:
     dai: Dict[str, Any] = field(default_factory=lambda: {"reason": "", "bonus": 0, "penalty": 0, "defense_success": False})
-    judgment: Optional[Dict[str, Any]] = None # {active, success, roll, dc}
+    judgment: Dict[str, Any] = field(default_factory=lambda: {"active": False, "meta": {}, "eval": {}})
     doom: Dict[str, Any] = field(default_factory=lambda: {"active": False, "value": 0, "delta": 0, "level": 0, "log": ""})
-    anomaly: Optional[Dict[str, Any]] = None # {active, triggered, tag, category, desc}
+    anomaly: Dict[str, Any] = field(default_factory=lambda: {"active": False, "triggered": False, "potential": False})
     mental: Dict[str, Any] = field(default_factory=lambda: {"active": False, "value": 0, "delta": 0, "adaptation_update": {}})
 
 @dataclass
@@ -55,12 +55,12 @@ class GameContext:
         anchors = data.get("narrative_anchors", {})
         bus_data = data.get("shared_bus", {})
         
-        # SharedBus mapping (handle Optionals)
+        # SharedBus mapping (ensure everything is a dict)
         bus = SharedBus(
             dai=bus_data.get("dai", {}),
-            judgment=bus_data.get("judgment"),
+            judgment=bus_data.get("judgment", {}),
             doom=bus_data.get("doom", {}),
-            anomaly=bus_data.get("anomaly"),
+            anomaly=bus_data.get("anomaly", {}),
             mental=bus_data.get("mental", {})
         )
         return cls(request=req_data, narrative_anchors=anchors, shared_bus=bus)
