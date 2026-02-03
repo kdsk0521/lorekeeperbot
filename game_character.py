@@ -732,45 +732,81 @@ def process_adaptation_encounter(user_data: Dict[str, Any], tag: str) -> Tuple[i
     
     return new_pct, leveled_up
 
-def apply_abnormal_impact(user_data: Dict[str, Any], tag: str, intensity: str = "Mid", doom_stage: int = 0) -> Tuple[str, int]:
+def apply_abnormal_impact(user_data: Dict[str, Any], tag: str, intensity: str = "Mid", doom_stage: int = 0) -> Tuple[str, int, int]:
     """
-    V7 Pre-calculation Logic
-    Returns: (Result String, Adapt %)
+    V7 이변 대응 판정 - 중립적 시스템
+
+    이변은 좋고 나쁨이 없는 '비일상적 현상'입니다.
+    캐릭터가 이를 어떻게 받아들이느냐에 따라 결과가 달라집니다.
+
+    결과:
+    - 대성공(roll >= 90): 영감 획득, 멘탈 회복, 둠 감소
+    - 성공(total >= dc): 침착한 대응, 보너스 획득, 둠 소폭 감소
+    - 실패(total < dc): 당황, 멘탈 소폭 감소
+    - 대실패(roll <= 10): 충격, 멘탈 크게 감소, 둠 증가
+
+    Returns: (Result String, Adapt %, Doom Delta)
     """
-    # 1. Adapt Check
+    # 1. 적응도 확인
     mem = user_data.setdefault("ai_memory", {})
     exposure: Dict[str, Any] = mem.get("abnormal_exposure", {})
     tag_data: Dict[str, Any] = exposure.get(tag, {})
     count = tag_data.get("count", 0)
     adapt_pct = calculate_adaptation_pct(count)
-    
-    # 2. Roll
-    # Difficulty: 30 + (DoomStage * 10)
+
+    # 2. 멘탈 상태에 따른 수정자
+    mental_data = mem.get("mental", {"value": 100})
+    mental_val = mental_data.get("value", 100)
+    mental_stage = get_mental_stage_id(mental_val)
+
+    # 멘탈이 낮으면 적응 판정에 불리
+    mental_modifier = {0: 0, 1: -5, 2: -15, 3: -25}.get(mental_stage, 0)
+
+    # 3. 주사위 굴림
+    # DC: 30 + (DoomStage * 10)
     dc = 30 + (doom_stage * 10)
     roll = random.randint(1, 100)
-    total = roll + adapt_pct
-    
-    # 3. Resolve
-    if total >= dc:
-        # Success
+    total = roll + adapt_pct + mental_modifier
+
+    # 4. 결과 판정
+    new_pct, _ = process_adaptation_encounter(user_data, tag)  # 어떤 결과든 적응도는 증가
+    doom_delta = 0  # 둠 변화량
+
+    # 대성공 (원본 roll이 90 이상)
+    if roll >= 90:
+        # 영감 획득: 이변에서 통찰을 얻음
+        mental_gain = {"Low": 5, "Mid": 10, "High": 15, "Extreme": 20}.get(intensity, 10)
+        msg = update_mental(user_data, mental_gain, reason=f"{tag}에서 영감")
+        user_data["temp_bonus_dice"] = user_data.get("temp_bonus_dice", 0) + 2
+        doom_delta = -3  # 영감으로 긴장 완화
+        return (f"✨ **영감!** (멘탈 +{mental_gain}, 직관 +20) {msg} [Adapt {adapt_pct}%→{new_pct}%]", new_pct, doom_delta)
+
+    # 대실패 (원본 roll이 10 이하)
+    elif roll <= 10:
+        # 충격: 이변에 압도됨
+        base_dmg = {"Low": 15, "Mid": 25, "High": 40, "Extreme": 60}.get(intensity, 25)
+        mitigation = adapt_pct / 200.0  # 최대 50% 경감
+        final_dmg = int(base_dmg * (1.0 - mitigation))
+        msg = update_mental(user_data, -final_dmg, reason=f"{tag} 충격")
+        doom_delta = 2  # 충격으로 긴장 증가
+        return (f"💥 **충격!** (멘탈 -{final_dmg}) {msg} [Adapt {adapt_pct}%→{new_pct}%]", new_pct, doom_delta)
+
+    # 성공 (total >= dc)
+    elif total >= dc:
+        # 침착한 대응
         user_data["temp_bonus_dice"] = user_data.get("temp_bonus_dice", 0) + 1
-        # Grow Adapt
-        new_pct, _ = process_adaptation_encounter(user_data, tag)
-        return (f"**적응 성공!** (직관 발동 +10) [Adapt {adapt_pct}%->{new_pct}%]", new_pct)
+        doom_delta = -1  # 침착하게 대응하여 소폭 긴장 완화
+        return (f"🔮 **침착!** (직관 +10) [Adapt {adapt_pct}%→{new_pct}%]", new_pct, doom_delta)
+
+    # 실패 (total < dc)
     else:
-        # Failure
-        base_dmg = {"Low": 10, "Mid": 20, "High": 30, "Extreme": 50}.get(intensity, 20)
-        # Mitigation: Dmg * (1 - Adapt/200) -> Max 50% reduce
+        # 당황: 소폭의 멘탈 감소
+        base_dmg = {"Low": 5, "Mid": 10, "High": 20, "Extreme": 35}.get(intensity, 10)
         mitigation = adapt_pct / 200.0
         final_dmg = int(base_dmg * (1.0 - mitigation))
-        
-        # Apply Mental
-        msg = update_mental(user_data, -final_dmg, reason=f"{tag} 조우")
-        
-        # Grow Adapt (Half speed? Or Full? Encounter is Encounter)
-        new_pct, _ = process_adaptation_encounter(user_data, tag)
-        
-        return (f"**충격!** (멘탈 -{final_dmg}) {msg}", new_pct)
+        msg = update_mental(user_data, -final_dmg, reason=f"{tag} 당황")
+        # doom_delta = 0  # 당황해도 둠은 변화 없음
+        return (f"😰 **당황** (멘탈 -{final_dmg}) {msg} [Adapt {adapt_pct}%→{new_pct}%]", new_pct, doom_delta)
 
 # Legacy Wrappers (Shim Layer)
 def check_adaptation_roll(user_data, tag, category=None, difficulty=30, intensity: str = "Mid", doom_stage: int = 0):
@@ -786,10 +822,10 @@ def check_adaptation_roll(user_data, tag, category=None, difficulty=30, intensit
         doom_stage: 현재 둠 스테이지 (0-5) - DC 계산에 사용
 
     Returns:
-        (user_data, result_message)
+        (user_data, result_message, doom_delta)
     """
-    msg, _ = apply_abnormal_impact(user_data, tag, intensity=intensity, doom_stage=doom_stage)
-    return user_data, msg
+    msg, _, doom_delta = apply_abnormal_impact(user_data, tag, intensity=intensity, doom_stage=doom_stage)
+    return user_data, msg, doom_delta
 
 def get_abnormal_context(user_data: Dict[str, Any]) -> str:
     """

@@ -203,7 +203,28 @@ def calculate_doom_increase(channel_id: str, world: Dict[str, Any]) -> Tuple[int
                 doom_increase += config.DOOM_INCREASE_LORE_RULE
                 doom_reasons.append(f"📜 로어 규칙({loc_name})")
                 
-    # [V6.2] Item 7: Adaptive Calm (Mitigate based on party experience)
+    # [V7] 삼각 연동 시스템: 멘탈 → 둠
+    # 파티원의 평균 멘탈이 낮으면 둠 증가
+    total_mental = 0
+    mental_count = 0
+    for uid, p in participants.items():
+        if p.get("status") == "active":
+            ai_mem = p.get("ai_memory", {})
+            mental_data = ai_mem.get("mental", {"value": 100})
+            total_mental += mental_data.get("value", 100)
+            mental_count += 1
+
+    if mental_count > 0:
+        avg_mental = total_mental / mental_count
+        # 멘탈이 낮을수록 둠 증가
+        if avg_mental < 40:  # 공황 상태
+            doom_increase += 2
+            doom_reasons.append(f"😱 파티 공황 상태 (+2)")
+        elif avg_mental < 70:  # 동요 상태
+            doom_increase += 1
+            doom_reasons.append(f"😰 파티 동요 상태 (+1)")
+
+    # [V6.2] Item 7: Adaptive Calm (적응 → 둠 완화)
     if doom_increase > 0:
         total_adapt = 0
         p_count = 0
@@ -213,10 +234,10 @@ def calculate_doom_increase(channel_id: str, world: Dict[str, Any]) -> Tuple[int
                 for tag, data in exp_data.items():
                     total_adapt += game_character.calculate_adaptation_percentage(data.get("count", 0))
                 p_count += 1
-        
+
         if p_count > 0:
             avg_adapt = total_adapt / p_count
-            if avg_adapt >= 50: # High average adaptation
+            if avg_adapt >= 50:  # High average adaptation
                 mitigation = 1 if avg_adapt < 80 else 2
                 before = doom_increase
                 doom_increase = max(0, doom_increase - mitigation)
@@ -435,7 +456,12 @@ async def generate_anomaly_event(
 
     # Dynamic Prompt Construction - 한국어 중심, 세계관 맥락 강화
     system_prompt = f"""당신은 TRPG의 '이변(Anomaly) 생성기'입니다.
-현재 세계 상태와 위기 수치에 기반하여 분위기 있는 이변 이벤트를 생성하세요.
+현재 세계 상태에 기반하여 **비일상적인** 이벤트를 생성하세요.
+
+## 핵심 원칙
+**이변은 좋고 나쁨이 없습니다.** 단지 '일상적이지 않은 현상'일 뿐입니다.
+- 기회일 수도, 위험일 수도, 단순한 기이함일 수도 있습니다.
+- 플레이어가 어떻게 반응하느냐에 따라 결과가 달라집니다.
 
 ## 현재 컨텍스트
 ### 세계관 요약
@@ -444,8 +470,8 @@ async def generate_anomaly_event(
 ### 현재 상황
 - **위치**: {location}
 - **활성 장르**: {', '.join(active_genres)}
-- **위기 수치**: {doom_val}/100 ({tone_cat.upper()} 긴장도)
-- **톤 키워드**: {', '.join(tone_keywords)}
+- **세계 긴장도**: {doom_val}/100 ({tone_cat.upper()})
+- **분위기 키워드**: {', '.join(tone_keywords)}
 
 ## 이변 생성 규칙
 
@@ -455,34 +481,34 @@ async def generate_anomaly_event(
 
 ### 2. 태그 (tag)
 한 단어로 된 이변의 정체. 세계관 용어를 사용하면 더 좋습니다.
-- ✅ 좋은 예: [균열], [속삭임], [변이], [침묵], [그림자]
+- ✅ 좋은 예: [균열], [속삭임], [변이], [침묵], [그림자], [빛], [울림]
 - ❌ 나쁜 예: [이상한 소리가 들림], [갑자기 어두워짐]
 
 ### 3. 설명 (description)
-**중요**: 이변은 세계가 플레이어에게 던지는 '사건'입니다.
+**중요**: 이변은 '판단'이 아닌 '현상'입니다.
 - 2-3문장으로 생생하게 묘사
 - 감각적 디테일 포함 (시각, 청각, 촉각, 냄새 등)
-- 세계관의 분위기와 일치해야 함
-- 위기 수치가 높을수록 더 위협적이고 기괴하게
+- **중립적 톤 유지**: "무섭다", "위험하다" 같은 판단 금지
+- 현상 자체만 객관적으로 묘사
 
 ### 4. 효과 힌트 (effect_hint)
-플레이어가 느끼거나 해야 할 것에 대한 짧은 힌트.
-- 예: "정신적 충격", "경계 필요", "조사 기회", "도주 권장"
+플레이어의 선택지나 가능한 반응에 대한 힌트.
+- 예: "조사할 수 있다", "무시할 수도 있다", "기회일지도", "주의 필요"
 
-### 5. 톤 일치
-- 위기 수치 {doom_val}%에 맞는 긴장도 유지
-- 낮은 위기(~30%): 기묘함, 호기심, 불안감
-- 중간 위기(30~70%): 긴장, 위협, 경계심
-- 높은 위기(70%+): 공포, 절망, 재앙의 전조
+### 5. 톤 조절 (세계 긴장도 기반)
+- 낮은 긴장(~30%): 기묘함, 호기심을 자극하는 현상
+- 중간 긴장(30~70%): 긴장감, 불확실성이 있는 현상
+- 높은 긴장(70%+): 강렬함, 무시하기 어려운 현상
 
 ## 출력 형식 (JSON만 출력)
 {{
   "category": "이변 분류 (영어)",
   "tag": "[한글 태그]",
-  "tone": "Horror/Mystery/Dread/etc",
-  "description": "이변에 대한 생생한 묘사...",
-  "effect_hint": "플레이어에게 주는 힌트"
-}}"""
+  "tone": "Mystery/Surreal/Ominous/Eerie/Wonder/etc",
+  "description": "이변에 대한 객관적 묘사...",
+  "effect_hint": "플레이어 선택지 힌트",
+  "nature": "neutral"
+}}""""""
 
     try:
         gen_config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.7)

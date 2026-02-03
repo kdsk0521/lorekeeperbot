@@ -189,16 +189,18 @@ async def process_anomaly(
         )
         messages.append(evt_msg)
 
-        # Doom Cost 적용
-        game_world.change_doom(channel_id, config.ANOMALY_DOOM_COST)
+        # [V7] 이변은 중립적 현상 - 둠 비용 제거, 판정 결과에 따라 둠 변화
 
         # 이변 강도(Intensity) 계산 - tone 기반
         tone_to_intensity = {
             "Mystery": "Low",
             "Unease": "Low",
             "Curiosity": "Low",
-            "Bizarre": "Mid",
             "Surreal": "Mid",
+            "Ominous": "Mid",
+            "Eerie": "Mid",
+            "Wonder": "Low",
+            "Bizarre": "Mid",
             "Tension": "Mid",
             "Omen": "Mid",
             "Horror": "High",
@@ -219,8 +221,10 @@ async def process_anomaly(
 
         logger.info(f"[Anomaly] Adaptation Check - Tag: {tag}, Intensity: {intensity}, DoomStage: {doom_stage}")
 
-        # 적응(Mental) 판정
+        # 적응(Mental) 판정 및 둠 변화 추적
         adapt_results = []
+        total_doom_change = 0
+
         for uid, p_data in participants.items():
             # [Debug Strict Mode] If data is corrupted, halt and report.
             if not isinstance(p_data, dict):
@@ -229,7 +233,7 @@ async def process_anomaly(
                 raise ValueError(error_msg)
 
             if p_data.get("status") == "active":
-                p_data, adapt_msg = game_character.check_adaptation_roll(
+                p_data, adapt_msg, doom_delta = game_character.check_adaptation_roll(
                     p_data,
                     tag=tag,
                     category=category,
@@ -237,9 +241,16 @@ async def process_anomaly(
                     doom_stage=doom_stage
                 )
                 domain_manager.save_participant_data(channel_id, uid, p_data)
+                total_doom_change += doom_delta
 
                 user_name = p_data.get("mask") or p_data.get("name", "Unknown")
                 adapt_results.append(f"**{user_name}**: {adapt_msg.strip()}")
+
+        # 적응 판정 결과에 따른 둠 변화 적용
+        if total_doom_change != 0:
+            doom_fb = game_world.change_doom(channel_id, total_doom_change)
+            if doom_fb:
+                adapt_results.append(f"\n{doom_fb}")
 
         if adapt_results:
             adapt_msg = (
