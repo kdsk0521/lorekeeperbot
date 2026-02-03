@@ -16,8 +16,56 @@ from npc_manager import get_npc
 logger = logging.getLogger("OrchContext")
 
 # =========================================================
-# Shared Data Structures
+# Shared Data Structures (UNE V4 Stateless)
 # =========================================================
+
+from dataclasses import asdict
+
+@dataclass
+class RequestData:
+    user_input: str = ""
+    genres: Dict[str, str] = field(default_factory=lambda: {"stage": "", "flavor": "", "lens": ""})
+    active_modules: List[str] = field(default_factory=lambda: ["judgment", "doom", "anomaly", "mental"])
+
+@dataclass
+class SharedBus:
+    dai: Dict[str, Any] = field(default_factory=lambda: {"reason": "", "bonus": 0, "penalty": 0, "defense_success": False})
+    judgment: Optional[Dict[str, Any]] = None # {active, success, roll, dc}
+    doom: Dict[str, Any] = field(default_factory=lambda: {"active": False, "value": 0, "delta": 0, "level": 0, "log": ""})
+    anomaly: Optional[Dict[str, Any]] = None # {active, triggered, tag, category, desc}
+    mental: Dict[str, Any] = field(default_factory=lambda: {"active": False, "value": 0, "delta": 0, "adaptation_update": {}})
+
+@dataclass
+class GameContext:
+    request: RequestData = field(default_factory=RequestData)
+    narrative_anchors: Dict[str, Any] = field(default_factory=lambda: {
+        "appearance": "", "personality": "", "background": "",
+        "relations": [], "passives": [], "inventory": [], "memos": []
+    })
+    shared_bus: SharedBus = field(default_factory=SharedBus)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """직렬화용 사전 변환"""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'GameContext':
+        """사전 데이터를 GameContext 객체로 복원"""
+        req_data = RequestData(**data.get("request", {}))
+        anchors = data.get("narrative_anchors", {})
+        bus_data = data.get("shared_bus", {})
+        
+        # SharedBus mapping (handle Optionals)
+        bus = SharedBus(
+            dai=bus_data.get("dai", {}),
+            judgment=bus_data.get("judgment"),
+            doom=bus_data.get("doom", {}),
+            anomaly=bus_data.get("anomaly"),
+            mental=bus_data.get("mental", {})
+        )
+        return cls(request=req_data, narrative_anchors=anchors, shared_bus=bus)
+
+# Legacy Structures (To be deprecated)
 
 @dataclass
 class ResponseContext:

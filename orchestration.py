@@ -61,6 +61,10 @@ class OrchestrationService:
         # [Phase 1 Upgrade] Initialize Skilled GM Brain
         self.gm_cognition = cognition.GMCognition(client_genai, model_id, model_id_flash)
         
+        # [UNE Upgrade] Initialize Universal Narrative Engine
+        from une_facade import UniversalNarrativeEngine
+        self.une = UniversalNarrativeEngine(client_genai, model_id_flash)
+        
         # [!다시 기능] 채널별 마지막 컨텍스트 저장
         self._last_contexts: Dict[str, Dict[str, Any]] = {}
 
@@ -129,40 +133,30 @@ class OrchestrationService:
     # =========================================================
     # STEP 4: ANOMALY & JUDGMENT PROCESSING
     # =========================================================
-    async def process_anomaly_and_judgment(
+    async def process_une_logic(
         self,
         ctx: ResponseContext,
         message: discord.Message
-    ) -> Tuple[ResponseContext, List[str]]:
-        """이변 시스템과 판정을 처리합니다."""
+    ) -> Tuple[ResponseContext, List[str], str]:
+        """[UNE] 구형 판정/이변 로직을 대체하는 통합 로직 실행"""
         channel_id = ctx.channel_id
-        messages = []
-
-        w_state = domain_manager.get_world_state(channel_id)
-        c_doom = w_state.get("doom", 0)
-
-        # 1. 이변 체크 (Delegated to GameSystem)
-        anom_msgs = await game_system.process_anomaly(
-            self.client, self.model_id_flash, 
-            channel_id, c_doom, ctx.scene_type,
-            ctx.domain_data.get("active_genres", ["Unknown"]),
-            ctx.domain_data.get("participants", {})
-        )
-        if anom_msgs:
-            messages.extend(anom_msgs)
-
-        # 2. GM 판정 처리 (Delegated to GameSystem)
-        judgment_log, judgment_ctx_str = await game_system.process_judgment(
-            channel_id, ctx.user_id, ctx.player_data,
-            ctx.nvc_result, ctx.scene_type
-        )
+        user_id = ctx.user_id
         
-        if judgment_log:
-            messages.append(judgment_log)
-        if judgment_ctx_str:
-            ctx.judgment_context = judgment_ctx_str
-
-        return ctx, messages
+        # UNE Run
+        result = await self.une.run(channel_id, user_id, ctx.action_text)
+        
+        # Extract Results
+        updated_context = result["game_context"]
+        directive = result["directive"]
+        system_log = result["system_message"]
+        
+        # Sync Context Back to ResponseContext for LLM
+        ctx.judgment_context = directive # Inject UNE directives into prompt
+        
+        # We return system_log as a list of messages for Discord
+        messages = [system_log] if system_log else []
+        
+        return ctx, messages, directive
 
     # =========================================================
     # STEP 5: PROMPT BUILDING
@@ -431,63 +425,16 @@ class OrchestrationService:
 
             # async output (typing indicator)
             async with message.channel.typing():
-                # 3. World State Update
-                ctx, world_msgs = await self.update_world_state(ctx, message)
-                
-                # 4. Anomaly & Judgment
-                ctx, game_msgs = await self.process_anomaly_and_judgment(ctx, message)
+                # 3. & 4. UNE Integrated Logic (Batching Process)
+                # This replaces world state updates and anomaly/judgment separate calls
+                ctx, une_logs, une_directive = await self.process_une_logic(ctx, message)
                 
                 # Log messages (User Facing)
-                system_logs = world_msgs + game_msgs
-                if system_logs:
-                    await message.channel.send("\n".join(system_logs))
+                if une_logs:
+                    await message.channel.send("\n".join(une_logs))
 
                 # 5. Prompt Building
-                # [Context Injection Fix] Wrap system logs with EXPLICIT narrative directive
-                system_outcome_block = ""
-                if system_logs:
-                    joined_logs = "\n".join(system_logs)
-
-                    # 이변 발생 여부 확인 (이변 메시지가 포함되어 있는지)
-                    has_anomaly = "이변 발생" in joined_logs or "⚡" in joined_logs
-                    has_judgment = "판정" in joined_logs or "🎲" in joined_logs
-
-                    # 이변이 포함된 경우 강력한 서술 지시 추가
-                    if has_anomaly:
-                        system_outcome_block = f"""
-<System_Outcome type="ANOMALY_EVENT" priority="CRITICAL">
-{joined_logs}
-
-### 🔴 필수 서술 지시 (MANDATORY NARRATIVE DIRECTIVE)
-위에 발생한 **이변(Anomaly)**을 반드시 서사의 **핵심 요소**로 통합하십시오:
-
-1. **즉시 반영**: 이변은 플레이어 행동 결과가 아닌 **세계 자체의 변화**입니다. 서술 시작부터 이변의 영향을 묘사하세요.
-2. **감각적 묘사**: 이변의 시각, 청각, 촉각, 심리적 영향을 생생하게 묘사하세요.
-3. **캐릭터 반응**: 현장의 모든 캐릭터가 이변에 반응해야 합니다 (공포, 경이, 긴장 등).
-4. **적응 판정 결과 반영**: 위 적응 판정 결과에 따라 캐릭터별로 다른 심리 상태를 묘사하세요.
-5. **서사 통합**: 이변을 현재 상황과 자연스럽게 연결하고, 긴장감을 유지하세요.
-
-⚠️ **경고**: 이변을 무시하거나 가볍게 언급만 하는 것은 금지됩니다. 이변이 이 턴의 핵심 사건입니다.
-</System_Outcome>
-"""
-                    elif has_judgment:
-                        # 판정만 있는 경우 (이변 없음)
-                        system_outcome_block = f"""
-<System_Outcome type="JUDGMENT_RESULT">
-{joined_logs}
-
-### 판정 결과 반영 지시
-위 판정 결과를 서사에 자연스럽게 반영하세요. 성공/실패에 따른 구체적인 결과를 묘사하세요.
-</System_Outcome>
-"""
-                    else:
-                        # 기타 시스템 로그
-                        system_outcome_block = f"<System_Outcome>\n{joined_logs}\n</System_Outcome>"
-
-                if system_outcome_block:
-                    # Append to world state string which goes into <Current-Context>
-                    ctx.world_ctx += f"\n\n{system_outcome_block}"
-
+                # UNE directive is already injected into ctx.judgment_context
                 full_prompt, builder = self.build_prompt(ctx)
 
                 # 6. Response Generation

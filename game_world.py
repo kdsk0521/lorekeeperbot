@@ -120,131 +120,12 @@ def change_doom(channel_id: str, amount: int) -> str:
 
 
 def calculate_doom_increase(channel_id: str, world: Dict[str, Any]) -> Tuple[int, List[str]]:
-    doom_increase = 0
-    doom_reasons = []
-    
-    # 1. Time Check (Night logic)
-    time_slots = get_time_slots(channel_id)
-    current_slot = world.get("time_slot", "오후")
-    try:
-        idx = time_slots.index(current_slot)
-    except ValueError:
-        idx = 2
-
-    is_night_time = idx >= len(time_slots) - 2 # "저녁", "심야" or "황혼" onwards
-    if "황혼" in current_slot:
-        is_night_time = True
-    
-    if is_night_time:
-        doom_increase += config.DOOM_INCREASE_NIGHT
-    
-    # [V6.1] Rubber-banding Up (Entropy Check)
-    current_doom = world.get("doom", 0)
-    if current_doom < config.DOOM_FLOOR:
-        doom_increase += config.DOOM_FLOOR_RECOVERY
-        doom_reasons.append(f"🌌 세계의 엔트로피 (수치 {config.DOOM_FLOOR}% 미만 보정)")
-    
-    # 2. Nemesis Check
-    domain = domain_manager.get_domain(channel_id)
-    participants = domain.get("participants", {})
-    nemesis_detected = False
-    for uid, p in participants.items():
-        if p.get("status") == "left": continue
-        ai_mem = p.get("ai_memory", {})
-        rels = ai_mem.get("relationships", {})
-        for npc_name, score in rels.items():
-            try:
-                score_val = int(score)
-            except (ValueError, TypeError):
-                continue # Skip invalid scores
-                
-            if score_val <= config.NEMESIS_THRESHOLD:
-                nemesis_detected = True; break
-        if nemesis_detected: break
-    
-    if nemesis_detected:
-        doom_increase += random.randint(config.DOOM_INCREASE_NEMESIS_MIN, config.DOOM_INCREASE_NEMESIS_MAX)
-        doom_reasons.append("👿 적대 세력")
-    
-    
-    # 3. AI Risk Level
-    ai_risk = world.get("risk_level", "None").lower()
-    location = world.get("current_location", "Unknown")
-    
-    if "high" in ai_risk or "extreme" in ai_risk:
-        doom_increase += config.DOOM_INCREASE_HIGH_RISK
-        doom_reasons.append(f"💀 위험 지역({location}): 고위험 감지")
-    elif "medium" in ai_risk:
-        doom_increase += config.DOOM_INCREASE_MEDIUM_RISK
-        doom_reasons.append(f"⚠️ 위험 지역({location}): 주의 필요")
-
-    # 4. Participant Status Severity (Restored V2 Feature)
-    import game_character
-    participants = domain.get("participants", {})
-    for uid, p in participants.items():
-        if p.get("status") != "active": continue
-        
-        severity_doom, sev_reasons = game_character.calculate_status_doom_contribution(p)
-        if severity_doom > 0:
-            doom_increase += severity_doom
-            p_name = p.get("mask", "Unknown")
-            doom_reasons.append(f"🩸 {p_name}: {', '.join(sev_reasons)}")
-        
-    # 4. Lore Rules
-    loc_rules = world.get("location_rules", {})
-    for loc_name, rule in loc_rules.items():
-        if loc_name.lower() in location.lower():
-            condition = rule.get("condition", "").lower()
-            should_apply = False
-            if "night" in condition and is_night_time: should_apply = True
-            elif "always" in condition: should_apply = True
-            
-            if should_apply and "high" not in ai_risk:
-                doom_increase += config.DOOM_INCREASE_LORE_RULE
-                doom_reasons.append(f"📜 로어 규칙({loc_name})")
-                
-    # [V7] 삼각 연동 시스템: 멘탈 → 둠
-    # 파티원의 평균 멘탈이 낮으면 둠 증가
-    total_mental = 0
-    mental_count = 0
-    for uid, p in participants.items():
-        if p.get("status") == "active":
-            ai_mem = p.get("ai_memory", {})
-            mental_data = ai_mem.get("mental", {"value": 100})
-            total_mental += mental_data.get("value", 100)
-            mental_count += 1
-
-    if mental_count > 0:
-        avg_mental = total_mental / mental_count
-        # 멘탈이 낮을수록 둠 증가
-        if avg_mental < 40:  # 공황 상태
-            doom_increase += 2
-            doom_reasons.append(f"😱 파티 공황 상태 (+2)")
-        elif avg_mental < 70:  # 동요 상태
-            doom_increase += 1
-            doom_reasons.append(f"😰 파티 동요 상태 (+1)")
-
-    # [V6.2] Item 7: Adaptive Calm (적응 → 둠 완화)
-    if doom_increase > 0:
-        total_adapt = 0
-        p_count = 0
-        for uid, p in participants.items():
-            if p.get("status") == "active":
-                exp_data = p.get("abnormal_exposure", {})
-                for tag, data in exp_data.items():
-                    total_adapt += game_character.calculate_adaptation_percentage(data.get("count", 0))
-                p_count += 1
-
-        if p_count > 0:
-            avg_adapt = total_adapt / p_count
-            if avg_adapt >= 50:  # High average adaptation
-                mitigation = 1 if avg_adapt < 80 else 2
-                before = doom_increase
-                doom_increase = max(0, doom_increase - mitigation)
-                if before > doom_increase:
-                    doom_reasons.append(f"🛡️ 적응형 평화 (-{mitigation})")
-
-    return doom_increase, doom_reasons
+    """
+    [LEGACY] UNE DoomModule에 의해 대체되었습니다. 
+    이 함수는 더 이상 비즈니스 로직을 수행하지 않으며, 점진적 마이그레이션을 위해 빈 결과를 반환할 수 있습니다.
+    필요 시 DoomModule.process()를 호출하세요.
+    """
+    return 0, []
 
 def reduce_doom(channel_id: str, amount: int, reason: str = "") -> str:
     """Doom 수치 감소 (최소 0)"""
@@ -330,11 +211,10 @@ ANOMALY_TONE_MAP = {
 
 def should_trigger_anomaly(doom_val: int) -> bool:
     """
-    위기 수치에 기반하여 이변 발생 여부를 결정합니다.
-    Prob = max(10, Doom * 0.5)
+    [LEGACY] UNE AnomalyModule에 의해 대체되었습니다. 
+    로직 중복을 방지하기 위해 여기서는 항상 False 혹은 최소 확률만 반환합니다.
     """
-    prob = max(config.ABNORMAL_MIN_PROB, doom_val * config.ABNORMAL_DOOM_COEFF)
-    return random.randint(1, 100) <= prob
+    return False
 
 def process_abnormal_turn(channel_id: str, context_tags: list) -> str:
     """
@@ -508,7 +388,8 @@ async def generate_anomaly_event(
   "description": "이변에 대한 객관적 묘사...",
   "effect_hint": "플레이어 선택지 힌트",
   "nature": "neutral"
-}}""""""
+}}
+"""
 
     try:
         gen_config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.7)

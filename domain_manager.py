@@ -81,7 +81,8 @@ def _get_default_session() -> Dict[str, Any]:
             "session_locked": False, 
             "growth_system": "default", 
             "abnormal_mode": True,
-            "scene_type": "normal"  # normal / gore / nsfw / gore_nsfw
+            "scene_type": "normal",  # normal / gore / nsfw / gore_nsfw
+            "active_modules": ["judgment", "doom", "anomaly", "mental"]
         },
         "active_genres": ["noir"],
         "custom_tone": None,
@@ -792,14 +793,29 @@ def update_settings(channel_id: str, **kwargs) -> None:
         d["settings"][k] = v
     save_domain(channel_id, d)
 
-def get_response_mode(channel_id: str) -> str:
-    settings: Dict[str, Any] = get_domain(channel_id).get("settings", {})
-    return settings.get("response_mode", "auto")
+def get_active_modules(channel_id: str) -> List[str]:
+    """현재 활성화된 DLC 모듈 리스트를 반환합니다."""
+    d = get_domain(channel_id)
+    return d.get("settings", {}).get("active_modules", ["judgment", "doom", "anomaly", "mental"])
+
+def toggle_module(channel_id: str, module_name: str, active: bool) -> None:
+    """특정 DLC 모듈을 켜거나 끕니다."""
+    modules = set(get_active_modules(channel_id))
+    if active:
+        modules.add(module_name)
+    else:
+        if module_name in modules:
+            modules.remove(module_name)
+    update_settings(channel_id, active_modules=list(modules))
 
 def set_response_mode(channel_id: str, mode: str) -> None:
     d = get_domain(channel_id)
     d["settings"]["response_mode"] = mode
     save_domain(channel_id, d)
+
+def get_response_mode(channel_id: str) -> str:
+    d = get_domain(channel_id)
+    return d["settings"].get("response_mode", "auto")
 
 def get_abnormal_mode(channel_id: str) -> bool:
     """비일상 적응도 시스템 활성화 여부 (Default: True)"""
@@ -926,6 +942,86 @@ def reset_session_state(channel_id: str) -> None:
         d["npcs"] = kept_npcs
         
     save_domain(channel_id, d)
+
+# =========================================================
+# 6. UNE ADAPTER (Bridge)
+# =========================================================
+
+def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> Dict[str, Any]:
+    """[UNE Bridge] ParticipantData -> GameContext (Dict)"""
+    from orchestration_context import GameContext, RequestData, SharedBus
+    
+    p_data = get_participant_data(channel_id, user_id)
+    mem = p_data.get("ai_memory", {}) if p_data else {}
+    world = get_world_state(channel_id)
+    
+    # Genre mapping
+    genres_raw = get_active_genres(channel_id)
+    if isinstance(genres_raw, dict) and "layers" in genres_raw:
+        l = genres_raw["layers"]
+        genres = {"stage": l.get("world_setting", ""), "flavor": l.get("style_tech", ""), "lens": l.get("narrative_tone", "")}
+    else:
+        genres = {"stage": genres_raw[0] if isinstance(genres_raw, list) and genres_raw else str(genres_raw), "flavor": "", "lens": ""}
+
+    # Active Modules
+    active_modules = get_active_modules(channel_id)
+
+    # Narrative Anchors
+    anchors = {
+        "appearance": mem.get("appearance", ""),
+        "personality": mem.get("personality", ""),
+        "background": mem.get("background", ""),
+        "relations": mem.get("relationships", {}),
+        "passives": mem.get("passives", []),
+        "inventory": [], # Extracted if needed
+        "memos": []
+    }
+    
+    # Bus initialization
+    bus = SharedBus()
+    bus.doom["value"] = world.get("doom", 40)
+    mental_data = mem.get("mental", {"value": 100})
+    bus.mental["value"] = mental_data.get("value", 100)
+    bus.mental["adaptation"] = mem.get("abnormal_exposure", {})
+    
+    context = GameContext(
+        request=RequestData(
+            user_input=user_input,
+            genres=genres,
+            active_modules=active_modules
+        ),
+        narrative_anchors=anchors,
+        shared_bus=bus
+    )
+    
+    return context.to_dict()
+
+def sync_from_game_context(channel_id: str, user_id: str, ctx_dict: Dict[str, Any]) -> None:
+    """[UNE Bridge] GameContext (Dict) -> ParticipantData/WorldState Sync"""
+    from orchestration_context import GameContext
+    ctx = GameContext.from_dict(ctx_dict)
+    bus = ctx.shared_bus
+    
+    # 1. World State Sync (Doom)
+    if bus.doom.get("active"):
+        world = get_world_state(channel_id)
+        world["doom"] = bus.doom["value"]
+        update_world_state(channel_id, **world)
+        
+    # 2. Participant Data Sync (Mental, Adaptation)
+    p_data = get_participant_data(channel_id, user_id)
+    if p_data:
+        mem = p_data.setdefault("ai_memory", {})
+        if bus.mental.get("active"):
+            mental_sys = mem.setdefault("mental", {"value": 100, "last_delta": 0})
+            mental_sys["value"] = bus.mental["value"]
+            
+            # Adaptation Updates
+            updates = bus.mental.get("adaptation_update")
+            if updates:
+                mem.setdefault("abnormal_exposure", {}).update(updates)
+        
+        save_participant_data(channel_id, user_id, p_data)
 
 
 

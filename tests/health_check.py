@@ -26,7 +26,13 @@ def check_imports():
         "npc_manager",
         "cognition",
         "persona",
-        "memory_system",
+        "une_facade",
+        "waterfall_pipeline",
+        "theoria_analyzer",
+        "judgment_engine",
+        "doom_module",
+        "anomaly_module",
+        "mental_module",
         "session_manager",
         "command_handler",
         "main"
@@ -86,10 +92,6 @@ def check_instantiation():
         # Check facade exports
         if not hasattr(game_system, "advance_time"):
             raise AttributeError("advance_time missing in game_system facade")
-        if not hasattr(game_system, "perform_check"):
-            raise AttributeError("perform_check missing in game_system facade")
-        if not hasattr(game_system, "get_quest_board"):
-            raise AttributeError("get_quest_board missing in game_system facade")
         if not hasattr(game_system, "get_world_context"):
             raise AttributeError("get_world_context missing in game_system facade")
         if not hasattr(game_system, "get_active_quests"):
@@ -133,16 +135,20 @@ def check_v6_features():
         print(f"❌ Anomaly System       : FAILED ({e})")
         failed.append("AnomalySystem")
 
-    # 6. Mental & Adaptation (game_character)
+    # 6. Mental & Adaptation (UNE/game_character)
     try:
         import game_character
         if not hasattr(game_character, "MENTAL_STAGES"):
             raise AttributeError("MENTAL_STAGES dict missing")
-        if not hasattr(game_character, "check_adaptation_roll"):
-            raise AttributeError("check_adaptation_roll logic missing")
         if not hasattr(game_character, "get_mental_status_text"):
              raise AttributeError("get_mental_status_text helper missing")
-        print(f"✅ Mental System        : OK")
+        print(f"✅ Mental System (Data) : OK")
+        
+        # 6-1. UNE Engine Check
+        import une_facade
+        if not hasattr(une_facade, "UniversalNarrativeEngine"):
+            raise AttributeError("UniversalNarrativeEngine missing")
+        print(f"✅ UNE Engine Facade    : OK")
         
         # 6-1. Relationship & Export Helpers
         if not hasattr(game_character, "get_recent_relationships"):

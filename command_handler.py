@@ -660,6 +660,53 @@ async def cmd_unlock(ctx: CommandContext) -> None:
     await ctx.send("🔓 **세션 잠금 해제**: 자유롭게 참여 가능합니다.")
 
 
+# =========================================================
+# UNE Module Control Commands
+# =========================================================
+
+@registry.register("modules", category="System", aliases=["모듈", "mods"], description="DLC 모듈 활성화 상태 확인")
+async def cmd_modules(ctx: CommandContext) -> None:
+    active = domain_manager.get_active_modules(ctx.channel_id)
+    all_mods = [("judgment", "판정"), ("doom", "둠"), ("anomaly", "이변"), ("mental", "멘탈")]
+    
+    msg = ["🔌 **DLC 모듈 상태**"]
+    for code, name in all_mods:
+        status = "✅ ON" if code in active else "❌ OFF"
+        msg.append(f"• {name} ({code}): {status}")
+    
+    await ctx.send("\n".join(msg))
+
+@registry.register("judgment", category="System", aliases=["판정"], description="판정 모듈 제어")
+async def cmd_toggle_judgment(ctx: CommandContext) -> None:
+    await _handle_module_toggle(ctx, "judgment", "판정")
+
+@registry.register("doom", category="System", aliases=["둠"], description="둠 모듈 제어")
+async def cmd_toggle_doom(ctx: CommandContext) -> None:
+    await _handle_module_toggle(ctx, "doom", "둠")
+
+@registry.register("anomaly", category="System", aliases=["이변"], description="이변 모듈 제어")
+async def cmd_toggle_anomaly(ctx: CommandContext) -> None:
+    await _handle_module_toggle(ctx, "anomaly", "이변")
+
+@registry.register("mental", category="System", aliases=["멘탈"], description="멘탈 모듈 제어")
+async def cmd_toggle_mental(ctx: CommandContext) -> None:
+    await _handle_module_toggle(ctx, "mental", "멘탈")
+
+async def _handle_module_toggle(ctx: CommandContext, code: str, name: str):
+    arg = ctx.raw_args.strip().lower()
+    if not arg:
+        active = domain_manager.get_active_modules(ctx.channel_id)
+        status = "✅ ON" if code in active else "❌ OFF"
+        await ctx.send(f"⚙️ **{name} 모듈 상태**: {status}\n사용법: `!{ctx.trigger} on/off`")
+        return
+    
+    if arg in ['on', '켜기', 'true']:
+        domain_manager.toggle_module(ctx.channel_id, code, True)
+        await ctx.send(f"✅ **{name} 모듈**이 활성화되었습니다.")
+    elif arg in ['off', '끄기', 'false']:
+        domain_manager.toggle_module(ctx.channel_id, code, False)
+        await ctx.send(f"❌ **{name} 모듈**이 비활성화되었습니다.")
+
 @registry.register("bot", category="System", aliases=["봇"], description="봇 활성화 제어")
 async def cmd_bot(ctx: CommandContext) -> None:
     """!봇 [on/off]"""
@@ -748,23 +795,8 @@ async def cmd_lores(ctx: CommandContext) -> None:
         await ctx.send(msg)
 
 
-@registry.register("abnormal", category="Analysis", aliases=["비일상"], description="비일상 적응도 시스템 제어")
-async def cmd_abnormal(ctx: CommandContext) -> None:
-    """!비일상 [on/off]"""
-    arg = ctx.raw_args.strip()
-    
-    if not arg:
-        current = domain_manager.get_abnormal_mode(ctx.channel_id)
-        status = "✅ ON" if current else "❌ OFF"
-        await ctx.send(f"🧠 **비일상 적응도 시스템**: {status}\n(사용법: `!비일상 on`, `!비일상 off`)")
-        return
-        
-    if arg.lower() in ['on', '켜기', 'true']:
-        domain_manager.set_abnormal_mode(ctx.channel_id, True)
-        await ctx.send("🧠 **비일상 적응도 시스템**: ✅ 켜짐\n이제 공포/스트레스 요소에 대한 적응도가 추적됩니다.")
-    elif arg.lower() in ['off', '끄기', 'false']:
-        domain_manager.set_abnormal_mode(ctx.channel_id, False)
-        await ctx.send("🧠 **비일상 적응도 시스템**: ❌ 꺼짐")
+# !abnormal / !비일상 은 !이변 (anomaly) 으로 통합되었습니다.
+# @registry.register("abnormal", category="Analysis", aliases=["비일상"], description="비일상 적응도 시스템 제어")
 
 
 

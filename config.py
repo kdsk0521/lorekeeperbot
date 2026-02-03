@@ -284,6 +284,31 @@ def get_normality_stage_info(val: Union[int, str, float]) -> Dict[str, Any]:
     return NORMALITY_STAGES[(90, 101)]
 
 # =========================================================
+# UNE (Universal Narrative Engine) Configs
+# =========================================================
+
+GENRE_ANOMALY_TABLE = {
+    "cosmic_horror": {
+        "tags": ["Ghost", "Sound", "Distortion", "Void", "Whisper"],
+        "categories": ["Horror", "Supernatural"]
+    },
+    "romance": {
+        "tags": ["Encounter", "Secret", "Mistake", "Coincidence", "Gift"],
+        "categories": ["Relationship", "Daily"]
+    },
+    "urban_fantasy": {
+        "tags": ["Signal", "Artifact", "Mystery", "Shadow", "Contract"],
+        "categories": ["Mystery", "Magic"]
+    }
+}
+
+DEFAULT_MODULE_SETTINGS = {
+    "active_modules": ["judgment", "doom", "anomaly", "mental"],
+    "doom_fallback": 40,
+    "judgment_fallback": "LLM_DECISION"
+}
+
+# =========================================================
 # Safety Settings
 # =========================================================
 SAFETY_SETTINGS = [
