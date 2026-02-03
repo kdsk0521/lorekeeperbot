@@ -980,8 +980,9 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> D
     # Bus initialization
     bus = SharedBus()
     bus.doom["value"] = world.get("doom", 40)
-    mental_data = mem.get("mental", {"value": 100})
+    mental_data = mem.get("mental", {"value": 100, "last_delta": 0})
     bus.mental["value"] = mental_data.get("value", 100)
+    bus.mental["last_delta"] = mental_data.get("last_delta", 0)
     bus.mental["adaptation"] = mem.get("abnormal_exposure", {})
     
     context = GameContext(
@@ -1006,7 +1007,7 @@ def sync_from_game_context(channel_id: str, user_id: str, ctx_dict: Dict[str, An
     if bus.doom.get("active"):
         world = get_world_state(channel_id)
         world["doom"] = bus.doom["value"]
-        update_world_state(channel_id, **world)
+        update_world_state(channel_id, world)
         
     # 2. Participant Data Sync (Mental, Adaptation)
     p_data = get_participant_data(channel_id, user_id)
@@ -1015,6 +1016,19 @@ def sync_from_game_context(channel_id: str, user_id: str, ctx_dict: Dict[str, An
         if bus.mental.get("active"):
             mental_sys = mem.setdefault("mental", {"value": 100, "last_delta": 0})
             mental_sys["value"] = bus.mental["value"]
+            mental_sys["last_delta"] = bus.mental.get("delta", 0) # Store current delta as last_delta
+            
+            # Trauma Trigger
+            if bus.mental.get("trauma_trigger"):
+                passives = mem.setdefault("passives", [])
+                trauma_name = "트라우마 (각성)"
+                if not any(p.get("name") == trauma_name for p in passives if isinstance(p, dict)):
+                    passives.append({
+                        "name": trauma_name,
+                        "tags": ["Trauma", "Hard-to-cure"],
+                        "modifier": -5,
+                        "desc": "붕괴의 문턱에서 돌아온 흔적입니다. 모든 판정에 -5 페널티를 받습니다."
+                    })
             
             # Adaptation Updates
             updates = bus.mental.get("adaptation_update")

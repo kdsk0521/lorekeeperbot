@@ -24,10 +24,14 @@ class WaterfallPipeline:
         
         # 1. Call 1: Analysis (Theoria)
         analysis = await self.theoria.analyze_input(context)
-        context.shared_bus.judgment["active"] = analysis.get("needs_judgment", False)
-        if context.shared_bus.judgment["active"]:
-            context.shared_bus.judgment["meta"] = analysis.get("action_meta", {})
-            context.shared_bus.judgment["eval"] = analysis.get("asset_evaluation", {})
+        bus = context.shared_bus
+        bus.judgment["active"] = analysis.get("needs_judgment", False)
+        if bus.judgment["active"]:
+            bus.judgment["meta"] = analysis.get("action_meta", {})
+            eval_data = analysis.get("asset_evaluation", {})
+            bus.judgment["eval"] = eval_data
+            bus.judgment["modifications"] = eval_data.get("modifications", [])
+            bus.judgment["narrative_hook"] = analysis.get("narrative_hook", "")
 
         # 2. Call 2: Judgment (Optional)
         if context.shared_bus.judgment["active"]:

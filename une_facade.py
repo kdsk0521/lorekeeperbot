@@ -48,7 +48,8 @@ class UniversalNarrativeEngine:
         
         # Judgment result in directive
         if bus.judgment and bus.judgment.get("active"):
-            directive_parts.append(f"[판정 결과]: {bus.judgment.get('result')} ({bus.judgment.get('roll')})")
+            reason_txt = f" (근거: {bus.judgment.get('reason')})" if bus.judgment.get('reason') else ""
+            directive_parts.append(f"[판정 결과]: {bus.judgment.get('result')} ({bus.judgment.get('roll')}){reason_txt}")
         
         # Anomaly outcome in directive
         if bus.anomaly and bus.anomaly.get("triggered"):

@@ -1,0 +1,244 @@
+{
+  "participants": {
+    "212189321548005378": {
+      "mask": "아담",
+      "status": "active",
+      "status_effects": [],
+      "ai_memory": {
+        "appearance": "Gray hair, vivid green eyes. Wears a blood-stained white coat over black attire. Left arm is a brass/platinum prosthetic with a hidden syringe. Legs are steam pistons with high-speed wheels. Chest bears a glowing Soul Sensor implant.",
+        "personality": "Cynical pragmatist. Views life through soul economics ('That injury costs 10% of a soul'). Outwardly cold and mercenary, using black humor and blunt language, but adheres to strict personal principles. Displays rough warmth ('tsundere') in critical moments.",
+        "background": "Survivor of the Steam Age operating the '3rd Clinic' in Scrap Forest. Known as a miracle worker who cures death for a price. Obsessively building 'Eve,' a perfect organic human, in his basement to challenge the machine-dependent world.",
+        "relationships": {
+          "Clara": 20
+        },
+        "passives": [
+          {
+            "name": "Godhand",
+            "modifier": 20,
+            "desc": "Miraculous surgical ability; can repair fatal wounds using junk parts and rusty tools."
+          },
+          {
+            "name": "Soul Contract Notary",
+            "modifier": 20,
+            "desc": "Drafts supernaturally binding contracts. Violation causes automatic soul extraction from the breaker."
+          },
+          {
+            "name": "Hell's Stethoscope (Relic)",
+            "modifier": 15,
+            "desc": "Hear heartbeats and eavesdrop through walls (20m). Measures exact soul amounts. Causes mental exhaustion."
+          },
+          {
+            "name": "Anatomical Interrogation",
+            "modifier": 15,
+            "desc": "Instantly deduce a target's history, habits, and secrets by reading their body or performing an autopsy."
+          },
+          {
+            "name": "Cybernetic Physiology",
+            "modifier": 15,
+            "desc": "Left arm has crushing grip/poison syringe. Legs allow 40km/h skating. Bio-filters process toxins/rotten food."
+          },
+          {
+            "name": "Soul Sensor",
+            "modifier": 10,
+            "desc": "Implant vibrates to indicate nearby soul density and contract violations."
+          }
+        ],
+        "normalization": {},
+        "notes": "",
+        "archived_info": [],
+        "mental": {
+          "value": 100,
+          "last_delta": 0
+        },
+        "abnormal_exposure": {},
+        "psych_profile": {
+          "needs": {
+            "survival": 50,
+            "safety": 50,
+            "love": 50,
+            "esteem": 50,
+            "self_actualization": 50
+          },
+          "values": [
+            "security",
+            "conformity"
+          ],
+          "instinct": "neutral"
+        }
+      }
+    }
+  },
+  "npcs": {
+    "Clara": {
+      "description": "Adam's mute guardian and clinic nurse, salvaged from a premium combat model. Clad in a Victorian nurse uniform, her porcelain face reveals exposed brass gears and glass bead eyes. She communicates solely through gear clicks and steam hisses. Equipped with high-speed piston legs and 'Scissor Hands'—delicate surgical tools that transform into massive Soul Steel shears capable of severing limbs in a single cut. She exhibits absolute, ruthless loyalty to Adam.",
+      "source": "lore",
+      "registered_at": "2026-02-03 22:21",
+      "gender": "Female",
+      "race": "Automaton"
+    },
+    "Eve": {
+      "description": "The 'Unfinished Masterwork' residing in the clinic's basement. A patchwork entity stitched from multiple skin donors, designed to be a perfect human independent of machinery. Currently an incomplete shell consisting of a brain in nutrient fluid, a hollow torso without organs, and a single, flawless left arm. She lacks a soul and memories, serving as the silent, motionless vessel for Adam's obsession with creating life from scratch.",
+      "source": "lore",
+      "registered_at": "2026-02-03 22:21",
+      "gender": "Female",
+      "race": "Artificial Human"
+    }
+  },
+  "history": [
+    {
+      "role": "아담",
+      "content": "[System Event] Opening"
+    },
+    {
+      "role": "Model",
+      "content": "제3구역, '고철 숲(Scrap Forest)'.\n하늘은 언제나처럼 납빛 구름과 매연으로 뒤덮여 낮인지 밤인지 분간하기 어렵다. 무너질 듯 위태롭게 솟아오른 고철 구조물들 사이로, 부러진 갈비뼈처럼 앙상한 파이프들이 허공을 가로지른다.\n\n그 혼돈의 한구석, 녹슨 철제 간판 하나가 불규칙하게 깜빡거린다.\n**[ ✚ 제 3 진료소 ]**\n전압이 불안정한 붉은 네온사인이 징징거리는 소음을 내며, 눅눅한 안개 속에 핏빛 잔상을 남긴다.\n\n진료소 내부의 공기는 무겁고 축축하다.\n오래된 피비린내, 독한 소독용 알코올 냄새, 그리고 기계유가 타는 매캐한 향이 섞여 폐부 깊숙이 달라붙는다. 벽면에는 수술 도구라기보다 고문 기구에 가까운 톱, 드릴, 그리고 뼈 절단기들이 차가운 금속성 광택을 뽐내며 걸려 있다. 수술대 위, 아직 닦아내지 못한 누군가의 검붉은 흔적이 램프 불빛 아래서 번들거린다.\n\n**치이이익—**\n구석에 놓인 증기 파이프 이음새에서 뜨거운 김이 새어 나온다. 이 도시는 숨을 쉴 때마다 쇳소리를 낸다.\n\n\"......\"\n\n진료실 한켠, 오토마톤 간호사 **클라라**가 조용히 움직이고 있다.\n빅토리아풍 드레스를 개조한 간호복 위로 하얀 앞치마를 둘렀지만, 곳곳에 기름 얼룩이 묻어 있다. 그녀는 도자기로 된 하얀 손가락 끝으로 수술용 가위를 헝겊으로 닦아내는 중이다.\n*철컥, 틱.*\n그녀가 관절을 굽힐 때마다 몸 안쪽의 태엽과 기어들이 맞물리는 정교한 구동음이 들려온다. 감정이 거세된 푸른색 유리구슬 눈동자가 허공을 응시하다가, 잠시 멈칫한다. 깨진 뺨 사이로 드러난 황동 기어가 미세하게 회전 속도를 높인다.\n\n외부 감지 센서가 반응한 것이다.\n\n**쾅, 쾅, 쾅!**\n\n두꺼운 철제 현관문을 거칠게 두드리는 소리가 적막을 찢는다.\n기계적인 노크가 아니다. 절박함, 혹은 무례함이 섞인 인간의 타격음이다.\n\n\"문 열어! 의사 양반! 안에 있는 거 다 알아!\"\n\n걸걸한 목소리가 쇠문 너머에서 웅웅거리며 들려온다. 클라라가 닦던 가위를 내려놓고, 천천히 고개를 돌려 당신, **아담**이 앉아 있는 책상 쪽을 바라본다. 그녀의 손끝이 미세하게 떨리며 가위의 날이 전투용으로 변형될 준비를 하듯 짤막한 금속음을 냈다.\n\n진료소의 영업 시간은 주인이 정하기 나름이지만, 고철 숲의 손님들은 언제나 예의보다 용건이 앞서는 법이다."
+    },
+    {
+      "role": "아담",
+      "content": "\"지금나가지..클라라. 환자를 맞이하러가지.\" 그리 말하며 환자를 보러갑니다"
+    },
+    {
+      "role": "Model",
+      "content": "**취이이익—.**\n\n당신이 의자에서 몸을 일으키자, 바지 밑단 아래 감춰진 증기 피스톤이 뜨거운 김을 내뿜으며 수축했다가 팽창한다. 고속 주행용 바퀴가 바닥의 철판을 긁으며 둔탁한 마찰음을 냈고, 그 소리는 진료소의 무거운 적막을 깨트렸다.\n\n등 뒤에서 규칙적인 태엽 감기는 소리가 따라붙는다.\n클라라는 대답 대신, 우아한 동작으로 당신의 오른쪽 후방 1미터 지점에 섰다. 그녀의 푸른색 유리구슬 눈동자는 현관문을 향해 고정되어 있었고, 앞치마 주머니 속에서 가위를 쥔 손은 이미 전투 프로토콜에 진입해 있었다. 그녀의 관절 사이에서 흘러나오는 미세한 구동음이 평소보다 날카롭다.\n\n당신이 현관에 다가갈수록 바깥의 소음은 더 거칠게 들려왔다. 문을 두드리는 소리는 이제 거의 발길질에 가까웠다.\n\n**끼이이익— 쾅.**\n\n녹슨 빗장을 풀고 육중한 철문을 밀어 열자, 고철 숲 특유의 매캐한 회색 안개가 실내의 소독약 냄새를 밀어내며 들이닥쳤다. 차가운 냉기와 함께, 밖에서 기다리던 소음이 한꺼번에 터져 나왔다.\n\n\"제기랄, 이제야 나오는군!\"\n\n문이 열리기 무섭게, 낡은 가죽 재킷을 걸친 사내 하나가 안으로 비틀거하며 쏟아져 들어왔다. 그의 온몸은 검은 기름때와 붉은 흙먼지로 뒤범벅이 되어 있었고, 한쪽 눈은 깨진 고글로 가려져 있었다. 그는 혼자가 아니었다.\n\n**\"끄아아악! 뜨거워! 내 팔! 내 팔이!!\"**\n\n사내는 바닥에 질질 끌리는 다른 남자의 멱살을 잡고 있었다. 바닥에 쓰러진 남자의 상태는 참혹했다. 그의 왼쪽 어깨에 이식된 구형 채굴용 의수(Prosthetic)가 통제 불능 상태로 요동치고 있었다.\n\n**파지직! 퍽!**\n\n의수의 이음새마다 시퍼런 스파크가 튀었고, 내부의 냉각 파이프가 터졌는지 허연 김이 맹렬하게 뿜어져 나왔다. 과부하 걸린 모터가 타는 역겨운 냄새, 그리고 그 열기에 살이 익어가는 단백질 타는 냄새가 진동했다. 의수는 주인의 의지와 상관없이 제멋대로 꺾이고 비틀리며, 남자의 쇄골을 으스러뜨릴 기세로 수축하고 있었다.\n\n사내는 동료를 진료소 바닥에 짐짝처럼 내던지며 당신을 향해 소리쳤다.\n\n\"이 멍청한 놈이 폐기장에서 아직 전력이 남은 동력원을 건드렸어! 당장 저 팔 좀 어떻게 해봐! 5분 뒤면 심장까지 타버릴 거라고!\"\n\n쓰러진 환자는 고통에 몸부림치며 바닥을 긁었다. 과열된 금속 팔이 진료소의 차가운 타일 바닥에 닿자 '치익' 하는 소리와 함께 바닥재가 검게 그을렸다.\n\n클라라가 조용히 당신의 앞으로 나서며 사내를 향해 가위를 들어 올렸다. 치료비보다 폭력이 먼저 오가는 이 도시의 생리를 너무나 잘 아는 탓이다. 하지만 사내는 위협할 생각조차 없어 보였다. 그는 품에서 꼬깃꼬깃한 영혼 바이알 주머니를 꺼내 흔들었다. 찰랑거리는 푸른 액체의 빛이 그의 절박한 눈동자에 비쳤다.\n\n\"돈... 아니, 영혼은 있어! 제발, 저거 떼어내든지 고치든지 하라고!\""
+    },
+    {
+      "role": "아담",
+      "content": "그럼 환자의 상태를 보고 치료를 시작합니다. 모터는 강제로 끄고 클라라의 도움을 받아 다양한 고철 부품과 황동 부품들 그리고 몇몇 생체조작으로 치료를 시작합니다"
+    },
+    {
+      "role": "Model",
+      "content": "**콰아아앙—!**\n\n당신의 왼팔, 황동과 백금으로 이루어진 의수가 맹렬한 기세로 환자의 폭주하는 어깨를 짓눌렀다. 80기압의 증기 피스톤이 터져 나갈 듯 비명을 질렀지만, 당신의 악력은 그보다 강했다.\n\n\"으아아악! 내 뼈, 뼈가...!\"\n\n환자의 비명과 함께 당신은 망설임 없이 과열된 동력원의 주입 밸브를 맨손으로 비틀어 뜯어냈다. 치이익, 날카로운 파열음과 함께 뜨거운 증기가 천장을 향해 솟구쳤고, 미친 듯이 요동치던 채굴용 의수가 그제야 경련하듯 멈춰 섰다.\n\n그 순간부터 진료소는 수술실이 아니라 하나의 거대한 시계태엽 내부가 되었다.\n\n**[패시브 발동: 신의 손 (Godhand) - Critical Success]**\n\n\"메스. 3호 커터. 와이어.\"\n\n당신의 짧은 명령이 떨어지기도 전에, 클라라의 도자기 손가락이 정확한 각도로 도구를 당신의 손바닥 위에 올려놓았다. 그녀의 관절이 구동하는 소리는 마치 메트로놈처럼 일정한 리듬을 만들어냈다.\n\n당신은 환자의 어깨 살을 가르고 드러난 붉은 근섬유를 핀셋으로 집어 올렸다. 열기에 검게 타버린 신경 다발들이 엉망으로 엉겨 있었다. 보통의 의사라면 절단했을 상황. 하지만 당신의 눈에는 고철 더미 속의 질서가 보였다.\n\n*달그락, 챙.*\n\n작업대 위에 널려 있던 잡동사니들이 당신의 손끝에서 춤을 추기 시작했다.\n녹슨 파이프 조각은 냉각 튜브의 지지대가 되었고, 찌그러진 황동 톱니바퀴는 어깨 관절의 보조 베어링으로 다시 태어났다. 당신은 환자의 끊어진 혈관을 얇은 구리선으로 봉합하고, 타버린 근육 대신 탄성 좋은 스프링 코일을 이식했다.\n\n고기와 쇠가 하나로 꿰매어지는(Suture) 순간.\n그것은 끔찍하면서도 기이할 정도로 아름다운 광경이었다.\n\n\"이건... 말도 안 돼...\"\n\n옆에서 지켜보던 동료 사내가 입을 떡 벌린 채 중얼거렸다. 그의 눈에는 당신의 손놀림이 보이지 않았다. 그저 잔상만이 붉은 피와 검은 오일 사이를 오갈 뿐이었다.\n\n당신은 마지막으로 환자의 쇄골 아래에 있는 신경 접속 포트에 윤활유를 한 방울 떨어뜨리고, 과부하 방지용 퓨즈를 새로 연결했다.\n\n**철컥. 위잉—**\n\n죽어가던 기계가 다시 숨을 쉬기 시작했다. 하지만 이전의 거칠고 투박한 소음이 아니었다.\n마치 갓 공장에서 출고된 최고급 오토마톤처럼, 지극히 부드럽고 정숙한 구동음이 진료소를 채웠다. 흉하게 튀어나왔던 배선들은 말끔하게 정리되어 황동 장갑 안으로 숨겨졌고, 붉게 부어올랐던 이식 부위는 차갑게 가라앉아 있었다.\n\n고철 덩어리와 살점의 조잡한 결합이었던 팔이, 이제는 예술품에 가까운 '기계 의수'로 다시 태어나 있었다.\n\n\"하아... 하아...\"\n\n환자의 거친 호흡이 잦아들었다. 그는 고통이 사라진 것이 믿기지 않는다는 듯, 멍한 눈으로 자신의 왼팔을 내려다보았다. 그가 조심스럽게 주먹을 쥐어보자, 손가락 마디마디의 기어들이 완벽한 유격으로 맞물리며 **'차르륵'** 하는 경쾌한 금속음을 냈다.\n\n클라라가 피 묻은 장갑을 수거하며 조용히 당신의 뒤로 물러섰다. 그녀의 푸른 눈동자가 아주 잠깐 반짝였다. 마치 주인의 걸작에 대한 무언의 찬사처럼.\n\n동료 사내는 덜덜 떨리는 손으로 영혼 바이알 주머니를 꽉 쥐었다. 그가 보기에 눈앞의 의사는 생명을 구한 것이 아니라, 고철에다가 새로운 생명을 불어넣은 연금술사나 다름없었다.\n\n\"이게... 가능한 건가? 방금 전까지만 해도 터지기 직전이었는데...\"\n\n사내는 마른침을 삼키며, 주머니 속의 영혼 바이알이 혹시 부족하지는 않을지 걱정스러운 눈빛으로 당신을 바라보았다. 진료소 바닥에는 잘려 나간 타버린 살점과 불필요한 고철 조각들만이 덩그러니 남아, 방금 일어난 기적의 부산물처럼 굴러다니고 있었다."
+    },
+    {
+      "role": "아담",
+      "content": "\"이제 댓가를 내놓을 시간일세. 돈이 있고말고의 문제는 아니라네.\""
+    },
+    {
+      "role": "Model",
+      "content": "당신의 말이 떨어지자마자 진료소 안의 공기가 무겁게 내려앉았다. 방금 전까지 기적적인 수술 성공에 환호하려던 분위기는 순식간에 찬물을 끼얹은 듯 얼어붙었다.\n\n**딸그락.**\n\n동료 사내의 손에서 짤그랑거리던 영혼 바이알 주머니가 힘없이 쳐졌다. 그 안에 든 푸른 액체가 찰랑거리는 소리가 유난히 크게 울렸다. 그는 당신의 녹색 눈동자를 마주 보지 못하고, 방금 당신이 '재창조'해낸 동료의 왼팔로 시선을 돌렸다.\n\n그것은 지나치게 완벽했다.\n고철 숲의 쓰레기장에서 주워 온 부품으로 만들었다고는 믿을 수 없는, 매끄러운 황동 장갑과 오차 없이 맞물리는 기어들. 3구역의 무허가 의사들이 흉내조차 낼 수 없는 '예술품'이었다. 이 정도 수준의 시술은 돈으로 환산할 수 있는 영역이 아니다. 사내는 본능적으로 깨달았다. 자신이 가진 꼬깃꼬깃한 영혼 몇 방울로는 이 '수술비'의 계약금조차 치를 수 없다는 것을.\n\n\"그, 그게 무슨...\"\n\n사내의 목울대가 꿀꺽하고 크게 움직였다. 이마에서 흐른 식은땀이 기름때 묻은 뺨을 타고 흘러내려 턱 끝에 맺혔다.\n\n**끼이익— 쿵.**\n\n등 뒤에서 무거운 철문이 닫히는 소리가 들렸다.\n어느새 현관 쪽으로 이동한 클라라가 문에 등을 기댄 채 서 있었다. 그녀의 손에 들려 있던 가위는 어느새 거대한 전지가위 형태로 변형되어 있었다. 날카로운 칼날이 램프 불빛을 받아 서늘하게 번뜩였다. 그녀는 아무 말도 하지 않았지만, 그 침묵은 명백한 선언이었다.\n*'계산이 끝나기 전에는 나갈 수 없다.'*\n\n당신의 목에 걸린 **[저주받은 물건: 지옥의 청진기]**가 귓가에 속삭이기 시작했다.\n두 사내의 심장 박동 소리가 고막을 때리는 북소리처럼 쿵쾅거렸다.\n*...도망쳐야 해... 아니, 못 나가... 저 여자가 막고 있어... 뭘 달라는 거지? 내 영혼? 아니면 장기?...*\n그들의 공포심이 여과 없이 당신의 뇌리로 흘러들어왔다.\n\n수술대 위에서 몸을 일으킨 환자가 자신의 새로운 왼팔을 감싸 쥐며 떨리는 목소리로 입을 열었다.\n\n\"의사 양반... 아니, 선생님. 우린 그저 고철이나 줍는 놈들입니다. 가진 거라곤 이 쥐꼬리만한 영혼이랑 썩은 몸뚱이뿐인데...\"\n\n그는 자신의 팔을 내려다보았다. 손가락을 쥐었다 펼 때마다 느껴지는 완벽한 감각. 이것은 축복인 동시에 족쇄였다. 이 정도의 '선물'을 받고 대가를 치르지 않는다면, 이 도시의 법칙상 그들의 영혼은 이미 압류당한 것이나 마찬가지였다.\n\n동료 사내가 입술을 깨물더니, 결심한 듯 품 속 깊숙한 곳으로 손을 집어넣었다. 그가 꺼낸 것은 영혼 바이알이 아니었다. 기름 종이에 싸인, 작고 검은 물체였다.\n\n\"돈... 문제는 아니라고 하셨죠.\"\n\n그가 조심스럽게 그것을 작업대 위에 올려놓았다. 겉보기엔 그저 검게 그을린 금속 파편처럼 보였지만, 당신의 **[패시브: 해부학적 심문]**은 그 물건에서 풍기는 이질적인 냄새를 맡았다. 그것은 단순한 고철 냄새가 아니었다. 아주 미세하지만, '피'와 '고급 향수', 그리고 '죽음'의 냄새가 섞여 있었다.\n\n\"어제... 4구역 '상아 회랑'과 연결된 하수구 끝자락에서 이걸 주웠습니다. 평소라면 그냥 지나쳤겠지만, 이걸 쥐고 있던 시체... 그 시체가 보통 놈이 아니었어요.\"\n\n사내가 목소리를 낮췄다. 마치 누군가 듣기라도 할까 봐 두려워하는 눈치였다.\n\n\"시체의 얼굴이... 없었습니다. 뜯겨 나간 게 아니라, 애초에 이목구비가 없었어요. 마치 만들다 만 인형처럼 매끈한 살가죽만 덮여 있었죠. 그리고 그놈 품속에 이게 있었습니다.\"\n\n그가 손가락으로 검은 파편을 가리켰다. 자세히 보니 그것은 부러진 **'기억 저장 장치(Memory Drive)'**의 일부였다. 일반적인 시민들이 쓰는 싸구려 유리 앰플이 아니라, 귀족들이나 쓴다는 고밀도 압축 저장소. 비록 파손되어 내용은 알 수 없지만, 표면에 새겨진 문양은 당신도 익히 아는 것이었다.\n\n**[ ♕ : 생명공학 연구소 (Biotech Lab) ]**\n\n이 도시에서 가장 은밀하고, 가장 비인도적인 실험이 자행된다는 곳. 그리고 당신이 만들고 있는 '이브'에게 필요한 최고급 생체 부품이 흘러나오는 곳이기도 했다.\n\n\"이걸... 이걸로 퉁칠 수 있을까요? 장물아비한테 넘기면 꽤 받을 거라 생각했지만, 선생님이 원하시는 게 이런 '정보'라면...\"\n\n사내의 눈빛이 간절하게 흔들렸다. 그들은 지금 단순한 고철 조각을 건네는 게 아니라, 자신들이 감당할 수 없는 위험한 비밀을 당신에게 떠넘기고 이 상황에서 벗어나고 싶어 하는 것이다.\n\n클라라의 시선이 당신에게 향했다. 그녀의 기계적인 눈동자가 깜빡이며 당신의 결정을 기다렸다. 수술비 대신, 도시 상류층의 어두운 비밀이 담긴 파편을 받을 것인가. 아니면 그들의 영혼을 쥐어짜 낼 것인가.\n\n선택은 '브로커'인 당신의 몫이었다."
+    }
+  ],
+  "quest_board": {
+    "active": [
+      "수술 대가 결정하기",
+      "생명공학 연구소의 기억 저장 장치 조사",
+      "이목구비 없는 시체의 정체 조사"
+    ],
+    "completed": [],
+    "memos": [],
+    "archive": [],
+    "lore": []
+  },
+  "world_state": {
+    "time_slot": "오후",
+    "weather": "맑음",
+    "day": 1,
+    "doom": 27,
+    "doom_name": "위기",
+    "risk_level": "None",
+    "current_location": "Unknown",
+    "location_rules": {},
+    "world_constraints": {},
+    "active_threads": [],
+    "last_temporal_context": {}
+  },
+  "settings": {
+    "response_mode": "auto",
+    "session_locked": true,
+    "growth_system": "default",
+    "abnormal_mode": true,
+    "scene_type": "gore_nsfw",
+    "active_modules": [
+      "judgment",
+      "mental",
+      "doom",
+      "anomaly"
+    ]
+  },
+  "active_genres": {
+    "layers": {
+      "world_setting": [
+        "post_apocalypse",
+        "cyberpunk"
+      ],
+      "style_tech": [
+        "steampunk",
+        "urban_fantasy"
+      ],
+      "narrative_tone": [
+        "noir",
+        "drama"
+      ]
+    },
+    "atmosphere_guide": "영혼과 기억을 연료로 태우는 멸망 후의 스팀펑크 도시 '수처 시티'를 무대로 합니다. 총기가 사라진 무법지대에서 신체 개조와 냉병기에 의존해 살아가는 생존자들의 이야기를 하드보일드 누아르 톤으로 묘사하세요. 기계적 미학과 영혼 상실의 비극이 교차하는 어둡고 축축한 분위기를 강조하십시오."
+  },
+  "custom_tone": "영혼과 기억을 연료로 태우는 멸망 후의 스팀펑크 도시 '수처 시티'를 무대로 합니다. 총기가 사라진 무법지대에서 신체 개조와 냉병기에 의존해 살아가는 생존자들의 이야기를 하드보일드 누아르 톤으로 묘사하세요. 기계적 미학과 영혼 상실의 비극이 교차하는 어둡고 축축한 분위기를 강조하십시오.",
+  "ai_session_memory": {
+    "world_summary": "",
+    "current_arc": "",
+    "active_threads": [],
+    "resolved_threads": [],
+    "key_events": [],
+    "foreshadowing": [],
+    "world_changes": [],
+    "npc_summaries": {},
+    "party_dynamics": "",
+    "last_updated": ""
+  },
+  "fermented_history": [],
+  "deep_memory": "",
+  "last_export_idx": 0,
+  "last_chronicle_idx": 0,
+  "bot_active": true,
+  "notebook": "— [소지품] —\n- Cigarettes (초기 장비)\n- Hard Candy (초기 장비)\n- Disinfectant (초기 장비)\n- Soul Vials (초기 장비)\n- Blank Blood Contracts (초기 장비)\n- Broken Memory Drive (Biotech Lab logo)\n\n— [메모] —\n- 4구역 하수구에서 발견된 이목구비 없는 시체와 생명공학 연구소의 연관성",
+  "prepared": true,
+  "default_pc_info": {
+    "name": "Adam (아담)",
+    "role": "Unlicensed Surgeon / Information Broker",
+    "species": "Human (Heavy Cybernetic Augmentation)",
+    "appearance": "Gray hair, vivid green eyes. Wears a blood-stained white coat over black attire. Left arm is a brass/platinum prosthetic with a hidden syringe. Legs are steam pistons with high-speed wheels. Chest bears a glowing Soul Sensor implant.",
+    "personality": "Cynical pragmatist. Views life through soul economics ('That injury costs 10% of a soul'). Outwardly cold and mercenary, using black humor and blunt language, but adheres to strict personal principles. Displays rough warmth ('tsundere') in critical moments.",
+    "sexual_characteristics": "Dulled sense of taste due to bio-filters. Chest experiences sharp pain when Soul Contracts are violated nearby. Body is a patchwork of scars and metal; views maintenance as hygiene.",
+    "background": "Survivor of the Steam Age operating the '3rd Clinic' in Scrap Forest. Known as a miracle worker who cures death for a price. Obsessively building 'Eve,' a perfect organic human, in his basement to challenge the machine-dependent world.",
+    "secret_info": "Possesses 'Hell's Stethoscope,' a Blessed Relic that allows him to hear secrets through walls at the cost of his sanity (insomnia/hallucinations). Hides the unfinished 'Eve' project.",
+    "passives": [
+      {
+        "name": "Godhand",
+        "modifier": 20,
+        "desc": "Miraculous surgical ability; can repair fatal wounds using junk parts and rusty tools."
+      },
+      {
+        "name": "Soul Contract Notary",
+        "modifier": 20,
+        "desc": "Drafts supernaturally binding contracts. Violation causes automatic soul extraction from the breaker."
+      },
+      {
+        "name": "Hell's Stethoscope (Relic)",
+        "modifier": 15,
+        "desc": "Hear heartbeats and eavesdrop through walls (20m). Measures exact soul amounts. Causes mental exhaustion."
+      },
+      {
+        "name": "Anatomical Interrogation",
+        "modifier": 15,
+        "desc": "Instantly deduce a target's history, habits, and secrets by reading their body or performing an autopsy."
+      },
+      {
+        "name": "Cybernetic Physiology",
+        "modifier": 15,
+        "desc": "Left arm has crushing grip/poison syringe. Legs allow 40km/h skating. Bio-filters process toxins/rotten food."
+      },
+      {
+        "name": "Soul Sensor",
+        "modifier": 10,
+        "desc": "Implant vibrates to indicate nearby soul density and contract violations."
+      }
+    ],
+    "inventory": {
+      "Cigarettes": "1 Pack",
+      "Hard Candy": "Handful",
+      "Disinfectant": "1 Bottle",
+      "Soul Vials": "Various (5-10%)",
+      "Blank Blood Contracts": "1 Bundle"
+    }
+  }
+}

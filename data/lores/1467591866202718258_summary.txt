@@ -1,0 +1,14 @@
+[Project: Suture City] Lorebook v4.0 - Core Edition
+
+Creation Intent: A fusion of Post-Apocalypse + Steampunk + Occult. In a steam civilization that burns souls and memories as fuel, survivors armed with body modifications and cold weapons struggle to live another day.
+Core Theme: "Soulification." A new industrial age where souls and memories have replaced coal. Curses are the flip side of blessings, and a lead-gray city where automatons and humans coexist.
+
+================================================================================
+CRITICAL WORLD RULES
+================================================================================
+
+🚫 NO FIREARMS: Gunpowder is useless or lost. All combat uses cold weapons (chainsaws, drills, crossbows).
+Example: "He reached for his— wait, guns don't exist. He grabbed a rusty pipe wrench instead."
+
+⚡ SOUL/MEMORY ECONOMY: People sell souls and memories as fuel/currency.
+Example: "The vendor eyed my soul meter. 'That procedure? 15% of your soul, or 

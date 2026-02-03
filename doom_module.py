@@ -34,7 +34,18 @@ class DoomModule:
             else:
                 bus.doom["log"] = f"📉 긴장도 감소 ({delta})"
                 
-        # 3. Check for Anomaly Potential
+        # 3. Entropy & Rubber-banding (Legacy: Floor 20)
+        # If doom is below 20, it naturally rises (+2) to maintain tension
+        if bus.doom["value"] < 20:
+            bus.doom["value"] = min(20, bus.doom["value"] + 2)
+            entropy_msg = "🌓 월드 엔트로피 (긴장도 하한선 유지 +2)"
+            if bus.doom.get("log"):
+                bus.doom["log"] += f"\n{entropy_msg}"
+            else:
+                bus.doom["log"] = entropy_msg
+            bus.doom["active"] = True
+
+        # 4. Check for Anomaly Potential
         # Trigger anomaly if doom > 50 or on critical failure
         if bus.doom["value"] > 50 or judgment.get("result") == "critical_failure":
             bus.anomaly["potential"] = True

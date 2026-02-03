@@ -1,0 +1,73 @@
+{
+  "participants": {},
+  "npcs": {},
+  "history": [
+    {
+      "role": "Unknown",
+      "content": "되었나"
+    },
+    {
+      "role": "Model",
+      "content": "시스템 동기화 완료.\n신경망 접속, 승인됨.\n*출력 개시.*\n\n***\n\n입 밖으로 뱉은 질문은 건조했다. 대답 대신 돌아온 것은 낡은 환풍기가 돌아가는 불규칙한 소음뿐이다. \n\n**\"…….\"**\n\n누군가 대답해 줄 리 만무하다. 이 방에 살아있는 것은 당신 하나뿐이니까.\n\n눈을 뜨자 가장 먼저 망막을 찌르는 것은 블라인드 틈새를 비집고 들어오는 붉은 네온사인의 잔광이었다. 시야가 흐릿하다. 마치 기름 낀 렌즈를 낀 것처럼 세상의 채도가 낮게 깔려 있다. 입안에서는 쇠 맛이 났다. 혀끝으로 입천장을 훑어보니 굳어버린 핏덩이가 거칠게 걸린다.\n\n당신은 낡아빠진 인조 가죽 소파에 깊숙이 파묻혀 있었다. 등 뒤로 느껴지는 축축한 감각. 식은땀인지, 아니면 덜 마른 빗물인지 구분하기 어렵다. 확실한 건, 지독한 소독약 냄새와 눅눅한 곰팡이 냄새가 뒤섞여 폐부 깊숙이 스며들고 있다는 사실이다.\n\n**[장소: 제3구역, 낡은 안전가옥]**\n**[시간: 오후 4시 12분. 날씨: 맑음(그러나 이 도시의 하층부는 언제나 그늘져 있다)]**\n\n오른손이 무의식적으로 옆구리를 더듬었다. 붕대가 감겨 있다. 거칠게 매듭지어진 솜씨를 보아하니, 정신을 잃기 직전 스스로 처치한 흔적이다. 통증은 아직 날카롭다기보다는 묵직하게 신경을 짓누르는 감각에 가깝다. 마취제가 덜 풀린 탓이리라.\n\n탁자 위에는 탄피 두 개, 그리고 화면이 깨진 휴대용 단말기가 놓여 있다. 단말기 화면은 검게 죽어 있지만, 알림 표시등만이 신경질적으로 깜빡거리고 있다.\n\n**「……되었나?」**\n\n당신의 물음은 허공에서 흩어졌다. 하지만 상황은 명백하다. 당신은 살아남았고, 눈을 떴으며, 밖에서는 여전히 이 거대한 도시가 짐승처럼 웅웅거리고 있다.\n\n몸을 일으키려 하자 관절이 삐걱거리는 소리를 내며 비명을 질렀다. 아직 감각이 완전히 돌아오지 않은 손끝이 미세하게 떨린다.\n\n자, 이제 확인해야 한다.\n이곳이 안전한지, 그리고 당신이 기억하는 '마지막 장면'이 무엇인지.\n\n단말기를 집어 들겠습니까, 아니면 우선 몸 상태부터 확인하겠습니까?"
+    }
+  ],
+  "quest_board": {
+    "active": [
+      "몸 상태 확인하기",
+      "단말기 확인하기",
+      "마지막 기억 확인하기"
+    ],
+    "completed": [],
+    "memos": [],
+    "archive": [],
+    "lore": []
+  },
+  "world_state": {
+    "time_slot": "오후",
+    "weather": "맑음",
+    "day": 1,
+    "doom": 30,
+    "doom_name": "위기",
+    "risk_level": "None",
+    "current_location": "Unknown",
+    "location_rules": {},
+    "world_constraints": {},
+    "active_threads": [],
+    "last_temporal_context": {}
+  },
+  "settings": {
+    "response_mode": "auto",
+    "session_locked": false,
+    "growth_system": "default",
+    "abnormal_mode": true,
+    "scene_type": "normal",
+    "active_modules": [
+      "judgment",
+      "doom",
+      "anomaly",
+      "mental"
+    ]
+  },
+  "active_genres": [
+    "noir"
+  ],
+  "custom_tone": null,
+  "ai_session_memory": {
+    "world_summary": "",
+    "current_arc": "",
+    "active_threads": [],
+    "resolved_threads": [],
+    "key_events": [],
+    "foreshadowing": [],
+    "world_changes": [],
+    "npc_summaries": {},
+    "party_dynamics": "",
+    "last_updated": ""
+  },
+  "fermented_history": [],
+  "deep_memory": "",
+  "last_export_idx": 0,
+  "last_chronicle_idx": 0,
+  "bot_active": false,
+  "notebook": "— [소지품] —\n\n— [메모] —"
+}

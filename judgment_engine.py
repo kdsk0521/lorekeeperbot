@@ -30,31 +30,108 @@ class JudgmentEngine:
         dc_table = {"trivial": 0, "easy": 20, "normal": 40, "hard": 60, "extreme": 80}
         dc = dc_table.get(difficulty.lower(), 40)
         
-        # 2. Roll Dice
+        # 2. Dynamic Modifiers (Legacy Restoration)
+        # 2.1 Mental Modifiers (+20 / +10 / 0 / -10)
+        mental_val = bus.mental.get("value", 100)
+        mental_mod = 0
+        mental_label = "평정"
+        if mental_val >= 70: 
+            mental_mod = 20
+            mental_label = "평정"
+        elif mental_val >= 40: 
+            mental_mod = 10
+            mental_label = "동요"
+        elif mental_val >= 15: 
+            mental_mod = 0
+            mental_label = "공황"
+        else: 
+            mental_mod = -10
+            mental_label = "붕괴"
+            
+        # 2.2 Doom Modifiers (Baseline 50, Step 5)
+        current_doom = bus.doom.get("value", 0)
+        doom_mod = ((50 - current_doom) // 10) * 5
+        
+        # 3. Roll Dice
         roll = random.randint(1, 100)
-        bonus = eval_data.get("bonus", 0)
-        penalty = eval_data.get("penalty", 0)
-        final_roll = roll + bonus - penalty
+        eval_bonus = eval_data.get("bonus", 0)
+        eval_penalty = eval_data.get("penalty", 0)
         
-        # 3. Determine Result
+        final_roll = roll + eval_bonus - eval_penalty + mental_mod + doom_mod
+        
+        # 4. Determine Result
         result = "failure"
-        if roll >= 96: result = "critical_success"
-        elif roll <= 5: result = "critical_failure"
-        elif final_roll >= dc: result = "success"
-        elif final_roll >= dc - 20: result = "partial"
+        # Heroism/Calamity Impact (Natural Roll)
+        if roll >= 96:
+            bus.doom["delta"] = bus.doom.get("delta", 0) - 5
+        elif roll <= 5:
+            bus.doom["delta"] = bus.doom.get("delta", 0) + 5
+
+        # Success/Failure/Critical logic
+        if roll >= 96: 
+            result = "critical_success"
+        elif roll <= 5:
+            # Safeguard: DC <= 20 (Trivial, Easy) only crit fail on 1
+            if dc <= 20 and roll > 1:
+                result = "failure"
+            else:
+                result = "critical_failure"
+        elif final_roll >= dc: 
+            result = "success"
+        elif final_roll >= dc - 20: 
+            result = "partial"
         
-        # 4. Store Result
+        # 5. Store Result
         bus.judgment["roll"] = roll
         bus.judgment["final_roll"] = final_roll
         bus.judgment["dc"] = dc
         bus.judgment["result"] = result
+        bus.judgment["reason"] = eval_data.get("reason", "")
         
-        res_kr = {
-            "critical_success": "✨대성공", "success": "✅성공", 
-            "partial": "🟠부분 성공", "failure": "❌실패", 
-            "critical_failure": "⚠️대실패"
-        }.get(result, result)
+        # 6. Format Output (Multi-line)
+        res_map = {
+            "critical_success": ("✨대성공", "Critical Success"),
+            "success": ("✅성공", "Success"),
+            "partial": ("🟠부분 성공", "Partial Success"),
+            "failure": ("❌실패", "Failure"),
+            "critical_failure": ("⚠️대실패", "Critical Failure")
+        }
+        res_kr, res_en = res_map.get(result, (result, result))
         
-        bus.judgment["output"] = f"🎲 **판정 ({action})**: {roll} + {bonus}(보정) - {penalty}(페널티) = **{final_roll}** (DC {dc}) -> **{res_kr}**"
+        diff_name = difficulty.upper()
+        
+        # Breakdown of modifications: Label(+Val)
+        modifications = bus.judgment.get("modifications", [])
+        # Append System Mods for visibility
+        if mental_mod != 0:
+            modifications.append({"label": f"정신({mental_label})", "value": mental_mod})
+        if doom_mod != 0:
+            modifications.append({"label": "월드긴장", "value": doom_mod})
+            
+        mod_parts = []
+        for m in modifications:
+            label = m.get("label", "Unknown")
+            val = m.get("value", 0)
+            sign = "+" if val >= 0 else ""
+            mod_parts.append(f"{label}({sign}{val})")
+        
+        mod_details = ", ".join(mod_parts)
+        if mod_details:
+            mod_details = f", {mod_details}"
+        
+        output = [
+            f"🎲 **[판정: {action}]**",
+            f"난이도: **{diff_name}** (DC {dc})",
+            f"이유: *{bus.judgment['reason']}*",
+            f"주사위: **{roll}** {mod_details} = **{final_roll}**",
+            f"결과: **{res_kr} ({res_en})**"
+        ]
+        
+        # Narrative Hook (Only for Partial or Failure)
+        hook = bus.judgment.get("narrative_hook")
+        if hook and result in ["partial", "failure", "critical_failure"]:
+            output.append(f"\n⚠️ **잠재적 위기 (Narrative Hook)**: {hook}")
+            
+        bus.judgment["output"] = "\n".join(output)
         
         return context
