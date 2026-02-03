@@ -253,6 +253,7 @@ Name: {name}
 Description: {desc}
 ⚠️ CRITICAL: This character is the PLAYER. Controlled ONLY by User input.
 🛑 ABSOLUTELY FORBIDDEN: Do NOT write dialogue or actions for {name}.
+💡 GUIDE: Avoid using 2nd person pronouns (당신, 너) in narrative. Use the character's **Name ({name})** or **Title** ([Name]님, 기사님, etc.) instead.
 </Player_Character>
 """
         return self
@@ -538,6 +539,7 @@ This tone affects style, not physics or causality.
             text_resources.ANTI_CLICHE_PROTOCOL,          # Consolidated
             text_resources.TEMPORAL_FLOW_DOCTRINE,        # Consolidated
             text_resources.ANTI_DIDACTIC_PRINCIPLES,      # 8 Principles of Narrative
+            text_resources.SELF_CORRECTION_BKSPC,         # NEW: Real-time Correction
 
             # [Group 4: The Agents - Social & Behavioral]
             text_resources.PC_AUTONOMY_DOCTRINE,          # Consolidated

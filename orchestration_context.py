@@ -26,6 +26,7 @@ class RequestData:
     user_input: str = ""
     genres: Dict[str, str] = field(default_factory=lambda: {"stage": "", "flavor": "", "lens": ""})
     active_modules: List[str] = field(default_factory=lambda: ["judgment", "doom", "anomaly", "mental"])
+    lore_summary: Dict[str, Any] = field(default_factory=dict) # [V4] theme, anomaly_seeds, locations
 
 @dataclass
 class SharedBus:
@@ -180,6 +181,9 @@ async def gather_context(ctx: ResponseContext) -> ResponseContext:
     # 장르/톤
     ctx.active_genres = domain_manager.get_active_genres(channel_id)
     ctx.custom_tone = domain_manager.get_custom_tone(channel_id)
+
+    # [V4] Lore Summary Data (for UNE)
+    ctx.domain_data["lore_summary_data"] = domain_manager.get_lore_summary_data(channel_id)
 
     return ctx
 

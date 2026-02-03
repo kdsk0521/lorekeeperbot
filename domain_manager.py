@@ -246,6 +246,18 @@ def set_event_lore_summary(channel_id: str, text: str) -> None:
     path = get_event_lore_summary_file_path(channel_id)
     save_text(path, text)
 
+# [V4 Deep Analysis]
+def get_lore_summary_data(channel_id: str) -> Dict[str, Any]:
+    """구체적인 로어 요약 데이터(Theme, Anomaly Seeds 등)를 반환합니다."""
+    d = get_domain(channel_id)
+    return d.get("lore_summary_data", {})
+
+def set_lore_summary_data(channel_id: str, data: Dict[str, Any]) -> None:
+    """구체적인 로어 요약 데이터를 저장합니다."""
+    d = get_domain(channel_id)
+    d["lore_summary_data"] = data
+    save_domain(channel_id, d)
+
 def get_lore_with_npcs(channel_id: str) -> str:
     lore = get_lore(channel_id)
     npcs = get_npcs(channel_id)
@@ -676,7 +688,7 @@ def get_unified_player_info(channel_id: str, user_id: str) -> str:
     # 1. Description (Appearance + Personality + Background)
     desc_parts = []
     if mem.get("appearance"): desc_parts.append(f"Appearance: {mem['appearance']}")
-    if mem.get("personality"): desc_parts.append(f"Personality: {mem['personality']}")
+    if mem.get("description"): desc_parts.append(f"Description: {mem['description']}")
     # [Restored] Background
     if mem.get("background"): desc_parts.append(f"Background: {mem['background']}")
     
@@ -966,6 +978,9 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> D
     # Active Modules
     active_modules = get_active_modules(channel_id)
 
+    # Lore Summary (V4)
+    lore_summary = get_lore_summary_data(channel_id)
+
     # Narrative Anchors
     anchors = {
         "appearance": mem.get("appearance", ""),
@@ -989,7 +1004,8 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> D
         request=RequestData(
             user_input=user_input,
             genres=genres,
-            active_modules=active_modules
+            active_modules=active_modules,
+            lore_summary=lore_summary
         ),
         narrative_anchors=anchors,
         shared_bus=bus

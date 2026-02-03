@@ -647,6 +647,23 @@ If failure triggers a GM Move, weave the consequence physically into the scene.
 </Output_Protocol>
 """
 
+# =========================================================
+# BKSPC SELF-CORRECTION PROTOCOL (NEW)
+# =========================================================
+SELF_CORRECTION_BKSPC = """
+<Self_Correction_BKSPC priority="REAL_TIME">
+## BKSPC SELF-CORRECTION PROTOCOL
+
+If you detect any error (incorrect word, player impersonation, deviation from instructions) during generation:
+1. **Immediately use the `BKSPC` keyword.**
+2. `BKSPC` deletes the **single word** immediately preceding it.
+3. Use multiple `BKSPC` to delete more than one word.
+4. Continue with the corrected text to ensure a seamless final response.
+
+**Objective**: Ensure the final output is SEAMLESS and ERROR-FREE.
+</Self_Correction_BKSPC>
+"""
+
 LANGUAGE_CORRECTION = """
 <Language_Output_Correction>
 ## KOREAN STYLE GUIDE

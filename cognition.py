@@ -1053,3 +1053,94 @@ class GMCognition:
             return safe_parse_json(res) or {}
         except Exception:
             return {}
+# =========================================================
+# PART 4: UNIFIED LORE ANALYSIS (LORE ANALYZER)
+# =========================================================
+
+async def analyze_lore_unified(
+    client: genai.Client,
+    model_id: str,
+    lore_text: str
+) -> Dict[str, Any]:
+    """
+    [LoreAnalyzer V1]
+    로어북을 전체적으로 분석하여 장르, NPC, PC, 세계관 테마 및 이변 징후를 통합 추출합니다.
+    """
+    if not lore_text:
+        return {}
+
+    system_prompt = f"""당신은 숙련된 TRPG 캠페인 설계자이자 '로어 분석 엔진(LoreAnalyzer)'입니다.
+제공된 로어북을 정밀하게 분석하여 게임 운영에 필요한 모든 메타데이터를 추출하세요.
+
+## 분석 지침 (Absolute Principles)
+1. **통합적 일관성**: NPC와 PC(주인공)를 명확히 구분하세요.
+2. **장르 정렬**: 로어의 테마를 기존 시스템의 장르 키워드와 매칭시키세요.
+3. **서사적 이변(Anomaly) 추출**: 이 세계관의 균열이나 초자연적 현상의 뿌리가 되는 테마를 '이변 징후'로 정리하세요.
+4. **최적화**: 설명은 간결하고 강력하게 작성하세요. (text_resources의 최적화 가이드 준수)
+
+## 추출 항목 (Output Schema)
+1. **genres**: 3-Layer 장르 레이어 (각 계층별 최대 2개 태그 선정하여 리스트로 출력)
+   - world_setting: 시대/무대 배경 (high_fantasy, wuxia, cyberpunk, post_apocalypse, space_opera, modern 중 택 1~2)
+   - style_tech: 서사적 기믹 (urban_fantasy, steampunk, cosmic_horror, game_system 중 택 0~2)
+   - narrative_tone: 분위기/톤 (noir, comedy, romance, drama 중 택 1~2)
+   - atmosphere_guide: 내레이터를 위한 짧은 분위기 가이드 (한국어)
+2. **npcs**: NPC 리스트 (이름, 성별, 종족, 상세 설명(성격/외양/역할 통합))
+3. **pc_info**: 주인공(플레이어 캐릭터) 식별 정보. 명확한 주인공이 없으면 null.
+   - 상세 필드: name, role, species, appearance, description(성격/특징 통합), sexual_characteristics, background, secret_info, passives(name, desc), inventory
+4. **lore_summary**:
+   - theme: 세계관의 핵심 테마 (1-2문장)
+   - anomaly_seeds: 이 세계관에서 발생 가능한 이변/이상 현상의 테마 리스트 (예: '그림자 침식', '기계 광증' 등)
+   - locations: 주요 거점 및 특징
+
+## 출력 형식 (JSON Only)
+{{
+  "genres": {{ 
+    "world_setting": ["..."], 
+    "style_tech": ["..."], 
+    "narrative_tone": ["..."],
+    "atmosphere_guide": "..."
+  }},
+  "npcs": [ {{ "name": "...", "gender": "...", "race": "...", "description": "..." }} ],
+  "pc_info": {{ 
+    "name": "...", 
+    "role": "...", 
+    "species": "...", 
+    "appearance": "...", 
+    "description": "성격 및 전반적인 특징 설명", 
+    "sexual_characteristics": "...", 
+    "background": "...", 
+    "secret_info": "...", 
+    "passives": [ {{ "name": "...", "desc": "..." }} ], 
+    "inventory": {{ "Item": "Quantity" }} 
+  }},
+  "lore_summary": {{
+    "theme": "...",
+    "anomaly_seeds": ["징후1", "징후2"],
+    "locations": "..."
+  }}
+}}"""
+
+    try:
+        gen_config = types.GenerateContentConfig(
+            response_mime_type="application/json",
+            temperature=0.1
+        )
+        contents = [
+            types.Content(
+                role="user",
+                parts=[types.Part(text=f"{system_prompt}\n\n[LORE TEXT]\n{lore_text}")]
+            )
+        ]
+
+        result = await api_call_with_retry(
+            client, model_id, contents, gen_config, 
+            operation_name="Unified Lore Analysis"
+        )
+        
+        if result:
+            return safe_parse_json(result)
+
+    except Exception as e:
+        logger.error(f"[LoreAnalyzer] Analysis failed: {e}")
+
+    return {}

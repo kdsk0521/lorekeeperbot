@@ -75,6 +75,32 @@ def detect_scene_type_keywords(text: str) -> Optional[str]:
     return None
 
 
+def process_bkspc(text: str) -> str:
+    """
+    BKSPC 키워드를 처리하여 이전 단어(공백 포함)를 삭제합니다.
+    공백과 줄바꿈을 보존하기 위해 정규표현식을 사용합니다.
+    """
+    if not text or "BKSPC" not in text:
+        return text
+
+    # "단어+공백" 패턴을 찾아서 리스트화 (줄바꿈 포함)
+    # \S+ : 공백이 아닌 문자들 (단어)
+    # \s* : 뒤따르는 공백들
+    tokens = re.findall(r'\S+\s*|[\n\r]+', text)
+    result = []
+    
+    for token in tokens:
+        if "BKSPC" in token:
+            # BKSPC가 포함된 토큰이면 이전 토큰 삭제
+            # "BKSPC" 자체만 있는 경우와 "BKSPC "와 같이 공백이 포함된 경우 모두 처리
+            if result:
+                result.pop()
+        else:
+            result.append(token)
+            
+    return "".join(result).strip()
+
+
 # =========================================================
 # PC Impersonation Detection (PC 사칭 감지)
 # =========================================================
@@ -82,81 +108,96 @@ def detect_scene_type_keywords(text: str) -> Optional[str]:
 def detect_pc_impersonation(response: str, pc_names: List[str]) -> List[Dict]:
     """
     AI 응답에서 PC 사칭 패턴을 검출합니다.
-
-    PC(플레이어 캐릭터)의 대사, 행동, 내면 묘사 등을
-    AI가 임의로 생성한 경우를 감지합니다.
-
-    Args:
-        response: AI 응답 텍스트
-        pc_names: PC 이름 목록
-
-    Returns:
-        위반 목록 (각 항목: {pc, type, matched})
-        - type: 'dialogue', 'action', 'reaction', 'thought'
+    
+    확장: 2인칭 지칭(당신, 너) 및 서술형 행동 강제 탐지 추가.
+    예외: 따옴표 내 대사는 허용.
     """
     violations = []
-    if not pc_names:
-        return violations
+    
+    # 1. PC 이름 기반 탐지 (기존)
+    if pc_names:
+        for pc in pc_names:
+            if not pc or pc == "Unknown":
+                continue
+            safe_pc = re.escape(pc)
+            
+            patterns = [
+                # Dialogue
+                (rf'{safe_pc}[이가은는]?\s*["\'].*?["\'].*?(?:말했다|대답했다|중얼거렸다|외쳤다|물었다|진술했다)', 'dialogue'),
+                (rf'["\'].*?["\'].*?(?:라고|하고|이라며)\s*{safe_pc}', 'dialogue'),
+                
+                # Action (Expanded)
+                (rf'{safe_pc}[이가은는]?\s*(?:고개를|손을|몸을|시선을).*?(?:끄덕|흔들|돌렸|뻗었|응시|바라)', 'action'),
+                (rf'{safe_pc}[이가은는]?\s*(?:일어났다|앉았다|걸었다|뛰었다|멈췄다|바라보았다|웃었다|울었다|미소지었다|한숨을|소리쳤다)', 'action'),
+                
+                # Reaction (Expanded)
+                (rf'{safe_pc}[의]?\s*(?:표정|눈|얼굴|심장|호흡)[이가]?\s*(?:굳|밝|어두|놀|떨|차갑|뜨겁)', 'reaction'),
+                (rf'{safe_pc}[은는이가]?\s*(?:생각했다|느꼈다|깨달았다|결심했다|기억했다|떠올렸다|추측했다)', 'thought'),
+            ]
+            
+            for pattern, vtype in patterns:
+                for match in re.finditer(pattern, response, re.IGNORECASE):
+                    violations.append({
+                        'pc': pc,
+                        'type': vtype,
+                        'matched': match.group(),
+                        'start': match.start(),
+                        'end': match.end()
+                    })
 
-    for pc in pc_names:
-        if not pc or pc == "Unknown":
-            continue
+    # 2. 2인칭 지칭 및 행동 강제 탐지 (신규)
+    # 당신/너 가 주어로 쓰이고 뒤에 서술어(다/음/함)로 끝나는 경우
+    second_person_patterns = [
+        # 일반적인 2인칭 행동 강제 (은/는/이/가 + ~다)
+        (r'(?:당신|너|플레이어)(?:은|는|이|가)\s*.*?(?:했다|켰다|껐다|느꼈다|생각했다|말했다|보았다|멈췄다|끄덕였다|웃었다|바라보았다|앉았다|일어났다|걸었다|뛰었다)', 'impersonation_2nd'),
+        # 소유격 또는 신체 부위 지칭 후 상태 변화 (눈이 빛났다, 가슴이 떨렸다 등)
+        (r'당신(?:의|이)\s*(?:눈|손|몸|기억|생각|가슴|심장|호흡)(?:이|은|는|을)?\s*.*?(?:했다|느꼈다|떠올랐다|움직였다|굳었다|빛났다|떨렸다|가냘퍼졌다|거칠어졌다)', 'impersonation_2nd'),
+    ]
+    
+    for pattern, vtype in second_person_patterns:
+        for match in re.finditer(pattern, response, re.IGNORECASE):
+            violations.append({
+                'pc': "Player",
+                'type': vtype,
+                'matched': match.group()[:50],
+                'start': match.start(),
+                'end': match.end()
+            })
 
-        # Escape PC name for regex
-        safe_pc = re.escape(pc)
+    # 3. 따옴표(대사) 예외 필터링
+    # 현재 위반 위치가 따옴표 내부인지 확인
+    def is_inside_quotes(text, pos):
+        # 텍스트의 처음부터 해당 위치까지 따옴표 개수 홀수면 내부로 간주 (간이 방식)
+        # 더 정확하려면 큰따옴표의 쌍을 추적해야 함
+        sub = text[:pos]
+        double_quotes = sub.count('"')
+        single_quotes = sub.count("'")
+        return (double_quotes % 2 == 1) or (single_quotes % 2 == 1)
 
-        patterns = [
-            # 1. Dialogue (대사)
-            # "말했다", "대답했다" referring to PC
-            (rf'{safe_pc}[이가은는]?\s*["\'].*?["\'].*?(?:말했다|대답했다|중얼거렸다|외쳤다|물었다)', 'dialogue'),
-            # "..." 라고 PC가...
-            (rf'["\'].*?["\'].*?(?:라고|하고)\s*{safe_pc}', 'dialogue'),
-
-            # 2. Action (행동) - Common narrative patterns
-            (rf'{safe_pc}[이가은는]?\s*(?:고개를|손을|몸을).*?(?:끄덕|흔들|돌렸|뻗었)', 'action'),
-            (rf'{safe_pc}[이가은는]?\s*(?:일어났다|앉았다|걸었다|뛰었다|멈췄다|바라보았다)', 'action'),
-
-            # 3. Reaction/Emotion (반응/내면)
-            (rf'{safe_pc}[의]?\s*(?:표정|눈|얼굴)[이가]?\s*(?:굳|밝|어두|놀)', 'reaction'),
-            (rf'{safe_pc}[은는이가]?\s*(?:생각했다|느꼈다|깨달았다|결심했다)', 'thought'),
-        ]
-
-        for pattern, vtype in patterns:
-            matches = re.findall(pattern, response, re.IGNORECASE)
-            for match in matches:
-                violations.append({
-                    'pc': pc,
-                    'type': vtype,
-                    'matched': match[:50]
-                })
-
-    return violations
+    filtered_violations = []
+    for v in violations:
+        if not is_inside_quotes(response, v['start']):
+            filtered_violations.append(v)
+            
+    return filtered_violations
 
 
 def filter_pc_impersonation(response: str, pc_names: List[str]) -> Tuple[str, List[str]]:
     """
-    PC 사칭 부분을 검출하고 경고를 반환합니다.
-
-    현재는 텍스트를 직접 수정하지 않고 경고만 생성합니다.
-    문장 단위 제거는 문맥 손상 위험이 있어 보류합니다.
-
-    Args:
-        response: AI 응답 텍스트
-        pc_names: PC 이름 목록
-
-    Returns:
-        (필터링된 응답, 경고 메시지 목록)
+    PC 사칭 부분을 검출하고 BKSPC를 처리한 최종 텍스트를 반환합니다.
     """
+    # 1. BKSPC 먼저 처리
+    clean_text = process_bkspc(response)
+    
+    # 2. 사칭 검출 (정제된 텍스트에서 실행)
     warnings = []
-    violations = detect_pc_impersonation(response, pc_names)
+    violations = detect_pc_impersonation(clean_text, pc_names)
 
     if violations:
-        # For now, we return existing text but WARN heavily.
-        # Removing sentences is complex without tearing logic.
         for v in violations:
             warnings.append(f"⚠️ **PC 사칭 검출 [{v['type']}]:** `{v['matched']}...`")
 
-    return response, warnings
+    return clean_text, warnings
 
 
 # =========================================================

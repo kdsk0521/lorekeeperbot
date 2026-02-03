@@ -315,11 +315,12 @@ async def generate_response(
         role = "user" if h['role'] == "User" else "model"
         session.history.append(types.Content(role=role, parts=[types.Part(text=str(h['content']))]))
 
-    response = await persona.generate_response_with_retry(client, session, prompt)
+    # [Anti-Gravity] PC 사칭 탐지 및 BKSPC 처리가 통합된 생성 함수 호출
+    response = await persona.generate_response_with_retry(client, session, prompt, pc_names=[p_name])
 
     # 정리 (System Update & Telescope Logic Block)
     if response:
-        # 1. system_update 블록 제거 (기존)
+        # 1. system_update 블록 제거
         response = re.sub(r'```system_update[\s\S]*?```', '', response, flags=re.IGNORECASE).strip()
         
         # 2. [Telescope] Hidden Logic Block 추출 및 로깅
@@ -327,16 +328,10 @@ async def generate_response(
         if logic_match:
             logic_content = logic_match.group(1)
             logger.info(f"\n[🔭 TELESCOPE LOGIC LAYER]\n{logic_content}\n[-----------------------]")
-            # 사용자에게는 숨김 (제거)
             response = response.replace(logic_content, "").strip()
 
-    # PC 사칭 필터
+    # [Anti-Gravity] Mob Tag Cleaning (System Level)
     if response:
-        response, violations = persona.filter_pc_impersonation(response, [p_name])
-        if violations:
-            ctx.pc_impersonation_warnings = violations
-            
-        # [Anti-Gravity] Mob Tag Cleaning (System Level)
         from response_processor import clean_mob_tags
         response = clean_mob_tags(response)
 

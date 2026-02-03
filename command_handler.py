@@ -158,18 +158,19 @@ async def cmd_lore(ctx: CommandContext) -> None:
     
     if ctx.genai_client:
         try:
-            # Entity Extraction (Parallel)
-            # 1. NPCs (via npc_manager)
-            # 2. PC Info
-            npc_task = npc_manager.extract_npcs_from_lore(ctx.genai_client, ctx.model_id, full_content)
-            pc_task = memory_system.extract_pc_info(ctx.genai_client, ctx.model_id, full_content)
-
-            extracted_npcs, pc_info = await asyncio.gather(npc_task, pc_task)
-
-            # Update NPCs
-            npc_manager.add_lore_npcs(channel_id, extracted_npcs)
+            # [LoreAnalyzer V1] Unified Analysis
+            unified_res = await cognition.analyze_lore_unified(ctx.genai_client, ctx.model_id, full_content)
+            
+            extracted_npcs = unified_res.get("npcs", [])
+            pc_info = unified_res.get("pc_info")
+            genre_res = unified_res.get("genres", {})
+            lore_summary_data = unified_res.get("lore_summary", {})
+            
+            # 1. Update NPCs
+            if extracted_npcs:
+                npc_manager.add_lore_npcs(channel_id, extracted_npcs)
                 
-            # Update PC Info
+            # 2. Update PC Info
             pc_msg = ""
             if pc_info and pc_info.get("name"):
                  # Save as default PC info for !mask to pick up
@@ -184,14 +185,11 @@ async def cmd_lore(ctx: CommandContext) -> None:
                          # Merge passives
                          new_passives = pc_info.get("passives", [])
                          if new_passives:
-                             # Ensure ai_memory exists
                              if "ai_memory" not in p_data: p_data["ai_memory"] = {}
                              if "passives" not in p_data["ai_memory"]: p_data["ai_memory"]["passives"] = []
                              
-                             # Append non-duplicate passives
                              current_names = [p['name'] if isinstance(p, dict) else str(p) for p in p_data["ai_memory"]["passives"]]
                              for np in new_passives:
-                                 # Standardize to Dict
                                  np_obj = np if isinstance(np, dict) else {"name": str(np), "modifier": 0, "desc": "Extracted"}
                                  name_key = np_obj.get("name", "Unknown")
                                  
@@ -210,26 +208,38 @@ async def cmd_lore(ctx: CommandContext) -> None:
                  if updated_players:
                      pc_msg += f"\n✅ 캐릭터 업데이트: {', '.join(updated_players)} (패시브 적용)"
             
+            # 3. Update Genre (3-Layer)
+            # Adapt unified_res to legacy structure
+            genre_data = {
+                "layers": {
+                    "world_setting": genre_res.get("world_setting", []),
+                    "style_tech": genre_res.get("style_tech", []),
+                    "narrative_tone": genre_res.get("narrative_tone", [])
+                },
+                "atmosphere_guide": genre_res.get("atmosphere_guide", "")
+            }
+            domain_manager.set_active_genres(channel_id, genre_data)
+            domain_manager.set_custom_tone(channel_id, genre_res.get("atmosphere_guide"))
+            
+            # 4. Update Lore Summary (Anomaly Seeds included)
+            summary_text = f"테마: {lore_summary_data.get('theme', '')}\n이변 징후: {', '.join(lore_summary_data.get('anomaly_seeds', []))}\n공간: {lore_summary_data.get('locations', '')}"
+            domain_manager.set_event_lore_summary(channel_id, summary_text)
+            
+            # JSON format storage for V4 Deep Analysis
+            d_data = domain_manager.get_domain(channel_id)
+            d_data["lore_summary_data"] = lore_summary_data
+            domain_manager.save_domain(channel_id, d_data)
+
             domain_manager.append_lore(channel_id, full_content) 
             
-            # Genre Analysis (3-Layer)
-            res = await memory_system.analyze_genre_layers(ctx.genai_client, ctx.model_id, full_content)
-            # Store the FULL structure so persona.py can use it
-            domain_manager.set_active_genres(channel_id, res) 
-            domain_manager.set_custom_tone(channel_id, res.get("atmosphere_guide"))
-            
-            # Event Lore Summarization
-            event_summary = await memory_system.summarize_lore_for_events(ctx.genai_client, ctx.model_id, full_content)
-            domain_manager.set_event_lore_summary(channel_id, event_summary)
-            
-            # Formatted Output
-            layers = res.get("layers", {})
-            genre_summary = f"{layers.get('world_setting', '?')} / {layers.get('style_tech', '?')} / {layers.get('narrative_tone', '?')}"
-            
-            await msg.edit(content=f"✅ **로어 분석 완료**\nNPC: {len(extracted_npcs)}명 추출{pc_msg}\n장르(3계층): {genre_summary}\n이벤트 요약: 생성됨 ({len(event_summary)}자)")
+            # Formatted Output (Match User's Legacy Format)
+            genre_summary = f"{genre_res.get('world_setting', [])} / {genre_res.get('style_tech', [])} / {genre_res.get('narrative_tone', [])}"
+            await msg.edit(content=f"✅ **로어 분석 완료**\nNPC: {len(extracted_npcs)}명 추출{pc_msg}\n장르(3계층): {genre_summary}\n이변 징후: {len(lore_summary_data.get('anomaly_seeds', []))}개 식별")
+
         except Exception as e:
+            import traceback
+            logger.error(f"Unified Lore Analysis Failed: {e}\n{traceback.format_exc()}")
             await msg.edit(content=f"⚠️ 분석 오류: {e}")
-            # Still append on error
             domain_manager.append_lore(channel_id, full_content)
     else:
         domain_manager.append_lore(channel_id, full_content)
@@ -266,12 +276,14 @@ async def cmd_info(ctx: CommandContext) -> None:
     # Appearance/Personality from AI Memory if available
     mem = p_data.get("ai_memory", {})
     appearance = mem.get("appearance", "")
-    personality = mem.get("personality", "")
+    description = mem.get("description", "")
+    background = mem.get("background", "")
     
     msg = [f"🎭 **{mask_name}**"]
     if desc: msg.append(f"> {desc}")
     if appearance: msg.append(f"**외모:** {appearance}")
-    if personality: msg.append(f"**성격:** {personality}")
+    if description: msg.append(f"**설명:** {description}")
+    if background: msg.append(f"**배경:** {background}")
     
     # 2. Relations (NPC/Colleague)
     # This might be in 'relations' key in memory or external
@@ -521,10 +533,20 @@ async def cmd_npc(ctx: CommandContext) -> None:
         # Specific NPC
         npc = domain_manager.get_npc(channel_id, arg.strip())
         if npc:
-            msg = f"👤 **{arg}**\n{npc.get('desc')}\n"
-            if npc.get('appearance'): msg += f"Look: {npc.get('appearance')}\n"
-            if npc.get('personality'): msg += f"Personality: {npc.get('personality')}\n"
-            await ctx.send(msg)
+            msg = [f"👤 **{arg}**"]
+            if npc.get('gender') or npc.get('race'):
+                meta = []
+                if npc.get('gender'): meta.append(npc.get('gender'))
+                if npc.get('race'): meta.append(npc.get('race'))
+                msg.append(f"({', '.join(meta)})")
+            
+            msg.append(f"{npc.get('desc')}")
+            
+            if npc.get('appearance'): msg.append(f"**외양:** {npc.get('appearance')}")
+            if npc.get('description'): msg.append(f"**설명:** {npc.get('description')}")
+            if npc.get('background'): msg.append(f"**배경:** {npc.get('background')}")
+            
+            await ctx.send("\n".join(msg))
         else:
             await ctx.send(f"⚠️ NPC '{arg}' 정보를 찾을 수 없습니다.")
 

@@ -63,7 +63,12 @@ class TheoriaAnalyzer:
 - **소지품(Inventory)**: {anchors.get('inventory', [])}
 - **관계(Relations)**: {anchors.get('relations', {})}
 
-## 3. 분석 및 출력 지침 (JSON)
+## 3. 세계관 맥락 (World Context & Lore)
+- **핵심 테마**: {req.lore_summary.get('theme', '일반적인 TRPG 세계관')}
+- **이변 징후(Anomaly Seeds)**: {', '.join(req.lore_summary.get('anomaly_seeds', [])) or '알 수 없음'}
+- **주요 장소**: {req.lore_summary.get('locations', '현재 위치 주변')}
+
+## 4. 분석 및 출력 지침 (JSON)
 - **intent**: 유저의 핵심 의도 요약.
 - **needs_judgment**: 판정(Dice Roll)이 필요한 도전적인 행동인가? (true/false)
 - **action_meta**: 판정 필요시 {{ "action": "단어", "difficulty": "easy/normal/hard..." }}

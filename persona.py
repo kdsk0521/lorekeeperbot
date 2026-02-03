@@ -246,13 +246,16 @@ Recording in Korean.
 async def generate_response_with_retry(
     client: genai.Client,
     chat_session: ChatSessionAdapter,
-    user_input: str
+    user_input: str,
+    pc_names: Optional[List[str]] = None
 ) -> str:
     """
     재시도 로직을 포함하여 응답을 생성합니다.
+    [Anti-Gravity Update]
+    - BKSPC 자가 교정 처리
+    - PC 사칭 실시간 탐지 및 자동 재시도
     """
     min_length = DEFAULT_MIN_RESPONSE_LENGTH
-    max_length = DEFAULT_MAX_RESPONSE_LENGTH
     
     length_instruction = build_length_instruction()
     
@@ -270,47 +273,38 @@ async def generate_response_with_retry(
         try:
             response = await chat_session.send_message(full_input)
             
-            # ===== [NEW] 상세 응답 진단 =====
-            if response is None:
-                logging.warning(f"[시도 {attempt+1}] response 객체 자체가 None")
-                continue
-            
-            # 후보 확인
-            if not response.candidates:
-                logging.warning(f"[시도 {attempt+1}] candidates 없음")
-                # prompt_feedback 확인
-                if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
+            if response is None or not response.candidates:
+                logging.warning(f"[시도 {attempt+1}] 응답 또는 후보 없음")
+                # prompt_feedback 확인 (기존 로직 유지)
+                if response and hasattr(response, 'prompt_feedback') and response.prompt_feedback:
                     feedback = response.prompt_feedback
                     logging.warning(f"  prompt_feedback: {feedback}")
                     if hasattr(feedback, 'block_reason') and str(feedback.block_reason) == 'PROHIBITED_CONTENT':
                         logging.error("🚫 [CRITICAL] Prompt blocked by PROHIBITED_CONTENT filter. Check guidelines/lore.")
                 continue
             
+            # 기존 finish_reason 확인 로직 (기존 로직 유지)
             candidate = response.candidates[0]
-            
-            # finish_reason 확인
             finish_reason = getattr(candidate, 'finish_reason', None)
             if finish_reason:
                 finish_reason_str = str(finish_reason)
                 if 'SAFETY' in finish_reason_str:
                     logging.warning(f"[시도 {attempt+1}] 안전 필터 차단: {finish_reason_str}")
-                    # 안전 등급 확인
                     if hasattr(candidate, 'safety_ratings'):
                         for rating in candidate.safety_ratings:
                             logging.warning(f"  {rating.category}: {rating.probability}")
                     continue
                 elif 'MAX_TOKENS' in finish_reason_str:
                     logging.warning(f"[시도 {attempt+1}] 토큰 한계 도달")
-                elif finish_reason_str not in ['STOP', 'END_TURN', '1']: # 1 is often STOP
-                     # Just log, don't necessarily skip if text exists
+                elif finish_reason_str not in ['STOP', 'END_TURN', '1']:
                     logging.warning(f"[시도 {attempt+1}] 종료 사유: {finish_reason_str}")
-            
+
             response_text = None
             if response.text:
                 response_text = response.text
             else:
-                logging.warning(f"[시도 {attempt+1}] text 속성 비어있음")
                 # content.parts 직접 확인
+                # candidate = response.candidates[0] # Already defined above
                 if hasattr(candidate, 'content') and candidate.content:
                     parts = candidate.content.parts
                     if parts:
@@ -319,12 +313,33 @@ async def generate_response_with_retry(
                             response_text = "".join(text_parts)
                             logging.info(f"[시도 {attempt+1}] parts에서 텍스트 복구: {len(response_text)}자")
 
+
             if response_text:
-                response_length = len(response_text)
+                # 1. BKSPC 및 사칭 필터 적용
+                # filter_pc_impersonation internally calls process_bkspc
+                clean_text, violations = filter_pc_impersonation(response_text, pc_names or [])
+                response_length = len(clean_text)
                 
+                # 2. 사칭 검출 시 재시도
+                if violations and attempt < config.MAX_RETRY_COUNT - 1:
+                    violation_types = ", ".join(set(v['type'] for v in violations))
+                    logging.warning(f"[Impersonation] 검출됨 ({violation_types}): 시도 {attempt + 1}")
+                    
+                    # 사칭 금지 경고와 함께 재시도
+                    full_input = (
+                        f"{user_input}\n\n"
+                        f"⚠️ **[SECURITY WARNING]** Previous response detected PC IMPERSONATION ({violation_types}). "
+                        f"🛑 **YOU MUST NOT** write dialogue, actions, or thoughts for the player.\n"
+                        f"Current PC(s): {', '.join(pc_names) if pc_names else 'Unknown'}\n"
+                        f"Focus ONLY on the World and NPCs.\n"
+                        f"{hidden_reminder}"
+                    )
+                    continue
+
+                # 3. 길이 검사
                 if response_length >= min_length:
                     logging.info(f"[Length] OK: {response_length}자")
-                    return response_text
+                    return clean_text
                 else:
                     logging.warning(
                         f"[Length] SHORT: {response_length}자 < {min_length}자 "
@@ -332,7 +347,7 @@ async def generate_response_with_retry(
                     )
                     
                     if response_length > best_length:
-                        best_response = response_text
+                        best_response = clean_text
                         best_length = response_length
                     
                     if attempt < config.MAX_RETRY_COUNT - 1:
@@ -353,7 +368,7 @@ async def generate_response_with_retry(
             await asyncio.sleep(config.RETRY_DELAY_SECONDS)
     
     if best_response:
-        logging.warning(f"[Length] FALLBACK: 최소 길이 미달이지만 반환 ({best_length}자)")
+        logging.warning(f"[Retry] FALLBACK: 최선의 응답 반환 ({len(best_response)}자)")
         return best_response
     
     return "⚠️ **[시스템 경고]** 기록 장치 오류. 잠시 후 다시 시도해주세요."
