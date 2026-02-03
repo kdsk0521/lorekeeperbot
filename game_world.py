@@ -335,61 +335,61 @@ async def generate_anomaly_event(
         category_hints = ["Unknown", "Strange", "Anomaly", "Phenomenon"]
 
     # Dynamic Prompt Construction - 한국어 중심, 세계관 맥락 강화
-    system_prompt = f"""당신은 TRPG의 '이변(Anomaly) 생성기'입니다.
-현재 세계 상태에 기반하여 **비일상적인** 이벤트를 생성하세요.
+    system_prompt = f"""You are the 'Anomaly Generator' for a TRPG.
+Generate an **extraordinary** event based on the current world state.
 
-## 핵심 원칙
-**이변은 좋고 나쁨이 없습니다.** 단지 '일상적이지 않은 현상'일 뿐입니다.
-- 기회일 수도, 위험일 수도, 단순한 기이함일 수도 있습니다.
-- 플레이어가 어떻게 반응하느냐에 따라 결과가 달라집니다.
+## Core Principles
+**An anomaly is neither good nor bad.** It is simply an 'extraordinary phenomenon'.
+- It can be an opportunity, a danger, or just a bizarre occurrence.
+- The outcome depends on how the player reacts.
 
-## 현재 컨텍스트
-### 세계관 요약
+## Current Context
+### World Lore Summary
 {lore_text}
 
-### 현재 상황
-- **위치**: {location}
-- **활성 장르**: {', '.join(active_genres)}
-- **세계 긴장도**: {doom_val}/100 ({tone_cat.upper()})
-- **분위기 키워드**: {', '.join(tone_keywords)}
+### Current Situation
+- **Location**: {location}
+- **Active Genres**: {', '.join(active_genres)}
+- **World Tension (Doom)**: {doom_val}/100 ({tone_cat.upper()})
+- **Atmosphere Keywords**: {', '.join(tone_keywords)}
 
-## 이변 생성 규칙
+## Anomaly Generation Rules
+**IMPORTANT: All string values (tag, description, effect_hint) must be in KOREAN.**
 
-### 1. 카테고리 (category)
-세계관에 맞는 이변 분류입니다. 다음 중 선택하거나 세계관에 맞게 생성:
-추천: {', '.join(category_hints[:5])}
+### 1. category
+A classification of the anomaly fitting the world. Select from or create one fitting the lore:
+Recommended: {', '.join(category_hints[:5])}
 
-### 2. 태그 (tag)
-한 단어로 된 이변의 정체. 세계관 용어를 사용하면 더 좋습니다.
-- ✅ 좋은 예: [균열], [속삭임], [변이], [침묵], [그림자], [빛], [울림]
-- ❌ 나쁜 예: [이상한 소리가 들림], [갑자기 어두워짐]
+### 2. tag
+A one-word tag representing the identity of the anomaly (KOREAN). Using world-specific terminology is better.
+- ✅ Good Examples: [균열], [속삭임], [변이], [침묵], [그림자], [빛], [울림]
+- ❌ Bad Examples: [Hear a strange sound], [Suddenly gets dark]
 
-### 3. 설명 (description)
-**중요**: 이변은 '판단'이 아닌 '현상'입니다.
-- 2-3문장으로 생생하게 묘사
-- 감각적 디테일 포함 (시각, 청각, 촉각, 냄새 등)
-- **중립적 톤 유지**: "무섭다", "위험하다" 같은 판단 금지
-- 현상 자체만 객관적으로 묘사
+### 3. description
+**IMPORTANT**: An anomaly is a 'phenomenon', not a 'judgment'.
+- Describe vividly in 2-3 sentences in KOREAN.
+- Include sensory details (sight, sound, touch, smell, etc.).
+- **Maintain Neutral Tone**: Avoid subjective judgments like "scary" or "dangerous".
+- Describe the phenomenon objectively.
 
-### 4. 효과 힌트 (effect_hint)
-플레이어의 선택지나 가능한 반응에 대한 힌트.
-- 예: "조사할 수 있다", "무시할 수도 있다", "기회일지도", "주의 필요"
+### 4. effect_hint
+Hints about player choices or possible reactions in KOREAN.
+- Examples: "조사할 수 있다", "무시할 수도 있다", "기회일지도", "주의 필요"
 
-### 5. 톤 조절 (세계 긴장도 기반)
-- 낮은 긴장(~30%): 기묘함, 호기심을 자극하는 현상
-- 중간 긴장(30~70%): 긴장감, 불확실성이 있는 현상
-- 높은 긴장(70%+): 강렬함, 무시하기 어려운 현상
+### 5. Tone Control (Based on World Tension)
+- Low Tension (~30%): Mysterious, curiosity-inducing phenomena.
+- Mid Tension (30~70%): Tense, uncertain phenomena.
+- High Tension (70%+): Intense, difficult-to-ignore phenomena.
 
-## 출력 형식 (JSON만 출력)
+## Output Format (JSON Only)
 {{
-  "category": "이변 분류 (영어)",
-  "tag": "[한글 태그]",
-  "tone": "Mystery/Surreal/Ominous/Eerie/Wonder/etc",
-  "description": "이변에 대한 객관적 묘사...",
-  "effect_hint": "플레이어 선택지 힌트",
+  "category": "Classification (English)",
+  "tag": "[Korean Tag]",
+  "tone": "Mystery/Surreal/Ominous/Eerie/Wonder/etc (English)",
+  "description": "Objective description in KOREAN...",
+  "effect_hint": "Player choice hint in KOREAN",
   "nature": "neutral"
-}}
-"""
+}}"""
 
     try:
         gen_config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.7)
@@ -405,31 +405,36 @@ async def generate_anomaly_event(
             cleaned = bot_utils.clean_json_text(response.text)
             data = json.loads(cleaned)
 
-            # [Sanitize Tag] Clean up and format
+            # [Sanitize Tag] Robust cleaning to get a clean single word/tag
             if "tag" in data:
-                raw = data["tag"].replace("[", "").replace("]", "").strip()
-                # Remove (...) parenthesis content
+                raw = data["tag"]
+                # 1. Remove brackets and common separators
+                raw = raw.replace("[", "").replace("]", "").strip()
+                
+                # 2. Remove anything after a colon or hyphen/dash (often used for descriptions)
+                raw = re.split(r'[:\-—]', raw)[0].strip()
+                
+                # 3. Remove (...) parenthesis content
                 raw = re.sub(r'\(.*?\)', '', raw).strip()
-                # Remove excessive description (take only first meaningful part)
-                # For Korean: 첫 번째 단어나 의미 단위만 취함
+                
+                # 4. Extract first meaningful word/concept
                 if ' ' in raw:
-                    # 한글이 포함된 경우 첫 단어만
                     words = raw.split()
-                    # Skip English articles if mixed
+                    # Skip English articles
                     if words[0].lower() in ["the", "a", "an"] and len(words) > 1:
                         raw = words[1]
                     else:
                         raw = words[0]
+                
+                # 5. Remove lingering punctuation at the end (.,!?)
+                raw = re.sub(r'[.,!?]$', '', raw).strip()
 
-                # 너무 긴 태그 자르기 (최대 10자)
+                # 6. Length limit (max 10 chars)
                 if len(raw) > 10:
                     raw = raw[:10]
 
-                # Check for empty result
-                if not raw:
-                    raw = "이변"
-
-                data["tag"] = raw  # 대괄호 없이 저장 (표시할 때 추가)
+                # Final Fallback
+                data["tag"] = raw if raw else "이변"
 
             return data
             

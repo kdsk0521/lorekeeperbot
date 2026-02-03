@@ -50,38 +50,40 @@ class TheoriaAnalyzer:
         req = context.request
         anchors = context.narrative_anchors
         
-        prompt = f"""당신은 TRPG 엔진의 '통합 분석기(Theoria)'입니다. 
-사용자의 입력 의도와 플레이어 캐릭터의 자산을 종합적으로 분석하여 시스템 처리를 위한 데이터를 생성하세요.
+        prompt = f"""You are the 'Integrated Analyzer (Theoria)' of the TRPG engine.
+Analyze the user's input intent and the player character's assets comprehensively to generate data for system processing.
 
-## 1. 현재 상황 및 맥락
-- **유저 입력**: {req.user_input}
-- **장르 설정**: {req.genres}
-- **현재 긴장도(Doom)**: {context.shared_bus.doom.get('value', 0)}
+## 1. Current Situation & Context
+- **User Input**: {req.user_input}
+- **Genre Settings**: {req.genres}
+- **Current World Tension (Doom)**: {context.shared_bus.doom.get('value', 0)}
 
-## 2. 플레이어 자산 (Narrative Anchors)
-- **특성(Passives)**: {anchors.get('passives', [])}
-- **소지품(Inventory)**: {anchors.get('inventory', [])}
-- **관계(Relations)**: {anchors.get('relations', {})}
+## 2. Player Assets (Narrative Anchors)
+- **Passives**: {anchors.get('passives', [])}
+- **Inventory**: {anchors.get('inventory', [])}
+- **Relations**: {anchors.get('relations', {})}
 
-## 3. 세계관 맥락 (World Context & Lore)
-- **핵심 테마**: {req.lore_summary.get('theme', '일반적인 TRPG 세계관')}
-- **이변 징후(Anomaly Seeds)**: {', '.join(req.lore_summary.get('anomaly_seeds', [])) or '알 수 없음'}
-- **주요 장소**: {req.lore_summary.get('locations', '현재 위치 주변')}
+## 3. World Context & Lore
+- **Core Theme**: {req.lore_summary.get('theme', 'General TRPG World')}
+- **Anomaly Seeds**: {', '.join(req.lore_summary.get('anomaly_seeds', [])) or 'Unknown'}
+- **Major Locations**: {req.lore_summary.get('locations', 'Current surroundings')}
 
-## 4. 분석 및 출력 지침 (JSON)
-- **intent**: 유저의 핵심 의도 요약.
-- **needs_judgment**: 판정(Dice Roll)이 필요한 도전적인 행동인가? (true/false)
-- **action_meta**: 판정 필요시 {{ "action": "단어", "difficulty": "easy/normal/hard..." }}
+## 4. Analysis & Output Guidelines (JSON)
+**IMPORTANT: All string values in the JSON output must be in KOREAN.**
+
+- **intent**: Summary of the user's core intent (Korean).
+- **needs_judgment**: Is this a challenging action requiring a Dice Roll? (true/false)
+- **action_meta**: If judgment is needed, {{ "action": "korean_word", "difficulty": "easy/normal/hard/extreme" }}
 - **asset_evaluation**: 
-    - **bonus**: 자산이 주는 보너스 합계 (0~40)
-    - **penalty**: 상황적 페널티 합계 (0~40)
-    - **reason**: 보정치 부여 근거 (1문장)
-    - **modifications**: [ {{ "label": "항목명", "value": 숫자 }}, ... ] (개별 보정치 상세 내역)
-    - **defense_success**: 만약 현재 상황이 '위협/이변'에 대응하는 것이라면, 자산으로 이를 완벽히 방어 가능한지 (true/false)
-- **narrative_hook**: 판정 실패나 부분 성공 시 발생할 수 있는 '잠재적 위기' 또는 '서사적 반전' 제안 (1문장)
-- **time_flow**: {{ "ticks": 숫자(1~20), "reason": "근거" }}
+    - **bonus**: Total bonus (Passives/Items: Max 40, Situational: Max 20).
+    - **penalty**: Total penalty (Passives/Items: Max 20, Situational: Max 20).
+    - **reason**: Rationale for modifiers (1 sentence in Korean, including compliance with caps).
+    - **modifications**: [ {{ "label": "itemName_Korean", "value": number }}, ... ] (Detailed breakdown)
+    - **defense_success**: If countering a threat/anomaly, can assets perfectly block it? (true/false)
+- **narrative_hook**: Suggested 'potential crisis' or 'twist' for failure/partial success (1 sentence in Korean).
+- **time_flow**: {{ "ticks": number(1-20), "reason": "reason_Korean" }}
 
-## 4. 출력 예시
+## 5. Output Example (Values must be Korean)
 {{
   "intent": "경비병 몰래 뒤로 돌아가 기습 시도",
   "needs_judgment": true,

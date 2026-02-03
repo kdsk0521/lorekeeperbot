@@ -1069,30 +1069,32 @@ async def analyze_lore_unified(
     if not lore_text:
         return {}
 
-    system_prompt = f"""당신은 숙련된 TRPG 캠페인 설계자이자 '로어 분석 엔진(LoreAnalyzer)'입니다.
-제공된 로어북을 정밀하게 분석하여 게임 운영에 필요한 모든 메타데이터를 추출하세요.
+    system_prompt = f"""You are an experienced TRPG Campaign Designer and 'Lore Analysis Engine (LoreAnalyzer)'.
+Analyze the provided lorebook precisely to extract all metadata required for game operations.
 
-## 분석 지침 (Absolute Principles)
-1. **통합적 일관성**: NPC와 PC(주인공)를 명확히 구분하세요.
-2. **장르 정렬**: 로어의 테마를 기존 시스템의 장르 키워드와 매칭시키세요.
-3. **서사적 이변(Anomaly) 추출**: 이 세계관의 균열이나 초자연적 현상의 뿌리가 되는 테마를 '이변 징후'로 정리하세요.
-4. **최적화**: 설명은 간결하고 강력하게 작성하세요. (text_resources의 최적화 가이드 준수)
+## Analysis Principles (Absolute Principles)
+1. **Holistic Consistency**: Clearly distinguish between NPCs and the PC (Player Character/Protagonist).
+2. **Genre Alignment**: Match lore themes with existing system genre keywords.
+3. **Narrative Anomaly Extraction**: Summarize themes that serve as the root of ruptures or supernatural phenomena as 'Anomaly Seeds'.
+4. **Optimization**: Write descriptions concisely and powerfully. (Follow the optimization guide in text_resources)
 
-## 추출 항목 (Output Schema)
-1. **genres**: 3-Layer 장르 레이어 (각 계층별 최대 2개 태그 선정하여 리스트로 출력)
-   - world_setting: 시대/무대 배경 (high_fantasy, wuxia, cyberpunk, post_apocalypse, space_opera, modern 중 택 1~2)
-   - style_tech: 서사적 기믹 (urban_fantasy, steampunk, cosmic_horror, game_system 중 택 0~2)
-   - narrative_tone: 분위기/톤 (noir, comedy, romance, drama 중 택 1~2)
-   - atmosphere_guide: 내레이터를 위한 짧은 분위기 가이드 (한국어)
-2. **npcs**: NPC 리스트 (이름, 성별, 종족, 상세 설명(성격/외양/역할 통합))
-3. **pc_info**: 주인공(플레이어 캐릭터) 식별 정보. 명확한 주인공이 없으면 null.
-   - 상세 필드: name, role, species, appearance, description(성격/특징 통합), sexual_characteristics, background, secret_info, passives(name, desc), inventory
+## Output Schema
+**IMPORTANT: All string descriptions and guides must be in KOREAN.**
+
+1. **genres**: 3-Layer Genre structure (List up to 2 tags per layer)
+   - world_setting: Time/Setting backdrop (Choose 1-2 from: high_fantasy, wuxia, cyberpunk, post_apocalypse, space_opera, modern)
+   - style_tech: Narrative gimmicks (Choose 0-2 from: urban_fantasy, steampunk, cosmic_horror, game_system)
+   - narrative_tone: Atmosphere/Tone (Choose 1-2 from: noir, comedy, romance, drama)
+   - atmosphere_guide: Short atmosphere guide for the narrator (Korean)
+2. **npcs**: List of NPCs (Name, Gender, Race, Detailed Description (Personality/Appearance/Role integrated - Korean))
+3. **pc_info**: Identification of the Protagonist. null if no clear protagonist.
+   - Fields: name, role, species, appearance, description (integrated personality/traits - Korean), sexual_characteristics, background, secret_info, passives(name, desc - Korean), inventory
 4. **lore_summary**:
-   - theme: 세계관의 핵심 테마 (1-2문장)
-   - anomaly_seeds: 이 세계관에서 발생 가능한 이변/이상 현상의 테마 리스트 (예: '그림자 침식', '기계 광증' 등)
-   - locations: 주요 거점 및 특징
+   - theme: Core theme of the world (1-2 sentences in Korean)
+   - anomaly_seeds: List of anomaly/supernatural themes possible in this world (e.g., '그림자 침식', '기계 광증' etc. - Korean)
+   - locations: Key locations and their characteristics (Korean)
 
-## 출력 형식 (JSON Only)
+## Output Format (JSON Only)
 {{
   "genres": {{ 
     "world_setting": ["..."], 

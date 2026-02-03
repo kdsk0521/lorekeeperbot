@@ -96,7 +96,8 @@ def _get_default_session() -> Dict[str, Any]:
         "last_export_idx": 0,
         "last_chronicle_idx": 0,
         "bot_active": True,  # Default: Bot is ON
-        "notebook": "— [소지품] —\n\n— [메모] —" # [V5.1] Unified Notebook
+        "notebook": "— [소지품] —\n\n— [메모] —", # [V5.1] Unified Notebook
+        "last_execution_context": None  # [!다시] Persistent retry data
     }
 
 def get_notebook(channel_id: str) -> str:
@@ -155,6 +156,26 @@ def get_domain(channel_id: str) -> Dict[str, Any]:
     # 캐시에 저장
     cache.set_session(channel_id, data)
     return data
+
+# =========================================================
+# 3. DOMAIN METADATA & RETRY CONTEXT
+# =========================================================
+
+def save_last_execution_context(channel_id: str, context: Dict[str, Any]) -> None:
+    """마지막 실행 컨텍스트를 저장합니다. (!다시 기능용)"""
+    d = get_domain(channel_id)
+    d["last_execution_context"] = context
+    save_domain(channel_id, d)
+
+def get_last_execution_context(channel_id: str) -> Optional[Dict[str, Any]]:
+    """마지막 실행 컨텍스트를 조회합니다."""
+    return get_domain(channel_id).get("last_execution_context")
+
+def clear_last_execution_context(channel_id: str) -> None:
+    """마지막 실행 컨텍스트를 초기화합니다."""
+    d = get_domain(channel_id)
+    d["last_execution_context"] = None
+    save_domain(channel_id, d)
 
 def save_domain(channel_id: str, data: Dict[str, Any]) -> bool:
     """세션 데이터 저장 (파일 + 캐시 동기화)"""

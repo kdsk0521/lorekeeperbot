@@ -76,9 +76,11 @@ class JudgmentEngine:
                 result = "failure"
             else:
                 result = "critical_failure"
+        elif final_roll >= dc + 30:
+            result = "critical_success"
         elif final_roll >= dc: 
             result = "success"
-        elif final_roll >= dc - 20: 
+        elif final_roll >= dc - 30: 
             result = "partial"
         
         # 5. Store Result

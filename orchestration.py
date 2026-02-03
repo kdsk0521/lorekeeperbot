@@ -65,8 +65,7 @@ class OrchestrationService:
         from une_facade import UniversalNarrativeEngine
         self.une = UniversalNarrativeEngine(client_genai, model_id_flash)
         
-        # [!다시 기능] 채널별 마지막 컨텍스트 저장
-        self._last_contexts: Dict[str, Dict[str, Any]] = {}
+        # NOTE: self._last_contexts는 이제 domain_manager의 영속 데이터로 대체됩니다.
 
     # =========================================================
     # STEP 1: CONTEXT GATHERING
@@ -425,13 +424,23 @@ class OrchestrationService:
 
             # async output (typing indicator)
             async with message.channel.typing():
-                # 3. & 4. UNE Integrated Logic (Batching Process)
-                # This replaces world state updates and anomaly/judgment separate calls
+                # [!다시] 마지막 컨텍스트 초기화 (재생성 전)
+                current_retry_ctx = {
+                    "action_text": ctx.action_text,
+                    "user_id": user_id,
+                    "original_message_id": message.id,
+                    "message_ids": [],
+                    "has_response": False
+                }
+
+                # 4. UNE Integrated Logic (Batching Process)
                 ctx, une_logs, une_directive = await self.process_une_logic(ctx, message)
                 
                 # Log messages (User Facing)
                 if une_logs:
-                    await message.channel.send("\n".join(une_logs))
+                    une_msg = await message.channel.send("\n".join(une_logs))
+                    current_retry_ctx["message_ids"].append(une_msg.id)
+                    current_retry_ctx["has_response"] = True # Mark as retryable even if only system logs exist
 
                 # 5. Prompt Building
                 # UNE directive is already injected into ctx.judgment_context
@@ -439,15 +448,6 @@ class OrchestrationService:
 
                 # 6. Response Generation
                 response = await self.generate_response(ctx, full_prompt)
-
-                # [!다시 기능] 마지막 컨텍스트 저장 (응답 존재 여부와 관계없이 저장)
-                self._last_contexts[channel_id] = {
-                    "action_text": ctx.action_text,
-                    "user_id": user_id,
-                    "original_message_id": message.id,
-                    "has_response": response is not None and response.strip() != ""
-                }
-                logger.debug(f"[!다시] Context saved for channel {channel_id}: action_text='{ctx.action_text[:50]}...', has_response={self._last_contexts[channel_id]['has_response']}")
                 
                 if response:
                     # [UI Feedback] 완료 시 안내 메시지 삭제
@@ -461,15 +461,17 @@ class OrchestrationService:
                     sent_msgs = await bot_utils.send_long_message(message.channel, response)
                     
                     # Store message IDs for retry deletion
-                    self._last_contexts[channel_id]["message_ids"] = [m.id for m in sent_msgs] if sent_msgs else []
+                    if sent_msgs:
+                        current_retry_ctx["message_ids"].extend([m.id for m in sent_msgs])
+                        current_retry_ctx["has_response"] = True
                     
-                    # [IMPORTANT] 히스토리에 사용자 입력과 AI 응답 저장
+                    # 8. [IMPORTANT] 히스토리에 사용자 입력과 AI 응답 저장
                     user_mask = ctx.user_mask or "User"
                     domain_manager.append_history(channel_id, user_mask, ctx.action_text)
                     domain_manager.append_history(channel_id, "Model", response)
                     logger.debug(f"[History] Saved: {user_mask} + Model response ({len(response)} chars)")
                     
-                    # 8. Background Extraction
+                    # 9. Background Extraction
                     await self.schedule_background_extraction(ctx, response, message)
                 else:
                     logger.warning(f"[!다시] No response generated for channel {channel_id}")
@@ -478,6 +480,11 @@ class OrchestrationService:
                             await feedback_msg.delete()
                         except Exception:
                             pass
+
+                # [!다시] 컨텍스트 영구 저장 (응답 성공/실패 여부와 관계없이 유효한 데이터가 있으면 저장)
+                if current_retry_ctx.get("has_response"):
+                    domain_manager.save_last_execution_context(channel_id, current_retry_ctx)
+                    logger.debug(f"[!다시] Persistent context saved for channel {channel_id}")
 
         except Exception as e:
             if feedback_msg:
@@ -497,54 +504,56 @@ class OrchestrationService:
     # =========================================================
     async def retry_last(self, message: discord.Message, channel_id: str) -> bool:
         """
-        마지막 AI 응답을 재생성합니다.
-        1. 이전 AI 메시지 삭제
-        2. history에서 마지막 AI 응답 제거
-        3. 동일 action으로 재실행
-        
-        Returns: 성공 여부
+        마지막 AI 응답을 재생성합니다. (고도화 버전)
         """
-        last_ctx = self._last_contexts.get(channel_id)
-        logger.debug(f"[!다시] channel_id={channel_id}, last_ctx={last_ctx is not None}, all_contexts={list(self._last_contexts.keys())}")
+        last_ctx = domain_manager.get_last_execution_context(channel_id)
         
-        if not last_ctx:
-            await message.channel.send("⚠️ 재시도할 이전 응답이 없습니다.\n💡 먼저 메시지를 보내서 AI 응답을 생성해주세요.")
+        if not last_ctx or not last_ctx.get("has_response"):
+            await message.channel.send("⚠️ 재시도할 이전 응답이 없거나 이미 처리 중입니다.")
             return False
         
-        # 1. 이전 AI 메시지 삭제
-        for msg_id in last_ctx.get("message_ids", []):
+        # 1. 이전 메시지 삭제 (UNE 로그 + AI 응답)
+        msg_ids = last_ctx.get("message_ids", [])
+        for mid in msg_ids:
             try:
-                old_msg = await message.channel.fetch_message(msg_id)
-                await old_msg.delete()
-            except Exception as e:
-                logger.debug(f"[무시됨] 이전 메시지 삭제 실패: {e}")
+                m = await message.channel.fetch_message(mid)
+                await m.delete()
+            except Exception: pass
+
+        # 2. 히스토리 정합성 보장 (마지막 User-Model 세트 제거 시도)
+        d = domain_manager.get_domain(channel_id)
+        history = d.get("history", [])
         
-        # 2. history에서 마지막 AI 응답 제거 (가장 최근 model 응답)
-        history = domain_manager.get_history(channel_id)
+        # 마지막 모델 응답이 있으면 제거
         if history and history[-1].get("role") == "model":
             history.pop()
-            d = domain_manager.get_domain(channel_id)
-            d["history"] = history
+            # 그 앞의 사용자 입력도 제거 (execute에서 세트로 추가하기 때문)
+            if history and history[-1].get("role") != "model":
+                history.pop()
+            
             domain_manager.save_domain(channel_id, d)
+            logger.debug(f"[!다시] Removed [User?, Model] set from history for {channel_id}")
         
-        # 3. 재실행을 위한 fake message 생성
-        # (원본 action_text로 execute 호출)
-        await message.channel.send("🔄 **재판정 중...**", delete_after=2)
+        # 3. 재실행 피드백 (안내 메시지 생성)
+        feedback = await message.channel.send("🔄 **서사를 다시 뽑는 중...**")
         
-        # 원본 메시지 객체 가져오기 시도
+        # 4. 재실행
+        orig_msg_id = last_ctx.get("original_message_id")
+        action_text = last_ctx.get("action_text")
+        
         try:
-            original_msg = await message.channel.fetch_message(last_ctx["original_message_id"])
-            await self.execute(original_msg, channel_id, system_trigger=None)
+            # 원본 메시지가 남아있으면 그것을 기준으로 재실행
+            orig_msg = await message.channel.fetch_message(orig_msg_id)
+            await self.execute(orig_msg, channel_id, feedback_msg=feedback)
         except Exception:
-            # 원본 메시지 못 찾으면 현재 메시지로 대체 실행
-            # action_text를 시스템 트리거로 전달
-            await self.execute(message, channel_id, system_trigger=last_ctx["action_text"])
-        
+            # 원본 메시지가 삭제되었으면 현재 메시지를 대리인으로 사용하되, 원본 텍스트 주입
+            await self.execute(message, channel_id, system_trigger=action_text, feedback_msg=feedback)
+            
         return True
-    
+
     def get_last_context(self, channel_id: str) -> Optional[Dict[str, Any]]:
         """채널의 마지막 컨텍스트 반환 (디버깅용)"""
-        return self._last_contexts.get(channel_id)
+        return domain_manager.get_last_execution_context(channel_id)
 
 
 # =========================================================
