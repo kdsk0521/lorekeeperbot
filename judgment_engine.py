@@ -52,12 +52,17 @@ class JudgmentEngine:
         current_doom = bus.doom.get("value", 0)
         doom_mod = ((50 - current_doom) // 10) * 5
         
+        # 2.3 DAI Modifiers (from Anomaly defense success/failure)
+        dai_bonus = bus.dai.get("bonus", 0)
+        dai_penalty = bus.dai.get("penalty", 0)
+        dai_reason = bus.dai.get("reason", "")
+        
         # 3. Roll Dice
         roll = random.randint(1, 100)
         eval_bonus = eval_data.get("bonus", 0)
         eval_penalty = eval_data.get("penalty", 0)
         
-        final_roll = roll + eval_bonus - eval_penalty + mental_mod + doom_mod
+        final_roll = roll + eval_bonus - eval_penalty + mental_mod + doom_mod + dai_bonus - dai_penalty
         
         # 4. Determine Result
         result = "failure"
@@ -109,6 +114,10 @@ class JudgmentEngine:
             modifications.append({"label": f"정신({mental_label})", "value": mental_mod})
         if doom_mod != 0:
             modifications.append({"label": "월드긴장", "value": doom_mod})
+        if dai_bonus > 0:
+            modifications.append({"label": "이변대응성공", "value": dai_bonus})
+        if dai_penalty > 0:
+            modifications.append({"label": "이변대응실패", "value": -dai_penalty})
             
         mod_parts = []
         for m in modifications:
