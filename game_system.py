@@ -172,11 +172,19 @@ async def process_anomaly(
     )
 
     if anom_evt:
+        tag = anom_evt.get('tag', '이변')
+        category = anom_evt.get('category', 'Unknown')
+        description = anom_evt.get('description', '무언가 이상한 일이 벌어지고 있습니다...')
+        effect_hint = anom_evt.get('effect_hint', '대처하십시오.')
+        tone = anom_evt.get('tone', 'Mystery')
+
         evt_msg = (
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"⚡ **이변 발생: [{anom_evt.get('tag', 'Unknown')}]**\n"
-            f"{anom_evt.get('description', '...')}\n"
-            f"💡 *{anom_evt.get('effect_hint', '대처하십시오.')}*\n"
+            f"⚡ **이변 발생: [{tag}]** `{category}`\n"
+            f"\n"
+            f"{description}\n"
+            f"\n"
+            f"💡 *{effect_hint}*\n"
             f"━━━━━━━━━━━━━━━━━━━━"
         )
         messages.append(evt_msg)
@@ -205,12 +213,12 @@ async def process_anomaly(
                 adapt_results.append(f"**{user_name}**: {adapt_msg.strip()}")
 
         if adapt_results:
-            tag = anom_evt.get('tag', 'Unknown')
             adapt_msg = (
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"🎲 **적응 판정 결과: [{tag}]**\n" +
-                "\n".join(adapt_results) +
-                "\n━━━━━━━━━━━━━━━━━━━━"
+                f"🎲 **적응 판정 결과: [{tag}]**\n"
+                f"\n"
+                + "\n".join(adapt_results) +
+                f"\n━━━━━━━━━━━━━━━━━━━━"
             )
             messages.append(adapt_msg)
 

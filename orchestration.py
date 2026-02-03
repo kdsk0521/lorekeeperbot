@@ -443,22 +443,47 @@ class OrchestrationService:
                     await message.channel.send("\n".join(system_logs))
 
                 # 5. Prompt Building
-                # [Context Injection Fix] Wrap system logs in <System_Outcome> for the AI
+                # [Context Injection Fix] Wrap system logs with EXPLICIT narrative directive
                 system_outcome_block = ""
                 if system_logs:
                     joined_logs = "\n".join(system_logs)
-                    system_outcome_block = f"<System_Outcome>\n{joined_logs}\n</System_Outcome>"
-                
-                # Pass the system outcome to the prompt builder via current_context or a new field
-                # For now, append to 'world_state' or inject directly
-                # Best approach: Inject into 'previous_log' logic in build_prompt or manually append
-                
-                # Let's verify 'build_prompt' signature. It takes 'ctx'.
-                # We should update ctx.world_state or similar field.
-                # Actually, ctx is immutable-ish dataclass but we can update it or passing it?
-                # looking at update_world_state, it returns new ctx.
-                # We can inject this into ctx.world_state for the prompt builder to pick up.
-                
+
+                    # 이변 발생 여부 확인 (이변 메시지가 포함되어 있는지)
+                    has_anomaly = "이변 발생" in joined_logs or "⚡" in joined_logs
+                    has_judgment = "판정" in joined_logs or "🎲" in joined_logs
+
+                    # 이변이 포함된 경우 강력한 서술 지시 추가
+                    if has_anomaly:
+                        system_outcome_block = f"""
+<System_Outcome type="ANOMALY_EVENT" priority="CRITICAL">
+{joined_logs}
+
+### 🔴 필수 서술 지시 (MANDATORY NARRATIVE DIRECTIVE)
+위에 발생한 **이변(Anomaly)**을 반드시 서사의 **핵심 요소**로 통합하십시오:
+
+1. **즉시 반영**: 이변은 플레이어 행동 결과가 아닌 **세계 자체의 변화**입니다. 서술 시작부터 이변의 영향을 묘사하세요.
+2. **감각적 묘사**: 이변의 시각, 청각, 촉각, 심리적 영향을 생생하게 묘사하세요.
+3. **캐릭터 반응**: 현장의 모든 캐릭터가 이변에 반응해야 합니다 (공포, 경이, 긴장 등).
+4. **적응 판정 결과 반영**: 위 적응 판정 결과에 따라 캐릭터별로 다른 심리 상태를 묘사하세요.
+5. **서사 통합**: 이변을 현재 상황과 자연스럽게 연결하고, 긴장감을 유지하세요.
+
+⚠️ **경고**: 이변을 무시하거나 가볍게 언급만 하는 것은 금지됩니다. 이변이 이 턴의 핵심 사건입니다.
+</System_Outcome>
+"""
+                    elif has_judgment:
+                        # 판정만 있는 경우 (이변 없음)
+                        system_outcome_block = f"""
+<System_Outcome type="JUDGMENT_RESULT">
+{joined_logs}
+
+### 판정 결과 반영 지시
+위 판정 결과를 서사에 자연스럽게 반영하세요. 성공/실패에 따른 구체적인 결과를 묘사하세요.
+</System_Outcome>
+"""
+                    else:
+                        # 기타 시스템 로그
+                        system_outcome_block = f"<System_Outcome>\n{joined_logs}\n</System_Outcome>"
+
                 if system_outcome_block:
                     # Append to world state string which goes into <Current-Context>
                     ctx.world_ctx += f"\n\n{system_outcome_block}"
