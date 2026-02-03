@@ -686,15 +686,37 @@ async def cmd_unlock(ctx: CommandContext) -> None:
 # UNE Module Control Commands
 # =========================================================
 
-@registry.register("modules", category="System", aliases=["모듈", "mods"], description="DLC 모듈 활성화 상태 확인")
+@registry.register("modules", category="System", aliases=["모듈", "mods"], description="DLC 모듈 활성화 상태 확인 및 일괄 제어")
 async def cmd_modules(ctx: CommandContext) -> None:
+    """!모듈 [on/off] - 모듈 상태 확인 또는 일괄 제어"""
+    arg = ctx.raw_args.strip().lower()
     active = domain_manager.get_active_modules(ctx.channel_id)
     all_mods = [("judgment", "판정"), ("doom", "둠"), ("anomaly", "이변"), ("mental", "멘탈")]
     
+    # 일괄 ON
+    if arg in ['on', '켜기', 'true', 'all']:
+        for code, _ in all_mods:
+            domain_manager.toggle_module(ctx.channel_id, code, True)
+        await ctx.send("✅ **모든 모듈이 활성화되었습니다.**\n• 판정 ✅\n• 둠 ✅\n• 이변 ✅\n• 멘탈 ✅")
+        return
+    
+    # 일괄 OFF
+    if arg in ['off', '끄기', 'false', 'none']:
+        for code, _ in all_mods:
+            domain_manager.toggle_module(ctx.channel_id, code, False)
+        await ctx.send("❌ **모든 모듈이 비활성화되었습니다.**\n• 판정 ❌\n• 둠 ❌\n• 이변 ❌\n• 멘탈 ❌")
+        return
+    
+    # 상태 확인
     msg = ["🔌 **DLC 모듈 상태**"]
     for code, name in all_mods:
         status = "✅ ON" if code in active else "❌ OFF"
         msg.append(f"• {name} ({code}): {status}")
+    
+    msg.append("\n💡 **사용법**:")
+    msg.append("• `!모듈 on` - 모든 모듈 활성화")
+    msg.append("• `!모듈 off` - 모든 모듈 비활성화")
+    msg.append("• `!판정 on/off` - 개별 모듈 제어")
     
     await ctx.send("\n".join(msg))
 
@@ -974,19 +996,7 @@ async def cmd_mental(ctx: CommandContext) -> None:
 
 
 
-@registry.register("rest", category="Player", aliases=["휴식", "rest", "sleep"], description="휴식 (위기 감소)")
-async def cmd_rest(ctx: CommandContext) -> None:
-    """!휴식"""
-    # Calculate reduction based on current location/risk
-    w_state = domain_manager.get_world_state(ctx.channel_id)
-    risk = w_state.get("risk_level", "medium")
-    
-    reduction = 5 # Default
-    if risk == "low": reduction = 15
-    elif risk == "high": reduction = 2
-    
-    msg = game_world.reduce_doom(ctx.channel_id, reduction, "Rest")
-    await ctx.send(f"⛺ **휴식을 취합니다.**\n{msg}")
+
 
 
 @registry.register("reset_npcs", category="Admin", aliases=["엔피씨초기화", "npc_reset"], description="세션 NPC 초기화")

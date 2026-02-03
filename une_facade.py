@@ -66,6 +66,26 @@ class UniversalNarrativeEngine:
             system_msg += bus.judgment.get("output", "")
         if bus.anomaly and bus.anomaly.get("triggered"):
             system_msg += f"\n⚡ **이변 발생: [{bus.anomaly.get('tag')}]**"
+        if bus.doom and bus.doom.get("relief_log"):
+            system_msg += f"\n{bus.doom.get('relief_log')}"
+        if bus.doom and bus.doom.get("mental_pressure_log"):
+            system_msg += f"\n{bus.doom.get('mental_pressure_log')}"
+        
+        # Integrate Mental impact and log into one line
+        if bus.mental:
+            mental_parts = []
+            if bus.mental.get("impact_log"):
+                impact_log = bus.mental.get("impact_log")
+                # Extract reason from impact_log: "🧠 정신적 영향: -10 (reason)"
+                if "(" in impact_log and ")" in impact_log:
+                    reason = impact_log.split("(", 1)[1].rsplit(")", 1)[0]
+                    mental_parts.append(reason)
+            
+            if bus.mental.get("log"):
+                mental_parts.append(bus.mental.get("log"))
+            
+            if mental_parts:
+                system_msg += f"\n{' → '.join(mental_parts)}"
 
         return {
             "game_context": updated_context,

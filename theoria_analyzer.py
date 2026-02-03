@@ -82,6 +82,18 @@ Analyze the user's input intent and the player character's assets comprehensivel
     - **defense_success**: If countering a threat/anomaly, can assets perfectly block it? (true/false)
 - **narrative_hook**: Suggested 'potential crisis' or 'twist' for failure/partial success (1 sentence in Korean).
 - **time_flow**: {{ "ticks": number(1-20), "reason": "reason_Korean" }}
+- **doom_relief**: Analyze if the action provides relief from tension/stress.
+    - **applicable**: Is this a calming/restorative action? (true/false)
+    - **amount**: Suggested Doom reduction (0-20). Consider: rest/meditation (10-15), healing items (5-10), safe haven (15-20), brief respite (3-5)
+    - **reason**: Why this action reduces tension (1 sentence in Korean)
+- **mental_impact**: Analyze if the action affects mental health. **IMPORTANT**: Consider player's passives, items, and companion NPCs.
+    - **applicable**: Does this action impact mental state? (true/false)
+    - **delta**: Mental health change (-35 to +20). Negative = damage, Positive = recovery. Consider: 
+        - Base impact: witnessing horror (-15~-25), mild fear (-5~-10), comfort/healing (+5~+15), triumph (+10~+20)
+        - **Passives**: Mental-related traits can amplify or reduce impact (e.g., "Brave" reduces fear, "Fragile" amplifies shock)
+        - **Items**: Calming items, protective charms, or comfort objects can mitigate negative impact
+        - **Companion NPCs**: Trusted allies nearby can reduce fear (-3~-5), isolation amplifies it (+3~+5)
+    - **reason**: Why this affects mental health, mentioning relevant modifiers if any (1 sentence in Korean)
 
 ## 5. Output Example (Values must be Korean)
 {{
@@ -99,6 +111,8 @@ Analyze the user's input intent and the player character's assets comprehensivel
     "defense_success": false
   }},
   "narrative_hook": "잠입에는 성공했으나, 도중에 떨어뜨린 동전 소리에 경비병이 의구심을 품고 다가옵니다.",
-  "time_flow": {{ "ticks": 3, "reason": "조심스러운 이동" }}
+  "time_flow": {{ "ticks": 3, "reason": "조심스러운 이동" }},
+  "doom_relief": {{ "applicable": false, "amount": 0, "reason": "긴장된 상황" }},
+  "mental_impact": {{ "applicable": false, "delta": 0, "reason": "정신적 영향 없음" }}
 }}"""
         return prompt

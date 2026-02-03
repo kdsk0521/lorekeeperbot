@@ -12,18 +12,29 @@ class MentalModule:
 
     async def process(self, context: GameContext) -> GameContext:
         bus = context.shared_bus
-        delta = bus.mental.get("delta", 0)
+        
+        # 1. Collect Delta from multiple sources
+        delta = bus.mental.get("delta", 0)  # From Anomaly Module
+        
+        # 2. AI-Analyzed Mental Impact (NEW!)
+        # If Theoria detected a mental health impact
+        impact_data = bus.mental.get("impact", {})
+        if impact_data.get("applicable", False):
+            impact_delta = impact_data.get("delta", 0)
+            impact_reason = impact_data.get("reason", "")
+            delta += impact_delta  # Add to total delta
+            bus.mental["impact_log"] = f"🧠 정신적 영향: {impact_delta:+d} ({impact_reason})"
         
         if delta == 0:
             return context
             
-        # 1. Inertia (Successive changes amplification)
+        # 3. Inertia (Successive changes amplification)
         last_delta = bus.mental.get("last_delta", 0)
         actual_delta = delta
         if (delta > 0 and last_delta > 0) or (delta < 0 and last_delta < 0):
             actual_delta = int(delta * 1.1)
             
-        # 2. Clamping (Max 2 stage drop per turn)
+        # 4. Clamping (Max 2 stage drop per turn)
         current_mental = bus.mental.get("value", 100)
         
         def get_stage(val):
@@ -45,7 +56,7 @@ class MentalModule:
             target_stage = limit_stage
             clamped = True
 
-        # 3. Trauma Awakening (Collapse -> Recovery)
+        # 5. Trauma Awakening (Collapse -> Recovery)
         trauma_triggered = False
         if current_stage == 3 and actual_delta > 0:
             target_mental = 90 # High Calm reset
@@ -53,21 +64,25 @@ class MentalModule:
             trauma_triggered = True
             bus.mental["trauma_trigger"] = True
         
-        # 4. Update Bus
+        # 6. Update Bus
         bus.mental["value"] = target_mental
         bus.mental["active"] = True
         
+        # Compact log format
         log_parts = []
+        
+        # Base change
         if actual_delta < 0:
-            log_parts.append(f"🧠 정신력 감소 ({actual_delta})")
+            log_parts.append(f"🧠 정신력 {actual_delta}")
         else:
-            log_parts.append(f"🧠 정신력 회복 (+{actual_delta})")
-            
+            log_parts.append(f"🧠 정신력 +{actual_delta}")
+        
+        # Modifiers with emphasis
         if clamped:
-            log_parts.append(" ❗충격 완화(Clamping)")
+            log_parts.append("\n❗ **충격 완화** (Clamping)")
         if trauma_triggered:
-            log_parts.append("\n✨ **트라우마 각성(Awakening)**: 정신을 가다듬었으나 깊은 흉터가 남았습니다. (-5 패시브)")
-            
+            log_parts.append("\n✨ **트라우마 각성** (Awakening)")
+        
         bus.mental["log"] = "".join(log_parts)
             
         return context
