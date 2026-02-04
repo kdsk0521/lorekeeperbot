@@ -61,8 +61,6 @@ import text_resources
 DEFAULT_TEMPERATURE = 1.0
 MIN_NARRATIVE_LENGTH = 1500  # 최소 서사 길이 (문자)
 
-# NOTE: 응답 길이 설정 및 build_length_instruction()은 prompt_builder.py로 이동됨
-# NOTE: 모든 텍스트 리소스는 text_resources.py로 이동됨.
 
 # =========================================================
 # ChatSessionAdapter 클래스
@@ -155,7 +153,6 @@ class ChatSessionAdapter:
             raise
 
 
-# NOTE: PromptBuilder 클래스 및 construct_system_prompt는 prompt_builder.py로 이동됨 (상단에서 import)
 
 
 # =========================================================
@@ -358,17 +355,5 @@ async def generate_response_with_retry(
 # =========================================================
 # 유틸리티 함수
 # =========================================================
-# NOTE: get_available_genres, get_genre_description은 prompt_builder.py로 이동됨 (상단에서 import)
 
-# [V3 Update] create_cached_session() 제거됨 - 외부 호출 없음, PromptBuilder 의존
 
-# =========================================================
-# [Request 3] Post-Response Impersonation Filter
-# =========================================================
-# NOTE: detect_pc_impersonation, filter_pc_impersonation은
-# response_processor.py로 이동됨 (상단에서 import)
-
-# =========================================================
-# EMOTION BOOSTER (감성 증폭기) - REMOVED
-# =========================================================
-# NOTE: EMOTION_BOOSTER moved to text_resources.py

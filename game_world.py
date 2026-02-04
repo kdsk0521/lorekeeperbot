@@ -119,14 +119,6 @@ def change_doom(channel_id: str, amount: int) -> str:
     return f"{emoji} **위기 수치:** {old_val}% → **{new_val}%** {diff_msg}"
 
 
-def calculate_doom_increase(channel_id: str, world: Dict[str, Any]) -> Tuple[int, List[str]]:
-    """
-    [LEGACY] UNE DoomModule에 의해 대체되었습니다. 
-    이 함수는 더 이상 비즈니스 로직을 수행하지 않으며, 점진적 마이그레이션을 위해 빈 결과를 반환할 수 있습니다.
-    필요 시 DoomModule.process()를 호출하세요.
-    """
-    return 0, []
-
 def reduce_doom(channel_id: str, amount: int, reason: str = "") -> str:
     """Doom 수치 감소 (최소 0)"""
     return change_doom(channel_id, -amount)
@@ -142,19 +134,6 @@ def _get_doom_description(doom: int) -> str:
     # Wrapper for legacy compatibility if needed, or internal use
     info = get_doom_info(doom)
     return f"{info['emoji']} {info['name']}"
-
-def process_doom_tick(channel_id: str) -> Optional[str]:
-    """매 5틱 또는 특정 주기마다 실행되는 둠 계산 및 적용"""
-    world = domain_manager.get_world_state(channel_id)
-    inc, reasons = calculate_doom_increase(channel_id, world)
-    
-    if inc > 0:
-        fb = change_doom(channel_id, inc)
-        if fb:
-            reason_text = "\n".join([f"• {r}" for r in reasons])
-            return f"{fb}\n{reason_text}"
-    return None
-
 
 def get_world_context(channel_id: str) -> str:
     world = domain_manager.get_world_state(channel_id)
@@ -209,88 +188,6 @@ ANOMALY_TONE_MAP = {
     "high": ["Horror", "Disaster", "Fear", "Despair"]
 }
 
-def should_trigger_anomaly(doom_val: int) -> bool:
-    """
-    [LEGACY] UNE AnomalyModule에 의해 대체되었습니다. 
-    로직 중복을 방지하기 위해 여기서는 항상 False 혹은 최소 확률만 반환합니다.
-    """
-    return False
-
-def process_abnormal_turn(channel_id: str, context_tags: list) -> str:
-    """
-    턴 처리 시 호출되는 중앙 허브 함수 (The Hub).
-    확률에 따라 비일상 이벤트를 '선 판정(Pre-calc)'하고, AI에게 묘사 지침(Directive)을 내립니다.
-    """
-    doom = domain_manager.get_world_state(channel_id).get("doom", 0)
-    
-    # 1. 확률 체크
-    if not should_trigger_anomaly(doom):
-        return "" # No event
-        
-    # 2. 태그 및 강도 선정 (Doom Based)
-    intensity = "Low"
-    tone_keyword = "Miracle/Fortune"
-    
-    if doom > 70:
-        intensity = "High"
-        tone_keyword = "Horror/Disaster"
-    elif doom > 30:
-        intensity = "Mid"
-        tone_keyword = "Mystery/Bizarre"
-        
-    # Tag Selection: Use context (e.g. current location tags) or "Unknown"
-    # In V7, context_tags should be passed from main loop (e.g. location logic).
-    # If empty, we can use a generic fallback.
-    tag = random.choice(context_tags) if context_tags else "Unknown"
-    
-    # 3. 미리 계산 (Pre-calculation) & 적용
-    results = []
-    import game_character
-    
-    # V7 Active Participants
-    participants = domain_manager.get_active_participants(channel_id)
-    
-    for uid, p in participants.items():
-        # Apply Impact (Update Mental/Adapt in DB immediately)
-        # We assume doom_stage based on doom value
-        doom_info = get_doom_info(doom)
-        # Extract stage ID from range loop? Or just trust tone logic?
-        # game_character doesn't need stage ID, just intensity/value?
-        # Actually update_mental uses doom to penalty recovery. But here we deal damage.
-        
-        # We need to map doom *value* to a stage *index* if game_character needs it.
-        # But apply_abnormal_impact takes (tag, intensity, doom_stage).
-        # Let's verify game_character signature I wrote: `apply_abnormal_impact(user_data, tag, intensity, doom_stage)`
-        
-        # Calculate Stage Index
-        current_doom_stage = 0
-        for sid, info in config.DOOM_STAGES.items():
-            l, h = info["range"]
-            if l <= doom < h:
-                 current_doom_stage = sid
-                 break
-                 
-        ai_mem_world: Dict[str, Any] = p.get("ai_memory", {})
-        mental_world: Dict[str, Any] = ai_mem_world.get("mental", {})
-        start_mental = mental_world.get("value", 100)
-        
-        # EXECUTE LOGIC
-        res_str, new_adapt = game_character.apply_abnormal_impact(p, tag, intensity, current_doom_stage)
-        
-        domain_manager.save_participant_data(channel_id, uid, p) # Save changes
-        
-        results.append(f"- {p['mask']}: {res_str}")
-        
-    # 4. Directive 생성 (Return to AI)
-    # The Directive tells AI *what happened* so it can describe it.
-    directive = (
-        f"\n[SYSTEM EVENT: Abnormal Phenomenon '{tag}' occurred!]\n"
-        f"- Intensity: {intensity} ({tone_keyword})\n"
-        f"- Outcomes:\n" + "\n".join(results) + "\n"
-        f"- Instruction: Describe this event naturally based on the outcomes. Focus on the sensory details and characters' reactions."
-    )
-    
-    return directive
 def _get_anomaly_tone(doom_val: int) -> str:
     """Selects a tone category based on Doom value."""
     if doom_val <= 30: return "low"

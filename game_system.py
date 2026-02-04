@@ -15,23 +15,18 @@ import domain_manager
 import game_world
 import game_character
 import npc_manager
-import cognition
 
 logger = logging.getLogger("GameSystem")
 
 # =========================================================
 # Facade Exports (Backward Compatibility)
 # =========================================================
-from game_world import *
-from game_character import *
-from npc_manager import *
 
 # Explicit Re-exports for clarity (optional but good for IDEs)
 # World
 get_time_slots = game_world.get_time_slots
 get_weather_types = game_world.get_weather_types
 advance_time = game_world.advance_time
-calculate_doom_increase = game_world.calculate_doom_increase
 change_doom = game_world.change_doom
 _get_doom_description = game_world._get_doom_description
 get_world_context = game_world.get_world_context
@@ -113,12 +108,7 @@ async def process_time_flow(channel_id: str, time_flow: Dict, scene_type: str = 
     new_ticks_total = current_ticks + ticks
 
     # 둠 체크 (5틱마다 1회)
-    old_doom_period = current_ticks // 5
-    new_doom_period = new_ticks_total // 5
-
-    if new_doom_period > old_doom_period:
-        for _ in range(new_doom_period - old_doom_period):
-            game_world.process_doom_tick(channel_id)
+    # Legacy Doom tick removed (handled by UNE DoomModule)
 
     # 시간대(Slot) 진행
     if new_ticks_total >= config.TIME_TICKS_PER_SLOT:

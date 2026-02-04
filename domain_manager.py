@@ -108,6 +108,19 @@ def update_notebook(channel_id: str, text: str) -> None:
     d["notebook"] = text
     save_domain(channel_id, d)
 
+def _append_memo_to_notebook(channel_id: str, content: str) -> None:
+    current_nb = get_notebook(channel_id)
+    if f"- {content}" in current_nb:
+        return
+
+    if "— [메모] —" in current_nb:
+        parts = current_nb.split("— [메모] —")
+        new_nb = parts[0] + "— [메모] —" + parts[1] + f"\n- {content}"
+    else:
+        new_nb = current_nb + f"\n\n— [메모] —\n- {content}"
+
+    update_notebook(channel_id, new_nb)
+
 # =========================================================
 # MATURE MODE MANAGEMENT (via settings.scene_type)
 # =========================================================
@@ -558,17 +571,16 @@ def apply_pc_info_to_user(channel_id: str, user_id: str) -> bool:
                 })
 
     # Memos/Inventory Merge (Integrated with Notebook)
-    import game_system
     # Notes/Memos
     notes = pc_info.get("notes") or pc_info.get("memos") or pc_info.get("background")
     if notes and isinstance(notes, (str, list)):
-        game_system.add_memo(channel_id, f"설정 동기화: {notes[:100]}...")
+        _append_memo_to_notebook(channel_id, f"설정 동기화: {notes[:100]}...")
     
     # Inventory
     inv = pc_info.get("inventory")
     if inv and isinstance(inv, dict):
         for item, qty in inv.items():
-            game_system.add_memo(channel_id, f"{item} ({qty}) - 설정 동기화")
+            _append_memo_to_notebook(channel_id, f"{item} ({qty}) - 설정 동기화")
     
     save_participant_data(channel_id, user_id, p)
     return True
@@ -990,100 +1002,6 @@ def reset_session_state(channel_id: str) -> None:
 # =========================================================
 # 6. UNE ADAPTER (Bridge)
 # =========================================================
-
-def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> Dict[str, Any]:
-    """[UNE Bridge] ParticipantData -> GameContext (Dict)"""
-    from orchestration_context import GameContext, RequestData, SharedBus
-    
-    p_data = get_participant_data(channel_id, user_id)
-    mem = p_data.get("ai_memory", {}) if p_data else {}
-    world = get_world_state(channel_id)
-    
-    # Genre mapping
-    genres_raw = get_active_genres(channel_id)
-    if isinstance(genres_raw, dict) and "layers" in genres_raw:
-        l = genres_raw["layers"]
-        genres = {"stage": l.get("world_setting", ""), "flavor": l.get("style_tech", ""), "lens": l.get("narrative_tone", "")}
-    else:
-        genres = {"stage": genres_raw[0] if isinstance(genres_raw, list) and genres_raw else str(genres_raw), "flavor": "", "lens": ""}
-
-    # Active Modules
-    active_modules = get_active_modules(channel_id)
-
-    # Lore Summary (V4)
-    lore_summary = get_lore_summary_data(channel_id)
-
-    # Narrative Anchors
-    anchors = {
-        "appearance": mem.get("appearance", ""),
-        "personality": mem.get("personality", ""),
-        "background": mem.get("background", ""),
-        "relations": mem.get("relationships", {}),
-        "passives": mem.get("passives", []),
-        "inventory": [], # Extracted if needed
-        "memos": []
-    }
-    
-    # Bus initialization
-    bus = SharedBus()
-    bus.doom["value"] = world.get("doom", 40)
-    mental_data = mem.get("mental", {"value": 100, "last_delta": 0})
-    bus.mental["value"] = mental_data.get("value", 100)
-    bus.mental["last_delta"] = mental_data.get("last_delta", 0)
-    bus.mental["adaptation"] = mem.get("abnormal_exposure", {})
-    
-    context = GameContext(
-        request=RequestData(
-            user_input=user_input,
-            genres=genres,
-            active_modules=active_modules,
-            lore_summary=lore_summary
-        ),
-        narrative_anchors=anchors,
-        shared_bus=bus
-    )
-    
-    return context.to_dict()
-
-def sync_from_game_context(channel_id: str, user_id: str, ctx_dict: Dict[str, Any]) -> None:
-    """[UNE Bridge] GameContext (Dict) -> ParticipantData/WorldState Sync"""
-    from orchestration_context import GameContext
-    ctx = GameContext.from_dict(ctx_dict)
-    bus = ctx.shared_bus
-    
-    # 1. World State Sync (Doom)
-    if bus.doom.get("active"):
-        world = get_world_state(channel_id)
-        world["doom"] = bus.doom["value"]
-        update_world_state(channel_id, world)
-        
-    # 2. Participant Data Sync (Mental, Adaptation)
-    p_data = get_participant_data(channel_id, user_id)
-    if p_data:
-        mem = p_data.setdefault("ai_memory", {})
-        if bus.mental.get("active"):
-            mental_sys = mem.setdefault("mental", {"value": 100, "last_delta": 0})
-            mental_sys["value"] = bus.mental["value"]
-            mental_sys["last_delta"] = bus.mental.get("delta", 0) # Store current delta as last_delta
-            
-            # Trauma Trigger
-            if bus.mental.get("trauma_trigger"):
-                passives = mem.setdefault("passives", [])
-                trauma_name = "트라우마 (각성)"
-                if not any(p.get("name") == trauma_name for p in passives if isinstance(p, dict)):
-                    passives.append({
-                        "name": trauma_name,
-                        "tags": ["Trauma", "Hard-to-cure"],
-                        "modifier": -5,
-                        "desc": "붕괴의 문턱에서 돌아온 흔적입니다. 모든 판정에 -5 페널티를 받습니다."
-                    })
-            
-            # Adaptation Updates
-            updates = bus.mental.get("adaptation_update")
-            if updates:
-                mem.setdefault("abnormal_exposure", {}).update(updates)
-        
-        save_participant_data(channel_id, user_id, p_data)
 
 
 

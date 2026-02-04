@@ -162,9 +162,9 @@ def parse_input(content: str) -> Optional[Dict[str, Any]]:
             '장면': 'scene',
             'scene': 'scene',
             
-            # === 비일상 감지 설정 ===
-            '비일상': 'abnormal',
-            'abnormal': 'abnormal',
+            # === 비일상/이변 설정 ===
+            '비일상': 'anomaly',
+            'abnormal': 'anomaly',
 
             # === 도움말 ===
             '도움': 'help',

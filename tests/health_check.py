@@ -126,8 +126,7 @@ def check_v6_features():
         import game_world
         if not hasattr(game_world, "ANOMALY_TONE_MAP"):
             raise AttributeError("ANOMALY_TONE_MAP missing")
-        if not hasattr(game_world, "should_trigger_anomaly"):
-            raise AttributeError("should_trigger_anomaly logic missing")
+        # Legacy anomaly trigger removed
         if not hasattr(game_world, "generate_anomaly_event"):
             raise AttributeError("generate_anomaly_event generator missing")
         print(f"✅ Anomaly System       : OK")

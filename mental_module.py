@@ -3,14 +3,16 @@ Lorekeeper UNE - Mental Module
 Manages player mental health and adaptation logic.
 """
 
-from typing import Dict, Any
-from orchestration_context import GameContext
+from typing import Dict, Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from orchestration_context import GameContext
 
 class MentalModule:
     def __init__(self):
         pass
 
-    async def process(self, context: GameContext) -> GameContext:
+    async def process(self, context: "GameContext") -> "GameContext":
         bus = context.shared_bus
         
         # 1. Collect Delta from multiple sources
@@ -44,17 +46,25 @@ class MentalModule:
             return 3
             
         current_stage = get_stage(current_mental)
-        target_mental = max(0, min(100, current_mental + actual_delta))
-        target_stage = get_stage(target_mental)
-        
-        clamped = False
-        if actual_delta < 0 and target_stage > current_stage + 2:
+
+        # Clamp floor based on base delta (pre-inertia)
+        base_target = max(0, min(100, current_mental + delta))
+        base_stage = get_stage(base_target)
+        clamp_floor = base_target
+
+        if base_stage > current_stage + 2:
             limit_stage = current_stage + 2
-            # Set to minimum of the limit stage
             floors = {0: 70, 1: 40, 2: 15, 3: 0}
-            target_mental = floors.get(limit_stage, 0)
-            target_stage = limit_stage
-            clamped = True
+            clamp_floor = floors.get(limit_stage, 0)
+
+        target_mental = max(0, min(100, current_mental + actual_delta))
+        clamped = False
+        if actual_delta < 0:
+            if target_mental < clamp_floor:
+                target_mental = clamp_floor
+                clamped = True
+
+        target_stage = get_stage(target_mental)
 
         # 5. Trauma Awakening (Collapse -> Recovery)
         trauma_triggered = False
@@ -67,6 +77,7 @@ class MentalModule:
         # 6. Update Bus
         bus.mental["value"] = target_mental
         bus.mental["active"] = True
+        bus.mental["last_delta"] = delta
         
         # Compact log format
         log_parts = []

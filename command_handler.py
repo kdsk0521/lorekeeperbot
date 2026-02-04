@@ -615,8 +615,8 @@ async def cmd_start(ctx: CommandContext) -> None:
 @registry.register("retry", category="System", aliases=["다시", "reroll", "재판정"], description="마지막 AI 응답 재생성")
 async def cmd_retry(ctx: CommandContext) -> None:
     """!다시 - 마지막 AI 응답을 삭제하고 새로 굴림"""
-    from main import _get_orchestration
-    orchestration = _get_orchestration()
+    from orchestration import get_orchestration_runtime
+    orchestration = get_orchestration_runtime(ctx.genai_client, ctx.model_id, config.MODEL_ID_FLASH)
     
     if not orchestration:
         await ctx.send("⚠️ AI 서비스가 초기화되지 않았습니다.")
@@ -755,7 +755,7 @@ async def cmd_toggle_judgment(ctx: CommandContext) -> None:
 async def cmd_toggle_doom(ctx: CommandContext) -> None:
     await _handle_module_toggle(ctx, "doom", "둠")
 
-@registry.register("anomaly", category="System", aliases=["이변"], description="이변 모듈 제어")
+@registry.register("anomaly", category="System", aliases=["이변", "비일상", "abnormal"], description="이변 모듈 제어")
 async def cmd_toggle_anomaly(ctx: CommandContext) -> None:
     await _handle_module_toggle(ctx, "anomaly", "이변")
 
@@ -888,7 +888,10 @@ def classify_ooc_type(ooc_content: str) -> str:
         return "edit"
     
     # 서사 요청 키워드
-    narrative_keywords = ["해줘", "보여줘", "묘사", "장면", "진행", "스킵", "넘어가"]
+    narrative_keywords = [
+        "해줘", "보여줘", "묘사", "장면", "진행", "스킵", "넘어가",
+        "가정", "상정", "상황", "이었다", "되었다"
+    ]
     if any(kw in content_lower for kw in narrative_keywords):
         return "narrative_request"
     
@@ -974,7 +977,23 @@ async def handle_ooc_command(
     
     elif ooc_type == "narrative_request":
         # 서사 지시는 프롬프트에 주입하기 위해 반환
-        return "[OOC Directive: {ooc_content}]"
+        return f"[OOC Directive: {ooc_content}]"
+
+
+@registry.register("ooc", category="Analysis", aliases=["OOC", "메타"], description="OOC 메타 요청 처리")
+async def cmd_ooc(ctx: CommandContext) -> Optional[str]:
+    """!ooc [내용] - 메타 지시/서사 요청/데이터 수정"""
+    ooc_content = ctx.raw_args.strip()
+    if not ooc_content:
+        await ctx.send("⚠️ OOC 내용을 함께 입력해주세요. 예: `!ooc 헤이젤의 방 소리를 더 크게 묘사해줘`")
+        return None
+    return await handle_ooc_command(
+        ctx.message,
+        ctx.channel_id,
+        ooc_content,
+        ctx.genai_client,
+        ctx.model_id
+    )
 
 @registry.register("mental", category="Player", aliases=["멘탈", "mental"], description="멘탈 조회 및 설정")
 async def cmd_mental(ctx: CommandContext) -> None:

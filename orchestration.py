@@ -27,7 +27,6 @@ import cognition
 import persona
 import fermentation
 import npc_manager
-import command_handler
 import input_handler
 from background_task_queue import enqueue_background_task, TaskPriority
 
@@ -372,7 +371,8 @@ class OrchestrationService:
         message: discord.Message, 
         channel_id: str, 
         system_trigger: Optional[str] = None, 
-        feedback_msg: Optional[discord.Message] = None
+        feedback_msg: Optional[discord.Message] = None,
+        user_input_override: Optional[str] = None
     ) -> None:
         """
         AI 응답 생성 파이프라인을 실행합니다.
@@ -382,7 +382,7 @@ class OrchestrationService:
         """
         try:
             user_id = str(message.author.id)
-            user_input = message.content
+            user_input = user_input_override if user_input_override is not None else message.content
             
             # 0. 초기 컨텍스트 설정
             d_data = domain_manager.get_domain(channel_id)
@@ -563,3 +563,25 @@ class OrchestrationService:
 def get_orchestration_service(client_genai, model_id: str, model_id_flash: str) -> OrchestrationService:
     """OrchestrationService 인스턴스를 생성 및 반환합니다."""
     return OrchestrationService(client_genai, model_id, model_id_flash)
+
+# =========================================================
+# RUNTIME SINGLETON (Avoids main <-> command_handler cycles)
+# =========================================================
+
+_orchestration_runtime = None
+_orchestration_params = None
+
+def get_orchestration_runtime(client_genai, model_id: str, model_id_flash: str) -> Optional[OrchestrationService]:
+    """
+    Returns a cached OrchestrationService instance for the given client/model ids.
+    Rebuilds if parameters changed. This replaces main._get_orchestration to avoid
+    cyclic imports.
+    """
+    global _orchestration_runtime, _orchestration_params
+    if not client_genai:
+        return None
+    params = (id(client_genai), model_id, model_id_flash)
+    if _orchestration_runtime is None or _orchestration_params != params:
+        _orchestration_runtime = get_orchestration_service(client_genai, model_id, model_id_flash)
+        _orchestration_params = params
+    return _orchestration_runtime

@@ -4,8 +4,9 @@ Orchestrates the sequence of narrative analysis and mechanical updates.
 """
 
 import logging
+import random
 from typing import Dict, Any, List
-from orchestration_context import GameContext
+from orchestration_context import GameContext, SharedBus
 from theoria_analyzer import TheoriaAnalyzer
 
 logger = logging.getLogger("Waterfall")
@@ -19,10 +20,44 @@ class WaterfallPipeline:
         self.anomaly = None
         self.mental = None
 
+    def _ensure_bus_schema(self, bus: SharedBus) -> None:
+        """
+        Ensure SharedBus has required dict fields without overwriting existing values.
+        This is a schema guard for DLC on/off during runtime.
+        """
+        defaults = SharedBus()
+        for key in ("dai", "judgment", "doom", "anomaly", "mental"):
+            current = getattr(bus, key, None)
+            if current is None or not isinstance(current, dict):
+                setattr(bus, key, getattr(defaults, key))
+
+    def _apply_off_fallbacks(self, active_modules: List[str], bus: SharedBus) -> None:
+        """
+        When a DLC is OFF, apply agreed fallback values without marking it active.
+        - Doom OFF  -> value 30
+        - Mental OFF -> value 50
+        """
+        if "doom" not in active_modules:
+            bus.doom["value"] = 30
+            bus.doom["active"] = False
+        if "mental" not in active_modules:
+            bus.mental["value"] = 50
+            bus.mental["active"] = False
+
     async def execute(self, context: GameContext) -> GameContext:
-        """Analysis -> Judgment -> Doom -> Anomaly -> Mental"""
+        """Analysis -> Judgment -> Doom -> Anomaly -> Mental
+
+        Data-flow map (SharedBus ownership):
+        - Theoria: bus.judgment.meta/eval/modifications/narrative_hook, bus.doom.relief, bus.mental.impact
+        - Judgment: bus.judgment.result/roll/output/reason
+        - Doom: bus.doom.value/delta/log (+ bus.mental.delta via pressure/recovery)
+        - Anomaly: bus.anomaly.triggered/tag/intensity
+        - Mental: bus.mental.value/log/trauma_trigger
+        """
         
         active_modules = context.request.active_modules
+        self._ensure_bus_schema(context.shared_bus)
+        self._apply_off_fallbacks(active_modules, context.shared_bus)
         
         # 1. Call 1: Analysis (Theoria) - Always Execute
         analysis = await self.theoria.analyze_input(context)
@@ -45,6 +80,43 @@ class WaterfallPipeline:
         if mental_impact.get("applicable", False):
             bus.mental["impact"] = mental_impact
 
+        # Store Anomaly profile (from Theoria) for Anomaly Module
+        anomaly_profile = analysis.get("anomaly_profile", {})
+        if isinstance(anomaly_profile, dict):
+            tag = anomaly_profile.get("trigger") or ""
+            category = anomaly_profile.get("category") or ""
+            intensity = anomaly_profile.get("intensity") or ""
+            polarity = anomaly_profile.get("polarity") or ""
+            line = anomaly_profile.get("line") or ""
+            reason = anomaly_profile.get("reason") or ""
+
+            if tag:
+                bus.anomaly["tag"] = tag
+            if category:
+                bus.anomaly["category"] = category
+            if intensity:
+                bus.anomaly["intensity"] = intensity
+            if polarity:
+                bus.anomaly["polarity"] = polarity
+            if line:
+                bus.anomaly["line"] = line
+            if reason:
+                bus.anomaly["reason"] = reason
+
+        # Fallback: if no anomaly tag was proposed, pick from lore seeds
+        if not bus.anomaly.get("tag"):
+            seeds = context.request.lore_summary.get("anomaly_seeds", [])
+            if isinstance(seeds, list) and seeds:
+                bus.anomaly["tag"] = random.choice(seeds)
+
+        # Normalize defaults for downstream use
+        if bus.anomaly.get("tag") and not bus.anomaly.get("category"):
+            bus.anomaly["category"] = bus.anomaly.get("tag")
+        if not bus.anomaly.get("intensity"):
+            bus.anomaly["intensity"] = "Mid"
+        if not bus.anomaly.get("polarity"):
+            bus.anomaly["polarity"] = "mixed"
+
         # 2. Call 2: Judgment (Conditional)
         if "judgment" in active_modules and context.shared_bus.judgment["active"]:
             from judgment_engine import JudgmentEngine
@@ -56,6 +128,10 @@ class WaterfallPipeline:
             from doom_module import DoomModule
             self.doom = DoomModule()
             context = await self.doom.process(context)
+
+        # If Doom is OFF, still allow anomalies to roll with a fixed chance.
+        if "anomaly" in active_modules and "doom" not in active_modules:
+            bus.anomaly["potential"] = True
 
         # 4. Anomaly Trigger (Conditional)
         if "anomaly" in active_modules and context.shared_bus.anomaly.get("potential"):

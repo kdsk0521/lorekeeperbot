@@ -3,14 +3,16 @@ Lorekeeper UNE - Doom Module
 Manages world tension and mechanical side-effects of judgment results.
 """
 
-from typing import Dict, Any
-from orchestration_context import GameContext
+from typing import Dict, Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from orchestration_context import GameContext
 
 class DoomModule:
     def __init__(self):
         pass
 
-    async def process(self, context: GameContext) -> GameContext:
+    async def process(self, context: "GameContext") -> "GameContext":
         bus = context.shared_bus
         current_doom = bus.doom.get("value", 0)
         

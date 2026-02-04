@@ -1,11 +1,13 @@
+# -*- coding: utf-8 -*-
 """
 Lorekeeper TRPG Bot - Main Module
 Version: 5.0 (Modularized with Orchestration Service)
 
-주요 변경사항 (v5.0):
-- generate_ai_response를 OrchestrationService로 분리
-- 백그라운드 태스크 큐 시스템 도입 (채널별 순차 실행 보장)
-- NVC 유통기한 필터링 추가
+ì£¼ì ë³ê²½ì¬??(v5.0):
+- generate_ai_responseë¥?OrchestrationServiceë¡?ë¶ë¦¬
+- ë°±ê·¸?¼ì´???ì¤?????ì¤???ì
+ (ì±ëë³??ì°¨ ?¤í ë³´ì¥)
+- NVC ? íµê¸°í ?í°ë§?ì¶ê?
 """
 
 import discord
@@ -26,8 +28,8 @@ try:
     import command_handler
     import domain_manager
 
-    # Orchestration Service (AI 응답 생성 통합)
-    from orchestration import get_orchestration_service
+    # Orchestration Service (AI ?ëµ ?ì± ?µí©)
+    from orchestration import get_orchestration_runtime
 
 except ImportError as e:
     print(f"CRITICAL ERROR: Failed to import modules. {e}")
@@ -97,6 +99,23 @@ async def _process_message(message: discord.Message) -> None:
 
             # 3. SPECIAL INPUTS (Dice, OOC -> handled by dispatch too)
             if parsed and parsed['type'] in ['dice', 'ooc', 'chat_with_ooc']:
+                if parsed['type'] in ['ooc', 'chat_with_ooc']:
+                    ooc_content = parsed.get('ooc_content') or parsed.get('content', '')
+                    ooc_parsed = {'content': ooc_content}
+                    ooc_directive = await command_handler.dispatch_command(
+                        'ooc', message, channel_id, ooc_parsed,
+                        client_discord, client_genai, MODEL_ID, MODEL_ID_FLASH,
+                        domain_manager.get_domain(channel_id)
+                    )
+                    # OOC + 일반 채팅이 함께 있더라도 OOC만 처리
+                    if ooc_directive:
+                        await generate_ai_response(
+                            message,
+                            channel_id,
+                            user_input_override=ooc_directive
+                        )
+                    return
+
                 await command_handler.dispatch_command(
                     None, message, channel_id, parsed,
                     client_discord, client_genai, MODEL_ID, MODEL_ID_FLASH,
@@ -120,7 +139,7 @@ async def _process_message(message: discord.Message) -> None:
                         if txt: log_content += f"\n(Attach: {txt})"
                 
                 domain_manager.append_history(channel_id, mask, log_content.strip())
-                await message.add_reaction("✏️")
+                await message.add_reaction("?ï¸")
                 return
 
             # AUTO MODE
@@ -128,51 +147,46 @@ async def _process_message(message: discord.Message) -> None:
 
         except Exception as e:
             logging.error(f"Message Error: {e}", exc_info=True)
-            await message.channel.send(f"⚠️ Error: {e}")
+            await message.channel.send(f"? ï¸ Error: {e}")
 
 
 # =========================================================
 # AI GENERATION CORE (Delegated to OrchestrationService)
 # =========================================================
 
-# 오케스트레이션 서비스 인스턴스 (지연 초기화)
-_orchestration = None
-
-
-def _get_orchestration():
-    """오케스트레이션 서비스를 지연 초기화하여 반환합니다."""
-    global _orchestration
-    if _orchestration is None and client_genai:
-        _orchestration = get_orchestration_service(client_genai, MODEL_ID, MODEL_ID_FLASH)
-    return _orchestration
-
-
 async def generate_ai_response(
     message: discord.Message, 
     channel_id: str, 
-    system_trigger: Optional[str] = None
+    system_trigger: Optional[str] = None,
+    user_input_override: Optional[str] = None
 ) -> None:
     """
-    AI 응답을 생성합니다.
+    AI ?ëµ???ì±?©ë??
 
-    v5.0: OrchestrationService로 위임하여 모듈화 및 유지보수성 향상.
-    기존 550줄 이상의 코드가 orchestration.py로 분리되었습니다.
+    v5.0: OrchestrationServiceë¡??ì?ì¬ ëª¨ë??ë°?? ì?ë³´ì???¥ì.
+    ê¸°ì¡´ 550ì¤??´ì??ì½ëê° orchestration.pyë¡?ë¶ë¦¬?ì?µë??
 
-    주요 개선사항:
-    - 백그라운드 태스크 큐 시스템으로 채널별 순차 실행 보장
-    - NVC 유통기한 필터링으로 오래된 정보 자동 제거
-    - PC 사칭 자가 수정 프롬프트 강화
+    ì£¼ì ê°ì ?¬í­:
+    - ë°±ê·¸?¼ì´???ì¤?????ì¤?ì¼ë¡?ì±ëë³??ì°¨ ?¤í ë³´ì¥
+    - NVC ? íµê¸°í ?í°ë§ì¼ë¡??¤ë???ë³´ ?ë ?ê±°
+    - PC ?¬ì¹­ ?ê? ?ì  ?ë¡¬?í¸ ê°í
     """
-    orchestration = _get_orchestration()
+    orchestration = get_orchestration_runtime(client_genai, MODEL_ID, MODEL_ID_FLASH)
     if not orchestration:
-        await message.channel.send("⚠️ No AI Configured")
+        await message.channel.send("? ï¸ No AI Configured")
         return
 
-    # [UI Feedback] 서사 생성 중 알림
-    feedback_msg = await message.channel.send("⏳ **서사를 생성하고 있습니다...**")
+    # [UI Feedback] ?ì¬ ?ì± ì¤??ë¦¼
+    feedback_msg = await message.channel.send("??**?ì¬ë¥??ì±?ê³  ?ìµ?ë¤...**")
 
     # Pass the feedback message to orchestration to delete it later
-    await orchestration.execute(message, channel_id, system_trigger, feedback_msg=feedback_msg)
+    await orchestration.execute(
+        message,
+        channel_id,
+        system_trigger,
+        feedback_msg=feedback_msg,
+        user_input_override=user_input_override
+    )
 
 if __name__ == "__main__":
     if DISCORD_TOKEN and GEMINI_API_KEY:

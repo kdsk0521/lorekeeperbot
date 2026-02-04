@@ -7,11 +7,6 @@ Defines shared data structures for the orchestration layer.
 import logging
 from typing import Dict, Any, Optional, List, Tuple
 from dataclasses import dataclass, field
-import fermentation
-import domain_manager
-import game_system
-import game_character
-from npc_manager import get_npc
 
 logger = logging.getLogger("OrchContext")
 
@@ -139,6 +134,11 @@ class NVCFilterConfig:
 
 async def gather_context(ctx: ResponseContext) -> ResponseContext:
     """필요한 모든 컨텍스트 데이터를 수집합니다."""
+    import domain_manager
+    import game_system
+    import game_character
+    import fermentation
+
     channel_id = ctx.channel_id
 
     # 기본 컨텍스트
@@ -190,6 +190,7 @@ async def gather_context(ctx: ResponseContext) -> ResponseContext:
 
 def _build_smart_history(ctx: ResponseContext) -> str:
     """스마트 컨텍스트 윈도우로 히스토리를 구성합니다."""
+    import fermentation
     all_hist = ctx.domain_data.get('history', [])
     target_len = 100000 # [Anti-Gravity] Maximize Context (Targeting <200k Tokens)
     default_lines = getattr(fermentation, "RECENT_HISTORY_FOR_ANALYSIS", 30)
@@ -223,6 +224,8 @@ async def run_cognition_analysis(
     """
     2단계 NVC 분석을 실행합니다.
     """
+    import game_system
+    import domain_manager
     # [Phase 1 Upgrade] Use GMCognition ReAct Loop
     # 1. Gather Inputs
     player_context_str = game_system.get_status_summary(ctx.player_data) if ctx.player_data else ""

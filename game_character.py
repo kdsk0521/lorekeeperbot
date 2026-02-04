@@ -493,7 +493,13 @@ def get_mental_status_text(p_data: Dict[str, Any]) -> str:
     return f"{info['emoji']} **{info['name']}**"
 
 
-def update_mental(user_data: Dict[str, Any], delta: int, reason: str) -> str:
+def update_mental(
+    user_data: Dict[str, Any],
+    delta: int,
+    reason: str,
+    channel_id: Optional[str],
+    user_id: Optional[str]
+) -> str:
     """
     V7 Mental Update Logic
     - Handles Doom Penalty on Recovery
@@ -507,7 +513,6 @@ def update_mental(user_data: Dict[str, Any], delta: int, reason: str) -> str:
     current_stage = get_mental_stage_id(current_val)
     
     # 1. Doom Penalty (Recovery Only)
-    channel_id = "UNKNOWN" # context missing in user_data, usually passed or disregarded for pure logic
     # We might need to fetch doom if available, but simplest is to assume 1.0 or require context.
     # Since function signature is fixed, we can't easily get channel_id here without passing it.
     # We will assume standard recovery unless doom is passed?
@@ -531,9 +536,15 @@ def update_mental(user_data: Dict[str, Any], delta: int, reason: str) -> str:
         # If we are in Stage 3 and healing, we grant Trauma and Reset to 100 (Calm)
         # This is the "Awakening" mechanic.
         
-        # Add Trauma Passive
+        # Add Trauma Passive (requires valid IDs)
         trauma_name = f"Trauma: {reason}"
-        domain_manager.add_to_ai_memory_list("UNKNOWN", "UNKNOWN", "passives", {"name": trauma_name, "tags": ["Trauma", "Permanent"], "modifier": -5})
+        if channel_id and user_id:
+            domain_manager.add_to_ai_memory_list(
+                channel_id,
+                user_id,
+                "passives",
+                {"name": trauma_name, "tags": ["Trauma", "Permanent"], "modifier": -5}
+            )
         
         # Reset
         mental["value"] = 90 # High Calm
@@ -547,20 +558,24 @@ def update_mental(user_data: Dict[str, Any], delta: int, reason: str) -> str:
     last_delta = mental.get("last_delta", 0)
     if (delta > 0 and last_delta > 0) or (delta < 0 and last_delta < 0):
         actual_delta = int(actual_delta * 1.1)
-        
+
+    # Clamp floor based on the *base* delta (before inertia)
+    base_target = max(0, min(100, current_val + delta))
+    base_stage = get_mental_stage_id(base_target)
+    clamp_floor = base_target
+
     # Clamping: Prevent crossing more than 2 stages downwards
     # Stage ranges: 0(70-100), 1(40-70), 2(15-40), 3(0-15)
-    # If Stage 0 -> Stage 3 (Illegal)
-    target_val = max(0, min(100, current_val + actual_delta))
-    target_stage = get_mental_stage_id(target_val)
-    
-    if target_stage > current_stage + 2: # Dropped more than 2 stages (0->3)
-        # Clamp to bottom of Stage (Current+2)
-        # Stage 2 range is 15-40. So set to 15.
+    if base_stage > current_stage + 2:
         limit_stage = current_stage + 2
         limit_info = config.MENTAL_STAGES.get(limit_stage)
-        target_val = limit_info["range"][0] # Set to min of limit stage
-        target_stage = limit_stage
+        clamp_floor = limit_info["range"][0]
+
+    target_val = max(0, min(100, current_val + actual_delta))
+    if delta < 0:
+        # Do not drop below the clamped floor when inertia amplifies damage.
+        target_val = max(target_val, clamp_floor)
+    target_stage = get_mental_stage_id(target_val)
         
     mental["value"] = target_val
     mental["last_delta"] = delta # Store original delta
@@ -600,6 +615,49 @@ def process_adaptation_encounter(user_data: Dict[str, Any], tag: str) -> Tuple[i
     leveled_up = (old_pct // 20) < (new_pct // 20) # 20% steps
     
     return new_pct, leveled_up
+
+def check_adaptation_roll(
+    user_data: Dict[str, Any],
+    trigger: str,
+    category: str = None,
+    difficulty: int = 30
+) -> Tuple[Dict[str, Any], str]:
+    """
+    Legacy adaptation check wrapper.
+    Returns (user_data, message) to keep older call sites working.
+    """
+    pct, leveled_up = process_adaptation_encounter(user_data, trigger)
+    status = "Success" if pct >= difficulty else "Fail"
+    lvl_txt = " (Level Up!)" if leveled_up else ""
+    msg = f"{trigger} Adaptation {pct}% vs DC {difficulty}: {status}{lvl_txt}"
+    return user_data, msg
+
+def apply_abnormal_impact(
+    user_data: Dict[str, Any],
+    tag: str,
+    intensity: str,
+    doom_stage: int = 0,
+    channel_id: Optional[str] = None,
+    user_id: Optional[str] = None
+) -> Tuple[str, int]:
+    """
+    Minimal abnormal impact handler for legacy paths.
+    Updates adaptation exposure and applies a mental hit based on intensity.
+    Returns (message, new_adaptation_pct).
+    """
+    pct, leveled_up = process_adaptation_encounter(user_data, tag)
+
+    intensity_map = {"Low": 10, "Mid": 20, "High": 30}
+    dmg = intensity_map.get(str(intensity), 10)
+    if doom_stage:
+        dmg += int(doom_stage)
+
+    # Apply mental impact (no trauma passive if IDs missing)
+    update_mental(user_data, -dmg, f"{tag} Exposure", channel_id, user_id)
+
+    lvl_txt = " (Level Up!)" if leveled_up else ""
+    msg = f"{tag} Exposure: -{dmg} Mental, Adaptation {pct}%{lvl_txt}"
+    return msg, pct
 
 # [DEPRECATED] Adaptation/Abnormal Impact logic moved to UNE MentalModule
 

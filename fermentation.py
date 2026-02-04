@@ -1001,7 +1001,7 @@ async def auto_ferment(
                                 p_data = domain_manager.get_participant_data(ch_id, uid)
                                 if p_data:
                                     reason = f"Psyche Analysis: {pd.get('dominant_instinct', 'unknown')}"
-                                    msg = game_character.update_mental(p_data, mental_delta, reason)
+                                    msg = game_character.update_mental(p_data, mental_delta, reason, ch_id, uid)
                                     domain_manager.save_participant_data(ch_id, uid, p_data)
                                     logger.info(f"[Fermentation V3] Mental 조정: {uid} -> {mental_delta} ({reason})")
                 except Exception as e:

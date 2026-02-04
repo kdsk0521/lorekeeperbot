@@ -69,7 +69,8 @@ Analyze the user's input intent and the player character's assets comprehensivel
 - **Major Locations**: {req.lore_summary.get('locations', 'Current surroundings')}
 
 ## 4. Analysis & Output Guidelines (JSON)
-**IMPORTANT: All string values in the JSON output must be in KOREAN.**
+**IMPORTANT: All string values in the JSON output must be in KOREAN,**
+**except for required enum tokens** (easy/normal/hard/extreme, Low/Mid/High/Extreme, positive/negative/mixed).
 
 - **intent**: Summary of the user's core intent (Korean).
 - **needs_judgment**: Is this a challenging action requiring a Dice Roll? (true/false)
@@ -94,6 +95,14 @@ Analyze the user's input intent and the player character's assets comprehensivel
         - **Items**: Calming items, protective charms, or comfort objects can mitigate negative impact
         - **Companion NPCs**: Trusted allies nearby can reduce fear (-3~-5), isolation amplifies it (+3~+5)
     - **reason**: Why this affects mental health, mentioning relevant modifiers if any (1 sentence in Korean)
+- **anomaly_profile**: Propose a lore-consistent anomaly candidate for this turn.
+    - **trigger**: Specific anomaly/event name (Korean) or null
+    - **category**: Short adaptation tag (Korean, 1-2 words) or null
+    - **intensity**: One of Low/Mid/High/Extreme
+    - **polarity**: One of positive/negative/mixed
+    - **line**: One-sentence narrative line in Korean (no mechanics)
+    - **reason**: 1 sentence in Korean tying to lore/scene
+    - **note**: Anomaly can be supernatural, a sudden clue, a rare coincidence, or an unexpected encounter. It may be positive, negative, or mixed.
 
 ## 5. Output Example (Values must be Korean)
 {{
@@ -113,6 +122,14 @@ Analyze the user's input intent and the player character's assets comprehensivel
   "narrative_hook": "잠입에는 성공했으나, 도중에 떨어뜨린 동전 소리에 경비병이 의구심을 품고 다가옵니다.",
   "time_flow": {{ "ticks": 3, "reason": "조심스러운 이동" }},
   "doom_relief": {{ "applicable": false, "amount": 0, "reason": "긴장된 상황" }},
-  "mental_impact": {{ "applicable": false, "delta": 0, "reason": "정신적 영향 없음" }}
+  "mental_impact": {{ "applicable": false, "delta": 0, "reason": "정신적 영향 없음" }},
+  "anomaly_profile": {{
+    "trigger": "이변 이름",
+    "category": "이변 태그",
+    "intensity": "Mid",
+    "polarity": "negative",
+    "line": "복도 끝에서 낡은 기계음이 스치며 이변의 기척이 번진다.",
+    "reason": "로어와 현재 상황에 근거한 이변 후보"
+  }}
 }}"""
         return prompt
