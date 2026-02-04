@@ -158,10 +158,10 @@ class OrchestrationService:
         return ctx, messages, directive
 
     # =========================================================
-    # STEP 5: PROMPT BUILDING
+    # STEP 5: PROMPT BUILDING (V3 - 34단계 슬롯 시스템)
     # =========================================================
-    def build_prompt(self, ctx: ResponseContext) -> Tuple[str, persona.PromptBuilder]:
-        """프롬프트를 구성합니다. (Delegated)"""
+    def build_prompt(self, ctx: ResponseContext) -> Tuple[str, None]:
+        """프롬프트를 구성합니다. (V3 34단계 슬롯 시스템 사용)"""
         return orch_res.build_prompt(ctx, self.nvc_filter_config)
 
     # =========================================================

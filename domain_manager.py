@@ -440,7 +440,7 @@ def _create_default_participant(display_name: str) -> Dict[str, Any]:
         }
     }
 
-def update_participant(channel_id: str, user, reset: bool = False) -> bool:
+def update_participant(channel_id: str, user, reset: bool = False, **kwargs) -> bool:
     d = get_domain(channel_id)
     uid = str(user.id)
     
@@ -451,6 +451,10 @@ def update_participant(channel_id: str, user, reset: bool = False) -> bool:
         # Ensure schema
         if "ai_memory" not in d["participants"][uid]:
              d["participants"][uid]["ai_memory"] = _create_default_participant("")["ai_memory"]
+    
+    # Apply additional fields
+    for k, v in kwargs.items():
+        d["participants"][uid][k] = v
              
     save_domain(channel_id, d)
     return True
@@ -524,58 +528,65 @@ def apply_pc_info_to_user(channel_id: str, user_id: str) -> bool:
     p = get_participant_data(channel_id, user_id)
     if not p: return False
     
-    mem = p["ai_memory"]
+    mem = p.get("ai_memory", {})
+    if not mem:
+        mem = _create_default_participant("")["ai_memory"]
+        p["ai_memory"] = mem
     
-    # Map PC info to Memory
+    # Map basic PC info
     if pc_info.get("appearance"): mem["appearance"] = pc_info["appearance"]
-    if pc_info.get("personality"): mem["personality"] = pc_info["personality"]
+    if pc_info.get("description"): mem["description"] = pc_info["description"]
+    elif pc_info.get("personality"): mem["description"] = pc_info["personality"]
+    
     if pc_info.get("background"): mem["background"] = pc_info["background"]
-    if pc_info.get("relationships"): mem["relationships"] = pc_info["relationships"]
-    if pc_info.get("relationships"): mem["relationships"] = pc_info["relationships"]
-    if pc_info.get("passives"): mem["passives"] = pc_info["passives"]
     
-    # Notes/Memos Merge (Notebook Integration)
-    if pc_info.get("notes") or pc_info.get("memos"):
-        notes = pc_info.get("notes") or pc_info.get("memos")
-        if notes:
-            # Append to Notebook [메모] section
-            import game_system
-            if isinstance(notes, list):
-                for n in notes: game_system.add_memo(channel_id, n)
-            else:
-                game_system.add_memo(channel_id, str(notes))
+    # Passives Merge (Prevent Duplicates)
+    new_passives = pc_info.get("passives", [])
+    if new_passives:
+        if "passives" not in mem: mem["passives"] = []
+        import time
+        current_names = [item['name'] if isinstance(item, dict) else str(item) for item in mem["passives"]]
+        for np in new_passives:
+            np_obj = np if isinstance(np, dict) else {"name": str(np), "desc": "Extracted"}
+            name_key = np_obj.get("name", "Unknown")
+            if name_key not in current_names:
+                mem["passives"].append({
+                    "name": name_key,
+                    "desc": np_obj.get("desc", "Extracted from Template"),
+                    "tags": ["Sync", "+Auto"],
+                    "acquired_at": time.strftime('%Y-%m-%d')
+                })
+
+    # Memos/Inventory Merge (Integrated with Notebook)
+    import game_system
+    # Notes/Memos
+    notes = pc_info.get("notes") or pc_info.get("memos") or pc_info.get("background")
+    if notes and isinstance(notes, (str, list)):
+        game_system.add_memo(channel_id, f"설정 동기화: {notes[:100]}...")
     
-    # Inventory Merge (Notebook Integration)
-    if pc_info.get("inventory"):
-        # Convert legacy dict inventory to Notebook format
-        items = []
-        for k, v in pc_info["inventory"].items():
-            try:
-                count = int(v)
-            except (ValueError, TypeError):
-                count = 1
-            
-            if count > 1: items.append(f"{k} x{count}")
-            else: items.append(k)
-            
-        if items:
-            import game_system # Avoid circular import if possible, or use domain_manager helper
-            current_nb = get_notebook(channel_id)
-            
-            # Simple Append
-            new_lines = [f"- {i} (초기 장비)" for i in items]
-            
-            if "— [소지품] —" in current_nb:
-                # Insert after header if possible
-                parts = current_nb.split("— [소지품] —")
-                new_nb = parts[0] + "— [소지품] —\n" + "\n".join(new_lines) + parts[1]
-            else:
-                 new_nb = current_nb + "\n\n— [소지품] —\n" + "\n".join(new_lines)
-            
-            update_notebook(channel_id, new_nb)
-            
+    # Inventory
+    inv = pc_info.get("inventory")
+    if inv and isinstance(inv, dict):
+        for item, qty in inv.items():
+            game_system.add_memo(channel_id, f"{item} ({qty}) - 설정 동기화")
+    
     save_participant_data(channel_id, user_id, p)
     return True
+
+def sync_matching_participants(channel_id: str, pc_info: Dict[str, Any]) -> List[str]:
+    """[V4] 캐릭터 이름(Mask)이 일치하는 모든 플레이어에게 기본 설정을 자동 동기화합니다."""
+    if not pc_info or not pc_info.get("name"): return []
+    
+    target_name = pc_info["name"].lower()
+    d = get_domain(channel_id)
+    updated_uids = []
+    
+    for uid, p_data in d.get("participants", {}).items():
+        if p_data.get("mask", "").lower() == target_name:
+            if apply_pc_info_to_user(channel_id, uid):
+                updated_uids.append(uid)
+                
+    return updated_uids
 
 def get_ai_memory(channel_id: str, uid: str) -> Dict[str, Any]:
     p = get_participant_data(channel_id, uid)

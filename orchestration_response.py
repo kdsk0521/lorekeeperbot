@@ -2,6 +2,8 @@
 Lorekeeper TRPG Bot - Orchestration Response Module
 Handles Step 5 (Prompt Building) and Step 6 (Response Generation).
 Uses context from Step 1 & 2 to generate the final AI output.
+
+[V3 CONFIRMED] 34단계 슬롯 시스템이 기본 시스템으로 확정되었습니다.
 """
 
 import logging
@@ -14,115 +16,29 @@ import persona
 import domain_manager
 from orchestration_context import ResponseContext, NVCFilterConfig
 
+# [V3] 34단계 슬롯 시스템 (유일한 프롬프트 빌더)
+import slot_manager
+
 logger = logging.getLogger("OrchResponse")
 
 # =========================================================
-# STEP 5: PROMPT BUILDING
+# STEP 5: PROMPT BUILDING (V3 - 34단계 슬롯 시스템)
 # =========================================================
 
 def build_prompt(
     ctx: ResponseContext,
     filter_config: NVCFilterConfig
-) -> Tuple[str, persona.PromptBuilder]:
-    """프롬프트를 구성합니다."""
-    builder = persona.PromptBuilder()
-
-    # NVC 요약 구성
-    nvc_summary = _build_nvc_summary(ctx, filter_config)
-
-    # 오프스크린 컨텍스트
-    temporal = ctx.nvc_result.get("TemporalOrientation", {})
-    offscreen_npcs = temporal.get("offscreen_npcs", [])
-    offscreen_context = ""
-    if offscreen_npcs:
-        offscreen_context = (
-            "### [OFFSCREEN WORLD]\n"
-            "While this scene unfolds, elsewhere:\n"
-            + "\n".join([f"- {npc}" for npc in offscreen_npcs])
-            + "\n**Instruction:** Naturally weave 1-2 of these background events into the narrative.\n"
-        )
-
-    # 활성 스레드
-    active_threads = temporal.get("active_threads", [])
-    threads_context = ""
-    if active_threads:
-        threads_context = (
-            "### [ACTIVE PLOT THREADS]\n"
-            + "\n".join([f"- {thread}" for thread in active_threads])
-            + "\n"
-        )
-
-    builder.set_genres(ctx.active_genres)
-    builder.set_custom_tone(ctx.custom_tone)
-    builder.set_scene_type(ctx.scene_type)
-
-    # [Context Diet / RAG Implementation]
-    # Use Flash-extracted context instead of full lore if available
-    relevant_context = ctx.nvc_result.get("RelevantContext", [])
+) -> Tuple[str, None]:
+    """
+    34단계 슬롯 시스템 기반 프롬프트를 구성합니다.
     
-    # Validation: Ensure it's a list and has content
-    if isinstance(relevant_context, list) and relevant_context:
-        logger.info(f"[Context Diet] Using {len(relevant_context)} extracted items. Full Lore bypassed.")
-        
-        # Build optimized lore block
-        filtered_lore = (
-            "### [RAG: FILTERED CONTEXT] (Full Lore Hidden for Efficiency)\n"
-            "The following rules/lore are extracted as MOST RELEVANT for this turn:\n"
-            + "\n".join([f"- {item}" for item in relevant_context])
-            + "\n\n(Use this context faithfully. If information is missing, rely on General Logic.)"
-        )
-        # Pass filtered lore instead of full lore
-        builder.set_lore(filtered_lore, ctx.rule_txt)
-    else:
-        # Fallback: Use full lore if extraction failed or is empty
-        logger.warning("[Context Diet] No relevant context extracted. Falling back to Full Lore.")
-        builder.set_lore(ctx.lore_txt, ctx.rule_txt)
-
-    # Combined Player Info (Status + Passives + Desc)
-    rich_player_info = domain_manager.get_unified_player_info(ctx.channel_id, ctx.user_id)
-    builder.set_player_info(name="", desc=rich_player_info)
-
-    builder.set_roles(character_descriptions="")
-    # V3 Hybrid: Pass structured deep_memory_data
-    deep_memory_str = ctx.domain_data.get("deep_memory", "")
-    deep_data = getattr(ctx, 'deep_memory_data', {})
-    
-    # Inject active_memory_triggers into prompt if present
-    if deep_data.get("active_memory_triggers"):
-        triggers_str = "\n".join(f"- {t}" for t in deep_data["active_memory_triggers"])
-        deep_memory_str = f"### [ACTIVE MEMORY TRIGGERS - Unresolved Narrative Hooks]\n{triggers_str}\n\n{deep_memory_str}"
-    
-    builder.set_fermented(ctx.fermented_summary_text, deep_memory_str)
-    
-    # [BUGFIX] Include conversation history in the prompt
-    # 히스토리를 "Immediate" 섹션으로 프롬프트에 추가
-    builder.set_immediate(ctx.hist_text)
-
-    # 동적 섹션
-    dynamic_world_state = f"{ctx.world_ctx}\n\n"
-    if threads_context:
-        dynamic_world_state += f"{threads_context}\n"
-    if offscreen_context:
-        dynamic_world_state += f"{offscreen_context}\n"
-
-    builder.set_current_context(
-        recent_chat="",
-        world_state=dynamic_world_state,
-        nvc_analysis=nvc_summary
-    )
-
-    # [Phase 2] Inject Psych Profile
-    ai_mem_resp: Dict[str, Any] = ctx.player_data.get("ai_memory", {}) if ctx.player_data else {}
-    psych_profile = ai_mem_resp.get("psych_profile")
-    builder.set_cognition_data(nvc_summary, psych_profile)
-    
-    # [Restored] Define p_name for Reminder
-    p_name = ctx.player_data.get("mask", "Unknown") if ctx.player_data else "Unknown"
-    pc_reminder = f"### CRITICAL WARNING: DO NOT WRITE FOR [{p_name}]\n{p_name} is the PLAYER. You must NOT generate their dialogue or actions."
-    builder.set_user_message(material=ctx.action_text, ooc_content=pc_reminder)
-
-    full_prompt = builder.build_dynamic_prompt()
-    return full_prompt, builder
+    Returns:
+        Tuple[str, None]: (프롬프트 문자열, None)
+        두 번째 반환값은 레거시 호환성을 위해 유지되며 항상 None입니다.
+    """
+    logger.info("[V3] Building 34-Step Slot Prompt")
+    v3_prompt = slot_manager.build_34_step_prompt(ctx)
+    return v3_prompt, None
 
 
 def _build_nvc_summary(ctx: ResponseContext, filter_config: NVCFilterConfig) -> str:
@@ -280,32 +196,30 @@ def _filter_stale_nvc_data(attitudes: Dict[str, Dict], filter_config: NVCFilterC
 
 
 # =========================================================
-# STEP 6: RESPONSE GENERATION
+# STEP 6: RESPONSE GENERATION (V3 - 34단계 프롬프트 직접 사용)
 # =========================================================
 
 async def generate_response(
     client,
     model_id: str,
     ctx: ResponseContext,
-    prompt: str,
+    prompt: str,  # V3 34단계 프롬프트 (build_prompt()에서 생성됨)
     filter_config: NVCFilterConfig
 ) -> Optional[str]:
-    """AI 응답을 생성합니다."""
+    """
+    AI 응답을 생성합니다.
+    
+    [V3 Update]
+    - prompt 파라미터를 직접 session에 주입
+    - PromptBuilder를 통한 중복 생성 제거
+    """
     p_name = ctx.player_data.get("mask", "Unknown") if ctx.player_data else "Unknown"
-    ai_mem_gen: Dict[str, Any] = ctx.player_data.get("ai_memory", {}) if ctx.player_data else {}
-    p_desc = ai_mem_gen.get("appearance", "")
 
+    # [V3] 이미 생성된 34단계 프롬프트를 직접 전달
     session = persona.create_risu_style_session(
-        client, model_id,
-        ctx.lore_txt, ctx.rule_txt,
-        ctx.active_genres, ctx.custom_tone,
-        ctx.domain_data.get("deep_memory", ""),
-        fermented_summary=ctx.fermented_summary_text,
-        character_descriptions="",
-        scene_type=ctx.scene_type,
-        player_name=p_name,
-        player_desc=p_desc,
-        nvc_summary=_build_nvc_summary(ctx, filter_config)
+        client=client,
+        model_version=model_id,
+        system_prompt=prompt  # ← V3 프롬프트 직접 주입!
     )
 
     # 히스토리 주입

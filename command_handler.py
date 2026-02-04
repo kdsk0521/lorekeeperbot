@@ -21,6 +21,7 @@ import game_system
 import game_world
 import game_character
 import npc_manager
+import cognition
 # session_manager and memory_system are still external for now, or integrated?
 # Plan said session_manager is modified to import domain_manager directly.
 # memory_system seems to be next or treated separately. I will assume memory_system exists.
@@ -178,35 +179,15 @@ async def cmd_lore(ctx: CommandContext) -> None:
                  pc_msg = f"\n주인공 식별: {pc_info.get('name')} (가면 설정 시 자동 적용)"
                  
                  # Auto-apply to existing participants with matching name
-                 d_state = domain_manager.get_domain(channel_id)
-                 updated_players = []
-                 for uid, p_data in d_state.get("participants", {}).items():
-                     if p_data.get("mask", "").lower() == pc_info.get("name").lower():
-                         # Merge passives
-                         new_passives = pc_info.get("passives", [])
-                         if new_passives:
-                             if "ai_memory" not in p_data: p_data["ai_memory"] = {}
-                             if "passives" not in p_data["ai_memory"]: p_data["ai_memory"]["passives"] = []
-                             
-                             current_names = [p['name'] if isinstance(p, dict) else str(p) for p in p_data["ai_memory"]["passives"]]
-                             for np in new_passives:
-                                 np_obj = np if isinstance(np, dict) else {"name": str(np), "modifier": 0, "desc": "Extracted"}
-                                 name_key = np_obj.get("name", "Unknown")
-                                 
-                                 if name_key not in current_names:
-                                     p_data["ai_memory"]["passives"].append({
-                                         "name": name_key,
-                                         "tags": ["Lore", "+Auto"],
-                                         "modifier": np_obj.get("modifier", 0), 
-                                         "desc": np_obj.get("desc", "Extracted from Lore"),
-                                         "acquired_at": time.strftime('%Y-%m-%d')
-                                     })
-                             
-                             updated_players.append(pc_info.get("name"))
-                             domain_manager.save_participant_data(channel_id, uid, p_data)
+                 updated_uids = domain_manager.sync_matching_participants(channel_id, pc_info)
                  
-                 if updated_players:
-                     pc_msg += f"\n✅ 캐릭터 업데이트: {', '.join(updated_players)} (패시브 적용)"
+                 if updated_uids:
+                     # Get names for display
+                     updated_names = []
+                     for uid in updated_uids:
+                         p = domain_manager.get_participant_data(channel_id, uid)
+                         if p: updated_names.append(p.get("mask", "Player"))
+                     pc_msg += f"\n✅ 캐릭터 업데이트: {', '.join(updated_names)} (패시브 및 설정 적용)"
             
             # 3. Update Genre (3-Layer)
             # Adapt unified_res to legacy structure
@@ -260,14 +241,60 @@ async def cmd_info(ctx: CommandContext) -> None:
         await ctx.send("❌ 등록 필요 (`!가면 [이름]`)")
         return
 
-    # [NEW] Description Update Support (if alias is desc/설명 and has args)
-    # Check trigger or just args? !info with args usually doesn't mean update.
-    # But !desc with args DOES.
-    if ctx.trigger in ['desc', '설명'] and ctx.args:
-        new_desc = ctx.raw_args.strip()
-        domain_manager.update_participant(ctx.channel_id, ctx.message.author, desc=new_desc)
-        await ctx.send(f"📝 **설명 업데이트:** {new_desc}")
-        return
+    # [NEW] Description Update Support (if alias is desc/설명)
+    if ctx.trigger in ['desc', '설명']:
+        # 1. Extract Full Argument (Text + Attachment)
+        file_text = ""
+        if ctx.message.attachments:
+            for att in ctx.message.attachments:
+                text, error = await read_attachment_text(att)
+                if error:
+                    await ctx.send(error)
+                    return
+                if text:
+                    file_text = text
+                    break
+        
+        full_arg = (ctx.raw_args + "\n" + file_text).strip()
+        
+        if not full_arg:
+            if not ctx.message.attachments:
+                # Fallback to View mode if no args provided at all
+                pass 
+            else:
+                await ctx.send("⚠️ 파일 내용을 읽을 수 없습니다.")
+                return
+        else:
+            # 2. Update logic
+            status_msg = await ctx.send("📝 **캐릭터 설정 분석 중...**")
+            
+            # AI Analysis Integration
+            if ctx.genai_client:
+                analysis = await cognition.analyze_character_sheet(ctx.genai_client, ctx.model_id, full_arg)
+                if analysis:
+                    # [V4 Integration] Save as Global PC Template (Like !로어)
+                    if analysis.get("name"):
+                        domain_manager.set_default_pc_info(ctx.channel_id, analysis)
+                        
+                    # 1. Update Current User directly
+                    domain_manager.apply_pc_info_to_user(ctx.channel_id, uid)
+                    
+                    # 2. Sync others if name matches (Same as !로어)
+                    updated_uids = domain_manager.sync_matching_participants(ctx.channel_id, analysis)
+                    
+                    # Filter out current user from "sync others" count
+                    other_uids = [u for u in updated_uids if u != uid]
+                    sync_info = ""
+                    if other_uids:
+                        sync_info = f"\n(동일 캐릭터 사용자 {len(other_uids)}명 동시 업데이트)"
+
+                    await status_msg.edit(content=f"✅ **캐릭터 설정 동기화 완료**\n이름: {analysis.get('name', '유지')}\n특성: {len(analysis.get('passives', []))}개 추출\n소지품/설정 데이터가 시스템에 적용되었습니다.{sync_info}")
+                    return
+            
+            # Fallback for no-AI or Fail
+            domain_manager.update_participant(ctx.channel_id, ctx.message.author, desc=full_arg[:500])
+            await status_msg.edit(content=f"📝 **설명 업데이트 완료** (단순 텍스트 저장)")
+            return
 
     # 1. Profile (Mask, Desc, etc)
     mask_name = p_data.get("mask", "Unknown")

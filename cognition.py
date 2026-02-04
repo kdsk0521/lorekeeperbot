@@ -1146,3 +1146,65 @@ Analyze the provided lorebook precisely to extract all metadata required for gam
         logger.error(f"[LoreAnalyzer] Analysis failed: {e}")
 
     return {}
+
+
+async def analyze_character_sheet(
+    client: genai.Client,
+    model_id: str,
+    sheet_text: str
+) -> Dict[str, Any]:
+    """
+    [Logos - CharacterExtractor]
+    단일 캐릭터 설정 텍스트를 분석하여 구조화된 PC 데이터를 추출합니다.
+    """
+    if not sheet_text:
+        return {}
+
+    system_prompt = """You are an expert TRPG Character Designer.
+Extract detailed character information from the provided text to create a structured character sheet.
+
+## Extraction Rules:
+1. **Name/Role/Species**: Identify the basic identity.
+2. **Appearance/Personality/Background**: Integrate provided details into concise Korean descriptions.
+3. **Passives (Traits)**: Identify permanent skills, traits, or abilities. 
+   - Return a list of objects: {"name": "...", "desc": "..."}.
+4. **Inventory**: Identify items and equipment. 
+   - Return a dict: {"Item": "Quantity"}.
+5. **Language**: All descriptions must be in KOREAN.
+
+## Output JSON Schema:
+{
+  "name": "...",
+  "role": "...",
+  "species": "...",
+  "appearance": "기계 의수, 흉터 등 외양 묘사",
+  "description": "성격, 말투, 특징 요약",
+  "background": "과거 이력 및 배경 설정",
+  "passives": [ {"name": "특성1", "desc": "효과 설명"} ],
+  "inventory": { "아이템1": "1개" }
+}"""
+
+    try:
+        gen_config = types.GenerateContentConfig(
+            response_mime_type="application/json",
+            temperature=0.1
+        )
+        contents = [
+            types.Content(
+                role="user",
+                parts=[types.Part(text=f"{system_prompt}\n\n[CHARACTER SHEET TEXT]\n{sheet_text}")]
+            )
+        ]
+
+        result = await api_call_with_retry(
+            client, model_id, contents, gen_config, 
+            operation_name="Character Sheet Analysis"
+        )
+        
+        if result:
+            return safe_parse_json(result)
+
+    except Exception as e:
+        logging.error(f"[CharacterAnalyzer] Analysis failed: {e}")
+
+    return {}

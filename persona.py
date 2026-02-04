@@ -40,16 +40,14 @@ from response_processor import (
     filter_pc_impersonation,
 )
 
-# Prompt building functions (분리된 모듈에서 import)
+# Prompt building functions (유틸리티만 사용 - V3에서 PromptBuilder 제거됨)
 from prompt_builder import (
-    PromptBuilder,
     build_length_instruction,
     build_combined_directive,
     build_mature_content_prompt,
     get_scene_type_description,
     get_available_genres,
     get_genre_description,
-    construct_system_prompt,
     SCENE_TYPES,
     GENRE_DEFINITIONS,
     DEFAULT_MIN_RESPONSE_LENGTH,
@@ -161,40 +159,24 @@ class ChatSessionAdapter:
 
 
 # =========================================================
-# 세션 생성 (프리셋 순서 적용)
+# 세션 생성 (V3 - 34단계 프롬프트 직접 주입)
 # =========================================================
 def create_risu_style_session(
     client: genai.Client,
     model_version: str,
-    lore_text: str,
-    rule_text: str = "",
-    active_genres: Optional[List[str]] = None,
-    custom_tone: Optional[str] = None,
-    deep_memory: str = "",
-    fermented_summary: str = "",
-    character_descriptions: str = "",
-    scene_type: Optional[str] = None,
-    player_name: str = "",
-    player_desc: str = "",
-    nvc_summary: str = ""
+    system_prompt: str  # [V3] 34단계 프롬프트 (필수)
 ) -> ChatSessionAdapter:
     """
-    RisuAI/SillyTavern 스타일의 세션을 생성합니다.
-    프리셋 순서에 맞게 프롬프트를 조립합니다.
+    V3 34단계 프롬프트를 사용하여 세션을 생성합니다.
+    
+    Args:
+        client: Gemini API 클라이언트
+        model_version: 모델 ID
+        system_prompt: 34단계 슬롯 시스템으로 생성된 프롬프트
+    
+    Returns:
+        ChatSessionAdapter: 초기화된 세션
     """
-    builder = PromptBuilder()
-    
-    # 프롬프트 구성
-    builder.set_genres(active_genres)
-    builder.set_custom_tone(custom_tone)
-    builder.set_scene_type(scene_type)  # 장면 유형 설정
-    builder.set_lore(lore_text, rule_text)
-    builder.set_player_info(player_name, player_desc)
-    builder.set_roles(character_descriptions)
-    builder.set_fermented(fermented_summary, deep_memory)
-    builder.set_cognition_data(nvc_summary)
-    
-    system_prompt = builder.build_system_prompt()
     
     # 초기화 메시지
     init_context = f"""
@@ -373,91 +355,12 @@ async def generate_response_with_retry(
     
     return "⚠️ **[시스템 경고]** 기록 장치 오류. 잠시 후 다시 시도해주세요."
 
-
 # =========================================================
 # 유틸리티 함수
 # =========================================================
 # NOTE: get_available_genres, get_genre_description은 prompt_builder.py로 이동됨 (상단에서 import)
 
-
-# =========================================================
-# 캐싱 지원 세션 생성
-# =========================================================
-async def create_cached_session(
-    client: genai.Client,
-    model_version: str,
-    channel_id: str,
-    lore_text: str,
-    rule_text: str = "",
-    active_genres: Optional[List[str]] = None,
-    custom_tone: Optional[str] = None,
-    deep_memory: str = "",
-    fermentation_module: Optional[python_types.ModuleType] = None,
-    scene_type: Optional[str] = None,
-    player_name: str = "",
-    player_desc: str = "",
-    nvc_summary: str = ""
-) -> Tuple[ChatSessionAdapter, bool]:
-    """
-    캐싱을 지원하는 세션을 생성합니다.
-    
-    Args:
-        scene_type: 장면 유형 ('normal', 'gore', 'nsfw', 'gore_nsfw')
-    """
-    builder = PromptBuilder()
-    builder.set_genres(active_genres)
-    builder.set_custom_tone(custom_tone)
-    builder.set_scene_type(scene_type)  # 장면 유형 설정
-    builder.set_lore(lore_text, rule_text)
-    builder.set_fermented(deep_memory=deep_memory)
-    builder.set_player_info(player_name, player_desc) # Added for consistency
-    builder.set_cognition_data(nvc_summary) # Added for consistency
-    
-    system_prompt_content = builder.build_system_prompt()
-    
-    cache_name = None
-    if fermentation_module and hasattr(fermentation_module, 'get_or_create_cache'):
-        try:
-            cache_name = await fermentation_module.get_or_create_cache(
-                client, model_version, channel_id,
-                lore_text, rule_text, deep_memory,
-                system_prompt_content
-            )
-        except Exception as e:
-            logging.warning(f"[Caching] 캐시 생성 실패, 일반 세션 사용: {e}")
-    
-    if cache_name:
-        logging.info(f"[Caching] 캐시 세션 생성 - {channel_id}")
-        
-        gen_config = types.GenerateContentConfig(
-            temperature=DEFAULT_TEMPERATURE,
-            safety_settings=config.SAFETY_SETTINGS,
-            cached_content=cache_name,
-            tools=[],
-            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
-        )
-        
-        session = ChatSessionAdapter(
-            client=client,
-            model=model_version,
-            history=[],
-            config=gen_config
-        )
-        
-        return session, True
-    
-    else:
-        session = create_risu_style_session(
-            client, model_version, lore_text, rule_text,
-            active_genres, custom_tone, deep_memory,
-            fermented_summary="",
-            character_descriptions="",
-            scene_type=scene_type,
-            player_name=player_name, # Passed for consistency
-            player_desc=player_desc, # Passed for consistency
-            nvc_summary=nvc_summary # Passed for consistency
-        )
-        return session, False
+# [V3 Update] create_cached_session() 제거됨 - 외부 호출 없음, PromptBuilder 의존
 
 # =========================================================
 # [Request 3] Post-Response Impersonation Filter
