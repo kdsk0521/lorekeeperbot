@@ -1129,6 +1129,10 @@ def build_fermented_context(
     remain accessible and distinct, whereas trivial details fade, blur, 
     and transform over time.
     """
+    if not isinstance(session_data, dict):
+        logger.warning("[Fermentation] build_fermented_context received non-dict session_data")
+        return ""
+
     deep_memory = session_data.get("deep_memory", "")
     fermented = session_data.get("fermented_history", [])
     

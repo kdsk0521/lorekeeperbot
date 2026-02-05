@@ -85,7 +85,7 @@ async def process_ai_system_action(channel_id: str, sys_action: Dict[str, Any]) 
 # Registry logic and dispatch (Restored for Health Check compatibility)
 async def handle_participant_command(ctx: CommandContext) -> bool:
     """Legacy entry point, now uses registry dispatch."""
-    return await registry.execute(ctx)
+    return await registry.dispatch(ctx)
 
 @registry.register("lore", category="World", aliases=["로어", "lore"], description="세계관 정보 조회 및 수정")
 async def cmd_lore(ctx: CommandContext) -> None:
@@ -465,7 +465,7 @@ async def cmd_notebook(ctx: CommandContext) -> None:
 
 
 
-@registry.register("npc", category="World", aliases=["엔피씨", "addnpc"], description="NPC 관리")
+@registry.register("npc", category="World", aliases=["엔피씨", "addnpc", "npc정보", "npc추가"], description="NPC 관리")
 async def cmd_npc(ctx: CommandContext) -> None:
     """!npc [조회/추가] [이름] [설명] or !addnpc [Batch]"""
     # 1. File Content
@@ -487,7 +487,7 @@ async def cmd_npc(ctx: CommandContext) -> None:
     channel_id = ctx.channel_id
     
     # If explicit "addnpc" or batch mode implied
-    if ctx.trigger == 'addnpc' or (len(raw_lines) > 1) or (file_text):
+    if ctx.trigger in ['addnpc', 'npc추가'] or (len(raw_lines) > 1) or (file_text):
         if not raw_lines[0].strip() and not file_text:
              await ctx.send("⚠️ 등록할 내용이 없습니다. `!npc추가 [이름]: [설명]` 또는 파일 첨부.")
              return
@@ -1056,7 +1056,7 @@ async def cmd_reset_npcs(ctx: CommandContext) -> None:
     await ctx.send(f"🧹 **세션 NPC 초기화 완료:** {count}명 삭제됨 (Lore NPC 유지)")
 
 
-@registry.register("rule", category="World", aliases=["룰", "규칙", "rules"], description="세계 규칙 관리")
+@registry.register("rule", category="World", aliases=["룰", "규칙", "rules", "worldrules", "세계규칙"], description="세계 규칙 관리")
 async def cmd_rule(ctx: CommandContext) -> None:
     """!룰 [추가/삭제/목록] [키워드] [내용]"""
     args = ctx.args
@@ -1116,7 +1116,52 @@ async def cmd_rule(ctx: CommandContext) -> None:
     await ctx.send(f"⚠️ 사용법: `!룰 [목록/추가/삭제]`")
 
 
-@registry.register("time", category="World", aliases=["시간", "time_adv"], description="시간 관리")
+@registry.register("quest", category="World", aliases=["퀘스트"], description="퀘스트 관리")
+async def cmd_quest(ctx: CommandContext) -> None:
+    """!quest [add/complete/remove/list] [내용]"""
+    args = ctx.args
+    raw = ctx.raw_args.strip()
+
+    if not args:
+        await ctx.send(game_system.get_active_quests_text(ctx.channel_id))
+        return
+
+    sub = args[0].lower()
+    content = raw[len(args[0]):].strip() if raw else ""
+
+    if sub in ["list", "목록", "l"]:
+        await ctx.send(game_system.get_active_quests_text(ctx.channel_id))
+        return
+
+    if sub in ["add", "추가", "+"]:
+        if not content:
+            await ctx.send("?좑툘 ?섏뒪???댁슜?? ?낅젰?섏꽭??. (`!quest add ???`)")
+            return
+        await ctx.send(game_system.add_quest(ctx.channel_id, content))
+        return
+
+    if sub in ["complete", "완료", "done", "clear"]:
+        if not content:
+            await ctx.send("?좑툘 ?꾨즺???섏뒪?? ?대쫫???낅젰?섏꽭??. (`!quest complete ???`)")
+            return
+        await ctx.send(game_system.complete_quest(ctx.channel_id, content))
+        return
+
+    if sub in ["remove", "삭제", "del", "delete"]:
+        if not content:
+            await ctx.send("?좑툘 ?쒓굅???섏뒪?? ?대쫫???낅젰?섏꽭??. (`!quest remove ???`)")
+            return
+        await ctx.send(game_system.remove_quest(ctx.channel_id, content))
+        return
+
+    # Fallback: treat raw input as a quest to add
+    if raw:
+        await ctx.send(game_system.add_quest(ctx.channel_id, raw))
+        return
+    await ctx.send("?좑툘 ?ъ슜踰? `!quest [add/complete/remove/list] [내용]`")
+
+
+@registry.register("time", category="World", aliases=["시간", "time_adv", "next", "turn", "진행", "건너뛰기", "턴"], description="시간 관리")
 async def cmd_time(ctx: CommandContext) -> None:
     """!시간 [진행/조회/설정]"""
     args = ctx.args
@@ -1125,6 +1170,10 @@ async def cmd_time(ctx: CommandContext) -> None:
     world = domain_manager.get_world_state(ctx.channel_id)
     
     if not args:
+        if ctx.trigger in ["next", "turn", "진행", "건너뛰기", "턴"]:
+            msg = game_system.advance_time(ctx.channel_id)
+            await ctx.send(msg)
+            return
         # View
         time_emoji = {"새벽": "🌅", "오전": "☀️", "오후": "🌤️", "황혼": "🌆", "저녁": "🌙", "심야": "🌑"}
         emoji = time_emoji.get(world.get("time_slot", "오후"), "⏰")
@@ -1228,7 +1277,7 @@ async def cmd_export(ctx: CommandContext) -> None:
         await send_long_message(ctx.message.channel, msg)
 
 
-@registry.register("help", category="System", aliases=["도움말", "help", "h"], description="명령어 목록")
+@registry.register("help", category="System", aliases=["도움말", "도움", "명령어", "help", "h"], description="명령어 목록")
 async def cmd_help(ctx: CommandContext) -> None:
     """!도움말"""
     # Dynamic Help from Registry (Using existing method)

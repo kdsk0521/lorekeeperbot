@@ -25,6 +25,10 @@ class RequestData:
 
 @dataclass
 class SharedBus:
+    """
+    Shared mutable state for UNE modules.
+    Note: bus.*.active indicates a module ran/triggered this turn, not DLC enablement.
+    """
     dai: Dict[str, Any] = field(default_factory=lambda: {"reason": "", "bonus": 0, "penalty": 0, "defense_success": False})
     judgment: Dict[str, Any] = field(default_factory=lambda: {
         "active": False, "success": False, "roll": 0, "dc": 0, 
@@ -140,6 +144,9 @@ async def gather_context(ctx: ResponseContext) -> ResponseContext:
     import fermentation
 
     channel_id = ctx.channel_id
+    if not isinstance(ctx.domain_data, dict):
+        logger.warning("[OrchContext] domain_data is not a dict; resetting to empty")
+        ctx.domain_data = {}
 
     # 기본 컨텍스트
     ctx.lore_txt = domain_manager.get_lore_with_npcs(channel_id)

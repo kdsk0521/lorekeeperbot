@@ -54,8 +54,8 @@ def _build_adaptation_result_line(
         return f"{name}: {status}{note_txt} [Adapt {old_pct}%->{new_pct}%]"
     return f"{name}: {status}{note_txt}"
 
-def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> Dict[str, Any]:
-    """[UNE Bridge] ParticipantData -> GameContext (Dict)"""
+def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> GameContext:
+    """[UNE Bridge] ParticipantData -> GameContext"""
     from orchestration_context import GameContext, RequestData, SharedBus
 
     p_data = domain_manager.get_participant_data(channel_id, user_id)
@@ -101,7 +101,10 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> D
     mental_data = mem.get("mental", {"value": 100, "last_delta": 0})
     bus.mental["value"] = mental_data.get("value", 100)
     bus.mental["last_delta"] = mental_data.get("last_delta", 0)
-    bus.mental["adaptation"] = mem.get("abnormal_exposure", {})
+    adaptation = mem.get("abnormal_exposure", {})
+    if not adaptation and p_data:
+        adaptation = p_data.get("abnormal_exposure", {})
+    bus.mental["adaptation"] = adaptation
 
     context = GameContext(
         request=RequestData(
@@ -114,12 +117,13 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> D
         shared_bus=bus
     )
 
-    return context.to_dict()
+    return context
 
-def sync_from_game_context(channel_id: str, user_id: str, ctx_dict: Dict[str, Any]) -> None:
-    """[UNE Bridge] GameContext (Dict) -> ParticipantData/WorldState Sync"""
+def sync_from_game_context(channel_id: str, user_id: str, ctx: Any) -> None:
+    """[UNE Bridge] GameContext -> ParticipantData/WorldState Sync"""
     from orchestration_context import GameContext
-    ctx = GameContext.from_dict(ctx_dict)
+    if isinstance(ctx, dict):
+        ctx = GameContext.from_dict(ctx)
     bus = ctx.shared_bus
 
     # 1. World State Sync (Doom)
@@ -135,7 +139,7 @@ def sync_from_game_context(channel_id: str, user_id: str, ctx_dict: Dict[str, An
         if bus.mental.get("active"):
             mental_sys = mem.setdefault("mental", {"value": 100, "last_delta": 0})
             mental_sys["value"] = bus.mental["value"]
-            mental_sys["last_delta"] = bus.mental.get("delta", 0)
+            mental_sys["last_delta"] = bus.mental.get("last_delta", 0)
 
             # Trauma Trigger
             if bus.mental.get("trauma_trigger"):
@@ -153,6 +157,7 @@ def sync_from_game_context(channel_id: str, user_id: str, ctx_dict: Dict[str, An
             updates = bus.mental.get("adaptation_update")
             if updates:
                 mem.setdefault("abnormal_exposure", {}).update(updates)
+                p_data.setdefault("abnormal_exposure", {}).update(updates)
 
         domain_manager.save_participant_data(channel_id, user_id, p_data)
 
@@ -177,8 +182,7 @@ class UniversalNarrativeEngine:
             }
         """
         # 1. Convert legacy data to GameContext
-        context_dict = convert_to_game_context(channel_id, user_id, user_input)
-        context = GameContext.from_dict(context_dict)
+        context = convert_to_game_context(channel_id, user_id, user_input)
         p_data = domain_manager.get_participant_data(channel_id, user_id)
         mask = p_data.get("mask") if p_data else "PC"
         
@@ -186,7 +190,7 @@ class UniversalNarrativeEngine:
         updated_context = await self.pipeline.execute(context)
         
         # 3. Sync result back to legacy storage
-        sync_from_game_context(channel_id, user_id, updated_context.to_dict())
+        sync_from_game_context(channel_id, user_id, updated_context)
         
         # 4. Generate Directive for Final LLM
         bus = updated_context.shared_bus
