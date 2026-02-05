@@ -92,38 +92,154 @@ Output JSON:
 
 THEORIA_PSYCHE = """
 <PSYCHE_LAYER>
-## Character State Tracking (6-Axis PSYCHE Model)
-For each NPC in the scene, output psychological state:
-Format: Ψ{name}[Μ:mood±.affect.insight][Φ:obj±,assess][Ι:phase.open±]
+## Character Psychological State Detection
 
-Dimensions:
-- Μ (Mental): Mood(eut/dep/anx/irr/elv/fea/ang) ± Intensity(1-5)
-- Φ (Soma): Body signals(sweat/tremble/pallor/flush)
-- Ι (Relation): Phase(orient/identity/explor/resolution) . Openness(guarded/cautious/open/vulnerable)
+For each NPC in scene, detect their psychological state by scanning for behavioral signals.
 
-Example: Ψ{Clara}[Μ:anx+3.rst.par][Φ:swt+1,tns][Ι:idn.opn+2]
+### AXIS 1: Mental (Mood)
+Scan for these signal clusters and assign the matching mood code:
+
+**dep (depressed/sad)** — sighing, avoiding eye contact, slumped shoulders, monotone voice, "...yeah", withdrawal
+**anx (anxious)** — darting eyes, trembling voice, fidgeting hands, stuttering, restlessness
+**irr (irritated)** — tongue clicking, short answers, eye rolling, impatient gestures, dismissive tone
+**elv (elevated/happy)** — smiling, bright voice, leaning in, talkative, animated gestures
+**fea (fearful)** — wide eyes, freezing, stepping back, held breath, pale face
+**ang (angry)** — clenched fists, jaw tight, raised voice, glaring, aggressive posture
+**eut (neutral)** — none of the above, calm conversation, relaxed demeanor
+
+Intensity: 1-2 subtle, 3-4 clear, 5 extreme
+
+### AXIS 2: Soma (Body)
+Physical manifestations to note:
+- **swt** — sweating (forehead, palms)
+- **trm** — trembling (hands, lips, voice)
+- **pal** — pallor (color draining)
+- **fls** — flushing (cheeks, ears, neck reddening)
+- **tns** — tension (stiff shoulders, clenched jaw)
+- **rlx** — relaxed (loose posture, no tension)
+
+### AXIS 3: Relation (Openness to PC)
+- **guarded (0)** — defensive, one-word answers, keeping distance, turned away
+- **cautious (1)** — careful, watching reactions, selective answers
+- **open (2)** — natural conversation, honest responses
+- **vulnerable (3)** — sharing secrets, showing weakness, depending on PC
+
+### Flexibility
+These are common patterns, NOT exhaustive. If you detect signals not listed but clearly indicating a mood, classify by closest match. For mixed signals, use format: "mixed:elv+ang" with a note field explaining.
+
+### Output
+```json
+"psyche_states": {
+  "CharName": {
+    "mental": {"descriptor": "anx", "value": 3},
+    "soma": {"descriptor": "swt+trm"},
+    "relation": {"descriptor": "cautious", "value": 1}
+  }
+}
+```
+If no NPC in scene or insufficient data, return empty object `{}`
 </PSYCHE_LAYER>
 """
 
 THEORIA_MEMORY = """
 <MEMORY_LAYER>
-## Memory Alchemy (Trigger Detection)
-Scan current input for sensory triggers that invoke character memories.
-- Triggers: Smells, sounds, specific phrases, déjà vu.
-- Echo: How the past serves the present emotion.
-Output JSON: "memory_triggers": [{"trigger": "...", "character": "...", "echo": "..."}]
+## Memory Trigger Detection
+
+Scan for moments that invoke character memories. Look for these patterns:
+
+### Type 1: Sensory Echo
+A sensory word followed by pause, reaction, or past reference:
+- **Smell** — "This scent... (freezes)" or smell + sudden mood shift
+- **Sound** — "That voice, where have I..." or sound + recognition
+- **Sight** — "That face... I've seen it before" or visual + flashback
+- **Touch** — "This texture feels like..." or touch + association
+- **Taste** — "This taste... mother used to..." or taste + memory
+
+### Type 2: Name/Place Echo
+When a proper noun from character's BACKGROUND appears in the current scene:
+- Background mentions "grew up in village called Cheongrim"
+- Current scene: "Cheongrim... have you heard of it?"
+- This activates a memory trigger
+
+### Type 3: Emotional Spike
+Sudden behavioral change without clear external cause:
+- Freezing mid-action — something surfaced in mind
+- Speech cutting off "......" — caught in memory
+- Expression shift (smiling then going blank) — past association
+- Topic avoidance "anyway, moving on" — uncomfortable memory
+- Unconscious gesture (touching old scar) — trauma connection
+
+### Type 4: Déjà Vu Markers
+Direct language indicating memory stirring:
+- "Feels like I've seen this before..."
+- "Somehow familiar..."
+- "This happened before, didn't it..."
+- "Just like that time..."
+
+### Flexibility
+These are guides, not rigid rules. If you detect a memory-invoking moment not matching listed patterns, still capture it. Key question: "Does this moment seem to stir something from the past?"
+
+### Safety
+- If NO clear trigger detected, return empty array `[]`
+- Do NOT fabricate triggers unsupported by text
+- When uncertain, err on side of NOT adding
+
+### Output
+```json
+"memory_triggers": [
+  {
+    "trigger": "specific stimulus (smell, name, scene)",
+    "character": "affected character name",
+    "echo": "surfacing memory or emotion (Korean, 1 sentence)"
+  }
+]
+```
 </MEMORY_LAYER>
 """
 
 THEORIA_CHAIN = """
 <CHAIN_LAYER>
 ## Narrative Chain Analysis
-Evaluate narrative flow state:
-1. Topic Lock: Is the current topic exhausted or still active?
-2. Pending Decisions: Are NPCs hesitating or deciding?
-3. Conclusion Proximity: 0-100% (How close to scene end?)
-4. Chain Status: OPEN (Expanding) vs CLOSED (Resolving)
-Output JSON: "narrative_chain": {"topic_lock": "...", "chain_status": "OPEN|CLOSED", "conclusion_proximity": N}
+
+Determine if the current scene is expanding (OPEN) or wrapping up (CLOSED).
+
+### Step 1: Detect CLOSED Signals (scene wrapping up)
+- **Question answered** — "Why?" → "Because..." (information delivered)
+- **Transition phrases** — "So now...", "Anyway...", "Moving on..."
+- **Farewell gestures** — walking toward door, saying goodbye, turning away
+- **Location change initiated** — "Let's go", "This way", opening door
+- **Time skip narration** — "The sun set...", "Hours later..."
+- **Conclusion reached** — deal made, promise confirmed, agreement settled
+
+### Step 2: Detect OPEN Signals (scene expanding)
+- **New question/mystery** — "But wait...", "Hold on, what do you mean..."
+- **Information withheld** — "There's something I haven't told you", speech trailing off
+- **Conflict escalating** — raised voices, confrontation, threats
+- **Third party appears** — new character, door opening sound, interruption
+- **Revelation/twist** — "Actually...", hidden information exposed
+- **Action interrupted** — sudden stop, "What was that?", strange noise
+
+### Step 3: Calculate conclusion_proximity
+- 2+ CLOSED signals AND 0 OPEN signals → 80-100%
+- 1 CLOSED signal AND 0 OPEN signals → 50-70%
+- Mixed CLOSED and OPEN signals → 30-50%
+- 1+ OPEN signals AND 0 CLOSED signals → 0-30%
+
+### Step 4: Determine topic_lock
+- Same topic discussed for 3+ turns → "locked: [topic name]"
+- Topic has shifted → "unlocked"
+
+### Flexibility
+These are examples, not exhaustive. If you detect unlisted signals, still classify appropriately. When OPEN and CLOSED signals conflict, weight by RECENCY (latest signal wins). When uncertain, default to "OPEN" (safer to keep narrative flowing).
+
+### Output
+```json
+"narrative_chain": {
+  "topic_lock": "locked: past story" | "unlocked",
+  "chain_status": "OPEN" | "CLOSED",
+  "conclusion_proximity": 0-100
+}
+```
 </CHAIN_LAYER>
 """
 
