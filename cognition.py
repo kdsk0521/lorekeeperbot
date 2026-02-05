@@ -151,23 +151,25 @@ async def _extract_physical(
     status: Optional[List[str]]
 ) -> Dict[str, Any]:
     sys = (
-        "EXTRACT NOTEBOOK & PHYSICAL CHANGES.\n"
-        "Return JSON with keys: notebook_update (string or null), status_add [list], status_remove [list].\n"
-        "Principle: Maintain a concise persistent state of the player's inventory and relevant memos.\n"
-        "\n### [NOTEBOOK MANAGEMENT RULES - CRITICAL]\n"
-        "1. **ACQUISITION vs OBSERVATION**: Record items ONLY if the player physically takes, receives, or buys them. Simply 'seeing', 'identifying', or 'inspecting' an item does NOT grant ownership. Unless they actively 'take' it, do NOT add to [소지품].\n"
-        "2. **LOSS & DESTRUCTION**: If an item is lost, stolen, or destroyed, REMOVE it from the Notebook.\n"
-        "3. **CONSUMPTION**: If a consumable (food, potion, ammo) is used, update its quantity or REMOVE if empty.\n"
-        "4. **STATE UPDATE**: If an item's condition changes (e.g. 'Sword' becomes 'Broken Sword'), update the description.\n"
-        "5. **DE-CLUTTER (Memos)**: Proactively REMOVE resolved tasks or information that is no longer relevant (e.g., 'Reached the room' is done; remove it) to prevent information overload.\n"
-        "6. **EXCLUSION (Transient Logs)**: Do NOT record one-off actions or movement logs that have no long-term impact.\n"
-        "7. **HYGIENE (No Duplication)**: Do NOT re-list items/memos already present in the [Current Notebook] unless the quantity/status changes.\n"
-        "\n### [DATA RULES]\n"
-        "- **Currency**: Track currency based on setting.\n"
-        "- **Deduplication**: If an item is given and taken in one turn, list it ONCE.\n"
-        "- **Format**: ALWAYS maintain '— [소지품] —' and '— [메모] —' headers.\n"
-        "\nExample Output:\n"
-        '{"notebook_update": "— [소지품] —\\n- 50 Credits\\n- Dull Combat Knife\\n\\n— [메모] —\\n- Code for Vault: 1234", "status_add": [], "status_remove": []}'
+        "## [EXTRACT NOTEBOOK & PHYSICAL CHANGES - V3.6]\n"
+        "Return JSON with keys: notebook_update (string or null), status_add [list], status_remove [list].\n\n"
+        "### [STRICT SAFETY GUARDS]\n"
+        "1. **ACQUISITION vs OBSERVATION (CRITICAL)**: Record items ONLY if player physically TAKES, RECEIVES, or BUYS them. Simply 'seeing' or 'inspecting' does NOT grant ownership. If no item was taken, `notebook_update` MUST be `null`.\n"
+        "2. **NO CHANGE -> NULL**: If there are no physical acquisitions, losses, or status changes, return `null` for `notebook_update`.\n\n"
+        "### [FEW-SHOT EXAMPLES]\n"
+        "- **Input**: 'I see a rusty sword on the wall and keep walking.'\n"
+        "  - Output: `{\"notebook_update\": null, \"status_add\": [], \"status_remove\": []}` (Observation only)\n"
+        "- **Input**: 'I pick up the rusty sword and put it in my bag.'\n"
+        "  - Output: `{\"notebook_update\": \"— [소지품] —\\n- Rusty Sword\", \"status_add\": [], \"status_remove\": []}` (Acquisition!)\n\n"
+        "### [DETAILED MANAGEMENT RULES]\n"
+        "1. **LOSS & DESTRUCTION**: If an item is lost, stolen, or destroyed, REMOVE it from the Notebook.\n"
+        "2. **CONSUMPTION**: If a consumable (food, potion, ammo) is used, update its quantity or REMOVE if empty.\n"
+        "3. **STATE UPDATE**: If an item's condition changes (e.g. 'Sword' becomes 'Broken Sword'), update the description.\n"
+        "4. **DE-CLUTTER (Memos)**: Proactively REMOVE resolved tasks or information that is no longer relevant (e.g., 'Reached the room' is done) to prevent information overload.\n"
+        "5. **EXCLUSION**: Do NOT record one-off transient actions or movement logs that have no long-term impact on the persistent state.\n"
+        "6. **HYGIENE**: Do NOT re-list items/memos already present in the [Current Notebook] unless the quantity or status has changed.\n\n"
+        "### [FORMAT]\n"
+        "- ALWAYS maintain '— [소지품] —' and '— [메모] —' headers."
     )
     ctx = f"Notebook Content:\n{notebook}\nStatus:{status}"
     usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput FULL UPDATED Notebook JSON."
@@ -184,10 +186,15 @@ async def _extract_social(
     scene_npcs: Optional[List[str]]
 ) -> Dict[str, Any]:
     sys = (
-        "EXTRACT SOCIAL CHANGES.\n"
-        "Return JSON with keys: relationships {Name: Level}, companions [list].\n"
-        "Rules: Deduplicate Names. Only output changes.\n"
-        'Example: {"relationships": {"Arthur": "Friendly"}, "companions": ["Arthur"]}'
+        "## [EXTRACT SOCIAL CHANGES - V3.7]\n"
+        "Return JSON: `{\"relationships\": {Name: Status}, \"companions\": [list]}`\n\n"
+        "### [FEW-SHOT EXAMPLE]\n"
+        "- **Input**: 'NPC Arthur nods and offers his hand in friendship.'\n"
+        "  - Output: `{\"relationships\": {\"Arthur\": \"Friendly\"}, \"companions\": [\"Arthur\"]}`\n"
+        "### [RULES]\n"
+        "1. **Only record SIGNIFICANT changes** in attitude (e.g., Neutral -> Friendly, Friendly -> Hostile).\n"
+        "2. **Deduplicate names**: Only use names explicitly present in recent history or lore NPCs.\n"
+        "3. **Safety Guard**: If no social change occurred, return `{\"relationships\": {}, \"companions\": []}`. Never fabricate trust or enmity without clear textual evidence."
     )
     ctx = f"Rels:{rels}, Comps:{comps}, LoreNPCs:{lore_npcs}, SceneNPCs:{scene_npcs}"
     usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON."
@@ -203,27 +210,25 @@ async def _extract_narrative(
     player_context: str = ""
 ) -> Dict[str, Any]:
     sys = (
-        "EXTRACT NARRATIVE CHANGES.\n"
-        "Return JSON with keys: passives [list], passive_suggestion {name, reason}, abnormal_trigger (string or null), abnormal_category (string or null), mental_suggestion (string or null).\n"
-        "Rules: 'Passive' here means ANY PERMANENT CAPABILITY or TRAIT.\n"
-        "Include:\n"
-        "1. **Skills/Abilities**: Learned techniques (e.g. 'Fireball', 'Lockpicking', 'Swordsmanship').\n"
-        "2. **Physical Traits**: Body mods, mutations, inherent stats (e.g. 'Cyber-Arm', 'Night Vision').\n"
-        "3. **Mental Traits**: Personality quirks, learned knowledge (e.g. 'Iron Will', 'Chemistry').\n"
-        "4. **Achievements**: Titles or major status (e.g. 'Dragonslayer').\n"
-        "5. **HYGIENE**: Do NOT list passives already in the [Passives] list. Only return NEW ones.\n"
-        "Abnormal Trigger Rules:\n"
-        "- Identify Genre Shifts or Monsters appearing. **MUST BE IN ENGLISH**.\n"
-        "- **abnormal_trigger**: The specific name of the anomaly (e.g., 'The Crimson Slime').\n"
-        "- **abnormal_category**: The general species or type for the adaptation system (e.g., 'Slime', 'Machine', 'Ghost', 'Silence').\n"
-        "- **mental_suggestion**: If the AI narration explicitly depicts the PC breaking down, panicking, or stabilizing, suggest a stage name (e.g. 'Panic', 'Calm'). Default null.\n"
-        "- **mental_delta**: If the scene depicts significant mental recovery (rest, comfort, therapy) or trauma, provide an integer delta (e.g., +20 for relief, -5 for stress). Use +10~+30 for 'healing' scenes. Default 0.\n"
-        "- **doom_delta**: If the scene depicts a reduction in global tension/threat (securing a safe zone, clearing an area, resting peacefully) or a spike in danger, provide an integer (e.g., -5 for relief, +2 for escalation). Default 0.\n"
-        "- **CRITICAL**: CONSIDER THE CHARACTER'S BACKGROUND. Do NOT trigger for events that are routine for their profession.\n"
-        "  - E.g., A Doctor seeing gore/wounds is NORMAL (No Trigger).\n"
-        "  - E.g., A Soldier seeing battle is NORMAL (No Trigger).\n"
-        "  - Only trigger if the event is truly shocking, supernatural, or fundamentally 'wrong' to THEM.\n"
-        'Example: {"passives": ["Fireball"], "passive_suggestion": null, "abnormal_trigger": "Zombie Dragon", "abnormal_category": "Zombie", "mental_suggestion": "Panic", "mental_delta": -15, "doom_delta": 0}'
+        "## [EXTRACT NARRATIVE CHANGES - V3.8]\n"
+        "Return JSON: `{\"passives\": [], \"passive_suggestion\": null, \"abnormal_trigger\": null, \"abnormal_category\": null, \"mental_suggestion\": null, \"mental_delta\": 0, \"doom_delta\": 0}`\n\n"
+        "### [FEW-SHOT EXAMPLE]\n"
+        "- **Input**: 'A faceless entity appears from the shadows. I feel a chill of cosmic horror.'\n"
+        "  - Output: `{\"abnormal_trigger\": \"Faceless Entity\", \"abnormal_category\": \"Ghost\", \"mental_delta\": -15, \"doom_delta\": +3}`\n\n"
+        "### [DETAILED PASSIVE RULES]\n"
+        "'Passive' means ANY permanent capability. Include:\n"
+        "1. **Skills/Abilities**: Learned techniques (e.g., 'Fireball', 'Lockpicking').\n"
+        "2. **Physical Traits**: Body mods, mutations (e.g., 'Cyber-Arm', 'Night Vision').\n"
+        "3. **Mental Traits**: Personality quarks, specialized knowledge (e.g., 'Iron Will').\n"
+        "4. **Achievements**: Significant titles or status (e.g., 'Dragonslayer').\n"
+        "5. **HYGIENE**: Only return NEW ones not in the [Passives] list.\n\n"
+        "### [NARRATIVE SIGNALS & ANOMALY RULES]\n"
+        "1. **Anomaly Trigger**: Genre shifts or monsters. **MUST BE IN ENGLISH**.\n"
+        "2. **Mental Delta**: Rest (+10~+30), Trauma (-10~-25). Use integers.\n"
+        "3. **Doom Delta**: Global threat reduction (-5~-10) or escalation (+2~+5).\n"
+        "4. **Professional Bias (CRITICAL)**: Gore is NORMAL for a Doctor. Combat is NORMAL for a Soldier. Only trigger for events truly wrong to THEM.\n\n"
+        "### [SAFETY GUARD]\n"
+        "If no significant narrative adaptation happens, keep fields `null` or `0`."
     )
     ctx = f"Passives:{passives}, PlayerContext:{player_context}, FermentedSnippet:{fermented[:2000]}"
     usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON."
@@ -238,13 +243,13 @@ async def _extract_quest(
     memos: Optional[List[str]]
 ) -> Dict[str, Any]:
     sys = (
-        "EXTRACT QUEST CHANGES.\n"
-        "Return JSON with keys: quest_add [list], quest_complete [list].\n"
-        "Rules: precise quest strings.\n"
-        "1. **ADD**: Only add NEW quests. Do not duplicate quests already in [Quests] list.\n"
-        "2. **COMPLETE**: Mark as complete ONLY if explicitly resolved. Be precise with the string match.\n"
-        "3. **Memos**: Managed via Notebook; DO NOT output them here.\n"
-        'Example: {"quest_add": ["Find the key"], "quest_complete": []}'
+        "## [EXTRACT QUEST CHANGES - V3.6]\n"
+        "Return JSON with keys: quest_add [list], quest_complete [list].\n\n"
+        "### [RULES]\n"
+        "1. **ADD**: Only add NEW quests. Do not duplicate quests already in [Quests].\n"
+        "2. **COMPLETE**: Mark as complete ONLY if explicitly resolved.\n\n"
+        "### [SAFETY GUARD]\n"
+        "If no quest update, return `{\"quest_add\": [], \"quest_complete\": []}`."
     )
     ctx = f"Quests:{quests}"
     usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON."
@@ -265,27 +270,6 @@ async def _call_extract(
     except Exception as e:
         logger.warning(f"[{op_name}] Error: {e}")
     return {}
-
-# =========================================================
-# PART 4: GM COGNITION (REACT ENGINE)
-# =========================================================
-
-
-SYSTEM_INSTRUCTION_NARRATIVE_FLOW = """
-<NARRATIVE_PLANNER>
-Analyze the narrative flow based on the "Chain Principle" and "Spotlight".
-
-1. **Chain Principle**: Does the outcome CLOSE the loop (boring) or OPEN a new one (fun)?
-2. **Spotlight**: Which character has been silent?
-
-Output JSON:
-{
-    "chain_status": "OPEN" or "CLOSED",
-    "narrative_hook": "Suggestion for opening a new loop",
-    "spotlight_suggestion": "Ask Player B what they are doing"
-}
-</NARRATIVE_PLANNER>
-"""
 
 # =========================================================
 # PART 4: UNIFIED LORE ANALYSIS (LORE ANALYZER)

@@ -29,7 +29,7 @@ class SharedBus:
     Shared mutable state for UNE modules.
     Note: bus.*.active indicates a module ran/triggered this turn, not DLC enablement.
     """
-    # dai: Theoria 분석 결과 전체 저장 (GMCognition nvc_result 대체)
+    # dai: Theoria 분석 결과 전체 저장 (SharedBus 데이터 인터페이스)
     dai: Dict[str, Any] = field(default_factory=lambda: {
         "active": False,
         # Input Analysis
@@ -61,7 +61,6 @@ class SharedBus:
         "anomaly_profile": {},
         # Safety & Debug
         "pc_impersonation_check": {},
-        "offscreen_hint": "",
         "temporal_orientation": {},
         "npc_attitudes": {},
         "relevant_context": []

@@ -16,10 +16,13 @@ from memory_system import (
     TEMPORAL_ORIENTATION_PROTOCOL
 )
 
+# [SYSTEM NOTE] Flash tends to hallucinate in complex models. 
+# We maintain the original complexity but wrap them in clear instructional tags.
+
 logger = logging.getLogger("Theoria")
 
 # =========================================================
-# THEORIA SYSTEM PROMPTS (GMCognition Flash 통합)
+# THEORIA SYSTEM PROMPTS (UNE 통합 분석 엔진)
 # =========================================================
 
 THEORIA_IDENTITY = """
@@ -43,50 +46,57 @@ Apply these in EVERY analysis:
 """
 
 THEORIA_PC_CHECK = """
-<pc_impersonation_self_correction>
-## PC IMPERSONATION DETECTION & SELF-CORRECTION
-**CRITICAL**: Before analyzing, scan recent history for PC impersonation violations ([PC] spoke, thought, acted).
-### OUTPUT FIELD
-Add to JSON output:
-- `PCImpersonationCheck`: {
-    "detected": boolean,
-    "violations": ["specific violation 1"],
-    "correction_hint": "Reminder for Right Hemisphere"
-  }
-</pc_impersonation_self_correction>
+<pc_impersonation_check>
+## PC IMPERSONATION DETECTION
+Scan recent history for violations where AI controlled the PC (Player Character).
+Players control their characters exclusively. AI control is a violation.
+
+### SAFETY GUARD
+- If NO violation detected: `{"detected": false, "violations": [], "correction_hint": null}`
+- DO NOT guess violations if none are explicitly visible.
+</pc_impersonation_check>
 """
 
 THEORIA_PROCESS = """
 <analysis_process>
-STEP 1 — OBSERVATION: State observable facts only. Strict noun linking.
-STEP 2 — PSYCHE SCAN: Analyze the psychological state of key actors (Mood, Soma, Relation).
-STEP 3 — MEMORY TRIGGER: Does immediate sensory input echo a past memory?
-STEP 4 — NARRATIVE CHAIN: Is the current flow OPEN (expanding) or CLOSED (ending)?
-STEP 5 — USER INTENT: What is the user trying to achieve IMMEDIATELY? Not ultimate goal.
-STEP 6 — OBSTACLES: Physical barriers, social resistance, time pressure.
-STEP 7 — CONTEXT SELECTION: Find relevant quotes/rules.
+STEP 1 — DECODE: Reconstruct user input and analyze plausibility.
+STEP 2 — SCAN: Check for PC Impersonation violations.
+STEP 3 — OBSERVE: State physical facts, NPC states (Psyche), and Memory Triggers.
+STEP 4 — MEASURE: Determine high-stakes parameters (Position/Effect).
+STEP 5 — EXTRACT: Identify key Aspects of the scene.
+STEP 6 — SEQUENCE: Analyze Narrative Chain continuity.
+STEP 7 — ORIENT: Determine Temporal focus and intensity.
 </analysis_process>
 """
 
 THEORIA_INPUT_DECODING = """
 <input_decoding_protocol>
-## INPUT ANALYSIS & RECONSTRUCTION (Theoria V3)
-Your first task is to DECODE the user's raw input.
-1. **Reconstruct**: If input is broken ("Gun... shoot..."), fix it ("Shoots the gun").
-2. **Contextualize**: Resolve pronouns. "Him" -> "The Bandit Leader".
-3. **Gap Fill**: If verb is missing, infer from current Quest/Goal. "Scalpel!" -> "Handing over the scalpel."
-4. **Evaluate**: 
-   - **Plausibility**: Is this action physically possible for this character? (High/Low/Impossible)
-   - **Metagaming**: Does it rely on hidden info?
-   
-Output JSON:
-"input_analysis": {
-    "original": "...",
-    "enhanced": "Full reconstructed sentence",
-    "plausibility": "High/Low/Impossible",
-    "logic_trace": ["Repair", "GapFill"],
-    "momentum": "Open/Closed"
-}
+## INPUT ANALYSIS & RECONSTRUCTION
+DECODE the user's raw input into a full, logical action based on current context.
+
+1. **Reconstruct**: Transform short or vague inputs into descriptive 3rd-person actions.
+   - Signal: Consider held items, current location, and recent NPC dialogue.
+2. **Evaluate Plausibility**: Judge if the action is physically/logically possible.
+   - **High**: Action fits character skills and environment.
+   - **Low**: Action is risky or unlikely due to wounds/lack of tools.
+   - **Impossible**: Action violates laws of physics or narrative facts.
+3. **Momentum**:
+   - **Open**: The action invites reaction or leaves room for failure.
+   - **Closed**: The action is final or mundane.
+
+### [FEW-SHOT EXAMPLES]
+- **Input**: "Scalpel!" (In surgery room)
+  - Reconstruct: "He urgently reaches for the sterile scalpel on the tray."
+  - Plausibility: High (He is a doctor).
+- **Input**: "Jump!" (While hands are tied)
+  - Reconstruct: "He attempts to leap despite being bound."
+  - Plausibility: Low (Restricted movement).
+- **Input**: "Fire!" (In a vacuum)
+  - Reconstruct: "He tries to ignite a torch in the airless void."
+  - Plausibility: Impossible (No oxygen).
+
+### [SAFETY GUARD]
+If input is gibberish or purely OOC, try to interpret it as a character's "confused mumbling" or flag as `Plausibility: Impossible`.
 </input_decoding_protocol>
 """
 
@@ -245,55 +255,60 @@ These are examples, not exhaustive. If you detect unlisted signals, still classi
 
 THEORIA_POSITION_EFFECT = """
 <position_effect_analysis>
-Analyze the stakes of this action:
+## POSITION (Risk Assessment: 0.0 to 1.0)
+Analyze the stakes of this action. What is risked on failure?
+- **0.0-0.3 (Controlled)**: Minor inconvenience. Signal: Investigation, casual talk.
+- **0.4-0.6 (Risky)**: Meaningful setback. Signal: Combat start, hostile negotiation.
+- **0.7-1.0 (Desperate)**: Serious consequences. Signal: Lethal blow, boss encounter.
 
-POSITION (0.0 to 1.0) — What is risked on failure?
-- 0.0-0.3: Minor inconvenience (time lost, retry possible)
-- 0.4-0.6: Meaningful setback (opportunity lost, complication added)
-- 0.7-1.0: Serious consequences (injury, relationship damage, irreversible)
+## EFFECT (Potency Assessment: 0.0 to 1.0)
+What is gained on success?
+- **0.0-0.3 (Limited)**: Small progress. Signal: Finding a scrap, simple NPC nod.
+- **0.4-0.6 (Standard)**: Meaningful progress. Signal: Taking an item, convincing an NPC.
+- **0.7-1.0 (Critical)**: Major success. Signal: Ending a scene, killing a major foe.
 
-EFFECT (0.0 to 1.0) — What is gained on success?
-- 0.0-0.3: Small progress (information, minor advantage)
-- 0.4-0.6: Meaningful progress (goal partially achieved)
-- 0.7-1.0: Major success (goal achieved, bonus gained)
+### [FEW-SHOT EXAMPLES]
+- **Scenario**: Player talks to a neutral guard about weather.
+  - Position: 0.2 (Low risk), Effect: 0.2 (Low gain). Signal: Casual conversation.
+- **Scenario**: Player tries to pick a lock on a chest while guards are patrolling nearby.
+  - Position: 0.6 (Caught on failure), Effect: 0.6 (Obtaining loot). Signal: Risky infiltration.
+- **Scenario**: Player attacks a dragon with a broken sword.
+  - Position: 0.9 (Death on failure), Effect: 0.3 (Minor scratch). Signal: Desperate combat.
+
+### [FALLBACK RULE]
+If input is non-action dialogue, default both to 0.4 unless intense drama is present.
 </position_effect_analysis>
 """
 
 THEORIA_ASPECTS = """
 <aspect_extraction>
-Extract 3-5 actionable keywords from the scene.
-Good Aspects are double-edged swords (e.g., "Dark Alley" masks you but limits vision).
+## ASPECT EXTRACTION (3-5 Keywords)
+Extract environment or situation keywords in `[Target/Object] + [Status]` format.
+- E.g.: `Alley [Dark]`, `Security [High]`, `Wound [Infected]`, `NPC [Panic]`
+
+### [FEW-SHOT EXAMPLE]
+- **Input**: "The rain pours down while I hide behind a crumbling stone wall."
+- **Output**: `["Rain [Heavy]", "Cover [Stone Wall]", "Wall [Crumbling]"]`
+
+### SAFETY GUARD
+If no clear environmental factors exist, return `["Normal Situation"]`.
 </aspect_extraction>
 """
 
-THEORIA_OFFSCREEN = """
-<offscreen_world>
-Per ASYNCHRONOUS WORLD principle: Note what NPCs NOT in the scene might be doing. The world does not pause for the player.
-</offscreen_world>
-"""
 
-THEORIA_PC_CHECK = """
-<pc_impersonation_check>
-## PC IMPERSONATION DETECTION
-Scan recent history for violations where AI controlled the PC.
-
-Output: "pc_impersonation_check": {
-    "detected": boolean,
-    "violations": ["specific violation"],
-    "correction_hint": "Reminder"
-}
-</pc_impersonation_check>
-"""
+# Duplicate THEORIA_PC_CHECK removed.
 
 THEORIA_TEMPORAL = """
 <temporal_orientation>
-## Temporal Flow Analysis
-Determine the scene's temporal focus:
-- PAST: Flashback, memory, regret
-- PRESENT: Current action, immediate sensation
-- FUTURE: Planning, anticipation, dread
+## TEMPORAL ORIENTATION (PAST / PRESENT / FUTURE)
+- **PAST (Intensity 0.0-1.0)**: Use of verbs like "remember, was, had". Signal: Flashbacks, trauma, nostalgia.
+- **PRESENT (Intensity 0.0-1.0)**: Use of immediate verbs. Signal: Combat, sensory input, dialogue.
+- **FUTURE (Intensity 0.0-1.0)**: Use of "will, plan, if". Signal: Anticipation, dread, strategy.
 
-Output: "temporal_orientation": {"focus": "past/present/future", "intensity": 0.0-1.0}
+### MEASUREMENT RULES
+- Strong signal (Direct mention) -> 0.8+
+- Weak signal (Indirect implication) -> 0.2-0.4
+- Default: PRESENT 1.0 if uncertain.
 </temporal_orientation>
 """
 
@@ -355,7 +370,6 @@ class TheoriaAnalyzer:
             THEORIA_CHAIN,
             THEORIA_POSITION_EFFECT,
             THEORIA_ASPECTS,
-            THEORIA_OFFSCREEN,
             THEORIA_TEMPORAL,
             self._get_output_schema(),
             "</THEORIA>"
@@ -406,7 +420,6 @@ Return valid JSON with ALL these fields (Korean values where specified):
 
 ## SAFETY & DEBUG
 - "PCImpersonationCheck": {"detected": boolean, "violations": [], "correction_hint": str}
-- "OffscreenHint": str (Korean)
 - "TemporalOrientation": {"focus": "past/present/future", "intensity": 0.0-1.0}
 - "NPCAttitudes": {"NpcName": {"attitude": "hostile/unfriendly/neutral/friendly/devoted", "reason": "Korean"}}
 - "RelevantContext": ["Quoted lore/rule 1", "Quote 2", ...]

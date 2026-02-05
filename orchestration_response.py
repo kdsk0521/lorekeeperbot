@@ -53,7 +53,6 @@ def _build_nvc_summary(ctx: ResponseContext, filter_config: NVCFilterConfig) -> 
     eff_data = dai.get("effect", {})
     aspects = dai.get("aspects", [])
     gm_m = dai.get("gm_move", {})
-    off_hint = dai.get("offscreen_hint")
 
     # [V3 Restructured] Cognition Engine Data Block
     nvc_summary = "### <Cognition_Engine_Data>\n"
@@ -145,8 +144,7 @@ def _build_nvc_summary(ctx: ResponseContext, filter_config: NVCFilterConfig) -> 
     if suggested_focus:
         nvc_summary += f"#### TEMPORAL_FOCUS\n- suggested_focus: {suggested_focus}\n\n"
 
-    if off_hint:
-        nvc_summary += f"#### OFFSCREEN_HINT\n- {off_hint}\n\n"
+
 
     nvc_summary += "### </Cognition_Engine_Data>\n"
 

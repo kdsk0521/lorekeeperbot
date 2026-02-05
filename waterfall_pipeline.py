@@ -84,7 +84,6 @@ class WaterfallPipeline:
         bus.dai["mental_impact"] = analysis.get("mental_impact", {})
         bus.dai["anomaly_profile"] = analysis.get("anomaly_profile", {})
         bus.dai["pc_impersonation_check"] = analysis.get("PCImpersonationCheck", {})
-        bus.dai["offscreen_hint"] = analysis.get("OffscreenHint", "")
         bus.dai["temporal_orientation"] = analysis.get("TemporalOrientation", {})
         bus.dai["npc_attitudes"] = analysis.get("NPCAttitudes", {})
         bus.dai["relevant_context"] = analysis.get("RelevantContext", [])

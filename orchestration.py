@@ -57,7 +57,7 @@ class OrchestrationService:
         self.model_id_flash = model_id_flash
         self.nvc_filter_config = orch_ctx.NVCFilterConfig()
 
-        # [UNE] Universal Narrative Engine (GMCognition ??)
+        # [UNE] Universal Narrative Engine 통합 엔진
         from une_facade import UniversalNarrativeEngine
         self.une = UniversalNarrativeEngine(client_genai, model_id_flash)
 
@@ -70,7 +70,7 @@ class OrchestrationService:
         """??? ?? ???? ???? ?????. (Delegated)"""
         return await orch_ctx.gather_context(ctx)
 
-    # STEP 2: COGNITION ANALYSIS (GMCognition ??? - UNE Theoria? ??)
+    # STEP 2: COGNITION ANALYSIS (UNE Theoria 실행)
     # ??? process_une_logic?? UNE Pipeline?? ?????.
 
     # =========================================================
@@ -409,7 +409,7 @@ class OrchestrationService:
             # 1. Context Gathering
             ctx = await self.gather_context(ctx)
 
-            # 2. Cognition Analysis (GMCognition 제거됨)
+            # 2. Cognition Analysis (Theoria 수행)
             # 분석은 이제 process_une_logic 내부의 UNE Theoria에서 수행됩니다.
 
 
