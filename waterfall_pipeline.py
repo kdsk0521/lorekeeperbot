@@ -62,6 +62,37 @@ class WaterfallPipeline:
         # 1. Call 1: Analysis (Theoria) - Always Execute
         analysis = await self.theoria.analyze_input(context)
         bus = context.shared_bus
+        
+        # Store ALL Theoria results in SharedBus.dai (replaces nvc_result)
+        bus.dai["active"] = True
+        bus.dai["input_analysis"] = analysis.get("InputAnalysis", {})
+        bus.dai["observation"] = analysis.get("Observation", "")
+        bus.dai["user_intent"] = analysis.get("UserIntent", "")
+        bus.dai["current_location"] = analysis.get("CurrentLocation", "")
+        bus.dai["location_risk"] = analysis.get("LocationRisk", "Low")
+        bus.dai["time_context"] = analysis.get("TimeContext", "")
+        bus.dai["scene_type"] = analysis.get("SceneType", "normal")
+        bus.dai["position"] = analysis.get("Position", {})
+        bus.dai["effect"] = analysis.get("Effect", {})
+        bus.dai["aspects"] = analysis.get("Aspects", [])
+        bus.dai["psyche_states"] = analysis.get("psyche_states", {})
+        bus.dai["narrative_chain"] = analysis.get("narrative_chain", {})
+        bus.dai["memory_triggers"] = analysis.get("memory_triggers", [])
+        bus.dai["narrative_hook"] = analysis.get("narrative_hook", "")
+        bus.dai["time_flow"] = analysis.get("TimeFlow", analysis.get("time_flow", {}))
+        bus.dai["doom_relief"] = analysis.get("doom_relief", {})
+        bus.dai["mental_impact"] = analysis.get("mental_impact", {})
+        bus.dai["anomaly_profile"] = analysis.get("anomaly_profile", {})
+        bus.dai["pc_impersonation_check"] = analysis.get("PCImpersonationCheck", {})
+        bus.dai["offscreen_hint"] = analysis.get("OffscreenHint", "")
+        bus.dai["temporal_orientation"] = analysis.get("TemporalOrientation", {})
+        bus.dai["npc_attitudes"] = analysis.get("NPCAttitudes", {})
+        bus.dai["relevant_context"] = analysis.get("RelevantContext", [])
+        bus.dai["needs_judgment"] = analysis.get("needs_judgment", False)
+        bus.dai["action_meta"] = analysis.get("action_meta", {})
+        bus.dai["asset_evaluation"] = analysis.get("asset_evaluation", {})
+        
+        # Judgment 연동
         bus.judgment["active"] = analysis.get("needs_judgment", False)
         if bus.judgment["active"]:
             bus.judgment["meta"] = analysis.get("action_meta", {})
@@ -70,17 +101,17 @@ class WaterfallPipeline:
             bus.judgment["modifications"] = eval_data.get("modifications", [])
             bus.judgment["narrative_hook"] = analysis.get("narrative_hook", "")
         
-        # Store Doom Relief data for Doom Module
+        # Doom Relief 연동
         doom_relief = analysis.get("doom_relief", {})
         if doom_relief.get("applicable", False):
             bus.doom["relief"] = doom_relief
         
-        # Store Mental Impact data for Mental Module
+        # Mental Impact 연동
         mental_impact = analysis.get("mental_impact", {})
         if mental_impact.get("applicable", False):
             bus.mental["impact"] = mental_impact
 
-        # Store Anomaly profile (from Theoria) for Anomaly Module
+        # Anomaly Profile 연동
         anomaly_profile = analysis.get("anomaly_profile", {})
         if isinstance(anomaly_profile, dict):
             tag = anomaly_profile.get("trigger") or ""

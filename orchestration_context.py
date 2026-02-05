@@ -29,7 +29,43 @@ class SharedBus:
     Shared mutable state for UNE modules.
     Note: bus.*.active indicates a module ran/triggered this turn, not DLC enablement.
     """
-    dai: Dict[str, Any] = field(default_factory=lambda: {"reason": "", "bonus": 0, "penalty": 0, "defense_success": False})
+    # dai: Theoria 분석 결과 전체 저장 (GMCognition nvc_result 대체)
+    dai: Dict[str, Any] = field(default_factory=lambda: {
+        "active": False,
+        # Input Analysis
+        "input_analysis": {},
+        "observation": "",
+        "user_intent": "",
+        # Location & Scene
+        "current_location": "",
+        "location_risk": "Low",
+        "time_context": "",
+        "scene_type": "normal",
+        # Stakes (BitD)
+        "position": {},
+        "effect": {},
+        "aspects": [],
+        # Judgment Support
+        "needs_judgment": False,
+        "action_meta": {},
+        "asset_evaluation": {"bonus": 0, "penalty": 0, "reason": "", "modifications": [], "defense_success": False},
+        # Psychological & Narrative
+        "psyche_states": {},
+        "narrative_chain": {},
+        "memory_triggers": [],
+        # DLC Support
+        "narrative_hook": "",
+        "time_flow": {},
+        "doom_relief": {},
+        "mental_impact": {},
+        "anomaly_profile": {},
+        # Safety & Debug
+        "pc_impersonation_check": {},
+        "offscreen_hint": "",
+        "temporal_orientation": {},
+        "npc_attitudes": {},
+        "relevant_context": []
+    })
     judgment: Dict[str, Any] = field(default_factory=lambda: {
         "active": False, "success": False, "roll": 0, "dc": 0, 
         "modifications": [], "narrative_hook": ""
@@ -97,9 +133,8 @@ class ResponseContext:
     smart_history: List[Dict] = field(default_factory=list)
 
     # NVC 분석 결과
-    nvc_result: Dict[str, Any] = field(default_factory=dict)
-    flash_result: Dict[str, Any] = field(default_factory=dict)
-    pro_result: Dict[str, Any] = field(default_factory=dict)
+    # UNE Theoria output (shared_bus.dai)
+    dai: Dict[str, Any] = field(default_factory=dict)
 
     # 씬 타입 및 장르
     scene_type: str = "normal"
@@ -116,9 +151,6 @@ class ResponseContext:
     # NPC 태도
     existing_attitudes: Dict[str, Dict] = field(default_factory=dict)
     
-    # Crisis Control
-    is_crisis: bool = False
-    crisis_reason: str = ""
     
     # PC Impersonation Tracking
     pc_impersonation_warnings: List[str] = field(default_factory=list)
@@ -218,78 +250,3 @@ def _build_smart_history(ctx: ResponseContext) -> str:
     history = all_hist[slice_idx:]
     ctx.smart_history = history # [Anti-Gravity] Store sliced list for response generation
     return "\n".join([f"{h['role']}: {h['content']}" for h in history]) + f"\nUser: {ctx.action_text}"
-
-
-# =========================================================
-# STEP 2: COGNITION ANALYSIS (NVC)
-# =========================================================
-
-async def run_cognition_analysis(
-    gm_cognition, # Passed from service instance
-    ctx: ResponseContext
-) -> ResponseContext:
-    """
-    2단계 NVC 분석을 실행합니다.
-    """
-    import game_system
-    import domain_manager
-    # [Phase 1 Upgrade] Use GMCognition ReAct Loop
-    # 1. Gather Inputs
-    player_context_str = game_system.get_status_summary(ctx.player_data) if ctx.player_data else ""
-    
-    # 2. Execute ReAct Loop
-    gm_result = await gm_cognition.process_turn(
-        ctx.hist_text,
-        ctx.lore_txt, 
-        ctx.rule_txt, 
-        ctx.quest_txt,
-        player_context_str,
-        ctx.action_text
-    )
-    
-    # 3. Handle Crisis Halt
-    if gm_result.get("type") == "CRISIS_HALT":
-        ctx.is_crisis = True
-        ctx.crisis_reason = gm_result.get("reason", "Unknown Crisis")
-        return ctx
-        
-    # 4. Map Results (CONTINUE)
-    ctx.flash_result = gm_result.get("observation", {})
-    ctx.pro_result = gm_result.get("judgment", {})
-    
-    # Merge NVC Results
-    ctx.nvc_result = {**ctx.flash_result, **ctx.pro_result}
-    
-    # Scene Type: Use session's mature_mode setting (not cognition's SceneType)
-    # Cognition's SceneType (combat/social/intimate) is for narrative flow
-    # Session's mature_mode (normal/gore/nsfw/gore_nsfw) is for content restrictions
-    settings_ctx: Dict[str, Any] = domain_manager.get_domain(ctx.channel_id).get("settings", {})
-    session_mature_mode = settings_ctx.get("scene_type", "normal")
-    ctx.scene_type = session_mature_mode if session_mature_mode else "normal"
-    
-    # Store cognition's narrative scene type separately for potential use
-    ctx.nvc_result["NarrativeSceneType"] = ctx.nvc_result.get("SceneType", "normal")
-    
-    # Map Narrative Flow & Actors
-    flow_plan = gm_result.get("flow_plan", {})
-    if flow_plan:
-        ctx.nvc_result["NarrativeFlow"] = flow_plan
-        # GM Move injection if Narrative Plan suggests it
-        if flow_plan.get("narrative_hook"):
-             ctx.nvc_result["GMMove"] = {"type": "Narrative Hook", "description": flow_plan["narrative_hook"]}
-
-    actors = gm_result.get("actors", [])
-    if actors:
-         ctx.nvc_result["IdentifiedActors"] = actors
-
-    # Logging
-    pos_data = ctx.nvc_result.get("Position", {})
-    eff_data = ctx.nvc_result.get("Effect", {})
-    
-    logger.info(
-        f"[GMCognition] Result: {gm_result.get('type')} | "
-        f"Pos: {pos_data.get('value')} | Eff: {eff_data.get('value')} | "
-        f"Crisis: {ctx.is_crisis}"
-    )
-
-    return ctx

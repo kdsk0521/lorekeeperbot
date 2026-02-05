@@ -41,19 +41,25 @@ def build_prompt(
     return v3_prompt, None
 
 
+def _get_dai(ctx: ResponseContext) -> Dict[str, Any]:
+    """Return UNE Theoria shared_bus.dai (no legacy fallback)."""
+    return getattr(ctx, "dai", None) or {}
+
+
 def _build_nvc_summary(ctx: ResponseContext, filter_config: NVCFilterConfig) -> str:
     """NVC 분석 요약을 구성합니다."""
-    pos_data = ctx.nvc_result.get("Position", {})
-    eff_data = ctx.nvc_result.get("Effect", {})
-    aspects = ctx.nvc_result.get("Aspects", [])
-    gm_m = ctx.nvc_result.get("GMMove", {})
-    off_hint = ctx.nvc_result.get("OffscreenHint")
+    dai = _get_dai(ctx)
+    pos_data = dai.get("position", {})
+    eff_data = dai.get("effect", {})
+    aspects = dai.get("aspects", [])
+    gm_m = dai.get("gm_move", {})
+    off_hint = dai.get("offscreen_hint")
 
     # [V3 Restructured] Cognition Engine Data Block
     nvc_summary = "### <Cognition_Engine_Data>\n"
-    
+
     # --- Section 1: Input Analysis ---
-    input_analysis = ctx.nvc_result.get("InputAnalysis", {})
+    input_analysis = dai.get("input_analysis", {})
     if input_analysis:
         nvc_summary += (
             f"#### INPUT_ANALYSIS\n"
@@ -62,19 +68,19 @@ def _build_nvc_summary(ctx: ResponseContext, filter_config: NVCFilterConfig) -> 
             f"- Plausibility: {input_analysis.get('Plausibility', 'N/A')}\n"
             f"- Momentum: {input_analysis.get('Momentum', 'OPEN')}\n\n"
         )
-    
+
     # --- Section 2: Observation & Intent ---
     nvc_summary += (
         f"#### SITUATION_ASSESSMENT\n"
-        f"- Observation: {ctx.nvc_result.get('Observation', 'N/A')}\n"
-        f"- UserIntent: {ctx.nvc_result.get('UserIntent', 'N/A')}\n"
-        f"- Position (Risk): {pos_data.get('value', 'N/A')} — {pos_data.get('reason', '')}\n"
-        f"- Effect (Potential): {eff_data.get('value', 'N/A')} — {eff_data.get('reason', '')}\n"
+        f"- Observation: {dai.get('observation', 'N/A')}\n"
+        f"- UserIntent: {dai.get('user_intent', 'N/A')}\n"
+        f"- Position (Risk): {pos_data.get('value', 'N/A')} -> {pos_data.get('reason', '')}\n"
+        f"- Effect (Potential): {eff_data.get('value', 'N/A')} -> {eff_data.get('reason', '')}\n"
         f"- Aspects: [{', '.join(aspects) if aspects else 'None'}]\n\n"
     )
 
     # --- Section 3: Psyche States (6-Axis) ---
-    psyche = ctx.nvc_result.get("psyche_states")
+    psyche = dai.get("psyche_states")
     if psyche and isinstance(psyche, dict):
         nvc_summary += "#### PSYCHE_STATES (Use for body signal rendering)\n"
         for char_name, state in psyche.items():
@@ -87,14 +93,14 @@ def _build_nvc_summary(ctx: ResponseContext, filter_config: NVCFilterConfig) -> 
                 relation = state.get("relation", {})
                 nvc_summary += (
                     f"- {char_name}: "
-                    f"Μ[{mental.get('descriptor', '?')}±{mental.get('value', 0)}] "
-                    f"Φ[{soma.get('descriptor', '?')}] "
-                    f"Ι[{relation.get('descriptor', '?')}±{relation.get('value', 0)}]\n"
+                    f"mental={mental.get('descriptor', '?')}({mental.get('value', 0)}), "
+                    f"soma={soma.get('descriptor', '?')}, "
+                    f"relation={relation.get('descriptor', '?')}({relation.get('value', 0)})\n"
                 )
         nvc_summary += "\n"
 
     # --- Section 4: Narrative Chain ---
-    chain = ctx.nvc_result.get("narrative_chain")
+    chain = dai.get("narrative_chain")
     if chain and isinstance(chain, dict):
         status = chain.get("chain_status", "OPEN")
         lock = chain.get("topic_lock", "None")
@@ -107,7 +113,7 @@ def _build_nvc_summary(ctx: ResponseContext, filter_config: NVCFilterConfig) -> 
         )
 
     # --- Section 5: Memory Triggers ---
-    memory = ctx.nvc_result.get("memory_triggers")
+    memory = dai.get("memory_triggers")
     if memory and isinstance(memory, list) and memory:
         nvc_summary += "#### MEMORY_TRIGGERS (Render as involuntary recall)\n"
         for m in memory[:3]:  # 최대 3개
@@ -115,16 +121,16 @@ def _build_nvc_summary(ctx: ResponseContext, filter_config: NVCFilterConfig) -> 
                 trigger = m.get("trigger", "")
                 char = m.get("character", "")
                 echo = m.get("echo", "")
-                nvc_summary += f"- [{char}] Trigger: '{trigger}' → Echo: '{echo}'\n"
+                nvc_summary += f"- [{char}] Trigger: '{trigger}' -> Echo: '{echo}'\n"
         nvc_summary += "\n"
 
     # --- Section 6: PC Impersonation Warning ---
-    pc_check = ctx.nvc_result.get("PCImpersonationCheck", {})
+    pc_check = dai.get("pc_impersonation_check", {})
     if pc_check.get("detected"):
         violations = pc_check.get("violations", [])
         hint = pc_check.get("correction_hint", "")
         nvc_summary += (
-            f"#### ⚠️ PC_IMPERSONATION_WARNING\n"
+            f"#### WARNING PC_IMPERSONATION_WARNING\n"
             f"- detected: true\n"
             f"- violations: {violations[:3]}\n"
             f"- correction_hint: {hint}\n\n"
@@ -134,11 +140,11 @@ def _build_nvc_summary(ctx: ResponseContext, filter_config: NVCFilterConfig) -> 
     if gm_m:
         nvc_summary += f"#### GM_MOVE_SUGGESTION\n- type: {gm_m.get('type')}\n- description: {gm_m.get('description', '')}\n\n"
 
-    temporal = ctx.nvc_result.get("TemporalOrientation", {})
-    suggested_focus = temporal.get("suggested_focus", "")
+    temporal = dai.get("temporal_orientation", {})
+    suggested_focus = temporal.get("suggested_focus") or temporal.get("focus", "")
     if suggested_focus:
         nvc_summary += f"#### TEMPORAL_FOCUS\n- suggested_focus: {suggested_focus}\n\n"
-    
+
     if off_hint:
         nvc_summary += f"#### OFFSCREEN_HINT\n- {off_hint}\n\n"
 
@@ -235,10 +241,10 @@ async def generate_response(
     # 정리 (System Update & Telescope Logic Block)
     if response:
         # 1. system_update 블록 제거
-        response = re.sub(r'```system_update[\s\S]*?```', '', response, flags=re.IGNORECASE).strip()
+        response = re.sub(r'```system_update[\s\S]*->```', '', response, flags=re.IGNORECASE).strip()
         
         # 2. [Telescope] Hidden Logic Block 추출 및 로깅
-        logic_match = re.search(r'(┣[\s\S]*?┫)', response)
+        logic_match = re.search(r'(┣[\s\S]*->┫)', response)
         if logic_match:
             logic_content = logic_match.group(1)
             logger.info(f"\n[🔭 TELESCOPE LOGIC LAYER]\n{logic_content}\n[-----------------------]")

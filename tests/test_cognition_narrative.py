@@ -69,60 +69,61 @@ def test_mock_cognition_data():
     print("=" * 60)
     
     # 시뮬레이션된 인지 엔진 출력
-    mock_nvc_result = {
-        "Observation": "플레이어가 Luna에게 반지를 건네며 정식 교제를 요청함",
-        "UserIntent": "Luna에게 공식적인 연인 관계를 제안",
-        "InputAnalysis": {
+
+    mock_dai = {
+        "observation": "????? Luna?? ??? ??? ?? ??? ???",
+        "user_intent": "Luna?? ???? ?? ??? ??",
+        "input_analysis": {
             "Original": USER_INPUT,
-            "Enhanced": "플레이어가 3년간 함께한 Luna에게 반지를 건네며 정식 교제를 요청한다",
+            "Enhanced": "????? 3?? ??? ? Luna?? ??? ??? ?? ??? ????",
             "Plausibility": "High",
             "LogicTrace": ["Contextualize", "EmotionInfer"],
-            "Momentum": "Closed"  # 결정적 순간
+            "Momentum": "Closed"
         },
-        "Position": {
+        "position": {
             "value": 0.7,
-            "reason": "거절 시 관계 손상 가능성. 3년의 관계가 걸림."
+            "reason": "?? ? ??? ??? ?? ???. 3??? ??? ??."
         },
-        "Effect": {
+        "effect": {
             "value": 0.9,
-            "reason": "성공 시 관계의 질적 변화. 공식 연인으로 전환."
+            "reason": "?? ? ??? ?? ??, ?? ???? ??."
         },
-        "Aspects": ["공원의 따스한 햇살", "손에 쥔 반지", "긴장된 분위기", "Luna의 붉어진 볼"],
+        "aspects": ["????? ???", "?? ?? ??", "??? ???", "Luna? ??"],
         "psyche_states": {
             "Luna": {
-                "mental": {"value": 4, "descriptor": "elv", "intensity": "High"},  # 고양
-                "soma": {"value": 2, "descriptor": "flush", "intensity": "Medium"},  # 상기
-                "relation": {"value": 3, "descriptor": "vulnerable", "intensity": "High"}  # 취약/열림
+                "mental": {"value": 4, "descriptor": "elv", "intensity": "High"},
+                "soma": {"value": 2, "descriptor": "flush", "intensity": "Medium"},
+                "relation": {"value": 3, "descriptor": "vulnerable", "intensity": "High"}
             }
         },
         "narrative_chain": {
             "chain_status": "CLOSING",
-            "topic_lock": "고백",
+            "topic_lock": "??",
             "conclusion_proximity": "85%",
-            "pending_decisions": ["Luna의 대답"]
+            "pending_decisions": ["Luna? ??"]
         },
         "memory_triggers": [
             {
-                "trigger": "반지",
-                "character": "Luna", 
-                "echo": "처음 만났던 날, 그가 건넨 작은 꽃"
+                "trigger": "??",
+                "character": "Luna",
+                "echo": "?? ???? ??? ??"
             }
         ],
-        "GMMove": {
+        "gm_move": {
             "type": "reveal_truth",
-            "description": "Luna의 숨겨진 감정이 표면으로"
+            "description": "Luna? ??? ??? ????"
         },
-        "TemporalOrientation": {
-            "suggested_focus": "Luna의 반응과 내면의 갈등",
-            "offscreen_npcs": ["공원의 다른 연인들이 지나감"],
-            "active_threads": ["3년간의 애매한 관계", "Luna의 수줍은 성격"]
+        "temporal_orientation": {
+            "suggested_focus": "Luna? ??? ??? ??",
+            "offscreen_npcs": ["?? ?? ?? ???? ???"],
+            "active_threads": ["3?? ???? ??", "Luna? ????? ??"]
         }
     }
-    
+
     # Mock Context 생성
     class MockResponseContext:
         def __init__(self):
-            self.nvc_result = mock_nvc_result
+            self.dai = mock_dai
             self.existing_attitudes = {
                 "Luna": {"attitude": "devoted", "reason": "3년간 함께함", "last_updated": "2026-02-02 10:00"}
             }

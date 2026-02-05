@@ -56,50 +56,41 @@ class OrchestrationService:
         self.model_id = model_id
         self.model_id_flash = model_id_flash
         self.nvc_filter_config = orch_ctx.NVCFilterConfig()
-        
-        # [Phase 1 Upgrade] Initialize Skilled GM Brain
-        self.gm_cognition = cognition.GMCognition(client_genai, model_id, model_id_flash)
-        
-        # [UNE Upgrade] Initialize Universal Narrative Engine
+
+        # [UNE] Universal Narrative Engine (GMCognition ??)
         from une_facade import UniversalNarrativeEngine
         self.une = UniversalNarrativeEngine(client_genai, model_id_flash)
-        
-        # NOTE: self._last_contexts는 이제 domain_manager의 영속 데이터로 대체됩니다.
+
+        # NOTE: self._last_contexts? ?? domain_manager? ?? ???? ?????.
 
     # =========================================================
     # STEP 1: CONTEXT GATHERING
     # =========================================================
     async def gather_context(self, ctx: ResponseContext) -> ResponseContext:
-        """필요한 모든 컨텍스트 데이터를 수집합니다. (Delegated)"""
+        """??? ?? ???? ???? ?????. (Delegated)"""
         return await orch_ctx.gather_context(ctx)
 
-    # =========================================================
-    # STEP 2: COGNITION ANALYSIS (NVC)
-    # =========================================================
-    async def run_cognition_analysis(
-        self,
-        ctx: ResponseContext,
-        previous_ai_response: Optional[str] = None
-    ) -> ResponseContext:
-        """2단계 NVC 분석을 실행합니다. (Delegated)"""
-        return await orch_ctx.run_cognition_analysis(self.gm_cognition, ctx)
+    # STEP 2: COGNITION ANALYSIS (GMCognition ??? - UNE Theoria? ??)
+    # ??? process_une_logic?? UNE Pipeline?? ?????.
 
     # =========================================================
     # STEP 3: WORLD STATE UPDATE
     # =========================================================
     async def update_world_state(self, ctx: ResponseContext, message: discord.Message) -> Tuple[ResponseContext, List[str]]:
-        """NVC 결과를 바탕으로 월드 상태를 업데이트합니다."""
+        """NVC ??? ???? ?? ??? ???????."""
         channel_id = ctx.channel_id
         messages = []
 
-        # 위치 및 위험도 업데이트
-        if ctx.nvc_result.get("CurrentLocation"):
-            domain_manager.set_current_location(channel_id, ctx.nvc_result["CurrentLocation"])
-        if ctx.nvc_result.get("LocationRisk"):
-            domain_manager.set_current_risk(channel_id, ctx.nvc_result["LocationRisk"])
+        dai = ctx.dai or {}
+        current_location = dai.get("current_location")
+        location_risk = dai.get("location_risk")
+        if current_location:
+            domain_manager.set_current_location(channel_id, current_location)
+        if location_risk:
+            domain_manager.set_current_risk(channel_id, location_risk)
 
-        # NPC 태도 업데이트
-        new_attitudes = ctx.nvc_result.get("NPCAttitudes")
+        # NPC ?? ????
+        new_attitudes = dai.get("npc_attitudes")
         if new_attitudes:
             for n_name, n_data in new_attitudes.items():
                 existing_npc = npc_manager.get_npc(channel_id, n_name)
@@ -119,8 +110,8 @@ class OrchestrationService:
 
             ctx.existing_attitudes = domain_manager.get_npc_attitudes(channel_id)
 
-        # 시간 흐름 처리 (Delegated to GameSystem)
-        time_flow = ctx.nvc_result.get("TimeFlow", {})
+        # ?? ?? ?? (Delegated to GameSystem)
+        time_flow = dai.get("time_flow", {})
         time_msg = await game_system.process_time_flow(channel_id, time_flow, ctx.scene_type)
         if time_msg:
             messages.append(time_msg)
@@ -128,9 +119,6 @@ class OrchestrationService:
 
         return ctx, messages
 
-    # =========================================================
-    # STEP 4: ANOMALY & JUDGMENT PROCESSING
-    # =========================================================
     async def process_une_logic(
         self,
         ctx: ResponseContext,
@@ -147,6 +135,15 @@ class OrchestrationService:
         updated_context = result["game_context"]
         directive = result["directive"]
         system_log = result["system_message"]
+        
+        # [BRIDGE] Sync SharedBus.dai → ResponseContext.dai
+        # UNE Theoria 분석 결과를 레거시 dai로 복사
+        dai = updated_context.shared_bus.dai
+        ctx.dai = dai
+
+        # Scene Type 업데이트 (dai 우선)
+        if dai.get("scene_type"):
+            ctx.scene_type = dai["scene_type"]
         
         # Sync Context Back to ResponseContext for LLM
         ctx.judgment_context = directive # Inject UNE directives into prompt
@@ -205,7 +202,7 @@ class OrchestrationService:
             "narrative": any(kw in response for kw in [
                 '처음으로', '마침내', '성공', '실패', '죽', '살', '마법',
                 '괴물', '이상한', '기이한'
-            ]) or bool(ctx.nvc_result.get("AbnormalElements")),
+            ]) or bool((ctx.dai or {}).get("abnormal_elements")),
             "quest": any(kw in response for kw in [
                 '퀘스트', '임무', '목표', '의뢰', '부탁', '완료', '달성', '단서', '정보', '비밀'
             ])
@@ -412,15 +409,9 @@ class OrchestrationService:
             # 1. Context Gathering
             ctx = await self.gather_context(ctx)
 
-            # 2. Cognition Analysis
-            ctx = await self.run_cognition_analysis(ctx)
-            
-            # Crisis Check
-            if ctx.is_crisis:
-                logger.warning(f"Crisis Halted: {ctx.crisis_reason}")
-                await message.channel.send(f"⛔ **위기 감지**: {ctx.crisis_reason}\n진행이 중단되었습니다.")
-                if feedback_msg: await feedback_msg.delete()
-                return
+            # 2. Cognition Analysis (GMCognition 제거됨)
+            # 분석은 이제 process_une_logic 내부의 UNE Theoria에서 수행됩니다.
+
 
             # async output (typing indicator)
             async with message.channel.typing():

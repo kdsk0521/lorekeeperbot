@@ -420,7 +420,7 @@ def build_34_step_prompt(ctx) -> str:
     # 2. 동적 슬롯 주입 (Phase 2 강화)
     # =========================================================
     
-    nvc_result = getattr(ctx, 'nvc_result', {}) or {}
+    dai = getattr(ctx, 'dai', None) or {}
     
     # --- [Step 3] PC Data (Rich Player Info) ---
     player_info = ""
@@ -444,7 +444,7 @@ def build_34_step_prompt(ctx) -> str:
     npc_roles = str(domain_data.get("npcs", "")) if domain_data.get("npcs") else ""
     
     # --- [Step 6] Lore (RAG Context Diet 적용) ---
-    relevant_context = nvc_result.get("RelevantContext", [])
+    relevant_context = dai.get("relevant_context", [])
     if isinstance(relevant_context, list) and relevant_context:
         logger.info(f"[Context Diet] Using {len(relevant_context)} extracted items.")
         lore_content = (
@@ -458,7 +458,7 @@ def build_34_step_prompt(ctx) -> str:
     
     # --- [Step 7] Fermented History + Memory Triggers ---
     fermented_base = getattr(ctx, 'fermented_summary_text', '')
-    memory_triggers = nvc_result.get("memory_triggers", [])
+    memory_triggers = dai.get("memory_triggers", [])
     deep_data = getattr(ctx, 'deep_memory_data', {}) or {}
     active_triggers = deep_data.get("active_memory_triggers", [])
     
@@ -473,7 +473,7 @@ def build_34_step_prompt(ctx) -> str:
     
     # --- [Step 14] Input Analysis (Enhanced) ---
     input_analysis = ""
-    input_analysis_data = nvc_result.get("InputAnalysis", {})
+    input_analysis_data = dai.get("input_analysis", {})
     if input_analysis_data:
         input_analysis = (
             f"Original: {input_analysis_data.get('Original', 'N/A')}\n"
@@ -484,7 +484,7 @@ def build_34_step_prompt(ctx) -> str:
     
     # --- [Step 15] Psyche States (6-Axis, Structured) ---
     psyche_states = ""
-    psyche_data = nvc_result.get("psyche_states", {})
+    psyche_data = dai.get("psyche_states", {})
     if psyche_data and isinstance(psyche_data, dict):
         psyche_lines = []
         for char_name, state in psyche_data.items():
@@ -504,7 +504,7 @@ def build_34_step_prompt(ctx) -> str:
     
     # --- [Step 28] Narrative Chain ---
     narrative_chain = ""
-    chain_data = nvc_result.get("narrative_chain", {})
+    chain_data = dai.get("narrative_chain", {})
     if chain_data and isinstance(chain_data, dict):
         narrative_chain = (
             f"chain_status: {chain_data.get('chain_status', 'OPEN')}\n"
@@ -514,7 +514,7 @@ def build_34_step_prompt(ctx) -> str:
     
     # --- [Step 30] GM Mover ---
     gm_mover = ""
-    gm_move = nvc_result.get("GMMover", {}) or nvc_result.get("GMMove", {})
+    gm_move = dai.get("gm_move", {})
     if gm_move:
         gm_mover = f"type: {gm_move.get('type', 'N/A')}\ndescription: {gm_move.get('description', '')}"
     
@@ -522,7 +522,7 @@ def build_34_step_prompt(ctx) -> str:
     real_time_data = getattr(ctx, 'world_ctx', '')
     
     # PC Impersonation Check 강화
-    pc_check = nvc_result.get("PCImpersonationCheck", {})
+    pc_check = dai.get("pc_impersonation_check", {})
     if pc_check.get("detected"):
         pc_warning = (
             f"\n\n⚠️ PC_IMPERSONATION_WARNING:\n"
