@@ -250,4 +250,4 @@ def _build_smart_history(ctx: ResponseContext) -> str:
 
     history = all_hist[slice_idx:]
     ctx.smart_history = history # [Anti-Gravity] Store sliced list for response generation
-    return "\n".join([f"{h['role']}: {h['content']}" for h in history]) + f"\nUser: {ctx.action_text}"
+    return "\n".join([f"{h['role']}: {h['content']}" for h in history])
