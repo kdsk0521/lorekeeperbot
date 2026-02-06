@@ -568,11 +568,9 @@ class OrchestrationService:
                     domain_manager.append_history(channel_id, "Model", response)
                     logger.debug(f"[History] Saved: {user_mask} + Model response ({len(response)} chars)")
 
-                    # 9. [V4] Inline Extraction 적용 (별도 API 호출 없이 즉시 처리)
-                    await self._apply_inline_extraction(ctx, extraction_data, message)
-
-                    # 10. Background Tasks (Fermentation only - extraction moved to inline)
-                    await self.schedule_background_tasks(ctx, response, message)
+                    # 9. Background Extraction (Flash 모델로 별도 API 호출)
+                    # V4 Inline Extraction 대신 기존 Background Extraction 복원
+                    await self.schedule_background_extraction(ctx, response, message)
                 else:
                     logger.warning(f"[!다시] No response generated for channel {channel_id}")
                     if feedback_msg:

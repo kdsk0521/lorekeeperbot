@@ -834,29 +834,6 @@ Use Position value from Cognition Engine:
 
 ## GM MOVE INTEGRATION
 If failure triggers a GM Move, weave consequence physically into scene.
-
-## INLINE EXTRACTION (API Call Optimization)
-After the narrative prose, append a hidden extraction block for system updates.
-This block will be parsed and removed before user display.
-
-### FORMAT
-```
-[NARRATIVE]
-(Your prose here...)
-
-[SYS_EXTRACT]
-{"notebook": "변경사항 또는 null", "quest": {"add": [], "complete": []}, "rel": {"NPC명": delta}, "flag": "이상현상 트리거 또는 null"}
-[/SYS_EXTRACT]
-```
-
-### RULES
-1. ALWAYS include [SYS_EXTRACT] block at the END
-2. Use `null` for unchanged fields, not empty strings
-3. `notebook`: Only significant item/status changes (획득, 소실, 부상, 회복)
-4. `quest`: Only explicit quest starts/completions mentioned in scene
-5. `rel`: NPC relationship delta (-20 to +20) based on interaction quality
-6. `flag`: Anomaly/supernatural trigger if detected, else null
-7. Keep JSON minimal - this is metadata, not prose
 </Output_Protocol>
 """
 
