@@ -73,20 +73,37 @@ class TheoriaAnalyzer:
         return "\n\n".join([
             text_resources.CONTENT_AUTHORIZATION_MANDATE,
             "<THEORIA role='Observer and Librarian'>",
+            # [Core Identity & Principles]
             analysis_resources.THEORIA_IDENTITY,
             analysis_resources.THEORIA_PRINCIPLES,
+            # [Observation Method]
+            analysis_resources.OBSERVER_APPARATUS,
+            analysis_resources.EVIDENCE_PIPELINE,
+            # [Input Analysis]
             analysis_resources.THEORIA_PC_CHECK,
-            analysis_resources.COGNITIVE_ARCHITECTURE_MODEL,
-            analysis_resources.STATE_TRACKING_FORMAT,
-            analysis_resources.TEMPORAL_ORIENTATION_PROTOCOL,
-            analysis_resources.THEORIA_PROCESS,
             analysis_resources.THEORIA_INPUT_DECODING,
+            analysis_resources.OBSERVATION_INTENT,
+            # [Psychological Analysis]
+            analysis_resources.COGNITIVE_ARCHITECTURE_MODEL,
             analysis_resources.THEORIA_PSYCHE,
+            analysis_resources.STATE_TRACKING_FORMAT,
+            # [Temporal & Memory]
+            analysis_resources.TEMPORAL_ORIENTATION_PROTOCOL,
             analysis_resources.THEORIA_MEMORY,
+            analysis_resources.THEORIA_TEMPORAL,
+            # [Narrative & Stakes]
             analysis_resources.THEORIA_CHAIN,
             analysis_resources.THEORIA_POSITION_EFFECT,
             analysis_resources.THEORIA_ASPECTS,
-            analysis_resources.THEORIA_TEMPORAL,
+            # [NPC & Judgment]
+            analysis_resources.NPC_ATTITUDE_ANALYSIS,
+            analysis_resources.JUDGMENT_SUPPORT,
+            # [Resource Tracking]
+            analysis_resources.DOOM_MENTAL_TRACKING,
+            analysis_resources.ANOMALY_DETECTION,
+            analysis_resources.SENSORY_ANCHORS,
+            # [Workflow & Output]
+            analysis_resources.THEORIA_PROCESS,
             self._get_output_schema(),
             "</THEORIA>"
         ])
@@ -99,22 +116,33 @@ Return valid JSON with ALL these fields (Korean values where specified):
 
 ## REQUIRED FIELDS
 - "InputAnalysis": {"Original": str, "Enhanced": str, "Plausibility": "High/Low/Impossible", "LogicTrace": [], "Momentum": "Open/Closed"}
-- "Observation": str (Korean - what actually happened)
-- "UserIntent": str (Korean - what user wants immediately)
+- "Observation": str (Korean - 중립적 관점에서 실제로 일어난 일)
+- "UserIntent": str (Korean - 유저가 즉시 원하는 것)
 - "CurrentLocation": str (Korean)
 - "LocationRisk": "None/Low/Medium/High/Extreme"
-- "TimeContext": str (Korean - time of day)
+- "TimeContext": str (Korean - e.g. "깊은 밤", "이른 아침")
 - "SceneType": "normal/combat/social/summary/intimate"
 
 ## STAKES & ENVIRONMENT
-- "Position": {"value": 0.0-1.0, "reason": "Korean"}
-- "Effect": {"value": 0.0-1.0, "reason": "Korean"}
-- "Aspects": ["Korean aspect 1", "Korean aspect 2", ...]
+- "Position": {"value": 0.0-1.0, "reason": "Korean - 왜 이 위치인지"}
+- "Effect": {"value": 0.0-1.0, "reason": "Korean - 잠재적 영향력"}
+- "Aspects": ["Korean aspect - 활용 가능성 포함", ...]
 
 ## PSYCHOLOGICAL & NARRATIVE
-- "psyche_states": {"CharName": {"mental": {...}, "soma": {...}, "relation": {...}}}
-- "narrative_chain": {"topic_lock": str, "chain_status": "OPEN/CLOSED", "conclusion_proximity": 0-100}
-- "memory_triggers": [{"trigger": str, "character": str, "echo": str}]
+- "psyche_states": {
+    "CharName": {
+        "mental": {"descriptor": "emotional label", "value": -100~+100, "primary_emotion": "plutchik"},
+        "soma": {"descriptor": "physical label", "polyvagal": "ventral/sympathetic/dorsal"},
+        "relation": {"descriptor": "stance toward PC", "value": -100~+100}
+    }
+  }
+- "narrative_chain": {
+    "topic_lock": str or null,
+    "chain_status": "OPEN/CLOSED/DORMANT",
+    "conclusion_proximity": 0-100,
+    "open_threads": ["thread type: description", ...]
+  }
+- "memory_triggers": [{"trigger": str, "character": str, "echo": str, "type": "traumatic/nostalgic/shameful/loving"}]
 
 ## JUDGMENT SUPPORT
 - "needs_judgment": boolean
@@ -125,30 +153,34 @@ Return valid JSON with ALL these fields (Korean values where specified):
     "reason": "Korean",
     "modifications": [{"label": "Korean", "value": int}],
     "defense_success": boolean
-}
+  }
 
 ## DLC SUPPORT
-- "narrative_hook": str (Korean - twist for failure/partial)
+- "narrative_hook": str (Korean - 실패/부분성공 시 트위스트)
 - "time_flow": {"ticks": 1-20, "reason": "Korean"}
 - "doom_relief": {"applicable": boolean, "amount": 0-20, "reason": "Korean"}
-- "mental_impact": {"applicable": boolean, "delta": -35 to +20, "reason": "Korean"}
-- "anomaly_profile": {"trigger": str, "category": str, "intensity": "Low/Mid/High/Extreme", "polarity": "positive/negative/mixed", "line": "Korean", "reason": "Korean"}
+- "mental_impact": {"applicable": boolean, "delta": -35~+20, "reason": "Korean"}
+- "anomaly_profile": {"trigger": str, "category": "supernatural/psychological/social/environmental/temporal", "intensity": "Low/Mid/High/Extreme", "polarity": "positive/negative/mixed", "line": "Korean", "reason": "Korean"}
 
-## COGNITIVE ENHANCEMENT (English Logic Blocks)
+## COGNITIVE ENHANCEMENT
 - "HabitusAnalysis": {
-    "Economic": str (Brief English description of physical standing),
-    "Cultural": str (Brief English description of linguistic/knowledge standing),
-    "Social": str (Brief English description of perceived authority)
+    "Economic": "English - material standing indicators",
+    "Cultural": "English - knowledge/taste patterns",
+    "Social": "English - network/authority position"
   }
-- "SensoryAnchors": [
-    {"anchor": "Physical sensation", "memory_link": "English description of related memory"}
-  ]
+- "SensoryAnchors": [{"anchor": "Physical sensation", "memory_link": "English - connected memory"}]
 
-## SAFETY & DEBUG
-- "PCImpersonationCheck": {"detected": boolean, "violations": [], "correction_hint": str}
+## SAFETY & TRACKING
+- "PCImpersonationCheck": {"detected": boolean, "violations": [{"type": str, "severity": str}], "correction_hint": str}
 - "TemporalOrientation": {"focus": "past/present/future", "intensity": 0.0-1.0}
-- "NPCAttitudes": {"NpcName": {"attitude": "hostile/unfriendly/neutral/friendly/devoted", "reason": "Korean"}}
-- "RelevantContext": ["Quoted lore/rule 1", "Quote 2", ...]
+- "NPCAttitudes": {
+    "NpcName": {
+        "attitude": "hostile/unfriendly/neutral/friendly/devoted",
+        "trajectory": "improving/stable/declining",
+        "reason": "Korean"
+    }
+  }
+- "RelevantContext": ["Quoted lore/rule directly applicable", ...]
 </output_schema>
 """
 
