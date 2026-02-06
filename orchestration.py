@@ -175,7 +175,113 @@ class OrchestrationService:
         )
 
     # =========================================================
-    # STEP 7: BACKGROUND EXTRACTION (Queue-based)
+    # STEP 7A: INLINE EXTRACTION (V4 - No Extra API Call)
+    # =========================================================
+    async def _apply_inline_extraction(
+        self,
+        ctx: ResponseContext,
+        extraction_data: Optional[Dict[str, Any]],
+        message: discord.Message
+    ) -> None:
+        """
+        [V4] 서사 응답에서 추출된 데이터를 즉시 적용합니다.
+        별도 API 호출 없이 서사 생성 시 함께 추출된 데이터를 사용합니다.
+        """
+        if not extraction_data:
+            return
+
+        channel_id = ctx.channel_id
+        notifications = []
+
+        try:
+            # 1. Notebook Update
+            notebook_delta = extraction_data.get("notebook")
+            if notebook_delta and notebook_delta != "null":
+                current_nb = game_system.get_notebook_text(channel_id) or ""
+                # 기존 노트북에 변경사항 추가
+                from datetime import datetime
+                timestamp = datetime.now().strftime("%m/%d %H:%M")
+                updated_nb = f"{current_nb}\n[{timestamp}] {notebook_delta}".strip()
+                game_system.update_notebook_text(channel_id, updated_nb)
+                notifications.append("📔 노트북 기록됨")
+                logger.info(f"[InlineExtract] Notebook: {notebook_delta}")
+
+            # 2. Quest Updates
+            quest_data = extraction_data.get("quest", {})
+            if quest_data:
+                for q in quest_data.get("add", []):
+                    if q:
+                        game_system.add_quest(channel_id, q)
+                        notifications.append(f"🆕 퀘스트: {q}")
+                for q in quest_data.get("complete", []):
+                    if q:
+                        game_system.complete_quest(channel_id, q)
+                        notifications.append(f"✅ 완료: {q}")
+
+            # 3. Relationship Updates
+            rel_data = extraction_data.get("rel", {})
+            if rel_data and isinstance(rel_data, dict):
+                for npc_name, delta in rel_data.items():
+                    if delta and delta != 0:
+                        domain_manager.update_npc_relationship(
+                            channel_id, ctx.user_id, npc_name, delta
+                        )
+                        logger.info(f"[InlineExtract] Relation: {npc_name} {delta:+d}")
+
+            # 4. Anomaly Flag
+            flag = extraction_data.get("flag")
+            if flag and flag != "null":
+                logger.info(f"[InlineExtract] Anomaly Flag: {flag}")
+                # 이상현상 트리거는 로깅만 (실제 처리는 UNE에서)
+
+            # Send notifications
+            if notifications:
+                await message.channel.send(" | ".join(notifications))
+
+        except Exception as e:
+            logger.error(f"[InlineExtract] Error applying extraction: {e}")
+
+    # =========================================================
+    # STEP 7B: BACKGROUND TASKS (V4 - Fermentation Only)
+    # =========================================================
+    async def schedule_background_tasks(
+        self,
+        ctx: ResponseContext,
+        response: str,
+        message: discord.Message
+    ) -> None:
+        """
+        [V4] 백그라운드 작업 스케줄링 (발효만 수행).
+        추출은 이제 Inline Extraction으로 처리됩니다.
+        """
+        channel_id = ctx.channel_id
+
+        # Mnemosyne Fermentation (Low Priority)
+        async def background_fermentation_task():
+            try:
+                fresh_data = domain_manager.get_domain(channel_id)
+
+                def save_cb():
+                    domain_manager.save_domain(channel_id, fresh_data)
+
+                await fermentation.auto_ferment(
+                    self.client, self.model_id,
+                    fresh_data,
+                    channel_id=channel_id,
+                    save_callback=save_cb
+                )
+            except Exception as e:
+                logger.error(f"[Orchestrator] Fermentation task error: {e}")
+
+        await enqueue_background_task(
+            channel_id,
+            "BackgroundFermentation",
+            background_fermentation_task,
+            priority=TaskPriority.LOW
+        )
+
+    # =========================================================
+    # STEP 7 (Legacy): BACKGROUND EXTRACTION (Queue-based)
     # =========================================================
     async def schedule_background_extraction(
         self,
@@ -437,9 +543,9 @@ class OrchestrationService:
                 # UNE directive is already injected into ctx.judgment_context
                 full_prompt, builder = self.build_prompt(ctx)
 
-                # 6. Response Generation
-                response = await self.generate_response(ctx, full_prompt)
-                
+                # 6. Response Generation (V4: returns Tuple[response, extraction_data])
+                response, extraction_data = await self.generate_response(ctx, full_prompt)
+
                 if response:
                     # [UI Feedback] 완료 시 안내 메시지 삭제
                     if feedback_msg:
@@ -450,20 +556,23 @@ class OrchestrationService:
 
                     # 7. Send Response
                     sent_msgs = await bot_utils.send_long_message(message.channel, response)
-                    
+
                     # Store message IDs for retry deletion
                     if sent_msgs:
                         current_retry_ctx["message_ids"].extend([m.id for m in sent_msgs])
                         current_retry_ctx["has_response"] = True
-                    
+
                     # 8. [IMPORTANT] 히스토리에 사용자 입력과 AI 응답 저장
                     user_mask = ctx.user_mask or "User"
                     domain_manager.append_history(channel_id, user_mask, ctx.action_text)
                     domain_manager.append_history(channel_id, "Model", response)
                     logger.debug(f"[History] Saved: {user_mask} + Model response ({len(response)} chars)")
-                    
-                    # 9. Background Extraction
-                    await self.schedule_background_extraction(ctx, response, message)
+
+                    # 9. [V4] Inline Extraction 적용 (별도 API 호출 없이 즉시 처리)
+                    await self._apply_inline_extraction(ctx, extraction_data, message)
+
+                    # 10. Background Tasks (Fermentation only - extraction moved to inline)
+                    await self.schedule_background_tasks(ctx, response, message)
                 else:
                     logger.warning(f"[!다시] No response generated for channel {channel_id}")
                     if feedback_msg:

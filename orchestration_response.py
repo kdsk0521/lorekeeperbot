@@ -200,13 +200,17 @@ async def generate_response(
     ctx: ResponseContext,
     prompt: str,  # V3 34단계 프롬프트 (build_prompt()에서 생성됨)
     filter_config: NVCFilterConfig
-) -> Optional[str]:
+) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
     """
     AI 응답을 생성합니다.
-    
+
     [V3 Update]
     - prompt 파라미터를 직접 session에 주입
     - PromptBuilder를 통한 중복 생성 제거
+
+    [V4 Update - Inline Extraction]
+    - Returns: (narrative_text, extraction_data)
+    - extraction_data contains: notebook, quest, rel, flag
     """
     p_name = ctx.player_data.get("mask", "Unknown") if ctx.player_data else "Unknown"
 
@@ -228,20 +232,36 @@ async def generate_response(
     response = await persona.generate_response_with_retry(client, session, prompt, pc_names=[p_name])
 
     # 정리 (System Update & Telescope Logic Block)
+    extraction_data = None
+
     if response:
         # 1. system_update 블록 제거
-        response = re.sub(r'```system_update[\s\S]*->```', '', response, flags=re.IGNORECASE).strip()
-        
+        response = re.sub(r'```system_update[\s\S]*?```', '', response, flags=re.IGNORECASE).strip()
+
         # 2. [Telescope] Hidden Logic Block 추출 및 로깅
-        logic_match = re.search(r'(┣[\s\S]*->┫)', response)
+        logic_match = re.search(r'(┣[\s\S]*?┫)', response)
         if logic_match:
             logic_content = logic_match.group(1)
             logger.info(f"\n[🔭 TELESCOPE LOGIC LAYER]\n{logic_content}\n[-----------------------]")
             response = response.replace(logic_content, "").strip()
+
+        # 3. [V4 Inline Extraction] SYS_EXTRACT 블록 파싱 및 제거
+        extract_match = re.search(r'\[SYS_EXTRACT\]\s*(\{[\s\S]*?\})\s*\[/SYS_EXTRACT\]', response)
+        if extract_match:
+            try:
+                import json
+                extraction_data = json.loads(extract_match.group(1))
+                logger.info(f"[📦 INLINE EXTRACTION] {extraction_data}")
+            except json.JSONDecodeError as e:
+                logger.warning(f"[EXTRACTION] JSON parse failed: {e}")
+            # 블록 제거 (파싱 성공/실패 무관)
+            response = re.sub(r'\[SYS_EXTRACT\][\s\S]*?\[/SYS_EXTRACT\]', '', response).strip()
+            # [NARRATIVE] 태그도 제거
+            response = re.sub(r'\[NARRATIVE\]\s*', '', response).strip()
 
     # [Anti-Gravity] Mob Tag Cleaning (System Level)
     if response:
         from response_processor import clean_mob_tags
         response = clean_mob_tags(response)
 
-    return response
+    return response, extraction_data

@@ -602,12 +602,22 @@ async def cmd_ready(ctx: CommandContext) -> None:
     await session_manager.manager.check_preparation(ctx.message)
 
 
-@registry.register("start", category="Admin", aliases=["시작"], description="세션 시작")
+@registry.register("start", category="Admin", aliases=["시작"], description="세션 시작 [첫 상황]")
 async def cmd_start(ctx: CommandContext) -> None:
-    """!시작"""
+    """
+    !시작 [첫 상황]
+
+    예시:
+    - !시작                              → LLM이 오프닝 생성
+    - !시작 노예 시장의 철창 안에서 경매를 기다린다  → 지정된 상황으로 시작
+    """
     domain_manager.update_participant(ctx.channel_id, ctx.message.author)
     if await session_manager.manager.start_session(ctx.message, ctx.genai_client, ctx.model_id):
-        # Trigger opening generation
+        # Check for custom opening scenario
+        custom_scenario = ctx.args.strip() if ctx.args else ""
+        if custom_scenario:
+            # Include custom scenario in the trigger
+            return f"Opening: {custom_scenario}"
         return "Opening"
     return None
 
