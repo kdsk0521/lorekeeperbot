@@ -30,15 +30,13 @@ MODEL_ID = MODEL_ID_PRO
 ANALYSIS_TEMPERATURE = 0.1
 ANALYSIS_TOP_K = 20
 ANALYSIS_TOP_P = 0.8
-ANALYSIS_PRESENCE_PENALTY = 0.0
-ANALYSIS_FREQUENCY_PENALTY = 0.0
+# [Gemini 3] presence_penalty/frequency_penalty not supported - removed
 
 # Generation Parameters - Narrative (Pro/Right Brain)
 NARRATIVE_TEMPERATURE = 1.1
 NARRATIVE_TOP_K = 40
 NARRATIVE_TOP_P = 0.95
-NARRATIVE_PRESENCE_PENALTY = 0.2  # 서사적 일관성 유지 (장편 적합)
-NARRATIVE_FREQUENCY_PENALTY = 0.3  # 반복 표현 억제
+# [Gemini 3] presence_penalty/frequency_penalty not supported - removed
 
 # =========================================================
 # File & Data Paths

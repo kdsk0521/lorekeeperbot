@@ -2,12 +2,6 @@
 """
 Lorekeeper TRPG Bot - Main Module
 Version: 5.0 (Modularized with Orchestration Service)
-
-ì£¼ì ë³ê²½ì¬??(v5.0):
-- generate_ai_responseë¥?OrchestrationServiceë¡?ë¶ë¦¬
-- ë°±ê·¸?¼ì´???ì¤?????ì¤???ì
- (ì±ëë³??ì°¨ ?¤í ë³´ì¥)
-- NVC ? íµê¸°í ?í°ë§?ì¶ê?
 """
 
 import discord
@@ -28,7 +22,7 @@ try:
     import command_handler
     import domain_manager
 
-    # Orchestration Service (AI ?ëµ ?ì± ?µí©)
+    # Orchestration Service
     from orchestration import get_orchestration_runtime
 
 except ImportError as e:
@@ -71,7 +65,7 @@ async def on_ready():
 async def on_message(message: discord.Message) -> None:
     if message.author == client_discord.user: return
     if not isinstance(message.channel, (discord.TextChannel, discord.Thread)): return
-    
+
     asyncio.create_task(_process_message(message))
 
 async def _process_message(message: discord.Message) -> None:
@@ -80,7 +74,7 @@ async def _process_message(message: discord.Message) -> None:
         try:
             content = message.content.strip()
             parsed = input_handler.parse_input(content)
-            
+
             # 1. COMMANDS
             if parsed and parsed['type'] == 'command':
                 sys_trigger = await command_handler.dispatch_command(
@@ -107,7 +101,6 @@ async def _process_message(message: discord.Message) -> None:
                         client_discord, client_genai, MODEL_ID, MODEL_ID_FLASH,
                         domain_manager.get_domain(channel_id)
                     )
-                    # OOC + 일반 채팅이 함께 있더라도 OOC만 처리
                     if ooc_directive:
                         await generate_ai_response(
                             message,
@@ -123,13 +116,13 @@ async def _process_message(message: discord.Message) -> None:
                 )
                 return
 
-            # [NEW] Whitelist Check (Ignore if bot inactive)
+            # Whitelist Check (Ignore if bot inactive)
             if not domain_manager.get_bot_active(channel_id):
                 return
 
             # 4. CHAT LOGGING / RESPONSE
             mode = domain_manager.get_response_mode(channel_id)
-            
+
             if mode == 'waiting':
                 mask = domain_manager.get_user_mask(channel_id, message.author.id)
                 log_content = message.content
@@ -137,9 +130,9 @@ async def _process_message(message: discord.Message) -> None:
                     for att in message.attachments:
                         txt, _ = await bot_utils.read_attachment_text(att)
                         if txt: log_content += f"\n(Attach: {txt})"
-                
+
                 domain_manager.append_history(channel_id, mask, log_content.strip())
-                await message.add_reaction("?ï¸")
+                await message.add_reaction("✏️")
                 return
 
             # AUTO MODE
@@ -147,7 +140,7 @@ async def _process_message(message: discord.Message) -> None:
 
         except Exception as e:
             logging.error(f"Message Error: {e}", exc_info=True)
-            await message.channel.send(f"? ï¸ Error: {e}")
+            await message.channel.send(f"⚠️ Error: {e}")
 
 
 # =========================================================
@@ -155,31 +148,19 @@ async def _process_message(message: discord.Message) -> None:
 # =========================================================
 
 async def generate_ai_response(
-    message: discord.Message, 
-    channel_id: str, 
+    message: discord.Message,
+    channel_id: str,
     system_trigger: Optional[str] = None,
     user_input_override: Optional[str] = None
 ) -> None:
-    """
-    AI ?ëµ???ì±?©ë??
-
-    v5.0: OrchestrationServiceë¡??ì?ì¬ ëª¨ë??ë°?? ì?ë³´ì???¥ì.
-    ê¸°ì¡´ 550ì¤??´ì??ì½ëê° orchestration.pyë¡?ë¶ë¦¬?ì?µë??
-
-    ì£¼ì ê°ì ?¬í­:
-    - ë°±ê·¸?¼ì´???ì¤?????ì¤?ì¼ë¡?ì±ëë³??ì°¨ ?¤í ë³´ì¥
-    - NVC ? íµê¸°í ?í°ë§ì¼ë¡??¤ë???ë³´ ?ë ?ê±°
-    - PC ?¬ì¹­ ?ê? ?ì  ?ë¡¬?í¸ ê°í
-    """
+    """AI 응답 생성 (OrchestrationService로 위임)"""
     orchestration = get_orchestration_runtime(client_genai, MODEL_ID, MODEL_ID_FLASH)
     if not orchestration:
-        await message.channel.send("? ï¸ No AI Configured")
+        await message.channel.send("⚠️ No AI Configured")
         return
 
-    # [UI Feedback] ?ì¬ ?ì± ì¤??ë¦¼
-    feedback_msg = await message.channel.send("??**?ì¬ë¥??ì±?ê³  ?ìµ?ë¤...**")
+    feedback_msg = await message.channel.send("🔄 **서사를 생성하고 있습니다...**")
 
-    # Pass the feedback message to orchestration to delete it later
     await orchestration.execute(
         message,
         channel_id,

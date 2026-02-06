@@ -48,9 +48,8 @@ class TheoriaAnalyzer:
                 response_mime_type="application/json",
                 temperature=config.ANALYSIS_TEMPERATURE,
                 top_k=config.ANALYSIS_TOP_K,
-                top_p=config.ANALYSIS_TOP_P,
-                presence_penalty=config.ANALYSIS_PRESENCE_PENALTY,
-                frequency_penalty=config.ANALYSIS_FREQUENCY_PENALTY
+                top_p=config.ANALYSIS_TOP_P
+                # [Gemini 3] presence_penalty/frequency_penalty not supported
             )
             
             response = await self.client.aio.models.generate_content(
