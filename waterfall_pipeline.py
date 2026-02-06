@@ -62,7 +62,15 @@ class WaterfallPipeline:
         # 1. Call 1: Analysis (Theoria) - Always Execute
         analysis = await self.theoria.analyze_input(context)
         bus = context.shared_bus
-        
+
+        # Safety: Gemini가 JSON 배열을 반환하면 첫 번째 요소를 사용
+        if isinstance(analysis, list):
+            logger.warning(f"[Theoria] Returned list instead of dict, extracting first element")
+            analysis = analysis[0] if analysis and isinstance(analysis[0], dict) else {}
+        if not isinstance(analysis, dict):
+            logger.error(f"[Theoria] Invalid response type: {type(analysis)}")
+            analysis = {}
+
         # Store ALL Theoria results in SharedBus.dai (replaces nvc_result)
         bus.dai["active"] = True
         bus.dai["input_analysis"] = analysis.get("InputAnalysis", {})
