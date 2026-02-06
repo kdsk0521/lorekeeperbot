@@ -108,96 +108,148 @@ def process_bkspc(text: str) -> str:
 def detect_pc_impersonation(response: str, pc_names: List[str]) -> List[Dict]:
     """
     AI 응답에서 PC 사칭 패턴을 검출합니다.
-    
-    확장: 2인칭 지칭(당신, 너) 및 서술형 행동 강제 탐지 추가.
-    예외: 따옴표 내 대사는 허용.
+
+    V2: 범용 한국어 동사 어미 패턴으로 확장.
+    예외: 따옴표 내 대사, NPC가 PC를 언급하는 경우는 허용.
     """
     violations = []
-    
-    # 1. PC 이름 기반 탐지 (기존)
+
+    # 한국어 과거형 동사 어미 (범용)
+    VERB_ENDING = r'(?:했다|었다|았다|였다|셨다|ㅆ다)'
+    # 내면/사고 동사
+    THOUGHT_VERBS = r'(?:생각했다|느꼈다|깨달았다|결심했다|기억했다|떠올렸다|추측했다|알았다|몰랐다|원했다|바랐다|후회했다|의심했다|확신했다|짐작했다)'
+
+    # 1. PC 이름 기반 탐지
     if pc_names:
         for pc in pc_names:
             if not pc or pc == "Unknown":
                 continue
             safe_pc = re.escape(pc)
-            
+
             patterns = [
-                # Dialogue
-                (rf'{safe_pc}[이가은는]?\s*["\'].*?["\'].*?(?:말했다|대답했다|중얼거렸다|외쳤다|물었다|진술했다)', 'dialogue'),
-                (rf'["\'].*?["\'].*?(?:라고|하고|이라며)\s*{safe_pc}', 'dialogue'),
-                
-                # Action (Expanded)
-                (rf'{safe_pc}[이가은는]?\s*(?:고개를|손을|몸을|시선을).*?(?:끄덕|흔들|돌렸|뻗었|응시|바라)', 'action'),
-                (rf'{safe_pc}[이가은는]?\s*(?:일어났다|앉았다|걸었다|뛰었다|멈췄다|바라보았다|웃었다|울었다|미소지었다|한숨을|소리쳤다)', 'action'),
-                
-                # Reaction (Expanded)
-                (rf'{safe_pc}[의]?\s*(?:표정|눈|얼굴|심장|호흡)[이가]?\s*(?:굳|밝|어두|놀|떨|차갑|뜨겁)', 'reaction'),
-                (rf'{safe_pc}[은는이가]?\s*(?:생각했다|느꼈다|깨달았다|결심했다|기억했다|떠올렸다|추측했다)', 'thought'),
+                # [광범위] PC가 주어 + 임의 동사 (40자 이내)
+                (rf'{safe_pc}[이가은는]\s+.{{1,40}}{VERB_ENDING}', 'action'),
+
+                # PC 대사 생성
+                (rf'{safe_pc}[이가은는]?\s*[""\u201C\u300C].*?[""\u201D\u300D]', 'dialogue'),
+                (rf'[""\u201C\u300C].*?[""\u201D\u300D].*?(?:라고|하고|이라며)\s*{safe_pc}', 'dialogue'),
+
+                # PC 신체/감정 반응 (소유격)
+                (rf'{safe_pc}[의]\s*(?:표정|눈|얼굴|심장|호흡|손|몸|입|다리|팔|어깨|등|가슴|목|머리|시선|목소리|숨결)[이가은는]?\s*.{{1,25}}{VERB_ENDING}', 'reaction'),
+
+                # PC 내면 묘사
+                (rf'{safe_pc}[은는이가]?\s*.{{0,15}}{THOUGHT_VERBS}', 'thought'),
             ]
-            
+
             for pattern, vtype in patterns:
                 for match in re.finditer(pattern, response, re.IGNORECASE):
                     violations.append({
                         'pc': pc,
                         'type': vtype,
-                        'matched': match.group(),
+                        'matched': match.group()[:60],
                         'start': match.start(),
                         'end': match.end()
                     })
 
-    # 2. 2인칭 지칭 및 행동 강제 탐지 (신규)
-    # 당신/너 가 주어로 쓰이고 뒤에 서술어(다/음/함)로 끝나는 경우
+    # 2. 2인칭 지칭 행동 강제 탐지
     second_person_patterns = [
-        # 일반적인 2인칭 행동 강제 (은/는/이/가 + ~다)
-        (r'(?:당신|너|플레이어)(?:은|는|이|가)\s*.*?(?:했다|켰다|껐다|느꼈다|생각했다|말했다|보았다|멈췄다|끄덕였다|웃었다|바라보았다|앉았다|일어났다|걸었다|뛰었다)', 'impersonation_2nd'),
-        # 소유격 또는 신체 부위 지칭 후 상태 변화 (눈이 빛났다, 가슴이 떨렸다 등)
-        (r'당신(?:의|이)\s*(?:눈|손|몸|기억|생각|가슴|심장|호흡)(?:이|은|는|을)?\s*.*?(?:했다|느꼈다|떠올랐다|움직였다|굳었다|빛났다|떨렸다|가냘퍼졌다|거칠어졌다)', 'impersonation_2nd'),
+        # 당신/너 + 주격조사 + 동사
+        (rf'(?:당신|너|그대|플레이어)[은는이가]\s+.{{1,40}}{VERB_ENDING}', 'impersonation_2nd'),
+        # 당신의 신체/감정 + 동사
+        (rf'(?:당신|너|그대)(?:의|이)\s*(?:눈|손|몸|기억|생각|가슴|심장|호흡|얼굴|표정|시선|발|다리|팔|목소리|숨결)[이가은는]?\s*.{{1,25}}{VERB_ENDING}', 'impersonation_2nd'),
     ]
-    
+
     for pattern, vtype in second_person_patterns:
         for match in re.finditer(pattern, response, re.IGNORECASE):
             violations.append({
                 'pc': "Player",
                 'type': vtype,
-                'matched': match.group()[:50],
+                'matched': match.group()[:60],
                 'start': match.start(),
                 'end': match.end()
             })
 
     # 3. 따옴표(대사) 예외 필터링
-    # 현재 위반 위치가 따옴표 내부인지 확인
     def is_inside_quotes(text, pos):
-        # 텍스트의 처음부터 해당 위치까지 따옴표 개수 홀수면 내부로 간주 (간이 방식)
-        # 더 정확하려면 큰따옴표의 쌍을 추적해야 함
         sub = text[:pos]
-        double_quotes = sub.count('"')
-        single_quotes = sub.count("'")
-        return (double_quotes % 2 == 1) or (single_quotes % 2 == 1)
+        # 큰따옴표 (일반 + 유니코드)
+        dq = sub.count('"') + sub.count('\u201C') + sub.count('\u201D')
+        return dq % 2 == 1
 
     filtered_violations = []
     for v in violations:
         if not is_inside_quotes(response, v['start']):
             filtered_violations.append(v)
-            
+
     return filtered_violations
 
 
-def filter_pc_impersonation(response: str, pc_names: List[str]) -> Tuple[str, List[str]]:
+def _remove_violation_sentences(text: str, violations: List[Dict]) -> str:
+    """사칭이 감지된 문장을 텍스트에서 제거합니다."""
+    if not violations:
+        return text
+
+    # 각 violation이 속한 문장의 범위를 찾음
+    remove_ranges = []
+    for v in violations:
+        start, end = v['start'], v['end']
+        # 문장 시작 찾기 (마침표/줄바꿈 뒤)
+        sent_start = start
+        while sent_start > 0 and text[sent_start - 1] not in '.\n!?。':
+            sent_start -= 1
+        # 문장 끝 찾기
+        sent_end = end
+        while sent_end < len(text) and text[sent_end] not in '.\n!?。':
+            sent_end += 1
+        if sent_end < len(text):
+            sent_end += 1  # 구두점 포함
+        remove_ranges.append((sent_start, sent_end))
+
+    # 겹치는 범위 병합
+    remove_ranges.sort()
+    merged = [list(remove_ranges[0])]
+    for start, end in remove_ranges[1:]:
+        if start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+
+    # 제거 후 텍스트 재조립
+    result = []
+    last_end = 0
+    for start, end in merged:
+        chunk = text[last_end:start].strip()
+        if chunk:
+            result.append(chunk)
+        last_end = end
+    trailing = text[last_end:].strip()
+    if trailing:
+        result.append(trailing)
+
+    return ' '.join(result)
+
+
+def filter_pc_impersonation(response: str, pc_names: List[str]) -> Tuple[str, List[Dict]]:
     """
-    PC 사칭 부분을 검출하고 BKSPC를 처리한 최종 텍스트를 반환합니다.
+    PC 사칭 부분을 검출하고 제거한 최종 텍스트를 반환합니다.
+
+    Returns:
+        (cleaned_text, violations): violations는 Dict 리스트 (type, matched, pc 등)
     """
     # 1. BKSPC 먼저 처리
     clean_text = process_bkspc(response)
-    
-    # 2. 사칭 검출 (정제된 텍스트에서 실행)
-    warnings = []
+
+    # 2. 사칭 검출
     violations = detect_pc_impersonation(clean_text, pc_names)
 
+    # 3. 사칭 문장 실제 제거
     if violations:
+        import logging
         for v in violations:
-            warnings.append(f"⚠️ **PC 사칭 검출 [{v['type']}]:** `{v['matched']}...`")
+            logging.warning(f"[PC사칭 제거] [{v['type']}] \"{v['matched']}\"")
+        clean_text = _remove_violation_sentences(clean_text, violations)
 
-    return clean_text, warnings
+    return clean_text, violations
 
 
 # =========================================================
