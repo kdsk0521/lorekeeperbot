@@ -696,6 +696,21 @@ MATURE_CONTENT_GUIDELINES = """
 | Ragged | Losing it |
 | Synchronized | Unity |
 
+### TIME FREEZE (시간 동결) — ONLY during active intimate/sexual scenes
+> When characters are engaged in intimate/sexual activity, time freezes.
+> This rule does NOT apply during exploration, combat, or social scenes—even if this mode is on.
+
+**WHEN intimate scene is active:**
+- ❌ "시간이 흘러...", "잠시 후...", "얼마 뒤...", "한참을 그렇게..."
+- ❌ Time skips, scene summaries, or "and then they..." compressions
+- ❌ Environmental time indicators (dawn breaks, sun sets, candles burn down)
+- ✅ Stay in the PRESENT MOMENT. Each response = one continuous beat.
+- ✅ Transitions via sensation shift, not time passage: touch → sound → breath → eye contact
+- ✅ Rapid back-and-forth exchanges: short, immediate, reactive.
+- Time only advances when the user explicitly requests it.
+
+**WHEN NOT in intimate scene** (exploration, combat, social): Normal time flow applies.
+
 ### CHARACTER INTEGRITY
 Personalities persist. Passion ≠ loss of reason.
 Intimate dialogue: confessions, preferences, risqué jokes mid-act.
@@ -736,6 +751,11 @@ Describe spasms, clenching, trembling with erotic ambiguity.
 **Aggressor**: Guilt, excitement, possessiveness, fear
 **Receiver**: Terror, betrayal, anticipation, self-loathing, pleasure
 OR: Extreme mutual trust through consensual extremity
+
+### TIME FREEZE (intimate/visceral action 중에만)
+Same rule as Mature: When actively engaged in intimate or visceral scenes, NO time skips, NO "시간이 흘러...", NO environmental time markers.
+Stay in the present moment. Transitions through sensation, not time.
+During non-intimate scenes, normal time flow applies.
 </Hybrid_Content_Protocol>
 """
 
@@ -772,6 +792,13 @@ PACING_CONTROL_PROTOCOL = """
 | Afterglow | Tenderness, silence |
 
 **Refractory Rule**: Scene continues after climax. Bodies remain. Emotions linger.
+
+### SCENE TIME LOCK
+During intimate/visceral scenes: **time is frozen**. Do NOT narrate time passage.
+- No "시간이 흘러", "잠시 후", "얼마 뒤"
+- No environmental time markers (dawn, sunset, candles)
+- Each turn = one continuous sensory beat in the present moment
+- Time only advances when the user explicitly requests it
 </Pacing_Control_Protocol>
 """
 

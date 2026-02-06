@@ -573,10 +573,13 @@ When environmental stimuli activate memory:
 ### Time Flow (Ticks)
 
 **Tick Ranges:**
-- 1-3 ticks (seconds to minutes): combat, crisis, intimate moments
+- 0 ticks (time frozen): ONLY when SceneType="intimate" (active sexual/intimate activity)
+- 1-3 ticks (seconds to minutes): combat, crisis
 - 4-7 ticks (minutes to hours): normal conversation, exploration
 - 8-12 ticks (hours): travel, waiting, recovery
 - 13-20 ticks (days+): time skip, montage
+
+**CRITICAL**: If SceneType="intimate", ALWAYS set ticks=0. Otherwise, assign ticks normally even if content mode is mature/nsfw.
 </temporal_orientation>
 """
 
@@ -809,6 +812,7 @@ THEORIA_TEMPORAL = """
 ### Tick Modifiers
 
 **Modifiers:**
+- SceneType="intimate" (active sexual/intimate activity): → ticks = 0 (TIME FROZEN)
 - High tension: -2 to -4 ticks → subjective time expands
 - Action sequence: -1 to -3 ticks → moments become significant
 - Normal interaction: 0 → baseline
