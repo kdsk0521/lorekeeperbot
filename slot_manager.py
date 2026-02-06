@@ -79,13 +79,13 @@ SLOT_DEFINITIONS: Dict[int, SlotDefinition] = {
     26: SlotDefinition(26, "CACHE_BOUNDARY", "boundary", "==========CACHE BOUNDARY==========", is_static=False),
 
     # ===== DYNAMIC ZONE (27-34): 최강 Recency =====
-    27: SlotDefinition(27, "LIVE_HISTORY", "dynamic", "smart_history (1-2 turns)", is_static=False),
+    27: SlotDefinition(27, "OLDER_HISTORY", "dynamic", "smart_history (2~11턴 전)", is_static=False),
     28: SlotDefinition(28, "NARRATIVE_CHAIN", "dynamic", "cognition.narrative_chain + PACING", is_static=False),
     29: SlotDefinition(29, "REAL_TIME_DATA", "dynamic", "world_context (Doom, HP, Time)", is_static=False),
     30: SlotDefinition(30, "GM_MOVER", "dynamic", "cognition.GMMover + COGNITIVE_INTEGRATION", is_static=False),
-    31: SlotDefinition(31, "USER_INPUT", "dynamic", "action_text", is_static=False),
-    32: SlotDefinition(32, "SELF_CORRECTION", "dynamic", "text_resources.SELF_CORRECTION_BKSPC"),
-    33: SlotDefinition(33, "AUTHOR_NOTE", "dynamic", "legacy_builder.build_combined_directive", is_static=False),
+    31: SlotDefinition(31, "LAST_RESPONSE", "dynamic", "직전 AI 응답 (turn -1)", is_static=False),
+    32: SlotDefinition(32, "USER_INPUT", "dynamic", "현재 유저 입력", is_static=False),
+    33: SlotDefinition(33, "SELF_CORRECTION_NOTE", "dynamic", "SELF_CORRECTION + AUTHOR_NOTE", is_static=False),
     34: SlotDefinition(34, "NARRATIVE_KERNEL", "kernel", "TELESCOPE + OUTPUT + LANGUAGE + KERNEL + EMOTION"),
 }
 
@@ -209,10 +209,7 @@ class SlotPromptBuilder:
         # ===== CACHE BOUNDARY =====
         self.set_slot(26, "\n==========CACHE BOUNDARY==========\n")
 
-        # ===== DYNAMIC ZONE (32, 34) - 정적 부분 =====
-        # [32] Self Correction
-        self.set_slot(32, getattr(text_resources, 'SELF_CORRECTION_BKSPC', ''))
-
+        # ===== DYNAMIC ZONE (34) - 정적 부분 =====
         # [34] Telescope + Output + Language + Kernel + Emotion (최종 Recency)
         telescope = getattr(text_resources, 'TELESCOPE_PROTOCOL', '')
         output_protocol = getattr(text_resources, 'OUTPUT_PROTOCOL', '')
@@ -240,7 +237,8 @@ class SlotPromptBuilder:
         scene_intelligence: str = "",
         chapter_context: str = "",
         content_level: str = "normal",
-        live_history: str = "",
+        older_history: str = "",
+        last_response: str = "",
         narrative_chain: str = "",
         real_time_data: str = "",
         gm_mover: str = "",
@@ -289,9 +287,9 @@ class SlotPromptBuilder:
         self._populate_content_slots_legacy(content_level)
 
         # ===== DYNAMIC ZONE (27-34) =====
-        # [27] Live History
-        if live_history:
-            self.set_slot(27, f"<Live_History>\n{live_history}\n</Live_History>")
+        # [27] Older History (2~11턴 전 대화 - 참고 맥락)
+        if older_history:
+            self.set_slot(27, f"<Previous_History>\n{older_history}\n</Previous_History>")
 
         # [28] Narrative Chain
         if narrative_chain:
@@ -307,16 +305,23 @@ class SlotPromptBuilder:
             cognitive_int = getattr(text_resources, 'COGNITIVE_DATA_INTEGRATION', '')
             self.set_slot(30, f"<GM_Analysis>\n{gm_mover}\n</GM_Analysis>\n\n{cognitive_int}")
 
-        # [31] User Input
-        if user_input:
-            self.set_slot(31, f"<User_Input>\n{user_input}\n</User_Input>")
+        # [31] Last Response (직전 AI 응답 - 유저 입력 바로 앞!)
+        if last_response:
+            self.set_slot(31, f"<Last_Response>\n{last_response}\n</Last_Response>")
 
-        # [33] Author Note
+        # [32] User Input (현재 유저 입력 - 직전 응답 바로 뒤!)
+        if user_input:
+            self.set_slot(32, f"<User_Input>\n{user_input}\n</User_Input>")
+
+        # [33] Self Correction + Author Note
+        correction = getattr(text_resources, 'SELF_CORRECTION_BKSPC', '')
         if author_note:
-            self.set_slot(33, f"<Author_Note>\n{author_note}\n</Author_Note>")
+            self.set_slot(33, f"{correction}\n\n<Author_Note>\n{author_note}\n</Author_Note>")
         elif self.active_genres or self.custom_tone:
             directive = legacy_builder.build_combined_directive(self.active_genres, self.custom_tone)
-            self.set_slot(33, directive)
+            self.set_slot(33, f"{correction}\n\n{directive}")
+        elif correction:
+            self.set_slot(33, correction)
 
         return self
 
@@ -581,7 +586,47 @@ def build_34_step_prompt(ctx) -> str:
         real_time_data += pc_warning
 
     # =========================================================
-    # 3. 동적 슬롯 주입 실행
+    # 3. 히스토리 분리 (직전 응답 vs 이전 대화)
+    # =========================================================
+    # SillyTavern 패턴: 직전 AI 응답을 유저 입력 바로 앞에 배치
+    # → AI가 "방금 이 말 했으니 → 유저가 이렇게 반응 → 이어서 써라" 흐름 유지
+
+    older_history = ""
+    last_response = ""
+    smart_history = getattr(ctx, 'smart_history', [])
+
+    if smart_history and isinstance(smart_history, list):
+        # 직전 AI 응답 찾기 (마지막 assistant/model 메시지)
+        last_ai_idx = -1
+        for i in range(len(smart_history) - 1, -1, -1):
+            role = smart_history[i].get('role', '').lower()
+            if role in ('assistant', 'model'):
+                last_ai_idx = i
+                break
+
+        if last_ai_idx >= 0:
+            # 직전 AI 응답
+            last_response = smart_history[last_ai_idx].get('content', '')
+
+            # 이전 대화 (2~11턴 전, 최대 20개 메시지)
+            # 직전 AI 응답 이전의 대화만 포함
+            older_start = max(0, last_ai_idx - 20)
+            older_msgs = smart_history[older_start:last_ai_idx]
+            if older_msgs:
+                older_history = "\n".join(
+                    f"{h.get('role', '?')}: {h.get('content', '')}" for h in older_msgs
+                )
+        else:
+            # AI 응답이 없으면 전체를 older_history로
+            older_history = "\n".join(
+                f"{h.get('role', '?')}: {h.get('content', '')}" for h in smart_history[-20:]
+            )
+    else:
+        # smart_history가 없으면 기존 hist_text 폴백
+        older_history = getattr(ctx, 'hist_text', '')
+
+    # =========================================================
+    # 4. 동적 슬롯 주입 실행
     # =========================================================
 
     builder.populate_dynamic_slots(
@@ -594,7 +639,8 @@ def build_34_step_prompt(ctx) -> str:
         scene_intelligence=scene_intelligence,
         chapter_context=getattr(ctx, 'obj_ctx', ''),
         content_level=getattr(ctx, 'scene_type', 'normal'),
-        live_history=getattr(ctx, 'hist_text', ''),
+        older_history=older_history,
+        last_response=last_response,
         narrative_chain=narrative_chain,
         real_time_data=real_time_data,
         gm_mover=gm_mover,
