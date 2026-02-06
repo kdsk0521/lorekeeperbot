@@ -84,6 +84,12 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> G
     # Lore Summary (V4)
     lore_summary = domain_manager.get_lore_summary_data(channel_id)
 
+    # History & Lore Text (V4 - for THEORIA)
+    history = domain_manager.get_history(channel_id)
+    recent_history = history[-30:] if history else []  # Last 30 turns
+    history_text = "\n".join([f"{h['role']}: {h['content']}" for h in recent_history])
+    lore_text = domain_manager.get_lore(channel_id)
+
     # Narrative Anchors
     anchors = {
         "appearance": mem.get("appearance", ""),
@@ -111,7 +117,9 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> G
             user_input=user_input,
             genres=genres,
             active_modules=active_modules,
-            lore_summary=lore_summary
+            lore_summary=lore_summary,
+            history_text=history_text,
+            lore_text=lore_text
         ),
         narrative_anchors=anchors,
         shared_bus=bus

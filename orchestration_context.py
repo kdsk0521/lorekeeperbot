@@ -22,6 +22,8 @@ class RequestData:
     genres: Dict[str, str] = field(default_factory=lambda: {"stage": "", "flavor": "", "lens": ""})
     active_modules: List[str] = field(default_factory=lambda: ["judgment", "doom", "anomaly", "mental"])
     lore_summary: Dict[str, Any] = field(default_factory=dict) # [V4] theme, anomaly_seeds, locations
+    history_text: str = ""  # [V4] Recent history for THEORIA analysis
+    lore_text: str = ""     # [V4] Lore reference for THEORIA analysis
 
 @dataclass
 class SharedBus:

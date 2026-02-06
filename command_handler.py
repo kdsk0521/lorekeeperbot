@@ -614,7 +614,7 @@ async def cmd_start(ctx: CommandContext) -> None:
     domain_manager.update_participant(ctx.channel_id, ctx.message.author)
     if await session_manager.manager.start_session(ctx.message, ctx.genai_client, ctx.model_id):
         # Check for custom opening scenario
-        custom_scenario = ctx.args.strip() if ctx.args else ""
+        custom_scenario = ctx.raw_args.strip() if ctx.raw_args else ""
         if custom_scenario:
             # Include custom scenario in the trigger
             return f"Opening: {custom_scenario}"

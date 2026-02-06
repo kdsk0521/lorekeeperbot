@@ -54,7 +54,7 @@ RULES_DIR = os.path.join(DATA_DIR, "rules")
 MAX_DISCORD_MESSAGE_LENGTH = 2000
 MAX_FILE_SIZE_MB = 10
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
-MAX_TEXT_INPUT_LENGTH = 50000
+MAX_TEXT_INPUT_LENGTH = 100000  # [V4] Doubled from 50k for detailed lore
 SUPPORTED_TEXT_EXTENSIONS = ['.txt', '.md', '.json', '.log', '.py', '.yaml', '.yml']
 
 # =========================================================
