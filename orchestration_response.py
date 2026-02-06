@@ -57,61 +57,75 @@ def _build_nvc_summary(ctx: ResponseContext, filter_config: NVCFilterConfig) -> 
     # [V3 Restructured] Cognition Engine Data Block
     nvc_summary = "### <Cognition_Engine_Data>\n"
 
-    # --- Section 1: Input Analysis ---
-    input_analysis = dai.get("input_analysis", {})
-    if input_analysis:
-        nvc_summary += (
-            f"#### INPUT_ANALYSIS\n"
-            f"- Original: {input_analysis.get('Original', 'N/A')}\n"
-            f"- Enhanced: {input_analysis.get('Enhanced', 'N/A')}\n"
-            f"- Plausibility: {input_analysis.get('Plausibility', 'N/A')}\n"
-            f"- Momentum: {input_analysis.get('Momentum', 'OPEN')}\n\n"
-        )
-
-    # --- Section 2: Observation & Intent ---
+    # --- Section 1: Situation Assessment (Stakes) ---
     nvc_summary += (
-        f"#### SITUATION_ASSESSMENT\n"
-        f"- Observation: {dai.get('observation', 'N/A')}\n"
-        f"- UserIntent: {dai.get('user_intent', 'N/A')}\n"
+        f"#### SITUATION_STAKES (Risk/Potential Calibration)\n"
         f"- Position (Risk): {pos_data.get('value', 'N/A')} -> {pos_data.get('reason', '')}\n"
         f"- Effect (Potential): {eff_data.get('value', 'N/A')} -> {eff_data.get('reason', '')}\n"
+        f"- Observation: {dai.get('observation', 'N/A')}\n"
+        f"- UserIntent: {dai.get('user_intent', 'N/A')}\n"
         f"- Aspects: [{', '.join(aspects) if aspects else 'None'}]\n\n"
     )
 
-    # --- Section 3: Psyche States (6-Axis) ---
+    # --- Section 2: Socio-Cultural Markers (Habitus) ---
+    habitus = dai.get("HabitusAnalysis", {})
+    if habitus:
+        nvc_summary += (
+            f"#### SOCIO_CULTURAL_MARKERS (Habitus Rendering)\n"
+            f"- Economic: {habitus.get('Economic', 'N/A')}\n"
+            f"- Cultural: {habitus.get('Cultural', 'N/A')}\n"
+            f"- Social: {habitus.get('Social', 'N/A')}\n\n"
+        )
+
+    # --- Section 3: Physical Props (Sensory Anchors) ---
+    anchors = dai.get("SensoryAnchors", [])
+    if anchors:
+        nvc_summary += "#### PHYSICAL_PROPS_FOR_RECALL (Sensory Anchors)\n"
+        for a in anchors[:2]:  # Top 2 anchors
+            nvc_summary += f"- Anchor: '{a.get('anchor', '')}' -> Link: {a.get('memory_link', '')}\n"
+        nvc_summary += "\n"
+
+    # --- Section 4: Psyche States (6-Axis) ---
     psyche = dai.get("psyche_states")
     if psyche and isinstance(psyche, dict):
-        nvc_summary += "#### PSYCHE_STATES (Use for body signal rendering)\n"
+        nvc_summary += "#### PSYCHE_STATES (Body Signal Calibration)\n"
         for char_name, state in psyche.items():
-            if isinstance(state, str):
-                nvc_summary += f"- {char_name}: {state}\n"
-            elif isinstance(state, dict):
-                # Structured format
+            if isinstance(state, dict):
                 mental = state.get("mental", {})
                 soma = state.get("soma", {})
                 relation = state.get("relation", {})
                 nvc_summary += (
                     f"- {char_name}: "
-                    f"mental={mental.get('descriptor', '?')}({mental.get('value', 0)}), "
+                    f"mental={mental.get('descriptor', '?')} ({mental.get('value', 0)}), "
                     f"soma={soma.get('descriptor', '?')}, "
-                    f"relation={relation.get('descriptor', '?')}({relation.get('value', 0)})\n"
+                    f"relation={relation.get('descriptor', '?')} ({relation.get('value', 0)})\n"
                 )
         nvc_summary += "\n"
 
-    # --- Section 4: Narrative Chain ---
-    chain = dai.get("narrative_chain")
-    if chain and isinstance(chain, dict):
-        status = chain.get("chain_status", "OPEN")
-        lock = chain.get("topic_lock", "None")
-        conclusion = chain.get("conclusion_proximity", "N/A")
+    # --- Section 5: Narrative Chain & Direction ---
+    chain = dai.get("narrative_chain", {})
+    temporal = dai.get("TemporalOrientation", dai.get("temporal_orientation", {}))
+    nvc_summary += (
+        f"#### NARRATIVE_DIRECTION\n"
+        f"- Chain Status: {chain.get('chain_status', 'OPEN')} (Conclusion Proximity: {chain.get('conclusion_proximity', 0)}%)\n"
+        f"- Topic Lock: {chain.get('topic_lock', 'None')}\n"
+        f"- Temporal Focus: {temporal.get('suggested_focus', temporal.get('focus', 'N/A'))}\n\n"
+    )
+
+    # --- Section 6: Security & Correction Hooks ---
+    pc_check = dai.get("PCImpersonationCheck", dai.get("pc_impersonation_check", {}))
+    if pc_check.get("detected"):
         nvc_summary += (
-            f"#### NARRATIVE_CHAIN\n"
-            f"- chain_status: {status}\n"
-            f"- topic_lock: {lock}\n"
-            f"- conclusion_proximity: {conclusion}\n\n"
+            f"#### [CRITICAL] SEC_CORRECTION_HINT\n"
+            f"- Violation Detected: {pc_check.get('violations', [])}\n"
+            f"- Required Correction: {pc_check.get('correction_hint', '')}\n\n"
         )
 
-    # --- Section 5: Memory Triggers ---
+    # --- Section 7: GM Move ---
+    if gm_m:
+        nvc_summary += f"#### GM_MOVE_SUGGESTION\n- type: {gm_m.get('type')}\n- description: {gm_m.get('description', '')}\n\n"
+
+    # --- Section 8: Memory Triggers ---
     memory = dai.get("memory_triggers")
     if memory and isinstance(memory, list) and memory:
         nvc_summary += "#### MEMORY_TRIGGERS (Render as involuntary recall)\n"
@@ -122,29 +136,6 @@ def _build_nvc_summary(ctx: ResponseContext, filter_config: NVCFilterConfig) -> 
                 echo = m.get("echo", "")
                 nvc_summary += f"- [{char}] Trigger: '{trigger}' -> Echo: '{echo}'\n"
         nvc_summary += "\n"
-
-    # --- Section 6: PC Impersonation Warning ---
-    pc_check = dai.get("pc_impersonation_check", {})
-    if pc_check.get("detected"):
-        violations = pc_check.get("violations", [])
-        hint = pc_check.get("correction_hint", "")
-        nvc_summary += (
-            f"#### WARNING PC_IMPERSONATION_WARNING\n"
-            f"- detected: true\n"
-            f"- violations: {violations[:3]}\n"
-            f"- correction_hint: {hint}\n\n"
-        )
-
-    # --- Section 7: GM Move & Offscreen ---
-    if gm_m:
-        nvc_summary += f"#### GM_MOVE_SUGGESTION\n- type: {gm_m.get('type')}\n- description: {gm_m.get('description', '')}\n\n"
-
-    temporal = dai.get("temporal_orientation", {})
-    suggested_focus = temporal.get("suggested_focus") or temporal.get("focus", "")
-    if suggested_focus:
-        nvc_summary += f"#### TEMPORAL_FOCUS\n- suggested_focus: {suggested_focus}\n\n"
-
-
 
     nvc_summary += "### </Cognition_Engine_Data>\n"
 

@@ -199,7 +199,11 @@ Recording in Korean.
     ]
     
     gen_config = types.GenerateContentConfig(
-        temperature=DEFAULT_TEMPERATURE,
+        temperature=config.NARRATIVE_TEMPERATURE,
+        top_k=config.NARRATIVE_TOP_K,
+        top_p=config.NARRATIVE_TOP_P,
+        presence_penalty=config.NARRATIVE_PRESENCE_PENALTY,
+        frequency_penalty=config.NARRATIVE_FREQUENCY_PENALTY,
         safety_settings=config.SAFETY_SETTINGS,
         tools=[],
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
