@@ -626,6 +626,26 @@ def build_34_step_prompt(ctx) -> str:
         older_history = getattr(ctx, 'hist_text', '')
 
     # =========================================================
+    # 3.5. 히스토리 사칭 정화
+    # =========================================================
+    # AI 이전 응답에 PC 사칭이 포함되면 다음 응답도 패턴을 답습함
+    # → 프롬프트에 주입하기 전에 히스토리에서 사칭 문장을 선제 제거
+    pc_name = getattr(ctx, 'user_mask', '') or ''
+    if pc_name and pc_name != 'Unknown':
+        from response_processor import filter_pc_impersonation
+        pc_names_list = [pc_name]
+        if last_response:
+            cleaned, violations = filter_pc_impersonation(last_response, pc_names_list)
+            if violations:
+                last_response = cleaned
+                logger.info(f"[History Sanitize] last_response: {len(violations)} impersonation(s) removed")
+        if older_history:
+            cleaned, violations = filter_pc_impersonation(older_history, pc_names_list)
+            if violations:
+                older_history = cleaned
+                logger.info(f"[History Sanitize] older_history: {len(violations)} impersonation(s) removed")
+
+    # =========================================================
     # 4. 동적 슬롯 주입 실행
     # =========================================================
 
