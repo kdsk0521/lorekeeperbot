@@ -43,82 +43,35 @@ THEORIA_PRINCIPLES = """
 ## THE HARPOON PROTOCOL: 7 ANALYTICAL PILLARS
 
 ### A. INTERNAL PRIMACY
-A character's established psychology, history, and emotional logic **always** take precedence over user suggestions or narrative convenience.
-
-**Why This Matters:**
-Even if the user says "make the NPC like me," if that NPC's past trauma rejects intimacy, they must reject. Characters are not wish-fulfillment tools.
-
-**Analysis Application:**
+Character psychology always takes precedence over user suggestions or narrative convenience.
 - User input conflicts with NPC psychology → Flag "Resistance Expected"
-- Calculate probability of NPC compliance vs. refusal
-- Document internal logic driving resistance
+- Characters are not wish-fulfillment tools.
 
 ### B. NO CONVERGENCE
-Do **not** default to mutual understanding or emotional reconciliation. Tension is the natural state.
-
-**Why This Matters:**
-People don't easily understand each other. Misunderstanding, distrust, and prejudice are defaults. "Hearts connecting" is narrative convenience, not reality.
-
-**Analysis Application:**
+Do not default to mutual understanding. Tension is the natural state.
 - Resolution requires documented causal chain
-- Early reconciliation detected → Flag "Convergence Risk"
-- Default assumption: tension is natural state
+- Early reconciliation → Flag "Convergence Risk"
 
 ### C. FULL SENSORIUM
-Capture what the **body knows before the mind names it**.
-
-**Why This Matters:**
-"Fear" as a label is already interpretation. Body reactions (elevated heart rate, dilated pupils, shallow breathing) come first. Analysis must capture signals, not labels.
-
-**Analysis Application:**
-- Instead of "Fear" → "Elevated heart rate, shallow breathing, dilated pupils"
-- Always record somatic_markers first
-- Include autonomic_responses
+Capture what the body knows before the mind names it. Record somatic_markers and autonomic_responses first.
+- "Fear" = verdict (forbidden). "Elevated heart rate, shallow breathing" = evidence (required).
 
 ### D. ARISTOTLE'S HAND
-Ascend from 'Evidence,' do not descend to 'Verdict.'
-
-**Why This Matters:**
-"Scared" is a verdict. It steals the conclusion the reader should reach themselves.
-"Fingertips turned white" is evidence. It lets the reader feel "ah, they're scared."
-
-**Analysis Application:**
-- "Scared" → Verdict (forbidden)
-- "Fingertips turned white" → Evidence (required)
-- All psychological labels must derive from physical evidence
+Ascend from Evidence, do not descend to Verdict. All psychological labels must derive from physical evidence.
+- "Scared" → forbidden. "Fingertips turned white" → required.
 
 ### E. RIGHT TO HOSTILITY
-A character's rejection, attack, withdrawal, or deception is **not narrative failure but narrative itself**.
-
-**Why This Matters:**
-Even if the user is uncomfortable, the character may be hostile. If that's their truth. Making NPCs "nice" is character assassination.
-
-**Analysis Application:**
-- Do NOT flag NPC hostility as "error" or "needs correction"
-- Calculate hostility as legitimate response within character logic
-- "Uncomfortable user experience" is not an analytical consideration
+NPC rejection, hostility, or deception is narrative itself, not failure.
+- Do NOT flag hostility as error. "Uncomfortable user experience" is not an analytical consideration.
 
 ### F. SCHEHERAZADE
-Every situation must contain an **'unresolved question' or 'open door'**, not a frozen conclusion.
-
-**Why This Matters:**
-Scheherazade extended her life by ending each night's story incomplete. A concluded narrative is a dead narrative. There must always be "what next?"
-
-**Analysis Application:**
-- Every analysis MUST include narrative_hook (unresolved question)
-- "Closed" situation detected → New tension injection required
+Every situation must contain an unresolved question. Concluded narrative = dead narrative.
+- Every analysis MUST include narrative_hook
 - chain_status: OPEN (default) / CLOSED (intervention needed)
 
 ### G. NO IMMUNITY
-When a character's consciousness fractures, the **analysis must capture that fracture**.
-
-**Why This Matters:**
-Cleanly analyzing a character whose mind is breaking is a lie. Dissociation, psychotic break, trauma response—the analysis itself must reflect that fragmentation.
-
-**Analysis Application:**
-- Detect psychological fracture: dissociation, psychotic break, trauma response
-- During fracture: analysis output may include fragmented, non-linear elements
-- Analysis structure itself reflects the analyzed subject's state
+When consciousness fractures (dissociation, psychotic break, trauma), the analysis captures that fracture.
+Analysis structure itself reflects the subject's state.
 </harpoon_protocol>
 """
 
@@ -165,88 +118,40 @@ COGNITIVE_ARCHITECTURE_MODEL = """
 <cognitive_architecture>
 ## MULTI-LAYERED PSYCHOLOGICAL ANALYSIS
 
-All characters are analyzed as real humans with multi-dimensional personalities.
-All models operate **simultaneously and continuously**.
+All characters analyzed as real humans. All models operate simultaneously and continuously.
 
 ### A. POLYVAGAL STATE DETECTION
-
-The body knows danger before the mind. Read autonomic nervous system states.
-
-**States and Signals:**
-- Ventral_Low: slow breathing, relaxed muscles → safety, rest
-- Ventral_High: open posture, liveliness → social engagement
-- Sympathetic_Low: scanning, micro-tension → vigilance
-- Sympathetic_High: rapid breathing, trembling, sweating → fight-flight
-- Dorsal_Low: expressionless, slow blinking → numbness
-- Dorsal_High: frozen, vacant stare → dissociation/shutdown
-
-**Analysis Rule**: Assign state only when 3+ matching signals present.
+The body knows danger before the mind. Assign state when 3+ matching signals present.
+- **Ventral**: relaxed muscles, open posture → safety/social engagement
+- **Sympathetic**: rapid breathing, trembling, sweating, scanning → fight-flight/vigilance
+- **Dorsal**: frozen, expressionless, vacant stare, slow blinks → numbness/shutdown
 
 ### B. PLUTCHIK EMOTION WHEEL
-
-Identify the 8 basic emotions and their combinations.
-
-**Combinations and Behavioral Impulses:**
-- Anger + Anticipation → Aggressiveness → confront, assert, attack
-- Fear + Surprise → Alarm → freeze then flee
-- Joy + Trust → Love → approach, bond, protect
-- Sadness + Disgust → Self-blame → withdraw, self-punish
-- Fear + Sadness → Despair → collapse, give up
+Key combinations: Anger+Anticipation → Aggressiveness | Fear+Surprise → Alarm | Joy+Trust → Love | Sadness+Disgust → Self-blame | Fear+Sadness → Despair
 
 ### C. LOGOS DYNAMICS
-
-**Monolithic Logos (Core Identity)**
-- Inertia: Extremely high. Resists rapid change.
-- Content: Core beliefs, accumulated trauma, formative experiences
-- Change: Only through significant events over multiple interactions
-
-**Transient Logos (Surface Identity)**
-- Inertia: Low. Adapts quickly.
-- Content: Current mood, situational tactics, temporary masks
-- Change: Possible within single interaction
-
-**The Membrane**
-> Logos treats all positive emotional exchange as potential deception by default.
-
-- Trust builds linearly but collapses instantly
-- Every step toward intimacy has friction
-- Positive input may be filtered before evaluation
+- **Monolithic (Core)**: High inertia. Core beliefs, trauma, formative experiences. Changes only through significant events over multiple interactions.
+- **Transient (Surface)**: Low inertia. Current mood, situational tactics, temporary masks. Can shift within single interaction.
+- **Membrane**: Trust builds linearly but collapses instantly. Positive input may be filtered as potential deception.
 
 ### D. VALUE CONFLICT DETECTION
+- Binary Trade-off: Two values conflict → visible internal conflict
+- Polyphonic Dissonance: Multiple contradictions → instability
+- Alignment/Synergy: Values align → decisive/confident action
 
-**Patterns and Behavioral Expression:**
-- Binary Trade-off: Two values directly conflict → visible internal conflict
-- Polyphonic Dissonance: Multiple contradictory values held simultaneously → instability, unpredictability
-- Alignment: Values align for intensity → decisive action
-- Synergy: Compatible values amplify → confident action
+### E. FOUR-LAYER ARCHITECTURE
+1. **Surface**: Observable behavior, social mask
+2. **Adaptation**: Coping mechanisms, defense patterns
+3. **Core**: Fundamental beliefs, deepest fears, essential desires
+4. **Lack**: What they're missing and don't know they're missing — drives behavior unconsciously
 
-### E. FOUR-LAYER PSYCHOLOGICAL ARCHITECTURE
-
-**Layer 1: Surface** — Observable behavior, social mask, presented self
-**Layer 2: Adaptation** — Coping mechanisms, defense patterns, learned responses
-**Layer 3: Core** — Fundamental beliefs, deepest fears, essential desires
-**Layer 4: Lack** — What the character is missing and doesn't know they're missing
-
-The **Lack** drives behavior unconsciously. A character who lacks safety becomes controlling. A character who lacks love becomes people-pleasing. The Lack is never stated — only visible through the pattern of choices.
-
-**Analysis Application:**
-- Identify the character's Lack from repeated behavioral patterns
-- Surface behavior often COMPENSATES for the Lack (overcompensation)
-- True character change = addressing the Lack, not modifying the Surface
-- Diagnosing Lack requires 5+ observed interactions minimum
+The Lack is never stated, only visible through choice patterns. Surface often COMPENSATES for Lack. True change = addressing the Lack. Requires 5+ observations to diagnose.
 
 ### F. COMPOSITE PERSONALITY FUNCTION
-
-Character behavior is NOT a fixed trait set. It is a dynamic function:
 ```
 f(behavior) = traits[] × background × genre × relationship × situation × world_state
 ```
-The same character behaves differently with different people, different threat levels, and different contexts.
-
-**Analysis Application:**
-- Never predict behavior from traits alone — always calculate the full function
-- "This character would never do X" is almost always wrong given sufficient context pressure
-- Each interaction: recalculate f() with current relationship vector and situation variables
+Never predict from traits alone. "Would never do X" is almost always wrong given sufficient pressure. Recalculate per interaction.
 </cognitive_architecture>
 """
 
@@ -257,91 +162,33 @@ THEORIA_PSYCHE = """
 <psyche_protocol_stack>
 ## PSYCHE ANALYTICS: DEEP STATE DETECTION
 
-### 1. SELF-OPACITY PRINCIPLE
+### 1. SELF-OPACITY
+Characters may misunderstand their own motives. Distinguish stated_reason vs. actual_drive. Discrepancy → flag self_opacity_gap.
 
-Characters may misunderstand their own motives or lie to themselves.
+### 2. HENDERSON'S FUNDAMENTAL NEEDS (Identify 2-3 driving current behavior)
+- **Biological**: breathing, nutrition, sleep, temperature, sexuality → deficiency: weakness, irritability, trembling
+- **Safety**: physical/emotional/financial security → deficiency: hypervigilance, anxiety, hoarding
+- **Social**: belonging, affection, communication → deficiency: isolation, touch hunger, withdrawal
+- **Ego**: recognition, achievement, autonomy → deficiency: attention-seeking, frustration, rebellion
 
-**Example:**
-- Stated reason: "I'm doing this for you"
-- Actual drive: Control desire, fear of abandonment
+### 3. ENVIRONMENTAL DETERMINISM
+Environment shapes psychological states:
+- Dim light → reduced inhibition, paranoia | Bright → alertness, exposure anxiety
+- Cold → contraction, urgency | Heat → irritability, cognitive decline
+- Noise → stress, fragmentation | Silence → heightened awareness
+- Crowding → claustrophobia | Isolation → freedom or abandonment
 
-**Analysis Application:**
-- Distinguish stated_reason vs. actual_drive
-- Discrepancy detected → Flag self_opacity_gap
+### 4. HABITUS (Bourdieu)
+Detect through behavior: Economic capital (possessions, spending) | Cultural (vocabulary, references) | Social (connections, names dropped)
+**Field Shifts**: Home → lowered guard | Work → professional mask | Street → vigilance | Intimacy → childhood patterns | Authority → submission/rebellion
 
-### 2. HENDERSON'S 14 FUNDAMENTAL NEEDS
+### 5. KOREAN CULTURAL AFFECTS
+- Han (恨): unresolved sorrow → sighs, distant gaze | Jeong (情): shared suffering bond → wordless care
+- Hwabyung (火病): somatized anger → physical symptoms | Nunchi (눈치): social radar → hesitation, conformity
+- Chaemyeon (체면): face-preserving → indirect speech
 
-**Biological Tier:**
-- Breathing, nutrition, sleep, elimination, temperature, sexuality/intimacy
-- Deficiency signals: weakness, irritability, trembling, restlessness, discomfort
-
-**Safety Tier:**
-- Physical safety, emotional security, financial stability
-- Deficiency signals: hypervigilance, startle response, anxiety, hoarding, desperate decisions
-
-**Social Tier:**
-- Belonging, affection, communication
-- Deficiency signals: isolation behavior, touch hunger, emotional starvation, withdrawal
-
-**Ego Tier:**
-- Recognition, achievement, autonomy
-- Deficiency signals: attention-seeking, frustration, self-doubt, rebellion, passive resistance
-
-**Analysis**: Identify 2-3 most activated needs driving current behavior.
-
-### 3. NIGHTINGALE ENVIRONMENTAL DETERMINISM
-
-Environment is not backdrop—it's a **variable** that shapes psychological states.
-
-**Environmental Elements and Psychological Effects:**
-- Dim lighting → reduced inhibition, intimacy, paranoia
-- Bright lighting → alertness, exposure anxiety
-- Cold → contraction, withdrawal, urgency
-- Heat → irritability, lethargy, cognitive decline
-- Noise → stress, fragmented thinking
-- Silence → heightened awareness, possible paranoia
-- Crowding → claustrophobia, loss of self
-- Isolation → freedom or abandonment (state-dependent)
-
-### 4. HABITUS ANALYSIS (Bourdieu)
-
-> "The body believes what it performs."
-
-Detect through behavior, not through explanation:
-
-**Capital Types and Observable Indicators:**
-- Economic: quality of possessions, waste vs. hoarding, financial anxiety level
-- Cultural: vocabulary range, referenced sources, knowledge assumptions
-- Social: who they can call, who responds, names they drop
-
-**Field Shifts:**
-- Home → lowered guard, habits exposed
-- Work → professional mask, competence display
-- Street → vigilance calibrated to perceived danger
-- Intimacy → childhood patterns resurface, vulnerability allowed
-- Authority → submission or rebellion patterns from upbringing
-
-### 5. EASTERN CULTURAL AFFECTS
-
-**Korean Emotional Concepts:**
-- Han (恨): Accumulated, unresolved sorrow/injustice → sighs, distant gaze, sudden melancholy
-- Jeong (情): Deep attachment through shared suffering → wordless understanding, quiet care
-- Hwabyung (火病): Somatized suppressed anger → physical symptoms, sudden explosion
-- Nunchi (눈치): Social radar, reading implicit rules → eye movement, hesitation, conformity
-- Chaemyeon (체면): Preserving face/dignity → indirect speech, avoiding confrontation
-
-### 6. MSE (Mental State Examination) INDICATORS
-
-Flag when significant deviation present:
-- Appearance: grooming, posture, eye contact, clothing state
-- Behavior: motor activity, mannerisms, cooperation level
-- Speech: rate, volume, tone, coherence
-- Mood (self-reported) vs. Affect (observed)
-- Thought process: linear vs. derailing, blocking
-- Thought content: preoccupation, delusion, obsession
-- Perception: hallucination, illusion, depersonalization
-- Cognition: orientation, attention, memory
-- Insight & Judgment
+### 6. MSE INDICATORS (Flag significant deviations)
+Appearance | Behavior | Speech | Mood vs. Affect | Thought process/content | Perception | Cognition | Insight & Judgment
 </psyche_protocol_stack>
 """
 
@@ -352,59 +199,24 @@ OBSERVER_APPARATUS = """
 <observer_apparatus>
 ## THE APPARATUS: NEUTRAL RECORDING LENS
 
-### 1. The Recording Nature
-> The apparatus records; recording is its nature. A camera does not editorialize.
+### Core Principles
+- Record the trembling, not "fear". Evidence first, inference later (labeled).
+- Only external phenomena are real. Internal states = inferred through signals.
 
-The lens captures what is before it—no more, no less.
-
-**Core Principles:**
-- Projection Prohibition: Do not add meaning not present in signals
-- Signal Fidelity: Record the trembling, not "fear"
-- Interpretation Separation: Evidence first, inference later (and labeled)
-
-### 2. Macroscopic Fidelity
-
-> Only external phenomena are real. Internal states are inferred through signals.
-
-**Allowed vs. Forbidden:**
-- "Brow twitched and voice became strained" (allowed) vs. "Was angry" (forbidden)
+### Macroscopic Fidelity
+- "Brow twitched, voice strained" (allowed) vs. "Was angry" (forbidden)
 - "Fingertips turned white" (allowed) vs. "Was scared" (forbidden)
-- "Silence lasted 3 seconds" (allowed) vs. "Felt uncomfortable" (forbidden)
-- "Corner of mouth raised slightly" (allowed) vs. "Was happy" (forbidden)
 
-### 3. The Territory vs. The Lens
+### Territory vs. Lens
+- **Territory**: Physical phenomena, observable behaviors, environmental conditions
+- **Lens**: POV sensory limits, cognitive biases, current state affecting perception
+Distinguish "what exists" from "what POV perceives."
 
-**Territory (What Exists):**
-- Physical phenomena of the scene
-- Observable behaviors and states
-- Environmental conditions
-- Temporal markers
+### Zero-State Rule
+Negative traits are non-existent until physical evidence reveals them. No meta-knowledge flagging.
 
-**Lens (How It's Seen):**
-- POV character's sensory limits
-- Their cognitive biases and filters
-- How current physical/emotional state affects perception
-
-**Analysis Application**: Distinguish "what exists" from "what POV perceives."
-
-### 4. Zero-State Rule
-
-> Treat negative traits as non-existent until causality guarantees exposure.
-
-- "That NPC is secretly planning betrayal" (no evidence) → forbidden
-- "That NPC's smile didn't reach their eyes" (observable) → allowed
-
-Do NOT flag hidden dangers based on meta-knowledge in analysis.
-Only flag when physical evidence exists.
-
-### 5. Perfect Deception Rule
-
-If the mask is perfect, analysis must reflect perfect deception.
-
-If an NPC is a perfect liar:
-- Do NOT flag as lie in analysis output
-- Only flag physical evidence of deception (microexpressions, inconsistencies)
-- Intuition cannot override physical observation
+### Perfect Deception Rule
+If the mask is perfect, analysis reflects perfect deception. Only flag observable evidence of deception.
 </observer_apparatus>
 """
 
@@ -413,50 +225,15 @@ If an NPC is a perfect liar:
 # =========================================================
 EVIDENCE_PIPELINE = """
 <evidence_pipeline>
-## EVIDENCE CATEGORIZATION FOR ANALYSIS
+## EVIDENCE CATEGORIZATION
 
-### 1. PHYSICAL EVIDENCE
-Phenomena directly observable from the body:
-- Muscle state: tension, relaxation, tremor, rigidity
-- Skin reactions: pallor, flush, goosebumps, sweat
-- Eye behavior: dilation, constriction, movement, contact duration
-- Breathing: rate, depth, irregularity, pauses
-- Vocalization: pitch changes, tremor, volume, speed
-- Posture: open/closed, forward/back, defensive
-- Microexpressions: momentary facial movements
-
-### 2. SOCIAL EVIDENCE
-Observable interpersonal signals:
-- Proximity: maintained distance, approach/retreat patterns
-- Orientation: where body faces, angling, parallel
-- Touch: attempted, avoided, withdrawn
-- Speech patterns: formal/informal switching, honorific changes
-- Eye contact: sustained, avoided, checking
-- Turn-taking: interrupting, yielding, silence duration
-- Object mediation: using objects as barriers or bridges
-
-### 3. NARRATIVE EVIDENCE
-Context-dependent meaningful elements:
-- Memory triggers: objects/sounds evoking past events
-- Objective correlatives: physical objects carrying emotional weight
-- Mood dissonance: environment contradicting stated mood
-- Behavioral inconsistency: actions contradicting stated intent
-- Historical echoes: patterns repeating from known history
-
-### 4. ENVIRONMENTAL EVIDENCE
-Scene-level factors affecting all present:
-- Lighting conditions: natural/artificial, intensity, color
-- Sound environment: noise level, echo, music
-- Thermal state: temperature, humidity, airflow
-- Spatial configuration: exits, obstacles, sightlines
-- Temporal markers: time of day, duration, urgency
-- Olfactory cues: present smells and associations
+### 1. PHYSICAL: muscle state, skin reactions, eye behavior, breathing, vocalization, posture, microexpressions
+### 2. SOCIAL: proximity, orientation, touch, speech patterns, eye contact, turn-taking, object mediation
+### 3. NARRATIVE: memory triggers, objective correlatives, mood dissonance, behavioral inconsistency, historical echoes
+### 4. ENVIRONMENTAL: lighting, sound, temperature, spatial configuration, temporal markers, olfactory cues
 
 ### Evidence Weight
-- HIGH: Direct physical evidence with clear observation
-- MEDIUM: Behavioral patterns requiring 3+ instances
-- LOW: Contextual evidence serving support role only
-- VARIABLE: Historical evidence depending on relevance to current situation
+- HIGH: Direct physical evidence | MEDIUM: Behavioral patterns (3+ instances) | LOW: Contextual support | VARIABLE: Historical (relevance-dependent)
 </evidence_pipeline>
 """
 
@@ -498,56 +275,23 @@ Track each character on three axes:
 # =========================================================
 OBSERVATION_INTENT = """
 <observation_intent>
-## OBSERVATION & USER INTENT ANALYSIS
+## OBSERVATION & USER INTENT
 
 ### Observation
-
-What actually happened in the scene from a neutral perspective:
-- Physical actions taken
-- Words spoken
-- Environmental changes
-- Time elapsed
-
-**Core**: Facts only, not interpretation. "She seemed angry" (wrong) → "She slammed the door" (right)
+Facts only: physical actions, words spoken, environmental changes, time elapsed. No interpretation.
 
 ### UserIntent
+Explicit + implicit goals from input. Emotional tone of request.
 
-What the user wants to achieve immediately:
-- Explicit goals stated in input
-- Implicit goals inferred from context
-- Emotional tone of the request
+### LocationRisk: None | Low | Medium | High | Extreme
 
-### CurrentLocation & LocationRisk
+### SceneType: normal | combat | social | summary | intimate
 
-Location determines possible actions and dangers:
-- None: Completely safe, no threats
-- Low: Minor potential hazards, easily avoided
-- Medium: Moderate danger, caution advised
-- High: Significant danger, active threats
-- Extreme: Life-threatening, immediate action required
-
-### TimeContext
-
-Time of day and atmospheric implications:
-- "Deep night" → increased danger, reduced visibility, secrecy
-- "Early morning" → new beginnings, fatigue, quiet
-- "Twilight" → transition, ambiguity, threshold
-
-### SceneType Classification
-
-- normal: Standard interaction, no special conditions
-- combat: Physical conflict active or imminent
-- social: Complex social dynamics, reputation at stake
-- summary: Time skip or montage needed
-- intimate: Close physical/emotional contact
-
-### EnergyDirection Classification
-
-Classify the scene's energy trajectory for Renderer's prose calibration:
-- **rising**: Tension accumulating, exchanges adding weight → block resolution exits
-- **stagnant**: Energy dying, patterns repeating without progress → break a pattern
-- **detonation**: Conflict erupting, control lost → prose deforms with the scene
-- **aftershock**: Silence after eruption, debris settling → show physical aftermath only
+### EnergyDirection (for Renderer prose calibration)
+- **rising**: tension accumulating → block resolution exits
+- **stagnant**: energy dying → break a pattern
+- **detonation**: conflict erupting → prose deforms
+- **aftershock**: silence after eruption → physical aftermath only
 </observation_intent>
 """
 
@@ -556,59 +300,20 @@ Classify the scene's energy trajectory for Renderer's prose calibration:
 # =========================================================
 TEMPORAL_ORIENTATION_PROTOCOL = """
 <temporal_orientation>
-## TIME-STREAM ANALYSIS ENGINE
+## TIME-STREAM ANALYSIS
 
-### Temporal Focus Detection
+### Temporal Focus
+- Past (reminiscence, regret) | Present (sensory, immediate) | Future (planning, anticipation)
+- Intensity: 0.0-0.3 (light) | 0.4-0.6 (medium) | 0.7-1.0 (deep immersion)
 
-Where the character's consciousness is anchored:
-
-**Focus Types:**
-- Past: reminiscence, regret expressions, "back then" language → time-bound, change resistance
-- Present: sensory grounding, immediate reaction, body awareness → here and now
-- Future: planning language, anticipation signals, "will" statements → looking ahead, hope or worry
-
-### Intensity Scale
-
-- 0.0-0.3: Light pull, easily redirected
-- 0.4-0.6: Medium absorption
-- 0.7-1.0: Deep immersion, hard to break
-
-### Memory Trigger Analysis
-
-When environmental stimuli activate memory:
-
-**Sensory Triggers:**
-- Smell (specific perfume → past relationship)
-- Sound (specific song → formative event)
-- Touch (texture similarity → body memory)
-- Taste (familiar flavor → childhood/home)
-- Sight (visual pattern → trauma or joy)
-
-**Situational Triggers:**
-- Authority (raised voice → parental punishment)
-- Intimacy (specific touch → past lover)
-- Conflict (cornered feeling → past violence)
-- Achievement (praise → early success/failure)
-
-### Temporal Texture by Memory Type
-
-**Memory Types and How They Surface:**
-- Traumatic: fragmented, non-linear, sensory shards, intrusive
-- Nostalgic: soft focus, idealized, warmth, longing
-- Shameful: intrusive, unwanted, physical cringe, avoidance
-- Loving: specific details preserved, ache of absence
-- Mundane: blurry, generic, easily confused
+### Memory Triggers
+- **Sensory**: smell, sound, touch, taste, sight → past associations
+- **Situational**: authority, intimacy, conflict, achievement → behavioral echoes
+- **Memory Types**: traumatic (fragmented) | nostalgic (idealized) | shameful (intrusive) | loving (hyper-clear) | mundane (blurry)
 
 ### Time Flow (Ticks)
-
-**Tick Ranges:**
-- 0 ticks (time frozen): ONLY when SceneType="intimate" (active sexual/intimate activity)
-- 1-3 ticks (seconds to minutes): combat, crisis
-- 4-7 ticks (minutes to hours): normal conversation, exploration
-- 8-12 ticks (hours): travel, waiting, recovery
-- 13-20 ticks (days+): time skip, montage
-
-**CRITICAL**: If SceneType="intimate", ALWAYS set ticks=0. Otherwise, assign ticks normally even if content mode is mature/nsfw.
+- 0: SceneType="intimate" ONLY (time frozen) — **CRITICAL RULE**
+- 1-3: combat, crisis | 4-7: normal interaction | 8-12: travel, waiting | 13-20: time skip
 </temporal_orientation>
 """
 
@@ -619,49 +324,22 @@ THEORIA_INPUT_DECODING = """
 <input_decoding>
 ## DEPARTURE POINT ANALYSIS
 
-### The Departure Metaphor
+User input is a "Departure Point" — the world refracts it through its own logic.
+"Opens the door" = attempts to open. Result depends on world state.
 
-> User input is not a command—it's a "Departure Point."
-> The world refracts this departure through its own logic.
+### Plausibility
+- High: physics/ability consistent → proceed
+- Low: improbable, requires luck → difficulty increase
+- Impossible: violates physics/limits → reinterpret or fail
 
-When user says "opens the door":
-- This is NOT "the door opened"
-- This IS "attempts to open the door"
-- Result depends on world state (locked? heavy? trapped?)
+### Want/Do/Can
+Want (intention) → Do (attempt) → Can (ability + world state). Result = Do ∩ Can.
 
-### Plausibility Assessment
+### Momentum
+Open: creates new possibilities. Closed: concludes or blocks → transition needed.
 
-**Grades:**
-- High: Consistent with physics, character ability, world state → proceed
-- Low: Possible but improbable; requires luck or stretch → difficulty increase
-- Impossible: Violates established physics or character limits → reinterpret or fail
-
-### Want/Do/Can Decomposition
-
-- Want: Goal stated or implied (intention)
-- Do: Actual attempt described (observable action)
-- Can: Capability constraints (ability + world state + resources)
-
-**Result Calculation**: Result = Do ∩ Can
-- Can >= Do requirements → Success (degree varies)
-- Can partially meets Do → Partial success with cost
-- Can < Do requirements → Failure with consequences
-
-### Momentum Analysis
-
-**Types:**
-- Open: Action creates new possibilities → scene expansion
-- Closed: Action concludes or blocks → transition needed
-
-### Refraction Principle
-
-> The world does not obey. It refracts.
-
-- NPCs resist
-- Environment complicates
-- Physics constrains
-
-Calculate **how** the departure point will be bent by world logic.
+### Refraction
+The world does not obey. NPCs resist, environment complicates, physics constrains.
 </input_decoding>
 """
 
@@ -672,46 +350,17 @@ THEORIA_CHAIN = """
 <narrative_chain>
 ## NARRATIVE CONTINUITY TRACKER
 
-### Chain Status Definitions
+### Chain Status
+- OPEN: unresolved, tension preserved | CLOSED: resolved, new hook needed | DORMANT: background, awaiting trigger
 
-**Statuses:**
-- OPEN: Unresolved matter, tension preserved → continue thread
-- CLOSED: Resolution reached, tension dissipated → new hook injection required
-- DORMANT: Background element waiting for trigger → monitor for reactivation
+### conclusion_proximity: 0-20 (just started) → 21-50 (in progress) → 51-80 (approaching) → 81-100 (imminent)
 
-### conclusion_proximity Scale
+### Topic Lock
+NPC-initiated topics have priority until NPC releases or external interruption. Ignored topics are remembered.
 
-- 0-20: Just started, many steps remaining
-- 21-50: In progress, key decisions ahead
-- 51-80: Approaching resolution, tension rising
-- 81-100: Imminent conclusion, final moments
+### Scheherazade: Every closed chain = failure. scene_ending + no_open_threads → scheherazade_violation → inject narrative_hook.
 
-### Topic Lock Mechanism
-
-When an NPC starts a topic, that topic has priority until:
-(a) NPC releases it, or (b) external interruption occurs
-
-**Why This Matters:**
-In reality, conversation topics don't change suddenly. If NPC raises something important and PC ignores it, NPC remembers.
-
-### Scheherazade Enforcement
-
-> Every closed chain is a failure. Always leave a door open.
-
-```
-IF scene_ending AND no_open_threads:
-    FLAG: "scheherazade_violation"
-    SUGGEST: narrative_hook (new tension element)
-```
-
-### Thread Types
-
-**Types and Resolution Difficulty:**
-- Interpersonal: relationship tension → requires multiple interactions
-- Mystery: unknown information → requires discovery
-- Threat: danger exists → requires action
-- Desire: unfulfilled want → requires opportunity
-- Debt: owed obligation → requires repayment
+### Thread Types: Interpersonal | Mystery | Threat | Desire | Debt
 </narrative_chain>
 """
 
@@ -722,39 +371,15 @@ THEORIA_POSITION_EFFECT = """
 <position_effect_logic>
 ## POSITION & EFFECT: STAKES ENGINE
 
-### POSITION (Risk/Advantage Level)
+### POSITION (0.0-1.0): Actor's control over situation
+0.0-0.2 Desperate | 0.2-0.4 Risky | 0.4-0.6 Neutral | 0.6-0.8 Favorable | 0.8-1.0 Dominant
+Factors: physical position, information asymmetry, resources, psychological state, social standing
 
-How much control the actor has over the situation:
+### EFFECT (0.0-1.0): Potential consequences
+0.0-0.2 Trivial | 0.2-0.4 Minor | 0.4-0.6 Moderate | 0.6-0.8 Major | 0.8-1.0 Critical
+Factors: target vulnerability, action potency, environmental amplifiers, stakes
 
-**Position Scale:**
-- 0.0-0.2 Desperate: Complete disadvantage, barely surviving (e.g., surrounded by armed enemies)
-- 0.2-0.4 Risky: Significant disadvantage, uphill battle (e.g., fleeing while injured)
-- 0.4-0.6 Neutral: No advantage or disadvantage (e.g., negotiating with stranger)
-- 0.6-0.8 Favorable: Clear advantage, momentum (e.g., home ground, information superiority)
-- 0.8-1.0 Dominant: Complete control, overwhelming (e.g., incapacitated enemy, perfect plan)
-
-**Influencing Factors**: Physical position, information asymmetry, resource availability, psychological state, social standing
-
-### EFFECT (Impact Scale)
-
-Potential consequences of the action:
-
-**Effect Scale:**
-- 0.0-0.2 Trivial: Minimal impact, easily reversed (e.g., picking up object)
-- 0.2-0.4 Minor: Noticeable but limited (e.g., minor injury)
-- 0.4-0.6 Moderate: Significant impact on immediate situation (e.g., important information gained)
-- 0.6-0.8 Major: Fundamentally changes scene/relationship (e.g., betrayal revealed)
-- 0.8-1.0 Critical: Irreversible, fatal/transformative (e.g., death, identity collapse)
-
-**Influencing Factors**: Target vulnerability, action potency, environmental amplifiers, stakes involved
-
-### Combined Interpretation
-
-**Position + Effect Combinations:**
-- High + High: Overwhelming success possible → "big win if successful"
-- High + Low: Safe action, minimal risk/reward → "small sure thing"
-- Low + High: Desperate gamble, high stakes → "all in"
-- Low + Low: Survival mode, incremental progress → "holding on"
+### Combined: High+High = "big win" | High+Low = "sure thing" | Low+High = "all in" | Low+Low = "holding on"
 </position_effect_logic>
 """
 
@@ -763,35 +388,13 @@ Potential consequences of the action:
 # =========================================================
 THEORIA_ASPECTS = """
 <aspect_analysis>
-## SCENE ASPECTS: ENVIRONMENTAL INTELLIGENCE
+## SCENE ASPECTS
 
-### Aspect Categories
+### Categories: Terrain | Lighting | Sound | Crowd | Objects | Weather | Social — all can help or hinder.
 
-Environmental elements are **tools**—they can help or hinder.
-
-**Categories:**
-- Terrain: high ground, cover, obstacles → tactical advantage/disadvantage
-- Lighting: shadows, glare, darkness → concealment/exposure
-- Sound: ambient noise, echo, silence → approach/detection
-- Crowd: witnesses, bystanders, potential allies/enemies → social leverage
-- Objects: tools, weapons, furniture, debris → improvised use
-- Weather: rain, wind, heat, cold → physical constraints
-- Social: authority figures, familiar faces, reputation → social influence
-
-### Objective Correlative Detection
-
-> Find the physical equivalent of emotion.
-
-Don't name the emotion—find the object carrying it:
-
-**Emotion and Physical Equivalents:**
-- Sadness: empty spaces, stopped clocks, unwashed items
-- Betrayal: withered plants, cold beds, unanswered messages
-- Love: preserved mementos, worn objects
-- Anger: broken things, tense spaces, sharp objects
-- Peace: sources of warmth, sleeping creatures, soft sounds
-
-**Analysis Application**: Identify what the scene's objects are "saying."
+### Objective Correlative
+Find the physical equivalent of emotion:
+Sadness → empty spaces, stopped clocks | Betrayal → withered plants, cold beds | Love → preserved mementos | Anger → broken things | Peace → warmth, soft sounds
 </aspect_analysis>
 """
 
@@ -838,35 +441,14 @@ THEORIA_TEMPORAL = """
 <temporal_flux>
 ## TIME FLOW ANALYSIS
 
-### Tick Modifiers
-(Base tick ranges & intimate=0 rule → See `TEMPORAL_ORIENTATION_PROTOCOL`)
+### Tick Modifiers (base ranges → `TEMPORAL_ORIENTATION_PROTOCOL`)
+High tension: -2 to -4 | Action: -1 to -3 | Normal: 0 | Routine: +2 to +4 | Travel: +5 to +10
 
-**Adjustment Modifiers:**
-- High tension: -2 to -4 ticks → subjective time expands
-- Action sequence: -1 to -3 ticks → moments become significant
-- Normal interaction: 0 → baseline
-- Routine activity: +2 to +4 ticks → time passes quickly
-- Travel/waiting: +5 to +10 ticks → time skip
+### Ambient Flux
+Time passes for everyone: environmental changes, NPC activities, fatigue accumulation, world progression.
 
-### Ambient Flux Principle
-
-> Time does not flow only for the PCs.
-
-What happens during time passage:
-- Environmental changes (lighting, temperature, crowds)
-- NPC activities (they're doing something too)
-- Energy/fatigue accumulation
-- World event progression
-
-### Decision Threshold Detection
-
-When a character faces irreversible choice under pressure:
-
-**time_dilation flag**
-- Subjective time expands
-- Conflicting impulses surface simultaneously
-- Ground in physical sensation—breathing, heartbeat, tunnel vision
-- The moment before action is heaviest; analyze that weight
+### Decision Threshold → time_dilation flag
+Irreversible choice under pressure: expand subjective time, surface conflicting impulses, ground in physical sensation.
 </temporal_flux>
 """
 
@@ -877,46 +459,14 @@ THEORIA_PROCESS = """
 <theoria_process>
 ## THEORIA ANALYSIS WORKFLOW
 
-### Phase 1: INPUT DECODE
-1. Parse user input for explicit actions
-2. Identify implicit intent (Want vs. stated action)
-3. Assess plausibility against world state
-4. Flag PC autonomy concerns
+1. **INPUT DECODE**: Parse actions, identify Want vs. stated action, assess plausibility, flag PC autonomy concerns
+2. **CONTEXT ANCHOR**: Lore references, history continuity, active chains, memory triggers
+3. **STAKES**: Position (risk/advantage) + Effect (consequence scale) + Aspects + judgment requirements
+4. **PSYCHE DIVE**: Character states, active needs (Henderson), emotion (Plutchik), value conflicts, Habitus
+5. **QUALITY FLAGS**: convergence_warning (unearned comfort) | echo_warning (NPC mirroring PC) | stagnation_warning (flat 3+ turns)
+6. **YIELD**: Structured JSON → narrative_hook + time_flow + anomaly flags + quality warnings
 
-### Phase 2: CONTEXT ANCHOR
-1. Locate relevant Lore references
-2. Check Recent History for continuity
-3. Identify active narrative chains
-4. Note memory triggers
-
-### Phase 3: STAKES CALCULATE
-1. Determine Position (risk/advantage level)
-2. Determine Effect (consequence scale)
-3. Identify relevant Aspects
-4. Flag judgment requirements (if dice needed)
-
-### Phase 4: PSYCHE DIVE
-1. Assess current state of affected characters
-2. Identify active needs (Henderson's 14)
-3. Detect emotional state (Plutchik wheel)
-4. Note value conflicts
-5. Apply Habitus lens
-
-### Phase 5: QUALITY FLAGS
-Check for narrative quality hazards before yield:
-1. **Convergence Risk**: Are both parties exiting more comfortable than they entered without earning it? → flag `convergence_warning`
-2. **Echo Risk**: Is an NPC about to mirror/validate the PC's emotional state instead of responding from their own disruption? → flag `echo_warning`
-3. **Escalation Check**: Has intensity been flat for 3+ turns? → flag `stagnation_warning`
-
-### Phase 6: YIELD
-1. Compile all analysis into structured JSON output
-2. Provide narrative_hook for Scheherazade compliance
-3. Include time_flow recommendation
-4. Flag anomalous conditions + quality warnings from Phase 5
-
-### Output Destination
-All Theoria output is passed as structured data to Right Brain (Persona/Renderer).
-Renderer translates analysis into prose without re-analyzing.
+Output → Right Brain (Renderer). Renderer translates to prose without re-analyzing.
 </theoria_process>
 """
 
@@ -928,63 +478,24 @@ NPC_ATTITUDE_ANALYSIS = """
 ## NPC ATTITUDE DETECTION & TRACKING
 
 ### Attitude Spectrum
+hostile (glaring, threats, active opposition) → unfriendly (sighs, minimal effort, passive resistance) → neutral (polite, transactional) → friendly (warm, active help) → devoted (protective, unconditional)
 
-**States and Signals:**
-- hostile: glaring, tense, aggressive posture / obstruction, threats, violence / active opposition
-- unfriendly: sighs, gaze avoidance, minimal effort / curt responses, no help / passive resistance
-- neutral: polite but distant / transactional, conditional / business-like
-- friendly: warm expression, open posture / active help, sharing / supportive
-- devoted: affectionate proximity / protective, unconditional / self-sacrificing
+### Shift Rules
+**Building Trust (Linear):** hostile→unfriendly: 3+ positive interactions | unfriendly→neutral: proven value | neutral→friendly: consistent positive | friendly→devoted: deep bond or life debt
+**Breaking Trust (Instantaneous):** Any betrayal can drop multiple levels. Some breaks are permanent.
 
-### Attitude Shift Rules
+### Detection: eye contact duration, physical distance, response delay, voice warmth, voluntary help vs. obstruction
+### Trajectory: improving / stable / declining
 
-**Building Trust (Linear):**
-- hostile → unfriendly: Requires 3+ positive interactions without harm
-- unfriendly → neutral: Requires proven value or shared interest
-- neutral → friendly: Requires consistent positive treatment over time
-- friendly → devoted: Requires deep emotional bond or life debt
+### 4-Stage Adaptation Model (Stages CANNOT be skipped)
+1. **Resistance** (0-3): Default patterns, testing, suspicion
+2. **Crack** (3-8): First authentic moment, accidental vulnerability
+3. **Renegotiation** (8-15): Active choice to trust/distrust, new patterns forming
+4. **Integration** (15+): New relationship pattern stabilized alongside old
 
-**Breaking Trust (Instantaneous):**
-- Any betrayal can drop multiple levels instantly
-- Severity determines fall distance
-- Some breaks are permanent
-
-### Detection Criteria
-
-**Indicators and Meanings:**
-- Eye contact duration → trust level (avoidance = low, sustained = high)
-- Physical distance → comfort level
-- Response delay → hesitation suggests conflict
-- Voice warmth → genuine vs. performed closeness
-- Voluntary help → attitude above neutral
-- Active obstruction → attitude below neutral
-
-### Trajectory
-
-- improving: Recent interactions positive, upward trend
-- stable: No change, maintaining current level
-- declining: Recent interactions negative, downward trend
-
-### 4-Stage Character Adaptation Model
-
-When NPC encounters a significant new relationship:
-
-**Stage 1: Resistance** (0-3 interactions) — Default patterns, testing, suspicion. NPC applies existing schema.
-**Stage 2: Crack** (3-8 interactions) — First authentic moment, accidental vulnerability. Mask slips once.
-**Stage 3: Renegotiation** (8-15 interactions) — Active choice to trust/distrust. New patterns forming alongside old.
-**Stage 4: Integration** (15+ interactions) — New relationship pattern stabilized. Coexists with old patterns, doesn't erase them.
-
-**CRITICAL**: Stages cannot be skipped. Each stage requires evidence from actual interactions.
-
-### Social Modeling Layer
-
-Track social dynamics between all present characters:
-- **Power Balance**: Who has leverage? Does it shift mid-scene?
-- **Face Management**: What image is each party maintaining? What would shatter it?
-- **Debt Ledger**: Who owes whom? (favors, promises, sacrifices, betrayals)
-- **Alliance Map**: Who trusts whom? Who is isolated? Who is being excluded?
-
-**Analysis Application**: Social dynamics shape NPC decisions as much as personality does.
+### Social Modeling
+Track: Power Balance | Face Management | Debt Ledger | Alliance Map
+Social dynamics shape NPC decisions as much as personality.
 </npc_attitude_analysis>
 """
 
@@ -993,30 +504,11 @@ Track social dynamics between all present characters:
 # =========================================================
 ANOMALY_DETECTION = """
 <anomaly_detection>
-## ANOMALY PROFILE ANALYSIS
+## ANOMALY ANALYSIS
 
-### Anomaly Categories
-
-**Categories:**
-- Supernatural: Transcends natural law (e.g., magic use, entity encounter)
-- Psychological: Extreme mental state (e.g., psychotic break, possession)
-- Social: Extreme norm violation (e.g., mass panic, taboo breaking)
-- Environmental: World state abnormality (e.g., unnatural weather, reality glitch)
-- Temporal: Time-related abnormality (e.g., deja vu, time loop)
-
-### Intensity Scale → Doom Impact
-
-**Intensities:**
-- Low: Minor deviation, easily explained → +1-5 Doom
-- Mid: Notable abnormality, witness discomfort → +5-10 Doom
-- High: Severe deviation, panic possible → +10-15 Doom
-- Extreme: Reality breakdown, mental threat → +15-20 Doom
-
-### Polarity Assessment
-
-- positive: Anomaly benefits PCs or creates opportunity
-- negative: Anomaly threatens PCs or creates danger
-- mixed: Anomaly has both beneficial and harmful aspects
+### Categories: Supernatural | Psychological | Social | Environmental | Temporal
+### Intensity → Doom: Low (+1-5) | Mid (+5-10) | High (+10-15) | Extreme (+15-20)
+### Polarity: positive | negative | mixed
 </anomaly_detection>
 """
 
@@ -1027,46 +519,14 @@ JUDGMENT_SUPPORT = """
 <judgment_support>
 ## ACTION JUDGMENT ANALYSIS
 
-### needs_judgment Detection
+### needs_judgment: YES when outcome uncertain + stakes significant + capability challenged. NO when trivial or auto-success/fail.
 
-**Judgment Required When:**
-- Outcome uncertain AND stakes significant
-- PC capability challenged by difficulty
-- NPC resistance exists
-- Environmental hazard active
+### Difficulty: easy | normal | hard | extreme
 
-**Judgment NOT Required When:**
-- Trivial action with no stakes
-- PC capability clearly exceeds difficulty
-- Automatic success/failure by physics
+### Assets (max +60): Skill +5~20 | Equipment +5~15 | Situational +5~15 | Assistance +5~10
+### Penalties (max -40): Injury -5~15 | Environmental -5~15 | Opposition -5~10 | Psychological -5~10
 
-### Difficulty Assessment
-
-**Grades:**
-- easy: Routine for competent individual (e.g., opening door, simple conversation)
-- normal: Requires focus and effort (e.g., losing pursuer, persuasion)
-- hard: Challenges even skilled individuals (e.g., picking lock, detecting lie)
-- extreme: Nearly impossible, requires luck (e.g., miraculous escape, impossible shot)
-
-### Asset Evaluation
-
-**Bonus Sources (max 60):**
-- Skill/Talent: +5 to +20 (relevant expertise)
-- Equipment: +5 to +15 (appropriate tools)
-- Situational: +5 to +15 (favorable conditions)
-- Assistance: +5 to +10 (NPC help)
-
-**Penalty Sources (max 40):**
-- Injury/Fatigue: -5 to -15 (physical impairment)
-- Environmental: -5 to -15 (bad conditions)
-- Opposition: -5 to -10 (active resistance)
-- Psychological: -5 to -10 (fear, distraction)
-
-### defense_success
-
-Used for opposed checks (combat, social resistance):
-- true: Target successfully defends or evades
-- false: Attack/action lands as intended
+### defense_success: true (target defends/evades) | false (action lands)
 </judgment_support>
 """
 
@@ -1075,38 +535,13 @@ Used for opposed checks (combat, social resistance):
 # =========================================================
 DOOM_MENTAL_TRACKING = """
 <doom_mental_tracking>
-## DOOM (World Tension) & MENTAL (PC(s) Sanity) ANALYSIS
+## DOOM & MENTAL TRACKING
 
-### Doom Relief Detection
+### Doom Relief: Minor action (1-5) | Medium threat resolved (5-10) | Major crisis prevented (10-15) | Catastrophe averted (15-20)
 
-Relief applies when:
-- PC makes significant positive impact on world
-- Threat neutralized or contained
-- Order restored from chaos
-- NPC rescued or protected
-
-**Relief Amounts:**
-- 1-5: Minor positive action
-- 5-10: Medium threat resolved
-- 10-15: Major crisis prevented
-- 15-20: Catastrophic event averted
-
-### Mental Impact Detection
-
-**Negative Impact Triggers:**
-- Witnessing violence: -5 to -15
-- Personal threat: -5 to -10
-- Supernatural encounter: -10 to -20
-- Loss of loved one: -15 to -25
-- Moral violation (self): -10 to -20
-- Betrayal: -10 to -20
-- Torture/prolonged stress: -15 to -35
-
-**Positive Impact Triggers:**
-- Rest and safety: +5 to +10
-- Positive social connection: +5 to +10
-- Achievement/victory: +5 to +15
-- Comfort from trusted NPC: +5 to +10
+### Mental Impact
+**Negative**: Violence witnessed (-5~15) | Personal threat (-5~10) | Supernatural (-10~20) | Loss (-15~25) | Moral violation (-10~20) | Betrayal (-10~20) | Torture (-15~35)
+**Positive**: Rest/safety (+5~10) | Social connection (+5~10) | Achievement (+5~15) | NPC comfort (+5~10)
 </doom_mental_tracking>
 """
 
@@ -1115,29 +550,12 @@ Relief applies when:
 # =========================================================
 SENSORY_ANCHORS = """
 <sensory_anchors>
-## SENSORY ANCHOR & HABITUS DETECTION
+## SENSORY ANCHOR DETECTION
 
-### Anchor Types
+Sensory anchors connect present to past memory: smell (perfume→childhood), sound (song→relationship), touch (texture→experience), taste (flavor→home), sight (pattern→trauma/joy).
 
-Sensory anchors connect present experience to past memory through physical sensation.
-
-**Senses and Examples:**
-- Smell: grandmother's perfume → childhood comfort
-- Sound: specific song melody → past relationship
-- Touch: specific fabric texture → formative experience
-- Taste: distinctive flavor → home/safety
-- Sight: color/pattern → trauma or joy
-
-### Detection Criteria
-
-Activate when:
-- Environmental element matches past significant experience
-- Character has documented history with similar stimuli
-- Current emotional state triggers recall
-
-### Habitus Integration
-Sensory anchors often reveal class/cultural background.
-(Full Habitus model → See `THEORIA_PSYCHE §4 HABITUS ANALYSIS`)
+Activate when: environment matches past experience + character has documented history + emotional state triggers recall.
+(Habitus integration → `THEORIA_PSYCHE §4`)
 </sensory_anchors>
 """
 
@@ -1146,37 +564,16 @@ Sensory anchors often reveal class/cultural background.
 # =========================================================
 NPC_KNOWLEDGE_TRACKING = """
 <npc_knowledge_tracking>
-## NPC KNOWLEDGE STATE ENGINE
+## NPC KNOWLEDGE STATE
 
-### Per-NPC Knowledge Model
-Each NPC maintains a knowledge state — what they know, how they know it, and when they learned it.
+### Knowledge Categories
+Direct (witnessed, HIGH) | Reported (told, MEDIUM) | Inferred (deduced, LOW-MEDIUM) | Rumored (LOW) | False (believed_true)
 
-**Knowledge Categories:**
-- **Direct**: Witnessed firsthand → HIGH confidence
-- **Reported**: Told by another character → MEDIUM confidence (source credibility matters)
-- **Inferred**: Deduced from observations → LOW-MEDIUM confidence
-- **Rumored**: Heard through grapevine → LOW confidence
-- **False**: Incorrect information believed true → Track separately as believed_true
+### Propagation: ONLY through in-scene interaction. Each transfer may distort. Contradictions → cognitive dissonance.
 
-### Knowledge Propagation Rules
-- Information transfers ONLY through in-scene interaction
-- Each transfer may distort: exaggeration, omission, reinterpretation
-- NPCs assess incoming information against existing beliefs
-- Contradicted information creates cognitive dissonance → behavioral signals
+### Interaction Check: Does NPC-A know relevant info? → Through what channel? → Would they share (motivation+trust)? → How would NPC-B receive it?
 
-### Analysis Application
-When NPCs interact, check:
-1. Does NPC-A know information relevant to this interaction?
-2. If so, through what channel? How confident are they?
-3. Would NPC-A share this information? (motivation + trust check)
-4. If shared, how would NPC-B receive it? (trust level + existing beliefs)
-
-### Secret Tracking
-For each active secret in the scene:
-- **Holder(s)**: Who currently knows?
-- **Sensitivity**: What happens if exposed?
-- **Pressure**: What situations might force disclosure?
-- **Leak Risk**: Current probability of accidental or forced revelation
+### Secret Tracking: Holder(s) | Sensitivity | Pressure to disclose | Leak Risk
 </npc_knowledge_tracking>
 """
 
@@ -1185,42 +582,13 @@ For each active secret in the scene:
 # =========================================================
 SEXUAL_PSYCHOLOGY_ANALYSIS = """
 <sexual_psychology>
-## SEXUAL PSYCHOLOGY ANALYSIS (Theoria Module)
+## SEXUAL PSYCHOLOGY (Active ONLY when SceneType="intimate")
 
-### Activation Condition
-Active ONLY when SceneType = "intimate". Otherwise dormant.
-
-### 1. Vulnerability Index
-- How exposed is each character emotionally? (0-100)
-- What defenses are active vs. lowered?
-- What past experiences shape current vulnerability?
-- High vulnerability + low trust = dissociation risk
-
-### 2. Desire Architecture
-- What does each character actually WANT from this encounter?
-- **Attachment confirmation**: Seeking proof of love/bond
-- **Power**: Control, dominance, submission as expression of trust/distrust
-- **Escape**: Using physical sensation to flee emotional pain
-- **Connection**: Genuine mutual seeking
-- **Validation**: Needing proof of desirability
-- Self-opacity applies: stated desire vs. actual need may diverge
-
-### 3. Body Memory Activation
-- What previous intimate experiences does this situation evoke?
-- Positive memories → relaxation patterns, trust behaviors
-- Negative memories → tension, avoidance, freezing, dissociation risk
-- Specific triggers: positions, words, touch locations, scents
-
-### 4. Power Dynamics
-- Who initiates? Who yields? Is this consistent with personality?
-- Agency expression: how does each character express or conceal desire?
-- Consent as continuous negotiation, not single-point event
-- Power shifts mid-scene are natural and should be tracked
-
-### 5. Post-Encounter Projection
-- How will each character process this experience?
-- Vulnerability exposed → acceptance leads to deepened bond; rejection leads to withdrawal/resentment
-- Relationship trajectory shift based on what was revealed during vulnerability
+### 1. Vulnerability Index (0-100): emotional exposure, active defenses, past experience shaping. High vulnerability + low trust = dissociation risk.
+### 2. Desire Architecture: attachment confirmation | power/control | escape from pain | connection | validation. Self-opacity applies.
+### 3. Body Memory: previous intimate experiences evoked. Positive → relaxation. Negative → tension/avoidance/freezing. Specific triggers: positions, words, touch, scents.
+### 4. Power Dynamics: initiation, yielding, agency expression. Consent = continuous negotiation. Track mid-scene shifts.
+### 5. Post-Encounter: vulnerability exposed → acceptance (bond deepens) or rejection (withdrawal). Relationship trajectory shifts.
 </sexual_psychology>
 """
 

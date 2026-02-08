@@ -4,7 +4,8 @@
       "Read(//c/Users/kdsk/.gemini/antigravity/brain/0744bfcc-1160-4b1d-a5c8-eca8cb8fe8bd/**)",
       "Bash(python:*)",
       "Bash(grep:*)",
-      "Bash(del \"C:\\\\Users\\\\kdsk\\\\.claude\\\\plans\\\\polymorphic-weaving-honey.md\")"
+      "Bash(del \"C:\\\\Users\\\\kdsk\\\\.claude\\\\plans\\\\polymorphic-weaving-honey.md\")",
+      "Bash(python3:*)"
     ]
   }
 }
