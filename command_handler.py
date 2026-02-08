@@ -497,47 +497,69 @@ async def cmd_npc(ctx: CommandContext) -> None:
              return
 
         last_name = None
-        full_text = "\n".join(raw_lines)
-        is_deep_profile = bool(re.search(r"(?:^|\n)\s*(?:\*|-)?\s*(?:Name|이름)\s*:", full_text, re.IGNORECASE))
-        
-        for line in raw_lines:
-            line = line.strip()
-            if not line: continue
-            
-            # Explicit Name
-            name_match = re.match(r"^(?:\*|-)?\s*(?:Name|이름)\s*:\s*(.+)$", line, re.IGNORECASE)
-            if name_match:
-                name = name_match.group(1).strip()
-                domain_manager.update_npc(channel_id, name, {"desc": line, "source": "manual", "status": "Active"})
-                processed_count += 1
-                last_name = name
-                continue
 
-            # Key-Value
-            if ":" in line:
-                if is_deep_profile and last_name:
-                     curr_npc = domain_manager.get_npc(channel_id, last_name)
-                     if curr_npc:
-                         new_desc = curr_npc.get("desc", "") + "\n" + line
-                         domain_manager.update_npc(channel_id, last_name, {"desc": new_desc, "source": "manual", "status": "Active"})
-                     continue
-                
-                key, val = line.split(":", 1)
-                clean_key = key.lstrip("*-> ").strip()
-                val = val.strip()
-                
-                if clean_key and val:
-                    domain_manager.update_npc(channel_id, clean_key, {"desc": val, "source": "manual", "status": "Active"})
-                    processed_count += 1
-                    last_name = clean_key
+        # --- Unified NPC Batch Parser ---
+        # Supports: simple (이름: 설명), deep profile (Name: X), rich structured ([NPC NAME]: X + ==== separators)
+        separator_pat = re.compile(r'^[=\-]{3,}$')
+        name_pat = re.compile(
+            r'^\s*(?:\[?\s*(?:NPC\s*NAME|Name|이름)\s*\]?\s*)[:\s]\s*(.+)$',
+            re.IGNORECASE
+        )
+
+        # Phase 1: Detect if structured (name declarations exist)
+        has_name_declarations = any(name_pat.match(l.strip()) for l in raw_lines if l.strip())
+
+        if has_name_declarations:
+            # Block mode: name declarations split NPC blocks
+            blocks = []  # [(name, [desc_lines])]
+            current_name = None
+            current_lines = []
+
+            for line in raw_lines:
+                stripped = line.strip()
+                if not stripped or separator_pat.match(stripped):
                     continue
 
-            # Continuation
-            if last_name:
-                 curr_npc = domain_manager.get_npc(channel_id, last_name)
-                 if curr_npc:
-                     new_desc = curr_npc.get("desc", "") + "\n" + line
-                     domain_manager.update_npc(channel_id, last_name, {"desc": new_desc, "source": "manual", "status": "Active"})
+                nm = name_pat.match(stripped)
+                if nm:
+                    if current_name:
+                        blocks.append((current_name, current_lines))
+                    current_name = nm.group(1).strip()
+                    current_lines = []
+                elif current_name:
+                    current_lines.append(stripped)
+
+            if current_name:
+                blocks.append((current_name, current_lines))
+
+            for name, desc_lines in blocks:
+                desc = "\n".join(desc_lines)
+                domain_manager.update_npc(channel_id, name, {"desc": desc, "source": "manual", "status": "Active"})
+                processed_count += 1
+                last_name = name
+        else:
+            # Simple mode: each "key: value" line = separate NPC, continuations append
+            for line in raw_lines:
+                stripped = line.strip()
+                if not stripped or separator_pat.match(stripped):
+                    continue
+
+                if ":" in stripped:
+                    key, val = stripped.split(":", 1)
+                    clean_key = key.lstrip("*-> ").strip()
+                    val = val.strip()
+                    if clean_key and val:
+                        domain_manager.update_npc(channel_id, clean_key, {"desc": val, "source": "manual", "status": "Active"})
+                        processed_count += 1
+                        last_name = clean_key
+                        continue
+
+                # Continuation line
+                if last_name:
+                    curr_npc = domain_manager.get_npc(channel_id, last_name)
+                    if curr_npc:
+                        new_desc = curr_npc.get("desc", "") + "\n" + stripped
+                        domain_manager.update_npc(channel_id, last_name, {"desc": new_desc, "source": "manual", "status": "Active"})
 
         if processed_count > 0:
             if processed_count == 1:
@@ -545,9 +567,7 @@ async def cmd_npc(ctx: CommandContext) -> None:
             else:
                 await ctx.send(f"👥 **NPC 일괄 등록 완료:** 총 {processed_count}명")
         else:
-             # Fallback if single line simple add "Name Desc"? 
-             # No, stick to "Name: Desc" format for consistency.
-             await ctx.send("⚠️ 유효한 형식을 찾을 수 없습니다. (예: `이름: 설명`)")
+             await ctx.send("⚠️ 유효한 형식을 찾을 수 없습니다. (예: `이름: 설명` 또는 `[NPC NAME]: 이름`)")
         return
 
     # Look up NPC

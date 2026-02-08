@@ -203,6 +203,7 @@ Return valid JSON with ALL these fields (Korean values where specified):
     "stagnation_warning": boolean
   }
 - "RelevantContext": ["Quoted lore/rule directly applicable", ...]
+- "RelevantNPCs": ["NPC name from roster that is relevant to THIS scene (max 5)"]
 </output_schema>
 """
 
@@ -320,6 +321,7 @@ Return valid JSON with ALL these fields (Korean values where specified):
         pc_section = self._build_pc_section(anchors)
         mental_line = self._build_mental_line(anchors, bus)
         npc_context = self._build_npc_context(anchors)
+        npc_roster = anchors.get("npc_roster", "")
         session_memory_context = self._build_session_memory_context(anchors)
 
         return f"""## ANALYSIS REQUEST
@@ -340,6 +342,9 @@ Return valid JSON with ALL these fields (Korean values where specified):
 - **Major Locations**: {req.lore_summary.get('locations', 'Current surroundings')}
 
 {npc_context}
+
+### 4c. NPC ROSTER (Select relevant NPCs for RelevantNPCs field, max 5)
+{npc_roster or '[No NPCs registered]'}
 
 {session_memory_context}
 

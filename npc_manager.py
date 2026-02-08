@@ -314,6 +314,40 @@ def get_scene_npc_names(channel_id: str) -> List[str]:
     return list(get_session_npcs(channel_id).keys())
 
 
+def get_npc_roster(channel_id: str) -> str:
+    """전체 NPC 이름+역할 1줄 요약 목록 (Theoria용)."""
+    npcs = get_npcs(channel_id)
+    if not npcs:
+        return ""
+    lines = []
+    for name, data in npcs.items():
+        desc = data.get("desc", "")
+        # desc 첫 줄에서 50자까지만 추출
+        first_line = desc.split("\n")[0][:50] if desc else ""
+        lines.append(f"- {name}: {first_line}")
+    return "\n".join(lines)
+
+
+def get_npc_full_profiles(channel_id: str, names: list) -> str:
+    """지정된 NPC들의 풀 프로필 반환."""
+    npcs = get_npcs(channel_id)
+    parts = []
+    for name in names:
+        data = npcs.get(name)
+        if data:
+            parts.append(f"### {name}\n{data.get('desc', '')}")
+    return "\n\n".join(parts)
+
+
+def get_npc_names_only(channel_id: str, exclude: list) -> str:
+    """지정된 NPC 제외한 나머지의 이름만 반환."""
+    npcs = get_npcs(channel_id)
+    remaining = [name for name in npcs if name not in exclude]
+    if not remaining:
+        return ""
+    return "기타 NPC: " + ", ".join(remaining)
+
+
 # =========================================================
 # NPC 정체 발각 (이름 변경 추적)
 # =========================================================

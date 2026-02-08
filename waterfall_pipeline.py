@@ -101,6 +101,7 @@ class WaterfallPipeline:
         bus.dai["habitus_analysis"] = analysis.get("HabitusAnalysis", {})
         bus.dai["intimacy_analysis"] = analysis.get("IntimacyAnalysis")
         bus.dai["relevant_context"] = analysis.get("RelevantContext", [])
+        bus.dai["relevant_npcs"] = analysis.get("RelevantNPCs", [])
         bus.dai["needs_judgment"] = analysis.get("needs_judgment", False)
         bus.dai["action_meta"] = analysis.get("action_meta", {})
         bus.dai["asset_evaluation"] = analysis.get("asset_evaluation", {})

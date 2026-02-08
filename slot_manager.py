@@ -444,9 +444,20 @@ def build_34_step_prompt(ctx) -> str:
         if player_data:
             player_info = f"Name: {player_data.get('mask', 'Unknown')}\n"
 
-    # --- [Slot 7] NPC Roles ---
+    # --- [Slot 7] NPC Roles (Smart Loading: relevant NPCs get full profiles) ---
     domain_data = getattr(ctx, 'domain_data', {}) or {}
-    npc_roles = str(domain_data.get("npcs", "")) if domain_data.get("npcs") else ""
+    relevant_npcs = dai.get("relevant_npcs", [])
+
+    if relevant_npcs and channel_id:
+        import npc_manager as _npc_mgr
+        full_profiles = _npc_mgr.get_npc_full_profiles(channel_id, relevant_npcs)
+        others = _npc_mgr.get_npc_names_only(channel_id, exclude=relevant_npcs)
+        npc_roles = full_profiles
+        if others:
+            npc_roles += f"\n\n{others}"
+        logger.info(f"[NPC Smart Load] Full: {relevant_npcs}, Others: name-only")
+    else:
+        npc_roles = str(domain_data.get("npcs", "")) if domain_data.get("npcs") else ""
 
     # --- [Slot 8] Lore (RAG Context Diet 적용) ---
     relevant_context = dai.get("relevant_context", [])
