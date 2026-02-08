@@ -134,8 +134,8 @@ def detect_pc_impersonation(response: str, pc_names: List[str]) -> List[Dict]:
                 (rf'{safe_pc}[이가은는]?\s*[""\u201C\u300C].*?[""\u201D\u300D]', 'dialogue'),
                 (rf'[""\u201C\u300C].*?[""\u201D\u300D].*?(?:라고|하고|이라며)\s*{safe_pc}', 'dialogue'),
 
-                # PC 신체/감정 반응 (소유격)
-                (rf'{safe_pc}[의]\s*(?:표정|눈|얼굴|심장|호흡|손|몸|입|다리|팔|어깨|등|가슴|목|머리|시선|목소리|숨결)[이가은는]?\s*.{{1,25}}{VERB_ENDING}', 'reaction'),
+                # PC 신체/감정 반응 (소유격 + 주격만 — NPC→PC 행동은 허용)
+                (rf'{safe_pc}[의]\s*(?:표정|눈|얼굴|심장|호흡|손|몸|입|다리|팔|어깨|등|가슴|목|머리|시선|목소리|숨결)[이가]\s*.{{1,25}}{VERB_ENDING}', 'reaction'),
 
                 # PC 내면 묘사
                 (rf'{safe_pc}[은는이가]?\s*.{{0,15}}{THOUGHT_VERBS}', 'thought'),
@@ -155,8 +155,8 @@ def detect_pc_impersonation(response: str, pc_names: List[str]) -> List[Dict]:
     second_person_patterns = [
         # 당신/너 + 주격조사 + 동사
         (rf'(?:당신|너|그대|플레이어)[은는이가]\s+.{{1,40}}{VERB_ENDING}', 'impersonation_2nd'),
-        # 당신의 신체/감정 + 동사
-        (rf'(?:당신|너|그대)(?:의|이)\s*(?:눈|손|몸|기억|생각|가슴|심장|호흡|얼굴|표정|시선|발|다리|팔|목소리|숨결)[이가은는]?\s*.{{1,25}}{VERB_ENDING}', 'impersonation_2nd'),
+        # 당신의 신체/감정 + 주격 동사 (NPC→PC 행동 허용)
+        (rf'(?:당신|너|그대)(?:의|이)\s*(?:눈|손|몸|기억|생각|가슴|심장|호흡|얼굴|표정|시선|발|다리|팔|목소리|숨결)[이가]\s*.{{1,25}}{VERB_ENDING}', 'impersonation_2nd'),
     ]
 
     for pattern, vtype in second_person_patterns:

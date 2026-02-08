@@ -3,7 +3,7 @@ Lorekeeper UNE - Doom Module
 Manages world tension and mechanical side-effects of judgment results.
 """
 
-from typing import Dict, Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from orchestration_context import GameContext
@@ -25,8 +25,7 @@ class DoomModule:
             elif res == "failure": delta = 2
             elif res == "critical_success": delta = -3
         
-        # 2. AI-Analyzed Doom Relief (NEW!)
-        # If Theoria detected a calming/restorative action
+        # 2. AI-Analyzed Doom Relief
         relief_data = bus.doom.get("relief", {})
         if relief_data.get("applicable", False):
             relief_amount = relief_data.get("amount", 0)

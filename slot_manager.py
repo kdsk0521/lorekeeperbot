@@ -767,4 +767,12 @@ def build_34_step_prompt(ctx) -> str:
         author_note=""  # 장르/톤이 설정되어 있으면 자동으로 레거시 함수 사용
     )
 
+    # 4.5. Format Feedback Injection (이전 턴 대사 포맷 위반 피드백)
+    session_mem = domain_manager.get_session_ai_memory(channel_id) if channel_id else {}
+    fmt_feedback = session_mem.get("format_feedback", "")
+    if fmt_feedback:
+        current_33 = builder.get_slot(33) or ""
+        builder.set_slot(33, f"{current_33}\n\n{fmt_feedback}")
+        logger.info("[FormatFeedback] Injected dialogue format correction into slot 33")
+
     return builder.build()

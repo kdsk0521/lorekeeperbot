@@ -86,6 +86,15 @@ class GameContext:
     })
     shared_bus: SharedBus = field(default_factory=SharedBus)
 
+    def get_acting_mask(self) -> str:
+        """현재 행동 중인 PC의 마스크명 반환."""
+        anchors = self.narrative_anchors or {}
+        acting_uid = anchors.get("acting_user_id", "")
+        all_pcs = anchors.get("all_pcs", {})
+        if acting_uid and acting_uid in all_pcs:
+            return all_pcs[acting_uid].get("mask", "PC")
+        return "PC"
+
     def to_dict(self) -> Dict[str, Any]:
         """직렬화용 사전 변환"""
         return asdict(self)

@@ -3,7 +3,7 @@ Lorekeeper UNE - Mental Module
 Manages player mental health and adaptation logic.
 """
 
-from typing import Dict, Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from orchestration_context import GameContext
@@ -18,8 +18,7 @@ class MentalModule:
         # 1. Collect Delta from multiple sources
         delta = bus.mental.get("delta", 0)  # From Anomaly Module
         
-        # 2. AI-Analyzed Mental Impact (NEW!)
-        # If Theoria detected a mental health impact
+        # 2. AI-Analyzed Mental Impact
         impact_data = bus.mental.get("impact", {})
         if impact_data.get("applicable", False):
             impact_delta = impact_data.get("delta", 0)
@@ -64,13 +63,10 @@ class MentalModule:
                 target_mental = clamp_floor
                 clamped = True
 
-        target_stage = get_stage(target_mental)
-
         # 5. Trauma Awakening (Collapse -> Recovery)
         trauma_triggered = False
         if current_stage == 3 and actual_delta > 0:
-            target_mental = 90 # High Calm reset
-            target_stage = 0
+            target_mental = 90  # High Calm reset
             trauma_triggered = True
             bus.mental["trauma_trigger"] = True
         
@@ -79,14 +75,7 @@ class MentalModule:
         bus.mental["active"] = True
         bus.mental["last_delta"] = delta
         
-        # Resolve acting PC mask
-        anchors = context.narrative_anchors or {}
-        acting_uid = anchors.get("acting_user_id", "")
-        all_pcs = anchors.get("all_pcs", {})
-        if acting_uid and acting_uid in all_pcs:
-            mask = all_pcs[acting_uid].get("mask", "PC")
-        else:
-            mask = "PC"
+        mask = context.get_acting_mask()
 
         # Compact log format
         log_parts = []

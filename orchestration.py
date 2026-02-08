@@ -38,6 +38,28 @@ from orchestration_context import ResponseContext
 logger = logging.getLogger("Orchestration")
 
 
+def _check_dialogue_format(response: str) -> str:
+    """AI 응답에서 이름: \"대사\" 포맷 위반을 감지하여 피드백 문자열 반환."""
+    lines = response.split('\n')
+    correct_pat = re.compile(r'^\s*\S+\s*:\s*"')  # 이름: "대사"
+    quote_pat = re.compile(r'"[^"]{2,}"')  # 2자 이상 쌍따옴표 텍스트
+    # 판정/시스템 메시지 제외
+    system_pat = re.compile(r'^\s*(?:🎲|📈|📉|🧠|⚠️|✅|❌|✨|🟠|🆕|🌿)')
+
+    violations = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or system_pat.match(stripped):
+            continue
+        if quote_pat.search(stripped) and not correct_pat.match(stripped):
+            violations.append(stripped[:40])
+
+    if not violations:
+        return ""
+    examples = violations[:2]
+    return f"[FORMAT] 지난 응답에서 대사 포맷 위반 {len(violations)}건. 예: {'; '.join(examples)}. 반드시 이름: \"대사\" 형식을 지켜라."
+
+
 class OrchestrationService:
     """
     AI 응답 생성 오케스트레이션 서비스.
@@ -603,6 +625,14 @@ class OrchestrationService:
                     domain_manager.append_history(channel_id, user_mask, ctx.action_text)
                     domain_manager.append_history(channel_id, "Model", response)
                     logger.debug(f"[History] Saved: {user_mask} + Model response ({len(response)} chars)")
+
+                    # 8.5. Dialogue Format Feedback (다음 턴 피드백용)
+                    fmt_feedback = _check_dialogue_format(response)
+                    domain_manager.update_session_ai_memory(
+                        channel_id, {"format_feedback": fmt_feedback}
+                    )
+                    if fmt_feedback:
+                        logger.info(f"[FormatCheck] {fmt_feedback[:80]}")
 
                     # 9. Background Extraction (Flash 모델로 별도 API 호출)
                     # V4 Inline Extraction 대신 기존 Background Extraction 복원

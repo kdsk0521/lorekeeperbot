@@ -5,7 +5,6 @@ Handles dice rolls and narrative outcomes based on Call 1 analysis.
 
 import logging
 import random
-from typing import Dict, Any
 from orchestration_context import GameContext
 
 logger = logging.getLogger("Judgment")
@@ -130,14 +129,7 @@ class JudgmentEngine:
         if mod_details:
             mod_details = f", {mod_details}"
         
-        # Resolve acting PC mask
-        anchors = context.narrative_anchors or {}
-        acting_uid = anchors.get("acting_user_id", "")
-        all_pcs = anchors.get("all_pcs", {})
-        if acting_uid and acting_uid in all_pcs:
-            mask = all_pcs[acting_uid].get("mask", "PC")
-        else:
-            mask = "PC"
+        mask = context.get_acting_mask()
         bus.judgment["mask"] = mask
 
         output = [
