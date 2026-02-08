@@ -358,8 +358,10 @@ Analyze the provided lorebook precisely to extract all metadata required for gam
    - style_tech: Narrative gimmicks (Choose 0-2 from: urban_fantasy, steampunk, cosmic_horror, game_system)
    - narrative_tone: Atmosphere/Tone (Choose 1-2 from: noir, comedy, romance, drama)
    - atmosphere_guide: Short atmosphere guide for the narrator (Korean)
-2. **npcs**: List of NPCs (Name, Gender, Race, Detailed Description (Personality/Appearance/Role integrated - Korean))
+2. **npcs**: List of NPCs (Name, Gender, Race, Detailed Description (Personality/Appearance integrated - Korean))
    - **MUST EXTRACT ALL NPCs found in the document.**
+   - **role**: Character's job or social role (e.g., "Resident", "Store Owner", "Neighbor").
+   - **location**: Primary location or residence (e.g., "Room 2", "Dungeon 25", "Error 404").
 3. **pc_info**: Identification of the Protagonist. null if no clear protagonist.
    - Fields: name, role, species, appearance, description (integrated personality/traits - Korean), sexual_characteristics, background, secret_info, passives(name, desc - Korean), inventory
 4. **lore_summary**:
@@ -378,7 +380,7 @@ Analyze the provided lorebook precisely to extract all metadata required for gam
     "narrative_tone": ["..."],
     "atmosphere_guide": "..."
   }},
-  "npcs": [ {{ "name": "...", "gender": "...", "race": "...", "description": "..." }} ],
+  "npcs": [ {{ "name": "...", "gender": "...", "race": "...", "role": "...", "location": "...", "description": "..." }} ],
   "pc_info": {{
     "name": "...",
     "role": "...",
