@@ -202,6 +202,7 @@ Recording in Korean.
         temperature=config.NARRATIVE_TEMPERATURE,
         top_k=config.NARRATIVE_TOP_K,
         top_p=config.NARRATIVE_TOP_P,
+        max_output_tokens=config.NARRATIVE_MAX_OUTPUT_TOKENS,
         # [Gemini 3] presence_penalty/frequency_penalty not supported
         safety_settings=config.SAFETY_SETTINGS,
         tools=[],

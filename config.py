@@ -33,9 +33,10 @@ ANALYSIS_TOP_P = 0.8
 # [Gemini 3] presence_penalty/frequency_penalty not supported - removed
 
 # Generation Parameters - Narrative (Pro/Right Brain)
-NARRATIVE_TEMPERATURE = 1.1
+NARRATIVE_TEMPERATURE = 1.2
 NARRATIVE_TOP_K = 40
 NARRATIVE_TOP_P = 0.95
+NARRATIVE_MAX_OUTPUT_TOKENS = 8192
 # [Gemini 3] presence_penalty/frequency_penalty not supported - removed
 
 # =========================================================
