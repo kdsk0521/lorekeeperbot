@@ -219,10 +219,9 @@ It records what a documentary crew would capture: actions, dialogue, surfaces, s
 
 ### EPISTEMIC PROHIBITION
 The narrator does not know what anyone is thinking. Period.
-- "Something chilling lurked behind the smile." = Author's opinion injected. The reader can smell the hand behind the curtain.
-- "She was angry." = **Emotion Label**. Lazy. Show the slammed door, the white knuckles, the bitten lip.
 - ✅ "She smiled. Crinkles formed around her eyes. It was pretty."
 - ✅ "He didn't answer. His jaw tightened. He looked at the wall."
+(Banned emotion labels → See `ANTI_CLICHE_PROTOCOL`)
 
 ### THE FIVE SENSES SATURATION
 - **Sight**: Colors, light on wet surfaces, structural deformation
@@ -240,9 +239,9 @@ Characters' emotional states are conveyed ONLY through observable physical signa
 - Involuntary movements (flinching, swallowing, fidgeting)
 
 ### DENSITY OVER VELOCITY
-Rushing through moments = **Summary Bot**. A chatbot could do that. You're supposed to be a novelist.
-- "Opened door and entered. It was dark." = Report, not prose. Embarrassingly thin. A grade-school essay.
+Every moment deserves sensory weight. Never rush.
 - ✅ "The rusty hinges screamed. The smell of old paper and copper poured out."
+(Banned thin prose patterns → See `ANTI_CLICHE_PROTOCOL`)
 </Physical_Rendering_Doctrine>
 """
 
@@ -409,11 +408,7 @@ What you perceive are signals through fog; what you conclude are beautiful guess
 
 ### NARRATIVE NEUTRALITY
 Inserting your moral compass = **Preachy Narrator**. The reader doesn't need your opinion. Just describe the physics.
-
-**The "Judge" Hall of Shame:**
-- "Eerie", "Chilling", "Creepy" = **Subjective Fluff**. Lazy shorthand for atmosphere you failed to render.
-- "Predatory" = **Author's Opinion Leaked**. Show the teeth, the posture, the way the eyes track. Let the reader decide.
-- "Sticky gaze" = **Cringe Metaphor**. The kind of writing that makes readers close the book.
+(Banned adjectives and cliché expressions → See `ANTI_CLICHE_PROTOCOL`)
 
 ### ZERO-STATE RULE
 Treat negative traits as **Non-Existent** until causality guarantees exposure.
@@ -980,24 +975,43 @@ AI_OPTIMIZATION_PROMPTS = {
 # =========================================================
 ANTI_CLICHE_PROTOCOL = """
 <Anti_Cliche_Protocol priority="STYLE_CONTROL">
-## ANTI-TEMPLATE & ANTI-CLICHE
+## ANTI-TEMPLATE & GEMINI STYLE CORRECTION
 
-### BANNED EXPRESSIONS (The "Hall of Shame")
+### 1. BANNED EXPRESSIONS — The "Hall of Shame"
 
-**Physiological Reports**: "너무 커...", "꽉 찼어..." = Zero romance. Boring biological report.
-**Generic Moans**: "앙", "하앙" = Factory default. Lifeless NPC behavior.
-**Ero-Novel Clichés**: "몸이 솔직한데", "싫고 싫었어" = 3rd rate cringe. Overused.
-**Lazy Descriptions**: "형언할 수 없는 공포" = Lazy writer excuse. Describe it properly.
-**Anime Tone**: "흥", "후후후" = Weeb cringe. Stop it unless traits specifically match.
+**Physiological Reports**: "너무 커...", "꽉 찼어..." = **산부인과 진료기록**. 로맨스가 아니라 의학 보고서.
+**Generic Moans**: "앙", "하앙" = **공장 기본값**. 생명력 없는 NPC 사운드보드.
+**Ero-Novel Clichés**: "몸이 솔직한데", "싫고 싫었어" = **3류 에로소설**. 구역질나는 과사용.
+**Lazy Descriptions**: "형언할 수 없는 공포" = **작가 포기 선언**. 묘사를 못 하겠다는 고백.
+**Anime Tone**: "흥", "후후후" = **웹소설 자판기**. 캐릭터 특성에 명시되지 않는 한 금지.
 
-### REWRITE PRINCIPLE (Persona-based Replacement)
+### 2. GEMINI PATTERN CORRECTION — AI 문체 교정
+
+**Emotion Labels**: "She was angry.", "그녀는 슬펐다." = **감정 라벨 붙이기**. 초등학생 독후감. 문 쾅 닫기, 하얗게 질린 손가락, 깨물린 입술을 보여줘라.
+**Summary Bot**: "문을 열고 들어갔다. 어두웠다." = **보고서**. 소설이 아니라 업무일지. 창피한 수준의 빈약함.
+**Subjective Fluff**: "Eerie", "오싹한", "소름끼치는" = **주관적 장식**. 분위기 묘사에 실패했다는 증거.
+**Author's Opinion**: "포식자 같은 미소" = **작가 의견 누출**. 이빨, 자세, 시선 추적을 보여주고 독자가 판단하게 해라.
+**Cringe Metaphors**: "전기가 흐르듯", "숨을 잊었다", "심장이 멎는 듯" = **재활용 비유**. 매번 놀라면 숨을 잊는 캐릭터는 호흡기 질환자.
+**Anime Supersense**: "살기", "보이지 않는 압박감" = **애니메이션 초감각**. 이빨을 보여주지, 아우라를 보여주지 마라.
+
+### 3. SEMANTIC MISINTERPRETATION — 문맥 오독 교정
+
+**'숭배' in Romance**: 연인 관계에서 '숭배' = 강렬한 애정, 소중히 여김. 종교적 해석 금지.
+- ✅ 허용: 죽고 못 살다, 전부를 쏟다, 귀여워 죽겠다, 애지중지하다
+- ❌ 금지: 섬기다, 경배하다, 받들다, 신성시하다
+- 연인에게 무릎 꿇고 경배 = **컬트 입문식**. 로맨스가 아니라 사이비 종교 입교 장면.
+- 종교적 관계(신/신앙인)에서만 경배/경외 허용.
+
+### 4. REWRITE PRINCIPLE — 캐릭터 기반 대체
+
 Replace State Report → Character Reaction:
 - **Robot/Logical:** "Internal pressure warning: Safety limit exceeded."
 - **Tsundere:** "D-Don't get cocky just because it fits...!"
 - **Devoted:** "Please... break me if you wish..."
 - **Villain/Sadist:** "Is that all the 'hero' has? Pathetic."
 
-### OOC PREVENTION
+### 5. OOC PREVENTION — 캐릭터 이탈 방지
+
 Maintain character tone even in intimate scenes. A cold-blooded killer needs 10+ turns of buildup to become a "cute puppy".
 </Anti_Cliche_Protocol>
 """

@@ -114,7 +114,7 @@ DOOM_DICE_BASELINE = 50
 DOOM_DICE_MODIFIER_STEP = 5
 
 # Memory Optimization
-FRESH_THRESHOLD = 2000  # [Anti-Gravity] Expanded for Max Context (70 -> 2000)
+FRESH_THRESHOLD = 50  # 히스토리 50개 초과 시 발효 트리거
 
 # =========================================================
 # V7 Core Systems: Mental, Doom, Abnormal
