@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 # 응답 길이 설정
 # =========================================================
 DEFAULT_MIN_RESPONSE_LENGTH = 1500
-DEFAULT_MAX_RESPONSE_LENGTH = 7000
+DEFAULT_MAX_RESPONSE_LENGTH = 2500
 
 
 def build_length_instruction() -> str:

@@ -132,7 +132,7 @@ Return valid JSON with ALL these fields (Korean values where specified):
     "CharName": {
         "mental": {"descriptor": "emotional label", "value": -100~+100, "primary_emotion": "plutchik"},
         "soma": {"descriptor": "physical label", "polyvagal": "ventral/sympathetic/dorsal"},
-        "relation": {"descriptor": "stance toward PC", "value": -100~+100}
+        "relation": {"descriptor": "stance toward each PC", "value": -100~+100}
     }
   }
 - "narrative_chain": {

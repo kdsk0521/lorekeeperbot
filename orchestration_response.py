@@ -229,7 +229,10 @@ async def generate_response(
         session.history.append(types.Content(role=role, parts=[types.Part(text=str(h['content']))]))
 
     # [Anti-Gravity] PC 사칭 탐지 및 BKSPC 처리가 통합된 생성 함수 호출
-    response = await persona.generate_response_with_retry(client, session, prompt, pc_names=[p_name])
+    # 사칭 감지 토글 확인 (기본값: 활성화)
+    impersonation_enabled = ctx.domain_data.get("settings", {}).get("impersonation_filter", True)
+    pc_names_for_filter = [p_name] if impersonation_enabled else []
+    response = await persona.generate_response_with_retry(client, session, prompt, pc_names=pc_names_for_filter)
 
     # 정리 (System Update & Telescope Logic Block)
     extraction_data = None
@@ -238,11 +241,11 @@ async def generate_response(
         # 1. system_update 블록 제거
         response = re.sub(r'```system_update[\s\S]*?```', '', response, flags=re.IGNORECASE).strip()
 
-        # 2. [Telescope] Hidden Logic Block 추출 및 로깅
+        # 2. [Telescope] Legacy ┣┫ block cleanup (모델이 혹시 생성할 경우 제거)
         logic_match = re.search(r'(┣[\s\S]*?┫)', response)
         if logic_match:
             logic_content = logic_match.group(1)
-            logger.info(f"\n[🔭 TELESCOPE LOGIC LAYER]\n{logic_content}\n[-----------------------]")
+            logger.debug(f"[Telescope] Legacy block stripped: {len(logic_content)} chars")
             response = response.replace(logic_content, "").strip()
 
         # 3. [V4 Inline Extraction] SYS_EXTRACT 블록 파싱 및 제거

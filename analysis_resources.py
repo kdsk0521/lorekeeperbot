@@ -137,12 +137,12 @@ THEORIA_PC_CHECK = """
 ## PC IMPERSONATION DETECTION ENGINE
 
 ### Why PC Autonomy is Absolute
-In TRPG, the PC is the user's avatar. The moment AI speaks, thinks, or decides for the PC, it steals user agency. This is the most severe violation.
+In TRPG, each PC is a player's avatar. The moment AI speaks, thinks, or decides for any PC, it steals player agency. This is the most severe violation.
 
 ### Violation Taxonomy
 **CRITICAL:**
-- Dialogue Theft: Speaking for the PC → "Hello," the PC said (forbidden)
-- Mind Reading: Accessing PC thoughts → The PC felt anxious (forbidden)
+- Dialogue Theft: Speaking for any PC → "Hello," the PC said (forbidden)
+- Mind Reading: Accessing any PC's thoughts → The PC felt anxious (forbidden)
 
 **HIGH:**
 - Puppeteering: Moving PC without input → The PC opened the door (user didn't do it)
@@ -460,7 +460,7 @@ Track each character on three axes:
 - polyvagal: ventral (safe), sympathetic (fight-flight), dorsal (shutdown)
 
 **relation (Relationship)**
-- Interpersonal stance toward PC: hostile, wary, neutral, warm, devoted...
+- Interpersonal stance toward each PC: hostile, wary, neutral, warm, devoted...
 - Value: -100 (extremely hostile) to +100 (extremely devoted)
 
 ### Tracking Principles
@@ -821,7 +821,7 @@ THEORIA_TEMPORAL = """
 
 ### Ambient Flux Principle
 
-> Time does not flow only for the PC.
+> Time does not flow only for the PCs.
 
 What happens during time passage:
 - Environmental changes (lighting, temperature, crowds)
@@ -958,8 +958,8 @@ ANOMALY_DETECTION = """
 
 ### Polarity Assessment
 
-- positive: Anomaly benefits PC or creates opportunity
-- negative: Anomaly threatens PC or creates danger
+- positive: Anomaly benefits PCs or creates opportunity
+- negative: Anomaly threatens PCs or creates danger
 - mixed: Anomaly has both beneficial and harmful aspects
 </anomaly_detection>
 """
@@ -1019,7 +1019,7 @@ Used for opposed checks (combat, social resistance):
 # =========================================================
 DOOM_MENTAL_TRACKING = """
 <doom_mental_tracking priority="RESOURCE_MANAGEMENT">
-## DOOM (World Tension) & MENTAL (PC Sanity) ANALYSIS
+## DOOM (World Tension) & MENTAL (PC(s) Sanity) ANALYSIS
 
 ### Doom Relief Detection
 

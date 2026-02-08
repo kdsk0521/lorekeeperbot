@@ -44,7 +44,7 @@ class CommandContext:
     async def send(self, content: str = None, embed: discord.Embed = None):
         """Helper to send to the channel."""
         if content or embed:
-            await self.message.channel.send(content=content, embed=embed)
+            return await self.message.channel.send(content=content, embed=embed)
 
 
 class CommandRegistry:

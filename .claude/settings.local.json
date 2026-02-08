@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Read(//c/Users/kdsk/.gemini/antigravity/brain/0744bfcc-1160-4b1d-a5c8-eca8cb8fe8bd/**)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(grep:*)"
     ]
   }
 }

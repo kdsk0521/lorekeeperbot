@@ -626,12 +626,30 @@ def build_34_step_prompt(ctx) -> str:
         older_history = getattr(ctx, 'hist_text', '')
 
     # =========================================================
-    # 3.5. 히스토리 사칭 정화
+    # 3.5. POV 모드 전환 (사칭 토글 연동)
+    # =========================================================
+    # impersonation_filter=True  → Camera Eye (행동주의, 모든 내면 블랙박스)
+    # impersonation_filter=False → Omniscient Author (전지적 작가, NPC 내면 허용)
+    impersonation_enabled = domain_data.get("settings", {}).get("impersonation_filter", True)
+
+    if not impersonation_enabled:
+        # 전지적 모드: Camera Eye 제한을 NPC에 대해 완화
+        omniscient_override = getattr(text_resources, 'OMNISCIENT_MODE_OVERRIDE', '')
+        if omniscient_override:
+            # 슬롯 34 (TELESCOPE + OUTPUT + KERNEL)에 오버라이드 추가 → 최종 Recency 강화
+            current_slot34 = builder.get_slot(34) or ''
+            builder.set_slot(34, f"{omniscient_override}\n\n{current_slot34}")
+            logger.info("[POV Mode] Omniscient Author mode active — NPC inner states accessible")
+    else:
+        logger.debug("[POV Mode] Camera Eye mode active — all inner states sealed")
+
+    # =========================================================
+    # 3.6. 히스토리 사칭 정화
     # =========================================================
     # AI 이전 응답에 PC 사칭이 포함되면 다음 응답도 패턴을 답습함
     # → 프롬프트에 주입하기 전에 히스토리에서 사칭 문장을 선제 제거
     pc_name = getattr(ctx, 'user_mask', '') or ''
-    if pc_name and pc_name != 'Unknown':
+    if impersonation_enabled and pc_name and pc_name != 'Unknown':
         from response_processor import filter_pc_impersonation
         pc_names_list = [pc_name]
         if last_response:

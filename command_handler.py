@@ -788,6 +788,23 @@ async def _handle_module_toggle(ctx: CommandContext, code: str, name: str):
         domain_manager.toggle_module(ctx.channel_id, code, False)
         await ctx.send(f"❌ **{name} 모듈**이 비활성화되었습니다.")
 
+@registry.register("impersonation", category="System", aliases=["사칭", "사칭감지"], description="PC 사칭 감지 on/off")
+async def cmd_toggle_impersonation(ctx: CommandContext) -> None:
+    """!사칭 [on/off]"""
+    arg = ctx.raw_args.strip().lower()
+    if not arg:
+        enabled = domain_manager.get_domain(ctx.channel_id).get("settings", {}).get("impersonation_filter", True)
+        status = "✅ ON" if enabled else "❌ OFF"
+        await ctx.send(f"🛡️ **PC 사칭 감지 상태**: {status}\n사용법: `!사칭 on/off`")
+        return
+
+    if arg in ['on', '켜기', 'true']:
+        domain_manager.update_settings(ctx.channel_id, impersonation_filter=True)
+        await ctx.send("✅ **PC 사칭 감지**가 활성화되었습니다.\n응답에서 PC 행동/대사/사고 묘사를 감지하고 제거합니다.")
+    elif arg in ['off', '끄기', 'false']:
+        domain_manager.update_settings(ctx.channel_id, impersonation_filter=False)
+        await ctx.send("❌ **PC 사칭 감지**가 비활성화되었습니다.\nPC 사칭 필터링이 중단됩니다.")
+
 @registry.register("bot", category="System", aliases=["봇"], description="봇 활성화 제어")
 async def cmd_bot(ctx: CommandContext) -> None:
     """!봇 [on/off]"""
