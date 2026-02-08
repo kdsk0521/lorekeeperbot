@@ -190,6 +190,9 @@ async def generate_ooc_response(
     import text_resources
 
     # Build context
+    import game_world
+    import npc_manager
+
     history = domain_manager.get_history(channel_id)
     history_text = "\n".join(
         [f"{h['role']}: {h['content']}" for h in history[-15:]]
@@ -197,9 +200,34 @@ async def generate_ooc_response(
 
     lore_text = domain_manager.get_lore(channel_id) or "(로어 없음)"
 
-    system_prompt = text_resources.OOC_HELPER_IDENTITY + (
-        f"\n[최근 히스토리]\n{history_text}\n\n[로어 요약]\n{lore_text[:2000]}"
-    )
+    # 세계 상태
+    world_context = game_world.get_world_context(channel_id)
+
+    # NPC 현황
+    npcs = domain_manager.get_npcs(channel_id)
+    npc_lines = []
+    for name, data in npcs.items():
+        attitude = data.get("attitude", "?")
+        role = data.get("role", "")
+        npc_lines.append(f"- {name}: {role} (태도: {attitude})")
+    npc_text = "\n".join(npc_lines) if npc_lines else "(등록된 NPC 없음)"
+
+    # 세션 AI 메모리 (진행 중인 스레드, 아크 등)
+    ai_mem = domain_manager.get_session_ai_memory(channel_id)
+    mem_parts = []
+    if ai_mem.get("active_threads"):
+        mem_parts.append(f"진행 중인 서사: {', '.join(ai_mem['active_threads'][:5])}")
+    if ai_mem.get("current_arc"):
+        mem_parts.append(f"현재 아크: {ai_mem['current_arc']}")
+    if ai_mem.get("resolved_threads"):
+        mem_parts.append(f"해결된 서사: {', '.join(ai_mem['resolved_threads'][:3])}")
+    mem_text = "\n".join(mem_parts) if mem_parts else ""
+
+    system_prompt = text_resources.OOC_HELPER_IDENTITY
+    system_prompt += f"\n[세계 상태]\n{world_context}\n" if world_context else ""
+    system_prompt += f"\n[NPC 현황]\n{npc_text}\n"
+    system_prompt += f"\n[서사 진행]\n{mem_text}\n" if mem_text else ""
+    system_prompt += f"\n[최근 히스토리]\n{history_text}\n\n[로어 요약]\n{lore_text[:2000]}"
 
     user_content = message.content.strip()
     if message.attachments:
@@ -221,12 +249,16 @@ async def generate_ooc_response(
             )
         )
         if response and response.text:
-            await bot_utils.send_long_message(message.channel, response.text)
+            # [루카] 프리픽스 + Discord 인용 블록으로 IC/OOC 시각 구분
+            lines = response.text.strip().split("\n")
+            quoted = "\n".join(f"> {line}" if line.strip() else ">" for line in lines)
+            formatted = f"**[루카]**\n{quoted}"
+            await bot_utils.send_long_message(message.channel, formatted)
         else:
-            await message.channel.send("⚠️ OOC 응답을 생성하지 못했습니다.")
+            await message.channel.send("⚠️ 루카가 응답하지 못했습니다.")
     except Exception as e:
         logging.error(f"OOC Response Error: {e}", exc_info=True)
-        await message.channel.send(f"⚠️ OOC 오류: {e}")
+        await message.channel.send(f"⚠️ 루카 오류: {e}")
 
 
 if __name__ == "__main__":

@@ -898,7 +898,7 @@ async def handle_ooc_command(
             await message.channel.send("⚠️ 먼저 세션에 참가해주세요 (`!가면`).")
             return None
             
-        await message.channel.send("🔄 **OOC 데이터 수정 중...**")
+        await message.channel.send("🔄 **루카가 데이터를 수정하고 있어...**")
         
         # [V5.3] Notebook Integration (per-user)
         notebook_txt = game_system.get_notebook_text(channel_id, uid)
@@ -947,7 +947,7 @@ async def handle_ooc_command(
             return None # RP 생성 중단 (필요시 반환값으로 조절)
             
         else:
-            await message.channel.send("⚠️ OOC 수정 사항을 인식하지 못했습니다.")
+            await message.channel.send("⚠️ 루카가 수정 사항을 인식하지 못했어.")
             return None
     
     elif ooc_type == "narrative_request":
@@ -959,16 +959,16 @@ async def handle_ooc_command(
         return f"[OOC Directive: {ooc_content}]"
 
 
-@registry.register("ooc", category="System", aliases=["OOC", "메타"], description="OOC 도우미 모드 토글")
+@registry.register("ooc", category="System", aliases=["OOC", "메타", "루카"], description="루카 (OOC 도우미) 모드 토글")
 async def cmd_ooc(ctx: CommandContext) -> None:
-    """!ooc - OOC 도우미 모드 ON/OFF 토글"""
+    """!ooc - 루카 (OOC 도우미) 모드 ON/OFF 토글"""
     current = domain_manager.get_ooc_mode(ctx.channel_id)
     new_state = not current
     domain_manager.set_ooc_mode(ctx.channel_id, new_state)
     if new_state:
-        await ctx.send("💬 **OOC 모드 ON** — 도우미 모드로 전환합니다.\n> 모든 메시지가 OOC 대화로 처리됩니다. 해제: `!ooc`")
+        await ctx.send("💬 **루카 모드 ON** — 루카가 대화에 참여합니다.\n> 모든 메시지가 OOC 대화로 처리됩니다. 해제: `!ooc`")
     else:
-        await ctx.send("🎭 **OOC 모드 OFF** — 서사 모드로 복귀합니다.")
+        await ctx.send("🎭 **루카 모드 OFF** — 서사 모드로 복귀합니다.")
 
 @registry.register("mental", category="Player", aliases=["멘탈", "mental"], description="멘탈 조회 및 설정")
 async def cmd_mental(ctx: CommandContext) -> None:
