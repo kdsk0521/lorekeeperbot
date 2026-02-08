@@ -1153,21 +1153,21 @@ async def cmd_quest(ctx: CommandContext) -> None:
 
     if sub in ["add", "추가", "+"]:
         if not content:
-            await ctx.send("?좑툘 ?섏뒪???댁슜?? ?낅젰?섏꽭??. (`!quest add ???`)")
+            await ctx.send("⚠️ 추가할 퀘스트 내용을 입력하세요. (`!quest add 내용`)")
             return
         await ctx.send(game_system.add_quest(ctx.channel_id, content))
         return
 
     if sub in ["complete", "완료", "done", "clear"]:
         if not content:
-            await ctx.send("?좑툘 ?꾨즺???섏뒪?? ?대쫫???낅젰?섏꽭??. (`!quest complete ???`)")
+            await ctx.send("⚠️ 완료할 퀘스트 이름을 입력하세요. (`!quest complete 이름`)")
             return
         await ctx.send(game_system.complete_quest(ctx.channel_id, content))
         return
 
     if sub in ["remove", "삭제", "del", "delete"]:
         if not content:
-            await ctx.send("?좑툘 ?쒓굅???섏뒪?? ?대쫫???낅젰?섏꽭??. (`!quest remove ???`)")
+            await ctx.send("⚠️ 삭제할 퀘스트 이름을 입력하세요. (`!quest remove 이름`)")
             return
         await ctx.send(game_system.remove_quest(ctx.channel_id, content))
         return
@@ -1176,7 +1176,7 @@ async def cmd_quest(ctx: CommandContext) -> None:
     if raw:
         await ctx.send(game_system.add_quest(ctx.channel_id, raw))
         return
-    await ctx.send("?좑툘 ?ъ슜踰? `!quest [add/complete/remove/list] [내용]`")
+    await ctx.send("📋 사용법: `!quest [add/complete/remove/list] [내용]`")
 
 
 @registry.register("time", category="World", aliases=["시간", "time_adv", "next", "turn", "진행", "건너뛰기", "턴"], description="시간 관리")
