@@ -122,13 +122,13 @@ async def cmd_lore(ctx: CommandContext) -> None:
         msg = f"📜 **로어 정보**\nLength: {len(lore):,} chars\nNPCs: {len(npcs)}명\nGenres: {', '.join(genres)}"
         if tone: msg += f"\nTone: {tone}"
         
-        # Preview NPCs
+        # [MODIFIED] Show ALL NPCs (Name Only)
         if npcs:
-            preview = [f"• **{n}**: {d.get('desc','-')[:50]}..." for n, d in list(npcs.items())[:5]]
-            msg += "\n\n👥 **NPC Preview:**\n" + "\n".join(preview)
+            names = [f"`{n}`" for n in npcs.keys()]
+            msg += f"\n\n👥 **식별된 NPC 목록 ({len(npcs)}명):**\n" + ", ".join(names)
             
         await send_long_message(ctx.message.channel, msg)
-        await send_long_message(ctx.message.channel, f"📄 **Lore Preview:**\n```\n{lore[:500]}...\n```")
+        # await send_long_message(ctx.message.channel, f"📄 **Lore Preview:**\n```\n{lore[:500]}...\n```")
         return
 
     # 2. Reset
@@ -222,7 +222,12 @@ async def cmd_lore(ctx: CommandContext) -> None:
             
             # Formatted Output (Match User's Legacy Format)
             genre_summary = f"{genre_res.get('world_setting', [])} / {genre_res.get('style_tech', [])} / {genre_res.get('narrative_tone', [])}"
-            await msg.edit(content=f"✅ **로어 분석 완료**\nNPC: {len(extracted_npcs)}명 추출{pc_msg}\n장르(3계층): {genre_summary}\n이변 징후: {len(lore_summary_data.get('anomaly_seeds', []))}개 식별")
+            
+            # [MODIFIED] Show ALL NPC Names in confirmation
+            npc_names = [f"`{n['name']}`" for n in extracted_npcs if n.get('name')]
+            npc_list_str = ", ".join(npc_names)
+            
+            await msg.edit(content=f"✅ **로어 분석 완료**\n\n👥 **NPC: {len(extracted_npcs)}명 식별**\n{npc_list_str}{pc_msg}\n\n🌍 **장르/톤**\n{genre_summary}\n\n🌪️ **이변 징후**\n{len(lore_summary_data.get('anomaly_seeds', []))}개 식별")
 
         except Exception as e:
             import traceback
