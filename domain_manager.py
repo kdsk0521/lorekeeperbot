@@ -1005,6 +1005,15 @@ def set_bot_active(channel_id: str, active: bool) -> None:
     d = get_domain(channel_id)
     d["bot_active"] = active
     save_domain(channel_id, d)
+# OOC Mode Toggle (channel-level)
+def get_ooc_mode(channel_id: str) -> bool:
+    return get_domain(channel_id).get("ooc_mode", False)
+
+def set_ooc_mode(channel_id: str, active: bool) -> None:
+    d = get_domain(channel_id)
+    d["ooc_mode"] = active
+    save_domain(channel_id, d)
+
 def reset_session_state(channel_id: str) -> None:
     """
     세션을 '준비 완료' 상태로 초기화합니다.

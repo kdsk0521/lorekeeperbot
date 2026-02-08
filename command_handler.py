@@ -817,56 +817,6 @@ async def cmd_bot(ctx: CommandContext) -> None:
 
 
 
-@registry.register("analyze", category="Analysis", aliases=["분석", "brainstorm"], description="AI 브레인스토밍")
-async def cmd_analyze(ctx: CommandContext) -> None:
-    """!분석 [검토내용]"""
-    await _run_analysis(ctx, "analyze")
-
-@registry.register("consistency", category="Analysis", aliases=["일관성", "개연성"], description="서사 일관성 검사")
-async def cmd_consistency(ctx: CommandContext) -> None:
-    """!일관성"""
-    await _run_analysis(ctx, "consistency")
-
-@registry.register("forecast", category="Analysis", aliases=["예지", "예측"], description="미래 전개 예측")
-async def cmd_forecast(ctx: CommandContext) -> None:
-    """!예지"""
-    await _run_analysis(ctx, "forecast")
-
-async def _run_analysis(ctx: CommandContext, mode: str):
-    domain = domain_manager.get_domain(ctx.channel_id)
-    history = domain.get('history', [])
-    if not history:
-        await ctx.send("⚠️ 분석할 데이터가 부족합니다.")
-        return
-        
-    history_text = "\n".join([f"{h['role']}: {h['content']}" for h in history[-20:]])
-    lore_text = domain_manager.get_lore(ctx.channel_id)
-
-    msg = await ctx.message.channel.send("🔄 **AI 분석 중...** (잠시만 기다려주세요)")
-    
-    try:
-        if mode == 'analyze': # Brainstorming
-            res = await memory_system.analyze_brainstorming(ctx.genai_client, ctx.model_id, history_text, lore_text, ctx.raw_args or "현재 상황 분석")
-            txt = f"🧠 **브레인스토밍**\n\n**상황:** {res.get('current_state_summary')}\n\n**추천:** {res.get('recommendation')}\n\n**가능성:**\n"
-            for p in res.get('potential_paths', []):
-                 txt += f"- {p.get('path')} ({p.get('pros')})\n"
-            await msg.edit(content=txt[:2000])
-            
-        elif mode == 'consistency':
-            res = await memory_system.check_narrative_consistency(ctx.genai_client, ctx.model_id, history_text, lore_text)
-            txt = f"⚖️ **일관성 검사**\n등급: {res.get('overall_consistency')}\n\n**이슈:**\n"
-            for i in res.get('issues', []):
-                txt += f"- [{i.get('severity')}] {i.get('description')}\n"
-            await msg.edit(content=txt[:2000])
-            
-        elif mode == 'forecast':
-            res = await memory_system.analyze_brainstorming(ctx.genai_client, ctx.model_id, history_text, lore_text, "다음 전개 예측")
-            txt = f"🔮 **미래 예지**\n{res.get('recommendation')}"
-            await msg.edit(content=txt[:2000])
-
-    except Exception as e:
-        await msg.edit(content=f"⚠️ 오류 발생: {e}")
-
 
 @registry.register("lores", category="Analysis", aliases=["연대기", "chronicle"], description="연대기 추출")
 async def cmd_lores(ctx: CommandContext) -> None:
@@ -998,20 +948,16 @@ async def handle_ooc_command(
         return f"[OOC Directive: {ooc_content}]"
 
 
-@registry.register("ooc", category="Analysis", aliases=["OOC", "메타"], description="OOC 메타 요청 처리")
-async def cmd_ooc(ctx: CommandContext) -> Optional[str]:
-    """!ooc [내용] - 메타 지시/서사 요청/데이터 수정"""
-    ooc_content = ctx.raw_args.strip()
-    if not ooc_content:
-        await ctx.send("⚠️ OOC 내용을 함께 입력해주세요. 예: `!ooc 헤이젤의 방 소리를 더 크게 묘사해줘`")
-        return None
-    return await handle_ooc_command(
-        ctx.message,
-        ctx.channel_id,
-        ooc_content,
-        ctx.genai_client,
-        ctx.model_id
-    )
+@registry.register("ooc", category="System", aliases=["OOC", "메타"], description="OOC 도우미 모드 토글")
+async def cmd_ooc(ctx: CommandContext) -> None:
+    """!ooc - OOC 도우미 모드 ON/OFF 토글"""
+    current = domain_manager.get_ooc_mode(ctx.channel_id)
+    new_state = not current
+    domain_manager.set_ooc_mode(ctx.channel_id, new_state)
+    if new_state:
+        await ctx.send("💬 **OOC 모드 ON** — 도우미 모드로 전환합니다.\n> 모든 메시지가 OOC 대화로 처리됩니다. 해제: `!ooc`")
+    else:
+        await ctx.send("🎭 **OOC 모드 OFF** — 서사 모드로 복귀합니다.")
 
 @registry.register("mental", category="Player", aliases=["멘탈", "mental"], description="멘탈 조회 및 설정")
 async def cmd_mental(ctx: CommandContext) -> None:

@@ -120,6 +120,11 @@ async def _process_message(message: discord.Message) -> None:
             if not domain_manager.get_bot_active(channel_id):
                 return
 
+            # 3.5. OOC MODE CHECK
+            if domain_manager.get_ooc_mode(channel_id):
+                await generate_ooc_response(message, channel_id)
+                return
+
             # 4. CHAT LOGGING / RESPONSE
             mode = domain_manager.get_response_mode(channel_id)
 
@@ -168,6 +173,63 @@ async def generate_ai_response(
         feedback_msg=feedback_msg,
         user_input_override=user_input_override
     )
+
+
+# =========================================================
+# OOC HELPER (Lightweight AI for OOC mode)
+# =========================================================
+
+async def generate_ooc_response(
+    message: discord.Message,
+    channel_id: str
+) -> None:
+    """OOC 도우미 모드 응답 생성 (Flash 모델 사용)"""
+    if not client_genai:
+        await message.channel.send("⚠️ No AI Configured")
+        return
+
+    from google.genai import types
+    import text_resources
+
+    # Build context
+    history = domain_manager.get_history(channel_id)
+    history_text = "\n".join(
+        [f"{h['role']}: {h['content']}" for h in history[-15:]]
+    ) if history else "(히스토리 없음)"
+
+    lore_text = domain_manager.get_lore(channel_id) or "(로어 없음)"
+
+    system_prompt = text_resources.OOC_HELPER_IDENTITY + (
+        f"\n[최근 히스토리]\n{history_text}\n\n[로어 요약]\n{lore_text[:2000]}"
+    )
+
+    user_content = message.content.strip()
+    if message.attachments:
+        for att in message.attachments:
+            txt, _ = await bot_utils.read_attachment_text(att)
+            if txt:
+                user_content += f"\n(첨부: {txt})"
+
+    try:
+        response = await client_genai.aio.models.generate_content(
+            model=MODEL_ID_FLASH,
+            contents=[
+                types.Content(role="user", parts=[types.Part(text=user_content)])
+            ],
+            config=types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                temperature=0.7,
+                max_output_tokens=2000,
+            )
+        )
+        if response and response.text:
+            await bot_utils.send_long_message(message.channel, response.text)
+        else:
+            await message.channel.send("⚠️ OOC 응답을 생성하지 못했습니다.")
+    except Exception as e:
+        logging.error(f"OOC Response Error: {e}", exc_info=True)
+        await message.channel.send(f"⚠️ OOC 오류: {e}")
+
 
 if __name__ == "__main__":
     if DISCORD_TOKEN and GEMINI_API_KEY:
