@@ -947,6 +947,10 @@ async def handle_ooc_command(
         # 서사 지시는 프롬프트에 주입하기 위해 반환
         return f"[OOC Directive: {ooc_content}]"
 
+    else:
+        # general: 일반 OOC도 서사 지시로 전달
+        return f"[OOC Directive: {ooc_content}]"
+
 
 @registry.register("ooc", category="System", aliases=["OOC", "메타"], description="OOC 도우미 모드 토글")
 async def cmd_ooc(ctx: CommandContext) -> None:

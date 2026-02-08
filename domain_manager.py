@@ -1037,6 +1037,7 @@ def reset_session_state(channel_id: str) -> None:
     # 3. Reset Quests & Notebook (Keep Lore Items if any? No, reset all dynamic)
     d["quest_board"] = {"active": [], "completed": [], "memos": [], "archive": [], "lore": []}
     d["notebook"] = "— [소지품] —\n\n— [메모] —"
+    d["ooc_mode"] = False
     
     # 4. Reset Session NPCs (Keep 'lore' NPCs)
     # Filter NPCs ensuring we keep only source="lore"

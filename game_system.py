@@ -27,6 +27,7 @@ logger = logging.getLogger("GameSystem")
 get_time_slots = game_world.get_time_slots
 get_weather_types = game_world.get_weather_types
 advance_time = game_world.advance_time
+advance_tick = game_world.advance_tick
 change_doom = game_world.change_doom
 _get_doom_description = game_world._get_doom_description
 get_world_context = game_world.get_world_context
