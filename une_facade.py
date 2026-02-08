@@ -117,6 +117,13 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> G
     anchors["all_pcs"] = all_pcs
     anchors["acting_user_id"] = user_id
 
+    # NPC Knowledge & Attitudes (피드백용)
+    anchors["stored_npc_knowledge"] = domain_manager.get_npc_knowledge(channel_id)
+    anchors["stored_npc_attitudes"] = domain_manager.get_npc_attitudes(channel_id)
+
+    # Session Memory (World State Updater 피드백용)
+    anchors["session_memory"] = domain_manager.get_session_ai_memory(channel_id)
+
     # Bus initialization
     bus = SharedBus()
     bus.doom["value"] = world.get("doom", 40)

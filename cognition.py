@@ -37,9 +37,10 @@ async def extract_all_updates(
     current_memos: Optional[List[str]] = None,
     fermented_context: str = "",
     player_context: str = "",
-    extraction_hints: Optional[Dict[str, bool]] = None
+    extraction_hints: Optional[Dict[str, bool]] = None,
+    current_session_memory: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
-    
+
     # Default: Run ALL if no hints provided
     if extraction_hints is None:
         extraction_hints = {"physical": True, "social": True, "narrative": True, "quest": True}
@@ -63,6 +64,10 @@ async def extract_all_updates(
         tasks.append(_extract_quest(client, model_id_flash, player_input, ai_response, current_quests, current_memos))
         task_keys.append("quest")
 
+    if extraction_hints.get("world_state", False):
+        tasks.append(_extract_world_state(client, model_id_flash, player_input, ai_response, current_session_memory))
+        task_keys.append("world_state")
+
     # If nothing to extract
     if not tasks:
         return {"PlayerUpdate": None, "PlayerMemoryUpdate": None, "PassiveSuggestion": None, "AbnormalTrigger": None, "QuestUpdate": None}
@@ -79,6 +84,7 @@ async def extract_all_updates(
     soc: Dict[str, Any] = result_map.get("social", {})
     nar: Dict[str, Any] = result_map.get("narrative", {})
     qst: Dict[str, Any] = result_map.get("quest", {})
+    wst: Dict[str, Any] = result_map.get("world_state", {})
     
     # Sanitize Physical (Now Notebook + Gold + Status)
     p_upd = None
@@ -137,7 +143,9 @@ async def extract_all_updates(
         
         "QuestUpdate": {
             "quest_add": qst.get("quest_add"), "quest_complete": qst.get("quest_complete")
-        } if qst else None
+        } if qst else None,
+
+        "WorldStateUpdate": wst if wst else None
     }
 
 # Internal Extractors (Private)
@@ -255,11 +263,56 @@ async def _extract_quest(
     usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON."
     return await _call_extract(client, model_id, sys, usr, "B-4 Quest")
 
+async def _extract_world_state(
+    client: genai.Client,
+    model_id: str,
+    p_in: str,
+    ai_out: str,
+    current_session_memory: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """
+    [World State Updater] +1 Flash call.
+    AI 응답 후 세계 상태를 추출하여 ai_session_memory를 갱신합니다.
+    active_threads, world_changes, npc_schedule_hints, basic_needs_flags 추출.
+    """
+    mem = current_session_memory or {}
+    existing_threads = mem.get("active_threads", [])
+    existing_arc = mem.get("current_arc", "")
+
+    sys = (
+        "## [WORLD STATE UPDATER - V1.0]\n"
+        "You are a TRPG session tracker. Analyze the latest exchange and extract world state changes.\n"
+        "Return JSON with these keys:\n\n"
+        "### FIELDS\n"
+        "- `active_threads`: [list of str] Currently open narrative threads/plotlines. "
+        "Merge with existing, remove resolved ones. Max 10. Korean.\n"
+        "- `resolved_threads`: [list of str] Threads that were resolved THIS turn. Korean.\n"
+        "- `world_changes`: [list of str] Significant environmental/world changes from this turn. "
+        "Only NEW changes (not already known). Max 5. Korean.\n"
+        "- `npc_schedule_hints`: {NpcName: str} Where each active NPC likely is or what they're doing RIGHT NOW "
+        "based on context. Only NPCs mentioned or implied. Korean.\n"
+        "- `basic_needs_flags`: {str: bool} Physical state flags for the PC. "
+        "Keys: hungry, thirsty, tired, injured, cold, hot. Only set true if evidence exists.\n"
+        "- `current_arc`: str - One-line summary of the current narrative arc. Korean.\n\n"
+        "### RULES\n"
+        "1. **CONSERVATIVE**: Only extract what is clearly evidenced in the text.\n"
+        "2. **NO FABRICATION**: Do not invent threads or NPC activities not implied by context.\n"
+        "3. **MERGE**: active_threads should combine existing + new - resolved.\n"
+        "4. **HYGIENE**: Remove stale threads that are clearly no longer relevant.\n"
+    )
+    ctx_lines = [f"Current Arc: {existing_arc}" if existing_arc else "Current Arc: (none)"]
+    if existing_threads:
+        ctx_lines.append(f"Existing Threads: {existing_threads[:10]}")
+    ctx = "\n".join(ctx_lines)
+    usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON."
+    return await _call_extract(client, model_id, sys, usr, "B-5 WorldState")
+
+
 async def _call_extract(
-    client: genai.Client, 
-    model_id: str, 
-    sys: str, 
-    usr: str, 
+    client: genai.Client,
+    model_id: str,
+    sys: str,
+    usr: str,
     op_name: str
 ) -> Dict[str, Any]:
     try:
@@ -311,32 +364,39 @@ Analyze the provided lorebook precisely to extract all metadata required for gam
    - theme: Core theme of the world (1-2 sentences in Korean)
    - anomaly_seeds: List of anomaly/supernatural themes possible in this world (e.g., '그림자 침식', '기계 광증' etc. - Korean)
    - locations: Key locations and their characteristics (Korean)
+5. **world_constraints**: World rules extracted from lore (Korean)
+   - systems: Magic/technology/power systems described in the lore (1-2 sentences)
+   - social: Social hierarchy, taboos, cultural norms (1-2 sentences)
 
 ## Output Format (JSON Only)
 {{
-  "genres": {{ 
-    "world_setting": ["..."], 
-    "style_tech": ["..."], 
+  "genres": {{
+    "world_setting": ["..."],
+    "style_tech": ["..."],
     "narrative_tone": ["..."],
     "atmosphere_guide": "..."
   }},
   "npcs": [ {{ "name": "...", "gender": "...", "race": "...", "description": "..." }} ],
-  "pc_info": {{ 
-    "name": "...", 
-    "role": "...", 
-    "species": "...", 
-    "appearance": "...", 
-    "description": "성격 및 전반적인 특징 설명", 
-    "sexual_characteristics": "...", 
-    "background": "...", 
-    "secret_info": "...", 
-    "passives": [ {{ "name": "...", "desc": "..." }} ], 
-    "inventory": {{ "Item": "Quantity" }} 
+  "pc_info": {{
+    "name": "...",
+    "role": "...",
+    "species": "...",
+    "appearance": "...",
+    "description": "성격 및 전반적인 특징 설명",
+    "sexual_characteristics": "...",
+    "background": "...",
+    "secret_info": "...",
+    "passives": [ {{ "name": "...", "desc": "..." }} ],
+    "inventory": {{ "Item": "Quantity" }}
   }},
   "lore_summary": {{
     "theme": "...",
     "anomaly_seeds": ["징후1", "징후2"],
     "locations": "..."
+  }},
+  "world_constraints": {{
+    "systems": "마법/기술 체계 설명",
+    "social": "사회 구조/금기 설명"
   }}
 }}"""
 

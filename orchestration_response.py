@@ -68,7 +68,7 @@ def _build_nvc_summary(ctx: ResponseContext, filter_config: NVCFilterConfig) -> 
     )
 
     # --- Section 2: Socio-Cultural Markers (Habitus) ---
-    habitus = dai.get("HabitusAnalysis", {})
+    habitus = dai.get("habitus_analysis", dai.get("HabitusAnalysis", {}))
     if habitus:
         nvc_summary += (
             f"#### SOCIO_CULTURAL_MARKERS (Habitus Rendering)\n"
@@ -78,7 +78,7 @@ def _build_nvc_summary(ctx: ResponseContext, filter_config: NVCFilterConfig) -> 
         )
 
     # --- Section 3: Physical Props (Sensory Anchors) ---
-    anchors = dai.get("SensoryAnchors", [])
+    anchors = dai.get("sensory_anchors", dai.get("SensoryAnchors", []))
     if anchors:
         nvc_summary += "#### PHYSICAL_PROPS_FOR_RECALL (Sensory Anchors)\n"
         for a in anchors[:2]:  # Top 2 anchors
@@ -104,7 +104,7 @@ def _build_nvc_summary(ctx: ResponseContext, filter_config: NVCFilterConfig) -> 
 
     # --- Section 5: Narrative Chain & Direction ---
     chain = dai.get("narrative_chain", {})
-    temporal = dai.get("TemporalOrientation", dai.get("temporal_orientation", {}))
+    temporal = dai.get("temporal_orientation", dai.get("TemporalOrientation", {}))
     nvc_summary += (
         f"#### NARRATIVE_DIRECTION\n"
         f"- Chain Status: {chain.get('chain_status', 'OPEN')} (Conclusion Proximity: {chain.get('conclusion_proximity', 0)}%)\n"
@@ -113,7 +113,7 @@ def _build_nvc_summary(ctx: ResponseContext, filter_config: NVCFilterConfig) -> 
     )
 
     # --- Section 6: Security & Correction Hooks ---
-    pc_check = dai.get("PCImpersonationCheck", dai.get("pc_impersonation_check", {}))
+    pc_check = dai.get("pc_impersonation_check", dai.get("PCImpersonationCheck", {}))
     if pc_check.get("detected"):
         nvc_summary += (
             f"#### [CRITICAL] SEC_CORRECTION_HINT\n"

@@ -110,6 +110,14 @@ class OrchestrationService:
 
             ctx.existing_attitudes = domain_manager.get_npc_attitudes(channel_id)
 
+        # NPC Knowledge 영속화
+        new_knowledge = dai.get("npc_knowledge")
+        if new_knowledge and isinstance(new_knowledge, dict):
+            for npc_name, k_data in new_knowledge.items():
+                if isinstance(k_data, dict) and k_data.get("knows"):
+                    domain_manager.update_npc_knowledge(channel_id, npc_name, k_data)
+            logger.info(f"[NPC Knowledge] Persisted for {len(new_knowledge)} NPCs")
+
         # ?? ?? ?? (Delegated to GameSystem)
         time_flow = dai.get("time_flow", {})
         time_msg = await game_system.process_time_flow(channel_id, time_flow, ctx.scene_type)
@@ -310,7 +318,8 @@ class OrchestrationService:
             ]) or bool((ctx.dai or {}).get("abnormal_elements")),
             "quest": any(kw in response for kw in [
                 '퀘스트', '임무', '목표', '의뢰', '부탁', '완료', '달성', '단서', '정보', '비밀'
-            ])
+            ]),
+            "world_state": True  # Always run World State Updater (+1 Flash)
         }
 
         # Phase 1: 즉시 노트북 업데이트 (높은 우선순위)
@@ -420,15 +429,18 @@ class OrchestrationService:
             scene_npcs = list(npc_manager.get_scene_npc_names(channel_id))
             current_quests = game_system.get_active_quests(channel_id)
             
+            session_memory = domain_manager.get_session_ai_memory(channel_id)
+
             updates = await cognition.extract_all_updates(
-                self.client, self.model_id_flash, 
+                self.client, self.model_id_flash,
                 ctx.action_text, response,
                 notebook=ctx.notebook_txt,
                 current_status=status,
-                lore_npc_names=lore_npcs, 
+                lore_npc_names=lore_npcs,
                 scene_npc_names=scene_npcs,
                 current_quests=current_quests,
-                extraction_hints=hints
+                extraction_hints=hints,
+                current_session_memory=session_memory
             )
             
             # Apply Updates
@@ -457,9 +469,34 @@ class OrchestrationService:
             if updates.get("AbnormalTrigger"):
                 trigger = updates["AbnormalTrigger"]
                 category = updates.get("AbnormalCategory")
-                # We could trigger something here, but usually adaptation check is done during Anomaly Event phase.
-                # If this is narrative extraction detecting a NEW anomaly that wasn't an event, maybe just log it.
                 logger.info(f"[Background] Narrative Anomaly Detected: {trigger} ({category})")
+
+            # World State Update (ai_session_memory 갱신)
+            wsu = updates.get("WorldStateUpdate")
+            if wsu and isinstance(wsu, dict):
+                mem_updates = {}
+                if wsu.get("active_threads"):
+                    mem_updates["active_threads"] = wsu["active_threads"][:10]
+                if wsu.get("resolved_threads"):
+                    # Append to resolved list (keep last 20)
+                    existing_resolved = session_memory.get("resolved_threads", [])
+                    merged_resolved = existing_resolved + wsu["resolved_threads"]
+                    mem_updates["resolved_threads"] = merged_resolved[-20:]
+                if wsu.get("world_changes"):
+                    existing_changes = session_memory.get("world_changes", [])
+                    merged_changes = existing_changes + wsu["world_changes"]
+                    mem_updates["world_changes"] = merged_changes[-15:]
+                if wsu.get("npc_schedule_hints"):
+                    existing_schedules = session_memory.get("npc_summaries", {})
+                    existing_schedules.update(wsu["npc_schedule_hints"])
+                    mem_updates["npc_summaries"] = existing_schedules
+                if wsu.get("current_arc"):
+                    mem_updates["current_arc"] = wsu["current_arc"]
+                if wsu.get("basic_needs_flags") and isinstance(wsu["basic_needs_flags"], dict):
+                    mem_updates["basic_needs_flags"] = wsu["basic_needs_flags"]
+                if mem_updates:
+                    domain_manager.update_session_ai_memory(channel_id, mem_updates)
+                    logger.info(f"[WorldState] Updated session memory: {list(mem_updates.keys())}")
 
         except Exception as e:
             logger.error(f"Background Extraction Failed: {e}")

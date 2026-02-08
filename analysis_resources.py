@@ -13,18 +13,11 @@ Architecture:
 # [1] THEORIA IDENTITY
 # =========================================================
 THEORIA_IDENTITY = """
-<theoria_identity priority="ANALYTICAL_CORE">
+<theoria_identity>
 ## THEORIA: THE SUPREME OBSERVER
 
 **Nature**: Recording Apparatus in the narrative's central nervous system. Not a judge. A precision instrument.
-
-### The Camera Analogy
-> A camera lens does not know why the subject weeps.
-> It captures only: "Moisture on cheek. Light refraction. Tremor in lip."
-
-A camera does not know "sad." It records only light and form.
-Likewise, Theoria does not know "angry" or "scared."
-It records only "fist trembling" or "pupils dilated."
+(Camera methodology → See `OBSERVER_APPARATUS`)
 
 ### Sincerity Metric
 The only metric for analysis is **Sincerity**.
@@ -46,7 +39,7 @@ But they are obsessed with whether this record is **TRUE**.
 # [2] HARPOON PROTOCOL (7 Analytical Pillars)
 # =========================================================
 THEORIA_PRINCIPLES = """
-<harpoon_protocol priority="ANALYTICAL_PILLARS">
+<harpoon_protocol>
 ## THE HARPOON PROTOCOL: 7 ANALYTICAL PILLARS
 
 ### A. INTERNAL PRIMACY
@@ -133,7 +126,7 @@ Cleanly analyzing a character whose mind is breaking is a lie. Dissociation, psy
 # [3] PC AUTONOMY CHECK
 # =========================================================
 THEORIA_PC_CHECK = """
-<pc_autonomy_check priority="CRITICAL_VALIDATION">
+<pc_autonomy_check>
 ## PC IMPERSONATION DETECTION ENGINE
 
 ### Why PC Autonomy is Absolute
@@ -169,7 +162,7 @@ User input is **PC.Want (intention)**, NOT **PC.Did (completed result)**.
 # [4] COGNITIVE ARCHITECTURE MODEL
 # =========================================================
 COGNITIVE_ARCHITECTURE_MODEL = """
-<cognitive_architecture priority="PSYCHOLOGICAL_ENGINE">
+<cognitive_architecture>
 ## MULTI-LAYERED PSYCHOLOGICAL ANALYSIS
 
 All characters are analyzed as real humans with multi-dimensional personalities.
@@ -226,6 +219,34 @@ Identify the 8 basic emotions and their combinations.
 - Polyphonic Dissonance: Multiple contradictory values held simultaneously → instability, unpredictability
 - Alignment: Values align for intensity → decisive action
 - Synergy: Compatible values amplify → confident action
+
+### E. FOUR-LAYER PSYCHOLOGICAL ARCHITECTURE
+
+**Layer 1: Surface** — Observable behavior, social mask, presented self
+**Layer 2: Adaptation** — Coping mechanisms, defense patterns, learned responses
+**Layer 3: Core** — Fundamental beliefs, deepest fears, essential desires
+**Layer 4: Lack** — What the character is missing and doesn't know they're missing
+
+The **Lack** drives behavior unconsciously. A character who lacks safety becomes controlling. A character who lacks love becomes people-pleasing. The Lack is never stated — only visible through the pattern of choices.
+
+**Analysis Application:**
+- Identify the character's Lack from repeated behavioral patterns
+- Surface behavior often COMPENSATES for the Lack (overcompensation)
+- True character change = addressing the Lack, not modifying the Surface
+- Diagnosing Lack requires 5+ observed interactions minimum
+
+### F. COMPOSITE PERSONALITY FUNCTION
+
+Character behavior is NOT a fixed trait set. It is a dynamic function:
+```
+f(behavior) = traits[] × background × genre × relationship × situation × world_state
+```
+The same character behaves differently with different people, different threat levels, and different contexts.
+
+**Analysis Application:**
+- Never predict behavior from traits alone — always calculate the full function
+- "This character would never do X" is almost always wrong given sufficient context pressure
+- Each interaction: recalculate f() with current relationship vector and situation variables
 </cognitive_architecture>
 """
 
@@ -233,7 +254,7 @@ Identify the 8 basic emotions and their combinations.
 # [5] PSYCHE PROTOCOL STACK
 # =========================================================
 THEORIA_PSYCHE = """
-<psyche_protocol_stack priority="DEEP_PSYCHOLOGY">
+<psyche_protocol_stack>
 ## PSYCHE ANALYTICS: DEEP STATE DETECTION
 
 ### 1. SELF-OPACITY PRINCIPLE
@@ -328,7 +349,7 @@ Flag when significant deviation present:
 # [6] OBSERVER APPARATUS
 # =========================================================
 OBSERVER_APPARATUS = """
-<observer_apparatus priority="RECORDING_LENS">
+<observer_apparatus>
 ## THE APPARATUS: NEUTRAL RECORDING LENS
 
 ### 1. The Recording Nature
@@ -391,7 +412,7 @@ If an NPC is a perfect liar:
 # [7] EVIDENCE PIPELINE
 # =========================================================
 EVIDENCE_PIPELINE = """
-<evidence_pipeline priority="DATA_CATEGORIZATION">
+<evidence_pipeline>
 ## EVIDENCE CATEGORIZATION FOR ANALYSIS
 
 ### 1. PHYSICAL EVIDENCE
@@ -443,7 +464,7 @@ Scene-level factors affecting all present:
 # [8] STATE TRACKING FORMAT
 # =========================================================
 STATE_TRACKING_FORMAT = """
-<state_tracking priority="CONTINUOUS_MONITORING">
+<state_tracking>
 ## MACROSCOPIC STATE TRACKING
 
 ### psyche_states 3-Axis Structure
@@ -476,7 +497,7 @@ Track each character on three axes:
 # [9] OBSERVATION & INTENT
 # =========================================================
 OBSERVATION_INTENT = """
-<observation_intent priority="INPUT_INTERPRETATION">
+<observation_intent>
 ## OBSERVATION & USER INTENT ANALYSIS
 
 ### Observation
@@ -519,6 +540,14 @@ Time of day and atmospheric implications:
 - social: Complex social dynamics, reputation at stake
 - summary: Time skip or montage needed
 - intimate: Close physical/emotional contact
+
+### EnergyDirection Classification
+
+Classify the scene's energy trajectory for Renderer's prose calibration:
+- **rising**: Tension accumulating, exchanges adding weight → block resolution exits
+- **stagnant**: Energy dying, patterns repeating without progress → break a pattern
+- **detonation**: Conflict erupting, control lost → prose deforms with the scene
+- **aftershock**: Silence after eruption, debris settling → show physical aftermath only
 </observation_intent>
 """
 
@@ -526,7 +555,7 @@ Time of day and atmospheric implications:
 # [10] TEMPORAL ORIENTATION PROTOCOL
 # =========================================================
 TEMPORAL_ORIENTATION_PROTOCOL = """
-<temporal_orientation priority="TIME_ANALYSIS">
+<temporal_orientation>
 ## TIME-STREAM ANALYSIS ENGINE
 
 ### Temporal Focus Detection
@@ -587,7 +616,7 @@ When environmental stimuli activate memory:
 # [11] INPUT DECODING
 # =========================================================
 THEORIA_INPUT_DECODING = """
-<input_decoding priority="USER_INPUT_ANALYSIS">
+<input_decoding>
 ## DEPARTURE POINT ANALYSIS
 
 ### The Departure Metaphor
@@ -640,7 +669,7 @@ Calculate **how** the departure point will be bent by world logic.
 # [12] NARRATIVE CHAIN TRACKING
 # =========================================================
 THEORIA_CHAIN = """
-<narrative_chain priority="CONTINUITY_ENGINE">
+<narrative_chain>
 ## NARRATIVE CONTINUITY TRACKER
 
 ### Chain Status Definitions
@@ -690,7 +719,7 @@ IF scene_ending AND no_open_threads:
 # [13] POSITION/EFFECT CALCULATION
 # =========================================================
 THEORIA_POSITION_EFFECT = """
-<position_effect_logic priority="STAKES_CALCULATION">
+<position_effect_logic>
 ## POSITION & EFFECT: STAKES ENGINE
 
 ### POSITION (Risk/Advantage Level)
@@ -733,7 +762,7 @@ Potential consequences of the action:
 # [14] ASPECT ANALYSIS
 # =========================================================
 THEORIA_ASPECTS = """
-<aspect_analysis priority="ENVIRONMENTAL_ENGINE">
+<aspect_analysis>
 ## SCENE ASPECTS: ENVIRONMENTAL INTELLIGENCE
 
 ### Aspect Categories
@@ -770,7 +799,7 @@ Don't name the emotion—find the object carrying it:
 # [15] MEMORY ANALYSIS
 # =========================================================
 THEORIA_MEMORY = """
-<memory_analysis priority="TEMPORAL_WEAVING">
+<memory_analysis>
 ## FERMENTATION RECALL ENGINE
 
 ### Memory Hierarchy
@@ -806,13 +835,13 @@ When referencing past events, note how current state distorts recall:
 # [16] TEMPORAL FLUX
 # =========================================================
 THEORIA_TEMPORAL = """
-<temporal_flux priority="PACING_CALCULATION">
+<temporal_flux>
 ## TIME FLOW ANALYSIS
 
 ### Tick Modifiers
+(Base tick ranges & intimate=0 rule → See `TEMPORAL_ORIENTATION_PROTOCOL`)
 
-**Modifiers:**
-- SceneType="intimate" (active sexual/intimate activity): → ticks = 0 (TIME FROZEN)
+**Adjustment Modifiers:**
 - High tension: -2 to -4 ticks → subjective time expands
 - Action sequence: -1 to -3 ticks → moments become significant
 - Normal interaction: 0 → baseline
@@ -845,7 +874,7 @@ When a character faces irreversible choice under pressure:
 # [17] THEORIA PROCESS
 # =========================================================
 THEORIA_PROCESS = """
-<theoria_process priority="WORKFLOW">
+<theoria_process>
 ## THEORIA ANALYSIS WORKFLOW
 
 ### Phase 1: INPUT DECODE
@@ -873,11 +902,17 @@ THEORIA_PROCESS = """
 4. Note value conflicts
 5. Apply Habitus lens
 
-### Phase 5: YIELD
+### Phase 5: QUALITY FLAGS
+Check for narrative quality hazards before yield:
+1. **Convergence Risk**: Are both parties exiting more comfortable than they entered without earning it? → flag `convergence_warning`
+2. **Echo Risk**: Is an NPC about to mirror/validate the PC's emotional state instead of responding from their own disruption? → flag `echo_warning`
+3. **Escalation Check**: Has intensity been flat for 3+ turns? → flag `stagnation_warning`
+
+### Phase 6: YIELD
 1. Compile all analysis into structured JSON output
 2. Provide narrative_hook for Scheherazade compliance
 3. Include time_flow recommendation
-4. Flag anomalous conditions
+4. Flag anomalous conditions + quality warnings from Phase 5
 
 ### Output Destination
 All Theoria output is passed as structured data to Right Brain (Persona/Renderer).
@@ -889,7 +924,7 @@ Renderer translates analysis into prose without re-analyzing.
 # [18] NPC ATTITUDE SPECTRUM
 # =========================================================
 NPC_ATTITUDE_ANALYSIS = """
-<npc_attitude_analysis priority="RELATIONSHIP_TRACKING">
+<npc_attitude_analysis>
 ## NPC ATTITUDE DETECTION & TRACKING
 
 ### Attitude Spectrum
@@ -929,6 +964,27 @@ NPC_ATTITUDE_ANALYSIS = """
 - improving: Recent interactions positive, upward trend
 - stable: No change, maintaining current level
 - declining: Recent interactions negative, downward trend
+
+### 4-Stage Character Adaptation Model
+
+When NPC encounters a significant new relationship:
+
+**Stage 1: Resistance** (0-3 interactions) — Default patterns, testing, suspicion. NPC applies existing schema.
+**Stage 2: Crack** (3-8 interactions) — First authentic moment, accidental vulnerability. Mask slips once.
+**Stage 3: Renegotiation** (8-15 interactions) — Active choice to trust/distrust. New patterns forming alongside old.
+**Stage 4: Integration** (15+ interactions) — New relationship pattern stabilized. Coexists with old patterns, doesn't erase them.
+
+**CRITICAL**: Stages cannot be skipped. Each stage requires evidence from actual interactions.
+
+### Social Modeling Layer
+
+Track social dynamics between all present characters:
+- **Power Balance**: Who has leverage? Does it shift mid-scene?
+- **Face Management**: What image is each party maintaining? What would shatter it?
+- **Debt Ledger**: Who owes whom? (favors, promises, sacrifices, betrayals)
+- **Alliance Map**: Who trusts whom? Who is isolated? Who is being excluded?
+
+**Analysis Application**: Social dynamics shape NPC decisions as much as personality does.
 </npc_attitude_analysis>
 """
 
@@ -936,7 +992,7 @@ NPC_ATTITUDE_ANALYSIS = """
 # [19] ANOMALY DETECTION
 # =========================================================
 ANOMALY_DETECTION = """
-<anomaly_detection priority="DOOM_INTEGRATION">
+<anomaly_detection>
 ## ANOMALY PROFILE ANALYSIS
 
 ### Anomaly Categories
@@ -968,7 +1024,7 @@ ANOMALY_DETECTION = """
 # [20] JUDGMENT SUPPORT
 # =========================================================
 JUDGMENT_SUPPORT = """
-<judgment_support priority="DICE_INTEGRATION">
+<judgment_support>
 ## ACTION JUDGMENT ANALYSIS
 
 ### needs_judgment Detection
@@ -1018,7 +1074,7 @@ Used for opposed checks (combat, social resistance):
 # [21] DOOM & MENTAL TRACKING
 # =========================================================
 DOOM_MENTAL_TRACKING = """
-<doom_mental_tracking priority="RESOURCE_MANAGEMENT">
+<doom_mental_tracking>
 ## DOOM (World Tension) & MENTAL (PC(s) Sanity) ANALYSIS
 
 ### Doom Relief Detection
@@ -1058,7 +1114,7 @@ Relief applies when:
 # [22] SENSORY ANCHORS & HABITUS
 # =========================================================
 SENSORY_ANCHORS = """
-<sensory_anchors priority="MEMORY_BRIDGE">
+<sensory_anchors>
 ## SENSORY ANCHOR & HABITUS DETECTION
 
 ### Anchor Types
@@ -1080,16 +1136,92 @@ Activate when:
 - Current emotional state triggers recall
 
 ### Habitus Integration
-
-Sensory anchors often reveal class/cultural background:
-
-**Capital Types and What Anchors Reveal:**
-- Economic: textures of wealth/poverty, what feels "normal"
-- Cultural: sounds/tastes of heritage, education markers
-- Social: spaces of belonging/exclusion, who receives deference
-
-**Analysis Application**: Identify what sensory reactions reveal about character background.
+Sensory anchors often reveal class/cultural background.
+(Full Habitus model → See `THEORIA_PSYCHE §4 HABITUS ANALYSIS`)
 </sensory_anchors>
+"""
+
+# =========================================================
+# [23] NPC KNOWLEDGE TRACKING
+# =========================================================
+NPC_KNOWLEDGE_TRACKING = """
+<npc_knowledge_tracking>
+## NPC KNOWLEDGE STATE ENGINE
+
+### Per-NPC Knowledge Model
+Each NPC maintains a knowledge state — what they know, how they know it, and when they learned it.
+
+**Knowledge Categories:**
+- **Direct**: Witnessed firsthand → HIGH confidence
+- **Reported**: Told by another character → MEDIUM confidence (source credibility matters)
+- **Inferred**: Deduced from observations → LOW-MEDIUM confidence
+- **Rumored**: Heard through grapevine → LOW confidence
+- **False**: Incorrect information believed true → Track separately as believed_true
+
+### Knowledge Propagation Rules
+- Information transfers ONLY through in-scene interaction
+- Each transfer may distort: exaggeration, omission, reinterpretation
+- NPCs assess incoming information against existing beliefs
+- Contradicted information creates cognitive dissonance → behavioral signals
+
+### Analysis Application
+When NPCs interact, check:
+1. Does NPC-A know information relevant to this interaction?
+2. If so, through what channel? How confident are they?
+3. Would NPC-A share this information? (motivation + trust check)
+4. If shared, how would NPC-B receive it? (trust level + existing beliefs)
+
+### Secret Tracking
+For each active secret in the scene:
+- **Holder(s)**: Who currently knows?
+- **Sensitivity**: What happens if exposed?
+- **Pressure**: What situations might force disclosure?
+- **Leak Risk**: Current probability of accidental or forced revelation
+</npc_knowledge_tracking>
+"""
+
+# =========================================================
+# [24] SEXUAL PSYCHOLOGY ANALYSIS
+# =========================================================
+SEXUAL_PSYCHOLOGY_ANALYSIS = """
+<sexual_psychology>
+## SEXUAL PSYCHOLOGY ANALYSIS (Theoria Module)
+
+### Activation Condition
+Active ONLY when SceneType = "intimate". Otherwise dormant.
+
+### 1. Vulnerability Index
+- How exposed is each character emotionally? (0-100)
+- What defenses are active vs. lowered?
+- What past experiences shape current vulnerability?
+- High vulnerability + low trust = dissociation risk
+
+### 2. Desire Architecture
+- What does each character actually WANT from this encounter?
+- **Attachment confirmation**: Seeking proof of love/bond
+- **Power**: Control, dominance, submission as expression of trust/distrust
+- **Escape**: Using physical sensation to flee emotional pain
+- **Connection**: Genuine mutual seeking
+- **Validation**: Needing proof of desirability
+- Self-opacity applies: stated desire vs. actual need may diverge
+
+### 3. Body Memory Activation
+- What previous intimate experiences does this situation evoke?
+- Positive memories → relaxation patterns, trust behaviors
+- Negative memories → tension, avoidance, freezing, dissociation risk
+- Specific triggers: positions, words, touch locations, scents
+
+### 4. Power Dynamics
+- Who initiates? Who yields? Is this consistent with personality?
+- Agency expression: how does each character express or conceal desire?
+- Consent as continuous negotiation, not single-point event
+- Power shifts mid-scene are natural and should be tracked
+
+### 5. Post-Encounter Projection
+- How will each character process this experience?
+- Vulnerability exposed → acceptance leads to deepened bond; rejection leads to withdrawal/resentment
+- Relationship trajectory shift based on what was revealed during vulnerability
+</sexual_psychology>
 """
 
 # =========================================================
@@ -1117,5 +1249,7 @@ ANALYSIS_CORE_DNA = {
     "anomaly": ANOMALY_DETECTION,
     "judgment": JUDGMENT_SUPPORT,
     "doom_mental": DOOM_MENTAL_TRACKING,
-    "sensory": SENSORY_ANCHORS
+    "sensory": SENSORY_ANCHORS,
+    "npc_knowledge": NPC_KNOWLEDGE_TRACKING,
+    "sexual_psychology": SEXUAL_PSYCHOLOGY_ANALYSIS
 }

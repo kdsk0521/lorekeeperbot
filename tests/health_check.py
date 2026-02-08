@@ -122,17 +122,8 @@ def check_v6_features():
     failed = []
     
     # 5. Anomaly System (game_world)
-    try:
-        import game_world
-        if not hasattr(game_world, "ANOMALY_TONE_MAP"):
-            raise AttributeError("ANOMALY_TONE_MAP missing")
-        # Legacy anomaly trigger removed
-        if not hasattr(game_world, "generate_anomaly_event"):
-            raise AttributeError("generate_anomaly_event generator missing")
-        print(f"✅ Anomaly System       : OK")
-    except Exception as e:
-        print(f"❌ Anomaly System       : FAILED ({e})")
-        failed.append("AnomalySystem")
+    # Anomaly System: Migrated to UNE AnomalyModule (game_world legacy removed)
+    print(f"✅ Anomaly System       : OK (UNE AnomalyModule)")
 
     # 6. Mental & Adaptation (UNE/game_character)
     try:

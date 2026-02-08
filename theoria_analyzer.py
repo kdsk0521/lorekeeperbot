@@ -96,11 +96,14 @@ class TheoriaAnalyzer:
             analysis_resources.THEORIA_ASPECTS,
             # [NPC & Judgment]
             analysis_resources.NPC_ATTITUDE_ANALYSIS,
+            analysis_resources.NPC_KNOWLEDGE_TRACKING,
             analysis_resources.JUDGMENT_SUPPORT,
             # [Resource Tracking]
             analysis_resources.DOOM_MENTAL_TRACKING,
             analysis_resources.ANOMALY_DETECTION,
             analysis_resources.SENSORY_ANCHORS,
+            # [Intimate Scene Psychology]
+            analysis_resources.SEXUAL_PSYCHOLOGY_ANALYSIS,
             # [Workflow & Output]
             analysis_resources.THEORIA_PROCESS,
             self._get_output_schema(),
@@ -121,6 +124,7 @@ Return valid JSON with ALL these fields (Korean values where specified):
 - "LocationRisk": "None/Low/Medium/High/Extreme"
 - "TimeContext": str (Korean - e.g. "깊은 밤", "이른 아침")
 - "SceneType": "normal/combat/social/summary/intimate"
+- "EnergyDirection": "rising/stagnant/detonation/aftershock"
 
 ## STAKES & ENVIRONMENT
 - "Position": {"value": 0.0-1.0, "reason": "Korean - 왜 이 위치인지"}
@@ -179,6 +183,25 @@ Return valid JSON with ALL these fields (Korean values where specified):
         "reason": "Korean"
     }
   }
+- "NPCKnowledge": {
+    "NpcName": {
+        "knows": ["Korean - 이 NPC가 현재 알고 있는 핵심 정보"],
+        "secrets_held": ["Korean - 이 NPC가 숨기고 있는 것"],
+        "would_share": boolean,
+        "leak_risk": "none/low/medium/high"
+    }
+  }
+- "IntimacyAnalysis": null OR (when SceneType="intimate") {
+    "vulnerability": {"char_name": 0-100, ...},
+    "desire_type": {"char_name": "attachment/power/escape/connection/validation"},
+    "power_dynamic": "Korean - 주도권 분석",
+    "body_memory": "Korean - 과거 경험과의 연결"
+  }
+- "QualityFlags": {
+    "convergence_warning": boolean,
+    "echo_warning": boolean,
+    "stagnation_warning": boolean
+  }
 - "RelevantContext": ["Quoted lore/rule directly applicable", ...]
 </output_schema>
 """
@@ -230,6 +253,64 @@ Return valid JSON with ALL these fields (Korean values where specified):
             return f"- **Mental (PC별)**: {' / '.join(parts)}"
         return f"- **Mental (PC Mental Health)**: {bus.mental.get('value', 100)}"
 
+    def _build_npc_context(self, anchors: dict) -> str:
+        """NPC 태도 + 지식 상태를 프롬프트에 포함"""
+        parts = []
+        attitudes = anchors.get("stored_npc_attitudes", {})
+        knowledge = anchors.get("stored_npc_knowledge", {})
+        if not attitudes and not knowledge:
+            return ""
+
+        parts.append("### 4b. NPC STATE (Previous Turn)")
+        for npc_name in set(list(attitudes.keys()) + list(knowledge.keys())):
+            npc_lines = [f"**{npc_name}**:"]
+            att = attitudes.get(npc_name, {})
+            if att:
+                npc_lines.append(f"  Attitude={att.get('attitude', 'neutral')} ({att.get('reason', '')})")
+            kn = knowledge.get(npc_name, {})
+            if kn and kn.get("knows"):
+                knows_str = "; ".join(kn["knows"][:5])
+                npc_lines.append(f"  Knows: [{knows_str}]")
+                if kn.get("secrets_held"):
+                    npc_lines.append(f"  Secrets: [{'; '.join(kn['secrets_held'][:3])}]")
+                npc_lines.append(f"  LeakRisk={kn.get('leak_risk', 'none')}")
+            parts.append("\n".join(npc_lines))
+
+        return "\n".join(parts)
+
+    def _build_session_memory_context(self, anchors: dict) -> str:
+        """세션 메모리(active_threads, arc, NPC schedules)를 프롬프트에 포함"""
+        mem = anchors.get("session_memory", {})
+        if not mem:
+            return ""
+
+        parts = []
+        arc = mem.get("current_arc")
+        if arc:
+            parts.append(f"- **Current Arc**: {arc}")
+
+        threads = mem.get("active_threads", [])
+        if threads:
+            parts.append(f"- **Active Threads**: {'; '.join(threads[:8])}")
+
+        npc_schedules = mem.get("npc_summaries", {})
+        if npc_schedules:
+            sched_items = [f"{k}: {v}" for k, v in list(npc_schedules.items())[:6]]
+            parts.append(f"- **NPC Activity**: {'; '.join(sched_items)}")
+
+        world_changes = mem.get("world_changes", [])
+        if world_changes:
+            parts.append(f"- **Recent World Changes**: {'; '.join(world_changes[-5:])}")
+
+        needs = mem.get("basic_needs_flags", {})
+        active_needs = [k for k, v in needs.items() if v]
+        if active_needs:
+            parts.append(f"- **PC Physical State**: {', '.join(active_needs)}")
+
+        if not parts:
+            return ""
+        return "### 4c. SESSION MEMORY (Accumulated)\n" + "\n".join(parts)
+
     def _build_prompt(self, context: GameContext) -> str:
         """분석 프롬프트 생성"""
         req = context.request
@@ -238,6 +319,8 @@ Return valid JSON with ALL these fields (Korean values where specified):
 
         pc_section = self._build_pc_section(anchors)
         mental_line = self._build_mental_line(anchors, bus)
+        npc_context = self._build_npc_context(anchors)
+        session_memory_context = self._build_session_memory_context(anchors)
 
         return f"""## ANALYSIS REQUEST
 
@@ -255,6 +338,10 @@ Return valid JSON with ALL these fields (Korean values where specified):
 - **Core Theme**: {req.lore_summary.get('theme', 'General TRPG')}
 - **Anomaly Seeds**: {', '.join(req.lore_summary.get('anomaly_seeds', [])) or 'None'}
 - **Major Locations**: {req.lore_summary.get('locations', 'Current surroundings')}
+
+{npc_context}
+
+{session_memory_context}
 
 ### 5. RECENT HISTORY
 {req.history_text or '[No history]'}

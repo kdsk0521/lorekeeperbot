@@ -377,39 +377,6 @@ async def check_narrative_consistency(
     return {"overall_consistency": "Unknown", "issues": []}
 
 
-async def extract_world_constraints(
-    client, 
-    model_id: str, 
-    lore_text: str
-) -> Dict[str, Any]:
-    """
-    로어에서 세계 규칙(제약 사항)을 추출합니다.
-    """
-    system_prompt = (
-        "You are a World Builder.\n"
-        "Extract structured world rules, constraints, and setting details from the text.\n\n"
-        
-        "Output Format (JSON):\n"
-        "{\n"
-        "  \"setting\": {\"era\": \"...\", \"location\": \"...\"},\n"
-        "  \"theme\": {\"genres\": [...], \"tone\": \"...\"},\n"
-        "  \"systems\": {\"magic\": \"...\", \"technology\": \"...\"},\n"
-        "  \"social\": {\"taboos\": [...], \"hierarchy\": \"...\"}\n"
-        "}"
-    )
-
-    try:
-        config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2)
-        contents = [types.Content(role="user", parts=[types.Part(text=f"{system_prompt}\n\n[Lore Text]\n{lore_text}")])]
-        
-        result = await api_call_with_retry(client, model_id, contents, config, operation_name="World Constraints")
-        if result:
-            return safe_parse_json(result)
-    except Exception as e:
-        logging.error(f"[World Constraints] Failed: {e}")
-        
-    return {}
-
 
 # =========================================================
 # OOC Memory Edit Functions

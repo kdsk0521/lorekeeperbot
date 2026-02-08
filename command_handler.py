@@ -206,6 +206,13 @@ async def cmd_lore(ctx: CommandContext) -> None:
             summary_text = f"테마: {lore_summary_data.get('theme', '')}\n이변 징후: {', '.join(lore_summary_data.get('anomaly_seeds', []))}\n공간: {lore_summary_data.get('locations', '')}"
             domain_manager.set_event_lore_summary(channel_id, summary_text)
             
+            # 5. Update World Constraints (로어 세계 규칙)
+            world_constraints = unified_res.get("world_constraints", {})
+            if world_constraints and isinstance(world_constraints, dict):
+                w = domain_manager.get_world_state(channel_id)
+                w["world_constraints"] = world_constraints
+                domain_manager.update_world_state(channel_id, w)
+
             # JSON format storage for V4 Deep Analysis
             d_data = domain_manager.get_domain(channel_id)
             d_data["lore_summary_data"] = lore_summary_data

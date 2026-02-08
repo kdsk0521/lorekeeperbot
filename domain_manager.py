@@ -371,6 +371,37 @@ def get_npc_attitude(channel_id: str, npc_name: str) -> Optional[Dict]:
     attitudes = get_npc_attitudes(channel_id)
     return attitudes.get(npc_name)
 
+# NPC Knowledge Persistence
+def update_npc_knowledge(channel_id: str, npc_name: str, knowledge_data: Dict[str, Any]) -> None:
+    """NPC의 지식 상태 업데이트 (Theoria 분석 결과 저장)"""
+    d = get_domain(channel_id)
+    if "npc_knowledge" not in d:
+        d["npc_knowledge"] = {}
+
+    existing = d["npc_knowledge"].get(npc_name, {})
+    # Merge: 기존 knows에 새 항목 추가 (중복 제거)
+    old_knows = set(existing.get("knows", []))
+    new_knows = knowledge_data.get("knows", [])
+    merged_knows = list(old_knows | set(new_knows))
+
+    d["npc_knowledge"][npc_name] = {
+        "knows": merged_knows[-20:],  # 최대 20개 유지
+        "secrets_held": knowledge_data.get("secrets_held", existing.get("secrets_held", [])),
+        "would_share": knowledge_data.get("would_share", existing.get("would_share", False)),
+        "leak_risk": knowledge_data.get("leak_risk", existing.get("leak_risk", "none")),
+        "last_updated": time.strftime('%Y-%m-%d %H:%M')
+    }
+    save_domain(channel_id, d)
+
+def get_npc_knowledge(channel_id: str) -> Dict[str, Dict]:
+    """저장된 전체 NPC 지식 상태 조회"""
+    d = get_domain(channel_id)
+    return d.get("npc_knowledge", {})
+
+def get_npc_knowledge_for(channel_id: str, npc_name: str) -> Optional[Dict]:
+    """특정 NPC의 지식 상태 조회"""
+    return get_npc_knowledge(channel_id).get(npc_name)
+
 # Rules & Genres
 def get_rules(channel_id: str) -> str:
     """룰 텍스트 조회 (캐시 우선)"""

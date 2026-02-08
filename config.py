@@ -33,7 +33,7 @@ ANALYSIS_TOP_P = 0.8
 # [Gemini 3] presence_penalty/frequency_penalty not supported - removed
 
 # Generation Parameters - Narrative (Pro/Right Brain)
-NARRATIVE_TEMPERATURE = 1.2
+NARRATIVE_TEMPERATURE = 1.05
 NARRATIVE_TOP_K = 40
 NARRATIVE_TOP_P = 0.95
 NARRATIVE_MAX_OUTPUT_TOKENS = 8192
@@ -224,7 +224,6 @@ DEFAULT_WORLD_STATE = {
     "current_location": "Unknown",
     "location_rules": {},
     "world_constraints": {},
-    "active_threads": [],
     "last_temporal_context": {}
 }
 

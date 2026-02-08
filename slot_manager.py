@@ -63,7 +63,7 @@ SLOT_DEFINITIONS: Dict[int, SlotDefinition] = {
     14: SlotDefinition(14, "PSYCHE_STATES", "reasoning", "Theoria: psyche_states (6-Axis)", is_static=False),
     15: SlotDefinition(15, "PSYCHE_RENDERING", "reasoning", "text_resources.PSYCHE_STATE_RENDERING"),
     16: SlotDefinition(16, "SCENE_INTELLIGENCE", "reasoning", "Theoria: Aspects + SensoryAnchors + HabitusAnalysis + narrative_hook", is_static=False),
-    17: SlotDefinition(17, "RESERVE", "reasoning", "Reserve Slot"),
+    17: SlotDefinition(17, "EXTENDED_INTELLIGENCE", "reasoning", "Theoria: NPCKnowledge + IntimacyAnalysis", is_static=False),
 
     # ===== RULES ZONE (18-25): Static Recency - 행동 규칙 강화 =====
     18: SlotDefinition(18, "PC_AUTONOMY", "rules", "text_resources.PC_AUTONOMY_DOCTRINE"),
@@ -73,7 +73,7 @@ SLOT_DEFINITIONS: Dict[int, SlotDefinition] = {
     22: SlotDefinition(22, "VISCERAL_CONTENT", "content", "text_resources.VISCERAL (conditional)", is_static=False),
     23: SlotDefinition(23, "MATURE_CONTENT", "content", "text_resources.MATURE (conditional)", is_static=False),
     24: SlotDefinition(24, "HYBRID_CONTENT", "content", "text_resources.HYBRID (conditional)", is_static=False),
-    25: SlotDefinition(25, "CRITICAL_STYLE", "rules", "text_resources.CRITICAL + ANTI_CLICHE + AUTHOR_PERSONA + PROSE_CRAFT"),
+    25: SlotDefinition(25, "STYLE", "rules", "text_resources.ANTI_CLICHE + AUTHOR_PERSONA + PROSE_CRAFT"),
 
     # ========== CACHE BOUNDARY ==========
     26: SlotDefinition(26, "CACHE_BOUNDARY", "boundary", "==========CACHE BOUNDARY==========", is_static=False),
@@ -199,24 +199,22 @@ class SlotPromptBuilder:
         situation_priority = getattr(text_resources, 'SITUATION_PRIORITY_PROTOCOL', '')
         self.set_slot(21, f"{action_res}\n\n{aspect_util}\n\n{situation_priority}")
 
-        # [25] Critical + Style (Static Recency! 캐시 구간 마지막)
-        critical = getattr(text_resources, 'CRITICAL_PROTOCOL', '')
+        # [25] Style (Static Recency! 캐시 구간 마지막)
         anti_cliche = getattr(text_resources, 'ANTI_CLICHE_PROTOCOL', '')
         author_persona = getattr(text_resources, 'AUTHOR_PERSONA_PROTOCOL', '')
         prose_craft = getattr(text_resources, 'PROSE_CRAFT_PROTOCOL', '')
-        self.set_slot(25, f"{critical}\n\n{anti_cliche}\n\n{author_persona}\n\n{prose_craft}")
+        self.set_slot(25, f"{anti_cliche}\n\n{author_persona}\n\n{prose_craft}")
 
         # ===== CACHE BOUNDARY =====
         self.set_slot(26, "\n==========CACHE BOUNDARY==========\n")
 
         # ===== DYNAMIC ZONE (34) - 정적 부분 =====
-        # [34] Telescope + Output + Language + Kernel + Emotion (최종 Recency)
+        # [34] Telescope + Output + Language + Kernel (최종 Recency)
         telescope = getattr(text_resources, 'TELESCOPE_PROTOCOL', '')
         output_protocol = getattr(text_resources, 'OUTPUT_PROTOCOL', '')
         language = getattr(text_resources, 'LANGUAGE_CORRECTION', '')
         kernel = getattr(text_resources, 'NARRATIVE_KERNEL', '')
-        emotion = getattr(text_resources, 'EMOTION_BOOSTER', '')
-        self.set_slot(34, f"{telescope}\n\n{output_protocol}\n\n{language}\n\n{kernel}\n\n{emotion}")
+        self.set_slot(34, f"{telescope}\n\n{output_protocol}\n\n{language}\n\n{kernel}")
 
         self._static_built = True
         logger.info("[SlotPromptBuilder] Static slots populated (Primacy/Recency optimized).")
@@ -235,6 +233,7 @@ class SlotPromptBuilder:
         input_analysis: str = "",
         psyche_states: str = "",
         scene_intelligence: str = "",
+        extended_intelligence: str = "",
         chapter_context: str = "",
         content_level: str = "normal",
         older_history: str = "",
@@ -284,6 +283,10 @@ class SlotPromptBuilder:
         # [16] Scene Intelligence (Aspects + SensoryAnchors + Habitus + Hook)
         if scene_intelligence:
             self.set_slot(16, f"<Scene_Intelligence>\n{scene_intelligence}\n</Scene_Intelligence>")
+
+        # [17] Extended Intelligence (NPC Knowledge + Intimacy Analysis)
+        if extended_intelligence:
+            self.set_slot(17, f"<Extended_Intelligence>\n{extended_intelligence}\n</Extended_Intelligence>")
 
         # ===== RULES ZONE (22-24) =====
         # [22-24] Content Level
@@ -351,16 +354,11 @@ class SlotPromptBuilder:
                 slot_def = SLOT_DEFINITIONS.get(i)
                 slot_name = slot_def.name if slot_def else f"SLOT_{i}"
 
-                # 캐시 바운더리는 특별 처리
-                if i == 26:
-                    parts.append(content)
-                else:
-                    # XML 래핑 (디버깅 및 추적 용이)
-                    parts.append(f"<!-- SLOT_{i}: {slot_name} -->\n{content}")
+                parts.append(content)
 
         # [레거시 재사용] 응답 길이 지시문 추가
         length_instruction = legacy_builder.build_length_instruction()
-        parts.append(f"<!-- SLOT_EXTRA: LENGTH_INSTRUCTION -->\n{length_instruction}")
+        parts.append(length_instruction)
 
         return "\n\n".join(parts)
 
@@ -370,9 +368,7 @@ class SlotPromptBuilder:
         for i in range(1, 26):
             content = self.slots.get(i)
             if content:
-                slot_def = SLOT_DEFINITIONS.get(i)
-                slot_name = slot_def.name if slot_def else f"SLOT_{i}"
-                parts.append(f"<!-- SLOT_{i}: {slot_name} -->\n{content}")
+                parts.append(content)
         return "\n\n".join(parts)
 
     def build_dynamic_only(self) -> str:
@@ -381,12 +377,7 @@ class SlotPromptBuilder:
         for i in range(26, 35):
             content = self.slots.get(i)
             if content:
-                slot_def = SLOT_DEFINITIONS.get(i)
-                slot_name = slot_def.name if slot_def else f"SLOT_{i}"
-                if i == 26:
-                    parts.append(content)
-                else:
-                    parts.append(f"<!-- SLOT_{i}: {slot_name} -->\n{content}")
+                parts.append(content)
         return "\n\n".join(parts)
 
 
@@ -520,8 +511,13 @@ def build_34_step_prompt(ctx) -> str:
 
     input_analysis = "\n".join(input_analysis_parts)
 
-    # --- [Slot 16] Scene Intelligence (Aspects + SensoryAnchors + Habitus + Hook) ---
+    # --- [Slot 16] Scene Intelligence (Aspects + Energy + SensoryAnchors + Habitus + Hook + Flags) ---
     scene_intel_parts = []
+
+    # EnergyDirection: 씬 에너지 방향
+    energy_dir = dai.get("energy_direction", "")
+    if energy_dir:
+        scene_intel_parts.append(f"### Energy Direction: {energy_dir.upper()}")
 
     # Aspects: 활용 가능한 장면 요소
     aspects = dai.get("aspects", [])
@@ -550,7 +546,74 @@ def build_34_step_prompt(ctx) -> str:
     if hook:
         scene_intel_parts.append(f"### Narrative Hook\n{hook}")
 
+    # QualityFlags: 서사 품질 경고
+    qflags = dai.get("quality_flags", {})
+    if qflags and isinstance(qflags, dict):
+        warnings = []
+        if qflags.get("convergence_warning"):
+            warnings.append("⚠ CONVERGENCE: Both parties exiting comfortable without earning it")
+        if qflags.get("echo_warning"):
+            warnings.append("⚠ ECHO: NPC mirroring PC emotion instead of own response")
+        if qflags.get("stagnation_warning"):
+            warnings.append("⚠ STAGNATION: Intensity flat — break the pattern")
+        if warnings:
+            scene_intel_parts.append("### Quality Alerts\n" + "\n".join(warnings))
+
     scene_intelligence = "\n\n".join(scene_intel_parts)
+
+    # --- [Slot 17] Extended Intelligence (NPC Knowledge + Intimacy Analysis) ---
+    extended_intel_parts = []
+
+    # NPCAttitudes: NPC 태도 추적 (기존 스키마 필드, 미주입이었음)
+    npc_attitudes = dai.get("NPCAttitudes", dai.get("npc_attitudes", {}))
+    if npc_attitudes and isinstance(npc_attitudes, dict):
+        att_lines = []
+        for npc_name, att in npc_attitudes.items():
+            if isinstance(att, dict):
+                attitude = att.get("attitude", "neutral")
+                trajectory = att.get("trajectory", "stable")
+                reason = att.get("reason", "")
+                att_lines.append(f"- {npc_name}: {attitude} ({trajectory}) — {reason}")
+        if att_lines:
+            extended_intel_parts.append("### NPC Attitudes\n" + "\n".join(att_lines))
+
+    # NPCKnowledge: NPC별 지식 상태
+    npc_knowledge = dai.get("NPCKnowledge", dai.get("npc_knowledge", {}))
+    if npc_knowledge and isinstance(npc_knowledge, dict):
+        know_lines = []
+        for npc_name, info in npc_knowledge.items():
+            if isinstance(info, dict):
+                knows = info.get("knows", [])
+                secrets = info.get("secrets_held", [])
+                leak = info.get("leak_risk", "none")
+                parts_k = [f"  knows: {', '.join(knows)}"] if knows else []
+                parts_k += [f"  secrets: {', '.join(secrets)}"] if secrets else []
+                parts_k += [f"  leak_risk: {leak}"] if leak != "none" else []
+                if parts_k:
+                    know_lines.append(f"- **{npc_name}**\n" + "\n".join(parts_k))
+        if know_lines:
+            extended_intel_parts.append("### NPC Knowledge States\n" + "\n".join(know_lines))
+
+    # IntimacyAnalysis: intimate 씬 전용 심리 분석
+    intimacy = dai.get("IntimacyAnalysis", dai.get("intimacy_analysis"))
+    if intimacy and isinstance(intimacy, dict):
+        intim_lines = []
+        vuln = intimacy.get("vulnerability", {})
+        if vuln:
+            intim_lines.append("Vulnerability: " + ", ".join(f"{k}={v}" for k, v in vuln.items()))
+        desire = intimacy.get("desire_type", {})
+        if desire:
+            intim_lines.append("Desire: " + ", ".join(f"{k}={v}" for k, v in desire.items()))
+        power = intimacy.get("power_dynamic", "")
+        if power:
+            intim_lines.append(f"Power: {power}")
+        body_mem = intimacy.get("body_memory", "")
+        if body_mem:
+            intim_lines.append(f"Body Memory: {body_mem}")
+        if intim_lines:
+            extended_intel_parts.append("### Intimacy Analysis\n" + "\n".join(intim_lines))
+
+    extended_intelligence = "\n\n".join(extended_intel_parts)
 
     # --- [Slot 14] Psyche States (6-Axis, Structured) ---
     psyche_states = ""
@@ -692,6 +755,7 @@ def build_34_step_prompt(ctx) -> str:
         input_analysis=input_analysis,
         psyche_states=psyche_states,
         scene_intelligence=scene_intelligence,
+        extended_intelligence=extended_intelligence,
         chapter_context=getattr(ctx, 'obj_ctx', ''),
         content_level=getattr(ctx, 'scene_type', 'normal'),
         older_history=older_history,

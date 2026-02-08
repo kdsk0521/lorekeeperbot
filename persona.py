@@ -187,6 +187,10 @@ Recording in Korean.
 </Initialization>
 """
     
+    # 조교 패턴 (Training Dialogue) - 지시이행력 강화
+    training_user = getattr(text_resources, 'TRAINING_USER_PROMPT', '')
+    training_model = getattr(text_resources, 'TRAINING_MODEL_RESPONSE', '')
+
     initial_history = [
         types.Content(
             role="user",
@@ -197,6 +201,19 @@ Recording in Korean.
             parts=[types.Part(text="[SYSTEM] Standing by. Awaiting observable events.")]
         )
     ]
+
+    # 조교 턴 삽입 (시스템 프롬프트 확인 후 자기확인)
+    if training_user and training_model:
+        initial_history.extend([
+            types.Content(
+                role="user",
+                parts=[types.Part(text=training_user)]
+            ),
+            types.Content(
+                role="model",
+                parts=[types.Part(text=training_model)]
+            )
+        ])
     
     gen_config = types.GenerateContentConfig(
         temperature=config.NARRATIVE_TEMPERATURE,

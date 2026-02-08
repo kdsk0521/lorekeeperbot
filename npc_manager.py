@@ -14,7 +14,6 @@ domain_manager.py는 저장소 역할만 담당.
 import time
 import random
 import logging
-import text_resources  # [NEW] Import text resources
 from typing import Dict, Any, Optional, List
 import difflib
 import domain_manager
@@ -128,8 +127,8 @@ def add_lore_npcs(channel_id: str, npc_list: List[Dict[str, Any]]) -> int:
             "registered_at": time.strftime('%Y-%m-%d %H:%M'),
         }
 
-        # 추가 필드 복사 (role, personality 등)
-        for key in ["role", "personality", "appearance", "location", "gender", "race"]:
+        # 추가 필드 복사 (role, personality, schedule 등)
+        for key in ["role", "personality", "appearance", "location", "gender", "race", "schedule"]:
             if key in npc:
                 data[key] = npc[key]
 
@@ -378,41 +377,6 @@ def update_npc_attitude(channel_id: str, npc_name: str, attitude: str, reason: s
     """NPC의 PC에 대한 태도 업데이트"""
     domain_manager.update_npc_attitude(channel_id, npc_name, attitude, reason)
 
-def sync_attitude_with_helena(channel_id: str, npc_name: str) -> Optional[str]:
-    """
-    [Phase 2] Helena Metrics (Depth, Tension) to Attitude Sync.
-    Updates the text-based attitude and returns a message if changed.
-    """
-    att_info = get_npc_attitude(channel_id, npc_name)
-    if not att_info: return None
-    
-    depth = att_info.get("depth", 0)
-    tension = att_info.get("tension", 0)
-    current_att = att_info.get("attitude", "neutral")
-    
-    # Simple Threshold Logic (Can be refined)
-    new_att = "neutral"
-    
-    if tension >= 80: 
-        new_att = "hostile"
-    elif tension >= 50: 
-        new_att = "unfriendly"
-    elif depth >= 80 and tension < 30: 
-        new_att = "loyal"
-    elif depth >= 40 and tension < 40: 
-        new_att = "friendly"
-    else:
-        new_att = "neutral"
-    
-    if new_att != current_att:
-        # Update without changing reason drastically, just appending sync note?
-        # Or keep original reason but update tag?
-        # Let's append Sync note for clarity.
-        update_npc_attitude(channel_id, npc_name, new_att, att_info.get("reason", "") + " [Helena]")
-        return f"🎭 **{npc_name}의 태도 변화:** {current_att} → {new_att} (심도:{depth}, 긴장:{tension})"
-        
-    return None
-
 def get_npc_attitudes(channel_id: str) -> Dict[str, Dict]:
     """저장된 NPC 태도 조회"""
     return domain_manager.get_npc_attitudes(channel_id)
@@ -505,16 +469,26 @@ def get_attitude_for_prompt(channel_id: str) -> str:
 
 def get_npc_time_progression(channel_id: str) -> List[str]:
     """
-    시간 경과에 따른 NPC 상태 변화 힌트 생성
+    시간 경과에 따른 NPC 상태 변화 힌트 생성 (3-Tier Hybrid)
+
+    Priority:
+      P1: ai_session_memory.npc_summaries — AI가 세션 중 관찰/추론한 활동
+      P2: NPC data의 schedule[time_slot] — 로어북/수동 등록 시 프리셋 루틴
+      P3: 시간대별 일반 활동 랜덤 폴백
     """
     npcs = get_npcs(channel_id)
+    if not npcs:
+        return []
+
     world = domain_manager.get_world_state(channel_id)
     time_slot = world.get("time_slot", "오후")
-    
-    hints = []
-    
-    # 시간대별 일반적 NPC 활동
-    time_activities = {
+
+    # P1: AI-observed activity from session memory
+    ai_mem = domain_manager.get_session_ai_memory(channel_id)
+    npc_summaries = ai_mem.get("npc_summaries", {})
+
+    # P3 fallback: 시간대별 일반 활동
+    _generic_activities = {
         "새벽": ["잠들어 있다", "이른 기상 준비", "야간 근무 마무리", "깊은 잠에 빠져 있다"],
         "오전": ["아침 식사", "일과 시작", "청소/정리", "분주하게 움직임"],
         "오후": ["업무 중", "점심 후 활동", "외출", "나른하게 휴식"],
@@ -522,13 +496,28 @@ def get_npc_time_progression(channel_id: str) -> List[str]:
         "저녁": ["저녁 식사", "여가 활동", "TV 시청", "술자리"],
         "심야": ["잠자리 준비", "야식", "늦은 작업", "비밀스러운 만남"]
     }
-    
-    activities = time_activities.get(time_slot, ["활동 중"])
-    
+    fallback_pool = _generic_activities.get(time_slot, ["활동 중"])
+
+    hints = []
     for npc_name, npc_data in npcs.items():
-        activity = random.choice(activities)
-        hints.append(f"{npc_name}: {activity}")
-    
+        # P1: session memory에 AI가 기록한 최근 활동/상태
+        summary = npc_summaries.get(npc_name, {})
+        if isinstance(summary, str) and summary:
+            hints.append(f"{npc_name}: {summary}")
+            continue
+        if isinstance(summary, dict) and summary.get("activity"):
+            hints.append(f"{npc_name}: {summary['activity']}")
+            continue
+
+        # P2: 프리셋 스케줄 (lore/manual NPC에 schedule 필드가 있을 때)
+        schedule = npc_data.get("schedule", {})
+        if isinstance(schedule, dict) and time_slot in schedule:
+            hints.append(f"{npc_name}: {schedule[time_slot]}")
+            continue
+
+        # P3: 일반 랜덤 폴백
+        hints.append(f"{npc_name}: {random.choice(fallback_pool)}")
+
     return hints
 
 def clear_session_npcs(channel_id: str) -> int:
