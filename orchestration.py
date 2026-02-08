@@ -194,15 +194,14 @@ class OrchestrationService:
         notifications = []
 
         try:
-            # 1. Notebook Update
+            # 1. Notebook Update (per-user)
             notebook_delta = extraction_data.get("notebook")
             if notebook_delta and notebook_delta != "null":
-                current_nb = game_system.get_notebook_text(channel_id) or ""
-                # 기존 노트북에 변경사항 추가
+                current_nb = game_system.get_notebook_text(channel_id, ctx.user_id) or ""
                 from datetime import datetime
                 timestamp = datetime.now().strftime("%m/%d %H:%M")
                 updated_nb = f"{current_nb}\n[{timestamp}] {notebook_delta}".strip()
-                game_system.update_notebook_text(channel_id, updated_nb)
+                game_system.update_notebook_text(channel_id, updated_nb, ctx.user_id)
                 notifications.append("📔 노트북 기록됨")
                 logger.info(f"[InlineExtract] Notebook: {notebook_delta}")
 
@@ -327,7 +326,7 @@ class OrchestrationService:
                     if phys_res:
                         nb_upd = phys_res.get("notebook_update")
                         if nb_upd and nb_upd != ctx.notebook_txt:
-                            game_system.update_notebook_text(channel_id, nb_upd)
+                            game_system.update_notebook_text(channel_id, nb_upd, ctx.user_id)
                             await message.channel.send("📔 노트북 기록됨")
                 except Exception as e:
                     logger.error(f"Immediate physical update error: {e}")
@@ -652,6 +651,156 @@ class OrchestrationService:
     def get_last_context(self, channel_id: str) -> Optional[Dict[str, Any]]:
         """채널의 마지막 컨텍스트 반환 (디버깅용)"""
         return domain_manager.get_last_execution_context(channel_id)
+
+    # =========================================================
+    # BATCH / OBSERVATION (!진행/!턴 — 다인 동시 행동 + 관찰 모드)
+    # =========================================================
+    async def execute_batch(
+        self,
+        message: discord.Message,
+        channel_id: str,
+        pending_actions: Dict[str, Dict],
+        feedback_msg: Optional[discord.Message] = None
+    ) -> None:
+        """다인 동시 행동 처리 → 통합 AI 서사 생성"""
+        try:
+            async with message.channel.typing():
+                # 1. UNE 배치 실행
+                result = await self.une.run_batch(channel_id, pending_actions)
+                directive = result["directive"]
+                system_log = result["system_message"]
+                updated_context = result["game_context"]
+
+                # 2. 시스템 메시지 출력 (판정/이변/멘탈 결과)
+                if system_log:
+                    await message.channel.send(system_log)
+
+                # 3. 통합 action_text (모든 PC 행동 결합)
+                action_parts = []
+                for uid, info in pending_actions.items():
+                    action_parts.append(f"[{info['mask']}]: {' / '.join(info['actions'])}")
+                combined_action = "\n".join(action_parts)
+
+                # 4. ResponseContext 구성
+                d_data = domain_manager.get_domain(channel_id)
+                first_uid = next(iter(pending_actions))
+                p_data = d_data.get("participants", {}).get(first_uid, {})
+
+                ctx = ResponseContext(
+                    channel_id=channel_id,
+                    user_id=first_uid,
+                    user_mask=p_data.get("mask", "Unknown"),
+                    action_text=combined_action,
+                    domain_data=d_data,
+                    player_data=p_data
+                )
+
+                # 5. Context 보강 + DAI 주입
+                ctx = await self.gather_context(ctx)
+                if updated_context:
+                    ctx.dai = updated_context.shared_bus.dai
+                    scene_type = ctx.dai.get("scene_type")
+                    if scene_type:
+                        ctx.scene_type = scene_type
+                ctx.judgment_context = directive
+
+                # 6. 프롬프트 빌드 + AI 응답 생성
+                full_prompt, _ = self.build_prompt(ctx)
+                response, _ = await self.generate_response(ctx, full_prompt)
+
+                if feedback_msg:
+                    try: await feedback_msg.delete()
+                    except Exception: pass
+
+                if response:
+                    await bot_utils.send_long_message(message.channel, response)
+                    # 히스토리: PC 행동은 이미 waiting 모드에서 저장됨, Model 응답만 추가
+                    domain_manager.append_history(channel_id, "Model", response)
+
+                    # Background Extraction (첫 PC 기준)
+                    await self.schedule_background_extraction(ctx, response, message)
+
+        except Exception as e:
+            if feedback_msg:
+                try: await feedback_msg.delete()
+                except Exception: pass
+            import traceback
+            error_tb = traceback.format_exc()
+            logger.error(f"Batch Process Error: {e}\n{error_tb}")
+            await message.channel.send(f"⚠️ **배치 처리 오류:** {e}\n```python\n{error_tb[-500:]}\n```")
+
+    async def execute_observation(
+        self,
+        message: discord.Message,
+        channel_id: str,
+        feedback_msg: Optional[discord.Message] = None
+    ) -> None:
+        """관찰 모드 → 세계 묘사 AI 서사 생성"""
+        try:
+            async with message.channel.typing():
+                # 1. UNE 관찰 실행
+                result = await self.une.run_observation(channel_id)
+                directive = result["directive"]
+                system_log = result["system_message"]
+                updated_context = result["game_context"]
+
+                if system_log:
+                    await message.channel.send(system_log)
+
+                if not updated_context:
+                    if feedback_msg:
+                        try: await feedback_msg.delete()
+                        except Exception: pass
+                    await message.channel.send("⚠️ 활성 캐릭터가 없습니다.")
+                    return
+
+                # 2. ResponseContext 구성
+                d_data = domain_manager.get_domain(channel_id)
+                participants = d_data.get("participants", {})
+                base_uid = None
+                for uid, p in participants.items():
+                    if p.get("status") == "active":
+                        base_uid = uid
+                        break
+
+                p_data = participants.get(base_uid, {}) if base_uid else {}
+                ctx = ResponseContext(
+                    channel_id=channel_id,
+                    user_id=base_uid or "",
+                    user_mask=p_data.get("mask", "관찰자"),
+                    action_text="[관찰 — 주변을 지켜본다]",
+                    domain_data=d_data,
+                    player_data=p_data
+                )
+
+                ctx = await self.gather_context(ctx)
+                if updated_context:
+                    ctx.dai = updated_context.shared_bus.dai
+                ctx.judgment_context = directive
+
+                # 3. AI 응답 생성
+                full_prompt, _ = self.build_prompt(ctx)
+                response, _ = await self.generate_response(ctx, full_prompt)
+
+                if feedback_msg:
+                    try: await feedback_msg.delete()
+                    except Exception: pass
+
+                if response:
+                    await bot_utils.send_long_message(message.channel, response)
+                    domain_manager.append_history(channel_id, "관찰", "[관찰 모드]")
+                    domain_manager.append_history(channel_id, "Model", response)
+
+                    await self.schedule_background_extraction(ctx, response, message)
+
+        except Exception as e:
+            if feedback_msg:
+                try: await feedback_msg.delete()
+                except Exception: pass
+            import traceback
+            error_tb = traceback.format_exc()
+            logger.error(f"Observation Process Error: {e}\n{error_tb}")
+            await message.channel.send(f"⚠️ **관찰 처리 오류:** {e}\n```python\n{error_tb[-500:]}\n```")
 
 
 # =========================================================

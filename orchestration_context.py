@@ -185,8 +185,8 @@ async def gather_context(ctx: ResponseContext) -> ResponseContext:
     ctx.lore_txt = domain_manager.get_lore_with_npcs(channel_id)
     ctx.rule_txt = domain_manager.get_rules(channel_id)
     ctx.world_ctx = game_system.get_world_context(channel_id)
-    ctx.obj_ctx = game_system.get_objective_context(channel_id)
-    ctx.notebook_txt = game_system.get_notebook_text(channel_id)
+    ctx.obj_ctx = game_system.get_objective_context(channel_id, ctx.user_id)
+    ctx.notebook_txt = game_system.get_notebook_text(channel_id, ctx.user_id)
 
     # 플레이어 패시브
     ctx.passives_txt = game_character.get_passives_for_context(ctx.player_data)

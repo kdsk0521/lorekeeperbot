@@ -248,9 +248,12 @@ class SlotPromptBuilder:
         """동적 슬롯들을 주입합니다. 레거시 함수들을 재사용."""
 
         # ===== WORLD ZONE (6-9) =====
-        # [6] PC Data
+        # [6] PC Data (솔로: Player_Character, 다인: Player_Characters)
         if player_data:
-            self.set_slot(6, f"<Player_Character>\n{player_data}\n</Player_Character>")
+            if "\n---\n" in player_data:
+                self.set_slot(6, f"<Player_Characters>\n{player_data}\n</Player_Characters>")
+            else:
+                self.set_slot(6, f"<Player_Character>\n{player_data}\n</Player_Character>")
 
         # [7] NPC Roles
         if npc_roles:
@@ -419,15 +422,29 @@ def build_34_step_prompt(ctx) -> str:
 
     dai = getattr(ctx, 'dai', None) or {}
 
-    # --- [Slot 6] PC Data (Rich Player Info) ---
+    # --- [Slot 6] PC Data (Rich Player Info — 다인 플레이 지원) ---
     player_info = ""
     channel_id = getattr(ctx, 'channel_id', '')
     user_id = getattr(ctx, 'user_id', '')
     if channel_id and user_id:
         try:
-            rich_player_info = domain_manager.get_unified_player_info(channel_id, user_id)
-            if rich_player_info:
-                player_info = rich_player_info
+            all_participants = domain_manager.get_domain(channel_id).get("participants", {})
+            active_pcs = {uid: p for uid, p in all_participants.items() if p.get("status") == "active"}
+
+            if len(active_pcs) > 1:
+                # 다인 플레이: 모든 PC 표시
+                pc_sections = []
+                for uid, p in active_pcs.items():
+                    info = domain_manager.get_unified_player_info(channel_id, uid)
+                    marker = " ★행동자" if uid == user_id else ""
+                    mask = p.get("mask", "Unknown")
+                    pc_sections.append(f"### {mask}{marker}\n{info}")
+                player_info = "\n---\n".join(pc_sections)
+            else:
+                # 솔로 플레이: 기존 방식
+                rich_player_info = domain_manager.get_unified_player_info(channel_id, user_id)
+                if rich_player_info:
+                    player_info = rich_player_info
         except Exception as e:
             logger.warning(f"Failed to get rich player info: {e}")
 

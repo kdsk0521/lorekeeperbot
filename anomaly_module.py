@@ -13,27 +13,33 @@ class AnomalyModule:
 
     async def process(self, context: GameContext) -> GameContext:
         bus = context.shared_bus
-        if not bus.anomaly.get("potential"):
-            return context
-
-        # [Rule] Trigger Anomaly based on Doom probability
         import random
         import math
-        doom_val = bus.doom.get("value", 0)
-        
-        # Probability:
-        if "doom" in context.request.active_modules:
-            trigger_chance = 25 + (doom_val / 2)
-        else:
-            trigger_chance = 30
-        
-        roll = random.randint(1, 100)
-        if roll > trigger_chance:
-            return context
 
+        # 배치 모드: skip_trigger가 설정되면 트리거 롤 스킵, 방어/적응만 수행
+        if bus.anomaly.get("skip_trigger"):
+            if not bus.anomaly.get("potential"):
+                return context
+            bus.anomaly["triggered"] = True
+            roll = 50  # 중립 롤 (영감/쇼크 특수 효과 비활성)
+        else:
+            if not bus.anomaly.get("potential"):
+                return context
+
+            # [Rule] Trigger Anomaly based on Doom probability
+            doom_val = bus.doom.get("value", 0)
+            if "doom" in context.request.active_modules:
+                trigger_chance = 25 + (doom_val / 2)
+            else:
+                trigger_chance = 30
+
+            roll = random.randint(1, 100)
+            if roll > trigger_chance:
+                return context
+
+            bus.anomaly["triggered"] = True
 
         # 1. Generate Anomaly Info
-        bus.anomaly["triggered"] = True
         tag = bus.anomaly.get("tag") or "기이한 현상"
         intensity = bus.anomaly.get("intensity", "Mid")
         category = bus.anomaly.get("category") or tag

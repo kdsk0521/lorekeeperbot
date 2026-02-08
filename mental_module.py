@@ -79,14 +79,23 @@ class MentalModule:
         bus.mental["active"] = True
         bus.mental["last_delta"] = delta
         
+        # Resolve acting PC mask
+        anchors = context.narrative_anchors or {}
+        acting_uid = anchors.get("acting_user_id", "")
+        all_pcs = anchors.get("all_pcs", {})
+        if acting_uid and acting_uid in all_pcs:
+            mask = all_pcs[acting_uid].get("mask", "PC")
+        else:
+            mask = "PC"
+
         # Compact log format
         log_parts = []
-        
-        # Base change
+
+        # Base change with mask and current value
         if actual_delta < 0:
-            log_parts.append(f"🧠 정신력 {actual_delta}")
+            log_parts.append(f"{mask}: 🧠 정신력 {actual_delta} → {target_mental}/100")
         else:
-            log_parts.append(f"🧠 정신력 +{actual_delta}")
+            log_parts.append(f"{mask}: 🧠 정신력 +{actual_delta} → {target_mental}/100")
         
         # Modifiers with emphasis
         if clamped:

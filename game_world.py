@@ -87,6 +87,16 @@ def advance_time(channel_id: str) -> str:
     domain_manager.update_world_state(channel_id, world)
     return msg
 
+def advance_tick(channel_id: str, ticks: int = 1) -> str:
+    """1틱(5-10분) 단위 시간 경과. 시간 슬롯은 변경하지 않음."""
+    world = domain_manager.get_world_state(channel_id)
+    current_ticks = world.get("ticks_in_slot", 0)
+    world["ticks_in_slot"] = current_ticks + ticks
+
+    minutes = ticks * random.randint(5, 10)
+    domain_manager.update_world_state(channel_id, world)
+    return f"⏳ {minutes}분이 흘렀다..."
+
 # =========================================================
 # DOOM SYSTEM
 # =========================================================

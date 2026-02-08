@@ -130,8 +130,18 @@ class JudgmentEngine:
         if mod_details:
             mod_details = f", {mod_details}"
         
+        # Resolve acting PC mask
+        anchors = context.narrative_anchors or {}
+        acting_uid = anchors.get("acting_user_id", "")
+        all_pcs = anchors.get("all_pcs", {})
+        if acting_uid and acting_uid in all_pcs:
+            mask = all_pcs[acting_uid].get("mask", "PC")
+        else:
+            mask = "PC"
+        bus.judgment["mask"] = mask
+
         output = [
-            f"🎲 **[판정: {action}]**",
+            f"🎲 **[{mask}의 판정: {action}]**",
             f"난이도: **{diff_name}** (DC {dc})",
             f"이유: *{bus.judgment['reason']}*",
             f"주사위: **{roll}** {mod_details} = **{final_roll}**",
@@ -142,6 +152,8 @@ class JudgmentEngine:
         hook = bus.judgment.get("narrative_hook")
         if hook and result in ["partial", "failure", "critical_failure"]:
             output.append(f"\n⚠️ **잠재적 위기 (Narrative Hook)**: {hook}")
+            if result == "critical_failure":
+                bus.judgment["party_wide_hook"] = True
             
         bus.judgment["output"] = "\n".join(output)
         

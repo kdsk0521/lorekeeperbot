@@ -100,68 +100,62 @@ def complete_quest(channel_id: str, content: str) -> str:
 def remove_quest(channel_id: str, content: str) -> str:
     return _del_op(channel_id, "active", content, "🗑️", "퀘스트")
 
-# Memo Operations (Integrated into Notebook)
-def add_memo(channel_id: str, content: str) -> str:
-    current_nb = get_notebook_text(channel_id)
-    # Check if duplicate line exists to avoid clutter
+# Memo Operations (Integrated into Notebook, per-user in V8)
+def add_memo(channel_id: str, content: str, user_id: str = "") -> str:
+    current_nb = get_notebook_text(channel_id, user_id)
     if f"- {content}" in current_nb:
         return f"⚠️ 이미 노트북에 있는 내용입니다: {content}"
-        
-    # Append to [메모] section if possible, else append to end
+
     new_nb = ""
     if "— [메모] —" in current_nb:
         parts = current_nb.split("— [메모] —")
-        # Ensure we append to the second part (the memo section)
         new_nb = parts[0] + "— [메모] —" + parts[1] + f"\n- {content}"
     else:
         new_nb = current_nb + f"\n\n— [메모] —\n- {content}"
-        
-    update_notebook_text(channel_id, new_nb)
+
+    update_notebook_text(channel_id, new_nb, user_id)
     return f"📝 **노트북 기록:** {content}"
 
-def remove_memo(channel_id: str, content: str) -> str:
-    current_nb = get_notebook_text(channel_id)
+def remove_memo(channel_id: str, content: str, user_id: str = "") -> str:
+    current_nb = get_notebook_text(channel_id, user_id)
     lines = current_nb.splitlines()
     new_lines = []
     removed = False
-    
+
     for line in lines:
         if content in line and line.strip().startswith("-"):
             removed = True
-            continue # Skip this line
+            continue
         new_lines.append(line)
-        
+
     if removed:
-        update_notebook_text(channel_id, "\n".join(new_lines))
+        update_notebook_text(channel_id, "\n".join(new_lines), user_id)
         return f"🗑️ **노트북 삭제:** {content}"
     return f"⚠️ '{content}' 내용을 찾을 수 없습니다."
 
-def edit_memo(channel_id: str, old_content: str, new_content: str) -> str:
-    current_nb = get_notebook_text(channel_id)
+def edit_memo(channel_id: str, old_content: str, new_content: str, user_id: str = "") -> str:
+    current_nb = get_notebook_text(channel_id, user_id)
     lines = current_nb.splitlines()
     new_lines = []
     edited = False
-    
+
     for line in lines:
         if old_content in line:
-            # Replace logic: If line was a bullet item, keep bullet
             if line.strip().startswith("-"):
                  new_lines.append(f"- {new_content}")
             else:
-                 # Just replace the text part if it wasn't a bullet (unlikely for memos but possible for free text)
                  new_lines.append(line.replace(old_content, new_content))
             edited = True
         else:
             new_lines.append(line)
-            
+
     if edited:
-         update_notebook_text(channel_id, "\n".join(new_lines))
+         update_notebook_text(channel_id, "\n".join(new_lines), user_id)
          return f"📝 **노트북 수정:** {old_content} -> {new_content}"
     return f"⚠️ '{old_content}' 내용을 찾을 수 없습니다."
 
-def resolve_memo_auto(channel_id: str, content: str) -> str:
-    # Just remove for now, archiving text is complex
-    return remove_memo(channel_id, content) + " (자동 해결)"
+def resolve_memo_auto(channel_id: str, content: str, user_id: str = "") -> str:
+    return remove_memo(channel_id, content, user_id) + " (자동 해결)"
 
 # Alias for V6
 def expose_to_abnormal(user_data: Dict[str, Any], trigger: str, category: str = None) -> Tuple[Dict[str, Any], str]:
@@ -169,12 +163,12 @@ def expose_to_abnormal(user_data: Dict[str, Any], trigger: str, category: str = 
     return check_adaptation_roll(user_data, trigger, category=category, difficulty=30)
 
 
-# Notebook System (New in V5.1)
-def get_notebook_text(channel_id: str) -> str:
-    return domain_manager.get_notebook(channel_id)
+# Notebook System (New in V5.1, per-user in V8)
+def get_notebook_text(channel_id: str, user_id: str = "") -> str:
+    return domain_manager.get_notebook(channel_id, user_id)
 
-def update_notebook_text(channel_id: str, new_text: str) -> None:
-    domain_manager.update_notebook(channel_id, new_text)
+def update_notebook_text(channel_id: str, new_text: str, user_id: str = "") -> None:
+    domain_manager.update_notebook(channel_id, new_text, user_id)
 
 def get_active_quests(channel_id: str) -> List[str]:
     return _get_board(channel_id).get("active", [])
@@ -186,15 +180,15 @@ def get_active_quests_text(channel_id: str) -> str:
     if not active: return "📭 현재 진행 중인 퀘스트가 없습니다."
     return "🔥 **진행 중인 퀘스트:**\n" + "\n".join([f"{i+1}. {q}" for i, q in enumerate(active)])
 
-def get_status_message(channel_id: str) -> str:
+def get_status_message(channel_id: str, user_id: str = "") -> str:
     quests = get_active_quests_text(channel_id)
-    notebook = get_notebook_text(channel_id)
+    notebook = get_notebook_text(channel_id, user_id)
     return f"{quests}\n\n{notebook}"
 
-def get_objective_context(channel_id: str) -> str:
+def get_objective_context(channel_id: str, user_id: str = "") -> str:
     """AI를 위한 가독성 중심의 세계 상태 정보 (퀘스트 + 노트북)"""
     active = get_active_quests(channel_id)
-    notebook = get_notebook_text(channel_id)
+    notebook = get_notebook_text(channel_id, user_id)
     
     txt = "### [진행 목표 (QUESTS)]\n"
     if active:

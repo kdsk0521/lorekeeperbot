@@ -183,12 +183,62 @@ Return valid JSON with ALL these fields (Korean values where specified):
 </output_schema>
 """
 
+    def _build_pc_section(self, anchors: dict) -> str:
+        """PC 정보 섹션 빌드 (솔로/다인 자동 분기)"""
+        all_pcs = anchors.get("all_pcs", {})
+        acting_uid = anchors.get("acting_user_id", "")
+
+        # 다인 플레이 (2명 이상)
+        if len(all_pcs) > 1:
+            acting_mask = "Unknown"
+            for uid, pc in all_pcs.items():
+                if uid == acting_uid:
+                    acting_mask = pc.get("mask", "Unknown")
+                    break
+
+            lines = [f"### 3. PLAYER CHARACTERS (행동자: {acting_mask})"]
+            for uid, pc in all_pcs.items():
+                mask = pc.get("mask", "Unknown")
+                marker = " (행동자)" if uid == acting_uid else ""
+                lines.append(f"\n**[{mask}]{marker}**")
+                lines.append(f"- Appearance: {pc.get('appearance', 'N/A')}")
+                lines.append(f"- Personality: {pc.get('personality', 'N/A')}")
+                lines.append(f"- Passives: {pc.get('passives', [])}")
+                lines.append(f"- Mental: {pc.get('mental_value', 100)}")
+            return "\n".join(lines)
+
+        # 솔로 플레이 (기존 형식 유지)
+        lines = ["### 3. PLAYER CHARACTER"]
+        lines.append(f"- **Appearance**: {anchors.get('appearance', 'N/A')}")
+        lines.append(f"- **Personality**: {anchors.get('personality', 'N/A')}")
+        lines.append(f"- **Background**: {anchors.get('background', 'N/A')}")
+        lines.append(f"- **Passives**: {anchors.get('passives', [])}")
+        lines.append(f"- **Inventory**: {anchors.get('inventory', [])}")
+        lines.append(f"- **Relations**: {anchors.get('relations', [])}")
+        lines.append(f"- **Memos**: {anchors.get('memos', [])}")
+        return "\n".join(lines)
+
+    def _build_mental_line(self, anchors: dict, bus) -> str:
+        """Mental 상태 라인 빌드 (솔로/다인 분기)"""
+        all_pcs = anchors.get("all_pcs", {})
+        if len(all_pcs) > 1:
+            parts = []
+            for uid, pc in all_pcs.items():
+                mask = pc.get("mask", "Unknown")
+                mental = pc.get("mental_value", 100)
+                parts.append(f"{mask}: {mental}")
+            return f"- **Mental (PC별)**: {' / '.join(parts)}"
+        return f"- **Mental (PC Mental Health)**: {bus.mental.get('value', 100)}"
+
     def _build_prompt(self, context: GameContext) -> str:
         """분석 프롬프트 생성"""
         req = context.request
         anchors = context.narrative_anchors
         bus = context.shared_bus
-        
+
+        pc_section = self._build_pc_section(anchors)
+        mental_line = self._build_mental_line(anchors, bus)
+
         return f"""## ANALYSIS REQUEST
 
 ### 1. USER INPUT
@@ -197,16 +247,9 @@ Return valid JSON with ALL these fields (Korean values where specified):
 ### 2. CURRENT STATE
 - **Genre**: {req.genres}
 - **Doom (World Tension)**: {bus.doom.get('value', 0)}
-- **Mental (PC Mental Health)**: {bus.mental.get('value', 100)}
+{mental_line}
 
-### 3. PLAYER ASSETS (Narrative Anchors)
-- **Appearance**: {anchors.get('appearance', 'N/A')}
-- **Personality**: {anchors.get('personality', 'N/A')}
-- **Background**: {anchors.get('background', 'N/A')}
-- **Passives**: {anchors.get('passives', [])}
-- **Inventory**: {anchors.get('inventory', [])}
-- **Relations**: {anchors.get('relations', [])}
-- **Memos**: {anchors.get('memos', [])}
+{pc_section}
 
 ### 4. WORLD CONTEXT
 - **Core Theme**: {req.lore_summary.get('theme', 'General TRPG')}

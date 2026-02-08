@@ -90,7 +90,7 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> G
     history_text = "\n".join([f"{h['role']}: {h['content']}" for h in recent_history])
     lore_text = domain_manager.get_lore(channel_id)
 
-    # Narrative Anchors
+    # Narrative Anchors (행동자 PC)
     anchors = {
         "appearance": mem.get("appearance", ""),
         "personality": mem.get("personality", ""),
@@ -100,6 +100,22 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> G
         "inventory": [],
         "memos": []
     }
+
+    # 모든 활성 PC 정보 수집 (다인 플레이 지원)
+    all_participants = domain_manager.get_domain(channel_id).get("participants", {})
+    all_pcs = {}
+    for uid, pdata in all_participants.items():
+        if pdata.get("status") == "active":
+            pmem = pdata.get("ai_memory", {})
+            all_pcs[uid] = {
+                "mask": pdata.get("mask", "Unknown"),
+                "appearance": pmem.get("appearance", ""),
+                "personality": pmem.get("personality", ""),
+                "passives": pmem.get("passives", []),
+                "mental_value": pmem.get("mental", {}).get("value", 100),
+            }
+    anchors["all_pcs"] = all_pcs
+    anchors["acting_user_id"] = user_id
 
     # Bus initialization
     bus = SharedBus()
@@ -174,129 +190,233 @@ class UniversalNarrativeEngine:
         self.pipeline = WaterfallPipeline(client, model_id)
 
     async def run(self, channel_id: str, user_id: str, user_input: str) -> Dict[str, Any]:
-        """
-        엔진을 실행하여 서사적 결과물(Directive)을 반환합니다.
-        
-        Args:
-            channel_id: 디스코드 채널 ID
-            user_id: 유저 ID
-            user_input: 사용자 입력 텍스트
-            
-        Returns:
-            Dict: {
-                "game_context": object,
-                "directive": str,      # LLM 지시문
-                "system_message": str  # 유저에게 보여줄 시스템 로그 (판정 결과 등)
-            }
-        """
-        # 1. Convert legacy data to GameContext
+        """단일 PC 행동 처리 (솔로/자동 모드용)"""
         context = convert_to_game_context(channel_id, user_id, user_input)
         p_data = domain_manager.get_participant_data(channel_id, user_id)
         mask = p_data.get("mask") if p_data else "PC"
-        
-        # 2. Execute Waterfall Pipeline
+
         updated_context = await self.pipeline.execute(context)
-        
-        # 3. Sync result back to legacy storage
         sync_from_game_context(channel_id, user_id, updated_context)
-        
-        # 4. Generate Directive for Final LLM
-        bus = updated_context.shared_bus
+
+        result = self._extract_pc_result(updated_context, mask)
+        return {
+            "game_context": updated_context,
+            "directive": result["directive"],
+            "system_message": result["system_msg"]
+        }
+
+    async def run_batch(self, channel_id: str, pending_actions: Dict[str, Dict]) -> Dict[str, Any]:
+        """다인 동시 행동 처리. pending_actions = {uid: {"mask":str, "actions":[str]}}"""
+        all_results = []
+        anomaly_data = None
+        last_context = None
+
+        for uid, info in pending_actions.items():
+            combined_input = "\n".join(info["actions"])
+            context = convert_to_game_context(channel_id, uid, combined_input)
+
+            # 이변 중복 방지: 이미 발동했으면 skip_trigger + 동일 이변 정보 주입
+            if anomaly_data:
+                context.shared_bus.anomaly["skip_trigger"] = True
+                context.shared_bus.anomaly.update(anomaly_data)
+
+            updated = await self.pipeline.execute(context)
+
+            # 이변 정보 보존 (첫 발동분)
+            if updated.shared_bus.anomaly.get("triggered") and not anomaly_data:
+                anomaly_data = {
+                    "tag": updated.shared_bus.anomaly.get("tag"),
+                    "intensity": updated.shared_bus.anomaly.get("intensity"),
+                    "polarity": updated.shared_bus.anomaly.get("polarity"),
+                    "category": updated.shared_bus.anomaly.get("category"),
+                    "potential": True,
+                }
+
+            sync_from_game_context(channel_id, uid, updated)
+            all_results.append(self._extract_pc_result(updated, info["mask"]))
+            last_context = updated
+
+        return self._combine_batch_results(all_results, last_context)
+
+    async def run_observation(self, channel_id: str) -> Dict[str, Any]:
+        """관찰 모드: PC 행동 없이 세계 묘사"""
+        participants = domain_manager.get_domain(channel_id).get("participants", {})
+        base_uid = None
+        for uid, p in participants.items():
+            if p.get("status") == "active":
+                base_uid = uid
+                break
+
+        if not base_uid:
+            return {"game_context": None, "directive": "", "system_message": ""}
+
+        observation_input = "[관찰 모드 — 직접적인 행동 없이 주변을 지켜본다]"
+        context = convert_to_game_context(channel_id, base_uid, observation_input)
+
+        # 판정 비활성화 (관찰은 행동이 아님)
+        context.shared_bus.judgment["active"] = False
+
+        updated = await self.pipeline.execute(context)
+        sync_from_game_context(channel_id, base_uid, updated)
+
+        result = self._extract_pc_result(updated, "")
+        return {
+            "game_context": updated,
+            "directive": "[관찰 모드] 세계와 NPC의 자연스러운 활동을 묘사하라. PC의 행동은 없다.\n" + result["directive"],
+            "system_message": result["system_msg"]
+        }
+
+    def _extract_pc_result(self, context, mask: str) -> Dict[str, Any]:
+        """단일 PC 파이프라인 결과에서 directive + system_msg 추출"""
+        bus = context.shared_bus
         directive_parts = []
-        
-        # Judgment result in directive
+        system_msg = ""
+
+        # Judgment
         if bus.judgment and bus.judgment.get("active"):
+            j_mask = bus.judgment.get("mask", mask)
             reason_txt = f" (근거: {bus.judgment.get('reason')})" if bus.judgment.get('reason') else ""
-            directive_parts.append(f"[판정 결과]: {bus.judgment.get('result')} ({bus.judgment.get('roll')}){reason_txt}")
-        
-        # Anomaly outcome in directive
+            directive_parts.append(f"[{j_mask}의 판정 결과]: {bus.judgment.get('result')} ({bus.judgment.get('roll')}){reason_txt}")
+            system_msg += bus.judgment.get("output", "")
+            if bus.judgment.get("party_wide_hook"):
+                system_msg += "\n⚠️ **[전체 파티 영향]** — 이 결과는 모든 동료에게 영향을 미칩니다."
+
+        # Anomaly
+        anomaly_directive = ""
+        anomaly_sys = ""
         if bus.anomaly and bus.anomaly.get("triggered"):
             tag = bus.anomaly.get("tag")
             intensity = bus.anomaly.get("intensity")
             polarity = bus.anomaly.get("polarity")
             category = bus.anomaly.get("category")
             cat_txt = f" / 적응키 {category}" if category and category != tag else ""
-            directive_parts.append(
-                f"[이변 활성화]: {tag} - {intensity} / {polarity}{cat_txt}"
-            )
+            anomaly_directive = f"[이변 활성화]: {tag} - {intensity} / {polarity}{cat_txt}"
             if bus.anomaly.get("output"):
-                directive_parts.append(bus.anomaly.get("output"))
-            
+                anomaly_directive += f"\n{bus.anomaly.get('output')}"
+
+            # Anomaly system message
+            line = bus.anomaly.get("line")
+            header = f"⚡ 이변 발생: [[{tag or '이변'}]]"
+            anomaly_sys += f"\n{header}"
+            if line:
+                anomaly_sys += f"\n{line}"
+            else:
+                info_parts = []
+                if tag: info_parts.append(f"태그: {tag}")
+                if intensity: info_parts.append(f"강도: {intensity}")
+                if polarity: info_parts.append(f"성격: {polarity}")
+                if category and category != tag: info_parts.append(f"적응키: {category}")
+                anomaly_sys += f"\n{' / '.join(info_parts) if info_parts else '이변 정보: (미상)'}"
+
+            divider = "━" * 20
+            anomaly_sys += f"\n{divider}\n{divider}"
+            anomaly_sys += f"\n🎲 적응 판정 결과: [[{category or tag or '이변'}]]"
+            result_line = _build_adaptation_result_line(
+                mask,
+                bus.anomaly.get("defense_success"),
+                bus.anomaly.get("defense_note", ""),
+                bus.anomaly.get("adapt_pct"),
+                bus.anomaly.get("adapt_new_pct")
+            )
+            if result_line:
+                anomaly_sys += f"\n{result_line}"
+
+        if anomaly_directive:
+            directive_parts.append(anomaly_directive)
+        system_msg += anomaly_sys
+
+        # Doom logs
+        if bus.doom and bus.doom.get("relief_log"):
+            system_msg += f"\n{bus.doom.get('relief_log')}"
+        if bus.doom and bus.doom.get("mental_pressure_log"):
+            system_msg += f"\n{bus.doom.get('mental_pressure_log')}"
+
+        # Mental
+        if bus.mental:
+            mental_parts = []
+            if bus.mental.get("impact_log"):
+                impact_log = bus.mental.get("impact_log")
+                if "(" in impact_log and ")" in impact_log:
+                    reason = impact_log.split("(", 1)[1].rsplit(")", 1)[0]
+                    mental_parts.append(reason)
+            if bus.mental.get("log"):
+                mental_parts.append(bus.mental.get("log"))
+            if mental_parts:
+                system_msg += f"\n{' → '.join(mental_parts)}"
+
         # Fallbacks
         fallback_msg = self.pipeline.get_fallback_directives(context.request.active_modules)
         if fallback_msg:
             directive_parts.append(f"\n[모듈 제약 지침]:\n{fallback_msg}")
 
-        # System message for UI
-        system_msg = ""
-        if bus.judgment and bus.judgment.get("active"):
-            system_msg += bus.judgment.get("output", "")
-        if bus.anomaly and bus.anomaly.get("triggered"):
-            tag = bus.anomaly.get("tag")
-            intensity = bus.anomaly.get("intensity")
-            polarity = bus.anomaly.get("polarity")
-            category = bus.anomaly.get("category")
-            adapt_pct = bus.anomaly.get("adapt_pct")
-            adapt_new_pct = bus.anomaly.get("adapt_new_pct")
-            defense_success = bus.anomaly.get("defense_success")
-            defense_note = bus.anomaly.get("defense_note", "")
-            line = bus.anomaly.get("line")
-            header = f"⚡ 이변 발생: [[{tag or '이변'}]]"
-            system_msg += f"\n{header}"
-            if line:
-                system_msg += f"\n{line}"
-            else:
-                info_parts = []
-                if tag:
-                    info_parts.append(f"태그: {tag}")
-                if intensity:
-                    info_parts.append(f"강도: {intensity}")
-                if polarity:
-                    info_parts.append(f"성격: {polarity}")
-                if category and category != tag:
-                    info_parts.append(f"적응키: {category}")
-                info_line = " / ".join(info_parts) if info_parts else "이변 정보: (미상)"
-                system_msg += f"\n{info_line}"
+        return {
+            "directive": "\n".join(directive_parts),
+            "system_msg": system_msg,
+            "has_anomaly": bool(bus.anomaly and bus.anomaly.get("triggered")),
+            "anomaly_header": anomaly_sys.split("━━")[0] if anomaly_sys else "",
+            "adaptation_line": result_line if (bus.anomaly and bus.anomaly.get("triggered")) else "",
+            "mental_log": bus.mental.get("log", "") if bus.mental else "",
+        }
 
+    def _combine_batch_results(self, results: list, last_context) -> Dict[str, Any]:
+        """다인 배치 결과를 통합 출력으로 합침"""
+        all_directives = []
+        judgment_msgs = []
+        anomaly_header = ""
+        adaptation_lines = []
+        mental_lines = []
+        doom_lines = []
+
+        for r in results:
+            if r["directive"]:
+                all_directives.append(r["directive"])
+
+            # 판정 부분만 추출 (system_msg에서 이변/멘탈 제외)
+            sys = r["system_msg"]
+            # 판정 출력은 🎲으로 시작, ⚡ 이변 전까지
+            if "🎲" in sys:
+                judgment_part = sys.split("⚡")[0].split("⏳")[0]
+                # doom/mental 로그 제거
+                for marker in ["\n📈", "\n📉", "\n🧠"]:
+                    if marker in judgment_part:
+                        judgment_part = judgment_part[:judgment_part.index(marker)]
+                judgment_msgs.append(judgment_part.strip())
+
+            # 이변 헤더는 1회만
+            if r["has_anomaly"] and not anomaly_header:
+                anomaly_header = r["anomaly_header"]
+
+            if r["adaptation_line"]:
+                adaptation_lines.append(r["adaptation_line"])
+
+            if r["mental_log"]:
+                mental_lines.append(r["mental_log"])
+
+        # 통합 시스템 메시지 구성
+        combined_sys = ""
+
+        # 1. 모든 판정 결과
+        if judgment_msgs:
+            combined_sys += "\n\n".join(judgment_msgs)
+
+        # 2. 이변 (헤더 1회 + 적응 PC별)
+        if anomaly_header:
+            combined_sys += f"\n\n{anomaly_header.strip()}"
             divider = "━" * 20
-            system_msg += f"\n{divider}\n{divider}"
+            combined_sys += f"\n{divider}\n{divider}"
+            tag = results[0].get("anomaly_tag", "이변")
+            combined_sys += f"\n🎲 적응 판정 결과:"
+            for line in adaptation_lines:
+                combined_sys += f"\n{line}"
 
-            result_title = f"🎲 적응 판정 결과: [[{category or tag or '이변'}]]"
-            system_msg += f"\n{result_title}"
-            result_line = _build_adaptation_result_line(
-                mask,
-                defense_success,
-                defense_note,
-                adapt_pct,
-                adapt_new_pct
-            )
-            if result_line:
-                system_msg += f"\n{result_line}"
-
-            # Optional extra flavor line can be added later if needed.
-        if bus.doom and bus.doom.get("relief_log"):
-            system_msg += f"\n{bus.doom.get('relief_log')}"
-        if bus.doom and bus.doom.get("mental_pressure_log"):
-            system_msg += f"\n{bus.doom.get('mental_pressure_log')}"
-        
-        # Integrate Mental impact and log into one line
-        if bus.mental:
-            mental_parts = []
-            if bus.mental.get("impact_log"):
-                impact_log = bus.mental.get("impact_log")
-                # Extract reason from impact_log: "🧠 정신적 영향: -10 (reason)"
-                if "(" in impact_log and ")" in impact_log:
-                    reason = impact_log.split("(", 1)[1].rsplit(")", 1)[0]
-                    mental_parts.append(reason)
-            
-            if bus.mental.get("log"):
-                mental_parts.append(bus.mental.get("log"))
-            
-            if mental_parts:
-                system_msg += f"\n{' → '.join(mental_parts)}"
+        # 3. 멘탈 변동 (PC별)
+        if mental_lines:
+            combined_sys += "\n"
+            for line in mental_lines:
+                combined_sys += f"\n{line}"
 
         return {
-            "game_context": updated_context,
-            "directive": "\n".join(directive_parts),
-            "system_message": system_msg
+            "game_context": last_context,
+            "directive": "\n\n".join(all_directives),
+            "system_message": combined_sys.strip()
         }

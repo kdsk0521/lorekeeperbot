@@ -100,16 +100,28 @@ def _get_default_session() -> Dict[str, Any]:
         "last_execution_context": None  # [!다시] Persistent retry data
     }
 
-def get_notebook(channel_id: str) -> str:
-    return get_domain(channel_id).get("notebook", "— [소지품] —\n\n— [메모] —")
-
-def update_notebook(channel_id: str, text: str) -> None:
+def get_notebook(channel_id: str, user_id: str = "") -> str:
+    """PC별 노트북 반환. user_id 있으면 participant에서 조회, 없으면 채널 fallback."""
     d = get_domain(channel_id)
-    d["notebook"] = text
+    if user_id:
+        p = d.get("participants", {}).get(user_id, {})
+        nb = p.get("notebook")
+        if nb is not None:
+            return nb
+    # Fallback: 기존 채널 레벨 (마이그레이션 전 호환)
+    return d.get("notebook", "— [소지품] —\n\n— [메모] —")
+
+def update_notebook(channel_id: str, text: str, user_id: str = "") -> None:
+    """PC별 노트북 저장. user_id 있으면 participant에 저장."""
+    d = get_domain(channel_id)
+    if user_id and user_id in d.get("participants", {}):
+        d["participants"][user_id]["notebook"] = text
+    else:
+        d["notebook"] = text  # Fallback
     save_domain(channel_id, d)
 
-def _append_memo_to_notebook(channel_id: str, content: str) -> None:
-    current_nb = get_notebook(channel_id)
+def _append_memo_to_notebook(channel_id: str, content: str, user_id: str = "") -> None:
+    current_nb = get_notebook(channel_id, user_id)
     if f"- {content}" in current_nb:
         return
 
@@ -119,7 +131,7 @@ def _append_memo_to_notebook(channel_id: str, content: str) -> None:
     else:
         new_nb = current_nb + f"\n\n— [메모] —\n- {content}"
 
-    update_notebook(channel_id, new_nb)
+    update_notebook(channel_id, new_nb, user_id)
 
 # =========================================================
 # MATURE MODE MANAGEMENT (via settings.scene_type)
@@ -436,6 +448,7 @@ def get_growth_system(channel_id: str) -> str:
 def _create_default_participant(display_name: str) -> Dict[str, Any]:
     return {
         "mask": display_name, "status": "active",
+        "notebook": "— [소지품] —\n\n— [메모] —",
         "status_effects": [],
         "ai_memory": {
             "appearance": "", "personality": "", "background": "", "relationships": {},
@@ -570,17 +583,17 @@ def apply_pc_info_to_user(channel_id: str, user_id: str) -> bool:
                     "acquired_at": time.strftime('%Y-%m-%d')
                 })
 
-    # Memos/Inventory Merge (Integrated with Notebook)
+    # Memos/Inventory Merge (Integrated with Notebook, per-user)
     # Notes/Memos
     notes = pc_info.get("notes") or pc_info.get("memos") or pc_info.get("background")
     if notes and isinstance(notes, (str, list)):
-        _append_memo_to_notebook(channel_id, f"설정 동기화: {notes[:100]}...")
-    
+        _append_memo_to_notebook(channel_id, f"설정 동기화: {notes[:100]}...", user_id)
+
     # Inventory
     inv = pc_info.get("inventory")
     if inv and isinstance(inv, dict):
         for item, qty in inv.items():
-            _append_memo_to_notebook(channel_id, f"{item} ({qty}) - 설정 동기화")
+            _append_memo_to_notebook(channel_id, f"{item} ({qty}) - 설정 동기화", user_id)
     
     save_participant_data(channel_id, user_id, p)
     return True
@@ -772,8 +785,8 @@ def get_unified_player_info(channel_id: str, user_id: str) -> str:
     mental_val = mental.get("value", 100)
     mental_text = f"{mental_val}/100"
 
-    # 7. [Added] Notebook
-    notebook = get_notebook(channel_id)
+    # 7. [Added] Notebook (per-user)
+    notebook = get_notebook(channel_id, user_id)
 
     # 8. Construct Block
     return f"""## 🎭 {name} (Player Character)
@@ -905,6 +918,35 @@ def append_history(channel_id: str, role: str, content: str) -> None:
 
 def get_history(channel_id: str) -> List[Dict[str, str]]:
     return get_domain(channel_id).get("history", [])
+
+def get_pending_actions(channel_id: str) -> Dict[str, Dict]:
+    """수동 모드에서 축적된 PC 행동을 수집.
+    마지막 Model 응답 이후의 PC 메시지를 역매핑하여 반환.
+    Returns: { user_id: {"mask": str, "actions": [str]} }
+    """
+    d = get_domain(channel_id)
+    history = d.get("history", [])
+    participants = d.get("participants", {})
+
+    # mask → user_id 역매핑
+    mask_to_uid = {}
+    for uid, pdata in participants.items():
+        if pdata.get("status") == "active":
+            mask_to_uid[pdata.get("mask", "")] = uid
+
+    # 마지막 "Model" 응답 이후의 PC 메시지 수집
+    pending: Dict[str, Dict] = {}
+    for entry in reversed(history):
+        if entry.get("role") == "Model":
+            break
+        role = entry.get("role", "")
+        uid = mask_to_uid.get(role)
+        if uid:
+            if uid not in pending:
+                pending[uid] = {"mask": role, "actions": []}
+            pending[uid]["actions"].insert(0, entry.get("content", ""))
+
+    return pending
 
 # =========================================================
 # 6. CONTEXT GENERATORS (For AI)

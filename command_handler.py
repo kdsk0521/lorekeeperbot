@@ -36,21 +36,21 @@ registry = CommandRegistry()
 # =========================================================
 # SYSTEM HANDLER LOGIC (Absorbed)
 # =========================================================
-async def process_ai_system_action(channel_id: str, sys_action: Dict[str, Any]) -> Optional[str]:
+async def process_ai_system_action(channel_id: str, sys_action: Dict[str, Any], user_id: str = "") -> Optional[str]:
     """AI가 제안한 시스템 액션을 처리합니다."""
     if not sys_action or not isinstance(sys_action, dict): return None
-    
+
     tool = sys_action.get("tool")
     atype = sys_action.get("type")
     content = sys_action.get("content")
-    
+
     if not all([tool, atype, content]): return None
-    
+
     auto_msg = None
     if tool == "Memo":
-        if atype == "Add": auto_msg = game_system.add_memo(channel_id, content)
-        elif atype == "Remove": auto_msg = game_system.remove_memo(channel_id, content)
-        elif atype == "Archive": auto_msg = game_system.resolve_memo_auto(channel_id, content)
+        if atype == "Add": auto_msg = game_system.add_memo(channel_id, content, user_id)
+        elif atype == "Remove": auto_msg = game_system.remove_memo(channel_id, content, user_id)
+        elif atype == "Archive": auto_msg = game_system.resolve_memo_auto(channel_id, content, user_id)
         
     elif tool == "Quest":
         if atype == "Add": auto_msg = game_system.add_quest(channel_id, content)
@@ -372,8 +372,8 @@ async def cmd_info(ctx: CommandContext) -> None:
         msg.append("\n**🛡️ 진행 중인 퀘스트:**")
         msg.extend([f"- {q}" for q in quests])
 
-    # 7. Notebook (Unified Inventory/Memo)
-    notebook = game_system.get_notebook_text(ctx.channel_id)
+    # 7. Notebook (Unified Inventory/Memo, per-user)
+    notebook = game_system.get_notebook_text(ctx.channel_id, ctx.user_id)
     if notebook:
         msg.append(f"\n**📔 노트북:**\n{notebook}")
 
@@ -413,8 +413,9 @@ async def cmd_notebook(ctx: CommandContext) -> None:
     arg = ctx.raw_args.strip()
     channel_id = ctx.channel_id
     
+    uid = ctx.user_id
     if not arg:
-        text = game_system.get_notebook_text(channel_id)
+        text = game_system.get_notebook_text(channel_id, uid)
         await send_long_message(ctx.message.channel, f"📔 **현재 노트북 내용:**\n\n{text}")
         return
 
@@ -424,42 +425,33 @@ async def cmd_notebook(ctx: CommandContext) -> None:
     content = parts[1] if len(parts) > 1 else ""
 
     if sub in ['추가', 'add', 'a']:
-        curr = game_system.get_notebook_text(channel_id)
-        # Handle "add content" vs "content" (implicit add)
-        # If sub is add, content is content.
-        # If implicit, whole arg is content.
-        to_add = content if content else "" # logic fix below
-        
-        # If explicitly 'add', use content.
+        curr = game_system.get_notebook_text(channel_id, uid)
+        to_add = content if content else ""
         new_text = f"{curr}\n- {to_add}"
-        game_system.update_notebook_text(channel_id, new_text)
+        game_system.update_notebook_text(channel_id, new_text, uid)
         await ctx.send("✅ 노트북에 내용이 추가되었습니다.")
-        
+
     elif sub in ['수정', 'edit', 'set', 'e']:
-        # Check for specific edit syntax: "old -> new"
         if "->" in content:
             old_val, new_val = content.split("->", 1)
-            await ctx.send(game_system.edit_memo(channel_id, old_val.strip(), new_val.strip()))
+            await ctx.send(game_system.edit_memo(channel_id, old_val.strip(), new_val.strip(), uid))
         else:
-            # Fallback: Replace All
-            game_system.update_notebook_text(channel_id, content)
+            game_system.update_notebook_text(channel_id, content, uid)
             await ctx.send("✅ 노트북 내용이 전체 수정되었습니다. (부분 수정은 `구형 -> 신형` 형식 사용)")
-        
+
     elif sub in ['삭제', 'del', 'remove', 'r', 'd']:
-        curr = game_system.get_notebook_text(channel_id)
+        curr = game_system.get_notebook_text(channel_id, uid)
         if content and content in curr:
             new_text = curr.replace(content, "").replace("\n\n\n", "\n\n").strip()
-            game_system.update_notebook_text(channel_id, new_text)
+            game_system.update_notebook_text(channel_id, new_text, uid)
             await ctx.send(f"🗑️ 노트북에서 '{content[:20]}...' 내용을 삭제했습니다.")
         else:
             await ctx.send("⚠️ 삭제할 내용을 찾을 수 없습니다. (정확히 일치해야 합니다)")
-            
+
     else:
-        # Default: Add if no sub-command recognized but content exists
-        # Treat whole arg as content
-        curr = game_system.get_notebook_text(channel_id)
+        curr = game_system.get_notebook_text(channel_id, uid)
         new_text = f"{curr}\n- {arg}"
-        game_system.update_notebook_text(channel_id, new_text)
+        game_system.update_notebook_text(channel_id, new_text, uid)
         await ctx.send("✅ 노트북에 내용이 기록되었습니다.")
 
 
@@ -951,8 +943,8 @@ async def handle_ooc_command(
             
         await message.channel.send("🔄 **OOC 데이터 수정 중...**")
         
-        # [V5.3] Notebook Integration
-        notebook_txt = game_system.get_notebook_text(channel_id)
+        # [V5.3] Notebook Integration (per-user)
+        notebook_txt = game_system.get_notebook_text(channel_id, uid)
         
         # AI 처리
         result = await memory_system.process_ooc_memory_edit(
@@ -971,10 +963,9 @@ async def handle_ooc_command(
                 # Notebook Handling
                 if field in ["notebook", "notes", "note"]:
                     if action == "append":
-                        game_system.add_memo(channel_id, value) # add_memo appends line
+                        game_system.add_memo(channel_id, value, uid)
                     elif action == "replace" or action == "set":
-                         # Dangerous but allowed
-                         game_system.update_notebook_text(channel_id, value)
+                         game_system.update_notebook_text(channel_id, value, uid)
                     continue # handled
                     
                 mem_edits.append(edit)
@@ -1198,8 +1189,25 @@ async def cmd_time(ctx: CommandContext) -> None:
     
     if not args:
         if ctx.trigger in ["next", "turn", "진행", "건너뛰기", "턴"]:
-            msg = game_system.advance_time(ctx.channel_id)
-            await ctx.send(msg)
+            # 축적된 PC 행동 확인
+            pending = domain_manager.get_pending_actions(ctx.channel_id)
+
+            from orchestration import get_orchestration_runtime
+            orch = get_orchestration_runtime(ctx.genai_client, ctx.model_id, config.MODEL_ID_FLASH)
+            if not orch:
+                await ctx.send("⚠️ AI 서비스가 초기화되지 않았습니다.")
+                return
+
+            if pending:
+                # BATCH MODE: 축적된 행동 일괄 처리
+                feedback = await ctx.message.channel.send("🔄 **행동을 처리하고 있습니다...**")
+                await orch.execute_batch(ctx.message, ctx.channel_id, pending, feedback)
+            else:
+                # OBSERVATION MODE: 관찰 턴 (1틱 시간 경과 + 세계 묘사)
+                tick_msg = game_system.advance_tick(ctx.channel_id)
+                await ctx.send(tick_msg)
+                feedback = await ctx.message.channel.send("🔄 **세계를 관찰하고 있습니다...**")
+                await orch.execute_observation(ctx.message, ctx.channel_id, feedback)
             return
         # View
         time_emoji = {"새벽": "🌅", "오전": "☀️", "오후": "🌤️", "황혼": "🌆", "저녁": "🌙", "심야": "🌑"}
