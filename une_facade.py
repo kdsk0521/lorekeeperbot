@@ -446,15 +446,19 @@ class UniversalNarrativeEngine:
         # ── Layer 4: [분위기 지시] — Doom Clock + 기력 ──
         atmosphere = []
 
-        # Doom = 외부 위협 시계 (FitD Clock)
-        if doom_val >= 80:
-            atmosphere.append("위협 시계 {}% — 곧 터진다. 임박감과 절박함".format(doom_val))
-        elif doom_val >= 60:
-            atmosphere.append("위협 시계 {}% — 위협이 다가오고 있다".format(doom_val))
-        elif doom_val >= 40:
-            atmosphere.append("위협 시계 {}% — 불안한 평온".format(doom_val))
-        elif doom_val <= 20:
-            atmosphere.append("위협 시계 {}% — 한숨 돌린 상태".format(doom_val))
+        # Doom = 8-Segment FitD Clock
+        if doom_val >= 88:
+            atmosphere.append(f"위협 시계 {doom_val}% [임박] — 곧 터진다")
+        elif doom_val >= 76:
+            atmosphere.append(f"위협 시계 {doom_val}% [위기] — 시간이 얼마 남지 않았다")
+        elif doom_val >= 63:
+            atmosphere.append(f"위협 시계 {doom_val}% [위협] — 위험이 다가오고 있다")
+        elif doom_val >= 50:
+            atmosphere.append(f"위협 시계 {doom_val}% [긴장] — 불안한 기운이 감돈다")
+        elif doom_val >= 38:
+            atmosphere.append(f"위협 시계 {doom_val}% [경계] — 불안한 평온")
+        elif doom_val < 13:
+            atmosphere.append(f"위협 시계 {doom_val}% [이완] — 위협이 멀어졌다")
 
         # 기력 = PC 총체적 자원 (체력/집중/평판/정신)
         if mental_val <= 14:

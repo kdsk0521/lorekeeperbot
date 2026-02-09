@@ -62,20 +62,29 @@ class DoomModule:
             
             bus.doom["active"] = True
 
-        # 5. 기력 Pressure/Recovery from Doom Clock
+        # 5. 기력 Pressure/Recovery from 8-Segment Doom Clock (FitD)
         if "mental" in context.request.active_modules:
-            if bus.doom["value"] >= 80:
-                mental_pressure = -2
-                bus.mental["delta"] = bus.mental.get("delta", 0) + mental_pressure
-                bus.doom["mental_pressure_log"] = "⚠️ 위협 시계 압박 (기력 -2)"
-            elif bus.doom["value"] >= 60:
-                mental_pressure = -1
-                bus.mental["delta"] = bus.mental.get("delta", 0) + mental_pressure
-                bus.doom["mental_pressure_log"] = "😰 위협 시계 압박 (기력 -1)"
-            elif bus.doom["value"] <= 40:
-                mental_recovery = 1
-                bus.mental["delta"] = bus.mental.get("delta", 0) + mental_recovery
-                bus.doom["mental_pressure_log"] = "😌 위협 이완 (기력 +1)"
+            dv = bus.doom["value"]
+            if dv >= 88:
+                pressure, label = -3, "⚠️ 위협 시계 [임박] (기력 -3)"
+            elif dv >= 76:
+                pressure, label = -2, "⚠️ 위협 시계 [위기] (기력 -2)"
+            elif dv >= 63:
+                pressure, label = -1, "😰 위협 시계 [위협] (기력 -1)"
+            elif dv >= 50:
+                pressure, label = -1, "😰 위협 시계 [긴장] (기력 -1)"
+            elif dv >= 38:
+                pressure, label = 0, ""   # 경계 — 중립
+            elif dv >= 25:
+                pressure, label = 0, ""   # 중립 — 자연회복 구간
+            elif dv >= 13:
+                pressure, label = 1, "😌 위협 이완 [안정] (기력 +1)"
+            else:
+                pressure, label = 2, "😌 위협 이완 [이완] (기력 +2)"
+
+            if pressure != 0:
+                bus.mental["delta"] = bus.mental.get("delta", 0) + pressure
+                bus.doom["mental_pressure_log"] = label
         
         # 6. Check for Anomaly Potential
         # Trigger anomaly if doom > 50 or on critical failure

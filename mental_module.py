@@ -21,13 +21,13 @@ class MentalModule:
         # 1a. Judgment Emotional Impact (직접적 감정 효과)
         if bus.judgment.get("active"):
             j_result = bus.judgment.get("result", "")
-            j_emotion = 0
-            if j_result == "critical_success":
-                j_emotion = 3   # 고양감
-            elif j_result == "success":
-                j_emotion = 1   # 자신감
-            elif j_result == "critical_failure":
-                j_emotion = -5  # 절망
+            j_emotion = {
+                "critical_success": 3,   # 고양감
+                "success": 1,            # 자신감
+                "partial": 0,            # 긴장 유지
+                "failure": -2,           # 좌절
+                "critical_failure": -4,  # 절망
+            }.get(j_result, 0)
             if j_emotion != 0:
                 delta += j_emotion
                 bus.mental["judgment_emotion"] = j_emotion
@@ -40,9 +40,20 @@ class MentalModule:
             delta += impact_delta  # Add to total delta
             bus.mental["impact_log"] = f"🧠 기력 영향: {impact_delta:+d} ({impact_reason})"
         
+        # 2a. Natural Recovery (평온한 턴: 외부 자극 없음)
         if delta == 0:
+            current_mental = bus.mental.get("value", 100)
+            if current_mental < 100:
+                recovery = 2
+                new_val = min(100, current_mental + recovery)
+                actual_recovery = new_val - current_mental
+                bus.mental["value"] = new_val
+                bus.mental["active"] = True
+                bus.mental["last_delta"] = 0
+                mask = context.get_acting_mask()
+                bus.mental["log"] = f"{mask}: 🧠 기력 +{actual_recovery} → {new_val}/100 (자연 회복)"
             return context
-            
+
         # 3. Inertia (Successive changes amplification)
         last_delta = bus.mental.get("last_delta", 0)
         actual_delta = delta
