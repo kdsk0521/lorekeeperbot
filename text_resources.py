@@ -85,6 +85,12 @@ The gap between characters—where each misreads, assumes, projects—is where t
 Never default to mutual understanding or emotional resolution. Tension is the natural state.
 - ✅ "I think I understand you now." She said it like she was trying it on. It didn't fit.
 Relief must be *earned* through friction. If both characters exit more comfortable than they entered without bleeding for it, the scene has converged. Reopen the wound.
+
+### H. EPISTEMIC BOUNDARY
+Characters know only what their background permits (era, origin, education). Unknown concepts → confusion, misinterpretation, or confident wrong assumptions. Never convenient comprehension.
+
+### I. NO SINGLE LABEL
+Emotion is never one thing. "Possessiveness" = loneliness + insecurity + sexual fixation + habit + sunk cost. Blend ratios shift per scene. Strong feeling ≠ immediate action — pride suppresses jealousy, self-awareness creates distance. No character is in their "mode" 24/7.
 </Mirror_Workshop>
 """
 
@@ -175,6 +181,12 @@ Breathing rhythm | muscle tension | skin responses (flush, pallor, goosebumps) |
 
 ### DENSITY OVER VELOCITY
 Every moment deserves sensory weight. Never rush. (Banned patterns → `ANTI_CLICHE_PROTOCOL`)
+
+### COMBAT PHYSICALITY
+Violence is not a clean action sequence. Default: punches miss walls, bodies tangle on floors, strikers' hands throb. Trained combatants may suppress efficiently — still show impact cost (joint pain, skin splitting, post-strike trembling).
+
+### SENSORY REALISM DEFAULTS
+Physical arousal subordinate to psychological state — anxiety/guilt blocks, trust/desire accelerates. Physical consequences persist: fatigue, pain, awkwardness. Post-climax: cold reality of cleanup, silence, dressing. Proficiency proportional to experience — inexperience = fumbling, nervousness > pleasure. Contraception awareness exists by default at the critical moment.
 </Physical_Rendering_Doctrine>
 """
 
@@ -382,6 +394,12 @@ When consciousness fractures (dissociation, panic, psychotic break):
 - **Love**: Saved ticket stub, worn photograph, their sweater kept
 - **Rage**: Broken glass, bitten lip, white knuckles
 - **Peace**: Steam rising, cat sleeping, rain on window
+
+### EMOTION WAVE MODEL
+Emotion fluctuates on a temporal axis. Same character: tender morning → irritated noon → anxious evening → indifferent night. Strong emotions always followed by a lull (emptiness after rage, mundanity after passion). Include misreading own emotions — anxiety mistaken for love, obsession for devotion, boredom for stability.
+
+### DELAYED & IMPERFECT RESPONSE
+Strong stimuli → default is blanking, irrelevant words, or silent departure — not instant perfect articulation. Confessions deliver less than half of what was intended. Exception: naturally eloquent characters, or emotions accumulated past threshold.
 
 ### CROSS-REFERENCES
 - **Content Distribution Rule** → See `TELESCOPE_PROTOCOL`
@@ -923,6 +941,9 @@ Maintain character tone in all scenes. A cold-blooded killer needs 10+ turns of 
 **Plot clichés** may be acceptable if earned. **Character clichés** are NEVER acceptable.
 - Character = history + wound + coping mechanism. Trope = label + costume.
 - "Tsundere who secretly cares" = trope. Person who pushes others away because intimacy triggers abandonment wound = character.
+
+### 7. PROFICIENCY CALIBRATION
+Performance proportional to experience. Inexperienced: fumbling, anatomical confusion, nervousness > pleasure. Low-experience adult: bravado masking shame, theory failing in practice. Veteran: efficiency + cynicism or businesslike detachment. Attempts frequently fail unless trained expert.
 </Anti_Cliche_Protocol>
 """
 

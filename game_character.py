@@ -5,7 +5,6 @@ Extracted from game_system.py
 """
 
 import logging
-import random
 import time
 import re
 import asyncio
@@ -19,13 +18,7 @@ import config
 import domain_manager
 from config import (
     MENTAL_STAGES,
-    DOOM_STAGES,
-    DOOM_MENTAL_RECOVERY_MOD,
-    NEGATIVE_STATUS_EFFECTS,
-    POSITIVE_STATUS_EFFECTS,
-    SEVERITY_DOOM_IMPACT,
     STATUS_EFFECTS,
-    get_normality_stage_info
 )
 
 # =========================================================
@@ -156,12 +149,6 @@ def edit_memo(channel_id: str, old_content: str, new_content: str, user_id: str 
 
 def resolve_memo_auto(channel_id: str, content: str, user_id: str = "") -> str:
     return remove_memo(channel_id, content, user_id) + " (자동 해결)"
-
-# Alias for V6
-def expose_to_abnormal(user_data: Dict[str, Any], trigger: str, category: str = None) -> Tuple[Dict[str, Any], str]:
-    # Wraps check_adaptation_roll with default difficulty
-    return check_adaptation_roll(user_data, trigger, category=category, difficulty=30)
-
 
 # Notebook System (New in V5.1, per-user in V8)
 def get_notebook_text(channel_id: str, user_id: str = "") -> str:
@@ -386,9 +373,6 @@ async def generate_chronicle_from_history(
     
     full_text = "\n".join([f"{h['role']}: {h['content']}" for h in history[-config.MAX_HISTORY_FOR_CHRONICLE:]])
     
-    # Importing time here to avoid top-level optional import issues if minimal
-    import time
-    
     res = await call_gemini_api(
         client, model_id, 
         f"Log:\n{full_text}",
@@ -465,15 +449,6 @@ def get_mental_stage_id(value: int) -> int:
 def get_mental_info(value: int) -> Dict[str, Any]:
     stage_id = get_mental_stage_id(value)
     return config.MENTAL_STAGES.get(stage_id, config.MENTAL_STAGES[0])
-
-def get_mental_dice_modifier(value: int) -> int:
-    stage = get_mental_stage_id(value)
-    # V7 Rules: +20 (Calm), +10 (Shake), 0 (Panic), -10 (Collapse)
-    if stage == 0: return 20
-    elif stage == 1: return 10
-    elif stage == 2: return 0
-    elif stage == 3: return -10
-    return 0
 
 def get_mental_status_text(p_data: Dict[str, Any]) -> str:
     """
@@ -591,69 +566,6 @@ def calculate_adaptation_pct(count: int) -> int:
 
 # Alias for Health Check / Legacy
 calculate_adaptation_percentage = calculate_adaptation_pct
-
-def process_adaptation_encounter(user_data: Dict[str, Any], tag: str) -> Tuple[int, bool]:
-    mem = user_data.setdefault("ai_memory", {})
-    exposure = mem.setdefault("abnormal_exposure", {})
-    
-    if tag not in exposure: exposure[tag] = {"count": 0}
-    
-    old_count = exposure[tag]["count"]
-    old_pct = calculate_adaptation_percentage(old_count) # Use V7 calc
-    
-    exposure[tag]["count"] = old_count + 1
-    new_count = exposure[tag]["count"]
-    
-    new_pct = calculate_adaptation_percentage(new_count)
-    
-    leveled_up = (old_pct // 20) < (new_pct // 20) # 20% steps
-    
-    return new_pct, leveled_up
-
-def check_adaptation_roll(
-    user_data: Dict[str, Any],
-    trigger: str,
-    category: str = None,
-    difficulty: int = 30
-) -> Tuple[Dict[str, Any], str]:
-    """
-    Legacy adaptation check wrapper.
-    Returns (user_data, message) to keep older call sites working.
-    """
-    pct, leveled_up = process_adaptation_encounter(user_data, trigger)
-    status = "Success" if pct >= difficulty else "Fail"
-    lvl_txt = " (Level Up!)" if leveled_up else ""
-    msg = f"{trigger} Adaptation {pct}% vs DC {difficulty}: {status}{lvl_txt}"
-    return user_data, msg
-
-def apply_abnormal_impact(
-    user_data: Dict[str, Any],
-    tag: str,
-    intensity: str,
-    doom_stage: int = 0,
-    channel_id: Optional[str] = None,
-    user_id: Optional[str] = None
-) -> Tuple[str, int]:
-    """
-    Minimal abnormal impact handler for legacy paths.
-    Updates adaptation exposure and applies a mental hit based on intensity.
-    Returns (message, new_adaptation_pct).
-    """
-    pct, leveled_up = process_adaptation_encounter(user_data, tag)
-
-    intensity_map = {"Low": 10, "Mid": 20, "High": 30}
-    dmg = intensity_map.get(str(intensity), 10)
-    if doom_stage:
-        dmg += int(doom_stage)
-
-    # Apply mental impact (no trauma passive if IDs missing)
-    update_mental(user_data, -dmg, f"{tag} Exposure", channel_id, user_id)
-
-    lvl_txt = " (Level Up!)" if leveled_up else ""
-    msg = f"{tag} Exposure: -{dmg} Mental, Adaptation {pct}%{lvl_txt}"
-    return msg, pct
-
-# [DEPRECATED] Adaptation/Abnormal Impact logic moved to UNE MentalModule
 
 def get_abnormal_context(user_data: Dict[str, Any]) -> str:
     """

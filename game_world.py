@@ -130,10 +130,6 @@ def change_doom(channel_id: str, amount: int) -> str:
     return f"{emoji} **위기 수치:** {old_val}% → **{new_val}%** {diff_msg}"
 
 
-def reduce_doom(channel_id: str, amount: int, reason: str = "") -> str:
-    """Doom 수치 감소 (최소 0)"""
-    return change_doom(channel_id, -amount)
-
 def get_doom_info(value: int) -> Dict[str, Any]:
     for stage_id, info in config.DOOM_STAGES.items():
         low, high = info["range"]

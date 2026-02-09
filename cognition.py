@@ -21,19 +21,19 @@ logger = logging.getLogger("Cognition")
 # =========================================================
 
 async def extract_all_updates(
-    client: genai.Client, 
-    model_id_flash: str, 
-    player_input: str, 
+    client: genai.Client,
+    model_id_flash: str,
+    player_input: str,
     ai_response: str,
     # Contexts
     notebook: str = "",
     current_status: Optional[List[str]] = None,
-    current_relationships: Optional[Dict[str, str]] = None, 
+    current_relationships: Optional[Dict[str, str]] = None,
     current_companions: Optional[List[str]] = None,
-    lore_npc_names: Optional[List[str]] = None, 
+    lore_npc_names: Optional[List[str]] = None,
     scene_npc_names: Optional[List[str]] = None,
-    current_passives: Optional[List[str]] = None, 
-    current_quests: Optional[List[str]] = None, 
+    current_passives: Optional[List[str]] = None,
+    current_quests: Optional[List[str]] = None,
     current_memos: Optional[List[str]] = None,
     fermented_context: str = "",
     player_context: str = "",
@@ -48,53 +48,57 @@ async def extract_all_updates(
     tasks = []
     task_keys = []
 
+    # Physical: always individual (separate HIGH priority in orchestration)
     if extraction_hints.get("physical", False):
         tasks.append(_extract_physical(client, model_id_flash, player_input, ai_response, notebook, current_status))
         task_keys.append("physical")
-    
-    if extraction_hints.get("social", False):
-        tasks.append(_extract_social(client, model_id_flash, player_input, ai_response, current_relationships, current_companions, lore_npc_names, scene_npc_names))
-        task_keys.append("social")
 
-    if extraction_hints.get("narrative", False):
-        tasks.append(_extract_narrative(client, model_id_flash, player_input, ai_response, current_passives, fermented_context, player_context))
-        task_keys.append("narrative")
-
-    if extraction_hints.get("quest", False):
-        tasks.append(_extract_quest(client, model_id_flash, player_input, ai_response, current_quests, current_memos))
-        task_keys.append("quest")
-
-    if extraction_hints.get("world_state", False):
-        tasks.append(_extract_world_state(client, model_id_flash, player_input, ai_response, current_session_memory))
-        task_keys.append("world_state")
+    # Non-physical: batch into 1 Flash call (saves ~60% input tokens)
+    batch_sections = [s for s in ["social", "narrative", "quest", "world_state"] if extraction_hints.get(s, False)]
+    if batch_sections:
+        tasks.append(_extract_batch(
+            client, model_id_flash, player_input, ai_response,
+            sections=batch_sections,
+            rels=current_relationships, comps=current_companions,
+            lore_npcs=lore_npc_names, scene_npcs=scene_npc_names,
+            passives=current_passives, fermented=fermented_context,
+            player_context=player_context,
+            quests=current_quests,
+            current_session_memory=current_session_memory
+        ))
+        task_keys.append("batch")
 
     # If nothing to extract
     if not tasks:
-        return {"PlayerUpdate": None, "PlayerMemoryUpdate": None, "PassiveSuggestion": None, "AbnormalTrigger": None, "QuestUpdate": None}
+        return {
+            "PlayerUpdate": None, "PlayerMemoryUpdate": None,
+            "AbnormalTrigger": None, "AbnormalCategory": None,
+            "QuestUpdate": None, "WorldStateUpdate": None
+        }
 
-    # Run selected in parallel
+    # Run (physical + batch) in parallel if both present
     results = await asyncio.gather(*tasks, return_exceptions=True)
-    
-    # Map results back to keys
+
+    # Map results back to keys (log failures instead of silently dropping)
     result_map = {}
     for key, res in zip(task_keys, results):
-        result_map[key] = res if not isinstance(res, Exception) else {}
+        if isinstance(res, Exception):
+            logger.warning(f"[Extraction] {key} failed: {res}")
+            result_map[key] = {}
+        else:
+            result_map[key] = res
 
     phys: Dict[str, Any] = result_map.get("physical", {})
-    soc: Dict[str, Any] = result_map.get("social", {})
-    nar: Dict[str, Any] = result_map.get("narrative", {})
-    qst: Dict[str, Any] = result_map.get("quest", {})
-    wst: Dict[str, Any] = result_map.get("world_state", {})
+    # Unpack batch result into individual sections
+    batch: Dict[str, Any] = result_map.get("batch", {})
+    soc: Dict[str, Any] = batch.get("social", {})
+    nar: Dict[str, Any] = batch.get("narrative", {})
+    qst: Dict[str, Any] = batch.get("quest", {})
+    wst: Dict[str, Any] = batch.get("world_state", {})
     
-    # Sanitize Physical (Now Notebook + Gold + Status)
+    # Sanitize Physical (Notebook + Status)
     p_upd = None
     if phys:
-        def _safe_int(v):
-            try:
-                return int(str(v).replace(',', '').replace('+', '').strip())
-            except (ValueError, TypeError):
-                return 0
-            
         p_upd = {
             "notebook_update": phys.get("notebook_update"), # [V5.1]
             "status_add": phys.get("status_add"), 
@@ -127,20 +131,16 @@ async def extract_all_updates(
     # Consolidate
     return {
         "PlayerUpdate": p_upd,
-        
+
         "PlayerMemoryUpdate": {
-            "relationships": rels_processed if rels_processed else soc.get("relationships"), 
-            "companions": soc.get("companions"), 
+            "relationships": rels_processed if rels_processed else soc.get("relationships"),
+            "companions": soc.get("companions"),
             "passives": nar.get("passives")
         } if soc or nar.get("passives") else None,
-        
-        "PassiveSuggestion": nar.get("passive_suggestion"),
+
         "AbnormalTrigger": nar.get("abnormal_trigger"),
         "AbnormalCategory": nar.get("abnormal_category"),
-        "MentalSuggestion": nar.get("mental_suggestion"),
-        "MentalDelta": nar.get("mental_delta", 0),
-        "DoomDelta": nar.get("doom_delta", 0),
-        
+
         "QuestUpdate": {
             "quest_add": qst.get("quest_add"), "quest_complete": qst.get("quest_complete")
         } if qst else None,
@@ -149,6 +149,87 @@ async def extract_all_updates(
     }
 
 # Internal Extractors (Private)
+
+async def _extract_batch(
+    client: genai.Client,
+    model_id: str,
+    p_in: str,
+    ai_out: str,
+    sections: List[str],
+    # Social context
+    rels=None, comps=None, lore_npcs=None, scene_npcs=None,
+    # Narrative context
+    passives=None, fermented: str = "", player_context: str = "",
+    # Quest context
+    quests=None,
+    # World State context
+    current_session_memory=None
+) -> Dict[str, Any]:
+    """Batch extraction: social+narrative+quest+world_state in 1 Flash call."""
+    sys_parts = [
+        "## [BATCH EXTRACTION]",
+        "Analyze the exchange and extract updates for ALL requested sections.",
+        "Return JSON with the requested top-level keys. Each section is independent.",
+    ]
+    ctx_parts = []
+
+    if "social" in sections:
+        sys_parts.append(
+            "\n### social"
+            "\nOutput: `{\"relationships\": {Name: Status}, \"companions\": [list]}`"
+            "\nOnly record SIGNIFICANT attitude changes. Deduplicate names against known NPCs."
+            "\nIf no social change: `{\"relationships\": {}, \"companions\": []}`."
+        )
+        ctx_parts.append(f"[Social] Rels:{rels}, Comps:{comps}, LoreNPCs:{lore_npcs}, SceneNPCs:{scene_npcs}")
+
+    if "narrative" in sections:
+        sys_parts.append(
+            "\n### narrative"
+            "\nOutput: `{\"passives\": [], \"abnormal_trigger\": null, \"abnormal_category\": null}`"
+            "\nPassive = permanent capability (skill/trait/achievement). Only NEW ones not in current list."
+            "\nAnomaly = genre shifts or monsters, trigger MUST BE IN ENGLISH."
+            "\nProfessional Bias: Gore is NORMAL for Doctor, Combat is NORMAL for Soldier."
+            "\nIf no change, keep fields null."
+        )
+        ctx_parts.append(f"[Narrative] Passives:{passives}, PlayerCtx:{player_context}, Fermented:{fermented[:2000]}")
+
+    if "quest" in sections:
+        sys_parts.append(
+            "\n### quest"
+            "\nOutput: `{\"quest_add\": [list], \"quest_complete\": [list]}`"
+            "\nADD only NEW quests. COMPLETE only if explicitly resolved."
+            "\nIf no update: `{\"quest_add\": [], \"quest_complete\": []}`."
+        )
+        ctx_parts.append(f"[Quest] Quests:{quests}")
+
+    if "world_state" in sections:
+        mem = current_session_memory or {}
+        existing_threads = mem.get("active_threads", [])
+        existing_arc = mem.get("current_arc", "")
+        sys_parts.append(
+            "\n### world_state"
+            "\nOutput: `{\"active_threads\": [], \"resolved_threads\": [], \"world_changes\": [],"
+            " \"npc_schedule_hints\": {}, \"basic_needs_flags\": {}, \"current_arc\": \"\"}`"
+            "\nactive_threads: Merge with existing, remove resolved. Max 10. Korean."
+            "\nresolved_threads: Threads resolved THIS turn. Korean."
+            "\nworld_changes: NEW environmental changes only. Max 5. Korean."
+            "\nnpc_schedule_hints: {NpcName: current_activity}. Only mentioned NPCs. Korean."
+            "\nbasic_needs_flags: {hungry/thirsty/tired/injured/cold/hot: bool}. Only true if evidence."
+            "\ncurrent_arc: One-line summary of current arc. Korean."
+            "\nCONSERVATIVE: Only extract clearly evidenced info. NO FABRICATION."
+        )
+        arc_line = f"Current Arc: {existing_arc}" if existing_arc else "Current Arc: (none)"
+        ws_ctx = f"[WorldState] {arc_line}"
+        if existing_threads:
+            ws_ctx += f", Existing Threads: {existing_threads[:10]}"
+        ctx_parts.append(ws_ctx)
+
+    sys_prompt = "\n".join(sys_parts)
+    ctx_text = "\n".join(ctx_parts)
+    usr = f"State:\n{ctx_text}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON with keys: {', '.join(sections)}."
+
+    return await _call_extract(client, model_id, sys_prompt, usr, "B-Batch")
+
 
 async def _extract_physical(
     client: genai.Client, 
@@ -218,25 +299,20 @@ async def _extract_narrative(
     player_context: str = ""
 ) -> Dict[str, Any]:
     sys = (
-        "## [EXTRACT NARRATIVE CHANGES - V3.8]\n"
-        "Return JSON: `{\"passives\": [], \"passive_suggestion\": null, \"abnormal_trigger\": null, \"abnormal_category\": null, \"mental_suggestion\": null, \"mental_delta\": 0, \"doom_delta\": 0}`\n\n"
+        "## [EXTRACT NARRATIVE CHANGES - V4]\n"
+        "Return JSON: `{\"passives\": [], \"abnormal_trigger\": null, \"abnormal_category\": null}`\n\n"
         "### [FEW-SHOT EXAMPLE]\n"
         "- **Input**: 'A faceless entity appears from the shadows. I feel a chill of cosmic horror.'\n"
-        "  - Output: `{\"abnormal_trigger\": \"Faceless Entity\", \"abnormal_category\": \"Ghost\", \"mental_delta\": -15, \"doom_delta\": +3}`\n\n"
-        "### [DETAILED PASSIVE RULES]\n"
-        "'Passive' means ANY permanent capability. Include:\n"
-        "1. **Skills/Abilities**: Learned techniques (e.g., 'Fireball', 'Lockpicking').\n"
-        "2. **Physical Traits**: Body mods, mutations (e.g., 'Cyber-Arm', 'Night Vision').\n"
-        "3. **Mental Traits**: Personality quarks, specialized knowledge (e.g., 'Iron Will').\n"
-        "4. **Achievements**: Significant titles or status (e.g., 'Dragonslayer').\n"
-        "5. **HYGIENE**: Only return NEW ones not in the [Passives] list.\n\n"
-        "### [NARRATIVE SIGNALS & ANOMALY RULES]\n"
+        "  - Output: `{\"abnormal_trigger\": \"Faceless Entity\", \"abnormal_category\": \"Ghost\"}`\n\n"
+        "### [PASSIVE RULES]\n"
+        "'Passive' means ANY permanent capability:\n"
+        "1. Skills/Abilities, Physical Traits, Mental Traits, Achievements.\n"
+        "2. **HYGIENE**: Only return NEW ones not in the [Passives] list.\n\n"
+        "### [ANOMALY RULES]\n"
         "1. **Anomaly Trigger**: Genre shifts or monsters. **MUST BE IN ENGLISH**.\n"
-        "2. **Mental Delta**: Rest (+10~+30), Trauma (-10~-25). Use integers.\n"
-        "3. **Doom Delta**: Global threat reduction (-5~-10) or escalation (+2~+5).\n"
-        "4. **Professional Bias (CRITICAL)**: Gore is NORMAL for a Doctor. Combat is NORMAL for a Soldier. Only trigger for events truly wrong to THEM.\n\n"
+        "2. **Professional Bias**: Gore is NORMAL for a Doctor. Combat is NORMAL for a Soldier. Only trigger for events truly wrong to THEM.\n\n"
         "### [SAFETY GUARD]\n"
-        "If no significant narrative adaptation happens, keep fields `null` or `0`."
+        "If no significant narrative change, keep fields `null`."
     )
     ctx = f"Passives:{passives}, PlayerContext:{player_context}, FermentedSnippet:{fermented[:2000]}"
     usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON."
@@ -488,6 +564,6 @@ Extract detailed character information from the provided text to create a struct
             return safe_parse_json(result)
 
     except Exception as e:
-        logging.error(f"[CharacterAnalyzer] Analysis failed: {e}")
+        logger.error(f"[CharacterAnalyzer] Analysis failed: {e}")
 
     return {}

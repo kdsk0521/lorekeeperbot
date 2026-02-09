@@ -42,10 +42,6 @@ except ImportError:
 
 import config
 
-# =========================================================
-# 상수 정의
-# =========================================================
-
 # 발효 트리거 임계값
 FRESH_THRESHOLD = config.FRESH_THRESHOLD
 FERMENT_CHUNK_SIZE = config.FERMENT_CHUNK_SIZE
@@ -320,79 +316,6 @@ Examples: ["오래된 약속", "붉은 문장의 정체", "사라진 동료"]
    - Consider cumulative impact across the segment
 """
 
-# Legacy V2 kept for backward compatibility
-FERMENT_PROMPT_V2 = """
-# System Role
-- Analyze the TRPG session segment for both **Narrative Events** and **Psychological Impact**.
-- Output purely in JSON format.
-
-## Input Data
-- Relay Novel style chat logs.
-
----
-
-# Response Template (JSON)
-{
-  "summary": "Compressed event summary in Korean (Natural prose, ~500 chars). Maintain 3rd person objective view.",
-  "psych_delta": {
-    "needs": {
-      "survival": 0, "safety": 0, "love": 0, "esteem": 0, "self_actualization": 0
-    },
-    "values": [],
-    "instinct": "neutral"
-  },
-  "helena_delta": {
-    "NPC_Name": {"depth": 0, "tension": 0} 
-  }
-}
-
-# Guidelines
-1. **Summary:** Focus on factual events. Use past tense. (Korean)
-2. **Psych Delta:** Analyze how events impacted the Protagonist's hierarchy of needs.
-   - Combat/Injury -> Survival decreases.
-   - Betrayal -> Safety/Love decreases.
-   - Victory/Praise -> Esteem/Self_Actualization increases.
-3. **Helena Delta:** Analyze interaction with *significant* NPCs.
-   - Shared crisis -> Depth increases.
-   - Argument/Suspicion -> Tension increases.
-"""
-
-# 발효 결과 포맷팅을 위한 간소화 프롬프트 (선택적 사용)
-FERMENT_PROMPT_SIMPLE = """
-[TRPG Session Summarizer - Fermentation]
-
-Write a brief overview of the key events in natural sentences.
-
-### CRITICAL RULES
-1. **Only use information explicitly mentioned** - Do not infer or add details
-2. **Include dates and temporal indicators** - "Day 3", "that evening", "next morning"
-3. **Maintain objective perspective** - No interpretation or explanation
-4. **Use past tense** - Everything happened already
-5. **Write in Korean** - 한국어로 작성
-
-### MUST PRESERVE
-- NPC names and relationships
-- Location changes (where → where)
-- Key events, decisions, discoveries
-- Time flow (which day, time of day)
-- Character state changes (injuries, items, emotions)
-- Unresolved plot hooks
-
-### EXCLUDE
-- Casual dialogue ("안녕", "고마워")
-- Repetitive action descriptions
-- System messages
-- Your interpretation of motives
-
-### OUTPUT FORMAT
-- Korean, ~500 characters
-- Chronological order
-- Natural prose sentences (not bullet points)
-
-### EXAMPLE
-"3일차 오후, 일행은 검은 숲에 진입했다. 고블린 정찰대와 조우하여 전투가 벌어졌고, 리엘이 부상을 입었으나 결국 승리했다. 고블린에게서 '붉은 문장'이 새겨진 편지를 발견했는데, 누군가 고블린을 고용한 정황이었다. 이후 숲 깊숙이 폐허가 된 탑을 발견했다."
-"""
-
 DEEP_COMPRESS_PROMPT = """
 # Deep Memory Crystallization Protocol (V3)
 
@@ -584,16 +507,8 @@ async def compress_fresh_to_fermented(
     """
     오래된 히스토리를 요약하여 FERMENTED 메모리로 변환합니다.
     V3: Mneme-Psyche Hybrid - 대화 원문 보존 + 심리 분석 + 메모리 트리거
-    
-    Args:
-        client: Gemini API 클라이언트
-        model_id: 모델 ID
-        history: 히스토리 리스트
-        chunk_size: 청크 크기
-        use_v3: True면 V3 하이브리드 포맷 사용
-        
+
     Returns:
-        V3 포맷:
         {
             "compressed_blocks": [...],
             "summary": "...",
@@ -604,14 +519,13 @@ async def compress_fresh_to_fermented(
     """
     if not client or not history:
         return None
-    
+
     to_summarize = history[:chunk_size]
-    
+
     # 인덱스 기반 포맷
     history_text = format_history_indexed(to_summarize)
-    
-    # V3 Hybrid Prompt 사용
-    system_instruction = FERMENT_PROMPT_V3 if use_v3 else FERMENT_PROMPT_V2
+
+    system_instruction = FERMENT_PROMPT_V3
     
     user_prompt = f"""# Session Logs (Indexed)
 {history_text}
@@ -887,23 +801,6 @@ def _normalize_deep_result(data: Dict[str, Any]) -> Dict[str, Any]:
         "character_milestones": data.get("character_milestones", {}),
         "world_state_changes": data.get("world_state_changes", [])
     }
-
-
-# Legacy wrapper for backward compatibility
-async def compress_fermented_to_deep_legacy(
-    client,
-    model_id: str,
-    fermented_list: List[Dict[str, Any]],
-    current_deep: str = "",
-    archived_context: str = ""
-) -> Optional[str]:
-    """기존 API 호환용 래퍼 - 문자열만 반환"""
-    result = await compress_fermented_to_deep(
-        client, model_id, fermented_list, current_deep, archived_context
-    )
-    if result:
-        return result.get("deep_narrative", "")
-    return None
 
 
 # =========================================================
@@ -1301,68 +1198,6 @@ Strictly chronological, high-fidelity record. Vivid and unaltered—the narrativ
 """
 
 
-def build_memory_context(
-    session_data: Dict[str, Any],
-    max_tokens: int = MAX_CONTEXT_TOKENS
-) -> str:
-    """
-    [5] FERMENTED 메모리 컨텍스트를 빌드합니다.
-    
-    NOTE: 이 함수는 기존 호환성을 위해 유지됩니다.
-          새 코드에서는 build_fermented_context()를 사용하세요.
-    """
-    fermented = session_data.get("fermented_history", [])
-    
-    if not fermented:
-        return ""
-    
-    max_fermented_chars = int(max_tokens * (FERMENTED_RATIO + DEEP_RATIO) * CHARS_PER_TOKEN)
-    
-    fermented_texts = []
-    total_chars = 0
-    
-    for entry in reversed(fermented):
-        summary = entry.get("summary", "")
-        timestamp = entry.get("timestamp", "")
-        
-        entry_text = f"[{timestamp}] {summary}"
-        
-        if total_chars + len(entry_text) > max_fermented_chars:
-            break
-        
-        fermented_texts.insert(0, entry_text)
-        total_chars += len(entry_text)
-    
-    if not fermented_texts:
-        return ""
-    
-    return (
-        f"### [FERMENTED MEMORY - 중기 기억]\n"
-        f"**CRITICAL: 아래 기억은 스토리 연속성을 위해 반드시 참조해야 합니다.**\n\n" +
-        "\n---\n".join(fermented_texts) +
-        "\n\n"
-    )
-
-
-def build_full_memory_context(
-    session_data: Dict[str, Any],
-    max_tokens: int = MAX_CONTEXT_TOKENS,
-    immediate_count: int = 20
-) -> Tuple[str, str]:
-    """
-    전체 메모리 컨텍스트를 빌드합니다.
-    
-    Returns:
-        (fermented_context, immediate_context) 튜플
-        - fermented_context: [5] <Fermented> 섹션
-        - immediate_context: [6] <Immediate> 섹션
-    """
-    fermented = build_fermented_context(session_data, max_tokens)
-    immediate = build_immediate_context(session_data, immediate_count)
-    
-    return fermented, immediate
-
-
 # =========================================================
 # 메모리 상태 조회
 # =========================================================
@@ -1440,22 +1275,29 @@ async def force_ferment(
     
     ferment_count = min(len(history), FERMENT_CHUNK_SIZE)
     
-    summary = await compress_fresh_to_fermented(
+    result_data = await compress_fresh_to_fermented(
         client, model_id,
-        history[:ferment_count]
+        history[:ferment_count],
+        use_v3=True
     )
-    
-    if not summary:
+
+    if not result_data:
         return False, "발효 중 오류가 발생했습니다."
-    
+
     if "fermented_history" not in session_data:
         session_data["fermented_history"] = []
-    
+
+    # V3 포맷으로 저장 (auto_ferment과 동일)
+    summary_text = result_data.get("summary", "") if isinstance(result_data, dict) else str(result_data)
     session_data["fermented_history"].append({
         "timestamp": get_timestamp(),
-        "summary": summary,
+        "summary": summary_text,
         "message_count": ferment_count,
-        "forced": True
+        "forced": True,
+        "compressed_blocks": result_data.get("compressed_blocks", []) if isinstance(result_data, dict) else [],
+        "memory_triggers": result_data.get("memory_triggers", []) if isinstance(result_data, dict) else [],
+        "psych_delta": result_data.get("psych_delta", {}) if isinstance(result_data, dict) else {},
+        "helena_delta": result_data.get("helena_delta", {}) if isinstance(result_data, dict) else {},
     })
     
     session_data["history"] = history[ferment_count:]
@@ -1485,20 +1327,31 @@ async def force_deep_compress(
     
     current_deep = session_data.get("deep_memory", "")
     
-    deep_summary = await compress_fermented_to_deep(
+    deep_result = await compress_fermented_to_deep(
         client, model_id,
         fermented, current_deep
     )
-    
-    if not deep_summary:
+
+    if not deep_result:
         return False, "DEEP 압축 중 오류가 발생했습니다."
-    
-    session_data["deep_memory"] = deep_summary
+
+    # V3: 구조화된 데이터 저장 (auto_ferment과 동일)
+    if isinstance(deep_result, dict):
+        session_data["deep_memory"] = deep_result.get("deep_narrative", "")
+        session_data["deep_memory_data"] = {
+            "crystallized_dialogues": deep_result.get("crystallized_dialogues", []),
+            "active_memory_triggers": deep_result.get("active_memory_triggers", []),
+            "character_milestones": deep_result.get("character_milestones", {}),
+            "world_state_changes": deep_result.get("world_state_changes", [])
+        }
+        session_data["active_memory_triggers"] = deep_result.get("active_memory_triggers", [])
+    else:
+        session_data["deep_memory"] = deep_result
     session_data["fermented_history"] = []
-    
+
     if save_callback:
         save_callback()
-    
+
     return True, f"✅ {len(fermented)}개 FERMENTED를 DEEP으로 압축했습니다."
 
 
@@ -1531,17 +1384,10 @@ CACHE_SESSION_TTL_MINUTES = 180  # 세션용 TTL (3시간)
 _channel_caches: Dict[str, Dict[str, Any]] = {}
 
 
-def estimate_content_tokens(content: str) -> int:
-    """컨텐츠의 토큰 수를 추정합니다."""
-    if not content:
-        return 0
-    return int(len(content) / CHARS_PER_TOKEN)
-
-
 def should_use_caching(lore_text: str, deep_memory: str = "") -> bool:
     """캐싱을 사용해야 하는지 판단합니다."""
     total_content = lore_text + (deep_memory or "")
-    estimated_tokens = estimate_content_tokens(total_content)
+    estimated_tokens = estimate_tokens(total_content)
     
     logger.debug(f"[Caching] 추정 토큰: {estimated_tokens} (최소: {CACHE_MIN_TOKENS})")
     

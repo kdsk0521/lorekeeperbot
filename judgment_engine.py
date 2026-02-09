@@ -54,7 +54,6 @@ class JudgmentEngine:
         # 2.3 DAI Modifiers (from Anomaly defense success/failure)
         dai_bonus = bus.dai.get("bonus", 0)
         dai_penalty = bus.dai.get("penalty", 0)
-        dai_reason = bus.dai.get("reason", "")
         
         # 3. Roll Dice
         roll = random.randint(1, 100)

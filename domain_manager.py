@@ -8,8 +8,7 @@ import os
 import json
 import logging
 import time
-import math
-from typing import Dict, Any, Optional, List, Set
+from typing import Dict, Any, Optional, List
 
 import config
 from cache_manager import cache
@@ -195,12 +194,6 @@ def save_last_execution_context(channel_id: str, context: Dict[str, Any]) -> Non
 def get_last_execution_context(channel_id: str) -> Optional[Dict[str, Any]]:
     """마지막 실행 컨텍스트를 조회합니다."""
     return get_domain(channel_id).get("last_execution_context")
-
-def clear_last_execution_context(channel_id: str) -> None:
-    """마지막 실행 컨텍스트를 초기화합니다."""
-    d = get_domain(channel_id)
-    d["last_execution_context"] = None
-    save_domain(channel_id, d)
 
 def save_domain(channel_id: str, data: Dict[str, Any]) -> bool:
     """세션 데이터 저장 (파일 + 캐시 동기화)"""
@@ -500,7 +493,8 @@ def _create_default_participant(display_name: str) -> Dict[str, Any]:
 def update_participant(channel_id: str, user, reset: bool = False, **kwargs) -> bool:
     d = get_domain(channel_id)
     uid = str(user.id)
-    
+    d.setdefault("participants", {})
+
     if reset or uid not in d["participants"]:
         d["participants"][uid] = _create_default_participant(user.display_name)
     else:
@@ -536,7 +530,7 @@ def get_participant_status(channel_id: str, uid: str) -> str:
     p = get_participant_data(channel_id, uid)
     return p.get("status", "active") if p else "unknown"
 
-def set_participant_status(channel_id: str, uid: str, status: str, reason: str = "") -> None:
+def set_participant_status(channel_id: str, uid: str, status: str) -> None:
     d = get_domain(channel_id)
     if str(uid) in d["participants"]:
         d["participants"][str(uid)]["status"] = status
@@ -544,7 +538,7 @@ def set_participant_status(channel_id: str, uid: str, status: str, reason: str =
 
 def save_participant_data(channel_id: str, user_id: str, data: Dict[str, Any]) -> None:
     d = get_domain(channel_id)
-    d["participants"][str(user_id)] = data
+    d.setdefault("participants", {})[str(user_id)] = data
     save_domain(channel_id, d)
 
 # PC Info & Masks
@@ -601,7 +595,6 @@ def apply_pc_info_to_user(channel_id: str, user_id: str) -> bool:
     new_passives = pc_info.get("passives", [])
     if new_passives:
         if "passives" not in mem: mem["passives"] = []
-        import time
         current_names = [item['name'] if isinstance(item, dict) else str(item) for item in mem["passives"]]
         for np in new_passives:
             np_obj = np if isinstance(np, dict) else {"name": str(np), "desc": "Extracted"}
@@ -745,14 +738,6 @@ def update_helena_metric(channel_id: str, npc_name: str, depth_delta: int = 0, t
     target["last_updated"] = time.strftime('%Y-%m-%d %H:%M')
     
     save_domain(channel_id, d)
-
-def find_participant_id_by_name(channel_id: str, name: str) -> Optional[str]:
-    d = get_domain(channel_id)
-    target = name.strip().lower()
-    for uid, p in d.get("participants", {}).items():
-        if p.get("mask", "").lower() == target:
-            return uid
-    return None
 
 # UI Helpers
 def get_unified_player_info(channel_id: str, user_id: str) -> str:
@@ -975,7 +960,11 @@ def get_pending_actions(channel_id: str) -> Dict[str, Dict]:
         if uid:
             if uid not in pending:
                 pending[uid] = {"mask": role, "actions": []}
-            pending[uid]["actions"].insert(0, entry.get("content", ""))
+            pending[uid]["actions"].append(entry.get("content", ""))
+
+    # reverse로 시간순 복원 (append+reverse는 insert(0)보다 O(n) 효율)
+    for uid in pending:
+        pending[uid]["actions"].reverse()
 
     return pending
 
@@ -988,9 +977,9 @@ def get_party_status_context(channel_id: str) -> str:
     if not participants: return "Active Players: None"
     
     active = []
-    for uid, p in participants.items():
+    for _, p in participants.items():
         if p.get("status") != "active": continue
-        
+
         mem = p.get("ai_memory", {})
         mask = p.get("mask", "Unknown")
         look = mem.get("appearance", "Unknown")[:50]
@@ -998,18 +987,6 @@ def get_party_status_context(channel_id: str) -> str:
         active.append(f"[{mask}] Look:{look}, Cond:{cond}")
         
     return "### PARTY\n" + "\n".join(active) if active else "All players inactive."
-
-def get_ai_memory_for_prompt(channel_id: str, user_id: str) -> str:
-    p = get_participant_data(channel_id, user_id)
-    if not p: return ""
-    mem = p["ai_memory"]
-    
-    parts = []
-    if mem.get("relationships"): parts.append(f"Rels: {mem['relationships']}")
-    if mem.get("passives"): parts.append(f"Passives: {mem['passives']}")
-    if mem.get("known_info"): parts.append(f"Known: {mem['known_info'][:3]}")
-    
-    return "### PLAYER MEMORY\n" + "\n".join(parts) + "\n" if parts else ""
 
 # NPC Memory
 def get_session_ai_memory(channel_id: str) -> Dict[str, Any]:

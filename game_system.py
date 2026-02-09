@@ -7,7 +7,7 @@ and implements high-level rule processing (Time, Anomaly, Judgment).
 
 import asyncio
 import logging
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 
 # Internal Modules
 import config
@@ -128,29 +128,3 @@ async def process_time_flow(channel_id: str, time_flow: Dict, scene_type: str = 
         domain_manager.update_world_state(channel_id, world)
 
     return "\n".join(messages) if messages else None
-
-
-async def process_anomaly(
-    client, 
-    model_id_flash: str, 
-    channel_id: str, 
-    current_doom: int, 
-    scene_type: str,
-    active_genres: List[str],
-    participants: Dict[str, Any]
-) -> List[str]:
-    """[LEGACY] UNE AnomalyModule에 의해 대체되었습니다."""
-    return []
-
-async def process_judgment(
-    channel_id: str,
-    user_id: str,
-    player_data: Dict[str, Any],
-    nvc_result: Dict[str, Any],
-    scene_type: str = "normal"
-) -> Tuple[Optional[str], Optional[str]]:
-    """
-    [LEGACY] UNE JudgmentEngine에 의해 대체되었습니다.
-    데이터 충돌 방지를 위해 빈 로그를 반환합니다.
-    """
-    return None, None

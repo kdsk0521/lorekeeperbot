@@ -69,7 +69,7 @@ def detect_scene_type_keywords(text: str) -> Optional[str]:
 
     for scene_type, pattern_list in patterns.items():
         for pattern in pattern_list:
-            if re.search(pattern, text_lower, re.IGNORECASE):
+            if re.search(pattern, text_lower):
                 return scene_type
 
     return None
@@ -244,9 +244,8 @@ def filter_pc_impersonation(response: str, pc_names: List[str]) -> Tuple[str, Li
 
     # 3. 사칭 문장 실제 제거
     if violations:
-        import logging
         for v in violations:
-            logging.warning(f"[PC사칭 제거] [{v['type']}] \"{v['matched']}\"")
+            logger.warning(f"[PC사칭 제거] [{v['type']}] \"{v['matched']}\"")
         clean_text = _remove_violation_sentences(clean_text, violations)
 
     return clean_text, violations
@@ -255,67 +254,6 @@ def filter_pc_impersonation(response: str, pc_names: List[str]) -> Tuple[str, Li
 # =========================================================
 # Response Validation (응답 유효성 검증)
 # =========================================================
-
-def validate_response_length(response: str, min_length: int = 100, max_length: int = 8000) -> Dict:
-    """
-    응답 길이 유효성을 검증합니다.
-
-    Args:
-        response: 응답 텍스트
-        min_length: 최소 길이
-        max_length: 최대 길이
-
-    Returns:
-        {valid: bool, length: int, message: str}
-    """
-    length = len(response)
-
-    if length < min_length:
-        return {
-            'valid': False,
-            'length': length,
-            'message': f'응답이 너무 짧습니다 ({length}/{min_length}자)'
-        }
-
-    if length > max_length:
-        return {
-            'valid': False,
-            'length': length,
-            'message': f'응답이 너무 깁니다 ({length}/{max_length}자)'
-        }
-
-    return {
-        'valid': True,
-        'length': length,
-        'message': 'OK'
-    }
-
-
-def extract_code_blocks(response: str) -> List[Dict]:
-    """
-    응답에서 코드 블록을 추출합니다.
-
-    AI가 가끔 마크다운 코드 블록을 포함할 수 있습니다.
-
-    Args:
-        response: 응답 텍스트
-
-    Returns:
-        코드 블록 목록 [{language, code, start, end}]
-    """
-    blocks = []
-    pattern = r'```(\w*)\n(.*?)```'
-
-    for match in re.finditer(pattern, response, re.DOTALL):
-        blocks.append({
-            'language': match.group(1) or 'text',
-            'code': match.group(2).strip(),
-            'start': match.start(),
-            'end': match.end()
-        })
-
-    return blocks
-
 
 # =========================================================
 # Mob Tag Cleaning (System-Level Hiding)

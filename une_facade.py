@@ -278,12 +278,13 @@ class UniversalNarrativeEngine:
         }
 
     def _extract_pc_result(self, context, mask: str) -> Dict[str, Any]:
-        """단일 PC 파이프라인 결과에서 4-Layer Directive + system_msg 추출
+        """Extract 5-Layer Directive + system_msg from single PC pipeline result.
 
-        Layer 1: [서사 지시] — FitD Position + PbtA MC Move (판정 결과)
-        Layer 2: [상황 양상] — Fate Aspect 선언 (복합 상호작용)
-        Layer 3: [이변 개입] — Cypher GM Intrusion (이변)
-        Layer 4: [분위기 지시] — Doom Clock 진행도 + 기력 상태
+        Layer 0: [Base Directive] — DAI soft hints (when Judgment OFF)
+        Layer 1: [Narrative] — FitD Position + PbtA MC Move (Judgment result)
+        Layer 2: [Aspects] — Fate Aspect declaration (cross-module interaction)
+        Layer 3: [Intrusion] — Cypher GM Intrusion (Anomaly event)
+        Layer 4: [Atmosphere] — Doom Clock progress + Vigor state
         """
         bus = context.shared_bus
         directive_parts = []
@@ -293,7 +294,7 @@ class UniversalNarrativeEngine:
         doom_val = bus.doom.get("value", 0) if bus.doom else 0
         mental_val = bus.mental.get("value", 100) if bus.mental else 100
 
-        # ── Layer 1: [서사 지시] — Position + MC Move ──
+        # ── Layer 1: [Narrative] — Position + MC Move ──
         j_active = bus.judgment and bus.judgment.get("active")
         j_result = ""
         if j_active:
@@ -306,54 +307,103 @@ class UniversalNarrativeEngine:
             # Position from Theoria (FitD)
             pos_val = bus.dai.get("position", {}).get("value", 0.5) if bus.dai else 0.5
             if pos_val <= 0.25:
-                pos_tier, pos_kr = "desperate", "절박"
+                pos_tier = "desperate"
             elif pos_val <= 0.5:
-                pos_tier, pos_kr = "risky", "위험"
+                pos_tier = "risky"
             else:
-                pos_tier, pos_kr = "controlled", "통제"
+                pos_tier = "controlled"
 
-            # MC Move: Position × Result → 서사 방향 (PbtA)
+            # MC Move: Position × Result matrix (PbtA)
             if j_result in ("failure", "critical_failure"):
                 mc_moves = {
-                    "desperate": "위협을 실현하라 — 돌이키기 어려운 결과",
-                    "risky": "상황을 악화시켜라 — 새로운 위험이 드러난다",
-                    "controlled": "약한 대가를 요구하라 — 작은 차질이 생긴다",
+                    "desperate": "Make the threat real — irreversible consequences",
+                    "risky": "Escalate the situation — a new danger reveals itself",
+                    "controlled": "Demand a minor cost — a small setback occurs",
                 }
                 if j_result == "critical_failure":
                     mc_moves = {
-                        "desperate": "파멸적 결과 — 돌이킬 수 없는 일이 벌어진다",
-                        "risky": "최악의 전개 — 위험이 현실이 된다",
-                        "controlled": "예상치 못한 반전 — 안전이 깨진다",
+                        "desperate": "Catastrophic outcome — something irreversible happens",
+                        "risky": "Worst case unfolds — the danger becomes reality",
+                        "controlled": "Unexpected reversal — safety shatters",
                     }
             elif j_result == "partial":
                 mc_moves = {
-                    "desperate": "큰 대가를 치른다 — 원한 것은 얻되 무언가를 잃는다",
-                    "risky": "대가 있는 성공 — 차질이 따른다",
-                    "controlled": "사소한 마찰 — 예상보다 순탄하지 않다",
+                    "desperate": "Heavy price paid — gain what was sought but lose something",
+                    "risky": "Success with cost — complications follow",
+                    "controlled": "Minor friction — less smooth than expected",
                 }
             else:  # success / critical_success
                 mc_moves = {
-                    "desperate": "극적인 역전 — 절체절명에서 빛난다",
-                    "risky": "위험을 넘겼다 — 무난한 수행",
-                    "controlled": "여유로운 성공 — 깔끔한 수행",
+                    "desperate": "Dramatic turnaround — shining in the direst moment",
+                    "risky": "Danger cleared — competent execution",
+                    "controlled": "Clean success — smooth and effortless",
                 }
                 if j_result == "critical_success":
                     mc_moves = {
-                        "desperate": "기적적 역전 — 절체절명에서 빛나는 순간",
-                        "risky": "빛나는 성공 — 위험을 뚫고 인상적인 결과",
-                        "controlled": "압도적 성공 — 기대 이상의 결과",
+                        "desperate": "Miraculous reversal — a transcendent moment",
+                        "risky": "Brilliant success — impressive result against the odds",
+                        "controlled": "Overwhelming mastery — exceeds all expectations",
                     }
 
             move = mc_moves.get(pos_tier, mc_moves.get("risky", ""))
             reason_part = f" ({reason_txt})" if reason_txt else ""
             directive_parts.append(
-                f"[서사 지시: {j_mask}의 '{action}'{reason_part} — {pos_kr}] {move}"
+                f"[Narrative: {j_mask} '{action}'{reason_part} — {pos_tier}] {move}"
             )
             system_msg += bus.judgment.get("output", "")
             if bus.judgment.get("party_wide_hook"):
                 system_msg += "\n⚠️ **[전체 파티 영향]** — 이 결과는 모든 동료에게 영향을 미칩니다."
 
-        # ── Layer 3: [이변 개입] — Cypher GM Intrusion ──
+        # ── Layer 0: [Base Directive] — DAI soft hints (Judgment OFF) ──
+        if not j_active and bus.dai and bus.dai.get("active"):
+            hints = []
+
+            # Position → narrative tone
+            pos_data = bus.dai.get("position", {})
+            pos_val = pos_data.get("value", 0.5)
+            if pos_val <= 0.25:
+                hints.append("Position: Desperate — stakes are lethal, consequences loom")
+            elif pos_val <= 0.5:
+                hints.append("Position: Risky — danger present, outcome uncertain")
+            else:
+                hints.append("Position: Controlled — situation favors the actor")
+
+            # SceneType → scene-specific guidance
+            scene_type = bus.dai.get("scene_type", "normal")
+            scene_hints = {
+                "combat": "Combat scene: emphasize physicality, positioning, and threat",
+                "tension": "Tension scene: build suspense, restrict information flow",
+                "intimate": "Intimate scene: focus on emotion, subtlety, and vulnerability",
+                "exploration": "Exploration scene: reward curiosity, reveal the world",
+                "social": "Social scene: weigh reputation, leverage, and hidden agendas",
+            }
+            if scene_type in scene_hints:
+                hints.append(scene_hints[scene_type])
+
+            # EnergyDirection → pacing
+            energy = bus.dai.get("energy_direction", "steady")
+            energy_hints = {
+                "rising": "Energy rising — escalate tension, accelerate pacing",
+                "falling": "Energy falling — allow breathing room, reflect on aftermath",
+                "peak": "Energy at peak — climactic moment, maximum intensity",
+                "steady": "Energy steady — maintain current rhythm",
+            }
+            if energy in energy_hints:
+                hints.append(energy_hints[energy])
+
+            # needs_judgment=True but module OFF → soft probability hint
+            if bus.dai.get("needs_judgment"):
+                action_meta = bus.dai.get("action_meta", {})
+                action_name = action_meta.get("action", "")
+                if action_name:
+                    hints.append(f"Action '{action_name}' attempted — judge outcome by situational probability, no dice")
+                else:
+                    hints.append("Meaningful action attempted — judge outcome by situational probability, no dice")
+
+            if hints:
+                directive_parts.append("[Base Directive]\n" + "\n".join(hints))
+
+        # ── Layer 3: [Intrusion] — Cypher GM Intrusion ──
         anomaly_sys = ""
         a_triggered = bus.anomaly and bus.anomaly.get("triggered")
         if a_triggered:
@@ -363,13 +413,13 @@ class UniversalNarrativeEngine:
             category = bus.anomaly.get("category")
             line = bus.anomaly.get("line", "")
 
-            # GM Intrusion 프레이밍: 이변은 "벌"이 아니라 "상황 개입"
+            # GM Intrusion framing: anomaly is "situation shift", not "punishment"
             polarity_frame = {
-                "positive": "기회로 작용할 수 있다",
-                "negative": "위협으로 다가온다",
-                "mixed": "기회이자 위협이다",
-            }.get(polarity, "상황에 개입한다")
-            intrusion = f"[이변 개입: {tag}] {polarity_frame}"
+                "positive": "may serve as opportunity",
+                "negative": "arrives as threat",
+                "mixed": "both opportunity and threat",
+            }.get(polarity, "shifts the situation")
+            intrusion = f"[Intrusion: {tag}] {polarity_frame}"
             if line:
                 intrusion += f"\n{line}"
             if bus.anomaly.get("output"):
@@ -422,62 +472,69 @@ class UniversalNarrativeEngine:
             if log_parts:
                 system_msg += f"\n{' → '.join(log_parts)}"
 
-        # ── Layer 2: [상황 양상] — Fate Aspect 선언 ──
+        # ── Layer 2: [Aspects] — Fate Aspect declaration ──
         aspects = []
         m_trauma = bus.mental and bus.mental.get("trauma_trigger")
         if j_active and a_triggered:
             if j_result in ("critical_failure", "failure"):
-                aspects.append("실패의 공명")
+                aspects.append("Failure Resonance")
             elif j_result == "critical_success":
-                aspects.append("영광의 이면")
+                aspects.append("Glory's Shadow")
         if a_triggered and mental_val <= 39:
-            aspects.append("기력 침식")
+            aspects.append("Vigor Erosion")
         if m_trauma and a_triggered:
-            aspects.append("내외 공명")
+            aspects.append("Inner-Outer Convergence")
         if m_trauma and j_active:
-            aspects.append("재기")
+            aspects.append("Resurgence")
         if j_result == "critical_failure" and mental_val <= 14:
-            aspects.append("나락")
+            aspects.append("Abyss")
         if bus.anomaly and bus.anomaly.get("escalated"):
-            aspects.append("통제 불능")
+            aspects.append("Loss of Control")
         if aspects:
-            directive_parts.append("[상황 양상]: " + ", ".join(aspects))
+            directive_parts.append("[Aspects]: " + ", ".join(aspects))
 
-        # ── Layer 4: [분위기 지시] — Doom Clock + 기력 ──
+        # ── Layer 4: [Atmosphere] — Doom Clock + Vigor ──
         atmosphere = []
+        active_modules = context.request.active_modules
 
-        # Doom = 8-Segment FitD Clock
-        if doom_val >= 88:
-            atmosphere.append(f"위협 시계 {doom_val}% [임박] — 곧 터진다")
-        elif doom_val >= 76:
-            atmosphere.append(f"위협 시계 {doom_val}% [위기] — 시간이 얼마 남지 않았다")
-        elif doom_val >= 63:
-            atmosphere.append(f"위협 시계 {doom_val}% [위협] — 위험이 다가오고 있다")
-        elif doom_val >= 50:
-            atmosphere.append(f"위협 시계 {doom_val}% [긴장] — 불안한 기운이 감돈다")
-        elif doom_val >= 38:
-            atmosphere.append(f"위협 시계 {doom_val}% [경계] — 불안한 평온")
-        elif doom_val < 13:
-            atmosphere.append(f"위협 시계 {doom_val}% [이완] — 위협이 멀어졌다")
+        # Doom = 8-Segment FitD Clock (only when module active)
+        if "doom" in active_modules:
+            if doom_val >= 88:
+                atmosphere.append(f"Threat Clock {doom_val}% [IMMINENT] — about to break")
+            elif doom_val >= 76:
+                atmosphere.append(f"Threat Clock {doom_val}% [CRISIS] — running out of time")
+            elif doom_val >= 63:
+                atmosphere.append(f"Threat Clock {doom_val}% [THREAT] — danger closing in")
+            elif doom_val >= 50:
+                atmosphere.append(f"Threat Clock {doom_val}% [TENSION] — unease fills the air")
+            elif doom_val >= 38:
+                atmosphere.append(f"Threat Clock {doom_val}% [ALERT] — uneasy calm")
+            elif doom_val >= 25:
+                atmosphere.append(f"Threat Clock {doom_val}% [NEUTRAL] — equilibrium")
+            elif doom_val >= 13:
+                atmosphere.append(f"Threat Clock {doom_val}% [STABLE] — relative safety")
+            else:
+                atmosphere.append(f"Threat Clock {doom_val}% [RELAXED] — threat has receded")
 
-        # 기력 = PC 총체적 자원 (체력/집중/평판/정신)
-        if mental_val <= 14:
-            atmosphere.append("기력 붕괴({}%) — 한계를 넘겼다. 몸도 정신도 부서진다".format(mental_val))
-        elif mental_val <= 39:
-            atmosphere.append("기력 고갈({}%) — 소진됐다. 무엇이든 힘겹다".format(mental_val))
-        elif mental_val <= 69:
-            atmosphere.append("기력 동요({}%) — 흔들린다. 집중이 어렵다".format(mental_val))
+        # Vigor = PC holistic resource (only when module active)
+        if "mental" in active_modules:
+            if mental_val <= 14:
+                atmosphere.append(f"Vigor COLLAPSE ({mental_val}%) — past the limit, body and mind breaking")
+            elif mental_val <= 39:
+                atmosphere.append(f"Vigor DEPLETED ({mental_val}%) — exhausted, everything is a struggle")
+            elif mental_val <= 69:
+                atmosphere.append(f"Vigor SHAKEN ({mental_val}%) — wavering, hard to focus")
 
         if m_trauma:
-            atmosphere.append("트라우마 각성 — 극한에서 되살아나는 순간")
+            atmosphere.append("Trauma Awakening — rebirth from the brink")
 
         if atmosphere:
-            directive_parts.append("[분위기 지시]: " + " / ".join(atmosphere))
+            directive_parts.append("[Atmosphere]: " + " / ".join(atmosphere))
 
         # Fallbacks
         fallback_msg = self.pipeline.get_fallback_directives(context.request.active_modules)
         if fallback_msg:
-            directive_parts.append(f"\n[모듈 제약 지침]:\n{fallback_msg}")
+            directive_parts.append(f"\n[Module Constraints]:\n{fallback_msg}")
 
         return {
             "directive": "\n".join(directive_parts),
