@@ -975,8 +975,8 @@ async def handle_ooc_command(
         return f"[OOC Directive: {ooc_content}]"
 
     else:
-        # general: 일반 OOC도 서사 지시로 전달
-        return f"[OOC Directive: {ooc_content}]"
+        # general: 질문/확인 등 → 서사 생성 불필요, 루카가 답변
+        return None
 
 
 @registry.register("ooc", category="System", aliases=["OOC", "메타", "루카"], description="루카 (OOC 도우미) 모드 토글")

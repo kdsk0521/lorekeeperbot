@@ -102,18 +102,40 @@ async def _process_message(message: discord.Message) -> None:
             status = domain_manager.get_participant_status(channel_id, message.author.id)
             if not status: return  # Ignore non-participants
 
-            # 3. SPECIAL INPUTS (OOC inline — chat_with_ooc도 OOC만 처리)
-            if parsed and parsed['type'] in ('ooc', 'chat_with_ooc'):
-                ooc_content = parsed.get('ooc_content') or parsed.get('content', '')
+            # 3. PURE OOC (GM에게 질문/메타 요청)
+            if parsed and parsed['type'] == 'ooc':
+                ooc_content = parsed.get('content', '')
                 ooc_directive = await command_handler.handle_ooc_command(
                     message, channel_id, ooc_content,
                     client_genai, MODEL_ID
                 )
                 if ooc_directive:
+                    # narrative_request → 서사 지시로 AI 응답
                     await generate_ai_response(
                         message, channel_id,
                         user_input_override=ooc_directive
                     )
+                else:
+                    # general/edit 처리 완료 or 질문 → 루카가 답변
+                    await generate_ooc_response(message, channel_id)
+                return
+
+            # 3a. CHAT + OOC (IC 행동 + 서사 지시)
+            if parsed and parsed['type'] == 'chat_with_ooc':
+                ic_text = parsed.get('chat_content', '')
+                ooc_content = parsed.get('ooc_content', '')
+                mask = domain_manager.get_user_mask(channel_id, message.author.id)
+
+                # IC 행동을 히스토리에 기록
+                if ic_text:
+                    domain_manager.append_history(channel_id, mask, ic_text)
+
+                # OOC를 지시로 변환 + IC 맥락 포함
+                combined_directive = f"[플레이어 행동: {ic_text}] [OOC 지시: {ooc_content}]"
+                await generate_ai_response(
+                    message, channel_id,
+                    user_input_override=combined_directive
+                )
                 return
 
             # 3.5. OOC MODE CHECK
