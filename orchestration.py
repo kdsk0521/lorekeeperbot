@@ -666,16 +666,17 @@ class OrchestrationService:
     # =========================================================
     # RETRY / REROLL (!다시)
     # =========================================================
-    async def retry_last(self, message: discord.Message, channel_id: str) -> bool:
+    async def retry_last(self, message: discord.Message, channel_id: str, edited_input: str = None) -> bool:
         """
-        마지막 AI 응답을 재생성합니다. (고도화 버전)
+        마지막 AI 응답을 재생성합니다.
+        edited_input이 있으면 이전 입력을 교체하여 재생성합니다.
         """
         last_ctx = domain_manager.get_last_execution_context(channel_id)
-        
+
         if not last_ctx or not last_ctx.get("has_response"):
             await message.channel.send("⚠️ 재시도할 이전 응답이 없거나 이미 처리 중입니다.")
             return False
-        
+
         # 1. 이전 메시지 삭제 (UNE 로그 + AI 응답)
         msg_ids = last_ctx.get("message_ids", [])
         for mid in msg_ids:
@@ -684,35 +685,33 @@ class OrchestrationService:
                 await m.delete()
             except Exception: pass
 
-        # 2. 히스토리 정합성 보장 (마지막 User-Model 세트 제거 시도)
+        # 2. 히스토리 정합성 보장 (마지막 User-Model 세트 제거)
         d = domain_manager.get_domain(channel_id)
         history = d.get("history", [])
-        
-        # 마지막 모델 응답이 있으면 제거
-        if history and history[-1].get("role") == "model":
+
+        if history and history[-1].get("role") == "Model":
             history.pop()
-            # 그 앞의 사용자 입력도 제거 (execute에서 세트로 추가하기 때문)
-            if history and history[-1].get("role") != "model":
+            if history and history[-1].get("role") != "Model":
                 history.pop()
-            
             domain_manager.save_domain(channel_id, d)
             logger.debug(f"[!다시] Removed [User?, Model] set from history for {channel_id}")
-        
-        # 3. 재실행 피드백 (안내 메시지 생성)
-        feedback = await message.channel.send("🔄 **서사를 다시 뽑는 중...**")
-        
-        # 4. 재실행
-        orig_msg_id = last_ctx.get("original_message_id")
-        action_text = last_ctx.get("action_text")
-        
-        try:
-            # 원본 메시지가 남아있으면 그것을 기준으로 재실행
-            orig_msg = await message.channel.fetch_message(orig_msg_id)
-            await self.execute(orig_msg, channel_id, feedback_msg=feedback)
-        except Exception:
-            # 원본 메시지가 삭제되었으면 현재 메시지를 대리인으로 사용하되, 원본 텍스트 주입
+
+        # 3. 재실행 텍스트 결정
+        action_text = edited_input or last_ctx.get("action_text")
+        label = "입력 수정 후 재생성" if edited_input else "서사를 다시 뽑는 중"
+        feedback = await message.channel.send(f"🔄 **{label}...**")
+
+        # 4. 재실행 (edited_input이 있으면 항상 system_trigger로 주입)
+        if edited_input:
             await self.execute(message, channel_id, system_trigger=action_text, feedback_msg=feedback)
-            
+        else:
+            orig_msg_id = last_ctx.get("original_message_id")
+            try:
+                orig_msg = await message.channel.fetch_message(orig_msg_id)
+                await self.execute(orig_msg, channel_id, feedback_msg=feedback)
+            except Exception:
+                await self.execute(message, channel_id, system_trigger=action_text, feedback_msg=feedback)
+
         return True
 
     def get_last_context(self, channel_id: str) -> Optional[Dict[str, Any]]:

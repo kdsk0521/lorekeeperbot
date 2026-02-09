@@ -284,21 +284,14 @@ async def cmd_info(ctx: CommandContext) -> None:
             if ctx.genai_client:
                 analysis = await cognition.analyze_character_sheet(ctx.genai_client, ctx.model_id, full_arg)
                 if analysis:
-                    # [V4 Integration] Save as Global PC Template (Like !로어)
-                    if analysis.get("name"):
-                        domain_manager.set_default_pc_info(ctx.channel_id, analysis)
-                        
-                    # 1. Update Current User directly
+                    # Save as PC Template (always — so apply uses fresh data)
+                    domain_manager.set_default_pc_info(ctx.channel_id, analysis)
                     domain_manager.apply_pc_info_to_user(ctx.channel_id, uid)
-                    
-                    # 2. Sync others if name matches (Same as !로어)
+
+                    # Sync others if name matches
                     updated_uids = domain_manager.sync_matching_participants(ctx.channel_id, analysis)
-                    
-                    # Filter out current user from "sync others" count
                     other_uids = [u for u in updated_uids if u != uid]
-                    sync_info = ""
-                    if other_uids:
-                        sync_info = f"\n(동일 캐릭터 사용자 {len(other_uids)}명 동시 업데이트)"
+                    sync_info = f"\n(동일 캐릭터 사용자 {len(other_uids)}명 동시 업데이트)" if other_uids else ""
 
                     await status_msg.edit(content=f"✅ **캐릭터 설정 동기화 완료**\n이름: {analysis.get('name', '유지')}\n특성: {len(analysis.get('passives', []))}개 추출\n소지품/설정 데이터가 시스템에 적용되었습니다.{sync_info}")
                     return
@@ -310,16 +303,18 @@ async def cmd_info(ctx: CommandContext) -> None:
 
     # 1. Profile (Mask, Desc, etc)
     mask_name = p_data.get("mask", "Unknown")
-    desc = p_data.get("desc", "설명 없음")
-    
+    desc = p_data.get("desc", "")
+
     # Appearance/Personality from AI Memory if available
     mem = p_data.get("ai_memory", {})
     appearance = mem.get("appearance", "")
     description = mem.get("description", "")
     background = mem.get("background", "")
-    
+
+    has_ai_profile = appearance or description or background
     msg = [f"🎭 **{mask_name}**"]
-    if desc: msg.append(f"> {desc}")
+    if desc and not has_ai_profile:
+        msg.append(f"> {desc}")
     if appearance: msg.append(f"**외모:** {appearance}")
     if description: msg.append(f"**설명:** {description}")
     if background: msg.append(f"**배경:** {background}")
@@ -646,17 +641,18 @@ async def cmd_start(ctx: CommandContext) -> None:
     return None
 
 
-@registry.register("retry", category="System", aliases=["다시", "reroll", "재판정"], description="마지막 AI 응답 재생성")
+@registry.register("retry", category="System", aliases=["다시", "reroll", "재판정"], description="재생성 / 인풋 수정 후 재생성")
 async def cmd_retry(ctx: CommandContext) -> None:
-    """!다시 - 마지막 AI 응답을 삭제하고 새로 굴림"""
+    """!다시 [수정 입력] — 빈칸이면 같은 입력으로 리롤, 내용 있으면 입력 교체 후 재생성"""
     from orchestration import get_orchestration_runtime
     orchestration = get_orchestration_runtime(ctx.genai_client, ctx.model_id, config.MODEL_ID_FLASH)
-    
+
     if not orchestration:
         await ctx.send("⚠️ AI 서비스가 초기화되지 않았습니다.")
         return
-    
-    await orchestration.retry_last(ctx.message, ctx.channel_id)
+
+    edited_input = ctx.raw_args.strip() or None
+    await orchestration.retry_last(ctx.message, ctx.channel_id, edited_input=edited_input)
 
 
 @registry.register("mode", category="System", aliases=["모드"], description="AI 응답 모드 변경")
@@ -665,17 +661,16 @@ async def cmd_mode(ctx: CommandContext) -> None:
     arg = ctx.raw_args.strip()
     
     if not arg:
-        d = domain_manager.get_domain(ctx.channel_id)
-        curr = d['settings'].get('mode', 'auto')
-        mode_kr = {'auto': '자동', 'waiting': '수동', 'manual': '수동', 'assist': '보조'}.get(curr, curr)
+        curr = domain_manager.get_response_mode(ctx.channel_id)
+        mode_kr = {'auto': '자동', 'waiting': '수동', 'assist': '보조'}.get(curr, curr)
         await ctx.send(f"⚙️ 현재 모드: **{mode_kr}**\n사용법: `!모드 [자동/수동]`")
         return
-    
+
     mode_map = {'자동': 'auto', '수동': 'waiting', 'auto': 'auto', 'waiting': 'waiting', 'manual': 'waiting', 'assist': 'assist'}
     mode = mode_map.get(arg.lower(), arg.lower())
     mode_kr = {'auto': '자동', 'waiting': '수동', 'assist': '보조'}.get(mode, mode)
-    
-    domain_manager.update_settings(ctx.channel_id, mode=mode)
+
+    domain_manager.set_response_mode(ctx.channel_id, mode)
     await ctx.send(f"⚙️ 모드 변경: **{mode_kr}**")
 
 
@@ -1161,40 +1156,16 @@ async def cmd_quest(ctx: CommandContext) -> None:
     await ctx.send("📋 사용법: `!quest [add/complete/remove/list] [내용]`")
 
 
-@registry.register("time", category="World", aliases=["시간", "time_adv", "next", "turn", "진행", "건너뛰기", "턴"], description="시간 관리")
+@registry.register("time", category="World", aliases=["시간"], description="시간 조회 및 설정")
 async def cmd_time(ctx: CommandContext) -> None:
-    """!시간 [진행/조회/설정]"""
+    """!시간 [설정 시간대 / 진행 / N]"""
     args = ctx.args
-    arg_str = ctx.raw_args.strip()
-    
     world = domain_manager.get_world_state(ctx.channel_id)
-    
+
     if not args:
-        if ctx.trigger in ["next", "turn", "진행", "건너뛰기", "턴"]:
-            # 축적된 PC 행동 확인
-            pending = domain_manager.get_pending_actions(ctx.channel_id)
-
-            from orchestration import get_orchestration_runtime
-            orch = get_orchestration_runtime(ctx.genai_client, ctx.model_id, config.MODEL_ID_FLASH)
-            if not orch:
-                await ctx.send("⚠️ AI 서비스가 초기화되지 않았습니다.")
-                return
-
-            if pending:
-                # BATCH MODE: 축적된 행동 일괄 처리
-                feedback = await ctx.message.channel.send("🔄 **행동을 처리하고 있습니다...**")
-                await orch.execute_batch(ctx.message, ctx.channel_id, pending, feedback)
-            else:
-                # OBSERVATION MODE: 관찰 턴 (1틱 시간 경과 + 세계 묘사)
-                tick_msg = game_system.advance_tick(ctx.channel_id)
-                await ctx.send(tick_msg)
-                feedback = await ctx.message.channel.send("🔄 **세계를 관찰하고 있습니다...**")
-                await orch.execute_observation(ctx.message, ctx.channel_id, feedback)
-            return
         # View
         time_emoji = {"새벽": "🌅", "오전": "☀️", "오후": "🌤️", "황혼": "🌆", "저녁": "🌙", "심야": "🌑"}
         emoji = time_emoji.get(world.get("time_slot", "오후"), "⏰")
-        
         msg = (
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"📅 **{world.get('day', 1)}일차**\n"
@@ -1205,16 +1176,16 @@ async def cmd_time(ctx: CommandContext) -> None:
         )
         await ctx.send(msg)
         return
-        
+
     first = args[0].lower()
-    
-    # Advance
+
+    # Advance clock by 1 tick
     if first in ["진행", "next", "pass"]:
         msg = game_system.advance_time(ctx.channel_id)
         await ctx.send(msg)
         return
-        
-    # Advance N
+
+    # Advance clock by N ticks
     if first.isdigit():
         count = int(first)
         if count > 12:
@@ -1226,7 +1197,7 @@ async def cmd_time(ctx: CommandContext) -> None:
         await ctx.send("\n".join(msgs))
         return
 
-    # Set
+    # Set time slot
     if first in ["설정", "set"]:
         if len(args) < 2:
             await ctx.send("⚠️ 사용법: `!시간 설정 [오전/오후/...]`")
@@ -1240,6 +1211,31 @@ async def cmd_time(ctx: CommandContext) -> None:
         else:
             await ctx.send(f"⚠️ 유효한 시간대: {', '.join(time_slots)}")
         return
+
+
+@registry.register("turn", category="World", aliases=["턴", "진행", "건너뛰기", "next"], description="턴 진행 (수동모드: 축적 행동 일괄 처리)")
+async def cmd_turn(ctx: CommandContext) -> None:
+    """!진행 — 축적된 행동 처리 또는 관찰 턴"""
+    from orchestration import get_orchestration_runtime
+    orch = get_orchestration_runtime(ctx.genai_client, ctx.model_id, config.MODEL_ID_FLASH)
+    if not orch:
+        await ctx.send("⚠️ AI 서비스가 초기화되지 않았습니다.")
+        return
+
+    pending = domain_manager.get_pending_actions(ctx.channel_id)
+
+    if pending:
+        # BATCH MODE: 축적된 행동 일괄 처리
+        summary = ", ".join(f"**{v['mask']}** ({len(v['actions'])}행동)" for v in pending.values())
+        feedback = await ctx.message.channel.send(f"🔄 **행동을 처리하고 있습니다...**\n> {summary}")
+        await orch.execute_batch(ctx.message, ctx.channel_id, pending, feedback)
+    else:
+        # OBSERVATION MODE: 관찰 턴 (1틱 시간 경과 + 세계 묘사)
+        tick_msg = game_system.advance_tick(ctx.channel_id)
+        await ctx.send(tick_msg)
+        feedback = await ctx.message.channel.send("🔄 **세계를 관찰하고 있습니다...**")
+        await orch.execute_observation(ctx.message, ctx.channel_id, feedback)
+    return
 
 
 @registry.register("doom", category="World", aliases=["둠", "위기", "tension"], description="위기 수치 관리")
@@ -1311,10 +1307,10 @@ async def cmd_help(ctx: CommandContext) -> None:
         for info in cmds:
             name = info['name']
             desc = info['description']
-            # Optional: Show aliases
-            # aliases = info['aliases']
-            # if aliases: desc += f" ({', '.join(aliases)})"
-            msg.append(f"`!{name}`: {desc}")
+            # Show Korean aliases for discoverability
+            kr_aliases = [a for a in info.get('aliases', []) if any('\uac00' <= c <= '\ud7a3' for c in a)]
+            alias_str = f" ({', '.join('!' + a for a in kr_aliases)})" if kr_aliases else ""
+            msg.append(f"`!{name}`{alias_str}: {desc}")
         
     await send_long_message(ctx.message.channel, "\n".join(msg))
 

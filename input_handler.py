@@ -25,7 +25,7 @@ _MARKDOWN_PATTERNS = [
 ]
 
 # OOC 및 주사위 패턴 미리 컴파일
-_OOC_PATTERN = re.compile(r'\((?:(?:OOC|ooc)[:\s]+)?(.+?)\)', re.IGNORECASE | re.DOTALL)
+_OOC_PATTERN = re.compile(r'\((?:OOC|ooc)[:\s]+(.+?)\)', re.IGNORECASE | re.DOTALL)
 
 
 

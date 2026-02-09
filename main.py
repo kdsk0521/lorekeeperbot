@@ -75,6 +75,16 @@ async def _process_message(message: discord.Message) -> None:
             content = message.content.strip()
             parsed = input_handler.parse_input(content)
 
+            # 0. BOT ACTIVE GATE (봇 꺼진 채널: !봇 토글만 허용)
+            if not domain_manager.get_bot_active(channel_id):
+                if parsed and parsed['type'] == 'command' and parsed['command'] in ('bot', '봇'):
+                    await command_handler.dispatch_command(
+                        parsed['command'], message, channel_id, parsed,
+                        client_discord, client_genai, MODEL_ID, MODEL_ID_FLASH,
+                        domain_manager.get_domain(channel_id)
+                    )
+                return
+
             # 1. COMMANDS
             if parsed and parsed['type'] == 'command':
                 sys_trigger = await command_handler.dispatch_command(
@@ -87,9 +97,10 @@ async def _process_message(message: discord.Message) -> None:
                 return
 
             # 2. SESSION LOCK CHECK
-            if domain_manager.is_session_locked(channel_id):
-                status = domain_manager.get_participant_status(channel_id, message.author.id)
-                if not status: return # Ignore non-participants
+            if not domain_manager.is_session_locked(channel_id):
+                return
+            status = domain_manager.get_participant_status(channel_id, message.author.id)
+            if not status: return  # Ignore non-participants
 
             # 3. SPECIAL INPUTS (Dice, OOC inline)
             if parsed and parsed['type'] in ['dice', 'ooc', 'chat_with_ooc']:
@@ -112,10 +123,6 @@ async def _process_message(message: discord.Message) -> None:
                     client_discord, client_genai, MODEL_ID, MODEL_ID_FLASH,
                     domain_manager.get_domain(channel_id)
                 )
-                return
-
-            # Whitelist Check (Ignore if bot inactive)
-            if not domain_manager.get_bot_active(channel_id):
                 return
 
             # 3.5. OOC MODE CHECK
