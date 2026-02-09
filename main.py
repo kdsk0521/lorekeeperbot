@@ -102,27 +102,18 @@ async def _process_message(message: discord.Message) -> None:
             status = domain_manager.get_participant_status(channel_id, message.author.id)
             if not status: return  # Ignore non-participants
 
-            # 3. SPECIAL INPUTS (Dice, OOC inline)
-            if parsed and parsed['type'] in ['dice', 'ooc', 'chat_with_ooc']:
-                if parsed['type'] in ['ooc', 'chat_with_ooc']:
-                    ooc_content = parsed.get('ooc_content') or parsed.get('content', '')
-                    ooc_directive = await command_handler.handle_ooc_command(
-                        message, channel_id, ooc_content,
-                        client_genai, MODEL_ID
-                    )
-                    if ooc_directive:
-                        await generate_ai_response(
-                            message,
-                            channel_id,
-                            user_input_override=ooc_directive
-                        )
-                    return
-
-                await command_handler.dispatch_command(
-                    None, message, channel_id, parsed,
-                    client_discord, client_genai, MODEL_ID, MODEL_ID_FLASH,
-                    domain_manager.get_domain(channel_id)
+            # 3. SPECIAL INPUTS (OOC inline — chat_with_ooc도 OOC만 처리)
+            if parsed and parsed['type'] in ('ooc', 'chat_with_ooc'):
+                ooc_content = parsed.get('ooc_content') or parsed.get('content', '')
+                ooc_directive = await command_handler.handle_ooc_command(
+                    message, channel_id, ooc_content,
+                    client_genai, MODEL_ID
                 )
+                if ooc_directive:
+                    await generate_ai_response(
+                        message, channel_id,
+                        user_input_override=ooc_directive
+                    )
                 return
 
             # 3.5. OOC MODE CHECK
@@ -171,13 +162,21 @@ async def generate_ai_response(
 
     feedback_msg = await message.channel.send("🔄 **서사를 생성하고 있습니다...**")
 
-    await orchestration.execute(
-        message,
-        channel_id,
-        system_trigger,
-        feedback_msg=feedback_msg,
-        user_input_override=user_input_override
-    )
+    try:
+        await orchestration.execute(
+            message,
+            channel_id,
+            system_trigger,
+            feedback_msg=feedback_msg,
+            user_input_override=user_input_override
+        )
+    except Exception as e:
+        logging.error(f"Orchestration Error: {e}", exc_info=True)
+        try:
+            await feedback_msg.delete()
+        except Exception:
+            pass
+        await message.channel.send(f"⚠️ 서사 생성 실패: {e}")
 
 
 # =========================================================

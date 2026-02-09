@@ -990,7 +990,7 @@ async def cmd_ooc(ctx: CommandContext) -> None:
     else:
         await ctx.send("🎭 **루카 모드 OFF** — 서사 모드로 복귀합니다.")
 
-@registry.register("mental", category="Player", aliases=["멘탈", "mental"], description="멘탈 조회 및 설정")
+@registry.register("mental", category="Player", aliases=["멘탈"], description="멘탈 조회 및 설정")
 async def cmd_mental(ctx: CommandContext) -> None:
     """!멘탈 [값] - 멘탈 수치를 특정 값으로 설정 (0-100)"""
     uid = ctx.user_id
@@ -1260,7 +1260,7 @@ async def cmd_doom(ctx: CommandContext) -> None:
             old_v = w.get("doom", 0)
             w["doom"] = max(0, min(100, val))
             domain_manager.update_world_state(ctx.channel_id, w)
-            await ctx.send(f"�️ **위기 수치 재설정:** {old_v}% → {val}%")
+            await ctx.send(f"⚙️ **위기 수치 재설정:** {old_v}% → {val}%")
         except ValueError:
             await ctx.send("⚠️ 올바른 숫자가 아닙니다.")
         return
