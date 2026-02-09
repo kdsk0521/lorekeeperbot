@@ -16,15 +16,29 @@ class MentalModule:
         bus = context.shared_bus
         
         # 1. Collect Delta from multiple sources
-        delta = bus.mental.get("delta", 0)  # From Anomaly Module
-        
+        delta = bus.mental.get("delta", 0)  # From Doom pressure/recovery + Anomaly damage
+
+        # 1a. Judgment Emotional Impact (직접적 감정 효과)
+        if bus.judgment.get("active"):
+            j_result = bus.judgment.get("result", "")
+            j_emotion = 0
+            if j_result == "critical_success":
+                j_emotion = 3   # 고양감
+            elif j_result == "success":
+                j_emotion = 1   # 자신감
+            elif j_result == "critical_failure":
+                j_emotion = -5  # 절망
+            if j_emotion != 0:
+                delta += j_emotion
+                bus.mental["judgment_emotion"] = j_emotion
+
         # 2. AI-Analyzed Mental Impact
         impact_data = bus.mental.get("impact", {})
         if impact_data.get("applicable", False):
             impact_delta = impact_data.get("delta", 0)
             impact_reason = impact_data.get("reason", "")
             delta += impact_delta  # Add to total delta
-            bus.mental["impact_log"] = f"🧠 정신적 영향: {impact_delta:+d} ({impact_reason})"
+            bus.mental["impact_log"] = f"🧠 기력 영향: {impact_delta:+d} ({impact_reason})"
         
         if delta == 0:
             return context
@@ -82,11 +96,16 @@ class MentalModule:
 
         # Base change with mask and current value
         if actual_delta < 0:
-            log_parts.append(f"{mask}: 🧠 정신력 {actual_delta} → {target_mental}/100")
+            log_parts.append(f"{mask}: 🧠 기력 {actual_delta} → {target_mental}/100")
         else:
-            log_parts.append(f"{mask}: 🧠 정신력 +{actual_delta} → {target_mental}/100")
+            log_parts.append(f"{mask}: 🧠 기력 +{actual_delta} → {target_mental}/100")
         
         # Modifiers with emphasis
+        j_emotion = bus.mental.get("judgment_emotion", 0)
+        if j_emotion > 0:
+            log_parts.append(f" (판정 고양 +{j_emotion})")
+        elif j_emotion < 0:
+            log_parts.append(f" (판정 절망 {j_emotion})")
         if clamped:
             log_parts.append("\n❗ **충격 완화** (Clamping)")
         if trauma_triggered:

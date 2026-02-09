@@ -161,6 +161,9 @@ class WaterfallPipeline:
             bus.anomaly["intensity"] = "Mid"
         if not bus.anomaly.get("polarity"):
             bus.anomaly["polarity"] = "mixed"
+        # Fallback line for seed-based anomalies (Theoria didn't generate one)
+        if bus.anomaly.get("tag") and not bus.anomaly.get("line"):
+            bus.anomaly["line"] = f"{bus.anomaly['tag']}의 기운이 감돈다."
 
         # 2. Call 2: Judgment (Conditional)
         if "judgment" in active_modules and context.shared_bus.judgment["active"]:
@@ -183,6 +186,20 @@ class WaterfallPipeline:
             from anomaly_module import AnomalyModule
             self.anomaly = AnomalyModule(self.theoria.client, self.theoria.model_id)
             context = await self.anomaly.process(context)
+
+        # 4a. Post-Anomaly Doom Sync (Anomaly writes doom.delta for inspiration/shock)
+        post_delta = bus.doom.get("delta", 0)
+        if post_delta != 0:
+            old_val = bus.doom.get("value", 0)
+            bus.doom["value"] = max(0, min(100, old_val + post_delta))
+            bus.doom["delta"] = 0
+            bus.doom["active"] = True
+            sign = f"+{post_delta}" if post_delta > 0 else str(post_delta)
+            existing_log = bus.doom.get("log", "")
+            if existing_log:
+                bus.doom["log"] = existing_log + f" (이변 {sign})"
+            else:
+                bus.doom["log"] = f"📈 긴장도 변동 (이변 {sign})" if post_delta > 0 else f"📉 긴장도 변동 (이변 {sign})"
 
         # 5. Mental Sync (Conditional)
         if "mental" in active_modules:

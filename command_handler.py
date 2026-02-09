@@ -227,7 +227,9 @@ async def cmd_lore(ctx: CommandContext) -> None:
             npc_names = [f"`{n['name']}`" for n in extracted_npcs if n.get('name')]
             npc_list_str = ", ".join(npc_names)
             
-            await msg.edit(content=f"✅ **로어 분석 완료**\n\n👥 **NPC: {len(extracted_npcs)}명 식별**\n{npc_list_str}{pc_msg}\n\n🌍 **장르/톤**\n{genre_summary}\n\n🌪️ **이변 징후**\n{len(lore_summary_data.get('anomaly_seeds', []))}개 식별")
+            anomaly_seeds = lore_summary_data.get('anomaly_seeds', [])
+            anomaly_str = ", ".join(f"`{s}`" for s in anomaly_seeds) if anomaly_seeds else "없음"
+            await msg.edit(content=f"✅ **로어 분석 완료**\n\n👥 **NPC: {len(extracted_npcs)}명 식별**\n{npc_list_str}{pc_msg}\n\n🌍 **장르/톤**\n{genre_summary}\n\n🌪️ **이변 징후** ({len(anomaly_seeds)}개)\n{anomaly_str}")
 
         except Exception as e:
             import traceback
@@ -359,7 +361,7 @@ async def cmd_info(ctx: CommandContext) -> None:
     mental_data: Dict[str, Any] = mem.get("mental", {})
     m_val = mental_data.get("value", 100)
     m_info = game_character.get_mental_info(m_val)
-    msg.append(f"\n**🧠 멘탈:** {m_info['emoji']} **{m_info['name']}**")
+    msg.append(f"\n**🧠 기력:** {m_info['emoji']} **{m_info['name']}**")
 
     # 5. Adaptation (Hidden Bar)
     exposure = p_data.get("abnormal_exposure", {})
@@ -747,20 +749,20 @@ async def cmd_modules(ctx: CommandContext) -> None:
     """!모듈 [on/off] - 모듈 상태 확인 또는 일괄 제어"""
     arg = ctx.raw_args.strip().lower()
     active = domain_manager.get_active_modules(ctx.channel_id)
-    all_mods = [("judgment", "판정"), ("doom", "둠"), ("anomaly", "이변"), ("mental", "멘탈")]
-    
+    all_mods = [("judgment", "판정"), ("doom", "둠"), ("anomaly", "이변"), ("mental", "기력")]
+
     # 일괄 ON
     if arg in ['on', '켜기', 'true', 'all']:
         for code, _ in all_mods:
             domain_manager.toggle_module(ctx.channel_id, code, True)
-        await ctx.send("✅ **모든 모듈이 활성화되었습니다.**\n• 판정 ✅\n• 둠 ✅\n• 이변 ✅\n• 멘탈 ✅")
+        await ctx.send("✅ **모든 모듈이 활성화되었습니다.**\n• 판정 ✅\n• 둠 ✅\n• 이변 ✅\n• 기력 ✅")
         return
-    
+
     # 일괄 OFF
     if arg in ['off', '끄기', 'false', 'none']:
         for code, _ in all_mods:
             domain_manager.toggle_module(ctx.channel_id, code, False)
-        await ctx.send("❌ **모든 모듈이 비활성화되었습니다.**\n• 판정 ❌\n• 둠 ❌\n• 이변 ❌\n• 멘탈 ❌")
+        await ctx.send("❌ **모든 모듈이 비활성화되었습니다.**\n• 판정 ❌\n• 둠 ❌\n• 이변 ❌\n• 기력 ❌")
         return
     
     # 상태 확인
@@ -784,13 +786,34 @@ async def cmd_toggle_judgment(ctx: CommandContext) -> None:
 async def cmd_toggle_doom(ctx: CommandContext) -> None:
     await _handle_module_toggle(ctx, "doom", "둠")
 
-@registry.register("anomaly", category="System", aliases=["이변", "비일상", "abnormal"], description="이변 모듈 제어")
+@registry.register("anomaly", category="System", aliases=["이변", "비일상", "abnormal"], description="이변 모듈 제어 및 징후 조회")
 async def cmd_toggle_anomaly(ctx: CommandContext) -> None:
-    await _handle_module_toggle(ctx, "anomaly", "이변")
+    arg = ctx.raw_args.strip().lower()
+    # on/off는 토글로 위임
+    if arg in ['on', '켜기', 'true', 'off', '끄기', 'false']:
+        await _handle_module_toggle(ctx, "anomaly", "이변")
+        return
 
-@registry.register("mental_mod", category="System", aliases=["멘탈모듈", "mentalmod"], description="멘탈 모듈 제어")
+    # 인자 없음: 상태 + 이변 징후 조회
+    active = domain_manager.get_active_modules(ctx.channel_id)
+    status = "✅ ON" if "anomaly" in active else "❌ OFF"
+
+    lore_data = domain_manager.get_lore_summary_data(ctx.channel_id)
+    seeds = lore_data.get("anomaly_seeds", [])
+
+    msg = f"🌪️ **이변 모듈**: {status}\n"
+    if seeds:
+        msg += f"\n**등록된 이변 징후** ({len(seeds)}개):\n"
+        msg += "\n".join(f"• `{s}`" for s in seeds)
+    else:
+        msg += "\n*(이변 징후 없음 — 로어 분석 시 자동 추출됩니다)*"
+
+    msg += f"\n\n사용법: `!이변 on/off`"
+    await ctx.send(msg)
+
+@registry.register("mental_mod", category="System", aliases=["멘탈모듈", "기력모듈", "mentalmod"], description="기력 모듈 제어")
 async def cmd_toggle_mental(ctx: CommandContext) -> None:
-    await _handle_module_toggle(ctx, "mental", "멘탈")
+    await _handle_module_toggle(ctx, "mental", "기력")
 
 async def _handle_module_toggle(ctx: CommandContext, code: str, name: str):
     arg = ctx.raw_args.strip().lower()
@@ -990,9 +1013,9 @@ async def cmd_ooc(ctx: CommandContext) -> None:
     else:
         await ctx.send("🎭 **루카 모드 OFF** — 서사 모드로 복귀합니다.")
 
-@registry.register("mental", category="Player", aliases=["멘탈"], description="멘탈 조회 및 설정")
+@registry.register("mental", category="Player", aliases=["멘탈", "기력"], description="기력 조회 및 설정")
 async def cmd_mental(ctx: CommandContext) -> None:
-    """!멘탈 [값] - 멘탈 수치를 특정 값으로 설정 (0-100)"""
+    """!기력 [값] - 기력 수치를 특정 값으로 설정 (0-100)"""
     uid = ctx.user_id
     p_data = domain_manager.get_participant_data(ctx.channel_id, uid)
     
@@ -1008,7 +1031,7 @@ async def cmd_mental(ctx: CommandContext) -> None:
         val = ment.get("value", 100)
         info = game_character.get_mental_info(val)
         desc = info['desc']
-        await ctx.send(f"🧠 **정신 상태:** {info['emoji']} **{info['name']}** ({val}/100)\n> {desc}")
+        await ctx.send(f"🧠 **기력 상태:** {info['emoji']} **{info['name']}** ({val}/100)\n> {desc}")
         return
 
     # [Set Mode]
@@ -1030,10 +1053,10 @@ async def cmd_mental(ctx: CommandContext) -> None:
         
         # Feedback
         info = game_character.get_mental_info(target_val)
-        await ctx.send(f"🧠 **멘탈 설정 완료:** {target_val}/100\n현재 상태: {info['emoji']} **{info['name']}**")
+        await ctx.send(f"🧠 **기력 설정 완료:** {target_val}/100\n현재 상태: {info['emoji']} **{info['name']}**")
         
     except ValueError:
-        await ctx.send("⚠️ 올바른 숫자를 입력하세요. (예: `!멘탈 50`)")
+        await ctx.send("⚠️ 올바른 숫자를 입력하세요. (예: `!기력 50`)")
 
 
 

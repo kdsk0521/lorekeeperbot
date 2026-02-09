@@ -16,14 +16,16 @@ class DoomModule:
         bus = context.shared_bus
         current_doom = bus.doom.get("value", 0)
         
-        # 1. Automatic Doom Change based on Judgment
+        # 1. Consume pre-existing doom delta (Judgment heroism/calamity: ±5)
+        delta = bus.doom.get("delta", 0)
+
+        # 1a. Judgment result-based doom change
         judgment = bus.judgment
-        delta = 0
         if judgment.get("active"):
             res = judgment.get("result")
-            if res == "critical_failure": delta = 5
-            elif res == "failure": delta = 2
-            elif res == "critical_success": delta = -3
+            if res == "critical_failure": delta += 5
+            elif res == "failure": delta += 2
+            elif res == "critical_success": delta -= 3
         
         # 2. AI-Analyzed Doom Relief
         relief_data = bus.doom.get("relief", {})
@@ -34,6 +36,7 @@ class DoomModule:
             bus.doom["relief_log"] = f"🌿 긴장 완화: -{relief_amount} ({relief_reason})"
             
         # 3. Update Bus
+        bus.doom["delta"] = 0  # Consumed — Anomaly can write fresh delta after this
         if delta != 0:
             new_doom = max(0, min(100, current_doom + delta))
             bus.doom["value"] = new_doom
@@ -59,23 +62,20 @@ class DoomModule:
             
             bus.doom["active"] = True
 
-        # 5. Mental Pressure/Recovery from Doom (Only if Mental module is active)
+        # 5. 기력 Pressure/Recovery from Doom Clock
         if "mental" in context.request.active_modules:
             if bus.doom["value"] >= 80:
-                # Extreme pressure
                 mental_pressure = -2
                 bus.mental["delta"] = bus.mental.get("delta", 0) + mental_pressure
-                bus.doom["mental_pressure_log"] = "⚠️ 극심한 긴장감"
+                bus.doom["mental_pressure_log"] = "⚠️ 위협 시계 압박 (기력 -2)"
             elif bus.doom["value"] >= 60:
-                # High pressure
                 mental_pressure = -1
                 bus.mental["delta"] = bus.mental.get("delta", 0) + mental_pressure
-                bus.doom["mental_pressure_log"] = "😰 높은 긴장감"
+                bus.doom["mental_pressure_log"] = "😰 위협 시계 압박 (기력 -1)"
             elif bus.doom["value"] <= 40:
-                # Low tension recovery
                 mental_recovery = 1
                 bus.mental["delta"] = bus.mental.get("delta", 0) + mental_recovery
-                bus.doom["mental_pressure_log"] = "😌 평온한 분위기"
+                bus.doom["mental_pressure_log"] = "😌 위협 이완 (기력 +1)"
         
         # 6. Check for Anomaly Potential
         # Trigger anomaly if doom > 50 or on critical failure

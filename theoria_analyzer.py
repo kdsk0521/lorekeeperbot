@@ -163,7 +163,7 @@ Return valid JSON with ALL these fields (Korean values where specified):
 - "time_flow": {"ticks": 1-20, "reason": "Korean"}
 - "doom_relief": {"applicable": boolean, "amount": 0-20, "reason": "Korean"}
 - "mental_impact": {"applicable": boolean, "delta": -35~+20, "reason": "Korean"}
-- "anomaly_profile": {"trigger": str, "category": "supernatural/psychological/social/environmental/temporal", "intensity": "Low/Mid/High/Extreme", "polarity": "positive/negative/mixed", "line": "Korean", "reason": "Korean"}
+- "anomaly_profile": {"trigger": str, "category": "supernatural/psychological/social/environmental/temporal", "intensity": "Low/Mid/High/Extreme", "polarity": "positive/negative/mixed", "line": "Korean - 이변의 서사적 묘사 1문장 (예: '그림자가 벽을 타고 기어오른다', '공기가 차갑게 얼어붙는다')", "reason": "Korean"}
 
 ## COGNITIVE ENHANCEMENT
 - "HabitusAnalysis": {

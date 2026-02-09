@@ -185,7 +185,7 @@ def sync_from_game_context(channel_id: str, user_id: str, ctx: Any) -> None:
                         "name": trauma_name,
                         "tags": ["Trauma", "Hard-to-cure"],
                         "modifier": -5,
-                        "desc": "붕괴한 무의식에서 깨어난 트라우마입니다. 모든 판정에 -5 패널티를 받습니다."
+                        "desc": "기력 붕괴에서 깨어난 트라우마입니다. 모든 판정에 -5 패널티를 받습니다."
                     })
 
             # Adaptation Updates
@@ -278,36 +278,106 @@ class UniversalNarrativeEngine:
         }
 
     def _extract_pc_result(self, context, mask: str) -> Dict[str, Any]:
-        """단일 PC 파이프라인 결과에서 directive + system_msg 추출"""
+        """단일 PC 파이프라인 결과에서 4-Layer Directive + system_msg 추출
+
+        Layer 1: [서사 지시] — FitD Position + PbtA MC Move (판정 결과)
+        Layer 2: [상황 양상] — Fate Aspect 선언 (복합 상호작용)
+        Layer 3: [이변 개입] — Cypher GM Intrusion (이변)
+        Layer 4: [분위기 지시] — Doom Clock 진행도 + 기력 상태
+        """
         bus = context.shared_bus
         directive_parts = []
         system_msg = ""
+        result_line = ""
 
-        # Judgment
-        if bus.judgment and bus.judgment.get("active"):
+        doom_val = bus.doom.get("value", 0) if bus.doom else 0
+        mental_val = bus.mental.get("value", 100) if bus.mental else 100
+
+        # ── Layer 1: [서사 지시] — Position + MC Move ──
+        j_active = bus.judgment and bus.judgment.get("active")
+        j_result = ""
+        if j_active:
             j_mask = bus.judgment.get("mask", mask)
-            reason_txt = f" (근거: {bus.judgment.get('reason')})" if bus.judgment.get('reason') else ""
-            directive_parts.append(f"[{j_mask}의 판정 결과]: {bus.judgment.get('result')} ({bus.judgment.get('roll')}){reason_txt}")
+            meta = bus.judgment.get("meta", {})
+            action = meta.get("action", "행동")
+            j_result = bus.judgment.get("result", "failure")
+            reason_txt = bus.judgment.get("reason", "")
+
+            # Position from Theoria (FitD)
+            pos_val = bus.dai.get("position", {}).get("value", 0.5) if bus.dai else 0.5
+            if pos_val <= 0.25:
+                pos_tier, pos_kr = "desperate", "절박"
+            elif pos_val <= 0.5:
+                pos_tier, pos_kr = "risky", "위험"
+            else:
+                pos_tier, pos_kr = "controlled", "통제"
+
+            # MC Move: Position × Result → 서사 방향 (PbtA)
+            if j_result in ("failure", "critical_failure"):
+                mc_moves = {
+                    "desperate": "위협을 실현하라 — 돌이키기 어려운 결과",
+                    "risky": "상황을 악화시켜라 — 새로운 위험이 드러난다",
+                    "controlled": "약한 대가를 요구하라 — 작은 차질이 생긴다",
+                }
+                if j_result == "critical_failure":
+                    mc_moves = {
+                        "desperate": "파멸적 결과 — 돌이킬 수 없는 일이 벌어진다",
+                        "risky": "최악의 전개 — 위험이 현실이 된다",
+                        "controlled": "예상치 못한 반전 — 안전이 깨진다",
+                    }
+            elif j_result == "partial":
+                mc_moves = {
+                    "desperate": "큰 대가를 치른다 — 원한 것은 얻되 무언가를 잃는다",
+                    "risky": "대가 있는 성공 — 차질이 따른다",
+                    "controlled": "사소한 마찰 — 예상보다 순탄하지 않다",
+                }
+            else:  # success / critical_success
+                mc_moves = {
+                    "desperate": "극적인 역전 — 절체절명에서 빛난다",
+                    "risky": "위험을 넘겼다 — 무난한 수행",
+                    "controlled": "여유로운 성공 — 깔끔한 수행",
+                }
+                if j_result == "critical_success":
+                    mc_moves = {
+                        "desperate": "기적적 역전 — 절체절명에서 빛나는 순간",
+                        "risky": "빛나는 성공 — 위험을 뚫고 인상적인 결과",
+                        "controlled": "압도적 성공 — 기대 이상의 결과",
+                    }
+
+            move = mc_moves.get(pos_tier, mc_moves.get("risky", ""))
+            reason_part = f" ({reason_txt})" if reason_txt else ""
+            directive_parts.append(
+                f"[서사 지시: {j_mask}의 '{action}'{reason_part} — {pos_kr}] {move}"
+            )
             system_msg += bus.judgment.get("output", "")
             if bus.judgment.get("party_wide_hook"):
                 system_msg += "\n⚠️ **[전체 파티 영향]** — 이 결과는 모든 동료에게 영향을 미칩니다."
 
-        # Anomaly
-        anomaly_directive = ""
+        # ── Layer 3: [이변 개입] — Cypher GM Intrusion ──
         anomaly_sys = ""
-        if bus.anomaly and bus.anomaly.get("triggered"):
-            tag = bus.anomaly.get("tag")
+        a_triggered = bus.anomaly and bus.anomaly.get("triggered")
+        if a_triggered:
+            tag = bus.anomaly.get("tag") or "이변"
             intensity = bus.anomaly.get("intensity")
             polarity = bus.anomaly.get("polarity")
             category = bus.anomaly.get("category")
-            cat_txt = f" / 적응키 {category}" if category and category != tag else ""
-            anomaly_directive = f"[이변 활성화]: {tag} - {intensity} / {polarity}{cat_txt}"
-            if bus.anomaly.get("output"):
-                anomaly_directive += f"\n{bus.anomaly.get('output')}"
+            line = bus.anomaly.get("line", "")
 
-            # Anomaly system message
-            line = bus.anomaly.get("line")
-            header = f"⚡ 이변 발생: [[{tag or '이변'}]]"
+            # GM Intrusion 프레이밍: 이변은 "벌"이 아니라 "상황 개입"
+            polarity_frame = {
+                "positive": "기회로 작용할 수 있다",
+                "negative": "위협으로 다가온다",
+                "mixed": "기회이자 위협이다",
+            }.get(polarity, "상황에 개입한다")
+            intrusion = f"[이변 개입: {tag}] {polarity_frame}"
+            if line:
+                intrusion += f"\n{line}"
+            if bus.anomaly.get("output"):
+                intrusion += f"\n{bus.anomaly.get('output')}"
+            directive_parts.append(intrusion)
+
+            # Anomaly system message (Discord)
+            header = f"⚡ 이변 발생: [[{tag}]]"
             anomaly_sys += f"\n{header}"
             if line:
                 anomaly_sys += f"\n{line}"
@@ -319,9 +389,11 @@ class UniversalNarrativeEngine:
                 if category and category != tag: info_parts.append(f"적응키: {category}")
                 anomaly_sys += f"\n{' / '.join(info_parts) if info_parts else '이변 정보: (미상)'}"
 
+            if bus.anomaly.get("escalated"):
+                anomaly_sys += f"\n⚠️ **대실패 공명**: 이변 강도 상승!"
             divider = "━" * 20
             anomaly_sys += f"\n{divider}\n{divider}"
-            anomaly_sys += f"\n🎲 적응 판정 결과: [[{category or tag or '이변'}]]"
+            anomaly_sys += f"\n🎲 적응 판정 결과: [[{category or tag}]]"
             result_line = _build_adaptation_result_line(
                 mask,
                 bus.anomaly.get("defense_success"),
@@ -331,29 +403,72 @@ class UniversalNarrativeEngine:
             )
             if result_line:
                 anomaly_sys += f"\n{result_line}"
-
-        if anomaly_directive:
-            directive_parts.append(anomaly_directive)
         system_msg += anomaly_sys
 
-        # Doom logs
+        # ── System Logs (Discord) ──
         if bus.doom and bus.doom.get("relief_log"):
             system_msg += f"\n{bus.doom.get('relief_log')}"
         if bus.doom and bus.doom.get("mental_pressure_log"):
             system_msg += f"\n{bus.doom.get('mental_pressure_log')}"
-
-        # Mental
         if bus.mental:
-            mental_parts = []
+            log_parts = []
             if bus.mental.get("impact_log"):
                 impact_log = bus.mental.get("impact_log")
                 if "(" in impact_log and ")" in impact_log:
                     reason = impact_log.split("(", 1)[1].rsplit(")", 1)[0]
-                    mental_parts.append(reason)
+                    log_parts.append(reason)
             if bus.mental.get("log"):
-                mental_parts.append(bus.mental.get("log"))
-            if mental_parts:
-                system_msg += f"\n{' → '.join(mental_parts)}"
+                log_parts.append(bus.mental.get("log"))
+            if log_parts:
+                system_msg += f"\n{' → '.join(log_parts)}"
+
+        # ── Layer 2: [상황 양상] — Fate Aspect 선언 ──
+        aspects = []
+        m_trauma = bus.mental and bus.mental.get("trauma_trigger")
+        if j_active and a_triggered:
+            if j_result in ("critical_failure", "failure"):
+                aspects.append("실패의 공명")
+            elif j_result == "critical_success":
+                aspects.append("영광의 이면")
+        if a_triggered and mental_val <= 39:
+            aspects.append("기력 침식")
+        if m_trauma and a_triggered:
+            aspects.append("내외 공명")
+        if m_trauma and j_active:
+            aspects.append("재기")
+        if j_result == "critical_failure" and mental_val <= 14:
+            aspects.append("나락")
+        if bus.anomaly and bus.anomaly.get("escalated"):
+            aspects.append("통제 불능")
+        if aspects:
+            directive_parts.append("[상황 양상]: " + ", ".join(aspects))
+
+        # ── Layer 4: [분위기 지시] — Doom Clock + 기력 ──
+        atmosphere = []
+
+        # Doom = 외부 위협 시계 (FitD Clock)
+        if doom_val >= 80:
+            atmosphere.append("위협 시계 {}% — 곧 터진다. 임박감과 절박함".format(doom_val))
+        elif doom_val >= 60:
+            atmosphere.append("위협 시계 {}% — 위협이 다가오고 있다".format(doom_val))
+        elif doom_val >= 40:
+            atmosphere.append("위협 시계 {}% — 불안한 평온".format(doom_val))
+        elif doom_val <= 20:
+            atmosphere.append("위협 시계 {}% — 한숨 돌린 상태".format(doom_val))
+
+        # 기력 = PC 총체적 자원 (체력/집중/평판/정신)
+        if mental_val <= 14:
+            atmosphere.append("기력 붕괴({}%) — 한계를 넘겼다. 몸도 정신도 부서진다".format(mental_val))
+        elif mental_val <= 39:
+            atmosphere.append("기력 고갈({}%) — 소진됐다. 무엇이든 힘겹다".format(mental_val))
+        elif mental_val <= 69:
+            atmosphere.append("기력 동요({}%) — 흔들린다. 집중이 어렵다".format(mental_val))
+
+        if m_trauma:
+            atmosphere.append("트라우마 각성 — 극한에서 되살아나는 순간")
+
+        if atmosphere:
+            directive_parts.append("[분위기 지시]: " + " / ".join(atmosphere))
 
         # Fallbacks
         fallback_msg = self.pipeline.get_fallback_directives(context.request.active_modules)
@@ -363,9 +478,9 @@ class UniversalNarrativeEngine:
         return {
             "directive": "\n".join(directive_parts),
             "system_msg": system_msg,
-            "has_anomaly": bool(bus.anomaly and bus.anomaly.get("triggered")),
+            "has_anomaly": bool(a_triggered),
             "anomaly_header": anomaly_sys.split("━━")[0] if anomaly_sys else "",
-            "adaptation_line": result_line if (bus.anomaly and bus.anomaly.get("triggered")) else "",
+            "adaptation_line": result_line if a_triggered else "",
             "mental_log": bus.mental.get("log", "") if bus.mental else "",
         }
 

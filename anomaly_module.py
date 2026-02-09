@@ -40,11 +40,12 @@ class AnomalyModule:
         return mapping.get(raw, "mixed")
 
     def _roll_defense(self, context: GameContext, intensity: str) -> dict:
-        """공통 방어 롤: passive 분석 + 성공률 계산 + 롤."""
+        """공통 방어 롤: passive 분석 + 정신 상태 + 성공률 계산 + 롤."""
         dc_map = {"Low": 30, "Mid": 50, "High": 70, "Extreme": 90}
         dc = dc_map.get(intensity, 50)
         success_rate = 100 - dc
 
+        # Passive 보정
         passives = (context.narrative_anchors or {}).get("passives", [])
         for passive in passives:
             if isinstance(passive, dict):
@@ -53,6 +54,15 @@ class AnomalyModule:
                     success_rate += 15
                 elif any(kw in p_name for kw in ["겁쟁이", "나약", "불안", "공포"]):
                     success_rate -= 15
+
+        # 정신 상태 보정: 평정(+10), 동요(0), 공황(-10), 붕괴(-20)
+        mental_val = context.shared_bus.mental.get("value", 100)
+        if mental_val >= 70:
+            success_rate += 10
+        elif mental_val <= 14:
+            success_rate -= 20
+        elif mental_val <= 39:
+            success_rate -= 10
 
         success_rate = max(10, min(90, success_rate))
         defense_roll = random.randint(1, 100)
@@ -87,6 +97,12 @@ class AnomalyModule:
         tag = bus.anomaly.get("tag") or "기이한 현상"
         intensity = self._normalize_intensity(bus.anomaly.get("intensity", "Mid"))
         polarity = self._normalize_polarity(bus.anomaly.get("polarity"))
+
+        # 판정 대실패 → 이변 강도 1단계 상승 (유기적 연결)
+        if bus.judgment.get("active") and bus.judgment.get("result") == "critical_failure":
+            escalation = {"Low": "Mid", "Mid": "High", "High": "Extreme"}
+            intensity = escalation.get(intensity, intensity)
+            bus.anomaly["escalated"] = True
         category = bus.anomaly.get("category") or tag
         bus.anomaly["category"] = category
         bus.anomaly["intensity"] = intensity

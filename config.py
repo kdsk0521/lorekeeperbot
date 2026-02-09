@@ -122,13 +122,13 @@ FRESH_THRESHOLD = 50  # 히스토리 50개 초과 시 발효 트리거
 ABNORMAL_MIN_PROB = 10
 ABNORMAL_DOOM_COEFF = 0.5  # Prob = max(MIN, Doom * 0.5)
 
-# Mental Stages (0-100)
+# 기력 Stages (0-100) — PC의 총체적 컨디션 (체력/집중/평판/정신)
 # Key: Stage ID (0-3)
 MENTAL_STAGES = {
-    0: {"name": "평정", "emoji": "😌", "range": (70, 101), "desc": "안정적인 상태"},
-    1: {"name": "동요", "emoji": "😰", "range": (40, 70),  "desc": "불안감이 엄습합니다"},
-    2: {"name": "공황", "emoji": "😱", "range": (15, 40),  "desc": "이성적인 판단이 어렵습니다. (지능/관찰 -20)"},
-    3: {"name": "붕괴", "emoji": "🫥", "range": (0, 15),   "desc": "정신이 무너져내렸습니다. (영구 트라우마 위험)"}
+    0: {"name": "충만", "emoji": "😌", "range": (70, 101), "desc": "몸과 마음이 충실한 상태"},
+    1: {"name": "동요", "emoji": "😰", "range": (40, 70),  "desc": "집중력과 체력이 흔들립니다"},
+    2: {"name": "고갈", "emoji": "😱", "range": (15, 40),  "desc": "한계에 가깝습니다. 판단과 행동이 둔해집니다"},
+    3: {"name": "붕괴", "emoji": "🫥", "range": (0, 15),   "desc": "몸도 정신도 한계를 넘겼습니다. (트라우마 위험)"}
 }
 
 # Doom Stages (0-5)

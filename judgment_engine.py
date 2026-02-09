@@ -30,20 +30,20 @@ class JudgmentEngine:
         dc = dc_table.get(difficulty.lower(), 40)
         
         # 2. Dynamic Modifiers (Legacy Restoration)
-        # 2.1 Mental Modifiers (+20 / +10 / 0 / -10)
+        # 2.1 기력 Modifiers (+20 / +10 / 0 / -10)
         mental_val = bus.mental.get("value", 100)
         mental_mod = 0
-        mental_label = "평정"
-        if mental_val >= 70: 
+        mental_label = "충만"
+        if mental_val >= 70:
             mental_mod = 20
-            mental_label = "평정"
-        elif mental_val >= 40: 
+            mental_label = "충만"
+        elif mental_val >= 40:
             mental_mod = 10
             mental_label = "동요"
-        elif mental_val >= 15: 
+        elif mental_val >= 15:
             mental_mod = 0
-            mental_label = "공황"
-        else: 
+            mental_label = "고갈"
+        else:
             mental_mod = -10
             mental_label = "붕괴"
             
@@ -110,7 +110,7 @@ class JudgmentEngine:
         modifications = bus.judgment.get("modifications", [])
         # Append System Mods for visibility
         if mental_mod != 0:
-            modifications.append({"label": f"정신({mental_label})", "value": mental_mod})
+            modifications.append({"label": f"기력({mental_label})", "value": mental_mod})
         if doom_mod != 0:
             modifications.append({"label": "월드긴장", "value": doom_mod})
         if dai_bonus > 0:
@@ -148,5 +148,11 @@ class JudgmentEngine:
                 bus.judgment["party_wide_hook"] = True
             
         bus.judgment["output"] = "\n".join(output)
-        
+
+        # 7. Clear DAI bonus/penalty after consumption (1회성)
+        if dai_bonus or dai_penalty:
+            bus.dai["bonus"] = 0
+            bus.dai["penalty"] = 0
+            bus.dai["reason"] = ""
+
         return context
