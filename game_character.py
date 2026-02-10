@@ -55,11 +55,30 @@ def _save_board(channel_id: str, board: Dict[str, Any]) -> None:
 
 
 def _find_quest(active: List, content: str) -> Optional[Dict]:
-    """active 리스트에서 content가 포함된 퀘스트 dict를 찾습니다."""
+    """active 리스트에서 content가 포함된 퀘스트 dict를 찾습니다. 퍼지 매칭 지원."""
+    # 1. 정확한 부분 일치
     for q in active:
         q_content = q["content"] if isinstance(q, dict) else q
-        if content in q_content:
+        if content in q_content or q_content in content:
             return q
+    # 2. 퍼지 매칭: 공백/조사 제거 후 비교
+    def _normalize(s: str) -> str:
+        return re.sub(r'[의을를이가은는에서로부터과와및\s]', '', s).lower()
+    norm_content = _normalize(content)
+    best, best_q = 0.0, None
+    for q in active:
+        q_content = q["content"] if isinstance(q, dict) else q
+        norm_q = _normalize(q_content)
+        # 짧은 쪽이 긴 쪽에 포함되면 매칭
+        if norm_content in norm_q or norm_q in norm_content:
+            return q
+        # 공통 문자 비율로 유사도 계산
+        common = len(set(norm_content) & set(norm_q))
+        ratio = common / max(len(set(norm_content)), len(set(norm_q)), 1)
+        if ratio > best:
+            best, best_q = ratio, q
+    if best >= 0.6:
+        return best_q
     return None
 
 

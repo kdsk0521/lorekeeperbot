@@ -127,9 +127,6 @@ def detect_pc_impersonation(response: str, pc_names: List[str]) -> List[Dict]:
             safe_pc = re.escape(pc)
 
             patterns = [
-                # [광범위] PC가 주어 + 임의 동사 (40자 이내)
-                (rf'{safe_pc}[이가은는]\s+.{{1,40}}{VERB_ENDING}', 'action'),
-
                 # PC 대사 생성
                 (rf'{safe_pc}[이가은는]?\s*[""\u201C\u300C].*?[""\u201D\u300D]', 'dialogue'),
                 (rf'[""\u201C\u300C].*?[""\u201D\u300D].*?(?:라고|하고|이라며)\s*{safe_pc}', 'dialogue'),
