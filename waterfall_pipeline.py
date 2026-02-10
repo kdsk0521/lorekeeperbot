@@ -107,6 +107,7 @@ class WaterfallPipeline:
         bus.dai["asset_evaluation"] = analysis.get("asset_evaluation", {})
         bus.dai["flashback_eval"] = analysis.get("flashback_eval")
         bus.dai["rest_eval"] = analysis.get("rest_eval")
+        bus.dai["item_usage"] = analysis.get("item_usage")
 
         # Judgment 연동
         bus.judgment["active"] = analysis.get("needs_judgment", False)
@@ -149,6 +150,10 @@ class WaterfallPipeline:
                 bus.anomaly["line"] = line
             if reason:
                 bus.anomaly["reason"] = reason
+
+            protective = anomaly_profile.get("protective_item")
+            if protective:
+                bus.anomaly["protective_item"] = protective
 
         # Fallback: if no anomaly tag was proposed, pick from lore seeds
         if not bus.anomaly.get("tag"):

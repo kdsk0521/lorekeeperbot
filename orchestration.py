@@ -190,6 +190,15 @@ class OrchestrationService:
             if fb_msg:
                 system_log = (system_log or "") + f"\n{fb_msg}"
 
+        # [Item Usage] 아이템 소비/획득 처리
+        item_eval = dai.get("item_usage")
+        if item_eval:
+            item_msg = self._process_item_usage(
+                channel_id, updated_context.request.acting_user_id, item_eval
+            )
+            if item_msg:
+                system_log = (system_log or "") + f"\n{item_msg}"
+
         # Scene Type 업데이트 (dai 우선)
         if dai.get("scene_type"):
             ctx.scene_type = dai["scene_type"]
@@ -242,6 +251,41 @@ class OrchestrationService:
             passive_note = f" (면모 '{relevant_passive}' 활성화 → {tier})"
 
         return f"🔮 회상 발동: {declaration}\n⚡ 기력 -{cost} → {new_mental}/100 [{tier}]{passive_note}"
+
+    def _process_item_usage(self, channel_id: str, user_id: str, item_eval: dict) -> Optional[str]:
+        """아이템 소비/획득 처리. Returns system message or None."""
+        consumed = item_eval.get("items_consumed", [])
+        gained = item_eval.get("items_gained", [])
+        reason = item_eval.get("reason", "")
+
+        if not consumed and not gained:
+            return None
+
+        log_parts = []
+
+        # 소비 처리: 노트북에서 제거
+        for item in consumed:
+            if not item or not isinstance(item, str):
+                continue
+            result = game_character.remove_memo(channel_id, item.strip(), user_id)
+            if "⚠️" not in result:
+                log_parts.append(f"📦 소비: {item.strip()}")
+
+        # 획득 처리: 노트북에 추가
+        for item in gained:
+            if not item or not isinstance(item, str):
+                continue
+            result = game_character.add_memo(channel_id, item.strip(), user_id)
+            if "⚠️" not in result:
+                log_parts.append(f"📥 획득: {item.strip()}")
+
+        if not log_parts:
+            return None
+
+        msg = " | ".join(log_parts)
+        if reason:
+            msg += f" ({reason})"
+        return msg
 
     # =========================================================
     # STEP 5: PROMPT BUILDING (V3 - 34단계 슬롯 시스템)

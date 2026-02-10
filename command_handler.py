@@ -187,7 +187,7 @@ async def cmd_lore(ctx: CommandContext) -> None:
                      for uid in updated_uids:
                          p = domain_manager.get_participant_data(channel_id, uid)
                          if p: updated_names.append(p.get("mask", "Player"))
-                     pc_msg += f"\n✅ 캐릭터 업데이트: {', '.join(updated_names)} (패시브 및 설정 적용)"
+                     pc_msg += f"\n✅ 캐릭터 업데이트: {', '.join(updated_names)} (특질 및 설정 적용)"
             
             # 3. Update Genre (3-Layer)
             # Adapt unified_res to legacy structure

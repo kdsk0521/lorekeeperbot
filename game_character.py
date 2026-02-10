@@ -378,7 +378,7 @@ def add_passive(channel_id: str, user_id: str, name: str, tags: List[str] = None
     domain_manager.add_to_ai_memory_list(channel_id, user_id, "passives", new_passive)
     
     tag_str = f" [{', '.join(tags)}]" if tags else ""
-    return f"🏆 **패시브 획득:** {name}{tag_str}\n_{desc}_"
+    return f"🏆 **특질 획득:** {name}{tag_str}\n_{desc}_"
 
 def get_passives_for_context(user_data: Optional[Dict[str, Any]]) -> str:
     if not user_data:

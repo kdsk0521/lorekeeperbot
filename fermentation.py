@@ -347,7 +347,7 @@ You will receive:
   ],
   "active_memory_triggers": ["Unresolved hook 1", "Unresolved hook 2"],
   "character_milestones": {
-    "PC_Name": ["[패시브] 획득", "관계 변화", "중요 아이템"]
+    "PC_Name": ["[특질] 획득", "관계 변화", "중요 아이템"]
   },
   "world_state_changes": ["Permanent change 1", "Faction shift"]
 }
@@ -433,7 +433,7 @@ Merge multiple session summaries into ONE cohesive historical record.
 - Natural prose (not lists)
 
 ### EXAMPLE
-"1주차: 모험가 일행이 왕도를 출발하여 검은 숲을 거쳐 폐탑을 발견했다. 고블린 습격의 배후에 '붉은 문장' 세력이 있음이 드러났다. 폐탑에서 고대 지도를 발견했으며, 리엘이 [숲의 가호] 패시브를 획득했다. 붉은 문장의 정체와 고대 지도가 가리키는 장소는 아직 밝혀지지 않았다."
+"1주차: 모험가 일행이 왕도를 출발하여 검은 숲을 거쳐 폐탑을 발견했다. 고블린 습격의 배후에 '붉은 문장' 세력이 있음이 드러났다. 폐탑에서 고대 지도를 발견했으며, 리엘이 [숲의 가호] 특질을 획득했다. 붉은 문장의 정체와 고대 지도가 가리키는 장소는 아직 밝혀지지 않았다."
 """
 
 

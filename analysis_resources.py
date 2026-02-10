@@ -503,6 +503,12 @@ ANOMALY_DETECTION = """
 ### Categories: Supernatural | Psychological | Social | Environmental | Temporal
 ### Intensity → Doom: Low (+1-5) | Mid (+5-10) | High (+10-15) | Extreme (+15-20)
 ### Polarity: positive | negative | mixed
+
+### Protective Item Check
+Cross-reference PC's INVENTORY for items that could help resist/mitigate the anomaly.
+- Holy symbol vs supernatural, calming herb vs psychological, mask vs environmental, etc.
+- Only items currently in inventory count. Do NOT invent items.
+- Output: "protective_item": "item name" or null if nothing relevant
 </anomaly_detection>
 """
 
@@ -524,6 +530,10 @@ JUDGMENT_SUPPORT = """
 - extreme: "이걸 진짜? 다이스 잘 뜨면 성공시켜줄게"
 
 ### Assets (max +60): Skill +5~20 | Equipment +5~15 | Situational +5~15 | Assistance +5~10
+- **Equipment**: Cross-reference PC's INVENTORY & MEMOS. Only items currently possessed count.
+  - Exact match: weapon for combat, tool for craft, key for lock → +10~15
+  - Partial match: improvised use, tangentially useful → +5~10
+  - No relevant item: Equipment bonus = 0 (do NOT invent items PC doesn't have)
 ### Penalties (max -40): Injury -5~15 | Environmental -5~15 | Opposition -5~10 | Psychological -5~10
 
 ### defense_success: true (target defends/evades) | false (action lands)
@@ -641,6 +651,37 @@ Output null for both fields if neither pattern is detected.
 """
 
 # =========================================================
+# [25] ITEM AWARENESS (Base Layer)
+# =========================================================
+ITEM_AWARENESS = """
+<item_awareness>
+## ITEM & INVENTORY TRACKING (Base Layer — always active)
+
+Cross-reference the PC's NOTEBOOK (inventory + memos) on every turn.
+
+### Detection Rules
+1. **Item USED**: PC uses a recorded item in their action → flag it
+   - Consumable (potion, scroll, food, ammo): consumed=true → remove from notebook
+   - Durable (weapon, armor, tool, key): consumed=false → keep in notebook
+2. **Item GAINED**: PC acquires a new item through action/narrative → flag it
+   - Only concrete, nameable items. NOT abstract concepts.
+3. **Item LOST**: PC drops, gives away, or has item stolen/destroyed → flag it
+   - consumed=true (gone from inventory)
+
+### Output: item_usage (null if no item interaction detected)
+- "items_consumed": ["item name", ...] — removed from notebook (potions, ammo, one-use items)
+- "items_gained": ["item name", ...] — added to notebook
+- "reason": "1-sentence Korean summary of what happened"
+
+### Important
+- Match item names to what's ACTUALLY in the notebook (fuzzy match OK)
+- Do NOT flag items that are merely mentioned/discussed but not used
+- Do NOT flag if the PC only looks at or considers an item without acting
+- If an item is used but NOT consumable (sword swing, key unlock), do NOT consume it
+</item_awareness>
+"""
+
+# =========================================================
 # ANALYSIS CORE DNA (Unified Reference Block)
 # =========================================================
 ANALYSIS_CORE_DNA = {
@@ -668,5 +709,6 @@ ANALYSIS_CORE_DNA = {
     "sensory": SENSORY_ANCHORS,
     "npc_knowledge": NPC_KNOWLEDGE_TRACKING,
     "sexual_psychology": SEXUAL_PSYCHOLOGY_ANALYSIS,
-    "flashback_rest": FLASHBACK_REST_DETECTION
+    "flashback_rest": FLASHBACK_REST_DETECTION,
+    "item_awareness": ITEM_AWARENESS
 }

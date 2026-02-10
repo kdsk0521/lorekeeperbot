@@ -746,7 +746,7 @@ def get_unified_player_info(channel_id: str, user_id: str) -> str:
     [V7] 통합 플레이어 정보 반환 (프롬프트 주입용)
     - 캐릭터 이름/외모 (Description)
     - 상태 이상 (Status Effects)
-    - 패시브 (Traits)
+    - 특질 (Traits)
     - 관계 (Relationships)
     - 배경 (Background)
     - 멘탈 (Mental)

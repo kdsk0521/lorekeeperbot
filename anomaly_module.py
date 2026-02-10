@@ -55,6 +55,10 @@ class AnomalyModule:
                 elif any(kw in p_name for kw in ["겁쟁이", "나약", "불안", "공포"]):
                     success_rate -= 15
 
+        # 보호 아이템 보정: Theoria가 인벤토리에서 관련 아이템 감지 시 +15
+        if context.shared_bus.anomaly.get("protective_item"):
+            success_rate += 15
+
         # 정신 상태 보정: 평정(+10), 동요(0), 공황(-10), 붕괴(-20)
         mental_val = context.shared_bus.mental.get("value", 100)
         if mental_val >= 70:
