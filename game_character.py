@@ -61,9 +61,10 @@ def _find_quest(active: List, content: str) -> Optional[Dict]:
         q_content = q["content"] if isinstance(q, dict) else q
         if content in q_content or q_content in content:
             return q
-    # 2. 퍼지 매칭: 공백/조사 제거 후 비교
+    # 2. 퍼지 매칭: 공백/조사/따옴표 정규화 후 비교
     def _normalize(s: str) -> str:
-        return re.sub(r'[의을를이가은는에서로부터과와및\s]', '', s).lower()
+        s = s.replace('\u2018', "'").replace('\u2019', "'").replace('\u201C', '"').replace('\u201D', '"')
+        return re.sub(r'[의을를이가은는에서로부터과와및\s\'\""]', '', s).lower()
     norm_content = _normalize(content)
     best, best_q = 0.0, None
     for q in active:
