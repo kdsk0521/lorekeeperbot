@@ -11,6 +11,7 @@ NPC의 완벽한 관리를 담당하는 비즈니스 로직 모듈.
 domain_manager.py는 저장소 역할만 담당.
 """
 
+import re
 import time
 import random
 import logging
@@ -49,7 +50,88 @@ def get_npcs(channel_id: str) -> Dict[str, Dict[str, Any]]:
 def get_npc(channel_id: str, name: str) -> Optional[Dict[str, Any]]:
     return domain_manager.get_npc(channel_id, name)
 
+
+def migrate_npc_fields(channel_id: str) -> int:
+    """기존 세션의 NPC 데이터를 마이그레이션: desc→description 통일 + 구조화 필드 추출."""
+    npcs = get_npcs(channel_id)
+    if not npcs:
+        return 0
+    migrated = 0
+    for name, data in npcs.items():
+        changed = False
+        # desc → description 통일
+        if "desc" in data and "description" not in data:
+            data["description"] = data.pop("desc")
+            changed = True
+        # 구조화 필드 추출 (없는 경우만)
+        desc_text = data.get("description", "")
+        if desc_text and len(desc_text) > 200:
+            extracted = _extract_structured_fields(desc_text)
+            for key, val in extracted.items():
+                if key not in data or not data[key]:
+                    data[key] = val
+                    changed = True
+        if changed:
+            domain_manager.update_npc(channel_id, name, data)
+            migrated += 1
+    if migrated:
+        logger.info(f"[NPC Migration] {channel_id}: {migrated}/{len(npcs)} NPCs migrated")
+    return migrated
+
+def _clean_markdown(s: str) -> str:
+    """마크다운 아티팩트(**등) 제거."""
+    return re.sub(r'\*{1,2}', '', s).strip().strip('"').strip()
+
+
+def _extract_structured_fields(desc: str) -> Dict[str, str]:
+    """NPC 프로필 텍스트에서 구조화 필드(role, location, tone, personality) 자동 추출."""
+    fields = {}
+    if not desc or len(desc) < 50:
+        return fields
+
+    # Role (예: "- Rank/Role: Emergency physician / Sharehouse resident (Room 2)")
+    role_m = re.search(r'(?:Rank/Role|Occupation)[:\s]+(.+)', desc, re.IGNORECASE)
+    if role_m:
+        role_text = _clean_markdown(role_m.group(1))[:100]
+        fields["role"] = role_text
+
+    # Location — Sharehouse resident (Room X) 패턴 우선
+    loc_m = re.search(r'Sharehouse resident\s*\(([^)]+)\)', desc, re.IGNORECASE)
+    if loc_m:
+        fields["location"] = loc_m.group(1).strip()
+    else:
+        # Fallback: Occupation에서 장소명만 추출
+        occ_m = re.search(r'(?:Occupation|Affiliation)[:\s]+(.+)', desc, re.IGNORECASE)
+        if occ_m:
+            occ_text = occ_m.group(1).strip()
+            # "Dungeon 25 convenience store owner" → "Dungeon 25"
+            place_m = re.search(r'(Dungeon\s*\d+|Error\s*\d+|Sunset\s*Villa|Sage\'s Chamber)', occ_text, re.IGNORECASE)
+            if place_m:
+                fields["location"] = place_m.group(1).strip()
+
+    # Speech/Tone (예: "**Tone:** Low, tired, flat.")
+    tone_m = re.search(r'\*?\*?Tone\*?\*?[:\s]+(.+)', desc)
+    if tone_m:
+        fields["tone"] = _clean_markdown(tone_m.group(1))[:100]
+
+    # Personality (Core Operating Principle에서 한 줄)
+    personality_m = re.search(r'### Core Operating Principle\s*\n+(.+)', desc)
+    if personality_m:
+        fields["personality"] = _clean_markdown(personality_m.group(1))[:120]
+
+    return fields
+
+
 def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
+    # desc/description 텍스트에서 구조화 필드 자동 추출 (없는 경우만)
+    desc_text = data.get("description") or data.get("desc", "")
+    if desc_text and len(desc_text) > 200:
+        extracted = _extract_structured_fields(desc_text)
+        for key, val in extracted.items():
+            if key not in data or not data[key]:
+                data[key] = val
+        if extracted:
+            logger.info(f"[NPC] Auto-extracted fields for '{name}': {list(extracted.keys())}")
     domain_manager.update_npc(channel_id, name, data)
 
 def delete_npc(channel_id: str, name: str) -> bool:
@@ -312,28 +394,93 @@ def get_scene_npc_names(channel_id: str) -> List[str]:
     return list(get_session_npcs(channel_id).keys())
 
 
+def _get_npc_desc(data: dict) -> str:
+    """NPC 설명 필드 읽기 (description/desc 호환)."""
+    return data.get("description") or data.get("desc", "")
+
+
 def get_npc_roster(channel_id: str) -> str:
-    """전체 NPC 이름+역할 1줄 요약 목록 (Theoria용)."""
+    """전체 NPC 이름+역할+위치 1줄 요약 목록 (Theoria용)."""
     npcs = get_npcs(channel_id)
     if not npcs:
         return ""
     lines = []
     for name, data in npcs.items():
-        desc = data.get("desc", "")
-        # desc 첫 줄에서 50자까지만 추출
+        desc = _get_npc_desc(data)
         first_line = desc.split("\n")[0][:50] if desc else ""
-        lines.append(f"- {name}: {first_line}")
+        role = data.get("role", "")
+        location = data.get("location", "")
+        tag = f" [{role}]" if role else ""
+        tag += f" @{location}" if location else ""
+        lines.append(f"- {name}{tag}: {first_line}")
     return "\n".join(lines)
 
 
+_PROFILE_SECTIONS_PRIORITY = [
+    "Identity", "Core Operating Principle", "Speech Pattern",
+    "Interpersonal Style", "Emotional Architecture", "Appearance",
+]
+_MAX_DESC_PER_NPC = 2000  # 프로필 텍스트 최대 글자수 (~500 토큰)
+
+
+def _compact_profile(desc: str) -> str:
+    """긴 NPC 프로필에서 핵심 섹션만 추출 (Identity, Speech, Core, Interpersonal)."""
+    if len(desc) <= _MAX_DESC_PER_NPC:
+        return desc
+
+    # ### 섹션 단위로 분할
+    sections = re.split(r'\n(?=###\s)', desc)
+    priority_parts = []
+    other_parts = []
+
+    for sec in sections:
+        header_m = re.match(r'###\s+(.+)', sec)
+        sec_name = header_m.group(1).strip() if header_m else ""
+        matched = any(p.lower() in sec_name.lower() for p in _PROFILE_SECTIONS_PRIORITY)
+        if matched:
+            priority_parts.append(sec.strip())
+        else:
+            other_parts.append(sec.strip())
+
+    # 우선 섹션을 먼저 넣고, 남은 공간에 나머지 추가
+    result = "\n\n".join(priority_parts)
+    for part in other_parts:
+        if len(result) + len(part) + 2 > _MAX_DESC_PER_NPC:
+            break
+        result += "\n\n" + part
+
+    if len(result) > _MAX_DESC_PER_NPC:
+        result = result[:_MAX_DESC_PER_NPC] + "\n[...truncated]"
+
+    return result
+
+
 def get_npc_full_profiles(channel_id: str, names: list) -> str:
-    """지정된 NPC들의 풀 프로필 반환."""
+    """지정된 NPC들의 풀 프로필 반환 (구조화 필드 + 핵심 섹션 추출)."""
     npcs = get_npcs(channel_id)
     parts = []
     for name in names:
         data = npcs.get(name)
         if data:
-            parts.append(f"### {name}\n{data.get('desc', '')}")
+            desc = _get_npc_desc(data)
+            desc = _compact_profile(desc)
+            header = f"### {name}"
+            meta_parts = []
+            if data.get("role"):
+                meta_parts.append(f"역할: {data['role']}")
+            if data.get("location"):
+                meta_parts.append(f"위치: {data['location']}")
+            if data.get("personality"):
+                meta_parts.append(f"성격: {data['personality']}")
+            if data.get("tone") or data.get("speech"):
+                meta_parts.append(f"말투: {data.get('tone') or data.get('speech')}")
+            if data.get("appearance"):
+                meta_parts.append(f"외형: {data['appearance']}")
+            meta_line = " | ".join(meta_parts)
+            if meta_line:
+                parts.append(f"{header}\n**[{meta_line}]**\n{desc}")
+            else:
+                parts.append(f"{header}\n{desc}")
     return "\n\n".join(parts)
 
 

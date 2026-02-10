@@ -124,6 +124,7 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> G
 
     # NPC Roster (Theoria용 이름+역할 요약)
     import npc_manager as _npc_mgr
+    _npc_mgr.migrate_npc_fields(channel_id)  # desc→description 통일 + 구조화 필드 자동 추출
     anchors["npc_roster"] = _npc_mgr.get_npc_roster(channel_id)
 
     # Session Memory (World State Updater 피드백용)

@@ -77,7 +77,7 @@ async def process_ai_system_action(channel_id: str, sys_action: Dict[str, Any], 
     elif tool == "NPC" and atype == "Add":
         name = content.split(":", 1)[0].strip() if ":" in content else content
         desc = content.split(":", 1)[1].strip() if ":" in content else "Auto Registered"
-        domain_manager.update_npc(channel_id, name, {"desc": desc, "source": "session", "status": "Active"})
+        domain_manager.update_npc(channel_id, name, {"description": desc, "source": "session", "status": "Active"})
         auto_msg = f"🎭 NPC: {name}"
 
     elif tool == "Doom" and atype == "Reduce":
@@ -609,7 +609,7 @@ async def cmd_npc(ctx: CommandContext) -> None:
                 summary = " / ".join(summary_items) if summary_items else ""
                 # Merge into existing NPC if alias matches (e.g., "Limi" → "리미 (Limi)")
                 target_name = _find_existing(name)
-                npc_data = {"desc": desc, "source": "manual", "status": "Active"}
+                npc_data = {"description": desc, "source": "manual", "status": "Active"}
                 if summary:
                     npc_data["summary"] = summary
                 domain_manager.update_npc(channel_id, target_name, npc_data)
@@ -642,7 +642,7 @@ async def cmd_npc(ctx: CommandContext) -> None:
 
             for name, desc_lines in blocks:
                 desc = "\n".join(desc_lines)
-                domain_manager.update_npc(channel_id, name, {"desc": desc, "source": "manual", "status": "Active"})
+                domain_manager.update_npc(channel_id, name, {"description": desc, "source": "manual", "status": "Active"})
                 processed_count += 1
                 last_name = name
         else:
@@ -657,7 +657,7 @@ async def cmd_npc(ctx: CommandContext) -> None:
                     clean_key = key.lstrip("*-> ").strip()
                     val = val.strip()
                     if clean_key and val:
-                        domain_manager.update_npc(channel_id, clean_key, {"desc": val, "source": "manual", "status": "Active"})
+                        domain_manager.update_npc(channel_id, clean_key, {"description": val, "source": "manual", "status": "Active"})
                         processed_count += 1
                         last_name = clean_key
                         continue
@@ -666,8 +666,8 @@ async def cmd_npc(ctx: CommandContext) -> None:
                 if last_name:
                     curr_npc = domain_manager.get_npc(channel_id, last_name)
                     if curr_npc:
-                        new_desc = curr_npc.get("desc", "") + "\n" + stripped
-                        domain_manager.update_npc(channel_id, last_name, {"desc": new_desc, "source": "manual", "status": "Active"})
+                        new_desc = (curr_npc.get("description") or curr_npc.get("desc", "")) + "\n" + stripped
+                        domain_manager.update_npc(channel_id, last_name, {"description": new_desc, "source": "manual", "status": "Active"})
 
         if processed_count > 0:
             if processed_count == 1:
@@ -689,7 +689,7 @@ async def cmd_npc(ctx: CommandContext) -> None:
         def _npc_preview(d: dict) -> str:
             if d.get("summary"):
                 return d["summary"][:60]
-            desc = d.get("desc", "-")
+            desc = d.get("description") or d.get("desc", "-")
             for line in desc.split("\n"):
                 s = line.strip()
                 if not s or s.startswith("#"):
@@ -712,10 +712,13 @@ async def cmd_npc(ctx: CommandContext) -> None:
                 if npc.get('race'): meta.append(npc.get('race'))
                 msg.append(f"({', '.join(meta)})")
             
-            msg.append(f"{npc.get('desc')}")
-            
+            desc_text = npc.get("description") or npc.get("desc", "")
+            if desc_text:
+                # 긴 프로필은 앞부분만 표시
+                preview = desc_text[:500] + ("..." if len(desc_text) > 500 else "")
+                msg.append(preview)
+
             if npc.get('appearance'): msg.append(f"**외양:** {npc.get('appearance')}")
-            if npc.get('description'): msg.append(f"**설명:** {npc.get('description')}")
             if npc.get('background'): msg.append(f"**배경:** {npc.get('background')}")
             
             await ctx.send("\n".join(msg))
