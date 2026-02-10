@@ -104,6 +104,8 @@ class TheoriaAnalyzer:
             analysis_resources.SENSORY_ANCHORS,
             # [Intimate Scene Psychology]
             analysis_resources.SEXUAL_PSYCHOLOGY_ANALYSIS,
+            # [Flashback & Rest Detection]
+            analysis_resources.FLASHBACK_REST_DETECTION,
             # [Workflow & Output]
             analysis_resources.THEORIA_PROCESS,
             self._get_output_schema(),
@@ -204,6 +206,22 @@ Return valid JSON with ALL these fields (Korean values where specified):
   }
 - "RelevantContext": ["Quoted lore/rule directly applicable", ...]
 - "RelevantNPCs": ["NPC name from roster that is relevant to THIS scene (max 5)"]
+
+## FLASHBACK & REST (nullable — output null if not detected)
+- "flashback_eval": null OR {
+    "detected": boolean,
+    "declaration": "Korean - 1-sentence summary of retroactive claim",
+    "plausibility": "plausible/stretch/impossible",
+    "relevant_passive": "passive name or null",
+    "tier": "trivial/standard/bold",
+    "reason": "Korean"
+  }
+- "rest_eval": null OR {
+    "detected": boolean,
+    "quality": "full/brief/interrupted",
+    "safe_location": boolean,
+    "reason": "Korean"
+  }
 </output_schema>
 """
 
@@ -312,6 +330,21 @@ Return valid JSON with ALL these fields (Korean values where specified):
             return ""
         return "### 4c. SESSION MEMORY (Accumulated)\n" + "\n".join(parts)
 
+    def _build_pending_flashback(self, anchors: dict) -> str:
+        """대기 중인 회상 선언을 프롬프트에 포함"""
+        pending = anchors.get("pending_flashback")
+        if not pending:
+            return ""
+        content = pending.get("content", "") if isinstance(pending, dict) else str(pending)
+        if not content:
+            return ""
+        return f"""### 5b. PENDING FLASHBACK DECLARATION
+The player explicitly declared a flashback via !회상 command:
+"{content}"
+Evaluate this in flashback_eval field. Check plausibility, passive match, and assign tier.
+
+"""
+
     def _build_prompt(self, context: GameContext) -> str:
         """분석 프롬프트 생성"""
         req = context.request
@@ -351,7 +384,7 @@ Return valid JSON with ALL these fields (Korean values where specified):
 ### 5. RECENT HISTORY
 {req.history_text or '[No history]'}
 
-### 6. LORE REFERENCE
+{self._build_pending_flashback(anchors)}### 6. LORE REFERENCE
 {req.lore_text[:2000] if req.lore_text else '[No lore loaded]'}
 
 ---

@@ -128,6 +128,9 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> G
     # Session Memory (World State Updater 피드백용)
     anchors["session_memory"] = domain_manager.get_session_ai_memory(channel_id)
 
+    # Pending Flashback (회상 대기)
+    anchors["pending_flashback"] = domain_manager.get_pending_flashback(channel_id)
+
     # Bus initialization
     bus = SharedBus()
     bus.doom["value"] = world.get("doom", 40)

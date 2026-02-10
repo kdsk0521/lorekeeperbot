@@ -181,6 +181,15 @@ class OrchestrationService:
         dai = updated_context.shared_bus.dai
         ctx.dai = dai
 
+        # [Flashback] 회상 기력 차감 (mental_module 전에 직접 처리)
+        fb_eval = dai.get("flashback_eval")
+        if fb_eval and fb_eval.get("detected"):
+            fb_msg = self._process_flashback(
+                channel_id, updated_context.shared_bus, fb_eval
+            )
+            if fb_msg:
+                system_log = (system_log or "") + f"\n{fb_msg}"
+
         # Scene Type 업데이트 (dai 우선)
         if dai.get("scene_type"):
             ctx.scene_type = dai["scene_type"]
@@ -192,6 +201,47 @@ class OrchestrationService:
         messages = [system_log] if system_log else []
         
         return ctx, messages, directive
+
+    def _process_flashback(self, channel_id: str, bus, fb_eval: dict) -> Optional[str]:
+        """회상 평가 → 기력 차감 + DAI 확정. Returns system message or None."""
+        plausibility = fb_eval.get("plausibility", "plausible")
+        tier = fb_eval.get("tier", "standard")
+        declaration = fb_eval.get("declaration", "")
+        dai = bus.dai
+
+        # 불가능한 회상 → 거부
+        if plausibility == "impossible":
+            dai["flashback_confirmed"] = False
+            domain_manager.clear_pending_flashback(channel_id)
+            return f"❌ 회상 거부: {fb_eval.get('reason', '논리적 모순')}"
+
+        cost = config.FLASHBACK_COST_TIERS.get(tier, 8)
+        current_mental = bus.mental.get("value", 100)
+
+        # 기력 부족
+        if current_mental < config.FLASHBACK_MIN_MENTAL:
+            dai["flashback_confirmed"] = False
+            domain_manager.clear_pending_flashback(channel_id)
+            return f"❌ 회상 불가: 기력 부족 ({current_mental}/100, 최소 {config.FLASHBACK_MIN_MENTAL} 필요)"
+
+        if current_mental - cost < 0:
+            dai["flashback_confirmed"] = False
+            domain_manager.clear_pending_flashback(channel_id)
+            return f"❌ 회상 불가: 기력 부족 (현재 {current_mental}, 비용 {cost})"
+
+        # 차감 실행
+        new_mental = current_mental - cost
+        bus.mental["value"] = new_mental
+        dai["flashback_confirmed"] = True
+        dai["flashback_declaration"] = declaration
+        domain_manager.clear_pending_flashback(channel_id)
+
+        passive_note = ""
+        relevant_passive = fb_eval.get("relevant_passive")
+        if relevant_passive:
+            passive_note = f" (면모 '{relevant_passive}' 활성화 → {tier})"
+
+        return f"🔮 회상 발동: {declaration}\n⚡ 기력 -{cost} → {new_mental}/100 [{tier}]{passive_note}"
 
     # =========================================================
     # STEP 5: PROMPT BUILDING (V3 - 34단계 슬롯 시스템)

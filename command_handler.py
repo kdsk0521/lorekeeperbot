@@ -1059,6 +1059,34 @@ async def cmd_mental(ctx: CommandContext) -> None:
         await ctx.send("⚠️ 올바른 숫자를 입력하세요. (예: `!기력 50`)")
 
 
+@registry.register("flashback", category="Player", aliases=["회상"], description="회상 선언 (과거 준비를 소급 선언)")
+async def cmd_flashback(ctx: CommandContext) -> None:
+    """!회상 [내용] - 회상 선언을 대기열에 등록. 다음 턴에 Theoria가 평가."""
+    # 기력 모듈 활성 체크
+    active_modules = domain_manager.get_active_modules(ctx.channel_id)
+    if "mental" not in active_modules:
+        await ctx.send("❌ 기력 모듈이 비활성 상태입니다. 회상을 사용하려면 기력 모듈을 활성화하세요.")
+        return
+
+    content = ctx.raw_args.strip()
+    if not content:
+        tiers = config.FLASHBACK_COST_TIERS
+        await ctx.send(
+            "🔮 **회상 시스템** — 과거의 준비를 소급 선언합니다.\n"
+            f"사용법: `!회상 [선언 내용]`\n\n"
+            f"**비용 (기력 차감)**\n"
+            f"- **trivial** (면모 매칭): -{tiers['trivial']}\n"
+            f"- **standard** (합리적): -{tiers['standard']}\n"
+            f"- **bold** (대담한): -{tiers['bold']}\n\n"
+            f"**규칙**: 상황/포지션 변경만 가능. 수치(기력/둠) 직접 변경 불가.\n"
+            f"**예시**: `!회상 탈출 루트를 미리 확보해뒀다`\n"
+            f"서사적으로도 가능: 대사/행동 중 자연스럽게 '사실 미리 ~해뒀다' 표현"
+        )
+        return
+
+    # 대기열에 등록
+    domain_manager.set_pending_flashback(ctx.channel_id, content, ctx.user_id)
+    await ctx.send(f"🔮 **회상 대기 등록**: \"{content}\"\n다음 턴에 Theoria가 평가합니다.")
 
 
 

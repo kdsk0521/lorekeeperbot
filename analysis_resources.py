@@ -587,6 +587,54 @@ SEXUAL_PSYCHOLOGY_ANALYSIS = """
 """
 
 # =========================================================
+# [25] FLASHBACK & REST DETECTION
+# =========================================================
+FLASHBACK_REST_DETECTION = """
+<flashback_rest_detection>
+## FLASHBACK DETECTION
+Flashback = player retroactively declares past preparation ("사실 미리 ~해뒀다", pulls out unmentioned item, reveals prior arrangement).
+
+### Inventory/Memo Gate (CRITICAL — check FIRST)
+Before evaluating as flashback, check the PC's notebook (inventory + memos):
+- Item EXISTS in notebook/inventory → NOT a flashback. Normal use. Output null.
+- Item does NOT exist in notebook/inventory → Flashback. Evaluate below.
+Notebook items are established resources (like Fate aspects / Cypher cyphers) — using them costs nothing.
+
+### Trigger Patterns
+- Explicit: "미리 ~해뒀다", "사실 ~를 챙겨왔다", "전에 ~를 준비해놨다"
+- Implicit: produces item/tool NOT in notebook/inventory, reveals pre-planned escape route, claims prior arrangement with NPC
+- `!회상` command sets pending_flashback anchor — evaluate when present
+
+### Evaluation
+1. **plausibility**: "plausible" / "stretch" / "impossible"
+   - Consider: PC background, location access, timeline logic, world constraints, notebook contents
+   - "impossible" = physically/logically contradicts established facts (auto-reject)
+2. **relevant_passive**: Check PC passives — if a passive directly supports the declaration, tier = "trivial"
+3. **tier**: "trivial" (passive match, cost 3) / "standard" (reasonable, cost 8) / "bold" (extraordinary, cost 15)
+4. **declaration**: Summarize what the PC is retroactively claiming (1 sentence)
+
+### CRITICAL RULE
+Flashback CANNOT change stats (기력, doom, HP). Position/situation change ONLY.
+- REJECT: "회복약을 미리 챙겨왔다" (stat change attempt)
+- ACCEPT: "탈출 루트를 미리 확보해뒀다" (position change)
+
+## REST DETECTION
+Rest = player narratively describes resting, sleeping, taking a break.
+
+### Trigger Patterns
+- "잠을 잤다", "쉬었다", "휴식", "눈을 붙였다", "잠시 쉬자", "여관에서 하룻밤"
+- Extended downtime descriptions (eating a meal + resting)
+
+### Evaluation
+1. **quality**: "full" (proper sleep/long rest) / "brief" (short nap/break) / "interrupted" (disturbed rest)
+2. **safe_location**: true/false — is the rest location reasonably safe?
+3. **reason**: 1-sentence justification
+
+Output null for both fields if neither pattern is detected.
+</flashback_rest_detection>
+"""
+
+# =========================================================
 # ANALYSIS CORE DNA (Unified Reference Block)
 # =========================================================
 ANALYSIS_CORE_DNA = {
@@ -613,5 +661,6 @@ ANALYSIS_CORE_DNA = {
     "doom_mental": DOOM_MENTAL_TRACKING,
     "sensory": SENSORY_ANCHORS,
     "npc_knowledge": NPC_KNOWLEDGE_TRACKING,
-    "sexual_psychology": SEXUAL_PSYCHOLOGY_ANALYSIS
+    "sexual_psychology": SEXUAL_PSYCHOLOGY_ANALYSIS,
+    "flashback_rest": FLASHBACK_REST_DETECTION
 }

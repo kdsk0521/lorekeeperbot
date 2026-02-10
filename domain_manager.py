@@ -1023,6 +1023,23 @@ def set_ooc_mode(channel_id: str, active: bool) -> None:
     d["ooc_mode"] = active
     save_domain(channel_id, d)
 
+# Pending Flashback (회상 대기)
+def get_pending_flashback(channel_id: str) -> Optional[Dict]:
+    """대기 중인 회상 선언 조회. Returns {"content": str, "user_id": str} or None."""
+    return get_domain(channel_id).get("pending_flashback")
+
+def set_pending_flashback(channel_id: str, content: str, user_id: str) -> None:
+    """회상 선언을 대기열에 저장."""
+    d = get_domain(channel_id)
+    d["pending_flashback"] = {"content": content, "user_id": user_id}
+    save_domain(channel_id, d)
+
+def clear_pending_flashback(channel_id: str) -> None:
+    """회상 대기열 초기화."""
+    d = get_domain(channel_id)
+    d.pop("pending_flashback", None)
+    save_domain(channel_id, d)
+
 def reset_session_state(channel_id: str) -> None:
     """
     세션을 '준비 완료' 상태로 초기화합니다.

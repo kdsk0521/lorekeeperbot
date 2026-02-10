@@ -105,7 +105,9 @@ class WaterfallPipeline:
         bus.dai["needs_judgment"] = analysis.get("needs_judgment", False)
         bus.dai["action_meta"] = analysis.get("action_meta", {})
         bus.dai["asset_evaluation"] = analysis.get("asset_evaluation", {})
-        
+        bus.dai["flashback_eval"] = analysis.get("flashback_eval")
+        bus.dai["rest_eval"] = analysis.get("rest_eval")
+
         # Judgment 연동
         bus.judgment["active"] = analysis.get("needs_judgment", False)
         if bus.judgment["active"]:

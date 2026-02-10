@@ -145,6 +145,14 @@ DOOM_MENTAL_RECOVERY_MOD = {
     0: 1.0, 1: 0.9, 2: 0.8, 3: 0.6, 4: 0.4, 5: 0.2
 }
 
+# Flashback (회상) — 능동적 기력 소비
+FLASHBACK_COST_TIERS = {"trivial": 3, "standard": 8, "bold": 15}
+FLASHBACK_MIN_MENTAL = 10  # 이 이하면 회상 불가
+
+# Rest Recovery (휴식) — 능동적 기력 회복
+REST_RECOVERY = {"full": 20, "brief": 10, "interrupted": 5}
+REST_UNSAFE_MODIFIER = 0.5  # 위험 장소 회복량 반감
+
 # =========================================================
 # Quest Manager Constants
 # =========================================================

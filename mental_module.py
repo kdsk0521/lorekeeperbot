@@ -4,6 +4,7 @@ Manages player mental health and adaptation logic.
 """
 
 from typing import TYPE_CHECKING
+import config
 
 if TYPE_CHECKING:
     from orchestration_context import GameContext
@@ -18,7 +19,18 @@ class MentalModule:
         # 1. Collect Delta from multiple sources
         delta = bus.mental.get("delta", 0)  # From Doom pressure/recovery + Anomaly damage
 
-        # 1a. Judgment Emotional Impact (직접적 감정 효과)
+        # 1a. Rest Recovery (휴식 회복)
+        rest_eval = bus.dai.get("rest_eval")
+        if rest_eval and rest_eval.get("detected"):
+            quality = rest_eval.get("quality", "brief")
+            base_recovery = config.REST_RECOVERY.get(quality, 10)
+            if not rest_eval.get("safe_location", True):
+                base_recovery = int(base_recovery * config.REST_UNSAFE_MODIFIER)
+            delta += base_recovery
+            safe_tag = "안전" if rest_eval.get("safe_location", True) else "위험"
+            bus.mental["rest_log"] = f"💤 휴식({quality}) +{base_recovery} ({safe_tag})"
+
+        # 1b. Judgment Emotional Impact (직접적 감정 효과)
         if bus.judgment.get("active"):
             j_result = bus.judgment.get("result", "")
             j_emotion = {
@@ -117,6 +129,9 @@ class MentalModule:
             log_parts.append(f" (판정 고양 +{j_emotion})")
         elif j_emotion < 0:
             log_parts.append(f" (판정 절망 {j_emotion})")
+        rest_log = bus.mental.get("rest_log")
+        if rest_log:
+            log_parts.append(f"\n{rest_log}")
         if clamped:
             log_parts.append("\n❗ **충격 완화** (Clamping)")
         if trauma_triggered:

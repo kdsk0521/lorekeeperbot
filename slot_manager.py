@@ -688,6 +688,17 @@ def build_34_step_prompt(ctx) -> str:
     if gm_move:
         gm_mover = f"type: {gm_move.get('type', 'N/A')}\ndescription: {gm_move.get('description', '')}"
 
+    # Flashback Scene Instruction (회상 확정 시)
+    if dai.get("flashback_confirmed"):
+        fb_decl = dai.get("flashback_declaration", "")
+        fb_instruction = (
+            f"\n[FLASHBACK] The player has activated a flashback: \"{fb_decl}\"\n"
+            "Write a brief 2-3 sentence flashback scene, then return to the present.\n"
+            "This changes the SITUATION/POSITION only. Do NOT change any stats (HP, 기력, doom).\n"
+            "Do NOT give the PC free items that would bypass resource management."
+        )
+        gm_mover = (gm_mover + fb_instruction) if gm_mover else fb_instruction
+
     # --- [Slot 29] Real-time Data (World Context + Variables) ---
     real_time_data = getattr(ctx, 'world_ctx', '')
 
