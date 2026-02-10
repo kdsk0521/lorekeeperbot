@@ -254,6 +254,11 @@ def append_lore(channel_id: str, text: str) -> None:
     cache.set_lore(channel_id, new_t)
     save_text(get_lore_file_path(channel_id), new_t)
 
+def set_lore(channel_id: str, text: str) -> None:
+    """로어 텍스트 덮어쓰기 (파일 업로드 시)"""
+    cache.set_lore(channel_id, text)
+    save_text(get_lore_file_path(channel_id), text)
+
 def reset_lore(channel_id: str) -> None:
     reset_domain(channel_id) # Simplify: reset all if lore reset requested usually implies restart
 

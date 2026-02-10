@@ -244,8 +244,11 @@ async def cmd_lore(ctx: CommandContext) -> None:
             if lore_chunks:
                 domain_manager.set_lore_chunks(channel_id, lore_chunks)
 
-            domain_manager.append_lore(channel_id, full_content)
-            
+            if file_text:
+                domain_manager.set_lore(channel_id, full_content)
+            else:
+                domain_manager.append_lore(channel_id, full_content)
+
             # Formatted Output (Match User's Legacy Format)
             genre_summary = f"{genre_res.get('world_setting', [])} / {genre_res.get('style_tech', [])} / {genre_res.get('narrative_tone', [])}"
             
@@ -266,9 +269,15 @@ async def cmd_lore(ctx: CommandContext) -> None:
             import traceback
             logger.error(f"Unified Lore Analysis Failed: {e}\n{traceback.format_exc()}")
             await msg.edit(content=f"⚠️ 분석 오류: {e}")
-            domain_manager.append_lore(channel_id, full_content)
+            if file_text:
+                domain_manager.set_lore(channel_id, full_content)
+            else:
+                domain_manager.append_lore(channel_id, full_content)
     else:
-        domain_manager.append_lore(channel_id, full_content)
+        if file_text:
+            domain_manager.set_lore(channel_id, full_content)
+        else:
+            domain_manager.append_lore(channel_id, full_content)
         domain_manager.set_event_lore_summary(channel_id, full_content[:1000])
         await msg.edit(content="📜 저장 완료 (AI 미사용 - 단순 요약)")
 
