@@ -771,7 +771,20 @@ class OrchestrationService:
                 full_prompt, builder = self.build_prompt(ctx)
 
                 # 6. Response Generation (V4: returns Tuple[response, extraction_data])
+                # + Impersonation retry loop (max 3 retries)
+                _MAX_IMP_RETRIES = 3
                 response, extraction_data = await self.generate_response(ctx, full_prompt)
+
+                _impersonation_retried = 0
+                if response and ctx.user_mask:
+                    for _imp_attempt in range(_MAX_IMP_RETRIES):
+                        _imp_check = _check_dialogue_format(response, pc_name=ctx.user_mask, user_input=ctx.action_text or "")
+                        if "[IMPERSONATION]" not in _imp_check:
+                            break
+                        _impersonation_retried += 1
+                        logger.warning(f"[Impersonation Retry {_impersonation_retried}/{_MAX_IMP_RETRIES}] 사칭 감지 → 재생성")
+                        domain_manager.update_session_ai_memory(channel_id, {"format_feedback": _imp_check})
+                        response, extraction_data = await self.generate_response(ctx, full_prompt)
 
                 if response:
                     # [UI Feedback] 완료 시 안내 메시지 삭제
@@ -802,6 +815,11 @@ class OrchestrationService:
                     )
                     if fmt_feedback:
                         logger.info(f"[FormatCheck] {fmt_feedback[:80]}")
+                    if _impersonation_retried:
+                        if "[IMPERSONATION]" in fmt_feedback:
+                            logger.warning(f"[Impersonation] {_impersonation_retried}회 재시도 후에도 사칭 지속 — 피드백으로 넘김")
+                        else:
+                            logger.info(f"[Impersonation] {_impersonation_retried}회 재시도 후 사칭 제거됨")
 
                     # 9. Background Extraction (Flash 모델로 별도 API 호출)
                     # V4 Inline Extraction 대신 기존 Background Extraction 복원
