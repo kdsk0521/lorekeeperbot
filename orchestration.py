@@ -194,7 +194,7 @@ class OrchestrationService:
         item_eval = dai.get("item_usage")
         if item_eval:
             item_msg = self._process_item_usage(
-                channel_id, updated_context.request.acting_user_id, item_eval
+                channel_id, updated_context.narrative_anchors.get("acting_user_id", ""), item_eval
             )
             if item_msg:
                 system_log = (system_log or "") + f"\n{item_msg}"
