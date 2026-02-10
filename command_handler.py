@@ -527,17 +527,49 @@ async def cmd_npc(ctx: CommandContext) -> None:
         last_name = None
 
         # --- Unified NPC Batch Parser ---
-        # Supports: simple (이름: 설명), deep profile (Name: X), rich structured ([NPC NAME]: X + ==== separators)
+        # Supports: markdown (## Name), simple (이름: 설명), deep profile (Name: X), rich structured ([NPC NAME]: X + ==== separators)
         separator_pat = re.compile(r'^[=\-]{3,}$')
         name_pat = re.compile(
             r'^\s*(?:\[?\s*(?:NPC\s*NAME|Name|이름)\s*\]?\s*)[:\s]\s*(.+)$',
             re.IGNORECASE
         )
+        heading_pat = re.compile(r'^##(?!#)\s+(.+)$')  # ## Name (h2 only, not ### h3)
+
+        # Phase 0: Detect markdown heading format (## NPC Name)
+        has_headings = any(heading_pat.match(l.strip()) for l in raw_lines if l.strip())
+
+        if has_headings:
+            # Markdown mode: ## headings split NPC blocks
+            blocks = []
+            current_name = None
+            current_lines = []
+
+            for line in raw_lines:
+                stripped = line.strip()
+                hm = heading_pat.match(stripped)
+                if hm:
+                    if current_name:
+                        blocks.append((current_name, current_lines))
+                    current_name = hm.group(1).strip()
+                    current_lines = []
+                elif current_name is not None:
+                    current_lines.append(line.rstrip())
+
+            if current_name:
+                blocks.append((current_name, current_lines))
+
+            for name, desc_lines in blocks:
+                while desc_lines and not desc_lines[0].strip():
+                    desc_lines.pop(0)
+                while desc_lines and not desc_lines[-1].strip():
+                    desc_lines.pop()
+                desc = "\n".join(desc_lines)
+                domain_manager.update_npc(channel_id, name, {"desc": desc, "source": "manual", "status": "Active"})
+                processed_count += 1
+                last_name = name
 
         # Phase 1: Detect if structured (name declarations exist)
-        has_name_declarations = any(name_pat.match(l.strip()) for l in raw_lines if l.strip())
-
-        if has_name_declarations:
+        elif any(name_pat.match(l.strip()) for l in raw_lines if l.strip()):
             # Block mode: name declarations split NPC blocks
             blocks = []  # [(name, [desc_lines])]
             current_name = None
