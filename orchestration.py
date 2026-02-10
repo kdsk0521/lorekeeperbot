@@ -39,8 +39,8 @@ from orchestration_context import ResponseContext
 logger = logging.getLogger("Orchestration")
 
 
-def _check_dialogue_format(response: str) -> str:
-    """AI 응답에서 이름: \"대사\" 포맷 위반을 감지하여 피드백 문자열 반환."""
+def _check_dialogue_format(response: str, pc_name: str = "", user_input: str = "") -> str:
+    """AI 응답에서 대사 포맷 위반 + PC 대사 창작을 감지하여 피드백 문자열 반환."""
     lines = response.split('\n')
     correct_pat = re.compile(r'^\s*\S+\s*:\s*"')  # 이름: "대사"
     quote_pat = re.compile(r'"[^"]{2,}"')  # 2자 이상 쌍따옴표 텍스트
@@ -55,10 +55,37 @@ def _check_dialogue_format(response: str) -> str:
         if quote_pat.search(stripped) and not correct_pat.match(stripped):
             violations.append(stripped[:40])
 
-    if not violations:
-        return ""
-    examples = violations[:2]
-    return f"[FORMAT] 지난 응답에서 대사 포맷 위반 {len(violations)}건. 예: {'; '.join(examples)}. 반드시 이름: \"대사\" 형식을 지켜라."
+    parts = []
+    if violations:
+        examples = violations[:2]
+        parts.append(f"[FORMAT] 대사 포맷 위반 {len(violations)}건. 예: {'; '.join(examples)}. 반드시 이름: \"대사\" 형식을 지켜라.")
+
+    # PC 대사 창작 감지: PC이름: "대사" 가 응답에 있는데 유저 입력에 해당 대사 내용이 없으면 사칭
+    if pc_name:
+        pc_dialogue_pat = re.compile(rf'^\s*{re.escape(pc_name)}\s*:\s*"([^"]+)"')
+        invented = []
+        for line in lines:
+            m = pc_dialogue_pat.match(line.strip())
+            if m:
+                dialogue_text = m.group(1)
+                # 유저 입력에 대사 핵심 내용이 포함되어 있는지 체크 (5자 이상 연속 매칭)
+                if user_input and len(dialogue_text) >= 5:
+                    # 유저 입력에서 대사 내용의 일부(5자 이상)가 있으면 리워딩으로 간주
+                    found = False
+                    for i in range(len(dialogue_text) - 4):
+                        if dialogue_text[i:i+5] in user_input:
+                            found = True
+                            break
+                    if not found:
+                        invented.append(dialogue_text[:30])
+                elif not user_input:
+                    # 유저 입력 없이 PC 대사 생성 = 확실한 사칭
+                    invented.append(dialogue_text[:30])
+        if invented:
+            logger.warning(f"[Impersonation] PC 대사 창작 감지 {len(invented)}건: {invented}")
+            parts.append(f"[IMPERSONATION] PC({pc_name}) 대사를 창작하지 마라. 유저가 제공한 대사만 리워딩 허용. 위반 {len(invented)}건.")
+
+    return " ".join(parts)
 
 
 class OrchestrationService:
@@ -768,8 +795,8 @@ class OrchestrationService:
                     domain_manager.append_history(channel_id, "Model", response)
                     logger.debug(f"[History] Saved: {user_mask} + Model response ({len(response)} chars)")
 
-                    # 8.5. Dialogue Format Feedback (다음 턴 피드백용)
-                    fmt_feedback = _check_dialogue_format(response)
+                    # 8.5. Dialogue Format Feedback + PC Impersonation Check (다음 턴 피드백용)
+                    fmt_feedback = _check_dialogue_format(response, pc_name=ctx.user_mask or "", user_input=ctx.action_text or "")
                     domain_manager.update_session_ai_memory(
                         channel_id, {"format_feedback": fmt_feedback}
                     )
