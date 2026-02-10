@@ -120,17 +120,17 @@ class WaterfallPipeline:
             bus.judgment["narrative_hook"] = analysis.get("narrative_hook", "")
         
         # Doom Relief 연동
-        doom_relief = analysis.get("doom_relief", {})
+        doom_relief = analysis.get("doom_relief") or {}
         if doom_relief.get("applicable", False):
             bus.doom["relief"] = doom_relief
-        
+
         # Mental Impact 연동
-        mental_impact = analysis.get("mental_impact", {})
+        mental_impact = analysis.get("mental_impact") or {}
         if mental_impact.get("applicable", False):
             bus.mental["impact"] = mental_impact
 
         # Anomaly Profile 연동
-        anomaly_profile = analysis.get("anomaly_profile", {})
+        anomaly_profile = analysis.get("anomaly_profile") or {}
         if isinstance(anomaly_profile, dict):
             tag = anomaly_profile.get("trigger") or ""
             category = anomaly_profile.get("category") or ""
