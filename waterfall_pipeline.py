@@ -179,8 +179,9 @@ class WaterfallPipeline:
             self.doom = DoomModule()
             context = await self.doom.process(context)
 
-        # If Doom is OFF, still allow anomalies to roll with a fixed chance.
-        if "anomaly" in active_modules and "doom" not in active_modules:
+        # Anomaly potential: always eligible when module is ON.
+        # trigger_chance in AnomalyModule handles Doom-based probability scaling.
+        if "anomaly" in active_modules:
             bus.anomaly["potential"] = True
 
         # 4. Anomaly Trigger (Conditional)

@@ -86,9 +86,4 @@ class DoomModule:
                 bus.mental["delta"] = bus.mental.get("delta", 0) + pressure
                 bus.doom["mental_pressure_log"] = label
         
-        # 6. Check for Anomaly Potential
-        # Trigger anomaly if doom > 50 or on critical failure
-        if bus.doom["value"] > 50 or judgment.get("result") == "critical_failure":
-            bus.anomaly["potential"] = True
-            
         return context

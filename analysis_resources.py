@@ -513,9 +513,15 @@ JUDGMENT_SUPPORT = """
 <judgment_support>
 ## ACTION JUDGMENT ANALYSIS
 
-### needs_judgment: YES when outcome uncertain + stakes significant + capability challenged. NO when trivial or auto-success/fail.
+### needs_judgment:
+- YES when outcome uncertain + stakes significant + capability challenged.
+- YES (occasionally) for easy actions if the situation is entertaining or has minor stakes — the GM finds it fun to roll.
+- NO only when purely automatic with zero possible failure.
 
 ### Difficulty: easy | normal | hard | extreme
+- easy: "간단하지만 재미있어 보이니 굴리죠" — mostly auto-success, but roll 1 = comedic disaster
+- normal/hard: where most real judgments live
+- extreme: "이걸 진짜? 다이스 잘 뜨면 성공시켜줄게"
 
 ### Assets (max +60): Skill +5~20 | Equipment +5~15 | Situational +5~15 | Assistance +5~10
 ### Penalties (max -40): Injury -5~15 | Environmental -5~15 | Opposition -5~10 | Psychological -5~10
