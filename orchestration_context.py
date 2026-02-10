@@ -205,7 +205,7 @@ async def gather_context(ctx: ResponseContext) -> ResponseContext:
     ctx.hist_text = _build_smart_history(ctx)
 
     # 활성 퀘스트
-    active_quests = game_system.get_quest_board(channel_id).get("active", [])
+    active_quests = game_character.get_active_quests(channel_id)
     ctx.quest_txt = " | ".join(active_quests) if active_quests else "None"
 
     # NPC 시간 힌트
