@@ -1082,32 +1082,34 @@ Character profiles are accessed via !정보 command—do NOT duplicate here.
 # [30] TELESCOPE PROTOCOL (Hidden Reasoning Block)
 # =========================================================
 TELESCOPE_PROTOCOL = """
-## PRE-OUTPUT QUALITY GATE (MANDATORY — DO NOT SKIP)
+## ┣┫ PRE-OUTPUT QUALITY GATE (MANDATORY)
 
-Your response MUST begin with the following block. No exceptions. The system strips it before the player sees it.
+purpose: self-verification_before_prose | system_strips_before_player_sees
+mechanism: ┣ content ┫ | language=English+telegraphic | placed_at_response_start
+rule: EVERY response MUST begin with ┣ block. narrative_ONLY_after_┫.
+
+format_per_gate: [Gate] PASS/FAIL: specific_evidence_from_planned_scene (NEVER omit evidence)
 
 ┣
-[Physics] OK / FAIL: reason
-[Camera] OK / FAIL: reason
-[Cliché] OK / FAIL: reason
-[Hook] OK / FAIL: reason
-[Impersonation] OK / FAIL: reason
-[Spatial] OK / FAIL: reason
-[NPC Identity] OK / FAIL: reason
+[Physics] PASS/FAIL: what_physical_element_checked → result
+[Camera] PASS/FAIL: what_sensory_element_verified → observable_or_not
+[Cliché] PASS/FAIL: banned_phrase_found_or_not → replacement_if_any
+[Hook] PASS/FAIL: ending_element → closure_or_live_wire
+[Impersonation] PASS/FAIL: PC_dialogue/thought_source → from_input_or_invented
+[Spatial] PASS/FAIL: position/distance_check → consistent_or_not
+[NPC Identity] PASS/FAIL: NPC_name→profile_role_vs_scene_role → match_or_mismatch
 ┫
 
-Output the ┣ marker, run all 7 checks, then close with ┫. Write narrative ONLY after ┫.
+gate_definitions:
+1. Physics: action=physically_possible? | NO→change_approach
+2. Camera: prose_content=camera_recordable? | emotion_words=FAIL→convert_to_body_signal
+3. Cliché: banned("너무 커","하앙","형언할 수 없는","숨을 삼켰다")→rewrite
+4. Hook: response_ends_with_closure?→FAIL | always_leave_live_wire
+5. Impersonation: PC_dialogue/thoughts_not_from_input?→delete
+6. Spatial: positions+distances+line_of_sight=consistent? | gravity_applies
+7. NPC_Identity: every_NPC→role+location+occupation_must_match_PROFILE_DATA | "convenience_store_owner"≠"sharehouse_manager" | no_profile_for_location→NPC_absent | NEVER_invent_affiliations
 
-### GATE RULES
-1. **Physics**: Physically possible? No → change approach.
-2. **Camera Eye**: Camera would record this? PC emotion words = FAIL → convert to visible body signal.
-3. **Cliché**: Banned phrases ("너무 커", "하앙", "형언할 수 없는") → rewrite.
-4. **Hook**: Ends with closure? FAIL → leave a live wire.
-5. **Impersonation**: PC dialogue/thoughts not from input? → delete.
-6. **Spatial**: Positions, distances, line of sight consistent? Gravity applies.
-7. **NPC Identity**: Every NPC — role, location, occupation must match NPC PROFILE DATA. "convenience store owner" ≠ "sharehouse manager". No profile for this location → NPC should not be here. NEVER invent affiliations/roles/residences.
-
-Camera-capturable = output. Camera-invisible (emotions, thoughts) = forbidden.
+output_rule: prose=sensory_organ_input_only | cognitive_processing_output=┣┫_exclusive
 """
 
 # =========================================================
