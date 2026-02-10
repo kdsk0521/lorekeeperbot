@@ -597,10 +597,15 @@ class OrchestrationService:
                     for quest_name, delta in qu["quest_progress"].items():
                         if delta and isinstance(delta, (int, float)) and delta != 0:
                             result = game_character.advance_quest_progress(channel_id, quest_name, int(delta))
+                            if result and result.startswith("⚠️"):
+                                # 매칭 실패 → 새 퀘스트로 자동 등록 후 진행
+                                logger.info(f"[Quest Auto] Progress miss → auto-add: {quest_name}")
+                                add_r = game_system.add_quest(channel_id, quest_name, "normal")
+                                if add_r and not add_r.startswith("⚠️"):
+                                    await message.channel.send(add_r)
+                                result = game_character.advance_quest_progress(channel_id, quest_name, int(delta))
                             if result and not result.startswith("⚠️"):
                                 await message.channel.send(result)
-                            elif result:
-                                logger.debug(f"[Quest Auto] {result}")
 
             # NPC Depth/Tension from cognition extraction
             npc_depth = updates.get("NPCDepthUpdate")

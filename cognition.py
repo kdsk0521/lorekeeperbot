@@ -205,7 +205,8 @@ async def _extract_batch(
             "\nOutput: `{\"quest_add\": [{\"content\": str, \"rank\": \"easy/normal/hard/extreme/epic\"}], "
             "\"quest_complete\": [str], \"quest_progress\": {\"QuestName\": delta_int}}`"
             "\nADD only NEW quests with estimated rank. COMPLETE only if explicitly resolved."
-            "\nPROGRESS: For each active quest where meaningful progress was made, +1 (or +2 for major milestones)."
+            "\nPROGRESS: key MUST be exact name from active quests list. Never paraphrase or invent names."
+            "\n+1 normal progress, +2 major milestone. New quest idea → use quest_add, NOT progress."
             "\nIf no update: `{\"quest_add\": [], \"quest_complete\": [], \"quest_progress\": {}}`."
         )
         ctx_parts.append(f"[Quest] Quests:{quests}")
