@@ -14,6 +14,8 @@ from typing import List, Tuple, Dict, Any, Optional
 from google import genai
 from google.genai import types
 
+logger = logging.getLogger("GameCharacter")
+
 import config
 import domain_manager
 from config import (
@@ -56,15 +58,17 @@ def _save_board(channel_id: str, board: Dict[str, Any]) -> None:
 
 def _find_quest(active: List, content: str) -> Optional[Dict]:
     """active 리스트에서 content가 포함된 퀘스트 dict를 찾습니다. 퍼지 매칭 지원."""
+    if not content or not active:
+        return None
     # 1. 정확한 부분 일치
     for q in active:
         q_content = q["content"] if isinstance(q, dict) else q
         if content in q_content or q_content in content:
             return q
-    # 2. 퍼지 매칭: 공백/조사/따옴표 정규화 후 비교
+    # 2. 퍼지 매칭: 공백/조사/따옴표/특수문자 정규화 후 비교
     def _normalize(s: str) -> str:
         s = s.replace('\u2018', "'").replace('\u2019', "'").replace('\u201C', '"').replace('\u201D', '"')
-        return re.sub(r'[의을를이가은는에서로부터과와및\s\'\""]', '', s).lower()
+        return re.sub(r'[의을를이가은는에서로부터과와및\s\'\""&,·\-_~:()]', '', s).lower()
     norm_content = _normalize(content)
     best, best_q = 0.0, None
     for q in active:
@@ -73,13 +77,17 @@ def _find_quest(active: List, content: str) -> Optional[Dict]:
         # 짧은 쪽이 긴 쪽에 포함되면 매칭
         if norm_content in norm_q or norm_q in norm_content:
             return q
-        # 공통 문자 비율로 유사도 계산
+        # 공통 문자 비율로 유사도 계산 (글자 수 기반, 세트 기반보다 정확)
         common = len(set(norm_content) & set(norm_q))
-        ratio = common / max(len(set(norm_content)), len(set(norm_q)), 1)
+        total = max(len(set(norm_content)), len(set(norm_q)), 1)
+        ratio = common / total
         if ratio > best:
             best, best_q = ratio, q
     if best >= 0.6:
         return best_q
+    # 매칭 실패 시 디버그
+    active_names = [q["content"] if isinstance(q, dict) else q for q in active]
+    logger.warning(f"[Quest] _find_quest MISS: '{content}' not matched in {active_names}")
     return None
 
 

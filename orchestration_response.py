@@ -245,8 +245,10 @@ async def generate_response(
         logic_match = re.search(r'(┣[\s\S]*?┫)', response)
         if logic_match:
             logic_content = logic_match.group(1)
-            logger.info(f"[Telescope] CoT block stripped: {len(logic_content)} chars")
+            logger.info(f"[Telescope] CoT block found and stripped ({len(logic_content)} chars):\n{logic_content}")
             response = response.replace(logic_content, "").strip()
+        else:
+            logger.warning(f"[Telescope] ┣┫ CoT block NOT found in response (first 200 chars: {response[:200]})")
 
         # 3. [V4 Inline Extraction] SYS_EXTRACT 블록 파싱 및 제거
         extract_match = re.search(r'\[SYS_EXTRACT\]\s*(\{[\s\S]*?\})\s*\[/SYS_EXTRACT\]', response)

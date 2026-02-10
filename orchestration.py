@@ -346,12 +346,14 @@ class OrchestrationService:
             if quest_data:
                 for q in quest_data.get("add", []):
                     if q:
-                        game_system.add_quest(channel_id, q)
-                        notifications.append(f"🆕 퀘스트: {q}")
+                        result = game_system.add_quest(channel_id, q)
+                        if result and not result.startswith("⚠️"):
+                            notifications.append(f"🆕 퀘스트: {q}")
                 for q in quest_data.get("complete", []):
                     if q:
-                        game_system.complete_quest(channel_id, q)
-                        notifications.append(f"✅ 완료: {q}")
+                        result = game_system.complete_quest(channel_id, q)
+                        if result and not result.startswith("⚠️"):
+                            notifications.append(f"✅ 완료: {q}")
 
             # 3. Relationship Updates
             rel_data = extraction_data.get("rel", {})
@@ -571,7 +573,7 @@ class OrchestrationService:
                 current_session_memory=session_memory
             )
             
-            # Apply Updates
+            # Apply Updates (⚠️ 에러는 로그만, 성공만 Discord 출력)
             if updates.get("QuestUpdate"):
                 qu = updates["QuestUpdate"]
                 if qu.get("quest_add"):
@@ -580,19 +582,25 @@ class OrchestrationService:
                             result = game_system.add_quest(channel_id, q.get("content", ""), q.get("rank"))
                         else:
                             result = game_system.add_quest(channel_id, q)
-                        if result:
+                        if result and not result.startswith("⚠️"):
                             await message.channel.send(result)
+                        elif result:
+                            logger.debug(f"[Quest Auto] {result}")
                 if qu.get("quest_complete"):
                     for q in qu["quest_complete"]:
                         result = game_system.complete_quest(channel_id, q)
-                        if result:
+                        if result and not result.startswith("⚠️"):
                             await message.channel.send(result)
+                        elif result:
+                            logger.debug(f"[Quest Auto] {result}")
                 if qu.get("quest_progress") and isinstance(qu["quest_progress"], dict):
                     for quest_name, delta in qu["quest_progress"].items():
                         if delta and isinstance(delta, (int, float)) and delta != 0:
                             result = game_character.advance_quest_progress(channel_id, quest_name, int(delta))
-                            if result:
+                            if result and not result.startswith("⚠️"):
                                 await message.channel.send(result)
+                            elif result:
+                                logger.debug(f"[Quest Auto] {result}")
 
             # NPC Depth/Tension from cognition extraction
             npc_depth = updates.get("NPCDepthUpdate")
