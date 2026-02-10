@@ -134,9 +134,6 @@ def detect_pc_impersonation(response: str, pc_names: List[str]) -> List[Dict]:
                 (rf'{safe_pc}[이가은는]?\s*[""\u201C\u300C].*?[""\u201D\u300D]', 'dialogue'),
                 (rf'[""\u201C\u300C].*?[""\u201D\u300D].*?(?:라고|하고|이라며)\s*{safe_pc}', 'dialogue'),
 
-                # PC 신체/감정 반응 (소유격 + 주격만 — NPC→PC 행동은 허용)
-                (rf'{safe_pc}[의]\s*(?:표정|눈|얼굴|심장|호흡|손|몸|입|다리|팔|어깨|등|가슴|목|머리|시선|목소리|숨결)[이가]\s*.{{1,25}}{VERB_ENDING}', 'reaction'),
-
                 # PC 내면 묘사
                 (rf'{safe_pc}[은는이가]?\s*.{{0,15}}{THOUGHT_VERBS}', 'thought'),
             ]
