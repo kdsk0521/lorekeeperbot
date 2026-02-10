@@ -451,10 +451,14 @@ Analyze the provided lorebook precisely to extract all metadata required for gam
 4. **lore_summary**:
    - theme: Core theme of the world (1-2 sentences in Korean)
    - anomaly_seeds: List of anomaly/supernatural themes possible in this world (e.g., '그림자 침식', '기계 광증' etc. - Korean)
-   - locations: Key locations and their characteristics (Korean)
+   - locations: List of key locations with name, description, danger level (Korean)
+   - rules: Key world rules — magic systems, physical laws, economy, combat rules (List of Korean strings, max 10. Each rule should be a concise actionable statement)
+   - factions: Major groups/organizations with name, description, stance/goal (Korean)
+   - key_events: Major historical events that characters would know about (List of Korean strings, max 5)
 5. **world_constraints**: World rules extracted from lore (Korean)
-   - systems: Magic/technology/power systems described in the lore (1-2 sentences)
-   - social: Social hierarchy, taboos, cultural norms (1-2 sentences)
+   - systems: Magic/technology/power systems described in the lore (2-4 sentences, be specific about limitations and costs)
+   - social: Social hierarchy, taboos, cultural norms (2-4 sentences)
+   - taboos: List of things explicitly forbidden or dangerous in this world (Korean strings)
 
 ## Output Format (JSON Only)
 {{
@@ -480,11 +484,15 @@ Analyze the provided lorebook precisely to extract all metadata required for gam
   "lore_summary": {{
     "theme": "...",
     "anomaly_seeds": ["징후1", "징후2"],
-    "locations": "..."
+    "locations": [{{"name": "장소명", "desc": "설명", "danger": "low/mid/high"}}],
+    "rules": ["규칙1: 구체적 설명", "규칙2: 구체적 설명"],
+    "factions": [{{"name": "세력명", "desc": "설명", "stance": "목표/입장"}}],
+    "key_events": ["핵심 사건 1", "핵심 사건 2"]
   }},
   "world_constraints": {{
-    "systems": "마법/기술 체계 설명",
-    "social": "사회 구조/금기 설명"
+    "systems": "마법/기술 체계 상세 설명 (제약과 비용 포함)",
+    "social": "사회 구조/금기 설명",
+    "taboos": ["금기1", "금기2"]
   }}
 }}"""
 

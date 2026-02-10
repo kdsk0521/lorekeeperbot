@@ -81,10 +81,11 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> G
     # Active Modules
     active_modules = domain_manager.get_active_modules(channel_id)
 
-    # Lore Summary (V4)
+    # Lore Summary (V4) + Chunks (V5)
     lore_summary = domain_manager.get_lore_summary_data(channel_id)
+    lore_chunks = domain_manager.get_lore_chunks(channel_id)
 
-    # History & Lore Text (V4 - for THEORIA)
+    # History & Lore Text (V4 - fallback)
     history = domain_manager.get_history(channel_id)
     recent_history = history[-30:] if history else []  # Last 30 turns
     history_text = "\n".join([f"{h['role']}: {h['content']}" for h in recent_history])
@@ -149,7 +150,8 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> G
             active_modules=active_modules,
             lore_summary=lore_summary,
             history_text=history_text,
-            lore_text=lore_text
+            lore_text=lore_text,
+            lore_chunks=lore_chunks
         ),
         narrative_anchors=anchors,
         shared_bus=bus

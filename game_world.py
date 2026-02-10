@@ -174,6 +174,9 @@ def get_world_context(channel_id: str) -> str:
             wc_parts.append(f"체계: {wc['systems']}")
         if wc.get("social"):
             wc_parts.append(f"사회: {wc['social']}")
+        taboos = wc.get("taboos", [])
+        if taboos:
+            wc_parts.append(f"금기: {', '.join(taboos)}")
         if wc_parts:
             lines.append(f"- **세계 규칙**: {' | '.join(wc_parts)}")
 

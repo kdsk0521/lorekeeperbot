@@ -461,16 +461,36 @@ def build_34_step_prompt(ctx) -> str:
     else:
         npc_roles = str(domain_data.get("npcs", "")) if domain_data.get("npcs") else ""
 
-    # --- [Slot 8] Lore (RAG Context Diet 적용) ---
+    # --- [Slot 8] Lore (V5 Chunk-based RAG + Context Diet) ---
+    relevant_chunks_idx = dai.get("relevant_chunks", [])
+    lore_chunks = domain_data.get("lore_chunks", [])
     relevant_context = dai.get("relevant_context", [])
-    if isinstance(relevant_context, list) and relevant_context:
+
+    # Priority 1: Chunk-based injection (V5)
+    if relevant_chunks_idx and lore_chunks:
+        chunk_parts = []
+        for idx in relevant_chunks_idx:
+            if isinstance(idx, int) and 0 <= idx < len(lore_chunks):
+                chunk = lore_chunks[idx]
+                chunk_parts.append(f"[{chunk.get('label', f'Chunk {idx}')}]\n{chunk.get('content', '')}")
+        if chunk_parts:
+            logger.info(f"[Chunk RAG] Injecting {len(chunk_parts)} selected chunks.")
+            lore_content = (
+                "### [LORE: SELECTED CHUNKS]\n"
+                + "\n\n".join(chunk_parts)
+            )
+        else:
+            lore_content = getattr(ctx, 'lore_txt', '')
+    # Priority 2: Free-form relevant_context (legacy RAG)
+    elif isinstance(relevant_context, list) and relevant_context:
         logger.info(f"[Context Diet] Using {len(relevant_context)} extracted items.")
         lore_content = (
-            "### [RAG: FILTERED CONTEXT] (Full Lore Hidden for Efficiency)\n"
+            "### [RAG: FILTERED CONTEXT]\n"
             "The following rules/lore are extracted as MOST RELEVANT for this turn:\n"
             + "\n".join([f"- {item}" for item in relevant_context])
             + "\n\n(Use this context faithfully. If information is missing, rely on General Logic.)"
         )
+    # Priority 3: Full lore text fallback
     else:
         lore_content = getattr(ctx, 'lore_txt', '')
 

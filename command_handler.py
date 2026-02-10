@@ -33,6 +33,21 @@ from command_registry import CommandRegistry, CommandContext
 # Registry Instance
 registry = CommandRegistry()
 
+def _split_lore_chunks(lore_text: str, min_len: int = 30) -> list:
+    """로어 텍스트를 의미 단위로 청크 분할. 각 청크에 라벨 자동 생성."""
+    # Split by double newlines, headers (# / ## / ###), or separator lines (=== / ---)
+    raw_parts = re.split(r'\n{2,}|(?=^#{1,3}\s)|(?=^[=\-]{3,}\s*$)', lore_text, flags=re.MULTILINE)
+    chunks = []
+    for part in raw_parts:
+        part = part.strip()
+        if not part or len(part) < min_len:
+            continue
+        # Auto-label from first line (strip markdown headers)
+        first_line = part.split('\n')[0].strip().lstrip('#').strip().rstrip(':').strip()
+        label = first_line[:60] if first_line else f"Section {len(chunks)}"
+        chunks.append({"label": label, "content": part, "index": len(chunks)})
+    return chunks
+
 # =========================================================
 # SYSTEM HANDLER LOGIC (Absorbed)
 # =========================================================
@@ -202,8 +217,14 @@ async def cmd_lore(ctx: CommandContext) -> None:
             domain_manager.set_active_genres(channel_id, genre_data)
             domain_manager.set_custom_tone(channel_id, genre_res.get("atmosphere_guide"))
             
-            # 4. Update Lore Summary (Anomaly Seeds included)
-            summary_text = f"테마: {lore_summary_data.get('theme', '')}\n이변 징후: {', '.join(lore_summary_data.get('anomaly_seeds', []))}\n공간: {lore_summary_data.get('locations', '')}"
+            # 4. Update Lore Summary (Enriched V2)
+            locations = lore_summary_data.get('locations', [])
+            loc_str = ', '.join(l.get('name', str(l)) if isinstance(l, dict) else str(l) for l in locations) if isinstance(locations, list) else str(locations)
+            rules = lore_summary_data.get('rules', [])
+            rules_str = '\n'.join(f"  - {r}" for r in rules) if rules else ""
+            summary_text = f"테마: {lore_summary_data.get('theme', '')}\n이변 징후: {', '.join(lore_summary_data.get('anomaly_seeds', []))}\n공간: {loc_str}"
+            if rules_str:
+                summary_text += f"\n규칙:\n{rules_str}"
             domain_manager.set_event_lore_summary(channel_id, summary_text)
             
             # 5. Update World Constraints (로어 세계 규칙)
@@ -218,7 +239,12 @@ async def cmd_lore(ctx: CommandContext) -> None:
             d_data["lore_summary_data"] = lore_summary_data
             domain_manager.save_domain(channel_id, d_data)
 
-            domain_manager.append_lore(channel_id, full_content) 
+            # 6. Chunk splitting (V5 — 선택적 주입용)
+            lore_chunks = _split_lore_chunks(full_content)
+            if lore_chunks:
+                domain_manager.set_lore_chunks(channel_id, lore_chunks)
+
+            domain_manager.append_lore(channel_id, full_content)
             
             # Formatted Output (Match User's Legacy Format)
             genre_summary = f"{genre_res.get('world_setting', [])} / {genre_res.get('style_tech', [])} / {genre_res.get('narrative_tone', [])}"
@@ -229,7 +255,12 @@ async def cmd_lore(ctx: CommandContext) -> None:
             
             anomaly_seeds = lore_summary_data.get('anomaly_seeds', [])
             anomaly_str = ", ".join(f"`{s}`" for s in anomaly_seeds) if anomaly_seeds else "없음"
-            await msg.edit(content=f"✅ **로어 분석 완료**\n\n👥 **NPC: {len(extracted_npcs)}명 식별**\n{npc_list_str}{pc_msg}\n\n🌍 **장르/톤**\n{genre_summary}\n\n🌪️ **이변 징후** ({len(anomaly_seeds)}개)\n{anomaly_str}")
+            rules_count = len(lore_summary_data.get('rules', []))
+            factions_count = len(lore_summary_data.get('factions', []))
+            lore_extra = ""
+            if rules_count or factions_count:
+                lore_extra = f"\n\n📜 **세계 규칙** {rules_count}개 | **세력** {factions_count}개 추출"
+            await msg.edit(content=f"✅ **로어 분석 완료**\n\n👥 **NPC: {len(extracted_npcs)}명 식별**\n{npc_list_str}{pc_msg}\n\n🌍 **장르/톤**\n{genre_summary}\n\n🌪️ **이변 징후** ({len(anomaly_seeds)}개)\n{anomaly_str}{lore_extra}")
 
         except Exception as e:
             import traceback

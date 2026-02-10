@@ -297,6 +297,17 @@ def set_lore_summary_data(channel_id: str, data: Dict[str, Any]) -> None:
     d["lore_summary_data"] = data
     save_domain(channel_id, d)
 
+def get_lore_chunks(channel_id: str) -> list:
+    """청크 분할된 로어 데이터를 반환합니다."""
+    d = get_domain(channel_id)
+    return d.get("lore_chunks", [])
+
+def set_lore_chunks(channel_id: str, chunks: list) -> None:
+    """청크 분할된 로어 데이터를 저장합니다."""
+    d = get_domain(channel_id)
+    d["lore_chunks"] = chunks
+    save_domain(channel_id, d)
+
 def get_lore_with_npcs(channel_id: str) -> str:
     lore = get_lore(channel_id)
     npcs = get_npcs(channel_id)

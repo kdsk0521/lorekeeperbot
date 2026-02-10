@@ -208,6 +208,7 @@ Return valid JSON with ALL these fields (Korean values where specified):
   }
 - "RelevantContext": ["Quoted lore/rule directly applicable", ...]
 - "RelevantNPCs": ["NPC name from roster that is relevant to THIS scene (max 5)"]
+- "relevant_chunks": [0, 2, 5] (indices from LORE CHUNKS section — select up to 5 most relevant chunks for this turn. Empty list if no chunks available)
 
 ## FLASHBACK & REST (nullable — output null if not detected)
 - "flashback_eval": null OR {
@@ -339,6 +340,61 @@ Return valid JSON with ALL these fields (Korean values where specified):
             return ""
         return "### 4c. SESSION MEMORY (Accumulated)\n" + "\n".join(parts)
 
+    def _build_lore_structured(self, lore_summary: dict) -> str:
+        """lore_summary의 구조화된 데이터를 Theoria 프롬프트로 변환"""
+        parts = []
+
+        # Locations
+        locations = lore_summary.get("locations", [])
+        if isinstance(locations, list) and locations:
+            loc_lines = []
+            for loc in locations:
+                if isinstance(loc, dict):
+                    name = loc.get("name", "?")
+                    desc = loc.get("desc", "")
+                    danger = loc.get("danger", "")
+                    danger_tag = f" [{danger}]" if danger else ""
+                    loc_lines.append(f"  - {name}{danger_tag}: {desc}")
+                else:
+                    loc_lines.append(f"  - {loc}")
+            parts.append("- **Locations**:\n" + "\n".join(loc_lines))
+        elif isinstance(locations, str) and locations:
+            parts.append(f"- **Locations**: {locations}")
+
+        # Rules
+        rules = lore_summary.get("rules", [])
+        if rules:
+            parts.append("- **World Rules**:\n" + "\n".join(f"  - {r}" for r in rules))
+
+        # Factions
+        factions = lore_summary.get("factions", [])
+        if factions:
+            fac_lines = []
+            for f in factions:
+                if isinstance(f, dict):
+                    fac_lines.append(f"  - {f.get('name', '?')}: {f.get('desc', '')} ({f.get('stance', '')})")
+                else:
+                    fac_lines.append(f"  - {f}")
+            parts.append("- **Factions**:\n" + "\n".join(fac_lines))
+
+        # Key Events
+        events = lore_summary.get("key_events", [])
+        if events:
+            parts.append("- **Key Events**:\n" + "\n".join(f"  - {e}" for e in events))
+
+        return "\n".join(parts) if parts else "- **Locations**: Current surroundings"
+
+    def _build_chunk_index(self, chunks: list) -> str:
+        """청크 라벨 인덱스를 Theoria 프롬프트에 포함 (선택용)"""
+        if not chunks:
+            return ""
+        lines = ["### 6. LORE CHUNKS (Select relevant indices for relevant_chunks field, max 5)"]
+        for chunk in chunks:
+            idx = chunk.get("index", 0)
+            label = chunk.get("label", f"Section {idx}")
+            lines.append(f"[{idx}] {label}")
+        return "\n".join(lines) + "\n"
+
     def _build_pending_flashback(self, anchors: dict) -> str:
         """대기 중인 회상 선언을 프롬프트에 포함"""
         pending = anchors.get("pending_flashback")
@@ -381,7 +437,7 @@ Evaluate this in flashback_eval field. Check plausibility, passive match, and as
 ### 4. WORLD CONTEXT
 - **Core Theme**: {req.lore_summary.get('theme', 'General TRPG')}
 - **Anomaly Seeds**: {', '.join(req.lore_summary.get('anomaly_seeds', [])) or 'None'}
-- **Major Locations**: {req.lore_summary.get('locations', 'Current surroundings')}
+{self._build_lore_structured(req.lore_summary)}
 
 {npc_context}
 
@@ -393,9 +449,7 @@ Evaluate this in flashback_eval field. Check plausibility, passive match, and as
 ### 5. RECENT HISTORY
 {req.history_text or '[No history]'}
 
-{self._build_pending_flashback(anchors)}### 6. LORE REFERENCE
-{req.lore_text[:2000] if req.lore_text else '[No lore loaded]'}
-
+{self._build_pending_flashback(anchors)}{self._build_chunk_index(req.lore_chunks)}
 ---
 Perform FULL Theoria analysis and return JSON with ALL required fields.
 """
