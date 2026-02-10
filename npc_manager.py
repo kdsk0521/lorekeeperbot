@@ -60,33 +60,30 @@ def delete_npc(channel_id: str, name: str) -> bool:
 def find_similar_npc(channel_id: str, new_name: str, threshold: float = 0.85) -> Optional[str]:
     """
     유사한 이름을 가진 NPC가 있는지 확인합니다.
-    (Exact -> Containment -> Fuzzy)
+    (Normalized -> Containment -> Fuzzy)
     """
     existing_npcs = get_npcs(channel_id)
     if not existing_npcs: return None
-    
-    n_lower = new_name.lower()
-    
-    # 1. Exact Match (Case-insensitive)
+
+    n_norm = domain_manager._normalize_npc_name(new_name).lower()
+
+    # 1. Normalized Match (괄호 공백 정규화 + case-insensitive)
     for name in existing_npcs:
-        if name.lower() == n_lower:
+        if domain_manager._normalize_npc_name(name).lower() == n_norm:
             return name
-            
+
     # 2. Containment Check (Only for names >= 3 chars)
-    # "Dr. Strange" vs "Strange", "Arthur" vs "King Arthur"
-    if len(n_lower) >= 3:
+    if len(n_norm) >= 3:
         for name in existing_npcs:
-            e_lower = name.lower()
-            if n_lower in e_lower or e_lower in n_lower:
-                # Check if the overlap is significant?
-                # For now, strict containment is usually a sign of identity or relation.
+            e_norm = domain_manager._normalize_npc_name(name).lower()
+            if n_norm in e_norm or e_norm in n_norm:
                 return name
 
     # 3. Fuzzy Match
     matches = difflib.get_close_matches(new_name, existing_npcs.keys(), n=1, cutoff=threshold)
     if matches:
         return matches[0]
-        
+
     return None
 
 

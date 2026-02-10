@@ -6,6 +6,7 @@ Consolidates: domain_io, domain_participant, domain_content, character_sheet
 
 import os
 import json
+import re
 import logging
 import time
 from typing import Dict, Any, Optional, List
@@ -323,33 +324,64 @@ def get_lore_with_npcs(channel_id: str) -> str:
     return lore + sec
 
 # NPCs
+def _normalize_npc_name(name: str) -> str:
+    """NPC 이름 정규화: 괄호 주변 공백 통일. '리미 (Limi)' → '리미(Limi)'"""
+    name = name.strip()
+    name = re.sub(r'\s+\(', '(', name)
+    name = re.sub(r'\(\s+', '(', name)
+    name = re.sub(r'\s+\)', ')', name)
+    return name
+
 def get_npcs(channel_id: str) -> Dict[str, Dict[str, Any]]:
     return get_domain(channel_id).get("npcs", {})
 
 def get_npc(channel_id: str, name: str) -> Optional[Dict[str, Any]]:
-    return get_npcs(channel_id).get(name)
+    npcs = get_npcs(channel_id)
+    norm = _normalize_npc_name(name)
+    if norm in npcs:
+        return npcs[norm]
+    # Fallback: 기존 비정규화 키 매칭
+    for k, v in npcs.items():
+        if _normalize_npc_name(k) == norm:
+            return v
+    return None
 
 def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
     d = get_domain(channel_id)
     npcs = d.setdefault("npcs", {})
-    
-    # [Restored Logic] Identity Reveal Tracking
-    # If name changes (OldName > NewName), handle it (Logic usually in higher layer, 
-    # but we support preserving 'source' and 'identity' fields here).
-    
-    # Ensure source field exists (Default: 'session' if created dynamically, 'lore' if loaded initially?)
-    # Callers should specify source. If not present and updating, keep existing.
-    if name in npcs:
-        existing_source = npcs[name].get("source", "session")
-        if "source" not in data: data["source"] = existing_source
-        
-    npcs[name] = data
+
+    norm_name = _normalize_npc_name(name)
+
+    # 기존 비정규화 키가 있으면 정규화 키로 마이그레이션
+    existing_key = None
+    for k in list(npcs.keys()):
+        if _normalize_npc_name(k) == norm_name:
+            existing_key = k
+            break
+
+    # source 보존
+    if existing_key:
+        existing_source = npcs[existing_key].get("source", "session")
+        if "source" not in data:
+            data["source"] = existing_source
+        # 비정규화 키 제거 후 정규화 키로 저장
+        if existing_key != norm_name:
+            del npcs[existing_key]
+
+    npcs[norm_name] = data
     save_domain(channel_id, d)
 
 def delete_npc(channel_id: str, name: str) -> bool:
     d = get_domain(channel_id)
-    if name in d.get("npcs", {}):
-        del d["npcs"][name]
+    npcs = d.get("npcs", {})
+    norm = _normalize_npc_name(name)
+    target = None
+    for k in npcs:
+        if _normalize_npc_name(k) == norm:
+            target = k
+            break
+    if target:
+        del npcs[target]
         save_domain(channel_id, d)
         return True
     return False
