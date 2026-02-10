@@ -558,15 +558,54 @@ async def cmd_npc(ctx: CommandContext) -> None:
             if current_name:
                 blocks.append((current_name, current_lines))
 
+            # Helper: find existing NPC by alias match (e.g., "Limi" matches "리미 (Limi)")
+            existing_npcs = domain_manager.get_npcs(channel_id)
+            def _find_existing(new_name: str) -> str:
+                if new_name in existing_npcs:
+                    return new_name
+                nl = new_name.lower().strip()
+                for en in existing_npcs:
+                    m = re.search(r'\(([^)]+)\)', en)
+                    if m and m.group(1).strip().lower() == nl:
+                        return en
+                return new_name  # no match → use as-is
+
             for name, desc_lines in blocks:
                 while desc_lines and not desc_lines[0].strip():
                     desc_lines.pop(0)
                 while desc_lines and not desc_lines[-1].strip():
                     desc_lines.pop()
                 desc = "\n".join(desc_lines)
-                domain_manager.update_npc(channel_id, name, {"desc": desc, "source": "manual", "status": "Active"})
+                # Extract identity summary for list display
+                id_fields = {}
+                for dl in desc_lines:
+                    dl_clean = dl.strip().lstrip("- ").strip()
+                    if ":" in dl_clean:
+                        fk, fv = dl_clean.split(":", 1)
+                        fk_lower = fk.strip().lower()
+                        fv = fv.strip()
+                        if fk_lower in ("species", "종족") and fv:
+                            id_fields.setdefault("species", fv)
+                        elif fk_lower in ("rank/role", "role", "역할") and fv:
+                            id_fields.setdefault("role", fv)
+                        elif fk_lower in ("affiliation", "소속") and fv:
+                            id_fields.setdefault("affiliation", fv)
+                summary_items = []
+                if "species" in id_fields:
+                    summary_items.append(id_fields["species"])
+                if "role" in id_fields:
+                    summary_items.append(id_fields["role"])
+                elif "affiliation" in id_fields:
+                    summary_items.append(id_fields["affiliation"])
+                summary = " / ".join(summary_items) if summary_items else ""
+                # Merge into existing NPC if alias matches (e.g., "Limi" → "리미 (Limi)")
+                target_name = _find_existing(name)
+                npc_data = {"desc": desc, "source": "manual", "status": "Active"}
+                if summary:
+                    npc_data["summary"] = summary
+                domain_manager.update_npc(channel_id, target_name, npc_data)
                 processed_count += 1
-                last_name = name
+                last_name = target_name
 
         # Phase 1: Detect if structured (name declarations exist)
         elif any(name_pat.match(l.strip()) for l in raw_lines if l.strip()):
@@ -638,7 +677,20 @@ async def cmd_npc(ctx: CommandContext) -> None:
             return
         
         # List all
-        name_list = [f"• **{n}**: {d.get('desc','-')[:30]}..." for n, d in npcs.items()]
+        def _npc_preview(d: dict) -> str:
+            if d.get("summary"):
+                return d["summary"][:60]
+            desc = d.get("desc", "-")
+            for line in desc.split("\n"):
+                s = line.strip()
+                if not s or s.startswith("#"):
+                    continue
+                cl = s.lstrip("- ").strip()
+                if cl.lower().startswith(("name:", "alias:", "이름:")):
+                    continue
+                return cl[:60]
+            return desc[:60]
+        name_list = [f"• **{n}**: {_npc_preview(d)}" for n, d in npcs.items()]
         await send_long_message(ctx.message.channel, "👥 **NPC 목록**\n" + "\n".join(name_list))
     else:
         # Specific NPC

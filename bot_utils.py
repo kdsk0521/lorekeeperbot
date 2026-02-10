@@ -90,7 +90,7 @@ async def read_attachment_text(attachment: discord.Attachment) -> Tuple[Optional
         data = await attachment.read()
 
         # 여러 인코딩 시도 (한국어 파일 지원)
-        encodings = ['utf-8', 'cp949', 'euc-kr', 'utf-8-sig']
+        encodings = ['utf-8-sig', 'utf-8', 'cp949', 'euc-kr']
         text = None
         last_error = None
 
@@ -105,6 +105,18 @@ async def read_attachment_text(attachment: discord.Attachment) -> Tuple[Optional
 
         if text is None:
             return None, f"⚠️ 파일 `{attachment.filename}` 읽기 실패: 지원하지 않는 인코딩입니다."
+
+        # Mojibake 자동 복구: UTF-8이 Latin-1/CP1252로 잘못 해석된 경우
+        # e.g., "그림" → "ê·¸ë¦¼" (UTF-8 bytes read as Latin-1)
+        _has_kr = lambda t: any('\uac00' <= c <= '\ud7a3' for c in t)
+        if not _has_kr(text):
+            try:
+                repaired = text.encode('latin-1').decode('utf-8')
+                if _has_kr(repaired):
+                    text = repaired
+                    logging.info(f"파일 '{attachment.filename}' mojibake 자동 복구")
+            except (UnicodeEncodeError, UnicodeDecodeError):
+                pass
 
         # 텍스트 길이 검증
         if len(text) > config.MAX_TEXT_INPUT_LENGTH:
