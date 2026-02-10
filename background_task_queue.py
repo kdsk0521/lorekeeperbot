@@ -176,6 +176,23 @@ class ChannelTaskQueue:
             logger.warning(f"[{channel_id}] Timeout waiting for queue to drain")
             return False
 
+    async def flush_channel(self, channel_id: str) -> int:
+        """채널의 대기 중인 모든 백그라운드 작업을 취소합니다. Returns flushed count."""
+        if channel_id not in self._queues:
+            return 0
+        queue = self._queues[channel_id]
+        count = 0
+        while not queue.empty():
+            try:
+                queue.get_nowait()
+                queue.task_done()
+                count += 1
+            except asyncio.QueueEmpty:
+                break
+        if count:
+            logger.info(f"[{channel_id}] Flushed {count} pending background tasks")
+        return count
+
     def get_queue_size(self, channel_id: str) -> int:
         """특정 채널의 대기 중인 작업 수를 반환합니다."""
         if channel_id not in self._queues:

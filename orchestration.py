@@ -10,6 +10,7 @@ Logic split into:
 """
 
 import asyncio
+import copy
 import logging
 import re
 from typing import Dict, Any, Optional, List, Tuple
@@ -83,7 +84,8 @@ class OrchestrationService:
         from une_facade import UniversalNarrativeEngine
         self.une = UniversalNarrativeEngine(client_genai, model_id_flash)
 
-        # NOTE: self._last_contexts? ?? domain_manager? ?? ???? ?????.
+        # [!다시] 채널별 도메인 스냅샷 (전체 상태 롤백용, 인메모리)
+        self._retry_snapshots: Dict[str, Dict[str, Any]] = {}
 
     # =========================================================
     # STEP 1: CONTEXT GATHERING
@@ -699,6 +701,11 @@ class OrchestrationService:
             # 분석은 이제 process_une_logic 내부의 UNE Theoria에서 수행됩니다.
 
 
+            # [!다시] 도메인 스냅샷 (UNE 실행 전 전체 상태 저장)
+            self._retry_snapshots[channel_id] = copy.deepcopy(
+                domain_manager.get_domain(channel_id)
+            )
+
             # async output (typing indicator)
             async with message.channel.typing():
                 # [!다시] 마지막 컨텍스트 초기화 (재생성 전)
@@ -791,6 +798,7 @@ class OrchestrationService:
     async def retry_last(self, message: discord.Message, channel_id: str, edited_input: str = None) -> bool:
         """
         마지막 AI 응답을 재생성합니다.
+        [V2] 전체 도메인 스냅샷 복원으로 퀘스트/NPC/월드 상태까지 롤백.
         edited_input이 있으면 이전 입력을 교체하여 재생성합니다.
         """
         last_ctx = domain_manager.get_last_execution_context(channel_id)
@@ -799,7 +807,14 @@ class OrchestrationService:
             await message.channel.send("⚠️ 재시도할 이전 응답이 없거나 이미 처리 중입니다.")
             return False
 
-        # 1. 이전 메시지 삭제 (UNE 로그 + AI 응답)
+        # 1. 백그라운드 작업 플러시 (이전 응답의 추출/발효 작업 취소)
+        from background_task_queue import get_task_queue
+        queue = get_task_queue()
+        flushed = await queue.flush_channel(channel_id)
+        if flushed:
+            logger.info(f"[!다시] Flushed {flushed} background tasks for {channel_id}")
+
+        # 2. 이전 메시지 삭제 (UNE 로그 + AI 응답)
         msg_ids = last_ctx.get("message_ids", [])
         for mid in msg_ids:
             try:
@@ -807,23 +822,28 @@ class OrchestrationService:
                 await m.delete()
             except Exception: pass
 
-        # 2. 히스토리 정합성 보장 (마지막 User-Model 세트 제거)
-        d = domain_manager.get_domain(channel_id)
-        history = d.get("history", [])
-
-        if history and history[-1].get("role") == "Model":
-            history.pop()
-            if history and history[-1].get("role") != "Model":
+        # 3. 도메인 스냅샷 복원 (퀘스트/NPC/둠/기력/히스토리 전부 롤백)
+        snapshot = self._retry_snapshots.get(channel_id)
+        if snapshot:
+            domain_manager.save_domain(channel_id, copy.deepcopy(snapshot))
+            logger.info(f"[!다시] Domain snapshot restored for {channel_id}")
+        else:
+            # 스냅샷 없음 (봇 재시작 등) — 히스토리만 정리 (레거시 폴백)
+            d = domain_manager.get_domain(channel_id)
+            history = d.get("history", [])
+            if history and history[-1].get("role") == "Model":
                 history.pop()
-            domain_manager.save_domain(channel_id, d)
-            logger.debug(f"[!다시] Removed [User?, Model] set from history for {channel_id}")
+                if history and history[-1].get("role") != "Model":
+                    history.pop()
+                domain_manager.save_domain(channel_id, d)
+            logger.warning(f"[!다시] No snapshot available, history-only rollback for {channel_id}")
 
-        # 3. 재실행 텍스트 결정
+        # 4. 재실행 텍스트 결정
         action_text = edited_input or last_ctx.get("action_text")
         label = "입력 수정 후 재생성" if edited_input else "서사를 다시 뽑는 중"
         feedback = await message.channel.send(f"🔄 **{label}...**")
 
-        # 4. 재실행 (edited_input이 있으면 항상 system_trigger로 주입)
+        # 5. 재실행 (edited_input이 있으면 항상 system_trigger로 주입)
         if edited_input:
             await self.execute(message, channel_id, system_trigger=action_text, feedback_msg=feedback)
         else:
