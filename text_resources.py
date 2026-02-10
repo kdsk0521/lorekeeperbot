@@ -1082,24 +1082,36 @@ Character profiles are accessed via !정보 command—do NOT duplicate here.
 # [30] TELESCOPE PROTOCOL (Hidden Reasoning Block)
 # =========================================================
 TELESCOPE_PROTOCOL = """
-<Pre_Output_Checklist>
-## PRE-OUTPUT QUALITY GATE
+## PRE-OUTPUT QUALITY GATE (┣┫ BLOCK — MANDATORY)
 
-Before writing, internally verify these checks. Do NOT output them — your native reasoning handles this.
+**You MUST output your quality check inside ┣ and ┫ markers BEFORE writing narrative.**
+This block will be stripped before the player sees it. Skipping = protocol violation.
 
-### MANDATORY CHECKS
-1. **Physics Gate**: Is this physically possible? If no → deny the fantasy, change the approach.
-2. **Camera Eye Gate**: Every sentence — would a camera crew record this? PC emotion words = **always failed**. NPC emotion words = **failed unless Omniscient Mode active**. Convert to visible body signal.
-3. **Cliché Gate**: Scan for banned phrases. "너무 커", "하앙", "형언할 수 없는" → **Cringe Alarm**. Rewrite immediately.
-4. **Scheherazade Gate**: Does the response end with a hook? Ending with closure = **Flatline**. Always leave a live wire.
-5. **Impersonation Gate**: Did you write any PC's dialogue, thoughts, or decisions not in input? → **Identity Theft**. Delete. (NPC acting toward PC = allowed.)
-6. **Spatial Gate**: Are character positions, distances, line of sight consistent? Can they physically reach/see/touch what's described? Gravity applies — liquids flow down, objects fall. Show the process leading to the result, not just the result.
+### FORMAT
+```
+┣
+[Physics] OK / FAIL: (1 line reason)
+[Camera] OK / FAIL: (1 line reason)
+[Cliché] OK / FAIL: (1 line reason)
+[Hook] OK / FAIL: (1 line reason)
+[Impersonation] OK / FAIL: (1 line reason)
+[Spatial] OK / FAIL: (1 line reason)
+[NPC Identity] OK / FAIL: (1 line reason)
+┫
+```
+
+### GATE DEFINITIONS
+1. **Physics**: Physically possible? If no → change approach.
+2. **Camera Eye**: Would a camera record this? PC emotion words = FAIL. Convert to visible body signal.
+3. **Cliché**: Banned phrases ("너무 커", "하앙", "형언할 수 없는") → rewrite.
+4. **Hook**: Ends with closure? → FAIL. Always leave a live wire.
+5. **Impersonation**: PC dialogue/thoughts not from input? → delete.
+6. **Spatial**: Positions, distances, line of sight consistent? Gravity applies.
+7. **NPC Identity**: Every NPC in this scene — does their role, location, occupation match the provided NPC PROFILE DATA? If profile says "convenience store owner" → they cannot appear as "sharehouse manager". If an NPC has no profile for this location → they should not be here unless a plausible reason exists. **NEVER invent affiliations, roles, or residences not in the profile.**
 
 ### CONTENT DISTRIBUTION RULE
 Output = camera-capturable (dialogue, actions, body language, environment, sounds).
 Internal only = camera-invisible (emotions, motivations, thoughts, judgments).
-(Full Camera Eye doctrine → See `PHYSICAL_RENDERING_DOCTRINE`)
-</Pre_Output_Checklist>
 """
 
 # =========================================================

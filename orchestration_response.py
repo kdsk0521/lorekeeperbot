@@ -241,11 +241,11 @@ async def generate_response(
         # 1. system_update 블록 제거
         response = re.sub(r'```system_update[\s\S]*?```', '', response, flags=re.IGNORECASE).strip()
 
-        # 2. [Telescope] Legacy ┣┫ block cleanup (모델이 혹시 생성할 경우 제거)
+        # 2. [Telescope] ┣┫ CoT block strip (품질 게이트 출력 제거 — 플레이어에겐 비공개)
         logic_match = re.search(r'(┣[\s\S]*?┫)', response)
         if logic_match:
             logic_content = logic_match.group(1)
-            logger.debug(f"[Telescope] Legacy block stripped: {len(logic_content)} chars")
+            logger.info(f"[Telescope] CoT block stripped: {len(logic_content)} chars")
             response = response.replace(logic_content, "").strip()
 
         # 3. [V4 Inline Extraction] SYS_EXTRACT 블록 파싱 및 제거
