@@ -87,9 +87,9 @@ class AnomalyModule:
 
             doom_val = bus.doom.get("value", 0)
             if "doom" in context.request.active_modules:
-                trigger_chance = 25 + (doom_val / 2)
+                trigger_chance = 5 + (doom_val * 0.7)
             else:
-                trigger_chance = 30
+                trigger_chance = 15
 
             roll = random.randint(1, 100)
             if roll > trigger_chance:
