@@ -1002,7 +1002,7 @@ async def handle_ooc_command(
         return None
 
 
-@registry.register("ooc", category="System", aliases=["OOC", "메타", "루카"], description="루카 (OOC 도우미) 모드 토글")
+@registry.register("ooc", category="Analysis", aliases=["OOC", "메타", "루카"], description="루카 (OOC 도우미) 모드 토글")
 async def cmd_ooc(ctx: CommandContext) -> None:
     """!ooc - 루카 (OOC 도우미) 모드 ON/OFF 토글"""
     current = domain_manager.get_ooc_mode(ctx.channel_id)
@@ -1153,9 +1153,39 @@ async def cmd_quest(ctx: CommandContext) -> None:
 
     if sub in ["add", "추가", "+"]:
         if not content:
-            await ctx.send("⚠️ 추가할 퀘스트 내용을 입력하세요. (`!quest add 내용`)")
+            await ctx.send("⚠️ 추가할 퀘스트 내용을 입력하세요. (`!quest add 내용 [난이도]`)")
             return
-        await ctx.send(game_system.add_quest(ctx.channel_id, content))
+        # Parse optional rank (last word)
+        rank = None
+        rank_kr_map = {"쉬움": "easy", "보통": "normal", "어려움": "hard", "극난": "extreme", "전설": "epic"}
+        for r in config.QUEST_RANK_SETTINGS.keys():
+            if content.lower().endswith(f" {r}"):
+                rank = r
+                content = content[:-(len(r)+1)].strip()
+                break
+        if not rank:
+            for kr, en in rank_kr_map.items():
+                if content.endswith(f" {kr}"):
+                    rank = en
+                    content = content[:-(len(kr)+1)].strip()
+                    break
+        await ctx.send(game_system.add_quest(ctx.channel_id, content, rank))
+        return
+
+    if sub in ["progress", "진행", "advance"]:
+        if not content:
+            await ctx.send("⚠️ 진행할 퀘스트 이름을 입력하세요. (`!quest 진행 이름 [+N]`)")
+            return
+        parts = content.rsplit(None, 1)
+        quest_name = content
+        delta = 1
+        if len(parts) > 1:
+            try:
+                delta = int(parts[1])
+                quest_name = parts[0]
+            except ValueError:
+                pass
+        await ctx.send(game_character.advance_quest_progress(ctx.channel_id, quest_name, delta))
         return
 
     if sub in ["complete", "완료", "done", "clear"]:
@@ -1176,7 +1206,43 @@ async def cmd_quest(ctx: CommandContext) -> None:
     if raw:
         await ctx.send(game_system.add_quest(ctx.channel_id, raw))
         return
-    await ctx.send("📋 사용법: `!quest [add/complete/remove/list] [내용]`")
+    await ctx.send("📋 사용법: `!quest [add/complete/remove/progress/list] [내용]`")
+
+
+@registry.register("relation", category="World", aliases=["관계", "connection", "친밀", "유대"], description="NPC 관계(친밀도) 현황")
+async def cmd_relation(ctx: CommandContext) -> None:
+    """!관계 [NPC이름] — 전체 관계 현황 또는 특정 NPC 상세"""
+    target = ctx.raw_args.strip()
+
+    if not target:
+        await ctx.send(npc_manager.get_connection_display(ctx.channel_id))
+        return
+
+    # 특정 NPC 상세 조회
+    att = npc_manager.get_npc_attitude(ctx.channel_id, target)
+    if not att:
+        await ctx.send(f"⚠️ '{target}' NPC의 관계 기록이 없습니다.")
+        return
+
+    depth = att.get("depth", 0)
+    tension = att.get("tension", 0)
+    attitude = att.get("attitude", "neutral")
+    reason = att.get("reason", "")
+    stage_info = config.get_connection_stage(depth)
+
+    depth_filled = min(10, depth // 10)
+    depth_bar = "▮" * depth_filled + "▯" * (10 - depth_filled)
+
+    lines = [
+        f"🤝 **{target}** 관계 상세",
+        f"태도: {attitude}" + (f" — {reason}" if reason else ""),
+        f"친밀: {depth_bar} {depth}/100",
+        f"단계: **{stage_info['name']}** — {stage_info['hint_kr']}",
+    ]
+    if tension > 0:
+        lines.append(f"긴장: {tension}/100" + (" ⚡위험" if tension > config.NPC_TENSION_DRAMA_THRESHOLD else ""))
+
+    await ctx.send("\n".join(lines))
 
 
 @registry.register("time", category="World", aliases=["시간"], description="시간 조회 및 설정")

@@ -29,69 +29,136 @@ def _get_board(channel_id: str) -> Dict[str, Any]:
     d = domain_manager.get_domain(channel_id)
     if "quest_board" not in d or not isinstance(d["quest_board"], dict):
         d["quest_board"] = {"active": [], "completed": [], "memos": [], "archive": [], "lore": []}
-    return d["quest_board"]
+
+    # Migration: normalize old string quests to dict format
+    board = d["quest_board"]
+    active = board.get("active", [])
+    migrated = False
+    for i, q in enumerate(active):
+        if isinstance(q, str):
+            active[i] = {
+                "content": q,
+                "rank": config.QUEST_DEFAULT_RANK,
+                "progress": 0,
+                "max_progress": config.QUEST_RANK_SETTINGS[config.QUEST_DEFAULT_RANK]["max_progress"]
+            }
+            migrated = True
+    if migrated:
+        board["active"] = active
+        domain_manager.update_quest_board(channel_id, board)
+
+    return board
 
 
 def _save_board(channel_id: str, board: Dict[str, Any]) -> None:
     domain_manager.update_quest_board(channel_id, board)
 
-# Generic List Ops
-def _list_op(cid: str, key: str, content: str, emoji: str, name: str) -> Optional[str]:
+
+def _find_quest(active: List, content: str) -> Optional[Dict]:
+    """active 리스트에서 content가 포함된 퀘스트 dict를 찾습니다."""
+    for q in active:
+        q_content = q["content"] if isinstance(q, dict) else q
+        if content in q_content:
+            return q
+    return None
+
+
+def get_quest_progress_bar(progress: int, max_progress: int) -> str:
+    filled = min(progress, max_progress)
+    empty = max_progress - filled
+    return f"[{'■' * filled}{'□' * empty}]"
+
+
+# Quest Operations (Progress Track)
+def add_quest(channel_id: str, content: str, rank: str = None) -> str:
     if not content:
         return None
-    board = _get_board(cid)
-    lst = board.get(key, [])
-    if content not in lst:
-        lst.append(content)
-        board[key] = lst
-        _save_board(cid, board)
-        return f"{emoji} **{name} 등록:** {content}"
-    return f"⚠️ 이미 등록된 {name}입니다."
+    rank = rank or config.QUEST_DEFAULT_RANK
+    if rank not in config.QUEST_RANK_SETTINGS:
+        rank = config.QUEST_DEFAULT_RANK
 
-def _del_op(cid: str, key: str, content: str, emoji: str, name: str) -> Optional[str]:
-    if not content:
-        return None
-    board = _get_board(cid)
-    lst = board.get(key, [])
-    target = next((i for i in lst if content in i), None)  # Partial Match
-    if target:
-        lst.remove(target)
-        board[key] = lst
-        _save_board(cid, board)
-        return f"{emoji} **{name} 제거:** {target}"
-    return f"⚠️ 해당 {name}를 찾을 수 없습니다."
+    board = _get_board(channel_id)
+    active = board.get("active", [])
 
-def _move_op(cid: str, src: str, dst: str, content: str, emoji: str, name: str, action: str) -> Optional[str]:
-    if not content:
-        return None
-    board = _get_board(cid)
-    s_lst = board.get(src, [])
-    d_lst = board.get(dst, [])
-    target = next((i for i in s_lst if content in i), None)
-    if target:
-        s_lst.remove(target)
-        d_lst.append(target)
-        board[src] = s_lst
-        board[dst] = d_lst
-        _save_board(cid, board)
-        return f"{emoji} **{name} {action}:** {target}"
-    return f"⚠️ 해당 {name}를 찾을 수 없습니다."
+    if _find_quest(active, content):
+        return f"⚠️ 이미 등록된 퀘스트입니다."
 
-# Operations
-def add_quest(channel_id: str, content: str) -> str:
-    return _list_op(channel_id, "active", content, "🔥", "퀘스트")
+    settings = config.QUEST_RANK_SETTINGS[rank]
+    quest_obj = {
+        "content": content,
+        "rank": rank,
+        "progress": 0,
+        "max_progress": settings["max_progress"]
+    }
+    active.append(quest_obj)
+    board["active"] = active
+    _save_board(channel_id, board)
+
+    bar = get_quest_progress_bar(0, settings["max_progress"])
+    return f"🔥 **퀘스트 등록:** {content}\n> 난이도: {settings['display']} | {bar}"
+
+
+def advance_quest_progress(channel_id: str, content: str, delta: int = 1) -> str:
+    """퀘스트 진행도 증가. max 도달 시 자동 완료."""
+    board = _get_board(channel_id)
+    active = board.get("active", [])
+    target = _find_quest(active, content)
+
+    if not target:
+        return f"⚠️ 퀘스트 '{content}'를 찾을 수 없습니다."
+
+    old_progress = target["progress"]
+    target["progress"] = max(0, min(target["max_progress"], old_progress + delta))
+    new_progress = target["progress"]
+    bar = get_quest_progress_bar(new_progress, target["max_progress"])
+
+    if new_progress >= target["max_progress"]:
+        _save_board(channel_id, board)
+        complete_msg = complete_quest(channel_id, target["content"])
+        return f"📊 **퀘스트 진행:** {target['content']}\n> {bar} ({new_progress}/{target['max_progress']})\n{complete_msg}"
+
+    _save_board(channel_id, board)
+    return f"📊 **퀘스트 진행:** {target['content']}\n> {bar} ({new_progress}/{target['max_progress']})"
+
 
 def complete_quest(channel_id: str, content: str) -> str:
-    res = _move_op(channel_id, "active", "completed", content, "✅", "퀘스트", "완료")
-    if "✅" in res:
-        # Reduce Doom on success
-        import game_world
-        doom_msg = game_world.change_doom(channel_id, -5) # Reward
-        return f"{res}\n{doom_msg}"
-    return res
+    board = _get_board(channel_id)
+    active = board.get("active", [])
+    completed = board.get("completed", [])
+    target = _find_quest(active, content)
+
+    if not target:
+        return f"⚠️ 해당 퀘스트를 찾을 수 없습니다."
+
+    active.remove(target)
+    completed.append(target)
+    board["active"] = active
+    board["completed"] = completed
+    _save_board(channel_id, board)
+
+    rank = target.get("rank", config.QUEST_DEFAULT_RANK) if isinstance(target, dict) else config.QUEST_DEFAULT_RANK
+    doom_reward = config.QUEST_RANK_SETTINGS.get(rank, {}).get("doom_reward", -5)
+
+    import game_world
+    doom_msg = game_world.change_doom(channel_id, doom_reward)
+    q_name = target["content"] if isinstance(target, dict) else target
+    return f"✅ **퀘스트 완료:** {q_name}\n{doom_msg}"
+
 
 def remove_quest(channel_id: str, content: str) -> str:
-    return _del_op(channel_id, "active", content, "🗑️", "퀘스트")
+    if not content:
+        return None
+    board = _get_board(channel_id)
+    active = board.get("active", [])
+    target = _find_quest(active, content)
+
+    if target:
+        active.remove(target)
+        board["active"] = active
+        _save_board(channel_id, board)
+        q_name = target["content"] if isinstance(target, dict) else target
+        return f"🗑️ **퀘스트 제거:** {q_name}"
+    return f"⚠️ 해당 퀘스트를 찾을 수 없습니다."
 
 # Memo Operations (Integrated into Notebook, per-user in V8)
 def add_memo(channel_id: str, content: str, user_id: str = "") -> str:
@@ -158,14 +225,29 @@ def update_notebook_text(channel_id: str, new_text: str, user_id: str = "") -> N
     domain_manager.update_notebook(channel_id, new_text, user_id)
 
 def get_active_quests(channel_id: str) -> List[str]:
+    """content 문자열 리스트 반환 (cognition 추출 호환)."""
+    raw = _get_board(channel_id).get("active", [])
+    return [q["content"] if isinstance(q, dict) else q for q in raw]
+
+
+def get_active_quests_raw(channel_id: str) -> List[Dict]:
+    """dict 리스트 원본 반환."""
     return _get_board(channel_id).get("active", [])
 
 
 def get_active_quests_text(channel_id: str) -> str:
-    board = _get_board(channel_id)
-    active = board.get("active", [])
-    if not active: return "📭 현재 진행 중인 퀘스트가 없습니다."
-    return "🔥 **진행 중인 퀘스트:**\n" + "\n".join([f"{i+1}. {q}" for i, q in enumerate(active)])
+    active = get_active_quests_raw(channel_id)
+    if not active:
+        return "📭 현재 진행 중인 퀘스트가 없습니다."
+    lines = []
+    for i, q in enumerate(active):
+        if isinstance(q, dict):
+            bar = get_quest_progress_bar(q["progress"], q["max_progress"])
+            rank_display = config.QUEST_RANK_SETTINGS.get(q.get("rank", "normal"), {}).get("display", "보통")
+            lines.append(f"{i+1}. {q['content']} [{rank_display}] {bar} {q['progress']}/{q['max_progress']}")
+        else:
+            lines.append(f"{i+1}. {q}")
+    return "🔥 **진행 중인 퀘스트:**\n" + "\n".join(lines)
 
 def get_status_message(channel_id: str, user_id: str = "") -> str:
     quests = get_active_quests_text(channel_id)
@@ -174,15 +256,19 @@ def get_status_message(channel_id: str, user_id: str = "") -> str:
 
 def get_objective_context(channel_id: str, user_id: str = "") -> str:
     """AI를 위한 가독성 중심의 세계 상태 정보 (퀘스트 + 노트북)"""
-    active = get_active_quests(channel_id)
+    active = get_active_quests_raw(channel_id)
     notebook = get_notebook_text(channel_id, user_id)
-    
+
     txt = "### [진행 목표 (QUESTS)]\n"
     if active:
-        txt += "\n".join([f"- {q}" for q in active]) + "\n"
+        for q in active:
+            if isinstance(q, dict):
+                txt += f"- {q['content']} (Rank:{q.get('rank','normal')}, Progress:{q['progress']}/{q['max_progress']})\n"
+            else:
+                txt += f"- {q}\n"
     else:
         txt += "None\n"
-        
+
     txt += f"\n### [노트북 (INVENTORY & MEMOS)]\n{notebook}"
     return txt.strip()
 

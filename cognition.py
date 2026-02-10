@@ -142,8 +142,11 @@ async def extract_all_updates(
         "AbnormalCategory": nar.get("abnormal_category"),
 
         "QuestUpdate": {
-            "quest_add": qst.get("quest_add"), "quest_complete": qst.get("quest_complete")
+            "quest_add": qst.get("quest_add"), "quest_complete": qst.get("quest_complete"),
+            "quest_progress": qst.get("quest_progress")
         } if qst else None,
+
+        "NPCDepthUpdate": soc.get("npc_depth_hints") if soc else None,
 
         "WorldStateUpdate": wst if wst else None
     }
@@ -176,9 +179,12 @@ async def _extract_batch(
     if "social" in sections:
         sys_parts.append(
             "\n### social"
-            "\nOutput: `{\"relationships\": {Name: Status}, \"companions\": [list]}`"
+            "\nOutput: `{\"relationships\": {Name: Status}, \"companions\": [list], "
+            "\"npc_depth_hints\": {NpcName: {\"depth_delta\": int, \"tension_delta\": int}}}`"
             "\nOnly record SIGNIFICANT attitude changes. Deduplicate names against known NPCs."
-            "\nIf no social change: `{\"relationships\": {}, \"companions\": []}`."
+            "\nnpc_depth_hints: For each NPC with meaningful interaction this turn, estimate "
+            "depth_delta (+1~+5 bonding, -1~-3 distancing) and tension_delta (+1~+10 conflict, -1~-5 resolution)."
+            "\nIf no social change: `{\"relationships\": {}, \"companions\": [], \"npc_depth_hints\": {}}`."
         )
         ctx_parts.append(f"[Social] Rels:{rels}, Comps:{comps}, LoreNPCs:{lore_npcs}, SceneNPCs:{scene_npcs}")
 
@@ -196,9 +202,11 @@ async def _extract_batch(
     if "quest" in sections:
         sys_parts.append(
             "\n### quest"
-            "\nOutput: `{\"quest_add\": [list], \"quest_complete\": [list]}`"
-            "\nADD only NEW quests. COMPLETE only if explicitly resolved."
-            "\nIf no update: `{\"quest_add\": [], \"quest_complete\": []}`."
+            "\nOutput: `{\"quest_add\": [{\"content\": str, \"rank\": \"easy/normal/hard/extreme/epic\"}], "
+            "\"quest_complete\": [str], \"quest_progress\": {\"QuestName\": delta_int}}`"
+            "\nADD only NEW quests with estimated rank. COMPLETE only if explicitly resolved."
+            "\nPROGRESS: For each active quest where meaningful progress was made, +1 (or +2 for major milestones)."
+            "\nIf no update: `{\"quest_add\": [], \"quest_complete\": [], \"quest_progress\": {}}`."
         )
         ctx_parts.append(f"[Quest] Quests:{quests}")
 

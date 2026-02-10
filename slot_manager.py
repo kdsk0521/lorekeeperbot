@@ -395,7 +395,9 @@ def build_34_step_prompt(ctx) -> str:
     - memory_triggers 통합
     - 풍부한 Cognition 데이터 주입
     """
-    import domain_manager  # Lazy import to avoid circular
+    import config  # Lazy import to avoid circular
+    import domain_manager
+    import npc_manager
 
     builder = SlotPromptBuilder()
 
@@ -623,6 +625,30 @@ def build_34_step_prompt(ctx) -> str:
             intim_lines.append(f"Body Memory: {body_mem}")
         if intim_lines:
             extended_intel_parts.append("### Intimacy Analysis\n" + "\n".join(intim_lines))
+
+    # NPC Connection Milestones (1회성 서사 힌트)
+    if channel_id:
+        milestone_hints = npc_manager.get_connection_milestone_hints(channel_id)
+        if milestone_hints:
+            extended_intel_parts.append("### NPC Connection Milestones\n" + "\n".join(milestone_hints))
+
+        # NPC Connection Depth Context (depth > 0인 NPC만)
+        all_attitudes = domain_manager.get_npc_attitudes(channel_id)
+        conn_lines = []
+        for _cn, _ca in all_attitudes.items():
+            _depth = _ca.get("depth", 0)
+            _tension = _ca.get("tension", 0)
+            if _depth > 0 or _tension > 20:
+                _stage = config.get_connection_stage(_depth)
+                _line = f"- {_cn}: Connection={_stage['name']}({_depth}/100)"
+                if _tension > config.NPC_TENSION_DRAMA_THRESHOLD:
+                    _line += f" TENSION={_tension} (DRAMA POTENTIAL)"
+                elif _tension > 20:
+                    _line += f" tension={_tension}"
+                _line += f" — {_stage['hint_en']}"
+                conn_lines.append(_line)
+        if conn_lines:
+            extended_intel_parts.append("### NPC Connection Depth\n" + "\n".join(conn_lines))
 
     extended_intelligence = "\n\n".join(extended_intel_parts)
 

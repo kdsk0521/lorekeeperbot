@@ -130,6 +130,16 @@ class OrchestrationService:
                     n_data.get("reason", "")
                 )
 
+            # NPC Connection: trajectory → depth delta
+            import random as _rng
+            for n_name, n_data in new_attitudes.items():
+                trajectory = n_data.get("trajectory", "stable")
+                depth_range = config.NPC_TRAJECTORY_DEPTH_MAP.get(trajectory, (0, 0))
+                if depth_range != (0, 0):
+                    depth_delta = _rng.randint(min(depth_range), max(depth_range))
+                    if depth_delta != 0:
+                        domain_manager.update_helena_metric(channel_id, n_name, depth_delta=depth_delta)
+
             ctx.existing_attitudes = domain_manager.get_npc_attitudes(channel_id)
 
         # NPC Knowledge 영속화
@@ -470,16 +480,34 @@ class OrchestrationService:
                 qu = updates["QuestUpdate"]
                 if qu.get("quest_add"):
                     for q in qu["quest_add"]:
-                        game_system.add_quest(channel_id, q)
-                        await message.channel.send(f"🆕 퀘스트 시작: {q}")
+                        if isinstance(q, dict):
+                            result = game_system.add_quest(channel_id, q.get("content", ""), q.get("rank"))
+                        else:
+                            result = game_system.add_quest(channel_id, q)
+                        if result:
+                            await message.channel.send(result)
                 if qu.get("quest_complete"):
                     for q in qu["quest_complete"]:
-                        game_system.complete_quest(channel_id, q)
-                        await message.channel.send(f"✅ 퀘스트 완료: {q}")
-            
-            # ... Handle other updates (Social, etc.) - Simplified for brevity in this refactor
-            # (Restoring original logic would be best)
-            
+                        result = game_system.complete_quest(channel_id, q)
+                        if result:
+                            await message.channel.send(result)
+                if qu.get("quest_progress") and isinstance(qu["quest_progress"], dict):
+                    for quest_name, delta in qu["quest_progress"].items():
+                        if delta and isinstance(delta, (int, float)) and delta != 0:
+                            result = game_character.advance_quest_progress(channel_id, quest_name, int(delta))
+                            if result:
+                                await message.channel.send(result)
+
+            # NPC Depth/Tension from cognition extraction
+            npc_depth = updates.get("NPCDepthUpdate")
+            if npc_depth and isinstance(npc_depth, dict):
+                for npc_name, deltas in npc_depth.items():
+                    if isinstance(deltas, dict):
+                        d_d = deltas.get("depth_delta", 0)
+                        t_d = deltas.get("tension_delta", 0)
+                        if d_d or t_d:
+                            domain_manager.update_helena_metric(channel_id, npc_name, depth_delta=int(d_d), tension_delta=int(t_d))
+
             if updates.get("PlayerMemoryUpdate"):
                 pmu = updates["PlayerMemoryUpdate"]
                 if pmu.get("relationships"):

@@ -16,6 +16,7 @@ import random
 import logging
 from typing import Dict, Any, Optional, List
 import difflib
+import config
 import domain_manager
 
 # =========================================================
@@ -495,6 +496,75 @@ def get_attitude_for_prompt(channel_id: str) -> str:
         lines.append(line)
 
     return "\n".join(lines)
+
+
+# =========================================================
+# NPC CONNECTION TRACK
+# =========================================================
+
+def get_connection_display(channel_id: str) -> str:
+    """전체 NPC 관계 현황 (Discord UI용)."""
+    attitudes = get_npc_attitudes(channel_id)
+    if not attitudes:
+        return "📭 기록된 NPC 관계가 없습니다."
+
+    att_emoji_map = {"hostile": "🔴", "unfriendly": "🟠", "neutral": "⚪",
+                     "friendly": "🟢", "loyal": "💚", "devoted": "💜"}
+    lines = ["🤝 **NPC 관계 현황**"]
+    for npc_name, att in attitudes.items():
+        depth = att.get("depth", 0)
+        tension = att.get("tension", 0)
+        attitude = att.get("attitude", "neutral")
+        stage_info = config.get_connection_stage(depth)
+
+        depth_filled = min(10, depth // 10)
+        depth_bar = "▮" * depth_filled + "▯" * (10 - depth_filled)
+
+        tension_str = ""
+        if tension > config.NPC_TENSION_DRAMA_THRESHOLD:
+            tension_str = f" ⚡{tension}"
+        elif tension > 20:
+            tension_str = f" 💢{tension}"
+
+        att_emoji = att_emoji_map.get(attitude, "⚪")
+        lines.append(f"**{npc_name}** {att_emoji} {attitude}")
+        lines.append(f"  친밀: {depth_bar} {depth}/100 ({stage_info['name']}){tension_str}")
+
+    return "\n".join(lines)
+
+
+def get_connection_milestone_hints(channel_id: str) -> List[str]:
+    """단계 경계를 넘은 NPC에 대한 서사적 힌트 반환. 1회성 (다음 턴 소비)."""
+    attitudes = get_npc_attitudes(channel_id)
+    if not attitudes:
+        return []
+
+    d = domain_manager.get_domain(channel_id)
+    tracking = d.get("npc_milestone_tracking", {})
+    hints = []
+    changed = False
+
+    for npc_name, att in attitudes.items():
+        depth = att.get("depth", 0)
+        current_stage = config.get_connection_stage_name(depth)
+        last_stage = tracking.get(npc_name, "")
+
+        if current_stage != last_stage and last_stage != "":
+            stage_info = config.get_connection_stage(depth)
+            hints.append(
+                f"[NPC Connection Milestone: {npc_name}] "
+                f"Reached '{current_stage}' ({depth}/100) — {stage_info['hint_en']}"
+            )
+
+        if current_stage != tracking.get(npc_name):
+            tracking[npc_name] = current_stage
+            changed = True
+
+    if changed:
+        d["npc_milestone_tracking"] = tracking
+        domain_manager.save_domain(channel_id, d)
+
+    return hints
 
 
 # =========================================================

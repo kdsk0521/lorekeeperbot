@@ -82,7 +82,6 @@ DEFAULT_LORE = "기본 세계관: 어두운 도시, 수수께끼의 사건들...
 
 
 # Time Settings
-# Time Settings
 TICK_DURATION_MIN = 1   # Minutes (Micro-pacing enabled)
 TICK_DURATION_MAX = 5   # Minutes
 
@@ -155,6 +154,45 @@ MAX_ARCHIVE_DISPLAY = 3
 MAX_HISTORY_FOR_CHRONICLE = 50
 EMPTY_QUEST_MEMO_MSG = "No active quests or memos."
 
+# Quest Progress Track (DC-linked 5 Ranks)
+QUEST_RANK_SETTINGS = {
+    "easy":    {"max_progress": 4,  "doom_reward": -3,  "display": "쉬움"},
+    "normal":  {"max_progress": 6,  "doom_reward": -5,  "display": "보통"},
+    "hard":    {"max_progress": 8,  "doom_reward": -8,  "display": "어려움"},
+    "extreme": {"max_progress": 10, "doom_reward": -12, "display": "극난"},
+    "epic":    {"max_progress": 12, "doom_reward": -15, "display": "전설"},
+}
+QUEST_DEFAULT_RANK = "normal"
+
+# NPC Connection Stages (depth-based, 0-100)
+NPC_CONNECTION_STAGES = {
+    "면식":  {"range": (0, 20),   "hint_en": "Acquaintance — may acknowledge PC but no bond",                        "hint_kr": "얼굴을 아는 정도"},
+    "지인":  {"range": (20, 40),  "hint_en": "Known — casual familiarity, small talk",                               "hint_kr": "가벼운 대화 상대"},
+    "친분":  {"range": (40, 60),  "hint_en": "Friendly — willing to help, shares opinions",                          "hint_kr": "호의적, 부탁을 들어줄 수 있음"},
+    "신뢰":  {"range": (60, 80),  "hint_en": "Trusted — shares secrets, offers real help, shows vulnerability",       "hint_kr": "비밀을 나눌 수 있음, 취약함을 보임"},
+    "유대":  {"range": (80, 101), "hint_en": "Bonded — deep loyalty, will sacrifice, reveals full self",              "hint_kr": "깊은 유대, 헌신적"},
+}
+
+NPC_TRAJECTORY_DEPTH_MAP = {
+    "improving": (5, 10),
+    "stable": (0, 0),
+    "declining": (-5, -3),
+}
+
+NPC_TENSION_DRAMA_THRESHOLD = 50
+
+def get_connection_stage(depth: int) -> Dict[str, Any]:
+    """커넥션 단계 정보 반환."""
+    for stage_name, info in NPC_CONNECTION_STAGES.items():
+        low, high = info["range"]
+        if low <= depth < high:
+            return {"name": stage_name, **info}
+    return {"name": "유대", **NPC_CONNECTION_STAGES["유대"]}
+
+def get_connection_stage_name(depth: int) -> str:
+    """커넥션 단계명만 반환."""
+    return get_connection_stage(depth)["name"]
+
 
 # =========================================================
 # Default Contents
@@ -178,28 +216,20 @@ DEFAULT_RULES = """
 - **대실패 (Critical Failure):** 주사위 **1~5** (보정치와 상관없이 실패)
 
 **기본 원칙: 서사적 판정 우선**
-- 플레이어 요청 시 `!r` 명령어로 주사위를 굴릴 수 있습니다.
-- AI는 주사위 없이도 캐릭터의 패시브, 상황적 유불리를 종합하여 판정할 수 있습니다.
+- 판정 모듈이 캐릭터의 패시브, 상황적 유불리를 종합하여 자동 판정합니다.
 
 ## 🎭 캐릭터 성장
 성장은 경험치나 레벨이 아닌 **서사적 성취**를 통해 이루어집니다:
-- **패시브**: 반복된 행동이나 경험을 통해 습득하는 특성
-  예) "독 내성" - 독에 여러 번 노출된 후 획득
-  예) "야간 시야" - 어둠 속에서 오래 활동한 후 획득
-- **칭호**: 특별한 업적이나 인정을 통해 얻는 명예
-  예) "드래곤 슬레이어" - 드래곤을 처치한 후 획득
-  예) "숲의 친구" - 엘프들에게 인정받은 후 획득
+- **패시브**: 반복된 행동이나 경험을 통해 습득하는 특성 (독 내성, 야간 시야 등)
 
 ## 🌓 비일상 적응
 초자연적/비일상적 존재나 현상에 반복 노출되면 점차 익숙해집니다:
 - 처음: 공포, 혼란, 패닉
 - 적응 중: 경계하지만 대처 가능
 - 일상화: 담담하게 받아들임
-AI가 캐릭터의 노출 횟수와 반응을 추적하여 자연스럽게 적응도를 부여합니다.
 
 ## ⚔️ 전투
-- 선제권: 상황과 캐릭터 특성에 따라 판단
-- 성공/실패: 캐릭터 능력, 패시브, 상황을 종합하여 서사적으로 결정
+- 캐릭터 능력, 패시브, 상황을 종합하여 서사적으로 결정
 - 피해: 서사적으로 묘사 (HP 수치 없음)
 - 상태이상: 부상, 중독, 공포 등이 행동에 영향
 
@@ -207,7 +237,6 @@ AI가 캐릭터의 노출 횟수와 반응을 추적하여 자연스럽게 적�
 - 화폐: 세계관에 맞는 단위 사용 (골드, 은화, 크레딧 등)
 - 인벤토리: 소지품 목록
 - 거래: 협상과 상황에 따라 가격 변동
-- AI가 세계관에 맞게 화폐 단위를 자동 판단
 
 ## 📝 특수 규칙
 - OOC 수정: `(OOC: 요청)` 형식으로 캐릭터 정보 수정 가능
@@ -219,7 +248,6 @@ DEFAULT_WORLD_STATE = {
     "weather": "맑음",
     "day": 1,
     "doom": 30, # [Unsettled Start] User Request
-    "doom_name": "위기",
     "risk_level": "None",
     "current_location": "Unknown",
     "location_rules": {},
@@ -318,6 +346,30 @@ DEFAULT_MODULE_SETTINGS = {
     "active_modules": ["judgment", "doom", "anomaly", "mental"],
     "doom_fallback": 40,
     "judgment_fallback": "LLM_DECISION"
+}
+
+# DLC Module Descriptions (for help/display)
+DLC_MODULE_DESCRIPTIONS = {
+    "judgment": {
+        "name": "판정",
+        "emoji": "⚖️",
+        "desc": "1d100 + FitD Position 기반 행동 판정. 대성공/대실패 시 서사 분기."
+    },
+    "doom": {
+        "name": "둠",
+        "emoji": "⏰",
+        "desc": "8단계 위협 시계. 위험한 행동·실패가 누적되며 세계 긴장도 상승."
+    },
+    "anomaly": {
+        "name": "이변",
+        "emoji": "🌪️",
+        "desc": "둠 수치에 비례해 예측 불가능한 사건 발생. 로어에 등록된 징후 우선."
+    },
+    "mental": {
+        "name": "기력",
+        "emoji": "💪",
+        "desc": "PC의 총체적 컨디션 (체력/집중/평판/정신). 판정 보정·이변 방어에 영향."
+    }
 }
 
 # =========================================================

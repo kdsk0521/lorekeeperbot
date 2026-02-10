@@ -340,16 +340,17 @@ def delete_npc(channel_id: str, name: str) -> bool:
 
 # NPC Attitude System
 def update_npc_attitude(channel_id: str, npc_name: str, attitude: str, reason: str = "") -> None:
-    """NPC의 PC에 대한 태도 업데이트"""
+    """NPC의 PC에 대한 태도 업데이트 (depth/tension 보존)"""
     d = get_domain(channel_id)
     if "npc_attitudes" not in d:
         d["npc_attitudes"] = {}
-    
+
+    existing = d["npc_attitudes"].get(npc_name, {})
     d["npc_attitudes"][npc_name] = {
         "attitude": attitude,
         "reason": reason,
-        "depth": 0,    # [Phase 2] Helena Depth (0-100)
-        "tension": 0,  # [Phase 2] Helena Tension (0-100)
+        "depth": existing.get("depth", 0),
+        "tension": existing.get("tension", 0),
         "last_updated": time.strftime('%Y-%m-%d %H:%M')
     }
     save_domain(channel_id, d)
