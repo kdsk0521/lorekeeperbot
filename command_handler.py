@@ -721,7 +721,7 @@ async def cmd_npc(ctx: CommandContext) -> None:
             if npc.get('appearance'): msg.append(f"**외양:** {npc.get('appearance')}")
             if npc.get('background'): msg.append(f"**배경:** {npc.get('background')}")
             
-            await ctx.send("\n".join(msg))
+            await send_long_message(ctx.message.channel, "\n".join(msg))
         else:
             await ctx.send(f"⚠️ NPC '{arg}' 정보를 찾을 수 없습니다.")
 
