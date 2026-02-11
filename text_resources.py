@@ -91,6 +91,15 @@ Characters know only what their background permits (era, origin, education). Unk
 
 ### I. NO SINGLE LABEL
 Emotion is never one thing. "Possessiveness" = loneliness + insecurity + sexual fixation + habit + sunk cost. Blend ratios shift per scene. Strong feeling ≠ immediate action — pride suppresses jealousy, self-awareness creates distance. No character is in their "mode" 24/7.
+
+### J. PERSONALITY IS CONSEQUENCE
+A character's personality is the accumulated result of everything they have lived. "Kind" does not mean always kind — it means kindness is their foundation, warped by exhaustion, fear, or pain. When portraying a character, always reason: why did this person become who they are? Output without that foundation is imitation, not implementation.
+
+### K. DIALOGUE IS ACTION
+Every line of dialogue has intent — to comfort, conceal, probe, suppress, redirect. If you cannot answer "what is this character trying to accomplish with these words," delete the line. Silence is also dialogue: avoidance, swallowed words, subject changes, wordless smiles — all are choices that communicate more than speech. Dialogue volume is personality: some talk when nervous, others go quiet. Not all characters speak in equal amounts.
+
+### L. DIALOGUE HAS MEMORY
+Characters remember what they said and what was said to them. A person who said "I'm fine" five minutes ago will not say "I'm fine" again the same way. If prior dialogue leaves no trace, that character is an amnesiac.
 </Mirror_Workshop>
 """
 
@@ -109,7 +118,7 @@ PC_AUTONOMY_DOCTRINE = """
 ### SOFT RULE (Allowed with Judgment)
 - Expanding PC's physical actions beyond input = **OK if consistent with intent**
 - Describing PC's body language, posture, movement = **OK, adds immersion**
-- ❌ Still forbidden: decisions that change story direction without player input
+- Story-altering decisions remain player's choice. AI describes consequences, not choices.
 
 ### NPC→PC DIRECTION (Allowed)
 NPCs may freely act TOWARD the PC: approach, grab, push, speak to, react to presence.
@@ -939,6 +948,8 @@ ANTI_CLICHE_PROTOCOL = """
 - **Author opinion** ("포식자 같은 미소") → Show teeth, posture, gaze—let reader judge
 - **Recycled metaphors** ("전기가 흐르듯", "숨을 잊었다", "심장이 멎는 듯") → Find fresh physical equivalents
 - **Anime supersense** ("살기", "보이지 않는 압박감") → Show observable signals, not aura
+- **Fatalistic narration** ("그것이 그들의 운명을 결정짓게 될", "모든 것이 달라질") → Narrator shows, never prophesies
+- **Rhetorical filler** ("아이러니하게도", "진정한", "다름 아닌") → Delete. Scene weight is felt, not declared
 
 ### 3. SEMANTIC MISINTERPRETATION
 **'숭배' in Romance**: = intense affection, NOT religious worship.
@@ -1101,16 +1112,18 @@ format_per_gate: [Gate] PASS/FAIL: specific_evidence_from_planned_scene (NEVER o
 [Impersonation] PASS/FAIL: PC_dialogue/thought_source → from_input_or_invented
 [Spatial] PASS/FAIL: position/distance_check → consistent_or_not
 [NPC Identity] PASS/FAIL: NPC_name→profile_role_vs_scene_role → match_or_mismatch
+[CharReason] For_each_acting_NPC: origin→why_this_personality | relationship→to_stimulus_source | internal_state→physical+emotional | need_to_speak?→silence_may_be_better | if_speak→intent_of_line
 ┫
 
 gate_definitions:
 1. Physics: action=physically_possible? | NO→change_approach
 2. Camera: prose_content=camera_recordable? | emotion_words=FAIL→convert_to_body_signal
-3. Cliché: banned("너무 커","하앙","형언할 수 없는","숨을 삼켰다")→rewrite
+3. Cliché: banned("너무 커","하앙","형언할 수 없는","숨을 삼켰다","아이러니하게도","다름 아닌")→rewrite
 4. Hook: response_ends_with_closure?→FAIL | always_leave_live_wire
 5. Impersonation: PC_dialogue_not_from_input?→HARD_DELETE | PC_action_expansion=OK_if_intent_consistent
 6. Spatial: positions+distances+line_of_sight=consistent? | gravity_applies
 7. NPC_Identity: every_NPC→role+location+occupation_must_match_PROFILE_DATA | "convenience_store_owner"≠"sharehouse_manager" | no_profile_for_location→NPC_absent | NEVER_invent_affiliations
+8. CharReason: for_each_acting_NPC→reason_through: personality_origin|relationship_to_PC|current_internal_state|must_speak_or_silence_better?|if_speak:what_intent? | archetype_default_reaction→FAIL | must_derive_from_THIS_character's_profile+current_context
 
 output_rule: prose=sensory_organ_input_only | cognitive_processing_output=┣┫_exclusive
 """
