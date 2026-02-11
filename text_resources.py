@@ -88,6 +88,7 @@ Relief must be *earned* through friction. If both characters exit more comfortab
 
 ### H. EPISTEMIC BOUNDARY
 Characters know only what their background permits (era, origin, education). Unknown concepts → confusion, misinterpretation, or confident wrong assumptions. Never convenient comprehension.
+**Acquisition rule**: A character uses information ONLY if acquired through in-narrative events. Profile data is author-reference, not character knowledge. Unacquired names → "that person/he/she"; unacquired measurements → perceptual estimate ("tall enough to look up at"); unacquired occupation → infer from visible clues only.
 
 ### I. NO SINGLE LABEL
 Emotion is never one thing. "Possessiveness" = loneliness + insecurity + sexual fixation + habit + sunk cost. Blend ratios shift per scene. Strong feeling ≠ immediate action — pride suppresses jealousy, self-awareness creates distance. No character is in their "mode" 24/7.
@@ -179,6 +180,7 @@ The camera moves freely through the scene, recording what a documentary crew wou
 - Smell: copper, bile, decay, memory anchors
 - Touch: temperature, pressure, texture
 - Taste: salt, sweetness, blood mist, bile
+**Sensory selection**: Psychology steers which senses dominate. Anxiety → sound sharpens, vision narrows. Longing → smell and texture amplify. Exhaustion → blurred vision, muted hearing. Proximity matters: far = sight/sound; close = touch/smell/breath/weight.
 
 ### THREE-CHANNEL EXPRESSION
 Every character rendered through simultaneous channels:
@@ -199,6 +201,7 @@ Violence is not a clean action sequence. Default: punches miss walls, bodies tan
 
 ### SENSORY REALISM DEFAULTS
 Physical arousal subordinate to psychological state — anxiety/guilt blocks, trust/desire accelerates. Physical consequences persist: fatigue, pain, awkwardness. Post-climax: cold reality of cleanup, silence, dressing. Proficiency proportional to experience — inexperience = fumbling, nervousness > pleasure. Contraception awareness exists by default at the critical moment.
+Pleasure is reflex; affection is earned. Orgasm intensity carries zero weight toward emotional surrender. Post-intimacy default: guarded distance, lingering unfamiliarity — warmth only after trust is proven through accumulated mundane moments, not through physical events.
 </Physical_Rendering_Doctrine>
 """
 
@@ -938,6 +941,7 @@ ANTI_CLICHE_PROTOCOL = """
 - **Physiological reports**: "너무 커...", "꽉 찼어..." → Replace with character-specific reaction
 - **Generic moans**: "앙", "하앙" → Unique vocalization per character
 - **Ero-novel clichés**: "몸이 솔직한데", "싫고 싫었어" → Rewrite as physical behavior
+- **Sex-induced love**: Body responded → heart opens = forbidden shortcut. Affection requires mundane trust accumulation
 - **Lazy descriptions**: "형언할 수 없는 공포" → Describe it or fail as a writer
 - **Anime tone**: "흥", "후후후" → Banned unless in character spec
 
@@ -963,6 +967,9 @@ Replace generic state reports → character-consistent reactions:
 
 ### 5. CHARACTER CONSISTENCY
 Maintain character tone in all scenes. A cold-blooded killer needs 10+ turns of buildup before softening.
+
+### 5b. PLAUSIBILITY GOVERNOR
+Interruptions, friction, and refusal events occur only when time, place, and circumstances genuinely support them. A forthright character speaks frankly; a stable relationship progresses stably. Artificial conflict injection to "create drama" is a cliché. Calm is reality too.
 
 ### 6. CLICHÉ DOMAIN SEPARATION
 **Plot clichés** may be acceptable if earned. **Character clichés** are NEVER acceptable.
