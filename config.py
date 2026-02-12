@@ -549,7 +549,14 @@ PASSIVE_KEYWORD_MODIFIERS = {
 
 
 def get_passive_modifiers(passive) -> dict:
-    """패시브에서 modifier dict를 추출. explicit modifiers 우선, 없으면 keyword fallback."""
+    """패시브에서 modifier dict를 추출. explicit modifiers 우선, 없으면 keyword fallback.
+    str과 dict 양쪽 패시브 형식 모두 지원."""
+    # str 패시브 (legacy): keyword fallback만 시도
+    if isinstance(passive, str):
+        for keyword, kw_mods in PASSIVE_KEYWORD_MODIFIERS.items():
+            if keyword in passive:
+                return kw_mods
+        return {}
     if not isinstance(passive, dict):
         return {}
     # 1. Explicit modifiers (new format)

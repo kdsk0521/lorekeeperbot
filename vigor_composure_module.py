@@ -138,6 +138,7 @@ class VigorComposureModule:
                 mods = config.get_passive_modifiers(passive)
                 if drain_key in mods:
                     drain_mult *= mods[drain_key]
+            drain_mult = max(0.5, min(1.5, drain_mult))  # 극단값 방지
             if drain_mult != 1.0:
                 delta = int(delta * drain_mult)
 

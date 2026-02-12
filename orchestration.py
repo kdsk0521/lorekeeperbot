@@ -649,7 +649,13 @@ class OrchestrationService:
                 if pmu.get("relationships"):
                     for nm, val in pmu["relationships"].items():
                         new_rel = domain_manager.update_npc_relationship(channel_id, ctx.user_id, nm, val)
-                        # Optionally notify?
+                # Passive merge (theory_links + modifiers 포함)
+                if pmu.get("passives"):
+                    for passive in pmu["passives"]:
+                        if isinstance(passive, dict) and passive.get("name"):
+                            domain_manager.add_to_ai_memory_list(
+                                channel_id, ctx.user_id, "passives", passive
+                            )
             
             # Abnormal Trigger logic
             if updates.get("AbnormalTrigger"):
