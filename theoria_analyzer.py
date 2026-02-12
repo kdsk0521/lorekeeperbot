@@ -40,7 +40,17 @@ class TheoriaAnalyzer:
             return {"error": "No client"}
 
         prompt = self._build_prompt(context)
-        system_instruction = self._build_system_instruction()
+
+        # Extract genre and scene context for conditional loading
+        req = context.request
+        anchors = context.narrative_anchors
+        active_genres = req.genres if isinstance(req.genres, list) else ["modern", "drama"]
+        scene_context = {
+            "scene_type": anchors.get("scene_type", "normal"),
+            "intimate_module": True,
+            "pending_flashback": bool(anchors.get("pending_flashback")),
+        }
+        system_instruction = self._build_system_instruction(active_genres, scene_context)
         
         try:
             gen_config = types.GenerateContentConfig(
@@ -67,62 +77,70 @@ class TheoriaAnalyzer:
             logger.error(f"Theoria analysis failed: {e}")
             return {"error": str(e)}
 
-    def _build_system_instruction(self) -> str:
-        """Theoria 시스템 프롬프트 조립 (GMCognition Flash 호환성 보장)"""
-        return "\n\n".join([
-            text_resources.CONTENT_AUTHORIZATION_MANDATE,
+    def _build_system_instruction(self, active_genres=None, scene_context=None) -> str:
+        """Theoria v2.0 시스템 프롬프트 조립 — build_analysis_directive() 사용"""
+        from theory_emphasis_engine import build_analysis_directive, get_turn_spotlight
+
+        active_genres = active_genres or ["modern", "drama"]
+        scene_context = scene_context or {}
+
+        # 코어 이론 블록 (PART A~E, 항상 로딩)
+        core_theories = "\n\n".join([
             "<THEORIA role='Observer and Librarian'>",
-            # [Core Identity & Principles]
-            analysis_resources.THEORIA_IDENTITY,
-            analysis_resources.THEORIA_PRINCIPLES,
-            # [Observation Method]
-            analysis_resources.OBSERVER_APPARATUS,
-            analysis_resources.EVIDENCE_PIPELINE,
-            # [Input Analysis]
+            analysis_resources.THEORIA_IDENTITY_V2,
+            analysis_resources.ANALYTICAL_LENSES_ESTABLISHED,
+            analysis_resources.ANALYTICAL_LENSES_CULTURAL,
+            analysis_resources.ANALYTICAL_LENSES_CUSTOM,
+            analysis_resources.ANALYTICAL_LENSES_LITERARY,
+        ])
+
+        # 규칙표 (항상 로딩)
+        rule_tables = "\n\n".join([
             analysis_resources.THEORIA_PC_CHECK,
-            analysis_resources.THEORIA_INPUT_DECODING,
+            analysis_resources.STATE_TRACKING_V2,
             analysis_resources.OBSERVATION_INTENT,
-            # [Psychological Analysis]
-            analysis_resources.COGNITIVE_ARCHITECTURE_MODEL,
-            analysis_resources.THEORIA_PSYCHE,
-            analysis_resources.STATE_TRACKING_FORMAT,
-            # [Temporal & Memory]
-            analysis_resources.TEMPORAL_ORIENTATION_PROTOCOL,
-            analysis_resources.THEORIA_MEMORY,
-            analysis_resources.THEORIA_TEMPORAL,
-            # [Narrative & Stakes]
+            analysis_resources.TEMPORAL_ORIENTATION_V2,
             analysis_resources.THEORIA_CHAIN,
             analysis_resources.THEORIA_POSITION_EFFECT,
             analysis_resources.THEORIA_ASPECTS,
-            # [NPC & Judgment]
+            analysis_resources.THEORIA_MEMORY,
             analysis_resources.NPC_ATTITUDE_ANALYSIS,
-            analysis_resources.NPC_KNOWLEDGE_TRACKING,
+            analysis_resources.NPC_KNOWLEDGE_V2,
             analysis_resources.JUDGMENT_SUPPORT,
-            # [Resource Tracking]
             analysis_resources.DOOM_MENTAL_TRACKING,
             analysis_resources.ANOMALY_DETECTION,
             analysis_resources.SENSORY_ANCHORS,
-            # [Intimate Scene Psychology]
-            analysis_resources.SEXUAL_PSYCHOLOGY_ANALYSIS,
-            # [Flashback & Rest Detection]
-            analysis_resources.FLASHBACK_REST_DETECTION,
-            # [Item Awareness]
             analysis_resources.ITEM_AWARENESS,
-            # [Workflow & Output]
-            analysis_resources.THEORIA_PROCESS,
-            self._get_output_schema(),
-            "</THEORIA>"
         ])
 
+        # 조건부 규칙표
+        if scene_context.get("scene_type") == "intimate":
+            rule_tables += "\n\n" + analysis_resources.SEXUAL_PSYCHOLOGY_ANALYSIS
+        if scene_context.get("pending_flashback"):
+            rule_tables += "\n\n" + analysis_resources.FLASHBACK_REST_DETECTION
+
+        directive = build_analysis_directive(
+            active_genres=active_genres,
+            core_theories=core_theories,
+            rule_tables=rule_tables,
+            content_mandate=text_resources.CONTENT_AUTHORIZATION_MANDATE,
+        )
+
+        # Rotation Spotlight: 매 턴 5개 이론 랜덤 하이라이트
+        spotlight = get_turn_spotlight(5)
+
+        return directive + "\n\n" + spotlight + "\n\n" + self._get_output_schema() + "\n</THEORIA>"
+
     def _get_output_schema(self) -> str:
-        """출력 스키마 정의"""
+        """출력 스키마 정의 (v2.0 — 16 new fields, mental→psyche rename)"""
         return """
 <output_schema>
 Return valid JSON with ALL these fields (Korean values where specified):
 
-## REQUIRED FIELDS
+
+## INPUT & CONTEXT
 - "InputAnalysis": {"Original": str, "Enhanced": str, "Plausibility": "High/Low/Impossible", "LogicTrace": [], "Momentum": "Open/Closed"}
-- "Observation": str (Korean - 중립적 관점에서 실제로 일어난 일)
+- "Observation": str (Korean - 중립적 관점에서 실제로 일어난 일. 해석 금지, 사실만.)
 - "UserIntent": str (Korean - 유저가 즉시 원하는 것)
 - "CurrentLocation": str (Korean)
 - "LocationRisk": "None/Low/Medium/High/Extreme"
@@ -130,26 +148,57 @@ Return valid JSON with ALL these fields (Korean values where specified):
 - "SceneType": "normal/combat/social/summary/intimate"
 - "EnergyDirection": "rising/stagnant/detonation/aftershock"
 
+
 ## STAKES & ENVIRONMENT
 - "Position": {"value": 0.0-1.0, "reason": "Korean - 왜 이 위치인지"}
 - "Effect": {"value": 0.0-1.0, "reason": "Korean - 잠재적 영향력"}
-- "Aspects": ["Korean aspect - 활용 가능성 포함", ...]
+- "Aspects": ["Korean aspect - 활용 가능성 포함 (Objective Correlative + 象 Image 적용)", ...]
 
-## PSYCHOLOGICAL & NARRATIVE
+
+## CHARACTER ANALYSIS (psyche_states)
+Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPENDENT (Cartesian Dualism).
+
 - "psyche_states": {
     "CharName": {
-        "mental": {"descriptor": "emotional label", "value": -100~+100, "primary_emotion": "plutchik"},
-        "soma": {"descriptor": "physical label", "polyvagal": "ventral/sympathetic/dorsal"},
-        "relation": {"descriptor": "stance toward each PC", "value": -100~+100}
+        "psyche": {
+            "descriptor": "Korean - MSE 기반 관찰 가능한 정서 징후",
+            "value": -100~+100,
+            "primary_emotion": "plutchik enum (陰陽: note opposing seed within)",
+            "active_needs": ["henderson/erikson enum - 현재 행동 지배하는 욕구 max 2"],
+            "self_opacity": "str or null (Self-Opacity: 'claims X — actual: Y' format. null = self-aware)",
+            "decision_mode": "reactive/deliberate (Kahneman + Carstensen)",
+            "coping": "problem_focused/emotion_focused/avoidant/null (Lazarus. null = no stressor)"
+        },
+        "soma": {
+            "descriptor": "Korean - SOAP-OA 기반 관찰 가능한 신체 신호만. 감정 라벨 금지.",
+            "polyvagal": "ventral/sympathetic/dorsal (Porges: 3+ signals required)",
+            "cultural_affect": "han/jeong/hwabyung/nunchi/chaemyeon/simma/gi/null",
+            "env_influence": "str or null (Nightingale: 환경→심리 영향. null = negligible)"
+        },
+        "relation": {
+            "descriptor": "Korean - PC에 대한 현재 태도를 구체적 행동으로",
+            "value": -100~+100,
+            "attachment": "secure/anxious/avoidant/disorganized (Bowlby: from behavioral evidence)",
+            "phase": "orientation/identification/exploitation/resolution (Peplau: cannot skip stages)",
+            "logos_layer": "str (Logos [CUSTOM]: current layer state + THIS TURN behavioral hint)",
+            "value_conflict": "str or null ('X vs Y' format + resolution direction. null = no conflict)",
+            "stage": "front/back (Goffman: by audience, not just location)"
+        },
+        "deep_read": "str (Four-Layer [CUSTOM]: Surface→Adaptation→Core→Lack in 1 sentence each. Lack is never stated by character.)"
     }
   }
+
+
+## NARRATIVE TRACKING
 - "narrative_chain": {
     "topic_lock": str or null,
-    "chain_status": "OPEN/CLOSED/DORMANT",
+    "chain_status": "OPEN/CLOSED/DORMANT (Scheherazade: CLOSED + no threads = violation → inject hook)",
     "conclusion_proximity": 0-100,
-    "open_threads": ["thread type: description", ...]
+    "open_threads": ["thread type: description", ...],
+    "silence_type": "reflective/hesitant/heavy/tense/null (間/Ma: classify when dialogue pauses)"
   }
-- "memory_triggers": [{"trigger": str, "character": str, "echo": str, "type": "traumatic/nostalgic/shameful/loving"}]
+- "memory_triggers": [{"trigger": str, "character": str, "echo": str, "type": "traumatic/nostalgic/shameful/loving (Fermentation Recall: current state distorts memory)"}]
+
 
 ## JUDGMENT SUPPORT
 - "needs_judgment": boolean
@@ -162,12 +211,14 @@ Return valid JSON with ALL these fields (Korean values where specified):
     "defense_success": boolean
   }
 
-## DLC SUPPORT
-- "narrative_hook": str (Korean - 실패/부분성공 시 트위스트)
+
+## NARRATIVE HOOKS & TIME
+- "narrative_hook": str (Korean - 실패/부분성공 시 트위스트. Scheherazade 준수.)
 - "time_flow": {"ticks": 1-20, "reason": "Korean"}
 - "doom_relief": {"applicable": boolean, "amount": 0-20, "reason": "Korean"}
 - "mental_impact": {"applicable": boolean, "delta": -35~+20, "reason": "Korean"}
-- "anomaly_profile": {"trigger": str, "category": "supernatural/psychological/social/environmental/temporal", "intensity": "Low/Mid/High/Extreme", "polarity": "positive/negative/mixed", "line": "Korean - 이변의 서사적 묘사 1문장 (예: '그림자가 벽을 타고 기어오른다', '공기가 차갑게 얼어붙는다')", "protective_item": str or null, "reason": "Korean"}
+- "anomaly_profile": {"trigger": str, "category": "supernatural/psychological/social/environmental/temporal", "intensity": "Low/Mid/High/Extreme", "polarity": "positive/negative/mixed", "line": "Korean - 이변의 서사적 묘사 1문장", "protective_item": str or null, "reason": "Korean"}
+
 
 ## COGNITIVE ENHANCEMENT
 - "HabitusAnalysis": {
@@ -175,42 +226,57 @@ Return valid JSON with ALL these fields (Korean values where specified):
     "Cultural": "English - knowledge/taste patterns",
     "Social": "English - network/authority position"
   }
-- "SensoryAnchors": [{"anchor": "Physical sensation", "memory_link": "English - connected memory"}]
+- "SensoryAnchors": [{"anchor": "Physical sensation (Somatic Marker/Damasio)", "memory_link": "English - connected memory"}]
 
-## SAFETY & TRACKING
-- "PCImpersonationCheck": {"detected": boolean, "violations": [{"type": str, "severity": str}], "correction_hint": str}
-- "TemporalOrientation": {"focus": "past/present/future", "intensity": 0.0-1.0}
+
+## NPC TRACKING
 - "NPCAttitudes": {
     "NpcName": {
         "attitude": "hostile/unfriendly/neutral/friendly/devoted",
         "trajectory": "improving/stable/declining",
-        "reason": "Korean"
+        "reason": "Korean (오륜 role expectation 위반 시 명시)"
     }
   }
 - "NPCKnowledge": {
     "NpcName": {
-        "knows": ["Korean - 이 NPC가 현재 알고 있는 핵심 정보"],
-        "secrets_held": ["Korean - 이 NPC가 숨기고 있는 것"],
+        "knows": ["Korean - 현재 알고 있는 핵심 정보"],
+        "secrets_held": ["Korean - 숨기고 있는 것"],
         "would_share": boolean,
-        "leak_risk": "none/low/medium/high"
+        "leak_risk": "none/low/medium/high (Curse of Knowledge: 아는 것을 숨기기 어려움)",
+        "false_beliefs": ["Korean - 사실과 다르게 믿고 있는 것 (Theory of Mind)"]
     }
   }
-- "IntimacyAnalysis": null OR (when SceneType="intimate") {
-    "vulnerability": {"char_name": 0-100, ...},
-    "desire_type": {"char_name": "attachment/power/escape/connection/validation"},
-    "power_dynamic": "Korean - 주도권 분석",
-    "body_memory": "Korean - 과거 경험과의 연결"
-  }
+
+
+## SAFETY & QUALITY
+- "PCImpersonationCheck": {"detected": boolean, "violations": [{"type": str, "severity": str}], "correction_hint": str}
+- "TemporalOrientation": {"focus": "past/present/future", "intensity": 0.0-1.0}
 - "QualityFlags": {
-    "convergence_warning": boolean,
-    "echo_warning": boolean,
-    "stagnation_warning": boolean
+    "convergence_warning": "boolean - unearned comfort / premature resolution",
+    "echo_warning": "boolean - NPC mirroring PC",
+    "stagnation_warning": "boolean - 3+ turns flat",
+    "mse_deviation": "boolean - MSE mental state anomaly detected",
+    "dissonance_flag": "boolean - NPC contradictory beliefs/actions (Festinger)",
+    "redemption_warning": "boolean - NPC showing unearned positive behavioral change (Bandura/Maruna)"
   }
 - "RelevantContext": ["Quoted lore/rule directly applicable", ...]
-- "RelevantNPCs": ["NPC name from roster that is relevant to THIS scene (max 5)"]
-- "relevant_chunks": [0, 2, 5] (indices from LORE CHUNKS section — select up to 5 most relevant chunks for this turn. Empty list if no chunks available)
+- "RelevantNPCs": ["NPC name from roster relevant to THIS scene (max 5)"]
+- "relevant_chunks": [0, 2, 5] (indices from LORE CHUNKS — up to 5 most relevant)
 
-## FLASHBACK & REST (nullable — output null if not detected)
+
+## CONDITIONAL MODULES (output null if not triggered)
+
+### IntimacyAnalysis (SceneType="intimate" AND lorebook.intimate_module=true)
+- "IntimacyAnalysis": null OR {
+    "window_check": {"char_name": "within/above/below (Siegel, from polyvagal state)"},
+    "dual_control": {"char_name": {"SES": "str - excitation factors", "SIS": "str - inhibition factors"}},
+    "desire_type": {"char_name": "attachment/power/escape/connection/validation/sensation (Basson)"},
+    "power_dynamic": "Korean (Benjamin Intersubjectivity - mutual recognition status)",
+    "body_memory": "Korean (van der Kolk - involuntary echoes of past experience)",
+    "post_encounter_prediction": {"char_name": "attachment activation pattern - predicted post-behavior"}
+  }
+
+### Flashback Evaluation (trigger pattern detected)
 - "flashback_eval": null OR {
     "detected": boolean,
     "declaration": "Korean - 1-sentence summary of retroactive claim",
@@ -219,6 +285,8 @@ Return valid JSON with ALL these fields (Korean values where specified):
     "tier": "trivial/standard/bold",
     "reason": "Korean"
   }
+
+### Rest Evaluation (rest trigger detected)
 - "rest_eval": null OR {
     "detected": boolean,
     "quality": "full/brief/interrupted",
@@ -226,7 +294,7 @@ Return valid JSON with ALL these fields (Korean values where specified):
     "reason": "Korean"
   }
 
-## ITEM TRACKING (nullable — output null if no item interaction)
+### Item Tracking (item interaction detected)
 - "item_usage": null OR {
     "items_consumed": ["item name", ...],
     "items_gained": ["item name", ...],

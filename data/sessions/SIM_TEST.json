@@ -1,0 +1,62 @@
+{
+  "participants": {
+    "SIM_USER": {
+      "mask": "카이",
+      "passives": [
+        {
+          "name": "의지",
+          "tags": [
+            "Mental"
+          ],
+          "desc": "위기에도 흔들리지 않는 마음"
+        }
+      ],
+      "status_effects": [],
+      "ai_memory": {
+        "mental": {
+          "value": 45
+        }
+      },
+      "status": "active"
+    }
+  },
+  "world_state": {
+    "doom": 50,
+    "time_slot": "오후",
+    "day": 15
+  },
+  "npcs": {
+    "동혁": {
+      "description": "카이의 동료. 냉소적이고 합리적. 최근 조직의 비밀 임무에 가담했다. 자신은 올바르다고 확신.",
+      "source": "lore"
+    }
+  },
+  "history": [
+    {
+      "role": "User",
+      "content": "(세션 시작)"
+    },
+    {
+      "role": "Model",
+      "content": "세계가 펼쳐진다."
+    }
+  ],
+  "lore": "",
+  "lore_chunks": [],
+  "settings": {
+    "impersonation_filter": true
+  },
+  "npc_attitudes": {
+    "동혁": {
+      "attitude": "unfriendly",
+      "trajectory": "declining",
+      "depth": 55,
+      "tension": 70
+    }
+  },
+  "fermented_summary": "",
+  "bot_active": true,
+  "npc_milestone_tracking": {
+    "동혁": "친분"
+  }
+}

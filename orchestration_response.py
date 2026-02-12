@@ -85,21 +85,24 @@ def _build_nvc_summary(ctx: ResponseContext, filter_config: NVCFilterConfig) -> 
             nvc_summary += f"- Anchor: '{a.get('anchor', '')}' -> Link: {a.get('memory_link', '')}\n"
         nvc_summary += "\n"
 
-    # --- Section 4: Psyche States (6-Axis) ---
+    # --- Section 4: Psyche States (4-Axis v2.0) ---
     psyche = dai.get("psyche_states")
     if psyche and isinstance(psyche, dict):
         nvc_summary += "#### PSYCHE_STATES (Body Signal Calibration)\n"
         for char_name, state in psyche.items():
             if isinstance(state, dict):
-                mental = state.get("mental", {})
+                psyche_ax = state.get("psyche", state.get("mental", {}))
                 soma = state.get("soma", {})
                 relation = state.get("relation", {})
+                deep_read = state.get("deep_read", "")
                 nvc_summary += (
                     f"- {char_name}: "
-                    f"mental={mental.get('descriptor', '?')} ({mental.get('value', 0)}), "
+                    f"psyche={psyche_ax.get('descriptor', '?')} ({psyche_ax.get('value', 0)}), "
                     f"soma={soma.get('descriptor', '?')}, "
                     f"relation={relation.get('descriptor', '?')} ({relation.get('value', 0)})\n"
                 )
+                if deep_read:
+                    nvc_summary += f"  deep_read: {deep_read}\n"
         nvc_summary += "\n"
 
     # --- Section 5: Narrative Chain & Direction ---

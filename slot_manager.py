@@ -67,7 +67,6 @@ SLOT_DEFINITIONS: Dict[int, SlotDefinition] = {
 
     # ===== RULES ZONE (18-25): Static Recency - 행동 규칙 강화 =====
     18: SlotDefinition(18, "PC_AUTONOMY", "rules", "text_resources.PC_AUTONOMY_DOCTRINE"),
-    19: SlotDefinition(19, "OBSERVER_NEUTRALITY", "rules", "text_resources.OBSERVER_NEUTRALITY_DOCTRINE"),
     20: SlotDefinition(20, "STATUS_LAYOUT", "rules", "text_resources.STATUS_WINDOW_LAYOUT"),
     21: SlotDefinition(21, "ACTION_RESOLUTION", "mechanics", "text_resources.ACTION_RESOLUTION + Aspects + SITUATION_PRIORITY"),
     22: SlotDefinition(22, "VISCERAL_CONTENT", "content", "text_resources.VISCERAL (conditional)", is_static=False),
@@ -85,8 +84,8 @@ SLOT_DEFINITIONS: Dict[int, SlotDefinition] = {
     30: SlotDefinition(30, "GM_MOVER", "dynamic", "cognition.GMMover + COGNITIVE_INTEGRATION", is_static=False),
     31: SlotDefinition(31, "LAST_RESPONSE", "dynamic", "직전 AI 응답 (turn -1)", is_static=False),
     32: SlotDefinition(32, "USER_INPUT", "dynamic", "현재 유저 입력", is_static=False),
-    33: SlotDefinition(33, "SELF_CORRECTION_NOTE", "dynamic", "SELF_CORRECTION + AUTHOR_NOTE", is_static=False),
-    34: SlotDefinition(34, "NARRATIVE_KERNEL", "kernel", "TELESCOPE + OUTPUT + LANGUAGE + KERNEL + EMOTION"),
+    33: SlotDefinition(33, "AUTHOR_NOTE", "dynamic", "AUTHOR_NOTE + GENRE_DIRECTIVE", is_static=False),
+    34: SlotDefinition(34, "TELESCOPE_LANGUAGE", "kernel", "TELESCOPE + LANGUAGE + EMOTION"),
 }
 
 
@@ -185,9 +184,8 @@ class SlotPromptBuilder:
         self.set_slot(15, psyche_render)
 
         # ===== RULES ZONE (18-25) - Static Recency 강화 =====
-        # [18-19] GM Conduct
+        # [18] PC Autonomy
         self.set_slot(18, text_resources.PC_AUTONOMY_DOCTRINE)
-        self.set_slot(19, text_resources.OBSERVER_NEUTRALITY_DOCTRINE)
 
         # [20] Status Layout
         status_layout = getattr(text_resources, 'STATUS_WINDOW_LAYOUT', '')
@@ -209,12 +207,11 @@ class SlotPromptBuilder:
         self.set_slot(26, "\n==========CACHE BOUNDARY==========\n")
 
         # ===== DYNAMIC ZONE (34) - 정적 부분 =====
-        # [34] Telescope + Output + Language + Kernel (최종 Recency)
+        # [34] Telescope + Language
         telescope = getattr(text_resources, 'TELESCOPE_PROTOCOL', '')
-        output_protocol = getattr(text_resources, 'OUTPUT_PROTOCOL', '')
         language = getattr(text_resources, 'LANGUAGE_CORRECTION', '')
-        kernel = getattr(text_resources, 'NARRATIVE_KERNEL', '')
-        self.set_slot(34, f"{telescope}\n\n{output_protocol}\n\n{language}\n\n{kernel}")
+        slot34_parts = [p for p in [telescope, language] if p.strip()]
+        self.set_slot(34, "\n\n".join(slot34_parts))
 
         self._static_built = True
         logger.info("[SlotPromptBuilder] Static slots populated (Primacy/Recency optimized).")
@@ -319,15 +316,12 @@ class SlotPromptBuilder:
         if user_input:
             self.set_slot(32, f"<User_Input>\n{user_input}\n</User_Input>")
 
-        # [33] Self Correction + Author Note
-        correction = getattr(text_resources, 'SELF_CORRECTION_BKSPC', '')
+        # [33] Author Note + Genre Directive
         if author_note:
-            self.set_slot(33, f"{correction}\n\n<Author_Note>\n{author_note}\n</Author_Note>")
+            self.set_slot(33, f"<Author_Note>\n{author_note}\n</Author_Note>")
         elif self.active_genres or self.custom_tone:
             directive = legacy_builder.build_combined_directive(self.active_genres, self.custom_tone)
-            self.set_slot(33, f"{correction}\n\n{directive}")
-        elif correction:
-            self.set_slot(33, correction)
+            self.set_slot(33, directive)
 
         return self
 
@@ -681,25 +675,33 @@ def build_34_step_prompt(ctx) -> str:
             if isinstance(state, str):
                 psyche_lines.append(f"- {char_name}: {state}")
             elif isinstance(state, dict):
-                mental = state.get("mental", {})
+                psyche_ax = state.get("psyche", state.get("mental", {}))
                 soma = state.get("soma", {})
                 relation = state.get("relation", {})
+                deep_read = state.get("deep_read", "")
+                emotion = psyche_ax.get("primary_emotion", "")
+                emotion_tag = f"/{emotion}" if emotion else ""
                 psyche_lines.append(
                     f"- {char_name}: "
-                    f"Μ[{mental.get('descriptor', '?')}±{mental.get('value', 0)}] "
+                    f"Μ[{psyche_ax.get('descriptor', '?')}±{psyche_ax.get('value', 0)}{emotion_tag}] "
                     f"Φ[{soma.get('descriptor', '?')}] "
                     f"Ι[{relation.get('descriptor', '?')}±{relation.get('value', 0)}]"
                 )
+                if deep_read:
+                    psyche_lines.append(f"  └ {deep_read}")
         psyche_states = "\n".join(psyche_lines)
 
     # --- [Slot 28] Narrative Chain ---
     narrative_chain = ""
     chain_data = dai.get("narrative_chain", {})
     if chain_data and isinstance(chain_data, dict):
+        silence = chain_data.get('silence_type')
+        silence_tag = f"\nsilence_type: {silence}" if silence else ""
         narrative_chain = (
             f"chain_status: {chain_data.get('chain_status', 'OPEN')}\n"
             f"topic_lock: {chain_data.get('topic_lock', 'None')}\n"
             f"conclusion_proximity: {chain_data.get('conclusion_proximity', 'N/A')}"
+            f"{silence_tag}"
         )
 
     # --- [Slot 30] GM Mover ---
