@@ -526,8 +526,9 @@ def _create_default_participant(display_name: str) -> Dict[str, Any]:
         "ai_memory": {
             "appearance": "", "personality": "", "background": "", "relationships": {},
             "passives": [], "normalization": {}, "notes": "", "archived_info": [],
-            # [V7] Core Systems
-            "mental": {"value": 100, "last_delta": 0}, # 0-100 Scale
+            # [V7→V3.0] Core Systems: 2-Axis (Vigor/Composure)
+            "vigor": {"value": 100, "last_delta": 0},
+            "composure": {"value": 100, "last_delta": 0},
             "abnormal_exposure": {}, # {Tag: {count: N, level: N}}
             
             # [Phase 2] Mnemosyne: PsychProfile
@@ -649,12 +650,18 @@ def apply_pc_info_to_user(channel_id: str, user_id: str) -> bool:
             np_obj = np if isinstance(np, dict) else {"name": str(np), "desc": "Extracted"}
             name_key = np_obj.get("name", "Unknown")
             if name_key not in current_names:
-                mem["passives"].append({
+                passive_entry = {
                     "name": name_key,
                     "desc": np_obj.get("desc", "Extracted from Template"),
-                    "tags": ["Sync", "+Auto"],
+                    "tags": np_obj.get("tags", ["Sync", "+Auto"]),
                     "acquired_at": time.strftime('%Y-%m-%d')
-                })
+                }
+                # Carry over theory_links and modifiers if present (Phase 4-1)
+                if np_obj.get("theory_links"):
+                    passive_entry["theory_links"] = np_obj["theory_links"]
+                if np_obj.get("modifiers"):
+                    passive_entry["modifiers"] = np_obj["modifiers"]
+                mem["passives"].append(passive_entry)
 
     # Memos/Inventory Merge (Integrated with Notebook, per-user)
     # Notes/Memos
@@ -845,10 +852,12 @@ def get_unified_player_info(channel_id: str, user_id: str) -> str:
     if rels:
         rel_text = ", ".join([f"{k}: {v}" for k, v in rels.items()])
 
-    # 6. [Added] Mental Status
-    mental = mem.get("mental", {})
-    mental_val = mental.get("value", 100)
-    mental_text = f"{mental_val}/100"
+    # 6. [V3.0] Vigor/Composure Status
+    vigor = mem.get("vigor", mem.get("mental", {}))
+    vigor_val = vigor.get("value", 100)
+    composure = mem.get("composure", {})
+    composure_val = composure.get("value", 100)
+    vc_text = f"기력 {vigor_val}/100 | 평정 {composure_val}/100"
 
     # 7. [Added] Notebook (per-user)
     notebook = get_notebook(channel_id, user_id)
@@ -856,7 +865,7 @@ def get_unified_player_info(channel_id: str, user_id: str) -> str:
     # 8. Construct Block
     return f"""## 🎭 {name} (Player Character)
 - **Status Condition**: {status_text}
-- **Mental Status**: {mental_text}
+- **Vigor/Composure**: {vc_text}
 - **Passives**: {passive_text}
 - **Abnormal Adaptation**: {abnormal_text if abnormal_text else "None"}
 - **Relationships**: {rel_text}

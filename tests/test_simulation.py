@@ -139,7 +139,7 @@ SCENARIOS = {
             "mask": "유진",
             "passives": [],
             "status_effects": [],
-            "ai_memory": {"mental": {"value": 65}},
+            "ai_memory": {"vigor": {"value": 65}, "composure": {"value": 70}},
         },
         "npcs": {
             "소연": {"description": "유진의 오랜 친구. 최근 뭔가 숨기는 게 있다. 시선을 자주 피한다.", "source": "lore"},
@@ -193,7 +193,7 @@ SCENARIOS = {
             "mask": "하루",
             "passives": [{"name": "요리 달인", "tags": ["Craft"], "desc": "어떤 재료든 맛있게 만든다"}],
             "status_effects": [],
-            "ai_memory": {"mental": {"value": 85}},
+            "ai_memory": {"vigor": {"value": 85}, "composure": {"value": 80}},
         },
         "npcs": {
             "묘조": {"description": "가게 앞에 눌러앉은 고양이. 하루에게만 배를 보여준다.", "source": "session"},
@@ -247,7 +247,7 @@ SCENARIOS = {
             "mask": "민수",
             "passives": [],
             "status_effects": [],
-            "ai_memory": {"mental": {"value": 55}},
+            "ai_memory": {"vigor": {"value": 55}, "composure": {"value": 60}},
         },
         "npcs": {},
         "npc_attitudes": {},
@@ -292,7 +292,7 @@ SCENARIOS = {
             "mask": "카이",
             "passives": [{"name": "의지", "tags": ["Mental"], "desc": "위기에도 흔들리지 않는 마음"}],
             "status_effects": [],
-            "ai_memory": {"mental": {"value": 45}},
+            "ai_memory": {"vigor": {"value": 45}, "composure": {"value": 50}},
         },
         "npcs": {
             "동혁": {"description": "카이의 동료. 냉소적이고 합리적. 최근 조직의 비밀 임무에 가담했다. 자신은 올바르다고 확신.", "source": "lore"},

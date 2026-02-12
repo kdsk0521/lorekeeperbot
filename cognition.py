@@ -193,6 +193,14 @@ async def _extract_batch(
             "\n### narrative"
             "\nOutput: `{\"passives\": [], \"abnormal_trigger\": null, \"abnormal_category\": null}`"
             "\nPassive = permanent capability (skill/trait/achievement). Only NEW ones not in current list."
+            "\nPassive format: `{\"name\": \"이름\", \"desc\": \"설명\","
+            " \"theory_links\": [\"theory1\", \"theory2\"],"
+            " \"modifiers\": {\"anomaly_defense\": 10, \"judgment_combat\": 5}}`"
+            "\ntheory_links: Which psychological theories this trait connects to (e.g. polyvagal_ventral_bias, coping_problem_focused)."
+            "\nmodifiers keys: anomaly_defense (±5~15), judgment_combat (±5~10), judgment_social (±5~10), vigor_drain (0.8~1.2), composure_drain (0.8~1.2)."
+            "\n  - Positive trait → positive anomaly_defense, relevant judgment bonus, drain < 1.0"
+            "\n  - Negative trait → negative values, drain > 1.0"
+            "\n  - Only include relevant keys (skip if 0 or 1.0)"
             "\nAnomaly = genre shifts or monsters, trigger MUST BE IN ENGLISH."
             "\nProfessional Bias: Gore is NORMAL for Doctor, Combat is NORMAL for Soldier."
             "\nIf no change, keep fields null."
@@ -479,7 +487,7 @@ Analyze the provided lorebook precisely to extract all metadata required for gam
     "sexual_characteristics": "...",
     "background": "...",
     "secret_info": "...",
-    "passives": [ {{ "name": "...", "desc": "..." }} ],
+    "passives": [ {{ "name": "...", "desc": "...", "theory_links": ["theory1", "theory2"], "modifiers": {{"anomaly_defense": 10, "judgment_combat": 5}} }} ],
     "inventory": {{ "Item": "Quantity" }}
   }},
   "lore_summary": {{

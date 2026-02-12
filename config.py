@@ -350,6 +350,223 @@ GENRE_ANOMALY_TABLE = {
     }
 }
 
+# =========================================================
+# Genre-Specific Doom Stages (서사 긴장도 재정의)
+# =========================================================
+# Doom = "서사가 클라이맥스에 얼마나 가까운가"
+# Stage 5는 반드시 "나쁜 것"이 아님 — 장르별 의미가 다름
+
+GENRE_DOOM_STAGES = {
+    "cosmic_horror": {
+        0: {"name": "평온", "emoji": "🟢", "range": (0, 20)},
+        1: {"name": "불안", "emoji": "🟡", "range": (20, 40)},
+        2: {"name": "경계", "emoji": "🟠", "range": (40, 60)},
+        3: {"name": "위험", "emoji": "🔴", "range": (60, 80)},
+        4: {"name": "임계", "emoji": "⚫", "range": (80, 100)},
+        5: {"name": "파멸", "emoji": "💀", "range": (100, 101)},
+    },
+    "romance": {
+        0: {"name": "평화", "emoji": "💚", "range": (0, 20)},
+        1: {"name": "설렘", "emoji": "💛", "range": (20, 40)},
+        2: {"name": "긴장", "emoji": "🧡", "range": (40, 60)},
+        3: {"name": "위기", "emoji": "❤️‍🔥", "range": (60, 80)},
+        4: {"name": "폭풍전야", "emoji": "💔", "range": (80, 100)},
+        5: {"name": "결정적 순간", "emoji": "💘", "range": (100, 101)},
+    },
+    "comedy": {
+        0: {"name": "일상", "emoji": "😊", "range": (0, 20)},
+        1: {"name": "소동", "emoji": "😅", "range": (20, 40)},
+        2: {"name": "혼란", "emoji": "😰", "range": (40, 60)},
+        3: {"name": "대혼란", "emoji": "🤯", "range": (60, 80)},
+        4: {"name": "카오스", "emoji": "💥", "range": (80, 100)},
+        5: {"name": "총체적 난국", "emoji": "🎪", "range": (100, 101)},
+    },
+    "noir": {
+        0: {"name": "수면", "emoji": "🌊", "range": (0, 20)},
+        1: {"name": "파문", "emoji": "🌀", "range": (20, 40)},
+        2: {"name": "조임", "emoji": "🕸️", "range": (40, 60)},
+        3: {"name": "노출", "emoji": "🔦", "range": (60, 80)},
+        4: {"name": "추적", "emoji": "🎯", "range": (80, 100)},
+        5: {"name": "청산", "emoji": "⚖️", "range": (100, 101)},
+    },
+    "action": {
+        0: {"name": "평온", "emoji": "🟢", "range": (0, 20)},
+        1: {"name": "경계", "emoji": "🟡", "range": (20, 40)},
+        2: {"name": "교전", "emoji": "🟠", "range": (40, 60)},
+        3: {"name": "격전", "emoji": "🔴", "range": (60, 80)},
+        4: {"name": "사지", "emoji": "⚫", "range": (80, 100)},
+        5: {"name": "최종 결전", "emoji": "⚔️", "range": (100, 101)},
+    },
+    "slice_of_life": {
+        0: {"name": "일상", "emoji": "☀️", "range": (0, 20)},
+        1: {"name": "변화", "emoji": "🌤️", "range": (20, 40)},
+        2: {"name": "파문", "emoji": "🌥️", "range": (40, 60)},
+        3: {"name": "갈등", "emoji": "🌧️", "range": (60, 80)},
+        4: {"name": "고비", "emoji": "⛈️", "range": (80, 100)},
+        5: {"name": "전환점", "emoji": "🌅", "range": (100, 101)},
+    },
+}
+
+GENRE_DOOM_SOURCES = {
+    "cosmic_horror": {
+        "increase": ["판정 실패", "이변", "밤 시간대", "고립", "정보 획득(진실)"],
+        "decrease": ["이변 대응 성공", "안전지대 확보", "동료 합류", "의미 체계 재구축"],
+    },
+    "romance": {
+        "increase": ["오해 발생", "라이벌 등장", "비밀 노출 위기", "친밀감 급진전", "질투 트리거"],
+        "decrease": ["오해 해소", "진심 전달 성공", "신뢰 확인", "일상 공유"],
+    },
+    "comedy": {
+        "increase": ["거짓말 추가", "목격자 증가", "이중 약속", "정체 노출 위기"],
+        "decrease": ["성공적 수습", "오해가 우연히 풀림", "공범 확보"],
+    },
+    "noir": {
+        "increase": ["증거 노출", "배신", "새 관계자 등장", "시간 압박"],
+        "decrease": ["증거 은폐 성공", "정보원 확보", "추적자 따돌림"],
+    },
+    "action": {
+        "increase": ["적 증원", "장비 손상", "민간인 위험", "시간 압박"],
+        "decrease": ["전략적 후퇴 성공", "아군 합류", "적 약점 발견"],
+    },
+    "slice_of_life": {
+        "increase": ["일정 충돌", "예상치 못한 방문자", "소문", "오해 누적"],
+        "decrease": ["대화로 해소", "일상 회복", "소소한 성취"],
+    },
+}
+
+
+def get_genre_doom_stages(genre: str) -> dict:
+    """장르별 Doom 단계를 반환. 매칭 장르 없으면 기본 DOOM_STAGES 사용."""
+    return GENRE_DOOM_STAGES.get(genre, DOOM_STAGES)
+
+# =========================================================
+# Vigor / Composure 2-Axis System (v3.0)
+# =========================================================
+# Vigor = 기력 (신체 + 의지): 전투, 부상, 수면 부족, 과로, 공포
+# Composure = 평정 (정신 + 사회): 정신 충격, 배신, 수치, 고립, 정보 과부하
+
+VIGOR_STAGES = MENTAL_STAGES  # 동일 단계 (충만/동요/고갈/붕괴)
+
+COMPOSURE_STAGES = {
+    0: {"name": "안정", "emoji": "😌", "range": (70, 101), "desc": "정신적으로 안정된 상태"},
+    1: {"name": "흔들림", "emoji": "😰", "range": (40, 70), "desc": "감정적 동요가 있습니다"},
+    2: {"name": "동요", "emoji": "😱", "range": (15, 40), "desc": "정신적 한계에 가깝습니다"},
+    3: {"name": "붕괴", "emoji": "🫥", "range": (0, 15), "desc": "정신이 무너진 상태입니다. (트라우마 위험)"},
+}
+
+GENRE_PRIMARY_RESOURCE = {
+    "cosmic_horror": "vigor",
+    "action": "vigor",
+    "romance": "composure",
+    "comedy": "composure",
+    "noir": "composure",
+    "slice_of_life": "composure",
+}
+
+# Genre-Specific Disruption Axis (이변 교란 설정)
+# Phase 3: Anomaly 장르 교란 엔진
+GENRE_DISRUPTION_AXIS = {
+    "cosmic_horror": {
+        "primary_axis": "vigor",
+        "defense_stat": "vigor",
+        "defense_theory": "Continuum+TMT",
+        "trigger_bonus": 10,
+        "secondary_ratio": 0.3,
+        "desc": "공포와 존재적 위협이 체력과 의지를 갉아먹는다",
+    },
+    "romance": {
+        "primary_axis": "composure",
+        "defense_stat": "composure",
+        "defense_theory": "Nunchi+Chaemyeon",
+        "trigger_bonus": -5,
+        "secondary_ratio": 0.3,
+        "desc": "감정적 혼란과 사회적 압박이 평정을 흔든다",
+    },
+    "comedy": {
+        "primary_axis": "composure",
+        "defense_stat": "composure",
+        "defense_theory": "Chaemyeon+Goffman",
+        "trigger_bonus": 5,
+        "secondary_ratio": 0.2,
+        "desc": "체면 위기와 상황 폭주가 평정을 시험한다",
+    },
+    "noir": {
+        "primary_axis": "composure",
+        "defense_stat": "composure",
+        "defense_theory": "ToM+CoK+Statement",
+        "trigger_bonus": 0,
+        "secondary_ratio": 0.3,
+        "desc": "심리적 압박과 진실의 무게가 평정을 갉아먹는다",
+    },
+    "action": {
+        "primary_axis": "vigor",
+        "defense_stat": "vigor",
+        "defense_theory": "Prospect+BATNA",
+        "trigger_bonus": 5,
+        "secondary_ratio": 0.3,
+        "desc": "물리적 위협과 전장의 혼란이 기력을 소모시킨다",
+    },
+    "slice_of_life": {
+        "primary_axis": "composure",
+        "defense_stat": "composure",
+        "defense_theory": "Lazarus+Reactance",
+        "trigger_bonus": -10,
+        "secondary_ratio": 0.2,
+        "desc": "일상의 변화와 자율성 위협이 평정을 흔든다",
+    },
+}
+
+# NPC Autonomous Behavior (Phase 7)
+NPC_AUTONOMOUS_ENABLED = True
+
+# =========================================================
+# Passive Theory Tag System (Phase 4-1)
+# =========================================================
+# Legacy keyword → modifier fallback (for passives without explicit modifiers)
+# New passives will have Flash-generated "modifiers" dict; this table handles old-format passives.
+PASSIVE_KEYWORD_MODIFIERS = {
+    # Positive traits
+    "용감": {"anomaly_defense": 15, "judgment_combat": 5},
+    "냉정": {"anomaly_defense": 15, "judgment_social": 5},
+    "강인": {"anomaly_defense": 15, "vigor_drain": 0.85},
+    "침착": {"anomaly_defense": 10, "composure_drain": 0.85},
+    "민첩": {"judgment_combat": 10},
+    "지혜": {"judgment_social": 10},
+    "직감": {"anomaly_defense": 10, "judgment_social": 5},
+    "인내": {"anomaly_defense": 10, "vigor_drain": 0.85},
+    "카리스마": {"judgment_social": 10},
+    "은밀": {"judgment_combat": 5, "anomaly_defense": 5},
+    # Negative traits
+    "겁쟁이": {"anomaly_defense": -15, "judgment_combat": -5},
+    "나약": {"anomaly_defense": -15, "vigor_drain": 1.2},
+    "불안": {"anomaly_defense": -10, "composure_drain": 1.2},
+    "공포": {"anomaly_defense": -15},
+    "무모": {"judgment_social": -5},
+    "우유부단": {"judgment_combat": -5, "judgment_social": -5},
+    # Trauma (from Trauma Awakening)
+    "Trauma": {"anomaly_defense": -5, "composure_drain": 1.15},
+}
+
+
+def get_passive_modifiers(passive) -> dict:
+    """패시브에서 modifier dict를 추출. explicit modifiers 우선, 없으면 keyword fallback."""
+    if not isinstance(passive, dict):
+        return {}
+    # 1. Explicit modifiers (new format)
+    mods = passive.get("modifiers")
+    if mods and isinstance(mods, dict):
+        return mods
+    # 2. Legacy single modifier field (e.g., Trauma: {"modifier": -5})
+    legacy_mod = passive.get("modifier")
+    if isinstance(legacy_mod, (int, float)):
+        return {"anomaly_defense": int(legacy_mod)}
+    # 3. Keyword fallback — match passive name against known keywords
+    p_name = passive.get("name", "")
+    for keyword, kw_mods in PASSIVE_KEYWORD_MODIFIERS.items():
+        if keyword in p_name:
+            return kw_mods
+    return {}
+
 DEFAULT_MODULE_SETTINGS = {
     "active_modules": ["judgment", "doom", "anomaly", "mental"],
     "doom_fallback": 40,

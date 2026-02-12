@@ -76,7 +76,17 @@ class SharedBus:
     anomaly: Dict[str, Any] = field(default_factory=lambda: {
         "active": False, "triggered": False, "potential": False, "narrative_hook": ""
     })
-    mental: Dict[str, Any] = field(default_factory=lambda: {"active": False, "value": 0, "delta": 0, "adaptation_update": {}})
+    vigor: Dict[str, Any] = field(default_factory=lambda: {
+        "active": False, "value": 0, "delta": 0, "last_delta": 0,
+        "adaptation": {}, "adaptation_update": {},
+        "impact": {}, "rest_eval": None, "rest_log": "",
+        "judgment_emotion": 0, "trauma_trigger": False, "log": ""
+    })
+    composure: Dict[str, Any] = field(default_factory=lambda: {
+        "active": False, "value": 0, "delta": 0, "last_delta": 0,
+        "impact": {},
+        "judgment_emotion": 0, "trauma_trigger": False, "log": ""
+    })
 
 @dataclass
 class GameContext:
@@ -113,7 +123,8 @@ class GameContext:
             judgment=bus_data.get("judgment", {}),
             doom=bus_data.get("doom", {}),
             anomaly=bus_data.get("anomaly", {}),
-            mental=bus_data.get("mental", {})
+            vigor=bus_data.get("vigor", {}),
+            composure=bus_data.get("composure", {}),
         )
         return cls(request=req_data, narrative_anchors=anchors, shared_bus=bus)
 

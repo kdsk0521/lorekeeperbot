@@ -254,22 +254,22 @@ class OrchestrationService:
             return f"❌ 회상 거부: {fb_eval.get('reason', '논리적 모순')}"
 
         cost = config.FLASHBACK_COST_TIERS.get(tier, 8)
-        current_mental = bus.mental.get("value", 100)
+        current_vigor = bus.vigor.get("value", 100)
 
         # 기력 부족
-        if current_mental < config.FLASHBACK_MIN_MENTAL:
+        if current_vigor < config.FLASHBACK_MIN_MENTAL:
             dai["flashback_confirmed"] = False
             domain_manager.clear_pending_flashback(channel_id)
-            return f"❌ 회상 불가: 기력 부족 ({current_mental}/100, 최소 {config.FLASHBACK_MIN_MENTAL} 필요)"
+            return f"❌ 회상 불가: 기력 부족 ({current_vigor}/100, 최소 {config.FLASHBACK_MIN_MENTAL} 필요)"
 
-        if current_mental - cost < 0:
+        if current_vigor - cost < 0:
             dai["flashback_confirmed"] = False
             domain_manager.clear_pending_flashback(channel_id)
-            return f"❌ 회상 불가: 기력 부족 (현재 {current_mental}, 비용 {cost})"
+            return f"❌ 회상 불가: 기력 부족 (현재 {current_vigor}, 비용 {cost})"
 
-        # 차감 실행
-        new_mental = current_mental - cost
-        bus.mental["value"] = new_mental
+        # 차감 실행 (vigor에서 차감)
+        new_vigor = current_vigor - cost
+        bus.vigor["value"] = new_vigor
         dai["flashback_confirmed"] = True
         dai["flashback_declaration"] = declaration
         domain_manager.clear_pending_flashback(channel_id)
@@ -279,7 +279,7 @@ class OrchestrationService:
         if relevant_passive:
             passive_note = f" (면모 '{relevant_passive}' 활성화 → {tier})"
 
-        return f"🔮 회상 발동: {declaration}\n⚡ 기력 -{cost} → {new_mental}/100 [{tier}]{passive_note}"
+        return f"🔮 회상 발동: {declaration}\n⚡ 기력 -{cost} → {new_vigor}/100 [{tier}]{passive_note}"
 
     def _process_item_usage(self, channel_id: str, user_id: str, item_eval: dict) -> Optional[str]:
         """아이템 소비/획득 처리. Returns system message or None."""

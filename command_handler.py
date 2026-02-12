@@ -395,13 +395,15 @@ async def cmd_info(ctx: CommandContext) -> None:
             msg.append("\n**✨ 특성:**")
             msg.append(" / ".join(p_list))
 
-    # 4. Mental
-    m_stage = p_data.get("mental_stage", 0)
-    # Using game_character logic to get Emoji/Name
-    mental_data: Dict[str, Any] = mem.get("mental", {})
-    m_val = mental_data.get("value", 100)
-    m_info = game_character.get_mental_info(m_val)
-    msg.append(f"\n**🧠 기력:** {m_info['emoji']} **{m_info['name']}**")
+    # 4. Vigor/Composure
+    vigor_data = mem.get("vigor", mem.get("mental", {}))
+    composure_data = mem.get("composure", {})
+    v_val = vigor_data.get("value", 100)
+    c_val = composure_data.get("value", 100)
+    v_info = game_character.get_mental_info(v_val)
+    c_info = game_character.get_composure_info(c_val)
+    msg.append(f"\n**💪 기력:** {v_info['emoji']} **{v_info['name']}** ({v_val}/100)")
+    msg.append(f"**😌 평정:** {c_info['emoji']} **{c_info['name']}** ({c_val}/100)")
 
     # 5. Adaptation (Hidden Bar)
     exposure = p_data.get("abnormal_exposure", {})
@@ -1140,50 +1142,63 @@ async def cmd_ooc(ctx: CommandContext) -> None:
     else:
         await ctx.send("🎭 **루카 모드 OFF** — 서사 모드로 복귀합니다.")
 
-@registry.register("mental", category="Player", aliases=["멘탈", "기력"], description="기력 조회 및 설정")
+@registry.register("mental", category="Player", aliases=["멘탈", "기력"], description="기력/평정 조회 및 설정")
 async def cmd_mental(ctx: CommandContext) -> None:
-    """!기력 [값] - 기력 수치를 특정 값으로 설정 (0-100)"""
+    """!기력 [기력값] [평정값] - 기력/평정 수치 설정 (0-100)"""
     uid = ctx.user_id
     p_data = domain_manager.get_participant_data(ctx.channel_id, uid)
-    
+
     if not p_data:
         await ctx.send("❌ 등록 필요 (`!가면`)")
         return
-        
+
     mem = p_data.get("ai_memory", {})
-    ment = mem.get("mental", {"value": 100})
-    
+    # Migration: old "mental" → vigor
+    if "mental" in mem and "vigor" not in mem:
+        old_val = mem["mental"].get("value", 100)
+        mem["vigor"] = {"value": old_val, "last_delta": 0}
+        mem["composure"] = {"value": old_val, "last_delta": 0}
+        del mem["mental"]
+
+    vigor = mem.get("vigor", {"value": 100, "last_delta": 0})
+    composure = mem.get("composure", {"value": 100, "last_delta": 0})
+
     # [View Mode]
     if not ctx.args:
-        val = ment.get("value", 100)
-        info = game_character.get_mental_info(val)
-        desc = info['desc']
-        await ctx.send(f"🧠 **기력 상태:** {info['emoji']} **{info['name']}** ({val}/100)\n> {desc}")
+        v_val = vigor.get("value", 100)
+        c_val = composure.get("value", 100)
+        v_info = game_character.get_mental_info(v_val)
+        c_info = game_character.get_composure_info(c_val)
+        await ctx.send(
+            f"💪 **기력:** {v_info['emoji']} **{v_info['name']}** ({v_val}/100)\n"
+            f"> {v_info.get('desc', '')}\n"
+            f"😌 **평정:** {c_info['emoji']} **{c_info['name']}** ({c_val}/100)\n"
+            f"> {c_info.get('desc', '')}"
+        )
         return
 
-    # [Set Mode]
+    # [Set Mode] — !기력 80 or !기력 80 70
     try:
-        target_val = int(ctx.args[0])
-        # Clamp 0-100
-        target_val = max(0, min(100, target_val))
-        
-        # Direct Set (Bypass game logic mechanics like Trauma/Clamping for manual correction)
-        # However, we should respect the structure
-        if "mental" not in mem: mem["mental"] = {}
-        
-        mem["mental"]["value"] = target_val
-        mem["mental"]["last_delta"] = 0 # Reset delta on manual set
-        
-        # Save
-        p_data["ai_memory"] = mem # Ensure ref
+        v_target = max(0, min(100, int(ctx.args[0])))
+        c_target = max(0, min(100, int(ctx.args[1]))) if len(ctx.args) > 1 else composure.get("value", 100)
+
+        mem.setdefault("vigor", {})["value"] = v_target
+        mem["vigor"]["last_delta"] = 0
+        mem.setdefault("composure", {})["value"] = c_target
+        mem["composure"]["last_delta"] = 0
+
+        p_data["ai_memory"] = mem
         domain_manager.save_participant_data(ctx.channel_id, uid, p_data)
-        
-        # Feedback
-        info = game_character.get_mental_info(target_val)
-        await ctx.send(f"🧠 **기력 설정 완료:** {target_val}/100\n현재 상태: {info['emoji']} **{info['name']}**")
-        
+
+        v_info = game_character.get_mental_info(v_target)
+        c_info = game_character.get_composure_info(c_target)
+        await ctx.send(
+            f"💪 **기력 설정:** {v_target}/100 ({v_info['emoji']} {v_info['name']})\n"
+            f"😌 **평정 설정:** {c_target}/100 ({c_info['emoji']} {c_info['name']})"
+        )
+
     except ValueError:
-        await ctx.send("⚠️ 올바른 숫자를 입력하세요. (예: `!기력 50`)")
+        await ctx.send("⚠️ 올바른 숫자를 입력하세요. (예: `!기력 80` 또는 `!기력 80 70`)")
 
 
 @registry.register("flashback", category="Player", aliases=["회상"], description="회상 선언 (과거 준비를 소급 선언)")

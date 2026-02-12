@@ -536,11 +536,33 @@ When 오륜 (Five Relationships) role expectation is violated, specify in reason
 # =========================================================
 ANOMALY_DETECTION = """
 <anomaly_detection>
-## ANOMALY ANALYSIS
+## ANOMALY ANALYSIS (Genre-Aware Disruption Engine)
 
 ### Categories: Supernatural | Psychological | Social | Environmental | Temporal
 ### Intensity → Doom: Low (+1-5) | Mid (+5-10) | High (+10-15) | Extreme (+15-20)
 ### Polarity: positive | negative | mixed
+
+### Disruption Axis Selection (Genre-Dependent)
+Determine which PC resource axis this anomaly primarily disrupts:
+- **cosmic_horror / action**: disruption_axis = "vigor" (physical/will erosion)
+- **romance / comedy / slice_of_life**: disruption_axis = "composure" (emotional/social disruption)
+- **noir**: disruption_axis = "composure" (psychological pressure)
+- **Extreme intensity OR mixed polarity**: disruption_axis = "both" (both axes affected)
+- When uncertain, match the anomaly's nature: physical threat → vigor, social/emotional → composure
+
+### Theory Basis for Defense
+Specify which theory framework applies to defense against this anomaly:
+- cosmic_horror: "Continuum+TMT" (mental resilience + terror management)
+- romance: "Nunchi+Chaemyeon" (social radar + face management)
+- comedy: "Chaemyeon+Goffman" (face + dramaturgical recovery)
+- noir: "ToM+CoK+Statement" (theory of mind + curse of knowledge)
+- action: "Prospect+BATNA" (loss aversion + best alternative)
+- slice_of_life: "Lazarus+Reactance" (coping + autonomy defense)
+- Mixed/other: Choose the most relevant theory pair from above
+
+### Defense Hint
+Provide a 1-sentence Korean hint describing how the PC could defend against this anomaly.
+Base on the theory_basis: e.g. "정신적 연속성을 유지하며 공포에 저항" (Continuum+TMT)
 
 ### Protective Item Check
 Cross-reference PC's INVENTORY for items that could help resist/mitigate the anomaly.
@@ -583,11 +605,16 @@ JUDGMENT_SUPPORT = """
 # =========================================================
 DOOM_MENTAL_TRACKING = """
 <doom_mental_tracking>
-## DOOM & MENTAL TRACKING
+## DOOM & VIGOR/COMPOSURE TRACKING
 
 ### Doom Relief: Minor action (1-5) | Medium threat resolved (5-10) | Major crisis prevented (10-15) | Catastrophe averted (15-20)
 
-### Mental Impact
+### Mental Impact (→ Vigor/Composure 2-axis system)
+The mental_impact delta is distributed to PC's Vigor and Composure axes based on genre:
+- **Vigor** (physical will, endurance): Primary for cosmic_horror, action
+- **Composure** (emotional stability, social grace): Primary for romance, comedy, noir, slice_of_life
+- Primary axis receives full impact; secondary axis receives ~30-50%
+
 **Negative**: Violence witnessed (-5~15) | Personal threat (-5~10) | Supernatural (-10~20) | Loss (-15~25) | Moral violation (-10~20) | Betrayal (-10~20) | Torture (-15~35)
 **Positive**: Rest/safety (+5~10) | Social connection (+5~10) | Achievement (+5~15) | NPC comfort (+5~10)
 </doom_mental_tracking>

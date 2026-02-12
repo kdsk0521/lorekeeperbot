@@ -20,6 +20,7 @@ import config
 import domain_manager
 from config import (
     MENTAL_STAGES,
+    COMPOSURE_STAGES,
     STATUS_EFFECTS,
 )
 
@@ -336,9 +337,9 @@ def get_status_summary(user_data: Dict[str, Any]) -> str:
     if effects: parts.append(f"상태(Status): {', '.join(effects)}")
     else: parts.append("상태(Status): 정상")
     
-    # [Anti-Gravity] 2. Mental State (V7)
-    mental_txt = get_mental_status_text(user_data)
-    parts.append(f"멘탈(Mental): {mental_txt}")
+    # [V3.0] 2. Vigor/Composure State
+    vc_txt = get_vigor_composure_text(user_data)
+    parts.append(f"기력/평정(Vigor/Composure): {vc_txt}")
     
     # [Anti-Gravity] 3. Adaptation / Abnormal Exposure
     abnormal_txt = get_abnormal_context(user_data)
@@ -391,10 +392,11 @@ def get_recent_relationships(user_data: Dict[str, Any], limit: int = 5) -> str:
     if not items: return ""
     return ", ".join(items)
 
-def add_passive(channel_id: str, user_id: str, name: str, tags: List[str] = None, desc: str = "") -> str:
-    """하이브리드 패시브 추가 (태그 시스템 포함)"""
+def add_passive(channel_id: str, user_id: str, name: str, tags: List[str] = None, desc: str = "",
+                 theory_links: List[str] = None, modifiers: dict = None) -> str:
+    """하이브리드 패시브 추가 (이론 태그 + 수정치 시스템 포함)"""
     if tags is None: tags = []
-    
+
     # AI Memory에 저장 (영구적)
     new_passive = {
         "name": name,
@@ -402,9 +404,13 @@ def add_passive(channel_id: str, user_id: str, name: str, tags: List[str] = None
         "desc": desc,
         "acquired_at": time.strftime('%Y-%m-%d')
     }
-    
+    if theory_links:
+        new_passive["theory_links"] = theory_links
+    if modifiers:
+        new_passive["modifiers"] = modifiers
+
     domain_manager.add_to_ai_memory_list(channel_id, user_id, "passives", new_passive)
-    
+
     tag_str = f" [{', '.join(tags)}]" if tags else ""
     return f"🏆 **특질 획득:** {name}{tag_str}\n_{desc}_"
 
@@ -432,13 +438,16 @@ def get_passives_for_context(user_data: Optional[Dict[str, Any]]) -> str:
                  all_passives[str(p)] = {"name": str(p), "tags": []}
     
     if not all_passives: return "Passives: None"
-    
+
     lines = []
     for p in all_passives.values():
         p_tags: List[str] = p.get('tags', [])
-        tags = f"({', '.join(p_tags)})" if p_tags else ""
-        lines.append(f"{p['name']}{tags}")
-        
+        tag_str = f"({', '.join(p_tags)})" if p_tags else ""
+        # Include theory_links for Flash analysis
+        t_links = p.get('theory_links', [])
+        link_str = f" [theories:{','.join(t_links)}]" if t_links else ""
+        lines.append(f"{p['name']}{tag_str}{link_str}")
+
     return f"Passives: {', '.join(lines)}"
 
 # =========================================================
@@ -566,14 +575,37 @@ def get_mental_info(value: int) -> Dict[str, Any]:
 
 def get_mental_status_text(p_data: Dict[str, Any]) -> str:
     """
-    Returns a formatted string of the character's mental state.
-    e.g. "😌 평정"
+    Returns a formatted string of the character's vigor/composure state.
+    e.g. "💪 충만 | 😌 안정"
     """
     mem = p_data.get("ai_memory", {})
-    ment = mem.get("mental", {"value": 100})
-    val = ment.get("value", 100)
-    info = get_mental_info(val)
-    return f"{info['emoji']} **{info['name']}**"
+    # Migration: old "mental" → vigor fallback
+    vigor = mem.get("vigor", mem.get("mental", {"value": 100}))
+    composure = mem.get("composure", {"value": 100})
+    v_val = vigor.get("value", 100)
+    c_val = composure.get("value", 100)
+    v_info = get_mental_info(v_val)
+    c_info = get_composure_info(c_val)
+    return f"💪 **{v_info['name']}** | 😌 **{c_info['name']}**"
+
+
+def get_composure_info(value: int) -> Dict[str, Any]:
+    """평정 단계 정보를 반환합니다."""
+    for stage_id, info in config.COMPOSURE_STAGES.items():
+        low, high = info["range"]
+        if low <= value < high:
+            return info
+    return config.COMPOSURE_STAGES[0]
+
+
+def get_vigor_composure_text(p_data: Dict[str, Any]) -> str:
+    """Returns "기력 85 | 평정 70" format."""
+    mem = p_data.get("ai_memory", {})
+    vigor = mem.get("vigor", mem.get("mental", {"value": 100}))
+    composure = mem.get("composure", {"value": 100})
+    v_val = vigor.get("value", 100)
+    c_val = composure.get("value", 100)
+    return f"기력 {v_val} | 평정 {c_val}"
 
 
 def update_mental(

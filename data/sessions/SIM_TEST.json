@@ -13,8 +13,11 @@
       ],
       "status_effects": [],
       "ai_memory": {
-        "mental": {
+        "vigor": {
           "value": 45
+        },
+        "composure": {
+          "value": 50
         }
       },
       "status": "active"

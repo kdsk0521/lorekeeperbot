@@ -1,12 +1,13 @@
 """
-Lorekeeper UNE - Anomaly Module
-Handles supernatural events and their mental impact.
+Lorekeeper UNE - Anomaly Module (v3.0 — Genre Disruption Engine)
+Handles anomaly events with genre-aware disruption axes, theory-based defense, and 2-axis damage.
 """
 
 import random
 import math
 from typing import Any
 from orchestration_context import GameContext
+import config as _cfg
 
 
 class AnomalyModule:
@@ -39,41 +40,104 @@ class AnomalyModule:
         }
         return mapping.get(raw, "mixed")
 
-    def _roll_defense(self, context: GameContext, intensity: str) -> dict:
-        """공통 방어 롤: passive 분석 + 정신 상태 + 성공률 계산 + 롤."""
+    @staticmethod
+    def _resolve_disruption_axis(bus, genre: str) -> tuple:
+        """Flash의 disruption_axis를 우선 사용, 없으면 GENRE_DISRUPTION_AXIS → GENRE_PRIMARY_RESOURCE 순 fallback.
+        Returns (primary_axis, secondary_axis, secondary_ratio)."""
+        flash_axis = bus.anomaly.get("disruption_axis", "").lower().strip()
+
+        genre_config = _cfg.GENRE_DISRUPTION_AXIS.get(genre, {})
+        default_primary = genre_config.get("primary_axis") or _cfg.GENRE_PRIMARY_RESOURCE.get(genre, "vigor")
+        secondary_ratio = genre_config.get("secondary_ratio", 0.3)
+
+        if flash_axis == "both":
+            return "vigor", "composure", 1.0  # both axes take full damage
+        elif flash_axis == "vigor":
+            primary = "vigor"
+        elif flash_axis == "composure":
+            primary = "composure"
+        else:
+            primary = default_primary
+
+        secondary = "composure" if primary == "vigor" else "vigor"
+        return primary, secondary, secondary_ratio
+
+    def _roll_defense(self, context: GameContext, intensity: str, genre: str) -> dict:
+        """장르 교란 방어 롤: passive + 보호 아이템 + 장르별 방어 스탯 + 이론 보정."""
+        bus = context.shared_bus
         dc_map = {"Low": 30, "Mid": 50, "High": 70, "Extreme": 90}
         dc = dc_map.get(intensity, 50)
         success_rate = 100 - dc
 
-        # Passive 보정
+        # Passive 보정 (theory tag modifier system)
         passives = (context.narrative_anchors or {}).get("passives", [])
+        passive_defense = 0
         for passive in passives:
-            if isinstance(passive, dict):
-                p_name = passive.get("name", "").lower()
-                if any(kw in p_name for kw in ["용감", "냉정", "강인", "침착"]):
-                    success_rate += 15
-                elif any(kw in p_name for kw in ["겁쟁이", "나약", "불안", "공포"]):
-                    success_rate -= 15
+            mods = _cfg.get_passive_modifiers(passive)
+            if not mods:
+                continue
+            # Genre-specific key first, then generic fallback
+            genre_key = f"anomaly_defense_{genre}" if genre else ""
+            if genre_key and genre_key in mods:
+                passive_defense += mods[genre_key]
+            elif "anomaly_defense" in mods:
+                passive_defense += mods["anomaly_defense"]
+        success_rate += max(-30, min(30, passive_defense))
 
-        # 보호 아이템 보정: Theoria가 인벤토리에서 관련 아이템 감지 시 +15
-        if context.shared_bus.anomaly.get("protective_item"):
+        # 보호 아이템 보정
+        if bus.anomaly.get("protective_item"):
             success_rate += 15
 
-        # 정신 상태 보정: 평정(+10), 동요(0), 공황(-10), 붕괴(-20)
-        mental_val = context.shared_bus.mental.get("value", 100)
-        if mental_val >= 70:
+        # 장르별 방어 스탯 (GENRE_DISRUPTION_AXIS 우선)
+        genre_config = _cfg.GENRE_DISRUPTION_AXIS.get(genre, {})
+        defense_stat = genre_config.get("defense_stat") or _cfg.GENRE_PRIMARY_RESOURCE.get(genre, "vigor")
+        defense_val = getattr(bus, defense_stat).get("value", 100)
+        if defense_val >= 70:
             success_rate += 10
-        elif mental_val <= 14:
+        elif defense_val <= 14:
             success_rate -= 20
-        elif mental_val <= 39:
+        elif defense_val <= 39:
             success_rate -= 10
+
+        # 이론 기반 방어 보정 (Flash theory_basis 매칭 시 +5)
+        flash_theory = bus.anomaly.get("theory_basis", "")
+        genre_theory = genre_config.get("defense_theory", "")
+        if flash_theory and genre_theory:
+            # Flash가 장르 이론과 일치하는 방어 이론을 제시하면 보정
+            flash_theories = set(t.strip().lower() for t in flash_theory.replace("+", ",").split(",") if t.strip())
+            genre_theories = set(t.strip().lower() for t in genre_theory.replace("+", ",").split(",") if t.strip())
+            if flash_theories & genre_theories:
+                success_rate += 5
 
         success_rate = max(10, min(90, success_rate))
         defense_roll = random.randint(1, 100)
         return {"success": defense_roll <= success_rate, "roll": defense_roll, "rate": success_rate}
 
+    def _calculate_trigger_chance(self, context: GameContext, genre: str) -> float:
+        """장르별 이변 트리거 확률 계산."""
+        bus = context.shared_bus
+        doom_val = bus.doom.get("value", 0)
+
+        if "doom" not in context.request.active_modules:
+            return 15.0
+
+        base_chance = 5 + (doom_val * 0.7)
+
+        # 장르별 트리거 보너스
+        genre_config = _cfg.GENRE_DISRUPTION_AXIS.get(genre, {})
+        trigger_bonus = genre_config.get("trigger_bonus", 0)
+        base_chance += trigger_bonus
+
+        return max(5.0, min(95.0, base_chance))
+
     async def process(self, context: GameContext) -> GameContext:
         bus = context.shared_bus
+        genres = context.request.genres
+        genre = ""
+        if isinstance(genres, dict):
+            genre = genres.get("stage", "")
+        elif isinstance(genres, list) and genres:
+            genre = genres[0] if isinstance(genres[0], str) else ""
 
         # 배치 모드: skip_trigger면 트리거 롤 스킵, 방어/적응만 수행
         if bus.anomaly.get("skip_trigger"):
@@ -85,11 +149,7 @@ class AnomalyModule:
             if not bus.anomaly.get("potential"):
                 return context
 
-            doom_val = bus.doom.get("value", 0)
-            if "doom" in context.request.active_modules:
-                trigger_chance = 5 + (doom_val * 0.7)
-            else:
-                trigger_chance = 15
+            trigger_chance = self._calculate_trigger_chance(context, genre)
 
             roll = random.randint(1, 100)
             if roll > trigger_chance:
@@ -116,7 +176,7 @@ class AnomalyModule:
         polarity_label = {"positive": "호재", "negative": "악재", "mixed": "혼합"}.get(polarity, polarity)
 
         # 2. Adaptation & Mitigation
-        adaptation_data = bus.mental.get("adaptation", {})
+        adaptation_data = bus.vigor.get("adaptation", {})
         tag_exposure = adaptation_data.get(category, {"count": 0})
         count = tag_exposure.get("count", 0)
 
@@ -150,7 +210,7 @@ class AnomalyModule:
 
         # 3. Defense Roll (only if damage is positive)
         if base_dmg > 0:
-            defense = self._roll_defense(context, intensity)
+            defense = self._roll_defense(context, intensity, genre)
             has_judgment = "judgment" in context.request.active_modules
 
             if defense["success"]:
@@ -175,15 +235,22 @@ class AnomalyModule:
                     outcome_msg += " [❌대응 실패]"
                     bus.anomaly["defense_note"] = "피해 유지"
 
-        # 4. Update Bus
-        bus.mental["delta"] = bus.mental.get("delta", 0) - final_dmg
+        # 4. Update Bus — disruption axis routing (Flash > genre config > fallback)
+        primary, secondary, sec_ratio = self._resolve_disruption_axis(bus, genre)
+        primary_bus = getattr(bus, primary)
+        secondary_bus = getattr(bus, secondary)
+        primary_bus["delta"] = primary_bus.get("delta", 0) - final_dmg
+        secondary_bus["delta"] = secondary_bus.get("delta", 0) - int(final_dmg * sec_ratio)
+
+        # Disruption axis log
+        axis_label = {"vigor": "기력", "composure": "평정"}.get(primary, primary)
         adapt_key = f" · 적응키 {category}" if category != tag else ""
         bus.anomaly["output"] = (
-            f"강도 {intensity_label} · 성격 {polarity_label} · "
+            f"강도 {intensity_label} · 성격 {polarity_label} · 축 {axis_label} · "
             f"적응도 {adapt_old_pct}%{adapt_key}{outcome_msg}"
         )
 
         # 5. Adaptation Update for Sync
-        bus.mental.setdefault("adaptation_update", {})[category] = {"count": count + 1}
+        bus.vigor.setdefault("adaptation_update", {})[category] = {"count": count + 1}
 
         return context

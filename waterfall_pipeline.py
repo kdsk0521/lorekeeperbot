@@ -18,7 +18,7 @@ class WaterfallPipeline:
         self.judgment = None
         self.doom = None
         self.anomaly = None
-        self.mental = None
+        self.vigor_composure = None
 
     def _ensure_bus_schema(self, bus: SharedBus) -> None:
         """
@@ -26,7 +26,7 @@ class WaterfallPipeline:
         This is a schema guard for DLC on/off during runtime.
         """
         defaults = SharedBus()
-        for key in ("dai", "judgment", "doom", "anomaly", "mental"):
+        for key in ("dai", "judgment", "doom", "anomaly", "vigor", "composure"):
             current = getattr(bus, key, None)
             if current is None or not isinstance(current, dict):
                 setattr(bus, key, getattr(defaults, key))
@@ -35,14 +35,16 @@ class WaterfallPipeline:
         """
         When a DLC is OFF, apply agreed fallback values without marking it active.
         - Doom OFF  -> value 30
-        - Mental OFF -> value 50
+        - Mental OFF -> vigor 50, composure 50
         """
         if "doom" not in active_modules:
             bus.doom["value"] = 30
             bus.doom["active"] = False
         if "mental" not in active_modules:
-            bus.mental["value"] = 50
-            bus.mental["active"] = False
+            bus.vigor["value"] = 50
+            bus.vigor["active"] = False
+            bus.composure["value"] = 50
+            bus.composure["active"] = False
 
     async def execute(self, context: GameContext) -> GameContext:
         """Analysis -> Judgment -> Doom -> Anomaly -> Mental
@@ -124,10 +126,14 @@ class WaterfallPipeline:
         if doom_relief.get("applicable", False):
             bus.doom["relief"] = doom_relief
 
-        # Mental Impact 연동
+        # Vigor/Composure Impact 연동
         mental_impact = analysis.get("mental_impact") or {}
         if mental_impact.get("applicable", False):
-            bus.mental["impact"] = mental_impact
+            # Route to primary axis based on genre
+            import config as _cfg
+            genre = context.request.genres.get("stage", "")
+            primary = _cfg.GENRE_PRIMARY_RESOURCE.get(genre, "vigor")
+            getattr(bus, primary)["impact"] = mental_impact
 
         # Anomaly Profile 연동
         anomaly_profile = analysis.get("anomaly_profile") or {}
@@ -210,19 +216,21 @@ class WaterfallPipeline:
             else:
                 bus.doom["log"] = f"📈 긴장도 변동 (이변 {sign})" if post_delta > 0 else f"📉 긴장도 변동 (이변 {sign})"
 
-        # 5. Mental Sync (Conditional)
+        # 5. Vigor/Composure Sync (Conditional)
         if "mental" in active_modules:
-            from mental_module import MentalModule
-            self.mental = MentalModule()
-            context = await self.mental.process(context)
+            from vigor_composure_module import VigorComposureModule
+            self.vigor_composure = VigorComposureModule()
+            context = await self.vigor_composure.process(context)
 
         return context
 
     def get_fallback_directives(self, active_modules: List[str]) -> str:
-        """Returns constraint directives for inactive modules."""
+        """Returns constraint directives for inactive modules (genre-aware)."""
         directives = []
         if "judgment" not in active_modules:
             directives.append("- [Mechanical Restriction]: Do not mention dice rolls or skill checks.")
         if "doom" not in active_modules:
-            directives.append("- [Narrative Restriction]: Avoid mentions of increasing tension or doom.")
-        return "".join(directives)
+            directives.append("- [Narrative Restriction]: Avoid mentions of increasing tension or doom clock.")
+        if "mental" not in active_modules:
+            directives.append("- [State Restriction]: Do not explicitly reference vigor/composure values. Use Flash polyvagal cues for physical/emotional tone instead.")
+        return "\n".join(directives)

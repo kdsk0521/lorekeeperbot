@@ -130,12 +130,13 @@ def change_doom(channel_id: str, amount: int) -> str:
     return f"{emoji} **위기 수치:** {old_val}% → **{new_val}%** {diff_msg}"
 
 
-def get_doom_info(value: int) -> Dict[str, Any]:
-    for stage_id, info in config.DOOM_STAGES.items():
+def get_doom_info(value: int, genre: str = None) -> Dict[str, Any]:
+    stages = config.get_genre_doom_stages(genre) if genre else config.DOOM_STAGES
+    for stage_id, info in stages.items():
         low, high = info["range"]
         if low <= value < high:
             return info
-    return config.DOOM_STAGES[5] # Default to Max
+    return stages[max(stages.keys())]
 
 def _get_doom_description(doom: int) -> str:
     # Wrapper for legacy compatibility if needed, or internal use

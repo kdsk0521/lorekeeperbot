@@ -14,6 +14,77 @@ class JudgmentEngine:
         self.client = client
         self.model_id = model_id
 
+    @staticmethod
+    def _calculate_theory_mod(context: GameContext) -> int:
+        """Flash psyche → ±20 보정. NPC의 심리 상태가 행동 결과에 미치는 영향."""
+        bus = context.shared_bus
+        scene_type = bus.dai.get("scene_type", "normal")
+        psyche_states = bus.dai.get("psyche_states", {})
+
+        if not psyche_states:
+            return 0
+
+        # Find target NPC (relevant NPCs first, then any available)
+        target_npc = None
+        for npc_name in bus.dai.get("relevant_npcs", []):
+            if npc_name in psyche_states:
+                target_npc = psyche_states[npc_name]
+                break
+        if not target_npc:
+            for state in psyche_states.values():
+                if isinstance(state, dict):
+                    target_npc = state
+                    break
+        if not target_npc:
+            return 0
+
+        soma = target_npc.get("soma", {})
+        psyche = target_npc.get("psyche", {})
+        relation = target_npc.get("relation", {})
+
+        polyvagal = soma.get("polyvagal", "ventral")
+        decision_mode = psyche.get("decision_mode", "deliberate")
+        cultural_affect = soma.get("cultural_affect")
+        attachment = relation.get("attachment", "secure")
+
+        is_combat = scene_type == "combat"
+        is_social = scene_type in ("social", "normal", "intimate")
+
+        mod = 0
+
+        # 1. Polyvagal × action_type
+        if polyvagal == "dorsal":
+            mod += 10 if is_combat else -10
+        elif polyvagal == "sympathetic":
+            mod -= 5
+        elif polyvagal == "ventral":
+            mod += 5 if is_social else 0
+
+        # 2. Decision mode × action_type
+        if decision_mode == "reactive":
+            mod += 5 if is_combat else -5
+        elif decision_mode == "deliberate":
+            mod += 5 if is_social else -5
+
+        # 3. Cultural affect
+        if cultural_affect == "hwabyung" and is_social:
+            mod -= 5
+        elif cultural_affect == "gi" and is_combat:
+            mod += 5
+        elif cultural_affect == "nunchi" and is_social:
+            mod -= 5
+        elif cultural_affect == "chaemyeon" and is_social:
+            mod += 5
+        elif cultural_affect == "han" and is_social:
+            mod += 5
+
+        # 4. Attachment × interpersonal
+        if is_social:
+            attachment_mod = {"secure": 5, "anxious": 3, "avoidant": -5, "disorganized": -3}
+            mod += attachment_mod.get(attachment, 0)
+
+        return max(-20, min(20, mod))
+
     async def process(self, context: GameContext) -> GameContext:
         bus = context.shared_bus
         if not bus.judgment.get("active"):
@@ -29,18 +100,21 @@ class JudgmentEngine:
         dc_table = {"trivial": 0, "easy": 20, "normal": 40, "hard": 60, "extreme": 80}
         dc = dc_table.get(difficulty.lower(), 40)
         
-        # 2. Dynamic Modifiers (Legacy Restoration)
-        # 2.1 기력 Modifiers (+20 / +10 / 0 / -10)
-        mental_val = bus.mental.get("value", 100)
+        # 2. Dynamic Modifiers
+        # 2.1 Vigor/Composure Modifiers — 장르 primary axis 기반
+        import config as _cfg
+        genre = context.request.genres.get("stage", "")
+        primary_axis = _cfg.GENRE_PRIMARY_RESOURCE.get(genre, "vigor")
+        primary_val = getattr(bus, primary_axis).get("value", 100)
         mental_mod = 0
         mental_label = "충만"
-        if mental_val >= 70:
+        if primary_val >= 70:
             mental_mod = 20
             mental_label = "충만"
-        elif mental_val >= 40:
+        elif primary_val >= 40:
             mental_mod = 10
             mental_label = "동요"
-        elif mental_val >= 15:
+        elif primary_val >= 15:
             mental_mod = 0
             mental_label = "고갈"
         else:
@@ -54,13 +128,36 @@ class JudgmentEngine:
         # 2.3 DAI Modifiers (from Anomaly defense success/failure)
         dai_bonus = bus.dai.get("bonus", 0)
         dai_penalty = bus.dai.get("penalty", 0)
-        
+
+        # 2.4 Theory Modifier (Flash psyche → ±20)
+        theory_mod = self._calculate_theory_mod(context)
+
+        # 2.5 Passive Modifiers (theory tag based)
+        import config as _cfg2
+        passives = (context.narrative_anchors or {}).get("passives", [])
+        passive_mod = 0
+        scene_type = bus.dai.get("scene_type", "normal")
+        is_combat_scene = scene_type == "combat"
+        is_social_scene = scene_type in ("social", "normal", "intimate")
+        for passive in passives:
+            mods = _cfg2.get_passive_modifiers(passive)
+            if not mods:
+                continue
+            # Scene-type specific key first, then generic
+            if is_combat_scene and "judgment_combat" in mods:
+                passive_mod += mods["judgment_combat"]
+            elif is_social_scene and "judgment_social" in mods:
+                passive_mod += mods["judgment_social"]
+            elif "judgment" in mods:
+                passive_mod += mods["judgment"]
+        passive_mod = max(-20, min(20, passive_mod))
+
         # 3. Roll Dice
         roll = random.randint(1, 100)
         eval_bonus = eval_data.get("bonus", 0)
         eval_penalty = eval_data.get("penalty", 0)
-        
-        final_roll = roll + eval_bonus - eval_penalty + mental_mod + doom_mod + dai_bonus - dai_penalty
+
+        final_roll = roll + eval_bonus - eval_penalty + mental_mod + doom_mod + theory_mod + passive_mod + dai_bonus - dai_penalty
         
         # 4. Determine Result
         result = "failure"
@@ -116,7 +213,11 @@ class JudgmentEngine:
             modifications.append({"label": "이변대응성공", "value": dai_bonus})
         if dai_penalty > 0:
             modifications.append({"label": "이변대응실패", "value": -dai_penalty})
-            
+        if theory_mod != 0:
+            modifications.append({"label": "심리상태", "value": theory_mod})
+        if passive_mod != 0:
+            modifications.append({"label": "특질", "value": passive_mod})
+
         mod_parts = []
         for m in modifications:
             label = m.get("label", "Unknown")

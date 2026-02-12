@@ -16,6 +16,120 @@ logger = logging.getLogger("UNE")
 def _pick(items):
     return random.choice(items) if items else ""
 
+# =========================================================
+# Genre MC Move Tables (Phase 8)
+# Key: (position_tier, result) → Korean MC move text
+# =========================================================
+GENRE_MC_MOVES = {
+    "cosmic_horror": {
+        ("desperate", "critical_failure"): "현실이 무너진다 — 돌이킬 수 없는 진실이 열린다",
+        ("desperate", "failure"): "공포가 실체가 된다 — 되돌릴 수 없는 결과",
+        ("desperate", "partial"): "살아남았지만 대가가 크다 — 세계관이 흔들린다",
+        ("desperate", "success"): "절망 속 한 줄기 빛 — 그러나 그 빛도 의심스럽다",
+        ("desperate", "critical_success"): "불가능한 기적 — 대가는 아직 청구되지 않았다",
+        ("risky", "critical_failure"): "최악이 현실이 된다 — 공포가 구체화한다",
+        ("risky", "failure"): "상황이 악화된다 — 새로운 공포가 모습을 드러낸다",
+        ("risky", "partial"): "일부 성공했지만 — 무언가 알아서는 안 될 것을 알게 되었다",
+        ("risky", "success"): "위험을 넘겼다 — 잠시간의 안전",
+        ("risky", "critical_success"): "선명한 통찰 — 공포의 정체를 직시하고 살아남았다",
+        ("controlled", "critical_failure"): "예상치 못한 반전 — 안전이 무너진다",
+        ("controlled", "failure"): "작은 실패가 균열을 만든다 — 불안의 씨앗",
+        ("controlled", "partial"): "부분적 성과 — 미묘한 불편함이 남는다",
+        ("controlled", "success"): "깔끔한 성공 — 평온이 유지된다",
+        ("controlled", "critical_success"): "완벽한 대응 — 공포를 이해의 영역으로 끌어왔다",
+    },
+    "romance": {
+        ("desperate", "critical_failure"): "마음이 드러난 순간, 취약성만 남았다 — 상처가 깊다",
+        ("desperate", "failure"): "진심이 전해지지 않았다 — 오해만 깊어진다",
+        ("desperate", "partial"): "감정이 닿았지만 타이밍이 아니었다 — 여운이 남는다",
+        ("desperate", "success"): "절박한 진심이 통했다 — 관계가 급격히 움직인다",
+        ("desperate", "critical_success"): "운명적 순간 — 모든 벽이 무너진다",
+        ("risky", "critical_failure"): "결정적 오해가 발생한다 — 관계가 흔들린다",
+        ("risky", "failure"): "감정의 엇갈림 — 라이벌이나 장애물이 선명해진다",
+        ("risky", "partial"): "마음은 전했지만 완전하지 않다 — 불안이 남는다",
+        ("risky", "success"): "감정이 전해졌다 — 관계가 한 걸음 나아간다",
+        ("risky", "critical_success"): "완벽한 순간 — 두 사람만의 세계가 열린다",
+        ("controlled", "critical_failure"): "안전한 거리에서 예상치 못한 감정이 터진다",
+        ("controlled", "failure"): "소소한 실수 — 그러나 감정의 여운",
+        ("controlled", "partial"): "일상적 교류 — 미세한 설렘",
+        ("controlled", "success"): "자연스러운 친밀함 — 편안한 진전",
+        ("controlled", "critical_success"): "완벽한 하모니 — 서로를 깊이 이해하는 순간",
+    },
+    "comedy": {
+        ("desperate", "critical_failure"): "전부 들통 — 숨긴 모든 것이 한꺼번에 공개된다",
+        ("desperate", "failure"): "상황이 완전히 통제를 벗어났다 — 그러나 웃기다",
+        ("desperate", "partial"): "겨우 수습했지만 새 거짓말이 필요하다",
+        ("desperate", "success"): "기적적 수습 — 아무도 믿지 못할 행운",
+        ("desperate", "critical_success"): "모든 거짓말이 우연히 진실이 된다",
+        ("risky", "critical_failure"): "최악의 타이밍에 최악의 사람이 등장한다",
+        ("risky", "failure"): "소동이 커진다 — 목격자가 늘어난다",
+        ("risky", "partial"): "절반만 성공 — 나머지 절반이 문제를 만든다",
+        ("risky", "success"): "깔끔한 수습 — 잠깐의 안도",
+        ("risky", "critical_success"): "예상치 못한 방식으로 완벽하게 해결된다",
+        ("controlled", "critical_failure"): "확실한 상황에서 황당한 실패",
+        ("controlled", "failure"): "사소한 실수가 나비효과를 일으킨다",
+        ("controlled", "partial"): "되긴 됐는데 뭔가 어색하다",
+        ("controlled", "success"): "순조로운 진행 — 평화로운 한 때",
+        ("controlled", "critical_success"): "모든 것이 완벽하게 맞아떨어진다 — 기분 좋은 놀라움",
+    },
+    "noir": {
+        ("desperate", "critical_failure"): "덫이 닫힌다 — 탈출구 없음",
+        ("desperate", "failure"): "진실이 무기가 되어 돌아온다 — 배신의 대가",
+        ("desperate", "partial"): "살아남았지만 빚이 생겼다 — 누군가에게 약점을 잡혔다",
+        ("desperate", "success"): "어둠 속에서 한 수 앞을 내다봤다 — 위험한 도박의 성공",
+        ("desperate", "critical_success"): "모든 퍼즐이 맞아떨어진다 — 그러나 그 대가는?",
+        ("risky", "critical_failure"): "증거가 뒤바뀐다 — 사냥꾼이 사냥감이 된다",
+        ("risky", "failure"): "수사선이 꼬인다 — 새로운 용의자, 새로운 의혹",
+        ("risky", "partial"): "일부 진실에 접근했지만 — 더 큰 비밀이 있다",
+        ("risky", "success"): "한 겹을 벗겼다 — 진실에 한 발 더 가까이",
+        ("risky", "critical_success"): "결정적 단서 확보 — 퍼즐의 핵심 조각",
+        ("controlled", "critical_failure"): "안전하다고 생각한 곳에서 칼이 날아온다",
+        ("controlled", "failure"): "사소한 실수가 흔적을 남긴다",
+        ("controlled", "partial"): "조용한 진전 — 그러나 감시의 눈이 있다",
+        ("controlled", "success"): "계획대로 — 아직은 주도권을 쥐고 있다",
+        ("controlled", "critical_success"): "완벽한 수 — 상대방은 움직였다는 것조차 모른다",
+    },
+    "action": {
+        ("desperate", "critical_failure"): "최악의 결과 — 치명적 부상 또는 장비 파괴",
+        ("desperate", "failure"): "위기가 실체화된다 — 후퇴할 곳이 없다",
+        ("desperate", "partial"): "살아남았지만 상처가 깊다 — 전투 능력 저하",
+        ("desperate", "success"): "기사회생 — 절체절명에서의 역전",
+        ("desperate", "critical_success"): "전설적 순간 — 불가능을 가능으로",
+        ("risky", "critical_failure"): "전세가 역전된다 — 적이 주도권을 잡는다",
+        ("risky", "failure"): "공격이 빗나간다 — 적이 반격 기회를 잡는다",
+        ("risky", "partial"): "명중했지만 완전하지 않다 — 적도 반격한다",
+        ("risky", "success"): "확실한 타격 — 전세가 유리해진다",
+        ("risky", "critical_success"): "완벽한 일격 — 적을 압도한다",
+        ("controlled", "critical_failure"): "방심의 대가 — 예상치 못한 반격",
+        ("controlled", "failure"): "실수로 기회를 놓친다",
+        ("controlled", "partial"): "무난한 성과 — 조금 부족하다",
+        ("controlled", "success"): "깔끔한 처리 — 전문가다운 수행",
+        ("controlled", "critical_success"): "압도적 우위 — 적이 전의를 상실한다",
+    },
+    "slice_of_life": {
+        ("desperate", "critical_failure"): "최악의 타이밍에 모든 것이 엉킨다 — 관계에 금이 간다",
+        ("desperate", "failure"): "진심이 전해지지 않았다 — 오해가 깊어진다",
+        ("desperate", "partial"): "마음은 닿았지만 방식이 서툴렀다",
+        ("desperate", "success"): "서투르지만 진심이 통했다 — 작은 기적",
+        ("desperate", "critical_success"): "모든 것이 제자리를 찾는다 — 일상의 따뜻함",
+        ("risky", "critical_failure"): "일상의 균형이 무너진다 — 익숙한 것이 낯설어진다",
+        ("risky", "failure"): "사소한 것이 꼬인다 — 불편함이 쌓인다",
+        ("risky", "partial"): "되긴 됐지만 아쉬움이 남는다",
+        ("risky", "success"): "자연스럽게 잘 풀린다 — 소소한 성취",
+        ("risky", "critical_success"): "예상치 못한 좋은 일 — 일상의 반짝임",
+        ("controlled", "critical_failure"): "확실하다고 생각했는데 뜻밖의 변수",
+        ("controlled", "failure"): "사소한 실수 — 웃어넘길 수 있는 정도",
+        ("controlled", "partial"): "평범한 하루의 한 장면",
+        ("controlled", "success"): "편안한 일상 — 모든 것이 순조롭다",
+        ("controlled", "critical_success"): "완벽한 하루 — 일상이 빛나는 순간",
+    },
+}
+
+def _get_genre_mc_move(genre: str, pos_tier: str, result: str) -> str:
+    """장르별 MC Move를 반환. 매칭 없으면 빈 문자열."""
+    genre_table = GENRE_MC_MOVES.get(genre, {})
+    return genre_table.get((pos_tier, result), "")
+
 def _build_adaptation_line(adapt_pct: int, category: str, tag: str) -> str:
     if adapt_pct is None:
         return ""
@@ -113,7 +227,8 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> G
                 "appearance": pmem.get("appearance", ""),
                 "personality": pmem.get("personality", ""),
                 "passives": pmem.get("passives", []),
-                "mental_value": pmem.get("mental", {}).get("value", 100),
+                "vigor_value": pmem.get("vigor", pmem.get("mental", {})).get("value", 100),
+                "composure_value": pmem.get("composure", {}).get("value", 100),
             }
     anchors["all_pcs"] = all_pcs
     anchors["acting_user_id"] = user_id
@@ -136,13 +251,25 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> G
     # Bus initialization
     bus = SharedBus()
     bus.doom["value"] = world.get("doom", 40)
-    mental_data = mem.get("mental", {"value": 100, "last_delta": 0})
-    bus.mental["value"] = mental_data.get("value", 100)
-    bus.mental["last_delta"] = mental_data.get("last_delta", 0)
+
+    # Vigor/Composure migration: old "mental" → vigor + composure
+    if "mental" in mem and "vigor" not in mem:
+        old_val = mem["mental"].get("value", 100)
+        old_delta = mem["mental"].get("last_delta", 0)
+        mem["vigor"] = {"value": old_val, "last_delta": old_delta}
+        mem["composure"] = {"value": old_val, "last_delta": 0}
+        del mem["mental"]
+
+    vigor_data = mem.get("vigor", {"value": 100, "last_delta": 0})
+    bus.vigor["value"] = vigor_data.get("value", 100)
+    bus.vigor["last_delta"] = vigor_data.get("last_delta", 0)
+    composure_data = mem.get("composure", {"value": 100, "last_delta": 0})
+    bus.composure["value"] = composure_data.get("value", 100)
+    bus.composure["last_delta"] = composure_data.get("last_delta", 0)
     adaptation = mem.get("abnormal_exposure", {})
     if not adaptation and p_data:
         adaptation = p_data.get("abnormal_exposure", {})
-    bus.mental["adaptation"] = adaptation
+    bus.vigor["adaptation"] = adaptation
 
     context = GameContext(
         request=RequestData(
@@ -173,32 +300,39 @@ def sync_from_game_context(channel_id: str, user_id: str, ctx: Any) -> None:
         world["doom"] = bus.doom["value"]
         domain_manager.update_world_state(channel_id, world)
 
-    # 2. Participant Data Sync (Mental, Adaptation)
+    # 2. Participant Data Sync (Vigor, Composure, Adaptation)
     p_data = domain_manager.get_participant_data(channel_id, user_id)
     if p_data:
         mem = p_data.setdefault("ai_memory", {})
-        if bus.mental.get("active"):
-            mental_sys = mem.setdefault("mental", {"value": 100, "last_delta": 0})
-            mental_sys["value"] = bus.mental["value"]
-            mental_sys["last_delta"] = bus.mental.get("last_delta", 0)
 
-            # Trauma Trigger
-            if bus.mental.get("trauma_trigger"):
-                passives = mem.setdefault("passives", [])
-                trauma_name = "트라우마 (각성)"
-                if not any(p.get("name") == trauma_name for p in passives if isinstance(p, dict)):
-                    passives.append({
-                        "name": trauma_name,
-                        "tags": ["Trauma", "Hard-to-cure"],
-                        "modifier": -5,
-                        "desc": "기력 붕괴에서 깨어난 트라우마입니다. 모든 판정에 -5 패널티를 받습니다."
-                    })
+        # Remove legacy "mental" key if present
+        mem.pop("mental", None)
 
-            # Adaptation Updates
-            updates = bus.mental.get("adaptation_update")
-            if updates:
-                mem.setdefault("abnormal_exposure", {}).update(updates)
-                p_data.setdefault("abnormal_exposure", {}).update(updates)
+        for axis_name in ("vigor", "composure"):
+            axis_bus = getattr(bus, axis_name)
+            if axis_bus.get("active"):
+                axis_sys = mem.setdefault(axis_name, {"value": 100, "last_delta": 0})
+                axis_sys["value"] = axis_bus["value"]
+                axis_sys["last_delta"] = axis_bus.get("last_delta", 0)
+
+                # Trauma Trigger
+                if axis_bus.get("trauma_trigger"):
+                    passives = mem.setdefault("passives", [])
+                    trauma_name = f"트라우마 ({axis_name} 각성)"
+                    if not any(p.get("name") == trauma_name for p in passives if isinstance(p, dict)):
+                        label = "기력" if axis_name == "vigor" else "평정"
+                        passives.append({
+                            "name": trauma_name,
+                            "tags": ["Trauma", "Hard-to-cure"],
+                            "modifier": -5,
+                            "desc": f"{label} 붕괴에서 깨어난 트라우마입니다. 모든 판정에 -5 패널티를 받습니다."
+                        })
+
+        # Adaptation Updates (vigor에서만 관리)
+        updates = bus.vigor.get("adaptation_update")
+        if updates:
+            mem.setdefault("abnormal_exposure", {}).update(updates)
+            p_data.setdefault("abnormal_exposure", {}).update(updates)
 
         domain_manager.save_participant_data(channel_id, user_id, p_data)
 
@@ -298,7 +432,8 @@ class UniversalNarrativeEngine:
         result_line = ""
 
         doom_val = bus.doom.get("value", 0) if bus.doom else 0
-        mental_val = bus.mental.get("value", 100) if bus.mental else 100
+        vigor_val = bus.vigor.get("value", 100) if bus.vigor else 100
+        composure_val = bus.composure.get("value", 100) if bus.composure else 100
 
         # ── Layer 1: [Narrative] — Position + MC Move ──
         j_active = bus.judgment and bus.judgment.get("active")
@@ -319,39 +454,50 @@ class UniversalNarrativeEngine:
             else:
                 pos_tier = "controlled"
 
-            # MC Move: Position × Result matrix (PbtA)
-            if j_result in ("failure", "critical_failure"):
-                mc_moves = {
-                    "desperate": "Make the threat real — irreversible consequences",
-                    "risky": "Escalate the situation — a new danger reveals itself",
-                    "controlled": "Demand a minor cost — a small setback occurs",
-                }
-                if j_result == "critical_failure":
-                    mc_moves = {
-                        "desperate": "Catastrophic outcome — something irreversible happens",
-                        "risky": "Worst case unfolds — the danger becomes reality",
-                        "controlled": "Unexpected reversal — safety shatters",
-                    }
-            elif j_result == "partial":
-                mc_moves = {
-                    "desperate": "Heavy price paid — gain what was sought but lose something",
-                    "risky": "Success with cost — complications follow",
-                    "controlled": "Minor friction — less smooth than expected",
-                }
-            else:  # success / critical_success
-                mc_moves = {
-                    "desperate": "Dramatic turnaround — shining in the direst moment",
-                    "risky": "Danger cleared — competent execution",
-                    "controlled": "Clean success — smooth and effortless",
-                }
-                if j_result == "critical_success":
-                    mc_moves = {
-                        "desperate": "Miraculous reversal — a transcendent moment",
-                        "risky": "Brilliant success — impressive result against the odds",
-                        "controlled": "Overwhelming mastery — exceeds all expectations",
-                    }
+            # MC Move: Genre-specific first, then generic fallback (PbtA)
+            genres = context.request.genres
+            primary_genre = ""
+            if isinstance(genres, dict):
+                primary_genre = genres.get("stage", "")
+            elif isinstance(genres, list) and genres:
+                primary_genre = genres[0] if isinstance(genres[0], str) else ""
 
-            move = mc_moves.get(pos_tier, mc_moves.get("risky", ""))
+            # Try genre-specific MC move first
+            move = _get_genre_mc_move(primary_genre, pos_tier, j_result)
+
+            # Fallback: generic MC moves
+            if not move:
+                if j_result in ("failure", "critical_failure"):
+                    mc_moves = {
+                        "desperate": "Make the threat real — irreversible consequences",
+                        "risky": "Escalate the situation — a new danger reveals itself",
+                        "controlled": "Demand a minor cost — a small setback occurs",
+                    }
+                    if j_result == "critical_failure":
+                        mc_moves = {
+                            "desperate": "Catastrophic outcome — something irreversible happens",
+                            "risky": "Worst case unfolds — the danger becomes reality",
+                            "controlled": "Unexpected reversal — safety shatters",
+                        }
+                elif j_result == "partial":
+                    mc_moves = {
+                        "desperate": "Heavy price paid — gain what was sought but lose something",
+                        "risky": "Success with cost — complications follow",
+                        "controlled": "Minor friction — less smooth than expected",
+                    }
+                else:  # success / critical_success
+                    mc_moves = {
+                        "desperate": "Dramatic turnaround — shining in the direst moment",
+                        "risky": "Danger cleared — competent execution",
+                        "controlled": "Clean success — smooth and effortless",
+                    }
+                    if j_result == "critical_success":
+                        mc_moves = {
+                            "desperate": "Miraculous reversal — a transcendent moment",
+                            "risky": "Brilliant success — impressive result against the odds",
+                            "controlled": "Overwhelming mastery — exceeds all expectations",
+                        }
+                move = mc_moves.get(pos_tier, mc_moves.get("risky", ""))
             reason_part = f" ({reason_txt})" if reason_txt else ""
             directive_parts.append(
                 f"[Narrative: {j_mask} '{action}'{reason_part} — {pos_tier}] {move}"
@@ -363,6 +509,25 @@ class UniversalNarrativeEngine:
         # ── Layer 0: [Base Directive] — DAI soft hints (Judgment OFF) ──
         if not j_active and bus.dai and bus.dai.get("active"):
             hints = []
+
+            # Genre scene hint
+            genres = context.request.genres
+            primary_genre = ""
+            if isinstance(genres, dict):
+                primary_genre = genres.get("stage", "")
+            elif isinstance(genres, list) and genres:
+                primary_genre = genres[0] if isinstance(genres[0], str) else ""
+
+            genre_scene_hints = {
+                "cosmic_horror": "Genre: Cosmic Horror — dread builds from the unseen and unknowable",
+                "romance": "Genre: Romance — emotional resonance and interpersonal nuance matter most",
+                "comedy": "Genre: Comedy — timing, escalation, and social absurdity drive the scene",
+                "noir": "Genre: Noir — shadows hide truth, trust is currency, everyone has angles",
+                "action": "Genre: Action — momentum, physical stakes, and tactical decisions",
+                "slice_of_life": "Genre: Slice of Life — quiet moments carry meaning, change is gradual",
+            }
+            if primary_genre in genre_scene_hints:
+                hints.append(genre_scene_hints[primary_genre])
 
             # Position → narrative tone
             pos_data = bus.dai.get("position", {})
@@ -409,7 +574,7 @@ class UniversalNarrativeEngine:
             if hints:
                 directive_parts.append("[Base Directive]\n" + "\n".join(hints))
 
-        # ── Layer 3: [Intrusion] — Cypher GM Intrusion ──
+        # ── Layer 3: [Intrusion] — Cypher GM Intrusion (Genre-Aware) ──
         anomaly_sys = ""
         a_triggered = bus.anomaly and bus.anomaly.get("triggered")
         if a_triggered:
@@ -419,12 +584,26 @@ class UniversalNarrativeEngine:
             category = bus.anomaly.get("category")
             line = bus.anomaly.get("line", "")
 
-            # GM Intrusion framing: anomaly is "situation shift", not "punishment"
-            polarity_frame = {
-                "positive": "may serve as opportunity",
-                "negative": "arrives as threat",
-                "mixed": "both opportunity and threat",
-            }.get(polarity, "shifts the situation")
+            # Resolve genre for framing
+            genres = context.request.genres
+            intrusion_genre = ""
+            if isinstance(genres, dict):
+                intrusion_genre = genres.get("stage", "")
+            elif isinstance(genres, list) and genres:
+                intrusion_genre = genres[0] if isinstance(genres[0], str) else ""
+
+            # Genre-specific anomaly framing
+            genre_frames = {
+                "cosmic_horror": {"positive": "a glimpse of forbidden understanding", "negative": "the veil thins — reality distorts", "mixed": "revelation wrapped in dread"},
+                "romance": {"positive": "a fateful encounter or revelation", "negative": "emotional disruption — hearts shaken", "mixed": "a moment that changes everything"},
+                "comedy": {"positive": "absurd luck — things go impossibly right", "negative": "comedic disaster — everything that can go wrong does", "mixed": "the situation escalates hilariously"},
+                "noir": {"positive": "an unexpected card to play", "negative": "the net tightens — exposure looms", "mixed": "a new piece enters the game"},
+                "action": {"positive": "tactical advantage appears", "negative": "the battlefield shifts against you", "mixed": "chaos reshapes the fight"},
+                "slice_of_life": {"positive": "a pleasant surprise in the routine", "negative": "the familiar becomes uncomfortable", "mixed": "change ripples through daily life"},
+            }
+            default_frame = {"positive": "may serve as opportunity", "negative": "arrives as threat", "mixed": "both opportunity and threat"}
+            frame_table = genre_frames.get(intrusion_genre, default_frame)
+            polarity_frame = frame_table.get(polarity, frame_table.get("mixed", "shifts the situation"))
             intrusion = f"[Intrusion: {tag}] {polarity_frame}"
             if line:
                 intrusion += f"\n{line}"
@@ -466,33 +645,39 @@ class UniversalNarrativeEngine:
             system_msg += f"\n{bus.doom.get('relief_log')}"
         if bus.doom and bus.doom.get("mental_pressure_log"):
             system_msg += f"\n{bus.doom.get('mental_pressure_log')}"
-        if bus.mental:
+        if bus.vigor:
             log_parts = []
-            if bus.mental.get("impact_log"):
-                impact_log = bus.mental.get("impact_log")
-                if "(" in impact_log and ")" in impact_log:
-                    reason = impact_log.split("(", 1)[1].rsplit(")", 1)[0]
-                    log_parts.append(reason)
-            if bus.mental.get("log"):
-                log_parts.append(bus.mental.get("log"))
+            if bus.vigor.get("log"):
+                log_parts.append(bus.vigor.get("log"))
             if log_parts:
                 system_msg += f"\n{' → '.join(log_parts)}"
 
-        # ── Layer 2: [Aspects] — Fate Aspect declaration ──
+        # ── Layer 2: [Aspects] — Fate Aspect declaration (Genre-Aware) ──
         aspects = []
-        m_trauma = bus.mental and bus.mental.get("trauma_trigger")
+        import config as _cfg
+        genres = context.request.genres
+        aspect_genre = ""
+        if isinstance(genres, dict):
+            aspect_genre = genres.get("stage", "")
+        elif isinstance(genres, list) and genres:
+            aspect_genre = genres[0] if isinstance(genres[0], str) else ""
+        primary_axis = _cfg.GENRE_PRIMARY_RESOURCE.get(aspect_genre, "vigor")
+        primary_val = vigor_val if primary_axis == "vigor" else composure_val
+
+        m_trauma = (bus.vigor and bus.vigor.get("trauma_trigger")) or (bus.composure and bus.composure.get("trauma_trigger"))
         if j_active and a_triggered:
             if j_result in ("critical_failure", "failure"):
                 aspects.append("Failure Resonance")
             elif j_result == "critical_success":
                 aspects.append("Glory's Shadow")
-        if a_triggered and mental_val <= 39:
-            aspects.append("Vigor Erosion")
+        if a_triggered and primary_val <= 39:
+            erosion_label = "Vigor Erosion" if primary_axis == "vigor" else "Composure Fracture"
+            aspects.append(erosion_label)
         if m_trauma and a_triggered:
             aspects.append("Inner-Outer Convergence")
         if m_trauma and j_active:
             aspects.append("Resurgence")
-        if j_result == "critical_failure" and mental_val <= 14:
+        if j_result == "critical_failure" and primary_val <= 14:
             aspects.append("Abyss")
         if bus.anomaly and bus.anomaly.get("escalated"):
             aspects.append("Loss of Control")
@@ -505,37 +690,68 @@ class UniversalNarrativeEngine:
 
         # Doom = 8-Segment FitD Clock (only when module active)
         if "doom" in active_modules:
+            # Genre-aware doom stage lookup
+            import game_world as _gw
+            primary_genre = context.request.genres.get("stage", "")
+            doom_info = _gw.get_doom_info(doom_val, genre=primary_genre)
+            stage_name = doom_info.get("name", "")
+            stage_emoji = doom_info.get("emoji", "")
+
             if doom_val >= 88:
-                atmosphere.append(f"Threat Clock {doom_val}% [IMMINENT] — about to break")
+                atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — about to break")
             elif doom_val >= 76:
-                atmosphere.append(f"Threat Clock {doom_val}% [CRISIS] — running out of time")
+                atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — running out of time")
             elif doom_val >= 63:
-                atmosphere.append(f"Threat Clock {doom_val}% [THREAT] — danger closing in")
+                atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — closing in")
             elif doom_val >= 50:
-                atmosphere.append(f"Threat Clock {doom_val}% [TENSION] — unease fills the air")
+                atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — tension fills the air")
             elif doom_val >= 38:
-                atmosphere.append(f"Threat Clock {doom_val}% [ALERT] — uneasy calm")
+                atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — uneasy calm")
             elif doom_val >= 25:
-                atmosphere.append(f"Threat Clock {doom_val}% [NEUTRAL] — equilibrium")
+                atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — equilibrium")
             elif doom_val >= 13:
-                atmosphere.append(f"Threat Clock {doom_val}% [STABLE] — relative safety")
+                atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — relative calm")
             else:
-                atmosphere.append(f"Threat Clock {doom_val}% [RELAXED] — threat has receded")
+                atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — tension has receded")
 
-        # Vigor = PC holistic resource (only when module active)
+        # Vigor + Composure = 2-axis PC state (only when module active)
         if "mental" in active_modules:
-            if mental_val <= 14:
-                atmosphere.append(f"Vigor COLLAPSE ({mental_val}%) — past the limit, body and mind breaking")
-            elif mental_val <= 39:
-                atmosphere.append(f"Vigor DEPLETED ({mental_val}%) — exhausted, everything is a struggle")
-            elif mental_val <= 69:
-                atmosphere.append(f"Vigor SHAKEN ({mental_val}%) — wavering, hard to focus")
+            if vigor_val <= 14:
+                atmosphere.append(f"Vigor COLLAPSE ({vigor_val}%) — past the limit, body breaking")
+            elif vigor_val <= 39:
+                atmosphere.append(f"Vigor DEPLETED ({vigor_val}%) — exhausted, body struggling")
+            elif vigor_val <= 69:
+                atmosphere.append(f"Vigor SHAKEN ({vigor_val}%) — wavering physically")
 
-        if m_trauma:
-            atmosphere.append("Trauma Awakening — rebirth from the brink")
+            if composure_val <= 14:
+                atmosphere.append(f"Composure COLLAPSE ({composure_val}%) — mind shattered")
+            elif composure_val <= 39:
+                atmosphere.append(f"Composure SHAKEN ({composure_val}%) — emotionally fragile")
+            elif composure_val <= 69:
+                atmosphere.append(f"Composure WAVERING ({composure_val}%) — mentally uneasy")
+
+        v_trauma = bus.vigor and bus.vigor.get("trauma_trigger")
+        c_trauma = bus.composure and bus.composure.get("trauma_trigger")
+        if v_trauma:
+            atmosphere.append("Vigor Trauma Awakening — physical rebirth from the brink")
+        if c_trauma:
+            atmosphere.append("Composure Trauma Awakening — mental rebirth from the brink")
 
         if atmosphere:
             directive_parts.append("[Atmosphere]: " + " / ".join(atmosphere))
+
+        # ── NPC Autonomous Behavior Triggers (Phase 7) ──
+        if bus.dai and bus.dai.get("psyche_states"):
+            from npc_autonomous import NPCAutonomousEngine
+            triggers = NPCAutonomousEngine.evaluate_triggers(
+                psyche_states=bus.dai.get("psyche_states", {}),
+                npc_knowledge=bus.dai.get("npc_knowledge", {}),
+                npc_attitudes=bus.dai.get("npc_attitudes", {}),
+                scene_type=bus.dai.get("scene_type", "normal"),
+            )
+            auto_directive = NPCAutonomousEngine.build_autonomous_directive(triggers)
+            if auto_directive:
+                directive_parts.append(auto_directive)
 
         # Fallbacks
         fallback_msg = self.pipeline.get_fallback_directives(context.request.active_modules)
@@ -548,7 +764,7 @@ class UniversalNarrativeEngine:
             "has_anomaly": bool(a_triggered),
             "anomaly_header": anomaly_sys.split("━━")[0] if anomaly_sys else "",
             "adaptation_line": result_line if a_triggered else "",
-            "mental_log": bus.mental.get("log", "") if bus.mental else "",
+            "mental_log": bus.vigor.get("log", "") if bus.vigor else "",
         }
 
     def _combine_batch_results(self, results: list, last_context) -> Dict[str, Any]:

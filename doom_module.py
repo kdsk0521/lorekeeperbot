@@ -62,28 +62,36 @@ class DoomModule:
             
             bus.doom["active"] = True
 
-        # 5. 기력 Pressure/Recovery from 8-Segment Doom Clock (FitD)
+        # 5. Vigor/Composure Pressure/Recovery from 8-Segment Doom Clock (FitD)
         if "mental" in context.request.active_modules:
             dv = bus.doom["value"]
             if dv >= 88:
-                pressure, label = -3, "⚠️ 위협 시계 [임박] (기력 -3)"
+                pressure, label = -3, "⚠️ 긴장 시계 [임박] (-3)"
             elif dv >= 76:
-                pressure, label = -2, "⚠️ 위협 시계 [위기] (기력 -2)"
+                pressure, label = -2, "⚠️ 긴장 시계 [위기] (-2)"
             elif dv >= 63:
-                pressure, label = -1, "😰 위협 시계 [위협] (기력 -1)"
+                pressure, label = -1, "😰 긴장 시계 [위협] (-1)"
             elif dv >= 50:
-                pressure, label = -1, "😰 위협 시계 [긴장] (기력 -1)"
+                pressure, label = -1, "😰 긴장 시계 [긴장] (-1)"
             elif dv >= 38:
-                pressure, label = 0, ""   # 경계 — 중립
+                pressure, label = 0, ""
             elif dv >= 25:
-                pressure, label = 0, ""   # 중립 — 자연회복 구간
+                pressure, label = 0, ""
             elif dv >= 13:
-                pressure, label = 1, "😌 위협 이완 [안정] (기력 +1)"
+                pressure, label = 1, "😌 긴장 이완 [안정] (+1)"
             else:
-                pressure, label = 2, "😌 위협 이완 [이완] (기력 +2)"
+                pressure, label = 2, "😌 긴장 이완 [이완] (+2)"
 
             if pressure != 0:
-                bus.mental["delta"] = bus.mental.get("delta", 0) + pressure
+                # Primary axis: 100%, Secondary axis: 50%
+                import config as _cfg
+                genre = context.request.genres.get("stage", "")
+                primary = _cfg.GENRE_PRIMARY_RESOURCE.get(genre, "vigor")
+                secondary = "composure" if primary == "vigor" else "vigor"
+                primary_bus = getattr(bus, primary)
+                secondary_bus = getattr(bus, secondary)
+                primary_bus["delta"] = primary_bus.get("delta", 0) + pressure
+                secondary_bus["delta"] = secondary_bus.get("delta", 0) + int(pressure * 0.5)
                 bus.doom["mental_pressure_log"] = label
-        
+
         return context

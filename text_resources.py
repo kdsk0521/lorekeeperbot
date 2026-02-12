@@ -1281,7 +1281,9 @@ format_per_gate: [Gate] PASS/FAIL: specific_evidence_from_planned_scene (NEVER o
 [Impersonation] PASS/FAIL: PC_dialogue/thought_source → from_input_or_invented
 [Spatial] PASS/FAIL: position/distance_check → consistent_or_not
 [NPC Identity] PASS/FAIL: NPC_name→profile_role_vs_scene_role → match_or_mismatch
-[CharReason] For_each_acting_NPC: origin→why_this_personality | relationship→to_stimulus_source | internal_state→physical+emotional | need_to_speak?→silence_may_be_better | if_speak→intent_of_line
+[CharReason] For_each_acting_NPC: origin→why_this_personality | relationship→to_stimulus_source | internal_state→physical+emotional | need_to_speak?→silence_may_be_better | if_speak→intent_of_line | deep_read→surface/adaptation/core_aligned? | polyvagal→body_signal_matches? | logos→which_layer_active? | attachment→proximity_behavior_consistent? | self_opacity→hidden_motive_leaking?
+[TheoryAlign] PASS/FAIL: Flash_data_reflected? | dual_signal(soma≠psyche)→shown_or_missed | cultural_affect→rendered_through_behavior_not_label | silence_type(間)→prose_rhythm_matches
+[GenreCoherence] PASS/FAIL: genre_tone_consistent? | doom_stage→meaning_matches_genre(horror=threat,romance=tension,comedy=chaos) | anomaly_axis→disruption_rendered_on_correct_resource(vigor_or_composure) | vigor/composure→character_state_visible_in_prose
 ┫
 
 gate_definitions:
@@ -1292,7 +1294,9 @@ gate_definitions:
 5. Impersonation: PC_dialogue_not_from_input?→HARD_DELETE | PC_action_expansion=OK_if_intent_consistent
 6. Spatial: positions+distances+line_of_sight=consistent? | gravity_applies
 7. NPC_Identity: every_NPC→role+location+occupation_must_match_PROFILE_DATA | "convenience_store_owner"≠"sharehouse_manager" | no_profile_for_location→NPC_absent | NEVER_invent_affiliations
-8. CharReason: for_each_acting_NPC→reason_through: personality_origin|relationship_to_PC|current_internal_state|must_speak_or_silence_better?|if_speak:what_intent? | archetype_default_reaction→FAIL | must_derive_from_THIS_character's_profile+current_context
+8. CharReason: for_each_acting_NPC→reason_through: personality_origin|relationship_to_PC|current_internal_state|must_speak_or_silence_better?|if_speak:what_intent? | verify: deep_read_alignment+polyvagal_body_signal+logos_layer+attachment_behavior+self_opacity_leak | archetype_default_reaction→FAIL | must_derive_from_THIS_character's_profile+current_context
+9. TheoryAlign: Flash_analysis_reflected_in_prose? | soma≠psyche(Cartesian_Dualism)→both_tracks_visible | cultural_affect→behavioral_not_labeled(한=sigh+endurance,정=food+staying,화병=chest+rage,눈치=hesitation,체면=deflection) | silence_type(間)→prose_rhythm_and_pacing_match | self_opacity→character_says_X_but_shows_Y
+10. GenreCoherence: prose_tone_matches_active_genre? | doom_meaning_correct(horror→existential_threat,romance→emotional_stakes,comedy→escalating_absurdity,noir→closing_trap) | anomaly_rendering_targets_correct_axis(vigor→physical_toll,composure→emotional_disruption) | vigor/composure_visible(low_vigor→sluggish_body,low_composure→trembling_voice_or_social_slip)
 
 output_rule: prose=sensory_organ_input_only | cognitive_processing_output=┣┫_exclusive
 """

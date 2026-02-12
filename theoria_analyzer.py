@@ -217,7 +217,7 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
 - "time_flow": {"ticks": 1-20, "reason": "Korean"}
 - "doom_relief": {"applicable": boolean, "amount": 0-20, "reason": "Korean"}
 - "mental_impact": {"applicable": boolean, "delta": -35~+20, "reason": "Korean"}
-- "anomaly_profile": {"trigger": str, "category": "supernatural/psychological/social/environmental/temporal", "intensity": "Low/Mid/High/Extreme", "polarity": "positive/negative/mixed", "line": "Korean - 이변의 서사적 묘사 1문장", "protective_item": str or null, "reason": "Korean"}
+- "anomaly_profile": {"trigger": str, "category": "supernatural/psychological/social/environmental/temporal", "intensity": "Low/Mid/High/Extreme", "polarity": "positive/negative/mixed", "disruption_axis": "vigor/composure/both (which PC resource axis this anomaly disrupts — Horror/Action→vigor, Romance/Social→composure, Extreme→both)", "theory_basis": "str — 방어에 적용되는 이론 (e.g. 'Continuum+TMT', 'Nunchi+Chaemyeon', 'Prospect+BATNA')", "defense_hint": "str — 이 이변에 대한 방어 힌트 1문장 (Korean)", "line": "Korean - 이변의 서사적 묘사 1문장", "protective_item": str or null, "reason": "Korean"}
 
 
 ## COGNITIVE ENHANCEMENT
@@ -339,16 +339,19 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
         return "\n".join(lines)
 
     def _build_mental_line(self, anchors: dict, bus) -> str:
-        """Mental 상태 라인 빌드 (솔로/다인 분기)"""
+        """Vigor/Composure 상태 라인 빌드 (솔로/다인 분기)"""
         all_pcs = anchors.get("all_pcs", {})
         if len(all_pcs) > 1:
             parts = []
             for uid, pc in all_pcs.items():
                 mask = pc.get("mask", "Unknown")
-                mental = pc.get("mental_value", 100)
-                parts.append(f"{mask}: {mental}")
-            return f"- **Mental (PC별)**: {' / '.join(parts)}"
-        return f"- **Mental (PC Mental Health)**: {bus.mental.get('value', 100)}"
+                vigor = pc.get("vigor_value", 100)
+                composure = pc.get("composure_value", 100)
+                parts.append(f"{mask}: 기력{vigor}/평정{composure}")
+            return f"- **Vigor/Composure (PC별)**: {' / '.join(parts)}"
+        vigor_val = bus.vigor.get('value', 100)
+        composure_val = bus.composure.get('value', 100)
+        return f"- **Vigor**: {vigor_val} | **Composure**: {composure_val}"
 
     def _build_npc_context(self, anchors: dict) -> str:
         """NPC 태도 + 지식 상태를 프롬프트에 포함"""
