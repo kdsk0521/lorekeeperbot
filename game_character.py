@@ -562,7 +562,7 @@ def get_status_summary(user_data: Dict[str, Any]) -> str:
     
     # [V3.0] 2. Vigor/Composure State
     vc_txt = get_vigor_composure_text(user_data)
-    parts.append(f"기력/평정(Vigor/Composure): {vc_txt}")
+    parts.append(f"기력/평정: {vc_txt}")
     
     # [Anti-Gravity] 3. Adaptation / Abnormal Exposure
     abnormal_txt = get_abnormal_context(user_data)

@@ -683,7 +683,7 @@ class UniversalNarrativeEngine:
             elif j_result == "critical_success":
                 aspects.append("Glory's Shadow")
         if a_triggered and primary_val <= 39:
-            erosion_label = "Vigor Erosion" if primary_axis == "vigor" else "Composure Fracture"
+            erosion_label = "기력 침식" if primary_axis == "vigor" else "평정 균열"
             aspects.append(erosion_label)
         if m_trauma and a_triggered:
             aspects.append("Inner-Outer Convergence")
@@ -730,25 +730,25 @@ class UniversalNarrativeEngine:
         # Vigor + Composure = 2-axis PC state (only when module active)
         if "mental" in active_modules:
             if vigor_val <= 14:
-                atmosphere.append(f"Vigor COLLAPSE ({vigor_val}%) — past the limit, body breaking")
+                atmosphere.append(f"기력 붕괴 ({vigor_val}%) — 한계를 넘어 신체가 무너진다")
             elif vigor_val <= 39:
-                atmosphere.append(f"Vigor DEPLETED ({vigor_val}%) — exhausted, body struggling")
+                atmosphere.append(f"기력 고갈 ({vigor_val}%) — 탈진으로 몸이 버거워진다")
             elif vigor_val <= 69:
-                atmosphere.append(f"Vigor SHAKEN ({vigor_val}%) — wavering physically")
+                atmosphere.append(f"기력 동요 ({vigor_val}%) — 신체 균형이 흔들린다")
 
             if composure_val <= 14:
-                atmosphere.append(f"Composure COLLAPSE ({composure_val}%) — mind shattered")
+                atmosphere.append(f"평정 붕괴 ({composure_val}%) — 정신이 무너진다")
             elif composure_val <= 39:
-                atmosphere.append(f"Composure SHAKEN ({composure_val}%) — emotionally fragile")
+                atmosphere.append(f"평정 동요 ({composure_val}%) — 감정이 취약해진다")
             elif composure_val <= 69:
-                atmosphere.append(f"Composure WAVERING ({composure_val}%) — mentally uneasy")
+                atmosphere.append(f"평정 흔들림 ({composure_val}%) — 내면이 불안정하다")
 
         v_trauma = bus.vigor and bus.vigor.get("trauma_trigger")
         c_trauma = bus.composure and bus.composure.get("trauma_trigger")
         if v_trauma:
-            atmosphere.append("Vigor Trauma Awakening — physical rebirth from the brink")
+            atmosphere.append("기력 트라우마 각성 — 벼랑 끝에서 신체가 재점화된다")
         if c_trauma:
-            atmosphere.append("Composure Trauma Awakening — mental rebirth from the brink")
+            atmosphere.append("평정 트라우마 각성 — 붕괴 직전에서 정신이 재기동된다")
 
         if atmosphere:
             directive_parts.append("[Atmosphere]: " + " / ".join(atmosphere))

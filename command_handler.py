@@ -947,7 +947,12 @@ async def cmd_toggle_anomaly(ctx: CommandContext) -> None:
     msg += f"\n\n사용법: `!이변 on/off`"
     await ctx.send(msg)
 
-@registry.register("mental_mod", category="System", aliases=["멘탈모듈", "기력모듈", "mentalmod"], description="기력 모듈 제어")
+@registry.register(
+    "기력모듈",
+    category="System",
+    aliases=["멘탈모듈", "mentalmod", "mental_mod", "vigor_mod", "기력mod"],
+    description="기력 모듈 제어"
+)
 async def cmd_toggle_mental(ctx: CommandContext) -> None:
     await _handle_module_toggle(ctx, "mental", "기력")
 
@@ -1149,7 +1154,12 @@ async def cmd_ooc(ctx: CommandContext) -> None:
     else:
         await ctx.send("🎭 **루카 모드 OFF** — 서사 모드로 복귀합니다.")
 
-@registry.register("mental", category="Player", aliases=["멘탈", "기력"], description="기력/평정 조회 및 설정")
+@registry.register(
+    "기력",
+    category="Player",
+    aliases=["멘탈", "mental", "vigor"],
+    description="기력/평정 조회 및 설정"
+)
 async def cmd_mental(ctx: CommandContext) -> None:
     """!기력 [기력값] [평정값] - 기력/평정 수치 설정 (0-100)"""
     uid = ctx.user_id
