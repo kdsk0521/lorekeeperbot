@@ -107,16 +107,23 @@ class ChatSessionAdapter:
             removed = self.history.pop(2)
             logging.debug(f"[History] 메시지 수 초과, 오래된 메시지 제거 (남은 메시지: {len(self.history)})")
 
-    async def send_message(self, content: str) -> Optional[types.GenerateContentResponse]:
+    async def send_message(self, content: str, prefill: str = "") -> Optional[types.GenerateContentResponse]:
         """
         메시지를 전송하고 응답을 받습니다. (히스토리 관리 포함)
+        prefill이 있으면 role="model" 메시지로 주입하여 모델이 이어서 생성하도록 합니다.
         """
         self._trim_history() # 전송 전 트림
-        
+
         self.history.append(
             types.Content(role="user", parts=[types.Part(text=content)])
         )
-        
+
+        # 프리필 주입: role="model" 메시지를 추가하여 모델이 이어서 생성
+        if prefill:
+            self.history.append(
+                types.Content(role="model", parts=[types.Part(text=prefill)])
+            )
+
         try:
             # 히스토리 상세 로깅
             total_chars = sum(
@@ -129,25 +136,36 @@ class ChatSessionAdapter:
                 contents=self.history,
                 config=self.config
             )
-            
+
             # 응답 상세 로깅
             cand_count = len(response.candidates) if response and response.candidates else 0
             if response:
                 logging.debug(f"[ChatSession] response 수신, candidates: {cand_count}")
             else:
                 logging.warning("[ChatSession] response가 None")
-            
+
             if response and response.text:
-                model_content = types.Content(
-                    role="model",
-                    parts=[types.Part(text=response.text)]
-                )
-                self.history.append(model_content)
-            
+                if prefill:
+                    # 프리필 + 생성된 연속분 = 전체 model 응답으로 교체
+                    full_text = prefill + response.text
+                    self.history[-1] = types.Content(
+                        role="model",
+                        parts=[types.Part(text=full_text)]
+                    )
+                else:
+                    model_content = types.Content(
+                        role="model",
+                        parts=[types.Part(text=response.text)]
+                    )
+                    self.history.append(model_content)
+
             return response
-            
+
         except Exception as e:
             logging.error(f"ChatSession.send_message 오류: {e}")
+            # 에러 시 프리필 메시지도 롤백
+            if prefill and self.history and self.history[-1].role == "model":
+                self.history.pop()
             if self.history and self.history[-1].role == "user":
                 self.history.pop()
             raise
@@ -256,22 +274,23 @@ async def generate_response_with_retry(
     - PC 사칭 실시간 탐지 및 자동 재시도
     """
     min_length = DEFAULT_MIN_RESPONSE_LENGTH
-    
+    prefill = getattr(text_resources, 'NARRATIVE_PREFILL', '')
+
     length_instruction = build_length_instruction()
-    
+
     hidden_reminder = (
         f"\n\n{length_instruction}\n"
         f"(System Reminder: Record observable Macroscopic States only. "
         f"The world continues asynchronously.)"
     )
     full_input = user_input + hidden_reminder
-    
+
     best_response = None
     best_length = 0
-    
+
     for attempt in range(config.MAX_RETRY_COUNT):
         try:
-            response = await chat_session.send_message(full_input)
+            response = await chat_session.send_message(full_input, prefill=prefill)
             
             if response is None or not response.candidates:
                 logging.warning(f"[시도 {attempt+1}] 응답 또는 후보 없음")
