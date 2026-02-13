@@ -85,6 +85,61 @@ class JudgmentEngine:
 
         return max(-20, min(20, mod))
 
+    @staticmethod
+    def _calculate_aspect_mod(context: GameContext) -> int:
+        """Aspects(for/against) 기반 보정. 구조화 데이터 없으면 0."""
+        import config as _cfg
+        aspects = context.shared_bus.dai.get("aspects", [])
+        if not isinstance(aspects, list):
+            return 0
+
+        for_count = 0
+        against_count = 0
+        for aspect in aspects:
+            if not isinstance(aspect, dict):
+                continue
+            stance = str(aspect.get("for_or_against", aspect.get("stance", ""))).strip().lower()
+            if stance in ("for", "support", "positive", "pro"):
+                for_count += 1
+            elif stance in ("against", "oppose", "negative", "con"):
+                against_count += 1
+
+        raw = (for_count - against_count) * int(getattr(_cfg, "ASPECT_VALUE", 5))
+        cap = int(getattr(_cfg, "MOD_SOURCE_CAPS", {}).get("aspect", 20))
+        return max(-cap, min(cap, raw))
+
+    @staticmethod
+    def _calculate_status_mod(context: GameContext) -> int:
+        """Status effect modifiers based on action_meta.type."""
+        import config as _cfg
+        from game_character import normalize_status_effects
+
+        status_effects = (context.narrative_anchors or {}).get("status_effects", [])
+        effects = normalize_status_effects(status_effects)
+
+        action_meta = context.shared_bus.dai.get("action_meta", {})
+        action_type = str(action_meta.get("type") or action_meta.get("action_type") or "").strip().lower()
+
+        total = 0
+        for eff in effects:
+            if not isinstance(eff, dict):
+                continue
+            mods = eff.get("modifiers")
+            if not isinstance(mods, dict):
+                continue
+            if action_type:
+                type_key = f"judgment_{action_type}"
+                if type_key in mods:
+                    total += mods[type_key]
+                elif "judgment" in mods:
+                    total += mods["judgment"]
+            else:
+                if "judgment" in mods:
+                    total += mods["judgment"]
+
+        cap = int(getattr(_cfg, "MOD_SOURCE_CAPS", {}).get("status", 20))
+        return max(-cap, min(cap, total))
+
     async def process(self, context: GameContext) -> GameContext:
         bus = context.shared_bus
         if not bus.judgment.get("active"):
@@ -152,21 +207,16 @@ class JudgmentEngine:
                 passive_mod += mods["judgment"]
         passive_mod = max(-20, min(20, passive_mod))
 
+        # 2.6 Status Modifiers (status_effects)
+        status_mod = self._calculate_status_mod(context)
+
         # 3. Roll Dice
         roll = random.randint(1, 100)
-        eval_bonus = eval_data.get("bonus", 0)
-        eval_penalty = eval_data.get("penalty", 0)
-
-        final_roll = roll + eval_bonus - eval_penalty + mental_mod + doom_mod + theory_mod + passive_mod + dai_bonus - dai_penalty
+        aspect_mod = self._calculate_aspect_mod(context)
+        final_roll = roll + mental_mod + doom_mod + theory_mod + passive_mod + status_mod + aspect_mod + dai_bonus - dai_penalty
         
         # 4. Determine Result
         result = "failure"
-        # Heroism/Calamity Impact (Natural Roll)
-        if roll >= 96:
-            bus.doom["delta"] = bus.doom.get("delta", 0) - 5
-        elif roll <= 5:
-            bus.doom["delta"] = bus.doom.get("delta", 0) + 5
-
         # Success/Failure/Critical logic
         if roll >= 96: 
             result = "critical_success"
@@ -176,11 +226,11 @@ class JudgmentEngine:
                 result = "failure"
             else:
                 result = "critical_failure"
-        elif final_roll >= dc + 30:
+        elif final_roll >= dc + 20:
             result = "critical_success"
         elif final_roll >= dc: 
             result = "success"
-        elif final_roll >= dc - 30: 
+        elif final_roll >= dc - 15: 
             result = "partial"
         
         # 5. Store Result
@@ -217,6 +267,10 @@ class JudgmentEngine:
             modifications.append({"label": "심리상태", "value": theory_mod})
         if passive_mod != 0:
             modifications.append({"label": "특질", "value": passive_mod})
+        if status_mod != 0:
+            modifications.append({"label": "상태", "value": status_mod})
+        if aspect_mod != 0:
+            modifications.append({"label": "면모", "value": aspect_mod})
 
         mod_parts = []
         for m in modifications:

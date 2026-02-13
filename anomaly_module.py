@@ -143,22 +143,9 @@ class AnomalyModule:
         return {"success": defense_roll <= success_rate, "roll": defense_roll, "rate": success_rate}
 
     def _calculate_trigger_chance(self, context: GameContext, mechanic: dict) -> float:
-        """장르별 이변 트리거 확률 계산."""
-        bus = context.shared_bus
-        doom_val = bus.doom.get("value", 0)
-
-        if "doom" not in context.request.active_modules:
-            return 15.0
-
-        base_chance = 5 + (doom_val * 0.7)
-
-        # 장르별 트리거 보너스 (legacy config fallback)
-        primary_lens = mechanic.get("primary_lens", "")
-        genre_config = _cfg.GENRE_DISRUPTION_AXIS.get(primary_lens, {})
-        trigger_bonus = genre_config.get("trigger_bonus", 0)
-        base_chance += trigger_bonus
-
-        return max(5.0, min(95.0, base_chance))
+        """v3: 이변 트리거 확률은 둠과 무관한 고정값."""
+        _ = (context, mechanic)  # kept for interface stability
+        return float(getattr(_cfg, "ANOMALY_BASE_CHANCE", 15.0))
 
     async def process(self, context: GameContext) -> GameContext:
         bus = context.shared_bus
@@ -187,11 +174,6 @@ class AnomalyModule:
         intensity = self._normalize_intensity(bus.anomaly.get("intensity", "Mid"))
         polarity = self._normalize_polarity(bus.anomaly.get("polarity"))
 
-        # 판정 대실패 → 이변 강도 1단계 상승 (유기적 연결)
-        if bus.judgment.get("active") and bus.judgment.get("result") == "critical_failure":
-            escalation = {"Low": "Mid", "Mid": "High", "High": "Extreme"}
-            intensity = escalation.get(intensity, intensity)
-            bus.anomaly["escalated"] = True
         category = bus.anomaly.get("category") or tag
         bus.anomaly["category"] = category
         bus.anomaly["intensity"] = intensity
@@ -227,16 +209,8 @@ class AnomalyModule:
         elif polarity == "mixed":
             base_dmg = int(base_dmg * 0.5)
 
-        # Special Outcomes (영감/쇼크)
+        # Outcome hooks (reserved for v3 matrix expansion)
         outcome_msg = ""
-        if roll >= 90:
-            outcome_msg = " [✨영감]"
-            base_dmg = -10
-            bus.doom["delta"] = bus.doom.get("delta", 0) - 3
-        elif roll <= 10:
-            outcome_msg = " [⚠️쇼크]"
-            base_dmg += 15
-            bus.doom["delta"] = bus.doom.get("delta", 0) + 2
 
         # Adaptation Mitigation (100% = 0 damage)
         mitigation = adapt_old_pct / 100.0

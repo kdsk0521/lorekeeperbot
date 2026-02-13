@@ -47,14 +47,15 @@ class WaterfallPipeline:
             bus.composure["active"] = False
 
     async def execute(self, context: GameContext) -> GameContext:
-        """Analysis -> Judgment -> Doom -> Anomaly -> Mental
+        """Analysis -> Mental(pre) -> Anomaly -> Doom -> Mental(sync) -> Judgment
 
         Data-flow map (SharedBus ownership):
-        - Theoria: bus.judgment.meta/eval/modifications/narrative_hook, bus.doom.relief, bus.mental.impact
-        - Judgment: bus.judgment.result/roll/output/reason
-        - Doom: bus.doom.value/delta/log (+ bus.mental.delta via pressure/recovery)
-        - Anomaly: bus.anomaly.triggered/tag/intensity
-        - Mental: bus.mental.value/log/trauma_trigger
+        - Theoria: bus.judgment.meta/eval/modifications/narrative_hook, bus.doom.relief, bus.vigor/composure.impact
+        - Mental(pre): stage snapshot only (no delta consumption)
+        - Anomaly: bus.anomaly.triggered/tag/intensity, writes vigor/composure delta
+        - Doom: bus.doom.value/delta/log, may write vigor/composure pressure delta
+        - Mental(sync): consumes accumulated deltas and syncs axis values
+        - Judgment(last): resolves action from updated state
         """
         
         active_modules = context.request.active_modules
@@ -129,10 +130,17 @@ class WaterfallPipeline:
         # Vigor/Composure Impact 연동
         mental_impact = analysis.get("mental_impact") or {}
         if mental_impact.get("applicable", False):
-            # Route to primary axis based on genre
-            mechanic = context.request.genres.get("mechanic", {})
-            primary = mechanic.get("primary_resource") or "vigor"
-            getattr(bus, primary)["impact"] = mental_impact
+            # v3 schema: explicit 2-axis deltas
+            if "vigor_delta" in mental_impact or "composure_delta" in mental_impact:
+                v_delta = int(mental_impact.get("vigor_delta", 0) or 0)
+                c_delta = int(mental_impact.get("composure_delta", 0) or 0)
+                bus.vigor["impact"] = {"applicable": True, "delta": v_delta, "reason": mental_impact.get("reason", "")}
+                bus.composure["impact"] = {"applicable": True, "delta": c_delta, "reason": mental_impact.get("reason", "")}
+            else:
+                # Legacy fallback: single delta -> route to primary axis
+                mechanic = context.request.genres.get("mechanic", {})
+                primary = mechanic.get("primary_resource") or "vigor"
+                getattr(bus, primary)["impact"] = mental_impact
 
         # Anomaly Profile 연동
         anomaly_profile = analysis.get("anomaly_profile") or {}
@@ -193,20 +201,13 @@ class WaterfallPipeline:
         if bus.anomaly.get("tag") and not bus.anomaly.get("line"):
             bus.anomaly["line"] = f"{bus.anomaly['tag']}의 기운이 감돈다."
 
-        # 2. Call 2: Judgment (Conditional)
-        if "judgment" in active_modules and context.shared_bus.judgment["active"]:
-            from judgment_engine import JudgmentEngine
-            self.judgment = JudgmentEngine(self.theoria.client, self.theoria.model_id)
-            context = await self.judgment.process(context)
+        # 2. Mental Pre-pass (Conditional): annotate current stage for downstream modules.
+        if "mental" in active_modules:
+            from vigor_composure_module import VigorComposureModule
+            self.vigor_composure = VigorComposureModule()
+            context = await self.vigor_composure.prime(context)
 
-        # 3. Doom Update (Conditional)
-        if "doom" in active_modules:
-            from doom_module import DoomModule
-            self.doom = DoomModule()
-            context = await self.doom.process(context)
-
-        # Anomaly potential: always eligible when module is ON.
-        # trigger_chance in AnomalyModule handles Doom-based probability scaling.
+        # 3. Anomaly Potential (Conditional)
         if "anomaly" in active_modules:
             bus.anomaly["potential"] = True
 
@@ -216,7 +217,7 @@ class WaterfallPipeline:
             self.anomaly = AnomalyModule(self.theoria.client, self.theoria.model_id)
             context = await self.anomaly.process(context)
 
-        # 4a. Post-Anomaly Doom Sync (Anomaly writes doom.delta for inspiration/shock)
+        # 4a. Post-Anomaly Doom Sync (reserved hook: anomaly may write doom delta)
         post_delta = bus.doom.get("delta", 0)
         if post_delta != 0:
             old_val = bus.doom.get("value", 0)
@@ -230,11 +231,23 @@ class WaterfallPipeline:
             else:
                 bus.doom["log"] = f"📈 긴장도 변동 (이변 {sign})" if post_delta > 0 else f"📉 긴장도 변동 (이변 {sign})"
 
-        # 5. Vigor/Composure Sync (Conditional)
+        # 5. Doom Update (Conditional)
+        if "doom" in active_modules:
+            from doom_module import DoomModule
+            self.doom = DoomModule()
+            context = await self.doom.process(context)
+
+        # 6. Vigor/Composure Sync (Conditional)
         if "mental" in active_modules:
             from vigor_composure_module import VigorComposureModule
             self.vigor_composure = VigorComposureModule()
             context = await self.vigor_composure.process(context)
+
+        # 7. Call 2: Judgment (Conditional, LAST)
+        if "judgment" in active_modules and context.shared_bus.judgment["active"]:
+            from judgment_engine import JudgmentEngine
+            self.judgment = JudgmentEngine(self.theoria.client, self.theoria.model_id)
+            context = await self.judgment.process(context)
 
         return context
 

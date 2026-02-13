@@ -131,10 +131,11 @@ async def cmd_lore(ctx: CommandContext) -> None:
              await ctx.send("📜 로어 없음. `!로어 [내용]` 입력.")
              return
              
-        genres = domain_manager.get_active_genres(channel_id)
+        genres = domain_manager.get_active_genre_list(channel_id)
         tone = domain_manager.get_custom_tone(channel_id)
-        
-        msg = f"📜 **로어 정보**\nLength: {len(lore):,} chars\nNPCs: {len(npcs)}명\nGenres: {', '.join(genres)}"
+
+        genre_text = ", ".join(genres) if genres else "none"
+        msg = f"📜 **로어 정보**\nLength: {len(lore):,} chars\nNPCs: {len(npcs)}명\nGenres: {genre_text}"
         if tone: msg += f"\nTone: {tone}"
         
         # [MODIFIED] Show ALL NPCs (Name Only)
@@ -364,6 +365,8 @@ async def cmd_info(ctx: CommandContext) -> None:
     if appearance: msg.append(f"**외모:** {appearance}")
     if description: msg.append(f"**설명:** {description}")
     if background: msg.append(f"**배경:** {background}")
+    status_text = game_character.format_status_effects(p_data.get("status_effects", [])) or "정상"
+    msg.append(f"**상태:** {status_text}")
     
     # 2. Relations (NPC/Colleague)
     # This might be in 'relations' key in memory or external

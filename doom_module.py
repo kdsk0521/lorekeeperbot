@@ -1,6 +1,6 @@
 """
 Lorekeeper UNE - Doom Module
-Manages world tension and mechanical side-effects of judgment results.
+Manages world tension updates and Doom-side pressures.
 """
 
 from typing import TYPE_CHECKING
@@ -12,21 +12,22 @@ class DoomModule:
     def __init__(self):
         pass
 
+    @staticmethod
+    def _clock_complete_delta(segments: int) -> int:
+        """완성 시 글로벌 둠 변화량(단순 매핑)."""
+        if segments <= 4:
+            return 10
+        if segments <= 6:
+            return 15
+        return 20
+
     async def process(self, context: "GameContext") -> "GameContext":
         bus = context.shared_bus
         current_doom = bus.doom.get("value", 0)
         
-        # 1. Consume pre-existing doom delta (Judgment heroism/calamity: ±5)
+        # 1. Consume pre-existing doom delta
         delta = bus.doom.get("delta", 0)
 
-        # 1a. Judgment result-based doom change
-        judgment = bus.judgment
-        if judgment.get("active"):
-            res = judgment.get("result")
-            if res == "critical_failure": delta += 5
-            elif res == "failure": delta += 2
-            elif res == "critical_success": delta -= 3
-        
         # 2. AI-Analyzed Doom Relief
         relief_data = bus.doom.get("relief", {})
         if relief_data.get("applicable", False):
@@ -34,6 +35,36 @@ class DoomModule:
             relief_reason = relief_data.get("reason", "")
             delta -= relief_amount  # Reduce Doom
             bus.doom["relief_log"] = f"🌿 긴장 완화: -{relief_amount} ({relief_reason})"
+
+        # 2a. Local doom clocks (time/hybrid auto-tick)
+        clocks = bus.doom.get("clocks", [])
+        clock_events = []
+        if isinstance(clocks, list):
+            for clock in clocks:
+                if not isinstance(clock, dict):
+                    continue
+                if clock.get("resolved"):
+                    continue
+                segments = int(clock.get("segments", 4) or 4)
+                progress = int(clock.get("progress", 0) or 0)
+                tick_mode = str(clock.get("tick_mode", "action")).lower()
+
+                if tick_mode in ("time", "hybrid"):
+                    new_progress = min(segments, progress + 1)
+                    if new_progress != progress:
+                        clock["progress"] = new_progress
+                        name = clock.get("name", "Unnamed Clock")
+                        clock_events.append(f"{name}: {progress}->{new_progress}/{segments}")
+
+                if clock.get("progress", 0) >= segments:
+                    clock["resolved"] = True
+                    name = clock.get("name", "Unnamed Clock")
+                    delta += self._clock_complete_delta(segments)
+                    clock_events.append(f"{name}: COMPLETE (+doom)")
+
+            bus.doom["clocks"] = clocks
+            if clock_events:
+                bus.doom["clock_log"] = " | ".join(clock_events)
             
         # 3. Update Bus
         bus.doom["delta"] = 0  # Consumed — Anomaly can write fresh delta after this
@@ -47,22 +78,7 @@ class DoomModule:
             else:
                 bus.doom["log"] = f"📉 긴장도 감소 ({delta})"
                 
-        # 4. Entropy & Rubber-banding (Minimum Tension Floor)
-        # If doom is below 20, it naturally rises (+2) to maintain tension
-        if bus.doom["value"] < 20:
-            old_val = bus.doom["value"]
-            bus.doom["value"] = min(20, bus.doom["value"] + 2)
-            entropy_delta = bus.doom["value"] - old_val
-            
-            # Integrate entropy into existing log or create new one
-            if bus.doom.get("log"):
-                bus.doom["log"] += f" (엔트로피 +{entropy_delta})"
-            else:
-                bus.doom["log"] = f"📈 긴장도 증가 (+{entropy_delta}, 엔트로피)"
-            
-            bus.doom["active"] = True
-
-        # 5. Vigor/Composure Pressure/Recovery from 8-Segment Doom Clock (FitD)
+        # 4. Vigor/Composure Pressure/Recovery from 8-Segment Doom Clock (FitD)
         if "mental" in context.request.active_modules:
             dv = bus.doom["value"]
             if dv >= 88:

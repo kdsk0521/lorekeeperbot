@@ -98,6 +98,19 @@ def advance_tick(channel_id: str, ticks: int = 1) -> str:
     domain_manager.update_world_state(channel_id, world)
     return f"⏳ {minutes}분이 흘렀다..."
 
+def increment_turn_index(channel_id: str, delta: int = 1) -> int:
+    """Turn index increments once per UNE run/batch/observation."""
+    world = domain_manager.get_world_state(channel_id)
+    current = world.get("turn_index", 0)
+    try:
+        current = int(current)
+    except (TypeError, ValueError):
+        current = 0
+    step = max(0, int(delta))
+    world["turn_index"] = current + step
+    domain_manager.update_world_state(channel_id, world)
+    return world["turn_index"]
+
 # =========================================================
 # DOOM SYSTEM
 # =========================================================
@@ -143,6 +156,26 @@ def _get_doom_description(doom: int) -> str:
     info = get_doom_info(doom)
     return f"{info['emoji']} {info['name']}"
 
+def _format_doom_clocks(world: Dict[str, Any], limit: int = 3) -> str:
+    clocks = world.get("doom_clocks", [])
+    if not isinstance(clocks, list) or not clocks:
+        return "None"
+
+    items = []
+    for clock in clocks:
+        if not isinstance(clock, dict):
+            continue
+        if clock.get("resolved"):
+            continue
+        name = clock.get("name", "Unnamed")
+        seg = int(clock.get("segments", 4) or 4)
+        prog = int(clock.get("progress", 0) or 0)
+        items.append(f"{name} ({prog}/{seg})")
+        if len(items) >= limit:
+            break
+
+    return ", ".join(items) if items else "None"
+
 def get_world_context(channel_id: str) -> str:
     world = domain_manager.get_world_state(channel_id)
     if not world: return ""
@@ -157,6 +190,7 @@ def get_world_context(channel_id: str) -> str:
         f"- 시간: {world.get('day', 1)}일차, {world.get('time_slot', '오후')}",
         f"- 날씨: {world.get('weather', '맑음')}",
         f"- 위기 수치: {world.get('doom', 0)}% ({_get_doom_description(world.get('doom', 0))})",
+        f"- 위협 시계: {_format_doom_clocks(world)}",
         f"- **파티 분위기**: {party_context}",
     ]
 
@@ -199,6 +233,9 @@ def get_doom_forecast(channel_id: str) -> str:
     bar = _get_doom_bar(current)
     
     msg = f"🛡️ **위기 예보**\n{bar} {info['emoji']} **{info['name']}**\n"
+    clocks_txt = _format_doom_clocks(world, limit=5)
+    if clocks_txt and clocks_txt != "None":
+        msg += f"\n⏰ **위협 시계**: {clocks_txt}\n"
     
     if current >= config.DOOM_THRESHOLD_CRITICAL:
         msg += "⚠️ **경고:** 파멸이 임박했습니다. 모든 행동에 위험이 따릅니다."

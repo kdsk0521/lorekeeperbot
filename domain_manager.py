@@ -491,10 +491,66 @@ def set_custom_rules_from_file(channel_id: str, content: str) -> None:
     d["settings"]["growth_system"] = "custom"
     save_domain(channel_id, d)
 
-def get_active_genres(channel_id: str) -> List[str]:
+def _coerce_genre_list(value: Any) -> List[str]:
+    """str/list 기반 장르 값을 List[str]로 정규화."""
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+
+    out: List[str] = []
+    for item in value:
+        s = str(item).strip()
+        if not s or s in out:
+            continue
+        out.append(s)
+    return out
+
+
+def normalize_active_genres(genres_raw: Any) -> List[str]:
+    """active_genres(raw)를 평탄한 List[str]로 정규화.
+    지원 형식:
+    - "noir"
+    - ["noir", "romance"]
+    - {"stage"/"flavor"/"lens": [...]}
+    - {"layers": {"world_setting"/"style_tech"/"narrative_tone": [...]}, ...}
+    """
+    if isinstance(genres_raw, (str, list)):
+        return _coerce_genre_list(genres_raw)
+
+    if isinstance(genres_raw, dict):
+        merged: List[str] = []
+
+        layers = genres_raw.get("layers", {})
+        if isinstance(layers, dict):
+            for key in ("world_setting", "style_tech", "narrative_tone"):
+                for genre in _coerce_genre_list(layers.get(key, [])):
+                    if genre not in merged:
+                        merged.append(genre)
+            if merged:
+                return merged
+
+        for key in ("stage", "flavor", "lens"):
+            for genre in _coerce_genre_list(genres_raw.get(key, [])):
+                if genre not in merged:
+                    merged.append(genre)
+        if merged:
+            return merged
+
+    return ["noir"]
+
+
+def get_active_genres(channel_id: str) -> Any:
+    """세션에 저장된 active_genres 원본 값을 반환."""
     return get_domain(channel_id).get("active_genres", ["noir"])
 
-def set_active_genres(channel_id: str, genres: List[str]) -> None:
+
+def get_active_genre_list(channel_id: str) -> List[str]:
+    """active_genres를 표시/프롬프트용 List[str]로 반환."""
+    return normalize_active_genres(get_active_genres(channel_id))
+
+
+def set_active_genres(channel_id: str, genres: Any) -> None:
     d = get_domain(channel_id)
     d["active_genres"] = genres
     save_domain(channel_id, d)
@@ -825,7 +881,8 @@ def get_unified_player_info(channel_id: str, user_id: str) -> str:
 
     # 2. Status Effects
     status_effects = p.get("status_effects", [])
-    status_text = ", ".join(status_effects) if status_effects else "Healthy (Normal)"
+    from game_character import format_status_effects
+    status_text = format_status_effects(status_effects) or "Healthy (Normal)"
 
     # 3. Passives (Traits)
     passives = mem.get("passives", [])
@@ -885,7 +942,13 @@ Only describe the world's reaction to {name}.
 # =========================================================
 
 def get_world_state(channel_id: str) -> Dict[str, Any]:
-    return get_domain(channel_id).get("world_state", config.DEFAULT_WORLD_STATE.copy())
+    ws = get_domain(channel_id).get("world_state", config.DEFAULT_WORLD_STATE.copy())
+    # Backfill new fields for legacy sessions
+    if "doom_clocks" not in ws or not isinstance(ws.get("doom_clocks"), list):
+        ws["doom_clocks"] = []
+    if "turn_index" not in ws or not isinstance(ws.get("turn_index"), int):
+        ws["turn_index"] = 0
+    return ws
 
 def update_world_state(channel_id: str, state: Dict[str, Any]) -> None:
     d = get_domain(channel_id)
@@ -1033,7 +1096,7 @@ def get_pending_actions(channel_id: str) -> Dict[str, Dict]:
 def get_party_status_context(channel_id: str) -> str:
     participants = get_domain(channel_id).get("participants", {})
     if not participants: return "Active Players: None"
-    
+    from game_character import format_status_effects
     active = []
     for _, p in participants.items():
         if p.get("status") != "active": continue
@@ -1041,7 +1104,7 @@ def get_party_status_context(channel_id: str) -> str:
         mem = p.get("ai_memory", {})
         mask = p.get("mask", "Unknown")
         look = mem.get("appearance", "Unknown")[:50]
-        cond = ", ".join(p.get("status_effects", [])) or "Normal"
+        cond = format_status_effects(p.get("status_effects", [])) or "Normal"
         active.append(f"[{mask}] Look:{look}, Cond:{cond}")
         
     return "### PARTY\n" + "\n".join(active) if active else "All players inactive."

@@ -34,6 +34,32 @@ class TheoriaAnalyzer:
         self.client = client
         self.model_id = model_id
 
+    @staticmethod
+    def _extract_active_genres(genres: Any) -> list:
+        """RequestData.genres(dict)에서 이론 강조용 장르 리스트를 추출."""
+        if isinstance(genres, str):
+            genres = [genres]
+        if isinstance(genres, list):
+            out = [str(g).strip() for g in genres if str(g).strip()]
+            return out or ["modern", "drama"]
+
+        if isinstance(genres, dict):
+            out = []
+            for key in ("stage", "flavor", "lens"):
+                val = genres.get(key, [])
+                if isinstance(val, str):
+                    val = [val]
+                if not isinstance(val, list):
+                    continue
+                for item in val:
+                    s = str(item).strip()
+                    if not s or s in out:
+                        continue
+                    out.append(s)
+            return out or ["modern", "drama"]
+
+        return ["modern", "drama"]
+
     async def analyze_input(self, context: GameContext) -> Dict[str, Any]:
         """전체 분석을 수행하고 결과를 반환합니다."""
         if not self.client:
@@ -44,7 +70,7 @@ class TheoriaAnalyzer:
         # Extract genre and scene context for conditional loading
         req = context.request
         anchors = context.narrative_anchors
-        active_genres = req.genres if isinstance(req.genres, list) else ["modern", "drama"]
+        active_genres = self._extract_active_genres(req.genres)
         scene_context = {
             "scene_type": anchors.get("scene_type", "normal"),
             "intimate_module": True,
@@ -152,7 +178,7 @@ Return valid JSON with ALL these fields (Korean values where specified):
 ## STAKES & ENVIRONMENT
 - "Position": {"value": 0.0-1.0, "reason": "Korean - 왜 이 위치인지"}
 - "Effect": {"value": 0.0-1.0, "reason": "Korean - 잠재적 영향력"}
-- "Aspects": ["Korean aspect - 활용 가능성 포함 (Objective Correlative + 象 Image 적용)", ...]
+- "Aspects": [{"text": "Korean aspect", "for_or_against": "for/against", "reason": "Korean"}, ...]
 
 
 ## CHARACTER ANALYSIS (psyche_states)
@@ -202,12 +228,11 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
 
 ## JUDGMENT SUPPORT
 - "needs_judgment": boolean
-- "action_meta": {"action": "Korean", "difficulty": "easy/normal/hard/extreme"}
+- "action_meta": {"action": "Korean", "type": "combat/social/exploration/stealth/survival/crafting/general", "resource_axis": "vigor/composure/both", "difficulty": "easy/normal/hard/extreme"}
 - "asset_evaluation": {
-    "bonus": int (max 60),
-    "penalty": int (max 40),
     "reason": "Korean",
     "modifications": [{"label": "Korean", "value": int}],
+    "memo_relevant": ["Korean short note", ...],
     "defense_success": boolean
   }
 
@@ -216,7 +241,7 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
 - "narrative_hook": str (Korean - 실패/부분성공 시 트위스트. Scheherazade 준수.)
 - "time_flow": {"ticks": 1-20, "reason": "Korean"}
 - "doom_relief": {"applicable": boolean, "amount": 0-20, "reason": "Korean"}
-- "mental_impact": {"applicable": boolean, "delta": -35~+20, "reason": "Korean"}
+- "mental_impact": {"applicable": boolean, "vigor_delta": -35~+20, "composure_delta": -35~+20, "reason": "Korean"}
 - "anomaly_profile": {"trigger": str, "category": "supernatural/psychological/social/environmental/temporal", "intensity": "Low/Mid/High/Extreme", "polarity": "positive/negative/mixed", "disruption_axis": "vigor/composure/both (which PC resource axis this anomaly disrupts — Horror/Action→vigor, Romance/Social→composure, Extreme→both)", "adaptation_group": ["1-3 items from ADAPTATION_TAXONOMY: undead/dragon/eldritch/cursed/spirit/divine/demonic/shapeshifter/fear/deception/exposure/betrayal/madness/guilt/obsession/encounter/jealousy/intimacy/separation/rivalry/loyalty/timing/cascade/authority/environment/resource/crowd/evidence/surveillance/leak/secret/misinformation"], "theory_basis": "str — 방어에 적용되는 이론 (e.g. 'Continuum+TMT', 'Nunchi+Chaemyeon', 'Prospect+BATNA')", "defense_hint": "str — 이 이변에 대한 방어 힌트 1문장 (Korean)", "line": "Korean - 이변의 서사적 묘사 1문장", "protective_item": str or null, "reason": "Korean"}
 
 
@@ -283,6 +308,8 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
     "plausibility": "plausible/stretch/impossible",
     "relevant_passive": "passive name or null",
     "tier": "trivial/standard/bold",
+    "vigor_ratio": 0.0~1.0,
+    "composure_ratio": 0.0~1.0,
     "reason": "Korean"
   }
 
@@ -492,7 +519,7 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
         return f"""### 5b. PENDING FLASHBACK DECLARATION
 The player explicitly declared a flashback via !회상 command:
 "{content}"
-Evaluate this in flashback_eval field. Check plausibility, passive match, and assign tier.
+Evaluate this in flashback_eval field. Check plausibility, passive match, assign tier, and provide vigor_ratio/composure_ratio split.
 
 """
 

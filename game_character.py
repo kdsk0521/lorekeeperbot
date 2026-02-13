@@ -305,23 +305,243 @@ def get_objective_context(channel_id: str, user_id: str = "") -> str:
 # CHARACTER STATUS & INVENTORY
 # =========================================================
 
+def _coerce_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
-def update_status_effect(user_data: Dict[str, Any], action: str, effect_name: str) -> Tuple[Dict[str, Any], str]:
-    effects = user_data.get("status_effects", [])
+def _default_status_modifiers(effect_type: str, severity: int) -> Dict[str, int]:
+    if effect_type != "debuff":
+        return {}
+    base = getattr(config, "SEVERITY_EFFECTS", {}).get(severity)
+    if isinstance(base, dict):
+        return dict(base)
+    return {}
+
+def _normalize_duration(raw_duration: Any, current_turn: Optional[int]) -> Dict[str, Any]:
+    if isinstance(raw_duration, dict):
+        dtype = str(raw_duration.get("type", "persistent")).strip().lower()
+        if dtype not in getattr(config, "DURATION_TYPES", set()):
+            dtype = "persistent"
+        value = raw_duration.get("value")
+        start_turn = raw_duration.get("start_turn")
+        if dtype == "turns":
+            value = _coerce_int(value, 0)
+            if value <= 0:
+                return {"type": "persistent"}
+            start_turn = _coerce_int(start_turn, current_turn or 0)
+            return {"type": "turns", "value": value, "start_turn": start_turn}
+        return {"type": dtype, "value": value, "start_turn": start_turn}
+
+    if isinstance(raw_duration, str):
+        d = raw_duration.strip().lower()
+        if d.startswith("turns_"):
+            try:
+                value = int(d.split("_", 1)[1])
+            except (ValueError, IndexError):
+                value = 0
+            if value > 0:
+                return {"type": "turns", "value": value, "start_turn": current_turn or 0}
+        if d in getattr(config, "DURATION_TYPES", set()):
+            return {"type": d}
+
+    return {"type": "persistent"}
+
+def _build_effect_from_name(effect_name: str, current_turn: Optional[int]) -> Dict[str, Any]:
+    tag = None
+    if effect_name in getattr(config, "LEGACY_TAG_MAP", {}):
+        tag = config.LEGACY_TAG_MAP[effect_name]
+    base = None
+    if tag and tag in getattr(config, "STATUS_TAGS", {}):
+        base = config.STATUS_TAGS[tag]
+    elif effect_name in getattr(config, "STATUS_TAGS", {}):
+        tag = effect_name
+        base = config.STATUS_TAGS[tag]
+
+    if base:
+        effect_type = base.get("type", "debuff")
+        severity = _coerce_int(base.get("severity", 1), 1)
+        modifiers = base.get("modifiers", {})
+        return {
+            "tag": tag,
+            "name": base.get("name", effect_name),
+            "type": effect_type,
+            "severity": severity,
+            "duration": _normalize_duration(base.get("duration"), current_turn),
+            "modifiers": dict(modifiers) if isinstance(modifiers, dict) else {},
+        }
+
     info = STATUS_EFFECTS.get(effect_name, {})
+    effect_type = info.get("type", "debuff")
+    severity = _coerce_int(info.get("severity", 1), 1)
+    modifiers = _default_status_modifiers(effect_type, severity)
+    return {
+        "tag": tag or effect_name,
+        "name": effect_name,
+        "type": effect_type,
+        "severity": severity,
+        "duration": _normalize_duration(None, current_turn),
+        "modifiers": modifiers,
+    }
+
+def _normalize_effect_dict(effect: Dict[str, Any], current_turn: Optional[int]) -> Dict[str, Any]:
+    normalized = dict(effect)
+    name = normalized.get("name") or normalized.get("label") or ""
+    tag = normalized.get("tag") or normalized.get("id")
+
+    if not tag and name in getattr(config, "LEGACY_TAG_MAP", {}):
+        tag = config.LEGACY_TAG_MAP[name]
+
+    base = None
+    if tag and tag in getattr(config, "STATUS_TAGS", {}):
+        base = config.STATUS_TAGS[tag]
+    elif name and name in getattr(config, "STATUS_TAGS", {}):
+        tag = name
+        base = config.STATUS_TAGS[tag]
+
+    if base:
+        normalized["tag"] = tag
+        normalized["name"] = normalized.get("name") or base.get("name", tag)
+        normalized["type"] = normalized.get("type") or base.get("type", "debuff")
+        normalized["severity"] = _coerce_int(normalized.get("severity", base.get("severity", 1)), base.get("severity", 1))
+        if not isinstance(normalized.get("modifiers"), dict):
+            normalized["modifiers"] = dict(base.get("modifiers", {}))
+    else:
+        if not tag:
+            tag = name or "status"
+        normalized["tag"] = tag
+        if not normalized.get("name"):
+            normalized["name"] = name or tag
+        if not normalized.get("type"):
+            normalized["type"] = STATUS_EFFECTS.get(name, {}).get("type", "debuff")
+        if normalized.get("severity") is None:
+            normalized["severity"] = STATUS_EFFECTS.get(name, {}).get("severity", 1)
+        if not isinstance(normalized.get("modifiers"), dict):
+            normalized["modifiers"] = _default_status_modifiers(normalized.get("type", "debuff"), _coerce_int(normalized.get("severity", 1), 1))
+
+    normalized["duration"] = _normalize_duration(normalized.get("duration"), current_turn)
+    if not isinstance(normalized.get("modifiers"), dict):
+        normalized["modifiers"] = {}
+    return normalized
+
+def normalize_status_effects(raw_effects: Any, current_turn: Optional[int] = None) -> List[Dict[str, Any]]:
+    if not raw_effects:
+        return []
+    if isinstance(raw_effects, dict):
+        raw_effects = [raw_effects]
+    if not isinstance(raw_effects, list):
+        return []
+
+    normalized: Dict[str, Dict[str, Any]] = {}
+    for item in raw_effects:
+        if isinstance(item, str):
+            eff = _build_effect_from_name(item, current_turn)
+        elif isinstance(item, dict):
+            eff = _normalize_effect_dict(item, current_turn)
+        else:
+            continue
+        tag = eff.get("tag") or eff.get("name") or ""
+        if not tag:
+            continue
+        normalized[tag] = eff
+    return list(normalized.values())
+
+def get_status_effect_names(raw_effects: Any, current_turn: Optional[int] = None) -> List[str]:
+    effects = normalize_status_effects(raw_effects, current_turn)
+    names = []
+    for eff in effects:
+        if not isinstance(eff, dict):
+            continue
+        name = eff.get("name") or eff.get("tag")
+        if name:
+            names.append(str(name))
+    return names
+
+def format_status_effects(raw_effects: Any, current_turn: Optional[int] = None) -> str:
+    names = get_status_effect_names(raw_effects, current_turn)
+    return ", ".join(names)
+
+def process_status_expiry(channel_id: str, user_id: str, current_turn: Optional[int] = None) -> List[str]:
+    """Remove expired status effects (turns-based). Returns list of expired names."""
+    p_data = domain_manager.get_participant_data(channel_id, user_id)
+    if not p_data:
+        return []
+
+    if current_turn is None:
+        world = domain_manager.get_world_state(channel_id)
+        current_turn = _coerce_int(world.get("turn_index", 0), 0)
+
+    raw = p_data.get("status_effects", [])
+    effects = normalize_status_effects(raw, current_turn)
+    expired = []
+    active = []
+
+    for eff in effects:
+        duration = eff.get("duration", {}) if isinstance(eff, dict) else {}
+        dtype = duration.get("type", "persistent")
+        if dtype == "turns":
+            start_turn = _coerce_int(duration.get("start_turn", current_turn), current_turn)
+            value = _coerce_int(duration.get("value", 0), 0)
+            if value > 0 and (current_turn - start_turn) >= value:
+                expired.append(eff.get("name") or eff.get("tag") or "status")
+                continue
+        active.append(eff)
+
+    if active != raw:
+        p_data["status_effects"] = active
+        domain_manager.save_participant_data(channel_id, user_id, p_data)
+
+    return expired
+
+
+def update_status_effect(
+    user_data: Dict[str, Any],
+    action: str,
+    effect_name: str,
+    effect_data: Optional[Dict[str, Any]] = None,
+    current_turn: Optional[int] = None,
+) -> Tuple[Dict[str, Any], str]:
+    effects = normalize_status_effects(user_data.get("status_effects", []), current_turn)
     msg = ""
-    
+
+    def _find_index(name_or_tag: str) -> Optional[int]:
+        for idx, eff in enumerate(effects):
+            if not isinstance(eff, dict):
+                continue
+            if eff.get("tag") == name_or_tag or eff.get("name") == name_or_tag:
+                return idx
+        return None
+
     if action == "add":
-        if effect_name not in effects:
-            effects.append(effect_name)
-            sym = "✨" if info.get("type") == "buff" else "⚠️"
-            msg = f"{sym} **상태:** [{effect_name}]"
-        else: msg = f"⚠️ 이미 [{effect_name}] 상태"
+        new_effect = None
+        if effect_data and isinstance(effect_data, dict):
+            new_effects = normalize_status_effects([effect_data], current_turn)
+            new_effect = new_effects[0] if new_effects else None
+        if not new_effect:
+            new_effects = normalize_status_effects([effect_name], current_turn)
+            new_effect = new_effects[0] if new_effects else None
+        if not new_effect:
+            return user_data, "⚠️ 상태 추가 실패"
+
+        idx = _find_index(new_effect.get("tag") or new_effect.get("name"))
+        if idx is None:
+            effects.append(new_effect)
+            sym = "✨" if new_effect.get("type") == "buff" else "⚠️"
+            msg = f"{sym} **상태:** [{new_effect.get('name', effect_name)}]"
+        else:
+            effects[idx] = new_effect
+            msg = f"⚠️ 이미 [{new_effect.get('name', effect_name)}] 상태"
+
     elif action == "remove":
-        if effect_name in effects:
-            effects.remove(effect_name)
-            msg = f"✨ **해제:** [{effect_name}]"
-        else: msg = f"⚠️ [{effect_name}] 없음"
+        idx = _find_index(effect_name)
+        if idx is None and effect_name in getattr(config, "LEGACY_TAG_MAP", {}):
+            idx = _find_index(config.LEGACY_TAG_MAP[effect_name])
+        if idx is not None:
+            removed = effects.pop(idx)
+            msg = f"✨ **해제:** [{removed.get('name', effect_name)}]"
+        else:
+            msg = f"⚠️ [{effect_name}] 없음"
         
     user_data["status_effects"] = effects
     return user_data, msg
@@ -334,8 +554,11 @@ def get_status_summary(user_data: Dict[str, Any]) -> str:
     
     # 1. Status Effects
     effects = user_data.get("status_effects", [])
-    if effects: parts.append(f"상태(Status): {', '.join(effects)}")
-    else: parts.append("상태(Status): 정상")
+    effects_text = format_status_effects(effects)
+    if effects_text:
+        parts.append(f"상태(Status): {effects_text}")
+    else:
+        parts.append("상태(Status): 정상")
     
     # [V3.0] 2. Vigor/Composure State
     vc_txt = get_vigor_composure_text(user_data)

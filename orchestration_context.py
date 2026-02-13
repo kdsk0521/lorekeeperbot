@@ -29,6 +29,56 @@ class RequestData:
     lore_text: str = ""     # [V4] Lore reference (fallback)
     lore_chunks: List[Dict[str, Any]] = field(default_factory=list) # [V5] Labeled lore chunks for selective injection
 
+    def __post_init__(self) -> None:
+        """genres 필드의 하위 호환 정규화(str/list/dict → dict[stage/flavor/lens])."""
+        raw = self.genres
+        normalized = {
+            "stage": [],
+            "flavor": [],
+            "lens": [],
+            "atmosphere": "",
+            "mechanic": {},
+        }
+
+        def _as_list(v: Any) -> List[str]:
+            if isinstance(v, str):
+                v = [v]
+            if not isinstance(v, list):
+                return []
+            out: List[str] = []
+            for item in v:
+                s = str(item).strip()
+                if not s or s in out:
+                    continue
+                out.append(s)
+            return out
+
+        if isinstance(raw, str):
+            normalized["stage"] = _as_list(raw)
+        elif isinstance(raw, list):
+            normalized["stage"] = _as_list(raw)
+        elif isinstance(raw, dict):
+            layers = raw.get("layers", {})
+            if isinstance(layers, dict):
+                normalized["stage"] = _as_list(layers.get("world_setting", []))
+                normalized["flavor"] = _as_list(layers.get("style_tech", []))
+                normalized["lens"] = _as_list(layers.get("narrative_tone", []))
+
+            # layers가 없거나 비어있는 경우 직접 키 사용
+            if not normalized["stage"]:
+                normalized["stage"] = _as_list(raw.get("stage", []))
+            if not normalized["flavor"]:
+                normalized["flavor"] = _as_list(raw.get("flavor", []))
+            if not normalized["lens"]:
+                normalized["lens"] = _as_list(raw.get("lens", []))
+
+            atmosphere = raw.get("atmosphere", raw.get("atmosphere_guide", ""))
+            normalized["atmosphere"] = str(atmosphere or "")
+            mechanic = raw.get("mechanic", raw.get("mechanic_profile", {}))
+            normalized["mechanic"] = mechanic if isinstance(mechanic, dict) else {}
+
+        self.genres = normalized
+
 @dataclass
 class SharedBus:
     """
@@ -54,7 +104,7 @@ class SharedBus:
         # Judgment Support
         "needs_judgment": False,
         "action_meta": {},
-        "asset_evaluation": {"bonus": 0, "penalty": 0, "reason": "", "modifications": [], "defense_success": False},
+        "asset_evaluation": {"reason": "", "modifications": [], "memo_relevant": [], "defense_success": False},
         # Psychological & Narrative
         "psyche_states": {},
         "narrative_chain": {},
@@ -75,7 +125,14 @@ class SharedBus:
         "active": False, "success": False, "roll": 0, "dc": 0, 
         "modifications": [], "narrative_hook": ""
     })
-    doom: Dict[str, Any] = field(default_factory=lambda: {"active": False, "value": 0, "delta": 0, "level": 0, "log": ""})
+    doom: Dict[str, Any] = field(default_factory=lambda: {
+        "active": False,
+        "value": 0,
+        "delta": 0,
+        "level": 0,
+        "log": "",
+        "clocks": []
+    })
     anomaly: Dict[str, Any] = field(default_factory=lambda: {
         "active": False, "triggered": False, "potential": False, "narrative_hook": ""
     })
@@ -243,7 +300,7 @@ async def gather_context(ctx: ResponseContext) -> ResponseContext:
     ctx.deep_memory_data = ctx.domain_data.get("deep_memory_data", {})
 
     # 장르/톤
-    ctx.active_genres = domain_manager.get_active_genres(channel_id)
+    ctx.active_genres = domain_manager.get_active_genre_list(channel_id)
     ctx.custom_tone = domain_manager.get_custom_tone(channel_id)
 
     # [V4] Lore Summary Data (for UNE)

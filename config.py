@@ -101,16 +101,23 @@ DOOM_INCREASE_HIGH_RISK = 4
 DOOM_INCREASE_MEDIUM_RISK = 2
 DOOM_INCREASE_LORE_RULE = 1
 
-# [V6.1] Entropy & Rubber-banding
-DOOM_FLOOR = 20
-DOOM_FLOOR_RECOVERY = 2
-DOOM_ACTION_TAX = 1
-
 NEMESIS_THRESHOLD = -10
 
 # Doom Dice Modifier
 DOOM_DICE_BASELINE = 50
 DOOM_DICE_MODIFIER_STEP = 5
+
+# Judgment v3 (incremental)
+ASPECT_VALUE = 5
+MOD_SOURCE_CAPS = {
+    "mental": 20,
+    "doom": 20,
+    "theory": 20,
+    "passive": 20,
+    "aspect": 20,
+    "dai": 20,
+    "status": 20,
+}
 
 # Memory Optimization
 FRESH_THRESHOLD = 50  # 히스토리 50개 초과 시 발효 트리거
@@ -120,6 +127,7 @@ FRESH_THRESHOLD = 50  # 히스토리 50개 초과 시 발효 트리거
 # =========================================================
 ABNORMAL_MIN_PROB = 10
 ABNORMAL_DOOM_COEFF = 0.5  # Prob = max(MIN, Doom * 0.5)
+ANOMALY_BASE_CHANCE = 15.0  # v3: fixed trigger chance (doom-independent)
 
 # 기력 Stages (0-100) — PC의 총체적 컨디션 (체력/집중/평판/정신)
 # Key: Stage ID (0-3)
@@ -260,7 +268,9 @@ DEFAULT_WORLD_STATE = {
     "current_location": "Unknown",
     "location_rules": {},
     "world_constraints": {},
-    "last_temporal_context": {}
+    "last_temporal_context": {},
+    "doom_clocks": [],
+    "turn_index": 0,
 }
 
 # =========================================================
@@ -298,6 +308,73 @@ STATUS_EFFECTS = {
     "야간시야": {"type": "buff", "severity": 0},
     "가호": {"type": "buff", "severity": 0},
     "신속": {"type": "buff", "severity": 0},
+}
+
+# Status Effects v3 (Structured)
+DURATION_TYPES = {"persistent", "turns", "scene", "until_rest", "until_recovery"}
+
+# Default severity modifiers (used when an effect doesn't define modifiers)
+SEVERITY_EFFECTS = {
+    1: {"judgment": -5},
+    2: {"judgment": -10},
+    3: {"judgment": -15},
+}
+
+# Canonical status tags (tag -> definition)
+STATUS_TAGS = {
+    # Debuffs
+    "injury": {"name": "부상", "type": "debuff", "severity": 1, "modifiers": {"judgment_combat": -5}},
+    "wound": {"name": "중상", "type": "debuff", "severity": 2, "modifiers": {"judgment_combat": -10}},
+    "mortal_wound": {"name": "치명상", "type": "debuff", "severity": 3, "modifiers": {"judgment_combat": -15}},
+    "poison": {"name": "중독", "type": "debuff", "severity": 1, "modifiers": {"judgment": -5}},
+    "deadly_poison": {"name": "맹독", "type": "debuff", "severity": 2, "modifiers": {"judgment": -10}},
+    "burn": {"name": "화상", "type": "debuff", "severity": 1, "modifiers": {"judgment_combat": -5}},
+    "frostbite": {"name": "동상", "type": "debuff", "severity": 1, "modifiers": {"judgment_combat": -5}},
+    "fear": {"name": "공포", "type": "debuff", "severity": 1, "modifiers": {"judgment_social": -5}},
+    "panic": {"name": "패닉", "type": "debuff", "severity": 2, "modifiers": {"judgment_social": -10}},
+    "blind": {"name": "실명", "type": "debuff", "severity": 2, "modifiers": {"judgment_combat": -10}},
+    "fracture": {"name": "골절", "type": "debuff", "severity": 2, "modifiers": {"judgment_combat": -10}},
+    "bleeding": {"name": "출혈", "type": "debuff", "severity": 1, "modifiers": {"judgment_combat": -5}},
+    "exhaustion": {"name": "탈진", "type": "debuff", "severity": 1, "modifiers": {"judgment": -5}},
+    "stunned": {"name": "기절", "type": "debuff", "severity": 3, "modifiers": {"judgment": -20}},
+    "confusion": {"name": "혼란", "type": "debuff", "severity": 1, "modifiers": {"judgment": -5}},
+
+    # Buffs
+    "vigor": {"name": "활력", "type": "buff", "severity": 0, "modifiers": {"judgment": 5}},
+    "defensive_stance": {"name": "방어태세", "type": "buff", "severity": 0, "modifiers": {"judgment_combat": 5}},
+    "focus": {"name": "집중", "type": "buff", "severity": 0, "modifiers": {"judgment": 5}},
+    "stealth": {"name": "은신", "type": "buff", "severity": 0, "modifiers": {"judgment": 5}},
+    "flight": {"name": "비행", "type": "buff", "severity": 0, "modifiers": {"judgment": 5}},
+    "night_vision": {"name": "야간시야", "type": "buff", "severity": 0, "modifiers": {"judgment": 5}},
+    "blessing": {"name": "가호", "type": "buff", "severity": 0, "modifiers": {"judgment": 5}},
+    "haste": {"name": "신속", "type": "buff", "severity": 0, "modifiers": {"judgment": 5}},
+}
+
+# Legacy name -> tag mapping (for string-based status lists)
+LEGACY_TAG_MAP = {
+    "부상": "injury",
+    "중상": "wound",
+    "치명상": "mortal_wound",
+    "중독": "poison",
+    "맹독": "deadly_poison",
+    "화상": "burn",
+    "동상": "frostbite",
+    "공포": "fear",
+    "패닉": "panic",
+    "실명": "blind",
+    "골절": "fracture",
+    "출혈": "bleeding",
+    "탈진": "exhaustion",
+    "기절": "stunned",
+    "혼란": "confusion",
+    "활력": "vigor",
+    "방어태세": "defensive_stance",
+    "집중": "focus",
+    "은신": "stealth",
+    "비행": "flight",
+    "야간시야": "night_vision",
+    "가호": "blessing",
+    "신속": "haste",
 }
 
 NEGATIVE_STATUS_EFFECTS = {k: v["severity"] for k, v in STATUS_EFFECTS.items() if v["type"] == "debuff"}

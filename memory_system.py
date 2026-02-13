@@ -276,6 +276,75 @@ def safe_parse_json(text: Optional[str], expect_list: bool = False) -> Any:
 # Lore Analysis Functions (Restored)
 # =========================================================
 
+async def summarize_lore_for_events(
+    client: Optional[genai.Client],
+    model_id: str,
+    lore_text: str
+) -> Dict[str, Any]:
+    """
+    Lore text를 이벤트/월드 업데이트용 요약 구조로 변환합니다.
+    Returns keys: theme, anomaly_seeds, locations, rules, factions.
+    """
+    if not lore_text or not lore_text.strip():
+        return {
+            "theme": "",
+            "anomaly_seeds": [],
+            "locations": [],
+            "rules": [],
+            "factions": [],
+        }
+
+    system_prompt = (
+        "You are a lore analyst for a TRPG engine.\n"
+        "Extract concise event-driving world data from lore text.\n"
+        "Output JSON only with keys:\n"
+        "- theme: short string\n"
+        "- anomaly_seeds: list[str]\n"
+        "- locations: list[dict{name, desc}] (max 8)\n"
+        "- rules: list[str] (max 10)\n"
+        "- factions: list[str] (max 8)\n"
+        "Conservative extraction only. No fabrication."
+    )
+
+    if client:
+        cfg = types.GenerateContentConfig(
+            response_mime_type="application/json",
+            temperature=0.1
+        )
+        contents = [
+            types.Content(
+                role="user",
+                parts=[types.Part(text=f"{system_prompt}\n\n[Lore]\n{lore_text}")]
+            )
+        ]
+        result = await api_call_with_retry(
+            client,
+            model_id,
+            contents,
+            cfg,
+            operation_name="Lore Event Summary"
+        )
+        if result:
+            data = safe_parse_json(result)
+            if isinstance(data, dict):
+                return {
+                    "theme": data.get("theme", ""),
+                    "anomaly_seeds": data.get("anomaly_seeds", []) or [],
+                    "locations": data.get("locations", []) or [],
+                    "rules": data.get("rules", []) or [],
+                    "factions": data.get("factions", []) or [],
+                }
+
+    # Fallback (no model / parse failure): lightweight deterministic summary
+    lines = [ln.strip() for ln in lore_text.splitlines() if ln.strip()]
+    theme = lines[0][:80] if lines else "Untitled Lore"
+    return {
+        "theme": theme,
+        "anomaly_seeds": [],
+        "locations": [],
+        "rules": [],
+        "factions": [],
+    }
 
 
 
@@ -489,12 +558,44 @@ def apply_memory_edits(
             elif action == "remove" and key:
                 if "relationships" in new_mem: new_mem["relationships"].pop(key, None)
                 
-        elif field in ["passives", "known_info", "foreshadowing", "status_effects"]:
-            # status_effects는 p_data에 있음
-            is_p_data = (field == "status_effects")
-            target = new_p_data.get(field, []) if is_p_data else new_mem.get(field, [])
-            
-            if not is_p_data and field not in new_mem:
+        elif field == "status_effects":
+            from game_character import normalize_status_effects
+            target = normalize_status_effects(new_p_data.get("status_effects", []))
+
+            def _find_idx(name_or_tag: str):
+                for i, item in enumerate(target):
+                    if item.get("tag") == name_or_tag or item.get("name") == name_or_tag:
+                        return i
+                return None
+
+            if action == "add":
+                new_effects = normalize_status_effects([value]) if value is not None else []
+                if new_effects:
+                    new_eff = new_effects[0]
+                    idx = _find_idx(new_eff.get("tag") or new_eff.get("name", ""))
+                    if idx is None:
+                        target.append(new_eff)
+                    else:
+                        target[idx] = new_eff
+            elif action == "remove":
+                idx = _find_idx(str(value))
+                if idx is None and str(value) in getattr(config, "LEGACY_TAG_MAP", {}):
+                    idx = _find_idx(config.LEGACY_TAG_MAP[str(value)])
+                if idx is not None:
+                    target.pop(idx)
+            elif action in ["set", "update"] and key:
+                idx = _find_idx(str(key))
+                new_effects = normalize_status_effects([value]) if value is not None else []
+                if idx is not None and new_effects:
+                    target[idx] = new_effects[0]
+                elif new_effects:
+                    target.append(new_effects[0])
+
+            new_p_data["status_effects"] = target
+
+        elif field in ["passives", "known_info", "foreshadowing"]:
+            target = new_mem.get(field, [])
+            if field not in new_mem:
                 new_mem[field] = []
                 target = new_mem[field]
             
@@ -530,8 +631,7 @@ def apply_memory_edits(
                         target[i] = value
                         break
                         
-            if not is_p_data: new_mem[field] = target
-            else: new_p_data[field] = target
+            new_mem[field] = target
                 
         elif field == "normalization":
             # [V6.1 Migration] Redirect legacy normalization to abnormal_exposure

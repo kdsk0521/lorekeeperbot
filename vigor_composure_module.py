@@ -27,6 +27,13 @@ class VigorComposureModule:
     def __init__(self):
         pass
 
+    async def prime(self, context: "GameContext") -> "GameContext":
+        """Pre-pass for pipeline order: annotate current stage without consuming deltas."""
+        bus = context.shared_bus
+        bus.vigor["stage"] = _get_stage(int(bus.vigor.get("value", 100)))
+        bus.composure["stage"] = _get_stage(int(bus.composure.get("value", 100)))
+        return context
+
     async def process(self, context: "GameContext") -> "GameContext":
         bus = context.shared_bus
         primary_axis = _get_primary_axis(context)

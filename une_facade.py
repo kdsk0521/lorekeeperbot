@@ -10,6 +10,8 @@ from typing import Dict, Any
 from orchestration_context import GameContext
 from waterfall_pipeline import WaterfallPipeline
 import domain_manager
+import game_character
+import game_world
 
 logger = logging.getLogger("UNE")
 
@@ -222,6 +224,7 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> G
         "background": mem.get("background", ""),
         "relations": mem.get("relationships", {}),
         "passives": mem.get("passives", []),
+        "status_effects": p_data.get("status_effects", []) if p_data else [],
         "inventory": [],
         "memos": []
     }
@@ -261,6 +264,9 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> G
     # Bus initialization
     bus = SharedBus()
     bus.doom["value"] = world.get("doom", 40)
+    # Doom clocks (local threats)
+    clocks = world.get("doom_clocks", [])
+    bus.doom["clocks"] = clocks if isinstance(clocks, list) else []
 
     # Vigor/Composure migration: old "mental" → vigor + composure
     if "mental" in mem and "vigor" not in mem:
@@ -305,9 +311,11 @@ def sync_from_game_context(channel_id: str, user_id: str, ctx: Any) -> None:
     bus = ctx.shared_bus
 
     # 1. World State Sync (Doom)
-    if bus.doom.get("active"):
+    if bus.doom.get("active") or isinstance(bus.doom.get("clocks"), list):
         world = domain_manager.get_world_state(channel_id)
         world["doom"] = bus.doom["value"]
+        if isinstance(bus.doom.get("clocks"), list):
+            world["doom_clocks"] = bus.doom.get("clocks", [])
         domain_manager.update_world_state(channel_id, world)
 
     # 2. Participant Data Sync (Vigor, Composure, Adaptation)
@@ -352,6 +360,8 @@ class UniversalNarrativeEngine:
 
     async def run(self, channel_id: str, user_id: str, user_input: str) -> Dict[str, Any]:
         """단일 PC 행동 처리 (솔로/자동 모드용)"""
+        turn_index = game_world.increment_turn_index(channel_id)
+        game_character.process_status_expiry(channel_id, user_id, turn_index)
         context = convert_to_game_context(channel_id, user_id, user_input)
         p_data = domain_manager.get_participant_data(channel_id, user_id)
         mask = p_data.get("mask") if p_data else "PC"
@@ -371,8 +381,10 @@ class UniversalNarrativeEngine:
         all_results = []
         anomaly_data = None
         last_context = None
+        turn_index = game_world.increment_turn_index(channel_id)
 
         for uid, info in pending_actions.items():
+            game_character.process_status_expiry(channel_id, uid, turn_index)
             combined_input = "\n".join(info["actions"])
             context = convert_to_game_context(channel_id, uid, combined_input)
 
@@ -401,6 +413,7 @@ class UniversalNarrativeEngine:
 
     async def run_observation(self, channel_id: str) -> Dict[str, Any]:
         """관찰 모드: PC 행동 없이 세계 묘사"""
+        turn_index = game_world.increment_turn_index(channel_id)
         participants = domain_manager.get_domain(channel_id).get("participants", {})
         base_uid = None
         for uid, p in participants.items():
@@ -410,6 +423,10 @@ class UniversalNarrativeEngine:
 
         if not base_uid:
             return {"game_context": None, "directive": "", "system_message": ""}
+
+        for uid, pdata in participants.items():
+            if pdata.get("status") == "active":
+                game_character.process_status_expiry(channel_id, uid, turn_index)
 
         observation_input = "[관찰 모드 — 직접적인 행동 없이 주변을 지켜본다]"
         context = convert_to_game_context(channel_id, base_uid, observation_input)
@@ -643,6 +660,8 @@ class UniversalNarrativeEngine:
             system_msg += f"\n{bus.doom.get('relief_log')}"
         if bus.doom and bus.doom.get("mental_pressure_log"):
             system_msg += f"\n{bus.doom.get('mental_pressure_log')}"
+        if bus.doom and bus.doom.get("clock_log"):
+            system_msg += f"\n⏰ {bus.doom.get('clock_log')}"
         if bus.vigor:
             log_parts = []
             if bus.vigor.get("log"):

@@ -253,23 +253,50 @@ class OrchestrationService:
             domain_manager.clear_pending_flashback(channel_id)
             return f"❌ 회상 거부: {fb_eval.get('reason', '논리적 모순')}"
 
-        cost = config.FLASHBACK_COST_TIERS.get(tier, 8)
-        current_vigor = bus.vigor.get("value", 100)
+        cost = int(config.FLASHBACK_COST_TIERS.get(tier, 8))
+        current_vigor = int(bus.vigor.get("value", 100))
+        current_composure = int(bus.composure.get("value", 100))
 
-        # 기력 부족
-        if current_vigor < config.FLASHBACK_MIN_MENTAL:
+        # v3: 2축 비율 차감 (한 축 부족분은 다른 축으로 전가)
+        try:
+            vigor_ratio = float(fb_eval.get("vigor_ratio", 1.0) or 0.0)
+            composure_ratio = float(fb_eval.get("composure_ratio", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            vigor_ratio, composure_ratio = 1.0, 0.0
+
+        vigor_ratio = max(0.0, vigor_ratio)
+        composure_ratio = max(0.0, composure_ratio)
+        ratio_sum = vigor_ratio + composure_ratio
+        if ratio_sum <= 0:
+            vigor_ratio, composure_ratio = 1.0, 0.0
+            ratio_sum = 1.0
+
+        vigor_cost = int(round(cost * (vigor_ratio / ratio_sum)))
+        composure_cost = cost - vigor_cost
+
+        # 한 축 부족분 전가
+        if current_vigor < vigor_cost:
+            deficit = vigor_cost - current_vigor
+            vigor_cost = current_vigor
+            composure_cost += deficit
+        if current_composure < composure_cost:
+            deficit = composure_cost - current_composure
+            composure_cost = current_composure
+            vigor_cost += deficit
+
+        # 양축 합이 비용을 감당 못하면 실패
+        if (vigor_cost + composure_cost) < cost:
             dai["flashback_confirmed"] = False
             domain_manager.clear_pending_flashback(channel_id)
-            return f"❌ 회상 불가: 기력 부족 ({current_vigor}/100, 최소 {config.FLASHBACK_MIN_MENTAL} 필요)"
+            return (
+                f"❌ 회상 불가: 자원 부족 "
+                f"(기력 {current_vigor}, 평정 {current_composure}, 비용 {cost})"
+            )
 
-        if current_vigor - cost < 0:
-            dai["flashback_confirmed"] = False
-            domain_manager.clear_pending_flashback(channel_id)
-            return f"❌ 회상 불가: 기력 부족 (현재 {current_vigor}, 비용 {cost})"
-
-        # 차감 실행 (vigor에서 차감)
-        new_vigor = current_vigor - cost
+        new_vigor = max(0, current_vigor - vigor_cost)
+        new_composure = max(0, current_composure - composure_cost)
         bus.vigor["value"] = new_vigor
+        bus.composure["value"] = new_composure
         dai["flashback_confirmed"] = True
         dai["flashback_declaration"] = declaration
         domain_manager.clear_pending_flashback(channel_id)
@@ -279,7 +306,11 @@ class OrchestrationService:
         if relevant_passive:
             passive_note = f" (면모 '{relevant_passive}' 활성화 → {tier})"
 
-        return f"🔮 회상 발동: {declaration}\n⚡ 기력 -{cost} → {new_vigor}/100 [{tier}]{passive_note}"
+        return (
+            f"🔮 회상 발동: {declaration}\n"
+            f"⚡ 기력 -{vigor_cost} → {new_vigor}/100 | 평정 -{composure_cost} → {new_composure}/100 "
+            f"[{tier}]{passive_note}"
+        )
 
     def _process_item_usage(self, channel_id: str, user_id: str, item_eval: dict) -> Optional[str]:
         """아이템 소비/획득 처리. Returns system message or None."""
@@ -483,7 +514,9 @@ class OrchestrationService:
         if extraction_hints["physical"]:
             async def immediate_physical_update():
                 try:
-                    status = ctx.player_data.get("status_effects", []) if ctx.player_data else []
+                    status = game_character.get_status_effect_names(
+                        ctx.player_data.get("status_effects", []) if ctx.player_data else []
+                    )
                     phys_res = await cognition._extract_physical(
                         self.client, self.model_id_flash,
                         ctx.action_text, response,
@@ -575,7 +608,9 @@ class OrchestrationService:
             
             # Prepare extended context
             p_data_latest = domain_manager.get_participant_data(channel_id, ctx.user_id)
-            status = p_data_latest.get("status_effects", []) if p_data_latest else []
+            status = game_character.get_status_effect_names(
+                p_data_latest.get("status_effects", []) if p_data_latest else []
+            )
             ai_mem: Dict[str, Any] = p_data_latest.get("ai_memory", {}) if p_data_latest else {}
             rels = ai_mem.get("relationships", {})
             # ... (Assume these getters exist or use ctx if acceptable)
