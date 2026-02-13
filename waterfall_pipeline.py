@@ -130,9 +130,8 @@ class WaterfallPipeline:
         mental_impact = analysis.get("mental_impact") or {}
         if mental_impact.get("applicable", False):
             # Route to primary axis based on genre
-            import config as _cfg
-            genre = context.request.genres.get("stage", "")
-            primary = _cfg.GENRE_PRIMARY_RESOURCE.get(genre, "vigor")
+            mechanic = context.request.genres.get("mechanic", {})
+            primary = mechanic.get("primary_resource") or "vigor"
             getattr(bus, primary)["impact"] = mental_impact
 
         # Anomaly Profile 연동
@@ -162,11 +161,26 @@ class WaterfallPipeline:
             if protective:
                 bus.anomaly["protective_item"] = protective
 
+            # adaptation_group from Flash (2-level taxonomy)
+            adapt_groups = anomaly_profile.get("adaptation_group")
+            if isinstance(adapt_groups, list) and adapt_groups:
+                bus.anomaly["adaptation_group"] = adapt_groups
+
         # Fallback: if no anomaly tag was proposed, pick from lore seeds
         if not bus.anomaly.get("tag"):
             seeds = context.request.lore_summary.get("anomaly_seeds", [])
             if isinstance(seeds, list) and seeds:
-                bus.anomaly["tag"] = random.choice(seeds)
+                seed = random.choice(seeds)
+                if isinstance(seed, dict):
+                    bus.anomaly["tag"] = seed.get("name", "기이한 현상")
+                    if seed.get("adaptation_group"):
+                        bus.anomaly.setdefault("adaptation_group", seed["adaptation_group"])
+                    if not bus.anomaly.get("category"):
+                        bus.anomaly["category"] = seed.get("name", "")
+                    if seed.get("axis"):
+                        bus.anomaly.setdefault("disruption_axis", seed["axis"])
+                else:
+                    bus.anomaly["tag"] = str(seed)
 
         # Normalize defaults for downstream use
         if bus.anomaly.get("tag") and not bus.anomaly.get("category"):

@@ -560,6 +560,15 @@ Specify which theory framework applies to defense against this anomaly:
 - slice_of_life: "Lazarus+Reactance" (coping + autonomy defense)
 - Mixed/other: Choose the most relevant theory pair from above
 
+### Adaptation Group (2-Level Taxonomy)
+Select 1-3 adaptation sub-groups from the CLOSED LIST below:
+- supernatural: undead, dragon, eldritch, cursed, spirit, divine, demonic, shapeshifter
+- psychological: fear, deception, exposure, betrayal, madness, guilt, obsession
+- relational: encounter, jealousy, intimacy, separation, rivalry, loyalty
+- situational: timing, cascade, authority, environment, resource, crowd
+- informational: evidence, surveillance, leak, secret, misinformation
+Output: "adaptation_group": ["fear", "betrayal"] (exact English keys from above)
+
 ### Defense Hint
 Provide a 1-sentence Korean hint describing how the PC could defend against this anomaly.
 Base on the theory_basis: e.g. "정신적 연속성을 유지하며 공포에 저항" (Continuum+TMT)

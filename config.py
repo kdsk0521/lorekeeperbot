@@ -335,20 +335,134 @@ def get_normality_stage_info(val: Union[int, str, float]) -> Dict[str, Any]:
 # UNE (Universal Narrative Engine) Configs
 # =========================================================
 
-GENRE_ANOMALY_TABLE = {
+# =========================================================
+# Lens-Based Mechanic Profile Tables (Genre Detection v3)
+# =========================================================
+# C계층(Lens/narrative_tone)이 메카닉을 주도.
+# build_mechanic_profile()이 이 테이블들로 결정론적 프로필 생성.
+
+LENS_AXIS_MAP = {
+    "noir":    ["information", "position"],
+    "comedy":  ["complication", "schedule"],
+    "romance": ["relation"],
+    "drama":   ["mental", "relation"],
+}
+
+LENS_DEFENSE_MAP = {
+    "noir":    ["info_control", "composure"],
+    "comedy":  ["chaemyeon", "wit"],
+    "romance": ["nunchi", "composure"],
+    "drama":   ["vigor", "composure"],
+}
+
+LENS_DOOM_STAGES = {
+    "noir":    {0: "수면", 1: "파문", 2: "조임", 3: "노출", 4: "추적", 5: "청산"},
+    "comedy":  {0: "일상", 1: "소동", 2: "혼란", 3: "대혼란", 4: "카오스", 5: "총체적 난국"},
+    "romance": {0: "평화", 1: "설렘", 2: "긴장", 3: "위기", 4: "폭풍전야", 5: "결정적 순간"},
+    "drama":   {0: "평온", 1: "불안", 2: "경계", 3: "위험", 4: "임계", 5: "파국"},
+}
+
+LENS_ICON = {
+    "noir": "🕸️",
+    "comedy": "💥",
+    "romance": "❤️‍🔥",
+    "drama": "⚡",
+}
+
+LENS_PRIMARY_RESOURCE = {
+    "noir": "composure",
+    "comedy": "composure",
+    "romance": "composure",
+    "drama": "vigor",
+}
+
+FLAVOR_BONUS = {
     "cosmic_horror": {
-        "tags": ["Ghost", "Sound", "Distortion", "Void", "Whisper"],
-        "categories": ["Horror", "Supernatural"]
-    },
-    "romance": {
-        "tags": ["Encounter", "Secret", "Mistake", "Coincidence", "Gift"],
-        "categories": ["Relationship", "Daily"]
+        "anomaly_tag_pool_extend": ["eldritch", "madness", "void"],
+        "defense_bonus": {"composure_drain_supernatural": 1.2},
     },
     "urban_fantasy": {
-        "tags": ["Signal", "Artifact", "Mystery", "Shadow", "Contract"],
-        "categories": ["Mystery", "Magic"]
-    }
+        "anomaly_tag_pool_extend": ["supernatural", "mundane_crack", "contract"],
+        "defense_bonus": {},
+    },
+    "steampunk": {
+        "anomaly_tag_pool_extend": ["mechanical", "pressure", "malfunction"],
+        "defense_bonus": {},
+    },
+    "game_system": {
+        "anomaly_tag_pool_extend": ["glitch", "system_error", "level_shift"],
+        "defense_bonus": {},
+    },
 }
+
+
+def build_mechanic_profile(narrative_tone: list, style_tech: list = None) -> dict:
+    """감지된 장르 Lens에서 메카닉 프로필을 결정론적으로 생성.
+    Flash가 아닌 코드가 생성 — 세션 내 일관성 보장."""
+    if style_tech is None:
+        style_tech = []
+
+    primary = narrative_tone[0] if narrative_tone else "drama"
+    secondary = narrative_tone[1] if len(narrative_tone) > 1 else None
+
+    # disruption_axes: primary + secondary 합산
+    axes = list(LENS_AXIS_MAP.get(primary, ["mental"]))
+    if secondary:
+        axes += [a for a in LENS_AXIS_MAP.get(secondary, []) if a not in axes]
+
+    # defense_stats: 합산
+    defense = list(LENS_DEFENSE_MAP.get(primary, ["vigor"]))
+    if secondary:
+        defense += [d for d in LENS_DEFENSE_MAP.get(secondary, []) if d not in defense]
+
+    # doom_stages: primary 기준
+    doom_stages = LENS_DOOM_STAGES.get(primary, LENS_DOOM_STAGES.get("drama", {}))
+
+    # doom_icon: primary + secondary
+    icon = LENS_ICON.get(primary, "⏰")
+    if secondary:
+        icon += LENS_ICON.get(secondary, "")
+
+    # primary_resource
+    resource = LENS_PRIMARY_RESOURCE.get(primary, "vigor")
+
+    # flavor_bonus: B계층 (style_tech)
+    flavor_bonus = {}
+    for f in style_tech:
+        if f in FLAVOR_BONUS:
+            flavor_bonus[f] = FLAVOR_BONUS[f]
+
+    return {
+        "primary_lens": primary,
+        "secondary_lens": secondary,
+        "disruption_axes": axes,
+        "defense_stats": defense,
+        "doom_stages": doom_stages,
+        "doom_icon": icon,
+        "primary_resource": resource,
+        "flavor_bonus": flavor_bonus,
+    }
+
+
+# =========================================================
+# Anomaly Adaptation Taxonomy (2-Level, 33 Sub-Groups)
+# =========================================================
+# 직접 매칭 100% + 같은 상위 카테고리 내 전이 50%
+ADAPTATION_TAXONOMY = {
+    "supernatural": ["undead", "dragon", "eldritch", "cursed", "spirit", "divine", "demonic", "shapeshifter"],
+    "psychological": ["fear", "deception", "exposure", "betrayal", "madness", "guilt", "obsession"],
+    "relational": ["encounter", "jealousy", "intimacy", "separation", "rivalry", "loyalty"],
+    "situational": ["timing", "cascade", "authority", "environment", "resource", "crowd"],
+    "informational": ["evidence", "surveillance", "leak", "secret", "misinformation"],
+}
+
+
+def get_parent_category(group: str):
+    """하위 그룹의 상위 카테고리를 반환. 없으면 None."""
+    for parent, children in ADAPTATION_TAXONOMY.items():
+        if group in children:
+            return parent
+    return None
 
 # =========================================================
 # Genre-Specific Doom Stages (서사 긴장도 재정의)

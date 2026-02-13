@@ -103,8 +103,8 @@ class JudgmentEngine:
         # 2. Dynamic Modifiers
         # 2.1 Vigor/Composure Modifiers — 장르 primary axis 기반
         import config as _cfg
-        genre = context.request.genres.get("stage", "")
-        primary_axis = _cfg.GENRE_PRIMARY_RESOURCE.get(genre, "vigor")
+        mechanic = context.request.genres.get("mechanic", {})
+        primary_axis = mechanic.get("primary_resource") or "vigor"
         primary_val = getattr(bus, primary_axis).get("value", 100)
         mental_mod = 0
         mental_label = "충만"

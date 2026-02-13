@@ -217,7 +217,7 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
 - "time_flow": {"ticks": 1-20, "reason": "Korean"}
 - "doom_relief": {"applicable": boolean, "amount": 0-20, "reason": "Korean"}
 - "mental_impact": {"applicable": boolean, "delta": -35~+20, "reason": "Korean"}
-- "anomaly_profile": {"trigger": str, "category": "supernatural/psychological/social/environmental/temporal", "intensity": "Low/Mid/High/Extreme", "polarity": "positive/negative/mixed", "disruption_axis": "vigor/composure/both (which PC resource axis this anomaly disrupts — Horror/Action→vigor, Romance/Social→composure, Extreme→both)", "theory_basis": "str — 방어에 적용되는 이론 (e.g. 'Continuum+TMT', 'Nunchi+Chaemyeon', 'Prospect+BATNA')", "defense_hint": "str — 이 이변에 대한 방어 힌트 1문장 (Korean)", "line": "Korean - 이변의 서사적 묘사 1문장", "protective_item": str or null, "reason": "Korean"}
+- "anomaly_profile": {"trigger": str, "category": "supernatural/psychological/social/environmental/temporal", "intensity": "Low/Mid/High/Extreme", "polarity": "positive/negative/mixed", "disruption_axis": "vigor/composure/both (which PC resource axis this anomaly disrupts — Horror/Action→vigor, Romance/Social→composure, Extreme→both)", "adaptation_group": ["1-3 items from ADAPTATION_TAXONOMY: undead/dragon/eldritch/cursed/spirit/divine/demonic/shapeshifter/fear/deception/exposure/betrayal/madness/guilt/obsession/encounter/jealousy/intimacy/separation/rivalry/loyalty/timing/cascade/authority/environment/resource/crowd/evidence/surveillance/leak/secret/misinformation"], "theory_basis": "str — 방어에 적용되는 이론 (e.g. 'Continuum+TMT', 'Nunchi+Chaemyeon', 'Prospect+BATNA')", "defense_hint": "str — 이 이변에 대한 방어 힌트 1문장 (Korean)", "line": "Korean - 이변의 서사적 묘사 1문장", "protective_item": str or null, "reason": "Korean"}
 
 
 ## COGNITIVE ENHANCEMENT
@@ -411,6 +411,21 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
             return ""
         return "### 4c. SESSION MEMORY (Accumulated)\n" + "\n".join(parts)
 
+    @staticmethod
+    def _format_anomaly_seeds(seeds: list) -> str:
+        """구조화 씨앗이면 상세 형식, str이면 기존 형식으로 포맷."""
+        if not seeds:
+            return "None"
+        if isinstance(seeds[0], dict):
+            lines = []
+            for s in seeds:
+                name = s.get("name", "?")
+                axis = s.get("axis", "?")
+                groups = s.get("adaptation_group", [])
+                lines.append(f"- {name} (axis:{axis}, groups:{groups})")
+            return "\n" + "\n".join(lines)
+        return ", ".join(str(s) for s in seeds)
+
     def _build_lore_structured(self, lore_summary: dict) -> str:
         """lore_summary의 구조화된 데이터를 Theoria 프롬프트로 변환"""
         parts = []
@@ -507,7 +522,7 @@ Evaluate this in flashback_eval field. Check plausibility, passive match, and as
 
 ### 4. WORLD CONTEXT
 - **Core Theme**: {req.lore_summary.get('theme', 'General TRPG')}
-- **Anomaly Seeds**: {', '.join(req.lore_summary.get('anomaly_seeds', [])) or 'None'}
+- **Anomaly Seeds**: {self._format_anomaly_seeds(req.lore_summary.get('anomaly_seeds', []))}
 {self._build_lore_structured(req.lore_summary)}
 
 {npc_context}

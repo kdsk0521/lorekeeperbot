@@ -459,7 +459,18 @@ Analyze the provided lorebook precisely to extract all metadata required for gam
    - Fields: name, role, species, appearance, description (integrated personality/traits - Korean), sexual_characteristics, background, secret_info, passives(name, desc - Korean), inventory
 4. **lore_summary**:
    - theme: Core theme of the world (1-2 sentences in Korean)
-   - anomaly_seeds: List of anomaly/supernatural themes possible in this world (e.g., '그림자 침식', '기계 광증' etc. - Korean)
+   - anomaly_seeds: Structured list of anomaly/disruption seeds for this world (3-5 items). Each seed:
+     - name: Korean narrative name (e.g., '그림자 침식', '삼각관계 점화')
+     - axis: Disruption axis from CLOSED LIST: mental, relation, complication, information, position, schedule
+     - adaptation_group: 1-3 items from CLOSED LIST (33 sub-groups):
+       supernatural: undead, dragon, eldritch, cursed, spirit, divine, demonic, shapeshifter
+       psychological: fear, deception, exposure, betrayal, madness, guilt, obsession
+       relational: encounter, jealousy, intimacy, separation, rivalry, loyalty
+       situational: timing, cascade, authority, environment, resource, crowd
+       informational: evidence, surveillance, leak, secret, misinformation
+     - tags: 2-3 free-form material tags for narrative rendering
+     - genre_affinity: Which Lens genres activate this seed easily (e.g., ["romance", "noir"])
+     - defense_hint: 1-sentence Korean hint for defense
    - locations: List of key locations with name, description, danger level (Korean)
    - rules: Key world rules — magic systems, physical laws, economy, combat rules (List of Korean strings, max 10. Each rule should be a concise actionable statement)
    - factions: Major groups/organizations with name, description, stance/goal (Korean)
@@ -492,7 +503,7 @@ Analyze the provided lorebook precisely to extract all metadata required for gam
   }},
   "lore_summary": {{
     "theme": "...",
-    "anomaly_seeds": ["징후1", "징후2"],
+    "anomaly_seeds": [{{"name": "서사 이름", "axis": "mental|relation|complication|information|position|schedule", "adaptation_group": ["fear", "deception"], "tags": ["소재1", "소재2"], "genre_affinity": ["noir"], "defense_hint": "방어 힌트 한국어"}}],
     "locations": [{{"name": "장소명", "desc": "설명", "danger": "low/mid/high"}}],
     "rules": ["규칙1: 구체적 설명", "규칙2: 구체적 설명"],
     "factions": [{{"name": "세력명", "desc": "설명", "stance": "목표/입장"}}],

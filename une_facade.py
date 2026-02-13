@@ -180,17 +180,27 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> G
     genres_raw = domain_manager.get_active_genres(channel_id)
     if isinstance(genres_raw, dict) and "layers" in genres_raw:
         layers = genres_raw["layers"]
+        mechanic = genres_raw.get("mechanic_profile", {})
         genres = {
-            "stage": layers.get("world_setting", ""),
-            "flavor": layers.get("style_tech", ""),
-            "lens": layers.get("narrative_tone", "")
+            "stage": layers.get("world_setting", []),
+            "flavor": layers.get("style_tech", []),
+            "lens": layers.get("narrative_tone", []),
+            "atmosphere": genres_raw.get("atmosphere_guide", ""),
+            "mechanic": mechanic,
         }
     else:
         genres = {
-            "stage": genres_raw[0] if isinstance(genres_raw, list) and genres_raw else str(genres_raw),
-            "flavor": "",
-            "lens": ""
+            "stage": [genres_raw[0]] if isinstance(genres_raw, list) and genres_raw else ([str(genres_raw)] if genres_raw else []),
+            "flavor": [],
+            "lens": [],
+            "atmosphere": "",
+            "mechanic": {},
         }
+    # 하위 호환: str이 들어오면 List로 래핑
+    for key in ["stage", "flavor", "lens"]:
+        val = genres[key]
+        if isinstance(val, str):
+            genres[key] = [val] if val else []
 
     # Active Modules
     active_modules = domain_manager.get_active_modules(channel_id)
@@ -455,12 +465,8 @@ class UniversalNarrativeEngine:
                 pos_tier = "controlled"
 
             # MC Move: Genre-specific first, then generic fallback (PbtA)
-            genres = context.request.genres
-            primary_genre = ""
-            if isinstance(genres, dict):
-                primary_genre = genres.get("stage", "")
-            elif isinstance(genres, list) and genres:
-                primary_genre = genres[0] if isinstance(genres[0], str) else ""
+            mechanic = context.request.genres.get("mechanic", {})
+            primary_genre = mechanic.get("primary_lens", "")
 
             # Try genre-specific MC move first
             move = _get_genre_mc_move(primary_genre, pos_tier, j_result)
@@ -511,12 +517,8 @@ class UniversalNarrativeEngine:
             hints = []
 
             # Genre scene hint
-            genres = context.request.genres
-            primary_genre = ""
-            if isinstance(genres, dict):
-                primary_genre = genres.get("stage", "")
-            elif isinstance(genres, list) and genres:
-                primary_genre = genres[0] if isinstance(genres[0], str) else ""
+            mechanic = context.request.genres.get("mechanic", {})
+            primary_genre = mechanic.get("primary_lens", "")
 
             genre_scene_hints = {
                 "cosmic_horror": "Genre: Cosmic Horror — dread builds from the unseen and unknowable",
@@ -585,12 +587,8 @@ class UniversalNarrativeEngine:
             line = bus.anomaly.get("line", "")
 
             # Resolve genre for framing
-            genres = context.request.genres
-            intrusion_genre = ""
-            if isinstance(genres, dict):
-                intrusion_genre = genres.get("stage", "")
-            elif isinstance(genres, list) and genres:
-                intrusion_genre = genres[0] if isinstance(genres[0], str) else ""
+            mechanic = context.request.genres.get("mechanic", {})
+            intrusion_genre = mechanic.get("primary_lens", "")
 
             # Genre-specific anomaly framing
             genre_frames = {
@@ -655,13 +653,8 @@ class UniversalNarrativeEngine:
         # ── Layer 2: [Aspects] — Fate Aspect declaration (Genre-Aware) ──
         aspects = []
         import config as _cfg
-        genres = context.request.genres
-        aspect_genre = ""
-        if isinstance(genres, dict):
-            aspect_genre = genres.get("stage", "")
-        elif isinstance(genres, list) and genres:
-            aspect_genre = genres[0] if isinstance(genres[0], str) else ""
-        primary_axis = _cfg.GENRE_PRIMARY_RESOURCE.get(aspect_genre, "vigor")
+        mechanic = context.request.genres.get("mechanic", {})
+        primary_axis = mechanic.get("primary_resource") or "vigor"
         primary_val = vigor_val if primary_axis == "vigor" else composure_val
 
         m_trauma = (bus.vigor and bus.vigor.get("trauma_trigger")) or (bus.composure and bus.composure.get("trauma_trigger"))
@@ -692,7 +685,8 @@ class UniversalNarrativeEngine:
         if "doom" in active_modules:
             # Genre-aware doom stage lookup
             import game_world as _gw
-            primary_genre = context.request.genres.get("stage", "")
+            mechanic_doom = context.request.genres.get("mechanic", {})
+            primary_genre = mechanic_doom.get("primary_lens", "")
             doom_info = _gw.get_doom_info(doom_val, genre=primary_genre)
             stage_name = doom_info.get("name", "")
             stage_emoji = doom_info.get("emoji", "")

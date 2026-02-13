@@ -18,12 +18,9 @@ def _get_stage(val: int) -> int:
     return 3
 
 
-def _get_primary_genre(context: "GameContext") -> str:
-    return context.request.genres.get("stage", "")
-
-
-def _get_primary_axis(genre: str) -> str:
-    return config.GENRE_PRIMARY_RESOURCE.get(genre, "vigor")
+def _get_primary_axis(context: "GameContext") -> str:
+    mechanic = context.request.genres.get("mechanic", {})
+    return mechanic.get("primary_resource") or "vigor"
 
 
 class VigorComposureModule:
@@ -32,8 +29,7 @@ class VigorComposureModule:
 
     async def process(self, context: "GameContext") -> "GameContext":
         bus = context.shared_bus
-        genre = _get_primary_genre(context)
-        primary_axis = _get_primary_axis(genre)
+        primary_axis = _get_primary_axis(context)
 
         # Process each axis
         self._process_axis(context, bus.vigor, "vigor", primary_axis)

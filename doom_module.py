@@ -84,9 +84,8 @@ class DoomModule:
 
             if pressure != 0:
                 # Primary axis: 100%, Secondary axis: 50%
-                import config as _cfg
-                genre = context.request.genres.get("stage", "")
-                primary = _cfg.GENRE_PRIMARY_RESOURCE.get(genre, "vigor")
+                mechanic = context.request.genres.get("mechanic", {})
+                primary = mechanic.get("primary_resource") or "vigor"
                 secondary = "composure" if primary == "vigor" else "vigor"
                 primary_bus = getattr(bus, primary)
                 secondary_bus = getattr(bus, secondary)

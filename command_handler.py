@@ -204,15 +204,19 @@ async def cmd_lore(ctx: CommandContext) -> None:
                          if p: updated_names.append(p.get("mask", "Player"))
                      pc_msg += f"\n✅ 캐릭터 업데이트: {', '.join(updated_names)} (특질 및 설정 적용)"
             
-            # 3. Update Genre (3-Layer)
-            # Adapt unified_res to legacy structure
+            # 3. Update Genre (3-Layer) + mechanic_profile
+            from config import build_mechanic_profile
+            narrative_tone = genre_res.get("narrative_tone", [])
+            style_tech = genre_res.get("style_tech", [])
+            mechanic_profile = build_mechanic_profile(narrative_tone, style_tech)
             genre_data = {
                 "layers": {
                     "world_setting": genre_res.get("world_setting", []),
-                    "style_tech": genre_res.get("style_tech", []),
-                    "narrative_tone": genre_res.get("narrative_tone", [])
+                    "style_tech": style_tech,
+                    "narrative_tone": narrative_tone,
                 },
-                "atmosphere_guide": genre_res.get("atmosphere_guide", "")
+                "atmosphere_guide": genre_res.get("atmosphere_guide", ""),
+                "mechanic_profile": mechanic_profile,
             }
             domain_manager.set_active_genres(channel_id, genre_data)
             domain_manager.set_custom_tone(channel_id, genre_res.get("atmosphere_guide"))
