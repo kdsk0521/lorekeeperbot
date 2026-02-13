@@ -1237,68 +1237,80 @@ STATUS_WINDOW_LAYOUT = """
 ## SCENE HEADER FORMAT
 
 Place a compact status line at the TOP of each narrative output.
-Character profiles are accessed via !정보 command—do NOT duplicate here.
+Character profiles are accessed via !info command. Do NOT duplicate full sheets here.
 
 ### FORMAT
 ```
-📍 [Location] | 🕐 [Month/Day, Time] | 👥 [Present Characters]
+위치 [Location] | 시간 [Month/Day, Time] | 인물 [Present Characters]
+기력 [value] | 평정 [value] | Doom [value]
+[Clock1 filled/segments] [Clock2 filled/segments ...]
 ```
 
 ### EXAMPLES
 ```
-📍 폐허가 된 성당 | 🕐 3/15, 새벽 | 👥 엘레나, 수상한 그림자
-📍 마을 광장 | 🕐 8/22, 정오 | 👥 없음
-📍 던전 3층 | 🕐 ?/??, 알 수 없음 | 👥 카이(PC), 고블린 무리
+위치 하숙집 거실 | 시간 3/15, 새벽 | 인물 리미, 옥상 남자
+기력 72 | 평정 38 | Doom 45
+[조직의 추적 4/6] [붉은 문턱 2/4]
 ```
 
 ### RULES
-- Location: Current scene/area name
-- Time: Month/Day + time of day (새벽/아침/낮/오후/저녁/밤/심야)
-- Characters: All visible characters in the scene — PCs and NPCs both (없음 if alone)
-- In multi-PC sessions, mark PCs with `(PC)` tag to distinguish from NPCs
-- Keep single line, minimal clutter
-- Update when location/time/company changes significantly
+- Line 1: location, time, characters.
+- Line 2: Vigor + Composure + Global Doom (numeric only).
+- Line 3: active doom clocks only. Omit line 3 if no active clock.
+- If module is OFF, omit that metric instead of faking numbers.
+- Keep it compact and stable across turns.
 </Status_Window_Layout>
 """
-
 # =========================================================
 # [30] TELESCOPE PROTOCOL (Hidden Reasoning Block)
 # =========================================================
 TELESCOPE_PROTOCOL = """
-## ┣┫ PRE-OUTPUT QUALITY GATE (MANDATORY)
+## ┣ PRE-OUTPUT QUALITY GATE (MANDATORY)
 
 purpose: self-verification_before_prose | system_strips_before_player_sees
-mechanism: ┣ content ┫ | language=English+telegraphic | placed_at_response_start
-rule: EVERY response MUST begin with ┣ block. narrative_ONLY_after_┫.
+mechanism: block_at_response_start | language=English+telegraphic
+rule: EVERY response MUST begin with telescope block. narrative_ONLY_after_block
+
+wrapper_required:
+┣
+[Physics] PASS/FAIL: evidence
+[Camera] PASS/FAIL: evidence
+[Cliche] PASS/FAIL: evidence
+[Hook] PASS/FAIL: evidence
+[Impersonation] PASS/FAIL: evidence
+[Spatial] PASS/FAIL: evidence
+[NPC Identity] PASS/FAIL: evidence
+[CharReason] PASS/FAIL: evidence
+[TheoryAlign] PASS/FAIL: evidence
+[GenreCoherence] PASS/FAIL: evidence
+┫
 
 format_per_gate: [Gate] PASS/FAIL: specific_evidence_from_planned_scene (NEVER omit evidence)
 
-┣
-[Physics] PASS/FAIL: what_physical_element_checked → result
-[Camera] PASS/FAIL: what_sensory_element_verified → observable_or_not
-[Cliché] PASS/FAIL: banned_phrase_found_or_not → replacement_if_any
-[Hook] PASS/FAIL: ending_element → closure_or_live_wire
-[Impersonation] PASS/FAIL: PC_dialogue/thought_source → from_input_or_invented
-[Spatial] PASS/FAIL: position/distance_check → consistent_or_not
-[NPC Identity] PASS/FAIL: NPC_name→profile_role_vs_scene_role → match_or_mismatch
-[CharReason] For_each_acting_NPC: origin→why_this_personality | relationship→to_stimulus_source | internal_state→physical+emotional | need_to_speak?→silence_may_be_better | if_speak→intent_of_line | deep_read→surface/adaptation/core_aligned? | polyvagal→body_signal_matches? | logos→which_layer_active? | attachment→proximity_behavior_consistent? | self_opacity→hidden_motive_leaking?
-[TheoryAlign] PASS/FAIL: Flash_data_reflected? | dual_signal(soma≠psyche)→shown_or_missed | cultural_affect→rendered_through_behavior_not_label | silence_type(間)→prose_rhythm_matches
-[GenreCoherence] PASS/FAIL: genre_tone_consistent? | doom_stage→meaning_matches_genre(horror=threat,romance=tension,comedy=chaos) | anomaly_axis→disruption_rendered_on_correct_resource(vigor_or_composure) | vigor/composure→character_state_visible_in_prose
-┫
+[Physics] PASS/FAIL: what_physical_element_checked -> result
+[Camera] PASS/FAIL: what_sensory_element_verified -> observable_or_not
+[Cliche] PASS/FAIL: banned_phrase_found_or_not -> replacement_if_any
+[Hook] PASS/FAIL: ending_element -> closure_or_live_wire
+[Impersonation] PASS/FAIL: PC_dialogue/thought_source -> from_input_or_invented
+[Spatial] PASS/FAIL: position/distance_check -> consistent_or_not
+[NPC Identity] PASS/FAIL: NPC_name/profile_role_vs_scene_role -> match_or_mismatch | loadout_item->declared_or_inventory?
+[CharReason] PASS/FAIL: acting_NPC_reasoning_chain_valid?
+[TheoryAlign] PASS/FAIL: Flash_data_reflected? | dual_signal_shown? | cultural_affect_behavioral? | silence_type_matches_rhythm?
+[GenreCoherence] PASS/FAIL: genre_tone_consistent? | doom_stage_meaning_matches_genre? | anomaly_axis_correct? | vigor/composure_visible? | clock_imminent_foreshadowed? | clock_completed_must_appear? | fortune_filter_tone_match?
 
 gate_definitions:
-1. Physics: action=physically_possible? | NO→change_approach
-2. Camera: prose_content=camera_recordable? | emotion_words=FAIL→convert_to_body_signal
-3. Cliché: banned("너무 커","하앙","형언할 수 없는","숨을 삼켰다","아이러니하게도","다름 아닌")→rewrite
-4. Hook: response_ends_with_closure?→FAIL | choice_menu/suggestion_list?→FAIL | always_leave_live_wire
-5. Impersonation: PC_dialogue_not_from_input?→HARD_DELETE | PC_action_expansion=OK_if_intent_consistent
+1. Physics: action=physically_possible? | NO->change_approach
+2. Camera: prose_content=camera_recordable? | emotion_words=FAIL->convert_to_body_signal
+3. Cliche: banned_phrases_found?->rewrite
+4. Hook: response_ends_with_closure=FAIL | menu_or_suggestion_list=FAIL | always_leave_live_wire
+5. Impersonation: PC_dialogue_not_from_input=HARD_DELETE | PC_action_expansion=OK_if_intent_consistent
 6. Spatial: positions+distances+line_of_sight=consistent? | gravity_applies
-7. NPC_Identity: every_NPC→role+location+occupation_must_match_PROFILE_DATA | "convenience_store_owner"≠"sharehouse_manager" | no_profile_for_location→NPC_absent | NEVER_invent_affiliations
-8. CharReason: for_each_acting_NPC→reason_through: personality_origin|relationship_to_PC|current_internal_state|must_speak_or_silence_better?|if_speak:what_intent? | verify: deep_read_alignment+polyvagal_body_signal+logos_layer+attachment_behavior+self_opacity_leak | archetype_default_reaction→FAIL | must_derive_from_THIS_character's_profile+current_context
-9. TheoryAlign: Flash_analysis_reflected_in_prose? | soma≠psyche(Cartesian_Dualism)→both_tracks_visible | cultural_affect→behavioral_not_labeled(한=sigh+endurance,정=food+staying,화병=chest+rage,눈치=hesitation,체면=deflection) | silence_type(間)→prose_rhythm_and_pacing_match | self_opacity→character_says_X_but_shows_Y
-10. GenreCoherence: prose_tone_matches_active_genre? | doom_meaning_correct(horror→existential_threat,romance→emotional_stakes,comedy→escalating_absurdity,noir→closing_trap) | anomaly_rendering_targets_correct_axis(vigor→physical_toll,composure→emotional_disruption) | vigor/composure_visible(low_vigor→sluggish_body,low_composure→trembling_voice_or_social_slip)
+7. NPC_Identity: every_NPC_role+location+occupation_must_match_PROFILE_DATA | no_profile_for_location->NPC_absent | NEVER_invent_affiliations | item_used_must_be_in_loadout_or_inventory
+8. CharReason: for_each_acting_NPC reason_through personality_origin|relationship_to_PC|current_internal_state|must_speak_or_silence?|if_speak:what_intent?
+9. TheoryAlign: Flash_analysis_reflected_in_prose? | soma+psyche_both_tracks_visible | cultural_affect_behavioral_not_labeled | silence_type_rhythm_match | self_opacity_X_vs_Y
+10. GenreCoherence: prose_tone_matches_active_genre? | doom_meaning_correct_by_genre | anomaly_rendering_targets_correct_axis(vigor=physical,composure=emotional) | vigor/composure_visible | clock_imminent_foreshadowed_in_narrative | clock_completed_MUST_be_rendered_cannot_skip | fortune_filter_mental_state_aligns_with_prose_tone
 
-output_rule: prose=sensory_organ_input_only | cognitive_processing_output=┣┫_exclusive
+output_rule: prose=sensory_organ_input_only | cognitive_processing_output=┣ exclusive
 """
 
 

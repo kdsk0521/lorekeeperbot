@@ -6,7 +6,7 @@ Extracted from game_system.py
 
 import logging
 import random
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 import config
 import domain_manager
@@ -175,6 +175,96 @@ def _format_doom_clocks(world: Dict[str, Any], limit: int = 3) -> str:
             break
 
     return ", ".join(items) if items else "None"
+
+
+def _get_active_player_masks(channel_id: str) -> List[str]:
+    participants = domain_manager.get_domain(channel_id).get("participants", {})
+    if not isinstance(participants, dict):
+        return []
+    masks: List[str] = []
+    for p_data in participants.values():
+        if not isinstance(p_data, dict):
+            continue
+        if p_data.get("status") != "active":
+            continue
+        mask = str(p_data.get("mask", "")).strip()
+        if mask:
+            masks.append(mask)
+    return masks
+
+
+def _get_status_target_participant(channel_id: str, user_id: str = "") -> Dict[str, Any]:
+    participants = domain_manager.get_domain(channel_id).get("participants", {})
+    if not isinstance(participants, dict):
+        return {}
+
+    if user_id:
+        direct = participants.get(user_id)
+        if isinstance(direct, dict) and direct.get("status") == "active":
+            return direct
+
+    for p_data in participants.values():
+        if isinstance(p_data, dict) and p_data.get("status") == "active":
+            return p_data
+    return {}
+
+
+def build_real_time_display(
+    channel_id: str,
+    user_id: str = "",
+    active_modules: Optional[List[str]] = None,
+) -> str:
+    """Build compact v3 real-time status lines for prompt slot 29."""
+    world = domain_manager.get_world_state(channel_id)
+    modules = active_modules if isinstance(active_modules, list) else domain_manager.get_active_modules(channel_id)
+    module_set = set(modules or [])
+    lines: List[str] = []
+
+    location = world.get("current_location") or world.get("location", "Unknown")
+    day = world.get("day", "?")
+    time_slot = world.get("time_slot", "Unknown")
+    present = _get_active_player_masks(channel_id)
+    present_text = ", ".join(present) if present else "None"
+    lines.append(f"위치 {location} | 시간 {day}일차 {time_slot} | 인물 {present_text}")
+
+    line2_parts: List[str] = []
+    if "mental" in module_set:
+        target = _get_status_target_participant(channel_id, user_id)
+        mem = target.get("ai_memory", {}) if isinstance(target, dict) else {}
+        legacy_mental = mem.get("mental", {}) if isinstance(mem, dict) else {}
+        vigor_src = mem.get("vigor", legacy_mental) if isinstance(mem, dict) else {}
+        composure_src = mem.get("composure", legacy_mental) if isinstance(mem, dict) else {}
+        vigor_val = int(vigor_src.get("value", 100) or 100)
+        composure_val = int(composure_src.get("value", 100) or 100)
+        line2_parts.append(f"기력 {vigor_val}")
+        line2_parts.append(f"평정 {composure_val}")
+
+    if "doom" in module_set:
+        doom_val = int(world.get("doom", 0) or 0)
+        line2_parts.append(f"Doom {doom_val}")
+
+    if line2_parts:
+        lines.append(" | ".join(line2_parts))
+
+    if "doom" in module_set:
+        clocks = world.get("doom_clocks", [])
+        if isinstance(clocks, list):
+            clock_parts: List[str] = []
+            for clock in clocks:
+                if not isinstance(clock, dict):
+                    continue
+                if clock.get("resolved"):
+                    continue
+                name = str(clock.get("name", "Clock")).strip()
+                segments = int(clock.get("segments", 4) or 4)
+                filled = int(clock.get("filled", clock.get("progress", 0)) or 0)
+                tick_mode = str(clock.get("tick_mode", "")).lower()
+                tick_mark = " ⏱" if tick_mode in ("time", "hybrid") else ""
+                clock_parts.append(f"[{name} {filled}/{segments}{tick_mark}]")
+            if clock_parts:
+                lines.append(" ".join(clock_parts))
+
+    return "\n".join(lines).strip()
 
 def get_world_context(channel_id: str) -> str:
     world = domain_manager.get_world_state(channel_id)

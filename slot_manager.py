@@ -721,8 +721,16 @@ def build_34_step_prompt(ctx) -> str:
         )
         gm_mover = (gm_mover + fb_instruction) if gm_mover else fb_instruction
 
-    # --- [Slot 29] Real-time Data (World Context + Variables) ---
-    real_time_data = getattr(ctx, 'world_ctx', '')
+    # --- [Slot 29] Real-time Data (compact v3 status first, legacy fallback) ---
+    real_time_data = ""
+    if channel_id:
+        try:
+            import game_world as _game_world
+            real_time_data = _game_world.build_real_time_display(channel_id, user_id=user_id)
+        except Exception as e:
+            logger.debug(f"[RealTimeDisplay] Fallback to legacy world_ctx: {e}")
+    if not real_time_data:
+        real_time_data = getattr(ctx, 'world_ctx', '')
 
     # PC Impersonation Check 강화
     pc_check = dai.get("pc_impersonation_check", {})

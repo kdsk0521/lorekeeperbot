@@ -11,6 +11,7 @@ import config
 import bot_utils
 import text_resources
 import analysis_resources
+import domain_manager
 from orchestration_context import GameContext
 from google.genai import types
 
@@ -523,6 +524,16 @@ Evaluate this in flashback_eval field. Check plausibility, passive match, assign
 
 """
 
+    def _build_telescope_quality_context(self, anchors: dict) -> str:
+        """Inject recent telescope fail history for self-correction."""
+        channel_id = str(anchors.get("channel_id", "")).strip()
+        if not channel_id:
+            return ""
+        context_text = domain_manager.build_telescope_context(channel_id, n=3)
+        if not context_text:
+            return ""
+        return f"### 5c. RECENT QUALITY GATE FAILURES\n{context_text}\n\n"
+
     def _build_prompt(self, context: GameContext) -> str:
         """분석 프롬프트 생성"""
         req = context.request
@@ -562,7 +573,7 @@ Evaluate this in flashback_eval field. Check plausibility, passive match, assign
 ### 5. RECENT HISTORY
 {req.history_text or '[No history]'}
 
-{self._build_pending_flashback(anchors)}{self._build_chunk_index(req.lore_chunks)}
+{self._build_pending_flashback(anchors)}{self._build_telescope_quality_context(anchors)}{self._build_chunk_index(req.lore_chunks)}
 ---
 Perform FULL Theoria analysis and return JSON with ALL required fields.
 """

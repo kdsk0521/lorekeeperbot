@@ -46,6 +46,67 @@ def _get_dai(ctx: ResponseContext) -> Dict[str, Any]:
     return getattr(ctx, "dai", None) or {}
 
 
+_TELESCOPE_BLOCK_PATTERNS = (
+    r"┣[\s\S]*?┫",
+    r"<TELESCOPE>[\s\S]*?</TELESCOPE>",
+    r"```telescope[\s\S]*?```",
+    r"<<TELESCOPE[\s\S]*?TELESCOPE>>",
+    r"<<[\s\S]*?>>",
+)
+
+
+def _extract_telescope_block(text: str) -> Optional[str]:
+    if not text:
+        return None
+    head = text[:2000]
+    for pattern in _TELESCOPE_BLOCK_PATTERNS:
+        match = re.search(pattern, head, flags=re.IGNORECASE)
+        if match:
+            return match.group(0)
+    return None
+
+
+def parse_telescope(raw_response: str) -> Dict[str, Any]:
+    """Parse a telescope gate block from model output."""
+    block = _extract_telescope_block(raw_response or "")
+    if not block:
+        return {"parsed": False, "gates": {}, "fail_count": 0, "fails": []}
+
+    gate_pattern = re.compile(
+        r"\[([^\]]+)\]\s*(PASS|FAIL)\s*:\s*(.*?)(?=(?:\n\[[^\]]+\]\s*(?:PASS|FAIL)\s*:)|\Z)",
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    gates: Dict[str, Dict[str, str]] = {}
+    fails: List[str] = []
+
+    for gate_name, result, evidence in gate_pattern.findall(block):
+        normalized = re.sub(r"[^a-z0-9]+", "_", gate_name.strip().lower()).strip("_")
+        verdict = result.strip().upper()
+        gates[normalized] = {
+            "result": verdict,
+            "evidence": evidence.strip(),
+        }
+        if verdict == "FAIL":
+            fails.append(normalized)
+
+    return {
+        "parsed": True,
+        "gates": gates,
+        "fail_count": len(fails),
+        "fails": fails,
+    }
+
+
+def strip_telescope(raw_response: str) -> str:
+    """Remove telescope gate block from model output."""
+    if not raw_response:
+        return ""
+    block = _extract_telescope_block(raw_response)
+    if not block:
+        return raw_response.strip()
+    return raw_response.replace(block, "", 1).strip()
+
+
 def _build_nvc_summary(ctx: ResponseContext, filter_config: NVCFilterConfig) -> str:
     """NVC 분석 요약을 구성합니다."""
     dai = _get_dai(ctx)
@@ -245,14 +306,21 @@ async def generate_response(
         response = re.sub(r'```system_update[\s\S]*?```', '', response, flags=re.IGNORECASE).strip()
 
         # 2. [Telescope] ┣┫ CoT block strip (품질 게이트 출력 제거 — 플레이어에겐 비공개)
-        logic_match = re.search(r'(┣[\s\S]*?┫)', response)
-        if logic_match:
-            logic_content = logic_match.group(1)
-            logger.info(f"[Telescope] CoT block found and stripped ({len(logic_content)} chars):\n{logic_content}")
-            response = response.replace(logic_content, "").strip()
-        else:
-            logger.warning(f"[Telescope] ┣┫ CoT block NOT found in response (first 200 chars: {response[:200]})")
-
+        telescope_data = parse_telescope(response)
+        if telescope_data.get("parsed"):
+            channel_id = getattr(ctx, "channel_id", "")
+            if channel_id:
+                try:
+                    turn = int(domain_manager.get_world_state(channel_id).get("turn_index", 0))
+                except Exception:
+                    turn = 0
+                domain_manager.save_telescope_log(channel_id, turn, telescope_data)
+            response = strip_telescope(response)
+            logger.info(
+                "[Telescope] Parsed gates=%d fails=%d",
+                len(telescope_data.get("gates", {})),
+                telescope_data.get("fail_count", 0),
+            )
         # 3. [V4 Inline Extraction] SYS_EXTRACT 블록 파싱 및 제거
         extract_match = re.search(r'\[SYS_EXTRACT\]\s*(\{[\s\S]*?\})\s*\[/SYS_EXTRACT\]', response)
         if extract_match:

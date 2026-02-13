@@ -5,7 +5,7 @@ The main entry point for the UNE engine.
 
 import logging
 import random
-from typing import Dict, Any
+from typing import Dict, Any, List, Tuple
 
 from orchestration_context import GameContext
 from waterfall_pipeline import WaterfallPipeline
@@ -170,6 +170,405 @@ def _build_adaptation_result_line(
         return f"{name}: {status}{note_txt} [Adapt {old_pct}%->{new_pct}%]"
     return f"{name}: {status}{note_txt}"
 
+
+def _to_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _position_tier(value: float) -> str:
+    if value <= 0.25:
+        return "desperate"
+    if value <= 0.5:
+        return "risky"
+    return "controlled"
+
+
+def _mc_move(position: str, result: str) -> str:
+    matrix = {
+        ("desperate", "critical_failure"): "Catastrophic - something irreversible happens.",
+        ("desperate", "failure"): "Make the threat real - irreversible consequences.",
+        ("desperate", "partial"): "Heavy price - gain what was sought but lose something.",
+        ("desperate", "success"): "Dramatic turnaround - shining in the direst moment.",
+        ("desperate", "critical_success"): "Miraculous reversal - transcendent moment.",
+        ("risky", "critical_failure"): "Worst case unfolds - danger becomes reality.",
+        ("risky", "failure"): "Escalate - a new danger reveals itself.",
+        ("risky", "partial"): "Success with cost - complications follow.",
+        ("risky", "success"): "Danger cleared - competent execution.",
+        ("risky", "critical_success"): "Brilliant - impressive against the odds.",
+        ("controlled", "critical_failure"): "Unexpected reversal - safety shatters.",
+        ("controlled", "failure"): "Minor cost - a small setback.",
+        ("controlled", "partial"): "Minor friction - less smooth than expected.",
+        ("controlled", "success"): "Clean - smooth and effortless.",
+        ("controlled", "critical_success"): "Overwhelming mastery - exceeds expectations.",
+    }
+    return matrix.get((position, result), "Outcome determined by world logic.")
+
+
+def _collect_aspect_stance(aspects: Any) -> Tuple[List[str], List[str]]:
+    if not isinstance(aspects, list):
+        return [], []
+
+    favorable: List[str] = []
+    against: List[str] = []
+    for aspect in aspects:
+        if not isinstance(aspect, dict):
+            continue
+        name = str(aspect.get("name", "")).strip()
+        if not name:
+            continue
+        stance = str(aspect.get("for_or_against", aspect.get("stance", ""))).strip().lower()
+        if stance in ("for", "support", "positive", "pro"):
+            favorable.append(name)
+        elif stance in ("against", "oppose", "negative", "con"):
+            against.append(name)
+    return favorable, against
+
+
+def _build_world_layer(bus) -> str:
+    dai = bus.dai if isinstance(bus.dai, dict) else {}
+    parts: List[str] = []
+
+    pos = dai.get("position", {}) if isinstance(dai.get("position"), dict) else {}
+    pos_value = _to_float(pos.get("value", 0.5), 0.5)
+    pos_tier = _position_tier(pos_value)
+    pos_labels = {
+        "desperate": "desperate - stakes are lethal, one wrong move can end it.",
+        "risky": "risky - danger is present, outcome uncertain.",
+        "controlled": "controlled - situation favors the actor.",
+    }
+    parts.append(f"[Position] {pos_labels.get(pos_tier, pos_tier)}")
+    if pos.get("reason"):
+        parts.append(f"Why: {pos.get('reason')}")
+
+    eff = dai.get("effect", {}) if isinstance(dai.get("effect"), dict) else {}
+    eff_value = _to_float(eff.get("value", 0.5), 0.5)
+    if eff_value >= 0.7:
+        eff_label = "great - success changes the situation dramatically."
+    elif eff_value >= 0.4:
+        eff_label = "standard - meaningful but not decisive."
+    else:
+        eff_label = "limited - small gain even on success."
+    parts.append(f"[Effect] {eff_label}")
+    if eff.get("reason"):
+        parts.append(f"Effect basis: {eff.get('reason')}")
+
+    scene_type = str(dai.get("scene_type", "normal"))
+    scene_map = {
+        "normal": "Normal - standard interaction, observe and react.",
+        "combat": "Combat - physicality, positioning, threat, consequences.",
+        "social": "Social - reputation, leverage, hidden agendas.",
+        "tension": "Tension - suspense, restricted information, slow reveal.",
+        "intimate": "Intimate - emotion, subtlety, vulnerability, trust.",
+        "exploration": "Exploration - curiosity, discovery, world-building.",
+    }
+    parts.append(f"[Scene] {scene_map.get(scene_type, scene_type)}")
+
+    energy = str(dai.get("energy_direction", "steady"))
+    energy_map = {
+        "rising": "RISING - escalate tension and pacing.",
+        "falling": "FALLING - breathing room and reflection.",
+        "peak": "PEAK - climactic intensity.",
+        "steady": "STEADY - maintain current rhythm.",
+        "stagnant": "STAGNANT - break the pattern and introduce change.",
+        "detonation": "DETONATION - everything erupts now.",
+        "aftershock": "AFTERSHOCK - consequences settle in.",
+    }
+    parts.append(f"[Energy] {energy_map.get(energy, energy)}")
+
+    attitudes = dai.get("npc_attitudes", {})
+    if isinstance(attitudes, dict) and attitudes:
+        lines: List[str] = []
+        for name, data in attitudes.items():
+            if not isinstance(data, dict):
+                continue
+            attitude = str(data.get("attitude", "neutral"))
+            trajectory = str(data.get("trajectory", "stable"))
+            reason = str(data.get("reason", "")).strip()
+            line = f"- {name}: {attitude} ({trajectory})"
+            if reason:
+                line += f" | {reason}"
+            lines.append(line)
+        if lines:
+            parts.append("[NPC States]\n" + "\n".join(lines))
+
+    psyche = dai.get("psyche_states", {})
+    if isinstance(psyche, dict) and psyche:
+        lines = []
+        for char_name, state in psyche.items():
+            if not isinstance(state, dict):
+                continue
+            mental = state.get("mental") if isinstance(state.get("mental"), dict) else {}
+            if not mental:
+                mental = state.get("psyche") if isinstance(state.get("psyche"), dict) else {}
+            soma = state.get("soma") if isinstance(state.get("soma"), dict) else {}
+            desc = str(mental.get("descriptor", "")).strip()
+            polyvagal = str(soma.get("polyvagal", "")).strip()
+            if desc or polyvagal:
+                lines.append(f"- {char_name}: {desc or 'n/a'} / body={polyvagal or 'n/a'}")
+        if lines:
+            parts.append("[Psyche]\n" + "\n".join(lines))
+
+    needs_judgment = bool(dai.get("needs_judgment", False))
+    action_meta = dai.get("action_meta", {}) if isinstance(dai.get("action_meta"), dict) else {}
+    action_name = str(action_meta.get("action", "")).strip()
+    if action_name:
+        difficulty = str(action_meta.get("difficulty", "normal"))
+        parts.append(f"[Action Reading] '{action_name}' - {difficulty}")
+        if not needs_judgment:
+            parts.append(f"No dice. Resolve by Position ({pos_tier}) and world logic.")
+
+    chain = dai.get("narrative_chain", {})
+    if isinstance(chain, dict) and chain:
+        status = str(chain.get("chain_status", "OPEN"))
+        proximity = int(_to_float(chain.get("conclusion_proximity", 0), 0))
+        chain_lines = [f"[Narrative] chain={status}, proximity={proximity}%"]
+        hook = str(dai.get("narrative_hook", "")).strip()
+        if hook:
+            chain_lines.append(f"Hook: {hook}")
+        threads = chain.get("open_threads", [])
+        if isinstance(threads, list) and threads:
+            chain_lines.append("Threads: " + " | ".join(str(t) for t in threads[:3]))
+        parts.append("\n".join(chain_lines))
+
+    qflags = dai.get("quality_flags", {})
+    if isinstance(qflags, dict):
+        warnings: List[str] = []
+        if qflags.get("convergence_warning"):
+            warnings.append("CONVERGENCE: comfort without earning it.")
+        if qflags.get("echo_warning"):
+            warnings.append("ECHO: NPC mirrors PC instead of independent response.")
+        if qflags.get("stagnation_warning"):
+            warnings.append("STAGNATION: scene pattern stayed flat too long.")
+        if warnings:
+            parts.append("[Quality Alerts]\n" + "\n".join(f"- {w}" for w in warnings))
+
+    return "[World]\n" + "\n".join(parts)
+
+
+def _build_events_layer(context, bus) -> str:
+    parts: List[str] = []
+
+    anomaly = bus.anomaly if isinstance(bus.anomaly, dict) else {}
+    if anomaly.get("triggered"):
+        tag = anomaly.get("tag") or "anomaly"
+        intensity = anomaly.get("intensity", "")
+        polarity = anomaly.get("polarity", "")
+        block = [f"[Anomaly] {tag} | intensity={intensity} | polarity={polarity}"]
+        if anomaly.get("line"):
+            block.append(f"Scene seed: {anomaly.get('line')}")
+        if anomaly.get("output"):
+            block.append(f"Effect: {anomaly.get('output')}")
+        old_pct = anomaly.get("adapt_pct")
+        new_pct = anomaly.get("adapt_new_pct")
+        if old_pct is not None and new_pct is not None:
+            block.append(f"Adaptation: {old_pct}% -> {new_pct}%")
+        if anomaly.get("defense_note"):
+            block.append(f"Defense note: {anomaly.get('defense_note')}")
+        parts.append("\n".join(block))
+
+    doom = bus.doom if isinstance(bus.doom, dict) else {}
+    if doom.get("clock_log"):
+        parts.append(f"[Clock Progress] {doom.get('clock_log')}")
+    if doom.get("log"):
+        parts.append(f"[Doom Shift] {doom.get('log')}")
+
+    clocks = doom.get("clocks", [])
+    if isinstance(clocks, list) and clocks:
+        completed: List[str] = []
+        imminent: List[str] = []
+        for clock in clocks:
+            if not isinstance(clock, dict):
+                continue
+            name = str(clock.get("name", "Unnamed Clock"))
+            segments = int(_to_float(clock.get("segments", 4), 4))
+            progress = int(_to_float(clock.get("progress", 0), 0))
+            if clock.get("resolved"):
+                completed.append(name)
+                continue
+            remaining = max(0, segments - progress)
+            if remaining <= 1:
+                imminent.append(f"{name} ({remaining} left)")
+        if completed:
+            parts.append("[Clock Completed] " + " | ".join(completed[:3]))
+        if imminent:
+            parts.append("[Clock Imminent] " + " | ".join(imminent[:3]))
+
+    status_seen = set()
+    for container in (bus.vigor, bus.composure, bus.dai):
+        if not isinstance(container, dict):
+            continue
+        for key, label in (("new_status_effects", "Status Added"), ("expired_status_effects", "Status Expired")):
+            entries = container.get(key, [])
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                name = ""
+                hint = ""
+                if isinstance(entry, dict):
+                    name = str(entry.get("name", "")).strip()
+                    hint = str(entry.get("narrative_hint", "")).strip()
+                else:
+                    name = str(entry).strip()
+                if not name:
+                    continue
+                sig = (label, name)
+                if sig in status_seen:
+                    continue
+                status_seen.add(sig)
+                line = f"[{label}] {name}"
+                if hint:
+                    line += f" - {hint}"
+                parts.append(line)
+
+    flashback = bus.dai.get("flashback_result") if isinstance(bus.dai, dict) else None
+    if not flashback and isinstance(bus.dai, dict):
+        flashback = bus.dai.get("flashback_eval")
+    if isinstance(flashback, dict):
+        declaration = str(flashback.get("declaration", "")).strip()
+        if not declaration:
+            declaration = str(flashback.get("reason", "")).strip()
+        if declaration:
+            parts.append(f"[Flashback] {declaration}")
+
+    if not parts:
+        return ""
+    return "[Events]\n" + "\n".join(parts)
+
+
+def _build_judgment_layer(context, bus, mask: str) -> str:
+    judgment = bus.judgment if isinstance(bus.judgment, dict) else {}
+    if not judgment.get("active"):
+        return ""
+
+    meta = judgment.get("meta", {}) if isinstance(judgment.get("meta"), dict) else {}
+    action = str(meta.get("action", "행동"))
+    result = str(judgment.get("result", "failure"))
+    reason = str(judgment.get("reason", "")).strip()
+
+    dai = bus.dai if isinstance(bus.dai, dict) else {}
+    pos_value = _to_float((dai.get("position", {}) or {}).get("value", 0.5), 0.5)
+    pos_tier = _position_tier(pos_value)
+
+    mechanic = context.request.genres.get("mechanic", {})
+    primary_genre = mechanic.get("primary_lens", "")
+    move = _get_genre_mc_move(primary_genre, pos_tier, result) or _mc_move(pos_tier, result)
+
+    favorable, against = _collect_aspect_stance(dai.get("aspects", []))
+    reason_part = f" ({reason})" if reason else ""
+    lines = [
+        f"[Judgment: {mask} '{action}'{reason_part}]",
+        f"Result: {result} | Position: {pos_tier}",
+        f"MC Move: {move}",
+    ]
+    if favorable:
+        lines.append("Favorable: " + ", ".join(favorable))
+    if against:
+        lines.append("Against: " + ", ".join(against))
+    return "\n".join(lines)
+
+
+def _build_atmosphere_layer(context, bus) -> str:
+    parts: List[str] = []
+
+    vigor_val = int(_to_float((bus.vigor or {}).get("value", 100), 100))
+    composure_val = int(_to_float((bus.composure or {}).get("value", 100), 100))
+
+    if vigor_val >= 70:
+        parts.append("[기력] FORTUNATE - body responds quickly and reliably.")
+    elif vigor_val >= 40:
+        pass
+    elif vigor_val >= 15:
+        parts.append("[기력] STRAINED - fatigue leaks into actions.")
+    else:
+        parts.append("[기력] COLLAPSING - body is failing; show cost, not hard block.")
+
+    if composure_val >= 70:
+        parts.append("[평정] FORTUNATE - social flow and observation stay sharp.")
+    elif composure_val >= 40:
+        pass
+    elif composure_val >= 15:
+        parts.append("[평정] STRAINED - mask slips and NPCs notice.")
+    else:
+        parts.append("[평정] COLLAPSING - mind frays; show cost, not hard block.")
+
+    if vigor_val >= 70 and composure_val <= 39:
+        parts.append("[Contrast] Body holds, mind is fragile.")
+    elif composure_val >= 70 and vigor_val <= 39:
+        parts.append("[Contrast] Mind holds, body is failing.")
+
+    if composure_val <= 14:
+        parts.append("[NPC Reaction] composure collapse draws concern, avoidance, or exploitation.")
+    if vigor_val <= 14:
+        parts.append("[NPC Reaction] physical collapse changes how others treat the PC.")
+
+    doom_val = int(_to_float((bus.doom or {}).get("value", 0), 0))
+    if doom_val > 0:
+        mechanic = context.request.genres.get("mechanic", {})
+        primary_genre = mechanic.get("primary_lens", "")
+        doom_info = game_world.get_doom_info(doom_val, genre=primary_genre)
+        stage_name = doom_info.get("name", "")
+        stage_emoji = doom_info.get("emoji", "")
+        parts.append(f"[Tension] {stage_emoji}{stage_name} ({doom_val}%)")
+
+    status_effects = (context.narrative_anchors or {}).get("status_effects", [])
+    if isinstance(status_effects, list):
+        for status in status_effects[:3]:
+            if not isinstance(status, dict):
+                continue
+            name = str(status.get("name", "")).strip()
+            if not name:
+                continue
+            hint = str(status.get("narrative_hint", status.get("description", ""))).strip()
+            if hint:
+                parts.append(f"[Condition: {name}] {hint}")
+            else:
+                parts.append(f"[Condition: {name}] active.")
+
+    if not parts:
+        return ""
+    return "[Atmosphere]\n" + "\n".join(parts)
+
+
+def _build_system_message(bus) -> str:
+    chunks: List[str] = []
+
+    judgment = bus.judgment if isinstance(bus.judgment, dict) else {}
+    if judgment.get("output"):
+        chunks.append(str(judgment.get("output")))
+
+    anomaly = bus.anomaly if isinstance(bus.anomaly, dict) else {}
+    if anomaly.get("triggered"):
+        tag = anomaly.get("tag", "anomaly")
+        note = anomaly.get("defense_note", "")
+        anomaly_line = f"[Anomaly Triggered] {tag}"
+        if note:
+            anomaly_line += f" ({note})"
+        chunks.append(anomaly_line)
+
+    doom = bus.doom if isinstance(bus.doom, dict) else {}
+    for key in ("relief_log", "mental_pressure_log", "clock_log", "log"):
+        val = doom.get(key)
+        if val:
+            chunks.append(str(val))
+
+    vigor = bus.vigor if isinstance(bus.vigor, dict) else {}
+    if vigor.get("log"):
+        chunks.append(str(vigor.get("log")))
+
+    deduped: List[str] = []
+    seen = set()
+    for chunk in chunks:
+        text = chunk.strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        deduped.append(text)
+
+    return "\n".join(deduped).strip()
+
 def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> GameContext:
     """[UNE Bridge] ParticipantData -> GameContext"""
     from orchestration_context import GameContext, RequestData, SharedBus
@@ -219,6 +618,7 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> G
 
     # Narrative Anchors (행동자 PC)
     anchors = {
+        "channel_id": channel_id,
         "appearance": mem.get("appearance", ""),
         "personality": mem.get("personality", ""),
         "background": mem.get("background", ""),
@@ -369,7 +769,7 @@ class UniversalNarrativeEngine:
         updated_context = await self.pipeline.execute(context)
         sync_from_game_context(channel_id, user_id, updated_context)
 
-        result = self._extract_pc_result(updated_context, mask)
+        result = self._extract_pc_result_v3(updated_context, mask)
         return {
             "game_context": updated_context,
             "directive": result["directive"],
@@ -406,10 +806,10 @@ class UniversalNarrativeEngine:
                 }
 
             sync_from_game_context(channel_id, uid, updated)
-            all_results.append(self._extract_pc_result(updated, info["mask"]))
+            all_results.append(self._extract_pc_result_v3(updated, info["mask"]))
             last_context = updated
 
-        return self._combine_batch_results(all_results, last_context)
+        return self._combine_batch_results_v3(all_results, last_context)
 
     async def run_observation(self, channel_id: str) -> Dict[str, Any]:
         """관찰 모드: PC 행동 없이 세계 묘사"""
@@ -437,11 +837,82 @@ class UniversalNarrativeEngine:
         updated = await self.pipeline.execute(context)
         sync_from_game_context(channel_id, base_uid, updated)
 
-        result = self._extract_pc_result(updated, "")
+        result = self._extract_pc_result_v3(updated, "")
         return {
             "game_context": updated,
             "directive": "[관찰 모드] 세계와 NPC의 자연스러운 활동을 묘사하라. PC의 행동은 없다.\n" + result["directive"],
             "system_message": result["system_msg"]
+        }
+
+    def _extract_pc_result_v3(self, context, mask: str) -> Dict[str, Any]:
+        """Build directive-layer v3: World -> Events -> Judgment -> Atmosphere."""
+        bus = context.shared_bus
+        layers: List[str] = []
+
+        world = _build_world_layer(bus)
+        if world:
+            layers.append(world)
+
+        events = _build_events_layer(context, bus)
+        if events:
+            layers.append(events)
+
+        effective_mask = mask or context.get_acting_mask()
+        judgment = _build_judgment_layer(context, bus, effective_mask)
+        if judgment:
+            layers.append(judgment)
+
+        atmosphere = _build_atmosphere_layer(context, bus)
+        if atmosphere:
+            layers.append(atmosphere)
+
+        # Preserve autonomous NPC behavior directive after core v3 layers.
+        if bus.dai and bus.dai.get("psyche_states"):
+            from npc_autonomous import NPCAutonomousEngine
+
+            triggers = NPCAutonomousEngine.evaluate_triggers(
+                psyche_states=bus.dai.get("psyche_states", {}),
+                npc_knowledge=bus.dai.get("npc_knowledge", {}),
+                npc_attitudes=bus.dai.get("npc_attitudes", {}),
+                scene_type=bus.dai.get("scene_type", "normal"),
+            )
+            auto_directive = NPCAutonomousEngine.build_autonomous_directive(triggers)
+            if auto_directive:
+                layers.append(auto_directive)
+
+        fallback_msg = self.pipeline.get_fallback_directives(context.request.active_modules)
+        if fallback_msg:
+            layers.append(f"[Module Constraints]\n{fallback_msg}")
+
+        return {
+            "directive": "\n\n".join(part for part in layers if part).strip(),
+            "system_msg": _build_system_message(bus),
+            "has_anomaly": bool(bus.anomaly and bus.anomaly.get("triggered")),
+            "anomaly_header": "",
+            "adaptation_line": "",
+            "mental_log": bus.vigor.get("log", "") if bus.vigor else "",
+        }
+
+    def _combine_batch_results_v3(self, results: list, last_context) -> Dict[str, Any]:
+        """Merge multi-PC directives and system logs for batch processing."""
+        all_directives: List[str] = []
+        system_chunks: List[str] = []
+        seen_sys = set()
+
+        for result in results:
+            directive = (result.get("directive") or "").strip()
+            if directive:
+                all_directives.append(directive)
+
+            sys_msg = (result.get("system_msg") or "").strip()
+            if sys_msg and sys_msg not in seen_sys:
+                seen_sys.add(sys_msg)
+                system_chunks.append(sys_msg)
+
+        return {
+            "game_context": last_context,
+            "directive": "\n\n".join(all_directives).strip(),
+            "system_message": "\n\n".join(system_chunks).strip(),
         }
 
     def _extract_pc_result(self, context, mask: str) -> Dict[str, Any]:

@@ -95,6 +95,7 @@ def _get_default_session() -> Dict[str, Any]:
         "deep_memory": "",
         "last_export_idx": 0,
         "last_chronicle_idx": 0,
+        "telescope_logs": [],
         "bot_active": True,  # Default: Bot is ON
         "notebook": "— [소지품] —\n\n— [메모] —", # [V5.1] Unified Notebook
         "last_execution_context": None  # [!다시] Persistent retry data
@@ -1159,6 +1160,56 @@ def clear_pending_flashback(channel_id: str) -> None:
     d = get_domain(channel_id)
     d.pop("pending_flashback", None)
     save_domain(channel_id, d)
+
+def save_telescope_log(channel_id: str, turn: int, telescope_data: Dict[str, Any]) -> None:
+    """Persist parsed telescope gate results with a rolling window of 10 turns."""
+    d = get_domain(channel_id)
+    logs = d.setdefault("telescope_logs", [])
+    if not isinstance(logs, list):
+        logs = []
+
+    entry = dict(telescope_data or {})
+    entry["turn"] = int(turn) if isinstance(turn, int) or str(turn).isdigit() else 0
+    logs.append(entry)
+    d["telescope_logs"] = logs[-10:]
+    save_domain(channel_id, d)
+
+
+def get_telescope_logs(channel_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Return stored telescope logs (optionally last N)."""
+    logs = get_domain(channel_id).get("telescope_logs", [])
+    if not isinstance(logs, list):
+        return []
+    if isinstance(limit, int) and limit > 0:
+        return logs[-limit:]
+    return logs
+
+
+def build_telescope_context(channel_id: str, n: int = 3) -> str:
+    """Build quality-history context from recent telescope FAIL gates."""
+    logs = get_telescope_logs(channel_id, limit=max(1, n))
+    if not logs:
+        return ""
+
+    fail_lines: List[str] = []
+    for log in logs:
+        turn = log.get("turn", "?")
+        gates = log.get("gates", {})
+        if not isinstance(gates, dict):
+            continue
+        for gate_name, gate_data in gates.items():
+            if not isinstance(gate_data, dict):
+                continue
+            if str(gate_data.get("result", "")).upper() != "FAIL":
+                continue
+            evidence = str(gate_data.get("evidence", "")).strip()
+            fail_lines.append(f"Turn {turn}: {gate_name} - {evidence}")
+
+    if not fail_lines:
+        return ""
+
+    return "[Quality History - Recent gate failures]\n" + "\n".join(fail_lines)
+
 
 def reset_session_state(channel_id: str) -> None:
     """
