@@ -98,29 +98,13 @@ def parse_telescope(raw_response: str) -> Dict[str, Any]:
     }
 
 
-def _truncate_to_limit(text: str, limit: int) -> str:
-    """응답이 limit 글자를 초과하면 마지막 문장 경계에서 절단."""
-    if not text or len(text) <= limit:
+def _check_length(text: str, limit: int) -> str:
+    """응답이 limit의 130%를 초과할 때만 경고 로그. 원문은 항상 그대로 반환."""
+    if not text:
         return text
-    # 한국어/영어 문장 종결 패턴: 다. 요. 까? ! … — 등
-    truncated = text[:limit]
-    # 마지막 문장 종결 위치를 역방향 탐색
-    last_sentence = -1
-    for i in range(len(truncated) - 1, max(0, limit - 500) - 1, -1):
-        ch = truncated[i]
-        if ch in '.!?…':
-            last_sentence = i + 1
-            break
-        if ch == '—' or ch == '―':
-            last_sentence = i + 1
-            break
-    if last_sentence > 0:
-        result = truncated[:last_sentence].rstrip()
-    else:
-        # 문장 경계 없으면 hard cut + 줄임표
-        result = truncated.rstrip() + "…"
-    logger.info("[Length Cap] %d → %d chars (limit %d)", len(text), len(result), limit)
-    return result
+    if len(text) > int(limit * 1.3):
+        logger.warning("[Length Over] %d chars (limit %d, +%d%% over)", len(text), limit, int((len(text) - limit) / limit * 100))
+    return text
 
 
 def strip_telescope(raw_response: str) -> str:
@@ -378,9 +362,9 @@ async def generate_response(
         from response_processor import clean_mob_tags
         response = clean_mob_tags(response)
 
-    # 4. 서사 길이 제한 (인원 기반 동적)
+    # 4. 서사 길이 체크 (인원 기반 — 경고만, 강제 절단 없음)
     if response:
         char_limit = config.get_narrative_char_limit(active_player_count)
-        response = _truncate_to_limit(response, char_limit)
+        response = _check_length(response, char_limit)
 
     return response, extraction_data
