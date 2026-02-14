@@ -726,11 +726,30 @@ def apply_pc_info_to_user(channel_id: str, user_id: str) -> bool:
     if notes and isinstance(notes, (str, list)):
         _append_memo_to_notebook(channel_id, f"설정 동기화: {notes[:100]}...", user_id)
 
-    # Inventory
+    # Inventory (v3 structured list + legacy dict 하위 호환)
     inv = pc_info.get("inventory")
-    if inv and isinstance(inv, dict):
-        for item, qty in inv.items():
-            _append_memo_to_notebook(channel_id, f"{item} ({qty}) - 설정 동기화", user_id)
+    if inv:
+        if isinstance(inv, list):
+            # v3 구조화 형식: [{name, qty, tags, modifiers}]
+            for item_obj in inv:
+                if isinstance(item_obj, dict):
+                    name = item_obj.get("name", "")
+                    qty = item_obj.get("qty", 1)
+                    if not name:
+                        continue
+                    structured = {"name": name, "qty": qty, "tags": item_obj.get("tags", [])}
+                    if item_obj.get("modifiers"):
+                        structured["modifiers"] = item_obj["modifiers"]
+                    add_to_ai_memory_list(channel_id, user_id, "inventory", structured)
+                    _append_memo_to_notebook(channel_id, f"{name} ({qty}개) - 설정 동기화", user_id)
+                elif isinstance(item_obj, str) and item_obj.strip():
+                    add_to_ai_memory_list(channel_id, user_id, "inventory", {"name": item_obj.strip(), "qty": 1, "tags": []})
+                    _append_memo_to_notebook(channel_id, f"{item_obj.strip()} (1개) - 설정 동기화", user_id)
+        elif isinstance(inv, dict):
+            # Legacy {"Item": "Qty"} 형식 → 구조화 변환
+            for item, qty in inv.items():
+                add_to_ai_memory_list(channel_id, user_id, "inventory", {"name": item, "qty": int(qty) if str(qty).isdigit() else 1, "tags": []})
+                _append_memo_to_notebook(channel_id, f"{item} ({qty}) - 설정 동기화", user_id)
     
     save_participant_data(channel_id, user_id, p)
     return True
@@ -785,9 +804,9 @@ def add_to_ai_memory_list(channel_id: str, uid: str, key: str, item: str) -> Non
     if key not in mem: mem[key] = []
     
     if isinstance(mem[key], list):
-        # [Fix] Deep Deduplication for Passives (Dict)
+        # [Fix] Deep Deduplication for Dict items (Passives, Inventory)
         is_duplicate = False
-        if key == "passives" and isinstance(item, dict):
+        if key in ("passives", "inventory") and isinstance(item, dict):
             new_name = item.get("name", "Unknown")
             for existing in mem[key]:
                 if isinstance(existing, dict) and existing.get("name") == new_name:

@@ -573,11 +573,6 @@ Output: "adaptation_group": ["fear", "betrayal"] (exact English keys from above)
 Provide a 1-sentence Korean hint describing how the PC could defend against this anomaly.
 Base on the theory_basis: e.g. "정신적 연속성을 유지하며 공포에 저항" (Continuum+TMT)
 
-### Protective Item Check
-Cross-reference PC's INVENTORY for items that could help resist/mitigate the anomaly.
-- Holy symbol vs supernatural, calming herb vs psychological, mask vs environmental, etc.
-- Only items currently in inventory count. Do NOT invent items.
-- Output: "protective_item": "item name" or null if nothing relevant
 </anomaly_detection>
 """
 

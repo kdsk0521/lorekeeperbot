@@ -325,7 +325,13 @@ async def _extract_narrative(
         "### [PASSIVE RULES]\n"
         "'Passive' means ANY permanent capability:\n"
         "1. Skills/Abilities, Physical Traits, Mental Traits, Achievements.\n"
-        "2. **HYGIENE**: Only return NEW ones not in the [Passives] list.\n\n"
+        "2. **HYGIENE**: Only return NEW ones not in the [Passives] list.\n"
+        "3. Passive format: `{\"name\": \"이름\", \"desc\": \"설명\","
+        " \"theory_links\": [\"theory1\", \"theory2\"],"
+        " \"modifiers\": {\"anomaly_defense\": 10, \"judgment_combat\": 5}}`\n"
+        "   theory_links: psychological theories this trait connects to.\n"
+        "   modifiers keys: anomaly_defense (±5~15), judgment_combat/social (±5~10), vigor_drain/composure_drain (0.8~1.2).\n"
+        "   Positive trait → positive values, drain < 1.0. Negative → negative, drain > 1.0. Only include relevant keys.\n\n"
         "### [ANOMALY RULES]\n"
         "1. **Anomaly Trigger**: Genre shifts or monsters. **MUST BE IN ENGLISH**.\n"
         "2. **Professional Bias**: Gore is NORMAL for a Doctor. Combat is NORMAL for a Soldier. Only trigger for events truly wrong to THEM.\n\n"
@@ -457,7 +463,7 @@ Analyze the provided lorebook precisely to extract all metadata required for gam
    - **role**: Character's job or social role (e.g., "Resident", "Store Owner", "Neighbor").
    - **location**: Primary location or residence (e.g., "Room 2", "Dungeon 25", "Error 404").
 3. **pc_info**: Identification of the Protagonist. null if no clear protagonist.
-   - Fields: name, role, species, appearance, description (integrated personality/traits - Korean), sexual_characteristics, background, secret_info, passives(name, desc - Korean), inventory
+   - Fields: name, role, species, appearance, description (integrated personality/traits - Korean), sexual_characteristics, background, secret_info, passives(name, desc, theory_links, modifiers - Korean), inventory(name, qty, tags, modifiers)
 4. **lore_summary**:
    - theme: Core theme of the world (1-2 sentences in Korean)
    - anomaly_seeds: Structured list of anomaly/disruption seeds for this world (3-5 items). Each seed:
@@ -500,7 +506,7 @@ Analyze the provided lorebook precisely to extract all metadata required for gam
     "background": "...",
     "secret_info": "...",
     "passives": [ {{ "name": "...", "desc": "...", "theory_links": ["theory1", "theory2"], "modifiers": {{"anomaly_defense": 10, "judgment_combat": 5}} }} ],
-    "inventory": {{ "Item": "Quantity" }}
+    "inventory": [{{ "name": "아이템명", "qty": 1, "tags": ["weapon", "melee"], "modifiers": {{"judgment_combat": 5}} }}]
   }},
   "lore_summary": {{
     "theme": "...",

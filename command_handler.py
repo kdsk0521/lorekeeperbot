@@ -227,7 +227,9 @@ async def cmd_lore(ctx: CommandContext) -> None:
             loc_str = ', '.join(l.get('name', str(l)) if isinstance(l, dict) else str(l) for l in locations) if isinstance(locations, list) else str(locations)
             rules = lore_summary_data.get('rules', [])
             rules_str = '\n'.join(f"  - {r}" for r in rules) if rules else ""
-            summary_text = f"테마: {lore_summary_data.get('theme', '')}\n이변 징후: {', '.join(lore_summary_data.get('anomaly_seeds', []))}\n공간: {loc_str}"
+            raw_seeds = lore_summary_data.get('anomaly_seeds', [])
+            seed_names = [s.get('name', str(s)) if isinstance(s, dict) else str(s) for s in raw_seeds] if isinstance(raw_seeds, list) else []
+            summary_text = f"테마: {lore_summary_data.get('theme', '')}\n이변 징후: {', '.join(seed_names)}\n공간: {loc_str}"
             if rules_str:
                 summary_text += f"\n규칙:\n{rules_str}"
             domain_manager.set_event_lore_summary(channel_id, summary_text)

@@ -673,6 +673,93 @@ def get_passives_for_context(user_data: Optional[Dict[str, Any]]) -> str:
 
     return f"Passives: {', '.join(lines)}"
 
+
+# =========================================================
+# INVENTORY TAG SYSTEM (Phase 4-1b)
+# =========================================================
+
+def add_inventory_item(channel_id: str, user_id: str, name: str,
+                       tags: List[str] = None, modifiers: dict = None, qty: int = 1) -> str:
+    """구조화 아이템을 ai_memory.inventory에 추가"""
+    new_item = {"name": name, "qty": qty, "tags": tags or []}
+    if modifiers:
+        new_item["modifiers"] = modifiers
+    domain_manager.add_to_ai_memory_list(channel_id, user_id, "inventory", new_item)
+    return f"📥 획득: {name}"
+
+
+def remove_inventory_item(channel_id: str, user_id: str, name: str) -> str:
+    """ai_memory.inventory에서 이름으로 아이템 제거"""
+    p = domain_manager.get_participant_data(channel_id, user_id)
+    if not p:
+        return f"⚠️ {name}: 참가자 없음"
+    mem = p.get("ai_memory", {})
+    inv = mem.get("inventory", [])
+    if not inv:
+        return f"⚠️ {name}: 인벤토리 비어있음"
+
+    # Find and remove by name (case-insensitive partial match)
+    name_lower = name.strip().lower()
+    new_inv = []
+    removed = False
+    for item in inv:
+        if removed:
+            new_inv.append(item)
+            continue
+        if isinstance(item, dict):
+            if item.get("name", "").strip().lower() == name_lower:
+                removed = True
+                continue
+        elif isinstance(item, str):
+            if item.strip().lower() == name_lower:
+                removed = True
+                continue
+        new_inv.append(item)
+
+    if not removed:
+        return f"⚠️ {name}: 인벤토리에 없음"
+
+    mem["inventory"] = new_inv
+    p["ai_memory"] = mem
+    domain_manager.save_participant_data(channel_id, user_id, p)
+    return f"📦 소비: {name}"
+
+
+def get_inventory_items(user_data: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """구조화 아이템 리스트 반환 (modifier 계산용).
+    ai_memory.inventory에서 dict 형태의 아이템만 반환."""
+    if not user_data:
+        return []
+    ai_mem = user_data.get("ai_memory", {})
+    inv = ai_mem.get("inventory", [])
+    result = []
+    for item in inv:
+        if isinstance(item, dict):
+            result.append(item)
+        elif isinstance(item, str):
+            result.append({"name": item, "tags": [], "qty": 1})
+    return result
+
+
+def get_inventory_for_context(user_data: Optional[Dict[str, Any]]) -> str:
+    """Flash/Renderer에 전달할 인벤토리 컨텍스트 문자열.
+    Passive와 동일 패턴: name(tags)"""
+    items = get_inventory_items(user_data)
+    if not items:
+        return "Inventory: None"
+
+    lines = []
+    for item in items:
+        name = item.get("name", "?")
+        qty = item.get("qty", 1)
+        tags = item.get("tags", [])
+        tag_str = f"({', '.join(tags)})" if tags else ""
+        qty_str = f" x{qty}" if qty > 1 else ""
+        lines.append(f"{name}{qty_str}{tag_str}")
+
+    return f"Inventory: {', '.join(lines)}"
+
+
 # =========================================================
 # CHRONICLE & EXPORTS (Moved from game_system.py)
 # =========================================================

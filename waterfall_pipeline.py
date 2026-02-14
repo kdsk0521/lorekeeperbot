@@ -165,9 +165,7 @@ class WaterfallPipeline:
             if reason:
                 bus.anomaly["reason"] = reason
 
-            protective = anomaly_profile.get("protective_item")
-            if protective:
-                bus.anomaly["protective_item"] = protective
+            # protective_item removed (Phase 4-1b): anomaly_module reads inventory modifiers directly
 
             # adaptation_group from Flash (2-level taxonomy)
             adapt_groups = anomaly_profile.get("adaptation_group")

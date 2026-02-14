@@ -9,6 +9,7 @@ import math
 from typing import Any
 from orchestration_context import GameContext
 import config as _cfg
+import game_character as _gc
 
 
 def calculate_adaptation(adaptation_groups: list, player_adaptation: dict) -> int:
@@ -113,9 +114,19 @@ class AnomalyModule:
                 passive_defense += mods["anomaly_defense"]
         success_rate += max(-30, min(30, passive_defense))
 
-        # 보호 아이템 보정
-        if bus.anomaly.get("protective_item"):
-            success_rate += 15
+        # 아이템 방어 보정 (modifier 기반, Phase 4-1b)
+        inventory_items = _gc.get_inventory_items(context.narrative_anchors)
+        item_defense = 0
+        for item in inventory_items:
+            mods = _cfg.get_item_modifiers(item)
+            if not mods:
+                continue
+            genre_key = f"anomaly_defense_{primary_lens}" if primary_lens else ""
+            if genre_key and genre_key in mods:
+                item_defense += mods[genre_key]
+            elif "anomaly_defense" in mods:
+                item_defense += mods["anomaly_defense"]
+        success_rate += max(-30, min(30, item_defense))
 
         # 방어 스탯: mechanic.primary_resource 우선, legacy fallback
         defense_stat = mechanic.get("primary_resource") or "vigor"

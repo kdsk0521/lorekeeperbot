@@ -773,6 +773,58 @@ def get_passive_modifiers(passive) -> dict:
             return kw_mods
     return {}
 
+
+# =========================================================
+# Item Theory Tag System (Phase 4-1b)
+# =========================================================
+# Legacy keyword → modifier fallback (for items without explicit modifiers)
+# New items will have Flash-generated "modifiers" dict; this table handles old-format items.
+ITEM_KEYWORD_MODIFIERS = {
+    # Protective/holy items
+    "성수": {"anomaly_defense_cosmic_horror": 15, "anomaly_defense": 10},
+    "부적": {"anomaly_defense_cosmic_horror": 10, "anomaly_defense": 5},
+    "십자가": {"anomaly_defense_cosmic_horror": 10},
+    "횃불": {"anomaly_defense_cosmic_horror": 5, "anomaly_defense": 5},
+    "해독제": {"anomaly_defense": 10},
+    "가면": {"anomaly_defense": 5},
+    # Weapons
+    "단검": {"judgment_combat": 5},
+    "검": {"judgment_combat": 10},
+    "총": {"judgment_combat": 15},
+    "방패": {"judgment_combat": 5, "anomaly_defense": 5},
+    # Social/relationship items
+    "목걸이": {"composure_drain_loneliness": 0.8},
+    "편지": {"composure_drain_loneliness": 0.8},
+    # Utility
+    "망원경": {"judgment_perception": 5},
+    "열쇠": {"judgment_craft": 5},
+    "로프": {"judgment_combat": 3, "judgment_craft": 5},
+}
+
+
+def get_item_modifiers(item) -> dict:
+    """아이템에서 modifier dict를 추출. explicit modifiers 우선, 없으면 keyword fallback.
+    str과 dict 양쪽 아이템 형식 모두 지원."""
+    # str 아이템 (legacy): keyword fallback만 시도
+    if isinstance(item, str):
+        for keyword, kw_mods in ITEM_KEYWORD_MODIFIERS.items():
+            if keyword in item:
+                return kw_mods
+        return {}
+    if not isinstance(item, dict):
+        return {}
+    # 1. Explicit modifiers (new format)
+    mods = item.get("modifiers")
+    if mods and isinstance(mods, dict):
+        return mods
+    # 2. Keyword fallback — match item name against known keywords
+    i_name = item.get("name", "")
+    for keyword, kw_mods in ITEM_KEYWORD_MODIFIERS.items():
+        if keyword in i_name:
+            return kw_mods
+    return {}
+
+
 DEFAULT_MODULE_SETTINGS = {
     "active_modules": ["judgment", "doom", "anomaly", "mental"],
     "doom_fallback": 40,

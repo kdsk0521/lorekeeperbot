@@ -323,19 +323,21 @@ class OrchestrationService:
 
         log_parts = []
 
-        # 소비 처리: 노트북에서 제거
+        # 소비 처리: 노트북 + 구조화 인벤토리 양쪽에서 제거
         for item in consumed:
             if not item or not isinstance(item, str):
                 continue
             result = game_character.remove_memo(channel_id, item.strip(), user_id)
+            game_character.remove_inventory_item(channel_id, user_id, item.strip())
             if "⚠️" not in result:
                 log_parts.append(f"📦 소비: {item.strip()}")
 
-        # 획득 처리: 노트북에 추가
+        # 획득 처리: 노트북 + 구조화 인벤토리 양쪽에 추가
         for item in gained:
             if not item or not isinstance(item, str):
                 continue
             result = game_character.add_memo(channel_id, item.strip(), user_id)
+            game_character.add_inventory_item(channel_id, user_id, item.strip())
             if "⚠️" not in result:
                 log_parts.append(f"📥 획득: {item.strip()}")
 
