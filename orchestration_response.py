@@ -318,15 +318,13 @@ async def generate_response(
             response = strip_telescope(response)
             gates = telescope_data.get("gates", {})
             fails = telescope_data.get("fails", [])
-            gate_summary = " | ".join(
-                f"{name}:{'FAIL' if g['result'] == 'FAIL' else 'PASS'}"
-                for name, g in gates.items()
-            )
-            logger.info("[Telescope] %d gates [%s]", len(gates), gate_summary)
-            if fails:
-                for fail_name in fails:
-                    evidence = gates.get(fail_name, {}).get("evidence", "")
-                    logger.warning("[Telescope FAIL] %s: %s", fail_name, evidence)
+            # 전체 게이트 상세 로그 (evidence 포함)
+            for name, g in gates.items():
+                verdict = g.get("result", "?")
+                evidence = g.get("evidence", "").strip()
+                tag = "FAIL" if verdict == "FAIL" else "OK"
+                level = logger.warning if verdict == "FAIL" else logger.info
+                level("[Telescope %s] %-15s %s", tag, name, evidence[:120] if evidence else "(no evidence)")
         # 3. [V4 Inline Extraction] SYS_EXTRACT 블록 파싱 및 제거
         extract_match = re.search(r'\[SYS_EXTRACT\]\s*(\{[\s\S]*?\})\s*\[/SYS_EXTRACT\]', response)
         if extract_match:
