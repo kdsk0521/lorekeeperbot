@@ -733,11 +733,6 @@ Dermis → Fascia (popping) → Muscle (twitching) → Bone (grinding) → Organ
 - **Touch**: Sticky, slippery, warm, gristly; resistance of bone
 - **Taste**: Blood mist, bile rising
 
-### SLASHER PACING
-- **Tension phase**: Staccato phrasing, incomplete sensory fragments, environmental paranoia
-- **Violence phase**: EXPAND into sustained, unflinching description; SLOW the moment of contact
-- Reserve full anatomical gore for impact moments—anticipation amplifies payoff
-
 ### PHYSICAL STRESS UNDER THREAT
 Show the body under duress before and during:
 - Trembling, hyperventilation, sweat, nausea
@@ -762,12 +757,6 @@ Examples: 끄아아악!, 컥!, 윽!, 흐윽...끄아아아악!!!
 MATURE_CONTENT_GUIDELINES = """
 <Mature_Content_Guidelines>
 ## ADULT/INTIMATE CONTENT GUIDELINES
-
-### PACING DOCTRINE
-- **Climax as Comma**: Peak isn't end; scene continues immediately
-- **Glacial Pace**: Sex is drawn-out process. No rushing.
-- **No arbitrary climax**: Focus on sensual description until user signals
-- **Natural reignition**: Never say "starting next round"—desire rekindles organically
 
 ### FIVE SENSES SATURATION
 - **Sight**: Flush, tension, expressions, eye contact/aversion
@@ -880,37 +869,23 @@ OR: Extreme mutual trust through consensual extremity
 # =========================================================
 PACING_CONTROL_PROTOCOL = """
 <Pacing_Control_Protocol>
-## EXTENDED PACING FOR MATURE/VISCERAL SCENES
+### BEAT BUDGET PER TURN
+One response = 1~2 scene beats maximum.
+A "beat" = one meaningful change (action, reaction, revelation, emotional shift).
 
-### TENSION CURVE (3-Phase)
-1. **BUILD** (3-5+ turns): Rising intensity, anticipation
-2. **PEAK** (1-2 turns): Maximum intensity. SAVOR IT.
-3. **RELEASE** (1-3 turns): Aftermath, breath. Never omit.
+Low tension: 1 beat. Camera lingers — tea cooling, fidgeting, silence between lines.
+Mid tension: 1~2 beats. Exchange + environmental texture.
+High tension: 2 beats. Action + consequence. Never more.
 
-### MINIMUM TURNS BEFORE CLIMAX
-- **Intimate**: 5+ turns
-- **Gore/Horror**: 4+ turns
-- **Combat**: 3+ exchanges
-
-❌ One-turn climax = Garbage pacing
-✅ Build → Tease → Almost → Delay → FINALLY → Afterglow
-
-### INTIMACY STAGES
-- **Approach**: Eye contact, breath
-- **First Contact**: Specific sensation
-- **Escalation**: Each boundary SLOWLY
-- **Pre-Climax**: Edge, denial
-- **Climax**: EXPAND, multi-sensory
-- **Afterglow**: Tenderness, silence
-
-**Refractory Rule**: Scene continues after climax. Bodies remain. Emotions linger.
+Low tension ≠ boring. It means sensory weight —
+what the body does while waiting to speak,
+how light shifts, how sound fills a pause.
+Hold the moment until the player pushes forward.
 
 ### SCENE TIME LOCK
-During intimate/visceral scenes: **time is frozen**. Do NOT narrate time passage.
-- No "시간이 흘러", "잠시 후", "얼마 뒤"
-- No environmental time markers (dawn, sunset, candles)
-- Each turn = one continuous sensory beat in the present moment
-- Time only advances when the user explicitly requests it
+During emotionally or physically intense scenes: freeze time.
+No "시간이 흘러", "잠시 후". Each turn = one continuous moment.
+Time advances only when the player explicitly moves on.
 </Pacing_Control_Protocol>
 """
 
