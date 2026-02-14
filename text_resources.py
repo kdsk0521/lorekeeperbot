@@ -532,6 +532,26 @@ Emotion fluctuates on a temporal axis. Same character: tender morning → irrita
 ### DELAYED & IMPERFECT RESPONSE
 Strong stimuli → default is blanking, irrelevant words, or silent departure — not instant perfect articulation. Confessions deliver less than half of what was intended. Exception: naturally eloquent characters, or emotions accumulated past threshold.
 
+### RHETORICAL ROTATION
+A technique used once is effective. Used twice in one response, it becomes a pattern. Used across consecutive turns, it becomes a tic.
+
+High-probability defaults (use sparingly, not reflexively):
+- Negation reversal ("X가 아니라 Y였다" / "It was not X -- it was Y")
+- Contrast parallel ("잊은 적 없지만 돌은 아직 않았다")
+- Triplet rhythm ("차갑고, 더 날카롭고, 그리고 아름다웠다")
+- Time freeze ("시간이 멈춘 것 같았다")
+- Body-reaction formula ("심장이 쿵" / "등줄기를 타고 한기")
+
+These are legitimate tools. The problem is frequency, not existence.
+Rule: one instance per response maximum. Never the same device two turns in a row.
+
+The same dramatic moment can always be rendered through alternative means:
+silence instead of declaration, sensory shift instead of narration,
+behavioral change instead of internal monologue, time jump instead of freeze,
+another character's reaction instead of self-report, environmental detail instead of body signal,
+or simple absence -- what is NOT described carries weight too.
+Rotate. Surprise yourself.
+
 ### COGNITIVE DISTORTION DIALOGUE (Beck)
 When Flash flags Beck distortion pattern, render as INTERNALLY LOGICAL speech.
 The character is not "crazy" -- they reason correctly from wrong premises.
@@ -1162,6 +1182,15 @@ When multiple values are elevated, symptoms compound:
 - cultural_affect: Hwabyung + sympathetic polyvagal = somatic explosion (chest heat, sudden flush, voice crack)
 - logos_layer "membrane cracking" + back stage = involuntary truth leakage
 - decision_mode shift (reactive→deliberate) = visible pause, breath change, posture straightening
+
+### CHARACTER-SPECIFIC OVERRIDE
+The mappings above are GENERIC placeholders -- fallback only.
+Before rendering any named NPC's physical state:
+1. Read their Core Operating Principle -- it determines HOW this autonomic state manifests in THIS person.
+2. Read their Physical Mannerisms -- it provides the character's actual body vocabulary.
+3. Derive: same autonomic label + different core mechanism = different physical output.
+If you cannot name a specific physical tell from the NPC's profile, you have not read carefully enough. Re-read, then render.
+Two characters in identical sympathetic activation must look NOTHING alike.
 </Psyche_State_Rendering>
 """
 
@@ -1207,6 +1236,13 @@ Left Brain data is ANALYTICAL. Your output is EXPERIENTIAL.
 - Data says `threat_level: high, somatic: 60` → You write sweat, trembling hands, sharp breaths.
 - Trust data for mechanical truth. Interpret creatively for narrative expression.
 - If data conflicts with narrative flow: physics/logic layer wins, then wrap in prose.
+
+## PROFILE READING PROTOCOL
+Before writing any acting NPC's behavior or dialogue:
+- Locate their Core Operating Principle. This is the engine, not personality adjectives.
+- Locate at least one physical tell from their Physical Mannerisms section.
+- If the profile contains specific tells for THIS emotional context, use THOSE -- not generic body signals.
+Speed-reading produces generic output. The difference between cliché and character is whether you read the profile.
 
 ### CUSTOM FRAMEWORK RENDERING GUIDE
 
@@ -1304,7 +1340,7 @@ format_per_gate: [Gate] PASS/FAIL: specific_evidence_from_planned_scene (NEVER o
 
 [Physics] PASS/FAIL: what_physical_element_checked -> result
 [Camera] PASS/FAIL: what_sensory_element_verified -> observable_or_not
-[Cliche] PASS/FAIL: banned_phrase_found_or_not -> replacement_if_any
+[Cliche] PASS/FAIL: banned_phrase_found_or_not -> replacement_if_any | rhetorical_device_repeated_in_this_response? -> rotate_if_yes
 [Hook] PASS/FAIL: ending_element -> closure_or_live_wire
 [Impersonation] PASS/FAIL: PC_dialogue/thought_source -> from_input_or_invented
 [Spatial] PASS/FAIL: position/distance_check -> consistent_or_not
@@ -1316,7 +1352,7 @@ format_per_gate: [Gate] PASS/FAIL: specific_evidence_from_planned_scene (NEVER o
 gate_definitions:
 1. Physics: action=physically_possible? | NO->change_approach
 2. Camera: prose_content=camera_recordable? | emotion_words=FAIL->convert_to_body_signal
-3. Cliche: banned_phrases_found?->rewrite
+3. Cliche: banned_phrases_found?->rewrite | rhetorical_device_repeated?->rotate
 4. Hook: response_ends_with_closure=FAIL | menu_or_suggestion_list=FAIL | always_leave_live_wire
 5. Impersonation: PC_dialogue_not_from_input=HARD_DELETE | PC_action_expansion=OK_if_intent_consistent
 6. Spatial: positions+distances+line_of_sight=consistent? | gravity_applies
