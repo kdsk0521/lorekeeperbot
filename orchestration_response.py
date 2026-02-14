@@ -58,7 +58,8 @@ _TELESCOPE_BLOCK_PATTERNS = (
 def _extract_telescope_block(text: str) -> Optional[str]:
     if not text:
         return None
-    head = text[:2000]
+    # 10-gate telescope can exceed 2000 chars — search up to 5000
+    head = text[:5000]
     for pattern in _TELESCOPE_BLOCK_PATTERNS:
         match = re.search(pattern, head, flags=re.IGNORECASE)
         if match:
