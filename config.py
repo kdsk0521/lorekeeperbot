@@ -36,7 +36,15 @@ ANALYSIS_TOP_P = 0.8
 NARRATIVE_TEMPERATURE = 1.05
 NARRATIVE_TOP_K = 40
 NARRATIVE_TOP_P = 0.95
-NARRATIVE_MAX_OUTPUT_TOKENS = 8192
+NARRATIVE_MAX_OUTPUT_TOKENS = 6144
+# 서사 출력 길이: 인원당 동적 조절 (텔레스코프 제거 후 기준)
+NARRATIVE_CHARS_BASE = 1500       # 기본 (1인 이하)
+NARRATIVE_CHARS_PER_PLAYER = 1000 # 참여 인원당 추가
+
+
+def get_narrative_char_limit(player_count: int = 1) -> int:
+    """참여 인원 기반 서사 출력 최대 글자수. 1인=2500, 2인=3500, 3인=4500..."""
+    return NARRATIVE_CHARS_BASE + NARRATIVE_CHARS_PER_PLAYER * max(1, player_count)
 # [Gemini 3] presence_penalty/frequency_penalty not supported - removed
 
 # =========================================================

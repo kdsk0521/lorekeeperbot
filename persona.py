@@ -265,7 +265,8 @@ async def generate_response_with_retry(
     client: genai.Client,
     chat_session: ChatSessionAdapter,
     user_input: str,
-    pc_names: Optional[List[str]] = None
+    pc_names: Optional[List[str]] = None,
+    player_count: int = 1
 ) -> str:
     """
     재시도 로직을 포함하여 응답을 생성합니다.
@@ -273,10 +274,11 @@ async def generate_response_with_retry(
     - BKSPC 자가 교정 처리
     - PC 사칭 실시간 탐지 및 자동 재시도
     """
-    min_length = DEFAULT_MIN_RESPONSE_LENGTH
+    max_chars = config.get_narrative_char_limit(player_count)
+    min_length = int(max_chars * 0.6)  # 최대의 60%를 최소 기준으로
     prefill = getattr(text_resources, 'NARRATIVE_PREFILL', '')
 
-    length_instruction = build_length_instruction()
+    length_instruction = build_length_instruction(min_len=min_length, max_len=max_chars)
 
     hidden_reminder = (
         f"\n\n{length_instruction}\n"

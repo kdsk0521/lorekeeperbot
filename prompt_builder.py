@@ -37,13 +37,15 @@ DEFAULT_MIN_RESPONSE_LENGTH = 1500
 DEFAULT_MAX_RESPONSE_LENGTH = 2500
 
 
-def build_length_instruction() -> str:
-    """응답 길이 지시문을 생성합니다."""
+def build_length_instruction(min_len: int = 0, max_len: int = 0) -> str:
+    """응답 길이 지시문을 생성합니다. 인원 기반 동적 길이 지원."""
+    mn = min_len or DEFAULT_MIN_RESPONSE_LENGTH
+    mx = max_len or DEFAULT_MAX_RESPONSE_LENGTH
     return (
         f"### [RESPONSE LENGTH DIRECTIVE]\n"
-        f"Write with appropriate detail. Target: {DEFAULT_MIN_RESPONSE_LENGTH}~{DEFAULT_MAX_RESPONSE_LENGTH} characters (Korean).\n"
-        f"- Minimum {DEFAULT_MIN_RESPONSE_LENGTH} chars required for narrative depth.\n"
-        f"- Avoid exceeding {DEFAULT_MAX_RESPONSE_LENGTH} chars to maintain pacing.\n"
+        f"Write with appropriate detail. Target: {mn}~{mx} characters (Korean).\n"
+        f"- Minimum {mn} chars required for narrative depth.\n"
+        f"- Avoid exceeding {mx} chars to maintain pacing.\n"
     )
 
 

@@ -97,6 +97,31 @@ def parse_telescope(raw_response: str) -> Dict[str, Any]:
     }
 
 
+def _truncate_to_limit(text: str, limit: int) -> str:
+    """응답이 limit 글자를 초과하면 마지막 문장 경계에서 절단."""
+    if not text or len(text) <= limit:
+        return text
+    # 한국어/영어 문장 종결 패턴: 다. 요. 까? ! … — 등
+    truncated = text[:limit]
+    # 마지막 문장 종결 위치를 역방향 탐색
+    last_sentence = -1
+    for i in range(len(truncated) - 1, max(0, limit - 500) - 1, -1):
+        ch = truncated[i]
+        if ch in '.!?…':
+            last_sentence = i + 1
+            break
+        if ch == '—' or ch == '―':
+            last_sentence = i + 1
+            break
+    if last_sentence > 0:
+        result = truncated[:last_sentence].rstrip()
+    else:
+        # 문장 경계 없으면 hard cut + 줄임표
+        result = truncated.rstrip() + "…"
+    logger.info("[Length Cap] %d → %d chars (limit %d)", len(text), len(result), limit)
+    return result
+
+
 def strip_telescope(raw_response: str) -> str:
     """Remove telescope gate block from model output."""
     if not raw_response:
@@ -278,6 +303,10 @@ async def generate_response(
     """
     p_name = ctx.player_data.get("mask", "Unknown") if ctx.player_data else "Unknown"
 
+    # 참여 인원 수 (동적 서사 길이 기준)
+    participants = ctx.domain_data.get("participants", {})
+    active_player_count = max(1, sum(1 for p in participants.values() if p.get("status") == "active"))
+
     # [V3] 이미 생성된 34단계 프롬프트를 직접 전달
     session = persona.create_risu_style_session(
         client=client,
@@ -296,7 +325,11 @@ async def generate_response(
     # 사칭 감지 토글 확인 (기본값: 활성화)
     impersonation_enabled = ctx.domain_data.get("settings", {}).get("impersonation_filter", True)
     pc_names_for_filter = [p_name] if impersonation_enabled else []
-    response = await persona.generate_response_with_retry(client, session, prompt, pc_names=pc_names_for_filter)
+    response = await persona.generate_response_with_retry(
+        client, session, prompt,
+        pc_names=pc_names_for_filter,
+        player_count=active_player_count
+    )
 
     # 정리 (System Update & Telescope Logic Block)
     extraction_data = None
@@ -343,5 +376,10 @@ async def generate_response(
     if response:
         from response_processor import clean_mob_tags
         response = clean_mob_tags(response)
+
+    # 4. 서사 길이 제한 (인원 기반 동적)
+    if response:
+        char_limit = config.get_narrative_char_limit(active_player_count)
+        response = _truncate_to_limit(response, char_limit)
 
     return response, extraction_data
