@@ -24,6 +24,70 @@ import prompt_builder as legacy_builder
 
 logger = logging.getLogger("SlotManager")
 
+
+# =========================================================
+# Dynamic STATUS_WINDOW_LAYOUT Builder
+# =========================================================
+
+def _build_status_layout(active_modules: list) -> str:
+    """active_modules에 따라 STATUS_WINDOW_LAYOUT을 동적으로 생성.
+    OFF인 모듈의 메트릭은 포맷/예시/규칙에서 완전 제거."""
+    module_set = set(active_modules or [])
+    has_mental = "mental" in module_set
+    has_doom = "doom" in module_set
+
+    # --- FORMAT block ---
+    fmt = ["위치 [Location] | 시간 [Month/Day, Time] | 인물 [Present Characters]"]
+    ex = ["위치 하숙집 거실 | 시간 3/15, 새벽 | 인물 리미, 옥상 남자"]
+
+    line2_fmt, line2_ex = [], []
+    if has_mental:
+        line2_fmt.extend(["기력 [value]", "평정 [value]"])
+        line2_ex.extend(["기력 72", "평정 38"])
+    if has_doom:
+        line2_fmt.append("Doom [value]")
+        line2_ex.append("Doom 45")
+
+    if line2_fmt:
+        fmt.append(" | ".join(line2_fmt))
+        ex.append(" | ".join(line2_ex))
+
+    if has_doom:
+        fmt.append("[Clock1 filled/segments] [Clock2 filled/segments ...]")
+        ex.append("[조직의 추적 4/6] [붉은 문턱 2/4]")
+
+    # --- RULES block ---
+    rules = ["- Line 1: location, time, characters."]
+    if has_mental and has_doom:
+        rules.append("- Line 2: Vigor + Composure + Global Doom (numeric only).")
+        rules.append("- Line 3: active doom clocks only. Omit line 3 if no active clock.")
+    elif has_mental:
+        rules.append("- Line 2: Vigor + Composure (numeric only).")
+    elif has_doom:
+        rules.append("- Line 2: Global Doom (numeric only).")
+        rules.append("- Line 3: active doom clocks only. Omit line 3 if no active clock.")
+
+    off_parts = []
+    if not has_mental:
+        off_parts.append("기력/평정(Vigor/Composure)")
+    if not has_doom:
+        off_parts.append("Doom/Doom Clocks")
+    if off_parts:
+        rules.append(f"- DISABLED: {', '.join(off_parts)} — do NOT display these metrics.")
+
+    rules.append("- Keep it compact and stable across turns.")
+
+    return (
+        "<Status_Window_Layout>\n"
+        "## SCENE HEADER FORMAT\n\n"
+        "Place a compact status line at the TOP of each narrative output.\n"
+        "Character profiles are accessed via !info command. Do NOT duplicate full sheets here.\n\n"
+        "### FORMAT\n```\n" + "\n".join(fmt) + "\n```\n\n"
+        "### EXAMPLES\n```\n" + "\n".join(ex) + "\n```\n\n"
+        "### RULES\n" + "\n".join(rules) + "\n"
+        "</Status_Window_Layout>"
+    )
+
 # =========================================================
 # 34-Step Slot Definition (Primacy/Recency Optimized)
 # =========================================================
@@ -404,6 +468,15 @@ def build_34_step_prompt(ctx) -> str:
     builder.populate_static_slots()
 
     # =========================================================
+    # 1.5. Slot 20 동적 오버라이드: active_modules 기반 STATUS_WINDOW_LAYOUT
+    # =========================================================
+    channel_id = getattr(ctx, 'channel_id', '')
+    user_id = getattr(ctx, 'user_id', '')
+    if channel_id:
+        _active_modules = domain_manager.get_active_modules(channel_id)
+        builder.set_slot(20, _build_status_layout(_active_modules))
+
+    # =========================================================
     # 2. 동적 슬롯 주입 (Phase 2 강화)
     # =========================================================
 
@@ -411,8 +484,6 @@ def build_34_step_prompt(ctx) -> str:
 
     # --- [Slot 6] PC Data (Rich Player Info — 다인 플레이 지원) ---
     player_info = ""
-    channel_id = getattr(ctx, 'channel_id', '')
-    user_id = getattr(ctx, 'user_id', '')
     if channel_id and user_id:
         try:
             all_participants = domain_manager.get_domain(channel_id).get("participants", {})
