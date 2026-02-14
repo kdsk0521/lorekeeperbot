@@ -316,11 +316,17 @@ async def generate_response(
                     turn = 0
                 domain_manager.save_telescope_log(channel_id, turn, telescope_data)
             response = strip_telescope(response)
-            logger.info(
-                "[Telescope] Parsed gates=%d fails=%d",
-                len(telescope_data.get("gates", {})),
-                telescope_data.get("fail_count", 0),
+            gates = telescope_data.get("gates", {})
+            fails = telescope_data.get("fails", [])
+            gate_summary = " | ".join(
+                f"{name}:{'FAIL' if g['result'] == 'FAIL' else 'PASS'}"
+                for name, g in gates.items()
             )
+            logger.info("[Telescope] %d gates [%s]", len(gates), gate_summary)
+            if fails:
+                for fail_name in fails:
+                    evidence = gates.get(fail_name, {}).get("evidence", "")
+                    logger.warning("[Telescope FAIL] %s: %s", fail_name, evidence)
         # 3. [V4 Inline Extraction] SYS_EXTRACT 블록 파싱 및 제거
         extract_match = re.search(r'\[SYS_EXTRACT\]\s*(\{[\s\S]*?\})\s*\[/SYS_EXTRACT\]', response)
         if extract_match:
