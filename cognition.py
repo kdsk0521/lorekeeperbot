@@ -453,11 +453,12 @@ Analyze the provided lorebook precisely to extract all metadata required for gam
 ## Output Schema
 **IMPORTANT: All string descriptions and guides must be in KOREAN.**
 
-1. **genres**: 3-Layer Genre structure (List up to 2 tags per layer)
-   - world_setting: Time/Setting backdrop (Choose 1-2 from: high_fantasy, wuxia, cyberpunk, post_apocalypse, space_opera, modern)
-   - style_tech: Narrative gimmicks (Choose 0-2 from: urban_fantasy, steampunk, cosmic_horror, game_system)
-   - narrative_tone: Atmosphere/Tone (Choose 1-2 from: noir, comedy, romance, drama)
+1. **genres**: 3-Layer Genre structure. Each layer has its OWN EXCLUSIVE tag pool — NEVER cross-assign tags between layers.
+   - world_setting (A-Layer: WHEN/WHERE): The physical world era/setting. Choose 1-2 ONLY from: high_fantasy, wuxia, cyberpunk, post_apocalypse, space_opera, modern
+   - style_tech (B-Layer: HOW it's flavored): Narrative overlay/gimmick ADDED to the world. Choose 0-2 ONLY from: urban_fantasy, steampunk, cosmic_horror, game_system
+   - narrative_tone (C-Layer: EMOTIONAL tone): The story's mood/feel. Choose 1-2 ONLY from: noir, comedy, romance, drama
    - atmosphere_guide: Short atmosphere guide for the narrator (Korean)
+   ⚠️ CROSS-ASSIGNMENT PROHIBITION: cyberpunk/modern/space_opera CANNOT appear in style_tech. urban_fantasy/cosmic_horror CANNOT appear in world_setting. comedy/romance CANNOT appear in style_tech.
 2. **npcs**: List of NPCs (Name, Gender, Race, Detailed Description (Personality/Appearance integrated - Korean))
    - **MUST EXTRACT ALL NPCs found in the document.**
    - **role**: Character's job or social role (e.g., "Resident", "Store Owner", "Neighbor").

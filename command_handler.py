@@ -206,13 +206,34 @@ async def cmd_lore(ctx: CommandContext) -> None:
                      pc_msg += f"\n✅ 캐릭터 업데이트: {', '.join(updated_names)} (특질 및 설정 적용)"
             
             # 3. Update Genre (3-Layer) + mechanic_profile
+            # [Guard] Flash가 레이어 간 태그를 교차 배치하는 경우 코드 레벨에서 보정
+            _STAGE_TAGS = {"high_fantasy", "wuxia", "cyberpunk", "post_apocalypse", "space_opera", "modern"}
+            _FLAVOR_TAGS = {"urban_fantasy", "steampunk", "cosmic_horror", "game_system"}
+            _TONE_TAGS = {"noir", "comedy", "romance", "drama"}
+
+            raw_ws = genre_res.get("world_setting", []) or []
+            raw_st = genre_res.get("style_tech", []) or []
+            raw_nt = genre_res.get("narrative_tone", []) or []
+            all_tags = [t for t in (raw_ws + raw_st + raw_nt) if isinstance(t, str)]
+
+            world_setting = [t for t in all_tags if t in _STAGE_TAGS][:2]
+            style_tech = [t for t in all_tags if t in _FLAVOR_TAGS][:2]
+            narrative_tone = [t for t in all_tags if t in _TONE_TAGS][:2]
+            # 알 수 없는 태그 → 원래 레이어에 유지
+            for t in all_tags:
+                if t not in _STAGE_TAGS and t not in _FLAVOR_TAGS and t not in _TONE_TAGS:
+                    if t in raw_ws: world_setting.append(t)
+                    elif t in raw_st: style_tech.append(t)
+                    elif t in raw_nt: narrative_tone.append(t)
+
+            if set(world_setting) != set(raw_ws) or set(style_tech) != set(raw_st) or set(narrative_tone) != set(raw_nt):
+                logger.warning(f"[Genre Fix] 교차 배치 보정: {raw_ws}/{raw_st}/{raw_nt} → {world_setting}/{style_tech}/{narrative_tone}")
+
             from config import build_mechanic_profile
-            narrative_tone = genre_res.get("narrative_tone", [])
-            style_tech = genre_res.get("style_tech", [])
             mechanic_profile = build_mechanic_profile(narrative_tone, style_tech)
             genre_data = {
                 "layers": {
-                    "world_setting": genre_res.get("world_setting", []),
+                    "world_setting": world_setting,
                     "style_tech": style_tech,
                     "narrative_tone": narrative_tone,
                 },
