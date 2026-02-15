@@ -420,37 +420,81 @@ _PROFILE_SECTIONS_PRIORITY = [
     "Identity", "Core Operating Principle", "Speech Pattern",
     "Interpersonal Style", "Emotional Architecture", "Appearance",
 ]
-_MAX_DESC_PER_NPC = 2000  # 프로필 텍스트 최대 글자수 (~500 토큰)
+_PROFILE_SECTIONS_SECONDARY = [
+    "Values", "Background", "Combat Profile", "Physical Mannerisms",
+    "Likes", "Dislikes", "Secrets",
+]
+_MAX_DESC_PER_NPC = 3500  # 프로필 텍스트 최대 글자수 (~900 토큰)
+_MAX_SECTION_CHARS = 500  # 우선 섹션별 내부 cap (메커니즘 첫 단락 위주)
+_IDENTITY_CAP = 300       # Identity는 짧으므로 별도 cap
+
+
+def _cap_section(section_text: str, cap: int) -> str:
+    """섹션 텍스트를 cap 글자로 제한. 문장 경계에서 자른다."""
+    if len(section_text) <= cap:
+        return section_text
+    # 마지막 완전한 문장/줄 경계에서 자르기
+    truncated = section_text[:cap]
+    # 줄바꿈 경계 우선
+    last_nl = truncated.rfind('\n')
+    if last_nl > cap * 0.5:
+        return truncated[:last_nl].rstrip()
+    # 문장 종결 경계
+    for ch in '.!?\n':
+        pos = truncated.rfind(ch)
+        if pos > cap * 0.4:
+            return truncated[:pos + 1].rstrip()
+    return truncated.rstrip() + "…"
 
 
 def _compact_profile(desc: str) -> str:
-    """긴 NPC 프로필에서 핵심 섹션만 추출 (Identity, Speech, Core, Interpersonal)."""
+    """긴 NPC 프로필에서 모든 핵심 섹션의 메커니즘(첫 단락)을 추출.
+
+    전략: 넓게 얕게 — 모든 우선순위 섹션이 포함되되 각 섹션은 cap으로 제한.
+    남은 공간에 2차 섹션을 짧게 추가.
+    """
     if len(desc) <= _MAX_DESC_PER_NPC:
         return desc
 
     # ### 섹션 단위로 분할
     sections = re.split(r'\n(?=###\s)', desc)
     priority_parts = []
+    secondary_parts = []
     other_parts = []
 
     for sec in sections:
         header_m = re.match(r'###\s+(.+)', sec)
         sec_name = header_m.group(1).strip() if header_m else ""
-        matched = any(p.lower() in sec_name.lower() for p in _PROFILE_SECTIONS_PRIORITY)
-        if matched:
-            priority_parts.append(sec.strip())
+        is_priority = any(p.lower() in sec_name.lower() for p in _PROFILE_SECTIONS_PRIORITY)
+        is_secondary = any(p.lower() in sec_name.lower() for p in _PROFILE_SECTIONS_SECONDARY)
+        if is_priority:
+            # Identity는 짧게, 나머지는 _MAX_SECTION_CHARS로 cap
+            cap = _IDENTITY_CAP if "identity" in sec_name.lower() else _MAX_SECTION_CHARS
+            priority_parts.append(_cap_section(sec.strip(), cap))
+        elif is_secondary:
+            secondary_parts.append(sec.strip())
         else:
             other_parts.append(sec.strip())
 
-    # 우선 섹션을 먼저 넣고, 남은 공간에 나머지 추가
+    # 1) 우선 섹션 (각각 capped) 모두 포함
     result = "\n\n".join(priority_parts)
-    for part in other_parts:
-        if len(result) + len(part) + 2 > _MAX_DESC_PER_NPC:
+
+    # 2) 남은 공간에 2차 섹션 추가 (각 300자 cap)
+    for part in secondary_parts:
+        capped = _cap_section(part, 300)
+        if len(result) + len(capped) + 2 > _MAX_DESC_PER_NPC:
             break
-        result += "\n\n" + part
+        result += "\n\n" + capped
+
+    # 3) 그래도 남으면 기타 섹션
+    for part in other_parts:
+        capped = _cap_section(part, 200)
+        if len(result) + len(capped) + 2 > _MAX_DESC_PER_NPC:
+            break
+        result += "\n\n" + capped
 
     if len(result) > _MAX_DESC_PER_NPC:
-        result = result[:_MAX_DESC_PER_NPC] + "\n[...truncated]"
+        result = result[:_MAX_DESC_PER_NPC].rstrip()
 
     return result
 
