@@ -237,7 +237,7 @@ Recording in Korean.
         temperature=config.NARRATIVE_TEMPERATURE,
         top_k=config.NARRATIVE_TOP_K,
         top_p=config.NARRATIVE_TOP_P,
-        max_output_tokens=config.NARRATIVE_MAX_OUTPUT_TOKENS,
+        # max_output_tokens 제한 해제 — 모델 기본값 사용 (텔레스코프+산문 충분히 확보)
         # [Gemini 3] presence_penalty/frequency_penalty not supported
         safety_settings=config.SAFETY_SETTINGS,
         tools=[],
@@ -341,23 +341,27 @@ async def generate_response_with_retry(
                 clean_text, violations = filter_pc_impersonation(response_text, pc_names or [])
                 response_length = len(clean_text)
                 
-                # 2. 사칭 검출 시 재시도
-                if violations and attempt < config.MAX_RETRY_COUNT - 1:
+                # 2. 사칭 검출 → 경고 로그만 (재시도 없음)
+                if violations:
                     violation_types = ", ".join(set(v['type'] for v in violations))
-                    logging.warning(f"[Impersonation] 검출됨 ({violation_types}): 시도 {attempt + 1}")
-                    
-                    # 사칭 금지 경고와 함께 재시도
-                    full_input = (
-                        f"{user_input}\n\n"
-                        f"⚠️ **[SECURITY WARNING]** Previous response detected PC IMPERSONATION ({violation_types}). "
-                        f"🛑 **YOU MUST NOT** write dialogue, actions, or thoughts for the player.\n"
-                        f"Current PC(s): {', '.join(pc_names) if pc_names else 'Unknown'}\n"
-                        f"Focus ONLY on the World and NPCs.\n"
-                        f"{hidden_reminder}"
-                    )
-                    continue
+                    logging.warning(f"[Impersonation] 검출됨 ({violation_types}): 필터 적용 후 통과")
 
-                # 3. 길이 검사
+                # 3. 텔레스코프 잔존 검사 → 재시도
+                from orchestration_response import strip_telescope, _extract_telescope_block
+                if _extract_telescope_block(clean_text):
+                    clean_text = strip_telescope(clean_text)
+                    if _extract_telescope_block(clean_text) and attempt < config.MAX_RETRY_COUNT - 1:
+                        logging.warning(f"[Telescope Leak] 스트립 후에도 잔존: 재시도 {attempt + 1}")
+                        full_input = (
+                            f"{user_input}\n\n"
+                            f"⚠️ **[FORMAT WARNING]** The ┣...┫ telescope block must appear ONLY at the very start "
+                            f"and must be properly closed. Write prose AFTER the ┫ marker.\n"
+                            f"{hidden_reminder}"
+                        )
+                        continue
+                    response_length = len(clean_text)
+
+                # 4. 길이 검사
                 if response_length >= min_length:
                     logging.info(f"[Length] OK: {response_length}자")
                     return clean_text
