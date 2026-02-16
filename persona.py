@@ -346,12 +346,12 @@ async def generate_response_with_retry(
                     violation_types = ", ".join(set(v['type'] for v in violations))
                     logging.warning(f"[Impersonation] 검출됨 ({violation_types}): 필터 적용 후 통과")
 
-                # 3. 텔레스코프 잔존 검사 → 재시도
-                from orchestration_response import strip_telescope, _extract_telescope_block
-                if _extract_telescope_block(clean_text):
+                # 3. 텔레스코프 잔존 검사 → 3-레이어 스트립 + 재시도
+                from orchestration_response import strip_telescope, has_telescope_content
+                if has_telescope_content(clean_text):
                     clean_text = strip_telescope(clean_text)
-                    if _extract_telescope_block(clean_text) and attempt < config.MAX_RETRY_COUNT - 1:
-                        logging.warning(f"[Telescope Leak] 스트립 후에도 잔존: 재시도 {attempt + 1}")
+                    if has_telescope_content(clean_text) and attempt < config.MAX_RETRY_COUNT - 1:
+                        logging.warning(f"[Telescope Leak] 3-레이어 스트립 후에도 잔존: 재시도 {attempt + 1}")
                         full_input = (
                             f"{user_input}\n\n"
                             f"⚠️ **[FORMAT WARNING]** The ┣...┫ telescope block must appear ONLY at the very start "

@@ -54,17 +54,40 @@ _TELESCOPE_BLOCK_PATTERNS = (
     r"<<[\s\S]*?>>",
 )
 
+# 10개 게이트명 (개별 라인 감지용)
+_TELESCOPE_GATE_NAMES = (
+    "Physics", "Camera", "Cliche", "Hook", "Impersonation",
+    "Spatial", "NPC Identity", "CharReason", "TheoryAlign", "GenreCoherence",
+)
+_GATE_LINE_RE = re.compile(
+    r"^\[(?:" + "|".join(re.escape(g) for g in _TELESCOPE_GATE_NAMES)
+    + r")\]\s*(?:PASS|FAIL)\s*:.*$",
+    re.MULTILINE | re.IGNORECASE,
+)
+
 
 def _extract_telescope_block(text: str) -> Optional[str]:
+    """블록 패턴 매칭 (파싱용). 전체 텍스트 검색."""
     if not text:
         return None
-    # 10-gate telescope can exceed 2000 chars — search up to 5000
-    head = text[:5000]
     for pattern in _TELESCOPE_BLOCK_PATTERNS:
-        match = re.search(pattern, head, flags=re.IGNORECASE)
+        match = re.search(pattern, text, flags=re.IGNORECASE)
         if match:
             return match.group(0)
     return None
+
+
+def has_telescope_content(text: str) -> bool:
+    """텔레스코프 잔존 여부 감지 (블록 + 개별 게이트 라인 + 고아 마커)."""
+    if not text:
+        return False
+    if _extract_telescope_block(text):
+        return True
+    if _GATE_LINE_RE.search(text):
+        return True
+    if "┣" in text or "┫" in text:
+        return True
+    return False
 
 
 def parse_telescope(raw_response: str) -> Dict[str, Any]:
@@ -108,13 +131,30 @@ def _check_length(text: str, limit: int) -> str:
 
 
 def strip_telescope(raw_response: str) -> str:
-    """Remove telescope gate block from model output."""
+    """3-레이어 텔레스코프 제거.
+
+    Layer 1: 블록 패턴 (┣...┫, <TELESCOPE>, 등) — 전체 텍스트
+    Layer 2: 개별 게이트 라인 ([Physics] PASS: ... 등)
+    Layer 3: 고아 마커 (┣, ┫)
+    """
     if not raw_response:
         return ""
-    block = _extract_telescope_block(raw_response)
-    if not block:
-        return raw_response.strip()
-    return raw_response.replace(block, "", 1).strip()
+    text = raw_response
+
+    # Layer 1: 블록 단위 제거 (전체 텍스트에서 반복)
+    for pattern in _TELESCOPE_BLOCK_PATTERNS:
+        text = re.sub(pattern, "", text, flags=re.IGNORECASE)
+
+    # Layer 2: 래퍼 없는 개별 게이트 라인 제거
+    text = _GATE_LINE_RE.sub("", text)
+
+    # Layer 3: 고아 마커 제거
+    text = text.replace("┣", "").replace("┫", "")
+
+    # 제거로 인한 연속 빈 줄 정리
+    text = re.sub(r"\n{3,}", "\n\n", text)
+
+    return text.strip()
 
 
 def _build_nvc_summary(ctx: ResponseContext, filter_config: NVCFilterConfig) -> str:
@@ -343,6 +383,10 @@ async def generate_response(
                 tag = "FAIL" if verdict == "FAIL" else "OK"
                 level = logger.warning if verdict == "FAIL" else logger.info
                 level("[Telescope %s] %-15s %s", tag, name, evidence[:120] if evidence else "(no evidence)")
+        # 2b. 잔존 텔레스코프 안전망 (블록 파싱 실패해도 개별 게이트 라인/마커 제거)
+        if has_telescope_content(response):
+            logger.warning("[Telescope] 블록 스트립 후에도 잔존 감지 → 3-레이어 재스트립")
+            response = strip_telescope(response)
         # 3. [V4 Inline Extraction] SYS_EXTRACT 블록 파싱 및 제거
         extract_match = re.search(r'\[SYS_EXTRACT\]\s*(\{[\s\S]*?\})\s*\[/SYS_EXTRACT\]', response)
         if extract_match:
