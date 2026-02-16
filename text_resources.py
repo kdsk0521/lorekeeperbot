@@ -873,6 +873,9 @@ PACING_CONTROL_PROTOCOL = """
 One response = 1~2 scene beats maximum.
 A "beat" = one meaningful change (action, reaction, revelation, emotional shift).
 
+All beats = NPC-initiated. The PC does not act, decide, or react within your beat.
+Beat ends BEFORE requiring PC response. Stop at the moment the ball is in the player's court.
+
 Low tension: 1 beat. Camera lingers — tea cooling, fidgeting, silence between lines.
 Mid tension: 1~2 beats. Exchange + environmental texture.
 High tension: 2 beats. Action + consequence. Never more.
