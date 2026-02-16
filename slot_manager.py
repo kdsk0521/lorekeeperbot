@@ -414,10 +414,6 @@ class SlotPromptBuilder:
 
                 parts.append(content)
 
-        # [레거시 재사용] 응답 길이 지시문 추가
-        length_instruction = legacy_builder.build_length_instruction()
-        parts.append(length_instruction)
-
         return "\n\n".join(parts)
 
     def build_static_only(self) -> str:

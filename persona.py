@@ -42,7 +42,6 @@ from response_processor import (
 
 # Prompt building functions (유틸리티만 사용 - V3에서 PromptBuilder 제거됨)
 from prompt_builder import (
-    build_length_instruction,
     build_combined_directive,
     build_mature_content_prompt,
     get_scene_type_description,
@@ -50,8 +49,6 @@ from prompt_builder import (
     get_genre_description,
     SCENE_TYPES,
     GENRE_DEFINITIONS,
-    DEFAULT_MIN_RESPONSE_LENGTH,
-    DEFAULT_MAX_RESPONSE_LENGTH,
 )
 import text_resources
 
@@ -278,12 +275,9 @@ async def generate_response_with_retry(
     min_length = int(max_chars * 0.6)  # 최대의 60%를 최소 기준으로
     prefill = getattr(text_resources, 'NARRATIVE_PREFILL', '')
 
-    length_instruction = build_length_instruction(min_len=min_length, max_len=max_chars)
-
     hidden_reminder = (
-        f"\n\n{length_instruction}\n"
-        f"(System Reminder: Record observable Macroscopic States only. "
-        f"The world continues asynchronously.)"
+        "\n\n(System Reminder: Record observable Macroscopic States only. "
+        "The world continues asynchronously.)"
     )
     full_input = user_input + hidden_reminder
 
