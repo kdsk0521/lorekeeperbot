@@ -1255,13 +1255,12 @@ def reset_session_state(channel_id: str) -> None:
     d["notebook"] = "— [소지품] —\n\n— [메모] —"
     d["ooc_mode"] = False
     
-    # 4. Reset Session NPCs (Keep 'lore' NPCs)
-    # Filter NPCs ensuring we keep only source="lore"
-    # Note: 'npcs' dict keys are names.
+    # 4. Reset Session NPCs (Keep 'lore' + 'manual' NPCs)
+    # AI가 생성한 세션 NPC만 제거, 유저가 직접 등록한 NPC는 보존
     if "npcs" in d:
         kept_npcs = {}
         for name, data in d["npcs"].items():
-            if data.get("source") == "lore":
+            if data.get("source") in ("lore", "manual"):
                 kept_npcs[name] = data
         d["npcs"] = kept_npcs
         

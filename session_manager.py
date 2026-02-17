@@ -109,7 +109,7 @@ class SessionManager:
             await message.channel.send(
                 "✨ **세션이 리셋되었습니다.**\n"
                 f"• 삭제됨: {len(deleted)}개 메시지, 히스토리, 진행 상황\n"
-                "• 유지됨: 로어북, 참가자, 룰\n"
+                "• 유지됨: 로어북, 참가자, 룰, 등록 NPC\n"
                 "이제 **!시작**을 입력하여 새 이야기를 시작하세요.",
                 delete_after=10
             )
