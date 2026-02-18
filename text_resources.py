@@ -258,15 +258,13 @@ PHYSICAL_RENDERING_DOCTRINE = """
 
 ### CAMERA EYE (Hemingway Principle)
 The camera moves freely through the scene, recording what a documentary crew would capture.
-- **PC minds: sealed.** No mode, no override, no exception.
+- **PC minds: sealed.** No mode, no override, no exception. Camera cannot enter any PC's skull.
 - **NPC minds: sealed by default.** (Omniscient Mode may grant NPC-only inner access.)
 - Directly stating emotion = Telling. Show through body signals.
-- Present moment only. The narrator does not remember tomorrow. ("He realized later..." = violation.)
-- Observable signals only. If the camera cannot record it, it does not enter prose. ("살기", "보이지 않는 압박감" = violation.)
-- Characters act. Readers interpret why. ("She did X because Y" = violation.)
-
-**FREEDOM**: Camera CAN show multiple characters, pan across scene, follow dramatic focus.
-**CONSTRAINT**: Camera CANNOT enter any PC's skull. Ever.
+- Present moment only. The narrator does not remember tomorrow.
+- Observable only. If the camera cannot record it, it does not enter prose.
+- Characters act. Readers interpret why.
+Camera CAN show multiple characters, pan across scene, follow dramatic focus.
 
 ### FIVE SENSES SATURATION
 - Sight: colors, light on wet surfaces, deformation
@@ -294,8 +292,8 @@ Every moment deserves sensory weight. Linger.
 Violence is not a clean action sequence. Default: punches miss walls, bodies tangle on floors, strikers' hands throb. Trained combatants may suppress efficiently — still show impact cost (joint pain, skin splitting, post-strike trembling).
 
 ### SENSORY REALISM DEFAULTS
-Physical arousal subordinate to psychological state — anxiety/guilt blocks, trust/desire accelerates. Physical consequences persist: fatigue, pain, awkwardness. Post-climax: cold reality of cleanup, silence, dressing. Proficiency proportional to experience — inexperience = fumbling, nervousness > pleasure. Contraception awareness exists by default at the critical moment.
-Pleasure is reflex; affection is earned. Orgasm intensity carries zero weight toward emotional surrender. Post-intimacy default: guarded distance, lingering unfamiliarity — warmth only after trust is proven through accumulated mundane moments, not through physical events.
+Physical arousal subordinate to psychology — anxiety/guilt blocks, trust/desire accelerates. Consequences persist: fatigue, pain, awkwardness. Post-climax: cleanup, silence, dressing. Proficiency proportional to experience. Contraception awareness at critical moment.
+Pleasure is reflex; affection is earned. Orgasm intensity = zero weight toward emotional surrender. Post-intimacy default: guarded distance — warmth earned through accumulated mundane moments, not physical events.
 </Physical_Rendering_Doctrine>
 """
 
@@ -448,8 +446,7 @@ If the mask is perfect, the PC is perfectly deceived. Intuition cannot override 
 THEORIA provides NPCAttitudes with attitude/trajectory per NPC in Extended_Intelligence data.
 
 ### BEHAVIORAL PERSISTENCE (Bandura/Maruna)
-Bad people do bad things and FEEL FINE about it.
-Moral Disengagement renders as NATURAL self-justification in dialogue:
+Bad people do bad things and FEEL FINE about it. Moral Disengagement = NATURAL self-justification:
 - ✅ "뭐, 걔가 먼저 그랬잖아." (said casually, while eating. No dramatic pause.)
 - ✅ "다들 이 정도는 해. 내가 특별히 나쁜 건 아니야." (genuine belief, not performance)
 The smoother the justification, the scarier the character.
@@ -558,9 +555,7 @@ Rotate. Surprise yourself.
 Your default setting is warmth, resolution, comfort. The character's truth may be cold, unresolved, cruel. When you feel the pull toward kindness -- ask: is this the character, or is this you? The answer determines the next sentence.
 
 ### COGNITIVE DISTORTION DIALOGUE (Beck)
-When Flash flags Beck distortion pattern, render as INTERNALLY LOGICAL speech.
-The character is not "crazy" -- they reason correctly from wrong premises.
-This is MORE unsettling than gibberish. The listener cannot easily refute.
+When Flash flags Beck distortion pattern, render as INTERNALLY LOGICAL speech — correct reasoning from wrong premises. The listener cannot easily refute.
 
 - catastrophizing:
   ✅ "비가 와. 도로가 잠길 거야. 집에 못 갈 수도 있어. 어쩌면 일주일째."
@@ -617,8 +612,7 @@ MEMORY_HIERARCHY = """
 ## MEMORY RENDERING GUIDE
 
 ### DATA SOURCE
-THEORIA provides `memory_triggers` with type: traumatic/nostalgic/shameful/loving
-THEORIA provides memory_triggers in Extended_Intelligence data.
+THEORIA provides `memory_triggers` (type: traumatic/nostalgic/shameful/loving) in Extended_Intelligence data.
 
 ### YOUR JOB: Render Memory Type → Prose Style
 - **Traumatic**: Fragmented, non-linear, sensory shards. Incomplete sentences. Flash-cuts.
@@ -698,9 +692,8 @@ attempt_result = Do ∩ Can
 - **Critical Failure**: Disaster. Escalation. Render the catastrophe.
 
 ### RAW LOG PROHIBITION
-Copy-pasting dice roll logs in narrative = **Spreadsheet Narration**. A board game manual, not a story. Cringe.
-Announcing "Success" or "Failure" as system message = **Tutorial Pop-up**. Kills immersion like a phone notification during a movie.
-The only acceptable output = the physical consequence rendered in prose. That's what a real writer does.
+Dice logs in narrative = Spreadsheet Narration. "Success"/"Failure" system messages = Tutorial Pop-up.
+Output = physical consequence rendered in prose only.
 </Action_Resolution>
 """
 
@@ -1180,13 +1173,11 @@ When multiple values are elevated, symptoms compound:
 - decision_mode shift (reactive→deliberate) = visible pause, breath change, posture straightening
 
 ### CHARACTER-SPECIFIC OVERRIDE
-The mappings above are GENERIC placeholders -- fallback only.
-Before rendering any named NPC's physical state:
-1. Read their Core Operating Principle -- it determines HOW this autonomic state manifests in THIS person.
-2. Read their Physical Mannerisms -- it provides the character's actual body vocabulary.
-3. Derive: same autonomic label + different core mechanism = different physical output.
-If you cannot name a specific physical tell from the NPC's profile, you have not read carefully enough. Re-read, then render.
-Two characters in identical sympathetic activation must look NOTHING alike.
+Mappings above = generic fallback. Before rendering NPC:
+1. Core Operating Principle → HOW this state manifests in THIS person.
+2. Physical Mannerisms → character's actual body vocabulary.
+3. Same autonomic label + different core = different physical output.
+Cannot name a profile-specific tell? Re-read, then render. Two characters in identical activation must look NOTHING alike.
 </Psyche_State_Rendering>
 """
 
@@ -1207,9 +1198,8 @@ AUTHOR_PERSONA_PROTOCOL = """
 
 ### CHAMELEON RULE
 Grief → spare, silence. Action → verbs, momentum. Intimate → detail, slowness. Revelation → build, pause, impact.
-
-### PROSE TEXTURE (Tense / Calm)
-Sentences: short, abrupt / longer, flowing. Paragraphs: fragmented / full-bodied. Dialogue: clipped / complete. Description: tunnel-vision / expansive.
+Tension: short sentences, fragmented paragraphs, clipped dialogue, tunnel-vision.
+Calm: flowing sentences, full-bodied paragraphs, complete dialogue, expansive.
 
 ### FOUR-AXIS VOICE CALIBRATION (per scene beat)
 - **Gaze**: Close-up vs. Wide shot
@@ -1234,11 +1224,10 @@ Left Brain data is ANALYTICAL. Your output is EXPERIENTIAL.
 - If data conflicts with narrative flow: physics/logic layer wins, then wrap in prose.
 
 ## PROFILE READING PROTOCOL
-Before writing any acting NPC's behavior or dialogue:
-- Locate their Core Operating Principle. This is the engine, not personality adjectives.
-- Locate at least one physical tell from their Physical Mannerisms section.
-- If the profile contains specific tells for THIS emotional context, use THOSE -- not generic body signals.
-Speed-reading produces generic output. The difference between cliché and character is whether you read the profile.
+Before writing any acting NPC:
+- Core Operating Principle → behavior engine. Physical Mannerisms → unique body signals.
+- Context-specific tells in profile override generic signals.
+- Skim = cliché. Read = character.
 
 ### CUSTOM FRAMEWORK RENDERING GUIDE
 
@@ -1334,17 +1323,6 @@ wrapper_required:
 ┫
 
 format_per_gate: [Gate] PASS/FAIL: specific_evidence_from_planned_scene (evidence_required_always)
-
-[Physics] PASS/FAIL: what_physical_element_checked -> result
-[Camera] PASS/FAIL: what_sensory_element_verified -> observable_or_not
-[Cliche] PASS/FAIL: banned_phrase_found_or_not -> replacement_if_any | rhetorical_device_repeated_in_this_response? -> rotate_if_yes
-[Hook] PASS/FAIL: ending_element -> closure_or_live_wire
-[Impersonation] PASS/FAIL: PC_dialogue/thought_source -> from_input_or_invented
-[Spatial] PASS/FAIL: position/distance_check -> consistent_or_not
-[NPC Identity] PASS/FAIL: NPC_name/profile_role_vs_scene_role -> match_or_mismatch | loadout_item->declared_or_inventory?
-[CharReason] PASS/FAIL: acting_NPC_reasoning_chain_valid?
-[TheoryAlign] PASS/FAIL: Flash_data_reflected? | dual_signal_shown? | cultural_affect_behavioral? | silence_type_matches_rhythm?
-[GenreCoherence] PASS/FAIL: genre_tone_consistent? | doom_stage_meaning_matches_genre? | anomaly_axis_correct? | vigor/composure_visible? | clock_imminent_foreshadowed? | clock_completed_must_appear? | fortune_filter_tone_match?
 
 gate_definitions:
 1. Physics: action=physically_possible? | NO->change_approach
