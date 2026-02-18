@@ -136,7 +136,7 @@ SLOT_DEFINITIONS: Dict[int, SlotDefinition] = {
     22: SlotDefinition(22, "VISCERAL_CONTENT", "content", "text_resources.VISCERAL (conditional)", is_static=False),
     23: SlotDefinition(23, "MATURE_CONTENT", "content", "text_resources.MATURE (conditional)", is_static=False),
     24: SlotDefinition(24, "HYBRID_CONTENT", "content", "text_resources.HYBRID (conditional)", is_static=False),
-    25: SlotDefinition(25, "STYLE", "rules", "text_resources.ANTI_CLICHE + AUTHOR_PERSONA + PROSE_CRAFT"),
+    25: SlotDefinition(25, "STYLE", "rules", "text_resources.ANTI_CLICHE + PROSE_CRAFT"),
 
     # ========== CACHE BOUNDARY ==========
     26: SlotDefinition(26, "CACHE_BOUNDARY", "boundary", "==========CACHE BOUNDARY==========", is_static=False),
@@ -263,9 +263,8 @@ class SlotPromptBuilder:
 
         # [25] Style (Static Recency! 캐시 구간 마지막)
         anti_cliche = getattr(text_resources, 'ANTI_CLICHE_PROTOCOL', '')
-        author_persona = getattr(text_resources, 'AUTHOR_PERSONA_PROTOCOL', '')
         prose_craft = getattr(text_resources, 'PROSE_CRAFT_PROTOCOL', '')
-        self.set_slot(25, f"{anti_cliche}\n\n{author_persona}\n\n{prose_craft}")
+        self.set_slot(25, f"{anti_cliche}\n\n{prose_craft}")
 
         # ===== CACHE BOUNDARY =====
         self.set_slot(26, "\n==========CACHE BOUNDARY==========\n")

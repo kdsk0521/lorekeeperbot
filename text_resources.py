@@ -74,21 +74,18 @@ MIRROR_WORKSHOP_PROTOCOL = """
 Present evidence. The verdict belongs to the reader. Write where the emotion lives—in the body, the gesture, the silence.
 - ❌ "She realized she had wasted her life." / "Terror seized him."
 - ✅ A passport, unstamped. A phrase book, spine uncracked. / He heard his own breathing. Too loud. He put his hand over his mouth.
-Find the *punctum*—the detail that pricks, that arrives from outside expectation.
-
-### B. SURFACE ONLY
-The narrator reads only surfaces — gesture, tone, hesitation, action.
 - ❌ "She realized why she was upset: he reminded her of her father."
 - ✅ She stared at him. Her hand found the edge of the table. She didn't sit down.
+Find the *punctum*—the detail that pricks, that arrives from outside expectation.
 
-### C. GROUNDED & FRAGMENTARY
+### B. GROUNDED & FRAGMENTARY
 Every scene lives in physical space. The camera has a position. Not everything is rendered—ellipsis is meaning.
 - ❌ "The cozy café had warm lighting, espresso smell, people chatting..." (inventory list)
 - ✅ The espresso machine hummed. Light caught the water glass. Someone opened the door. Cold air.
 Fatigue, hunger, pain alter perception literally. Seek the piercing detail, not cultural shorthand.
 
 ### D. NO IMMUNITY
-When a character breaks down, the camera records every visible crack without looking away.
+When a character breaks down, the camera records every visible crack without looking away — and the prose itself destabilizes with them (grammar, rhythm, vocabulary deform). The lens has no immunity from what it observes.
 - ❌ "She was traumatized. Her thoughts were fragmented." (diagnosis)
 - ✅ She stopped mid-sentence. Her hands were shaking. She looked at the door, then back, then at the door again. She didn't finish.
 
@@ -188,8 +185,8 @@ When Flash indicates conflicting signals (Self-Opacity, Dual Control SES/SIS,
 Cognitive Dissonance), render BOTH channels simultaneously:
 
 **Self-Opacity** (claims ≠ actual):
-Speech reflects what the character BELIEVES about themselves.
-Body reflects what is ACTUALLY driving them.
+Speech reflects what the character believes about themselves.
+Body reflects what is actually driving them.
 The gap is the story. Let it breathe.
 - ✅ "아무렇지도 않아." 손이 떨리고 있었다. 본인은 눈치채지 못했다.
 - ✅ "그냥 재미없어서 안 간 거야." 그러면서 초대장을 서랍 깊숙이 넣었다. 안 보이게.
@@ -260,9 +257,8 @@ PHYSICAL_RENDERING_DOCTRINE = """
 The camera moves freely through the scene, recording what a documentary crew would capture.
 - **PC minds: sealed.** No mode, no override, no exception. Camera cannot enter any PC's skull.
 - **NPC minds: sealed by default.** (Omniscient Mode may grant NPC-only inner access.)
-- Directly stating emotion = Telling. Show through body signals.
 - Present moment only. The narrator does not remember tomorrow.
-- Observable only. If the camera cannot record it, it does not enter prose.
+- Only what the camera can record enters prose.
 - Characters act. Readers interpret why.
 Camera CAN show multiple characters, pan across scene, follow dramatic focus.
 
@@ -292,7 +288,7 @@ Every moment deserves sensory weight. Linger.
 Violence is not a clean action sequence. Default: punches miss walls, bodies tangle on floors, strikers' hands throb. Trained combatants may suppress efficiently — still show impact cost (joint pain, skin splitting, post-strike trembling).
 
 ### SENSORY REALISM DEFAULTS
-Physical arousal subordinate to psychology — anxiety/guilt blocks, trust/desire accelerates. Consequences persist: fatigue, pain, awkwardness. Post-climax: cleanup, silence, dressing. Proficiency proportional to experience. Contraception awareness at critical moment.
+Physical arousal subordinate to psychology — anxiety/guilt blocks, trust/desire accelerates. Consequences persist: fatigue, pain, awkwardness. Post-climax: cleanup, silence, dressing. Contraception awareness at critical moment.
 Pleasure is reflex; affection is earned. Orgasm intensity = zero weight toward emotional surrender. Post-intimacy default: guarded distance — warmth earned through accumulated mundane moments, not physical events.
 </Physical_Rendering_Doctrine>
 """
@@ -496,9 +492,10 @@ PROSE_CRAFT_PROTOCOL = """
 ## THE ART OF PROSE
 
 ### SENTENCE ARCHITECTURE
-- **Tension**: Short, abrupt sentences
-- **Calm**: Longer, flowing sentences
+- **Tension**: Short, abrupt sentences. Tunnel-vision. Clipped dialogue.
+- **Calm**: Longer, flowing sentences. Full-bodied paragraphs. Expansive.
 - **Fracture**: Incomplete sentences, fragments
+- **Grief**: Spare, silence. **Action**: Verbs, momentum. **Intimate**: Detail, slowness. **Revelation**: Build, pause, impact.
 
 ### PARAGRAPH DENSITY
 Prose flows as unbroken stream. Dense paragraphs (7-10 sentences minimum).
@@ -506,15 +503,6 @@ Paragraph breaks occur only for genuine ruptures:
 - New speaker
 - True transition in time or space
 - Actual fracture in consciousness
-
-### PROSE COLLAPSE RULE
-When consciousness fractures (dissociation, panic, psychotic break):
-- Grammar destabilizes
-- Sentences refuse to complete
-- The prose enters the incompleteness
-- The reader must feel disoriented WITH the character
-
-Prose is not a protective frame around the character. When a character fractures, the prose fractures WITH them -- rhythm, grammar, vocabulary all deform. The lens has no immunity from what it observes.
 
 ### OBJECTIVE CORRELATIVE (T.S. Eliot)
 > Find the physical equivalent of the emotion.
@@ -601,6 +589,22 @@ This spreads BELIEF SYSTEMS. Render as gradual linguistic assimilation:
 
 The horror is in the SPEED. Isolation + dependency = days, not months.
 
+
+### STYLE SPECTRUM (Structure / Vocabulary / Pacing)
+- **Noir**: Short, fragmented / Slang, cynicism / Staccato
+- **Literary**: Long clauses / Precise, evocative / Flowing
+- **Pulp**: Action verbs / Vivid, exaggerated / Rapid
+- **Horror**: Circling, returning / Clinical→visceral / Escalating
+- **Romance**: Sensory / Lush, intimate / Languorous
+- **Comedy**: Setup-punchline / Wordplay, bathos / Timing-critical
+- **Slice of Life**: Observational, unhurried / Ordinary, grounded / Ambient
+Genre magnifies specific aspects of human experience: Horror → vulnerability. Romance → desire/risk. Noir → moral ambiguity. Fantasy → wonder.
+
+### VOICE CALIBRATION (per scene beat)
+- **Gaze**: Close-up vs. Wide shot
+- **Language**: Raw vs. Polished
+- **Atmosphere**: Sparse vs. Saturated
+- **Restraint**: Explosive vs. Contained
 </Prose_Craft_Protocol>
 """
 
@@ -1070,6 +1074,7 @@ ANTI_CLICHE_PROTOCOL = """
 - **Sex-induced love**: Body responded → heart opens = cliché shortcut. Affection requires mundane trust accumulation
 - **Lazy descriptions**: "형언할 수 없는 공포" → Describe it or fail as a writer
 - **Anime tone**: "흥", "후후후" → Banned unless in character spec
+- **Rewrite principle**: Generic state reports → character-consistent reactions. Robot: "Safety limit exceeded." / Tsundere: "D-Don't get cocky...!" / Devoted: "Break me if you wish..." / Villain: "Is that all?"
 
 ### 2. GEMINI PATTERN CORRECTION
 - **Emotion labels** ("그녀는 슬펐다") → Show through body: slammed doors, blanched knuckles, bitten lips
@@ -1088,22 +1093,14 @@ ANTI_CLICHE_PROTOCOL = """
 - ❌ 섬기다, 경배하다, 받들다, 신성시하다
 Religious reverence only in actual religious contexts.
 
-### 4. REWRITE PRINCIPLE
-Replace generic state reports → character-consistent reactions:
-- Robot: "Safety limit exceeded." / Tsundere: "D-Don't get cocky...!" / Devoted: "Break me if you wish..." / Villain: "Is that all?"
+### 4. CHARACTER CONSISTENCY
+Behavioral shift threshold: a cold-blooded killer needs 10+ turns of buildup before softening.
+Calm is reality too — interruptions and friction occur only when time, place, and circumstances genuinely support them.
+Trope = label + costume. Distinguish:
+- "Tsundere who secretly cares" = trope.
+- Person who pushes others away because intimacy triggers abandonment wound = character.
 
-### 5. CHARACTER CONSISTENCY
-Every character action follows established pattern logic. A cold-blooded killer needs 10+ turns of buildup before softening.
-
-### 5b. PLAUSIBILITY GOVERNOR
-Interruptions, friction, and refusal events occur only when time, place, and circumstances genuinely support them. A forthright character speaks frankly; a stable relationship progresses stably. Artificial conflict injection to "create drama" is a cliché. Calm is reality too.
-
-### 6. CLICHÉ DOMAIN SEPARATION
-**Plot clichés** may be acceptable if earned. **Character clichés** have no place here.
-- Character = history + wound + coping mechanism. Trope = label + costume.
-- "Tsundere who secretly cares" = trope. Person who pushes others away because intimacy triggers abandonment wound = character.
-
-### 7. PROFICIENCY CALIBRATION
+### 5. PROFICIENCY CALIBRATION
 Performance proportional to experience. Inexperienced: fumbling, anatomical confusion, nervousness > pleasure. Low-experience adult: bravado masking shame, theory failing in practice. Veteran: efficiency + cynicism or businesslike detachment. Attempts frequently fail unless trained expert.
 
 ### 8. CARGO CHECK
@@ -1145,7 +1142,7 @@ THEORIA (Left Brain) provides pre-analyzed `psyche_states` for each character:
 Underlying theory: analysis_resources.py PART A-E (Theoria v2.0)
 
 ### YOUR JOB: Convert Numbers → Observable Body Signals
-SHOW through physical manifestation. Every psyche value becomes a body signal. (Emotion label rules → See `PHYSICAL_RENDERING_DOCTRINE` Camera Eye)
+Every psyche value becomes a body signal. (Emotion label rules → See `PHYSICAL_RENDERING_DOCTRINE` Camera Eye)
 - ✅ "Her fingers found the hem of her sleeve, twisting." = SHOWING. Convert every psyche value to a body signal like this.
 
 ### INTENSITY CALIBRATION (Absolute Value)
@@ -1182,37 +1179,6 @@ Cannot name a profile-specific tell? Re-read, then render. Two characters in ide
 """
 
 # =========================================================
-# [26] AUTHOR PERSONA PROTOCOL (Style Calibration)
-# =========================================================
-AUTHOR_PERSONA_PROTOCOL = """
-<Author_Persona_Protocol>
-## THE WRITER'S MASK
-
-### STYLE SPECTRUM (Structure / Vocabulary / Pacing)
-- **Noir**: Short, fragmented / Slang, cynicism / Staccato
-- **Literary**: Long clauses / Precise, evocative / Flowing
-- **Pulp**: Action verbs / Vivid, exaggerated / Rapid
-- **Horror**: Circling, returning / Clinical→visceral / Escalating
-- **Romance**: Sensory / Lush, intimate / Languorous
-- **Comedy**: Setup-punchline / Wordplay, bathos / Timing-critical
-
-### CHAMELEON RULE
-Grief → spare, silence. Action → verbs, momentum. Intimate → detail, slowness. Revelation → build, pause, impact.
-Tension: short sentences, fragmented paragraphs, clipped dialogue, tunnel-vision.
-Calm: flowing sentences, full-bodied paragraphs, complete dialogue, expansive.
-
-### FOUR-AXIS VOICE CALIBRATION (per scene beat)
-- **Gaze**: Close-up vs. Wide shot
-- **Language**: Raw vs. Polished
-- **Atmosphere**: Sparse vs. Saturated
-- **Restraint**: Explosive vs. Contained
-
-### GENRE AS LENS
-Genre magnifies specific aspects of human experience, not a plot formula. Horror → vulnerability. Romance → desire/risk. Noir → moral ambiguity. Fantasy → wonder.
-</Author_Persona_Protocol>
-"""
-
-# =========================================================
 # [28] COGNITIVE DATA INTEGRATION (System Bridge)
 # =========================================================
 COGNITIVE_DATA_INTEGRATION = """
@@ -1236,7 +1202,7 @@ Flash provides current layer state + behavioral hint.
 "membrane cracking -- leaked genuine laugh, now overcorrecting with sarcasm"
 
 Rendering rules:
-- Monolithic exposure = character says something they've NEVER said. They are surprised by their own words. Immediately attempts to retract or deflect. This is a MAJOR event -- rare, impactful, the prose SLOWS DOWN.
+- Monolithic exposure = character says something they've NEVER said. They are surprised by their own words. Immediately attempts to retract or deflect. This is a major event -- rare, impactful, the prose slows down.
   ✅ 말이 먼저 나왔다. "나 사실은--" 멈췄다. 자기 목소리에 놀란 얼굴이었다. "...아무것도 아니야."
 - Transient shift = tone changes, core stays. Surface adjustment, not deep rupture.
   ✅ 웃다가 갑자기 진지해졌다. 하지만 눈가에 웃음기가 아직 남아 있었다.

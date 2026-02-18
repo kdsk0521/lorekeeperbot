@@ -57,7 +57,6 @@ def test_constants_exist():
         "NPC_BEHAVIOR_SYSTEM",
         "PROSE_CRAFT_PROTOCOL",
         "ANTI_CLICHE_PROTOCOL",
-        "AUTHOR_PERSONA_PROTOCOL",
         "TELESCOPE_PROTOCOL",
         "TEMPORAL_FLOW_DOCTRINE",
         "INTERACTION_MODEL",
