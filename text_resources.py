@@ -1290,6 +1290,17 @@ wrapper_required:
 
 format_per_gate: [Gate] PASS/FAIL: specific_evidence_from_planned_scene (evidence_required_always)
 
+[Physics] PASS/FAIL: what_physical_element_checked -> result
+[Camera] PASS/FAIL: what_sensory_element_verified -> observable_or_not
+[Cliche] PASS/FAIL: banned_phrase_found_or_not -> replacement_if_any | rhetorical_device_repeated_in_this_response? -> rotate_if_yes
+[Hook] PASS/FAIL: ending_element -> closure_or_live_wire
+[Impersonation] PASS/FAIL: PC_dialogue/thought_source -> from_input_or_invented
+[Spatial] PASS/FAIL: position/distance_check -> consistent_or_not
+[NPC Identity] PASS/FAIL: NPC_name/profile_role_vs_scene_role -> match_or_mismatch | loadout_item->declared_or_inventory?
+[CharReason] PASS/FAIL: acting_NPC_reasoning_chain_valid?
+[TheoryAlign] PASS/FAIL: Flash_data_reflected? | dual_signal_shown? | cultural_affect_behavioral? | silence_type_matches_rhythm?
+[GenreCoherence] PASS/FAIL: genre_tone_consistent? | doom_stage_meaning_matches_genre? | anomaly_axis_correct? | vigor/composure_visible? | clock_imminent_foreshadowed? | clock_completed_must_appear? | fortune_filter_tone_match?
+
 gate_definitions:
 1. Physics: action=physically_possible? | NO->change_approach
 2. Camera: prose_content=camera_recordable? | emotion_words=FAIL->convert_to_body_signal
