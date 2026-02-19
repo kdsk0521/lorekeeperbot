@@ -283,3 +283,34 @@ def clean_mob_tags(text: str) -> str:
         
     cleaned_text = re.sub(pattern, repl, text)
     return cleaned_text
+
+
+# =========================================================
+# Cliché Pattern Detection
+# =========================================================
+
+CLICHE_PATTERNS = [
+    (re.compile(r"형언할 수 없는"), "형언할 수 없는"),
+    (re.compile(r"전기가 흐르[는듯]"), "전기가 흐르"),
+    (re.compile(r"심장이 멎[는은]"), "심장이 멎"),
+    (re.compile(r"시간이 멈[춘추]"), "시간이 멈"),
+    (re.compile(r"숨을?\s?잊[었은]"), "숨을 잊"),
+    (re.compile(r"등줄기를 타고.{0,5}한기"), "등줄기 한기"),
+    (re.compile(r"포식자 같은"), "포식자 같은"),
+    (re.compile(r"살기가?\s?느껴"), "살기가 느껴"),
+    (re.compile(r"보이지 않는 압박"), "보이지 않는 압박"),
+    (re.compile(r"모든 것이 달라[질지]"), "모든 것이 달라"),
+    (re.compile(r"운명을?\s?결정짓"), "운명을 결정짓"),
+]
+
+
+def detect_cliche_patterns(response: str) -> str:
+    """Detect cliché patterns in response and return feedback string."""
+    matched = []
+    for pattern, label in CLICHE_PATTERNS:
+        if pattern.search(response):
+            matched.append(label)
+    if not matched:
+        return ""
+    labels = ", ".join(matched[:3])
+    return f"[CLICHE: {labels} — replace with concrete sensory detail]"

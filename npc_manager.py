@@ -122,6 +122,50 @@ def _extract_structured_fields(desc: str) -> Dict[str, str]:
     return fields
 
 
+async def extract_voice_card(client, model_id: str, npc_name: str, profile_text: str) -> str:
+    """Flash API로 NPC 음성 카드를 추출. 업로드 시 1회만 호출."""
+    if not client or not profile_text or len(profile_text) < 300:
+        return ""
+
+    from memory_system import api_call_with_retry
+    from google.genai import types
+
+    prompt = f"""Extract the distinctive VOICE characteristics of this NPC into a compact voice card.
+The card must capture what makes this character's speech UNIQUE — not personality, not backstory, just HOW they talk.
+
+Output format (plain text, not JSON):
+[Voice: CHARACTER_NAME]
+Tone: (1 sentence — pitch, speed, energy, texture)
+Quirks: (2-3 speech habits that distinguish this character)
+Shifts: (how speech changes by situation — e.g., "home: more alive / work: autopilot")
+Catch: (2-4 signature phrases with brief context)
+Sample: (1-2 example lines that capture the voice — with subtext note if gap between words and meaning)
+
+Rules:
+- Total output MUST be under 500 characters
+- Write in the SAME LANGUAGE as the profile (Korean descriptions → Korean card, English → English)
+- Focus ONLY on speech patterns, not personality or backstory
+- Catchphrases should be in the character's actual speaking language
+
+[NPC NAME]: {npc_name}
+[PROFILE]
+{profile_text[:6000]}"""
+
+    try:
+        cfg = types.GenerateContentConfig(
+            temperature=0.1,
+            max_output_tokens=1024,
+        )
+        contents = [types.Content(role="user", parts=[types.Part(text=prompt)])]
+        result = await api_call_with_retry(client, model_id, contents, cfg,
+                                           operation_name=f"VoiceCard-{npc_name}")
+        if result and len(result.strip()) > 50:
+            return result.strip()
+    except Exception as e:
+        logger.warning(f"[VoiceCard] Extraction failed for {npc_name}: {e}")
+    return ""
+
+
 def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
     # desc/description 텍스트에서 구조화 필드 자동 추출 (없는 경우만)
     desc_text = data.get("description") or data.get("desc", "")
@@ -312,10 +356,14 @@ def register_ai_npc(channel_id: str, name: str, description: str = "", context: 
         tag = generate_mob_tag()
         tagged_name = f"{name} {tag}"
         
-        # Recursive uniqueness check
-        while get_npc(channel_id, tagged_name):
+        # Uniqueness check (with iteration limit)
+        for _attempt in range(50):
+            if not get_npc(channel_id, tagged_name):
+                break
             tag = generate_mob_tag()
             tagged_name = f"{name} {tag}"
+        else:
+            tagged_name = f"{name} #{int(time.time()) % 10000}"
             
         logger.info(f"[NPC] Name Collision '{name}' -> Auto-tagged as '{tagged_name}'")
         name = tagged_name
@@ -522,9 +570,16 @@ def get_npc_full_profiles(channel_id: str, names: list) -> str:
                 meta_parts.append(f"외형: {data['appearance']}")
             meta_line = " | ".join(meta_parts)
             if meta_line:
-                parts.append(f"{header}\n**[{meta_line}]**\n{desc}")
+                profile_text = f"{header}\n**[{meta_line}]**\n{desc}"
             else:
-                parts.append(f"{header}\n{desc}")
+                profile_text = f"{header}\n{desc}"
+
+            # Voice Card injection (compaction과 별개)
+            voice_card = data.get("voice_card", "")
+            if voice_card:
+                profile_text += f"\n\n{voice_card}"
+
+            parts.append(profile_text)
     return "\n\n".join(parts)
 
 
@@ -588,7 +643,7 @@ def handle_identity_reveal(channel_id: str, old_name: str, new_name: str, reason
     if att:
         # 기존 태도 삭제하고 새 이름으로 등록 (domain_manager 기능 한계로 직접 조작 필요할 수 있으나, update_npc_attitude 사용)
         update_npc_attitude(channel_id, new_name, att.get("attitude", "neutral"), att.get("reason", "") + " (Identity Reveal)")
-        # 태도 삭제 API가 없으므로... (TODO: Add delete attitude support if needed, or leave it orphaned)
+        delete_npc_attitude(channel_id, old_name)
     
     return f"🎭 **정체 드러남:** {old_name} ➔ {new_name}"
 

@@ -23,6 +23,7 @@
 """
 
 import json
+import hashlib
 import logging
 import asyncio
 from typing import Dict, Any, List, Optional, Tuple
@@ -1394,6 +1395,11 @@ def should_use_caching(lore_text: str, deep_memory: str = "") -> bool:
     return estimated_tokens >= CACHE_MIN_TOKENS
 
 
+def _stable_hash(text: str) -> str:
+    """프로세스 재시작 간 안정적인 해시. Python hash()는 비결정론적."""
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
 async def create_context_cache(
     client,
     model_id: str,
@@ -1459,8 +1465,8 @@ async def create_context_cache(
             "cache_name": cache.name,
             "created_at": get_timestamp(),
             "ttl_minutes": ttl_minutes,
-            "lore_hash": hash(lore_text),
-            "deep_hash": hash(deep_memory or "")
+            "lore_hash": _stable_hash(lore_text),
+            "deep_hash": _stable_hash(deep_memory or "")
         }
         
         logger.info(f"[Caching] 캐시 생성 완료 - {channel_id}: {cache.name}")
@@ -1489,8 +1495,8 @@ def is_cache_valid(
     if not cache_info:
         return False
     
-    current_lore_hash = hash(lore_text)
-    current_deep_hash = hash(deep_memory or "")
+    current_lore_hash = _stable_hash(lore_text)
+    current_deep_hash = _stable_hash(deep_memory or "")
     
     if cache_info.get("lore_hash") != current_lore_hash:
         logger.info(f"[Caching] 로어 변경 감지 - {channel_id}")

@@ -181,7 +181,7 @@ GENRE_THEORY_WEIGHTS: Dict[str, Dict[str, list]] = {
         ],
         'reframe': [
             "Habitus: read as SOCIAL CASTE indicators — noble vs common speech, gestures, habits",
-            "Prospect Theory: honor/legacy as 'possessions' subject to loss aversion",
+            "Prospect Theory -> HONOR: treat face and duty as possessions. Loss of face > gain of face in behavioral weight",
         ],
     },
 
@@ -197,7 +197,7 @@ GENRE_THEORY_WEIGHTS: Dict[str, Dict[str, list]] = {
             "Carstensen SST (wuxia heroes act as if immortal regardless of age)",
         ],
         'reframe': [
-            "Attachment: read as LOYALTY patterns — sworn brotherhood bond vs betrayal wound",
+            "Attachment -> LOYALTY: secure=sworn brotherhood, anxious=honor-debt obsession, avoidant=lone wolf pride, disorganized=betrayal trauma",
             "Logos Dynamics: Monolithic layer = martial arts principles and shi-fu teachings, nearly impossible to override",
         ],
     },
@@ -360,7 +360,7 @@ GENRE_THEORY_WEIGHTS: Dict[str, Dict[str, list]] = {
         'reframe': [
             "Logos membrane: in noir, membrane is THICK by default. Cracking it is a major event.",
             "Attachment: mostly avoidant or disorganized. Secure attachment is rare and precious.",
-            "Comedy elements: dark humor ONLY — gallows wit, not slapstick",
+            "Comedy: RESTRICT to gallows wit and ironic understatement. No slapstick, no lightness.",
         ],
     },
 
@@ -609,19 +609,49 @@ NON_SLOT_THEORIES = [
 ]
 
 
-def get_turn_spotlight(n: int = 5) -> str:
-    """
-    매 턴 N개 이론을 랜덤 하이라이트.
-    슬롯 강제가 없는 이론들의 적용을 보장하기 위한 Rotation 시스템.
-    10턴이면 거의 모든 이론이 최소 1회 하이라이트됨.
-    """
-    selected = random.sample(NON_SLOT_THEORIES, min(n, len(NON_SLOT_THEORIES)))
+def get_suppressed_theories(active_genres: list) -> list:
+    """build_theory_emphasis의 suppress 리스트를 추출."""
+    all_suppress = []
+    for genre in active_genres:
+        if genre in GENRE_THEORY_WEIGHTS:
+            all_suppress.extend(GENRE_THEORY_WEIGHTS[genre].get('suppress', []))
+    return list(set(all_suppress))
+
+
+def get_session_spotlight(
+    session_seed: int,
+    turn_number: int,
+    n: int = 5,
+    suppressed: list = None,
+) -> str:
+    """세션 고정 시드 + 로테이션 스포트라이트. SUPPRESS 이론 제외."""
+    pool = NON_SLOT_THEORIES[:]
+    if suppressed:
+        sup_names = {s.split('(')[0].strip().split('/')[0].strip() for s in suppressed}
+        pool = [t for t in pool if t.split('-')[0].strip().split('/')[0].strip() not in sup_names]
+
+    rng = random.Random(session_seed)
+    rng.shuffle(pool)
+
+    group_size = n
+    total_groups = max(1, len(pool) // group_size)
+    group_idx = turn_number % total_groups
+    start = group_idx * group_size
+    selected = pool[start:start + group_size]
+    if len(selected) < n:
+        selected = pool[:n]
+
     lines = "\n".join(f"  * {t}" for t in selected)
     return f"""<turn_spotlight>
-This turn, verify you actively considered these theories
-(all others still apply -- these are HIGHLIGHTED for this turn):
+This turn, actively apply these highlighted theories
+(all others remain in effect — these receive focused attention):
 {lines}
 </turn_spotlight>"""
+
+
+def get_turn_spotlight(n: int = 5) -> str:
+    """Legacy wrapper — redirects to session spotlight with random seed."""
+    return get_session_spotlight(random.randint(0, 2**31), 0, n)
 
 
 # ---------------------------------------------------------

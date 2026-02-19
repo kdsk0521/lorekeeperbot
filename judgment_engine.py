@@ -54,11 +54,11 @@ class JudgmentEngine:
 
         # 1. Polyvagal × action_type
         if polyvagal == "dorsal":
-            mod += 10 if is_combat else -10
+            mod += (-15 if is_combat else -10)  # 셧다운: 전투/사회 모두 불리
         elif polyvagal == "sympathetic":
-            mod -= 5
+            mod += (5 if is_combat else -5)     # 투쟁도주: 전투+, 사회-
         elif polyvagal == "ventral":
-            mod += 5 if is_social else 0
+            mod += (5 if is_social else 0)      # 안전: 사회+
 
         # 2. Decision mode × action_type
         if decision_mode == "reactive":
@@ -67,16 +67,18 @@ class JudgmentEngine:
             mod += 5 if is_social else -5
 
         # 3. Cultural affect
-        if cultural_affect == "hwabyung" and is_social:
-            mod -= 5
-        elif cultural_affect == "gi" and is_combat:
-            mod += 5
+        if cultural_affect == "han":
+            mod += (-3 if is_social else 0)   # 한: 사회적 위축
+        elif cultural_affect == "jeong" and is_social:
+            mod += 5                          # 정: 사회적 유대
+        elif cultural_affect == "hwabyung":
+            mod += (-8 if is_social else -3)  # 화병: 폭발 위험
         elif cultural_affect == "nunchi" and is_social:
-            mod -= 5
+            mod += 3                          # 눈치: 상황 파악 이점
         elif cultural_affect == "chaemyeon" and is_social:
-            mod += 5
-        elif cultural_affect == "han" and is_social:
-            mod += 5
+            mod += 5                          # 체면 유지
+        elif cultural_affect == "gi" and is_combat:
+            mod += 5                          # 기 충전
 
         # 4. Attachment × interpersonal
         if is_social:

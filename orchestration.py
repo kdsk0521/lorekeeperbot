@@ -13,6 +13,7 @@ import asyncio
 import copy
 import logging
 import re
+import time
 from typing import Dict, Any, Optional, List, Tuple
 
 import discord
@@ -681,6 +682,22 @@ class OrchestrationService:
                         if d_d or t_d:
                             domain_manager.update_helena_metric(channel_id, npc_name, depth_delta=int(d_d), tension_delta=int(t_d))
 
+                # Convergence Detection
+                convergence_warnings = []
+                for npc_name, deltas in npc_depth.items():
+                    if isinstance(deltas, dict):
+                        d_d = deltas.get("depth_delta", 0)
+                        if isinstance(d_d, (int, float)) and d_d > 15:
+                            convergence_warnings.append(
+                                f"[CONVERGENCE: {npc_name} depth_delta={d_d:+.0f} — match relationship progression speed to current Peplau phase]"
+                            )
+                if convergence_warnings:
+                    existing_fb = domain_manager.get_session_ai_memory(channel_id).get("format_feedback", "")
+                    conv_str = " ".join(convergence_warnings)
+                    combined = f"{existing_fb} {conv_str}".strip() if existing_fb else conv_str
+                    domain_manager.update_session_ai_memory(channel_id, {"format_feedback": combined})
+                    logger.info(f"[Convergence] {conv_str}")
+
             if updates.get("PlayerMemoryUpdate"):
                 pmu = updates["PlayerMemoryUpdate"]
                 if pmu.get("relationships"):
@@ -785,9 +802,14 @@ class OrchestrationService:
 
 
             # [!다시] 도메인 스냅샷 (UNE 실행 전 전체 상태 저장)
-            self._retry_snapshots[channel_id] = copy.deepcopy(
-                domain_manager.get_domain(channel_id)
-            )
+            self._retry_snapshots[channel_id] = {
+                "_ts": time.time(),
+                "_data": copy.deepcopy(domain_manager.get_domain(channel_id))
+            }
+            # 메모리 누수 방지: 최대 20개 채널 스냅샷만 유지
+            if len(self._retry_snapshots) > 20:
+                oldest = min(self._retry_snapshots, key=lambda k: self._retry_snapshots[k].get("_ts", 0))
+                del self._retry_snapshots[oldest]
 
             # async output (typing indicator)
             async with message.channel.typing():
@@ -851,8 +873,12 @@ class OrchestrationService:
                     domain_manager.append_history(channel_id, "Model", response)
                     logger.debug(f"[History] Saved: {user_mask} + Model response ({len(response)} chars)")
 
-                    # 8.5. Dialogue Format Feedback + PC Impersonation Check (다음 턴 피드백용)
+                    # 8.5. Dialogue Format Feedback + PC Impersonation + Cliché Check (다음 턴 피드백용)
                     fmt_feedback = _check_dialogue_format(response, pc_name=ctx.user_mask or "", user_input=ctx.action_text or "")
+                    from response_processor import detect_cliche_patterns
+                    cliche_fb = detect_cliche_patterns(response)
+                    if cliche_fb:
+                        fmt_feedback = f"{fmt_feedback} {cliche_fb}".strip() if fmt_feedback else cliche_fb
                     domain_manager.update_session_ai_memory(
                         channel_id, {"format_feedback": fmt_feedback}
                     )
@@ -879,6 +905,9 @@ class OrchestrationService:
                 if current_retry_ctx.get("has_response"):
                     domain_manager.save_last_execution_context(channel_id, current_retry_ctx)
                     logger.debug(f"[!다시] Persistent context saved for channel {channel_id}")
+
+                # 성공 완료 후 스냅샷 정리 (메모리 누수 방지)
+                self._retry_snapshots.pop(channel_id, None)
 
         except Exception as e:
             if feedback_msg:
@@ -924,7 +953,8 @@ class OrchestrationService:
             except Exception: pass
 
         # 3. 도메인 스냅샷 복원 (퀘스트/NPC/둠/기력/히스토리 전부 롤백)
-        snapshot = self._retry_snapshots.get(channel_id)
+        snapshot_entry = self._retry_snapshots.get(channel_id)
+        snapshot = snapshot_entry.get("_data") if snapshot_entry else None
         if snapshot:
             domain_manager.save_domain(channel_id, copy.deepcopy(snapshot))
             logger.info(f"[!다시] Domain snapshot restored for {channel_id}")

@@ -366,10 +366,10 @@ class SlotPromptBuilder:
         if real_time_data:
             self.set_slot(29, f"<Real_Time_Status>\n{real_time_data}\n</Real_Time_Status>")
 
-        # [30] GM Mover
+        # [30] World Response (GM Mover)
         if gm_mover:
             cognitive_int = getattr(text_resources, 'COGNITIVE_DATA_INTEGRATION', '')
-            self.set_slot(30, f"<GM_Analysis>\n{gm_mover}\n</GM_Analysis>\n\n{cognitive_int}")
+            self.set_slot(30, f"<World_Response>\n{gm_mover}\n</World_Response>\n\n{cognitive_int}")
 
         # [31] Last Response (직전 AI 응답 - 유저 입력 바로 앞!)
         if last_response:
@@ -787,6 +787,24 @@ def build_34_step_prompt(ctx) -> str:
         )
         gm_mover = (gm_mover + fb_instruction) if gm_mover else fb_instruction
 
+    # Position-based friction (GAP 6 — anti-sycophancy)
+    position = dai.get("position", {})
+    pos_val = position.get("value", 0.5) if position else 0.5
+    if pos_val < 0.3:
+        friction = (
+            "\n\n[POSITION_FRICTION] PC is in a DESPERATE/RISKY position.\n"
+            "- The world RESISTS. Success should be partial at best.\n"
+            "- NPCs do NOT yield easily. Barriers are real.\n"
+            "- Prioritize friction, complication, and cost over clean resolution."
+        )
+        gm_mover = (gm_mover + friction) if gm_mover else friction
+    elif pos_val < 0.5:
+        friction = (
+            "\n\n[POSITION_FRICTION] PC is DISADVANTAGED.\n"
+            "- Success comes with strings attached or unexpected cost."
+        )
+        gm_mover = (gm_mover + friction) if gm_mover else friction
+
     # --- [Slot 29] Real-time Data (compact v3 status first, legacy fallback) ---
     real_time_data = ""
     if channel_id:
@@ -808,6 +826,27 @@ def build_34_step_prompt(ctx) -> str:
             f"- correction_hint: {pc_check.get('correction_hint', '')}"
         )
         real_time_data += pc_warning
+
+    # Emotion Intensity Calibration (GAP 4)
+    psyche_states = dai.get("psyche_states", {})
+    if psyche_states:
+        intensity_lines = []
+        for npc_name, pdata in psyche_states.items():
+            if not isinstance(pdata, dict):
+                continue
+            psyche = pdata.get("psyche", {})
+            val = abs(psyche.get("value", 0))
+            if val <= 30:
+                band = "SUBTLE — micro-expressions only"
+            elif val <= 60:
+                band = "VISIBLE — noticeable body language"
+            elif val <= 80:
+                band = "OVERT — obvious physical signs"
+            else:
+                band = "OVERWHELMING — somatic takeover"
+            intensity_lines.append(f"  {npc_name}: |psyche| {val} -> {band}")
+        if intensity_lines:
+            real_time_data += "\n\n[EMOTION_INTENSITY_GUIDE]\n" + "\n".join(intensity_lines)
 
     # =========================================================
     # 3. 히스토리 분리 (직전 응답 vs 이전 대화)
@@ -918,5 +957,10 @@ def build_34_step_prompt(ctx) -> str:
         current_33 = builder.get_slot(33) or ""
         builder.set_slot(33, f"{current_33}\n\n{fmt_feedback}")
         logger.info("[FormatFeedback] Injected dialogue format correction into slot 33")
+
+    # 5W1H Recency Echo — always present at maximum recency position
+    fidelity_echo = "[5W1H: Draw events only from DAI data. Camera scans environment evenly. Prose intensity follows EnergyDirection.]"
+    current_33 = builder.get_slot(33) or ""
+    builder.set_slot(33, f"{current_33}\n\n{fidelity_echo}")
 
     return builder.build()

@@ -4,7 +4,7 @@ Evaluates NPC psychological state from Flash data to generate autonomous behavio
 """
 
 import random
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 import config as _cfg
 
@@ -48,6 +48,10 @@ NPC_AUTONOMOUS_TRIGGERS = {
     "desistance_check": {
         "desc": "변화 조건 4가지 충족? → 행동 변화",
         "check": "_check_desistance",
+    },
+    "agenda_manifest": {
+        "desc": "NPC의 개인 목표/욕구가 씬 상호작용 중 자연스럽게 드러남",
+        "check": "_check_agenda_manifest",
     },
 }
 
@@ -134,6 +138,11 @@ class NPCAutonomousEngine:
 
             # Moral Disengagement
             r = _check_moral_disengagement(npc_ctx)
+            if r:
+                results.append(r)
+
+            # Agenda Manifest
+            r = _check_agenda_manifest(npc_ctx)
             if r:
                 results.append(r)
 
@@ -274,4 +283,26 @@ def _check_desistance(ctx: Dict) -> TriggerResult | None:
                 f"Desistance conditions emerging for {ctx['name']} — behavioral change may be possible (verify: alternative identity + social support + generative motivation + redemption narrative)",
                 priority=1,  # Low priority — very rare
             )
+    return None
+
+
+def _check_agenda_manifest(ctx: Dict) -> Optional[TriggerResult]:
+    """NPC 개인 어젠다가 인씬에서 드러남."""
+    needs = ctx["psyche"].get("active_needs", [])
+    scene_type = ctx.get("scene_type", "normal")
+    if scene_type not in ("social", "normal", "intimate"):
+        return None
+    if not needs or len(needs) >= 2:  # 2+ needs → henderson이 처리
+        return None
+    need = needs[0]
+    secrets = ctx.get("knowledge", {}).get("secrets_held", [])
+    agenda_needs = ("autonomy", "esteem", "self-actualization", "belonging", "intimacy")
+    if secrets or need in agenda_needs:
+        need_kr = {"autonomy": "자율성", "esteem": "인정", "self-actualization": "자아실현",
+                   "belonging": "소속감", "intimacy": "친밀감", "safety": "안전"}.get(need, need)
+        return TriggerResult(
+            "agenda_manifest", ctx["name"],
+            f"Personal agenda surfaces — {ctx['name']}'s need for {need_kr} colors in-scene behavior (dialogue/body language)",
+            priority=2,
+        )
     return None

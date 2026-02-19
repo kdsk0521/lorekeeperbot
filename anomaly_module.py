@@ -76,7 +76,7 @@ class AnomalyModule:
 
         # mechanic_profile 우선, 없으면 legacy config fallback
         default_primary = mechanic.get("primary_resource") or "vigor"
-        secondary_ratio = 0.3
+        secondary_ratio = mechanic.get("secondary_ratio", 0.3)
 
         if flash_axis == "both":
             return "vigor", "composure", 1.0

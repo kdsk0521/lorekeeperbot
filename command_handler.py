@@ -706,6 +706,24 @@ async def cmd_npc(ctx: CommandContext) -> None:
                 await ctx.send(f"👥 **NPC 등록:** {last_name}")
             else:
                 await ctx.send(f"👥 **NPC 일괄 등록 완료:** 총 {processed_count}명")
+
+            # Voice Card extraction (Flash API)
+            if ctx.genai_client:
+                registered_npcs = domain_manager.get_npcs(channel_id)
+                vc_count = 0
+                for npc_name in list(registered_npcs.keys())[-processed_count:]:
+                    npc_data = registered_npcs[npc_name]
+                    desc = npc_data.get("description") or npc_data.get("desc", "")
+                    if desc and len(desc) > 300 and not npc_data.get("voice_card"):
+                        voice_card = await npc_manager.extract_voice_card(
+                            ctx.genai_client, config.MODEL_ID_FLASH, npc_name, desc
+                        )
+                        if voice_card:
+                            npc_data["voice_card"] = voice_card
+                            domain_manager.update_npc(channel_id, npc_name, npc_data)
+                            vc_count += 1
+                if vc_count > 0:
+                    await ctx.send(f"🎙️ Voice Card 추출 완료 ({vc_count}명)")
         else:
              await ctx.send("⚠️ 유효한 형식을 찾을 수 없습니다. (예: `이름: 설명` 또는 `[NPC NAME]: 이름`)")
         return

@@ -90,6 +90,7 @@ class VigorComposureModule:
         for axis in (bus.vigor, bus.composure):
             axis.pop("_final_delta", None)
             axis.pop("_clamped", None)
+            axis.pop("trauma_trigger", None)
 
         return context
 

@@ -76,6 +76,8 @@ class TheoriaAnalyzer:
             "scene_type": anchors.get("scene_type", "normal"),
             "intimate_module": True,
             "pending_flashback": bool(anchors.get("pending_flashback")),
+            "channel_id": req.channel_id,
+            "turn_count": req.turn_count or 0,
         }
         system_instruction = self._build_system_instruction(active_genres, scene_context)
         
@@ -106,7 +108,7 @@ class TheoriaAnalyzer:
 
     def _build_system_instruction(self, active_genres=None, scene_context=None) -> str:
         """Theoria v2.0 시스템 프롬프트 조립 — build_analysis_directive() 사용"""
-        from theory_emphasis_engine import build_analysis_directive, get_turn_spotlight
+        from theory_emphasis_engine import build_analysis_directive, get_session_spotlight, get_suppressed_theories
 
         active_genres = active_genres or ["modern", "drama"]
         scene_context = scene_context or {}
@@ -153,8 +155,11 @@ class TheoriaAnalyzer:
             content_mandate=text_resources.CONTENT_AUTHORIZATION_MANDATE,
         )
 
-        # Rotation Spotlight: 매 턴 5개 이론 랜덤 하이라이트
-        spotlight = get_turn_spotlight(5)
+        # Rotation Spotlight: 세션 고정 시드 + 로테이션 + SUPPRESS 필터
+        session_seed = hash(str(scene_context.get("channel_id", "")))
+        turn_number = scene_context.get("turn_count", 0)
+        suppressed = get_suppressed_theories(active_genres)
+        spotlight = get_session_spotlight(session_seed, turn_number, 5, suppressed)
 
         return directive + "\n\n" + spotlight + "\n\n" + self._get_output_schema() + "\n</THEORIA>"
 
@@ -173,7 +178,7 @@ Return valid JSON with ALL these fields (Korean values where specified):
 - "LocationRisk": "None/Low/Medium/High/Extreme"
 - "TimeContext": str (Korean - e.g. "깊은 밤", "이른 아침")
 - "SceneType": "normal/combat/social/summary/intimate"
-- "EnergyDirection": "rising/stagnant/detonation/aftershock"
+- "EnergyDirection": "idle/rising/stagnant/detonation/aftershock"  (idle = low-energy everyday rhythm, nothing brewing. stagnant = energy present but locked in place, deadlock.)
 
 
 ## STAKES & ENVIRONMENT
@@ -239,7 +244,7 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
 
 
 ## NARRATIVE HOOKS & TIME
-- "narrative_hook": str (Korean - 실패/부분성공 시 트위스트. Scheherazade 준수.)
+- "narrative_hook": str | null (Korean - Observe the next event that naturally arises from currently unresolved world state. Describe only consequences produced by the world's existing forces. Return null when the world is at peace.)
 - "time_flow": {"ticks": 1-20, "reason": "Korean"}
 - "doom_relief": {"applicable": boolean, "amount": 0-20, "reason": "Korean"}
 - "mental_impact": {"applicable": boolean, "vigor_delta": -35~+20, "composure_delta": -35~+20, "reason": "Korean"}
