@@ -108,7 +108,7 @@ class TheoriaAnalyzer:
 
     def _build_system_instruction(self, active_genres=None, scene_context=None) -> str:
         """Theoria v2.0 시스템 프롬프트 조립 — build_analysis_directive() 사용"""
-        from theory_emphasis_engine import build_analysis_directive, get_session_spotlight, get_suppressed_theories
+        from theory_emphasis_engine import build_analysis_directive, get_session_spotlight, get_suppressed_theories, get_emphasized_theories
 
         active_genres = active_genres or ["modern", "drama"]
         scene_context = scene_context or {}
@@ -155,11 +155,12 @@ class TheoriaAnalyzer:
             content_mandate=text_resources.CONTENT_AUTHORIZATION_MANDATE,
         )
 
-        # Rotation Spotlight: 세션 고정 시드 + 로테이션 + SUPPRESS 필터
+        # Rotation Spotlight: 세션 고정 시드 + 로테이션 + SUPPRESS/EMPHASIZE 필터
         session_seed = hash(str(scene_context.get("channel_id", "")))
         turn_number = scene_context.get("turn_count", 0)
         suppressed = get_suppressed_theories(active_genres)
-        spotlight = get_session_spotlight(session_seed, turn_number, 5, suppressed)
+        emphasized = get_emphasized_theories(active_genres)
+        spotlight = get_session_spotlight(session_seed, turn_number, 5, suppressed, emphasized)
 
         return directive + "\n\n" + spotlight + "\n\n" + self._get_output_schema() + "\n</THEORIA>"
 
@@ -205,7 +206,8 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
             "descriptor": "Korean - SOAP-OA 기반 관찰 가능한 신체 신호만. 감정 라벨 금지.",
             "polyvagal": "ventral/sympathetic/dorsal (Porges: 3+ signals required)",
             "cultural_affect": "han/jeong/hwabyung/nunchi/chaemyeon/simma/gi/null",
-            "env_influence": "str or null (Nightingale: 환경→심리 영향. null = negligible)"
+            "env_influence": "str or null (Nightingale: 환경→심리 영향. null = negligible)",
+            "dissociation": "none/mild/moderate/severe/null (Dissociation Spectrum: dorsal→entry point. mild=flat affect,delayed response. moderate=third-person self-reference,time gaps. severe=autopilot,recognition failure. Track across turns. null = no trigger)"
         },
         "relation": {
             "descriptor": "Korean - PC에 대한 현재 태도를 구체적 행동으로",
@@ -214,7 +216,9 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
             "phase": "orientation/identification/exploitation/resolution (Peplau: cannot skip stages)",
             "logos_layer": "str (Logos [CUSTOM]: current layer state + THIS TURN behavioral hint)",
             "value_conflict": "str or null ('X vs Y' format + resolution direction. null = no conflict)",
-            "stage": "front/back (Goffman: by audience, not just location)"
+            "stage": "front/back (Goffman: by audience, not just location)",
+            "group_dynamic": "conformity/obedience/groupthink/diffusion/null (Group Dynamics: active in 3+ character scenes. null = no group pressure)",
+            "negotiation_stance": "cooperative/competitive/exploitative/null (BATNA strength reflects Position value. null = no negotiation active)"
         },
         "deep_read": "str (Four-Layer [CUSTOM]: Surface→Adaptation→Core→Lack in 1 sentence each. Lack is never stated by character.)"
     }
@@ -248,7 +252,7 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
 - "time_flow": {"ticks": 1-20, "reason": "Korean"}
 - "doom_relief": {"applicable": boolean, "amount": 0-20, "reason": "Korean"}
 - "mental_impact": {"applicable": boolean, "vigor_delta": -35~+20, "composure_delta": -35~+20, "reason": "Korean"}
-- "anomaly_profile": {"trigger": str, "category": "supernatural/psychological/social/environmental/temporal", "intensity": "Low/Mid/High/Extreme", "polarity": "positive/negative/mixed", "disruption_axis": "vigor/composure/both (which PC resource axis this anomaly disrupts — Horror/Action→vigor, Romance/Social→composure, Extreme→both)", "adaptation_group": ["1-3 items from ADAPTATION_TAXONOMY: undead/dragon/eldritch/cursed/spirit/divine/demonic/shapeshifter/fear/deception/exposure/betrayal/madness/guilt/obsession/encounter/jealousy/intimacy/separation/rivalry/loyalty/timing/cascade/authority/environment/resource/crowd/evidence/surveillance/leak/secret/misinformation"], "theory_basis": "str — 방어에 적용되는 이론 (e.g. 'Continuum+TMT', 'Nunchi+Chaemyeon', 'Prospect+BATNA')", "defense_hint": "str — 이 이변에 대한 방어 힌트 1문장 (Korean)", "line": "Korean - 이변의 서사적 묘사 1문장", "reason": "Korean"}
+- "anomaly_profile": {"trigger": str, "category": "supernatural/psychological/social/environmental/temporal", "intensity": "Low/Mid/High/Extreme", "polarity": "positive/negative/mixed", "disruption_axis": "vigor/composure/both (which PC resource axis this anomaly disrupts — Horror/Action→vigor, Romance/Social→composure, Extreme→both)", "adaptation_group": ["1-3 items from ADAPTATION_TAXONOMY: undead/dragon/eldritch/cursed/spirit/divine/demonic/shapeshifter/fear/deception/exposure/betrayal/madness/guilt/obsession/encounter/jealousy/intimacy/separation/rivalry/loyalty/timing/cascade/authority/environment/resource/crowd/evidence/surveillance/leak/secret/misinformation"], "theory_basis": "str — 방어에 적용되는 이론 (e.g. 'Continuum+TMT', 'Nunchi+Chaemyeon', 'Prospect+BATNA')", "defense_hint": "str — 이 이변에 대한 방어 힌트 1문장 (Korean)", "perception_type": "veridical/illusory/hallucinatory/delusional/null (Anomalous Experience Framework. In supernatural settings, 'hallucinatory' may be CORRECT. null = no anomaly)", "line": "Korean - 이변의 서사적 묘사 1문장", "reason": "Korean"}
 
 
 ## COGNITIVE ENHANCEMENT
@@ -274,7 +278,8 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
         "secrets_held": ["Korean - 숨기고 있는 것"],
         "would_share": boolean,
         "leak_risk": "none/low/medium/high (Curse of Knowledge: 아는 것을 숨기기 어려움)",
-        "false_beliefs": ["Korean - 사실과 다르게 믿고 있는 것 (Theory of Mind)"]
+        "false_beliefs": ["Korean - 사실과 다르게 믿고 있는 것 (Theory of Mind)"],
+        "deception_cues": "str or null (Statement Analysis/SCAN: pronoun_shift/tense_shift/time_gap/over_detail/emotion_misplace. null = no deception detected)"
     }
   }
 
@@ -288,11 +293,13 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
     "stagnation_warning": "boolean - 3+ turns flat",
     "mse_deviation": "boolean - MSE mental state anomaly detected",
     "dissonance_flag": "boolean - NPC contradictory beliefs/actions (Festinger)",
-    "redemption_warning": "boolean - NPC showing unearned positive behavioral change (Bandura/Maruna)"
+    "redemption_warning": "boolean - NPC showing unearned positive behavioral change (Bandura/Maruna)",
+    "symptom_cluster": "PTSD/anxiety/depression/null (DSM-5: track co-occurring symptoms as consistent SET. Cherry-picking = inconsistent character. null = no clinical pattern)",
+    "label_internalization": "boolean - NPC internalizing external label into self-identity (Labeling Theory: labeled deviant → becomes more deviant)"
   }
 - "RelevantContext": ["Quoted lore/rule directly applicable", ...]
 - "RelevantNPCs": ["NPC name from roster relevant to THIS scene (max 5)"]
-- "relevant_chunks": [0, 2, 5] (indices from LORE CHUNKS — up to 5 most relevant)
+- "relevant_chunks": [0, 2, 5] (indices from LORE CHUNKS — up to 7 most relevant)
 
 
 ## CONDITIONAL MODULES (output null if not triggered)
@@ -507,7 +514,7 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
         """청크 라벨 인덱스를 Theoria 프롬프트에 포함 (선택용)"""
         if not chunks:
             return ""
-        lines = ["### 6. LORE CHUNKS (Select relevant indices for relevant_chunks field, max 5)"]
+        lines = ["### 6. LORE CHUNKS (Select relevant indices for relevant_chunks field, max 7)"]
         for chunk in chunks:
             idx = chunk.get("index", 0)
             label = chunk.get("label", f"Section {idx}")
@@ -530,14 +537,8 @@ Evaluate this in flashback_eval field. Check plausibility, passive match, assign
 """
 
     def _build_telescope_quality_context(self, anchors: dict) -> str:
-        """Inject recent telescope fail history for self-correction."""
-        channel_id = str(anchors.get("channel_id", "")).strip()
-        if not channel_id:
-            return ""
-        context_text = domain_manager.build_telescope_context(channel_id, n=3)
-        if not context_text:
-            return ""
-        return f"### 5c. RECENT QUALITY GATE FAILURES\n{context_text}\n\n"
+        """V3: Telescope는 이제 5W1H 추론 기록 채널. FAIL 피드백 불필요."""
+        return ""
 
     def _build_prompt(self, context: GameContext) -> str:
         """분석 프롬프트 생성"""

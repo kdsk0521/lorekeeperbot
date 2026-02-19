@@ -119,6 +119,22 @@ def _extract_structured_fields(desc: str) -> Dict[str, str]:
     if personality_m:
         fields["personality"] = _clean_markdown(personality_m.group(1))[:120]
 
+    # Hard Constraints (ALL-CAPS 마커: CANNOT, NEVER, MUST NOT 등)
+    # 프로필 중간에 묻힌 핵심 제약을 자동 추출 → recency echo용
+    constraints = []
+    for sentence in re.split(r'(?<=[.!])\s+|\n+', desc):
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        if re.search(r'\b(CANNOT|NEVER|MUST NOT|MUST NEVER|does NOT|CLOSED LIST|SPECIES NOTE)\b', sentence):
+            clean = _clean_markdown(sentence.rstrip('.!'))
+            if 20 < len(clean) < 200:
+                constraints.append(clean)
+    if constraints:
+        # 최대 3개, 가장 짧은 것 우선 (핵심일수록 짧음)
+        constraints.sort(key=len)
+        fields["constraints"] = " | ".join(constraints[:3])
+
     return fields
 
 
@@ -465,16 +481,17 @@ def get_npc_roster(channel_id: str) -> str:
 
 
 _PROFILE_SECTIONS_PRIORITY = [
-    "Identity", "Core Operating Principle", "Speech Pattern",
+    "Identity", "Hard Rules", "Core Operating Principle", "Speech Pattern",
     "Interpersonal Style", "Emotional Architecture", "Appearance",
 ]
 _PROFILE_SECTIONS_SECONDARY = [
     "Values", "Background", "Combat Profile", "Physical Mannerisms",
-    "Likes", "Dislikes", "Secrets",
+    "Sexuality", "Likes", "Dislikes", "Secrets", "Additional",
 ]
-_MAX_DESC_PER_NPC = 3500  # 프로필 텍스트 최대 글자수 (~900 토큰)
-_MAX_SECTION_CHARS = 500  # 우선 섹션별 내부 cap (메커니즘 첫 단락 위주)
+_MAX_DESC_PER_NPC = 5000  # 프로필 텍스트 최대 글자수 (~1250 토큰). 5 NPC = ~6250 토큰.
+_MAX_SECTION_CHARS = 600  # 우선 섹션별 내부 cap
 _IDENTITY_CAP = 300       # Identity는 짧으므로 별도 cap
+_HARD_RULES_CAP = 400     # Hard Rules는 전문 보존 목표
 
 
 def _cap_section(section_text: str, cap: int) -> str:
@@ -516,8 +533,13 @@ def _compact_profile(desc: str) -> str:
         is_priority = any(p.lower() in sec_name.lower() for p in _PROFILE_SECTIONS_PRIORITY)
         is_secondary = any(p.lower() in sec_name.lower() for p in _PROFILE_SECTIONS_SECONDARY)
         if is_priority:
-            # Identity는 짧게, 나머지는 _MAX_SECTION_CHARS로 cap
-            cap = _IDENTITY_CAP if "identity" in sec_name.lower() else _MAX_SECTION_CHARS
+            # Identity/Hard Rules는 별도 cap, 나머지는 _MAX_SECTION_CHARS
+            if "identity" in sec_name.lower():
+                cap = _IDENTITY_CAP
+            elif "hard rules" in sec_name.lower():
+                cap = _HARD_RULES_CAP
+            else:
+                cap = _MAX_SECTION_CHARS
             priority_parts.append(_cap_section(sec.strip(), cap))
         elif is_secondary:
             secondary_parts.append(sec.strip())
@@ -590,6 +612,60 @@ def get_npc_names_only(channel_id: str, exclude: list) -> str:
     if not remaining:
         return ""
     return "기타 NPC: " + ", ".join(remaining)
+
+
+def get_npc_recency_reminders(channel_id: str, npc_names: list) -> str:
+    """활성 NPC의 말투 + 핵심 제약을 compact하게 생성. Recency 슬롯 주입용.
+
+    Lost-in-the-Middle 대응: Slot 7 프로필이 중간에 묻히므로 핵심만 recency에 echo.
+    voice_card > tone > (skip) 우선순위. constraints는 별도 섹션.
+    """
+    if not channel_id or not npc_names:
+        return ""
+    voice_lines = []
+    constraint_lines = []
+    for name in npc_names:
+        data = get_npc(channel_id, name)
+        if not data:
+            continue
+        # --- Voice ---
+        vc = data.get("voice_card", "")
+        if vc:
+            vc_summary = _extract_voice_summary(name, vc)
+            if vc_summary:
+                voice_lines.append(vc_summary)
+        if not vc:
+            tone = data.get("tone", "")
+            if tone:
+                voice_lines.append(f"- {name}: {tone}")
+        # --- Constraints ---
+        constraints = data.get("constraints", "")
+        if constraints:
+            constraint_lines.append(f"- {name}: {constraints}")
+    parts = []
+    if constraint_lines:
+        parts.append("[NPC HARD RULES — VIOLATING THESE = HALLUCINATION]\n" + "\n".join(constraint_lines))
+    if voice_lines:
+        parts.append("[NPC Voice — match these speech patterns]\n" + "\n".join(voice_lines))
+    return "\n\n".join(parts)
+
+
+def _extract_voice_summary(name: str, voice_card: str) -> str:
+    """voice_card에서 Tone + Quirks 줄만 추출, 1줄로 압축."""
+    parts = []
+    for line in voice_card.split("\n"):
+        stripped = line.strip()
+        if stripped.lower().startswith("tone:"):
+            parts.append(stripped[5:].strip())
+        elif stripped.lower().startswith("quirks:"):
+            parts.append(stripped[7:].strip())
+    if parts:
+        return f"- {name}: {' | '.join(parts)}"
+    # Tone/Quirks 파싱 실패 시 첫 2줄
+    card_lines = [l.strip() for l in voice_card.strip().split("\n") if l.strip() and not l.strip().startswith("[Voice")]
+    if card_lines:
+        return f"- {name}: {card_lines[0][:120]}"
+    return ""
 
 
 # =========================================================

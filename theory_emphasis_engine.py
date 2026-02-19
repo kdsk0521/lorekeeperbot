@@ -1,7 +1,7 @@
 # =========================================================
 # Theory Emphasis Engine (이론 가중치 엔진)
 # =========================================================
-# 14개 장르 우산 × 46 범용 이론 + 조건부 모듈 로딩
+# 14개 장르 우산 × ~52 범용 이론 + ~27 조건부 이론. 3-layer genre (max 6 tags) stacking.
 # analysis_resources.py에서 참조되는 코드
 # =========================================================
 
@@ -43,6 +43,15 @@ FORENSIC_MODULE = """
   Pronoun shift=distancing | Tense shift=fabricating | Time gaps=concealment |
   Over-detail=compensating | Emotion misplacement=performed feeling.
   → Apply to NPC dialogue analysis. Flag cues for Pro to render as subtle tells.
+
+OUTPUT MAPPING:
+- Locard Exchange → Aspects[] (trace evidence as scene aspects)
+- Statement Analysis/SCAN → NPCKnowledge.deception_cues
+- Geographic Profiling → Observation + CurrentLocation
+- RAT → Position/Effect (guardian=Position, target=Effect)
+- Victimology → NPCKnowledge.knows (why THIS target)
+- Labeling → QualityFlags.label_internalization
+- Strain → deep_read.Core(Lack) + psyche.active_needs
 </forensic_analysis>
 """
 
@@ -65,6 +74,13 @@ NEGOTIATION_MODULE = """
 - Signaling (Spence): Only costly signals are credible. Words are cheap.
   NPC who sacrifices something to prove intent = trustworthy signal.
   NPC who only promises = cheap talk. Track signal cost.
+
+OUTPUT MAPPING:
+- BATNA → Position.value (strong BATNA = high position)
+- Prisoner's Dilemma → relation.logos_layer (trust boundary state)
+- Signaling → NPCAttitudes.reason (signal cost noted)
+- Negotiation stance → relation.negotiation_stance
+- Zero-Sum/Positive-Sum → deep_read (reframing potential)
 </negotiation_analysis>
 """
 
@@ -86,6 +102,12 @@ GROUP_DYNAMICS_MODULE = """
   Maps to Peplau phases at group level.
 - Diffusion of Responsibility (Darley/Latane): More people present → less individual action.
   Bystander effect. Counter: direct assignment of responsibility to specific person.
+
+OUTPUT MAPPING:
+- Asch/Milgram/Groupthink → relation.group_dynamic
+- Tuckman → relation.phase (maps to Peplau at group level)
+- Social Identity → psyche.active_needs (in-group/out-group need)
+- Diffusion → deep_read (individual responsibility dilution)
 </group_dynamics>
 """
 
@@ -116,6 +138,11 @@ CRITICAL: In settings with actual supernatural elements,
 the "crazy" character may be the ONLY one seeing correctly.
 The "sane" character in denial may be the delusional one.
 Cross-reference with established world state before classifying.
+
+OUTPUT MAPPING:
+- Dissociation Spectrum → soma.dissociation
+- Shared Psychosis → NPCKnowledge.false_beliefs + source note
+- Anomalous Experience → anomaly_profile.perception_type
 </cosmic_horror_psychology>
 """
 
@@ -482,24 +509,36 @@ def build_theory_emphasis(active_genres: List[str]) -> str:
             all_reframe.extend(weights.get('reframe', []))
 
     # 중복 제거 (순서 유지)
-    seen = set()
-    def dedup(items):
+    # EMPHASIZE/SUPPRESS는 seen_main 공유 (EMPHASIZE > SUPPRESS 우선순위)
+    # REFRAME은 별도 — EMPHASIZE된 이론도 장르별 재해석 가능
+    seen_main = set()
+    def _dedup_main(items):
         result = []
         for item in items:
-            key = item.split('(')[0].strip()  # 이론 이름만으로 중복 판단
-            if key not in seen:
-                seen.add(key)
+            key = item.split('(')[0].strip()
+            if key not in seen_main:
+                seen_main.add(key)
                 result.append(item)
         return result
 
-    all_emphasize = dedup(all_emphasize)
+    seen_reframe = set()
+    def _dedup_reframe(items):
+        result = []
+        for item in items:
+            key = item.split('(')[0].strip()
+            if key not in seen_reframe:
+                seen_reframe.add(key)
+                result.append(item)
+        return result
+
+    all_emphasize = _dedup_main(all_emphasize)
 
     # SUPPRESS에서 EMPHASIZE와 충돌하는 항목 제거
     emphasize_names = {e.split('(')[0].strip().split('/')[0].strip() for e in all_emphasize}
     all_suppress = [s for s in all_suppress
                     if s.split('(')[0].strip().split('/')[0].strip() not in emphasize_names]
-    all_suppress = dedup(all_suppress)
-    all_reframe = dedup(all_reframe)
+    all_suppress = _dedup_main(all_suppress)
+    all_reframe = _dedup_reframe(all_reframe)
 
     # 지시문 조립
     parts = []
@@ -571,42 +610,49 @@ def build_analysis_directive(
 import random
 
 NON_SLOT_THEORIES = [
-    "Moral Disengagement - is any NPC self-justifying harmful behavior?",
-    "Dark Triad - established harmful traits present? Do NOT soften.",
-    "Desistance/Maruna - any NPC showing unearned change? Check 4 conditions.",
-    "Recidivism Baseline - default is pattern continuation, not change.",
-    "Attribution Error - am I sympathizing away established patterns?",
-    "Yin-Yang - does primary_emotion contain its opposite seed?",
-    "Five Skandhas - did I analyze soma BEFORE psyche?",
-    "Manas - is Self-Opacity structural, not just ignorance?",
-    "Wulun - are role expectations (elder/younger, host/guest) active?",
-    "Reactance - is freedom being threatened? Expect resistance.",
-    "Learned Helplessness - repeated failure present? Track passivity.",
-    "Prospect Theory - is loss aversion driving behavior?",
-    "Emotional Contagion - multiple NPCs present? Check emotion spread.",
-    "Stanislavski - am I writing THIS person or an archetype?",
-    "Dependent Origination - what prior causes led to this moment?",
-    "Bergson Duration - past filtering present perception?",
-    "Somatic Marker - body bookmarks biasing current decision?",
-    "Nietzsche Value Creation - irrational action = meaning-seeking?",
-    "Information Gap - what does each character WANT to know?",
-    "Curse of Knowledge - known secrets leaking through behavior?",
-    "Bem Gender Schema - gender-typed behavior appropriate for THIS character?",
-    "Carstensen SST - time horizon affecting decision mode?",
-    "Transactional Analysis - Parent/Adult/Child transaction type?",
-    "SOAP-OA - soma: subjective report vs objective observation?",
-    "Labeling Theory - is a label becoming self-fulfilling?",
-    "Rational Choice - what is the actor's internal cost-benefit?",
-    "Mono no Aware - is this a moment of passing beauty?",
-    "Embodied Cognition - showing sensation, not labeling emotion?",
-    "Gap Principle - showing evidence, not explaining psychology?",
-    "Simma - is an inner demon voice active?",
-    "Gi - is energy flow blocked/flowing/depleted?",
-    "Beck Cognitive Distortions - any NPC reasoning from wrong premises?",
-    "TMT - is anyone's meaning system under threat?",
-    "Continuum Model - where is this NPC on the mental health spectrum?",
-    "DSM-5 Clusters - if symptoms present, are they a consistent SET?",
+    # -- 행동 패턴 / 변화 저항 --
+    "Moral Disengagement - is any NPC self-justifying harmful behavior? → deep_read + QualityFlags.dissonance_flag",
+    "Dark Triad - established harmful traits present? Do NOT soften. → deep_read.Core(Lack) + QualityFlags.redemption_warning",
+    "Desistance/Maruna - any NPC showing unearned change? Check 4 conditions. → QualityFlags.redemption_warning + deep_read",
+    "Recidivism Baseline - default is pattern continuation, not change. → QualityFlags.convergence_warning",
+    "Attribution Error - am I sympathizing away established patterns? → QualityFlags.redemption_warning",
+    # -- 동양 심리 / 정서 --
+    "Yin-Yang - does primary_emotion contain its opposite seed? → psyche.primary_emotion(陰陽 note)",
+    "Five Skandhas - did I analyze soma BEFORE psyche? → [process: soma→psyche field order]",
+    "Manas - is Self-Opacity structural, not just ignorance? → psyche.self_opacity",
+    "Wulun - are role expectations (elder/younger, host/guest) active? → NPCAttitudes.reason + relation.value_conflict",
+    "Simma - is an inner demon voice active? → psyche.self_opacity + soma.cultural_affect(simma)",
+    "Gi - is energy flow blocked/flowing/depleted? → soma.cultural_affect(gi) + soma.descriptor",
+    # -- 사회 / 관계 역학 --
+    "Reactance - is freedom being threatened? Expect resistance. → psyche.active_needs + deep_read",
+    "Learned Helplessness - repeated failure present? Track passivity. → psyche.decision_mode(reactive) + psyche.coping(avoidant)",
+    "Prospect Theory - is loss aversion driving behavior? → deep_read + Position/Effect.reason",
+    "Emotional Contagion - multiple NPCs present? Check emotion spread. → NPCAttitudes.trajectory + psyche.primary_emotion",
+    "Curse of Knowledge - known secrets leaking through behavior? → NPCKnowledge.leak_risk + deception_cues",
+    "Bem Gender Schema - gender-typed behavior appropriate for THIS character? → relation.stage + deep_read",
+    "Carstensen SST - time horizon affecting decision mode? → psyche.decision_mode + TemporalOrientation",
+    "Transactional Analysis - Parent/Adult/Child transaction type? → deep_read + relation.value_conflict",
+    # -- 인지 / 동기 --
+    "Stanislavski - am I writing THIS person or an archetype? → [process: QualityFlags.echo_warning check]",
+    "Dependent Origination - what prior causes led to this moment? → narrative_chain.open_threads",
+    "Bergson Duration - past filtering present perception? → memory_triggers + TemporalOrientation",
+    "Somatic Marker - body bookmarks biasing current decision? → SensoryAnchors + soma.descriptor",
+    "Nietzsche Value Creation - irrational action = meaning-seeking? → deep_read.Core(Lack)",
+    "Information Gap - what does each character WANT to know? → narrative_chain.chain_status + NPCKnowledge",
+    "SOAP-OA - soma: subjective report vs objective observation? → soma.descriptor(objective only)",
+    "Rational Choice - what is the actor's internal cost-benefit? → deep_read + Position/Effect",
+    "Beck Cognitive Distortions - any NPC reasoning from wrong premises? → NPCKnowledge.false_beliefs + deep_read",
+    "TMT - is anyone's meaning system under threat? → psyche.active_needs + deep_read.Core",
+    # -- 임상 / 진단 --
+    "Labeling Theory - is a label becoming self-fulfilling? → QualityFlags.label_internalization",
+    "Continuum Model - where is this NPC on the mental health spectrum? → QualityFlags.symptom_cluster",
+    "DSM-5 Clusters - if symptoms present, are they a consistent SET? → QualityFlags.symptom_cluster",
 ]
+
+
+def _normalize_theory_name(s: str) -> str:
+    """이론 이름 정규화: 'Dark Triad (Paulhus)' / 'Dark Triad - established...' → 'dark triad'"""
+    return s.split('-')[0].split('(')[0].strip().split('/')[0].strip().lower()
 
 
 def get_suppressed_theories(active_genres: list) -> list:
@@ -618,17 +664,32 @@ def get_suppressed_theories(active_genres: list) -> list:
     return list(set(all_suppress))
 
 
+def get_emphasized_theories(active_genres: list) -> list:
+    """build_theory_emphasis의 emphasize 리스트를 추출."""
+    all_emphasize = []
+    for genre in active_genres:
+        if genre in GENRE_THEORY_WEIGHTS:
+            all_emphasize.extend(GENRE_THEORY_WEIGHTS[genre].get('emphasize', []))
+    return list(set(all_emphasize))
+
+
 def get_session_spotlight(
     session_seed: int,
     turn_number: int,
     n: int = 5,
     suppressed: list = None,
+    emphasized: list = None,
 ) -> str:
-    """세션 고정 시드 + 로테이션 스포트라이트. SUPPRESS 이론 제외."""
+    """세션 고정 시드 + 로테이션 스포트라이트. SUPPRESS/EMPHASIZE 이론 제외."""
     pool = NON_SLOT_THEORIES[:]
+
+    # 통일된 이름 정규화로 SUPPRESS + EMPHASIZE 모두 제외
+    exclude_names = set()
     if suppressed:
-        sup_names = {s.split('(')[0].strip().split('/')[0].strip() for s in suppressed}
-        pool = [t for t in pool if t.split('-')[0].strip().split('/')[0].strip() not in sup_names]
+        exclude_names.update(_normalize_theory_name(s) for s in suppressed)
+    if emphasized:
+        exclude_names.update(_normalize_theory_name(e) for e in emphasized)
+    pool = [t for t in pool if _normalize_theory_name(t) not in exclude_names]
 
     rng = random.Random(session_seed)
     rng.shuffle(pool)

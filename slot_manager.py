@@ -88,6 +88,66 @@ def _build_status_layout(active_modules: list) -> str:
         "</Status_Window_Layout>"
     )
 
+
+# =========================================================
+# 5W1H Telescope Prefill Builder
+# =========================================================
+
+def _build_telescope_prefill(dai: dict, real_time_data: str) -> str:
+    """5W1H Telescope 프리필: Who/When/Where를 코드에서 조립.
+
+    코드 프리필 = GROUND_TRUTH → 환각 불가.
+    모델은 이 사실 위에 [What][Why][How] 추론을 쌓음.
+    """
+    parts = []
+
+    # [Who] — DAI psyche_states에서 등장인물 + 핵심상태
+    psyche = dai.get("psyche_states", {})
+    if psyche and isinstance(psyche, dict):
+        who_entries = []
+        for name, pdata in psyche.items():
+            if isinstance(pdata, dict):
+                p = pdata.get("psyche", pdata.get("mental", {}))
+                state = p.get("primary_emotion", "") or p.get("descriptor", "") or p.get("surface", "")
+                who_entries.append(f"{name}:{state}" if state else name)
+            else:
+                who_entries.append(str(name))
+        if who_entries:
+            parts.append(f"[Who] {' | '.join(who_entries)}")
+
+    # [When][Where] — real_time_data에서 추출
+    if real_time_data:
+        # real_time_data 첫 줄들에서 시간/장소 정보 추출 (compact format)
+        rt_lines = [ln.strip() for ln in real_time_data.strip().split("\n") if ln.strip()]
+        # 위치/시간/인물 줄 찾기 (status header format: "위치 X | 시간 Y | 인물 Z")
+        when_where = ""
+        for ln in rt_lines[:5]:
+            if "위치" in ln or "시간" in ln or "Location" in ln or "Time" in ln:
+                when_where = ln
+                break
+        if when_where:
+            parts.append(f"[When/Where] {when_where}")
+        else:
+            # fallback: 첫 줄 사용
+            parts.append(f"[When/Where] {rt_lines[0][:200]}")
+    else:
+        # DAI observation fallback
+        observation = dai.get("observation", "")
+        if observation:
+            parts.append(f"[When/Where] (from observation) {observation[:150]}")
+
+    # 모델이 채울 추론 게이트
+    parts.append("[What] (trace: input→trigger→mechanism→outcome)")
+    parts.append("[Why] (per NPC: want|know|can→do)")
+    parts.append("[How] (POV→senses|punctum|sealed=PC)")
+
+    if len(parts) < 2:
+        # Who/When/Where 둘 다 없으면 프리필 의미 없음
+        return ""
+
+    return "Pre-filled reasoning scaffold:\n┣\n" + "\n".join(parts) + "\n┫"
+
+
 # =========================================================
 # 34-Step Slot Definition (Primacy/Recency Optimized)
 # =========================================================
@@ -269,11 +329,11 @@ class SlotPromptBuilder:
         # ===== CACHE BOUNDARY =====
         self.set_slot(26, "\n==========CACHE BOUNDARY==========\n")
 
-        # ===== DYNAMIC ZONE (34) - 정적 부분 =====
-        # [34] Telescope + Language
-        telescope = getattr(text_resources, 'TELESCOPE_PROTOCOL', '')
+        # ===== DYNAMIC ZONE (34) - Telescope 규칙만 정적, 프리필은 동적 =====
+        # [34] Telescope rules (정적) + Language — 프리필은 populate_dynamic_slots()에서 추가
+        telescope_rules = getattr(text_resources, 'TELESCOPE_PROTOCOL', '')
         language = getattr(text_resources, 'LANGUAGE_CORRECTION', '')
-        slot34_parts = [p for p in [telescope, language] if p.strip()]
+        slot34_parts = [p for p in [telescope_rules, language] if p.strip()]
         self.set_slot(34, "\n\n".join(slot34_parts))
 
         self._static_built = True
@@ -302,7 +362,8 @@ class SlotPromptBuilder:
         real_time_data: str = "",
         gm_mover: str = "",
         user_input: str = "",
-        author_note: str = ""
+        author_note: str = "",
+        telescope_prefill: str = ""
     ) -> 'SlotPromptBuilder':
         """동적 슬롯들을 주입합니다. 레거시 함수들을 재사용."""
 
@@ -334,11 +395,11 @@ class SlotPromptBuilder:
         # ===== COGNITION ZONE (13-14, 16) =====
         # [13] Input Analysis (Enhanced with Observation + Intent + Position/Effect)
         if input_analysis:
-            self.set_slot(13, f"<Input_Analysis>\n{input_analysis}\n</Input_Analysis>")
+            self.set_slot(13, f"<Input_Analysis source='theoria_flash'>\n[ANALYSIS] The following is Theoria's inference — may contain errors.\n{input_analysis}\n</Input_Analysis>")
 
         # [14] Psyche States
         if psyche_states:
-            self.set_slot(14, f"<Psyche_States>\n{psyche_states}\n</Psyche_States>")
+            self.set_slot(14, f"<Psyche_States source='theoria_flash'>\n[ANALYSIS] NPC psychology inferred by Flash model. Cross-reference with NPC profiles.\n{psyche_states}\n</Psyche_States>")
 
         # [16] Scene Intelligence (Aspects + SensoryAnchors + Habitus + Hook)
         if scene_intelligence:
@@ -364,7 +425,7 @@ class SlotPromptBuilder:
 
         # [29] Real-time Data
         if real_time_data:
-            self.set_slot(29, f"<Real_Time_Status>\n{real_time_data}\n</Real_Time_Status>")
+            self.set_slot(29, f"<Real_Time_Status>\n[GROUND_TRUTH] Current world state from game mechanics.\n{real_time_data}\n</Real_Time_Status>")
 
         # [30] World Response (GM Mover)
         if gm_mover:
@@ -385,6 +446,11 @@ class SlotPromptBuilder:
         elif self.active_genres or self.custom_tone:
             directive = legacy_builder.build_combined_directive(self.active_genres, self.custom_tone)
             self.set_slot(33, directive)
+
+        # [34] Telescope prefill 동적 추가 (정적 규칙은 _build_static에서 이미 설정)
+        if telescope_prefill:
+            existing = self.slots.get(34, "")
+            self.set_slot(34, existing + "\n\n" + telescope_prefill if existing else telescope_prefill)
 
         return self
 
@@ -536,7 +602,8 @@ def build_34_step_prompt(ctx) -> str:
         if chunk_parts:
             logger.info(f"[Chunk RAG] Injecting {len(chunk_parts)} selected chunks.")
             lore_content = (
-                "### [LORE: SELECTED CHUNKS]\n"
+                "### [LORE: SELECTED CHUNKS — GROUND_TRUTH]\n"
+                "Source: User lorebook. Treat as established world fact.\n\n"
                 + "\n\n".join(chunk_parts)
             )
         else:
@@ -610,7 +677,7 @@ def build_34_step_prompt(ctx) -> str:
     # EnergyDirection: 씬 에너지 방향
     energy_dir = dai.get("energy_direction", "")
     if energy_dir:
-        scene_intel_parts.append(f"### Energy Direction: {energy_dir.upper()}")
+        scene_intel_parts.append(f"### Energy Direction [ANALYSIS]: {energy_dir.upper()}")
 
     # Aspects: 활용 가능한 장면 요소
     aspects = dai.get("aspects", [])
@@ -637,7 +704,7 @@ def build_34_step_prompt(ctx) -> str:
     # narrative_hook: 트위스트 제안
     hook = dai.get("narrative_hook", "")
     if hook:
-        scene_intel_parts.append(f"### Narrative Hook\n{hook}")
+        scene_intel_parts.append(f"### Narrative Hook [INFERRED]\n{hook}")
 
     # QualityFlags: 서사 품질 경고
     qflags = dai.get("quality_flags", {})
@@ -648,9 +715,9 @@ def build_34_step_prompt(ctx) -> str:
         if qflags.get("echo_warning"):
             warnings.append("⚠ ECHO: NPC mirroring PC emotion instead of own response")
         if qflags.get("stagnation_warning"):
-            warnings.append("⚠ STAGNATION: Intensity flat — break the pattern")
+            warnings.append("⚠ STAGNATION: Scene energy flat for 3+ turns. Continue naturally — do not force artificial change.")
         if warnings:
-            scene_intel_parts.append("### Quality Alerts\n" + "\n".join(warnings))
+            scene_intel_parts.append("### Quality Alerts [ANALYSIS]\n" + "\n".join(warnings))
 
     scene_intelligence = "\n\n".join(scene_intel_parts)
 
@@ -792,16 +859,16 @@ def build_34_step_prompt(ctx) -> str:
     pos_val = position.get("value", 0.5) if position else 0.5
     if pos_val < 0.3:
         friction = (
-            "\n\n[POSITION_FRICTION] PC is in a DESPERATE/RISKY position.\n"
-            "- The world RESISTS. Success should be partial at best.\n"
-            "- NPCs do NOT yield easily. Barriers are real.\n"
-            "- Prioritize friction, complication, and cost over clean resolution."
+            "\n\n[POSITION_FRICTION] PC is in a DESPERATE/RISKY position (causal assessment).\n"
+            "- Physical and social barriers are real. Render them faithfully.\n"
+            "- Success requires overcoming established obstacles, not narrative convenience.\n"
+            "- Outcomes follow from the world's physics, not from desire for drama or comfort."
         )
         gm_mover = (gm_mover + friction) if gm_mover else friction
     elif pos_val < 0.5:
         friction = (
-            "\n\n[POSITION_FRICTION] PC is DISADVANTAGED.\n"
-            "- Success comes with strings attached or unexpected cost."
+            "\n\n[POSITION_FRICTION] PC is DISADVANTAGED (causal assessment).\n"
+            "- Existing obstacles create natural cost. Render the cost honestly."
         )
         gm_mover = (gm_mover + friction) if gm_mover else friction
 
@@ -846,7 +913,11 @@ def build_34_step_prompt(ctx) -> str:
                 band = "OVERWHELMING — somatic takeover"
             intensity_lines.append(f"  {npc_name}: |psyche| {val} -> {band}")
         if intensity_lines:
-            real_time_data += "\n\n[EMOTION_INTENSITY_GUIDE]\n" + "\n".join(intensity_lines)
+            real_time_data += (
+                "\n\n[EMOTION_INTENSITY_GUIDE]\n"
+                "Render emotion through PHYSICAL EVIDENCE at the intensity below. Do NOT name emotions directly.\n"
+                + "\n".join(intensity_lines)
+            )
 
     # =========================================================
     # 3. 히스토리 분리 (직전 응답 vs 이전 대화)
@@ -930,6 +1001,9 @@ def build_34_step_prompt(ctx) -> str:
     # 4. 동적 슬롯 주입 실행
     # =========================================================
 
+    # 5W1H Telescope 프리필 조립 (코드 레벨 GROUND_TRUTH)
+    telescope_prefill = _build_telescope_prefill(dai, real_time_data)
+
     builder.populate_dynamic_slots(
         player_data=player_info,
         npc_roles=npc_roles,
@@ -947,7 +1021,8 @@ def build_34_step_prompt(ctx) -> str:
         real_time_data=real_time_data,
         gm_mover=gm_mover,
         user_input=getattr(ctx, 'action_text', ''),
-        author_note=""  # 장르/톤이 설정되어 있으면 자동으로 레거시 함수 사용
+        author_note="",  # 장르/톤이 설정되어 있으면 자동으로 레거시 함수 사용
+        telescope_prefill=telescope_prefill
     )
 
     # 4.5. Format Feedback Injection (이전 턴 대사 포맷 위반 피드백)
@@ -957,6 +1032,15 @@ def build_34_step_prompt(ctx) -> str:
         current_33 = builder.get_slot(33) or ""
         builder.set_slot(33, f"{current_33}\n\n{fmt_feedback}")
         logger.info("[FormatFeedback] Injected dialogue format correction into slot 33")
+
+    # NPC Recency Echo — 프로필이 중간 슬롯에 묻히므로 핵심 제약 + 말투를 recency에 재주입
+    if relevant_npcs and channel_id:
+        import npc_manager as _npc_mgr_voice
+        npc_reminder = _npc_mgr_voice.get_npc_recency_reminders(channel_id, relevant_npcs)
+        if npc_reminder:
+            current_33 = builder.get_slot(33) or ""
+            builder.set_slot(33, f"{current_33}\n\n{npc_reminder}")
+            logger.info(f"[RecencyEcho] NPC reminders injected into slot 33 ({len(relevant_npcs)} NPCs)")
 
     # 5W1H Recency Echo — always present at maximum recency position
     fidelity_echo = "[5W1H: Draw events only from DAI data. Camera scans environment evenly. Prose intensity follows EnergyDirection.]"

@@ -1205,29 +1205,8 @@ def get_telescope_logs(channel_id: str, limit: Optional[int] = None) -> List[Dic
 
 
 def build_telescope_context(channel_id: str, n: int = 3) -> str:
-    """Build quality-history context from recent telescope FAIL gates."""
-    logs = get_telescope_logs(channel_id, limit=max(1, n))
-    if not logs:
-        return ""
-
-    fail_lines: List[str] = []
-    for log in logs:
-        turn = log.get("turn", "?")
-        gates = log.get("gates", {})
-        if not isinstance(gates, dict):
-            continue
-        for gate_name, gate_data in gates.items():
-            if not isinstance(gate_data, dict):
-                continue
-            if str(gate_data.get("result", "")).upper() != "FAIL":
-                continue
-            evidence = str(gate_data.get("evidence", "")).strip()
-            fail_lines.append(f"Turn {turn}: {gate_name} - {evidence}")
-
-    if not fail_lines:
-        return ""
-
-    return "[Quality History - Recent gate failures]\n" + "\n".join(fail_lines)
+    """V3: Telescope는 이제 5W1H 추론 기록 채널. FAIL 피드백 불필요."""
+    return ""
 
 
 def reset_session_state(channel_id: str) -> None:

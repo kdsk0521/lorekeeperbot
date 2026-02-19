@@ -54,14 +54,17 @@ _TELESCOPE_BLOCK_PATTERNS = (
     r"<<[\s\S]*?>>",
 )
 
-# 10개 게이트명 (개별 라인 감지용)
+# 5W1H 게이트명 (개별 라인 감지용) + legacy 호환
 _TELESCOPE_GATE_NAMES = (
+    "Who", "When", "Where", "When/Where",
+    "What", "Why", "How",
+    # legacy gates (이전 형식 잔존 대비)
     "Physics", "Camera", "Cliche", "Hook", "Impersonation",
     "Spatial", "NPC Identity", "CharReason", "TheoryAlign", "GenreCoherence",
 )
 _GATE_LINE_RE = re.compile(
     r"^\[(?:" + "|".join(re.escape(g) for g in _TELESCOPE_GATE_NAMES)
-    + r")\]\s*(?:PASS|FAIL)\s*:.*$",
+    + r")\]\s+.*$",
     re.MULTILINE | re.IGNORECASE,
 )
 
@@ -91,33 +94,39 @@ def has_telescope_content(text: str) -> bool:
 
 
 def parse_telescope(raw_response: str) -> Dict[str, Any]:
-    """Parse a telescope gate block from model output."""
+    """Parse a 5W1H telescope reasoning block from model output.
+
+    V3: PASS/FAIL verdict 대신 reasoning content를 추출.
+    하위호환: 옛 PASS/FAIL 형식도 파싱 가능.
+    """
     block = _extract_telescope_block(raw_response or "")
     if not block:
-        return {"parsed": False, "gates": {}, "fail_count": 0, "fails": []}
+        return {"parsed": False, "gates": {}, "reasoning_count": 0}
 
+    # V3: [GateName] 이후 내용을 다음 게이트 또는 블록 끝까지 추출
     gate_pattern = re.compile(
-        r"\[([^\]]+)\]\s*(PASS|FAIL)\s*:\s*(.*?)(?=(?:\n\[[^\]]+\]\s*(?:PASS|FAIL)\s*:)|\Z)",
-        flags=re.DOTALL | re.IGNORECASE,
+        r"\[([^\]]+)\]\s*(.*?)(?=(?:\n\[[^\]]+\])|\Z)",
+        flags=re.DOTALL,
     )
     gates: Dict[str, Dict[str, str]] = {}
-    fails: List[str] = []
 
-    for gate_name, result, evidence in gate_pattern.findall(block):
+    for gate_name, content in gate_pattern.findall(block):
         normalized = re.sub(r"[^a-z0-9]+", "_", gate_name.strip().lower()).strip("_")
-        verdict = result.strip().upper()
-        gates[normalized] = {
-            "result": verdict,
-            "evidence": evidence.strip(),
-        }
-        if verdict == "FAIL":
-            fails.append(normalized)
+        raw = content.strip()
+        # 하위호환: 옛 PASS/FAIL 형식 감지
+        legacy_match = re.match(r"^(PASS|FAIL)\s*:\s*(.*)", raw, re.DOTALL | re.IGNORECASE)
+        if legacy_match:
+            gates[normalized] = {
+                "result": legacy_match.group(1).upper(),
+                "reasoning": legacy_match.group(2).strip(),
+            }
+        else:
+            gates[normalized] = {"reasoning": raw}
 
     return {
         "parsed": True,
         "gates": gates,
-        "fail_count": len(fails),
-        "fails": fails,
+        "reasoning_count": len(gates),
     }
 
 
@@ -375,14 +384,17 @@ async def generate_response(
                 domain_manager.save_telescope_log(channel_id, turn, telescope_data)
             response = strip_telescope(response)
             gates = telescope_data.get("gates", {})
-            fails = telescope_data.get("fails", [])
-            # 전체 게이트 상세 로그 (evidence 포함)
+            # 5W1H 게이트별 추론 내용 로그
             for name, g in gates.items():
-                verdict = g.get("result", "?")
-                evidence = g.get("evidence", "").strip()
-                tag = "FAIL" if verdict == "FAIL" else "OK"
-                level = logger.warning if verdict == "FAIL" else logger.info
-                level("[Telescope %s] %-15s %s", tag, name, evidence[:120] if evidence else "(no evidence)")
+                reasoning = g.get("reasoning", "").strip()
+                # 하위호환: 옛 PASS/FAIL verdict 로그
+                if "result" in g:
+                    verdict = g["result"]
+                    tag = "FAIL" if verdict == "FAIL" else "OK"
+                    level = logger.warning if verdict == "FAIL" else logger.info
+                    level("[Telescope %s] %-12s %s", tag, name, reasoning[:120] if reasoning else "(empty)")
+                else:
+                    logger.info("[Telescope] %-12s %s", name, reasoning[:120] if reasoning else "(empty)")
         # 2b. 잔존 텔레스코프 안전망 (블록 파싱 실패해도 개별 게이트 라인/마커 제거)
         if has_telescope_content(response):
             logger.warning("[Telescope] 블록 스트립 후에도 잔존 감지 → 3-레이어 재스트립")
