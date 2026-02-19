@@ -707,7 +707,7 @@ async def cmd_notebook(ctx: CommandContext) -> None:
 
 @registry.register("npc", category="World", aliases=["엔피씨", "addnpc", "npc정보", "npc추가"], description="NPC 관리")
 async def cmd_npc(ctx: CommandContext) -> None:
-    """!npc [조회/추가] [이름] [설명] or !addnpc [Batch]"""
+    """!npc [조회/추가/삭제] [이름] [설명] or !addnpc [Batch] or !npc remove [이름]"""
     # 1. File Content
     file_text = ""
     if ctx.message.attachments:
@@ -720,15 +720,74 @@ async def cmd_npc(ctx: CommandContext) -> None:
                 file_text = text
                 break
 
-    # 2. Batch Processing Logic (Restored from handle_npc_command)
+    # 2. Subcommand: remove / 삭제
     arg = ctx.raw_args
-    raw_lines = (arg + "\n" + file_text).strip().splitlines()
-    processed_count = 0
     channel_id = ctx.channel_id
-    
+    if arg:
+        parts = arg.strip().split(None, 1)
+        if parts[0].lower() in ('remove', 'delete', 'del', '삭제', '제거'):
+            if len(parts) < 2 or not parts[1].strip():
+                await ctx.send("⚠️ 사용법: `!npc remove [이름]`")
+                return
+            target_name = parts[1].strip()
+            success, matched_key = domain_manager.delete_npc(channel_id, target_name)
+            if success:
+                display = matched_key or target_name
+                await ctx.send(f"🗑️ NPC **{display}** 삭제 완료.")
+            else:
+                # 유사 이름 후보 제시
+                npcs = domain_manager.get_npcs(channel_id)
+                nl = target_name.lower()
+                candidates = [k for k in npcs if nl in k.lower() or k.lower() in nl]
+                hint = ""
+                if candidates:
+                    hint = f"\n💡 유사한 NPC: {', '.join(candidates[:5])}"
+                await ctx.send(f"⚠️ NPC '{target_name}' 정보를 찾을 수 없습니다.{hint}")
+            return
+
+        # Subcommand: voicecard / 보이스카드 재추출
+        if parts[0].lower() in ('voicecard', 'vc', '보이스카드', '보이스'):
+            if not ctx.genai_client:
+                await ctx.send("⚠️ AI 클라이언트가 초기화되지 않았습니다.")
+                return
+            target = parts[1].strip() if len(parts) > 1 else None
+            npcs = domain_manager.get_npcs(channel_id)
+            targets = {}
+            if target:
+                key = domain_manager._find_npc_key(npcs, target)
+                if key:
+                    targets[key] = npcs[key]
+                else:
+                    await ctx.send(f"⚠️ NPC '{target}' 정보를 찾을 수 없습니다.")
+                    return
+            else:
+                # 전체 NPC 중 Voice Card 없는 것만
+                targets = {k: v for k, v in npcs.items()
+                           if not v.get("voice_card") and len(v.get("description") or v.get("desc", "")) > 300}
+            if not targets:
+                await ctx.send("Voice Card가 필요한 NPC가 없습니다.")
+                return
+            await ctx.send(f"🎙️ Voice Card 추출 시작... ({len(targets)}명)")
+            vc_count = 0
+            for npc_name, npc_data in targets.items():
+                desc = npc_data.get("description") or npc_data.get("desc", "")
+                voice_card = await npc_manager.extract_voice_card(
+                    ctx.genai_client, config.MODEL_ID_FLASH, npc_name, desc
+                )
+                if voice_card:
+                    npc_data["voice_card"] = voice_card
+                    domain_manager.update_npc(channel_id, npc_name, npc_data)
+                    vc_count += 1
+            await ctx.send(f"🎙️ Voice Card 추출 완료: {vc_count}/{len(targets)}명 성공")
+            return
+
+    # 3. Batch Processing Logic (Restored from handle_npc_command)
+    raw_lines = (arg + "\n" + file_text).strip().splitlines() if arg else (file_text or "").strip().splitlines()
+    processed_count = 0
+
     # If explicit "addnpc" or batch mode implied
     if ctx.trigger in ['addnpc', 'npc추가'] or (len(raw_lines) > 1) or (file_text):
-        if not raw_lines[0].strip() and not file_text:
+        if (not raw_lines or not raw_lines[0].strip()) and not file_text:
              await ctx.send("⚠️ 등록할 내용이 없습니다. `!npc추가 [이름]: [설명]` 또는 파일 첨부.")
              return
 
@@ -922,7 +981,10 @@ async def cmd_npc(ctx: CommandContext) -> None:
         # Specific NPC
         npc = domain_manager.get_npc(channel_id, arg.strip())
         if npc:
-            msg = [f"👤 **{arg}**"]
+            # 실제 매칭된 키 이름 표시 (부분 매칭 시 전체 이름)
+            npcs = domain_manager.get_npcs(channel_id)
+            display_name = domain_manager._find_npc_key(npcs, arg.strip()) or arg
+            msg = [f"👤 **{display_name}**"]
             if npc.get('gender') or npc.get('race'):
                 meta = []
                 if npc.get('gender'): meta.append(npc.get('gender'))

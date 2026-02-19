@@ -194,7 +194,8 @@ def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
             logger.info(f"[NPC] Auto-extracted fields for '{name}': {list(extracted.keys())}")
     domain_manager.update_npc(channel_id, name, data)
 
-def delete_npc(channel_id: str, name: str) -> bool:
+def delete_npc(channel_id: str, name: str) -> tuple:
+    """Returns (success: bool, matched_key: str or None)"""
     return domain_manager.delete_npc(channel_id, name)
 
 

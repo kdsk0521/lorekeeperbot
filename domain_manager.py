@@ -336,16 +336,32 @@ def _normalize_npc_name(name: str) -> str:
 def get_npcs(channel_id: str) -> Dict[str, Dict[str, Any]]:
     return get_domain(channel_id).get("npcs", {})
 
+def _find_npc_key(npcs: dict, name: str) -> Optional[str]:
+    """NPC 키 검색: 정규화 매칭 → 부분 이름 매칭 (괄호 앞/안)"""
+    norm = _normalize_npc_name(name)
+    # 1) 정확한 정규화 매칭
+    if norm in npcs:
+        return norm
+    for k in npcs:
+        if _normalize_npc_name(k) == norm:
+            return k
+    # 2) 부분 매칭: "복셀" → "복셀(Voxel)", "Voxel" → "복셀(Voxel)"
+    nl = norm.lower()
+    for k in npcs:
+        # 괄호 앞 한글 이름으로 매칭
+        base = re.split(r'[(\[（]', k)[0].strip().lower()
+        if base == nl:
+            return k
+        # 괄호 안 영문 이름으로 매칭
+        m = re.search(r'[(\[（]([^)\]）]+)[)\]）]', k)
+        if m and m.group(1).strip().lower() == nl:
+            return k
+    return None
+
 def get_npc(channel_id: str, name: str) -> Optional[Dict[str, Any]]:
     npcs = get_npcs(channel_id)
-    norm = _normalize_npc_name(name)
-    if norm in npcs:
-        return npcs[norm]
-    # Fallback: 기존 비정규화 키 매칭
-    for k, v in npcs.items():
-        if _normalize_npc_name(k) == norm:
-            return v
-    return None
+    key = _find_npc_key(npcs, name)
+    return npcs[key] if key else None
 
 def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
     d = get_domain(channel_id)
@@ -372,20 +388,16 @@ def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
     npcs[norm_name] = data
     save_domain(channel_id, d)
 
-def delete_npc(channel_id: str, name: str) -> bool:
+def delete_npc(channel_id: str, name: str) -> tuple:
+    """NPC 삭제. Returns (success: bool, matched_key: str or None)"""
     d = get_domain(channel_id)
     npcs = d.get("npcs", {})
-    norm = _normalize_npc_name(name)
-    target = None
-    for k in npcs:
-        if _normalize_npc_name(k) == norm:
-            target = k
-            break
+    target = _find_npc_key(npcs, name)
     if target:
         del npcs[target]
         save_domain(channel_id, d)
-        return True
-    return False
+        return True, target
+    return False, None
 
 # NPC Attitude System
 def update_npc_attitude(channel_id: str, npc_name: str, attitude: str, reason: str = "") -> None:
