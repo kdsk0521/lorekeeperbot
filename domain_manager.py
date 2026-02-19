@@ -376,11 +376,13 @@ def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
             existing_key = k
             break
 
-    # source 보존
+    # 기존 데이터에서 보존할 필드 (재등록 시 유실 방지)
+    _PRESERVE_KEYS = ("source", "voice_card")
     if existing_key:
-        existing_source = npcs[existing_key].get("source", "session")
-        if "source" not in data:
-            data["source"] = existing_source
+        existing = npcs[existing_key]
+        for pk in _PRESERVE_KEYS:
+            if pk not in data and existing.get(pk):
+                data[pk] = existing[pk]
         # 비정규화 키 제거 후 정규화 키로 저장
         if existing_key != norm_name:
             del npcs[existing_key]
