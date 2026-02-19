@@ -170,7 +170,7 @@ Rules:
     try:
         cfg = types.GenerateContentConfig(
             temperature=0.1,
-            max_output_tokens=1024,
+            max_output_tokens=2048,
         )
         contents = [types.Content(role="user", parts=[types.Part(text=prompt)])]
         result = await api_call_with_retry(client, model_id, contents, cfg,
