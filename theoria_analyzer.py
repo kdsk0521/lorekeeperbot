@@ -76,8 +76,8 @@ class TheoriaAnalyzer:
             "scene_type": anchors.get("scene_type", "normal"),
             "intimate_module": True,
             "pending_flashback": bool(anchors.get("pending_flashback")),
-            "channel_id": req.channel_id,
-            "turn_count": req.turn_count or 0,
+            "channel_id": anchors.get("channel_id", ""),
+            "turn_count": len(anchors.get("history", [])) if isinstance(anchors.get("history"), list) else 0,
         }
         system_instruction = self._build_system_instruction(active_genres, scene_context)
         
