@@ -32,7 +32,7 @@ def check_imports():
         "judgment_engine",
         "doom_module",
         "anomaly_module",
-        "mental_module",
+        "vigor_composure_module",
         "session_manager",
         "command_handler",
         "main"

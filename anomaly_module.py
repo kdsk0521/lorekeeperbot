@@ -4,12 +4,15 @@ Handles anomaly events with genre-aware disruption axes, theory-based defense,
 2-axis damage, and 2-level adaptation taxonomy.
 """
 
+import logging
 import random
 import math
 from typing import Any
 from orchestration_context import GameContext
 import config as _cfg
 import game_character as _gc
+
+logger = logging.getLogger("Anomaly")
 
 
 def calculate_adaptation(adaptation_groups: list, player_adaptation: dict) -> int:
@@ -176,9 +179,11 @@ class AnomalyModule:
 
             roll = random.randint(1, 100)
             if roll > trigger_chance:
+                logger.info("[Anomaly] Skip (roll=%d > chance=%.0f%%)", roll, trigger_chance)
                 return context
 
             bus.anomaly["triggered"] = True
+            logger.info("[Anomaly] TRIGGERED (roll=%d <= chance=%.0f%%)", roll, trigger_chance)
 
         # 1. Anomaly Info
         tag = bus.anomaly.get("tag") or "기이한 현상"
@@ -273,5 +278,11 @@ class AnomalyModule:
         for g in adaptation_groups:
             old_count = adaptation_data.get(g, {}).get("count", 0)
             bus.vigor.setdefault("adaptation_update", {})[g] = {"count": old_count + 1}
+
+        defense_result = "pass" if bus.anomaly.get("defense_success") else "fail" if base_dmg > 0 else "N/A"
+        logger.info("[Anomaly] %s | %s/%s | base=%d → final=%d (adapt=%d%%) | defense=%s | axis=%s",
+                     tag, intensity_label, polarity_label, base_dmg, final_dmg,
+                     adapt_old_pct, defense_result, primary)
+        bus.anomaly["defense_result"] = defense_result
 
         return context

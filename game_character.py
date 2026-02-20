@@ -117,7 +117,8 @@ def add_quest(channel_id: str, content: str, rank: str = None) -> str:
         "content": content,
         "rank": rank,
         "progress": 0,
-        "max_progress": settings["max_progress"]
+        "max_progress": settings["max_progress"],
+        "linked_clock": None,
     }
     active.append(quest_obj)
     board["active"] = active
@@ -170,8 +171,17 @@ def complete_quest(channel_id: str, content: str) -> str:
 
     import game_world
     doom_msg = game_world.change_doom(channel_id, doom_reward)
+
+    # 연결된 시계 해결
+    linked_clock = target.get("linked_clock") if isinstance(target, dict) else None
+    clock_msg = ""
+    if linked_clock:
+        clock_msg = game_world.resolve_clock_by_quest(channel_id, linked_clock)
+        if clock_msg:
+            clock_msg = "\n" + clock_msg
+
     q_name = target["content"] if isinstance(target, dict) else target
-    return f"✅ **퀘스트 완료:** {q_name}\n{doom_msg}"
+    return f"✅ **퀘스트 완료:** {q_name}\n{doom_msg}{clock_msg}"
 
 
 def remove_quest(channel_id: str, content: str) -> str:

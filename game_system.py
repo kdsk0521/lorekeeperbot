@@ -75,6 +75,24 @@ get_npc_time_progression = npc_manager.get_npc_time_progression
 # High-Level Game Logic (Migrated from Orchestration)
 # =========================================================
 
+def build_time_directive(ticks: int, scene_type: str = "normal") -> str:
+    """Pro에 전달할 시간 범위 디렉티브. 서사 범위를 제한한다."""
+    if scene_type in ("combat", "intimate"):
+        return (
+            "[TIME] Scene frozen. Describe ONE moment/action only. "
+            "Do NOT advance time or skip ahead."
+        )
+    minutes = ticks * 1.5
+    if minutes <= 3:
+        return (
+            f"[TIME] ~{minutes:.0f}min. Describe only what happens in this brief moment. "
+            "Do NOT compress multiple events or skip time."
+        )
+    if minutes <= 10:
+        return f"[TIME] ~{minutes:.0f}min. One focused interaction or action."
+    return f"[TIME] ~{minutes:.0f}min. Describe the passage of time naturally."
+
+
 async def process_time_flow(channel_id: str, time_flow: Dict, scene_type: str = "normal") -> Optional[str]:
     """
     시간 흐름을 처리합니다. (Ticks 증가, Slot 변경, Doom 체크)
@@ -93,15 +111,19 @@ async def process_time_flow(channel_id: str, time_flow: Dict, scene_type: str = 
 
     messages = []
 
-    if duration == "explicit" and explicit_hours:
+    explicit = time_flow.get("explicit", False) or duration == "explicit"
+
+    if explicit and explicit_hours:
         ticks = int(explicit_hours * 5)
-        
-    # [Anti-Gravity Fix] Premature Turn Prevention
-    # 성인/전투 장면에서는 명시적인 시간 경과가 아닌 한, 자동 시간 진행을 막는다.
-    if scene_type in ["intimate", "combat"] and duration != "explicit":
-        if ticks > 0:
-            logger.info(f"[{scene_type}] Suppressing time flow ({ticks} ticks) to prevent premature turn advancement.")
-            ticks = 0
+
+    # v3: SCENE_TIME_RULES 기반 클램핑 (Anti-Gravity Fix 통합)
+    rules = config.SCENE_TIME_RULES.get(scene_type, config.SCENE_TIME_RULES["normal"])
+    if not explicit:
+        if ticks > rules["max_ticks"]:
+            logger.info("[TimeFlow] Clamped %d → %d (scene=%s)", ticks, rules["max_ticks"], scene_type)
+            ticks = rules["max_ticks"]
+        if ticks <= 0 and rules["base_ticks"] > 0:
+            ticks = rules["base_ticks"]
 
     if ticks <= 0:
         return None

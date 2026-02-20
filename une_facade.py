@@ -375,24 +375,37 @@ def _build_events_layer(context, bus) -> str:
     if doom.get("log"):
         parts.append(f"[Doom Shift] {doom.get('log')}")
 
+    # v3: 완성된 시계 → 서사 지시
+    completed_clocks = doom.get("completed_this_turn", [])
+    if isinstance(completed_clocks, list):
+        for clock in completed_clocks:
+            if isinstance(clock, dict):
+                threat = clock.get("threat", "")
+                cname = clock.get("name", "?")
+                parts.append(f"[CLOCK COMPLETED] '{cname}' → {threat}. This MUST happen in the narrative.")
+
+    # 클라이맥스
+    if doom.get("climax_triggered"):
+        parts.append("[CLIMAX] All clocks completed simultaneously. MAXIMUM TENSION. Final choice moment.")
+
+    # 퀘스트 실패 (시계 완성으로)
+    for fail in doom.get("quest_failed", []):
+        if isinstance(fail, dict):
+            parts.append(f"[Quest Failed] {fail.get('quest', '?')} — {fail.get('reason', '')}")
+
+    # 임박 시계
     clocks = doom.get("clocks", [])
     if isinstance(clocks, list) and clocks:
-        completed: List[str] = []
         imminent: List[str] = []
         for clock in clocks:
-            if not isinstance(clock, dict):
+            if not isinstance(clock, dict) or clock.get("resolved"):
                 continue
             name = str(clock.get("name", "Unnamed Clock"))
             segments = int(_to_float(clock.get("segments", 4), 4))
-            progress = int(_to_float(clock.get("progress", 0), 0))
-            if clock.get("resolved"):
-                completed.append(name)
-                continue
-            remaining = max(0, segments - progress)
+            filled = int(_to_float(clock.get("filled", clock.get("progress", 0)), 0))
+            remaining = max(0, segments - filled)
             if remaining <= 1:
                 imminent.append(f"{name} ({remaining} left)")
-        if completed:
-            parts.append("[Clock Completed] " + " | ".join(completed[:3]))
         if imminent:
             parts.append("[Clock Imminent] " + " | ".join(imminent[:3]))
 
@@ -733,7 +746,7 @@ def sync_from_game_context(channel_id: str, user_id: str, ctx: Any) -> None:
                 axis_sys["value"] = axis_bus["value"]
                 axis_sys["last_delta"] = axis_bus.get("last_delta", 0)
 
-                # Trauma Trigger
+                # Trauma Trigger (사용 후 pop — 다음 턴 중복 방지)
                 if axis_bus.get("trauma_trigger"):
                     passives = mem.setdefault("passives", [])
                     trauma_name = f"트라우마 ({axis_name} 각성)"
@@ -745,6 +758,7 @@ def sync_from_game_context(channel_id: str, user_id: str, ctx: Any) -> None:
                             "modifier": -5,
                             "desc": f"{label} 붕괴에서 깨어난 트라우마입니다. 모든 판정에 -5 패널티를 받습니다."
                         })
+                    axis_bus.pop("trauma_trigger", None)
 
         # Adaptation Updates (vigor에서만 관리)
         updates = bus.vigor.get("adaptation_update")

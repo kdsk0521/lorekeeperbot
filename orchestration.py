@@ -180,9 +180,24 @@ class OrchestrationService:
                     domain_manager.update_npc_knowledge(channel_id, npc_name, k_data)
             logger.info(f"[NPC Knowledge] Persisted for {len(new_knowledge)} NPCs")
 
-        # ?? ?? ?? (Delegated to GameSystem)
+        # 장면 전환 exit_ticks 처리
+        curr_scene = ctx.scene_type or "normal"
+        world = domain_manager.get_world_state(channel_id)
+        prev_scene = world.get("current_scene_type", "normal")
+        if prev_scene != curr_scene:
+            exit_rules = config.SCENE_TIME_RULES.get(prev_scene, {})
+            exit_ticks = exit_rules.get("exit_ticks", 0)
+            if exit_ticks > 0:
+                exit_msg = await game_system.process_time_flow(
+                    channel_id, {"ticks": exit_ticks, "reason": f"{prev_scene} 장면 종료"}, "normal")
+                if exit_msg:
+                    messages.append(exit_msg)
+            world["current_scene_type"] = curr_scene
+            domain_manager.update_world_state(channel_id, world)
+
+        # 시간 흐름 처리 (Delegated to GameSystem)
         time_flow = dai.get("time_flow", {})
-        time_msg = await game_system.process_time_flow(channel_id, time_flow, ctx.scene_type)
+        time_msg = await game_system.process_time_flow(channel_id, time_flow, curr_scene)
         if time_msg:
             messages.append(time_msg)
             ctx.world_ctx = game_system.get_world_context(channel_id)
@@ -211,7 +226,7 @@ class OrchestrationService:
         dai = updated_context.shared_bus.dai
         ctx.dai = dai
 
-        # [Flashback] 회상 기력 차감 (mental_module 전에 직접 처리)
+        # [Flashback] 회상 기력 차감 (vigor_composure 전에 직접 처리)
         fb_eval = dai.get("flashback_eval")
         if fb_eval and fb_eval.get("detected"):
             fb_msg = self._process_flashback(
@@ -625,11 +640,13 @@ class OrchestrationService:
             current_quests = game_system.get_active_quests(channel_id)
             
             session_memory = domain_manager.get_session_ai_memory(channel_id)
+            # Fresh notebook reload (stale ctx 방지 — 배경 작업은 지연 실행될 수 있음)
+            fresh_notebook = game_system.get_notebook_text(channel_id, ctx.user_id)
 
             updates = await cognition.extract_all_updates(
                 self.client, self.model_id_flash,
                 ctx.action_text, response,
-                notebook=ctx.notebook_txt,
+                notebook=fresh_notebook,
                 current_status=status,
                 lore_npc_names=lore_npcs,
                 scene_npc_names=scene_npcs,

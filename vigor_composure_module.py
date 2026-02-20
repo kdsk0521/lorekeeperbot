@@ -4,8 +4,11 @@ Manages 2-axis PC state: Vigor (physical+will) and Composure (mental+social).
 Replaces mental_module.py.
 """
 
+import logging
 from typing import TYPE_CHECKING
 import config
+
+logger = logging.getLogger("VigorComposure")
 
 if TYPE_CHECKING:
     from orchestration_context import GameContext
@@ -86,11 +89,19 @@ class VigorComposureModule:
         bus.vigor["log"] = combined_log
         bus.composure["log"] = combined_log  # Same log for both
 
-        # Cleanup temp keys
+        # Delta applied (Pipeline Summary에서 참조)
+        bus.vigor["delta_applied"] = v_delta
+        bus.composure["delta_applied"] = c_delta
+
+        logger.info("[VigorComposure] vigor=%d(%s%d) composure=%d(%s%d) primary=%s",
+                     v_val, "+" if v_delta >= 0 else "", v_delta,
+                     c_val, "+" if c_delta >= 0 else "", c_delta,
+                     primary_axis)
+
+        # Cleanup temp keys (trauma_trigger는 sync_from_game_context에서 사용 후 정리)
         for axis in (bus.vigor, bus.composure):
             axis.pop("_final_delta", None)
             axis.pop("_clamped", None)
-            axis.pop("trauma_trigger", None)
 
         return context
 
@@ -126,6 +137,19 @@ class VigorComposureModule:
             if j_emotion != 0:
                 delta += j_emotion
                 axis["judgment_emotion"] = j_emotion
+
+        # 1c. Status severity → drain (primary axis만)
+        if axis_name == primary_axis:
+            status_effects = (context.narrative_anchors or {}).get("status_effects", [])
+            if isinstance(status_effects, list):
+                for eff in status_effects:
+                    if not isinstance(eff, dict):
+                        continue
+                    sev = int(eff.get("severity", 0) or 0)
+                    sev_cfg = config.SEVERITY_EFFECTS.get(sev, {})
+                    drain = sev_cfg.get("vigor_drain", 0)
+                    if drain != 0:
+                        delta += drain
 
         # 2. AI-Analyzed Impact
         impact_data = axis.get("impact", {})

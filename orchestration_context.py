@@ -309,11 +309,18 @@ async def gather_context(ctx: ResponseContext) -> ResponseContext:
     return ctx
 
 
+def _estimate_tokens(text: str) -> int:
+    """간이 토큰 추정: 한글 1자≈1.5tok, ASCII 4자≈1tok (Gemini BPE 근사)"""
+    korean = sum(1 for c in text if '\uAC00' <= c <= '\uD7A3' or '\u3131' <= c <= '\u318E')
+    ascii_chars = len(text) - korean
+    return int(korean * 1.5 + ascii_chars * 0.25)
+
+
 def _build_smart_history(ctx: ResponseContext) -> str:
     """스마트 컨텍스트 윈도우로 히스토리를 구성합니다."""
     import fermentation
     all_hist = ctx.domain_data.get('history', [])
-    target_len = 100000 # [Anti-Gravity] Maximize Context (Targeting <200k Tokens)
+    target_tokens = 100000  # [Anti-Gravity] 토큰 기준 목표 (Gemini 1M window 내 안전 범위)
     default_lines = getattr(fermentation, "RECENT_HISTORY_FOR_ANALYSIS", 30)
     slice_idx = -default_lines
 
@@ -324,7 +331,7 @@ def _build_smart_history(ctx: ResponseContext) -> str:
         subset = all_hist[slice_idx:]
         hist_text = "\n".join([f"{h['role']}: {h['content']}" for h in subset])
 
-        if len(hist_text) >= target_len or abs(slice_idx) >= len(all_hist):
+        if _estimate_tokens(hist_text) >= target_tokens or abs(slice_idx) >= len(all_hist):
             break
 
         slice_idx -= 5

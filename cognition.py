@@ -580,10 +580,12 @@ Extract detailed character information from the provided text to create a struct
 ## Extraction Rules:
 1. **Name/Role/Species**: Identify the basic identity.
 2. **Appearance/Personality/Background**: Integrate provided details into concise Korean descriptions.
-3. **Passives (Traits)**: Identify permanent skills, traits, or abilities. 
-   - Return a list of objects: {"name": "...", "desc": "..."}.
-4. **Inventory**: Identify items and equipment. 
-   - Return a dict: {"Item": "Quantity"}.
+3. **Passives (Traits)**: Identify permanent skills, traits, or abilities.
+   - Return structured: {"name": "이름", "desc": "설명", "tags": ["tag1"], "theory_links": ["theory"], "modifiers": {"judgment_combat": 5, "anomaly_defense": 10}}
+   - modifiers keys: anomaly_defense (±5~15), judgment_combat/social/perception/stealth/athletics (±5~10), vigor_drain/composure_drain (0.8~1.2). Only relevant keys.
+4. **Inventory**: Identify items and equipment.
+   - Return structured: {"name": "아이템명", "qty": 1, "tags": ["weapon", "melee"], "modifiers": {"judgment_combat": 5}}
+   - modifiers keys: same as passives. Only relevant keys.
 5. **Language**: All descriptions must be in KOREAN.
 
 ## Output JSON Schema:
@@ -594,8 +596,8 @@ Extract detailed character information from the provided text to create a struct
   "appearance": "기계 의수, 흉터 등 외양 묘사",
   "description": "성격, 말투, 특징 요약",
   "background": "과거 이력 및 배경 설정",
-  "passives": [ {"name": "특성1", "desc": "효과 설명"} ],
-  "inventory": { "아이템1": "1개" }
+  "passives": [ {"name": "특성1", "desc": "효과 설명", "tags": ["tag1"], "theory_links": [], "modifiers": {"anomaly_defense": 10}} ],
+  "inventory": [ {"name": "아이템1", "qty": 1, "tags": ["weapon"], "modifiers": {"judgment_combat": 5}} ]
 }"""
 
     try:

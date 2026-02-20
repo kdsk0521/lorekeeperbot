@@ -95,6 +95,16 @@ TICK_DURATION_MAX = 5   # Minutes
 
 TIME_TICKS_PER_SLOT = 240  # 4 hours / 1 min = 240 ticks
 
+# Time Flow v3 — 장면별 시간 규칙 (base_ticks: Flash 0일 때 최소, max_ticks: 비명시 상한, exit_ticks: 장면 종료 시 일괄)
+SCENE_TIME_RULES = {
+    "normal":   {"base_ticks": 1, "max_ticks": 3,   "exit_ticks": 0},
+    "combat":   {"base_ticks": 0, "max_ticks": 0,   "exit_ticks": 5},
+    "social":   {"base_ticks": 1, "max_ticks": 2,   "exit_ticks": 0},
+    "intimate": {"base_ticks": 0, "max_ticks": 0,   "exit_ticks": 10},
+    "travel":   {"base_ticks": 5, "max_ticks": 30,  "exit_ticks": 0},
+    "summary":  {"base_ticks": 0, "max_ticks": 999, "exit_ticks": 0},
+}
+
 # Doom Thresholds
 DOOM_THRESHOLD_WARNING = 30
 DOOM_THRESHOLD_DANGER = 70
@@ -113,6 +123,17 @@ NEMESIS_THRESHOLD = -10
 
 # Doom Dice Modifier
 DOOM_DICE_BASELINE = 50
+
+# Doom v3 — Situation Clocks
+DOOM_CLIMAX_THRESHOLD = 95  # Stage 5 진입 기준 (doom ≥ 95)
+CLOCK_COMPLETE_DOOM = {4: 10, 6: 15, 8: 20}  # segments → global doom 상승
+CLOCK_RESOLVE_DOOM = {4: -5, 6: -10, 8: -15}  # segments → global doom 하강 (해결 시)
+
+JUDGMENT_DOOM_DELTA = {
+    "critical_failure": 5,
+    "failure": 2,
+    "critical_success": -3,
+}
 DOOM_DICE_MODIFIER_STEP = 5
 
 # Judgment v3 (incremental)
@@ -323,9 +344,10 @@ DURATION_TYPES = {"persistent", "turns", "scene", "until_rest", "until_recovery"
 
 # Default severity modifiers (used when an effect doesn't define modifiers)
 SEVERITY_EFFECTS = {
-    1: {"judgment": -5},
-    2: {"judgment": -10},
-    3: {"judgment": -15},
+    0: {"judgment": 0,   "doom_impact": 0, "vigor_drain": 0},
+    1: {"judgment": -5,  "doom_impact": 1, "vigor_drain": -3},
+    2: {"judgment": -10, "doom_impact": 3, "vigor_drain": -7},
+    3: {"judgment": -15, "doom_impact": 5, "vigor_drain": -15},
 }
 
 # Canonical status tags (tag -> definition)

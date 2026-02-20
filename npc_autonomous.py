@@ -3,7 +3,6 @@ Lorekeeper UNE - NPC Autonomous Behavior Trigger Engine (Phase 7)
 Evaluates NPC psychological state from Flash data to generate autonomous behavior directives.
 """
 
-import random
 from typing import Dict, Any, List, Optional
 
 import config as _cfg
@@ -24,10 +23,6 @@ NPC_AUTONOMOUS_TRIGGERS = {
     "reactance": {
         "desc": "자유 제한 → NPC 반발",
         "check": "_check_reactance",
-    },
-    "off_screen_persistence": {
-        "desc": "PC 없어도 NPC는 자기 일정대로 움직임",
-        "check": "_check_off_screen",
     },
     "information_gap_fill": {
         "desc": "궁금한 것 → 알아내려 함",
@@ -284,6 +279,7 @@ def _check_desistance(ctx: Dict) -> TriggerResult | None:
                 priority=1,  # Low priority — very rare
             )
     return None
+
 
 
 def _check_agenda_manifest(ctx: Dict) -> Optional[TriggerResult]:

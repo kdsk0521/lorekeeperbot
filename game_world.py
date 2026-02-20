@@ -169,7 +169,7 @@ def _format_doom_clocks(world: Dict[str, Any], limit: int = 3) -> str:
             continue
         name = clock.get("name", "Unnamed")
         seg = int(clock.get("segments", 4) or 4)
-        prog = int(clock.get("progress", 0) or 0)
+        prog = int(clock.get("filled", clock.get("progress", 0)) or 0)
         items.append(f"{name} ({prog}/{seg})")
         if len(items) >= limit:
             break
@@ -326,13 +326,42 @@ def get_doom_forecast(channel_id: str) -> str:
     clocks_txt = _format_doom_clocks(world, limit=5)
     if clocks_txt and clocks_txt != "None":
         msg += f"\n⏰ **위협 시계**: {clocks_txt}\n"
-    
+        # 임박한 시계 경고
+        for c in world.get("doom_clocks", []):
+            if not isinstance(c, dict) or c.get("resolved"):
+                continue
+            seg = int(c.get("segments", 4) or 4)
+            filled = int(c.get("filled", c.get("progress", 0)) or 0)
+            remaining = seg - filled
+            if 0 < remaining <= 2:
+                msg += f"⚠️ **임박: {c.get('name', '?')}** — {remaining}칸 남음!\n"
+
     if current >= config.DOOM_THRESHOLD_CRITICAL:
         msg += "⚠️ **경고:** 파멸이 임박했습니다. 모든 행동에 위험이 따릅니다."
     elif current >= config.DOOM_THRESHOLD_DANGER:
         msg += "⚠️ **주의:** 세계의 적의가 느껴집니다."
     else:
         msg += "✅ 아직은 안전합니다."
-        
+
     return msg
+
+
+def resolve_clock_by_quest(channel_id: str, clock_name: str) -> str:
+    """퀘스트 완료 → 연결된 시계 서사적 해결 + doom 하강."""
+    world = domain_manager.get_world_state(channel_id)
+    clocks = world.get("doom_clocks", [])
+    if not isinstance(clocks, list):
+        return ""
+    for clock in clocks:
+        if not isinstance(clock, dict):
+            continue
+        if clock.get("name") == clock_name and not clock.get("resolved"):
+            clock["resolved"] = True
+            seg = int(clock.get("segments", 6) or 6)
+            bonus_doom = config.CLOCK_RESOLVE_DOOM.get(seg, -10)
+            world["doom"] = max(0, min(100, world.get("doom", 0) + bonus_doom))
+            world["doom_clocks"] = clocks
+            domain_manager.update_world_state(channel_id, world)
+            return f"✅ **시계 해결: {clock_name}** (긴장도 {bonus_doom})"
+    return ""
 

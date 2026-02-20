@@ -872,6 +872,21 @@ def build_34_step_prompt(ctx) -> str:
         )
         gm_mover = (gm_mover + friction) if gm_mover else friction
 
+    # Time directive (Pro에 서사 시간 범위 힌트)
+    time_flow_data = dai.get("time_flow", {})
+    if time_flow_data:
+        import game_system as _gs
+        scene = dai.get("SceneType", dai.get("scene_type", "normal"))
+        tf_ticks = time_flow_data.get("ticks", 1)
+        rules = config.SCENE_TIME_RULES.get(scene, config.SCENE_TIME_RULES["normal"])
+        explicit = time_flow_data.get("explicit", False) or time_flow_data.get("duration") == "explicit"
+        if not explicit and tf_ticks > rules["max_ticks"]:
+            tf_ticks = rules["max_ticks"]
+        if not explicit and tf_ticks <= 0 and rules["base_ticks"] > 0:
+            tf_ticks = rules["base_ticks"]
+        time_dir = _gs.build_time_directive(tf_ticks, scene)
+        gm_mover = (gm_mover + f"\n\n{time_dir}") if gm_mover else time_dir
+
     # --- [Slot 29] Real-time Data (compact v3 status first, legacy fallback) ---
     real_time_data = ""
     if channel_id:
@@ -918,6 +933,33 @@ def build_34_step_prompt(ctx) -> str:
                 "Render emotion through PHYSICAL EVIDENCE at the intensity below. Do NOT name emotions directly.\n"
                 + "\n".join(intensity_lines)
             )
+
+    # Vigor ↔ Composure CONTRAST directive (괴리 30 이상 시 Pro에 힌트)
+    if channel_id:
+        try:
+            _target_p = domain_manager.get_domain(channel_id).get("participants", {}).get(user_id, {})
+            _mem = _target_p.get("ai_memory", {}) if isinstance(_target_p, dict) else {}
+            _v = int((_mem.get("vigor") or _mem.get("mental") or {}).get("value", 100) or 100)
+            _c = int((_mem.get("composure") or {}).get("value", 100) or 100)
+            _gap = abs(_v - _c)
+            if _gap >= 30:
+                if _v > _c:
+                    _contrast_hint = (
+                        f"\n\n[CONTRAST] 기력 {_v} vs 평정 {_c} (차이 {_gap})\n"
+                        "Body is functional but mind is fracturing. "
+                        "Show: hands steady but voice cracking, completing tasks while thoughts scatter, "
+                        "physical competence masking inner turmoil."
+                    )
+                else:
+                    _contrast_hint = (
+                        f"\n\n[CONTRAST] 기력 {_v} vs 평정 {_c} (차이 {_gap})\n"
+                        "Mind is clear but body is failing. "
+                        "Show: sharp eyes in an exhausted face, precise words through labored breath, "
+                        "willpower overriding physical limits."
+                    )
+                real_time_data += _contrast_hint
+        except Exception:
+            pass
 
     # =========================================================
     # 3. 히스토리 분리 (직전 응답 vs 이전 대화)

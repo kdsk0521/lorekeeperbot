@@ -93,7 +93,8 @@ class WaterfallPipeline:
         bus.dai["memory_triggers"] = analysis.get("memory_triggers", [])
         bus.dai["narrative_hook"] = analysis.get("narrative_hook", "")
         bus.dai["time_flow"] = analysis.get("TimeFlow", analysis.get("time_flow", {}))
-        bus.dai["doom_relief"] = analysis.get("doom_relief", {})
+        bus.dai["doom_clocks"] = analysis.get("doom_clocks", {})
+        bus.dai["doom_relief"] = analysis.get("doom_relief", {})  # legacy fallback
         bus.dai["mental_impact"] = analysis.get("mental_impact", {})
         bus.dai["anomaly_profile"] = analysis.get("anomaly_profile", {})
         bus.dai["pc_impersonation_check"] = analysis.get("PCImpersonationCheck", {})
@@ -122,10 +123,21 @@ class WaterfallPipeline:
             bus.judgment["modifications"] = eval_data.get("modifications", [])
             bus.judgment["narrative_hook"] = analysis.get("narrative_hook", "")
         
-        # Doom Relief 연동
-        doom_relief = analysis.get("doom_relief") or {}
-        if doom_relief.get("applicable", False):
-            bus.doom["relief"] = doom_relief
+        # Doom Clocks v3 연동 (clock_updates, clock_new, clock_resolved, relief)
+        doom_clocks_output = analysis.get("doom_clocks") or {}
+        if isinstance(doom_clocks_output, dict):
+            bus.doom["flash_clock_updates"] = doom_clocks_output.get("clock_updates", [])
+            bus.doom["flash_clock_new"] = doom_clocks_output.get("clock_new")
+            bus.doom["flash_clock_resolved"] = doom_clocks_output.get("clock_resolved", [])
+            # Relief: doom_clocks.relief 우선, 없으면 legacy doom_relief fallback
+            relief = doom_clocks_output.get("relief") or analysis.get("doom_relief") or {}
+            if relief.get("applicable", False):
+                bus.doom["relief"] = relief
+        else:
+            # Legacy fallback: doom_relief 직접 사용
+            doom_relief = analysis.get("doom_relief") or {}
+            if doom_relief.get("applicable", False):
+                bus.doom["relief"] = doom_relief
 
         # Vigor/Composure Impact 연동
         mental_impact = analysis.get("mental_impact") or {}
@@ -247,7 +259,67 @@ class WaterfallPipeline:
             self.judgment = JudgmentEngine(self.theoria.client, self.theoria.model_id)
             context = await self.judgment.process(context)
 
+            # 7a. Judgment → Doom post-sync (같은 턴 반영)
+            j_doom = bus.judgment.get("doom_delta", 0)
+            if j_doom != 0 and "doom" in active_modules:
+                old_val = bus.doom.get("value", 0)
+                bus.doom["value"] = max(0, min(100, old_val + j_doom))
+                bus.doom["active"] = True
+
+        # ===== Pipeline Summary Log =====
+        self._log_pipeline_summary(bus, active_modules)
+
         return context
+
+    def _log_pipeline_summary(self, bus: SharedBus, active_modules: List[str]) -> None:
+        """파이프라인 실행 결과 한눈에 볼 수 있는 요약 로그."""
+        parts = ["[Pipeline Summary]"]
+        parts.append(f"  Modules ON: {', '.join(active_modules)}")
+
+        # Judgment
+        if bus.judgment.get("active"):
+            j = bus.judgment
+            result = j.get("result", "N/A")
+            roll = j.get("final_roll", "?")
+            dc = j.get("dc", "?")
+            parts.append(f"  Judgment: {result} (roll={roll} vs DC={dc})")
+        else:
+            parts.append(f"  Judgment: skipped (no action requiring roll)")
+
+        # Doom
+        doom_val = bus.doom.get("value", "?")
+        doom_log = bus.doom.get("log", "")
+        doom_active = bus.doom.get("active", False)
+        if doom_active:
+            parts.append(f"  Doom: {doom_val}/100 — {doom_log[:100]}" if doom_log else f"  Doom: {doom_val}/100")
+        else:
+            parts.append(f"  Doom: OFF (fallback={doom_val})")
+
+        # Anomaly
+        anomaly_triggered = bus.anomaly.get("triggered", False)
+        if anomaly_triggered:
+            a_tag = bus.anomaly.get("tag", "?")
+            a_int = bus.anomaly.get("intensity", "?")
+            a_def = bus.anomaly.get("defense_result", "?")
+            parts.append(f"  Anomaly: TRIGGERED [{a_tag}] intensity={a_int} defense={a_def}")
+        else:
+            parts.append(f"  Anomaly: not triggered")
+
+        # Vigor / Composure
+        v_val = bus.vigor.get("value", "?")
+        v_active = bus.vigor.get("active", False)
+        c_val = bus.composure.get("value", "?")
+        c_active = bus.composure.get("active", False)
+        if v_active or c_active:
+            v_delta = bus.vigor.get("delta_applied", 0) or 0
+            c_delta = bus.composure.get("delta_applied", 0) or 0
+            v_sign = f"+{v_delta}" if v_delta > 0 else str(v_delta)
+            c_sign = f"+{c_delta}" if c_delta > 0 else str(c_delta)
+            parts.append(f"  Vigor: {v_val} ({v_sign}) | Composure: {c_val} ({c_sign})")
+        else:
+            parts.append(f"  Vigor/Composure: OFF (fallback={v_val}/{c_val})")
+
+        logger.info("\n".join(parts))
 
     def get_fallback_directives(self, active_modules: List[str]) -> str:
         """Returns constraint directives for inactive modules (genre-aware)."""

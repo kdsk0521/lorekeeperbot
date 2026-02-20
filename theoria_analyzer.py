@@ -242,7 +242,7 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
 - "asset_evaluation": {
     "reason": "Korean",
     "modifications": [{"label": "Korean", "value": int}],
-    "memo_relevant": ["Korean short note", ...],
+    "memo_relevant": {"content": "relevant memo/clue excerpt (Korean)", "bonus": 5, "reason": "why this helps (Korean)"} | null,
     "defense_success": boolean
   }
 
@@ -250,7 +250,12 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
 ## NARRATIVE HOOKS & TIME
 - "narrative_hook": str | null (Korean - Observe the next event that naturally arises from currently unresolved world state. Describe only consequences produced by the world's existing forces. Return null when the world is at peace.)
 - "time_flow": {"ticks": 1-20, "reason": "Korean"}
-- "doom_relief": {"applicable": boolean, "amount": 0-20, "reason": "Korean"}
+- "doom_clocks": {
+    "clock_updates": [{"name": str, "delta": int(-1~+2), "reason": "Korean"}],
+    "clock_new": {"name": "Korean", "segments": 4|6|8, "tick_mode": "action|time|hybrid", "threat": "Korean — 이 시계가 완성되면 무슨 일이 벌어지는가", "source": "narrative|consequence", "linked_entity": "str or null — 관련 NPC/세력 이름", "tags": ["Korean"]} | null,
+    "clock_resolved": ["시계 이름 — 서사적으로 위협이 해소된 경우만"],
+    "relief": {"applicable": boolean, "amount": 0-20, "reason": "Korean"}
+  }
 - "mental_impact": {"applicable": boolean, "vigor_delta": -35~+20, "composure_delta": -35~+20, "reason": "Korean"}
 - "anomaly_profile": {"trigger": str, "category": "supernatural/psychological/social/environmental/temporal", "intensity": "Low/Mid/High/Extreme", "polarity": "positive/negative/mixed", "disruption_axis": "vigor/composure/both (which PC resource axis this anomaly disrupts — Horror/Action→vigor, Romance/Social→composure, Extreme→both)", "adaptation_group": ["1-3 items from ADAPTATION_TAXONOMY: undead/dragon/eldritch/cursed/spirit/divine/demonic/shapeshifter/fear/deception/exposure/betrayal/madness/guilt/obsession/encounter/jealousy/intimacy/separation/rivalry/loyalty/timing/cascade/authority/environment/resource/crowd/evidence/surveillance/leak/secret/misinformation"], "theory_basis": "str — 방어에 적용되는 이론 (e.g. 'Continuum+TMT', 'Nunchi+Chaemyeon', 'Prospect+BATNA')", "defense_hint": "str — 이 이변에 대한 방어 힌트 1문장 (Korean)", "perception_type": "veridical/illusory/hallucinatory/delusional/null (Anomalous Experience Framework. In supernatural settings, 'hallucinatory' may be CORRECT. null = no anomaly)", "line": "Korean - 이변의 서사적 묘사 1문장", "reason": "Korean"}
 
@@ -540,6 +545,23 @@ Evaluate this in flashback_eval field. Check plausibility, passive match, assign
         """V3: Telescope는 이제 5W1H 추론 기록 채널. FAIL 피드백 불필요."""
         return ""
 
+    @staticmethod
+    def _build_clock_context(clocks: list) -> str:
+        """활성 둠 시계 현황을 Flash 프롬프트용 텍스트로 변환."""
+        active = [c for c in clocks if isinstance(c, dict) and not c.get("resolved")]
+        if not active:
+            return "- **Doom Clocks**: None"
+        lines = ["- **Doom Clocks**:"]
+        for c in active:
+            filled = int(c.get("filled", c.get("progress", 0)) or 0)
+            segments = int(c.get("segments", 4) or 4)
+            mode_kr = {"action": "행동", "time": "시간", "hybrid": "복합"}.get(
+                str(c.get("tick_mode", "")).lower(), "행동")
+            threat = c.get("threat", "")
+            name = c.get("name", "?")
+            lines.append(f"  [{name} {filled}/{segments}] ({mode_kr}) → {threat}")
+        return "\n".join(lines)
+
     def _build_prompt(self, context: GameContext) -> str:
         """분석 프롬프트 생성"""
         req = context.request
@@ -560,6 +582,7 @@ Evaluate this in flashback_eval field. Check plausibility, passive match, assign
 ### 2. CURRENT STATE
 - **Genre**: {req.genres}
 - **Doom (World Tension)**: {bus.doom.get('value', 0)}
+{self._build_clock_context(bus.doom.get('clocks', []))}
 {mental_line}
 
 {pc_section}

@@ -186,28 +186,50 @@ class JudgmentEngine:
         dai_bonus = bus.dai.get("bonus", 0)
         dai_penalty = bus.dai.get("penalty", 0)
 
-        # 2.4 Theory Modifier (Flash psyche → ±20)
+        # 2.4 Memo Bonus (Flash가 관련 메모/단서 발견 시 +0~10)
+        memo_relevant = eval_data.get("memo_relevant")
+        memo_mod = 0
+        memo_label = ""
+        if isinstance(memo_relevant, dict):
+            memo_mod = max(0, min(10, int(memo_relevant.get("bonus", 0) or 0)))
+            memo_label = str(memo_relevant.get("content", ""))[:20]
+        elif isinstance(memo_relevant, list) and memo_relevant:
+            # 레거시 호환: 문자열 리스트면 개당 +3 (최대 +10)
+            memo_mod = min(10, len(memo_relevant) * 3)
+            memo_label = str(memo_relevant[0])[:20]
+
+        # 2.4b Theory Modifier (Flash psyche → ±20)
         theory_mod = self._calculate_theory_mod(context)
 
-        # 2.5 Passive Modifiers (theory tag based)
+        # 2.5 Passive Modifiers (action_type 기반)
         import config as _cfg2
+        from game_character import get_inventory_items as _get_inv
+        action_meta = bus.judgment.get("meta", {})
+        action_type = str(action_meta.get("type") or action_meta.get("action_type") or "").strip().lower()
         passives = (context.narrative_anchors or {}).get("passives", [])
         passive_mod = 0
-        scene_type = bus.dai.get("scene_type", "normal")
-        is_combat_scene = scene_type == "combat"
-        is_social_scene = scene_type in ("social", "normal", "intimate")
         for passive in passives:
             mods = _cfg2.get_passive_modifiers(passive)
             if not mods:
                 continue
-            # Scene-type specific key first, then generic
-            if is_combat_scene and "judgment_combat" in mods:
-                passive_mod += mods["judgment_combat"]
-            elif is_social_scene and "judgment_social" in mods:
-                passive_mod += mods["judgment_social"]
+            if action_type and f"judgment_{action_type}" in mods:
+                passive_mod += mods[f"judgment_{action_type}"]
             elif "judgment" in mods:
                 passive_mod += mods["judgment"]
         passive_mod = max(-20, min(20, passive_mod))
+
+        # 2.5b Inventory Modifiers (action_type 기반)
+        inv_items = _get_inv(context.narrative_anchors)
+        inv_mod = 0
+        for item in inv_items:
+            mods = _cfg2.get_item_modifiers(item)
+            if not mods:
+                continue
+            if action_type and f"judgment_{action_type}" in mods:
+                inv_mod += mods[f"judgment_{action_type}"]
+            elif "judgment" in mods:
+                inv_mod += mods["judgment"]
+        inv_mod = max(-10, min(15, inv_mod))
 
         # 2.6 Status Modifiers (status_effects)
         status_mod = self._calculate_status_mod(context)
@@ -215,7 +237,7 @@ class JudgmentEngine:
         # 3. Roll Dice
         roll = random.randint(1, 100)
         aspect_mod = self._calculate_aspect_mod(context)
-        final_roll = roll + mental_mod + doom_mod + theory_mod + passive_mod + status_mod + aspect_mod + dai_bonus - dai_penalty
+        final_roll = roll + mental_mod + doom_mod + theory_mod + memo_mod + passive_mod + inv_mod + status_mod + aspect_mod + dai_bonus - dai_penalty
         
         # 4. Determine Result
         result = "failure"
@@ -232,7 +254,7 @@ class JudgmentEngine:
             result = "critical_success"
         elif final_roll >= dc: 
             result = "success"
-        elif final_roll >= dc - 15: 
+        elif final_roll >= dc - 20:
             result = "partial"
         
         # 5. Store Result
@@ -265,10 +287,14 @@ class JudgmentEngine:
             modifications.append({"label": "이변대응성공", "value": dai_bonus})
         if dai_penalty > 0:
             modifications.append({"label": "이변대응실패", "value": -dai_penalty})
+        if memo_mod > 0:
+            modifications.append({"label": f"메모({memo_label})", "value": memo_mod})
         if theory_mod != 0:
             modifications.append({"label": "심리상태", "value": theory_mod})
         if passive_mod != 0:
             modifications.append({"label": "특질", "value": passive_mod})
+        if inv_mod != 0:
+            modifications.append({"label": "장비", "value": inv_mod})
         if status_mod != 0:
             modifications.append({"label": "상태", "value": status_mod})
         if aspect_mod != 0:
@@ -305,10 +331,18 @@ class JudgmentEngine:
             
         bus.judgment["output"] = "\n".join(output)
 
+        logger.info("[Judgment] %s → %s | roll=%d %s = %d vs DC=%d (%s)",
+                     action, res_kr, roll, mod_details.strip(", "), final_roll, dc, difficulty)
+
         # 7. Clear DAI bonus/penalty after consumption (1회성)
         if dai_bonus or dai_penalty:
             bus.dai["bonus"] = 0
             bus.dai["penalty"] = 0
             bus.dai["reason"] = ""
+
+        # 8. Judgment → Doom delta (waterfall post-sync에서 즉시 반영)
+        j_doom = _cfg.JUDGMENT_DOOM_DELTA.get(result, 0)
+        if j_doom != 0:
+            bus.judgment["doom_delta"] = j_doom
 
         return context

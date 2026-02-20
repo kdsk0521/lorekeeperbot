@@ -373,6 +373,7 @@ async def generate_response(
         response = re.sub(r'```system_update[\s\S]*?```', '', response, flags=re.IGNORECASE).strip()
 
         # 2. [Telescope] ┣┫ CoT block strip (품질 게이트 출력 제거 — 플레이어에겐 비공개)
+        raw_block = _extract_telescope_block(response)
         telescope_data = parse_telescope(response)
         if telescope_data.get("parsed"):
             channel_id = getattr(ctx, "channel_id", "")
@@ -384,17 +385,36 @@ async def generate_response(
                 domain_manager.save_telescope_log(channel_id, turn, telescope_data)
             response = strip_telescope(response)
             gates = telescope_data.get("gates", {})
-            # 5W1H 게이트별 추론 내용 로그
+            # 원문 블록 전체 로그 (서버 로그에서 CoT 내용 확인용)
+            if raw_block:
+                logger.info("[Telescope RAW]\n%s", raw_block)
+            # 게이트별 요약
             for name, g in gates.items():
                 reasoning = g.get("reasoning", "").strip()
-                # 하위호환: 옛 PASS/FAIL verdict 로그
                 if "result" in g:
                     verdict = g["result"]
                     tag = "FAIL" if verdict == "FAIL" else "OK"
                     level = logger.warning if verdict == "FAIL" else logger.info
-                    level("[Telescope %s] %-12s %s", tag, name, reasoning[:120] if reasoning else "(empty)")
+                    level("[Telescope %s] %-12s %s", tag, name, reasoning[:200] if reasoning else "(empty)")
                 else:
-                    logger.info("[Telescope] %-12s %s", name, reasoning[:120] if reasoning else "(empty)")
+                    logger.info("[Telescope] %-12s %s", name, reasoning[:200] if reasoning else "(empty)")
+            logger.info("[Telescope] Parsed OK — %d gates", len(gates))
+        else:
+            # 모델이 텔레스코프 블록을 안 쓴 건지 진단
+            if raw_block:
+                logger.warning("[Telescope] Block found but gate parse FAILED:\n%s", raw_block[:500])
+            else:
+                has_markers = "┣" in response or "┫" in response
+                has_bracket_gates = bool(re.search(r"\[(Who|What|Why|How|When|Where)\]", response, re.IGNORECASE))
+                if has_markers or has_bracket_gates:
+                    # 마커는 있는데 블록 추출 실패
+                    snippet = ""
+                    idx = response.find("┣")
+                    if idx >= 0:
+                        snippet = response[idx:idx+300]
+                    logger.warning("[Telescope] Partial markers found but no valid block. Snippet:\n%s", snippet)
+                else:
+                    logger.warning("[Telescope] No telescope block in model output — model skipped CoT")
         # 2b. 잔존 텔레스코프 안전망 (블록 파싱 실패해도 개별 게이트 라인/마커 제거)
         if has_telescope_content(response):
             logger.warning("[Telescope] 블록 스트립 후에도 잔존 감지 → 3-레이어 재스트립")
