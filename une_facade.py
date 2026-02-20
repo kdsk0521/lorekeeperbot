@@ -638,8 +638,8 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> G
         "relations": mem.get("relationships", {}),
         "passives": mem.get("passives", []),
         "status_effects": p_data.get("status_effects", []) if p_data else [],
-        "inventory": [],
-        "memos": []
+        "inventory": mem.get("inventory", []),
+        "memos": mem.get("memos", [])
     }
 
     # 모든 활성 PC 정보 수집 (다인 플레이 지원)

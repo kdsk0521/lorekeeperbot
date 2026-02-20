@@ -737,11 +737,12 @@ def remove_inventory_item(channel_id: str, user_id: str, name: str) -> str:
 
 def get_inventory_items(user_data: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """구조화 아이템 리스트 반환 (modifier 계산용).
-    ai_memory.inventory에서 dict 형태의 아이템만 반환."""
+    ai_memory.inventory 또는 직접 inventory 키에서 dict 형태의 아이템만 반환."""
     if not user_data:
         return []
+    # narrative_anchors 직접 접근 또는 ai_memory 경유 모두 지원
     ai_mem = user_data.get("ai_memory", {})
-    inv = ai_mem.get("inventory", [])
+    inv = ai_mem.get("inventory", user_data.get("inventory", []))
     result = []
     for item in inv:
         if isinstance(item, dict):

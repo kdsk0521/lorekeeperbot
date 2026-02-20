@@ -848,6 +848,15 @@ class OrchestrationService:
                     current_retry_ctx["message_ids"].append(une_msg.id)
                     current_retry_ctx["has_response"] = True # Mark as retryable even if only system logs exist
 
+                # 4.5. World State Update (scene transition exit_ticks + time flow)
+                ctx, world_msgs = await self.update_world_state(ctx, message)
+                if world_msgs:
+                    for wm in world_msgs:
+                        if wm:
+                            w_msg = await message.channel.send(wm)
+                            current_retry_ctx["message_ids"].append(w_msg.id)
+                            current_retry_ctx["has_response"] = True
+
                 # 5. Prompt Building
                 # UNE directive is already injected into ctx.judgment_context
                 full_prompt, builder = self.build_prompt(ctx)

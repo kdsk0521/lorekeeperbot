@@ -876,7 +876,7 @@ def build_34_step_prompt(ctx) -> str:
     time_flow_data = dai.get("time_flow", {})
     if time_flow_data:
         import game_system as _gs
-        scene = dai.get("SceneType", dai.get("scene_type", "normal"))
+        scene = dai.get("scene_type", "normal")
         tf_ticks = time_flow_data.get("ticks", 1)
         rules = config.SCENE_TIME_RULES.get(scene, config.SCENE_TIME_RULES["normal"])
         explicit = time_flow_data.get("explicit", False) or time_flow_data.get("duration") == "explicit"
@@ -939,8 +939,10 @@ def build_34_step_prompt(ctx) -> str:
         try:
             _target_p = domain_manager.get_domain(channel_id).get("participants", {}).get(user_id, {})
             _mem = _target_p.get("ai_memory", {}) if isinstance(_target_p, dict) else {}
-            _v = int((_mem.get("vigor") or _mem.get("mental") or {}).get("value", 100) or 100)
-            _c = int((_mem.get("composure") or {}).get("value", 100) or 100)
+            _v_dict = _mem.get("vigor") or _mem.get("mental") or {}
+            _c_dict = _mem.get("composure") or {}
+            _v = int(_v_dict.get("value", 100)) if _v_dict.get("value") is not None else 100
+            _c = int(_c_dict.get("value", 100)) if _c_dict.get("value") is not None else 100
             _gap = abs(_v - _c)
             if _gap >= 30:
                 if _v > _c:

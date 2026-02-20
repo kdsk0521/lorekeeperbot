@@ -140,16 +140,15 @@ class VigorComposureModule:
 
         # 1c. Status severity → drain (primary axis만)
         if axis_name == primary_axis:
-            status_effects = (context.narrative_anchors or {}).get("status_effects", [])
-            if isinstance(status_effects, list):
-                for eff in status_effects:
-                    if not isinstance(eff, dict):
-                        continue
-                    sev = int(eff.get("severity", 0) or 0)
-                    sev_cfg = config.SEVERITY_EFFECTS.get(sev, {})
-                    drain = sev_cfg.get("vigor_drain", 0)
-                    if drain != 0:
-                        delta += drain
+            from game_character import normalize_status_effects
+            raw_effects = (context.narrative_anchors or {}).get("status_effects", [])
+            status_effects = normalize_status_effects(raw_effects)
+            for eff in status_effects:
+                sev = eff.get("severity", 0)
+                sev_cfg = config.SEVERITY_EFFECTS.get(sev, {})
+                drain = sev_cfg.get("vigor_drain", 0)
+                if drain != 0:
+                    delta += drain
 
         # 2. AI-Analyzed Impact
         impact_data = axis.get("impact", {})

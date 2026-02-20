@@ -127,16 +127,15 @@ class DoomModule:
                     _fail_linked_quest(context, linked_quest, clock.get("name", "?"))
 
         # ── 4b. Status severity → doom_impact ─────────────────
-        status_effects = (context.narrative_anchors or {}).get("status_effects", [])
-        if isinstance(status_effects, list):
-            for eff in status_effects:
-                if not isinstance(eff, dict):
-                    continue
-                sev = int(eff.get("severity", 0) or 0)
-                sev_cfg = config.SEVERITY_EFFECTS.get(sev, {})
-                doom_impact = sev_cfg.get("doom_impact", 0)
-                if doom_impact > 0:
-                    delta += doom_impact
+        from game_character import normalize_status_effects
+        raw_effects = (context.narrative_anchors or {}).get("status_effects", [])
+        status_effects = normalize_status_effects(raw_effects)
+        for eff in status_effects:
+            sev = eff.get("severity", 0)
+            sev_cfg = config.SEVERITY_EFFECTS.get(sev, {})
+            doom_impact = sev_cfg.get("doom_impact", 0)
+            if doom_impact > 0:
+                delta += doom_impact
 
         # ── 5. Doom Relief ───────────────────────────────────
         relief_data = bus.doom.get("relief", {})
