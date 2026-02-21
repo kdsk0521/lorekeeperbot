@@ -74,6 +74,17 @@ class VigorComposureModule:
         rest_log = bus.vigor.get("rest_log")
         if rest_log:
             log_parts.append(f"\n{rest_log}")
+        c_rest_log = bus.composure.get("rest_log")
+        if c_rest_log:
+            log_parts.append(f"\n{c_rest_log}")
+
+        # Cascade log
+        v_cascade = bus.vigor.get("cascade_drain", 0)
+        c_cascade = bus.composure.get("cascade_drain", 0)
+        if v_cascade:
+            log_parts.append(f"\n🔗 기력 ← 평정 cascade ({v_cascade})")
+        if c_cascade:
+            log_parts.append(f"\n🔗 평정 ← 기력 cascade ({c_cascade})")
 
         # Clamping/Trauma
         if bus.vigor.get("_clamped"):
@@ -102,6 +113,7 @@ class VigorComposureModule:
         for axis in (bus.vigor, bus.composure):
             axis.pop("_final_delta", None)
             axis.pop("_clamped", None)
+            axis.pop("cascade_drain", None)
 
         return context
 
@@ -112,20 +124,22 @@ class VigorComposureModule:
         # 1. Collect Delta
         delta = axis.get("delta", 0)
 
-        # 1a. Rest Recovery (vigor만 적용)
-        if axis_name == "vigor":
-            rest_eval = bus.dai.get("rest_eval")
-            if rest_eval and rest_eval.get("detected"):
-                quality = rest_eval.get("quality", "brief")
-                base_recovery = config.REST_RECOVERY.get(quality, 10)
-                if not rest_eval.get("safe_location", True):
-                    base_recovery = int(base_recovery * config.REST_UNSAFE_MODIFIER)
+        # 1a. Rest Recovery (both axes — composure at reduced rate)
+        rest_eval = bus.dai.get("rest_eval")
+        if rest_eval and rest_eval.get("detected"):
+            quality = rest_eval.get("quality", "brief")
+            base_recovery = config.REST_RECOVERY.get(quality, 10)
+            if not rest_eval.get("safe_location", True):
+                base_recovery = int(base_recovery * config.REST_UNSAFE_MODIFIER)
+            if axis_name != "vigor":
+                base_recovery = int(base_recovery * config.REST_COMPOSURE_RATIO)
+            if base_recovery > 0:
                 delta += base_recovery
-                safe_tag = "안전" if rest_eval.get("safe_location", True) else "위험"
+                safe_tag = "safe" if rest_eval.get("safe_location", True) else "unsafe"
                 axis["rest_log"] = f"💤 휴식({quality}) +{base_recovery} ({safe_tag})"
 
-        # 1b. Judgment Emotional Impact (primary axis만 적용)
-        if axis_name == primary_axis and bus.judgment.get("active"):
+        # 1b. Judgment Emotional Impact (보조축에 적용 — 주축은 consequence primary_delta가 담당)
+        if axis_name != primary_axis and bus.judgment.get("active"):
             j_result = bus.judgment.get("result", "")
             j_emotion = {
                 "critical_success": 3,
@@ -138,7 +152,16 @@ class VigorComposureModule:
                 delta += j_emotion
                 axis["judgment_emotion"] = j_emotion
 
-        # 1c. Status severity → drain (primary axis만)
+        # 1c. Cross-Axis Cascade — other axis's bad state drains this axis
+        other_name = "composure" if axis_name == "vigor" else "vigor"
+        other_bus = getattr(bus, other_name)
+        other_stage = other_bus.get("stage", 0)  # prime()에서 설정된 턴 시작 스테이지
+        cascade = config.CROSS_AXIS_CASCADE.get(other_stage, 0)
+        if cascade != 0:
+            delta += cascade
+            axis["cascade_drain"] = cascade
+
+        # 1d. Status severity → drain (primary axis만)
         if axis_name == primary_axis:
             from game_character import normalize_status_effects
             raw_effects = (context.narrative_anchors or {}).get("status_effects", [])

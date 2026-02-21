@@ -234,10 +234,15 @@ class JudgmentEngine:
         # 2.6 Status Modifiers (status_effects)
         status_mod = self._calculate_status_mod(context)
 
+        # 2.7 Momentum (이전 턴 판정 결과의 여운)
+        momentum_mod = int(bus.judgment.get("momentum_carry", 0) or 0)
+        momentum_mod = max(-10, min(10, momentum_mod))
+        bus.judgment["momentum_carry"] = 0  # 1회성 소비
+
         # 3. Roll Dice
         roll = random.randint(1, 100)
         aspect_mod = self._calculate_aspect_mod(context)
-        final_roll = roll + mental_mod + doom_mod + theory_mod + memo_mod + passive_mod + inv_mod + status_mod + aspect_mod + dai_bonus - dai_penalty
+        final_roll = roll + mental_mod + doom_mod + theory_mod + memo_mod + passive_mod + inv_mod + status_mod + aspect_mod + dai_bonus - dai_penalty + momentum_mod
         
         # 4. Determine Result
         result = "failure"
@@ -299,6 +304,8 @@ class JudgmentEngine:
             modifications.append({"label": "상태", "value": status_mod})
         if aspect_mod != 0:
             modifications.append({"label": "면모", "value": aspect_mod})
+        if momentum_mod != 0:
+            modifications.append({"label": "기세", "value": momentum_mod})
 
         mod_parts = []
         for m in modifications:
@@ -328,11 +335,6 @@ class JudgmentEngine:
             output.append(f"\n⚠️ **잠재적 위기 (Narrative Hook)**: {hook}")
             if result == "critical_failure":
                 bus.judgment["party_wide_hook"] = True
-            
-        bus.judgment["output"] = "\n".join(output)
-
-        logger.info("[Judgment] %s → %s | roll=%d %s = %d vs DC=%d (%s)",
-                     action, res_kr, roll, mod_details.strip(", "), final_roll, dc, difficulty)
 
         # 7. Clear DAI bonus/penalty after consumption (1회성)
         if dai_bonus or dai_penalty:
@@ -340,9 +342,92 @@ class JudgmentEngine:
             bus.dai["penalty"] = 0
             bus.dai["reason"] = ""
 
-        # 8. Judgment → Doom delta (waterfall post-sync에서 즉시 반영)
-        j_doom = _cfg.JUDGMENT_DOOM_DELTA.get(result, 0)
-        if j_doom != 0:
-            bus.judgment["doom_delta"] = j_doom
+        # 8. Apply Consequences (doom, primary axis, clocks, momentum)
+        _apply_consequences(context, result)
+
+        # Consequence log → Discord output
+        consequence_log = bus.judgment.get("consequence_log", "")
+        if consequence_log:
+            output.append(f"\n📋 **결과 영향**: {consequence_log}")
+
+        bus.judgment["output"] = "\n".join(output)
+
+        logger.info("[Judgment] %s → %s | roll=%d %s = %d vs DC=%d (%s)",
+                     action, res_kr, roll, mod_details.strip(", "), final_roll, dc, difficulty)
 
         return context
+
+
+# ── Consequence Helpers ──────────────────────────────────────
+
+def _apply_consequences(context, result: str) -> None:
+    """판정 결과 → 기계적 세계 변경. BitD/PbtA/Cypher 영감."""
+    import config as _cfg
+    bus = context.shared_bus
+    cons = getattr(_cfg, "JUDGMENT_CONSEQUENCES", {}).get(result, {})
+    if not cons:
+        return
+
+    consequence_log = []
+
+    # A. Doom Delta → bus.doom["delta"]에 누적 (Doom 모듈이 자연 소비)
+    doom_delta = cons.get("doom_delta", 0)
+    if doom_delta != 0:
+        bus.doom["delta"] = bus.doom.get("delta", 0) + doom_delta
+
+    # B. Primary Axis Direct Impact
+    primary_delta = cons.get("primary_delta", 0)
+    if primary_delta != 0:
+        mechanic = context.request.genres.get("mechanic", {})
+        primary_axis = mechanic.get("primary_resource") or "vigor"
+        p_bus = getattr(bus, primary_axis)
+        p_bus["delta"] = p_bus.get("delta", 0) + primary_delta
+        sign = "+" if primary_delta > 0 else ""
+        consequence_log.append(f"{'회복' if primary_delta > 0 else '소모'} {sign}{primary_delta}")
+
+    # C. Clock Effect (DLC 안전: clocks 없으면 스킵)
+    clock_effect = cons.get("clock_effect", 0)
+    if clock_effect != 0:
+        clocks = bus.doom.get("clocks", [])
+        if isinstance(clocks, list) and clocks:
+            clock_all = cons.get("clock_all", False)
+            affected = _apply_clock_consequence(clocks, clock_effect, clock_all)
+            consequence_log.extend(affected)
+
+    # D. Momentum (다음 턴 보너스/페널티)
+    momentum = cons.get("momentum", 0)
+    if momentum != 0:
+        bus.judgment["momentum_next"] = momentum
+        sign = "+" if momentum > 0 else ""
+        consequence_log.append(f"기세 {sign}{momentum}")
+
+    if consequence_log:
+        bus.judgment["consequence_log"] = " | ".join(consequence_log)
+
+
+def _apply_clock_consequence(clocks: list, effect: int, apply_all: bool) -> list:
+    """판정 결과 → 시계 변경. effect>0: 전진, effect<0: 후퇴."""
+    log = []
+    active = [c for c in clocks if isinstance(c, dict) and not c.get("resolved")]
+    if not active:
+        return log
+
+    if apply_all:
+        for clock in active:
+            segments = int(clock.get("segments", 4) or 4)
+            old = int(clock.get("filled", 0) or 0)
+            new = max(0, min(segments, old + effect))
+            if new != old:
+                clock["filled"] = new
+                log.append(f"⏰ {clock.get('name', '?')} {old}→{new}/{segments}")
+    else:
+        # 가장 위험한(채워진 비율 높은) 시계 선택
+        target = max(active, key=lambda c: int(c.get("filled", 0) or 0) / max(int(c.get("segments", 4) or 4), 1))
+        segments = int(target.get("segments", 4) or 4)
+        old = int(target.get("filled", 0) or 0)
+        new = max(0, min(segments, old + effect))
+        if new != old:
+            target["filled"] = new
+            direction = "⬇️" if effect < 0 else "⬆️"
+            log.append(f"{direction} {target.get('name', '?')} {old}→{new}/{segments}")
+    return log

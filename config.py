@@ -140,6 +140,44 @@ JUDGMENT_DOOM_DELTA = {
 }
 DOOM_DICE_MODIFIER_STEP = 5
 
+# Judgment Consequences v4 — 결과별 기계적 세계 변경
+# primary_delta: 주축(vigor/composure) 직접 효과
+# momentum: 다음 턴 판정 보너스/페널티 (±10 cap)
+# clock_effect: 활성 시계 변경 (+전진/-후퇴), clock_all: 모든 시계 대상
+JUDGMENT_CONSEQUENCES = {
+    "critical_success": {
+        "doom_delta": -3,
+        "primary_delta": 5,
+        "momentum": 10,
+        "clock_effect": -1,
+    },
+    "success": {
+        "doom_delta": 0,
+        "primary_delta": 0,
+        "momentum": 0,
+        "clock_effect": 0,
+    },
+    "partial": {
+        "doom_delta": 1,
+        "primary_delta": -2,
+        "momentum": 0,
+        "clock_effect": 0,
+    },
+    "failure": {
+        "doom_delta": 2,
+        "primary_delta": -3,
+        "momentum": -5,
+        "clock_effect": 1,
+    },
+    "critical_failure": {
+        "doom_delta": 5,
+        "primary_delta": -5,
+        "momentum": -10,
+        "clock_effect": 1,
+        "clock_all": True,
+    },
+}
+
 # Judgment v3 (incremental)
 ASPECT_VALUE = 5
 MOD_SOURCE_CAPS = {
@@ -194,6 +232,15 @@ FLASHBACK_MIN_MENTAL = 10  # 이 이하면 회상 불가
 # Rest Recovery (휴식) — 능동적 기력 회복
 REST_RECOVERY = {"full": 20, "brief": 10, "interrupted": 5}
 REST_UNSAFE_MODIFIER = 0.5  # 위험 장소 회복량 반감
+REST_COMPOSURE_RATIO = 0.6  # composure = 60% of vigor's rest rate
+
+# Cross-Axis Cascade: one axis's bad state drains the other
+CROSS_AXIS_CASCADE = {
+    0: 0,    # Fullness — no cascade
+    1: 0,    # Agitation — no cascade
+    2: -2,   # Exhaustion — mild drain on other axis
+    3: -5,   # Collapse — severe drain on other axis
+}
 
 # =========================================================
 # Quest Manager Constants

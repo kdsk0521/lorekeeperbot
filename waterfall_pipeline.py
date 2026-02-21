@@ -47,15 +47,15 @@ class WaterfallPipeline:
             bus.composure["active"] = False
 
     async def execute(self, context: GameContext) -> GameContext:
-        """Analysis -> Mental(pre) -> Storyteller -> Doom -> Mental(sync) -> Judgment
+        """Analysis -> Mental(pre) -> Judgment -> Storyteller -> Doom -> Mental(sync)
 
         Data-flow map (SharedBus ownership):
         - Theoria: bus.dai (all analysis), bus.judgment, bus.doom, bus.vigor/composure.impact
         - Mental(pre): stage snapshot only (no delta consumption)
+        - Judgment: resolves action, writes consequences (doom.delta, primary axis delta, clock effects, momentum)
         - Storyteller: bus.anomaly.triggered/tag/decision (narrative only, no deltas)
-        - Doom: bus.doom.value/delta/log, may write vigor/composure pressure delta
-        - Mental(sync): consumes accumulated deltas and syncs axis values
-        - Judgment(last): resolves action from updated state
+        - Doom: bus.doom.value/delta/log, consumes judgment doom_delta, may write vigor/composure pressure delta
+        - Mental(sync): consumes ALL accumulated deltas (judgment + doom pressure + rest + status)
         """
         
         active_modules = context.request.active_modules
@@ -206,7 +206,13 @@ class WaterfallPipeline:
             self.vigor_composure = VigorComposureModule()
             context = await self.vigor_composure.prime(context)
 
-        # 3. Storyteller: inject state + set potential
+        # 3. Judgment (Conditional, EARLY — consequences flow downstream)
+        if "judgment" in active_modules and bus.judgment["active"]:
+            from judgment_engine import JudgmentEngine
+            self.judgment = JudgmentEngine(self.theoria.client, self.theoria.model_id)
+            context = await self.judgment.process(context)
+
+        # 4. Storyteller: inject state + set potential
         if "anomaly" in active_modules:
             bus.anomaly["potential"] = True
             channel_id = (context.narrative_anchors or {}).get("channel_id", "")
@@ -217,36 +223,23 @@ class WaterfallPipeline:
                 bus.anomaly["_current_turn"] = domain_manager.get_world_state(channel_id).get("turn_index", 0)
                 bus.anomaly["_channel_id"] = channel_id
 
-        # 4. Storyteller Decision (Conditional)
+        # 5. Storyteller Decision (Conditional)
         if "anomaly" in active_modules and bus.anomaly.get("potential"):
             from anomaly_module import AnomalyModule
             self.anomaly = AnomalyModule(self.theoria.client, self.theoria.model_id)
             context = await self.anomaly.process(context)
 
-        # 5. Doom Update (Conditional)
+        # 6. Doom Update (Conditional) — consumes judgment doom_delta naturally
         if "doom" in active_modules:
             from doom_module import DoomModule
             self.doom = DoomModule()
             context = await self.doom.process(context)
 
-        # 6. Vigor/Composure Sync (Conditional)
+        # 7. Vigor/Composure Sync (Conditional, LAST — consumes all accumulated deltas)
         if "mental" in active_modules:
             from vigor_composure_module import VigorComposureModule
             self.vigor_composure = VigorComposureModule()
             context = await self.vigor_composure.process(context)
-
-        # 7. Call 2: Judgment (Conditional, LAST)
-        if "judgment" in active_modules and context.shared_bus.judgment["active"]:
-            from judgment_engine import JudgmentEngine
-            self.judgment = JudgmentEngine(self.theoria.client, self.theoria.model_id)
-            context = await self.judgment.process(context)
-
-            # 7a. Judgment → Doom post-sync (같은 턴 반영)
-            j_doom = bus.judgment.get("doom_delta", 0)
-            if j_doom != 0 and "doom" in active_modules:
-                old_val = bus.doom.get("value", 0)
-                bus.doom["value"] = max(0, min(100, old_val + j_doom))
-                bus.doom["active"] = True
 
         # ===== Pipeline Summary Log =====
         self._log_pipeline_summary(bus, active_modules)

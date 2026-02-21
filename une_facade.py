@@ -432,6 +432,34 @@ def _build_events_layer(context, bus) -> str:
     return "[Events]\n" + "\n".join(parts)
 
 
+# Universal narrative principles — separated from MC Moves (genre flavor)
+CONSEQUENCE_DIRECTIVES = {
+    "critical_success": (
+        "Show the PC achieving MORE than they intended. "
+        "A new possibility opens, or the PC seizes decisive control of the situation. "
+        "If NPCs are present, show how this success positively shifts the relationship."
+    ),
+    "partial": (
+        "The PC's intent is achieved, but ONE unwanted change necessarily follows. "
+        "Concretely depict what was lost, exposed, or complicated. "
+        "A partial success with zero cost is FORBIDDEN. "
+        "If NPCs are present, let this cost leave a subtle mark on the relationship."
+    ),
+    "failure": (
+        "The PC's intent is NOT achieved. "
+        "The situation is now different from before the attempt — do NOT simply say 'it didn't work.' "
+        "Show what has changed. "
+        "If NPCs are present, show their reaction to witnessing this failure."
+    ),
+    "critical_failure": (
+        "An IRREVERSIBLE change occurs in this scene. "
+        "The opposite of the PC's intent is realized, or an unforeseen new reality is revealed. "
+        "The world after this moment is different from the world before. "
+        "If NPCs are present, this catastrophe fundamentally shakes the relationship."
+    ),
+}
+
+
 def _build_judgment_layer(context, bus, mask: str) -> str:
     judgment = bus.judgment if isinstance(bus.judgment, dict) else {}
     if not judgment.get("active"):
@@ -461,6 +489,12 @@ def _build_judgment_layer(context, bus, mask: str) -> str:
         lines.append("Favorable: " + ", ".join(favorable))
     if against:
         lines.append("Against: " + ", ".join(against))
+
+    # 범용 서사 원칙 (장르 불문)
+    cons_dir = CONSEQUENCE_DIRECTIVES.get(result, "")
+    if cons_dir:
+        lines.append(f"[Consequence] {cons_dir}")
+
     return "\n".join(lines)
 
 
@@ -488,10 +522,28 @@ def _build_atmosphere_layer(context, bus) -> str:
     else:
         parts.append("[평정] COLLAPSING - mind frays; show cost, not hard block.")
 
-    if vigor_val >= 70 and composure_val <= 39:
-        parts.append("[Contrast] Body holds, mind is fragile.")
-    elif composure_val >= 70 and vigor_val <= 39:
-        parts.append("[Contrast] Mind holds, body is failing.")
+    # Named Mixed-State Conditions
+    v_low = vigor_val <= 39      # Stage 2+ (Exhaustion or Collapse)
+    c_low = composure_val <= 39
+
+    if v_low and c_low:
+        parts.append(
+            "[Condition: Desperate] Both body and mind are breaking. "
+            "Show the PC pushing through on sheer will or raw instinct. "
+            "Every action should carry visible strain and cost."
+        )
+    elif vigor_val >= 70 and c_low:
+        parts.append(
+            "[Condition: Reckless] Body is strong but mind falters. "
+            "Show impulsive, unguarded behavior — the PC acts before thinking. "
+            "Physical actions succeed but social judgment slips."
+        )
+    elif composure_val >= 70 and v_low:
+        parts.append(
+            "[Condition: Fragile] Mind is sharp but body fails. "
+            "Show the PC's painful awareness of their physical limits — "
+            "plans they can see but cannot execute."
+        )
 
     if composure_val <= 14:
         parts.append("[NPC Reaction] composure collapse draws concern, avoidance, or exploitation.")
@@ -734,6 +786,10 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> G
     composure_data = mem.get("composure", {"value": 100, "last_delta": 0})
     bus.composure["value"] = composure_data.get("value", 100)
     bus.composure["last_delta"] = composure_data.get("last_delta", 0)
+
+    # Momentum 로드 (이전 턴 판정 결과의 여운)
+    bus.judgment["momentum_carry"] = mem.get("judgment_momentum", 0)
+
     context = GameContext(
         request=RequestData(
             user_input=user_input,
@@ -793,6 +849,13 @@ def sync_from_game_context(channel_id: str, user_id: str, ctx: Any) -> None:
                             "desc": f"{label} 붕괴에서 깨어난 트라우마입니다. 모든 판정에 -5 패널티를 받습니다."
                         })
                     axis_bus.pop("trauma_trigger", None)
+
+        # Momentum 저장 (다음 턴 carry)
+        momentum_next = bus.judgment.get("momentum_next", 0)
+        if momentum_next != 0:
+            mem["judgment_momentum"] = momentum_next
+        else:
+            mem.pop("judgment_momentum", None)
 
         domain_manager.save_participant_data(channel_id, user_id, p_data)
 
