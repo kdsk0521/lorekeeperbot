@@ -57,7 +57,7 @@ _TELESCOPE_BLOCK_PATTERNS = (
 # 5W1H 게이트명 (개별 라인 감지용) + legacy 호환
 _TELESCOPE_GATE_NAMES = (
     "Who", "When", "Where", "When/Where",
-    "What", "Why", "How",
+    "What", "Why", "How", "Craft",
     # legacy gates (이전 형식 잔존 대비)
     "Physics", "Camera", "Cliche", "Hook", "Impersonation",
     "Spatial", "NPC Identity", "CharReason", "TheoryAlign", "GenreCoherence",
