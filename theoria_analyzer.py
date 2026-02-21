@@ -257,7 +257,9 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
     "relief": {"applicable": boolean, "amount": 0-20, "reason": "Korean"}
   }
 - "mental_impact": {"applicable": boolean, "vigor_delta": -35~+20, "composure_delta": -35~+20, "reason": "Korean"}
-- "anomaly_profile": {"trigger": str, "category": "supernatural/psychological/social/environmental/temporal", "intensity": "Low/Mid/High/Extreme", "polarity": "positive/negative/mixed", "perception_type": "veridical/illusory/hallucinatory/delusional/null (Anomalous Experience Framework. In supernatural settings, 'hallucinatory' may be CORRECT. null = no anomaly)", "line": "Korean - 이변의 서사적 묘사 1문장", "reason": "Korean"} | null (null when world event is not appropriate this turn)
+- "anomaly_profile": {"trigger": str, "category": "supernatural/psychological/social/environmental/temporal", "intensity": "Low/Mid/High/Extreme", "polarity": "positive/negative/mixed", "perception_type": "veridical/illusory/hallucinatory/delusional/null (Anomalous Experience Framework. In supernatural settings, 'hallucinatory' may be CORRECT. null = no anomaly)", "line": "Korean - 이변의 서사적 묘사 1문장", "reason": "Korean", "location": "이벤트 발생 장소 (CurrentLocation과 다를 때만. 빈 문자열이면 현재 위치)"} | null (null when world event is not appropriate this turn)
+- "condition_resolved": ["조건 태그 — 서사적으로 해당 조건이 더 이상 세계에 유효하지 않을 때. Active Conditions 참고"]
+- "condition_updates": [{"tag": "조건 태그", "intensity": "새 강도 (Low/Mid/High/Extreme)", "description": "갱신된 상황 묘사 (Korean)"}]
 
 
 ## COGNITIVE ENHANCEMENT
@@ -573,6 +575,29 @@ Evaluate this in flashback_eval field. Check plausibility, passive match, assign
                 lines.append(f"  [{name} {filled}/{segments}] ({mode_kr}) → {threat}")
         return "\n".join(lines)
 
+    @staticmethod
+    def _build_condition_context(channel_id: str) -> str:
+        """활성 조건 현황을 Flash 프롬프트용 텍스트로 변환 (장소별 그룹)."""
+        import domain_manager
+        st_state = domain_manager.get_storyteller_state(channel_id)
+        conditions = st_state.get("active_conditions", [])
+        if not conditions:
+            return "- **Active Conditions**: None"
+        grouped: dict = {}
+        for c in conditions:
+            loc = c.get("location", "") or "Global"
+            grouped.setdefault(loc, []).append(c)
+        lines = ["- **Active Conditions**:"]
+        for loc, conds in grouped.items():
+            lines.append(f"  [{loc}]")
+            for c in conds:
+                tag = c.get("tag", "?")
+                intensity = c.get("intensity", "Mid")
+                polarity = c.get("polarity", "mixed")
+                desc = c.get("description", "")
+                lines.append(f"    - {tag} ({intensity}/{polarity}): {desc}")
+        return "\n".join(lines)
+
     def _build_prompt(self, context: GameContext) -> str:
         """분석 프롬프트 생성"""
         req = context.request
@@ -584,6 +609,7 @@ Evaluate this in flashback_eval field. Check plausibility, passive match, assign
         npc_context = self._build_npc_context(anchors)
         npc_roster = anchors.get("npc_roster", "")
         session_memory_context = self._build_session_memory_context(anchors)
+        channel_id = anchors.get("channel_id", "")
 
         return f"""## ANALYSIS REQUEST
 
@@ -594,6 +620,7 @@ Evaluate this in flashback_eval field. Check plausibility, passive match, assign
 - **Genre**: {req.genres}
 - **Doom (World Tension)**: {bus.doom.get('value', 0)}
 {self._build_clock_context(bus.doom.get('clocks', []))}
+{self._build_condition_context(channel_id)}
 {mental_line}
 
 {pc_section}

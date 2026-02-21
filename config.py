@@ -201,6 +201,13 @@ STORYTELLER_QUEUE_MAX = 5
 STORYTELLER_DIVERSITY_WINDOW = 5
 STORYTELLER_STARVATION_TURNS = 3
 
+# Active Condition (Storyteller v4.1 — Fate Aspect + Location)
+ACTIVE_CONDITION_CAP = 3
+
+# Judgment condition modifier (polarity × intensity → ±mod)
+CONDITION_MOD_SCALE = {"Low": 2, "Mid": 4, "High": 7, "Extreme": 12}
+CONDITION_MOD_CAP = 15
+
 # 기력 Stages (0-100) — PC의 총체적 컨디션 (체력/집중/평판/정신)
 # Key: Stage ID (0-3)
 MENTAL_STAGES = {

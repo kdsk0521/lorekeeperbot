@@ -177,6 +177,22 @@ class WaterfallPipeline:
             if reason:
                 bus.anomaly["reason"] = reason
 
+        # Condition resolved (from Flash analysis)
+        cond_resolved = analysis.get("condition_resolved")
+        if isinstance(cond_resolved, list) and cond_resolved:
+            bus.anomaly["condition_resolved"] = cond_resolved
+
+        # Condition updates — severity transition (from Flash analysis)
+        cond_updates = analysis.get("condition_updates")
+        if isinstance(cond_updates, list) and cond_updates:
+            bus.anomaly["condition_updates"] = cond_updates
+
+        # Event location override (from Flash anomaly_profile)
+        if isinstance(anomaly_profile, dict):
+            event_location = (anomaly_profile.get("location") or "").strip()
+            if event_location:
+                bus.anomaly["location"] = event_location
+
         # Fallback: if no anomaly tag was proposed, pick from lore seeds
         if not bus.anomaly.get("tag"):
             seeds = context.request.lore_summary.get("anomaly_seeds", [])

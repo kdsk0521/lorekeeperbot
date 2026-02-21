@@ -211,6 +211,44 @@ class AnomalyModule:
         current_turn = bus.anomaly.get("_current_turn", 0)
         channel_id = bus.anomaly.get("_channel_id", "")
 
+        # --- Active Condition lifecycle ---
+
+        # 1a. Process condition resolutions (from Flash)
+        condition_resolved = bus.anomaly.pop("condition_resolved", [])
+        if isinstance(condition_resolved, list) and condition_resolved:
+            active_conds = st_state.get("active_conditions", [])
+            resolved_set = set(condition_resolved)
+            before_count = len(active_conds)
+            active_conds = [c for c in active_conds if c.get("tag") not in resolved_set]
+            st_state["active_conditions"] = active_conds
+            resolved_count = before_count - len(active_conds)
+            if resolved_count > 0:
+                bus.anomaly["conditions_resolved_log"] = (
+                    f"🌤️ 조건 해소: {', '.join(condition_resolved[:3])} ({resolved_count}건)"
+                )
+                logger.info("[Storyteller] Conditions resolved: %s", condition_resolved)
+
+        # 1b. Process condition updates — severity transition (from Flash)
+        condition_updates = bus.anomaly.pop("condition_updates", [])
+        if isinstance(condition_updates, list):
+            active_conds = st_state.get("active_conditions", [])
+            for upd in condition_updates:
+                if not isinstance(upd, dict):
+                    continue
+                upd_tag = upd.get("tag", "")
+                if not upd_tag:
+                    continue
+                for cond in active_conds:
+                    if cond.get("tag") == upd_tag:
+                        if upd.get("intensity"):
+                            cond["intensity"] = self._normalize_intensity(upd["intensity"])
+                        if upd.get("description"):
+                            cond["description"] = upd["description"]
+                        logger.info("[Storyteller] Condition updated: %s → %s",
+                                    upd_tag, upd.get("intensity", ""))
+                        break
+            st_state["active_conditions"] = active_conds
+
         # Normalize proposal
         tag = bus.anomaly.get("tag") or ""
         if tag:
@@ -266,6 +304,23 @@ class AnomalyModule:
                     if 0 <= idx < len(queue):
                         queue.pop(idx)
 
+                # Register Active Condition (Fate Aspect + Ironsworn Location)
+                active_conds = st_state.get("active_conditions", [])
+                if len(active_conds) < _cfg.ACTIVE_CONDITION_CAP:
+                    cond_location = bus.anomaly.get("location") or ""
+                    if not cond_location:
+                        cond_location = bus.dai.get("current_location", "") if hasattr(bus, "dai") else ""
+                    active_conds.append({
+                        "tag": selected.get("tag", ""),
+                        "category": selected.get("category", ""),
+                        "intensity": bus.anomaly["intensity"],
+                        "polarity": bus.anomaly["polarity"],
+                        "description": selected.get("line", ""),
+                        "location": cond_location,
+                        "turn_created": current_turn,
+                    })
+                    st_state["active_conditions"] = active_conds
+
                 logger.info("[Storyteller] ACT [%s] cat=%s int=%s pol=%s src=%s reason=%s",
                             bus.anomaly["tag"], bus.anomaly["category"],
                             bus.anomaly["intensity"], bus.anomaly["polarity"],
@@ -300,6 +355,15 @@ class AnomalyModule:
         else:  # skip
             bus.anomaly["triggered"] = False
             logger.info("[Storyteller] skip reason=%s", bus.anomaly.get("decision_reason", ""))
+
+        # Omen: expose top queued event for Main model hint (PbtA Soft Move)
+        queue = st_state.get("event_queue", [])
+        if queue and decision != "act":
+            top = queue[0]
+            bus.anomaly["omen"] = {
+                "tag": top.get("tag", ""),
+                "line": top.get("line", ""),
+            }
 
         # Persist storyteller state
         if channel_id:

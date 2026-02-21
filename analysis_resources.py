@@ -579,6 +579,22 @@ Output: "adaptation_group": ["fear", "betrayal"] (exact English keys from above)
 Provide a 1-sentence Korean hint describing how the PC could defend against this anomaly.
 Base on the theory_basis: e.g. "정신적 연속성을 유지하며 공포에 저항" (Continuum+TMT)
 
+### Active Conditions (Situation Aspects)
+Active conditions are persistent world facts from previous events. They appear in CURRENT STATE grouped by location.
+
+**Resolution**: If a condition is no longer narratively valid (flood waters receded, crisis resolved),
+list its tag in "condition_resolved". Only resolve when the situation has genuinely changed.
+
+**Severity Transition**: If a condition's severity has changed (flood worsening, plague spreading),
+use "condition_updates" to update intensity and/or description. Do NOT resolve and re-create — update in place.
+
+**Location Interaction**: Conditions at the SAME location may interact with each other.
+If co-located conditions combine or transform (e.g., "flooded streets" + "cold snap" → new event "frozen streets"),
+propose the result as a new anomaly_profile event or update existing conditions via condition_updates.
+
+**Location Override**: If an event occurs at a different location from CurrentLocation,
+set "location" in anomaly_profile. Leave empty for events at the current location.
+
 </anomaly_detection>
 """
 

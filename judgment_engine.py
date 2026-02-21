@@ -239,10 +239,31 @@ class JudgmentEngine:
         momentum_mod = max(-10, min(10, momentum_mod))
         bus.judgment["momentum_carry"] = 0  # 1회성 소비
 
+        # 2.8 Condition Modifier (Active Conditions at PC's location)
+        condition_mod = 0
+        _j_ch = (context.narrative_anchors or {}).get("channel_id", "")
+        if _j_ch:
+            import domain_manager as _dm_j
+            _j_st = _dm_j.get_storyteller_state(_j_ch)
+            _j_pc_loc = (bus.dai.get("current_location", "") if isinstance(bus.dai, dict) else "").strip()
+            for _jc in _j_st.get("active_conditions", []):
+                _jc_loc = (_jc.get("location") or "").strip()
+                if _jc_loc and _jc_loc != _j_pc_loc:
+                    continue  # Distant — skip
+                pol = _jc.get("polarity", "mixed")
+                if pol == "mixed":
+                    continue
+                base = _cfg.CONDITION_MOD_SCALE.get(_jc.get("intensity", "Mid"), 4)
+                if pol == "negative":
+                    condition_mod -= base
+                elif pol == "positive":
+                    condition_mod += base
+            condition_mod = max(-_cfg.CONDITION_MOD_CAP, min(_cfg.CONDITION_MOD_CAP, condition_mod))
+
         # 3. Roll Dice
         roll = random.randint(1, 100)
         aspect_mod = self._calculate_aspect_mod(context)
-        final_roll = roll + mental_mod + doom_mod + theory_mod + memo_mod + passive_mod + inv_mod + status_mod + aspect_mod + dai_bonus - dai_penalty + momentum_mod
+        final_roll = roll + mental_mod + doom_mod + theory_mod + memo_mod + passive_mod + inv_mod + status_mod + aspect_mod + dai_bonus - dai_penalty + momentum_mod + condition_mod
         
         # 4. Determine Result
         result = "failure"
@@ -306,6 +327,8 @@ class JudgmentEngine:
             modifications.append({"label": "면모", "value": aspect_mod})
         if momentum_mod != 0:
             modifications.append({"label": "기세", "value": momentum_mod})
+        if condition_mod != 0:
+            modifications.append({"label": "세계상황", "value": condition_mod})
 
         mod_parts = []
         for m in modifications:

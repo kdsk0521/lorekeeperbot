@@ -322,6 +322,42 @@ def _build_events_layer(context, bus) -> str:
             block.append(f"Scene seed: {anomaly.get('line')}")
         parts.append("\n".join(block))
 
+    # Active Conditions (Fate Aspect — persistent world facts, location-aware)
+    _st_state = {}
+    _ch_id = (context.narrative_anchors or {}).get("channel_id", "")
+    if _ch_id:
+        import domain_manager as _dm_ev
+        _st_state = _dm_ev.get_storyteller_state(_ch_id)
+    _all_conds = _st_state.get("active_conditions", [])
+    _pc_loc = (bus.dai.get("current_location", "") if isinstance(bus.dai, dict) else "").strip()
+
+    for cond in _all_conds:
+        cond_loc = (cond.get("location") or "").strip()
+        if not cond_loc or cond_loc == _pc_loc:
+            _tag = cond.get("tag", "?")
+            _desc = cond.get("description", "")
+            _int = cond.get("intensity", "Mid")
+            parts.append(
+                f"[Active: {_tag}] ({_int}) {_desc} — "
+                "This condition is currently true in the world. "
+                "Reflect it in environmental details, NPC behavior, and available actions."
+            )
+
+    # Omen: deferred event hint (PbtA Soft Move)
+    _omen = anomaly.get("omen")
+    if isinstance(_omen, dict) and _omen.get("tag"):
+        _omen_line = _omen.get("line", "")
+        parts.append(
+            f"[Omen: {_omen['tag']}] {_omen_line} — "
+            "Weave subtle foreshadowing into the scene through sensory details only. "
+            "Do NOT trigger this event. Hints only."
+        )
+
+    # Condition resolved feedback
+    _cond_resolved_log = anomaly.get("conditions_resolved_log")
+    if _cond_resolved_log:
+        parts.append(f"[Condition Resolved] {_cond_resolved_log}")
+
     doom = bus.doom if isinstance(bus.doom, dict) else {}
     if doom.get("clock_log"):
         parts.append(f"[Clock Progress] {doom.get('clock_log')}")
@@ -576,6 +612,28 @@ def _build_atmosphere_layer(context, bus) -> str:
             "Resolution must come from PC action, not narrative convenience. "
             "Do NOT hand the PC easy solutions or convenient escapes."
         )
+
+    # Distant conditions — camera is NOT there, tag only (카메라 원칙)
+    _st_atm = {}
+    _ch_atm = (context.narrative_anchors or {}).get("channel_id", "")
+    if _ch_atm:
+        import domain_manager as _dm_atm
+        _st_atm = _dm_atm.get_storyteller_state(_ch_atm)
+    _all_conds_atm = _st_atm.get("active_conditions", [])
+    _pc_loc_atm = (bus.dai.get("current_location", "") if isinstance(bus.dai, dict) else "").strip()
+
+    _distant_tags = []
+    _active_tags = []
+    for _c in _all_conds_atm:
+        _cloc = (_c.get("location") or "").strip()
+        if _cloc and _cloc != _pc_loc_atm:
+            _distant_tags.append(f"[Distant: {_c.get('tag', '?')} @ {_cloc}]")
+        else:
+            _active_tags.append(_c.get("tag", "?"))
+    for _dt in _distant_tags:
+        parts.append(_dt)
+    if _active_tags:
+        parts.append(f"[World Conditions] {', '.join(_active_tags)}")
 
     # ── Task 2b: 서사 공간 디렉티브 (둠 하락 시) ──
     narrative_space = int(_to_float((bus.doom or {}).get("narrative_space", 0), 0))
