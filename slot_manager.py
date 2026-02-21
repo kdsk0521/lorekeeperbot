@@ -382,12 +382,12 @@ class SlotPromptBuilder:
         # BABEL Pidgin→Creole: 라벨을 산문에 그대로 옮기지 말고 필드별 감식 변환
         if npc_roles:
             _pidgin = (
-                "[PIDGIN→CREOLE] NPC profiles below are compressed labels (pidgin). "
-                "Do NOT echo labels into prose. Convert each field type:\n"
-                "- personality → Write PHYSICAL CONSEQUENCE. Adjective becomes action, never stated.\n"
-                "- appearance → Do NOT list in one paragraph. Each trait arrives at a different moment, through a different gaze.\n"
-                "- background → Past exists only as residue in present behavior (hesitation, reflex, avoidance).\n"
-                "- speech/tone → Dialogue itself must PERFORM the pattern. Do not describe it.\n\n"
+                "[PIDGIN→CREOLE] Profiles below = author reference, NOT prose vocabulary.\n"
+                "If a profile word appears as an adjective in your output, you have failed. Transform:\n"
+                "- personality label → physical consequence (behavior, not adjective)\n"
+                "- appearance → arrives piecemeal through different moments/gazes, not listed\n"
+                "- background → residue in present behavior only (hesitation, reflex, avoidance)\n"
+                "- speech/tone → dialogue PERFORMS the pattern. Describing it = narrating the label.\n\n"
             )
             self.set_slot(7, f"<NPC_Roles>\n{_pidgin}{npc_roles}\n</NPC_Roles>")
 
@@ -768,6 +768,21 @@ def build_34_step_prompt(ctx) -> str:
                 + "\n".join(conn_lines)
             )
 
+    # Foreshadowing Guard: ai_memory에 추적된 복선을 ambient fact으로 주입
+    if channel_id:
+        _fs_mem = domain_manager.get_session_ai_memory(channel_id)
+        _foreshadowing = _fs_mem.get("foreshadowing", [])
+        if isinstance(_foreshadowing, list) and _foreshadowing:
+            fs_items = "\n".join(f"- {f}" for f in _foreshadowing[:5] if f)
+            if fs_items:
+                scene_intel_parts.append(
+                    "### Foreshadowing [AMBIENT — DO NOT RESOLVE]\n"
+                    "These seeds exist in the world. They are NOT dramatic promises awaiting payoff.\n"
+                    "Render only as background texture (environmental detail, NPC micro-behavior) — "
+                    "NEVER as climactic reveal or resolution, unless user action directly engages them.\n"
+                    + fs_items
+                )
+
     scene_intelligence = "\n\n".join(scene_intel_parts)
 
     # --- [Slot 17] Extended Intelligence (NPC Knowledge + Intimacy Analysis) ---
@@ -885,6 +900,16 @@ def build_34_step_prompt(ctx) -> str:
             f"conclusion_proximity: {chain_data.get('conclusion_proximity', 'N/A')}"
             f"{silence_tag}"
         )
+        # Anti-Resolution: open threads guard
+        open_threads = chain_data.get("open_threads", [])
+        if isinstance(open_threads, list) and open_threads:
+            thread_list = "\n".join(f"- {t}" for t in open_threads[:5])
+            narrative_chain += (
+                f"\n\n[OPEN THREADS — AMBIENT ONLY]\n"
+                f"These threads are active world forces. Maintain their PRESENCE, not their RESOLUTION.\n"
+                f"Only user action directly engaging a thread may advance or close it.\n"
+                f"{thread_list}"
+            )
 
     # --- [Slot 30] GM Mover ---
     gm_mover = ""

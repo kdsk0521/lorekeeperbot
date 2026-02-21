@@ -138,6 +138,60 @@ def _extract_structured_fields(desc: str) -> Dict[str, str]:
     return fields
 
 
+# Generic labels to exclude from pidgin echo detection
+_LABEL_EXCLUDE = frozenset([
+    "있는", "없는", "하는", "되는", "같은", "다른", "모든", "이런", "그런",
+    "좋은", "나쁜", "큰", "작은", "많은", "적은", "새로운", "오래된",
+])
+
+# Korean adjective-like pattern: 2+ chars ending in typical adjective suffixes
+_KO_ADJ_RE = re.compile(r'[가-힣]{1,6}[운은한적인스러운]')
+
+
+def get_npc_label_keywords(channel_id: str, npc_names: List[str]) -> Dict[str, List[str]]:
+    """NPC personality/tone 필드에서 라벨 키워드를 추출.
+
+    Pidgin Echo 검출용: NPC 프로필의 형용사를 추출하여
+    서술에 그대로 등장하는지 확인할 수 있게 함.
+
+    Returns:
+        {npc_name: [keyword1, keyword2, ...]} max 5 per NPC
+    """
+    npcs = domain_manager.get_npcs(channel_id)
+    if not npcs:
+        return {}
+
+    result = {}
+    for name in npc_names:
+        if not name or name not in npcs:
+            continue
+        data = npcs[name]
+        # Collect text from personality and tone fields
+        sources = []
+        for field in ("personality", "tone"):
+            val = data.get(field, "")
+            if val:
+                sources.append(val)
+
+        if not sources:
+            continue
+
+        combined = " ".join(sources)
+        # Extract Korean adjective-like words
+        keywords = []
+        for m in _KO_ADJ_RE.finditer(combined):
+            word = m.group()
+            if word not in _LABEL_EXCLUDE and word not in keywords:
+                keywords.append(word)
+            if len(keywords) >= 5:
+                break
+
+        if keywords:
+            result[name] = keywords
+
+    return result
+
+
 async def extract_voice_card(client, model_id: str, npc_name: str, profile_text: str) -> str:
     """Flash API로 NPC 음성 카드를 추출. 업로드 시 1회만 호출."""
     if not client or not profile_text or len(profile_text) < 300:

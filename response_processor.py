@@ -364,3 +364,148 @@ def detect_cargo_patterns(response: str) -> str:
         return ""
     labels = ", ".join(matched[:3])
     return f"[CARGO: {labels} — 삭제해도 장면이 잃는 게 없는 문장. 구조적 기능이 있는 문장만 유지하라]"
+
+
+# =========================================================
+# Premature Closure Detection (Anti-Resolution)
+# =========================================================
+
+CLOSURE_PATTERNS = [
+    (re.compile(r'그렇게.{0,10}(?:끝났다|마무리|끝이\s?났)'), "narrative_closure"),
+    (re.compile(r'모든\s?것이.{0,5}(?:해결|끝|풀리)'), "total_resolution"),
+    (re.compile(r'다시\s?(?:평온|평화|고요)[이가해]'), "peace_restored"),
+    (re.compile(r'새로운.{0,5}시작[이을]'), "fresh_start"),
+    (re.compile(r'마침내.{0,10}(?:마무리|끝|해결)'), "finally_resolved"),
+    (re.compile(r'한숨\s?돌릴\s?수\s?있'), "relief_marker"),
+    (re.compile(r'위기[는가].{0,10}(?:지나|넘기|끝)'), "crisis_over"),
+    (re.compile(r'이제.{0,5}(?:괜찮|안전|무사)'), "safety_declaration"),
+    (re.compile(r'(?:사건|문제|갈등)[이가은는].{0,10}(?:봉합|종결|해소)'), "conflict_sealed"),
+]
+
+
+def detect_premature_closure(response: str, conclusion_proximity: int = 50,
+                             open_threads: Optional[List[str]] = None) -> str:
+    """Detect premature narrative closure patterns.
+
+    Gate: If conclusion_proximity >= 70 AND no open threads → legitimate ending, skip.
+    Otherwise, closure language triggers feedback for next turn.
+    """
+    # Gate: legitimate conclusion
+    if conclusion_proximity >= 70 and not open_threads:
+        return ""
+
+    matched = []
+    for pattern, label in CLOSURE_PATTERNS:
+        if pattern.search(response):
+            if label not in matched:
+                matched.append(label)
+
+    if not matched:
+        return ""
+
+    labels = ", ".join(matched[:3])
+    thread_note = ""
+    if open_threads:
+        thread_note = f" open_threads={len(open_threads)}"
+    return (f"[CLOSURE: {labels} — proximity={conclusion_proximity}%{thread_note}. "
+            f"세계의 기본 상태는 미해결이다. 유저가 직접 해결하지 않은 스레드를 닫지 마라]")
+
+
+# =========================================================
+# Sensory Rotation Detection (Cross-Turn Body Part Tracking)
+# =========================================================
+
+def detect_sensory_repetition(response: str,
+                              recent_body_parts: Optional[List[List[str]]] = None
+                              ) -> Tuple[str, List[str]]:
+    """Detect repetitive body part usage across turns.
+
+    Args:
+        response: Current turn response text
+        recent_body_parts: Rolling window of body parts from last N turns
+            e.g. [["심장", "눈"], ["심장", "입술"], ...]
+
+    Returns:
+        (feedback_str, current_turn_parts)
+        - feedback_str: Empty if no repetition detected
+        - current_turn_parts: Body parts found in this turn (for rolling window update)
+    """
+    # Extract body parts from current response
+    current_parts = list(set(_BODY_PARTS_RE.findall(response)))
+
+    if not current_parts:
+        return "", current_parts
+
+    if not recent_body_parts or len(recent_body_parts) < 2:
+        return "", current_parts
+
+    # Find parts repeated across 3 consecutive turns (current + last 2)
+    repeated = []
+    for part in current_parts:
+        consecutive = 0
+        for turn_parts in recent_body_parts[-2:]:  # last 2 turns
+            if part in turn_parts:
+                consecutive += 1
+        if consecutive >= 2:  # present in all 3 turns (last 2 + current)
+            repeated.append(part)
+
+    if not repeated:
+        return "", current_parts
+
+    parts_str = ", ".join(repeated[:3])
+    return (f"[ROTATION: {parts_str} 3턴 연속 — 다른 신체 부위로 감정/상태를 표현하라]",
+            current_parts)
+
+
+# =========================================================
+# Pidgin Echo Detection (NPC Label → Prose Leak)
+# =========================================================
+
+# Dialogue span regex: matches quoted text in various Korean/Unicode quote styles
+_DIALOGUE_SPAN_RE = re.compile(r'["""\u201C\u300C].*?["""\u201D\u300D]')
+
+
+def detect_pidgin_echo(response: str,
+                       npc_label_keywords: Optional[Dict[str, List[str]]] = None) -> str:
+    """Detect NPC personality label keywords echoed verbatim in narrative prose.
+
+    Pidgin Echo = Level 1 in Decompression scale.
+    The label keyword appears as a descriptive adjective in prose (not dialogue).
+
+    Args:
+        npc_label_keywords: {npc_name: [keyword1, keyword2, ...]}
+    """
+    if not npc_label_keywords:
+        return ""
+
+    # Build mask of dialogue spans to exclude
+    dialogue_spans = []
+    for m in _DIALOGUE_SPAN_RE.finditer(response):
+        dialogue_spans.append((m.start(), m.end()))
+
+    def is_in_dialogue(pos: int) -> bool:
+        for ds, de in dialogue_spans:
+            if ds <= pos < de:
+                return True
+        return False
+
+    matched_echoes = []
+    for npc_name, keywords in npc_label_keywords.items():
+        for kw in keywords:
+            if len(kw) < 2:
+                continue
+            # Search for keyword in response as descriptive adjective
+            # Pattern: keyword + optional suffix + space/particle
+            pattern = re.compile(re.escape(kw) + r'[은는한인의]?\s')
+            for m in pattern.finditer(response):
+                if not is_in_dialogue(m.start()):
+                    echo_label = f"{npc_name}:'{kw}'"
+                    if echo_label not in matched_echoes:
+                        matched_echoes.append(echo_label)
+
+    if not matched_echoes:
+        return ""
+
+    echoes_str = ", ".join(matched_echoes[:3])
+    return (f"[PIDGIN: {echoes_str} — NPC 라벨 키워드가 서술에 그대로 등장. "
+            f"행동적 결과로 해압축하라 (Level 3+)]")

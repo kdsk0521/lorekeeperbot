@@ -899,16 +899,50 @@ class OrchestrationService:
                     domain_manager.append_history(channel_id, "Model", response)
                     logger.debug(f"[History] Saved: {user_mask} + Model response ({len(response)} chars)")
 
-                    # 8.5. Dialogue Format Feedback + PC Impersonation + Cliché + Cargo Check (다음 턴 피드백용)
+                    # 8.5. Dialogue Format Feedback + PC Impersonation + Style Detectors (다음 턴 피드백용)
                     fmt_feedback = _check_dialogue_format(response, pc_name=ctx.user_mask or "", user_input=ctx.action_text or "")
-                    from response_processor import detect_cliche_patterns, detect_cargo_patterns
+                    from response_processor import (
+                        detect_cliche_patterns, detect_cargo_patterns,
+                        detect_premature_closure, detect_sensory_repetition, detect_pidgin_echo
+                    )
                     cliche_fb = detect_cliche_patterns(response)
                     cargo_fb = detect_cargo_patterns(response)
-                    style_fb = " ".join(filter(None, [cliche_fb, cargo_fb]))
+
+                    # Closure Detection: narrative_chain에서 proximity/threads 가져옴
+                    _mem_for_fb = domain_manager.get_session_ai_memory(channel_id)
+                    _chain = _mem_for_fb.get("narrative_chain", {})
+                    if isinstance(_chain, dict):
+                        _prox = _chain.get("conclusion_proximity", 50)
+                        try:
+                            _prox = int(str(_prox).replace("%", ""))
+                        except (ValueError, TypeError):
+                            _prox = 50
+                        _threads = _chain.get("open_threads", [])
+                        if not isinstance(_threads, list):
+                            _threads = []
+                    else:
+                        _prox, _threads = 50, []
+                    closure_fb = detect_premature_closure(response, _prox, _threads)
+
+                    # Sensory Rotation: rolling window 3턴
+                    _recent_parts = _mem_for_fb.get("recent_body_parts", [])
+                    if not isinstance(_recent_parts, list):
+                        _recent_parts = []
+                    rotation_fb, _current_parts = detect_sensory_repetition(response, _recent_parts)
+                    # Rolling window 업데이트 (최근 3턴 유지)
+                    _recent_parts.append(_current_parts)
+                    if len(_recent_parts) > 3:
+                        _recent_parts = _recent_parts[-3:]
+
+                    # Pidgin Echo: scene NPC label keywords
+                    _npc_keywords = npc_manager.get_npc_label_keywords(channel_id, scene_npcs) if scene_npcs else {}
+                    pidgin_fb = detect_pidgin_echo(response, _npc_keywords)
+
+                    style_fb = " ".join(filter(None, [cliche_fb, cargo_fb, closure_fb, rotation_fb, pidgin_fb]))
                     if style_fb:
                         fmt_feedback = f"{fmt_feedback} {style_fb}".strip() if fmt_feedback else style_fb
                     domain_manager.update_session_ai_memory(
-                        channel_id, {"format_feedback": fmt_feedback}
+                        channel_id, {"format_feedback": fmt_feedback, "recent_body_parts": _recent_parts}
                     )
                     if fmt_feedback:
                         logger.info(f"[FormatCheck] {fmt_feedback[:80]}")

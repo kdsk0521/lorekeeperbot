@@ -292,6 +292,12 @@ def _build_world_layer(bus) -> str:
         threads = chain.get("open_threads", [])
         if isinstance(threads, list) and threads:
             chain_lines.append("Threads: " + " | ".join(str(t) for t in threads[:3]))
+            # Anti-Resolution: open threads 유지 강제
+            if status == "OPEN" and proximity < 80:
+                chain_lines.append(
+                    "→ These threads persist as world forces. "
+                    "Do NOT close threads the user didn't directly engage this turn."
+                )
         parts.append("\n".join(chain_lines))
 
     qflags = dai.get("quality_flags", {})

@@ -22,7 +22,7 @@ VERSION = "8.0"
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
-MODEL_ID_PRO = "gemini-3-pro-preview"
+MODEL_ID_PRO = "gemini-3.1-pro-preview"
 MODEL_ID_FLASH = "gemini-3-flash-preview"
 MODEL_ID = MODEL_ID_PRO
 
@@ -33,7 +33,7 @@ ANALYSIS_TOP_P = 0.8
 # [Gemini 3] presence_penalty/frequency_penalty not supported - removed
 
 # Generation Parameters - Narrative (Pro/Right Brain)
-NARRATIVE_TEMPERATURE = 1.05
+NARRATIVE_TEMPERATURE = 1.4
 NARRATIVE_TOP_K = 40
 NARRATIVE_TOP_P = 0.95
 NARRATIVE_MAX_OUTPUT_TOKENS = 8192
