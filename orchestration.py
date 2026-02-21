@@ -935,7 +935,8 @@ class OrchestrationService:
                         _recent_parts = _recent_parts[-3:]
 
                     # Pidgin Echo: scene NPC label keywords
-                    _npc_keywords = npc_manager.get_npc_label_keywords(channel_id, scene_npcs) if scene_npcs else {}
+                    _scene_npcs = list(npc_manager.get_scene_npc_names(channel_id))
+                    _npc_keywords = npc_manager.get_npc_label_keywords(channel_id, _scene_npcs) if _scene_npcs else {}
                     pidgin_fb = detect_pidgin_echo(response, _npc_keywords)
 
                     style_fb = " ".join(filter(None, [cliche_fb, cargo_fb, closure_fb, rotation_fb, pidgin_fb]))
