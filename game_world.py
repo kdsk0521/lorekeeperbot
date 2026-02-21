@@ -156,6 +156,17 @@ def _get_doom_description(doom: int) -> str:
     info = get_doom_info(doom)
     return f"{info['emoji']} {info['name']}"
 
+def _get_clock_emoji(clock: dict) -> str:
+    """Clock polarity → emoji prefix."""
+    doom_on = clock.get("doom_on_complete")
+    if doom_on is None or (isinstance(doom_on, (int, float)) and doom_on > 0):
+        return "⏰"   # threat
+    elif doom_on == 0:
+        return "📅"   # timer
+    else:
+        return "⭐"   # opportunity
+
+
 def _format_doom_clocks(world: Dict[str, Any], limit: int = 3) -> str:
     clocks = world.get("doom_clocks", [])
     if not isinstance(clocks, list) or not clocks:
@@ -167,10 +178,11 @@ def _format_doom_clocks(world: Dict[str, Any], limit: int = 3) -> str:
             continue
         if clock.get("resolved"):
             continue
+        emoji = _get_clock_emoji(clock)
         name = clock.get("name", "Unnamed")
         seg = int(clock.get("segments", 4) or 4)
         prog = int(clock.get("filled", clock.get("progress", 0)) or 0)
-        items.append(f"{name} ({prog}/{seg})")
+        items.append(f"{emoji}{name} ({prog}/{seg})")
         if len(items) >= limit:
             break
 

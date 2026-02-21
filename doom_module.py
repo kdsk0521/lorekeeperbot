@@ -16,6 +16,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger("Doom")
 
 
+def _get_doom_stage(doom_val: int) -> int:
+    """Doom value → stage index (0-5)."""
+    if doom_val >= 95: return 5
+    if doom_val >= 80: return 4
+    if doom_val >= 60: return 3
+    if doom_val >= 40: return 2
+    if doom_val >= 20: return 1
+    return 0
+
+
 class DoomModule:
     def __init__(self):
         pass
@@ -36,29 +46,41 @@ class DoomModule:
 
         # 1a. 새 시계 생성
         if isinstance(flash_new, dict) and flash_new.get("name"):
-            new_clock = {
-                "name": flash_new["name"],
-                "segments": int(flash_new.get("segments", 6) or 6),
-                "filled": 0,
-                "tick_mode": str(flash_new.get("tick_mode", "action")).lower(),
-                "source": flash_new.get("source", "narrative"),
-                "threat": flash_new.get("threat", ""),
-                "linked_entity": flash_new.get("linked_entity"),
-                "defense_action": flash_new.get("defense_action", ""),
-                "linked_quest": None,
-                "tags": flash_new.get("tags", []),
-                "turn_created": bus.dai.get("turn_index", 0),
-                "resolved": False,
-            }
-            # 중복 방지 (같은 이름 미해결 시계)
-            existing_names = {c.get("name") for c in clocks if not c.get("resolved")}
-            if new_clock["name"] not in existing_names:
-                clocks.append(new_clock)
-                clock_events.append(
-                    f"NEW: {new_clock['name']} ({new_clock['segments']}seg, {new_clock['tick_mode']})"
-                )
-                # 퀘스트 자동 연결 시도
-                _auto_link_quest_clock(context, new_clock)
+            new_name = flash_new["name"]
+            active_count = sum(1 for c in clocks if not c.get("resolved"))
+            if active_count >= config.DOOM_CLOCK_CAP:
+                clock_events.append(f"⚠️ Cap({config.DOOM_CLOCK_CAP}) — '{new_name}' blocked")
+            else:
+                new_clock = {
+                    "name": new_name,
+                    "segments": int(flash_new.get("segments", 6) or 6),
+                    "filled": 0,
+                    "tick_mode": str(flash_new.get("tick_mode", "action")).lower(),
+                    "source": flash_new.get("source", "narrative"),
+                    "threat": flash_new.get("threat", ""),
+                    "linked_entity": flash_new.get("linked_entity"),
+                    "defense_action": flash_new.get("defense_action", ""),
+                    "doom_on_complete": flash_new.get("doom_on_complete"),
+                    "linked_quest": None,
+                    "tags": flash_new.get("tags", []),
+                    "turn_created": bus.dai.get("turn_index", 0),
+                    "resolved": False,
+                }
+                # Fast-track: pre-fill at high doom
+                if bus.doom.get("value", 0) >= config.DOOM_FAST_TRACK_THRESHOLD:
+                    pre_fill = config.DOOM_FAST_TRACK_FILL.get(new_clock["segments"], 0)
+                    if pre_fill > 0:
+                        new_clock["filled"] = pre_fill
+                        clock_events.append(f"⚡ Fast-track: {new_name} {pre_fill}/{new_clock['segments']}")
+                # 중복 방지 (같은 이름 미해결 시계)
+                existing_names = {c.get("name") for c in clocks if not c.get("resolved")}
+                if new_clock["name"] not in existing_names:
+                    clocks.append(new_clock)
+                    clock_events.append(
+                        f"NEW: {new_clock['name']} ({new_clock['segments']}seg, {new_clock['tick_mode']})"
+                    )
+                    # 퀘스트 자동 연결 시도
+                    _auto_link_quest_clock(context, new_clock)
 
         # 1b. 서사적 해결
         if isinstance(flash_resolved, list):
@@ -79,6 +101,7 @@ class DoomModule:
 
         # ── 2. Flash clock_updates (action/hybrid delta) ────
         mitigation_count = 0
+        flash_updated_names = set()
         if isinstance(flash_updates, list):
             for update in flash_updates:
                 if not isinstance(update, dict):
@@ -92,6 +115,7 @@ class DoomModule:
                         old_filled = int(clock.get("filled", clock.get("progress", 0)) or 0)
                         new_filled = max(0, min(clock["segments"], old_filled + upd_delta))
                         clock["filled"] = new_filled
+                        flash_updated_names.add(name)
                         if new_filled != old_filled:
                             clock_events.append(
                                 f"{name}: {old_filled}→{new_filled}/{clock['segments']}"
@@ -104,19 +128,38 @@ class DoomModule:
         if mitigation_count > 0:
             bus.doom["defense_reward"] = mitigation_count * config.CLOCK_MITIGATE_REWARD
 
-        # ── 3. Time/Hybrid 자동 틱 ──────────────────────────
+        # ── 3. Time/Hybrid 자동 틱 (Escalation + Deceleration) ──
+        doom_stage = _get_doom_stage(bus.doom.get("value", 0))
+        extra_tick = config.DOOM_CLOCK_ACCELERATION.get(doom_stage, 0)
+        turn_idx = bus.dai.get("turn_index", 0)
+
         for clock in clocks:
             if clock.get("resolved"):
                 continue
             tick_mode = str(clock.get("tick_mode", "action")).lower()
-            if tick_mode in ("time", "hybrid"):
+            clock_name = clock.get("name", "")
+
+            should_auto_tick = False
+            if tick_mode == "time":
+                should_auto_tick = True
+            elif tick_mode == "hybrid" and clock_name not in flash_updated_names:
+                should_auto_tick = True  # Flash가 안 건드린 hybrid만
+
+            # Deceleration: stage 0에서 2턴에 1번
+            if should_auto_tick and doom_stage <= config.DOOM_DECELERATION_STAGE:
+                if turn_idx % 2 != 0:
+                    should_auto_tick = False
+
+            if should_auto_tick:
                 segments = int(clock.get("segments", 4) or 4)
                 old_filled = int(clock.get("filled", clock.get("progress", 0)) or 0)
-                new_filled = min(segments, old_filled + 1)
+                tick_amount = 1 + extra_tick
+                new_filled = min(segments, old_filled + tick_amount)
                 if new_filled != old_filled:
                     clock["filled"] = new_filled
+                    suffix = f" (accel +{extra_tick})" if extra_tick else ""
                     clock_events.append(
-                        f"{clock.get('name', '?')}: {old_filled}→{new_filled}/{segments} (auto)"
+                        f"{clock_name}: {old_filled}→{new_filled}/{segments} (auto{suffix})"
                     )
 
         # ── 4. 완성 체크 → 글로벌 둠 상승 ───────────────────
@@ -128,14 +171,21 @@ class DoomModule:
             filled = int(clock.get("filled", clock.get("progress", 0)) or 0)
             if filled >= segments:
                 clock["resolved"] = True
-                complete_doom = config.CLOCK_COMPLETE_DOOM.get(segments, 15)
+                # Polarity: doom_on_complete overrides default
+                custom_doom = clock.get("doom_on_complete")
+                if custom_doom is not None:
+                    complete_doom = int(custom_doom)
+                else:
+                    complete_doom = config.CLOCK_COMPLETE_DOOM.get(segments, 15)
                 delta += complete_doom
                 completed_this_turn.append(clock)
-                clock_events.append(f"COMPLETE: {clock.get('name', '?')} (+{complete_doom} doom)")
-                # 연결된 퀘스트 자동 실패
-                linked_quest = clock.get("linked_quest")
-                if linked_quest:
-                    _fail_linked_quest(context, linked_quest, clock.get("name", "?"))
+                sign = f"+{complete_doom}" if complete_doom > 0 else str(complete_doom)
+                clock_events.append(f"COMPLETE: {clock.get('name', '?')} ({sign} doom)")
+                # 연결된 퀘스트 자동 실패 (위협 시계만)
+                if complete_doom > 0:
+                    linked_quest = clock.get("linked_quest")
+                    if linked_quest:
+                        _fail_linked_quest(context, linked_quest, clock.get("name", "?"))
 
         # ── 4b. Status severity → doom_impact ─────────────────
         from game_character import normalize_status_effects
@@ -214,8 +264,8 @@ def _auto_link_quest_clock(context: "GameContext", clock: dict) -> None:
             if not isinstance(quest, dict):
                 continue
             quest_name = quest.get("content", "").strip().lower()
-            # 퍼지 매칭: 시계 이름이 퀘스트에 포함되거나 그 반대
-            if clock_name in quest_name or quest_name in clock_name:
+            # 퍼지 매칭: 시계 이름이 퀘스트에 포함 (단방향 — 퀘스트가 상위 개념)
+            if clock_name in quest_name:
                 clock["linked_quest"] = quest.get("content", "")
                 quest["linked_clock"] = clock.get("name", "")
                 game_character._save_board(channel_id, board)

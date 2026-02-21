@@ -559,6 +559,24 @@ def _build_atmosphere_layer(context, bus) -> str:
         stage_emoji = doom_info.get("emoji", "")
         parts.append(f"[Tension] {stage_emoji}{stage_name} ({doom_val}%)")
 
+    # Pacing directive based on doom stage
+    if doom_val < 20:
+        parts.append(
+            "[Pacing: Breathing] The world is calm and clocks advance slowly. "
+            "Use this space for character depth, relationships, and quiet moments. "
+            "Let the PC enjoy what they've earned. "
+            "Plant subtle seeds — sensory details, NPC remarks, environmental shifts — "
+            "that may or may not become relevant later. Do NOT resolve existing tensions."
+        )
+    elif doom_val >= 80:
+        parts.append(
+            "[Pacing: Converging] The world accelerates. Unresolved threats compound. "
+            "New dangers arrive already in motion. Show mounting urgency through "
+            "environmental details and NPC behavior. "
+            "Resolution must come from PC action, not narrative convenience. "
+            "Do NOT hand the PC easy solutions or convenient escapes."
+        )
+
     # ── Task 2b: 서사 공간 디렉티브 (둠 하락 시) ──
     narrative_space = int(_to_float((bus.doom or {}).get("narrative_space", 0), 0))
     if narrative_space > 0:

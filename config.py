@@ -242,6 +242,25 @@ CROSS_AXIS_CASCADE = {
     3: -5,   # Collapse — severe drain on other axis
 }
 
+# Doom Clock Pacing: stage → extra auto-tick for time/hybrid clocks
+DOOM_CLOCK_ACCELERATION = {
+    0: 0,  # 평온 — decelerated (half-speed, handled by turn parity)
+    1: 0,  # 불안 — normal
+    2: 0,  # 경계 — normal
+    3: 0,  # 위험 — normal (서사적 긴장은 높지만 기계적 가속 없음)
+    4: 1,  # 임계 — world accelerates (+2 total auto-tick)
+}
+
+# Deceleration: stage 0에서 time/hybrid 시계 2턴에 1번 tick
+DOOM_DECELERATION_STAGE = 0
+
+# Fast-Track: new clocks start pre-filled at high doom (stage 4+)
+DOOM_FAST_TRACK_THRESHOLD = 80
+DOOM_FAST_TRACK_FILL = {4: 1, 6: 2, 8: 3}  # segments → initial filled
+
+# Clock cap: max active (unresolved) clocks
+DOOM_CLOCK_CAP = 5
+
 # =========================================================
 # Quest Manager Constants
 # =========================================================
