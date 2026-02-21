@@ -325,7 +325,8 @@ async def generate_response_with_retry(
 
             response_text = None
             if response.text:
-                response_text = response.text
+                # Telescope V2: prefill은 response.text에 미포함 → 수동 결합
+                response_text = (prefill + response.text) if prefill else response.text
             else:
                 # content.parts 직접 확인
                 # candidate = response.candidates[0] # Already defined above
@@ -334,11 +335,17 @@ async def generate_response_with_retry(
                     if parts:
                         text_parts = [p.text for p in parts if hasattr(p, 'text') and p.text]
                         if text_parts:
-                            response_text = "".join(text_parts)
+                            raw = "".join(text_parts)
+                            response_text = (prefill + raw) if prefill else raw
                             logging.info(f"[시도 {attempt+1}] parts에서 텍스트 복구: {len(response_text)}자")
 
 
             if response_text:
+                # Telescope 디버그: 프리필 결합 후 블록 존재 확인
+                if prefill:
+                    _has_open = "┣" in response_text
+                    _has_close = "┫" in response_text
+                    logging.info(f"[Telescope Debug] prefill={len(prefill)}chars, ┣={_has_open}, ┫={_has_close}, response_start={response_text[:80]!r}")
                 # 1. BKSPC 및 사칭 필터 적용
                 # filter_pc_impersonation internally calls process_bkspc
                 clean_text, violations = filter_pc_impersonation(response_text, pc_names or [])
