@@ -356,20 +356,19 @@ async def generate_response_with_retry(
                     violation_types = ", ".join(set(v['type'] for v in violations))
                     logging.warning(f"[Impersonation] 검출됨 ({violation_types}): 필터 적용 후 통과")
 
-                # 3. 텔레스코프 잔존 검사 → 3-레이어 스트립 + 재시도
-                from orchestration_response import strip_telescope, has_telescope_content
-                if has_telescope_content(clean_text):
-                    clean_text = strip_telescope(clean_text)
-                    if has_telescope_content(clean_text) and attempt < config.MAX_RETRY_COUNT - 1:
-                        logging.warning(f"[Telescope Leak] 3-레이어 스트립 후에도 잔존: 재시도 {attempt + 1}")
+                # 3. 텔레스코프: 정식 파싱/제거는 orchestration_response.py에서 수행
+                # 여기서는 블록이 깨진 경우(┣ 열고 ┫ 안 닫음)만 재시도
+                if prefill and "┣" in clean_text and "┫" not in clean_text:
+                    if attempt < config.MAX_RETRY_COUNT - 1:
+                        logging.warning(f"[Telescope] ┣ 열었으나 ┫ 미닫힘: 재시도 {attempt + 1}")
                         full_input = (
                             f"{user_input}\n\n"
-                            f"⚠️ **[FORMAT WARNING]** The ┣...┫ telescope block must appear ONLY at the very start "
-                            f"and must be properly closed. Write prose AFTER the ┫ marker.\n"
+                            f"⚠️ **[FORMAT WARNING]** The ┣...┫ telescope block must be properly closed with ┫. "
+                            f"Write prose AFTER the ┫ marker.\n"
                             f"{hidden_reminder}"
                         )
                         continue
-                    response_length = len(clean_text)
+                response_length = len(clean_text)
 
                 # 4. 길이 검사
                 if response_length >= min_length:
