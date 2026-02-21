@@ -314,3 +314,53 @@ def detect_cliche_patterns(response: str) -> str:
         return ""
     labels = ", ".join(matched[:3])
     return f"[CLICHE: {labels} — replace with concrete sensory detail]"
+
+
+# =========================================================
+# Cargo Cult Pattern Detection (BABEL Axis IV)
+# "Delete the sentence — does the scene lose anything?"
+# =========================================================
+
+CARGO_PATTERNS = [
+    # 날씨=감정 동기화 (비+슬픔, 어둠+우울, 바람+쓸쓸)
+    (re.compile(r'비[가이]?\s*.{0,20}(?:슬[프픔펐]|우울|눈물|울[고었])'), "weather_emotion"),
+    (re.compile(r'(?:어두[운움]|잿빛|먹구름).{0,15}(?:마음|기분|심정|우울)'), "weather_emotion"),
+    (re.compile(r'(?:햇[빛살]|맑[은게]).{0,15}(?:기분|마음|행복|밝[아은])'), "weather_emotion"),
+    (re.compile(r'바람[이이]?\s*.{0,15}(?:쓸쓸|외[로롭]|허전)'), "weather_emotion"),
+    # 감정 라벨 직접 서술 (showing이 아닌 telling)
+    (re.compile(r'(?:그녀는|그는|그가|그녀가)\s*(?:슬[펐프]|기[뻤쁜]|행복[했한]|두려[웠운]|불안[했한])'), "emotion_label"),
+    (re.compile(r'(?:두려움|공포|슬픔|기쁨|분노|혐오)[이가]\s*(?:밀려|엄습|찾아|몰려)'), "emotion_label_wave"),
+    # 감정 벽지형 날씨 (마치 ~처럼, ~인 듯, ~을 대변하듯)
+    (re.compile(r'(?:마치|인 듯|대변하듯|반영하듯).{0,20}(?:하늘|날씨|비|바람|구름)'), "pathetic_fallacy"),
+]
+
+# 문단 내 신체반응 동시 나열 탐지용
+_BODY_PARTS_RE = re.compile(r'(?:심장|가슴|호흡|숨|손[이가]|손가락|눈[이가]|눈동자|입술|턱|어깨|등[이가을]|목[이가]|다리|발[이가])')
+
+
+def detect_cargo_patterns(response: str) -> str:
+    """Detect Cargo Cult patterns in response and return feedback string.
+
+    Cargo Cult: sentences that look like 'good writing' but add nothing structural.
+    Test: delete the sentence — does the scene lose anything concrete?
+    """
+    matched = []
+
+    # Pattern-based detection
+    for pattern, label in CARGO_PATTERNS:
+        if pattern.search(response):
+            if label not in matched:
+                matched.append(label)
+
+    # Paragraph-level: reaction catalog (4+ distinct body parts in one paragraph)
+    paragraphs = response.split('\n\n')
+    for para in paragraphs:
+        if para.strip():
+            body_hits = set(_BODY_PARTS_RE.findall(para))
+            if len(body_hits) >= 4 and "reaction_catalog" not in matched:
+                matched.append("reaction_catalog")
+
+    if not matched:
+        return ""
+    labels = ", ".join(matched[:3])
+    return f"[CARGO: {labels} — 삭제해도 장면이 잃는 게 없는 문장. 구조적 기능이 있는 문장만 유지하라]"

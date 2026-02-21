@@ -263,17 +263,26 @@ async def generate_response_with_retry(
     chat_session: ChatSessionAdapter,
     user_input: str,
     pc_names: Optional[List[str]] = None,
-    player_count: int = 1
+    player_count: int = 1,
+    telescope_prefill: str = ""
 ) -> str:
     """
     재시도 로직을 포함하여 응답을 생성합니다.
     [Anti-Gravity Update]
     - BKSPC 자가 교정 처리
     - PC 사칭 실시간 탐지 및 자동 재시도
+
+    [Telescope V2]
+    - telescope_prefill이 있으면 모델 응답이 ┣ 블록으로 시작하도록 강제
+    - 모델은 [What][Why][How]를 채운 뒤 ┫ 닫고 산문으로 전환
     """
     max_chars = config.get_narrative_char_limit(player_count)
     min_length = int(max_chars * 0.6)  # 최대의 60%를 최소 기준으로
-    prefill = getattr(text_resources, 'NARRATIVE_PREFILL', '')
+    # Telescope V2: prefill이 CoT 블록으로 시작하여 스킵 불가
+    if telescope_prefill:
+        prefill = telescope_prefill
+    else:
+        prefill = getattr(text_resources, 'NARRATIVE_PREFILL', '')
 
     hidden_reminder = (
         "\n\n(System Reminder: Record observable Macroscopic States only. "

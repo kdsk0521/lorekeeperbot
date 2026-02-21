@@ -628,10 +628,13 @@ The mental_impact delta is distributed to PC's Vigor and Composure axes based on
 **Negative**: Violence witnessed (-5~15) | Personal threat (-5~10) | Supernatural (-10~20) | Loss (-15~25) | Moral violation (-10~20) | Betrayal (-10~20) | Torture (-15~35)
 **Positive**: Rest/safety (+5~10) | Social connection (+5~10) | Achievement (+5~15) | NPC comfort (+5~10)
 
-### Doom Clocks (Situation Clocks)
-You receive active doom clocks in CURRENT STATE. Your job:
-1. **clock_updates**: If player action advances or hinders an action/hybrid clock, output delta (+1 for progress, -1 for mitigation). Do NOT update time-mode clocks (auto-ticked by code). Only update clocks whose threat is directly affected by the current action.
-2. **clock_new**: If the narrative creates a NEW threat with clear deadline and consequences, propose a clock. Use 4 segments (urgent/imminent), 6 (standard), 8 (long-term). Set tick_mode: "action" if only player actions drive it, "time" if it advances every turn regardless, "hybrid" if both. Do NOT create clocks for minor events — only NAMED threats with CONSEQUENCES if unaddressed.
+### Doom Clocks (Situation Clocks — Offense/Defense)
+Doom clocks represent world threats advancing against the player. You receive active clocks in CURRENT STATE. Your job:
+1. **clock_updates** (Offense/Defense):
+   - **Escalation (+1~+2)**: Player action worsens a clock's threat, or player ignores an urgent clock while acting elsewhere.
+   - **Mitigation (-1)**: Player action DIRECTLY addresses a clock's threat. Check the clock's 방어 hint — if the player's action aligns with it, output delta -1. General caution or avoidance is NOT mitigation; the action must specifically target the threat.
+   - Do NOT update time-mode clocks (auto-ticked by code). Only update clocks whose threat is directly affected.
+2. **clock_new**: If the narrative creates a NEW threat with clear deadline and consequences, propose a clock. Use 4 segments (urgent/imminent), 6 (standard), 8 (long-term). Set tick_mode: "action" if only player actions drive it, "time" if it advances every turn regardless, "hybrid" if both. Include defense_action: a concrete hint about what the player can do to counter this threat. Do NOT create clocks for minor events — only NAMED threats with CONSEQUENCES if unaddressed.
 3. **clock_resolved**: If a clock's threat is narratively neutralized (e.g. the threatening force is destroyed/pacified), list its name. Do NOT resolve clocks for partial mitigation — only full resolution.
 4. **relief**: Same as before — doom reduction from narrative resolution (separate from clock resolution).
 </doom_mental_tracking>

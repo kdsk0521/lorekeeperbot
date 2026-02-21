@@ -899,12 +899,14 @@ class OrchestrationService:
                     domain_manager.append_history(channel_id, "Model", response)
                     logger.debug(f"[History] Saved: {user_mask} + Model response ({len(response)} chars)")
 
-                    # 8.5. Dialogue Format Feedback + PC Impersonation + Cliché Check (다음 턴 피드백용)
+                    # 8.5. Dialogue Format Feedback + PC Impersonation + Cliché + Cargo Check (다음 턴 피드백용)
                     fmt_feedback = _check_dialogue_format(response, pc_name=ctx.user_mask or "", user_input=ctx.action_text or "")
-                    from response_processor import detect_cliche_patterns
+                    from response_processor import detect_cliche_patterns, detect_cargo_patterns
                     cliche_fb = detect_cliche_patterns(response)
-                    if cliche_fb:
-                        fmt_feedback = f"{fmt_feedback} {cliche_fb}".strip() if fmt_feedback else cliche_fb
+                    cargo_fb = detect_cargo_patterns(response)
+                    style_fb = " ".join(filter(None, [cliche_fb, cargo_fb]))
+                    if style_fb:
+                        fmt_feedback = f"{fmt_feedback} {style_fb}".strip() if fmt_feedback else style_fb
                     domain_manager.update_session_ai_memory(
                         channel_id, {"format_feedback": fmt_feedback}
                     )

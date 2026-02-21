@@ -252,12 +252,12 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
 - "time_flow": {"ticks": 1-20, "reason": "Korean"}
 - "doom_clocks": {
     "clock_updates": [{"name": str, "delta": int(-1~+2), "reason": "Korean"}],
-    "clock_new": {"name": "Korean", "segments": 4|6|8, "tick_mode": "action|time|hybrid", "threat": "Korean — 이 시계가 완성되면 무슨 일이 벌어지는가", "source": "narrative|consequence", "linked_entity": "str or null — 관련 NPC/세력 이름", "tags": ["Korean"]} | null,
+    "clock_new": {"name": "Korean", "segments": 4|6|8, "tick_mode": "action|time|hybrid", "threat": "Korean — 이 시계가 완성되면 무슨 일이 벌어지는가", "defense_action": "Korean — 이 시계를 막으려면 무엇을 해야 하는가 (구체적 행동 힌트)", "source": "narrative|consequence", "linked_entity": "str or null — 관련 NPC/세력 이름", "tags": ["Korean"]} | null,
     "clock_resolved": ["시계 이름 — 서사적으로 위협이 해소된 경우만"],
     "relief": {"applicable": boolean, "amount": 0-20, "reason": "Korean"}
   }
 - "mental_impact": {"applicable": boolean, "vigor_delta": -35~+20, "composure_delta": -35~+20, "reason": "Korean"}
-- "anomaly_profile": {"trigger": str, "category": "supernatural/psychological/social/environmental/temporal", "intensity": "Low/Mid/High/Extreme", "polarity": "positive/negative/mixed", "disruption_axis": "vigor/composure/both (which PC resource axis this anomaly disrupts — Horror/Action→vigor, Romance/Social→composure, Extreme→both)", "adaptation_group": ["1-3 items from ADAPTATION_TAXONOMY: undead/dragon/eldritch/cursed/spirit/divine/demonic/shapeshifter/fear/deception/exposure/betrayal/madness/guilt/obsession/encounter/jealousy/intimacy/separation/rivalry/loyalty/timing/cascade/authority/environment/resource/crowd/evidence/surveillance/leak/secret/misinformation"], "theory_basis": "str — 방어에 적용되는 이론 (e.g. 'Continuum+TMT', 'Nunchi+Chaemyeon', 'Prospect+BATNA')", "defense_hint": "str — 이 이변에 대한 방어 힌트 1문장 (Korean)", "perception_type": "veridical/illusory/hallucinatory/delusional/null (Anomalous Experience Framework. In supernatural settings, 'hallucinatory' may be CORRECT. null = no anomaly)", "line": "Korean - 이변의 서사적 묘사 1문장", "reason": "Korean"}
+- "anomaly_profile": {"trigger": str, "category": "supernatural/psychological/social/environmental/temporal", "intensity": "Low/Mid/High/Extreme", "polarity": "positive/negative/mixed", "perception_type": "veridical/illusory/hallucinatory/delusional/null (Anomalous Experience Framework. In supernatural settings, 'hallucinatory' may be CORRECT. null = no anomaly)", "line": "Korean - 이변의 서사적 묘사 1문장", "reason": "Korean"} | null (null when world event is not appropriate this turn)
 
 
 ## COGNITIVE ENHANCEMENT
@@ -287,6 +287,14 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
         "deception_cues": "str or null (Statement Analysis/SCAN: pronoun_shift/tense_shift/time_gap/over_detail/emotion_misplace. null = no deception detected)"
     }
   }
+- "trait_connections": {
+    "NpcName": {
+        "trait_pair": "trait_A × trait_B (the two profile traits being connected this turn)",
+        "primary_link": "Korean - 가장 뻔한 첫 번째 연결 (highest probability, most cliché)",
+        "deflection": "Korean - 굴절/복합/역전 방향. Primary를 피하는 대안적 해석",
+        "render_hint": "Korean - 이 장면에서의 렌더링 힌트 1문장"
+    }
+  } | null (null when no NPC traits are being actively expressed this turn)
 
 
 ## SAFETY & QUALITY
@@ -465,9 +473,8 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
             lines = []
             for s in seeds:
                 name = s.get("name", "?")
-                axis = s.get("axis", "?")
-                groups = s.get("adaptation_group", [])
-                lines.append(f"- {name} (axis:{axis}, groups:{groups})")
+                tags = s.get("tags", [])
+                lines.append(f"- {name} (tags:{tags})" if tags else f"- {name}")
             return "\n" + "\n".join(lines)
         return ", ".join(str(s) for s in seeds)
 
@@ -559,7 +566,11 @@ Evaluate this in flashback_eval field. Check plausibility, passive match, assign
                 str(c.get("tick_mode", "")).lower(), "행동")
             threat = c.get("threat", "")
             name = c.get("name", "?")
-            lines.append(f"  [{name} {filled}/{segments}] ({mode_kr}) → {threat}")
+            defense = c.get("defense_action", "")
+            if defense:
+                lines.append(f"  [{name} {filled}/{segments}] ({mode_kr}) → {threat} | 방어: {defense}")
+            else:
+                lines.append(f"  [{name} {filled}/{segments}] ({mode_kr}) → {threat}")
         return "\n".join(lines)
 
     def _build_prompt(self, context: GameContext) -> str:

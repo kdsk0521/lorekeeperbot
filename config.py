@@ -129,6 +129,10 @@ DOOM_CLIMAX_THRESHOLD = 95  # Stage 5 진입 기준 (doom ≥ 95)
 CLOCK_COMPLETE_DOOM = {4: 10, 6: 15, 8: 20}  # segments → global doom 상승
 CLOCK_RESOLVE_DOOM = {4: -5, 6: -10, 8: -15}  # segments → global doom 하강 (해결 시)
 
+# Clock Defense Rewards (→ primary vigor/composure axis)
+CLOCK_MITIGATE_REWARD = 1           # 시계 1칸 감소당 기력/평정 +1
+CLOCK_RESOLVE_REWARD = {4: 2, 6: 3, 8: 5}  # 시계 해결 시 segments별 보상
+
 JUDGMENT_DOOM_DELTA = {
     "critical_failure": 5,
     "failure": 2,
@@ -154,9 +158,10 @@ FRESH_THRESHOLD = 50  # 히스토리 50개 초과 시 발효 트리거
 # =========================================================
 # V7 Core Systems: Mental, Doom, Abnormal
 # =========================================================
-ABNORMAL_MIN_PROB = 10
-ABNORMAL_DOOM_COEFF = 0.5  # Prob = max(MIN, Doom * 0.5)
-ANOMALY_BASE_CHANCE = 15.0  # v3: fixed trigger chance (doom-independent)
+# Storyteller (World Initiative) Constants
+STORYTELLER_QUEUE_MAX = 5
+STORYTELLER_DIVERSITY_WINDOW = 5
+STORYTELLER_STARVATION_TURNS = 3
 
 # 기력 Stages (0-100) — PC의 총체적 컨디션 (체력/집중/평판/정신)
 # Key: Stage ID (0-3)
@@ -300,15 +305,27 @@ DEFAULT_WORLD_STATE = {
     "last_temporal_context": {},
     "doom_clocks": [],
     "turn_index": 0,
+    "storyteller": {
+        "last_event_turn": 0,
+        "recent_categories": [],
+        "recent_tags": [],
+        "event_queue": [],
+        "total_events_fired": 0,
+    },
 }
 
 # =========================================================
 # Simulation Constants (Restored)
 # =========================================================
 
-# Anomaly / Doom Equilibrium Settings
-ANOMALY_TRIGGER_CHANCE_MULTIPLIER = 1.0 # Doom * 1.0 = % Chance
-ANOMALY_DOOM_COST = -3 # Tension Release when Anomaly occurs
+# Storyteller Scene-Type Allowed Categories
+STORYTELLER_SCENE_CATEGORIES = {
+    "normal": None,  # None = all allowed
+    "combat": set(),  # empty = skip all events during combat
+    "social": {"social", "environmental", "temporal"},
+    "exploration": {"supernatural", "environmental", "temporal"},
+    "rest": {"environmental"},
+}
 
 STATUS_EFFECTS = {
     # Debuffs (Severity 1-3)

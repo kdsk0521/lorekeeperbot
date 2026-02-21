@@ -134,11 +134,12 @@ class SharedBus:
         "clocks": []
     })
     anomaly: Dict[str, Any] = field(default_factory=lambda: {
-        "active": False, "triggered": False, "potential": False, "narrative_hook": ""
+        "active": False, "triggered": False, "potential": False,
+        "tag": "", "category": "", "intensity": "", "polarity": "",
+        "line": "", "source": "", "decision": "", "decision_reason": "",
     })
     vigor: Dict[str, Any] = field(default_factory=lambda: {
         "active": False, "value": 0, "delta": 0, "last_delta": 0,
-        "adaptation": {}, "adaptation_update": {},
         "impact": {}, "rest_eval": None, "rest_log": "",
         "judgment_emotion": 0, "trauma_trigger": False, "log": ""
     })

@@ -119,6 +119,7 @@ def add_quest(channel_id: str, content: str, rank: str = None) -> str:
         "progress": 0,
         "max_progress": settings["max_progress"],
         "linked_clock": None,
+        "last_progress_turn": 0,
     }
     active.append(quest_obj)
     board["active"] = active
@@ -140,6 +141,13 @@ def advance_quest_progress(channel_id: str, content: str, delta: int = 1) -> str
     old_progress = target["progress"]
     target["progress"] = max(0, min(target["max_progress"], old_progress + delta))
     new_progress = target["progress"]
+    # Track last progress turn for stale quest detection
+    try:
+        import domain_manager
+        ws = domain_manager.get_world_state(channel_id)
+        target["last_progress_turn"] = ws.get("turn_index", 0)
+    except Exception:
+        pass
     bar = get_quest_progress_bar(new_progress, target["max_progress"])
 
     if new_progress >= target["max_progress"]:

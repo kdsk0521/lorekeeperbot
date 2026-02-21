@@ -136,16 +136,13 @@ def _build_telescope_prefill(dai: dict, real_time_data: str) -> str:
         if observation:
             parts.append(f"[When/Where] (from observation) {observation[:150]}")
 
-    # 모델이 채울 추론 게이트
-    parts.append("[What] (trace: input→trigger→mechanism→outcome)")
-    parts.append("[Why] (per NPC: want|know|can→do)")
-    parts.append("[How] (POV→senses|punctum|sealed=PC)")
-
-    if len(parts) < 2:
-        # Who/When/Where 둘 다 없으면 프리필 의미 없음
+    if len(parts) < 1:
+        # Who/When/Where 하나도 없으면 프리필 의미 없음
         return ""
 
-    return "Pre-filled reasoning scaffold:\n┣\n" + "\n".join(parts) + "\n┫"
+    # V2: 프리필은 [Who][When/Where]까지만. 모델이 [What][Why][How]+┫를 채운 뒤 산문.
+    # ┫를 닫지 않아야 모델이 추론 게이트를 실제로 수행함.
+    return "┣\n" + "\n".join(parts) + "\n"
 
 
 # =========================================================
@@ -369,15 +366,30 @@ class SlotPromptBuilder:
 
         # ===== WORLD ZONE (6-9) =====
         # [6] PC Data (솔로: Player_Character, 다인: Player_Characters)
+        # BABEL Discovery Protocol: PC 정보는 작가 참조용. NPC는 관찰로만 발견.
         if player_data:
+            _discovery = (
+                "[DISCOVERY PROTOCOL] This is AUTHOR REFERENCE — not character knowledge.\n"
+                "NPCs discover PC traits ONLY through: direct observation, shared dialogue, behavioral inference.\n"
+                "Do NOT 'download' profile data into NPC perception. Unobserved traits remain invisible.\n\n"
+            )
             if "\n---\n" in player_data:
-                self.set_slot(6, f"<Player_Characters>\n{player_data}\n</Player_Characters>")
+                self.set_slot(6, f"<Player_Characters>\n{_discovery}{player_data}\n</Player_Characters>")
             else:
-                self.set_slot(6, f"<Player_Character>\n{player_data}\n</Player_Character>")
+                self.set_slot(6, f"<Player_Character>\n{_discovery}{player_data}\n</Player_Character>")
 
         # [7] NPC Roles
+        # BABEL Pidgin→Creole: 라벨을 산문에 그대로 옮기지 말고 필드별 감식 변환
         if npc_roles:
-            self.set_slot(7, f"<NPC_Roles>\n{npc_roles}\n</NPC_Roles>")
+            _pidgin = (
+                "[PIDGIN→CREOLE] NPC profiles below are compressed labels (pidgin). "
+                "Do NOT echo labels into prose. Convert each field type:\n"
+                "- personality → Write PHYSICAL CONSEQUENCE. Adjective becomes action, never stated.\n"
+                "- appearance → Do NOT list in one paragraph. Each trait arrives at a different moment, through a different gaze.\n"
+                "- background → Past exists only as residue in present behavior (hesitation, reflex, avoidance).\n"
+                "- speech/tone → Dialogue itself must PERFORM the pattern. Do not describe it.\n\n"
+            )
+            self.set_slot(7, f"<NPC_Roles>\n{_pidgin}{npc_roles}\n</NPC_Roles>")
 
         # [8] Lore
         if lore:
@@ -498,6 +510,25 @@ class SlotPromptBuilder:
             if content:
                 parts.append(content)
         return "\n\n".join(parts)
+
+
+# =========================================================
+# Helper: Quest Directive
+# =========================================================
+
+def _prepend_quest_directive(obj_ctx: str) -> str:
+    """퀘스트 컨텍스트 앞에 체호프의 총 방지 원칙을 추가."""
+    if not obj_ctx:
+        return obj_ctx
+    quest_directive = (
+        "[QUEST ≠ CHEKHOV'S GUN]\n"
+        "퀘스트는 서사적 약속이 아니라 세계에 존재하는 가능성이다.\n"
+        "- 유저의 DO(현재 행동)만 서사에 반영. WANT(퀘스트)를 DO로 끌어올리지 마라\n"
+        "- 유저가 퀘스트와 무관한 행동을 하면 퀘스트를 언급하지 마라\n"
+        "- 미해결 퀘스트는 해소 압박 없이 세계에 존재한다\n"
+        "- 퀘스트 환경 묘사는 유저 행동이 자연스럽게 겹칠 때만\n"
+    )
+    return quest_directive + "\n" + obj_ctx
 
 
 # =========================================================
@@ -719,6 +750,24 @@ def build_34_step_prompt(ctx) -> str:
         if warnings:
             scene_intel_parts.append("### Quality Alerts [ANALYSIS]\n" + "\n".join(warnings))
 
+    # Apophenia Guard: 특성 연결 굴절 지시 (BABEL Axis V)
+    trait_conn = dai.get("trait_connections", {})
+    if trait_conn and isinstance(trait_conn, dict):
+        conn_lines = []
+        for npc_name, conn in trait_conn.items():
+            if isinstance(conn, dict) and conn.get("primary_link") and conn.get("deflection"):
+                line = f"- {npc_name}: OBVIOUS={conn['primary_link']} → INSTEAD: {conn['deflection']}"
+                hint = conn.get("render_hint", "")
+                if hint:
+                    line += f" | {hint}"
+                conn_lines.append(line)
+        if conn_lines:
+            scene_intel_parts.append(
+                "### Apophenia Guard [ANALYSIS]\n"
+                "Primary connection = cliché path. Deflect to the suggested direction.\n"
+                + "\n".join(conn_lines)
+            )
+
     scene_intelligence = "\n\n".join(scene_intel_parts)
 
     # --- [Slot 17] Extended Intelligence (NPC Knowledge + Intimacy Analysis) ---
@@ -887,6 +936,11 @@ def build_34_step_prompt(ctx) -> str:
         time_dir = _gs.build_time_directive(tf_ticks, scene)
         gm_mover = (gm_mover + f"\n\n{time_dir}") if gm_mover else time_dir
 
+    # UNE Narrative Layers (Events / Atmosphere / Judgment / World) → Slot 30
+    une_directive = getattr(ctx, 'judgment_context', '')
+    if une_directive:
+        gm_mover = (gm_mover + f"\n\n{une_directive}") if gm_mover else une_directive
+
     # --- [Slot 29] Real-time Data (compact v3 status first, legacy fallback) ---
     real_time_data = ""
     if channel_id:
@@ -1046,7 +1100,11 @@ def build_34_step_prompt(ctx) -> str:
     # =========================================================
 
     # 5W1H Telescope 프리필 조립 (코드 레벨 GROUND_TRUTH)
+    # V2: Slot 34 대신 ctx에 저장 → 모델 응답 프리필로 직접 주입 (스킵 불가)
     telescope_prefill = _build_telescope_prefill(dai, real_time_data)
+    if telescope_prefill:
+        ctx.telescope_prefill_text = telescope_prefill
+        logger.info("[Telescope] Prefill stored on ctx for model response injection")
 
     builder.populate_dynamic_slots(
         player_data=player_info,
@@ -1057,7 +1115,7 @@ def build_34_step_prompt(ctx) -> str:
         psyche_states=psyche_states,
         scene_intelligence=scene_intelligence,
         extended_intelligence=extended_intelligence,
-        chapter_context=getattr(ctx, 'obj_ctx', ''),
+        chapter_context=_prepend_quest_directive(getattr(ctx, 'obj_ctx', '')),
         content_level=getattr(ctx, 'scene_type', 'normal'),
         older_history=older_history,
         last_response=last_response,
@@ -1066,7 +1124,7 @@ def build_34_step_prompt(ctx) -> str:
         gm_mover=gm_mover,
         user_input=getattr(ctx, 'action_text', ''),
         author_note="",  # 장르/톤이 설정되어 있으면 자동으로 레거시 함수 사용
-        telescope_prefill=telescope_prefill
+        telescope_prefill=""  # V2: Slot 34에 넣지 않음 — ctx를 통해 모델 프리필로 전달
     )
 
     # 4.5. Format Feedback Injection (이전 턴 대사 포맷 위반 피드백)
@@ -1085,6 +1143,36 @@ def build_34_step_prompt(ctx) -> str:
             current_33 = builder.get_slot(33) or ""
             builder.set_slot(33, f"{current_33}\n\n{npc_reminder}")
             logger.info(f"[RecencyEcho] NPC reminders injected into slot 33 ({len(relevant_npcs)} NPCs)")
+
+    # Scene Breathing directive (BABEL Madeleine — energy_direction별 원칙 강조/약화)
+    _SCENE_BREATHING = {
+        "idle": (
+            "[SCENE_BREATHING] IDLE: Prioritize environmental texture, 間(MA), mundane detail, slow rhythm. "
+            "De-emphasize combat physicality, crisis urgency, high-density paragraphs."
+        ),
+        "rising": (
+            "[SCENE_BREATHING] RISING: Prioritize character friction, body language contradiction, interpersonal tension. "
+            "De-emphasize atmospheric padding, sensory catalogs, environmental scanning."
+        ),
+        "stagnant": (
+            "[SCENE_BREATHING] STAGNANT: Prioritize silence, absence as presence, unspoken weight. "
+            "De-emphasize forced conflict injection, artificial hooks, momentum creation."
+        ),
+        "detonation": (
+            "[SCENE_BREATHING] DETONATION: Prioritize physical impact, short sentences, action consequence. "
+            "De-emphasize environmental beauty, slow pacing, philosophical narration."
+        ),
+        "aftershock": (
+            "[SCENE_BREATHING] AFTERSHOCK: Prioritize silence, debris, delayed reaction, numbness. "
+            "De-emphasize new conflict, active hooks, forward momentum."
+        ),
+    }
+    _energy = dai.get("energy_direction", "") if dai else ""
+    _breathing = _SCENE_BREATHING.get(_energy)
+    if _breathing:
+        current_33 = builder.get_slot(33) or ""
+        builder.set_slot(33, f"{current_33}\n\n{_breathing}")
+        logger.info(f"[SceneBreathing] {_energy} directive injected into slot 33")
 
     # 5W1H Recency Echo — always present at maximum recency position
     fidelity_echo = "[5W1H: Draw events only from DAI data. Camera scans environment evenly. Prose intensity follows EnergyDirection.]"

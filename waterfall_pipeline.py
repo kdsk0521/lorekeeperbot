@@ -47,12 +47,12 @@ class WaterfallPipeline:
             bus.composure["active"] = False
 
     async def execute(self, context: GameContext) -> GameContext:
-        """Analysis -> Mental(pre) -> Anomaly -> Doom -> Mental(sync) -> Judgment
+        """Analysis -> Mental(pre) -> Storyteller -> Doom -> Mental(sync) -> Judgment
 
         Data-flow map (SharedBus ownership):
-        - Theoria: bus.judgment.meta/eval/modifications/narrative_hook, bus.doom.relief, bus.vigor/composure.impact
+        - Theoria: bus.dai (all analysis), bus.judgment, bus.doom, bus.vigor/composure.impact
         - Mental(pre): stage snapshot only (no delta consumption)
-        - Anomaly: bus.anomaly.triggered/tag/intensity, writes vigor/composure delta
+        - Storyteller: bus.anomaly.triggered/tag/decision (narrative only, no deltas)
         - Doom: bus.doom.value/delta/log, may write vigor/composure pressure delta
         - Mental(sync): consumes accumulated deltas and syncs axis values
         - Judgment(last): resolves action from updated state
@@ -177,13 +177,6 @@ class WaterfallPipeline:
             if reason:
                 bus.anomaly["reason"] = reason
 
-            # protective_item removed (Phase 4-1b): anomaly_module reads inventory modifiers directly
-
-            # adaptation_group from Flash (2-level taxonomy)
-            adapt_groups = anomaly_profile.get("adaptation_group")
-            if isinstance(adapt_groups, list) and adapt_groups:
-                bus.anomaly["adaptation_group"] = adapt_groups
-
         # Fallback: if no anomaly tag was proposed, pick from lore seeds
         if not bus.anomaly.get("tag"):
             seeds = context.request.lore_summary.get("anomaly_seeds", [])
@@ -191,12 +184,8 @@ class WaterfallPipeline:
                 seed = random.choice(seeds)
                 if isinstance(seed, dict):
                     bus.anomaly["tag"] = seed.get("name", "기이한 현상")
-                    if seed.get("adaptation_group"):
-                        bus.anomaly.setdefault("adaptation_group", seed["adaptation_group"])
                     if not bus.anomaly.get("category"):
                         bus.anomaly["category"] = seed.get("name", "")
-                    if seed.get("axis"):
-                        bus.anomaly.setdefault("disruption_axis", seed["axis"])
                 else:
                     bus.anomaly["tag"] = str(seed)
 
@@ -217,29 +206,22 @@ class WaterfallPipeline:
             self.vigor_composure = VigorComposureModule()
             context = await self.vigor_composure.prime(context)
 
-        # 3. Anomaly Potential (Conditional)
+        # 3. Storyteller: inject state + set potential
         if "anomaly" in active_modules:
             bus.anomaly["potential"] = True
+            channel_id = (context.narrative_anchors or {}).get("channel_id", "")
+            if channel_id:
+                import domain_manager
+                st_state = domain_manager.get_storyteller_state(channel_id)
+                bus.anomaly["_storyteller_state"] = st_state
+                bus.anomaly["_current_turn"] = domain_manager.get_world_state(channel_id).get("turn_index", 0)
+                bus.anomaly["_channel_id"] = channel_id
 
-        # 4. Anomaly Trigger (Conditional)
-        if "anomaly" in active_modules and context.shared_bus.anomaly.get("potential"):
+        # 4. Storyteller Decision (Conditional)
+        if "anomaly" in active_modules and bus.anomaly.get("potential"):
             from anomaly_module import AnomalyModule
             self.anomaly = AnomalyModule(self.theoria.client, self.theoria.model_id)
             context = await self.anomaly.process(context)
-
-        # 4a. Post-Anomaly Doom Sync (reserved hook: anomaly may write doom delta)
-        post_delta = bus.doom.get("delta", 0)
-        if post_delta != 0:
-            old_val = bus.doom.get("value", 0)
-            bus.doom["value"] = max(0, min(100, old_val + post_delta))
-            bus.doom["delta"] = 0
-            bus.doom["active"] = True
-            sign = f"+{post_delta}" if post_delta > 0 else str(post_delta)
-            existing_log = bus.doom.get("log", "")
-            if existing_log:
-                bus.doom["log"] = existing_log + f" (이변 {sign})"
-            else:
-                bus.doom["log"] = f"📈 긴장도 변동 (이변 {sign})" if post_delta > 0 else f"📉 긴장도 변동 (이변 {sign})"
 
         # 5. Doom Update (Conditional)
         if "doom" in active_modules:
@@ -295,15 +277,18 @@ class WaterfallPipeline:
         else:
             parts.append(f"  Doom: OFF (fallback={doom_val})")
 
-        # Anomaly
+        # Storyteller
         anomaly_triggered = bus.anomaly.get("triggered", False)
         if anomaly_triggered:
             a_tag = bus.anomaly.get("tag", "?")
             a_int = bus.anomaly.get("intensity", "?")
-            a_def = bus.anomaly.get("defense_result", "?")
-            parts.append(f"  Anomaly: TRIGGERED [{a_tag}] intensity={a_int} defense={a_def}")
+            a_dec = bus.anomaly.get("decision", "?")
+            a_reason = bus.anomaly.get("decision_reason", "")
+            parts.append(f"  Storyteller: ACT [{a_tag}] intensity={a_int} ({a_dec}: {a_reason})")
         else:
-            parts.append(f"  Anomaly: not triggered")
+            a_dec = bus.anomaly.get("decision", "skip")
+            a_reason = bus.anomaly.get("decision_reason", "")
+            parts.append(f"  Storyteller: {a_dec} ({a_reason})" if a_reason else f"  Storyteller: {a_dec}")
 
         # Vigor / Composure
         v_val = bus.vigor.get("value", "?")

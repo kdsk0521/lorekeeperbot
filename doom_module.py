@@ -44,6 +44,7 @@ class DoomModule:
                 "source": flash_new.get("source", "narrative"),
                 "threat": flash_new.get("threat", ""),
                 "linked_entity": flash_new.get("linked_entity"),
+                "defense_action": flash_new.get("defense_action", ""),
                 "linked_quest": None,
                 "tags": flash_new.get("tags", []),
                 "turn_created": bus.dai.get("turn_index", 0),
@@ -70,10 +71,14 @@ class DoomModule:
                         seg = int(clock.get("segments", 6) or 6)
                         resolve_doom = config.CLOCK_RESOLVE_DOOM.get(seg, -10)
                         delta += resolve_doom
-                        clock_events.append(f"RESOLVED: {resolved_name} ({resolve_doom} doom)")
+                        # Defense reward: vigor/composure recovery on clock resolution
+                        resolve_reward = config.CLOCK_RESOLVE_REWARD.get(seg, 3)
+                        bus.doom["resolve_reward"] = bus.doom.get("resolve_reward", 0) + resolve_reward
+                        clock_events.append(f"RESOLVED: {resolved_name} ({resolve_doom} doom, +{resolve_reward} recovery)")
                         break
 
         # ── 2. Flash clock_updates (action/hybrid delta) ────
+        mitigation_count = 0
         if isinstance(flash_updates, list):
             for update in flash_updates:
                 if not isinstance(update, dict):
@@ -91,7 +96,13 @@ class DoomModule:
                             clock_events.append(
                                 f"{name}: {old_filled}→{new_filled}/{clock['segments']}"
                             )
+                            # Track mitigation (defense success)
+                            if upd_delta < 0 and new_filled < old_filled:
+                                mitigation_count += 1
                         break
+        # Defense reward: vigor/composure recovery per mitigated clock
+        if mitigation_count > 0:
+            bus.doom["defense_reward"] = mitigation_count * config.CLOCK_MITIGATE_REWARD
 
         # ── 3. Time/Hybrid 자동 틱 ──────────────────────────
         for clock in clocks:
@@ -155,10 +166,11 @@ class DoomModule:
                 bus.doom["log"] = f"📈 긴장도 증가 (+{delta})"
             else:
                 bus.doom["log"] = f"📉 긴장도 감소 ({delta})"
+                bus.doom["narrative_space"] = abs(delta)
 
         # ── 7. Stage 5 클라이맥스 체크 (doom ≥ threshold) ────
         if bus.doom.get("value", 0) >= config.DOOM_CLIMAX_THRESHOLD:
-            _trigger_climax(bus, clocks, clock_events)
+            _trigger_climax(context, bus, clocks, clock_events)
 
         # ── 8. 시계 저장 ─────────────────────────────────────
         bus.doom["clocks"] = clocks
@@ -231,17 +243,36 @@ def _fail_linked_quest(context: "GameContext", quest_name: str, clock_name: str)
         logger.warning("[Doom] Failed to remove linked quest: %s", e)
 
 
-def _trigger_climax(bus, clocks: list, clock_events: list) -> None:
-    """Stage 5: 모든 미해결 시계 즉시 완성 + 이변 강제 발동."""
+def _trigger_climax(context, bus, clocks: list, clock_events: list) -> None:
+    """Stage 5: 모든 미해결 시계 즉시 완성 + 클라이맥스 이벤트를 스토리텔러 큐에 push."""
     for clock in clocks:
         if not clock.get("resolved"):
             clock["filled"] = clock.get("segments", 4)
             clock["resolved"] = True
             clock_events.append(f"CLIMAX: {clock.get('name', '?')} forced complete")
-    bus.anomaly["skip_trigger"] = True
-    bus.anomaly["potential"] = True
     bus.doom["climax_triggered"] = True
-    logger.info("[Doom] CLIMAX TRIGGERED — all clocks forced complete, anomaly forced")
+
+    # Doom runs after Storyteller in pipeline → push climax event to next-turn queue
+    channel_id = (context.narrative_anchors or {}).get("channel_id", "")
+    if channel_id:
+        import domain_manager
+        st_state = domain_manager.get_storyteller_state(channel_id)
+        queue = st_state.get("event_queue", [])
+        ws = domain_manager.get_world_state(channel_id)
+        current_turn = ws.get("turn_index", 0)
+        queue.insert(0, {
+            "tag": "클라이맥스",
+            "category": "supernatural",
+            "intensity": "Extreme",
+            "polarity": "negative",
+            "line": "모든 시계가 완성된다 — 세계가 임계점에 도달했다.",
+            "reason": "doom_climax",
+            "queued_turn": current_turn,
+        })
+        st_state["event_queue"] = queue
+        domain_manager.update_storyteller_state(channel_id, st_state)
+
+    logger.info("[Doom] CLIMAX TRIGGERED — all clocks forced, event queued for next turn")
 
 
 def _apply_pressure(context: "GameContext", bus) -> None:
@@ -267,12 +298,26 @@ def _apply_pressure(context: "GameContext", bus) -> None:
     else:
         pressure, label = 2, "😌 긴장 이완 [이완] (+2)"
 
+    mechanic = context.request.genres.get("mechanic", {})
+    primary = mechanic.get("primary_resource") or "vigor"
+    secondary = "composure" if primary == "vigor" else "vigor"
+    primary_bus = getattr(bus, primary)
+    secondary_bus = getattr(bus, secondary)
+
     if pressure != 0:
-        mechanic = context.request.genres.get("mechanic", {})
-        primary = mechanic.get("primary_resource") or "vigor"
-        secondary = "composure" if primary == "vigor" else "vigor"
-        primary_bus = getattr(bus, primary)
-        secondary_bus = getattr(bus, secondary)
         primary_bus["delta"] = primary_bus.get("delta", 0) + pressure
         secondary_bus["delta"] = secondary_bus.get("delta", 0) + int(pressure * 0.5)
         bus.doom["mental_pressure_log"] = label
+
+    # Defense rewards → primary axis recovery
+    defense_reward = bus.doom.get("defense_reward", 0)
+    resolve_reward = bus.doom.get("resolve_reward", 0)
+    total_reward = defense_reward + resolve_reward
+    if total_reward > 0:
+        primary_bus["delta"] = primary_bus.get("delta", 0) + total_reward
+        reward_parts = []
+        if defense_reward > 0:
+            reward_parts.append(f"완화 +{defense_reward}")
+        if resolve_reward > 0:
+            reward_parts.append(f"해소 +{resolve_reward}")
+        bus.doom["defense_log"] = f"🛡️ {' | '.join(reward_parts)}"

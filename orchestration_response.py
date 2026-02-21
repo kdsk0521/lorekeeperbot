@@ -359,10 +359,13 @@ async def generate_response(
     # 사칭 감지 토글 확인 (기본값: 활성화)
     impersonation_enabled = ctx.domain_data.get("settings", {}).get("impersonation_filter", True)
     pc_names_for_filter = [p_name] if impersonation_enabled else []
+    # Telescope V2: ctx에 저장된 프리필을 모델 응답 시작으로 전달 (스킵 불가)
+    _tele_prefill = getattr(ctx, 'telescope_prefill_text', '')
     response = await persona.generate_response_with_retry(
         client, session, prompt,
         pc_names=pc_names_for_filter,
-        player_count=active_player_count
+        player_count=active_player_count,
+        telescope_prefill=_tele_prefill
     )
 
     # 정리 (System Update & Telescope Logic Block)

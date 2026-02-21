@@ -1194,6 +1194,20 @@ def clear_pending_flashback(channel_id: str) -> None:
     d.pop("pending_flashback", None)
     save_domain(channel_id, d)
 
+# Storyteller State (세계 주도권 시스템)
+def get_storyteller_state(channel_id: str) -> dict:
+    ws = get_world_state(channel_id)
+    return ws.get("storyteller", {
+        "last_event_turn": 0, "recent_categories": [],
+        "recent_tags": [], "event_queue": [], "total_events_fired": 0,
+    })
+
+def update_storyteller_state(channel_id: str, state: dict) -> None:
+    ws = get_world_state(channel_id)
+    ws["storyteller"] = state
+    update_world_state(channel_id, ws)
+
+
 def save_telescope_log(channel_id: str, turn: int, telescope_data: Dict[str, Any]) -> None:
     """Persist parsed telescope gate results with a rolling window of 10 turns."""
     d = get_domain(channel_id)

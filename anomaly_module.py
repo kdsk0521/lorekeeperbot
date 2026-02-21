@@ -1,44 +1,27 @@
 """
-Lorekeeper UNE - Anomaly Module (v3.1 — Genre Disruption Engine)
-Handles anomaly events with genre-aware disruption axes, theory-based defense,
-2-axis damage, and 2-level adaptation taxonomy.
+Lorekeeper UNE - Anomaly Module (v4.0 — Storyteller / World Initiative Engine)
+RimWorld-style event scheduler: Flash proposes events, code decides timing/diversity/rhythm.
+No damage calculation — purely narrative event scheduling.
 """
 
 import logging
-import random
-import math
-from typing import Any
+from typing import Any, Dict, List, Optional
 from orchestration_context import GameContext
 import config as _cfg
-import game_character as _gc
 
 logger = logging.getLogger("Anomaly")
 
-
-def calculate_adaptation(adaptation_groups: list, player_adaptation: dict) -> int:
-    """2단계 적응도: 직접 100% + 같은 상위 카테고리 내 전이 50%.
-    Returns max adaptation percentage (0-100)."""
-    direct_pcts = []
-    for g in adaptation_groups:
-        count = player_adaptation.get(g, {}).get("count", 0)
-        pct = min(100, int(math.log(count + 1) * 25))
-        direct_pcts.append(pct)
-
-    transfer_pcts = []
-    for g in adaptation_groups:
-        parent = _cfg.get_parent_category(g)
-        if not parent:
-            continue
-        for sibling in _cfg.ADAPTATION_TAXONOMY[parent]:
-            if sibling in adaptation_groups:
-                continue  # 이미 직접 계산함
-            count = player_adaptation.get(sibling, {}).get("count", 0)
-            if count > 0:
-                pct = min(100, int(math.log(count + 1) * 25))
-                transfer_pcts.append(int(pct * 0.5))  # 50% 전이
-
-    all_pcts = direct_pcts + transfer_pcts
-    return max(all_pcts) if all_pcts else 0
+# =========================================================
+# Timing Table (Cassandra Curve)
+# energy_direction × turns_since_last_event → decision
+# =========================================================
+TIMING_TABLE: Dict[str, Dict[int, str]] = {
+    "idle":       {0: "defer", 1: "defer", 2: "act",   3: "act"},
+    "stagnant":   {0: "defer", 1: "act",   2: "act",   3: "act"},
+    "rising":     {0: "defer", 1: "defer", 2: "defer", 3: "act"},
+    "detonation": {0: "skip",  1: "skip",  2: "defer", 3: "defer"},
+    "aftershock": {0: "defer", 1: "defer", 2: "act",   3: "act"},
+}
 
 
 class AnomalyModule:
@@ -71,218 +54,256 @@ class AnomalyModule:
         }
         return mapping.get(raw, "mixed")
 
-    @staticmethod
-    def _resolve_disruption_axis(bus, mechanic: dict) -> tuple:
-        """Flash의 disruption_axis를 우선 사용, 없으면 mechanic → GENRE_DISRUPTION_AXIS → fallback.
-        Returns (primary_axis, secondary_axis, secondary_ratio)."""
-        flash_axis = bus.anomaly.get("disruption_axis", "").lower().strip()
+    # ----- Timing Decision -----
 
-        # mechanic_profile 우선, 없으면 legacy config fallback
-        default_primary = mechanic.get("primary_resource") or "vigor"
-        secondary_ratio = mechanic.get("secondary_ratio", 0.3)
+    def _decide_timing(self, bus, st_state: dict, current_turn: int) -> str:
+        """Determine act/defer/skip based on timing table + overrides + DAI."""
+        dai = bus.dai
 
-        if flash_axis == "both":
-            return "vigor", "composure", 1.0
-        elif flash_axis == "vigor":
-            primary = "vigor"
-        elif flash_axis == "composure":
-            primary = "composure"
-        else:
-            primary = default_primary
+        # Override 1: Force act (climax push)
+        if bus.anomaly.get("_force_act"):
+            return "act"
 
-        secondary = "composure" if primary == "vigor" else "vigor"
-        return primary, secondary, secondary_ratio
+        # Override 2: Batch skip (2nd+ PC in batch — reuse existing data)
+        if bus.anomaly.get("_skip_storyteller"):
+            return "keep"
 
-    def _roll_defense(self, context: GameContext, intensity: str, mechanic: dict) -> dict:
-        """장르 교란 방어 롤: passive + 보호 아이템 + 장르별 방어 스탯 + 이론 보정."""
-        bus = context.shared_bus
-        dc_map = {"Low": 30, "Mid": 50, "High": 70, "Extreme": 90}
-        dc = dc_map.get(intensity, 50)
-        success_rate = 100 - dc
+        # Override 3: Judgment active → defer (scene overload prevention)
+        if bus.judgment.get("active"):
+            return "defer"
 
-        primary_lens = mechanic.get("primary_lens", "")
+        # Starvation: queued event waiting 3+ turns → force act
+        queue = st_state.get("event_queue", [])
+        if queue:
+            oldest_queued_turn = queue[0].get("queued_turn", 0)
+            if current_turn - oldest_queued_turn >= _cfg.STORYTELLER_STARVATION_TURNS:
+                return "act"
 
-        # Passive 보정 (theory tag modifier system)
-        passives = (context.narrative_anchors or {}).get("passives", [])
-        passive_defense = 0
-        for passive in passives:
-            mods = _cfg.get_passive_modifiers(passive)
-            if not mods:
-                continue
-            # Genre-specific key first, then generic fallback
-            genre_key = f"anomaly_defense_{primary_lens}" if primary_lens else ""
-            if genre_key and genre_key in mods:
-                passive_defense += mods[genre_key]
-            elif "anomaly_defense" in mods:
-                passive_defense += mods["anomaly_defense"]
-        success_rate += max(-30, min(30, passive_defense))
+        # No proposal and no queue → nothing to schedule
+        has_proposal = bool(bus.anomaly.get("tag"))
+        if not has_proposal and not queue:
+            return "skip"
 
-        # 아이템 방어 보정 (modifier 기반, Phase 4-1b)
-        inventory_items = _gc.get_inventory_items(context.narrative_anchors)
-        item_defense = 0
-        for item in inventory_items:
-            mods = _cfg.get_item_modifiers(item)
-            if not mods:
-                continue
-            genre_key = f"anomaly_defense_{primary_lens}" if primary_lens else ""
-            if genre_key and genre_key in mods:
-                item_defense += mods[genre_key]
-            elif "anomaly_defense" in mods:
-                item_defense += mods["anomaly_defense"]
-        success_rate += max(-30, min(30, item_defense))
+        # Timing table lookup
+        energy = dai.get("energy_direction", "rising")
+        last_event_turn = st_state.get("last_event_turn", 0)
+        turns_since = max(0, current_turn - last_event_turn)
+        turns_key = min(turns_since, 3)  # 3+ capped
 
-        # 방어 스탯: mechanic.primary_resource 우선, legacy fallback
-        defense_stat = mechanic.get("primary_resource") or "vigor"
-        defense_val = getattr(bus, defense_stat).get("value", 100)
-        if defense_val >= 70:
-            success_rate += 10
-        elif defense_val <= 14:
-            success_rate -= 20
-        elif defense_val <= 39:
-            success_rate -= 10
+        row = TIMING_TABLE.get(energy, TIMING_TABLE["rising"])
+        decision = row.get(turns_key, "defer")
 
-        # 이론 기반 방어 보정 (Flash theory_basis 매칭 시 +5)
-        flash_theory = bus.anomaly.get("theory_basis", "")
-        # Legacy fallback: GENRE_DISRUPTION_AXIS for theory matching
-        genre_config = _cfg.GENRE_DISRUPTION_AXIS.get(primary_lens, {})
-        genre_theory = genre_config.get("defense_theory", "")
-        if flash_theory and genre_theory:
-            flash_theories = set(t.strip().lower() for t in flash_theory.replace("+", ",").split(",") if t.strip())
-            genre_theories = set(t.strip().lower() for t in genre_theory.replace("+", ",").split(",") if t.strip())
-            if flash_theories & genre_theories:
-                success_rate += 5
+        # DAI promotion: defer → act
+        if decision == "defer":
+            quality_flags = dai.get("quality_flags", {})
+            if quality_flags.get("stagnation_warning"):
+                decision = "act"
+                bus.anomaly["decision_reason"] = "stagnation_promotion"
+            elif quality_flags.get("convergence_warning"):
+                decision = "act"
+                bus.anomaly["decision_reason"] = "convergence_promotion"
 
-        success_rate = max(10, min(90, success_rate))
-        defense_roll = random.randint(1, 100)
-        return {"success": defense_roll <= success_rate, "roll": defense_roll, "rate": success_rate}
+        # DAI suppression: act → defer (scene_type filter)
+        if decision == "act":
+            scene_type = dai.get("scene_type", "normal")
+            allowed = _cfg.STORYTELLER_SCENE_CATEGORIES.get(scene_type)
+            if allowed is not None:  # None = all allowed
+                # Check if current proposal's category is allowed
+                proposal_cat = (bus.anomaly.get("category") or "").lower()
+                if not allowed:  # empty set = skip all
+                    decision = "defer"
+                    bus.anomaly["decision_reason"] = f"scene_suppression:{scene_type}"
+                elif proposal_cat and proposal_cat not in allowed:
+                    # Check queue for allowed events
+                    has_allowed = any(
+                        (e.get("category", "").lower() in allowed) for e in queue
+                    )
+                    if not has_allowed:
+                        decision = "defer"
+                        bus.anomaly["decision_reason"] = f"category_mismatch:{scene_type}"
 
-    def _calculate_trigger_chance(self, context: GameContext, mechanic: dict) -> float:
-        """v3: 이변 트리거 확률은 둠과 무관한 고정값."""
-        _ = (context, mechanic)  # kept for interface stability
-        return float(getattr(_cfg, "ANOMALY_BASE_CHANCE", 15.0))
+        return decision
+
+    # ----- Event Selection (when ACT) -----
+
+    def _select_event(self, bus, st_state: dict) -> dict:
+        """Select best event from queue + current proposal using diversity + polarity scoring."""
+        dai = bus.dai
+        candidates: List[dict] = []
+
+        # Queued events
+        for i, event in enumerate(st_state.get("event_queue", [])):
+            candidates.append({**event, "_source": "queue", "_queue_index": i})
+
+        # Current Flash proposal
+        tag = bus.anomaly.get("tag", "")
+        if tag:
+            candidates.append({
+                "tag": tag,
+                "category": bus.anomaly.get("category") or tag,
+                "intensity": bus.anomaly.get("intensity", "Mid"),
+                "polarity": bus.anomaly.get("polarity", "mixed"),
+                "line": bus.anomaly.get("line", ""),
+                "reason": bus.anomaly.get("reason", ""),
+                "_source": "flash",
+            })
+
+        if not candidates:
+            return {}
+
+        # Scene-type filter
+        scene_type = dai.get("scene_type", "normal")
+        allowed = _cfg.STORYTELLER_SCENE_CATEGORIES.get(scene_type)
+        if allowed is not None and allowed:
+            filtered = [c for c in candidates if c.get("category", "").lower() in allowed]
+            if filtered:
+                candidates = filtered
+
+        # Score each candidate
+        recent_tags = st_state.get("recent_tags", [])
+        recent_cats = st_state.get("recent_categories", [])
+        position = dai.get("position", {})
+        pos_label = position.get("label", "") if isinstance(position, dict) else ""
+        convergence = dai.get("quality_flags", {}).get("convergence_warning", False)
+
+        scored = []
+        for c in candidates:
+            score = 1.0
+
+            # Diversity penalty: tag overlap
+            if c.get("tag") in recent_tags:
+                score -= 0.5
+
+            # Diversity penalty: category overlap
+            cat = c.get("category", "")
+            cat_count = recent_cats.count(cat)
+            if cat_count > 0:
+                score -= 0.3 * cat_count
+
+            # Polarity bonus (DAI-driven)
+            pol = c.get("polarity", "mixed")
+            if pos_label == "weak" and pol == "positive":
+                score += 0.2
+            elif pos_label == "strong" and pol == "negative":
+                score += 0.2
+            if convergence and pol in ("negative", "mixed"):
+                score += 0.3
+
+            # Queue events get tiebreaker priority (FIFO fairness)
+            if c.get("_source") == "queue":
+                score += 0.01
+
+            scored.append((score, c))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return scored[0][1] if scored else {}
+
+    # ----- Main Process -----
 
     async def process(self, context: GameContext) -> GameContext:
         bus = context.shared_bus
-        mechanic = context.request.genres.get("mechanic", {})
 
-        # 배치 모드: skip_trigger면 트리거 롤 스킵, 방어/적응만 수행
-        if bus.anomaly.get("skip_trigger"):
-            if not bus.anomaly.get("potential"):
-                return context
+        if not bus.anomaly.get("potential"):
+            return context
+
+        # Load storyteller state
+        st_state = bus.anomaly.get("_storyteller_state", {})
+        current_turn = bus.anomaly.get("_current_turn", 0)
+        channel_id = bus.anomaly.get("_channel_id", "")
+
+        # Normalize proposal
+        tag = bus.anomaly.get("tag") or ""
+        if tag:
+            bus.anomaly["intensity"] = self._normalize_intensity(bus.anomaly.get("intensity", "Mid"))
+            bus.anomaly["polarity"] = self._normalize_polarity(bus.anomaly.get("polarity"))
+            if not bus.anomaly.get("category"):
+                bus.anomaly["category"] = tag
+
+        # Decide timing
+        decision = self._decide_timing(bus, st_state, current_turn)
+        bus.anomaly["decision"] = decision
+        if not bus.anomaly.get("decision_reason"):
+            energy = bus.dai.get("energy_direction", "rising")
+            turns_since = max(0, current_turn - st_state.get("last_event_turn", 0))
+            bus.anomaly["decision_reason"] = f"table:{energy}/t{turns_since}"
+
+        if decision == "keep":
+            # Batch mode: data already set by first PC
             bus.anomaly["triggered"] = True
-            roll = 50  # 중립 롤 (영감/쇼크 비활성)
-        else:
-            if not bus.anomaly.get("potential"):
-                return context
+            logger.info("[Storyteller] keep (batch reuse)")
+            return context
 
-            trigger_chance = self._calculate_trigger_chance(context, mechanic)
+        if decision == "act":
+            # Select best event
+            selected = self._select_event(bus, st_state)
+            if selected:
+                bus.anomaly["triggered"] = True
+                bus.anomaly["tag"] = selected.get("tag", "")
+                bus.anomaly["category"] = selected.get("category", "")
+                bus.anomaly["intensity"] = self._normalize_intensity(selected.get("intensity", "Mid"))
+                bus.anomaly["polarity"] = self._normalize_polarity(selected.get("polarity"))
+                bus.anomaly["line"] = selected.get("line", "")
+                bus.anomaly["reason"] = selected.get("reason", "")
+                bus.anomaly["source"] = selected.get("_source", "flash")
 
-            roll = random.randint(1, 100)
-            if roll > trigger_chance:
-                logger.info("[Anomaly] Skip (roll=%d > chance=%.0f%%)", roll, trigger_chance)
-                return context
+                # Update storyteller state
+                st_state["last_event_turn"] = current_turn
+                st_state["total_events_fired"] = st_state.get("total_events_fired", 0) + 1
 
-            bus.anomaly["triggered"] = True
-            logger.info("[Anomaly] TRIGGERED (roll=%d <= chance=%.0f%%)", roll, trigger_chance)
+                # Update diversity window
+                cats = st_state.get("recent_categories", [])
+                cats.append(selected.get("category", ""))
+                st_state["recent_categories"] = cats[-_cfg.STORYTELLER_DIVERSITY_WINDOW:]
 
-        # 1. Anomaly Info
-        tag = bus.anomaly.get("tag") or "기이한 현상"
-        intensity = self._normalize_intensity(bus.anomaly.get("intensity", "Mid"))
-        polarity = self._normalize_polarity(bus.anomaly.get("polarity"))
+                tags = st_state.get("recent_tags", [])
+                tags.append(selected.get("tag", ""))
+                st_state["recent_tags"] = tags[-_cfg.STORYTELLER_DIVERSITY_WINDOW:]
 
-        category = bus.anomaly.get("category") or tag
-        bus.anomaly["category"] = category
-        bus.anomaly["intensity"] = intensity
-        bus.anomaly["polarity"] = polarity
+                # Remove selected from queue if it came from there
+                if selected.get("_source") == "queue":
+                    idx = selected.get("_queue_index", -1)
+                    queue = st_state.get("event_queue", [])
+                    if 0 <= idx < len(queue):
+                        queue.pop(idx)
 
-        intensity_label = {"Low": "낮음", "Mid": "중간", "High": "높음", "Extreme": "극단"}.get(intensity, intensity)
-        polarity_label = {"positive": "호재", "negative": "악재", "mixed": "혼합"}.get(polarity, polarity)
-
-        # 2. Adaptation & Mitigation (2-level taxonomy)
-        adaptation_data = bus.vigor.get("adaptation", {})
-
-        # adaptation_group: Flash/seed 제공, 없으면 category fallback
-        adaptation_groups = bus.anomaly.get("adaptation_group", [])
-        if not adaptation_groups:
-            adaptation_groups = [category]
-
-        adapt_old_pct = calculate_adaptation(adaptation_groups, adaptation_data)
-        # Calculate new pct (after this exposure)
-        projected = dict(adaptation_data)
-        for g in adaptation_groups:
-            old_count = projected.get(g, {}).get("count", 0)
-            projected[g] = {"count": old_count + 1}
-        adapt_new_pct = calculate_adaptation(adaptation_groups, projected)
-
-        bus.anomaly["adapt_pct"] = adapt_old_pct
-        bus.anomaly["adapt_new_pct"] = adapt_new_pct
-
-        damage_map = {"Low": 5, "Mid": 10, "High": 20, "Extreme": 35}
-        base_dmg = damage_map.get(intensity, 10)
-
-        if polarity == "positive":
-            base_dmg = -abs(base_dmg)
-        elif polarity == "mixed":
-            base_dmg = int(base_dmg * 0.5)
-
-        # Outcome hooks (reserved for v3 matrix expansion)
-        outcome_msg = ""
-
-        # Adaptation Mitigation (100% = 0 damage)
-        mitigation = adapt_old_pct / 100.0
-        final_dmg = int(base_dmg * (1.0 - mitigation)) if base_dmg > 0 else base_dmg
-
-        # 3. Defense Roll (only if damage is positive)
-        if base_dmg > 0:
-            defense = self._roll_defense(context, intensity, mechanic)
-            has_judgment = "judgment" in context.request.active_modules
-
-            if defense["success"]:
-                bus.anomaly["defense_success"] = True
-                if has_judgment:
-                    bus.dai["bonus"] = bus.dai.get("bonus", 0) + 10
-                    bus.dai["reason"] = bus.dai.get("reason", "") + " [이변 대응 성공 +10]"
-                    outcome_msg += " [🛡️대응 성공: 다음 판정 +10]"
-                    bus.anomaly["defense_note"] = "다음 판정 +10"
-                else:
-                    final_dmg = int(final_dmg * 0.5)
-                    outcome_msg += " [🛡️대응 성공]"
-                    bus.anomaly["defense_note"] = "피해 감소"
+                logger.info("[Storyteller] ACT [%s] cat=%s int=%s pol=%s src=%s reason=%s",
+                            bus.anomaly["tag"], bus.anomaly["category"],
+                            bus.anomaly["intensity"], bus.anomaly["polarity"],
+                            bus.anomaly["source"], bus.anomaly.get("decision_reason", ""))
             else:
-                bus.anomaly["defense_success"] = False
-                if has_judgment:
-                    bus.dai["penalty"] = bus.dai.get("penalty", 0) + 10
-                    bus.dai["reason"] = bus.dai.get("reason", "") + " [이변 대응 실패 -10]"
-                    outcome_msg += " [❌대응 실패: 다음 판정 -10]"
-                    bus.anomaly["defense_note"] = "다음 판정 -10"
-                else:
-                    outcome_msg += " [❌대응 실패]"
-                    bus.anomaly["defense_note"] = "피해 유지"
+                bus.anomaly["triggered"] = False
+                decision = "skip"
+                bus.anomaly["decision"] = "skip"
+                bus.anomaly["decision_reason"] = "no_candidates"
+                logger.info("[Storyteller] skip (no candidates)")
 
-        # 4. Update Bus — disruption axis routing (Flash > mechanic > fallback)
-        primary, secondary, sec_ratio = self._resolve_disruption_axis(bus, mechanic)
-        primary_bus = getattr(bus, primary)
-        secondary_bus = getattr(bus, secondary)
-        primary_bus["delta"] = primary_bus.get("delta", 0) - final_dmg
-        secondary_bus["delta"] = secondary_bus.get("delta", 0) - int(final_dmg * sec_ratio)
+        elif decision == "defer":
+            bus.anomaly["triggered"] = False
+            # Queue current proposal if it exists
+            if tag:
+                queue = st_state.get("event_queue", [])
+                if len(queue) < _cfg.STORYTELLER_QUEUE_MAX:
+                    queue.append({
+                        "tag": tag,
+                        "category": bus.anomaly.get("category", tag),
+                        "intensity": bus.anomaly.get("intensity", "Mid"),
+                        "polarity": bus.anomaly.get("polarity", "mixed"),
+                        "line": bus.anomaly.get("line", ""),
+                        "reason": bus.anomaly.get("reason", ""),
+                        "queued_turn": current_turn,
+                    })
+                    st_state["event_queue"] = queue
+            logger.info("[Storyteller] defer [%s] queue_size=%d reason=%s",
+                        tag or "(none)", len(st_state.get("event_queue", [])),
+                        bus.anomaly.get("decision_reason", ""))
 
-        # Disruption axis log
-        axis_label = {"vigor": "기력", "composure": "평정"}.get(primary, primary)
-        adapt_key = f" · 적응키 {','.join(adaptation_groups)}" if adaptation_groups != [category] else ""
-        bus.anomaly["output"] = (
-            f"강도 {intensity_label} · 성격 {polarity_label} · 축 {axis_label} · "
-            f"적응도 {adapt_old_pct}%{adapt_key}{outcome_msg}"
-        )
+        else:  # skip
+            bus.anomaly["triggered"] = False
+            logger.info("[Storyteller] skip reason=%s", bus.anomaly.get("decision_reason", ""))
 
-        # 5. Adaptation Update for Sync (각 adaptation_group에 count+1)
-        for g in adaptation_groups:
-            old_count = adaptation_data.get(g, {}).get("count", 0)
-            bus.vigor.setdefault("adaptation_update", {})[g] = {"count": old_count + 1}
-
-        defense_result = "pass" if bus.anomaly.get("defense_success") else "fail" if base_dmg > 0 else "N/A"
-        logger.info("[Anomaly] %s | %s/%s | base=%d → final=%d (adapt=%d%%) | defense=%s | axis=%s",
-                     tag, intensity_label, polarity_label, base_dmg, final_dmg,
-                     adapt_old_pct, defense_result, primary)
-        bus.anomaly["defense_result"] = defense_result
+        # Persist storyteller state
+        if channel_id:
+            import domain_manager
+            domain_manager.update_storyteller_state(channel_id, st_state)
 
         return context

@@ -132,45 +132,6 @@ def _get_genre_mc_move(genre: str, pos_tier: str, result: str) -> str:
     genre_table = GENRE_MC_MOVES.get(genre, {})
     return genre_table.get((pos_tier, result), "")
 
-def _build_adaptation_line(adapt_pct: int, category: str, tag: str) -> str:
-    if adapt_pct is None:
-        return ""
-    key = category or tag or "이변"
-    if adapt_pct < 25:
-        tone = "아직 낯설다"
-    elif adapt_pct < 50:
-        tone = "조금 익숙해졌다"
-    elif adapt_pct < 75:
-        tone = "확실히 익숙해졌다"
-    else:
-        tone = "거의 몸에 익었다"
-    templates = [
-        f"{key}에 대한 익숙함이 쌓인다. ({tone}, 적응도 {adapt_pct}%)",
-        f"반복된 경험이 내성을 만든다. ({tone}, 적응도 {adapt_pct}%)",
-        f"{key}에 대한 감각이 또렷해진다. ({tone}, 적응도 {adapt_pct}%)"
-    ]
-    return _pick(templates)
-
-def _build_adaptation_result_line(
-    mask: str,
-    success: bool,
-    note: str,
-    old_pct: int,
-    new_pct: int
-) -> str:
-    name = mask or "PC"
-    if success is True:
-        status = "적응 성공!"
-    elif success is False:
-        status = "적응 실패!"
-    else:
-        status = "적응 진행"
-    note_txt = f" ({note})" if note else ""
-    if old_pct is not None and new_pct is not None:
-        return f"{name}: {status}{note_txt} [Adapt {old_pct}%->{new_pct}%]"
-    return f"{name}: {status}{note_txt}"
-
-
 def _to_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
@@ -356,17 +317,9 @@ def _build_events_layer(context, bus) -> str:
         tag = anomaly.get("tag") or "anomaly"
         intensity = anomaly.get("intensity", "")
         polarity = anomaly.get("polarity", "")
-        block = [f"[Anomaly] {tag} | intensity={intensity} | polarity={polarity}"]
+        block = [f"[World Event] {tag} | intensity={intensity} | polarity={polarity}"]
         if anomaly.get("line"):
             block.append(f"Scene seed: {anomaly.get('line')}")
-        if anomaly.get("output"):
-            block.append(f"Effect: {anomaly.get('output')}")
-        old_pct = anomaly.get("adapt_pct")
-        new_pct = anomaly.get("adapt_new_pct")
-        if old_pct is not None and new_pct is not None:
-            block.append(f"Adaptation: {old_pct}% -> {new_pct}%")
-        if anomaly.get("defense_note"):
-            block.append(f"Defense note: {anomaly.get('defense_note')}")
         parts.append("\n".join(block))
 
     doom = bus.doom if isinstance(bus.doom, dict) else {}
@@ -382,11 +335,19 @@ def _build_events_layer(context, bus) -> str:
             if isinstance(clock, dict):
                 threat = clock.get("threat", "")
                 cname = clock.get("name", "?")
-                parts.append(f"[CLOCK COMPLETED] '{cname}' → {threat}. This MUST happen in the narrative.")
+                parts.append(
+                    f"[CLOCK COMPLETED] '{cname}' → {threat}.\n"
+                    "PC가 이 영향을 직접 마주칠 때 변화된 세계를 보여주라. "
+                    "이미 벌어진 결과의 흔적으로 묘사. '한편' 시점 전환 금지."
+                )
 
     # 클라이맥스
     if doom.get("climax_triggered"):
         parts.append("[CLIMAX] All clocks completed simultaneously. MAXIMUM TENSION. Final choice moment.")
+
+    # 방어 보상 피드백
+    if doom.get("defense_log"):
+        parts.append(f"[Defense] {doom.get('defense_log')}")
 
     # 퀘스트 실패 (시계 완성으로)
     for fail in doom.get("quest_failed", []):
@@ -445,6 +406,26 @@ def _build_events_layer(context, bus) -> str:
             declaration = str(flashback.get("reason", "")).strip()
         if declaration:
             parts.append(f"[Flashback] {declaration}")
+
+    # ── Task 6: 장기 퀘스트 리마인드 (코어 — 둠 독립) ──
+    channel_id = (context.narrative_anchors or {}).get("channel_id", "")
+    if channel_id:
+        try:
+            import game_character
+            active_quests = game_character.get_active_quests_raw(channel_id)
+            turn_index = int(_to_float((bus.dai or {}).get("turn_index", 0), 0))
+            for q in active_quests:
+                if not isinstance(q, dict):
+                    continue
+                last_progress_turn = q.get("last_progress_turn", 0)
+                stale_turns = turn_index - last_progress_turn
+                if stale_turns >= 8:
+                    parts.append(
+                        f"[Quest Echo: {q.get('content', '?')}] "
+                        "이 목표가 세계에 여전히 존재한다. 유저가 이 방향으로 행동할 때만 반영하라 — 강제 진전 금지."
+                    )
+        except Exception:
+            pass
 
     if not parts:
         return ""
@@ -526,6 +507,58 @@ def _build_atmosphere_layer(context, bus) -> str:
         stage_emoji = doom_info.get("emoji", "")
         parts.append(f"[Tension] {stage_emoji}{stage_name} ({doom_val}%)")
 
+    # ── Task 2b: 서사 공간 디렉티브 (둠 하락 시) ──
+    narrative_space = int(_to_float((bus.doom or {}).get("narrative_space", 0), 0))
+    if narrative_space > 0:
+        if narrative_space >= 15:
+            intensity = "넓은"
+        elif narrative_space >= 8:
+            intensity = "적당한"
+        else:
+            intensity = "작은"
+        mechanic = context.request.genres.get("mechanic", {})
+        primary_res = mechanic.get("primary_resource") or "vigor"
+        if primary_res == "vigor":
+            parts.append(
+                f"[서사 공간: {intensity}] 긴장이 풀렸다 — 이 여유를 써라:\n"
+                "- 캐릭터 관계 심화 (대화, 감정 교류, 유대 확인)\n"
+                "- 유저 행동에 대한 세계의 반응과 되새김\n"
+                "- 다음 위기의 복선을 자연스럽게 배치"
+            )
+        else:
+            parts.append(
+                f"[서사 공간: {intensity}] 일상이 돌아왔다 — 이 여유를 써라:\n"
+                "- 인물 간 관계 심화 (소소한 대화, 감정 교류)\n"
+                "- 유저의 선택이 주변에 미친 영향 묘사\n"
+                "- 새로운 변화의 씨앗을 자연스럽게 배치"
+            )
+
+    # ── Task 1: 시계 조짐 디렉티브 (Clock Surfacing) ──
+    clocks = (bus.doom or {}).get("clocks", [])
+    if isinstance(clocks, list):
+        mechanic = context.request.genres.get("mechanic", {})
+        primary_res = mechanic.get("primary_resource") or "vigor"
+        for clock in clocks:
+            if not isinstance(clock, dict) or clock.get("resolved"):
+                continue
+            segments = int(_to_float(clock.get("segments", 4), 4))
+            filled = int(_to_float(clock.get("filled", 0), 0))
+            if segments <= 0:
+                continue
+            ratio = filled / segments
+            name = clock.get("name", "?")
+            threat = clock.get("threat", "")
+            if ratio >= 0.75:
+                if primary_res == "vigor":
+                    parts.append(f"[Clock Omen: {name}] 위협의 징후가 뚜렷하다 — {threat}의 조짐을 PC 주변에서 구체적으로 묘사하라. 소문, 흔적, 이상 현상. '한편' 시점 전환 금지.")
+                else:
+                    parts.append(f"[Clock Omen: {name}] 위기의 전조가 감지된다 — {threat}의 조짐을 주변 인물의 태도 변화, 미묘한 분위기, 사소한 균열로 묘사하라. 시점 전환 금지.")
+            elif ratio >= 0.5:
+                if primary_res == "vigor":
+                    parts.append(f"[Clock Hint: {name}] 먼 전조 — {threat}의 징후를 감각적 디테일로 암시하라.")
+                else:
+                    parts.append(f"[Clock Hint: {name}] 미세한 변화 — {threat}의 전조를 일상의 작은 어긋남으로 암시하라.")
+
     status_effects = (context.narrative_anchors or {}).get("status_effects", [])
     if isinstance(status_effects, list):
         for status in status_effects[:3]:
@@ -539,6 +572,16 @@ def _build_atmosphere_layer(context, bus) -> str:
                 parts.append(f"[Condition: {name}] {hint}")
             else:
                 parts.append(f"[Condition: {name}] active.")
+
+    # ── Task 3: 시점 고정 디렉티브 (POV Lock) ──
+    if isinstance(clocks, list):
+        active_clocks = [c for c in clocks if isinstance(c, dict) and not c.get("resolved")]
+        if active_clocks:
+            parts.append(
+                "[시점 고정] 시계 이벤트는 PC 시점 안에서만 묘사하라. "
+                "'한편', '그 무렵', '다른 곳에서는' 등 시점 전환 절대 금지. "
+                "PC가 직접 목격·감지하는 것만 서술."
+            )
 
     if not parts:
         return ""
@@ -555,11 +598,7 @@ def _build_system_message(bus) -> str:
     anomaly = bus.anomaly if isinstance(bus.anomaly, dict) else {}
     if anomaly.get("triggered"):
         tag = anomaly.get("tag", "anomaly")
-        note = anomaly.get("defense_note", "")
-        anomaly_line = f"[Anomaly Triggered] {tag}"
-        if note:
-            anomaly_line += f" ({note})"
-        chunks.append(anomaly_line)
+        chunks.append(f"[이변] {tag}")
 
     doom = bus.doom if isinstance(bus.doom, dict) else {}
     for key in ("relief_log", "mental_pressure_log", "clock_log", "log"):
@@ -695,11 +734,6 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> G
     composure_data = mem.get("composure", {"value": 100, "last_delta": 0})
     bus.composure["value"] = composure_data.get("value", 100)
     bus.composure["last_delta"] = composure_data.get("last_delta", 0)
-    adaptation = mem.get("abnormal_exposure", {})
-    if not adaptation and p_data:
-        adaptation = p_data.get("abnormal_exposure", {})
-    bus.vigor["adaptation"] = adaptation
-
     context = GameContext(
         request=RequestData(
             user_input=user_input,
@@ -760,12 +794,6 @@ def sync_from_game_context(channel_id: str, user_id: str, ctx: Any) -> None:
                         })
                     axis_bus.pop("trauma_trigger", None)
 
-        # Adaptation Updates (vigor에서만 관리)
-        updates = bus.vigor.get("adaptation_update")
-        if updates:
-            mem.setdefault("abnormal_exposure", {}).update(updates)
-            p_data.setdefault("abnormal_exposure", {}).update(updates)
-
         domain_manager.save_participant_data(channel_id, user_id, p_data)
 
 class UniversalNarrativeEngine:
@@ -802,9 +830,9 @@ class UniversalNarrativeEngine:
             combined_input = "\n".join(info["actions"])
             context = convert_to_game_context(channel_id, uid, combined_input)
 
-            # 이변 중복 방지: 이미 발동했으면 skip_trigger + 동일 이변 정보 주입
+            # 스토리텔러 중복 방지: 이미 발동했으면 동일 이벤트 데이터 복사
             if anomaly_data:
-                context.shared_bus.anomaly["skip_trigger"] = True
+                context.shared_bus.anomaly["_skip_storyteller"] = True
                 context.shared_bus.anomaly.update(anomaly_data)
 
             updated = await self.pipeline.execute(context)
@@ -1078,14 +1106,13 @@ class UniversalNarrativeEngine:
             if hints:
                 directive_parts.append("[Base Directive]\n" + "\n".join(hints))
 
-        # ── Layer 3: [Intrusion] — Cypher GM Intrusion (Genre-Aware) ──
+        # ── Layer 3: [Intrusion] — World Initiative (Genre-Aware) ──
         anomaly_sys = ""
         a_triggered = bus.anomaly and bus.anomaly.get("triggered")
         if a_triggered:
             tag = bus.anomaly.get("tag") or "이변"
             intensity = bus.anomaly.get("intensity")
             polarity = bus.anomaly.get("polarity")
-            category = bus.anomaly.get("category")
             line = bus.anomaly.get("line", "")
 
             # Resolve genre for framing
@@ -1107,8 +1134,6 @@ class UniversalNarrativeEngine:
             intrusion = f"[Intrusion: {tag}] {polarity_frame}"
             if line:
                 intrusion += f"\n{line}"
-            if bus.anomaly.get("output"):
-                intrusion += f"\n{bus.anomaly.get('output')}"
             directive_parts.append(intrusion)
 
             # Anomaly system message (Discord)
@@ -1121,23 +1146,7 @@ class UniversalNarrativeEngine:
                 if tag: info_parts.append(f"태그: {tag}")
                 if intensity: info_parts.append(f"강도: {intensity}")
                 if polarity: info_parts.append(f"성격: {polarity}")
-                if category and category != tag: info_parts.append(f"적응키: {category}")
                 anomaly_sys += f"\n{' / '.join(info_parts) if info_parts else '이변 정보: (미상)'}"
-
-            if bus.anomaly.get("escalated"):
-                anomaly_sys += f"\n⚠️ **대실패 공명**: 이변 강도 상승!"
-            divider = "━" * 20
-            anomaly_sys += f"\n{divider}\n{divider}"
-            anomaly_sys += f"\n🎲 적응 판정 결과: [[{category or tag}]]"
-            result_line = _build_adaptation_result_line(
-                mask,
-                bus.anomaly.get("defense_success"),
-                bus.anomaly.get("defense_note", ""),
-                bus.anomaly.get("adapt_pct"),
-                bus.anomaly.get("adapt_new_pct")
-            )
-            if result_line:
-                anomaly_sys += f"\n{result_line}"
         system_msg += anomaly_sys
 
         # ── System Logs (Discord) ──
@@ -1147,6 +1156,8 @@ class UniversalNarrativeEngine:
             system_msg += f"\n{bus.doom.get('mental_pressure_log')}"
         if bus.doom and bus.doom.get("clock_log"):
             system_msg += f"\n⏰ {bus.doom.get('clock_log')}"
+        if bus.doom and bus.doom.get("defense_log"):
+            system_msg += f"\n{bus.doom.get('defense_log')}"
         if bus.vigor:
             log_parts = []
             if bus.vigor.get("log"):
@@ -1260,8 +1271,8 @@ class UniversalNarrativeEngine:
             "directive": "\n".join(directive_parts),
             "system_msg": system_msg,
             "has_anomaly": bool(a_triggered),
-            "anomaly_header": anomaly_sys.split("━━")[0] if anomaly_sys else "",
-            "adaptation_line": result_line if a_triggered else "",
+            "anomaly_header": anomaly_sys.strip() if anomaly_sys else "",
+            "adaptation_line": "",
             "mental_log": bus.vigor.get("log", "") if bus.vigor else "",
         }
 
@@ -1270,9 +1281,7 @@ class UniversalNarrativeEngine:
         all_directives = []
         judgment_msgs = []
         anomaly_header = ""
-        adaptation_lines = []
         mental_lines = []
-        doom_lines = []
 
         for r in results:
             if r["directive"]:
@@ -1280,10 +1289,8 @@ class UniversalNarrativeEngine:
 
             # 판정 부분만 추출 (system_msg에서 이변/멘탈 제외)
             sys = r["system_msg"]
-            # 판정 출력은 🎲으로 시작, ⚡ 이변 전까지
             if "🎲" in sys:
                 judgment_part = sys.split("⚡")[0].split("⏳")[0]
-                # doom/mental 로그 제거
                 for marker in ["\n📈", "\n📉", "\n🧠"]:
                     if marker in judgment_part:
                         judgment_part = judgment_part[:judgment_part.index(marker)]
@@ -1292,9 +1299,6 @@ class UniversalNarrativeEngine:
             # 이변 헤더는 1회만
             if r["has_anomaly"] and not anomaly_header:
                 anomaly_header = r["anomaly_header"]
-
-            if r["adaptation_line"]:
-                adaptation_lines.append(r["adaptation_line"])
 
             if r["mental_log"]:
                 mental_lines.append(r["mental_log"])
@@ -1306,15 +1310,9 @@ class UniversalNarrativeEngine:
         if judgment_msgs:
             combined_sys += "\n\n".join(judgment_msgs)
 
-        # 2. 이변 (헤더 1회 + 적응 PC별)
+        # 2. 이변 헤더 (1회)
         if anomaly_header:
-            combined_sys += f"\n\n{anomaly_header.strip()}"
-            divider = "━" * 20
-            combined_sys += f"\n{divider}\n{divider}"
-            tag = results[0].get("anomaly_tag", "이변")
-            combined_sys += f"\n🎲 적응 판정 결과:"
-            for line in adaptation_lines:
-                combined_sys += f"\n{line}"
+            combined_sys += f"\n\n{anomaly_header}"
 
         # 3. 멘탈 변동 (PC별)
         if mental_lines:
