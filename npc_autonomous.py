@@ -151,7 +151,10 @@ class NPCAutonomousEngine:
         if not triggers:
             return ""
         selected = triggers[:max_triggers]
-        lines = ["[NPC Autonomous Behavior]"]
+        lines = [
+            "[NPC Autonomous Behavior]",
+            "(Show through action only. Never name trigger types or psychology terms in prose.)",
+        ]
         for t in selected:
             lines.append(f"- {t.npc_name}: {t.directive}")
         return "\n".join(lines)
@@ -168,7 +171,7 @@ def _check_henderson_need_critical(ctx: Dict) -> TriggerResult | None:
         need_str = "/".join(needs[:2])
         return TriggerResult(
             "henderson_need_critical", ctx["name"],
-            f"Critical needs ({need_str}) — NPC will actively pursue fulfillment this turn",
+            f"Unmet needs ({need_str}) — acts to get what they lack this turn",
             priority=7,
         )
     return None
@@ -180,7 +183,7 @@ def _check_attachment_activation(ctx: Dict) -> TriggerResult | None:
     if attachment == "anxious":
         return TriggerResult(
             "attachment_activation", ctx["name"],
-            f"Anxious attachment activated — {ctx['name']} seeks reassurance or proximity to PC",
+            f"{ctx['name']} craves closeness — initiates contact, seeks reassurance from PC",
             priority=5,
         )
     return None
@@ -193,7 +196,7 @@ def _check_reactance(ctx: Dict) -> TriggerResult | None:
     if coping == "avoidant" and rel_val < -10:
         return TriggerResult(
             "reactance", ctx["name"],
-            f"Reactance triggered — {ctx['name']} resists or defies current expectations",
+            f"{ctx['name']} pushes back — resists or defies what's expected of them",
             priority=6,
         )
     return None
@@ -205,7 +208,7 @@ def _check_info_gap(ctx: Dict) -> TriggerResult | None:
     if false_beliefs:
         return TriggerResult(
             "information_gap_fill", ctx["name"],
-            f"Information gap — {ctx['name']} is driven to verify or investigate (false belief: {false_beliefs[0][:40]})",
+            f"{ctx['name']} senses something is off — driven to verify or investigate (re: {false_beliefs[0][:40]})",
             priority=4,
         )
     return None
@@ -218,7 +221,7 @@ def _check_secret_pressure(ctx: Dict) -> TriggerResult | None:
     if leak_risk in ("medium", "high") and secrets:
         return TriggerResult(
             "secret_pressure", ctx["name"],
-            f"Secret pressure ({leak_risk}) — {ctx['name']} may inadvertently reveal clues about hidden information",
+            f"{ctx['name']} struggles to keep a secret — may slip or reveal clues unintentionally",
             priority=5 if leak_risk == "high" else 3,
         )
     return None
@@ -241,7 +244,7 @@ def _check_emotional_contagion(ctx: Dict, all_psyche: Dict) -> TriggerResult | N
             if other_val < -30:
                 return TriggerResult(
                     "emotional_contagion", ctx["name"],
-                    f"Emotional contagion from {other_name} — {ctx['name']}'s calm may waver",
+                    f"{ctx['name']} picks up on {other_name}'s distress — their own calm starts to crack",
                     priority=2,
                 )
     return None
@@ -254,7 +257,7 @@ def _check_moral_disengagement(ctx: Dict) -> TriggerResult | None:
     if attitude == "hostile" and self_opacity:
         return TriggerResult(
             "moral_disengagement_stable", ctx["name"],
-            f"Moral disengagement active — {ctx['name']} continues harmful pattern with self-justification",
+            f"{ctx['name']} doubles down on harmful behavior — rationalizes it to themselves",
             priority=4,
         )
     return None
@@ -275,7 +278,7 @@ def _check_desistance(ctx: Dict) -> TriggerResult | None:
         if rel_val > 30:  # Strong positive relationship despite hostile tag
             return TriggerResult(
                 "desistance_check", ctx["name"],
-                f"Desistance conditions emerging for {ctx['name']} — behavioral change may be possible (verify: alternative identity + social support + generative motivation + redemption narrative)",
+                f"{ctx['name']} shows signs of change — old patterns loosening, new behavior emerging",
                 priority=1,  # Low priority — very rare
             )
     return None

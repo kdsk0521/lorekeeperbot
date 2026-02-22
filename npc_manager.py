@@ -926,8 +926,9 @@ def get_connection_milestone_hints(channel_id: str) -> List[str]:
         if current_stage != last_stage and last_stage != "":
             stage_info = config.get_connection_stage(depth)
             hints.append(
-                f"[NPC Connection Milestone: {npc_name}] "
-                f"Reached '{current_stage}' ({depth}/100) — {stage_info['hint_en']}"
+                f"[NPC Connection Shift: {npc_name}] "
+                f"Relationship deepened — {stage_info['hint_en']} "
+                f"(Show through behavior. Never name stage or score in prose.)"
             )
 
         if current_stage != tracking.get(npc_name):

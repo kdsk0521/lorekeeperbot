@@ -1181,7 +1181,8 @@ class UniversalNarrativeEngine:
                 move = mc_moves.get(pos_tier, mc_moves.get("risky", ""))
             reason_part = f" ({reason_txt})" if reason_txt else ""
             directive_parts.append(
-                f"[Narrative: {j_mask} '{action}'{reason_part} — {pos_tier}] {move}"
+                f"[Narrative: {j_mask} '{action}'{reason_part}] {move}\n"
+                f"(Render outcome through scene events. Never echo move descriptions or tier names in prose.)"
             )
             system_msg += bus.judgment.get("output", "")
             if bus.judgment.get("party_wide_hook"):
@@ -1324,7 +1325,7 @@ class UniversalNarrativeEngine:
             elif j_result == "critical_success":
                 aspects.append("Glory's Shadow")
         if a_triggered and primary_val <= 39:
-            erosion_label = "기력 침식" if primary_axis == "vigor" else "평정 균열"
+            erosion_label = "Body Erosion" if primary_axis == "vigor" else "Mind Fracture"
             aspects.append(erosion_label)
         if m_trauma and a_triggered:
             aspects.append("Inner-Outer Convergence")
@@ -1342,6 +1343,7 @@ class UniversalNarrativeEngine:
         active_modules = context.request.active_modules
 
         # Doom = 8-Segment FitD Clock (only when module active)
+        # (Atmosphere reference. Never name doom stages, clock names, or percentages in prose.)
         if "doom" in active_modules:
             # Genre-aware doom stage lookup
             import game_world as _gw
@@ -1369,27 +1371,28 @@ class UniversalNarrativeEngine:
                 atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — tension has receded")
 
         # Vigor + Composure = 2-axis PC state (only when module active)
+        # (Show through behavior only. Never name 기력/평정/vigor/composure in prose.)
         if "mental" in active_modules:
             if vigor_val <= 14:
-                atmosphere.append(f"기력 붕괴 ({vigor_val}%) — 한계를 넘어 신체가 무너진다")
+                atmosphere.append(f"Body collapse ({vigor_val}%) — limbs fail, can barely stand")
             elif vigor_val <= 39:
-                atmosphere.append(f"기력 고갈 ({vigor_val}%) — 탈진으로 몸이 버거워진다")
+                atmosphere.append(f"Body exhaustion ({vigor_val}%) — heavy limbs, labored breath")
             elif vigor_val <= 69:
-                atmosphere.append(f"기력 동요 ({vigor_val}%) — 신체 균형이 흔들린다")
+                atmosphere.append(f"Body strain ({vigor_val}%) — muscles ache, movements slow")
 
             if composure_val <= 14:
-                atmosphere.append(f"평정 붕괴 ({composure_val}%) — 정신이 무너진다")
+                atmosphere.append(f"Mind collapse ({composure_val}%) — thoughts scatter, reality blurs")
             elif composure_val <= 39:
-                atmosphere.append(f"평정 동요 ({composure_val}%) — 감정이 취약해진다")
+                atmosphere.append(f"Mind fraying ({composure_val}%) — emotions leak, focus breaks")
             elif composure_val <= 69:
-                atmosphere.append(f"평정 흔들림 ({composure_val}%) — 내면이 불안정하다")
+                atmosphere.append(f"Mind uneasy ({composure_val}%) — inner tension, restless")
 
         v_trauma = bus.vigor and bus.vigor.get("trauma_trigger")
         c_trauma = bus.composure and bus.composure.get("trauma_trigger")
         if v_trauma:
-            atmosphere.append("기력 트라우마 각성 — 벼랑 끝에서 신체가 재점화된다")
+            atmosphere.append("Trauma surge (body) — adrenaline reignites failing limbs")
         if c_trauma:
-            atmosphere.append("평정 트라우마 각성 — 붕괴 직전에서 정신이 재기동된다")
+            atmosphere.append("Trauma surge (mind) — survival instinct overrides breakdown")
 
         if atmosphere:
             directive_parts.append("[Atmosphere]: " + " / ".join(atmosphere))

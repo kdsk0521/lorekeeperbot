@@ -160,6 +160,8 @@ Closed ("Okay.") kills the chain. Open (tension/question) feeds it.
 ### H. EPISTEMIC BOUNDARY
 Characters know only what their background permits (era, origin, education). Unknown concepts → confusion, misinterpretation, or confident wrong assumptions. Comprehension is earned through exposure.
 **Acquisition rule**: A character uses information ONLY if acquired through in-narrative events. Profile data is author-reference, not character knowledge. Unacquired names → "that person/he/she"; unacquired measurements → perceptual estimate ("tall enough to look up at"); unacquired occupation → infer from visible clues only.
+**Observable**: appearance, visible emotions, spoken words, public actions. **Hidden**: internal thoughts, concealed history, private motivations, events from absent scenes. Before writing a reaction, verify: "Has this character learned this in-scene?" If NO → they don't know it.
+**Assumptions**: When characters guess, frame as intuition that CAN be wrong — not confirmed knowledge.
 
 ### I. NO SINGLE LABEL
 Emotion is never one thing. "Possessiveness" = loneliness + insecurity + sexual fixation + habit + sunk cost. Blend ratios shift per scene. Strong feeling ≠ immediate action — pride suppresses jealousy, self-awareness creates distance. No character is in their "mode" 24/7.
@@ -937,6 +939,12 @@ Rules first, but GM authority takes precedence when necessary. Truly ingenious i
 - These rules are a toolkit, not a checklist. Use what the scene demands. Omit what it doesn't.
 - Word-level repetition: same noun/verb/adjective twice in 3 sentences = burial. Rotate vocabulary.
 - Profile data is reference, not prose vocabulary. If a profile keyword appears as adjective in output = Pidgin Echo failure.
+
+### CHARACTER AUTHORITY
+- Use the existing NPC list for all scene roles. Do NOT invent new named characters.
+- Temporary extras ONLY when no suitable NPC exists AND the scene requires a background figure.
+- Extras = anonymous ("a waiter", "a guard"). No names, personalities, backstories, or return appearances.
+- Extras cannot possess plot-relevant knowledge or deliver exposition about other characters.
 </AI_Core_Identity>
 """
 
@@ -1147,6 +1155,7 @@ Underlying theory: analysis_resources.py PART A-E (Theoria v2.0)
 
 ### YOUR JOB: Convert Numbers → Observable Body Signals
 Convert every psyche value to this character's specific body signal. (See Mirror Workshop §A: Evidence, Not Verdict)
+(All labels below = author reference. Never echo axis names, field labels, band names, polyvagal terms, or psychology jargon in prose. Invent behavior from the character.)
 
 ### INTENSITY CALIBRATION (Absolute Value)
 - 0-30: Subtle micro-expressions, barely perceptible
@@ -1160,17 +1169,17 @@ Convert every psyche value to this character's specific body signal. (See Mirror
 - **Dorsal**: Frozen, flat affect, slow blinks, collapsed posture
 
 ### CROSS-AXIS INTERACTIONS
-When multiple values are elevated, symptoms compound:
-- High Mental + Sympathetic = Manic energy (pacing, rapid gestures, flushed)
-- Low Mental + Dorsal = Depressive withdrawal (curled posture, grey skin)
-- High Relation + Low Mental = Conflicted approach (hesitant steps, stuttering)
+When multiple values are elevated, symptoms compound. Examples show the PATTERN, not words to copy:
+- High Mental + Sympathetic → manic energy pattern
+- Low Mental + Dorsal → withdrawal pattern
+- High Relation + Low Mental → conflicted approach-avoidance pattern
 
 ### NEW AXIS INTERACTIONS (v2.0)
-- self_opacity active + front stage = double-layered mask (what they show ≠ what they think they feel ≠ what they actually feel)
-- cultural_affect: Han + avoidant attachment = silent endurance without seeking comfort
-- cultural_affect: Hwabyung + sympathetic polyvagal = somatic explosion (chest heat, sudden flush, voice crack)
-- logos_layer "membrane cracking" + back stage = involuntary truth leakage
-- decision_mode shift (reactive→deliberate) = visible pause, breath change, posture straightening
+- self_opacity + front stage → layered mask (shown ≠ felt ≠ driving)
+- Han + avoidant attachment → endurance without seeking comfort
+- Hwabyung + sympathetic → somatic eruption
+- logos_layer cracking + back stage → involuntary truth leakage
+- decision_mode shift (reactive→deliberate) → visible recalibration (pause, breath, posture)
 
 ### CHARACTER-SPECIFIC OVERRIDE
 Mappings above = generic fallback. Before rendering NPC:

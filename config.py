@@ -34,8 +34,8 @@ ANALYSIS_TOP_P = 0.8
 
 # Generation Parameters - Narrative (Pro/Right Brain)
 NARRATIVE_TEMPERATURE = 1.4
-NARRATIVE_TOP_K = 40
-NARRATIVE_TOP_P = 0.95
+NARRATIVE_TOP_K = 70
+NARRATIVE_TOP_P = 0.80
 NARRATIVE_MAX_OUTPUT_TOKENS = 8192
 # 서사 출력 길이: 인원당 동적 조절 (텔레스코프 제거 후 기준)
 NARRATIVE_CHARS_BASE = 1500      # 기본 (1인 이하)

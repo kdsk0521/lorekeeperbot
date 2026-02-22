@@ -691,6 +691,8 @@ def build_34_step_prompt(ctx) -> str:
     # Position/Effect: 상황 위치 및 영향력
     position = dai.get("position", {})
     effect = dai.get("effect", {})
+    if position or effect:
+        input_analysis_parts.append("(Outcome calibration. Never echo position/effect values or tier names in prose.)")
     if position:
         input_analysis_parts.append(
             f"Position: {position.get('value', 0.5)} ({position.get('reason', '')})"
@@ -708,7 +710,7 @@ def build_34_step_prompt(ctx) -> str:
     # EnergyDirection: 씬 에너지 방향
     energy_dir = dai.get("energy_direction", "")
     if energy_dir:
-        scene_intel_parts.append(f"### Energy Direction [ANALYSIS]: {energy_dir.upper()}")
+        scene_intel_parts.append(f"### Energy Direction [ANALYSIS]: {energy_dir.upper()}\n(Prose pacing reference. Never name energy direction labels in output.)")
 
     # Aspects: 활용 가능한 장면 요소
     aspects = dai.get("aspects", [])
@@ -748,7 +750,11 @@ def build_34_step_prompt(ctx) -> str:
         if qflags.get("stagnation_warning"):
             warnings.append("⚠ STAGNATION: Scene energy flat for 3+ turns. Continue naturally — do not force artificial change.")
         if warnings:
-            scene_intel_parts.append("### Quality Alerts [ANALYSIS]\n" + "\n".join(warnings))
+            scene_intel_parts.append(
+                "### Quality Alerts [ANALYSIS]\n"
+                "(Course-correction cues. Never echo alert labels or meta-commentary in prose.)\n"
+                + "\n".join(warnings)
+            )
 
     # Apophenia Guard: 특성 연결 굴절 지시 (BABEL Axis V)
     trait_conn = dai.get("trait_connections", {})
@@ -799,7 +805,11 @@ def build_34_step_prompt(ctx) -> str:
                 reason = att.get("reason", "")
                 att_lines.append(f"- {npc_name}: {attitude} ({trajectory}) — {reason}")
         if att_lines:
-            extended_intel_parts.append("### NPC Attitudes\n" + "\n".join(att_lines))
+            extended_intel_parts.append(
+                "### NPC Attitudes\n"
+                "(Author reference. Show attitude through behavior/dialogue, not labels.)\n"
+                + "\n".join(att_lines)
+            )
 
     # NPCKnowledge: NPC별 지식 상태
     npc_knowledge = dai.get("NPCKnowledge", dai.get("npc_knowledge", {}))
@@ -816,7 +826,11 @@ def build_34_step_prompt(ctx) -> str:
                 if parts_k:
                     know_lines.append(f"- **{npc_name}**\n" + "\n".join(parts_k))
         if know_lines:
-            extended_intel_parts.append("### NPC Knowledge States\n" + "\n".join(know_lines))
+            extended_intel_parts.append(
+                "### NPC Knowledge States\n"
+                "(What NPCs know/hide shapes their behavior. Never narrate 'knows', 'secrets', or 'leak_risk' as concepts.)\n"
+                + "\n".join(know_lines)
+            )
 
     # IntimacyAnalysis: intimate 씬 전용 심리 분석
     intimacy = dai.get("IntimacyAnalysis", dai.get("intimacy_analysis"))
@@ -835,7 +849,11 @@ def build_34_step_prompt(ctx) -> str:
         if body_mem:
             intim_lines.append(f"Body Memory: {body_mem}")
         if intim_lines:
-            extended_intel_parts.append("### Intimacy Analysis\n" + "\n".join(intim_lines))
+            extended_intel_parts.append(
+                "### Intimacy Analysis\n"
+                "(Render through physical sensation and behavior. Never name field labels in prose.)\n"
+                + "\n".join(intim_lines)
+            )
 
     # NPC Connection Milestones (1회성 서사 힌트)
     if channel_id:
@@ -859,7 +877,12 @@ def build_34_step_prompt(ctx) -> str:
                 _line += f" — {_stage['hint_en']}"
                 conn_lines.append(_line)
         if conn_lines:
-            extended_intel_parts.append("### NPC Connection Depth\n" + "\n".join(conn_lines))
+            extended_intel_parts.append(
+                "### NPC Connection Depth\n"
+                "(Stage names and numbers = author reference. Show depth through BEHAVIOR — "
+                "never name stages, scores, or 'connection' in prose.)\n"
+                + "\n".join(conn_lines)
+            )
 
     extended_intelligence = "\n\n".join(extended_intel_parts)
 
@@ -867,7 +890,11 @@ def build_34_step_prompt(ctx) -> str:
     psyche_states = ""
     psyche_data = dai.get("psyche_states", {})
     if psyche_data and isinstance(psyche_data, dict):
-        psyche_lines = []
+        psyche_lines = [
+            "(Author reference only. NEVER echo axis names, field labels, or psychology terms "
+            "(polyvagal/attachment/self_opacity/decision_mode/coping/logos_layer) in prose. "
+            "Convert every value to THIS character's specific observable behavior.)"
+        ]
         for char_name, state in psyche_data.items():
             if isinstance(state, str):
                 psyche_lines.append(f"- {char_name}: {state}")
@@ -895,6 +922,7 @@ def build_34_step_prompt(ctx) -> str:
         silence = chain_data.get('silence_type')
         silence_tag = f"\nsilence_type: {silence}" if silence else ""
         narrative_chain = (
+            "(Pacing reference only. Never echo these labels or values in prose.)\n"
             f"chain_status: {chain_data.get('chain_status', 'OPEN')}\n"
             f"topic_lock: {chain_data.get('topic_lock', 'None')}\n"
             f"conclusion_proximity: {chain_data.get('conclusion_proximity', 'N/A')}"
@@ -915,7 +943,10 @@ def build_34_step_prompt(ctx) -> str:
     gm_mover = ""
     gm_move = dai.get("gm_move", {})
     if gm_move:
-        gm_mover = f"type: {gm_move.get('type', 'N/A')}\ndescription: {gm_move.get('description', '')}"
+        gm_mover = (
+            "(Direction for what happens next. Never name move types in prose.)\n"
+            f"type: {gm_move.get('type', 'N/A')}\ndescription: {gm_move.get('description', '')}"
+        )
 
     # Flashback Scene Instruction (회상 확정 시)
     if dai.get("flashback_confirmed"):
@@ -1009,7 +1040,8 @@ def build_34_step_prompt(ctx) -> str:
         if intensity_lines:
             real_time_data += (
                 "\n\n[EMOTION_INTENSITY_GUIDE]\n"
-                "Render emotion through PHYSICAL EVIDENCE at the intensity below. Do NOT name emotions directly.\n"
+                "Render emotion through PHYSICAL EVIDENCE at the intensity below. "
+                "Do NOT name emotions, band labels (SUBTLE/VISIBLE/OVERT/OVERWHELMING), or psyche values in prose.\n"
                 + "\n".join(intensity_lines)
             )
 
@@ -1024,19 +1056,18 @@ def build_34_step_prompt(ctx) -> str:
             _c = int(_c_dict.get("value", 100)) if _c_dict.get("value") is not None else 100
             _gap = abs(_v - _c)
             if _gap >= 30:
+                _no_echo = "Show through BEHAVIOR only. Never name 기력/평정/vigor/composure in prose."
                 if _v > _c:
                     _contrast_hint = (
                         f"\n\n[CONTRAST] 기력 {_v} vs 평정 {_c} (차이 {_gap})\n"
-                        "Body is functional but mind is fracturing. "
-                        "Show: hands steady but voice cracking, completing tasks while thoughts scatter, "
-                        "physical competence masking inner turmoil."
+                        "Body functional, mind fracturing. "
+                        f"{_no_echo}"
                     )
                 else:
                     _contrast_hint = (
                         f"\n\n[CONTRAST] 기력 {_v} vs 평정 {_c} (차이 {_gap})\n"
-                        "Mind is clear but body is failing. "
-                        "Show: sharp eyes in an exhausted face, precise words through labored breath, "
-                        "willpower overriding physical limits."
+                        "Mind clear, body failing. "
+                        f"{_no_echo}"
                     )
                 real_time_data += _contrast_hint
         except Exception:
