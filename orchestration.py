@@ -229,11 +229,20 @@ class OrchestrationService:
         # [Flashback] 회상 기력 차감 (vigor_composure 전에 직접 처리)
         fb_eval = dai.get("flashback_eval")
         if fb_eval and fb_eval.get("detected"):
+            acting_uid = updated_context.narrative_anchors.get("acting_user_id", "")
             fb_msg = self._process_flashback(
-                channel_id, updated_context.shared_bus, fb_eval
+                channel_id, updated_context.shared_bus, fb_eval, user_id=acting_uid
             )
             if fb_msg:
                 system_log = (system_log or "") + f"\n{fb_msg}"
+
+        # [Downtime] 다운타임 활동 처리 (rest_eval.activity != "rest")
+        rest_eval = dai.get("rest_eval")
+        if rest_eval and rest_eval.get("detected") and rest_eval.get("activity", "rest") != "rest":
+            acting_uid = updated_context.narrative_anchors.get("acting_user_id", "")
+            dt_msg = self._process_downtime(channel_id, updated_context.shared_bus, rest_eval, acting_uid)
+            if dt_msg:
+                system_log = (system_log or "") + f"\n{dt_msg}"
 
         # [Item Usage] 아이템 소비/획득 처리
         item_eval = dai.get("item_usage")
@@ -256,12 +265,41 @@ class OrchestrationService:
         
         return ctx, messages, directive
 
-    def _process_flashback(self, channel_id: str, bus, fb_eval: dict) -> Optional[str]:
+    def _process_flashback(self, channel_id: str, bus, fb_eval: dict, user_id: str = "") -> Optional[str]:
         """회상 평가 → 기력 차감 + DAI 확정. Returns system message or None."""
         plausibility = fb_eval.get("plausibility", "plausible")
         tier = fb_eval.get("tier", "standard")
         declaration = fb_eval.get("declaration", "")
         dai = bus.dai
+
+        # ── Loadout 분기 (flashback_type == "loadout") ──
+        if fb_eval.get("flashback_type") == "loadout" and user_id:
+            loadout = domain_manager.get_loadout(channel_id, user_id)
+            if not loadout:
+                dai["flashback_confirmed"] = False
+                return "❌ 로드아웃 미설정. `!로드아웃 [경장/표준/중장]`으로 먼저 설정하세요."
+            slots_needed = fb_eval.get("loadout_slots", 1)
+            remaining = loadout["total_slots"] - loadout.get("used_slots", 0)
+            if slots_needed > remaining:
+                dai["flashback_confirmed"] = False
+                return f"❌ 슬롯 부족 ({remaining}/{loadout['total_slots']})"
+            cost = config.LOADOUT_SLOT_COST.get(slots_needed, 3)
+            # 비용 차감 (기력 기반)
+            current_vigor = int(bus.vigor.get("value", 100))
+            if current_vigor < cost:
+                dai["flashback_confirmed"] = False
+                return f"❌ 기력 부족 (현재 {current_vigor}, 필요 {cost})"
+            bus.vigor["value"] = max(0, current_vigor - cost)
+            domain_manager.consume_loadout_slot(channel_id, user_id, slots_needed, declaration)
+            dai["flashback_confirmed"] = True
+            dai["flashback_declaration"] = declaration
+            dai["loadout_used"] = True
+            new_vigor = bus.vigor["value"]
+            return (
+                f"🎒 로드아웃: {declaration}\n"
+                f"⚡ 슬롯 {slots_needed}개 소비 (잔여 {remaining - slots_needed}/{loadout['total_slots']}) | "
+                f"기력 -{cost} → {new_vigor}/100"
+            )
 
         # 불가능한 회상 → 거부
         if plausibility == "impossible":
@@ -270,6 +308,10 @@ class OrchestrationService:
             return f"❌ 회상 거부: {fb_eval.get('reason', '논리적 모순')}"
 
         cost = int(config.FLASHBACK_COST_TIERS.get(tier, 8))
+        # 특질 할인: 관련 특질 매칭 시 비용 50%
+        relevant_passive = fb_eval.get("relevant_passive")
+        if relevant_passive:
+            cost = max(1, int(cost * config.FLASHBACK_PASSIVE_DISCOUNT))
         current_vigor = int(bus.vigor.get("value", 100))
         current_composure = int(bus.composure.get("value", 100))
 
@@ -318,9 +360,8 @@ class OrchestrationService:
         domain_manager.clear_pending_flashback(channel_id)
 
         passive_note = ""
-        relevant_passive = fb_eval.get("relevant_passive")
         if relevant_passive:
-            passive_note = f" (면모 '{relevant_passive}' 활성화 → {tier})"
+            passive_note = f" (특질 '{relevant_passive}' 할인 → 비용 50%↓)"
 
         return (
             f"🔮 회상 발동: {declaration}\n"
@@ -364,6 +405,69 @@ class OrchestrationService:
         if reason:
             msg += f" ({reason})"
         return msg
+
+    def _process_downtime(self, channel_id: str, bus, rest_eval: dict, user_id: str) -> Optional[str]:
+        """다운타임 활동 처리 (rest_eval.activity != 'rest'). Returns system message or None."""
+        import random as _rng
+        dt_type = rest_eval.get("activity", "recover")
+        target = rest_eval.get("target")
+        safe = rest_eval.get("safe_location", True)
+        dai = bus.dai
+
+        if dt_type == "recover":
+            cfg = config.DOWNTIME_RECOVER.get("safe" if safe else "unsafe", {})
+            bus.vigor["delta"] = bus.vigor.get("delta", 0) + cfg.get("vigor", 15)
+            bus.composure["delta"] = bus.composure.get("delta", 0) + cfg.get("composure", 10)
+            tag = "안전" if safe else "불안정"
+            return f"💤 치료({tag}): 기력 +{cfg.get('vigor', 15)}, 평정 +{cfg.get('composure', 10)}"
+
+        elif dt_type == "vice":
+            cfg = config.DOWNTIME_VICE
+            v_gain = cfg.get("base_vigor", 25)
+            c_gain = cfg.get("base_composure", 20)
+            bus.vigor["delta"] = bus.vigor.get("delta", 0) + v_gain
+            bus.composure["delta"] = bus.composure.get("delta", 0) + c_gain
+            projected = bus.composure.get("value", 50) + c_gain
+            if projected > cfg.get("overindulge_threshold", 85):
+                penalty = cfg.get("overindulge_penalty", -15)
+                bus.composure["delta"] = bus.composure.get("delta", 0) + penalty
+                dai["vice_overindulge"] = True
+                return f"🍺 부업: 기력 +{v_gain}, 평정 +{c_gain} → 과용! 평정 {penalty}"
+            return f"🍺 부업: 기력 +{v_gain}, 평정 +{c_gain}"
+
+        elif dt_type == "train":
+            cfg = config.DOWNTIME_TRAIN
+            v_cost = cfg.get("vigor_cost", 5)
+            c_cost = cfg.get("composure_cost", 5)
+            bus.vigor["value"] = max(0, bus.vigor.get("value", 100) - v_cost)
+            bus.composure["value"] = max(0, bus.composure.get("value", 100) - c_cost)
+            progress_msg = ""
+            if target and user_id:
+                entry = domain_manager.advance_training(channel_id, user_id, target, cfg.get("progress_per_session", 1))
+                progress_msg = f", 진행도 {entry.get('progress', 1)}/{entry.get('target', 3)}"
+            return f"⚔️ 훈련({target or '일반'}): 기력 -{v_cost}, 평정 -{c_cost}{progress_msg}"
+
+        elif dt_type == "socialize":
+            cfg = config.DOWNTIME_SOCIALIZE
+            bus.vigor["delta"] = bus.vigor.get("delta", 0) + cfg.get("vigor", 5)
+            bus.composure["delta"] = bus.composure.get("delta", 0) + cfg.get("composure", 15)
+            depth_gain = 0
+            if target:
+                depth_gain = _rng.randint(*cfg.get("depth_delta_range", (10, 15)))
+                domain_manager.update_helena_metric(channel_id, target, depth_delta=depth_gain, tension_delta=0)
+            return f"🤝 사교({target or '일반'}): 평정 +{cfg.get('composure', 15)}, 유대 +{depth_gain}"
+
+        elif dt_type == "project":
+            cfg = config.DOWNTIME_PROJECT
+            v_cost = cfg.get("vigor_cost", 3)
+            c_cost = cfg.get("composure_cost", 3)
+            bus.vigor["value"] = max(0, bus.vigor.get("value", 100) - v_cost)
+            bus.composure["value"] = max(0, bus.composure.get("value", 100) - c_cost)
+            if target and user_id:
+                domain_manager.advance_project(channel_id, user_id, target)
+            return f"🔧 프로젝트({target or '?'}): 기력 -{v_cost}, 평정 -{c_cost}, 진행 +1"
+
+        return None
 
     # =========================================================
     # STEP 5: PROMPT BUILDING (V3 - 34단계 슬롯 시스템)

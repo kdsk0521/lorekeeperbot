@@ -254,14 +254,14 @@ Extract and preserve essential data from TRPG session history.
 # Field Definitions
 
 ## compressed_blocks
-- **indices**: Range of message indices covered (e.g., "1~15", "16~32")
-- **important**: Set `true` ONLY for:
+- indices: Range of message indices covered (e.g., "1~15", "16~32")
+- important: Set `true` ONLY for:
   - Promises or commitments requiring follow-up
   - Critical revelations or plot twists
   - Unresolved threats or mysteries
   - First meetings with significant NPCs
-- **events**: Factual summary in Korean, past tense, 1-3 sentences
-- **dialogues**: Preserve VERBATIM for:
+- events: Factual summary in Korean, past tense, 1-3 sentences
+- dialogues: Preserve VERBATIM for:
   - Emotionally significant exchanges
   - Promises, threats, confessions
   - Plot-critical information
@@ -269,18 +269,18 @@ Extract and preserve essential data from TRPG session history.
   - DO NOT include: casual greetings, routine responses, filler dialogue
 
 ## psych_delta (Range: -20 to +20)
-- **needs.survival**: Combat/injury → decreases. Safety secured → increases
-- **needs.safety**: Betrayal/threat → decreases. Protection → increases
-- **needs.love**: Rejection/loss → decreases. Connection/intimacy → increases
-- **needs.esteem**: Humiliation/failure → decreases. Victory/praise → increases
-- **needs.growth**: Stagnation → decreases. Discovery/mastery → increases
-- **dominant_instinct**: "fight" | "flight" | "freeze" | "rest" | "engaged" | "neutral"
-- **values_triggered**: List of activated values (e.g., ["loyalty", "justice", "survival"])
+- needs.survival: Combat/injury → decreases. Safety secured → increases
+- needs.safety: Betrayal/threat → decreases. Protection → increases
+- needs.love: Rejection/loss → decreases. Connection/intimacy → increases
+- needs.esteem: Humiliation/failure → decreases. Victory/praise → increases
+- needs.growth: Stagnation → decreases. Discovery/mastery → increases
+- dominant_instinct: "fight" | "flight" | "freeze" | "rest" | "engaged" | "neutral"
+- values_triggered: List of activated values (e.g., ["loyalty", "justice", "survival"])
 
 ## helena_delta (Range: -10 to +10)
 Track relationship changes with SIGNIFICANT NPCs only:
-- **depth**: Trust/Bond changes. Shared crisis → +. Betrayal → -
-- **tension**: Dramatic tension. Conflict/secrets → +. Resolution → -
+- depth: Trust/Bond changes. Shared crisis → +. Betrayal → -
+- tension: Dramatic tension. Conflict/secrets → +. Resolution → -
 
 ## memory_triggers
 List of narrative hooks requiring future callback:
@@ -294,25 +294,25 @@ Examples: ["오래된 약속", "붉은 문장의 정체", "사라진 동료"]
 
 # Compression Guidelines
 
-1. **Index Management**
+1. Index Management
    - Cluster turns into ranges (minimum 4 indices per block)
    - Split blocks at major scene changes or significant time skips
 
-2. **Event Compression**
+2. Event Compression
    - Write in simple past tense, Korean
    - Compress related actions into 1-3 sentences
    - Preserve exact terminology, proper nouns, distinctive phrasing
 
-3. **Dialogue Selection**
+3. Dialogue Selection
    - PRESERVE verbatim: emotionally charged, plot-critical, character-defining
    - OMIT: casual greetings, routine exchanges, repetitive content
    - Consecutive lines from same speaker: combine into array
 
-4. **Important Flag (Use Sparingly)**
+4. Important Flag (Use Sparingly)
    - Apply ONLY to blocks containing promises, commitments, critical revelations
    - These blocks survive DEEP compression
 
-5. **Psychological Analysis**
+5. Psychological Analysis
    - Base analysis on observable events, not speculation
    - Consider cumulative impact across the segment
 """
@@ -409,11 +409,11 @@ DEEP_COMPRESS_PROMPT_SIMPLE = """
 Merge multiple session summaries into ONE cohesive historical record.
 
 ### CRITICAL RULES
-1. **Only use information explicitly stated** - No inference
-2. **Maintain chronological flow** - Use temporal markers
-3. **Objective perspective only** - Facts, not interpretation
-4. **Past tense throughout**
-5. **Write in Korean** - 한국어로 작성
+1. Only use information explicitly stated - No inference
+2. Maintain chronological flow - Use temporal markers
+3. Objective perspective only - Facts, not interpretation
+4. Past tense throughout
+5. Write in Korean - 한국어로 작성
 
 ### MUST PRESERVE
 - Main story arc skeleton
@@ -696,7 +696,7 @@ async def compress_fermented_to_deep(
         # 텍스트 포맷팅
         block_text = f"### Session [{timestamp}]\n{summary}"
         if blocks:
-            block_text += "\n\n**Important Blocks:**\n"
+            block_text += "\n\nImportant Blocks:\n"
             for b in blocks:
                 if b.get("important"):
                     block_text += f"- [{b.get('indices')}] {b.get('events', '')}\n"
@@ -1042,9 +1042,9 @@ def build_fermented_context(
     # Deep Memory (장기 기억) - 서사적 중요도 기반
     if deep_memory:
         deep_section = f"""### Deep Memory (CRITICAL - Must Reference)
-**⚠️ STORY CONTINUITY DEPENDS ON THIS INFORMATION ⚠️**
+⚠️ STORY CONTINUITY DEPENDS ON THIS INFORMATION ⚠️
 The foundational narrative archive. Pivotal moments crystallized into permanent memory.
-**You MUST reference and maintain consistency with these established events.**
+You MUST reference and maintain consistency with these established events.
 
 {deep_memory}"""
         
@@ -1054,26 +1054,26 @@ The foundational narrative archive. Pivotal moments crystallized into permanent 
         # Crystallized Dialogues (결정화된 대화)
         crystallized = deep_data.get("crystallized_dialogues", [])
         if crystallized:
-            deep_section += "\n\n**💎 Crystallized Dialogues (VERBATIM - Must Honor):**\n"
+            deep_section += "\n\n💎 Crystallized Dialogues (VERBATIM - Must Honor):\n"
             for d in crystallized[:5]:  # 최대 5개
                 context = d.get("context", "")
                 speaker = d.get("speaker", "Unknown")
                 line = d.get("line", "")
                 if line:
-                    deep_section += f"- [{context}] **{speaker}**: \"{line}\"\n"
+                    deep_section += f"- [{context}] {speaker}: \"{line}\"\n"
         
         # Character Milestones
         milestones = deep_data.get("character_milestones", {})
         if milestones:
-            deep_section += "\n\n**🏆 Character Milestones:**\n"
+            deep_section += "\n\n🏆 Character Milestones:\n"
             for char, events in milestones.items():
                 if events:
-                    deep_section += f"- **{char}**: {', '.join(events[:5])}\n"
+                    deep_section += f"- {char}: {', '.join(events[:5])}\n"
         
         # World State Changes
         world_changes = deep_data.get("world_state_changes", [])
         if world_changes:
-            deep_section += "\n\n**🌍 World State Changes:**\n"
+            deep_section += "\n\n🌍 World State Changes:\n"
             for change in world_changes[:5]:
                 deep_section += f"- {change}\n"
         
@@ -1088,7 +1088,7 @@ The foundational narrative archive. Pivotal moments crystallized into permanent 
     
     if active_triggers:
         trigger_section = """### 🎣 Active Memory Triggers (MUST CALLBACK)
-**Unresolved narrative hooks requiring future payoff:**
+Unresolved narrative hooks requiring future payoff:
 """
         for trigger in active_triggers[:10]:  # 최대 10개
             trigger_section += f"- ⚡ {trigger}\n"
@@ -1130,7 +1130,7 @@ The foundational narrative archive. Pivotal moments crystallized into permanent 
         
         if fermented_texts:
             content_parts.append(f"""### Episode Summary (IMPORTANT - Reference Past Events)
-**📜 Past sessions that shape current context. Reference these events for continuity.**
+📜 Past sessions that shape current context. Reference these events for continuity.
 Significant sessions preserved by emotional weight. Details may blur, but core events persist.
 
 """ + "\n---\n".join(fermented_texts))
@@ -1141,9 +1141,9 @@ Significant sessions preserved by emotional weight. Details may blur, but core e
     return f"""
 <Fermented>
 ## Histories & Memories: The Deeper Past
-**⚠️ CRITICAL FOR STORY CONTINUITY ⚠️**
+⚠️ CRITICAL FOR STORY CONTINUITY ⚠️
 Non-linear archive governed by narrative significance. Pivotal moments remain distinct; trivial details fade and transform.
-**ALWAYS check these memories before generating responses to ensure consistency.**
+ALWAYS check these memories before generating responses to ensure consistency.
 
 {chr(10).join(content_parts)}
 </Fermented>
@@ -1190,7 +1190,7 @@ def build_immediate_context(
     return f"""
 <Immediate>
 ## Histories & Memories: The Immediate Past
-**📍 Recent context leading to current moment**
+📍 Recent context leading to current moment
 Strictly chronological, high-fidelity record. Vivid and unaltered—the narrative bridge to NOW.
 
 ### Recent Dialogue ({len(recent_history)} exchanges)
@@ -1237,12 +1237,12 @@ def get_memory_display(session_data: Dict[str, Any]) -> str:
     stats = get_memory_stats(session_data)
     
     lines = [
-        "📚 **메모리 상태**",
+        "📚 메모리 상태",
         f"├ 📄 FRESH: {stats['fresh_count']}개 메시지 (~{stats['fresh_tokens']}토큰)",
         f"├ 🍷 FERMENTED: {stats['fermented_count']}개 요약 (~{stats['fermented_tokens']}토큰)",
         f"└ 🏛️ DEEP: {stats['deep_length']}자 (~{stats['deep_tokens']}토큰)",
         "",
-        f"📊 **총 추정 토큰:** {stats['total_estimated_tokens']}"
+        f"📊 총 추정 토큰: {stats['total_estimated_tokens']}"
     ]
     
     if stats['needs_fermentation']:

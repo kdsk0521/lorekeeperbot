@@ -125,8 +125,9 @@ class VigorComposureModule:
         delta = axis.get("delta", 0)
 
         # 1a. Rest Recovery (both axes — composure at reduced rate)
+        # activity != "rest"인 다운타임은 orchestration._process_downtime()에서 별도 처리
         rest_eval = bus.dai.get("rest_eval")
-        if rest_eval and rest_eval.get("detected"):
+        if rest_eval and rest_eval.get("detected") and rest_eval.get("activity", "rest") == "rest":
             quality = rest_eval.get("quality", "brief")
             base_recovery = config.REST_RECOVERY.get(quality, 10)
             if not rest_eval.get("safe_location", True):

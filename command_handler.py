@@ -1520,6 +1520,43 @@ async def cmd_flashback(ctx: CommandContext) -> None:
 
 
 
+@registry.register("loadout", category="Player", aliases=["로드아웃", "장비설정"], description="세션 초기 준비 슬롯 설정")
+async def cmd_loadout(ctx: CommandContext) -> None:
+    """!로드아웃 [경장/표준/중장] — 세션 초기 준비 슬롯 설정"""
+    import config as _cfg
+    active_modules = domain_manager.get_active_modules(ctx.channel_id)
+    if "mental" not in active_modules:
+        await ctx.send("❌ 기력 모듈이 비활성 상태입니다.")
+        return
+
+    arg = ctx.raw_args.strip().lower()
+    # Korean alias → key mapping
+    alias_map = {"경장": "light", "표준": "standard", "중장": "heavy"}
+    load_key = alias_map.get(arg, arg) if arg else ""
+
+    if not load_key or load_key not in _cfg.LOADOUT_TYPES:
+        types_desc = " / ".join(
+            f"`{v['label']}({k})` — {v['slots']}슬롯" for k, v in _cfg.LOADOUT_TYPES.items()
+        )
+        current = domain_manager.get_loadout(ctx.channel_id, ctx.user_id)
+        current_msg = ""
+        if current:
+            current_msg = (
+                f"\n현재: **{current.get('label', current.get('load_type'))}** "
+                f"({current.get('used_slots', 0)}/{current['total_slots']}슬롯 사용)"
+            )
+        await ctx.send(
+            f"🎒 **로드아웃** — 준비 슬롯 설정\n"
+            f"사용법: `!로드아웃 [유형]`\n{types_desc}{current_msg}\n\n"
+            f"설정 후, 서사 중 '가방에서 ~를 꺼낸다'로 슬롯을 소비합니다."
+        )
+        return
+
+    lt = _cfg.LOADOUT_TYPES[load_key]
+    domain_manager.set_loadout(ctx.channel_id, ctx.user_id, load_key, lt["slots"], lt["label"])
+    await ctx.send(f"🎒 로드아웃 설정: **{lt['label']}** ({lt['slots']}슬롯)")
+
+
 @registry.register("reset_npcs", category="Admin", aliases=["엔피씨초기화", "npc_reset"], description="세션 NPC 초기화")
 async def cmd_reset_npcs(ctx: CommandContext) -> None:
     """!reset_npcs"""

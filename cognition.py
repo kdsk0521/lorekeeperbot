@@ -261,20 +261,20 @@ async def _extract_physical(
         "## [EXTRACT NOTEBOOK & PHYSICAL CHANGES - V3.6]\n"
         "Return JSON with keys: notebook_update (string or null), status_add [list], status_remove [list].\n\n"
         "### [STRICT SAFETY GUARDS]\n"
-        "1. **ACQUISITION vs OBSERVATION (CRITICAL)**: Record items ONLY if player physically TAKES, RECEIVES, or BUYS them. Simply 'seeing' or 'inspecting' does NOT grant ownership. If no item was taken, `notebook_update` MUST be `null`.\n"
-        "2. **NO CHANGE -> NULL**: If there are no physical acquisitions, losses, or status changes, return `null` for `notebook_update`.\n\n"
+        "1. ACQUISITION vs OBSERVATION (CRITICAL): Record items ONLY if player physically TAKES, RECEIVES, or BUYS them. Simply 'seeing' or 'inspecting' does NOT grant ownership. If no item was taken, `notebook_update` MUST be `null`.\n"
+        "2. NO CHANGE -> NULL: If there are no physical acquisitions, losses, or status changes, return `null` for `notebook_update`.\n\n"
         "### [FEW-SHOT EXAMPLES]\n"
-        "- **Input**: 'I see a rusty sword on the wall and keep walking.'\n"
+        "- Input: 'I see a rusty sword on the wall and keep walking.'\n"
         "  - Output: `{\"notebook_update\": null, \"status_add\": [], \"status_remove\": []}` (Observation only)\n"
-        "- **Input**: 'I pick up the rusty sword and put it in my bag.'\n"
+        "- Input: 'I pick up the rusty sword and put it in my bag.'\n"
         "  - Output: `{\"notebook_update\": \"— [소지품] —\\n- Rusty Sword\", \"status_add\": [], \"status_remove\": []}` (Acquisition!)\n\n"
         "### [DETAILED MANAGEMENT RULES]\n"
-        "1. **LOSS & DESTRUCTION**: If an item is lost, stolen, or destroyed, REMOVE it from the Notebook.\n"
-        "2. **CONSUMPTION**: If a consumable (food, potion, ammo) is used, update its quantity or REMOVE if empty.\n"
-        "3. **STATE UPDATE**: If an item's condition changes (e.g. 'Sword' becomes 'Broken Sword'), update the description.\n"
-        "4. **DE-CLUTTER (Memos)**: Proactively REMOVE resolved tasks or information that is no longer relevant (e.g., 'Reached the room' is done) to prevent information overload.\n"
-        "5. **EXCLUSION**: Do NOT record one-off transient actions or movement logs that have no long-term impact on the persistent state.\n"
-        "6. **HYGIENE**: Do NOT re-list items/memos already present in the [Current Notebook] unless the quantity or status has changed.\n\n"
+        "1. LOSS & DESTRUCTION: If an item is lost, stolen, or destroyed, REMOVE it from the Notebook.\n"
+        "2. CONSUMPTION: If a consumable (food, potion, ammo) is used, update its quantity or REMOVE if empty.\n"
+        "3. STATE UPDATE: If an item's condition changes (e.g. 'Sword' becomes 'Broken Sword'), update the description.\n"
+        "4. DE-CLUTTER (Memos): Proactively REMOVE resolved tasks or information that is no longer relevant (e.g., 'Reached the room' is done) to prevent information overload.\n"
+        "5. EXCLUSION: Do NOT record one-off transient actions or movement logs that have no long-term impact on the persistent state.\n"
+        "6. HYGIENE: Do NOT re-list items/memos already present in the [Current Notebook] unless the quantity or status has changed.\n\n"
         "### [FORMAT]\n"
         "- ALWAYS maintain '— [소지품] —' and '— [메모] —' headers."
     )
@@ -296,12 +296,12 @@ async def _extract_social(
         "## [EXTRACT SOCIAL CHANGES - V3.7]\n"
         "Return JSON: `{\"relationships\": {Name: Status}, \"companions\": [list]}`\n\n"
         "### [FEW-SHOT EXAMPLE]\n"
-        "- **Input**: 'NPC Arthur nods and offers his hand in friendship.'\n"
+        "- Input: 'NPC Arthur nods and offers his hand in friendship.'\n"
         "  - Output: `{\"relationships\": {\"Arthur\": \"Friendly\"}, \"companions\": [\"Arthur\"]}`\n"
         "### [RULES]\n"
-        "1. **Only record SIGNIFICANT changes** in attitude (e.g., Neutral -> Friendly, Friendly -> Hostile).\n"
-        "2. **Deduplicate names**: Only use names explicitly present in recent history or lore NPCs.\n"
-        "3. **Safety Guard**: If no social change occurred, return `{\"relationships\": {}, \"companions\": []}`. Never fabricate trust or enmity without clear textual evidence."
+        "1. Only record SIGNIFICANT changes in attitude (e.g., Neutral -> Friendly, Friendly -> Hostile).\n"
+        "2. Deduplicate names: Only use names explicitly present in recent history or lore NPCs.\n"
+        "3. Safety Guard: If no social change occurred, return `{\"relationships\": {}, \"companions\": []}`. Never fabricate trust or enmity without clear textual evidence."
     )
     ctx = f"Rels:{rels}, Comps:{comps}, LoreNPCs:{lore_npcs}, SceneNPCs:{scene_npcs}"
     usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON."
@@ -320,12 +320,12 @@ async def _extract_narrative(
         "## [EXTRACT NARRATIVE CHANGES - V4]\n"
         "Return JSON: `{\"passives\": [], \"abnormal_trigger\": null, \"abnormal_category\": null}`\n\n"
         "### [FEW-SHOT EXAMPLE]\n"
-        "- **Input**: 'A faceless entity appears from the shadows. I feel a chill of cosmic horror.'\n"
+        "- Input: 'A faceless entity appears from the shadows. I feel a chill of cosmic horror.'\n"
         "  - Output: `{\"abnormal_trigger\": \"Faceless Entity\", \"abnormal_category\": \"Ghost\"}`\n\n"
         "### [PASSIVE RULES]\n"
         "'Passive' means ANY permanent capability:\n"
         "1. Skills/Abilities, Physical Traits, Mental Traits, Achievements.\n"
-        "2. **HYGIENE**: Only return NEW ones not in the [Passives] list.\n"
+        "2. HYGIENE: Only return NEW ones not in the [Passives] list.\n"
         "3. Passive format: `{\"name\": \"이름\", \"desc\": \"설명\","
         " \"theory_links\": [\"theory1\", \"theory2\"],"
         " \"modifiers\": {\"anomaly_defense\": 10, \"judgment_combat\": 5}}`\n"
@@ -333,8 +333,8 @@ async def _extract_narrative(
         "   modifiers keys: anomaly_defense (±5~15), judgment_combat/social (±5~10), vigor_drain/composure_drain (0.8~1.2).\n"
         "   Positive trait → positive values, drain < 1.0. Negative → negative, drain > 1.0. Only include relevant keys.\n\n"
         "### [ANOMALY RULES]\n"
-        "1. **Anomaly Trigger**: Genre shifts or monsters. **MUST BE IN ENGLISH**.\n"
-        "2. **Professional Bias**: Gore is NORMAL for a Doctor. Combat is NORMAL for a Soldier. Only trigger for events truly wrong to THEM.\n\n"
+        "1. Anomaly Trigger: Genre shifts or monsters. MUST BE IN ENGLISH.\n"
+        "2. Professional Bias: Gore is NORMAL for a Doctor. Combat is NORMAL for a Soldier. Only trigger for events truly wrong to THEM.\n\n"
         "### [SAFETY GUARD]\n"
         "If no significant narrative change, keep fields `null`."
     )
@@ -354,8 +354,8 @@ async def _extract_quest(
         "## [EXTRACT QUEST CHANGES - V3.6]\n"
         "Return JSON with keys: quest_add [list], quest_complete [list].\n\n"
         "### [RULES]\n"
-        "1. **ADD**: Only add NEW quests. Do not duplicate quests already in [Quests].\n"
-        "2. **COMPLETE**: Mark as complete ONLY if explicitly resolved.\n\n"
+        "1. ADD: Only add NEW quests. Do not duplicate quests already in [Quests].\n"
+        "2. COMPLETE: Mark as complete ONLY if explicitly resolved.\n\n"
         "### [SAFETY GUARD]\n"
         "If no quest update, return `{\"quest_add\": [], \"quest_complete\": []}`."
     )
@@ -395,10 +395,10 @@ async def _extract_world_state(
         "Keys: hungry, thirsty, tired, injured, cold, hot. Only set true if evidence exists.\n"
         "- `current_arc`: str - One-line summary of the current narrative arc. Korean.\n\n"
         "### RULES\n"
-        "1. **CONSERVATIVE**: Only extract what is clearly evidenced in the text.\n"
-        "2. **NO FABRICATION**: Do not invent threads or NPC activities not implied by context.\n"
-        "3. **MERGE**: active_threads should combine existing + new - resolved.\n"
-        "4. **HYGIENE**: Remove stale threads that are clearly no longer relevant.\n"
+        "1. CONSERVATIVE: Only extract what is clearly evidenced in the text.\n"
+        "2. NO FABRICATION: Do not invent threads or NPC activities not implied by context.\n"
+        "3. MERGE: active_threads should combine existing + new - resolved.\n"
+        "4. HYGIENE: Remove stale threads that are clearly no longer relevant.\n"
     )
     ctx_lines = [f"Current Arc: {existing_arc}" if existing_arc else "Current Arc: (none)"]
     if existing_threads:
@@ -444,28 +444,28 @@ async def analyze_lore_unified(
 Analyze the provided lorebook precisely to extract all metadata required for game operations.
 
 ## Analysis Principles (Absolute Principles)
-1. **Holistic Consistency**: Clearly distinguish between NPCs and the PC (Player Character/Protagonist).
-2. **Genre Alignment**: Match lore themes with existing system genre keywords.
-3. **Narrative Anomaly Extraction**: Summarize themes that serve as the root of ruptures or supernatural phenomena as 'Anomaly Seeds'.
-4. **Optimization**: Write descriptions concisely and powerfully. (Follow the optimization guide in text_resources)
-5. **Exhaustive Extraction (CRITICAL)**: Extract **ALL** characters identified as NPCs, Residents, Neighbors, or special roles. Do not summarize or truncate the list. If there are 20 NPCs, extract all 20.
+1. Holistic Consistency: Clearly distinguish between NPCs and the PC (Player Character/Protagonist).
+2. Genre Alignment: Match lore themes with existing system genre keywords.
+3. Narrative Anomaly Extraction: Summarize themes that serve as the root of ruptures or supernatural phenomena as 'Anomaly Seeds'.
+4. Optimization: Write descriptions concisely and powerfully. (Follow the optimization guide in text_resources)
+5. Exhaustive Extraction (CRITICAL): Extract ALL characters identified as NPCs, Residents, Neighbors, or special roles. Do not summarize or truncate the list. If there are 20 NPCs, extract all 20.
 
 ## Output Schema
-**IMPORTANT: All string descriptions and guides must be in KOREAN.**
+IMPORTANT: All string descriptions and guides must be in KOREAN.
 
-1. **genres**: 3-Layer Genre structure. Each layer has its OWN EXCLUSIVE tag pool — NEVER cross-assign tags between layers.
+1. genres: 3-Layer Genre structure. Each layer has its OWN EXCLUSIVE tag pool — NEVER cross-assign tags between layers.
    - world_setting (A-Layer: WHEN/WHERE): The physical world era/setting. Choose 1-2 ONLY from: high_fantasy, wuxia, cyberpunk, post_apocalypse, space_opera, modern
    - style_tech (B-Layer: HOW it's flavored): Narrative overlay/gimmick ADDED to the world. Choose 0-2 ONLY from: urban_fantasy, steampunk, cosmic_horror, game_system
    - narrative_tone (C-Layer: EMOTIONAL tone): The story's mood/feel. Choose 1-2 ONLY from: noir, comedy, romance, drama
    - atmosphere_guide: Short atmosphere guide for the narrator (Korean)
    ⚠️ CROSS-ASSIGNMENT PROHIBITION: cyberpunk/modern/space_opera CANNOT appear in style_tech. urban_fantasy/cosmic_horror CANNOT appear in world_setting. comedy/romance CANNOT appear in style_tech.
-2. **npcs**: List of NPCs (Name, Gender, Race, Detailed Description (Personality/Appearance integrated - Korean))
-   - **MUST EXTRACT ALL NPCs found in the document.**
-   - **role**: Character's job or social role (e.g., "Resident", "Store Owner", "Neighbor").
-   - **location**: Primary location or residence (e.g., "Room 2", "Dungeon 25", "Error 404").
-3. **pc_info**: Identification of the Protagonist. null if no clear protagonist.
+2. npcs: List of NPCs (Name, Gender, Race, Detailed Description (Personality/Appearance integrated - Korean))
+   - MUST EXTRACT ALL NPCs found in the document.
+   - role: Character's job or social role (e.g., "Resident", "Store Owner", "Neighbor").
+   - location: Primary location or residence (e.g., "Room 2", "Dungeon 25", "Error 404").
+3. pc_info: Identification of the Protagonist. null if no clear protagonist.
    - Fields: name, role, species, appearance, description (integrated personality/traits - Korean), sexual_characteristics, background, secret_info, passives(name, desc, theory_links, modifiers - Korean), inventory(name, qty, tags, modifiers)
-4. **lore_summary**:
+4. lore_summary:
    - theme: Core theme of the world (1-2 sentences in Korean)
    - anomaly_seeds: Structured list of anomaly/disruption seeds for this world (3-5 items). Each seed:
      - name: Korean narrative name (e.g., '그림자 침식', '삼각관계 점화')
@@ -483,7 +483,7 @@ Analyze the provided lorebook precisely to extract all metadata required for gam
    - rules: Key world rules — magic systems, physical laws, economy, combat rules (List of Korean strings, max 10. Each rule should be a concise actionable statement)
    - factions: Major groups/organizations with name, description, stance/goal (Korean)
    - key_events: Major historical events that characters would know about (List of Korean strings, max 5)
-5. **world_constraints**: World rules extracted from lore (Korean)
+5. world_constraints: World rules extracted from lore (Korean)
    - systems: Magic/technology/power systems described in the lore (2-4 sentences, be specific about limitations and costs)
    - social: Social hierarchy, taboos, cultural norms (2-4 sentences)
    - taboos: List of things explicitly forbidden or dangerous in this world (Korean strings)
@@ -578,15 +578,15 @@ async def analyze_character_sheet(
 Extract detailed character information from the provided text to create a structured character sheet.
 
 ## Extraction Rules:
-1. **Name/Role/Species**: Identify the basic identity.
-2. **Appearance/Personality/Background**: Integrate provided details into concise Korean descriptions.
-3. **Passives (Traits)**: Identify permanent skills, traits, or abilities.
+1. Name/Role/Species: Identify the basic identity.
+2. Appearance/Personality/Background: Integrate provided details into concise Korean descriptions.
+3. Passives (Traits): Identify permanent skills, traits, or abilities.
    - Return structured: {"name": "이름", "desc": "설명", "tags": ["tag1"], "theory_links": ["theory"], "modifiers": {"judgment_combat": 5, "anomaly_defense": 10}}
    - modifiers keys: anomaly_defense (±5~15), judgment_combat/social/perception/stealth/athletics (±5~10), vigor_drain/composure_drain (0.8~1.2). Only relevant keys.
-4. **Inventory**: Identify items and equipment.
+4. Inventory: Identify items and equipment.
    - Return structured: {"name": "아이템명", "qty": 1, "tags": ["weapon", "melee"], "modifiers": {"judgment_combat": 5}}
    - modifiers keys: same as passives. Only relevant keys.
-5. **Language**: All descriptions must be in KOREAN.
+5. Language: All descriptions must be in KOREAN.
 
 ## Output JSON Schema:
 {

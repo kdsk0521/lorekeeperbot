@@ -122,11 +122,11 @@ def test_migrated_content():
           "NPCKnowledge" in npc,
           "NPCKnowledge reference missing")
 
-    # TELESCOPE Hook gate에 choice_menu 흡수 확인
+    # TELESCOPE v3 구조 확인
     telescope = text_resources.TELESCOPE_PROTOCOL
-    check("choice_menu/suggestion_list in TELESCOPE Hook gate",
-          "choice_menu" in telescope and "suggestion_list" in telescope,
-          "No Choice Menus not absorbed into TELESCOPE")
+    check("TELESCOPE v3 Phase A/B structure",
+          "Phase A" in telescope and "Phase B" in telescope,
+          "TELESCOPE v3 structure missing")
 
 # =========================================================
 # 4. Master Reference Table

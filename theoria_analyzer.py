@@ -238,7 +238,7 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
 
 ## JUDGMENT SUPPORT
 - "needs_judgment": boolean
-- "action_meta": {"action": "Korean", "type": "combat/social/exploration/stealth/survival/crafting/general", "resource_axis": "vigor/composure/both", "difficulty": "easy/normal/hard/extreme"}
+- "action_meta": {"action": "Korean — describe the CURRENT user input ONLY. Do NOT repeat or rephrase previous turn's action.", "type": "combat/social/exploration/stealth/survival/crafting/general", "resource_axis": "vigor/composure/both", "difficulty": "easy/normal/hard/extreme", "resolve": "none/determined/desperate — none: 일반 행동, determined: 강한 의지+노력(서사 강조만), desperate: 대가 감수 각오(기력/평정 선불→판정 보너스). 핵심 구분: '강하게 한다'(determined)≠'대가를 치르더라도 한다'(desperate). needs_judgment=false이면 항상 none"}
 - "asset_evaluation": {
     "reason": "Korean",
     "modifications": [{"label": "Korean", "value": int}],
@@ -329,11 +329,13 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
     "post_encounter_prediction": {"char_name": "attachment activation pattern - predicted post-behavior"}
   }
 
-### Flashback Evaluation (trigger pattern detected)
+### Flashback Evaluation (trigger pattern detected — !회상 명령 없이도, 유저 입력에 소급 선언("사실 미리 ~했다", "이미 ~해뒀다")이 있으면 생성하라)
 - "flashback_eval": null OR {
     "detected": boolean,
     "declaration": "Korean - 1-sentence summary of retroactive claim",
     "plausibility": "plausible/stretch/impossible",
+    "flashback_type": "standard/loadout — 유저가 로드아웃을 가지고 있고 '꺼낸다/챙겨왔다/준비해둔' 등 사전 준비물 소환이면 loadout, 그 외 소급 선언이면 standard",
+    "loadout_slots": 1 (loadout일 때만: 단순=1, 특수=2, 대담=3),
     "relevant_passive": "passive name or null",
     "tier": "trivial/standard/bold",
     "vigor_ratio": 0.0~1.0,
@@ -341,11 +343,13 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
     "reason": "Korean"
   }
 
-### Rest Evaluation (rest trigger detected)
+### Rest / Downtime Evaluation (rest or purposeful downtime activity detected)
 - "rest_eval": null OR {
     "detected": boolean,
     "quality": "full/brief/interrupted",
     "safe_location": boolean,
+    "activity": "rest/recover/vice/train/socialize/project — rest: 단순 쉼(풍미만 있어도 rest), recover: 치료/약복용+시간투자, vice: 술/도박/탐닉, train: 훈련/수련, socialize: NPC교류, project: 제작/조사. 전투/탐험 중에는 rest_eval 자체를 null로",
+    "target": "NPC name or skill name or project name or null (activity != rest일 때)",
     "reason": "Korean"
   }
 
@@ -375,7 +379,7 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
             for uid, pc in all_pcs.items():
                 mask = pc.get("mask", "Unknown")
                 marker = " (행동자)" if uid == acting_uid else ""
-                lines.append(f"\n**[{mask}]{marker}**")
+                lines.append(f"\n[{mask}]{marker}")
                 lines.append(f"- Appearance: {pc.get('appearance', 'N/A')}")
                 lines.append(f"- Personality: {pc.get('personality', 'N/A')}")
                 lines.append(f"- Passives: {pc.get('passives', [])}")
@@ -384,13 +388,13 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
 
         # 솔로 플레이 (기존 형식 유지)
         lines = ["### 3. PLAYER CHARACTER"]
-        lines.append(f"- **Appearance**: {anchors.get('appearance', 'N/A')}")
-        lines.append(f"- **Personality**: {anchors.get('personality', 'N/A')}")
-        lines.append(f"- **Background**: {anchors.get('background', 'N/A')}")
-        lines.append(f"- **Passives**: {anchors.get('passives', [])}")
-        lines.append(f"- **Inventory**: {anchors.get('inventory', [])}")
-        lines.append(f"- **Relations**: {anchors.get('relations', [])}")
-        lines.append(f"- **Memos**: {anchors.get('memos', [])}")
+        lines.append(f"- Appearance: {anchors.get('appearance', 'N/A')}")
+        lines.append(f"- Personality: {anchors.get('personality', 'N/A')}")
+        lines.append(f"- Background: {anchors.get('background', 'N/A')}")
+        lines.append(f"- Passives: {anchors.get('passives', [])}")
+        lines.append(f"- Inventory: {anchors.get('inventory', [])}")
+        lines.append(f"- Relations: {anchors.get('relations', [])}")
+        lines.append(f"- Memos: {anchors.get('memos', [])}")
         return "\n".join(lines)
 
     def _build_mental_line(self, anchors: dict, bus) -> str:
@@ -403,10 +407,10 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
                 vigor = pc.get("vigor_value", 100)
                 composure = pc.get("composure_value", 100)
                 parts.append(f"{mask}: 기력{vigor}/평정{composure}")
-            return f"- **Vigor/Composure (PC별)**: {' / '.join(parts)}"
+            return f"- Vigor/Composure (PC별): {' / '.join(parts)}"
         vigor_val = bus.vigor.get('value', 100)
         composure_val = bus.composure.get('value', 100)
-        return f"- **Vigor**: {vigor_val} | **Composure**: {composure_val}"
+        return f"- Vigor: {vigor_val} | Composure: {composure_val}"
 
     def _build_npc_context(self, anchors: dict) -> str:
         """NPC 태도 + 지식 상태를 프롬프트에 포함"""
@@ -418,7 +422,7 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
 
         parts.append("### 4b. NPC STATE (Previous Turn)")
         for npc_name in set(list(attitudes.keys()) + list(knowledge.keys())):
-            npc_lines = [f"**{npc_name}**:"]
+            npc_lines = [f"{npc_name}:"]
             att = attitudes.get(npc_name, {})
             if att:
                 npc_lines.append(f"  Attitude={att.get('attitude', 'neutral')} ({att.get('reason', '')})")
@@ -442,25 +446,25 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
         parts = []
         arc = mem.get("current_arc")
         if arc:
-            parts.append(f"- **Current Arc**: {arc}")
+            parts.append(f"- Current Arc: {arc}")
 
         threads = mem.get("active_threads", [])
         if threads:
-            parts.append(f"- **Active Threads**: {'; '.join(threads[:8])}")
+            parts.append(f"- Active Threads: {'; '.join(threads[:8])}")
 
         npc_schedules = mem.get("npc_summaries", {})
         if npc_schedules:
             sched_items = [f"{k}: {v}" for k, v in list(npc_schedules.items())[:6]]
-            parts.append(f"- **NPC Activity**: {'; '.join(sched_items)}")
+            parts.append(f"- NPC Activity: {'; '.join(sched_items)}")
 
         world_changes = mem.get("world_changes", [])
         if world_changes:
-            parts.append(f"- **Recent World Changes**: {'; '.join(world_changes[-5:])}")
+            parts.append(f"- Recent World Changes: {'; '.join(world_changes[-5:])}")
 
         needs = mem.get("basic_needs_flags", {})
         active_needs = [k for k, v in needs.items() if v]
         if active_needs:
-            parts.append(f"- **PC Physical State**: {', '.join(active_needs)}")
+            parts.append(f"- PC Physical State: {', '.join(active_needs)}")
 
         if not parts:
             return ""
@@ -497,14 +501,14 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
                     loc_lines.append(f"  - {name}{danger_tag}: {desc}")
                 else:
                     loc_lines.append(f"  - {loc}")
-            parts.append("- **Locations**:\n" + "\n".join(loc_lines))
+            parts.append("- Locations:\n" + "\n".join(loc_lines))
         elif isinstance(locations, str) and locations:
-            parts.append(f"- **Locations**: {locations}")
+            parts.append(f"- Locations: {locations}")
 
         # Rules
         rules = lore_summary.get("rules", [])
         if rules:
-            parts.append("- **World Rules**:\n" + "\n".join(f"  - {r}" for r in rules))
+            parts.append("- World Rules:\n" + "\n".join(f"  - {r}" for r in rules))
 
         # Factions
         factions = lore_summary.get("factions", [])
@@ -515,14 +519,14 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
                     fac_lines.append(f"  - {f.get('name', '?')}: {f.get('desc', '')} ({f.get('stance', '')})")
                 else:
                     fac_lines.append(f"  - {f}")
-            parts.append("- **Factions**:\n" + "\n".join(fac_lines))
+            parts.append("- Factions:\n" + "\n".join(fac_lines))
 
         # Key Events
         events = lore_summary.get("key_events", [])
         if events:
-            parts.append("- **Key Events**:\n" + "\n".join(f"  - {e}" for e in events))
+            parts.append("- Key Events:\n" + "\n".join(f"  - {e}" for e in events))
 
-        return "\n".join(parts) if parts else "- **Locations**: Current surroundings"
+        return "\n".join(parts) if parts else "- Locations: Current surroundings"
 
     def _build_chunk_index(self, chunks: list) -> str:
         """청크 라벨 인덱스를 Theoria 프롬프트에 포함 (선택용)"""
@@ -559,8 +563,8 @@ Evaluate this in flashback_eval field. Check plausibility, passive match, assign
         """활성 둠 시계 현황을 Flash 프롬프트용 텍스트로 변환."""
         active = [c for c in clocks if isinstance(c, dict) and not c.get("resolved")]
         if not active:
-            return "- **Doom Clocks**: None"
-        lines = ["- **Doom Clocks**:"]
+            return "- Doom Clocks: None"
+        lines = ["- Doom Clocks:"]
         for c in active:
             filled = int(c.get("filled", c.get("progress", 0)) or 0)
             segments = int(c.get("segments", 4) or 4)
@@ -582,12 +586,12 @@ Evaluate this in flashback_eval field. Check plausibility, passive match, assign
         st_state = domain_manager.get_storyteller_state(channel_id)
         conditions = st_state.get("active_conditions", [])
         if not conditions:
-            return "- **Active Conditions**: None"
+            return "- Active Conditions: None"
         grouped: dict = {}
         for c in conditions:
             loc = c.get("location", "") or "Global"
             grouped.setdefault(loc, []).append(c)
-        lines = ["- **Active Conditions**:"]
+        lines = ["- Active Conditions:"]
         for loc, conds in grouped.items():
             lines.append(f"  [{loc}]")
             for c in conds:
@@ -617,8 +621,8 @@ Evaluate this in flashback_eval field. Check plausibility, passive match, assign
 "{req.user_input}"
 
 ### 2. CURRENT STATE
-- **Genre**: {req.genres}
-- **Doom (World Tension)**: {bus.doom.get('value', 0)}
+- Genre: {req.genres}
+- Doom (World Tension): {bus.doom.get('value', 0)}
 {self._build_clock_context(bus.doom.get('clocks', []))}
 {self._build_condition_context(channel_id)}
 {mental_line}
@@ -626,8 +630,8 @@ Evaluate this in flashback_eval field. Check plausibility, passive match, assign
 {pc_section}
 
 ### 4. WORLD CONTEXT
-- **Core Theme**: {req.lore_summary.get('theme', 'General TRPG')}
-- **Anomaly Seeds**: {self._format_anomaly_seeds(req.lore_summary.get('anomaly_seeds', []))}
+- Core Theme: {req.lore_summary.get('theme', 'General TRPG')}
+- Anomaly Seeds: {self._format_anomaly_seeds(req.lore_summary.get('anomaly_seeds', []))}
 {self._build_lore_structured(req.lore_summary)}
 
 {npc_context}

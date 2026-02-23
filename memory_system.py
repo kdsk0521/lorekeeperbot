@@ -494,7 +494,7 @@ async def process_ooc_memory_edit(
         "Interpret the user's request and generate specific edits to the character data or Notebook.\n"
         "Supports adding/removing items (via Notebook), changing relationships, passives, descriptions, etc.\n\n"
         "### Notebook Rules\n"
-        "Items, Inventory, and Gold are tracked in the **Notebook**.\n"
+        "Items, Inventory, and Gold are tracked in the Notebook.\n"
         "To change items/gold, use field='notebook' with action='append' (to add log) or 'replace' (rarely used).\n\n"
         
         "Output Format (JSON):\n"

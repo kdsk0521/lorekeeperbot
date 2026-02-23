@@ -188,147 +188,103 @@ def _collect_aspect_stance(aspects: Any) -> Tuple[List[str], List[str]]:
     return favorable, against
 
 
+# ── Directing Notation Tables (음악+카메라+만화 통합 연출 표기) ──
+_POSITION_NOTATION = {
+    "controlled": "상황 — mp, andante, 와이드, legato",
+    "risky":      "상황 — f, allegro, 투샷, marcato",
+    "desperate":  "상황 — ff, presto, 로우앵글, staccato",
+}
+_ENERGY_NOTATION = {
+    "idle":       "장면 — mp, andante, 팬, legato",
+    "steady":     "장면 — mf, andante, 아이레벨, legato",
+    "rising":     "장면 — f, allegro, 투샷, marcato, crescendo",
+    "falling":    "장면 — p, adagio, 롱테이크, legato, diminuendo",
+    "peak":       "장면 — ff, presto, 컷, sforzando",
+    "stagnant":   "장면 — pp, largo, 롱테이크, legato",
+    "detonation": "장면 — sfz, presto, 와이드, sforzando",
+    "aftershock": "장면 — p, adagio, 롱테이크, staccato",
+}
+_VIGOR_NOTATION = {
+    "high":       "신체 — f, allegro, 와이드, legato",
+    "strained":   "신체 — p, adagio, 클로즈업:근육, marcato",
+    "collapsing": "신체 — pp, largo, 클로즈업:호흡, staccato [저조도]",
+}
+_COMPOSURE_NOTATION = {
+    "high":       "심리 — mf, andante, 투샷, legato",
+    "strained":   "심리 — p, adagio, 클로즈업:시선, staccato",
+    "collapsing": "심리 — pp, largo, 하이앵글, sforzando [저조도]",
+}
+_MIXED_NOTATION = {
+    "desperate": "신체+심리 — pp, largo, 하이앵글, staccato [저조도]",
+    "reckless":  "행동 — f, presto, 와이드, sforzando",
+    "fragile":   "의식 — p, adagio, 클로즈업:눈, legato",
+}
+_DOOM_NOTATION = {
+    "high":     "세계 — f, allegro, marcato",
+    "critical": "세계 — ff, presto, sforzando [저조도]",
+}
+_SCENE_FOCUS = {
+    "normal":      "장면 초점: 관찰과 반응",
+    "combat":      "장면 초점: 물리적 충돌, 위치, 위협",
+    "social":      "장면 초점: 평판, 레버리지, 숨은 의도",
+    "tension":     "장면 초점: 서스펜스, 제한된 정보, 느린 공개",
+    "intimate":    "장면 초점: 감정, 미묘함, 취약성, 신뢰",
+    "exploration": "장면 초점: 호기심, 발견, 세계관",
+}
+
 def _build_world_layer(bus) -> str:
+    """World Layer: 연출 표기 + 장면 초점 + 액션만.
+    데이터(position reason, effect, NPC attitudes, psyche, narrative chain,
+    quality flags)는 iceberg 개별 슬롯(13-17, 28)이 커버."""
     dai = bus.dai if isinstance(bus.dai, dict) else {}
     parts: List[str] = []
 
+    # Position → directing notation ONLY (reason+friction은 Slot 13 iceberg)
     pos = dai.get("position", {}) if isinstance(dai.get("position"), dict) else {}
     pos_value = _to_float(pos.get("value", 0.5), 0.5)
     pos_tier = _position_tier(pos_value)
-    pos_labels = {
-        "desperate": "desperate - stakes are lethal, one wrong move can end it.",
-        "risky": "risky - danger is present, outcome uncertain.",
-        "controlled": "controlled - situation favors the actor.",
-    }
-    parts.append(f"[Position] {pos_labels.get(pos_tier, pos_tier)}")
-    if pos.get("reason"):
-        parts.append(f"Why: {pos.get('reason')}")
+    notation = _POSITION_NOTATION.get(pos_tier, "")
+    if notation:
+        parts.append(notation)
 
-    eff = dai.get("effect", {}) if isinstance(dai.get("effect"), dict) else {}
-    eff_value = _to_float(eff.get("value", 0.5), 0.5)
-    if eff_value >= 0.7:
-        eff_label = "great - success changes the situation dramatically."
-    elif eff_value >= 0.4:
-        eff_label = "standard - meaningful but not decisive."
-    else:
-        eff_label = "limited - small gain even on success."
-    parts.append(f"[Effect] {eff_label}")
-    if eff.get("reason"):
-        parts.append(f"Effect basis: {eff.get('reason')}")
-
+    # Scene → natural language focus (고유 — iceberg에 없음)
     scene_type = str(dai.get("scene_type", "normal"))
-    scene_map = {
-        "normal": "Normal - standard interaction, observe and react.",
-        "combat": "Combat - physicality, positioning, threat, consequences.",
-        "social": "Social - reputation, leverage, hidden agendas.",
-        "tension": "Tension - suspense, restricted information, slow reveal.",
-        "intimate": "Intimate - emotion, subtlety, vulnerability, trust.",
-        "exploration": "Exploration - curiosity, discovery, world-building.",
-    }
-    parts.append(f"[Scene] {scene_map.get(scene_type, scene_type)}")
+    scene_text = _SCENE_FOCUS.get(scene_type, "")
+    if scene_text:
+        parts.append(scene_text)
 
+    # Energy → directing notation ONLY (산문 힌트는 Slot 16 iceberg)
     energy = str(dai.get("energy_direction", "steady"))
-    energy_map = {
-        "rising": "RISING - escalate tension and pacing.",
-        "falling": "FALLING - breathing room and reflection.",
-        "peak": "PEAK - climactic intensity.",
-        "steady": "STEADY - maintain current rhythm.",
-        "stagnant": "STAGNANT - break the pattern and introduce change.",
-        "detonation": "DETONATION - everything erupts now.",
-        "aftershock": "AFTERSHOCK - consequences settle in.",
-    }
-    parts.append(f"[Energy] {energy_map.get(energy, energy)}")
+    energy_notation = _ENERGY_NOTATION.get(energy, "")
+    if energy_notation:
+        parts.append(energy_notation)
 
-    attitudes = dai.get("npc_attitudes", {})
-    if isinstance(attitudes, dict) and attitudes:
-        lines: List[str] = []
-        for name, data in attitudes.items():
-            if not isinstance(data, dict):
-                continue
-            attitude = str(data.get("attitude", "neutral"))
-            trajectory = str(data.get("trajectory", "stable"))
-            reason = str(data.get("reason", "")).strip()
-            line = f"- {name}: {attitude} ({trajectory})"
-            if reason:
-                line += f" | {reason}"
-            lines.append(line)
-        if lines:
-            parts.append("[NPC States]\n" + "\n".join(lines))
-
-    psyche = dai.get("psyche_states", {})
-    if isinstance(psyche, dict) and psyche:
-        lines = []
-        for char_name, state in psyche.items():
-            if not isinstance(state, dict):
-                continue
-            mental = state.get("mental") if isinstance(state.get("mental"), dict) else {}
-            if not mental:
-                mental = state.get("psyche") if isinstance(state.get("psyche"), dict) else {}
-            soma = state.get("soma") if isinstance(state.get("soma"), dict) else {}
-            desc = str(mental.get("descriptor", "")).strip()
-            polyvagal = str(soma.get("polyvagal", "")).strip()
-            if desc or polyvagal:
-                lines.append(f"- {char_name}: {desc or 'n/a'} / body={polyvagal or 'n/a'}")
-        if lines:
-            parts.append("[Psyche]\n" + "\n".join(lines))
-
+    # Action Reading (고유 — iceberg에 없음)
     needs_judgment = bool(dai.get("needs_judgment", False))
     action_meta = dai.get("action_meta", {}) if isinstance(dai.get("action_meta"), dict) else {}
     action_name = str(action_meta.get("action", "")).strip()
     if action_name:
         difficulty = str(action_meta.get("difficulty", "normal"))
-        parts.append(f"[Action Reading] '{action_name}' - {difficulty}")
+        parts.append(f"'{action_name}' 시도 — {difficulty}")
         if not needs_judgment:
-            parts.append(f"No dice. Resolve by Position ({pos_tier}) and world logic.")
+            parts.append(f"판정 없음. 상황({pos_tier})과 세계 논리로 해결.")
 
-    chain = dai.get("narrative_chain", {})
-    if isinstance(chain, dict) and chain:
-        status = str(chain.get("chain_status", "OPEN"))
-        proximity = int(_to_float(chain.get("conclusion_proximity", 0), 0))
-        chain_lines = [f"[Narrative] chain={status}, proximity={proximity}%"]
-        hook = str(dai.get("narrative_hook", "")).strip()
-        if hook:
-            chain_lines.append(f"Hook: {hook}")
-        threads = chain.get("open_threads", [])
-        if isinstance(threads, list) and threads:
-            chain_lines.append("Threads: " + " | ".join(str(t) for t in threads[:3]))
-            # Anti-Resolution: open threads 유지 강제
-            if status == "OPEN" and proximity < 80:
-                chain_lines.append(
-                    "→ These threads persist as world forces. "
-                    "Do NOT close threads the user didn't directly engage this turn."
-                )
-        parts.append("\n".join(chain_lines))
-
-    qflags = dai.get("quality_flags", {})
-    if isinstance(qflags, dict):
-        warnings: List[str] = []
-        if qflags.get("convergence_warning"):
-            warnings.append("CONVERGENCE: comfort without earning it.")
-        if qflags.get("echo_warning"):
-            warnings.append("ECHO: NPC mirrors PC instead of independent response.")
-        if qflags.get("stagnation_warning"):
-            warnings.append("STAGNATION: scene pattern stayed flat too long.")
-        if warnings:
-            parts.append("[Quality Alerts]\n" + "\n".join(f"- {w}" for w in warnings))
-
-    return "[World]\n" + "\n".join(parts)
+    if not parts:
+        return ""
+    return "── 세계 ──\n" + "\n".join(parts)
 
 
 def _build_events_layer(context, bus) -> str:
     parts: List[str] = []
 
+    # World Event → fact only (metadata stripped)
     anomaly = bus.anomaly if isinstance(bus.anomaly, dict) else {}
     if anomaly.get("triggered"):
-        tag = anomaly.get("tag") or "anomaly"
-        intensity = anomaly.get("intensity", "")
-        polarity = anomaly.get("polarity", "")
-        block = [f"[World Event] {tag} | intensity={intensity} | polarity={polarity}"]
-        if anomaly.get("line"):
-            block.append(f"Scene seed: {anomaly.get('line')}")
-        parts.append("\n".join(block))
+        line = anomaly.get("line", "")
+        if line:
+            parts.append(f"세계 사건: {line}")
 
-    # Active Conditions (Fate Aspect — persistent world facts, location-aware)
+    # Active Conditions → tag stripped
     _st_state = {}
     _ch_id = (context.narrative_anchors or {}).get("channel_id", "")
     if _ch_id:
@@ -340,37 +296,32 @@ def _build_events_layer(context, bus) -> str:
     for cond in _all_conds:
         cond_loc = (cond.get("location") or "").strip()
         if not cond_loc or cond_loc == _pc_loc:
-            _tag = cond.get("tag", "?")
             _desc = cond.get("description", "")
-            _int = cond.get("intensity", "Mid")
-            parts.append(
-                f"[Active: {_tag}] ({_int}) {_desc} — "
-                "This condition is currently true in the world. "
-                "Reflect it in environmental details, NPC behavior, and available actions."
-            )
+            if _desc:
+                parts.append(
+                    f"현재 상황: {_desc} — "
+                    "환경, NPC 행동, 가용 행동에 반영하라."
+                )
 
-    # Omen: deferred event hint (PbtA Soft Move)
+    # Omen → tag stripped
     _omen = anomaly.get("omen")
     if isinstance(_omen, dict) and _omen.get("tag"):
         _omen_line = _omen.get("line", "")
-        parts.append(
-            f"[Omen: {_omen['tag']}] {_omen_line} — "
-            "Weave subtle foreshadowing into the scene through sensory details only. "
-            "Do NOT trigger this event. Hints only."
-        )
+        if _omen_line:
+            parts.append(
+                f"전조: {_omen_line} — "
+                "감각적 디테일로만 암시하라. 이벤트 발동 금지."
+            )
 
-    # Condition resolved feedback
+    # Condition resolved → text only
     _cond_resolved_log = anomaly.get("conditions_resolved_log")
     if _cond_resolved_log:
-        parts.append(f"[Condition Resolved] {_cond_resolved_log}")
+        parts.append(str(_cond_resolved_log))
 
+    # Clock Progress / Doom Shift → REMOVED (system_msg only)
     doom = bus.doom if isinstance(bus.doom, dict) else {}
-    if doom.get("clock_log"):
-        parts.append(f"[Clock Progress] {doom.get('clock_log')}")
-    if doom.get("log"):
-        parts.append(f"[Doom Shift] {doom.get('log')}")
 
-    # v3: 완성된 시계 → 서사 지시
+    # Completed clocks → fact
     completed_clocks = doom.get("completed_this_turn", [])
     if isinstance(completed_clocks, list):
         for clock in completed_clocks:
@@ -378,45 +329,42 @@ def _build_events_layer(context, bus) -> str:
                 threat = clock.get("threat", "")
                 cname = clock.get("name", "?")
                 parts.append(
-                    f"[CLOCK COMPLETED] '{cname}' → {threat}.\n"
-                    "PC가 이 영향을 직접 마주칠 때 변화된 세계를 보여주라. "
-                    "이미 벌어진 결과의 흔적으로 묘사. '한편' 시점 전환 금지."
+                    f"{cname}이 현실이 되었다 — {threat}. "
+                    "변화된 세계를 보여주라. 시점 전환 금지."
                 )
 
-    # 클라이맥스
+    # Climax → fact
     if doom.get("climax_triggered"):
-        parts.append("[CLIMAX] All clocks completed simultaneously. MAXIMUM TENSION. Final choice moment.")
+        parts.append("임계점 — 모든 것이 동시에 수렴했다. 최후의 선택.")
 
-    # 방어 보상 피드백
-    if doom.get("defense_log"):
-        parts.append(f"[Defense] {doom.get('defense_log')}")
+    # Defense → REMOVED (mechanical log)
 
-    # 퀘스트 실패 (시계 완성으로)
+    # Quest Failed → fact
     for fail in doom.get("quest_failed", []):
         if isinstance(fail, dict):
-            parts.append(f"[Quest Failed] {fail.get('quest', '?')} — {fail.get('reason', '')}")
+            parts.append(f"{fail.get('quest', '?')}가 실패했다 — {fail.get('reason', '')}")
 
-    # 임박 시계
+    # Imminent clocks → no numbers
     clocks = doom.get("clocks", [])
     if isinstance(clocks, list) and clocks:
         imminent: List[str] = []
         for clock in clocks:
             if not isinstance(clock, dict) or clock.get("resolved"):
                 continue
-            name = str(clock.get("name", "Unnamed Clock"))
             segments = int(_to_float(clock.get("segments", 4), 4))
             filled = int(_to_float(clock.get("filled", clock.get("progress", 0)), 0))
             remaining = max(0, segments - filled)
             if remaining <= 1:
-                imminent.append(f"{name} ({remaining} left)")
+                imminent.append(str(clock.get("name", "?")))
         if imminent:
-            parts.append("[Clock Imminent] " + " | ".join(imminent[:3]))
+            parts.append(" | ".join(f"{n}이 곧 현실이 된다" for n in imminent[:3]))
 
+    # Status effects → tag stripped
     status_seen = set()
     for container in (bus.vigor, bus.composure, bus.dai):
         if not isinstance(container, dict):
             continue
-        for key, label in (("new_status_effects", "Status Added"), ("expired_status_effects", "Status Expired")):
+        for key, label_kr in (("new_status_effects", "시작"), ("expired_status_effects", "종료")):
             entries = container.get(key, [])
             if not isinstance(entries, list):
                 continue
@@ -430,15 +378,16 @@ def _build_events_layer(context, bus) -> str:
                     name = str(entry).strip()
                 if not name:
                     continue
-                sig = (label, name)
+                sig = (label_kr, name)
                 if sig in status_seen:
                     continue
                 status_seen.add(sig)
-                line = f"[{label}] {name}"
+                line = f"{name} {label_kr}"
                 if hint:
-                    line += f" - {hint}"
+                    line += f" — {hint}"
                 parts.append(line)
 
+    # Flashback → tag stripped
     flashback = bus.dai.get("flashback_result") if isinstance(bus.dai, dict) else None
     if not flashback and isinstance(bus.dai, dict):
         flashback = bus.dai.get("flashback_eval")
@@ -447,9 +396,9 @@ def _build_events_layer(context, bus) -> str:
         if not declaration:
             declaration = str(flashback.get("reason", "")).strip()
         if declaration:
-            parts.append(f"[Flashback] {declaration}")
+            parts.append(f"소급 선언: {declaration}")
 
-    # ── Task 6: 장기 퀘스트 리마인드 (코어 — 둠 독립) ──
+    # Quest Echo → tag stripped
     channel_id = (context.narrative_anchors or {}).get("channel_id", "")
     if channel_id:
         try:
@@ -463,15 +412,31 @@ def _build_events_layer(context, bus) -> str:
                 stale_turns = turn_index - last_progress_turn
                 if stale_turns >= 8:
                     parts.append(
-                        f"[Quest Echo: {q.get('content', '?')}] "
-                        "이 목표가 세계에 여전히 존재한다. 유저가 이 방향으로 행동할 때만 반영하라 — 강제 진전 금지."
+                        f"{q.get('content', '?')} — "
+                        "유저가 이 방향으로 행동할 때만 반영. 강제 진전 금지."
                     )
         except Exception:
             pass
 
+    # Downtime activity (from dead code migration)
+    _dai_dt = bus.dai if isinstance(bus.dai, dict) else {}
+    _dt_rest = _dai_dt.get("rest_eval") or {}
+    _dt_activity = _dt_rest.get("activity", "rest")
+    if _dt_activity != "rest" and _dt_rest.get("detected"):
+        _dt_hints = {
+            "recover": "PC가 부상을 치료하며 시간을 보낸다.",
+            "vice": "PC가 쾌락에 빠져 시간을 보낸다.",
+            "train": "PC가 훈련에 몰두한다.",
+            "socialize": "PC가 사람들과 교류하며 시간을 보낸다.",
+            "project": "PC가 작업에 집중한다.",
+        }
+        parts.append(_dt_hints.get(_dt_activity, "PC가 목적 있는 시간을 보낸다."))
+        if _dai_dt.get("vice_overindulge"):
+            parts.append("쾌락의 대가가 돌아왔다.")
+
     if not parts:
         return ""
-    return "[Events]\n" + "\n".join(parts)
+    return "── 사건 ──\n" + "\n".join(parts)
 
 
 # Universal narrative principles — separated from MC Moves (genre flavor)
@@ -521,21 +486,41 @@ def _build_judgment_layer(context, bus, mask: str) -> str:
     move = _get_genre_mc_move(primary_genre, pos_tier, result) or _mc_move(pos_tier, result)
 
     favorable, against = _collect_aspect_stance(dai.get("aspects", []))
-    reason_part = f" ({reason})" if reason else ""
+
+    # Natural language — no tags, no framework labels
+    _result_kr = {
+        "critical_success": "대성공", "success": "성공",
+        "partial": "부분 성공", "failure": "실패", "critical_failure": "대실패",
+    }
+    _pos_kr = {"controlled": "안전한 상황", "risky": "위험한 상황", "desperate": "절망적 상황"}
+    reason_part = f" {reason}" if reason else ""
     lines = [
-        f"[Judgment: {mask} '{action}'{reason_part}]",
-        f"Result: {result} | Position: {pos_tier}",
-        f"MC Move: {move}",
+        f"{mask}가 '{action}'를 시도했다.{reason_part}",
+        f"{_result_kr.get(result, result)} — {_pos_kr.get(pos_tier, pos_tier)}.",
+        move,
     ]
     if favorable:
-        lines.append("Favorable: " + ", ".join(favorable))
+        lines.append("유리: " + ", ".join(favorable))
     if against:
-        lines.append("Against: " + ", ".join(against))
+        lines.append("불리: " + ", ".join(against))
 
-    # 범용 서사 원칙 (장르 불문)
+    # 범용 서사 원칙 (장르 불문) — tag stripped
     cons_dir = CONSEQUENCE_DIRECTIVES.get(result, "")
     if cons_dir:
-        lines.append(f"[Consequence] {cons_dir}")
+        lines.append(cons_dir)
+
+    # Effort / Absorb (각오 / 흡수) — from dead code migration
+    effort_used = judgment.get("effort_used")
+    if effort_used:
+        eu_action = effort_used.get("action", "")
+        if judgment.get("absorb_applied"):
+            lines.append(f"PC가 {eu_action}에 전력을 다했으나 실패. 각오 덕에 최악은 면했다.")
+        elif result in ("failure", "critical_failure"):
+            lines.append(f"PC가 {eu_action}에 모든 걸 걸었지만 실패. 대가만큼 최악은 면했다.")
+        else:
+            lines.append(f"PC가 {eu_action}에 대가를 치렀고 그만한 가치가 있었다.")
+    elif isinstance(bus.dai, dict) and bus.dai.get("effort_failed"):
+        lines.append("PC가 각오했지만 몸이 따르지 않았다.")
 
     return "\n".join(lines)
 
@@ -546,80 +531,64 @@ def _build_atmosphere_layer(context, bus) -> str:
     vigor_val = int(_to_float((bus.vigor or {}).get("value", 100), 100))
     composure_val = int(_to_float((bus.composure or {}).get("value", 100), 100))
 
+    # Vigor → directing notation
     if vigor_val >= 70:
-        parts.append("[기력] FORTUNATE - body responds quickly and reliably.")
+        parts.append(_VIGOR_NOTATION["high"])
     elif vigor_val >= 40:
-        pass
+        pass  # 정상 구간 — directive 없음
     elif vigor_val >= 15:
-        parts.append("[기력] STRAINED - fatigue leaks into actions.")
+        parts.append(_VIGOR_NOTATION["strained"])
     else:
-        parts.append("[기력] COLLAPSING - body is failing; show cost, not hard block.")
+        parts.append(_VIGOR_NOTATION["collapsing"])
 
+    # Composure → directing notation
     if composure_val >= 70:
-        parts.append("[평정] FORTUNATE - social flow and observation stay sharp.")
+        parts.append(_COMPOSURE_NOTATION["high"])
     elif composure_val >= 40:
-        pass
+        pass  # 정상 구간
     elif composure_val >= 15:
-        parts.append("[평정] STRAINED - mask slips and NPCs notice.")
+        parts.append(_COMPOSURE_NOTATION["strained"])
     else:
-        parts.append("[평정] COLLAPSING - mind frays; show cost, not hard block.")
+        parts.append(_COMPOSURE_NOTATION["collapsing"])
 
-    # Named Mixed-State Conditions
-    v_low = vigor_val <= 39      # Stage 2+ (Exhaustion or Collapse)
+    # Mixed conditions → directing notation
+    v_low = vigor_val <= 39
     c_low = composure_val <= 39
 
     if v_low and c_low:
-        parts.append(
-            "[Condition: Desperate] Both body and mind are breaking. "
-            "Show the PC pushing through on sheer will or raw instinct. "
-            "Every action should carry visible strain and cost."
-        )
+        parts.append(_MIXED_NOTATION["desperate"])
     elif vigor_val >= 70 and c_low:
-        parts.append(
-            "[Condition: Reckless] Body is strong but mind falters. "
-            "Show impulsive, unguarded behavior — the PC acts before thinking. "
-            "Physical actions succeed but social judgment slips."
-        )
+        parts.append(_MIXED_NOTATION["reckless"])
     elif composure_val >= 70 and v_low:
-        parts.append(
-            "[Condition: Fragile] Mind is sharp but body fails. "
-            "Show the PC's painful awareness of their physical limits — "
-            "plans they can see but cannot execute."
-        )
+        parts.append(_MIXED_NOTATION["fragile"])
 
+    # NPC Reaction → natural language
     if composure_val <= 14:
-        parts.append("[NPC Reaction] composure collapse draws concern, avoidance, or exploitation.")
+        parts.append("주변 인물들이 PC의 불안정을 감지한다 — 걱정, 회피, 또는 이용.")
     if vigor_val <= 14:
-        parts.append("[NPC Reaction] physical collapse changes how others treat the PC.")
+        parts.append("주변 인물들이 PC의 물리적 한계를 목격한다.")
 
+    # Doom/Tension → directing notation (50+ only)
     doom_val = int(_to_float((bus.doom or {}).get("value", 0), 0))
-    if doom_val > 0:
-        mechanic = context.request.genres.get("mechanic", {})
-        primary_genre = mechanic.get("primary_lens", "")
-        doom_info = game_world.get_doom_info(doom_val, genre=primary_genre)
-        stage_name = doom_info.get("name", "")
-        stage_emoji = doom_info.get("emoji", "")
-        parts.append(f"[Tension] {stage_emoji}{stage_name} ({doom_val}%)")
+    if doom_val >= 80:
+        parts.append(_DOOM_NOTATION["critical"])
+    elif doom_val >= 50:
+        parts.append(_DOOM_NOTATION["high"])
 
-    # Pacing directive based on doom stage
+    # Pacing → Korean instruction (tag stripped)
     if doom_val < 20:
         parts.append(
-            "[Pacing: Breathing] The world is calm and clocks advance slowly. "
-            "Use this space for character depth, relationships, and quiet moments. "
-            "Let the PC enjoy what they've earned. "
-            "Plant subtle seeds — sensory details, NPC remarks, environmental shifts — "
-            "that may or may not become relevant later. Do NOT resolve existing tensions."
+            "세계가 잠잠하다. 캐릭터 깊이, 관계, 조용한 순간에 시간을 쓰라. "
+            "감각적 디테일, NPC 발언, 환경 변화로 씨앗을 심되 기존 긴장을 해결하지 마라."
         )
     elif doom_val >= 80:
         parts.append(
-            "[Pacing: Converging] The world accelerates. Unresolved threats compound. "
-            "New dangers arrive already in motion. Show mounting urgency through "
-            "environmental details and NPC behavior. "
-            "Resolution must come from PC action, not narrative convenience. "
-            "Do NOT hand the PC easy solutions or convenient escapes."
+            "세계가 가속한다. 미해결 위협이 복합된다. "
+            "환경과 NPC 행동으로 긴박함을 보여라. "
+            "해결은 PC 행동으로만 가능. 편의적 탈출구 금지."
         )
 
-    # Distant conditions — camera is NOT there, tag only (카메라 원칙)
+    # Distant conditions → natural language (camera NOT there)
     _st_atm = {}
     _ch_atm = (context.narrative_anchors or {}).get("channel_id", "")
     if _ch_atm:
@@ -628,20 +597,13 @@ def _build_atmosphere_layer(context, bus) -> str:
     _all_conds_atm = _st_atm.get("active_conditions", [])
     _pc_loc_atm = (bus.dai.get("current_location", "") if isinstance(bus.dai, dict) else "").strip()
 
-    _distant_tags = []
-    _active_tags = []
     for _c in _all_conds_atm:
         _cloc = (_c.get("location") or "").strip()
         if _cloc and _cloc != _pc_loc_atm:
-            _distant_tags.append(f"[Distant: {_c.get('tag', '?')} @ {_cloc}]")
-        else:
-            _active_tags.append(_c.get("tag", "?"))
-    for _dt in _distant_tags:
-        parts.append(_dt)
-    if _active_tags:
-        parts.append(f"[World Conditions] {', '.join(_active_tags)}")
+            parts.append(f"멀리서 {_c.get('tag', '?')}의 기운이 느껴진다")
+    # [World Conditions] → REMOVED (Events Active와 중복)
 
-    # ── Task 2b: 서사 공간 디렉티브 (둠 하락 시) ──
+    # 서사 공간 → tag stripped
     narrative_space = int(_to_float((bus.doom or {}).get("narrative_space", 0), 0))
     if narrative_space > 0:
         if narrative_space >= 15:
@@ -654,20 +616,20 @@ def _build_atmosphere_layer(context, bus) -> str:
         primary_res = mechanic.get("primary_resource") or "vigor"
         if primary_res == "vigor":
             parts.append(
-                f"[서사 공간: {intensity}] 긴장이 풀렸다 — 이 여유를 써라:\n"
+                f"{intensity} 서사 공간 — 긴장이 풀렸다. 이 여유를 써라:\n"
                 "- 캐릭터 관계 심화 (대화, 감정 교류, 유대 확인)\n"
                 "- 유저 행동에 대한 세계의 반응과 되새김\n"
                 "- 다음 위기의 복선을 자연스럽게 배치"
             )
         else:
             parts.append(
-                f"[서사 공간: {intensity}] 일상이 돌아왔다 — 이 여유를 써라:\n"
+                f"{intensity} 서사 공간 — 일상이 돌아왔다. 이 여유를 써라:\n"
                 "- 인물 간 관계 심화 (소소한 대화, 감정 교류)\n"
                 "- 유저의 선택이 주변에 미친 영향 묘사\n"
                 "- 새로운 변화의 씨앗을 자연스럽게 배치"
             )
 
-    # ── Task 1: 시계 조짐 디렉티브 (Clock Surfacing) ──
+    # Clock surfacing → tag stripped (clock name removed, threat only)
     clocks = (bus.doom or {}).get("clocks", [])
     if isinstance(clocks, list):
         mechanic = context.request.genres.get("mechanic", {})
@@ -680,19 +642,19 @@ def _build_atmosphere_layer(context, bus) -> str:
             if segments <= 0:
                 continue
             ratio = filled / segments
-            name = clock.get("name", "?")
             threat = clock.get("threat", "")
             if ratio >= 0.75:
                 if primary_res == "vigor":
-                    parts.append(f"[Clock Omen: {name}] 위협의 징후가 뚜렷하다 — {threat}의 조짐을 PC 주변에서 구체적으로 묘사하라. 소문, 흔적, 이상 현상. '한편' 시점 전환 금지.")
+                    parts.append(f"{threat}의 전조가 뚜렷하다 — PC 주변에서 구체적으로 묘사하라. 시점 전환 금지.")
                 else:
-                    parts.append(f"[Clock Omen: {name}] 위기의 전조가 감지된다 — {threat}의 조짐을 주변 인물의 태도 변화, 미묘한 분위기, 사소한 균열로 묘사하라. 시점 전환 금지.")
+                    parts.append(f"{threat}의 전조가 감지된다 — 주변 인물의 태도 변화, 미묘한 분위기로 묘사하라. 시점 전환 금지.")
             elif ratio >= 0.5:
                 if primary_res == "vigor":
-                    parts.append(f"[Clock Hint: {name}] 먼 전조 — {threat}의 징후를 감각적 디테일로 암시하라.")
+                    parts.append(f"{threat}의 징후를 감각적 디테일로 암시하라.")
                 else:
-                    parts.append(f"[Clock Hint: {name}] 미세한 변화 — {threat}의 전조를 일상의 작은 어긋남으로 암시하라.")
+                    parts.append(f"{threat}의 전조를 일상의 작은 어긋남으로 암시하라.")
 
+    # Status effects → tag stripped
     status_effects = (context.narrative_anchors or {}).get("status_effects", [])
     if isinstance(status_effects, list):
         for status in status_effects[:3]:
@@ -703,23 +665,21 @@ def _build_atmosphere_layer(context, bus) -> str:
                 continue
             hint = str(status.get("narrative_hint", status.get("description", ""))).strip()
             if hint:
-                parts.append(f"[Condition: {name}] {hint}")
-            else:
-                parts.append(f"[Condition: {name}] active.")
+                parts.append(f"{name}: {hint}")
 
-    # ── Task 3: 시점 고정 디렉티브 (POV Lock) ──
+    # POV Lock → tag stripped
     if isinstance(clocks, list):
         active_clocks = [c for c in clocks if isinstance(c, dict) and not c.get("resolved")]
         if active_clocks:
             parts.append(
-                "[시점 고정] 시계 이벤트는 PC 시점 안에서만 묘사하라. "
+                "시계 이벤트는 PC 시점 안에서만 묘사하라. "
                 "'한편', '그 무렵', '다른 곳에서는' 등 시점 전환 절대 금지. "
                 "PC가 직접 목격·감지하는 것만 서술."
             )
 
     if not parts:
         return ""
-    return "[Atmosphere]\n" + "\n".join(parts)
+    return "── 분위기 ──\n" + "\n".join(parts)
 
 
 def _build_system_message(bus) -> str:
@@ -1066,6 +1026,12 @@ class UniversalNarrativeEngine:
             auto_directive = NPCAutonomousEngine.build_autonomous_directive(triggers)
             if auto_directive:
                 layers.append(auto_directive)
+            # iceberg per-NPC depth 계산용 구조 데이터 저장
+            if triggers:
+                bus.dai["autonomous_triggers"] = [
+                    {"npc_name": t.npc_name, "trigger_id": t.trigger_id, "priority": t.priority}
+                    for t in triggers
+                ]
 
         fallback_msg = self.pipeline.get_fallback_directives(context.request.active_modules)
         if fallback_msg:
@@ -1409,6 +1375,12 @@ class UniversalNarrativeEngine:
             auto_directive = NPCAutonomousEngine.build_autonomous_directive(triggers)
             if auto_directive:
                 directive_parts.append(auto_directive)
+            # iceberg per-NPC depth 계산용 구조 데이터 저장
+            if triggers:
+                bus.dai["autonomous_triggers"] = [
+                    {"npc_name": t.npc_name, "trigger_id": t.trigger_id, "priority": t.priority}
+                    for t in triggers
+                ]
 
         # Fallbacks
         fallback_msg = self.pipeline.get_fallback_directives(context.request.active_modules)

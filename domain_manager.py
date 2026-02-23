@@ -321,7 +321,7 @@ def get_lore_with_npcs(channel_id: str) -> str:
     if not npcs: return lore
     sec = "\n\n### 📋 NPC 정보\n\n"
     for n, d in npcs.items():
-        sec += f"**{n}** ({d.get('status','Active')})\n{d.get('desc','-')}\n\n"
+        sec += f"{n} ({d.get('status','Active')})\n{d.get('desc','-')}\n\n"
     return lore + sec
 
 # NPCs
@@ -955,12 +955,12 @@ def get_unified_player_info(channel_id: str, user_id: str) -> str:
 
     # 8. Construct Block
     return f"""## 🎭 {name} (Player Character)
-- **Status Condition**: {status_text}
-- **Vigor/Composure**: {vc_text}
-- **Passives**: {passive_text}
-- **Abnormal Adaptation**: {abnormal_text if abnormal_text else "None"}
-- **Relationships**: {rel_text}
-- **Description**:
+- Status Condition: {status_text}
+- Vigor/Composure: {vc_text}
+- Passives: {passive_text}
+- Abnormal Adaptation: {abnormal_text if abnormal_text else "None"}
+- Relationships: {rel_text}
+- Description:
 {desc_text}
 
 ### 📓 Player Notebook (Inventory & Memos)
@@ -1193,6 +1193,54 @@ def clear_pending_flashback(channel_id: str) -> None:
     d = get_domain(channel_id)
     d.pop("pending_flashback", None)
     save_domain(channel_id, d)
+
+# Loadout (로드아웃 — BITD Load)
+def get_loadout(channel_id: str, user_id: str) -> Optional[Dict]:
+    """유저의 로드아웃 설정 조회. Returns {"total_slots": int, "used_slots": int, "items": list, "load_type": str} or None."""
+    mem = get_ai_memory(channel_id, user_id)
+    return mem.get("loadout")
+
+def set_loadout(channel_id: str, user_id: str, load_type: str, slots: int, label: str) -> None:
+    """로드아웃 초기 설정."""
+    update_ai_memory(channel_id, user_id, {
+        "loadout": {"total_slots": slots, "used_slots": 0, "items": [], "load_type": load_type, "label": label}
+    })
+
+def consume_loadout_slot(channel_id: str, user_id: str, slots_needed: int, item_name: str) -> bool:
+    """로드아웃 슬롯 소비. 성공 시 True."""
+    mem = get_ai_memory(channel_id, user_id)
+    loadout = mem.get("loadout")
+    if not loadout:
+        return False
+    remaining = loadout["total_slots"] - loadout.get("used_slots", 0)
+    if slots_needed > remaining:
+        return False
+    loadout["used_slots"] = loadout.get("used_slots", 0) + slots_needed
+    loadout.setdefault("items", []).append(item_name)
+    update_ai_memory(channel_id, user_id, {"loadout": loadout})
+    return True
+
+# Training / Project Progress (다운타임 진행도)
+def advance_training(channel_id: str, user_id: str, skill_name: str, progress: int = 1) -> Dict:
+    """훈련 진행도 업데이트. Returns updated training entry."""
+    mem = get_ai_memory(channel_id, user_id)
+    training = mem.get("training_progress", {})
+    entry = training.get(skill_name, {"progress": 0, "target": config.DOWNTIME_TRAIN.get("required_progress", 3)})
+    entry["progress"] = entry.get("progress", 0) + progress
+    training[skill_name] = entry
+    update_ai_memory(channel_id, user_id, {"training_progress": training})
+    return entry
+
+def advance_project(channel_id: str, user_id: str, project_name: str) -> Optional[Dict]:
+    """프로젝트 진행도 +1. Returns updated project or None."""
+    mem = get_ai_memory(channel_id, user_id)
+    projects = mem.get("projects", [])
+    for proj in projects:
+        if isinstance(proj, dict) and proj.get("name") == project_name:
+            proj["filled"] = proj.get("filled", 0) + 1
+            update_ai_memory(channel_id, user_id, {"projects": projects})
+            return proj
+    return None
 
 # Storyteller State (세계 주도권 시스템)
 def get_storyteller_state(channel_id: str) -> dict:

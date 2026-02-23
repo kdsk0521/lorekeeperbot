@@ -18,6 +18,7 @@ import logging
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 import text_resources
+import iceberg
 
 # [레거시 재사용] 기존 모듈에서 유용한 함수 임포트
 import prompt_builder as legacy_builder
@@ -51,6 +52,10 @@ def _build_status_layout(active_modules: list) -> str:
     if line2_fmt:
         fmt.append(" | ".join(line2_fmt))
         ex.append(" | ".join(line2_ex))
+
+    if has_mental:
+        line2_fmt.append("로드아웃 [used/total]")
+        line2_ex.append("로드아웃 1/4")
 
     if has_doom:
         fmt.append("[Clock1 filled/segments] [Clock2 filled/segments ...]")
@@ -94,55 +99,41 @@ def _build_status_layout(active_modules: list) -> str:
 # =========================================================
 
 def _build_telescope_prefill(dai: dict, real_time_data: str) -> str:
-    """5W1H Telescope 프리필: Who/When/Where를 코드에서 조립.
+    """Telescope v3 프리필: Scene.Who / Scene.When/Where를 코드에서 조립.
 
     코드 프리필 = GROUND_TRUTH → 환각 불가.
-    모델은 이 사실 위에 [What][Why][How] 추론을 쌓음.
+    모델은 Phase A 나머지 + Phase B를 채운 뒤 ┫ 닫고 산문.
     """
-    parts = []
+    scene_lines = []
 
-    # [Who] — DAI psyche_states에서 등장인물 + 핵심상태
+    # [Scene.Who]
     psyche = dai.get("psyche_states", {})
-    if psyche and isinstance(psyche, dict):
-        who_entries = []
-        for name, pdata in psyche.items():
-            if isinstance(pdata, dict):
-                p = pdata.get("psyche", pdata.get("mental", {}))
-                state = p.get("primary_emotion", "") or p.get("descriptor", "") or p.get("surface", "")
-                who_entries.append(f"{name}:{state}" if state else name)
-            else:
-                who_entries.append(str(name))
-        if who_entries:
-            parts.append(f"[Who] {' | '.join(who_entries)}")
+    who_names = iceberg.translate_telescope_who(psyche)
+    if who_names:
+        scene_lines.append(f"  ├ [Scene.Who] {who_names}")
 
-    # [When][Where] — real_time_data에서 추출
+    # [Scene.When/Where]
     if real_time_data:
-        # real_time_data 첫 줄들에서 시간/장소 정보 추출 (compact format)
         rt_lines = [ln.strip() for ln in real_time_data.strip().split("\n") if ln.strip()]
-        # 위치/시간/인물 줄 찾기 (status header format: "위치 X | 시간 Y | 인물 Z")
         when_where = ""
         for ln in rt_lines[:5]:
             if "위치" in ln or "시간" in ln or "Location" in ln or "Time" in ln:
                 when_where = ln
                 break
         if when_where:
-            parts.append(f"[When/Where] {when_where}")
+            scene_lines.append(f"  ├ [Scene.When/Where] {when_where}")
         else:
-            # fallback: 첫 줄 사용
-            parts.append(f"[When/Where] {rt_lines[0][:200]}")
+            scene_lines.append(f"  ├ [Scene.When/Where] {rt_lines[0][:200]}")
     else:
-        # DAI observation fallback
         observation = dai.get("observation", "")
         if observation:
-            parts.append(f"[When/Where] (from observation) {observation[:150]}")
+            scene_lines.append(f"  ├ [Scene.When/Where] (observation) {observation[:150]}")
 
-    if len(parts) < 1:
-        # Who/When/Where 하나도 없으면 프리필 의미 없음
+    if not scene_lines:
         return ""
 
-    # V2: 프리필은 [Who][When/Where]까지만. 모델이 [What][Why][How]+┫를 채운 뒤 산문.
-    # ┫를 닫지 않아야 모델이 추론 게이트를 실제로 수행함.
-    return "┣\n" + "\n".join(parts) + "\n"
+    header = "=== Phase A: Domain Checks ===\n\n[Scene] — 장면 구조"
+    return "┣\n" + header + "\n" + "\n".join(scene_lines) + "\n"
 
 
 # =========================================================
@@ -688,29 +679,23 @@ def build_34_step_prompt(ctx) -> str:
     if user_intent:
         input_analysis_parts.append(f"UserIntent: {user_intent}")
 
-    # Position/Effect: 상황 위치 및 영향력
+    # Position/Effect: iceberg 번역 (수치 → 서수 tier + friction)
     position = dai.get("position", {})
     effect = dai.get("effect", {})
-    if position or effect:
-        input_analysis_parts.append("(Outcome calibration. Never echo position/effect values or tier names in prose.)")
-    if position:
-        input_analysis_parts.append(
-            f"Position: {position.get('value', 0.5)} ({position.get('reason', '')})"
-        )
-    if effect:
-        input_analysis_parts.append(
-            f"Effect: {effect.get('value', 0.5)} ({effect.get('reason', '')})"
-        )
+    pos_eff_text = iceberg.translate_position_effect(position, effect)
+    if pos_eff_text:
+        input_analysis_parts.append(pos_eff_text)
 
     input_analysis = "\n".join(input_analysis_parts)
 
     # --- [Slot 16] Scene Intelligence (Aspects + Energy + SensoryAnchors + Habitus + Hook + Flags) ---
     scene_intel_parts = []
 
-    # EnergyDirection: 씬 에너지 방향
+    # EnergyDirection: iceberg 번역 (라벨 → 산문 호흡 힌트)
     energy_dir = dai.get("energy_direction", "")
-    if energy_dir:
-        scene_intel_parts.append(f"### Energy Direction [ANALYSIS]: {energy_dir.upper()}\n(Prose pacing reference. Never name energy direction labels in output.)")
+    energy_hint = iceberg.translate_energy_direction(energy_dir)
+    if energy_hint:
+        scene_intel_parts.append(energy_hint)
 
     # Aspects: 활용 가능한 장면 요소
     aspects = dai.get("aspects", [])
@@ -739,40 +724,17 @@ def build_34_step_prompt(ctx) -> str:
     if hook:
         scene_intel_parts.append(f"### Narrative Hook [INFERRED]\n{hook}")
 
-    # QualityFlags: 서사 품질 경고
+    # QualityFlags: iceberg 번역 (경고 라벨 → 행동 지시)
     qflags = dai.get("quality_flags", {})
-    if qflags and isinstance(qflags, dict):
-        warnings = []
-        if qflags.get("convergence_warning"):
-            warnings.append("⚠ CONVERGENCE: Both parties exiting comfortable without earning it")
-        if qflags.get("echo_warning"):
-            warnings.append("⚠ ECHO: NPC mirroring PC emotion instead of own response")
-        if qflags.get("stagnation_warning"):
-            warnings.append("⚠ STAGNATION: Scene energy flat for 3+ turns. Continue naturally — do not force artificial change.")
-        if warnings:
-            scene_intel_parts.append(
-                "### Quality Alerts [ANALYSIS]\n"
-                "(Course-correction cues. Never echo alert labels or meta-commentary in prose.)\n"
-                + "\n".join(warnings)
-            )
+    qflag_text = iceberg.translate_quality_flags(qflags)
+    if qflag_text:
+        scene_intel_parts.append("### 서사 품질 보정\n" + qflag_text)
 
-    # Apophenia Guard: 특성 연결 굴절 지시 (BABEL Axis V)
+    # Apophenia Guard: iceberg 번역 (OBVIOUS= → 한국어)
     trait_conn = dai.get("trait_connections", {})
-    if trait_conn and isinstance(trait_conn, dict):
-        conn_lines = []
-        for npc_name, conn in trait_conn.items():
-            if isinstance(conn, dict) and conn.get("primary_link") and conn.get("deflection"):
-                line = f"- {npc_name}: OBVIOUS={conn['primary_link']} → INSTEAD: {conn['deflection']}"
-                hint = conn.get("render_hint", "")
-                if hint:
-                    line += f" | {hint}"
-                conn_lines.append(line)
-        if conn_lines:
-            scene_intel_parts.append(
-                "### Apophenia Guard [ANALYSIS]\n"
-                "Primary connection = cliché path. Deflect to the suggested direction.\n"
-                + "\n".join(conn_lines)
-            )
+    trait_text = iceberg.translate_trait_connections(trait_conn)
+    if trait_text:
+        scene_intel_parts.append(trait_text)
 
     # Foreshadowing Guard: ai_memory에 추적된 복선을 ambient fact으로 주입
     if channel_id:
@@ -794,66 +756,27 @@ def build_34_step_prompt(ctx) -> str:
     # --- [Slot 17] Extended Intelligence (NPC Knowledge + Intimacy Analysis) ---
     extended_intel_parts = []
 
-    # NPCAttitudes: NPC 태도 추적 (기존 스키마 필드, 미주입이었음)
+    # NPCAttitudes: iceberg 번역 (태도 라벨 제거, trajectory → 행동 힌트)
     npc_attitudes = dai.get("NPCAttitudes", dai.get("npc_attitudes", {}))
-    if npc_attitudes and isinstance(npc_attitudes, dict):
-        att_lines = []
-        for npc_name, att in npc_attitudes.items():
-            if isinstance(att, dict):
-                attitude = att.get("attitude", "neutral")
-                trajectory = att.get("trajectory", "stable")
-                reason = att.get("reason", "")
-                att_lines.append(f"- {npc_name}: {attitude} ({trajectory}) — {reason}")
-        if att_lines:
-            extended_intel_parts.append(
-                "### NPC Attitudes\n"
-                "(Author reference. Show attitude through behavior/dialogue, not labels.)\n"
-                + "\n".join(att_lines)
-            )
+    att_text = iceberg.translate_npc_attitudes(npc_attitudes)
+    if att_text:
+        extended_intel_parts.append("### NPC 태도 방향\n" + att_text)
 
-    # NPCKnowledge: NPC별 지식 상태
+    # NPCKnowledge: iceberg 번역 (leak_risk/would_share 제거, 내용 유지)
     npc_knowledge = dai.get("NPCKnowledge", dai.get("npc_knowledge", {}))
-    if npc_knowledge and isinstance(npc_knowledge, dict):
-        know_lines = []
-        for npc_name, info in npc_knowledge.items():
-            if isinstance(info, dict):
-                knows = info.get("knows", [])
-                secrets = info.get("secrets_held", [])
-                leak = info.get("leak_risk", "none")
-                parts_k = [f"  knows: {', '.join(knows)}"] if knows else []
-                parts_k += [f"  secrets: {', '.join(secrets)}"] if secrets else []
-                parts_k += [f"  leak_risk: {leak}"] if leak != "none" else []
-                if parts_k:
-                    know_lines.append(f"- **{npc_name}**\n" + "\n".join(parts_k))
-        if know_lines:
-            extended_intel_parts.append(
-                "### NPC Knowledge States\n"
-                "(What NPCs know/hide shapes their behavior. Never narrate 'knows', 'secrets', or 'leak_risk' as concepts.)\n"
-                + "\n".join(know_lines)
-            )
+    know_text = iceberg.translate_npc_knowledge(npc_knowledge)
+    if know_text:
+        extended_intel_parts.append(know_text)
 
-    # IntimacyAnalysis: intimate 씬 전용 심리 분석
+    # IntimacyAnalysis: iceberg 번역 (window_check + dual_control 버그 수정 포함)
     intimacy = dai.get("IntimacyAnalysis", dai.get("intimacy_analysis"))
-    if intimacy and isinstance(intimacy, dict):
-        intim_lines = []
-        vuln = intimacy.get("vulnerability", {})
-        if vuln:
-            intim_lines.append("Vulnerability: " + ", ".join(f"{k}={v}" for k, v in vuln.items()))
-        desire = intimacy.get("desire_type", {})
-        if desire:
-            intim_lines.append("Desire: " + ", ".join(f"{k}={v}" for k, v in desire.items()))
-        power = intimacy.get("power_dynamic", "")
-        if power:
-            intim_lines.append(f"Power: {power}")
-        body_mem = intimacy.get("body_memory", "")
-        if body_mem:
-            intim_lines.append(f"Body Memory: {body_mem}")
-        if intim_lines:
-            extended_intel_parts.append(
-                "### Intimacy Analysis\n"
-                "(Render through physical sensation and behavior. Never name field labels in prose.)\n"
-                + "\n".join(intim_lines)
-            )
+    intim_text = iceberg.translate_intimacy(intimacy)
+    if intim_text:
+        extended_intel_parts.append(
+            "### 친밀 장면 신체 상태\n"
+            "(신체 감각과 행동으로만 렌더링하라. 필드명이나 분석 용어를 산문에 쓰지 마.)\n"
+            + intim_text
+        )
 
     # NPC Connection Milestones (1회성 서사 힌트)
     if channel_id:
@@ -861,7 +784,7 @@ def build_34_step_prompt(ctx) -> str:
         if milestone_hints:
             extended_intel_parts.append("### NPC Connection Milestones\n" + "\n".join(milestone_hints))
 
-        # NPC Connection Depth Context (depth > 0인 NPC만)
+        # NPC Connection Depth: iceberg 번역 (수치/스테이지명 제거)
         all_attitudes = domain_manager.get_npc_attitudes(channel_id)
         conn_lines = []
         for _cn, _ca in all_attitudes.items():
@@ -869,84 +792,79 @@ def build_34_step_prompt(ctx) -> str:
             _tension = _ca.get("tension", 0)
             if _depth > 0 or _tension > 20:
                 _stage = config.get_connection_stage(_depth)
-                _line = f"- {_cn}: Connection={_stage['name']}({_depth}/100)"
-                if _tension > config.NPC_TENSION_DRAMA_THRESHOLD:
-                    _line += f" TENSION={_tension} (DRAMA POTENTIAL)"
-                elif _tension > 20:
-                    _line += f" tension={_tension}"
-                _line += f" — {_stage['hint_en']}"
+                _line = iceberg.translate_connection_depth(
+                    _cn, _stage["name"], _depth, _tension, _stage.get("hint_en", "")
+                )
                 conn_lines.append(_line)
         if conn_lines:
             extended_intel_parts.append(
-                "### NPC Connection Depth\n"
-                "(Stage names and numbers = author reference. Show depth through BEHAVIOR — "
-                "never name stages, scores, or 'connection' in prose.)\n"
-                + "\n".join(conn_lines)
+                "### NPC 관계 깊이\n" + "\n".join(conn_lines)
             )
 
     extended_intelligence = "\n\n".join(extended_intel_parts)
 
-    # --- [Slot 14] Psyche States (6-Axis, Structured) ---
-    psyche_states = ""
+    # --- NPC별 수면 계산 (per-NPC depth knobs) ---
+    npc_depths = None
     psyche_data = dai.get("psyche_states", {})
-    if psyche_data and isinstance(psyche_data, dict):
-        psyche_lines = [
-            "(Author reference only. NEVER echo axis names, field labels, or psychology terms "
-            "(polyvagal/attachment/self_opacity/decision_mode/coping/logos_layer) in prose. "
-            "Convert every value to THIS character's specific observable behavior.)"
-        ]
-        for char_name, state in psyche_data.items():
-            if isinstance(state, str):
-                psyche_lines.append(f"- {char_name}: {state}")
-            elif isinstance(state, dict):
-                psyche_ax = state.get("psyche", state.get("mental", {}))
-                soma = state.get("soma", {})
-                relation = state.get("relation", {})
-                deep_read = state.get("deep_read", "")
-                emotion = psyche_ax.get("primary_emotion", "")
-                emotion_tag = f"/{emotion}" if emotion else ""
-                psyche_lines.append(
-                    f"- {char_name}: "
-                    f"Μ[{psyche_ax.get('descriptor', '?')}±{psyche_ax.get('value', 0)}{emotion_tag}] "
-                    f"Φ[{soma.get('descriptor', '?')}] "
-                    f"Ι[{relation.get('descriptor', '?')}±{relation.get('value', 0)}]"
-                )
-                if deep_read:
-                    psyche_lines.append(f"  └ {deep_read}")
-        psyche_states = "\n".join(psyche_lines)
+    scene_type = dai.get("scene_type", "normal")
+    energy_dir_raw = dai.get("energy_direction", "idle")
 
-    # --- [Slot 28] Narrative Chain ---
+    if psyche_data and channel_id:
+        _turn_count = 0
+        _conn_depths = {}
+        try:
+            _ws = domain_manager.get_world_state(channel_id)
+            _turn_count = _ws.get("turn_index", 0)
+        except Exception:
+            pass
+        try:
+            _all_att = domain_manager.get_npc_attitudes(channel_id)
+            _conn_depths = {n: a.get("depth", 0) for n, a in _all_att.items()}
+        except Exception:
+            pass
+
+        _auto_triggers = dai.get("autonomous_triggers", [])
+        _npc_attitudes_raw = dai.get("NPCAttitudes", dai.get("npc_attitudes", {}))
+
+        npc_depths = iceberg.compute_npc_depths(
+            npc_names=list(psyche_data.keys()),
+            scene_type=scene_type,
+            energy=energy_dir_raw,
+            turn_count=_turn_count,
+            autonomous_triggers=_auto_triggers,
+            connection_depths=_conn_depths,
+            npc_attitudes=_npc_attitudes_raw,
+        )
+
+    # --- [Slot 14] Psyche States (iceberg 번역) ---
+    psyche_states = iceberg.translate_psyche_states(
+        psyche_data, scene_type, energy_dir_raw,
+        npc_depths=npc_depths,
+    )
+
+    # --- [Slot 28] Narrative Chain (iceberg 번역) ---
     narrative_chain = ""
     chain_data = dai.get("narrative_chain", {})
     if chain_data and isinstance(chain_data, dict):
-        silence = chain_data.get('silence_type')
-        silence_tag = f"\nsilence_type: {silence}" if silence else ""
-        narrative_chain = (
-            "(Pacing reference only. Never echo these labels or values in prose.)\n"
-            f"chain_status: {chain_data.get('chain_status', 'OPEN')}\n"
-            f"topic_lock: {chain_data.get('topic_lock', 'None')}\n"
-            f"conclusion_proximity: {chain_data.get('conclusion_proximity', 'N/A')}"
-            f"{silence_tag}"
-        )
-        # Anti-Resolution: open threads guard
+        narrative_chain = iceberg.translate_narrative_chain(chain_data)
+        # Anti-Resolution: open threads guard (가드 텍스트 유지, 카테고리 라벨만 제거)
         open_threads = chain_data.get("open_threads", [])
         if isinstance(open_threads, list) and open_threads:
-            thread_list = "\n".join(f"- {t}" for t in open_threads[:5])
-            narrative_chain += (
-                f"\n\n[OPEN THREADS — AMBIENT ONLY]\n"
-                f"These threads are active world forces. Maintain their PRESENCE, not their RESOLUTION.\n"
-                f"Only user action directly engaging a thread may advance or close it.\n"
-                f"{thread_list}"
-            )
+            thread_list = iceberg.translate_open_threads(open_threads[:5])
+            if thread_list:
+                narrative_chain += (
+                    f"\n\n[OPEN THREADS — AMBIENT ONLY]\n"
+                    f"These threads are active world forces. Maintain their PRESENCE, not their RESOLUTION.\n"
+                    f"Only user action directly engaging a thread may advance or close it.\n"
+                    f"{thread_list}"
+                )
 
-    # --- [Slot 30] GM Mover ---
+    # --- [Slot 30] GM Mover (iceberg: type 라벨 제거) ---
     gm_mover = ""
     gm_move = dai.get("gm_move", {})
-    if gm_move:
-        gm_mover = (
-            "(Direction for what happens next. Never name move types in prose.)\n"
-            f"type: {gm_move.get('type', 'N/A')}\ndescription: {gm_move.get('description', '')}"
-        )
+    gm_move_text = iceberg.translate_gm_move(gm_move)
+    if gm_move_text:
+        gm_mover = gm_move_text
 
     # Flashback Scene Instruction (회상 확정 시)
     if dai.get("flashback_confirmed"):
@@ -959,23 +877,7 @@ def build_34_step_prompt(ctx) -> str:
         )
         gm_mover = (gm_mover + fb_instruction) if gm_mover else fb_instruction
 
-    # Position-based friction (GAP 6 — anti-sycophancy)
-    position = dai.get("position", {})
-    pos_val = position.get("value", 0.5) if position else 0.5
-    if pos_val < 0.3:
-        friction = (
-            "\n\n[POSITION_FRICTION] PC is in a DESPERATE/RISKY position (causal assessment).\n"
-            "- Physical and social barriers are real. Render them faithfully.\n"
-            "- Success requires overcoming established obstacles, not narrative convenience.\n"
-            "- Outcomes follow from the world's physics, not from desire for drama or comfort."
-        )
-        gm_mover = (gm_mover + friction) if gm_mover else friction
-    elif pos_val < 0.5:
-        friction = (
-            "\n\n[POSITION_FRICTION] PC is DISADVANTAGED (causal assessment).\n"
-            "- Existing obstacles create natural cost. Render the cost honestly."
-        )
-        gm_mover = (gm_mover + friction) if gm_mover else friction
+    # [POSITION_FRICTION 제거됨] — Slot 13 translate_position_effect()에서 tier별 friction 자동 append
 
     # Time directive (Pro에 서사 시간 범위 힌트)
     time_flow_data = dai.get("time_flow", {})
@@ -1019,33 +921,13 @@ def build_34_step_prompt(ctx) -> str:
         )
         real_time_data += pc_warning
 
-    # Emotion Intensity Calibration (GAP 4)
-    psyche_states = dai.get("psyche_states", {})
-    if psyche_states:
-        intensity_lines = []
-        for npc_name, pdata in psyche_states.items():
-            if not isinstance(pdata, dict):
-                continue
-            psyche = pdata.get("psyche", {})
-            val = abs(psyche.get("value", 0))
-            if val <= 30:
-                band = "SUBTLE — micro-expressions only"
-            elif val <= 60:
-                band = "VISIBLE — noticeable body language"
-            elif val <= 80:
-                band = "OVERT — obvious physical signs"
-            else:
-                band = "OVERWHELMING — somatic takeover"
-            intensity_lines.append(f"  {npc_name}: |psyche| {val} -> {band}")
-        if intensity_lines:
-            real_time_data += (
-                "\n\n[EMOTION_INTENSITY_GUIDE]\n"
-                "Render emotion through PHYSICAL EVIDENCE at the intensity below. "
-                "Do NOT name emotions, band labels (SUBTLE/VISIBLE/OVERT/OVERWHELMING), or psyche values in prose.\n"
-                + "\n".join(intensity_lines)
-            )
+    # Emotion Intensity: iceberg 번역 (밴드명/수치 제거 → 행동 강도 힌트)
+    psyche_states_raw = dai.get("psyche_states", {})
+    intensity_text = iceberg.translate_emotion_intensity(psyche_states_raw)
+    if intensity_text:
+        real_time_data += f"\n\n{intensity_text}"
 
-    # Vigor ↔ Composure CONTRAST directive (괴리 30 이상 시 Pro에 힌트)
+    # Vigor ↔ Composure CONTRAST: iceberg 번역 (수치·해석 제거, 괴리 사실만)
     if channel_id:
         try:
             _target_p = domain_manager.get_domain(channel_id).get("participants", {}).get(user_id, {})
@@ -1054,22 +936,9 @@ def build_34_step_prompt(ctx) -> str:
             _c_dict = _mem.get("composure") or {}
             _v = int(_v_dict.get("value", 100)) if _v_dict.get("value") is not None else 100
             _c = int(_c_dict.get("value", 100)) if _c_dict.get("value") is not None else 100
-            _gap = abs(_v - _c)
-            if _gap >= 30:
-                _no_echo = "Show through BEHAVIOR only. Never name 기력/평정/vigor/composure in prose."
-                if _v > _c:
-                    _contrast_hint = (
-                        f"\n\n[CONTRAST] 기력 {_v} vs 평정 {_c} (차이 {_gap})\n"
-                        "Body functional, mind fracturing. "
-                        f"{_no_echo}"
-                    )
-                else:
-                    _contrast_hint = (
-                        f"\n\n[CONTRAST] 기력 {_v} vs 평정 {_c} (차이 {_gap})\n"
-                        "Mind clear, body failing. "
-                        f"{_no_echo}"
-                    )
-                real_time_data += _contrast_hint
+            contrast_text = iceberg.translate_vigor_composure(_v, _c)
+            if contrast_text:
+                real_time_data += f"\n\n{contrast_text}"
         except Exception:
             pass
 
@@ -1200,35 +1069,7 @@ def build_34_step_prompt(ctx) -> str:
             builder.set_slot(33, f"{current_33}\n\n{npc_reminder}")
             logger.info(f"[RecencyEcho] NPC reminders injected into slot 33 ({len(relevant_npcs)} NPCs)")
 
-    # Scene Breathing directive (BABEL Madeleine — energy_direction별 원칙 강조/약화)
-    _SCENE_BREATHING = {
-        "idle": (
-            "[SCENE_BREATHING] IDLE: Prioritize environmental texture, 間(MA), mundane detail, slow rhythm. "
-            "De-emphasize combat physicality, crisis urgency, high-density paragraphs."
-        ),
-        "rising": (
-            "[SCENE_BREATHING] RISING: Prioritize character friction, body language contradiction, interpersonal tension. "
-            "De-emphasize atmospheric padding, sensory catalogs, environmental scanning."
-        ),
-        "stagnant": (
-            "[SCENE_BREATHING] STAGNANT: Prioritize silence, absence as presence, unspoken weight. "
-            "De-emphasize forced conflict injection, artificial hooks, momentum creation."
-        ),
-        "detonation": (
-            "[SCENE_BREATHING] DETONATION: Prioritize physical impact, short sentences, action consequence. "
-            "De-emphasize environmental beauty, slow pacing, philosophical narration."
-        ),
-        "aftershock": (
-            "[SCENE_BREATHING] AFTERSHOCK: Prioritize silence, debris, delayed reaction, numbness. "
-            "De-emphasize new conflict, active hooks, forward momentum."
-        ),
-    }
-    _energy = dai.get("energy_direction", "") if dai else ""
-    _breathing = _SCENE_BREATHING.get(_energy)
-    if _breathing:
-        current_33 = builder.get_slot(33) or ""
-        builder.set_slot(33, f"{current_33}\n\n{_breathing}")
-        logger.info(f"[SceneBreathing] {_energy} directive injected into slot 33")
+    # [Scene Breathing 제거됨] — Slot 16 iceberg.translate_energy_direction()이 동일 정보를 커버
 
     # 5W1H Recency Echo — always present at maximum recency position
     fidelity_echo = "[5W1H: Draw events only from DAI data. Camera scans environment evenly. Prose intensity follows EnergyDirection.]"

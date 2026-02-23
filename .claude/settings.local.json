@@ -6,7 +6,11 @@
       "Bash(grep:*)",
       "Bash(del \"C:\\\\Users\\\\kdsk\\\\.claude\\\\plans\\\\polymorphic-weaving-honey.md\")",
       "Bash(python3:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(PYTHONIOENCODING=utf-8 python:*)"
+    ],
+    "additionalDirectories": [
+      "\\tmp"
     ]
   }
 }

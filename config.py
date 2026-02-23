@@ -232,8 +232,13 @@ DOOM_MENTAL_RECOVERY_MOD = {
     0: 1.0, 1: 0.9, 2: 0.8, 3: 0.6, 4: 0.4, 5: 0.2
 }
 
+# Effort (각오) — 판정 전 선불 보너스 + 실패 시 consequence 흡수 내장 (Cypher Effort + BITD Resist)
+EFFORT_BONUS = 10    # 판정 +10
+EFFORT_COST = 8      # 기력/평정 선불 (흡수 보험 포함, 추가 비용 없음)
+
 # Flashback (회상) — 능동적 기력 소비
 FLASHBACK_COST_TIERS = {"trivial": 3, "standard": 8, "bold": 15}
+FLASHBACK_PASSIVE_DISCOUNT = 0.5  # 관련 특질 매칭 시 비용 50%
 FLASHBACK_MIN_MENTAL = 10  # 이 이하면 회상 불가
 
 # Rest Recovery (휴식) — 능동적 기력 회복
@@ -248,6 +253,21 @@ CROSS_AXIS_CASCADE = {
     2: -2,   # Exhaustion — mild drain on other axis
     3: -5,   # Collapse — severe drain on other axis
 }
+
+# Loadout (로드아웃) — 준비 슬롯 (BITD Load)
+LOADOUT_TYPES = {
+    "light":    {"slots": 2, "label": "경장"},
+    "standard": {"slots": 4, "label": "표준"},
+    "heavy":    {"slots": 6, "label": "중장"},
+}
+LOADOUT_SLOT_COST = {1: 3, 2: 6, 3: 10}
+
+# Downtime (다운타임) — 목적 있는 시간 투자 활동 (BITD Downtime)
+DOWNTIME_RECOVER = {"safe": {"vigor": 25, "composure": 15}, "unsafe": {"vigor": 15, "composure": 10}}
+DOWNTIME_VICE = {"base_vigor": 25, "base_composure": 20, "overindulge_threshold": 85, "overindulge_penalty": -15}
+DOWNTIME_TRAIN = {"vigor_cost": 5, "composure_cost": 5, "progress_per_session": 1, "required_progress": 3}
+DOWNTIME_SOCIALIZE = {"vigor": 5, "composure": 15, "depth_delta_range": (10, 15)}
+DOWNTIME_PROJECT = {"vigor_cost": 3, "composure_cost": 3, "clock_progress": 1}
 
 # Doom Clock Pacing: stage → extra auto-tick for time/hybrid clocks
 DOOM_CLOCK_ACCELERATION = {
@@ -326,24 +346,24 @@ DEFAULT_RULES = """
 [Lorekeeper 기본 룰: 서사 중심 TRPG]
 
 ## 📜 판정 시스템 (1d100)
-**성공 기준치 (DC: Difficulty Check)**
-- **매우 쉬움 (Trivial):** DC 0
-- **쉬움 (Easy):** DC 20
-- **보통 (Normal):** DC 40 (표준)
-- **어려움 (Hard):** DC 60
-- **매우 어려움 (Extreme):** DC 80
+성공 기준치 (DC: Difficulty Check)
+- 매우 쉬움 (Trivial): DC 0
+- 쉬움 (Easy): DC 20
+- 보통 (Normal): DC 40 (표준)
+- 어려움 (Hard): DC 60
+- 매우 어려움 (Extreme): DC 80
 
-**판정 결과 계산**
+판정 결과 계산
 - `[주사위 1d100] + [특성/상태 보정치] >= [DC]` 이면 성공
-- **대성공 (Critical Success):** 주사위 **96~100** & 최종값 >= DC
-- **대실패 (Critical Failure):** 주사위 **1~5** (보정치와 상관없이 실패)
+- 대성공 (Critical Success): 주사위 96~100 & 최종값 >= DC
+- 대실패 (Critical Failure): 주사위 1~5 (보정치와 상관없이 실패)
 
-**기본 원칙: 서사적 판정 우선**
+기본 원칙: 서사적 판정 우선
 - 판정 모듈이 캐릭터의 특질, 상황적 유불리를 종합하여 자동 판정합니다.
 
 ## 🎭 캐릭터 성장
-성장은 경험치나 레벨이 아닌 **서사적 성취**를 통해 이루어집니다:
-- **특질**: 반복된 행동이나 경험을 통해 습득하는 특성 (독 내성, 야간 시야, 파이어볼 등)
+성장은 경험치나 레벨이 아닌 서사적 성취를 통해 이루어집니다:
+- 특질: 반복된 행동이나 경험을 통해 습득하는 특성 (독 내성, 야간 시야, 파이어볼 등)
 
 ## 🌓 비일상 적응
 초자연적/비일상적 존재나 현상에 반복 노출되면 점차 익숙해집니다:

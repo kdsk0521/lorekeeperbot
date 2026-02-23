@@ -260,10 +260,31 @@ class JudgmentEngine:
                     condition_mod += base
             condition_mod = max(-_cfg.CONDITION_MOD_CAP, min(_cfg.CONDITION_MOD_CAP, condition_mod))
 
+        # 2.9 Effort Modifier (각오 선불 — Cypher Effort)
+        effort_mod = 0
+        action_meta = bus.dai.get("action_meta", {}) if isinstance(bus.dai, dict) else {}
+        resolve = action_meta.get("resolve", "none")
+        if resolve == "desperate" and bus.judgment.get("active"):
+            effort_cost = _cfg.EFFORT_COST
+            axis_choice = action_meta.get("resource_axis", "vigor")
+            if axis_choice == "both":
+                mechanic = context.request.genres.get("mechanic", {})
+                axis_choice = mechanic.get("primary_resource") or "vigor"
+            axis_bus = bus.vigor if axis_choice == "vigor" else bus.composure
+            if axis_bus.get("value", 0) >= effort_cost:
+                axis_bus["value"] = max(0, axis_bus["value"] - effort_cost)
+                effort_mod = _cfg.EFFORT_BONUS
+                bus.judgment["effort_used"] = {
+                    "axis": axis_choice, "cost": effort_cost, "bonus": effort_mod,
+                    "action": action_meta.get("action", ""),
+                }
+            else:
+                bus.dai["effort_failed"] = True
+
         # 3. Roll Dice
         roll = random.randint(1, 100)
         aspect_mod = self._calculate_aspect_mod(context)
-        final_roll = roll + mental_mod + doom_mod + theory_mod + memo_mod + passive_mod + inv_mod + status_mod + aspect_mod + dai_bonus - dai_penalty + momentum_mod + condition_mod
+        final_roll = roll + mental_mod + doom_mod + theory_mod + memo_mod + passive_mod + inv_mod + status_mod + aspect_mod + dai_bonus - dai_penalty + momentum_mod + condition_mod + effort_mod
         
         # 4. Determine Result
         result = "failure"
@@ -329,6 +350,8 @@ class JudgmentEngine:
             modifications.append({"label": "기세", "value": momentum_mod})
         if condition_mod != 0:
             modifications.append({"label": "세계상황", "value": condition_mod})
+        if effort_mod != 0:
+            modifications.append({"label": "각오", "value": effort_mod})
 
         mod_parts = []
         for m in modifications:
@@ -393,8 +416,23 @@ def _apply_consequences(context, result: str) -> None:
 
     consequence_log = []
 
-    # A. Doom Delta → bus.doom["delta"]에 누적 (Doom 모듈이 자연 소비)
+    # 0. Absorb: effort 선언 + 실패 → doom/clock consequence 자동 경감
     doom_delta = cons.get("doom_delta", 0)
+    clock_effect = cons.get("clock_effect", 0)
+    effort_used = bus.judgment.get("effort_used")
+    if effort_used and result in ("failure", "critical_failure"):
+        doom_reduction = doom_delta // 2
+        clock_cancelled = clock_effect > 0
+        if doom_reduction > 0:
+            doom_delta -= doom_reduction
+        if clock_cancelled:
+            clock_effect = 0
+        bus.judgment["absorb_applied"] = {
+            "doom_reduced": doom_reduction,
+            "clock_cancelled": clock_cancelled,
+        }
+
+    # A. Doom Delta → bus.doom["delta"]에 누적 (Doom 모듈이 자연 소비)
     if doom_delta != 0:
         bus.doom["delta"] = bus.doom.get("delta", 0) + doom_delta
 
@@ -409,7 +447,6 @@ def _apply_consequences(context, result: str) -> None:
         consequence_log.append(f"{'회복' if primary_delta > 0 else '소모'} {sign}{primary_delta}")
 
     # C. Clock Effect (DLC 안전: clocks 없으면 스킵)
-    clock_effect = cons.get("clock_effect", 0)
     if clock_effect != 0:
         clocks = bus.doom.get("clocks", [])
         if isinstance(clocks, list) and clocks:

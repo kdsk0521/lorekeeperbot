@@ -56,9 +56,14 @@ _TELESCOPE_BLOCK_PATTERNS = (
 
 # 5W1H 게이트명 (개별 라인 감지용) + legacy 호환
 _TELESCOPE_GATE_NAMES = (
-    "Who", "When", "Where", "When/Where",
-    "What", "Why", "How", "Craft",
-    # legacy gates (이전 형식 잔존 대비)
+    # V3 domain gates
+    "Scene", "Scene.Who", "Scene.When/Where", "Scene.What", "Scene.Causal",
+    "Character", "Char.Why", "Char.PC", "Char.Pidgin",
+    "Craft", "Craft.Cargo", "Craft.Rhythm",
+    "Collision", "Alignment", "Final",
+    # V2 legacy
+    "Who", "When", "Where", "When/Where", "What", "Why", "How",
+    # V1 legacy
     "Physics", "Camera", "Cliche", "Hook", "Impersonation",
     "Spatial", "NPC Identity", "CharReason", "TheoryAlign", "GenreCoherence",
 )
@@ -164,153 +169,6 @@ def strip_telescope(raw_response: str) -> str:
     text = re.sub(r"\n{3,}", "\n\n", text)
 
     return text.strip()
-
-
-def _build_nvc_summary(ctx: ResponseContext, filter_config: NVCFilterConfig) -> str:
-    """NVC 분석 요약을 구성합니다."""
-    dai = _get_dai(ctx)
-    pos_data = dai.get("position", {})
-    eff_data = dai.get("effect", {})
-    aspects = dai.get("aspects", [])
-    gm_m = dai.get("gm_move", {})
-
-    # [V3 Restructured] Cognition Engine Data Block
-    nvc_summary = "### <Cognition_Engine_Data>\n"
-
-    # --- Section 1: Situation Assessment (Stakes) ---
-    nvc_summary += (
-        f"#### SITUATION_STAKES (Risk/Potential Calibration)\n"
-        f"- Position (Risk): {pos_data.get('value', 'N/A')} -> {pos_data.get('reason', '')}\n"
-        f"- Effect (Potential): {eff_data.get('value', 'N/A')} -> {eff_data.get('reason', '')}\n"
-        f"- Observation: {dai.get('observation', 'N/A')}\n"
-        f"- UserIntent: {dai.get('user_intent', 'N/A')}\n"
-        f"- Aspects: [{', '.join(aspects) if aspects else 'None'}]\n\n"
-    )
-
-    # --- Section 2: Socio-Cultural Markers (Habitus) ---
-    habitus = dai.get("habitus_analysis", dai.get("HabitusAnalysis", {}))
-    if habitus:
-        nvc_summary += (
-            f"#### SOCIO_CULTURAL_MARKERS (Habitus Rendering)\n"
-            f"- Economic: {habitus.get('Economic', 'N/A')}\n"
-            f"- Cultural: {habitus.get('Cultural', 'N/A')}\n"
-            f"- Social: {habitus.get('Social', 'N/A')}\n\n"
-        )
-
-    # --- Section 3: Physical Props (Sensory Anchors) ---
-    anchors = dai.get("sensory_anchors", dai.get("SensoryAnchors", []))
-    if anchors:
-        nvc_summary += "#### PHYSICAL_PROPS_FOR_RECALL (Sensory Anchors)\n"
-        for a in anchors[:2]:  # Top 2 anchors
-            nvc_summary += f"- Anchor: '{a.get('anchor', '')}' -> Link: {a.get('memory_link', '')}\n"
-        nvc_summary += "\n"
-
-    # --- Section 4: Psyche States (4-Axis v2.0) ---
-    psyche = dai.get("psyche_states")
-    if psyche and isinstance(psyche, dict):
-        nvc_summary += "#### PSYCHE_STATES (Body Signal Calibration)\n"
-        for char_name, state in psyche.items():
-            if isinstance(state, dict):
-                psyche_ax = state.get("psyche", state.get("mental", {}))
-                soma = state.get("soma", {})
-                relation = state.get("relation", {})
-                deep_read = state.get("deep_read", "")
-                nvc_summary += (
-                    f"- {char_name}: "
-                    f"psyche={psyche_ax.get('descriptor', '?')} ({psyche_ax.get('value', 0)}), "
-                    f"soma={soma.get('descriptor', '?')}, "
-                    f"relation={relation.get('descriptor', '?')} ({relation.get('value', 0)})\n"
-                )
-                if deep_read:
-                    nvc_summary += f"  deep_read: {deep_read}\n"
-        nvc_summary += "\n"
-
-    # --- Section 5: Narrative Chain & Direction ---
-    chain = dai.get("narrative_chain", {})
-    temporal = dai.get("temporal_orientation", dai.get("TemporalOrientation", {}))
-    nvc_summary += (
-        f"#### NARRATIVE_DIRECTION\n"
-        f"- Chain Status: {chain.get('chain_status', 'OPEN')} (Conclusion Proximity: {chain.get('conclusion_proximity', 0)}%)\n"
-        f"- Topic Lock: {chain.get('topic_lock', 'None')}\n"
-        f"- Temporal Focus: {temporal.get('suggested_focus', temporal.get('focus', 'N/A'))}\n\n"
-    )
-
-    # --- Section 6: Security & Correction Hooks ---
-    pc_check = dai.get("pc_impersonation_check", dai.get("PCImpersonationCheck", {}))
-    if pc_check.get("detected"):
-        nvc_summary += (
-            f"#### [CRITICAL] SEC_CORRECTION_HINT\n"
-            f"- Violation Detected: {pc_check.get('violations', [])}\n"
-            f"- Required Correction: {pc_check.get('correction_hint', '')}\n\n"
-        )
-
-    # --- Section 7: GM Move ---
-    if gm_m:
-        nvc_summary += f"#### GM_MOVE_SUGGESTION\n- type: {gm_m.get('type')}\n- description: {gm_m.get('description', '')}\n\n"
-
-    # --- Section 8: Memory Triggers ---
-    memory = dai.get("memory_triggers")
-    if memory and isinstance(memory, list) and memory:
-        nvc_summary += "#### MEMORY_TRIGGERS (Render as involuntary recall)\n"
-        for m in memory[:3]:  # 최대 3개
-            if isinstance(m, dict):
-                trigger = m.get("trigger", "")
-                char = m.get("character", "")
-                echo = m.get("echo", "")
-                nvc_summary += f"- [{char}] Trigger: '{trigger}' -> Echo: '{echo}'\n"
-        nvc_summary += "\n"
-
-    nvc_summary += "### </Cognition_Engine_Data>\n"
-
-    # --- Legacy Section: NPC Attitudes (Outside Cognition Block) ---
-    filtered_attitudes = _filter_stale_nvc_data(ctx.existing_attitudes, filter_config)
-    if filtered_attitudes:
-        att_lines = [f"- {n}: {d['attitude']} ({d['reason']})" for n, d in filtered_attitudes.items()]
-        nvc_summary += f"\n### [NPC ATTITUDES TOWARD PC]\n" + "\n".join(att_lines)
-
-    if ctx.judgment_context:
-        nvc_summary += f"\n\n{ctx.judgment_context}"
-
-    return nvc_summary
-
-
-def _filter_stale_nvc_data(attitudes: Dict[str, Dict], filter_config: NVCFilterConfig) -> Dict[str, Dict]:
-    """
-    유통기한이 지난 NVC 정보를 필터링합니다.
-
-    오래된 NPC 태도 정보를 제거하여 프롬프트 품질을 유지합니다.
-    """
-    if not filter_config.filter_stale_data:
-        return attitudes
-
-    import time
-    from datetime import datetime
-    filtered = {}
-    
-    # max_attitude_age_hours is relative to now
-    max_age_seconds = filter_config.max_attitude_age_hours * 3600
-
-    for npc_name, data in attitudes.items():
-        last_updated = data.get("last_updated", "")
-
-        # 시간 파싱
-        if last_updated:
-            try:
-                update_time = datetime.strptime(last_updated, '%Y-%m-%d %H:%M')
-                age_seconds = (datetime.now() - update_time).total_seconds()
-
-                if age_seconds <= max_age_seconds:
-                    filtered[npc_name] = data
-                else:
-                    logger.debug(f"Filtered stale NPC attitude: {npc_name} (age: {age_seconds/3600:.1f}h)")
-            except (ValueError, TypeError):
-                # 파싱 실패 시 유지
-                filtered[npc_name] = data
-        else:
-            # last_updated 없으면 유지 (하위 호환성)
-            filtered[npc_name] = data
-
-    return filtered
 
 
 # =========================================================
