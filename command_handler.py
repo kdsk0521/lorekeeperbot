@@ -780,9 +780,9 @@ async def cmd_npc(ctx: CommandContext) -> None:
                     await ctx.send(f"⚠️ NPC '{target}' 정보를 찾을 수 없습니다.")
                     return
             else:
-                # 전체 NPC 중 Voice Card 없는 것만
+                # 인자 없으면 전체 일괄 재추출 (description 300자 이상)
                 targets = {k: v for k, v in npcs.items()
-                           if not v.get("voice_card") and len(v.get("description") or v.get("desc", "")) > 300}
+                           if len(v.get("description") or v.get("desc", "")) > 300}
             if not targets:
                 await ctx.send("Voice Card가 필요한 NPC가 없습니다.")
                 return
