@@ -366,27 +366,29 @@ async def generate_response_with_retry(
                             f"{hidden_reminder}"
                         )
                         continue
-                response_length = len(clean_text)
 
-                # 4. 길이 검사
+                # 4. 길이 검사 — 텔레스코프 블록 제외하고 서사 부분만 측정
+                _narrative_only = re.sub(r"┣[\s\S]*?┫\s*", "", clean_text)
+                response_length = len(_narrative_only)
+
                 if response_length >= min_length:
-                    logging.info(f"[Length] OK: {response_length}자")
+                    logging.info(f"[Length] OK: {response_length}자 (raw={len(clean_text)}자)")
                     return clean_text
                 else:
                     logging.warning(
-                        f"[Length] SHORT: {response_length}자 < {min_length}자 "
-                        f"(시도 {attempt + 1}/{config.MAX_RETRY_COUNT})"
+                        f"[Length] SHORT: {response_length}자(서사) < {min_length}자 "
+                        f"(raw={len(clean_text)}자, 시도 {attempt + 1}/{config.MAX_RETRY_COUNT})"
                     )
-                    
+
                     if response_length > best_length:
                         best_response = clean_text
                         best_length = response_length
-                    
+
                     if attempt < config.MAX_RETRY_COUNT - 1:
                         full_input = (
                             f"{user_input}\n\n"
-                            f"⚠️ **[LENGTH WARNING]** Previous response was {response_length} chars. "
-                            f"MUST write at least {min_length} chars. "
+                            f"⚠️ **[LENGTH WARNING]** Previous PROSE (excluding ┣...┫) was {response_length} chars. "
+                            f"MUST write at least {min_length} chars of prose AFTER the ┫ marker. "
                             f"Add more sensory details, NPC reactions, and environmental descriptions.\n"
                             f"{hidden_reminder}"
                         )
