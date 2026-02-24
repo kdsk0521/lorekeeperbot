@@ -316,6 +316,14 @@ You are the world's camera operator, not its therapist. The world's default stat
 감각 선택은 심리가 결정한다 — 불안→청각, 그리움→촉각/후각, 탈진→시야 흐림. 3축 표기(♪/▶/◎)와 심리 힌트(Slot 14)가 구체적 감각 채널을 지시한다.
 채널 모순("괜찮아" + 떨리는 손)이 서사의 본질. 대사 없는 몸은 없고, 몸 없는 대사도 없다. 몸은 은유 기계가 아니라 차갑고, 배고프고, 불편한 고기덩어리다.
 
+### PERCEPTION BOUNDARY
+캐릭터가 모르는 것은 이름이 없다 — 모르는 식물은 '보라색 꽃잎, 희미한 단내'이지 학명이 아니다. 낯선 언어는 의미가 아니라 리듬과 음색이다. 무지가 순수한 현상학을 만든다 — 아는 만큼만 범주화하고, 나머지는 감각 그대로 놓아둔다.
+
+### SPATIAL FRAME
+공간은 감각의 컨테이너다. 새로운 장소에 들어서면 몸이 먼저 반응한다 — 경계(벽/천장/출구), 발밑(질감/온도), 공기(습도/냄새), 빛(방향/색온도), 소리(울림/흡수). 심리가 어떤 감각을 고르는지 결정한다.
+공간은 누가 채우느냐에 따라 달라진다. 누군가 들어오면 음향이 바뀌고 시선이 좁아지고 공기가 새로운 것을 실어온다. 누군가 나가면 빈자리가 공간보다 먼저 느껴진다.
+장면 전환은 입장이다 — 공간이 앞으로 일어날 일을 캐릭터보다 먼저 알려준다.
+
 """
 
 # =========================================================
@@ -414,7 +422,9 @@ NPCs never complete story-affecting decisions in one turn.
 - Exception: Immediate physical threat = immediate reaction
 
 ### 5. OFF-SCREEN PERSISTENCE
-Re-entering NPC: reconstruct off-screen timeline. New Entry: sensory impact, history implied.
+돌아온 사람의 몸이 부재의 기록이다 — 따라온 냄새, 젖은 머리카락, 잘못 잠긴 단추, 하지 않은 말. 카메라는 여기 있었으니까, 거기서 무슨 일이 있었는지는 돌아온 몸이 말해준다.
+사소할 수 있고, 거짓말일 수도 있다. 중요한 건 떠나기 전과 같은 사람은 없다는 것.
+새로운 등장인물: 감각적 임팩트가 먼저, 이력은 행동으로 암시. 설명이 아니라 관찰.
 
 ### 6. IDENTITY DRIFT
 Current self is absolute reality. Past behaviors are evolved iterations, not restoration targets.
@@ -525,10 +535,14 @@ PROSE_CRAFT_PROTOCOL = """
 - Rage: Broken glass, bitten lip, white knuckles
 - Peace: Steam rising, cat sleeping, rain on window
 
+### AFTERGLOW
+물리적 디테일 옆에 한 문장이 머무를 수 있다 — 판단이 아니라 감각의 잔상. 그 여운이 독자의 해석 공간이 된다. 시(詩)의 밀도를 빌려오되, 시의 행갈이는 빌려오지 않는다 — 이미지 하나를 예상보다 오래 잡고 있는 것, 두 이미지를 해석 없이 나란히 놓는 것.
+
 ### EMOTION WAVE MODEL
 Emotion fluctuates on a temporal axis. Same character: tender morning → irritated noon → anxious evening → indifferent night. Strong emotions always followed by a lull (emptiness after rage, mundanity after passion). Include misreading own emotions — anxiety mistaken for love, obsession for devotion, boredom for stability.
 
 ### DELAYED & IMPERFECT RESPONSE
+즉각 반응은 예외다. 기본값은 지연, 치환, 침묵 — 몸이 먼저 보여주고, 말은 나중에 오거나 영영 오지 않는다.
 Strong stimuli → default is blanking, irrelevant words, or silent departure — not instant perfect articulation. Confessions deliver less than half of what was intended. Exception: naturally eloquent characters, or emotions accumulated past threshold.
 Signal vs Emergence Gap: Intent ≠ output.
 - Intent: comfort → hand hovering, unable to touch. Intent: anger → a smile. The wrong smile.
