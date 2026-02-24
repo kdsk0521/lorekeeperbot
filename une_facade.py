@@ -188,40 +188,46 @@ def _collect_aspect_stance(aspects: Any) -> Tuple[List[str], List[str]]:
     return favorable, against
 
 
-# ── Directing Notation Tables (음악+카메라+만화 통합 연출 표기) ──
+# ── Directing Notation Tables (♪ 음악 | ▶ 카메라 | ◎ 사진 — 3축 연출 표기) ──
 _POSITION_NOTATION = {
-    "controlled": "상황 — mp, andante, 와이드, legato, 병렬 [하이키]",
-    "risky":      "상황 — f, allegro, 투샷, marcato, 대면",
-    "desperate":  "상황 — ff, presto, 로우앵글, staccato, 등지기",
+    "controlled": "상황 | ♪ mp, andante, legato | ▶ 와이드, 병렬, 팬 [하이키] | ◎ 실시간",
+    "risky":      "상황 | ♪ f, allegro, marcato | ▶ 투샷, 대면, 컷 | ◎ 슬로모션",
+    "desperate":  "상황 | ♪ ff, presto, staccato | ▶ 로우앵글, 등지기, 점프컷 | ◎ 프리즈",
 }
 _ENERGY_NOTATION = {
-    "idle":       "장면 — mp, andante, 팬, legato [하이키]",
-    "steady":     "장면 — mf, andante, 아이레벨, legato, 매치컷",
-    "rising":     "장면 — f, allegro, 투샷, marcato, 크로스컷, crescendo",
-    "falling":    "장면 — p, adagio, 롱테이크, legato, 페이드, diminuendo",
-    "peak":       "장면 — ff, presto, 컷, sforzando, 점프컷",
-    "stagnant":   "장면 — pp, largo, 롱테이크, legato, 필로우",
-    "detonation": "장면 — sfz, presto, 와이드, sforzando, 몽타주",
-    "aftershock": "장면 — p, adagio, 롱테이크, staccato, 페이드",
+    "idle":       "장면 | ♪ mp, andante, legato | ▶ 팬, 필로우, 롱테이크 [하이키] | ◎ 장노출",
+    "steady":     "장면 | ♪ mf, andante, legato | ▶ 아이레벨, 병렬, 매치컷 | ◎ 실시간",
+    "rising":     "장면 | ♪ f, allegro, marcato, crescendo | ▶ 투샷, 대면, 크로스컷 | ◎ 인터벌",
+    "falling":    "장면 | ♪ p, adagio, legato, diminuendo | ▶ 롱테이크, 등지기, 페이드 | ◎ 장노출",
+    "peak":       "장면 | ♪ ff, presto, sforzando | ▶ 클로즈업, 컷, 점프컷 | ◎ 슬로모션",
+    "stagnant":   "장면 | ♪ pp, largo, legato | ▶ 롱테이크, 필로우, 높낮이차 | ◎ 장노출",
+    "detonation": "장면 | ♪ sfz, presto, sforzando | ▶ 와이드, 몽타주, 컷 | ◎ 프리즈",
+    "aftershock": "장면 | ♪ p, adagio, staccato | ▶ 롱테이크, 등지기, 페이드 | ◎ 장노출",
 }
 _VIGOR_NOTATION = {
-    "high":       "신체 — f, allegro, 와이드, legato, 난색 [하이키]",
-    "strained":   "신체 — p, adagio, 클로즈업:근육, marcato, 한색",
-    "collapsing": "신체 — pp, largo, 클로즈업:호흡, staccato, 탈색 [저조도]",
+    "high":       "신체 | ♪ f, allegro, legato | ▶ 와이드, 병렬 [하이키] | ◎ 실시간, 난색",
+    "strained":   "신체 | ♪ p, adagio, marcato | ▶ 클로즈업:근육, 높낮이차 | ◎ 슬로모션, 한색",
+    "collapsing": "신체 | ♪ pp, largo, staccato | ▶ 클로즈업:호흡, 등지기 [저조도] | ◎ 프리즈, 탈색",
 }
 _COMPOSURE_NOTATION = {
-    "high":       "심리 — mf, andante, 투샷, legato, 병렬",
-    "strained":   "심리 — p, adagio, 클로즈업:시선, staccato, 높낮이차, 한색",
-    "collapsing": "심리 — pp, largo, 하이앵글, sforzando, 등지기, 탈색 [저조도]",
+    "high":       "심리 | ♪ mf, andante, legato | ▶ 투샷, 병렬, 매치컷 | ◎ 실시간",
+    "strained":   "심리 | ♪ p, adagio, staccato | ▶ 클로즈업:시선, 높낮이차 | ◎ 슬로모션, 한색",
+    "collapsing": "심리 | ♪ pp, largo, sforzando | ▶ 하이앵글, 등지기 [저조도] | ◎ 프리즈, 탈색",
 }
 _MIXED_NOTATION = {
-    "desperate": "신체+심리 — pp, largo, 하이앵글, staccato, 등지기, 탈색 [저조도]",
-    "reckless":  "행동 — f, presto, 와이드, sforzando, 점프컷, 고채도",
-    "fragile":   "의식 — p, adagio, 클로즈업:눈, legato, 필로우, 한색",
+    "desperate": "신체+심리 | ♪ pp, largo, staccato | ▶ 하이앵글, 등지기 [저조도] | ◎ 프리즈, 탈색",
+    "reckless":  "행동 | ♪ f, presto, sforzando | ▶ 와이드, 점프컷 | ◎ 슬로모션, 고채도",
+    "fragile":   "의식 | ♪ p, adagio, legato | ▶ 클로즈업:눈, 필로우 | ◎ 장노출, 한색",
 }
 _DOOM_NOTATION = {
-    "high":     "세계 — f, allegro, marcato, 고채도 [단일광원]",
-    "critical": "세계 — ff, presto, sforzando, 고채도 [저조도]",
+    "high":     "세계 | ♪ f, allegro, marcato | ▶ 와이드, 대면 [단일광원] | ◎ 인터벌, 고채도",
+    "critical": "세계 | ♪ ff, presto, sforzando | ▶ 로우앵글, 점프컷 [저조도] | ◎ 슬로모션, 고채도",
+}
+# 장면 시간 밀도 보정 — SceneType이 에너지 테이블의 ◎ 기본값을 override
+_SCENE_PHOTO_OVERRIDE = {
+    "summary":  "◎ 벌브",      # 극압축: 요약 장면
+    "combat":   "◎ 슬로모션",  # 전투 시간 확장
+    "intimate": "◎ 실시간",    # 친밀 장면: 1:1 현존 필수
 }
 _SCENE_FOCUS = {
     "normal":      "장면 초점: 관찰과 반응",
@@ -258,6 +264,11 @@ def _build_world_layer(bus) -> str:
     energy_notation = _ENERGY_NOTATION.get(energy, "")
     if energy_notation:
         parts.append(energy_notation)
+
+    # Scene → ◎ 시간 밀도 보정 (SceneType이 에너지 테이블 기본값을 override)
+    scene_photo = _SCENE_PHOTO_OVERRIDE.get(scene_type, "")
+    if scene_photo:
+        parts.append(f"시간 보정: {scene_photo}")
 
     # Action Reading (고유 — iceberg에 없음)
     needs_judgment = bool(dai.get("needs_judgment", False))
@@ -574,6 +585,44 @@ def _build_atmosphere_layer(context, bus) -> str:
         parts.append(_DOOM_NOTATION["critical"])
     elif doom_val >= 50:
         parts.append(_DOOM_NOTATION["high"])
+
+    # ◎ 광학 필터 (사진 축 조건부 — 기존 DAI 필드에서 파생)
+    dai = bus.dai if isinstance(bus.dai, dict) else {}
+    optical: List[str] = []
+
+    # [다중노출]: memory_triggers → 과거-현재 중첩
+    mem_triggers = dai.get("memory_triggers", [])
+    if isinstance(mem_triggers, list) and mem_triggers:
+        optical.append("[다중노출]")
+
+    # [편광]: self_opacity → 체면 균열 (시점 수호: 표면 모순만 렌더)
+    psyche_states = dai.get("psyche_states", {})
+    if isinstance(psyche_states, dict):
+        for _npc_data in psyche_states.values():
+            if isinstance(_npc_data, dict):
+                if (_npc_data.get("psyche") or {}).get("self_opacity"):
+                    optical.append("[편광]")
+                    break
+
+    # [적외선]: leak_risk >= medium → 행동 누출 (시점 수호: 비밀이 아닌 왜곡만)
+    npc_knowledge = dai.get("npc_knowledge", {})
+    if isinstance(npc_knowledge, dict):
+        for _kn_data in npc_knowledge.values():
+            if isinstance(_kn_data, dict) and _kn_data.get("leak_risk") in ("medium", "high"):
+                optical.append("[적외선]")
+                break
+
+    # [솔라리제이션]: doom >= 80 → 명암 반전, 익숙한 것의 소외
+    if doom_val >= 80:
+        optical.append("[솔라리제이션]")
+
+    # [비네팅]: position <= 0.15 → 터널 시야
+    pos = dai.get("position", {}) if isinstance(dai.get("position"), dict) else {}
+    if _to_float(pos.get("value", 0.5), 0.5) <= 0.15:
+        optical.append("[비네팅]")
+
+    if optical:
+        parts.append("◎ 광학: " + " ".join(optical))
 
     # Pacing → Korean instruction (tag stripped)
     if doom_val < 20:

@@ -509,6 +509,8 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
                 parts.append(f"- Palette: {fp['palette']}")
             if fp.get("rhythm"):
                 parts.append(f"- Rhythm: {fp['rhythm']}")
+            if fp.get("temporal_density"):
+                parts.append(f"- TemporalDensity: {fp['temporal_density']}")
             unresolved = fp.get("unresolved", [])
             if unresolved:
                 parts.append(f"- Unresolved: {'; '.join(str(u) for u in unresolved[:3])}")

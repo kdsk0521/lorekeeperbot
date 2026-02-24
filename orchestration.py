@@ -888,7 +888,7 @@ class OrchestrationService:
             # [Scene Continuity 2층] 렌더링 지문 저장
             rfp = updates.get("RenderFingerprint")
             if rfp and isinstance(rfp, dict):
-                fingerprint = {k: rfp.get(k, "") for k in ("gaze", "lighting", "palette", "rhythm")}
+                fingerprint = {k: rfp.get(k, "") for k in ("gaze", "lighting", "palette", "rhythm", "temporal_density")}
                 fingerprint["unresolved"] = rfp.get("unresolved", [])
                 domain_manager.update_scene_continuity(channel_id, render_fingerprint=fingerprint)
                 logger.debug("[RenderFP] Stored: gaze=%s, lighting=%s",
