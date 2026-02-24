@@ -1161,36 +1161,68 @@ def set_session_ai_memory(channel_id: str, data: Dict[str, Any]) -> None:
     save_domain(channel_id, d)
 
 
-# Scene Continuity (DAI 스냅샷 + 렌더링 지문)
+# Scene Continuity (롤링 프레임 윈도우)
 def get_scene_continuity(channel_id: str) -> Dict[str, Any]:
-    """Scene continuity 데이터 조회 (DAI 스냅샷 + 렌더링 지문)."""
+    """Scene continuity 데이터 조회. 구 포맷 자동 마이그레이션."""
     mem = get_session_ai_memory(channel_id)
-    return mem.get("scene_continuity", {
-        "dai_snapshot": {},
-        "render_fingerprint": {},
-        "discontinuity_flags": []
-    })
+    sc = mem.get("scene_continuity", {})
+
+    # 마이그레이션: 구 포맷(dai_snapshot 직접) → 신 포맷(frames 배열)
+    if "frames" not in sc:
+        old_snap = sc.get("dai_snapshot", {})
+        old_fp = sc.get("render_fingerprint", {})
+        frames = []
+        if old_snap or old_fp:
+            frames.append({"dai_snapshot": old_snap, "render_fingerprint": old_fp, "turn": 0})
+        return {"frames": frames, "discontinuity_flags": sc.get("discontinuity_flags", [])}
+
+    return sc
 
 def update_scene_continuity(
     channel_id: str,
     dai_snapshot: Dict[str, Any] = None,
     render_fingerprint: Dict[str, Any] = None,
-    discontinuity_flags: list = None
+    discontinuity_flags: list = None,
+    turn_number: int = None
 ) -> None:
-    """Scene continuity 갱신. DAI 스냅샷과 렌더링 지문은 독립적으로 업데이트 가능."""
-    mem = get_session_ai_memory(channel_id)
-    sc = mem.get("scene_continuity", {
-        "dai_snapshot": {},
-        "render_fingerprint": {},
-        "discontinuity_flags": []
-    })
+    """Scene continuity 갱신.
+    - dai_snapshot → 새 프레임 PUSH (턴 시작)
+    - render_fingerprint → 최신 프레임 UPDATE (배경 추출 완료 후)
+    """
+    sc = get_scene_continuity(channel_id)
+    frames = sc.get("frames", [])
+
     if dai_snapshot is not None:
-        sc["dai_snapshot"] = dai_snapshot
+        frames.append({
+            "dai_snapshot": dai_snapshot,
+            "render_fingerprint": {},
+            "turn": turn_number or 0
+        })
+        if len(frames) > config.FRAME_HISTORY_DEPTH:
+            frames = frames[-config.FRAME_HISTORY_DEPTH:]
+        sc["frames"] = frames
+
     if render_fingerprint is not None:
-        sc["render_fingerprint"] = render_fingerprint
+        if frames:
+            frames[-1]["render_fingerprint"] = render_fingerprint
+            sc["frames"] = frames
+
     if discontinuity_flags is not None:
         sc["discontinuity_flags"] = discontinuity_flags[:5]
+
     update_session_ai_memory(channel_id, {"scene_continuity": sc})
+
+def get_latest_frame(channel_id: str) -> Dict[str, Any]:
+    """최신 프레임을 구 포맷({dai_snapshot, render_fingerprint})으로 반환."""
+    sc = get_scene_continuity(channel_id)
+    frames = sc.get("frames", [])
+    if not frames:
+        return {"dai_snapshot": {}, "render_fingerprint": {}}
+    latest = frames[-1]
+    return {
+        "dai_snapshot": latest.get("dai_snapshot", {}),
+        "render_fingerprint": latest.get("render_fingerprint", {})
+    }
 
 
 # Bot Active State

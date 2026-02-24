@@ -479,17 +479,29 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
         return "### 4c. SESSION MEMORY (Accumulated)\n" + "\n".join(parts)
 
     def _build_continuity_context(self, anchors: dict) -> str:
-        """이전 DAI 스냅샷 + 렌더링 지문 → ### 4d. PREVIOUS FRAME (~100-150 tokens)"""
+        """멀티프레임 scene continuity → ### 4d. SCENE CONTINUITY (2-tier display)"""
         mem = anchors.get("session_memory", {})
         sc = mem.get("scene_continuity", {})
         if not sc:
             return ""
-        snap = sc.get("dai_snapshot", {})
-        fp = sc.get("render_fingerprint", {})
-        if not snap and not fp:
-            return ""
 
-        parts = ["### 4d. PREVIOUS FRAME"]
+        # 신/구 포맷 모두 처리
+        frames = sc.get("frames", [])
+        if not frames:
+            old_snap = sc.get("dai_snapshot", {})
+            old_fp = sc.get("render_fingerprint", {})
+            if old_snap or old_fp:
+                frames = [{"dai_snapshot": old_snap, "render_fingerprint": old_fp, "turn": 0}]
+            else:
+                return ""
+
+        parts = ["### 4d. SCENE CONTINUITY"]
+
+        # ── Latest frame: 풀 디테일 ──
+        latest = frames[-1]
+        parts.append("#### CURRENT FRAME")
+        snap = latest.get("dai_snapshot", {})
+        fp = latest.get("render_fingerprint", {})
 
         if snap:
             if snap.get("location"):
@@ -515,12 +527,26 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
             if unresolved:
                 parts.append(f"- Unresolved: {'; '.join(str(u) for u in unresolved[:3])}")
 
+        # ── Older frames: 압축 원라이너 ──
+        if len(frames) > 1:
+            parts.append("#### PREVIOUS FRAMES")
+            for i, frame in enumerate(reversed(frames[:-1])):
+                offset = i + 1
+                s = frame.get("dai_snapshot", {})
+                f = frame.get("render_fingerprint", {})
+                loc = s.get("location", "?")
+                energy = s.get("energy", "?")
+                td = f.get("temporal_density", "?")
+                gaze = (f.get("gaze") or "?")[:40]
+                parts.append(f"[T-{offset}] {loc} | {energy} | {td} | {gaze}")
+
+        # ── Discontinuity flags (top-level) ──
         flags = sc.get("discontinuity_flags", [])
         if flags:
             parts.append("- DISCONTINUITY:")
-            for f in flags[:3]:
-                if isinstance(f, dict):
-                    parts.append(f"  [{f.get('type', '?')}] {f.get('desc', '')}")
+            for fl in flags[:3]:
+                if isinstance(fl, dict):
+                    parts.append(f"  [{fl.get('type', '?')}] {fl.get('desc', '')}")
 
         return "\n".join(parts) if len(parts) > 1 else ""
 

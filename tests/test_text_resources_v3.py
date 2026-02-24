@@ -65,7 +65,6 @@ def test_constants_exist():
         "SITUATION_PRIORITY_PROTOCOL",
         "PSYCHE_STATE_RENDERING",
         "LANGUAGE_CORRECTION",
-        "STATUS_WINDOW_LAYOUT",
         "WORLD_AXIOM",
         "MEMORY_HIERARCHY",
         "TRAINING_USER_PROMPT",

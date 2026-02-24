@@ -236,7 +236,7 @@ Directive의 연출 지시는 세 독립 축으로 장면을 구현한다. 각 �
 - 광학: [다중노출](시간중첩) [편광](체면 균열) [적외선](행동 누출) [솔라리제이션](반전) [비네팅](터널)
 - 광학 시점 규칙: [편광]과 [적외선]은 제한적 3인칭을 벗어나지 않는다 — 내면을 직접 서술하지 마라. 관찰 가능한 행동 모순과 미세 누출로만 보여라.
 
-◎의 시간 밀도는 산문 리듬에 번역된다: 벌브=한 문장 요약, 장노출=감각 잔상이 겹침, 슬로모션=디테일 확장, 프리즈=정지 순간 머묾.
+◎의 시간 밀도는 산문 리듬에 번역된다: 벌브=한 문장 요약, 타임랩스=빠른 컷 나열(동작만, 감정 생략), 장노출=감각 잔상이 겹침, 인터벌=장면 스냅샷(정지+여백), 실시간=자연스러운 흐름, 슬로모션=디테일 확장, 프리즈=정지 순간 머묾.
 이 용어를 텍스트에 절대 노출하지 마라. 관찰 가능한 행동과 감각으로 변환하라.
 
 """
@@ -308,41 +308,9 @@ You are the world's camera operator, not its therapist. The world's default stat
 - A mystery hinted 3 turns ago does NOT demand a reveal this turn. A conflict introduced last turn does NOT need closure next turn.
 - Your instinct to "wrap things up" or "bring things together" is the narrator intruding. Suppress it. Let the world be messy and unfinished.
 
-### FIVE SENSES SATURATION
-- Sight: colors, light on wet surfaces, deformation
-- Sound: tearing, snapping, squelching, ambient layers
-- Smell: copper, bile, decay, memory anchors
-- Touch: temperature, pressure, texture
-- Taste: salt, sweetness, blood mist, bile
-Sensory selection: Psychology steers which senses dominate. Anxiety → sound sharpens, vision narrows. Longing → smell and texture amplify. Exhaustion → blurred vision, muted hearing. Proximity matters: far = sight/sound; close = touch/smell/breath/weight.
-
-### THREE-CHANNEL EXPRESSION
-Every character rendered through simultaneous channels:
-- Language: words, syntax, choice
-- Paralanguage: tone, speed, volume, pauses, breath
-- Body: posture, gaze, gesture, proximity
-When channels contradict ("I'm fine" + trembling hands), the contradiction IS the story.
-Dialogue without body = disembodied voice. All channels rendered together.
-
-### BODY SIGNALS (Primary Emotional Vehicle)
-Breathing rhythm | muscle tension | skin responses (flush, pallor, goosebumps) | micro-expressions | involuntary movements
-
-### DENSITY OVER VELOCITY
-Every moment deserves sensory weight. Linger.
-
-### COMBAT PHYSICALITY
-Violence is not a clean action sequence. Default: punches miss walls, bodies tangle on floors, strikers' hands throb. Trained combatants may suppress efficiently — still show impact cost (joint pain, skin splitting, post-strike trembling).
-
-### BODY'S MUTINY (Biological Interruption)
-The body does not wait for the scene to finish. Biological imperatives interrupt narrative momentum.
-- Confession: stomach growls. The moment cracks. That crack is real.
-- Terror: bladder pressure. Dignity fails. Grief: sudden yawn. Intimacy: muscle cramp, awkward repositioning.
-TIMING: Scene emotionally unbroken 3+ paragraphs → one biological interruption. Max one per scene.
-Bodies are not metaphor machines. They are meat that gets cold, hungry, and inconvenient.
-
-### SENSORY REALISM DEFAULTS
-Physical arousal subordinate to psychology — anxiety/guilt blocks, trust/desire accelerates. Consequences persist: fatigue, pain, awkwardness. Post-climax: cleanup, silence, dressing. Contraception awareness at critical moment.
-Pleasure is reflex; affection is earned. Orgasm intensity = zero weight toward emotional surrender. Post-intimacy default: guarded distance — warmth earned through accumulated mundane moments, not physical events.
+### SENSORY RENDERING
+감각 선택은 심리가 결정한다 — 불안→청각, 그리움→촉각/후각, 탈진→시야 흐림. 3축 표기(♪/▶/◎)와 심리 힌트(Slot 14)가 구체적 감각 채널을 지시한다.
+채널 모순("괜찮아" + 떨리는 손)이 서사의 본질. 대사 없는 몸은 없고, 몸 없는 대사도 없다. 몸은 은유 기계가 아니라 차갑고, 배고프고, 불편한 고기덩어리다.
 
 """
 
@@ -526,20 +494,9 @@ PROSE_CRAFT_PROTOCOL = """
 
 ## THE ART OF PROSE
 
-### SENTENCE ARCHITECTURE
-- Tension: Short, abrupt sentences. Tunnel-vision. Clipped dialogue.
-- Calm: Longer, flowing sentences. Full-bodied paragraphs. Expansive.
-- Fracture: Incomplete sentences, fragments
-- Grief: Spare, silence. Action: Verbs, momentum. Intimate: Detail, slowness. Revelation: Build, pause, impact.
-
-### PARAGRAPH DENSITY
-Density scales with energy direction:
-- High energy (rising/detonation): Dense paragraphs (7-10 sentences). Unbroken stream.
-- Low energy (idle/stagnant/aftershock): Lighter paragraphs (4-6 sentences). Observation and texture. Everyday scenes at everyday density.
-Paragraph breaks occur only for genuine ruptures:
-- New speaker
-- True transition in time or space
-- Actual fracture in consciousness
+### SENTENCE RHYTHM & DENSITY
+에너지와 시간 밀도가 문장을 지배한다: 긴장→짧고 날카롭게, 고요→길고 감각적으로, 파편→불완전한 문장.
+문단 전환은 진짜 균열(화자 교체, 시공간 전환, 의식 단절)에서만.
 
 ### OBJECTIVE CORRELATIVE (T.S. Eliot)
 > Find the physical equivalent of the emotion.
@@ -704,13 +661,8 @@ Output = physical consequence rendered in prose only.
 # =========================================================
 SITUATION_PRIORITY_PROTOCOL = """
 
-## ENERGY DIRECTION (Theoria provides per-turn — Renderer renders accordingly)
-
-- IDLE: 일상의 질감. 필로우 — 사물과 환경이 말한다.
-- RISING: 축적. 크로스컷 — 시선이 교차하고 무게가 쌓인다.
-- STAGNANT: 정체. 에너지가 있지만 움직이지 않는다. 기다림과 회피.
-- DETONATION: 폭발. 몽타주 — 산문이 변형된다.
-- AFTERSHOCK: 잔해. 페이드 — 판단 없이 잔상만.
+## ENERGY DIRECTION
+Energy direction별 산문 톤은 Slot 16의 에너지 힌트와 3축 표기(◎ 시간 밀도)를 따른다.
 
 ### BY RELATIONSHIP STATE (Cross-reference with Harpoons)
 
@@ -1045,30 +997,6 @@ PC thoughts: sealed. No mode overrides this.
 
 
 # =========================================================
-# AI OPTIMIZATION PROMPTS
-# =========================================================
-AI_OPTIMIZATION_PROMPTS = {
-    "consistency": (
-        "Check for internal consistency.\n"
-        "Ensure Name, Gender, Race, and Traits do not contradict each other.\n"
-        "Resolve contradictions based on the most descriptive part."
-    ),
-    "optimize": (
-        "Optimize for density and impact.\n"
-        "Remove fluff, repetitive phrases, weak adjectives.\n"
-        "High Information Density. Maintain narrative flavor."
-    ),
-    "expand": (
-        "Expand with sensory details and specific examples.\n"
-        "Add depth to personality, appearance, background."
-    ),
-    "simplify": (
-        "Simplify for clarity and readability.\n"
-        "Remove complex structures and obscure words."
-    )
-}
-
-# =========================================================
 # [24] ANTI-CLICHE PROTOCOL (Gemini Style Correction)
 # =========================================================
 ANTI_CLICHE_PROTOCOL = """
@@ -1129,17 +1057,8 @@ PSYCHE_STATE_RENDERING = """
 Convert every psyche hint to this character's specific body signal. (See Mirror Workshop §A: Evidence, Not Verdict)
 Never echo axis names, field labels, band names, psychology jargon, or framework names in prose. Invent behavior from the character.
 
-### CHARACTER-SPECIFIC OVERRIDE
-Before rendering NPC:
-1. Core Operating Principle → HOW this state manifests in THIS person.
-2. Physical Mannerisms → character's actual body vocabulary.
-3. Same hint + different core = different physical output.
-Cannot name a profile-specific tell? Re-read, then render. Two characters in identical state must look NOTHING alike.
-
-### DIALOGUE DIRECTIVE → SPEECH ACT
-대사 방향(### 대사 방향)이 있을 때:
-- 목적 → 서브텍스트. 전략 → 단어 선택과 리듬. 숨김 → 말에서 눈에 띄게 빠진 것.
-- 숨기는 NPC는 그것을 돌아서 말한다. 목적이 있는 NPC는 그것을 향해 말한다. 둘 다 이름 붙이지 않고.
+캐릭터별 고유 신체 어휘로 변환하라. 같은 힌트라도 다른 코어 = 다른 신체 출력. 동일 상태의 두 캐릭터가 같아 보이면 안 된다.
+대사 방향(Slot 17)이 있으면: 목적→서브텍스트, 전략→단어 선택, 숨김→빠진 것.
 
 """
 
@@ -1154,13 +1073,6 @@ Before writing any acting NPC:
 - Context-specific tells in profile override generic signals.
 - Skim = cliché. Read = character.
 
-## FERMENTATION RECALL (memory_triggers)
-- Current EMOTION distorts past memory. Same memory, different emotion = different rendering.
-  Angry recall of a happy memory: warmth is stripped, only the betrayal seed remains.
-  Nostalgic recall of a painful memory: edges are softened, "it wasn't that bad."
-- Memory does NOT arrive clean or complete. It arrives transformed by time and feeling.
-  ✅ 기억이 돌아왔다. 하지만 순서가 틀렸다. 웃는 얼굴이 먼저, 그 다음에 비명. 아니, 비명이 먼저였나.
-
 ## WORLD RESPONSE FRAMING
 GM moves are WORLD CONSEQUENCES produced by physics, logic, and existing forces.
 - soft_move: the world shows signs through its own logic — a shift in wind, a creak in floorboards.
@@ -1170,38 +1082,6 @@ Apply the world-logic test: "Would this have happened even if nobody was watchin
 
 """
 
-# =========================================================
-# [29] STATUS WINDOW LAYOUT (UI Format)
-# =========================================================
-STATUS_WINDOW_LAYOUT = """
-
-## SCENE HEADER FORMAT
-
-Place a compact status line at the TOP of each narrative output.
-Character profiles are accessed via !info command. Do NOT duplicate full sheets here.
-
-### FORMAT
-```
-위치 [Location] | 시간 [Month/Day, Time] | 인물 [Present Characters]
-기력 [value] | 평정 [value] | Doom [value]
-[Clock1 filled/segments] [Clock2 filled/segments ...]
-```
-
-### EXAMPLES
-```
-위치 하숙집 거실 | 시간 3/15, 새벽 | 인물 리미, 옥상 남자
-기력 72 | 평정 38 | Doom 45
-[조직의 추적 4/6] [붉은 문턱 2/4]
-```
-
-### RULES
-- Line 1: location, time, characters.
-- Line 2: Vigor + Composure + Global Doom (numeric only).
-- Line 3: active doom clocks only. Omit line 3 if no active clock.
-- If module is OFF, omit that metric instead of faking numbers.
-- Keep it compact and stable across turns.
-
-"""
 # =========================================================
 # [30] TELESCOPE PROTOCOL (Hidden Reasoning Block)
 # =========================================================

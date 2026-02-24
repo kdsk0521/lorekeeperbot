@@ -241,7 +241,9 @@ class OrchestrationService:
             "chain_status": (dai.get("narrative_chain") or {}).get("chain_status", ""),
             "open_threads": (dai.get("narrative_chain") or {}).get("open_threads", [])[:5],
         }
-        domain_manager.update_scene_continuity(channel_id, dai_snapshot=_dai_snap)
+        _ws = domain_manager.get_world_state(channel_id)
+        _turn_num = _ws.get("turn_index", 0)
+        domain_manager.update_scene_continuity(channel_id, dai_snapshot=_dai_snap, turn_number=_turn_num)
 
         # [Flashback] 회상 기력 차감 (vigor_composure 전에 직접 처리)
         fb_eval = dai.get("flashback_eval")
@@ -762,7 +764,7 @@ class OrchestrationService:
             current_quests = game_system.get_active_quests(channel_id)
             
             session_memory = domain_manager.get_session_ai_memory(channel_id)
-            prev_continuity = domain_manager.get_scene_continuity(channel_id)
+            prev_continuity = domain_manager.get_latest_frame(channel_id)
             # Fresh notebook reload (stale ctx 방지 — 배경 작업은 지연 실행될 수 있음)
             fresh_notebook = game_system.get_notebook_text(channel_id, ctx.user_id)
 

@@ -179,7 +179,7 @@ SLOT_DEFINITIONS: Dict[int, SlotDefinition] = {
 
     # ===== RULES ZONE (18-25): Static Recency - 행동 규칙 강화 =====
     18: SlotDefinition(18, "PC_AUTONOMY", "rules", "text_resources.PC_AUTONOMY_DOCTRINE"),
-    20: SlotDefinition(20, "STATUS_LAYOUT", "rules", "text_resources.STATUS_WINDOW_LAYOUT"),
+    20: SlotDefinition(20, "STATUS_LAYOUT", "rules", "_build_status_layout() dynamic"),
     21: SlotDefinition(21, "ACTION_RESOLUTION", "mechanics", "text_resources.ACTION_RESOLUTION + Aspects + SITUATION_PRIORITY"),
     22: SlotDefinition(22, "VISCERAL_CONTENT", "content", "text_resources.VISCERAL (conditional)", is_static=False),
     23: SlotDefinition(23, "MATURE_CONTENT", "content", "text_resources.MATURE (conditional)", is_static=False),
@@ -299,9 +299,8 @@ class SlotPromptBuilder:
         # [18] PC Autonomy
         self.set_slot(18, text_resources.PC_AUTONOMY_DOCTRINE)
 
-        # [20] Status Layout
-        status_layout = getattr(text_resources, 'STATUS_WINDOW_LAYOUT', '')
-        self.set_slot(20, status_layout)
+        # [20] Status Layout — 동적 빌더(_build_status_layout)가 덮어씀
+        self.set_slot(20, "")
 
         # [21] Action Resolution + Situation Priority
         action_res = getattr(text_resources, 'ACTION_RESOLUTION', '')
@@ -845,8 +844,8 @@ def build_34_step_prompt(ctx) -> str:
     # [Slot 17 보충] 대사 방향 지시 (gaze 기반 심도)
     _prev_gaze = ""
     if channel_id:
-        _sc = domain_manager.get_scene_continuity(channel_id)
-        _prev_gaze = _sc.get("render_fingerprint", {}).get("gaze", "")
+        _latest = domain_manager.get_latest_frame(channel_id)
+        _prev_gaze = _latest.get("render_fingerprint", {}).get("gaze", "")
 
     _dialogue_dir = iceberg.compose_dialogue_directives(
         psyche_data, npc_knowledge,

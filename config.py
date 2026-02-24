@@ -71,6 +71,7 @@ SUPPORTED_TEXT_EXTENSIONS = ['.txt', '.md', '.json', '.log', '.py', '.yaml', '.y
 MAX_HISTORY_LENGTH = 2000             # [Anti-Gravity] Expanded History (80 -> 2000)
 MAX_DESC_LENGTH = 50                # Summary description length
 RECENT_HISTORY_FOR_ANALYSIS = 30    # Number of recent messages sent to Left Brain Analysis
+FRAME_HISTORY_DEPTH = 10            # Scene Continuity rolling window size
 
 # Fermentation (Memory) Settings
 
