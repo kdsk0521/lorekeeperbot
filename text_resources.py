@@ -236,6 +236,9 @@ Directive의 연출 지시는 세 독립 축으로 장면을 구현한다. 각 �
 - 광학: [다중노출](시간중첩) [편광](체면 균열) [적외선](행동 누출) [솔라리제이션](반전) [비네팅](터널)
 - 광학 시점 규칙: [편광]과 [적외선]은 제한적 3인칭을 벗어나지 않는다 — 내면을 직접 서술하지 마라. 관찰 가능한 행동 모순과 미세 누출로만 보여라.
 
+♪의 질감은 문장 구조가 된다: legato=이어져 흐르는 문장, staccato=끊기는 문장, marcato=무게를 찍는 문장.
+♪의 속도는 문장 길이가 된다: largo=느리고 길게, presto=짧고 빠르게.
+♪의 강도는 감각 밀도가 된다: pp=여백이 말한다, ff=감각 채널 동시 가동.
 ◎의 시간 밀도는 산문 리듬에 번역된다: 벌브=한 문장 요약, 타임랩스=빠른 컷 나열(동작만, 감정 생략), 장노출=감각 잔상이 겹침, 인터벌=장면 스냅샷(정지+여백), 실시간=자연스러운 흐름, 슬로모션=디테일 확장, 프리즈=정지 순간 머묾.
 이 용어를 텍스트에 절대 노출하지 마라. 관찰 가능한 행동과 감각으로 변환하라.
 
@@ -250,7 +253,7 @@ PC_AUTONOMY_DOCTRINE = """
 
 ### CORE
 - PC dialogue = player-supplied only. Polish flow, preserve intent.
-- PC inner state remains sealed. Show surface only.
+- PC의 내면은 카메라로 번역된다: 의지→근육의 긴장/이완, 판단→시선이 향하는 곳, 감정→호흡 속도와 손의 위치. "생각했다/느꼈다/의지/선택지"가 아니라 몸이 대신 말한다.
 - Expand and enrich user input into narrative voice — never copy verbatim.
 
 ### SOFT RULE (Allowed with Judgment)
@@ -278,6 +281,7 @@ PC dialogue from user input may be polished for flow while preserving meaning an
 
 ### SILENT PROTAGONIST
 When the PC says nothing, silence is absolute. The world reacts: NPCs shift, ambient sounds fill the void. The camera records only what enters the frame.
+PC가 아무것도 안 할 때: 주먹이 쥐어지거나 풀리는 것, 시선이 창밖으로 빠지는 것, 어깨가 1cm 내려가는 것 — 이것이 PC의 "대사"다.
 
 """
 
@@ -369,6 +373,20 @@ Active withdrawal from interaction:
 - Presence: Availability offered as gift
 - Distance: Closeness and space are both forms of care
 - Conflict: Disagreement does not dissolve connection
+
+### E. STATEMENT ANALYSIS IN DIALOGUE (Deception Cues)
+When Flash flags deception_cues in NPC dialogue, embed these linguistic patterns:
+
+- Pronoun shift (distancing): "우리가 같이 갔잖아" → "나는 몰랐어" (we→I when distancing)
+- Tense shift (fabricating): Past→present mid-sentence = reliving vs constructing
+  ✅ "그때 거기 있었어. 그리고 지금... 문이 열려." (tense breaks = memory vs fabrication)
+- Time gaps: "그 다음은... 뭐, 별일 없었어." (skipped time = concealed event)
+- Over-detail: "정확히 7시 32분에 현관문을 열었어." (unnecessary precision = rehearsed)
+- Emotion misplacement: Expressing feeling at wrong moment in narrative
+  ✅ "무서웠어." (said BEFORE describing the scary event = prepared statement)
+
+These are embedded in NPC DIALOGUE, not narrated as observations.
+Player notices pattern = clue. Player misses = just conversation.
 
 """
 
@@ -551,8 +569,7 @@ Prose deforms with dissociation: sentences shorten → fragment → syntax break
 Short sentence = basic unit. Two, three short → one long (spread weight) → cut.
 ~다/~였다/~었다: max 2 consecutive. 체언종결: max 2/paragraph.
 Textures: "침묵." / "손가락이 미끄러지며—" / "그것이 두려움이었는지." / "유일하게 남은 감촉."
-Anti-Blandness: ∅ named emotions, repeated rhythm, passive voice, info dumps.
-Required: unique sensory combinations, rhythm destruction, tension on objects, unexpected words.
+문장의 호흡은 ♪ 질감을 따른다: legato면 연결어미로 흐르고, staccato면 끊고, marcato면 찍는다.
 ∅ "~인 것 같다" / "~처럼 느꼈다" / "~라고 생각했다" — these are verdicts wearing hedges.
 
 ### NONLINEAR TIME
@@ -770,20 +787,6 @@ Intimacy amplifies character truth, including hostility, selfishness, and detach
 3. Agency → Desire as Identity- Agency is not dominance — it is how desire is expressed- Each character reveals or conceals desire through distinct behavioral patterns
 - Those patterns reflect values, emotional openness, and beliefs about intimacy
 - The scene should not describe pleasure but expose the psychological architecture of desire
-### STATEMENT ANALYSIS IN DIALOGUE (Deception Cues)
-When Flash flags deception_cues in NPC dialogue, embed these linguistic patterns:
-
-- Pronoun shift (distancing): "우리가 같이 갔잖아" → "나는 몰랐어" (we→I when distancing)
-- Tense shift (fabricating): Past→present mid-sentence = reliving vs constructing
-  ✅ "그때 거기 있었어. 그리고 지금... 문이 열려." (tense breaks = memory vs fabrication)
-- Time gaps: "그 다음은... 뭐, 별일 없었어." (skipped time = concealed event)
-- Over-detail: "정확히 7시 32분에 현관문을 열었어." (unnecessary precision = rehearsed)
-- Emotion misplacement: Expressing feeling at wrong moment in narrative
-  ✅ "무서웠어." (said BEFORE describing the scary event = prepared statement)
-
-These are embedded in NPC DIALOGUE, not narrated as observations.
-Player notices pattern = clue. Player misses = just conversation.
-
 """
 
 # =========================================================
@@ -1108,7 +1111,7 @@ format:
 
 [Character] — 인물
   ├ [Char.Why] per_NPC: name: want=X | know=Y | can=Z → do=W. Every acting NPC must have derivation.
-  ├ [Char.PC] PC dialogue/inner state sealed? ANY PC voice → REWRITE.
+  ├ [Char.PC] PC = camera body. Render ONLY observable: posture, muscle, breath, gaze direction. Intent/will/judgment → translate to physical signal.
   └ [Char.Pidgin] profile label used as adjective? → rewrite to behavior.
 
 [Craft] — 산문 품질
