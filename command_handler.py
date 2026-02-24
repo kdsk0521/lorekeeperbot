@@ -724,9 +724,9 @@ async def cmd_notebook(ctx: CommandContext) -> None:
 
 
 
-@registry.register("npc", category="World", aliases=["엔피씨", "addnpc", "npc정보", "npc추가"], description="NPC 관리")
+@registry.register("npc", category="World", aliases=["엔피씨", "addnpc", "npc정보", "npc추가"], description="NPC 관리 (조회/추가/삭제/보이스카드)")
 async def cmd_npc(ctx: CommandContext) -> None:
-    """!npc [조회/추가/삭제] [이름] [설명] or !addnpc [Batch] or !npc remove [이름]"""
+    """!npc [이름] 조회 | !npc add [이름] [설명] | !npc remove [이름] | !npc voicecard [이름]"""
     # 1. File Content
     file_text = ""
     if ctx.message.attachments:
