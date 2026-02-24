@@ -15,120 +15,6 @@ import game_world
 
 logger = logging.getLogger("UNE")
 
-# =========================================================
-# Genre MC Move Tables (Phase 8)
-# Key: (position_tier, result) → Korean MC move text
-# =========================================================
-GENRE_MC_MOVES = {
-    "cosmic_horror": {
-        ("desperate", "critical_failure"): "현실이 무너진다 — 돌이킬 수 없는 진실이 열린다",
-        ("desperate", "failure"): "공포가 실체가 된다 — 되돌릴 수 없는 결과",
-        ("desperate", "partial"): "살아남았지만 대가가 크다 — 세계관이 흔들린다",
-        ("desperate", "success"): "절망 속 한 줄기 빛 — 그러나 그 빛도 의심스럽다",
-        ("desperate", "critical_success"): "불가능한 기적 — 대가는 아직 청구되지 않았다",
-        ("risky", "critical_failure"): "최악이 현실이 된다 — 공포가 구체화한다",
-        ("risky", "failure"): "상황이 악화된다 — 새로운 공포가 모습을 드러낸다",
-        ("risky", "partial"): "일부 성공했지만 — 무언가 알아서는 안 될 것을 알게 되었다",
-        ("risky", "success"): "위험을 넘겼다 — 잠시간의 안전",
-        ("risky", "critical_success"): "선명한 통찰 — 공포의 정체를 직시하고 살아남았다",
-        ("controlled", "critical_failure"): "예상치 못한 반전 — 안전이 무너진다",
-        ("controlled", "failure"): "작은 실패가 균열을 만든다 — 불안의 씨앗",
-        ("controlled", "partial"): "부분적 성과 — 미묘한 불편함이 남는다",
-        ("controlled", "success"): "깔끔한 성공 — 평온이 유지된다",
-        ("controlled", "critical_success"): "완벽한 대응 — 공포를 이해의 영역으로 끌어왔다",
-    },
-    "romance": {
-        ("desperate", "critical_failure"): "마음이 드러난 순간, 취약성만 남았다 — 상처가 깊다",
-        ("desperate", "failure"): "진심이 전해지지 않았다 — 오해만 깊어진다",
-        ("desperate", "partial"): "감정이 닿았지만 타이밍이 아니었다 — 여운이 남는다",
-        ("desperate", "success"): "절박한 진심이 통했다 — 관계가 급격히 움직인다",
-        ("desperate", "critical_success"): "운명적 순간 — 모든 벽이 무너진다",
-        ("risky", "critical_failure"): "결정적 오해가 발생한다 — 관계가 흔들린다",
-        ("risky", "failure"): "감정의 엇갈림 — 라이벌이나 장애물이 선명해진다",
-        ("risky", "partial"): "마음은 전했지만 완전하지 않다 — 불안이 남는다",
-        ("risky", "success"): "감정이 전해졌다 — 관계가 한 걸음 나아간다",
-        ("risky", "critical_success"): "완벽한 순간 — 두 사람만의 세계가 열린다",
-        ("controlled", "critical_failure"): "안전한 거리에서 예상치 못한 감정이 터진다",
-        ("controlled", "failure"): "소소한 실수 — 그러나 감정의 여운",
-        ("controlled", "partial"): "일상적 교류 — 미세한 설렘",
-        ("controlled", "success"): "자연스러운 친밀함 — 편안한 진전",
-        ("controlled", "critical_success"): "완벽한 하모니 — 서로를 깊이 이해하는 순간",
-    },
-    "comedy": {
-        ("desperate", "critical_failure"): "전부 들통 — 숨긴 모든 것이 한꺼번에 공개된다",
-        ("desperate", "failure"): "상황이 완전히 통제를 벗어났다 — 그러나 웃기다",
-        ("desperate", "partial"): "겨우 수습했지만 새 거짓말이 필요하다",
-        ("desperate", "success"): "기적적 수습 — 아무도 믿지 못할 행운",
-        ("desperate", "critical_success"): "모든 거짓말이 우연히 진실이 된다",
-        ("risky", "critical_failure"): "최악의 타이밍에 최악의 사람이 등장한다",
-        ("risky", "failure"): "소동이 커진다 — 목격자가 늘어난다",
-        ("risky", "partial"): "절반만 성공 — 나머지 절반이 문제를 만든다",
-        ("risky", "success"): "깔끔한 수습 — 잠깐의 안도",
-        ("risky", "critical_success"): "예상치 못한 방식으로 완벽하게 해결된다",
-        ("controlled", "critical_failure"): "확실한 상황에서 황당한 실패",
-        ("controlled", "failure"): "사소한 실수가 나비효과를 일으킨다",
-        ("controlled", "partial"): "되긴 됐는데 뭔가 어색하다",
-        ("controlled", "success"): "순조로운 진행 — 평화로운 한 때",
-        ("controlled", "critical_success"): "모든 것이 완벽하게 맞아떨어진다 — 기분 좋은 놀라움",
-    },
-    "noir": {
-        ("desperate", "critical_failure"): "덫이 닫힌다 — 탈출구 없음",
-        ("desperate", "failure"): "진실이 무기가 되어 돌아온다 — 배신의 대가",
-        ("desperate", "partial"): "살아남았지만 빚이 생겼다 — 누군가에게 약점을 잡혔다",
-        ("desperate", "success"): "어둠 속에서 한 수 앞을 내다봤다 — 위험한 도박의 성공",
-        ("desperate", "critical_success"): "모든 퍼즐이 맞아떨어진다 — 그러나 그 대가는?",
-        ("risky", "critical_failure"): "증거가 뒤바뀐다 — 사냥꾼이 사냥감이 된다",
-        ("risky", "failure"): "수사선이 꼬인다 — 새로운 용의자, 새로운 의혹",
-        ("risky", "partial"): "일부 진실에 접근했지만 — 더 큰 비밀이 있다",
-        ("risky", "success"): "한 겹을 벗겼다 — 진실에 한 발 더 가까이",
-        ("risky", "critical_success"): "결정적 단서 확보 — 퍼즐의 핵심 조각",
-        ("controlled", "critical_failure"): "안전하다고 생각한 곳에서 칼이 날아온다",
-        ("controlled", "failure"): "사소한 실수가 흔적을 남긴다",
-        ("controlled", "partial"): "조용한 진전 — 그러나 감시의 눈이 있다",
-        ("controlled", "success"): "계획대로 — 아직은 주도권을 쥐고 있다",
-        ("controlled", "critical_success"): "완벽한 수 — 상대방은 움직였다는 것조차 모른다",
-    },
-    "action": {
-        ("desperate", "critical_failure"): "최악의 결과 — 치명적 부상 또는 장비 파괴",
-        ("desperate", "failure"): "위기가 실체화된다 — 후퇴할 곳이 없다",
-        ("desperate", "partial"): "살아남았지만 상처가 깊다 — 전투 능력 저하",
-        ("desperate", "success"): "기사회생 — 절체절명에서의 역전",
-        ("desperate", "critical_success"): "전설적 순간 — 불가능을 가능으로",
-        ("risky", "critical_failure"): "전세가 역전된다 — 적이 주도권을 잡는다",
-        ("risky", "failure"): "공격이 빗나간다 — 적이 반격 기회를 잡는다",
-        ("risky", "partial"): "명중했지만 완전하지 않다 — 적도 반격한다",
-        ("risky", "success"): "확실한 타격 — 전세가 유리해진다",
-        ("risky", "critical_success"): "완벽한 일격 — 적을 압도한다",
-        ("controlled", "critical_failure"): "방심의 대가 — 예상치 못한 반격",
-        ("controlled", "failure"): "실수로 기회를 놓친다",
-        ("controlled", "partial"): "무난한 성과 — 조금 부족하다",
-        ("controlled", "success"): "깔끔한 처리 — 전문가다운 수행",
-        ("controlled", "critical_success"): "압도적 우위 — 적이 전의를 상실한다",
-    },
-    "slice_of_life": {
-        ("desperate", "critical_failure"): "최악의 타이밍에 모든 것이 엉킨다 — 관계에 금이 간다",
-        ("desperate", "failure"): "진심이 전해지지 않았다 — 오해가 깊어진다",
-        ("desperate", "partial"): "마음은 닿았지만 방식이 서툴렀다",
-        ("desperate", "success"): "서투르지만 진심이 통했다 — 작은 기적",
-        ("desperate", "critical_success"): "모든 것이 제자리를 찾는다 — 일상의 따뜻함",
-        ("risky", "critical_failure"): "일상의 균형이 무너진다 — 익숙한 것이 낯설어진다",
-        ("risky", "failure"): "사소한 것이 꼬인다 — 불편함이 쌓인다",
-        ("risky", "partial"): "되긴 됐지만 아쉬움이 남는다",
-        ("risky", "success"): "자연스럽게 잘 풀린다 — 소소한 성취",
-        ("risky", "critical_success"): "예상치 못한 좋은 일 — 일상의 반짝임",
-        ("controlled", "critical_failure"): "확실하다고 생각했는데 뜻밖의 변수",
-        ("controlled", "failure"): "사소한 실수 — 웃어넘길 수 있는 정도",
-        ("controlled", "partial"): "평범한 하루의 한 장면",
-        ("controlled", "success"): "편안한 일상 — 모든 것이 순조롭다",
-        ("controlled", "critical_success"): "완벽한 하루 — 일상이 빛나는 순간",
-    },
-}
-
-def _get_genre_mc_move(genre: str, pos_tier: str, result: str) -> str:
-    """장르별 MC Move를 반환. 매칭 없으면 빈 문자열."""
-    genre_table = GENRE_MC_MOVES.get(genre, {})
-    return genre_table.get((pos_tier, result), "")
-
 def _to_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
@@ -475,7 +361,7 @@ CONSEQUENCE_DIRECTIVES = {
 }
 
 
-def _build_judgment_layer(context, bus, mask: str) -> str:
+def _build_judgment_layer(bus, mask: str) -> str:
     judgment = bus.judgment if isinstance(bus.judgment, dict) else {}
     if not judgment.get("active"):
         return ""
@@ -489,9 +375,7 @@ def _build_judgment_layer(context, bus, mask: str) -> str:
     pos_value = _to_float((dai.get("position", {}) or {}).get("value", 0.5), 0.5)
     pos_tier = _position_tier(pos_value)
 
-    mechanic = context.request.genres.get("mechanic", {})
-    primary_genre = mechanic.get("primary_lens", "")
-    move = _get_genre_mc_move(primary_genre, pos_tier, result) or _mc_move(pos_tier, result)
+    move = _mc_move(pos_tier, result)
 
     favorable, against = _collect_aspect_stance(dai.get("aspects", []))
 
@@ -1051,7 +935,7 @@ class UniversalNarrativeEngine:
             layers.append(events)
 
         effective_mask = mask or context.get_acting_mask()
-        judgment = _build_judgment_layer(context, bus, effective_mask)
+        judgment = _build_judgment_layer(bus, effective_mask)
         if judgment:
             layers.append(judgment)
 
@@ -1151,46 +1035,8 @@ class UniversalNarrativeEngine:
             else:
                 pos_tier = "controlled"
 
-            # MC Move: Genre-specific first, then generic fallback (PbtA)
-            mechanic = context.request.genres.get("mechanic", {})
-            primary_genre = mechanic.get("primary_lens", "")
-
-            # Try genre-specific MC move first
-            move = _get_genre_mc_move(primary_genre, pos_tier, j_result)
-
-            # Fallback: generic MC moves
-            if not move:
-                if j_result in ("failure", "critical_failure"):
-                    mc_moves = {
-                        "desperate": "Make the threat real — irreversible consequences",
-                        "risky": "Escalate the situation — a new danger reveals itself",
-                        "controlled": "Demand a minor cost — a small setback occurs",
-                    }
-                    if j_result == "critical_failure":
-                        mc_moves = {
-                            "desperate": "Catastrophic outcome — something irreversible happens",
-                            "risky": "Worst case unfolds — the danger becomes reality",
-                            "controlled": "Unexpected reversal — safety shatters",
-                        }
-                elif j_result == "partial":
-                    mc_moves = {
-                        "desperate": "Heavy price paid — gain what was sought but lose something",
-                        "risky": "Success with cost — complications follow",
-                        "controlled": "Minor friction — less smooth than expected",
-                    }
-                else:  # success / critical_success
-                    mc_moves = {
-                        "desperate": "Dramatic turnaround — shining in the direst moment",
-                        "risky": "Danger cleared — competent execution",
-                        "controlled": "Clean success — smooth and effortless",
-                    }
-                    if j_result == "critical_success":
-                        mc_moves = {
-                            "desperate": "Miraculous reversal — a transcendent moment",
-                            "risky": "Brilliant success — impressive result against the odds",
-                            "controlled": "Overwhelming mastery — exceeds all expectations",
-                        }
-                move = mc_moves.get(pos_tier, mc_moves.get("risky", ""))
+            # MC Move (PbtA): generic matrix
+            move = _mc_move(pos_tier, j_result)
             reason_part = f" ({reason_txt})" if reason_txt else ""
             directive_parts.append(
                 f"[Narrative: {j_mask} '{action}'{reason_part}] {move}\n"
