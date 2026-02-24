@@ -15,9 +15,6 @@ import game_world
 
 logger = logging.getLogger("UNE")
 
-def _pick(items):
-    return random.choice(items) if items else ""
-
 # =========================================================
 # Genre MC Move Tables (Phase 8)
 # Key: (position_tier, result) → Korean MC move text

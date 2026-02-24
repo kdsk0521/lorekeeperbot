@@ -13,6 +13,7 @@ import asyncio
 import copy
 import logging
 import re
+import traceback
 import time
 from typing import Dict, Any, Optional, List, Tuple
 
@@ -897,7 +898,7 @@ class OrchestrationService:
                              fingerprint.get("gaze", "")[:50], fingerprint.get("lighting", "")[:50])
 
         except Exception as e:
-            logger.error(f"Background Extraction Failed: {e}")
+            logger.error(f"Background Extraction Failed: {e}\n{traceback.format_exc()}")
 
 
     # =========================================================

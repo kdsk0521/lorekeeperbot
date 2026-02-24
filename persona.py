@@ -26,7 +26,6 @@ Prompt Order (SillyTavern Preset Style):
 import asyncio
 import logging
 import re
-import types as python_types
 from typing import Optional, List, Dict, Any, Tuple, Union
 from google import genai
 from google.genai import types
@@ -35,7 +34,6 @@ import fermentation
 
 # Response processing functions (분리된 모듈에서 import)
 from response_processor import (
-    detect_scene_type_keywords,
     detect_pc_impersonation,
     filter_pc_impersonation,
 )

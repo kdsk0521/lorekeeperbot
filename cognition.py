@@ -86,7 +86,7 @@ async def extract_all_updates(
     result_map = {}
     for key, res in zip(task_keys, results):
         if isinstance(res, Exception):
-            logger.warning(f"[Extraction] {key} failed: {res}")
+            logger.error(f"[Extraction] {key} failed: {res}")
             result_map[key] = {}
         else:
             result_map[key] = res

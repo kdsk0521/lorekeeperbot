@@ -8,6 +8,11 @@ import random
 from typing import Dict, Any, List
 from orchestration_context import GameContext, SharedBus
 from theoria_analyzer import TheoriaAnalyzer
+from vigor_composure_module import VigorComposureModule
+from judgment_engine import JudgmentEngine
+from anomaly_module import AnomalyModule
+from doom_module import DoomModule
+import domain_manager
 
 logger = logging.getLogger("Waterfall")
 
@@ -218,13 +223,11 @@ class WaterfallPipeline:
 
         # 2. Mental Pre-pass (Conditional): annotate current stage for downstream modules.
         if "mental" in active_modules:
-            from vigor_composure_module import VigorComposureModule
             self.vigor_composure = VigorComposureModule()
             context = await self.vigor_composure.prime(context)
 
         # 3. Judgment (Conditional, EARLY — consequences flow downstream)
         if "judgment" in active_modules and bus.judgment["active"]:
-            from judgment_engine import JudgmentEngine
             self.judgment = JudgmentEngine(self.theoria.client, self.theoria.model_id)
             context = await self.judgment.process(context)
 
@@ -233,7 +236,6 @@ class WaterfallPipeline:
             bus.anomaly["potential"] = True
             channel_id = (context.narrative_anchors or {}).get("channel_id", "")
             if channel_id:
-                import domain_manager
                 st_state = domain_manager.get_storyteller_state(channel_id)
                 bus.anomaly["_storyteller_state"] = st_state
                 bus.anomaly["_current_turn"] = domain_manager.get_world_state(channel_id).get("turn_index", 0)
@@ -241,19 +243,16 @@ class WaterfallPipeline:
 
         # 5. Storyteller Decision (Conditional)
         if "anomaly" in active_modules and bus.anomaly.get("potential"):
-            from anomaly_module import AnomalyModule
             self.anomaly = AnomalyModule(self.theoria.client, self.theoria.model_id)
             context = await self.anomaly.process(context)
 
         # 6. Doom Update (Conditional) — consumes judgment doom_delta naturally
         if "doom" in active_modules:
-            from doom_module import DoomModule
             self.doom = DoomModule()
             context = await self.doom.process(context)
 
         # 7. Vigor/Composure Sync (Conditional, LAST — consumes all accumulated deltas)
         if "mental" in active_modules:
-            from vigor_composure_module import VigorComposureModule
             self.vigor_composure = VigorComposureModule()
             context = await self.vigor_composure.process(context)
 
