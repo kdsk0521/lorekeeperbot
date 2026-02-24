@@ -1383,7 +1383,19 @@ def reset_session_state(channel_id: str) -> None:
             if data.get("source") in ("lore", "manual"):
                 kept_npcs[name] = data
         d["npcs"] = kept_npcs
-        
+
+    # 5. Reset Participant Runtime State (vigor/composure/notebook — 로어 프로필은 유지)
+    for uid, pdata in d.get("participants", {}).items():
+        mem = pdata.get("ai_memory", {})
+        mem["vigor"] = {"value": 100, "last_delta": 0}
+        mem["composure"] = {"value": 100, "last_delta": 0}
+        mem.pop("mental", None)  # 레거시 제거
+        mem["abnormal_exposure"] = {}
+        mem["normalization"] = {}
+        mem["judgment_momentum"] = 0
+        pdata["notebook"] = "— [소지품] —\n\n— [메모] —"
+        pdata["status_effects"] = []
+
     save_domain(channel_id, d)
 
 # =========================================================

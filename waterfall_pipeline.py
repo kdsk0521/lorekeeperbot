@@ -281,7 +281,7 @@ class WaterfallPipeline:
         doom_log = bus.doom.get("log", "")
         doom_active = bus.doom.get("active", False)
         if doom_active:
-            parts.append(f"  Doom: {doom_val}/100 — {doom_log[:100]}" if doom_log else f"  Doom: {doom_val}/100")
+            parts.append(f"  Doom: {doom_val}/100 — {doom_log[:100]}" if doom_log else f"  Doom: {doom_val}/100 (no change)")
         else:
             parts.append(f"  Doom: OFF (fallback={doom_val})")
 

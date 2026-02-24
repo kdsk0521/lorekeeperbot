@@ -32,6 +32,7 @@ class DoomModule:
 
     async def process(self, context: "GameContext") -> "GameContext":
         bus = context.shared_bus
+        bus.doom["active"] = True  # 모듈 실행 = active (delta 유무 무관)
         current_doom = bus.doom.get("value", 0)
         delta = bus.doom.get("delta", 0)
         clocks = bus.doom.get("clocks", [])
@@ -211,7 +212,6 @@ class DoomModule:
         if delta != 0:
             new_doom = max(0, min(100, current_doom + delta))
             bus.doom["value"] = new_doom
-            bus.doom["active"] = True
             if delta > 0:
                 bus.doom["log"] = f"📈 긴장도 증가 (+{delta})"
             else:
