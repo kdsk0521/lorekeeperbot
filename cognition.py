@@ -39,7 +39,8 @@ async def extract_all_updates(
     fermented_context: str = "",
     player_context: str = "",
     extraction_hints: Optional[Dict[str, bool]] = None,
-    current_session_memory: Optional[Dict[str, Any]] = None
+    current_session_memory: Optional[Dict[str, Any]] = None,
+    previous_continuity: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
 
     # Default: Run ALL if no hints provided
@@ -55,7 +56,7 @@ async def extract_all_updates(
         task_keys.append("physical")
 
     # Non-physical: batch into 1 Flash call (saves ~60% input tokens)
-    batch_sections = [s for s in ["social", "narrative", "quest", "world_state"] if extraction_hints.get(s, False)]
+    batch_sections = [s for s in ["social", "narrative", "quest", "world_state", "render_fingerprint"] if extraction_hints.get(s, False)]
     if batch_sections:
         tasks.append(_extract_batch(
             client, model_id_flash, player_input, ai_response,
@@ -65,7 +66,8 @@ async def extract_all_updates(
             passives=current_passives, fermented=fermented_context,
             player_context=player_context,
             quests=current_quests,
-            current_session_memory=current_session_memory
+            current_session_memory=current_session_memory,
+            previous_continuity=previous_continuity
         ))
         task_keys.append("batch")
 
@@ -96,6 +98,7 @@ async def extract_all_updates(
     nar: Dict[str, Any] = batch.get("narrative", {})
     qst: Dict[str, Any] = batch.get("quest", {})
     wst: Dict[str, Any] = batch.get("world_state", {})
+    rfp: Dict[str, Any] = batch.get("render_fingerprint", {})
     
     # Sanitize Physical (Notebook + Status)
     p_upd = None
@@ -149,7 +152,9 @@ async def extract_all_updates(
 
         "NPCDepthUpdate": soc.get("npc_depth_hints") if soc else None,
 
-        "WorldStateUpdate": wst if wst else None
+        "WorldStateUpdate": wst if wst else None,
+
+        "RenderFingerprint": rfp if rfp else None
     }
 
 # Internal Extractors (Private)
@@ -167,9 +172,11 @@ async def _extract_batch(
     # Quest context
     quests=None,
     # World State context
-    current_session_memory=None
+    current_session_memory=None,
+    # Scene Continuity context
+    previous_continuity=None
 ) -> Dict[str, Any]:
-    """Batch extraction: social+narrative+quest+world_state in 1 Flash call."""
+    """Batch extraction: social+narrative+quest+world_state+render_fingerprint in 1 Flash call."""
     sys_parts = [
         "## [BATCH EXTRACTION]",
         "Analyze the exchange and extract updates for ALL requested sections.",
@@ -241,6 +248,42 @@ async def _extract_batch(
         if existing_threads:
             ws_ctx += f", Existing Threads: {existing_threads[:10]}"
         ctx_parts.append(ws_ctx)
+
+    if "render_fingerprint" in sections:
+        sys_parts.append(
+            "\n### render_fingerprint"
+            "\nAnalyze the AI RESPONSE's rendering properties (not story content)."
+            "\nOutput: `{\"gaze\": str, \"lighting\": str, \"palette\": str, "
+            "\"rhythm\": str, \"unresolved\": []}`"
+            "\n- gaze: 서사의 시선/초점 — 무엇을 클로즈업했고 무엇이 배경인가 (1문장 Korean)"
+            "\n- lighting: 장면의 명암 — 밝기, 그림자, 광원 (1구절 Korean)"
+            "\n- palette: 색감/온도감 — 따뜻함/차가움, 지배적 색조 (1구절 Korean)"
+            "\n- rhythm: 산문 리듬 — 문장 길이 패턴, 쉼표/느낌표/온점 밀도, 호흡 (1구절 Korean)"
+            "\n- unresolved: 씬 레벨 미결 디테일 — 응답되지 않은 것, 열린 감각, 중단된 행동. max 3. Korean."
+        )
+        prev = previous_continuity or {}
+        if prev:
+            snap = prev.get("dai_snapshot", {})
+            fp = prev.get("render_fingerprint", {})
+            prev_parts = []
+            if snap.get("location"):
+                prev_parts.append(f"Location={snap['location']}")
+            if snap.get("energy"):
+                prev_parts.append(f"Energy={snap['energy']}")
+            if fp.get("lighting"):
+                prev_parts.append(f"Lighting={fp['lighting']}")
+            if fp.get("palette"):
+                prev_parts.append(f"Palette={fp['palette']}")
+            if fp.get("rhythm"):
+                prev_parts.append(f"Rhythm={fp['rhythm']}")
+            if fp.get("unresolved"):
+                prev_parts.append(f"Unresolved={fp['unresolved']}")
+            if prev_parts:
+                ctx_parts.append(f"[RenderFP] Previous: {' | '.join(prev_parts)}")
+            else:
+                ctx_parts.append("[RenderFP] No previous data")
+        else:
+            ctx_parts.append("[RenderFP] No previous data")
 
     sys_prompt = "\n".join(sys_parts)
     ctx_text = "\n".join(ctx_parts)

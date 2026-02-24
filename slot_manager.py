@@ -730,6 +730,12 @@ def build_34_step_prompt(ctx) -> str:
     if qflag_text:
         scene_intel_parts.append("### 서사 품질 보정\n" + qflag_text)
 
+    # Scene Continuity: 불연속 감지 → 보정 지시
+    continuity_data = dai.get("continuity_check", {})
+    continuity_text = iceberg.translate_continuity_check(continuity_data)
+    if continuity_text:
+        scene_intel_parts.append(continuity_text)
+
     # Apophenia Guard: iceberg 번역 (OBVIOUS= → 한국어)
     trait_conn = dai.get("trait_connections", {})
     trait_text = iceberg.translate_trait_connections(trait_conn)
@@ -835,6 +841,22 @@ def build_34_step_prompt(ctx) -> str:
             connection_depths=_conn_depths,
             npc_attitudes=_npc_attitudes_raw,
         )
+
+    # [Slot 17 보충] 대사 방향 지시 (gaze 기반 심도)
+    _prev_gaze = ""
+    if channel_id:
+        _sc = domain_manager.get_scene_continuity(channel_id)
+        _prev_gaze = _sc.get("render_fingerprint", {}).get("gaze", "")
+
+    _dialogue_dir = iceberg.compose_dialogue_directives(
+        psyche_data, npc_knowledge,
+        prev_gaze=_prev_gaze, npc_depths=npc_depths,
+    )
+    if _dialogue_dir:
+        if extended_intelligence:
+            extended_intelligence += "\n\n" + _dialogue_dir
+        else:
+            extended_intelligence = _dialogue_dir
 
     # --- [Slot 14] Psyche States (iceberg 번역) ---
     psyche_states = iceberg.translate_psyche_states(

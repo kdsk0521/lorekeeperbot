@@ -226,6 +226,23 @@ class OrchestrationService:
         dai = updated_context.shared_bus.dai
         ctx.dai = dai
 
+        # [Scene Continuity 1층] DAI 스냅샷 — 이미 분석된 것을 기록
+        _dai_snap = {
+            "location": str(dai.get("CurrentLocation", dai.get("current_location", ""))),
+            "energy": str(dai.get("EnergyDirection", dai.get("energy_direction", ""))),
+            "scene_type": str(dai.get("SceneType", dai.get("scene_type", ""))),
+            "position": dai.get("Position", dai.get("position", {})).get("value", 0.5)
+                if isinstance(dai.get("Position", dai.get("position")), dict) else 0.5,
+            "observation": str(dai.get("Observation", dai.get("observation", "")))[:200],
+            "quality_flags": {k: v for k, v in
+                (dai.get("QualityFlags") or dai.get("quality_flags") or {}).items()
+                if v and v != "null"} if isinstance(
+                    dai.get("QualityFlags") or dai.get("quality_flags"), dict) else {},
+            "chain_status": (dai.get("narrative_chain") or {}).get("chain_status", ""),
+            "open_threads": (dai.get("narrative_chain") or {}).get("open_threads", [])[:5],
+        }
+        domain_manager.update_scene_continuity(channel_id, dai_snapshot=_dai_snap)
+
         # [Flashback] 회상 기력 차감 (vigor_composure 전에 직접 처리)
         fb_eval = dai.get("flashback_eval")
         if fb_eval and fb_eval.get("detected"):
@@ -629,7 +646,8 @@ class OrchestrationService:
             "quest": any(kw in response for kw in [
                 '퀘스트', '임무', '목표', '의뢰', '부탁', '완료', '달성', '단서', '정보', '비밀'
             ]),
-            "world_state": True  # Always run World State Updater (+1 Flash)
+            "world_state": True,  # Always run World State Updater (+1 Flash)
+            "render_fingerprint": True  # [Scene Continuity 2층] 항상 실행
         }
 
         # Phase 1: 즉시 노트북 업데이트 (높은 우선순위)
@@ -744,6 +762,7 @@ class OrchestrationService:
             current_quests = game_system.get_active_quests(channel_id)
             
             session_memory = domain_manager.get_session_ai_memory(channel_id)
+            prev_continuity = domain_manager.get_scene_continuity(channel_id)
             # Fresh notebook reload (stale ctx 방지 — 배경 작업은 지연 실행될 수 있음)
             fresh_notebook = game_system.get_notebook_text(channel_id, ctx.user_id)
 
@@ -756,7 +775,8 @@ class OrchestrationService:
                 scene_npc_names=scene_npcs,
                 current_quests=current_quests,
                 extraction_hints=hints,
-                current_session_memory=session_memory
+                current_session_memory=session_memory,
+                previous_continuity=prev_continuity
             )
             
             # Apply Updates (⚠️ 에러는 로그만, 성공만 Discord 출력)
@@ -864,6 +884,15 @@ class OrchestrationService:
                 if mem_updates:
                     domain_manager.update_session_ai_memory(channel_id, mem_updates)
                     logger.info(f"[WorldState] Updated session memory: {list(mem_updates.keys())}")
+
+            # [Scene Continuity 2층] 렌더링 지문 저장
+            rfp = updates.get("RenderFingerprint")
+            if rfp and isinstance(rfp, dict):
+                fingerprint = {k: rfp.get(k, "") for k in ("gaze", "lighting", "palette", "rhythm")}
+                fingerprint["unresolved"] = rfp.get("unresolved", [])
+                domain_manager.update_scene_continuity(channel_id, render_fingerprint=fingerprint)
+                logger.debug("[RenderFP] Stored: gaze=%s, lighting=%s",
+                             fingerprint.get("gaze", "")[:50], fingerprint.get("lighting", "")[:50])
 
         except Exception as e:
             logger.error(f"Background Extraction Failed: {e}")

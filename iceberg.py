@@ -366,6 +366,42 @@ def translate_quality_flags(flags: Optional[dict]) -> str:
 
 
 # =========================================================
+# 4-1. Scene Continuity Check → 보정 지시
+# =========================================================
+
+_CONTINUITY_TYPE_KR = {
+    "spatial_break": "공간 불연속",
+    "sensory_break": "감각 불연속",
+    "object_break": "사물 불연속",
+    "tone_break": "분위기 불연속",
+    "npc_break": "인물 불연속",
+    "rhythm_break": "리듬 불연속",
+}
+
+def translate_continuity_check(check_data) -> str:
+    """continuity_check → 보정 지시 (Korean behavioral directives)."""
+    if not check_data or not isinstance(check_data, dict):
+        return ""
+    flags = check_data.get("flags", [])
+    if not flags or not isinstance(flags, list):
+        return ""
+    directives = []
+    for f in flags[:3]:
+        if not isinstance(f, dict):
+            continue
+        ftype = f.get("type", "")
+        correction = f.get("correction", "") or f.get("risk", "")
+        type_kr = _CONTINUITY_TYPE_KR.get(ftype, ftype)
+        if correction:
+            directives.append(f"- {type_kr}: {correction}")
+    if not directives:
+        return ""
+    return ("### 씬 연속성 보정\n"
+            "이전 장면과의 불연속이 감지되었다. 자연스러운 연결을 만들어라.\n"
+            + "\n".join(directives))
+
+
+# =========================================================
 # 5. NPC attitudes (Slot 17)
 # =========================================================
 
@@ -699,5 +735,209 @@ def translate_npc_knowledge(npc_knowledge: Optional[dict]) -> str:
     return (
         "### NPC 지식 상태\n"
         "(NPC가 아는 것/숨기는 것은 행동을 형성한다. 이 개념 자체를 산문에 쓰지 마.)\n"
+        + "\n".join(lines)
+    )
+
+
+# =========================================================
+# 15. Dialogue Directives (Slot 17) — 대사 방향 지시
+# =========================================================
+
+_STRATEGY_HINTS = {
+    # coping (Lazarus)
+    "problem_focused": "직접적으로",
+    "emotion_focused": "감정으로 우회하여",
+    "avoidant": "화제를 돌리며",
+    # stage (Goffman)
+    "front": "체면을 유지하며",
+    "back": "꾸밈없이",
+    # decision_mode (Kahneman)
+    "reactive": "즉흥적으로",
+    "deliberate": "계산하며",
+    # negotiation_stance (NEGOTIATION 모듈)
+    "cooperative": "협력적으로",
+    "competitive": "주도권을 쥐며",
+    "exploitative": "상대를 이용하며",
+    # group_dynamic (GROUP_DYNAMICS 모듈)
+    "conformity": "다수에 동조하며",
+    "obedience": "권위에 따르며",
+    "groupthink": "집단 논리에 매몰되어",
+    "diffusion": "책임을 회피하며",
+}
+
+_NEEDS_HINTS = {
+    "safety": "안전을 확보하려",
+    "belonging": "소속감을 얻으려",
+    "esteem": "인정을 받으려",
+    "autonomy": "자율성을 지키려",
+    "competence": "능력을 증명하려",
+    "relatedness": "유대를 형성하려",
+    "trust": "신뢰를 쌓으려",
+    "identity": "정체성을 확인하려",
+    "control": "주도권을 잡으려",
+    "understanding": "상대를 파악하려",
+    "intimacy": "거리를 좁히려",
+    "power": "우위를 점하려",
+    "survival": "생존하려",
+    "justice": "공정함을 지키려",
+    "meaning": "의미를 찾으려",
+}
+
+_FRAMEWORK_TERMS_RE = re.compile(
+    r'\b(membrane|monolithic|interleaving|fracture|collapse|logos|layer|'
+    r'peplau|goffman|bowlby|lazarus|kahneman|erikson|henderson|'
+    r'front stage|back stage|orientation phase|identification phase|'
+    r'exploitation phase|resolution phase|'
+    r'ventral|sympathetic|dorsal)\b',
+    re.IGNORECASE,
+)
+
+
+def _strip_framework_terms(text: str) -> str:
+    """logos_layer 등에서 프레임워크 용어 제거."""
+    result = _FRAMEWORK_TERMS_RE.sub('', text)
+    result = re.sub(r'\s+', ' ', result).strip()
+    result = re.sub(r'^[\s—\-:]+|[\s—\-:]+$', '', result)
+    return result
+
+
+def _extract_actual(opacity_str: str) -> str:
+    """'claims X — actual: Y' 형식에서 Y만 추출."""
+    low = opacity_str.lower()
+    if "actual:" in low:
+        idx = low.index("actual:")
+        return opacity_str[idx + 7:].strip().rstrip(".")
+    if "—" in opacity_str:
+        return opacity_str.split("—")[-1].strip().rstrip(".")
+    return ""
+
+
+def compose_dialogue_directives(
+    psyche_states: Optional[dict],
+    npc_knowledge: Optional[dict],
+    prev_gaze: str = "",
+    npc_depths: Optional[Dict[str, float]] = None,
+) -> str:
+    """psyche_states + NPCKnowledge + 이전 gaze → NPC별 대사 방향 지시.
+
+    Gaze 심도:
+      이름 in gaze → full directive (전 축)
+      이름 not in gaze → minimal (logos_layer만)
+      gaze 없음 (첫 턴) → moderate (logos_layer + purpose)
+
+    Returns: Slot 17 주입용 한국어 텍스트. ~60-100 tokens for 2-3 NPCs.
+    """
+    if not psyche_states or not isinstance(psyche_states, dict):
+        return ""
+
+    knowledge = npc_knowledge if isinstance(npc_knowledge, dict) else {}
+    has_gaze = bool(prev_gaze and prev_gaze.strip())
+
+    lines = []
+    for name, state in psyche_states.items():
+        if not isinstance(state, dict):
+            continue
+
+        # 얕은 수면(depth >= 0.8) → skip
+        if npc_depths and npc_depths.get(name, 0.5) >= 0.8:
+            continue
+
+        relation = state.get("relation", {})
+        if not isinstance(relation, dict):
+            relation = {}
+        psyche = state.get("psyche", {})
+        if not isinstance(psyche, dict):
+            psyche = {}
+
+        # logos_layer 없으면 skip (분석 안 된 NPC)
+        logos = relation.get("logos_layer", "")
+        if not logos or not isinstance(logos, str):
+            continue
+
+        # Gaze 기반 심도 결정
+        if has_gaze:
+            in_focus = name in prev_gaze
+        else:
+            in_focus = True  # 첫 턴: moderate for all
+
+        # === MINIMAL DIRECTIVE (배경 NPC) ===
+        if has_gaze and not in_focus:
+            clean_logos = _strip_framework_terms(logos)
+            if clean_logos:
+                lines.append(f"- {name}: {clean_logos}")
+            continue
+
+        # === FULL / MODERATE DIRECTIVE (초점 NPC) ===
+        directive_parts = []
+
+        # 목적 (Purpose): active_needs → Korean
+        needs = psyche.get("active_needs", [])
+        if isinstance(needs, list) and needs:
+            need_hints = []
+            for n in needs[:2]:
+                hint = _NEEDS_HINTS.get(n.lower().strip(), "")
+                if hint:
+                    need_hints.append(hint)
+                elif n.strip():
+                    need_hints.append(n.strip())  # fallback: raw need
+            if need_hints:
+                directive_parts.append(" ".join(need_hints))
+
+        # 전략 (Strategy): logos_layer (core)
+        clean_logos = _strip_framework_terms(logos)
+        if clean_logos:
+            directive_parts.append(clean_logos)
+
+        # 전략 수식어: coping, decision_mode, stage, negotiation_stance, group_dynamic
+        strategy_mods = []
+        for field in ("coping", "decision_mode"):
+            val = psyche.get(field, "")
+            if val and isinstance(val, str) and val != "null":
+                mod = _STRATEGY_HINTS.get(val, "")
+                if mod:
+                    strategy_mods.append(mod)
+        for field in ("stage", "negotiation_stance", "group_dynamic"):
+            val = relation.get(field, "")
+            if val and isinstance(val, str) and val != "null":
+                mod = _STRATEGY_HINTS.get(val, "")
+                if mod:
+                    strategy_mods.append(mod)
+        if strategy_mods:
+            directive_parts.append(", ".join(strategy_mods))
+
+        # 숨김 (Hidden): self_opacity
+        opacity = psyche.get("self_opacity")
+        if opacity and isinstance(opacity, str) and opacity != "null":
+            actual = _extract_actual(opacity)
+            if actual:
+                directive_parts.append(f"(실제로는 {actual})")
+
+        # 숨김: NPCKnowledge (leak_risk >= medium 일 때만)
+        nk = knowledge.get(name, {})
+        if isinstance(nk, dict):
+            leak = nk.get("leak_risk", "none")
+            if leak in ("medium", "high"):
+                secrets = nk.get("secrets_held", [])
+                if secrets and isinstance(secrets, list) and secrets[0]:
+                    directive_parts.append(f"숨기는 중: {secrets[0]}")
+                false_b = nk.get("false_beliefs", [])
+                if false_b and isinstance(false_b, list) and false_b[0]:
+                    directive_parts.append(f"잘못 믿는 중: {false_b[0]}")
+
+        # 갈등 (value_conflict)
+        vc = relation.get("value_conflict")
+        if vc and isinstance(vc, str) and vc != "null":
+            conflict = vc.split("+")[0].strip() if "+" in vc else vc
+            directive_parts.append(f"갈등: {conflict}")
+
+        if directive_parts:
+            lines.append(f"- {name}: {'. '.join(directive_parts)}")
+
+    if not lines:
+        return ""
+
+    return (
+        "### 대사 방향\n"
+        "(NPC 대사의 목적과 전략. 이 용어를 산문에 쓰지 마 — 대사가 수행하게 하라.)\n"
         + "\n".join(lines)
     )

@@ -220,9 +220,12 @@ Directive의 연출 지시는 음악·영상 어휘로 장면을 구현하는 �
 - 속도: largo(극느림)~presto(극빠름)
 - 질감: legato(매끄러움) staccato(끊김) marcato(강조)
 - 구도: 클로즈업/와이드/투샷/오버더숄더/로우앵글/하이앵글
+- 배치: 대면(대립)/병렬(연대)/등지기(단절)/높낮이차(권력차)/필로우(인물 없는 환경)
+- 전환: 몽타주(빠른 나열)/크로스컷(교차)/점프컷(건너뜀)/매치컷(유사 전환)/페이드(여운)
 - 흐름: 팬/컷/롱테이크, crescendo/diminuendo
-- [조명]: 저조도/역광/측면광 (선택적)
-이 용어를 텍스트에 절대 노출하지 말라. 관찰 가능한 행동과 감각으로 변환하라.
+- [조명]: 하이키(밝음)/저조도(그림자)/역광(실루엣)/단일광원(이중성)/측면광
+- [색채]: 한색(고립)/난색(활력)/탈색(기억)/고채도(강렬)
+이 용어를 텍스트에 절대 노출하지 마라. 관찰 가능한 행동과 감각으로 변환하라.
 
 """
 
@@ -591,12 +594,6 @@ Memory does NOT arrive clean or complete — it arrives transformed by current e
 Final sentence = springboard, not landing. ∅ close cleanly.
 User's last action is a departure point, not a command. Character takes what was given and runs somewhere neither expected.
 
-### VOICE CALIBRATION (per scene beat)
-- Gaze: Close-up vs. Wide shot
-- Language: Raw vs. Polished
-- Atmosphere: Sparse vs. Saturated
-- Restraint: Explosive vs. Contained
-
 """
 
 # =========================================================
@@ -697,13 +694,11 @@ SITUATION_PRIORITY_PROTOCOL = """
 
 ## ENERGY DIRECTION (Theoria provides per-turn — Renderer renders accordingly)
 
-- IDLE: The world flows in mundane rhythms. Render the texture of everyday life — tea cooling, dust floating in light, the weight of time when nothing happens. Render the ordinary as ordinary.
-- RISING: World forces accumulate tension. Each exchange adds weight. Block exits toward resolution.
-- STAGNANT: Energy present but unmoving. Characters wait, avoid, process. The world's existing patterns continue.
-- DETONATION: Accumulated pressure erupts. Prose deforms. Sentences shatter, body overtakes consciousness.
-- AFTERSHOCK: Silence after impact. Show the debris. A glass on the counter, still vibrating. No verdicts, only residue.
-
-Prose intensity follows the EnergyDirection value. idle renders at idle density, rising at rising density.
+- IDLE: 일상의 질감. 필로우 — 사물과 환경이 말한다.
+- RISING: 축적. 크로스컷 — 시선이 교차하고 무게가 쌓인다.
+- STAGNANT: 정체. 에너지가 있지만 움직이지 않는다. 기다림과 회피.
+- DETONATION: 폭발. 몽타주 — 산문이 변형된다.
+- AFTERSHOCK: 잔해. 페이드 — 판단 없이 잔상만.
 
 ### BY RELATIONSHIP STATE (Cross-reference with Harpoons)
 
@@ -1128,6 +1123,11 @@ Before rendering NPC:
 2. Physical Mannerisms → character's actual body vocabulary.
 3. Same hint + different core = different physical output.
 Cannot name a profile-specific tell? Re-read, then render. Two characters in identical state must look NOTHING alike.
+
+### DIALOGUE DIRECTIVE → SPEECH ACT
+대사 방향(### 대사 방향)이 있을 때:
+- 목적 → 서브텍스트. 전략 → 단어 선택과 리듬. 숨김 → 말에서 눈에 띄게 빠진 것.
+- 숨기는 NPC는 그것을 돌아서 말한다. 목적이 있는 NPC는 그것을 향해 말한다. 둘 다 이름 붙이지 않고.
 
 """
 

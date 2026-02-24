@@ -190,38 +190,38 @@ def _collect_aspect_stance(aspects: Any) -> Tuple[List[str], List[str]]:
 
 # ── Directing Notation Tables (음악+카메라+만화 통합 연출 표기) ──
 _POSITION_NOTATION = {
-    "controlled": "상황 — mp, andante, 와이드, legato",
-    "risky":      "상황 — f, allegro, 투샷, marcato",
-    "desperate":  "상황 — ff, presto, 로우앵글, staccato",
+    "controlled": "상황 — mp, andante, 와이드, legato, 병렬 [하이키]",
+    "risky":      "상황 — f, allegro, 투샷, marcato, 대면",
+    "desperate":  "상황 — ff, presto, 로우앵글, staccato, 등지기",
 }
 _ENERGY_NOTATION = {
-    "idle":       "장면 — mp, andante, 팬, legato",
-    "steady":     "장면 — mf, andante, 아이레벨, legato",
-    "rising":     "장면 — f, allegro, 투샷, marcato, crescendo",
-    "falling":    "장면 — p, adagio, 롱테이크, legato, diminuendo",
-    "peak":       "장면 — ff, presto, 컷, sforzando",
-    "stagnant":   "장면 — pp, largo, 롱테이크, legato",
-    "detonation": "장면 — sfz, presto, 와이드, sforzando",
-    "aftershock": "장면 — p, adagio, 롱테이크, staccato",
+    "idle":       "장면 — mp, andante, 팬, legato [하이키]",
+    "steady":     "장면 — mf, andante, 아이레벨, legato, 매치컷",
+    "rising":     "장면 — f, allegro, 투샷, marcato, 크로스컷, crescendo",
+    "falling":    "장면 — p, adagio, 롱테이크, legato, 페이드, diminuendo",
+    "peak":       "장면 — ff, presto, 컷, sforzando, 점프컷",
+    "stagnant":   "장면 — pp, largo, 롱테이크, legato, 필로우",
+    "detonation": "장면 — sfz, presto, 와이드, sforzando, 몽타주",
+    "aftershock": "장면 — p, adagio, 롱테이크, staccato, 페이드",
 }
 _VIGOR_NOTATION = {
-    "high":       "신체 — f, allegro, 와이드, legato",
-    "strained":   "신체 — p, adagio, 클로즈업:근육, marcato",
-    "collapsing": "신체 — pp, largo, 클로즈업:호흡, staccato [저조도]",
+    "high":       "신체 — f, allegro, 와이드, legato, 난색 [하이키]",
+    "strained":   "신체 — p, adagio, 클로즈업:근육, marcato, 한색",
+    "collapsing": "신체 — pp, largo, 클로즈업:호흡, staccato, 탈색 [저조도]",
 }
 _COMPOSURE_NOTATION = {
-    "high":       "심리 — mf, andante, 투샷, legato",
-    "strained":   "심리 — p, adagio, 클로즈업:시선, staccato",
-    "collapsing": "심리 — pp, largo, 하이앵글, sforzando [저조도]",
+    "high":       "심리 — mf, andante, 투샷, legato, 병렬",
+    "strained":   "심리 — p, adagio, 클로즈업:시선, staccato, 높낮이차, 한색",
+    "collapsing": "심리 — pp, largo, 하이앵글, sforzando, 등지기, 탈색 [저조도]",
 }
 _MIXED_NOTATION = {
-    "desperate": "신체+심리 — pp, largo, 하이앵글, staccato [저조도]",
-    "reckless":  "행동 — f, presto, 와이드, sforzando",
-    "fragile":   "의식 — p, adagio, 클로즈업:눈, legato",
+    "desperate": "신체+심리 — pp, largo, 하이앵글, staccato, 등지기, 탈색 [저조도]",
+    "reckless":  "행동 — f, presto, 와이드, sforzando, 점프컷, 고채도",
+    "fragile":   "의식 — p, adagio, 클로즈업:눈, legato, 필로우, 한색",
 }
 _DOOM_NOTATION = {
-    "high":     "세계 — f, allegro, marcato",
-    "critical": "세계 — ff, presto, sforzando [저조도]",
+    "high":     "세계 — f, allegro, marcato, 고채도 [단일광원]",
+    "critical": "세계 — ff, presto, sforzando, 고채도 [저조도]",
 }
 _SCENE_FOCUS = {
     "normal":      "장면 초점: 관찰과 반응",

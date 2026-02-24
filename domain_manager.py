@@ -1160,6 +1160,39 @@ def set_session_ai_memory(channel_id: str, data: Dict[str, Any]) -> None:
     d["ai_session_memory"] = data
     save_domain(channel_id, d)
 
+
+# Scene Continuity (DAI 스냅샷 + 렌더링 지문)
+def get_scene_continuity(channel_id: str) -> Dict[str, Any]:
+    """Scene continuity 데이터 조회 (DAI 스냅샷 + 렌더링 지문)."""
+    mem = get_session_ai_memory(channel_id)
+    return mem.get("scene_continuity", {
+        "dai_snapshot": {},
+        "render_fingerprint": {},
+        "discontinuity_flags": []
+    })
+
+def update_scene_continuity(
+    channel_id: str,
+    dai_snapshot: Dict[str, Any] = None,
+    render_fingerprint: Dict[str, Any] = None,
+    discontinuity_flags: list = None
+) -> None:
+    """Scene continuity 갱신. DAI 스냅샷과 렌더링 지문은 독립적으로 업데이트 가능."""
+    mem = get_session_ai_memory(channel_id)
+    sc = mem.get("scene_continuity", {
+        "dai_snapshot": {},
+        "render_fingerprint": {},
+        "discontinuity_flags": []
+    })
+    if dai_snapshot is not None:
+        sc["dai_snapshot"] = dai_snapshot
+    if render_fingerprint is not None:
+        sc["render_fingerprint"] = render_fingerprint
+    if discontinuity_flags is not None:
+        sc["discontinuity_flags"] = discontinuity_flags[:5]
+    update_session_ai_memory(channel_id, {"scene_continuity": sc})
+
+
 # Bot Active State
 def get_bot_active(channel_id: str) -> bool:
     return get_domain(channel_id).get("bot_active", True)

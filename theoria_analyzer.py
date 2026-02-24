@@ -316,6 +316,14 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
 - "RelevantNPCs": ["NPC name from roster relevant to THIS scene (max 5)"]
 - "relevant_chunks": [0, 2, 5] (indices from LORE CHUNKS — up to 7 most relevant)
 
+## SCENE CONTINUITY (requires ### 4d. PREVIOUS FRAME — null if no previous frame)
+- "continuity_check": null OR {
+    "flags": [{"type": "spatial_break|sensory_break|object_break|tone_break|npc_break|rhythm_break",
+               "risk": "Korean — what discontinuity risk exists",
+               "correction": "Korean — how to naturally bridge the gap"}],
+    "anchor_consumed": boolean
+  }
+
 
 ## CONDITIONAL MODULES (output null if not triggered)
 
@@ -470,6 +478,50 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
             return ""
         return "### 4c. SESSION MEMORY (Accumulated)\n" + "\n".join(parts)
 
+    def _build_continuity_context(self, anchors: dict) -> str:
+        """이전 DAI 스냅샷 + 렌더링 지문 → ### 4d. PREVIOUS FRAME (~100-150 tokens)"""
+        mem = anchors.get("session_memory", {})
+        sc = mem.get("scene_continuity", {})
+        if not sc:
+            return ""
+        snap = sc.get("dai_snapshot", {})
+        fp = sc.get("render_fingerprint", {})
+        if not snap and not fp:
+            return ""
+
+        parts = ["### 4d. PREVIOUS FRAME"]
+
+        if snap:
+            if snap.get("location"):
+                parts.append(f"- Location: {snap['location']}")
+            if snap.get("energy"):
+                parts.append(f"- Energy: {snap['energy']}")
+            if snap.get("observation"):
+                parts.append(f"- Observation: {snap['observation']}")
+            if snap.get("chain_status"):
+                parts.append(f"- Chain: {snap['chain_status']}")
+        if fp:
+            if fp.get("gaze"):
+                parts.append(f"- Gaze: {fp['gaze']}")
+            if fp.get("lighting"):
+                parts.append(f"- Lighting: {fp['lighting']}")
+            if fp.get("palette"):
+                parts.append(f"- Palette: {fp['palette']}")
+            if fp.get("rhythm"):
+                parts.append(f"- Rhythm: {fp['rhythm']}")
+            unresolved = fp.get("unresolved", [])
+            if unresolved:
+                parts.append(f"- Unresolved: {'; '.join(str(u) for u in unresolved[:3])}")
+
+        flags = sc.get("discontinuity_flags", [])
+        if flags:
+            parts.append("- DISCONTINUITY:")
+            for f in flags[:3]:
+                if isinstance(f, dict):
+                    parts.append(f"  [{f.get('type', '?')}] {f.get('desc', '')}")
+
+        return "\n".join(parts) if len(parts) > 1 else ""
+
     @staticmethod
     def _format_anomaly_seeds(seeds: list) -> str:
         """구조화 씨앗이면 상세 형식, str이면 기존 형식으로 포맷."""
@@ -613,6 +665,7 @@ Evaluate this in flashback_eval field. Check plausibility, passive match, assign
         npc_context = self._build_npc_context(anchors)
         npc_roster = anchors.get("npc_roster", "")
         session_memory_context = self._build_session_memory_context(anchors)
+        continuity_context = self._build_continuity_context(anchors)
         channel_id = anchors.get("channel_id", "")
 
         return f"""## ANALYSIS REQUEST
@@ -640,6 +693,8 @@ Evaluate this in flashback_eval field. Check plausibility, passive match, assign
 {npc_roster or '[No NPCs registered]'}
 
 {session_memory_context}
+
+{continuity_context}
 
 ### 5. RECENT HISTORY
 {req.history_text or '[No history]'}
