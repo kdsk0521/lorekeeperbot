@@ -575,7 +575,7 @@ IMPORTANT: All string descriptions and guides must be in KOREAN.
             system_instruction=text_resources.CONTENT_AUTHORIZATION_MANDATE,
             response_mime_type="application/json",
             temperature=0.1,
-            max_output_tokens=8192  # [CRITICAL] Increase token limit for large lorebooks
+            # max_output_tokens 제한 해제 — 모델 기본값 사용 (대형 로어북도 잘리지 않도록)
         )
         contents = [
             # Training pair: 콘텐츠 인가 프라이밍 (거부 방지)

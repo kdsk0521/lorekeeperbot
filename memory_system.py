@@ -159,9 +159,12 @@ async def api_call_with_retry(
                          for rating in candidate.safety_ratings:
                              logging.warning(f"  {rating.category}: {rating.probability}")
                     continue
+                elif 'MAX_TOKENS' in fr_str:
+                     logging.warning(f"[{operation_name}] 출력 토큰 한도 초과 (시도 {attempt+1}) — 재시도 불가, 잘린 응답 폐기")
+                     return None
                 elif 'STOP' not in fr_str and 'END_TURN' not in fr_str and fr_str != '1':
                      logging.warning(f"[{operation_name}] 비정상 종료 (시도 {attempt+1}): {fr_str}")
-            
+
             if response.text:
                 return response.text.strip()
             

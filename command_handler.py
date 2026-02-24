@@ -344,14 +344,33 @@ async def cmd_lore(ctx: CommandContext) -> None:
         try:
             # [LoreAnalyzer V1] Unified Analysis
             unified_res = await cognition.analyze_lore_unified(ctx.genai_client, ctx.model_id, full_content)
-            
+
+            if not unified_res or not any(unified_res.get(k) for k in ("npcs", "genres", "lore_summary")):
+                logger.warning("[LoreAnalyzer] 분석 결과 비어있음 — 로어 텍스트만 저장")
+                if file_text:
+                    domain_manager.set_lore(channel_id, full_content)
+                else:
+                    domain_manager.append_lore(channel_id, full_content)
+                lore_chunks = _split_lore_chunks(full_content)
+                if lore_chunks:
+                    domain_manager.set_lore_chunks(channel_id, lore_chunks)
+                await msg.edit(content="⚠️ **로어 분석 실패** — 텍스트는 저장되었으나 NPC/장르/이변 추출에 실패했습니다. 로어를 다시 업로드하거나 분량을 나누어 시도해 주세요.")
+                return
+
             extracted_npcs = unified_res.get("npcs", [])
             pc_info = unified_res.get("pc_info")
             genre_res = unified_res.get("genres", {})
             lore_summary_data = unified_res.get("lore_summary", {})
             
-            # 1. Update NPCs
+            # 1. Update NPCs — Flash 메타데이터 + 로어 원문 프로필 병합
             if extracted_npcs:
+                # 로어 원문에서 NPC 섹션 파싱 (Flash 요약 대신 원문 보존)
+                npc_names = [n.get("name", "") for n in extracted_npcs if n.get("name")]
+                full_sections = npc_manager.extract_npc_sections_from_lore(full_content, npc_names)
+                for npc in extracted_npcs:
+                    npc_name = npc.get("name", "")
+                    if npc_name and npc_name in full_sections:
+                        npc["description"] = full_sections[npc_name]
                 npc_manager.add_lore_npcs(channel_id, extracted_npcs)
                 
             # 2. Update PC Info

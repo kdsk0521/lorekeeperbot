@@ -284,6 +284,40 @@ def find_similar_npc(channel_id: str, new_name: str, threshold: float = 0.85) ->
     return None
 
 
+def extract_npc_sections_from_lore(lore_text: str, npc_names: List[str]) -> Dict[str, str]:
+    """로어북 원문에서 NPC별 전체 섹션 텍스트 추출.
+
+    ## 또는 # 헤더로 구분된 NPC 섹션을 찾아 원문 그대로 반환.
+    Flash 요약 대신 원문을 보존하기 위한 용도.
+    """
+    if not lore_text or not npc_names:
+        return {}
+
+    # ## 또는 # 헤더 기준 분할 (### 내부 섹션은 보존)
+    sections = re.split(r'\n(?=#{1,2}(?!#)\s)', lore_text)
+
+    result = {}
+    for section in sections:
+        header_m = re.match(r'#{1,2}\s+(.+)', section)
+        if not header_m:
+            continue
+        header = header_m.group(1).strip()
+
+        for name in npc_names:
+            if name in result:
+                continue
+            # 괄호 안 이름도 분리해서 비교: "리미(Limi)" → ["리미", "Limi"]
+            name_parts = [p.strip() for p in re.split(r'[()]', name) if p.strip()]
+            matched = any(part.lower() in header.lower() for part in name_parts)
+            if matched and len(section) > 500:
+                result[name] = section.strip()
+                break
+
+    if result:
+        logger.info(f"[NPC] 로어 원문에서 {len(result)}명 NPC 섹션 추출: {list(result.keys())}")
+    return result
+
+
 def add_lore_npcs(channel_id: str, npc_list: List[Dict[str, Any]]) -> int:
     """
     로어 분석 결과로 NPC 일괄 등록.
@@ -535,104 +569,84 @@ def get_npc_roster(channel_id: str) -> str:
     return "\n".join(lines)
 
 
-_PROFILE_SECTIONS_PRIORITY = [
-    "Identity", "Hard Rules", "Core Operating Principle", "Speech Pattern",
-    "Interpersonal Style", "Emotional Architecture", "Appearance",
-]
-_PROFILE_SECTIONS_SECONDARY = [
-    "Values", "Background", "Combat Profile", "Physical Mannerisms",
-    "Sexuality", "Likes", "Dislikes", "Secrets", "Additional",
-]
-_MAX_DESC_PER_NPC = 5000  # 프로필 텍스트 최대 글자수 (~1250 토큰). 5 NPC = ~6250 토큰.
-_MAX_SECTION_CHARS = 600  # 우선 섹션별 내부 cap
-_IDENTITY_CAP = 300       # Identity는 짧으므로 별도 cap
-_HARD_RULES_CAP = 400     # Hard Rules는 전문 보존 목표
+# =========================================================
+# Scene-Aware Section Selection
+# =========================================================
+# 항상 포함되는 코어 섹션
+_CORE_SECTIONS = ["Identity", "Hard Rules"]
+# scene_type별 추가 로딩 섹션
+_SCENE_SECTION_MAP = {
+    "combat":      ["Combat Profile", "Appearance", "Core Operating Principle", "Values"],
+    "social":      ["Core Operating Principle", "Interpersonal Style", "Emotional Architecture",
+                    "Secrets", "Speech Pattern"],
+    "intimate":    ["Emotional Architecture", "Sexuality", "Secrets",
+                    "Interpersonal Style", "Core Operating Principle"],
+    "exploration": ["Core Operating Principle", "Background", "Values", "Appearance"],
+    "summary":     ["Core Operating Principle"],
+    "normal":      ["Core Operating Principle", "Speech Pattern", "Interpersonal Style",
+                    "Emotional Architecture", "Secrets"],
+}
+_MAX_TOTAL_PER_NPC = 15000 # NPC 1명당 최종 안전 cap (장면 선택이 자연 필터 역할)
 
 
-def _cap_section(section_text: str, cap: int) -> str:
-    """섹션 텍스트를 cap 글자로 제한. 문장 경계에서 자른다."""
-    if len(section_text) <= cap:
-        return section_text
-    # 마지막 완전한 문장/줄 경계에서 자르기
-    truncated = section_text[:cap]
-    # 줄바꿈 경계 우선
-    last_nl = truncated.rfind('\n')
-    if last_nl > cap * 0.5:
-        return truncated[:last_nl].rstrip()
-    # 문장 종결 경계
-    for ch in '.!?\n':
-        pos = truncated.rfind(ch)
-        if pos > cap * 0.4:
-            return truncated[:pos + 1].rstrip()
-    return truncated.rstrip() + "…"
+def _parse_sections(desc: str) -> Dict[str, str]:
+    """### 헤더 기준으로 프로필을 섹션 dict로 분할."""
+    sections: Dict[str, str] = {}
+    parts = re.split(r'\n(?=###\s)', desc)
+    for part in parts:
+        header_m = re.match(r'###\s+(.+)', part)
+        if header_m:
+            sec_name = header_m.group(1).strip()
+            sections[sec_name] = part.strip()
+        elif not sections:
+            sections["_preamble"] = part.strip()
+    return sections
 
 
-def _compact_profile(desc: str) -> str:
-    """긴 NPC 프로필에서 모든 핵심 섹션의 메커니즘(첫 단락)을 추출.
+def _select_profile_sections(desc: str, scene_type: str = "normal") -> str:
+    """scene_type에 따라 필요한 섹션만 선택하여 원문 그대로 반환.
 
-    전략: 넓게 얕게 — 모든 우선순위 섹션이 포함되되 각 섹션은 cap으로 제한.
-    남은 공간에 2차 섹션을 짧게 추가.
+    장면 선택 자체가 필터 — 섹션 캡 없이 원문 보존.
+    _MAX_TOTAL_PER_NPC만 안전망으로 동작.
     """
-    if len(desc) <= _MAX_DESC_PER_NPC:
-        return desc
+    if len(desc) <= 3000 or '###' not in desc:
+        return desc[:_MAX_TOTAL_PER_NPC]
 
-    # ### 섹션 단위로 분할
-    sections = re.split(r'\n(?=###\s)', desc)
-    priority_parts = []
-    secondary_parts = []
-    other_parts = []
+    parsed = _parse_sections(desc)
+    if len(parsed) <= 2:
+        return desc[:_MAX_TOTAL_PER_NPC]
 
-    for sec in sections:
-        header_m = re.match(r'###\s+(.+)', sec)
-        sec_name = header_m.group(1).strip() if header_m else ""
-        is_priority = any(p.lower() in sec_name.lower() for p in _PROFILE_SECTIONS_PRIORITY)
-        is_secondary = any(p.lower() in sec_name.lower() for p in _PROFILE_SECTIONS_SECONDARY)
-        if is_priority:
-            # Identity/Hard Rules는 별도 cap, 나머지는 _MAX_SECTION_CHARS
-            if "identity" in sec_name.lower():
-                cap = _IDENTITY_CAP
-            elif "hard rules" in sec_name.lower():
-                cap = _HARD_RULES_CAP
-            else:
-                cap = _MAX_SECTION_CHARS
-            priority_parts.append(_cap_section(sec.strip(), cap))
-        elif is_secondary:
-            secondary_parts.append(sec.strip())
-        else:
-            other_parts.append(sec.strip())
+    wanted = list(_CORE_SECTIONS) + list(_SCENE_SECTION_MAP.get(scene_type, _SCENE_SECTION_MAP["normal"]))
 
-    # 1) 우선 섹션 (각각 capped) 모두 포함
-    result = "\n\n".join(priority_parts)
+    result_parts = []
+    included = set()
 
-    # 2) 남은 공간에 2차 섹션 추가 (각 300자 cap)
-    for part in secondary_parts:
-        capped = _cap_section(part, 300)
-        if len(result) + len(capped) + 2 > _MAX_DESC_PER_NPC:
-            break
-        result += "\n\n" + capped
+    for wanted_name in wanted:
+        for sec_name, sec_text in parsed.items():
+            if sec_name in included or sec_name == "_preamble":
+                continue
+            if wanted_name.lower() in sec_name.lower():
+                result_parts.append(sec_text)
+                included.add(sec_name)
+                break
 
-    # 3) 그래도 남으면 기타 섹션
-    for part in other_parts:
-        capped = _cap_section(part, 200)
-        if len(result) + len(capped) + 2 > _MAX_DESC_PER_NPC:
-            break
-        result += "\n\n" + capped
+    result = "\n\n".join(result_parts)
 
-    if len(result) > _MAX_DESC_PER_NPC:
-        result = result[:_MAX_DESC_PER_NPC].rstrip()
+    if len(result) > _MAX_TOTAL_PER_NPC:
+        result = result[:_MAX_TOTAL_PER_NPC].rstrip()
 
     return result
 
 
-def get_npc_full_profiles(channel_id: str, names: list) -> str:
-    """지정된 NPC들의 풀 프로필 반환 (구조화 필드 + 핵심 섹션 추출)."""
+def get_npc_full_profiles(channel_id: str, names: list, scene_type: str = "normal") -> str:
+    """지정된 NPC들의 프로필 반환. scene_type에 따라 필요한 섹션만 선택."""
     npcs = get_npcs(channel_id)
     parts = []
     for name in names:
         data = npcs.get(name)
         if data:
             desc = _get_npc_desc(data)
-            desc = _compact_profile(desc)
+            desc = _select_profile_sections(desc, scene_type)
             header = f"### {name}"
             meta_parts = []
             if data.get("role"):

@@ -599,7 +599,8 @@ def build_34_step_prompt(ctx) -> str:
 
     if relevant_npcs and channel_id:
         import npc_manager as _npc_mgr
-        full_profiles = _npc_mgr.get_npc_full_profiles(channel_id, relevant_npcs)
+        npc_scene_type = dai.get("scene_type", "normal")
+        full_profiles = _npc_mgr.get_npc_full_profiles(channel_id, relevant_npcs, scene_type=npc_scene_type)
         others = _npc_mgr.get_npc_names_only(channel_id, exclude=relevant_npcs)
         npc_roles = full_profiles
         if others:
