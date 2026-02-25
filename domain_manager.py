@@ -888,14 +888,14 @@ def update_helena_metric(channel_id: str, npc_name: str, depth_delta: int = 0, t
 # UI Helpers
 def get_unified_player_info(channel_id: str, user_id: str) -> str:
     """
-    [V7] 통합 플레이어 정보 반환 (프롬프트 주입용)
-    - 캐릭터 이름/외모 (Description)
-    - 상태 이상 (Status Effects)
-    - 특질 (Traits)
-    - 관계 (Relationships)
-    - 배경 (Background)
-    - 멘탈 (Mental)
-    - 노트북 (Notebook)
+    [V8] 통합 플레이어 정보 반환 (프롬프트 주입용)
+    - 캐릭터 이름/외모/배경
+    - 상태 이상
+    - 특질 (이름 + 설명)
+    - 관계 (단계명 + 태도)
+    - 기력/평정
+    - 알고 있는 정보
+    - 노트북
     """
     p = get_participant_data(channel_id, user_id)
     if not p:
@@ -903,14 +903,13 @@ def get_unified_player_info(channel_id: str, user_id: str) -> str:
 
     name = p.get("mask", "Unknown")
     mem = p.get("ai_memory", {})
-    
+
     # 1. Description (Appearance + Personality + Background)
     desc_parts = []
     if mem.get("appearance"): desc_parts.append(f"Appearance: {mem['appearance']}")
     if mem.get("description"): desc_parts.append(f"Description: {mem['description']}")
-    # [Restored] Background
     if mem.get("background"): desc_parts.append(f"Background: {mem['background']}")
-    
+
     desc_text = "\n".join(desc_parts) if desc_parts else "No description available."
 
     # 2. Status Effects
@@ -918,58 +917,61 @@ def get_unified_player_info(channel_id: str, user_id: str) -> str:
     from game_character import format_status_effects
     status_text = format_status_effects(status_effects) or "Healthy (Normal)"
 
-    # 3. Passives (Traits)
+    # 3. Passives (Traits) — 이름 + 설명
     passives = mem.get("passives", [])
-    p_names = []
+    passive_lines = []
     for pas in passives:
-        if isinstance(pas, dict): p_names.append(pas.get("name", "Unknown"))
-        else: p_names.append(str(pas))
-    passive_text = ", ".join(p_names) if p_names else "None"
-    
-    # 4. Adaptation Stats
-    abnormal = mem.get("abnormal_exposure", {})
-    abnormal_text = ""
-    if abnormal:
-        items = []
-        for tag, data in abnormal.items():
-            count = data.get("count", 0)
-            items.append(f"{tag}({count})")
-        if items:
-            abnormal_text = ", ".join(items)
+        if isinstance(pas, dict):
+            pname = pas.get("name", "Unknown")
+            pdesc = pas.get("desc", "")
+            passive_lines.append(f"{pname}: {pdesc}" if pdesc else pname)
+        else:
+            passive_lines.append(str(pas))
+    passive_text = " / ".join(passive_lines) if passive_lines else "None"
 
-    # 5. [Restored] Relationships
-    rels = mem.get("relationships", {})
-    rel_text = "None"
-    if rels:
-        rel_text = ", ".join([f"{k}: {v}" for k, v in rels.items()])
+    # 4. Relationships — 태도(attitude) + 친밀 단계(depth stage)
+    attitudes = get_npc_attitudes(channel_id)
+    rel_parts = []
+    if attitudes:
+        from config import get_connection_stage_name
+        for npc_name, att_data in attitudes.items():
+            attitude = att_data.get("attitude", "neutral")
+            depth = att_data.get("depth", 0)
+            stage = get_connection_stage_name(depth)
+            rel_parts.append(f"{npc_name}: {attitude} ({stage})")
+    rel_text = ", ".join(rel_parts) if rel_parts else "None"
 
-    # 6. [V3.0] Vigor/Composure Status
+    # 5. Vigor/Composure Status
     vigor = mem.get("vigor", mem.get("mental", {}))
     vigor_val = vigor.get("value", 100)
     composure = mem.get("composure", {})
     composure_val = composure.get("value", 100)
     vc_text = f"기력 {vigor_val}/100 | 평정 {composure_val}/100"
 
-    # 7. [Added] Notebook (per-user)
+    # 6. Known Info (PC가 알고 있는 정보)
+    known_info = mem.get("known_info", [])
+    if isinstance(known_info, list) and known_info:
+        ki_text = " / ".join(str(k) for k in known_info[:10])
+    elif isinstance(known_info, str) and known_info:
+        ki_text = known_info
+    else:
+        ki_text = ""
+
+    # 7. Notebook (per-user)
     notebook = get_notebook(channel_id, user_id)
 
     # 8. Construct Block
-    return f"""## 🎭 {name} (Player Character)
-- Status Condition: {status_text}
-- Vigor/Composure: {vc_text}
-- Passives: {passive_text}
-- Abnormal Adaptation: {abnormal_text if abnormal_text else "None"}
-- Relationships: {rel_text}
-- Description:
-{desc_text}
-
-### 📓 Player Notebook (Inventory & Memos)
-{notebook}
-
-⚠️ CRITICAL: YOU ARE THE GM. {name} IS THE PLAYER.
-DO NOT speak for {name}. DO NOT describe {name}'s actions.
-Only describe the world's reaction to {name}.
-"""
+    lines = [f"## 🎭 {name} (Player Character)"]
+    lines.append(f"- Status Condition: {status_text}")
+    lines.append(f"- Vigor/Composure: {vc_text}")
+    lines.append(f"- Traits: {passive_text}")
+    lines.append(f"- Relationships: {rel_text}")
+    if ki_text:
+        lines.append(f"- Known Info: {ki_text}")
+    lines.append(f"- Description:\n{desc_text}")
+    lines.append(f"\n### 📓 Player Notebook (Inventory & Memos)\n{notebook}")
+    lines.append(f"\n⚠️ CRITICAL: YOU ARE THE GM. {name} IS THE PLAYER.\nDO NOT speak for {name}. DO NOT describe {name}'s actions.\nOnly describe the world's reaction to {name}.")
+    return "\n".join(lines)
 
 # =========================================================
 # 5. STATE ACCESSORS (From legacy domain_manager)

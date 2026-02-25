@@ -854,13 +854,24 @@ class OrchestrationService:
                             domain_manager.add_to_ai_memory_list(
                                 channel_id, ctx.user_id, "passives", passive
                             )
+                # Trait Evolution (desc-only update for existing passives)
+                if pmu.get("trait_evolution"):
+                    mem = domain_manager.get_ai_memory(channel_id, ctx.user_id)
+                    current_passives = mem.get("passives", [])
+                    for evo in pmu["trait_evolution"]:
+                        if not isinstance(evo, dict):
+                            continue
+                        evo_name = evo.get("name", "")
+                        new_desc = evo.get("new_desc", "")
+                        if not evo_name or not new_desc:
+                            continue
+                        for p in current_passives:
+                            if isinstance(p, dict) and p.get("name") == evo_name:
+                                p["desc"] = new_desc
+                                logger.info(f"[TraitEvolution] {evo_name} desc updated")
+                                break
+                    domain_manager.update_ai_memory(channel_id, ctx.user_id, {"passives": current_passives})
             
-            # Abnormal Trigger logic
-            if updates.get("AbnormalTrigger"):
-                trigger = updates["AbnormalTrigger"]
-                category = updates.get("AbnormalCategory")
-                logger.info(f"[Background] Narrative Anomaly Detected: {trigger} ({category})")
-
             # World State Update (ai_session_memory 갱신)
             wsu = updates.get("WorldStateUpdate")
             if wsu and isinstance(wsu, dict):

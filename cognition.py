@@ -75,7 +75,6 @@ async def extract_all_updates(
     if not tasks:
         return {
             "PlayerUpdate": None, "PlayerMemoryUpdate": None,
-            "AbnormalTrigger": None, "AbnormalCategory": None,
             "QuestUpdate": None, "WorldStateUpdate": None
         }
 
@@ -139,11 +138,9 @@ async def extract_all_updates(
         "PlayerMemoryUpdate": {
             "relationships": rels_processed if rels_processed else soc.get("relationships"),
             "companions": soc.get("companions"),
-            "passives": nar.get("passives")
-        } if soc or nar.get("passives") else None,
-
-        "AbnormalTrigger": nar.get("abnormal_trigger"),
-        "AbnormalCategory": nar.get("abnormal_category"),
+            "passives": nar.get("passives"),
+            "trait_evolution": nar.get("trait_evolution")
+        } if soc or nar.get("passives") or nar.get("trait_evolution") else None,
 
         "QuestUpdate": {
             "quest_add": qst.get("quest_add"), "quest_complete": qst.get("quest_complete"),
@@ -199,8 +196,10 @@ async def _extract_batch(
     if "narrative" in sections:
         sys_parts.append(
             "\n### narrative"
-            "\nOutput: `{\"passives\": [], \"abnormal_trigger\": null, \"abnormal_category\": null}`"
-            "\nPassive = permanent capability (skill/trait/achievement). Only NEW ones not in current list."
+            "\nOutput: `{\"passives\": [], \"trait_evolution\": []}`"
+            "\nPassive = MAJOR permanent capability (skill/trait/achievement). Only NEW ones not in current list."
+            "\n  STRICT: Most turns have NO new passive. Only add for life-changing events (new power, title, rank-up, permanent transformation)."
+            "\n  Temporary advantages, minor skills, or narrative flavor are NOT passives. Max 1 new passive per 10+ turns."
             "\nPassive format: `{\"name\": \"이름\", \"desc\": \"설명\","
             " \"theory_links\": [\"theory1\", \"theory2\"],"
             " \"modifiers\": {\"anomaly_defense\": 10, \"judgment_combat\": 5}}`"
@@ -209,9 +208,14 @@ async def _extract_batch(
             "\n  - Positive trait → positive anomaly_defense, relevant judgment bonus, drain < 1.0"
             "\n  - Negative trait → negative values, drain > 1.0"
             "\n  - Only include relevant keys (skip if 0 or 1.0)"
+            "\ntrait_evolution: Update desc of EXISTING passives when narrative shows clear growth/change."
+            "\n  Format: `[{\"name\": \"기존특질이름\", \"new_desc\": \"업데이트된 설명\"}]`"
+            "\n  Rules: name MUST match an existing passive exactly. Only update desc, never name/modifiers."
+            "\n  Only when clear narrative evidence exists (rank-up, new skill learned, trauma overcome)."
+            "\n  CONSERVATIVE: most turns should return empty []. Max 1 per turn."
             "\nAnomaly = genre shifts or monsters, trigger MUST BE IN ENGLISH."
             "\nProfessional Bias: Gore is NORMAL for Doctor, Combat is NORMAL for Soldier."
-            "\nIf no change, keep fields null."
+            "\nIf no change, keep fields null/empty."
         )
         ctx_parts.append(f"[Narrative] Passives:{passives}, PlayerCtx:{player_context}, Fermented:{fermented[:2000]}")
 
@@ -327,132 +331,6 @@ async def _extract_physical(
     ctx = f"Notebook Content:\n{notebook}\nStatus:{status}"
     usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput FULL UPDATED Notebook JSON."
     return await _call_extract(client, model_id, sys, usr, "B-1 Notebook")
-
-async def _extract_social(
-    client: genai.Client, 
-    model_id: str, 
-    p_in: str, 
-    ai_out: str, 
-    rels: Optional[Dict[str, str]], 
-    comps: Optional[List[str]], 
-    lore_npcs: Optional[List[str]], 
-    scene_npcs: Optional[List[str]]
-) -> Dict[str, Any]:
-    sys = (
-        "## [EXTRACT SOCIAL CHANGES - V3.7]\n"
-        "Return JSON: `{\"relationships\": {Name: Status}, \"companions\": [list]}`\n\n"
-        "### [FEW-SHOT EXAMPLE]\n"
-        "- Input: 'NPC Arthur nods and offers his hand in friendship.'\n"
-        "  - Output: `{\"relationships\": {\"Arthur\": \"Friendly\"}, \"companions\": [\"Arthur\"]}`\n"
-        "### [RULES]\n"
-        "1. Only record SIGNIFICANT changes in attitude (e.g., Neutral -> Friendly, Friendly -> Hostile).\n"
-        "2. Deduplicate names: Only use names explicitly present in recent history or lore NPCs.\n"
-        "3. Safety Guard: If no social change occurred, return `{\"relationships\": {}, \"companions\": []}`. Never fabricate trust or enmity without clear textual evidence."
-    )
-    ctx = f"Rels:{rels}, Comps:{comps}, LoreNPCs:{lore_npcs}, SceneNPCs:{scene_npcs}"
-    usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON."
-    return await _call_extract(client, model_id, sys, usr, "B-2 Social")
-
-async def _extract_narrative(
-    client: genai.Client, 
-    model_id: str, 
-    p_in: str, 
-    ai_out: str, 
-    passives: Optional[List[str]], 
-    fermented: str, 
-    player_context: str = ""
-) -> Dict[str, Any]:
-    sys = (
-        "## [EXTRACT NARRATIVE CHANGES - V4]\n"
-        "Return JSON: `{\"passives\": [], \"abnormal_trigger\": null, \"abnormal_category\": null}`\n\n"
-        "### [FEW-SHOT EXAMPLE]\n"
-        "- Input: 'A faceless entity appears from the shadows. I feel a chill of cosmic horror.'\n"
-        "  - Output: `{\"abnormal_trigger\": \"Faceless Entity\", \"abnormal_category\": \"Ghost\"}`\n\n"
-        "### [PASSIVE RULES]\n"
-        "'Passive' means ANY permanent capability:\n"
-        "1. Skills/Abilities, Physical Traits, Mental Traits, Achievements.\n"
-        "2. HYGIENE: Only return NEW ones not in the [Passives] list.\n"
-        "3. Passive format: `{\"name\": \"이름\", \"desc\": \"설명\","
-        " \"theory_links\": [\"theory1\", \"theory2\"],"
-        " \"modifiers\": {\"anomaly_defense\": 10, \"judgment_combat\": 5}}`\n"
-        "   theory_links: psychological theories this trait connects to.\n"
-        "   modifiers keys: anomaly_defense (±5~15), judgment_combat/social (±5~10), vigor_drain/composure_drain (0.8~1.2).\n"
-        "   Positive trait → positive values, drain < 1.0. Negative → negative, drain > 1.0. Only include relevant keys.\n\n"
-        "### [ANOMALY RULES]\n"
-        "1. Anomaly Trigger: Genre shifts or monsters. MUST BE IN ENGLISH.\n"
-        "2. Professional Bias: Gore is NORMAL for a Doctor. Combat is NORMAL for a Soldier. Only trigger for events truly wrong to THEM.\n\n"
-        "### [SAFETY GUARD]\n"
-        "If no significant narrative change, keep fields `null`."
-    )
-    ctx = f"Passives:{passives}, PlayerContext:{player_context}, FermentedSnippet:{fermented[:2000]}"
-    usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON."
-    return await _call_extract(client, model_id, sys, usr, "B-3 Narrative")
-
-async def _extract_quest(
-    client: genai.Client, 
-    model_id: str, 
-    p_in: str, 
-    ai_out: str, 
-    quests: Optional[List[str]], 
-    memos: Optional[List[str]]
-) -> Dict[str, Any]:
-    sys = (
-        "## [EXTRACT QUEST CHANGES - V3.6]\n"
-        "Return JSON with keys: quest_add [list], quest_complete [list].\n\n"
-        "### [RULES]\n"
-        "1. ADD: Only add NEW quests. Do not duplicate quests already in [Quests].\n"
-        "2. COMPLETE: Mark as complete ONLY if explicitly resolved.\n\n"
-        "### [SAFETY GUARD]\n"
-        "If no quest update, return `{\"quest_add\": [], \"quest_complete\": []}`."
-    )
-    ctx = f"Quests:{quests}"
-    usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON."
-    return await _call_extract(client, model_id, sys, usr, "B-4 Quest")
-
-async def _extract_world_state(
-    client: genai.Client,
-    model_id: str,
-    p_in: str,
-    ai_out: str,
-    current_session_memory: Optional[Dict[str, Any]] = None
-) -> Dict[str, Any]:
-    """
-    [World State Updater] +1 Flash call.
-    AI 응답 후 세계 상태를 추출하여 ai_session_memory를 갱신합니다.
-    active_threads, world_changes, npc_schedule_hints, basic_needs_flags 추출.
-    """
-    mem = current_session_memory or {}
-    existing_threads = mem.get("active_threads", [])
-    existing_arc = mem.get("current_arc", "")
-
-    sys = (
-        "## [WORLD STATE UPDATER - V1.0]\n"
-        "You are a TRPG session tracker. Analyze the latest exchange and extract world state changes.\n"
-        "Return JSON with these keys:\n\n"
-        "### FIELDS\n"
-        "- `active_threads`: [list of str] Currently open narrative threads/plotlines. "
-        "Merge with existing, remove resolved ones. Max 10. Korean.\n"
-        "- `resolved_threads`: [list of str] Threads that were resolved THIS turn. Korean.\n"
-        "- `world_changes`: [list of str] Significant environmental/world changes from this turn. "
-        "Only NEW changes (not already known). Max 5. Korean.\n"
-        "- `npc_schedule_hints`: {NpcName: str} Where each active NPC likely is or what they're doing RIGHT NOW "
-        "based on context. Only NPCs mentioned or implied. Korean.\n"
-        "- `basic_needs_flags`: {str: bool} Physical state flags for the PC. "
-        "Keys: hungry, thirsty, tired, injured, cold, hot. Only set true if evidence exists.\n"
-        "- `current_arc`: str - One-line summary of the current narrative arc. Korean.\n\n"
-        "### RULES\n"
-        "1. CONSERVATIVE: Only extract what is clearly evidenced in the text.\n"
-        "2. NO FABRICATION: Do not invent threads or NPC activities not implied by context.\n"
-        "3. MERGE: active_threads should combine existing + new - resolved.\n"
-        "4. HYGIENE: Remove stale threads that are clearly no longer relevant.\n"
-    )
-    ctx_lines = [f"Current Arc: {existing_arc}" if existing_arc else "Current Arc: (none)"]
-    if existing_threads:
-        ctx_lines.append(f"Existing Threads: {existing_threads[:10]}")
-    ctx = "\n".join(ctx_lines)
-    usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON."
-    return await _call_extract(client, model_id, sys, usr, "B-5 WorldState")
-
 
 async def _call_extract(
     client: genai.Client,
