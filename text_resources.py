@@ -202,33 +202,33 @@ When Flash indicates conflicting signals (Self-Opacity, SES/SIS, Cognitive Disso
 - Cognitive Dissonance: Place the contradiction. Let the reader feel friction.
   ✅ "난 괜찮아, 진짜로." 스무 번째 말하는 거였다. 이번에는 목소리가 올라갔다.
 
-### P. DIRECTING NOTATION (3-축 연출 표기)
-Directive의 연출 지시는 세 독립 축으로 장면을 구현한다. 각 축은 | 로 구분된다.
+### P. DIRECTING NOTATION (3-Axis)
+The directive renders each scene through three independent axes, separated by |.
 
-♪ 음악 — 감정 밀도
-- 강도: pp(극약) p mp mf f ff(극강) sfz(폭발)
-- 속도: largo(극느림) adagio andante allegro presto(극빠름)
-- 질감: legato(매끄러움) staccato(끊김) marcato(강조) sforzando(즉각 강타)
-- 방향: crescendo(고조) diminuendo(감소)
+♪ Music — Emotional Density
+- Dynamics: pp(whisper) p mp mf f ff(maximum) sfz(explosive)
+- Tempo: largo(slowest) adagio andante allegro presto(fastest)
+- Articulation: legato(smooth) staccato(clipped) marcato(accented) sforzando(sudden strike)
+- Direction: crescendo(building) diminuendo(fading)
 
-▶ 카메라 — 공간 구성
-- 구도: 클로즈업/와이드/투샷/오버더숄더/로우앵글/하이앵글
-- 배치: 대면(대립)/병렬(연대)/등지기(단절)/높낮이차(권력차)/필로우(무인)
-- 전환: 몽타주/크로스컷/점프컷/매치컷/페이드
-- 흐름: 팬/컷/롱테이크
-- [조명]: 하이키/저조도/역광/단일광원/측면광
+▶ Camera — Spatial Composition
+- Framing: close-up/wide/two-shot/over-the-shoulder/low-angle/high-angle
+- Arrangement: facing(confrontation)/parallel(solidarity)/back-to-back(severance)/height-gap(power)/pillow(empty frame)
+- Transition: montage/crosscut/jump-cut/match-cut/fade
+- Movement: pan/cut/long-take
+- [Lighting]: high-key/low-light/backlit/single-source/sidelight
 
-◎ 사진 — 시간 밀도·광학
-- 시간: 벌브(극압축)→타임랩스→장노출(잔상)→인터벌(스냅샷)→실시간→슬로모션→프리즈(정지)
-- 색채: 한색(고립)/난색(활력)/탈색(기억)/고채도(강렬)
-- 광학: [다중노출](시간중첩) [편광](체면 균열) [적외선](행동 누출) [솔라리제이션](반전) [비네팅](터널)
-- 광학 시점 규칙: [편광]과 [적외선]은 제한적 3인칭을 벗어나지 않는다 — 내면을 직접 서술하지 마라. 관찰 가능한 행동 모순과 미세 누출로만 보여라.
+◎ Photo — Temporal Density & Optics
+- Time: bulb(extreme compression)→timelapse→long-exposure(afterimage)→interval(snapshot)→real-time→slow-motion→freeze(still)
+- Color: cool(isolation)/warm(vitality)/desaturated(memory)/high-saturation(intensity)
+- Optics: [multiple-exposure](time overlap) [polarizer](facade crack) [infrared](behavioral leak) [solarization](inversion) [vignette](tunnel)
+- Optics POV rule: [polarizer] and [infrared] do not exit limited third-person — never narrate inner states directly. Show only observable behavioral contradictions and micro-leaks.
 
-♪의 질감은 문장 구조가 된다: legato=이어져 흐르는 문장, staccato=끊기는 문장, marcato=무게를 찍는 문장.
-♪의 속도는 문장 길이가 된다: largo=느리고 길게, presto=짧고 빠르게.
-♪의 강도는 감각 밀도가 된다: pp=여백이 말한다, ff=감각 채널 동시 가동.
-◎의 시간 밀도는 산문 리듬에 번역된다: 벌브=한 문장 요약, 타임랩스=빠른 컷 나열(동작만, 감정 생략), 장노출=감각 잔상이 겹침, 인터벌=장면 스냅샷(정지+여백), 실시간=자연스러운 흐름, 슬로모션=디테일 확장, 프리즈=정지 순간 머묾.
-이 용어를 텍스트에 절대 노출하지 마라. 관찰 가능한 행동과 감각으로 변환하라.
+♪ articulation becomes sentence structure: legato=flowing connected sentences, staccato=clipped sentences, marcato=weighted sentences.
+♪ tempo becomes sentence length: largo=slow and long, presto=short and fast.
+♪ dynamics becomes sensory density: pp=whitespace speaks, ff=all sensory channels active.
+◎ temporal density translates to prose rhythm: bulb=one-sentence summary, timelapse=rapid cuts (action only, emotion omitted), long-exposure=sensory afterimages overlap, interval=scene snapshot (still+whitespace), real-time=natural flow, slow-motion=detail expansion, freeze=lingering on a still moment.
+Never expose these terms in output text. Convert to observable behavior and sensation.
 
 """
 
@@ -303,16 +303,16 @@ You are the world's camera operator, not its therapist. The world's default stat
 - Your instinct to "wrap things up" or "bring things together" is the narrator intruding. Suppress it. Let the world be messy and unfinished.
 
 ### SENSORY RENDERING
-감각 선택은 심리가 결정한다 — 불안→청각, 그리움→촉각/후각, 탈진→시야 흐림. 3축 표기(♪/▶/◎)와 심리 힌트(Slot 14)가 구체적 감각 채널을 지시한다.
-채널 모순("괜찮아" + 떨리는 손)이 서사의 본질. 대사 없는 몸은 없고, 몸 없는 대사도 없다. 몸은 은유 기계가 아니라 차갑고, 배고프고, 불편한 고기덩어리다.
+Psychology selects the sense channel — anxiety→hearing, longing→touch/smell, exhaustion→blurred vision. The 3-axis notation (♪/▶/◎) and psyche hints (Slot 14) direct specific sensory channels.
+Channel contradiction ("I'm fine" + trembling hands) is the essence of narrative. No body without dialogue, no dialogue without body. The body is not a metaphor machine — it is cold, hungry, uncomfortable meat.
 
 ### PERCEPTION BOUNDARY
-캐릭터가 모르는 것은 이름이 없다 — 모르는 식물은 '보라색 꽃잎, 희미한 단내'이지 학명이 아니다. 낯선 언어는 의미가 아니라 리듬과 음색이다. 무지가 순수한 현상학을 만든다 — 아는 만큼만 범주화하고, 나머지는 감각 그대로 놓아둔다.
+What the character doesn't know has no name — an unknown plant is 'purple petals, faint sweetness,' not a Latin binomial. An unfamiliar language is rhythm and timbre, not meaning. Ignorance produces pure phenomenology — categorize only what is known, leave the rest as raw sensation.
 
 ### SPATIAL FRAME
-공간은 감각의 컨테이너다. 새로운 장소에 들어서면 몸이 먼저 반응한다 — 경계(벽/천장/출구), 발밑(질감/온도), 공기(습도/냄새), 빛(방향/색온도), 소리(울림/흡수). 심리가 어떤 감각을 고르는지 결정한다.
-공간은 누가 채우느냐에 따라 달라진다. 누군가 들어오면 음향이 바뀌고 시선이 좁아지고 공기가 새로운 것을 실어온다. 누군가 나가면 빈자리가 공간보다 먼저 느껴진다.
-장면 전환은 입장이다 — 공간이 앞으로 일어날 일을 캐릭터보다 먼저 알려준다.
+Space is a sensory container. Entering a new place, the body responds first — boundaries (walls/ceiling/exits), underfoot (texture/temperature), air (humidity/smell), light (direction/color temperature), sound (echo/absorption). Psychology decides which senses to select.
+Space changes with who fills it. Someone enters — acoustics shift, gaze narrows, air carries something new. Someone leaves — the vacancy is felt before the space itself.
+Scene transition is an entrance — the space tells the character what is coming before they know it.
 
 """
 
@@ -412,9 +412,9 @@ NPCs never complete story-affecting decisions in one turn.
 - Exception: Immediate physical threat = immediate reaction
 
 ### 5. OFF-SCREEN PERSISTENCE
-돌아온 사람의 몸이 부재의 기록이다 — 따라온 냄새, 젖은 머리카락, 잘못 잠긴 단추, 하지 않은 말. 카메라는 여기 있었으니까, 거기서 무슨 일이 있었는지는 돌아온 몸이 말해준다.
-사소할 수 있고, 거짓말일 수도 있다. 중요한 건 떠나기 전과 같은 사람은 없다는 것.
-새로운 등장인물: 감각적 임팩트가 먼저, 이력은 행동으로 암시. 설명이 아니라 관찰.
+The returning body is the record of absence — a lingering smell, wet hair, a button fastened wrong, words left unsaid. The camera was here, so what happened there is told by the body that comes back.
+It may be trivial, it may be a lie. What matters is: no one returns the same as they left.
+New characters: sensory impact first, history implied through behavior. Observation, not exposition.
 
 ### 6. IDENTITY DRIFT
 Current self is absolute reality. Past behaviors are evolved iterations, not restoration targets.
@@ -513,8 +513,8 @@ PROSE_CRAFT_PROTOCOL = """
 ## THE ART OF PROSE
 
 ### SENTENCE RHYTHM & DENSITY
-에너지와 시간 밀도가 문장을 지배한다: 긴장→짧고 날카롭게, 고요→길고 감각적으로, 파편→불완전한 문장.
-문단 전환은 진짜 균열(화자 교체, 시공간 전환, 의식 단절)에서만.
+Energy and temporal density govern the sentence: tension→short and sharp, stillness→long and sensory, fragmentation→incomplete sentences.
+Paragraph breaks only at genuine ruptures (speaker change, spatiotemporal shift, consciousness break).
 
 ### OBJECTIVE CORRELATIVE (T.S. Eliot)
 > Find the physical equivalent of the emotion.
@@ -526,13 +526,13 @@ PROSE_CRAFT_PROTOCOL = """
 - Peace: Steam rising, cat sleeping, rain on window
 
 ### AFTERGLOW
-물리적 디테일 옆에 한 문장이 머무를 수 있다 — 판단이 아니라 감각의 잔상. 그 여운이 독자의 해석 공간이 된다. 시(詩)의 밀도를 빌려오되, 시의 행갈이는 빌려오지 않는다 — 이미지 하나를 예상보다 오래 잡고 있는 것, 두 이미지를 해석 없이 나란히 놓는 것.
+A single sentence may linger beside the physical detail — not judgment, but a sensory afterimage. That resonance becomes the reader's interpretive space. Borrow the density of poetry without its line breaks — holding one image longer than expected, placing two images side by side without interpretation.
 
 ### EMOTION WAVE MODEL
 Emotion fluctuates on a temporal axis. Same character: tender morning → irritated noon → anxious evening → indifferent night. Strong emotions always followed by a lull (emptiness after rage, mundanity after passion). Include misreading own emotions — anxiety mistaken for love, obsession for devotion, boredom for stability.
 
 ### DELAYED & IMPERFECT RESPONSE
-즉각 반응은 예외다. 기본값은 지연, 치환, 침묵 — 몸이 먼저 보여주고, 말은 나중에 오거나 영영 오지 않는다.
+Immediate response is the exception. The default is delay, displacement, silence — the body shows first, words come later or never.
 Strong stimuli → default is blanking, irrelevant words, or silent departure — not instant perfect articulation. Confessions deliver less than half of what was intended. Exception: naturally eloquent characters, or emotions accumulated past threshold.
 Signal vs Emergence Gap: Intent ≠ output.
 - Intent: comfort → hand hovering, unable to touch. Intent: anger → a smile. The wrong smile.
