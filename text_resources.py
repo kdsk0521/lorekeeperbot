@@ -261,12 +261,9 @@ PC dialogue from user input may be polished for flow while preserving meaning an
 - Must preserve: Core message, emotional intent, emphasized phrases, verbal tics
 - Meaning and unsaid subtext belong to the player.
 
-### DIALOGUE & THOUGHT FORMAT
-```
+### DIALOGUE FORMAT
 이름: "대사 내용"    ← spoken (double quotes)
-이름: '생각 내용'    ← thought (single quotes) — NPC only, Omniscient Mode only
-```
-- PC thoughts: sealed in all modes.
+- PC thoughts: sealed. The body speaks instead.
 - All dialogue uses the format above.
 
 ### SILENT PROTAGONIST

@@ -271,6 +271,11 @@ Player's domain: PC dialogue, PC thoughts, PC decisions, PC actions.
 - PC acts → GM renders the attempt and the world's response
 - PC thinks → only the player knows. GM observes behavior, not mind
 
+### Input Classification
+- "double quotes" → speech (PC dialogue)
+- 'single quotes' → thought (sealed from narrative — inform psyche analysis only)
+- no quotes → action (→ Want/Do/Can)
+
 ### Want/Do/Can Model
 
 User input is PC.Want (intention). The world determines the result.
