@@ -102,7 +102,7 @@ class WaterfallPipeline:
         bus.dai["doom_relief"] = analysis.get("doom_relief", {})  # legacy fallback
         bus.dai["mental_impact"] = analysis.get("mental_impact", {})
         bus.dai["anomaly_profile"] = analysis.get("anomaly_profile", {})
-        bus.dai["pc_impersonation_check"] = analysis.get("PCImpersonationCheck", {})
+        bus.dai["pc_autonomy_check"] = analysis.get("PCAutonomyCheck", {})
         bus.dai["temporal_orientation"] = analysis.get("TemporalOrientation", {})
         bus.dai["npc_attitudes"] = analysis.get("NPCAttitudes", {})
         bus.dai["npc_knowledge"] = analysis.get("NPCKnowledge", {})

@@ -116,7 +116,7 @@ class SharedBus:
         "mental_impact": {},
         "anomaly_profile": {},
         # Safety & Debug
-        "pc_impersonation_check": {},
+        "pc_autonomy_check": {},
         "temporal_orientation": {},
         "npc_attitudes": {},
         "relevant_context": []

@@ -131,7 +131,6 @@ class TheoriaAnalyzer:
             analysis_resources.TEMPORAL_ORIENTATION_V2,
             analysis_resources.THEORIA_CHAIN,
             analysis_resources.THEORIA_POSITION_EFFECT,
-            analysis_resources.THEORIA_ASPECTS,
             analysis_resources.THEORIA_MEMORY,
             analysis_resources.NPC_ATTITUDE_ANALYSIS,
             analysis_resources.NPC_KNOWLEDGE_V2,
@@ -300,7 +299,7 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
 
 
 ## SAFETY & QUALITY
-- "PCImpersonationCheck": {"detected": boolean, "violations": [{"type": str, "severity": str}], "correction_hint": str}
+- "PCAutonomyCheck": {"pc_spoke": boolean, "pc_thought": boolean, "pc_moved_unprompted": boolean, "gm_focus": "1-sentence: what the GM narrates this turn (world/NPC reactions only)"}
 - "TemporalOrientation": {"focus": "past/present/future", "intensity": 0.0-1.0}
 - "QualityFlags": {
     "convergence_warning": "boolean - unearned comfort / premature resolution",

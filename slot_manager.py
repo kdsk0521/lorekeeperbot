@@ -932,16 +932,21 @@ def build_34_step_prompt(ctx) -> str:
     if not real_time_data:
         real_time_data = getattr(ctx, 'world_ctx', '')
 
-    # PC Impersonation Check 강화
-    pc_check = dai.get("pc_impersonation_check", {})
-    if pc_check.get("detected"):
-        pc_warning = (
-            f"\n\n⚠️ PC_IMPERSONATION_WARNING:\n"
-            f"- detected: true\n"
-            f"- violations: {pc_check.get('violations', [])[:3]}\n"
-            f"- correction_hint: {pc_check.get('correction_hint', '')}"
+    # PC Autonomy Check — 사실 보고 기반
+    pc_check = dai.get("pc_autonomy_check", {})
+    if pc_check.get("pc_spoke") or pc_check.get("pc_thought") or pc_check.get("pc_moved_unprompted"):
+        flags = []
+        if pc_check.get("pc_spoke"): flags.append("PC dialogue present")
+        if pc_check.get("pc_thought"): flags.append("PC inner thought present")
+        if pc_check.get("pc_moved_unprompted"): flags.append("PC moved without player input")
+        gm_focus = pc_check.get("gm_focus", "")
+        pc_reminder = (
+            f"\n\n🎭 PC_AUTONOMY_REMINDER:\n"
+            f"- Flags: {', '.join(flags)}\n"
+            f"- GM focus: {gm_focus}\n"
+            f"- Rule: Narrate WORLD reactions only. PC dialogue/thoughts belong to the player."
         )
-        real_time_data += pc_warning
+        real_time_data += pc_reminder
 
     # Emotion Intensity: iceberg 번역 (밴드명/수치 제거 → 행동 강도 힌트)
     psyche_states_raw = dai.get("psyche_states", {})

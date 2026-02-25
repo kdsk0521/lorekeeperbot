@@ -251,14 +251,6 @@ Find the physical symbol carrying emotional weight → Aspects[] + SensoryAnchor
 Universal defaults: empty space=absence | stopped clock=stasis | cold bed=abandonment | broken object=anger | warmth=safety
 When LOREBOOK provides symbol vocabulary (象), prioritize setting-specific symbols over universal.
 
-### 間 (Ma) — Silence Typography → narrative_chain.silence_type
-Silence has weight. What is NOT said shapes what IS said.
-- reflective: processing, looking inward. Slow, still.
-- hesitant: wanting to speak but afraid. Lips part and close.
-- heavy: loaded with meaning both parties feel. The room fills.
-- tense: pre-conflict. Held breath. Waiting for the break.
-- null: no significant silence in this turn.
-
 """
 
 
@@ -267,34 +259,27 @@ Silence has weight. What is NOT said shapes what IS said.
 # =========================================================
 THEORIA_PC_CHECK = """
 
-## PC IMPERSONATION DETECTION ENGINE
+## PC AUTONOMY ENGINE
 
-### PC Autonomy = Absolute
-Each PC is a player's avatar. Speaking, thinking, or deciding for any PC = agency theft.
+### PC = Player's Avatar
+The GM narrates the world. The player narrates their character.
+GM's domain: environment, NPCs, consequences, sensory feedback.
+Player's domain: PC dialogue, PC thoughts, PC decisions, PC actions.
 
-### Violation Taxonomy
-CRITICAL:
-- Dialogue Theft: Speaking for any PC → "Hello," the PC said (forbidden)
-- Mind Reading: Accessing any PC's thoughts → The PC felt anxious (forbidden)
-
-HIGH:
-- Puppeteering: Moving PC without input → The PC opened the door (user didn't do it)
-- Decision Override: Choosing for the PC
-
-MEDIUM:
-- Parroting: Repeating user input verbatim
-- Reinterpretation: Changing the meaning of user actions
+### GM Response Pattern
+- PC speaks → GM renders world's reaction to those words
+- PC acts → GM renders the attempt and the world's response
+- PC thinks → only the player knows. GM observes behavior, not mind
 
 ### Want/Do/Can Model
 
-User input is PC.Want (intention), NOT PC.Did (completed result).
+User input is PC.Want (intention). The world determines the result.
 
-Example Analysis:
 - "Opens the door" → Want: open door / Do: turns handle / Can: locked? heavy? trapped?
 - "Persuades him" → Want: successful persuasion / Do: speaks to him / Can: NPC state? relationship? logic?
 - "Attacks" → Want: hit enemy / Do: swings fist / Can: range? speed? defense?
 
-Core: Do NOT assume Want = Did. Calculate Can based on world state.
+Result = Do ∩ Can. The world refracts intention through its own logic.
 
 """
 
@@ -362,6 +347,9 @@ Explicit + implicit goals from input. Emotional tone of request.
 ### LocationRisk: None | Low | Medium | High | Extreme
 
 ### SceneType: normal | combat | social | summary | intimate
+
+### Scene Aspects
+Categories: Terrain | Lighting | Sound | Crowd | Objects | Weather | Social — all can help or hinder.
 
 ### EnergyDirection (observed scene energy — Renderer calibrates prose rhythm, NOT outcomes)
 - idle: minimal active force. The world breathes normally.
@@ -453,53 +441,17 @@ Factors: target vulnerability, action potency, environmental amplifiers, stakes
 """
 
 # =========================================================
-# [§14] ASPECT ANALYSIS
-# =========================================================
-THEORIA_ASPECTS = """
-
-## SCENE ASPECTS
-
-### Categories: Terrain | Lighting | Sound | Crowd | Objects | Weather | Social — all can help or hinder.
-
-### Objective Correlative
-Find the physical equivalent of emotion:
-Sadness → empty spaces, stopped clocks | Betrayal → withered plants, cold beds | Love → preserved mementos | Anger → broken things | Peace → warmth, soft sounds
-
-"""
-
-# =========================================================
 # [§15] MEMORY ANALYSIS
 # =========================================================
 THEORIA_MEMORY = """
 
-## FERMENTATION RECALL ENGINE
+## MEMORY PRIORITY
 
 ### Memory Hierarchy
 
 1. FRESH (Current Context): Absolute truth, overrides everything
 2. FERMENTED (History): Transformed by time, non-linear
 3. LORE (Static Setting): Valid only when not contradicted by above
-
-### Fermentation Principle
-
-> Memory doesn't return clean. It resurfaces evolved—bent by present longings, stained by old wounds.
-
-When referencing past events, note how current state distorts recall:
-- Trauma memory → may surface fragmented
-- Nostalgia memory → may be idealized
-- Shame memory → suppressed but leaks through behavior
-
-### Body Memory Doctrine
-
-> The body retains what the mind suppresses.
-
-Triggers and Hidden Memories:
-- Hand raised near face → flinch → childhood violence
-- Locked door → panic, claustrophobia → past imprisonment
-- Specific smell → nausea, dizziness → trauma event
-- Specific words → freeze, dissociate → verbal abuse
-
-Analysis Application: When involuntary physical reaction occurs, explore potential underlying memory.
 
 """
 
@@ -542,42 +494,20 @@ When 오륜 (Five Relationships) role expectation is violated, specify in reason
 # =========================================================
 ANOMALY_DETECTION = """
 
-## ANOMALY ANALYSIS (Genre-Aware Disruption Engine)
+## WORLD EVENT PROPOSAL (Storyteller Engine)
+
+The world does not wait for the PC. Each turn, propose events that would naturally arise from the current world state.
+Events may be consequences of PC actions, or the world moving on its own.
+
+### Proposal Rules
+- Must follow causally from existing world state (Active Conditions, NPC activity, elapsed time)
+- Anomaly seeds from lorebook may serve as starting material
+- Not every turn needs an event — if the world is quiet, output null
+- You only PROPOSE. Code decides timing and acceptance
 
 ### Categories: Supernatural | Psychological | Social | Environmental | Temporal
 ### Intensity → Doom: Low (+1-5) | Mid (+5-10) | High (+10-15) | Extreme (+15-20)
-### Polarity: positive | negative | mixed
-
-### Disruption Axis Selection (Genre-Dependent)
-Determine which PC resource axis this anomaly primarily disrupts:
-- cosmic_horror / action: disruption_axis = "vigor" (physical/will erosion)
-- romance / comedy / slice_of_life: disruption_axis = "composure" (emotional/social disruption)
-- noir: disruption_axis = "composure" (psychological pressure)
-- Extreme intensity OR mixed polarity: disruption_axis = "both" (both axes affected)
-- When uncertain, match the anomaly's nature: physical threat → vigor, social/emotional → composure
-
-### Theory Basis for Defense
-Specify which theory framework applies to defense against this anomaly:
-- cosmic_horror: "Continuum+TMT" (mental resilience + terror management)
-- romance: "Nunchi+Chaemyeon" (social radar + face management)
-- comedy: "Chaemyeon+Goffman" (face + dramaturgical recovery)
-- noir: "ToM+CoK+Statement" (theory of mind + curse of knowledge)
-- action: "Prospect+BATNA" (loss aversion + best alternative)
-- slice_of_life: "Lazarus+Reactance" (coping + autonomy defense)
-- Mixed/other: Choose the most relevant theory pair from above
-
-### Adaptation Group (2-Level Taxonomy)
-Select 1-3 adaptation sub-groups from the CLOSED LIST below:
-- supernatural: undead, dragon, eldritch, cursed, spirit, divine, demonic, shapeshifter
-- psychological: fear, deception, exposure, betrayal, madness, guilt, obsession
-- relational: encounter, jealousy, intimacy, separation, rivalry, loyalty
-- situational: timing, cascade, authority, environment, resource, crowd
-- informational: evidence, surveillance, leak, secret, misinformation
-Output: "adaptation_group": ["fear", "betrayal"] (exact English keys from above)
-
-### Defense Hint
-Provide a 1-sentence Korean hint describing how the PC could defend against this anomaly.
-Base on the theory_basis: e.g. "정신적 연속성을 유지하며 공포에 저항" (Continuum+TMT)
+### Polarity: positive (opportunity) | negative (threat) | mixed (double-edged)
 
 ### Active Conditions (Situation Aspects)
 Active conditions are persistent world facts from previous events. They appear in CURRENT STATE grouped by location.
@@ -590,7 +520,7 @@ use "condition_updates" to update intensity and/or description. Do NOT resolve a
 
 Location Interaction: Conditions at the SAME location may interact with each other.
 If co-located conditions combine or transform (e.g., "flooded streets" + "cold snap" → new event "frozen streets"),
-propose the result as a new anomaly_profile event or update existing conditions via condition_updates.
+propose the result as a new event or update existing conditions via condition_updates.
 
 Location Override: If an event occurs at a different location from CurrentLocation,
 set "location" in anomaly_profile. Leave empty for events at the current location.
@@ -907,7 +837,6 @@ ANALYSIS_CORE_DNA = {
     "temporal_v2": TEMPORAL_ORIENTATION_V2,
     "chain": THEORIA_CHAIN,
     "position_effect": THEORIA_POSITION_EFFECT,
-    "aspects": THEORIA_ASPECTS,
     "memory": THEORIA_MEMORY,
     "npc_attitude": NPC_ATTITUDE_ANALYSIS,
     "anomaly": ANOMALY_DETECTION,
