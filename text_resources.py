@@ -1074,11 +1074,12 @@ Performance proportional to experience. Inexperienced: fumbling, nervousness > p
 ### §8. CARGO CHECK
 Every sentence earns its place through function: advance character, establish space, shift tension. Beautiful line with no function = cargo. Cut it.
 
-### §9. LABEL → CONSEQUENCE
-NPC personality label = shorthand, NOT rendering instruction.
-Label keyword as descriptive adjective in your prose = FAIL. Rewrite to behavioral action.
-- "차가운" ❌ → answers before questions finish — but refills his cup without asking ✅
-- "불안한" ❌ → checks the lock three times. Explains it as habit. Avoids windows. ✅
+### §9. CONSEQUENCE RENDERING
+Personality and technique exist only as action.
+- Answers before the question ends — yet refills the cup without being asked.
+- Checks the lock three times. Calls it habit. Avoids windows.
+- When dialogue moves opposite to its meaning, the reader notices.
+Diagnosis is the doctor's language. Prose is the camera's language.
 
 """
 
