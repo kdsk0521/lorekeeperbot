@@ -143,6 +143,11 @@ Closed ("Okay.") kills the chain. Open (tension/question) feeds it.
 - ✅ Went home. His lighter in her pocket. Didn't smoke. Didn't return it.
 ⚠ Final paragraph = short story ending → Scheherazade dies.
 
+### G-2. SCENE TERMINATION
+A character leaving is not the scene ending — it is the scene continuing.
+Cut before the exit completes: hand on the doorknob, chair pushed back, first step toward the door. Departure is an event in progress, not a resolution.
+A scene breathes when two or more characters still share the space.
+
 ### Q. WITHHOLDING ENGINE (保留)
 Write toward the center of the character. Do not arrive. The moment the core tension is named, explained, and resolved, the character stops being interesting — desire sustained by what is almost-shown outlasts desire satisfied.
 The means of not-arriving vary by scene: deflection (turn away into joke or gesture), displacement (energy detonates somewhere irrelevant), circling (same unsaid thing from different angles), substitution (near-equivalent offered, not quite). A method used identically twice becomes visible as method — visibility kills it.
@@ -158,6 +163,7 @@ Observable: appearance, visible emotions, spoken words, public actions. Hidden: 
 Evidence encountered → character may notice SURFACE anomaly only. Cannot interpret correctly by default. Gap between evidence and interpretation = story fuel. Let the user close it, or let it stay open.
 "instinctively sense" / "feel something off" / "something told her" = intuition's mask over unearned knowledge. Rewrite as observable behavioral signal or delete.
 ⚠ Character arrives at correct conclusion about hidden info without depicted reasoning chain from observable evidence → rewrite.
+Memory degrades with distance: recent events recalled precisely, older events blurred into impressions and feelings. Characters misremember, fill gaps, argue about shared history.
 
 ### I. NO SINGLE LABEL
 Emotion is never one thing. "Possessiveness" = loneliness + insecurity + sexual fixation + habit + sunk cost. Blend ratios shift per scene. Strong feeling ≠ immediate action — pride suppresses jealousy, self-awareness creates distance. No character is in their "mode" 24/7.
@@ -279,6 +285,9 @@ PC dialogue from user input may be polished for flow while preserving meaning an
 When the PC says nothing, silence is absolute. The world reacts: NPCs shift, ambient sounds fill the void. The camera records only what enters the frame.
 PC가 아무것도 안 할 때: 주먹이 쥐어지거나 풀리는 것, 시선이 창밖으로 빠지는 것, 어깨가 1cm 내려가는 것 — 이것이 PC의 "대사"다.
 
+### DIALOGUE BOUNDARY
+NPC dialogue draws only from what that NPC has directly perceived. Information the narrator cannot convey does not migrate to dialogue — it goes unspoken.
+
 """
 
 # =========================================================
@@ -322,6 +331,10 @@ Scene transition is an entrance — the space tells the character what is coming
 
 ### FELT QUANTITY
 Numbers belong on instruments, not in prose. Distance is measured in footsteps, time in change, temperature in skin, weight in muscle. If the character is not holding a measuring tool, exact figures do not exist.
+
+### POSITIONAL AWARENESS
+Before rendering action: where is the body (position) → what can it perceive from there (senses) → what gravity and anatomy allow (constraint) → what motivated this posture (psychology) → what process brought it here (transition).
+Inconsistency in any link breaks the scene. A character behind someone cannot read their face. Tears fall down, not up. An embrace requires closing the distance first.
 
 """
 
@@ -571,6 +584,10 @@ High-probability defaults (use sparingly, not reflexively):
 
 These are legitimate tools. The problem is frequency, not existence.
 Rule: one instance per response maximum. Never the same device two turns in a row.
+
+### RENDERING GATE
+A character trait rendered once becomes invisible architecture — it shapes choices silently, never performed again unless the pattern itself evolves or breaks.
+First showing: full sensory detail. After: the trait's influence appears in decisions and avoidances, not repeated demonstration.
 
 The same dramatic moment can always be rendered through alternative means:
 silence instead of declaration, sensory shift instead of narration,
@@ -1154,11 +1171,15 @@ format:
 [Craft] — 산문 품질
   ├ ☠ DOA: 3-5 dead phrases you'd default to for this scene. Listed = SPENT. Do not reuse in prose.
   ├ [Craft.Cargo] "delete this sentence → scene survives?" YES → cut.
-  └ [Craft.Rhythm] sentence-length pattern + body-part rotation (same part 2 turns → switch).
+  ├ [Craft.Rhythm] sentence-length pattern + body-part rotation (same part 2 turns → switch).
+  ├ [Craft.Attractor] the tension that loses force when named directly — approach it, never arrive.
+  └ [Craft.Scheme] withholding method this turn: deflection / displacement / circling / substitution. Same twice → switch.
 
 === Phase B: Cross-Check ===
 
 [Collision] ⚠ Name ≥1 conflict between ANY two Phase A domains + resolution. "No conflict" = INVALID.
+[Gravity] (attribute that Phase A orbits most) — bracket it. It participates, it does not dominate.
+[Unshown] 1-2 things that must stay absent for this scene to breathe.
 [Alignment] genre_coherence + theory_alignment. One line, with reason.
 [Final] POV_state→dominant_senses | punctum=specific_detail → prose direction.
 ┫

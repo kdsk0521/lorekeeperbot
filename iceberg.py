@@ -460,6 +460,21 @@ def translate_continuity_check(check_data) -> str:
             + "\n".join(directives))
 
 
+_SCHEME_KR = {
+    "deflection": "전환(농담/제스처로 회피)",
+    "displacement": "치환(무관한 곳에서 폭발)",
+    "circling": "선회(다른 각도에서 같은 것)",
+    "substitution": "대체(비슷하지만 다른 것 제공)",
+}
+
+def translate_prev_scheme(prev_scheme: str) -> str:
+    """render_fingerprint.withholding_scheme → 직전 수법 피드백 (Slot 16 주입)."""
+    if not prev_scheme or prev_scheme == "none":
+        return ""
+    scheme_kr = _SCHEME_KR.get(prev_scheme, prev_scheme)
+    return f"직전 보류 수법: {scheme_kr}"
+
+
 # =========================================================
 # 5. NPC attitudes (Slot 17)
 # =========================================================

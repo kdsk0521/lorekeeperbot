@@ -267,13 +267,14 @@ async def _extract_batch(
             "\n### render_fingerprint"
             "\nAnalyze the AI RESPONSE's rendering properties (not story content)."
             "\nOutput: `{\"gaze\": str, \"lighting\": str, \"palette\": str, "
-            "\"rhythm\": str, \"temporal_density\": str, \"unresolved\": []}`"
+            "\"rhythm\": str, \"temporal_density\": str, \"unresolved\": [], \"withholding_scheme\": str}`"
             "\n- gaze: 서사의 시선/초점 — 무엇을 클로즈업했고 무엇이 배경인가 (1문장 Korean)"
             "\n- lighting: 장면의 명암 — 밝기, 그림자, 광원 (1구절 Korean)"
             "\n- palette: 색감/온도감 — 따뜻함/차가움, 지배적 색조 (1구절 Korean)"
             "\n- rhythm: 산문 리듬 — 문장 길이 패턴, 쉼표/느낌표/온점 밀도, 호흡 (1구절 Korean)"
             "\n- temporal_density: 실제 시간 밀도 — 벌브/타임랩스/장노출/인터벌/실시간/슬로모션/프리즈 중 가장 가까운 것 (1단어)"
             "\n- unresolved: 씬 레벨 미결 디테일 — 응답되지 않은 것, 열린 감각, 중단된 행동. max 3. Korean."
+            "\n- withholding_scheme: 이 응답에서 사용된 보류 수법 — deflection/displacement/circling/substitution/none 중 1개 (1단어)"
         )
         prev = previous_continuity or {}
         if prev:

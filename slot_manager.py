@@ -786,6 +786,14 @@ def build_34_step_prompt(ctx) -> str:
     if continuity_text:
         scene_intel_parts.append(continuity_text)
 
+    # Withholding Scheme rotation feedback (render_fingerprint → Slot 16)
+    if channel_id:
+        _prev_frame = domain_manager.get_latest_frame(channel_id)
+        _prev_scheme = _prev_frame.get("render_fingerprint", {}).get("withholding_scheme", "")
+        _scheme_text = iceberg.translate_prev_scheme(_prev_scheme)
+        if _scheme_text:
+            scene_intel_parts.append(_scheme_text)
+
     # Apophenia Guard: iceberg 번역 (OBVIOUS= → 한국어)
     trait_conn = dai.get("trait_connections", {})
     trait_text = iceberg.translate_trait_connections(trait_conn)
