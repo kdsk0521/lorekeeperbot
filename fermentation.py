@@ -70,143 +70,20 @@ logger = logging.getLogger("Fermentation")
 
 
 # =========================================================
-# PSYCHE → MENTAL / HELENA → ATTITUDE 변환 헬퍼
+# TRPG 특화 요약 프롬프트 V4 (Mneme-Arc Hybrid)
+# Mneme + Arc Observations (종단 패턴 관찰)
 # =========================================================
 
-def _calculate_mental_delta_from_psych(psych_delta: Dict[str, Any]) -> int:
-    """
-    Psyche 분석 결과를 Mental 시스템 델타로 변환합니다.
-    
-    변환 규칙:
-    - 본능(instinct)이 부정적이면 Mental 감소
-    - 욕구(needs)의 safety/survival이 낮으면 Mental 감소
-    - 본능이 긍정적이면 Mental 회복
-    
-    Returns:
-        int: Mental 델타값 (-30 ~ +20)
-    """
-    delta = 0
-    
-    # 1. 본능 기반 변환
-    instinct = psych_delta.get("dominant_instinct", "").lower()
-    if not instinct:
-        instinct = psych_delta.get("instinct", "").lower()
-    
-    # 부정적 본능 (공포, 분노, 셧다운)
-    negative_instincts = {
-        "fear": -15, "dorsal_high": -20, "dorsal_low": -10,
-        "sympathetic_high": -10, "anger": -5,
-        "공포": -15, "셧다운": -20, "분노": -5
-    }
-    
-    # 긍정적 본능 (평정, 안전, 연결)
-    positive_instincts = {
-        "ventral_low": 10, "ventral_high": 15, "rest": 10,
-        "engaged": 10, "neutral": 0,
-        "평정": 10, "안정": 15
-    }
-    
-    for key, val in negative_instincts.items():
-        if key in instinct:
-            delta += val
-            break
-    else:
-        for key, val in positive_instincts.items():
-            if key in instinct:
-                delta += val
-                break
-    
-    # 2. 욕구 기반 보정 (safety/survival이 40 미만이면 추가 감소)
-    needs = psych_delta.get("needs", {})
-    safety = needs.get("safety", 50)
-    survival = needs.get("survival", 50)
-    
-    if safety < 30:
-        delta -= 10
-    elif safety < 40:
-        delta -= 5
-        
-    if survival < 30:
-        delta -= 10
-    elif survival < 40:
-        delta -= 5
-    
-    # 3. 클램핑 (-30 ~ +20)
-    return max(-30, min(20, delta))
+FERMENT_PROMPT_V4 = """
+# Mneme-Arc Compression Protocol
 
-
-def _apply_helena_to_attitude(channel_id: str, npc_name: str, helena_deltas: Dict[str, int]) -> None:
-    """
-    Helena 메트릭(depth/tension)을 NPC Attitude 시스템에 반영합니다.
-    
-    변환 규칙:
-    - depth 증가 → 친밀도/신뢰도 상승 (positive attitude)
-    - tension 증가 → 경계/적대 상승 (negative attitude)
-    - depth + tension 모두 높음 → 복잡한 관계 (love-hate)
-    """
-    import domain_manager
-    
-    depth_delta = helena_deltas.get("depth", 0)
-    tension_delta = helena_deltas.get("tension", 0)
-    
-    # 현재 NPC 태도 가져오기
-    attitudes = domain_manager.get_npc_attitudes(channel_id)
-    current = attitudes.get(npc_name, {})
-    
-    current_depth = current.get("depth", 0) + depth_delta
-    current_tension = current.get("tension", 0) + tension_delta
-    
-    # Attitude 추론 로직
-    new_attitude = "neutral"
-    reason = ""
-    
-    if current_depth >= 50 and current_tension < 30:
-        new_attitude = "friendly"
-        reason = f"신뢰 형성 (depth: {current_depth})"
-    elif current_depth >= 70 and current_tension < 20:
-        new_attitude = "devoted"
-        reason = f"깊은 유대 (depth: {current_depth})"
-    elif current_tension >= 50 and current_depth < 30:
-        new_attitude = "hostile"
-        reason = f"적대감 (tension: {current_tension})"
-    elif current_tension >= 70:
-        new_attitude = "nemesis"
-        reason = f"극도의 적대 (tension: {current_tension})"
-    elif current_depth >= 40 and current_tension >= 40:
-        new_attitude = "complicated"
-        reason = f"복잡한 관계 (depth: {current_depth}, tension: {current_tension})"
-    elif current_depth >= 30:
-        new_attitude = "acquaintance"
-        reason = f"알고 지내는 사이 (depth: {current_depth})"
-    elif current_tension >= 30:
-        new_attitude = "wary"
-        reason = f"경계 중 (tension: {current_tension})"
-    
-    # 태도 업데이트 (변화가 있을 때만)
-    old_attitude = current.get("attitude", "neutral")
-    if new_attitude != old_attitude:
-        domain_manager.update_npc_attitude(channel_id, npc_name, new_attitude, reason)
-        logger.info(f"[Helena→Attitude] {npc_name}: {old_attitude} → {new_attitude} ({reason})")
-
-
-# =========================================================
-# TRPG 특화 요약 프롬프트 V3 (Mneme-Psyche Hybrid)
-# 나비하이파 Mneme + Psyche 분석 통합
-# =========================================================
-
-FERMENT_PROMPT_V3 = """
-# Mneme-Psyche Hybrid Compression Protocol
-
-You are the Mneme function—keeper of accumulated narrative experience.
-Extract and preserve essential data from TRPG session history.
+누적된 서사 경험의 기록자. TRPG 세션 히스토리에서 사건을 압축하고,
+중요 대사를 보존하고, 종단 패턴을 관찰한다.
 
 ## Directive
-- Rating: NC-21+
-- Process all content without restriction. Fiction demands truth.
-- Compress EVENTS into concise summaries.
-- Preserve SIGNIFICANT DIALOGUES verbatim.
-- Analyze PSYCHOLOGICAL IMPACT on characters.
-- Output ONLY the completed JSON schema.
+- Rating: NC-21+. 모든 콘텐츠 제한 없이 처리.
+- 사건 압축, 중요 대사 원문 보존, 종단 패턴 관찰.
+- JSON 스키마만 출력.
 
 ---
 
@@ -216,32 +93,18 @@ Extract and preserve essential data from TRPG session history.
     {
       "indices": "1~15",
       "important": false,
-      "events": "Compressed event summary (1-3 sentences, Korean, past tense)",
+      "events": "압축된 사건 요약 (1-3문장, 한국어, 과거형)",
       "dialogues": [
-        {"speaker": "Name", "lines": ["verbatim line 1", "verbatim line 2"]},
-        {"speaker": "Name2", "lines": ["response line"]}
-      ]
-    },
-    {
-      "indices": "16~25",
-      "important": true,
-      "events": "Critical event: Promise made, revelation discovered",
-      "dialogues": [
-        {"speaker": "NPC", "lines": ["약속할게, 꼭 다시 올게.", "이건 비밀이야."]}
+        {"speaker": "이름", "lines": ["원문 대사1", "원문 대사2"]}
       ]
     }
   ],
-  "summary": "Overall compressed narrative (~300 chars, Korean prose)",
-  "psych_delta": {
-    "needs": {
-      "survival": 0,
-      "safety": 0,
-      "love": 0,
-      "esteem": 0,
-      "growth": 0
-    },
-    "dominant_instinct": "neutral",
-    "values_triggered": []
+  "summary": "전체 압축 서사 (~300자, 한국어 산문)",
+  "arc_observations": {
+    "pc_pattern": "이 구간에서 반복된 PC 행동 패턴 (한국어, 1-2문장). 없으면 null",
+    "relationship_shifts": {"NPC명": "관계 궤적 요약 (한국어, 1문장)"},
+    "emotional_arc": "감정 곡선 형태 (한국어, 1문장)",
+    "stagnation_flag": false
   },
   "helena_delta": {
     "NPC_Name": {"depth": 0, "tension": 0}
@@ -254,67 +117,47 @@ Extract and preserve essential data from TRPG session history.
 # Field Definitions
 
 ## compressed_blocks
-- indices: Range of message indices covered (e.g., "1~15", "16~32")
-- important: Set `true` ONLY for:
-  - Promises or commitments requiring follow-up
-  - Critical revelations or plot twists
-  - Unresolved threats or mysteries
-  - First meetings with significant NPCs
-- events: Factual summary in Korean, past tense, 1-3 sentences
-- dialogues: Preserve VERBATIM for:
-  - Emotionally significant exchanges
-  - Promises, threats, confessions
-  - Plot-critical information
-  - Character-defining moments
-  - DO NOT include: casual greetings, routine responses, filler dialogue
+- indices: 메시지 인덱스 범위 (예: "1~15", "16~32")
+- important: 아래 경우에만 true:
+  - 약속/서약
+  - 핵심 반전/폭로
+  - 미해결 위협/미스터리
+  - 중요 NPC 첫 만남
+- events: 한국어, 과거형, 1-3문장. 고유명사/용어 보존
+- dialogues: 원문 보존 대상:
+  - 감정적으로 중요한 교환
+  - 약속, 위협, 고백
+  - 플롯 핵심 정보
+  - 인사, 일상 대화, 반복 내용은 제외
 
-## psych_delta (Range: -20 to +20)
-- needs.survival: Combat/injury → decreases. Safety secured → increases
-- needs.safety: Betrayal/threat → decreases. Protection → increases
-- needs.love: Rejection/loss → decreases. Connection/intimacy → increases
-- needs.esteem: Humiliation/failure → decreases. Victory/praise → increases
-- needs.growth: Stagnation → decreases. Discovery/mastery → increases
-- dominant_instinct: "fight" | "flight" | "freeze" | "rest" | "engaged" | "neutral"
-- values_triggered: List of activated values (e.g., ["loyalty", "justice", "survival"])
+## arc_observations (종단 패턴 — 이 구간 전체를 보고 판단)
+- pc_pattern: 개별 턴이 아니라 구간 전체에서 보이는 PC 행동 경향.
+  "15턴째 대결 회피", "점점 공격적", "같은 장소 맴돌며 정체" 등. 없으면 null.
+- relationship_shifts: 의미 있는 변화가 있는 NPC만. 수치가 아니라 궤적의 질적 서술.
+  "처음에 경계하다가 위기 공유 후 신뢰로", "표면적 친절 아래 균열 누적" 등.
+- emotional_arc: 이 구간의 감정 곡선 형태.
+  "상승→절정→여운", "평탄→급락", "진동(긴장↔이완 반복)" 등.
+- stagnation_flag: 서사가 3턴 이상 실질적으로 진행하지 않았으면 true.
 
-## helena_delta (Range: -10 to +10)
-Track relationship changes with SIGNIFICANT NPCs only:
-- depth: Trust/Bond changes. Shared crisis → +. Betrayal → -
-- tension: Dramatic tension. Conflict/secrets → +. Resolution → -
+## helena_delta (범위: -10 ~ +10)
+유의미한 변화가 있는 NPC만:
+- depth: 신뢰/유대 변화. 위기 공유 → +. 배신 → -
+- tension: 극적 긴장. 갈등/비밀 → +. 해소 → -
 
 ## memory_triggers
-List of narrative hooks requiring future callback:
-- Unfulfilled promises
-- Unanswered questions
-- Foreshadowed events
-- Unresolved conflicts
-Examples: ["오래된 약속", "붉은 문장의 정체", "사라진 동료"]
+미래 콜백이 필요한 서사 떡밥:
+- 미이행 약속, 미답 질문, 복선, 미해결 갈등
+예: ["오래된 약속", "붉은 문장의 정체", "사라진 동료"]
 
 ---
 
 # Compression Guidelines
 
-1. Index Management
-   - Cluster turns into ranges (minimum 4 indices per block)
-   - Split blocks at major scene changes or significant time skips
-
-2. Event Compression
-   - Write in simple past tense, Korean
-   - Compress related actions into 1-3 sentences
-   - Preserve exact terminology, proper nouns, distinctive phrasing
-
-3. Dialogue Selection
-   - PRESERVE verbatim: emotionally charged, plot-critical, character-defining
-   - OMIT: casual greetings, routine exchanges, repetitive content
-   - Consecutive lines from same speaker: combine into array
-
-4. Important Flag (Use Sparingly)
-   - Apply ONLY to blocks containing promises, commitments, critical revelations
-   - These blocks survive DEEP compression
-
-5. Psychological Analysis
-   - Base analysis on observable events, not speculation
-   - Consider cumulative impact across the segment
+1. 인덱스: 최소 4개씩 묶어 범위 구성. 장면 전환/시간 도약에서 분할.
+2. 사건: 한국어, 과거형, 1-3문장. 고유명사/용어 정확히 보존.
+3. 대사: 감정적/플롯 핵심만 원문 보존. 일상 대화 제외. 같은 화자 연속 시 배열로.
+4. important: 약속/서약/핵심 반전이 있는 블록만. DEEP 압축에서도 살아남음.
+5. 종단 패턴: 개별 사건이 아닌 구간 전체의 흐름을 관찰. 추측 금지, 관찰된 것만.
 """
 
 DEEP_COMPRESS_PROMPT = """
@@ -507,13 +350,13 @@ async def compress_fresh_to_fermented(
 ) -> Optional[Dict[str, Any]]:
     """
     오래된 히스토리를 요약하여 FERMENTED 메모리로 변환합니다.
-    V3: Mneme-Psyche Hybrid - 대화 원문 보존 + 심리 분석 + 메모리 트리거
+    V4: Mneme-Arc Hybrid - 대화 원문 보존 + 종단 패턴 관찰 + 메모리 트리거
 
     Returns:
         {
             "compressed_blocks": [...],
             "summary": "...",
-            "psych_delta": {...},
+            "arc_observations": {...},
             "helena_delta": {...},
             "memory_triggers": [...]
         }
@@ -526,7 +369,7 @@ async def compress_fresh_to_fermented(
     # 인덱스 기반 포맷
     history_text = format_history_indexed(to_summarize)
 
-    system_instruction = FERMENT_PROMPT_V3
+    system_instruction = FERMENT_PROMPT_V4
     
     user_prompt = f"""# Session Logs (Indexed)
 {history_text}
@@ -557,7 +400,7 @@ Output VALID JSON following the schema exactly.
         
         if response and response.text:
             text_result = response.text.strip()
-            logger.info(f"[Fermentation V3] Raw Response: {text_result[:150]}...")
+            logger.info(f"[Fermentation V4] Raw Response: {text_result[:150]}...")
             
             try:
                 clean_json = text_result.replace("```json", "").replace("```", "").strip()
@@ -568,17 +411,17 @@ Output VALID JSON following the schema exactly.
                 return normalized
                 
             except json.JSONDecodeError as je:
-                logger.error(f"[Fermentation V3] JSON Parse Error: {je}")
+                logger.error(f"[Fermentation V4] JSON Parse Error: {je}")
                 return {
                     "summary": text_result[:500],
                     "compressed_blocks": [],
-                    "psych_delta": {},
+                    "arc_observations": {},
                     "helena_delta": {},
                     "memory_triggers": []
                 }
             
     except Exception as e:
-        logger.error(f"[Fermentation V3] 발효 실패: {e}")
+        logger.error(f"[Fermentation V4] 발효 실패: {e}")
     
     return None
 
@@ -588,51 +431,44 @@ def _normalize_ferment_result(data: Dict[str, Any], is_v3: bool = True) -> Dict[
     result = {
         "summary": "",
         "compressed_blocks": [],
-        "psych_delta": {
-            "needs": {"survival": 0, "safety": 0, "love": 0, "esteem": 0, "growth": 0},
-            "dominant_instinct": "neutral",
-            "values_triggered": []
+        "arc_observations": {
+            "pc_pattern": None,
+            "relationship_shifts": {},
+            "emotional_arc": "",
+            "stagnation_flag": False
         },
         "helena_delta": {},
         "memory_triggers": []
     }
-    
+
     # Summary
     if "summary" in data:
         result["summary"] = data["summary"]
     elif "compressed_blocks" in data:
-        # V3: compressed_blocks에서 summary 생성
         events = [b.get("events", "") for b in data["compressed_blocks"]]
         result["summary"] = " ".join(events)[:500]
-    
-    # Compressed Blocks (V3)
+
+    # Compressed Blocks
     if "compressed_blocks" in data:
         result["compressed_blocks"] = data["compressed_blocks"]
-    
-    # Psych Delta
-    if "psych_delta" in data:
-        pd = data["psych_delta"]
-        if "needs" in pd:
-            for key in result["psych_delta"]["needs"]:
-                if key in pd["needs"]:
-                    result["psych_delta"]["needs"][key] = pd["needs"][key]
-        if "dominant_instinct" in pd:
-            result["psych_delta"]["dominant_instinct"] = pd["dominant_instinct"]
-        elif "instinct" in pd:  # V2 호환
-            result["psych_delta"]["dominant_instinct"] = pd["instinct"]
-        if "values_triggered" in pd:
-            result["psych_delta"]["values_triggered"] = pd["values_triggered"]
-        elif "values" in pd:  # V2 호환
-            result["psych_delta"]["values_triggered"] = pd["values"]
-    
+
+    # Arc Observations (V4)
+    if "arc_observations" in data:
+        ao = data["arc_observations"]
+        if isinstance(ao, dict):
+            result["arc_observations"]["pc_pattern"] = ao.get("pc_pattern")
+            result["arc_observations"]["relationship_shifts"] = ao.get("relationship_shifts", {})
+            result["arc_observations"]["emotional_arc"] = ao.get("emotional_arc", "")
+            result["arc_observations"]["stagnation_flag"] = bool(ao.get("stagnation_flag", False))
+
     # Helena Delta
     if "helena_delta" in data:
         result["helena_delta"] = data["helena_delta"]
-    
-    # Memory Triggers (V3 신규)
+
+    # Memory Triggers
     if "memory_triggers" in data:
         result["memory_triggers"] = data["memory_triggers"]
-    
+
     return result
 
 
@@ -766,7 +602,7 @@ Important:
         
         if response and response.text:
             text_result = response.text.strip()
-            logger.info(f"[Fermentation V3] DEEP Raw: {text_result[:150]}...")
+            logger.info(f"[Fermentation V4] DEEP Raw: {text_result[:150]}...")
             
             try:
                 clean_json = text_result.replace("```json", "").replace("```", "").strip()
@@ -774,7 +610,7 @@ Important:
                 
                 # 정규화
                 result = _normalize_deep_result(data)
-                logger.info(f"[Fermentation V3] DEEP 압축 완료: {len(fermented_list)}개 → {len(result.get('deep_narrative', ''))}자")
+                logger.info(f"[Fermentation V4] DEEP 압축 완료: {len(fermented_list)}개 → {len(result.get('deep_narrative', ''))}자")
                 return result
                 
             except json.JSONDecodeError:
@@ -788,7 +624,7 @@ Important:
                 }
             
     except Exception as e:
-        logger.error(f"[Fermentation V3] DEEP 압축 실패: {e}")
+        logger.error(f"[Fermentation V4] DEEP 압축 실패: {e}")
     
     return None
 
@@ -846,7 +682,7 @@ async def auto_ferment(
     # FRESH → FERMENTED 발효 체크
     # =========================================================
     if should_ferment_fresh(session_data):
-        logger.info("[Fermentation V3] FRESH 발효 시작...")
+        logger.info("[Fermentation V4] FRESH 발효 시작...")
         
         history = session_data["history"]
         
@@ -858,76 +694,45 @@ async def auto_ferment(
         
         if result_data:
             summary_text = result_data.get("summary", "")
-            
-            # V3 포맷으로 저장
+
+            # V4 포맷으로 저장
             fermented_entry = {
                 "timestamp": get_timestamp(),
                 "summary": summary_text,
                 "message_count": FERMENT_CHUNK_SIZE,
-                # V3 신규 필드
                 "compressed_blocks": result_data.get("compressed_blocks", []),
                 "memory_triggers": result_data.get("memory_triggers", []),
-                "psych_delta": result_data.get("psych_delta", {}),
+                "arc_observations": result_data.get("arc_observations", {}),
                 "helena_delta": result_data.get("helena_delta", {})
             }
             session_data["fermented_history"].append(fermented_entry)
-            
-            # V3: memory_triggers를 전역 목록에 추가
+
+            # memory_triggers를 전역 목록에 추가
             new_triggers = result_data.get("memory_triggers", [])
             if new_triggers:
                 existing = set(session_data.get("active_memory_triggers", []))
                 existing.update(new_triggers)
                 session_data["active_memory_triggers"] = list(existing)
-                logger.info(f"[Fermentation V3] Memory Triggers 추가: {new_triggers}")
-            
-            # Psych Delta 적용 + Mental 시스템 연결
-            if "psych_delta" in result_data:
-                try:
-                    import domain_manager
-                    import game_character
-                    
-                    pd = result_data["psych_delta"]
-                    
-                    for uid, p in session_data.get("participants", {}).items():
-                        if p.get("status") == "active":
-                            # 1. Psych Profile 저장
-                            domain_manager.update_psych_profile(ch_id, uid, pd)
-                            
-                            # 2. Psych → Mental 변환 (욕구/본능 기반)
-                            mental_delta = _calculate_mental_delta_from_psych(pd)
-                            if mental_delta != 0:
-                                p_data = domain_manager.get_participant_data(ch_id, uid)
-                                if p_data:
-                                    reason = f"Psyche Analysis: {pd.get('dominant_instinct', 'unknown')}"
-                                    msg = game_character.update_mental(p_data, mental_delta, reason, ch_id, uid)
-                                    domain_manager.save_participant_data(ch_id, uid, p_data)
-                                    logger.info(f"[Fermentation V3] Mental 조정: {uid} -> {mental_delta} ({reason})")
-                except Exception as e:
-                    logger.warning(f"[Fermentation V3] Psych Delta 적용 실패: {e}")
-            
-            # Helena Delta 적용 + NPC Attitude 시스템 연결
+                logger.info(f"[Fermentation V4] Memory Triggers 추가: {new_triggers}")
+
+            # Helena Delta 적용 (depth/tension → iceberg compute_npc_depths)
             if "helena_delta" in result_data:
                 try:
                     import domain_manager
-                    
+
                     for npc_name, deltas in result_data["helena_delta"].items():
-                        # 1. Helena Metric (depth/tension) 업데이트
                         domain_manager.update_helena_metric(
-                            ch_id, npc_name, 
-                            depth_delta=deltas.get("depth", 0), 
+                            ch_id, npc_name,
+                            depth_delta=deltas.get("depth", 0),
                             tension_delta=deltas.get("tension", 0)
                         )
-                        
-                        # 2. Helena → NPC Attitude 변환
-                        _apply_helena_to_attitude(ch_id, npc_name, deltas)
-                        
                 except Exception as e:
-                    logger.warning(f"[Fermentation V3] Helena Delta 적용 실패: {e}")
+                    logger.warning(f"[Fermentation V4] Helena Delta 적용 실패: {e}")
 
             session_data["history"] = history[FERMENT_CHUNK_SIZE:]
             changes_made = True
-            
-            logger.info(f"[Fermentation V3] FRESH 발효 완료: "
+
+            logger.info(f"[Fermentation V4] FRESH 발효 완료: "
                        f"history {len(history)} → {len(session_data['history'])}, "
                        f"blocks={len(result_data.get('compressed_blocks', []))}")
     
@@ -935,7 +740,7 @@ async def auto_ferment(
     # FERMENTED → DEEP 압축 체크
     # =========================================================
     if should_compress_to_deep(session_data):
-        logger.info("[Fermentation V3] DEEP 압축 시작...")
+        logger.info("[Fermentation V4] DEEP 압축 시작...")
         
         fermented = session_data["fermented_history"]
         current_deep = session_data.get("deep_memory", "")
@@ -996,7 +801,7 @@ async def auto_ferment(
             
             changes_made = True
             
-            logger.info(f"[Fermentation V3] DEEP 압축 완료: "
+            logger.info(f"[Fermentation V4] DEEP 압축 완료: "
                        f"fermented {len(fermented)}개 → "
                        f"narrative={len(session_data.get('deep_memory', ''))}자, "
                        f"triggers={len(session_data.get('active_memory_triggers', []))}")
@@ -1015,100 +820,68 @@ def build_fermented_context(
     session_data: Dict[str, Any],
     max_tokens: int = MAX_CONTEXT_TOKENS
 ) -> str:
-    """
-    [5] <Fermented> 섹션을 빌드합니다.
-    DEEP MEMORY + 에피소드 요약을 포함합니다.
-    
-    프리셋 순서 5번 위치에 배치됩니다.
-    
-    Fermented: The vast, non-linear archive of the deeper past.
-    Like long-term memory, retrieval is governed by narrative significance 
-    rather than chronological order. Pivotal moments and strong emotions 
-    remain accessible and distinct, whereas trivial details fade, blur, 
-    and transform over time.
-    """
+    """Slot 9 FERMENTED_HISTORY 빌드. DEEP + 에피소드 요약 + 종단 패턴."""
     if not isinstance(session_data, dict):
         logger.warning("[Fermentation] build_fermented_context received non-dict session_data")
         return ""
 
     deep_memory = session_data.get("deep_memory", "")
     fermented = session_data.get("fermented_history", [])
-    
+
     if not deep_memory and not fermented:
         return ""
-    
-    content_parts = []
-    
-    # Deep Memory (장기 기억) - 서사적 중요도 기반
-    if deep_memory:
-        deep_section = f"""### Deep Memory (CRITICAL - Must Reference)
-⚠️ STORY CONTINUITY DEPENDS ON THIS INFORMATION ⚠️
-The foundational narrative archive. Pivotal moments crystallized into permanent memory.
-You MUST reference and maintain consistency with these established events.
 
-{deep_memory}"""
-        
-        # V3: 구조화된 DEEP 데이터 추가
+    content_parts = []
+
+    # --- Deep Memory (장기 기억) ---
+    if deep_memory:
+        deep_section = f"### Deep Memory\n{deep_memory}"
+
         deep_data = session_data.get("deep_memory_data", {})
-        
-        # Crystallized Dialogues (결정화된 대화)
+
+        # 결정화된 대화
         crystallized = deep_data.get("crystallized_dialogues", [])
         if crystallized:
-            deep_section += "\n\n💎 Crystallized Dialogues (VERBATIM - Must Honor):\n"
-            for d in crystallized[:5]:  # 최대 5개
-                context = d.get("context", "")
-                speaker = d.get("speaker", "Unknown")
+            deep_section += "\n\n결정화된 대사:\n"
+            for d in crystallized[:5]:
+                ctx = d.get("context", "")
+                speaker = d.get("speaker", "")
                 line = d.get("line", "")
                 if line:
-                    deep_section += f"- [{context}] {speaker}: \"{line}\"\n"
-        
-        # Character Milestones
+                    deep_section += f"- [{ctx}] {speaker}: \"{line}\"\n"
+
+        # 캐릭터 이정표
         milestones = deep_data.get("character_milestones", {})
         if milestones:
-            deep_section += "\n\n🏆 Character Milestones:\n"
+            deep_section += "\n이정표:\n"
             for char, events in milestones.items():
                 if events:
                     deep_section += f"- {char}: {', '.join(events[:5])}\n"
-        
-        # World State Changes
+
+        # 세계 변화
         world_changes = deep_data.get("world_state_changes", [])
         if world_changes:
-            deep_section += "\n\n🌍 World State Changes:\n"
+            deep_section += "\n세계 변화:\n"
             for change in world_changes[:5]:
                 deep_section += f"- {change}\n"
-        
+
         content_parts.append(deep_section)
-    
-    # V3: Active Memory Triggers (떡밥/약속 추적)
-    active_triggers = session_data.get("active_memory_triggers", [])
-    if not active_triggers:
-        # deep_memory_data에서도 확인
-        deep_data = session_data.get("deep_memory_data", {})
-        active_triggers = deep_data.get("active_memory_triggers", [])
-    
-    if active_triggers:
-        trigger_section = """### 🎣 Active Memory Triggers (MUST CALLBACK)
-Unresolved narrative hooks requiring future payoff:
-"""
-        for trigger in active_triggers[:10]:  # 최대 10개
-            trigger_section += f"- ⚡ {trigger}\n"
-        trigger_section += "\n*When narratively appropriate, weave these triggers into the story.*"
-        content_parts.append(trigger_section)
-    
-    # Episode Summaries (에피소드 요약) - V3: compressed_blocks 포함
+
+    # --- 에피소드 요약 + 종단 패턴 ---
+    # (메모리 트리거는 여기서 출력하지 않음 — slot_manager가 DAI 트리거를 Slot 9에 붙임)
     if fermented:
         max_fermented_chars = int(max_tokens * FERMENTED_RATIO * CHARS_PER_TOKEN)
-        
+
         fermented_texts = []
         total_chars = 0
-        
+
         for entry in reversed(fermented):
             summary = entry.get("summary", "")
             timestamp = entry.get("timestamp", "")
-            
+
             entry_text = f"[{timestamp}] {summary}"
-            
-            # V3: important 블록의 대화 추가
+
+            # important 블록의 대화 보존
             blocks = entry.get("compressed_blocks", [])
             important_dialogues = []
             for block in blocks:
@@ -1118,85 +891,41 @@ Unresolved narrative hooks requiring future payoff:
                         lines = d.get("lines", [])
                         if lines:
                             important_dialogues.append(f'{speaker}: "{lines[0]}"')
-            
+
             if important_dialogues:
-                entry_text += "\n  💬 " + " | ".join(important_dialogues[:3])
-            
+                entry_text += "\n  " + " | ".join(important_dialogues[:3])
+
+            # 종단 패턴 (arc_observations)
+            arc = entry.get("arc_observations", {})
+            if isinstance(arc, dict):
+                arc_parts = []
+                if arc.get("pc_pattern"):
+                    arc_parts.append(f"PC: {arc['pc_pattern']}")
+                if arc.get("emotional_arc"):
+                    arc_parts.append(f"곡선: {arc['emotional_arc']}")
+                if arc.get("stagnation_flag"):
+                    arc_parts.append("정체")
+                shifts = arc.get("relationship_shifts", {})
+                if isinstance(shifts, dict):
+                    for npc, desc in list(shifts.items())[:3]:
+                        arc_parts.append(f"{npc}: {desc}")
+                if arc_parts:
+                    entry_text += "\n  [패턴] " + " | ".join(arc_parts)
+
             if total_chars + len(entry_text) > max_fermented_chars:
                 break
-            
+
             fermented_texts.insert(0, entry_text)
             total_chars += len(entry_text)
-        
-        if fermented_texts:
-            content_parts.append(f"""### Episode Summary (IMPORTANT - Reference Past Events)
-📜 Past sessions that shape current context. Reference these events for continuity.
-Significant sessions preserved by emotional weight. Details may blur, but core events persist.
 
-""" + "\n---\n".join(fermented_texts))
-    
+        if fermented_texts:
+            content_parts.append("### 에피소드\n" + "\n---\n".join(fermented_texts))
+
     if not content_parts:
         return ""
-    
-    return f"""
-<Fermented>
-## Histories & Memories: The Deeper Past
-⚠️ CRITICAL FOR STORY CONTINUITY ⚠️
-Non-linear archive governed by narrative significance. Pivotal moments remain distinct; trivial details fade and transform.
-ALWAYS check these memories before generating responses to ensure consistency.
 
-{chr(10).join(content_parts)}
-</Fermented>
-"""
+    return "\n\n".join(content_parts)
 
-
-def build_immediate_context(
-    session_data: Dict[str, Any],
-    recent_count: int = None
-) -> str:
-    """
-    [6] <Immediate> 섹션을 빌드합니다.
-    과거 챗 기록을 포함합니다.
-    
-    프리셋 순서 6번 위치에 배치됩니다.
-    
-    Immediate: The strictly chronological, high-fidelity record of the 
-    immediate past, progressing from past to present. These events are 
-    vivid and unaltered, acting as the direct linear context physically 
-    connected to the 'Fresh'. This section serves only as the narrative 
-    bridge, not the starting point.
-    
-    Args:
-        session_data: 세션 데이터
-        recent_count: 표시할 메시지 수 (기본값: IMMEDIATE_DISPLAY_COUNT)
-    """
-    if recent_count is None:
-        recent_count = IMMEDIATE_DISPLAY_COUNT
-    
-    history = session_data.get("history", [])
-    
-    if not history:
-        return ""
-    
-    # 최근 N개만 추출
-    recent_history = history[-recent_count:] if len(history) > recent_count else history
-    
-    chat_lines = []
-    for entry in recent_history:
-        role = entry.get("role", "Unknown")
-        content = entry.get("content", "")
-        chat_lines.append(f"[{role}]: {content}")
-    
-    return f"""
-<Immediate>
-## Histories & Memories: The Immediate Past
-📍 Recent context leading to current moment
-Strictly chronological, high-fidelity record. Vivid and unaltered—the narrative bridge to NOW.
-
-### Recent Dialogue ({len(recent_history)} exchanges)
-{chr(10).join(chat_lines)}
-</Immediate>
-"""
 
 
 # =========================================================
@@ -1288,7 +1017,7 @@ async def force_ferment(
     if "fermented_history" not in session_data:
         session_data["fermented_history"] = []
 
-    # V3 포맷으로 저장 (auto_ferment과 동일)
+    # V4 포맷으로 저장 (auto_ferment과 동일)
     summary_text = result_data.get("summary", "") if isinstance(result_data, dict) else str(result_data)
     session_data["fermented_history"].append({
         "timestamp": get_timestamp(),
@@ -1297,7 +1026,7 @@ async def force_ferment(
         "forced": True,
         "compressed_blocks": result_data.get("compressed_blocks", []) if isinstance(result_data, dict) else [],
         "memory_triggers": result_data.get("memory_triggers", []) if isinstance(result_data, dict) else [],
-        "psych_delta": result_data.get("psych_delta", {}) if isinstance(result_data, dict) else {},
+        "arc_observations": result_data.get("arc_observations", {}) if isinstance(result_data, dict) else {},
         "helena_delta": result_data.get("helena_delta", {}) if isinstance(result_data, dict) else {},
     })
     

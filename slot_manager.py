@@ -660,11 +660,33 @@ def build_34_step_prompt(ctx) -> str:
 
     fermented_history = fermented_base
     if memory_triggers or active_triggers:
-        all_triggers = list(set(active_triggers + [
-            m.get("trigger", "") for m in memory_triggers if isinstance(m, dict)
-        ]))
-        if all_triggers:
-            triggers_str = "\n".join(f"- {t}" for t in all_triggers if t)
+        # Theoria DAI memory_triggers: type/character/echo 서브필드 보존
+        trigger_lines = []
+        dai_trigger_texts = set()
+        for m in memory_triggers:
+            if not isinstance(m, dict):
+                continue
+            trigger = m.get("trigger", "")
+            if not trigger:
+                continue
+            dai_trigger_texts.add(trigger)
+            mtype = m.get("type", "")
+            char = m.get("character", "")
+            echo = m.get("echo", "")
+            line = trigger
+            if char:
+                line += f" ({char})"
+            if echo:
+                line += f" — {echo}"
+            if mtype:
+                line += f" [{mtype}]"
+            trigger_lines.append(line)
+        # Fermentation active_triggers: 중복 제거 후 추가
+        for t in active_triggers:
+            if t and t not in dai_trigger_texts:
+                trigger_lines.append(t)
+        if trigger_lines:
+            triggers_str = "\n".join(f"- {t}" for t in trigger_lines)
             fermented_history = f"### [ACTIVE MEMORY TRIGGERS - Unresolved Narrative Hooks]\n{triggers_str}\n\n{fermented_base}"
 
     # --- [Slot 13] Input Analysis (Enhanced with Observation + Intent + Position/Effect) ---

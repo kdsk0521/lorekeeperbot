@@ -172,6 +172,22 @@ _POLYVAGAL_HINTS = {
     "dorsal": "시선 고정/공허, 최소 움직임, 목소리 단조로움",
 }
 
+_CULTURAL_AFFECT_HINTS = {
+    "han": "삼킨 감정이 축적 — 한숨, 먼 시선, 과묵",
+    "jeong": "거리가 가까워진 행동 — 자연스러운 접촉, 챙김, 무심한 척 신경 씀",
+    "hwabyung": "억눌린 분노의 신체 전환 — 가슴 답답함, 열감, 급격한 감정 폭발",
+    "nunchi": "상대 기색 살피는 중 — 시선 탐색, 말 고르기, 반응 전 짧은 멈춤",
+    "chaemyeon": "체면 유지 — 과장된 여유, 속마음 감추기, 자존심 방어",
+    "simma": "마음결이 움직이는 중 — 동요, 표정 변화, 숨기려 해도 새는 감정",
+    "gi": "기세 변화 — 위축되거나 팽창하는 존재감, 공간을 차지하는 방식",
+}
+
+_DISSOCIATION_HINTS = {
+    "mild": "감정이 납작하고 대답이 늦다",
+    "moderate": "자기를 3인칭으로 언급하거나 시간 감각이 빈다",
+    "severe": "자동 조종 — 인식 실패, 기계적 행동",
+}
+
 _LAYER_RENAMES = {
     "Surface": "▸평소(80%)",
     "Adaptation": "▸반복패턴",
@@ -267,6 +283,22 @@ def translate_psyche_states(
             pvg_hint = _POLYVAGAL_HINTS.get(pvg.lower().strip())
             if pvg_hint:
                 parts.append(pvg_hint)
+        # cultural_affect → 한국 문화감정 행동 힌트 (soma, 항상 수면 위)
+        ca = soma.get("cultural_affect", "")
+        if ca and isinstance(ca, str) and ca != "null":
+            ca_hint = _CULTURAL_AFFECT_HINTS.get(ca.lower().strip())
+            if ca_hint:
+                parts.append(ca_hint)
+        # env_influence → 환경→심리 영향 (soma, 항상 수면 위)
+        env = soma.get("env_influence")
+        if env and isinstance(env, str) and env != "null":
+            parts.append(env)
+        # dissociation → 해리 행동 힌트 (soma, 항상 수면 위)
+        diss = soma.get("dissociation", "")
+        if diss and isinstance(diss, str) and diss not in ("null", "none"):
+            diss_hint = _DISSOCIATION_HINTS.get(diss.lower().strip())
+            if diss_hint:
+                parts.append(diss_hint)
         if depth < 0.8 and psyche.get("descriptor"):
             parts.append(psyche["descriptor"])
         if depth < 0.6 and relation.get("descriptor"):
@@ -364,6 +396,7 @@ _FLAG_DIRECTIVES = {
     "redemption_warning": "NPC가 근거 없이 태도를 누그러뜨리고 있다. 변화에는 대가가 필요하다. 되돌려라.",
     "shallow_read": "분석이 표면에 머물렀다. 행동 아래 숨겨진 힘을 더 관찰하라 — 인정하지 않은 욕구, 환경 압력, 관계 부채.",
     "sensory_habituated": "같은 공간에서 감각이 적응했다. 동일한 감각을 반복하지 말고, 미세한 변화를 포착하거나 새로운 감각 채널로 전환하라.",
+    "label_internalization": "NPC가 라벨을 내면화하고 있다. 라벨을 대사로 직접 언급하지 마라 — 라벨이 만든 습관, 자세, 반응 패턴으로 드러내라.",
 }
 
 _SYMPTOM_TEMPLATE = "NPC가 {cluster} 증상군을 보이고 있다. 증상을 일관된 세트로 유지하라. 체리피킹 금지."
