@@ -859,7 +859,9 @@ class OrchestrationService:
             # NPC Behavioral Imprints
             npc_imp = updates.get("NPCImprintUpdate")
             if npc_imp and isinstance(npc_imp, dict):
-                domain_manager.update_npc_imprints(channel_id, npc_imp, turn=ctx.turn_count)
+                ws = domain_manager.get_world_state(channel_id)
+                current_turn = ws.get("turn_index", 0) if ws else 0
+                domain_manager.update_npc_imprints(channel_id, npc_imp, turn=current_turn)
                 logger.info(f"[Imprint] {list(npc_imp.keys())}")
 
             if updates.get("PlayerMemoryUpdate"):

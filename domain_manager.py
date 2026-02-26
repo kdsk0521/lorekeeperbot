@@ -9,7 +9,7 @@ import json
 import re
 import logging
 import time
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 
 import config
 from cache_manager import cache
@@ -865,12 +865,12 @@ def update_ai_memory(channel_id: str, uid: str, updates: Dict[str, Any]) -> None
     p["ai_memory"] = mem
     save_participant_data(channel_id, uid, p)
 
-def update_npc_relationship(channel_id: str, uid: str, npc_name: str, rel_text: str) -> str:
+def update_npc_relationship(channel_id: str, uid: str, npc_name: str, rel_text: Union[str, int]) -> Union[str, int]:
     """[Extracted from Memory] Update specific NPC relationship in Player AI Memory"""
     update_ai_memory(channel_id, uid, {"relationships": {npc_name: rel_text}})
     return rel_text
 
-def add_to_ai_memory_list(channel_id: str, uid: str, key: str, item: str) -> None:
+def add_to_ai_memory_list(channel_id: str, uid: str, key: str, item: Union[str, Dict[str, Any]]) -> None:
     p = get_participant_data(channel_id, uid)
     if not p: return
     
