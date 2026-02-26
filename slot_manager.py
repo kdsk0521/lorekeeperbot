@@ -699,6 +699,12 @@ def build_34_step_prompt(ctx) -> str:
             f"Plausibility: {input_analysis_data.get('Plausibility', 'N/A')}\n"
             f"Momentum: {input_analysis_data.get('Momentum', 'OPEN')}"
         )
+        # LogicTrace: 논리 추론 체인 (있을 때만)
+        logic_trace = input_analysis_data.get("LogicTrace", [])
+        if logic_trace and isinstance(logic_trace, list):
+            trace_str = " → ".join(str(t) for t in logic_trace if t)
+            if trace_str:
+                input_analysis_parts.append(f"LogicTrace: {trace_str}")
 
     # Observation: 실제로 일어난 일
     observation = dai.get("observation", "")
@@ -749,6 +755,19 @@ def build_34_step_prompt(ctx) -> str:
         hab_lines = [f"- {k}: {v}" for k, v in habitus.items() if v]
         if hab_lines:
             scene_intel_parts.append("### Habitus\n" + "\n".join(hab_lines))
+
+    # TemporalOrientation: 인물의 시간 방향성
+    temporal_orient = dai.get("TemporalOrientation", {})
+    if temporal_orient and isinstance(temporal_orient, dict):
+        t_focus = temporal_orient.get("focus", "")
+        t_intensity = temporal_orient.get("intensity", 0)
+        if t_focus and isinstance(t_intensity, (int, float)) and t_intensity > 0.3:
+            _temporal_kr = {"past": "인물의 시선이 과거를 향한다", "future": "인물의 시선이 앞을 향한다", "present": "인물이 지금 이 순간에 머문다"}
+            t_hint = _temporal_kr.get(t_focus, "")
+            if t_hint:
+                if t_intensity > 0.7:
+                    t_hint += " — 강하게"
+                scene_intel_parts.append(f"### 시간 방향\n{t_hint}")
 
     # narrative_hook: 트위스트 제안
     hook = dai.get("narrative_hook", "")
@@ -932,16 +951,47 @@ def build_34_step_prompt(ctx) -> str:
     if gm_move_text:
         gm_mover = gm_move_text
 
-    # Flashback Scene Instruction (회상 확정 시)
+    # Flashback Scene Instruction (회상 확정 시 — 세부 정보 포함)
     if dai.get("flashback_confirmed"):
-        fb_decl = dai.get("flashback_declaration", "")
+        fb_eval = dai.get("flashback_eval", {}) or {}
+        fb_decl = dai.get("flashback_declaration", fb_eval.get("declaration", ""))
+        fb_plaus = fb_eval.get("plausibility", "plausible")
+        fb_tier = fb_eval.get("tier", "standard")
+        fb_type = fb_eval.get("flashback_type", "standard")
+        # 설득력에 따른 렌더링 힌트
+        plaus_hint = ""
+        if fb_plaus == "stretch":
+            plaus_hint = " 가능하지만 의외다 — 의외성을 살려라."
+        elif fb_plaus == "impossible":
+            plaus_hint = " 무리한 선언이다 — 실패하거나 대가가 따른다."
+        # 타입에 따른 방향
+        type_hint = "소급 선언" if fb_type == "standard" else "사전 준비물 소환"
         fb_instruction = (
-            f"\n[FLASHBACK] The player has activated a flashback: \"{fb_decl}\"\n"
-            "Write a brief 2-3 sentence flashback scene, then return to the present.\n"
-            "This changes the SITUATION/POSITION only. Do NOT change any stats (HP, 기력, doom).\n"
-            "Do NOT give the PC free items that would bypass resource management."
+            f"\n[FLASHBACK] 회상 발동: \"{fb_decl}\"\n"
+            f"유형: {type_hint} | 무게: {fb_tier}.{plaus_hint}\n"
+            "회상 장면을 2-3문장으로 쓰고 현재로 복귀하라.\n"
+            "상황/위치만 바꾼다. 수치(기력, 둠)는 코드가 처리한다."
         )
         gm_mover = (gm_mover + fb_instruction) if gm_mover else fb_instruction
+
+    # Rest/Downtime Scene Direction (휴식/다운타임 장면 렌더링 힌트)
+    rest_eval = dai.get("rest_eval")
+    if rest_eval and isinstance(rest_eval, dict) and rest_eval.get("detected"):
+        _activity_kr = {
+            "rest": "쉬는 중", "recover": "치료/회복 중", "vice": "탐닉 중",
+            "train": "훈련 중", "socialize": "교류 중", "project": "작업 중",
+        }
+        _quality_kr = {"full": "충분한", "brief": "짧은", "interrupted": "방해받는"}
+        r_activity = rest_eval.get("activity", "rest")
+        r_quality = rest_eval.get("quality", "brief")
+        r_target = rest_eval.get("target")
+        r_safe = rest_eval.get("safe_location", True)
+        rest_dir = f"\n[DOWNTIME] {_quality_kr.get(r_quality, r_quality)} {_activity_kr.get(r_activity, r_activity)}"
+        if r_target:
+            rest_dir += f" (대상: {r_target})"
+        if not r_safe:
+            rest_dir += " — 안전하지 않은 장소. 긴장을 유지하라."
+        gm_mover = (gm_mover + rest_dir) if gm_mover else rest_dir
 
     # [POSITION_FRICTION 제거됨] — Slot 13 translate_position_effect()에서 tier별 friction 자동 append
 
@@ -964,6 +1014,22 @@ def build_34_step_prompt(ctx) -> str:
     une_directive = getattr(ctx, 'judgment_context', '')
     if une_directive:
         gm_mover = (gm_mover + f"\n\n{une_directive}") if gm_mover else une_directive
+
+    # Perception Type: 이상현상 인식 유형 (anomaly가 발생했을 때만 유의미)
+    _anomaly_prof = dai.get("anomaly_profile", {})
+    if _anomaly_prof and isinstance(_anomaly_prof, dict):
+        _perc_type = _anomaly_prof.get("perception_type")
+        if _perc_type and isinstance(_perc_type, str) and _perc_type.lower() != "null":
+            _perc_hints = {
+                "veridical": "실제 일어난 일이다 — 명확하게 묘사하라",
+                "illusory": "감각이 왜곡되었다 — 혼란과 불일치를 섞어라",
+                "hallucinatory": "자극 없는 지각이다 — 생생하지만 타인은 반응하지 않는다",
+                "delusional": "확신에 찬 오해다 — 당사자에겐 절대적 진실이다",
+            }
+            _p_hint = _perc_hints.get(_perc_type.lower().strip(), "")
+            if _p_hint:
+                _perc_dir = f"\n[이상현상 인식] {_p_hint}"
+                gm_mover = (gm_mover + _perc_dir) if gm_mover else _perc_dir
 
     # --- [Slot 29] Real-time Data (compact v3 status first, legacy fallback) ---
     real_time_data = ""
@@ -997,6 +1063,23 @@ def build_34_step_prompt(ctx) -> str:
     intensity_text = iceberg.translate_emotion_intensity(psyche_states_raw)
     if intensity_text:
         real_time_data += f"\n\n{intensity_text}"
+
+    # Item Usage: 이번 턴 아이템 소비/획득 정보
+    item_eval = dai.get("item_usage")
+    if item_eval and isinstance(item_eval, dict):
+        _consumed = item_eval.get("items_consumed", [])
+        _gained = item_eval.get("items_gained", [])
+        _item_parts = []
+        if _consumed and isinstance(_consumed, list):
+            _item_parts.append(f"소비: {', '.join(str(i) for i in _consumed)}")
+        if _gained and isinstance(_gained, list):
+            _item_parts.append(f"획득: {', '.join(str(i) for i in _gained)}")
+        if _item_parts:
+            _item_reason = item_eval.get("reason", "")
+            _item_text = f"[아이템 변동] {' | '.join(_item_parts)}"
+            if _item_reason:
+                _item_text += f" ({_item_reason})"
+            real_time_data += f"\n\n{_item_text}"
 
     # Vigor ↔ Composure CONTRAST: iceberg 번역 (수치·해석 제거, 괴리 사실만)
     if channel_id:

@@ -450,6 +450,9 @@ def translate_continuity_check(check_data) -> str:
     rewrite = check_data.get("rewrite")
     if rewrite and isinstance(rewrite, str):
         directives.append(f"- 소급: {rewrite}")
+    # anchor_consumed: 이전 감각 앵커 소비 여부
+    if check_data.get("anchor_consumed"):
+        directives.append("- 이전 장면의 감각 앵커가 소비되었다. 새로운 감각 기점을 설정하라.")
     if not directives:
         return ""
     return ("### 씬 연속성 보정\n"
@@ -470,9 +473,18 @@ _TRAJECTORY_HINTS = {
     "improving": "관계가 나아지고 있는 기미",
 }
 
+# attitude 라벨 → 행동 기준선 (숫자/등급이 아니라 행동으로)
+_ATTITUDE_BASELINE = {
+    "hostile": "적의를 품고 있다",
+    "unfriendly": "불편함을 숨기지 않는다",
+    "neutral": "",  # 중립은 힌트 불필요
+    "friendly": "호의적이다",
+    "devoted": "깊이 헌신하고 있다",
+}
+
 
 def translate_npc_attitudes(attitudes: Optional[dict]) -> str:
-    """NPCAttitudes → attitude 라벨 제거, trajectory 행동 힌트, reason 유지."""
+    """NPCAttitudes → attitude 행동 기준선 + trajectory 방향 힌트 + reason."""
     if not attitudes or not isinstance(attitudes, dict):
         return ""
     lines = []
@@ -481,11 +493,17 @@ def translate_npc_attitudes(attitudes: Optional[dict]) -> str:
             continue
         trajectory = att.get("trajectory", "stable")
         reason = att.get("reason", "")
-        hint = _TRAJECTORY_HINTS.get(trajectory, trajectory)
+        traj_hint = _TRAJECTORY_HINTS.get(trajectory, trajectory)
+        # attitude: 현재 행동 기준선 (neutral이면 생략)
+        attitude = att.get("attitude", "neutral")
+        baseline = _ATTITUDE_BASELINE.get(attitude, "") if attitude else ""
+        parts = []
+        if baseline:
+            parts.append(baseline)
         if reason:
-            lines.append(f"- {name}: {reason} — {hint}")
-        else:
-            lines.append(f"- {name}: {hint}")
+            parts.append(reason)
+        parts.append(traj_hint)
+        lines.append(f"- {name}: {' — '.join(parts)}")
     return "\n".join(lines)
 
 
@@ -584,6 +602,13 @@ def translate_intimacy(intimacy_data: Optional[dict]) -> str:
     if body_mem:
         lines.append(f"- 신체 기억: {body_mem}")
 
+    # post_encounter_prediction: 친밀씬 후 예측되는 행동 패턴
+    post_pred = intimacy_data.get("post_encounter_prediction", {})
+    if post_pred and isinstance(post_pred, dict):
+        for char_name, prediction in post_pred.items():
+            if prediction and isinstance(prediction, str) and prediction.lower() != "null":
+                lines.append(f"- {char_name} 이후 예측: {prediction}")
+
     return "\n".join(lines)
 
 
@@ -672,6 +697,15 @@ _CHAIN_STATUS_HINTS = {
     "CLOSED": "대화가 끝났다",
 }
 
+# conclusion_proximity: 0-100 → 서사 페이싱 힌트
+_PROXIMITY_HINTS = [
+    (20, ""),  # 아직 멀다 — 힌트 불필요
+    (45, "서사가 전개되고 있다. 새로운 실마리를 풀어놓아도 좋다"),
+    (70, "긴장이 고조되고 있다. 새 떡밥보다 기존 실을 조이라"),
+    (90, "절정이 가깝다. 모든 행동이 무게를 가진다"),
+    (100, "서사가 정점에 있다. 결말을 향해 수렴하라"),
+]
+
 _SILENCE_HINTS = {
     "reflective": "사색적 침묵 — 시간이 느려진다",
     "hesitant": "망설이는 침묵 — 삼킨 말이 있다",
@@ -695,6 +729,15 @@ def translate_narrative_chain(chain_data: Optional[dict]) -> str:
     topic = chain_data.get("topic_lock")
     if topic and str(topic).lower() != "none":
         parts.append(f"주제: {topic}")
+
+    # conclusion_proximity: 0-100 → 페이싱 힌트
+    proximity = chain_data.get("conclusion_proximity")
+    if proximity is not None and isinstance(proximity, (int, float)) and proximity > 20:
+        for threshold, hint in _PROXIMITY_HINTS:
+            if proximity <= threshold:
+                if hint:
+                    parts.append(hint)
+                break
 
     # silence_type
     silence = chain_data.get("silence_type")
@@ -744,7 +787,10 @@ def translate_trait_connections(trait_conn: Optional[dict]) -> str:
         deflection = conn.get("deflection", "")
         if not primary or not deflection:
             continue
-        line = f"- {npc_name}: 뻔한 방향({primary}) 대신 → {deflection}"
+        # trait_pair: 어떤 특질 조합이 연결되는지 표시
+        pair = conn.get("trait_pair", "")
+        prefix = f"[{pair}] " if pair else ""
+        line = f"- {npc_name}: {prefix}뻔한 방향({primary}) 대신 → {deflection}"
         hint = conn.get("render_hint", "")
         if hint:
             line += f" | {hint}"
@@ -783,7 +829,9 @@ def translate_npc_knowledge(npc_knowledge: Optional[dict]) -> str:
         deception = info.get("deception_cues", [])
         if deception and isinstance(deception, list):
             parts_k.append(f"  거짓말 단서: {', '.join(str(d) for d in deception)}")
-        # leak_risk, would_share → 제거 (GM이론의 "빈칸")
+        # would_share: NPC가 자발적으로 정보를 공유하려는 의향
+        if info.get("would_share"):
+            parts_k.append("  스스로 말하고 싶어한다 — 기회가 오면 자연스럽게 꺼낸다")
         if parts_k:
             lines.append(f"- {npc_name}\n" + "\n".join(parts_k))
     if not lines:
@@ -819,6 +867,14 @@ _STRATEGY_HINTS = {
     "obedience": "권위에 따르며",
     "groupthink": "집단 논리에 매몰되어",
     "diffusion": "책임을 회피하며",
+}
+
+# relation.phase → 관계 단계별 대화 전략 힌트
+_PHASE_HINTS = {
+    "orientation": "탐색 중 — 조심스럽게 경계를 그리며",
+    "identification": "동질감 형성 중 — 공통점을 찾으며",
+    "exploitation": "관계 활용 중 — 편하게 요청하고 의지하며",
+    "resolution": "정리 중 — 관계의 의미를 되짚으며",
 }
 
 _NEEDS_HINTS = {
@@ -945,6 +1001,13 @@ def compose_dialogue_directives(
         clean_logos = _strip_framework_terms(logos)
         if clean_logos:
             directive_parts.append(clean_logos)
+
+        # 관계 단계 (phase): 대화 전략의 기저 톤
+        phase = relation.get("phase", "")
+        if phase and isinstance(phase, str) and phase != "null":
+            phase_hint = _PHASE_HINTS.get(phase.lower().strip(), "")
+            if phase_hint:
+                directive_parts.append(phase_hint)
 
         # 전략 수식어: coping, decision_mode, stage, negotiation_stance, group_dynamic
         strategy_mods = []
