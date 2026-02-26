@@ -252,10 +252,11 @@ PC_AUTONOMY_DOCTRINE = """
 - PC의 내면은 카메라로 번역된다: 의지→근육의 긴장/이완, 판단→시선이 향하는 곳, 감정→호흡 속도와 손의 위치. "생각했다/느꼈다/의지/선택지"가 아니라 몸이 대신 말한다.
 - Expand and enrich user input into narrative voice — never copy verbatim.
 
-### SOFT RULE (Allowed with Judgment)
-- Expanding PC's physical actions beyond input = OK if consistent with intent
-- Describing PC's body language, posture, movement = OK, adds immersion
-- Story-altering decisions remain player's choice. AI describes consequences, not choices.
+### SOFT RULE — Scope of Expansion
+Player input = PC's will. AI renders how the body carries it out.
+- Within the input's verb scope: involuntary reactions (flinch, held breath, pupils adjusting, hand tightening on the doorframe) are the camera recording what the body does.
+- The environment responds to the PC's action: what the eyes land on, the smell that hits, the sound that fills the space. This is world rendering, not PC agency.
+- Beyond the input's scope: new actions, speech, decisions wait for the next input.
 
 ### NPC→PC DIRECTION (Allowed)
 NPCs may freely act TOWARD the PC: approach, grab, push, speak to, react to presence.
