@@ -710,11 +710,6 @@ This turn, actively apply these highlighted theories
 </turn_spotlight>"""
 
 
-def get_turn_spotlight(n: int = 5) -> str:
-    """Legacy wrapper — redirects to session spotlight with random seed."""
-    return get_session_spotlight(random.randint(0, 2**31), 0, n)
-
-
 # ---------------------------------------------------------
 # 6. EXAMPLES & VERIFICATION
 # ---------------------------------------------------------
@@ -738,10 +733,6 @@ def preview_genre_config(active_genres: List[str]) -> None:
 
     print(f"\n{'='*60}\n")
 
-
-# ---------------------------------------------------------
-# 6. PRESET EXAMPLES
-# ---------------------------------------------------------
 
 if __name__ == "__main__":
     import sys

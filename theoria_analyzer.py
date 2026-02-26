@@ -416,7 +416,7 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
                 lines.append(f"- Appearance: {pc.get('appearance', 'N/A')}")
                 lines.append(f"- Personality: {pc.get('personality', 'N/A')}")
                 lines.append(f"- Passives: {pc.get('passives', [])}")
-                lines.append(f"- Mental: {pc.get('mental_value', 100)}")
+                lines.append(f"- Vigor: {pc.get('vigor_value', 100)} | Composure: {pc.get('composure_value', 100)}")
             return "\n".join(lines)
 
         # 솔로 플레이 (기존 형식 유지)
@@ -675,10 +675,6 @@ Evaluate this in flashback_eval field. Check plausibility, passive match, assign
 
 """
 
-    def _build_telescope_quality_context(self, anchors: dict) -> str:
-        """V3: Telescope는 이제 5W1H 추론 기록 채널. FAIL 피드백 불필요."""
-        return ""
-
     @staticmethod
     def _build_clock_context(clocks: list) -> str:
         """활성 둠 시계 현황을 Flash 프롬프트용 텍스트로 변환."""
@@ -758,7 +754,7 @@ Evaluate this in flashback_eval field. Check plausibility, passive match, assign
 
 {npc_context}
 
-### 4c. NPC ROSTER (Select relevant NPCs for RelevantNPCs field, max 5)
+### 4a. NPC ROSTER (Select relevant NPCs for RelevantNPCs field, max 5)
 {npc_roster or '[No NPCs registered]'}
 
 {session_memory_context}
@@ -768,7 +764,7 @@ Evaluate this in flashback_eval field. Check plausibility, passive match, assign
 ### 5. RECENT HISTORY
 {req.history_text or '[No history]'}
 
-{self._build_pending_flashback(anchors)}{self._build_telescope_quality_context(anchors)}{self._build_chunk_index(req.lore_chunks)}
+{self._build_pending_flashback(anchors)}{self._build_chunk_index(req.lore_chunks)}
 ---
 Perform FULL Theoria analysis and return JSON with ALL required fields.
 """

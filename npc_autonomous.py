@@ -180,7 +180,7 @@ def _check_henderson_need_critical(ctx: Dict) -> TriggerResult | None:
         need_str = "/".join(needs[:2])
         return TriggerResult(
             "henderson_need_critical", ctx["name"],
-            f"Unmet needs ({need_str}) — acts to get what they lack this turn",
+            f"{ctx['name']}의 욕구({need_str})가 충족되지 않았다 — 이번 턴에 스스로 움직인다",
             priority=7,
         )
     return None
@@ -192,7 +192,7 @@ def _check_attachment_activation(ctx: Dict) -> TriggerResult | None:
     if attachment == "anxious":
         return TriggerResult(
             "attachment_activation", ctx["name"],
-            f"{ctx['name']} craves closeness — initiates contact, seeks reassurance from PC",
+            f"{ctx['name']}이(가) 가까움을 갈망한다 — 먼저 다가가고 확인을 구한다",
             priority=5,
         )
     return None
@@ -205,7 +205,7 @@ def _check_reactance(ctx: Dict) -> TriggerResult | None:
     if coping == "avoidant" and rel_val < -10:
         return TriggerResult(
             "reactance", ctx["name"],
-            f"{ctx['name']} pushes back — resists or defies what's expected of them",
+            f"{ctx['name']}이(가) 반발한다 — 기대에 저항하거나 거부한다",
             priority=6,
         )
     return None
@@ -231,7 +231,7 @@ def _check_info_gap(ctx: Dict) -> TriggerResult | None:
 
     return TriggerResult(
         "information_gap_fill", ctx["name"],
-        f"{ctx['name']} senses something is off — driven to verify or investigate (re: {belief})",
+        f"{ctx['name']}이(가) 뭔가 어긋남을 느낀다 — '{belief}'에 대해 확인하거나 캐묻는다",
         priority=4,
     )
 
@@ -257,7 +257,7 @@ def _check_secret_pressure(ctx: Dict) -> TriggerResult | None:
 
     return TriggerResult(
         "secret_pressure", ctx["name"],
-        f"{ctx['name']} struggles to keep a secret — may slip or reveal clues unintentionally",
+        f"{ctx['name']}이(가) 비밀을 유지하기 힘들어한다 — 말실수나 행동으로 단서가 새어나올 수 있다",
         priority=5 if leak_risk == "high" else 3,
     )
 
@@ -274,12 +274,12 @@ def _check_emotional_contagion(ctx: Dict, all_psyche: Dict) -> TriggerResult | N
         other_soma = other_state.get("soma", {})
         other_polyvagal = other_soma.get("polyvagal", "ventral")
         if other_polyvagal in ("sympathetic", "dorsal"):
-            other_psyche = other_state.get("psyche", {})
-            other_val = other_psyche.get("value", 0)
-            if other_val < -30:
+            other_relation = other_state.get("relation", {})
+            other_val = other_relation.get("value", 0)
+            if isinstance(other_val, (int, float)) and other_val < -30:
                 return TriggerResult(
                     "emotional_contagion", ctx["name"],
-                    f"{ctx['name']} picks up on {other_name}'s distress — their own calm starts to crack",
+                    f"{ctx['name']}이(가) {other_name}의 고통을 감지한다 — 평온이 흔들리기 시작한다",
                     priority=2,
                 )
     return None
@@ -292,7 +292,7 @@ def _check_moral_disengagement(ctx: Dict) -> TriggerResult | None:
     if attitude == "hostile" and self_opacity:
         return TriggerResult(
             "moral_disengagement_stable", ctx["name"],
-            f"{ctx['name']} doubles down on harmful behavior — rationalizes it to themselves",
+            f"{ctx['name']}이(가) 해로운 행동을 강화한다 — 스스로에게 합리화하며",
             priority=4,
         )
     return None
@@ -351,7 +351,7 @@ def _check_agenda_manifest(ctx: Dict) -> Optional[TriggerResult]:
                    "belonging": "소속감", "intimacy": "친밀감", "safety": "안전"}.get(need, need)
         return TriggerResult(
             "agenda_manifest", ctx["name"],
-            f"Personal agenda surfaces — {ctx['name']}'s need for {need_kr} colors in-scene behavior (dialogue/body language)",
+            f"{ctx['name']}의 개인 목표가 드러난다 — {need_kr}에 대한 욕구가 대사와 행동에 묻어난다",
             priority=2,
         )
     return None

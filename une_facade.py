@@ -947,10 +947,22 @@ class UniversalNarrativeEngine:
         if bus.dai and bus.dai.get("psyche_states"):
             from npc_autonomous import NPCAutonomousEngine
 
+            # Helena metrics(depth/tension) merge: domain 영속 데이터 → DAI attitudes
+            _dai_att = bus.dai.get("npc_attitudes", {})
+            _stored_att = (context.narrative_anchors or {}).get("stored_npc_attitudes", {})
+            _merged_att = {}
+            for _n, _a in _dai_att.items():
+                _m = dict(_a) if isinstance(_a, dict) else {}
+                _s = _stored_att.get(_n, {})
+                if isinstance(_s, dict):
+                    _m.setdefault("depth", _s.get("depth", 0))
+                    _m.setdefault("tension", _s.get("tension", 0))
+                _merged_att[_n] = _m
+
             triggers = NPCAutonomousEngine.evaluate_triggers(
                 psyche_states=bus.dai.get("psyche_states", {}),
                 npc_knowledge=bus.dai.get("npc_knowledge", {}),
-                npc_attitudes=bus.dai.get("npc_attitudes", {}),
+                npc_attitudes=_merged_att,
                 scene_type=bus.dai.get("scene_type", "normal"),
             )
             auto_directive = NPCAutonomousEngine.build_autonomous_directive(triggers)
@@ -1258,10 +1270,23 @@ class UniversalNarrativeEngine:
         # ── NPC Autonomous Behavior Triggers (Phase 7) ──
         if bus.dai and bus.dai.get("psyche_states"):
             from npc_autonomous import NPCAutonomousEngine
+
+            # Helena metrics(depth/tension) merge: domain 영속 데이터 → DAI attitudes
+            _dai_att = bus.dai.get("npc_attitudes", {})
+            _stored_att = (context.narrative_anchors or {}).get("stored_npc_attitudes", {})
+            _merged_att = {}
+            for _n, _a in _dai_att.items():
+                _m = dict(_a) if isinstance(_a, dict) else {}
+                _s = _stored_att.get(_n, {})
+                if isinstance(_s, dict):
+                    _m.setdefault("depth", _s.get("depth", 0))
+                    _m.setdefault("tension", _s.get("tension", 0))
+                _merged_att[_n] = _m
+
             triggers = NPCAutonomousEngine.evaluate_triggers(
                 psyche_states=bus.dai.get("psyche_states", {}),
                 npc_knowledge=bus.dai.get("npc_knowledge", {}),
-                npc_attitudes=bus.dai.get("npc_attitudes", {}),
+                npc_attitudes=_merged_att,
                 scene_type=bus.dai.get("scene_type", "normal"),
             )
             auto_directive = NPCAutonomousEngine.build_autonomous_directive(triggers)

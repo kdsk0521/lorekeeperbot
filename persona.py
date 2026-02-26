@@ -26,35 +26,18 @@ Prompt Order (SillyTavern Preset Style):
 import asyncio
 import logging
 import re
-from typing import Optional, List, Dict, Any, Tuple, Union
+from typing import Optional, List
 from google import genai
 from google.genai import types
 import config
-import fermentation
 
-# Response processing functions (분리된 모듈에서 import)
-from response_processor import (
-    detect_pc_impersonation,
-    filter_pc_impersonation,
-)
-
-# Prompt building functions (유틸리티만 사용 - V3에서 PromptBuilder 제거됨)
-from prompt_builder import (
-    build_combined_directive,
-    build_mature_content_prompt,
-    get_scene_type_description,
-    get_available_genres,
-    get_genre_description,
-    SCENE_TYPES,
-    GENRE_DEFINITIONS,
-)
+from response_processor import filter_pc_impersonation
 import text_resources
 
 # =========================================================
 # 상수 정의
 # =========================================================
 DEFAULT_TEMPERATURE = 1.0
-MIN_NARRATIVE_LENGTH = 1500  # 최소 서사 길이 (문자)
 
 
 # =========================================================

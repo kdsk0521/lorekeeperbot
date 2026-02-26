@@ -150,7 +150,7 @@ class OrchestrationService:
                 if not existing_npc:
                     npc_manager.update_npc(channel_id, n_name, {
                         "source": "session",
-                        "desc": "Auto-detected by AI",
+                        "description": "Auto-detected by AI",
                         "status": "active"
                     })
                     logger.info(f"Auto-created Session NPC: {n_name}")
