@@ -149,6 +149,8 @@ async def extract_all_updates(
 
         "NPCDepthUpdate": soc.get("npc_depth_hints") if soc else None,
 
+        "NPCImprintUpdate": soc.get("npc_imprints") if soc else None,
+
         "WorldStateUpdate": wst if wst else None,
 
         "RenderFingerprint": rfp if rfp else None
@@ -185,11 +187,15 @@ async def _extract_batch(
         sys_parts.append(
             "\n### social"
             "\nOutput: `{\"relationships\": {Name: Status}, \"companions\": [list], "
-            "\"npc_depth_hints\": {NpcName: {\"depth_delta\": int, \"tension_delta\": int}}}`"
+            "\"npc_depth_hints\": {NpcName: {\"depth_delta\": int, \"tension_delta\": int}}, "
+            "\"npc_imprints\": {NpcName: {\"event\": str, \"mark\": str}}}`"
             "\nOnly record SIGNIFICANT attitude changes. Deduplicate names against known NPCs."
             "\nnpc_depth_hints: For each NPC with meaningful interaction this turn, estimate "
             "depth_delta (+1~+5 bonding, -1~-3 distancing) and tension_delta (+1~+10 conflict, -1~-5 resolution)."
-            "\nIf no social change: `{\"relationships\": {}, \"companions\": [], \"npc_depth_hints\": {}}`."
+            "\nnpc_imprints: ONLY for events that leave lasting behavioral marks (betrayal, injury, confession, trauma, "
+            "major gift, life-saving). mark = observable physical/behavioral change (Korean, 1 phrase). "
+            "Most turns have NO imprints. Max 1 per NPC per turn."
+            "\nIf no social change: `{\"relationships\": {}, \"companions\": [], \"npc_depth_hints\": {}, \"npc_imprints\": {}}`."
         )
         ctx_parts.append(f"[Social] Rels:{rels}, Comps:{comps}, LoreNPCs:{lore_npcs}, SceneNPCs:{scene_npcs}")
 
@@ -238,13 +244,16 @@ async def _extract_batch(
         sys_parts.append(
             "\n### world_state"
             "\nOutput: `{\"active_threads\": [], \"resolved_threads\": [], \"world_changes\": [],"
-            " \"npc_schedule_hints\": {}, \"basic_needs_flags\": {}, \"current_arc\": \"\"}`"
+            " \"npc_schedule_hints\": {}, \"basic_needs_flags\": {}, \"current_arc\": \"\","
+            " \"residual_effects\": \"\"}`"
             "\nactive_threads: Merge with existing, remove resolved. Max 10. Korean."
             "\nresolved_threads: Threads resolved THIS turn. Korean."
             "\nworld_changes: NEW environmental changes only. Max 5. Korean."
             "\nnpc_schedule_hints: {NpcName: current_activity}. Only mentioned NPCs. Korean."
             "\nbasic_needs_flags: {hungry/thirsty/tired/injured/cold/hot: bool}. Only true if evidence."
             "\ncurrent_arc: One-line summary of current arc. Korean."
+            "\nresidual_effects: Side-effects or unintended consequences of SUCCESSFUL actions this turn. "
+            "Korean. Empty string if none. Only genuine ripple effects, not failures."
             "\nCONSERVATIVE: Only extract clearly evidenced info. NO FABRICATION."
         )
         arc_line = f"Current Arc: {existing_arc}" if existing_arc else "Current Arc: (none)"

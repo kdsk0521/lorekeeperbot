@@ -166,6 +166,12 @@ def _safe_get(data: Any, key: str, default: Any = None) -> Any:
 # 1. psyche_states (Slot 14)
 # =========================================================
 
+_POLYVAGAL_HINTS = {
+    "ventral": "눈맞춤, 열린 자세, 목소리 안정",
+    "sympathetic": "안절부절, 시선 분산, 움직임 증가, 목소리 빨라짐",
+    "dorsal": "시선 고정/공허, 최소 움직임, 목소리 단조로움",
+}
+
 _LAYER_RENAMES = {
     "Surface": "▸평소(80%)",
     "Adaptation": "▸반복패턴",
@@ -255,6 +261,12 @@ def translate_psyche_states(
         parts = []
         if soma.get("descriptor"):
             parts.append(soma["descriptor"])
+        # polyvagal → 물리적 행동 힌트 (soma는 항상 수면 위)
+        pvg = soma.get("polyvagal", "")
+        if pvg and isinstance(pvg, str):
+            pvg_hint = _POLYVAGAL_HINTS.get(pvg.lower().strip())
+            if pvg_hint:
+                parts.append(pvg_hint)
         if depth < 0.8 and psyche.get("descriptor"):
             parts.append(psyche["descriptor"])
         if depth < 0.6 and relation.get("descriptor"):
@@ -268,6 +280,11 @@ def translate_psyche_states(
             filtered = _filter_deep_read_by_depth(deep, depth)
             if filtered:
                 lines.append(f"  └ {filtered}")
+
+        # resurfacing: depth < 0.6일 때만 노출 (intimate/social)
+        resurface = state.get("resurfacing")
+        if resurface and isinstance(resurface, str) and resurface != "null" and depth < 0.6:
+            lines.append(f"  └ 재부상: {resurface}")
 
     return "\n".join(lines)
 
@@ -345,6 +362,8 @@ _FLAG_DIRECTIVES = {
     "mse_deviation": "NPC의 정신 상태가 급변했다. 이전 행동과의 일관성을 점검하고, 변화에 인과적 근거를 부여하라.",
     "dissonance_flag": "NPC가 모순된 신념/행동을 보이고 있다. 즉시 해소하지 마라 — 불편함을 행동으로 보여줘라.",
     "redemption_warning": "NPC가 근거 없이 태도를 누그러뜨리고 있다. 변화에는 대가가 필요하다. 되돌려라.",
+    "shallow_read": "분석이 표면에 머물렀다. 행동 아래 숨겨진 힘을 더 관찰하라 — 인정하지 않은 욕구, 환경 압력, 관계 부채.",
+    "sensory_habituated": "같은 공간에서 감각이 적응했다. 동일한 감각을 반복하지 말고, 미세한 변화를 포착하거나 새로운 감각 채널로 전환하라.",
 }
 
 _SYMPTOM_TEMPLATE = "NPC가 {cluster} 증상군을 보이고 있다. 증상을 일관된 세트로 유지하라. 체리피킹 금지."
@@ -394,6 +413,10 @@ def translate_continuity_check(check_data) -> str:
         type_kr = _CONTINUITY_TYPE_KR.get(ftype, ftype)
         if correction:
             directives.append(f"- {type_kr}: {correction}")
+    # Retroactive rewriting cue
+    rewrite = check_data.get("rewrite")
+    if rewrite and isinstance(rewrite, str):
+        directives.append(f"- 소급: {rewrite}")
     if not directives:
         return ""
     return ("### 씬 연속성 보정\n"
@@ -817,6 +840,8 @@ def compose_dialogue_directives(
     npc_knowledge: Optional[dict],
     prev_gaze: str = "",
     npc_depths: Optional[Dict[str, float]] = None,
+    npc_imprints: Optional[Dict[str, list]] = None,
+    voice_quirks: Optional[Dict[str, str]] = None,
 ) -> str:
     """psyche_states + NPCKnowledge + 이전 gaze → NPC별 대사 방향 지시.
 
@@ -912,6 +937,11 @@ def compose_dialogue_directives(
             if actual:
                 directive_parts.append(f"(실제로는 {actual})")
 
+        # 숨김: apprehension_gap (인식 왜곡)
+        ag = psyche.get("apprehension_gap")
+        if ag and isinstance(ag, str) and ag != "null":
+            directive_parts.append(f"(인식 왜곡: {ag})")
+
         # 숨김: NPCKnowledge (leak_risk >= medium 일 때만)
         nk = knowledge.get(name, {})
         if isinstance(nk, dict):
@@ -929,6 +959,20 @@ def compose_dialogue_directives(
         if vc and isinstance(vc, str) and vc != "null":
             conflict = vc.split("+")[0].strip() if "+" in vc else vc
             directive_parts.append(f"갈등: {conflict}")
+
+        # 행동 각인 (imprints) — 최근 1-2개만
+        if npc_imprints and isinstance(npc_imprints, dict):
+            imp_list = npc_imprints.get(name, [])
+            if isinstance(imp_list, list):
+                for imp in imp_list[-2:]:
+                    if isinstance(imp, dict) and imp.get("mark"):
+                        directive_parts.append(f"각인: {imp['mark']}")
+
+        # 말투 (voice quirks) — gaze=Full인 NPC만 (in_focus)
+        if voice_quirks and isinstance(voice_quirks, dict) and in_focus:
+            vq = voice_quirks.get(name, "")
+            if vq:
+                directive_parts.append(f"말투: {vq}")
 
         if directive_parts:
             lines.append(f"- {name}: {'. '.join(directive_parts)}")

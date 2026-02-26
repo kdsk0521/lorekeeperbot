@@ -48,6 +48,10 @@ NPC_AUTONOMOUS_TRIGGERS = {
         "desc": "NPC의 개인 목표/욕구가 씬 상호작용 중 자연스럽게 드러남",
         "check": "_check_agenda_manifest",
     },
+    "ethical_arrest": {
+        "desc": "타자의 취약성 목격 → 행동 멈춤/외면/잔인 강화 (Lévinas)",
+        "check": "_check_ethical_arrest",
+    },
 }
 
 
@@ -141,6 +145,11 @@ class NPCAutonomousEngine:
             if r:
                 results.append(r)
 
+            # Ethical Arrest (Lévinas)
+            r = _check_ethical_arrest(npc_ctx, psyche_states)
+            if r:
+                results.append(r)
+
         # Sort by priority descending
         results.sort(key=lambda x: x.priority, reverse=True)
         return results
@@ -203,28 +212,54 @@ def _check_reactance(ctx: Dict) -> TriggerResult | None:
 
 
 def _check_info_gap(ctx: Dict) -> TriggerResult | None:
-    """Information Gap: NPC has false_beliefs → driven to investigate."""
+    """Information Gap: NPC has false_beliefs → investigate or conflict.
+    High tension + false_belief → belief collision (defensive/confrontational)."""
     false_beliefs = ctx["knowledge"].get("false_beliefs", [])
-    if false_beliefs:
+    if not false_beliefs:
+        return None
+
+    tension = ctx.get("attitude", {}).get("tension", 0)
+    belief = false_beliefs[0][:40]
+
+    # High tension → belief collision (5-7: False Belief→Conflict)
+    if tension >= 50:
         return TriggerResult(
             "information_gap_fill", ctx["name"],
-            f"{ctx['name']} senses something is off — driven to verify or investigate (re: {false_beliefs[0][:40]})",
-            priority=4,
+            f"{ctx['name']}의 믿음이 흔들린다 — '{belief}'와 현실이 충돌. 방어하거나, 의심하거나, 무시한다",
+            priority=5,
         )
-    return None
+
+    return TriggerResult(
+        "information_gap_fill", ctx["name"],
+        f"{ctx['name']} senses something is off — driven to verify or investigate (re: {belief})",
+        priority=4,
+    )
 
 
 def _check_secret_pressure(ctx: Dict) -> TriggerResult | None:
-    """Secret pressure: leak_risk medium+ → NPC may slip."""
+    """Secret pressure: leak_risk medium+ → NPC may slip. high+tension≥60 → concrete fragment leak."""
     leak_risk = ctx["knowledge"].get("leak_risk", "none")
     secrets = ctx["knowledge"].get("secrets_held", [])
-    if leak_risk in ("medium", "high") and secrets:
+    if not secrets or leak_risk not in ("medium", "high"):
+        return None
+
+    tension = ctx.get("attitude", {}).get("tension", 0)
+    secret = secrets[0]
+
+    # high risk + high tension → concrete secret fragment in directive
+    if leak_risk == "high" and tension >= 60:
+        fragment = secret[:30] if len(secret) > 30 else secret
         return TriggerResult(
             "secret_pressure", ctx["name"],
-            f"{ctx['name']} struggles to keep a secret — may slip or reveal clues unintentionally",
-            priority=5 if leak_risk == "high" else 3,
+            f"{ctx['name']}의 압력 한계 — '{fragment}'의 조각이 행동이나 말실수로 새어나온다",
+            priority=6,
         )
-    return None
+
+    return TriggerResult(
+        "secret_pressure", ctx["name"],
+        f"{ctx['name']} struggles to keep a secret — may slip or reveal clues unintentionally",
+        priority=5 if leak_risk == "high" else 3,
+    )
 
 
 def _check_emotional_contagion(ctx: Dict, all_psyche: Dict) -> TriggerResult | None:
@@ -264,23 +299,38 @@ def _check_moral_disengagement(ctx: Dict) -> TriggerResult | None:
 
 
 def _check_desistance(ctx: Dict) -> TriggerResult | None:
-    """Desistance check: needs ALL FOUR conditions for behavioral change.
-    1. Alternative identity, 2. Social support, 3. Generative motivation, 4. Redemption narrative.
-    Almost never fires — this is by design (Maruna)."""
-    deep_read = ctx.get("deep_read", "")
+    """Incremental Desistance: layered by depth + trajectory (Maruna).
+    Tier 1 (depth≥30 + improving): micro-change — hostile remarks decrease
+    Tier 2 (depth≥50 + improving): notable — neutral observation, guarded cooperation
+    Tier 3 (depth≥70 + improving + rel_val>30): turning point — old patterns break"""
     relation = ctx["relation"]
     attitude = ctx["attitude"].get("attitude", "neutral")
     trajectory = ctx["attitude"].get("trajectory", "stable")
 
-    # Simplified heuristic: hostile NPC with improving trajectory + high relation value
-    if attitude in ("hostile", "unfriendly") and trajectory == "improving":
-        rel_val = relation.get("value", 0)
-        if rel_val > 30:  # Strong positive relationship despite hostile tag
-            return TriggerResult(
-                "desistance_check", ctx["name"],
-                f"{ctx['name']} shows signs of change — old patterns loosening, new behavior emerging",
-                priority=1,  # Low priority — very rare
-            )
+    if attitude not in ("hostile", "unfriendly") or trajectory != "improving":
+        return None
+
+    depth = ctx["attitude"].get("depth", 0)
+    rel_val = relation.get("value", 0)
+
+    if depth >= 70 and rel_val > 30:
+        return TriggerResult(
+            "desistance_check", ctx["name"],
+            f"{ctx['name']} — 전환점. 오래된 패턴이 무너지고 새로운 행동이 나타난다",
+            priority=3,
+        )
+    elif depth >= 50:
+        return TriggerResult(
+            "desistance_check", ctx["name"],
+            f"{ctx['name']} — 적대적 발언 감소, 중립적 관찰 증가, 조심스러운 협력 가능",
+            priority=2,
+        )
+    elif depth >= 30:
+        return TriggerResult(
+            "desistance_check", ctx["name"],
+            f"{ctx['name']} — 미세 변화: 공격 빈도 감소, 짧은 침묵, 시선 회피",
+            priority=1,
+        )
     return None
 
 
@@ -304,4 +354,36 @@ def _check_agenda_manifest(ctx: Dict) -> Optional[TriggerResult]:
             f"Personal agenda surfaces — {ctx['name']}'s need for {need_kr} colors in-scene behavior (dialogue/body language)",
             priority=2,
         )
+    return None
+
+
+def _check_ethical_arrest(ctx: Dict, all_psyche: Dict) -> Optional[TriggerResult]:
+    """Ethical Arrest (Lévinas): NPC witnesses vulnerability → pre-rational ethical call.
+    Hostile/unfriendly NPC + another character in dorsal/severe state → 3 possible responses:
+    stops, looks away, or becomes MORE cruel. The outcome depends on NPC's initial conditions."""
+    attitude = ctx.get("attitude", {}).get("attitude", "neutral")
+    if attitude not in ("hostile", "unfriendly", "neutral"):
+        return None  # friendly+ NPCs don't need this trigger
+
+    for other_name, other_state in all_psyche.items():
+        if other_name == ctx["name"] or not isinstance(other_state, dict):
+            continue
+        other_soma = other_state.get("soma", {})
+        other_polyvagal = other_soma.get("polyvagal", "ventral")
+        other_psyche = other_state.get("psyche", {})
+        other_val = other_psyche.get("value", 0)
+        dissociation = other_soma.get("dissociation", "none")
+
+        # Vulnerability: dorsal state, extreme negative psyche, or moderate+ dissociation
+        is_vulnerable = (
+            other_polyvagal == "dorsal"
+            or (isinstance(other_val, (int, float)) and other_val <= -60)
+            or dissociation in ("moderate", "severe")
+        )
+        if is_vulnerable:
+            return TriggerResult(
+                "ethical_arrest", ctx["name"],
+                f"타자의 고통이 보였다 — {ctx['name']}의 행동이 멈추거나, 외면하거나, 더 잔인해진다",
+                priority=3,
+            )
     return None

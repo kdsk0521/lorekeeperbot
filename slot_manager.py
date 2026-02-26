@@ -521,6 +521,15 @@ def _prepend_quest_directive(obj_ctx: str) -> str:
     return quest_directive + "\n" + obj_ctx
 
 
+def _extract_voice_quirks(voice_card: str) -> str:
+    """voice_card에서 Quirks 줄만 추출 (대사 디렉티브 합성용)."""
+    for line in voice_card.split("\n"):
+        stripped = line.strip()
+        if stripped.lower().startswith("quirks:"):
+            return stripped[7:].strip()
+    return ""
+
+
 # =========================================================
 # Factory Function for Easy Integration
 # =========================================================
@@ -848,9 +857,22 @@ def build_34_step_prompt(ctx) -> str:
         _latest = domain_manager.get_latest_frame(channel_id)
         _prev_gaze = _latest.get("render_fingerprint", {}).get("gaze", "")
 
+    _npc_imprints = domain_manager.get_npc_imprints(channel_id) if channel_id else {}
+    # Voice quirks for dialogue directive merge (5-9)
+    _voice_quirks = {}
+    if channel_id:
+        import npc_manager as _npc_mgr
+        for _npc_n in (psyche_data or {}):
+            _nd = _npc_mgr.get_npc(channel_id, _npc_n)
+            if _nd and _nd.get("voice_card"):
+                _vq = _extract_voice_quirks(_nd["voice_card"])
+                if _vq:
+                    _voice_quirks[_npc_n] = _vq
     _dialogue_dir = iceberg.compose_dialogue_directives(
         psyche_data, npc_knowledge,
         prev_gaze=_prev_gaze, npc_depths=npc_depths,
+        npc_imprints=_npc_imprints,
+        voice_quirks=_voice_quirks,
     )
     if _dialogue_dir:
         if extended_intelligence:

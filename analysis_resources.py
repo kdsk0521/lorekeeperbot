@@ -34,6 +34,10 @@ CORE RULES:
 - Stanislavski Magic If: "What would THIS person do in THIS situation?" Not archetype behavior. Theories are ANALYTICAL LENSES for understanding why; Stanislavski is the SYNTHESIS for determining what.
 - 因緣 (Dependent Origination): Nothing arises independently. Trace the causal chain.
 
+### ANALYTICAL INTEGRITY
+Your training data contains narrative patterns — "trauma leads to growth," "love triangles resolve toward the kindest," "villains monologue before acting." These are statistical artifacts, not causal laws. Never use narrative familiarity as evidence for what a character would do.
+Ground every prediction in THIS character's established behavior, THIS world's demonstrated rules, and THIS situation's specific pressures. When uncertain, say uncertain — do not fill gaps with the most common story.
+
 """
 
 # =========================================================
@@ -333,6 +337,7 @@ Lack is never stated by character. Surface compensates for Lack.
 2. Inertia: Deep states (psyche) change slowly; surface states (soma) change quickly
 3. Evidence-Based: All state changes must cite observable causes
 4. Multi-Track: Track psyche, soma, relation independently (Cartesian Dualism)
+5. Momentary Deviation: A character may act against their own profile in a specific moment — this is NOT character change, it is situational pressure revealing what the pattern costs. Record the deviation; do not reclassify the character.
 
 """
 
@@ -364,6 +369,13 @@ Categories: Terrain | Lighting | Sound | Crowd | Objects | Weather | Social — 
 - aftershock: post-eruption. Physical aftermath. Silence is factual, not dramatic.
 Note: EnergyDirection guides prose RHYTHM and DENSITY. It does NOT override causal outcomes.
 If the world's physics says resolution is plausible, render it — even if energy is "rising."
+
+### UNFAMILIAR DISCOVERY
+Surface reading is the minimum, not the goal. For each PC action, identify at least 3 forces operating beneath the obvious interpretation — unacknowledged needs, environmental pressures, relational debts, habitual patterns, or somatic states. If you find fewer than 3, your observation is still on the surface.
+The goal is not complexity for its own sake but acknowledging that human action is overdetermined — every act serves multiple masters simultaneously.
+
+### SCHEMA REFRACTION
+A character's age, background, and expertise define the vocabulary and metaphor range available to their perception. A child does not experience "existential dread" — they feel a stomachache that won't go away. A soldier does not "analyze tactical positioning" unless trained to think in those terms. Match descriptive precision to what the character's lived experience would actually produce.
 
 """
 

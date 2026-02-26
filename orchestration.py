@@ -181,6 +181,13 @@ class OrchestrationService:
                     domain_manager.update_npc_knowledge(channel_id, npc_name, k_data)
             logger.info(f"[NPC Knowledge] Persisted for {len(new_knowledge)} NPCs")
 
+            # Knowledge Propagation: 같은 장면 NPC 간 지식 전파
+            scene_npcs = list(new_knowledge.keys())
+            if len(scene_npcs) >= 2:
+                prop_count = domain_manager.propagate_npc_knowledge(channel_id, scene_npcs)
+                if prop_count:
+                    logger.info(f"[Knowledge Propagation] {prop_count} facts shared among {scene_npcs}")
+
         # 장면 전환 exit_ticks 처리
         curr_scene = ctx.scene_type or "normal"
         world = domain_manager.get_world_state(channel_id)
@@ -245,6 +252,13 @@ class OrchestrationService:
         _ws = domain_manager.get_world_state(channel_id)
         _turn_num = _ws.get("turn_index", 0)
         domain_manager.update_scene_continuity(channel_id, dai_snapshot=_dai_snap, turn_number=_turn_num)
+
+        # [Sensory Habituation] 같은 위치에서 감각 반복 감지
+        if domain_manager.check_sensory_habituation(channel_id):
+            qf = dai.get("quality_flags") or dai.get("QualityFlags") or {}
+            if isinstance(qf, dict):
+                qf["sensory_habituated"] = True
+                dai["quality_flags"] = qf
 
         # [Flashback] 회상 기력 차감 (vigor_composure 전에 직접 처리)
         fb_eval = dai.get("flashback_eval")
@@ -842,6 +856,12 @@ class OrchestrationService:
                     domain_manager.update_session_ai_memory(channel_id, {"format_feedback": combined})
                     logger.info(f"[Convergence] {conv_str}")
 
+            # NPC Behavioral Imprints
+            npc_imp = updates.get("NPCImprintUpdate")
+            if npc_imp and isinstance(npc_imp, dict):
+                domain_manager.update_npc_imprints(channel_id, npc_imp, turn=ctx.turn_count)
+                logger.info(f"[Imprint] {list(npc_imp.keys())}")
+
             if updates.get("PlayerMemoryUpdate"):
                 pmu = updates["PlayerMemoryUpdate"]
                 if pmu.get("relationships"):
@@ -895,6 +915,8 @@ class OrchestrationService:
                     mem_updates["current_arc"] = wsu["current_arc"]
                 if wsu.get("basic_needs_flags") and isinstance(wsu["basic_needs_flags"], dict):
                     mem_updates["basic_needs_flags"] = wsu["basic_needs_flags"]
+                if wsu.get("residual_effects") and isinstance(wsu["residual_effects"], str):
+                    mem_updates["residual_effects"] = wsu["residual_effects"]
                 if mem_updates:
                     domain_manager.update_session_ai_memory(channel_id, mem_updates)
                     logger.info(f"[WorldState] Updated session memory: {list(mem_updates.keys())}")

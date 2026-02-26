@@ -100,11 +100,35 @@ class TheoriaAnalyzer:
             if not response.text:
                 return {"error": "Empty response"}
 
-            return json.loads(bot_utils.clean_json_text(response.text))
+            result = json.loads(bot_utils.clean_json_text(response.text))
+            return self._validate_dai(result)
 
         except Exception as e:
             logger.error(f"Theoria analysis failed: {e}")
             return {"error": str(e)}
+
+    def _validate_dai(self, dai: dict) -> dict:
+        """DAI 결과 검증 — deep_read 깊이 체크."""
+        _LAYER_KEYWORDS = ("Surface", "Adaptation", "Core", "Lack")
+        npc_states = dai.get("npc_states", {})
+        if not isinstance(npc_states, dict):
+            return dai
+        shallow = False
+        for npc_data in npc_states.values():
+            if not isinstance(npc_data, dict):
+                continue
+            deep = npc_data.get("deep_read", "")
+            if isinstance(deep, str) and deep:
+                layers_found = sum(1 for kw in _LAYER_KEYWORDS if kw in deep)
+                if layers_found < 3:
+                    shallow = True
+        if shallow:
+            qf = dai.get("quality_flags") or dai.get("QualityFlags") or {}
+            if not isinstance(qf, dict):
+                qf = {}
+            qf["shallow_read"] = True
+            dai["quality_flags"] = qf
+        return dai
 
     def _build_system_instruction(self, active_genres=None, scene_context=None) -> str:
         """Theoria v2.0 시스템 프롬프트 조립 — build_analysis_directive() 사용"""
@@ -199,7 +223,8 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
             "active_needs": ["henderson/erikson enum - 현재 행동 지배하는 욕구 max 2"],
             "self_opacity": "str or null (Self-Opacity: 'claims X — actual: Y' format. null = self-aware)",
             "decision_mode": "reactive/deliberate (Kahneman + Carstensen)",
-            "coping": "problem_focused/emotion_focused/avoidant/null (Lazarus. null = no stressor)"
+            "coping": "problem_focused/emotion_focused/avoidant/null (Lazarus. null = no stressor)",
+            "apprehension_gap": "str or null (Absence/Approximation/Distortion: what THIS character failed to perceive, roughly approximated, or distorted through their own schema/defense. null = accurate apprehension)"
         },
         "soma": {
             "descriptor": "Korean - SOAP-OA 기반 관찰 가능한 신체 신호만. 감정 라벨 금지.",
@@ -219,7 +244,8 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
             "group_dynamic": "conformity/obedience/groupthink/diffusion/null (Group Dynamics: active in 3+ character scenes. null = no group pressure)",
             "negotiation_stance": "cooperative/competitive/exploitative/null (BATNA strength reflects Position value. null = no negotiation active)"
         },
-        "deep_read": "str (Four-Layer [CUSTOM]: Surface→Adaptation→Core→Lack in 1 sentence each. Lack is never stated by character.)"
+        "deep_read": "str (Four-Layer [CUSTOM]: Surface→Adaptation→Core→Lack in 1 sentence each. Lack is never stated by character.)",
+        "resurfacing": "str or null (past trauma, contradictory desire, or 'resolved' emotion re-emerging through current interaction. What resurfaces and what triggered it. null = no resurgence)"
     }
   }
 
@@ -419,8 +445,13 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
         composure_val = bus.composure.get('value', 100)
         return f"- Vigor: {vigor_val} | Composure: {composure_val}"
 
+    _DEPTH_PSYCHE_HINTS = {
+        70: "deep bond — defenses lowered, mask cracks show, willing to share",
+        40: "growing familiarity — selective openness, testing boundaries",
+    }
+
     def _build_npc_context(self, anchors: dict) -> str:
-        """NPC 태도 + 지식 상태를 프롬프트에 포함"""
+        """NPC 태도 + 지식 + depth/psyche 힌트를 프롬프트에 포함"""
         parts = []
         attitudes = anchors.get("stored_npc_attitudes", {})
         knowledge = anchors.get("stored_npc_knowledge", {})
@@ -433,6 +464,13 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
             att = attitudes.get(npc_name, {})
             if att:
                 npc_lines.append(f"  Attitude={att.get('attitude', 'neutral')} ({att.get('reason', '')})")
+                # Depth↔Psyche feedback hint
+                depth = att.get("depth", 0)
+                if isinstance(depth, (int, float)):
+                    for threshold, hint in sorted(self._DEPTH_PSYCHE_HINTS.items(), reverse=True):
+                        if depth >= threshold:
+                            npc_lines.append(f"  Depth={int(depth)} → {hint}")
+                            break
             kn = knowledge.get(npc_name, {})
             if kn and kn.get("knows"):
                 knows_str = "; ".join(kn["knows"][:5])
@@ -472,6 +510,10 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
         active_needs = [k for k, v in needs.items() if v]
         if active_needs:
             parts.append(f"- PC Physical State: {', '.join(active_needs)}")
+
+        residual = mem.get("residual_effects", "")
+        if residual and isinstance(residual, str):
+            parts.append(f"- Residual Effects (from last success): {residual}")
 
         if not parts:
             return ""

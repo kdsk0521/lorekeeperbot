@@ -459,6 +459,66 @@ def get_npc_knowledge_for(channel_id: str, npc_name: str) -> Optional[Dict]:
     """특정 NPC의 지식 상태 조회"""
     return get_npc_knowledge(channel_id).get(npc_name)
 
+def propagate_npc_knowledge(channel_id: str, scene_npcs: list) -> int:
+    """같은 장면 NPC 간 지식 전파. would_share=True인 NPC의 비밀 아닌 지식을 공유.
+    Returns: 전파된 사실 수."""
+    if len(scene_npcs) < 2:
+        return 0
+    all_knowledge = get_npc_knowledge(channel_id)
+    attitudes = get_npc_attitudes(channel_id)
+    propagated = 0
+
+    for npc_a in scene_npcs:
+        kn_a = all_knowledge.get(npc_a, {})
+        if not kn_a.get("would_share"):
+            continue
+        secrets = set(kn_a.get("secrets_held", []))
+        shareable = [f for f in kn_a.get("knows", []) if f not in secrets]
+        if not shareable:
+            continue
+
+        for npc_b in scene_npcs:
+            if npc_b == npc_a:
+                continue
+            # hostile NPC에게는 공유 안 함
+            att_b = attitudes.get(npc_b, {}).get("attitude", "neutral")
+            if att_b in ("hostile", "unfriendly"):
+                continue
+            kn_b = all_knowledge.get(npc_b, {})
+            existing_b = set(kn_b.get("knows", []))
+            new_facts = [f for f in shareable if f not in existing_b][:3]
+            if new_facts:
+                tagged = [f"{f} (via {npc_a})" for f in new_facts]
+                merged = list(existing_b) + tagged
+                kn_b_updated = dict(kn_b)
+                kn_b_updated["knows"] = merged[-20:]
+                all_knowledge[npc_b] = kn_b_updated
+                propagated += len(new_facts)
+
+    if propagated > 0:
+        d = get_domain(channel_id)
+        d["npc_knowledge"] = all_knowledge
+        save_domain(channel_id, d)
+    return propagated
+
+# NPC Behavioral Imprints
+def update_npc_imprints(channel_id: str, imprints: Dict[str, Dict[str, str]], turn: int = 0) -> None:
+    """NPC 행동 각인 저장. imprints: {NpcName: {"event": str, "mark": str}}"""
+    d = get_domain(channel_id)
+    all_imprints = d.setdefault("npc_imprints", {})
+    for npc_name, imp in imprints.items():
+        if not isinstance(imp, dict) or not imp.get("event"):
+            continue
+        npc_list = all_imprints.setdefault(npc_name, [])
+        npc_list.append({"event": imp["event"], "mark": imp.get("mark", ""), "turn": turn})
+        # 최근 5개만 유지
+        all_imprints[npc_name] = npc_list[-5:]
+    save_domain(channel_id, d)
+
+def get_npc_imprints(channel_id: str) -> Dict[str, list]:
+    """전체 NPC 행동 각인 조회"""
+    return get_domain(channel_id).get("npc_imprints", {})
+
 # Rules & Genres
 def get_rules(channel_id: str) -> str:
     """룰 텍스트 조회 (캐시 우선)"""
@@ -1213,6 +1273,30 @@ def update_scene_continuity(
         sc["discontinuity_flags"] = discontinuity_flags[:5]
 
     update_session_ai_memory(channel_id, {"scene_continuity": sc})
+
+def check_sensory_habituation(channel_id: str) -> bool:
+    """최근 3+ 프레임이 같은 location + 유사 palette/lighting이면 True."""
+    sc = get_scene_continuity(channel_id)
+    frames = sc.get("frames", [])
+    if len(frames) < 3:
+        return False
+    recent = frames[-3:]
+    locations = []
+    palettes = []
+    lightings = []
+    for f in recent:
+        snap = f.get("dai_snapshot", {})
+        fp = f.get("render_fingerprint", {})
+        locations.append(snap.get("location", ""))
+        palettes.append(fp.get("palette", ""))
+        lightings.append(fp.get("lighting", ""))
+    # 같은 위치 + palette/lighting 모두 동일(빈 문자열 제외)
+    if not locations[0]:
+        return False
+    if len(set(locations)) == 1 and len(set(p for p in palettes if p)) <= 1 and len(set(l for l in lightings if l)) <= 1:
+        return True
+    return False
+
 
 def get_latest_frame(channel_id: str) -> Dict[str, Any]:
     """최신 프레임을 구 포맷({dai_snapshot, render_fingerprint})으로 반환."""

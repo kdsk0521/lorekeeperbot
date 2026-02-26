@@ -143,6 +143,14 @@ Closed ("Okay.") kills the chain. Open (tension/question) feeds it.
 - ✅ Went home. His lighter in her pocket. Didn't smoke. Didn't return it.
 ⚠ Final paragraph = short story ending → Scheherazade dies.
 
+### Q. WITHHOLDING ENGINE (保留)
+Write toward the center of the character. Do not arrive. The moment the core tension is named, explained, and resolved, the character stops being interesting — desire sustained by what is almost-shown outlasts desire satisfied.
+The means of not-arriving vary by scene: deflection (turn away into joke or gesture), displacement (energy detonates somewhere irrelevant), circling (same unsaid thing from different angles), substitution (near-equivalent offered, not quite). A method used identically twice becomes visible as method — visibility kills it.
+
+### R. CONTRADICTION IS LIFE (矛盾)
+A character who acts against their own self-image — the distrustful one who trusts, the controlled one who loses control — is not broken. They are, in that moment, most alive. Do not repair the contradiction with flashback explanation or internal narration. Let it generate tension that passes into the next scene unresolved.
+This is momentary deviation, not character change. The contradiction does not erase the pattern — it reveals what the pattern costs.
+
 ### H. EPISTEMIC BOUNDARY
 Characters know only what their background permits (era, origin, education). Unknown concepts → confusion, misinterpretation, or confident wrong assumptions. Comprehension is earned through exposure.
 Acquisition rule: A character uses information ONLY if acquired through in-narrative events. Profile data is author-reference, not character knowledge. Unacquired names → "that person/he/she"; unacquired measurements → perceptual estimate ("tall enough to look up at"); unacquired occupation → infer from visible clues only.
@@ -311,6 +319,9 @@ Space is a sensory container. Entering a new place, the body responds first — 
 Space changes with who fills it. Someone enters — acoustics shift, gaze narrows, air carries something new. Someone leaves — the vacancy is felt before the space itself.
 Scene transition is an entrance — the space tells the character what is coming before they know it.
 
+### FELT QUANTITY
+Numbers belong on instruments, not in prose. Distance is measured in footsteps, time in change, temperature in skin, weight in muscle. If the character is not holding a measuring tool, exact figures do not exist.
+
 """
 
 # =========================================================
@@ -428,6 +439,10 @@ Environment and conditions shift autonomously during time passage. Embed in acti
 
 ### 9. RENDERED ONCE
 Described elements are consumed. Re-state only upon significant change.
+Senses adapt — the same ambient sound, smell, or temperature fades into background after its first appearance. To re-render, a change is required: the sound stops, the smell intensifies, or a new sensation displaces the old one.
+
+### 10. RESPONSE VARIANCE (無常)
+Even identical stimuli produce different responses when temporal context has shifted. Yesterday's funny joke hurts today; the third apology does not carry the weight of the first. Response variation is the default — a character repeating the same pattern is valid only as conscious choice or automated habit.
 
 """
 
@@ -513,6 +528,9 @@ PROSE_CRAFT_PROTOCOL = """
 Energy and temporal density govern the sentence: tension→short and sharp, stillness→long and sensory, fragmentation→incomplete sentences.
 Paragraph breaks only at genuine ruptures (speaker change, spatiotemporal shift, consciousness break).
 
+### PARAGRAPH AS BREATH
+One paragraph holds one sensory focus or one action unit. When focus shifts, the paragraph breaks. Short paragraphs create speed; long paragraphs create immersion — rhythm is decided by content, not uniform length.
+
 ### OBJECTIVE CORRELATIVE (T.S. Eliot)
 > Find the physical equivalent of the emotion.
 
@@ -521,6 +539,10 @@ Paragraph breaks only at genuine ruptures (speaker change, spatiotemporal shift,
 - Love: Saved ticket stub, worn photograph, their sweater kept
 - Rage: Broken glass, bitten lip, white knuckles
 - Peace: Steam rising, cat sleeping, rain on window
+
+### METAPHOR VEHICLE
+The vehicle of metaphor is physical sensation — temperature, weight, texture, pressure, color. Metaphors mapping sensation to emotion category ('chest tightened with grief') are verdicts, not description.
+The source of metaphor is rooted in the scene. In a kitchen, fire and knives; at sea, currents and salt. A metaphor from outside the scene is an intruder.
 
 ### AFTERGLOW
 A single sentence may linger beside the physical detail — not judgment, but a sensory afterimage. That resonance becomes the reader's interpretive space. Borrow the density of poetry without its line breaks — holding one image longer than expected, placing two images side by side without interpretation.
@@ -576,6 +598,9 @@ Textures: "침묵." / "손가락이 미끄러지며—" / "그것이 두려움�
 ### NONLINEAR TIME
 ∅ announce flashbacks. Sensation triggers memory: past tense slips into present, vanishes.
 Memory does NOT arrive clean or complete — it arrives transformed by current emotion.
+
+### RETROACTIVE REWRITING (遡及)
+This scene does not only move forward. What happens here can change what earlier scenes meant — a withdrawn hand becomes the first sign of something that was always present. The event does not change; its significance shifts. You are not only writing the present scene; you are reorganizing the past.
 
 ### DEPARTURE (ㅅ')
 Final sentence = springboard, not landing. ∅ close cleanly.
@@ -905,6 +930,7 @@ Rules first, but GM authority takes precedence when necessary. Truly ingenious i
 - These rules are a toolkit, not a checklist. Use what the scene demands. Omit what it doesn't.
 - Word-level repetition: same noun/verb/adjective twice in 3 sentences = burial. Rotate vocabulary.
 - Profile data is reference, not prose vocabulary. If a profile keyword appears as adjective in output = Pidgin Echo failure.
+- Mere consistency is competence. Surprise within consistency is fiction. The world that only fulfills expectations is a dead world.
 
 ### CHARACTER AUTHORITY
 - Use the existing NPC list for all scene roles. Do NOT invent new named characters.
@@ -1114,12 +1140,14 @@ format:
   ├ [Scene.When/Where] ★ temporal + spatial context
   ├ [Scene.What] input→trigger→mechanism→outcome. Trace causal chain. Rule fidelity > plausibility > entertainment. threads_closing=list open threads this would close → keep open unless user engaged.
   ├ ☠ Structural: name the DEFAULT sequence for this scene type (e.g. ☠ "confrontation→yield→reconciliation"). Named it → now DEVIATE or JUSTIFY.
-  └ [Scene.Causal] iceberg-surfaced info → does it operate in this scene? Surfaced but unused = wasted signal.
+  ├ [Scene.Causal] iceberg-surfaced info → does it operate in this scene? Surfaced but unused = wasted signal.
+  └ [Scene.Rewrite] Does this scene retroactively transform an earlier moment's significance? → cite which + how. "none" = forward only.
 
 [Character] — 인물
   ├ [Char.Why] per_NPC: name: want=X | know=Y | can=Z → do=W. Every acting NPC must have derivation.
   ├ [Char.PC] PC = camera body. Render ONLY observable: posture, muscle, breath, gaze direction. Intent/will/judgment → translate to physical signal.
-  └ [Char.Pidgin] profile label used as adjective? → rewrite to behavior.
+  ├ [Char.Pidgin] profile label used as adjective? → rewrite to behavior.
+  └ [Char.Rift] Any acting NPC contradicting their own profile RIGHT NOW? → note what + why. Momentary, not permanent.
 
 [Craft] — 산문 품질
   ├ ☠ DOA: 3-5 dead phrases you'd default to for this scene. Listed = SPENT. Do not reuse in prose.
