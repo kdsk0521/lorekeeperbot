@@ -1587,6 +1587,113 @@ async def cmd_reset_npcs(ctx: CommandContext) -> None:
     await ctx.send(f"🧹 **세션 NPC 초기화 완료:** {count}명 삭제됨 (Lore NPC 유지)")
 
 
+@registry.register("genre", category="World", aliases=["장르", "렌즈", "lens"], description="장르/렌즈 조회 및 수동 설정")
+async def cmd_genre(ctx: CommandContext) -> None:
+    """!장르 — 조회 / !장르 noir drama — 렌즈 설정 / !장르 초기화 — 리셋"""
+    channel_id = ctx.channel_id
+    raw = ctx.raw_args.strip() if ctx.raw_args else ""
+
+    # 조회
+    if not raw:
+        genres = domain_manager.get_active_genres(channel_id)
+        if isinstance(genres, dict):
+            layers = genres.get("layers", {})
+            stage = ", ".join(layers.get("world_setting", [])) or "—"
+            flavor = ", ".join(layers.get("style_tech", [])) or "—"
+            lens = ", ".join(layers.get("narrative_tone", [])) or "—"
+            atmo = genres.get("atmosphere_guide", "") or ""
+            mech = genres.get("mechanic_profile", {})
+            primary = mech.get("primary_lens", "—") if mech else "—"
+            msg = (
+                f"🎭 **장르 설정**\n"
+                f"A-Stage (세계): {stage}\n"
+                f"B-Flavor (기법): {flavor}\n"
+                f"C-Lens (톤): {lens}\n"
+                f"Primary Lens: {primary}"
+            )
+            if atmo:
+                msg += f"\nAtmosphere: {atmo}"
+        else:
+            flat = domain_manager.get_active_genre_list(channel_id)
+            msg = f"🎭 **장르**: {', '.join(flat) if flat else '미설정'}"
+        await ctx.send(msg)
+        return
+
+    # 초기화
+    if raw in ("초기화", "reset", "clear"):
+        domain_manager.set_active_genres(channel_id, {})
+        domain_manager.set_custom_tone(channel_id, None)
+        await ctx.send("🎭 장르 데이터 초기화됨.")
+        return
+
+    # 수동 설정 — 태그 분류
+    _STAGE_TAGS = {"high_fantasy", "wuxia", "cyberpunk", "post_apocalypse", "space_opera", "modern"}
+    _FLAVOR_TAGS = {"urban_fantasy", "steampunk", "cosmic_horror", "game_system"}
+    _TONE_TAGS = {"noir", "comedy", "romance", "drama"}
+
+    # 한국어 → 영어 매핑
+    _KR_ALIAS = {
+        # A-Stage
+        "하이판타지": "high_fantasy", "판타지": "high_fantasy", "무협": "wuxia",
+        "사이버펑크": "cyberpunk", "포스트아포칼립스": "post_apocalypse", "종말": "post_apocalypse",
+        "스페이스오페라": "space_opera", "우주": "space_opera", "현대": "modern",
+        # B-Flavor
+        "어반판타지": "urban_fantasy", "도시판타지": "urban_fantasy",
+        "스팀펑크": "steampunk", "코즈믹호러": "cosmic_horror", "우주공포": "cosmic_horror",
+        "게임": "game_system",
+        # C-Lens
+        "느와르": "noir", "코미디": "comedy", "로맨스": "romance", "드라마": "drama",
+    }
+
+    raw_tags = [t.strip().lower() for t in raw.replace(",", " ").split() if t.strip()]
+    tags = [_KR_ALIAS.get(t, t) for t in raw_tags]  # 한국어 → 영어 변환
+
+    world_setting = [t for t in tags if t in _STAGE_TAGS]
+    style_tech = [t for t in tags if t in _FLAVOR_TAGS]
+    narrative_tone = [t for t in tags if t in _TONE_TAGS]
+    unknown = [t for t in tags if t not in _STAGE_TAGS and t not in _FLAVOR_TAGS and t not in _TONE_TAGS]
+
+    if unknown:
+        all_valid = sorted(_STAGE_TAGS | _FLAVOR_TAGS | _TONE_TAGS)
+        kr_list = ", ".join(sorted(_KR_ALIAS.keys()))
+        await ctx.send(f"⚠️ 알 수 없는 태그: {', '.join(unknown)}\n유효 태그: {', '.join(all_valid)}\n한국어: {kr_list}")
+        return
+
+    from config import build_mechanic_profile
+    mechanic_profile = build_mechanic_profile(narrative_tone, style_tech)
+
+    # 기존 데이터 병합 — 입력한 레이어만 덮어쓰기
+    existing = domain_manager.get_active_genres(channel_id)
+    if isinstance(existing, dict):
+        old_layers = existing.get("layers", {})
+    else:
+        old_layers = {}
+
+    new_layers = {
+        "world_setting": world_setting if world_setting else old_layers.get("world_setting", []),
+        "style_tech": style_tech if style_tech else old_layers.get("style_tech", []),
+        "narrative_tone": narrative_tone if narrative_tone else old_layers.get("narrative_tone", []),
+    }
+
+    genre_data = {
+        "layers": new_layers,
+        "atmosphere_guide": existing.get("atmosphere_guide", "") if isinstance(existing, dict) else "",
+        "mechanic_profile": mechanic_profile,
+    }
+    domain_manager.set_active_genres(channel_id, genre_data)
+
+    stage_str = ", ".join(new_layers["world_setting"]) or "—"
+    flavor_str = ", ".join(new_layers["style_tech"]) or "—"
+    lens_str = ", ".join(new_layers["narrative_tone"]) or "—"
+    await ctx.send(
+        f"🎭 **장르 설정됨**\n"
+        f"A-Stage: {stage_str}\n"
+        f"B-Flavor: {flavor_str}\n"
+        f"C-Lens: {lens_str}\n"
+        f"Primary Lens: {mechanic_profile.get('primary_lens', '—')}"
+    )
+
+
 @registry.register("rule", category="World", aliases=["룰", "규칙", "rules", "worldrules", "세계규칙"], description="세계 규칙 관리")
 async def cmd_rule(ctx: CommandContext) -> None:
     """!룰 [추가/삭제/목록] [키워드] [내용]"""
