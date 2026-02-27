@@ -19,6 +19,41 @@ import config
 
 logger = logging.getLogger("Cognition")
 
+# =========================================================
+# 미성년자 표현 전처리 (Gemini 하드코드 필터 회피)
+# 원본 로어는 save_lore_original()로 이미 저장됨 — 분석용만 치환
+# =========================================================
+import re as _re
+
+_MINOR_SANITIZE_RULES = [
+    # 학교 + 나이 표현 → 일반화 (순서 중요: 긴 패턴 먼저)
+    (_re.compile(r'초등학교\s*\d+학년'), '어린'),
+    (_re.compile(r'중학교\s*\d+학년'), '사춘기의'),
+    (_re.compile(r'고등학교\s*\d+학년'), '청소년기의'),
+    (_re.compile(r'초등학생'), '어린아이'),
+    (_re.compile(r'중학생'), '사춘기 아이'),
+    (_re.compile(r'고등학생'), '청소년'),
+    (_re.compile(r'초등학교'), '어린'),
+    (_re.compile(r'중학교'), '사춘기'),
+    # 구체적 나이 (1~17살/세) → 삭제. 성인 나이는 보존
+    (_re.compile(r'(?<!\d)(?:만\s?)?(?:1[0-7]|[1-9])살'), ''),
+    (_re.compile(r'(?<!\d)(?:만\s?)?(?:1[0-7]|[1-9])세(?!\d)'), ''),
+    # 영문
+    (_re.compile(r'elementary\s+school', _re.IGNORECASE), 'young'),
+    (_re.compile(r'middle\s+school', _re.IGNORECASE), 'adolescent'),
+    (_re.compile(r'high\s+school', _re.IGNORECASE), 'teenage'),
+    (_re.compile(r'\b(?:1[0-7]|[1-9])\s*(?:years?\s*old|y/?o)\b', _re.IGNORECASE), ''),
+]
+
+def _sanitize_for_analysis(text: str) -> str:
+    """분석 API 전송 전 미성년자 관련 표현을 일반화. 원본에는 영향 없음."""
+    result = text
+    for pattern, replacement in _MINOR_SANITIZE_RULES:
+        result = pattern.sub(replacement, result)
+    # 연속 공백 정리
+    result = _re.sub(r'  +', ' ', result)
+    return result
+
 # PART 3: EXTRACTION (LOGOS)
 # =========================================================
 
@@ -379,6 +414,9 @@ async def analyze_lore_unified(
     if not lore_text:
         return {}
 
+    # 미성년자 표현 전처리 — 원본은 이미 save_lore_original()로 저장됨
+    lore_text = _sanitize_for_analysis(lore_text)
+
     system_prompt = f"""You are an experienced TRPG Campaign Designer and 'Lore Analysis Engine (LoreAnalyzer)'.
 Analyze the provided lorebook precisely to extract all metadata required for game operations.
 
@@ -517,6 +555,9 @@ async def analyze_character_sheet(
     """
     if not sheet_text:
         return {}
+
+    # 미성년자 표현 전처리 — 원본은 caller 측에서 보존
+    sheet_text = _sanitize_for_analysis(sheet_text)
 
     system_prompt = """You are an expert TRPG Character Designer.
 Extract detailed character information from the provided text to create a structured character sheet.

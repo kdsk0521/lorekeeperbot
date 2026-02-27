@@ -210,6 +210,10 @@ async def extract_voice_card(client, model_id: str, npc_name: str, profile_text:
 
     from memory_system import api_call_with_retry
     from google.genai import types
+    from cognition import _sanitize_for_analysis
+
+    # 미성년자 표현 전처리 — NPC 프로필 원본은 domain에 이미 저장됨
+    profile_text = _sanitize_for_analysis(profile_text)
 
     instruction = f"""Extract the distinctive VOICE characteristics of this NPC into a compact voice card.
 The card must capture what makes this character's speech UNIQUE — not personality, not backstory, just HOW they talk.
