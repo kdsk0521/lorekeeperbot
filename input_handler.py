@@ -25,7 +25,8 @@ _MARKDOWN_PATTERNS = [
 ]
 
 # OOC 및 주사위 패턴 미리 컴파일
-_OOC_PATTERN = re.compile(r'\((?:OOC|ooc)[:\s]+(.+?)\)', re.IGNORECASE | re.DOTALL)
+# 매칭 순서: (OOC: 내용) 또는 ((내용)) — TRPG 이중 괄호 관례
+_OOC_PATTERN = re.compile(r'\((?:OOC|ooc)[:\s]+(.+?)\)|\(\((.+?)\)\)', re.IGNORECASE | re.DOTALL)
 
 
 
@@ -99,7 +100,7 @@ def parse_input(content: str) -> Optional[Dict[str, Any]]:
     ooc_match = _OOC_PATTERN.search(clean_content)
 
     if ooc_match:
-        ooc_content = ooc_match.group(1).strip()
+        ooc_content = (ooc_match.group(1) or ooc_match.group(2)).strip()
         # OOC 부분을 제거한 나머지 텍스트
         remaining_text = _OOC_PATTERN.sub('', clean_content).strip()
         
