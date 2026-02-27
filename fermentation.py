@@ -48,6 +48,7 @@ FRESH_THRESHOLD = config.FRESH_THRESHOLD
 FERMENT_CHUNK_SIZE = config.FERMENT_CHUNK_SIZE
 FERMENTED_THRESHOLD = config.FERMENTED_THRESHOLD
 RECENT_HISTORY_FOR_ANALYSIS = config.RECENT_HISTORY_FOR_ANALYSIS
+_SAFETY_SETTINGS = config.SAFETY_SETTINGS
 
 # 컨텍스트 비율 (HypaMemory V3 참고)
 DEEP_RATIO = 0.10             # 10% - 장기 기억
@@ -389,7 +390,8 @@ Output VALID JSON following the schema exactly.
             system_instruction=system_instruction,
             temperature=0.3,
             max_output_tokens=3000,  # V3는 더 많은 출력 필요
-            response_mime_type="application/json"
+            response_mime_type="application/json",
+            safety_settings=_SAFETY_SETTINGS,
         )
         
         response = await client.aio.models.generate_content(
@@ -591,7 +593,8 @@ Important:
             system_instruction=system_instruction,
             temperature=0.2,
             max_output_tokens=3000,
-            response_mime_type="application/json"
+            response_mime_type="application/json",
+            safety_settings=_SAFETY_SETTINGS,
         )
         
         response = await client.aio.models.generate_content(

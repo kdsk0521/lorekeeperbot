@@ -497,7 +497,7 @@ async def cmd_lore(ctx: CommandContext) -> None:
 
 
 
-@registry.register("info", category="Player", aliases=["내정보", "me", "desc", "설명", "정보"], description="캐릭터 정보를 확인합니다.")
+@registry.register("info", category="Player", aliases=["내정보", "me", "desc", "설명", "정보"], description="캐릭터 정보 확인 / `!설명 [내용/파일]`으로 PC 설정 입력")
 async def cmd_info(ctx: CommandContext) -> None:
     """
     V2 Layout: Profile -> Relations -> Passives -> Mental -> Adaptation -> Quests -> Notebook

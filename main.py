@@ -277,6 +277,7 @@ async def generate_ooc_response(
                 system_instruction=f"{text_resources.CONTENT_AUTHORIZATION_MANDATE}\n\n{system_prompt}",
                 temperature=0.7,
                 max_output_tokens=2000,
+                safety_settings=config.SAFETY_SETTINGS,
             )
         )
         if response and response.text:

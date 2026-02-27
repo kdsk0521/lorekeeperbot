@@ -791,7 +791,7 @@ async def call_gemini_api(
 ) -> Optional[Dict[str, Any]]:
     if not client: return None
     full_prompt = f"{sys_instruction}\n\n{prompt}" if sys_instruction else prompt
-    cfg = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.1)
+    cfg = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.1, safety_settings=config.SAFETY_SETTINGS)
     
     for _ in range(config.MAX_RETRY_COUNT):
         try:

@@ -87,7 +87,8 @@ class TheoriaAnalyzer:
                 response_mime_type="application/json",
                 temperature=config.ANALYSIS_TEMPERATURE,
                 top_k=config.ANALYSIS_TOP_K,
-                top_p=config.ANALYSIS_TOP_P
+                top_p=config.ANALYSIS_TOP_P,
+                safety_settings=config.SAFETY_SETTINGS,
                 # [Gemini 3] presence_penalty/frequency_penalty not supported
             )
             

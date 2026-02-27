@@ -15,6 +15,7 @@ from memory_system import (
     safe_parse_json
 )
 import text_resources
+import config
 
 logger = logging.getLogger("Cognition")
 
@@ -350,7 +351,7 @@ async def _call_extract(
     op_name: str
 ) -> Dict[str, Any]:
     try:
-        cfg = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.1)
+        cfg = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.1, safety_settings=config.SAFETY_SETTINGS)
         cnt = [types.Content(role="user", parts=[types.Part(text=f"{sys}\n\n{usr}")])]
         res = await api_call_with_retry(client, model_id, cnt, cfg, operation_name=op_name)
         if res: return safe_parse_json(res)
@@ -463,6 +464,7 @@ IMPORTANT: All string descriptions and guides must be in KOREAN.
             system_instruction=text_resources.CONTENT_AUTHORIZATION_MANDATE,
             response_mime_type="application/json",
             temperature=0.1,
+            safety_settings=config.SAFETY_SETTINGS,
             # max_output_tokens 제한 해제 — 모델 기본값 사용 (대형 로어북도 잘리지 않도록)
         )
         contents = [
@@ -538,7 +540,8 @@ Extract detailed character information from the provided text to create a struct
         gen_config = types.GenerateContentConfig(
             system_instruction=text_resources.CONTENT_AUTHORIZATION_MANDATE,
             response_mime_type="application/json",
-            temperature=0.1
+            temperature=0.1,
+            safety_settings=config.SAFETY_SETTINGS,
         )
         contents = [
             # Training pair: 콘텐츠 인가 프라이밍 (거부 방지)
