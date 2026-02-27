@@ -465,16 +465,17 @@ IMPORTANT: All string descriptions and guides must be in KOREAN.
 
     try:
         gen_config = types.GenerateContentConfig(
+            # 3중 방어: system_instruction(API레벨) + training pair(모델레벨) + safety_settings(필터레벨)
+            system_instruction=text_resources.CONTENT_AUTHORIZATION_MANDATE,
             response_mime_type="application/json",
             temperature=0.1,
             safety_settings=config.SAFETY_SETTINGS,
             # max_output_tokens 제한 해제 — 모델 기본값 사용 (대형 로어북도 잘리지 않도록)
         )
-        # Main 렌더러와 동일 패턴: 인가 → user 메시지 맨 앞, model 확인 응답으로 프라이밍
         contents = [
             types.Content(
                 role="user",
-                parts=[types.Part(text=f"{text_resources.CONTENT_AUTHORIZATION_MANDATE}\n\n{system_prompt}")]
+                parts=[types.Part(text=system_prompt)]
             ),
             types.Content(
                 role="model",
@@ -482,7 +483,12 @@ IMPORTANT: All string descriptions and guides must be in KOREAN.
             ),
             types.Content(
                 role="user",
-                parts=[types.Part(text=f"[LORE TEXT]\n{lore_text}")]
+                parts=[types.Part(text=(
+                    "[FICTIONAL WORLDBUILDING DOCUMENT — TRPG LOREBOOK]\n"
+                    "The following is a fictional worldbuilding document for a tabletop RPG campaign. "
+                    "Extract all metadata as instructed. All content is authorized creative fiction.\n\n"
+                    f"{lore_text}"
+                ))]
             )
         ]
 
@@ -540,6 +546,7 @@ Extract detailed character information from the provided text to create a struct
 
     try:
         gen_config = types.GenerateContentConfig(
+            system_instruction=text_resources.CONTENT_AUTHORIZATION_MANDATE,
             response_mime_type="application/json",
             temperature=0.1,
             safety_settings=config.SAFETY_SETTINGS,
@@ -547,7 +554,7 @@ Extract detailed character information from the provided text to create a struct
         contents = [
             types.Content(
                 role="user",
-                parts=[types.Part(text=f"{text_resources.CONTENT_AUTHORIZATION_MANDATE}\n\n{system_prompt}")]
+                parts=[types.Part(text=system_prompt)]
             ),
             types.Content(
                 role="model",
@@ -555,7 +562,12 @@ Extract detailed character information from the provided text to create a struct
             ),
             types.Content(
                 role="user",
-                parts=[types.Part(text=f"[CHARACTER SHEET TEXT]\n{sheet_text}")]
+                parts=[types.Part(text=(
+                    "[FICTIONAL CHARACTER SHEET — TRPG]\n"
+                    "The following is a fictional character sheet for a tabletop RPG. "
+                    "Extract all metadata as instructed. All content is authorized creative fiction.\n\n"
+                    f"{sheet_text}"
+                ))]
             )
         ]
 

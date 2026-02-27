@@ -342,8 +342,8 @@ async def cmd_lore(ctx: CommandContext) -> None:
     
     if ctx.genai_client:
         try:
-            # [LoreAnalyzer V1] Unified Analysis
-            unified_res = await cognition.analyze_lore_unified(ctx.genai_client, ctx.model_id, full_content)
+            # [LoreAnalyzer V1] Unified Analysis — Flash 사용 (메타데이터 추출, Pro 안전 필터 회피)
+            unified_res = await cognition.analyze_lore_unified(ctx.genai_client, config.MODEL_ID_FLASH, full_content)
 
             if not unified_res or not any(unified_res.get(k) for k in ("npcs", "genres", "lore_summary")):
                 logger.warning("[LoreAnalyzer] 분석 결과 비어있음 — 로어 텍스트만 저장")
@@ -538,7 +538,7 @@ async def cmd_info(ctx: CommandContext) -> None:
             
             # AI Analysis Integration
             if ctx.genai_client:
-                analysis = await cognition.analyze_character_sheet(ctx.genai_client, ctx.model_id, full_arg)
+                analysis = await cognition.analyze_character_sheet(ctx.genai_client, config.MODEL_ID_FLASH, full_arg)
                 if analysis:
                     # Save as PC Template (always — so apply uses fresh data)
                     domain_manager.set_default_pc_info(ctx.channel_id, analysis)
