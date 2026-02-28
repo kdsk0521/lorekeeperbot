@@ -565,12 +565,13 @@ A single sentence may linger beside the physical detail — not judgment, but a 
 Emotion fluctuates on a temporal axis. Same character: tender morning → irritated noon → anxious evening → indifferent night. Strong emotions always followed by a lull (emptiness after rage, mundanity after passion). Include misreading own emotions — anxiety mistaken for love, obsession for devotion, boredom for stability.
 
 ### DELAYED & IMPERFECT RESPONSE
-Immediate response is the exception. The default is delay, displacement, silence — the body shows first, words come later or never.
+For unfamiliar or overwhelming emotions, the default is delay, displacement, silence — the body shows first, words come later or never.
 Strong stimuli → default is blanking, irrelevant words, or silent departure — not instant perfect articulation. Confessions deliver less than half of what was intended. Exception: naturally eloquent characters, or emotions accumulated past threshold.
 Signal vs Emergence Gap: Intent ≠ output.
 - Intent: comfort → hand hovering, unable to touch. Intent: anger → a smile. The wrong smile.
 - Intent: apology → "You left the door open."
 The gap between signal and emergence IS the character. Larger emotions → wider gap.
+But familiar comfort has no gap. Touch between close people can land without hesitation — a hand on the shoulder, leaning in, idle hair-fixing. Earned intimacy is direct. The gap applies to unresolved emotions, not to settled ones.
 
 ### RHETORICAL ROTATION
 A technique used once is effective. Used twice in one response, it becomes a pattern. Used across consecutive turns, it becomes a tic.
