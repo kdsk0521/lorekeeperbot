@@ -1696,39 +1696,73 @@ async def cmd_genre(ctx: CommandContext) -> None:
 
 @registry.register("rule", category="World", aliases=["룰", "규칙", "rules", "worldrules", "세계규칙"], description="세계 규칙 관리")
 async def cmd_rule(ctx: CommandContext) -> None:
-    """!룰 [추가/삭제/목록] [키워드] [내용]"""
+    """!룰 [추가/삭제/목록/초기화] [키워드] [내용]  — 파일 첨부 시 일괄 등록"""
     args = ctx.args
     if not args:
         sub = "list"
     else:
         sub = args[0].lower()
-    
+
     # Load World Data
     w = domain_manager.get_world_state(ctx.channel_id)
     rules = w.get("location_rules", {})
-    
+
     # 1. List
     if sub in ['list', '목록', '조회', 'l']:
         if not rules:
             await ctx.send("📜 활성화된 특수 규칙이 없습니다.")
             return
-        
+
         msg = ["📜 **세계 규칙 목록**"]
         for k, v in rules.items():
             desc = v.get('desc', '') if isinstance(v, dict) else str(v)
             msg.append(f"- **{k}**: {desc}")
-        await ctx.send("\n".join(msg))
+        await send_long_message(ctx.message.channel, "\n".join(msg))
         return
 
     # 2. Add / Update
     if sub in ['add', '추가', 'set', '설정', 'a']:
-        if len(args) < 3:
-            await ctx.send("⚠️ 사용법: `!룰 추가 [키워드] [설명]`")
+        # 파일 첨부 → 일괄 등록 ("키워드: 설명" 또는 "키워드 - 설명" per line)
+        if ctx.message.attachments:
+            file_text, error = await read_attachment_text(ctx.message.attachments[0])
+            if error:
+                await ctx.send(error)
+                return
+            if not file_text:
+                await ctx.send("⚠️ 파일 내용이 비어있습니다.")
+                return
+            added = 0
+            for line in file_text.splitlines():
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                sep = None
+                for s in [':', '-', '：']:
+                    if s in line:
+                        sep = s
+                        break
+                if sep:
+                    key, desc = line.split(sep, 1)
+                    key, desc = key.strip(), desc.strip()
+                else:
+                    parts = line.split(None, 1)
+                    key = parts[0]
+                    desc = parts[1] if len(parts) > 1 else ""
+                if key:
+                    rules[key] = {"desc": desc, "created_at": time.strftime('%Y-%m-%d')}
+                    added += 1
+            w["location_rules"] = rules
+            domain_manager.update_world_state(ctx.channel_id, w)
+            await ctx.send(f"📜 **{added}개 규칙 일괄 등록 완료**")
             return
-        
+
+        if len(args) < 3:
+            await ctx.send("⚠️ 사용법: `!룰 추가 [키워드] [설명]` 또는 파일 첨부")
+            return
+
         key = args[1]
         desc = " ".join(args[2:])
-        
+
         rules[key] = {"desc": desc, "created_at": time.strftime('%Y-%m-%d')}
         w["location_rules"] = rules
         domain_manager.update_world_state(ctx.channel_id, w)
@@ -1740,7 +1774,7 @@ async def cmd_rule(ctx: CommandContext) -> None:
         if len(args) < 2:
             await ctx.send("⚠️ 사용법: `!룰 삭제 [키워드]`")
             return
-            
+
         key = args[1]
         if key in rules:
             del rules[key]
@@ -1750,8 +1784,15 @@ async def cmd_rule(ctx: CommandContext) -> None:
         else:
             await ctx.send(f"⚠️ 규칙 '{key}'(을)를 찾을 수 없습니다.")
         return
-        
-    await ctx.send(f"⚠️ 사용법: `!룰 [목록/추가/삭제]`")
+
+    # 4. Reset
+    if sub in ['reset', '초기화', 'clear']:
+        w["location_rules"] = {}
+        domain_manager.update_world_state(ctx.channel_id, w)
+        await ctx.send("🗑️ **모든 규칙 초기화 완료**")
+        return
+
+    await ctx.send("⚠️ 사용법: `!룰 [목록/추가/삭제/초기화]` — 파일 첨부로 일괄 등록 가능")
 
 
 @registry.register("quest", category="World", aliases=["퀘스트"], description="퀘스트 관리")
