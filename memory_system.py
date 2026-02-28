@@ -103,7 +103,8 @@ async def api_call_with_retry(
     model_id: str,
     contents: List[types.Content],
     gen_config: types.GenerateContentConfig,
-    operation_name: str = "API Call"
+    operation_name: str = "API Call",
+    allow_truncated: bool = False
 ) -> Optional[str]:
     """
     Gemini API 호출을 재시도 로직과 함께 수행합니다.
@@ -160,6 +161,9 @@ async def api_call_with_retry(
                              logging.warning(f"  {rating.category}: {rating.probability}")
                     continue
                 elif 'MAX_TOKENS' in fr_str:
+                     if allow_truncated and response.text and len(response.text.strip()) > 50:
+                         logging.info(f"[{operation_name}] 출력 잘림 (시도 {attempt+1}) — 잘린 응답 허용")
+                         return response.text.strip()
                      logging.warning(f"[{operation_name}] 출력 토큰 한도 초과 (시도 {attempt+1}) — 재시도 불가, 잘린 응답 폐기")
                      return None
                 elif 'STOP' not in fr_str and 'END_TURN' not in fr_str and fr_str != '1':

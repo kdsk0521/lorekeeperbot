@@ -311,7 +311,8 @@ Rules:
             types.Content(role="user", parts=[types.Part(text=f"[NPC PROFILE]\n{profile_text[:6000]}")]),
         ]
         result = await api_call_with_retry(client, model_id, contents, cfg,
-                                           operation_name=f"VoiceCard-{npc_name}")
+                                           operation_name=f"VoiceCard-{npc_name}",
+                                           allow_truncated=True)
         if result and len(result.strip()) > 50:
             return result.strip()
     except Exception as e:
