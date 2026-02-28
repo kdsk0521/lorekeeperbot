@@ -95,38 +95,122 @@ def _build_status_layout(active_modules: list) -> str:
 
 
 # =========================================================
-# §P Scene Palette — scene_type × energy → lighting × color
+# §S Spatial Sense — 공간 유형 → 물성 + 감각 잔류 힌트
 # =========================================================
 
-_SCENE_PALETTE_DEFAULT = {
-    "intimate":    ("indoor_lamp", "amber"),
-    "social":      ("high_key", "natural"),
-    "combat":      ("low_key", "vivid"),
-    "exploration": ("natural", "natural"),
-    "tension":     ("single_source", "cool"),
-    "summary":     ("diffused", "washed"),
-    "normal":      ("natural", "natural"),
+_SPATIAL_KEYWORDS = {
+    # 밀폐
+    "방": "enclosed", "실내": "enclosed", "closet": "enclosed",
+    "room": "enclosed", "bedroom": "enclosed", "bathroom": "enclosed",
+    "부엌": "enclosed", "kitchen": "enclosed", "사무실": "enclosed", "office": "enclosed",
+    "창고": "enclosed", "storage": "enclosed",
+    # 반향
+    "복도": "resonant", "홀": "resonant", "성당": "resonant", "지하": "resonant",
+    "hallway": "resonant", "hall": "resonant", "cathedral": "resonant", "cave": "resonant",
+    "계단": "resonant", "stairway": "resonant", "터널": "resonant", "tunnel": "resonant",
+    # 개방
+    "거리": "open", "공원": "open", "숲": "open", "들판": "open",
+    "street": "open", "park": "open", "forest": "open", "field": "open",
+    "바다": "open", "해변": "open", "beach": "open",
+    # 고소
+    "옥상": "elevated", "rooftop": "elevated", "절벽": "elevated", "cliff": "elevated",
+    "탑": "elevated", "tower": "elevated", "발코니": "elevated", "balcony": "elevated",
+    # 군중
+    "시장": "crowded", "카페": "crowded", "바": "crowded", "클럽": "crowded",
+    "market": "crowded", "cafe": "crowded", "bar": "crowded", "club": "crowded",
+    "식당": "crowded", "restaurant": "crowded",
+    # 이동
+    "차": "moving", "버스": "moving", "기차": "moving", "지하철": "moving",
+    "bus": "moving", "train": "moving", "subway": "moving", "car": "moving",
+    "배": "moving", "ship": "moving", "boat": "moving",
 }
 
-_ENERGY_PALETTE_MOD = {
-    "idle":        (None, None),
-    "steady":      (None, None),
-    "rising":      (None, "vivid"),
-    "falling":     ("diffused", None),
-    "peak":        ("single_source", "vivid"),
-    "stagnant":    (None, "mono"),
-    "detonation":  ("low_key", "vivid"),
-    "aftershock":  ("diffused", "washed"),
+_SPATIAL_HINTS = {
+    "enclosed":  "[§S] 밀폐 — 냄새와 체온이 오래 남는다. 시선을 피하기 어렵고, 침묵이 무겁다",
+    "resonant":  "[§S] 반향 — 발소리가 벽을 타고 돌아온다. 빈 공간이 존재감을 갖고, 속삭임도 멀리 간다",
+    "open":      "[§S] 개방 — 바람이 흔적을 지운다. 발자국만 남고, 거리가 몸 사이를 벌린다",
+    "elevated":  "[§S] 고소 — 바람이 체온을 앗아간다. 소리는 아래로 떨어지고, 몸이 노출된다",
+    "crowded":   "[§S] 군중 — 개별 흔적이 소음에 묻힌다. 가까이 붙어야 하고, 사적 공간이 사라진다",
+    "moving":    "[§S] 이동 — 흔적을 남길 수 없다. 진동이 몸에 전해지고, 공간 자체가 일시적이다",
+}
+
+# Architecture.decay_profile — 코드 보관, 후속 확장용 (현재 프롬프트 미사용)
+_DECAY_PROFILE = {
+    "enclosed":  {"scent": "high", "thermal": "high", "acoustic": "absorbed", "visual": "high"},
+    "resonant":  {"scent": "low",  "thermal": "low",  "acoustic": "high",     "visual": "mid"},
+    "open":      {"scent": "none", "thermal": "none", "acoustic": "none",     "visual": "low"},
+    "elevated":  {"scent": "none", "thermal": "none", "acoustic": "none",     "visual": "mid"},
+    "crowded":   {"scent": "noise","thermal": "noise","acoustic": "noise",    "visual": "noise"},
+    "moving":    {"scent": "none", "thermal": "none", "acoustic": "none",     "visual": "none"},
 }
 
 
-def _resolve_palette(scene_type: str, energy: str) -> str:
-    """scene_type × energy_direction → [§P light, color] 태그."""
-    base_light, base_color = _SCENE_PALETTE_DEFAULT.get(scene_type, ("natural", "natural"))
-    energy_mod = _ENERGY_PALETTE_MOD.get(energy, (None, None))
-    light = energy_mod[0] if energy_mod[0] else base_light
-    color = energy_mod[1] if energy_mod[1] else base_color
-    return f"[§P {light}, {color}]"
+def _resolve_spatial(location: str) -> str:
+    """위치 문자열에서 공간 유형 추론 → §S 힌트. 매칭 없으면 빈 문자열."""
+    if not location:
+        return ""
+    loc_lower = location.lower()
+    for keyword, space_type in _SPATIAL_KEYWORDS.items():
+        if keyword in loc_lower:
+            return _SPATIAL_HINTS[space_type]
+    return ""
+
+
+# =========================================================
+# §P Scene Palette — spatial_read(Flash) → lighting × color
+# =========================================================
+
+_VALID_LIGHTS = {
+    "natural", "indoor_lamp", "high_key", "low_key", "single_source",
+    "diffused", "golden_hour", "window_light", "backlight", "side_light",
+}
+_VALID_COLORS = {
+    "natural", "amber", "vivid", "cool", "washed",
+    "mono", "sunset", "sepia", "pastel", "complementary",
+}
+
+
+def _resolve_palette(dai: dict) -> str:
+    """spatial_read → [§P light, color] 태그 + 선택적 filter 힌트.
+
+    우선순위: flashback(코드 강제) > mutation(변이 결과) > base(장면 분위기) > natural(fallback)
+    weight=skip 또는 null → natural/natural (§P 무강화)
+    """
+    light, color = "natural", "natural"
+    filter_hint = ""
+
+    spatial = dai.get("spatial_read")
+    if spatial and isinstance(spatial, dict):
+        weight = spatial.get("weight", "skip")
+        if weight != "skip":
+            base = spatial.get("base", {})
+            if isinstance(base, dict):
+                bl = base.get("lighting", "natural")
+                bc = base.get("color", "natural")
+                if bl in _VALID_LIGHTS:
+                    light = bl
+                if bc in _VALID_COLORS:
+                    color = bc
+
+            mut = spatial.get("mutation")
+            if mut and isinstance(mut, dict):
+                ml = mut.get("lighting")
+                mc = mut.get("color")
+                if ml and ml in _VALID_LIGHTS:
+                    light = ml
+                if mc and mc in _VALID_COLORS:
+                    color = mc
+
+            flt = spatial.get("filter")
+            if flt and isinstance(flt, str):
+                filter_hint = f" ({flt})"
+
+    fb = dai.get("flashback_eval")
+    if fb and isinstance(fb, dict) and fb.get("detected"):
+        light, color = "diffused", "sepia"
+        filter_hint = ""
+
+    return f"[§P {light}, {color}]{filter_hint}"
 
 
 # =========================================================
@@ -165,10 +249,19 @@ def _build_telescope_prefill(dai: dict, real_time_data: str) -> str:
             scene_lines.append(f"  ├ [Scene.When/Where] (observation) {observation[:150]}")
 
     # [§P] Scene Palette
-    scene_type = dai.get("scene_type", "normal")
-    energy = dai.get("energy_direction", "steady")
-    palette_tag = _resolve_palette(scene_type, energy)
+    palette_tag = _resolve_palette(dai)
     scene_lines.append(f"  ├ {palette_tag}")
+
+    # [§S] Spatial Sense
+    location = ""
+    obs = dai.get("observation", {})
+    if isinstance(obs, dict):
+        location = obs.get("location", "")
+    elif isinstance(obs, str):
+        location = obs
+    spatial_hint = _resolve_spatial(location)
+    if spatial_hint:
+        scene_lines.append(f"  ├ {spatial_hint}")
 
     if not scene_lines:
         return ""
@@ -916,6 +1009,12 @@ def build_34_step_prompt(ctx) -> str:
             extended_intel_parts.append(
                 "### NPC 관계 깊이\n" + "\n".join(conn_lines)
             )
+
+    # Spatial Inscription: 공간 각인 렌더링 힌트
+    spatial_read = dai.get("spatial_read")
+    spatial_text = iceberg.translate_spatial_inscription(spatial_read)
+    if spatial_text:
+        extended_intel_parts.append(spatial_text)
 
     extended_intelligence = "\n\n".join(extended_intel_parts)
 

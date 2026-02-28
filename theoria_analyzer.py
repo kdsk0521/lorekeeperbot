@@ -346,6 +346,32 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
 - "RelevantNPCs": ["NPC name from roster relevant to THIS scene (max 5)"]
 - "relevant_chunks": [0, 2, 5] (indices from LORE CHUNKS — up to 7 most relevant)
 
+## SPATIAL PALETTE
+Observe the physical space. base = what this scene's atmosphere looks and feels like. Lighting and color are mood, not clock.
+mutation = did anyone/anything change the space? A=body/presence(involuntary), B=action(physical), C=perceptual(subjective POV lens).
+A/B are Territory (objective). C is Lens (subjective) — MUST separate.
+[§S] tag = architectural base (code-injected). Use as decay physics for traces. Do NOT re-analyze.
+weight: skip = default (most turns). Output null when skip.
+
+- "spatial_read": null OR {
+    "active_traces": [{"type": "thermal/scent/acoustic/surface/object", "detail": "Korean 1 sentence"}] | null,
+    "base": {
+      "lighting": "natural/indoor_lamp/high_key/low_key/single_source/diffused/golden_hour/window_light/backlight/side_light",
+      "color": "natural/amber/vivid/cool/washed/mono/sunset/sepia/pastel/complementary"
+    },
+    "mutation": null OR {
+      "type": "A/B/C",
+      "source": "Korean — 무엇이 변화를 일으켰는가",
+      "lighting": "변이 결과 lighting",
+      "color": "변이 결과 color"
+    },
+    "filter": "Korean or null — C-type만. POV 캐릭터의 지각 렌즈. A/B와 별도",
+    "tension": "designed X <-> lived Y (Lefebvre)" | null,
+    "shift": null | "gradual" | "sudden",
+    "threshold": null | "mild" | "sharp",
+    "weight": "skip/ambient/render"
+  }
+
 ## SCENE CONTINUITY (requires ### 4d. PREVIOUS FRAME — null if no previous frame)
 - "continuity_check": null OR {
     "flags": [{"type": "spatial_break|sensory_break|object_break|tone_break|npc_break|rhythm_break",

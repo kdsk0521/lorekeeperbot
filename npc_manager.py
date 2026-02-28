@@ -168,16 +168,6 @@ def _extract_structured_fields(desc: str) -> Dict[str, str]:
         fields["initial_depth"] = best_depth
         fields["initial_tension"] = best_tension
 
-    # Cultural Context (5-3) — 이름/배경/키워드로 문화 힌트 추출
-    if any(w in desc_lower for w in ("한국", "korea", "서울", "부산", "전통", "유교", "한복", "김치")):
-        fields["cultural_context"] = "korean"
-    elif any(w in desc_lower for w in ("japan", "일본", "동경", "samurai", "shogun", "bushido")):
-        fields["cultural_context"] = "japanese"
-    elif any(w in desc_lower for w in ("china", "중국", "wuxia", "martial sect", "jianghu")):
-        fields["cultural_context"] = "chinese"
-    elif any(w in desc_lower for w in ("western", "america", "europe", "london", "new york")):
-        fields["cultural_context"] = "western"
-
     return fields
 
 
@@ -647,10 +637,8 @@ def get_npc_roster(channel_id: str) -> str:
         first_line = desc.split("\n")[0][:50] if desc else ""
         role = data.get("role", "")
         location = data.get("location", "")
-        cultural = data.get("cultural_context", "")
         tag = f" [{role}]" if role else ""
         tag += f" @{location}" if location else ""
-        tag += f" ({cultural})" if cultural else ""
         lines.append(f"- {name}{tag}: {first_line}")
     return "\n".join(lines)
 

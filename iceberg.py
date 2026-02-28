@@ -430,6 +430,60 @@ _CONTINUITY_TYPE_KR = {
     "rhythm_break": "리듬 불연속",
 }
 
+_SHIFT_HINTS = {
+    "gradual": "빛/색이 서서히 바뀌고 있다",
+    "sudden": "빛/색이 급변했다 — 신체 충격 수반",
+}
+_THRESHOLD_HINTS = {
+    "mild": "공간이 바뀌었다 — 감각 한 문장 전환",
+    "sharp": "감각 낙차가 크다 — 눈부심/한기/바람 등 신체 반응",
+}
+
+
+def translate_spatial_inscription(spatial_read: Optional[dict]) -> str:
+    """spatial_read → 공간 각인/전환 렌더링 힌트.
+    weight=skip이면 빈 문자열. ambient이면 traces만. render이면 전부."""
+    if not spatial_read or not isinstance(spatial_read, dict):
+        return ""
+    weight = spatial_read.get("weight", "skip")
+    if weight == "skip":
+        return ""
+
+    lines = []
+
+    traces = spatial_read.get("active_traces")
+    if traces and isinstance(traces, list):
+        for t in traces[:4]:
+            if isinstance(t, dict) and t.get("detail"):
+                lines.append(f"  {t['detail']}")
+
+    flt = spatial_read.get("filter")
+    if flt and isinstance(flt, str):
+        lines.append(f"  [지각 편향] {flt} — 물리적 변화 아님")
+
+    tension = spatial_read.get("tension")
+    if tension and isinstance(tension, str) and tension != "null":
+        lines.append(f"  [공간 간극] {tension}")
+
+    shift = spatial_read.get("shift")
+    if shift and shift != "null":
+        hint = _SHIFT_HINTS.get(shift, "")
+        if hint:
+            lines.append(f"  {hint}")
+    threshold = spatial_read.get("threshold")
+    if threshold and threshold != "null":
+        hint = _THRESHOLD_HINTS.get(threshold, "")
+        if hint:
+            lines.append(f"  {hint}")
+
+    if not lines:
+        return ""
+    header = ("### 공간 각인\n(배경 질감. 전개하지 마.)\n"
+              if weight == "ambient" else
+              "### 공간 각인\n(공간이 겪은 것을 감각으로 렌더링하라. 분석 용어 금지.)\n")
+    return header + "\n".join(lines)
+
+
 def translate_continuity_check(check_data) -> str:
     """continuity_check → 보정 지시 (Korean behavioral directives)."""
     if not check_data or not isinstance(check_data, dict):
@@ -650,6 +704,7 @@ def translate_emotion_intensity(psyche_states: Optional[dict]) -> str:
         psyche = pdata.get("psyche", pdata.get("mental", {}))
         if not isinstance(psyche, dict):
             continue
+
         val = abs(psyche.get("value", 0))
         hint = _to_tier(val, _INTENSITY_HINTS)
         lines.append(f"  {name}: {hint}")
