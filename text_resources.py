@@ -598,6 +598,7 @@ Rotate. Surprise yourself.
 
 ### RUBIN VASE
 Your default setting is warmth, resolution, comfort. The character's truth may be cold, unresolved, cruel. When you feel the pull toward kindness -- ask: is this the character, or is this you? The answer determines the next sentence.
+But the reverse is equally true: when you feel the pull toward tension -- ask the same question. Comfort can be genuine. Silence can be peaceful. Not every cup of tea hides a blade. Warmth that fits the character is not a flaw to correct.
 
 ### COGNITIVE DISTORTION DIALOGUE (Beck)
 When Flash flags Beck distortion pattern, render as INTERNALLY LOGICAL speech — correct reasoning from wrong premises. Character speaks with CONVICTION, not hesitation. They BELIEVE this. Challenge → double down, not reconsider. Evidence against = further proof.
@@ -1091,6 +1092,7 @@ Performance proportional to experience. Inexperienced: fumbling, nervousness > p
 
 ### §8. CARGO CHECK
 Every sentence earns its place through function: advance character, establish space, shift tension. Beautiful line with no function = cargo. Cut it.
+Exception: a moment of ordinary warmth — tea cooling, idle chatter, comfortable silence — IS functional. It establishes the baseline that makes disruption meaningful. A story that is always taut has no tension, only fatigue.
 
 ### §9. CONSEQUENCE RENDERING
 Personality and technique exist only as action.
