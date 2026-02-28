@@ -26,23 +26,37 @@ logger = logging.getLogger("Cognition")
 import re as _re
 
 _MINOR_SANITIZE_RULES = [
-    # 학교 + 나이 표현 → 일반화 (순서 중요: 긴 패턴 먼저)
-    (_re.compile(r'초등학교\s*\d+학년'), '어린'),
-    (_re.compile(r'중학교\s*\d+학년'), '사춘기의'),
-    (_re.compile(r'고등학교\s*\d+학년'), '청소년기의'),
-    (_re.compile(r'초등학생'), '어린아이'),
-    (_re.compile(r'중학생'), '사춘기 아이'),
-    (_re.compile(r'고등학생'), '청소년'),
-    (_re.compile(r'초등학교'), '어린'),
-    (_re.compile(r'중학교'), '사춘기'),
-    # 구체적 나이 (1~17살/세) → 삭제. 성인 나이는 보존
+    # ── 학교 등급 → "학교" (순서: 긴 패턴 먼저) ──
+    (_re.compile(r'초등학교\s*\d+학년'), '학교'),
+    (_re.compile(r'중학교\s*\d+학년'), '학교'),
+    (_re.compile(r'고등학교\s*\d+학년'), '학교'),
+    (_re.compile(r'초등학교'), '학교'),
+    (_re.compile(r'중학교'), '학교'),
+    (_re.compile(r'고등학교'), '학교'),
+    # ── 학생 등급 → "학생" ──
+    (_re.compile(r'초등학생'), '학생'),
+    (_re.compile(r'중학생'), '학생'),
+    (_re.compile(r'고등학생'), '학생'),
+    # ── 학년 단독 → 삭제 ──
+    (_re.compile(r'\d학년'), ''),
+    # ── 미성년 관련 한국어 ──
+    (_re.compile(r'미성년자?'), ''),
+    (_re.compile(r'아동'), '사람'),
+    (_re.compile(r'어린이'), '사람'),
+    (_re.compile(r'유아'), ''),
+    # ── 구체적 나이 (1~17살/세) → 삭제. 성인 나이는 보존 ──
     (_re.compile(r'(?<!\d)(?:만\s?)?(?:1[0-7]|[1-9])살'), ''),
     (_re.compile(r'(?<!\d)(?:만\s?)?(?:1[0-7]|[1-9])세(?!\d)'), ''),
-    # 영문
-    (_re.compile(r'elementary\s+school', _re.IGNORECASE), 'young'),
-    (_re.compile(r'middle\s+school', _re.IGNORECASE), 'adolescent'),
-    (_re.compile(r'high\s+school', _re.IGNORECASE), 'teenage'),
+    # ── 영문 학교 → "school" ──
+    (_re.compile(r'elementary\s+school', _re.IGNORECASE), 'school'),
+    (_re.compile(r'middle\s+school', _re.IGNORECASE), 'school'),
+    (_re.compile(r'high\s+school', _re.IGNORECASE), 'school'),
+    # ── 영문 나이/미성년 ──
     (_re.compile(r'\b(?:1[0-7]|[1-9])\s*(?:years?\s*old|y/?o)\b', _re.IGNORECASE), ''),
+    (_re.compile(r'\bminors?\b', _re.IGNORECASE), ''),
+    (_re.compile(r'\bunderage\b', _re.IGNORECASE), ''),
+    (_re.compile(r'\bjuveniles?\b', _re.IGNORECASE), ''),
+    (_re.compile(r'\bgrade\s*\d{1,2}(?:th|st|nd|rd)?\b', _re.IGNORECASE), ''),
 ]
 
 def _sanitize_for_analysis(text: str) -> str:
