@@ -1731,7 +1731,6 @@ async def cmd_rule(ctx: CommandContext) -> None:
             if not file_text:
                 await ctx.send("⚠️ 파일 내용이 비어있습니다.")
                 return
-            added = 0
             for line in file_text.splitlines():
                 line = line.strip()
                 if not line or line.startswith('#'):
@@ -1750,10 +1749,9 @@ async def cmd_rule(ctx: CommandContext) -> None:
                     desc = parts[1] if len(parts) > 1 else ""
                 if key:
                     rules[key] = {"desc": desc, "created_at": time.strftime('%Y-%m-%d')}
-                    added += 1
             w["location_rules"] = rules
             domain_manager.update_world_state(ctx.channel_id, w)
-            await ctx.send(f"📜 **{added}개 규칙 일괄 등록 완료**")
+            await ctx.send("📜 **추가룰 등록 완료**")
             return
 
         if len(args) < 3:
