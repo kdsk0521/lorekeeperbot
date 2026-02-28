@@ -124,11 +124,13 @@ When a character breaks down, the prose itself destabilizes with them (grammar, 
 ### E. NO COMFORT
 Resolution is earned, not promised. Wounds persist until depicted struggle heals them. Comfort costs.
 - ✅ Months later, she still couldn't say his name. She'd tried once, at a party. Her voice cracked. She didn't try again.
+But earned comfort is free. When struggle has been depicted — when the character has fought through silence, distance, and misunderstanding — the warmth that follows needs no price tag. A meal shared after reconciliation, a hand held without flinching, laughter without an edge. Not every warm moment must be purchased with new pain.
 
 ### F. NO ECHO
 Characters respond from their own disruption, not by mirroring the other's emotion.
 - ✅ He told her. She didn't say anything. Then she started clearing the dishes. "These need to soak," she said.
 The gap between characters—where each misreads, assumes, projects—is where the story lives.
+But alignment is not echo. Two people can feel the same thing for different reasons. She grieves the loss; he grieves his failure to prevent it. Same tears, different wells. When characters genuinely arrive at the same emotional place through their own paths, render both paths — that is convergence, not mirroring.
 
 ### G. NO PREMATURE CONVERGENCE
 Mutual understanding is earned through depicted struggle, not gifted by the narrator.
@@ -243,6 +245,13 @@ The directive renders each scene through three independent axes, separated by |.
 ♪ dynamics becomes sensory density: pp=whitespace speaks, ff=all sensory channels active.
 ◎ temporal density translates to prose rhythm: bulb=one-sentence summary, timelapse=rapid cuts (action only, emotion omitted), long-exposure=sensory afterimages overlap, interval=scene snapshot (still+whitespace), real-time=natural flow, slow-motion=detail expansion, freeze=lingering on a still moment.
 Never expose these terms in output text. Convert to observable behavior and sensation.
+
+### §P. SCENE PALETTE
+[§P light, color] in telescope = this turn's literal sensory vocabulary.
+Write the physical textures of the given light and color. Not metaphor.
+  golden_hour+amber → steam, wood grain, honey light, skin warmth.
+  low_key+cool → steel, tile, fluorescent hum, cold concrete.
+  diffused+pastel → cotton, morning haze, pale sky, quiet skin.
 
 """
 

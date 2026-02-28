@@ -171,6 +171,20 @@ class OrchestrationService:
                     if depth_delta != 0:
                         domain_manager.update_helena_metric(channel_id, n_name, depth_delta=depth_delta)
 
+            # 첫 등장 NPC: 프로필에서 초기 depth 가져오기
+            for n_name in new_attitudes:
+                existing_att = domain_manager.get_npc_attitudes(channel_id).get(n_name, {})
+                if existing_att.get("depth", 0) == 0:
+                    npc_data = npc_manager.get_npc(channel_id, n_name) or {}
+                    initial_depth = npc_data.get("initial_depth", 0)
+                    initial_tension = npc_data.get("initial_tension", 0)
+                    if initial_depth > 0:
+                        domain_manager.update_helena_metric(
+                            channel_id, n_name,
+                            depth_delta=initial_depth,
+                            tension_delta=initial_tension
+                        )
+
             ctx.existing_attitudes = domain_manager.get_npc_attitudes(channel_id)
 
         # NPC Knowledge 영속화

@@ -388,8 +388,8 @@ def translate_energy_direction(energy: str) -> str:
 # =========================================================
 
 _FLAG_DIRECTIVES = {
-    "convergence_warning": "장면이 갈등 없이 합의에 도달하고 있다. 불편함을 유지하라.",
-    "echo_warning": "NPC가 PC 감정을 따라하고 있다. NPC만의 반응을 만들어라.",
+    "convergence_warning": "관계 변화가 빠르다. 이 속도에 맞는 인과적 근거가 있는지 점검하라. 근거 없으면 속도를 늦춰라.",
+    "echo_warning": "NPC가 PC 감정을 그대로 반사하고 있다. NPC 자신의 이유에서 나온 반응인지 점검하라.",
     "stagnation_warning": "3턴째 장면 에너지가 평평하다. 외부 자극을 자연스럽게 도입하라.",
     "mse_deviation": "NPC의 정신 상태가 급변했다. 이전 행동과의 일관성을 점검하고, 변화에 인과적 근거를 부여하라.",
     "dissonance_flag": "NPC가 모순된 신념/행동을 보이고 있다. 즉시 해소하지 마라 — 불편함을 행동으로 보여줘라.",

@@ -73,12 +73,12 @@ def _collect_aspect_stance(aspects: Any) -> Tuple[List[str], List[str]]:
 
 # ── Directing Notation Tables (♪ 음악 | ▶ 카메라 | ◎ 사진 — 3축 연출 표기) ──
 _POSITION_NOTATION = {
-    "controlled": "상황 | ♪ mp, andante, legato | ▶ 와이드, 병렬, 팬 [하이키] | ◎ 실시간",
+    "controlled": "상황 | ♪ mp, andante, legato | ▶ 와이드, 병렬, 팬 | ◎ 실시간",
     "risky":      "상황 | ♪ f, allegro, marcato | ▶ 투샷, 대면, 컷 | ◎ 슬로모션",
     "desperate":  "상황 | ♪ ff, presto, staccato | ▶ 로우앵글, 등지기, 점프컷 | ◎ 프리즈",
 }
 _ENERGY_NOTATION = {
-    "idle":       "장면 | ♪ mp, andante, legato | ▶ 팬, 필로우, 롱테이크 [하이키] | ◎ 장노출",
+    "idle":       "장면 | ♪ mp, andante, legato | ▶ 팬, 필로우, 롱테이크 | ◎ 장노출",
     "steady":     "장면 | ♪ mf, andante, legato | ▶ 아이레벨, 병렬, 매치컷 | ◎ 실시간",
     "rising":     "장면 | ♪ f, allegro, marcato, crescendo | ▶ 투샷, 대면, 크로스컷 | ◎ 인터벌",
     "falling":    "장면 | ♪ p, adagio, legato, diminuendo | ▶ 롱테이크, 등지기, 페이드 | ◎ 장노출",
@@ -88,23 +88,23 @@ _ENERGY_NOTATION = {
     "aftershock": "장면 | ♪ p, adagio, staccato | ▶ 롱테이크, 등지기, 페이드 | ◎ 장노출",
 }
 _VIGOR_NOTATION = {
-    "high":       "신체 | ♪ f, allegro, legato | ▶ 와이드, 병렬 [하이키] | ◎ 실시간, 난색",
-    "strained":   "신체 | ♪ p, adagio, marcato | ▶ 클로즈업:근육, 높낮이차 | ◎ 슬로모션, 한색",
-    "collapsing": "신체 | ♪ pp, largo, staccato | ▶ 클로즈업:호흡, 등지기 [저조도] | ◎ 프리즈, 탈색",
+    "high":       "신체 | ♪ f, allegro, legato | ▶ 와이드, 병렬 | ◎ 실시간",
+    "strained":   "신체 | ♪ p, adagio, marcato | ▶ 클로즈업:근육, 높낮이차 | ◎ 슬로모션",
+    "collapsing": "신체 | ♪ pp, largo, staccato | ▶ 클로즈업:호흡, 등지기 | ◎ 프리즈",
 }
 _COMPOSURE_NOTATION = {
     "high":       "심리 | ♪ mf, andante, legato | ▶ 투샷, 병렬, 매치컷 | ◎ 실시간",
-    "strained":   "심리 | ♪ p, adagio, staccato | ▶ 클로즈업:시선, 높낮이차 | ◎ 슬로모션, 한색",
-    "collapsing": "심리 | ♪ pp, largo, sforzando | ▶ 하이앵글, 등지기 [저조도] | ◎ 프리즈, 탈색",
+    "strained":   "심리 | ♪ p, adagio, staccato | ▶ 클로즈업:시선, 높낮이차 | ◎ 슬로모션",
+    "collapsing": "심리 | ♪ pp, largo, sforzando | ▶ 하이앵글, 등지기 | ◎ 프리즈",
 }
 _MIXED_NOTATION = {
-    "desperate": "신체+심리 | ♪ pp, largo, staccato | ▶ 하이앵글, 등지기 [저조도] | ◎ 프리즈, 탈색",
-    "reckless":  "행동 | ♪ f, presto, sforzando | ▶ 와이드, 점프컷 | ◎ 슬로모션, 고채도",
-    "fragile":   "의식 | ♪ p, adagio, legato | ▶ 클로즈업:눈, 필로우 | ◎ 장노출, 한색",
+    "desperate": "신체+심리 | ♪ pp, largo, staccato | ▶ 하이앵글, 등지기 | ◎ 프리즈",
+    "reckless":  "행동 | ♪ f, presto, sforzando | ▶ 와이드, 점프컷 | ◎ 슬로모션",
+    "fragile":   "의식 | ♪ p, adagio, legato | ▶ 클로즈업:눈, 필로우 | ◎ 장노출",
 }
 _DOOM_NOTATION = {
-    "high":     "세계 | ♪ f, allegro, marcato | ▶ 와이드, 대면 [단일광원] | ◎ 인터벌, 고채도",
-    "critical": "세계 | ♪ ff, presto, sforzando | ▶ 로우앵글, 점프컷 [저조도] | ◎ 슬로모션, 고채도",
+    "high":     "세계 | ♪ f, allegro, marcato | ▶ 와이드, 대면 | ◎ 인터벌",
+    "critical": "세계 | ♪ ff, presto, sforzando | ▶ 로우앵글, 점프컷 | ◎ 슬로모션",
 }
 # 장면 시간 밀도 보정 — SceneType이 에너지 테이블의 ◎ 기본값을 override
 _SCENE_PHOTO_OVERRIDE = {

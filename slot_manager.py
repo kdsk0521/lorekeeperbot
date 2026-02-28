@@ -95,6 +95,41 @@ def _build_status_layout(active_modules: list) -> str:
 
 
 # =========================================================
+# §P Scene Palette — scene_type × energy → lighting × color
+# =========================================================
+
+_SCENE_PALETTE_DEFAULT = {
+    "intimate":    ("indoor_lamp", "amber"),
+    "social":      ("high_key", "natural"),
+    "combat":      ("low_key", "vivid"),
+    "exploration": ("natural", "natural"),
+    "tension":     ("single_source", "cool"),
+    "summary":     ("diffused", "washed"),
+    "normal":      ("natural", "natural"),
+}
+
+_ENERGY_PALETTE_MOD = {
+    "idle":        (None, None),
+    "steady":      (None, None),
+    "rising":      (None, "vivid"),
+    "falling":     ("diffused", None),
+    "peak":        ("single_source", "vivid"),
+    "stagnant":    (None, "mono"),
+    "detonation":  ("low_key", "vivid"),
+    "aftershock":  ("diffused", "washed"),
+}
+
+
+def _resolve_palette(scene_type: str, energy: str) -> str:
+    """scene_type × energy_direction → [§P light, color] 태그."""
+    base_light, base_color = _SCENE_PALETTE_DEFAULT.get(scene_type, ("natural", "natural"))
+    energy_mod = _ENERGY_PALETTE_MOD.get(energy, (None, None))
+    light = energy_mod[0] if energy_mod[0] else base_light
+    color = energy_mod[1] if energy_mod[1] else base_color
+    return f"[§P {light}, {color}]"
+
+
+# =========================================================
 # 5W1H Telescope Prefill Builder
 # =========================================================
 
@@ -128,6 +163,12 @@ def _build_telescope_prefill(dai: dict, real_time_data: str) -> str:
         observation = dai.get("observation", "")
         if observation:
             scene_lines.append(f"  ├ [Scene.When/Where] (observation) {observation[:150]}")
+
+    # [§P] Scene Palette
+    scene_type = dai.get("scene_type", "normal")
+    energy = dai.get("energy_direction", "steady")
+    palette_tag = _resolve_palette(scene_type, energy)
+    scene_lines.append(f"  ├ {palette_tag}")
 
     if not scene_lines:
         return ""

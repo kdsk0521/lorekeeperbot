@@ -135,8 +135,40 @@ def _extract_structured_fields(desc: str) -> Dict[str, str]:
         constraints.sort(key=len)
         fields["constraints"] = " | ".join(constraints[:3])
 
-    # Cultural Context (5-3) — 이름/배경/키워드로 문화 힌트 추출
+    # Relation Keywords — 프로필에서 관계 키워드 스캔 → initial_depth/tension
+    _RELATION_KEYWORDS = {
+        # (depth, tension) 초기값
+        # 친밀/가족
+        "소꿉친구": (60, 5), "childhood friend": (60, 5),
+        "절친": (65, 5), "best friend": (65, 5),
+        "가족": (55, 10), "family": (55, 10),
+        "형제": (50, 15), "자매": (50, 15), "sibling": (50, 15),
+        "부모": (55, 15), "parent": (55, 15),
+        "연인": (70, 10), "lover": (70, 10), "애인": (70, 10),
+        "partner": (60, 10), "배우자": (65, 10), "spouse": (65, 10),
+        # 중립/직업
+        "동료": (30, 5), "colleague": (30, 5),
+        "이웃": (20, 5), "neighbor": (20, 5),
+        "지인": (15, 5), "acquaintance": (15, 5),
+        "스승": (40, 10), "mentor": (40, 10),
+        "제자": (35, 10), "student": (35, 10),
+        "친구": (40, 5), "friend": (40, 5),
+        # 적대/갈등
+        "원수": (40, 70), "enemy": (40, 70),
+        "라이벌": (35, 50), "rival": (35, 50),
+        "적": (30, 60),
+    }
     desc_lower = desc.lower()
+    best_depth, best_tension = 0, 0
+    for keyword, (d, t) in _RELATION_KEYWORDS.items():
+        if keyword in desc_lower:
+            if d > best_depth:
+                best_depth, best_tension = d, t
+    if best_depth > 0:
+        fields["initial_depth"] = best_depth
+        fields["initial_tension"] = best_tension
+
+    # Cultural Context (5-3) — 이름/배경/키워드로 문화 힌트 추출
     if any(w in desc_lower for w in ("한국", "korea", "서울", "부산", "전통", "유교", "한복", "김치")):
         fields["cultural_context"] = "korean"
     elif any(w in desc_lower for w in ("japan", "일본", "동경", "samurai", "shogun", "bushido")):
