@@ -350,26 +350,29 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
 Observe the physical space. base = what this scene's atmosphere looks and feels like. Lighting and color are mood, not clock.
 mutation = did anyone/anything change the space? A=body/presence(involuntary), B=action(physical), C=perceptual(subjective POV lens).
 A/B are Territory (objective). C is Lens (subjective) — MUST separate.
-[§S] tag = architectural base (code-injected). Use as decay physics for traces. Do NOT re-analyze.
-weight: skip = default (most turns). Output null when skip.
+spatial_type = classify from context. enclosed(scent/heat linger, silence heavy), resonant(echoes, emptiness has presence), open(wind erases, distance separates), elevated(wind steals heat, exposed), crowded(traces drown in noise, no privacy), moving(no lasting trace, vibration, transient).
+weight: ambient = default (base palette always). render = when mutation occurs.
 
-- "spatial_read": null OR {
+- "spatial_read": {
+    "spatial_type": "enclosed/resonant/open/elevated/crowded/moving",
     "active_traces": [{"type": "thermal/scent/acoustic/surface/object", "detail": "Korean 1 sentence"}] | null,
     "base": {
-      "lighting": "natural/indoor_lamp/high_key/low_key/single_source/diffused/golden_hour/window_light/backlight/side_light",
-      "color": "natural/amber/vivid/cool/washed/mono/sunset/sepia/pastel/complementary"
+      "lighting": "diffused/indoor_lamp/high_key/low_key/single_source/golden_hour/window_light/backlight/side_light",
+      "hue": "amber/crimson/violet/sunset/sepia/grey/cool",
+      "saturation": "pastel/solid/vivid/washed"
     },
     "mutation": null OR {
       "type": "A/B/C",
       "source": "Korean — 무엇이 변화를 일으켰는가",
       "lighting": "변이 결과 lighting",
-      "color": "변이 결과 color"
+      "hue": "변이 결과 hue",
+      "saturation": "변이 결과 saturation"
     },
     "filter": "Korean or null — C-type만. POV 캐릭터의 지각 렌즈. A/B와 별도",
     "tension": "designed X <-> lived Y (Lefebvre)" | null,
     "shift": null | "gradual" | "sudden",
     "threshold": null | "mild" | "sharp",
-    "weight": "skip/ambient/render"
+    "weight": "ambient/render"
   }
 
 ## SCENE CONTINUITY (requires ### 4d. PREVIOUS FRAME — null if no previous frame)

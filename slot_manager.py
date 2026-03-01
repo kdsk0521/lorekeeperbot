@@ -98,33 +98,6 @@ def _build_status_layout(active_modules: list) -> str:
 # §S Spatial Sense — 공간 유형 → 물성 + 감각 잔류 힌트
 # =========================================================
 
-_SPATIAL_KEYWORDS = {
-    # 밀폐
-    "방": "enclosed", "실내": "enclosed", "closet": "enclosed",
-    "room": "enclosed", "bedroom": "enclosed", "bathroom": "enclosed",
-    "부엌": "enclosed", "kitchen": "enclosed", "사무실": "enclosed", "office": "enclosed",
-    "창고": "enclosed", "storage": "enclosed",
-    # 반향
-    "복도": "resonant", "홀": "resonant", "성당": "resonant", "지하": "resonant",
-    "hallway": "resonant", "hall": "resonant", "cathedral": "resonant", "cave": "resonant",
-    "계단": "resonant", "stairway": "resonant", "터널": "resonant", "tunnel": "resonant",
-    # 개방
-    "거리": "open", "공원": "open", "숲": "open", "들판": "open",
-    "street": "open", "park": "open", "forest": "open", "field": "open",
-    "바다": "open", "해변": "open", "beach": "open",
-    # 고소
-    "옥상": "elevated", "rooftop": "elevated", "절벽": "elevated", "cliff": "elevated",
-    "탑": "elevated", "tower": "elevated", "발코니": "elevated", "balcony": "elevated",
-    # 군중
-    "시장": "crowded", "카페": "crowded", "바": "crowded", "클럽": "crowded",
-    "market": "crowded", "cafe": "crowded", "bar": "crowded", "club": "crowded",
-    "식당": "crowded", "restaurant": "crowded",
-    # 이동
-    "차": "moving", "버스": "moving", "기차": "moving", "지하철": "moving",
-    "bus": "moving", "train": "moving", "subway": "moving", "car": "moving",
-    "배": "moving", "ship": "moving", "boat": "moving",
-}
-
 _SPATIAL_HINTS = {
     "enclosed":  "[§S] 밀폐 — 냄새와 체온이 오래 남는다. 시선을 피하기 어렵고, 침묵이 무겁다",
     "resonant":  "[§S] 반향 — 발소리가 벽을 타고 돌아온다. 빈 공간이 존재감을 갖고, 속삭임도 멀리 간다",
@@ -145,15 +118,13 @@ _DECAY_PROFILE = {
 }
 
 
-def _resolve_spatial(location: str) -> str:
-    """위치 문자열에서 공간 유형 추론 → §S 힌트. 매칭 없으면 빈 문자열."""
-    if not location:
+def _resolve_spatial(dai: dict) -> str:
+    """spatial_read.spatial_type(Flash 판단) → §S 힌트. 없으면 빈 문자열."""
+    spatial = dai.get("spatial_read")
+    if not spatial or not isinstance(spatial, dict):
         return ""
-    loc_lower = location.lower()
-    for keyword, space_type in _SPATIAL_KEYWORDS.items():
-        if keyword in loc_lower:
-            return _SPATIAL_HINTS[space_type]
-    return ""
+    stype = spatial.get("spatial_type", "")
+    return _SPATIAL_HINTS.get(stype, "")
 
 
 # =========================================================
@@ -161,56 +132,57 @@ def _resolve_spatial(location: str) -> str:
 # =========================================================
 
 _VALID_LIGHTS = {
-    "natural", "indoor_lamp", "high_key", "low_key", "single_source",
+    "indoor_lamp", "high_key", "low_key", "single_source",
     "diffused", "golden_hour", "window_light", "backlight", "side_light",
 }
-_VALID_COLORS = {
-    "natural", "amber", "vivid", "cool", "washed",
-    "mono", "sunset", "sepia", "pastel", "complementary",
-}
+_VALID_HUES = {"amber", "crimson", "violet", "sunset", "sepia", "grey", "cool"}
+_VALID_SATS = {"pastel", "solid", "vivid", "washed"}
 
 
 def _resolve_palette(dai: dict) -> str:
-    """spatial_read → [§P light, color] 태그 + 선택적 filter 힌트.
+    """spatial_read → [§P light, hue, saturation] 태그 + 선택적 filter 힌트.
 
-    우선순위: flashback(코드 강제) > mutation(변이 결과) > base(장면 분위기) > natural(fallback)
-    weight=skip 또는 null → natural/natural (§P 무강화)
+    우선순위: flashback(코드 강제) > mutation(변이 결과) > base(장면 분위기) > diffused/grey/solid(fallback)
     """
-    light, color = "natural", "natural"
+    light, hue, sat = "diffused", "grey", "solid"
     filter_hint = ""
 
     spatial = dai.get("spatial_read")
     if spatial and isinstance(spatial, dict):
-        weight = spatial.get("weight", "skip")
-        if weight != "skip":
-            base = spatial.get("base", {})
-            if isinstance(base, dict):
-                bl = base.get("lighting", "natural")
-                bc = base.get("color", "natural")
-                if bl in _VALID_LIGHTS:
-                    light = bl
-                if bc in _VALID_COLORS:
-                    color = bc
+        base = spatial.get("base", {})
+        if isinstance(base, dict):
+            bl = base.get("lighting", "diffused")
+            bh = base.get("hue", "grey")
+            bs = base.get("saturation", "solid")
+            if bl in _VALID_LIGHTS:
+                light = bl
+            if bh in _VALID_HUES:
+                hue = bh
+            if bs in _VALID_SATS:
+                sat = bs
 
-            mut = spatial.get("mutation")
-            if mut and isinstance(mut, dict):
-                ml = mut.get("lighting")
-                mc = mut.get("color")
-                if ml and ml in _VALID_LIGHTS:
-                    light = ml
-                if mc and mc in _VALID_COLORS:
-                    color = mc
+        mut = spatial.get("mutation")
+        if mut and isinstance(mut, dict):
+            ml = mut.get("lighting")
+            mh = mut.get("hue")
+            ms = mut.get("saturation")
+            if ml and ml in _VALID_LIGHTS:
+                light = ml
+            if mh and mh in _VALID_HUES:
+                hue = mh
+            if ms and ms in _VALID_SATS:
+                sat = ms
 
-            flt = spatial.get("filter")
-            if flt and isinstance(flt, str):
-                filter_hint = f" ({flt})"
+        flt = spatial.get("filter")
+        if flt and isinstance(flt, str):
+            filter_hint = f" ({flt})"
 
     fb = dai.get("flashback_eval")
     if fb and isinstance(fb, dict) and fb.get("detected"):
-        light, color = "diffused", "sepia"
+        light, hue, sat = "diffused", "sepia", "washed"
         filter_hint = ""
 
-    return f"[§P {light}, {color}]{filter_hint}"
+    return f"[§P {light}, {hue}, {sat}]{filter_hint}"
 
 
 # =========================================================
@@ -252,14 +224,8 @@ def _build_telescope_prefill(dai: dict, real_time_data: str) -> str:
     palette_tag = _resolve_palette(dai)
     scene_lines.append(f"  ├ {palette_tag}")
 
-    # [§S] Spatial Sense
-    location = ""
-    obs = dai.get("observation", {})
-    if isinstance(obs, dict):
-        location = obs.get("location", "")
-    elif isinstance(obs, str):
-        location = obs
-    spatial_hint = _resolve_spatial(location)
+    # [§S] Spatial Sense (Flash spatial_type 판단 기반)
+    spatial_hint = _resolve_spatial(dai)
     if spatial_hint:
         scene_lines.append(f"  ├ {spatial_hint}")
 

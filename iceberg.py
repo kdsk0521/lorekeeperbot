@@ -442,12 +442,10 @@ _THRESHOLD_HINTS = {
 
 def translate_spatial_inscription(spatial_read: Optional[dict]) -> str:
     """spatial_read → 공간 각인/전환 렌더링 힌트.
-    weight=skip이면 빈 문자열. ambient이면 traces만. render이면 전부."""
+    ambient이면 배경 질감. render이면 전부."""
     if not spatial_read or not isinstance(spatial_read, dict):
         return ""
-    weight = spatial_read.get("weight", "skip")
-    if weight == "skip":
-        return ""
+    weight = spatial_read.get("weight", "ambient")
 
     lines = []
 
