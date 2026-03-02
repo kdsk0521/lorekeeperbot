@@ -403,6 +403,32 @@ _FLAG_DIRECTIVES = {
 
 _SYMPTOM_TEMPLATE = "NPC가 {cluster} 증상을 보이고 있다. 한 세트로 일관되게 유지하라."
 
+# =========================================================
+# 시간 방향 번역
+# =========================================================
+
+_TEMPORAL_KR = {
+    "past": "인물의 시선이 과거를 향한다",
+    "future": "인물의 시선이 앞을 향한다",
+    "present": "인물이 지금 이 순간에 머문다",
+}
+
+
+def translate_temporal_orientation(temporal_data: Optional[dict]) -> str:
+    """TemporalOrientation → 한국어 시간 방향 힌트."""
+    if not temporal_data or not isinstance(temporal_data, dict):
+        return ""
+    focus = temporal_data.get("focus", "")
+    intensity = temporal_data.get("intensity", 0)
+    if not focus or not isinstance(intensity, (int, float)) or intensity <= 0.3:
+        return ""
+    hint = _TEMPORAL_KR.get(focus, "")
+    if not hint:
+        return ""
+    if intensity > 0.7:
+        hint += " — 강하게"
+    return f"### 시간 방향\n{hint}"
+
 
 def translate_quality_flags(flags: Optional[dict]) -> str:
     """QualityFlags → 행동 지시 텍스트."""
@@ -1045,9 +1071,10 @@ def compose_dialogue_directives(
         if not logos or not isinstance(logos, str):
             continue
 
-        # Gaze 기반 심도 결정
+        # Gaze 기반 심도 결정 (exact match — substring 위양성 방지)
         if has_gaze:
-            in_focus = name in prev_gaze
+            _gaze_names = {g.strip() for g in prev_gaze.replace("\n", ",").split(",") if g.strip()}
+            in_focus = name in _gaze_names
         else:
             in_focus = True  # 첫 턴: moderate for all
 
