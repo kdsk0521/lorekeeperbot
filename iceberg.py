@@ -166,33 +166,33 @@ def _safe_get(data: Any, key: str, default: Any = None) -> Any:
 # 1. psyche_states (Slot 14)
 # =========================================================
 
-_POLYVAGAL_HINTS = {
-    "ventral": "눈맞춤, 열린 자세, 목소리 안정",
-    "sympathetic": "안절부절, 시선 분산, 움직임 증가, 목소리 빨라짐",
-    "dorsal": "시선 고정/공허, 최소 움직임, 목소리 단조로움",
+_POLYVAGAL_NOTATION = {
+    "ventral":     "soma | ♪ mp, andante, legato | ▶ two-shot, parallel [diffused, warm, solid] | ◎ real-time",
+    "sympathetic": "soma | ♪ f, allegro, staccato | ▶ close-up, back-to-back, cut [side_light, cool, vivid] | ◎ slow-motion",
+    "dorsal":      "soma | ♪ pp, largo, legato | ▶ long-take, pillow [single_source, grey, washed] | ◎ freeze",
 }
 
-_CULTURAL_AFFECT_HINTS = {
-    "han": "삼킨 감정이 축적 — 한숨, 먼 시선, 과묵",
-    "jeong": "거리가 가까워진 행동 — 자연스러운 접촉, 챙김, 무심한 척 신경 씀",
-    "hwabyung": "억눌린 분노의 신체 전환 — 가슴 답답함, 열감, 급격한 감정 폭발",
-    "nunchi": "상대 기색 살피는 중 — 시선 탐색, 말 고르기, 반응 전 짧은 멈춤",
-    "chaemyeon": "체면 유지 — 과장된 여유, 속마음 감추기, 자존심 방어",
-    "simma": "마음결이 움직이는 중 — 동요, 표정 변화, 숨기려 해도 새는 감정",
-    "gi": "기세 변화 — 위축되거나 팽창하는 존재감, 공간을 차지하는 방식",
+_CULTURAL_AFFECT_NOTATION = {
+    "han":       "affect | ♪ p, adagio, legato, diminuendo | ▶ long-take, back-to-back [backlight, grey, washed] | ◎ long-exposure",
+    "jeong":     "affect | ♪ mp, andante, legato | ▶ two-shot, pillow [diffused, amber, solid] | ◎ real-time",
+    "hwabyung":  "affect | ♪ ff, presto, sforzando | ▶ close-up, facing [side_light, crimson, vivid] | ◎ slow-motion",
+    "nunchi":    "affect | ♪ p, andante, staccato | ▶ over-the-shoulder, height-gap [side_light, grey] | ◎ slow-motion",
+    "chaemyeon": "affect | ♪ mf, andante, legato | ▶ two-shot, facing [high_key, solid] | ◎ real-time",
+    "simma":     "affect | ♪ mf, allegro, staccato, crescendo | ▶ close-up [side_light, amber, vivid] | ◎ slow-motion",
+    "gi":        "affect | ♪ f, allegro, marcato | ▶ wide, height-gap [single_source, vivid] | ◎ real-time",
 }
 
-_DISSOCIATION_HINTS = {
-    "mild": "감정이 납작하고 대답이 늦다",
-    "moderate": "자기를 3인칭으로 언급하거나 시간 감각이 빈다",
-    "severe": "자동 조종 — 인식 실패, 기계적 행동",
+_DISSOCIATION_NOTATION = {
+    "mild":     "consciousness | ♪ pp, adagio, legato | ▶ eye-level, pillow [diffused, grey, pastel] | ◎ long-exposure",
+    "moderate": "consciousness | ♪ pp, largo, staccato | ▶ high-angle, height-gap [single_source, grey, washed] | ◎ interval",
+    "severe":   "consciousness | ♪ pp, largo, legato | ▶ long-take, back-to-back [low_key, grey, washed] | ◎ freeze",
 }
 
 _LAYER_RENAMES = {
     "Surface": "▸평소(80%)",
     "Adaptation": "▸반복패턴",
     "Core": "▸극한에서만",
-    "Lack": "▸절대 직접 말하지 마",
+    "Lack": "▸직접 드러내지 마",
 }
 
 
@@ -231,7 +231,7 @@ def _filter_deep_read_by_depth(deep_read: str, depth: float) -> str:
         lines = renamed.split("▸")
         kept = [lines[0]]
         for part in lines[1:]:
-            if not part.startswith("절대 직접"):
+            if not part.startswith("직접 드러내지"):
                 kept.append("▸" + part)
         return "".join(kept).strip()
     # depth < 0.2: 전부 노출
@@ -273,39 +273,41 @@ def translate_psyche_states(
             relation = {}
         deep = state.get("deep_read", "")
 
-        # descriptor 추출 (depth에 따라 축 제한) — soma는 항상 수면 위
-        parts = []
-        if soma.get("descriptor"):
-            parts.append(soma["descriptor"])
-        # polyvagal → 물리적 행동 힌트 (soma는 항상 수면 위)
+        # ♪▶◎ notation 줄 (soma는 항상 수면 위)
+        notations = []
         pvg = soma.get("polyvagal", "")
         if pvg and isinstance(pvg, str):
-            pvg_hint = _POLYVAGAL_HINTS.get(pvg.lower().strip())
-            if pvg_hint:
-                parts.append(pvg_hint)
-        # cultural_affect → 한국 문화감정 행동 힌트 (soma, 항상 수면 위)
+            pvg_n = _POLYVAGAL_NOTATION.get(pvg.lower().strip())
+            if pvg_n:
+                notations.append(pvg_n)
         ca = soma.get("cultural_affect", "")
         if ca and isinstance(ca, str) and ca != "null":
-            ca_hint = _CULTURAL_AFFECT_HINTS.get(ca.lower().strip())
-            if ca_hint:
-                parts.append(ca_hint)
-        # env_influence → 환경→심리 영향 (soma, 항상 수면 위)
-        env = soma.get("env_influence")
-        if env and isinstance(env, str) and env != "null":
-            parts.append(env)
-        # dissociation → 해리 행동 힌트 (soma, 항상 수면 위)
+            ca_n = _CULTURAL_AFFECT_NOTATION.get(ca.lower().strip())
+            if ca_n:
+                notations.append(ca_n)
         diss = soma.get("dissociation", "")
         if diss and isinstance(diss, str) and diss not in ("null", "none"):
-            diss_hint = _DISSOCIATION_HINTS.get(diss.lower().strip())
-            if diss_hint:
-                parts.append(diss_hint)
-        if depth < 0.8 and psyche.get("descriptor"):
-            parts.append(psyche["descriptor"])
-        if depth < 0.6 and relation.get("descriptor"):
-            parts.append(relation["descriptor"])
+            diss_n = _DISSOCIATION_NOTATION.get(diss.lower().strip())
+            if diss_n:
+                notations.append(diss_n)
 
-        line = f"- {name}: {'. '.join(parts)}" if parts else f"- {name}"
-        lines.append(line)
+        # prose descriptor 줄 (depth에 따라 축 제한)
+        prose = []
+        if soma.get("descriptor"):
+            prose.append(soma["descriptor"])
+        env = soma.get("env_influence")
+        if env and isinstance(env, str) and env != "null":
+            prose.append(env)
+        if depth < 0.8 and psyche.get("descriptor"):
+            prose.append(psyche["descriptor"])
+        if depth < 0.6 and relation.get("descriptor"):
+            prose.append(relation["descriptor"])
+
+        lines.append(f"- {name}:")
+        for n in notations:
+            lines.append(f"  {n}")
+        if prose:
+            lines.append(f"  {'. '.join(prose)}")
 
         # deep_read: depth에 따라 필터링
         if deep and isinstance(deep, str):
@@ -364,22 +366,22 @@ def translate_position_effect(
 # 3. energy_direction (Slot 16)
 # =========================================================
 
-_ENERGY_HINTS = {
-    "idle": "일상 — 환경 질감, 間(MA), 일상적 디테일, 느린 리듬",
-    "rising": "고조 — 인물 간 마찰, 체언어 모순, 대인 긴장",
-    "stagnant": "정적 — 침묵, 부재의 존재감, 말하지 않은 무게",
-    "detonation": "폭발 — 물리적 충격, 짧은 문장, 행동의 대가",
-    "aftershock": "여진 — 침묵, 잔해, 지연된 반응, 무감각",
+_ENERGY_VISUAL = {
+    "idle":       "[diffused, amber, pastel]",
+    "rising":     "[side_light, cool, solid]",
+    "stagnant":   "[single_source, grey, washed]",
+    "detonation": "[single_source, crimson, vivid]",
+    "aftershock": "[backlight, sepia, washed]",
 }
 
 
 def translate_energy_direction(energy: str) -> str:
-    """energy_direction 라벨 → 산문 호흡 힌트."""
+    """energy_direction → [lighting, hue, saturation] 시각 힌트."""
     if not energy:
         return ""
-    hint = _ENERGY_HINTS.get(energy.lower().strip(), "")
+    hint = _ENERGY_VISUAL.get(energy.lower().strip(), "")
     if hint:
-        return f"### 장면 호흡: {hint}"
+        return f"### 장면 빛: {hint}"
     return ""
 
 
@@ -388,18 +390,18 @@ def translate_energy_direction(energy: str) -> str:
 # =========================================================
 
 _FLAG_DIRECTIVES = {
-    "convergence_warning": "관계 변화가 빠르다. 이 속도에 맞는 인과적 근거가 있는지 점검하라. 근거 없으면 속도를 늦춰라.",
-    "echo_warning": "NPC가 PC 감정을 그대로 반사하고 있다. NPC 자신의 이유에서 나온 반응인지 점검하라.",
+    "convergence_warning": "관계 변화가 빠르다. 이 속도에 맞는 근거가 있는지 확인하라.",
+    "echo_warning": "NPC가 PC 감정을 따라가고 있다. NPC 자신의 이유가 있는 반응인지 확인하라.",
     "stagnation_warning": "3턴째 장면 에너지가 평평하다. 외부 자극을 자연스럽게 도입하라.",
-    "mse_deviation": "NPC의 정신 상태가 급변했다. 이전 행동과의 일관성을 점검하고, 변화에 인과적 근거를 부여하라.",
-    "dissonance_flag": "NPC가 모순된 신념/행동을 보이고 있다. 즉시 해소하지 마라 — 불편함을 행동으로 보여줘라.",
-    "redemption_warning": "NPC가 근거 없이 태도를 누그러뜨리고 있다. 변화에는 대가가 필요하다. 되돌려라.",
-    "shallow_read": "분석이 표면에 머물렀다. 행동 아래 숨겨진 힘을 더 관찰하라 — 인정하지 않은 욕구, 환경 압력, 관계 부채.",
+    "mse_deviation": "NPC 행동이 급변했다. 이전과 일관되는지 확인하고, 변화에 근거를 부여하라.",
+    "dissonance_flag": "NPC의 말과 행동이 어긋나고 있다. 바로 해소하지 마 — 불편함을 몸으로 보여줘라.",
+    "redemption_warning": "NPC가 근거 없이 누그러지고 있다. 이전 패턴을 유지하라.",
+    "shallow_read": "분석이 표면에 머물렀다. 드러난 행동 아래를 더 보라 — 입 밖에 안 낸 것, 공간이 주는 압박, 갚지 못한 빚.",
     "sensory_habituated": "같은 공간에서 감각이 적응했다. 동일한 감각을 반복하지 말고, 미세한 변화를 포착하거나 새로운 감각 채널로 전환하라.",
-    "label_internalization": "NPC가 라벨을 내면화하고 있다. 라벨을 대사로 직접 언급하지 마라 — 라벨이 만든 습관, 자세, 반응 패턴으로 드러내라.",
+    "label_internalization": "NPC가 자기에게 붙은 라벨을 믿기 시작했다. 라벨을 입으로 말하지 마 — 습관, 자세, 반응으로 보여줘라.",
 }
 
-_SYMPTOM_TEMPLATE = "NPC가 {cluster} 증상군을 보이고 있다. 증상을 일관된 세트로 유지하라. 체리피킹 금지."
+_SYMPTOM_TEMPLATE = "NPC가 {cluster} 증상을 보이고 있다. 한 세트로 일관되게 유지하라."
 
 
 def translate_quality_flags(flags: Optional[dict]) -> str:
@@ -478,7 +480,7 @@ def translate_spatial_inscription(spatial_read: Optional[dict]) -> str:
         return ""
     header = ("### 공간 각인\n(배경 질감. 전개하지 마.)\n"
               if weight == "ambient" else
-              "### 공간 각인\n(공간이 겪은 것을 감각으로 렌더링하라. 분석 용어 금지.)\n")
+              "### 공간 각인\n(공간이 겪은 것을 감각으로 보여줘라. 분석 용어 쓰지 마.)\n")
     return header + "\n".join(lines)
 
 
@@ -531,46 +533,48 @@ def translate_prev_scheme(prev_scheme: str) -> str:
 # 5. NPC attitudes (Slot 17)
 # =========================================================
 
-_TRAJECTORY_HINTS = {
-    "warming": "경계를 풀기 시작하는 기미",
-    "cooling": "거리를 두기 시작하는 기미",
-    "stable": "현재 태도 유지",
-    "volatile": "태도가 불안정, 작은 자극에도 변화 가능",
-    "declining": "관계가 약해지고 있는 기미",
-    "improving": "관계가 나아지고 있는 기미",
+_TRAJECTORY_NOTATION = {
+    "warming":   "crescendo",
+    "cooling":   "diminuendo",
+    "stable":    "",
+    "volatile":  "sforzando",
+    "declining": "diminuendo",
+    "improving": "crescendo",
 }
 
-# attitude 라벨 → 행동 기준선 (숫자/등급이 아니라 행동으로)
-_ATTITUDE_BASELINE = {
-    "hostile": "적의를 품고 있다",
-    "unfriendly": "불편함을 숨기지 않는다",
-    "neutral": "",  # 중립은 힌트 불필요
-    "friendly": "호의적이다",
-    "devoted": "깊이 헌신하고 있다",
+_ATTITUDE_NOTATION = {
+    "hostile":    "attitude | ♪ f, allegro, staccato | ▶ facing, height-gap [side_light, cool, vivid] | ◎ slow-motion",
+    "unfriendly": "attitude | ♪ mf, andante, staccato | ▶ back-to-back [side_light, cool] | ◎ real-time",
+    "neutral":    "",
+    "friendly":   "attitude | ♪ mp, andante, legato | ▶ two-shot, parallel [diffused, amber, solid] | ◎ real-time",
+    "devoted":    "attitude | ♪ mp, adagio, legato | ▶ close-up, pillow [golden_hour, amber, solid] | ◎ real-time",
 }
 
 
 def translate_npc_attitudes(attitudes: Optional[dict]) -> str:
-    """NPCAttitudes → attitude 행동 기준선 + trajectory 방향 힌트 + reason."""
+    """NPCAttitudes → ♪▶◎ notation + trajectory 방향 합성 + reason prose."""
     if not attitudes or not isinstance(attitudes, dict):
         return ""
     lines = []
     for name, att in attitudes.items():
         if not isinstance(att, dict):
             continue
+        attitude = att.get("attitude", "neutral")
         trajectory = att.get("trajectory", "stable")
         reason = att.get("reason", "")
-        traj_hint = _TRAJECTORY_HINTS.get(trajectory, trajectory)
-        # attitude: 현재 행동 기준선 (neutral이면 생략)
-        attitude = att.get("attitude", "neutral")
-        baseline = _ATTITUDE_BASELINE.get(attitude, "") if attitude else ""
-        parts = []
-        if baseline:
-            parts.append(baseline)
+        notation = _ATTITUDE_NOTATION.get(attitude, "") if attitude else ""
+        if not notation:
+            if reason:
+                lines.append(f"- {name}: {reason}")
+            continue
+        # trajectory → ♪ 방향 수식어 합성
+        traj_dir = _TRAJECTORY_NOTATION.get(trajectory, "")
+        if traj_dir:
+            notation = notation.replace(" | ▶", f", {traj_dir} | ▶")
+        lines.append(f"- {name}:")
+        lines.append(f"  {notation}")
         if reason:
-            parts.append(reason)
-        parts.append(traj_hint)
-        lines.append(f"- {name}: {' — '.join(parts)}")
+            lines.append(f"  {reason}")
     return "\n".join(lines)
 
 
@@ -578,12 +582,12 @@ def translate_npc_attitudes(attitudes: Optional[dict]) -> str:
 # 6. connection_depth (Slot 17)
 # =========================================================
 
-_STAGE_HINTS = {
-    "Initial": "첫 만남 — 서로를 파악하는 중",
-    "Warming": "관계 심화 중 — 경계가 낮아지고 있다",
-    "Established": "관계 형성됨 — 일정한 패턴이 자리잡았다",
-    "Intimate": "깊은 관계 — 취약성이 노출되기 시작한다",
-    "Ruptured": "관계 파열 — 신뢰가 깨졌거나 위기 상태",
+_STAGE_NOTATION = {
+    "Initial":     "distance | ♪ p, andante, staccato | ▶ wide, height-gap | ◎ real-time",
+    "Warming":     "distance | ♪ mp, andante, legato, crescendo | ▶ two-shot | ◎ real-time",
+    "Established": "distance | ♪ mf, andante, legato | ▶ two-shot, match-cut | ◎ real-time",
+    "Intimate":    "distance | ♪ mp, adagio, legato | ▶ close-up, pillow | ◎ real-time",
+    "Ruptured":    "distance | ♪ f, allegro, staccato | ▶ back-to-back, cut | ◎ freeze",
 }
 
 
@@ -594,33 +598,32 @@ def translate_connection_depth(
     tension: int,
     hint_en: str = "",
 ) -> str:
-    """Connection depth 수치/스테이지명 → 행동 힌트."""
-    stage_hint = _STAGE_HINTS.get(stage_name, hint_en or stage_name)
-    parts = [f"- {npc_name}: {stage_hint}"]
+    """Connection depth → ♪▶◎ notation. tension > 50 → marcato 합성."""
+    notation = _STAGE_NOTATION.get(stage_name, "")
+    if not notation:
+        return ""
     if tension > 50:
-        parts[0] += ". 긴장감이 매우 높다."
-    elif tension > 20:
-        parts[0] += ". 긴장감이 있다."
-    return "\n".join(parts)
+        notation = notation.replace(" | ▶", ", marcato | ▶")
+    return f"- {npc_name}:\n  {notation}"
 
 
 # =========================================================
 # 7. IntimacyAnalysis (Slot 17)
 # =========================================================
 
-_WINDOW_HINTS = {
-    "within": "안정 범위 — 참여 가능, 감각이 살아있음",
-    "above": "과각성 — 압도됨, 호흡 빨라짐, 경계 상태",
-    "below": "저각성 — 얼어붙음, 감각 둔화, 해리 가능",
+_WINDOW_NOTATION = {
+    "within": "♪ mf, andante, legato | ◎ real-time",
+    "above":  "♪ ff, presto, staccato | ◎ slow-motion",
+    "below":  "♪ pp, largo, legato | ◎ freeze",
 }
 
 _DESIRE_HINTS = {
     "attachment": "확인받고 싶다 — 거리가 생기면 불안",
-    "power": "주도권을 쥐고 싶다 — 통제 욕구",
-    "escape": "여기서 벗어나고 싶다 — 현실 회피",
+    "power": "주도권을 쥐고 싶다 — 상황을 쥐려 한다",
+    "escape": "여기서 벗어나고 싶다 — 지금 이 자리에서 빠지려 한다",
     "connection": "연결되고 싶다 — 진짜 접촉",
-    "validation": "인정받고 싶다 — 자기 가치 확인",
-    "sensation": "느끼고 싶다 — 순수 감각 추구",
+    "validation": "인정받고 싶다 — 나를 봐달라는 것",
+    "sensation": "느끼고 싶다 — 감각 그 자체를 원한다",
 }
 
 
@@ -630,13 +633,16 @@ def translate_intimacy(intimacy_data: Optional[dict]) -> str:
         return ""
     lines = []
 
-    # window_check (기존 버그: vulnerability → window_check 정정)
+    # window_check → ♪◎ notation
     window = intimacy_data.get("window_check", intimacy_data.get("vulnerability", {}))
     if window and isinstance(window, dict):
         for char_name, state in window.items():
             state_lower = str(state).lower().strip()
-            hint = _WINDOW_HINTS.get(state_lower, state)
-            lines.append(f"- {char_name}: {hint}")
+            notation = _WINDOW_NOTATION.get(state_lower)
+            if notation:
+                lines.append(f"- {char_name}: {notation}")
+            else:
+                lines.append(f"- {char_name}: {state}")
 
     # dual_control (SES/SIS 라벨 제거)
     dual = intimacy_data.get("dual_control", {})
@@ -683,16 +689,16 @@ def translate_intimacy(intimacy_data: Optional[dict]) -> str:
 # 8. emotion_intensity (Slot 29)
 # =========================================================
 
-_INTENSITY_HINTS = [
-    (30, "미세한 표정 변화 수준 — 주의 깊게 봐야 알아챔"),
-    (60, "눈에 띄는 체언어 — 관찰자가 알아챌 수 있음"),
-    (80, "뚜렷한 신체 반응 — 숨기기 어려움"),
-    (100, "신체가 압도됨 — 평정을 유지할 수 없음"),
+_INTENSITY_NOTATION = [
+    (30,  "♪ pp"),
+    (60,  "♪ mf"),
+    (80,  "♪ f"),
+    (100, "♪ ff"),
 ]
 
 
 def translate_emotion_intensity(psyche_states: Optional[dict]) -> str:
-    """psyche value → 관찰 가능한 강도 힌트."""
+    """psyche value → ♪ dynamics notation."""
     if not psyche_states or not isinstance(psyche_states, dict):
         return ""
     lines = []
@@ -704,13 +710,13 @@ def translate_emotion_intensity(psyche_states: Optional[dict]) -> str:
             continue
 
         val = abs(psyche.get("value", 0))
-        hint = _to_tier(val, _INTENSITY_HINTS)
+        hint = _to_tier(val, _INTENSITY_NOTATION)
         lines.append(f"  {name}: {hint}")
     if not lines:
         return ""
     return (
         "[감정 강도]\n"
-        "감정을 신체 증거로 렌더링하라. 감정명, 강도 라벨, 수치를 산문에 쓰지 마.\n"
+        "감정은 몸으로 보여줘라. 감정명, 강도 라벨, 수치를 산문에 쓰지 마.\n"
         + "\n".join(lines)
     )
 
@@ -774,16 +780,16 @@ _PROXIMITY_HINTS = [
     (100, "서사가 정점에 있다. 결말을 향해 수렴하라"),
 ]
 
-_SILENCE_HINTS = {
-    "reflective": "사색적 침묵 — 시간이 느려진다",
-    "hesitant": "망설이는 침묵 — 삼킨 말이 있다",
-    "heavy": "묵직한 침묵 — 둘 다 알고 있지만 말하지 않는다",
-    "tense": "긴장된 침묵 — 한 마디가 모든 걸 바꿀 수 있다",
+_SILENCE_NOTATION = {
+    "reflective": "♪ pp, adagio, legato | ◎ long-exposure",
+    "hesitant":   "♪ p, andante, staccato | ◎ slow-motion",
+    "heavy":      "♪ pp, largo, legato | ◎ freeze",
+    "tense":      "♪ p, allegro, staccato | ◎ slow-motion",
 }
 
 
 def translate_narrative_chain(chain_data: Optional[dict]) -> str:
-    """narrative_chain 라벨 → 산문 힌트."""
+    """narrative_chain 라벨 → prose + silence notation."""
     if not chain_data or not isinstance(chain_data, dict):
         return ""
     parts = []
@@ -807,13 +813,16 @@ def translate_narrative_chain(chain_data: Optional[dict]) -> str:
                     parts.append(hint)
                 break
 
-    # silence_type
+    result = ". ".join(parts) + "." if parts else ""
+
+    # silence_type → ♪◎ notation (별도 줄)
     silence = chain_data.get("silence_type")
     if silence and isinstance(silence, str):
-        silence_hint = _SILENCE_HINTS.get(silence.lower(), silence)
-        parts.append(silence_hint)
+        silence_n = _SILENCE_NOTATION.get(silence.lower())
+        if silence_n:
+            result = f"{result}\n  {silence_n}" if result else f"  {silence_n}"
 
-    return ". ".join(parts) + "." if parts else ""
+    return result
 
 
 # =========================================================

@@ -101,6 +101,14 @@ ANALYTICAL_LENSES_ESTABLISHED = """
   Academic basis for Scheherazade principle.
 - Curse of Knowledge (Pinker): Once known, can't un-know. Subtle behavioral leaks betray hidden info → NPCKnowledge.leak_risk
 
+### Social Position Analysis
+- Habitus (Bourdieu): Three capitals that produce observable class signals → HabitusAnalysis
+  Economic: material resources, consumption patterns, visible wealth/scarcity.
+  Cultural: vocabulary range, taste markers, education signals, comfort with formality.
+  Social: who they know, whose call they take, who defers to whom.
+  Habitus is EMBODIED — accent, posture, table manners, reaction to authority.
+  Not what they own but how they CARRY themselves. Mismatch between capitals = friction.
+
 ### Behavioral Persistence & Change
 - Moral Disengagement (Bandura): Harmful actors maintain STABLE self-justification.
   7 mechanisms: moral justification, euphemistic labeling, advantageous comparison,
@@ -204,6 +212,15 @@ All characters operate on four depth layers:
 - Lack: What they're missing and DON'T KNOW they're missing. Never stated by character. Surface COMPENSATES for Lack. True change = addressing Lack.
 OUTPUT FORMAT: 1 sentence per layer.
 e.g. "Surface: performative boredom. Adaptation: sarcasm as proximity control. Core: starving for connection she believes will hurt. Lack: never learned vulnerability can be survived."
+
+### Trait Deflection [CUSTOM] → .trait_connections
+When two NPC profile traits activate in the same scene:
+1. primary_link: the OBVIOUS connection — the first, most cliché interpretation
+2. deflection: the RICHER alternative — complicate, invert, or compound the primary
+Primary link is diagnostic ("cold + intelligent = calculating"). Deflection is fiction ("cold + intelligent = terrified of being wrong").
+Deflection methods: inversion (trait A suppresses B), compounding (A amplifies B in unexpected axis), friction (A and B contradict, producing visible tension).
+OUTPUT FORMAT: trait_pair="trait_A × trait_B", primary_link=Korean obvious, deflection=Korean richer, render_hint=Korean 1-sentence scene direction.
+null when no NPC traits are being actively expressed this turn.
 
 ### Self-Opacity [CUSTOM] → .psyche.self_opacity
 Characters misunderstand their own motives (Wittgenstein: the eye cannot see itself; 末那識: ego-grasping is pre-conscious).
@@ -311,12 +328,14 @@ psyche (Mind/Emotion) — James-Lange + 五蘊 order: assess AFTER soma
 - self_opacity: "claims X — actual: Y" format or null if self-aware (Wittgenstein + 末那識)
 - decision_mode: reactive (System 1) / deliberate (System 2) (Kahneman + Carstensen)
 - coping: problem_focused / emotion_focused / avoidant / null (Lazarus. null = no stressor)
+- apprehension_gap: "Absence/Approximation/Distortion" or null (Schema Refraction: what THIS character failed to perceive, roughly approximated, or distorted through their own schema/defense. null = accurate apprehension)
 
 soma (Body/Autonomic) — Assess FIRST (James-Lange)
 - descriptor: SOAP-OA based observable physical signals only. No emotion labels. (Korean)
 - polyvagal: ventral / sympathetic / dorsal (Porges: 3+ signals required)
 - cultural_affect: han / jeong / hwabyung / nunchi / chaemyeon / simma / gi / null
 - env_influence: Environment → psychology effect or null (Nightingale. null = negligible)
+- dissociation: none / mild / moderate / severe / null (Dissociation Spectrum: dorsal→entry point. mild=flat affect,delayed response. moderate=third-person self-reference,time gaps. severe=autopilot,recognition failure. Track across turns. null = no trigger)
 
 relation (Relationship)
 - descriptor: Current attitude toward PC expressed as specific behavior (Korean)
@@ -326,10 +345,15 @@ relation (Relationship)
 - logos_layer: Logos [CUSTOM] — current layer state + this turn behavioral hint
 - value_conflict: "X vs Y" format + resolution direction, or null (Festinger. null = no conflict)
 - stage: front / back (Goffman: by audience, not just location)
+- group_dynamic: conformity / obedience / groupthink / diffusion / null (Group Dynamics: active in 3+ character scenes. null = no group pressure)
+- negotiation_stance: cooperative / competitive / exploitative / null (BATNA: stance reflects Position value. null = no negotiation active)
 
 deep_read (Four-Layer [CUSTOM])
 Surface → Adaptation → Core → Lack in 1 sentence each.
 Lack is never stated by character. Surface compensates for Lack.
+
+resurfacing (Resurgence)
+- str or null. Past trauma, contradictory desire, or 'resolved' emotion re-emerging through current interaction. What resurfaces and what triggered it. null = no resurgence.
 
 ### Tracking Principles
 
@@ -369,6 +393,22 @@ Categories: Terrain | Lighting | Sound | Crowd | Objects | Weather | Social — 
 - aftershock: post-eruption. Physical aftermath. Silence is factual, not dramatic.
 Note: EnergyDirection guides prose RHYTHM and DENSITY. It does NOT override causal outcomes.
 If the world's physics says resolution is plausible, render it — even if energy is "rising."
+
+### Momentum (InputAnalysis)
+- Open: active tension, unanswered question, or unresolved force in play. The scene is PULLING.
+- Closed: current thread settled, breath taken, natural pause. The scene is RESTING.
+Momentum is NOT EnergyDirection. Energy=scene intensity. Momentum=narrative pull.
+idle+Open = quiet but something unspoken hangs. detonation+Closed = explosion just resolved.
+
+### Spatial Palette → spatial_read
+Observe the physical space. Lighting and color are mood, not clock.
+- base: ambient atmosphere. What the space looks and feels like before anyone acts.
+- mutation: space changed by presence or action.
+  A=body/presence(involuntary territory), B=action(physical territory), C=perceptual(subjective lens, POV only).
+  A/B are Territory (objective). C is Lens (subjective) — MUST separate.
+- tension (Lefebvre Production of Space): "designed X <-> lived Y" — mismatch between the space's intended purpose and how characters actually inhabit it. null when no mismatch.
+- spatial_type: enclosed(traces linger), resonant(echoes, emptiness), open(wind erases), elevated(exposed), crowded(traces drown), moving(transient).
+- weight: ambient=default(base palette only). render=mutation occurred.
 
 ### UNFAMILIAR DISCOVERY
 Surface reading is the minimum, not the goal. For each PC action, identify at least 3 forces operating beneath the obvious interpretation — unacknowledged needs, environmental pressures, relational debts, habitual patterns, or somatic states. If you find fewer than 3, your observation is still on the surface.

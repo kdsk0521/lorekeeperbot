@@ -190,7 +190,26 @@ class TheoriaAnalyzer:
         emphasized = get_emphasized_theories(active_genres)
         spotlight = get_session_spotlight(session_seed, turn_number, 5, suppressed, emphasized)
 
-        return directive + "\n\n" + spotlight + "\n\n" + self._get_output_schema() + "\n</THEORIA>"
+        # 조건부 null 가이드: 모듈 미로딩 시 해당 필드 null 기본값 안내
+        from theory_emphasis_engine import get_active_modules
+        active_mods = set(get_active_modules(active_genres))
+        null_hints = []
+        if 'COSMIC_HORROR_MODULE' not in active_mods:
+            null_hints.append("- soma.dissociation: null unless extreme trauma/shutdown observed")
+            null_hints.append("- anomaly_profile.perception_type: null unless supernatural elements confirmed in setting")
+        if 'GROUP_DYNAMICS_MODULE' not in active_mods:
+            null_hints.append("- relation.group_dynamic: null unless 3+ characters actively pressuring each other")
+        if 'NEGOTIATION_MODULE' not in active_mods:
+            null_hints.append("- relation.negotiation_stance: null unless active bargaining/trade in scene")
+        if 'FORENSIC_MODULE' not in active_mods:
+            null_hints.append("- NPCKnowledge.deception_cues: null unless strong behavioral deception signals")
+            null_hints.append("- QualityFlags.label_internalization: false unless labeling pattern clearly evident")
+
+        null_guide = ""
+        if null_hints:
+            null_guide = "\n\n<module_absent_guidance>\nThese fields' full theory modules are not loaded for current genre. Default to null/false unless clear evidence:\n" + "\n".join(null_hints) + "\n</module_absent_guidance>"
+
+        return directive + "\n\n" + spotlight + "\n\n" + self._get_output_schema() + null_guide + "\n</THEORIA>"
 
     def _get_output_schema(self) -> str:
         """출력 스키마 정의 (v2.0 — 16 new fields, mental→psyche rename)"""
@@ -347,11 +366,6 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
 - "relevant_chunks": [0, 2, 5] (indices from LORE CHUNKS — up to 7 most relevant)
 
 ## SPATIAL PALETTE
-Observe the physical space. base = what this scene's atmosphere looks and feels like. Lighting and color are mood, not clock.
-mutation = did anyone/anything change the space? A=body/presence(involuntary), B=action(physical), C=perceptual(subjective POV lens).
-A/B are Territory (objective). C is Lens (subjective) — MUST separate.
-spatial_type = classify from context. enclosed(scent/heat linger, silence heavy), resonant(echoes, emptiness has presence), open(wind erases, distance separates), elevated(wind steals heat, exposed), crowded(traces drown in noise, no privacy), moving(no lasting trace, vibration, transient).
-weight: ambient = default (base palette always). render = when mutation occurs.
 
 - "spatial_read": {
     "spatial_type": "enclosed/resonant/open/elevated/crowded/moving",

@@ -73,54 +73,44 @@ def _collect_aspect_stance(aspects: Any) -> Tuple[List[str], List[str]]:
 
 # ── Directing Notation Tables (♪ 음악 | ▶ 카메라 | ◎ 사진 — 3축 연출 표기) ──
 _POSITION_NOTATION = {
-    "controlled": "상황 | ♪ mp, andante, legato | ▶ 와이드, 병렬, 팬 | ◎ 실시간",
-    "risky":      "상황 | ♪ f, allegro, marcato | ▶ 투샷, 대면, 컷 | ◎ 슬로모션",
-    "desperate":  "상황 | ♪ ff, presto, staccato | ▶ 로우앵글, 등지기, 점프컷 | ◎ 프리즈",
+    "controlled": "situation | ♪ mp, andante, legato | ▶ wide, parallel, pan | ◎ real-time",
+    "risky":      "situation | ♪ f, allegro, marcato | ▶ two-shot, facing, cut | ◎ slow-motion",
+    "desperate":  "situation | ♪ ff, presto, staccato | ▶ low-angle, back-to-back, jump-cut | ◎ freeze",
 }
 _ENERGY_NOTATION = {
-    "idle":       "장면 | ♪ mp, andante, legato | ▶ 팬, 필로우, 롱테이크 | ◎ 장노출",
-    "steady":     "장면 | ♪ mf, andante, legato | ▶ 아이레벨, 병렬, 매치컷 | ◎ 실시간",
-    "rising":     "장면 | ♪ f, allegro, marcato, crescendo | ▶ 투샷, 대면, 크로스컷 | ◎ 인터벌",
-    "falling":    "장면 | ♪ p, adagio, legato, diminuendo | ▶ 롱테이크, 등지기, 페이드 | ◎ 장노출",
-    "peak":       "장면 | ♪ ff, presto, sforzando | ▶ 클로즈업, 컷, 점프컷 | ◎ 슬로모션",
-    "stagnant":   "장면 | ♪ pp, largo, legato | ▶ 롱테이크, 필로우, 높낮이차 | ◎ 장노출",
-    "detonation": "장면 | ♪ sfz, presto, sforzando | ▶ 와이드, 몽타주, 컷 | ◎ 프리즈",
-    "aftershock": "장면 | ♪ p, adagio, staccato | ▶ 롱테이크, 등지기, 페이드 | ◎ 장노출",
+    "idle":       "scene | ♪ mp, andante, legato | ▶ pan, pillow, long-take | ◎ long-exposure",
+    "steady":     "scene | ♪ mf, andante, legato | ▶ eye-level, parallel, match-cut | ◎ real-time",
+    "rising":     "scene | ♪ f, allegro, marcato, crescendo | ▶ two-shot, facing, crosscut | ◎ interval",
+    "falling":    "scene | ♪ p, adagio, legato, diminuendo | ▶ long-take, back-to-back, fade | ◎ long-exposure",
+    "peak":       "scene | ♪ ff, presto, sforzando | ▶ close-up, cut, jump-cut | ◎ slow-motion",
+    "stagnant":   "scene | ♪ pp, largo, legato | ▶ long-take, pillow, height-gap | ◎ long-exposure",
+    "detonation": "scene | ♪ sfz, presto, sforzando | ▶ wide, montage, cut | ◎ freeze",
+    "aftershock": "scene | ♪ p, adagio, staccato | ▶ long-take, back-to-back, fade | ◎ long-exposure",
 }
 _VIGOR_NOTATION = {
-    "high":       "신체 | ♪ f, allegro, legato | ▶ 와이드, 병렬 | ◎ 실시간",
-    "strained":   "신체 | ♪ p, adagio, marcato | ▶ 클로즈업:근육, 높낮이차 | ◎ 슬로모션",
-    "collapsing": "신체 | ♪ pp, largo, staccato | ▶ 클로즈업:호흡, 등지기 | ◎ 프리즈",
+    "high":       "body | ♪ f, allegro, legato | ▶ wide, parallel | ◎ real-time",
+    "strained":   "body | ♪ p, adagio, marcato | ▶ close-up:muscle, height-gap | ◎ slow-motion",
+    "collapsing": "body | ♪ pp, largo, staccato | ▶ close-up:breath, back-to-back | ◎ freeze",
 }
 _COMPOSURE_NOTATION = {
-    "high":       "심리 | ♪ mf, andante, legato | ▶ 투샷, 병렬, 매치컷 | ◎ 실시간",
-    "strained":   "심리 | ♪ p, adagio, staccato | ▶ 클로즈업:시선, 높낮이차 | ◎ 슬로모션",
-    "collapsing": "심리 | ♪ pp, largo, sforzando | ▶ 하이앵글, 등지기 | ◎ 프리즈",
+    "high":       "psyche | ♪ mf, andante, legato | ▶ two-shot, parallel, match-cut | ◎ real-time",
+    "strained":   "psyche | ♪ p, adagio, staccato | ▶ close-up:gaze, height-gap | ◎ slow-motion",
+    "collapsing": "psyche | ♪ pp, largo, sforzando | ▶ high-angle, back-to-back | ◎ freeze",
 }
 _MIXED_NOTATION = {
-    "desperate": "신체+심리 | ♪ pp, largo, staccato | ▶ 하이앵글, 등지기 | ◎ 프리즈",
-    "reckless":  "행동 | ♪ f, presto, sforzando | ▶ 와이드, 점프컷 | ◎ 슬로모션",
-    "fragile":   "의식 | ♪ p, adagio, legato | ▶ 클로즈업:눈, 필로우 | ◎ 장노출",
+    "desperate": "body+psyche | ♪ pp, largo, staccato | ▶ high-angle, back-to-back | ◎ freeze",
+    "reckless":  "action | ♪ f, presto, sforzando | ▶ wide, jump-cut | ◎ slow-motion",
+    "fragile":   "consciousness | ♪ p, adagio, legato | ▶ close-up:eyes, pillow | ◎ long-exposure",
 }
 _DOOM_NOTATION = {
-    "high":     "세계 | ♪ f, allegro, marcato | ▶ 와이드, 대면 | ◎ 인터벌",
-    "critical": "세계 | ♪ ff, presto, sforzando | ▶ 로우앵글, 점프컷 | ◎ 슬로모션",
+    "high":     "world | ♪ f, allegro, marcato | ▶ wide, facing | ◎ interval",
+    "critical": "world | ♪ ff, presto, sforzando | ▶ low-angle, jump-cut | ◎ slow-motion",
 }
-# 장면 시간 밀도 보정 — SceneType이 에너지 테이블의 ◎ 기본값을 override
 _SCENE_PHOTO_OVERRIDE = {
-    "summary":  "◎ 벌브",      # 극압축: 요약 장면
-    "combat":   "◎ 슬로모션",  # 전투 시간 확장
-    "intimate": "◎ 실시간",    # 친밀 장면: 1:1 현존 필수
+    "summary":  "◎ bulb",
+    "combat":   "◎ slow-motion",
+    "intimate": "◎ real-time",
 }
-_SCENE_FOCUS = {
-    "normal":      "장면 초점: 관찰과 반응",
-    "combat":      "장면 초점: 물리적 충돌, 위치, 위협",
-    "social":      "장면 초점: 평판, 레버리지, 숨은 의도",
-    "tension":     "장면 초점: 서스펜스, 제한된 정보, 느린 공개",
-    "intimate":    "장면 초점: 감정, 미묘함, 취약성, 신뢰",
-    "exploration": "장면 초점: 호기심, 발견, 세계관",
-}
-
 def _build_world_layer(bus) -> str:
     """World Layer: 연출 표기 + 장면 초점 + 액션만.
     데이터(position reason, effect, NPC attitudes, psyche, narrative chain,
@@ -136,11 +126,7 @@ def _build_world_layer(bus) -> str:
     if notation:
         parts.append(notation)
 
-    # Scene → natural language focus (고유 — iceberg에 없음)
     scene_type = str(dai.get("scene_type", "normal"))
-    scene_text = _SCENE_FOCUS.get(scene_type, "")
-    if scene_text:
-        parts.append(scene_text)
 
     # Energy → directing notation ONLY (산문 힌트는 Slot 16 iceberg)
     energy = str(dai.get("energy_direction", "steady"))
@@ -151,7 +137,7 @@ def _build_world_layer(bus) -> str:
     # Scene → ◎ 시간 밀도 보정 (SceneType이 에너지 테이블 기본값을 override)
     scene_photo = _SCENE_PHOTO_OVERRIDE.get(scene_type, "")
     if scene_photo:
-        parts.append(f"시간 보정: {scene_photo}")
+        parts.append(f"time override: {scene_photo}")
 
     # Action Reading (고유 — iceberg에 없음)
     needs_judgment = bool(dai.get("needs_judgment", False))
@@ -467,56 +453,49 @@ def _build_atmosphere_layer(context, bus) -> str:
     elif doom_val >= 50:
         parts.append(_DOOM_NOTATION["high"])
 
-    # ◎ 광학 필터 (사진 축 조건부 — 기존 DAI 필드에서 파생)
+    # ◎ optics (conditional — derived from DAI fields)
     dai = bus.dai if isinstance(bus.dai, dict) else {}
     optical: List[str] = []
 
-    # [다중노출]: memory_triggers → 과거-현재 중첩
+    # [multiple-exposure]: memory_triggers → time overlap
     mem_triggers = dai.get("memory_triggers", [])
     if isinstance(mem_triggers, list) and mem_triggers:
-        optical.append("[다중노출]")
+        optical.append("[multiple-exposure]")
 
-    # [편광]: self_opacity → 체면 균열 (시점 수호: 표면 모순만 렌더)
+    # [polarizer]: self_opacity → facade crack (POV guard: surface contradictions only)
     psyche_states = dai.get("psyche_states", {})
     if isinstance(psyche_states, dict):
         for _npc_data in psyche_states.values():
             if isinstance(_npc_data, dict):
                 if (_npc_data.get("psyche") or {}).get("self_opacity"):
-                    optical.append("[편광]")
+                    optical.append("[polarizer]")
                     break
 
-    # [적외선]: leak_risk >= medium → 행동 누출 (시점 수호: 비밀이 아닌 왜곡만)
+    # [infrared]: leak_risk >= medium → behavioral leak (POV guard: distortion, not secrets)
     npc_knowledge = dai.get("npc_knowledge", {})
     if isinstance(npc_knowledge, dict):
         for _kn_data in npc_knowledge.values():
             if isinstance(_kn_data, dict) and _kn_data.get("leak_risk") in ("medium", "high"):
-                optical.append("[적외선]")
+                optical.append("[infrared]")
                 break
 
-    # [솔라리제이션]: doom >= 80 → 명암 반전, 익숙한 것의 소외
+    # [solarization]: doom >= 80 → inversion
     if doom_val >= 80:
-        optical.append("[솔라리제이션]")
+        optical.append("[solarization]")
 
-    # [비네팅]: position <= 0.15 → 터널 시야
+    # [vignette]: position <= 0.15 → tunnel vision
     pos = dai.get("position", {}) if isinstance(dai.get("position"), dict) else {}
     if _to_float(pos.get("value", 0.5), 0.5) <= 0.15:
-        optical.append("[비네팅]")
+        optical.append("[vignette]")
 
     if optical:
-        parts.append("◎ 광학: " + " ".join(optical))
+        parts.append("◎ optics: " + " ".join(optical))
 
-    # Pacing → Korean instruction (tag stripped)
+    # Pacing rules (narrative constraints only — rhythm/density covered by ♪▶◎)
     if doom_val < 20:
-        parts.append(
-            "세계가 잠잠하다. 캐릭터 깊이, 관계, 조용한 순간에 시간을 쓰라. "
-            "감각적 디테일, NPC 발언, 환경 변화로 씨앗을 심되 기존 긴장을 해결하지 마라."
-        )
+        parts.append("기존 긴장을 해결하지 마라. 씨앗만 심어라.")
     elif doom_val >= 80:
-        parts.append(
-            "세계가 가속한다. 미해결 위협이 복합된다. "
-            "환경과 NPC 행동으로 긴박함을 보여라. "
-            "해결은 PC 행동으로만 가능. 편의적 탈출구 금지."
-        )
+        parts.append("해결은 PC 행동으로만 가능. 편의적 탈출구 금지.")
 
     # Distant conditions → natural language (camera NOT there)
     _st_atm = {}
