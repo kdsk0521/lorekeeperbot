@@ -342,11 +342,8 @@ async def generate_response_with_retry(
                 # 3. 텔레스코프: 정식 파싱/제거는 orchestration_response.py에서 수행
                 # 여기서는 블록이 깨진 경우(┣ 열고 ┫ 안 닫음)를 처리
                 if prefill and "┣" in clean_text and "┫" not in clean_text:
-                    if _truncated:
-                        # MAX_TOKENS 잘림 → ┫ 보충하여 살림 (재시도해도 같은 결과)
-                        logging.warning(f"[Telescope] MAX_TOKENS 잘림 → ┫ 보충")
-                        clean_text = clean_text + "\n┫"
-                    elif attempt < config.MAX_RETRY_COUNT - 1:
+                    if attempt == 0 and not _truncated:
+                        # 첫 시도 + 정상 종료(STOP) → 1회만 재시도
                         logging.warning(f"[Telescope] ┣ 열었으나 ┫ 미닫힘: 재시도 {attempt + 1}")
                         full_input = (
                             f"{user_input}\n\n"
@@ -355,6 +352,10 @@ async def generate_response_with_retry(
                             f"{hidden_reminder}"
                         )
                         continue
+                    else:
+                        # MAX_TOKENS 잘림 또는 재시도 후에도 미닫힘 → ┫ 강제 보충
+                        logging.warning(f"[Telescope] ┫ 강제 보충 (truncated={_truncated}, attempt={attempt+1})")
+                        clean_text = clean_text + "\n┫"
 
                 # 4. 길이 검사 — 텔레스코프 블록 제외하고 서사 부분만 측정
                 _narrative_only = re.sub(r"┣[\s\S]*?┫\s*", "", clean_text)
