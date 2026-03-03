@@ -300,10 +300,12 @@ async def generate_response_with_retry(
                             logging.warning(f"  {rating.category}: {rating.probability}")
                     continue
                 elif 'MAX_TOKENS' in finish_reason_str:
-                    logging.warning(f"[시도 {attempt+1}] 토큰 한계 도달")
+                    logging.warning(f"[시도 {attempt+1}] 토큰 한계 도달 — 잘린 응답 보충 시도")
+                    _truncated = True
                 elif finish_reason_str not in ['STOP', 'END_TURN', '1']:
                     logging.warning(f"[시도 {attempt+1}] 종료 사유: {finish_reason_str}")
 
+            _truncated = False
             response_text = None
             if response.text:
                 # Telescope V2: prefill은 response.text에 미포함 → 수동 결합
@@ -338,9 +340,13 @@ async def generate_response_with_retry(
                     logging.warning(f"[Impersonation] 검출됨 ({violation_types}): 필터 적용 후 통과")
 
                 # 3. 텔레스코프: 정식 파싱/제거는 orchestration_response.py에서 수행
-                # 여기서는 블록이 깨진 경우(┣ 열고 ┫ 안 닫음)만 재시도
+                # 여기서는 블록이 깨진 경우(┣ 열고 ┫ 안 닫음)를 처리
                 if prefill and "┣" in clean_text and "┫" not in clean_text:
-                    if attempt < config.MAX_RETRY_COUNT - 1:
+                    if _truncated:
+                        # MAX_TOKENS 잘림 → ┫ 보충하여 살림 (재시도해도 같은 결과)
+                        logging.warning(f"[Telescope] MAX_TOKENS 잘림 → ┫ 보충")
+                        clean_text = clean_text + "\n┫"
+                    elif attempt < config.MAX_RETRY_COUNT - 1:
                         logging.warning(f"[Telescope] ┣ 열었으나 ┫ 미닫힘: 재시도 {attempt + 1}")
                         full_input = (
                             f"{user_input}\n\n"
