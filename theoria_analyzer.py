@@ -84,6 +84,7 @@ class TheoriaAnalyzer:
         gen_config = types.GenerateContentConfig(
             system_instruction=system_instruction,
             response_mime_type="application/json",
+            max_output_tokens=16384,
             temperature=config.ANALYSIS_TEMPERATURE,
             top_k=config.ANALYSIS_TOP_K,
             top_p=config.ANALYSIS_TOP_P,

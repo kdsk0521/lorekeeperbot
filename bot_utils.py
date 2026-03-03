@@ -175,9 +175,12 @@ def repair_json(text: str) -> str:
     text = re.sub(r"""(?<=[\{,])\s*'([^']+)'\s*:""", r' "\1":', text)
     # 4) Unquoted 키 → double-quoted: {key: → {"key":  ,key: → ,"key":
     text = re.sub(r'(?<=[\{,])\s*([a-zA-Z_]\w*)\s*:', r' "\1":', text)
-    # 5) Trailing comma 재정리 (3/4 단계에서 새로 생길 수 있음)
+    # 5) 빈 값 수리: "key": } → "key": null}  /  "key": , → "key": null,
+    text = re.sub(r':\s*([}\]])', r': null\1', text)
+    text = re.sub(r':\s*,', r': null,', text)
+    # 6) Trailing comma 재정리 (3/4/5 단계에서 새로 생길 수 있음)
     text = re.sub(r',\s*([}\]])', r'\1', text)
-    # 6) 미완성 문자열 닫기: 홀수 개 따옴표 → 마지막에 " 추가
+    # 7) 미완성 문자열 닫기: 홀수 개 따옴표 → 마지막에 " 추가
     quote_count = text.count('"') - text.count('\\"')
     if quote_count % 2 == 1:
         text = text.rstrip() + '"'
