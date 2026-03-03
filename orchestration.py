@@ -49,10 +49,13 @@ def _check_dialogue_format(response: str) -> str:
     # 판정/시스템 메시지 제외
     system_pat = re.compile(r'^\s*(?:🎲|📈|📉|🧠|⚠️|✅|❌|✨|🟠|🆕|🌿)')
 
+    # 출력 형식 태그 (<Members>, <Market> 등) 제외
+    tag_pat = re.compile(r'^\s*</?[A-Za-z_]')
+
     violations = []
     for line in lines:
         stripped = line.strip()
-        if not stripped or system_pat.match(stripped):
+        if not stripped or system_pat.match(stripped) or tag_pat.match(stripped):
             continue
         if quote_pat.search(stripped) and not correct_pat.match(stripped):
             violations.append(stripped[:40])

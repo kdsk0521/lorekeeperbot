@@ -1358,7 +1358,7 @@ def build_34_step_prompt(ctx) -> str:
             for k, v in _out_rules.items():
                 desc = v.get("desc", "") if isinstance(v, dict) else str(v)
                 out_lines.append(desc)
-            out_block = "<Output_Format_Rules>\n" + "\n\n".join(out_lines) + "\n</Output_Format_Rules>"
+            out_block = "<Output_Format_Rules>\n[NOTE: These format blocks are OUTSIDE the prose token budget. Write full prose first, then append format blocks at the end.]\n" + "\n\n".join(out_lines) + "\n</Output_Format_Rules>"
             current_33 = builder.get_slot(33) or ""
             builder.set_slot(33, f"{current_33}\n\n{out_block}")
             logger.info(f"[OutputRules] {len(_out_rules)} output rules injected into slot 33")
