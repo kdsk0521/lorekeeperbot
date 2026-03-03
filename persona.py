@@ -107,7 +107,7 @@ class ChatSessionAdapter:
             total_chars = sum(
                 len(p.text) for c in self.history for p in c.parts if hasattr(p, 'text') and p.text
             )
-            logging.debug(f"[ChatSession] 히스토리: {len(self.history)}msgs, ~{total_chars}chars")
+            logging.info(f"[ChatSession] 히스토리: {len(self.history)}msgs, ~{total_chars}chars")
 
             response = await self.client.aio.models.generate_content(
                 model=self.model,
