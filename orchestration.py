@@ -41,8 +41,8 @@ from orchestration_context import ResponseContext
 logger = logging.getLogger("Orchestration")
 
 
-def _check_dialogue_format(response: str, pc_name: str = "", user_input: str = "") -> str:
-    """AI 응답에서 대사 포맷 위반 + PC 대사 창작을 감지하여 피드백 문자열 반환."""
+def _check_dialogue_format(response: str) -> str:
+    """AI 응답에서 대사 포맷 위반을 감지하여 피드백 문자열 반환."""
     lines = response.split('\n')
     correct_pat = re.compile(r'^\s*\S+\s*:\s*"')  # 이름: "대사"
     quote_pat = re.compile(r'"[^"]{2,}"')  # 2자 이상 쌍따옴표 텍스트
@@ -57,37 +57,10 @@ def _check_dialogue_format(response: str, pc_name: str = "", user_input: str = "
         if quote_pat.search(stripped) and not correct_pat.match(stripped):
             violations.append(stripped[:40])
 
-    parts = []
     if violations:
         examples = violations[:2]
-        parts.append(f"[FORMAT] 대사 포맷 위반 {len(violations)}건. 예: {'; '.join(examples)}. 반드시 이름: \"대사\" 형식을 지켜라.")
-
-    # PC 대사 창작 감지: PC이름: "대사" 가 응답에 있는데 유저 입력에 해당 대사 내용이 없으면 사칭
-    if pc_name:
-        pc_dialogue_pat = re.compile(rf'^\s*{re.escape(pc_name)}\s*:\s*"([^"]+)"')
-        invented = []
-        for line in lines:
-            m = pc_dialogue_pat.match(line.strip())
-            if m:
-                dialogue_text = m.group(1)
-                # 유저 입력에 대사 핵심 내용이 포함되어 있는지 체크 (5자 이상 연속 매칭)
-                if user_input and len(dialogue_text) >= 5:
-                    # 유저 입력에서 대사 내용의 일부(5자 이상)가 있으면 리워딩으로 간주
-                    found = False
-                    for i in range(len(dialogue_text) - 4):
-                        if dialogue_text[i:i+5] in user_input:
-                            found = True
-                            break
-                    if not found:
-                        invented.append(dialogue_text[:30])
-                elif not user_input:
-                    # 유저 입력 없이 PC 대사 생성 = 확실한 사칭
-                    invented.append(dialogue_text[:30])
-        if invented:
-            logger.warning(f"[Impersonation] PC 대사 창작 감지 {len(invented)}건: {invented}")
-            parts.append(f"[IMPERSONATION] PC({pc_name}) 대사를 창작하지 마라. 유저가 제공한 대사만 리워딩 허용. 위반 {len(invented)}건.")
-
-    return " ".join(parts)
+        return f"[FORMAT] 대사 포맷 위반 {len(violations)}건. 예: {'; '.join(examples)}. 반드시 이름: \"대사\" 형식을 지켜라."
+    return ""
 
 
 class OrchestrationService:
@@ -1047,20 +1020,7 @@ class OrchestrationService:
                 full_prompt, builder = self.build_prompt(ctx)
 
                 # 6. Response Generation (V4: returns Tuple[response, extraction_data])
-                # + Impersonation retry loop (max 3 retries)
-                _MAX_IMP_RETRIES = 3
                 response, extraction_data = await self.generate_response(ctx, full_prompt)
-
-                _impersonation_retried = 0
-                if response and ctx.user_mask:
-                    for _imp_attempt in range(_MAX_IMP_RETRIES):
-                        _imp_check = _check_dialogue_format(response, pc_name=ctx.user_mask, user_input=ctx.action_text or "")
-                        if "[IMPERSONATION]" not in _imp_check:
-                            break
-                        _impersonation_retried += 1
-                        logger.warning(f"[Impersonation Retry {_impersonation_retried}/{_MAX_IMP_RETRIES}] 사칭 감지 → 재생성")
-                        domain_manager.update_session_ai_memory(channel_id, {"format_feedback": _imp_check})
-                        response, extraction_data = await self.generate_response(ctx, full_prompt)
 
                 if response:
                     # [UI Feedback] 완료 시 안내 메시지 삭제
@@ -1084,8 +1044,8 @@ class OrchestrationService:
                     domain_manager.append_history(channel_id, "Model", response)
                     logger.debug(f"[History] Saved: {user_mask} + Model response ({len(response)} chars)")
 
-                    # 8.5. Dialogue Format Feedback + PC Impersonation + Style Detectors (다음 턴 피드백용)
-                    fmt_feedback = _check_dialogue_format(response, pc_name=ctx.user_mask or "", user_input=ctx.action_text or "")
+                    # 8.5. Dialogue Format Feedback + Style Detectors (다음 턴 피드백용)
+                    fmt_feedback = _check_dialogue_format(response)
                     from response_processor import (
                         detect_cliche_patterns, detect_cargo_patterns,
                         detect_premature_closure, detect_sensory_repetition, detect_pidgin_echo
@@ -1132,11 +1092,6 @@ class OrchestrationService:
                     )
                     if fmt_feedback:
                         logger.info(f"[FormatCheck] {fmt_feedback[:80]}")
-                    if _impersonation_retried:
-                        if "[IMPERSONATION]" in fmt_feedback:
-                            logger.warning(f"[Impersonation] {_impersonation_retried}회 재시도 후에도 사칭 지속 — 피드백으로 넘김")
-                        else:
-                            logger.info(f"[Impersonation] {_impersonation_retried}회 재시도 후 사칭 제거됨")
 
                     # 9. Background Extraction (Flash 모델로 별도 API 호출)
                     # V4 Inline Extraction 대신 기존 Background Extraction 복원

@@ -1167,10 +1167,10 @@ def build_34_step_prompt(ctx) -> str:
         real_time_data = getattr(ctx, 'world_ctx', '')
 
     # PC Autonomy Check — 사실 보고 기반
+    # PC Autonomy: pc_spoke 제외 (유저 대사 재사용은 사칭 아님). pc_thought/pc_moved만 경고.
     pc_check = dai.get("pc_autonomy_check", {})
-    if pc_check.get("pc_spoke") or pc_check.get("pc_thought") or pc_check.get("pc_moved_unprompted"):
+    if pc_check.get("pc_thought") or pc_check.get("pc_moved_unprompted"):
         flags = []
-        if pc_check.get("pc_spoke"): flags.append("PC dialogue present")
         if pc_check.get("pc_thought"): flags.append("PC inner thought present")
         if pc_check.get("pc_moved_unprompted"): flags.append("PC moved without player input")
         gm_focus = pc_check.get("gm_focus", "")

@@ -773,6 +773,10 @@ Evaluate this in flashback_eval field. Check plausibility, passive match, assign
         anchors = context.narrative_anchors
         bus = context.shared_bus
 
+        # lore_summary가 list로 저장된 경우 방어 (구버전 데이터 호환)
+        if not isinstance(req.lore_summary, dict):
+            req.lore_summary = {}
+
         pc_section = self._build_pc_section(anchors)
         mental_line = self._build_mental_line(anchors, bus)
         npc_context = self._build_npc_context(anchors)
