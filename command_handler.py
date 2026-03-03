@@ -1710,13 +1710,14 @@ async def cmd_rule(ctx: CommandContext) -> None:
     # 1. List
     if sub in ['list', '목록', '조회', 'l']:
         if not rules:
-            await ctx.send("📜 활성화된 특수 규칙이 없습니다.")
+            await ctx.send("📜 활성화된 특수 규칙이 없습니다.\n💡 출력 형식 규칙은 `!출력룰 목록`으로 확인하세요.")
             return
 
         msg = ["📜 **세계 규칙 목록**"]
         for k, v in rules.items():
             desc = v.get('desc', '') if isinstance(v, dict) else str(v)
             msg.append(f"- **{k}**: {desc}")
+        msg.append("\n💡 출력 형식 규칙은 `!출력룰 목록`으로 확인하세요.")
         await send_long_message(ctx.message.channel, "\n".join(msg))
         return
 
@@ -1791,6 +1792,87 @@ async def cmd_rule(ctx: CommandContext) -> None:
         return
 
     await ctx.send("⚠️ 사용법: `!룰 [목록/추가/삭제/초기화]` — 파일 첨부로 일괄 등록 가능")
+
+
+@registry.register("outputrule", category="World", aliases=["출력룰", "출력규칙", "outputrules", "출력"], description="출력 형식 규칙 관리 (Recency 슬롯)")
+async def cmd_output_rule(ctx: CommandContext) -> None:
+    """!출력룰 [추가/삭제/목록/초기화] [키워드] [내용]  — 파일 첨부 시 일괄 등록
+    출력 형식 지시(상태창, 포맷 등)를 Recency 영역에 주입합니다."""
+    args = ctx.args
+    if not args:
+        sub = "list"
+    else:
+        sub = args[0].lower()
+
+    w = domain_manager.get_world_state(ctx.channel_id)
+    rules = w.get("output_rules", {})
+
+    # 1. List
+    if sub in ['list', '목록', '조회', 'l']:
+        if not rules:
+            await ctx.send("📋 활성화된 출력 규칙이 없습니다.")
+            return
+        msg = ["📋 **출력 규칙 목록** (Recency 슬롯 주입)"]
+        for k, v in rules.items():
+            desc = v.get('desc', '') if isinstance(v, dict) else str(v)
+            preview = desc[:80] + "..." if len(desc) > 80 else desc
+            msg.append(f"- **{k}**: {preview}")
+        await send_long_message(ctx.message.channel, "\n".join(msg))
+        return
+
+    # 2. Add / Update
+    if sub in ['add', '추가', 'set', '설정', 'a']:
+        if ctx.message.attachments:
+            file_text, error = await read_attachment_text(ctx.message.attachments[0])
+            if error:
+                await ctx.send(error)
+                return
+            if not file_text:
+                await ctx.send("⚠️ 파일 내용이 비어있습니다.")
+                return
+            # 파일 전체를 하나의 출력 규칙으로 등록 (키워드 = 파일명)
+            fname = ctx.message.attachments[0].filename.rsplit('.', 1)[0]
+            rules[fname] = {"desc": file_text.strip(), "created_at": time.strftime('%Y-%m-%d')}
+            w["output_rules"] = rules
+            domain_manager.update_world_state(ctx.channel_id, w)
+            await ctx.send(f"📋 **출력규칙 등록 완료:** [{fname}]")
+            return
+
+        if len(args) < 3:
+            await ctx.send("⚠️ 사용법: `!출력룰 추가 [키워드] [설명]` 또는 파일 첨부")
+            return
+
+        key = args[1]
+        desc = " ".join(args[2:])
+        rules[key] = {"desc": desc, "created_at": time.strftime('%Y-%m-%d')}
+        w["output_rules"] = rules
+        domain_manager.update_world_state(ctx.channel_id, w)
+        await ctx.send(f"📋 **출력규칙 설정:** [{key}] - {desc}")
+        return
+
+    # 3. Remove
+    if sub in ['remove', 'delete', 'del', '삭제', '제거', 'r']:
+        if len(args) < 2:
+            await ctx.send("⚠️ 사용법: `!출력룰 삭제 [키워드]`")
+            return
+        key = args[1]
+        if key in rules:
+            del rules[key]
+            w["output_rules"] = rules
+            domain_manager.update_world_state(ctx.channel_id, w)
+            await ctx.send(f"🗑️ **출력규칙 삭제:** [{key}]")
+        else:
+            await ctx.send(f"⚠️ 출력규칙 '{key}'(을)를 찾을 수 없습니다.")
+        return
+
+    # 4. Reset
+    if sub in ['reset', '초기화', 'clear']:
+        w["output_rules"] = {}
+        domain_manager.update_world_state(ctx.channel_id, w)
+        await ctx.send("🗑️ **모든 출력규칙 초기화 완료**")
+        return
+
+    await ctx.send("⚠️ 사용법: `!출력룰 [목록/추가/삭제/초기화]` — 파일 첨부로 일괄 등록 가능")
 
 
 @registry.register("quest", category="World", aliases=["퀘스트"], description="퀘스트 관리")

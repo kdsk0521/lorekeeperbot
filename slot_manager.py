@@ -1349,6 +1349,20 @@ def build_34_step_prompt(ctx) -> str:
 
     # [Scene Breathing 제거됨] — Slot 16 iceberg.translate_energy_direction()이 동일 정보를 커버
 
+    # Output Rules (!출력룰) → Slot 33 Recency injection
+    if channel_id:
+        _ws_out = domain_manager.get_world_state(channel_id)
+        _out_rules = _ws_out.get("output_rules", {})
+        if _out_rules:
+            out_lines = []
+            for k, v in _out_rules.items():
+                desc = v.get("desc", "") if isinstance(v, dict) else str(v)
+                out_lines.append(desc)
+            out_block = "<Output_Format_Rules>\n" + "\n\n".join(out_lines) + "\n</Output_Format_Rules>"
+            current_33 = builder.get_slot(33) or ""
+            builder.set_slot(33, f"{current_33}\n\n{out_block}")
+            logger.info(f"[OutputRules] {len(_out_rules)} output rules injected into slot 33")
+
     # 5W1H Recency Echo — always present at maximum recency position
     fidelity_echo = "[5W1H: Draw events only from DAI data. Camera scans environment evenly. Prose intensity follows EnergyDirection.]"
     current_33 = builder.get_slot(33) or ""

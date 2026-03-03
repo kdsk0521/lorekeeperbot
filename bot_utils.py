@@ -145,15 +145,48 @@ async def safe_delete_message(message: discord.Message) -> None:
         logging.warning(f"메시지 삭제 실패: {e}")
 
 def clean_json_text(text: str) -> str:
-    """JSON 문자열에서 코드 블록 마커(```json) 등을 제거합니다."""
+    """JSON 문자열에서 코드 블록 마커 + trailing comma 등을 제거합니다."""
+    import re
     text = text.strip()
     if text.startswith("```"):
         lines = text.split("\n")
-        # 첫 줄이 ```json 등이면 제거
         if lines[0].startswith("```"):
             lines = lines[1:]
-        # 마지막 줄이 ``` 이면 제거
         if lines and lines[-1].startswith("```"):
             lines = lines[:-1]
         text = "\n".join(lines).strip()
+    # JS-style 한줄 주석 제거 (문자열 내부가 아닌 경우)
+    text = re.sub(r'(?m)^\s*//.*$', '', text)
+    # Trailing comma 제거: ,} → }  ,] → ]
+    text = re.sub(r',\s*([}\]])', r'\1', text)
+    return text
+
+
+def repair_json(text: str) -> str:
+    """Flash 모델의 불완전/비표준 JSON을 수리합니다."""
+    import re
+    # 1) 제어문자 제거
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+    # 2) JS 리터럴 → JSON
+    text = re.sub(r'\bNaN\b', 'null', text)
+    text = re.sub(r'\bInfinity\b', '999999', text)
+    text = re.sub(r'\bundefined\b', 'null', text)
+    # 3) Single-quoted 키 → double-quoted: {'key': → {"key":
+    text = re.sub(r"""(?<=[\{,])\s*'([^']+)'\s*:""", r' "\1":', text)
+    # 4) Unquoted 키 → double-quoted: {key: → {"key":  ,key: → ,"key":
+    text = re.sub(r'(?<=[\{,])\s*([a-zA-Z_]\w*)\s*:', r' "\1":', text)
+    # 5) Trailing comma 재정리 (3/4 단계에서 새로 생길 수 있음)
+    text = re.sub(r',\s*([}\]])', r'\1', text)
+    # 6) 미완성 문자열 닫기: 홀수 개 따옴표 → 마지막에 " 추가
+    quote_count = text.count('"') - text.count('\\"')
+    if quote_count % 2 == 1:
+        text = text.rstrip() + '"'
+    # 7) 잘린 응답 닫기: 열린 {/[ 부족분 보충
+    text = text.rstrip().rstrip(',')
+    open_b = text.count('{') - text.count('}')
+    open_s = text.count('[') - text.count(']')
+    if open_s > 0:
+        text += ']' * open_s
+    if open_b > 0:
+        text += '}' * open_b
     return text
