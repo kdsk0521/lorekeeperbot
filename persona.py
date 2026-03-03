@@ -126,9 +126,15 @@ class ChatSessionAdapter:
                 if prefill:
                     # 프리필 + 생성된 연속분 = 전체 model 응답으로 교체
                     full_text = prefill + response.text
+                    # 히스토리에는 텔레스코프 CoT 제거 — 이전 턴 CoT가 남으면
+                    # 모델이 "텔레스코프만 쓰면 된다"고 학습하여 산문 생략
+                    import re as _re
+                    history_text = _re.sub(r"┣[\s\S]*?┫\s*", "", full_text).strip()
+                    if not history_text:
+                        history_text = full_text  # strip 후 빈 문자열이면 원본 유지
                     self.history[-1] = types.Content(
                         role="model",
-                        parts=[types.Part(text=full_text)]
+                        parts=[types.Part(text=history_text)]
                     )
                 else:
                     model_content = types.Content(
@@ -215,7 +221,7 @@ Recording in Korean.
         temperature=config.NARRATIVE_TEMPERATURE,
         top_k=config.NARRATIVE_TOP_K,
         top_p=config.NARRATIVE_TOP_P,
-        # max_output_tokens 제한 해제 — 모델 기본값 사용 (텔레스코프+산문 충분히 확보)
+        max_output_tokens=config.NARRATIVE_MAX_OUTPUT_TOKENS,
         # [Gemini 3] presence_penalty/frequency_penalty not supported
         safety_settings=config.SAFETY_SETTINGS,
         tools=[],
