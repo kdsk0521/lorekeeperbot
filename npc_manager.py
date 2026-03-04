@@ -245,6 +245,62 @@ def _extract_voice_sections(text: str) -> str:
     return text
 
 
+def _build_fallback_voice_card(npc_name: str, data: Dict[str, Any]) -> str:
+    """API 실패 시 tone/personality/프로필 텍스트에서 간이 보이스카드 생성. 0 API calls."""
+    parts = []
+
+    # 1. tone 필드 (자동 추출됨)
+    tone = data.get("tone", "")
+    if tone:
+        parts.append(f"Tone: {tone}")
+
+    # 2. personality 필드 → Quirks 힌트로 변환
+    personality = data.get("personality", "")
+    if personality:
+        parts.append(f"Quirks: {personality[:120]}")
+
+    # 3. 프로필 본문에서 말투 관련 키워드 스캔
+    desc = data.get("description") or data.get("desc", "")
+    if desc:
+        speech_hints = []
+        # 영어 말투 패턴
+        for pat, hint in [
+            (r'(?:speaks?\s+in|talks?\s+in|uses?)\s+([^.]{5,60})', None),
+            (r'(?:voice|speech|manner\s+of\s+speaking)[:\s]+([^.]{5,80})', None),
+            (r'(?:반말|존댓말|해요체|합니다체|음슴체|~해|~요)', None),
+            (r'(?:말투|어투|말버릇|입버릇)[:\s]*([^\n.]{3,60})', None),
+        ]:
+            for m in re.finditer(pat, desc, re.IGNORECASE):
+                found = m.group(0).strip()[:80]
+                if found and found not in speech_hints:
+                    speech_hints.append(found)
+                if len(speech_hints) >= 3:
+                    break
+
+        # 상황별 변화 감지 (Shifts 힌트)
+        shift_hints = []
+        for m in re.finditer(
+            r'(?:when\s+(?:angry|happy|nervous|embarrassed|excited|scared|drunk|tired)|'
+            r'(?:화나면|기쁘면|긴장하면|당황하면|흥분하면|무서우면|취하면))'
+            r'[,:\s]+([^.]{5,60})', desc, re.IGNORECASE
+        ):
+            shift_hints.append(m.group(0).strip()[:60])
+            if len(shift_hints) >= 2:
+                break
+
+        if speech_hints:
+            parts.append(f"Speech: {' | '.join(speech_hints)}")
+        if shift_hints:
+            parts.append(f"Shifts: {' | '.join(shift_hints)}")
+
+    if not parts:
+        return ""
+
+    card = f"[Voice: {npc_name}]\n" + "\n".join(parts)
+    # 500자 제한 (API 보이스카드와 동일)
+    return card[:500]
+
+
 async def extract_voice_card(client, model_id: str, npc_name: str, profile_text: str) -> str:
     """Flash API로 NPC 음성 카드를 추출. 업로드 시 1회만 호출."""
     if not client or not profile_text or len(profile_text) < 300:

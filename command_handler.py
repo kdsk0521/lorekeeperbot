@@ -793,6 +793,8 @@ async def cmd_npc(ctx: CommandContext) -> None:
                 voice_card = await npc_manager.extract_voice_card(
                     ctx.genai_client, config.MODEL_ID_FLASH, npc_name, desc
                 )
+                if not voice_card:
+                    voice_card = npc_manager._build_fallback_voice_card(npc_name, npc_data)
                 if voice_card:
                     npc_data["voice_card"] = voice_card
                     domain_manager.update_npc(channel_id, npc_name, npc_data)
@@ -963,6 +965,8 @@ async def cmd_npc(ctx: CommandContext) -> None:
                         voice_card = await npc_manager.extract_voice_card(
                             ctx.genai_client, config.MODEL_ID_FLASH, npc_name, desc
                         )
+                        if not voice_card:
+                            voice_card = npc_manager._build_fallback_voice_card(npc_name, npc_data)
                         if voice_card:
                             npc_data["voice_card"] = voice_card
                             domain_manager.update_npc(channel_id, npc_name, npc_data)
