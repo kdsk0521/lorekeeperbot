@@ -1099,6 +1099,18 @@ class OrchestrationService:
                     # 9. Background Extraction (Flash 모델로 별도 API 호출)
                     # V4 Inline Extraction 대신 기존 Background Extraction 복원
                     await self.schedule_background_extraction(ctx, response, message)
+
+                    # 9.5. World Board (N턴 자동 트리거, 백그라운드)
+                    try:
+                        import world_board
+                        if isinstance(message.channel, discord.TextChannel):
+                            asyncio.create_task(world_board.trigger_board_update(
+                                message.channel, self.client,
+                                config.MODEL_ID_FLASH, channel_id,
+                                trigger="turn",
+                            ))
+                    except Exception:
+                        pass
                 else:
                     logger.warning(f"[!다시] No response generated for channel {channel_id}")
                     if feedback_msg:

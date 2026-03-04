@@ -1266,9 +1266,85 @@ async def _handle_module_toggle(ctx: CommandContext, code: str, name: str):
         domain_manager.toggle_module(ctx.channel_id, code, False)
         await ctx.send(f"❌ **{name} 모듈**이 비활성화되었습니다.")
 
-@registry.register("board", category="System", aliases=["게시판", "boardmod"], description="세계 게시판 모듈 on/off")
+@registry.register("board", category="System", aliases=["게시판", "boardmod"], description="세계 게시판 모듈 관리")
 async def cmd_toggle_board(ctx: CommandContext) -> None:
-    await _handle_module_toggle(ctx, "board", "게시판")
+    """!게시판 [on/off/상태] | !게시판 공지/sns/메시지 [on/off] | !게시판 빈도 N"""
+    import world_board
+    arg = ctx.raw_args.strip().lower()
+    parts = arg.split()
+
+    # 채널 이름 매핑
+    ch_aliases = {
+        "공지": "bulletin", "bulletin": "bulletin", "게시": "bulletin",
+        "sns": "sns", "소셜": "sns", "피드": "sns",
+        "메시지": "message", "message": "message", "쪽지": "message", "편지": "message",
+    }
+
+    # 빈도 설정: !게시판 빈도 10 또는 !게시판 빈도 sns 5
+    if len(parts) >= 2 and parts[0] in ("빈도", "freq", "frequency"):
+        try:
+            # !게시판 빈도 sns 5 (채널별)
+            if len(parts) >= 3 and parts[1] in ch_aliases:
+                ch = ch_aliases[parts[1]]
+                freq = max(1, int(parts[2]))
+                world_board.set_board_frequency(ctx.channel_id, freq, ch_name=ch)
+                ch_display = {"bulletin": "📋 공지", "sns": "📱 SNS", "message": "💌 메시지"}[ch]
+                await ctx.send(f"{ch_display} **빈도**: {freq}턴마다")
+            else:
+                # !게시판 빈도 10 (전체 기본값)
+                freq = max(1, int(parts[1]))
+                world_board.set_board_frequency(ctx.channel_id, freq)
+                await ctx.send(f"📋 **게시판 전체 빈도**: {freq}턴마다 자동 게시")
+            return
+        except (ValueError, TypeError):
+            await ctx.send("⚠️ 사용법: `!게시판 빈도 10` 또는 `!게시판 빈도 sns 5`")
+            return
+
+    # 개별 채널 토글: !게시판 sns on/off
+    if len(parts) >= 1 and parts[0] in ch_aliases:
+        ch_name = ch_aliases[parts[0]]
+        ch_display = {"bulletin": "📋 공지", "sns": "📱 SNS", "message": "💌 메시지"}[ch_name]
+        if len(parts) >= 2 and parts[1] in ("on", "켜기", "true"):
+            world_board.set_board_channel(ctx.channel_id, ch_name, True)
+            await ctx.send(f"✅ **{ch_display}** 채널 활성화")
+            return
+        elif len(parts) >= 2 and parts[1] in ("off", "끄기", "false"):
+            world_board.set_board_channel(ctx.channel_id, ch_name, False)
+            await ctx.send(f"❌ **{ch_display}** 채널 비활성화")
+            return
+        else:
+            # 상태 표시
+            channels = world_board.get_board_channels(ctx.channel_id)
+            status = "✅ ON" if channels.get(ch_name) else "❌ OFF"
+            await ctx.send(f"{ch_display} 상태: {status}\n사용법: `!게시판 {parts[0]} on/off`")
+            return
+
+    # 전체 on/off
+    if arg in ("on", "켜기", "true"):
+        domain_manager.toggle_module(ctx.channel_id, "board", True)
+        await ctx.send("✅ **게시판 모듈** 활성화")
+        return
+    if arg in ("off", "끄기", "false"):
+        domain_manager.toggle_module(ctx.channel_id, "board", False)
+        await ctx.send("❌ **게시판 모듈** 비활성화")
+        return
+
+    # 상태 표시 (기본)
+    modules = domain_manager.get_active_modules(ctx.channel_id)
+    board_on = "board" in modules
+    channels = world_board.get_board_channels(ctx.channel_id)
+    freqs = world_board.get_all_frequencies(ctx.channel_id)
+    lines = [
+        f"📋 **게시판 모듈**: {'✅ ON' if board_on else '❌ OFF'}",
+        f"  📋 공지: {'✅' if channels['bulletin'] else '❌'} ({freqs['bulletin']}턴)  |  📱 SNS: {'✅' if channels['sns'] else '❌'} ({freqs['sns']}턴)  |  💌 메시지: {'✅' if channels['message'] else '❌'} ({freqs['message']}턴)",
+        "",
+        "사용법:",
+        "  `!게시판 on/off` — 전체 모듈",
+        "  `!게시판 공지/sns/메시지 on/off` — 개별 채널",
+        "  `!게시판 빈도 N` — 전체 기본 빈도",
+        "  `!게시판 빈도 sns 5` — 채널별 빈도",
+    ]
+    await ctx.send("\n".join(lines))
 
 
 @registry.register("impersonation", category="System", aliases=["사칭", "사칭감지"], description="PC 사칭 감지 on/off")
