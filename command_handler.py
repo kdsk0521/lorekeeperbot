@@ -2107,6 +2107,107 @@ async def cmd_doom(ctx: CommandContext) -> None:
     except (ValueError, TypeError):
         await ctx.send("⚠️ 사용법: `!둠 10`, `!둠 -5`, `!둠 설정 50`")
 
+@registry.register("backup", category="Admin", aliases=["백업", "저장"], description="세션 데이터 백업 (JSON 파일 다운로드)")
+async def cmd_backup(ctx: CommandContext) -> None:
+    """!백업 — 현재 채널의 세션+로어+룰 데이터를 JSON 파일로 전송."""
+    channel_id = ctx.channel_id
+    import json as _json
+
+    backup_data = {}
+
+    # 세션 데이터
+    session_path = domain_manager.get_session_file_path(channel_id)
+    if os.path.exists(session_path):
+        backup_data["session"] = domain_manager.load_json(session_path, {})
+
+    # 로어 원본
+    lore_path = domain_manager.get_lore_original_file_path(channel_id)
+    if not os.path.exists(lore_path):
+        lore_path = domain_manager.get_lore_file_path(channel_id)
+    if os.path.exists(lore_path):
+        try:
+            with open(lore_path, "r", encoding="utf-8") as f:
+                backup_data["lore"] = f.read()
+        except Exception:
+            pass
+
+    # 룰
+    rules_path = domain_manager.get_rules_file_path(channel_id)
+    if os.path.exists(rules_path):
+        try:
+            with open(rules_path, "r", encoding="utf-8") as f:
+                backup_data["rules"] = f.read()
+        except Exception:
+            pass
+
+    if not backup_data:
+        await ctx.send("⚠️ 백업할 데이터가 없습니다.")
+        return
+
+    content = _json.dumps(backup_data, ensure_ascii=False, indent=2)
+    fname = f"backup_{channel_id}.json"
+    await ctx.send(
+        f"💾 **백업 완료** — 세션{'✅' if 'session' in backup_data else '❌'} "
+        f"로어{'✅' if 'lore' in backup_data else '❌'} "
+        f"룰{'✅' if 'rules' in backup_data else '❌'}",
+        file=discord.File(io.StringIO(content), filename=fname)
+    )
+
+
+@registry.register("restore", category="Admin", aliases=["복구", "복원"], description="백업 파일로 세션 복구")
+async def cmd_restore(ctx: CommandContext) -> None:
+    """!복구 — 백업 JSON 파일 첨부 시 세션 데이터 복원."""
+    import json as _json
+    channel_id = ctx.channel_id
+
+    if not ctx.message.attachments:
+        await ctx.send("⚠️ 백업 JSON 파일을 첨부해서 `!복구`를 입력하세요.")
+        return
+
+    attachment = ctx.message.attachments[0]
+    if not attachment.filename.endswith(".json"):
+        await ctx.send("⚠️ .json 파일만 복구 가능합니다.")
+        return
+
+    try:
+        raw = (await attachment.read()).decode("utf-8")
+        backup_data = _json.loads(raw)
+    except Exception as e:
+        await ctx.send(f"⚠️ 파일 파싱 실패: {e}")
+        return
+
+    restored = []
+
+    # 세션 복구
+    if "session" in backup_data and isinstance(backup_data["session"], dict):
+        domain_manager.save_domain(channel_id, backup_data["session"])
+        restored.append("세션")
+
+    # 로어 복구
+    if "lore" in backup_data and backup_data["lore"]:
+        lore_path = domain_manager.get_lore_file_path(channel_id)
+        orig_path = domain_manager.get_lore_original_file_path(channel_id)
+        os.makedirs(os.path.dirname(lore_path), exist_ok=True)
+        with open(lore_path, "w", encoding="utf-8") as f:
+            f.write(backup_data["lore"])
+        with open(orig_path, "w", encoding="utf-8") as f:
+            f.write(backup_data["lore"])
+        restored.append("로어")
+
+    # 룰 복구
+    if "rules" in backup_data and backup_data["rules"]:
+        rules_path = domain_manager.get_rules_file_path(channel_id)
+        os.makedirs(os.path.dirname(rules_path), exist_ok=True)
+        with open(rules_path, "w", encoding="utf-8") as f:
+            f.write(backup_data["rules"])
+        restored.append("룰")
+
+    if restored:
+        await ctx.send(f"✅ **복구 완료**: {', '.join(restored)}")
+    else:
+        await ctx.send("⚠️ 복구할 데이터가 백업 파일에 없습니다.")
+
+
 @registry.register("export", category="System", aliases=["추출", "로그"], description="대화 내역 추출")
 async def cmd_export(ctx: CommandContext) -> None:
     """!추출 [inc/증분]"""

@@ -70,10 +70,45 @@ channel_locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 # =========================================================
 # DISCORD EVENTS
 # =========================================================
+async def _auto_backup_loop():
+    """매 24시간마다 모든 활성 세션을 백업 파일로 저장."""
+    import json as _json
+    await client_discord.wait_until_ready()
+    while not client_discord.is_closed():
+        try:
+            await asyncio.sleep(86400)  # 24시간
+            sessions_dir = config.SESSIONS_DIR
+            if not os.path.isdir(sessions_dir):
+                continue
+            backup_dir = os.path.join(config.DATA_DIR, "backups")
+            os.makedirs(backup_dir, exist_ok=True)
+            count = 0
+            for fname in os.listdir(sessions_dir):
+                if not fname.endswith(".json"):
+                    continue
+                src = os.path.join(sessions_dir, fname)
+                dst = os.path.join(backup_dir, fname)
+                try:
+                    with open(src, "r", encoding="utf-8") as f:
+                        data = _json.load(f)
+                    with open(dst, "w", encoding="utf-8") as f:
+                        _json.dump(data, f, ensure_ascii=False)
+                    count += 1
+                except Exception:
+                    pass
+            if count:
+                logging.info(f"[AutoBackup] {count} sessions backed up to {backup_dir}")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logging.error(f"[AutoBackup] Error: {e}")
+
+
 @client_discord.event
 async def on_ready():
     logging.info(f'Logged in as {client_discord.user}')
     await client_discord.change_presence(activity=discord.Game(name="!help | TRPG"))
+    client_discord.loop.create_task(_auto_backup_loop())
 
 @client_discord.event
 async def on_message(message: discord.Message) -> None:
