@@ -8,6 +8,8 @@ import discord
 import asyncio
 import logging
 import io
+import json
+import os
 import time
 from typing import Optional, Dict, Any
 import re
@@ -1178,20 +1180,20 @@ async def cmd_modules(ctx: CommandContext) -> None:
     """!모듈 [on/off] - 모듈 상태 확인 또는 일괄 제어"""
     arg = ctx.raw_args.strip().lower()
     active = domain_manager.get_active_modules(ctx.channel_id)
-    all_mods = [("judgment", "판정"), ("doom", "둠"), ("anomaly", "이변"), ("mental", "기력")]
+    all_mods = [("judgment", "판정"), ("doom", "둠"), ("anomaly", "이변"), ("mental", "기력"), ("board", "게시판")]
 
     # 일괄 ON
     if arg in ['on', '켜기', 'true', 'all']:
         for code, _ in all_mods:
             domain_manager.toggle_module(ctx.channel_id, code, True)
-        await ctx.send("✅ **모든 모듈이 활성화되었습니다.**\n• 판정 ✅\n• 둠 ✅\n• 이변 ✅\n• 기력 ✅")
+        await ctx.send("✅ **모든 모듈이 활성화되었습니다.**\n• 판정 ✅\n• 둠 ✅\n• 이변 ✅\n• 기력 ✅\n• 게시판 ✅")
         return
 
     # 일괄 OFF
     if arg in ['off', '끄기', 'false', 'none']:
         for code, _ in all_mods:
             domain_manager.toggle_module(ctx.channel_id, code, False)
-        await ctx.send("❌ **모든 모듈이 비활성화되었습니다.**\n• 판정 ❌\n• 둠 ❌\n• 이변 ❌\n• 기력 ❌")
+        await ctx.send("❌ **모든 모듈이 비활성화되었습니다.**\n• 판정 ❌\n• 둠 ❌\n• 이변 ❌\n• 기력 ❌\n• 게시판 ❌")
         return
     
     # 상태 확인
@@ -1263,6 +1265,11 @@ async def _handle_module_toggle(ctx: CommandContext, code: str, name: str):
     elif arg in ['off', '끄기', 'false']:
         domain_manager.toggle_module(ctx.channel_id, code, False)
         await ctx.send(f"❌ **{name} 모듈**이 비활성화되었습니다.")
+
+@registry.register("board", category="System", aliases=["게시판", "boardmod"], description="세계 게시판 모듈 on/off")
+async def cmd_toggle_board(ctx: CommandContext) -> None:
+    await _handle_module_toggle(ctx, "board", "게시판")
+
 
 @registry.register("impersonation", category="System", aliases=["사칭", "사칭감지"], description="PC 사칭 감지 on/off")
 async def cmd_toggle_impersonation(ctx: CommandContext) -> None:
@@ -1990,6 +1997,19 @@ async def cmd_relation(ctx: CommandContext) -> None:
     await ctx.send("\n".join(lines))
 
 
+async def _trigger_board(ctx: 'CommandContext', trigger: str = "time") -> None:
+    """게시판 트리거 헬퍼 (백그라운드 실행)."""
+    try:
+        import world_board
+        if ctx.genai_client and isinstance(ctx.message.channel, discord.TextChannel):
+            await world_board.trigger_board_update(
+                ctx.message.channel, ctx.genai_client,
+                config.MODEL_ID_FLASH, ctx.channel_id, trigger=trigger,
+            )
+    except Exception as e:
+        logging.getLogger("WorldBoard").debug(f"[WorldBoard] Trigger error: {e}")
+
+
 @registry.register("time", category="World", aliases=["시간"], description="시간 조회 및 설정")
 async def cmd_time(ctx: CommandContext) -> None:
     """!시간 [설정 시간대 / 진행 / N]"""
@@ -2017,6 +2037,8 @@ async def cmd_time(ctx: CommandContext) -> None:
     if first in ["진행", "next", "pass"]:
         msg = game_system.advance_time(ctx.channel_id)
         await ctx.send(msg)
+        # 게시판 트리거 (백그라운드)
+        asyncio.create_task(_trigger_board(ctx, "time"))
         return
 
     # Advance clock by N ticks
@@ -2029,6 +2051,8 @@ async def cmd_time(ctx: CommandContext) -> None:
         for _ in range(count):
             msgs.append(game_system.advance_time(ctx.channel_id))
         await ctx.send("\n".join(msgs))
+        # 다중 진행 시 마지막 1회만 트리거
+        asyncio.create_task(_trigger_board(ctx, "time"))
         return
 
     # Set time slot
@@ -2067,6 +2091,7 @@ async def cmd_turn(ctx: CommandContext) -> None:
         # OBSERVATION MODE: 관찰 턴 (1틱 시간 경과 + 세계 묘사)
         tick_msg = game_system.advance_tick(ctx.channel_id)
         await ctx.send(tick_msg)
+        asyncio.create_task(_trigger_board(ctx, "observation"))
         feedback = await ctx.message.channel.send("🔄 **세계를 관찰하고 있습니다...**")
         await orch.execute_observation(ctx.message, ctx.channel_id, feedback)
     return
@@ -2111,7 +2136,6 @@ async def cmd_doom(ctx: CommandContext) -> None:
 async def cmd_backup(ctx: CommandContext) -> None:
     """!백업 — 현재 채널의 세션+로어+룰 데이터를 JSON 파일로 전송."""
     channel_id = ctx.channel_id
-    import json as _json
 
     backup_data = {}
 
@@ -2144,7 +2168,7 @@ async def cmd_backup(ctx: CommandContext) -> None:
         await ctx.send("⚠️ 백업할 데이터가 없습니다.")
         return
 
-    content = _json.dumps(backup_data, ensure_ascii=False, indent=2)
+    content = json.dumps(backup_data, ensure_ascii=False, indent=2)
     fname = f"backup_{channel_id}.json"
     await ctx.send(
         f"💾 **백업 완료** — 세션{'✅' if 'session' in backup_data else '❌'} "
@@ -2157,7 +2181,6 @@ async def cmd_backup(ctx: CommandContext) -> None:
 @registry.register("restore", category="Admin", aliases=["복구", "복원"], description="백업 파일로 세션 복구")
 async def cmd_restore(ctx: CommandContext) -> None:
     """!복구 — 백업 JSON 파일 첨부 시 세션 데이터 복원."""
-    import json as _json
     channel_id = ctx.channel_id
 
     if not ctx.message.attachments:
@@ -2171,7 +2194,7 @@ async def cmd_restore(ctx: CommandContext) -> None:
 
     try:
         raw = (await attachment.read()).decode("utf-8")
-        backup_data = _json.loads(raw)
+        backup_data = json.loads(raw)
     except Exception as e:
         await ctx.send(f"⚠️ 파일 파싱 실패: {e}")
         return
