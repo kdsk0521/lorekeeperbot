@@ -283,6 +283,7 @@ Rules:
         cfg = types.GenerateContentConfig(
             temperature=0.1,
             max_output_tokens=2048,
+            safety_settings=config.SAFETY_SETTINGS,
         )
         contents = [
             types.Content(role="user", parts=[types.Part(text=f"{text_resources.CONTENT_AUTHORIZATION_MANDATE}\n\n{instruction}")]),

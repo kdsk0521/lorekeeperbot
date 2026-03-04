@@ -8,6 +8,7 @@ import discord
 import os
 import asyncio
 import logging
+import logging.handlers
 from typing import Optional, Dict
 from collections import defaultdict
 from google import genai
@@ -32,7 +33,20 @@ except ImportError as e:
 # =========================================================
 # CONFIGURATION & LOGGING
 # =========================================================
-logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+_log_fmt = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+
+# Console handler (기존)
+_console_h = logging.StreamHandler()
+_console_h.setFormatter(_log_fmt)
+
+# File handler — 10MB × 5 rotations (최대 ~60MB)
+os.makedirs("logs", exist_ok=True)
+_file_h = logging.handlers.RotatingFileHandler(
+    "logs/bot.log", maxBytes=10_000_000, backupCount=5, encoding="utf-8"
+)
+_file_h.setFormatter(_log_fmt)
+
+logging.basicConfig(level=logging.INFO, handlers=[_console_h, _file_h])
 
 DISCORD_TOKEN = config.DISCORD_TOKEN
 GEMINI_API_KEY = config.GEMINI_API_KEY
