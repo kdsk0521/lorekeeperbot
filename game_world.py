@@ -21,6 +21,75 @@ def get_time_slots(channel_id: str) -> List[str]:
 def get_weather_types(channel_id: str) -> List[str]:
     return config.DEFAULT_WEATHER_TYPES
 
+
+def _slot_for_hour(hour: int) -> str:
+    """시각(0-23)에 해당하는 시간 슬롯 반환."""
+    for slot, (start, end) in config.TIME_SLOT_HOURS.items():
+        if start <= end:
+            if start <= hour <= end:
+                return slot
+        else:  # 심야 wrap (23~3)
+            if hour >= start or hour <= end:
+                return slot
+    return "오후"
+
+
+def _init_clock(world: dict) -> None:
+    """hour/minute 미초기화 시 time_slot 기반으로 설정."""
+    if "hour" in world:
+        return
+    slot = world.get("time_slot", "오후")
+    hours = config.TIME_SLOT_HOURS.get(slot, (12, 16))
+    start = hours[0]
+    world["hour"] = start
+    world["minute"] = 0
+
+
+def get_formatted_time(channel_id: str) -> str:
+    """현재 시각을 'HH:MM' 형식으로 반환."""
+    world = domain_manager.get_world_state(channel_id)
+    _init_clock(world)
+    return f"{world['hour']:02d}:{world['minute']:02d}"
+
+
+def advance_minutes(channel_id: str, minutes: int) -> str:
+    """지정 분만큼 시간 경과. 슬롯 전환/날짜 변경 자동 처리."""
+    world = domain_manager.get_world_state(channel_id)
+    _init_clock(world)
+
+    old_hour = world["hour"]
+    old_slot = world.get("time_slot", _slot_for_hour(old_hour))
+
+    total_min = world["hour"] * 60 + world["minute"] + minutes
+    new_day_offset = total_min // 1440  # 24*60
+    remainder = total_min % 1440
+    world["hour"] = remainder // 60
+    world["minute"] = remainder % 60
+
+    new_slot = _slot_for_hour(world["hour"])
+    world["time_slot"] = new_slot
+
+    if new_day_offset > 0:
+        world["day"] = world.get("day", 1) + new_day_offset
+        world["weather"] = random.choice(get_weather_types(channel_id))
+
+    # 슬롯 전환 시 last_temporal_context 기록
+    if old_slot != new_slot:
+        world["last_temporal_context"] = {
+            "prev_time_slot": old_slot,
+            "prev_day": world.get("day", 1) - new_day_offset,
+            "prev_weather": world.get("weather", "맑음"),
+        }
+
+    domain_manager.update_world_state(channel_id, world)
+
+    time_str = f"{world['hour']:02d}:{world['minute']:02d}"
+    if new_day_offset > 0:
+        return f"📅 {world['day']}일차 {time_str} ({new_slot})"
+    if old_slot != new_slot:
+        return f"⏰ {time_str} ({new_slot})"
+    return f"⏳ {time_str}"
+
 def advance_time(channel_id: str) -> str:
     """시간을 다음 슬롯으로 진행하고 세계 변화를 반환"""
     world = domain_manager.get_world_state(channel_id)
@@ -58,20 +127,33 @@ def advance_time(channel_id: str) -> str:
         world["day"] = world.get("day", 1) + 1
         new_weather = random.choice(get_weather_types(channel_id))
         world["weather"] = new_weather
-        
+
+        # 시각 동기화 — 새 슬롯 시작 시각으로 설정
+        start_h = config.TIME_SLOT_HOURS.get(time_slots[0], (4, 6))[0]
+        world["hour"] = start_h
+        world["minute"] = 0
+
         emoji = time_emoji.get(time_slots[0], "🌅")
+        time_str = f"{start_h:02d}:00"
         msg = (
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"🌙 **밤이 지나고...**\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"📅 **{world['day']}일차** {emoji} **{time_slots[0]}**\n"
+            f"📅 **{world['day']}일차** {emoji} **{time_slots[0]}** ({time_str})\n"
             f"🌤️ 날씨: {new_weather}\n"
             f"━━━━━━━━━━━━━━━━━━━━"
         )
     else:
         world["time_slot"] = time_slots[next_idx]
+
+        # 시각 동기화
+        start_h = config.TIME_SLOT_HOURS.get(time_slots[next_idx], (12, 16))[0]
+        world["hour"] = start_h
+        world["minute"] = 0
+
         emoji = time_emoji.get(time_slots[next_idx], "⏰")
-        
+        time_str = f"{start_h:02d}:00"
+
         # 시간대별 분위기 메시지
         atmosphere = {
             "새벽": "동이 트기 시작합니다...",
@@ -82,21 +164,16 @@ def advance_time(channel_id: str) -> str:
             "심야": "깊은 밤이 찾아왔습니다..."
         }
         atm = atmosphere.get(time_slots[next_idx], "")
-        
-        msg = f"{emoji} **{time_slots[next_idx]}** — {atm}"
-    
+
+        msg = f"{emoji} **{time_slots[next_idx]}** ({time_str}) — {atm}"
+
     domain_manager.update_world_state(channel_id, world)
     return msg
 
 def advance_tick(channel_id: str, ticks: int = 1) -> str:
-    """1틱(5-10분) 단위 시간 경과. 시간 슬롯은 변경하지 않음."""
-    world = domain_manager.get_world_state(channel_id)
-    current_ticks = world.get("ticks_in_slot", 0)
-    world["ticks_in_slot"] = current_ticks + ticks
-
+    """1틱(5-10분) 단위 시간 경과. advance_minutes로 위임."""
     minutes = ticks * random.randint(5, 10)
-    domain_manager.update_world_state(channel_id, world)
-    return f"⏳ {minutes}분이 흘렀다..."
+    return advance_minutes(channel_id, minutes)
 
 def increment_turn_index(channel_id: str, delta: int = 1) -> int:
     """Turn index increments once per UNE run/batch/observation."""
@@ -235,9 +312,13 @@ def build_real_time_display(
     location = world.get("current_location") or world.get("location", "Unknown")
     day = world.get("day", "?")
     time_slot = world.get("time_slot", "Unknown")
+    _init_clock(world)
+    hour = world.get("hour", 12)
+    minute = world.get("minute", 0)
+    time_str = f"{hour:02d}:{minute:02d}"
     present = _get_active_player_masks(channel_id)
     present_text = ", ".join(present) if present else "None"
-    lines.append(f"위치 {location} | 시간 {day}일차 {time_slot} | 인물 {present_text}")
+    lines.append(f"위치 {location} | 시간 {day}일차 {time_str} ({time_slot}) | 인물 {present_text}")
 
     line2_parts: List[str] = []
     if "mental" in module_set:
@@ -289,7 +370,7 @@ def get_world_context(channel_id: str) -> str:
         f"[현재 세계 상태]",
         f"- 위치: {location}",
         f"- 위험도: {world.get('risk_level', 'None')}",
-        f"- 시간: {world.get('day', 1)}일차, {world.get('time_slot', '오후')}",
+        f"- 시간: {world.get('day', 1)}일차 {world.get('hour', 12):02d}:{world.get('minute', 0):02d} ({world.get('time_slot', '오후')})",
         f"- 날씨: {world.get('weather', '맑음')}",
         f"- 위기 수치: {world.get('doom', 0)}% ({_get_doom_description(world.get('doom', 0))})",
         f"- 위협 시계: {_format_doom_clocks(world)}",

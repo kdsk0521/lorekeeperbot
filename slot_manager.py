@@ -38,8 +38,8 @@ def _build_status_layout(active_modules: list) -> str:
     has_doom = "doom" in module_set
 
     # --- FORMAT block ---
-    fmt = ["위치 [Location] | 시간 [Month/Day, Time] | 인물 [Present Characters]"]
-    ex = ["위치 하숙집 거실 | 시간 3/15, 새벽 | 인물 리미, 옥상 남자"]
+    fmt = ["위치 [Location] | 시간 [Day]일차 [HH:MM] ([TimeSlot]) | 인물 [Present Characters]"]
+    ex = ["위치 하숙집 거실 | 시간 3일차 04:30 (새벽) | 인물 리미, 옥상 남자"]
 
     line2_fmt, line2_ex = [], []
     if has_mental:
