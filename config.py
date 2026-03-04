@@ -106,14 +106,15 @@ TICK_DURATION_MAX = 5   # Minutes
 
 TIME_TICKS_PER_SLOT = 240  # 4 hours / 1 min = 240 ticks
 
-# Time Flow v3 — 장면별 시간 규칙 (base_ticks: Flash 0일 때 최소, max_ticks: 비명시 상한, exit_ticks: 장면 종료 시 일괄)
+# Time Flow v4 — 장면별 시간 규칙 (base_ticks: Flash 0일 때 최소, max_ticks: 비명시 상한)
+# 1틱=1분, 1슬롯=240틱(4시간). normal 15틱→~16턴에 슬롯 전환
 SCENE_TIME_RULES = {
-    "normal":   {"base_ticks": 1, "max_ticks": 3,   "exit_ticks": 0},
-    "combat":   {"base_ticks": 0, "max_ticks": 0,   "exit_ticks": 5},
-    "social":   {"base_ticks": 1, "max_ticks": 2,   "exit_ticks": 0},
-    "intimate": {"base_ticks": 0, "max_ticks": 0,   "exit_ticks": 10},
-    "travel":   {"base_ticks": 5, "max_ticks": 30,  "exit_ticks": 0},
-    "summary":  {"base_ticks": 0, "max_ticks": 999, "exit_ticks": 0},
+    "normal":   {"base_ticks": 3,  "max_ticks": 15},
+    "combat":   {"base_ticks": 0,  "max_ticks": 1},
+    "social":   {"base_ticks": 2,  "max_ticks": 10},
+    "intimate": {"base_ticks": 1,  "max_ticks": 5},
+    "travel":   {"base_ticks": 10, "max_ticks": 60},
+    "summary":  {"base_ticks": 0,  "max_ticks": 999},
 }
 
 # Doom Thresholds

@@ -178,18 +178,11 @@ class OrchestrationService:
                 if prop_count:
                     logger.info(f"[Knowledge Propagation] {prop_count} facts shared among {scene_npcs}")
 
-        # 장면 전환 exit_ticks 처리
+        # 장면 타입 추적
         curr_scene = ctx.scene_type or "normal"
         world = domain_manager.get_world_state(channel_id)
         prev_scene = world.get("current_scene_type", "normal")
         if prev_scene != curr_scene:
-            exit_rules = config.SCENE_TIME_RULES.get(prev_scene, {})
-            exit_ticks = exit_rules.get("exit_ticks", 0)
-            if exit_ticks > 0:
-                exit_msg = await game_system.process_time_flow(
-                    channel_id, {"ticks": exit_ticks, "reason": f"{prev_scene} 장면 종료"}, "normal")
-                if exit_msg:
-                    messages.append(exit_msg)
             world["current_scene_type"] = curr_scene
             domain_manager.update_world_state(channel_id, world)
 
@@ -1009,7 +1002,7 @@ class OrchestrationService:
                     current_retry_ctx["message_ids"].append(une_msg.id)
                     current_retry_ctx["has_response"] = True # Mark as retryable even if only system logs exist
 
-                # 4.5. World State Update (scene transition exit_ticks + time flow)
+                # 4.5. World State Update (scene transition + time flow)
                 ctx, world_msgs = await self.update_world_state(ctx, message)
                 if world_msgs:
                     for wm in world_msgs:
