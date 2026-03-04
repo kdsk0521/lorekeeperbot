@@ -27,6 +27,8 @@ def initialize_folders() -> None:
             except Exception as e:
                 logging.error(f"Failed to create {path}: {e}")
 
+initialize_folders()  # 모듈 임포트 시 자동 실행
+
 def get_session_file_path(channel_id: str) -> str: return os.path.join(config.SESSIONS_DIR, f"{channel_id}.json")
 def get_lore_file_path(channel_id: str) -> str: return os.path.join(config.LORE_DIR, f"{channel_id}.txt")
 def get_lore_original_file_path(channel_id: str) -> str: return os.path.join(config.LORE_DIR, f"{channel_id}_original.txt")
