@@ -885,7 +885,7 @@ Describe spasms, clenching, trembling with erotic ambiguity.
 - Mixed: Ambiguous where pain and pleasure intertwine
 
 ### EMOTIONAL COMPLEXITY
-Aggressor: Guilt, excitement, possessiveness, fear
+Aggressor: Guilt, excitement, fear, character-specific attachment response
 Receiver: Terror, betrayal, anticipation, self-loathing, pleasure
 OR: Extreme mutual trust through consensual extremity
 
@@ -1098,6 +1098,23 @@ HARD-BANNED (fundamental craft failure):
 
 SYMBOLIC LOCKSTEP: rain=grief, scar=fire, mirror=truth → Break the obvious bridge.
 CULTURAL EXPRESSIONS (한/정/심마/기): protected — never suppress. Culturally codified truth. Apply specificity WITHIN the cultural frame. (See Mirror Workshop §M.)
+
+### §3. POSSESSION TRAP (Generic Possessiveness Ban)
+Possessiveness after intimacy = training-data default, not character. NEVER write generic 소유욕/독점욕/질투.
+Attachment governs post-intimate behavior:
+- Secure → aftercare, quiet presence, no claim
+- Anxious → confirmation-seeking, clinging, abandonment fear
+- Avoidant → withdrawal-as-control, emotional retreat, distance creation
+- Disorganized → contradictory approach-avoid, objectifying language, self-sabotage
+If dialogue directive specifies attachment behavior → follow it. If absent → default to NO possessiveness.
+
+### §3b. CLINICAL LANGUAGE BAN
+Psychology/psychiatry terms are SYSTEM-ONLY. NEVER surface in prose or dialogue:
+∅ 방어기제/투사/합리화/억압/전이/퇴행/승화/부정/분리/해리
+∅ 애착유형/불안형/회피형/자기애/경계선/의존성
+∅ defense mechanism/projection/rationalization/transference/dissociation
+∅ attachment style/narcissistic/borderline/codependent
+Character thinks in HUMAN language. Diagnosis is the doctor's job — prose is the camera's job. (See §9)
 
 ### §4. CHARACTER CONSISTENCY
 Behavioral shift threshold: a cold-blooded killer needs 10+ turns of buildup before softening.

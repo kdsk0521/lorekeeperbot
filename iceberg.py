@@ -998,6 +998,14 @@ _NEEDS_HINTS = {
     "meaning": "의미를 찾으려",
 }
 
+# relation.attachment → 소유욕 대체 행동 힌트 (secure=없음, non-secure=구체 행동)
+_ATTACHMENT_POSSESSIVENESS = {
+    "secure":       "",
+    "anxious":      "확인 강박 — 거리에 불안, 선제적 통제",
+    "avoidant":     "거리-통제 — 감정 후퇴, 회피로 주도권 유지",
+    "disorganized": "접근-회피 — 다가갔다 밀어내기, 대상화",
+}
+
 _FRAMEWORK_TERMS_RE = re.compile(
     r'\b(membrane|monolithic|interleaving|fracture|collapse|logos|layer|'
     r'peplau|goffman|bowlby|lazarus|kahneman|erikson|henderson|'
@@ -1112,6 +1120,13 @@ def compose_dialogue_directives(
             phase_hint = _PHASE_HINTS.get(phase.lower().strip(), "")
             if phase_hint:
                 directive_parts.append(phase_hint)
+
+        # 애착 유형 → 소유욕 대체 행동
+        attachment = relation.get("attachment", "")
+        if attachment and isinstance(attachment, str) and attachment != "null":
+            att_hint = _ATTACHMENT_POSSESSIVENESS.get(attachment.lower().strip(), "")
+            if att_hint:
+                directive_parts.append(att_hint)
 
         # 전략 수식어: coping, decision_mode, stage, negotiation_stance, group_dynamic
         strategy_mods = []
