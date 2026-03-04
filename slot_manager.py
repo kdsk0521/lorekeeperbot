@@ -30,9 +30,10 @@ logger = logging.getLogger("SlotManager")
 # Dynamic STATUS_WINDOW_LAYOUT Builder
 # =========================================================
 
-def _build_status_layout(active_modules: list) -> str:
+def _build_status_layout(active_modules: list, present_chars: str = "") -> str:
     """active_modules에 따라 STATUS_WINDOW_LAYOUT을 동적으로 생성.
-    OFF인 모듈의 메트릭은 포맷/예시/규칙에서 완전 제거."""
+    OFF인 모듈의 메트릭은 포맷/예시/규칙에서 완전 제거.
+    present_chars: 현재 장면 인물 힌트 (gaze 기반)."""
     module_set = set(active_modules or [])
     has_mental = "mental" in module_set
     has_doom = "doom" in module_set
@@ -81,6 +82,8 @@ def _build_status_layout(active_modules: list) -> str:
         rules.append(f"- DISABLED: {', '.join(off_parts)} — do NOT display these metrics.")
 
     rules.append("- Keep it compact and stable across turns.")
+    if present_chars:
+        rules.append(f"- CURRENT SCENE CHARACTERS: {present_chars}")
 
     return (
         "<Status_Window_Layout>\n"
@@ -669,7 +672,16 @@ def build_34_step_prompt(ctx) -> str:
     user_id = getattr(ctx, 'user_id', '')
     if channel_id:
         _active_modules = domain_manager.get_active_modules(channel_id)
-        builder.set_slot(20, _build_status_layout(_active_modules))
+        # gaze에서 현재 장면 인물 추출
+        _present_chars = ""
+        try:
+            _frame = domain_manager.get_latest_frame(channel_id)
+            _gaze = _frame.get("render_fingerprint", {}).get("gaze", "")
+            if _gaze and isinstance(_gaze, str):
+                _present_chars = _gaze.strip()
+        except Exception:
+            pass
+        builder.set_slot(20, _build_status_layout(_active_modules, _present_chars))
 
     # =========================================================
     # 2. 동적 슬롯 주입 (Phase 2 강화)
