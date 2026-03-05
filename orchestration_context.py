@@ -321,7 +321,7 @@ def _build_smart_history(ctx: ResponseContext) -> str:
     """스마트 컨텍스트 윈도우로 히스토리를 구성합니다."""
     import fermentation
     all_hist = ctx.domain_data.get('history', [])
-    target_tokens = 100000  # [Anti-Gravity] 토큰 기준 목표 (Gemini 1M window 내 안전 범위)
+    target_tokens = 50000  # [Anti-Burial] 축소 — 과거 매몰 방지 (Gemini 1M 내 안전)
     default_lines = getattr(fermentation, "RECENT_HISTORY_FOR_ANALYSIS", 30)
     slice_idx = -default_lines
 

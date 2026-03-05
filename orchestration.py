@@ -1048,26 +1048,10 @@ class OrchestrationService:
                     fmt_feedback = _check_dialogue_format(response)
                     from response_processor import (
                         detect_cliche_patterns, detect_cargo_patterns,
-                        detect_premature_closure, detect_sensory_repetition, detect_pidgin_echo
+                        detect_sensory_repetition, detect_pidgin_echo
                     )
                     cliche_fb = detect_cliche_patterns(response)
                     cargo_fb = detect_cargo_patterns(response)
-
-                    # Closure Detection: narrative_chain에서 proximity/threads 가져옴
-                    _mem_for_fb = domain_manager.get_session_ai_memory(channel_id)
-                    _chain = _mem_for_fb.get("narrative_chain", {})
-                    if isinstance(_chain, dict):
-                        _prox = _chain.get("conclusion_proximity", 50)
-                        try:
-                            _prox = int(str(_prox).replace("%", ""))
-                        except (ValueError, TypeError):
-                            _prox = 50
-                        _threads = _chain.get("open_threads", [])
-                        if not isinstance(_threads, list):
-                            _threads = []
-                    else:
-                        _prox, _threads = 50, []
-                    closure_fb = detect_premature_closure(response, _prox, _threads)
 
                     # Sensory Rotation: rolling window 3턴
                     _recent_parts = _mem_for_fb.get("recent_body_parts", [])
@@ -1084,7 +1068,7 @@ class OrchestrationService:
                     _npc_keywords = npc_manager.get_npc_label_keywords(channel_id, _scene_npcs) if _scene_npcs else {}
                     pidgin_fb = detect_pidgin_echo(response, _npc_keywords)
 
-                    style_fb = " ".join(filter(None, [cliche_fb, cargo_fb, closure_fb, rotation_fb, pidgin_fb]))
+                    style_fb = " ".join(filter(None, [cliche_fb, cargo_fb, rotation_fb, pidgin_fb]))
                     if style_fb:
                         fmt_feedback = f"{fmt_feedback} {style_fb}".strip() if fmt_feedback else style_fb
                     domain_manager.update_session_ai_memory(

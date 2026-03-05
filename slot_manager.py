@@ -44,8 +44,8 @@ def _build_status_layout(active_modules: list, present_chars: str = "") -> str:
 
     line2_fmt, line2_ex = [], []
     if has_mental:
-        line2_fmt.extend(["기력 [value]", "평정 [value]"])
-        line2_ex.extend(["기력 72", "평정 38"])
+        line2_fmt.extend(["기력 [value]", "평정 [value]", "로드아웃 [used/total]"])
+        line2_ex.extend(["기력 72", "평정 38", "로드아웃 1/4"])
     if has_doom:
         line2_fmt.append("Doom [value]")
         line2_ex.append("Doom 45")
@@ -53,10 +53,6 @@ def _build_status_layout(active_modules: list, present_chars: str = "") -> str:
     if line2_fmt:
         fmt.append(" | ".join(line2_fmt))
         ex.append(" | ".join(line2_ex))
-
-    if has_mental:
-        line2_fmt.append("로드아웃 [used/total]")
-        line2_ex.append("로드아웃 1/4")
 
     if has_doom:
         fmt.append("[Clock1 filled/segments] [Clock2 filled/segments ...]")
@@ -285,8 +281,6 @@ SLOT_DEFINITIONS: Dict[int, SlotDefinition] = {
     20: SlotDefinition(20, "STATUS_LAYOUT", "rules", "_build_status_layout() dynamic"),
     21: SlotDefinition(21, "ACTION_RESOLUTION", "mechanics", "text_resources.ACTION_RESOLUTION + Aspects + SITUATION_PRIORITY"),
     22: SlotDefinition(22, "VISCERAL_CONTENT", "content", "text_resources.VISCERAL (conditional)", is_static=False),
-    23: SlotDefinition(23, "MATURE_CONTENT", "content", "text_resources.MATURE (conditional)", is_static=False),
-    24: SlotDefinition(24, "HYBRID_CONTENT", "content", "text_resources.HYBRID (conditional)", is_static=False),
     25: SlotDefinition(25, "STYLE", "rules", "text_resources.ANTI_CLICHE + PROSE_CRAFT"),
 
     # ========== CACHE BOUNDARY ==========
@@ -450,7 +444,6 @@ class SlotPromptBuilder:
         extended_intelligence: str = "",
         chapter_context: str = "",
         content_level: str = "normal",
-        older_history: str = "",
         last_response: str = "",
         narrative_chain: str = "",
         real_time_data: str = "",
@@ -463,28 +456,25 @@ class SlotPromptBuilder:
 
         # ===== WORLD ZONE (6-9) =====
         # [6] PC Data (솔로: Player_Character, 다인: Player_Characters)
-        # BABEL Discovery Protocol: PC 정보는 작가 참조용. NPC는 관찰로만 발견.
         if player_data:
-            _discovery = (
-                "[DISCOVERY PROTOCOL] This is AUTHOR REFERENCE — not character knowledge.\n"
-                "NPCs discover PC traits ONLY through: direct observation, shared dialogue, behavioral inference.\n"
-                "Do NOT 'download' profile data into NPC perception. Unobserved traits remain invisible.\n\n"
-            )
             if "\n---\n" in player_data:
-                self.set_slot(6, f"<Player_Characters>\n{_discovery}{player_data}\n</Player_Characters>")
+                self.set_slot(6, f"<Player_Characters>\n{player_data}\n</Player_Characters>")
             else:
-                self.set_slot(6, f"<Player_Character>\n{_discovery}{player_data}\n</Player_Character>")
+                self.set_slot(6, f"<Player_Character>\n{player_data}\n</Player_Character>")
 
         # [7] NPC Roles
-        # BABEL Pidgin→Creole: 라벨을 산문에 그대로 옮기지 말고 필드별 감식 변환
+        # BABEL Pidgin→Creole + Knowledge Isolation (유일한 선언 지점)
         if npc_roles:
             _pidgin = (
-                "[PIDGIN→CREOLE] Profiles below = author reference, NOT prose vocabulary.\n"
+                "[PIDGIN→CREOLE + KNOWLEDGE ISOLATION]\n"
+                "Profiles below = author reference, NOT prose vocabulary, NOT character knowledge.\n"
                 "If a profile word appears as an adjective in your output, you have failed. Transform:\n"
                 "- personality label → physical consequence (behavior, not adjective)\n"
                 "- appearance → arrives piecemeal through different moments/gazes, not listed\n"
                 "- background → residue in present behavior only (hesitation, reflex, avoidance)\n"
-                "- speech/tone → dialogue PERFORMS the pattern. Describing it = narrating the label.\n\n"
+                "- speech/tone → dialogue PERFORMS the pattern. Describing it = narrating the label.\n"
+                "NPCs know ONLY what they acquired through in-scene interaction.\n"
+                "Absent scene = unknown. Unacquired name → 'that person'. Profile data ≠ character knowledge.\n\n"
             )
             self.set_slot(7, f"<NPC_Roles>\n{_pidgin}{npc_roles}\n</NPC_Roles>")
 
@@ -523,9 +513,12 @@ class SlotPromptBuilder:
         self._populate_content_slots_legacy(content_level)
 
         # ===== DYNAMIC ZONE (27-34) =====
-        # [27] Older History (2~11턴 전 대화 - 참고 맥락)
-        if older_history:
-            self.set_slot(27, f"<Previous_History>\n{older_history}\n</Previous_History>")
+        # [27] Gemini 채팅 히스토리에 원문 이미 포함. 시간 우선순위 지시만 유지.
+        self.set_slot(27, (
+            "[TEMPORAL PRIORITY] 현재 장면 데이터(Real_Time_Status, User_Input, Scene_Intelligence)가 "
+            "이전 대화 패턴보다 항상 우선한다. 과거 대화는 연속성 참고용이며, "
+            "동일한 감정 흐름·장면 구조·대사 패턴을 반복하지 말 것."
+        ))
 
         # [28] Narrative Chain
         if narrative_chain:
@@ -541,9 +534,14 @@ class SlotPromptBuilder:
             cognitive_int = getattr(text_resources, 'COGNITIVE_DATA_INTEGRATION', '')
             self.set_slot(30, f"<World_Response>\n{gm_mover}\n</World_Response>\n\n{cognitive_int}")
 
-        # [31] Last Response (직전 AI 응답 - 유저 입력 바로 앞!)
+        # [31] Last Response (직전 AI 응답 끝부분 — recency 앵커. 전문은 Gemini 히스토리에 있음)
         if last_response:
-            self.set_slot(31, f"<Last_Response>\n{last_response}\n</Last_Response>")
+            # 마지막 2문단만 추출 (~500자 캡)
+            paragraphs = [p.strip() for p in last_response.split("\n\n") if p.strip()]
+            tail = "\n\n".join(paragraphs[-2:]) if len(paragraphs) > 2 else last_response
+            if len(tail) > 500:
+                tail = tail[-500:]
+            self.set_slot(31, f"<Last_Response_Tail>\n{tail}\n</Last_Response_Tail>")
 
         # [32] User Input (현재 유저 입력 - 직전 응답 바로 뒤!)
         if user_input:
@@ -1246,39 +1244,16 @@ def build_34_step_prompt(ctx) -> str:
     # SillyTavern 패턴: 직전 AI 응답을 유저 입력 바로 앞에 배치
     # → AI가 "방금 이 말 했으니 → 유저가 이렇게 반응 → 이어서 써라" 흐름 유지
 
-    older_history = ""
     last_response = ""
     smart_history = getattr(ctx, 'smart_history', [])
 
     if smart_history and isinstance(smart_history, list):
         # 직전 AI 응답 찾기 (마지막 assistant/model 메시지)
-        last_ai_idx = -1
         for i in range(len(smart_history) - 1, -1, -1):
             role = smart_history[i].get('role', '').lower()
             if role in ('assistant', 'model'):
-                last_ai_idx = i
+                last_response = smart_history[i].get('content', '')
                 break
-
-        if last_ai_idx >= 0:
-            # 직전 AI 응답
-            last_response = smart_history[last_ai_idx].get('content', '')
-
-            # 이전 대화 (2~11턴 전, 최대 20개 메시지)
-            # 직전 AI 응답 이전의 대화만 포함
-            older_start = max(0, last_ai_idx - 20)
-            older_msgs = smart_history[older_start:last_ai_idx]
-            if older_msgs:
-                older_history = "\n".join(
-                    f"{h.get('role', '?')}: {h.get('content', '')}" for h in older_msgs
-                )
-        else:
-            # AI 응답이 없으면 전체를 older_history로
-            older_history = "\n".join(
-                f"{h.get('role', '?')}: {h.get('content', '')}" for h in smart_history[-20:]
-            )
-    else:
-        # smart_history가 없으면 기존 hist_text 폴백
-        older_history = getattr(ctx, 'hist_text', '')
 
     # =========================================================
     # 3.5. POV 모드 전환 (사칭 토글 연동)
@@ -1312,11 +1287,6 @@ def build_34_step_prompt(ctx) -> str:
             if violations:
                 last_response = cleaned
                 logger.info(f"[History Sanitize] last_response: {len(violations)} impersonation(s) removed")
-        if older_history:
-            cleaned, violations = filter_pc_impersonation(older_history, pc_names_list)
-            if violations:
-                older_history = cleaned
-                logger.info(f"[History Sanitize] older_history: {len(violations)} impersonation(s) removed")
 
     # =========================================================
     # 4. 동적 슬롯 주입 실행
@@ -1340,7 +1310,6 @@ def build_34_step_prompt(ctx) -> str:
         extended_intelligence=extended_intelligence,
         chapter_context=_prepend_quest_directive(getattr(ctx, 'obj_ctx', '')),
         content_level=getattr(ctx, 'scene_type', 'normal'),
-        older_history=older_history,
         last_response=last_response,
         narrative_chain=narrative_chain,
         real_time_data=real_time_data,
@@ -1350,12 +1319,21 @@ def build_34_step_prompt(ctx) -> str:
         telescope_prefill=""  # V2: Slot 34에 넣지 않음 — ctx를 통해 모델 프리필로 전달
     )
 
-    # 4.5. Format Feedback Injection (이전 턴 대사 포맷 위반 피드백)
+    # =========================================================
+    # 4.5. Slot 33 일괄 조립 (Author Note + 모든 Recency 요소)
+    # =========================================================
+    slot33_parts = []
+
+    # Base: Author Note / Genre Directive (populate_dynamic_slots에서 이미 설정됨)
+    base_33 = builder.get_slot(33) or ""
+    if base_33:
+        slot33_parts.append(base_33)
+
+    # Format Feedback (이전 턴 대사 포맷 위반 피드백)
     session_mem = domain_manager.get_session_ai_memory(channel_id) if channel_id else {}
     fmt_feedback = session_mem.get("format_feedback", "")
     if fmt_feedback:
-        current_33 = builder.get_slot(33) or ""
-        builder.set_slot(33, f"{current_33}\n\n{fmt_feedback}")
+        slot33_parts.append(fmt_feedback)
         logger.info("[FormatFeedback] Injected dialogue format correction into slot 33")
 
     # NPC Recency Echo — 프로필이 중간 슬롯에 묻히므로 핵심 제약 + 말투를 recency에 재주입
@@ -1363,13 +1341,10 @@ def build_34_step_prompt(ctx) -> str:
         import npc_manager as _npc_mgr_voice
         npc_reminder = _npc_mgr_voice.get_npc_recency_reminders(channel_id, relevant_npcs)
         if npc_reminder:
-            current_33 = builder.get_slot(33) or ""
-            builder.set_slot(33, f"{current_33}\n\n{npc_reminder}")
+            slot33_parts.append(npc_reminder)
             logger.info(f"[RecencyEcho] NPC reminders injected into slot 33 ({len(relevant_npcs)} NPCs)")
 
-    # [Scene Breathing 제거됨] — Slot 16 iceberg.translate_energy_direction()이 동일 정보를 커버
-
-    # Output Rules (!출력룰) → Slot 33 Recency injection
+    # Output Rules (!출력룰)
     if channel_id:
         _ws_out = domain_manager.get_world_state(channel_id)
         _out_rules = _ws_out.get("output_rules", {})
@@ -1379,13 +1354,22 @@ def build_34_step_prompt(ctx) -> str:
                 desc = v.get("desc", "") if isinstance(v, dict) else str(v)
                 out_lines.append(desc)
             out_block = "<Output_Format_Rules>\n[NOTE: These format blocks are OUTSIDE the prose token budget. Write full prose first, then append format blocks at the end.]\n" + "\n\n".join(out_lines) + "\n</Output_Format_Rules>"
-            current_33 = builder.get_slot(33) or ""
-            builder.set_slot(33, f"{current_33}\n\n{out_block}")
+            slot33_parts.append(out_block)
             logger.info(f"[OutputRules] {len(_out_rules)} output rules injected into slot 33")
 
+    # Cognition Zone Recency Echo — Slot 13-17 Lost-in-the-Middle 방어
+    _echo_parts = []
+    if energy_hint:
+        _echo_parts.append(energy_hint.split("\n")[0])  # 첫 줄만
+    _active_flags = [k for k, v in (dai.get("quality_flags", {}) or {}).items() if v]
+    if _active_flags:
+        _echo_parts.append("flags=" + ",".join(_active_flags))
+    if _echo_parts:
+        slot33_parts.append(f"[Scene Echo] {' | '.join(_echo_parts)}")
+
     # 5W1H Recency Echo — always present at maximum recency position
-    fidelity_echo = "[5W1H: Draw events only from DAI data. Camera scans environment evenly. Prose intensity follows EnergyDirection.]"
-    current_33 = builder.get_slot(33) or ""
-    builder.set_slot(33, f"{current_33}\n\n{fidelity_echo}")
+    slot33_parts.append("[5W1H: Draw events only from DAI data. Camera scans environment evenly. Prose intensity follows EnergyDirection.]")
+
+    builder.set_slot(33, "\n\n".join(slot33_parts))
 
     return builder.build()

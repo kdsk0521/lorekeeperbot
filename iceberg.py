@@ -17,7 +17,7 @@ descriptor와 행동 방향만 전달된다.
 
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("Iceberg")
 
@@ -154,12 +154,6 @@ def _to_tier(value: float, tiers: List[Tuple[float, str]]) -> str:
             return label
     return tiers[-1][1] if tiers else "알 수 없음"
 
-
-def _safe_get(data: Any, key: str, default: Any = None) -> Any:
-    """dict.get() with isinstance guard."""
-    if isinstance(data, dict):
-        return data.get(key, default)
-    return default
 
 
 # =========================================================
@@ -701,12 +695,12 @@ def translate_intimacy(intimacy_data: Optional[dict]) -> str:
     if body_mem:
         lines.append(f"- 신체 기억: {body_mem}")
 
-    # post_encounter_prediction: 친밀씬 후 예측되는 행동 패턴
+    # post_encounter_prediction: 친밀씬 후 가능한 행동 패턴 (확정 아님)
     post_pred = intimacy_data.get("post_encounter_prediction", {})
     if post_pred and isinstance(post_pred, dict):
         for char_name, prediction in post_pred.items():
             if prediction and isinstance(prediction, str) and prediction.lower() != "null":
-                lines.append(f"- {char_name} 이후 예측: {prediction}")
+                lines.append(f"- {char_name} 이후 가능 반응 (성격·관계 패턴에 따라 다름): {prediction}")
 
     return "\n".join(lines)
 
@@ -803,7 +797,7 @@ _PROXIMITY_HINTS = [
     (45, "서사가 전개되고 있다. 새로운 실마리를 풀어놓아도 좋다"),
     (70, "긴장이 고조되고 있다. 새 떡밥보다 기존 실을 조이라"),
     (90, "절정이 가깝다. 모든 행동이 무게를 가진다"),
-    (100, "서사가 정점에 있다. 결말을 향해 수렴하라"),
+    (100, "서사가 정점에 있다. 모든 행동이 결과를 낳는다"),
 ]
 
 _SILENCE_NOTATION = {
@@ -912,7 +906,7 @@ def translate_trait_connections(trait_conn: Optional[dict]) -> str:
 # =========================================================
 
 def translate_npc_knowledge(npc_knowledge: Optional[dict]) -> str:
-    """NPCKnowledge — knows/secrets/false_beliefs/deception_cues 유지, leak_risk/would_share 제거."""
+    """NPCKnowledge — knows/secrets/false_beliefs/deception_cues/would_share 유지. leak_risk는 compose_dialogue_directives에서 소비."""
     if not npc_knowledge or not isinstance(npc_knowledge, dict):
         return ""
     lines = []
