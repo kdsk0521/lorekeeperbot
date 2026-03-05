@@ -1796,11 +1796,15 @@ async def cmd_rule(ctx: CommandContext) -> None:
 
     # 1. List
     if sub in ['list', '목록', '조회', 'l']:
-        if not rules:
+        rules_text = w.get("rules_text", "")
+        if not rules and not rules_text:
             await ctx.send("📜 활성화된 특수 규칙이 없습니다.\n💡 출력 형식 규칙은 `!출력룰 목록`으로 확인하세요.")
             return
 
         msg = ["📜 **세계 규칙 목록**"]
+        if rules_text:
+            preview = rules_text[:300] + ("..." if len(rules_text) > 300 else "")
+            msg.append(f"**[파일 규칙]**\n{preview}")
         for k, v in rules.items():
             desc = v.get('desc', '') if isinstance(v, dict) else str(v)
             msg.append(f"- **{k}**: {desc}")
@@ -1810,7 +1814,7 @@ async def cmd_rule(ctx: CommandContext) -> None:
 
     # 2. Add / Update
     if sub in ['add', '추가', 'set', '설정', 'a']:
-        # 파일 첨부 → 일괄 등록 ("키워드: 설명" 또는 "키워드 - 설명" per line)
+        # 파일 첨부 → 원본 텍스트 그대로 저장
         if ctx.message.attachments:
             file_text, error = await read_attachment_text(ctx.message.attachments[0])
             if error:
@@ -1819,27 +1823,9 @@ async def cmd_rule(ctx: CommandContext) -> None:
             if not file_text:
                 await ctx.send("⚠️ 파일 내용이 비어있습니다.")
                 return
-            for line in file_text.splitlines():
-                line = line.strip()
-                if not line or line.startswith('#'):
-                    continue
-                sep = None
-                for s in [':', '-', '：']:
-                    if s in line:
-                        sep = s
-                        break
-                if sep:
-                    key, desc = line.split(sep, 1)
-                    key, desc = key.strip(), desc.strip()
-                else:
-                    parts = line.split(None, 1)
-                    key = parts[0]
-                    desc = parts[1] if len(parts) > 1 else ""
-                if key:
-                    rules[key] = {"desc": desc, "created_at": time.strftime('%Y-%m-%d')}
-            w["location_rules"] = rules
+            w["rules_text"] = file_text.strip()
             domain_manager.update_world_state(ctx.channel_id, w)
-            await ctx.send("📜 **추가룰 등록 완료**")
+            await ctx.send("📜 **추가룰 등록 완료** (파일 원본 주입)")
             return
 
         if len(args) < 3:
@@ -1874,6 +1860,7 @@ async def cmd_rule(ctx: CommandContext) -> None:
     # 4. Reset
     if sub in ['reset', '초기화', 'clear']:
         w["location_rules"] = {}
+        w.pop("rules_text", None)
         domain_manager.update_world_state(ctx.channel_id, w)
         await ctx.send("🗑️ **모든 규칙 초기화 완료**")
         return

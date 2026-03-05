@@ -771,13 +771,21 @@ def build_34_step_prompt(ctx) -> str:
     # --- [Slot 8+] Location Rules (!룰 추가) → Lore 하단 append ---
     if channel_id:
         _ws = domain_manager.get_world_state(channel_id)
+        _rules_parts = []
+        # 파일 원본 텍스트
+        _rules_text = _ws.get("rules_text", "")
+        if _rules_text:
+            _rules_parts.append(_rules_text)
+        # 개별 추가 규칙 (!룰 추가 key desc)
         _loc_rules = _ws.get("location_rules", {})
         if _loc_rules:
             rule_lines = []
             for k, v in _loc_rules.items():
                 desc = v.get("desc", "") if isinstance(v, dict) else str(v)
                 rule_lines.append(f"- {k}: {desc}")
-            lore_content += "\n\n### [ACTIVE RULES]\n" + "\n".join(rule_lines)
+            _rules_parts.append(" ".join(rule_lines))
+        if _rules_parts:
+            lore_content += "\n\n### [ACTIVE RULES]\n" + "\n".join(_rules_parts)
 
     # --- [Slot 9] Fermented History + Memory Triggers ---
     fermented_base = getattr(ctx, 'fermented_summary_text', '')
