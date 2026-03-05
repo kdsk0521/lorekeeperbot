@@ -1054,6 +1054,7 @@ class OrchestrationService:
                     cargo_fb = detect_cargo_patterns(response)
 
                     # Sensory Rotation: rolling window 3턴
+                    _mem_for_fb = domain_manager.get_session_ai_memory(channel_id)
                     _recent_parts = _mem_for_fb.get("recent_body_parts", [])
                     if not isinstance(_recent_parts, list):
                         _recent_parts = []
