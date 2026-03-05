@@ -130,27 +130,10 @@ async def process_time_flow(channel_id: str, time_flow: Dict, scene_type: str = 
     if ticks <= 0:
         return None
 
-    world = domain_manager.get_world_state(channel_id)
-    current_ticks = world.get("time_ticks", 0)
-    new_ticks_total = current_ticks + ticks
-
-    # 둠 체크 (5틱마다 1회)
-    # Legacy Doom tick removed (handled by UNE DoomModule)
-
-    # 시간대(Slot) 진행
-    if new_ticks_total >= config.TIME_TICKS_PER_SLOT:
-        slots_to_advance = new_ticks_total // config.TIME_TICKS_PER_SLOT
-        remaining_ticks = new_ticks_total % config.TIME_TICKS_PER_SLOT
-
-        world["time_ticks"] = remaining_ticks
-        domain_manager.update_world_state(channel_id, world)
-
-        for _ in range(slots_to_advance):
-            msg = game_world.advance_time(channel_id)
-            if msg:
-                messages.append(msg)
-    else:
-        world["time_ticks"] = new_ticks_total
-        domain_manager.update_world_state(channel_id, world)
+    # 틱 → 분 변환 후 advance_minutes로 시각 갱신
+    minutes = ticks * 3  # 1틱 = ~3분
+    msg = game_world.advance_minutes(channel_id, minutes)
+    if msg:
+        messages.append(msg)
 
     return "\n".join(messages) if messages else None
