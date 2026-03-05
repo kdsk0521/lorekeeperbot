@@ -185,8 +185,16 @@ def _get_absent_npcs(channel_id: str) -> List[str]:
     if gaze and isinstance(gaze, str):
         for g in gaze.replace("\n", ",").split(","):
             name = g.strip()
+            if not name:
+                continue
+            # 정확 일치
             if name in all_names:
                 present.add(name)
+                continue
+            # 부분 매칭: "이하윤" → "Lee Ha-yoon(이하윤)"
+            matched = domain_manager._find_npc_key(npcs, name)
+            if matched:
+                present.add(matched)
 
     absent = list(all_names - present)
     return absent[:10]
