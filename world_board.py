@@ -305,6 +305,18 @@ def _build_board_prompt(
         if parts:
             constraints_text = " | ".join(parts)
 
+    # 추가 규칙 (!룰 추가)
+    active_rules_parts = []
+    _rules_text = world.get("rules_text", "")
+    if _rules_text:
+        active_rules_parts.append(_rules_text)
+    _loc_rules = world.get("location_rules", {})
+    if _loc_rules:
+        for k, v in _loc_rules.items():
+            desc = v.get("desc", "") if isinstance(v, dict) else str(v)
+            active_rules_parts.append(f"- {k}: {desc}")
+    active_rules_text = "\n".join(active_rules_parts)
+
     # NPC 프로필: 부재 NPC 우선, 없으면 전체
     _npc_keys = absent_npcs if absent_npcs else list((domain_manager.get_npcs(channel_id) or {}).keys())[:10]
     all_npcs = domain_manager.get_npcs(channel_id) or {}
@@ -324,9 +336,26 @@ def _build_board_prompt(
     npc_names = _npc_keys  # 기존 호환
     npc_section = "\n\n".join(npc_profiles) if npc_profiles else "None"
 
-    # 서사 앵커링: 최신 DAI observation
+    # 서사 앵커링: 최신 DAI observation + 로어 청크 재사용
     frame = domain_manager.get_latest_frame(channel_id)
-    observation = frame.get("dai_snapshot", {}).get("observation", "")
+    dai_snap = frame.get("dai_snapshot", {})
+    observation = dai_snap.get("observation", "")
+
+    # 마지막 Theoria가 선택한 로어 청크 재사용 (추가 API 콜 0)
+    lore_chunks = domain_manager.get_lore_chunks(channel_id)
+    last_chunk_idx = dai_snap.get("relevant_chunks", [])
+    lore_section = ""
+    if last_chunk_idx and lore_chunks:
+        chunk_texts = []
+        for idx in last_chunk_idx:
+            if isinstance(idx, int) and 0 <= idx < len(lore_chunks):
+                chunk = lore_chunks[idx]
+                label = chunk.get("label", f"Chunk {idx}")
+                text = chunk.get("text", "")
+                if text:
+                    chunk_texts.append(f"[{label}] {text}")
+        if chunk_texts:
+            lore_section = "\n".join(chunk_texts)
 
     # 스토리텔러 최근 이벤트
     storyteller = world.get("storyteller", {})
@@ -407,7 +436,8 @@ def _build_board_prompt(
 - Weather: {weather}
 - Doom Level: {doom}%
 - World Rules: {constraints_text or 'None'}
-
+{f'- Active Rules:{chr(10)}{active_rules_text}' if active_rules_text else ''}
+{f'{chr(10)}## WORLD LORE (from last scene){chr(10)}{lore_section}' if lore_section else ''}
 
 ## AVAILABLE NPCs (off-screen)
 {npc_section}

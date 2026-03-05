@@ -231,6 +231,7 @@ class OrchestrationService:
                     dai.get("QualityFlags") or dai.get("quality_flags"), dict) else {},
             "chain_status": (dai.get("narrative_chain") or {}).get("chain_status", ""),
             "open_threads": (dai.get("narrative_chain") or {}).get("open_threads", [])[:5],
+            "relevant_chunks": dai.get("relevant_chunks", []),
         }
         _ws = domain_manager.get_world_state(channel_id)
         _turn_num = _ws.get("turn_index", 0)
