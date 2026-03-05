@@ -435,7 +435,7 @@ async def generate_posts(
 
     cfg = types.GenerateContentConfig(
         temperature=0.9,
-        max_output_tokens=1024,
+        max_output_tokens=2048,
         response_mime_type="application/json",
         safety_settings=config.SAFETY_SETTINGS,
     )
