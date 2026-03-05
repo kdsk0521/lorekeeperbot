@@ -305,8 +305,24 @@ def _build_board_prompt(
         if parts:
             constraints_text = " | ".join(parts)
 
-    # NPC 이름: 부재 NPC 우선, 없으면 전체
-    npc_names = absent_npcs if absent_npcs else list((domain_manager.get_npcs(channel_id) or {}).keys())[:10]
+    # NPC 프로필: 부재 NPC 우선, 없으면 전체
+    _npc_keys = absent_npcs if absent_npcs else list((domain_manager.get_npcs(channel_id) or {}).keys())[:10]
+    all_npcs = domain_manager.get_npcs(channel_id) or {}
+    npc_profiles = []
+    for _nk in _npc_keys:
+        _nd = all_npcs.get(_nk) or all_npcs.get(domain_manager._find_npc_key(all_npcs, _nk) or "", {})
+        desc = _nd.get("description") or _nd.get("desc", "")
+        meta = []
+        if _nd.get("role"): meta.append(f"역할: {_nd['role']}")
+        if _nd.get("personality"): meta.append(f"성격: {_nd['personality']}")
+        if _nd.get("tone") or _nd.get("speech"): meta.append(f"말투: {_nd.get('tone') or _nd.get('speech')}")
+        if _nd.get("location"): meta.append(f"위치: {_nd['location']}")
+        profile = f"### {_nk}\n"
+        if meta: profile += " | ".join(meta) + "\n"
+        if desc: profile += desc
+        npc_profiles.append(profile)
+    npc_names = _npc_keys  # 기존 호환
+    npc_section = "\n\n".join(npc_profiles) if npc_profiles else "None"
 
     # 서사 앵커링: 최신 DAI observation
     frame = domain_manager.get_latest_frame(channel_id)
@@ -391,7 +407,10 @@ def _build_board_prompt(
 - Weather: {weather}
 - Doom Level: {doom}%
 - World Rules: {constraints_text or 'None'}
-- Available NPCs (off-screen): {', '.join(npc_names) or 'None'}
+
+
+## AVAILABLE NPCs (off-screen)
+{npc_section}
 - Recent Events: {', '.join(recent_tags[-3:]) or 'None'}
 - Trigger: {trigger}
 {f'- Extra: {extra_context}' if extra_context else ''}
@@ -407,7 +426,7 @@ Generate content for the following channels in this world:
 - Write in Korean
 - Each post 100-200 characters (body)
 - Match the world's genre and atmosphere
-- ONLY use NPCs from the Available NPCs list above
+- ONLY use NPCs from the AVAILABLE NPCs section above. Match their personality and speech style.
 - Time-appropriate content (dawn posts differ from night posts)
 - DO NOT reference game mechanics or meta information
 - DO NOT repeat topics from Recent Posts
