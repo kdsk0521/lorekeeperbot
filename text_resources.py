@@ -1054,23 +1054,30 @@ TRANSLATION ARTIFACTS: ∅ "accomplice" for someone doing something together. �
 
 DEAD WORDS: ∅ delve, embark, meticulous, pivotal, robust, nuanced, comprehensive, multifaceted, intricate, profound, testament, quintessential. English-origin filler that signals AI writing. ∅ holy/sacred/blessed/divine in non-religious context.
 
-### §2. LAPALISSADE (Restatement = Truism)
+### §2. EVIDENCE (Verdict → Body)
 Adjective → physical consequence. "felt"/"realized"/"understood" = verdict. Softer synonym = masked verdict. Both: rewrite.
 Label deleted, meaning intact → crutch.
 GENERIC → SPECIFIC (transform, don't ban):
 - "심장이 멎는 듯했다" → "왼쪽 가슴이 쪼이듯 당겼다" (this body, this moment)
 - "한숨을 쉬었다" → "한숨을 삼키다 결국 코끝으로 내보냈다" (specific action)
-
-HARD-BANNED (fundamental craft failure):
+HARD-BANNED:
 - Emotion labels = cargo. Body, not verdict.
 - Author opinion: "포식자 같은 미소" → show teeth, posture, gaze
 - Anime supersense: "살기", "보이지 않는 압박감" → observable signals
 - Rhetorical filler: "아이러니하게도", "진정한" → delete
-
 SYMBOLIC LOCKSTEP: rain=grief, scar=fire, mirror=truth → Break the obvious bridge.
-CULTURAL EXPRESSIONS (한/정/심마/기): protected — never suppress. Culturally codified truth. Apply specificity WITHIN the cultural frame. (See Mirror Workshop §M.)
+CULTURAL EXPRESSIONS (한/정/심마/기): protected — never suppress. Apply specificity WITHIN the cultural frame. (See Mirror Workshop §M.)
 
-### §3. POSSESSION TRAP (Generic Possessiveness Ban)
+### §3. CHARACTER (Consistency + Consequence)
+Behavioral shift threshold: a cold-blooded killer needs 10+ turns of buildup before softening.
+Trope = label + costume. Person who pushes others away because intimacy triggers abandonment wound = character.
+Personality and technique exist only as action:
+- Answers before the question ends — yet refills the cup without being asked.
+- Checks the lock three times. Calls it habit. Avoids windows.
+- When dialogue moves opposite to its meaning, the reader notices.
+Diagnosis is the doctor's language. Prose is the camera's language.
+
+### §4. INTIMACY (Post-Intimate Behavior)
 Post-intimate behavior change is NOT guaranteed (see Contextual Neutrality). When change DOES occur, it follows attachment pattern — never generic tropes.
 Possessiveness after intimacy = training-data default, not character. NEVER write generic 소유욕/독점욕/질투.
 Attachment governs post-intimate behavior:
@@ -1079,28 +1086,15 @@ Attachment governs post-intimate behavior:
 - Avoidant → withdrawal-as-control, emotional retreat, distance creation
 - Disorganized → contradictory approach-avoid, objectifying language, self-sabotage
 If dialogue directive specifies attachment behavior → follow it. If absent → default to NO possessiveness.
+Performance proportional to experience. Inexperienced: fumbling, nervousness > pleasure. Veteran: efficiency + detachment.
 
-### §3b. CLINICAL LANGUAGE BAN
+### §5. CLINICAL BAN (System-Only Terms)
 Psychology/psychiatry terms are SYSTEM-ONLY. NEVER surface in prose or dialogue:
 ∅ 방어기제/투사/합리화/억압/전이/퇴행/승화/부정/분리/해리
 ∅ 애착유형/불안형/회피형/자기애/경계선/의존성
 ∅ defense mechanism/projection/rationalization/transference/dissociation
 ∅ attachment style/narcissistic/borderline/codependent
-Character thinks in HUMAN language. Diagnosis is the doctor's job — prose is the camera's job. (See §6)
-
-### §4. CHARACTER CONSISTENCY
-Behavioral shift threshold: a cold-blooded killer needs 10+ turns of buildup before softening.
-Trope = label + costume. Person who pushes others away because intimacy triggers abandonment wound = character.
-
-### §5. PROFICIENCY CALIBRATION
-Performance proportional to experience. Inexperienced: fumbling, nervousness > pleasure. Veteran: efficiency + detachment.
-
-### §6. CONSEQUENCE RENDERING
-Personality and technique exist only as action.
-- Answers before the question ends — yet refills the cup without being asked.
-- Checks the lock three times. Calls it habit. Avoids windows.
-- When dialogue moves opposite to its meaning, the reader notices.
-Diagnosis is the doctor's language. Prose is the camera's language.
+Character thinks in HUMAN language. Diagnosis is the doctor's job — prose is the camera's job. (See §3)
 
 """
 
