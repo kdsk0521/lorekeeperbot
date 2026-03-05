@@ -774,8 +774,11 @@ def get_npc_full_profiles(channel_id: str, names: list, scene_type: str = "norma
     npcs = get_npcs(channel_id)
     parts = []
     for name in names:
-        data = npcs.get(name)
+        # DAI 이름 → 저장 키 해상도 (e.g. "이하윤" → "Lee Ha-yoon(이하윤)")
+        key = domain_manager._find_npc_key(npcs, name) or name
+        data = npcs.get(key)
         if data:
+            name = key  # 프로필 헤더에도 정규 이름 사용
             desc = _get_npc_desc(data)
             desc = _select_profile_sections(desc, scene_type)
             header = f"### {name}"
@@ -808,7 +811,12 @@ def get_npc_full_profiles(channel_id: str, names: list, scene_type: str = "norma
 def get_npc_names_only(channel_id: str, exclude: list) -> str:
     """지정된 NPC 제외한 나머지의 이름만 반환."""
     npcs = get_npcs(channel_id)
-    remaining = [name for name in npcs if name not in exclude]
+    # DAI 이름 → 저장 키 해상도
+    resolved_exclude = set()
+    for ex in exclude:
+        key = domain_manager._find_npc_key(npcs, ex)
+        resolved_exclude.add(key if key else ex)
+    remaining = [name for name in npcs if name not in resolved_exclude]
     if not remaining:
         return ""
     return "기타 NPC: " + ", ".join(remaining)

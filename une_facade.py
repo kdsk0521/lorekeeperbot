@@ -932,7 +932,17 @@ class UniversalNarrativeEngine:
             _merged_att = {}
             for _n, _a in _dai_att.items():
                 _m = dict(_a) if isinstance(_a, dict) else {}
-                _s = _stored_att.get(_n, {})
+                # DAI 이름 → 저장 키 해상도 (e.g. "이하윤" → "Lee Ha-yoon(이하윤)")
+                _resolved = _n
+                for _sk in _stored_att:
+                    if _sk == _n:
+                        _resolved = _sk
+                        break
+                    _sk_base = _sk.split("(")[0].strip().lower() if "(" in _sk else _sk.lower()
+                    if _sk_base == _n.strip().lower() or _n.strip().lower() in _sk.lower():
+                        _resolved = _sk
+                        break
+                _s = _stored_att.get(_resolved, {})
                 if isinstance(_s, dict):
                     _m.setdefault("depth", _s.get("depth", 0))
                     _m.setdefault("tension", _s.get("tension", 0))
@@ -1256,7 +1266,17 @@ class UniversalNarrativeEngine:
             _merged_att = {}
             for _n, _a in _dai_att.items():
                 _m = dict(_a) if isinstance(_a, dict) else {}
-                _s = _stored_att.get(_n, {})
+                # DAI 이름 → 저장 키 해상도 (e.g. "이하윤" → "Lee Ha-yoon(이하윤)")
+                _resolved = _n
+                for _sk in _stored_att:
+                    if _sk == _n:
+                        _resolved = _sk
+                        break
+                    _sk_base = _sk.split("(")[0].strip().lower() if "(" in _sk else _sk.lower()
+                    if _sk_base == _n.strip().lower() or _n.strip().lower() in _sk.lower():
+                        _resolved = _sk
+                        break
+                _s = _stored_att.get(_resolved, {})
                 if isinstance(_s, dict):
                     _m.setdefault("depth", _s.get("depth", 0))
                     _m.setdefault("tension", _s.get("tension", 0))

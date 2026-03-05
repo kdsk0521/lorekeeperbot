@@ -637,7 +637,10 @@ class OrchestrationService:
             ]),
             "social": (
                 list(domain_manager.get_npcs(channel_id).keys()) and
-                any(n in response for n in domain_manager.get_npcs(channel_id).keys())
+                any(
+                    n in response or n.split("(")[0].strip() in response
+                    for n in domain_manager.get_npcs(channel_id).keys()
+                )
             ) or ('"' in response or '「' in response),
             "narrative": any(kw in response for kw in [
                 '처음으로', '마침내', '성공', '실패', '죽', '살', '마법',

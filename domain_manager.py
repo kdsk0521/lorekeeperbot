@@ -360,6 +360,12 @@ def _find_npc_key(npcs: dict, name: str) -> Optional[str]:
             return k
     return None
 
+def _resolve_npc_name(d: dict, name: str) -> str:
+    """AI 출력 이름 → 저장된 NPC 키로 해상도. 일치 없으면 원본 반환."""
+    npcs = d.get("npcs", {})
+    matched = _find_npc_key(npcs, name)
+    return matched if matched else name
+
 def get_npc(channel_id: str, name: str) -> Optional[Dict[str, Any]]:
     npcs = get_npcs(channel_id)
     key = _find_npc_key(npcs, name)
@@ -409,6 +415,7 @@ def update_npc_attitude(channel_id: str, npc_name: str, attitude: str, reason: s
     d = get_domain(channel_id)
     if "npc_attitudes" not in d:
         d["npc_attitudes"] = {}
+    npc_name = _resolve_npc_name(d, npc_name)
 
     existing = d["npc_attitudes"].get(npc_name, {})
     d["npc_attitudes"][npc_name] = {
@@ -427,8 +434,9 @@ def get_npc_attitudes(channel_id: str) -> Dict[str, Dict]:
 
 def get_npc_attitude(channel_id: str, npc_name: str) -> Optional[Dict]:
     """특정 NPC의 태도 조회"""
-    attitudes = get_npc_attitudes(channel_id)
-    return attitudes.get(npc_name)
+    d = get_domain(channel_id)
+    npc_name = _resolve_npc_name(d, npc_name)
+    return d.get("npc_attitudes", {}).get(npc_name)
 
 # NPC Knowledge Persistence
 def update_npc_knowledge(channel_id: str, npc_name: str, knowledge_data: Dict[str, Any]) -> None:
@@ -436,6 +444,7 @@ def update_npc_knowledge(channel_id: str, npc_name: str, knowledge_data: Dict[st
     d = get_domain(channel_id)
     if "npc_knowledge" not in d:
         d["npc_knowledge"] = {}
+    npc_name = _resolve_npc_name(d, npc_name)
 
     existing = d["npc_knowledge"].get(npc_name, {})
     # Merge: 기존 knows에 새 항목 추가 (중복 제거)
@@ -459,7 +468,9 @@ def get_npc_knowledge(channel_id: str) -> Dict[str, Dict]:
 
 def get_npc_knowledge_for(channel_id: str, npc_name: str) -> Optional[Dict]:
     """특정 NPC의 지식 상태 조회"""
-    return get_npc_knowledge(channel_id).get(npc_name)
+    d = get_domain(channel_id)
+    npc_name = _resolve_npc_name(d, npc_name)
+    return d.get("npc_knowledge", {}).get(npc_name)
 
 def propagate_npc_knowledge(channel_id: str, scene_npcs: list) -> int:
     """같은 장면 NPC 간 지식 전파. would_share=True인 NPC의 비밀 아닌 지식을 공유.
@@ -511,10 +522,11 @@ def update_npc_imprints(channel_id: str, imprints: Dict[str, Dict[str, str]], tu
     for npc_name, imp in imprints.items():
         if not isinstance(imp, dict) or not imp.get("event"):
             continue
-        npc_list = all_imprints.setdefault(npc_name, [])
+        resolved = _resolve_npc_name(d, npc_name)
+        npc_list = all_imprints.setdefault(resolved, [])
         npc_list.append({"event": imp["event"], "mark": imp.get("mark", ""), "turn": turn})
         # 최근 5개만 유지
-        all_imprints[npc_name] = npc_list[-5:]
+        all_imprints[resolved] = npc_list[-5:]
     save_domain(channel_id, d)
 
 def get_npc_imprints(channel_id: str) -> Dict[str, list]:
@@ -869,6 +881,8 @@ def update_ai_memory(channel_id: str, uid: str, updates: Dict[str, Any]) -> None
 
 def update_npc_relationship(channel_id: str, uid: str, npc_name: str, rel_text: Union[str, int]) -> Union[str, int]:
     """[Extracted from Memory] Update specific NPC relationship in Player AI Memory"""
+    d = get_domain(channel_id)
+    npc_name = _resolve_npc_name(d, npc_name)
     update_ai_memory(channel_id, uid, {"relationships": {npc_name: rel_text}})
     return rel_text
 
@@ -932,8 +946,9 @@ def update_helena_metric(channel_id: str, npc_name: str, depth_delta: int = 0, t
     """[Phase 2] Update Helena metrics (Depth/Tension) for an NPC relation"""
     d = get_domain(channel_id)
     if "npc_attitudes" not in d: d["npc_attitudes"] = {}
+    npc_name = _resolve_npc_name(d, npc_name)
     if npc_name not in d["npc_attitudes"]: return # Must exist first
-    
+
     target = d["npc_attitudes"][npc_name]
     
     # Initialize if missing (Migration support)
