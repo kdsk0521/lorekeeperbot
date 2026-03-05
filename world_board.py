@@ -26,7 +26,8 @@ BOARD_CHANNELS = {
     "message":  ("message_thread_id",  "💌", "메시지"),
 }
 
-DEFAULT_BOARD_FREQUENCY = 10  # N턴마다 자동 게시 (기본 10)
+DEFAULT_BOARD_FREQUENCY = 10  # 전체 기본값 (개별 미설정 시 폴백)
+DEFAULT_CHANNEL_FREQUENCY = {"bulletin": 10, "sns": 11, "message": 12}
 
 
 def _calc_post_count(npc_count: int) -> int:
@@ -88,7 +89,10 @@ def get_board_frequency(channel_id: str, ch_name: str = None) -> int:
         per_ch = freq_map.get(ch_name)
         if per_ch is not None:
             return per_ch
-    return board_state.get("frequency", DEFAULT_BOARD_FREQUENCY)
+    default = board_state.get("frequency", DEFAULT_BOARD_FREQUENCY)
+    if ch_name:
+        return DEFAULT_CHANNEL_FREQUENCY.get(ch_name, default)
+    return default
 
 
 def get_all_frequencies(channel_id: str) -> Dict[str, int]:
@@ -98,9 +102,9 @@ def get_all_frequencies(channel_id: str) -> Dict[str, int]:
     default = board_state.get("frequency", DEFAULT_BOARD_FREQUENCY)
     freq_map = board_state.get("frequency_per_channel", {})
     return {
-        "bulletin": freq_map.get("bulletin", default),
-        "sns":      freq_map.get("sns", default),
-        "message":  freq_map.get("message", default),
+        "bulletin": freq_map.get("bulletin", DEFAULT_CHANNEL_FREQUENCY.get("bulletin", default)),
+        "sns":      freq_map.get("sns", DEFAULT_CHANNEL_FREQUENCY.get("sns", default)),
+        "message":  freq_map.get("message", DEFAULT_CHANNEL_FREQUENCY.get("message", default)),
     }
 
 
