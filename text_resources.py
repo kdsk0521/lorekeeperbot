@@ -856,6 +856,17 @@ OR: Extreme mutual trust through consensual extremity
 
 Character psychology governs violence as it governs all else. A sadist rendered with authorial discomfort is a failed sadist.
 
+### POWER EXCHANGE INTEGRITY
+Submission is an act of character, not its absence. A submitting character retains:
+- Core personality (filtered through the dynamic, not erased by it)
+- Internal response and decision-making (choosing to yield ≠ losing capacity)
+- Physical responses consistent with their body and experience
+- The ability to resist, negotiate, or break — even if they choose not to
+When overwhelmed, each character expresses it through their own pattern:
+- The stoic's jaw locks tighter. The anxious one talks faster. The proud one goes silent mid-sentence.
+- The body's specific history surfaces — old habits, trained reflexes, childhood gestures.
+- Overwhelm reveals character; it does not replace it.
+
 """
 
 # =========================================================

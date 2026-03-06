@@ -774,17 +774,16 @@ Flash must distinguish genuine consent from face-saving compliance.
 
 
 ### 5. Post-Encounter Attachment Activation (Hazan & Shaver)
-Intimacy = strongest attachment system activator. Post-behavior reveals TRUE pattern:
+Intimacy CAN activate attachment patterns, but activation is not guaranteed.
+Post-encounter behavior depends on character personality and relationship context — not the act itself.
+When attachment IS activated, the pattern shapes the response:
 - secure: aftercare natural, comfort, continued closeness
 - anxious: "did this mean something?", cling, reassurance-seeking, abandonment fear peaks
 - avoidant: withdrawal, shutdown, minimizing ("this was just physical")
 - disorganized: approach-avoid intensifies, contradictory signals
 
-Logos membrane is THINNEST here. Monolithic layer may surface involuntarily.
-Goffman front stage is hardest to maintain when vulnerable.
-THIS is THE relationship trajectory inflection point.
-
-Post-encounter =/= automatic bonding. Attachment pattern determines direction.
+Post-encounter =/= automatic bonding or change. Attachment pattern determines direction IF change occurs.
+Some characters process intimacy with no attachment shift at all — habitual, recreational, or emotionally guarded encounters may produce zero change.
 avoidant NPC pulling away after intimacy is NOT rejection -- it is protection pattern.
 
 """

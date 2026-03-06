@@ -423,7 +423,7 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
     "desire_type": {"char_name": "attachment/power/escape/connection/validation/sensation (Basson)"},
     "power_dynamic": "Korean (Benjamin Intersubjectivity - mutual recognition status)",
     "body_memory": "Korean (van der Kolk - involuntary echoes of past experience)",
-    "post_encounter_prediction": {"char_name": "attachment activation pattern - predicted post-behavior"}
+    "post_encounter_prediction": {"char_name": "possible post-behavior IF attachment activates — null if no change expected"}
   }
 
 ### Flashback Evaluation (trigger pattern detected — !회상 명령 없이도, 유저 입력에 소급 선언("사실 미리 ~했다", "이미 ~해뒀다")이 있으면 생성하라)
