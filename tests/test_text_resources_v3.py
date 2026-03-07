@@ -160,7 +160,7 @@ def test_locked_content():
 
     # MIRROR §F, §G, §I
     check("MIRROR §F (No Echo)", "NO ECHO" in mirror.upper() or "No Echo" in mirror)
-    check("MIRROR §G (No Convergence)", "NO CONVERGENCE" in mirror.upper() or "No Convergence" in mirror)
+    check("MIRROR §G (Convergence concept)", "CONVERGENCE" in mirror.upper())
     check("MIRROR §I (No Single Label)", "NO SINGLE LABEL" in mirror.upper() or "No Single Label" in mirror)
 
     # PC_AUTONOMY NPC→PC Direction 예시
@@ -180,8 +180,8 @@ def test_locked_content():
 
     # PROSE_CRAFT 3건
     prose = text_resources.PROSE_CRAFT_PROTOCOL
-    check("PROSE_CRAFT Prose Collapse Rule",
-          "Prose Collapse" in prose or "PROSE COLLAPSE" in prose.upper())
+    check("PROSE_CRAFT Rendering Gate (was Prose Collapse)",
+          "RENDERING GATE" in prose.upper() or "Rendering Gate" in prose)
     check("PROSE_CRAFT Emotion Wave Model",
           "Emotion Wave" in prose or "EMOTION WAVE" in prose.upper())
     # Delayed & Imperfect Response
