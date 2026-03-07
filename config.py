@@ -75,7 +75,7 @@ FRAME_HISTORY_DEPTH = 10            # Scene Continuity rolling window size
 
 # Fermentation (Memory) Settings
 
-FERMENT_CHUNK_SIZE = 25             # Chunk size for fermentation
+FERMENT_CHUNK_SIZE = 12             # [Cost-Diet] Chunk size matches render window (6턴=12msg)
 FERMENTED_THRESHOLD = 8             # Max fermented summaries before Deep Memory compression
 
 # UI/Display
@@ -203,7 +203,7 @@ MOD_SOURCE_CAPS = {
 }
 
 # Memory Optimization
-FRESH_THRESHOLD = 50  # 히스토리 50개 초과 시 발효 트리거
+FRESH_THRESHOLD = 24  # [Cost-Diet] 24개 초과 시 발효 (렌더 12 + 여유 12)
 
 # =========================================================
 # V7 Core Systems: Mental, Doom, Abnormal

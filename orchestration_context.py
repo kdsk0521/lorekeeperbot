@@ -321,8 +321,8 @@ def _build_smart_history(ctx: ResponseContext) -> str:
     """스마트 컨텍스트 윈도우로 히스토리를 구성합니다."""
     import fermentation
     all_hist = ctx.domain_data.get('history', [])
-    target_tokens = 50000  # [Anti-Burial] 축소 — 과거 매몰 방지 (Gemini 1M 내 안전)
-    default_lines = getattr(fermentation, "RECENT_HISTORY_FOR_ANALYSIS", 30)
+    target_tokens = 10000  # [Cost-Diet] 6턴(12메시지) 수준. 장기 맥락은 fermented_history가 커버.
+    default_lines = 12  # 6턴 = 12메시지. 분석용(RECENT_HISTORY_FOR_ANALYSIS=30)과 독립.
     slice_idx = -default_lines
 
     while True:
