@@ -368,15 +368,131 @@ _ENERGY_VISUAL = {
     "aftershock": "[backlight, sepia, washed]",
 }
 
+# --- PACING tables (was PACING_CONTROL_PROTOCOL static constant) ---
+
+_ENERGY_TONE = {
+    "rising":        "tension builds → sensory weight",
+    "detonation":    "peak → max rendering",
+    "stagnant":      "world at rest → sensory density",
+    "aftershock":    "debris settling → residue only, no verdict",
+    "exploration":   "threads open → ground in body, evidence",
+    "establishment": "personality drives → comfort earned, no echo",
+    "rupture":       "contradictions coexist → no immunity",
+}
+
+_ENERGY_BEAT = {
+    "idle":       "1 beat (sensory)",
+    "rising":     "1-2 beats (exchange+texture)",
+    "detonation": "2 beats (action+consequence)",
+    "stagnant":   "1 beat (sensory)",
+    "aftershock": "1 beat (residue)",
+}
+
+_ENERGY_END = {
+    "idle":       "stillness",
+    "rising":     "render tension weight",
+    "aftershock": "residue, no verdict",
+}
+
 
 def translate_energy_direction(energy: str) -> str:
-    """energy_direction → [lighting, hue, saturation] 시각 힌트."""
+    """energy_direction → light + tone + beat + end (conditional injection).
+    Replaces static PACING_CONTROL_PROTOCOL constant."""
     if not energy:
         return ""
-    hint = _ENERGY_VISUAL.get(energy.lower().strip(), "")
-    if hint:
-        return f"### 장면 빛: {hint}"
-    return ""
+    key = energy.lower().strip()
+
+    parts = []
+    visual = _ENERGY_VISUAL.get(key, "")
+    if visual:
+        parts.append(f"Light: {visual}")
+
+    tone = _ENERGY_TONE.get(key, "")
+    if tone:
+        parts.append(tone)
+
+    beat = _ENERGY_BEAT.get(key, "")
+    if beat:
+        parts.append(f"Beat: {beat}")
+
+    end = _ENERGY_END.get(key, "")
+    if end:
+        parts.append(f"End: {end}")
+
+    if key in ("detonation", "rupture"):
+        parts.append("Time lock: this turn = one moment")
+
+    if not parts:
+        return ""
+    return "### Energy Pacing\n" + "\n".join(parts)
+
+
+# =========================================================
+# 3-1. memory_type (Slot 16) — was MEMORY_HIERARCHY static constant
+# =========================================================
+
+_MEMORY_PROSE_STYLE = {
+    "traumatic": "fragmented, non-linear, sensory shards, flash-cuts",
+    "nostalgic": "soft-focus, idealized, gentle rhythm",
+    "shameful": "intrusive, body recoils before mind",
+    "loving": "hyper-clear, specific details preserved",
+    "mundane": "blurred, fog-like, uncertain",
+}
+
+
+def translate_memory_type(memory_triggers: list) -> str:
+    """memory_triggers type → prose style hint. Empty string when no triggers."""
+    if not memory_triggers or not isinstance(memory_triggers, list):
+        return ""
+    styles = []
+    seen = set()
+    for m in memory_triggers:
+        if not isinstance(m, dict):
+            continue
+        mtype = m.get("type", "")
+        if not mtype or mtype in seen:
+            continue
+        seen.add(mtype)
+        style = _MEMORY_PROSE_STYLE.get(mtype.lower().strip(), "")
+        if style:
+            styles.append(f"- {mtype}: {style}")
+    if not styles:
+        return ""
+    return "### Memory Rendering\n" + "\n".join(styles)
+
+
+# =========================================================
+# 3-2. time_atmosphere (Slot 16) — was TEMPORAL_FLOW TIME-OF-DAY/DURATION tables
+# =========================================================
+
+_TIME_ATMOSPHERE = {
+    "새벽": "silence, mist, blue",
+    "오전": "vitality, sunlight",
+    "오후": "peak heat",
+    "황혼": "long shadows, gold",
+    "저녁": "streetlights, danger rises",
+    "심야": "darkness, danger max",
+}
+
+_DURATION_HINTS = {
+    "combat": "seconds-minutes. Momentum > environmental bookkeeping",
+}
+
+
+def translate_time_atmosphere(time_context: str, scene_type: str = "normal") -> str:
+    """TimeContext keyword → sensory hint. Combat adds duration hint."""
+    if not time_context or not isinstance(time_context, str):
+        return ""
+    parts = []
+    for key, hint in _TIME_ATMOSPHERE.items():
+        if key in time_context:
+            parts.append(f"Time: {key}({hint})")
+            break
+    if scene_type == "combat":
+        parts.append(f"Duration: {_DURATION_HINTS['combat']}")
+    if not parts:
+        return ""
+    return "\n".join(parts)
 
 
 # =========================================================

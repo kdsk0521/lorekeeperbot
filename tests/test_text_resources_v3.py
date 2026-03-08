@@ -65,8 +65,9 @@ def test_constants_exist():
         # SITUATION_PRIORITY_PROTOCOL — merged into PACING_CONTROL
         # PSYCHE_STATE_RENDERING — merged into ANTI_CLICHE §5
         # LANGUAGE_CORRECTION — merged into PROSE_CRAFT
+        # MEMORY_HIERARCHY — codified into iceberg.translate_memory_type()
+        # PACING_CONTROL_PROTOCOL — codified into iceberg.translate_energy_direction()
         "WORLD_AXIOM",
-        "MEMORY_HIERARCHY",
         "TRAINING_USER_PROMPT",
         "TRAINING_MODEL_RESPONSE",
     ]
@@ -113,13 +114,14 @@ def test_migrated_content():
           "PERFECT DECEPTION RULE" in npc,
           "Perfect Deception Rule missing from NPC_BEHAVIOR_SYSTEM")
 
-    check("ATTITUDE DATA in NPC_BEHAVIOR",
-          "ATTITUDE DATA" in npc,
-          "Attitude data section missing")
+    # ATTITUDE DATA and NPCKnowledge reference removed (pipeline meta-description, codified)
+    check("ATTITUDE DATA removed from NPC_BEHAVIOR",
+          "ATTITUDE DATA" not in npc,
+          "Attitude data meta-description should be removed")
 
-    check("NPCKnowledge reference in NPC_BEHAVIOR",
-          "NPCKnowledge" in npc,
-          "NPCKnowledge reference missing")
+    check("COMBAT section removed from NPC_BEHAVIOR",
+          "### COMBAT" not in npc,
+          "Combat section should be removed (covered by MW SENSORY RULES + VISCERAL)")
 
     # TELESCOPE v3 구조 확인
     telescope = text_resources.TELESCOPE_PROTOCOL
@@ -290,21 +292,31 @@ def test_tier_a_conversions():
 # 9. SITUATION_PRIORITY 트리밍
 # =========================================================
 def test_situation_priority():
-    print_header("9. ENERGY DIRECTION (merged into PACING_CONTROL)")
+    print_header("9. PACING codified → iceberg.translate_energy_direction()")
 
-    pacing = text_resources.PACING_CONTROL_PROTOCOL
+    # PACING_CONTROL_PROTOCOL removed from text_resources — now in iceberg.py
+    check("PACING_CONTROL_PROTOCOL removed",
+          not hasattr(text_resources, 'PACING_CONTROL_PROTOCOL') or not getattr(text_resources, 'PACING_CONTROL_PROTOCOL', '').strip(),
+          "PACING_CONTROL_PROTOCOL should be removed")
 
-    # 4 Energy Directions 존재 (now in PACING_CONTROL)
-    for direction in ["RISING", "STAGNANT", "DETONATION", "AFTERSHOCK"]:
-        check(f"Energy Direction '{direction}' exists in PACING",
-              direction in pacing)
+    check("MEMORY_HIERARCHY removed",
+          not hasattr(text_resources, 'MEMORY_HIERARCHY') or not getattr(text_resources, 'MEMORY_HIERARCHY', '').strip(),
+          "MEMORY_HIERARCHY should be removed")
 
-    # 6 조합 삭제 확인 (기존 조합 키워드)
-    removed_combos = ["RISING×", "STAGNANT×", "DETONATION×", "high_doom", "low_doom"]
-    for combo in removed_combos:
-        check(f"Removed combo pattern '{combo}' absent",
-              combo not in pacing,
-              f"Old combo pattern still exists")
+    # Verify iceberg has the replacement functions
+    import iceberg
+    check("iceberg.translate_energy_direction exists",
+          callable(getattr(iceberg, 'translate_energy_direction', None)))
+    check("iceberg.translate_memory_type exists",
+          callable(getattr(iceberg, 'translate_memory_type', None)))
+    check("iceberg.translate_time_atmosphere exists",
+          callable(getattr(iceberg, 'translate_time_atmosphere', None)))
+
+    # Verify energy direction returns pacing info
+    result = iceberg.translate_energy_direction("detonation")
+    check("translate_energy_direction('detonation') returns pacing data",
+          "Beat" in result and "Light" in result,
+          f"Expected pacing info, got: {result[:80]}")
 
 # =========================================================
 # 10. Slot 34 빈 문자열 필터링

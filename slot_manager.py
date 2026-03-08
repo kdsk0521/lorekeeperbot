@@ -257,7 +257,7 @@ SLOT_DEFINITIONS: Dict[int, SlotDefinition] = {
     3: SlotDefinition(3, "MIRROR_WORKSHOP", "philosophy", "text_resources.MIRROR_WORKSHOP_PROTOCOL (includes CAMERA/SENSORY RULES)"),
 
     # ===== WORLD ZONE (5-9): 참조 데이터 (중간 배치 OK) =====
-    5: SlotDefinition(5, "WORLD_AXIOM", "world", "text_resources.WORLD_AXIOM (includes ACTION_RES + ASPECTS) + MEMORY_HIERARCHY"),
+    5: SlotDefinition(5, "WORLD_AXIOM", "world", "text_resources.WORLD_AXIOM (includes ACTION_RES + ASPECTS)"),
     6: SlotDefinition(6, "PC_DATA", "world", "ResponseContext.player_data", is_static=False),
     7: SlotDefinition(7, "NPC_ROLES", "world", "npc_manager.get_npcs", is_static=False),
     8: SlotDefinition(8, "LORE", "world", "domain_manager.get_lore", is_static=False),
@@ -285,7 +285,7 @@ SLOT_DEFINITIONS: Dict[int, SlotDefinition] = {
 
     # ===== DYNAMIC ZONE (27-34): 최강 Recency =====
     27: SlotDefinition(27, "OLDER_HISTORY", "dynamic", "smart_history (2~11턴 전)", is_static=False),
-    28: SlotDefinition(28, "NARRATIVE_CHAIN", "dynamic", "cognition.narrative_chain + PACING (includes ENERGY_DIR)", is_static=False),
+    28: SlotDefinition(28, "NARRATIVE_CHAIN", "dynamic", "cognition.narrative_chain", is_static=False),
     29: SlotDefinition(29, "REAL_TIME_DATA", "dynamic", "world_context (Doom, HP, Time)", is_static=False),
     30: SlotDefinition(30, "GM_MOVER", "dynamic", "cognition.GMMover", is_static=False),
     31: SlotDefinition(31, "LAST_RESPONSE", "dynamic", "직전 AI 응답 (turn -1)", is_static=False),
@@ -371,7 +371,8 @@ class SlotPromptBuilder:
         # [4] Removed — PHYSICAL_RENDERING merged into MIRROR_WORKSHOP (Slot 3)
 
         # ===== WORLD ZONE (5) =====
-        self.set_slot(5, f"{text_resources.WORLD_AXIOM}\n\n{text_resources.MEMORY_HIERARCHY}")
+        # MEMORY_HIERARCHY removed — codified into iceberg.translate_memory_type()
+        self.set_slot(5, text_resources.WORLD_AXIOM)
 
         # ===== CONTEXT ZONE (10, 12) =====
         # [10] Temporal (TIME-OF-DAY + DURATION now inside TEMPORAL_FLOW_DOCTRINE)
@@ -503,10 +504,9 @@ class SlotPromptBuilder:
             "동일한 감정 흐름·장면 구조·대사 패턴을 반복하지 말 것."
         ))
 
-        # [28] Narrative Chain
+        # [28] Narrative Chain — PACING_CONTROL removed (codified into iceberg.translate_energy_direction)
         if narrative_chain:
-            pacing = getattr(text_resources, 'PACING_CONTROL_PROTOCOL', '')
-            self.set_slot(28, f"<Narrative_Chain>\n{narrative_chain}\n</Narrative_Chain>\n\n{pacing}")
+            self.set_slot(28, f"<Narrative_Chain>\n{narrative_chain}\n</Narrative_Chain>")
 
         # [29] Real-time Data
         if real_time_data:
@@ -847,11 +847,23 @@ def build_34_step_prompt(ctx) -> str:
     # --- [Slot 16] Scene Intelligence (Aspects + Energy + SensoryAnchors + Habitus + Hook + Flags) ---
     scene_intel_parts = []
 
-    # EnergyDirection: iceberg 번역 (라벨 → 산문 호흡 힌트)
+    # EnergyDirection: iceberg 번역 (라벨 → 톤/비트/종결 + 장면 빛)
     energy_dir = dai.get("energy_direction", "")
     energy_hint = iceberg.translate_energy_direction(energy_dir)
     if energy_hint:
         scene_intel_parts.append(energy_hint)
+
+    # MemoryType: iceberg 번역 (기억 유형 → 산문 스타일 힌트, 발동 턴만)
+    memory_hint = iceberg.translate_memory_type(memory_triggers)
+    if memory_hint:
+        scene_intel_parts.append(memory_hint)
+
+    # TimeAtmosphere: iceberg 번역 (시간대 → 감각 힌트, 전투 duration)
+    time_context = dai.get("TimeContext", dai.get("time_context", ""))
+    scene_type = dai.get("scene_type", "normal")
+    time_atm = iceberg.translate_time_atmosphere(time_context, scene_type)
+    if time_atm:
+        scene_intel_parts.append(time_atm)
 
     # Aspects: 활용 가능한 장면 요소
     aspects = dai.get("aspects", [])

@@ -148,7 +148,7 @@ Three independent axes, separated by |.
 ◎ Photo — time(bulb→timelapse→long-exposure→interval→real-time→slow-motion→freeze) color(cool/warm/desaturated/high-saturation) optics([multiple-exposure][polarizer][infrared][solarization][vignette])
 Optics POV: [polarizer]+[infrared] stay in limited 3rd-person — behavioral contradictions only.
 
-Conversion: ♪articulation→sentence structure(legato=flowing,staccato=clipped,marcato=weighted). ♪tempo→length(largo=long,presto=short). ♪dynamics→sensory density(pp=whitespace,ff=all channels). ◎time→prose rhythm(bulb=one-sentence,timelapse=rapid cuts,slow-motion=detail expansion,freeze=lingering).
+♪→prose: staccato=끊김, legato=이어짐, marcato=무게 | largo=길게, presto=짧게 | pp=여백, ff=전감각. ◎→rhythm: bulb=한문장, slow-motion=확장, freeze=정지.
 Never expose notation terms in output.
 
 ### §P. SCENE PALETTE
@@ -253,13 +253,6 @@ TEMPORAL_FLOW_DOCTRINE = """
 9. RENDERED ONCE: Described elements consumed. Re-render only on change.
 10. 無常: Identical stimuli, different temporal context = different response. Same joke hurts tomorrow. Third apology ≠ first.
 
-### TIME-OF-DAY
-새벽(silence,mist,blue) | 오전(vitality,sunlight) | 오후(peak heat) | 황혼(long shadows,gold) | 저녁(streetlights,danger rises) | 심야(darkness,danger max)
-
-### DURATION REFERENCE
-Conversation:5-15min | Meal:30min-1hr | Rest:1-3hrs | Sleep:6-8hrs | Travel:30min-2hrs | Combat:seconds-minutes
-Apply atmosphere during transitions/lulls. High-action: momentum > environmental bookkeeping.
-
 """
 
 # =========================================================
@@ -278,21 +271,15 @@ ZERO-STATE RULE: Negative traits non-existent until causality reveals them.
 ### SECRET PROPAGATION
 Source(who knows) → Vector(in-scene interaction) → Condition(pressure to reveal) → Distortion(each retelling changes)
 
-### COMBAT
-Every strike has weight. Pain real-time. Fatigue/injury/fear accumulate visibly. Render every exchange.
-
 ### PERFECT DECEPTION RULE
 Near-perfect masks leak at seams: micro-expression, word repeated too often, suspicious kindness. Observation ≠ intuition override.
-
-### ATTITUDE DATA
-THEORIA provides NPCAttitudes (from NPCKnowledge) with attitude/trajectory per NPC in Extended_Intelligence.
 
 ### BEHAVIORAL PERSISTENCE
 Bad people feel fine about it. Smooth self-justification = disengaged, scarier. Clumsy = guilt active.
 Machiavellianism: kindness has purpose. Narcissism: entitlement genuine. Psychopathy: emotion absent, not hidden.
 
 ### EARNED CHANGE
-Requires ALL four: alternative identity + social support + generative motivation + redemption narrative. Without all → old patterns reassert. Flash redemption_warning → revert. One kind act ≠ transformation. But it can be a crack.
+Requires ALL four: alternative identity + social support + generative motivation + redemption narrative. Without all → old patterns reassert.
 
 ### 눈치 & 체면
 눈치: 0.5-second scan before action. A PAUSE filled with observation, not "감지했다."
@@ -326,8 +313,7 @@ Unfamiliar/overwhelming emotions: body shows first, words come later or never. I
 Larger emotions → wider gap. But familiar comfort has no gap — earned intimacy is direct.
 
 ### RHETORICAL ROTATION
-Once = effective. Twice in one response = pattern. Across consecutive turns = tic.
-Defaults (max 1/response, never same device 2 turns): negation reversal, contrast parallel, triplet rhythm, time freeze, body-reaction formula.
+Max 1/response, never same device 2 turns: negation reversal | contrast parallel | triplet rhythm | time freeze | body-reaction formula.
 
 ### RENDERING GATE
 Trait rendered once → invisible architecture. First: full sensory. After: influence in decisions/avoidances only.
@@ -364,26 +350,8 @@ Paragraph density: 5-8 sentences. Onomatopoeia: 철컥, 스르르, 와지끈, �
 
 """
 
-# =========================================================
-# [10] MEMORY SYSTEM (기억 체계)
-# =========================================================
-MEMORY_HIERARCHY = """
-
-## MEMORY RENDERING
-THEORIA provides `memory_triggers` (type: traumatic/nostalgic/shameful/loving) in Extended_Intelligence.
-
-### Type → Prose Style
-Traumatic: fragmented, non-linear, sensory shards, flash-cuts.
-Nostalgic: soft-focus, idealized, gentle rhythm.
-Shameful: intrusive, body recoils before mind catches up.
-Loving: specific details preserved, hyper-clear.
-Mundane: blurred, fog-like, uncertain.
-
-### Temporal Degradation
-<1wk: sharp, photographic | 1wk-1mo: key moments, gaps reconstructed | >1mo: approximate, emotionally colored
-Traumatic exception: sensory fragments stay sharp; context degrades. Characters recall feeling and gist, not exact words.
-
-"""
+# [10] MEMORY_HIERARCHY — Removed. Codified into iceberg.translate_memory_type()
+# Type→Prose Style now injected per-turn only when memory_triggers are active.
 
 # =========================================================
 # [11] WORLD AXIOM (세계 공리)
@@ -502,30 +470,8 @@ When overwhelmed: each character's own pattern surfaces (stoic→jaw locks, anxi
 
 """
 
-# =========================================================
-# [17] PACING CONTROL (페이싱 제어)
-# =========================================================
-PACING_CONTROL_PROTOCOL = """
-
-### ENERGY DIRECTION
-Prose tone follows energy hints and ◎ temporal density.
-RISING: tension builds → DETONATION: peak release.
-STAGNANT: world at rest, sensory weight → AFTERSHOCK: debris settling.
-EXPLORATION: threads open, ground in body, evidence accumulates.
-ESTABLISHMENT: personality drives action, comfort earned, no mirroring.
-RUPTURE: contradictions coexist, no immunity, prose fights with character.
-
-### BEAT BUDGET
-1~2 beats/response. Beat = one meaningful change. All NPC-initiated. End BEFORE requiring PC response.
-Low=1 beat(sensory weight). Mid=1~2(exchange+texture). High=2(action+consequence). Never more.
-
-### SCENE TIME LOCK
-Intense scenes: freeze time. No "시간이 흘러". Each turn = one continuous moment. Player moves time forward.
-
-### END STATE
-Idle→stillness | Rising→render tension weight | Aftershock→residue without verdict. World continues on its own terms.
-
-"""
+# [17] PACING_CONTROL_PROTOCOL — Removed. Codified into iceberg.translate_energy_direction()
+# Energy tone/beat/end/time-lock now injected per-turn based on energy_direction.
 
 
 # =========================================================
@@ -603,23 +549,18 @@ Every word earns its place through specificity. Scene-specific vocabulary — if
 PC acts from THIS person's exhaustion, THIS person's problem-solving. Match words to what actually happens, not genre shorthand.
 
 ### §2. EVIDENCE (Body Tells the Story)
-Every internal state is a physical event. Name the body part, not the emotion. Label deleted, meaning intact → writer's hand showing.
-- "심장이 멎는 듯했다" → "왼쪽 가슴이 쪼이듯 당겼다" (this body, this moment)
-- Every emotion: where in body? What does it do to posture, breathing, grip?
-- Observable only. If a bystander couldn't see it, the camera can't film it. If deletion changes nothing, delete.
-SYMBOLIC LOCKSTEP: Break the obvious bridge (rain≠grief). CULTURAL (한/정/심마/기): protected — specificity WITHIN the cultural frame.
+Name the body part, not the emotion. Observable only. If deletion changes nothing, delete.
+SYMBOLIC LOCKSTEP: Break the obvious bridge. CULTURAL (한/정/심마/기): protected — specificity WITHIN the cultural frame.
 
 ### §3. CHARACTER (Consistency + Consequence)
 Behavior follows established pattern logic. Shift threshold: cold-blooded killer needs 10+ turns before softening. Personality exists only as action. Feelings in their own words, not frameworks. Prose is camera's language.
 
 ### §4. INTIMACY (Post-Intimate Behavior)
-Sex does not guarantee emotional shift. When change occurs, follows attachment pattern: secure(aftercare) / anxious(confirmation-seeking) / avoidant(withdrawal) / disorganized(contradictory).
-If dialogue directive specifies attachment → follow. Absent → unchanged. Performance ∝ experience.
+Sex does not guarantee emotional shift. Attachment response follows dialogue directive.
 
 ### §5. PSYCHE → BODY SIGNAL
 Convert every psyche hint to THIS character's specific body signal. Evidence, not verdicts. No jargon/framework names in prose.
 Same hint + different character = different physical output. Two characters in same state must never look identical.
-Dialogue directive: purpose→subtext, strategy→word choice, hidden→what's missing.
 
 """
 
