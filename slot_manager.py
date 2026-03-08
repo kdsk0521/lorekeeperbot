@@ -254,47 +254,44 @@ SLOT_DEFINITIONS: Dict[int, SlotDefinition] = {
     # ===== PRIMACY ZONE (1-4): AI가 가장 강하게 기억하는 구간 =====
     1: SlotDefinition(1, "AI_MANDATE", "identity", "text_resources.CONTENT_AUTHORIZATION_MANDATE"),
     2: SlotDefinition(2, "AI_IDENTITY", "identity", "text_resources.AI_CORE_IDENTITY"),
-    3: SlotDefinition(3, "MIRROR_WORKSHOP", "philosophy", "text_resources.MIRROR_WORKSHOP_PROTOCOL"),
-    4: SlotDefinition(4, "PHYSICAL_RENDERING", "philosophy", "text_resources.PHYSICAL_RENDERING_DOCTRINE"),
+    3: SlotDefinition(3, "MIRROR_WORKSHOP", "philosophy", "text_resources.MIRROR_WORKSHOP_PROTOCOL (includes CAMERA/SENSORY RULES)"),
 
     # ===== WORLD ZONE (5-9): 참조 데이터 (중간 배치 OK) =====
-    5: SlotDefinition(5, "WORLD_AXIOM", "world", "text_resources.WORLD_AXIOM + MEMORY_HIERARCHY"),
+    5: SlotDefinition(5, "WORLD_AXIOM", "world", "text_resources.WORLD_AXIOM (includes ACTION_RES + ASPECTS) + MEMORY_HIERARCHY"),
     6: SlotDefinition(6, "PC_DATA", "world", "ResponseContext.player_data", is_static=False),
     7: SlotDefinition(7, "NPC_ROLES", "world", "npc_manager.get_npcs", is_static=False),
     8: SlotDefinition(8, "LORE", "world", "domain_manager.get_lore", is_static=False),
     9: SlotDefinition(9, "FERMENTED_HISTORY", "history", "fermentation + cognition.memory_triggers", is_static=False),
 
     # ===== CONTEXT ZONE (10-12): 현재 상황 =====
-    10: SlotDefinition(10, "TEMPORAL_FLOW", "context", "text_resources.TEMPORAL_FLOW + TIME_ATMOSPHERE"),
+    10: SlotDefinition(10, "TEMPORAL_FLOW", "context", "text_resources.TEMPORAL_FLOW (includes TIME-OF-DAY + DURATION)"),
     11: SlotDefinition(11, "CHAPTER_CONTEXT", "context", "domain_manager.get_current_chapter", is_static=False),
     12: SlotDefinition(12, "SOCIAL_INTERACTION", "context", "text_resources.INTERACTION_MODEL + NPC_BEHAVIOR"),
 
     # ===== COGNITION ZONE (13-17): Theoria 분석 데이터 =====
     13: SlotDefinition(13, "INPUT_ANALYSIS", "reasoning", "Theoria: InputAnalysis + Observation + UserIntent + Position/Effect", is_static=False),
     14: SlotDefinition(14, "PSYCHE_STATES", "reasoning", "Theoria: psyche_states (6-Axis)", is_static=False),
-    15: SlotDefinition(15, "PSYCHE_RENDERING", "reasoning", "text_resources.PSYCHE_STATE_RENDERING"),
     16: SlotDefinition(16, "SCENE_INTELLIGENCE", "reasoning", "Theoria: Aspects + SensoryAnchors + HabitusAnalysis + narrative_hook", is_static=False),
     17: SlotDefinition(17, "EXTENDED_INTELLIGENCE", "reasoning", "Theoria: NPCKnowledge + IntimacyAnalysis", is_static=False),
 
     # ===== RULES ZONE (18-25): Static Recency - 행동 규칙 강화 =====
     18: SlotDefinition(18, "PC_AUTONOMY", "rules", "text_resources.PC_AUTONOMY_DOCTRINE"),
     20: SlotDefinition(20, "STATUS_LAYOUT", "rules", "_build_status_layout() dynamic"),
-    21: SlotDefinition(21, "ACTION_RESOLUTION", "mechanics", "text_resources.ACTION_RESOLUTION + Aspects + SITUATION_PRIORITY"),
     22: SlotDefinition(22, "VISCERAL_CONTENT", "content", "text_resources.VISCERAL (conditional)", is_static=False),
-    25: SlotDefinition(25, "STYLE", "rules", "text_resources.ANTI_CLICHE + PROSE_CRAFT"),
+    25: SlotDefinition(25, "STYLE", "rules", "text_resources.ANTI_CLICHE (includes §5 PSYCHE) + PROSE_CRAFT (includes KOREAN STYLE)"),
 
     # ========== CACHE BOUNDARY ==========
     26: SlotDefinition(26, "CACHE_BOUNDARY", "boundary", "==========CACHE BOUNDARY==========", is_static=False),
 
     # ===== DYNAMIC ZONE (27-34): 최강 Recency =====
     27: SlotDefinition(27, "OLDER_HISTORY", "dynamic", "smart_history (2~11턴 전)", is_static=False),
-    28: SlotDefinition(28, "NARRATIVE_CHAIN", "dynamic", "cognition.narrative_chain + PACING", is_static=False),
+    28: SlotDefinition(28, "NARRATIVE_CHAIN", "dynamic", "cognition.narrative_chain + PACING (includes ENERGY_DIR)", is_static=False),
     29: SlotDefinition(29, "REAL_TIME_DATA", "dynamic", "world_context (Doom, HP, Time)", is_static=False),
-    30: SlotDefinition(30, "GM_MOVER", "dynamic", "cognition.GMMover + COGNITIVE_INTEGRATION", is_static=False),
+    30: SlotDefinition(30, "GM_MOVER", "dynamic", "cognition.GMMover", is_static=False),
     31: SlotDefinition(31, "LAST_RESPONSE", "dynamic", "직전 AI 응답 (turn -1)", is_static=False),
     32: SlotDefinition(32, "USER_INPUT", "dynamic", "현재 유저 입력", is_static=False),
     33: SlotDefinition(33, "AUTHOR_NOTE", "dynamic", "AUTHOR_NOTE + GENRE_DIRECTIVE", is_static=False),
-    34: SlotDefinition(34, "TELESCOPE_LANGUAGE", "kernel", "TELESCOPE + LANGUAGE + EMOTION"),
+    34: SlotDefinition(34, "TELESCOPE", "kernel", "TELESCOPE_PROTOCOL"),
 }
 
 
@@ -371,30 +368,22 @@ class SlotPromptBuilder:
             logger.warning("[Slot 3] MIRROR_WORKSHOP_PROTOCOL missing — primacy philosophy slot empty")
         self.set_slot(3, mirror_workshop)
 
-        # [4] Physical Rendering
-        physical = getattr(text_resources, 'PHYSICAL_RENDERING_DOCTRINE', '') or getattr(text_resources, 'PHYSICAL_RENDER', '')
-        if not physical:
-            logger.warning("[Slot 4] PHYSICAL_RENDERING_DOCTRINE missing — rendering philosophy slot empty")
-        self.set_slot(4, physical)
+        # [4] Removed — PHYSICAL_RENDERING merged into MIRROR_WORKSHOP (Slot 3)
 
         # ===== WORLD ZONE (5) =====
         self.set_slot(5, f"{text_resources.WORLD_AXIOM}\n\n{text_resources.MEMORY_HIERARCHY}")
 
         # ===== CONTEXT ZONE (10, 12) =====
-        # [10] Temporal
+        # [10] Temporal (TIME-OF-DAY + DURATION now inside TEMPORAL_FLOW_DOCTRINE)
         temporal = getattr(text_resources, 'TEMPORAL_FLOW_DOCTRINE', '') or getattr(text_resources, 'TEMPORAL_FLOW', '')
-        time_atm = getattr(text_resources, 'TIME_ATMOSPHERE', '')
-        self.set_slot(10, f"{temporal}\n\n{time_atm}")
+        self.set_slot(10, temporal)
 
         # [12] Social
         interaction = getattr(text_resources, 'INTERACTION_MODEL', '')
         npc_behavior = getattr(text_resources, 'NPC_BEHAVIOR_SYSTEM', '')
         self.set_slot(12, f"{interaction}\n\n{npc_behavior}")
 
-        # ===== COGNITION ZONE (15) =====
-        # [15] Psyche Rendering Instruction
-        psyche_render = getattr(text_resources, 'PSYCHE_STATE_RENDERING', '')
-        self.set_slot(15, psyche_render)
+        # [15] Removed — PSYCHE_STATE_RENDERING merged into ANTI_CLICHE §5 (Slot 25)
 
         # ===== RULES ZONE (18-25) - Static Recency 강화 =====
         # [18] PC Autonomy
@@ -403,11 +392,7 @@ class SlotPromptBuilder:
         # [20] Status Layout — 동적 빌더(_build_status_layout)가 덮어씀
         self.set_slot(20, "")
 
-        # [21] Action Resolution + Situation Priority
-        action_res = getattr(text_resources, 'ACTION_RESOLUTION', '')
-        aspect_util = getattr(text_resources, 'ASPECT_UTILIZATION', '')
-        situation_priority = getattr(text_resources, 'SITUATION_PRIORITY_PROTOCOL', '')
-        self.set_slot(21, f"{action_res}\n\n{aspect_util}\n\n{situation_priority}")
+        # [21] Removed — ACTION_RES+ASPECTS merged into WORLD_AXIOM (Slot 5), ENERGY_DIR into PACING (Slot 28)
 
         # [25] Style (Static Recency! 캐시 구간 마지막)
         anti_cliche = getattr(text_resources, 'ANTI_CLICHE_PROTOCOL', '')
@@ -418,11 +403,9 @@ class SlotPromptBuilder:
         self.set_slot(26, "\n==========CACHE BOUNDARY==========\n")
 
         # ===== DYNAMIC ZONE (34) - Telescope 규칙만 정적, 프리필은 동적 =====
-        # [34] Telescope rules (정적) + Language — 프리필은 populate_dynamic_slots()에서 추가
+        # [34] Telescope rules (정적) — LANGUAGE_CORRECTION은 PROSE_CRAFT로 병합됨. 프리필은 populate_dynamic_slots()에서 추가
         telescope_rules = getattr(text_resources, 'TELESCOPE_PROTOCOL', '')
-        language = getattr(text_resources, 'LANGUAGE_CORRECTION', '')
-        slot34_parts = [p for p in [telescope_rules, language] if p.strip()]
-        self.set_slot(34, "\n\n".join(slot34_parts))
+        self.set_slot(34, telescope_rules)
 
         self._static_built = True
         logger.info("[SlotPromptBuilder] Static slots populated (Primacy/Recency optimized).")
@@ -531,8 +514,8 @@ class SlotPromptBuilder:
 
         # [30] World Response (GM Mover)
         if gm_mover:
-            cognitive_int = getattr(text_resources, 'COGNITIVE_DATA_INTEGRATION', '')
-            self.set_slot(30, f"<World_Response>\n{gm_mover}\n</World_Response>\n\n{cognitive_int}")
+            # COGNITIVE_DATA_INTEGRATION은 AI_CORE_IDENTITY로 병합됨
+            self.set_slot(30, f"<World_Response>\n{gm_mover}\n</World_Response>")
 
         # [31] Last Response (직전 AI 응답 끝부분 — recency 앵커. 전문은 Gemini 히스토리에 있음)
         if last_response:

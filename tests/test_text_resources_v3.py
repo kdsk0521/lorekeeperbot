@@ -51,7 +51,7 @@ def test_constants_exist():
     required_constants = [
         "CONTENT_AUTHORIZATION_MANDATE",
         "MIRROR_WORKSHOP_PROTOCOL",
-        "PHYSICAL_RENDERING_DOCTRINE",
+        # PHYSICAL_RENDERING_DOCTRINE — merged into MIRROR_WORKSHOP
         "AI_CORE_IDENTITY",
         "PC_AUTONOMY_DOCTRINE",
         "NPC_BEHAVIOR_SYSTEM",
@@ -60,11 +60,11 @@ def test_constants_exist():
         "TELESCOPE_PROTOCOL",
         "TEMPORAL_FLOW_DOCTRINE",
         "INTERACTION_MODEL",
-        "ACTION_RESOLUTION",
-        "ASPECT_UTILIZATION",
-        "SITUATION_PRIORITY_PROTOCOL",
-        "PSYCHE_STATE_RENDERING",
-        "LANGUAGE_CORRECTION",
+        # ACTION_RESOLUTION — merged into WORLD_AXIOM
+        # ASPECT_UTILIZATION — merged into WORLD_AXIOM
+        # SITUATION_PRIORITY_PROTOCOL — merged into PACING_CONTROL
+        # PSYCHE_STATE_RENDERING — merged into ANTI_CLICHE §5
+        # LANGUAGE_CORRECTION — merged into PROSE_CRAFT
         "WORLD_AXIOM",
         "MEMORY_HIERARCHY",
         "TRAINING_USER_PROMPT",
@@ -144,10 +144,12 @@ def test_master_reference():
               aspect in identity,
               f"'{aspect}' row missing from Master Reference")
 
+    # Gate format changed from table ┣[X]┫ to inline [┣X]
     expected_gates = ["Impersonation", "CharReason", "Hook", "NPC Identity", "Cliché"]
     for gate in expected_gates:
-        check(f"  gate '┣[{gate}]┫' in table",
-              f"┣[{gate}]┫" in identity,
+        found = f"[┣{gate}]" in identity or f"┣[{gate}]┫" in identity
+        check(f"  gate '{gate}' referenced",
+              found,
               f"Gate reference missing")
 
 # =========================================================
@@ -251,11 +253,11 @@ def test_dedup_removal():
           "Mind-sealing rules" not in mirror,
           "Cross-ref to PHYSICAL_RENDERING still in MIRROR §B")
 
-    # ASPECT_UTILIZATION cross-ref 삭제
-    aspect = text_resources.ASPECT_UTILIZATION
-    check("ASPECT_UTILIZATION: CROSS-REFERENCE block removed",
-          "CROSS-REFERENCE" not in aspect and "Cross-Reference" not in aspect,
-          "CROSS-REFERENCE block still exists")
+    # ASPECT content merged into WORLD_AXIOM
+    world = text_resources.WORLD_AXIOM
+    check("WORLD_AXIOM: SCENE ASPECTS merged in",
+          "SCENE ASPECTS" in world or "Aspects" in world,
+          "SCENE ASPECTS missing from WORLD_AXIOM")
 
     # PROSE_CRAFT cross-ref 삭제
     prose = text_resources.PROSE_CRAFT_PROTOCOL
@@ -288,20 +290,20 @@ def test_tier_a_conversions():
 # 9. SITUATION_PRIORITY 트리밍
 # =========================================================
 def test_situation_priority():
-    print_header("9. SITUATION_PRIORITY 트리밍")
+    print_header("9. ENERGY DIRECTION (merged into PACING_CONTROL)")
 
-    sp = text_resources.SITUATION_PRIORITY_PROTOCOL
+    pacing = text_resources.PACING_CONTROL_PROTOCOL
 
-    # 4 Energy Directions 존재
+    # 4 Energy Directions 존재 (now in PACING_CONTROL)
     for direction in ["RISING", "STAGNANT", "DETONATION", "AFTERSHOCK"]:
-        check(f"Energy Direction '{direction}' exists",
-              direction in sp)
+        check(f"Energy Direction '{direction}' exists in PACING",
+              direction in pacing)
 
     # 6 조합 삭제 확인 (기존 조합 키워드)
     removed_combos = ["RISING×", "STAGNANT×", "DETONATION×", "high_doom", "low_doom"]
     for combo in removed_combos:
         check(f"Removed combo pattern '{combo}' absent",
-              combo not in sp,
+              combo not in pacing,
               f"Old combo pattern still exists")
 
 # =========================================================
@@ -328,10 +330,12 @@ def test_slot34_filtering():
               "PRE-OUTPUT QUALITY GATE" in slot34 or "┣" in slot34,
               "TELESCOPE missing from Slot 34")
 
-        # LANGUAGE_CORRECTION 있어야 함
-        check("LANGUAGE_CORRECTION in Slot 34",
-              "KOREAN PROSE STYLE" in slot34 or "Language" in slot34.lower(),
-              "LANGUAGE_CORRECTION missing from Slot 34")
+        # LANGUAGE_CORRECTION은 PROSE_CRAFT로 병합됨 — Slot 34에서 제거됨
+        # KOREAN PROSE STYLE은 이제 Slot 25 (PROSE_CRAFT)에 포함
+        prose = text_resources.PROSE_CRAFT_PROTOCOL
+        check("KOREAN PROSE STYLE in PROSE_CRAFT (was Slot 34)",
+              "KOREAN PROSE STYLE" in prose or "존댓말" in prose,
+              "KOREAN PROSE STYLE missing from PROSE_CRAFT")
 
         # OUTPUT_PROTOCOL (빈) 콘텐츠 없어야 함
         # NARRATIVE_KERNEL (빈) 콘텐츠 없어야 함
