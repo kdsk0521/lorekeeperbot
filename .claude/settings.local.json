@@ -11,7 +11,8 @@
       "Bash(where claude:*)",
       "Bash(where gemini:*)",
       "Bash(where claude.exe)",
-      "Bash(where gemini.exe)"
+      "Bash(where gemini.exe)",
+      "Bash(gemini -p \"stdin에서 읽은 내용을 그대로 반복해줘\")"
     ],
     "additionalDirectories": [
       "\\tmp"
