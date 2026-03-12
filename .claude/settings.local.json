@@ -7,7 +7,11 @@
       "Bash(del \"C:\\\\Users\\\\kdsk\\\\.claude\\\\plans\\\\polymorphic-weaving-honey.md\")",
       "Bash(python3:*)",
       "Bash(ls:*)",
-      "Bash(PYTHONIOENCODING=utf-8 python:*)"
+      "Bash(PYTHONIOENCODING=utf-8 python:*)",
+      "Bash(where claude:*)",
+      "Bash(where gemini:*)",
+      "Bash(where claude.exe)",
+      "Bash(where gemini.exe)"
     ],
     "additionalDirectories": [
       "\\tmp"
