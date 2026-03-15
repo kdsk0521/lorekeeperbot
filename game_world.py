@@ -59,11 +59,18 @@ def advance_minutes(channel_id: str, minutes: int) -> str:
 
     old_hour = world["hour"]
     old_slot = world.get("time_slot", _slot_for_hour(old_hour))
+    old_weather = world.get("weather", "맑음")
 
-    total_min = world["hour"] * 60 + world["minute"] + minutes
-    new_day_offset = total_min // 1440  # 24*60
-    remainder = total_min % 1440
-    world["hour"] = remainder // 60
+    # 게임 날짜 경계 = 첫 슬롯 시작 시각 (새벽 04:00)
+    time_slots = get_time_slots(channel_id)
+    day_start_hour = config.TIME_SLOT_HOURS.get(time_slots[0], (4, 6))[0]
+
+    game_min = ((world["hour"] - day_start_hour) % 24) * 60 + world["minute"]
+    total_game_min = game_min + minutes
+    new_day_offset = total_game_min // 1440
+    remainder = total_game_min % 1440
+
+    world["hour"] = (remainder // 60 + day_start_hour) % 24
     world["minute"] = remainder % 60
 
     new_slot = _slot_for_hour(world["hour"])
@@ -78,7 +85,7 @@ def advance_minutes(channel_id: str, minutes: int) -> str:
         world["last_temporal_context"] = {
             "prev_time_slot": old_slot,
             "prev_day": world.get("day", 1) - new_day_offset,
-            "prev_weather": world.get("weather", "맑음"),
+            "prev_weather": old_weather,
         }
 
     domain_manager.update_world_state(channel_id, world)
@@ -89,6 +96,61 @@ def advance_minutes(channel_id: str, minutes: int) -> str:
     if old_slot != new_slot:
         return f"⏰ {time_str} ({new_slot})"
     return f"⏳ {time_str}"
+
+
+def advance_to_slot(channel_id: str, target_slot: str, day_offset: int = 0) -> str:
+    """특정 시간대+일차로 시간을 설정. 알피에서 명시적 시간 점프 시 사용."""
+    world = domain_manager.get_world_state(channel_id)
+    _init_clock(world)
+    time_slots = get_time_slots(channel_id)
+
+    old_slot = world.get("time_slot", "오후")
+    old_weather = world.get("weather", "맑음")
+    old_day = world.get("day", 1)
+
+    if target_slot not in time_slots:
+        target_slot = time_slots[0]
+
+    start_h = config.TIME_SLOT_HOURS.get(target_slot, (12, 16))[0]
+    world["hour"] = start_h
+    world["minute"] = 0
+    world["time_slot"] = target_slot
+
+    # day_offset이 0이어도 슬롯이 "과거"면 자동 +1
+    old_idx = time_slots.index(old_slot) if old_slot in time_slots else 0
+    new_idx = time_slots.index(target_slot)
+    if day_offset == 0 and new_idx <= old_idx and target_slot != old_slot:
+        day_offset = 1
+
+    if day_offset > 0:
+        world["day"] = old_day + day_offset
+        world["weather"] = random.choice(get_weather_types(channel_id))
+
+    if old_slot != target_slot:
+        world["last_temporal_context"] = {
+            "prev_time_slot": old_slot,
+            "prev_day": old_day,
+            "prev_weather": old_weather,
+        }
+
+    domain_manager.update_world_state(channel_id, world)
+
+    time_emoji = {
+        "새벽": "🌅", "오전": "☀️", "오후": "🌤️",
+        "황혼": "🌆", "저녁": "🌙", "심야": "🌑"
+    }
+    emoji = time_emoji.get(target_slot, "⏰")
+    time_str = f"{start_h:02d}:00"
+
+    if world["day"] != old_day:
+        return (
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📅 **{world['day']}일차** {emoji} **{target_slot}** ({time_str})\n"
+            f"🌤️ 날씨: {world['weather']}\n"
+            f"━━━━━━━━━━━━━━━━━━━━"
+        )
+    return f"{emoji} **{target_slot}** ({time_str})"
+
 
 def advance_time(channel_id: str) -> str:
     """시간을 다음 슬롯으로 진행하고 세계 변화를 반환"""

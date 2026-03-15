@@ -314,7 +314,8 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
 
 ## NARRATIVE HOOKS & TIME
 - "narrative_hook": str | null (Korean - Observe the next event that naturally arises from currently unresolved world state. Describe only consequences produced by the world's existing forces. Return null when the world is at peace.)
-- "time_flow": {"ticks": 1-20, "reason": "Korean"}
+- "time_flow": {"ticks": 1-20, "reason": "Korean", "target": {"slot": "시간대명(새벽/오전/오후/황혼/저녁/심야)", "day_offset": 0|1} | null}
+  - target: 유저가 특정 시각을 명시했을 때만 사용 (예: "다음날 아침" → {"slot": "오전", "day_offset": 1}, "저녁까지 기다린다" → {"slot": "저녁", "day_offset": 0}). null이면 ticks로 진행. target 사용 시 ticks는 무시됨
 - "doom_clocks": {
     "clock_updates": [{"name": str, "delta": int(-1~+2), "reason": "Korean"}],
     "clock_new": {"name": "Korean", "segments": 4|6|8, "tick_mode": "action|time|hybrid", "threat": "Korean — 이 시계가 완성되면 무슨 일이 벌어지는가", "defense_action": "Korean — 이 시계를 막으려면 무엇을 해야 하는가 (구체적 행동 힌트)", "source": "narrative|consequence", "linked_entity": "str or null — 관련 NPC/세력 이름", "tags": ["Korean"]} | null,

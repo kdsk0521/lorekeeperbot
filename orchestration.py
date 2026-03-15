@@ -191,7 +191,7 @@ class OrchestrationService:
         time_msg = await game_system.process_time_flow(channel_id, time_flow, curr_scene)
         if time_msg:
             messages.append(time_msg)
-            ctx.world_ctx = game_system.get_world_context(channel_id)
+        ctx.world_ctx = game_system.get_world_context(channel_id)
 
         return ctx, messages
 

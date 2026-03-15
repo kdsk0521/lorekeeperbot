@@ -29,6 +29,7 @@ get_weather_types = game_world.get_weather_types
 advance_time = game_world.advance_time
 advance_tick = game_world.advance_tick
 advance_minutes = game_world.advance_minutes
+advance_to_slot = game_world.advance_to_slot
 get_formatted_time = game_world.get_formatted_time
 change_doom = game_world.change_doom
 _get_doom_description = game_world._get_doom_description
@@ -106,6 +107,16 @@ async def process_time_flow(channel_id: str, time_flow: Dict, scene_type: str = 
     """
     if not time_flow:
         return None
+
+    # 절대 시간 점프 (target)
+    target = time_flow.get("target")
+    if target and target.get("slot"):
+        msg = game_world.advance_to_slot(
+            channel_id,
+            target["slot"],
+            target.get("day_offset", 0)
+        )
+        return msg
 
     duration = time_flow.get("duration", "instant")
     ticks = time_flow.get("ticks", 0)
