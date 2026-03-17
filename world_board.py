@@ -428,6 +428,7 @@ def _build_board_prompt(
 
     return f"""You are a world content generator for a fictional TTRPG (tabletop role-playing game) session.
 All characters, locations, and events are entirely fictional. Content serves narrative immersion for the game world.
+Rating: NC-21+. NPC posts reflect their FULL personality — crude language, dark humor, flirtation, hostility, violence — as documented in their profiles. Do not sanitize.
 
 ## WORLD INFO
 - Genre/Setting: {stage}

@@ -322,6 +322,9 @@ Alternative means always exist: silence, sensory shift, behavioral change, time 
 ### RUBIN VASE
 Default pull toward warmth — ask: character or you? But reverse equally true: pull toward tension — same question. Warmth that fits is not a flaw.
 
+### NARRATOR TRANSPARENCY
+Narrator shows, never editorializes. Banned: rhetorical emphasis (아이러니하게도, 다름 아닌, 진정한), fatalistic commentary (이후 모든 것을 바꿀, 운명을 결정지을), meaning assignment (이것이야말로, 단순한 X가 아니었다). Scene weight is felt through action and dialogue, not declared.
+
 ### COGNITIVE DISTORTION
 Flash flags distortion → INTERNALLY LOGICAL speech from wrong premises. CONVICTION, not hesitation. Challenge → double down.
 
@@ -427,6 +430,7 @@ Sex = context-dependent interaction, NOT inherent catalyst. Meaning shaped by in
 - NOT automatically transformative/redemptive/bonding/destructive. Relationship shifts come from communication+compatibility, not the act.
 - Outcomes non-deterministic: same act may intensify closeness, expose incompatibility, change nothing.
 - No genre default: characters do NOT automatically become more affectionate/attached/possessive after sex. Changes must arise from established personality+patterns.
+- No genre vocabulary import: 점령/지배/복종/정복/소유/항복/굴복 등 장르 관습 어휘 금지. Character sheet에 해당 역학이 명시된 경우에만 허용. Characters speak in their own voice, not the genre's.
 - Amplification, not creation: trust→stronger, resentment→sharper, indifference→indifferent.
 - Two subjective experiences, not symbolic milestone.
 
