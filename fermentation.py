@@ -70,6 +70,57 @@ DEEP_SUMMARY_LENGTH = 1000    # DEEP 메모리 목표 길이
 logger = logging.getLogger("Fermentation")
 
 
+def _repair_truncated_json(text: str) -> Optional[Dict]:
+    """max_output_tokens 초과로 잘린 JSON을 복구 시도."""
+    # 열린 괄호/대괄호 카운트 후 닫아줌
+    try:
+        trimmed = text.rstrip()
+        # 끝에 잘린 문자열 닫기: 열린 " 찾아서 닫기
+        in_string = False
+        escape = False
+        for ch in trimmed:
+            if escape:
+                escape = False
+                continue
+            if ch == '\\':
+                escape = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+        if in_string:
+            trimmed += '"'
+
+        # 열린 괄호 닫기
+        stack = []
+        in_str = False
+        esc = False
+        for ch in trimmed:
+            if esc:
+                esc = False
+                continue
+            if ch == '\\':
+                esc = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch in ('{', '['):
+                stack.append('}' if ch == '{' else ']')
+            elif ch in ('}', ']'):
+                if stack:
+                    stack.pop()
+
+        # 마지막에 쉼표가 있으면 제거 (trailing comma)
+        trimmed = trimmed.rstrip().rstrip(',')
+        trimmed += ''.join(reversed(stack))
+
+        return json.loads(trimmed)
+    except (json.JSONDecodeError, Exception):
+        return None
+
+
 # =========================================================
 # TRPG 특화 요약 프롬프트 V4 (Mneme-Arc Hybrid)
 # Mneme + Arc Observations (종단 패턴 관찰)
@@ -392,7 +443,7 @@ Output VALID JSON following the schema exactly.
         config = types.GenerateContentConfig(
             system_instruction=system_instruction,
             temperature=0.3,
-            max_output_tokens=3000,  # V3는 더 많은 출력 필요
+            max_output_tokens=8192,
             response_mime_type="application/json",
             safety_settings=_SAFETY_SETTINGS,
         )
@@ -402,21 +453,26 @@ Output VALID JSON following the schema exactly.
             contents=contents,
             config=config
         )
-        
+
         if response and response.text:
             text_result = response.text.strip()
             logger.info(f"[Fermentation V4] Raw Response: {text_result[:150]}...")
-            
+
             try:
                 clean_json = text_result.replace("```json", "").replace("```", "").strip()
                 data = json.loads(clean_json)
-                
+
                 # V3 포맷 검증 및 정규화
                 normalized = _normalize_ferment_result(data, use_v3)
                 return normalized
-                
+
             except json.JSONDecodeError as je:
-                logger.error(f"[Fermentation V4] JSON Parse Error: {je}")
+                logger.warning(f"[Fermentation V4] JSON Parse Error: {je}, attempting repair...")
+                repaired = _repair_truncated_json(clean_json)
+                if repaired:
+                    logger.info("[Fermentation V4] JSON repair succeeded")
+                    return _normalize_ferment_result(repaired, use_v3)
+                logger.error("[Fermentation V4] JSON repair failed, using fallback")
                 return {
                     "summary": text_result[:500],
                     "compressed_blocks": [],
@@ -598,7 +654,7 @@ Important:
         config = types.GenerateContentConfig(
             system_instruction=system_instruction,
             temperature=0.2,
-            max_output_tokens=3000,
+            max_output_tokens=8192,
             response_mime_type="application/json",
             safety_settings=_SAFETY_SETTINGS,
         )
@@ -608,22 +664,27 @@ Important:
             contents=contents,
             config=config
         )
-        
+
         if response and response.text:
             text_result = response.text.strip()
             logger.info(f"[Fermentation V4] DEEP Raw: {text_result[:150]}...")
-            
+
             try:
                 clean_json = text_result.replace("```json", "").replace("```", "").strip()
                 data = json.loads(clean_json)
-                
+
                 # 정규화
                 result = _normalize_deep_result(data)
                 logger.info(f"[Fermentation V4] DEEP 압축 완료: {len(fermented_list)}개 → {len(result.get('deep_narrative', ''))}자")
                 return result
-                
-            except json.JSONDecodeError:
-                # Fallback: 텍스트만 반환
+
+            except json.JSONDecodeError as je:
+                logger.warning(f"[Fermentation V4] DEEP JSON Parse Error: {je}, attempting repair...")
+                repaired = _repair_truncated_json(clean_json)
+                if repaired:
+                    logger.info("[Fermentation V4] DEEP JSON repair succeeded")
+                    return _normalize_deep_result(repaired)
+                logger.error("[Fermentation V4] DEEP JSON repair failed, using fallback")
                 return {
                     "deep_narrative": text_result[:1000],
                     "crystallized_dialogues": all_dialogues[:5],
