@@ -206,6 +206,74 @@ async def extract_all_updates(
         "RenderFingerprint": rfp if rfp else None
     }
 
+# =========================================================
+# N4: NPC PERSONA SNAPSHOT EXTRACTION
+# =========================================================
+
+def build_persona_extraction_prompt(ai_response: str, npc_names: list) -> str:
+    """페르소나 업데이트 추출 프롬프트 생성."""
+    return f"""From the narrative response below, extract persona state updates for NPCs.
+Only include NPCs that APPEARED or were MENTIONED in the response.
+For each NPC, extract ONLY fields that CHANGED in this turn.
+
+NPCs to check: {', '.join(npc_names)}
+
+Response:
+{ai_response[:3000]}
+
+Return JSON:
+{{
+  "npc_name": {{
+    "state": {{
+      "emotional_state": "current emotion if changed",
+      "peplau_stage": "orientation|identification|exploitation|resolution if changed"
+    }}
+  }}
+}}
+Only include NPCs with actual changes. Empty dict if no changes."""
+
+
+async def extract_persona_updates(client, model_flash, ai_response: str, npc_names: list, temperature: float = 0.1) -> dict:
+    """Flash로 NPC 페르소나 업데이트 추출.
+    Returns: {npc_name: {"state": {...}, "core": {...}}, ...}
+    """
+    if not npc_names or not ai_response:
+        return {}
+
+    prompt = build_persona_extraction_prompt(ai_response, npc_names)
+
+    try:
+        cfg = types.GenerateContentConfig(
+            temperature=temperature,
+            response_mime_type="application/json",
+            safety_settings=config.SAFETY_SETTINGS,
+        )
+        cnt = [
+            types.Content(role="user", parts=[types.Part(text=prompt)]),
+        ]
+        res = await api_call_with_retry(client, model_flash, cnt, cfg, operation_name="N4-Persona")
+        if not res:
+            return {}
+
+        updates = safe_parse_json(res)
+        if not isinstance(updates, dict):
+            return {}
+
+        # Filter incomplete pairs
+        validated = {}
+        for npc_name, update in updates.items():
+            if isinstance(update, dict):
+                if "core" in update and "state" not in update:
+                    logger.warning(f"Incomplete persona pair for {npc_name}, discarding")
+                    continue
+                validated[npc_name] = update
+
+        return validated
+    except Exception as e:
+        logger.warning(f"Persona extraction failed: {e}")
+        return {}
+
+
 # Internal Extractors (Private)
 
 async def _extract_batch(
@@ -359,12 +427,68 @@ async def _extract_batch(
     return await _call_extract(client, model_id, sys_prompt, usr, "B-Batch")
 
 
+# =========================================================
+# INVENTORY VALIDATION (N2 — 아이템 영속 + 인벤토리 검증)
+# =========================================================
+
+def validate_inventory(extracted_items: list, current_inventory: list, logger_ref=None) -> list:
+    """Compare AI response's mentioned items with known inventory.
+
+    Log warnings for items that disappeared without narrative cause.
+    Returns the extracted item list as-is (preserving AI decisions) but
+    with a warning logged when items silently vanish.
+
+    Args:
+        extracted_items: Items the AI response implies the PC has now.
+        current_inventory: Structured inventory items (each must have "id" or "name").
+        logger_ref: Optional logger; falls back to module logger if None.
+    """
+    _log = logger_ref or logger
+
+    if not current_inventory:
+        return extracted_items
+
+    # Build lookup sets — extracted items may not have IDs yet, so fall back to name
+    extracted_ids = set()
+    extracted_names = set()
+    for item in (extracted_items or []):
+        if isinstance(item, dict):
+            if item.get("id"):
+                extracted_ids.add(item["id"])
+            if item.get("name"):
+                extracted_names.add(item["name"].strip().lower())
+        elif isinstance(item, str):
+            extracted_names.add(item.strip().lower())
+
+    missing = []
+    for item in current_inventory:
+        if not isinstance(item, dict):
+            continue
+        qty = item.get("qty", 1)
+        if qty <= 0:
+            continue
+        item_id = item.get("id")
+        item_name = (item.get("name") or "").strip().lower()
+        # Check if the item is accounted for in the extraction
+        if item_id and item_id in extracted_ids:
+            continue
+        if item_name and item_name in extracted_names:
+            continue
+        missing.append(item)
+
+    if missing:
+        names = [i.get("name", "?") for i in missing]
+        _log.warning(f"[Inventory] Items disappeared without cause: {names}")
+
+    return extracted_items or []
+
+
 async def _extract_physical(
-    client: genai.Client, 
-    model_id: str, 
-    p_in: str, 
-    ai_out: str, 
-    notebook: str, 
+    client: genai.Client,
+    model_id: str,
+    p_in: str,
+    ai_out: str,
+    notebook: str,
     status: Optional[List[str]]
 ) -> Dict[str, Any]:
     sys = (

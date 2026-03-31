@@ -266,14 +266,37 @@ CROSS_AXIS_CASCADE = {
     3: -5,   # Collapse — severe drain on other axis
 }
 
-# Loadout (로드아웃) — 준비 슬롯 (BITD Load)
-LOADOUT_TYPES = {
-    "light":    {"slots": 2, "label": "경장"},
-    "standard": {"slots": 4, "label": "표준"},
-    "heavy":    {"slots": 6, "label": "중장"},
-}
+# Loadout (로드아웃) — 고정 4슬롯. 티어 선택 불필요.
+LOADOUT_SLOTS = 4
 LOADOUT_SLOT_COST = {1: 3, 2: 6, 3: 10}
+# 하위 호환용 (제거 예정)
+LOADOUT_TYPES = {
+    "standard": {"slots": 4, "label": "표준"},
+}
 
+# =========================================================
+# Inventory System (N2 — 아이템 영속 + 인벤토리 검증)
+# =========================================================
+INVENTORY_SLOT_CAP = 4  # 로드아웃 고정 슬롯과 동기화
+ITEM_PERSISTENCE_RULES = {
+    "consumable": "remove_on_use",
+    "weapon": "persist",
+    "armor": "persist",
+    "quest": "persist_until_complete",
+    "misc": "persist",
+}
+
+# =========================================================
+# Vector Search (N3 — 시맨틱 로어 검색)
+# =========================================================
+VECTOR_EMBEDDING_MODEL = "text-embedding-004"
+VECTOR_TOP_K = 5
+VECTOR_MIN_SCORE = 0.3
+
+# Weighted Memory Retrieval (LIBRA-inspired scoring)
+MEMORY_SCORE_W_SIMILARITY = 0.4
+MEMORY_SCORE_W_RECENCY = 0.35
+MEMORY_SCORE_W_IMPORTANCE = 0.25
 # Downtime (다운타임) — 목적 있는 시간 투자 활동 (BITD Downtime)
 DOWNTIME_RECOVER = {"safe": {"vigor": 25, "composure": 15}, "unsafe": {"vigor": 15, "composure": 10}}
 DOWNTIME_VICE = {"base_vigor": 25, "base_composure": 20, "overindulge_threshold": 85, "overindulge_penalty": -15}

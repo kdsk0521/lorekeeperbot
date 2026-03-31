@@ -1112,19 +1112,27 @@ def update_settings(channel_id: str, **kwargs) -> None:
         d["settings"][k] = v
     save_domain(channel_id, d)
 
+CORE_MODULES = {"judgment", "doom", "anomaly", "mental"}
+
 def get_active_modules(channel_id: str) -> List[str]:
-    """현재 활성화된 DLC 모듈 리스트를 반환합니다."""
+    """현재 활성화된 모듈 리스트를 반환합니다.
+    핵심 4모듈(judgment, doom, anomaly, mental)은 항상 활성.
+    board 등 부가 모듈만 토글 가능."""
     d = get_domain(channel_id)
-    return d.get("settings", {}).get("active_modules", ["judgment", "doom", "anomaly", "mental"])
+    stored = set(d.get("settings", {}).get("active_modules", []))
+    # 핵심 모듈은 항상 포함
+    return list(CORE_MODULES | stored)
 
 def toggle_module(channel_id: str, module_name: str, active: bool) -> None:
-    """특정 DLC 모듈을 켜거나 끕니다."""
+    """부가 모듈(board 등)을 켜거나 끕니다.
+    핵심 4모듈은 토글 불가 (항상 활성)."""
+    if module_name in CORE_MODULES:
+        return  # 핵심 모듈은 항상 활성 — 토글 무시
     modules = set(get_active_modules(channel_id))
     if active:
         modules.add(module_name)
     else:
-        if module_name in modules:
-            modules.remove(module_name)
+        modules.discard(module_name)
     update_settings(channel_id, active_modules=list(modules))
 
 def set_response_mode(channel_id: str, mode: str) -> None:
@@ -1500,6 +1508,19 @@ def reset_session_state(channel_id: str) -> None:
         pdata["status_effects"] = []
 
     save_domain(channel_id, d)
+
+# =========================================================
+# 5b. CHRONICLE STORAGE
+# =========================================================
+
+def get_chronicles(channel_id: str) -> list:
+    """저장된 연대기 목록 조회."""
+    return get_domain(channel_id).get("chronicles", [])
+
+def get_latest_chronicle(channel_id: str) -> Optional[Dict]:
+    """가장 최근 연대기 조회."""
+    chronicles = get_chronicles(channel_id)
+    return chronicles[-1] if chronicles else None
 
 # =========================================================
 # 6. UNE ADAPTER (Bridge)

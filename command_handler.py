@@ -1175,96 +1175,68 @@ async def cmd_unlock(ctx: CommandContext) -> None:
 # UNE Module Control Commands
 # =========================================================
 
-@registry.register("modules", category="System", aliases=["모듈", "mods"], description="DLC 모듈 활성화 상태 확인 및 일괄 제어")
+@registry.register("modules", category="System", aliases=["모듈", "mods"], description="DLC 모듈 상태 확인")
 async def cmd_modules(ctx: CommandContext) -> None:
-    """!모듈 [on/off] - 모듈 상태 확인 또는 일괄 제어"""
+    """!모듈 - 모듈 상태 확인. 핵심 4모듈은 항상 활성."""
     arg = ctx.raw_args.strip().lower()
     active = domain_manager.get_active_modules(ctx.channel_id)
-    all_mods = [("judgment", "판정"), ("doom", "둠"), ("anomaly", "이변"), ("mental", "기력"), ("board", "게시판")]
+    core_mods = [("judgment", "판정"), ("doom", "둠"), ("anomaly", "이변"), ("mental", "기력")]
+    extra_mods = [("board", "게시판")]
 
-    # 일괄 ON
+    # board만 일괄 토글 가능
     if arg in ['on', '켜기', 'true', 'all']:
-        for code, _ in all_mods:
+        for code, _ in extra_mods:
             domain_manager.toggle_module(ctx.channel_id, code, True)
-        await ctx.send("✅ **모든 모듈이 활성화되었습니다.**\n• 판정 ✅\n• 둠 ✅\n• 이변 ✅\n• 기력 ✅\n• 게시판 ✅")
+        await ctx.send("✅ **부가 모듈이 활성화되었습니다.**\n• 게시판 ✅\n\n(판정/둠/이변/기력은 항상 활성)")
+        return
+    if arg in ['off', '끄기', 'false', 'none']:
+        for code, _ in extra_mods:
+            domain_manager.toggle_module(ctx.channel_id, code, False)
+        await ctx.send("❌ **부가 모듈이 비활성화되었습니다.**\n• 게시판 ❌\n\n(판정/둠/이변/기력은 항상 활성)")
         return
 
-    # 일괄 OFF
-    if arg in ['off', '끄기', 'false', 'none']:
-        for code, _ in all_mods:
-            domain_manager.toggle_module(ctx.channel_id, code, False)
-        await ctx.send("❌ **모든 모듈이 비활성화되었습니다.**\n• 판정 ❌\n• 둠 ❌\n• 이변 ❌\n• 기력 ❌\n• 게시판 ❌")
-        return
-    
     # 상태 확인
-    msg = ["🔌 **DLC 모듈 상태**"]
-    for code, name in all_mods:
+    msg = ["🔌 **모듈 상태**", "", "**핵심 모듈** (항상 활성)"]
+    for code, name in core_mods:
+        msg.append(f"• {name} ({code}): ✅ ON")
+    msg.append("")
+    msg.append("**부가 모듈** (토글 가능)")
+    for code, name in extra_mods:
         status = "✅ ON" if code in active else "❌ OFF"
         msg.append(f"• {name} ({code}): {status}")
-    
-    msg.append("\n💡 **사용법**:")
-    msg.append("• `!모듈 on` - 모든 모듈 활성화")
-    msg.append("• `!모듈 off` - 모든 모듈 비활성화")
-    msg.append("• `!판정 on/off` - 개별 모듈 제어")
-    
+    msg.append("\n💡 `!게시판 on/off` — 부가 모듈 제어")
+
     await ctx.send("\n".join(msg))
 
-@registry.register("judgment", category="System", aliases=["판정"], description="판정 모듈 제어")
+@registry.register("judgment", category="System", aliases=["판정"], description="판정 모듈 정보")
 async def cmd_toggle_judgment(ctx: CommandContext) -> None:
-    await _handle_module_toggle(ctx, "judgment", "판정")
+    await ctx.send("⚖️ **판정 모듈**: ✅ 항상 활성\n판정 트리거는 AI 분석 + 코드 게이트로 자동 결정됩니다.")
 
-@registry.register("doom_mod", category="System", aliases=["둠모듈", "doommod"], description="둠 모듈 제어")
+@registry.register("doom_mod", category="System", aliases=["둠모듈", "doommod"], description="둠 모듈 정보")
 async def cmd_toggle_doom(ctx: CommandContext) -> None:
-    await _handle_module_toggle(ctx, "doom", "둠")
+    await ctx.send("⏰ **둠 모듈**: ✅ 항상 활성\n8단계 위협 시계가 항상 작동합니다.")
 
-@registry.register("anomaly", category="System", aliases=["이변", "비일상", "abnormal"], description="이변 모듈 제어 및 징후 조회")
+@registry.register("anomaly", category="System", aliases=["이변", "비일상", "abnormal"], description="이변 모듈 정보 및 징후 조회")
 async def cmd_toggle_anomaly(ctx: CommandContext) -> None:
-    arg = ctx.raw_args.strip().lower()
-    # on/off는 토글로 위임
-    if arg in ['on', '켜기', 'true', 'off', '끄기', 'false']:
-        await _handle_module_toggle(ctx, "anomaly", "이변")
-        return
-
-    # 인자 없음: 상태 + 이변 징후 조회
-    active = domain_manager.get_active_modules(ctx.channel_id)
-    status = "✅ ON" if "anomaly" in active else "❌ OFF"
-
     lore_data = domain_manager.get_lore_summary_data(ctx.channel_id)
     seeds = lore_data.get("anomaly_seeds", [])
 
-    msg = f"🌪️ **이변 모듈**: {status}\n"
+    msg = "🌪️ **이변 모듈**: ✅ 항상 활성\n"
     if seeds:
         msg += f"\n**등록된 이변 징후** ({len(seeds)}개):\n"
         msg += "\n".join(f"• `{s}`" for s in seeds)
     else:
         msg += "\n*(이변 징후 없음 — 로어 분석 시 자동 추출됩니다)*"
-
-    msg += f"\n\n사용법: `!이변 on/off`"
     await ctx.send(msg)
 
 @registry.register(
     "기력모듈",
     category="System",
     aliases=["멘탈모듈", "mentalmod", "mental_mod", "vigor_mod", "기력mod"],
-    description="기력 모듈 제어"
+    description="기력 모듈 정보"
 )
 async def cmd_toggle_mental(ctx: CommandContext) -> None:
-    await _handle_module_toggle(ctx, "mental", "기력")
-
-async def _handle_module_toggle(ctx: CommandContext, code: str, name: str):
-    arg = ctx.raw_args.strip().lower()
-    if not arg:
-        active = domain_manager.get_active_modules(ctx.channel_id)
-        status = "✅ ON" if code in active else "❌ OFF"
-        await ctx.send(f"⚙️ **{name} 모듈 상태**: {status}\n사용법: `!{ctx.trigger} on/off`")
-        return
-    
-    if arg in ['on', '켜기', 'true']:
-        domain_manager.toggle_module(ctx.channel_id, code, True)
-        await ctx.send(f"✅ **{name} 모듈**이 활성화되었습니다.")
-    elif arg in ['off', '끄기', 'false']:
-        domain_manager.toggle_module(ctx.channel_id, code, False)
-        await ctx.send(f"❌ **{name} 모듈**이 비활성화되었습니다.")
+    await ctx.send("💪 **기력 모듈**: ✅ 항상 활성\n기력/평정 2축 시스템이 항상 작동합니다.")
 
 @registry.register("board", category="System", aliases=["게시판", "boardmod"], description="세계 게시판 모듈 관리")
 async def cmd_toggle_board(ctx: CommandContext) -> None:
@@ -1385,21 +1357,141 @@ async def cmd_bot(ctx: CommandContext) -> None:
 
 
 
-@registry.register("lores", category="Analysis", aliases=["연대기", "chronicle"], description="연대기 추출")
+def _build_chronicle_input(deep_memory: str, fermented: list, history: list) -> str:
+    """연대기 생성을 위한 입력 텍스트 조립."""
+    parts = []
+
+    if deep_memory and isinstance(deep_memory, str) and deep_memory.strip():
+        parts.append(f"## 장기 기억 (Deep Memory)\n{deep_memory[:3000]}")
+
+    if fermented and isinstance(fermented, list):
+        fermented_texts = []
+        for entry in fermented:
+            if not isinstance(entry, dict):
+                continue
+            summary = entry.get("summary", "")
+            arc = entry.get("arc_observations", {})
+            ts = entry.get("timestamp", "")
+            text = f"[{ts}] {summary}" if summary else ""
+            if isinstance(arc, dict) and arc.get("emotional_arc"):
+                text += f" (감정: {arc['emotional_arc']})"
+            if text:
+                fermented_texts.append(text)
+        if fermented_texts:
+            parts.append("## 중기 기억 (Fermented)\n" + "\n".join(fermented_texts[-10:]))
+
+    if history and isinstance(history, list):
+        recent = history[-30:]
+        hist_lines = []
+        for h in recent:
+            if isinstance(h, dict):
+                role = h.get("role", "?")
+                content = h.get("content", "")
+                if content:
+                    hist_lines.append(f"{role}: {content[:500]}")
+        if hist_lines:
+            parts.append(f"## 최근 대화 (Fresh History, last {len(hist_lines)} messages)\n" + "\n".join(hist_lines))
+
+    return "\n\n---\n\n".join(parts) if parts else ""
+
+
+async def _generate_session_chronicle(ctx: CommandContext) -> None:
+    """Flash API로 세션 연대기 생성."""
+    channel_id = ctx.channel_id
+    d_data = domain_manager.get_domain(channel_id)
+
+    # Gather all memory layers
+    session_data = d_data.get("ai_session_memory", {})
+    deep_memory = session_data.get("deep_memory", "") or d_data.get("deep_memory", "")
+    fermented = session_data.get("fermented_history", []) or d_data.get("fermented_history", [])
+    history = d_data.get("history", [])
+
+    if not deep_memory and not fermented and not history:
+        await ctx.send("⚠️ 기록된 세션 데이터가 없습니다.")
+        return
+
+    feedback = await ctx.message.channel.send("📜 **연대기를 작성하고 있습니다...**")
+
+    chronicle_input = _build_chronicle_input(deep_memory, fermented, history)
+    if not chronicle_input:
+        try:
+            await feedback.edit(content="⚠️ 요약할 데이터가 부족합니다.")
+        except Exception:
+            pass
+        return
+
+    import text_resources
+    from google.genai import types
+
+    try:
+        response = await ctx.genai_client.aio.models.generate_content(
+            model=config.MODEL_ID_FLASH,
+            contents=[
+                types.Content(role="user", parts=[types.Part(text=chronicle_input)])
+            ],
+            config=types.GenerateContentConfig(
+                system_instruction=text_resources.CHRONICLE_SYSTEM_PROMPT,
+                temperature=0.5,
+                max_output_tokens=4096,
+                safety_settings=config.SAFETY_SETTINGS,
+            )
+        )
+
+        if response and response.text:
+            chronicle_text = response.text.strip()
+
+            # Store in domain
+            chronicles = d_data.setdefault("chronicles", [])
+            chronicles.append({
+                "timestamp": time.time(),
+                "content": chronicle_text,
+                "type": "session_summary",
+            })
+            if len(chronicles) > 10:
+                d_data["chronicles"] = chronicles[-10:]
+            domain_manager.save_domain(channel_id, d_data)
+
+            # Send to channel
+            try:
+                await feedback.delete()
+            except Exception:
+                pass
+
+            await send_long_message(
+                ctx.message.channel,
+                f"📜 **[세션 연대기]**\n\n{chronicle_text}"
+            )
+        else:
+            try:
+                await feedback.edit(content="⚠️ 연대기 생성에 실패했습니다.")
+            except Exception:
+                pass
+    except Exception as e:
+        logger.error(f"[Chronicle] Generation failed: {e}", exc_info=True)
+        try:
+            await feedback.edit(content=f"⚠️ 연대기 생성 오류: {str(e)[:100]}")
+        except Exception:
+            pass
+
+
+@registry.register("lores", category="Analysis", aliases=["연대기", "chronicle"], description="세션 연대기 (AI 요약 / 내보내기)")
 async def cmd_lores(ctx: CommandContext) -> None:
-    """!연대기 [new/증분]"""
-    # Check for incremental argument "new", "inc"
-    incremental = False
-    arg = ctx.raw_args.lower()
-    if arg in ['new', 'inc', '증분', '최신']:
-         incremental = True
-         
-    export_text, msg = game_system.export_chronicle_book(ctx.channel_id, incremental=incremental)
-    if export_text:
-        fname = f"Chronicles_{ctx.channel_id}_{'INC' if incremental else 'FULL'}.txt"
-        await ctx.message.channel.send(msg, file=discord.File(io.StringIO(export_text), filename=fname))
-    else:
-        await ctx.send(msg)
+    """!연대기 — AI 세션 요약 생성 / !연대기 내보내기 — 기존 텍스트 파일"""
+    arg = ctx.raw_args.strip().lower()
+
+    # Subcommand: export (기존 기능 유지)
+    if arg.startswith(('내보내기', 'export', 'new', 'inc', '증분', '최신')):
+        incremental = arg in ('new', 'inc', '증분', '최신') or '증분' in arg or 'new' in arg
+        export_text, msg = game_system.export_chronicle_book(ctx.channel_id, incremental=incremental)
+        if export_text:
+            fname = f"Chronicles_{ctx.channel_id}_{'INC' if incremental else 'FULL'}.txt"
+            await ctx.message.channel.send(msg, file=discord.File(io.StringIO(export_text), filename=fname))
+        else:
+            await ctx.send(msg)
+        return
+
+    # Default: AI Summary Generation
+    await _generate_session_chronicle(ctx)
 
 
 # !abnormal / !비일상 은 !이변 (anomaly) 으로 통합되었습니다.
@@ -1594,73 +1686,60 @@ async def cmd_mental(ctx: CommandContext) -> None:
         await ctx.send("⚠️ 올바른 숫자를 입력하세요. (예: `!기력 80` 또는 `!기력 80 70`)")
 
 
-@registry.register("flashback", category="Player", aliases=["회상"], description="회상 선언 (과거 준비를 소급 선언)")
+@registry.register("flashback", category="Player", aliases=["회상", "로드아웃", "장비설정"], description="회상 선언 (장비 소환 포함)")
 async def cmd_flashback(ctx: CommandContext) -> None:
-    """!회상 [내용] - 회상 선언을 대기열에 등록. 다음 턴에 Theoria가 평가."""
-    # 기력 모듈 활성 체크
-    active_modules = domain_manager.get_active_modules(ctx.channel_id)
-    if "mental" not in active_modules:
-        await ctx.send("❌ 기력 모듈이 비활성 상태입니다. 회상을 사용하려면 기력 모듈을 활성화하세요.")
-        return
-
-    content = ctx.raw_args.strip()
-    if not content:
-        tiers = config.FLASHBACK_COST_TIERS
-        await ctx.send(
-            "🔮 **회상 시스템** — 과거의 준비를 소급 선언합니다.\n"
-            f"사용법: `!회상 [선언 내용]`\n\n"
-            f"**비용 (기력 차감)**\n"
-            f"- **trivial** (면모 매칭): -{tiers['trivial']}\n"
-            f"- **standard** (합리적): -{tiers['standard']}\n"
-            f"- **bold** (대담한): -{tiers['bold']}\n\n"
-            f"**규칙**: 상황/포지션 변경만 가능. 수치(기력/둠) 직접 변경 불가.\n"
-            f"**예시**: `!회상 탈출 루트를 미리 확보해뒀다`\n"
-            f"서사적으로도 가능: 대사/행동 중 자연스럽게 '사실 미리 ~해뒀다' 표현"
-        )
-        return
-
-    # 대기열에 등록
-    domain_manager.set_pending_flashback(ctx.channel_id, content, ctx.user_id)
-    await ctx.send(f"🔮 **회상 대기 등록**: \"{content}\"\n다음 턴에 Theoria가 평가합니다.")
-
-
-
-
-@registry.register("loadout", category="Player", aliases=["로드아웃", "장비설정"], description="세션 초기 준비 슬롯 설정")
-async def cmd_loadout(ctx: CommandContext) -> None:
-    """!로드아웃 [경장/표준/중장] — 세션 초기 준비 슬롯 설정"""
+    """!회상 [상태/선언내용] — 과거 준비를 소급 선언. 로드아웃 4칸 자동."""
     import config as _cfg
-    active_modules = domain_manager.get_active_modules(ctx.channel_id)
-    if "mental" not in active_modules:
-        await ctx.send("❌ 기력 모듈이 비활성 상태입니다.")
-        return
+    arg = ctx.raw_args.strip()
 
-    arg = ctx.raw_args.strip().lower()
-    # Korean alias → key mapping
-    alias_map = {"경장": "light", "표준": "standard", "중장": "heavy"}
-    load_key = alias_map.get(arg, arg) if arg else ""
-
-    if not load_key or load_key not in _cfg.LOADOUT_TYPES:
-        types_desc = " / ".join(
-            f"`{v['label']}({k})` — {v['slots']}슬롯" for k, v in _cfg.LOADOUT_TYPES.items()
-        )
-        current = domain_manager.get_loadout(ctx.channel_id, ctx.user_id)
-        current_msg = ""
-        if current:
-            current_msg = (
-                f"\n현재: **{current.get('label', current.get('load_type'))}** "
-                f"({current.get('used_slots', 0)}/{current['total_slots']}슬롯 사용)"
-            )
+    # ── 도움말 ──
+    if not arg:
+        tiers = _cfg.FLASHBACK_COST_TIERS
+        loadout = domain_manager.get_loadout(ctx.channel_id, ctx.user_id)
+        slot_info = ""
+        if loadout:
+            used = loadout.get("used_slots", 0)
+            total = loadout["total_slots"]
+            slot_info = f"\n📌 장비 슬롯: {total - used}/{total}칸 남음"
         await ctx.send(
-            f"🎒 **로드아웃** — 준비 슬롯 설정\n"
-            f"사용법: `!로드아웃 [유형]`\n{types_desc}{current_msg}\n\n"
-            f"설정 후, 서사 중 '가방에서 ~를 꺼낸다'로 슬롯을 소비합니다."
+            "🔮 **회상 시스템** — 과거 준비를 소급 선언합니다.\n\n"
+            "**사용법**\n"
+            "`!회상 [선언 내용]` — 다음 턴에 평가\n"
+            "`!회상 상태` — 현재 슬롯/기력 확인\n\n"
+            "**비용** (기력 차감, 특질 매칭 시 50% 할인)\n"
+            f"- trivial: -{tiers['trivial']} / standard: -{tiers['standard']} / bold: -{tiers['bold']}\n\n"
+            "**장비 소환**: 서사 중 '꺼낸다/챙겨왔다' → 장비 슬롯 소비 (4칸, 자동)\n\n"
+            "예시: `!회상 탈출 루트를 미리 확보해뒀다`\n"
+            "서사 중 자연스럽게도 가능: \"사실 미리 ~해뒀다\""
+            f"{slot_info}"
         )
         return
 
-    lt = _cfg.LOADOUT_TYPES[load_key]
-    domain_manager.set_loadout(ctx.channel_id, ctx.user_id, load_key, lt["slots"], lt["label"])
-    await ctx.send(f"🎒 로드아웃 설정: **{lt['label']}** ({lt['slots']}슬롯)")
+    # ── 상태 확인 ──
+    if arg.lower() in ("상태", "status", "정보", "info"):
+        loadout = domain_manager.get_loadout(ctx.channel_id, ctx.user_id)
+        mem = domain_manager.get_ai_memory(ctx.channel_id, ctx.user_id)
+        vigor_val = mem.get("vigor", {}).get("value", 100)
+        composure_val = mem.get("composure", {}).get("value", 100)
+        if loadout:
+            used = loadout.get("used_slots", 0)
+            total = loadout["total_slots"]
+            items = loadout.get("items", [])
+            items_str = ", ".join(items) if items else "(없음)"
+            slot_msg = f"🎒 **장비 슬롯**: {total - used}/{total}칸\n사용: {items_str}"
+        else:
+            slot_msg = f"🎒 **장비 슬롯**: 4/4칸 (미사용)"
+        tiers = _cfg.FLASHBACK_COST_TIERS
+        await ctx.send(
+            f"{slot_msg}\n"
+            f"⚡ 기력 {vigor_val}/100 | 평정 {composure_val}/100\n"
+            f"회상 비용: trivial -{tiers['trivial']} / standard -{tiers['standard']} / bold -{tiers['bold']}"
+        )
+        return
+
+    # ── 회상 선언 (대기열 등록) ──
+    domain_manager.set_pending_flashback(ctx.channel_id, arg, ctx.user_id)
+    await ctx.send(f"🔮 **회상 대기**: \"{arg}\"\n다음 턴에 평가됩니다.")
 
 
 @registry.register("reset_npcs", category="Admin", aliases=["엔피씨초기화", "npc_reset"], description="세션 NPC 초기화")

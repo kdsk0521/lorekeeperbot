@@ -26,58 +26,52 @@ import prompt_builder as legacy_builder
 logger = logging.getLogger("SlotManager")
 
 
+# N5: 카테고리-슬롯 자동 배치 매핑
+CATEGORY_SLOT_MAP = {
+    'world_rule': 5,        # World Axiom
+    'character': 6,          # PC Data
+    'npc_info': 7,           # NPC Role
+    'lore': 8,               # Lore
+    'temporal': 10,           # Time Flow
+    'interaction': 12,        # Social Interaction
+    'narrative_rule': 25,     # Anti-Cliche + Style
+    'real_time': 29,          # Real-Time Data
+}
+
+
+def get_slot_for_category(category: str) -> int:
+    """카테고리에 해당하는 슬롯 번호 반환. 기본값: 8 (로어)."""
+    return CATEGORY_SLOT_MAP.get(category, 8)
+
+
 # =========================================================
 # Dynamic STATUS_WINDOW_LAYOUT Builder
 # =========================================================
 
-def _build_status_layout(active_modules: list, present_chars: str = "") -> str:
-    """active_modules에 따라 STATUS_WINDOW_LAYOUT을 동적으로 생성.
-    OFF인 모듈의 메트릭은 포맷/예시/규칙에서 완전 제거.
+def _build_status_layout(active_modules: list = None, present_chars: str = "") -> str:
+    """STATUS_WINDOW_LAYOUT 생성. 모든 핵심 모듈은 항상 활성.
+    active_modules 인자는 하위 호환용으로 유지하나 무시됨.
     present_chars: 현재 장면 인물 힌트 (gaze 기반)."""
-    module_set = set(active_modules or [])
-    has_mental = "mental" in module_set
-    has_doom = "doom" in module_set
 
-    # --- FORMAT block ---
-    fmt = ["위치 [Location] | 시간 [Day]일차 [HH:MM] ([TimeSlot]) | 인물 [Present Characters]"]
-    ex = ["위치 하숙집 거실 | 시간 3일차 04:30 (새벽) | 인물 리미, 옥상 남자"]
-
-    line2_fmt, line2_ex = [], []
-    if has_mental:
-        line2_fmt.extend(["기력 [value]", "평정 [value]", "로드아웃 [used/total]"])
-        line2_ex.extend(["기력 72", "평정 38", "로드아웃 1/4"])
-    if has_doom:
-        line2_fmt.append("Doom [value]")
-        line2_ex.append("Doom 45")
-
-    if line2_fmt:
-        fmt.append(" | ".join(line2_fmt))
-        ex.append(" | ".join(line2_ex))
-
-    if has_doom:
-        fmt.append("[Clock1 filled/segments] [Clock2 filled/segments ...]")
-        ex.append("[조직의 추적 4/6] [붉은 문턱 2/4]")
+    # --- FORMAT block (모든 메트릭 항상 포함) ---
+    fmt = [
+        "위치 [Location] | 시간 [Day]일차 [HH:MM] ([TimeSlot]) | 인물 [Present Characters]",
+        "기력 [value] | 평정 [value] | 로드아웃 [used/total] | Doom [value]",
+        "[Clock1 filled/segments] [Clock2 filled/segments ...]",
+    ]
+    ex = [
+        "위치 하숙집 거실 | 시간 3일차 04:30 (새벽) | 인물 리미, 옥상 남자",
+        "기력 72 | 평정 38 | 로드아웃 1/4 | Doom 45",
+        "[조직의 추적 4/6] [붉은 문턱 2/4]",
+    ]
 
     # --- RULES block ---
-    rules = ["- Line 1: location, time, characters."]
-    if has_mental and has_doom:
-        rules.append("- Line 2: Vigor + Composure + Global Doom (numeric only).")
-        rules.append("- Line 3: active doom clocks only. Omit line 3 if no active clock.")
-    elif has_mental:
-        rules.append("- Line 2: Vigor + Composure (numeric only).")
-    elif has_doom:
-        rules.append("- Line 2: Global Doom (numeric only).")
-        rules.append("- Line 3: active doom clocks only. Omit line 3 if no active clock.")
-
-    off_parts = []
-    if not has_mental:
-        off_parts.append("기력/평정(Vigor/Composure)")
-    if not has_doom:
-        off_parts.append("Doom/Doom Clocks")
-    if off_parts:
-        rules.append(f"- DISABLED: {', '.join(off_parts)} — do NOT display these metrics.")
-
-    rules.append("- Keep it compact and stable across turns.")
+    rules = [
+        "- Line 1: location, time, characters.",
+        "- Line 2: Vigor + Composure + Global Doom (numeric only).",
+        "- Line 3: active doom clocks only. Omit line 3 if no active clock.",
+        "- Keep it compact and stable across turns.",
+    ]
     if present_chars:
         rules.append(f"- CURRENT SCENE CHARACTERS: {present_chars}")
 
@@ -254,19 +248,19 @@ SLOT_DEFINITIONS: Dict[int, SlotDefinition] = {
     # ===== PRIMACY ZONE (1-4): AI가 가장 강하게 기억하는 구간 =====
     1: SlotDefinition(1, "AI_MANDATE", "identity", "text_resources.CONTENT_AUTHORIZATION_MANDATE"),
     2: SlotDefinition(2, "AI_IDENTITY", "identity", "text_resources.AI_CORE_IDENTITY"),
-    3: SlotDefinition(3, "MIRROR_WORKSHOP", "philosophy", "text_resources.MIRROR_WORKSHOP_PROTOCOL (includes CAMERA/SENSORY RULES)"),
+    3: SlotDefinition(3, "MIRROR_WORKSHOP", "philosophy", "text_resources.MIRROR_WORKSHOP_PROTOCOL"),
 
     # ===== WORLD ZONE (5-9): 참조 데이터 (중간 배치 OK) =====
-    5: SlotDefinition(5, "WORLD_AXIOM", "world", "text_resources.WORLD_AXIOM (includes ACTION_RES + ASPECTS)"),
+    5: SlotDefinition(5, "WORLD_AXIOM", "world", "text_resources.WORLD_AXIOM"),
     6: SlotDefinition(6, "PC_DATA", "world", "ResponseContext.player_data", is_static=False),
     7: SlotDefinition(7, "NPC_ROLES", "world", "npc_manager.get_npcs", is_static=False),
     8: SlotDefinition(8, "LORE", "world", "domain_manager.get_lore", is_static=False),
     9: SlotDefinition(9, "FERMENTED_HISTORY", "history", "fermentation + cognition.memory_triggers", is_static=False),
 
     # ===== CONTEXT ZONE (10-12): 현재 상황 =====
-    10: SlotDefinition(10, "TEMPORAL_FLOW", "context", "text_resources.TEMPORAL_FLOW (includes TIME-OF-DAY + DURATION)"),
+    10: SlotDefinition(10, "TEMPORAL_FLOW", "context", "text_resources.TEMPORAL_FLOW_DOCTRINE"),
     11: SlotDefinition(11, "CHAPTER_CONTEXT", "context", "domain_manager.get_current_chapter", is_static=False),
-    12: SlotDefinition(12, "SOCIAL_INTERACTION", "context", "text_resources.INTERACTION_MODEL + NPC_BEHAVIOR"),
+    12: SlotDefinition(12, "SOCIAL_INTERACTION", "context", "text_resources.INTERACTION_MODEL + NPC_BEHAVIOR_SYSTEM"),
 
     # ===== COGNITION ZONE (13-17): Theoria 분석 데이터 =====
     13: SlotDefinition(13, "INPUT_ANALYSIS", "reasoning", "Theoria: InputAnalysis + Observation + UserIntent + Position/Effect", is_static=False),
@@ -278,7 +272,7 @@ SLOT_DEFINITIONS: Dict[int, SlotDefinition] = {
     18: SlotDefinition(18, "PC_AUTONOMY", "rules", "text_resources.PC_AUTONOMY_DOCTRINE"),
     20: SlotDefinition(20, "STATUS_LAYOUT", "rules", "_build_status_layout() dynamic"),
     22: SlotDefinition(22, "VISCERAL_CONTENT", "content", "text_resources.VISCERAL (conditional)", is_static=False),
-    25: SlotDefinition(25, "STYLE", "rules", "text_resources.ANTI_CLICHE (includes §5 PSYCHE) + PROSE_CRAFT (includes KOREAN STYLE)"),
+    25: SlotDefinition(25, "STYLE", "rules", "text_resources.PROSE_CRAFT_PROTOCOL"),
 
     # ========== CACHE BOUNDARY ==========
     26: SlotDefinition(26, "CACHE_BOUNDARY", "boundary", "==========CACHE BOUNDARY==========", is_static=False),
@@ -362,51 +356,30 @@ class SlotPromptBuilder:
         self.set_slot(1, text_resources.CONTENT_AUTHORIZATION_MANDATE)
         self.set_slot(2, text_resources.AI_CORE_IDENTITY)
 
-        # [3] Mirror Workshop (거울공방 - 핵심 서사 철학 → Primacy!)
-        mirror_workshop = getattr(text_resources, 'MIRROR_WORKSHOP_PROTOCOL', '')
-        if not mirror_workshop:
-            logger.warning("[Slot 3] MIRROR_WORKSHOP_PROTOCOL missing — primacy philosophy slot empty")
-        self.set_slot(3, mirror_workshop)
-
-        # [4] Removed — PHYSICAL_RENDERING merged into MIRROR_WORKSHOP (Slot 3)
+        # [3] Mirror Workshop
+        self.set_slot(3, getattr(text_resources, 'MIRROR_WORKSHOP_PROTOCOL', ''))
 
         # ===== WORLD ZONE (5) =====
-        # MEMORY_HIERARCHY removed — codified into iceberg.translate_memory_type()
         self.set_slot(5, text_resources.WORLD_AXIOM)
 
         # ===== CONTEXT ZONE (10, 12) =====
-        # [10] Temporal (TIME-OF-DAY + DURATION now inside TEMPORAL_FLOW_DOCTRINE)
-        temporal = getattr(text_resources, 'TEMPORAL_FLOW_DOCTRINE', '') or getattr(text_resources, 'TEMPORAL_FLOW', '')
-        self.set_slot(10, temporal)
+        self.set_slot(10, getattr(text_resources, 'TEMPORAL_FLOW_DOCTRINE', ''))
 
         # [12] Social
         interaction = getattr(text_resources, 'INTERACTION_MODEL', '')
         npc_behavior = getattr(text_resources, 'NPC_BEHAVIOR_SYSTEM', '')
         self.set_slot(12, f"{interaction}\n\n{npc_behavior}")
 
-        # [15] Removed — PSYCHE_STATE_RENDERING merged into ANTI_CLICHE §5 (Slot 25)
-
-        # ===== RULES ZONE (18-25) - Static Recency 강화 =====
-        # [18] PC Autonomy
+        # ===== RULES ZONE (18-25) =====
         self.set_slot(18, text_resources.PC_AUTONOMY_DOCTRINE)
-
-        # [20] Status Layout — 동적 빌더(_build_status_layout)가 덮어씀
-        self.set_slot(20, "")
-
-        # [21] Removed — ACTION_RES+ASPECTS merged into WORLD_AXIOM (Slot 5), ENERGY_DIR into PACING (Slot 28)
-
-        # [25] Style (Static Recency! 캐시 구간 마지막)
-        anti_cliche = getattr(text_resources, 'ANTI_CLICHE_PROTOCOL', '')
-        prose_craft = getattr(text_resources, 'PROSE_CRAFT_PROTOCOL', '')
-        self.set_slot(25, f"{anti_cliche}\n\n{prose_craft}")
+        self.set_slot(20, "")  # 동적 빌더가 덮어씀
+        self.set_slot(25, getattr(text_resources, 'PROSE_CRAFT_PROTOCOL', ''))
 
         # ===== CACHE BOUNDARY =====
         self.set_slot(26, "\n==========CACHE BOUNDARY==========\n")
 
-        # ===== DYNAMIC ZONE (34) - Telescope 규칙만 정적, 프리필은 동적 =====
-        # [34] Telescope rules (정적) — LANGUAGE_CORRECTION은 PROSE_CRAFT로 병합됨. 프리필은 populate_dynamic_slots()에서 추가
-        telescope_rules = getattr(text_resources, 'TELESCOPE_PROTOCOL', '')
-        self.set_slot(34, telescope_rules)
+        # ===== DYNAMIC ZONE (34) =====
+        self.set_slot(34, getattr(text_resources, 'TELESCOPE_PROTOCOL', ''))
 
         self._static_built = True
         logger.info("[SlotPromptBuilder] Static slots populated (Primacy/Recency optimized).")
@@ -706,7 +679,8 @@ def build_34_step_prompt(ctx) -> str:
     if relevant_npcs and channel_id:
         import npc_manager as _npc_mgr
         npc_scene_type = dai.get("scene_type", "normal")
-        full_profiles = _npc_mgr.get_npc_full_profiles(channel_id, relevant_npcs, scene_type=npc_scene_type)
+        # P5: Renderer gets secret-stripped profiles; Theoria already has full data
+        full_profiles = _npc_mgr.get_npc_renderer_profiles(channel_id, relevant_npcs, scene_type=npc_scene_type)
         others = _npc_mgr.get_npc_names_only(channel_id, exclude=relevant_npcs)
         npc_roles = full_profiles
         if others:
@@ -1251,22 +1225,7 @@ def build_34_step_prompt(ctx) -> str:
                 break
 
     # =========================================================
-    # 3.5. POV 모드 전환 (사칭 토글 연동)
-    # =========================================================
-    # impersonation_filter=True  → Camera Eye (행동주의, 모든 내면 블랙박스)
-    # impersonation_filter=False → Omniscient Author (전지적 작가, NPC 내면 허용)
-    impersonation_enabled = domain_data.get("settings", {}).get("impersonation_filter", True)
-
-    if not impersonation_enabled:
-        # 전지적 모드: Camera Eye 제한을 NPC에 대해 완화
-        omniscient_override = getattr(text_resources, 'OMNISCIENT_MODE_OVERRIDE', '')
-        if omniscient_override:
-            # 슬롯 34 (TELESCOPE + OUTPUT + KERNEL)에 오버라이드 추가 → 최종 Recency 강화
-            current_slot34 = builder.get_slot(34) or ''
-            builder.set_slot(34, f"{omniscient_override}\n\n{current_slot34}")
-            logger.info("[POV Mode] Omniscient Author mode active — NPC inner states accessible")
-    else:
-        logger.debug("[POV Mode] Camera Eye mode active — all inner states sealed")
+    # 3.5. POV — Camera Eye 고정 (전지적 모드 제거)
 
     # =========================================================
     # 3.6. 히스토리 사칭 정화

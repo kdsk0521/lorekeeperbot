@@ -5,16 +5,48 @@ Orchestrates the sequence of narrative analysis and mechanical updates.
 
 import logging
 import random
-from typing import Dict, Any, List
+from typing import Dict, Any
 from orchestration_context import GameContext, SharedBus
 from theoria_analyzer import TheoriaAnalyzer
 from vigor_composure_module import VigorComposureModule
 from judgment_engine import JudgmentEngine
 from anomaly_module import AnomalyModule
 from doom_module import DoomModule
+from judgment_gate import gate_judgment
 import domain_manager
 
 logger = logging.getLogger("Waterfall")
+
+
+# =========================================================
+# P6: 인과 구속 힌트 (Flash에 능력 범위 주입)
+# =========================================================
+def _inject_capability_hints(npc_profiles: dict) -> str:
+    """NPC별 능력 범위 요약을 Flash 프롬프트에 주입.
+    하드블록 아님. Flash가 참조할 수 있는 힌트만."""
+    hints = []
+    for name, profile in npc_profiles.items():
+        if not isinstance(profile, dict):
+            continue
+        caps = profile.get("capabilities", {})
+        static_traits = profile.get("static_traits", {})
+
+        parts = []
+        if caps:
+            strengths = caps.get("strengths", "?")
+            limits = caps.get("limits", "?")
+            parts.append(f"can={strengths} | cannot={limits}")
+        if static_traits:
+            coping = static_traits.get("coping_style", "")
+            moral = static_traits.get("moral_stance", "")
+            if coping or moral:
+                parts.append(f"coping={coping}, moral={moral}")
+
+        if parts:
+            hints.append(f"[{name}] {' | '.join(parts)}")
+
+    return "\n".join(hints) if hints else ""
+
 
 class WaterfallPipeline:
     def __init__(self, client, model_id: str):
@@ -36,23 +68,11 @@ class WaterfallPipeline:
             if current is None or not isinstance(current, dict):
                 setattr(bus, key, getattr(defaults, key))
 
-    def _apply_off_fallbacks(self, active_modules: List[str], bus: SharedBus) -> None:
-        """
-        When a DLC is OFF, apply agreed fallback values without marking it active.
-        - Doom OFF  -> value 30
-        - Mental OFF -> vigor 50, composure 50
-        """
-        if "doom" not in active_modules:
-            bus.doom["value"] = 30
-            bus.doom["active"] = False
-        if "mental" not in active_modules:
-            bus.vigor["value"] = 50
-            bus.vigor["active"] = False
-            bus.composure["value"] = 50
-            bus.composure["active"] = False
-
     async def execute(self, context: GameContext) -> GameContext:
         """Analysis -> Mental(pre) -> Judgment -> Storyteller -> Doom -> Mental(sync)
+
+        All core modules (Doom, Anomaly, Mental, Judgment) are always active.
+        Judgment trigger is gated by judgment_gate (N1).
 
         Data-flow map (SharedBus ownership):
         - Theoria: bus.dai (all analysis), bus.judgment, bus.doom, bus.vigor/composure.impact
@@ -62,10 +82,8 @@ class WaterfallPipeline:
         - Doom: bus.doom.value/delta/log, consumes judgment doom_delta, may write vigor/composure pressure delta
         - Mental(sync): consumes ALL accumulated deltas (judgment + doom pressure + rest + status)
         """
-        
-        active_modules = context.request.active_modules
+
         self._ensure_bus_schema(context.shared_bus)
-        self._apply_off_fallbacks(active_modules, context.shared_bus)
         
         # 1. Call 1: Analysis (Theoria) - Always Execute
         analysis = await self.theoria.analyze_input(context)
@@ -119,9 +137,35 @@ class WaterfallPipeline:
         bus.dai["rest_eval"] = analysis.get("rest_eval")
         bus.dai["item_usage"] = analysis.get("item_usage")
 
-        # Judgment 연동
-        bus.judgment["active"] = analysis.get("needs_judgment", False)
-        if bus.judgment["active"]:
+        # P6: Inject capability hints for Theoria reference
+        _npc_roster = (context.narrative_anchors or {}).get("npc_roster", {})
+        if _npc_roster:
+            cap_hints = _inject_capability_hints(_npc_roster)
+            if cap_hints:
+                bus.dai["capability_hints"] = cap_hints
+
+        # N1: Judgment Gate — Flash의 needs_judgment를 코드 게이트로 검증
+        raw_needs = analysis.get("needs_judgment", False)
+        resolve = (analysis.get("action_meta") or {}).get("resolve", "none")
+        last_j_turn = bus.judgment.get("last_judgment_turn", -10)
+        current_turn = (context.narrative_anchors or {}).get(
+            "session_memory", {}
+        ).get("turn_count", 0) or domain_manager.get_world_state(
+            (context.narrative_anchors or {}).get("channel_id", "")
+        ).get("turn_index", 0)
+
+        final_needs, gate_reason = gate_judgment(
+            user_input=context.request.user_input,
+            flash_needs_judgment=raw_needs,
+            last_judgment_turn=last_j_turn,
+            current_turn=current_turn,
+            resolve=resolve,
+        )
+
+        bus.judgment["active"] = final_needs
+        bus.judgment["gate_reason"] = gate_reason
+        if final_needs:
+            bus.judgment["last_judgment_turn"] = current_turn
             bus.judgment["meta"] = analysis.get("action_meta", {})
             eval_data = analysis.get("asset_evaluation", {})
             bus.judgment["eval"] = eval_data
@@ -198,6 +242,14 @@ class WaterfallPipeline:
             if event_location:
                 bus.anomaly["location"] = event_location
 
+        # M3: Chain CLOSED → force anomaly trigger
+        chain_status = bus.dai.get('narrative_chain', {}).get('status', 'OPEN')
+        if chain_status == 'CLOSED' and not bus.anomaly.get('triggered'):
+            bus.anomaly['triggered'] = True
+            bus.anomaly['tag'] = bus.anomaly.get('tag') or 'chain_closure'
+            bus.anomaly['decision_reason'] = 'Narrative chain reached CLOSED state'
+            logger.info("[M3] Chain CLOSED → anomaly auto-triggered")
+
         # Fallback: if no anomaly tag was proposed, pick from lore seeds
         if not bus.anomaly.get("tag"):
             seeds = context.request.lore_summary.get("anomaly_seeds", [])
@@ -221,50 +273,45 @@ class WaterfallPipeline:
         if bus.anomaly.get("tag") and not bus.anomaly.get("line"):
             bus.anomaly["line"] = f"{bus.anomaly['tag']}의 기운이 감돈다."
 
-        # 2. Mental Pre-pass (Conditional): annotate current stage for downstream modules.
-        if "mental" in active_modules:
-            self.vigor_composure = VigorComposureModule()
-            context = await self.vigor_composure.prime(context)
+        # 2. Mental Pre-pass: annotate current stage for downstream modules.
+        self.vigor_composure = VigorComposureModule()
+        context = await self.vigor_composure.prime(context)
 
-        # 3. Judgment (Conditional, EARLY — consequences flow downstream)
-        if "judgment" in active_modules and bus.judgment["active"]:
+        # 3. Judgment (gated by Flash needs_judgment + judgment_gate)
+        if bus.judgment["active"]:
             self.judgment = JudgmentEngine(self.theoria.client, self.theoria.model_id)
             context = await self.judgment.process(context)
 
         # 4. Storyteller: inject state + set potential
-        if "anomaly" in active_modules:
-            bus.anomaly["potential"] = True
-            channel_id = (context.narrative_anchors or {}).get("channel_id", "")
-            if channel_id:
-                st_state = domain_manager.get_storyteller_state(channel_id)
-                bus.anomaly["_storyteller_state"] = st_state
-                bus.anomaly["_current_turn"] = domain_manager.get_world_state(channel_id).get("turn_index", 0)
-                bus.anomaly["_channel_id"] = channel_id
+        bus.anomaly["potential"] = True
+        channel_id = (context.narrative_anchors or {}).get("channel_id", "")
+        if channel_id:
+            st_state = domain_manager.get_storyteller_state(channel_id)
+            bus.anomaly["_storyteller_state"] = st_state
+            bus.anomaly["_current_turn"] = domain_manager.get_world_state(channel_id).get("turn_index", 0)
+            bus.anomaly["_channel_id"] = channel_id
 
-        # 5. Storyteller Decision (Conditional)
-        if "anomaly" in active_modules and bus.anomaly.get("potential"):
+        # 5. Storyteller Decision
+        if bus.anomaly.get("potential"):
             self.anomaly = AnomalyModule(self.theoria.client, self.theoria.model_id)
             context = await self.anomaly.process(context)
 
-        # 6. Doom Update (Conditional) — consumes judgment doom_delta naturally
-        if "doom" in active_modules:
-            self.doom = DoomModule()
-            context = await self.doom.process(context)
+        # 6. Doom Update — consumes judgment doom_delta naturally
+        self.doom = DoomModule()
+        context = await self.doom.process(context)
 
-        # 7. Vigor/Composure Sync (Conditional, LAST — consumes all accumulated deltas)
-        if "mental" in active_modules:
-            self.vigor_composure = VigorComposureModule()
-            context = await self.vigor_composure.process(context)
+        # 7. Vigor/Composure Sync (LAST — consumes all accumulated deltas)
+        self.vigor_composure = VigorComposureModule()
+        context = await self.vigor_composure.process(context)
 
         # ===== Pipeline Summary Log =====
-        self._log_pipeline_summary(bus, active_modules)
+        self._log_pipeline_summary(bus)
 
         return context
 
-    def _log_pipeline_summary(self, bus: SharedBus, active_modules: List[str]) -> None:
+    def _log_pipeline_summary(self, bus: SharedBus) -> None:
         """파이프라인 실행 결과 한눈에 볼 수 있는 요약 로그."""
-        parts = ["[Pipeline Summary]"]
-        parts.append(f"  Modules ON: {', '.join(active_modules)}")
+        parts = ["[Pipeline Summary] (all modules always active)"]
 
         # Judgment
         if bus.judgment.get("active"):
@@ -272,18 +319,15 @@ class WaterfallPipeline:
             result = j.get("result", "N/A")
             roll = j.get("final_roll", "?")
             dc = j.get("dc", "?")
-            parts.append(f"  Judgment: {result} (roll={roll} vs DC={dc})")
+            gate = j.get("gate_reason", "")
+            parts.append(f"  Judgment: {result} (roll={roll} vs DC={dc}) [{gate}]")
         else:
             parts.append(f"  Judgment: skipped (no action requiring roll)")
 
         # Doom
         doom_val = bus.doom.get("value", "?")
         doom_log = bus.doom.get("log", "")
-        doom_active = bus.doom.get("active", False)
-        if doom_active:
-            parts.append(f"  Doom: {doom_val}/100 — {doom_log[:100]}" if doom_log else f"  Doom: {doom_val}/100 (no change)")
-        else:
-            parts.append(f"  Doom: OFF (fallback={doom_val})")
+        parts.append(f"  Doom: {doom_val}/100 — {doom_log[:100]}" if doom_log else f"  Doom: {doom_val}/100 (no change)")
 
         # Storyteller
         anomaly_triggered = bus.anomaly.get("triggered", False)
@@ -300,27 +344,11 @@ class WaterfallPipeline:
 
         # Vigor / Composure
         v_val = bus.vigor.get("value", "?")
-        v_active = bus.vigor.get("active", False)
         c_val = bus.composure.get("value", "?")
-        c_active = bus.composure.get("active", False)
-        if v_active or c_active:
-            v_delta = bus.vigor.get("delta_applied", 0) or 0
-            c_delta = bus.composure.get("delta_applied", 0) or 0
-            v_sign = f"+{v_delta}" if v_delta > 0 else str(v_delta)
-            c_sign = f"+{c_delta}" if c_delta > 0 else str(c_delta)
-            parts.append(f"  Vigor: {v_val} ({v_sign}) | Composure: {c_val} ({c_sign})")
-        else:
-            parts.append(f"  Vigor/Composure: OFF (fallback={v_val}/{c_val})")
+        v_delta = bus.vigor.get("delta_applied", 0) or 0
+        c_delta = bus.composure.get("delta_applied", 0) or 0
+        v_sign = f"+{v_delta}" if v_delta > 0 else str(v_delta)
+        c_sign = f"+{c_delta}" if c_delta > 0 else str(c_delta)
+        parts.append(f"  Vigor: {v_val} ({v_sign}) | Composure: {c_val} ({c_sign})")
 
         logger.info("\n".join(parts))
-
-    def get_fallback_directives(self, active_modules: List[str]) -> str:
-        """Returns constraint directives for inactive modules (genre-aware)."""
-        directives = []
-        if "judgment" not in active_modules:
-            directives.append("- [Mechanical Restriction]: Do not mention dice rolls or skill checks.")
-        if "doom" not in active_modules:
-            directives.append("- [Narrative Restriction]: Avoid mentions of increasing tension or doom clock.")
-        if "mental" not in active_modules:
-            directives.append("- [State Restriction]: Do not explicitly reference vigor/composure values. Use Flash polyvagal cues for physical/emotional tone instead.")
-        return "\n".join(directives)

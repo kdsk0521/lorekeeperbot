@@ -306,18 +306,85 @@ CLICHE_PATTERNS = [
     (re.compile(r"보이지 않는 압박"), "보이지 않는 압박"),
     (re.compile(r"모든 것이 달라[질지]"), "모든 것이 달라"),
     (re.compile(r"운명을?\s?결정짓"), "운명을 결정짓"),
+    # [마나젬] 음성/톤 직접 설명 금지
+    (re.compile(r'(?:건조한|차분한|냉담한|무미건조한|딱딱한)\s*(?:목소리|어조|말투)'), "voice_description"),
+    (re.compile(r'(?:날카로운|부드러운|차가운|따뜻한)\s*(?:목소리|어조|음성)'), "voice_description"),
+    # [마나젬] 동기없는 소품 상호작용 금지
+    (re.compile(r'안경[을를]?\s*(?:고쳐|밀어|만지)'), "unmotivated_prop"),
+    (re.compile(r'(?:재떨이|컵|펜)[을를]?\s*(?:만지작|돌리|굴리)'), "unmotivated_prop"),
 ]
 
 
-def detect_cliche_patterns(response: str) -> str:
-    """Detect cliché patterns in response and return feedback string."""
+# =========================================================
+# P4: Scene-Type Exceptions for Cliché Detection
+# =========================================================
+
+SCENE_EXCEPTIONS: Dict[str, set] = {
+    "gore": {"voice_description"},     # 해부학 용어 허용, 감정라벨 필터 강화
+    "combat": {"unmotivated_prop"},     # 전술 용어 허용, 소품 필터 완화
+    "mature": {"voice_description"},    # 신체 묘사 허용
+}
+
+
+def _check_banned_expressions(response: str, scene_type: Optional[str] = None) -> List[str]:
+    """BANNED_EXPRESSIONS 딕셔너리 기반 금지어 체크.
+
+    Args:
+        response: Current turn response text
+        scene_type: Optional scene type for exemptions via SCENE_EXCEPTIONS.
+
+    Returns:
+        List of "[category] 'expression'" feedback strings.
+    """
+    try:
+        from text_resources import BANNED_EXPRESSIONS
+    except ImportError:
+        return []
+
+    exempted: set = SCENE_EXCEPTIONS.get(scene_type, set()) if scene_type else set()
+    feedback = []
+    for category, expressions in BANNED_EXPRESSIONS.items():
+        if category in exempted:
+            continue
+        for expr in expressions:
+            if expr in response:
+                feedback.append(f"[{category}] '{expr}'")
+    return feedback
+
+
+def detect_cliche_patterns(response: str, scene_type: Optional[str] = None) -> str:
+    """Detect cliché patterns in response and return feedback string.
+
+    Args:
+        response: Current turn response text
+        scene_type: Optional scene type (e.g. 'gore', 'combat', 'mature').
+            Certain cliché labels are exempted per scene type via SCENE_EXCEPTIONS.
+    """
+    # Determine which labels to skip for this scene type
+    exempted: set = SCENE_EXCEPTIONS.get(scene_type, set()) if scene_type else set()
+
     matched = []
     for pattern, label in CLICHE_PATTERNS:
+        if label in exempted:
+            continue
         if pattern.search(response):
             matched.append(label)
+
+    # BANNED_EXPRESSIONS dict-based check (complements regex patterns)
+    banned_hits = _check_banned_expressions(response, scene_type)
+    for hit in banned_hits:
+        matched.append(hit)
+
     if not matched:
         return ""
-    labels = ", ".join(matched[:3])
+    # Deduplicate while preserving order
+    seen = set()
+    deduped = []
+    for m in matched:
+        if m not in seen:
+            seen.add(m)
+            deduped.append(m)
+    labels = ", ".join(deduped[:3])
     return f"[CLICHE: {labels} — replace with concrete sensory detail]"
 
 
@@ -385,6 +452,9 @@ CLOSURE_PATTERNS = [
     (re.compile(r'위기[는가].{0,10}(?:지나|넘기|끝)'), "crisis_over"),
     (re.compile(r'이제.{0,5}(?:괜찮|안전|무사)'), "safety_declaration"),
     (re.compile(r'(?:사건|문제|갈등)[이가은는].{0,10}(?:봉합|종결|해소)'), "conflict_sealed"),
+    # [마나젬] 마지막 문단 분위기 마무리
+    (re.compile(r'(?:밤|어둠|달빛|바람)[이가].{0,15}(?:감싸|품|내려앉)'), "atmospheric_closing"),
+    (re.compile(r'(?:그것은|이것은).{0,10}(?:시작|서막|예고)'), "prophetic_closing"),
 ]
 
 
@@ -414,6 +484,175 @@ def detect_premature_closure(response: str, conclusion_proximity: int = 50,
         thread_note = f" open_threads={len(open_threads)}"
     return (f"[CLOSURE: {labels} — proximity={conclusion_proximity}%{thread_note}. "
             f"세계의 기본 상태는 미해결이다. 유저가 직접 해결하지 않은 스레드를 닫지 마라]")
+
+
+# =========================================================
+# P2: Structural Repetition Detection (구조 반복 감지)
+# =========================================================
+
+# Opening type patterns
+_OPENING_PATTERNS = [
+    ("dialogue", re.compile(r'^\s*["""\u201C\u300C]')),
+    ("inner_thought", re.compile(r"^\s*[\u2018\u2019'].{0,30}[\u2018\u2019']")),
+    ("action", re.compile(r'^\s*(?:\S{1,10}[이가은는]\s+.{0,20}(?:했다|었다|았다|였다|한다|는다|인다))')),
+    ("environment", re.compile(r'^\s*(?:하늘|바람|빛|공기|거리|방|복도|숲|바다|밤|낮|아침|저녁|어둠|달|태양|비|눈|안개|연기)')),
+    ("description", re.compile(r'^\s*\S')),  # fallback: any non-empty line
+]
+
+# Closing type patterns (applied to last paragraph)
+_CLOSING_PATTERNS = [
+    ("dialogue", re.compile(r'["""\u201D\u300D]\s*$')),
+    ("atmosphere", re.compile(r'(?:밤|어둠|달빛|바람|고요|적막|침묵)[이가을를에].{0,20}$')),
+    ("cliffhanger", re.compile(r'(?:\.{3}|—|―)\s*$')),
+    ("action", re.compile(r'(?:했다|었다|았다|였다)\.\s*$')),
+    ("description", re.compile(r'[다]\.?\s*$')),  # fallback
+]
+
+
+def _classify_opening(response: str) -> str:
+    """Classify the opening type of a response."""
+    first_line = response.strip().split('\n')[0] if response.strip() else ""
+    for otype, pattern in _OPENING_PATTERNS:
+        if pattern.search(first_line):
+            return otype
+    return "description"
+
+
+def _classify_closing(response: str) -> str:
+    """Classify the closing type of a response."""
+    paragraphs = [p.strip() for p in response.strip().split('\n\n') if p.strip()]
+    last_para = paragraphs[-1] if paragraphs else ""
+    last_line = last_para.strip().split('\n')[-1] if last_para else ""
+    for ctype, pattern in _CLOSING_PATTERNS:
+        if pattern.search(last_line):
+            return ctype
+    return "description"
+
+
+def detect_structural_repetition(response: str,
+                                 recent_openings: Optional[List[str]] = None,
+                                 recent_closings: Optional[List[str]] = None
+                                 ) -> Tuple[str, str, str]:
+    """Detect if response opening/closing structure repeats across turns.
+
+    Opening types: dialogue, action, description, inner_thought, environment
+    Closing types: dialogue, action, description, atmosphere, cliffhanger
+
+    Args:
+        response: Current turn response text
+        recent_openings: List of opening types from recent turns (most recent last)
+        recent_closings: List of closing types from recent turns (most recent last)
+
+    Returns:
+        (feedback_str, current_opening_type, current_closing_type)
+        3 consecutive same type -> warning feedback.
+    """
+    current_opening = _classify_opening(response)
+    current_closing = _classify_closing(response)
+
+    warnings = []
+
+    if recent_openings and len(recent_openings) >= 2:
+        if recent_openings[-1] == recent_openings[-2] == current_opening:
+            warnings.append(f"opening={current_opening}")
+
+    if recent_closings and len(recent_closings) >= 2:
+        if recent_closings[-1] == recent_closings[-2] == current_closing:
+            warnings.append(f"closing={current_closing}")
+
+    feedback = ""
+    if warnings:
+        detail = ", ".join(warnings)
+        feedback = (f"[STRUCTURE: {detail} 3턴 연속 반복 — "
+                    f"다른 구조로 시작/종결하라 (dialogue↔action↔description↔environment)]")
+
+    return feedback, current_opening, current_closing
+
+
+# =========================================================
+# P3: Tension Dissolution Detection (긴장 해소 감지)
+# =========================================================
+
+TENSION_DISSOLUTION_PATTERNS = [
+    (re.compile(r'(?:마침내|드디어|결국).{0,15}(?:안도|안심|한숨)'), "premature_relief"),
+    (re.compile(r'(?:오해|갈등|긴장)[이가].{0,10}(?:풀리|해소|녹)'), "conflict_evaporation"),
+    (re.compile(r'(?:진심|본심)[을를]?\s*(?:털어놓|고백하|밝히).{0,10}(?:받아들|이해하)'), "instant_acceptance"),
+]
+
+
+def detect_tension_dissolution(response: str) -> List[Tuple[str, str]]:
+    """Detect premature tension resolution patterns.
+
+    Returns:
+        List of (pattern_name, matched_text) tuples.
+    """
+    results = []
+    for pattern, label in TENSION_DISSOLUTION_PATTERNS:
+        m = pattern.search(response)
+        if m:
+            results.append((label, m.group()))
+    return results
+
+
+# =========================================================
+# P3: NPC Deflection Repetition Detection (회피기법 반복 추적)
+# =========================================================
+
+_DEFLECTION_PATTERNS = [
+    ("topic_change", re.compile(r'(?:그건\s*그렇고|어쨌든|그나저나|아\s*참|그것보다)')),
+    ("humor", re.compile(r'(?:농담[이을]|웃으며|피식|킥킥|하하|장난[을이])')),
+    ("silence", re.compile(r'(?:침묵[을이했]|말[을이]?\s*아끼|입[을]?\s*다물|대답.{0,5}않)')),
+    ("counter_question", re.compile(r'(?:왜\s*물어|그건\s*왜|오히려\s*내가|되물[었어])')),
+    ("denial", re.compile(r'(?:그런\s*거\s*아니|아닌데|무슨\s*소리|그럴\s*리가|말도\s*안\s*돼)')),
+]
+
+
+def detect_deflection_repetition(response: str,
+                                 recent_deflections: Optional[List[Dict[str, str]]] = None
+                                 ) -> Tuple[str, List[Dict[str, str]]]:
+    """NPC deflection technique repetition detection.
+
+    Types: topic_change, humor, silence, counter_question, denial.
+    Same NPC + same type within 3 turns -> warning.
+
+    Args:
+        response: Current turn response text
+        recent_deflections: List of dicts from recent turns,
+            each with keys 'npc' (optional) and 'type'.
+
+    Returns:
+        (feedback_str, current_deflections)
+        - current_deflections: List of dicts with 'type' keys found in this turn.
+    """
+    current = []
+    for dtype, pattern in _DEFLECTION_PATTERNS:
+        if pattern.search(response):
+            current.append({"type": dtype})
+
+    if not current:
+        return "", current
+
+    if not recent_deflections or len(recent_deflections) < 2:
+        return "", current
+
+    # Check if any current deflection type appeared in 2 most recent turns
+    current_types = {d["type"] for d in current}
+    warnings = []
+    for dtype in current_types:
+        consecutive = 0
+        for past in recent_deflections[-2:]:
+            if past.get("type") == dtype:
+                consecutive += 1
+        if consecutive >= 2:
+            warnings.append(dtype)
+
+    if not warnings:
+        return "", current
+
+    types_str = ", ".join(warnings)
+    feedback = (f"[DEFLECTION: {types_str} 3턴 연속 사용 — "
+                f"NPC의 회피 수단을 다양화하라 (topic_change↔humor↔silence↔counter_question↔denial)]")
+    return feedback, current
 
 
 # =========================================================

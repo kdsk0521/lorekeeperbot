@@ -210,6 +210,7 @@ GENRE_THEORY_WEIGHTS: Dict[str, Dict[str, list]] = {
             "Habitus: read as SOCIAL CASTE indicators — noble vs common speech, gestures, habits",
             "Prospect Theory -> HONOR: treat face and duty as possessions. Loss of face > gain of face in behavioral weight",
         ],
+        'ambiguity_bias': {'pc_intent': 'duty-bound', 'npc_default': 'hierarchical'},
     },
 
     'wuxia': {
@@ -227,6 +228,7 @@ GENRE_THEORY_WEIGHTS: Dict[str, Dict[str, list]] = {
             "Attachment -> LOYALTY: secure=sworn brotherhood, anxious=honor-debt obsession, avoidant=lone wolf pride, disorganized=betrayal trauma",
             "Logos Dynamics: Monolithic layer = martial arts principles and shi-fu teachings, nearly impossible to override",
         ],
+        'ambiguity_bias': {'pc_intent': 'honor-driven', 'npc_default': 'loyalty-testing'},
     },
 
     'cyberpunk': {
@@ -244,6 +246,7 @@ GENRE_THEORY_WEIGHTS: Dict[str, Dict[str, list]] = {
             "Polyvagal: augmented bodies may override natural stress responses — note implant interference",
             "Environmental Theory: urban environment as HOSTILE by default, not neutral",
         ],
+        'ambiguity_bias': {'pc_intent': 'calculating', 'npc_default': 'transactional'},
     },
 
     'post_apocalypse': {
@@ -263,6 +266,7 @@ GENRE_THEORY_WEIGHTS: Dict[str, Dict[str, list]] = {
             "Erikson: ALL characters compressed into safety/survival crisis regardless of age",
             "Attachment: attachment injuries amplified — everyone has lost someone",
         ],
+        'ambiguity_bias': {'pc_intent': 'survivalist', 'npc_default': 'desperate'},
     },
 
     'space_opera': {
@@ -280,6 +284,7 @@ GENRE_THEORY_WEIGHTS: Dict[str, Dict[str, list]] = {
             "Geographic Profiling: scale up to SECTOR-level anchor points — homeworld, trade routes, outposts",
             "Attachment: species may have fundamentally different attachment biology",
         ],
+        'ambiguity_bias': {'pc_intent': 'diplomatic', 'npc_default': 'factional'},
     },
 
     'modern': {
@@ -291,6 +296,7 @@ GENRE_THEORY_WEIGHTS: Dict[str, Dict[str, list]] = {
         ],
         'suppress': [],
         'reframe': [],
+        'ambiguity_bias': {'pc_intent': 'pragmatic', 'npc_default': 'self-interested'},
     },
 
     # =====================================================
@@ -309,6 +315,7 @@ GENRE_THEORY_WEIGHTS: Dict[str, Dict[str, list]] = {
             "Polyvagal: supernatural exposure may trigger dorsal (freeze) in mundane characters — awe/terror response",
             "MSE: what looks like psychotic symptoms may be genuine supernatural perception",
         ],
+        'ambiguity_bias': {'pc_intent': 'curious', 'npc_default': 'secretive'},
     },
 
     'steampunk': {
@@ -322,6 +329,7 @@ GENRE_THEORY_WEIGHTS: Dict[str, Dict[str, list]] = {
             "Environmental Theory: smog, factory noise, gaslight = constant environmental pressure on lower class",
             "Chaemyeon: Victorian propriety as WESTERN equivalent of face management",
         ],
+        'ambiguity_bias': {'pc_intent': 'inventive', 'npc_default': 'proprietary'},
     },
 
     'cosmic_horror': {
@@ -348,6 +356,7 @@ GENRE_THEORY_WEIGHTS: Dict[str, Dict[str, list]] = {
             "Anomalous Experience: 'crazy' perceptions may be CORRECT in supernatural settings",
             "Dissociation as survival: the mind is not breaking, it is PROTECTING",
         ],
+        'ambiguity_bias': {'pc_intent': 'cautious', 'npc_default': 'threatening'},
     },
 
     'game_system': {
@@ -362,6 +371,7 @@ GENRE_THEORY_WEIGHTS: Dict[str, Dict[str, list]] = {
             "Position/Effect: may map directly to game mechanics (stat checks, skill rolls)",
             "Henderson Needs: character 'needs' may be literal game resources (HP, mana, gold)",
         ],
+        'ambiguity_bias': {'pc_intent': 'strategic', 'npc_default': 'rule-bound'},
     },
 
     # =====================================================
@@ -389,6 +399,7 @@ GENRE_THEORY_WEIGHTS: Dict[str, Dict[str, list]] = {
             "Attachment: mostly avoidant or disorganized. Secure attachment is rare and precious.",
             "Comedy: RESTRICT to gallows wit and ironic understatement. No slapstick, no lightness.",
         ],
+        'ambiguity_bias': {'pc_intent': 'suspicious', 'npc_default': 'guarded'},
     },
 
     'comedy': {
@@ -412,6 +423,7 @@ GENRE_THEORY_WEIGHTS: Dict[str, Dict[str, list]] = {
             "Value Conflict: comedy = choosing BOTH conflicting values simultaneously and failing at both",
             "Moral Disengagement: villain's self-justification IS the joke",
         ],
+        'ambiguity_bias': {'pc_intent': 'lighthearted', 'npc_default': 'accepting'},
     },
 
     'romance': {
@@ -435,6 +447,7 @@ GENRE_THEORY_WEIGHTS: Dict[str, Dict[str, list]] = {
             "Korean Affects: Jeong(情) as the deepest form of romantic bond — beyond passion into shared suffering",
             "Ma/silence: romantic silence (unspoken confession, loaded pause) as PEAK narrative moment",
         ],
+        'ambiguity_bias': {'pc_intent': 'hopeful', 'npc_default': 'receptive'},
     },
 
     'drama': {
@@ -455,6 +468,7 @@ GENRE_THEORY_WEIGHTS: Dict[str, Dict[str, list]] = {
             "Desistance: if redemption arc exists, track ALL FOUR conditions. Earned only.",
             "Recidivism: relapse is dramatically powerful. Change -> relapse -> struggle = good drama.",
         ],
+        'ambiguity_bias': {'pc_intent': 'earnest', 'npc_default': 'complex'},
     },
 }
 
@@ -500,6 +514,9 @@ def build_theory_emphasis(active_genres: List[str]) -> str:
     all_suppress: List[str] = []
     all_reframe: List[str] = []
 
+    # ambiguity_bias 수집 (장르 레이어 순서: 마지막 장르가 최종 오버라이드)
+    merged_ambiguity: Dict[str, str] = {}
+
     # 모든 활성 장르의 가중치 수집
     for genre in active_genres:
         if genre in GENRE_THEORY_WEIGHTS:
@@ -507,6 +524,9 @@ def build_theory_emphasis(active_genres: List[str]) -> str:
             all_emphasize.extend(weights.get('emphasize', []))
             all_suppress.extend(weights.get('suppress', []))
             all_reframe.extend(weights.get('reframe', []))
+            bias = weights.get('ambiguity_bias')
+            if bias:
+                merged_ambiguity.update(bias)
 
     # 중복 제거 (순서 유지)
     # EMPHASIZE/SUPPRESS는 seen_main 공유 (EMPHASIZE > SUPPRESS 우선순위)
@@ -542,6 +562,9 @@ def build_theory_emphasis(active_genres: List[str]) -> str:
 
     # 지시문 조립
     parts = []
+    if merged_ambiguity:
+        bias_lines = " | ".join(f"{k}={v}" for k, v in merged_ambiguity.items())
+        parts.append(f"AMBIGUITY BIAS (when intent is unclear, default to these interpretations):\n  {bias_lines}")
     if all_emphasize:
         lines = "\n".join(f"  * {e}" for e in all_emphasize)
         parts.append(f"ACTIVELY EMPHASIZE these theories for current genre combination:\n{lines}")

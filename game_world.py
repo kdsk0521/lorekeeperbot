@@ -382,26 +382,18 @@ def build_real_time_display(
     present_text = ", ".join(present) if present else "None"
     lines.append(f"위치 {location} | 시간 {day}일차 {time_str} ({time_slot}) | 인물 {present_text}")
 
-    line2_parts: List[str] = []
-    if "mental" in module_set:
-        target = _get_status_target_participant(channel_id, user_id)
-        mem = target.get("ai_memory", {}) if isinstance(target, dict) else {}
-        legacy_mental = mem.get("mental", {}) if isinstance(mem, dict) else {}
-        vigor_src = mem.get("vigor", legacy_mental) if isinstance(mem, dict) else {}
-        composure_src = mem.get("composure", legacy_mental) if isinstance(mem, dict) else {}
-        vigor_val = int(vigor_src.get("value", 100) or 100)
-        composure_val = int(composure_src.get("value", 100) or 100)
-        line2_parts.append(f"기력 {vigor_val}")
-        line2_parts.append(f"평정 {composure_val}")
+    # All core modules always active — no module_set checks needed
+    target = _get_status_target_participant(channel_id, user_id)
+    mem = target.get("ai_memory", {}) if isinstance(target, dict) else {}
+    legacy_mental = mem.get("mental", {}) if isinstance(mem, dict) else {}
+    vigor_src = mem.get("vigor", legacy_mental) if isinstance(mem, dict) else {}
+    composure_src = mem.get("composure", legacy_mental) if isinstance(mem, dict) else {}
+    vigor_val = int(vigor_src.get("value", 100) or 100)
+    composure_val = int(composure_src.get("value", 100) or 100)
+    doom_val = int(world.get("doom", 0) or 0)
+    lines.append(f"기력 {vigor_val} | 평정 {composure_val} | Doom {doom_val}")
 
-    if "doom" in module_set:
-        doom_val = int(world.get("doom", 0) or 0)
-        line2_parts.append(f"Doom {doom_val}")
-
-    if line2_parts:
-        lines.append(" | ".join(line2_parts))
-
-    if "doom" in module_set:
+    if True:  # doom clocks always active
         clocks = world.get("doom_clocks", [])
         if isinstance(clocks, list):
             clock_parts: List[str] = []

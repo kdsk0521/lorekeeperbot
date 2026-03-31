@@ -131,11 +131,19 @@ class OrchestrationService:
                     })
                     logger.info(f"Auto-created Session NPC: {n_name}")
 
-                domain_manager.update_npc_attitude(
+                # M5: 태도 변경 코드 게이트 적용 (3턴 쿨다운 + 1단계 제한)
+                _ws = domain_manager.get_world_state(channel_id)
+                _current_turn = _ws.get("turn_index", 0) if _ws else 0
+                _gate_result = npc_manager.update_npc_attitude_gated(
                     channel_id, n_name,
                     n_data.get("attitude", "neutral"),
+                    _current_turn,
                     n_data.get("reason", "")
                 )
+                if _gate_result == "cooldown":
+                    logger.debug(f"[M5] Attitude change for {n_name} blocked: cooldown")
+                elif _gate_result == "clamped":
+                    logger.debug(f"[M5] Attitude change for {n_name} clamped to ±1 step")
 
             # NPC Connection: trajectory → depth delta
             import random as _rng
@@ -204,8 +212,9 @@ class OrchestrationService:
         channel_id = ctx.channel_id
         user_id = ctx.user_id
         
-        # UNE Run
-        result = await self.une.run(channel_id, user_id, ctx.action_text)
+        # UNE Run (ranked lore chunks from vector search)
+        _ranked = ctx.domain_data.get("lore_chunks_ranked", []) if isinstance(ctx.domain_data, dict) else []
+        result = await self.une.run(channel_id, user_id, ctx.action_text, lore_chunks_ranked=_ranked)
         
         # Extract Results
         updated_context = result["game_context"]
@@ -271,6 +280,17 @@ class OrchestrationService:
             if item_msg:
                 system_log = (system_log or "") + f"\n{item_msg}"
 
+        # N2: Inventory validation — log warnings for items that silently vanished
+        _acting_uid = updated_context.narrative_anchors.get("acting_user_id", "")
+        if _acting_uid:
+            _cur_mem = domain_manager.get_ai_memory(channel_id, _acting_uid)
+            _cur_inv = game_character.migrate_notebook_to_inventory(
+                _cur_mem.get("inventory", [])
+            ).get("items", [])
+            _mentioned_items = (dai.get("item_usage", {}) or {}).get("items", _cur_inv)
+            if _cur_inv:
+                cognition.validate_inventory(_mentioned_items, _cur_inv)
+
         # Scene Type 업데이트 (dai 우선)
         if dai.get("scene_type"):
             ctx.scene_type = dai["scene_type"]
@@ -292,31 +312,53 @@ class OrchestrationService:
 
         # ── Loadout 분기 (flashback_type == "loadout") ──
         if fb_eval.get("flashback_type") == "loadout" and user_id:
+            # 1) 인벤토리에 이미 있는 아이템 → 슬롯/기력 소비 없이 통과
+            existing_inv = domain_manager.get_ai_memory(channel_id, user_id).get("inventory", [])
+            if isinstance(existing_inv, dict):
+                existing_inv = existing_inv.get("items", [])
+            inv_names = {(i.get("name", "") if isinstance(i, dict) else str(i)).lower()
+                         for i in existing_inv if i}
+            if declaration and declaration.strip().lower() in inv_names:
+                dai["flashback_confirmed"] = True
+                dai["flashback_declaration"] = declaration
+                return f"🎒 인벤토리: {declaration} (이미 소지 중)"
+
+            # 2) 로드아웃 자동 초기화
             loadout = domain_manager.get_loadout(channel_id, user_id)
             if not loadout:
-                dai["flashback_confirmed"] = False
-                return "❌ 로드아웃 미설정. `!로드아웃 [경장/표준/중장]`으로 먼저 설정하세요."
+                domain_manager.set_loadout(channel_id, user_id, "standard", config.LOADOUT_SLOTS, "표준")
+                loadout = domain_manager.get_loadout(channel_id, user_id)
+
             slots_needed = fb_eval.get("loadout_slots", 1)
             remaining = loadout["total_slots"] - loadout.get("used_slots", 0)
-            if slots_needed > remaining:
-                dai["flashback_confirmed"] = False
-                return f"❌ 슬롯 부족 ({remaining}/{loadout['total_slots']})"
             cost = config.LOADOUT_SLOT_COST.get(slots_needed, 3)
-            # 비용 차감 (기력 기반)
             current_vigor = int(bus.vigor.get("value", 100))
-            if current_vigor < cost:
+
+            # 3) 슬롯 부족 시 → 기력 추가 차감으로 소프트 대체 (하드블록 안 함)
+            overflow_cost = 0
+            if slots_needed > remaining:
+                overflow_cost = (slots_needed - remaining) * 5  # 초과 슬롯당 기력 5 추가
+                slots_needed = remaining  # 남은 슬롯만 소비
+
+            total_cost = cost + overflow_cost
+            if current_vigor < total_cost:
                 dai["flashback_confirmed"] = False
-                return f"❌ 기력 부족 (현재 {current_vigor}, 필요 {cost})"
-            bus.vigor["value"] = max(0, current_vigor - cost)
-            domain_manager.consume_loadout_slot(channel_id, user_id, slots_needed, declaration)
+                return f"❌ 기력 부족 (현재 {current_vigor}, 필요 {total_cost})"
+
+            bus.vigor["value"] = max(0, current_vigor - total_cost)
+            if slots_needed > 0:
+                domain_manager.consume_loadout_slot(channel_id, user_id, slots_needed, declaration)
             dai["flashback_confirmed"] = True
             dai["flashback_declaration"] = declaration
             dai["loadout_used"] = True
             new_vigor = bus.vigor["value"]
+            new_remaining = remaining - slots_needed
+
+            overflow_note = f" (슬롯 초과 → 기력 추가 -{overflow_cost})" if overflow_cost else ""
             return (
-                f"🎒 로드아웃: {declaration}\n"
-                f"⚡ 슬롯 {slots_needed}개 소비 (잔여 {remaining - slots_needed}/{loadout['total_slots']}) | "
-                f"기력 -{cost} → {new_vigor}/100"
+                f"🎒 장비: {declaration}\n"
+                f"⚡ 슬롯 {slots_needed}개 소비 (잔여 {new_remaining}/{loadout['total_slots']}) | "
+                f"기력 -{total_cost} → {new_vigor}/100{overflow_note}"
             )
 
         # 불가능한 회상 → 거부
@@ -972,6 +1014,25 @@ class OrchestrationService:
             # 1. Context Gathering
             ctx = await self.gather_context(ctx)
 
+            # 1.1 N3: Optional vector search for lore chunk ranking
+            try:
+                from vector_search import VectorSearchEngine
+                _lore_chunks = ctx.domain_data.get("lore_chunks", [])
+                if _lore_chunks and len(_lore_chunks) > config.VECTOR_TOP_K:
+                    _vs = VectorSearchEngine(self.client, config.VECTOR_EMBEDDING_MODEL)
+                    _query = ctx.action_text or ""
+                    _ranked = await _vs.search(_query, _lore_chunks,
+                                               top_k=config.VECTOR_TOP_K,
+                                               min_score=config.VECTOR_MIN_SCORE)
+                    if _ranked:
+                        ctx.domain_data["lore_chunks_ranked"] = _ranked
+                        logger.debug(f"[VectorSearch] Ranked {len(_ranked)} chunks from {len(_lore_chunks)}")
+            except Exception as _vs_err:
+                logger.debug(f"[VectorSearch] unavailable: {_vs_err}")
+
+            # 1.5. NPC decision cooldown tick (매 턴 시작 시 1씩 감소)
+            npc_manager.tick_all_cooldowns(channel_id)
+
             # 2. Cognition Analysis (Theoria 수행)
             # 분석은 이제 process_une_logic 내부의 UNE Theoria에서 수행됩니다.
 
@@ -1048,7 +1109,9 @@ class OrchestrationService:
                     fmt_feedback = _check_dialogue_format(response)
                     from response_processor import (
                         detect_cliche_patterns, detect_cargo_patterns,
-                        detect_sensory_repetition, detect_pidgin_echo
+                        detect_sensory_repetition, detect_pidgin_echo,
+                        detect_structural_repetition, detect_tension_dissolution,
+                        detect_deflection_repetition,
                     )
                     cliche_fb = detect_cliche_patterns(response)
                     cargo_fb = detect_cargo_patterns(response)
@@ -1069,12 +1132,49 @@ class OrchestrationService:
                     _npc_keywords = npc_manager.get_npc_label_keywords(channel_id, _scene_npcs) if _scene_npcs else {}
                     pidgin_fb = detect_pidgin_echo(response, _npc_keywords)
 
-                    style_fb = " ".join(filter(None, [cliche_fb, cargo_fb, rotation_fb, pidgin_fb]))
+                    # P2: Structural repetition detection (opening/closing 3턴 연속 반복)
+                    _recent_openings = _mem_for_fb.get("recent_openings", [])
+                    _recent_closings = _mem_for_fb.get("recent_closings", [])
+                    if not isinstance(_recent_openings, list):
+                        _recent_openings = []
+                    if not isinstance(_recent_closings, list):
+                        _recent_closings = []
+                    struct_fb, _opening_type, _closing_type = detect_structural_repetition(
+                        response, _recent_openings, _recent_closings
+                    )
+
+                    # P3: Tension dissolution detection
+                    _tension_fb_list = detect_tension_dissolution(response)
+                    tension_fb = (
+                        "[TENSION: " + "; ".join(f"{name}: {text}" for name, text in _tension_fb_list)
+                        + " — 갈등을 즉시 해소하지 마라. 긴장을 유지하라]"
+                    ) if _tension_fb_list else ""
+
+                    # P3: Deflection repetition detection (NPC 회피기법 반복)
+                    _recent_deflections = _mem_for_fb.get("recent_deflections", [])
+                    if not isinstance(_recent_deflections, list):
+                        _recent_deflections = []
+                    deflection_fb, _current_deflections = detect_deflection_repetition(
+                        response, _recent_deflections
+                    )
+
+                    style_fb = " ".join(filter(None, [
+                        cliche_fb, cargo_fb, rotation_fb, pidgin_fb,
+                        struct_fb, tension_fb, deflection_fb,
+                    ]))
                     if style_fb:
                         fmt_feedback = f"{fmt_feedback} {style_fb}".strip() if fmt_feedback else style_fb
-                    domain_manager.update_session_ai_memory(
-                        channel_id, {"format_feedback": fmt_feedback, "recent_body_parts": _recent_parts}
-                    )
+
+                    # Save structural tracking data to session memory
+                    _tracking_update = {
+                        "format_feedback": fmt_feedback,
+                        "recent_body_parts": _recent_parts,
+                        "recent_openings": (_recent_openings + [_opening_type])[-3:],
+                        "recent_closings": (_recent_closings + [_closing_type])[-3:],
+                    }
+                    if _current_deflections:
+                        _tracking_update["recent_deflections"] = (_recent_deflections + _current_deflections)[-6:]
+                    domain_manager.update_session_ai_memory(channel_id, _tracking_update)
                     if fmt_feedback:
                         logger.info(f"[FormatCheck] {fmt_feedback[:80]}")
 

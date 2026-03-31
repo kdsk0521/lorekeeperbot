@@ -55,6 +55,25 @@ NPC_AUTONOMOUS_TRIGGERS = {
 }
 
 
+# =========================================================
+# Desistance 4-Condition Gate (Maruna / Narrative Identity)
+# =========================================================
+DESISTANCE_CONDITIONS = {
+    "alternative_identity":
+        lambda ctx: ctx.get("depth", 0) >= 50
+                    and ctx.get("trajectory") == "improving",
+    "social_support":
+        lambda ctx: ctx.get("attitude") in ("friendly", "loyal"),
+    "generative_motivation":
+        lambda ctx: bool(
+            set(ctx.get("active_needs", []))
+            & {"belonging", "intimacy", "esteem", "self-actualization"}
+        ),
+    "redemption_narrative":
+        lambda ctx: ctx.get("depth", 0) >= 70,
+}
+
+
 class TriggerResult:
     def __init__(self, trigger_id: str, npc_name: str, directive: str, priority: int = 0):
         self.trigger_id = trigger_id
@@ -75,12 +94,18 @@ class NPCAutonomousEngine:
         npc_knowledge: Dict[str, Any],
         npc_attitudes: Dict[str, Any],
         scene_type: str = "normal",
+        static_traits_map: Optional[Dict[str, dict]] = None,
     ) -> List[TriggerResult]:
         """Evaluate all triggers for all NPCs in psyche_states.
-        Returns list of TriggerResult sorted by priority (descending)."""
+        Returns list of TriggerResult sorted by priority (descending).
+
+        Args:
+            static_traits_map: {npc_name: static_traits_dict} for desistance gate enrichment (N6).
+        """
         if not _cfg.__dict__.get("NPC_AUTONOMOUS_ENABLED", True):
             return []
 
+        _traits_map = static_traits_map or {}
         results = []
         for npc_name, state in psyche_states.items():
             if not isinstance(state, dict):
@@ -103,6 +128,7 @@ class NPCAutonomousEngine:
                 "knowledge": kn,
                 "attitude": att,
                 "scene_type": scene_type,
+                "static_traits": _traits_map.get(npc_name, {}),
             }
 
             # Henderson Need Critical
@@ -137,6 +163,11 @@ class NPCAutonomousEngine:
 
             # Moral Disengagement
             r = _check_moral_disengagement(npc_ctx)
+            if r:
+                results.append(r)
+
+            # Desistance 4-Condition Gate
+            r = _check_desistance(npc_ctx)
             if r:
                 results.append(r)
 
@@ -299,40 +330,122 @@ def _check_moral_disengagement(ctx: Dict) -> TriggerResult | None:
 
 
 def _check_desistance(ctx: Dict) -> TriggerResult | None:
-    """Incremental Desistance: layered by depth + trajectory (Maruna).
-    Tier 1 (depth≥30 + improving): micro-change — hostile remarks decrease
-    Tier 2 (depth≥50 + improving): notable — neutral observation, guarded cooperation
-    Tier 3 (depth≥70 + improving + rel_val>30): turning point — old patterns break"""
-    relation = ctx["relation"]
-    attitude = ctx["attitude"].get("attitude", "neutral")
-    trajectory = ctx["attitude"].get("trajectory", "stable")
+    """Incremental Desistance: 4조건 게이트 기반 (Maruna).
+    Uses check_desistance_gate() for structured condition checking.
+    4/4 met → full transition eligible, priority 5
+    2-3/4 met → micro-cracks, priority 2
+    0-1/4 met → denied"""
+    attitude_data = ctx["attitude"]
+    attitude = attitude_data.get("attitude", "neutral")
 
-    if attitude not in ("hostile", "unfriendly") or trajectory != "improving":
+    if attitude not in ("hostile", "unfriendly"):
         return None
 
-    depth = ctx["attitude"].get("depth", 0)
-    rel_val = relation.get("value", 0)
+    gate = check_desistance_gate(ctx["name"], attitude_data, ctx["psyche"],
+                                static_traits=ctx.get("static_traits"))
+    if not gate["eligible"]:
+        return None
 
-    if depth >= 70 and rel_val > 30:
-        return TriggerResult(
-            "desistance_check", ctx["name"],
-            f"{ctx['name']} — 전환점. 오래된 패턴이 무너지고 새로운 행동이 나타난다",
-            priority=3,
-        )
-    elif depth >= 50:
-        return TriggerResult(
-            "desistance_check", ctx["name"],
-            f"{ctx['name']} — 적대적 발언 감소, 중립적 관찰 증가, 조심스러운 협력 가능",
-            priority=2,
-        )
-    elif depth >= 30:
-        return TriggerResult(
-            "desistance_check", ctx["name"],
-            f"{ctx['name']} — 미세 변화: 공격 빈도 감소, 짧은 침묵, 시선 회피",
-            priority=1,
-        )
-    return None
+    return TriggerResult(
+        "desistance_check", ctx["name"],
+        gate["directive"],
+        priority=5 if gate["met"] == 4 else 2,
+    )
 
+
+# =========================================================
+# Leak Risk Calculator (replaces Flash leak_risk)
+# =========================================================
+
+def calculate_leak_risk(
+    secrets_held: list,
+    tension: int,
+    depth: int,
+    turns_since_secret: int,
+    moral_stance: str,
+) -> str:
+    """비밀 누출 위험도 코드 계산. Flash의 leak_risk 대체.
+    Returns: "none", "low", "medium", or "high"
+    """
+    if not secrets_held:
+        return "none"
+
+    time_pressure = min(turns_since_secret * 5, 30)
+    tension_factor = tension * 0.4
+    depth_factor = max(0, (depth - 40) * 0.3)
+    moral_mod = {"disengaged": -15, "conflicted": 15, "principled": 5, "neutral": 0}
+    moral_factor = moral_mod.get(moral_stance, 0)
+
+    risk_score = time_pressure + tension_factor + depth_factor + moral_factor
+
+    if risk_score >= 60:
+        return "high"
+    elif risk_score >= 30:
+        return "medium"
+    return "low"
+
+
+# =========================================================
+# Desistance 4-Condition Gate Check
+# =========================================================
+
+def check_desistance_gate(
+    npc_name: str,
+    attitude: dict,
+    psyche: dict,
+    static_traits: dict = None,
+) -> dict:
+    """4조건 중 몇 개 충족되는지 검사.
+    Returns: {"met": int, "total": 4, "eligible": bool, "directive": str}
+
+    Rules:
+    - Only applies to hostile/unfriendly NPCs
+    - 4/4 met → full transition eligible, priority 5 trigger
+    - 2-3/4 met → micro-cracks, priority 2 trigger
+    - 0-1/4 met → earned change denied
+    """
+    att_label = attitude.get("attitude", "neutral")
+    if att_label not in ("hostile", "unfriendly"):
+        return {"met": 0, "total": 4, "eligible": False,
+                "directive": ""}
+
+    # Build context dict for lambda evaluation
+    gate_ctx = {
+        "depth": attitude.get("depth", 0),
+        "trajectory": attitude.get("trajectory", "stable"),
+        "attitude": att_label,
+        "active_needs": psyche.get("active_needs", []),
+    }
+    if static_traits:
+        gate_ctx.update(static_traits)
+
+    met_count = 0
+    met_names = []
+    for cond_name, check_fn in DESISTANCE_CONDITIONS.items():
+        try:
+            if check_fn(gate_ctx):
+                met_count += 1
+                met_names.append(cond_name)
+        except Exception:
+            pass  # malformed data → condition not met
+
+    if met_count >= 4:
+        directive = (
+            f"{npc_name} — 전환점: 4조건 충족({', '.join(met_names)}). "
+            f"오래된 패턴이 무너지고 새로운 행동이 나타난다"
+        )
+        return {"met": met_count, "total": 4, "eligible": True,
+                "directive": directive}
+    elif met_count >= 2:
+        directive = (
+            f"{npc_name} — 균열 징후({met_count}/4: {', '.join(met_names)}). "
+            f"적대적 발언 감소, 짧은 침묵, 시선 회피"
+        )
+        return {"met": met_count, "total": 4, "eligible": True,
+                "directive": directive}
+    else:
+        return {"met": met_count, "total": 4, "eligible": False,
+                "directive": ""}
 
 
 def _check_agenda_manifest(ctx: Dict) -> Optional[TriggerResult]:

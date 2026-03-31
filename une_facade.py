@@ -406,6 +406,30 @@ def _build_judgment_layer(bus, mask: str) -> str:
 def _build_atmosphere_layer(context, bus) -> str:
     parts: List[str] = []
 
+    # N8 경량 채택: [지배] 태그 + [전환] 디렉티브만 사용 (합성 파이프라인 제거)
+    dai = bus.dai if isinstance(bus.dai, dict) else {}
+
+    # [전환] 디렉티브 — 에너지 방향 변화 시에만
+    from notation_compositor import compose_transition
+    prev_continuity = (context.narrative_anchors or {}).get("session_memory", {}).get("scene_continuity", {})
+    current_energy = str(dai.get("energy_direction", "idle"))
+    _transition = compose_transition(prev_continuity, current_energy)
+    if _transition:
+        parts.append(_transition)
+
+    # [지배] 태그 — 장르+씬타입 기반 우선 레이어 1줄
+    from notation_compositor import LAYER_PRIORITY, GENRE_NOTATION_WEIGHTS
+    scene_type = str(dai.get("scene_type", "normal"))
+    mechanic = context.request.genres.get("mechanic", {})
+    genre = mechanic.get("primary_lens", "")
+    _weights = GENRE_NOTATION_WEIGHTS.get(genre, {})
+    _dominant = _weights.get("dominant", "")
+    _reframe = _weights.get("reframe", {})
+    if _dominant:
+        _lens = _reframe.get(_dominant, "")
+        _lens_tag = f" ({_lens})" if _lens else ""
+        parts.append(f"[지배:{_dominant}{_lens_tag}]")
+
     vigor_val = int(_to_float((bus.vigor or {}).get("value", 100), 100))
     composure_val = int(_to_float((bus.composure or {}).get("value", 100), 100))
 
@@ -624,7 +648,7 @@ def _build_system_message(bus) -> str:
 
     return "\n".join(deduped).strip()
 
-def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> GameContext:
+def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore_chunks_ranked: list = None) -> GameContext:
     """[UNE Bridge] ParticipantData -> GameContext"""
     from orchestration_context import GameContext, RequestData, SharedBus
 
@@ -680,7 +704,7 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> G
         "relations": mem.get("relationships", {}),
         "passives": mem.get("passives", []),
         "status_effects": p_data.get("status_effects", []) if p_data else [],
-        "inventory": mem.get("inventory", []),
+        "inventory": game_character.migrate_notebook_to_inventory(mem.get("inventory", [])).get("items", []),
         "memos": mem.get("memos", [])
     }
 
@@ -723,6 +747,12 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> G
     clocks = world.get("doom_clocks", [])
     bus.doom["clocks"] = clocks if isinstance(clocks, list) else []
 
+    # Loadout 자동 지급 — 고정 4슬롯, 미설정 시 세션 시작과 함께 생성
+    if not mem.get("loadout"):
+        import config as _loadout_cfg
+        _lo_slots = getattr(_loadout_cfg, "LOADOUT_SLOTS", 4)
+        mem["loadout"] = {"total_slots": _lo_slots, "used_slots": 0, "items": [], "load_type": "standard", "label": "표준"}
+
     # Vigor/Composure migration: old "mental" → vigor + composure
     if "mental" in mem and "vigor" not in mem:
         old_val = mem["mental"].get("value", 100)
@@ -749,7 +779,8 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str) -> G
             lore_summary=lore_summary,
             history_text=history_text,
             lore_text=lore_text,
-            lore_chunks=lore_chunks
+            lore_chunks=lore_chunks,
+            lore_chunks_ranked=lore_chunks_ranked or []
         ),
         narrative_anchors=anchors,
         shared_bus=bus
@@ -814,11 +845,11 @@ class UniversalNarrativeEngine:
     def __init__(self, client, model_id: str):
         self.pipeline = WaterfallPipeline(client, model_id)
 
-    async def run(self, channel_id: str, user_id: str, user_input: str) -> Dict[str, Any]:
+    async def run(self, channel_id: str, user_id: str, user_input: str, lore_chunks_ranked: list = None) -> Dict[str, Any]:
         """단일 PC 행동 처리 (솔로/자동 모드용)"""
         turn_index = game_world.increment_turn_index(channel_id)
         game_character.process_status_expiry(channel_id, user_id, turn_index)
-        context = convert_to_game_context(channel_id, user_id, user_input)
+        context = convert_to_game_context(channel_id, user_id, user_input, lore_chunks_ranked=lore_chunks_ranked)
         p_data = domain_manager.get_participant_data(channel_id, user_id)
         mask = p_data.get("mask") if p_data else "PC"
 
@@ -900,6 +931,82 @@ class UniversalNarrativeEngine:
             "system_message": result["system_msg"]
         }
 
+    def _evaluate_npc_autonomy(self, bus, context) -> str:
+        """Evaluate NPC autonomous behavior triggers and store results in bus.
+
+        Merges Helena metrics (depth/tension) from domain storage into DAI attitudes,
+        runs NPCAutonomousEngine trigger evaluation, and returns the directive string.
+        """
+        if not (bus.dai and bus.dai.get("psyche_states")):
+            return ""
+
+        from npc_autonomous import NPCAutonomousEngine
+
+        # Helena metrics(depth/tension) merge: domain 영속 데이터 → DAI attitudes
+        _dai_att = bus.dai.get("npc_attitudes", {})
+        _stored_att = (context.narrative_anchors or {}).get("stored_npc_attitudes", {})
+        _merged_att = {}
+        for _n, _a in _dai_att.items():
+            _m = dict(_a) if isinstance(_a, dict) else {}
+            # DAI 이름 → 저장 키 해상도 (e.g. "이하윤" → "Lee Ha-yoon(이하윤)")
+            _resolved = _n
+            for _sk in _stored_att:
+                if _sk == _n:
+                    _resolved = _sk
+                    break
+                _sk_base = _sk.split("(")[0].strip().lower() if "(" in _sk else _sk.lower()
+                if _sk_base == _n.strip().lower() or _n.strip().lower() in _sk.lower():
+                    _resolved = _sk
+                    break
+            _s = _stored_att.get(_resolved, {})
+            if isinstance(_s, dict):
+                _m.setdefault("depth", _s.get("depth", 0))
+                _m.setdefault("tension", _s.get("tension", 0))
+            _merged_att[_n] = _m
+
+        # N6: Gather static traits for desistance gate enrichment
+        import npc_manager as _npc_mgr
+        _cd_channel = (context.narrative_anchors or {}).get("channel_id", "")
+        _static_traits_map = {}
+        if _cd_channel:
+            for _npc_name in bus.dai.get("psyche_states", {}):
+                _st = _npc_mgr.get_npc_static_traits(_cd_channel, _npc_name)
+                if _st:
+                    _static_traits_map[_npc_name] = _st
+
+        triggers = NPCAutonomousEngine.evaluate_triggers(
+            psyche_states=bus.dai.get("psyche_states", {}),
+            npc_knowledge=bus.dai.get("npc_knowledge", {}),
+            npc_attitudes=_merged_att,
+            scene_type=bus.dai.get("scene_type", "normal"),
+            static_traits_map=_static_traits_map,
+        )
+
+        # M2: Filter out triggers for NPCs on decision cooldown
+        if _cd_channel and triggers:
+            _filtered = []
+            for t in triggers:
+                cd = _npc_mgr.check_decision_cooldown(_cd_channel, t.npc_name)
+                if cd > 0:
+                    logger.debug(f"[NPC Autonomy] {t.npc_name} trigger '{t.trigger_id}' suppressed — cooldown {cd} turns remaining")
+                else:
+                    _filtered.append(t)
+            triggers = _filtered
+
+        auto_directive = NPCAutonomousEngine.build_autonomous_directive(triggers)
+        # iceberg per-NPC depth 계산용 구조 데이터 저장
+        if triggers:
+            bus.dai["autonomous_triggers"] = [
+                {"npc_name": t.npc_name, "trigger_id": t.trigger_id, "priority": t.priority}
+                for t in triggers
+            ]
+            # M2: 고우선순위 트리거(중대 결정) 발동 시 쿨다운 설정
+            if _cd_channel:
+                for t in triggers:
+                    if t.priority >= 4:
+                        _npc_mgr.set_decision_cooldown(_cd_channel, t.npc_name, turns=3)
+        return auto_directive or ""
+
     def _extract_pc_result_v3(self, context, mask: str) -> Dict[str, Any]:
         """Build directive-layer v3: World -> Events -> Judgment -> Atmosphere."""
         bus = context.shared_bus
@@ -923,50 +1030,9 @@ class UniversalNarrativeEngine:
             layers.append(atmosphere)
 
         # Preserve autonomous NPC behavior directive after core v3 layers.
-        if bus.dai and bus.dai.get("psyche_states"):
-            from npc_autonomous import NPCAutonomousEngine
-
-            # Helena metrics(depth/tension) merge: domain 영속 데이터 → DAI attitudes
-            _dai_att = bus.dai.get("npc_attitudes", {})
-            _stored_att = (context.narrative_anchors or {}).get("stored_npc_attitudes", {})
-            _merged_att = {}
-            for _n, _a in _dai_att.items():
-                _m = dict(_a) if isinstance(_a, dict) else {}
-                # DAI 이름 → 저장 키 해상도 (e.g. "이하윤" → "Lee Ha-yoon(이하윤)")
-                _resolved = _n
-                for _sk in _stored_att:
-                    if _sk == _n:
-                        _resolved = _sk
-                        break
-                    _sk_base = _sk.split("(")[0].strip().lower() if "(" in _sk else _sk.lower()
-                    if _sk_base == _n.strip().lower() or _n.strip().lower() in _sk.lower():
-                        _resolved = _sk
-                        break
-                _s = _stored_att.get(_resolved, {})
-                if isinstance(_s, dict):
-                    _m.setdefault("depth", _s.get("depth", 0))
-                    _m.setdefault("tension", _s.get("tension", 0))
-                _merged_att[_n] = _m
-
-            triggers = NPCAutonomousEngine.evaluate_triggers(
-                psyche_states=bus.dai.get("psyche_states", {}),
-                npc_knowledge=bus.dai.get("npc_knowledge", {}),
-                npc_attitudes=_merged_att,
-                scene_type=bus.dai.get("scene_type", "normal"),
-            )
-            auto_directive = NPCAutonomousEngine.build_autonomous_directive(triggers)
-            if auto_directive:
-                layers.append(auto_directive)
-            # iceberg per-NPC depth 계산용 구조 데이터 저장
-            if triggers:
-                bus.dai["autonomous_triggers"] = [
-                    {"npc_name": t.npc_name, "trigger_id": t.trigger_id, "priority": t.priority}
-                    for t in triggers
-                ]
-
-        fallback_msg = self.pipeline.get_fallback_directives(context.request.active_modules)
-        if fallback_msg:
-            layers.append(f"[Module Constraints]\n{fallback_msg}")
+        auto_directive = self._evaluate_npc_autonomy(bus, context)
+        if auto_directive:
+            layers.append(auto_directive)
 
         return {
             "directive": "\n\n".join(part for part in layers if part).strip(),
@@ -1197,54 +1263,50 @@ class UniversalNarrativeEngine:
         if aspects:
             directive_parts.append("[Aspects]: " + ", ".join(aspects))
 
-        # ── Layer 4: [Atmosphere] — Doom Clock + Vigor ──
+        # ── Layer 4: [Atmosphere] — Doom Clock + Vigor (always active) ──
         atmosphere = []
-        active_modules = context.request.active_modules
 
-        # Doom = 8-Segment FitD Clock (only when module active)
+        # Doom = 8-Segment FitD Clock
         # (Atmosphere reference. Never name doom stages, clock names, or percentages in prose.)
-        if "doom" in active_modules:
-            # Genre-aware doom stage lookup
-            import game_world as _gw
-            mechanic_doom = context.request.genres.get("mechanic", {})
-            primary_genre = mechanic_doom.get("primary_lens", "")
-            doom_info = _gw.get_doom_info(doom_val, genre=primary_genre)
-            stage_name = doom_info.get("name", "")
-            stage_emoji = doom_info.get("emoji", "")
+        import game_world as _gw
+        mechanic_doom = context.request.genres.get("mechanic", {})
+        primary_genre = mechanic_doom.get("primary_lens", "")
+        doom_info = _gw.get_doom_info(doom_val, genre=primary_genre)
+        stage_name = doom_info.get("name", "")
+        stage_emoji = doom_info.get("emoji", "")
 
-            if doom_val >= 88:
-                atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — about to break")
-            elif doom_val >= 76:
-                atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — running out of time")
-            elif doom_val >= 63:
-                atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — closing in")
-            elif doom_val >= 50:
-                atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — tension fills the air")
-            elif doom_val >= 38:
-                atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — uneasy calm")
-            elif doom_val >= 25:
-                atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — equilibrium")
-            elif doom_val >= 13:
-                atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — relative calm")
-            else:
-                atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — tension has receded")
+        if doom_val >= 88:
+            atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — about to break")
+        elif doom_val >= 76:
+            atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — running out of time")
+        elif doom_val >= 63:
+            atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — closing in")
+        elif doom_val >= 50:
+            atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — tension fills the air")
+        elif doom_val >= 38:
+            atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — uneasy calm")
+        elif doom_val >= 25:
+            atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — equilibrium")
+        elif doom_val >= 13:
+            atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — relative calm")
+        else:
+            atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — tension has receded")
 
-        # Vigor + Composure = 2-axis PC state (only when module active)
+        # Vigor + Composure = 2-axis PC state (always active)
         # (Show through behavior only. Never name 기력/평정/vigor/composure in prose.)
-        if "mental" in active_modules:
-            if vigor_val <= 14:
-                atmosphere.append(f"Body collapse ({vigor_val}%) — limbs fail, can barely stand")
-            elif vigor_val <= 39:
-                atmosphere.append(f"Body exhaustion ({vigor_val}%) — heavy limbs, labored breath")
-            elif vigor_val <= 69:
-                atmosphere.append(f"Body strain ({vigor_val}%) — muscles ache, movements slow")
+        if vigor_val <= 14:
+            atmosphere.append(f"Body collapse ({vigor_val}%) — limbs fail, can barely stand")
+        elif vigor_val <= 39:
+            atmosphere.append(f"Body exhaustion ({vigor_val}%) — heavy limbs, labored breath")
+        elif vigor_val <= 69:
+            atmosphere.append(f"Body strain ({vigor_val}%) — muscles ache, movements slow")
 
-            if composure_val <= 14:
-                atmosphere.append(f"Mind collapse ({composure_val}%) — thoughts scatter, reality blurs")
-            elif composure_val <= 39:
-                atmosphere.append(f"Mind fraying ({composure_val}%) — emotions leak, focus breaks")
-            elif composure_val <= 69:
-                atmosphere.append(f"Mind uneasy ({composure_val}%) — inner tension, restless")
+        if composure_val <= 14:
+            atmosphere.append(f"Mind collapse ({composure_val}%) — thoughts scatter, reality blurs")
+        elif composure_val <= 39:
+            atmosphere.append(f"Mind fraying ({composure_val}%) — emotions leak, focus breaks")
+        elif composure_val <= 69:
+            atmosphere.append(f"Mind uneasy ({composure_val}%) — inner tension, restless")
 
         v_trauma = bus.vigor and bus.vigor.get("trauma_trigger")
         c_trauma = bus.composure and bus.composure.get("trauma_trigger")
@@ -1257,51 +1319,9 @@ class UniversalNarrativeEngine:
             directive_parts.append("[Atmosphere]: " + " / ".join(atmosphere))
 
         # ── NPC Autonomous Behavior Triggers (Phase 7) ──
-        if bus.dai and bus.dai.get("psyche_states"):
-            from npc_autonomous import NPCAutonomousEngine
-
-            # Helena metrics(depth/tension) merge: domain 영속 데이터 → DAI attitudes
-            _dai_att = bus.dai.get("npc_attitudes", {})
-            _stored_att = (context.narrative_anchors or {}).get("stored_npc_attitudes", {})
-            _merged_att = {}
-            for _n, _a in _dai_att.items():
-                _m = dict(_a) if isinstance(_a, dict) else {}
-                # DAI 이름 → 저장 키 해상도 (e.g. "이하윤" → "Lee Ha-yoon(이하윤)")
-                _resolved = _n
-                for _sk in _stored_att:
-                    if _sk == _n:
-                        _resolved = _sk
-                        break
-                    _sk_base = _sk.split("(")[0].strip().lower() if "(" in _sk else _sk.lower()
-                    if _sk_base == _n.strip().lower() or _n.strip().lower() in _sk.lower():
-                        _resolved = _sk
-                        break
-                _s = _stored_att.get(_resolved, {})
-                if isinstance(_s, dict):
-                    _m.setdefault("depth", _s.get("depth", 0))
-                    _m.setdefault("tension", _s.get("tension", 0))
-                _merged_att[_n] = _m
-
-            triggers = NPCAutonomousEngine.evaluate_triggers(
-                psyche_states=bus.dai.get("psyche_states", {}),
-                npc_knowledge=bus.dai.get("npc_knowledge", {}),
-                npc_attitudes=_merged_att,
-                scene_type=bus.dai.get("scene_type", "normal"),
-            )
-            auto_directive = NPCAutonomousEngine.build_autonomous_directive(triggers)
-            if auto_directive:
-                directive_parts.append(auto_directive)
-            # iceberg per-NPC depth 계산용 구조 데이터 저장
-            if triggers:
-                bus.dai["autonomous_triggers"] = [
-                    {"npc_name": t.npc_name, "trigger_id": t.trigger_id, "priority": t.priority}
-                    for t in triggers
-                ]
-
-        # Fallbacks
-        fallback_msg = self.pipeline.get_fallback_directives(context.request.active_modules)
-        if fallback_msg:
-            directive_parts.append(f"\n[Module Constraints]:\n{fallback_msg}")
+        auto_directive = self._evaluate_npc_autonomy(bus, context)
+        if auto_directive:
+            directive_parts.append(auto_directive)
 
         return {
             "directive": "\n".join(directive_parts),

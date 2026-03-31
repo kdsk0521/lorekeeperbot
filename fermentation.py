@@ -799,6 +799,14 @@ async def auto_ferment(
                 except Exception as e:
                     logger.warning(f"[Fermentation V4] Helena Delta 적용 실패: {e}")
 
+            # N5: Write compression result to structured memory slot
+            _turn = len(session_data.get("fermented_history", []))
+            if summary_text:
+                write_memory_slot(session_data, "persistent_memory", summary_text, turn=_turn)
+            _arc = result_data.get("arc_observations", {})
+            if isinstance(_arc, dict) and _arc.get("pc_pattern"):
+                write_memory_slot(session_data, "arc_memory", _arc["pc_pattern"], turn=_turn)
+
             session_data["history"] = history[FERMENT_CHUNK_SIZE:]
             changes_made = True
 
@@ -886,9 +894,67 @@ async def auto_ferment(
 # 메모리 컨텍스트 빌드 (프리셋 순서 적용)
 # =========================================================
 
+def score_fermented_entries(entries: list, query: str = "") -> list:
+    """LIBRA-inspired weighted scoring for fermented memory retrieval.
+    Returns [(entry, score), ...] sorted by score descending.
+    """
+    import config as _cfg
+
+    if not entries:
+        return []
+
+    query_tokens = set()
+    if query:
+        query_tokens = set(query.lower().replace('\n', ' ').split())
+        query_tokens = {t for t in query_tokens if len(t) > 1}
+
+    scored = []
+    total = len(entries)
+
+    w_sim = getattr(_cfg, 'MEMORY_SCORE_W_SIMILARITY', 0.4)
+    w_rec = getattr(_cfg, 'MEMORY_SCORE_W_RECENCY', 0.35)
+    w_imp = getattr(_cfg, 'MEMORY_SCORE_W_IMPORTANCE', 0.25)
+    layer_weight = MEMORY_INFLUENCE_WEIGHT.get("fermented", 0.6)
+
+    for idx, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            continue
+
+        # Recency: 0.0 (oldest) to 1.0 (newest)
+        recency = (idx + 1) / total if total > 0 else 0.5
+
+        # Importance: any block marked important?
+        blocks = entry.get("compressed_blocks", [])
+        has_important = any(
+            b.get("important", False) for b in blocks if isinstance(b, dict)
+        )
+        importance = 1.0 if has_important else 0.0
+
+        # Keyword overlap with query
+        similarity = 0.0
+        if query_tokens:
+            summary = (entry.get("summary", "") or "").lower()
+            arc = entry.get("arc_observations", {})
+            if isinstance(arc, dict):
+                summary += " " + (arc.get("emotional_arc", "") or "")
+                summary += " " + (arc.get("pc_pattern", "") or "")
+            entry_tokens = set(summary.split())
+            entry_tokens = {t for t in entry_tokens if len(t) > 1}
+            if entry_tokens:
+                overlap = len(query_tokens & entry_tokens)
+                similarity = overlap / max(len(query_tokens), 1)
+
+        score = (similarity * w_sim + recency * w_rec + importance * w_imp) * layer_weight
+        scored.append((entry, score))
+
+    scored.sort(key=lambda x: -x[1])
+    return scored
+
+
 def build_fermented_context(
     session_data: Dict[str, Any],
-    max_tokens: int = MAX_CONTEXT_TOKENS
+    max_tokens: int = MAX_CONTEXT_TOKENS,
+    query: str = ""
 ) -> str:
     """Slot 9 FERMENTED_HISTORY 빌드. DEEP + 에피소드 요약 + 종단 패턴."""
     if not isinstance(session_data, dict):
@@ -945,7 +1011,14 @@ def build_fermented_context(
         fermented_texts = []
         total_chars = 0
 
-        for entry in reversed(fermented):
+        # Weighted scoring: query가 있으면 점수 기반 정렬, 없으면 역순(최신 우선)
+        if query:
+            scored = score_fermented_entries(fermented, query=query)
+            ordered_entries = [entry for entry, _score in scored]
+        else:
+            ordered_entries = list(reversed(fermented))
+
+        for entry in ordered_entries:
             summary = entry.get("summary", "")
             timestamp = entry.get("timestamp", "")
 
@@ -991,11 +1064,145 @@ def build_fermented_context(
         if fermented_texts:
             content_parts.append("### 에피소드\n" + "\n---\n".join(fermented_texts))
 
+    # N5: Structured memory slots → 프롬프트 주입
+    slot_text = format_memory_for_injection(session_data)
+    if slot_text:
+        content_parts.append(f"### 구조 메모리\n{slot_text}")
+
     if not content_parts:
         return ""
 
     return "\n\n".join(content_parts)
 
+
+
+# =========================================================
+# 메모리 상태 조회
+# =========================================================
+
+# =========================================================
+# N5: 구조화 메모리 슬롯
+# =========================================================
+
+MEMORY_SLOTS = {
+    'scene_state':        {'write_mode': 'overwrite', 'retention_keep': 1},
+    'persistent_memory':  {'write_mode': 'append', 'retention_after': 15, 'retention_keep': 5},
+    'arc_memory':         {'write_mode': 'append', 'retention_after': 30, 'retention_keep': 3},
+    'turn_trace':         {'write_mode': 'overwrite', 'retention_keep': 3},
+    'world_encyclopedia': {'write_mode': 'append', 'retention_after': 50, 'retention_keep': 10},
+}
+
+# P13: 기억 영향 감쇠 기울기 (Reality Weaver)
+MEMORY_INFLUENCE_WEIGHT = {
+    "fresh":      1.0,    # Present → strongest
+    "fermented":  0.6,    # Timeline → moderate
+    "deep":       0.3,    # RecalledPast → weak
+    "lore":       0.1,    # Lore → weakest
+}
+
+
+def get_memory_weight(layer: str, important: bool = False) -> float:
+    """기억 계층별 영향 가중치. important=True면 감쇠 면제."""
+    if important:
+        return 1.0
+    return MEMORY_INFLUENCE_WEIGHT.get(layer, 0.5)
+
+
+def write_memory_slot(memory_data: dict, slot_name: str, content: str, turn: int = 0, important: bool = False) -> dict:
+    """구조화 메모리 슬롯에 데이터 쓰기.
+
+    Args:
+        memory_data: 전체 메모리 dict (수정 후 반환)
+        slot_name: MEMORY_SLOTS 키
+        content: 기록할 내용
+        turn: 현재 턴 번호
+        important: True면 감쇠 면제
+    """
+    if slot_name not in MEMORY_SLOTS:
+        return memory_data
+
+    slot_config = MEMORY_SLOTS[slot_name]
+    slots = memory_data.setdefault("structured_slots", {})
+    slot = slots.setdefault(slot_name, {"entries": []})
+
+    entry = {
+        "content": content,
+        "turn": turn,
+        "important": important,
+    }
+
+    if slot_config["write_mode"] == "overwrite":
+        slot["entries"] = [entry]
+    else:  # append
+        slot["entries"].append(entry)
+
+    # Retention pruning
+    retention_keep = slot_config.get("retention_keep", 10)
+    retention_after = slot_config.get("retention_after", 0)
+
+    if retention_after > 0 and turn > 0:
+        slot["entries"] = [
+            e for e in slot["entries"]
+            if e.get("important") or (turn - e.get("turn", 0)) < retention_after
+        ]
+
+    # Keep limit
+    if len(slot["entries"]) > retention_keep:
+        # Keep important + most recent
+        important_entries = [e for e in slot["entries"] if e.get("important")]
+        normal_entries = [e for e in slot["entries"] if not e.get("important")]
+        normal_entries = normal_entries[-(retention_keep - len(important_entries)):]
+        slot["entries"] = important_entries + normal_entries
+
+    return memory_data
+
+
+def read_memory_slot(memory_data: dict, slot_name: str) -> list:
+    """구조화 메모리 슬롯에서 엔트리 읽기."""
+    slots = memory_data.get("structured_slots", {})
+    slot = slots.get(slot_name, {})
+    return slot.get("entries", [])
+
+
+def format_memory_for_injection(memory_data: dict, layer: str = "fresh") -> str:
+    """메모리를 프롬프트 주입용으로 포맷. 가중치 적용.
+    P13: Surface form 비전달 — 어휘/문체 미포함, 사실만.
+    N5: 카테고리별 슬롯 매핑 힌트 포함."""
+    slots = memory_data.get("structured_slots", {})
+    if not slots:
+        return ""
+
+    from slot_manager import get_slot_for_category
+
+    # 슬롯 이름 → 카테고리 매핑 (역방향 추론)
+    _SLOT_CATEGORY_HINT = {
+        "scene_state": "real_time",
+        "persistent_memory": "character",
+        "arc_memory": "narrative_rule",
+        "turn_trace": "real_time",
+        "world_encyclopedia": "lore",
+    }
+
+    lines = []
+    weight = get_memory_weight(layer)
+
+    for slot_name, slot in slots.items():
+        entries = slot.get("entries", [])
+        if not entries:
+            continue
+        category = _SLOT_CATEGORY_HINT.get(slot_name, "lore")
+        target_slot = get_slot_for_category(category)
+        for entry in entries:
+            content = entry.get("content", "")
+            if not content:
+                continue
+            imp = " [important]" if entry.get("important") else ""
+            lines.append(f"[{slot_name}→S{target_slot}]{imp} {content}")
+
+    if weight < 1.0:
+        lines.insert(0, f"(Memory weight: {weight} — factual substrate only, surface form does not transmit)")
+
+    return "\n".join(lines)
 
 
 # =========================================================

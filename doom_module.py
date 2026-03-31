@@ -327,9 +327,6 @@ def _trigger_climax(context, bus, clocks: list, clock_events: list) -> None:
 
 def _apply_pressure(context: "GameContext", bus) -> None:
     """Vigor/Composure Pressure/Recovery from global doom level (FitD 8-segment)."""
-    if "mental" not in context.request.active_modules:
-        return
-
     dv = bus.doom.get("value", 0)
     if dv >= 88:
         pressure, label = -3, "⚠️ 긴장 시계 [임박] (-3)"

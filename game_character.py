@@ -694,6 +694,91 @@ def get_passives_for_context(user_data: Optional[Dict[str, Any]]) -> str:
 
 
 # =========================================================
+# STRUCTURED INVENTORY (N2 — 아이템 영속 + 인벤토리 검증)
+# =========================================================
+
+def create_inventory_item(name: str, qty: int = 1, tags: list = None,
+                          location: str = "bag", acquired_turn: int = 0) -> dict:
+    """Create a structured inventory item with a stable ID."""
+    import hashlib
+    item_id = hashlib.md5(f"{name}_{acquired_turn}".encode()).hexdigest()[:8]
+    return {
+        "id": item_id,
+        "name": name,
+        "qty": qty,
+        "tags": tags or [],
+        "location": location,
+        "acquired_turn": acquired_turn,
+    }
+
+
+def migrate_notebook_to_inventory(notebook_data) -> dict:
+    """Convert legacy string notebook to structured inventory.
+
+    Handles three cases:
+      1. Already-structured dict with "items" key -> returned as-is (with defaults filled).
+      2. Plain string (notebook text) -> items parsed from '— [소지품] —' section.
+      3. None / empty -> fresh empty inventory.
+
+    Returns: {"items": [...], "capacity": 4, "last_validated_turn": 0}
+    """
+    empty = {"items": [], "capacity": config.INVENTORY_SLOT_CAP.get("standard", 4),
+             "last_validated_turn": 0}
+
+    if notebook_data is None:
+        return empty
+
+    # Case 1: already structured
+    if isinstance(notebook_data, dict):
+        if "items" in notebook_data:
+            notebook_data.setdefault("capacity", empty["capacity"])
+            notebook_data.setdefault("last_validated_turn", 0)
+            return notebook_data
+        # Dict but no "items" key — treat as empty
+        return empty
+
+    # Case 2: list (already a list of items, possibly from ai_memory.inventory)
+    if isinstance(notebook_data, list):
+        items = []
+        for idx, entry in enumerate(notebook_data):
+            if isinstance(entry, dict) and "name" in entry:
+                # Already a structured item — ensure id exists
+                if "id" not in entry:
+                    entry = create_inventory_item(
+                        name=entry.get("name", "?"),
+                        qty=entry.get("qty", 1),
+                        tags=entry.get("tags", []),
+                        location=entry.get("location", "bag"),
+                        acquired_turn=entry.get("acquired_turn", 0),
+                    )
+                    # Preserve any extra keys (e.g., modifiers)
+                items.append(entry)
+            elif isinstance(entry, str) and entry.strip():
+                items.append(create_inventory_item(name=entry.strip()))
+        return {"items": items, "capacity": empty["capacity"], "last_validated_turn": 0}
+
+    # Case 3: string notebook
+    if isinstance(notebook_data, str):
+        items = []
+        in_inventory_section = False
+        for line in notebook_data.splitlines():
+            stripped = line.strip()
+            if "소지품" in stripped:
+                in_inventory_section = True
+                continue
+            if stripped.startswith("—") and "메모" in stripped:
+                in_inventory_section = False
+                continue
+            if in_inventory_section and stripped.startswith("-"):
+                item_text = stripped.lstrip("- ").strip()
+                if item_text:
+                    items.append(create_inventory_item(name=item_text))
+        return {"items": items, "capacity": empty["capacity"], "last_validated_turn": 0}
+
+    return empty
+
+
+# =========================================================
 # INVENTORY TAG SYSTEM (Phase 4-1b)
 # =========================================================
 

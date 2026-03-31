@@ -19,6 +19,7 @@ from typing import Dict, Any, Optional, List
 import difflib
 import config
 import domain_manager
+from npc_profile_harness import extract_static_traits
 
 # =========================================================
 # NPC SOURCE TYPES (출처 구분)
@@ -29,16 +30,33 @@ SOURCE_AI_GENERATED = "ai_generated"  # 세션 중 AI가 생성한 NPC
 
 VALID_SOURCES = {SOURCE_LORE, SOURCE_MANUAL, SOURCE_AI_GENERATED}
 
-# 태도 레벨 정의
+# 태도 레벨 정의 (0-4 scale for gating distance calculation)
 ATTITUDE_LEVELS = {
-    "hostile": -2,
-    "unfriendly": -1,
-    "neutral": 0,
-    "friendly": 1,
-    "loyal": 2
+    "hostile": 0,
+    "unfriendly": 1,
+    "neutral": 2,
+    "friendly": 3,
+    "loyal": 4
 }
 
 logger = logging.getLogger(__name__)
+
+# =========================================================
+# PEPLAU PHASE VALIDATION
+# =========================================================
+PEPLAU_ORDER = ['orientation', 'identification', 'exploitation', 'resolution']
+
+
+def validate_peplau_transition(current: str, proposed: str) -> str:
+    """Peplau 단계 건너뛰기 방지. 다음 단계로만 진행 가능."""
+    if current not in PEPLAU_ORDER or proposed not in PEPLAU_ORDER:
+        return proposed  # unknown stages pass through
+    curr_idx = PEPLAU_ORDER.index(current)
+    prop_idx = PEPLAU_ORDER.index(proposed)
+    if prop_idx > curr_idx + 1:  # skip prevention
+        return PEPLAU_ORDER[curr_idx + 1]
+    return proposed
+
 
 # =========================================================
 # NPC CRUD operations (Wraps domain_manager for now)
@@ -49,6 +67,52 @@ def get_npcs(channel_id: str) -> Dict[str, Dict[str, Any]]:
 
 def get_npc(channel_id: str, name: str) -> Optional[Dict[str, Any]]:
     return domain_manager.get_npc(channel_id, name)
+
+
+def get_npc_static_traits(channel_id: str, npc_name: str) -> dict:
+    """NPC의 정적 심리 특성을 반환. 없으면 빈 dict."""
+    npc = get_npc(channel_id, npc_name)
+    if not npc:
+        return {}
+    return npc.get("static_traits", {})
+
+
+# =========================================================
+# P5: 프로필-서사 분리 (Renderer strip)
+# =========================================================
+# Renderer에는 관찰 가능 데이터만 전달. Flash에는 전체.
+RENDERER_STRIP_KEYS = {
+    "hidden_motivation", "secret_knowledge", "true_identity",
+    "betrayal_plan", "inner_conflict", "secret", "secrets",
+    "hidden_agenda", "deception_plan",
+}
+
+def get_npc_context_for_renderer(channel_id: str, npc_name: str) -> dict:
+    """Renderer에는 행동 관찰 가능 데이터만 전달.
+    Flash(Theoria)에는 전체 프로필 전달.
+    코드가 데이터를 물리적으로 빼면 LLM이 쓰고 싶어도 못 씀."""
+    npc = get_npc(channel_id, npc_name)
+    if not npc:
+        return {}
+
+    # Description 내부의 비밀 섹션도 제거
+    result = {}
+    for k, v in npc.items():
+        if k in RENDERER_STRIP_KEYS:
+            continue
+        result[k] = v
+
+    # Description text에서 [Secret]/[Hidden] 섹션 제거
+    desc = result.get("description", "")
+    if desc:
+        # Remove sections starting with [Secret], [Hidden], [비밀], [숨겨진]
+        desc = re.sub(
+            r'(?:\[(?:Secret|Hidden|비밀|숨겨진)[^\]]*\])[^\[]*',
+            '', desc, flags=re.IGNORECASE
+        )
+        result["description"] = desc.strip()
+
+    return result
 
 
 def migrate_npc_fields(channel_id: str) -> int:
@@ -373,6 +437,12 @@ def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
                 data[key] = val
         if extracted:
             logger.info(f"[NPC] Auto-extracted fields for '{name}': {list(extracted.keys())}")
+    # N6: 정적 심리 특성 추출 (프로필 충분할 때만, 기존 traits 없을 때만)
+    if desc_text and len(desc_text) >= 100 and "static_traits" not in data:
+        static_traits = extract_static_traits(name, desc_text)
+        if static_traits:
+            data["static_traits"] = static_traits
+            logger.info(f"[NPC] Static traits extracted for '{name}': {static_traits}")
     domain_manager.update_npc(channel_id, name, data)
 
 def delete_npc(channel_id: str, name: str) -> tuple:
@@ -804,6 +874,45 @@ def get_npc_full_profiles(channel_id: str, names: list, scene_type: str = "norma
     return "\n\n".join(parts)
 
 
+def get_npc_renderer_profiles(channel_id: str, names: list, scene_type: str = "normal") -> str:
+    """P5: Renderer용 NPC 프로필 (비밀/숨겨진 정보 제거). 포맷은 get_npc_full_profiles와 동일."""
+    npcs = get_npcs(channel_id)
+    parts = []
+    for name in names:
+        key = domain_manager._find_npc_key(npcs, name) or name
+        raw = npcs.get(key)
+        if not raw:
+            continue
+        data = get_npc_context_for_renderer(channel_id, key)
+        if not data:
+            continue
+        name = key
+        desc = _get_npc_desc(data)
+        desc = _select_profile_sections(desc, scene_type)
+        header = f"### {name}"
+        meta_parts = []
+        if data.get("role"):
+            meta_parts.append(f"역할: {data['role']}")
+        if data.get("location"):
+            meta_parts.append(f"위치: {data['location']}")
+        if data.get("personality"):
+            meta_parts.append(f"성격: {data['personality']}")
+        if data.get("tone") or data.get("speech"):
+            meta_parts.append(f"말투: {data.get('tone') or data.get('speech')}")
+        if data.get("appearance"):
+            meta_parts.append(f"외형: {data['appearance']}")
+        meta_line = " | ".join(meta_parts)
+        if meta_line:
+            profile_text = f"{header}\n**[{meta_line}]**\n{desc}"
+        else:
+            profile_text = f"{header}\n{desc}"
+        voice_card = data.get("voice_card", "")
+        if voice_card:
+            profile_text += f"\n\n{voice_card}"
+        parts.append(profile_text)
+    return "\n\n".join(parts)
+
+
 def get_npc_names_only(channel_id: str, exclude: list) -> str:
     """지정된 NPC 제외한 나머지의 이름만 반환."""
     npcs = get_npcs(channel_id)
@@ -1168,3 +1277,213 @@ def clear_session_npcs(channel_id: str) -> int:
     return len(to_delete)
 
 
+# =========================================================
+# M2: NPC 결정 페이싱 쿨다운
+# =========================================================
+
+def check_decision_cooldown(channel_id: str, npc_name: str) -> int:
+    """NPC의 남은 결정 쿨다운 턴 수를 반환. 0이면 결정 가능."""
+    npc_data = get_npc(channel_id, npc_name)
+    if not npc_data:
+        return 0
+    return max(0, npc_data.get("decision_cooldown", 0))
+
+
+def set_decision_cooldown(channel_id: str, npc_name: str, turns: int = 3) -> None:
+    """NPC가 중대한 결정을 내린 후 쿨다운 설정."""
+    npc_data = get_npc(channel_id, npc_name)
+    if not npc_data:
+        logger.warning(f"[DecisionCooldown] NPC '{npc_name}' not found in {channel_id}")
+        return
+    npc_data["decision_cooldown"] = max(0, turns)
+    domain_manager.update_npc(channel_id, npc_name, npc_data)
+    logger.debug(f"[DecisionCooldown] {npc_name}: cooldown set to {turns}")
+
+
+def tick_all_cooldowns(channel_id: str) -> None:
+    """매 턴 호출: 모든 NPC의 decision_cooldown을 1씩 감소."""
+    npcs = get_npcs(channel_id)
+    if not npcs:
+        return
+    changed = False
+    for name, data in npcs.items():
+        cd = data.get("decision_cooldown", 0)
+        if cd > 0:
+            data["decision_cooldown"] = max(0, cd - 1)
+            changed = True
+    if changed:
+        # 직접 domain 저장 (bulk update — update_npc 반복 호출보다 효율적)
+        d = domain_manager.get_domain(channel_id)
+        d["npcs"] = npcs
+        domain_manager.save_domain(channel_id, d)
+        logger.debug(f"[DecisionCooldown] Ticked cooldowns for {channel_id}")
+
+
+# =========================================================
+# M5: NPC 태도 변경 쿨다운 게이트 (3턴 + 1단계)
+# =========================================================
+
+_ATTITUDE_LEVEL_REVERSE = {v: k for k, v in ATTITUDE_LEVELS.items()}
+
+
+def update_npc_attitude_gated(
+    channel_id: str,
+    npc_name: str,
+    new_attitude: str,
+    current_turn: int,
+    reason: str = ""
+) -> str:
+    """NPC 태도 변경에 쿨다운(3턴) + 최대 1단계 제한 적용.
+
+    Returns:
+        "accepted"  — 변경 승인, 저장 완료
+        "cooldown"  — 3턴 미경과로 거부
+        "clamped"   — 2단계 이상 점프 → ±1로 클램핑 후 저장
+    """
+    new_attitude = new_attitude.lower().strip()
+    if new_attitude not in ATTITUDE_LEVELS:
+        logger.warning(f"[AttitudeGate] Unknown attitude '{new_attitude}' for {npc_name}")
+        return "accepted"  # 알 수 없는 태도는 그냥 통과 (기존 동작 유지)
+
+    existing = get_npc_attitude(channel_id, npc_name)
+
+    # --- Rule 1: 이전 태도가 없으면 무조건 수락 ---
+    if not existing or "attitude" not in existing:
+        update_npc_attitude(channel_id, npc_name, new_attitude, reason)
+        # last_change_turn 기록
+        _save_attitude_turn(channel_id, npc_name, current_turn)
+        logger.info(f"[AttitudeGate] {npc_name}: initial → {new_attitude} (accepted)")
+        return "accepted"
+
+    old_attitude = existing.get("attitude", "neutral").lower().strip()
+    old_level = ATTITUDE_LEVELS.get(old_attitude, 2)  # default neutral
+    new_level = ATTITUDE_LEVELS[new_attitude]
+
+    # --- Rule 2: 3턴 쿨다운 ---
+    last_turn = existing.get("last_change_turn", -999)
+    if current_turn - last_turn < 3:
+        logger.info(f"[AttitudeGate] {npc_name}: cooldown ({current_turn - last_turn}/3 turns)")
+        return "cooldown"
+
+    # --- Rule 3: 최대 1단계 점프 ---
+    diff = new_level - old_level
+    if abs(diff) > 1:
+        clamped_level = old_level + (1 if diff > 0 else -1)
+        clamped_level = max(0, min(4, clamped_level))
+        clamped_attitude = _ATTITUDE_LEVEL_REVERSE.get(clamped_level, "neutral")
+        update_npc_attitude(channel_id, npc_name, clamped_attitude, reason)
+        _save_attitude_turn(channel_id, npc_name, current_turn)
+        logger.info(
+            f"[AttitudeGate] {npc_name}: {old_attitude}→{new_attitude} "
+            f"clamped to {clamped_attitude} (jump {diff}→±1)"
+        )
+        return "clamped"
+
+    # --- 정상 수락 ---
+    update_npc_attitude(channel_id, npc_name, new_attitude, reason)
+    _save_attitude_turn(channel_id, npc_name, current_turn)
+    logger.info(f"[AttitudeGate] {npc_name}: {old_attitude}→{new_attitude} (accepted)")
+    return "accepted"
+
+
+def _save_attitude_turn(channel_id: str, npc_name: str, turn: int) -> None:
+    """attitude 데이터에 last_change_turn을 기록."""
+    d = domain_manager.get_domain(channel_id)
+    attitudes = d.get("npc_attitudes", {})
+    npc_name = domain_manager._resolve_npc_name(d, npc_name)
+    if npc_name in attitudes:
+        attitudes[npc_name]["last_change_turn"] = turn
+        domain_manager.save_domain(channel_id, d)
+
+
+# =========================================================
+# N4: NPC 페르소나 스냅샷
+# =========================================================
+
+def apply_persona_snapshot(channel_id: str, npc_name: str, updates: dict, current_turn: int) -> str:
+    """페르소나 스냅샷 업데이트 적용. Delta-only 이력 기록.
+
+    updates format: {
+        "state": {"emotional_state": "...", "peplau_stage": "...", ...},
+        "core": {"motivation": "...", ...}  # optional
+    }
+
+    Returns: "applied", "incomplete_pair", "peplau_clamped", "npc_not_found"
+    """
+    npc = get_npc(channel_id, npc_name)
+    if not npc:
+        return "npc_not_found"
+
+    # Incomplete pair rejection
+    if "core" in updates and "state" not in updates:
+        return "incomplete_pair"
+
+    snapshot = npc.get("persona_snapshot", {
+        "core": {},
+        "state": {},
+        "history": [],
+        "last_updated_turn": 0,
+    })
+
+    result = "applied"
+
+    # Apply state updates
+    if "state" in updates:
+        state_updates = updates["state"]
+        old_state = snapshot.get("state", {})
+
+        # Peplau stage validation
+        if "peplau_stage" in state_updates:
+            old_peplau = old_state.get("peplau_stage", "orientation")
+            validated = validate_peplau_transition(old_peplau, state_updates["peplau_stage"])
+            if validated != state_updates["peplau_stage"]:
+                result = "peplau_clamped"
+            state_updates["peplau_stage"] = validated
+
+        # Static traits override protection (N6)
+        static_traits = npc.get("static_traits", {})
+        if static_traits.get("attachment_style"):
+            state_updates.pop("attachment_style", None)  # Code-provided, Flash can't override
+
+        # Delta-only history recording
+        for key, new_val in state_updates.items():
+            old_val = old_state.get(key)
+            if old_val != new_val and old_val is not None:
+                snapshot.setdefault("history", []).append({
+                    "turn": current_turn,
+                    "field": key,
+                    "old": old_val,
+                    "new": new_val,
+                })
+
+        snapshot["state"] = {**old_state, **state_updates}
+
+    # Apply core updates (less frequent)
+    if "core" in updates:
+        old_core = snapshot.get("core", {})
+        snapshot["core"] = {**old_core, **updates["core"]}
+
+    snapshot["last_updated_turn"] = current_turn
+
+    # Keep history bounded (last 20 entries)
+    if len(snapshot.get("history", [])) > 20:
+        snapshot["history"] = snapshot["history"][-20:]
+
+    # Save
+    npc["persona_snapshot"] = snapshot
+    d = domain_manager.get_domain(channel_id)
+    npcs = d.get("npcs", {})
+    resolved_name = domain_manager._find_npc_key(npcs, npc_name) or npc_name
+    if resolved_name in npcs:
+        npcs[resolved_name]["persona_snapshot"] = snapshot
+        domain_manager.save_domain(channel_id, d)
+
+    return result
+
+
+def get_persona_snapshot(channel_id: str, npc_name: str) -> dict:
+    """NPC 페르소나 스냅샷 반환."""
+    npc = get_npc(channel_id, npc_name)
+    if not npc:
+        return {}
+    return npc.get("persona_snapshot", {})

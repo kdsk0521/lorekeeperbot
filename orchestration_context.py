@@ -28,6 +28,7 @@ class RequestData:
     history_text: str = ""  # [V4] Recent history for THEORIA analysis
     lore_text: str = ""     # [V4] Lore reference (fallback)
     lore_chunks: List[Dict[str, Any]] = field(default_factory=list) # [V5] Labeled lore chunks for selective injection
+    lore_chunks_ranked: list = field(default_factory=list)  # [N3] Vector search ranked results
 
     def __post_init__(self) -> None:
         """genres 필드의 하위 호환 정규화(str/list/dict → dict[stage/flavor/lens])."""
@@ -295,7 +296,8 @@ async def gather_context(ctx: ResponseContext) -> ResponseContext:
     # 발효 요약 (V3 Hybrid - Mneme/Psyche)
     # build_fermented_context expects session_data dict, not separate args
     ctx.fermented_summary_text = fermentation.build_fermented_context(
-        ctx.domain_data  # 전체 세션 데이터 전달
+        ctx.domain_data,  # 전체 세션 데이터 전달
+        query=ctx.action_text
     )
     # Store deep_memory_data for prompt builder
     ctx.deep_memory_data = ctx.domain_data.get("deep_memory_data", {})

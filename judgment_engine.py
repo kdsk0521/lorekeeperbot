@@ -156,7 +156,15 @@ class JudgmentEngine:
         # DC Table
         dc_table = {"trivial": 0, "easy": 20, "normal": 40, "hard": 60, "extreme": 80}
         dc = dc_table.get(difficulty.lower(), 40)
-        
+
+        # 1b. Position → DC Modifier (DAI position = PC의 통제력)
+        position_data = bus.dai.get("position", {})
+        pos_value = float(position_data.get("value", 0.5)) if isinstance(position_data, dict) else 0.5
+        # Position 0.5 = neutral (no modifier). Each 0.1 away = ±5 DC
+        # 0.0 (desperate) → DC+25, 0.5 (neutral) → DC+0, 1.0 (dominant) → DC-25
+        position_dc_mod = int((0.5 - pos_value) * 50)
+        dc = max(0, dc + position_dc_mod)
+
         # 2. Dynamic Modifiers
         # 2.1 Vigor/Composure Modifiers — 장르 primary axis 기반
         import config as _cfg
@@ -303,8 +311,30 @@ class JudgmentEngine:
             result = "success"
         elif final_roll >= dc - 20:
             result = "partial"
-        
+
+        # 4b. Effect → Result Tier Shift (DAI effect = 결과 임팩트)
+        effect_data = bus.dai.get("effect", {})
+        eff_value = float(effect_data.get("value", 0.5)) if isinstance(effect_data, dict) else 0.5
+        # High effect (>=0.7) can upgrade partial→success or success→critical_success
+        # Low effect (<=0.3) can downgrade success→partial or partial→failure
+        if result not in ("critical_success", "critical_failure"):
+            if eff_value >= 0.7 and result in ("partial", "success"):
+                _tier_order = ["failure", "partial", "success", "critical_success"]
+                _idx = _tier_order.index(result)
+                if _idx < len(_tier_order) - 1:
+                    result = _tier_order[_idx + 1]
+                    bus.judgment["effect_shift"] = "upgrade"
+            elif eff_value <= 0.3 and result in ("partial", "success"):
+                _tier_order = ["failure", "partial", "success", "critical_success"]
+                _idx = _tier_order.index(result)
+                if _idx > 0:
+                    result = _tier_order[_idx - 1]
+                    bus.judgment["effect_shift"] = "downgrade"
+
         # 5. Store Result
+        bus.judgment["position_value"] = pos_value
+        bus.judgment["effect_value"] = eff_value
+        bus.judgment["position_dc_mod"] = position_dc_mod
         bus.judgment["roll"] = roll
         bus.judgment["final_roll"] = final_roll
         bus.judgment["dc"] = dc
@@ -352,6 +382,12 @@ class JudgmentEngine:
             modifications.append({"label": "세계상황", "value": condition_mod})
         if effort_mod != 0:
             modifications.append({"label": "각오", "value": effort_mod})
+        if position_dc_mod != 0:
+            pos_label = "유리" if position_dc_mod < 0 else "불리"
+            modifications.append({"label": f"포지션({pos_label})", "value": -position_dc_mod})  # Inverted: lower DC = better
+        if bus.judgment.get("effect_shift"):
+            shift_label = "효과↑" if bus.judgment["effect_shift"] == "upgrade" else "효과↓"
+            modifications.append({"label": shift_label, "value": 0})
 
         mod_parts = []
         for m in modifications:

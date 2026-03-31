@@ -714,15 +714,38 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
 
         return "\n".join(parts) if parts else "- Locations: Current surroundings"
 
-    def _build_chunk_index(self, chunks: list) -> str:
-        """청크 라벨 인덱스를 Theoria 프롬프트에 포함 (선택용)"""
+    def _build_chunk_index(self, chunks: list, ranked_chunks: list = None) -> str:
+        """청크 라벨 인덱스를 Theoria 프롬프트에 포함 (선택용).
+        ranked_chunks: [(chunk, score), ...] from vector search — 상위 청크에 ★ 마커 부여.
+        """
         if not chunks:
             return ""
+
+        # Build a set of ranked chunk indices for priority marking
+        ranked_indices: dict = {}
+        if ranked_chunks:
+            for item, score in ranked_chunks:
+                if isinstance(item, dict):
+                    ridx = item.get("index")
+                    if ridx is not None:
+                        ranked_indices[ridx] = score
+
+        # Reorder: ranked chunks first, then the rest
+        if ranked_indices:
+            ranked_first = [c for c in chunks if c.get("index") in ranked_indices]
+            rest = [c for c in chunks if c.get("index") not in ranked_indices]
+            ordered = ranked_first + rest
+        else:
+            ordered = chunks
+
         lines = ["### 6. LORE CHUNKS (Select relevant indices for relevant_chunks field, max 7)"]
-        for chunk in chunks:
+        for chunk in ordered:
             idx = chunk.get("index", 0)
             label = chunk.get("label", f"Section {idx}")
-            lines.append(f"[{idx}] {label}")
+            if idx in ranked_indices:
+                lines.append(f"[{idx}] ★ {label}")
+            else:
+                lines.append(f"[{idx}] {label}")
         return "\n".join(lines) + "\n"
 
     def _build_pending_flashback(self, anchors: dict) -> str:
@@ -833,7 +856,7 @@ Evaluate this in flashback_eval field. Check plausibility, passive match, assign
 ### 5. RECENT HISTORY
 {req.history_text or '[No history]'}
 
-{self._build_pending_flashback(anchors)}{self._build_chunk_index(req.lore_chunks)}
+{self._build_pending_flashback(anchors)}{self._build_chunk_index(req.lore_chunks, ranked_chunks=req.lore_chunks_ranked)}
 ---
 Perform FULL Theoria analysis and return JSON with ALL required fields.
 """
