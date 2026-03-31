@@ -116,8 +116,17 @@ def detect_pc_impersonation(response: str, pc_names: List[str]) -> List[Dict]:
 
     # 한국어 과거형 동사 어미 (범용)
     VERB_ENDING = r'(?:했다|었다|았다|였다|셨다|ㅆ다)'
-    # 내면/사고 동사
+    # 내면/사고 동사 (진짜 사칭)
     THOUGHT_VERBS = r'(?:생각했다|느꼈다|깨달았다|결심했다|기억했다|떠올렸다|추측했다|알았다|몰랐다|원했다|바랐다|후회했다|의심했다|확신했다|짐작했다)'
+    # 반사적/불수의 반응 동사 (허용 — PC 선택이 아닌 물리 반응)
+    REFLEXIVE_VERBS = re.compile(
+        r'(?:밀렸다|밀려났다|떨렸다|떨려왔다|흔들렸다|굳었다|경직됐다|경직되었다|'
+        r'거칠어졌다|빨라졌다|느려졌다|멈췄다|멈추었다|떨어졌다|넘어졌다|쏠렸다|'
+        r'미끄러졌다|부딪혔다|부딪쳤다|맞았다|닿았다|스쳤다|꿰뚫렸다|찔렸다|베였다|'
+        r'젖었다|얼어붙었다|뜨거워졌다|차가워졌다|흐려졌다|어두워졌다|'
+        r'커졌다|작아졌다|조여왔다|풀렸다|터졌다|갈라졌다|'
+        r'움찔했다|휘청했다|비틀거렸다|주저앉았다|쓰러졌다|의식이\s*(?:흐려졌다|멀어졌다|끊겼다))'
+    )
 
     # 1. PC 이름 기반 탐지
     if pc_names:
@@ -170,10 +179,17 @@ def detect_pc_impersonation(response: str, pc_names: List[str]) -> List[Dict]:
         dq = sub.count('"') + sub.count('\u201C') + sub.count('\u201D')
         return dq % 2 == 1
 
+    # 4. 반사적 반응 예외 필터링 (PC 선택이 아닌 물리 반응은 허용)
+    def is_reflexive(matched_text):
+        return bool(REFLEXIVE_VERBS.search(matched_text))
+
     filtered_violations = []
     for v in violations:
-        if not is_inside_quotes(response, v['start']):
-            filtered_violations.append(v)
+        if is_inside_quotes(response, v['start']):
+            continue  # 따옴표 내 → 허용
+        if v['type'] != 'thought' and is_reflexive(v['matched']):
+            continue  # 반사적 반응 → 허용 (thought 타입은 예외 없이 차단)
+        filtered_violations.append(v)
 
     return filtered_violations
 

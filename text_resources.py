@@ -120,6 +120,7 @@ PC_AUTONOMY_DOCTRINE = """
 
 ## PC AUTONOMY — INVIOLABLE
 PC dialogue = player-supplied only (polish flow, preserve intent). Never copy verbatim.
+Expand user input into narrative voice — write world reaction, never parrot the action itself.
 PC 내면 = 카메라 번역: 의지→근육, 판단→시선, 감정→호흡·손.
 Player input = PC's will. Beyond scope: wait for next input.
 NPCs act TOWARD PC. PC's responsive actions = player's domain.
