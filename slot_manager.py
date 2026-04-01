@@ -779,6 +779,15 @@ def build_34_step_prompt(ctx) -> str:
             triggers_str = "\n".join(f"- {t}" for t in trigger_lines)
             fermented_history = f"### [ACTIVE MEMORY TRIGGERS - Unresolved Narrative Hooks]\n{triggers_str}\n\n{fermented_base}"
 
+    # 연대기 미해결 떡밥 주입 (자동 생성분)
+    _chronicle_unresolved = domain_manager.get_session_ai_memory(channel_id).get("chronicle_unresolved", "")
+    if not _chronicle_unresolved:
+        _chronicles = domain_manager.get_domain(channel_id).get("chronicles", [])
+        if _chronicles:
+            _chronicle_unresolved = _chronicles[-1].get("unresolved", "")
+    if _chronicle_unresolved:
+        fermented_history = f"[연대기 떡밥] {_chronicle_unresolved}\n\n{fermented_history}"
+
     # --- [Slot 13] Input Analysis (Enhanced with Observation + Intent + Position/Effect) ---
     input_analysis_parts = []
     input_analysis_data = dai.get("input_analysis", {})

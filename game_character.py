@@ -271,6 +271,79 @@ def get_notebook_text(channel_id: str, user_id: str = "") -> str:
 
 def update_notebook_text(channel_id: str, new_text: str, user_id: str = "") -> None:
     domain_manager.update_notebook(channel_id, new_text, user_id)
+    if user_id:
+        sync_notebook_to_inventory(channel_id, user_id)
+
+
+def add_item_to_sojipin(channel_id: str, item_name: str, user_id: str = "") -> str:
+    """[소지품] 섹션에 아이템 추가. 중복 방지."""
+    item_name = item_name.strip()
+    if not item_name:
+        return ""
+    current_nb = get_notebook_text(channel_id, user_id)
+    if f"- {item_name}" in current_nb:
+        return f"이미 소지품에 있음: {item_name}"
+
+    if "— [메모] —" in current_nb:
+        parts = current_nb.split("— [메모] —", 1)
+        inventory_part = parts[0].rstrip()
+        new_nb = inventory_part + f"\n- {item_name}\n\n— [메모] —" + parts[1]
+    elif "— [소지품] —" in current_nb:
+        new_nb = current_nb.rstrip() + f"\n- {item_name}"
+    else:
+        new_nb = f"— [소지품] —\n- {item_name}\n\n— [메모] —\n" + current_nb
+
+    update_notebook_text(channel_id, new_nb, user_id)
+    return f"소지품 추가: {item_name}"
+
+
+def remove_item_from_sojipin(channel_id: str, item_name: str, user_id: str = "") -> str:
+    """[소지품] 섹션에서 아이템 제거. [메모]는 안 건드림."""
+    item_name = item_name.strip()
+    if not item_name:
+        return ""
+    current_nb = get_notebook_text(channel_id, user_id)
+    lines = current_nb.splitlines()
+    new_lines = []
+    removed = False
+    in_sojipin = False
+
+    for line in lines:
+        stripped = line.strip()
+        if "소지품" in stripped and stripped.startswith("—"):
+            in_sojipin = True
+            new_lines.append(line)
+            continue
+        if stripped.startswith("—") and "메모" in stripped:
+            in_sojipin = False
+            new_lines.append(line)
+            continue
+        if in_sojipin and stripped.startswith("-") and item_name in stripped and not removed:
+            removed = True
+            continue
+        new_lines.append(line)
+
+    if removed:
+        update_notebook_text(channel_id, "\n".join(new_lines), user_id)
+        return f"소지품 제거: {item_name}"
+    return f"소지품에서 '{item_name}' 못 찾음"
+
+
+def sync_notebook_to_inventory(channel_id: str, user_id: str) -> None:
+    """노트북 [소지품] 섹션에서 ai_memory.inventory를 재구축."""
+    if not user_id:
+        return
+    notebook_text = get_notebook_text(channel_id, user_id)
+    parsed = migrate_notebook_to_inventory(notebook_text)
+
+    p = domain_manager.get_participant_data(channel_id, user_id)
+    if not p:
+        return
+    mem = p.get("ai_memory", {})
+    mem["inventory"] = parsed.get("items", [])
+    p["ai_memory"] = mem
+    domain_manager.save_participant_data(channel_id, user_id, p)
+
 
 def get_active_quests(channel_id: str) -> List[str]:
     """content 문자열 리스트 반환 (cognition 추출 호환)."""
@@ -722,7 +795,7 @@ def migrate_notebook_to_inventory(notebook_data) -> dict:
 
     Returns: {"items": [...], "capacity": 4, "last_validated_turn": 0}
     """
-    empty = {"items": [], "capacity": config.INVENTORY_SLOT_CAP.get("standard", 4),
+    empty = {"items": [], "capacity": config.INVENTORY_SLOT_CAP,
              "last_validated_turn": 0}
 
     if notebook_data is None:

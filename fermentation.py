@@ -884,10 +884,108 @@ async def auto_ferment(
                        f"narrative={len(session_data.get('deep_memory', ''))}자, "
                        f"triggers={len(session_data.get('active_memory_triggers', []))}")
     
+    # =========================================================
+    # 연대기 자동 갱신 (발효 3회마다)
+    # =========================================================
+    ferment_count = len(session_data.get("fermented_history", []))
+    last_chronicle_at = session_data.get("_last_chronicle_ferment_count", 0)
+    if ferment_count > 0 and ferment_count - last_chronicle_at >= 3:
+        try:
+            await _auto_generate_chronicle(client, model_id, session_data, channel_id)
+            session_data["_last_chronicle_ferment_count"] = ferment_count
+            changes_made = True
+            logger.info(f"[Chronicle] Auto-generated at ferment_count={ferment_count}")
+        except Exception as e:
+            logger.warning(f"[Chronicle] Auto-generation failed: {e}")
+
     if changes_made and save_callback:
         save_callback()
-    
+
     return session_data
+
+
+async def _auto_generate_chronicle(client, model_id: str, session_data: dict, channel_id: str = "") -> None:
+    """발효 3회마다 자동 연대기 생성 → 미해결 떡밥을 session_data에 저장."""
+    import text_resources
+    import config as _cfg
+    from google.genai import types
+
+    deep = session_data.get("deep_memory", "")
+    fermented = session_data.get("fermented_history", [])
+    history = session_data.get("history", [])
+
+    # 입력 조립 (command_handler._build_chronicle_input과 동일 패턴)
+    parts = []
+    if deep and isinstance(deep, str) and deep.strip():
+        parts.append(f"## Deep Memory\n{deep[:3000]}")
+    if fermented:
+        texts = []
+        for e in fermented[-10:]:
+            if isinstance(e, dict):
+                s = e.get("summary", "")
+                if s:
+                    texts.append(s)
+        if texts:
+            parts.append("## Fermented\n" + "\n".join(texts))
+    if history:
+        recent = history[-20:]
+        lines = [f"{h.get('role','?')}: {h.get('content','')[:300]}" for h in recent if isinstance(h, dict)]
+        if lines:
+            parts.append("## Recent\n" + "\n".join(lines))
+
+    if not parts:
+        return
+
+    chronicle_input = "\n\n---\n\n".join(parts)
+
+    response = await client.aio.models.generate_content(
+        model=model_id,
+        contents=[types.Content(role="user", parts=[types.Part(text=chronicle_input)])],
+        config=types.GenerateContentConfig(
+            system_instruction=getattr(text_resources, 'CHRONICLE_SYSTEM_PROMPT', ''),
+            temperature=0.5,
+            max_output_tokens=2048,
+            safety_settings=_cfg.SAFETY_SETTINGS,
+        )
+    )
+
+    if not response or not response.text:
+        return
+
+    text = response.text.strip()
+
+    # 미해결 떡밥 섹션 추출
+    unresolved = ""
+    if "미해결" in text or "🔮" in text:
+        for line in text.split("\n"):
+            if "미해결" in line or "🔮" in line:
+                # 이 줄부터 다음 ### 또는 끝까지
+                idx = text.index(line)
+                rest = text[idx:]
+                section_lines = []
+                for sl in rest.split("\n")[1:]:
+                    if sl.strip().startswith("###") or sl.strip().startswith("📖") or sl.strip().startswith("🎭") or sl.strip().startswith("⚡") or sl.strip().startswith("💡"):
+                        break
+                    if sl.strip():
+                        section_lines.append(sl.strip().lstrip("- "))
+                unresolved = " | ".join(section_lines[:5])
+                break
+
+    # 저장
+    import time
+    chronicles = session_data.setdefault("chronicles", [])
+    chronicles.append({
+        "timestamp": time.time(),
+        "content": text[:2000],
+        "unresolved": unresolved,
+        "type": "auto",
+    })
+    if len(chronicles) > 10:
+        session_data["chronicles"] = chronicles[-10:]
+
+    # 미해결 떡밥을 별도 필드에 저장 (Slot 9 주입용)
+    if unresolved:
+        session_data["chronicle_unresolved"] = unresolved
 
 
 # =========================================================

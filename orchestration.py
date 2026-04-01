@@ -351,6 +351,8 @@ class OrchestrationService:
             dai["flashback_confirmed"] = True
             dai["flashback_declaration"] = declaration
             dai["loadout_used"] = True
+            # 회상 아이템 → 노트북 [소지품] + 인벤토리 자동 동기화
+            game_character.add_item_to_sojipin(channel_id, declaration, user_id)
             new_vigor = bus.vigor["value"]
             new_remaining = remaining - slots_needed
 
@@ -440,22 +442,20 @@ class OrchestrationService:
 
         log_parts = []
 
-        # 소비 처리: 노트북 + 구조화 인벤토리 양쪽에서 제거
+        # 소비 처리: [소지품] 섹션에서 제거 → sync가 인벤토리 자동 반영
         for item in consumed:
             if not item or not isinstance(item, str):
                 continue
-            result = game_character.remove_memo(channel_id, item.strip(), user_id)
-            game_character.remove_inventory_item(channel_id, user_id, item.strip())
-            if "⚠️" not in result:
+            result = game_character.remove_item_from_sojipin(channel_id, item.strip(), user_id)
+            if "못 찾음" not in result:
                 log_parts.append(f"📦 소비: {item.strip()}")
 
-        # 획득 처리: 노트북 + 구조화 인벤토리 양쪽에 추가
+        # 획득 처리: [소지품] 섹션에 추가 → sync가 인벤토리 자동 반영
         for item in gained:
             if not item or not isinstance(item, str):
                 continue
-            result = game_character.add_memo(channel_id, item.strip(), user_id)
-            game_character.add_inventory_item(channel_id, user_id, item.strip())
-            if "⚠️" not in result:
+            result = game_character.add_item_to_sojipin(channel_id, item.strip(), user_id)
+            if "이미" not in result:
                 log_parts.append(f"📥 획득: {item.strip()}")
 
         if not log_parts:
