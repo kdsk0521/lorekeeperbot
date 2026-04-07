@@ -509,8 +509,10 @@ def detect_premature_closure(response: str, conclusion_proximity: int = 50,
 # Opening type patterns
 _OPENING_PATTERNS = [
     ("dialogue", re.compile(r'^\s*["""\u201C\u300C]')),
+    ("dialogue", re.compile(r'^\s*.{1,30}:\s*["""\u201C\u300C]')),  # 이름: "대사"
     ("inner_thought", re.compile(r"^\s*[\u2018\u2019'].{0,30}[\u2018\u2019']")),
     ("action", re.compile(r'^\s*(?:\S{1,10}[이가은는]\s+.{0,20}(?:했다|었다|았다|였다|한다|는다|인다))')),
+    ("action", re.compile(r'(?:했다|었다|았다|였다|졌다|왔다|갔다|났다|렸다|섰다)[\.\s]*$')),  # 동사 종결
     ("environment", re.compile(r'^\s*(?:하늘|바람|빛|공기|거리|방|복도|숲|바다|밤|낮|아침|저녁|어둠|달|태양|비|눈|안개|연기)')),
     ("description", re.compile(r'^\s*\S')),  # fallback: any non-empty line
 ]

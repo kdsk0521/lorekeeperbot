@@ -186,15 +186,7 @@ class JudgmentEngine:
             mental_mod = -10
             mental_label = "붕괴"
             
-        # 2.2 Doom Modifiers (Baseline 50, Step 5)
-        current_doom = bus.doom.get("value", 0)
-        doom_mod = ((50 - current_doom) // 10) * 5
-        
-        # 2.3 DAI Modifiers (from Anomaly defense success/failure)
-        dai_bonus = bus.dai.get("bonus", 0)
-        dai_penalty = bus.dai.get("penalty", 0)
-
-        # 2.4 Memo Bonus (Flash가 관련 메모/단서 발견 시 +0~10)
+        # 2.2 Memo Bonus (Flash가 관련 메모/단서 발견 시 +0~10)
         memo_relevant = eval_data.get("memo_relevant")
         memo_mod = 0
         memo_label = ""
@@ -289,10 +281,21 @@ class JudgmentEngine:
             else:
                 bus.dai["effort_failed"] = True
 
+        # 2.10 Context Modifiers (Flash 분석 보정 — 특질/상황)
+        _flash_mods = bus.judgment.get("modifications", [])
+        context_mod = 0
+        for _fm in _flash_mods:
+            if isinstance(_fm, dict):
+                try:
+                    context_mod += int(_fm.get("value", 0) or 0)
+                except (ValueError, TypeError):
+                    pass
+        context_mod = max(-40, min(40, context_mod))
+
         # 3. Roll Dice
         roll = random.randint(1, 100)
         aspect_mod = self._calculate_aspect_mod(context)
-        final_roll = roll + mental_mod + doom_mod + theory_mod + memo_mod + passive_mod + inv_mod + status_mod + aspect_mod + dai_bonus - dai_penalty + momentum_mod + condition_mod + effort_mod
+        final_roll = roll + mental_mod + theory_mod + memo_mod + passive_mod + inv_mod + status_mod + aspect_mod + momentum_mod + condition_mod + effort_mod + context_mod
         
         # 4. Determine Result
         result = "failure"
@@ -358,12 +361,6 @@ class JudgmentEngine:
         # Append System Mods for visibility
         if mental_mod != 0:
             modifications.append({"label": f"기력({mental_label})", "value": mental_mod})
-        if doom_mod != 0:
-            modifications.append({"label": "월드긴장", "value": doom_mod})
-        if dai_bonus > 0:
-            modifications.append({"label": "이변대응성공", "value": dai_bonus})
-        if dai_penalty > 0:
-            modifications.append({"label": "이변대응실패", "value": -dai_penalty})
         if memo_mod > 0:
             modifications.append({"label": f"메모({memo_label})", "value": memo_mod})
         if theory_mod != 0:
@@ -418,13 +415,7 @@ class JudgmentEngine:
             if result == "critical_failure":
                 bus.judgment["party_wide_hook"] = True
 
-        # 7. Clear DAI bonus/penalty after consumption (1회성)
-        if dai_bonus or dai_penalty:
-            bus.dai["bonus"] = 0
-            bus.dai["penalty"] = 0
-            bus.dai["reason"] = ""
-
-        # 8. Apply Consequences (doom, primary axis, clocks, momentum)
+        # 7. Apply Consequences (doom, primary axis, clocks, momentum)
         _apply_consequences(context, result)
 
         # Consequence log → Discord output
