@@ -442,7 +442,32 @@ async def cmd_lore(ctx: CommandContext) -> None:
             if rules_str:
                 summary_text += f"\n규칙:\n{rules_str}"
             domain_manager.set_event_lore_summary(channel_id, summary_text)
-            
+
+            # 4.5 World Tree: 로어 위치 데이터로 공간 그래프 구축
+            if locations and isinstance(locations, list):
+                try:
+                    import world_tree
+                    # lore_summary 스키마(desc/danger) → world_tree 스키마(description/risk) 변환
+                    _wt_locs = []
+                    for loc in locations:
+                        if isinstance(loc, dict) and loc.get("name"):
+                            _wt_locs.append({
+                                "name": loc["name"],
+                                "type": loc.get("type", "area"),
+                                "parent": loc.get("parent", ""),
+                                "description": loc.get("desc", loc.get("description", "")),
+                                "risk": loc.get("danger", loc.get("risk", "Low")),
+                                "atmosphere": loc.get("atmosphere", ""),
+                                "tags": loc.get("tags", []),
+                                "connections": loc.get("connections", []),
+                            })
+                    if _wt_locs:
+                        _wt_count = world_tree.import_locations_from_lore(channel_id, _wt_locs)
+                        if _wt_count:
+                            logger.info(f"[WorldTree] Imported {_wt_count} locations from lore")
+                except Exception as e:
+                    logger.warning(f"[WorldTree] Lore import failed: {e}")
+
             # 5. Update World Constraints (로어 세계 규칙)
             world_constraints = unified_res.get("world_constraints", {})
             if world_constraints and isinstance(world_constraints, dict):

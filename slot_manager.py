@@ -359,6 +359,9 @@ class SlotPromptBuilder:
         # [3] Mirror Workshop
         self.set_slot(3, getattr(text_resources, 'MIRROR_WORKSHOP_PROTOCOL', ''))
 
+        # [4] Narrative Priority (W4)
+        self.set_slot(4, getattr(text_resources, 'NARRATIVE_PRIORITY', ''))
+
         # ===== WORLD ZONE (5) =====
         self.set_slot(5, text_resources.WORLD_AXIOM)
 
@@ -372,6 +375,10 @@ class SlotPromptBuilder:
 
         # ===== RULES ZONE (18-25) =====
         self.set_slot(18, text_resources.PC_AUTONOMY_DOCTRINE)
+        # [19] Writing Directives — ɑ/ɑ′ Dual-Path (W11)
+        self.set_slot(19, getattr(text_resources, 'WRITING_DIRECTIVES', ''))
+        # [21] Input Authority — Decree/Attempt (W3)
+        self.set_slot(21, getattr(text_resources, 'INPUT_AUTHORITY', ''))
         self.set_slot(20, "")  # 동적 빌더가 덮어씀
         self.set_slot(25, getattr(text_resources, 'PROSE_CRAFT_PROTOCOL', ''))
 
@@ -643,6 +650,19 @@ def build_34_step_prompt(ctx) -> str:
 
     dai = getattr(ctx, 'dai', None) or {}
 
+    # --- [Slot 12] NPC Relation Context (entity_relations — 동적 append) ---
+    if channel_id:
+        try:
+            import entity_relations
+            _relevant_npcs = dai.get("relevant_npcs", [])
+            _npc_names = [n if isinstance(n, str) else n.get("name", "") for n in _relevant_npcs] if _relevant_npcs else None
+            _rel_ctx = entity_relations.build_relation_context(channel_id, relevant_npcs=_npc_names)
+            if _rel_ctx:
+                _slot12 = builder.get_slot(12) or ""
+                builder.set_slot(12, f"{_slot12}\n\n{_rel_ctx}" if _slot12 else _rel_ctx)
+        except Exception:
+            pass
+
     # --- [Slot 6] PC Data (Rich Player Info — 다인 플레이 지원) ---
     player_info = ""
     if channel_id and user_id:
@@ -830,11 +850,46 @@ def build_34_step_prompt(ctx) -> str:
     # --- [Slot 16] Scene Intelligence (Aspects + Energy + SensoryAnchors + Habitus + Hook + Flags) ---
     scene_intel_parts = []
 
+    # EmotionEngine: NPC 감정 상태 컨텍스트 (급변 표시 포함)
+    try:
+        from emotion_engine import EmotionEngine, EmotionState
+        _emo_bus = dai.get("_emotion_states_for_slot", {})
+        if not _emo_bus and channel_id:
+            import domain_manager as _dm_emo
+            _raw_emo = _dm_emo.get_world_state(channel_id).get("npc_emotion_states", {})
+            if _raw_emo:
+                _emo_bus = {n: EmotionState.from_dict(s) for n, s in _raw_emo.items() if isinstance(s, dict)}
+        if isinstance(_emo_bus, dict) and _emo_bus:
+            _emo_text = EmotionEngine.build_emotion_context(_emo_bus)
+            if _emo_text:
+                scene_intel_parts.append(_emo_text)
+    except Exception:
+        pass
+
     # EnergyDirection: iceberg 번역 (라벨 → 톤/비트/종결 + 장면 빛)
     energy_dir = dai.get("energy_direction", "")
     energy_hint = iceberg.translate_energy_direction(energy_dir)
     if energy_hint:
         scene_intel_parts.append(energy_hint)
+
+    # WorldTree: 공간 그래프 컨텍스트 (계층 경로 + 연결 + NPC 위치 + 출구)
+    if channel_id:
+        try:
+            import world_tree
+            _loc_ctx = world_tree.build_location_context_text(channel_id)
+            if _loc_ctx:
+                scene_intel_parts.append(_loc_ctx)
+        except Exception:
+            pass
+
+    # scene_type: 하위 여러 곳에서 사용
+    scene_type = dai.get("scene_type", "normal")
+
+    # StoryDirection: iceberg 번역 (pacing + tension + transition + focus)
+    _story_dir = dai.get("story_direction", {})
+    _story_dir_hint = iceberg.translate_story_direction(_story_dir, scene_type)
+    if _story_dir_hint:
+        scene_intel_parts.append(_story_dir_hint)
 
     # MemoryType: iceberg 번역 (기억 유형 → 산문 스타일 힌트, 발동 턴만)
     memory_hint = iceberg.translate_memory_type(memory_triggers)
@@ -843,7 +898,6 @@ def build_34_step_prompt(ctx) -> str:
 
     # TimeAtmosphere: iceberg 번역 (시간대 → 감각 힌트, 전투 duration)
     time_context = dai.get("TimeContext", dai.get("time_context", ""))
-    scene_type = dai.get("scene_type", "normal")
     time_atm = iceberg.translate_time_atmosphere(time_context, scene_type)
     if time_atm:
         scene_intel_parts.append(time_atm)
@@ -885,6 +939,13 @@ def build_34_step_prompt(ctx) -> str:
     qflag_text = iceberg.translate_quality_flags(qflags)
     if qflag_text:
         scene_intel_parts.append("### 서사 품질 보정\n" + qflag_text)
+
+    # W5: Pipeline Degradation Notice
+    _degraded = dai.get("_degraded_stages", [])
+    if _degraded:
+        _deg_names = [d.get("stage", "?") for d in _degraded if isinstance(d, dict)]
+        if _deg_names:
+            scene_intel_parts.append(f"[System] 제한된 분석: {', '.join(_deg_names)}")
 
     # Scene Continuity: 불연속 감지 → 보정 지시
     continuity_data = dai.get("continuity_check", {})
@@ -1113,6 +1174,22 @@ def build_34_step_prompt(ctx) -> str:
             rest_dir += " — 안전하지 않은 장소. 긴장을 유지하라."
         gm_mover = (gm_mover + rest_dir) if gm_mover else rest_dir
 
+    # Idle Proactive Direction (유휴 입력 시 능동적 서사 전개 힌트)
+    _sd = dai.get("story_direction", {})
+    if isinstance(_sd, dict) and _sd.get("is_idle_input") and _sd.get("idle_direction"):
+        _idle = _sd["idle_direction"]
+        _idle_source = _idle.get("source", "ambient")
+        _idle_hint = _idle.get("hint", "")
+        _idle_npc = _idle.get("npc", "")
+        _idle_parts = [f"[IDLE INPUT → PROACTIVE] Source: {_idle_source}"]
+        if _idle_hint:
+            _idle_parts.append(f"Hint: {_idle_hint}")
+        if _idle_npc:
+            _idle_parts.append(f"Focus NPC: {_idle_npc}")
+        _idle_parts.append("유저가 능동적 입력을 하지 않았다 — 세계/NPC가 주도하여 장면을 전진시켜라.")
+        _idle_dir = "\n".join(_idle_parts)
+        gm_mover = (gm_mover + f"\n{_idle_dir}") if gm_mover else _idle_dir
+
     # [POSITION_FRICTION 제거됨] — Slot 13 translate_position_effect()에서 tier별 friction 자동 append
 
     # Time directive (Pro에 서사 시간 범위 힌트)
@@ -1242,6 +1319,8 @@ def build_34_step_prompt(ctx) -> str:
     # AI 이전 응답에 PC 사칭이 포함되면 다음 응답도 패턴을 답습함
     # → 프롬프트에 주입하기 전에 히스토리에서 사칭 문장을 선제 제거
     pc_name = getattr(ctx, 'user_mask', '') or ''
+    _domain_data = getattr(ctx, 'domain_data', {}) or {}
+    impersonation_enabled = _domain_data.get("settings", {}).get("impersonation_filter", True)
     if impersonation_enabled and pc_name and pc_name != 'Unknown':
         from response_processor import filter_pc_impersonation
         pc_names_list = [pc_name]

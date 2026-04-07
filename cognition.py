@@ -201,6 +201,8 @@ async def extract_all_updates(
 
         "NPCImprintUpdate": soc.get("npc_imprints") if soc else None,
 
+        "NPCRelationUpdate": soc.get("npc_relations") if soc else None,
+
         "WorldStateUpdate": wst if wst else None,
 
         "RenderFingerprint": rfp if rfp else None
@@ -313,7 +315,12 @@ async def _extract_batch(
             "\nnpc_imprints: ONLY for events that leave lasting behavioral marks (betrayal, injury, confession, trauma, "
             "major gift, life-saving). mark = observable physical/behavioral change (Korean, 1 phrase). "
             "Most turns have NO imprints. Max 1 per NPC per turn."
-            "\nIf no social change: `{\"relationships\": {}, \"companions\": [], \"npc_depth_hints\": {}, \"npc_imprints\": {}}`."
+            "\nnpc_relations: NPC↔NPC directed relationships observed this turn. "
+            "Format: [{\"source\": \"A\", \"target\": \"B\", \"type\": \"rivalry\", \"intensity\": 0.7, \"reason\": \"경쟁 장면\"}]. "
+            "Type: alliance/rivalry/fear/respect/distrust/affection/debt/mentor/grudge/neutral. "
+            "intensity 0.0~1.0 (new relation) OR delta ±0.1~0.3 (modify existing). "
+            "Only clear behavioral evidence. Max 3 per turn. Most turns: []."
+            "\nIf no social change: `{\"relationships\": {}, \"companions\": [], \"npc_depth_hints\": {}, \"npc_imprints\": {}, \"npc_relations\": []}`."
         )
         ctx_parts.append(f"[Social] Rels:{rels}, Comps:{comps}, LoreNPCs:{lore_npcs}, SceneNPCs:{scene_npcs}")
 

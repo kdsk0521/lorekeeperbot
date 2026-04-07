@@ -992,9 +992,10 @@ async def _auto_generate_chronicle(client, model_id: str, session_data: dict, ch
 # 메모리 컨텍스트 빌드 (프리셋 순서 적용)
 # =========================================================
 
-def score_fermented_entries(entries: list, query: str = "") -> list:
+def score_fermented_entries(entries: list, query: str = "", channel_id: str = "") -> list:
     """LIBRA-inspired weighted scoring for fermented memory retrieval.
     Returns [(entry, score), ...] sorted by score descending.
+    Emotion boost: 감정 강도에 따라 메모리 중요도 증폭 (channel_id 필요).
     """
     import config as _cfg
 
@@ -1043,6 +1044,24 @@ def score_fermented_entries(entries: list, query: str = "") -> list:
                 similarity = overlap / max(len(query_tokens), 1)
 
         score = (similarity * w_sim + recency * w_rec + importance * w_imp) * layer_weight
+
+        # EmotionEngine boost: 높은 감정 강도의 턴 기억을 증폭
+        if channel_id:
+            try:
+                from emotion_engine import EmotionEngine, EmotionState
+                import domain_manager as _dm
+                _emo_states = _dm.get_world_state(channel_id).get("npc_emotion_states", {})
+                if _emo_states:
+                    _max_intensity = max(
+                        (EmotionState.from_dict(s).intensity for s in _emo_states.values() if isinstance(s, dict)),
+                        default=0.0
+                    )
+                    if _max_intensity > 0.3:
+                        _dummy = EmotionState(intensity=_max_intensity)
+                        score *= EmotionEngine.get_importance_boost(_dummy)
+            except Exception:
+                pass  # EmotionEngine 미사용 시 graceful fallback
+
         scored.append((entry, score))
 
     scored.sort(key=lambda x: -x[1])
@@ -1111,7 +1130,8 @@ def build_fermented_context(
 
         # Weighted scoring: query가 있으면 점수 기반 정렬, 없으면 역순(최신 우선)
         if query:
-            scored = score_fermented_entries(fermented, query=query)
+            _ch_id = session_data.get("channel_id_ref", "")
+            scored = score_fermented_entries(fermented, query=query, channel_id=_ch_id)
             ordered_entries = [entry for entry, _score in scored]
         else:
             ordered_entries = list(reversed(fermented))

@@ -13,6 +13,8 @@ from judgment_engine import JudgmentEngine
 from anomaly_module import AnomalyModule
 from doom_module import DoomModule
 from judgment_gate import gate_judgment
+from emotion_engine import EmotionEngine
+from story_director import StoryDirector
 import domain_manager
 
 logger = logging.getLogger("Waterfall")
@@ -48,6 +50,23 @@ def _inject_capability_hints(npc_profiles: dict) -> str:
     return "\n".join(hints) if hints else ""
 
 
+def _degrade_stage(bus, stage_name: str, error: Exception) -> None:
+    """W5: Record pipeline degradation and apply fallback from config table."""
+    try:
+        import config as _cfg
+        rule = _cfg.PIPELINE_DEGRADATION.get(stage_name, {})
+        behavior = rule.get("absent_behavior", "skip")
+        logger.warning("[Degradation] %s → %s: %s", stage_name, behavior, error)
+        degraded = bus.dai.setdefault("_degraded_stages", [])
+        degraded.append({"stage": stage_name, "behavior": behavior, "error": str(error)[:200]})
+        # Apply fallback DAI values if present
+        for k, v in rule.get("fallback_dai", {}).items():
+            if k not in bus.dai or not bus.dai[k]:
+                bus.dai[k] = v
+    except Exception as inner:
+        logger.error("[Degradation] Handler itself failed for %s: %s", stage_name, inner)
+
+
 class WaterfallPipeline:
     def __init__(self, client, model_id: str):
         self.theoria = TheoriaAnalyzer(client, model_id)
@@ -63,7 +82,7 @@ class WaterfallPipeline:
         This is a schema guard for DLC on/off during runtime.
         """
         defaults = SharedBus()
-        for key in ("dai", "judgment", "doom", "anomaly", "vigor", "composure"):
+        for key in ("dai", "judgment", "doom", "anomaly", "vigor", "composure", "emotion"):
             current = getattr(bus, key, None)
             if current is None or not isinstance(current, dict):
                 setattr(bus, key, getattr(defaults, key))
@@ -86,8 +105,12 @@ class WaterfallPipeline:
         self._ensure_bus_schema(context.shared_bus)
         
         # 1. Call 1: Analysis (Theoria) - Always Execute
-        analysis = await self.theoria.analyze_input(context)
         bus = context.shared_bus
+        try:
+            analysis = await self.theoria.analyze_input(context)
+        except Exception as e:
+            analysis = {}
+            _degrade_stage(bus, "theoria_analysis", e)
 
         # Safety: Gemini가 JSON 배열을 반환하면 첫 번째 요소를 사용
         if isinstance(analysis, list):
@@ -273,14 +296,59 @@ class WaterfallPipeline:
         if bus.anomaly.get("tag") and not bus.anomaly.get("line"):
             bus.anomaly["line"] = f"{bus.anomaly['tag']}의 기운이 감돈다."
 
+        # 1.5 Emotion Engine: psyche_states → normalized emotion tracking
+        channel_id = (context.narrative_anchors or {}).get("channel_id", "")
+        current_turn = 0
+        if channel_id:
+            current_turn = domain_manager.get_world_state(channel_id).get("turn_index", 0)
+
+        try:
+            psyche_states = bus.dai.get("psyche_states", {})
+            if psyche_states:
+                prev_emotions = {}
+                if channel_id:
+                    prev_emotions = domain_manager.get_world_state(channel_id).get(
+                        "npc_emotion_states", {}
+                    )
+                emotion_results = EmotionEngine.process_turn(
+                    psyche_states=psyche_states,
+                    previous_emotions=prev_emotions,
+                    current_turn=current_turn,
+                    npc_attitudes=bus.dai.get("npc_attitudes", {}),
+                )
+                bus.emotion = EmotionEngine.to_bus_dict(emotion_results)
+                if channel_id and emotion_results:
+                    world = domain_manager.get_world_state(channel_id)
+                    world["npc_emotion_states"] = {
+                        name: state.to_dict()
+                        for name, state in emotion_results.items()
+                    }
+                    domain_manager.update_world_state(channel_id, world)
+                spikes = [
+                    f"{n}({s.spike_detail})"
+                    for n, s in emotion_results.items()
+                    if s.spike_detected
+                ]
+                if spikes:
+                    logger.info(f"[EmotionEngine] Spikes: {', '.join(spikes)}")
+        except Exception as e:
+            _degrade_stage(bus, "emotion_engine", e)
+
         # 2. Mental Pre-pass: annotate current stage for downstream modules.
-        self.vigor_composure = VigorComposureModule()
-        context = await self.vigor_composure.prime(context)
+        try:
+            self.vigor_composure = VigorComposureModule()
+            context = await self.vigor_composure.prime(context)
+        except Exception as e:
+            _degrade_stage(bus, "vigor_composure", e)
 
         # 3. Judgment (gated by Flash needs_judgment + judgment_gate)
         if bus.judgment["active"]:
-            self.judgment = JudgmentEngine(self.theoria.client, self.theoria.model_id)
-            context = await self.judgment.process(context)
+            try:
+                self.judgment = JudgmentEngine(self.theoria.client, self.theoria.model_id)
+                context = await self.judgment.process(context)
+            except Exception as e:
+                bus.judgment["active"] = False
+                _degrade_stage(bus, "judgment_engine", e)
 
         # 4. Storyteller: inject state + set potential
         bus.anomaly["potential"] = True
@@ -293,16 +361,45 @@ class WaterfallPipeline:
 
         # 5. Storyteller Decision
         if bus.anomaly.get("potential"):
-            self.anomaly = AnomalyModule(self.theoria.client, self.theoria.model_id)
-            context = await self.anomaly.process(context)
+            try:
+                self.anomaly = AnomalyModule(self.theoria.client, self.theoria.model_id)
+                context = await self.anomaly.process(context)
+            except Exception as e:
+                bus.anomaly["triggered"] = False
+                _degrade_stage(bus, "anomaly_module", e)
+
+        # 5.5 Story Director: pacing, plot hints, idle handling, transition mood
+        try:
+            context = StoryDirector.process(context)
+        except Exception as e:
+            _degrade_stage(bus, "story_director", e)
+
+        # 5.6 Seven Dice persistence (W9)
+        try:
+            import config as _cfg
+            _dice = bus.dai.get("story_direction", {}).get("dice")
+            if _dice and channel_id:
+                _st = bus.anomaly.get("_storyteller_state", {})
+                _rd = _st.get("recent_dice", [])
+                _rd.append(_dice.get("face", ""))
+                _st["recent_dice"] = _rd[-_cfg.DICE_HISTORY_CAP:]
+                domain_manager.update_storyteller_state(channel_id, _st)
+        except Exception as e:
+            logger.warning("[SevenDice] Persistence failed: %s", e)
 
         # 6. Doom Update — consumes judgment doom_delta naturally
-        self.doom = DoomModule()
-        context = await self.doom.process(context)
+        try:
+            self.doom = DoomModule()
+            context = await self.doom.process(context)
+        except Exception as e:
+            _degrade_stage(bus, "doom_module", e)
 
         # 7. Vigor/Composure Sync (LAST — consumes all accumulated deltas)
-        self.vigor_composure = VigorComposureModule()
-        context = await self.vigor_composure.process(context)
+        try:
+            self.vigor_composure = VigorComposureModule()
+            context = await self.vigor_composure.process(context)
+        except Exception as e:
+            _degrade_stage(bus, "vigor_composure", e)
 
         # ===== Pipeline Summary Log =====
         self._log_pipeline_summary(bus)
@@ -350,5 +447,43 @@ class WaterfallPipeline:
         v_sign = f"+{v_delta}" if v_delta > 0 else str(v_delta)
         c_sign = f"+{c_delta}" if c_delta > 0 else str(c_delta)
         parts.append(f"  Vigor: {v_val} ({v_sign}) | Composure: {c_val} ({c_sign})")
+
+        # Story Director
+        sd = bus.dai.get("story_direction", {})
+        if sd.get("active"):
+            sd_pacing = sd.get("pacing", "?")
+            sd_tension = sd.get("tension_axis", "?")
+            sd_idle = sd.get("is_idle_input", False)
+            sd_hints = len(sd.get("plot_hints", []))
+            sd_cut = sd.get("transition", {}).get("cut", "?")
+            sd_mood = sd.get("transition", {}).get("mood", "?")
+            parts.append(f"  StoryDir: pacing={sd_pacing} tension={sd_tension} idle={sd_idle} hints={sd_hints} cut={sd_cut} mood={sd_mood}")
+            # Seven Dice
+            sd_dice = sd.get("dice", {})
+            if sd_dice:
+                parts.append(f"  Dice: {sd_dice.get('name','?')} (state={sd_dice.get('scene_state','?')}, visible={sd_dice.get('visible',False)})")
+        else:
+            parts.append("  StoryDir: inactive")
+
+        # Degradation
+        _deg = bus.dai.get("_degraded_stages", [])
+        if _deg:
+            _deg_str = ", ".join(d.get("stage", "?") for d in _deg if isinstance(d, dict))
+            parts.append(f"  ⚠ Degraded: {_deg_str}")
+
+        # Emotion
+        emotion_data = bus.emotion
+        if emotion_data.get("active"):
+            summaries = emotion_data.get("summary", {})
+            emo_parts = [
+                f"{n}={s.get('dominant','?')}({s.get('intensity',0):.1f})"
+                + (" ⚡" if s.get("spike") else "")
+                for n, s in summaries.items()
+                if s.get("intensity", 0) > 0.05
+            ]
+            if emo_parts:
+                parts.append(f"  Emotion: {', '.join(emo_parts)}")
+        else:
+            parts.append("  Emotion: inactive")
 
         logger.info("\n".join(parts))

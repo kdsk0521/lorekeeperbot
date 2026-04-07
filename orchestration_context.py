@@ -149,6 +149,12 @@ class SharedBus:
         "impact": {},
         "judgment_emotion": 0, "trauma_trigger": False, "log": ""
     })
+    # Phase 8: Emotion Engine (LIBRA-inspired)
+    emotion: Dict[str, Any] = field(default_factory=lambda: {
+        "active": False,
+        "states": {},    # {npc_name: EmotionState.to_dict()}
+        "summary": {},   # {npc_name: {dominant, intensity, spike}}
+    })
 
 @dataclass
 class GameContext:
@@ -187,6 +193,7 @@ class GameContext:
             anomaly=bus_data.get("anomaly", {}),
             vigor=bus_data.get("vigor", {}),
             composure=bus_data.get("composure", {}),
+            emotion=bus_data.get("emotion", {}),
         )
         return cls(request=req_data, narrative_anchors=anchors, shared_bus=bus)
 

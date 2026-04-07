@@ -1424,6 +1424,7 @@ def get_storyteller_state(channel_id: str) -> dict:
     return ws.get("storyteller", {
         "last_event_turn": 0, "recent_categories": [],
         "recent_tags": [], "event_queue": [], "total_events_fired": 0,
+        "recent_dice": [],
     })
 
 def update_storyteller_state(channel_id: str, state: dict) -> None:

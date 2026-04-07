@@ -428,6 +428,103 @@ def translate_energy_direction(energy: str) -> str:
 
 
 # =========================================================
+# 2-1. story_direction (Slot 16) — StoryDirector pacing/tension/transition/focus
+# =========================================================
+
+_PACING_KR = {
+    "push":    "박자를 올려라 — 다음 비트로 빠르게 전진",
+    "hold":    "현재 리듬 유지 — 성급히 전진하지 마라",
+    "breathe": "숨을 돌려라 — 속도를 늦추고 여운을 남겨라",
+    "pivot":   "방향 전환 — 새로운 톤이나 장소로 전이하라",
+}
+
+_TENSION_KR = {
+    "critical":  "극한 긴장 — 모든 서술에 무게를 실어라",
+    "rising":    "긴장 상승 — 압박을 점진적으로 강화하라",
+    "plateau":   "긴장 유지 — 불안한 안정, 뭔가 올 것 같은 기류",
+    "falling":   "긴장 해소 — 이완과 성찰의 공간을 확보하라",
+}
+
+_CUT_KR = {
+    "hard_cut":        "하드 컷: 빠르게 다음 비트로 전환",
+    "fade":            "페이드: 서서히 전환, 여운이 머물게",
+    "contrast_cut":    "대비 컷: 톤/장소를 의도적으로 전환",
+    "natural":         "자연 전환: 흐름을 따르라",
+    "dramatic_entrance": "극적 등장: 이벤트가 장면을 깨뜨린다",
+}
+
+_IDLE_SOURCE_KR = {
+    "active_condition":  "진행 중인 상황을 확대하라",
+    "narrative_chain":   "서사 체인을 이어가라",
+    "emotion":           "감정이 격한 NPC가 주도하게 하라",
+    "doom":              "환경 압력을 서사적으로 표현하라",
+    "ambient":           "세계가 스스로 움직이게 하라 — 소소한 진행",
+}
+
+
+def translate_story_direction(story_dir: Optional[dict], scene_type: str = "normal") -> str:
+    """story_direction → pacing + tension + transition + focus 지시 (Korean)."""
+    if not story_dir or not isinstance(story_dir, dict) or not story_dir.get("active"):
+        return ""
+
+    parts = []
+
+    # Pacing
+    pacing = story_dir.get("pacing", "")
+    pacing_hint = _PACING_KR.get(pacing, "")
+    if pacing_hint:
+        parts.append(f"Pacing: {pacing_hint}")
+
+    # Tension
+    tension = story_dir.get("tension_axis", "")
+    tension_hint = _TENSION_KR.get(tension, "")
+    if tension_hint:
+        parts.append(f"Tension: {tension_hint}")
+
+    # Transition
+    transition = story_dir.get("transition", {})
+    if isinstance(transition, dict):
+        cut = transition.get("cut", "")
+        cut_hint = _CUT_KR.get(cut, "")
+        if cut_hint:
+            parts.append(cut_hint)
+        suggest = transition.get("suggest_shift", "")
+        if suggest:
+            parts.append(f"장면 전이 제안: → {suggest}")
+
+    # Focus spotlight
+    focus = story_dir.get("focus", {})
+    if isinstance(focus, dict):
+        spotlight = focus.get("spotlight", "none")
+        if spotlight and spotlight != "none":
+            reason = focus.get("reason", "")
+            parts.append(f"초점: {spotlight}" + (f" ({reason})" if reason else ""))
+
+    # Idle direction (proactive scene guidance)
+    idle_dir = story_dir.get("idle_direction")
+    if idle_dir and isinstance(idle_dir, dict):
+        source = idle_dir.get("source", "ambient")
+        idle_hint = _IDLE_SOURCE_KR.get(source, "")
+        if idle_hint:
+            parts.append(f"[능동 전개] {idle_hint}")
+        npc = idle_dir.get("npc", "")
+        if npc:
+            parts.append(f"주도 NPC: {npc}")
+
+    # Seven Dice (W9) — 서사 방향/저류 힌트
+    dice = story_dir.get("dice")
+    if dice and isinstance(dice, dict):
+        effect = dice.get("effect", "")
+        if effect:
+            label = "[서사 방향]" if dice.get("visible") else "[서사 저류]"
+            parts.append(f"{label} {effect}")
+
+    if not parts:
+        return ""
+    return "### Story Direction\n" + "\n".join(parts)
+
+
+# =========================================================
 # 3-1. memory_type (Slot 16) — was MEMORY_HIERARCHY static constant
 # =========================================================
 

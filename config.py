@@ -439,8 +439,51 @@ DEFAULT_WORLD_STATE = {
         "recent_tags": [],
         "event_queue": [],
         "total_events_fired": 0,
+        "recent_dice": [],  # W9: Seven Dice history
     },
 }
+
+# =========================================================
+# W5: Pipeline Degradation Rule
+# =========================================================
+PIPELINE_DEGRADATION = {
+    "theoria_analysis": {
+        "absent_behavior": "visible_context_only",
+        "fallback_dai": {"energy_direction": "rising", "scene_type": "normal", "quality_flags": {}},
+    },
+    "emotion_engine":  {"absent_behavior": "skip_emotion"},
+    "judgment_engine":  {"absent_behavior": "skip_judgment"},
+    "anomaly_module":   {"absent_behavior": "skip_anomaly"},
+    "story_director":   {"absent_behavior": "no_direction"},
+    "doom_module":      {"absent_behavior": "preserve_doom"},
+    "vigor_composure":  {"absent_behavior": "preserve_mental"},
+}
+
+# =========================================================
+# W9: Seven Dice — Narrative Entropy Management
+# =========================================================
+SEVEN_DICE = {
+    # 가시 3개: 능동적 창작 마찰
+    "agon":    {"name": "Agon/적",     "visible": True,  "effect": "NPC가 현재 흐름에 역행하는 목표를 추구. 갈등 강제."},
+    "alea":    {"name": "Alea/운",     "visible": True,  "effect": "예정에 없던 요소 등장 — 소리, 인물, 사물, 날씨 변화."},
+    "mimicry": {"name": "Mimicry/역할", "visible": True,  "effect": "장면을 비정상적 렌즈로 인식. 시점/감각 초점 전환."},
+    # 은닉 4개: 수동적/부재의 힘
+    "silence": {"name": "Silence/침묵", "visible": False, "effect": "말해야 할 NPC가 침묵. 행동해야 할 순간에 부재. 빈자리가 이야기."},
+    "broken":  {"name": "Broken/오류",  "visible": False, "effect": "시스템 규칙의 예상치 못한 상호작용이 서사가 된다."},
+    "ghost":   {"name": "Ghost/유령",   "visible": False, "effect": "하지 않은 행동의 결과가 분위기로 스며든다. 대안 현실의 잔향."},
+    "yours":   {"name": "Yours/미정",   "visible": False, "effect": "플레이어의 다음 입력이 방향을 결정. 열린 결말."},
+}
+
+DICE_WEIGHTS = {
+    "default":          {"silence": 0.30, "ghost": 0.30, "yours": 0.20, "broken": 0.10,
+                         "agon": 0.05, "alea": 0.03, "mimicry": 0.02},
+    "scene_stagnant":   {"agon": 0.30, "alea": 0.25, "mimicry": 0.15,
+                         "silence": 0.10, "ghost": 0.10, "yours": 0.05, "broken": 0.05},
+    "scene_repetitive": {"mimicry": 0.30, "agon": 0.20, "broken": 0.15,
+                         "silence": 0.15, "ghost": 0.10, "alea": 0.05, "yours": 0.05},
+}
+
+DICE_HISTORY_CAP = 10
 
 # =========================================================
 # Simulation Constants (Restored)

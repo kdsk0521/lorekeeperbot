@@ -115,6 +115,16 @@ class OrchestrationService:
         location_risk = dai.get("location_risk")
         if current_location:
             domain_manager.set_current_location(channel_id, current_location)
+            # Tier 2: 새 위치 자동 등록 (world_tree에 없으면 추가)
+            try:
+                import world_tree
+                if not world_tree.get_node(channel_id, current_location):
+                    world_tree.add_node(
+                        channel_id, current_location, node_type="area",
+                        properties={"risk": location_risk or "Low", "tags": ["auto_detected"]},
+                    )
+            except Exception:
+                pass
         if location_risk:
             domain_manager.set_current_risk(channel_id, location_risk)
 
@@ -892,6 +902,19 @@ class OrchestrationService:
                 current_turn = ws.get("turn_index", 0) if ws else 0
                 domain_manager.update_npc_imprints(channel_id, npc_imp, turn=current_turn)
                 logger.info(f"[Imprint] {list(npc_imp.keys())}")
+
+            # NPC↔NPC Relations (entity_relations)
+            npc_rels = updates.get("NPCRelationUpdate")
+            if npc_rels and isinstance(npc_rels, list):
+                try:
+                    import entity_relations
+                    _ws = domain_manager.get_world_state(channel_id)
+                    _turn = _ws.get("turn_index", 0) if _ws else 0
+                    _rel_count = entity_relations.process_flash_relations(channel_id, npc_rels, current_turn=_turn)
+                    if _rel_count:
+                        logger.info(f"[EntityRelations] Processed {_rel_count} relation updates")
+                except Exception as e:
+                    logger.warning(f"[EntityRelations] Failed to process: {e}")
 
             if updates.get("PlayerMemoryUpdate"):
                 pmu = updates["PlayerMemoryUpdate"]
