@@ -1094,7 +1094,8 @@ class UniversalNarrativeEngine:
             reason_txt = bus.judgment.get("reason", "")
 
             # Position from Theoria (FitD)
-            pos_val = bus.dai.get("position", {}).get("value", 0.5) if bus.dai else 0.5
+            _pos = bus.dai.get("position", {}) if bus.dai else {}
+            pos_val = _pos.get("value", 0.5) if isinstance(_pos, dict) else 0.5
             if pos_val <= 0.25:
                 pos_tier = "desperate"
             elif pos_val <= 0.5:

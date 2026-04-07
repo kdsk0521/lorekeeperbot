@@ -130,7 +130,7 @@ class OrchestrationService:
 
         # NPC ?? ????
         new_attitudes = dai.get("npc_attitudes")
-        if new_attitudes:
+        if new_attitudes and isinstance(new_attitudes, dict):
             for n_name, n_data in new_attitudes.items():
                 existing_npc = npc_manager.get_npc(channel_id, n_name)
                 if not existing_npc:
@@ -244,10 +244,7 @@ class OrchestrationService:
             "position": dai.get("Position", dai.get("position", {})).get("value", 0.5)
                 if isinstance(dai.get("Position", dai.get("position")), dict) else 0.5,
             "observation": str(dai.get("Observation", dai.get("observation", "")))[:200],
-            "quality_flags": {k: v for k, v in
-                (dai.get("QualityFlags") or dai.get("quality_flags") or {}).items()
-                if v and v != "null"} if isinstance(
-                    dai.get("QualityFlags") or dai.get("quality_flags"), dict) else {},
+            "quality_flags": (lambda qf: {k: v for k, v in qf.items() if v and v != "null"} if isinstance(qf, dict) else {})(dai.get("QualityFlags") or dai.get("quality_flags") or {}),
             "chain_status": (dai.get("narrative_chain") or {}).get("chain_status", ""),
             "open_threads": (dai.get("narrative_chain") or {}).get("open_threads", [])[:5],
             "relevant_chunks": dai.get("relevant_chunks", []),

@@ -162,7 +162,7 @@ class WaterfallPipeline:
 
         # P6: Inject capability hints for Theoria reference
         _npc_roster = (context.narrative_anchors or {}).get("npc_roster", {})
-        if _npc_roster:
+        if _npc_roster and isinstance(_npc_roster, dict):
             cap_hints = _inject_capability_hints(_npc_roster)
             if cap_hints:
                 bus.dai["capability_hints"] = cap_hints
@@ -266,7 +266,8 @@ class WaterfallPipeline:
                 bus.anomaly["location"] = event_location
 
         # M3: Chain CLOSED → force anomaly trigger
-        chain_status = bus.dai.get('narrative_chain', {}).get('status', 'OPEN')
+        _nc = bus.dai.get('narrative_chain', {})
+        chain_status = _nc.get('status', 'OPEN') if isinstance(_nc, dict) else 'OPEN'
         if chain_status == 'CLOSED' and not bus.anomaly.get('triggered'):
             bus.anomaly['triggered'] = True
             bus.anomaly['tag'] = bus.anomaly.get('tag') or 'chain_closure'

@@ -5,7 +5,10 @@
       "Bash(find /c/Users/kdsk/Desktop/lorekeeperbot/lorekeeperbot -name \"*.py\" -type f -exec grep -l \"story_direction\" {} \\\\;)",
       "Read(//c/Users/kdsk/Desktop/lorekeeperbot//**)",
       "Bash(find /c/Users/kdsk/Desktop/lorekeeperbot/lorekeeperbot -type f \\\\\\( -name \"*.txt\" -o -name \"*.md\" \\\\\\) -exec grep -l \"story_direction\\\\|pacing\\\\|tension_axis\\\\|idle_direction\\\\|plot_hints\" {} \\\\;)",
-      "Read(//c/Users/kdsk/Desktop/lorekeeperbot/**)"
+      "Read(//c/Users/kdsk/Desktop/lorekeeperbot/**)",
+      "Read(//Users/kdsk/Desktop/lorekeeperbot/lorekeeperbot/**)",
+      "Read(//c/Users/kdsk/Desktop/lorekeeperbot/lorekeeperbot/**)",
+      "Bash(git status:*)"
     ]
   }
 }

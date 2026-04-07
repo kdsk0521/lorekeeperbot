@@ -164,7 +164,8 @@ class AnomalyModule:
         recent_cats = st_state.get("recent_categories", [])
         position = dai.get("position", {})
         pos_label = position.get("label", "") if isinstance(position, dict) else ""
-        convergence = dai.get("quality_flags", {}).get("convergence_warning", False)
+        _qf = dai.get("quality_flags", {})
+        convergence = _qf.get("convergence_warning", False) if isinstance(_qf, dict) else False
 
         scored = []
         for c in candidates:

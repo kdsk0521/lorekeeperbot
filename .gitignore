@@ -20,15 +20,17 @@ secrets.json
 .DS_Store
 .vscode/
 .idea/
+.claude/
 
-# --- 5. (선택) 로그나 데이터 파일 ---
+# --- 5. 로컬 전용 (서버 불필요) ---
+data/
+mds/
+
+# --- 6. 로컬 참고자료 ---
+proma/
+*.txt
+
+# --- 7. 로그 및 기타 ---
 *.log
 *.sqlite3
-data/lores/1464890214202740759_original.txt
-.gitignore
-data/sessions/1464890214202740759.json
-data/lores/1464890214202740759.txt
-data/sessions/TEST_SCENARIO_CHANNEL.json
-*.txt
-글쓰기전문.txt
 nul

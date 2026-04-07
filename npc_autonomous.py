@@ -107,6 +107,8 @@ class NPCAutonomousEngine:
 
         _traits_map = static_traits_map or {}
         results = []
+        if not isinstance(psyche_states, dict):
+            return results
         for npc_name, state in psyche_states.items():
             if not isinstance(state, dict):
                 continue
