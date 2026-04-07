@@ -36,7 +36,8 @@ ATTITUDE_LEVELS = {
     "unfriendly": 1,
     "neutral": 2,
     "friendly": 3,
-    "loyal": 4
+    "loyal": 4,
+    "devoted": 5,
 }
 
 logger = logging.getLogger(__name__)

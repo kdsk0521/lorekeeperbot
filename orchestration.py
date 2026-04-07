@@ -41,29 +41,72 @@ from orchestration_context import ResponseContext
 logger = logging.getLogger("Orchestration")
 
 
-def _check_dialogue_format(response: str) -> str:
-    """AI 응답에서 대사 포맷 위반을 감지하여 피드백 문자열 반환."""
+def _check_dialogue_format(response: str, pc_names: list = None, user_input: str = "") -> str:
+    """AI 응답에서 대사 포맷 위반을 감지하여 피드백 문자열 반환.
+    PC 대사 에코(유저 입력 재출력)와 AI 창작 PC 대사를 구분:
+    - 유저 입력에 포함된 대사와 5자 이상 겹치면 에코 → 제외
+    - 겹치지 않으면 AI 창작 → [IMPERSONATION] 피드백"""
     lines = response.split('\n')
-    correct_pat = re.compile(r'^\s*\S+\s*:\s*"')  # 이름: "대사"
-    quote_pat = re.compile(r'"[^"]{2,}"')  # 2자 이상 쌍따옴표 텍스트
+    correct_pat = re.compile(r'^\s*.+?\s*:\s*"')  # 이름(공백 포함): "대사"
+    quote_pat = re.compile(r'"([^"]{2,})"')  # 2자 이상 쌍따옴표 텍스트 (캡처)
     # 판정/시스템 메시지 제외
     system_pat = re.compile(r'^\s*(?:🎲|📈|📉|🧠|⚠️|✅|❌|✨|🟠|🆕|🌿)')
 
     # 출력 형식 태그 (<Members>, <Market> 등) 제외
     tag_pat = re.compile(r'^\s*</?[A-Za-z_]')
 
+    # PC 이름 패턴
+    _pc_pats = []
+    if pc_names:
+        for pc in pc_names:
+            if pc and pc != "Unknown":
+                _pc_pats.append(re.compile(rf'^\s*{re.escape(pc)}'))
+
+    # 유저 입력에서 대사 텍스트 추출 (에코 판별용)
+    _user_quotes = set()
+    if user_input:
+        for m in re.finditer(r'"([^"]{3,})"', user_input):
+            _user_quotes.add(m.group(1).strip()[:20])  # 앞 20자만 비교
+        # 따옴표 없이 쓴 대사도 포함 (입력 전체를 청크로)
+        _input_clean = re.sub(r'["\s]+', '', user_input)
+        if len(_input_clean) >= 5:
+            _user_quotes.add(_input_clean[:30])
+
     violations = []
+    impersonations = []
     for line in lines:
         stripped = line.strip()
         if not stripped or system_pat.match(stripped) or tag_pat.match(stripped):
             continue
+
+        # PC 이름으로 시작하는 줄 체크
+        is_pc_line = _pc_pats and any(p.match(stripped) for p in _pc_pats)
+        if is_pc_line:
+            # PC 대사가 있는지 확인
+            q_match = quote_pat.search(stripped)
+            if q_match:
+                ai_quote = q_match.group(1).strip()[:20]
+                # 유저 입력과 겹치면 에코 → 제외
+                is_echo = any(
+                    ai_quote[:5] in uq or uq[:5] in ai_quote
+                    for uq in _user_quotes
+                ) if _user_quotes else False
+                if not is_echo:
+                    # AI가 창작한 PC 대사 → 사칭
+                    impersonations.append(stripped[:40])
+            continue  # PC 줄은 포맷 위반 체크에서 항상 제외
+
         if quote_pat.search(stripped) and not correct_pat.match(stripped):
             violations.append(stripped[:40])
 
+    parts = []
     if violations:
         examples = violations[:2]
-        return f"[FORMAT] 대사 포맷 위반 {len(violations)}건. 예: {'; '.join(examples)}. 반드시 이름: \"대사\" 형식을 지켜라."
-    return ""
+        parts.append(f"[FORMAT] 대사 포맷 위반 {len(violations)}건. 예: {'; '.join(examples)}. 반드시 이름: \"대사\" 형식을 지켜라.")
+    if impersonations:
+        imp_examples = impersonations[:2]
+        parts.append(f"[IMPERSONATION] PC 대사 창작 {len(impersonations)}건: {'; '.join(imp_examples)}. PC의 대사를 만들지 마라 — 유저가 입력한 대사만 재현하라.")
+    return " ".join(parts)
 
 
 class OrchestrationService:
@@ -1126,7 +1169,8 @@ class OrchestrationService:
                     logger.debug(f"[History] Saved: {user_mask} + Model response ({len(response)} chars)")
 
                     # 8.5. Dialogue Format Feedback + Style Detectors (다음 턴 피드백용)
-                    fmt_feedback = _check_dialogue_format(response)
+                    _pc_names_for_fmt = [user_mask] if user_mask and user_mask != "Unknown" else []
+                    fmt_feedback = _check_dialogue_format(response, pc_names=_pc_names_for_fmt, user_input=ctx.action_text or "")
                     from response_processor import (
                         detect_cliche_patterns, detect_cargo_patterns,
                         detect_sensory_repetition, detect_pidgin_echo,
