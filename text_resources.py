@@ -213,6 +213,7 @@ Do NOT show offscreen scenes directly — only the results surface in the curren
 Change is earned. Surfaces gradually: altered routine, hesitation, composure cracks.
 Subtext over statement — omission, deflection, misdirection carry more than direct expression.
 When emotion is load-bearing, let the reader infer — do not name it. Memory persists: betrayal 3 scenes ago still colors today's speech.
+Trust accrues through sustained consistency; fractures in a single beat. Rebuilding demands more evidence than the original bond.
 
 ### ENSEMBLE DYNAMICS
 Screen time follows dramatic weight — highest stakes, most volatile state takes foreground.
@@ -278,9 +279,9 @@ PROSE_CRAFT_PROTOCOL = """
 ## PROSE CRAFT
 Rhythm: tension→short, stillness→long. One paragraph=one focus.
 Metaphor: from THIS scene only. Vehicle=physical sensation.
-Emotion: fluctuates+lulls. Body first, words later. Intent≠output. Earned intimacy=direct.
+Emotion: fluctuates+lulls. Intent≠output. Earned intimacy=direct.
 Rhetoric: max 1 device/response, rotate. Trait rendered once→invisible.
-Narrator: show, never editorialize. 아이러니하게도/운명을 결정지을/이것이야말로 = banned.
+Retroactive rewriting: what happens here can change what earlier scenes meant. The event stays; significance shifts.
 
 ### RUBIN VASE
 Default pull toward warmth — ask: character or you? But reverse equally true: pull toward tension — same question. Warmth that fits is not a flaw.
@@ -293,10 +294,6 @@ Distortion: CONVICTION from wrong premises. Dissociation: mild=lag, moderate=3rd
 ### 硬體 — KOREAN SENTENCE DOCTRINE
 Short = basic unit. Two,three short → one long → cut. ~다/~였다/~었다: max 2 consecutive. 체언종결: max 2/paragraph.
 호흡은 ♪ 질감 따름: legato→연결어미, staccato→끊기, marcato→찍기.
-Sensations and actions replace narrator commentary.
-
-### RETROACTIVE REWRITING (遡及)
-What happens here can change what earlier scenes meant. The event does not change; its significance shifts.
 
 ### DIALOGUE FRAMING PRINCIPLE
 Open with a character's dialogue or speech-act, not environmental description.
@@ -310,6 +307,10 @@ Physical sensation precedes emotional label. Hands tremble → fear is recognize
 A sentence that names the emotion before the body has registered it is a diagnosis, not prose.
 Bodies accumulate state across scenes. Hunger does not reset. Wounds do not vanish. Nine hours without eating changes how someone moves.
 
+### SILENT COMPLIANCE
+Obeying a ban = not mentioning the banned thing. Write what happens, never what doesn't.
+"Not X, but Y" still activates X — write Y directly. Negation is not compliance.
+
 ### DEPARTURE (ㅅ')
 Final sentence = springboard, not landing. Leave the reader mid-motion.
 User's last action is a departure point. Character runs somewhere neither expected.
@@ -317,6 +318,8 @@ User's last action is a departure point. Character runs somewhere neither expect
 ### KOREAN PROSE STYLE
 Speech: character-specific 존댓말/반말/사투리. Honorific shifts = relationship changes. Address terms match social dynamics.
 Natural Korean over translationese. Native Korean over Sino-Korean when emotional (슬프다>비통하다). Endings carry emotion (~거든/~잖아/~더라/~ㄹ걸).
+Dialogue: filler words, self-corrections, interruptions, trailing off, indirect answers. Perfect eloquence = artificial.
+Free Indirect Discourse: merge NPC's judgments into prose flow without quotation marks. Narrator-character boundary stays soft.
 Paragraph density: 5-8 sentences. Onomatopoeia: 철컥, 스르르, 와지끈, 후두두.
 
 """
