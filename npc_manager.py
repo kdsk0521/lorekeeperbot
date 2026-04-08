@@ -773,18 +773,30 @@ def get_npc_roster(channel_id: str) -> str:
 # 항상 포함되는 코어 섹션
 _CORE_SECTIONS = ["Identity", "Hard Rules"]
 # scene_type별 추가 로딩 섹션
+# "Voice" = hybrid v2 포맷의 1인칭 서술 블록 (Core+Emotional+Speech+Interpersonal 통합)
 _SCENE_SECTION_MAP = {
-    "combat":      ["Combat Profile", "Appearance", "Core Operating Principle", "Values"],
-    "social":      ["Core Operating Principle", "Interpersonal Style", "Emotional Architecture",
+    "combat":      ["Voice", "Combat Profile", "Appearance", "Core Operating Principle", "Values"],
+    "social":      ["Voice", "Core Operating Principle", "Interpersonal Style", "Emotional Architecture",
                     "Secrets", "Speech Pattern"],
-    "intimate":    ["Emotional Architecture", "Sexuality", "Secrets",
+    "intimate":    ["Voice", "Intimacy Reference", "Emotional Architecture", "Sexuality", "Secrets",
                     "Interpersonal Style", "Core Operating Principle"],
-    "exploration": ["Core Operating Principle", "Background", "Values", "Appearance"],
-    "summary":     ["Core Operating Principle"],
-    "normal":      ["Core Operating Principle", "Speech Pattern", "Interpersonal Style",
+    "exploration": ["Voice", "Appearance Reference", "Core Operating Principle", "Background", "Values", "Appearance"],
+    "summary":     ["Voice", "Core Operating Principle"],
+    "normal":      ["Voice", "Core Operating Principle", "Speech Pattern", "Interpersonal Style",
                     "Emotional Architecture", "Secrets"],
 }
 _MAX_TOTAL_PER_NPC = 15000 # NPC 1명당 최종 안전 cap (장면 선택이 자연 필터 역할)
+
+
+def _is_hybrid_profile(desc: str) -> bool:
+    """프로필이 hybrid v2 포맷인지 판별. '### Voice' 섹션 존재 여부로 결정."""
+    return bool(re.search(r'^###\s+Voice\b', desc, re.MULTILINE))
+
+
+def _extract_voice_section(desc: str) -> str:
+    """프로필에서 ### Voice 섹션 텍스트만 추출. 없으면 빈 문자열."""
+    sections = _parse_sections(desc)
+    return sections.get("Voice", "")
 
 
 def _parse_sections(desc: str) -> Dict[str, str]:
@@ -828,6 +840,10 @@ def _select_profile_sections(desc: str, scene_type: str = "normal") -> str:
                 included.add(sec_name)
                 break
 
+    # 매칭된 섹션이 너무 적으면 (레거시 포맷 — 섹션명 불일치) 통째로 보내기
+    if len(included) <= 1:
+        return desc[:_MAX_TOTAL_PER_NPC]
+
     result = "\n\n".join(result_parts)
 
     if len(result) > _MAX_TOTAL_PER_NPC:
@@ -866,10 +882,11 @@ def get_npc_full_profiles(channel_id: str, names: list, scene_type: str = "norma
             else:
                 profile_text = f"{header}\n{desc}"
 
-            # Voice Card injection (compaction과 별개)
-            voice_card = data.get("voice_card", "")
-            if voice_card:
-                profile_text += f"\n\n{voice_card}"
+            # Voice Card injection — hybrid는 본문에 Voice 섹션이 이미 포함되어 있으므로 스킵
+            if not _is_hybrid_profile(desc):
+                voice_card = data.get("voice_card", "")
+                if voice_card:
+                    profile_text += f"\n\n{voice_card}"
 
             parts.append(profile_text)
     return "\n\n".join(parts)
@@ -907,9 +924,10 @@ def get_npc_renderer_profiles(channel_id: str, names: list, scene_type: str = "n
             profile_text = f"{header}\n**[{meta_line}]**\n{desc}"
         else:
             profile_text = f"{header}\n{desc}"
-        voice_card = data.get("voice_card", "")
-        if voice_card:
-            profile_text += f"\n\n{voice_card}"
+        if not _is_hybrid_profile(_get_npc_desc(raw)):
+            voice_card = data.get("voice_card", "")
+            if voice_card:
+                profile_text += f"\n\n{voice_card}"
         parts.append(profile_text)
     return "\n\n".join(parts)
 
@@ -965,7 +983,9 @@ def get_npc_recency_reminders(channel_id: str, npc_names: list) -> str:
 
 
 def _extract_voice_summary(name: str, voice_card: str) -> str:
-    """voice_card에서 Tone + Quirks 줄만 추출, 1줄로 압축."""
+    """voice_card에서 Tone + Quirks 줄만 추출, 1줄로 압축.
+    Hybrid v2 Voice 블록이면 대사 줄("~"로 끝나거나 따옴표 포함)을 우선 추출."""
+    # Legacy: Tone/Quirks 파싱
     parts = []
     for line in voice_card.split("\n"):
         stripped = line.strip()
@@ -975,8 +995,22 @@ def _extract_voice_summary(name: str, voice_card: str) -> str:
             parts.append(stripped[7:].strip())
     if parts:
         return f"- {name}: {' | '.join(parts)}"
-    # Tone/Quirks 파싱 실패 시 첫 2줄
-    card_lines = [l.strip() for l in voice_card.strip().split("\n") if l.strip() and not l.strip().startswith("[Voice")]
+
+    # Hybrid v2: 대사 줄 추출 (따옴표로 시작하거나 ~로 끝나는 줄)
+    dialogue_lines = []
+    for line in voice_card.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith('"') or stripped.startswith('"') or stripped.endswith('~"') or stripped.endswith("~"):
+            dialogue_lines.append(stripped[:80])
+            if len(dialogue_lines) >= 3:
+                break
+    if dialogue_lines:
+        return f"- {name}: {' / '.join(dialogue_lines)}"
+
+    # 최종 폴백: 첫 의미있는 줄
+    card_lines = [l.strip() for l in voice_card.strip().split("\n") if l.strip() and not l.strip().startswith("[Voice") and not l.strip().startswith("###")]
     if card_lines:
         return f"- {name}: {card_lines[0][:120]}"
     return ""
