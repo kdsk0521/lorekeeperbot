@@ -111,15 +111,34 @@ async def process_time_flow(channel_id: str, time_flow: Dict, scene_type: str = 
     if not time_flow:
         return None
 
-    # 절대 시간 점프 (target)
+    # 절대 시간 점프 (target) — 유저가 명시적으로 시간을 언급한 경우만
     target = time_flow.get("target")
     if target and target.get("slot"):
-        msg = game_world.advance_to_slot(
-            channel_id,
-            target["slot"],
-            target.get("day_offset", 0)
-        )
-        return msg
+        # 안전장치: 현재 시각에서 target까지 과도 점프 방지
+        # 1슬롯 이동은 ticks로 처리하는 게 자연스러움
+        world = domain_manager.get_world_state(channel_id)
+        game_world._init_clock(world)
+        current_slot = world.get("time_slot", "오후")
+        target_slot = target["slot"]
+        _slots = config.DEFAULT_TIME_SLOTS
+        try:
+            cur_idx = _slots.index(current_slot)
+            tgt_idx = _slots.index(target_slot)
+        except ValueError:
+            cur_idx, tgt_idx = 0, 0
+        slot_distance = (tgt_idx - cur_idx) % len(_slots)
+        day_offset = target.get("day_offset", 0)
+        # 같은 슬롯 + day_offset 0 → 시간 점프 불필요 (단순 행동)
+        if slot_distance == 0 and day_offset == 0 and not target.get("hour"):
+            pass  # target 무시, ticks로 처리
+        else:
+            msg = game_world.advance_to_slot(
+                channel_id,
+                target_slot,
+                day_offset,
+                target_hour=target.get("hour"),
+            )
+            return msg
 
     duration = time_flow.get("duration", "instant")
     ticks = time_flow.get("ticks", 0)

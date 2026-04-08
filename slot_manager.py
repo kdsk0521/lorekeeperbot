@@ -891,6 +891,35 @@ def build_34_step_prompt(ctx) -> str:
     if _story_dir_hint:
         scene_intel_parts.append(_story_dir_hint)
 
+    # Register Lens: 장면의 지배적 관계 역학 (H3 + B1 fallback)
+    _register = dai.get("scene_register")
+    if not _register or _register == "null":
+        # B1: Flash가 null → psyche_states + narrative_chain에서 추론
+        _register = iceberg.infer_scene_register(
+            dai.get("psyche_states"), dai.get("narrative_chain"),
+        )
+    if _register:
+        _reg_hint = iceberg.translate_register(_register)
+        if _reg_hint:
+            scene_intel_parts.append(_reg_hint)
+
+    # Propagation Shape: 장면 전파 형태 (B5)
+    _psyche_raw = dai.get("psyche_states", {})
+    _nchain = dai.get("narrative_chain", {})
+    _npc_count = len(_psyche_raw) if isinstance(_psyche_raw, dict) else 1
+    _prop_shape = iceberg.infer_propagation_shape(
+        _psyche_raw, _nchain, scene_type, energy_dir, _npc_count,
+    )
+    if _prop_shape:
+        _prop_hint = iceberg.translate_propagation_shape(_prop_shape)
+        if _prop_hint:
+            scene_intel_parts.append(_prop_hint)
+
+    # Detail Density: scene_type + energy → 디테일 밀도 캘리브레이션 (B6)
+    _density_hint = iceberg.translate_detail_density(scene_type, energy_dir)
+    if _density_hint:
+        scene_intel_parts.append(_density_hint)
+
     # MemoryType: iceberg 번역 (기억 유형 → 산문 스타일 힌트, 발동 턴만)
     memory_hint = iceberg.translate_memory_type(memory_triggers)
     if memory_hint:
@@ -1228,6 +1257,12 @@ def build_34_step_prompt(ctx) -> str:
                 _perc_dir = f"\n[이상현상 인식] {_p_hint}"
                 gm_mover = (gm_mover + _perc_dir) if gm_mover else _perc_dir
 
+    # PROBE Mode: 탐침 입력 시 NPC 반응 지시 (H5)
+    _input_mode = dai.get("input_mode", "decree")
+    if _input_mode == "probe":
+        _probe_dir = "\n[PROBE] 유저 입력 = 압력. NPC는 복종하지 않고 반응한다 — 인식/신체 기억/사회적 습관/환경을 통해."
+        gm_mover = (gm_mover + _probe_dir) if gm_mover else _probe_dir
+
     # --- [Slot 29] Real-time Data (compact v3 status first, legacy fallback) ---
     real_time_data = ""
     if channel_id:
@@ -1255,9 +1290,16 @@ def build_34_step_prompt(ctx) -> str:
         )
         real_time_data += pc_reminder
 
-    # Emotion Intensity: iceberg 번역 (밴드명/수치 제거 → 행동 강도 힌트)
+    # Emotion Intensity: iceberg 번역 (밴드명/수치 제거 → 행동 강도 힌트 + B4 페이싱)
     psyche_states_raw = dai.get("psyche_states", {})
-    intensity_text = iceberg.translate_emotion_intensity(psyche_states_raw)
+    _prev_psyche_vals = {}
+    if channel_id:
+        try:
+            _pf = domain_manager.get_latest_frame(channel_id)
+            _prev_psyche_vals = _pf.get("dai_snapshot", {}).get("psyche_values", {})
+        except Exception:
+            pass
+    intensity_text = iceberg.translate_emotion_intensity(psyche_states_raw, _prev_psyche_vals)
     if intensity_text:
         real_time_data += f"\n\n{intensity_text}"
 

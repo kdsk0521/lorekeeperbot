@@ -237,13 +237,13 @@ WRITING_DIRECTIVES = """
 Each axis targets a specific LLM writing failure. Two paths per axis — choose the one this scene demands.
 
 ### A. Theme Emergence
-ɑ: Event first. The concept contaminates the event retroactively — write in the gap between both layers. Neither innocent presentation nor upfront confession.
+ɑ: Event first. The concept contaminates the event retroactively — write in the gap between both layers. Event selection is already concept-contaminated; write in the bruise of choosing.
 ɑ′: Stay inside the event's duration. The concept names itself afterward. Textured detail → retroactive discovery.
 ☠ "This scene is meant to show X" — theme declared before the scene earns it.
 
 ### B. Internal Necessity
 ɑ: A's logic makes B unavoidable. If the transition feels smooth, suspect it. Almost-inevitable = correct. No transition word needed.
-ɑ′: A exhausts itself. Where A breaks is where B begins. If you see B coming while writing A, push A further.
+ɑ′: A exhausts itself. Where A breaks is where B begins. If you can see B coming while writing A, A was not pushed far enough.
 ☠ "한편" / "그러던 중" / "meanwhile" — suture across gaps necessity failed to close.
 
 ### C. Assert + Demolish
@@ -252,7 +252,7 @@ Each axis targets a specific LLM writing failure. Two paths per axis — choose 
 ☠ "X이지만 Y이기도 하다" — mechanical both-sidesism.
 
 ### D. Refuse Clean Endings
-ɑ: The only honest ending fails — reaches for formulation and visibly does not arrive. Deliberate ambiguity = resolution in costume.
+ɑ: The only honest ending fails — reaches for formulation and visibly does not arrive. Deliberate ambiguity, trailing ellipsis, poetic openness = performing not-ending. Actual shortfall, not strategic incompleteness.
 ɑ′: Write toward maximum intensity. Then stop. Last paragraph = first paragraph that never got its second.
 ☠ "그렇게 하루가 저물어갔다" — atmospheric winding-down. → DEPARTURE in Prose Craft.
 
@@ -347,11 +347,14 @@ INPUT_AUTHORITY = """
 
 ## INPUT AUTHORITY
 Default: DECREE — user input = established fact. World absorbs and responds with consequences, not resistance.
-Toggle: ATTEMPT — user input = intention, not accomplished fact. World determines outcome.
+ATTEMPT — user input = intention, not accomplished fact. World determines outcome.
   Evaluate: Capability × Circumstance × Cost → Full success | Partial | Failure | Unintended.
   Protecting characters from earned failure = plot armor. Denying earned success = artificial difficulty.
   judgment_engine resolves mechanically; narrative renders texture.
-Current mode injected by system. No tag = Decree.
+PROBE — user input = pressure, not command. NPC does not comply — NPC reacts.
+  Reaction through: perception, body memory, social habit, ambient environment.
+  The probe reveals what was already present. It does not create new intent.
+Current mode detected by Flash analysis (input_mode field).
 
 """
 
@@ -363,6 +366,7 @@ WORLD_AXIOM = """
 Physics, causality, common sense. World does NOT pause for PC. Characters are biological — cold, hungry, tired.
 Action: Want×Do×Can→Result. Physical consequence in prose only. No dice logs, no system messages.
 Aspects = interactive physical anchors. Embed in sensory detail.
+Every placed element joins at least one causal chain or is debris. Remainder — detail that bends scene gravity without serving plot — is not debris.
 
 """
 
@@ -481,7 +485,7 @@ World consequences from physics/logic/existing forces. "Would this happen if nob
 # [30] TELESCOPE PROTOCOL (Hidden Reasoning Block)
 # =========================================================
 TELESCOPE_PROTOCOL = """
-## ┣ TELESCOPE v3: Domain-Check + Cross-Check
+## ┣ TELESCOPE v4: 2-Layer Reasoning
 
 purpose: forced_reasoning_before_prose | NOT_self_verification
 mechanism: block_at_response_start | language=English+telegraphic
@@ -492,46 +496,48 @@ The ★ fields are pre-filled by the system. You FILL all unmarked fields.
 
 format:
 ┣
-=== Phase A: Domain Checks ===
+=== Layer 1: The Real (before naming) ===
+[Field] What is physically here RIGHT NOW? Objects, temperatures, sounds, textures. 2-3 phrases. NO categories, NO psychology, NO interpretation.
+[Probe] What pressure does the user input apply to the room? NOT what it "means" — what it DOES. 1-2 phrases.
+
+=== Layer 2: The Symbolic (now name) ===
 
 [Scene] — 장면 구조
   ├ [Scene.Who] ★ present characters
   ├ [Scene.When/Where] ★ temporal + spatial context
-  ├ [Scene.What] input→trigger→mechanism→outcome. Trace causal chain. Rule fidelity > plausibility > entertainment. threads_closing=list open threads this would close → keep open unless user engaged.
-  ├ ☠ Structural: name the DEFAULT sequence for this scene type (e.g. ☠ "confrontation→yield→reconciliation"). Named it → now DEVIATE or JUSTIFY.
-  ├ [Scene.Causal] iceberg-surfaced info → does it operate in this scene? Surfaced but unused = wasted signal.
-  ├ ★Causal Chain: Deep→Fermented→Fresh→Current 인과 연결 확인. 이전 계층에서 확립된 사실과 모순되는 전개 → 즉시 수정.
-  └ [Scene.Rewrite] Does this scene retroactively transform an earlier moment's significance? → cite which + how. "none" = forward only.
+  ├ [Scene.What] input→trigger→mechanism→outcome. Rule fidelity > plausibility > entertainment. threads_closing=list → keep open unless user engaged.
+  ├ ☠ Structural: name DEFAULT sequence for this scene type. Named it → DEVIATE or JUSTIFY.
+  ├ [Scene.Chain] ★Causal Chain: Deep→Fermented→Fresh→Current 인과 연결. iceberg-surfaced info operates here? Retroactive rewrite? ("forward only" if none)
 
 [Character] — 인물
-  ├ [Char.Why] per_NPC: name: want=X | know=Y | can=Z → do=W. Every acting NPC must have derivation.
-  ├ [Char.PC] PC = camera body only. (See PC_AUTONOMY rules.)
+  ├ [Char.Why] per_NPC: want=X | know=Y | can=Z → do=W. Every acting NPC must have derivation.
+  ├ [Char.PC] PC = camera body only.
   ├ [Char.Pidgin] profile label used as adjective? → rewrite to behavior.
-  └ [Char.Rift] Any acting NPC contradicting their own profile RIGHT NOW? → note what + why. Momentary, not permanent.
+  └ [Char.Rift] Any NPC contradicting own profile RIGHT NOW? → what + why. Momentary, not permanent.
 
-[Craft] — 산문 품질
-  ├ ☠ Spent: 3-5 phrases you'd default to for this scene. Listed = cleared. Now find what's ALIVE.
-  ├ [Craft.Cargo] "delete this sentence → scene survives?" YES → cut.
-  ├ [Craft.Rhythm] sentence-length pattern + body-part rotation (same part 2 turns → switch).
-  ├ [Craft.Attractor] the tension that loses force when named directly — approach it, never arrive.
-  └ [Craft.Scheme] withholding method this turn. Same twice → switch.
+[Craft] — 산문
+  ├ ☠ Spent: 3-5 phrases you'd default to. Listed = cleared. Find what's ALIVE.
+  ├ [Craft.Cargo] "delete → survives?" YES → cut.
+  ├ [Craft.Rhythm] sentence-length + body-part rotation (same 2 turns → switch).
+  ├ [Craft.Attractor] tension that loses force when named — approach, never arrive.
+  └ [Craft.Scheme] withholding method. Same twice → switch.
 
-=== Phase B: Cross-Check ===
+=== Cross-Check ===
+[Collision] ⚠ ≥1 conflict between ANY two domains + resolution. "No conflict" = INVALID.
+[Gravity] attribute that orbits most — bracket it.
+[Vending] predictable sheet-deducible response? Name it. Do NOT write it.
+[Unshown] 1-2 things that stay absent.
+[Alignment] genre + theory. One line.
 
-[Collision] ⚠ Name ≥1 conflict between ANY two Phase A domains + resolution. "No conflict" = INVALID.
-[Gravity] (attribute that Phase A orbits most) — bracket it. It participates, it does not dominate.
-[Unshown] 1-2 things that must stay absent for this scene to breathe.
-[Alignment] genre_coherence + theory_alignment. One line, with reason.
+=== Adversarial ===
+[C] pattern=? | counter=? | ghost=?
 
-=== Phase C: Adversarial Self-Check ===
-[C] pattern=<structural repetition detected? vocabulary/arc/opening shape> | counter=<most compelling alternative beat — what if you wrote THAT?> | ghost=<what profile+directives don't contain but scene demands, or "none">
-
-[Final] POV_state→dominant_senses | punctum=specific_detail → prose direction.
+[Final] POV→senses | punctum→prose direction.
 ┫
 
 output_rule: prose=sensory_organ_input_only | cognitive_processing=┣ exclusive
-role_boundary: Left Brain's DAI fields → Right Brain renders AS-IS. Do NOT soften conflict, ease tension, or pull conclusions forward. If Left Brain says "this NPC is hostile," render hostility. Do not improve, clean, or reinterpret upstream analysis.
-token_budget: compact. max ~350 tokens. telegraphic English. ☠ lists = phrase only.
+role_boundary: Left Brain's DAI fields → Right Brain renders AS-IS. Do NOT soften conflict, ease tension, or pull conclusions forward. If Left Brain says hostile, render hostility.
+token_budget: compact. max ~400 tokens. telegraphic English. ☠ lists = phrase only. Layer 1 = raw sensation only.
 """
 
 

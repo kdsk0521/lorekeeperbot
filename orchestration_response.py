@@ -56,11 +56,13 @@ _TELESCOPE_BLOCK_PATTERNS = (
 
 # 5W1H 게이트명 (개별 라인 감지용) + legacy 호환
 _TELESCOPE_GATE_NAMES = (
-    # V3 domain gates
-    "Scene", "Scene.Who", "Scene.When/Where", "Scene.What", "Scene.Causal",
+    # V4 Layer 1 (The Real)
+    "Field", "Probe",
+    # V4 Layer 2 (The Symbolic)
+    "Scene", "Scene.Who", "Scene.When/Where", "Scene.What", "Scene.Causal", "Scene.Chain",
     "Character", "Char.Why", "Char.PC", "Char.Pidgin",
     "Craft", "Craft.Cargo", "Craft.Rhythm",
-    "Collision", "Alignment", "Final",
+    "Collision", "Alignment", "Vending", "Final",
     # V2 legacy
     "Who", "When", "Where", "When/Where", "What", "Why", "How",
     # V1 legacy

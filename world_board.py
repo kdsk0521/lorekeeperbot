@@ -266,6 +266,358 @@ def _save_post_summaries(channel_id: str, posts_data: Dict[str, Any]) -> None:
     domain_manager.update_world_state(channel_id, world)
 
 
+# =========================================================
+# Event-Driven Board v2: Scanners + Selection + Routing
+# =========================================================
+
+def _collect_board_events(channel_id: str, dai: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """파이프라인 산출물에서 보드 이벤트 수집. 0 API 콜. 실패한 스캐너는 무시."""
+    events: List[Dict[str, Any]] = []
+    world = domain_manager.get_world_state(channel_id)
+    current_turn = world.get("turn_index", 0)
+
+    # --- Scanner 1: Emotion Spike ---
+    try:
+        emo_states = world.get("npc_emotion_states", {})
+        for npc_name, state in emo_states.items():
+            if not isinstance(state, dict):
+                continue
+            if state.get("spike_detected"):
+                weight = 0.7
+                intensity = state.get("intensity", 0)
+                if isinstance(intensity, (int, float)) and intensity > 0.8:
+                    weight += 0.2
+                events.append({
+                    "type": "emotion_spike",
+                    "weight": weight,
+                    "npc": npc_name,
+                    "target_npc": None,
+                    "channel": "sns",
+                    "detail_kr": state.get("spike_detail", "")
+                               or f"{npc_name}의 감정 급변: {state.get('dominant', '?')}",
+                    "tag": f"emotion_spike:{npc_name}",
+                })
+    except Exception:
+        pass
+
+    # --- Scanner 2: Attitude Shift ---
+    try:
+        npc_attitudes = dai.get("npc_attitudes", {})
+        if isinstance(npc_attitudes, dict):
+            for npc_name, att_data in npc_attitudes.items():
+                if not isinstance(att_data, dict):
+                    continue
+                trajectory = att_data.get("trajectory", "stable")
+                if trajectory == "stable":
+                    continue
+                weight = 0.6
+                if trajectory == "declining":
+                    weight += 0.15
+                reason = att_data.get("reason", "")
+                events.append({
+                    "type": "attitude_shift",
+                    "weight": weight,
+                    "npc": npc_name,
+                    "target_npc": None,
+                    "channel": "sns" if trajectory == "improving" else "message",
+                    "detail_kr": reason or f"{npc_name}의 태도 변화: {trajectory}",
+                    "tag": f"attitude:{npc_name}:{trajectory}",
+                })
+    except Exception:
+        pass
+
+    # --- Scanner 3: Storyteller Event Fired ---
+    try:
+        storyteller = world.get("storyteller", {})
+        last_event_turn = storyteller.get("last_event_turn", -1)
+        if last_event_turn == current_turn:
+            recent_tags = storyteller.get("recent_tags", [])
+            tag = recent_tags[-1] if recent_tags else "이변"
+            # active_conditions에서 line 가져오기
+            active_conds = storyteller.get("active_conditions", [])
+            line = ""
+            for c in reversed(active_conds):
+                if isinstance(c, dict) and c.get("tag") == tag:
+                    line = c.get("description", "")
+                    break
+            weight = 0.85
+            events.append({
+                "type": "anomaly_fired",
+                "weight": weight,
+                "npc": None,
+                "target_npc": None,
+                "channel": "bulletin",
+                "detail_kr": line or f"이변 발생: {tag}",
+                "tag": f"anomaly:{tag}",
+            })
+    except Exception:
+        pass
+
+    # --- Scanner 4: Doom Clock Milestone ---
+    try:
+        board_state = world.get("world_board", {})
+        posted_milestones = set(board_state.get("posted_clock_milestones", []))
+        clocks = world.get("doom_clocks", [])
+        for clock in clocks:
+            if not isinstance(clock, dict):
+                continue
+            name = clock.get("name", "")
+            segments = int(clock.get("segments", 4) or 4)
+            filled = int(clock.get("filled", 0) or 0)
+            if segments <= 0:
+                continue
+            if clock.get("resolved") and f"{name}:complete" not in posted_milestones:
+                events.append({
+                    "type": "clock_milestone",
+                    "weight": 0.95,
+                    "npc": None,
+                    "target_npc": None,
+                    "channel": "bulletin",
+                    "detail_kr": f"상황 종결: {name} (시계 완성)",
+                    "tag": f"clock_complete:{name}",
+                })
+            elif filled >= segments / 2 and f"{name}:half" not in posted_milestones:
+                events.append({
+                    "type": "clock_milestone",
+                    "weight": 0.75,
+                    "npc": None,
+                    "target_npc": None,
+                    "channel": "bulletin",
+                    "detail_kr": f"상황 심화: {name} ({filled}/{segments})",
+                    "tag": f"clock_half:{name}",
+                })
+    except Exception:
+        pass
+
+    # --- Scanner 5: NPC Imprint ---
+    try:
+        all_imprints = domain_manager.get_npc_imprints(channel_id)
+        for npc_name, imp_list in all_imprints.items():
+            if not isinstance(imp_list, list) or not imp_list:
+                continue
+            latest = imp_list[-1]
+            if not isinstance(latest, dict):
+                continue
+            if latest.get("turn") == current_turn:
+                event_type = latest.get("event", "")
+                mark = latest.get("mark", "")
+                channel = "message" if event_type in ("confession", "injury", "trauma") else "sns"
+                events.append({
+                    "type": "npc_imprint",
+                    "weight": 0.8,
+                    "npc": npc_name,
+                    "target_npc": None,
+                    "channel": channel,
+                    "detail_kr": mark or f"{npc_name}에게 각인: {event_type}",
+                    "tag": f"imprint:{npc_name}:{event_type}",
+                })
+    except Exception:
+        pass
+
+    # --- Scanner 6: Relation Change ---
+    try:
+        import entity_relations
+        edges = entity_relations.get_all_relations(channel_id)
+        for key, edge in edges.items():
+            if not isinstance(edge, dict):
+                continue
+            history = edge.get("history", [])
+            if not history:
+                continue
+            last_entry = history[-1]
+            if isinstance(last_entry, dict) and last_entry.get("turn") == current_turn:
+                source = edge.get("source", "")
+                target = edge.get("target", "")
+                reason = last_entry.get("reason", "")
+                new_type = last_entry.get("new_type", "")
+                events.append({
+                    "type": "relation_change",
+                    "weight": 0.65,
+                    "npc": source,
+                    "target_npc": target,
+                    "channel": "sns",
+                    "detail_kr": reason or f"{source}→{target}: {new_type}",
+                    "tag": f"relation:{source}→{target}",
+                })
+    except Exception:
+        pass
+
+    # --- Scanner 7: World Change ---
+    try:
+        session_mem = domain_manager.get_session_ai_memory(channel_id)
+        world_changes = session_mem.get("world_changes", [])
+        board_state = world.get("world_board", {})
+        last_idx = board_state.get("last_world_change_idx", 0)
+        if isinstance(world_changes, list) and len(world_changes) > last_idx:
+            new_change = world_changes[-1]
+            if isinstance(new_change, str) and new_change.strip():
+                events.append({
+                    "type": "world_change",
+                    "weight": 0.5,
+                    "npc": None,
+                    "target_npc": None,
+                    "channel": "bulletin",
+                    "detail_kr": new_change,
+                    "tag": f"world_change",
+                })
+    except Exception:
+        pass
+
+    # --- Scanner 8: Thread Resolved ---
+    try:
+        session_mem = session_mem if 'session_mem' in dir() else domain_manager.get_session_ai_memory(channel_id)
+        resolved = session_mem.get("resolved_threads", [])
+        if isinstance(resolved, list) and resolved:
+            latest_resolved = resolved[-1] if isinstance(resolved[-1], str) else ""
+            if latest_resolved:
+                events.append({
+                    "type": "thread_resolved",
+                    "weight": 0.6,
+                    "npc": None,
+                    "target_npc": None,
+                    "channel": "bulletin",
+                    "detail_kr": f"사건 해소: {latest_resolved}",
+                    "tag": f"resolved:{latest_resolved[:20]}",
+                })
+    except Exception:
+        pass
+
+    # --- Scanner 9: Visible Dice ---
+    try:
+        story_dir = dai.get("story_direction", {})
+        dice = story_dir.get("dice", {}) if isinstance(story_dir, dict) else {}
+        if isinstance(dice, dict) and dice.get("visible"):
+            effect = dice.get("effect", "")
+            if effect:
+                events.append({
+                    "type": "visible_dice",
+                    "weight": 0.4,
+                    "npc": None,
+                    "target_npc": None,
+                    "channel": "bulletin",
+                    "detail_kr": effect,
+                    "tag": f"dice:{dice.get('name', '?')}",
+                })
+    except Exception:
+        pass
+
+    # --- Scanner 10: Memory Trigger (filler) ---
+    try:
+        session_mem = session_mem if 'session_mem' in dir() else domain_manager.get_session_ai_memory(channel_id)
+        triggers = session_mem.get("active_memory_triggers", [])
+        if isinstance(triggers, list) and triggers:
+            # 부재 NPC 중 하나를 랜덤 선정
+            absent = _get_absent_npcs(channel_id)
+            if absent:
+                import random
+                chosen_npc = random.choice(absent)
+                chosen_trigger = triggers[-1] if isinstance(triggers[-1], str) else ""
+                if chosen_trigger:
+                    events.append({
+                        "type": "memory_trigger",
+                        "weight": 0.3,
+                        "npc": chosen_npc,
+                        "target_npc": None,
+                        "channel": "sns",
+                        "detail_kr": chosen_trigger,
+                        "tag": f"memory:{chosen_trigger[:20]}",
+                    })
+    except Exception:
+        pass
+
+    return events
+
+
+def _select_best_event(
+    events: List[Dict[str, Any]],
+    channel_id: str,
+) -> Optional[Dict[str, Any]]:
+    """이벤트 목록에서 최고 weight 1개 선택. 게이트 적용."""
+    if not events:
+        return None
+
+    enabled = get_board_channels(channel_id)
+    absent_npcs = _get_absent_npcs(channel_id)
+    absent_set = set(absent_npcs)
+
+    # 안전 상태 로드
+    world = domain_manager.get_world_state(channel_id)
+    board_state = world.get("world_board", {})
+    npc_history = board_state.get("npc_post_history", [])
+    recent_types = board_state.get("recent_event_types", [])
+
+    # NPC 연속 포스트 감지 (최근 2건이 같은 NPC면 차단)
+    blocked_npcs = set()
+    if len(npc_history) >= 2:
+        last_two = [h.get("npc") for h in npc_history[-2:]]
+        if last_two[0] and last_two[0] == last_two[1]:
+            blocked_npcs.add(last_two[0])
+
+    candidates = []
+    for ev in events:
+        ch = ev.get("channel", "sns")
+        npc = ev.get("npc")
+        ev_type = ev.get("type", "")
+        weight = ev.get("weight", 0)
+
+        # 채널 활성 필터
+        if not enabled.get(ch, False):
+            continue
+
+        # NPC 쿨다운 필터
+        if npc and npc in blocked_npcs:
+            continue
+
+        # 부재 필터: sns/bulletin은 부재 NPC만, message는 제한 없음
+        if npc and ch != "message" and npc not in absent_set:
+            continue
+
+        # 반복 감쇠: 같은 type이 최근 2턴 내 → weight × 0.5
+        if ev_type in recent_types[-2:]:
+            weight *= 0.5
+
+        # 최소 threshold
+        if weight < 0.3:
+            continue
+
+        candidates.append((weight, ev))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    return candidates[0][1]
+
+
+def _route_event_channel(
+    event: Dict[str, Any],
+    enabled: Dict[str, bool],
+    absent_npcs: List[str],
+) -> Optional[str]:
+    """이벤트의 최종 채널 결정. 비활성/부재 규칙 적용."""
+    preferred = event.get("channel", "sns")
+    npc = event.get("npc")
+    absent_set = set(absent_npcs)
+
+    # NPC가 장면에 있으면 message만 가능
+    if npc and npc not in absent_set:
+        if enabled.get("message"):
+            return "message"
+        return None
+
+    # 기본 채널 활성이면 사용
+    if enabled.get(preferred):
+        return preferred
+
+    # 폴백
+    fallbacks = ["sns", "bulletin", "message"]
+    for fb in fallbacks:
+        if fb != preferred and enabled.get(fb):
+            return fb
+
+    return None
+
+
 def _build_board_prompt(
     channel_id: str,
     active_channels: Dict[str, bool],
@@ -480,13 +832,14 @@ async def generate_posts(
     extra_context: str = "",
     max_posts: int = 1,
     absent_npcs: Optional[List[str]] = None,
+    override_prompt: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Flash API로 게시물 생성. 3턴 프리필 + CONTENT_AUTHORIZATION."""
     from memory_system import api_call_with_retry
     from google.genai import types
     import text_resources
 
-    prompt = _build_board_prompt(channel_id, active_channels, trigger, extra_context, max_posts, absent_npcs)
+    prompt = override_prompt or _build_board_prompt(channel_id, active_channels, trigger, extra_context, max_posts, absent_npcs)
 
     cfg = types.GenerateContentConfig(
         # 3중 방어: system_instruction(API레벨) + training pair(모델레벨) + safety_settings(필터레벨)
@@ -524,6 +877,110 @@ async def generate_posts(
     except Exception as e:
         logger.error(f"[WorldBoard] Generation failed: {e}")
         return None
+
+
+# =========================================================
+# Event-Driven Prompt Builder (v2)
+# =========================================================
+
+def _build_event_prompt(
+    channel_id: str,
+    event: Dict[str, Any],
+    channel_type: str,
+) -> str:
+    """이벤트 맞춤 프롬프트. 기존 대비 ~50% 축소."""
+    world = domain_manager.get_world_state(channel_id)
+    location = world.get("current_location", "Unknown")
+    day = world.get("day", 1)
+    hour = world.get("hour", 12)
+    minute = world.get("minute", 0)
+    time_slot = world.get("time_slot", "오후")
+
+    genres = world.get("genres", {})
+    stage = ", ".join(genres.get("stage", [])) if isinstance(genres, dict) else "미정"
+    atmosphere = genres.get("atmosphere", "미정") if isinstance(genres, dict) else "미정"
+
+    # NPC 프로필 (1명만)
+    npc_name = event.get("npc") or ""
+    npc_section = ""
+    if npc_name:
+        all_npcs = domain_manager.get_npcs(channel_id) or {}
+        npc_key = domain_manager._find_npc_key(all_npcs, npc_name) or npc_name
+        npc_data = all_npcs.get(npc_key, {})
+        meta = []
+        if npc_data.get("role"):
+            meta.append(f"역할: {npc_data['role']}")
+        if npc_data.get("personality"):
+            meta.append(f"성격: {npc_data['personality']}")
+        if npc_data.get("tone") or npc_data.get("speech"):
+            meta.append(f"말투: {npc_data.get('tone') or npc_data.get('speech')}")
+        npc_section = f"Name: {npc_name}\n" + " | ".join(meta) if meta else f"Name: {npc_name}"
+
+        # NPC 태도/감정
+        att = domain_manager.get_npc_attitude(channel_id, npc_key)
+        if isinstance(att, dict) and att.get("attitude"):
+            npc_section += f"\n태도: {att['attitude']}"
+
+        emo = world.get("npc_emotion_states", {}).get(npc_key, {})
+        if isinstance(emo, dict) and emo.get("dominant"):
+            npc_section += f" | 감정: {emo['dominant']}"
+
+        # NPC 지식
+        knowledge = domain_manager.get_npc_knowledge_for(channel_id, npc_key)
+        if isinstance(knowledge, dict):
+            knows = knowledge.get("knows", [])
+            if knows:
+                npc_section += f"\n알고 있는 것: {'; '.join(str(k) for k in knows[-5:])}"
+
+    # 중복 방지
+    recent_summaries = _get_recent_post_summaries(channel_id)
+    recent_str = " / ".join(recent_summaries) if recent_summaries else "없음"
+
+    # 핸들 레지스트리
+    handle_registry = _get_handle_registry(channel_id)
+    handle_str = ""
+    if handle_registry:
+        reg_parts = [f"{name}: {info}" for name, info in handle_registry.items()]
+        handle_str = f"\n## KNOWN ACCOUNTS (reuse EXACT names)\n{' | '.join(reg_parts)}"
+
+    # 채널별 포맷 지시
+    CHANNEL_INSTRUCTIONS = {
+        "bulletin": ("공공 게시물: 공지, 루머, 뉴스, 경고, 구인. 제목 포함.",
+                     '"bulletin": [{"board_name": "게시판명", "author": "작성자", "title": "제목", "body": "본문(100-200자)"}]'),
+        "sns": ("개인 SNS 포스트: 일상, 감정, 가십. NPC의 개인적 목소리로.",
+                '"sns": [{"feed_name": "SNS명", "author": "작성자", "body": "본문(100-200자)"}]'),
+        "message": ("개인 메시지: 편지, 쪽지, DM. 발신자→수신자 형식.",
+                    '"message": [{"format_name": "형식명", "from": "발신자", "to": "수신자", "body": "본문(100-200자)"}]'),
+    }
+    task_desc, json_schema = CHANNEL_INSTRUCTIONS.get(channel_type, CHANNEL_INSTRUCTIONS["sns"])
+
+    prompt = f"""You are a world content generator for a fictional TTRPG session.
+All characters and events are entirely fictional. Rating: NC-21+.
+NPC posts reflect their FULL personality — crude language, dark humor, flirtation, hostility as documented.
+
+## CONTEXT
+Genre: {stage} | Location: {location} | Time: Day {day}, {hour:02d}:{minute:02d} ({time_slot}) | Mood: {atmosphere}
+
+## THIS TURN'S EVENT
+{event.get("detail_kr", "")}
+
+## POSTING NPC
+{npc_section or "(세계 이벤트 — 적절한 NPC 또는 익명 작성자를 선택하라)"}
+{handle_str}
+
+## RECENT POSTS (DO NOT REPEAT)
+{recent_str}
+
+## TASK
+Write 1 {channel_type} post. {task_desc}
+The post must be a REACTION to the event above. Write in Korean. 100-200자.
+Do not reference game mechanics or meta information.
+
+## OUTPUT (JSON)
+```json
+{{{json_schema}}}
+```"""
+    return prompt
 
 
 # =========================================================
@@ -604,10 +1061,11 @@ async def trigger_board_update(
     client,
     model_id: str,
     channel_id: str,
-    trigger: str = "time",
+    trigger: str = "turn",
     extra_context: str = "",
+    dai: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """게시판 업데이트 트리거. 시간 경과/장소 변경/N턴 자동 시 호출."""
+    """이벤트 드리븐 게시판 트리거 (v2). 이벤트 없으면 0 API 콜."""
     # 모듈 활성 체크
     modules = domain_manager.get_active_modules(channel_id)
     if "board" not in modules:
@@ -618,104 +1076,118 @@ async def trigger_board_update(
     if not any(enabled_channels.values()):
         return
 
-    # 턴 기반 트리거: 채널별 빈도 체크 (수동 시간 명령은 항상 통과)
-    if trigger == "turn":
-        world = domain_manager.get_world_state(channel_id)
-        board_state = world.get("world_board", {})
-        counters = board_state.get("turns_since", {})
-        ready_channels = {}
-        for ch_name, enabled in enabled_channels.items():
-            if not enabled:
-                continue
-            count = counters.get(ch_name, 0) + 1
-            freq = get_board_frequency(channel_id, ch_name)
-            counters[ch_name] = count
-            if count >= freq:
-                ready_channels[ch_name] = True
-                counters[ch_name] = 0
-        board_state["turns_since"] = counters
-        world["world_board"] = board_state
-        domain_manager.update_world_state(channel_id, world)
-        if not ready_channels:
-            return
-        active_channels = ready_channels
-    else:
-        # 수동 시간 명령: 활성 채널 전부
-        active_channels = {k: v for k, v in enabled_channels.items() if v}
+    # 최소 간격 게이트 (빈도 설정을 최소 간격으로 재해석)
+    world = domain_manager.get_world_state(channel_id)
+    current_turn = world.get("turn_index", 0)
+    board_state = world.get("world_board", {})
+    last_post_turn = board_state.get("last_post_turn", 0)
+    min_interval = get_board_frequency(channel_id)  # 기본 10 → 최소 간격
+    if trigger == "turn" and current_turn - last_post_turn < min_interval:
+        return
 
-    # 부재 NPC 조회 → 캐핑
+    # 이벤트 수집
+    events = _collect_board_events(channel_id, dai or {})
+    if not events:
+        return
+
+    # 최고 weight 이벤트 선택
+    best_event = _select_best_event(events, channel_id)
+    if not best_event:
+        return
+
+    # 채널 라우팅
     absent_npcs = _get_absent_npcs(channel_id)
-    max_posts = _calc_post_count(len(absent_npcs))
-
-    # 부재 NPC 0명 → 전원 출석, 게시 스킵
-    if not absent_npcs:
-        logger.info("[WorldBoard] All NPCs present in scene — skipped")
+    final_channel = _route_event_channel(best_event, enabled_channels, absent_npcs)
+    if not final_channel:
         return
 
-    # Flash로 게시물 생성 (활성 채널만, 부재 NPC만)
-    posts = await generate_posts(client, model_id, channel_id, active_channels, trigger, extra_context, max_posts, absent_npcs)
+    # 이벤트 맞춤 프롬프트로 Flash 콜
+    prompt = _build_event_prompt(channel_id, best_event, final_channel)
+    active_channels = {final_channel: True}
+    posts = await generate_posts(
+        client, model_id, channel_id, active_channels,
+        trigger, extra_context, max_posts=1,
+        absent_npcs=absent_npcs,
+        override_prompt=prompt,
+    )
     if not posts:
+        logger.info(f"[WorldBoard] Flash returned empty for event={best_event.get('tag', '?')}")
         return
 
-    # 각 채널별 게시 (배열 또는 단일 dict 하위 호환)
+    # Discord에 게시 (기존 embed 함수 재사용)
     posted_count = 0
+    raw = posts.get(final_channel)
+    items = raw if isinstance(raw, list) else [raw] if raw else []
+    thread = None
+    for post in items:
+        if not post or not isinstance(post, dict) or not post.get("body"):
+            continue
+        if thread is None:
+            thread_name_map = {
+                "bulletin": f"📋 {post.get('board_name', '게시판')}",
+                "sns": f"📱 {post.get('feed_name', 'SNS')}",
+                "message": f"💌 {post.get('format_name', '메시지')}",
+            }
+            thread_key_map = {
+                "bulletin": "bulletin_thread_id",
+                "sns": "sns_thread_id",
+                "message": "message_thread_id",
+            }
+            thread = await _ensure_thread(
+                channel, channel_id,
+                thread_key_map[final_channel],
+                thread_name_map.get(final_channel, "📋 게시판"),
+            )
+        if thread:
+            post_fn = {"bulletin": _post_bulletin, "sns": _post_sns, "message": _post_message}
+            await post_fn[final_channel](thread, post, channel_id)
+            posted_count += 1
 
-    if active_channels.get("bulletin"):
-        raw = posts.get("bulletin")
-        items = raw if isinstance(raw, list) else [raw] if raw else []
-        thread = None
-        for post in items:
-            if not post or not post.get("body"):
-                continue
-            if thread is None:
-                board_name = post.get("board_name", "게시판")
-                thread = await _ensure_thread(
-                    channel, channel_id, "bulletin_thread_id", f"📋 {board_name}"
-                )
-            if thread:
-                await _post_bulletin(thread, post, channel_id)
-                posted_count += 1
-
-    if active_channels.get("sns"):
-        raw = posts.get("sns")
-        items = raw if isinstance(raw, list) else [raw] if raw else []
-        thread = None
-        for post in items:
-            if not post or not post.get("body"):
-                continue
-            if thread is None:
-                feed_name = post.get("feed_name", "SNS")
-                thread = await _ensure_thread(
-                    channel, channel_id, "sns_thread_id", f"📱 {feed_name}"
-                )
-            if thread:
-                await _post_sns(thread, post, channel_id)
-                posted_count += 1
-
-    if active_channels.get("message"):
-        raw = posts.get("message")
-        items = raw if isinstance(raw, list) else [raw] if raw else []
-        thread = None
-        for post in items:
-            if not post or not post.get("body"):
-                continue
-            if thread is None:
-                fmt_name = post.get("format_name", "메시지")
-                thread = await _ensure_thread(
-                    channel, channel_id, "message_thread_id", f"💌 {fmt_name}"
-                )
-            if thread:
-                await _post_message(thread, post, channel_id)
-                posted_count += 1
-
-    # 게시물 카운트 + 요약 저장 (중복 방지용)
+    # 상태 업데이트
     if posted_count > 0:
         world = domain_manager.get_world_state(channel_id)
         board_state = world.get("world_board", {})
+
+        # 기본 카운트
         board_state["total_posts"] = board_state.get("total_posts", 0) + posted_count
+        board_state["last_post_turn"] = current_turn
+
+        # NPC 포스트 히스토리 (쿨다운용, max 10)
+        npc_history = board_state.get("npc_post_history", [])
+        npc_history.append({
+            "npc": best_event.get("npc", ""),
+            "turn": current_turn,
+            "channel": final_channel,
+            "type": best_event.get("type", ""),
+        })
+        board_state["npc_post_history"] = npc_history[-10:]
+
+        # 이벤트 타입 히스토리 (반복 감쇠용, max 3)
+        recent_types = board_state.get("recent_event_types", [])
+        recent_types.append(best_event.get("type", ""))
+        board_state["recent_event_types"] = recent_types[-3:]
+
+        # 시계 마일스톤 추적
+        tag = best_event.get("tag", "")
+        if tag.startswith("clock_"):
+            milestones = board_state.get("posted_clock_milestones", [])
+            milestone_key = tag.replace("clock_complete:", "").replace("clock_half:", "")
+            suffix = "complete" if "complete" in tag else "half"
+            milestones.append(f"{milestone_key}:{suffix}")
+            board_state["posted_clock_milestones"] = milestones[-20:]
+
+        # world_change 인덱스 추적
+        if best_event.get("type") == "world_change":
+            session_mem = domain_manager.get_session_ai_memory(channel_id)
+            wc = session_mem.get("world_changes", [])
+            board_state["last_world_change_idx"] = len(wc)
+
         world["world_board"] = board_state
         domain_manager.update_world_state(channel_id, world)
         _save_post_summaries(channel_id, posts)
         _update_handle_registry(channel_id, posts)
 
-    logger.info(f"[WorldBoard] Posted {posted_count} (trigger={trigger}, absent={len(absent_npcs)})")
+    logger.info(
+        f"[WorldBoard] Posted {posted_count} event={best_event.get('tag', '?')} "
+        f"ch={final_channel} trigger={trigger}"
+    )

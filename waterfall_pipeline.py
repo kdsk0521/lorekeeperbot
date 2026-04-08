@@ -136,6 +136,8 @@ class WaterfallPipeline:
         bus.dai["aspects"] = analysis.get("Aspects", [])
         bus.dai["psyche_states"] = analysis.get("psyche_states", {})
         bus.dai["narrative_chain"] = analysis.get("narrative_chain", {})
+        bus.dai["scene_register"] = analysis.get("scene_register")
+        bus.dai["input_mode"] = analysis.get("input_mode", "decree")
         bus.dai["memory_triggers"] = analysis.get("memory_triggers", [])
         bus.dai["narrative_hook"] = analysis.get("narrative_hook", "")
         bus.dai["time_flow"] = analysis.get("TimeFlow", analysis.get("time_flow", {}))

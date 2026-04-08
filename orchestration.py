@@ -291,6 +291,11 @@ class OrchestrationService:
             "chain_status": (dai.get("narrative_chain") or {}).get("chain_status", ""),
             "open_threads": (dai.get("narrative_chain") or {}).get("open_threads", [])[:5],
             "relevant_chunks": dai.get("relevant_chunks", []),
+            "psyche_values": {  # B4: 이전 턴 감정 강도 비교용 (NPC별 value만)
+                n: (s.get("psyche", s.get("mental", {})) or {}).get("value", 0)
+                for n, s in (dai.get("psyche_states") or {}).items()
+                if isinstance(s, dict)
+            },
         }
         _ws = domain_manager.get_world_state(channel_id)
         _turn_num = _ws.get("turn_index", 0)
@@ -1246,14 +1251,16 @@ class OrchestrationService:
                     # V4 Inline Extraction 대신 기존 Background Extraction 복원
                     await self.schedule_background_extraction(ctx, response, message)
 
-                    # 9.5. World Board (N턴 자동 트리거, 백그라운드)
+                    # 9.5. World Board (event-driven, 백그라운드)
                     try:
                         import world_board
                         if isinstance(message.channel, discord.TextChannel):
+                            _board_dai = dict(ctx.dai) if ctx.dai else {}
                             asyncio.create_task(world_board.trigger_board_update(
                                 message.channel, self.client,
                                 config.MODEL_ID_FLASH, channel_id,
                                 trigger="turn",
+                                dai=_board_dai,
                             ))
                     except Exception:
                         pass
@@ -1270,8 +1277,8 @@ class OrchestrationService:
                     domain_manager.save_last_execution_context(channel_id, current_retry_ctx)
                     logger.debug(f"[!다시] Persistent context saved for channel {channel_id}")
 
-                # 성공 완료 후 스냅샷 정리 (메모리 누수 방지)
-                self._retry_snapshots.pop(channel_id, None)
+                # 스냅샷은 !다시용으로 유지 (다음 턴 시작 시 덮어씀)
+                # 메모리 누수는 _retry_snapshots 20개 cap으로 방지 (line 1109)
 
         except Exception as e:
             if feedback_msg:
@@ -1301,12 +1308,14 @@ class OrchestrationService:
             await message.channel.send("⚠️ 재시도할 이전 응답이 없거나 이미 처리 중입니다.")
             return False
 
-        # 1. 백그라운드 작업 플러시 (이전 응답의 추출/발효 작업 취소)
+        # 1. 백그라운드 작업 플러시 + 실행 중 태스크 완료 대기
         from background_task_queue import get_task_queue
         queue = get_task_queue()
         flushed = await queue.flush_channel(channel_id)
         if flushed:
-            logger.info(f"[!다시] Flushed {flushed} background tasks for {channel_id}")
+            logger.info(f"[!다시] Flushed {flushed} pending background tasks for {channel_id}")
+        # 실행 중인 태스크가 있으면 완료 대기 (save_callback 레이스 방지)
+        await queue.wait_for_channel(channel_id, timeout=10.0)
 
         # 2. 이전 메시지 삭제 (UNE 로그 + AI 응답)
         msg_ids = last_ctx.get("message_ids", [])

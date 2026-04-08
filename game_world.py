@@ -98,8 +98,8 @@ def advance_minutes(channel_id: str, minutes: int) -> str:
     return f"⏳ {time_str}"
 
 
-def advance_to_slot(channel_id: str, target_slot: str, day_offset: int = 0) -> str:
-    """특정 시간대+일차로 시간을 설정. 알피에서 명시적 시간 점프 시 사용."""
+def advance_to_slot(channel_id: str, target_slot: str, day_offset: int = 0, target_hour: int = None) -> str:
+    """특정 시간대+일차로 시간을 설정. target_hour가 있으면 슬롯 내 정확한 시각으로."""
     world = domain_manager.get_world_state(channel_id)
     _init_clock(world)
     time_slots = get_time_slots(channel_id)
@@ -111,7 +111,24 @@ def advance_to_slot(channel_id: str, target_slot: str, day_offset: int = 0) -> s
     if target_slot not in time_slots:
         target_slot = time_slots[0]
 
-    start_h = config.TIME_SLOT_HOURS.get(target_slot, (12, 16))[0]
+    slot_range = config.TIME_SLOT_HOURS.get(target_slot, (12, 16))
+    start_h = slot_range[0]
+
+    # target_hour가 유효하고 슬롯 범위 내이면 사용, 아니면 슬롯 시작
+    if target_hour is not None:
+        try:
+            target_hour = int(target_hour)
+            end_h = slot_range[1]
+            # wrap 처리 (심야 23~3)
+            if start_h <= end_h:
+                if start_h <= target_hour <= end_h:
+                    start_h = target_hour
+            else:
+                if target_hour >= start_h or target_hour <= end_h:
+                    start_h = target_hour
+        except (ValueError, TypeError):
+            pass
+
     world["hour"] = start_h
     world["minute"] = 0
     world["time_slot"] = target_slot

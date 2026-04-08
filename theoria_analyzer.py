@@ -238,6 +238,10 @@ Return valid JSON with ALL these fields (Korean values where specified):
 - "InputAnalysis": {"Original": str, "Enhanced": str, "Plausibility": "High/Low/Impossible", "LogicTrace": [], "Momentum": "Open/Closed"}
 - "Observation": str (Korean - 중립적 관점에서 실제로 일어난 일. 해석 금지, 사실만.)
 - "UserIntent": str (Korean - 유저가 즉시 원하는 것)
+- "input_mode": "decree" | "attempt" | "probe"
+  - decree: user input = established fact, world absorbs ("문을 연다", "밥을 먹는다")
+  - attempt: user input = intention, outcome uncertain ("자물쇠를 따본다", "절벽을 오른다")
+  - probe: user input = pressure/exploration, not command ("주변을 둘러본다", "유우의 눈을 바라본다"). Characters REACT to pressure, not obey.
 - "CurrentLocation": str (Korean)
 - "LocationRisk": "None/Low/Medium/High/Extreme"
 - "TimeContext": str (Korean - e.g. "깊은 밤", "이른 아침")
@@ -299,6 +303,11 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
     "silence_type": "reflective/hesitant/heavy/tense/null (間/Ma: classify when dialogue pauses)"
   }
 - "memory_triggers": [{"trigger": str, "character": str, "echo": str, "type": "traumatic/nostalgic/shameful/loving (Fermentation Recall: current state distorts memory)"}]
+- "scene_register": "mirror" | "law" | "remainder" | null
+  - mirror: character sees own trait in another without recognizing it. Name trait AND misrecognition.
+  - law: protocol/hierarchy/expectation bends under input pressure. Name order, bend, who pretends not to notice.
+  - remainder: what scene cannot metabolize into dialogue or action. Sensory residue, weight without plot function.
+  - null: no dominant register
 
 
 ## JUDGMENT SUPPORT
@@ -314,8 +323,10 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
 
 ## NARRATIVE HOOKS & TIME
 - "narrative_hook": str | null (Korean - Observe the next event that naturally arises from currently unresolved world state. Describe only consequences produced by the world's existing forces. Return null when the world is at peace.)
-- "time_flow": {"ticks": 1-20, "reason": "Korean", "target": {"slot": "시간대명(새벽/오전/오후/황혼/저녁/심야)", "day_offset": 0|1} | null}
-  - target: 유저가 특정 시각을 명시했을 때만 사용 (예: "다음날 아침" → {"slot": "오전", "day_offset": 1}, "저녁까지 기다린다" → {"slot": "저녁", "day_offset": 0}). null이면 ticks로 진행. target 사용 시 ticks는 무시됨
+- "time_flow": {"ticks": 1-20, "reason": "Korean", "target": {"slot": "시간대명(새벽/오전/오후/황혼/저녁/심야)", "day_offset": 0|1, "hour": 0-23} | null}
+  - target: ONLY when user EXPLICITLY mentions a specific time/period (e.g. "다음날 아침", "저녁까지 기다린다", "오후 4시에 만나자"). Do NOT use target for simple actions like moving, talking, looking — those use ticks only.
+  - hour: exact hour within slot (예: "오후 4시" → hour: 16). 생략 시 슬롯 시작 시각.
+  - 예: "다음날 아침 9시" → {"slot": "오전", "day_offset": 1, "hour": 9}, "저녁까지" → {"slot": "저녁", "day_offset": 0}. null이면 ticks로 진행. target 사용 시 ticks는 무시됨
 - "doom_clocks": {
     "clock_updates": [{"name": str, "delta": int(-1~+2), "reason": "Korean"}],
     "clock_new": {"name": "Korean", "segments": 4|6|8, "tick_mode": "action|time|hybrid", "threat": "Korean — 이 시계가 완성되면 무슨 일이 벌어지는가", "defense_action": "Korean — 이 시계를 막으려면 무엇을 해야 하는가 (구체적 행동 힌트)", "source": "narrative|consequence", "linked_entity": "str or null — 관련 NPC/세력 이름", "tags": ["Korean"]} | null,
@@ -376,7 +387,8 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
     "dissonance_flag": "boolean - NPC contradictory beliefs/actions (Festinger)",
     "redemption_warning": "boolean - NPC showing unearned positive behavioral change (Bandura/Maruna)",
     "symptom_cluster": "PTSD/anxiety/depression/null (DSM-5: track co-occurring symptoms as consistent SET. Cherry-picking = inconsistent character. null = no clinical pattern)",
-    "label_internalization": "boolean - NPC internalizing external label into self-identity (Labeling Theory: labeled deviant → becomes more deviant)"
+    "label_internalization": "boolean - NPC internalizing external label into self-identity (Labeling Theory: labeled deviant → becomes more deviant)",
+    "sheet_deducible": "boolean - current NPC response is directly deducible from profile tags alone. Test: could ANY character with the same tags produce this response? YES → true"
   }
 - "RelevantContext": ["Quoted lore/rule directly applicable", ...]
 - "RelevantNPCs": ["NPC name from roster relevant to THIS scene (max 5)"]

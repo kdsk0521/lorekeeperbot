@@ -303,11 +303,16 @@ def translate_psyche_states(
         if prose:
             lines.append(f"  {'. '.join(prose)}")
 
-        # deep_read: depth에 따라 필터링
+        # deep_read: depth에 따라 필터링 + 렌더링 제약
         if deep and isinstance(deep, str):
             filtered = _filter_deep_read_by_depth(deep, depth)
             if filtered:
                 lines.append(f"  └ {filtered}")
+                # B3: 노출 깊을수록 행동-only 제약 강화
+                if depth < 0.2:
+                    lines.append("    [환원불가: 이 캐릭터, 이 순간에만 가능한 반응으로. 수행(performed) 아닌 환원불가(irreducible).]")
+                elif depth < 0.4:
+                    lines.append("    [행동/반사/신체반응으로만. 서술자 명명·심리용어 금지.]")
 
         # resurfacing: depth < 0.6일 때만 노출 (intimate/social)
         resurface = state.get("resurfacing")
@@ -462,6 +467,129 @@ _IDLE_SOURCE_KR = {
 }
 
 
+def translate_register(register) -> str:
+    """scene_register → Korean rendering hint for Pro."""
+    if not register or not isinstance(register, str):
+        return ""
+    _REGISTER_KR = {
+        "mirror": "[거울] 인물이 상대에게서 자신을 보되 자각하지 못한다 — 특질과 오인을 구체적으로 렌더링하라",
+        "law": "[법칙] 위계/기대/프로토콜이 입력에 의해 휘어진다 — 질서, 균열, 모른 척하는 자를 렌더링하라",
+        "remainder": "[잔여] 장면이 대화나 행동으로 소화할 수 없는 것 — 감각, 반복, 플롯에 봉사하지 않는 디테일을 남겨라",
+    }
+    return _REGISTER_KR.get(register, "")
+
+
+def infer_scene_register(
+    psyche_states: Optional[dict],
+    narrative_chain: Optional[dict],
+) -> str:
+    """B1: Flash scene_register가 null일 때 기존 DAI에서 register 추론.
+    Returns register string or empty string."""
+    if not psyche_states or not isinstance(psyche_states, dict):
+        return ""
+    for _name, state in psyche_states.items():
+        if not isinstance(state, dict):
+            continue
+        psyche = state.get("psyche", state.get("mental", {}))
+        if not isinstance(psyche, dict):
+            psyche = {}
+        relation = state.get("relation", {})
+        if not isinstance(relation, dict):
+            relation = {}
+        # mirror: self_opacity 높고 + apprehension_gap 존재
+        opacity = psyche.get("self_opacity", 0)
+        try:
+            opacity = float(opacity)
+        except (ValueError, TypeError):
+            opacity = 0
+        if opacity > 0.6 and psyche.get("apprehension_gap"):
+            return "mirror"
+        # law: value_conflict + defensive/aggressive stance
+        if relation.get("value_conflict") and relation.get("negotiation_stance") in (
+            "defensive", "aggressive",
+        ):
+            return "law"
+    # remainder: silence_type in narrative_chain
+    if narrative_chain and isinstance(narrative_chain, dict):
+        if narrative_chain.get("silence_type"):
+            return "remainder"
+    return ""
+
+
+# ----- B5: Propagation Shape (장면 전파 형태) -----
+
+_PROPAGATION_KR = {
+    "compression": "[압축파] 충격이 대상에게 가장 강하고 주변으로 감쇠. 직격의 무게를 먼저, 잔향은 느리게.",
+    "radiation": "[방사] 충격이 전방향으로 퍼진다. 각 인물의 개별 반응을 추적하라.",
+    "oscillation": "[왕복] 자극↔반응이 교대. 리듬적으로 묘사하되 매 왕복마다 점진 변화를 추적하라.",
+    "convergence": "[수렴] 복수의 힘이 한 점으로. 압력 누적을 보여주되 결과는 개별 힘의 합 이상.",
+    "divergence": "[발산] 하나의 결정이 갈래로 쪼개진다. 각 경로를 개별 추적하라.",
+    "torsion": "[비틀림] 겉과 속이 다른 방향. 표면의 말과 이면의 힘을 동시에 렌더링하라.",
+}
+
+
+def infer_propagation_shape(
+    psyche_states: Optional[dict],
+    narrative_chain: Optional[dict],
+    scene_type: str = "normal",
+    energy: str = "idle",
+    npc_count: int = 1,
+) -> str:
+    """B5: 기존 DAI에서 장면의 전파 형태 추론. Returns shape key or empty."""
+    if not psyche_states or not isinstance(psyche_states, dict):
+        return ""
+
+    # torsion: 기만/자기기만이 활성 — 최우선 (다른 전파와 겹쳐도 비틀림이 지배)
+    for _name, state in psyche_states.items():
+        if not isinstance(state, dict):
+            continue
+        psyche = state.get("psyche", state.get("mental", {})) or {}
+        relation = state.get("relation", {}) or {}
+        if relation.get("deception_cues"):
+            return "torsion"
+        try:
+            opacity = float(psyche.get("self_opacity", 0))
+        except (ValueError, TypeError):
+            opacity = 0
+        if opacity > 0.7:
+            return "torsion"
+
+    # convergence: open_threads 복수 수렴 + 높은 에너지
+    chain = narrative_chain or {}
+    threads = chain.get("open_threads", [])
+    if isinstance(threads, list) and len(threads) >= 3 and energy in ("detonation", "aftershock"):
+        return "convergence"
+
+    # divergence: 선택/분기 + NPC별 반응 상이
+    if chain.get("chain_status") in ("branching", "diverging"):
+        return "divergence"
+
+    # radiation: 3명+ NPC + 공개적 장면
+    if npc_count >= 3 and scene_type in ("social", "normal", "combat"):
+        return "radiation"
+
+    # oscillation: 대화 중심 + negotiation 활성
+    for _name, state in psyche_states.items():
+        if not isinstance(state, dict):
+            continue
+        relation = state.get("relation", {}) or {}
+        if relation.get("negotiation_stance") in ("defensive", "aggressive", "cooperative"):
+            return "oscillation"
+
+    # compression: 1:1 + 강한 에너지
+    if npc_count <= 2 and energy in ("detonation", "aftershock"):
+        return "compression"
+
+    return ""
+
+
+def translate_propagation_shape(shape: str) -> str:
+    """propagation shape key → Korean rendering directive."""
+    if not shape or not isinstance(shape, str):
+        return ""
+    return _PROPAGATION_KR.get(shape, "")
+
+
 def translate_story_direction(story_dir: Optional[dict], scene_type: str = "normal") -> str:
     """story_direction → pacing + tension + transition + focus 지시 (Korean)."""
     if not story_dir or not isinstance(story_dir, dict) or not story_dir.get("active"):
@@ -606,6 +734,7 @@ _FLAG_DIRECTIVES = {
     "shallow_read": "분석이 표면에 머물렀다. 드러난 행동 아래를 더 보라 — 입 밖에 안 낸 것, 공간이 주는 압박, 갚지 못한 빚.",
     "sensory_habituated": "같은 공간에서 감각이 적응했다. 동일한 감각을 반복하지 말고, 미세한 변화를 포착하거나 새로운 감각 채널로 전환하라.",
     "label_internalization": "NPC가 자기에게 붙은 라벨을 믿기 시작했다. 라벨을 입으로 말하지 마 — 습관, 자세, 반응으로 보여줘라.",
+    "sheet_deducible": "⚠️ 자판기 위험: 반응이 시트 태그의 직역. 이 캐릭터, 이 순간에만 가능한 구체적 반응을 찾을 것.",
 }
 
 _SYMPTOM_TEMPLATE = "NPC가 {cluster} 증상을 보이고 있다. 한 세트로 일관되게 유지하라."
@@ -808,6 +937,11 @@ def translate_npc_attitudes(attitudes: Optional[dict]) -> str:
         lines.append(f"  {notation}")
         if reason:
             lines.append(f"  {reason}")
+        # B7: Trust Dynamics 비대칭 힌트
+        if trajectory == "declining" and attitude in ("friendly", "devoted"):
+            lines.append("  [신뢰 균열: 한 순간에 발생. 안정이 길었을수록 충격 더 큼. 재건은 최초보다 더 많은 증거 필요.]")
+        elif trajectory == "improving" and attitude in ("hostile", "unfriendly"):
+            lines.append("  [신뢰 재건 중: 회의가 기본값. 일관된 행동의 누적만이 증거.]")
     return "\n".join(lines)
 
 
@@ -930,10 +1064,23 @@ _INTENSITY_NOTATION = [
 ]
 
 
-def translate_emotion_intensity(psyche_states: Optional[dict]) -> str:
-    """psyche value → ♪ dynamics notation."""
+_STAGE_PACING = {
+    "escalating":         "가속 중 — 정점 아님. 텐션 빌드업, 결정적 순간 유보.",
+    "rising":             "상승 중 — 점진적 축적. 다음 자극의 효과가 증폭됨.",
+    "declining_from_peak": "정점 직후 — 잔류. 2-3턴 서서히 해소. 같은 자극 재투입 시 즉시 가속 복귀.",
+    "sustained":          "유지 — 균열 가능성 축적 중.",
+    "fading":             "해소 중 — 완전 해소는 장면 내에서 드묾.",
+}
+
+
+def translate_emotion_intensity(
+    psyche_states: Optional[dict],
+    prev_psyche_values: Optional[Dict[str, int]] = None,
+) -> str:
+    """psyche value → ♪ dynamics notation + B4 stage pacing."""
     if not psyche_states or not isinstance(psyche_states, dict):
         return ""
+    prev = prev_psyche_values or {}
     lines = []
     for name, pdata in psyche_states.items():
         if not isinstance(pdata, dict):
@@ -944,7 +1091,29 @@ def translate_emotion_intensity(psyche_states: Optional[dict]) -> str:
 
         val = abs(psyche.get("value", 0))
         hint = _to_tier(val, _INTENSITY_NOTATION)
-        lines.append(f"  {name}: {hint}")
+        line = f"  {name}: {hint}"
+
+        # B4: 이전 턴 대비 stage pacing
+        prev_val = prev.get(name)
+        if prev_val is not None:
+            try:
+                delta = val - abs(int(prev_val))
+            except (ValueError, TypeError):
+                delta = 0
+            if delta > 15:
+                trend = "escalating"
+            elif delta > 5:
+                trend = "rising"
+            elif delta < -5 and val > 40:
+                trend = "declining_from_peak"
+            elif abs(delta) <= 5:
+                trend = "sustained"
+            else:
+                trend = "fading"
+            pacing = _STAGE_PACING.get(trend, "")
+            if pacing and trend != "sustained":
+                line += f" — {pacing}"
+        lines.append(line)
     if not lines:
         return ""
     return (
@@ -969,6 +1138,32 @@ def translate_vigor_composure(vigor: int, composure: int) -> str:
 # =========================================================
 # 10. gm_move (Slot 30)
 # =========================================================
+
+_DETAIL_DENSITY = {
+    "combat": "dense", "intimate": "dense",
+    "social": "moderate", "normal": "moderate",
+    "exploration": "moderate", "rest": "sparse", "summary": "sparse",
+}
+_DENSITY_KR = {
+    "dense": "디테일 밀도 높게 — 물리적/감각적 세부 전부 렌더링",
+    "moderate": "디테일 적정 — 핵심 환경 + 필요 감각만",
+    "sparse": "디테일 최소 — 핵심 이벤트와 전환만",
+}
+
+
+def translate_detail_density(scene_type: str = "normal", energy: str = "idle") -> str:
+    """scene_type + energy → 디테일 밀도 힌트."""
+    base = _DETAIL_DENSITY.get(scene_type, "moderate")
+    # energy 보정: detonation/aftershock → +1, idle → -1
+    density_order = ["sparse", "moderate", "dense"]
+    idx = density_order.index(base) if base in density_order else 1
+    if energy in ("detonation", "aftershock"):
+        idx = min(idx + 1, 2)
+    elif energy == "idle":
+        idx = max(idx - 1, 0)
+    final = density_order[idx]
+    return _DENSITY_KR.get(final, "")
+
 
 def translate_gm_move(gm_data: Optional[dict]) -> str:
     """GM Move → type 라벨 제거, description만."""
