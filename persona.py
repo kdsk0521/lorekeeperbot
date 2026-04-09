@@ -34,6 +34,13 @@ import config
 from response_processor import filter_pc_impersonation
 import text_resources
 
+# OpenAI-compatible SDK (optional — for Fireworks/Kimi renderer)
+try:
+    import openai as _openai_mod
+    _HAS_OPENAI = True
+except ImportError:
+    _HAS_OPENAI = False
+
 # =========================================================
 # 상수 정의
 # =========================================================
@@ -155,6 +162,92 @@ class ChatSessionAdapter:
             raise
 
 
+# =========================================================
+# OpenAI-Compatible ChatSessionAdapter (Fireworks/Kimi 등)
+# =========================================================
+class _OpenAIResponseShim:
+    """Gemini response와 동일한 인터페이스 제공."""
+    def __init__(self, text: str, finish_reason: str = "stop"):
+        self.text = text
+        self._finish_reason = finish_reason
+        self.candidates = [self] if text else []
+        self.content = type("Content", (), {"parts": [type("Part", (), {"text": text})()]})() if text else None
+        self.prompt_feedback = None
+
+    @property
+    def finish_reason(self):
+        return self._finish_reason
+
+
+class OpenAIChatSessionAdapter:
+    """OpenAI-compatible API용 세션 어댑터. ChatSessionAdapter와 동일 인터페이스."""
+
+    def __init__(self, system_prompt: str, model: str, temperature: float = 1.4,
+                 max_tokens: int = 8192, top_p: float = 0.8):
+        if not _HAS_OPENAI:
+            raise ImportError("openai 패키지가 설치되지 않았습니다. pip install openai")
+        self._client = _openai_mod.AsyncOpenAI(
+            api_key=config.OPENAI_API_KEY,
+            base_url=config.OPENAI_BASE_URL,
+        )
+        self.model = model
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.top_p = top_p
+        self.history: list = []  # [{"role": ..., "content": ...}]
+        self._system_prompt = system_prompt
+
+    def _trim_history(self):
+        MAX_HISTORY_MESSAGES = getattr(config, "MAX_HISTORY_LENGTH", 2000)
+        MAX_HISTORY_CHARS = 100000
+        if len(self.history) <= 2:
+            return
+        total_chars = sum(len(m["content"]) for m in self.history)
+        while total_chars > MAX_HISTORY_CHARS and len(self.history) > 2:
+            removed = self.history.pop(0)
+            total_chars -= len(removed["content"])
+        while len(self.history) > MAX_HISTORY_MESSAGES and len(self.history) > 2:
+            self.history.pop(0)
+
+    async def send_message(self, content: str, prefill: str = ""):
+        self._trim_history()
+        self.history.append({"role": "user", "content": content})
+
+        messages = [{"role": "system", "content": self._system_prompt}] + self.history
+
+        # Prefill: assistant 메시지로 prefix 주입
+        if prefill:
+            messages.append({"role": "assistant", "content": prefill})
+
+        try:
+            response = await self._client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                top_p=self.top_p,
+                extra_body={"reasoning_effort": "none"},
+            )
+            choice = response.choices[0] if response.choices else None
+            if choice and choice.message and choice.message.content:
+                text = choice.message.content
+                finish = getattr(choice, "finish_reason", "stop") or "stop"
+                # 히스토리에 assistant 응답 저장 (prefill 포함)
+                full_text = (prefill + text) if prefill else text
+                # 히스토리에는 Telescope CoT 제거
+                history_text = re.sub(r"┣[\s\S]*?┫\s*", "", full_text).strip() or full_text
+                self.history.append({"role": "assistant", "content": history_text})
+                return _OpenAIResponseShim(text, finish)
+            else:
+                logging.warning("[OpenAI] Empty response")
+                return _OpenAIResponseShim("", "stop")
+
+        except Exception as e:
+            logging.error(f"[OpenAI] send_message error: {e}")
+            # 롤백
+            if self.history and self.history[-1]["role"] == "user":
+                self.history.pop()
+            raise
 
 
 # =========================================================
@@ -164,20 +257,47 @@ def create_risu_style_session(
     client: genai.Client,
     model_version: str,
     system_prompt: str  # [V3] 34단계 프롬프트 (필수)
-) -> ChatSessionAdapter:
+):
     """
     V3 34단계 프롬프트를 사용하여 세션을 생성합니다.
-    
-    Args:
-        client: Gemini API 클라이언트
-        model_version: 모델 ID
-        system_prompt: 34단계 슬롯 시스템으로 생성된 프롬프트
-    
-    Returns:
-        ChatSessionAdapter: 초기화된 세션
+    RENDERER_BACKEND에 따라 Gemini 또는 OpenAI 호환 세션을 반환.
     """
-    
-    # 초기화 메시지
+    # --- OpenAI 호환 백엔드 ---
+    if config.RENDERER_BACKEND == "openai":
+        if not _HAS_OPENAI:
+            logging.error("[Renderer] openai 패키지 미설치 — Gemini 폴백")
+        elif not config.OPENAI_API_KEY:
+            logging.error("[Renderer] OPENAI_RENDERER_API_KEY 미설정 — Gemini 폴백")
+        else:
+            logging.info(f"[Renderer] OpenAI backend: {config.OPENAI_MODEL_ID}")
+            # 조교 패턴을 system_prompt에 통합
+            training_user = getattr(text_resources, 'TRAINING_USER_PROMPT', '')
+            training_model = getattr(text_resources, 'TRAINING_MODEL_RESPONSE', '')
+            full_system = system_prompt
+            if training_user and training_model:
+                full_system += (
+                    f"\n\n<TrainingDialogue>\n"
+                    f"User: {training_user}\n"
+                    f"Assistant: {training_model}\n"
+                    f"</TrainingDialogue>"
+                )
+            full_system += (
+                "\n\n<Initialization>\n"
+                "[SYSTEM] Narrative Protocol Online.\n"
+                "Observing Macroscopic States.\n"
+                "The world is asynchronous—it does not wait.\n"
+                "Recording in Korean.\n"
+                "</Initialization>"
+            )
+            return OpenAIChatSessionAdapter(
+                system_prompt=full_system,
+                model=config.OPENAI_MODEL_ID,
+                temperature=config.NARRATIVE_TEMPERATURE,
+                max_tokens=config.NARRATIVE_MAX_OUTPUT_TOKENS,
+                top_p=config.NARRATIVE_TOP_P,
+            )
+
+    # --- Gemini 백엔드 (기본) ---
     init_context = f"""
 {system_prompt}
 
@@ -188,8 +308,7 @@ The world is asynchronous—it does not wait.
 Recording in Korean.
 </Initialization>
 """
-    
-    # 조교 패턴 (Training Dialogue) - 지시이행력 강화
+
     training_user = getattr(text_resources, 'TRAINING_USER_PROMPT', '')
     training_model = getattr(text_resources, 'TRAINING_MODEL_RESPONSE', '')
 
@@ -204,7 +323,6 @@ Recording in Korean.
         )
     ]
 
-    # 조교 턴 삽입 (시스템 프롬프트 확인 후 자기확인)
     if training_user and training_model:
         initial_history.extend([
             types.Content(
@@ -216,24 +334,22 @@ Recording in Korean.
                 parts=[types.Part(text=training_model)]
             )
         ])
-    
+
     gen_config = types.GenerateContentConfig(
         temperature=config.NARRATIVE_TEMPERATURE,
         top_k=config.NARRATIVE_TOP_K,
         top_p=config.NARRATIVE_TOP_P,
         max_output_tokens=config.NARRATIVE_MAX_OUTPUT_TOKENS,
-        # [Gemini 3] presence_penalty/frequency_penalty not supported
         safety_settings=config.SAFETY_SETTINGS,
         tools=[],
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-        # Aggressively disable AFC
         tool_config=types.ToolConfig(
             function_calling_config=types.FunctionCallingConfig(
                 mode=types.FunctionCallingConfigMode.NONE
             )
         )
     )
-    
+
     return ChatSessionAdapter(
         client=client,
         model=model_version,

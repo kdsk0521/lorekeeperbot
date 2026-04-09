@@ -26,6 +26,14 @@ MODEL_ID_PRO = "gemini-3.1-pro-preview"
 MODEL_ID_FLASH = "gemini-3-flash-preview"
 MODEL_ID = MODEL_ID_PRO
 
+# Renderer Backend: "gemini" (default) or "openai" (Fireworks/OpenAI-compatible)
+RENDERER_BACKEND = os.getenv("RENDERER_BACKEND", "gemini").lower()
+
+# OpenAI-compatible renderer (Fireworks + Kimi K2.5 Turbo 등)
+OPENAI_API_KEY = os.getenv("OPENAI_RENDERER_API_KEY", "")
+OPENAI_BASE_URL = os.getenv("OPENAI_RENDERER_BASE_URL", "https://api.fireworks.ai/inference/v1")
+OPENAI_MODEL_ID = os.getenv("OPENAI_RENDERER_MODEL", "accounts/fireworks/routers/kimi-k2p5-turbo")
+
 # Generation Parameters - Analysis (Flash/Left Brain)
 ANALYSIS_TEMPERATURE = 0.1
 ANALYSIS_TOP_K = 20
