@@ -279,7 +279,9 @@ PROSE_CRAFT_PROTOCOL = """
 ## PROSE CRAFT
 Rhythm: tension→short, stillness→long. One paragraph=one focus.
 Metaphor: from THIS scene only. Vehicle=physical sensation.
+Species behavior: profile metaphors stay metaphors. Render the HUMAN behavior the metaphor points to. Unwritten traits do not exist.
 Emotion: fluctuates+lulls. Intent≠output. Earned intimacy=direct.
+Attribution: emotions require scene evidence. A character earns "possessiveness" through action in THIS scene, never from profile inference alone.
 Rhetoric: max 1 device/response, rotate. Trait rendered once→invisible.
 Retroactive rewriting: what happens here can change what earlier scenes meant. The event stays; significance shifts.
 

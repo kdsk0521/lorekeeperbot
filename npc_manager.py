@@ -1382,12 +1382,20 @@ def update_npc_attitude_gated(
 
     existing = get_npc_attitude(channel_id, npc_name)
 
-    # --- Rule 1: 이전 태도가 없으면 무조건 수락 ---
+    # --- Rule 1: 이전 태도가 없으면 neutral 기준 ±1 클램프 적용 ---
     if not existing or "attitude" not in existing:
+        new_level = ATTITUDE_LEVELS[new_attitude]
+        neutral_level = ATTITUDE_LEVELS["neutral"]  # 2
+        diff = new_level - neutral_level
+        if abs(diff) > 1:
+            clamped_level = neutral_level + (1 if diff > 0 else -1)
+            clamped_level = max(0, min(len(ATTITUDE_LEVELS) - 1, clamped_level))
+            new_attitude = _ATTITUDE_LEVEL_REVERSE.get(clamped_level, "neutral")
+            logger.info(f"[AttitudeGate] {npc_name}: initial → {new_attitude} (clamped from jump {diff})")
+        else:
+            logger.info(f"[AttitudeGate] {npc_name}: initial → {new_attitude} (accepted)")
         update_npc_attitude(channel_id, npc_name, new_attitude, reason)
-        # last_change_turn 기록
         _save_attitude_turn(channel_id, npc_name, current_turn)
-        logger.info(f"[AttitudeGate] {npc_name}: initial → {new_attitude} (accepted)")
         return "accepted"
 
     old_attitude = existing.get("attitude", "neutral").lower().strip()
