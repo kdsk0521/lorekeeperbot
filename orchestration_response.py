@@ -211,9 +211,14 @@ async def generate_response(
     # 히스토리 주입
     # [Anti-Gravity] Use Smart Context Window
     history_to_inject = ctx.smart_history if ctx.smart_history else ctx.domain_data.get('history', [])
+    is_openai = isinstance(session, persona.OpenAIChatSessionAdapter)
     for h in history_to_inject:
-        role = "user" if h['role'] == "User" else "model"
-        session.history.append(types.Content(role=role, parts=[types.Part(text=str(h['content']))]))
+        if is_openai:
+            role = "user" if h['role'] == "User" else "assistant"
+            session.history.append({"role": role, "content": str(h['content'])})
+        else:
+            role = "user" if h['role'] == "User" else "model"
+            session.history.append(types.Content(role=role, parts=[types.Part(text=str(h['content']))]))
 
     # [Anti-Gravity] PC 사칭 탐지 및 BKSPC 처리가 통합된 생성 함수 호출
     # 사칭 감지 토글 확인 (기본값: 활성화)

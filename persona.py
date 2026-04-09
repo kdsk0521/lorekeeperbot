@@ -215,23 +215,43 @@ class OpenAIChatSessionAdapter:
 
         messages = [{"role": "system", "content": self._system_prompt}] + self.history
 
-        # Prefill: assistant 메시지로 prefix 주입
+        # Prefill: Fireworks는 assistant prefix를 이어쓰기로 인식 못할 수 있음
+        # → user 메시지에 지시로 포함
         if prefill:
-            messages.append({"role": "assistant", "content": prefill})
+            messages[-1] = {
+                "role": "user",
+                "content": messages[-1]["content"] + f"\n\n[SYSTEM: Begin your response with exactly this text, then continue with prose after ┫]\n{prefill}"
+            }
 
         try:
+            # Fireworks: max_tokens > 4096 requires stream=true
+            use_stream = self.max_tokens > 4096
             response = await self._client.chat.completions.create(
                 model=self.model,
                 messages=messages,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
                 top_p=self.top_p,
+                stream=use_stream,
                 extra_body={"reasoning_effort": "none"},
             )
-            choice = response.choices[0] if response.choices else None
-            if choice and choice.message and choice.message.content:
-                text = choice.message.content
-                finish = getattr(choice, "finish_reason", "stop") or "stop"
+
+            if use_stream:
+                # 스트리밍 청크 수집
+                chunks = []
+                finish = "stop"
+                async for chunk in response:
+                    if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
+                        chunks.append(chunk.choices[0].delta.content)
+                    if chunk.choices and chunk.choices[0].finish_reason:
+                        finish = chunk.choices[0].finish_reason
+                text = "".join(chunks)
+            else:
+                choice = response.choices[0] if response.choices else None
+                text = choice.message.content if choice and choice.message and choice.message.content else ""
+                finish = getattr(choice, "finish_reason", "stop") or "stop" if choice else "stop"
+
+            if text:
                 # 히스토리에 assistant 응답 저장 (prefill 포함)
                 full_text = (prefill + text) if prefill else text
                 # 히스토리에는 Telescope CoT 제거
