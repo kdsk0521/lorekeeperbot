@@ -174,10 +174,22 @@ class VigorComposureModule:
                 if drain != 0:
                     delta += drain
 
-        # 2. AI-Analyzed Impact (턴당 ±15 클램프 — 급격한 변동 방지)
+        # 2. AI-Analyzed Impact (씬타입별 클램프 + 방향 전환 감쇠)
         impact_data = axis.get("impact", {})
         if impact_data.get("applicable", False):
-            impact_delta = max(-15, min(15, impact_data.get("delta", 0)))
+            # 씬타입별 impact 상한: intimate ±8, social ±10, 나머지 ±15
+            scene_type = bus.dai.get("scene_type", "normal")
+            _SCENE_IMPACT_CAP = {"intimate": 8, "social": 10, "combat": 15, "normal": 15, "summary": 5}
+            cap = _SCENE_IMPACT_CAP.get(scene_type, 15)
+            impact_delta = max(-cap, min(cap, impact_data.get("delta", 0)))
+
+            # 방향 전환 감쇠: 이전 턴 delta와 반대 방향이면 50% 감쇠 (요요 방지)
+            prev_delta = axis.get("last_delta", 0)
+            if prev_delta != 0 and impact_delta != 0:
+                if (impact_delta > 0 and prev_delta < 0) or (impact_delta < 0 and prev_delta > 0):
+                    impact_delta = int(impact_delta * 0.5)
+                    logger.debug("[%s] Direction reversal damping: %d → %d", axis_name, impact_data.get("delta", 0), impact_delta)
+
             delta += impact_delta
 
         # 2b. Passive Drain Modifiers (theory tag system)

@@ -60,9 +60,11 @@ _TELESCOPE_GATE_NAMES = (
     "Field", "Probe",
     # V4 Layer 2 (The Symbolic)
     "Scene", "Scene.Who", "Scene.When/Where", "Scene.What", "Scene.Causal", "Scene.Chain",
-    "Character", "Char.Why", "Char.PC", "Char.Pidgin",
-    "Craft", "Craft.Cargo", "Craft.Rhythm",
-    "Collision", "Alignment", "Vending", "Final",
+    "Character", "Char.Why", "Char.PC", "Char.Pidgin", "Char.Rift",
+    "Craft", "Craft.Cargo", "Craft.Rhythm", "Craft.Attractor", "Craft.Scheme",
+    "Collision", "Gravity", "Alignment", "Vending", "Unshown", "Final",
+    # V4 Adversarial
+    "C",
     # V2 legacy
     "Who", "When", "Where", "When/Where", "What", "Why", "How",
     # V1 legacy

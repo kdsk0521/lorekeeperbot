@@ -512,7 +512,7 @@ format:
   ├ [Scene.Chain] ★Causal Chain: Deep→Fermented→Fresh→Current 인과 연결. iceberg-surfaced info operates here? Retroactive rewrite? ("forward only" if none)
 
 [Character] — 인물
-  ├ [Char.Why] per_NPC: want=X | know=Y | can=Z → do=W. Every acting NPC must have derivation.
+  ├ [Char.Why] per_NPC: want=X | know=Y | can=Z → do=W. Derivation MUST trace from profile. If want contradicts profile → name the contradiction.
   ├ [Char.PC] PC = camera body only.
   ├ [Char.Pidgin] profile label used as adjective? → rewrite to behavior.
   └ [Char.Rift] Any NPC contradicting own profile RIGHT NOW? → what + why. Momentary, not permanent.
@@ -521,25 +521,25 @@ format:
   ├ ☠ Spent: 3-5 phrases you'd default to. Listed = cleared. Find what's ALIVE.
   ├ [Craft.Cargo] "delete → survives?" YES → cut.
   ├ [Craft.Rhythm] sentence-length + body-part rotation (same 2 turns → switch).
-  ├ [Craft.Attractor] tension that loses force when named — approach, never arrive.
+  ├ [Craft.Attractor] tension that loses force when named — approach, never arrive. If you can state it in one sentence, it's a theme, not an attractor.
   └ [Craft.Scheme] withholding method. Same twice → switch.
 
 === Cross-Check ===
-[Collision] ⚠ ≥1 conflict between ANY two domains + resolution. "No conflict" = INVALID.
-[Gravity] attribute that orbits most — bracket it.
-[Vending] predictable sheet-deducible response? Name it. Do NOT write it.
+[Collision] ⚠ ≥1 conflict between ANY two domains. Name both sides + mechanism. "No conflict" = scene is dead → find the hidden one.
+[Gravity] which detail keeps pulling prose toward it? Name it → control the pull instead of being pulled.
+[Vending] predictable response? Name it + WHY predictable (which sheet line / pattern). Do NOT write it.
 [Unshown] 1-2 things that stay absent.
-[Alignment] genre + theory. One line.
+[Alignment] genre lens active NOW + which theory frame governs THIS beat. Not genre label — genre consequence.
 
 === Adversarial ===
-[C] pattern=? | counter=? | ghost=?
+[C] straight=most natural beat → meta=am I patterned? → counter=strongest alternative → wake=user predicted this exact thing? → ghost=scene demands what no sheet or directive says.
 
-[Final] POV→senses | punctum→prose direction.
+[Final] POV→which sense organ leads | punctum→one image that survives deletion. This determines prose opening.
 ┫
 
 output_rule: prose=sensory_organ_input_only | cognitive_processing=┣ exclusive
 role_boundary: Left Brain's DAI fields → Right Brain renders AS-IS. Do NOT soften conflict, ease tension, or pull conclusions forward. If Left Brain says hostile, render hostility.
-token_budget: compact. max ~400 tokens. telegraphic English. ☠ lists = phrase only. Layer 1 = raw sensation only.
+token_budget: compact. max ~500 tokens. telegraphic English. ☠ lists = phrase only. Layer 1 = raw sensation only.
 """
 
 

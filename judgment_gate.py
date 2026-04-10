@@ -18,6 +18,7 @@ ACTION_PATTERNS = [
     r'(?:설득|협박|속이|유혹|위협|거짓말|간청)',          # 사회
     r'(?:탐색|수색|조사|살피|열|잠입|숨|도망|달려)',      # 탐색/은신
     r'(?:제작|수리|조합|해체|치료|요리|연금)',            # 제작/생존
+    r'(?:잡|뻗|밀|당기|건네|꺼내|부수|올라|뛰)',         # 물리/일상
     r'(?:attack|strike|dodge|persuade|sneak|craft)',       # 영어 폴백
 ]
 ACTION_RE = re.compile('|'.join(ACTION_PATTERNS))
@@ -38,7 +39,9 @@ def gate_judgment(user_input: str, flash_needs_judgment: bool,
     Returns: (final_needs_judgment: bool, reason: str)
     """
     has_action = bool(ACTION_RE.search(user_input))
-    is_non_action = bool(NON_ACTION_RE.search(user_input)) and not has_action
+    # 대사 부분 제거 후 NON_ACTION 판정 (혼합 입력 오탐 방지: "대사" 행동 / 행동 "대사")
+    _dialogue_stripped = re.sub(r'[\u201c\u201d\u2018\u2019\'\""].*?[\u201c\u201d\u2018\u2019\'\""]', '', user_input)
+    is_non_action = bool(NON_ACTION_RE.search(_dialogue_stripped)) and not has_action
 
     # Rule 1: 비행동 입력 + Flash true → 오탐 차단
     if flash_needs_judgment and is_non_action:

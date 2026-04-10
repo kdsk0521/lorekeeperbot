@@ -336,6 +336,7 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
 - "mental_impact": {"applicable": boolean, "vigor_delta": -35~+20, "composure_delta": -35~+20, "reason": "Korean"}
   - vigor_delta: physical strain or recovery. Consensual intimacy/comfort = mild drain (-5~-10) or neutral. NOT traumatic unless coerced.
   - composure_delta: emotional turbulence. Positive intimacy/bonding = slight positive (+5) or neutral. Negative ONLY if unwanted, coerced, humiliating, or boundary-violating.
+  - DIRECTION STABILITY: Within the same continuous scene, delta direction should be CONSISTENT. If composure was dropping, it should not spike positive next turn unless the scene's emotional tone genuinely shifts (new event, resolution, comfort). Same emotion at same intensity = same sign, smaller magnitude. Yoyo between negative and positive within 2 turns = analysis error.
 - "anomaly_profile": {"trigger": str, "category": "supernatural/psychological/social/environmental/temporal", "intensity": "Low/Mid/High/Extreme", "polarity": "positive/negative/mixed", "perception_type": "veridical/illusory/hallucinatory/delusional/null (Anomalous Experience Framework. In supernatural settings, 'hallucinatory' may be CORRECT. null = no anomaly)", "line": "Korean - 이변의 서사적 묘사 1문장", "reason": "Korean", "location": "이벤트 발생 장소 (CurrentLocation과 다를 때만. 빈 문자열이면 현재 위치)"} | null (null when world event is not appropriate this turn)
 - "condition_resolved": ["조건 태그 — 서사적으로 해당 조건이 더 이상 세계에 유효하지 않을 때. Active Conditions 참고"]
 - "condition_updates": [{"tag": "조건 태그", "intensity": "새 강도 (Low/Mid/High/Extreme)", "description": "갱신된 상황 묘사 (Korean)"}]
@@ -402,9 +403,9 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
     "spatial_type": "enclosed/resonant/open/elevated/crowded/moving",
     "active_traces": [{"type": "thermal/scent/acoustic/surface/object", "detail": "Korean 1 sentence"}] | null,
     "base": {
-      "lighting": "diffused/indoor_lamp/high_key/low_key/single_source/golden_hour/window_light/backlight/side_light",
-      "hue": "amber/crimson/violet/sunset/sepia/grey/cool",
-      "saturation": "pastel/solid/vivid/washed"
+      "lighting": "diffused/indoor_lamp/high_key/low_key/single_source/golden_hour/window_light/backlight/side_light — match light SOURCE, not time",
+      "hue": "amber/crimson/violet/sunset/sepia/grey/cool — match emotional register, NOT neutral default",
+      "saturation": "pastel/solid/vivid/washed — match intensity. diffused+grey+solid = lazy fallback, avoid"
     },
     "mutation": null OR {
       "type": "A/B/C",

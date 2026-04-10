@@ -403,6 +403,20 @@ idle+Open = quiet but something unspoken hangs. detonation+Closed = explosion ju
 ### Spatial Palette → spatial_read
 Observe the physical space. Lighting and color are mood, not clock.
 - base: ambient atmosphere. What the space looks and feels like before anyone acts.
+  - lighting: match to light SOURCE, not time-of-day.
+    indoor_lamp=warm artificial | high_key=bright, few shadows | low_key=shadow-dominant, contrast |
+    single_source=one light, directional | diffused=soft, even, no strong source |
+    golden_hour=warm natural glow | window_light=directional natural | backlight=subject dark, rim bright |
+    side_light=half-face shadow
+  - hue: dominant color temperature.
+    amber=warm comfort | crimson=tension/desire | violet=uncanny/melancholy |
+    sunset=bittersweet warmth | sepia=memory/nostalgia | grey=neutral/bleak | cool=clinical/detached
+  - saturation: emotional intensity.
+    pastel=muted/gentle | solid=grounded/stable | vivid=heightened/intense | washed=drained/faded
+  DO NOT default to diffused/grey/solid. Match the scene's emotional register.
+  Intimate+private → single_source/low_key, amber/crimson, vivid/solid.
+  Combat/tense → backlight/side_light, crimson/cool, vivid.
+  Calm everyday → window_light/diffused, amber/grey, pastel/solid.
 - mutation: space changed by presence or action.
   A=body/presence(involuntary territory), B=action(physical territory), C=perceptual(subjective lens, POV only).
   A/B are Territory (objective). C is Lens (subjective) — MUST separate.
