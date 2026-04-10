@@ -119,8 +119,13 @@ class TheoriaAnalyzer:
 
             except json.JSONDecodeError as je:
                 last_error = str(je)
+                # 깨진 부분 주변 컨텍스트 로그 (진단용)
+                pos = je.pos or 0
+                snippet = cleaned[max(0, pos - 60):pos + 60] if cleaned else ""
                 if attempt == 0:
-                    logger.warning(f"[Theoria] JSON failed, retrying: {je}")
+                    logger.warning("[Theoria] JSON failed, retrying: %s | context: ...%s...", je, snippet)
+                else:
+                    logger.error("[Theoria] JSON failed (attempt 2): %s | context: ...%s...", je, snippet)
             except Exception as e:
                 logger.error(f"Theoria analysis failed: {e}")
                 return {"error": str(e)}
@@ -402,11 +407,6 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
 - "spatial_read": {
     "spatial_type": "enclosed/resonant/open/elevated/crowded/moving",
     "active_traces": [{"type": "thermal/scent/acoustic/surface/object", "detail": "Korean 1 sentence"}] | null,
-    "base": {
-      "lighting": "diffused/indoor_lamp/high_key/low_key/single_source/golden_hour/window_light/backlight/side_light — match light SOURCE, not time",
-      "hue": "amber/crimson/violet/sunset/sepia/grey/cool — match emotional register, NOT neutral default",
-      "saturation": "pastel/solid/vivid/washed — match intensity. diffused+grey+solid = lazy fallback, avoid"
-    },
     "mutation": null OR {
       "type": "A/B/C",
       "source": "Korean — 무엇이 변화를 일으켰는가",

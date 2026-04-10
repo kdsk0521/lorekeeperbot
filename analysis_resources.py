@@ -401,33 +401,7 @@ Momentum is NOT EnergyDirection. Energy=scene intensity. Momentum=narrative pull
 idle+Open = quiet but something unspoken hangs. detonation+Closed = explosion just resolved.
 
 ### Spatial Palette → spatial_read
-OBSERVE: What is the actual light source in this room? What color dominates the space? How intense is the atmosphere?
-Answer EACH sub-field by examining the scene, not by picking a safe default.
-
-- base: ambient atmosphere BEFORE anyone acts this turn.
-  - lighting: identify the PRIMARY light source visible in scene RIGHT NOW.
-    single_source: one lamp, candle, screen — strong directional shadow visible
-    low_key: most of space is dark, light catches edges/faces only
-    indoor_lamp: multiple warm artificial lights, even soft coverage
-    window_light: natural light from window, directional, time-dependent color
-    side_light: light hits from one side, half the face/body in shadow
-    backlight: light source behind subject, silhouette or rim glow
-    golden_hour: warm natural glow flooding in, long shadows
-    high_key: bright, minimal shadows, clinical or cheerful
-    diffused: no identifiable source, flat even light — USE ONLY when genuinely no light source is identifiable
-  - hue: look at the dominant COLOR in the scene (walls, objects, light color, clothing).
-    amber: warm light, wood, skin tones dominate — comfort, intimacy
-    crimson: red tones, flush, blood, fire — tension, desire, danger
-    cool: blue/white light, metal, glass — clinical, detached, morning
-    violet: purple shadow, twilight, neon — uncanny, melancholy, altered state
-    sunset: orange-pink gradient — bittersweet, transition, ending warmth
-    sepia: yellow-brown, old paper, dust — memory, nostalgia, flashback
-    grey: concrete, overcast, ash — bleak, neutral, emptiness — USE ONLY when scene is genuinely colorless
-  - saturation: how EMOTIONALLY CHARGED is the scene atmosphere?
-    vivid: high stakes, strong emotion, senses heightened — colors pop
-    solid: grounded, stable, present — normal clarity
-    pastel: gentle, muted, dreamy — soft focus, low stakes
-    washed: drained, exhausted, post-crisis — color bled out
+Observe the physical space. Architecture, not decoration.
 - mutation: space changed by presence or action.
   A=body/presence(involuntary territory), B=action(physical territory), C=perceptual(subjective lens, POV only).
   A/B are Territory (objective). C is Lens (subjective) — MUST separate.

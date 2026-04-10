@@ -131,63 +131,6 @@ def _resolve_spatial(dai: dict) -> str:
     return _SPATIAL_HINTS.get(stype, "")
 
 
-# =========================================================
-# §P Scene Palette — spatial_read(Flash) → lighting × color
-# =========================================================
-
-_VALID_LIGHTS = {
-    "indoor_lamp", "high_key", "low_key", "single_source",
-    "diffused", "golden_hour", "window_light", "backlight", "side_light",
-}
-_VALID_HUES = {"amber", "crimson", "violet", "sunset", "sepia", "grey", "cool"}
-_VALID_SATS = {"pastel", "solid", "vivid", "washed"}
-
-
-def _resolve_palette(dai: dict) -> str:
-    """spatial_read → [§P light, hue, saturation] 태그 + 선택적 filter 힌트.
-
-    우선순위: flashback(코드 강제) > mutation(변이 결과) > base(장면 분위기) > diffused/grey/solid(fallback)
-    """
-    light, hue, sat = "diffused", "grey", "solid"
-    filter_hint = ""
-
-    spatial = dai.get("spatial_read")
-    if spatial and isinstance(spatial, dict):
-        base = spatial.get("base", {})
-        if isinstance(base, dict):
-            bl = base.get("lighting", "diffused")
-            bh = base.get("hue", "grey")
-            bs = base.get("saturation", "solid")
-            if bl in _VALID_LIGHTS:
-                light = bl
-            if bh in _VALID_HUES:
-                hue = bh
-            if bs in _VALID_SATS:
-                sat = bs
-
-        mut = spatial.get("mutation")
-        if mut and isinstance(mut, dict):
-            ml = mut.get("lighting")
-            mh = mut.get("hue")
-            ms = mut.get("saturation")
-            if ml and ml in _VALID_LIGHTS:
-                light = ml
-            if mh and mh in _VALID_HUES:
-                hue = mh
-            if ms and ms in _VALID_SATS:
-                sat = ms
-
-        flt = spatial.get("filter")
-        if flt and isinstance(flt, str):
-            filter_hint = f" ({flt})"
-
-    fb = dai.get("flashback_eval")
-    if fb and isinstance(fb, dict) and fb.get("detected"):
-        light, hue, sat = "diffused", "sepia", "washed"
-        filter_hint = ""
-
-    return f"[§P {light}, {hue}, {sat}]{filter_hint}"
-
 
 # =========================================================
 # 5W1H Telescope Prefill Builder
@@ -224,10 +167,6 @@ def _build_telescope_prefill(dai: dict, real_time_data: str) -> str:
         if observation:
             scene_lines.append(f"  ├ [Scene.When/Where] (observation) {observation[:150]}")
 
-    # [§P] Scene Palette
-    palette_tag = _resolve_palette(dai)
-    scene_lines.append(f"  ├ {palette_tag}")
-
     # [§S] Spatial Sense (Flash spatial_type 판단 기반)
     spatial_hint = _resolve_spatial(dai)
     if spatial_hint:
@@ -236,7 +175,7 @@ def _build_telescope_prefill(dai: dict, real_time_data: str) -> str:
     if not scene_lines:
         return ""
 
-    header = "=== Phase A: Domain Checks ===\n\n[Scene] — 장면 구조"
+    header = "[Scene] — 장면 구조"
     return "┣\n" + header + "\n" + "\n".join(scene_lines) + "\n"
 
 

@@ -126,10 +126,6 @@ Self-Opacity: speech=belief, body=actual drive. SES/SIS: approach+retreat in sam
 Optics: [polarizer]+[infrared] = limited 3rd-person, behavioral contradictions only.
 Never expose notation terms in output.
 
-### §P. SCENE PALETTE
-[§P light,hue,saturation] in telescope = this turn's sensory vocabulary. Write physical textures. Not metaphor.
-golden_hour+amber+solid→steam,wood grain,honey light. low_key+cool+washed→steel,tile,fluorescent hum. diffused+grey+pastel→cotton,morning haze.
-
 ### §S. SPATIAL SENSE
 [§S] = space's physical character. Let properties leak into prose: how sound travels, whether scent stays, whether silence has weight.
 Space = sensory container. Entry: boundaries, underfoot, air, light, sound. Space changes with who fills it. Scene transition = entrance.
