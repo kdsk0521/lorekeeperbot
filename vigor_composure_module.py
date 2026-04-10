@@ -174,10 +174,10 @@ class VigorComposureModule:
                 if drain != 0:
                     delta += drain
 
-        # 2. AI-Analyzed Impact
+        # 2. AI-Analyzed Impact (턴당 ±15 클램프 — 급격한 변동 방지)
         impact_data = axis.get("impact", {})
         if impact_data.get("applicable", False):
-            impact_delta = impact_data.get("delta", 0)
+            impact_delta = max(-15, min(15, impact_data.get("delta", 0)))
             delta += impact_delta
 
         # 2b. Passive Drain Modifiers (theory tag system)

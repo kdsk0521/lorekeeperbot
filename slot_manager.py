@@ -18,6 +18,17 @@ import logging
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 import text_resources
+import config as _cfg
+# Kimi 전용 오버라이드: 존재하면 text_resources 상수를 덮어씀
+if _cfg.RENDERER_BACKEND == "openai":
+    try:
+        import text_resources_kimi as _kimi_tr
+        for _attr in dir(_kimi_tr):
+            if _attr.isupper() and not _attr.startswith("_"):
+                setattr(text_resources, _attr, getattr(_kimi_tr, _attr))
+        logging.getLogger("SlotManager").info("[SlotManager] Kimi text_resources override applied")
+    except ImportError:
+        pass
 import iceberg
 
 # [레거시 재사용] 기존 모듈에서 유용한 함수 임포트
@@ -386,7 +397,15 @@ class SlotPromptBuilder:
         self.set_slot(26, "\n==========CACHE BOUNDARY==========\n")
 
         # ===== DYNAMIC ZONE (34) =====
-        self.set_slot(34, getattr(text_resources, 'TELESCOPE_PROTOCOL', ''))
+        _telescope = getattr(text_resources, 'TELESCOPE_PROTOCOL', '')
+        if _cfg.RENDERER_BACKEND == "openai":
+            _telescope += (
+                "\n\n### STRICT BUDGET (renderer-specific)"
+                "\n┣┫ block MUST stay ≤ 250 words. Telegraphic English only."
+                "\nProse MUST be ≥ 3× telescope length. If prose is short, telescope was too long."
+                "\nDo NOT repeat ┣ blocks. One ┣...┫ per response."
+            )
+        self.set_slot(34, _telescope)
 
         self._static_built = True
         logger.info("[SlotPromptBuilder] Static slots populated (Primacy/Recency optimized).")
@@ -568,6 +587,24 @@ class SlotPromptBuilder:
             if content:
                 parts.append(content)
         return "\n\n".join(parts)
+
+    def build_split(self) -> tuple:
+        """OpenAI용: system(규칙) + context(데이터)로 분리 빌드.
+        system = 지시/규칙 슬롯, context = NPC/로어/히스토리/분석 데이터.
+        Returns: (system_prompt, context_prompt)"""
+        # 규칙 슬롯: 1-4 (Primacy), 10, 12, 18-25 (Rules), 34 (Telescope)
+        _RULE_SLOTS = {1, 2, 3, 4, 10, 12, 18, 19, 20, 21, 22, 25, 34}
+        system_parts = []
+        context_parts = []
+        for i in range(1, 35):
+            content = self.slots.get(i)
+            if not content:
+                continue
+            if i in _RULE_SLOTS:
+                system_parts.append(content)
+            else:
+                context_parts.append(content)
+        return "\n\n".join(system_parts), "\n\n".join(context_parts)
 
 
 # =========================================================
@@ -1455,5 +1492,9 @@ def build_34_step_prompt(ctx) -> str:
     slot33_parts.append("[5W1H: Draw events only from DAI data. Camera scans environment evenly. Prose intensity follows EnergyDirection.]")
 
     builder.set_slot(33, "\n\n".join(slot33_parts))
+
+    # OpenAI 백엔드: system(규칙) + context(데이터) 분리 빌드
+    if _cfg.RENDERER_BACKEND == "openai":
+        return builder.build_split()
 
     return builder.build()

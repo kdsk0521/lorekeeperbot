@@ -183,7 +183,8 @@ class OpenAIChatSessionAdapter:
     """OpenAI-compatible API용 세션 어댑터. ChatSessionAdapter와 동일 인터페이스."""
 
     def __init__(self, system_prompt: str, model: str, temperature: float = 1.4,
-                 max_tokens: int = 8192, top_p: float = 0.8):
+                 max_tokens: int = 8192, top_p: float = 0.8,
+                 frequency_penalty: float = 0.0, presence_penalty: float = 0.0):
         if not _HAS_OPENAI:
             raise ImportError("openai 패키지가 설치되지 않았습니다. pip install openai")
         self._client = _openai_mod.AsyncOpenAI(
@@ -194,6 +195,8 @@ class OpenAIChatSessionAdapter:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.top_p = top_p
+        self.frequency_penalty = frequency_penalty
+        self.presence_penalty = presence_penalty
         self.history: list = []  # [{"role": ..., "content": ...}]
         self._system_prompt = system_prompt
 
@@ -225,27 +228,44 @@ class OpenAIChatSessionAdapter:
 
         try:
             # Fireworks: max_tokens > 4096 requires stream=true
-            use_stream = self.max_tokens > 4096
+            # Thinking 활성 시 budget만큼 max_tokens 확장 (출력 토큰 보호)
+            _effective_max = self.max_tokens
+            if config.OPENAI_REASONING_EFFORT != "none":
+                _effective_max = max(self.max_tokens, config.OPENAI_THINKING_BUDGET + self.max_tokens)
+            use_stream = _effective_max > 4096
             response = await self._client.chat.completions.create(
                 model=self.model,
                 messages=messages,
                 temperature=self.temperature,
-                max_tokens=self.max_tokens,
+                max_tokens=_effective_max,
                 top_p=self.top_p,
+                frequency_penalty=self.frequency_penalty,
+                presence_penalty=self.presence_penalty,
                 stream=use_stream,
-                extra_body={"reasoning_effort": "none"},
+                extra_body={
+                    "top_k": config.OPENAI_TOP_K,
+                    **({"thinking": {"type": "enabled", "budget_tokens": config.OPENAI_THINKING_BUDGET}}
+                       if config.OPENAI_REASONING_EFFORT != "none"
+                       else {"reasoning_effort": "none"}),
+                },
             )
 
             if use_stream:
-                # 스트리밍 청크 수집
+                # 스트리밍 청크 수집 — reasoning_content는 무시, content만 수집
                 chunks = []
                 finish = "stop"
                 async for chunk in response:
-                    if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
-                        chunks.append(chunk.choices[0].delta.content)
-                    if chunk.choices and chunk.choices[0].finish_reason:
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta
+                    if delta and delta.content:
+                        chunks.append(delta.content)
+                    # reasoning_content는 의도적으로 무시 (thinking 토큰 분리)
+                    if chunk.choices[0].finish_reason:
                         finish = chunk.choices[0].finish_reason
                 text = "".join(chunks)
+                # </think> 태그 누출 정리
+                text = re.sub(r'</think>', '', text).strip()
             else:
                 choice = response.choices[0] if response.choices else None
                 text = choice.message.content if choice and choice.message and choice.message.content else ""
@@ -312,9 +332,11 @@ def create_risu_style_session(
             return OpenAIChatSessionAdapter(
                 system_prompt=full_system,
                 model=config.OPENAI_MODEL_ID,
-                temperature=config.NARRATIVE_TEMPERATURE,
+                temperature=config.OPENAI_TEMPERATURE,
                 max_tokens=config.NARRATIVE_MAX_OUTPUT_TOKENS,
-                top_p=config.NARRATIVE_TOP_P,
+                top_p=config.OPENAI_TOP_P,
+                frequency_penalty=config.OPENAI_FREQUENCY_PENALTY,
+                presence_penalty=config.OPENAI_PRESENCE_PENALTY,
             )
 
     # --- Gemini 백엔드 (기본) ---

@@ -33,6 +33,14 @@ RENDERER_BACKEND = os.getenv("RENDERER_BACKEND", "gemini").lower()
 OPENAI_API_KEY = os.getenv("OPENAI_RENDERER_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_RENDERER_BASE_URL", "https://api.fireworks.ai/inference/v1")
 OPENAI_MODEL_ID = os.getenv("OPENAI_RENDERER_MODEL", "accounts/fireworks/routers/kimi-k2p5-turbo")
+# OpenAI-compatible generation parameters (top_k 미지원 → frequency/presence_penalty로 보정)
+OPENAI_TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", "1.05"))
+OPENAI_TOP_P = float(os.getenv("OPENAI_TOP_P", "0.80"))
+OPENAI_FREQUENCY_PENALTY = float(os.getenv("OPENAI_FREQUENCY_PENALTY", "0.3"))
+OPENAI_TOP_K = int(os.getenv("OPENAI_TOP_K", "40"))
+OPENAI_REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "low")  # none / low / medium / high
+OPENAI_THINKING_BUDGET = int(os.getenv("OPENAI_THINKING_BUDGET", "8192"))  # thinking 토큰 별도 예산
+OPENAI_PRESENCE_PENALTY = float(os.getenv("OPENAI_PRESENCE_PENALTY", "0.1"))
 
 # Generation Parameters - Analysis (Flash/Left Brain)
 ANALYSIS_TEMPERATURE = 0.1
