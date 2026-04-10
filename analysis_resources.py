@@ -401,22 +401,33 @@ Momentum is NOT EnergyDirection. Energy=scene intensity. Momentum=narrative pull
 idle+Open = quiet but something unspoken hangs. detonation+Closed = explosion just resolved.
 
 ### Spatial Palette → spatial_read
-Observe the physical space. Lighting and color are mood, not clock.
-- base: ambient atmosphere. What the space looks and feels like before anyone acts.
-  - lighting: match to light SOURCE, not time-of-day.
-    indoor_lamp=warm artificial | high_key=bright, few shadows | low_key=shadow-dominant, contrast |
-    single_source=one light, directional | diffused=soft, even, no strong source |
-    golden_hour=warm natural glow | window_light=directional natural | backlight=subject dark, rim bright |
-    side_light=half-face shadow
-  - hue: dominant color temperature.
-    amber=warm comfort | crimson=tension/desire | violet=uncanny/melancholy |
-    sunset=bittersweet warmth | sepia=memory/nostalgia | grey=neutral/bleak | cool=clinical/detached
-  - saturation: emotional intensity.
-    pastel=muted/gentle | solid=grounded/stable | vivid=heightened/intense | washed=drained/faded
-  DO NOT default to diffused/grey/solid. Match the scene's emotional register.
-  Intimate+private → single_source/low_key, amber/crimson, vivid/solid.
-  Combat/tense → backlight/side_light, crimson/cool, vivid.
-  Calm everyday → window_light/diffused, amber/grey, pastel/solid.
+OBSERVE: What is the actual light source in this room? What color dominates the space? How intense is the atmosphere?
+Answer EACH sub-field by examining the scene, not by picking a safe default.
+
+- base: ambient atmosphere BEFORE anyone acts this turn.
+  - lighting: identify the PRIMARY light source visible in scene RIGHT NOW.
+    single_source: one lamp, candle, screen — strong directional shadow visible
+    low_key: most of space is dark, light catches edges/faces only
+    indoor_lamp: multiple warm artificial lights, even soft coverage
+    window_light: natural light from window, directional, time-dependent color
+    side_light: light hits from one side, half the face/body in shadow
+    backlight: light source behind subject, silhouette or rim glow
+    golden_hour: warm natural glow flooding in, long shadows
+    high_key: bright, minimal shadows, clinical or cheerful
+    diffused: no identifiable source, flat even light — USE ONLY when genuinely no light source is identifiable
+  - hue: look at the dominant COLOR in the scene (walls, objects, light color, clothing).
+    amber: warm light, wood, skin tones dominate — comfort, intimacy
+    crimson: red tones, flush, blood, fire — tension, desire, danger
+    cool: blue/white light, metal, glass — clinical, detached, morning
+    violet: purple shadow, twilight, neon — uncanny, melancholy, altered state
+    sunset: orange-pink gradient — bittersweet, transition, ending warmth
+    sepia: yellow-brown, old paper, dust — memory, nostalgia, flashback
+    grey: concrete, overcast, ash — bleak, neutral, emptiness — USE ONLY when scene is genuinely colorless
+  - saturation: how EMOTIONALLY CHARGED is the scene atmosphere?
+    vivid: high stakes, strong emotion, senses heightened — colors pop
+    solid: grounded, stable, present — normal clarity
+    pastel: gentle, muted, dreamy — soft focus, low stakes
+    washed: drained, exhausted, post-crisis — color bled out
 - mutation: space changed by presence or action.
   A=body/presence(involuntary territory), B=action(physical territory), C=perceptual(subjective lens, POV only).
   A/B are Territory (objective). C is Lens (subjective) — MUST separate.
@@ -449,9 +460,14 @@ TEMPORAL_ORIENTATION_V2 = """
 - Situational: authority, intimacy, conflict, achievement → behavioral echoes
 - Memory Types: traumatic (fragmented) | nostalgic (idealized) | shameful (intrusive) | loving (hyper-clear) | mundane (blurry)
 
-### Time Flow (Ticks)
-- 0: SceneType="intimate" ONLY (time frozen) — CRITICAL RULE
-- 1-3: combat, crisis | 4-7: normal interaction | 8-12: travel, waiting | 13-20: time skip
+### Time Flow (Ticks) — 1 tick ≈ 2 minutes
+- 0: SceneType="intimate" or "combat" (time frozen for focused moments)
+- 1: single dialogue exchange, one physical action, glancing around. DEFAULT for most inputs.
+- 2: short conversation with back-and-forth, completing a simple task
+- 3-5: walking to nearby location, extended multi-topic conversation
+- 6-12: travel between distant locations, waiting, routine block
+- 13-20: explicit time skip ONLY (user states "wait until..." or "next morning")
+DEFAULT: 1 tick. Over-advancing = stealing player's time. When unsure, use fewer ticks.
 
 ### Tick Modifiers
 High tension: -2 to -4 | Action: -1 to -3 | Normal: 0 | Routine: +2 to +4 | Travel: +5 to +10

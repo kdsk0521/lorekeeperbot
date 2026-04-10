@@ -122,14 +122,13 @@ TICK_DURATION_MAX = 5   # Minutes
 
 TIME_TICKS_PER_SLOT = 240  # 4 hours / 1 min = 240 ticks
 
-# Time Flow v4 — 장면별 시간 규칙 (base_ticks: Flash 0일 때 최소, max_ticks: 비명시 상한)
-# 1틱=1분, 1슬롯=240틱(4시간). normal 15틱→~16턴에 슬롯 전환
+# Time Flow v5 — 장면별 시간 규칙. 1틱=2분. 렌더러에 시간 감각 전달용.
 SCENE_TIME_RULES = {
-    "normal":   {"base_ticks": 3,  "max_ticks": 15},
-    "combat":   {"base_ticks": 0,  "max_ticks": 1},
-    "social":   {"base_ticks": 2,  "max_ticks": 10},
-    "intimate": {"base_ticks": 1,  "max_ticks": 5},
-    "travel":   {"base_ticks": 10, "max_ticks": 60},
+    "normal":   {"base_ticks": 1,  "max_ticks": 2},    # 최대 4분
+    "combat":   {"base_ticks": 0,  "max_ticks": 1},    # 최대 2분
+    "social":   {"base_ticks": 1,  "max_ticks": 1},    # 최대 2분
+    "intimate": {"base_ticks": 0,  "max_ticks": 1},    # 최대 2분, 기본 정지
+    "travel":   {"base_ticks": 10, "max_ticks": 60},   # 최대 120분
     "summary":  {"base_ticks": 0,  "max_ticks": 999},
 }
 
@@ -510,8 +509,18 @@ STORYTELLER_SCENE_CATEGORIES = {
     "normal": None,  # None = all allowed
     "combat": set(),  # empty = skip all events during combat
     "social": {"social", "environmental", "temporal"},
+    "intimate": set(),  # intimate = all events defer
     "exploration": {"supernatural", "environmental", "temporal"},
     "rest": {"environmental"},
+}
+
+# 시계 라이프사이클 씬타입별 억제
+CLOCK_SCENE_RULES = {
+    "normal":   {"create": True,  "auto_tick": True,  "flash_tick": True},
+    "intimate": {"create": False, "auto_tick": False, "flash_tick": False},  # 전면 동결
+    "combat":   {"create": False, "auto_tick": False, "flash_tick": True},   # 전투 행동 틱만
+    "social":   {"create": True,  "auto_tick": False, "flash_tick": True},   # 자동 틱 억제
+    "summary":  {"create": True,  "auto_tick": True,  "flash_tick": True},
 }
 
 STATUS_EFFECTS = {

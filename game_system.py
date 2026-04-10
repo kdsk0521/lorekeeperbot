@@ -88,7 +88,7 @@ def build_time_directive(ticks: int, scene_type: str = "normal") -> str:
             "[TIME] Scene frozen. Describe ONE moment/action only. "
             "Do NOT advance time or skip ahead."
         )
-    minutes = ticks * 1.5
+    minutes = ticks * 2
     if minutes <= 3:
         return (
             f"[TIME] ~{minutes:.0f}min. Describe only what happens in this brief moment. "
@@ -164,7 +164,7 @@ async def process_time_flow(channel_id: str, time_flow: Dict, scene_type: str = 
         return None
 
     # 틱 → 분 변환 후 advance_minutes로 시각 갱신
-    minutes = ticks * 3  # 1틱 = ~3분
+    minutes = ticks * 2  # 1틱 = 2분
     msg = game_world.advance_minutes(channel_id, minutes)
     if msg:
         messages.append(msg)

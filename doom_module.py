@@ -40,13 +40,35 @@ class DoomModule:
             clocks = []
         clock_events = []
 
+        # ── 씬타입별 시계 라이프사이클 억제 ──────────────────
+        scene_type = bus.dai.get("scene_type", "normal")
+        clock_rules = config.CLOCK_SCENE_RULES.get(scene_type, config.CLOCK_SCENE_RULES.get("normal", {}))
+
+        # ── 0. Storyteller가 fire 신호 보낸 pending 시계 처리 ──
+        fired_names = set(bus.doom.get("_fire_completions", []))
+        for clock in clocks:
+            if not clock.get("pending_completion") or clock.get("resolved"):
+                continue
+            if clock.get("name") in fired_names:
+                clock["resolved"] = True
+                clock.pop("pending_completion", None)
+                clock.pop("pending_turn", None)
+                complete_doom = _get_clock_doom(clock)
+                delta += complete_doom
+                sign = f"+{complete_doom}" if complete_doom > 0 else str(complete_doom)
+                clock_events.append(f"COMPLETE: {clock['name']} ({sign} doom)")
+                if complete_doom > 0:
+                    linked_quest = clock.get("linked_quest")
+                    if linked_quest:
+                        _fail_linked_quest(context, linked_quest, clock.get("name", "?"))
+
         # ── 1. Flash 시계 소비 ──────────────────────────────
         flash_new = bus.doom.pop("flash_clock_new", None)
         flash_updates = bus.doom.pop("flash_clock_updates", [])
         flash_resolved = bus.doom.pop("flash_clock_resolved", [])
 
-        # 1a. 새 시계 생성
-        if isinstance(flash_new, dict) and flash_new.get("name"):
+        # 1a. 새 시계 생성 (씬타입 억제: create)
+        if isinstance(flash_new, dict) and flash_new.get("name") and clock_rules.get("create", True):
             new_name = flash_new["name"]
             active_count = sum(1 for c in clocks if not c.get("resolved"))
             if active_count >= config.DOOM_CLOCK_CAP:
@@ -100,10 +122,10 @@ class DoomModule:
                         clock_events.append(f"RESOLVED: {resolved_name} ({resolve_doom} doom, +{resolve_reward} recovery)")
                         break
 
-        # ── 2. Flash clock_updates (action/hybrid delta) ────
+        # ── 2. Flash clock_updates (action/hybrid delta, 씬타입 억제: flash_tick) ──
         mitigation_count = 0
         flash_updated_names = set()
-        if isinstance(flash_updates, list):
+        if isinstance(flash_updates, list) and clock_rules.get("flash_tick", True):
             for update in flash_updates:
                 if not isinstance(update, dict):
                     continue
@@ -129,10 +151,11 @@ class DoomModule:
         if mitigation_count > 0:
             bus.doom["defense_reward"] = mitigation_count * config.CLOCK_MITIGATE_REWARD
 
-        # ── 3. Time/Hybrid 자동 틱 (Escalation + Deceleration) ──
+        # ── 3. Time/Hybrid 자동 틱 (씬타입 억제: auto_tick) ──
         doom_stage = _get_doom_stage(bus.doom.get("value", 0))
         extra_tick = config.DOOM_CLOCK_ACCELERATION.get(doom_stage, 0)
         turn_idx = bus.dai.get("turn_index", 0)
+        auto_tick_allowed = clock_rules.get("auto_tick", True)
 
         for clock in clocks:
             if clock.get("resolved"):
@@ -141,7 +164,9 @@ class DoomModule:
             clock_name = clock.get("name", "")
 
             should_auto_tick = False
-            if tick_mode == "time":
+            if not auto_tick_allowed:
+                pass  # 씬타입 억제
+            elif tick_mode == "time":
                 should_auto_tick = True
             elif tick_mode == "hybrid" and clock_name not in flash_updated_names:
                 should_auto_tick = True  # Flash가 안 건드린 hybrid만
@@ -163,30 +188,35 @@ class DoomModule:
                         f"{clock_name}: {old_filled}→{new_filled}/{segments} (auto{suffix})"
                     )
 
-        # ── 4. 완성 체크 → 글로벌 둠 상승 ───────────────────
+        # ── 4. 완성 체크 → 극성별 분기 ──────────────────────
         completed_this_turn = []
+        current_turn = bus.dai.get("turn_index", 0)
         for clock in clocks:
-            if clock.get("resolved"):
+            if clock.get("resolved") or clock.get("pending_completion"):
                 continue
             segments = int(clock.get("segments", 4) or 4)
             filled = int(clock.get("filled", clock.get("progress", 0)) or 0)
             if filled >= segments:
-                clock["resolved"] = True
-                # Polarity: doom_on_complete overrides default
-                custom_doom = clock.get("doom_on_complete")
-                if custom_doom is not None:
-                    complete_doom = int(custom_doom)
+                complete_doom = _get_clock_doom(clock)
+                if complete_doom >= 0:
+                    # 위협/타이머 시계: pending → Storyteller 타이밍 위임
+                    clock["pending_completion"] = True
+                    clock["pending_turn"] = current_turn
+                    clock_events.append(
+                        f"⏸️ READY: {clock.get('name', '?')} ({filled}/{segments} — Storyteller 대기)"
+                    )
+                    _push_clock_to_storyteller(context, clock, current_turn)
                 else:
-                    complete_doom = config.CLOCK_COMPLETE_DOOM.get(segments, 15)
-                delta += complete_doom
-                completed_this_turn.append(clock)
-                sign = f"+{complete_doom}" if complete_doom > 0 else str(complete_doom)
-                clock_events.append(f"COMPLETE: {clock.get('name', '?')} ({sign} doom)")
-                # 연결된 퀘스트 자동 실패 (위협 시계만)
-                if complete_doom > 0:
-                    linked_quest = clock.get("linked_quest")
-                    if linked_quest:
-                        _fail_linked_quest(context, linked_quest, clock.get("name", "?"))
+                    # 기회/타이머 시계: 즉시 완성 (보상은 바로)
+                    clock["resolved"] = True
+                    delta += complete_doom
+                    completed_this_turn.append(clock)
+                    sign = f"+{complete_doom}" if complete_doom > 0 else str(complete_doom)
+                    clock_events.append(f"COMPLETE: {clock.get('name', '?')} ({sign} doom)")
+                    if complete_doom < 0:
+                        seg = int(clock.get("segments", 6) or 6)
+                        resolve_reward = config.CLOCK_RESOLVE_REWARD.get(seg, 3)
+                        bus.doom["resolve_reward"] = bus.doom.get("resolve_reward", 0) + resolve_reward
 
         # ── 4b. Status severity → doom_impact ─────────────────
         from game_character import normalize_status_effects
@@ -291,6 +321,43 @@ def _fail_linked_quest(context: "GameContext", quest_name: str, clock_name: str)
                      quest_name, clock_name, result)
     except Exception as e:
         logger.warning("[Doom] Failed to remove linked quest: %s", e)
+
+
+def _get_clock_doom(clock: dict) -> int:
+    """시계의 doom_on_complete 값을 반환 (극성 반영)."""
+    custom_doom = clock.get("doom_on_complete")
+    if custom_doom is not None:
+        return int(custom_doom)
+    segments = int(clock.get("segments", 6) or 6)
+    return config.CLOCK_COMPLETE_DOOM.get(segments, 15)
+
+
+def _push_clock_to_storyteller(context: "GameContext", clock: dict, current_turn: int) -> None:
+    """시계 완성 이벤트를 Storyteller event_queue에 푸시."""
+    channel_id = (context.narrative_anchors or {}).get("channel_id", "")
+    if not channel_id:
+        return
+    import domain_manager
+    st_state = domain_manager.get_storyteller_state(channel_id)
+    queue = st_state.get("event_queue", [])
+    clock_name = clock.get("name", "")
+    # 중복 방지
+    if any(e.get("type") == "clock_completion" and e.get("clock_name") == clock_name for e in queue):
+        return
+    doom_val = _get_clock_doom(clock)
+    queue.append({
+        "type": "clock_completion",
+        "tag": clock_name,
+        "clock_name": clock_name,
+        "category": "clock",
+        "intensity": "High",
+        "polarity": "negative" if doom_val > 0 else ("positive" if doom_val < 0 else "mixed"),
+        "queued_turn": current_turn,
+        "non_intimate_turns": 0,
+    })
+    st_state["event_queue"] = queue
+    domain_manager.update_storyteller_state(channel_id, st_state)
+    logger.info("[Doom] Clock '%s' → Storyteller queue (pending completion)", clock_name)
 
 
 def _trigger_climax(context, bus, clocks: list, clock_events: list) -> None:

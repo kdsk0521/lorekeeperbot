@@ -258,8 +258,45 @@ class AnomalyModule:
             if not bus.anomaly.get("category"):
                 bus.anomaly["category"] = tag
 
-        # Decide timing
-        decision = self._decide_timing(bus, st_state, current_turn)
+        # ── clock_completion 분리 큐 처리 (anomaly보다 우선) ──
+        clock_fired = False
+        clock_queue = [e for e in st_state.get("event_queue", []) if e.get("type") == "clock_completion"]
+        if clock_queue and not bus.judgment.get("active"):
+            # non_intimate_turns 카운터 갱신 (intimate 턴은 세지 않음)
+            scene_type = bus.dai.get("scene_type", "normal")
+            for cq in clock_queue:
+                if scene_type != "intimate":
+                    cq["non_intimate_turns"] = cq.get("non_intimate_turns", 0) + 1
+
+            # 타이밍 판단 (기존 _decide_timing 재사용)
+            clock_decision = self._decide_timing(bus, st_state, current_turn)
+            # intimate 중에는 starvation도 무시 — non_intimate_turns 기준으로만
+            top_clock = clock_queue[0]
+            if scene_type == "intimate":
+                clock_decision = "defer"
+            elif top_clock.get("non_intimate_turns", 0) >= 5:
+                clock_decision = "act"  # non-intimate 5턴 starvation 강제
+
+            if clock_decision == "act":
+                fire_list = bus.doom.get("_fire_completions", [])
+                fire_list.append(top_clock["clock_name"])
+                bus.doom["_fire_completions"] = fire_list
+                # queue에서 제거
+                queue = st_state.get("event_queue", [])
+                st_state["event_queue"] = [
+                    e for e in queue
+                    if not (e.get("type") == "clock_completion" and e.get("clock_name") == top_clock["clock_name"])
+                ]
+                clock_fired = True
+                logger.info("[Storyteller] Clock fired: %s (waited %d non-intimate turns)",
+                            top_clock["clock_name"], top_clock.get("non_intimate_turns", 0))
+
+        # Decide timing (상호 배제: clock 발동 턴에는 anomaly defer)
+        if clock_fired:
+            decision = "defer"
+            bus.anomaly["decision_reason"] = "clock_mutual_exclusion"
+        else:
+            decision = self._decide_timing(bus, st_state, current_turn)
         bus.anomaly["decision"] = decision
         if not bus.anomaly.get("decision_reason"):
             energy = bus.dai.get("energy_direction", "rising")
