@@ -1020,6 +1020,46 @@ class OrchestrationService:
                     domain_manager.update_session_ai_memory(channel_id, mem_updates)
                     logger.info(f"[WorldState] Updated session memory: {list(mem_updates.keys())}")
 
+            # [NarrativeTracker] 턴 로그 + 엔티티 상태 이력 업데이트
+            try:
+                import narrative_tracker
+                nt_state = domain_manager.get_narrative_tracker_state(channel_id)
+
+                # turn_idx: world_state에서 획득, 없으면 히스토리 길이 기반
+                ws = domain_manager.get_world_state(channel_id)
+                _ti = (ws or {}).get("turn_index")
+                turn_idx = _ti if _ti is not None else len(session_memory.get("history", [])) // 2
+
+                # 턴 로그 기록
+                involved_npcs = list((wsu or {}).get("npc_schedule_hints", {}).keys()) if wsu else []
+                qf = ctx.dai.get("quality_flags", {}) if ctx.dai else {}
+                user_brief = str(ctx.action_text or "")[:200]
+                ai_brief = str(response or "")[:300]
+                narrative_tracker.record_turn(nt_state, turn_idx, user_brief, ai_brief, involved_npcs, qf)
+
+                # 엔티티 상태 변화 기록
+                est_data = updates.get("EntityStateUpdate")
+                if est_data:
+                    narrative_tracker.update_entity_states(nt_state, turn_idx, est_data)
+
+                # 스토리라인 분류
+                last_entry = nt_state["turn_log"][-1] if nt_state.get("turn_log") else None
+                if last_entry:
+                    narrative_tracker.assign_to_storyline(nt_state, last_entry)
+
+                # 5턴 간격 스토리라인 요약 (Flash 소형 콜)
+                import config as _cfg
+                flash_model = _cfg.ANALYSIS_MODEL
+                await narrative_tracker.summarize_if_needed(
+                    nt_state, turn_idx,
+                    client=self.client if hasattr(self, 'client') else None,
+                    model_id=flash_model
+                )
+
+                domain_manager.update_narrative_tracker_state(channel_id, nt_state)
+            except Exception as nt_err:
+                logger.warning("[NarrativeTracker] Update failed: %s", nt_err)
+
             # [Scene Continuity 2층] 렌더링 지문 저장
             rfp = updates.get("RenderFingerprint")
             if rfp and isinstance(rfp, dict):

@@ -95,7 +95,7 @@ async def extract_all_updates(
 
     # Default: Run ALL if no hints provided
     if extraction_hints is None:
-        extraction_hints = {"physical": True, "social": True, "narrative": True, "quest": True}
+        extraction_hints = {"physical": True, "social": True, "narrative": True, "quest": True, "entity_state": True}
 
     tasks = []
     task_keys = []
@@ -106,7 +106,7 @@ async def extract_all_updates(
         task_keys.append("physical")
 
     # Non-physical: batch into 1 Flash call (saves ~60% input tokens)
-    batch_sections = [s for s in ["social", "narrative", "quest", "world_state", "render_fingerprint"] if extraction_hints.get(s, False)]
+    batch_sections = [s for s in ["social", "narrative", "quest", "world_state", "entity_state", "render_fingerprint"] if extraction_hints.get(s, False)]
     if batch_sections:
         tasks.append(_extract_batch(
             client, model_id_flash, player_input, ai_response,
@@ -147,6 +147,7 @@ async def extract_all_updates(
     nar: Dict[str, Any] = batch.get("narrative", {})
     qst: Dict[str, Any] = batch.get("quest", {})
     wst: Dict[str, Any] = batch.get("world_state", {})
+    est: Dict[str, Any] = batch.get("entity_state", {})
     rfp: Dict[str, Any] = batch.get("render_fingerprint", {})
     
     # Sanitize Physical (Notebook + Status)
@@ -204,6 +205,8 @@ async def extract_all_updates(
         "NPCRelationUpdate": soc.get("npc_relations") if soc else None,
 
         "WorldStateUpdate": wst if wst else None,
+
+        "EntityStateUpdate": est.get("changes") if est else None,
 
         "RenderFingerprint": rfp if rfp else None
     }
@@ -386,6 +389,21 @@ async def _extract_batch(
         if existing_threads:
             ws_ctx += f", Existing Threads: {existing_threads[:10]}"
         ctx_parts.append(ws_ctx)
+
+    if "entity_state" in sections:
+        sys_parts.append(
+            "\n### entity_state"
+            "\nTrack per-NPC state CHANGES this turn. Only NPCs who appear or are mentioned."
+            "\nOutput: `{\"changes\": {NpcName: {\"location\": str or null, \"mood\": str or null, "
+            "\"health\": str or null, \"notable\": str or null}}}`"
+            "\n- location: NEW location if NPC moved this turn. null if unchanged."
+            "\n- mood: Current emotional state in Korean (1-2 words). null if unclear."
+            "\n- health: Health change description in Korean. null if unchanged."
+            "\n- notable: One-line notable state change (Korean). null if nothing remarkable."
+            "\nCONSERVATIVE: Only extract clearly evidenced changes. Most fields should be null."
+            "\nIf no NPC state change: `{\"changes\": {}}`."
+        )
+        ctx_parts.append(f"[EntityState] SceneNPCs:{scene_npcs}")
 
     if "render_fingerprint" in sections:
         sys_parts.append(

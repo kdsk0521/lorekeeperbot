@@ -374,19 +374,148 @@ def get_timestamp() -> str:
 
 
 # =========================================================
-# 발효 필요 여부 판단
+# 발효 필요 여부 판단 (Sprint 4: 중요도 기반)
 # =========================================================
 
-def should_ferment_fresh(session_data: Dict[str, Any]) -> bool:
-    """FRESH → FERMENTED 발효가 필요한지 판단합니다."""
+# TTL: 중요도 낮은 Fresh 메시지 자동 정리 기준
+FRESH_TTL_TURNS = 60        # 이 턴수보다 오래된 + 중요도 낮은 → GC 대상
+IMPORTANCE_GC_THRESHOLD = 4  # 이 이하 중요도 → TTL 적용 대상
+
+
+def should_ferment_fresh(session_data: Dict[str, Any], channel_id: str = "") -> bool:
+    """FRESH → FERMENTED 발효가 필요한지 판단합니다.
+    Sprint 4: 중요도 기반 — 고중요도 비율 높으면 발효 약간 유예.
+    """
     history = session_data.get("history", [])
-    return len(history) > FRESH_THRESHOLD
+    count = len(history)
+    if count <= FRESH_THRESHOLD:
+        return False
+
+    # 기본 임계값 초과 시 — 중요도 판단으로 유예 여부 결정
+    if count > FRESH_THRESHOLD + 8:
+        # 임계값 +8 이상이면 무조건 발효 (메모리 보호)
+        return True
+
+    # narrative_tracker 턴 로그에서 최근 chunk_size만큼의 중요도 확인
+    try:
+        import narrative_tracker as _nt
+        import domain_manager as _dm
+        if channel_id:
+            nt_state = _dm.get_narrative_tracker_state(channel_id)
+        else:
+            nt_state = {}
+        turn_log = nt_state.get("turn_log", [])
+        if turn_log:
+            recent = turn_log[-FERMENT_CHUNK_SIZE:]
+            avg_importance = sum(t.get("importance", 5) for t in recent) / len(recent)
+            # 최근 chunk의 평균 중요도가 7 이상이면 유예 (+4 여유)
+            if avg_importance >= 7 and count <= FRESH_THRESHOLD + 4:
+                logger.info(
+                    "[Fermentation] High-importance chunk (avg=%.1f) — deferring fermentation",
+                    avg_importance,
+                )
+                return False
+    except Exception:
+        pass
+
+    return True
 
 
 def should_compress_to_deep(session_data: Dict[str, Any]) -> bool:
     """FERMENTED → DEEP 압축이 필요한지 판단합니다."""
     fermented = session_data.get("fermented_history", [])
     return len(fermented) > FERMENTED_THRESHOLD
+
+
+def gc_low_importance_fresh(
+    session_data: Dict[str, Any],
+    channel_id: str = "",
+    current_turn: int = 0,
+) -> int:
+    """Sprint 4: 중요도 낮은 오래된 Fresh 메시지 자동 GC.
+    TTL 만료된 저중요도 메시지를 1줄 마커로 대체.
+    Returns: 제거된 메시지 수.
+    """
+    history = session_data.get("history", [])
+    if not history or len(history) < 10:
+        return 0
+
+    # narrative_tracker에서 턴별 중요도 가져오기
+    turn_importance = {}
+    try:
+        import narrative_tracker as _nt
+        import domain_manager as _dm
+        if channel_id:
+            nt_state = _dm.get_narrative_tracker_state(channel_id)
+        else:
+            nt_state = {}
+        for entry in nt_state.get("turn_log", []):
+            turn_importance[entry.get("turn", 0)] = entry.get("importance", 5)
+    except Exception:
+        pass
+
+    if not turn_importance:
+        return 0
+
+    # current_turn이 0이면 턴 로그 최대값 사용
+    if current_turn <= 0:
+        current_turn = max(turn_importance.keys(), default=0)
+
+    # GC 대상 탐색: 앞쪽(오래된) 히스토리만
+    # history는 [user, model, user, model, ...] 쌍 — 2개씩 1턴
+    gc_count = 0
+    new_history = []
+    i = 0
+
+    while i < len(history):
+        # 최근 FRESH_THRESHOLD개는 건드리지 않음
+        remaining = len(history) - i
+        if remaining <= FRESH_THRESHOLD:
+            new_history.extend(history[i:])
+            break
+
+        msg = history[i]
+        if not isinstance(msg, dict):
+            new_history.append(msg)
+            i += 1
+            continue
+        # 턴 번호 추정: 히스토리 인덱스 기반 (2개 = 1턴)
+        estimated_turn = max(1, current_turn - (len(history) - i) // 2)
+
+        importance = turn_importance.get(estimated_turn, 5)
+        age = current_turn - estimated_turn
+
+        if age >= FRESH_TTL_TURNS and importance <= IMPORTANCE_GC_THRESHOLD:
+            # GC: user+model 쌍 제거 → 축약 쌍으로 대체 (role 교대 유지)
+            if i + 1 < len(history) and isinstance(history[i + 1], dict):
+                content_hint = (msg.get("content", "") or "")[:40]
+                model_msg = history[i + 1]
+                model_hint = (model_msg.get("content", "") or "")[:40]
+                new_history.append({
+                    "role": "user",
+                    "content": f"[...T{estimated_turn}: {content_hint}...]",
+                })
+                new_history.append({
+                    "role": "model",
+                    "content": f"[...{model_hint}...]",
+                })
+                gc_count += 2
+                i += 2
+            else:
+                new_history.append(msg)
+                i += 1
+        else:
+            new_history.append(msg)
+            i += 1
+
+    if gc_count > 0:
+        session_data["history"] = new_history
+        logger.info(
+            "[Fermentation GC] Removed %d low-importance messages (TTL=%d, threshold=%d)",
+            gc_count, FRESH_TTL_TURNS, IMPORTANCE_GC_THRESHOLD,
+        )
+
+    return gc_count
 
 
 # =========================================================
@@ -398,11 +527,15 @@ async def compress_fresh_to_fermented(
     model_id: str,
     history: List[Dict[str, str]],
     chunk_size: int = FERMENT_CHUNK_SIZE,
-    use_v3: bool = True
+    use_v3: bool = True,
+    nt_state: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     오래된 히스토리를 요약하여 FERMENTED 메모리로 변환합니다.
     V4: Mneme-Arc Hybrid - 대화 원문 보존 + 종단 패턴 관찰 + 메모리 트리거
+
+    Args:
+        nt_state: NarrativeTracker 상태 (Sprint 4 — 스토리라인 힌트용)
 
     Returns:
         {
@@ -422,12 +555,31 @@ async def compress_fresh_to_fermented(
     history_text = format_history_indexed(to_summarize)
 
     system_instruction = FERMENT_PROMPT_V4
-    
+
+    # Sprint 4: NarrativeTracker 서사 컨텍스트 주입 (압축 품질 향상)
+    narrative_hint = ""
+    try:
+        if nt_state and isinstance(nt_state, dict):
+            active_sls = [
+                s for s in nt_state.get("storylines", [])
+                if s.get("status") == "active"
+            ]
+            if active_sls:
+                sl_hints = []
+                for sl in active_sls[:4]:
+                    name = sl.get("name", "?")
+                    entities = ", ".join(sl.get("entities", [])[:5])
+                    sl_ctx = sl.get("current_context", "")[:80]
+                    sl_hints.append(f"- {name} [{entities}]: {sl_ctx}")
+                narrative_hint = "\n## Active Storylines (context for compression)\n" + "\n".join(sl_hints)
+    except Exception:
+        pass
+
     user_prompt = f"""# Session Logs (Indexed)
 {history_text}
-
+{narrative_hint}
 # Directive
-Analyze this TRPG session segment. Extract events, preserve significant dialogues verbatim, 
+Analyze this TRPG session segment. Extract events, preserve significant dialogues verbatim,
 analyze psychological impact, and identify memory triggers.
 Output VALID JSON following the schema exactly.
 """
@@ -747,19 +899,64 @@ async def auto_ferment(
         session_data["active_memory_triggers"] = []
     
     ch_id = channel_id or session_data.get("channel_id_ref", "unknown")
-    
+
+    # =========================================================
+    # Sprint 4: 중요도 GC (발효 전 저중요도 Fresh 정리)
+    # =========================================================
+    gc_removed = gc_low_importance_fresh(session_data, channel_id=ch_id)
+    if gc_removed > 0:
+        changes_made = True
+
+    # Sprint 4: NarrativeTracker 상태 로드 (함수 인자로 전달 — 스레드 안전)
+    _nt_state_for_ferment = {}
+    try:
+        import domain_manager as _dm
+        if ch_id != "unknown":
+            _nt_state_for_ferment = _dm.get_narrative_tracker_state(ch_id)
+    except Exception:
+        pass
+
+    # Sprint 4: Staleness 기반 자동 스토리라인 resolve
+    # 오래된 스토리라인을 archived로 이동 → build_fermented_context에서 재주입
+    STORYLINE_STALE_TURNS = 20  # 20턴 동안 업데이트 없으면 자동 resolve
+    try:
+        if _nt_state_for_ferment and ch_id != "unknown":
+            import narrative_tracker as _nt
+            current_turn = max(
+                (t.get("turn", 0) for t in _nt_state_for_ferment.get("turn_log", [{}])),
+                default=0,
+            )
+            stale_resolved = []
+            for sl in list(_nt_state_for_ferment.get("storylines", [])):
+                if sl.get("status") != "active":
+                    continue
+                last = sl.get("last_turn", 0)
+                if current_turn - last >= STORYLINE_STALE_TURNS:
+                    _nt.resolve_storyline(_nt_state_for_ferment, sl.get("id", 0))
+                    stale_resolved.append(sl.get("name", "?"))
+            if stale_resolved:
+                _dm.update_narrative_tracker_state(ch_id, _nt_state_for_ferment)
+                changes_made = True
+                logger.info(
+                    "[Fermentation] Auto-resolved %d stale storylines: %s",
+                    len(stale_resolved), ", ".join(stale_resolved),
+                )
+    except Exception as e:
+        logger.debug("[Fermentation] Staleness resolve skipped: %s", e)
+
     # =========================================================
     # FRESH → FERMENTED 발효 체크
     # =========================================================
-    if should_ferment_fresh(session_data):
+    if should_ferment_fresh(session_data, channel_id=ch_id):
         logger.info("[Fermentation V4] FRESH 발효 시작...")
-        
+
         history = session_data["history"]
-        
+
         result_data = await compress_fresh_to_fermented(
-            client, model_id, 
+            client, model_id,
             history[:FERMENT_CHUNK_SIZE],
-            use_v3=True
+            use_v3=True,
+            nt_state=_nt_state_for_ferment,
         )
         
         if result_data:
@@ -844,14 +1041,51 @@ async def auto_ferment(
                 archived_context_parts.append(p_context)
         
         archived_context_str = "\n".join(archived_context_parts)
-        
+
+        # Sprint 4: NarrativeTracker 아카이브 컨텍스트 추가
+        try:
+            import narrative_tracker as _nt
+            import domain_manager as _dm
+            nt_state = _dm.get_narrative_tracker_state(ch_id) if ch_id != "unknown" else {}
+
+            # 스토리라인 아카이브를 DEEP 압축 맥락에 추가
+            archived_sls = nt_state.get("archived_storylines", [])
+            if archived_sls:
+                archived_context_str += "\n### Archived Storylines\n"
+                for asl in archived_sls[-5:]:
+                    archived_context_str += (
+                        f"- {asl.get('name', '?')} "
+                        f"[{', '.join(asl.get('entities', [])[:4])}]: "
+                        f"{asl.get('summary', '')[:120]}\n"
+                    )
+
+            # 엔티티 critical moments를 DEEP에 보존
+            entity_log = nt_state.get("entity_state_log", {})
+            critical_parts = []
+            for npc_name, npc_data in entity_log.items():
+                moments = npc_data.get("critical_moments", [])
+                if moments:
+                    for m in moments[-3:]:
+                        critical_parts.append(
+                            f"- {npc_name} T{m.get('turn', '?')}: {m.get('description', '')[:80]}"
+                        )
+            if critical_parts:
+                archived_context_str += "\n### Entity Critical Moments\n" + "\n".join(critical_parts[:10])
+
+            # resolved 스토리라인 자동 정리 (DEEP 승격 완료 시 아카이브 축소)
+            if len(archived_sls) > 10:
+                nt_state["archived_storylines"] = archived_sls[-10:]
+                _dm.update_narrative_tracker_state(ch_id, nt_state)
+        except Exception as e:
+            logger.debug("[Fermentation] NarrativeTracker archive context: %s", e)
+
         # V3 DEEP 압축
         deep_result = await compress_fermented_to_deep(
             client, model_id,
             fermented, current_deep, archived_context_str,
             current_deep_data=current_deep_data
         )
-        
+
         if deep_result:
             # V3: 구조화된 데이터 저장
             if isinstance(deep_result, dict):
@@ -885,6 +1119,22 @@ async def auto_ferment(
                        f"triggers={len(session_data.get('active_memory_triggers', []))}")
     
     # =========================================================
+    # Sprint 4: 벡터 유사도 프리컴퓨트 (다음 build_fermented_context용)
+    # =========================================================
+    fermented_now = session_data.get("fermented_history", [])
+    if fermented_now and client:
+        # 최근 히스토리에서 쿼리 추출 (최근 3메시지)
+        recent_msgs = session_data.get("history", [])[-3:]
+        vec_query = " ".join(
+            m.get("content", "")[:100] for m in recent_msgs if isinstance(m, dict)
+        )
+        if vec_query.strip():
+            try:
+                await precompute_vector_scores(client, fermented_now, vec_query, channel_id=ch_id)
+            except Exception as e:
+                logger.debug("[VectorSearch] Pre-compute skipped: %s", e)
+
+    # =========================================================
     # 연대기 자동 갱신 (발효 3회마다)
     # =========================================================
     ferment_count = len(session_data.get("fermented_history", []))
@@ -897,6 +1147,10 @@ async def auto_ferment(
             logger.info(f"[Chronicle] Auto-generated at ferment_count={ferment_count}")
         except Exception as e:
             logger.warning(f"[Chronicle] Auto-generation failed: {e}")
+
+    # Sprint 4: 벡터 캐시 크기 제한 (채널별 최대 50 엔트리)
+    if ch_id in _vector_similarity_cache and len(_vector_similarity_cache[ch_id]) > 50:
+        _vector_similarity_cache[ch_id] = {}
 
     if changes_made and save_callback:
         save_callback()
@@ -992,10 +1246,55 @@ async def _auto_generate_chronicle(client, model_id: str, session_data: dict, ch
 # 메모리 컨텍스트 빌드 (프리셋 순서 적용)
 # =========================================================
 
+# Sprint 4: 벡터 유사도 캐시 (async pre-compute → sync 소비)
+_vector_similarity_cache: Dict[str, Dict[int, float]] = {}  # {channel_id: {entry_idx: similarity}}
+
+
+async def precompute_vector_scores(
+    client,
+    entries: list,
+    query: str,
+    channel_id: str = "",
+) -> None:
+    """auto_ferment 내에서 호출. 벡터 유사도를 미리 계산하여 캐시."""
+    if not query or not entries:
+        return
+    try:
+        from vector_search import VectorSearchEngine
+        engine = VectorSearchEngine(client)
+
+        # 각 entry summary를 chunk로 변환
+        chunks = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                chunks.append("")
+                continue
+            summary = entry.get("summary", "") or ""
+            arc = entry.get("arc_observations", {})
+            if isinstance(arc, dict):
+                summary += " " + (arc.get("emotional_arc", "") or "")
+                summary += " " + (arc.get("pc_pattern", "") or "")
+            chunks.append(summary.strip() or "(empty)")
+
+        # 인덱스 추적을 위해 래핑 (중복 summary 대응)
+        indexed_chunks = [{"content": c, "_idx": i} for i, c in enumerate(chunks)]
+        results = await engine.search(query, indexed_chunks, top_k=len(indexed_chunks), min_score=0.0)
+
+        score_map = {}
+        for chunk_obj, score in results:
+            if isinstance(chunk_obj, dict) and "_idx" in chunk_obj:
+                score_map[chunk_obj["_idx"]] = score
+
+        _vector_similarity_cache[channel_id] = score_map
+        logger.info("[VectorSearch] Pre-computed %d scores for %d entries", len(score_map), len(entries))
+    except Exception as e:
+        logger.debug("[VectorSearch] Pre-compute failed (keyword fallback): %s", e)
+
+
 def score_fermented_entries(entries: list, query: str = "", channel_id: str = "") -> list:
     """LIBRA-inspired weighted scoring for fermented memory retrieval.
     Returns [(entry, score), ...] sorted by score descending.
-    Emotion boost: 감정 강도에 따라 메모리 중요도 증폭 (channel_id 필요).
+    Sprint 4: 벡터 유사도 캐시 활용 + EmotionEngine 부스트.
     """
     import config as _cfg
 
@@ -1015,6 +1314,9 @@ def score_fermented_entries(entries: list, query: str = "", channel_id: str = ""
     w_imp = getattr(_cfg, 'MEMORY_SCORE_W_IMPORTANCE', 0.25)
     layer_weight = MEMORY_INFLUENCE_WEIGHT.get("fermented", 0.6)
 
+    # Sprint 4: 벡터 캐시 조회
+    vec_cache = _vector_similarity_cache.get(channel_id, {})
+
     for idx, entry in enumerate(entries):
         if not isinstance(entry, dict):
             continue
@@ -1029,9 +1331,11 @@ def score_fermented_entries(entries: list, query: str = "", channel_id: str = ""
         )
         importance = 1.0 if has_important else 0.0
 
-        # Keyword overlap with query
+        # Similarity: 벡터 캐시 우선, 없으면 키워드 폴백
         similarity = 0.0
-        if query_tokens:
+        if idx in vec_cache:
+            similarity = vec_cache[idx]
+        elif query_tokens:
             summary = (entry.get("summary", "") or "").lower()
             arc = entry.get("arc_observations", {})
             if isinstance(arc, dict):
@@ -1181,6 +1485,27 @@ def build_fermented_context(
 
         if fermented_texts:
             content_parts.append("### 에피소드\n" + "\n---\n".join(fermented_texts))
+
+    # Sprint 4: Archived storylines → 발효 컨텍스트에 주입
+    # resolved 스토리라인의 요약이 여기에 들어가서, 원본 턴이 압축되어도 맥락이 남음
+    try:
+        import domain_manager as _dm
+        _ch = session_data.get("channel_id_ref", "")
+        if _ch:
+            _nt_st = _dm.get_narrative_tracker_state(_ch)
+            archived = _nt_st.get("archived_storylines", [])
+            if archived:
+                arch_lines = []
+                for asl in archived[-8:]:
+                    name = asl.get("name", "?")
+                    entities = ", ".join(asl.get("entities", [])[:4])
+                    summary = asl.get("summary", "")[:150]
+                    turns = asl.get("turns", 0)
+                    arch_lines.append(f"- {name} [{entities}] ({turns}턴): {summary}")
+                if arch_lines:
+                    content_parts.append("### 완결 스토리라인\n" + "\n".join(arch_lines))
+    except Exception:
+        pass
 
     # N5: Structured memory slots → 프롬프트 주입
     slot_text = format_memory_for_injection(session_data)
@@ -1343,6 +1668,9 @@ def get_memory_stats(session_data: Dict[str, Any]) -> Dict[str, Any]:
     )
     deep_tokens = estimate_tokens(deep)
     
+    # Sprint 4: 벡터 캐시 정보
+    vec_cached = sum(len(v) for v in _vector_similarity_cache.values())
+
     return {
         "fresh_count": len(history),
         "fermented_count": len(fermented),
@@ -1352,7 +1680,8 @@ def get_memory_stats(session_data: Dict[str, Any]) -> Dict[str, Any]:
         "deep_tokens": deep_tokens,
         "total_estimated_tokens": fresh_tokens + fermented_tokens + deep_tokens,
         "needs_fermentation": should_ferment_fresh(session_data),
-        "needs_deep_compression": should_compress_to_deep(session_data)
+        "needs_deep_compression": should_compress_to_deep(session_data),
+        "vector_cache_entries": vec_cached,
     }
 
 
@@ -1385,25 +1714,36 @@ async def force_ferment(
     client,
     model_id: str,
     session_data: Dict[str, Any],
-    save_callback=None
+    save_callback=None,
+    channel_id: str = "",
 ) -> Tuple[bool, str]:
     """
     조건과 관계없이 강제로 발효를 실행합니다.
-    
+
     Returns:
         (성공 여부, 메시지)
     """
     history = session_data.get("history", [])
-    
+
     if len(history) < 10:
         return False, "발효할 히스토리가 부족합니다 (최소 10개 필요)"
-    
+
     ferment_count = min(len(history), FERMENT_CHUNK_SIZE)
-    
+
+    # Sprint 4: 스토리라인 힌트 로드
+    _nt_state = {}
+    if channel_id:
+        try:
+            import domain_manager as _dm
+            _nt_state = _dm.get_narrative_tracker_state(channel_id)
+        except Exception:
+            pass
+
     result_data = await compress_fresh_to_fermented(
         client, model_id,
         history[:ferment_count],
-        use_v3=True
+        use_v3=True,
+        nt_state=_nt_state,
     )
 
     if not result_data:

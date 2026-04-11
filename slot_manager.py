@@ -565,6 +565,22 @@ def _prepend_quest_directive(obj_ctx: str) -> str:
     return quest_directive + "\n" + obj_ctx
 
 
+def _build_chapter_with_storylines(chapter_ctx: str, channel_id: str) -> str:
+    """Chapter 컨텍스트에 NarrativeTracker 스토리라인 정보 추가."""
+    try:
+        import narrative_tracker
+        import domain_manager
+        if not channel_id:
+            return chapter_ctx
+        nt_state = domain_manager.get_narrative_tracker_state(channel_id)
+        sl_text = narrative_tracker.format_storylines_for_prompt(nt_state)
+        if sl_text:
+            return (chapter_ctx + "\n\n" + sl_text) if chapter_ctx else sl_text
+    except Exception as e:
+        logger.debug("[Slot 11] NarrativeTracker storyline injection failed: %s", e)
+    return chapter_ctx
+
+
 def _extract_voice_quirks(voice_card: str) -> str:
     """voice_card에서 Quirks 줄만 추출 (대사 디렉티브 합성용)."""
     for line in voice_card.split("\n"):
@@ -682,6 +698,21 @@ def build_34_step_prompt(ctx) -> str:
         if others:
             npc_roles += f"\n\n{others}"
         logger.info(f"[NPC Smart Load] Full: {relevant_npcs}, Others: name-only")
+
+        # Sprint 3: NPC 상태 이력 추가 (NarrativeTracker)
+        try:
+            import narrative_tracker as _nt
+            import domain_manager as _dm
+            nt_state = _dm.get_narrative_tracker_state(channel_id)
+            state_parts = []
+            for npc_name in relevant_npcs:
+                state_text = _nt.format_entity_state_for_prompt(nt_state, npc_name)
+                if state_text:
+                    state_parts.append(f"[{npc_name} State History]\n{state_text}")
+            if state_parts:
+                npc_roles += "\n\n" + "\n".join(state_parts)
+        except Exception as e:
+            logger.debug("[Slot 7] NarrativeTracker entity state injection failed: %s", e)
     else:
         npc_roles = str(domain_data.get("npcs", "")) if domain_data.get("npcs") else ""
 
@@ -1368,7 +1399,10 @@ def build_34_step_prompt(ctx) -> str:
         psyche_states=psyche_states,
         scene_intelligence=scene_intelligence,
         extended_intelligence=extended_intelligence,
-        chapter_context=_prepend_quest_directive(getattr(ctx, 'obj_ctx', '')),
+        chapter_context=_build_chapter_with_storylines(
+            _prepend_quest_directive(getattr(ctx, 'obj_ctx', '')),
+            getattr(ctx, 'channel_id', '') or (ctx.narrative_anchors or {}).get('channel_id', '')
+        ),
         content_level=getattr(ctx, 'scene_type', 'normal'),
         last_response=last_response,
         narrative_chain=narrative_chain,

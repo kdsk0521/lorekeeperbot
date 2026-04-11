@@ -1248,6 +1248,20 @@ def set_session_ai_memory(channel_id: str, data: Dict[str, Any]) -> None:
     save_domain(channel_id, d)
 
 
+# Narrative Tracker State (ai_session_memory 내 중첩)
+def get_narrative_tracker_state(channel_id: str) -> Dict[str, Any]:
+    mem = get_session_ai_memory(channel_id)
+    import narrative_tracker
+    return mem.get("narrative_tracker") or narrative_tracker.get_default_state()
+
+def update_narrative_tracker_state(channel_id: str, state: Dict[str, Any]) -> None:
+    d = get_domain(channel_id)
+    mem = d.get("ai_session_memory", {})
+    mem["narrative_tracker"] = state
+    d["ai_session_memory"] = mem
+    save_domain(channel_id, d)
+
+
 # Scene Continuity (롤링 프레임 윈도우)
 def get_scene_continuity(channel_id: str) -> Dict[str, Any]:
     """Scene continuity 데이터 조회. 구 포맷 자동 마이그레이션."""
