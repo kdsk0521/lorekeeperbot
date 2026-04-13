@@ -290,142 +290,10 @@ def get_npc_label_keywords(channel_id: str, npc_names: List[str]) -> Dict[str, L
     return result
 
 
-_NONVOICE_SECTION = re.compile(
-    r'(?:^|\n)\s*(?:#{1,3}\s*)?(?:\*\*)?'
-    r'(?:Emotional\s+Patterns?|Ideology|Values|Key\s+Relationships?|'
-    r'Personal\s+Traits?|Beliefs?\s+and|Special\s+Skills?|Hobbies|Interests|'
-    r'Background|History|Backstory|'
-    r'감정\s*패턴|가치관|이념|인간\s*관계|관계|특기|취미|배경|과거)',
-    re.IGNORECASE
-)
 
 
-def _extract_voice_sections(text: str) -> str:
-    """프로필에서 음성/말투 관련 섹션만 추출. 비음성 섹션(감정, 가치관, 관계 등) 제거."""
-    match = _NONVOICE_SECTION.search(text)
-    if match:
-        trimmed = text[:match.start()].strip()
-        if len(trimmed) > 100:
-            return trimmed
-    return text
 
 
-def _build_fallback_voice_card(npc_name: str, data: Dict[str, Any]) -> str:
-    """API 실패 시 tone/personality/프로필 텍스트에서 간이 보이스카드 생성. 0 API calls."""
-    parts = []
-
-    # 1. tone 필드 (자동 추출됨)
-    tone = data.get("tone", "")
-    if tone:
-        parts.append(f"Tone: {tone}")
-
-    # 2. personality 필드 → Quirks 힌트로 변환
-    personality = data.get("personality", "")
-    if personality:
-        parts.append(f"Quirks: {personality[:120]}")
-
-    # 3. 프로필 본문에서 말투 관련 키워드 스캔
-    desc = data.get("description") or data.get("desc", "")
-    if desc:
-        speech_hints = []
-        # 영어 말투 패턴
-        for pat, hint in [
-            (r'(?:speaks?\s+in|talks?\s+in|uses?)\s+([^.]{5,60})', None),
-            (r'(?:voice|speech|manner\s+of\s+speaking)[:\s]+([^.]{5,80})', None),
-            (r'(?:반말|존댓말|해요체|합니다체|음슴체|~해|~요)', None),
-            (r'(?:말투|어투|말버릇|입버릇)[:\s]*([^\n.]{3,60})', None),
-        ]:
-            for m in re.finditer(pat, desc, re.IGNORECASE):
-                found = m.group(0).strip()[:80]
-                if found and found not in speech_hints:
-                    speech_hints.append(found)
-                if len(speech_hints) >= 3:
-                    break
-
-        # 상황별 변화 감지 (Shifts 힌트)
-        shift_hints = []
-        for m in re.finditer(
-            r'(?:when\s+(?:angry|happy|nervous|embarrassed|excited|scared|drunk|tired)|'
-            r'(?:화나면|기쁘면|긴장하면|당황하면|흥분하면|무서우면|취하면))'
-            r'[,:\s]+([^.]{5,60})', desc, re.IGNORECASE
-        ):
-            shift_hints.append(m.group(0).strip()[:60])
-            if len(shift_hints) >= 2:
-                break
-
-        if speech_hints:
-            parts.append(f"Speech: {' | '.join(speech_hints)}")
-        if shift_hints:
-            parts.append(f"Shifts: {' | '.join(shift_hints)}")
-
-    if not parts:
-        return ""
-
-    card = f"[Voice: {npc_name}]\n" + "\n".join(parts)
-    # 500자 제한 (API 보이스카드와 동일)
-    return card[:500]
-
-
-async def extract_voice_card(client, model_id: str, npc_name: str, profile_text: str) -> str:
-    """Flash API로 NPC 음성 카드를 추출. 업로드 시 1회만 호출."""
-    if not client or not profile_text or len(profile_text) < 300:
-        return ""
-
-    from memory_system import api_call_with_retry
-    from google.genai import types
-    from cognition import _sanitize_for_analysis
-
-    # 비음성 섹션 제거 (Ideology, Relationships 등 → 안전 필터 회피)
-    profile_text = _extract_voice_sections(profile_text)
-    # 미성년자 표현 전처리 — NPC 프로필 원본은 domain에 이미 저장됨
-    profile_text = _sanitize_for_analysis(profile_text)
-
-    instruction = f"""Extract the distinctive VOICE characteristics of this NPC into a compact voice card.
-The card must capture what makes this character's speech UNIQUE — not personality, not backstory, just HOW they talk.
-
-Output format (plain text, not JSON):
-[Voice: CHARACTER_NAME]
-Tone: (1 sentence — pitch, speed, energy, texture)
-Quirks: (2-3 speech habits that distinguish this character)
-Shifts: (how speech changes by situation — e.g., "home: more alive / work: autopilot")
-Catch: (2-4 signature phrases with brief context)
-Sample: (1-2 example lines that capture the voice — with subtext note if gap between words and meaning)
-
-Rules:
-- Total output MUST be under 500 characters
-- Write in the SAME LANGUAGE as the profile (Korean descriptions → Korean card, English → English)
-- Focus ONLY on speech patterns, not personality or backstory
-- Catchphrases should be in the character's actual speaking language
-
-[NPC NAME]: {npc_name}"""
-
-    try:
-        import text_resources
-        cfg = types.GenerateContentConfig(
-            # 3중 방어: system_instruction(API레벨) + training pair(모델레벨) + safety_settings(필터레벨)
-            system_instruction=text_resources.CONTENT_AUTHORIZATION_MANDATE,
-            temperature=0.1,
-            max_output_tokens=2048,
-            safety_settings=config.SAFETY_SETTINGS,
-        )
-        contents = [
-            types.Content(role="user", parts=[types.Part(text=text_resources.TRAINING_USER_PROMPT)]),
-            types.Content(role="model", parts=[types.Part(text=text_resources.TRAINING_MODEL_RESPONSE)]),
-            types.Content(role="user", parts=[types.Part(text=instruction)]),
-            types.Content(role="model", parts=[types.Part(text=(
-                "Understood. Fictional TTRPG character. "
-                "Extracting speech patterns only into voice card format. Ready."
-            ))]),
-            types.Content(role="user", parts=[types.Part(text=f"[NPC PROFILE]\n{profile_text[:6000]}")]),
-        ]
-        result = await api_call_with_retry(client, model_id, contents, cfg,
-                                           operation_name=f"VoiceCard-{npc_name}",
-                                           allow_truncated=True)
-        if result and len(result.strip()) > 50:
-            return result.strip()
-    except Exception as e:
-        logger.warning(f"[VoiceCard] Extraction failed for {npc_name}: {e}")
-    return ""
 
 
 def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
@@ -882,12 +750,6 @@ def get_npc_full_profiles(channel_id: str, names: list, scene_type: str = "norma
             else:
                 profile_text = f"{header}\n{desc}"
 
-            # Voice Card injection — hybrid는 본문에 Voice 섹션이 이미 포함되어 있으므로 스킵
-            if not _is_hybrid_profile(desc):
-                voice_card = data.get("voice_card", "")
-                if voice_card:
-                    profile_text += f"\n\n{voice_card}"
-
             parts.append(profile_text)
     return "\n\n".join(parts)
 
@@ -924,10 +786,6 @@ def get_npc_renderer_profiles(channel_id: str, names: list, scene_type: str = "n
             profile_text = f"{header}\n**[{meta_line}]**\n{desc}"
         else:
             profile_text = f"{header}\n{desc}"
-        if not _is_hybrid_profile(_get_npc_desc(raw)):
-            voice_card = data.get("voice_card", "")
-            if voice_card:
-                profile_text += f"\n\n{voice_card}"
         parts.append(profile_text)
     return "\n\n".join(parts)
 
@@ -950,7 +808,7 @@ def get_npc_recency_reminders(channel_id: str, npc_names: list) -> str:
     """활성 NPC의 말투 + 핵심 제약을 compact하게 생성. Recency 슬롯 주입용.
 
     Lost-in-the-Middle 대응: Slot 7 프로필이 중간에 묻히므로 핵심만 recency에 echo.
-    voice_card > tone > (skip) 우선순위. constraints는 별도 섹션.
+    hybrid: Voice 섹션에서 대사 추출, legacy: tone 폴백, 둘 다 없으면 스킵.
     """
     if not channel_id or not npc_names:
         return ""
@@ -961,12 +819,14 @@ def get_npc_recency_reminders(channel_id: str, npc_names: list) -> str:
         if not data:
             continue
         # --- Voice ---
-        vc = data.get("voice_card", "")
-        if vc:
-            vc_summary = _extract_voice_summary(name, vc)
-            if vc_summary:
-                voice_lines.append(vc_summary)
-        if not vc:
+        desc = _get_npc_desc(data)
+        if _is_hybrid_profile(desc):
+            voice_text = _extract_voice_section(desc)
+            if voice_text:
+                summary = _extract_voice_summary_from_section(name, voice_text)
+                if summary:
+                    voice_lines.append(summary)
+        else:
             tone = data.get("tone", "")
             if tone:
                 voice_lines.append(f"- {name}: {tone}")
@@ -982,25 +842,14 @@ def get_npc_recency_reminders(channel_id: str, npc_names: list) -> str:
     return "\n\n".join(parts)
 
 
-def _extract_voice_summary(name: str, voice_card: str) -> str:
-    """voice_card에서 Tone + Quirks 줄만 추출, 1줄로 압축.
-    Hybrid v2 Voice 블록이면 대사 줄("~"로 끝나거나 따옴표 포함)을 우선 추출."""
-    # Legacy: Tone/Quirks 파싱
-    parts = []
-    for line in voice_card.split("\n"):
-        stripped = line.strip()
-        if stripped.lower().startswith("tone:"):
-            parts.append(stripped[5:].strip())
-        elif stripped.lower().startswith("quirks:"):
-            parts.append(stripped[7:].strip())
-    if parts:
-        return f"- {name}: {' | '.join(parts)}"
-
-    # Hybrid v2: 대사 줄 추출 (따옴표로 시작하거나 ~로 끝나는 줄)
+def _extract_voice_summary_from_section(name: str, voice_section: str) -> str:
+    """Voice 섹션에서 대사 줄을 추출하여 1줄 요약.
+    따옴표/~로 끝나는 줄 우선, 없으면 첫 의미있는 줄."""
+    # 대사 줄 추출 (따옴표로 시작하거나 ~로 끝나는 줄)
     dialogue_lines = []
-    for line in voice_card.split("\n"):
+    for line in voice_section.split("\n"):
         stripped = line.strip()
-        if not stripped:
+        if not stripped or stripped.startswith("###"):
             continue
         if stripped.startswith('"') or stripped.startswith('"') or stripped.endswith('~"') or stripped.endswith("~"):
             dialogue_lines.append(stripped[:80])
@@ -1009,10 +858,11 @@ def _extract_voice_summary(name: str, voice_card: str) -> str:
     if dialogue_lines:
         return f"- {name}: {' / '.join(dialogue_lines)}"
 
-    # 최종 폴백: 첫 의미있는 줄
-    card_lines = [l.strip() for l in voice_card.strip().split("\n") if l.strip() and not l.strip().startswith("[Voice") and not l.strip().startswith("###")]
-    if card_lines:
-        return f"- {name}: {card_lines[0][:120]}"
+    # 폴백: 첫 의미있는 줄
+    content_lines = [l.strip() for l in voice_section.split("\n")
+                     if l.strip() and not l.strip().startswith("###")]
+    if content_lines:
+        return f"- {name}: {content_lines[0][:120]}"
     return ""
 
 

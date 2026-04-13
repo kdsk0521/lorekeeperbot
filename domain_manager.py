@@ -385,7 +385,7 @@ def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
             break
 
     # 기존 데이터에서 보존할 필드 (재등록 시 유실 방지)
-    _PRESERVE_KEYS = ("source", "voice_card")
+    _PRESERVE_KEYS = ("source",)
     if existing_key:
         existing = npcs[existing_key]
         for pk in _PRESERVE_KEYS:

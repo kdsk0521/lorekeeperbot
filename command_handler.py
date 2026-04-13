@@ -811,25 +811,9 @@ async def cmd_npc(ctx: CommandContext) -> None:
                 targets = {k: v for k, v in npcs.items()
                            if len(v.get("description") or v.get("desc", "")) > 300}
             if not targets:
-                await ctx.send("Voice Card가 필요한 NPC가 없습니다.")
+                await ctx.send("Voice Card 대상 NPC가 없습니다.")
                 return
-            await ctx.send(f"🎙️ Voice Card 추출 시작... ({len(targets)}명)")
-            vc_count = 0
-            for npc_name, npc_data in targets.items():
-                desc = npc_data.get("description") or npc_data.get("desc", "")
-                if npc_manager._is_hybrid_profile(desc):
-                    voice_card = npc_manager._extract_voice_section(desc)
-                else:
-                    voice_card = await npc_manager.extract_voice_card(
-                        ctx.genai_client, config.MODEL_ID_FLASH, npc_name, desc
-                    )
-                    if not voice_card:
-                        voice_card = npc_manager._build_fallback_voice_card(npc_name, npc_data)
-                if voice_card:
-                    npc_data["voice_card"] = voice_card
-                    domain_manager.update_npc(channel_id, npc_name, npc_data)
-                    vc_count += 1
-            await ctx.send(f"🎙️ Voice Card 추출 완료: {vc_count}/{len(targets)}명 성공")
+            await ctx.send("ℹ️ Voice Card 시스템은 제거되었습니다. hybrid 프로필의 ### Voice 섹션이 직접 사용됩니다.")
             return
 
     # 3. Batch Processing Logic (Restored from handle_npc_command)
@@ -984,29 +968,7 @@ async def cmd_npc(ctx: CommandContext) -> None:
             else:
                 await ctx.send(f"👥 **NPC 일괄 등록 완료:** 총 {processed_count}명")
 
-            # Voice Card extraction (Flash API) — hybrid v2는 Voice 섹션 직접 사용
-            if ctx.genai_client:
-                registered_npcs = domain_manager.get_npcs(channel_id)
-                vc_count = 0
-                for npc_name in list(registered_npcs.keys())[-processed_count:]:
-                    npc_data = registered_npcs[npc_name]
-                    desc = npc_data.get("description") or npc_data.get("desc", "")
-                    if desc and len(desc) > 300 and not npc_data.get("voice_card"):
-                        # Hybrid v2: Voice 섹션이 곧 voice_card — Flash 콜 스킵
-                        if npc_manager._is_hybrid_profile(desc):
-                            voice_card = npc_manager._extract_voice_section(desc)
-                        else:
-                            voice_card = await npc_manager.extract_voice_card(
-                                ctx.genai_client, config.MODEL_ID_FLASH, npc_name, desc
-                            )
-                            if not voice_card:
-                                voice_card = npc_manager._build_fallback_voice_card(npc_name, npc_data)
-                        if voice_card:
-                            npc_data["voice_card"] = voice_card
-                            domain_manager.update_npc(channel_id, npc_name, npc_data)
-                            vc_count += 1
-                if vc_count > 0:
-                    await ctx.send(f"🎙️ Voice Card 추출 완료 ({vc_count}명)")
+            # Voice Card 시스템 제거됨 — hybrid는 ### Voice 섹션 직접 사용, legacy는 tone 폴백
         else:
              await ctx.send("⚠️ 유효한 형식을 찾을 수 없습니다. (예: `이름: 설명` 또는 `[NPC NAME]: 이름`)")
         return

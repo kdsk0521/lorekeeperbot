@@ -587,12 +587,22 @@ def _build_chapter_with_storylines(chapter_ctx: str, channel_id: str) -> str:
     return chapter_ctx
 
 
-def _extract_voice_quirks(voice_card: str) -> str:
-    """voice_card에서 Quirks 줄만 추출 (대사 디렉티브 합성용)."""
-    for line in voice_card.split("\n"):
+def _extract_voice_quirks_from_profile(desc: str) -> str:
+    """NPC 프로필에서 voice quirks 추출 (대사 디렉티브 합성용).
+    hybrid: Voice 섹션 첫 대사 줄, legacy: 빈 문자열."""
+    import npc_manager as _nm
+    if not _nm._is_hybrid_profile(desc):
+        return ""
+    voice_text = _nm._extract_voice_section(desc)
+    if not voice_text:
+        return ""
+    # 첫 의미있는 대사 줄 추출
+    for line in voice_text.split("\n"):
         stripped = line.strip()
-        if stripped.lower().startswith("quirks:"):
-            return stripped[7:].strip()
+        if not stripped or stripped.startswith("###"):
+            continue
+        if stripped.startswith('"') or stripped.startswith('\u201c') or stripped.endswith("~"):
+            return stripped[:120]
     return ""
 
 
@@ -1129,8 +1139,9 @@ def build_34_step_prompt(ctx) -> str:
         import npc_manager as _npc_mgr
         for _npc_n in (psyche_data or {}):
             _nd = _npc_mgr.get_npc(channel_id, _npc_n)
-            if _nd and _nd.get("voice_card"):
-                _vq = _extract_voice_quirks(_nd["voice_card"])
+            if _nd:
+                _desc = _npc_mgr._get_npc_desc(_nd)
+                _vq = _extract_voice_quirks_from_profile(_desc)
                 if _vq:
                     _voice_quirks[_npc_n] = _vq
     _dialogue_dir = iceberg.compose_dialogue_directives(
