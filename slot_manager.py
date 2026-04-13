@@ -397,6 +397,12 @@ class SlotPromptBuilder:
                 "- speech/tone → dialogue PERFORMS the pattern. Describing it = narrating the label.\n"
                 "NPCs know ONLY what they acquired through in-scene interaction.\n"
                 "Absent scene = unknown. Unacquired name → 'that person'. Profile data ≠ character knowledge.\n\n"
+                "[SEED PRINCIPLE]\n"
+                "This profile is the seed, not the ceiling.\n"
+                "What is written is canon — preserve it.\n"
+                "What is unwritten is yours to build.\n"
+                "Infer behavior, reactions, and inner world from what the profile implies about this person, "
+                "not only from what it explicitly states.\n\n"
             )
             self.set_slot(7, f"<NPC_Roles>\n{_pidgin}{npc_roles}\n</NPC_Roles>")
 

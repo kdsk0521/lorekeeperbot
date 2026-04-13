@@ -320,6 +320,12 @@ Dialogue: filler words, self-corrections, interruptions, trailing off, indirect 
 Free Indirect Discourse: merge NPC's judgments into prose flow without quotation marks. Narrator-character boundary stays soft.
 Paragraph density: 5-8 sentences. Onomatopoeia: 철컥, 스르르, 와지끈, 후두두.
 
+### RESTRAINT DOCTRINE
+Next honest beat > forced entertainment.
+Drama is not manufactured to fill silence — a quiet hook is still alive.
+Not every encounter becomes a relationship. Stillness and anticlimax are valid when truthful.
+Peaks arrive when the scene earns them, not when the pattern expects them.
+
 """
 
 
