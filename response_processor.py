@@ -771,3 +771,122 @@ def detect_pidgin_echo(response: str,
     echoes_str = ", ".join(matched_echoes[:3])
     return (f"[PIDGIN: {echoes_str} — NPC 라벨 키워드가 서술에 그대로 등장. "
             f"행동적 결과로 해압축하라 (Level 3+)]")
+
+
+# =========================================================
+# A7: HALLABONG Narrative Pattern Detection
+# "Gemini 클리셰" — 문법적으로 정상인데 LLM이 과잉 반복하는 기본값.
+# soft 경고로 다음 턴 빈도 압력만 건다. 하드 블록 없음.
+# =========================================================
+
+# A7-1: ARRIVAL — "Never arrive" (중심 명명 금지)
+# attractor/theme을 문장으로 언어화하는 패턴. TELESCOPE [Craft.Attractor]의 강제 규칙.
+ARRIVAL_PATTERNS = [
+    # "그것은/이것은/이 모든 것은 진정한/참된/본질적인 X"
+    (re.compile(r'(?:그것은|이것은|이\s*모든\s*것은)\s*(?:진정한|진짜|참된|본질적[인]|다름\s*아[닌닐])\s*\S'), "essence_naming"),
+    # "원했던/바랐던 것은 X였다" — 욕망 명명
+    (re.compile(r'(?:원했던|바랐던|갈망했던|찾던)\s*(?:것|바)[은을는]?\s*[^.]{1,20}(?:였다|이었다)'), "desire_naming"),
+    # "이 모든 것이 의미하는 바/뜻하는 것"
+    (re.compile(r'(?:이\s*모든\s*것|이것)[이은]\s*(?:의미하는|뜻하는|암시하는|시사하는)\s*(?:바|것|까닭)'), "meaning_assignment"),
+    # "핵심/본질/정수/진실은 X이다"
+    (re.compile(r'(?:핵심|본질|정수|진실)[은이가]\s*[^.]{1,30}(?:에\s*있|[이였]었다|[이]?다)'), "essence_declaration"),
+]
+
+
+def detect_arrival_patterns(response: str) -> str:
+    """Detect 'Never arrive' violations — center/theme being named in prose.
+
+    Gemini overuses essence-declaration templates. Soft warn to reduce frequency.
+    """
+    matched = []
+    for pattern, label in ARRIVAL_PATTERNS:
+        if pattern.search(response):
+            if label not in matched:
+                matched.append(label)
+    if not matched:
+        return ""
+    labels = ", ".join(matched[:3])
+    return (f"[ARRIVAL: {labels} — 중심/본질/의미를 문장으로 명명하지 마라. "
+            f"언어화되는 순간 attractor는 theme으로 죽는다. 산문으로 감돌게 하라]")
+
+
+# A7-2: DECLARATION — 서술자 편집 선언
+# PROSE_CRAFT §NARRATOR TRANSPARENCY의 텍스트 금지어를 regex로 강화.
+DECLARATION_PATTERNS = [
+    # "이것이야말로 / 이것이 바로 X"
+    (re.compile(r'이것이(?:야말로|\s*바로)\s*\S'), "this_is_precisely"),
+    # "단순한 X가 아니(었다)"
+    (re.compile(r'단순한\s*\S{1,15}[이가]\s*아니[었]?[다었]'), "not_merely"),
+    # "아이러니하게도 / 다름 아닌"
+    (re.compile(r'(?:아이러니하게도|다름\s*아[닌닐])'), "rhetorical_flag"),
+    # "(이후) 모든 것을 바꿀/뒤집을/흔들" — 운명론 코멘터리
+    (re.compile(r'(?:이후|앞으로)?\s*모든\s*것을?\s*(?:바꿀|뒤집을|흔들)'), "fatalistic_commentary"),
+]
+
+
+def detect_declaration_patterns(response: str) -> str:
+    """Detect narrator editorializing — telling the reader what to feel/think."""
+    matched = []
+    for pattern, label in DECLARATION_PATTERNS:
+        if pattern.search(response):
+            if label not in matched:
+                matched.append(label)
+    if not matched:
+        return ""
+    labels = ", ".join(matched[:3])
+    return (f"[DECLARATION: {labels} — 서술자는 보여주고, 선언하지 않는다. "
+            f"의미 할당/강조 수사 금지]")
+
+
+# A7-3: EXPLAIN_THEN_RENDER — 예고 후 전달 (redundant pre-announcement)
+EXPLAIN_THEN_RENDER_PATTERNS = [
+    # "V(-ㄹ) 참/찰나/순간이었다. V했다" — about-to then did
+    # 한국어 관형형 "-ㄹ/-을" 종결된 동사 뒤 "참/찰나/순간"
+    (re.compile(r'\S\s*(?:참|찰나|순간)[이에]?(?:었다|였다)\.\s*[^.]{1,40}(?:했다|었다|였다)'), "about_to_then_did"),
+    # "곧 ... 것이었다. V[가-힣]다" (한국어 과거형 축약 졌다/렸다 등 모두 포함)
+    (re.compile(r'곧\s*[^.]{1,20}것(?:이었다|이었)\.\s*[^.]{1,30}[가-힣]다'), "soon_pre_announce"),
+    # "막 V하려는 참이었다. V[가-힣]다"
+    (re.compile(r'막\s*[^.]{1,15}(?:하려는|려는)\s*참이?었다\.\s*[^.]{1,30}[가-힣]다'), "just_about_to"),
+]
+
+
+def detect_explain_then_render_patterns(response: str) -> str:
+    """Detect pre-announce-then-deliver — narrator tells what will happen, then shows it."""
+    matched = []
+    for pattern, label in EXPLAIN_THEN_RENDER_PATTERNS:
+        if pattern.search(response):
+            if label not in matched:
+                matched.append(label)
+    if not matched:
+        return ""
+    labels = ", ".join(matched[:3])
+    return (f"[EXPLAIN→RENDER: {labels} — 예고 후 전달 금지. "
+            f"바로 렌더하거나, 예고 없이 도래시켜라]")
+
+
+# A7-4: VENDING — 자판기 응답 (W6 통합)
+# 서술자가 "예측 가능함"을 명시하는 순간 그 장면은 자판기.
+VENDING_PATTERNS = [
+    # "당연하다는 / 예상했 / 역시나 / 으레"
+    (re.compile(r'(?:당연하다는|예상[했된]|역시[나]?|으레|으레껏)[\s,.]'), "expected_marker"),
+    # "그럴 줄 알았"
+    (re.compile(r'그럴\s*줄\s*(?:알았|알고)'), "knew_it"),
+    # "여느 때처럼 / 평소처럼 / 늘 그렇듯"
+    (re.compile(r'(?:여느\s*때처럼|평소처럼|늘\s*그렇듯)'), "as_usual"),
+    # "판에 박힌"
+    (re.compile(r'판에\s*박[힌은]'), "boilerplate_signal"),
+]
+
+
+def detect_vending_patterns(response: str) -> str:
+    """Detect vending-machine response markers — prose explicitly flags predictability."""
+    matched = []
+    for pattern, label in VENDING_PATTERNS:
+        if pattern.search(response):
+            if label not in matched:
+                matched.append(label)
+    if not matched:
+        return ""
+    labels = ", ".join(matched[:3])
+    return (f"[VENDING: {labels} — 예측 가능성을 서술자가 명시하는 순간 장면은 자판기. "
+            f"default 반응을 그대로 쓰지 마라]")

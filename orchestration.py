@@ -1221,9 +1221,17 @@ class OrchestrationService:
                         detect_sensory_repetition, detect_pidgin_echo,
                         detect_structural_repetition, detect_tension_dissolution,
                         detect_deflection_repetition,
+                        # A7: HALLABONG Gemini-cliché detectors
+                        detect_arrival_patterns, detect_declaration_patterns,
+                        detect_explain_then_render_patterns, detect_vending_patterns,
                     )
                     cliche_fb = detect_cliche_patterns(response)
                     cargo_fb = detect_cargo_patterns(response)
+                    # A7: HALLABONG 4-pattern detection
+                    arrival_fb = detect_arrival_patterns(response)
+                    declaration_fb = detect_declaration_patterns(response)
+                    explain_render_fb = detect_explain_then_render_patterns(response)
+                    vending_fb = detect_vending_patterns(response)
 
                     # Sensory Rotation: rolling window 3턴
                     _mem_for_fb = domain_manager.get_session_ai_memory(channel_id)
@@ -1270,6 +1278,7 @@ class OrchestrationService:
                     style_fb = " ".join(filter(None, [
                         cliche_fb, cargo_fb, rotation_fb, pidgin_fb,
                         struct_fb, tension_fb, deflection_fb,
+                        arrival_fb, declaration_fb, explain_render_fb, vending_fb,
                     ]))
                     if style_fb:
                         fmt_feedback = f"{fmt_feedback} {style_fb}".strip() if fmt_feedback else style_fb
