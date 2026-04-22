@@ -136,6 +136,12 @@ class WaterfallPipeline:
         bus.dai["aspects"] = analysis.get("Aspects", [])
         bus.dai["psyche_states"] = analysis.get("psyche_states", {})
         bus.dai["narrative_chain"] = analysis.get("narrative_chain", {})
+        # SD-Bb2 (2026-04-22): Theoria author-hint beats (휴리스틱 비트 보강용, 필수 아님)
+        _sb_raw = analysis.get("suggested_beats", [])
+        if isinstance(_sb_raw, list):
+            bus.dai["suggested_beats"] = [str(b).strip() for b in _sb_raw if isinstance(b, str) and b.strip()]
+        else:
+            bus.dai["suggested_beats"] = []
         bus.dai["scene_register"] = analysis.get("scene_register")
         bus.dai["input_mode"] = analysis.get("input_mode", "decree")
         bus.dai["memory_triggers"] = analysis.get("memory_triggers", [])
@@ -313,11 +319,19 @@ class WaterfallPipeline:
                     prev_emotions = domain_manager.get_world_state(channel_id).get(
                         "npc_emotion_states", {}
                     )
+                # P2: scene 컨텍스트와 memory_triggers 전달 (_derive_relational Tier 4/6/7 입력)
+                _narrative_chain = bus.dai.get("narrative_chain", {}) or {}
+                _scene_ctx = {
+                    "register": bus.dai.get("scene_register"),
+                    "silence_type": _narrative_chain.get("silence_type"),
+                }
                 emotion_results = EmotionEngine.process_turn(
                     psyche_states=psyche_states,
                     previous_emotions=prev_emotions,
                     current_turn=current_turn,
                     npc_attitudes=bus.dai.get("npc_attitudes", {}),
+                    scene_ctx=_scene_ctx,
+                    memory_triggers=bus.dai.get("memory_triggers", []),
                 )
                 bus.emotion = EmotionEngine.to_bus_dict(emotion_results)
                 if channel_id and emotion_results:
@@ -377,18 +391,7 @@ class WaterfallPipeline:
         except Exception as e:
             _degrade_stage(bus, "story_director", e)
 
-        # 5.6 Seven Dice persistence (W9)
-        try:
-            import config as _cfg
-            _dice = bus.dai.get("story_direction", {}).get("dice")
-            if _dice and channel_id:
-                _st = bus.anomaly.get("_storyteller_state", {})
-                _rd = _st.get("recent_dice", [])
-                _rd.append(_dice.get("face", ""))
-                _st["recent_dice"] = _rd[-_cfg.DICE_HISTORY_CAP:]
-                domain_manager.update_storyteller_state(channel_id, _st)
-        except Exception as e:
-            logger.warning("[SevenDice] Persistence failed: %s", e)
+        # 5.6 Seven Dice persistence → DiceEngine가 자체 처리 (dice_engine.py)
 
         # 6. Doom Update — consumes judgment doom_delta naturally
         try:
@@ -474,16 +477,21 @@ class WaterfallPipeline:
             _deg_str = ", ".join(d.get("stage", "?") for d in _deg if isinstance(d, dict))
             parts.append(f"  ⚠ Degraded: {_deg_str}")
 
-        # Emotion
+        # Emotion — pair 스키마 v2: 'dominant' → 'base' + 'modifier' (to_bus_dict summary)
         emotion_data = bus.emotion
         if emotion_data.get("active"):
             summaries = emotion_data.get("summary", {})
-            emo_parts = [
-                f"{n}={s.get('dominant','?')}({s.get('intensity',0):.1f})"
-                + (" ⚡" if s.get("spike") else "")
-                for n, s in summaries.items()
-                if s.get("intensity", 0) > 0.05
-            ]
+            emo_parts = []
+            for n, s in summaries.items():
+                if s.get("intensity", 0) <= 0.05:
+                    continue
+                _base = s.get("base", "?") or "?"
+                _mod = s.get("modifier", "")
+                _pair = f"{_base}×{_mod}" if _mod else _base
+                emo_parts.append(
+                    f"{n}={_pair}({s.get('intensity',0):.1f})"
+                    + (" ⚡" if s.get("spike") else "")
+                )
             if emo_parts:
                 parts.append(f"  Emotion: {', '.join(emo_parts)}")
         else:

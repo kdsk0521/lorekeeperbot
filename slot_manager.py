@@ -1431,6 +1431,29 @@ def build_34_step_prompt(ctx) -> str:
     )
 
     # =========================================================
+    # 4.4. Seven Dice 가시면 → Slot 19 (WRITING_DIRECTIVES 뒤에 append)
+    # 가시 3면(Agon/Alea/Mimicry)은 렌더링 제약 성격이므로 쓰기 지시문 축에 붙인다.
+    # 은닉 4면은 iceberg.translate_story_direction()이 Slot 16으로 보낸다.
+    # =========================================================
+    try:
+        _dice = (dai.get("story_direction", {}) or {}).get("dice") if isinstance(dai, dict) else None
+        if isinstance(_dice, dict) and _dice.get("visible"):
+            _d_effect = _dice.get("effect", "")
+            _d_name = _dice.get("name", "?")
+            if _d_effect:
+                _base_19 = builder.get_slot(19) or ""
+                _dice_block = (
+                    "\n\n### [Seven Dice — 가시 제약 | this turn]\n"
+                    f"- Rolled: {_d_name}\n"
+                    f"- Constraint: {_d_effect}\n"
+                    "- This constraint is REQUIRED for this response only. Apply once, then release."
+                )
+                builder.set_slot(19, _base_19 + _dice_block)
+                logger.info(f"[SevenDice→Slot19] Visible face injected: {_d_name}")
+    except Exception as _e_dice19:
+        logger.warning(f"[SevenDice→Slot19] Injection failed: {_e_dice19}")
+
+    # =========================================================
     # 4.5. Slot 33 일괄 조립 (Author Note + 모든 Recency 요소)
     # =========================================================
     slot33_parts = []
@@ -1477,6 +1500,16 @@ def build_34_step_prompt(ctx) -> str:
         _echo_parts.append("flags=" + ",".join(_active_flags))
     if _echo_parts:
         slot33_parts.append(f"[Scene Echo] {' | '.join(_echo_parts)}")
+
+    # Next Beat (SD-Ba4, 2026-04-22) — StoryDirector beat queue의 활성 비트 주입
+    # 5W1H 바로 앞, 최근접 주의(Recency) 위치에 배치.
+    try:
+        _nb = (dai.get("story_direction", {}) or {}).get("next_beat") if isinstance(dai, dict) else None
+        if isinstance(_nb, str) and _nb.strip():
+            slot33_parts.append(f"[Next Beat] {_nb.strip()}")
+            logger.info(f"[NextBeat→Slot33] Injected: {_nb[:60]}")
+    except Exception as _e_beat:
+        logger.warning(f"[NextBeat→Slot33] Injection failed: {_e_beat}")
 
     # 5W1H Recency Echo — always present at maximum recency position
     slot33_parts.append("[5W1H: Draw events only from DAI data. Camera scans environment evenly. Prose intensity follows EnergyDirection.]")

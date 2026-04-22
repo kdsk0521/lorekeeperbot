@@ -252,6 +252,16 @@ When all threads genuinely resolve, the scene rests in quiet resolution.
 narrative_hook = what the world's existing forces produce next. null when the world is at peace.
 scheherazade_violation: reserve for when GM has zero plausible world-driven continuation (extremely rare).
 
+### Suggested Beats (Author-Hint) [CUSTOM] → suggested_beats
+Based on current narrative state (chain_status, open_threads, active_conditions, memory_triggers, scene pressure), propose 2~3 candidate *next-turn beats* as short Korean directive strings. These are HINTS for the downstream Story Director — not commands to the Renderer.
+Format: Korean 1-sentence "다음 비트: ..." directives (the "다음 비트:" prefix is REQUIRED).
+Constraints:
+- World-driven only (same discipline as narrative_hook). No deus ex machina, no tonal whiplash.
+- Observation-rooted: each beat must have a visible cause in scene/chain/memory/condition.
+- Non-redundant: each beat should take a different direction (e.g. external trigger / internal pressure / relational shift / environmental beat).
+- Output [] (empty list) if the scene rests in quiet resolution and no next beat naturally emerges.
+- DO NOT include the Renderer's job (dialogue, prose). Only beat direction.
+
 ### Departure Point / Refraction [CUSTOM] → InputAnalysis
 User input is intention, not result. The world refracts through its own logic.
 "Opens the door" = attempts to open. Result depends on world state.

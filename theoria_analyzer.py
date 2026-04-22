@@ -115,6 +115,11 @@ class TheoriaAnalyzer:
                     repaired = bot_utils.repair_json(cleaned)
                     result = json.loads(repaired)
                     logger.info("[Theoria] JSON repair succeeded")
+                # Gemini가 간헐적으로 `[{...DAI...}]` 배열로 wrap하는 경우 구제.
+                # 원소 1개 + dict만 unwrap. 그 외는 기존 경로 유지.
+                if isinstance(result, list) and len(result) == 1 and isinstance(result[0], dict):
+                    logger.info("[Theoria] unwrapped JSON array top-level (Gemini quirk)")
+                    result = result[0]
                 return self._validate_dai(result)
 
             except json.JSONDecodeError as je:
@@ -307,6 +312,7 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
     "open_threads": ["thread type: description", ...],
     "silence_type": "reflective/hesitant/heavy/tense/null (間/Ma: classify when dialogue pauses)"
   }
+- "suggested_beats": [str, ...]  (0~3 Korean directives. Format: "다음 비트: ..." — world-driven next-turn hints for the Story Director. Non-redundant axes (external trigger / internal pressure / relational shift / environmental beat). [] when scene rests in quiet resolution. DO NOT write dialogue or prose — beat direction only.)
 - "memory_triggers": [{"trigger": str, "character": str, "echo": str, "type": "traumatic/nostalgic/shameful/loving (Fermentation Recall: current state distorts memory)"}]
 - "scene_register": "mirror" | "law" | "remainder" | null
   - mirror: character sees own trait in another without recognizing it. Name trait AND misrecognition.

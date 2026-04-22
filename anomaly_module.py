@@ -359,10 +359,18 @@ class AnomalyModule:
                     })
                     st_state["active_conditions"] = active_conds
 
-                logger.info("[Storyteller] ACT [%s] cat=%s int=%s pol=%s src=%s reason=%s",
+                # DC-09 배선: High/Extreme intensity 발현 시 escalated 플래그 설정.
+                # une_facade.py:1262가 이 플래그를 읽어 directive Aspects에
+                # "Loss of Control"을 추가한다. 배선 전에는 플래그가 영원히
+                # 설정되지 않아 Aspects가 죽어있었음 (컨슈머 고아 해소).
+                if bus.anomaly["intensity"] in ("High", "Extreme"):
+                    bus.anomaly["escalated"] = True
+
+                logger.info("[Storyteller] ACT [%s] cat=%s int=%s pol=%s src=%s reason=%s escalated=%s",
                             bus.anomaly["tag"], bus.anomaly["category"],
                             bus.anomaly["intensity"], bus.anomaly["polarity"],
-                            bus.anomaly["source"], bus.anomaly.get("decision_reason", ""))
+                            bus.anomaly["source"], bus.anomaly.get("decision_reason", ""),
+                            bus.anomaly.get("escalated", False))
             else:
                 bus.anomaly["triggered"] = False
                 decision = "skip"

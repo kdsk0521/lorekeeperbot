@@ -287,6 +287,7 @@ def _collect_board_events(channel_id: str, dai: Dict[str, Any]) -> List[Dict[str
                 intensity = state.get("intensity", 0)
                 if isinstance(intensity, (int, float)) and intensity > 0.8:
                     weight += 0.2
+                # pair 스키마 v2: 'dominant' 제거 → base_label (full EmotionState dict)
                 events.append({
                     "type": "emotion_spike",
                     "weight": weight,
@@ -294,7 +295,7 @@ def _collect_board_events(channel_id: str, dai: Dict[str, Any]) -> List[Dict[str
                     "target_npc": None,
                     "channel": "sns",
                     "detail_kr": state.get("spike_detail", "")
-                               or f"{npc_name}의 감정 급변: {state.get('dominant', '?')}",
+                               or f"{npc_name}의 감정 급변: {state.get('base_label', '?')}",
                     "tag": f"emotion_spike:{npc_name}",
                 })
     except Exception:
@@ -482,24 +483,9 @@ def _collect_board_events(channel_id: str, dai: Dict[str, Any]) -> List[Dict[str
     except Exception:
         pass
 
-    # --- Scanner 9: Visible Dice ---
-    try:
-        story_dir = dai.get("story_direction", {})
-        dice = story_dir.get("dice", {}) if isinstance(story_dir, dict) else {}
-        if isinstance(dice, dict) and dice.get("visible"):
-            effect = dice.get("effect", "")
-            if effect:
-                events.append({
-                    "type": "visible_dice",
-                    "weight": 0.4,
-                    "npc": None,
-                    "target_npc": None,
-                    "channel": "bulletin",
-                    "detail_kr": effect,
-                    "tag": f"dice:{dice.get('name', '?')}",
-                })
-    except Exception:
-        pass
+    # --- Scanner 9: Visible Dice → 제거됨 (SD-A4, 2026-04-22)
+    # 가시 다이스는 slot_manager에서 Slot 19(쓰기 지시문)에 직접 강제 제약으로 주입됨.
+    # bulletin 경로로 중복 송출하면 같은 제약이 두 슬롯에 쌓여 혼선이 생김.
 
     # --- Scanner 10: Memory Trigger (filler) ---
     try:
@@ -922,8 +908,12 @@ def _build_event_prompt(
             npc_section += f"\n태도: {att['attitude']}"
 
         emo = world.get("npc_emotion_states", {}).get(npc_key, {})
-        if isinstance(emo, dict) and emo.get("dominant"):
-            npc_section += f" | 감정: {emo['dominant']}"
+        # pair 스키마 v2: 'dominant' 제거 → base_label/modifier_label (full EmotionState.to_dict())
+        if isinstance(emo, dict) and emo.get("base_label"):
+            _base = emo.get("base_label", "")
+            _mod = emo.get("modifier_label", "")
+            _emo_text = f"{_base} × {_mod}" if _mod else _base
+            npc_section += f" | 감정: {_emo_text}"
 
         # NPC 지식
         knowledge = domain_manager.get_npc_knowledge_for(channel_id, npc_key)

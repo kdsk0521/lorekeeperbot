@@ -52,6 +52,18 @@ NPC_AUTONOMOUS_TRIGGERS = {
         "desc": "타자의 취약성 목격 → 행동 멈춤/외면/잔인 강화 (Lévinas)",
         "check": "_check_ethical_arrest",
     },
+    "groupthink_pressure": {
+        "desc": "3+ NPC 씬 · groupthink 다수 · fear/value_conflict → 반대 의견 삼킴 (Janis)",
+        "check": "_check_groupthink_pressure",
+    },
+    "conformity_drift": {
+        "desc": "3+ NPC 씬 · conformity 다수 · anxious → 다수 의견 동조 (Asch)",
+        "check": "_check_conformity_drift",
+    },
+    "obedience_cascade": {
+        "desc": "3+ NPC 씬 · obedience 다수 · disorganized/avoidant → 권위 추종 (Milgram)",
+        "check": "_check_obedience_cascade",
+    },
 }
 
 
@@ -183,6 +195,21 @@ class NPCAutonomousEngine:
             if r:
                 results.append(r)
 
+            # Group Dynamic Hooks (Pass D-3, 2026-04-21): group_dynamic dark
+            # circuit 해결. Flash가 채우는 relation.group_dynamic이 지금까지
+            # iceberg 대사 수식어로만 소비되고 NPC 행동에 영향 0이었던 것
+            # (§8b-10 S5). 3+ NPC 씬에서 다수 공유 시 취약 NPC(fear/anxious/
+            # disorganized)에게 행동 directive 발동.
+            r = _check_groupthink_pressure(npc_ctx, psyche_states)
+            if r:
+                results.append(r)
+            r = _check_conformity_drift(npc_ctx, psyche_states)
+            if r:
+                results.append(r)
+            r = _check_obedience_cascade(npc_ctx, psyche_states)
+            if r:
+                results.append(r)
+
         # Sort by priority descending
         results.sort(key=lambda x: x.priority, reverse=True)
         return results
@@ -296,10 +323,24 @@ def _check_secret_pressure(ctx: Dict) -> TriggerResult | None:
 
 
 def _check_emotional_contagion(ctx: Dict, all_psyche: Dict) -> TriggerResult | None:
-    """Emotional contagion: if another NPC is in extreme state, this NPC may be affected."""
+    """Emotional contagion: if another NPC is in extreme state, this NPC may be affected.
+
+    게이트 정책 (Pass D-1, 2026-04-21 — 폴리베이걸 이론 기반 재조정):
+      - dorsal(freeze): 지각 셧다운 상태 → 수신 차단
+      - sympathetic(fight/flight): 과각성 상태 → 감지 허용하되 어조·우선순위 차등
+      - ventral(calm): 평상 감지 → 기본 priority 2 + "평온이 흔들린다"
+
+    수신자 상태별 directive:
+      - ventral → priority 2, "평온이 흔들리기 시작한다"
+      - sympathetic → priority 1, "이미 곤두선 신경이 더 날카로워진다"
+
+    이전 게이트(`polyvagal != "ventral"` 차단)는 쉐어하우스처럼 모두가
+    약간씩 긴장한 장면에서 contagion 완전 침묵 → "고독한 공황" 패턴 유발
+    (§8b-10 S2). sympathetic은 오히려 타인 고통에 더 예민하므로 허용.
+    """
     current_polyvagal = ctx["soma"].get("polyvagal", "ventral")
-    if current_polyvagal != "ventral":
-        return None  # already stressed, no contagion trigger
+    if current_polyvagal == "dorsal":
+        return None  # freeze 상태: 지각 셧다운, 수신 불가
 
     for other_name, other_state in all_psyche.items():
         if other_name == ctx["name"] or not isinstance(other_state, dict):
@@ -310,6 +351,13 @@ def _check_emotional_contagion(ctx: Dict, all_psyche: Dict) -> TriggerResult | N
             other_relation = other_state.get("relation", {})
             other_val = other_relation.get("value", 0)
             if isinstance(other_val, (int, float)) and other_val < -30:
+                if current_polyvagal == "sympathetic":
+                    return TriggerResult(
+                        "emotional_contagion", ctx["name"],
+                        f"{ctx['name']}이(가) {other_name}의 고통을 감지한다 — 이미 곤두선 신경이 더 날카로워진다",
+                        priority=1,
+                    )
+                # ventral (또는 기타): 기본 어조
                 return TriggerResult(
                     "emotional_contagion", ctx["name"],
                     f"{ctx['name']}이(가) {other_name}의 고통을 감지한다 — 평온이 흔들리기 시작한다",
@@ -501,4 +549,86 @@ def _check_ethical_arrest(ctx: Dict, all_psyche: Dict) -> Optional[TriggerResult
                 f"타자의 고통이 보였다 — {ctx['name']}의 행동이 멈추거나, 외면하거나, 더 잔인해진다",
                 priority=3,
             )
+    return None
+
+
+# =========================================================
+# Group Dynamic Hooks (Pass D-3, 2026-04-21)
+# =========================================================
+# §8b-10 S5에서 실증된 dark circuit 해소. `relation.group_dynamic`이 Flash DAI
+# 에선 채워지고 iceberg.compose_dialogue_directives에서 대사 수식어로만
+# 소비되어 NPC 행동 결정 로직에 영향이 0이었음. 3+ NPC 씬에서 다수가 같은
+# group_dynamic을 공유할 때 "취약 조건" NPC에게 행동 directive를 생성해
+# Asch/Janis/Milgram 심리학적 압력을 실제 자율 행동으로 반영.
+#
+# 게이트 공통: `len(all_psyche) >= 3` + `동일 group_dynamic >= 2`
+#   (theoria_analyzer 스펙: "active in 3+ character scenes")
+
+def _check_groupthink_pressure(ctx: Dict, all_psyche: Dict) -> TriggerResult | None:
+    """Janis Groupthink: 다수가 만장일치 환상 쪽으로 수렴할 때 반대 의견 억제.
+    본인 primary_emotion=fear 또는 value_conflict 존재 → 반대 삼킴.
+    """
+    if len(all_psyche) < 3:
+        return None
+    gt_count = sum(
+        1 for s in all_psyche.values()
+        if isinstance(s, dict)
+        and s.get("relation", {}).get("group_dynamic") == "groupthink"
+    )
+    if gt_count < 2:
+        return None
+    own_emotion = ctx["psyche"].get("primary_emotion", "")
+    own_conflict = ctx["relation"].get("value_conflict")
+    if own_emotion == "fear" or own_conflict:
+        return TriggerResult(
+            "groupthink_pressure", ctx["name"],
+            f"{ctx['name']}이(가) 반대 의견을 삼킨다 — 집단 결론 쪽으로 말끝이 휘어진다",
+            priority=3,
+        )
+    return None
+
+
+def _check_conformity_drift(ctx: Dict, all_psyche: Dict) -> TriggerResult | None:
+    """Asch Conformity: 다수의 시선 자체가 압력이 되는 동조.
+    본인 attachment=anxious → 자기 판단 유보하고 다수 따름.
+    """
+    if len(all_psyche) < 3:
+        return None
+    cf_count = sum(
+        1 for s in all_psyche.values()
+        if isinstance(s, dict)
+        and s.get("relation", {}).get("group_dynamic") == "conformity"
+    )
+    if cf_count < 2:
+        return None
+    own_attachment = ctx["relation"].get("attachment", "")
+    if own_attachment == "anxious":
+        return TriggerResult(
+            "conformity_drift", ctx["name"],
+            f"{ctx['name']}이(가) 다수의 시선을 따른다 — 자기 판단을 유보한 채",
+            priority=3,
+        )
+    return None
+
+
+def _check_obedience_cascade(ctx: Dict, all_psyche: Dict) -> TriggerResult | None:
+    """Milgram Obedience: 권위 구조가 서면 책임이 위로 이전된다는 감각.
+    본인 attachment in (disorganized, avoidant) → 지시 따름, 책임 분산 신호.
+    """
+    if len(all_psyche) < 3:
+        return None
+    ob_count = sum(
+        1 for s in all_psyche.values()
+        if isinstance(s, dict)
+        and s.get("relation", {}).get("group_dynamic") == "obedience"
+    )
+    if ob_count < 2:
+        return None
+    own_attachment = ctx["relation"].get("attachment", "")
+    if own_attachment in ("disorganized", "avoidant"):
+        return TriggerResult(
+            "obedience_cascade", ctx["name"],
+            f"{ctx['name']}이(가) 권위의 흐름에 몸을 맡긴다 — 책임은 위에 있다고 믿는다",
+            priority=4,
+        )
     return None

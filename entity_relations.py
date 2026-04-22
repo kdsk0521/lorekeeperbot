@@ -319,6 +319,9 @@ def build_relation_context(channel_id: str, relevant_npcs: List[str] = None, max
     """
     프롬프트에 삽입할 NPC 관계 컨텍스트 생성.
     relevant_npcs가 주어지면 해당 NPC 관련 관계만 필터링.
+
+    DC-06 배선: 단순 랭킹 리스트 위에 구조적 강조(갈등 페어 + 동맹 클러스터)를
+    먼저 배치하여 모델이 관계망을 "봐야 할 축"을 먼저 인식하도록 한다.
     """
     edges = get_all_relations(channel_id)
     if not edges:
@@ -337,10 +340,66 @@ def build_relation_context(channel_id: str, relevant_npcs: List[str] = None, max
 
     # Sort by intensity (strongest first)
     filtered.sort(key=lambda e: e.get("intensity", 0), reverse=True)
-    filtered = filtered[:max_lines]
+    ranked = filtered[:max_lines]
 
-    lines = ["[NPC RELATIONSHIPS]"]
+    blocks: List[str] = []
+
+    # ── 구조적 강조 1: 갈등 페어 (rivalry/grudge/fear/distrust, intensity > 0.5) ──
+    # get_conflict_pairs를 직접 쓰면 relevant_npcs 필터링이 안 되므로
+    # filtered 리스트에서 추린다.
+    negative_types = {"rivalry", "grudge", "fear", "distrust"}
+    conflict_edges = [
+        e for e in filtered
+        if e.get("type") in negative_types and e.get("intensity", 0) > 0.5
+    ]
+    if conflict_edges:
+        conflict_edges.sort(key=lambda e: e.get("intensity", 0), reverse=True)
+        conflict_parts = []
+        for edge in conflict_edges[:3]:  # 최대 3쌍
+            src = edge.get("source", "?")
+            tgt = edge.get("target", "?")
+            rtype = edge.get("type", "neutral")
+            rinfo = RELATION_TYPES.get(rtype, RELATION_TYPES["neutral"])
+            conflict_parts.append(f"{src} {rinfo['emoji']} {tgt}")
+        blocks.append(f"[Conflicts]: {' | '.join(conflict_parts)}")
+
+    # ── 구조적 강조 2: 동맹 클러스터 (alliance/affection/respect/mentor ≥ 0.4) ──
+    alliance_types = {"alliance", "affection", "respect", "mentor"}
+    adj: Dict[str, set] = {}
     for edge in filtered:
+        if edge.get("type") in alliance_types and edge.get("intensity", 0) >= 0.4:
+            src = edge.get("source", "")
+            tgt = edge.get("target", "")
+            if src and tgt:
+                adj.setdefault(src, set()).add(tgt)
+                adj.setdefault(tgt, set()).add(src)
+
+    if adj:
+        visited = set()
+        clusters: List[List[str]] = []
+        for node in adj:
+            if node in visited:
+                continue
+            cluster = []
+            queue = [node]
+            while queue:
+                n = queue.pop(0)
+                if n in visited:
+                    continue
+                visited.add(n)
+                cluster.append(n)
+                for neighbor in adj.get(n, set()):
+                    if neighbor not in visited:
+                        queue.append(neighbor)
+            if len(cluster) >= 2:
+                clusters.append(sorted(cluster))
+        if clusters:
+            cluster_parts = [" & ".join(c) for c in clusters[:2]]  # 최대 2 클러스터
+            blocks.append(f"[Alliances]: {' || '.join(cluster_parts)}")
+
+    # ── 랭킹 리스트 (기존 동작) ──
+    blocks.append("[NPC RELATIONSHIPS]")
+    for edge in ranked:
         src = edge.get("source", "?")
         tgt = edge.get("target", "?")
         rtype = edge.get("type", "neutral")
@@ -352,9 +411,9 @@ def build_relation_context(channel_id: str, relevant_npcs: List[str] = None, max
         line = f"- {src} {rinfo['emoji']}{rinfo['label']}→ {tgt} ({label})"
         if reason:
             line += f" [{reason[:30]}]"
-        lines.append(line)
+        blocks.append(line)
 
-    return "\n".join(lines)
+    return "\n".join(blocks)
 
 
 def build_npc_relation_summary(channel_id: str, npc_name: str) -> str:

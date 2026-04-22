@@ -1435,11 +1435,24 @@ def advance_project(channel_id: str, user_id: str, project_name: str) -> Optiona
 # Storyteller State (세계 주도권 시스템)
 def get_storyteller_state(channel_id: str) -> dict:
     ws = get_world_state(channel_id)
-    return ws.get("storyteller", {
+    st = ws.get("storyteller", {
         "last_event_turn": 0, "recent_categories": [],
         "recent_tags": [], "event_queue": [], "total_events_fired": 0,
         "recent_dice": [],
+        # SD-Ba1 (2026-04-22): next_beats 큐 — LIBRA StoryAuthor nextBeats 최소 이식.
+        #   beats: 자연어 비트 문자열 리스트 (최대 cap)
+        #   last_planned_turn: 마지막 재계획 턴 (turn_index 기준)
+        #   cap: 큐 최대 크기
+        "next_beats": [], "last_planned_turn": 0, "beats_cap": 6,
     })
+    # 기존 세션 하위호환: 필드가 없으면 기본값 주입
+    if "next_beats" not in st:
+        st["next_beats"] = []
+    if "last_planned_turn" not in st:
+        st["last_planned_turn"] = 0
+    if "beats_cap" not in st:
+        st["beats_cap"] = 6
+    return st
 
 def update_storyteller_state(channel_id: str, state: dict) -> None:
     ws = get_world_state(channel_id)

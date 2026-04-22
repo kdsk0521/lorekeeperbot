@@ -639,13 +639,12 @@ def translate_story_direction(story_dir: Optional[dict], scene_type: str = "norm
         if npc:
             parts.append(f"주도 NPC: {npc}")
 
-    # Seven Dice (W9) — 서사 방향/저류 힌트
+    # Seven Dice (W9) — 은닉 4면만 Slot 16 분위기로. 가시 3면은 Slot 19(WRITING_DIRECTIVES) 경로.
     dice = story_dir.get("dice")
-    if dice and isinstance(dice, dict):
+    if dice and isinstance(dice, dict) and not dice.get("visible"):
         effect = dice.get("effect", "")
         if effect:
-            label = "[서사 방향]" if dice.get("visible") else "[서사 저류]"
-            parts.append(f"{label} {effect}")
+            parts.append(f"[서사 저류] {effect}")
 
     if not parts:
         return ""

@@ -478,10 +478,10 @@ PIPELINE_DEGRADATION = {
 # W9: Seven Dice — Narrative Entropy Management
 # =========================================================
 SEVEN_DICE = {
-    # 가시 3개: 능동적 창작 마찰
-    "agon":    {"name": "Agon/적",     "visible": True,  "effect": "NPC가 현재 흐름에 역행하는 목표를 추구. 갈등 강제."},
-    "alea":    {"name": "Alea/운",     "visible": True,  "effect": "예정에 없던 요소 등장 — 소리, 인물, 사물, 날씨 변화."},
-    "mimicry": {"name": "Mimicry/역할", "visible": True,  "effect": "장면을 비정상적 렌즈로 인식. 시점/감각 초점 전환."},
+    # 가시 3개: 능동적 창작 마찰 (AGELAST 원본의 구문 제약 계열 — Slot 19로 라우팅)
+    "agon":    {"name": "Agon/적",     "visible": True,  "effect": "이번 응답에서 NPC 대사 최소 한 줄은 의문문으로. 명제문 비중 축소."},
+    "alea":    {"name": "Alea/운",     "visible": True,  "effect": "장면에 예정되지 않았던 사물·소리·기척 하나를 불쑥 등장시킨다."},
+    "mimicry": {"name": "Mimicry/역할", "visible": True,  "effect": "감각 왜곡 하나를 삽입한다 — 시점 전환·시간 감각·색 편향·공감각 중 자유 선택."},
     # 은닉 4개: 수동적/부재의 힘
     "silence": {"name": "Silence/침묵", "visible": False, "effect": "말해야 할 NPC가 침묵. 행동해야 할 순간에 부재. 빈자리가 이야기."},
     "broken":  {"name": "Broken/오류",  "visible": False, "effect": "시스템 규칙의 예상치 못한 상호작용이 서사가 된다."},
