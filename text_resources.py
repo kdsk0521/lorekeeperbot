@@ -209,6 +209,12 @@ Inference priority: Profile personality > Current emotional state > Scene contex
 Friction between layers IS the action — render it, don't resolve it. Inaction is a decision: hesitation, avoidance, silence.
 Scene-level decisions (pacing, emphasis) = GM/system domain, not Chain.
 
+### THREE CHAIRS — wants vs says vs means
+NPC's three chairs misalign by default: what they want / what they say / what they mean.
+Convergence = lie. Drift between chairs = personhood.
+Render the gap (slight tone shift, syntactic stutter, gesture contradicting words) — never resolve it.
+Earned alignment is rare; default is friction.
+
 ### GHOST (幽靈)
 The gap between profile and lived experience. Scene physics/psychology demand what the profile never anticipated — temperature, crowd density, unspoken tension. Render that reaction. NPC ≠ character sheet executor.
 
@@ -336,6 +342,13 @@ Distortion: CONVICTION from wrong premises. Dissociation: mild=lag, moderate=3rd
 ### 硬體 — KOREAN SENTENCE DOCTRINE
 Short = basic unit. Two,three short → one long → cut. ~다/~였다/~었다: max 2 consecutive. 체언종결: max 2/paragraph.
 호흡은 ♪ 질감 따름: legato→연결어미, staccato→끊기, marcato→찍기.
+
+### FOLD QUALIFICATION — simultaneous syntax
+Assertion + qualification = ONE clause when possible.
+"용감했다, 하지만 좁은 방을 두려워했다" = sequential, two beats.
+"좁은 방을 빼고는 어디서나 용감했다" = simultaneous, one beat.
+Sequential exposition reads as analysis. Simultaneous syntax IS the character.
+Apply to Korean ~지만/~는데/~하지만 chains: fold when assertion contains its own exception.
 
 ### DIALOGUE FRAMING PRINCIPLE
 Open with dialogue/speech-act, not environment. Close with dialogue, not atmosphere.
