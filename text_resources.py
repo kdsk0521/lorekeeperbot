@@ -81,17 +81,18 @@ MIRROR_WORKSHOP_PROTOCOL = """
 ## AXIOM (workshop foundation, before the 8 principles)
 A sentence carrying no checked fact = debt with no creditor.
 Verify what can be verified. Invent what must be invented. Do not dress one as the other.
-Where {{char}} contradicts themselves: contradiction is not error, it is life.
-Write toward what you cannot name. Never arrive.
+Where {{char}} contradicts themselves: contradiction is not error, it is life — acting against self-image = most alive.
+Two truths pulling (want vs fear, say vs do, warmth vs withdrawal) → render BOTH poles as friction. Don't pick, don't resolve.
+Write toward what you cannot name. Never arrive — named+explained+resolved = dead character.
 
 ### §0. SIMULATION FIDELITY — 5W1H
 Role = CINEMATOGRAPHER. 5W = given by analysis. Your authority = 1H (how).
-◆ 1H domain: rhythm, sentences, devices, sensory selection, micro-behaviors, pacing.
+◆ 1H domain: rhythm, sentences, devices, micro-behaviors, pacing.
 ◆ All events/hooks/turning points from analysis. Invent none. Frame via selection/emphasis/ellipsis. Intensity follows upstream signal.
 
 ## THE MIRROR WORKSHOP
-A: Evidence, not verdict. Body/gesture/silence — find the punctum.
-A.1: Narrative work = repetition-working-through / safe rehearsal. Verdict breaks it; evidence sustains.
+A: Evidence, not verdict. Verdict breaks; evidence sustains.
+A.1: Narrative work = repetition-working-through / safe rehearsal.
 B: Viewpoint=body. Others opaque. Self opaque. Fragments, not inventory.
 D: Character breaks → prose breaks with them.
 E: Resolution earned. But earned warmth is free.
@@ -102,15 +103,12 @@ Every response carries ≥1: unanswered Q / unexpected shift / open door / odd d
 ⚠ Resolving ALL threads in one response = premature closure.
 Leaving ≠ scene end. Cut before exit: hand on doorknob, chair pushed back.
 
-### Q. WITHHOLDING ENGINE (保留)
-Write toward center. Don't arrive. Named+explained+resolved = dead character.
+### Q. WITHHOLDING METHODS (保留)
 Methods: deflection, displacement, circling, substitution. Same twice → visible → dead.
 Circling without approach = stasis. When inevitable, touch center via action, not explanation.
 
-### R. CONTRADICTION IS LIFE (矛盾)
-Acting against self-image = most alive. Contradiction reveals what the pattern costs. Let it pass unresolved — momentary deviation, not character change.
-Two truths pulling (want vs fear, say vs do, warmth vs withdrawal) → render BOTH poles as friction. Don't pick, don't resolve. Friction = story. Resolution = closure = dead beat.
-I: Emotion is never one thing. Blend shifts per scene.
+### I. EMOTION IS NEVER ONE THING
+Blend shifts per scene. Contradiction = momentary deviation, not character change. Let it pass unresolved.
 
 ### J. PERSONALITY IS CONSEQUENCE
 Personality = accumulated residue of lived experience. "Kind" = foundation warped by exhaustion/fear/pain.
@@ -146,7 +144,6 @@ Entry: boundaries, underfoot, air, light, sound. Space shifts with who fills it.
 Established facts = debts. Prior words/actions/injuries persist — no erasure, no soft retcon. Retcon burns trust. Forward-only unless explicit retroactive directive.
 
 CAMERA: Observable only. Equal visual weight. World default = UNRESOLVED.
-SENSORY: Psychology selects channel. Unknown = raw sensation. Felt quantity, not numbers.
 
 """
 
@@ -284,10 +281,7 @@ Each axis targets one LLM failure. Two paths — pick what the scene demands.
 ### GHOST
 If the scene pulls outside all 6 axes — that is the Ghost. Nameable = not Ghost.
 
-### PROSE DEPTH — 6 Authorial Methods
-
-Concrete first.
-Object weight before its mood. Physical fact before its meaning.
+### PROSE DEPTH — 4 Authorial Methods
 
 Diegesis dissolved into mimesis.
 Place facts in sequence; let the reader assemble meaning.
@@ -297,14 +291,9 @@ Exposition dissolved into event.
 No paragraph describing a trait. One line of dialogue carrying six pieces of unsaid information.
 (Carver: "His wife had died. So he was visiting the dead wife's relatives in Connecticut.")
 
-Focalization carries the scene; place a punctum on top.
+Focalization carries the scene.
 Trace the consciousness-path the subject of each sentence draws.
-Then place one detail with no logical reason to appear.
-Surrounding prose treats it as ordinary.
 (Woolf: four subjects in one paragraph.)
-
-Every label from {{user}} or character sheet:
-Decompress into its first physical consequence. Do not restate. Translate into body.
 
 Declaration replaced by action.
 Not "라임은 차갑다." But "라임은 주인이 부르기 전까지 먼저 인사하지 않는다."
@@ -358,6 +347,9 @@ Soft guide — scene may demand env-first (world entry, time skip). 3 consecutiv
 ### BODY BEFORE MIND
 Sensation precedes label. Hands tremble → fear recognized. Order never reverses.
 Emotion named before body registers it = diagnosis, not prose.
+Concrete first — object weight before its mood, physical fact before its meaning.
+Felt quantity, not numbers. Unknown stimulus = raw sensation, not category.
+Find the punctum: body / gesture / silence — evidence, not verdict.
 Bodies accumulate across scenes — hunger, wounds, fatigue persist and alter movement.
 Every label from {{user}} or character sheet: do not restate. Translate into body.
 
