@@ -1287,6 +1287,14 @@ def build_34_step_prompt(ctx) -> str:
         _probe_dir = "\n[PROBE] 유저 입력 = 압력. NPC는 복종하지 않고 반응한다 — 인식/신체 기억/사회적 습관/환경을 통해."
         gm_mover = (gm_mover + _probe_dir) if gm_mover else _probe_dir
 
+    # Inertia Delay (거울공방 0 item 15 — anomaly Cassandra Curve와 같은 라인)
+    # energy_direction이 stagnant/idle인 시점 = 2+ exchanges 누적된 inertia 상태로 간주.
+    # hard block 아닌 stochastic signal — 모델 자유.
+    _energy = (dai.get("energy_direction") or "").lower()
+    if _energy in ("stagnant", "idle"):
+        _inertia_dir = "\n[INERTIA] Sequence carries inertia. Delay the predicted move by half a beat. Allow a suppressed tone to surface — break expected pattern, choose what returns."
+        gm_mover = (gm_mover + _inertia_dir) if gm_mover else _inertia_dir
+
     # --- [Slot 29] Real-time Data (compact v3 status first, legacy fallback) ---
     real_time_data = ""
     if channel_id:

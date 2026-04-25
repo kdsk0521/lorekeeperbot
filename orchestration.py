@@ -100,12 +100,18 @@ def _check_dialogue_format(response: str, pc_names: list = None, user_input: str
             violations.append(stripped[:40])
 
     parts = []
-    if violations:
-        examples = violations[:2]
-        parts.append(f"[FORMAT] 대사 포맷 위반 {len(violations)}건. 예: {'; '.join(examples)}. 반드시 이름: \"대사\" 형식을 지켜라.")
+    # [FORMAT] 출력 제거 (2026-04-26): 이름: "대사" prefix 강제가 W12 Three Chairs / W16 FID 표현과 충돌.
+    # detect 로직(violations 변수)은 운영 분석 가치를 위해 유지하되 모델에 피드백 주입은 안 함.
+    # if violations:
+    #     examples = violations[:2]
+    #     parts.append(f"[FORMAT] 대사 포맷 위반 {len(violations)}건. 예: {'; '.join(examples)}. 반드시 이름: \"대사\" 형식을 지켜라.")
     if impersonations:
         imp_examples = impersonations[:2]
         parts.append(f"[IMPERSONATION] PC 대사 창작 {len(impersonations)}건: {'; '.join(imp_examples)}. PC의 대사를 만들지 마라 — 유저가 입력한 대사만 재현하라.")
+    if violations:
+        # 운영 분석용 디버그만 (피드백 주입 X)
+        import logging
+        logging.getLogger(__name__).debug(f"[FormatDetect] dialogue prefix 부재 {len(violations)}건 — FID 허용 정책으로 무시")
     return " ".join(parts)
 
 
