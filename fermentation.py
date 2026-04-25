@@ -1261,7 +1261,8 @@ async def precompute_vector_scores(
         return
     try:
         from vector_search import VectorSearchEngine
-        engine = VectorSearchEngine(client)
+        import config as _cfg_emb
+        engine = VectorSearchEngine(client, _cfg_emb.VECTOR_EMBEDDING_MODEL)
 
         # 각 entry summary를 chunk로 변환
         chunks = []

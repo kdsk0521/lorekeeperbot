@@ -354,8 +354,12 @@ async def _flash_summarize_storylines(state, storylines, recent_log, client, mod
     prompt = (
         "Summarize each storyline's current state in 1-2 sentences. "
         "Focus on what changed, what's unresolved, and where the story is heading. "
-        "Respond in the same language as the content.\n"
-        "Output JSON: {\"summaries\": [{\"id\": N, \"context\": \"...\", \"tension\": \"...\"}]}\n\n"
+        "Respond in the same language as the content.\n\n"
+        "CRITICAL OUTPUT RULES:\n"
+        "- Return JSON ONLY. No prose, preamble, or explanation before or after.\n"
+        "- Your response MUST start directly with `{` and end with `}`.\n"
+        "- Do NOT write \"Here is the JSON\" or any introductory text.\n"
+        "- Schema: {\"summaries\": [{\"id\": N, \"context\": \"...\", \"tension\": \"...\"}]}\n\n"
         + "\n\n".join(sl_texts)
     )
 

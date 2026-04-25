@@ -38,7 +38,7 @@ def keyword_fallback(query: str, chunks: list, top_k: int = 5) -> list:
 class VectorSearchEngine:
     """Gemini Embedding API 기반 시맨틱 검색 엔진."""
 
-    def __init__(self, client, embedding_model: str = "text-embedding-004"):
+    def __init__(self, client, embedding_model: str = "gemini-embedding-2"):
         self.client = client
         self.model = embedding_model
         self._cache = {}  # {chunk_hash: vector}

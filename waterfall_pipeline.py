@@ -454,16 +454,19 @@ class WaterfallPipeline:
         c_sign = f"+{c_delta}" if c_delta > 0 else str(c_delta)
         parts.append(f"  Vigor: {v_val} ({v_sign}) | Composure: {c_val} ({c_sign})")
 
-        # Story Director
+        # Story Director (SD-A4 새 스키마 — plot_hints/transition.mood 제거, focus.spotlight/next_beat 사용)
         sd = bus.dai.get("story_direction", {})
         if sd.get("active"):
             sd_pacing = sd.get("pacing", "?")
             sd_tension = sd.get("tension_axis", "?")
             sd_idle = sd.get("is_idle_input", False)
-            sd_hints = len(sd.get("plot_hints", []))
-            sd_cut = sd.get("transition", {}).get("cut", "?")
-            sd_mood = sd.get("transition", {}).get("mood", "?")
-            parts.append(f"  StoryDir: pacing={sd_pacing} tension={sd_tension} idle={sd_idle} hints={sd_hints} cut={sd_cut} mood={sd_mood}")
+            sd_focus = (sd.get("focus") or {}).get("spotlight", "none")
+            sd_cut = (sd.get("transition") or {}).get("cut", "?")
+            sd_beat = "Y" if sd.get("next_beat") else "N"
+            parts.append(
+                f"  StoryDir: pacing={sd_pacing} tension={sd_tension} idle={sd_idle} "
+                f"focus={sd_focus} cut={sd_cut} beat={sd_beat}"
+            )
             # Seven Dice
             sd_dice = sd.get("dice", {})
             if sd_dice:

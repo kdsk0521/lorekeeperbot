@@ -145,7 +145,7 @@ async def safe_delete_message(message: discord.Message) -> None:
         logging.warning(f"메시지 삭제 실패: {e}")
 
 def clean_json_text(text: str) -> str:
-    """JSON 문자열에서 코드 블록 마커 + trailing comma 등을 제거합니다."""
+    """JSON 문자열에서 코드 블록 마커 + trailing comma + 자연어 prefix/suffix 등을 제거합니다."""
     import re
     text = text.strip()
     if text.startswith("```"):
@@ -159,6 +159,17 @@ def clean_json_text(text: str) -> str:
     text = re.sub(r'(?m)^\s*//.*$', '', text)
     # Trailing comma 제거: ,} → }  ,] → ]
     text = re.sub(r',\s*([}\]])', r'\1', text)
+    # 자연어 prefix/suffix 제거: 첫 { 또는 [ 부터 마지막 } 또는 ] 까지 추출
+    # 예: "Here is the JSON:\n\n{...}\nThat concludes it." → "{...}"
+    m = re.search(r'[\{\[]', text)
+    if m:
+        start = m.start()
+        # 루트 괄호 종료 위치 = 마지막 } 또는 ] (둘 중 더 뒤)
+        last_brace = text.rfind('}')
+        last_bracket = text.rfind(']')
+        last = max(last_brace, last_bracket)
+        if last > start:
+            text = text[start:last + 1]
     return text
 
 

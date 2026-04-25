@@ -1049,7 +1049,7 @@ class OrchestrationService:
 
                 # 5턴 간격 스토리라인 요약 (Flash 소형 콜)
                 import config as _cfg
-                flash_model = _cfg.ANALYSIS_MODEL
+                flash_model = _cfg.MODEL_ID_FLASH
                 await narrative_tracker.summarize_if_needed(
                     nt_state, turn_idx,
                     client=self.client if hasattr(self, 'client') else None,

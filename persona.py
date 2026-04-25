@@ -431,7 +431,9 @@ async def generate_response_with_retry(
 
     hidden_reminder = (
         "\n\n(System Reminder: Record observable Macroscopic States only. "
-        "The world continues asynchronously.)"
+        "The world continues asynchronously. "
+        f"Narrative prose AFTER ┫ MUST be at least {min_length} chars — "
+        f"add sensory detail, NPC micro-reactions, and environmental grounding.)"
     )
     full_input = user_input + hidden_reminder
 

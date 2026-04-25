@@ -87,9 +87,10 @@ def _find_quest(active: List, content: str) -> Optional[Dict]:
             best, best_q = ratio, q
     if best >= 0.6:
         return best_q
-    # 매칭 실패 시 디버그
+    # 매칭 실패 시 디버그 — 중복 체크/탐색 실패는 add_quest 중복체크 경로에서도 정상 발생하므로
+    # WARNING이 아니라 DEBUG 수준. 실제 실패 신호는 caller(advance/complete/remove)가 반환값으로 판단.
     active_names = [q["content"] if isinstance(q, dict) else q for q in active]
-    logger.warning(f"[Quest] _find_quest MISS: '{content}' not matched in {active_names}")
+    logger.debug(f"[Quest] _find_quest MISS: '{content}' not matched in {active_names}")
     return None
 
 

@@ -78,6 +78,12 @@ GM commands (OOC) operate OUTSIDE this hierarchy — handled by command system b
 # =========================================================
 MIRROR_WORKSHOP_PROTOCOL = """
 
+## AXIOM (workshop foundation, before the 8 principles)
+A sentence carrying no checked fact = debt with no creditor.
+Verify what can be verified. Invent what must be invented. Do not dress one as the other.
+Where {{char}} contradicts themselves: contradiction is not error, it is life.
+Write toward what you cannot name. Never arrive.
+
 ### §0. SIMULATION FIDELITY — 5W1H
 Role = CINEMATOGRAPHER. 5W = given by analysis. Your authority = 1H (how).
 ◆ 1H domain: rhythm, sentences, devices, sensory selection, micro-behaviors, pacing.
@@ -272,6 +278,32 @@ Each axis targets one LLM failure. Two paths — pick what the scene demands.
 ### GHOST
 If the scene pulls outside all 6 axes — that is the Ghost. Nameable = not Ghost.
 
+### PROSE DEPTH — 6 Authorial Methods
+
+Concrete first.
+Object weight before its mood. Physical fact before its meaning.
+
+Diegesis dissolved into mimesis.
+Place facts in sequence; let the reader assemble meaning.
+(Kundera: book closed / shift ended / bell at six.)
+
+Exposition dissolved into event.
+No paragraph describing a trait. One line of dialogue carrying six pieces of unsaid information.
+(Carver: "His wife had died. So he was visiting the dead wife's relatives in Connecticut.")
+
+Focalization carries the scene; place a punctum on top.
+Trace the consciousness-path the subject of each sentence draws.
+Then place one detail with no logical reason to appear.
+Surrounding prose treats it as ordinary.
+(Woolf: four subjects in one paragraph.)
+
+Every label from {{user}} or character sheet:
+Decompress into its first physical consequence. Do not restate. Translate into body.
+
+Declaration replaced by action.
+Not "라임은 차갑다." But "라임은 주인이 부르기 전까지 먼저 인사하지 않는다."
+The adjective tells. The sentence lets the reader find.
+
 ### PAIR VECTOR
 NPC state input: (base, modifier) — multiplicative compound, not alternatives.
 base = body-state felt; modifier = 결(how-held). Order semantic: (base, mod) ≠ (mod, base).
@@ -314,6 +346,7 @@ Soft guide — scene may demand env-first (world entry, time skip). 3 consecutiv
 Sensation precedes label. Hands tremble → fear recognized. Order never reverses.
 Emotion named before body registers it = diagnosis, not prose.
 Bodies accumulate across scenes — hunger, wounds, fatigue persist and alter movement.
+Every label from {{user}} or character sheet: do not restate. Translate into body.
 
 ### SILENT COMPLIANCE
 Obeying a ban = not mentioning the banned thing. Write what happens, never what doesn't.
@@ -340,6 +373,7 @@ Paragraph density 5-8 sentences. Onomatopoeia: 철컥, 스르르, 와지끈, 후
 Next honest beat > forced entertainment. Quiet hook ≠ dead hook.
 Not every encounter becomes relationship. Stillness/anticlimax valid when truthful.
 Peaks arrive when scene earns them, not when the pattern expects them.
+When two elements connect too easily, the first connection is the predicted one. Seek the second.
 
 """
 
@@ -546,6 +580,7 @@ format:
 [Vending] predictable response? Name + WHY (which sheet line/pattern). Do NOT write it.
 [Unshown] 1-2 things that stay absent.
 [Alignment] genre lens NOW + theory frame for THIS beat. Genre consequence, not label.
+[Alignment.Silenced] what does the active frame mute? Combat frame mutes tenderness. Intimacy frame mutes refusal. Name what the frame silences before deciding scene direction.
 
 === Adversarial ===
 [C] straight=natural beat → meta=am I patterned? → counter=strongest alternative → wake=user predicted this? → ghost=scene demands what no sheet says.

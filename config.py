@@ -304,7 +304,7 @@ ITEM_PERSISTENCE_RULES = {
 # =========================================================
 # Vector Search (N3 — 시맨틱 로어 검색)
 # =========================================================
-VECTOR_EMBEDDING_MODEL = "gemini-embedding-001"
+VECTOR_EMBEDDING_MODEL = "gemini-embedding-2"
 VECTOR_TOP_K = 5
 VECTOR_MIN_SCORE = 0.3
 
