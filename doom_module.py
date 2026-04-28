@@ -361,12 +361,20 @@ def _push_clock_to_storyteller(context: "GameContext", clock: dict, current_turn
 
 
 def _trigger_climax(context, bus, clocks: list, clock_events: list) -> None:
-    """Stage 5: 모든 미해결 시계 즉시 완성 + 클라이맥스 이벤트를 스토리텔러 큐에 push."""
+    """Stage 5: 모든 미해결 시계 즉시 완성 + 클라이맥스 이벤트를 스토리텔러 큐에 push.
+
+    do_not_resolve_yet 플래그가 True인 clock은 강제 완성에서 제외 (체호프의 미발사된 총).
+    인간 기억 모델 — 모든 약속이 발사되지 않음. 명시적 보류는 unresolved 유지.
+    """
     for clock in clocks:
-        if not clock.get("resolved"):
-            clock["filled"] = clock.get("segments", 4)
-            clock["resolved"] = True
-            clock_events.append(f"CLIMAX: {clock.get('name', '?')} forced complete")
+        if clock.get("resolved"):
+            continue
+        if clock.get("do_not_resolve_yet"):
+            clock_events.append(f"CLIMAX HOLD: {clock.get('name', '?')} 발사 보류 (do_not_resolve_yet)")
+            continue
+        clock["filled"] = clock.get("segments", 4)
+        clock["resolved"] = True
+        clock_events.append(f"CLIMAX: {clock.get('name', '?')} forced complete")
     bus.doom["climax_triggered"] = True
 
     # Doom runs after Storyteller in pipeline → push climax event to next-turn queue

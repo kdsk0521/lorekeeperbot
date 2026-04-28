@@ -403,8 +403,85 @@ async def _flash_summarize_storylines(state, storylines, recent_log, client, mod
 # 프롬프트 포맷 (Slot 11, Slot 7)
 # =========================================================
 
-def format_storylines_for_prompt(state: dict) -> str:
-    """활성 스토리라인을 프롬프트용 텍스트로 변환. Slot 11 (Chapter) 확장."""
+# =========================================================
+# Tension priority + decay (체호프 vs 세헤라자드, 인간 기억 모델)
+# =========================================================
+# Sprint D (2026-04-28): ongoing_tensions에 priority + last_touched 메타데이터.
+# LIBRA Story Ledger X 흡수 — 무거운 약속만 surface, 가벼운 것은 자연 소멸.
+# 체호프의 미발사된 총 = RP의 살아있는 세계.
+
+TENSION_DORMANT_TURNS = 12   # turn - last_touched > 12 → prompt 제외 (dormant)
+TENSION_EXPIRE_TURNS = 36    # turn - last_touched > 36 AND priority < 0.5 → 자연 소멸
+TENSION_MIN_PROMPT_PRIORITY = 0.25
+
+
+def _normalize_tension(item, current_turn: int):
+    """str 또는 dict 둘 다 받아 dict로 정규화. 마이그레이션 호환."""
+    if isinstance(item, str):
+        return {
+            "label": item[:120],
+            "priority": 0.5,
+            "introduced_turn": current_turn,
+            "last_touched_turn": current_turn,
+            "do_not_resolve_yet": False,
+        }
+    if isinstance(item, dict):
+        return {
+            "label": str(item.get("label", ""))[:120],
+            "priority": max(0.0, min(1.0, float(item.get("priority", 0.5)))),
+            "introduced_turn": int(item.get("introduced_turn", current_turn)),
+            "last_touched_turn": int(item.get("last_touched_turn", current_turn)),
+            "do_not_resolve_yet": bool(item.get("do_not_resolve_yet", False)),
+        }
+    return None
+
+
+def apply_tension_decay(state: dict, current_turn: int) -> dict:
+    """매 턴 호출. 모든 storyline의 ongoing_tensions에 decay 룰 적용.
+
+    - dormant: turn - last_touched > 12 → prompt 제외 (데이터는 보존)
+    - expire: turn - last_touched > 36 AND priority < 0.5 → 자연 소멸 (제거)
+    - do_not_resolve_yet=True는 decay 면제 (명시적 보류는 영원)
+    """
+    for sl in state.get("storylines", []):
+        tensions = sl.get("ongoing_tensions", [])
+        if not tensions:
+            continue
+        normalized = []
+        for item in tensions:
+            t = _normalize_tension(item, current_turn)
+            if t is None:
+                continue
+            age = current_turn - t["last_touched_turn"]
+            # expire: 자연 소멸 (단 do_not_resolve_yet은 면제, priority >= 0.5도 보존)
+            if (not t["do_not_resolve_yet"]
+                    and age > TENSION_EXPIRE_TURNS
+                    and t["priority"] < 0.5):
+                continue  # 자연 소멸
+            normalized.append(t)
+        sl["ongoing_tensions"] = normalized
+    return state
+
+
+def _is_tension_promptable(t: dict, current_turn: int) -> bool:
+    """tension이 prompt에 surface할 자격이 있는가."""
+    if t["do_not_resolve_yet"]:
+        return False  # 명시적 보류는 surface 안 함
+    if t["priority"] < TENSION_MIN_PROMPT_PRIORITY:
+        return False
+    age = current_turn - t["last_touched_turn"]
+    if age > TENSION_DORMANT_TURNS:
+        return False  # dormant
+    return True
+
+
+def format_storylines_for_prompt(state: dict, current_turn: int = 0) -> str:
+    """활성 스토리라인을 프롬프트용 텍스트로 변환. Slot 11 (Chapter) 확장.
+
+    Sprint D (2026-04-28): tension priority + decay 적용.
+    무거운 약속(priority >= 0.25) + 활성(dormant 아님) + non-hold만 surface.
+    str legacy tensions도 호환 (_normalize_tension).
+    """
     active = [s for s in state.get("storylines", []) if s.get("status") == "active"]
     if not active:
         return ""
@@ -414,10 +491,20 @@ def format_storylines_for_prompt(state: dict) -> str:
         name = sl.get("name", "?")
         entities = ", ".join(sl.get("entities", [])[:5])
         context = sl.get("current_context", "")[:180]
-        tensions = sl.get("ongoing_tensions", [])[-2:]
+        # tensions: priority+decay 룰 적용 후 surface
+        raw = sl.get("ongoing_tensions", [])
+        promptable = []
+        for item in raw:
+            t = _normalize_tension(item, current_turn)
+            if t is None:
+                continue
+            if _is_tension_promptable(t, current_turn):
+                promptable.append(t)
+        promptable.sort(key=lambda x: -x["priority"])
+        top = promptable[:2]
         line = f"  [{name}] ({entities}): {context}"
-        if tensions:
-            line += f" | Tension: {'; '.join(tensions)}"
+        if top:
+            line += f" | Tension: {'; '.join(t['label'] for t in top)}"
         parts.append(line)
 
     return "\n".join(parts)
