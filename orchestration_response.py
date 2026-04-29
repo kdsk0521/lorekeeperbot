@@ -272,16 +272,15 @@ async def generate_response(
             # 원문 블록 전체 로그 (서버 로그에서 CoT 내용 확인용)
             if raw_block:
                 logger.info("[Telescope RAW]\n%s", raw_block)
-            # 게이트별 요약
-            for name, g in gates.items():
-                reasoning = g.get("reasoning", "").strip()
-                if "result" in g:
-                    verdict = g["result"]
-                    tag = "FAIL" if verdict == "FAIL" else "OK"
-                    level = logger.warning if verdict == "FAIL" else logger.info
-                    level("[Telescope %s] %-12s %s", tag, name, reasoning[:200] if reasoning else "(empty)")
-                else:
-                    logger.info("[Telescope] %-12s %s", name, reasoning[:200] if reasoning else "(empty)")
+            # [2026-04-28] gate별 200자 cap 출력 제거 — RAW 블록과 중복 + 짤림 노이즈.
+            # 검증 단계 종료 + 휘발 자세. FAIL gate만 warning으로 잡아 알림 유지.
+            fail_gates = [
+                (name, g.get("reasoning", "").strip())
+                for name, g in gates.items()
+                if g.get("result") == "FAIL"
+            ]
+            for name, reasoning in fail_gates:
+                logger.warning("[Telescope FAIL] %-12s %s", name, reasoning[:200] if reasoning else "(empty)")
             logger.info("[Telescope] Parsed OK — %d gates", len(gates))
         else:
             # 모델이 텔레스코프 블록을 안 쓴 건지 진단

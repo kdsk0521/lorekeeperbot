@@ -177,7 +177,8 @@ async def _process_message(message: discord.Message) -> None:
 
                 # IC 행동을 히스토리에 기록
                 if ic_text:
-                    domain_manager.append_history(channel_id, mask, ic_text)
+                    # [LIBRA #2 C1] Discord message.id 보존 — 출처 회상용 단서
+                    domain_manager.append_history(channel_id, mask, ic_text, message_id=message.id)
 
                 # OOC를 지시로 변환 + IC 맥락 포함
                 combined_directive = f"[플레이어 행동: {ic_text}] [OOC 지시: {ooc_content}]"
@@ -203,7 +204,8 @@ async def _process_message(message: discord.Message) -> None:
                         txt, _ = await bot_utils.read_attachment_text(att)
                         if txt: log_content += f"\n(Attach: {txt})"
 
-                domain_manager.append_history(channel_id, mask, log_content.strip())
+                # [LIBRA #2 C1] waiting 모드에서도 message.id 보존
+                domain_manager.append_history(channel_id, mask, log_content.strip(), message_id=message.id)
                 await message.add_reaction("✏️")
                 return
 

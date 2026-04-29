@@ -103,11 +103,14 @@ def compute_npc_depths(
     npc_attitudes: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, float]:
     """NPC별 수면 깊이 계산. {npc_name: depth}."""
+    # [Sprint J 2026-04-28] npc_names None/non-list 안전 가드
+    if not npc_names or not isinstance(npc_names, list):
+        return {}
     base = _calc_depth(scene_type, energy)
     t_mod = _turn_mod(turn_count)
     global_depth = max(0.0, min(1.0, base + t_mod))
 
-    result = {name: global_depth for name in npc_names}
+    result = {name: global_depth for name in npc_names if name and isinstance(name, str)}
 
     # 트리거 매핑 (NPC → 최고 priority)
     trigger_map: Dict[str, int] = {}
@@ -1547,16 +1550,25 @@ def compose_dialogue_directives(
             directive_parts.append(", ".join(strategy_mods))
 
         # 숨김 (Hidden): self_opacity
+        # [Sprint J 2026-04-28] depth < 0.4 시 추상 압축 — 거울공방 axiom (named+explained=죽음)
+        # 더 깊은 NPC는 alpha 그대로 박지 X. signal은 보존, 라벨화 약화
+        _depth_for_npc = (npc_depths or {}).get(name, 0.5)
         opacity = psyche.get("self_opacity")
         if opacity and isinstance(opacity, str) and opacity != "null":
             actual = _extract_actual(opacity)
             if actual:
-                directive_parts.append(f"(실제로는 {actual})")
+                if _depth_for_npc < 0.4:
+                    directive_parts.append("(내면 잠김)")
+                else:
+                    directive_parts.append(f"(실제로는 {actual})")
 
         # 숨김: apprehension_gap (인식 왜곡)
         ag = psyche.get("apprehension_gap")
         if ag and isinstance(ag, str) and ag != "null":
-            directive_parts.append(f"(인식 왜곡: {ag})")
+            if _depth_for_npc < 0.4:
+                directive_parts.append("(인식 흐림)")
+            else:
+                directive_parts.append(f"(인식 왜곡: {ag})")
 
         # 숨김: NPCKnowledge (leak_risk >= medium 일 때만)
         nk = knowledge.get(name, {})

@@ -190,8 +190,10 @@ async def extract_all_updates(
             "relationships": rels_processed if rels_processed else soc.get("relationships"),
             "companions": soc.get("companions"),
             "passives": nar.get("passives"),
-            "trait_evolution": nar.get("trait_evolution")
-        } if soc or nar.get("passives") or nar.get("trait_evolution") else None,
+            "trait_evolution": nar.get("trait_evolution"),
+            "emotional_saturation": nar.get("emotional_saturation", 0.0),
+            "voidfill_inferences": nar.get("voidfill_inferences", []),
+        } if soc or nar.get("passives") or nar.get("trait_evolution") or nar.get("emotional_saturation") or nar.get("voidfill_inferences") else None,
 
         "QuestUpdate": {
             "quest_add": qst.get("quest_add"), "quest_complete": qst.get("quest_complete"),
@@ -330,7 +332,7 @@ async def _extract_batch(
     if "narrative" in sections:
         sys_parts.append(
             "\n### narrative"
-            "\nOutput: `{\"passives\": [], \"trait_evolution\": []}`"
+            "\nOutput: `{\"passives\": [], \"trait_evolution\": [], \"tensions\": [], \"emotional_saturation\": 0.0, \"voidfill_inferences\": []}`"
             "\nPassive = MAJOR permanent capability (skill/trait/achievement). Only NEW ones not in current list."
             "\n  STRICT: Most turns have NO new passive. Only add for life-changing events (new power, title, rank-up, permanent transformation)."
             "\n  Temporary advantages, minor skills, or narrative flavor are NOT passives. Max 1 new passive per 10+ turns."
@@ -347,6 +349,29 @@ async def _extract_batch(
             "\n  Rules: name MUST match an existing passive exactly. Only update desc, never name/modifiers."
             "\n  Only when clear narrative evidence exists (rank-up, new skill learned, trauma overcome)."
             "\n  CONSERVATIVE: most turns should return empty []. Max 1 per turn."
+            "\ntensions: 발사된 무게중심 약속을 식별. (Sprint G — Anti-Chekhov + 미발사된 총 자세)"
+            "\n  Format: `[{\"label\": \"짧은 한국어 라벨\", \"kind\": \"open_question/payoff/lock\","
+            " \"primary\": bool, \"priority\": 0.0~1.0}]`"
+            "\n  - kind: open_question (일반 hook), payoff (해결되면 의미 큰 약속), lock (continuity 보호)"
+            "\n  - primary: scene의 무게중심 1개만 true (없으면 모두 false)"
+            "\n  - priority: 0.0~1.0. payoff/lock은 ≥0.5, primary는 ≥0.7 권장"
+            "\n  CONSERVATIVE: 모든 hook 라벨하지 말 것. *진짜 발사된 무게중심* + payoff candidate + lock만 식별. Max 3."
+            "\n  발사 안 된 약속, 가벼운 hook, 일반 atmosphere = 라벨 X (자연 소멸 layer가 처리)."
+            "\n  대부분 턴은 empty [] 또는 1개. 격렬한 사건 시 max 3."
+            "\nemotional_saturation: 직전 Pro 응답이 부정 감정 (외로움/슬픔/공허/소유욕/지배/독점/집착) 매몰 정도. 0.0~1.0."
+            "\n  CONSERVATIVE: 씬 anchor가 부정 감정 직접 요구 (장례/배신/이별/고문 등) → 0.0으로 보수적. 매몰 ≠ 요구된 감정."
+            "\n  - 0.0~0.3: 매몰 없음 또는 씬 요구된 감정"
+            "\n  - 0.4~0.6: 일부 dwell, 적정선"
+            "\n  - 0.7~1.0: 매몰. 정체성/관계 dynamic이 부정 감정에 anchor됨. 다음 턴 환기 필요."
+            "\n  대부분 턴 ≤0.3. (Sprint I — 제미니 부정 감정 매몰 자세)"
+            "\n  ※ NOTE: emotion_engine.intensity (NPC 상태 변화율, 별 layer)와 별 차원. saturation = 서술 매몰 평가, intensity = 상태 추적."
+            "\n  ※ Directional bias (관계 dynamic이 dominance/submission/control 톤으로 미세 기우는 경우) 도 saturation 카운트. 명시 어휘 없어도 *방향*이 같으면 잡음. (Sprint K)"
+            "\n  ※ CONSERVATIVE for directional bias: 씬 anchor가 dynamic을 직접 요구 (the dynamic is the scene, not the bias) → 0.0~0.3 보수적. 정당한 씬 본질을 매몰로 잡지 X."
+            "\nvoidfill_inferences: 직전 Pro 응답이 *프로필에 없는* 배경/방어기제/트라우마/인과를 자동 채웠는지."
+            "\n  Format: [{\"npc\": \"이름\", \"inferred\": \"추가된 인과 ≤40자\", \"evidence\": \"응답 인용 ≤30자\"}]"
+            "\n  CONSERVATIVE: 시트 키워드를 *행동으로 표현*한 정상 묘사는 invent X. *시트에 명시 없는* 새 사실/인과만 식별."
+            "\n  예: 시트에 \"독립적, 밝다\"만 있는데 응답이 \"혼자 있을 때 두려워하며\" 표현 → voidfill."
+            "\n  대부분 턴 empty []. Max 2."
             "\nAnomaly = genre shifts or monsters, trigger MUST BE IN ENGLISH."
             "\nProfessional Bias: Gore is NORMAL for Doctor, Combat is NORMAL for Soldier."
             "\nIf no change, keep fields null/empty."

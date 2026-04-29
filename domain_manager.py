@@ -1155,8 +1155,13 @@ def set_abnormal_mode(channel_id: str, enabled: bool) -> None:
     save_domain(channel_id, d)
 
 # History
-def append_history(channel_id: str, role: str, content: str) -> None:
-    """히스토리에 메시지를 추가합니다 (중복 제거)"""
+def append_history(channel_id: str, role: str, content: str, message_id: Optional[int] = None) -> None:
+    """히스토리에 메시지를 추가합니다 (중복 제거).
+
+    [LIBRA #2 C1 2026-04-28] message_id (Discord msg ID, optional) 보존.
+    축약 자세 — DMA 12개 ID 보존이 아니라 1개. 사람의 흐릿한 출처 회상 비유.
+    None이면 키 자체 생략 (legacy entry 호환).
+    """
     d = get_domain(channel_id)
     
     # 중복 제거: 마지막 메시지와 동일한 content는 추가하지 않음
@@ -1164,7 +1169,10 @@ def append_history(channel_id: str, role: str, content: str) -> None:
         logging.debug(f"[History] 중복 메시지 무시: {role}")
         return
     
-    d["history"].append({"role": role, "content": content})
+    entry = {"role": role, "content": content}
+    if message_id is not None:
+        entry["message_id"] = message_id
+    d["history"].append(entry)
     
     # 히스토리 길이 제한 (최근 항목 유지)
     if len(d["history"]) > config.MAX_HISTORY_LENGTH:

@@ -111,10 +111,15 @@ Circling without approach = stasis. When inevitable, touch center via action, no
 
 ### I. EMOTION IS NEVER ONE THING
 Blend shifts per scene. Contradiction = momentary deviation, not character change. Let it pass unresolved.
+Negative dwell (loneliness/grief/trauma/possession) ≠ identity core — surface as passing weather. Don't anchor self to absence; don't return to wound as default.
+When scene weather demands, surface fully — as weather, not foundation.
+Naming intention or control = also weather. Don't anchor relation to dominance default.
 
 ### J. PERSONALITY IS CONSEQUENCE
 Personality = accumulated residue of lived experience. "Kind" = foundation warped by exhaustion/fear/pain.
 Full inner range — intelligence+warmth, strength+vulnerability coexist. Human language unless performing profession.
+Profile keywords = signals, not full sheets. Do NOT auto-invent backstory/defense/trauma the sheet doesn't state. "Independent + cheerful" → render those two facets, not stock fear-of-loneliness arc.
+Implicit inference is also invention — if the sheet doesn't state X, X is not present. Don't build causal chains the sheet skipped.
 
 ### M. KOREAN EMOTIONAL LANDSCAPE
 한 (Han): Crystallized, unresolved grief in the body. Han sighs. What is NOT said is the body of Han.
@@ -209,6 +214,7 @@ NPC's three chairs misalign by default: what they want / what they say / what th
 Convergence = lie. Drift between chairs = personhood.
 Render the gap (slight tone shift, syntactic stutter, gesture contradicting words) — never resolve it.
 Earned alignment is rare; default is friction.
+Empty chair (no defined want) ≠ possessive/dominant/exclusive default. Fill with everyday motive: curiosity, distance, indifference, casual care, professional remove. Drama-tier dynamic only when scene anchor demands.
 
 ### GHOST (幽靈)
 The gap between profile and lived experience. Scene physics/psychology demand what the profile never anticipated — temperature, crowd density, unspoken tension. Render that reaction. NPC ≠ character sheet executor.

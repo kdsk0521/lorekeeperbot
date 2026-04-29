@@ -1295,6 +1295,39 @@ def build_34_step_prompt(ctx) -> str:
         _inertia_dir = "\n[INERTIA] Sequence carries inertia. Delay the predicted move by half a beat. Allow a suppressed tone to surface — break expected pattern, choose what returns."
         gm_mover = (gm_mover + _inertia_dir) if gm_mover else _inertia_dir
 
+    # [Sprint I 2026-04-28] Climate prefix — 직전 턴 emotional_saturation/voidfill 신호 기반
+    # 강제 X, *signal*만. 부정 감정 자체 차단 X — 매몰만 환기. 모델 self-discipline 의존
+    if channel_id:
+        try:
+            import domain_manager as _dm_climate
+            _nt_climate = _dm_climate.get_narrative_tracker_state(channel_id)
+            _last_climate = (_nt_climate or {}).get("last_climate") or {}
+            _sat = float(_last_climate.get("saturation", 0.0))
+            _vfc = int(_last_climate.get("voidfill_count", 0))
+            _climate_parts = []
+            if _sat >= 0.6:
+                _climate_parts.append(
+                    "[CLIMATE] Recent thread saturated with negative dwell (loneliness/grief/possession). "
+                    "Surface alternate texture this turn: light, banal detail, third-element distraction, or time-shift. "
+                    "Don't anchor identity to absence."
+                )
+            elif _sat >= 0.4:
+                _climate_parts.append(
+                    "[CLIMATE] Negative weight present. Allow weather to pass — don't deepen wound as default."
+                )
+            if _vfc > 0:
+                _samples = _last_climate.get("voidfill_samples") or []
+                _names = ", ".join((s.get("npc", "?") for s in _samples if isinstance(s, dict)))[:60]
+                _climate_parts.append(
+                    f"[FIDELITY] Last turn invented {_vfc} item(s) absent from sheet ({_names or '?'}). "
+                    "This turn: render only stated facets. No stock backstory/defense/trauma arc."
+                )
+            if _climate_parts:
+                _climate_dir = "\n" + "\n".join(_climate_parts)
+                gm_mover = (gm_mover + _climate_dir) if gm_mover else _climate_dir.lstrip()
+        except Exception as _ce:
+            logger.debug(f"[Climate prefix skipped]: {_ce}")
+
     # --- [Slot 29] Real-time Data (compact v3 status first, legacy fallback) ---
     real_time_data = ""
     if channel_id:

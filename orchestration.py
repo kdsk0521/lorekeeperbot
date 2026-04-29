@@ -1053,6 +1053,38 @@ class OrchestrationService:
                 if last_entry:
                     narrative_tracker.assign_to_storyline(nt_state, last_entry)
 
+                # [Sprint G 2026-04-28] Anti-Chekhov tension 라벨링 적용
+                # Pro 응답에서 Flash가 추출한 발사된 무게중심 약속 (kind/primary/priority) 반영
+                # 매칭은 label substring, 미매칭은 첫 active storyline에 새 entry insert
+                # 가벼운 hook은 라벨링 안 받음 → 자연 소멸 layer (apply_tension_decay)가 처리
+                tensions_labeled = []
+                if pmu and isinstance(pmu, dict):
+                    raw_tensions = pmu.get("tensions") or []
+                    if isinstance(raw_tensions, list):
+                        tensions_labeled = raw_tensions
+                if tensions_labeled:
+                    narrative_tracker.apply_tension_labels(nt_state, tensions_labeled, turn_idx)
+                    logger.info(f"[NarrativeTracker] Applied {len(tensions_labeled)} tension labels")
+
+                # [Sprint I 2026-04-28] 제미니 부정 감정 매몰 + voidfill 남기기 — 다음 턴 GM Mover prefix의 입력
+                # 강제 아니라 *신호*로만 보존 — 모델 self-discipline에 의존
+                if pmu and isinstance(pmu, dict):
+                    _saturation = float(pmu.get("emotional_saturation") or 0.0)
+                    _voidfills = pmu.get("voidfill_inferences") or []
+                    if not isinstance(_voidfills, list):
+                        _voidfills = []
+                    nt_state["last_climate"] = {
+                        "saturation": max(0.0, min(1.0, _saturation)),
+                        "voidfill_count": len(_voidfills),
+                        "voidfill_samples": [v for v in _voidfills if isinstance(v, dict)][:2],
+                        "turn": turn_idx,
+                    }
+                    if _saturation >= 0.5 or len(_voidfills) > 0:
+                        logger.info(f"[Climate] Saturation={_saturation:.2f} Voidfills={len(_voidfills)} (turn {turn_idx})")
+
+                # 자연 소멸 layer — 매 턴 호출, dormant 12 / expire 36 룰
+                narrative_tracker.apply_tension_decay(nt_state, turn_idx)
+
                 # 5턴 간격 스토리라인 요약 (Flash 소형 콜)
                 import config as _cfg
                 flash_model = _cfg.MODEL_ID_FLASH

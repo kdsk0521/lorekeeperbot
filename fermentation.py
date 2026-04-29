@@ -28,6 +28,7 @@ import logging
 import asyncio
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
+import time
 
 # Google Gemini API
 try:
@@ -373,6 +374,57 @@ def get_timestamp() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M")
 
 
+# [LIBRA #2 2026-04-28] Discord snowflake → timestamp 디코딩 + 상대 시기 표현
+# 목적: 발효본 prefix에 "약 3일 전" 같은 흔적 메타 추가 + GC 시간 단위 보수화
+DISCORD_EPOCH_MS = 1420070400000  # 2015-01-01 UTC
+
+
+def _snowflake_to_ts(msg_id) -> Optional[float]:
+    """Discord snowflake ID → Unix timestamp (seconds). 잘못된 입력은 None."""
+    try:
+        mid = int(msg_id)
+        if mid <= 0:
+            return None
+        return ((mid >> 22) + DISCORD_EPOCH_MS) / 1000.0
+    except (TypeError, ValueError):
+        return None
+
+
+def _relative_time(ts: float, now: Optional[float] = None) -> str:
+    """Unix ts를 상대 시기 한국어로. 흐릿한 흔적 표현 지향."""
+    if ts is None:
+        return ""
+    delta = (now if now is not None else time.time()) - ts
+    if delta < 0:
+        return "방금"
+    if delta < 60:
+        return "방금"
+    if delta < 3600:
+        return f"{int(delta // 60)}분 전"
+    if delta < 86400:
+        return f"{int(delta // 3600)}시간 전"
+    if delta < 86400 * 7:
+        return f"{int(delta // 86400)}일 전"
+    if delta < 86400 * 30:
+        return f"약 {int(delta // (86400 * 7))}주 전"
+    return f"약 {int(delta // (86400 * 30))}개월 전"
+
+
+def _format_msg_range(from_id, to_id, now: Optional[float] = None) -> str:
+    """from/to msg_id → "약 3일 전~1일 전" 형식. 둘 다 None이면 빈 문자열."""
+    f_ts = _snowflake_to_ts(from_id) if from_id is not None else None
+    t_ts = _snowflake_to_ts(to_id) if to_id is not None else None
+    if f_ts is None and t_ts is None:
+        return ""
+    if f_ts is not None and t_ts is not None:
+        f_str = _relative_time(f_ts, now)
+        t_str = _relative_time(t_ts, now)
+        if f_str == t_str:
+            return f_str
+        return f"{f_str}~{t_str}"
+    return _relative_time(f_ts if f_ts is not None else t_ts, now)
+
+
 # =========================================================
 # 발효 필요 여부 판단 (Sprint 4: 중요도 기반)
 # =========================================================
@@ -485,15 +537,30 @@ def gc_low_importance_fresh(
         importance = turn_importance.get(estimated_turn, 5)
         age = current_turn - estimated_turn
 
-        if age >= FRESH_TTL_TURNS and importance <= IMPORTANCE_GC_THRESHOLD:
+        # [LIBRA #2 a 2026-04-28] message_id 있으면 시간 단위 보수화 — 흐릿한 흔적이 너무 일정게 사라지지 않게
+        # turn TTL + (message_id 있으면) 시간 TTL (기본 24시간) 둘 다 충족 시만 GC
+        time_age_ok = True  # message_id 없음 = legacy = 기존 로직 유지
+        rel_str = ""
+        msg_ts = None
+        _mid = msg.get("message_id") if isinstance(msg, dict) else None
+        if _mid is not None:
+            msg_ts = _snowflake_to_ts(_mid)
+            if msg_ts is not None:
+                hours_old = (time.time() - msg_ts) / 3600.0
+                time_age_ok = hours_old >= 24.0  # 나중 config로 사용자 조정 가능
+                rel_str = _relative_time(msg_ts)
+
+        if age >= FRESH_TTL_TURNS and importance <= IMPORTANCE_GC_THRESHOLD and time_age_ok:
             # GC: user+model 쌍 제거 → 축약 쌍으로 대체 (role 교대 유지)
             if i + 1 < len(history) and isinstance(history[i + 1], dict):
                 content_hint = (msg.get("content", "") or "")[:40]
                 model_msg = history[i + 1]
                 model_hint = (model_msg.get("content", "") or "")[:40]
+                # [LIBRA #2 a] 흔적 마커에 상대 시기 추가 — "약 3일 전"
+                tmark = f"T{estimated_turn}@{rel_str}" if rel_str else f"T{estimated_turn}"
                 new_history.append({
                     "role": "user",
-                    "content": f"[...T{estimated_turn}: {content_hint}...]",
+                    "content": f"[...{tmark}: {content_hint}...]",
                 })
                 new_history.append({
                     "role": "model",
@@ -962,6 +1029,20 @@ async def auto_ferment(
         if result_data:
             summary_text = result_data.get("summary", "")
 
+            # [LIBRA #2 C2 2026-04-28] 축약 대상 첫/끝 entry message_id 보존
+            # 사람의 "그게 [얼측]부터 [얼측]까지 일이었어" 비유 — 정확 추적 X, 대략적 시점만
+            _to_summarize = history[:FERMENT_CHUNK_SIZE]
+            _from_msg_id = None
+            _to_msg_id = None
+            for _e in _to_summarize:
+                if isinstance(_e, dict) and _e.get("message_id") is not None:
+                    _from_msg_id = _e["message_id"]
+                    break
+            for _e in reversed(_to_summarize):
+                if isinstance(_e, dict) and _e.get("message_id") is not None:
+                    _to_msg_id = _e["message_id"]
+                    break
+
             # V4 포맷으로 저장
             fermented_entry = {
                 "timestamp": get_timestamp(),
@@ -970,7 +1051,9 @@ async def auto_ferment(
                 "compressed_blocks": result_data.get("compressed_blocks", []),
                 "memory_triggers": result_data.get("memory_triggers", []),
                 "arc_observations": result_data.get("arc_observations", {}),
-                "helena_delta": result_data.get("helena_delta", {})
+                "helena_delta": result_data.get("helena_delta", {}),
+                "from_msg_id": _from_msg_id,
+                "to_msg_id": _to_msg_id,
             }
             session_data["fermented_history"].append(fermented_entry)
 
@@ -1445,7 +1528,15 @@ def build_fermented_context(
             summary = entry.get("summary", "")
             timestamp = entry.get("timestamp", "")
 
-            entry_text = f"[{timestamp}] {summary}"
+            # [LIBRA #2 c 2026-04-28] from/to msg_id 으로 상대 시기 prefix 추가 (흔적)
+            # 기존 entry는 from_msg_id가 없어 표현 추가 안 됨 (legacy 호환)
+            _from_id = entry.get("from_msg_id")
+            _to_id = entry.get("to_msg_id")
+            _rel = _format_msg_range(_from_id, _to_id)
+            if _rel:
+                entry_text = f"[{timestamp} / {_rel}] {summary}"
+            else:
+                entry_text = f"[{timestamp}] {summary}"
 
             # important 블록의 대화 보존
             blocks = entry.get("compressed_blocks", [])
@@ -1755,6 +1846,18 @@ async def force_ferment(
 
     # V4 포맷으로 저장 (auto_ferment과 동일)
     summary_text = result_data.get("summary", "") if isinstance(result_data, dict) else str(result_data)
+    # [LIBRA #2 C2 2026-04-28] from/to message_id 보존 (force_ferment)
+    _to_summarize_force = history[:ferment_count]
+    _from_msg_id_f = None
+    _to_msg_id_f = None
+    for _e in _to_summarize_force:
+        if isinstance(_e, dict) and _e.get("message_id") is not None:
+            _from_msg_id_f = _e["message_id"]
+            break
+    for _e in reversed(_to_summarize_force):
+        if isinstance(_e, dict) and _e.get("message_id") is not None:
+            _to_msg_id_f = _e["message_id"]
+            break
     session_data["fermented_history"].append({
         "timestamp": get_timestamp(),
         "summary": summary_text,
@@ -1764,6 +1867,8 @@ async def force_ferment(
         "memory_triggers": result_data.get("memory_triggers", []) if isinstance(result_data, dict) else [],
         "arc_observations": result_data.get("arc_observations", {}) if isinstance(result_data, dict) else {},
         "helena_delta": result_data.get("helena_delta", {}) if isinstance(result_data, dict) else {},
+        "from_msg_id": _from_msg_id_f,
+        "to_msg_id": _to_msg_id_f,
     })
     
     session_data["history"] = history[ferment_count:]

@@ -416,7 +416,13 @@ TENSION_MIN_PROMPT_PRIORITY = 0.25
 
 
 def _normalize_tension(item, current_turn: int):
-    """str 또는 dict 둘 다 받아 dict로 정규화. 마이그레이션 호환."""
+    """str 또는 dict 둘 다 받아 dict로 정규화. 마이그레이션 호환.
+
+    Sprint E (2026-04-28): kind / primary 필드 추가.
+    - kind: "open_question" (default) / "payoff" / "lock"
+    - primary: scene의 무게중심 (priority/dormant 무관 surface, 단 do_not_resolve_yet은 여전히 제외)
+    """
+    valid_kinds = ("open_question", "payoff", "lock")
     if isinstance(item, str):
         return {
             "label": item[:120],
@@ -424,14 +430,20 @@ def _normalize_tension(item, current_turn: int):
             "introduced_turn": current_turn,
             "last_touched_turn": current_turn,
             "do_not_resolve_yet": False,
+            "kind": "open_question",
+            "primary": False,
         }
     if isinstance(item, dict):
+        kind_raw = str(item.get("kind", "open_question"))
+        kind = kind_raw if kind_raw in valid_kinds else "open_question"
         return {
             "label": str(item.get("label", ""))[:120],
             "priority": max(0.0, min(1.0, float(item.get("priority", 0.5)))),
             "introduced_turn": int(item.get("introduced_turn", current_turn)),
             "last_touched_turn": int(item.get("last_touched_turn", current_turn)),
             "do_not_resolve_yet": bool(item.get("do_not_resolve_yet", False)),
+            "kind": kind,
+            "primary": bool(item.get("primary", False)),
         }
     return None
 
@@ -463,10 +475,103 @@ def apply_tension_decay(state: dict, current_turn: int) -> dict:
     return state
 
 
+
+
+def apply_tension_labels(state: dict, labeled_tensions: list, current_turn: int) -> dict:
+    """Sprint G (2026-04-28): Flash 사후 라벨링 결과를 ongoing_tensions에 반영.
+
+    BG Extract narrative section의 tensions 필드 결과를 받아:
+    - label로 active storylines의 ongoing_tensions에서 매칭 시도
+    - 매칭 → priority/kind/primary 갱신, last_touched_turn = current_turn
+    - 미매칭 → primary storyline (또는 가장 active)에 새 entry insert
+
+    매칭 전략:
+    - case-insensitive substring (label[:20] 비교)
+    - 첫 active storyline이 default insertion target (storyline_id 미지정 시)
+
+    Anti-Chekhov 자세 — *진짜 발사된 약속만* 라벨됨. 발사 안 된 후보는 별도 layer (decay).
+    """
+    if not labeled_tensions:
+        return state
+
+    active = [s for s in state.get("storylines", []) if s.get("status") == "active"]
+    if not active:
+        return state
+
+    # primary가 1개만 보존되도록 — 새 라벨에 primary=True가 있으면 기존 primary 모두 false 처리 후 적용
+    has_new_primary = any(
+        isinstance(item, dict) and item.get("primary") for item in labeled_tensions
+    )
+    if has_new_primary:
+        for sl in active:
+            for t in sl.get("ongoing_tensions", []):
+                if isinstance(t, dict) and t.get("primary"):
+                    t["primary"] = False
+
+    target_sl = active[0]  # default insertion target
+
+    for raw in labeled_tensions:
+        if not isinstance(raw, dict):
+            continue
+        label = str(raw.get("label", ""))[:120].strip()
+        if not label:
+            continue
+        kind_raw = str(raw.get("kind", "open_question"))
+        kind = kind_raw if kind_raw in ("open_question", "payoff", "lock") else "open_question"
+        primary = bool(raw.get("primary", False))
+        priority = max(0.0, min(1.0, float(raw.get("priority", 0.5))))
+
+        # 매칭 — substring 양방향
+        matched = False
+        label_short = label[:20]
+        for sl in active:
+            for t in sl.get("ongoing_tensions", []):
+                norm_t = _normalize_tension(t, current_turn)
+                if norm_t is None:
+                    continue
+                tl = norm_t["label"][:20]
+                if not tl or not label_short:
+                    continue
+                if label_short in norm_t["label"] or tl in label:
+                    # 갱신
+                    norm_t["last_touched_turn"] = current_turn
+                    norm_t["priority"] = max(norm_t["priority"], priority)
+                    norm_t["kind"] = kind
+                    norm_t["primary"] = primary
+                    # 원본 자리에 정규화된 dict 저장 (str legacy → dict 마이그레이션)
+                    idx = sl["ongoing_tensions"].index(t)
+                    sl["ongoing_tensions"][idx] = norm_t
+                    matched = True
+                    break
+            if matched:
+                break
+
+        if not matched:
+            # 새 entry
+            new_entry = {
+                "label": label,
+                "priority": priority,
+                "introduced_turn": current_turn,
+                "last_touched_turn": current_turn,
+                "do_not_resolve_yet": False,
+                "kind": kind,
+                "primary": primary,
+            }
+            target_sl.setdefault("ongoing_tensions", []).append(new_entry)
+
+    return state
+
+
 def _is_tension_promptable(t: dict, current_turn: int) -> bool:
-    """tension이 prompt에 surface할 자격이 있는가."""
+    """tension이 prompt에 surface할 자격이 있는가.
+
+    Sprint E (2026-04-28): primary=True는 priority/dormant 무관 surface.
+    단 do_not_resolve_yet은 여전히 제외 (명시적 보류는 의도된 silence).
+    """
     if t["do_not_resolve_yet"]:
         return False  # 명시적 보류는 surface 안 함
+    if t.get("primary"):
+        return True   # 무게중심은 항상 surface (단 hold 제외)
     if t["priority"] < TENSION_MIN_PROMPT_PRIORITY:
         return False
     age = current_turn - t["last_touched_turn"]
@@ -500,11 +605,22 @@ def format_storylines_for_prompt(state: dict, current_turn: int = 0) -> str:
                 continue
             if _is_tension_promptable(t, current_turn):
                 promptable.append(t)
-        promptable.sort(key=lambda x: -x["priority"])
+        # Sprint E: primary 우선 정렬 + kind별 라벨 prefix
+        promptable.sort(key=lambda x: (not x.get("primary"), -x["priority"]))
         top = promptable[:2]
         line = f"  [{name}] ({entities}): {context}"
         if top:
-            line += f" | Tension: {'; '.join(t['label'] for t in top)}"
+            def _fmt_tension(t):
+                lbl = t["label"]
+                k = t.get("kind", "open_question")
+                if t.get("primary"):
+                    return f"★{lbl}"
+                if k == "payoff":
+                    return f"[Payoff] {lbl}"
+                if k == "lock":
+                    return f"[Lock] {lbl}"
+                return lbl
+            line += f" | Tension: {'; '.join(_fmt_tension(t) for t in top)}"
         parts.append(line)
 
     return "\n".join(parts)
