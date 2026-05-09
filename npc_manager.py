@@ -653,7 +653,7 @@ _SCENE_SECTION_MAP = {
     "normal":      ["Voice", "Core Operating Principle", "Speech Pattern", "Interpersonal Style",
                     "Emotional Architecture", "Secrets"],
 }
-_MAX_TOTAL_PER_NPC = 15000 # NPC 1명당 최종 안전 cap (장면 선택이 자연 필터 역할)
+_MAX_TOTAL_PER_NPC = 50000  # [Sprint L 2026-04-29] 사고 방어 안전망만. 정상 운영 도달 X.
 
 
 def _is_hybrid_profile(desc: str) -> bool:
@@ -682,35 +682,43 @@ def _parse_sections(desc: str) -> Dict[str, str]:
 
 
 def _select_profile_sections(desc: str, scene_type: str = "normal") -> str:
-    """scene_type에 따라 필요한 섹션만 선택하여 원문 그대로 반환.
+    """모든 섹션을 _CORE 우선으로 순서대로 노출.
 
-    장면 선택 자체가 필터 — 섹션 캡 없이 원문 보존.
-    _MAX_TOTAL_PER_NPC만 안전망으로 동작.
+    [Sprint L 2026-04-29] 시트 별 헤더 자유도 + 섹션 누락 방지.
+    scene_type 인자는 호환성 위해 유지 (내부 사용 X — 미래 exclusion 후보).
+    _MAX_TOTAL_PER_NPC = 50000은 사고 방어 안전망 (정상 운영 도달 X).
     """
-    if len(desc) <= 3000 or '###' not in desc:
-        return desc[:_MAX_TOTAL_PER_NPC]
+    if not desc or '###' not in desc:
+        return (desc[:_MAX_TOTAL_PER_NPC] if desc else "")
 
     parsed = _parse_sections(desc)
-    if len(parsed) <= 2:
+    if len(parsed) <= 1:
         return desc[:_MAX_TOTAL_PER_NPC]
-
-    wanted = list(_CORE_SECTIONS) + list(_SCENE_SECTION_MAP.get(scene_type, _SCENE_SECTION_MAP["normal"]))
 
     result_parts = []
     included = set()
 
-    for wanted_name in wanted:
+    # _preamble 먼저 (있고 비어있지 않으면)
+    preamble = parsed.get("_preamble", "")
+    if preamble and preamble.strip():
+        result_parts.append(preamble)
+
+    # _CORE 우선 매칭 (Identity + Hard Rules)
+    for core_name in _CORE_SECTIONS:
         for sec_name, sec_text in parsed.items():
-            if sec_name in included or sec_name == "_preamble":
+            if sec_name == "_preamble" or sec_name in included:
                 continue
-            if wanted_name.lower() in sec_name.lower():
+            if core_name.lower() in sec_name.lower():
                 result_parts.append(sec_text)
                 included.add(sec_name)
                 break
 
-    # 매칭된 섹션이 너무 적으면 (레거시 포맷 — 섹션명 불일치) 통째로 보내기
-    if len(included) <= 1:
-        return desc[:_MAX_TOTAL_PER_NPC]
+    # 나머지 모든 섹션 (parsed dict 순서대로)
+    for sec_name, sec_text in parsed.items():
+        if sec_name == "_preamble" or sec_name in included:
+            continue
+        result_parts.append(sec_text)
+        included.add(sec_name)
 
     result = "\n\n".join(result_parts)
 

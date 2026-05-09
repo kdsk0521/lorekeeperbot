@@ -49,8 +49,8 @@ ANALYSIS_TOP_P = 0.8
 # [Gemini 3] presence_penalty/frequency_penalty not supported - removed
 
 # Generation Parameters - Narrative (Pro/Right Brain)
-NARRATIVE_TEMPERATURE = 1.4
-NARRATIVE_TOP_K = 70
+NARRATIVE_TEMPERATURE = 1.15  # 1.4 → 1.15 (감정 과장 어휘 fan-out 축소)
+NARRATIVE_TOP_K = 60          # 70 → 60 (wild 후보 trim)
 NARRATIVE_TOP_P = 0.80
 NARRATIVE_MAX_OUTPUT_TOKENS = 12288
 # 서사 출력 길이: 인원당 동적 조절 (텔레스코프 제거 후 기준)
@@ -227,6 +227,10 @@ FRESH_THRESHOLD = 24  # [Cost-Diet] 24개 초과 시 발효 (렌더 12 + 여유 
 STORYTELLER_QUEUE_MAX = 5
 STORYTELLER_DIVERSITY_WINDOW = 5
 STORYTELLER_STARVATION_TURNS = 3
+# event_queue 만료: queued_turn으로부터 N턴 이상 묵힌 일반 이벤트는 폐기.
+# clock_completion 타입은 제외 — 기계적 약속이라 만료 없음.
+# 이미 시간이 지난 anomaly가 뒤늦게 발사되는 것을 방지.
+EVENT_QUEUE_EXPIRY_TURNS = 8
 
 # Active Condition (Storyteller v4.1 — Fate Aspect + Location)
 ACTIVE_CONDITION_CAP = 3
@@ -338,6 +342,17 @@ DOOM_FAST_TRACK_FILL = {4: 1, 6: 2, 8: 3}  # segments → initial filled
 # Clock cap: max active (unresolved) clocks
 DOOM_CLOCK_CAP = 5
 
+# Clock staleness fade: 시계가 segments + bonus 턴 동안 진행 0이면 silent resolve.
+# segments 4 → 10턴, 6 → 12턴, 8 → 14턴. pending_completion / do_not_resolve_yet 제외.
+# Doom delta 0, 보상 없음 — "잊혀짐" 처리(완료/실패 아님).
+CLOCK_STALE_BONUS_TURNS = 6
+
+# Clock context drift fade: 시계의 linked_entity/tags가 현재 씬의 relevant_npcs /
+# current_location과 N턴 동안 한 번도 안 겹치면 silent fade.
+# 앵커 없는 시계(linked_entity 빈 + tags 빈)는 면제 — staleness가 처리.
+# 진행 중이지만 맥락이 떠난 시계 처리용 (예: 도시 떠난 뒤 도시 외곽 시계).
+CLOCK_DRIFT_TURNS = 8
+
 # =========================================================
 # Quest Manager Constants
 # =========================================================
@@ -346,6 +361,11 @@ RETRY_DELAY_SECONDS = 1
 MAX_ARCHIVE_DISPLAY = 3
 MAX_HISTORY_FOR_CHRONICLE = 50
 EMPTY_QUEST_MEMO_MSG = "No active quests or memos."
+
+# Quest staleness archive: 마지막 진행으로부터 N턴 이상 멈춘 active 퀘스트는 archive로 조용히 이동.
+# une_facade의 8턴 directive softening은 유지 — 8~11턴 사이에는 약화된 채 살아있고, 12턴에 archive.
+# Doom delta 0, 실패/완료 처리 아님. 단순히 active 슬롯에서 빠지는 것.
+QUEST_STALE_ARCHIVE_TURNS = 12
 
 # Quest Progress Track (DC-linked 5 Ranks)
 QUEST_RANK_SETTINGS = {

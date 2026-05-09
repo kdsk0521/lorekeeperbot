@@ -50,14 +50,13 @@ def _split_lore_chunks(lore_text: str, min_len: int = 50) -> list:
         return []
 
     _MAX_CHUNK = 4000
-    _MIN_CHUNK = 200
+    _MIN_CHUNK = 800  # V3 (2026-05-04): 영어 로어북 sweet spot. 200은 한국어 기준이라 영어에선 과잉 분할
 
     # 구분선: ===, ---, ***, ~~~ (3자 이상, 내용 없는 줄)
     _SEP = re.compile(r'^[\s]*[=\-\*~]{3,}[\s]*$')
     # 메이저 헤더: "1. TITLE" / "2.3.1 Title" / "SECTION 1:" / "# Title" / "## Title"
-    _MAJOR = re.compile(
-        r'^(?:\d+\.[\d.]*\s+[A-Z\uAC00-\uD7A3]|SECTION\s+\d+|#{1,2}\s+)'
-    )
+    # V3: \uB9C8\uD06C\uB2E4\uC6B4 \uD5E4\uB354\uB9CC. \d+\. / SECTION \uD328\uD134 \uC81C\uAC70 (\uC77C\uBC18 \uBCF8\uBB38 false positive)
+    _MAJOR = re.compile(r'^#{1,2}\s+')
     # 마이너 헤더: "[1.1] Sub" / "--- Title ---" / "### Sub"
     _MINOR = re.compile(
         r'^(?:\[[\d.]+\]\s|---\s+.+\s+---|#{3,}\s+)'

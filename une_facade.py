@@ -279,12 +279,21 @@ def _build_events_layer(context, bus) -> str:
             parts.append(f"소급 선언: {declaration}")
 
     # Quest Echo → tag stripped
+    # 매 턴 stale 퀘스트(QUEST_STALE_ARCHIVE_TURNS 이상) archive 이동 후,
+    # 남은 active 퀘스트 중 8턴+ stale은 directive softening (강제 진전 금지).
+    # 즉 8~(threshold-1)턴 사이가 "약화된 채 살아있는" 구간.
     channel_id = (context.narrative_anchors or {}).get("channel_id", "")
     if channel_id:
         try:
             import game_character
-            active_quests = game_character.get_active_quests_raw(channel_id)
             turn_index = int(_to_float((bus.dai or {}).get("turn_index", 0), 0))
+            # Archive 먼저: threshold 넘은 퀘스트를 active에서 빼냄
+            try:
+                game_character.archive_stale_quests(channel_id, turn_index)
+            except Exception:
+                pass
+            # 남은 active 퀘스트에서 8턴+ stale은 약화 directive
+            active_quests = game_character.get_active_quests_raw(channel_id)
             for q in active_quests:
                 if not isinstance(q, dict):
                     continue

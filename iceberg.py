@@ -731,7 +731,7 @@ _FLAG_DIRECTIVES = {
     "echo_warning": "NPC가 PC 감정을 따라가고 있다. NPC 자신의 이유가 있는 반응인지 확인하라.",
     "stagnation_warning": "3턴째 장면 에너지가 평평하다. 외부 자극을 자연스럽게 도입하라.",
     "mse_deviation": "NPC 행동이 급변했다. 이전과 일관되는지 확인하고, 변화에 근거를 부여하라.",
-    "dissonance_flag": "NPC의 말과 행동이 어긋나고 있다. 바로 해소하지 마 — 불편함을 몸으로 보여줘라.",
+    "dissonance_flag": "NPC의 말과 행동이 어긋나고 있다. 그 어긋남이 해소되지 않은 채 몸짓·표정·호흡의 작은 불일치로 남는다.",
     "redemption_warning": "NPC가 근거 없이 누그러지고 있다. 이전 패턴을 유지하라.",
     "shallow_read": "분석이 표면에 머물렀다. 드러난 행동 아래를 더 보라 — 입 밖에 안 낸 것, 공간이 주는 압박, 갚지 못한 빚.",
     "sensory_habituated": "같은 공간에서 감각이 적응했다. 동일한 감각을 반복하지 말고, 미세한 변화를 포착하거나 새로운 감각 채널로 전환하라.",
@@ -1367,13 +1367,13 @@ _STRATEGY_HINTS = {
     "deliberate": "계산하며",
     # negotiation_stance (NEGOTIATION 모듈)
     "cooperative": "협력적으로",
-    "competitive": "주도권을 쥐며",
-    "exploitative": "상대를 이용하며",
+    "competitive": "먼저 말을 끊으며",
+    "exploitative": "상대 말의 약한 곳을 짚으며",
     # group_dynamic (GROUP_DYNAMICS 모듈)
-    "conformity": "다수에 동조하며",
-    "obedience": "권위에 따르며",
-    "groupthink": "집단 논리에 매몰되어",
-    "diffusion": "책임을 회피하며",
+    "conformity": "주변이 동의한 다음에 말하며",
+    "obedience": "지시받은 대로 짧게 답하며",
+    "groupthink": "남의 결론을 자기 말로 반복하며",
+    "diffusion": "주어를 흐리고 다른 사람을 가리키며",
 }
 
 # relation.phase → 관계 단계별 대화 전략 힌트
@@ -1405,9 +1405,9 @@ _NEEDS_HINTS = {
 # relation.attachment → 소유욕 대체 행동 힌트 (secure=없음, non-secure=구체 행동)
 _ATTACHMENT_POSSESSIVENESS = {
     "secure":       "",
-    "anxious":      "확인 강박 — 거리에 불안, 선제적 통제",
-    "avoidant":     "거리-통제 — 감정 후퇴, 회피로 주도권 유지",
-    "disorganized": "접근-회피 — 다가갔다 밀어내기, 대상화",
+    "anxious":      "거리가 벌어지면 먼저 묻고, 답이 늦으면 묻기를 거듭한다",
+    "avoidant":     "감정이 고조되면 한 발 물러서고, 가까워지면 시선을 다른 데 둔다",
+    "disorganized": "다가갔다가 갑자기 거리를 두고, 같은 사람을 다르게 대한다",
 }
 
 _FRAMEWORK_TERMS_RE = re.compile(

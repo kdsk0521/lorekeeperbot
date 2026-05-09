@@ -212,6 +212,34 @@ class AnomalyModule:
         current_turn = bus.anomaly.get("_current_turn", 0)
         channel_id = bus.anomaly.get("_channel_id", "")
 
+        # --- event_queue 만료 정리 ---
+        # queued_turn으로부터 EVENT_QUEUE_EXPIRY_TURNS 이상 묵힌 일반 이벤트는 폐기.
+        # clock_completion 타입은 제외 — 기계적 약속이라 만료 안 함 (intimate 5턴 starvation은 별도).
+        # starvation_turns(3) < expiry_turns(8) 이라 보통은 starvation으로 발사되고,
+        # 발사 못한 채 8턴 이상 묵힌 건 "기회 놓침"으로 폐기.
+        try:
+            _exp_threshold = _cfg.EVENT_QUEUE_EXPIRY_TURNS
+            queue = st_state.get("event_queue", [])
+            kept = []
+            expired_tags = []
+            for ev in queue:
+                if ev.get("type") == "clock_completion":
+                    kept.append(ev)
+                    continue
+                qt = ev.get("queued_turn", current_turn)
+                if current_turn - qt >= _exp_threshold:
+                    expired_tags.append(ev.get("tag", "?"))
+                    continue
+                kept.append(ev)
+            if expired_tags:
+                st_state["event_queue"] = kept
+                logger.info(
+                    "[Storyteller] Expired %d stale event(s): %s",
+                    len(expired_tags), ", ".join(expired_tags),
+                )
+        except Exception as _e_expire:
+            logger.warning("[Storyteller] event_queue expiry failed: %s", _e_expire)
+
         # --- Active Condition lifecycle ---
 
         # 1a. Process condition resolutions (from Flash)

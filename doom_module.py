@@ -87,6 +87,8 @@ class DoomModule:
                     "linked_quest": None,
                     "tags": flash_new.get("tags", []),
                     "turn_created": bus.dai.get("turn_index", 0),
+                    "last_progress_turn": bus.dai.get("turn_index", 0),
+                    "last_context_turn": bus.dai.get("turn_index", 0),
                     "resolved": False,
                 }
                 # Fast-track: pre-fill at high doom
@@ -140,6 +142,7 @@ class DoomModule:
                         clock["filled"] = new_filled
                         flash_updated_names.add(name)
                         if new_filled != old_filled:
+                            clock["last_progress_turn"] = bus.dai.get("turn_index", 0)
                             clock_events.append(
                                 f"{name}: {old_filled}→{new_filled}/{clock['segments']}"
                             )
@@ -183,10 +186,84 @@ class DoomModule:
                 new_filled = min(segments, old_filled + tick_amount)
                 if new_filled != old_filled:
                     clock["filled"] = new_filled
+                    clock["last_progress_turn"] = turn_idx
                     suffix = f" (accel +{extra_tick})" if extra_tick else ""
                     clock_events.append(
                         f"{clock_name}: {old_filled}→{new_filled}/{segments} (auto{suffix})"
                     )
+
+        # ── 3.5. Staleness Fade ─────────────────────────────
+        # 시계가 segments + CLOCK_STALE_BONUS_TURNS 동안 진행 0이면 silent resolve.
+        # pending_completion / do_not_resolve_yet 시계는 제외 (이미 발사 대기 또는 명시적 보류).
+        # Doom delta 0, 보상 없음 — "잊혀짐" 처리.
+        _stale_current = bus.dai.get("turn_index", 0)
+        for clock in clocks:
+            if clock.get("resolved") or clock.get("pending_completion") or clock.get("do_not_resolve_yet"):
+                continue
+            segments = int(clock.get("segments", 6) or 6)
+            stale_threshold = segments + config.CLOCK_STALE_BONUS_TURNS
+            # backward compat: 패치 이전 시계는 last_progress_turn 없음 → turn_created 사용
+            last_prog = int(clock.get("last_progress_turn", clock.get("turn_created", _stale_current)) or 0)
+            stale_turns = _stale_current - last_prog
+            if stale_turns >= stale_threshold:
+                clock["resolved"] = True
+                clock["fade_reason"] = f"stale_{stale_turns}turns"
+                clock_events.append(
+                    f"FADE: {clock.get('name', '?')} (stale {stale_turns}t, no doom)"
+                )
+
+        # ── 3.6. Context Drift Fade ─────────────────────────
+        # linked_entity / tags가 현재 씬의 relevant_npcs / current_location과
+        # N턴 동안 한 번도 매칭 안 되면 silent fade. 진행 중이지만 맥락 떠난 시계 정리.
+        # 앵커 없는 시계(linked 빈 + tags 빈)는 drift 면제 — staleness만 처리.
+        # in-context 매칭되면 last_context_turn 갱신.
+        _drift_current = _stale_current
+        _relevant_npcs = bus.dai.get("relevant_npcs", []) or []
+        _npc_names = set()
+        for _n in _relevant_npcs:
+            if isinstance(_n, str):
+                if _n.strip():
+                    _npc_names.add(_n.strip().lower())
+            elif isinstance(_n, dict):
+                _nm = (_n.get("name") or "").strip()
+                if _nm:
+                    _npc_names.add(_nm.lower())
+        _current_loc = (bus.dai.get("current_location") or "").strip().lower()
+
+        for clock in clocks:
+            if clock.get("resolved") or clock.get("pending_completion") or clock.get("do_not_resolve_yet"):
+                continue
+            _linked = (clock.get("linked_entity") or "").strip().lower()
+            _tags_raw = clock.get("tags") or []
+            _tags = [str(t).strip().lower() for t in _tags_raw if str(t).strip()]
+            _has_anchor = bool(_linked) or bool(_tags)
+            if not _has_anchor:
+                # 앵커 없는 시계는 drift 면제 (staleness 경로로만 처리)
+                continue
+
+            in_context = False
+            if _linked and _linked in _npc_names:
+                in_context = True
+            elif _tags and any(t in _npc_names for t in _tags):
+                in_context = True
+            elif _current_loc:
+                if _linked and (_current_loc in _linked or _linked in _current_loc):
+                    in_context = True
+                elif _tags and any((_current_loc in t) or (t in _current_loc) for t in _tags):
+                    in_context = True
+
+            if in_context:
+                clock["last_context_turn"] = _drift_current
+                continue
+
+            _last_ctx = int(clock.get("last_context_turn", clock.get("turn_created", _drift_current)) or 0)
+            drift_turns = _drift_current - _last_ctx
+            if drift_turns >= config.CLOCK_DRIFT_TURNS:
+                clock["resolved"] = True
+                clock["fade_reason"] = f"drift_{drift_turns}turns"
+                clock_events.append(
+                    f"DRIFT: {clock.get('name', '?')} (out of context {drift_turns}t)"
+                )
 
         # ── 4. 완성 체크 → 극성별 분기 ──────────────────────
         completed_this_turn = []

@@ -115,13 +115,20 @@ def add_quest(channel_id: str, content: str, rank: str = None) -> str:
         return f"⚠️ 이미 등록된 퀘스트입니다."
 
     settings = config.QUEST_RANK_SETTINGS[rank]
+    # last_progress_turn 초기화: 생성 즉시 0이면 첫 턴부터 stale 카운트가 시작되어
+    # 신생 퀘스트가 12턴 후 자동 archive되는 버그(turn_index가 12 이상일 때).
+    # 생성 턴을 기준점으로 잡아야 staleness 임계가 의미 있음.
+    try:
+        _curr_turn = domain_manager.get_world_state(channel_id).get("turn_index", 0)
+    except Exception:
+        _curr_turn = 0
     quest_obj = {
         "content": content,
         "rank": rank,
         "progress": 0,
         "max_progress": settings["max_progress"],
         "linked_clock": None,
-        "last_progress_turn": 0,
+        "last_progress_turn": _curr_turn,
     }
     active.append(quest_obj)
     board["active"] = active
@@ -208,6 +215,53 @@ def remove_quest(channel_id: str, content: str) -> str:
         q_name = target["content"] if isinstance(target, dict) else target
         return f"🗑️ **퀘스트 제거:** {q_name}"
     return f"⚠️ 해당 퀘스트를 찾을 수 없습니다."
+
+
+def archive_stale_quests(channel_id: str, current_turn: int, threshold: int = None) -> List[str]:
+    """N턴 이상 진전 없는 active 퀘스트를 archive로 조용히 이동.
+
+    - 완료/실패 처리 아님. doom delta 0.
+    - 사용자에게 떠들지 않음 (반환값으로만 호출자에게 알림).
+    - une_facade의 8턴 directive softening은 유지 — 8~11턴 사이에는 약화된 채 살아있고,
+      threshold 도달 시 archive.
+
+    Returns: archived된 퀘스트 이름 리스트.
+    """
+    if threshold is None:
+        threshold = config.QUEST_STALE_ARCHIVE_TURNS
+
+    board = _get_board(channel_id)
+    active = board.get("active", [])
+    archive = board.get("archive", [])
+    archived_names: List[str] = []
+    keep: List[Any] = []
+
+    for q in active:
+        if not isinstance(q, dict):
+            keep.append(q)
+            continue
+        # progress가 max에 도달했거나 거의 도달한 활동적 퀘스트는 살림
+        # (아주 큰 퀘스트가 dribble 진행 중인 경우)
+        last_prog = int(q.get("last_progress_turn", 0) or 0)
+        stale_turns = current_turn - last_prog
+        if stale_turns >= threshold:
+            q["archived_reason"] = f"stale_{stale_turns}turns"
+            q["archived_turn"] = current_turn
+            archive.append(q)
+            archived_names.append(q.get("content", "?"))
+        else:
+            keep.append(q)
+
+    if archived_names:
+        board["active"] = keep
+        board["archive"] = archive
+        _save_board(channel_id, board)
+        logger.info(
+            "[Quest] Archived %d stale quest(s): %s",
+            len(archived_names), ", ".join(archived_names),
+        )
+
+    return archived_names
 
 # Memo Operations (Integrated into Notebook, per-user in V8)
 def add_memo(channel_id: str, content: str, user_id: str = "") -> str:
