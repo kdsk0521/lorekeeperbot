@@ -1,12 +1,11 @@
 """
-Lorekeeper UNE - Doom Module (v3 — Dual-Layer Situation Clocks)
-Layer 1: Individual situation clocks (Flash creates/updates/resolves)
-Layer 2: Global doom gauge (0-100 climax meter)
-Backward compatible: empty doom_clocks → same behavior as v2.
+Lorekeeper UNE - Doom Module (v4 — Chapter Volume Gauge)
+Doom = 이야기 활성도 + 챕터 볼륨. 起承轉結 + 間 4+1단.
+Phase × Lens × Scene 결합. intense 자동 climax / intimate spike 발화.
 """
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, List, Set, Tuple
 
 import config
 
@@ -17,13 +16,154 @@ logger = logging.getLogger("Doom")
 
 
 def _get_doom_stage(doom_val: int) -> int:
-    """Doom value → stage index (0-5)."""
+    """Doom value → 6단 stage index (0-5). DOOM_CLOCK_ACCELERATION/DECELERATION_STAGE 룩업용 legacy."""
     if doom_val >= 95: return 5
     if doom_val >= 80: return 4
     if doom_val >= 60: return 3
     if doom_val >= 40: return 2
     if doom_val >= 20: return 1
     return 0
+
+
+# =========================================================
+# Phase / Lens / Scene 결합 헬퍼
+# =========================================================
+
+def _extract_lens_tags(active_genres) -> List[str]:
+    """active_genres에서 C-Lens 태그(noir/comedy/romance/drama)만 추출.
+    여러 형식 정규화: str / list / dict({stage,flavor,lens} 또는 {layers}).
+    """
+    KNOWN_LENS = {"noir", "comedy", "romance", "drama"}
+    tags = set()
+    if isinstance(active_genres, str):
+        if active_genres in KNOWN_LENS:
+            return [active_genres]
+        return []
+    if isinstance(active_genres, list):
+        for g in active_genres:
+            if isinstance(g, str) and g in KNOWN_LENS:
+                tags.add(g)
+        return list(tags)
+    if isinstance(active_genres, dict):
+        # layers 형식
+        layers = active_genres.get("layers", {})
+        if isinstance(layers, dict):
+            for v in layers.get("narrative_tone", []):
+                if isinstance(v, str) and v in KNOWN_LENS:
+                    tags.add(v)
+        # stage/flavor/lens 형식
+        for v in active_genres.get("lens", []):
+            if isinstance(v, str) and v in KNOWN_LENS:
+                tags.add(v)
+        if tags:
+            return list(tags)
+        # fallback: 모든 값 순회
+        for v in active_genres.values():
+            if isinstance(v, list):
+                for item in v:
+                    if isinstance(item, str) and item in KNOWN_LENS:
+                        tags.add(item)
+            elif isinstance(v, str) and v in KNOWN_LENS:
+                tags.add(v)
+    return list(tags)
+
+
+def _extract_flavor_tags(active_genres) -> List[str]:
+    """active_genres에서 B-Flavor 태그(urban_fantasy/steampunk/cosmic_horror/game_system) 추출."""
+    KNOWN_FLAVOR = set(config.FLAVOR_DOOM_MODIFIER.keys())
+    tags = set()
+    if isinstance(active_genres, str):
+        if active_genres in KNOWN_FLAVOR:
+            return [active_genres]
+        return []
+    if isinstance(active_genres, list):
+        for g in active_genres:
+            if isinstance(g, str) and g in KNOWN_FLAVOR:
+                tags.add(g)
+        return list(tags)
+    if isinstance(active_genres, dict):
+        layers = active_genres.get("layers", {})
+        if isinstance(layers, dict):
+            for v in layers.get("style_tech", []):
+                if isinstance(v, str) and v in KNOWN_FLAVOR:
+                    tags.add(v)
+        for v in active_genres.get("flavor", []):
+            if isinstance(v, str) and v in KNOWN_FLAVOR:
+                tags.add(v)
+        if tags:
+            return list(tags)
+        for v in active_genres.values():
+            if isinstance(v, list):
+                for item in v:
+                    if isinstance(item, str) and item in KNOWN_FLAVOR:
+                        tags.add(item)
+            elif isinstance(v, str) and v in KNOWN_FLAVOR:
+                tags.add(v)
+    return list(tags)
+
+
+def _get_doom_phase(doom_val: int, lens_tags: List[str]) -> str:
+    """Doom value + 활성 lens → 페이즈 라벨(起/承/轉/結/間).
+    다중 lens면 첫 번째 lens의 boundary 기준 (단순화 — 곡선만 평균, 페이즈는 단일 기준).
+    """
+    primary = lens_tags[0] if lens_tags else "default"
+    return config.get_lens_phase(doom_val, primary)
+
+
+def _compute_phase_multiplier(phase: str, lens_tags: List[str]) -> float:
+    """페이즈 + 활성 lens → multiplier. 다중 lens는 가중평균. 間 페이즈는 별도 처리(자연 감쇠)."""
+    if phase == "間":
+        return 0.0  # 間은 gain 적용 안 함, 별도 자연 감쇠 처리
+    if not lens_tags:
+        return config.LENS_DOOM_CURVE["default"].get(phase, 1.0)
+    mults = [config.LENS_DOOM_CURVE.get(lens, config.LENS_DOOM_CURVE["default"]).get(phase, 1.0)
+             for lens in lens_tags]
+    return sum(mults) / len(mults)
+
+
+def _compute_flavor_modifier(flavor_tags: List[str]) -> Tuple[float, int]:
+    """B-Flavor → (gain_mult 곱, threshold_offset 합)."""
+    gain = 1.0
+    offset = 0
+    for f in flavor_tags:
+        mod = config.FLAVOR_DOOM_MODIFIER.get(f)
+        if mod:
+            gain *= mod.get("gain_mult", 1.0)
+            offset += mod.get("threshold_offset", 0)
+    return gain, offset
+
+
+def _compute_climax_threshold(lens_tags: List[str], flavor_tags: List[str]) -> int:
+    """렌즈 climax_threshold 가중평균 + flavor offset."""
+    if not lens_tags:
+        base = config.LENS_DOOM_CURVE["default"]["climax"]
+    else:
+        thresholds = [config.LENS_DOOM_CURVE.get(l, config.LENS_DOOM_CURVE["default"]).get("climax", 80)
+                      for l in lens_tags]
+        base = sum(thresholds) / len(thresholds)
+    _, offset = _compute_flavor_modifier(flavor_tags)
+    return int(base + offset)
+
+
+def _compute_scene_modifier(scene_type: str) -> float:
+    """씬 타입 modifier 룩업."""
+    return config.SCENE_DOOM_MODIFIER.get(scene_type, 1.0)
+
+
+def _apply_doom_multipliers(raw_delta: int, phase: str, lens_tags: List[str],
+                             flavor_tags: List[str], scene_type: str) -> int:
+    """raw doom delta에 phase × lens_curve × flavor × scene 모두 적용."""
+    if raw_delta == 0:
+        return 0
+    phase_mult = _compute_phase_multiplier(phase, lens_tags)
+    flavor_mult, _ = _compute_flavor_modifier(flavor_tags)
+    scene_mult = _compute_scene_modifier(scene_type)
+    final = raw_delta * phase_mult * flavor_mult * scene_mult
+    # 부호 보존 + 정수화
+    if raw_delta > 0:
+        return max(0, int(round(final)))
+    else:
+        return min(0, int(round(final)))
 
 
 class DoomModule:
@@ -43,6 +183,20 @@ class DoomModule:
         # ── 씬타입별 시계 라이프사이클 억제 ──────────────────
         scene_type = bus.dai.get("scene_type", "normal")
         clock_rules = config.CLOCK_SCENE_RULES.get(scene_type, config.CLOCK_SCENE_RULES.get("normal", {}))
+
+        # ── 페이즈/렌즈/플레이버 추출 (이번 턴 결합 multiplier 결정) ──
+        active_genres = (context.narrative_anchors or {}).get("active_genres", [])
+        lens_tags = _extract_lens_tags(active_genres)
+        flavor_tags = _extract_flavor_tags(active_genres)
+        current_phase = _get_doom_phase(current_doom, lens_tags)
+        climax_threshold = _compute_climax_threshold(lens_tags, flavor_tags)
+        bus.doom["chapter_phase"] = current_phase
+        bus.doom["lens_tags"] = lens_tags
+        bus.doom["flavor_tags"] = flavor_tags
+        bus.doom["climax_threshold"] = climax_threshold
+
+        # 間 페이즈 진입 여부 — climax_triggered가 직전 턴에 set됐고 doom 자연 감쇠 중
+        in_intermission = bool(bus.doom.get("intermission_active"))
 
         # ── 0. Storyteller가 fire 신호 보낸 pending 시계 처리 ──
         fired_names = set(bus.doom.get("_fire_completions", []))
@@ -89,10 +243,15 @@ class DoomModule:
                     "turn_created": bus.dai.get("turn_index", 0),
                     "last_progress_turn": bus.dai.get("turn_index", 0),
                     "last_context_turn": bus.dai.get("turn_index", 0),
+                    "filled_history": [0],  # 등락 감지용 — 매 턴 filled 변화 시 append
                     "resolved": False,
                 }
-                # Fast-track: pre-fill at high doom
-                if bus.doom.get("value", 0) >= config.DOOM_FAST_TRACK_THRESHOLD:
+                # 間 페이즈: 새 시계는 자동 do_not_resolve_yet (다음 챕터 떡밥)
+                if in_intermission:
+                    new_clock["do_not_resolve_yet"] = True
+                    clock_events.append(f"📖 {new_name} — 다음 챕터 떡밥 (do_not_resolve_yet)")
+                # Fast-track: pre-fill at high doom (間 페이즈에선 정지)
+                if not in_intermission and bus.doom.get("value", 0) >= config.DOOM_FAST_TRACK_THRESHOLD:
                     pre_fill = config.DOOM_FAST_TRACK_FILL.get(new_clock["segments"], 0)
                     if pre_fill > 0:
                         new_clock["filled"] = pre_fill
@@ -143,6 +302,11 @@ class DoomModule:
                         flash_updated_names.add(name)
                         if new_filled != old_filled:
                             clock["last_progress_turn"] = bus.dai.get("turn_index", 0)
+                            # 등락 감지용 history 갱신 (window 크기로 잘림)
+                            hist = clock.setdefault("filled_history", [old_filled])
+                            hist.append(new_filled)
+                            if len(hist) > config.CLOCK_OSCILLATION_WINDOW:
+                                clock["filled_history"] = hist[-config.CLOCK_OSCILLATION_WINDOW:]
                             clock_events.append(
                                 f"{name}: {old_filled}→{new_filled}/{clock['segments']}"
                             )
@@ -156,9 +320,11 @@ class DoomModule:
 
         # ── 3. Time/Hybrid 자동 틱 (씬타입 억제: auto_tick) ──
         doom_stage = _get_doom_stage(bus.doom.get("value", 0))
-        extra_tick = config.DOOM_CLOCK_ACCELERATION.get(doom_stage, 0)
+        # 間 페이즈: acceleration 정지 (extra_tick=0)
+        extra_tick = 0 if in_intermission else config.DOOM_CLOCK_ACCELERATION.get(doom_stage, 0)
         turn_idx = bus.dai.get("turn_index", 0)
-        auto_tick_allowed = clock_rules.get("auto_tick", True)
+        # 間 페이즈: auto_tick 정지
+        auto_tick_allowed = (not in_intermission) and clock_rules.get("auto_tick", True)
 
         for clock in clocks:
             if clock.get("resolved"):
@@ -187,6 +353,11 @@ class DoomModule:
                 if new_filled != old_filled:
                     clock["filled"] = new_filled
                     clock["last_progress_turn"] = turn_idx
+                    # 등락 감지용 history 갱신
+                    hist = clock.setdefault("filled_history", [old_filled])
+                    hist.append(new_filled)
+                    if len(hist) > config.CLOCK_OSCILLATION_WINDOW:
+                        clock["filled_history"] = hist[-config.CLOCK_OSCILLATION_WINDOW:]
                     suffix = f" (accel +{extra_tick})" if extra_tick else ""
                     clock_events.append(
                         f"{clock_name}: {old_filled}→{new_filled}/{segments} (auto{suffix})"
@@ -265,6 +436,33 @@ class DoomModule:
                     f"DRIFT: {clock.get('name', '?')} (out of context {drift_turns}t)"
                 )
 
+        # ── 3.7. Oscillation Fade ───────────────────────────
+        # 시계 filled이 등락(+1, -1, +1, -1)만 반복하면 silent fade.
+        # 알고리즘: direction change(non-zero diff sign 변화) ≥ DIR_MIN AND net change ≤ NET_THRESHOLD.
+        # pending_completion / do_not_resolve_yet 시계는 면제.
+        for clock in clocks:
+            if clock.get("resolved") or clock.get("pending_completion") or clock.get("do_not_resolve_yet"):
+                continue
+            hist = clock.get("filled_history", [])
+            if len(hist) < config.CLOCK_OSCILLATION_WINDOW:
+                continue
+            window = hist[-config.CLOCK_OSCILLATION_WINDOW:]
+            net_change = abs(window[-1] - window[0])
+            # non-zero diff의 sign 변화 카운트
+            diffs = [window[i+1] - window[i] for i in range(len(window)-1)]
+            nonzero = [d for d in diffs if d != 0]
+            dir_changes = sum(
+                1 for i in range(1, len(nonzero))
+                if (nonzero[i-1] > 0) != (nonzero[i] > 0)
+            )
+            if dir_changes >= config.CLOCK_OSCILLATION_DIRECTION_CHANGES_MIN and \
+               net_change <= config.CLOCK_OSCILLATION_NET_THRESHOLD:
+                clock["resolved"] = True
+                clock["fade_reason"] = f"oscillation_dir{dir_changes}_net{net_change}"
+                clock_events.append(
+                    f"OSCILLATE: {clock.get('name', '?')} (dir-changes {dir_changes}, net {net_change})"
+                )
+
         # ── 4. 완성 체크 → 극성별 분기 ──────────────────────
         completed_this_turn = []
         current_turn = bus.dai.get("turn_index", 0)
@@ -314,20 +512,67 @@ class DoomModule:
             delta -= relief_amount
             bus.doom["relief_log"] = f"🌿 긴장 완화: -{relief_amount} ({relief_reason})"
 
+        # ── 5.5. Phase × Lens × Scene multiplier 적용 ───────
+        # 누적된 raw delta(시계 완성/해결, status, judgment, relief)에 결합 multiplier.
+        # 間 페이즈는 multiplier=0이라 자동으로 자연 감쇠로 넘어감 (별도 처리).
+        raw_delta = delta
+        if not in_intermission:
+            delta = _apply_doom_multipliers(raw_delta, current_phase, lens_tags, flavor_tags, scene_type)
+        else:
+            # 間 페이즈: raw delta 무시, 자연 감쇠만 적용
+            delta = -config.CHAPTER_INTERMISSION_DECAY
+
         # ── 6. 글로벌 둠 갱신 ────────────────────────────────
         bus.doom["delta"] = 0  # Consumed — Anomaly/Judgment can write fresh delta after this
         if delta != 0:
-            new_doom = max(0, min(100, current_doom + delta))
+            # intimate climax armed 상태: doom threshold 천장 cap (못 더 오름)
+            new_doom = current_doom + delta
+            climax_armed = bus.doom.get("climax_armed", False)
+            if climax_armed and new_doom > climax_threshold:
+                new_doom = climax_threshold
+            new_doom = max(0, min(100, new_doom))
             bus.doom["value"] = new_doom
             if delta > 0:
-                bus.doom["log"] = f"📈 긴장도 증가 (+{delta})"
+                bus.doom["log"] = f"📈 긴장도 증가 (+{delta}, raw={raw_delta}, phase={current_phase})"
             else:
-                bus.doom["log"] = f"📉 긴장도 감소 ({delta})"
+                bus.doom["log"] = f"📉 긴장도 감소 ({delta}, phase={current_phase})"
                 bus.doom["narrative_space"] = abs(delta)
 
-        # ── 7. Stage 5 클라이맥스 체크 (doom ≥ threshold) ────
-        if bus.doom.get("value", 0) >= config.DOOM_CLIMAX_THRESHOLD:
-            _trigger_climax(context, bus, clocks, clock_events)
+        # ── 7. Climax 분기 (intense 자동 / intimate spike 발화) ────
+        new_doom = bus.doom.get("value", 0)
+        is_intimate = bool(set(lens_tags) & config.INTIMATE_LENS_GROUP)
+        already_climaxed = bus.doom.get("climax_triggered", False)
+
+        if not in_intermission and not already_climaxed:
+            if is_intimate:
+                # intimate: doom ≥ threshold이면 armed=True. spike 발생 시 발화.
+                if new_doom >= climax_threshold:
+                    bus.doom["climax_armed"] = True
+                else:
+                    bus.doom["climax_armed"] = False  # threshold 아래 떨어지면 unset
+                # spike 검색
+                if bus.doom.get("climax_armed"):
+                    emotion_summary = bus.emotion.get("summary", {}) if isinstance(bus.emotion, dict) else {}
+                    spike_detected = any(
+                        isinstance(e, dict) and e.get("spike")
+                        for e in emotion_summary.values()
+                    )
+                    if spike_detected:
+                        _trigger_climax(context, bus, clocks, clock_events)
+                        bus.doom["intermission_active"] = True  # 다음 턴 間 페이즈 진입
+            else:
+                # intense (cosmic_horror 활성 또는 default): 자동 발화
+                if new_doom >= climax_threshold:
+                    _trigger_climax(context, bus, clocks, clock_events)
+                    bus.doom["intermission_active"] = True
+
+        # ── 7.5. 間 페이즈 → 새 챕터 起 진입 체크 ─────────────
+        if in_intermission and bus.doom.get("value", 0) <= config.CHAPTER_RESET_FLOOR:
+            bus.doom["intermission_active"] = False
+            bus.doom["climax_triggered"] = False
+            bus.doom["climax_armed"] = False
+            bus.doom["chapter_reset_log"] = f"📖 새 챕터 起 진입 (doom {bus.doom['value']})"
+            logger.info("[Doom] 챕터 reset → 새 챕터 起 진입")
 
         # ── 8. 시계 저장 ─────────────────────────────────────
         bus.doom["clocks"] = clocks
@@ -451,6 +696,7 @@ def _trigger_climax(context, bus, clocks: list, clock_events: list) -> None:
             continue
         clock["filled"] = clock.get("segments", 4)
         clock["resolved"] = True
+        clock["fade_reason"] = "climax_close"
         clock_events.append(f"CLIMAX: {clock.get('name', '?')} forced complete")
     bus.doom["climax_triggered"] = True
 
@@ -478,24 +724,21 @@ def _trigger_climax(context, bus, clocks: list, clock_events: list) -> None:
 
 
 def _apply_pressure(context: "GameContext", bus) -> None:
-    """Vigor/Composure Pressure/Recovery from global doom level (FitD 8-segment)."""
+    """Vigor/Composure Recovery — 활성도 페이즈 기반.
+    리브랜드: 마이너스 패널티 제거. 起 페이즈(저-doom) 회복만 유지.
+    "조용한 세계 = 쉴 시간 있음" / "분주한 세계 = 쉴 틈은 없지만 깎이지도 않음".
+    """
     dv = bus.doom.get("value", 0)
-    if dv >= 88:
-        pressure, label = -3, "⚠️ 긴장 시계 [임박] (-3)"
-    elif dv >= 76:
-        pressure, label = -2, "⚠️ 긴장 시계 [위기] (-2)"
-    elif dv >= 63:
-        pressure, label = -1, "😰 긴장 시계 [위협] (-1)"
-    elif dv >= 50:
-        pressure, label = -1, "😰 긴장 시계 [긴장] (-1)"
-    elif dv >= 38:
-        pressure, label = 0, ""
-    elif dv >= 25:
-        pressure, label = 0, ""
-    elif dv >= 13:
-        pressure, label = 1, "😌 긴장 이완 [안정] (+1)"
+    # 페이즈 기반 회복 (起 영역만 +1/+2). 그 외 모두 0.
+    if dv < 13:
+        pressure, label = 2, "😌 이완"
+    elif dv < 25:
+        pressure, label = 1, "😌 안정"
     else:
-        pressure, label = 2, "😌 긴장 이완 [이완] (+2)"
+        # 承/轉/結/間 — 페이즈 라벨만 노출, pressure 0
+        phase = bus.doom.get("chapter_phase", "")
+        pressure = 0
+        label = f"📖 페이즈 {phase}" if phase else ""
 
     mechanic = context.request.genres.get("mechanic", {})
     primary = mechanic.get("primary_resource") or "vigor"
@@ -503,9 +746,10 @@ def _apply_pressure(context: "GameContext", bus) -> None:
     primary_bus = getattr(bus, primary)
     secondary_bus = getattr(bus, secondary)
 
-    if pressure != 0:
+    if pressure > 0:
         primary_bus["delta"] = primary_bus.get("delta", 0) + pressure
         secondary_bus["delta"] = secondary_bus.get("delta", 0) + int(pressure * 0.5)
+    if label:
         bus.doom["mental_pressure_log"] = label
 
     # Defense rewards → primary axis recovery

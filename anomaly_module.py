@@ -60,6 +60,11 @@ class AnomalyModule:
         """Determine act/defer/skip based on timing table + overrides + DAI."""
         dai = bus.dai
 
+        # Override 0: 間 페이즈 (후일담) — anomaly 강제 defer (정적/회상 톤만 통과)
+        if bus.doom.get("intermission_active"):
+            bus.anomaly["decision_reason"] = "intermission_defer"
+            return "defer"
+
         # Override 1: Force act (climax push)
         if bus.anomaly.get("_force_act"):
             return "act"

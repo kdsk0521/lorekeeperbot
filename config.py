@@ -132,10 +132,7 @@ SCENE_TIME_RULES = {
     "summary":  {"base_ticks": 0,  "max_ticks": 999},
 }
 
-# Doom Thresholds
-DOOM_THRESHOLD_WARNING = 30
-DOOM_THRESHOLD_DANGER = 70
-DOOM_THRESHOLD_CRITICAL = 90
+# Doom Max
 DOOM_MAX = 100
 
 # Doom Increase Rates
@@ -151,8 +148,31 @@ NEMESIS_THRESHOLD = -10
 # Doom Dice Modifier
 DOOM_DICE_BASELINE = 50
 
+# =========================================================
+# Doom Chapter Volume — Phase × Lens × Scene 결합
+# =========================================================
+# 페이즈 boundary가 lens별로 다름 (climax_threshold 따라). 起承轉結間 4+1단.
+# raw doom delta는 doom_module.process() 내부 자동 변동에만 multiplier 적용.
+# game_world.change_doom (OOC `!둠`, quest 보상)은 직접 amount 반영 (사용자 의도 보존).
+
+DOOM_RAW_GAIN_BASE = 2.5  # 평균 turn당 raw doom gain 기준
+CHAPTER_INTERMISSION_DECAY = 3  # 間 페이즈 자연 감쇠 (-3/턴)
+CHAPTER_RESET_FLOOR = 10  # 새 챕터 시작 floor (climax 후 doom 10 도달 시 起 진입)
+INTIMATE_LENS_GROUP = {"romance", "comedy", "noir", "drama"}  # manual climax (spike 발화)
+
+# Scene type doom modifier
+SCENE_DOOM_MODIFIER = {
+    "combat":      1.5,
+    "exploration": 1.2,
+    "normal":      1.0,
+    "social":      1.0,
+    "intimate":    0.5,
+    "rest":        0.3,
+    "summary":     0.0,
+}
+
 # Doom v3 — Situation Clocks
-DOOM_CLIMAX_THRESHOLD = 95  # Stage 5 진입 기준 (doom ≥ 95)
+DOOM_CLIMAX_THRESHOLD = 95  # Default climax threshold (intense). intimate는 lens별 가변.
 CLOCK_COMPLETE_DOOM = {4: 10, 6: 15, 8: 20}  # segments → global doom 상승
 CLOCK_RESOLVE_DOOM = {4: -5, 6: -10, 8: -15}  # segments → global doom 하강 (해결 시)
 
@@ -248,15 +268,7 @@ MENTAL_STAGES = {
     3: {"name": "붕괴", "emoji": "🫥", "range": (0, 15),   "desc": "몸도 정신도 한계를 넘겼습니다. (트라우마 위험)"}
 }
 
-# Doom Stages (0-5)
-DOOM_STAGES = {
-    0: {"name": "평온", "emoji": "🟢", "range": (0, 20)},
-    1: {"name": "불안", "emoji": "🟡", "range": (20, 40)},
-    2: {"name": "경계", "emoji": "🟠", "range": (40, 60)},
-    3: {"name": "위험", "emoji": "🔴", "range": (60, 80)},
-    4: {"name": "임계", "emoji": "⚫", "range": (80, 100)},
-    5: {"name": "파멸", "emoji": "💀", "range": (100, 101)}
-}
+# DOOM_STAGES 제거 — LENS_DOOM_PHASE_RANGES + LENS_DOOM_ATMOSPHERE로 대체 (line 698~)
 
 # Doom Stage (0-5) -> Mental Recovery Multiplier
 DOOM_MENTAL_RECOVERY_MOD = {
@@ -352,6 +364,15 @@ CLOCK_STALE_BONUS_TURNS = 6
 # 앵커 없는 시계(linked_entity 빈 + tags 빈)는 면제 — staleness가 처리.
 # 진행 중이지만 맥락이 떠난 시계 처리용 (예: 도시 떠난 뒤 도시 외곽 시계).
 CLOCK_DRIFT_TURNS = 8
+
+# Clock oscillation fade: 시계 filled이 등락(+1, -1, +1, -1)만 반복하면 silent fade.
+# 알고리즘: WINDOW 턴 안에 direction change ≥ DIR_MIN AND net change ≤ NET_THRESHOLD.
+# direction change = non-zero diff의 sign 변화 횟수. zero diff는 무시 (정지 구간).
+# 의미 없이 전진후진만 반복하는 시계 정리 — "그 의미가 없으니" (사용자 정책).
+# pending_completion / do_not_resolve_yet 시계는 면제.
+CLOCK_OSCILLATION_WINDOW = 6              # filled_history 깊이
+CLOCK_OSCILLATION_NET_THRESHOLD = 1       # |last - first| ≤ 이 값 (진행 방향성 없음)
+CLOCK_OSCILLATION_DIRECTION_CHANGES_MIN = 3  # non-zero diff sign 변화 ≥ 이 값이면 oscillating
 
 # =========================================================
 # Quest Manager Constants
@@ -695,11 +716,122 @@ LENS_DEFENSE_MAP = {
     "drama":   ["vigor", "composure"],
 }
 
-LENS_DOOM_STAGES = {
-    "noir":    {0: "수면", 1: "파문", 2: "조임", 3: "노출", 4: "추적", 5: "청산"},
-    "comedy":  {0: "일상", 1: "소동", 2: "혼란", 3: "대혼란", 4: "카오스", 5: "총체적 난국"},
-    "romance": {0: "평화", 1: "설렘", 2: "긴장", 3: "위기", 4: "폭풍전야", 5: "결정적 순간"},
-    "drama":   {0: "평온", 1: "불안", 2: "경계", 3: "위험", 4: "임계", 5: "파국"},
+# =========================================================
+# Lens × Phase Doom System — 起承轉結 + 間 4+1단
+# =========================================================
+# 페이즈 boundary는 lens별 climax_threshold 따라 달라짐. range 마지막(間)은 climax_threshold 이후.
+
+LENS_DOOM_PHASE_RANGES = {
+    # noir climax 90, comedy 85, romance 80, drama 75, default 80
+    "noir":    {"起": (0, 25), "承": (25, 55), "轉": (55, 85), "結": (85, 90),  "間": (90, 101)},
+    "comedy":  {"起": (0, 25), "承": (25, 55), "轉": (55, 80), "結": (80, 85),  "間": (85, 101)},
+    "romance": {"起": (0, 25), "承": (25, 55), "轉": (55, 75), "結": (75, 80),  "間": (80, 101)},
+    "drama":   {"起": (0, 25), "承": (25, 55), "轉": (55, 70), "結": (70, 75),  "間": (75, 101)},
+    "default": {"起": (0, 25), "承": (25, 55), "轉": (55, 75), "結": (75, 80),  "間": (80, 101)},
+}
+
+# Phase × Lens curve multipliers (장르 거장 라인 반영). default는 flat (의견 없음).
+LENS_DOOM_CURVE = {
+    #            起    承    轉    結    climax_threshold
+    "noir":    {"起": 0.8, "承": 1.0, "轉": 0.7, "結": 2.0, "climax": 90},  # slow burn + cold reveal
+    "comedy":  {"起": 0.7, "承": 1.8, "轉": 1.2, "結": 1.5, "climax": 85},  # screwball oscillation
+    "romance": {"起": 0.5, "承": 1.5, "轉": 0.4, "結": 2.0, "climax": 80},  # dwelling 정체기
+    "drama":   {"起": 0.7, "承": 1.5, "轉": 0.7, "結": 1.5, "climax": 75},  # quiet 轉
+    "default": {"起": 1.0, "承": 1.0, "轉": 1.0, "結": 1.0, "climax": 80},  # flat fallback
+}
+
+# Atmosphere block (산문 주입의 진짜 매체). suture_tone 패턴 — multi-line directive.
+# 4원리 적용: state-only (no imperatives), no negation, typological palette, no author names.
+# 다중 lens 활성 시 양쪽 block 모두 노출 + "neither erases" hybrid 디렉티브 (une_facade 처리).
+LENS_DOOM_ATMOSPHERE = {
+    "noir": {
+        "起": ("Surface routine over latent currents. Information moving below speech.\n"
+              "Voice: present-tense, hardboiled. Direct, kinetic, terse.\n"
+              "Procedural moments carrying weight beyond their surface."),
+        "承": ("A name dropped with weight. Eye contact extending past comfort.\n"
+              "Information surfacing as currency. Watching becomes mutual.\n"
+              "Voice: present-tense, kinetic. Black humor under pressure."),
+        "轉": ("Surveillance closing in. Paths narrowing. Pressure amplifying through quiet.\n"
+              "Voice: hardboiled, present, kinetic. Black humor as armor.\n"
+              "Procedural moments carrying menace. Information as weapon."),
+        "結": ("Cold reveal in stark light. Information landing as betrayal as recognition.\n"
+              "Clipped dialogue. Cuts that hit.\n"
+              "Truth surfacing through evidence and pressure."),
+        "間": ("Aftermath absorbing into routine. Tension receding.\n"
+              "Voice still present but lower. Scars settling.\n"
+              "New stories already moving beneath surfaces."),
+    },
+    "comedy": {
+        "起": ("Easy rhythms, predictable beats. Small obstacles played for warmth.\n"
+              "Voice: theatrical, attentive to incongruity. Light tone holding.\n"
+              "Body humor and verbal wit in equal measure."),
+        "承": ("Small fictions multiplying. Schedules colliding under their own logic.\n"
+              "Voice still light but quicker. Wit sharpening through pressure.\n"
+              "Audience seeing more than the players. Sympathy and ridicule intertwined."),
+        "轉": ("Cover stories spawning new layers. Each fix introducing two new tangles.\n"
+              "Voice accelerating. Body humor amplifying — slips, doubles, mistimings.\n"
+              "Absurdity peaking. Characters caught in their own webs."),
+        "結": ("Peak chaos. Masks slipping in overlapping confrontations.\n"
+              "Voice fastest, theatrical and self-aware. Body humor at maximum.\n"
+              "Recognition through absurdity itself. Laughter as resolution mechanism."),
+        "間": ("Aftermath played soft. Embarrassment lingering with warmth.\n"
+              "Voice settling, lighter again. Insight emerging through the absurd.\n"
+              "What was uncovered moving into shared memory, easier now."),
+    },
+    "romance": {
+        "起": ("Easy peace, days holding their shape. Glances starting to register.\n"
+              "Voice: free indirect, attentive to interiority. Restraint as default.\n"
+              "Internal weather setting in. Body cues registering before mind admits."),
+        "承": ("Attraction sharpening. Banter carrying weight under wit.\n"
+              "Withholding louder than utterance. Restraint shaping every choice.\n"
+              "Internal weather thickening. Shared air growing dense."),
+        "轉": ("The misunderstanding crystallizing. Distance opening through what was unsaid.\n"
+              "Voice still restrained, more so. Internal storm beneath the calm exterior.\n"
+              "Time stretching across the held silence. Long dwell before any movement."),
+        "結": ("The decisive vulnerability. Restraint giving way through gesture.\n"
+              "Voice softening — first direct utterance carrying weight built across the dwell.\n"
+              "Body and word arriving together. Recognition through declared feeling."),
+        "間": ("A new equilibrium. Internal weather settled but altered.\n"
+              "Voice quieter, intimate now. Shared atmosphere thickening into permanence.\n"
+              "What was declared moving into shared body of routine."),
+    },
+    "drama": {
+        "起": ("Quiet inhabited atmosphere. Routine has its own gravity.\n"
+              "Voice: restrained, attentive. Observation-led.\n"
+              "Body knowing before mind notices. Small details bearing the weight."),
+        "承": ("Subtle dissonance under a restrained surface. Atmosphere a slow barometer.\n"
+              "Voice carrying restraint. Observation-led.\n"
+              "Silence speaking louder than utterance."),
+        "轉": ("Quiet recognition through muted gesture. Meaning slipping sideways.\n"
+              "Time stretching around the moment of seeing. The dwell holds.\n"
+              "Small over large. Recognition over revelation."),
+        "結": ("A decisive small moment. Truth surfacing in what is seen.\n"
+              "Body bearing what stays outside speech. Restraint holding.\n"
+              "Quiet resolution; the thing becoming known."),
+        "間": ("The residue of recognition. Familiar surfaces engaged differently after seeing.\n"
+              "Voice quieter still. Body remembering, anchored in itself.\n"
+              "What was learned moving into bone."),
+    },
+    "default": {
+        "起": ("Light slice-of-life pacing. Daily activities, casual conversation.\n"
+              "Environmental texture, body-anchored emotion."),
+        "承": ("Activity rises. Threads surface, characters moving with intention.\n"
+              "Mid-tempo, attentive sensory detail."),
+        "轉": ("Something shifts under the surface. Tighter focus, dialogue carrying weight.\n"
+              "Bodies signaling what voices hold back."),
+        "結": ("Convergence approaching. Decisive moments crystallizing.\n"
+              "Tone hardening or sharpening depending on character."),
+        "間": ("Aftermath. Receding pulse, scars settling.\n"
+              "Atmosphere absorbing what just happened."),
+    },
+}
+
+# Flavor doom modifier (B-Layer)
+FLAVOR_DOOM_MODIFIER = {
+    "urban_fantasy": {"gain_mult": 1.0,  "threshold_offset": 0},
+    "steampunk":     {"gain_mult": 1.1,  "threshold_offset": 0},
+    "cosmic_horror": {"gain_mult": 1.2,  "threshold_offset": 5},
+    "game_system":   {"gain_mult": 1.15, "threshold_offset": 0},
 }
 
 LENS_ICON = {
@@ -755,8 +887,8 @@ def build_mechanic_profile(narrative_tone: list, style_tech: list = None) -> dic
     if secondary:
         defense += [d for d in LENS_DEFENSE_MAP.get(secondary, []) if d not in defense]
 
-    # doom_stages: primary 기준
-    doom_stages = LENS_DOOM_STAGES.get(primary, LENS_DOOM_STAGES.get("drama", {}))
+    # doom_stages 폐기 — 외부 참조 없음. 페이즈 시스템이 LENS_DOOM_PHASE_RANGES + LENS_DOOM_ATMOSPHERE를 직접 참조.
+    doom_stages = {}
 
     # doom_icon: primary + secondary
     icon = LENS_ICON.get(primary, "⏰")
@@ -805,61 +937,10 @@ def get_parent_category(group: str):
     return None
 
 # =========================================================
-# Genre-Specific Doom Stages (서사 긴장도 재정의)
+# Genre Doom Sources (서사 긴장도 변동 사유 — Flash 참조용)
 # =========================================================
-# Doom = "서사가 클라이맥스에 얼마나 가까운가"
-# Stage 5는 반드시 "나쁜 것"이 아님 — 장르별 의미가 다름
-
-GENRE_DOOM_STAGES = {
-    "cosmic_horror": {
-        0: {"name": "평온", "emoji": "🟢", "range": (0, 20)},
-        1: {"name": "불안", "emoji": "🟡", "range": (20, 40)},
-        2: {"name": "경계", "emoji": "🟠", "range": (40, 60)},
-        3: {"name": "위험", "emoji": "🔴", "range": (60, 80)},
-        4: {"name": "임계", "emoji": "⚫", "range": (80, 100)},
-        5: {"name": "파멸", "emoji": "💀", "range": (100, 101)},
-    },
-    "romance": {
-        0: {"name": "평화", "emoji": "💚", "range": (0, 20)},
-        1: {"name": "설렘", "emoji": "💛", "range": (20, 40)},
-        2: {"name": "긴장", "emoji": "🧡", "range": (40, 60)},
-        3: {"name": "위기", "emoji": "❤️‍🔥", "range": (60, 80)},
-        4: {"name": "폭풍전야", "emoji": "💔", "range": (80, 100)},
-        5: {"name": "결정적 순간", "emoji": "💘", "range": (100, 101)},
-    },
-    "comedy": {
-        0: {"name": "일상", "emoji": "😊", "range": (0, 20)},
-        1: {"name": "소동", "emoji": "😅", "range": (20, 40)},
-        2: {"name": "혼란", "emoji": "😰", "range": (40, 60)},
-        3: {"name": "대혼란", "emoji": "🤯", "range": (60, 80)},
-        4: {"name": "카오스", "emoji": "💥", "range": (80, 100)},
-        5: {"name": "총체적 난국", "emoji": "🎪", "range": (100, 101)},
-    },
-    "noir": {
-        0: {"name": "수면", "emoji": "🌊", "range": (0, 20)},
-        1: {"name": "파문", "emoji": "🌀", "range": (20, 40)},
-        2: {"name": "조임", "emoji": "🕸️", "range": (40, 60)},
-        3: {"name": "노출", "emoji": "🔦", "range": (60, 80)},
-        4: {"name": "추적", "emoji": "🎯", "range": (80, 100)},
-        5: {"name": "청산", "emoji": "⚖️", "range": (100, 101)},
-    },
-    "action": {
-        0: {"name": "평온", "emoji": "🟢", "range": (0, 20)},
-        1: {"name": "경계", "emoji": "🟡", "range": (20, 40)},
-        2: {"name": "교전", "emoji": "🟠", "range": (40, 60)},
-        3: {"name": "격전", "emoji": "🔴", "range": (60, 80)},
-        4: {"name": "사지", "emoji": "⚫", "range": (80, 100)},
-        5: {"name": "최종 결전", "emoji": "⚔️", "range": (100, 101)},
-    },
-    "slice_of_life": {
-        0: {"name": "일상", "emoji": "☀️", "range": (0, 20)},
-        1: {"name": "변화", "emoji": "🌤️", "range": (20, 40)},
-        2: {"name": "파문", "emoji": "🌥️", "range": (40, 60)},
-        3: {"name": "갈등", "emoji": "🌧️", "range": (60, 80)},
-        4: {"name": "고비", "emoji": "⛈️", "range": (80, 100)},
-        5: {"name": "전환점", "emoji": "🌅", "range": (100, 101)},
-    },
-}
+# 곡선/단계 시스템은 LENS_DOOM_PHASE_RANGES + LENS_DOOM_ATMOSPHERE로 통합.
+# 이 표는 Flash가 doom delta 결정 시 "어떤 사건이 doom을 변동시키는가" 참조.
 
 GENRE_DOOM_SOURCES = {
     "cosmic_horror": {
@@ -889,9 +970,21 @@ GENRE_DOOM_SOURCES = {
 }
 
 
-def get_genre_doom_stages(genre: str) -> dict:
-    """장르별 Doom 단계를 반환. 매칭 장르 없으면 기본 DOOM_STAGES 사용."""
-    return GENRE_DOOM_STAGES.get(genre, DOOM_STAGES)
+def get_lens_phase(doom_value: int, lens: str = "default") -> str:
+    """doom value → 페이즈 라벨(起承轉結間) 변환. lens별 boundary 다름."""
+    ranges = LENS_DOOM_PHASE_RANGES.get(lens, LENS_DOOM_PHASE_RANGES["default"])
+    for phase, (low, high) in ranges.items():
+        if low <= doom_value < high:
+            return phase
+    return "間"  # doom > 100 등 fallback
+
+
+def get_lens_atmosphere(lens: str, phase: str) -> str:
+    """렌즈 + 페이즈 → atmosphere block. lens placeholder면 default fallback."""
+    block = LENS_DOOM_ATMOSPHERE.get(lens, {}).get(phase)
+    if block:
+        return block
+    return LENS_DOOM_ATMOSPHERE["default"].get(phase, "")
 
 # =========================================================
 # Vigor / Composure 2-Axis System (v3.0)

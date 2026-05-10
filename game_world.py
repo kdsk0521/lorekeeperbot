@@ -274,43 +274,43 @@ def increment_turn_index(channel_id: str, delta: int = 1) -> int:
 def change_doom(channel_id: str, amount: int) -> str:
     """
     위기 수치를 조정하고 메시지를 반환합니다.
+    OOC `!둠` 명령 / quest 보상 — 직접 amount 반영 (페이즈 multiplier 미적용, 사용자 의도 보존).
     """
     world = domain_manager.get_world_state(channel_id)
     old_val = world.get("doom", 0)
     new_val = max(0, min(100, old_val + amount))
-    
+
     if old_val == new_val:
-        return "" # No change
-        
+        return ""  # No change
+
     world["doom"] = new_val
     domain_manager.update_world_state(channel_id, world)
-    
-    # Emoji feedback
+
     emoji = "📈" if amount > 0 else "📉"
-    
-    # Check Thresholds
+
+    # 페이즈 전환 감지 (default boundary 기준 — OOC 메시지는 lens 정보 부족하니 default)
     diff_msg = ""
-    # Critical Transition
-    if old_val < config.DOOM_THRESHOLD_CRITICAL <= new_val:
-        diff_msg = "\n⚠️ **[경고] 파멸이 임박했습니다!**"
-    elif old_val < config.DOOM_THRESHOLD_DANGER <= new_val:
-        diff_msg = "\n⚠️ **[주의] 위험도가 상승했습니다.**"
-        
-    return f"{emoji} **위기 수치:** {old_val}% → **{new_val}%** {diff_msg}"
+    old_phase = config.get_lens_phase(old_val, "default")
+    new_phase = config.get_lens_phase(new_val, "default")
+    if old_phase != new_phase:
+        diff_msg = f"\n📖 **페이즈 전환:** {old_phase} → {new_phase}"
+
+    return f"{emoji} **활성도:** {old_val}% → **{new_val}%**{diff_msg}"
 
 
-def get_doom_info(value: int, genre: str = None) -> Dict[str, Any]:
-    stages = config.get_genre_doom_stages(genre) if genre else config.DOOM_STAGES
-    for stage_id, info in stages.items():
-        low, high = info["range"]
-        if low <= value < high:
-            return info
-    return stages[max(stages.keys())]
+def get_doom_info(value: int, lens: str = "default") -> Dict[str, Any]:
+    """페이즈 + atmosphere 정보 반환. legacy genre 인자는 lens로 동작."""
+    phase = config.get_lens_phase(value, lens or "default")
+    return {
+        "phase": phase,
+        "atmosphere": config.get_lens_atmosphere(lens or "default", phase),
+        "lens": lens or "default",
+    }
+
 
 def _get_doom_description(doom: int) -> str:
-    # Wrapper for legacy compatibility if needed, or internal use
     info = get_doom_info(doom)
-    return f"{info['emoji']} {info['name']}"
+    return f"📖 {info['phase']}"
 
 def _get_clock_emoji(clock: dict) -> str:
     """Clock polarity → emoji prefix."""
@@ -482,15 +482,12 @@ def get_doom_forecast(channel_id: str) -> str:
     world = domain_manager.get_world_state(channel_id)
     current = world.get("doom", 0)
     info = get_doom_info(current)
-    
-    # Hide Numbers, Show Bar + Description
+
     bar = _get_doom_bar(current)
-    
-    msg = f"🛡️ **위기 예보**\n{bar} {info['emoji']} **{info['name']}**\n"
+    msg = f"📖 **챕터 활성도**\n{bar} 페이즈 **{info['phase']}**\n"
     clocks_txt = _format_doom_clocks(world, limit=5)
     if clocks_txt and clocks_txt != "None":
-        msg += f"\n⏰ **위협 시계**: {clocks_txt}\n"
-        # 임박한 시계 경고
+        msg += f"\n⏰ **활성 시계**: {clocks_txt}\n"
         for c in world.get("doom_clocks", []):
             if not isinstance(c, dict) or c.get("resolved"):
                 continue
@@ -498,15 +495,18 @@ def get_doom_forecast(channel_id: str) -> str:
             filled = int(c.get("filled", c.get("progress", 0)) or 0)
             remaining = seg - filled
             if 0 < remaining <= 2:
-                msg += f"⚠️ **임박: {c.get('name', '?')}** — {remaining}칸 남음!\n"
+                msg += f"⏳ **임박: {c.get('name', '?')}** — {remaining}칸 남음\n"
 
-    if current >= config.DOOM_THRESHOLD_CRITICAL:
-        msg += "⚠️ **경고:** 파멸이 임박했습니다. 모든 행동에 위험이 따릅니다."
-    elif current >= config.DOOM_THRESHOLD_DANGER:
-        msg += "⚠️ **주의:** 세계의 적의가 느껴집니다."
-    else:
-        msg += "✅ 아직은 안전합니다."
-
+    # 페이즈 기반 메시지 (패널티 라벨 X)
+    phase = info['phase']
+    phase_msg = {
+        "起": "이야기가 천천히 시작합니다.",
+        "承": "사건들이 누적되고 있습니다.",
+        "轉": "결정적 변화가 다가옵니다.",
+        "結": "절정이 가까워졌습니다.",
+        "間": "후일담의 여운입니다.",
+    }
+    msg += phase_msg.get(phase, "")
     return msg
 
 

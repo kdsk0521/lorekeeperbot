@@ -1276,31 +1276,36 @@ class UniversalNarrativeEngine:
         # ── Layer 4: [Atmosphere] — Doom Clock + Vigor (always active) ──
         atmosphere = []
 
-        # Doom = 8-Segment FitD Clock
-        # (Atmosphere reference. Never name doom stages, clock names, or percentages in prose.)
-        import game_world as _gw
-        mechanic_doom = context.request.genres.get("mechanic", {})
-        primary_genre = mechanic_doom.get("primary_lens", "")
-        doom_info = _gw.get_doom_info(doom_val, genre=primary_genre)
-        stage_name = doom_info.get("name", "")
-        stage_emoji = doom_info.get("emoji", "")
+        # Doom = Chapter Volume Gauge (Phase × Lens × Scene)
+        # atmosphere block을 산문 주입의 진짜 매체로 사용. 페이즈 letter는 식별자.
+        import config as _cfg
+        lens_tags = bus.doom.get("lens_tags", []) if isinstance(bus.doom, dict) else []
+        phase = bus.doom.get("chapter_phase", "") if isinstance(bus.doom, dict) else ""
+        if not phase:
+            phase = _cfg.get_lens_phase(doom_val, lens_tags[0] if lens_tags else "default")
 
-        if doom_val >= 88:
-            atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — about to break")
-        elif doom_val >= 76:
-            atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — running out of time")
-        elif doom_val >= 63:
-            atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — closing in")
-        elif doom_val >= 50:
-            atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — tension fills the air")
-        elif doom_val >= 38:
-            atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — uneasy calm")
-        elif doom_val >= 25:
-            atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — equilibrium")
-        elif doom_val >= 13:
-            atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — relative calm")
+        if not lens_tags:
+            # C-Lens 미활성 → default 블록만
+            block = _cfg.get_lens_atmosphere("default", phase)
+            if block:
+                atmosphere.append(f"[Tension {doom_val}% — phase {phase}]\n{block}")
+        elif len(lens_tags) == 1:
+            # 단일 lens
+            block = _cfg.get_lens_atmosphere(lens_tags[0], phase)
+            if block:
+                atmosphere.append(f"[Tension {doom_val}% — phase {phase}, {lens_tags[0]}]\n{block}")
         else:
-            atmosphere.append(f"Tension Clock {doom_val}% {stage_emoji}[{stage_name}] — tension has receded")
+            # 다중 lens (hybrid) — 양쪽 block + neither-erases 디렉티브
+            blocks = [(lens, _cfg.get_lens_atmosphere(lens, phase)) for lens in lens_tags]
+            blocks = [(l, b) for l, b in blocks if b]
+            if blocks:
+                header = f"[Tension {doom_val}% — phase {phase}, dual register: {' × '.join(l for l, _ in blocks)}]"
+                joined = "\n× crosscut with:\n".join(b for _, b in blocks)
+                atmosphere.append(f"{header}\n{joined}\n— neither register erases the other; both qualities in the same beat")
+
+        # 챕터 종결 라벨 (climax 발동 직후 다음 턴)
+        if isinstance(bus.doom, dict) and bus.doom.get("intermission_active"):
+            atmosphere.append("📖 챕터 종결 — 후일담/여운 페이즈. 새 시계는 다음 챕터로 이월.")
 
         # Vigor + Composure = 2-axis PC state (always active)
         # (Show through behavior only. Never name 기력/평정/vigor/composure in prose.)
