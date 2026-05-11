@@ -408,7 +408,7 @@ def build_real_time_display(
     vigor_val = int(vigor_src.get("value", 100) or 100)
     composure_val = int(composure_src.get("value", 100) or 100)
     doom_val = int(world.get("doom", 0) or 0)
-    lines.append(f"기력 {vigor_val} | 평정 {composure_val} | Doom {doom_val}")
+    lines.append(f"활력 {vigor_val} | 평형 {composure_val} | Doom {doom_val}")
 
     if True:  # doom clocks always active
         clocks = world.get("doom_clocks", [])

@@ -346,64 +346,132 @@ class AnomalyModule:
             # Select best event
             selected = self._select_event(bus, st_state)
             if selected:
-                bus.anomaly["triggered"] = True
-                bus.anomaly["tag"] = selected.get("tag", "")
-                bus.anomaly["category"] = selected.get("category", "")
-                bus.anomaly["intensity"] = self._normalize_intensity(selected.get("intensity", "Mid"))
-                bus.anomaly["polarity"] = self._normalize_polarity(selected.get("polarity"))
-                bus.anomaly["line"] = selected.get("line", "")
-                bus.anomaly["reason"] = selected.get("reason", "")
-                bus.anomaly["source"] = selected.get("_source", "flash")
+                # === Arc 라우터 (Phase 2, spec v2 §4.0/§4.2) ===
+                # 후보를 단일 분기로: absorb / promote_candidate / emit
+                _normalized_cand = {
+                    "category": selected.get("category", ""),
+                    "tag": selected.get("tag", ""),
+                    "intensity": self._normalize_intensity(selected.get("intensity", "Mid")),
+                    "polarity": self._normalize_polarity(selected.get("polarity")),
+                    "line": selected.get("line", ""),
+                    "summary": selected.get("line", ""),
+                }
+                _route = "emit"  # 기본
+                _target_arc = None
+                try:
+                    import narrative_tracker as _nt
+                    _target_arc = _nt.find_absorbing_arc(st_state, _normalized_cand["category"])
+                    if _target_arc:
+                        _route = "absorb"
+                    elif _nt.check_promote_threshold(
+                        st_state, _normalized_cand,
+                        st_state.get("recent_categories", []),
+                        st_state.get("event_queue", []),
+                    ):
+                        _route = "promote_candidate"
+                except Exception as _e_route:
+                    logger.warning("[Storyteller] Router error: %s", _e_route)
 
-                # Update storyteller state
-                st_state["last_event_turn"] = current_turn
-                st_state["total_events_fired"] = st_state.get("total_events_fired", 0) + 1
+                if _route == "absorb":
+                    # === (d) arc 흡수 — 일반 발사 흐름 skip ===
+                    try:
+                        _absorbed = _nt.absorb_to_arc(_target_arc, _normalized_cand, current_turn)
+                    except Exception as _e_abs:
+                        logger.warning("[Storyteller] absorb_to_arc failed: %s", _e_abs)
+                        _absorbed = False
 
-                # Update diversity window
-                cats = st_state.get("recent_categories", [])
-                cats.append(selected.get("category", ""))
-                st_state["recent_categories"] = cats[-_cfg.STORYTELLER_DIVERSITY_WINDOW:]
+                    # diversity 갱신 (시드 들어왔다는 사실 추적)
+                    _cats = st_state.get("recent_categories", [])
+                    _cats.append(_normalized_cand["category"])
+                    st_state["recent_categories"] = _cats[-_cfg.STORYTELLER_DIVERSITY_WINDOW:]
 
-                tags = st_state.get("recent_tags", [])
-                tags.append(selected.get("tag", ""))
-                st_state["recent_tags"] = tags[-_cfg.STORYTELLER_DIVERSITY_WINDOW:]
+                    # queue 출처면 제거
+                    if selected.get("_source") == "queue":
+                        _idx = selected.get("_queue_index", -1)
+                        _queue = st_state.get("event_queue", [])
+                        if 0 <= _idx < len(_queue):
+                            _queue.pop(_idx)
 
-                # Remove selected from queue if it came from there
-                if selected.get("_source") == "queue":
-                    idx = selected.get("_queue_index", -1)
-                    queue = st_state.get("event_queue", [])
-                    if 0 <= idx < len(queue):
-                        queue.pop(idx)
+                    bus.anomaly["triggered"] = False
+                    bus.anomaly["arc_absorbed"] = {
+                        "arc_id": _target_arc.get("id"),
+                        "accepted": bool(_absorbed),
+                    }
+                    logger.info(
+                        "[Storyteller] ABSORB → arc#%s cat=%s accepted=%s",
+                        _target_arc.get("id"), _normalized_cand["category"], _absorbed,
+                    )
+                    # 일반 발사 흐름 skip — active_condition / escalated 등록 X
+                else:
+                    # === (e) promote_candidate 또는 (f) 일반 발사 ===
+                    if _route == "promote_candidate":
+                        bus.anomaly["arc_promote_candidate"] = dict(_normalized_cand)
+                        logger.info(
+                            "[Storyteller] PROMOTE_CANDIDATE cat=%s tag=%s",
+                            _normalized_cand["category"], _normalized_cand["tag"],
+                        )
+                        # 1차 안전: PMU confirm 단계 도입 전엔 일반 발사도 함께 진행
+                        # PMU가 다음 턴에 confirm하면 arc 등록 별도
 
-                # Register Active Condition (Fate Aspect + Ironsworn Location)
-                active_conds = st_state.get("active_conditions", [])
-                if len(active_conds) < _cfg.ACTIVE_CONDITION_CAP:
-                    cond_location = bus.anomaly.get("location") or ""
-                    if not cond_location:
-                        cond_location = bus.dai.get("current_location", "") if hasattr(bus, "dai") else ""
-                    active_conds.append({
-                        "tag": selected.get("tag", ""),
-                        "category": selected.get("category", ""),
-                        "intensity": bus.anomaly["intensity"],
-                        "polarity": bus.anomaly["polarity"],
-                        "description": selected.get("line", ""),
-                        "location": cond_location,
-                        "turn_created": current_turn,
-                    })
-                    st_state["active_conditions"] = active_conds
+                    # === 기존 일반 발사 흐름 ===
+                    bus.anomaly["triggered"] = True
+                    bus.anomaly["tag"] = selected.get("tag", "")
+                    bus.anomaly["category"] = selected.get("category", "")
+                    bus.anomaly["intensity"] = self._normalize_intensity(selected.get("intensity", "Mid"))
+                    bus.anomaly["polarity"] = self._normalize_polarity(selected.get("polarity"))
+                    bus.anomaly["line"] = selected.get("line", "")
+                    bus.anomaly["reason"] = selected.get("reason", "")
+                    bus.anomaly["source"] = selected.get("_source", "flash")
 
-                # DC-09 배선: High/Extreme intensity 발현 시 escalated 플래그 설정.
-                # une_facade.py:1262가 이 플래그를 읽어 directive Aspects에
-                # "Loss of Control"을 추가한다. 배선 전에는 플래그가 영원히
-                # 설정되지 않아 Aspects가 죽어있었음 (컨슈머 고아 해소).
-                if bus.anomaly["intensity"] in ("High", "Extreme"):
-                    bus.anomaly["escalated"] = True
+                    # Update storyteller state
+                    st_state["last_event_turn"] = current_turn
+                    st_state["total_events_fired"] = st_state.get("total_events_fired", 0) + 1
 
-                logger.info("[Storyteller] ACT [%s] cat=%s int=%s pol=%s src=%s reason=%s escalated=%s",
-                            bus.anomaly["tag"], bus.anomaly["category"],
-                            bus.anomaly["intensity"], bus.anomaly["polarity"],
-                            bus.anomaly["source"], bus.anomaly.get("decision_reason", ""),
-                            bus.anomaly.get("escalated", False))
+                    # Update diversity window
+                    cats = st_state.get("recent_categories", [])
+                    cats.append(selected.get("category", ""))
+                    st_state["recent_categories"] = cats[-_cfg.STORYTELLER_DIVERSITY_WINDOW:]
+
+                    tags = st_state.get("recent_tags", [])
+                    tags.append(selected.get("tag", ""))
+                    st_state["recent_tags"] = tags[-_cfg.STORYTELLER_DIVERSITY_WINDOW:]
+
+                    # Remove selected from queue if it came from there
+                    if selected.get("_source") == "queue":
+                        idx = selected.get("_queue_index", -1)
+                        queue = st_state.get("event_queue", [])
+                        if 0 <= idx < len(queue):
+                            queue.pop(idx)
+
+                    # Register Active Condition (Fate Aspect + Ironsworn Location)
+                    active_conds = st_state.get("active_conditions", [])
+                    if len(active_conds) < _cfg.ACTIVE_CONDITION_CAP:
+                        cond_location = bus.anomaly.get("location") or ""
+                        if not cond_location:
+                            cond_location = bus.dai.get("current_location", "") if hasattr(bus, "dai") else ""
+                        active_conds.append({
+                            "tag": selected.get("tag", ""),
+                            "category": selected.get("category", ""),
+                            "intensity": bus.anomaly["intensity"],
+                            "polarity": bus.anomaly["polarity"],
+                            "description": selected.get("line", ""),
+                            "location": cond_location,
+                            "turn_created": current_turn,
+                        })
+                        st_state["active_conditions"] = active_conds
+
+                    # DC-09 배선: High/Extreme intensity 발현 시 escalated 플래그 설정.
+                    # une_facade.py:1262가 이 플래그를 읽어 directive Aspects에
+                    # "Loss of Control"을 추가한다. 배선 전에는 플래그가 영원히
+                    # 설정되지 않아 Aspects가 죽어있었음 (컨슈머 고아 해소).
+                    if bus.anomaly["intensity"] in ("High", "Extreme"):
+                        bus.anomaly["escalated"] = True
+
+                    logger.info("[Storyteller] ACT [%s] cat=%s int=%s pol=%s src=%s reason=%s escalated=%s",
+                                bus.anomaly["tag"], bus.anomaly["category"],
+                                bus.anomaly["intensity"], bus.anomaly["polarity"],
+                                bus.anomaly["source"], bus.anomaly.get("decision_reason", ""),
+                                bus.anomaly.get("escalated", False))
             else:
                 bus.anomaly["triggered"] = False
                 decision = "skip"

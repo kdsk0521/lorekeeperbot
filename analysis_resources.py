@@ -627,7 +627,7 @@ JUDGMENT_SUPPORT = """
 ### resolve: none | determined | desperate
 - none: 일반 행동. "문을 연다", "살펴본다", "조심스럽게 움직인다"
 - determined: 강한 의지 + 노력. "힘껏 밀어본다", "전력으로 달린다", "집중해서" → 서사적 강조만, 기계 효과 없음
-- desperate: 대가 감수 각오. "이를 악물고", "무리해서라도", "목숨을 걸고", "모든 걸 걸고" → 기력/평정 선불 차감 + 판정 보너스
+- desperate: 대가 감수 각오. "이를 악물고", "무리해서라도", "목숨을 걸고", "모든 걸 걸고" → 활력/평형 선불 차감 + 판정 보너스
 - 핵심 구분: "강하게 한다"(determined) ≠ "대가를 치르더라도 한다"(desperate)
 - needs_judgment=false이면 resolve는 항상 "none"
 
@@ -830,7 +830,7 @@ Notebook items are established resources (like Fate aspects / Cypher cyphers) �
 4. declaration: Summarize what the PC is retroactively claiming (1 sentence)
 
 ### CRITICAL RULE
-Flashback CANNOT change stats (기력, doom, HP). Position/situation change ONLY.
+Flashback CANNOT change stats (활력, doom, HP). Position/situation change ONLY.
 - REJECT: "회복약을 미리 챙겨왔다" (stat change attempt)
 - ACCEPT: "탈출 루트를 미리 확보해뒀다" (position change)
 

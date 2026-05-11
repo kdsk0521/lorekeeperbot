@@ -709,7 +709,7 @@ def get_status_summary(user_data: Dict[str, Any]) -> str:
     
     # [V3.0] 2. Vigor/Composure State
     vc_txt = get_vigor_composure_text(user_data)
-    parts.append(f"기력/평정: {vc_txt}")
+    parts.append(f"활력/평형: {vc_txt}")
     
     # [Anti-Gravity] 3. Adaptation / Abnormal Exposure
     abnormal_txt = get_abnormal_context(user_data)
@@ -1137,7 +1137,7 @@ def get_mental_status_text(p_data: Dict[str, Any]) -> str:
 
 
 def get_composure_info(value: int) -> Dict[str, Any]:
-    """평정 단계 정보를 반환합니다."""
+    """평형 단계 정보를 반환합니다."""
     for stage_id, info in config.COMPOSURE_STAGES.items():
         low, high = info["range"]
         if low <= value < high:
@@ -1146,13 +1146,13 @@ def get_composure_info(value: int) -> Dict[str, Any]:
 
 
 def get_vigor_composure_text(p_data: Dict[str, Any]) -> str:
-    """Returns "기력 85 | 평정 70" format."""
+    """Returns "활력 85 | 평형 70" format."""
     mem = p_data.get("ai_memory", {})
     vigor = mem.get("vigor", mem.get("mental", {"value": 100}))
     composure = mem.get("composure", {"value": 100})
     v_val = vigor.get("value", 100)
     c_val = composure.get("value", 100)
-    return f"기력 {v_val} | 평정 {c_val}"
+    return f"활력 {v_val} | 평형 {c_val}"
 
 
 def update_mental(

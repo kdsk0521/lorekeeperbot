@@ -479,12 +479,38 @@ def _build_atmosphere_layer(context, bus) -> str:
     if vigor_val <= 14:
         parts.append("주변 인물들이 PC의 물리적 한계를 목격한다.")
 
-    # Doom/Tension → directing notation (50+ only)
+    # Doom = Chapter Volume Gauge (Phase × Lens) — 둠 리브랜드 산문 주입
+    # phase × lens atmosphere block을 산문 주입의 진짜 매체로 사용.
+    # 페이즈 letter(起承轉結間)는 식별자, lens(noir/comedy/romance/drama)는 톤.
     doom_val = int(_to_float((bus.doom or {}).get("value", 0), 0))
-    if doom_val >= 80:
-        parts.append(_DOOM_NOTATION["critical"])
-    elif doom_val >= 50:
-        parts.append(_DOOM_NOTATION["high"])
+    import config as _cfg
+    lens_tags = bus.doom.get("lens_tags", []) if isinstance(bus.doom, dict) else []
+    phase = bus.doom.get("chapter_phase", "") if isinstance(bus.doom, dict) else ""
+    if not phase:
+        phase = _cfg.get_lens_phase(doom_val, lens_tags[0] if lens_tags else "default")
+
+    if not lens_tags:
+        # C-Lens 미활성 → default 블록만
+        block = _cfg.get_lens_atmosphere("default", phase)
+        if block:
+            parts.append(f"[Tension {doom_val}% — phase {phase}]\n{block}")
+    elif len(lens_tags) == 1:
+        # 단일 lens
+        block = _cfg.get_lens_atmosphere(lens_tags[0], phase)
+        if block:
+            parts.append(f"[Tension {doom_val}% — phase {phase}, {lens_tags[0]}]\n{block}")
+    else:
+        # 다중 lens (hybrid) — 양쪽 block + neither-erases 디렉티브
+        blocks = [(lens, _cfg.get_lens_atmosphere(lens, phase)) for lens in lens_tags]
+        blocks = [(l, b) for l, b in blocks if b]
+        if blocks:
+            header = f"[Tension {doom_val}% — phase {phase}, dual register: {' × '.join(l for l, _ in blocks)}]"
+            joined = "\n× crosscut with:\n".join(b for _, b in blocks)
+            parts.append(f"{header}\n{joined}\n— neither register erases the other; both qualities in the same beat")
+
+    # 챕터 종결 라벨 (climax 발동 직후, 間 페이즈)
+    if isinstance(bus.doom, dict) and bus.doom.get("intermission_active"):
+        parts.append("📖 챕터 종결 — 후일담/여운 페이즈. 새 시계는 다음 챕터로 이월.")
 
     # ◎ optics (conditional — derived from DAI fields)
     dai = bus.dai if isinstance(bus.dai, dict) else {}
@@ -622,6 +648,62 @@ def _build_atmosphere_layer(context, bus) -> str:
     if not parts:
         return ""
     return "── 분위기 ──\n" + "\n".join(parts)
+
+
+def _build_aspects_layer(context, bus) -> str:
+    """
+    Aspects (시스템 교차 결합) 산문 디렉티브. 활성 라벨 → typological 텍스트만.
+    라벨 자체는 Pro 산문에 직접 노출 X (내부 식별자).
+    Arc 사이클 시 백업한 자리 V3 재이식.
+    """
+    try:
+        import narrative_tracker as _nt
+        import domain_manager as _dm
+        import config as _cfg
+    except Exception:
+        return ""
+
+    # primary axis (자원 임계 평가용)
+    try:
+        mechanic = context.request.genres.get("mechanic", {})
+        primary_axis = mechanic.get("primary_resource") or "vigor"
+    except Exception:
+        primary_axis = "vigor"
+
+    # storyteller_state (arc proximity / armed 평가용)
+    channel_id = (context.narrative_anchors or {}).get("channel_id", "") if context.narrative_anchors else ""
+    state = {}
+    if channel_id:
+        try:
+            state = _dm.get_narrative_tracker_state(channel_id)
+        except Exception:
+            state = {}
+
+    # 활성 라벨 평가
+    try:
+        active = _nt.compute_aspects(bus, state, primary_axis=primary_axis)
+    except Exception:
+        return ""
+
+    if not active:
+        return ""
+
+    # typological 디렉티브 변환
+    directives = _cfg.ASPECTS_DIRECTIVES or {}
+    lines = []
+    for label in active:
+        text = directives.get(label, "")
+        if text:
+            lines.append(text)
+
+    if not lines:
+        return ""
+
+    return (
+        "── 결합 흐름 ──\n"
+        + "\n".join(lines)
+        + "\n(이 결의 톤만 산문에 결로 반영. 명명 라벨 직접 노출 X.)"
+    )
 
 
 def _build_system_message(bus) -> str:
@@ -832,7 +914,7 @@ def sync_from_game_context(channel_id: str, user_id: str, ctx: Any) -> None:
                     passives = mem.setdefault("passives", [])
                     trauma_name = f"트라우마 ({axis_name} 각성)"
                     if not any(p.get("name") == trauma_name for p in passives if isinstance(p, dict)):
-                        label = "기력" if axis_name == "vigor" else "평정"
+                        label = "활력" if axis_name == "vigor" else "평형"
                         passives.append({
                             "name": trauma_name,
                             "tags": ["Trauma", "Hard-to-cure"],
@@ -1038,6 +1120,11 @@ class UniversalNarrativeEngine:
         if atmosphere:
             layers.append(atmosphere)
 
+        # Aspects (시스템 교차 결합 신호) — 라벨 내부 식별자, 산문 typological.
+        aspects_layer = _build_aspects_layer(context, bus)
+        if aspects_layer:
+            layers.append(aspects_layer)
+
         # Preserve autonomous NPC behavior directive after core v3 layers.
         auto_directive = self._evaluate_npc_autonomy(bus, context)
         if auto_directive:
@@ -1074,325 +1161,3 @@ class UniversalNarrativeEngine:
             "system_message": "\n\n".join(system_chunks).strip(),
         }
 
-    def _extract_pc_result(self, context, mask: str) -> Dict[str, Any]:
-        """Extract 5-Layer Directive + system_msg from single PC pipeline result.
-
-        Layer 0: [Base Directive] — DAI soft hints (when Judgment OFF)
-        Layer 1: [Narrative] — FitD Position + PbtA MC Move (Judgment result)
-        Layer 2: [Aspects] — Fate Aspect declaration (cross-module interaction)
-        Layer 3: [Intrusion] — Cypher GM Intrusion (Anomaly event)
-        Layer 4: [Atmosphere] — Doom Clock progress + Vigor state
-        """
-        bus = context.shared_bus
-        directive_parts = []
-        system_msg = ""
-        result_line = ""
-
-        doom_val = bus.doom.get("value", 0) if bus.doom else 0
-        vigor_val = bus.vigor.get("value", 100) if bus.vigor else 100
-        composure_val = bus.composure.get("value", 100) if bus.composure else 100
-
-        # ── Layer 1: [Narrative] — Position + MC Move ──
-        j_active = bus.judgment and bus.judgment.get("active")
-        j_result = ""
-        if j_active:
-            j_mask = bus.judgment.get("mask", mask)
-            meta = bus.judgment.get("meta", {})
-            action = meta.get("action", "행동")
-            j_result = bus.judgment.get("result", "failure")
-            reason_txt = bus.judgment.get("reason", "")
-
-            # Position from Theoria (FitD)
-            _pos = bus.dai.get("position", {}) if bus.dai else {}
-            pos_val = _pos.get("value", 0.5) if isinstance(_pos, dict) else 0.5
-            if pos_val <= 0.25:
-                pos_tier = "desperate"
-            elif pos_val <= 0.5:
-                pos_tier = "risky"
-            else:
-                pos_tier = "controlled"
-
-            # MC Move (PbtA): generic matrix
-            move = _mc_move(pos_tier, j_result)
-            reason_part = f" ({reason_txt})" if reason_txt else ""
-            directive_parts.append(
-                f"[Narrative: {j_mask} '{action}'{reason_part}] {move}\n"
-                f"(Render outcome through scene events. Never echo move descriptions or tier names in prose.)"
-            )
-            system_msg += bus.judgment.get("output", "")
-            if bus.judgment.get("party_wide_hook"):
-                system_msg += "\n⚠️ **[전체 파티 영향]** — 이 결과는 모든 동료에게 영향을 미칩니다."
-
-        # ── Layer 0: [Base Directive] — DAI soft hints (Judgment OFF) ──
-        if not j_active and bus.dai and bus.dai.get("active"):
-            hints = []
-
-            # Genre scene hint
-            mechanic = context.request.genres.get("mechanic", {})
-            primary_genre = mechanic.get("primary_lens", "")
-
-            genre_scene_hints = {
-                "cosmic_horror": "Genre: Cosmic Horror — dread builds from the unseen and unknowable",
-                "romance": "Genre: Romance — emotional resonance and interpersonal nuance matter most",
-                "comedy": "Genre: Comedy — timing, escalation, and social absurdity drive the scene",
-                "noir": "Genre: Noir — shadows hide truth, trust is currency, everyone has angles",
-                "action": "Genre: Action — momentum, physical stakes, and tactical decisions",
-                "slice_of_life": "Genre: Slice of Life — quiet moments carry meaning, change is gradual",
-            }
-            if primary_genre in genre_scene_hints:
-                hints.append(genre_scene_hints[primary_genre])
-
-            # Position → narrative tone
-            pos_data = bus.dai.get("position", {})
-            pos_val = pos_data.get("value", 0.5)
-            if pos_val <= 0.25:
-                hints.append("Position: Desperate — stakes are lethal, consequences loom")
-            elif pos_val <= 0.5:
-                hints.append("Position: Risky — danger present, outcome uncertain")
-            else:
-                hints.append("Position: Controlled — situation favors the actor")
-
-            # SceneType → scene-specific guidance
-            scene_type = bus.dai.get("scene_type", "normal")
-            scene_hints = {
-                "combat": "Combat scene: emphasize physicality, positioning, and threat",
-                "tension": "Tension scene: build suspense, restrict information flow",
-                "intimate": "Intimate scene: focus on emotion, subtlety, and vulnerability",
-                "exploration": "Exploration scene: reward curiosity, reveal the world",
-                "social": "Social scene: weigh reputation, leverage, and hidden agendas",
-            }
-            if scene_type in scene_hints:
-                hints.append(scene_hints[scene_type])
-
-            # EnergyDirection → pacing
-            energy = bus.dai.get("energy_direction", "steady")
-            energy_hints = {
-                "rising": "Energy rising — escalate tension, accelerate pacing",
-                "falling": "Energy falling — allow breathing room, reflect on aftermath",
-                "peak": "Energy at peak — climactic moment, maximum intensity",
-                "steady": "Energy steady — maintain current rhythm",
-            }
-            if energy in energy_hints:
-                hints.append(energy_hints[energy])
-
-            # needs_judgment=True but module OFF → soft probability hint
-            if bus.dai.get("needs_judgment"):
-                action_meta = bus.dai.get("action_meta", {})
-                action_name = action_meta.get("action", "")
-                if action_name:
-                    hints.append(f"Action '{action_name}' attempted — judge outcome by situational probability, no dice")
-                else:
-                    hints.append("Meaningful action attempted — judge outcome by situational probability, no dice")
-
-            if hints:
-                directive_parts.append("[Base Directive]\n" + "\n".join(hints))
-
-        # ── Layer 3: [Intrusion] — World Initiative (Genre-Aware) ──
-        anomaly_sys = ""
-        a_triggered = bus.anomaly and bus.anomaly.get("triggered")
-        if a_triggered:
-            tag = bus.anomaly.get("tag") or "이변"
-            intensity = bus.anomaly.get("intensity")
-            polarity = bus.anomaly.get("polarity")
-            line = bus.anomaly.get("line", "")
-
-            # Resolve genre for framing
-            mechanic = context.request.genres.get("mechanic", {})
-            intrusion_genre = mechanic.get("primary_lens", "")
-
-            # Genre-specific anomaly framing
-            genre_frames = {
-                "cosmic_horror": {"positive": "a glimpse of forbidden understanding", "negative": "the veil thins — reality distorts", "mixed": "revelation wrapped in dread"},
-                "romance": {"positive": "a fateful encounter or revelation", "negative": "emotional disruption — hearts shaken", "mixed": "a moment that changes everything"},
-                "comedy": {"positive": "absurd luck — things go impossibly right", "negative": "comedic disaster — everything that can go wrong does", "mixed": "the situation escalates hilariously"},
-                "noir": {"positive": "an unexpected card to play", "negative": "the net tightens — exposure looms", "mixed": "a new piece enters the game"},
-                "action": {"positive": "tactical advantage appears", "negative": "the battlefield shifts against you", "mixed": "chaos reshapes the fight"},
-                "slice_of_life": {"positive": "a pleasant surprise in the routine", "negative": "the familiar becomes uncomfortable", "mixed": "change ripples through daily life"},
-            }
-            default_frame = {"positive": "may serve as opportunity", "negative": "arrives as threat", "mixed": "both opportunity and threat"}
-            frame_table = genre_frames.get(intrusion_genre, default_frame)
-            polarity_frame = frame_table.get(polarity, frame_table.get("mixed", "shifts the situation"))
-            intrusion = f"[Intrusion: {tag}] {polarity_frame}"
-            if line:
-                intrusion += f"\n{line}"
-            directive_parts.append(intrusion)
-
-            # Anomaly system message (Discord)
-            header = f"⚡ 이변 발생: [[{tag}]]"
-            anomaly_sys += f"\n{header}"
-            if line:
-                anomaly_sys += f"\n{line}"
-            else:
-                info_parts = []
-                if tag: info_parts.append(f"태그: {tag}")
-                if intensity: info_parts.append(f"강도: {intensity}")
-                if polarity: info_parts.append(f"성격: {polarity}")
-                anomaly_sys += f"\n{' / '.join(info_parts) if info_parts else '이변 정보: (미상)'}"
-        system_msg += anomaly_sys
-
-        # ── System Logs (Discord) ──
-        if bus.doom and bus.doom.get("relief_log"):
-            system_msg += f"\n{bus.doom.get('relief_log')}"
-        if bus.doom and bus.doom.get("mental_pressure_log"):
-            system_msg += f"\n{bus.doom.get('mental_pressure_log')}"
-        if bus.doom and bus.doom.get("clock_log"):
-            system_msg += f"\n⏰ {bus.doom.get('clock_log')}"
-        if bus.doom and bus.doom.get("defense_log"):
-            system_msg += f"\n{bus.doom.get('defense_log')}"
-        if bus.vigor:
-            log_parts = []
-            if bus.vigor.get("log"):
-                log_parts.append(bus.vigor.get("log"))
-            if log_parts:
-                system_msg += f"\n{' → '.join(log_parts)}"
-
-        # ── Layer 2: [Aspects] — Fate Aspect declaration (Genre-Aware) ──
-        aspects = []
-        import config as _cfg
-        mechanic = context.request.genres.get("mechanic", {})
-        primary_axis = mechanic.get("primary_resource") or "vigor"
-        primary_val = vigor_val if primary_axis == "vigor" else composure_val
-
-        m_trauma = (bus.vigor and bus.vigor.get("trauma_trigger")) or (bus.composure and bus.composure.get("trauma_trigger"))
-        if j_active and a_triggered:
-            if j_result in ("critical_failure", "failure"):
-                aspects.append("Failure Resonance")
-            elif j_result == "critical_success":
-                aspects.append("Glory's Shadow")
-        if a_triggered and primary_val <= 39:
-            erosion_label = "Body Erosion" if primary_axis == "vigor" else "Mind Fracture"
-            aspects.append(erosion_label)
-        if m_trauma and a_triggered:
-            aspects.append("Inner-Outer Convergence")
-        if m_trauma and j_active:
-            aspects.append("Resurgence")
-        if j_result == "critical_failure" and primary_val <= 14:
-            aspects.append("Abyss")
-        if bus.anomaly and bus.anomaly.get("escalated"):
-            aspects.append("Loss of Control")
-        if aspects:
-            directive_parts.append("[Aspects]: " + ", ".join(aspects))
-
-        # ── Layer 4: [Atmosphere] — Doom Clock + Vigor (always active) ──
-        atmosphere = []
-
-        # Doom = Chapter Volume Gauge (Phase × Lens × Scene)
-        # atmosphere block을 산문 주입의 진짜 매체로 사용. 페이즈 letter는 식별자.
-        import config as _cfg
-        lens_tags = bus.doom.get("lens_tags", []) if isinstance(bus.doom, dict) else []
-        phase = bus.doom.get("chapter_phase", "") if isinstance(bus.doom, dict) else ""
-        if not phase:
-            phase = _cfg.get_lens_phase(doom_val, lens_tags[0] if lens_tags else "default")
-
-        if not lens_tags:
-            # C-Lens 미활성 → default 블록만
-            block = _cfg.get_lens_atmosphere("default", phase)
-            if block:
-                atmosphere.append(f"[Tension {doom_val}% — phase {phase}]\n{block}")
-        elif len(lens_tags) == 1:
-            # 단일 lens
-            block = _cfg.get_lens_atmosphere(lens_tags[0], phase)
-            if block:
-                atmosphere.append(f"[Tension {doom_val}% — phase {phase}, {lens_tags[0]}]\n{block}")
-        else:
-            # 다중 lens (hybrid) — 양쪽 block + neither-erases 디렉티브
-            blocks = [(lens, _cfg.get_lens_atmosphere(lens, phase)) for lens in lens_tags]
-            blocks = [(l, b) for l, b in blocks if b]
-            if blocks:
-                header = f"[Tension {doom_val}% — phase {phase}, dual register: {' × '.join(l for l, _ in blocks)}]"
-                joined = "\n× crosscut with:\n".join(b for _, b in blocks)
-                atmosphere.append(f"{header}\n{joined}\n— neither register erases the other; both qualities in the same beat")
-
-        # 챕터 종결 라벨 (climax 발동 직후 다음 턴)
-        if isinstance(bus.doom, dict) and bus.doom.get("intermission_active"):
-            atmosphere.append("📖 챕터 종결 — 후일담/여운 페이즈. 새 시계는 다음 챕터로 이월.")
-
-        # Vigor + Composure = 2-axis PC state (always active)
-        # (Show through behavior only. Never name 기력/평정/vigor/composure in prose.)
-        if vigor_val <= 14:
-            atmosphere.append(f"Body collapse ({vigor_val}%) — limbs fail, can barely stand")
-        elif vigor_val <= 39:
-            atmosphere.append(f"Body exhaustion ({vigor_val}%) — heavy limbs, labored breath")
-        elif vigor_val <= 69:
-            atmosphere.append(f"Body strain ({vigor_val}%) — muscles ache, movements slow")
-
-        if composure_val <= 14:
-            atmosphere.append(f"Mind collapse ({composure_val}%) — thoughts scatter, reality blurs")
-        elif composure_val <= 39:
-            atmosphere.append(f"Mind fraying ({composure_val}%) — emotions leak, focus breaks")
-        elif composure_val <= 69:
-            atmosphere.append(f"Mind uneasy ({composure_val}%) — inner tension, restless")
-
-        v_trauma = bus.vigor and bus.vigor.get("trauma_trigger")
-        c_trauma = bus.composure and bus.composure.get("trauma_trigger")
-        if v_trauma:
-            atmosphere.append("Trauma surge (body) — adrenaline reignites failing limbs")
-        if c_trauma:
-            atmosphere.append("Trauma surge (mind) — survival instinct overrides breakdown")
-
-        if atmosphere:
-            directive_parts.append("[Atmosphere]: " + " / ".join(atmosphere))
-
-        # ── NPC Autonomous Behavior Triggers (Phase 7) ──
-        auto_directive = self._evaluate_npc_autonomy(bus, context)
-        if auto_directive:
-            directive_parts.append(auto_directive)
-
-        return {
-            "directive": "\n".join(directive_parts),
-            "system_msg": system_msg,
-            "has_anomaly": bool(a_triggered),
-            "anomaly_header": anomaly_sys.strip() if anomaly_sys else "",
-            "adaptation_line": "",
-            "mental_log": bus.vigor.get("log", "") if bus.vigor else "",
-        }
-
-    def _combine_batch_results(self, results: list, last_context) -> Dict[str, Any]:
-        """다인 배치 결과를 통합 출력으로 합침"""
-        all_directives = []
-        judgment_msgs = []
-        anomaly_header = ""
-        mental_lines = []
-
-        for r in results:
-            if r["directive"]:
-                all_directives.append(r["directive"])
-
-            # 판정 부분만 추출 (system_msg에서 이변/멘탈 제외)
-            sys = r["system_msg"]
-            if "🎲" in sys:
-                judgment_part = sys.split("⚡")[0].split("⏳")[0]
-                for marker in ["\n📈", "\n📉", "\n🧠"]:
-                    if marker in judgment_part:
-                        judgment_part = judgment_part[:judgment_part.index(marker)]
-                judgment_msgs.append(judgment_part.strip())
-
-            # 이변 헤더는 1회만
-            if r["has_anomaly"] and not anomaly_header:
-                anomaly_header = r["anomaly_header"]
-
-            if r["mental_log"]:
-                mental_lines.append(r["mental_log"])
-
-        # 통합 시스템 메시지 구성
-        combined_sys = ""
-
-        # 1. 모든 판정 결과
-        if judgment_msgs:
-            combined_sys += "\n\n".join(judgment_msgs)
-
-        # 2. 이변 헤더 (1회)
-        if anomaly_header:
-            combined_sys += f"\n\n{anomaly_header}"
-
-        # 3. 멘탈 변동 (PC별)
-        if mental_lines:
-            combined_sys += "\n"
-            for line in mental_lines:
-                combined_sys += f"\n{line}"
-
-        return {
-            "game_context": last_context,
-            "directive": "\n\n".join(all_directives),
-            "system_message": combined_sys.strip()
-        }

@@ -177,7 +177,7 @@ CLOCK_COMPLETE_DOOM = {4: 10, 6: 15, 8: 20}  # segments → global doom 상승
 CLOCK_RESOLVE_DOOM = {4: -5, 6: -10, 8: -15}  # segments → global doom 하강 (해결 시)
 
 # Clock Defense Rewards (→ primary vigor/composure axis)
-CLOCK_MITIGATE_REWARD = 1           # 시계 1칸 감소당 기력/평정 +1
+CLOCK_MITIGATE_REWARD = 1           # 시계 1칸 감소당 활력/평형 +1
 CLOCK_RESOLVE_REWARD = {4: 2, 6: 3, 8: 5}  # 시계 해결 시 segments별 보상
 
 JUDGMENT_DOOM_DELTA = {
@@ -262,10 +262,10 @@ CONDITION_MOD_CAP = 15
 # 기력 Stages (0-100) — PC의 총체적 컨디션 (체력/집중/평판/정신)
 # Key: Stage ID (0-3)
 MENTAL_STAGES = {
-    0: {"name": "충만", "emoji": "😌", "range": (70, 101), "desc": "몸과 마음이 충실한 상태"},
-    1: {"name": "동요", "emoji": "😰", "range": (40, 70),  "desc": "집중력과 체력이 흔들립니다"},
+    0: {"name": "충만", "emoji": "😌", "range": (70, 101), "desc": "신체와 의지가 충실한 상태"},
+    1: {"name": "둔화", "emoji": "😰", "range": (40, 70),  "desc": "출력이 느려지고 체력이 흔들립니다"},
     2: {"name": "고갈", "emoji": "😱", "range": (15, 40),  "desc": "한계에 가깝습니다. 판단과 행동이 둔해집니다"},
-    3: {"name": "붕괴", "emoji": "🫥", "range": (0, 15),   "desc": "몸도 정신도 한계를 넘겼습니다. (트라우마 위험)"}
+    3: {"name": "붕괴", "emoji": "🫥", "range": (0, 15),   "desc": "신체와 의지가 한계를 넘겼습니다. (트라우마 위험)"}
 }
 
 # DOOM_STAGES 제거 — LENS_DOOM_PHASE_RANGES + LENS_DOOM_ATMOSPHERE로 대체 (line 698~)
@@ -275,11 +275,94 @@ DOOM_MENTAL_RECOVERY_MOD = {
     0: 1.0, 1: 0.9, 2: 0.8, 3: 0.6, 4: 0.4, 5: 0.2
 }
 
-# Effort (각오) — 판정 전 선불 보너스 + 실패 시 consequence 흡수 내장 (Cypher Effort + BITD Resist)
-EFFORT_BONUS = 10    # 판정 +10
-EFFORT_COST = 8      # 기력/평정 선불 (흡수 보험 포함, 추가 비용 없음)
+# =========================================================
+# Aspects 부활 (시스템 교차 결합 신호)
+# 자세히: 파티쳇수정/vigor_composure_design_brief.md (관련 메모)
+# Arc 사이클 시 백업, 부활 사이클로 V3 재이식.
+# 내부 라벨 + 산문 typological palette (Arc 패턴 D).
+# =========================================================
 
-# Flashback (회상) — 능동적 기력 소비
+ASPECTS_RESOURCE_THRESHOLD = 29   # Body Erosion / Mind Fracture 자원 임계 (≤29)
+ASPECTS_ABYSS_THRESHOLD = 14      # Abyss 자원 한계 (≤14)
+ASPECTS_ARC_PROXIMITY_THRESHOLD = 0.3  # Arc proximity 외부 사건 인식 임계
+
+# 8개 라벨 → typological 산문 디렉티브. 라벨 자체는 Pro 산문에 직접 노출 X.
+ASPECTS_DIRECTIVES = {
+    "Failure Resonance":        "실패의 결이 외부 흐름과 공명한다. 의도하지 못한 결이 표면에 새겨진다.",
+    "Glory's Shadow":           "성공의 빛 아래 다른 결이 자리잡는다. 영광의 표면이 어두운 결을 함께 운반한다.",
+    "Body Erosion":             "한계 가까운 신체가 외부 흐름을 더 깊이 받는다. 사건이 몸의 결에 짙게 새겨진다.",
+    "Mind Fracture":            "한계 가까운 정신이 외부 흐름을 그대로 통과시킨다. 균열의 결이 표면에 선명해진다.",
+    "Inner-Outer Convergence":  "내면의 결과 외부 사건이 한 자리에서 만난다. 두 흐름이 같은 시점에 표면으로 떠오른다.",
+    "Resurgence":               "지나간 결이 이번 결정에 다시 들어온다. 묻혔던 흔적이 표면에 새로 새겨진다.",
+    "Abyss":                    "한계의 결 끝에서 마지막 잔여가 깎인다. 회복할 자리가 남지 않은 결이 표면에 새겨진다.",
+    "Loss of Control":          "사건이 통제의 결을 넘었다. 흐름이 자기 결을 가지고 표면을 벗어난다.",
+}
+
+
+# =========================================================
+# Phase 2 (Vigor/Composure 리브랜딩) — F+G 메커닉
+# 자세히: 파티쳇수정/vigor_composure_rebrand_log.md
+# =========================================================
+
+# F. 자동 소비 baseline 매트릭스 — 장르 × 축 (Y/N)
+# Y=True면 그 축에 -1 baseline drain (layer-cap: 같은 layer 다중 Y는 단일 -1)
+GENRE_BASELINE_DRAIN = {
+    # A. The Stage
+    "high_fantasy":    {"vigor": True,  "composure": False},
+    "wuxia":           {"vigor": True,  "composure": False},
+    "cyberpunk":       {"vigor": False, "composure": True},
+    "post_apocalypse": {"vigor": True,  "composure": True},
+    "space_opera":     {"vigor": False, "composure": False},
+    "modern":          {"vigor": False, "composure": False},
+    # B. The Flavor
+    "urban_fantasy":   {"vigor": False, "composure": False},
+    "steampunk":       {"vigor": False, "composure": False},
+    "cosmic_horror":   {"vigor": False, "composure": True},
+    "game_system":     {"vigor": False, "composure": True},
+    # C. The Lens
+    "noir":            {"vigor": False, "composure": True},
+    "comedy":          {"vigor": False, "composure": False},
+    "romance":         {"vigor": False, "composure": True},
+    "drama":           {"vigor": False, "composure": True},
+}
+
+# Genre Layer 분류 (layer-cap 계산용)
+GENRE_LAYERS = {
+    "A": {"high_fantasy", "wuxia", "cyberpunk", "post_apocalypse", "space_opera", "modern"},
+    "B": {"urban_fantasy", "steampunk", "cosmic_horror", "game_system"},
+    "C": {"noir", "comedy", "romance", "drama"},
+}
+
+# F. 씬타입 × 축 baseline (5 SceneType)
+ACTION_BASELINE_DRAIN = {
+    "combat":   {"vigor": True,  "composure": True},
+    "intimate": {"vigor": False, "composure": False},  # cap이 본업
+    "social":   {"vigor": False, "composure": True},
+    "normal":   {"vigor": False, "composure": False},  # 장르가 결정
+    "summary":  {"vigor": False, "composure": False},
+}
+
+# F. Flash mental_impact severity enum → 수치 매핑
+MENTAL_IMPACT_ENUM_SCALE = {
+    "none":    0,
+    "mild":    -3,
+    "heavy":   -8,
+    "extreme": -15,
+}
+
+# G. 회복 균형
+NATURAL_RECOVERY_THRESHOLD = 2   # |delta| ≤ T 시 자연 회복 가산
+NATURAL_RECOVERY_AMOUNT = 1      # 양축 각각 +1
+CHAPTER_REFRESH_THRESHOLD = 60   # intermission_active 시 max(value, 60)
+
+
+# [Phase 3 DEPRECATED] Effort (각오) — Phase 2 Flash modulator(extreme)가 자동 흡수 예정.
+# 단순 dead 보존 (미래 재활성화 가능). 코드 호출처: judgment_engine effort_mod (effort_used가 None이면 자동 skip).
+EFFORT_BONUS = 10    # 판정 +10
+EFFORT_COST = 8      # 활력/평형 선불 (흡수 보험 포함, 추가 비용 없음)
+
+# [Phase 3 DEPRECATED] Flashback (회상) — 능동적 기력 소비.
+# Theoria.flashback_eval 자동 감지는 유지 (산문 반영). 차감 코드는 orchestration에서 비활성화.
 FLASHBACK_COST_TIERS = {"trivial": 3, "standard": 8, "bold": 15}
 FLASHBACK_PASSIVE_DISCOUNT = 0.5  # 관련 특질 매칭 시 비용 50%
 FLASHBACK_MIN_MENTAL = 10  # 이 이하면 회상 불가
@@ -297,7 +380,8 @@ CROSS_AXIS_CASCADE = {
     3: -5,   # Collapse — severe drain on other axis
 }
 
-# Loadout (로드아웃) — 고정 4슬롯. 티어 선택 불필요.
+# [Phase 3 DEPRECATED] Loadout (로드아웃) — flashback과 함께 비활성화.
+# 단순 dead 보존 (미래 재활성화 가능).
 LOADOUT_SLOTS = 4
 LOADOUT_SLOT_COST = {1: 3, 2: 6, 3: 10}
 # 하위 호환용 (제거 예정)
@@ -387,6 +471,40 @@ EMPTY_QUEST_MEMO_MSG = "No active quests or memos."
 # une_facade의 8턴 directive softening은 유지 — 8~11턴 사이에는 약화된 채 살아있고, 12턴에 archive.
 # Doom delta 0, 실패/완료 처리 아님. 단순히 active 슬롯에서 빠지는 것.
 QUEST_STALE_ARCHIVE_TURNS = 12
+
+# =========================================================
+# ARC SYSTEM (호흡 3단 위계의 큰 호흡 — 좌표 모델)
+# =========================================================
+# 시계 = 0D 압력 누적 / 퀘스트 = 1D 단계 진행 / Arc = 5D 좌표 자율 표류
+# Storyline 확장 (is_arc=True) — 별도 자료구조 X, carrier 재활용
+# 자세히: 파티쳇수정/arc_spec_v2.md
+# Phase 1 (스키마만, tick_arcs는 Phase 3)
+
+# 호흡 길이 (운영 측정 산출)
+ARC_EXPECTED_VOLUME_LENGTH = 150        # 1턴 ≈ 2000자 × 챕터 50턴 × 3 (최소치)
+                                         # PC 무관심 시 자연 소멸 기준 (decay rate 분모)
+ARC_DORMANT_BASE_TURNS = 30             # last_advanced_turn 무진행 임계 (compute_dormant_threshold fallback)
+
+# 노출 / 거부 임계
+ARC_PROXIMITY_EXPOSURE_THRESHOLD = 0.3  # 산문 노출 최소 proximity (전경/배경 분기 임계도 동일)
+ARC_PHASES_CAP = 10                     # phases 누적 history 상한 (ring buffer)
+ARC_TRAJECTORY_CAP = 20                 # trajectory ring buffer
+ARC_FORESHADOWING_CAP = 20              # sensory_foreshadowing 안전망 (거부 게이트가 1차 통제)
+ARC_OFFSCREEN_ACTIONS_CAP = 20          # offscreen_actions 안전망
+ARC_FORESHADOWING_DISPLAY_CAP = 5       # 산문 노출 최대 (토큰 budget)
+ARC_OFFSCREEN_DISPLAY_CAP = 5           # 산문 노출 최대
+
+# Promote 트리거
+ARC_PROMOTE_CATEGORY_MIN = 3            # 같은 카테고리 누적 임계 + High/Extreme 1+ 필수
+
+# Supernova (weight armed/분기)
+ARC_SUPERNOVA_ARMED_THRESHOLD = 0.95    # weight armed 진입
+ARC_SUPERNOVA_FORCED_THRESHOLD = 0.7    # 분기 score → forced_climax
+ARC_SUPERNOVA_VANISH_THRESHOLD = 0.3    # 분기 score → vanish
+
+# Multi-arc 합성 (산문 노출)
+ARC_FOREGROUND_CAP = 1                  # 동시 노출 전경
+ARC_BACKGROUND_CAP = 2                  # 동시 노출 배경
 
 # Quest Progress Track (DC-linked 5 Ranks)
 QUEST_RANK_SETTINGS = {

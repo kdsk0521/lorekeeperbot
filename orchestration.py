@@ -314,15 +314,13 @@ class OrchestrationService:
                 qf["sensory_habituated"] = True
                 dai["quality_flags"] = qf
 
-        # [Flashback] 회상 기력 차감 (vigor_composure 전에 직접 처리)
+        # [Flashback] (Phase 3 DEPRECATED) vigor 차감 / 로드아웃 / 인벤토리 X.
+        # Theoria.flashback_eval 자동 감지는 유지 — dai 표시만 → 산문 반영.
+        # _process_flashback 함수 자체는 dead 보존 (미래 재활성화 가능).
         fb_eval = dai.get("flashback_eval")
-        if fb_eval and fb_eval.get("detected"):
-            acting_uid = updated_context.narrative_anchors.get("acting_user_id", "")
-            fb_msg = self._process_flashback(
-                channel_id, updated_context.shared_bus, fb_eval, user_id=acting_uid
-            )
-            if fb_msg:
-                system_log = (system_log or "") + f"\n{fb_msg}"
+        if fb_eval and fb_eval.get("detected") and fb_eval.get("plausibility") != "impossible":
+            updated_context.shared_bus.dai["flashback_confirmed"] = True
+            updated_context.shared_bus.dai["flashback_declaration"] = fb_eval.get("declaration", "")
 
         # [Downtime] 다운타임 활동 처리 (rest_eval.activity != "rest")
         rest_eval = dai.get("rest_eval")
@@ -873,6 +871,32 @@ class OrchestrationService:
             # Fresh notebook reload (stale ctx 방지 — 배경 작업은 지연 실행될 수 있음)
             fresh_notebook = game_system.get_notebook_text(channel_id, ctx.user_id)
 
+            # === Arc 컨텍스트 (Phase 4b) ===
+            _arc_context_str = ""
+            _arc_promote_cand = None
+            try:
+                _nt_state_pre = domain_manager.get_narrative_tracker_state(channel_id)
+                _active_arcs_pre = [
+                    s for s in _nt_state_pre.get("storylines", [])
+                    if isinstance(s, dict) and s.get("is_arc") and s.get("status") == "active"
+                ]
+                if _active_arcs_pre:
+                    _lines = []
+                    for arc in _active_arcs_pre:
+                        _phases = arc.get("phases", [])
+                        _cur_p = _phases[-1] if _phases else "(initial)"
+                        _lines.append(
+                            f"Arc #{arc.get('id')}: cat={arc.get('origin_category', '?')}, "
+                            f"phase={_cur_p}, prox={arc.get('proximity', 0):.2f}, "
+                            f"weight={arc.get('weight', 0):.2f}"
+                        )
+                    _arc_context_str = "\n".join(_lines)
+                # bus.anomaly.arc_promote_candidate
+                if hasattr(ctx, "bus") and getattr(ctx.bus, "anomaly", None):
+                    _arc_promote_cand = ctx.bus.anomaly.get("arc_promote_candidate")
+            except Exception as _e_arc_pre:
+                logger.debug(f"[Arc] PMU context build skipped: {_e_arc_pre}")
+
             updates = await cognition.extract_all_updates(
                 self.client, self.model_id_flash,
                 ctx.action_text, response,
@@ -883,7 +907,9 @@ class OrchestrationService:
                 current_quests=current_quests,
                 extraction_hints=hints,
                 current_session_memory=session_memory,
-                previous_continuity=prev_continuity
+                previous_continuity=prev_continuity,
+                arc_context=_arc_context_str,
+                arc_promote_candidate=_arc_promote_cand,
             )
             
             # Apply Updates (⚠️ 에러는 로그만, 성공만 Discord 출력)
@@ -1084,6 +1110,49 @@ class OrchestrationService:
 
                 # 자연 소멸 layer — 매 턴 호출, dormant 12 / expire 36 룰
                 narrative_tracker.apply_tension_decay(nt_state, turn_idx)
+
+                # === Arc PMU 결과 처리 (Phase 4b, spec v2 §5.1) ===
+                # ArcUpdates / ArcDecisions를 storyline에 적용. tick_arcs 직전에 처리해서
+                # 갱신된 좌표가 같은 턴 tick_arcs에 반영되도록.
+                try:
+                    _arc_updates_payload = updates.get("ArcUpdates")
+                    if _arc_updates_payload and isinstance(_arc_updates_payload, list):
+                        _au_events = narrative_tracker.apply_arc_updates(
+                            nt_state, _arc_updates_payload, turn_idx
+                        )
+                        if _au_events.get("phase_transitions"):
+                            logger.info("[Arc] phase_transitions: %s", _au_events["phase_transitions"])
+                    _arc_decisions_payload = updates.get("ArcDecisions")
+                    if _arc_decisions_payload and isinstance(_arc_decisions_payload, dict):
+                        _ad_events = narrative_tracker.apply_arc_decisions(
+                            nt_state, _arc_decisions_payload, turn_idx
+                        )
+                        if _ad_events.get("promoted"):
+                            logger.info("[Arc] Promoted from PMU confirm: %s", _ad_events["promoted"])
+                        if _ad_events.get("rejected"):
+                            logger.info("[Arc] PMU rejected categories: %s", _ad_events["rejected"])
+                except Exception as _e_pmu_arc:
+                    logger.warning("[Arc] PMU result apply failed: %s", _e_pmu_arc)
+
+                # === Arc 좌표 갱신 (Phase 5, spec v2 §4.3) ===
+                # active arcs의 5축 좌표 자연 갱신 + armed 토글 + dormant 판정
+                try:
+                    _arc_ctx = {
+                        "current_location": (ctx.dai or {}).get("current_location", "") if ctx.dai else "",
+                        "relevant_npcs": (ctx.dai or {}).get("relevant_npcs", []) if ctx.dai else [],
+                        "scene_type": (ctx.dai or {}).get("scene_type", "normal") if ctx.dai else "normal",
+                        "anomaly_category": (ctx.bus.anomaly or {}).get("category", "") if hasattr(ctx, "bus") else "",
+                        "doom_phase": (ctx.bus.doom or {}).get("chapter_phase", "") if hasattr(ctx, "bus") else "",
+                        "quality_flags": (ctx.dai or {}).get("quality_flags", {}) if ctx.dai else {},
+                        "decisive": bool((ctx.dai or {}).get("decisive_action", False)) if ctx.dai else False,
+                    }
+                    _arc_events = narrative_tracker.tick_arcs(nt_state, _arc_ctx, turn_idx)
+                    if _arc_events.get("dormant"):
+                        logger.info("[Arc] Tick: dormant=%s", _arc_events["dormant"])
+                    if _arc_events.get("armed"):
+                        logger.info("[Arc] Tick: armed=%s", _arc_events["armed"])
+                except Exception as _e_arc:
+                    logger.warning("[Arc] tick_arcs failed: %s", _e_arc)
 
                 # 5턴 간격 스토리라인 요약 (Flash 소형 콜)
                 import config as _cfg

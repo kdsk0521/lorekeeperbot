@@ -90,12 +90,15 @@ async def extract_all_updates(
     player_context: str = "",
     extraction_hints: Optional[Dict[str, bool]] = None,
     current_session_memory: Optional[Dict[str, Any]] = None,
-    previous_continuity: Optional[Dict[str, Any]] = None
+    previous_continuity: Optional[Dict[str, Any]] = None,
+    # === Arc System (Phase 4b) ===
+    arc_context: str = "",                                      # active arcs 컨텍스트 (orchestration이 전달)
+    arc_promote_candidate: Optional[Dict[str, Any]] = None,     # bus.anomaly.arc_promote_candidate
 ) -> Dict[str, Any]:
 
     # Default: Run ALL if no hints provided
     if extraction_hints is None:
-        extraction_hints = {"physical": True, "social": True, "narrative": True, "quest": True, "entity_state": True}
+        extraction_hints = {"physical": True, "social": True, "narrative": True, "quest": True, "entity_state": True, "arc": True}
 
     tasks = []
     task_keys = []
@@ -106,7 +109,7 @@ async def extract_all_updates(
         task_keys.append("physical")
 
     # Non-physical: batch into 1 Flash call (saves ~60% input tokens)
-    batch_sections = [s for s in ["social", "narrative", "quest", "world_state", "entity_state", "render_fingerprint"] if extraction_hints.get(s, False)]
+    batch_sections = [s for s in ["social", "narrative", "quest", "world_state", "entity_state", "render_fingerprint", "arc"] if extraction_hints.get(s, False)]
     if batch_sections:
         tasks.append(_extract_batch(
             client, model_id_flash, player_input, ai_response,
@@ -117,7 +120,9 @@ async def extract_all_updates(
             player_context=player_context,
             quests=current_quests,
             current_session_memory=current_session_memory,
-            previous_continuity=previous_continuity
+            previous_continuity=previous_continuity,
+            arc_context=arc_context,
+            arc_promote_candidate=arc_promote_candidate,
         ))
         task_keys.append("batch")
 
@@ -149,6 +154,7 @@ async def extract_all_updates(
     wst: Dict[str, Any] = batch.get("world_state", {})
     est: Dict[str, Any] = batch.get("entity_state", {})
     rfp: Dict[str, Any] = batch.get("render_fingerprint", {})
+    arc_res: Dict[str, Any] = batch.get("arc", {}) if isinstance(batch.get("arc"), dict) else {}
     
     # Sanitize Physical (Notebook + Status)
     p_upd = None
@@ -210,7 +216,11 @@ async def extract_all_updates(
 
         "EntityStateUpdate": est.get("changes") if est else None,
 
-        "RenderFingerprint": rfp if rfp else None
+        "RenderFingerprint": rfp if rfp else None,
+
+        # === Arc System (Phase 4b) ===
+        "ArcUpdates": arc_res.get("arc_updates") if arc_res else None,
+        "ArcDecisions": arc_res.get("arc_decisions") if arc_res else None,
     }
 
 # =========================================================
@@ -298,7 +308,10 @@ async def _extract_batch(
     # World State context
     current_session_memory=None,
     # Scene Continuity context
-    previous_continuity=None
+    previous_continuity=None,
+    # Arc System context (Phase 4b)
+    arc_context: str = "",
+    arc_promote_candidate: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Batch extraction: social+narrative+quest+world_state+render_fingerprint in 1 Flash call."""
     sys_parts = [
@@ -469,6 +482,62 @@ async def _extract_batch(
                 ctx_parts.append("[RenderFP] No previous data")
         else:
             ctx_parts.append("[RenderFP] No previous data")
+
+    if "arc" in sections:
+        sys_parts.append(
+            "\n### arc"
+            "\nOutput: `{\"arc_updates\": [], \"arc_decisions\": {\"confirms\": [], \"rejects\": []}}`"
+            "\n"
+            "\narc_updates: 활성 arc별 갱신 (다중 가능). 각 항목 schema:"
+            "\n  {"
+            "\n    \"arc_id\": int,                                  # Arc Context 표시된 active arc id"
+            "\n    \"phase_transition\": {\"enter\": bool, \"label\": str | null},"
+            "\n    \"next_waypoint_update\": str | null,             # 다음 단기 목표 갱신"
+            "\n    \"backstage_reality_update\": str | null,         # 객관적 진실 추론/정정 (Pro 비공개)"
+            "\n    \"sensory_foreshadowing_add\": [{\"summary\": str, \"polarity\": str, \"intensity\": str}],"
+            "\n    \"offscreen_actions_add\": [{\"summary\": str, \"polarity\": str, \"intensity\": str}]"
+            "\n  }"
+            "\n"
+            "\nphase_transition.enter=True 인 케이스 매우 드물게. 의미적 전환이 확실히 일어났을 때만:"
+            "\n  - 장소/관계/사건이 새 단계로 명확히 이동"
+            "\n  - 단순 감각/소문/배경 사건은 phase 진행 X (sensory_foreshadowing_add 또는 offscreen_actions_add로)"
+            "\n  - phase_transition.label: 새 phase의 짧은 한국어 라벨 (예: '왕국 함락')"
+            "\n"
+            "\nbackstage_reality: 작가만 아는 객관적 진실 (Pro에 노출 X). 표면 vs 진실 불일치 추적용."
+            "\n  - 평범 씬에선 'ordinary/nothing special' 같은 값 OK"
+            "\n  - 중요 사건에선 hidden truth"
+            "\n  - 대부분 턴 null"
+            "\n"
+            "\nsensory_foreshadowing_add: PC 가까이서 깐 단서 (proximity ≥ 0.3 가정)."
+            "\noffscreen_actions_add: PC 멀리서 진행된 사건 (proximity < 0.3 가정, 전언/소문 톤)."
+            "\n  - polarity: positive/negative/mixed"
+            "\n  - intensity: Low/Mid/High/Extreme"
+            "\n  - 같은 polarity+intensity 시드 중복 X (거부 게이트가 자연 차단)"
+            "\n  - summary 짧은 한국어 ≤ 60자"
+            "\n"
+            "\narc_decisions:"
+            "\n  - confirms: bus.anomaly.arc_promote_candidate가 있을 때만. schema: "
+            "[{\"candidate_category\": str, \"declared_goal\": str, \"initial_phase_label\": str, \"origin_summary\": str}]"
+            "\n  - rejects: candidate 거부 시. schema: [{\"candidate_category\": str, \"reason\": str}]"
+            "\n  - candidate 없으면 둘 다 빈 list"
+            "\n"
+            "\nCONSERVATIVE: arc_updates는 대부분 턴 빈 list 또는 1~2개. "
+            "active arcs에 PC가 직접 접촉하지 않으면 갱신할 게 거의 없음. "
+            "phase_transition.enter=True는 정말 의미적 전환일 때만."
+        )
+        _arc_ctx_str = arc_context or "(no active arcs)"
+        _arc_cand_str = "None"
+        if arc_promote_candidate:
+            try:
+                _arc_cand_str = (
+                    f"category={arc_promote_candidate.get('category', '?')}, "
+                    f"intensity={arc_promote_candidate.get('intensity', '?')}, "
+                    f"polarity={arc_promote_candidate.get('polarity', '?')}, "
+                    f"line={arc_promote_candidate.get('line', '')[:80]}"
+                )
+            except Exception:
+                _arc_cand_str = str(arc_promote_candidate)[:200]
+        ctx_parts.append(f"[Arc Context]\n{_arc_ctx_str}\n[Promote Candidate] {_arc_cand_str}")
 
     sys_prompt = "\n".join(sys_parts)
     ctx_text = "\n".join(ctx_parts)

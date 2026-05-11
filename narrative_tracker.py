@@ -238,6 +238,10 @@ def assign_to_storyline(state: dict, turn_entry: dict) -> dict:
             "ongoing_tensions": [],
             "summaries": [],
             "status": "active",
+            # === Arc 시스템 (Phase 1) ===
+            # 신규 storyline은 is_arc=False. Arc 격상 시 promote 함수가 신규 필드 추가.
+            # 자세히: 파티쳇수정/arc_spec_v2.md §4.1
+            "is_arc": False,
         }
         state["storylines"].append(new_sl)
 
@@ -651,3 +655,803 @@ def format_entity_state_for_prompt(state: dict, npc_name: str) -> str:
             parts.append(f"  Critical(T{c.get('turn', '?')}): {c.get('description', '')[:80]}")
 
     return "\n".join(parts)
+
+
+# =========================================================
+# ARC SYSTEM (Phase 1: 스키마 + helper)
+# =========================================================
+# 자세히: 파티쳇수정/arc_spec_v2.md
+# Phase 1 = 자료구조 + 격상/격하 함수만. 좌표 갱신(tick_arcs)은 Phase 3.
+
+def is_arc(sl: dict) -> bool:
+    """Storyline이 arc인지. 단순 helper — 누락 default False."""
+    return bool(sl.get("is_arc", False))
+
+
+def get_active_arcs(state: dict) -> list:
+    """state.storylines 중 is_arc=True AND status=active만."""
+    return [
+        s for s in state.get("storylines", [])
+        if isinstance(s, dict) and s.get("is_arc") and s.get("status") == "active"
+    ]
+
+
+def get_focus_arc(state: dict) -> dict | None:
+    """current_focus_arc_id가 가리키는 arc. 없으면 None."""
+    fid = state.get("current_focus_arc_id")
+    if fid is None:
+        return None
+    for sl in state.get("storylines", []):
+        if sl.get("id") == fid and sl.get("is_arc"):
+            return sl
+    return None
+
+
+def promote_to_arc(
+    sl: dict,
+    *,
+    current_turn: int,
+    declared_goal: str,
+    initial_phase_label: str,
+    origin_category: str,
+    next_waypoint: str = "",
+    backstage_reality: str = "",
+) -> None:
+    """
+    Storyline → Arc 격상 (in-place). spec v2 §4.1.
+
+    - 기존 storyline carrier 재활용 (새 자료구조 X)
+    - is_arc=True 토글
+    - 좌표 5축 단순 기본값 초기화
+    - phases는 initial_phase_label 1개로 시작
+    - entities/turns/current_context/summaries는 격상 시점 동결 (이후 갱신 X)
+    - last_turn = current_turn 동결
+    """
+    sl["is_arc"] = True
+
+    # 좌표 5축 — 단순 기본값 (운영 검증 후 PMU 추론으로 정교화 가능)
+    sl["phase_pos"] = 0.05
+    sl["proximity"] = 0.5
+    sl["pacing"] = 0.3
+    sl["momentum"] = 0.3
+    sl["weight"] = 0.3
+
+    # 의미 라벨
+    sl["declared_goal"] = declared_goal
+    sl["origin_category"] = origin_category
+    sl["phases"] = [initial_phase_label] if initial_phase_label else []
+    sl["next_waypoint"] = next_waypoint
+    sl["backstage_reality"] = backstage_reality
+
+    # 누적 흔적 (초기 빈)
+    sl["sensory_foreshadowing"] = []  # List[dict] — {summary, polarity, intensity, turn}
+    sl["offscreen_actions"] = []
+    sl["trajectory"] = []  # List[Tuple[turn, phase_pos, weight]]
+
+    # 운영 추적
+    sl["promoted_at_turn"] = current_turn
+    sl["last_advanced_turn"] = current_turn
+    sl["armed"] = False
+
+    # 동결
+    sl["last_turn"] = current_turn  # 격상 시점 동결 (이후 갱신 X)
+
+
+def demote_to_storyline(sl: dict) -> None:
+    """
+    Arc → Storyline 격하 (in-place). spec v2 §4.5.
+
+    - is_arc=False 토글
+    - 좌표/라벨/누적흔적/운영추적 모두 제거
+    - entities/turns 동결 풀고 일반 storyline 자동 분류 재개
+    - 재진입 가능 (다음 promote 임계 도달 시 다시 arc로, 깔끔한 재시작)
+    """
+    sl["is_arc"] = False
+
+    # 신규 필드 모두 제거
+    for key in (
+        "phase_pos", "proximity", "pacing", "momentum", "weight",
+        "declared_goal", "origin_category", "phases",
+        "next_waypoint", "backstage_reality",
+        "sensory_foreshadowing", "offscreen_actions", "trajectory",
+        "promoted_at_turn", "last_advanced_turn", "armed",
+    ):
+        sl.pop(key, None)
+
+
+# =========================================================
+# ARC SYSTEM (Phase 2: 라우터 helper)
+# =========================================================
+# spec v2 §4.0 라우터 우선순위 + §4.2 흡수 메커니즘.
+# anomaly_module._route_candidate가 이 helper들을 호출.
+
+def find_absorbing_arc(state: dict, category: str) -> dict | None:
+    """
+    같은 origin_category active arc 찾기. weight × proximity 큰 쪽 우선.
+    동률 시 promoted_at_turn 빠른 쪽 (오래된 arc 우선).
+
+    spec v2 §4.2 — 같은 카테고리 active arc 다수 시 우선순위.
+    """
+    if not category:
+        return None
+    candidates = []
+    for sl in state.get("storylines", []):
+        if not isinstance(sl, dict):
+            continue
+        if not sl.get("is_arc"):
+            continue
+        if sl.get("status") != "active":
+            continue
+        if sl.get("origin_category") != category:
+            continue
+        candidates.append(sl)
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda a: (
+        -(a.get("weight", 0.0) * a.get("proximity", 0.0)),
+        a.get("promoted_at_turn", 0),
+    ))
+    return candidates[0]
+
+
+def check_promote_threshold(
+    state: dict,
+    candidate: dict,
+    recent_categories: list,
+    event_queue: list,
+) -> bool:
+    """
+    spec v2 §4.0/§4.2: arc_promote 임계 도달 검사.
+
+    조건:
+      - 같은 카테고리 active arc 없음 (있으면 흡수로 가야)
+      - 같은 카테고리 누적 (recent_categories + event_queue + candidate) ≥ ARC_PROMOTE_CATEGORY_MIN (3)
+      - 누적 항목 중 최소 1개 intensity High/Extreme
+    """
+    import config as _cfg
+    cat = candidate.get("category", "")
+    if not cat:
+        return False
+
+    # 같은 카테고리 active arc 있으면 promote X (흡수 분기로)
+    if find_absorbing_arc(state, cat) is not None:
+        return False
+
+    # 같은 카테고리 누적 카운트
+    recent_count = sum(1 for c in (recent_categories or []) if c == cat)
+    queue_count = sum(
+        1 for e in (event_queue or [])
+        if isinstance(e, dict) and e.get("category") == cat
+    )
+    total = recent_count + queue_count + 1  # +1 for candidate
+    if total < _cfg.ARC_PROMOTE_CATEGORY_MIN:
+        return False
+
+    # High/Extreme 1+ 검사
+    high_set = ("High", "Extreme")
+    cand_high = candidate.get("intensity") in high_set
+    queue_high = any(
+        isinstance(e, dict) and e.get("category") == cat and e.get("intensity") in high_set
+        for e in (event_queue or [])
+    )
+    return cand_high or queue_high
+
+
+def similar_seed_present(arc: dict, seed: dict) -> bool:
+    """
+    spec v2 §4.2 거부 게이트: 같은 polarity + 같은 intensity 시드가
+    sensory_foreshadowing 또는 offscreen_actions에 이미 있나?
+
+    완전 거부 — 약한 효과 폭주 위험 회피.
+    """
+    s_pol = seed.get("polarity")
+    s_int = seed.get("intensity")
+    pool = (arc.get("sensory_foreshadowing", []) or []) + (arc.get("offscreen_actions", []) or [])
+    for stored in pool:
+        if not isinstance(stored, dict):
+            continue
+        if stored.get("polarity") == s_pol and stored.get("intensity") == s_int:
+            return True
+    return False
+
+
+def compute_absorption(arc: dict, foreground: bool) -> float:
+    """
+    spec v2 §3 compute_absorption 잠정값 1차.
+      foreground (proximity ≥ 0.3): +0.04
+      background:                    +0.015
+      phase_pos > 0.7 후반:          ×0.7 (흡수 약화)
+    """
+    base = 0.04 if foreground else 0.015
+    if arc.get("phase_pos", 0.0) > 0.7:
+        base *= 0.7
+    return base
+
+
+def absorb_to_arc(arc: dict, seed: dict, current_turn: int) -> bool:
+    """
+    spec v2 §4.2 흡수 (in-place). 성공 시 True, 거부 시 False.
+
+    - 거부 게이트 (similar_seed_present) 통과 시 흡수
+    - weight 증가 (compute_absorption)
+    - foreground/background 분기로 sensory/offscreen 누적
+    - cap ring buffer 적용
+    - armed 자동 토글 (weight ≥ 0.95)
+    - last_advanced_turn 갱신 X (phase_transition만 갱신)
+    - 좌표 직접 점프 X
+    """
+    import config as _cfg
+
+    # 거부 게이트
+    if similar_seed_present(arc, seed):
+        return False
+
+    foreground = arc.get("proximity", 0.0) >= _cfg.ARC_PROXIMITY_EXPOSURE_THRESHOLD
+    delta = compute_absorption(arc, foreground)
+    arc["weight"] = min(1.0, arc.get("weight", 0.0) + delta)
+
+    entry = {
+        "summary": seed.get("summary") or seed.get("line") or seed.get("tag") or "",
+        "polarity": seed.get("polarity", "mixed"),
+        "intensity": seed.get("intensity", "Mid"),
+        "turn": int(current_turn),
+    }
+
+    if foreground:
+        arr = arc.setdefault("sensory_foreshadowing", [])
+        arr.append(entry)
+        cap = _cfg.ARC_FORESHADOWING_CAP
+        if len(arr) > cap:
+            arc["sensory_foreshadowing"] = arr[-cap:]
+    else:
+        arr = arc.setdefault("offscreen_actions", [])
+        arr.append(entry)
+        cap = _cfg.ARC_OFFSCREEN_ACTIONS_CAP
+        if len(arr) > cap:
+            arc["offscreen_actions"] = arr[-cap:]
+
+    # armed 자동 토글
+    if arc["weight"] >= _cfg.ARC_SUPERNOVA_ARMED_THRESHOLD:
+        arc["armed"] = True
+
+    return True
+
+
+# =========================================================
+# ARC SYSTEM (Phase 3: 좌표 변환 룰 + tick_arcs)
+# =========================================================
+# spec v2 §3 산출 함수 + §4.3 자연 감쇠 + §4.4 armed + §4.6 dormant.
+# 모든 좌표 갱신은 매 턴 tick_arcs() 호출에서.
+# 호출 위치: orchestration이 매 턴 narrative_tracker 호출하는 자리에 1줄 추가
+# (Phase 5 통합 단계에서 배선).
+
+def compute_decay_rate(
+    arc: dict,
+    turn_since_advanced: int,
+    expected_volume_length: int = None,
+) -> float:
+    """
+    weight 자연 감쇠율 — 선형 감쇠. spec v2 §3.
+
+    weight=0.95 가정 시 expected_volume_length(150)턴에 0 도달.
+    선형 (0.95 / 150 ≈ 0.0063/turn). 시작 weight 무관 절대값.
+    """
+    import config as _cfg
+    if expected_volume_length is None:
+        expected_volume_length = _cfg.ARC_EXPECTED_VOLUME_LENGTH
+    return 0.95 / max(1, expected_volume_length)
+
+
+def compute_dormant_threshold(
+    arc: dict,
+    pacing: float,
+    phase_pos: float,
+) -> int:
+    """
+    dormant 판정 turn 수. pacing/phase_pos 따라 다름. spec v2 §3.
+
+    잠정값:
+      mundane (pacing<0.3): 50턴 — 평범 씬은 늦게 dormant
+      crucial (pacing>0.7): 15턴 — 정교한 빌드업은 빨리 결판
+      baseline:             30턴 — ARC_DORMANT_BASE_TURNS
+    """
+    import config as _cfg
+    if pacing < 0.3:
+        return 50
+    elif pacing > 0.7:
+        return 15
+    else:
+        return _cfg.ARC_DORMANT_BASE_TURNS
+
+
+def compute_proximity_update(arc: dict, ctx: dict) -> float:
+    """
+    proximity 갱신. spec v2 §3 / 블루프린트 §2.3.
+
+    새 측정값 = location 매칭(0.4) + npc 매칭(0.3) + category 매칭(0.3)
+    return max(arc.proximity - 자연감쇠, 새 측정값)
+    """
+    score = 0.0
+
+    # location 매칭 (PC current_location vs arc.entities)
+    pc_loc = (ctx.get("current_location") or "").strip()
+    entities = arc.get("entities") or []
+    if pc_loc and any(pc_loc == e or (pc_loc and e and (pc_loc in e or e in pc_loc)) for e in entities):
+        score += 0.4
+
+    # npc 매칭 (relevant_npcs vs arc.entities)
+    relevant = ctx.get("relevant_npcs") or []
+    # relevant_npcs가 dict 리스트일 수 있음 (lorekeeper 패턴)
+    npc_names = [n if isinstance(n, str) else n.get("name", "") for n in relevant]
+    npc_names = [n for n in npc_names if n]
+    entity_set = set(entities)
+    matched_npcs = sum(1 for n in npc_names if n in entity_set)
+    if matched_npcs > 0:
+        score += min(0.3, matched_npcs * 0.15)
+
+    # category 매칭 (이번 턴 anomaly_category vs arc.origin_category)
+    anomaly_cat = (ctx.get("anomaly_category") or "").strip()
+    if anomaly_cat and anomaly_cat == arc.get("origin_category", ""):
+        score += 0.3
+
+    # 자연 감쇠 (PC 안 닿으면 약해짐)
+    decay = 0.05
+    decayed_old = max(0.0, arc.get("proximity", 0.0) - decay)
+
+    # max(과거 감쇠, 새 측정값)
+    return min(1.0, max(decayed_old, score))
+
+
+def compute_momentum_update(
+    arc: dict,
+    quality_flags: dict,
+    decisive_action: bool,
+) -> float:
+    """
+    momentum 갱신. baseline + spike + 감쇠. spec v2 §3 / 블루프린트 §2.3.
+
+    잠정값:
+      baseline:               0.2
+      decisive 시 spike:      +0.3
+      quality_flags signal:   +0.2
+      자연 감쇠:              -0.05/turn
+    """
+    baseline = 0.2
+    spike = 0.0
+
+    if decisive_action:
+        spike += 0.3
+
+    if quality_flags and isinstance(quality_flags, dict):
+        if quality_flags.get("decisive_signal") or quality_flags.get("crisis_warning"):
+            spike += 0.2
+
+    decay = 0.05
+    decayed = max(0.0, arc.get("momentum", 0.0) - decay)
+
+    return min(1.0, max(decayed, baseline) + spike)
+
+
+def compute_pacing_mode(
+    arc: dict,
+    scene_type: str,
+    doom_phase: str,
+    decisive: bool,
+) -> float:
+    """
+    pacing 모드 (mundane 0 ↔ crucial 1). spec v2 §3 / 블루프린트 §2.3.
+
+    crucial 트리거:
+      proximity ≥ 0.7 / decisive / 클라이맥스 페이즈(轉/結) / 긴장 씬(combat/tension/intimate)
+
+    부드러운 전환 (lerp 30%) — 갑작스러운 모드 전환 회피.
+    """
+    target = 0.3  # mundane 기본
+
+    if arc.get("proximity", 0.0) >= 0.7:
+        target = 0.9
+    elif decisive:
+        target = 0.8
+    elif doom_phase in ("轉", "結"):
+        target = 0.7
+    elif scene_type in ("combat", "tension", "intimate"):
+        target = 0.6
+    elif scene_type in ("normal", "exploration", "social"):
+        target = 0.25
+
+    current = arc.get("pacing", 0.3)
+    return current + (target - current) * 0.3  # 30% lerp
+
+
+def compute_phase_drift(arc: dict) -> float:
+    """
+    phase_pos 자체 표류 (PC 무관심 시). spec v2 §3 / 블루프린트 §2.3.
+
+    proximity 낮으면 momentum × offscreen_rate 만큼 자체 진행.
+    proximity 높으면 PMU의 phase_transition이 별도 진행 (이 함수는 0 반환).
+    """
+    import config as _cfg
+    if arc.get("proximity", 0.0) >= _cfg.ARC_PROXIMITY_EXPOSURE_THRESHOLD:
+        return 0.0  # PC 관심 시 자체 표류 X (PMU만 진행)
+
+    offscreen_rate = 0.005  # 매 턴 momentum × rate
+    return arc.get("momentum", 0.0) * offscreen_rate
+
+
+def apply_arc_updates(state: dict, arc_updates: list, current_turn: int) -> dict:
+    """
+    PMU 응답의 arc_updates를 storyline에 적용. spec v2 §5.1.
+
+    Args:
+        state: storyteller_state
+        arc_updates: PMU 출력 [{arc_id, phase_transition, next_waypoint_update, ...}, ...]
+        current_turn: int
+
+    Returns:
+        events: {"phase_transitions": [arc_id, ...], "applied": [arc_id, ...]}
+    """
+    import config as _cfg
+    events = {"phase_transitions": [], "applied": []}
+    if not arc_updates or not isinstance(arc_updates, list):
+        return events
+
+    storylines = state.get("storylines", [])
+
+    for upd in arc_updates:
+        if not isinstance(upd, dict):
+            continue
+        arc_id = upd.get("arc_id")
+        if arc_id is None:
+            continue
+        # find arc
+        target = None
+        for sl in storylines:
+            if isinstance(sl, dict) and sl.get("id") == arc_id and sl.get("is_arc"):
+                target = sl
+                break
+        if not target:
+            continue
+
+        applied = False
+
+        # phase_transition
+        pt = upd.get("phase_transition")
+        if isinstance(pt, dict) and pt.get("enter") and pt.get("label"):
+            phases = target.setdefault("phases", [])
+            phases.append(str(pt["label"]))
+            if len(phases) > _cfg.ARC_PHASES_CAP:
+                target["phases"] = phases[-_cfg.ARC_PHASES_CAP:]
+            target["phase_pos"] = min(1.0, target.get("phase_pos", 0.0) + 0.1)
+            target["last_advanced_turn"] = current_turn
+            events["phase_transitions"].append(arc_id)
+            applied = True
+
+        # next_waypoint
+        nw = upd.get("next_waypoint_update")
+        if nw and isinstance(nw, str):
+            target["next_waypoint"] = nw
+            applied = True
+
+        # backstage_reality
+        br = upd.get("backstage_reality_update")
+        if br and isinstance(br, str):
+            target["backstage_reality"] = br
+            applied = True
+
+        # sensory_foreshadowing_add
+        for entry in (upd.get("sensory_foreshadowing_add") or []):
+            if not isinstance(entry, dict):
+                continue
+            if not entry.get("summary"):
+                continue
+            target.setdefault("sensory_foreshadowing", []).append({
+                "summary": str(entry.get("summary", ""))[:200],
+                "polarity": entry.get("polarity", "mixed"),
+                "intensity": entry.get("intensity", "Mid"),
+                "turn": current_turn,
+            })
+            cap = _cfg.ARC_FORESHADOWING_CAP
+            if len(target["sensory_foreshadowing"]) > cap:
+                target["sensory_foreshadowing"] = target["sensory_foreshadowing"][-cap:]
+            applied = True
+
+        # offscreen_actions_add
+        for entry in (upd.get("offscreen_actions_add") or []):
+            if not isinstance(entry, dict):
+                continue
+            if not entry.get("summary"):
+                continue
+            target.setdefault("offscreen_actions", []).append({
+                "summary": str(entry.get("summary", ""))[:200],
+                "polarity": entry.get("polarity", "mixed"),
+                "intensity": entry.get("intensity", "Mid"),
+                "turn": current_turn,
+            })
+            cap = _cfg.ARC_OFFSCREEN_ACTIONS_CAP
+            if len(target["offscreen_actions"]) > cap:
+                target["offscreen_actions"] = target["offscreen_actions"][-cap:]
+            applied = True
+
+        if applied:
+            events["applied"].append(arc_id)
+
+    return events
+
+
+def apply_arc_decisions(state: dict, arc_decisions: dict, current_turn: int) -> dict:
+    """
+    PMU 응답의 arc_decisions(confirms/rejects)를 처리. spec v2 §5.1 / §4.1.
+
+    confirms[i] = {candidate_category, declared_goal, initial_phase_label, origin_summary}
+    → 같은 카테고리 active storyline (is_arc=False) 중 가장 최근 last_turn 것을 promote_to_arc.
+
+    rejects[i] = {candidate_category, reason}
+    → 무시 (log만).
+
+    Returns:
+        events: {"promoted": [arc_id, ...], "rejected": [category, ...]}
+    """
+    events = {"promoted": [], "rejected": []}
+    if not isinstance(arc_decisions, dict):
+        return events
+
+    storylines = state.get("storylines", [])
+
+    # confirms
+    for confirm in (arc_decisions.get("confirms") or []):
+        if not isinstance(confirm, dict):
+            continue
+        category = confirm.get("candidate_category", "")
+        if not category:
+            continue
+        # 같은 카테고리 active storyline 찾기 (is_arc=False만, 이미 arc면 흡수가 처리)
+        non_arc_candidates = [
+            s for s in storylines
+            if isinstance(s, dict) and not s.get("is_arc") and s.get("status") == "active"
+        ]
+        if not non_arc_candidates:
+            continue
+        # 가장 최근 last_turn storyline 선택 (해당 카테고리 시드 누적 가능성 높음)
+        target_sl = max(non_arc_candidates, key=lambda s: s.get("last_turn", 0))
+        try:
+            promote_to_arc(
+                target_sl,
+                current_turn=current_turn,
+                declared_goal=confirm.get("declared_goal", "(미정)"),
+                initial_phase_label=confirm.get("initial_phase_label", "(initial)"),
+                origin_category=category,
+                next_waypoint=confirm.get("next_waypoint", ""),
+                backstage_reality=confirm.get("backstage_reality", ""),
+            )
+            events["promoted"].append(target_sl.get("id"))
+        except Exception:
+            pass
+
+    # rejects (log만)
+    for reject in (arc_decisions.get("rejects") or []):
+        if not isinstance(reject, dict):
+            continue
+        cat = reject.get("candidate_category", "")
+        if cat:
+            events["rejected"].append(cat)
+
+    return events
+
+
+def tick_arcs(state: dict, ctx: dict, current_turn: int) -> dict:
+    """
+    매 턴 모든 active arc의 좌표 갱신 + dormant 판정. spec v2 §4.3/§4.4/§4.6.
+
+    Args:
+        state: storyteller_state
+        ctx: 갱신 컨텍스트 dict {
+            "current_location": str,
+            "relevant_npcs": List[str|dict],
+            "scene_type": str,
+            "anomaly_category": str,         # 이번 턴 발사된 anomaly category (있으면)
+            "doom_phase": str,                # 起承轉結間
+            "quality_flags": dict,            # DAI quality_flags
+            "decisive": bool,                 # PC 결정적 행동 신호
+        }
+        current_turn: int
+
+    Returns:
+        events: {
+            "ticked": [arc_id, ...],         # 이번 턴 갱신된 arc id
+            "dormant": [arc_id, ...],        # 이번 턴 dormant 처리된 arc id
+            "armed": [arc_id, ...],          # 이번 턴 armed 진입한 arc id
+        }
+    """
+    import config as _cfg
+
+    events = {"ticked": [], "dormant": [], "armed": []}
+
+    for sl in state.get("storylines", []):
+        if not isinstance(sl, dict):
+            continue
+        if not sl.get("is_arc"):
+            continue
+        if sl.get("status") != "active":
+            continue
+
+        arc_id = sl.get("id")
+        events["ticked"].append(arc_id)
+        prev_armed = bool(sl.get("armed", False))
+
+        # 1. proximity 갱신
+        sl["proximity"] = compute_proximity_update(sl, ctx)
+
+        # 2. pacing 모드 (proximity 갱신 후 평가)
+        sl["pacing"] = compute_pacing_mode(
+            sl,
+            ctx.get("scene_type", "normal"),
+            ctx.get("doom_phase", ""),
+            bool(ctx.get("decisive", False)),
+        )
+
+        # 3. momentum 갱신
+        sl["momentum"] = compute_momentum_update(
+            sl,
+            ctx.get("quality_flags", {}) or {},
+            bool(ctx.get("decisive", False)),
+        )
+
+        # 4. weight 자연 감쇠 (선형)
+        turn_since_advanced = max(0, current_turn - sl.get("last_advanced_turn", current_turn))
+        decay = compute_decay_rate(sl, turn_since_advanced)
+        sl["weight"] = max(0.0, sl.get("weight", 0.0) - decay)
+
+        # 5. phase_pos 표류 (PC 무관심 시 momentum × offscreen_rate)
+        drift = compute_phase_drift(sl)
+        if drift > 0:
+            sl["phase_pos"] = min(1.0, sl.get("phase_pos", 0.0) + drift)
+
+        # 6. armed 자동 토글 (hysteresis 0.05)
+        if sl.get("weight", 0.0) >= _cfg.ARC_SUPERNOVA_ARMED_THRESHOLD:
+            if not prev_armed:
+                events["armed"].append(arc_id)
+            sl["armed"] = True
+        elif sl.get("weight", 0.0) < (_cfg.ARC_SUPERNOVA_ARMED_THRESHOLD - 0.05):
+            sl["armed"] = False
+
+        # 7. trajectory 갱신 (ring buffer cap 20)
+        traj = sl.setdefault("trajectory", [])
+        traj.append((current_turn, sl["phase_pos"], sl["weight"]))
+        if len(traj) > _cfg.ARC_TRAJECTORY_CAP:
+            sl["trajectory"] = traj[-_cfg.ARC_TRAJECTORY_CAP:]
+
+        # 8. dormant 판정 (proximity 게이트 + 무진행 임계)
+        threshold = compute_dormant_threshold(
+            sl, sl.get("pacing", 0.3), sl.get("phase_pos", 0.0)
+        )
+        if (sl.get("proximity", 0.0) < _cfg.ARC_PROXIMITY_EXPOSURE_THRESHOLD and
+                turn_since_advanced >= threshold):
+            sl["status"] = "dormant"
+            events["dormant"].append(arc_id)
+
+    return events
+
+
+# =========================================================
+# Aspects 부활 — 시스템 교차 결합 신호
+# =========================================================
+# 8개 라벨 결합 조건 평가. Arc 사이클 시 백업, V3 재이식.
+# 라벨 내부 식별자 (산문 노출 X), typological 디렉티브는 config.ASPECTS_DIRECTIVES.
+
+def _any_active_arc_proximate(state: dict, threshold: float = None) -> bool:
+    """active arc 중 proximity ≥ threshold인 게 있나? (외부 사건 인식 자리)."""
+    import config as _cfg
+    if threshold is None:
+        threshold = _cfg.ASPECTS_ARC_PROXIMITY_THRESHOLD
+    for sl in state.get("storylines", []):
+        if not isinstance(sl, dict):
+            continue
+        if not sl.get("is_arc") or sl.get("status") != "active":
+            continue
+        if float(sl.get("proximity", 0.0) or 0.0) >= threshold:
+            return True
+    return False
+
+
+def _any_arc_armed(state: dict) -> bool:
+    """active arc 중 armed=True인 게 있나? (큰 흐름 임박)."""
+    for sl in state.get("storylines", []):
+        if not isinstance(sl, dict):
+            continue
+        if sl.get("is_arc") and sl.get("status") == "active" and sl.get("armed"):
+            return True
+    return False
+
+
+def compute_aspects(bus, state: dict, primary_axis: str = "vigor") -> list:
+    """
+    시스템 교차 결합 평가. 활성 라벨 리스트 반환.
+
+    Args:
+        bus: SharedBus (judgment / anomaly / vigor / composure / doom 읽기)
+        state: storyteller_state (Arc proximity / armed 평가용)
+        primary_axis: "vigor" or "composure"
+
+    Returns:
+        active_aspects: List[str] — 활성 라벨 식별자 (산문 노출 X, 내부 추적용)
+    """
+    aspects = []
+
+    # bus 안전 추출
+    judgment = bus.judgment if isinstance(bus.judgment, dict) else {}
+    anomaly = bus.anomaly if isinstance(bus.anomaly, dict) else {}
+    vigor = bus.vigor if isinstance(bus.vigor, dict) else {}
+    composure = bus.composure if isinstance(bus.composure, dict) else {}
+    doom = bus.doom if isinstance(bus.doom, dict) else {}
+
+    j_active = bool(judgment.get("active"))
+    j_result = str(judgment.get("result", "") or "")
+    a_triggered = bool(anomaly.get("triggered"))
+    a_escalated = bool(anomaly.get("escalated"))
+    a_intensity = str(anomaly.get("intensity", "") or "")
+    a_arc_absorbed = isinstance(anomaly.get("arc_absorbed"), dict)
+    clock_fired = bool(doom.get("completed_this_turn"))
+
+    v_val = int(vigor.get("value", 100) or 100)
+    c_val = int(composure.get("value", 100) or 100)
+    v_trauma = bool(vigor.get("trauma_trigger"))
+    c_trauma = bool(composure.get("trauma_trigger"))
+    trauma_any = v_trauma or c_trauma
+
+    primary_val = v_val if primary_axis == "vigor" else c_val
+
+    arc_proximate = _any_active_arc_proximate(state)
+    arc_armed = _any_arc_armed(state)
+    # arc forced_climax 감지: bus.anomaly.arc_absorbed에 forced_climax 신호가 있을 수 있음
+    # 또는 별도 신호. 현재 spec에는 단발 신호 없음. arc_armed를 가까운 대용으로.
+    arc_forced_climax = bool(anomaly.get("arc_forced_climax", False))
+
+    # 외부 사건 통합 신호 (anomaly OR arc 흡수 OR 시계 발사)
+    external_event = a_triggered or a_arc_absorbed or clock_fired
+
+    # === 1. Failure Resonance ===
+    if j_active and j_result in ("failure", "critical_failure") and external_event:
+        aspects.append("Failure Resonance")
+
+    # === 2. Glory's Shadow ===
+    if j_active and j_result == "critical_success" and external_event:
+        aspects.append("Glory's Shadow")
+
+    # === 3. Body Erosion ===
+    # primary_axis == vigor + 외부 인식 + vigor 한계 가까움
+    if primary_axis == "vigor" and (a_triggered or arc_proximate) and v_val <= _aspects_resource_threshold():
+        aspects.append("Body Erosion")
+
+    # === 4. Mind Fracture ===
+    if primary_axis == "composure" and (a_triggered or arc_proximate) and c_val <= _aspects_resource_threshold():
+        aspects.append("Mind Fracture")
+
+    # === 5. Inner-Outer Convergence ===
+    if trauma_any and (a_triggered or arc_forced_climax):
+        aspects.append("Inner-Outer Convergence")
+
+    # === 6. Resurgence ===
+    if trauma_any and j_active:
+        aspects.append("Resurgence")
+
+    # === 7. Abyss ===
+    if j_result == "critical_failure" and primary_val <= _aspects_abyss_threshold():
+        aspects.append("Abyss")
+
+    # === 8. Loss of Control ===
+    if a_intensity == "Extreme" or (a_escalated and arc_armed):
+        aspects.append("Loss of Control")
+
+    return aspects
+
+
+def _aspects_resource_threshold() -> int:
+    import config as _cfg
+    return _cfg.ASPECTS_RESOURCE_THRESHOLD
+
+
+def _aspects_abyss_threshold() -> int:
+    import config as _cfg
+    return _cfg.ASPECTS_ABYSS_THRESHOLD

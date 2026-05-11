@@ -607,6 +607,143 @@ def _extract_voice_quirks_from_profile(desc: str) -> str:
 
 
 # =========================================================
+# Arc System — Slot 30 디렉티브 빌더 (Phase 5)
+# =========================================================
+# spec v2 §6 노출 정책 + §6.1 multi-arc 합성 (전경 1 + 배경 1~2)
+# - 차원별 노출:
+#   typological palette: declared_goal / current_phase / pacing 모드
+#   라벨 + instruction: next_waypoint
+#   직접 노출: sensory_foreshadowing / offscreen_actions (summary만)
+#   Pro 비공개: backstage_reality
+#   Pro 컨텍스트 X: phases history
+
+def _build_arc_directive(channel_id: str) -> str:
+    """
+    active arcs → Slot 30 GM_MOVER에 합류할 디렉티브.
+
+    전경(proximity 가장 높음, ≥0.3) 1개 + 배경 1~2개. dormant/proximity<0.3 제외.
+    """
+    if not channel_id:
+        return ""
+
+    try:
+        import narrative_tracker as _nt
+        import domain_manager as _dm
+        import config as _cfg
+        nt_state = _dm.get_narrative_tracker_state(channel_id)
+        active_arcs = _nt.get_active_arcs(nt_state)
+    except Exception:
+        return ""
+
+    # 노출 임계 필터 + 정렬
+    visible = [
+        a for a in active_arcs
+        if a.get("proximity", 0.0) >= _cfg.ARC_PROXIMITY_EXPOSURE_THRESHOLD
+    ]
+    if not visible:
+        return ""
+
+    visible.sort(key=lambda a: (
+        -a.get("proximity", 0.0),
+        -a.get("weight", 0.0),
+    ))
+
+    # 전경 1 + 배경 N
+    fg_cap = _cfg.ARC_FOREGROUND_CAP   # 1
+    bg_cap = _cfg.ARC_BACKGROUND_CAP   # 2
+    foreground = visible[:fg_cap]
+    background = visible[fg_cap:fg_cap + bg_cap]
+
+    lines: list = []
+
+    # 전경 (있으면)
+    for arc in foreground:
+        lines.append(_render_arc_foreground(arc))
+
+    # 배경 (typological + 전언 톤)
+    for arc in background:
+        rendered = _render_arc_background(arc)
+        if rendered:
+            lines.append(rendered)
+
+    if not lines:
+        return ""
+
+    return "[현재의 큰 호흡]\n" + "\n\n".join(lines)
+
+
+def _render_arc_foreground(arc: dict) -> str:
+    """전경 arc — declared_goal/current_phase는 typological, next_waypoint는 라벨+instruction,
+    sensory_foreshadowing은 직접 노출 (summary, display cap 5)."""
+    import config as _cfg
+    parts = []
+
+    decl = arc.get("declared_goal", "")
+    phases = arc.get("phases", [])
+    current_phase = phases[-1] if phases else ""
+    next_wp = arc.get("next_waypoint", "")
+    pacing = arc.get("pacing", 0.3)
+    mode = "crucial" if pacing >= 0.6 else "mundane"
+
+    # 큰 호흡 톤 (typological, 라벨 직접 노출 X — 사용자가 의도 톤만 가져감)
+    if decl or current_phase:
+        tone_hint = []
+        if decl:
+            tone_hint.append(f"이 흐름의 의도: {decl}")
+        if current_phase:
+            tone_hint.append(f"현재 결: {current_phase}")
+        parts.append(" / ".join(tone_hint))
+
+    # next_waypoint (라벨 + 변환 instruction)
+    if next_wp:
+        parts.append(
+            f"다가오는 그림자: {next_wp}\n"
+            "(직접 명명 금지. 환경/NPC 행동/사건에 결로만 암시.)"
+        )
+
+    # 페이싱 모드 디렉티브
+    if mode == "crucial":
+        parts.append("페이싱: 정교한 빌드업. 빙산 — 작가만 아는 진실이 표면을 누른다.")
+    else:
+        parts.append("페이싱: 평범한 결. 일상의 vivid 디테일 우선. 음모/반전 강요 금지.")
+
+    # sensory_foreshadowing — display cap 5
+    sens = arc.get("sensory_foreshadowing") or []
+    if sens:
+        recent = sens[-_cfg.ARC_FORESHADOWING_DISPLAY_CAP:]
+        summaries = [s.get("summary", "") for s in recent if isinstance(s, dict)]
+        summaries = [s for s in summaries if s]
+        if summaries:
+            parts.append("이번 호흡의 단서:\n  - " + "\n  - ".join(summaries))
+
+    return "\n".join(parts)
+
+
+def _render_arc_background(arc: dict) -> str:
+    """배경 arc — typological 톤만 + offscreen_actions 전언 톤 (display cap 5)."""
+    import config as _cfg
+    parts = []
+
+    decl = arc.get("declared_goal", "")
+    if decl:
+        parts.append(f"먼 곳의 흐름: {decl}")
+
+    # offscreen_actions — display cap 5
+    off = arc.get("offscreen_actions") or []
+    if off:
+        recent = off[-_cfg.ARC_OFFSCREEN_DISPLAY_CAP:]
+        summaries = [s.get("summary", "") for s in recent if isinstance(s, dict)]
+        summaries = [s for s in summaries if s]
+        if summaries:
+            parts.append("저멀리: " + " / ".join(summaries) + "\n(전언/소문 톤. 직접 묘사 금지.)")
+
+    if not parts:
+        return ""
+
+    return "[배경 호흡] " + "\n".join(parts)
+
+
+# =========================================================
 # Factory Function for Easy Integration
 # =========================================================
 
@@ -1264,6 +1401,15 @@ def build_34_step_prompt(ctx) -> str:
     une_directive = getattr(ctx, 'judgment_context', '')
     if une_directive:
         gm_mover = (gm_mover + f"\n\n{une_directive}") if gm_mover else une_directive
+
+    # Arc 디렉티브 (Phase 5, spec v2 §6/§6.1): 전경 1 + 배경 1~2, mundane/crucial 모드
+    if channel_id:
+        try:
+            _arc_dir = _build_arc_directive(channel_id)
+            if _arc_dir:
+                gm_mover = (gm_mover + f"\n\n{_arc_dir}") if gm_mover else _arc_dir
+        except Exception as _e_arc:
+            logger.debug(f"[Arc directive skipped]: {_e_arc}")
 
     # Perception Type: 이상현상 인식 유형 (anomaly가 발생했을 때만 유의미)
     _anomaly_prof = dai.get("anomaly_profile", {})

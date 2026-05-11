@@ -344,10 +344,17 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
     "clock_resolved": ["시계 이름 — 서사적으로 위협이 해소된 경우만"],
     "relief": {"applicable": boolean, "amount": 0-20, "reason": "Korean"}
   }
-- "mental_impact": {"applicable": boolean, "vigor_delta": -35~+20, "composure_delta": -35~+20, "reason": "Korean"}
-  - vigor_delta: physical strain or recovery. Consensual intimacy/comfort = mild drain (-5~-10) or neutral. NOT traumatic unless coerced.
-  - composure_delta: emotional turbulence. Positive intimacy/bonding = slight positive (+5) or neutral. Negative ONLY if unwanted, coerced, humiliating, or boundary-violating.
-  - DIRECTION STABILITY: Within the same continuous scene, delta direction should be CONSISTENT. If composure was dropping, it should not spike positive next turn unless the scene's emotional tone genuinely shifts (new event, resolution, comfort). Same emotion at same intensity = same sign, smaller magnitude. Yoyo between negative and positive within 2 turns = analysis error.
+- "mental_impact": {"applicable": boolean, "vigor_severity": "none/mild/heavy/extreme", "composure_severity": "none/mild/heavy/extreme", "reason": "Korean"}
+  - vigor_severity: 신체 부하 정도. consensual intimacy/comfort = mild. NOT heavy unless coerced.
+  - composure_severity: 감정 부하 정도. positive intimacy/bonding = none or mild. heavy ONLY if unwanted/coerced/humiliating/boundary-violating.
+  - Enum 가이드:
+    - none: 부하 없음. 평범 행동 / 가벼운 회복 / 의미 없는 변화.
+    - mild: 일상적 부하. 가벼운 활동, 평범한 대화, 작은 긴장.
+    - heavy: 집중적 부하. 강한 행동, 격렬 감정, 의미 있는 대결.
+    - extreme: 클라이맥스 모먼트. 한계 도달, 사력을 다하는 행동, 트라우마 직면.
+  - CONSERVATIVE: 0(none) 자제. 부하 있으면 mild 이상. heavy/extreme은 클라이맥스 모먼트에만.
+  - DIRECTION STABILITY: 같은 씬 안에서 severity 방향 일관. composure가 heavy로 떨어지던 중 갑자기 none → mild 회복은 부자연 (씬 톤 진짜 전환 시에만).
+  - 레거시 호환: vigor_delta / composure_delta (수치) 형식도 시스템이 인식하지만 신 형식(severity enum) 권장.
 - "anomaly_profile": {"trigger": str, "category": "supernatural/psychological/social/environmental/temporal", "intensity": "Low/Mid/High/Extreme", "polarity": "positive/negative/mixed", "perception_type": "veridical/illusory/hallucinatory/delusional/null (Anomalous Experience Framework. In supernatural settings, 'hallucinatory' may be CORRECT. null = no anomaly)", "line": "Korean - 이변의 서사적 묘사 1문장", "reason": "Korean", "location": "이벤트 발생 장소 (CurrentLocation과 다를 때만. 빈 문자열이면 현재 위치)"} | null (null when world event is not appropriate this turn)
 - "condition_resolved": ["조건 태그 — 서사적으로 해당 조건이 더 이상 세계에 유효하지 않을 때. Active Conditions 참고"]
 - "condition_updates": [{"tag": "조건 태그", "intensity": "새 강도 (Low/Mid/High/Extreme)", "description": "갱신된 상황 묘사 (Korean)"}]
@@ -828,6 +835,57 @@ Evaluate this in flashback_eval field. Check plausibility, passive match, assign
                 lines.append(f"    - {tag} ({intensity}/{polarity}): {desc}")
         return "\n".join(lines)
 
+    @staticmethod
+    def _build_arc_context(channel_id: str) -> str:
+        """
+        Active arcs 현황을 Flash 프롬프트용 텍스트로 변환. spec v2 §5.
+
+        Active arc별: declared_goal / current_phase / next_waypoint / pacing 모드 / proximity / 최근 단서.
+        Flash가 다음 anomaly_seed 생성 시 정합 활용 — 같은 카테고리 시드는 흡수 가능, 새 카테고리는 신규.
+        """
+        try:
+            import narrative_tracker as _nt
+            import domain_manager
+            nt_state = domain_manager.get_narrative_tracker_state(channel_id)
+            active_arcs = _nt.get_active_arcs(nt_state)
+        except Exception:
+            return "- Active Arcs: None"
+
+        if not active_arcs:
+            return "- Active Arcs: None"
+
+        lines = ["- Active Arcs:"]
+        for arc in active_arcs:
+            arc_id = arc.get("id", "?")
+            decl = arc.get("declared_goal", "")
+            phases = arc.get("phases", [])
+            current_phase = phases[-1] if phases else "(initial)"
+            next_wp = arc.get("next_waypoint", "")
+            origin_cat = arc.get("origin_category", "")
+            prox = arc.get("proximity", 0.0)
+            pacing = arc.get("pacing", 0.3)
+            mode = "crucial" if pacing >= 0.6 else "mundane"
+            armed = " [ARMED]" if arc.get("armed") else ""
+            lines.append(
+                f"  [Arc #{arc_id}] cat={origin_cat} prox={prox:.2f} mode={mode}{armed}"
+            )
+            if decl:
+                lines.append(f"    declared_goal: {decl}")
+            lines.append(f"    current_phase: {current_phase}")
+            if next_wp:
+                lines.append(f"    next_waypoint: {next_wp}")
+
+            # 최근 단서 (sensory_foreshadowing 5개)
+            sens = arc.get("sensory_foreshadowing") or []
+            if sens:
+                recent_sens = sens[-3:]  # 최근 3개만 (토큰 budget)
+                summaries = [s.get("summary", "") for s in recent_sens if isinstance(s, dict)]
+                summaries = [s for s in summaries if s]
+                if summaries:
+                    lines.append(f"    recent_seeds: {' / '.join(summaries)}")
+
+        return "\n".join(lines)
+
     def _build_prompt(self, context: GameContext) -> str:
         """분석 프롬프트 생성"""
         req = context.request
@@ -856,6 +914,7 @@ Evaluate this in flashback_eval field. Check plausibility, passive match, assign
 - Doom (World Tension): {bus.doom.get('value', 0)}
 {self._build_clock_context(bus.doom.get('clocks', []))}
 {self._build_condition_context(channel_id)}
+{self._build_arc_context(channel_id)}
 {mental_line}
 
 {pc_section}

@@ -360,7 +360,7 @@ class JudgmentEngine:
         modifications = bus.judgment.get("modifications", [])
         # Append System Mods for visibility
         if mental_mod != 0:
-            modifications.append({"label": f"기력({mental_label})", "value": mental_mod})
+            modifications.append({"label": f"활력({mental_label})", "value": mental_mod})
         if memo_mod > 0:
             modifications.append({"label": f"메모({memo_label})", "value": memo_mod})
         if theory_mod != 0:

@@ -644,8 +644,8 @@ async def cmd_info(ctx: CommandContext) -> None:
     c_val = composure_data.get("value", 100)
     v_info = game_character.get_mental_info(v_val)
     c_info = game_character.get_composure_info(c_val)
-    msg.append(f"\n**💪 기력:** {v_info['emoji']} **{v_info['name']}** ({v_val}/100)")
-    msg.append(f"**😌 평정:** {c_info['emoji']} **{c_info['name']}** ({c_val}/100)")
+    msg.append(f"\n**💪 활력:** {v_info['emoji']} **{v_info['name']}** ({v_val}/100)")
+    msg.append(f"**😌 평형:** {c_info['emoji']} **{c_info['name']}** ({c_val}/100)")
 
     # 5. Adaptation (Hidden Bar)
     exposure = p_data.get("abnormal_exposure", {})
@@ -1173,19 +1173,19 @@ async def cmd_modules(ctx: CommandContext) -> None:
     """!모듈 - 모듈 상태 확인. 핵심 4모듈은 항상 활성."""
     arg = ctx.raw_args.strip().lower()
     active = domain_manager.get_active_modules(ctx.channel_id)
-    core_mods = [("judgment", "판정"), ("doom", "둠"), ("anomaly", "이변"), ("mental", "기력")]
+    core_mods = [("judgment", "판정"), ("doom", "둠"), ("anomaly", "이변"), ("mental", "활력")]
     extra_mods = [("board", "게시판")]
 
     # board만 일괄 토글 가능
     if arg in ['on', '켜기', 'true', 'all']:
         for code, _ in extra_mods:
             domain_manager.toggle_module(ctx.channel_id, code, True)
-        await ctx.send("✅ **부가 모듈이 활성화되었습니다.**\n• 게시판 ✅\n\n(판정/둠/이변/기력은 항상 활성)")
+        await ctx.send("✅ **부가 모듈이 활성화되었습니다.**\n• 게시판 ✅\n\n(판정/둠/이변/활력은 항상 활성)")
         return
     if arg in ['off', '끄기', 'false', 'none']:
         for code, _ in extra_mods:
             domain_manager.toggle_module(ctx.channel_id, code, False)
-        await ctx.send("❌ **부가 모듈이 비활성화되었습니다.**\n• 게시판 ❌\n\n(판정/둠/이변/기력은 항상 활성)")
+        await ctx.send("❌ **부가 모듈이 비활성화되었습니다.**\n• 게시판 ❌\n\n(판정/둠/이변/활력은 항상 활성)")
         return
 
     # 상태 확인
@@ -1223,13 +1223,177 @@ async def cmd_toggle_anomaly(ctx: CommandContext) -> None:
     await ctx.send(msg)
 
 @registry.register(
-    "기력모듈",
+    "활력모듈",
     category="System",
-    aliases=["멘탈모듈", "mentalmod", "mental_mod", "vigor_mod", "기력mod"],
-    description="기력 모듈 정보"
+    aliases=["기력모듈", "멘탈모듈", "mentalmod", "mental_mod", "vigor_mod", "활력mod", "기력mod", "평형모듈"],
+    description="활력/평형 모듈 정보"
 )
 async def cmd_toggle_mental(ctx: CommandContext) -> None:
-    await ctx.send("💪 **기력 모듈**: ✅ 항상 활성\n기력/평정 2축 시스템이 항상 작동합니다.")
+    await ctx.send("💪 **활력/평형 모듈**: ✅ 항상 활성\n활력/평형 2축 시스템이 항상 작동합니다.")
+
+
+# =========================================================
+# Arc System OOC 명령어 (Phase 6)
+# =========================================================
+# spec v2 §5 운영 자세 — "안 쓰는 게 최고. 안 쓴다는 건 잘 작동한다는 의미."
+# 최소한만: 조회 / 정정 / 강제 dormant·활성 / backstage 조회.
+# 디버깅용 (phases, trajectory)은 보류.
+
+@registry.register(
+    "아크",
+    category="System",
+    aliases=["arc", "큰호흡", "volume"],
+    description="아크 조회/관리 — `!아크` 목록, `!아크 수정 [id] [field]=[value]`, `!아크 dormant/활성 [id]`, `!아크 backstage [id]`",
+)
+async def cmd_arc(ctx: CommandContext) -> None:
+    import narrative_tracker as _nt
+
+    args = ctx.args
+    nt_state = domain_manager.get_narrative_tracker_state(ctx.channel_id)
+
+    # 인자 없으면 조회
+    if not args:
+        await _arc_list(ctx, nt_state)
+        return
+
+    sub = args[0].lower()
+
+    if sub in ("dormant", "비활성"):
+        if len(args) < 2:
+            await ctx.send("사용법: `!아크 dormant [id]`")
+            return
+        await _arc_set_status(ctx, nt_state, args[1], "dormant")
+        return
+
+    if sub in ("활성", "active", "부활"):
+        if len(args) < 2:
+            await ctx.send("사용법: `!아크 활성 [id]`")
+            return
+        await _arc_set_status(ctx, nt_state, args[1], "active")
+        return
+
+    if sub == "backstage":
+        if len(args) < 2:
+            await ctx.send("사용법: `!아크 backstage [id]`")
+            return
+        await _arc_backstage(ctx, nt_state, args[1])
+        return
+
+    if sub == "수정":
+        if len(args) < 3:
+            await ctx.send("사용법: `!아크 수정 [id] [field]=[value]`\n필드: declared_goal / next_waypoint")
+            return
+        await _arc_modify(ctx, nt_state, args[1], " ".join(args[2:]))
+        return
+
+    await ctx.send(f"알 수 없는 서브명령: `{sub}`\n사용법: `!아크` / `!아크 수정` / `!아크 dormant/활성` / `!아크 backstage`")
+
+
+async def _arc_list(ctx, nt_state):
+    """active + dormant arc 목록 조회."""
+    storylines = nt_state.get("storylines", [])
+    active_arcs = [s for s in storylines if s.get("is_arc") and s.get("status") == "active"]
+    dormant_arcs = [s for s in storylines if s.get("is_arc") and s.get("status") == "dormant"]
+
+    if not active_arcs and not dormant_arcs:
+        await ctx.send("📚 **현재 아크 없음** — 시드가 누적되어 자연 격상되면 표시됩니다.")
+        return
+
+    lines = ["📚 **현재 아크**"]
+
+    if active_arcs:
+        lines.append("\n**활성**:")
+        for arc in active_arcs:
+            arc_id = arc.get("id")
+            decl = arc.get("declared_goal", "(미정)")
+            cat = arc.get("origin_category", "?")
+            prox = arc.get("proximity", 0.0)
+            weight = arc.get("weight", 0.0)
+            pacing = arc.get("pacing", 0.0)
+            mode = "crucial" if pacing >= 0.6 else "mundane"
+            armed = " ⚡armed" if arc.get("armed") else ""
+            phases = arc.get("phases", [])
+            current = phases[-1] if phases else "(initial)"
+            lines.append(
+                f"• `#{arc_id}` {decl}\n"
+                f"   카테고리: {cat} | prox={prox:.2f} | weight={weight:.2f} | mode={mode}{armed}\n"
+                f"   현재: {current} → {arc.get('next_waypoint', '(?)')}"
+            )
+
+    if dormant_arcs:
+        lines.append("\n**휴면**:")
+        for arc in dormant_arcs:
+            arc_id = arc.get("id")
+            decl = arc.get("declared_goal", "(미정)")
+            lines.append(f"• `#{arc_id}` {decl} (`!아크 활성 {arc_id}` 로 부활)")
+
+    await ctx.send("\n".join(lines))
+
+
+async def _arc_find(nt_state, arc_id_str):
+    """id string으로 arc 찾기. 못 찾으면 None."""
+    try:
+        arc_id = int(arc_id_str)
+    except (ValueError, TypeError):
+        return None
+    for sl in nt_state.get("storylines", []):
+        if sl.get("id") == arc_id and sl.get("is_arc"):
+            return sl
+    return None
+
+
+async def _arc_set_status(ctx, nt_state, arc_id_str, new_status):
+    arc = await _arc_find(nt_state, arc_id_str)
+    if not arc:
+        await ctx.send(f"아크 `#{arc_id_str}` 없음.")
+        return
+    old_status = arc.get("status")
+    arc["status"] = new_status
+    domain_manager.update_narrative_tracker_state(ctx.channel_id, nt_state)
+    await ctx.send(f"✅ 아크 `#{arc_id_str}` {old_status} → **{new_status}**")
+
+
+async def _arc_backstage(ctx, nt_state, arc_id_str):
+    arc = await _arc_find(nt_state, arc_id_str)
+    if not arc:
+        await ctx.send(f"아크 `#{arc_id_str}` 없음.")
+        return
+    backstage = arc.get("backstage_reality", "")
+    decl = arc.get("declared_goal", "(미정)")
+    if backstage:
+        await ctx.send(
+            f"🎭 **아크 #{arc_id_str} 배경 진실** (작가만 아는 정보)\n"
+            f"선언된 목표: {decl}\n"
+            f"\n**객관적 진실**:\n{backstage}"
+        )
+    else:
+        await ctx.send(f"아크 `#{arc_id_str}` 배경 진실 미설정.")
+
+
+async def _arc_modify(ctx, nt_state, arc_id_str, rest):
+    arc = await _arc_find(nt_state, arc_id_str)
+    if not arc:
+        await ctx.send(f"아크 `#{arc_id_str}` 없음.")
+        return
+
+    # "field=value" 파싱
+    if "=" not in rest:
+        await ctx.send("형식: `!아크 수정 [id] field=value`\n필드: declared_goal / next_waypoint / backstage_reality")
+        return
+
+    field, value = rest.split("=", 1)
+    field = field.strip()
+    value = value.strip()
+
+    allowed = ("declared_goal", "next_waypoint", "backstage_reality")
+    if field not in allowed:
+        await ctx.send(f"수정 가능 필드: {', '.join(allowed)}")
+        return
+
+    old = arc.get(field, "")
+    arc[field] = value
+    domain_manager.update_narrative_tracker_state(ctx.channel_id, nt_state)
+    await ctx.send(f"✅ 아크 `#{arc_id_str}` {field}:\n  이전: {old or '(빈)'}\n  현재: {value}")
 
 @registry.register("board", category="System", aliases=["게시판", "boardmod"], description="세계 게시판 모듈 관리")
 async def cmd_toggle_board(ctx: CommandContext) -> None:
@@ -1616,13 +1780,13 @@ async def cmd_ooc(ctx: CommandContext) -> None:
         await ctx.send("🎭 **루카 모드 OFF** — 서사 모드로 복귀합니다.")
 
 @registry.register(
-    "기력",
+    "활력",
     category="Player",
-    aliases=["멘탈", "mental", "vigor"],
-    description="기력/평정 조회 및 설정"
+    aliases=["기력", "평형", "평정", "멘탈", "mental", "vigor"],
+    description="활력/평형 조회 및 설정"
 )
 async def cmd_mental(ctx: CommandContext) -> None:
-    """!기력 [기력값] [평정값] - 기력/평정 수치 설정 (0-100)"""
+    """!활력 [활력값] [평형값] - 활력/평형 수치 설정 (0-100)"""
     uid = ctx.user_id
     p_data = domain_manager.get_participant_data(ctx.channel_id, uid)
 
@@ -1648,14 +1812,14 @@ async def cmd_mental(ctx: CommandContext) -> None:
         v_info = game_character.get_mental_info(v_val)
         c_info = game_character.get_composure_info(c_val)
         await ctx.send(
-            f"💪 **기력:** {v_info['emoji']} **{v_info['name']}** ({v_val}/100)\n"
+            f"💪 **활력:** {v_info['emoji']} **{v_info['name']}** ({v_val}/100)\n"
             f"> {v_info.get('desc', '')}\n"
-            f"😌 **평정:** {c_info['emoji']} **{c_info['name']}** ({c_val}/100)\n"
+            f"😌 **평형:** {c_info['emoji']} **{c_info['name']}** ({c_val}/100)\n"
             f"> {c_info.get('desc', '')}"
         )
         return
 
-    # [Set Mode] — !기력 80 or !기력 80 70
+    # [Set Mode] — !활력 80 or !활력 80 70
     try:
         v_target = max(0, min(100, int(ctx.args[0])))
         c_target = max(0, min(100, int(ctx.args[1]))) if len(ctx.args) > 1 else composure.get("value", 100)
@@ -1671,15 +1835,17 @@ async def cmd_mental(ctx: CommandContext) -> None:
         v_info = game_character.get_mental_info(v_target)
         c_info = game_character.get_composure_info(c_target)
         await ctx.send(
-            f"💪 **기력 설정:** {v_target}/100 ({v_info['emoji']} {v_info['name']})\n"
-            f"😌 **평정 설정:** {c_target}/100 ({c_info['emoji']} {c_info['name']})"
+            f"💪 **활력 설정:** {v_target}/100 ({v_info['emoji']} {v_info['name']})\n"
+            f"😌 **평형 설정:** {c_target}/100 ({c_info['emoji']} {c_info['name']})"
         )
 
     except ValueError:
-        await ctx.send("⚠️ 올바른 숫자를 입력하세요. (예: `!기력 80` 또는 `!기력 80 70`)")
+        await ctx.send("⚠️ 올바른 숫자를 입력하세요. (예: `!활력 80` 또는 `!활력 80 70`)")
 
 
-@registry.register("flashback", category="Player", aliases=["회상", "로드아웃", "장비설정"], description="회상 선언 (장비 소환 포함)")
+# [Phase 3 DEPRECATED] !회상/!로드아웃 명령 비활성화. Theoria.flashback_eval 자동 감지는 유지.
+# 사용자 자연 입력 ("사실 미리 ~해뒀다") → Flash detect → 산문 반영 (vigor 차감 X).
+# @registry.register("flashback", category="Player", aliases=["회상", "로드아웃", "장비설정"], description="회상 선언 (장비 소환 포함)")
 async def cmd_flashback(ctx: CommandContext) -> None:
     """!회상 [상태/선언내용] — 과거 준비를 소급 선언. 로드아웃 4칸 자동."""
     import config as _cfg

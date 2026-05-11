@@ -463,6 +463,27 @@ class DoomModule:
                     f"OSCILLATE: {clock.get('name', '?')} (dir-changes {dir_changes}, net {net_change})"
                 )
 
+        # ── 3.8. Discharge Fade ─────────────────────────────
+        # 시계 filled가 양수에서 0으로 떨어지면 silent fade.
+        # completion(filled≥segments)의 대칭 — 채워서 터지든 빠져서 사라지든 둘 중 하나만 의미.
+        # 신생/잠복 시계(filled_history에 양수 한 번도 없음)는 면제 — staleness 경로로 처리.
+        # pending_completion / do_not_resolve_yet 면제.
+        for clock in clocks:
+            if clock.get("resolved") or clock.get("pending_completion") or clock.get("do_not_resolve_yet"):
+                continue
+            current_filled = int(clock.get("filled", clock.get("progress", 0)) or 0)
+            if current_filled != 0:
+                continue
+            hist = clock.get("filled_history", [])
+            if not hist or max(hist) <= 0:
+                continue
+            peak = max(hist)
+            clock["resolved"] = True
+            clock["fade_reason"] = f"discharge_peak{peak}"
+            clock_events.append(
+                f"DISCHARGE: {clock.get('name', '?')} (peak {peak} → 0)"
+            )
+
         # ── 4. 완성 체크 → 극성별 분기 ──────────────────────
         completed_this_turn = []
         current_turn = bus.dai.get("turn_index", 0)
