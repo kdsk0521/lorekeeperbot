@@ -34,3 +34,7 @@ proma/
 *.log
 *.sqlite3
 nul
+
+# --- 8. 로컬 임시 검증 테스트 ---
+tests/verify_emotion_bugs.py
+

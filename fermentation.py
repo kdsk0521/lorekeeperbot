@@ -596,6 +596,7 @@ async def compress_fresh_to_fermented(
     chunk_size: int = FERMENT_CHUNK_SIZE,
     use_v3: bool = True,
     nt_state: Optional[Dict[str, Any]] = None,
+    channel_id: str = "",  # Bug 2a (2026-05-20): emotion_at_save 캡처용
 ) -> Optional[Dict[str, Any]]:
     """
     오래된 히스토리를 요약하여 FERMENTED 메모리로 변환합니다.
@@ -682,7 +683,7 @@ Output VALID JSON following the schema exactly.
                 data = json.loads(clean_json)
 
                 # V3 포맷 검증 및 정규화
-                normalized = _normalize_ferment_result(data, use_v3)
+                normalized = _normalize_ferment_result(data, use_v3, channel_id=channel_id)
                 return normalized
 
             except json.JSONDecodeError as je:
@@ -690,14 +691,22 @@ Output VALID JSON following the schema exactly.
                 repaired = _repair_truncated_json(clean_json)
                 if repaired:
                     logger.info("[Fermentation V4] JSON repair succeeded")
-                    return _normalize_ferment_result(repaired, use_v3)
+                    return _normalize_ferment_result(repaired, use_v3, channel_id=channel_id)
                 logger.error("[Fermentation V4] JSON repair failed, using fallback")
+                # Bug 2a fallback patch (2026-05-20): fallback dict도 emotion_at_save 필드 포함.
+                # _normalize_ferment_result를 우회하지만 schema 일관성 유지 (빈 값 = backward compat).
                 return {
                     "summary": text_result[:500],
                     "compressed_blocks": [],
                     "arc_observations": {},
                     "helena_delta": {},
-                    "memory_triggers": []
+                    "memory_triggers": [],
+                    "emotion_at_save": {
+                        "scene_base": "",
+                        "scene_mod": "",
+                        "max_intensity_at_save": 0.0,
+                        "captured_turn": 0,
+                    },
                 }
             
     except Exception as e:
@@ -706,8 +715,21 @@ Output VALID JSON following the schema exactly.
     return None
 
 
-def _normalize_ferment_result(data: Dict[str, Any], is_v3: bool = True) -> Dict[str, Any]:
-    """발효 결과를 정규화합니다."""
+def _normalize_ferment_result(
+    data: Dict[str, Any],
+    is_v3: bool = True,
+    channel_id: str = "",
+) -> Dict[str, Any]:
+    """발효 결과를 정규화합니다.
+
+    Bug 2a proper fix (2026-05-20): channel_id 인자 추가.
+    저장 시점의 scene-level emotion snapshot을 캡처해 `emotion_at_save` 필드로 부착.
+    회상 시점(score_fermented_entries)에서 mood-congruent recall 매칭 기준으로 사용.
+
+    waterfall_pipeline 실행 순서상, 발효 시점에는 EmotionEngine이 이미 최신 턴
+    데이터로 npc_emotion_states를 업데이트한 상태가 보장됨 (Stage 1 → Stage 2 →
+    ... → Fermentation 순서).
+    """
     result = {
         "summary": "",
         "compressed_blocks": [],
@@ -718,7 +740,15 @@ def _normalize_ferment_result(data: Dict[str, Any], is_v3: bool = True) -> Dict[
             "stagnation_flag": False
         },
         "helena_delta": {},
-        "memory_triggers": []
+        "memory_triggers": [],
+        # Bug 2a (2026-05-20): mood-congruent recall 매칭용 스냅샷.
+        # 기본값은 빈 상태 — channel_id가 비어 있거나 emo_states가 없으면 그대로 유지.
+        "emotion_at_save": {
+            "scene_base": "",
+            "scene_mod": "",
+            "max_intensity_at_save": 0.0,
+            "captured_turn": 0,
+        },
     }
 
     # Summary
@@ -748,6 +778,27 @@ def _normalize_ferment_result(data: Dict[str, Any], is_v3: bool = True) -> Dict[
     # Memory Triggers
     if "memory_triggers" in data:
         result["memory_triggers"] = data["memory_triggers"]
+
+    # Bug 2a proper fix (2026-05-20): 발효 시점의 지배적인 감정 스냅샷 캡처.
+    # intensity 최대 NPC의 scene_pair를 "이 장면의 지배 정서"로 채택.
+    if channel_id:
+        try:
+            import domain_manager as _dm
+            world = _dm.get_world_state(channel_id)
+            emo_states = world.get("npc_emotion_states", {})
+            if emo_states:
+                max_npc = max(
+                    (s for s in emo_states.values() if isinstance(s, dict)),
+                    key=lambda s: float(s.get("intensity", 0.0)),
+                    default=None,
+                )
+                if max_npc:
+                    result["emotion_at_save"]["scene_base"] = max_npc.get("scene_base", "") or ""
+                    result["emotion_at_save"]["scene_mod"] = max_npc.get("scene_mod", "") or ""
+                    result["emotion_at_save"]["max_intensity_at_save"] = float(max_npc.get("intensity", 0.0))
+                result["emotion_at_save"]["captured_turn"] = int(world.get("turn_index", 0))
+        except Exception:
+            pass  # 캡처 실패는 graceful — 옛 entry처럼 빈 값 유지
 
     return result
 
@@ -1024,6 +1075,7 @@ async def auto_ferment(
             history[:FERMENT_CHUNK_SIZE],
             use_v3=True,
             nt_state=_nt_state_for_ferment,
+            channel_id=ch_id,  # Bug 2a (2026-05-20): emotion_at_save 캡처용
         )
         
         if result_data:
@@ -1401,6 +1453,34 @@ def score_fermented_entries(entries: list, query: str = "", channel_id: str = ""
     # Sprint 4: 벡터 캐시 조회
     vec_cache = _vector_similarity_cache.get(channel_id, {})
 
+    # Bug 2a proper fix (2026-05-20): RAG 정서 일치 회상 (Mood-Congruent Recall).
+    # 이전 코드 (Bug 2b fix 결과의 _global_emotion_boost 블록)는 현재 NPC 살아있는
+    # intensity로 모든 과거 엔트리에 일괄 부스트 → valence 선별성 0 (둔화된 arousal
+    # 근사). 본 버전은 (1) 인코딩 시점 scene_pair vs 현재 scene_pair 매칭 기준 부스트,
+    # (2) 인코딩 시점 max_intensity 기반 saliency 부스트, 둘 중 max 적용으로 교체.
+    #
+    # waterfall_pipeline 순서상 score_fermented_entries가 호출되는 시점에는
+    # npc_emotion_states가 이번 턴 EmotionEngine 결과로 업데이트된 상태가 보장됨.
+    #
+    # get_world_state 호출은 단 1회 — 이전 블록 완전 제거. 중복 곱 방지.
+    current_scene_base = ""
+    current_scene_mod = ""
+    if channel_id:
+        try:
+            import domain_manager as _dm
+            _emo_states = _dm.get_world_state(channel_id).get("npc_emotion_states", {})
+            if _emo_states:
+                max_npc = max(
+                    (s for s in _emo_states.values() if isinstance(s, dict)),
+                    key=lambda s: float(s.get("intensity", 0.0)),
+                    default=None,
+                )
+                if max_npc:
+                    current_scene_base = max_npc.get("scene_base", "") or ""
+                    current_scene_mod = max_npc.get("scene_mod", "") or ""
+        except Exception:
+            pass  # 현재 scene 추출 실패 → mood_boost 모두 1.0 (saliency만 작동)
+
     for idx, entry in enumerate(entries):
         if not isinstance(entry, dict):
             continue
@@ -1433,23 +1513,36 @@ def score_fermented_entries(entries: list, query: str = "", channel_id: str = ""
 
         score = (similarity * w_sim + recency * w_rec + importance * w_imp) * layer_weight
 
-        # EmotionEngine boost: 높은 감정 강도의 턴 기억을 증폭
-        # v2 (2026-05-20): get_importance_boost(float) 시그니처. EmotionState
-        # 인스턴스화 제거 — to_dict 형태에서 intensity 필드만 직접 추출.
-        if channel_id:
+        # ----- Bug 2a: Mood-Congruent + Saliency Max 결합 -----
+        emo_save = entry.get("emotion_at_save", {})
+        if isinstance(emo_save, dict) and emo_save:
+            save_base = emo_save.get("scene_base", "")
+            save_mod = emo_save.get("scene_mod", "")
+            try:
+                save_intensity = float(emo_save.get("max_intensity_at_save", 0.0))
+            except (TypeError, ValueError):
+                save_intensity = 0.0
+
+            # (1) Mood-congruent boost (Hybrid 2단)
+            mood_boost = 1.0
+            if save_base and current_scene_base:
+                if save_base == current_scene_base and save_mod == current_scene_mod:
+                    mood_boost = 1.5  # 완전 일치
+                elif save_base == current_scene_base:
+                    mood_boost = 1.2  # base만 일치
+
+            # (2) Saliency boost (entry 자체 강도)
             try:
                 from emotion_engine import EmotionEngine
-                import domain_manager as _dm
-                _emo_states = _dm.get_world_state(channel_id).get("npc_emotion_states", {})
-                if _emo_states:
-                    _max_intensity = max(
-                        (float(s.get("intensity", 0.0)) for s in _emo_states.values() if isinstance(s, dict)),
-                        default=0.0
-                    )
-                    if _max_intensity > 0.3:
-                        score *= EmotionEngine.get_importance_boost(_max_intensity)
+                saliency_boost = EmotionEngine.get_importance_boost(save_intensity)
             except Exception:
-                pass  # EmotionEngine 미사용 시 graceful fallback
+                saliency_boost = 1.0
+
+            # (3) Max 결합 — 곱이 아니라 max로 합쳐서 부풀림 방지
+            final_boost = max(mood_boost, saliency_boost)
+            if final_boost > 1.0:
+                score *= final_boost
+        # 옛 엔트리 (emotion_at_save 없음 또는 빈/비정상) → boost 1.0 (no-op)
 
         scored.append((entry, score))
 
@@ -1837,6 +1930,7 @@ async def force_ferment(
         history[:ferment_count],
         use_v3=True,
         nt_state=_nt_state,
+        channel_id=channel_id,  # Bug 2a (2026-05-20): emotion_at_save 캡처용
     )
 
     if not result_data:

@@ -196,14 +196,23 @@ class EmotionState:
         obj.pair_confidence = data.get("pair_confidence", 0.0)
         obj.scene_base = data.get("scene_base", "")
         obj.scene_mod = data.get("scene_mod", "")
-        # L2 히스토리 복원. list of list/tuple 모두 수용, 비정상 엔트리는 스킵
+        # L2 히스토리 복원. list of list/tuple 모두 수용, 비정상 엔트리는 스킵.
+        # Bug 4 fix (2026-05-20): 이전 코드 `str(e[0])`은 None을 "None" (truthy 4글자)
+        # 문자열로 둔갑시켜 _append_history 가드와 _derive_scene_pair Counter를 오염시킴.
+        # 추가로 비문자열 타입(int 등)은 str() 코어스되어 가짜 라벨로 통과하던 문제도 차단.
+        # 두 층 방어: (1) isinstance(str) 가드 → 빈 문자열 강등, (2) 빈 페어 엔트리 명시 스킵.
         raw_hist = data.get("history") or []
         if isinstance(raw_hist, list):
             clean = []
             for e in raw_hist:
                 if isinstance(e, (list, tuple)) and len(e) >= 4:
+                    # base/mod: 문자열일 때만 인정, 아니면 "" → 다음 단계에서 스킵 대상
+                    base = e[0] if isinstance(e[0], str) else ""
+                    mod = e[1] if isinstance(e[1], str) else ""
+                    if not base or not mod:
+                        continue  # 비정상 또는 빈 페어 — _append_history 자체 가드와 일치
                     try:
-                        clean.append([str(e[0]), str(e[1]), float(e[2]), int(e[3])])
+                        clean.append([base, mod, float(e[2]), int(e[3])])
                     except (TypeError, ValueError):
                         continue
             obj.history = clean[-HISTORY_MAX_LEN:]
@@ -363,10 +372,19 @@ class EmotionEngine:
             scene_base, scene_mod = EmotionEngine._derive_scene_pair(
                 new_history, current_turn, window=SCENE_WINDOW,
             )
-            # 파생 실패 시 직전 씬 페어 유지 (점진 감쇠 방지)
+            # Bug 1 fix (2026-05-20): 파생 실패 시 자연 소멸.
+            # 이전 코드는 무조건 prev_state.scene_base를 폴백으로 복사했는데,
+            # _append_history가 solo plutchik / 저강도 턴을 스킵하기 때문에 history.latest가
+            # SCENE_WINDOW 밖으로 밀려나는 케이스가 발생. 이때 폴백을 적용하면 과거 강했던
+            # 페어가 영구 박제되어:
+            #   - [Scene Drift] 슬롯 영구 출력
+            #   - story_director drift bonus (+0.3) 영구 점화
+            #   - npc_emotion_states 영속 데이터에도 stale scene_pair 박힘
+            # _derive_scene_pair는 SCENE_WINDOW 안 엔트리가 있으면 정상 도출하므로,
+            # 여기 도달했다는 건 "history가 비었거나 stale" 케이스 = 자연 소멸이 정답.
             if not scene_base:
-                scene_base = prev_state.scene_base
-                scene_mod = prev_state.scene_mod
+                scene_base = ""
+                scene_mod = ""
 
             state = EmotionState(
                 emotions=blended,
@@ -903,6 +921,11 @@ class EmotionEngine:
           - 'dominant' 제거 → 'base' (pair의 base 측)
           - 'modifier' 추가 (pair의 modifier 측, P2 이후 채워짐)
           - 외부 소비자는 P1b에서 함께 rename됨 (story_director, world_board)
+
+        summary 스키마 v3 (2026-05-20):
+          - scene_base / scene_mod 노출 — turn vs scene drift 감지 가능 (6.1)
+          - pair_confidence 노출 — Tier 매치 강도. story_director focus 가중치 (6.4)
+          summary는 외부 소비자가 가벼운 의사결정에 쓰는 채널이라 가능한 평면 dict 유지.
         """
         return {
             "active": bool(emotion_states),
@@ -916,6 +939,11 @@ class EmotionEngine:
                     "modifier": state.modifier_label,
                     "intensity": state.intensity,
                     "spike": state.spike_detected,
+                    # v3 (2026-05-20): scene drift 감지용
+                    "scene_base": state.scene_base,
+                    "scene_mod": state.scene_mod,
+                    # v3 (2026-05-20): 관계 라벨 매치 강도 (Tier 1=1.0 … Tier 9=0.0)
+                    "pair_confidence": state.pair_confidence,
                 }
                 for name, state in emotion_states.items()
             },

@@ -54,6 +54,47 @@ TRANSITION_MOOD: Dict[str, Dict[str, str]] = {
 }
 
 
+# =========================================================
+# Emotion → Spotlight Composite Score
+# =========================================================
+# 6.1 + 6.4 (2026-05-20): _determine_focus와 NPC initiative direction 두 사이트가
+# 같은 공식을 쓰도록 helper로 통합. 이전엔 intensity + spike만 봤음.
+#
+# 공식:
+#   composite = intensity
+#             + (0.5 if spike else 0)         # 감정 급변
+#             + (0.3 if drift else 0)          # turn_pair ≠ scene_pair (감정 전환 중)
+#             + 0.15 * pair_confidence         # 관계 라벨 매치 강도 (Tier 1=1.0 → +0.15, Tier 9=0.0 → +0)
+#
+# 설계 근거:
+# - spike(0.5): raw 도메인 |Δ| ≥ 0.25 = 명백한 dramatic jolt. 최우선 신호.
+# - drift(0.3): scene_pair가 누적 평균이라 turn과 어긋나면 NPC가 감정적 전환 중. 강한 narrative pull.
+# - confidence(0.15): 가산만 — Tier 9(solo plutchik) NPC를 spotlight에서 영구 배제하지 않기 위함.
+def _emotion_composite_score(emo: Dict[str, Any]) -> float:
+    """to_bus_dict.summary 한 NPC 엔트리에 대한 composite score 계산."""
+    try:
+        score = float(emo.get("intensity", 0))
+    except (TypeError, ValueError):
+        score = 0.0
+    if emo.get("spike"):
+        score += 0.5
+    # Drift: scene_pair 존재하고 turn_pair와 어긋날 때
+    scene_base = emo.get("scene_base", "") or ""
+    if scene_base:
+        turn_pair = (emo.get("base", "") or "", emo.get("modifier", "") or "")
+        scene_pair = (scene_base, emo.get("scene_mod", "") or "")
+        if turn_pair != scene_pair:
+            score += 0.3
+    # Confidence weight
+    try:
+        conf = float(emo.get("pair_confidence", 0.0))
+    except (TypeError, ValueError):
+        conf = 0.0
+    conf = max(0.0, min(1.0, conf))
+    score += 0.15 * conf
+    return score
+
+
 class StoryDirector:
     """Stateless narrative direction engine. All state comes from SharedBus."""
 
@@ -304,6 +345,9 @@ class StoryDirector:
         #   달라졌다 (T1/T2/T3 smoke 비결정성 확인). spotlight 선정과 동일 공식
         #   (intensity + 0.5_if_spike) 기반 composite score primary + npc_name
         #   alphabetical secondary로 결정적 선정. smoke_direction_tiebreak.py 5/5 pass.
+        # 6.1/6.4 (2026-05-20): composite score 공식을 _emotion_composite_score helper로 통합.
+        # 게이트(spike OR intensity > 0.6)는 그대로 유지 — 낮은 강도 NPC가 drift/confidence
+        # bonus만으로 npc_initiative 트리거하는 걸 막기 위함.
         candidates = []
         for npc_name, emo in emotion_summary.items():
             if not isinstance(emo, dict):
@@ -314,7 +358,7 @@ class StoryDirector:
                 _emo_intensity = 0.0
             _emo_spike = bool(emo.get("spike"))
             if _emo_spike or _emo_intensity > 0.6:
-                _composite = _emo_intensity + (0.5 if _emo_spike else 0.0)
+                _composite = _emotion_composite_score(emo)
                 candidates.append((_composite, npc_name, emo))
 
         if candidates:
@@ -469,30 +513,28 @@ class StoryDirector:
         focus: Dict[str, Any] = {"spotlight": "none", "elements": []}
 
         # 1. Emotional NPC spotlight
-        best_npc = None
-        best_intensity = 0.0
+        # 6.1/6.4 (2026-05-20): _emotion_composite_score helper로 통합 (intensity + spike
+        # + drift + pair_confidence). 결정적 tiebreak를 위해 candidates 리스트 + sort 패턴
+        # 채용 — 이전엔 first-match 루프라 dict insertion order 의존 비결정성이 있었음.
+        candidates = []
         for npc_name, emo in emotion_summary.items():
             if not isinstance(emo, dict):
                 continue
-            try:
-                intensity = float(emo.get("intensity", 0))
-            except (TypeError, ValueError):
-                intensity = 0.0
-            # Spike NPCs get priority
-            if emo.get("spike"):
-                intensity += 0.5
-            if intensity > best_intensity:
-                best_intensity = intensity
-                best_npc = npc_name
+            score = _emotion_composite_score(emo)
+            if score > 0.3:
+                candidates.append((score, npc_name, emo))
 
-        if best_npc and best_intensity > 0.3:
+        if candidates:
+            # 내림차순 composite, 오름차순 name (결정적 tiebreak)
+            candidates.sort(key=lambda x: (-x[0], x[1]))
+            best_score, best_npc, best_emo = candidates[0]
             focus["spotlight"] = best_npc
             focus["reason"] = "emotional_intensity"
             # pair 스키마 v2: 'dominant' → 'base' (to_bus_dict summary)
             focus["elements"].append({
                 "type": "npc", "name": best_npc,
-                "emotion": emotion_summary[best_npc].get("base", ""),
-                "intensity": best_intensity,
+                "emotion": best_emo.get("base", ""),
+                "intensity": best_score,
             })
 
         # 2. Active condition elements (environmental focus)
