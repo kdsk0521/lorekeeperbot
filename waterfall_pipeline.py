@@ -341,6 +341,12 @@ class WaterfallPipeline:
                     memory_triggers=bus.dai.get("memory_triggers", []),
                 )
                 bus.emotion = EmotionEngine.to_bus_dict(emotion_results)
+                # 6.2 (2026-05-20): slot_manager fast-path 배선. slot_manager가
+                # `dai._emotion_states_for_slot`를 우선 보고 있었으나 어디서도 set
+                # 안 해 항상 world_state round-trip으로 폴백했음. 같은 턴 내에서는
+                # 이 라이브 dict가 가장 신선하므로 직접 주입한다.
+                # 값 타입: Dict[str, EmotionState] — slot_manager가 그대로 소비.
+                bus.dai["_emotion_states_for_slot"] = emotion_results
                 if channel_id and emotion_results:
                     world = domain_manager.get_world_state(channel_id)
                     world["npc_emotion_states"] = {

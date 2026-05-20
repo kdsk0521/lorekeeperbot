@@ -784,10 +784,18 @@ class EmotionEngine:
     # Utility: Memory Importance Boost
     # ---------------------------------------------------------
     @staticmethod
-    def get_importance_boost(emotion_state: EmotionState) -> float:
+    def get_importance_boost(intensity: float) -> float:
         """감정 강도에 따른 메모리 중요도 부스트 계수 반환.
-        fermentation.py에서 메모리 저장 시 호출."""
-        intensity = emotion_state.intensity
+        fermentation.py에서 메모리 저장 시 호출.
+
+        v2 (2026-05-20): intensity (float) 직접 받음. 이전 시그니처는 EmotionState
+        인스턴스를 요구했지만 실제로 .intensity 필드만 봤고, fermentation 호출자가
+        더미 인스턴스를 만들어 넘기는 패턴이 있었음. float로 단순화해 ceremony 제거.
+        """
+        try:
+            intensity = float(intensity)
+        except (TypeError, ValueError):
+            return 1.0
         boost = 1.0
         for threshold, multiplier in sorted(IMPORTANCE_BOOST_CURVE.items()):
             if intensity >= threshold:

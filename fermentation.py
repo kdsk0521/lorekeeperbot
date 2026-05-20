@@ -1434,19 +1434,20 @@ def score_fermented_entries(entries: list, query: str = "", channel_id: str = ""
         score = (similarity * w_sim + recency * w_rec + importance * w_imp) * layer_weight
 
         # EmotionEngine boost: 높은 감정 강도의 턴 기억을 증폭
+        # v2 (2026-05-20): get_importance_boost(float) 시그니처. EmotionState
+        # 인스턴스화 제거 — to_dict 형태에서 intensity 필드만 직접 추출.
         if channel_id:
             try:
-                from emotion_engine import EmotionEngine, EmotionState
+                from emotion_engine import EmotionEngine
                 import domain_manager as _dm
                 _emo_states = _dm.get_world_state(channel_id).get("npc_emotion_states", {})
                 if _emo_states:
                     _max_intensity = max(
-                        (EmotionState.from_dict(s).intensity for s in _emo_states.values() if isinstance(s, dict)),
+                        (float(s.get("intensity", 0.0)) for s in _emo_states.values() if isinstance(s, dict)),
                         default=0.0
                     )
                     if _max_intensity > 0.3:
-                        _dummy = EmotionState(intensity=_max_intensity)
-                        score *= EmotionEngine.get_importance_boost(_dummy)
+                        score *= EmotionEngine.get_importance_boost(_max_intensity)
             except Exception:
                 pass  # EmotionEngine 미사용 시 graceful fallback
 
