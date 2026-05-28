@@ -525,16 +525,12 @@ class DoomModule:
             if doom_impact > 0:
                 delta += doom_impact
 
-        # ── 5. Doom Relief ───────────────────────────────────
-        relief_data = bus.doom.get("relief", {})
-        if relief_data.get("applicable", False):
-            relief_amount = int(relief_data.get("amount", 0) or 0)
-            relief_reason = relief_data.get("reason", "")
-            delta -= relief_amount
-            bus.doom["relief_log"] = f"🌿 긴장 완화: -{relief_amount} ({relief_reason})"
+        # ── 5. Doom Relief 제거됨 (2026-05-23) ───────────────
+        # legacy 위기진폭 doom 잔재. 둠 = 서사 진행도/챕터 볼륨 리브랜드 정규편입 이후
+        # 평화 장면 → 자동 doom 감소는 의미 충돌. 진정/해소는 間 페이즈로만 흐름.
 
         # ── 5.5. Phase × Lens × Scene multiplier 적용 ───────
-        # 누적된 raw delta(시계 완성/해결, status, judgment, relief)에 결합 multiplier.
+        # 누적된 raw delta(시계 완성/해결, status, judgment)에 결합 multiplier.
         # 間 페이즈는 multiplier=0이라 자동으로 자연 감쇠로 넘어감 (별도 처리).
         raw_delta = delta
         if not in_intermission:
@@ -609,8 +605,6 @@ class DoomModule:
         parts = [f"[Doom] {current_doom}→{final_doom}"]
         if delta != 0:
             parts.append(f"delta={'+' + str(delta) if delta > 0 else str(delta)}")
-        if relief_data.get("applicable"):
-            parts.append(f"relief=-{relief_data.get('amount', 0)}")
         if clock_events:
             parts.append(f"clocks: {', '.join(clock_events)}")
         pressure_log = bus.doom.get("mental_pressure_log", "")

@@ -334,15 +334,17 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
 
 ## NARRATIVE HOOKS & TIME
 - "narrative_hook": str | null (Korean - Observe the next event that naturally arises from currently unresolved world state. Describe only consequences produced by the world's existing forces. Return null when the world is at peace.)
-- "time_flow": {"ticks": 1-20, "reason": "Korean", "target": {"slot": "시간대명(새벽/오전/오후/황혼/저녁/심야)", "day_offset": 0|1, "hour": 0-23} | null}
-  - target: ONLY when user EXPLICITLY mentions a specific time/period (e.g. "다음날 아침", "저녁까지 기다린다", "오후 4시에 만나자"). Do NOT use target for simple actions like moving, talking, looking — those use ticks only.
-  - hour: exact hour within slot (예: "오후 4시" → hour: 16). 생략 시 슬롯 시작 시각.
-  - 예: "다음날 아침 9시" → {"slot": "오전", "day_offset": 1, "hour": 9}, "저녁까지" → {"slot": "저녁", "day_offset": 0}. null이면 ticks로 진행. target 사용 시 ticks는 무시됨
+- "time_flow": {"ticks": 1-20, "reason": "Korean", "explicit_hours": number | null, "target": {"slot": "시간대명(새벽/오전/오후/황혼/저녁/심야)", "day_offset": 0|1, "hour": 0-23, "minute": 0-59, "year": int | null, "month": 1-12 | null, "day_in_month": 1-30 | null} | null}
+  - target: ONLY when user EXPLICITLY mentions absolute time/date (e.g. "다음날 아침", "오후 4시에 만나자", "3월 5일", "2년 5월 12일 오후 3시"). Do NOT use target for simple actions.
+  - hour: exact hour within slot. minute: exact minute. 모두 ONLY when user EXPLICITLY mentions.
+  - year/month/day_in_month (V8.5 캘린더): ONLY when user EXPLICITLY mentions year/month/day (e.g. "3월 5일" → month=3, day_in_month=5 / "2년 1월" → year=2, month=1). 단순 시각 점프엔 null. day_offset과 별개 — day_offset은 "다음날/이튿날" 같은 상대, year/month/day_in_month는 절대 날짜.
+  - explicit_hours: ONLY for RELATIVE time skip explicitly stated (e.g. "10분 뒤" → 0.167, "30분 후" → 0.5, "2시간 지나" → 2.0). Bypasses SCENE_TIME_RULES clamp.
+  - 예: "다음날 아침 9시" → {"target": {"slot": "오전", "day_offset": 1, "hour": 9}}, "10분 뒤" → {"explicit_hours": 0.167, "ticks": 5}, "3월 5일 오후 2시" → {"target": {"slot": "오후", "month": 3, "day_in_month": 5, "hour": 14}}.
+  - SOURCE GATE: extraction sources ONLY from current-turn user input. Vague phrases ("한참 후", "잠시 후") use ticks only.
 - "doom_clocks": {
     "clock_updates": [{"name": str, "delta": int(-1~+2), "reason": "Korean"}],
     "clock_new": {"name": "Korean", "segments": 4|6|8, "tick_mode": "action|time|hybrid", "threat": "Korean — 이 시계가 완성되면 무슨 일이 벌어지는가", "defense_action": "Korean — 이 시계를 막으려면 무엇을 해야 하는가 (구체적 행동 힌트)", "source": "narrative|consequence", "linked_entity": "str or null — 관련 NPC/세력 이름", "tags": ["Korean"]} | null,
-    "clock_resolved": ["시계 이름 — 서사적으로 위협이 해소된 경우만"],
-    "relief": {"applicable": boolean, "amount": 0-20, "reason": "Korean"}
+    "clock_resolved": ["시계 이름 — 서사적으로 위협이 해소된 경우만"]
   }
 - "mental_impact": {"applicable": boolean, "vigor_severity": "none/mild/heavy/extreme", "composure_severity": "none/mild/heavy/extreme", "reason": "Korean"}
   - vigor_severity: 신체 부하 정도. consensual intimacy/comfort = mild. NOT heavy unless coerced.

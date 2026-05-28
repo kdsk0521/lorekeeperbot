@@ -148,7 +148,7 @@ class WaterfallPipeline:
         bus.dai["narrative_hook"] = analysis.get("narrative_hook", "")
         bus.dai["time_flow"] = analysis.get("TimeFlow", analysis.get("time_flow", {}))
         bus.dai["doom_clocks"] = analysis.get("doom_clocks", {})
-        bus.dai["doom_relief"] = analysis.get("doom_relief", {})  # legacy fallback
+        # doom_relief 제거 (2026-05-23) — legacy 위기진폭 잔재
         bus.dai["mental_impact"] = analysis.get("mental_impact", {})
         bus.dai["anomaly_profile"] = analysis.get("anomaly_profile", {})
         bus.dai["pc_autonomy_check"] = analysis.get("PCAutonomyCheck", {})
@@ -203,21 +203,13 @@ class WaterfallPipeline:
             bus.judgment["modifications"] = eval_data.get("modifications", [])
             bus.judgment["narrative_hook"] = analysis.get("narrative_hook", "")
         
-        # Doom Clocks v3 연동 (clock_updates, clock_new, clock_resolved, relief)
+        # Doom Clocks v3 연동 (clock_updates, clock_new, clock_resolved)
+        # relief 제거 (2026-05-23) — legacy 위기진폭 잔재. 둠은 서사 진행도라 평화 장면 자동 감소는 의미 충돌.
         doom_clocks_output = analysis.get("doom_clocks") or {}
         if isinstance(doom_clocks_output, dict):
             bus.doom["flash_clock_updates"] = doom_clocks_output.get("clock_updates", [])
             bus.doom["flash_clock_new"] = doom_clocks_output.get("clock_new")
             bus.doom["flash_clock_resolved"] = doom_clocks_output.get("clock_resolved", [])
-            # Relief: doom_clocks.relief 우선, 없으면 legacy doom_relief fallback
-            relief = doom_clocks_output.get("relief") or analysis.get("doom_relief") or {}
-            if relief.get("applicable", False):
-                bus.doom["relief"] = relief
-        else:
-            # Legacy fallback: doom_relief 직접 사용
-            doom_relief = analysis.get("doom_relief") or {}
-            if doom_relief.get("applicable", False):
-                bus.doom["relief"] = doom_relief
 
         # Vigor/Composure Impact 연동
         mental_impact = analysis.get("mental_impact") or {}

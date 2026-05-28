@@ -116,6 +116,14 @@ DEFAULT_WEATHER_TYPES = ["맑음", "흐림", "비", "안개", "돌풍"]
 DEFAULT_LORE = "기본 세계관: 어두운 도시, 수수께끼의 사건들..."
 
 
+# Calendar Rules (V8.5 단순 게임 캘린더 — 2026-05-23)
+# 1년 = 12달, 1달 = 30일, 1주 = 7일. 윤년/달별 일수 차이 없음. fantasy/추가룰 도입 시 변경 가능.
+CALENDAR_DAYS_PER_MONTH = 30
+CALENDAR_MONTHS_PER_YEAR = 12
+CALENDAR_DAYS_PER_YEAR = CALENDAR_DAYS_PER_MONTH * CALENDAR_MONTHS_PER_YEAR  # 360
+CALENDAR_DAYS_PER_WEEK = 7  # 발효 시스템 연동용 (3단계)
+
+
 # Time Settings
 TICK_DURATION_MIN = 1   # Minutes (Micro-pacing enabled)
 TICK_DURATION_MAX = 5   # Minutes

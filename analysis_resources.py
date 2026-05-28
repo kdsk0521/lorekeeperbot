@@ -453,6 +453,31 @@ TEMPORAL_ORIENTATION_V2 = """
 - 13-20: explicit time skip ONLY (user states "wait until..." or "next morning")
 DEFAULT: 1 tick. Over-advancing = stealing player's time. When unsure, use fewer ticks.
 
+### Time Target Extraction (G1/G2 — 2026-05-23)
+Two channels for user-explicit time progression:
+- target = {slot, day_offset, hour, minute} for ABSOLUTE time jumps.
+- explicit_hours = number for RELATIVE time skips.
+
+G1. EXPLICIT-ONLY: time channels ONLY when user input contains EXPLICIT time statement.
+- Absolute triggers (→ target): "오후 3시", "15시 5분", "다음날 아침 9시", "저녁까지 기다린다", "15:05에서 시작".
+- Relative triggers (→ explicit_hours): "10분 뒤" (0.167), "30분 후" (0.5), "1시간 지나" (1.0), "2시간 뒤" (2.0).
+- NEVER triggered by vague phrases: "한참 후", "잠시 후", "시간이 흘러", "얼마 지나", "결국", "이내".
+  → Vague time = ticks only, target = null, explicit_hours = null.
+
+G2. USER-INPUT-ONLY: extraction sources ONLY from current-turn user input.
+- Profile/lore/character-sheet time mentions do NOT trigger any channel.
+- Model's previous response time descriptions do NOT trigger any channel.
+- Only the user's THIS-turn message counts as time source.
+
+CHANNEL SELECTION:
+- Absolute time (specific clock value) → target. "오후 3시" → target.hour=15.
+- Relative skip (delta from now) → explicit_hours. "10분 뒤" → explicit_hours=0.167.
+- Both? Prefer target (more specific).
+- explicit_hours BYPASSES SCENE_TIME_RULES clamp — user's stated delta is authoritative.
+
+NULL DEFAULT: If user input has no explicit time statement → both null, time advances by ticks.
+PLAYER-TIME-RESPECT: When in doubt, prefer nulls + smaller ticks. Over-advancing = stealing.
+
 ### Tick Modifiers
 High tension: -2 to -4 | Action: -1 to -3 | Normal: 0 | Routine: +2 to +4 | Travel: +5 to +10
 
@@ -665,7 +690,7 @@ Doom clocks represent world threats advancing against the player. You receive ac
    - INDEPENDENCE RULE: Clocks must be INDEPENDENT subplots, not duplicates of existing quests. A clock that restates a quest's goal is redundant. Instead, propose clocks about SEPARATE world changes that add pressure, context, or opportunity around the quest.
    - Do NOT create clocks for minor events — only NAMED situations with CONSEQUENCES.
 3. clock_resolved: If a clock's threat is narratively neutralized (e.g. the threatening force is destroyed/pacified), list its name. Do NOT resolve clocks for partial mitigation — only full resolution.
-4. relief: Same as before — doom reduction from narrative resolution (separate from clock resolution).
+   (NOTE: Legacy `relief` field removed 2026-05-23 — doom is "narrative progression / chapter volume", not crisis amplitude. Peace/calm scenes flow through 間 phase, not raw doom reductions.)
 
 """
 

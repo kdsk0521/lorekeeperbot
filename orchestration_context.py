@@ -113,7 +113,7 @@ class SharedBus:
         # DLC Support
         "narrative_hook": "",
         "time_flow": {},
-        "doom_relief": {},
+        # "doom_relief" 제거 (2026-05-23) — legacy 위기진폭 잔재, 둠은 서사 진행도로 리브랜드됨
         "mental_impact": {},
         "anomaly_profile": {},
         # Safety & Debug

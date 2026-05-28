@@ -65,13 +65,14 @@ def _build_status_layout(active_modules: list = None, present_chars: str = "") -
     present_chars: 현재 장면 인물 힌트 (gaze 기반)."""
 
     # --- FORMAT block (모든 메트릭 항상 포함) ---
+    # V8.5 (2026-05-23): 캘린더 확장 — [Year]년 [Month]월 [Day]일 형식
     fmt = [
-        "위치 [Location] | 시간 [Day]일차 [HH:MM] ([TimeSlot]) | 인물 [Present Characters]",
+        "위치 [Location] | 시간 [Year]년 [Month]월 [Day]일 [HH:MM] ([TimeSlot]) | 인물 [Present Characters]",
         "기력 [value] | 평정 [value] | 로드아웃 [used/total] | Doom [value]",
         "[Clock1 filled/segments] [Clock2 filled/segments ...]",
     ]
     ex = [
-        "위치 하숙집 거실 | 시간 3일차 04:30 (새벽) | 인물 리미, 옥상 남자",
+        "위치 하숙집 거실 | 시간 1년 3월 12일 04:30 (새벽) | 인물 리미, 옥상 남자",
         "기력 72 | 평정 38 | 로드아웃 1/4 | Doom 45",
         "[조직의 추적 4/6] [붉은 문턱 2/4]",
     ]
@@ -82,6 +83,8 @@ def _build_status_layout(active_modules: list = None, present_chars: str = "") -
         "- Line 2: Vigor + Composure + Global Doom (numeric only).",
         "- Line 3: active doom clocks only. Omit line 3 if no active clock.",
         "- Keep it compact and stable across turns.",
+        # V8.5 (2026-05-23): 캘린더 형식 강제 — anti-pattern 명시
+        "- TIME FORMAT (STRICT): ALWAYS use `N년 M월 D일 HH:MM (슬롯)` format. NEVER use legacy `N일차 HH:MM` format. Even if previous responses showed `N일차`, override to new format.",
     ]
     if present_chars:
         rules.append(f"- CURRENT SCENE CHARACTERS: {present_chars}")
@@ -222,6 +225,7 @@ SLOT_DEFINITIONS: Dict[int, SlotDefinition] = {
     18: SlotDefinition(18, "PC_AUTONOMY", "rules", "text_resources.PC_AUTONOMY_DOCTRINE"),
     20: SlotDefinition(20, "STATUS_LAYOUT", "rules", "_build_status_layout() dynamic"),
     22: SlotDefinition(22, "VISCERAL_CONTENT", "content", "text_resources.VISCERAL (conditional)", is_static=False),
+    # 23: 빈 슬롯 (AUTHOR_MEMORANDUM은 Slot 33 dynamic append로 이동)
     25: SlotDefinition(25, "STYLE", "rules", "text_resources.PROSE_CRAFT_PROTOCOL"),
 
     # ========== CACHE BOUNDARY ==========
@@ -233,7 +237,7 @@ SLOT_DEFINITIONS: Dict[int, SlotDefinition] = {
     29: SlotDefinition(29, "REAL_TIME_DATA", "dynamic", "world_context (Doom, HP, Time)", is_static=False),
     30: SlotDefinition(30, "GM_MOVER", "dynamic", "cognition.GMMover", is_static=False),
     31: SlotDefinition(31, "LAST_RESPONSE", "dynamic", "직전 AI 응답 (turn -1)", is_static=False),
-    32: SlotDefinition(32, "USER_INPUT", "dynamic", "현재 유저 입력", is_static=False),
+    32: SlotDefinition(32, "PERSONA_AND_USER_INPUT", "dynamic", "AUTHOR_MEMORANDUM prepend + 현재 유저 입력 (누렁이 v11.55 [16] 비망록 위치 매칭)", is_static=False),
     33: SlotDefinition(33, "AUTHOR_NOTE", "dynamic", "AUTHOR_NOTE + GENRE_DIRECTIVE", is_static=False),
     34: SlotDefinition(34, "TELESCOPE", "kernel", "TELESCOPE_PROTOCOL"),
 }
@@ -330,9 +334,13 @@ class SlotPromptBuilder:
         # [21] Input Authority — Decree/Attempt (W3)
         self.set_slot(21, getattr(text_resources, 'INPUT_AUTHORITY', ''))
         self.set_slot(20, "")  # 동적 빌더가 덮어씀
+        # [23] 빈 슬롯 — AUTHOR_MEMORANDUM은 populate_dynamic_slots의 Slot 33 append로 이동
+        # (누렁이 v11.55 권고 "prefill 밑으로 지시 약화" 정합)
         self.set_slot(25, getattr(text_resources, 'PROSE_CRAFT_PROTOCOL', ''))
 
         # ===== CACHE BOUNDARY =====
+        # AUTHOR_MEMORANDUM은 populate_dynamic_slots에서 Slot 32 prepend로 이동
+        # (누렁이 [10]~[15]→[16]비망록→[17-24] 구조 정확 매칭)
         self.set_slot(26, "\n==========CACHE BOUNDARY==========\n")
 
         # ===== DYNAMIC ZONE (34) =====
@@ -470,9 +478,17 @@ class SlotPromptBuilder:
                 tail = tail[-500:]
             self.set_slot(31, f"<Last_Response_Tail>\n{tail}\n</Last_Response_Tail>")
 
-        # [32] User Input (현재 유저 입력 - 직전 응답 바로 뒤!)
-        if user_input:
-            self.set_slot(32, f"<User_Input>\n{user_input}\n</User_Input>")
+        # [32] User Input (현재 유저 입력) — 비망록 prefill 직후 위치
+        # AUTHOR_MEMORANDUM을 Slot 32 prepend로 두어 누렁이 [10]~[15]→[16]비망록→[17-24] 구조 정확 매칭:
+        # 큰 룰(1-25) + 누적 컨텍스트(27-31) → 비망록(작가 의식) → 현재 작업(유저 입력 + 운영 지시 + 텔레스코프).
+        _author_memo = getattr(text_resources, 'AUTHOR_MEMORANDUM', '')
+        _user_block = f"<User_Input>\n{user_input}\n</User_Input>" if user_input else ""
+        if _author_memo and _user_block:
+            self.set_slot(32, _author_memo + "\n\n" + _user_block)
+        elif _author_memo:
+            self.set_slot(32, _author_memo)
+        elif _user_block:
+            self.set_slot(32, _user_block)
 
         # [33] Author Note + Genre Directive
         if author_note:

@@ -128,8 +128,24 @@ async def process_time_flow(channel_id: str, time_flow: Dict, scene_type: str = 
             cur_idx, tgt_idx = 0, 0
         slot_distance = (tgt_idx - cur_idx) % len(_slots)
         day_offset = target.get("day_offset", 0)
-        # 같은 슬롯 + day_offset 0 → 시간 점프 불필요 (단순 행동)
-        if slot_distance == 0 and day_offset == 0 and not target.get("hour"):
+        # V8.5: 절대 캘린더 target (year/month/day_in_month) — 직접 world 설정 후 return
+        abs_year = target.get("year")
+        abs_month = target.get("month")
+        abs_day = target.get("day_in_month")
+        if abs_month or abs_day or abs_year:
+            world["year"] = int(abs_year) if abs_year else world.get("year", 1)
+            world["month"] = int(abs_month) if abs_month else world.get("month", 1)
+            if abs_day:
+                world["day"] = int(abs_day)
+            if target.get("hour") is not None:
+                world["hour"] = int(target.get("hour"))
+            if target.get("minute") is not None:
+                world["minute"] = int(target.get("minute"))
+            world["time_slot"] = target_slot
+            domain_manager.update_world_state(channel_id, world)
+            return f"📅 {game_world.format_calendar(world)} {world['hour']:02d}:{world['minute']:02d} ({target_slot})"
+        # 같은 슬롯 + day_offset 0 + hour/minute 없음 → 시간 점프 불필요
+        if slot_distance == 0 and day_offset == 0 and not target.get("hour") and not target.get("minute"):
             pass  # target 무시, ticks로 처리
         else:
             msg = game_world.advance_to_slot(
@@ -137,6 +153,7 @@ async def process_time_flow(channel_id: str, time_flow: Dict, scene_type: str = 
                 target_slot,
                 day_offset,
                 target_hour=target.get("hour"),
+                target_minute=target.get("minute"),  # 2026-05-23: 분 단위 정확 동기화
             )
             return msg
 
@@ -146,10 +163,24 @@ async def process_time_flow(channel_id: str, time_flow: Dict, scene_type: str = 
 
     messages = []
 
-    explicit = time_flow.get("explicit", False) or duration == "explicit"
+    # 2026-05-23: explicit_hours > 0 이면 자동으로 explicit 취급 (Theoria가 상대 명시 잡았다는 신호)
+    explicit = (
+        time_flow.get("explicit", False)
+        or duration == "explicit"
+        or (explicit_hours is not None and explicit_hours > 0)
+    )
 
-    if explicit and explicit_hours:
-        ticks = int(explicit_hours * 5)
+    # 2026-05-23 (버그 수정): explicit + explicit_hours → 분 단위 직접 변환.
+    # 이전: ticks = int(explicit_hours * 5) → 1 tick=2분 가정과 충돌하여 1/6만 진행 버그.
+    # 현재: minutes = int(explicit_hours * 60) 직접 사용, ticks 단계 건너뜀.
+    # explicit이라 SCENE_TIME_RULES 클램프 면제 (사용자 명시 권위).
+    if explicit and explicit_hours and explicit_hours > 0:
+        minutes = int(round(explicit_hours * 60))
+        if minutes > 0:
+            msg = game_world.advance_minutes(channel_id, minutes)
+            if msg:
+                messages.append(msg)
+            return "\n".join(messages) if messages else None
 
     # v3: SCENE_TIME_RULES 기반 클램핑 (Anti-Gravity Fix 통합)
     rules = config.SCENE_TIME_RULES.get(scene_type, config.SCENE_TIME_RULES["normal"])

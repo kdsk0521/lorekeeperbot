@@ -2321,9 +2321,12 @@ async def cmd_time(ctx: CommandContext) -> None:
         # View
         time_emoji = {"새벽": "🌅", "오전": "☀️", "오후": "🌤️", "황혼": "🌆", "저녁": "🌙", "심야": "🌑"}
         emoji = time_emoji.get(world.get("time_slot", "오후"), "⏰")
+        # hour/minute/year/month 초기화 보장 (V8.5 캘린더 확장)
+        import game_world as _gw_view
+        _gw_view._init_clock(world)
         msg = (
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"📅 **{world.get('day', 1)}일차**\n"
+            f"📅 **{_gw_view.format_calendar(world)}** {world.get('hour', 12):02d}:{world.get('minute', 0):02d}\n"
             f"{emoji} 시간: **{world.get('time_slot', '오후')}**\n"
             f"🌤️ 날씨: {world.get('weather', '맑음')}\n"
             f"⚠️ 위기: {world.get('doom', 0)}/100\n"
@@ -2359,16 +2362,124 @@ async def cmd_time(ctx: CommandContext) -> None:
     # Set time slot
     if first in ["설정", "set"]:
         if len(args) < 2:
-            await ctx.send("⚠️ 사용법: `!시간 설정 [오전/오후/...]`")
+            await ctx.send(
+                "⚠️ 사용법:\n"
+                "  `!시간 설정 [오전/오후/...]` (슬롯만)\n"
+                "  `!시간 설정 HH:MM` (시:분, 같은 날)\n"
+                "  `!시간 설정 N년 M월 D일` (날짜만, 기존 시각 유지)\n"
+                "  `!시간 설정 N년 M월 D일 HH:MM` (풀 캘린더, V8.5)"
+            )
             return
         target = args[1]
         time_slots = game_system.get_time_slots(ctx.channel_id)
+
+        # V8.5: N년 M월 D일 [HH:MM] 풀 캘린더 형식 파싱 (HH:MM 생략 시 기존 시각 유지)
+        # 예: !시간 설정 1년 3월 12일 15:05 / !시간 설정 2024년 1월 1일
+        import re as _re
+        if len(args) >= 4:
+            rest = " ".join(args[1:])
+            # HH:MM 포함
+            cal_match = _re.match(r'^\s*(\d+)년\s+(\d+)월\s+(\d+)일\s+(\d{1,2}):(\d{2})\s*$', rest)
+            # HH:MM 미포함 (날짜만)
+            cal_match_date_only = _re.match(r'^\s*(\d+)년\s+(\d+)월\s+(\d+)일\s*$', rest) if not cal_match else None
+            if cal_match or cal_match_date_only:
+                try:
+                    if cal_match:
+                        yy = int(cal_match.group(1))
+                        mo = int(cal_match.group(2))
+                        dd = int(cal_match.group(3))
+                        hh = int(cal_match.group(4))
+                        mm = int(cal_match.group(5))
+                        hh_provided = True
+                    else:
+                        yy = int(cal_match_date_only.group(1))
+                        mo = int(cal_match_date_only.group(2))
+                        dd = int(cal_match_date_only.group(3))
+                        # 기존 시각 유지
+                        import game_world as _gw_keep
+                        _gw_keep._init_clock(world)
+                        hh = world.get("hour", 12)
+                        mm = world.get("minute", 0)
+                        hh_provided = False
+                    if not (1 <= yy and 1 <= mo <= config.CALENDAR_MONTHS_PER_YEAR
+                            and 1 <= dd <= config.CALENDAR_DAYS_PER_MONTH
+                            and 0 <= hh <= 23 and 0 <= mm <= 59):
+                        await ctx.send(
+                            f"⚠️ 유효 범위: 년≥1, 월=1~{config.CALENDAR_MONTHS_PER_YEAR}, "
+                            f"일=1~{config.CALENDAR_DAYS_PER_MONTH}, HH=0~23, MM=0~59"
+                        )
+                        return
+                    # slot 자동 추론
+                    inferred_slot = None
+                    for slot, (start, end) in config.TIME_SLOT_HOURS.items():
+                        if start <= end:
+                            if start <= hh <= end:
+                                inferred_slot = slot; break
+                        else:
+                            if hh >= start or hh <= end:
+                                inferred_slot = slot; break
+                    if inferred_slot is None:
+                        inferred_slot = world.get("time_slot", "오후")
+                    world["year"] = yy
+                    world["month"] = mo
+                    world["day"] = dd
+                    world["hour"] = hh
+                    world["minute"] = mm
+                    world["time_slot"] = inferred_slot
+                    domain_manager.update_world_state(ctx.channel_id, world)
+                    import game_world as _gw_set
+                    if hh_provided:
+                        await ctx.send(f"⏰ 시간 설정: **{_gw_set.format_calendar(world)} {hh:02d}:{mm:02d}** ({inferred_slot})")
+                    else:
+                        await ctx.send(
+                            f"⏰ 시간 설정: **{_gw_set.format_calendar(world)} {hh:02d}:{mm:02d}** ({inferred_slot})"
+                            f" — 시각은 기존 유지"
+                        )
+                except ValueError:
+                    await ctx.send(f"⚠️ 형식 오류 (예: `!시간 설정 1년 3월 12일 15:05` 또는 `!시간 설정 1년 3월 12일`)")
+                return
+
+        # HH:MM 형식 파싱 (시:분만 — 진행 중 세션 마이그레이션용, 2026-05-23)
+        hhmm_match = _re.match(r'^(\d{1,2}):(\d{2})$', target)
+        if hhmm_match:
+            try:
+                hh = int(hhmm_match.group(1))
+                mm = int(hhmm_match.group(2))
+                if not (0 <= hh <= 23 and 0 <= mm <= 59):
+                    await ctx.send(f"⚠️ 유효 범위: HH=0~23, MM=0~59 (입력: {hh}:{mm:02d})")
+                    return
+                # slot 자동 추론 (config.TIME_SLOT_HOURS 기준)
+                inferred_slot = None
+                for slot, (start, end) in config.TIME_SLOT_HOURS.items():
+                    if start <= end:
+                        if start <= hh <= end:
+                            inferred_slot = slot
+                            break
+                    else:  # wrap (심야 23~3)
+                        if hh >= start or hh <= end:
+                            inferred_slot = slot
+                            break
+                if inferred_slot is None:
+                    inferred_slot = world.get("time_slot", "오후")
+                world["hour"] = hh
+                world["minute"] = mm
+                world["time_slot"] = inferred_slot
+                # V8.5: year/month 초기화 (마이그레이션) 후 저장
+                import game_world as _gw_set
+                _gw_set._init_clock(world)
+                domain_manager.update_world_state(ctx.channel_id, world)
+                await ctx.send(f"⏰ 시간 설정: **{_gw_set.format_calendar(world)} {hh:02d}:{mm:02d}** ({inferred_slot})")
+            except ValueError:
+                await ctx.send(f"⚠️ 형식 오류: HH:MM (예: `!시간 설정 15:05`)")
+            return
+
+        # 기존: 슬롯 이름 입력 (slot만 변경, hour/minute 보존)
         if target in time_slots:
             world["time_slot"] = target
             domain_manager.update_world_state(ctx.channel_id, world)
-            await ctx.send(f"⏰ 시간 설정: **{target}**")
+            await ctx.send(f"⏰ 시간 설정: **{target}** (HH:MM 변경 안 됨 — 분 단위는 `!시간 설정 HH:MM`)")
         else:
-            await ctx.send(f"⚠️ 유효한 시간대: {', '.join(time_slots)}")
+            await ctx.send(f"⚠️ 유효한 시간대: {', '.join(time_slots)} / 또는 HH:MM 형식")
         return
 
 

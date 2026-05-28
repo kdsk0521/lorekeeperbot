@@ -719,7 +719,8 @@ def _build_system_message(bus) -> str:
         chunks.append(f"[이변] {tag}")
 
     doom = bus.doom if isinstance(bus.doom, dict) else {}
-    for key in ("relief_log", "mental_pressure_log", "clock_log", "log"):
+    # relief_log 제거 (2026-05-23) — legacy 위기진폭 잔재
+    for key in ("mental_pressure_log", "clock_log", "log"):
         val = doom.get(key)
         if val:
             chunks.append(str(val))

@@ -1172,6 +1172,28 @@ def append_history(channel_id: str, role: str, content: str, message_id: Optiona
     entry = {"role": role, "content": content}
     if message_id is not None:
         entry["message_id"] = message_id
+
+    # V8.5 (2026-05-23): 발효 시간 연동 — 메시지 생성 시점의 게임 시간 메타 저장.
+    # 발효/Deep 요약 시 시간 거리 표현용. 트리거에는 영향 없음 (3a 안전 모드).
+    try:
+        world = get_world_state(channel_id)
+        # 캘린더 마이그레이션 보장
+        try:
+            from game_world import _init_clock
+            _init_clock(world)
+        except Exception:
+            pass
+        entry["game_time"] = {
+            "year": world.get("year", 1),
+            "month": world.get("month", 1),
+            "day": world.get("day", 1),
+            "hour": world.get("hour", 12),
+            "minute": world.get("minute", 0),
+            "slot": world.get("time_slot", "오후"),
+        }
+    except Exception as _e_gt:
+        logging.debug(f"[History] game_time meta skip: {_e_gt}")
+
     d["history"].append(entry)
     
     # 히스토리 길이 제한 (최근 항목 유지)

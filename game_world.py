@@ -35,14 +35,48 @@ def _slot_for_hour(hour: int) -> str:
 
 
 def _init_clock(world: dict) -> None:
-    """hour/minute 미초기화 시 time_slot 기반으로 설정."""
-    if "hour" in world:
-        return
-    slot = world.get("time_slot", "오후")
-    hours = config.TIME_SLOT_HOURS.get(slot, (12, 16))
-    start = hours[0]
-    world["hour"] = start
-    world["minute"] = 0
+    """hour/minute/year/month 미초기화 시 time_slot 기반으로 설정.
+    V8.5 (2026-05-23): 캘린더 확장. day=N → year/month/day 자동 마이그레이션."""
+    # 1. hour/minute 초기화
+    if "hour" not in world:
+        slot = world.get("time_slot", "오후")
+        hours = config.TIME_SLOT_HOURS.get(slot, (12, 16))
+        start = hours[0]
+        world["hour"] = start
+        world["minute"] = 0
+
+    # 2. 캘린더 마이그레이션 (year/month 미설정 시 day=N → year/month/day_in_month 자동 분해)
+    if "year" not in world or "month" not in world:
+        legacy_day = world.get("day", 1)  # 기존 *N일차*
+        # day=N → year, month, day_in_month
+        # day=1 → 1년 1월 1일 / day=31 → 1년 2월 1일 / day=361 → 2년 1월 1일
+        zero_idx = max(0, legacy_day - 1)  # 0-based
+        days_per_year = config.CALENDAR_DAYS_PER_YEAR  # 360
+        days_per_month = config.CALENDAR_DAYS_PER_MONTH  # 30
+        year_offset = zero_idx // days_per_year
+        rem_after_year = zero_idx % days_per_year
+        month_offset = rem_after_year // days_per_month
+        day_in_month = rem_after_year % days_per_month + 1  # 1-based
+        world["year"] = 1 + year_offset
+        world["month"] = 1 + month_offset
+        world["day"] = day_in_month  # 이제 day = day_in_month (1~30)
+
+
+def _wrap_calendar(world: dict) -> None:
+    """day가 CALENDAR_DAYS_PER_MONTH 초과 시 month/year로 wrap. advance_minutes 후 호출."""
+    days_per_month = config.CALENDAR_DAYS_PER_MONTH
+    months_per_year = config.CALENDAR_MONTHS_PER_YEAR
+    while world.get("day", 1) > days_per_month:
+        world["day"] -= days_per_month
+        world["month"] = world.get("month", 1) + 1
+    while world.get("month", 1) > months_per_year:
+        world["month"] -= months_per_year
+        world["year"] = world.get("year", 1) + 1
+
+
+def format_calendar(world: dict) -> str:
+    """한국식 캘린더 표시 (N년 M월 D일). V8.5."""
+    return f"{world.get('year', 1)}년 {world.get('month', 1)}월 {world.get('day', 1)}일"
 
 
 def get_formatted_time(channel_id: str) -> str:
@@ -79,6 +113,8 @@ def advance_minutes(channel_id: str, minutes: int) -> str:
     if new_day_offset > 0:
         world["day"] = world.get("day", 1) + new_day_offset
         world["weather"] = random.choice(get_weather_types(channel_id))
+        # V8.5: day→month→year wrap (캘린더 확장)
+        _wrap_calendar(world)
 
     # 슬롯 전환 시 last_temporal_context 기록
     if old_slot != new_slot:
@@ -92,14 +128,16 @@ def advance_minutes(channel_id: str, minutes: int) -> str:
 
     time_str = f"{world['hour']:02d}:{world['minute']:02d}"
     if new_day_offset > 0:
-        return f"📅 {world['day']}일차 {time_str} ({new_slot})"
+        return f"📅 {format_calendar(world)} {time_str} ({new_slot})"
     if old_slot != new_slot:
         return f"⏰ {time_str} ({new_slot})"
     return f"⏳ {time_str}"
 
 
-def advance_to_slot(channel_id: str, target_slot: str, day_offset: int = 0, target_hour: int = None) -> str:
-    """특정 시간대+일차로 시간을 설정. target_hour가 있으면 슬롯 내 정확한 시각으로."""
+def advance_to_slot(channel_id: str, target_slot: str, day_offset: int = 0,
+                     target_hour: int = None, target_minute: int = None) -> str:
+    """특정 시간대+일차로 시간을 설정. target_hour가 있으면 슬롯 내 정확한 시각으로.
+    target_minute가 있으면 분까지 정확히 (Theoria 자동 시간 동기화용, 2026-05-23)."""
     world = domain_manager.get_world_state(channel_id)
     _init_clock(world)
     time_slots = get_time_slots(channel_id)
@@ -129,8 +167,18 @@ def advance_to_slot(channel_id: str, target_slot: str, day_offset: int = 0, targ
         except (ValueError, TypeError):
             pass
 
+    # target_minute 처리 (0-59 범위 클램프). None이면 0.
+    final_minute = 0
+    if target_minute is not None:
+        try:
+            tm = int(target_minute)
+            if 0 <= tm <= 59:
+                final_minute = tm
+        except (ValueError, TypeError):
+            pass
+
     world["hour"] = start_h
-    world["minute"] = 0
+    world["minute"] = final_minute
     world["time_slot"] = target_slot
 
     # day_offset이 0이어도 슬롯이 "과거"면 자동 +1
@@ -142,6 +190,8 @@ def advance_to_slot(channel_id: str, target_slot: str, day_offset: int = 0, targ
     if day_offset > 0:
         world["day"] = old_day + day_offset
         world["weather"] = random.choice(get_weather_types(channel_id))
+        # V8.5: day→month→year wrap (캘린더 확장)
+        _wrap_calendar(world)
 
     if old_slot != target_slot:
         world["last_temporal_context"] = {
@@ -157,12 +207,12 @@ def advance_to_slot(channel_id: str, target_slot: str, day_offset: int = 0, targ
         "황혼": "🌆", "저녁": "🌙", "심야": "🌑"
     }
     emoji = time_emoji.get(target_slot, "⏰")
-    time_str = f"{start_h:02d}:00"
+    time_str = f"{start_h:02d}:{final_minute:02d}"
 
-    if world["day"] != old_day:
+    if day_offset > 0:
         return (
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"📅 **{world['day']}일차** {emoji} **{target_slot}** ({time_str})\n"
+            f"📅 **{format_calendar(world)}** {emoji} **{target_slot}** ({time_str})\n"
             f"🌤️ 날씨: {world['weather']}\n"
             f"━━━━━━━━━━━━━━━━━━━━"
         )
@@ -204,6 +254,8 @@ def advance_time(channel_id: str) -> str:
         # 날짜 변경
         world["time_slot"] = time_slots[0]
         world["day"] = world.get("day", 1) + 1
+        # V8.5: day → month → year wrap
+        _wrap_calendar(world)
         new_weather = random.choice(get_weather_types(channel_id))
         world["weather"] = new_weather
 
@@ -218,7 +270,7 @@ def advance_time(channel_id: str) -> str:
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"🌙 **밤이 지나고...**\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"📅 **{world['day']}일차** {emoji} **{time_slots[0]}** ({time_str})\n"
+            f"📅 **{format_calendar(world)}** {emoji} **{time_slots[0]}** ({time_str})\n"
             f"🌤️ 날씨: {new_weather}\n"
             f"━━━━━━━━━━━━━━━━━━━━"
         )
@@ -389,15 +441,15 @@ def build_real_time_display(
     lines: List[str] = []
 
     location = world.get("current_location") or world.get("location", "Unknown")
-    day = world.get("day", "?")
+    _init_clock(world)  # V8.5: year/month 마이그레이션 + hour/minute 초기화
     time_slot = world.get("time_slot", "Unknown")
-    _init_clock(world)
     hour = world.get("hour", 12)
     minute = world.get("minute", 0)
     time_str = f"{hour:02d}:{minute:02d}"
+    cal_str = format_calendar(world)  # "N년 M월 D일"
     present = _get_active_player_masks(channel_id)
     present_text = ", ".join(present) if present else "None"
-    lines.append(f"위치 {location} | 시간 {day}일차 {time_str} ({time_slot}) | 인물 {present_text}")
+    lines.append(f"위치 {location} | 시간 {cal_str} {time_str} ({time_slot}) | 인물 {present_text}")
 
     # All core modules always active — no module_set checks needed
     target = _get_status_target_participant(channel_id, user_id)
@@ -441,7 +493,7 @@ def get_world_context(channel_id: str) -> str:
         f"[현재 세계 상태]",
         f"- 위치: {location}",
         f"- 위험도: {world.get('risk_level', 'None')}",
-        f"- 시간: {world.get('day', 1)}일차 {world.get('hour', 12):02d}:{world.get('minute', 0):02d} ({world.get('time_slot', '오후')})",
+        f"- 시간: {format_calendar(world)} {world.get('hour', 12):02d}:{world.get('minute', 0):02d} ({world.get('time_slot', '오후')})",
         f"- 날씨: {world.get('weather', '맑음')}",
         f"- 위기 수치: {world.get('doom', 0)}% ({_get_doom_description(world.get('doom', 0))})",
         f"- 위협 시계: {_format_doom_clocks(world)}",

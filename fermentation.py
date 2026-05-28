@@ -257,7 +257,7 @@ You will receive:
 - Write in Korean, natural prose, ~800-1000 characters
 - Organize by story arc, not strict chronology
 - Pivotal moments crystallize; trivial details blur and fade
-- Use temporal markers ("1주차", "그 후 며칠 뒤")
+- Use temporal markers — when `[시간 범위]` headers are present in input Fermented blocks, preserve concrete date references ("3월 5일", "1년 2월", "그 후 7일") in the narrative. Otherwise use relative markers ("1주차", "그 후 며칠 뒤").
 
 ## crystallized_dialogues
 - ONLY preserve from blocks marked important=true
@@ -345,9 +345,49 @@ def estimate_tokens(text: str) -> int:
     return int(len(text) / CHARS_PER_TOKEN)
 
 
+def _game_time_range_header(history: List[Dict[str, Any]]) -> str:
+    """V8.5: history 첫/끝 메시지의 game_time 메타로 시간 거리 헤더 생성.
+    예: '[시간 범위] 1년 3월 5일 14:00 ~ 1년 3월 12일 09:30 (7일간)' 또는 빈 문자열."""
+    if not history:
+        return ""
+    first_gt = None
+    last_gt = None
+    for entry in history:
+        gt = entry.get("game_time") if isinstance(entry, dict) else None
+        if isinstance(gt, dict):
+            if first_gt is None:
+                first_gt = gt
+            last_gt = gt
+    if not first_gt or not last_gt:
+        return ""
+    def _fmt(gt):
+        return (f"{gt.get('year', 1)}년 {gt.get('month', 1)}월 {gt.get('day', 1)}일 "
+                f"{gt.get('hour', 12):02d}:{gt.get('minute', 0):02d}")
+    # 절대 분 차이
+    def _abs(gt):
+        return ((gt.get("year", 1) - 1) * 360 + (gt.get("month", 1) - 1) * 30
+                + (gt.get("day", 1) - 1)) * 1440 + gt.get("hour", 12) * 60 + gt.get("minute", 0)
+    diff_min = _abs(last_gt) - _abs(first_gt)
+    if diff_min < 0:
+        diff_min = 0
+    diff_days = diff_min // 1440
+    diff_hours = (diff_min % 1440) // 60
+    if diff_days >= 1:
+        span = f"{diff_days}일 {diff_hours}시간"
+    elif diff_hours >= 1:
+        span = f"{diff_hours}시간 {diff_min % 60}분"
+    else:
+        span = f"{diff_min}분"
+    return f"[시간 범위] {_fmt(first_gt)} ~ {_fmt(last_gt)} ({span})"
+
+
 def format_history_for_summary(history: List[Dict[str, str]]) -> str:
-    """히스토리를 요약용 텍스트로 변환합니다. (기존 호환)"""
+    """히스토리를 요약용 텍스트로 변환합니다. V8.5: 시간 범위 헤더 prepend."""
+    header = _game_time_range_header(history)
     lines = []
+    if header:
+        lines.append(header)
+        lines.append("")
     for entry in history:
         role = entry.get("role", "Unknown")
         content = entry.get("content", "")
@@ -358,14 +398,25 @@ def format_history_for_summary(history: List[Dict[str, str]]) -> str:
 def format_history_indexed(history: List[Dict[str, str]], start_index: int = 1) -> str:
     """
     히스토리를 인덱스 기반 Relay Novel 포맷으로 변환합니다.
-    
+    V8.5: 시간 범위 헤더 prepend + 각 메시지에 game_time 마커.
+
     새로운 발효 프롬프트에서 인덱스 범위 참조를 위해 사용됩니다.
     """
+    header = _game_time_range_header(history)
     lines = []
+    if header:
+        lines.append(header)
+        lines.append("")
     for i, entry in enumerate(history, start=start_index):
         role = entry.get("role", "Unknown")
         content = entry.get("content", "")
-        lines.append(f"[{i}] [{role}]: {content}")
+        gt = entry.get("game_time") if isinstance(entry, dict) else None
+        if isinstance(gt, dict):
+            ts = (f"[{gt.get('year', 1)}.{gt.get('month', 1):02d}.{gt.get('day', 1):02d} "
+                  f"{gt.get('hour', 12):02d}:{gt.get('minute', 0):02d}]")
+            lines.append(f"[{i}] {ts} [{role}]: {content}")
+        else:
+            lines.append(f"[{i}] [{role}]: {content}")
     return "\n".join(lines)
 
 

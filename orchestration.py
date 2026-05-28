@@ -1320,6 +1320,53 @@ class OrchestrationService:
                     domain_manager.append_history(channel_id, "Model", response)
                     logger.debug(f"[History] Saved: {user_mask} + Model response ({len(response)} chars)")
 
+                    # 8.4. [TimeSync] 모델 출력 status line 시간 → 내부 클록 동기화 (2026-05-23)
+                    # G1/G2(사용자 인풋 명시) 다음 2순위. SCENE_TIME_RULES로 침묵 점프 차단.
+                    # V8.5: year/month 캘린더 확장 — 절대 분 차이 계산
+                    try:
+                        from response_processor import parse_status_line_time
+                        parsed_time = parse_status_line_time(response)
+                        if parsed_time:
+                            _world = domain_manager.get_world_state(channel_id)
+                            from game_world import _init_clock as _ic
+                            _ic(_world)
+                            cur_y = _world.get("year", 1)
+                            cur_mo = _world.get("month", 1)
+                            cur_d = _world.get("day", 1)
+                            cur_h = _world.get("hour", 12)
+                            cur_m = _world.get("minute", 0)
+                            new_y = parsed_time["year"]
+                            new_mo = parsed_time["month"]
+                            new_day = parsed_time["day"]
+                            new_h = parsed_time["hour"]
+                            new_m = parsed_time["minute"]
+                            # V8.5: year/month/day 절대 분 차이 (1년=360일=518400분, 1달=30일=43200분, 1일=1440분)
+                            cur_abs = ((cur_y - 1) * 360 + (cur_mo - 1) * 30 + (cur_d - 1)) * 1440 + cur_h * 60 + cur_m
+                            new_abs = ((new_y - 1) * 360 + (new_mo - 1) * 30 + (new_day - 1)) * 1440 + new_h * 60 + new_m
+                            delta_min = new_abs - cur_abs
+                            if delta_min < 0:
+                                logger.warning(
+                                    f"[TimeSync] Negative delta blocked: world={cur_y}/{cur_mo}/{cur_d} {cur_h:02d}:{cur_m:02d} → status={new_y}/{new_mo}/{new_day} {new_h:02d}:{new_m:02d}"
+                                )
+                            elif delta_min > 0:
+                                # SCENE_TIME_RULES 클램프 (1 tick = 2분)
+                                _scene = ctx.scene_type or _world.get("current_scene_type", "normal")
+                                _rules = config.SCENE_TIME_RULES.get(_scene, config.SCENE_TIME_RULES["normal"])
+                                max_min = _rules.get("max_ticks", 2) * 2
+                                if delta_min > max_min:
+                                    logger.info(
+                                        f"[TimeSync] Clamped {delta_min}→{max_min}min (scene={_scene}, status={new_h:02d}:{new_m:02d})"
+                                    )
+                                    delta_min = max_min
+                                # advance_minutes로 자연 진행 (day wrap 포함)
+                                from game_world import advance_minutes as _adv
+                                _adv(channel_id, delta_min)
+                                logger.info(
+                                    f"[TimeSync] world {cur_h:02d}:{cur_m:02d} → status {new_h:02d}:{new_m:02d} ({delta_min}min applied)"
+                                )
+                    except Exception as _e_ts:
+                        logger.debug(f"[TimeSync] skipped: {_e_ts}")
+
                     # 8.5. Dialogue Format Feedback + Style Detectors (다음 턴 피드백용)
                     _pc_names_for_fmt = [user_mask] if user_mask and user_mask != "Unknown" else []
                     fmt_feedback = _check_dialogue_format(response, pc_names=_pc_names_for_fmt, user_input=ctx.action_text or "")

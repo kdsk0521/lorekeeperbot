@@ -19,6 +19,72 @@ logger = logging.getLogger(__name__)
 
 
 # =========================================================
+# Status Line Time Parsing (모델 출력 status line → 내부 클록 동기화용, 2026-05-23)
+# =========================================================
+
+# Status line 형식 (V8.5): "위치 ... | 시간 N년 M월 D일 HH:MM (슬롯) | 인물 ..."
+# Legacy (V8.4): "위치 ... | 시간 N일차 HH:MM (슬롯) | 인물 ..." — 마이그레이션 기간 호환
+# slot_manager._build_status_layout 의 정확 형식만 채택 (G5 strict)
+_STATUS_TIME_PATTERN_V85 = re.compile(
+    r'시간\s+(\d+)년\s+(\d+)월\s+(\d+)일\s+(\d{1,2}):(\d{2})\s*\(([^)]+)\)'
+)
+_STATUS_TIME_PATTERN_LEGACY = re.compile(
+    r'시간\s+(\d+)일차\s+(\d{1,2}):(\d{2})\s*\(([^)]+)\)'
+)
+
+
+def parse_status_line_time(response_text: str) -> Optional[dict]:
+    """모델 응답 텍스트에서 status line의 시간 추출.
+
+    Returns:
+        {"year": int, "month": int, "day": int, "hour": int, "minute": int, "slot": str} or None.
+        Legacy 매칭 시 year=1, month=1 기본값. 패턴 미발견 / 형식 위반 시 None.
+    """
+    if not response_text or not isinstance(response_text, str):
+        return None
+
+    # V8.5 풀 캘린더 먼저 시도
+    m = _STATUS_TIME_PATTERN_V85.search(response_text)
+    if m:
+        try:
+            year = int(m.group(1))
+            month = int(m.group(2))
+            day = int(m.group(3))
+            hour = int(m.group(4))
+            minute = int(m.group(5))
+            slot = m.group(6).strip()
+            if not (1 <= year and 1 <= month <= 12 and 1 <= day <= 31
+                    and 0 <= hour <= 23 and 0 <= minute <= 59):
+                return None
+            return {"year": year, "month": month, "day": day,
+                    "hour": hour, "minute": minute, "slot": slot}
+        except (ValueError, IndexError):
+            return None
+
+    # Legacy fallback (V8.4 N일차 형식)
+    m = _STATUS_TIME_PATTERN_LEGACY.search(response_text)
+    if m:
+        try:
+            legacy_day = int(m.group(1))
+            hour = int(m.group(2))
+            minute = int(m.group(3))
+            slot = m.group(4).strip()
+            if not (1 <= legacy_day and 0 <= hour <= 23 and 0 <= minute <= 59):
+                return None
+            # legacy day → year/month/day 자동 분해
+            zero_idx = legacy_day - 1
+            year = 1 + zero_idx // 360
+            month = 1 + (zero_idx % 360) // 30
+            day = 1 + (zero_idx % 30)
+            return {"year": year, "month": month, "day": day,
+                    "hour": hour, "minute": minute, "slot": slot}
+        except (ValueError, IndexError):
+            return None
+
+    return None
+
+
+# =========================================================
 # Scene Type Detection (씬 타입 감지)
 # =========================================================
 

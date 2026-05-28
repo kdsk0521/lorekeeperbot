@@ -614,7 +614,15 @@ def _build_board_prompt(
 ) -> str:
     """활성 채널에 맞는 게시물 생성 프롬프트."""
     world = domain_manager.get_world_state(channel_id)
+    # V8.5: 캘린더 마이그레이션
+    try:
+        import game_world as _gw
+        _gw._init_clock(world)
+    except Exception:
+        pass
     location = world.get("current_location", "Unknown")
+    year = world.get("year", 1)
+    month = world.get("month", 1)
     day = world.get("day", 1)
     time_slot = world.get("time_slot", "오후")
     hour = world.get("hour", 12)
@@ -772,7 +780,7 @@ Rating: NC-21+. NPC posts reflect their FULL personality — crude language, dar
 - Genre/Setting: {stage}
 - Atmosphere: {atmosphere}
 - Location: {location}
-- Time: Day {day}, {hour:02d}:{minute:02d} ({time_slot})
+- Time: Year {year}, Month {month}, Day {day}, {hour:02d}:{minute:02d} ({time_slot})
 - Weather: {weather}
 - Doom Level: {doom}%
 - World Rules: {constraints_text or 'None'}
@@ -876,7 +884,14 @@ def _build_event_prompt(
 ) -> str:
     """이벤트 맞춤 프롬프트. 기존 대비 ~50% 축소."""
     world = domain_manager.get_world_state(channel_id)
+    try:
+        import game_world as _gw
+        _gw._init_clock(world)
+    except Exception:
+        pass
     location = world.get("current_location", "Unknown")
+    year = world.get("year", 1)
+    month = world.get("month", 1)
     day = world.get("day", 1)
     hour = world.get("hour", 12)
     minute = world.get("minute", 0)
@@ -949,7 +964,7 @@ All characters and events are entirely fictional. Rating: NC-21+.
 NPC posts reflect their FULL personality — crude language, dark humor, flirtation, hostility as documented.
 
 ## CONTEXT
-Genre: {stage} | Location: {location} | Time: Day {day}, {hour:02d}:{minute:02d} ({time_slot}) | Mood: {atmosphere}
+Genre: {stage} | Location: {location} | Time: Y{year}/M{month}/D{day} {hour:02d}:{minute:02d} ({time_slot}) | Mood: {atmosphere}
 
 ## THIS TURN'S EVENT
 {event.get("detail_kr", "")}
@@ -978,13 +993,21 @@ Do not reference game mechanics or meta information.
 # =========================================================
 
 def _get_time_footer(channel_id: str) -> tuple:
-    """공통 시간 정보 반환."""
+    """공통 시간 정보 반환. V8.5: year/month 포함 마이그레이션 보장."""
     world = domain_manager.get_world_state(channel_id)
+    # V8.5: 캘린더 마이그레이션 (day=N → year/month/day_in_month 자동)
+    try:
+        import game_world
+        game_world._init_clock(world)
+    except Exception:
+        pass
+    year = world.get("year", 1)
+    month = world.get("month", 1)
     day = world.get("day", 1)
     hour = world.get("hour", 12)
     minute = world.get("minute", 0)
     time_slot = world.get("time_slot", "")
-    return day, hour, minute, time_slot
+    return year, month, day, hour, minute, time_slot
 
 
 async def _post_bulletin(
@@ -993,14 +1016,14 @@ async def _post_bulletin(
     channel_id: str,
 ) -> None:
     """게시판 스레드에 Embed 게시."""
-    day, hour, minute, time_slot = _get_time_footer(channel_id)
+    year, month, day, hour, minute, time_slot = _get_time_footer(channel_id)
     embed = discord.Embed(
         title=post.get("title", ""),
         description=post.get("body", ""),
         color=0x2F3136,
     )
     embed.set_author(name=post.get("author", "익명"))
-    embed.set_footer(text=f"{day}일차 {hour:02d}:{minute:02d} ({time_slot})")
+    embed.set_footer(text=f"{year}년 {month}월 {day}일 {hour:02d}:{minute:02d} ({time_slot})")
     await thread.send(embed=embed)
 
 
@@ -1010,13 +1033,13 @@ async def _post_sns(
     channel_id: str,
 ) -> None:
     """SNS 스레드에 Embed 게시."""
-    day, hour, minute, _ = _get_time_footer(channel_id)
+    year, month, day, hour, minute, _ = _get_time_footer(channel_id)
     embed = discord.Embed(
         description=post.get("body", ""),
         color=0x5865F2,
     )
     embed.set_author(name=post.get("author", "익명"))
-    embed.set_footer(text=f"Day {day} · {hour:02d}:{minute:02d}")
+    embed.set_footer(text=f"{year}년 {month}월 {day}일 · {hour:02d}:{minute:02d}")
     await thread.send(embed=embed)
 
 
@@ -1026,7 +1049,7 @@ async def _post_message(
     channel_id: str,
 ) -> None:
     """메시지 스레드에 Embed 게시."""
-    day, hour, minute, time_slot = _get_time_footer(channel_id)
+    year, month, day, hour, minute, time_slot = _get_time_footer(channel_id)
     sender = post.get("from", "익명")
     receiver = post.get("to", "???")
     embed = discord.Embed(
@@ -1035,7 +1058,7 @@ async def _post_message(
     )
     embed.set_author(name=f"{sender} → {receiver}")
     fmt_name = post.get("format_name", "")
-    footer_parts = [f"{day}일차 {hour:02d}:{minute:02d}"]
+    footer_parts = [f"{year}년 {month}월 {day}일 {hour:02d}:{minute:02d}"]
     if fmt_name:
         footer_parts.append(fmt_name)
     embed.set_footer(text=" · ".join(footer_parts))
