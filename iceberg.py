@@ -1130,11 +1130,13 @@ def translate_emotion_intensity(
 # =========================================================
 
 def translate_vigor_composure(vigor: int, composure: int) -> str:
-    """활력/평형 괴리가 클 때 사실만 전달."""
+    """컨디션 두 축의 괴리가 클 때 방향만 전달. 스탯명·수치·예시 없이, 몸으로만."""
     gap = abs(vigor - composure)
     if gap < 30:
         return ""
-    return "활력과 평형 사이에 큰 괴리가 있다. 행동으로 드러내라."
+    if vigor < composure:
+        return "몸은 한계, 겉은 버틴다. 그 어긋남을 동작으로. 명명 금지."
+    return "겉은 멀쩡, 속이 흔들린다. 그 어긋남을 동작으로. 명명 금지."
 
 
 # =========================================================

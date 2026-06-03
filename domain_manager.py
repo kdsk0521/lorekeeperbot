@@ -200,11 +200,23 @@ def get_last_execution_context(channel_id: str) -> Optional[Dict[str, Any]]:
     return get_domain(channel_id).get("last_execution_context")
 
 def save_domain(channel_id: str, data: Dict[str, Any]) -> bool:
-    """세션 데이터 저장 (파일 + 캐시 동기화)"""
+    """세션 데이터 저장 (파일 + 캐시 동기화)
+
+    [V10 Sprint 0] JSON 저장 성공 후 SQLite에도 미러(dual-write).
+    SQLite 실패는 봇에 영향 없음 — JSON이 진실의 원천. 롤백 = 아래 dual-write 블록 삭제.
+    """
     # 파일 저장 성공 후 캐시 업데이트 (동기화 안전성)
     if not save_json(get_session_file_path(channel_id), data):
         return False
     cache.set_session(channel_id, data)
+
+    # [V10 Sprint 0] Dual-write to SQLite (shadow mirror, 읽기는 아직 JSON)
+    try:
+        import sqlite_store
+        sqlite_store.write_session(channel_id, data)
+    except Exception as _e:
+        logging.debug(f"[V10] dual-write skipped: {_e}")
+
     return True
 
 def reset_domain(channel_id: str) -> None:

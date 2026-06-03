@@ -68,19 +68,19 @@ def _build_status_layout(active_modules: list = None, present_chars: str = "") -
     # V8.5 (2026-05-23): 캘린더 확장 — [Year]년 [Month]월 [Day]일 형식
     fmt = [
         "위치 [Location] | 시간 [Year]년 [Month]월 [Day]일 [HH:MM] ([TimeSlot]) | 인물 [Present Characters]",
-        "기력 [value] | 평정 [value] | 로드아웃 [used/total] | Doom [value]",
+        "로드아웃 [used/total] | Doom [value]",
         "[Clock1 filled/segments] [Clock2 filled/segments ...]",
     ]
     ex = [
         "위치 하숙집 거실 | 시간 1년 3월 12일 04:30 (새벽) | 인물 리미, 옥상 남자",
-        "기력 72 | 평정 38 | 로드아웃 1/4 | Doom 45",
+        "로드아웃 1/4 | Doom 45",
         "[조직의 추적 4/6] [붉은 문턱 2/4]",
     ]
 
     # --- RULES block ---
     rules = [
         "- Line 1: location, time, characters.",
-        "- Line 2: Vigor + Composure + Global Doom (numeric only).",
+        "- Line 2: Loadout + Global Doom (numeric only). Do NOT print condition stats here.",
         "- Line 3: active doom clocks only. Omit line 3 if no active clock.",
         "- Keep it compact and stable across turns.",
         # V8.5 (2026-05-23): 캘린더 형식 강제 — anti-pattern 명시
