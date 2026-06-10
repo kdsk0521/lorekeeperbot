@@ -2133,7 +2133,12 @@ async def create_context_cache(
     """
     if not client:
         return None
-    
+
+    # OpenAI 호환 분석 백엔드(wellspring)는 명시적 컨텍스트 캐시 미지원(암묵 prefix 캐싱).
+    # → 캐시 생성 스킵, 호출부는 None 처리하여 비캐시 경로를 탄다.
+    if getattr(config, "ANALYSIS_BACKEND", "gemini") == "openai":
+        return None
+
     if not should_use_caching(lore_text, deep_memory):
         logger.info(f"[Caching] 토큰 부족으로 캐싱 스킵 - {channel_id}")
         return None

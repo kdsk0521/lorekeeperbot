@@ -1,0 +1,222 @@
+"""
+Analysis Backend — genai.Client 호환 facade (좌뇌/Flash 분석을 OpenAI 호환 백엔드로 라우팅).
+
+목적:
+    Gemini 키가 죽었을 때, cognition/theoria/memory/fermentation 등 좌뇌 호출부 15+곳을
+    *건드리지 않고* wellspring(OpenAI 호환, DeepSeek)으로 넘긴다.
+
+방법:
+    google.genai.Client 의 사용 표면만 흉내낸다:
+        - client.aio.models.generate_content(model, contents, config) -> .text 보장
+        - client.aio.models.embed_content(model, contents)            -> .embeddings[].values
+        - client.caches.create / delete                              -> 명시적 캐시 차단(암묵 캐싱 사용)
+    main.py 의 클라이언트 생성부 한 곳만 이걸로 스왑하면 전체가 라우팅된다.
+
+핵심 번역:
+    - types.Content(role=user|model, parts=[Part(text)])  -> OpenAI messages(role=user|assistant)
+    - config.system_instruction                            -> system 메시지
+    - config.response_mime_type == "application/json"      -> response_format={"type":"json_object"}
+    - config.safety_settings                               -> 버림 (OpenAI 무대응)
+    - config.top_k                                         -> extra_body.top_k
+    - config.temperature/top_p/max_output_tokens           -> 표준 파라미터
+
+호출부는 response_schema 를 안 쓰고 json_object 모드 + 수동 파싱(json.loads/repair_json)을 쓰므로
+스키마 변환은 불필요하다.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, List, Optional
+
+import config as _appconfig
+
+logger = logging.getLogger(__name__)
+
+try:
+    from openai import AsyncOpenAI
+    _HAS_OPENAI = True
+except ImportError:  # pragma: no cover
+    AsyncOpenAI = None  # type: ignore
+    _HAS_OPENAI = False
+
+
+# ── 응답 shim (Gemini 응답 인터페이스 흉내) ──────────────────────────────────
+
+class _RespShim:
+    """generate_content 응답 흉내 — 호출부가 쓰는 .text 만 보장."""
+    __slots__ = ("text", "candidates", "prompt_feedback", "usage_metadata")
+
+    def __init__(self, text: Optional[str]):
+        self.text = text or ""
+        self.candidates = [object()] if text else []
+        self.prompt_feedback = None
+        self.usage_metadata = None
+
+
+class _Embedding:
+    __slots__ = ("values",)
+
+    def __init__(self, values):
+        self.values = values
+
+
+class _EmbResShim:
+    """embed_content 응답 흉내 — response.embeddings[i].values."""
+    __slots__ = ("embeddings",)
+
+    def __init__(self, vectors: List[list]):
+        self.embeddings = [_Embedding(v) for v in vectors]
+
+
+# ── 입력 번역 ────────────────────────────────────────────────────────────────
+
+def _flatten_text(obj: Any) -> str:
+    """str / Content / Part / list 를 평문 텍스트로."""
+    if obj is None:
+        return ""
+    if isinstance(obj, str):
+        return obj
+    parts = getattr(obj, "parts", None)
+    if parts:
+        return "".join(getattr(p, "text", "") or "" for p in parts)
+    if isinstance(obj, (list, tuple)):
+        return "\n".join(_flatten_text(x) for x in obj)
+    text_attr = getattr(obj, "text", None)
+    if isinstance(text_attr, str):
+        return text_attr
+    return str(obj)
+
+
+def _contents_to_messages(contents: Any, system_instruction: Any = None) -> List[dict]:
+    """Gemini contents(+system_instruction) -> OpenAI messages.
+
+    role 매핑: model -> assistant, 그 외 -> user. system_instruction -> system.
+    """
+    messages: List[dict] = []
+    si = _flatten_text(system_instruction).strip() if system_instruction is not None else ""
+    if si:
+        messages.append({"role": "system", "content": si})
+
+    if contents is None:
+        return messages
+    if isinstance(contents, str):
+        messages.append({"role": "user", "content": contents})
+        return messages
+    if not isinstance(contents, (list, tuple)):
+        contents = [contents]
+
+    for c in contents:
+        role = (getattr(c, "role", None) or "user")
+        out_role = "assistant" if role == "model" else "user"
+        messages.append({"role": out_role, "content": _flatten_text(c)})
+    return messages
+
+
+def _map_model(model: Optional[str]) -> str:
+    """Gemini 모델ID -> wellspring 모델ID. flash->flash, pro->pro, 기본 flash."""
+    m = (model or "").lower()
+    if "pro" in m and "flash" not in m:
+        return _appconfig.ANALYSIS_OPENAI_MODEL_PRO
+    return _appconfig.ANALYSIS_OPENAI_MODEL_FLASH
+
+
+def _config_to_kwargs(cfg: Any) -> dict:
+    """GenerateContentConfig -> chat.completions.create kwargs (safety_settings 무시)."""
+    kwargs: dict = {}
+    if cfg is None:
+        return kwargs
+    temp = getattr(cfg, "temperature", None)
+    if temp is not None:
+        kwargs["temperature"] = temp
+    top_p = getattr(cfg, "top_p", None)
+    if top_p is not None:
+        kwargs["top_p"] = top_p
+    max_out = getattr(cfg, "max_output_tokens", None)
+    if max_out:
+        kwargs["max_tokens"] = max_out
+    if getattr(cfg, "response_mime_type", None) == "application/json":
+        kwargs["response_format"] = {"type": "json_object"}
+    # 분석은 JSON 채우기 → extended thinking off(출력/지연 폭증 방지).
+    # 렌더가 reasoning_effort:none 으로 200 확인됨 → wellspring 수용. .env 로 상향 가능.
+    extra_body = {"reasoning_effort": getattr(_appconfig, "ANALYSIS_OPENAI_REASONING_EFFORT", "none")}
+    top_k = getattr(cfg, "top_k", None)
+    if top_k is not None:
+        # top_k 는 표준 파라미터가 아님 → extra_body.
+        extra_body["top_k"] = top_k
+    kwargs["extra_body"] = extra_body
+    return kwargs
+
+
+# ── facade ───────────────────────────────────────────────────────────────────
+
+class _NoCaches:
+    """Gemini 명시적 컨텍스트 캐시 차단. wellspring 은 암묵 prefix 캐싱이라 불필요.
+    호출부(fermentation)는 ANALYSIS_BACKEND=openai 가드로 비캐시 경로를 타야 한다."""
+
+    def create(self, *args, **kwargs):
+        raise RuntimeError(
+            "explicit caching unsupported on openai analysis backend "
+            "(wellspring uses implicit prefix caching; fermentation must use non-cached path)"
+        )
+
+    def delete(self, *args, **kwargs):
+        return None
+
+
+class _Models:
+    def __init__(self, client: "AsyncOpenAI"):
+        self._client = client
+
+    async def generate_content(self, model=None, contents=None, config=None):
+        messages = _contents_to_messages(contents, getattr(config, "system_instruction", None))
+        kwargs = _config_to_kwargs(config)
+        kwargs["model"] = _map_model(model)
+        kwargs["messages"] = messages
+        try:
+            resp = await self._client.chat.completions.create(**kwargs)
+            text = resp.choices[0].message.content if getattr(resp, "choices", None) else ""
+            return _RespShim(text)
+        except Exception as e:
+            logger.error("[analysis-openai] generate_content failed (%s): %s", kwargs.get("model"), e)
+            return _RespShim("")
+
+    async def embed_content(self, model=None, contents=None, **_ignore):
+        texts = contents if isinstance(contents, list) else [contents]
+        texts = [t if isinstance(t, str) else _flatten_text(t) for t in texts]
+        try:
+            resp = await self._client.embeddings.create(
+                model=_appconfig.ANALYSIS_OPENAI_EMBED_MODEL,
+                input=texts,
+            )
+            vectors = [d.embedding for d in resp.data]
+            return _EmbResShim(vectors)
+        except Exception as e:
+            logger.warning("[analysis-openai] embed_content failed: %s", e)
+            return _EmbResShim([[] for _ in texts])
+
+
+class _Aio:
+    def __init__(self, models: _Models):
+        self.models = models
+
+
+class GenaiCompatClient:
+    """google.genai.Client 호환 facade (분석측 전용)."""
+
+    def __init__(self, api_key: str, base_url: str):
+        if not _HAS_OPENAI:
+            raise ImportError("openai 패키지 필요: pip install openai")
+        self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        _models = _Models(self._client)
+        self.aio = _Aio(_models)
+        self.models = _models          # 일부 코드가 client.models.* 를 쓸 경우 대비
+        self.caches = _NoCaches()
+
+
+def build_analysis_client() -> "GenaiCompatClient":
+    """config 의 ANALYSIS_OPENAI_* 로 facade 생성."""
+    return GenaiCompatClient(
+        api_key=_appconfig.ANALYSIS_OPENAI_API_KEY,
+        base_url=_appconfig.ANALYSIS_OPENAI_BASE_URL,
+    )

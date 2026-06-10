@@ -42,6 +42,22 @@ OPENAI_REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "low")  # none / 
 OPENAI_THINKING_BUDGET = int(os.getenv("OPENAI_THINKING_BUDGET", "8192"))  # thinking 토큰 별도 예산
 OPENAI_PRESENCE_PENALTY = float(os.getenv("OPENAI_PRESENCE_PENALTY", "0.1"))
 
+# =========================================================
+# Analysis Backend (좌뇌/Flash) — Gemini vs OpenAI 호환(wellspring DeepSeek)
+# "gemini"(기본, 현행 genai.Client) 또는 "openai"(analysis_backend.GenaiCompatClient).
+# Gemini 키가 죽으면 "openai"로 전환 → Flash 분석을 deepseek-v4-flash로 라우팅.
+# =========================================================
+ANALYSIS_BACKEND = os.getenv("ANALYSIS_BACKEND", "gemini").lower()
+# 미지정 시 렌더러(OPENAI_*) 설정 재사용 — 같은 wellspring 게이트면 키/URL 공유 가능
+ANALYSIS_OPENAI_API_KEY = os.getenv("ANALYSIS_OPENAI_API_KEY", OPENAI_API_KEY)
+ANALYSIS_OPENAI_BASE_URL = os.getenv("ANALYSIS_OPENAI_BASE_URL", OPENAI_BASE_URL)
+ANALYSIS_OPENAI_MODEL_FLASH = os.getenv("ANALYSIS_OPENAI_MODEL_FLASH", "deepseek-v4-flash")
+ANALYSIS_OPENAI_MODEL_PRO = os.getenv("ANALYSIS_OPENAI_MODEL_PRO", "deepseek-v4-pro")
+ANALYSIS_OPENAI_EMBED_MODEL = os.getenv("ANALYSIS_OPENAI_EMBED_MODEL", "qwen3-embedding")
+# 분석 = JSON 스키마 채우기(결정적 추출). extended thinking 불필요 → 기본 off(출력/지연 절감).
+# DAI 품질 부족 관측 시 .env 에서 "low"/"medium" 으로 상향.
+ANALYSIS_OPENAI_REASONING_EFFORT = os.getenv("ANALYSIS_OPENAI_REASONING_EFFORT", "none")
+
 # Generation Parameters - Analysis (Flash/Left Brain)
 ANALYSIS_TEMPERATURE = 0.1
 ANALYSIS_TOP_K = 20
@@ -1191,6 +1207,19 @@ GENRE_DISRUPTION_AXIS = {
 
 # NPC Autonomous Behavior (Phase 7)
 NPC_AUTONOMOUS_ENABLED = True
+
+# =========================================================
+# V10 — 상태 우선 아키텍처 플래그
+# =========================================================
+# Sprint 1: 관계(npc_attitudes) 읽기를 SQLite npc_relations에서.
+# False = V9 동작 (읽기 JSON, 쓰기는 dual-write로 테이블 쌓임).
+# 서버에서 쓰기 며칠 돌려 parity 확인 후 True로. 문제 시 이 한 줄로 즉시 복귀.
+V10_RELATIONS_READ_FROM_SQLITE = True
+# Sprint 2-A: NPC 지식(npc_knowledge) / 2-B: NPC 본체(npcs).
+# 2026-06-10 셋 동시 ON (사용자 결정): 도메인 독립 + lazy migration이라 빈 테이블에서도 안전
+# (첫 읽기는 JSON 폴백 → 자동 이주). 문제 시 셋 다 False로 즉시 V9 복귀.
+V10_KNOWLEDGE_READ_FROM_SQLITE = True
+V10_NPCS_READ_FROM_SQLITE = True
 
 # =========================================================
 # Passive Theory Tag System (Phase 4-1)

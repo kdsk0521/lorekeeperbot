@@ -178,7 +178,7 @@ def _build_telescope_prefill(dai: dict, real_time_data: str) -> str:
     if not scene_lines:
         return ""
 
-    header = "[Scene] — 장면 구조"
+    header = "[Scene] — scene structure"  # 영어 시드: 모델이 텔레스코프 CoT를 영어로 이어쓰게 (TELESCOPE_PROTOCOL과 정렬)
     return "┣\n" + header + "\n" + "\n".join(scene_lines) + "\n"
 
 

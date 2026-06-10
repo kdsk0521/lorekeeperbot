@@ -233,6 +233,13 @@ def reset_domain(channel_id: str) -> None:
     # 모든 캐시 무효화
     cache.invalidate_all(channel_id)
 
+    # [V10] SQLite 행도 삭제 — 안 지우면 읽기 플래그 ON 시 유령 데이터 부활 (Sprint 1 누락분 보강)
+    try:
+        import sqlite_store
+        sqlite_store.delete_channel_rows(channel_id)
+    except Exception as _e:
+        logging.debug(f"[V10] channel rows delete skipped: {_e}")
+
 # Export Indices
 def get_last_export_idx(channel_id: str) -> int:
     return get_domain(channel_id).get("last_export_idx", 0)
@@ -347,7 +354,35 @@ def _normalize_npc_name(name: str) -> str:
     name = re.sub(r'\s+\)', ')', name)
     return name
 
+# [V10 Sprint 2-B] NPC 본체 — JSON 진실원천 + npcs 문서테이블 dual-write.
+# 읽기는 config.V10_NPCS_READ_FROM_SQLITE 게이트 (기본 OFF).
+# 단건(get_npc)은 별칭 해상도(_find_npc_key)가 전체 dict를 요구하므로 get_npcs 경유 유지.
+
+def _mirror_npc(channel_id: str, npc_name: str, data: Dict[str, Any]) -> None:
+    """NPC 1건을 방벽 통과 후 npcs 테이블에 미러."""
+    try:
+        import sqlite_store
+        import state_guards
+        clean = state_guards.validate_npc_write(npc_name, data)
+        if clean is not None:
+            sqlite_store.upsert_npc(channel_id, npc_name, clean)
+    except Exception as _e:
+        logging.debug(f"[V10] npc mirror skipped: {_e}")
+
 def get_npcs(channel_id: str) -> Dict[str, Dict[str, Any]]:
+    """[V10] 플래그 ON 시 read-through: SQLite 우선, 없으면 JSON 폴백 + lazy migration."""
+    if getattr(config, "V10_NPCS_READ_FROM_SQLITE", False):
+        try:
+            import sqlite_store
+            npcs = sqlite_store.read_npcs(channel_id)
+            if npcs is not None:
+                return npcs
+            npcs_json = get_domain(channel_id).get("npcs", {})
+            for _name, _data in npcs_json.items():
+                _mirror_npc(channel_id, _name, _data)
+            return npcs_json
+        except Exception as _e:
+            logging.warning(f"[V10] npcs read-through 실패, JSON 폴백: {_e}")
     return get_domain(channel_id).get("npcs", {})
 
 def _find_npc_key(npcs: dict, name: str) -> Optional[str]:
@@ -410,6 +445,19 @@ def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
     npcs[norm_name] = data
     save_domain(channel_id, d)
 
+    # [V10 Sprint 2-B] 미러 — 키 마이그레이션 발생 시 구 행 삭제 + 신 행, 한 트랜잭션
+    try:
+        import sqlite_store
+        import state_guards
+        clean = state_guards.validate_npc_write(norm_name, data)
+        if clean is not None:
+            if existing_key and existing_key != norm_name:
+                sqlite_store.rename_npc(channel_id, existing_key, norm_name, clean)
+            else:
+                sqlite_store.upsert_npc(channel_id, norm_name, clean)
+    except Exception as _e:
+        logging.debug(f"[V10] npc mirror skipped: {_e}")
+
 def delete_npc(channel_id: str, name: str) -> tuple:
     """NPC 삭제. Returns (success: bool, matched_key: str or None)"""
     d = get_domain(channel_id)
@@ -418,12 +466,74 @@ def delete_npc(channel_id: str, name: str) -> tuple:
     if target:
         del npcs[target]
         save_domain(channel_id, d)
+        try:
+            import sqlite_store
+            sqlite_store.delete_npc_row(channel_id, target)
+        except Exception as _e:
+            logging.debug(f"[V10] npc delete mirror skipped: {_e}")
         return True, target
     return False, None
 
+def bulk_update_npcs(channel_id: str, npcs: Dict[str, Dict[str, Any]]) -> None:
+    """[V10 §3b] NPC dict 전체 교체 (tick_all_cooldowns 등 bulk 쓰기 정식화).
+    JSON + SQLite 동시, SQLite는 단일 트랜잭션."""
+    d = get_domain(channel_id)
+    d["npcs"] = npcs
+    save_domain(channel_id, d)
+    try:
+        import sqlite_store
+        import state_guards
+        cleaned = {}
+        for _name, _data in npcs.items():
+            _c = state_guards.validate_npc_write(_name, _data)
+            if _c is not None:
+                cleaned[_name] = _c
+        if cleaned:
+            sqlite_store.bulk_upsert_npcs(channel_id, cleaned)
+    except Exception as _e:
+        logging.debug(f"[V10] npc bulk mirror skipped: {_e}")
+
+def delete_npcs_by_source(channel_id: str, keep_sources: tuple = ("lore", "manual")) -> int:
+    """[V10 §3b] keep_sources 외 NPC 일괄 삭제 (clear_session_npcs/세션 리셋 공용).
+    Returns: 삭제된 NPC 수."""
+    d = get_domain(channel_id)
+    npcs = d.get("npcs", {})
+    to_delete = [name for name, data in npcs.items()
+                 if data.get("source", "session") not in keep_sources]
+    for name in to_delete:
+        del npcs[name]
+    if to_delete:
+        save_domain(channel_id, d)
+        try:
+            import sqlite_store
+            sqlite_store.delete_npcs_except_sources(channel_id, keep_sources)
+        except Exception as _e:
+            logging.debug(f"[V10] npc bulk delete mirror skipped: {_e}")
+    return len(to_delete)
+
 # NPC Attitude System
+# [V10 Sprint 1] 관계 도메인 — JSON 진실원천 + npc_relations 정규화 테이블 dual-write.
+# 읽기는 config.V10_RELATIONS_READ_FROM_SQLITE 플래그 게이트 (기본 OFF = V9 동작).
+# spec: 파티쳇수정/v10_sprint1_relations_spec.md
+
+def _mirror_relation(channel_id: str, npc_name: str, rel: Dict[str, Any]) -> None:
+    """JSON에 쓰인 최종 상태를 방벽 통과 후 npc_relations에 미러.
+    철칙: JSON이 받은 건 다 받는다 (existing_npcs 체크 안 함 — parity 우선).
+    실패해도 봇 무영향 (JSON이 진실원천)."""
+    try:
+        import sqlite_store
+        import state_guards
+        clean = state_guards.validate_relation_write(npc_name, rel)
+        if clean is not None:
+            sqlite_store.upsert_relation(channel_id, npc_name, clean)
+    except Exception as _e:
+        logging.debug(f"[V10] relation mirror skipped: {_e}")
+
 def update_npc_attitude(channel_id: str, npc_name: str, attitude: str, reason: str = "") -> None:
-    """NPC의 PC에 대한 태도 업데이트 (depth/tension 보존)"""
+    """NPC의 PC에 대한 태도 업데이트 (depth/tension 보존)
+
+    주의: dict 재구성이므로 last_change_turn은 의도적으로 소실됨 (기존 동작 보존, §1b quirk).
+    gated 경로에선 직후 set_attitude_turn이 재기록."""
     d = get_domain(channel_id)
     if "npc_attitudes" not in d:
         d["npc_attitudes"] = {}
@@ -438,21 +548,96 @@ def update_npc_attitude(channel_id: str, npc_name: str, attitude: str, reason: s
         "last_updated": time.strftime('%Y-%m-%d %H:%M')
     }
     save_domain(channel_id, d)
+    _mirror_relation(channel_id, npc_name, d["npc_attitudes"][npc_name])
 
 def get_npc_attitudes(channel_id: str) -> Dict[str, Dict]:
-    """저장된 NPC 태도 조회"""
+    """저장된 NPC 태도 조회 (전체)
+
+    [V10] 플래그 ON 시 read-through: SQLite 우선, 행 없으면 JSON 폴백 + lazy migration."""
+    if getattr(config, "V10_RELATIONS_READ_FROM_SQLITE", False):
+        try:
+            import sqlite_store
+            rels = sqlite_store.read_relations(channel_id)
+            if rels is not None:
+                return rels  # B 발동: 통짜 JSON 안 거침
+            # 구 세션 — JSON에서 읽고 그 자리에서 SQLite로 lazy 이주
+            att = get_domain(channel_id).get("npc_attitudes", {})
+            for _name, _rel in att.items():
+                _mirror_relation(channel_id, _name, _rel)
+            return att
+        except Exception as _e:
+            logging.warning(f"[V10] relations read-through 실패, JSON 폴백: {_e}")
     d = get_domain(channel_id)
     return d.get("npc_attitudes", {})
 
 def get_npc_attitude(channel_id: str, npc_name: str) -> Optional[Dict]:
-    """특정 NPC의 태도 조회"""
+    """특정 NPC의 태도 조회 (단건)
+
+    [V10] 플래그 ON 시 포인트 질의 (npc_relations 단일 행 SELECT)."""
     d = get_domain(channel_id)
     npc_name = _resolve_npc_name(d, npc_name)
+    if getattr(config, "V10_RELATIONS_READ_FROM_SQLITE", False):
+        try:
+            import sqlite_store
+            rel = sqlite_store.read_relation(channel_id, npc_name)
+            if rel is not None:
+                return rel
+        except Exception as _e:
+            logging.warning(f"[V10] relation 단건 read-through 실패, JSON 폴백: {_e}")
     return d.get("npc_attitudes", {}).get(npc_name)
 
+def delete_npc_attitude(channel_id: str, npc_name: str) -> bool:
+    """NPC 태도 삭제 (identity reveal 등). [V10 §3b] 직접 조작 정식화 — JSON+SQLite 동시."""
+    d = get_domain(channel_id)
+    npc_name = _resolve_npc_name(d, npc_name)
+    attitudes = d.get("npc_attitudes", {})
+    if npc_name not in attitudes:
+        return False
+    del attitudes[npc_name]
+    save_domain(channel_id, d)
+    try:
+        import sqlite_store
+        sqlite_store.delete_relation(channel_id, npc_name)
+    except Exception as _e:
+        logging.debug(f"[V10] relation delete mirror skipped: {_e}")
+    return True
+
+def set_attitude_turn(channel_id: str, npc_name: str, turn: int) -> None:
+    """attitude에 last_change_turn 기록 (쿨다운 게이트용). [V10 §3b] 직접 조작 정식화.
+    기존 _save_attitude_turn 동작 보존: NPC 태도가 존재할 때만."""
+    d = get_domain(channel_id)
+    npc_name = _resolve_npc_name(d, npc_name)
+    attitudes = d.get("npc_attitudes", {})
+    if npc_name not in attitudes:
+        return
+    attitudes[npc_name]["last_change_turn"] = int(turn)
+    save_domain(channel_id, d)
+    try:
+        import sqlite_store
+        sqlite_store.set_relation_turn(channel_id, npc_name, int(turn))
+    except Exception as _e:
+        logging.debug(f"[V10] relation turn mirror skipped: {_e}")
+
 # NPC Knowledge Persistence
+# [V10 Sprint 2-A] JSON 진실원천 + npc_knowledge 테이블 dual-write.
+# 읽기는 config.V10_KNOWLEDGE_READ_FROM_SQLITE 게이트 (기본 OFF).
+
+def _mirror_knowledge(channel_id: str, npc_name: str, kn: Dict[str, Any]) -> None:
+    """JSON에 쓰인 최종 지식 상태를 방벽 통과 후 npc_knowledge 테이블에 미러."""
+    try:
+        import sqlite_store
+        import state_guards
+        clean = state_guards.validate_knowledge_write(npc_name, kn)
+        if clean is not None:
+            sqlite_store.upsert_knowledge(channel_id, npc_name, clean)
+    except Exception as _e:
+        logging.debug(f"[V10] knowledge mirror skipped: {_e}")
+
 def update_npc_knowledge(channel_id: str, npc_name: str, knowledge_data: Dict[str, Any]) -> None:
-    """NPC의 지식 상태 업데이트 (Theoria 분석 결과 저장)"""
+    """NPC의 지식 상태 업데이트 (Theoria 분석 결과 저장)
+
+    주의: knows는 set union 머지라 순서 비결정 (기존 동작 — parity 비교는 set 기준).
+    DAI의 false_beliefs는 여기 저장 안 됨 (턴 내 소비 전용, spec §A-1)."""
     d = get_domain(channel_id)
     if "npc_knowledge" not in d:
         d["npc_knowledge"] = {}
@@ -472,16 +657,39 @@ def update_npc_knowledge(channel_id: str, npc_name: str, knowledge_data: Dict[st
         "last_updated": time.strftime('%Y-%m-%d %H:%M')
     }
     save_domain(channel_id, d)
+    _mirror_knowledge(channel_id, npc_name, d["npc_knowledge"][npc_name])
 
 def get_npc_knowledge(channel_id: str) -> Dict[str, Dict]:
-    """저장된 전체 NPC 지식 상태 조회"""
+    """저장된 전체 NPC 지식 상태 조회
+
+    [V10] 플래그 ON 시 read-through: SQLite 우선, 없으면 JSON 폴백 + lazy migration."""
+    if getattr(config, "V10_KNOWLEDGE_READ_FROM_SQLITE", False):
+        try:
+            import sqlite_store
+            kns = sqlite_store.read_knowledge_all(channel_id)
+            if kns is not None:
+                return kns
+            kn_json = get_domain(channel_id).get("npc_knowledge", {})
+            for _name, _kn in kn_json.items():
+                _mirror_knowledge(channel_id, _name, _kn)
+            return kn_json
+        except Exception as _e:
+            logging.warning(f"[V10] knowledge read-through 실패, JSON 폴백: {_e}")
     d = get_domain(channel_id)
     return d.get("npc_knowledge", {})
 
 def get_npc_knowledge_for(channel_id: str, npc_name: str) -> Optional[Dict]:
-    """특정 NPC의 지식 상태 조회"""
+    """특정 NPC의 지식 상태 조회 (단건 포인트 질의)"""
     d = get_domain(channel_id)
     npc_name = _resolve_npc_name(d, npc_name)
+    if getattr(config, "V10_KNOWLEDGE_READ_FROM_SQLITE", False):
+        try:
+            import sqlite_store
+            kn = sqlite_store.read_knowledge(channel_id, npc_name)
+            if kn is not None:
+                return kn
+        except Exception as _e:
+            logging.warning(f"[V10] knowledge 단건 read-through 실패, JSON 폴백: {_e}")
     return d.get("npc_knowledge", {}).get(npc_name)
 
 def propagate_npc_knowledge(channel_id: str, scene_npcs: list) -> int:
@@ -524,6 +732,19 @@ def propagate_npc_knowledge(channel_id: str, scene_npcs: list) -> int:
         d = get_domain(channel_id)
         d["npc_knowledge"] = all_knowledge
         save_domain(channel_id, d)
+        # [V10 Sprint 2-A] bulk 미러 — 방벽 통과분만, 단일 트랜잭션
+        try:
+            import sqlite_store
+            import state_guards
+            cleaned = {}
+            for _name, _kn in all_knowledge.items():
+                _c = state_guards.validate_knowledge_write(_name, _kn)
+                if _c is not None:
+                    cleaned[_name] = _c
+            if cleaned:
+                sqlite_store.upsert_knowledge_bulk(channel_id, cleaned)
+        except Exception as _e:
+            logging.debug(f"[V10] knowledge bulk mirror skipped: {_e}")
     return propagated
 
 # NPC Behavioral Imprints
@@ -971,8 +1192,9 @@ def update_helena_metric(channel_id: str, npc_name: str, depth_delta: int = 0, t
     target["depth"] = max(0, min(100, target["depth"] + depth_delta))
     target["tension"] = max(0, min(100, target["tension"] + tension_delta))
     target["last_updated"] = time.strftime('%Y-%m-%d %H:%M')
-    
+
     save_domain(channel_id, d)
+    _mirror_relation(channel_id, npc_name, target)  # [V10 Sprint 1] dual-write
 
 # UI Helpers
 def get_unified_player_info(channel_id: str, user_id: str) -> str:
@@ -1564,6 +1786,12 @@ def reset_session_state(channel_id: str) -> None:
             if data.get("source") in ("lore", "manual"):
                 kept_npcs[name] = data
         d["npcs"] = kept_npcs
+        # [V10 Sprint 2-B] npcs 테이블 미러 (clear_session_npcs와 동일 보존 정책)
+        try:
+            import sqlite_store
+            sqlite_store.delete_npcs_except_sources(channel_id, ("lore", "manual"))
+        except Exception as _e:
+            logging.debug(f"[V10] reset npc mirror skipped: {_e}")
 
     # 5. Reset Participant Runtime State (vigor/composure/notebook — 로어 프로필은 유지)
     for uid, pdata in d.get("participants", {}).items():

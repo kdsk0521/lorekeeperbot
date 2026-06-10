@@ -182,6 +182,15 @@ def repair_json(text: str) -> str:
     text = re.sub(r'\bNaN\b', 'null', text)
     text = re.sub(r'\bInfinity\b', '999999', text)
     text = re.sub(r'\bundefined\b', 'null', text)
+    # 2.5) [DeepSeek 2026-06-10] 값 뒤 괄호 주석 제거 — deepseek-v4가 JSON 값에 해설을 다는 버릇.
+    #   예: "pc_thought": true ("...라는 생각),   /   "self_opacity": null (분석 불가)",
+    #   bare 리터럴(true/false/null/숫자) 뒤 (...) [+잔여 따옴표] 가 구분자 앞에 오면 주석으로 보고 삭제.
+    #   파싱 실패 시에만 도는 수리 경로라 문자열 내부 오탐 위험 낮음.
+    text = re.sub(
+        r'\b(true|false|null|-?\d+(?:\.\d+)?)\s*\([^)]*\)\s*"?(?=\s*[,}\]\n])',
+        r'\1', text)
+    #   닫는 따옴표 뒤 괄호 주석: "...value" (해설), → "...value",
+    text = re.sub(r'(")\s*\([^()"]*\)(?=\s*[,}\]\n])', r'\1', text)
     # 3) Single-quoted 키 → double-quoted: {'key': → {"key":
     text = re.sub(r"""(?<=[\{,])\s*'([^']+)'\s*:""", r' "\1":', text)
     # 4) Unquoted 키 → double-quoted: {key: → {"key":  ,key: → ,"key":

@@ -687,6 +687,7 @@ TELESCOPE_PROTOCOL = """
 ## ┣ TELESCOPE v4: 2-Layer Reasoning
 purpose: forced_reasoning_before_prose | NOT self-verification
 rule: every response begins with telescope block. prose ONLY after block.
+language: ENTIRE telescope block in ENGLISH. Internal CoT — stripped before output, never reader-facing. English sharpens the reasoning. Korean ONLY for: quoting Korean prose-to-avoid (Craft.Spent), proper nouns. Final prose AFTER ┫ stays Korean.
 close_reading: re-examine all slot data + profiles + records before composing. Skim = failure.
 ★ fields pre-filled. Fill all unmarked fields.
 
@@ -698,7 +699,7 @@ format:
 
 === Layer 2: The Symbolic (now name) ===
 
-[Scene] — 장면 구조
+[Scene] — scene structure
   ├ [Scene.Who] ★ present characters
   ├ [Scene.When/Where] ★ temporal + spatial context
   ├ [Scene.Stance] A(approach)/B(back-off)/P(pressure)/☠(stuck). Scene's net direction. Per-NPC chairs still drift within it. Named → prose orients. Mismatch = vending.
@@ -707,13 +708,13 @@ format:
   ├ ☠ Structural: DEFAULT sequence for this scene type. Named → DEVIATE or JUSTIFY.
   ├ [Scene.Chain] ★Causal: Deep→Fermented→Fresh→Current. Surfaced info operates here? Retroactive? ("forward only" if none)
 
-[Character] — 인물
+[Character] — characters
   ├ [Char.Why] per NPC: want=X | know=Y | can=Z → do=W. Must trace from profile. Want contradicts profile → name the contradiction.
   ├ [Char.PC] PC = camera body only.
   ├ [Char.Pidgin] profile label used as adjective? → rewrite to behavior.
   └ [Char.Rift] NPC contradicting own profile NOW? → what + why. Momentary, not permanent.
 
-[Craft] — 산문
+[Craft] — prose craft
   ├ ☠ Spent: 3-5 default phrases (transitions/labels/closure/conjunctions). Listed=cleared. Find what's ALIVE.
   ├ [Craft.Cargo] delete → survives? YES → cut.
   ├ [Craft.Rhythm] sentence-length + body-part rotation. Same 2 turns → switch. Inertia check — if last two exchanges mirrored shape (tone/length/intensity), next beat shifts: environmental interruption, physical distraction, half-beat delay, or non-mirrored intensity.
@@ -737,7 +738,7 @@ format:
 output_rule: prose = sensory input only. Cognitive processing = ┣ exclusive.
    Chain context surfaces as present body — posture, breath, gesture. History shapes the moment; the moment carries it.
 role_boundary: analysis fields → renderer takes AS-IS. Hostility renders as hostile beats; conflict as collision; tension as pressure on action.
-token_budget: ~500 tok. Telegraphic English. ☠ lists = phrases. Layer 1 = raw sensation.
+token_budget: ~900 tok entire block — terse but COMPLETE. Compress WITHIN a field; never drop a field to save space (field omission = failure). Telegraphic English, no Korean drift. ☠ lists = phrases. Layer 1 = raw sensation.
 """
 
 

@@ -57,7 +57,13 @@ if not GEMINI_API_KEY: logging.warning("GEMINI_API_KEY Missing!")
 
 client_genai = None
 try:
-    if GEMINI_API_KEY: client_genai = genai.Client(api_key=GEMINI_API_KEY)
+    if config.ANALYSIS_BACKEND == "openai":
+        # 좌뇌(Flash 분석)를 wellspring(DeepSeek)으로 라우팅. genai.Client 호환 facade.
+        from analysis_backend import build_analysis_client
+        client_genai = build_analysis_client()
+        logging.info("[Analysis] backend=openai → GenaiCompatClient (wellspring DeepSeek)")
+    elif GEMINI_API_KEY:
+        client_genai = genai.Client(api_key=GEMINI_API_KEY)
 except Exception as e: logging.error(f"GenAI Init Failed: {e}")
 
 intents = discord.Intents.default()

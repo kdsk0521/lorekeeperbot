@@ -541,11 +541,19 @@ async def generate_response_with_retry(
                         best_length = response_length
 
                     if attempt < config.MAX_RETRY_COUNT - 1:
+                        # [2026-06-10] 길이 미달의 실범인은 텔레스코프 비대 (관측: raw 3555 중 블록 2300+).
+                        # 출력 예산을 구조 분석이 다 쓰고 산문이 굶음 → 블록 압축 + 산문 증량을 함께 지시.
+                        # 값싼 모델(deepseek)은 추상 지시를 무시 → 문단 수 같은 구체 지표로.
+                        _tele_len = len(clean_text) - response_length
                         full_input = (
                             f"{user_input}\n\n"
-                            f"⚠️ **[LENGTH WARNING]** Previous PROSE (excluding ┣...┫) was {response_length} chars. "
-                            f"MUST write at least {min_length} chars of prose AFTER the ┫ marker. "
-                            f"Add more sensory details, NPC reactions, and environmental descriptions.\n"
+                            f"⚠️ **[LENGTH WARNING — attempt {attempt + 1}]** "
+                            f"Previous output: telescope block {_tele_len} chars, prose only {response_length} chars. "
+                            f"WRONG BUDGET SPLIT.\n"
+                            f"1. COMPRESS the ┣...┫ telescope block to under 900 chars (telegraphic, no elaboration).\n"
+                            f"2. PROSE after ┫ MUST be at least {min_length} chars — write 6+ full paragraphs. "
+                            f"Expand scene beats already planned: sensory texture, NPC micro-reactions, "
+                            f"environmental shifts, body language. Do NOT add new plot events to pad length.\n"
                             f"{hidden_reminder}"
                         )
             else:

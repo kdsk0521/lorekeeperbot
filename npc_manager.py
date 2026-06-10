@@ -947,14 +947,8 @@ def get_npc_attitude(channel_id: str, npc_name: str) -> Optional[Dict]:
 
 
 def delete_npc_attitude(channel_id: str, npc_name: str) -> bool:
-    """NPC 태도 정보 삭제"""
-    d = domain_manager.get_domain(channel_id)
-    attitudes = d.get("npc_attitudes", {})
-    if npc_name in attitudes:
-        del attitudes[npc_name]
-        domain_manager.save_domain(channel_id, d)
-        return True
-    return False
+    """NPC 태도 정보 삭제 [V10 Sprint 1: domain_manager 정식 API로 위임 (JSON+SQLite 동시)]"""
+    return domain_manager.delete_npc_attitude(channel_id, npc_name)
 
 
 def get_relationship_summary(channel_id: str) -> str:
@@ -1152,22 +1146,13 @@ def get_npc_time_progression(channel_id: str) -> List[str]:
 
 def clear_session_npcs(channel_id: str) -> int:
     """
-    세션 전용 NPC (source != 'lore') 일괄 삭제
+    세션 전용 NPC 일괄 삭제 — lore + manual(수동 등록)은 보존.
+    [2026-06-10 Fix] 기존엔 source != 'lore'만 보존 제외라 manual도 삭제됨 (세션 리셋의
+    보존 정책과 불일치). 사용자 확인: 수동 추가 NPC는 살린다.
+    [V10 Sprint 2: domain_manager 정식 API로 위임 (JSON+SQLite 동시)]
     Returns: 삭제된 NPC 수
     """
-    d = domain_manager.get_domain(channel_id)
-    npcs = d.get("npcs", {})
-    to_delete = []
-    
-    for name, data in npcs.items():
-        if data.get("source", "session") != "lore":
-            to_delete.append(name)
-            
-    for name in to_delete:
-        del npcs[name]
-        
-    domain_manager.save_domain(channel_id, d)
-    return len(to_delete)
+    return domain_manager.delete_npcs_by_source(channel_id, ("lore", "manual"))
 
 
 # =========================================================
@@ -1205,10 +1190,9 @@ def tick_all_cooldowns(channel_id: str) -> None:
             data["decision_cooldown"] = max(0, cd - 1)
             changed = True
     if changed:
-        # 직접 domain 저장 (bulk update — update_npc 반복 호출보다 효율적)
-        d = domain_manager.get_domain(channel_id)
-        d["npcs"] = npcs
-        domain_manager.save_domain(channel_id, d)
+        # bulk update — update_npc 반복 호출보다 효율적
+        # [V10 Sprint 2: domain_manager 정식 API로 위임 (JSON+SQLite 트랜잭션 동시)]
+        domain_manager.bulk_update_npcs(channel_id, npcs)
         logger.debug(f"[DecisionCooldown] Ticked cooldowns for {channel_id}")
 
 
@@ -1288,13 +1272,9 @@ def update_npc_attitude_gated(
 
 
 def _save_attitude_turn(channel_id: str, npc_name: str, turn: int) -> None:
-    """attitude 데이터에 last_change_turn을 기록."""
-    d = domain_manager.get_domain(channel_id)
-    attitudes = d.get("npc_attitudes", {})
-    npc_name = domain_manager._resolve_npc_name(d, npc_name)
-    if npc_name in attitudes:
-        attitudes[npc_name]["last_change_turn"] = turn
-        domain_manager.save_domain(channel_id, d)
+    """attitude 데이터에 last_change_turn을 기록.
+    [V10 Sprint 1: domain_manager 정식 API로 위임 (JSON+SQLite 동시)]"""
+    domain_manager.set_attitude_turn(channel_id, npc_name, turn)
 
 
 # =========================================================
@@ -1370,14 +1350,15 @@ def apply_persona_snapshot(channel_id: str, npc_name: str, updates: dict, curren
     if len(snapshot.get("history", [])) > 20:
         snapshot["history"] = snapshot["history"][-20:]
 
-    # Save
+    # Save [V10 Sprint 2: update_npc 경유로 교체 (JSON+SQLite 동시, 직접 조작 제거)]
     npc["persona_snapshot"] = snapshot
     d = domain_manager.get_domain(channel_id)
     npcs = d.get("npcs", {})
     resolved_name = domain_manager._find_npc_key(npcs, npc_name) or npc_name
     if resolved_name in npcs:
-        npcs[resolved_name]["persona_snapshot"] = snapshot
-        domain_manager.save_domain(channel_id, d)
+        npc_data = dict(npcs[resolved_name])
+        npc_data["persona_snapshot"] = snapshot
+        domain_manager.update_npc(channel_id, resolved_name, npc_data)
 
     return result
 
