@@ -217,7 +217,34 @@ def save_domain(channel_id: str, data: Dict[str, Any]) -> bool:
     except Exception as _e:
         logging.debug(f"[V10] dual-write skipped: {_e}")
 
+    # [V10 Sprint 3] 이력 도메인 스냅샷 미러 — 발효(auto_ferment)의 모든 저장이
+    # save_domain(=save_cb)으로 수렴하므로 여기가 유일한 미러 지점 (발효 코드 무수정).
+    _sync_history_domain(channel_id, data)
+
     return True
+
+# [V10 Sprint 3] 변경 감지 가드 — save_domain은 모든 도메인 저장마다 불리므로,
+# fermented/deep이 안 변했으면 미러 skip (무의미한 DELETE+INSERT 방지).
+_hist_sync_cache: Dict[str, tuple] = {}
+
+def _sync_history_domain(channel_id: str, data: Dict[str, Any]) -> None:
+    try:
+        import sqlite_store
+        fermented = data.get("fermented_history", [])
+        deep = data.get("deep_memory", "")
+        deep_data = data.get("deep_memory_data", {})
+        f_key = hash(json.dumps(fermented, ensure_ascii=False, sort_keys=True, default=str))
+        d_key = hash(json.dumps([deep, deep_data], ensure_ascii=False, sort_keys=True, default=str))
+        cached = _hist_sync_cache.get(channel_id)
+        f_ok = d_ok = True
+        if cached is None or cached[0] != f_key:
+            f_ok = sqlite_store.sync_fermented(channel_id, fermented if isinstance(fermented, list) else [])
+        if cached is None or cached[1] != d_key:
+            d_ok = sqlite_store.sync_deep(channel_id, deep, deep_data)
+        if f_ok and d_ok:
+            _hist_sync_cache[channel_id] = (f_key, d_key)
+    except Exception as _e:
+        logging.debug(f"[V10] history domain sync skipped: {_e}")
 
 def reset_domain(channel_id: str) -> None:
     """채널의 모든 데이터 초기화 (파일 삭제 + 캐시 무효화)"""
@@ -1429,14 +1456,25 @@ def append_history(channel_id: str, role: str, content: str, message_id: Optiona
         logging.debug(f"[History] game_time meta skip: {_e_gt}")
 
     d["history"].append(entry)
-    
+
     # 히스토리 길이 제한 (최근 항목 유지)
     if len(d["history"]) > config.MAX_HISTORY_LENGTH:
         removed = d["history"][:len(d["history"]) - config.MAX_HISTORY_LENGTH]
         d["history"] = d["history"][-config.MAX_HISTORY_LENGTH:]
         logging.debug(f"[History] 오래된 {len(removed)}개 메시지 제거 (최대: {config.MAX_HISTORY_LENGTH})")
-    
+
     save_domain(channel_id, d)
+
+    # [V10 Sprint 3] 영구 로그 append — JSON은 작업 창(trim/발효 소비), history_log는 전체 기록.
+    # 의도적 비대칭: 여기서 INSERT만, trim/발효가 지워도 로그엔 남는다 (무한 기억 토대).
+    try:
+        import sqlite_store
+        import state_guards
+        clean = state_guards.validate_history_write(entry)
+        if clean is not None:
+            sqlite_store.append_history(channel_id, clean)
+    except Exception as _e:
+        logging.debug(f"[V10] history append mirror skipped: {_e}")
 
 def get_history(channel_id: str) -> List[Dict[str, str]]:
     return get_domain(channel_id).get("history", [])
@@ -1762,12 +1800,20 @@ def reset_session_state(channel_id: str) -> None:
     - 세션 NPC 및 퀘스트 초기화
     """
     d = get_domain(channel_id)
-    
+
     # 1. Reset History
     d["history"] = []
     d["fermented_history"] = []
     d["deep_memory"] = ""
     d["ai_session_memory"] = _get_default_session()["ai_session_memory"]
+    # [V10 Sprint 3] 영구 로그도 삭제 — 리셋=완전 새 이야기 (사용자 결정 2026-06-10).
+    # fermented/deep 테이블은 함수 끝 save_domain의 스냅샷 미러가 빈 상태로 동기화.
+    try:
+        import sqlite_store
+        sqlite_store.clear_history_log(channel_id)
+        sqlite_store.clear_ledger(channel_id)  # [Sprint 4] 막간 장부도 동일 정책
+    except Exception as _e:
+        logging.debug(f"[V10] history log clear skipped: {_e}")
     
     # 2. Reset World State
     d["world_state"] = config.DEFAULT_WORLD_STATE.copy()

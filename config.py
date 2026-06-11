@@ -70,7 +70,7 @@ NARRATIVE_TOP_K = 60          # 70 → 60 (wild 후보 trim)
 NARRATIVE_TOP_P = 0.80
 NARRATIVE_MAX_OUTPUT_TOKENS = 12288
 # 서사 출력 길이: 인원당 동적 조절 (텔레스코프 제거 후 기준)
-NARRATIVE_CHARS_BASE = 1500      # 기본 (1인 이하)
+NARRATIVE_CHARS_BASE = 2200      # 기본 (1인 이하) [2026-06-11: 1500→2200, 산문 목표 2000자대 (1인 max 3000/floor 1800)]
 NARRATIVE_CHARS_PER_PLAYER = 800 # 참여 인원당 추가
 
 
@@ -1220,6 +1220,10 @@ V10_RELATIONS_READ_FROM_SQLITE = True
 # (첫 읽기는 JSON 폴백 → 자동 이주). 문제 시 셋 다 False로 즉시 V9 복귀.
 V10_KNOWLEDGE_READ_FROM_SQLITE = True
 V10_NPCS_READ_FROM_SQLITE = True
+# Sprint 4: 막간 장부 (침묵 틱) — 장면 밖 NPC 행적을 코드로 전진시켜 기록.
+# 발화 0/콜 0/루프 0. OFF = 완전 무동작. spec: v10_sprint4_interim_ledger_spec.md
+# 2026-06-11 ON (스모크 35케이스 PASS 후). 문제 시 이 줄 False = 즉시 완전 무동작.
+V10_INTERIM_LEDGER = True
 
 # =========================================================
 # Passive Theory Tag System (Phase 4-1)

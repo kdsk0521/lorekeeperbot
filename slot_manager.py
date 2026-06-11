@@ -419,8 +419,13 @@ class SlotPromptBuilder:
             self.set_slot(8, f"<Lore>\n{lore}\n</Lore>")
 
         # [9] Fermented History
+        # [wave4-D] State Modulation gradient (RW 1.5.0): 기억층이 현재 표현을 변조하는 강도 사다리 명시.
         if fermented_history:
-            self.set_slot(9, f"<Fermented_Memory>\n{fermented_history}\n</Fermented_Memory>")
+            _mod_note = (
+                "Memory modulates current expression as gradient: recent turns (strongest) → "
+                "fermented (moderate) → deep past (weak). Layered ATOP profile baseline, never replacing it."
+            )
+            self.set_slot(9, f"<Fermented_Memory>\n{_mod_note}\n\n{fermented_history}\n</Fermented_Memory>")
 
         # ===== CONTEXT ZONE (11) =====
         # [11] Chapter Context
@@ -1500,6 +1505,12 @@ def build_34_step_prompt(ctx) -> str:
             logger.debug(f"[RealTimeDisplay] Fallback to legacy world_ctx: {e}")
     if not real_time_data:
         real_time_data = getattr(ctx, 'world_ctx', '')
+
+    # [V10 Sprint 4] 막간 장부 — ctx에 미리 재구성된 블록이 있으면 Slot 29에 합류.
+    # (재구성은 orchestration_context에서 턴 진입 시 1회 — 여기선 부착만)
+    _interim_block = getattr(ctx, 'interim_ledger_block', '')
+    if _interim_block:
+        real_time_data += f"\n\n{_interim_block}"
 
     # PC Autonomy Check — 사실 보고 기반
     # PC Autonomy: pc_spoke 제외 (유저 대사 재사용은 사칭 아님). pc_thought/pc_moved만 경고.

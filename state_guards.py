@@ -22,8 +22,9 @@ from typing import Any, Dict, Iterable, Optional
 
 logger = logging.getLogger("StateGuards")
 
-# npc_manager.ATTITUDE_LEVELS와 동기 (검증용 참조 — 강제 아님, 경고만)
-KNOWN_ATTITUDES = ("hostile", "unfriendly", "neutral", "friendly", "devoted")
+# npc_manager.ATTITUDE_LEVELS와 동기 필수 (검증용 참조 — 강제 아님, 경고만)
+# [2026-06-10 Fix] 'loyal' 누락돼 있었음 — 실운영 로그에서 거짓 경고로 발각 (spec 가정 5단계 ≠ 실코드 6단계)
+KNOWN_ATTITUDES = ("hostile", "unfriendly", "neutral", "friendly", "loyal", "devoted")
 
 _CLAMP_MIN, _CLAMP_MAX = 0, 100
 
@@ -141,6 +142,64 @@ def validate_knowledge_write(npc_name: Any, payload: Any) -> Optional[Dict[str, 
         "would_share": bool(payload.get("would_share")),
         "leak_risk": leak_risk,
         "last_updated": last_updated,
+    }
+
+
+def validate_history_write(entry: Any) -> Optional[Dict[str, Any]]:
+    """[Sprint 3] history_log append 방벽. role/content 비어있으면 거부 (행 가치 없음).
+    message_id/game_time은 있으면 타입만 정규화, 없으면 키 부재 보존."""
+    if not isinstance(entry, dict):
+        logger.warning("[Guard] history write 거부: entry가 dict 아님 (%s)", type(entry).__name__)
+        return None
+    role = entry.get("role")
+    content = entry.get("content")
+    if not isinstance(role, str) or not role.strip():
+        logger.warning("[Guard] history write 거부: role 불량 (%r)", role)
+        return None
+    if not isinstance(content, str) or not content.strip():
+        logger.warning("[Guard] history write 거부: content 비어있음")
+        return None
+    clean: Dict[str, Any] = {"role": role, "content": content}
+    if "message_id" in entry and entry["message_id"] is not None:
+        clean["message_id"] = str(entry["message_id"])
+    gt = entry.get("game_time")
+    if isinstance(gt, dict):
+        clean["game_time"] = gt
+    return clean
+
+
+LEDGER_ACTS = ("move", "routine", "contact", "pursue", "still")
+
+
+def validate_ledger_write(entry: Any) -> Optional[Dict[str, Any]]:
+    """[Sprint 4] 막간 장부 방벽. 입력원이 우리 코드뿐 → **act enum 강제** (parity 철칙 비적용 —
+    위반은 관용 대상이 아니라 버그 신호). 흔적은 명사구 리스트(str)만, 문장형 지시 침투 차단은
+    문법 차원(헤더 1회 원칙)이라 여기선 타입만."""
+    if not isinstance(entry, dict):
+        logger.warning("[Guard] ledger write 거부: entry 비dict (%s)", type(entry).__name__)
+        return None
+    npc = entry.get("npc_name")
+    act = entry.get("act")
+    summary = entry.get("summary")
+    if not isinstance(npc, str) or not npc.strip():
+        logger.warning("[Guard] ledger write 거부: npc_name 불량 (%r)", npc)
+        return None
+    if act not in LEDGER_ACTS:
+        logger.warning("[Guard] ledger write 거부: act enum 위반 (%r) — 코드 버그 신호", act)
+        return None
+    if not isinstance(summary, str) or not summary.strip():
+        logger.warning("[Guard] ledger write 거부: summary 비어있음 for %s", npc)
+        return None
+    return {
+        "npc_name": npc.strip(),
+        "act": act,
+        "summary": summary.strip(),
+        "motive": str(entry.get("motive") or ""),
+        "route": str(entry.get("route") or ""),
+        "traces": _safe_str_list(entry.get("traces")),
+        "mood_delta": str(entry.get("mood_delta") or ""),
+        "game_span": str(entry.get("game_span") or ""),
+        "consumed": bool(entry.get("consumed")),
     }
 
 

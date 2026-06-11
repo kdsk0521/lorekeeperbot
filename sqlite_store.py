@@ -115,6 +115,69 @@ def _ensure_schema() -> bool:
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_npcs_channel ON npcs(channel_id)")
+            # [V10 Sprint 3] 대화 이력 도메인 (v10_sprint3_history_spec.md)
+            # history_log: append-only 영구 기록. JSON history(작업 창)와 의도적 비대칭 —
+            # trim/발효 소비로 JSON에서 사라져도 여기엔 남는다. DELETE는 리셋뿐.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS history_log (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_id  TEXT NOT NULL,
+                    role        TEXT NOT NULL,
+                    content     TEXT NOT NULL,
+                    message_id  TEXT,
+                    game_time   TEXT,
+                    created_at  REAL NOT NULL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_histlog_channel ON history_log(channel_id, id)")
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS fermented_history (
+                    channel_id  TEXT NOT NULL,
+                    seq         INTEGER NOT NULL,
+                    entry       TEXT NOT NULL,
+                    updated_at  REAL NOT NULL,
+                    PRIMARY KEY (channel_id, seq)
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS deep_memory (
+                    channel_id  TEXT PRIMARY KEY,
+                    narrative   TEXT NOT NULL DEFAULT '',
+                    data        TEXT NOT NULL DEFAULT '{}',
+                    updated_at  REAL NOT NULL
+                )
+            """)
+            # [V10] DAI 스냅샷 롤링 로그 — Theoria 분석의 턴별 보존.
+            # 용도: ①관측(필드 비대/모델 JSON 버릇) ②Sprint 4 동적 NPC 원재료 (턴별 심리·사회 이력)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS dai_logs (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_id  TEXT NOT NULL,
+                    turn        INTEGER NOT NULL,
+                    dai         TEXT NOT NULL,
+                    created_at  REAL NOT NULL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_dailogs_channel ON dai_logs(channel_id, id)")
+            # [V10 Sprint 4] 막간 장부 — 장면 밖 NPC 행적의 기록 (환각 대체).
+            # 순수 코드 전진 결과만 들어옴 (LLM 출력 아님 → act enum 방벽 강제).
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS offscreen_ledger (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_id  TEXT NOT NULL,
+                    npc_name    TEXT NOT NULL,
+                    act         TEXT NOT NULL,
+                    summary     TEXT NOT NULL,
+                    motive      TEXT NOT NULL DEFAULT '',
+                    route       TEXT NOT NULL DEFAULT '',
+                    traces      TEXT NOT NULL DEFAULT '[]',
+                    mood_delta  TEXT NOT NULL DEFAULT '',
+                    game_span   TEXT NOT NULL DEFAULT '',
+                    consumed    INTEGER NOT NULL DEFAULT 0,
+                    created_at  REAL NOT NULL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_ledger_channel ON offscreen_ledger(channel_id, consumed, id)")
             conn.commit()
             _initialized = True
             return True
@@ -711,7 +774,7 @@ def delete_npcs_except_sources(channel_id: str, keep_sources: tuple) -> int:
 
 
 def delete_channel_rows(channel_id: str) -> bool:
-    """채널의 모든 SQLite 행 삭제 (sessions + npc_relations + npc_knowledge + npcs).
+    """채널의 모든 SQLite 행 삭제 (전 테이블).
     reset_domain(파일 삭제 리셋) 미러 — 안 지우면 읽기 플래그 ON 시 유령 데이터 부활."""
     if not channel_id or not _ensure_schema():
         return False
@@ -719,13 +782,357 @@ def delete_channel_rows(channel_id: str) -> bool:
     if conn is None:
         return False
     try:
-        for table in ("sessions", "npc_relations", "npc_knowledge", "npcs"):
+        for table in ("sessions", "npc_relations", "npc_knowledge", "npcs",
+                      "history_log", "fermented_history", "deep_memory", "dai_logs",
+                      "offscreen_ledger"):
             conn.execute(f"DELETE FROM {table} WHERE channel_id=?", (channel_id,))
         conn.commit()
         return True
     except Exception as e:
         logger.warning(f"[SQLiteStore] delete_channel_rows 실패 (무시): {channel_id}: {e}")
         return False
+
+
+# =========================================================
+# [V10 Sprint 3] 대화 이력 도메인 API
+# =========================================================
+
+def append_history(channel_id: str, entry: Dict[str, Any]) -> bool:
+    """history_log에 1행 append (방벽 통과 후). 영구 기록 — DELETE는 리셋뿐."""
+    if not channel_id or not isinstance(entry, dict):
+        return False
+    if not _ensure_schema():
+        return False
+    conn = _get_conn()
+    if conn is None:
+        return False
+    try:
+        gt = entry.get("game_time")
+        conn.execute(
+            "INSERT INTO history_log (channel_id, role, content, message_id, game_time, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                channel_id, entry.get("role", ""), entry.get("content", ""),
+                entry.get("message_id"),
+                json.dumps(gt, ensure_ascii=False) if isinstance(gt, dict) else None,
+                time.time(),
+            ),
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] append_history 실패 (무시): {channel_id}: {e}")
+        return False
+
+
+def _row_to_history(row) -> Dict[str, Any]:
+    entry: Dict[str, Any] = {"role": row[0], "content": row[1]}
+    if row[2] is not None:
+        entry["message_id"] = row[2]
+    if row[3]:
+        try:
+            entry["game_time"] = json.loads(row[3])
+        except Exception:
+            pass
+    return entry
+
+
+def read_history_tail(channel_id: str, n: int = 50) -> Optional[list]:
+    """최근 N개 엔트리 (오래된→최신 순). 행 0개/실패 시 None."""
+    if not channel_id or n <= 0 or not _ensure_schema():
+        return None
+    conn = _get_conn()
+    if conn is None:
+        return None
+    try:
+        cur = conn.execute(
+            "SELECT role, content, message_id, game_time FROM history_log "
+            "WHERE channel_id=? ORDER BY id DESC LIMIT ?",
+            (channel_id, int(n)),
+        )
+        rows = cur.fetchall()
+        if not rows:
+            return None
+        return [_row_to_history(r) for r in reversed(rows)]
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_history_tail 실패: {channel_id}: {e}")
+        return None
+
+
+def search_history_log(channel_id: str, query: str, limit: int = 20) -> list:
+    """전체 로그 텍스트 검색 (trim된 과거 포함) — B의 실증, RAG/틱 루프 토대. 최신순."""
+    if not channel_id or not query or not _ensure_schema():
+        return []
+    conn = _get_conn()
+    if conn is None:
+        return []
+    try:
+        cur = conn.execute(
+            "SELECT role, content, message_id, game_time FROM history_log "
+            "WHERE channel_id=? AND content LIKE ? ORDER BY id DESC LIMIT ?",
+            (channel_id, f"%{query}%", int(limit)),
+        )
+        return [_row_to_history(r) for r in cur.fetchall()]
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] search_history_log 실패: {channel_id}: {e}")
+        return []
+
+
+def count_history(channel_id: Optional[str] = None) -> int:
+    """history_log 행 수. 실패 시 -1."""
+    if not _ensure_schema():
+        return -1
+    conn = _get_conn()
+    if conn is None:
+        return -1
+    try:
+        if channel_id:
+            cur = conn.execute("SELECT COUNT(*) FROM history_log WHERE channel_id=?", (channel_id,))
+        else:
+            cur = conn.execute("SELECT COUNT(*) FROM history_log")
+        return int(cur.fetchone()[0])
+    except Exception:
+        return -1
+
+
+def clear_history_log(channel_id: str) -> bool:
+    """history_log 채널 행 전체 삭제 — 리셋=완전 새 이야기 (사용자 결정 2026-06-10)."""
+    if not channel_id or not _ensure_schema():
+        return False
+    conn = _get_conn()
+    if conn is None:
+        return False
+    try:
+        conn.execute("DELETE FROM history_log WHERE channel_id=?", (channel_id,))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] clear_history_log 실패 (무시): {channel_id}: {e}")
+        return False
+
+
+def sync_fermented(channel_id: str, entries: list) -> bool:
+    """fermented_history 전체 교체 미러 (발효의 리스트 교체 의미론 그대로). 단일 트랜잭션."""
+    if not channel_id or not isinstance(entries, list) or not _ensure_schema():
+        return False
+    conn = _get_conn()
+    if conn is None:
+        return False
+    try:
+        now = time.time()
+        conn.execute("DELETE FROM fermented_history WHERE channel_id=?", (channel_id,))
+        if entries:
+            conn.executemany(
+                "INSERT INTO fermented_history (channel_id, seq, entry, updated_at) VALUES (?, ?, ?, ?)",
+                [(channel_id, i, json.dumps(e, ensure_ascii=False), now) for i, e in enumerate(entries)],
+            )
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] sync_fermented 실패 (무시): {channel_id}: {e}")
+        return False
+
+
+def read_fermented(channel_id: str) -> Optional[list]:
+    """fermented_history 조회 (seq 순). 행 0개/실패 시 None."""
+    if not channel_id or not _ensure_schema():
+        return None
+    conn = _get_conn()
+    if conn is None:
+        return None
+    try:
+        cur = conn.execute(
+            "SELECT entry FROM fermented_history WHERE channel_id=? ORDER BY seq",
+            (channel_id,),
+        )
+        rows = cur.fetchall()
+        if not rows:
+            return None
+        out = []
+        for (blob,) in rows:
+            try:
+                out.append(json.loads(blob))
+            except Exception:
+                continue
+        return out if out else None
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_fermented 실패: {channel_id}: {e}")
+        return None
+
+
+def sync_deep(channel_id: str, narrative: str, data: Dict[str, Any]) -> bool:
+    """deep_memory upsert 미러."""
+    if not channel_id or not _ensure_schema():
+        return False
+    conn = _get_conn()
+    if conn is None:
+        return False
+    try:
+        conn.execute(
+            "INSERT INTO deep_memory (channel_id, narrative, data, updated_at) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(channel_id) DO UPDATE SET narrative=excluded.narrative, "
+            "data=excluded.data, updated_at=excluded.updated_at",
+            (
+                channel_id,
+                narrative if isinstance(narrative, str) else str(narrative or ""),
+                json.dumps(data if isinstance(data, dict) else {}, ensure_ascii=False),
+                time.time(),
+            ),
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] sync_deep 실패 (무시): {channel_id}: {e}")
+        return False
+
+
+def append_dai_log(channel_id: str, turn: int, dai: Dict[str, Any], keep: int = 100) -> bool:
+    """DAI 스냅샷 1턴 저장 + 채널당 최근 keep개 롤링. 실패해도 봇 무영향."""
+    if not channel_id or not isinstance(dai, dict) or not dai:
+        return False
+    if not _ensure_schema():
+        return False
+    conn = _get_conn()
+    if conn is None:
+        return False
+    try:
+        conn.execute(
+            "INSERT INTO dai_logs (channel_id, turn, dai, created_at) VALUES (?, ?, ?, ?)",
+            (channel_id, int(turn), json.dumps(dai, ensure_ascii=False, default=str), time.time()),
+        )
+        # 롤링: 최근 keep개 초과분 삭제
+        conn.execute(
+            "DELETE FROM dai_logs WHERE channel_id=? AND id NOT IN "
+            "(SELECT id FROM dai_logs WHERE channel_id=? ORDER BY id DESC LIMIT ?)",
+            (channel_id, channel_id, int(keep)),
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] append_dai_log 실패 (무시): {channel_id}: {e}")
+        return False
+
+
+def append_ledger(channel_id: str, entry: Dict[str, Any], keep: int = 200) -> bool:
+    """막간 장부 1행 기록 (validate_ledger_write 통과 후). 채널당 최근 keep행 롤링."""
+    if not channel_id or not isinstance(entry, dict):
+        return False
+    if not _ensure_schema():
+        return False
+    conn = _get_conn()
+    if conn is None:
+        return False
+    try:
+        conn.execute(
+            "INSERT INTO offscreen_ledger (channel_id, npc_name, act, summary, motive, route, "
+            "traces, mood_delta, game_span, consumed, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                channel_id, entry["npc_name"], entry["act"], entry["summary"],
+                entry.get("motive", ""), entry.get("route", ""),
+                json.dumps(entry.get("traces", []), ensure_ascii=False),
+                entry.get("mood_delta", ""), entry.get("game_span", ""),
+                1 if entry.get("consumed") else 0, time.time(),
+            ),
+        )
+        conn.execute(
+            "DELETE FROM offscreen_ledger WHERE channel_id=? AND id NOT IN "
+            "(SELECT id FROM offscreen_ledger WHERE channel_id=? ORDER BY id DESC LIMIT ?)",
+            (channel_id, channel_id, int(keep)),
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] append_ledger 실패 (무시): {channel_id}: {e}")
+        return False
+
+
+def read_ledger_tail(channel_id: str, n: int = 20) -> list:
+    """최근 N행 (오래된→최신). 디버그/관측용."""
+    if not channel_id or n <= 0 or not _ensure_schema():
+        return []
+    conn = _get_conn()
+    if conn is None:
+        return []
+    try:
+        cur = conn.execute(
+            "SELECT npc_name, act, summary, motive, route, traces, mood_delta, consumed "
+            "FROM offscreen_ledger WHERE channel_id=? ORDER BY id DESC LIMIT ?",
+            (channel_id, int(n)),
+        )
+        out = []
+        for r in reversed(cur.fetchall()):
+            try:
+                traces = json.loads(r[5])
+            except Exception:
+                traces = []
+            out.append({"npc_name": r[0], "act": r[1], "summary": r[2], "motive": r[3],
+                        "route": r[4], "traces": traces, "mood_delta": r[6], "consumed": bool(r[7])})
+        return out
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_ledger_tail 실패: {channel_id}: {e}")
+        return []
+
+
+def clear_ledger(channel_id: str) -> bool:
+    """막간 장부 채널 행 삭제 — 리셋=완전 새 이야기."""
+    if not channel_id or not _ensure_schema():
+        return False
+    conn = _get_conn()
+    if conn is None:
+        return False
+    try:
+        conn.execute("DELETE FROM offscreen_ledger WHERE channel_id=?", (channel_id,))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] clear_ledger 실패 (무시): {channel_id}: {e}")
+        return False
+
+
+def read_dai_logs(channel_id: str, limit: int = 10) -> list:
+    """최근 N턴 DAI 스냅샷 (오래된→최신). [(turn, dai_dict), ...]"""
+    if not channel_id or limit <= 0 or not _ensure_schema():
+        return []
+    conn = _get_conn()
+    if conn is None:
+        return []
+    try:
+        cur = conn.execute(
+            "SELECT turn, dai FROM dai_logs WHERE channel_id=? ORDER BY id DESC LIMIT ?",
+            (channel_id, int(limit)),
+        )
+        out = []
+        for turn, blob in reversed(cur.fetchall()):
+            try:
+                out.append((turn, json.loads(blob)))
+            except Exception:
+                continue
+        return out
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_dai_logs 실패: {channel_id}: {e}")
+        return []
+
+
+def read_deep(channel_id: str) -> Optional[Dict[str, Any]]:
+    """deep_memory 조회. {"narrative": str, "data": dict} or None."""
+    if not channel_id or not _ensure_schema():
+        return None
+    conn = _get_conn()
+    if conn is None:
+        return None
+    try:
+        cur = conn.execute("SELECT narrative, data FROM deep_memory WHERE channel_id=?", (channel_id,))
+        row = cur.fetchone()
+        if row is None:
+            return None
+        try:
+            data = json.loads(row[1])
+        except Exception:
+            data = {}
+        return {"narrative": row[0], "data": data}
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_deep 실패: {channel_id}: {e}")
+        return None
 
 
 def count_npcs(channel_id: Optional[str] = None) -> int:

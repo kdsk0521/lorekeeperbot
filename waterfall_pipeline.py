@@ -202,6 +202,17 @@ class WaterfallPipeline:
             bus.judgment["eval"] = eval_data
             bus.judgment["modifications"] = eval_data.get("modifications", [])
             bus.judgment["narrative_hook"] = analysis.get("narrative_hook", "")
+
+        # [V10] DAI 스냅샷 롤링 보존 — bus.dai 완성 직후, 코드만(콜 0)·실패 무해.
+        # 용도: ①관측 — 필드 비대/모델 JSON 버릇을 실데이터로 ②Sprint 4 동적 NPC 원재료
+        # (턴별 심리·사회 이력 질의). 읽기: sqlite_store.read_dai_logs(channel_id, n).
+        try:
+            import sqlite_store
+            _dai_ch = (context.narrative_anchors or {}).get("channel_id", "")
+            if _dai_ch:
+                sqlite_store.append_dai_log(_dai_ch, current_turn, bus.dai)
+        except Exception as _e_dai:
+            logger.debug(f"[V10] dai log skipped: {_e_dai}")
         
         # Doom Clocks v3 연동 (clock_updates, clock_new, clock_resolved)
         # relief 제거 (2026-05-23) — legacy 위기진폭 잔재. 둠은 서사 진행도라 평화 장면 자동 감소는 의미 충돌.

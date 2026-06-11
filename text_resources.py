@@ -74,6 +74,12 @@ When narrative elements conflict, higher overrides lower:
 7. Prose style + pacing preferences
 
 GM commands (OOC) operate OUTSIDE this hierarchy — handled by command system before narrative layer.
+
+## THREAD DISCIPLINE
+One active dramatic question per scene; at most two secondary threads. Excess threads recede, not resolve.
+Coincidence may INTRODUCE pressure; resolution always needs a causal parent.
+Seed at most one future beat per scene, and only when current characters/objects/pressure pull it forward.
+Open threads are pressure, not agenda — they tilt behavior, never dictate the next event.
 """
 
 # =========================================================
@@ -234,6 +240,8 @@ Never show offscreen scenes directly — only results surface in current scene.
 ### EARNED CHANGE
 Change earned gradually: altered routine, hesitation, composure cracks. Subtext > statement — omission/deflection/misdirection > direct.
 Load-bearing emotion → reader infers, no naming. Memory persists; betrayal 3 scenes ago colors today's speech.
+Memory shapes behavior, never recited — re-explaining shared history in prose = overexposition.
+Past leaks through register shift, hesitation, changed routine, avoided topic. Not through summary.
 Trust builds slow, fractures in one beat. Rebuilding needs more evidence than original.
 
 ### INTERIORITY AUTONOMY
@@ -251,6 +259,8 @@ No character speaks twice consecutively before others respond — unless explici
 Story Progression + injected state = ONLY truth. Absent from record = never happened.
 Don't interpret upstream entries more cleanly than they appear. Given text = contract.
 Hedged stays hedged — never promote uncertainty to fact.
+Absence of record = unknown, NOT negation. Unrecorded ≠ "never happened" as character speech —
+NPC may not assert denial of what is merely unrecorded; they simply don't know. (Invention stays banned.)
 
 ### PERCEPTION LIMIT — character-side knowledge gate
 Contract-First is memory-side (no event = no event). This is perception-side (no witnessed = no known).
@@ -363,6 +373,10 @@ Apply to Korean ~지만/~는데/~하지만 chains: fold when assertion contains 
 Dialogue/speech-act inside scene, not framing it from outside.
 Env-first opening → reader=observer. Dialogue/action opening → reader inside scene. Atmospheric close → tension evaporates.
 Scene may open on environment when consequence demands it (per IN MEDIA RES). 3 consecutive opener-shape repetitions = structural repetition.
+Dead dialogue ban: bare "알겠어."/"그래."/"맞아." carries nothing — flat agreement needs loaded silence,
+trailing tension, or follow-through cost. "..." = something unsaid pressing, not filler.
+Each character keeps a linguistic fingerprint (habitual openers, pet phrases, how they trail or snap) —
+it bends or sharpens under emotional pressure, never disappears into register soup.
 
 ### CAUSALITY ANCHORS
 A word stands where a thing should stand.
@@ -373,6 +387,16 @@ Never narrate the ACT of realization. Banned: "he realized", "she understood", "
 Write the CONTENT of the realization directly. The character's next words/actions show the shift. Reader performs emotional labeling internally.
 WRONG: "He realized his regret was not about the battle."
 RIGHT: "Going back, he would live the same life. Then this was no longer regret."
+
+### PSEUDO-SHOWING — conclusion labels in showing's clothes
+Labels disguised as description: "감정 없는 목소리", "공허한 눈", "기계적인 움직임", "emotionless voice", "hollow eyes".
+These hand the reader a verdict instead of evidence — lazy narration that closes interpretation.
+Render the evidence channel instead:
+- Voice: pitch steadiness, pace, breath, clipped vs complete sentences
+- Gaze: blink rate, focus point, micro-reactions
+- Body: stillness vs fidget, economy of motion, gesture timing
+- Dialogue texture: literalness, abrupt topic shift, delayed response
+- Others' recalibration: awkward silence, adjusted tone, question left hanging
 
 ### BODY BEFORE MIND
 Sensation precedes label. Hands tremble → fear recognized. Order never reverses.

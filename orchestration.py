@@ -1063,7 +1063,24 @@ class OrchestrationService:
                 turn_idx = _ti if _ti is not None else len(session_memory.get("history", [])) // 2
 
                 # 턴 로그 기록
-                involved_npcs = list((wsu or {}).get("npc_schedule_hints", {}).keys()) if wsu else []
+                # [2026-06-11 Fix] entities 소스 교정: 기존 npc_schedule_hints는 "그 턴에 새 스케줄
+                # 힌트가 나왔는가"의 대리 지표라 장면 인물과 무관하게 자주 빈값 → storyline 분류
+                # 건너뜀 + importance 가산 누락. 주 소스를 DAI 장면 실재 인물로, 힌트는 보조 합류.
+                # PC 가면은 제외 (모든 턴에 있어 storyline 변별력 없음 — 기존 동작과도 정합).
+                _dai_d = ctx.dai if ctx.dai else {}
+                _scene_names = list(dict.fromkeys(
+                    list((_dai_d.get("npc_attitudes") or {}).keys())
+                    + list((_dai_d.get("psyche_states") or {}).keys())
+                    + (list((wsu or {}).get("npc_schedule_hints", {}).keys()) if wsu else [])
+                ))
+                _pc_masks = set()
+                try:
+                    for _p in domain_manager.get_domain(channel_id).get("participants", {}).values():
+                        if _p.get("mask"):
+                            _pc_masks.add(_p["mask"])
+                except Exception:
+                    pass
+                involved_npcs = [n for n in _scene_names if n not in _pc_masks]
                 qf = ctx.dai.get("quality_flags", {}) if ctx.dai else {}
                 user_brief = str(ctx.action_text or "")[:200]
                 ai_brief = str(response or "")[:300]

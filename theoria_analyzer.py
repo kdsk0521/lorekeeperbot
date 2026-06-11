@@ -575,6 +575,11 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
                 npc_lines.append(f"  LeakRisk={kn.get('leak_risk', 'none')}")
             parts.append("\n".join(npc_lines))
 
+        # [V10 Sprint 4] 막간 장부 — 분석이 막간 사실을 알아야 NPC 심리 추론이 정합
+        interim = anchors.get("interim_ledger", "")
+        if interim:
+            parts.append(interim)
+
         return "\n".join(parts)
 
     def _build_session_memory_context(self, anchors: dict) -> str:

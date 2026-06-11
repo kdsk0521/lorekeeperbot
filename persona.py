@@ -429,11 +429,20 @@ async def generate_response_with_retry(
     else:
         prefill = getattr(text_resources, 'NARRATIVE_PREFILL', '')
 
+    # [2026-06-11] deepseek 길이 처방: 글자수 계약은 무시됨 (재시도 강화 메시지도 무효 관측)
+    # → 문단 수 계약 + RW식 소진-연속 트릭 ("장면이 다 그려졌으면 멈추지 말고 세계 진행으로 채워라"
+    # — deepseek이 멈추는 원인 = 장면 소진감. 새 플롯 발명 없이 분량을 채우는 합법 경로 제시).
+    # 뮈토스 V6.2 차용: 모델은 한국어 글자수를 못 셈 → 영어 단어 등가 볼륨으로 환산 지시
+    _vol_words = max(1, min_length // 4)  # 한국어 ~4자 ≈ 영어 1단어 볼륨 등가 (근사)
     hidden_reminder = (
         "\n\n(System Reminder: Record observable Macroscopic States only. "
         "The world continues asynchronously. "
-        f"Narrative prose AFTER ┫ MUST be at least {min_length} chars — "
-        f"add sensory detail, NPC micro-reactions, and environmental grounding.)"
+        f"PROSE after ┫: 10+ full paragraphs — volume of ≈{_vol_words}+ English words equivalent; "
+        "judge by English-word-equivalent volume, never by counting Korean characters literally. "
+        "If the immediate beat exhausts before that volume, do NOT stop — continue world motion: "
+        "ambient shifts, NPC micro-actions and parallel small business, sensory continuation, "
+        "the room breathing after the beat. Never invent new plot events to pad; "
+        "extend the present moment's texture and consequences instead.)"
     )
     full_input = user_input + hidden_reminder
 

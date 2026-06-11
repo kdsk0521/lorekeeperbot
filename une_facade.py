@@ -821,6 +821,15 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
     anchors["stored_npc_knowledge"] = domain_manager.get_npc_knowledge(channel_id)
     anchors["stored_npc_attitudes"] = domain_manager.get_npc_attitudes(channel_id)
 
+    # [V10 Sprint 4] 막간 장부 (이번 턴 재구성분) — Theoria가 막간을 알아야 NPC 심리 추론 정합
+    try:
+        import interim_engine
+        _ledger_block = interim_engine.get_last_block(channel_id)
+        if _ledger_block:
+            anchors["interim_ledger"] = _ledger_block
+    except Exception:
+        pass
+
     # NPC Roster (Theoria용 이름+역할 요약)
     import npc_manager as _npc_mgr
     _npc_mgr.migrate_npc_fields(channel_id)  # desc→description 통일 + 구조화 필드 자동 추출
@@ -1075,9 +1084,16 @@ class UniversalNarrativeEngine:
         )
 
         # M2: Filter out triggers for NPCs on decision cooldown
+        # [2026-06-10 Fix] + 미등록 이름(PC 등) 트리거 제외 — DAI psyche에 PC가 섞여 들어와
+        # PC 이름으로 자율 지시문/쿨다운이 생성되던 경로 차단 (Contract-First: 미등록 NPC엔 트리거 X).
+        # 부수효과: 매 턴 찍히던 [DecisionCooldown] not found 경고 소거. 신규 NPC는 이번 턴
+        # 후처리에서 자동 등록되므로 다음 턴부터 정상 평가됨 (1턴 지연은 의도적 보수).
         if _cd_channel and triggers:
             _filtered = []
             for t in triggers:
+                if _npc_mgr.get_npc(_cd_channel, t.npc_name) is None:
+                    logger.debug(f"[NPC Autonomy] '{t.npc_name}' 미등록(PC 추정) — trigger '{t.trigger_id}' 제외")
+                    continue
                 cd = _npc_mgr.check_decision_cooldown(_cd_channel, t.npc_name)
                 if cd > 0:
                     logger.debug(f"[NPC Autonomy] {t.npc_name} trigger '{t.trigger_id}' suppressed — cooldown {cd} turns remaining")

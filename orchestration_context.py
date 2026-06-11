@@ -278,6 +278,18 @@ async def gather_context(ctx: ResponseContext) -> ResponseContext:
     ctx.obj_ctx = game_system.get_objective_context(channel_id, ctx.user_id)
     ctx.notebook_txt = game_system.get_notebook_text(channel_id, ctx.user_id)
 
+    # [V10 Sprint 4] 막간 장부 — 게으른 재구성 (턴 진입 1회, 코드만, 콜 0).
+    # 플래그 OFF/경과 부족이면 None → 완전 무동작. 실패해도 턴 정상 진행 (히스토리 추가 전이라
+    # '마지막 game_time'은 직전 턴 기준 — 의도된 측정 지점).
+    ctx.interim_ledger_block = ""
+    try:
+        import interim_engine
+        _interim = interim_engine.reconstruct_interim(channel_id)
+        if _interim:
+            ctx.interim_ledger_block = _interim
+    except Exception as _e_interim:
+        logger.debug(f"[Interim] skip: {_e_interim}")
+
     # 플레이어 패시브
     ctx.passives_txt = game_character.get_passives_for_context(ctx.player_data)
 

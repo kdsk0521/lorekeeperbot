@@ -486,6 +486,10 @@ CARGO_PATTERNS = [
     (re.compile(r'(?:두려움|공포|슬픔|기쁨|분노|혐오)[이가]\s*(?:밀려|엄습|찾아|몰려)'), "emotion_label_wave"),
     # 감정 벽지형 날씨 (마치 ~처럼, ~인 듯, ~을 대변하듯)
     (re.compile(r'(?:마치|인 듯|대변하듯|반영하듯).{0,20}(?:하늘|날씨|비|바람|구름)'), "pathetic_fallacy"),
+    # [wave4-E] Pseudo-showing: 결론 라벨을 묘사로 위장 (증거 대신 평결 — ELYSIUM 분석)
+    (re.compile(r'(?:감정\s*없는|메마른|공허한|텅\s*빈)\s*(?:목소리|눈[빛동]?|표정)'), "pseudo_showing"),
+    (re.compile(r'기계적[으인]\s*(?:로|움직임|동작|말투|반응)'), "pseudo_showing"),
+    (re.compile(r'(?:아무런?\s*감정도?\s*(?:없|담기지|드러나지)|무표정[한하]게?\s*(?:말했|대답했|읊))'), "pseudo_showing"),
 ]
 
 # 문단 내 신체반응 동시 나열 탐지용
