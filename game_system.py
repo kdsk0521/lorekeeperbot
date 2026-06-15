@@ -184,6 +184,8 @@ async def process_time_flow(channel_id: str, time_flow: Dict, scene_type: str = 
 
     # v3: SCENE_TIME_RULES 기반 클램핑 (Anti-Gravity Fix 통합)
     rules = config.SCENE_TIME_RULES.get(scene_type, config.SCENE_TIME_RULES["normal"])
+    # (참고 2026-06-12: explicit 신호는 원래 Theoria 의존이었으나 모델 교체로 미발화 관측 —
+    #  유저 인풋 regex 판정(parse_time_decree)이 orchestration에서 선행 주입됨. 코드 결정론.)
     if not explicit:
         if ticks > rules["max_ticks"]:
             logger.info("[TimeFlow] Clamped %d → %d (scene=%s)", ticks, rules["max_ticks"], scene_type)

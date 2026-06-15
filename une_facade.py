@@ -835,6 +835,16 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
     _npc_mgr.migrate_npc_fields(channel_id)  # desc→description 통일 + 구조화 필드 자동 추출
     anchors["npc_roster"] = _npc_mgr.get_npc_roster(channel_id)
 
+    # [2026-06-11 소비자 감사 #6 부활] P6 capability hints — Flash *입력*으로 (원설계 배달).
+    # 등록 NPC 전용 (PC는 npcs 레지스트리에 없음 — NPC 제한, PC 자율성 무관).
+    try:
+        from waterfall_pipeline import _inject_capability_hints
+        _cap = _inject_capability_hints(domain_manager.get_npcs(channel_id) or {})
+        if _cap:
+            anchors["capability_hints"] = _cap
+    except Exception as _e_cap:
+        logger.debug(f"[P6] capability hints skip: {_e_cap}")
+
     # Session Memory (World State Updater 피드백용)
     anchors["session_memory"] = domain_manager.get_session_ai_memory(channel_id)
 

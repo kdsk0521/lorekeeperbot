@@ -267,6 +267,8 @@ Return valid JSON with ALL these fields (Korean values where specified):
 
 ## CHARACTER ANALYSIS (psyche_states)
 Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPENDENT (Cartesian Dualism).
+**NPCs ONLY — never include the PC.** PC interiority belongs to the player; PC coverage = PCAutonomyCheck only.
+NPCs perceive the PC through what the input SHOWS (words, actions), not through a PC psyche profile.
 
 - "psyche_states": {
     "CharName": {
@@ -379,6 +381,7 @@ Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPE
         "reason": "Korean (오륜 role expectation 위반 시 명시)"
     }
   }
+  (keys = NPC names ONLY — never the PC. This is each NPC's attitude TOWARD the PC.)
 - "NPCKnowledge": {
     "NpcName": {
         "knows": ["Korean - 현재 알고 있는 핵심 정보"],
@@ -907,6 +910,11 @@ Evaluate this in flashback_eval field. Check plausibility, passive match, assign
         mental_line = self._build_mental_line(anchors, bus)
         npc_context = self._build_npc_context(anchors)
         npc_roster = anchors.get("npc_roster", "")
+        # [2026-06-11 소비자 감사 #6 부활] P6 원설계 배달 — NPC 능력 범위 힌트 (하드블록 아님).
+        # 기존엔 Flash 콜 *후* bus.dai에 저장돼 한 번도 미배달이었음.
+        _cap_hints = anchors.get("capability_hints", "")
+        if _cap_hints:
+            npc_roster = f"{npc_roster}\n\n#### Capability bounds (reference, not hard limits)\n{_cap_hints}"
         session_memory_context = self._build_session_memory_context(anchors)
         continuity_context = self._build_continuity_context(anchors)
         channel_id = anchors.get("channel_id", "")

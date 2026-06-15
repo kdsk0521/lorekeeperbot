@@ -442,7 +442,12 @@ async def generate_response_with_retry(
         "If the immediate beat exhausts before that volume, do NOT stop — continue world motion: "
         "ambient shifts, NPC micro-actions and parallel small business, sensory continuation, "
         "the room breathing after the beat. Never invent new plot events to pad; "
-        "extend the present moment's texture and consequences instead.)"
+        "extend the present moment's texture and consequences instead. "
+        # [2026-06-12] 길이 인플레 차단 (2530→3533→4225 복리 관측 — 맥락 우선 모델에게 긴 응답=다음 선례).
+        # 뮈토스 ceiling 차용: 천장 = 쿼터 아닌 정지 경계.
+        f"Ceiling ≈{max_chars // 4} English-words volume: a firm stopping boundary, NOT a quota to "
+        "fill — when the scene offers a clean exit inside the band, take it. Cross the ceiling only "
+        "to land a beat already in motion, never to open a new one.)"
     )
     full_input = user_input + hidden_reminder
 

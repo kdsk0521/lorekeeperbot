@@ -413,7 +413,11 @@ def get_npcs(channel_id: str) -> Dict[str, Dict[str, Any]]:
     return get_domain(channel_id).get("npcs", {})
 
 def _find_npc_key(npcs: dict, name: str) -> Optional[str]:
-    """NPC 키 검색: 정규화 매칭 → 부분 이름 매칭 (괄호 앞/안)"""
+    """NPC 키 검색: 정규화 매칭 → 부분 이름 매칭 (괄호 앞/안) → aliases 필드.
+
+    [2026-06-12] aliases 정식 지원 — 괄호 컨벤션은 키에 별칭이 박힌 경우만 커버해서,
+    "리리스"로 등록된 NPC를 모델이 "Lilith"로 부르면 자동 등록이 중복 생성하던 구멍
+    (한↔영 교차는 통제 밖, deepseek은 특히 영문명 빈발). NPC data에 aliases: [".."] 리스트."""
     norm = _normalize_npc_name(name)
     # 1) 정확한 정규화 매칭
     if norm in npcs:
@@ -432,6 +436,15 @@ def _find_npc_key(npcs: dict, name: str) -> Optional[str]:
         m = re.search(r'[(\[（]([^)\]）]+)[)\]）]', k)
         if m and m.group(1).strip().lower() == nl:
             return k
+    # 3) aliases 필드 매칭 (data dict 내 명시 별칭 리스트)
+    for k, data in npcs.items():
+        if not isinstance(data, dict):
+            continue
+        aliases = data.get("aliases")
+        if isinstance(aliases, list):
+            for a in aliases:
+                if isinstance(a, str) and _normalize_npc_name(a).lower() == nl:
+                    return k
     return None
 
 def _resolve_npc_name(d: dict, name: str) -> str:
@@ -445,61 +458,313 @@ def get_npc(channel_id: str, name: str) -> Optional[Dict[str, Any]]:
     key = _find_npc_key(npcs, name)
     return npcs[key] if key else None
 
+def find_equivalent_npc_key(npcs: dict, name: str) -> Optional[str]:
+    """양방향 동일 인물 매칭. _find_npc_key(이름→키)에 더해 역방향
+    (새 이름의 괄호 앞/안 → 기존 키)도 본다.
+
+    [2026-06-12] 리리스/Lilith 4중 분열의 두 번째 원인 — 등록 경로의 중복 탐지가
+    한 방향(새 맨이름 → 기존 키 괄호 안)뿐이라, 맨이름 "리리스"가 있는 상태에서
+    "리리스(Lilith)"로 재등록하면 병합이 아니라 병렬 생성됐음."""
+    key = _find_npc_key(npcs, name)
+    if key:
+        return key
+    norm = _normalize_npc_name(name)
+    base = re.split(r'[(\[（]', norm)[0].strip()
+    m = re.search(r'[(\[（]([^)\]）]+)[)\]）]', norm)
+    inner = m.group(1).strip() if m else ""
+    for cand in (base, inner):
+        if cand and cand.lower() != norm.lower():
+            key = _find_npc_key(npcs, cand)
+            if key:
+                return key
+    return None
+
 def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
+    """NPC 등록/갱신.
+
+    [2026-06-12] 중복 탐지 보강 — 기존엔 정규화 동일성만 봐서 (등록 경로별로
+    매칭이 제각각이라) 같은 인물이 키 형태마다 병렬 생성됐음. 이제:
+    ① find_equivalent_npc_key로 양방향 매칭
+    ② 키 선호: 괄호 별칭 가진 쪽 (riche key) — DAI가 맨이름으로 update해도 다운그레이드 안 됨
+    ③ 키 마이그레이션 시 태도/지식도 함께 이사 + 버려지는 키 형태는 aliases로 흡수"""
     d = get_domain(channel_id)
     npcs = d.setdefault("npcs", {})
 
     norm_name = _normalize_npc_name(name)
 
-    # 기존 비정규화 키가 있으면 정규화 키로 마이그레이션
+    # 동일 인물 기존 키 탐지 (정규화 동일성 → 양방향 풀 매칭)
     existing_key = None
     for k in list(npcs.keys()):
         if _normalize_npc_name(k) == norm_name:
             existing_key = k
             break
+    if existing_key is None:
+        existing_key = find_equivalent_npc_key(npcs, name)
+
+    # 최종 키 결정: 기존 키 안정 유지가 기본 (DAI가 변형 호칭으로 update해도 개명 X).
+    # 새 이름이 괄호식일 때만 업그레이드 — 괄호식 = 사용자의 명시 등록 의도.
+    def _has_paren(k: str) -> bool:
+        return bool(re.search(r'[(\[（]', k))
+    if existing_key:
+        final_key = norm_name if _has_paren(norm_name) else _normalize_npc_name(existing_key)
+    else:
+        final_key = norm_name
 
     # 기존 데이터에서 보존할 필드 (재등록 시 유실 방지)
-    _PRESERVE_KEYS = ("source",)
+    _PRESERVE_KEYS = ("source", "aliases")
     if existing_key:
         existing = npcs[existing_key]
-        for pk in _PRESERVE_KEYS:
-            if pk not in data and existing.get(pk):
-                data[pk] = existing[pk]
-        # 비정규화 키 제거 후 정규화 키로 저장
-        if existing_key != norm_name:
+        if isinstance(existing, dict):
+            for pk in _PRESERVE_KEYS:
+                if pk not in data and existing.get(pk):
+                    data[pk] = existing[pk]
+        if existing_key != final_key:
             del npcs[existing_key]
+            # 버려지는 키의 고유 형태(전체/base/괄호 안)를 aliases로 흡수 — 재분열 방지
+            fk_base = re.split(r'[(\[（]', final_key)[0].strip().lower()
+            fm = re.search(r'[(\[（]([^)\]）]+)[)\]）]', final_key)
+            fk_inner = fm.group(1).strip().lower() if fm else ""
+            covered = {final_key.lower(), _normalize_npc_name(final_key).lower(), fk_base, fk_inner}
+            aliases = data.setdefault("aliases", [])
+            if isinstance(aliases, list):
+                seen = {_normalize_npc_name(a).lower() for a in aliases if isinstance(a, str)}
+                om = re.search(r'[(\[（]([^)\]）]+)[)\]）]', existing_key)
+                for cand in (existing_key, re.split(r'[(\[（]', existing_key)[0].strip(),
+                             om.group(1).strip() if om else ""):
+                    nc = _normalize_npc_name(cand).lower() if cand else ""
+                    if nc and nc not in covered and nc not in seen:
+                        aliases.append(cand.strip())
+                        seen.add(nc)
+                if not aliases:
+                    data.pop("aliases", None)
+            # 태도/지식도 함께 이사 (구 키에 쌓인 관계 고아화 방지)
+            for _dom in ("npc_attitudes", "npc_knowledge"):
+                _dd = d.get(_dom, {})
+                if existing_key in _dd and final_key not in _dd:
+                    _dd[final_key] = _dd.pop(existing_key)
+                elif existing_key in _dd:
+                    _dd.pop(existing_key)  # 양쪽 존재 시 final 쪽 유지
 
-    npcs[norm_name] = data
+    npcs[final_key] = data
     save_domain(channel_id, d)
 
     # [V10 Sprint 2-B] 미러 — 키 마이그레이션 발생 시 구 행 삭제 + 신 행, 한 트랜잭션
     try:
         import sqlite_store
         import state_guards
-        clean = state_guards.validate_npc_write(norm_name, data)
+        clean = state_guards.validate_npc_write(final_key, data)
         if clean is not None:
-            if existing_key and existing_key != norm_name:
-                sqlite_store.rename_npc(channel_id, existing_key, norm_name, clean)
+            if existing_key and existing_key != final_key:
+                sqlite_store.rename_npc(channel_id, existing_key, final_key, clean)
+                sqlite_store.delete_relation(channel_id, existing_key)
+                sqlite_store.delete_knowledge(channel_id, existing_key)
+                if final_key in d.get("npc_attitudes", {}):
+                    _mirror_relation(channel_id, final_key, d["npc_attitudes"][final_key])
+                if final_key in d.get("npc_knowledge", {}):
+                    _mirror_knowledge(channel_id, final_key, d["npc_knowledge"][final_key])
             else:
-                sqlite_store.upsert_npc(channel_id, norm_name, clean)
+                sqlite_store.upsert_npc(channel_id, final_key, clean)
     except Exception as _e:
         logging.debug(f"[V10] npc mirror skipped: {_e}")
 
 def delete_npc(channel_id: str, name: str) -> tuple:
-    """NPC 삭제. Returns (success: bool, matched_key: str or None)"""
+    """NPC 삭제. Returns (success: bool, matched_key: str or None)
+
+    [2026-06-12] 고아 정리 추가 — 초기 코드는 본체만 지워서 태도/지식 행이
+    유령으로 남았음 (삭제 후 그 이름이 분석에 재등장하면 죽은 관계가 부활)."""
     d = get_domain(channel_id)
     npcs = d.get("npcs", {})
     target = _find_npc_key(npcs, name)
     if target:
         del npcs[target]
+        # 고아 정리: 같은 키의 태도/지식도 함께 (JSON)
+        d.get("npc_attitudes", {}).pop(target, None)
+        d.get("npc_knowledge", {}).pop(target, None)
         save_domain(channel_id, d)
         try:
             import sqlite_store
             sqlite_store.delete_npc_row(channel_id, target)
+            sqlite_store.delete_relation(channel_id, target)
+            sqlite_store.delete_knowledge(channel_id, target)
         except Exception as _e:
             logging.debug(f"[V10] npc delete mirror skipped: {_e}")
         return True, target
     return False, None
+
+def add_npc_alias(channel_id: str, name: str, alias: str) -> tuple:
+    """NPC에 별칭 추가. Returns (success: bool, matched_key: str or None)
+
+    [2026-06-12] 모델이 등록명과 다른 언어로 NPC를 부르면 (리리스 ↔ Lilith)
+    자동 등록이 중복 생성하던 구멍의 입구. aliases 리스트는 _find_npc_key 3단계가 소비."""
+    alias = (alias or "").strip()
+    if not alias:
+        return False, None
+    d = get_domain(channel_id)
+    npcs = d.get("npcs", {})
+    key = _find_npc_key(npcs, name)
+    if not key:
+        return False, None
+    # 별칭이 이미 다른 NPC로 해상되면 거부 (모호성 생성 방지)
+    existing = _find_npc_key(npcs, alias)
+    if existing and existing != key:
+        logging.warning(f"[NPC] 별칭 거부: '{alias}'는 이미 '{existing}'로 해상됨")
+        return False, existing
+    data = npcs[key]
+    if not isinstance(data, dict):
+        return False, None
+    aliases = data.setdefault("aliases", [])
+    if not isinstance(aliases, list):
+        aliases = data["aliases"] = []
+    norm_new = _normalize_npc_name(alias).lower()
+    if any(isinstance(a, str) and _normalize_npc_name(a).lower() == norm_new for a in aliases):
+        return True, key  # 이미 있음 = 성공
+    aliases.append(alias)
+    save_domain(channel_id, d)
+    _mirror_npc(channel_id, key, data)
+    return True, key
+
+def split_npc_pair(npcs: dict, text: str, both_npc: bool = True) -> tuple:
+    """명령 인자 텍스트를 (이름A, 이름B)로 분할. 이름 중간 띄어쓰기 지원.
+
+    [2026-06-12] "이름없는 유령" 같은 공백 포함 키가 split(None,1)에서 잘리던 문제.
+    ① 명시 구분자 우선: ->, =>, →, |, 쉼표
+    ② 없으면 등록 키 기반 스마트 분할: 양쪽(both_npc) 또는 왼쪽(별칭 모드)이
+       실제 NPC로 해상되는 분할점 탐색. 별칭 모드는 가장 긴 왼쪽 우선.
+    Returns (a, b, error_msg) — 성공 시 error_msg는 ""."""
+    text = (text or "").strip()
+    if not text:
+        return None, None, "인자 없음"
+    seg = [s.strip() for s in re.split(r'\s*(?:->|=>|→|\||,)\s*', text) if s.strip()]
+    if len(seg) == 2:
+        return seg[0], seg[1], ""
+    if len(seg) > 2:
+        return None, None, "구분자가 너무 많습니다. `이름A -> 이름B` 형식으로."
+    toks = text.split()
+    if len(toks) < 2:
+        return None, None, "이름 두 개가 필요합니다."
+    if both_npc:
+        cands = []
+        for i in range(1, len(toks)):
+            l, r = " ".join(toks[:i]), " ".join(toks[i:])
+            if _find_npc_key(npcs, l) and _find_npc_key(npcs, r):
+                cands.append((l, r))
+        if len(cands) == 1:
+            return cands[0][0], cands[0][1], ""
+        if len(cands) > 1:
+            opts = " / ".join(f"'{l}'+'{r}'" for l, r in cands[:3])
+            return None, None, f"분할이 모호합니다 ({opts}). `이름A -> 이름B` 구분자를 쓰세요."
+        return None, None, "두 이름을 NPC로 해상하지 못했습니다. `이름A -> 이름B` 구분자를 쓰거나 이름을 확인하세요."
+    # 별칭 모드: 왼쪽만 NPC면 됨 — 가장 긴 왼쪽 우선 (나머지 = 별칭)
+    for i in range(len(toks) - 1, 0, -1):
+        l, r = " ".join(toks[:i]), " ".join(toks[i:])
+        if _find_npc_key(npcs, l):
+            return l, r, ""
+    return None, None, "NPC를 찾을 수 없습니다. `이름 -> 별칭` 구분자를 쓰거나 이름을 확인하세요."
+
+def merge_npc(channel_id: str, dup_name: str, canon_name: str) -> tuple:
+    """중복 NPC를 본체로 흡수. Returns (success: bool, message: str)
+
+    [2026-06-12] 리리스/Lilith 류 이중 등록 청소용. 정책:
+    - 본체(canon) 필드 우선, 중복(dup)은 빈 필드만 채움
+    - 흡수된 이름(+괄호 별칭)은 자동으로 본체 aliases에 — 재발 방지
+    - 태도: 본체 우선, depth/tension은 둘 중 큰 값 (쌓인 관계 보존)
+    - 지식: knows/secrets 합집합, would_share OR
+    - 중복은 본체/태도/지식 전 도메인에서 삭제 (JSON+SQLite)"""
+    d = get_domain(channel_id)
+    npcs = d.get("npcs", {})
+    dup_key = _find_npc_key(npcs, dup_name)
+    canon_key = _find_npc_key(npcs, canon_name)
+    if not dup_key:
+        return False, f"중복 NPC '{dup_name}' 없음"
+    if not canon_key:
+        return False, f"본체 NPC '{canon_name}' 없음"
+    if dup_key == canon_key:
+        return False, f"'{dup_name}'와 '{canon_name}'는 이미 같은 NPC ({canon_key})"
+
+    canon = npcs[canon_key] if isinstance(npcs[canon_key], dict) else {}
+    dup = npcs[dup_key] if isinstance(npcs[dup_key], dict) else {}
+
+    # 1) 본체 필드 보강 (빈 필드만 dup에서)
+    for k, v in dup.items():
+        if k == "aliases":
+            continue
+        if k not in canon or canon[k] in (None, "", [], {}):
+            canon[k] = v
+
+    # 2) 별칭 합치기 + 흡수된 이름 자동 별칭화
+    merged_aliases = [a for a in canon.get("aliases", []) if isinstance(a, str)]
+    seen = {_normalize_npc_name(a).lower() for a in merged_aliases}
+
+    def _add_alias(cand: str):
+        cand = (cand or "").strip()
+        if not cand:
+            return
+        nc = _normalize_npc_name(cand).lower()
+        # 본체 키 자신(괄호 앞/안 포함)으로 이미 해상되는 이름은 별칭 불필요
+        base = re.split(r'[(\[（]', canon_key)[0].strip().lower()
+        m = re.search(r'[(\[（]([^)\]）]+)[)\]）]', canon_key)
+        inner = m.group(1).strip().lower() if m else ""
+        if nc in (canon_key.lower(), _normalize_npc_name(canon_key).lower(), base, inner):
+            return
+        if nc not in seen:
+            merged_aliases.append(cand)
+            seen.add(nc)
+
+    for a in dup.get("aliases", []):
+        if isinstance(a, str):
+            _add_alias(a)
+    _add_alias(dup_key)
+    _add_alias(re.split(r'[(\[（]', dup_key)[0])
+    m = re.search(r'[(\[（]([^)\]）]+)[)\]）]', dup_key)
+    if m:
+        _add_alias(m.group(1))
+    if merged_aliases:
+        canon["aliases"] = merged_aliases
+    npcs[canon_key] = canon
+    del npcs[dup_key]
+
+    # 3) 태도 병합 (본체 우선, depth/tension은 max)
+    attitudes = d.get("npc_attitudes", {})
+    dup_att = attitudes.pop(dup_key, None)
+    if dup_att:
+        canon_att = attitudes.get(canon_key)
+        if canon_att:
+            canon_att["depth"] = max(canon_att.get("depth", 0) or 0, dup_att.get("depth", 0) or 0)
+            canon_att["tension"] = max(canon_att.get("tension", 0) or 0, dup_att.get("tension", 0) or 0)
+        else:
+            attitudes[canon_key] = dup_att
+            canon_att = dup_att
+
+    # 4) 지식 병합 (합집합)
+    knowledge = d.get("npc_knowledge", {})
+    dup_kn = knowledge.pop(dup_key, None)
+    if dup_kn:
+        canon_kn = knowledge.get(canon_key)
+        if canon_kn:
+            canon_kn["knows"] = list(set(canon_kn.get("knows", [])) | set(dup_kn.get("knows", [])))[-20:]
+            canon_kn["secrets_held"] = list(set(canon_kn.get("secrets_held", [])) | set(dup_kn.get("secrets_held", [])))
+            canon_kn["would_share"] = bool(canon_kn.get("would_share")) or bool(dup_kn.get("would_share"))
+        else:
+            knowledge[canon_key] = dup_kn
+
+    save_domain(channel_id, d)
+
+    # 5) SQLite 미러: 중복 행 삭제 + 본체 재미러
+    try:
+        import sqlite_store
+        sqlite_store.delete_npc_row(channel_id, dup_key)
+        sqlite_store.delete_relation(channel_id, dup_key)
+        sqlite_store.delete_knowledge(channel_id, dup_key)
+    except Exception as _e:
+        logging.debug(f"[V10] merge dup row cleanup skipped: {_e}")
+    _mirror_npc(channel_id, canon_key, canon)
+    if canon_key in d.get("npc_attitudes", {}):
+        _mirror_relation(channel_id, canon_key, d["npc_attitudes"][canon_key])
+    if canon_key in d.get("npc_knowledge", {}):
+        _mirror_knowledge(channel_id, canon_key, d["npc_knowledge"][canon_key])
+
+    alias_note = f" (별칭: {', '.join(merged_aliases)})" if merged_aliases else ""
+    return True, f"'{dup_key}' → '{canon_key}' 병합 완료{alias_note}"
 
 def bulk_update_npcs(channel_id: str, npcs: Dict[str, Dict[str, Any]]) -> None:
     """[V10 §3b] NPC dict 전체 교체 (tick_all_cooldowns 등 bulk 쓰기 정식화).

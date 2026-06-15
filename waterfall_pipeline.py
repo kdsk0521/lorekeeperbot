@@ -167,13 +167,17 @@ class WaterfallPipeline:
         bus.dai["flashback_eval"] = analysis.get("flashback_eval")
         bus.dai["rest_eval"] = analysis.get("rest_eval")
         bus.dai["item_usage"] = analysis.get("item_usage")
+        # [2026-06-11 소비자 감사 #2~4] 운송 누락 복구 — Theoria 스키마에 실재(=Flash가 매 턴 생산)
+        # 했으나 매핑이 빠져 슬롯 번역기 3종(trait_connections/spatial_inscription/continuity_check)이
+        # 영구 빈손이었음 (dai_consumer_audit.md). 번역기들은 빈값 관용이라 연결만으로 안전.
+        bus.dai["trait_connections"] = analysis.get("trait_connections", {})
+        bus.dai["spatial_read"] = analysis.get("spatial_read", {})
+        bus.dai["continuity_check"] = analysis.get("continuity_check")
 
-        # P6: Inject capability hints for Theoria reference
-        _npc_roster = (context.narrative_anchors or {}).get("npc_roster", {})
-        if _npc_roster and isinstance(_npc_roster, dict):
-            cap_hints = _inject_capability_hints(_npc_roster)
-            if cap_hints:
-                bus.dai["capability_hints"] = cap_hints
+        # [2026-06-11 소비자 감사 #6] 죽은 저장 제거 — capability hints는 이제 anchors 경유로
+        # Theoria *입력*에 배달됨 (une_facade에서 계산, theoria_analyzer 로스터 옆 렌더 — 원설계).
+        # 기존 이 자리 코드는 Flash 콜 후 저장 + 독자 0 + npc_roster가 str이라 isinstance(dict)
+        # 가드에 막혀 사실상 한 번도 실행 안 됨 (이중 사망 확인).
 
         # N1: Judgment Gate — Flash의 needs_judgment를 코드 게이트로 검증
         raw_needs = analysis.get("needs_judgment", False)
@@ -184,6 +188,12 @@ class WaterfallPipeline:
         ).get("turn_count", 0) or domain_manager.get_world_state(
             (context.narrative_anchors or {}).get("channel_id", "")
         ).get("turn_index", 0)
+
+        # [2026-06-11 소비자 감사 #1] turn_index 배선 — bus.dai["turn_index"]를 아무도 안 실어
+        # 항상 0이었음 → doom 시계 fade 7개 읽기 + une_facade 퀘스트 stale archive가 0 기반 동작
+        # (staleness 트리거 사망). 게이트 계산용 current_turn을 그대로 적재.
+        # 주의: 부활 첫 턴에 묵은 퀘스트 일괄 archive는 정상 동작.
+        bus.dai["turn_index"] = current_turn
 
         final_needs, gate_reason = gate_judgment(
             user_input=context.request.user_input,
@@ -323,6 +333,19 @@ class WaterfallPipeline:
 
         try:
             psyche_states = bus.dai.get("psyche_states", {})
+            # [2026-06-12] PC 혼입 차단 (4호) — Theoria가 psyche_states에 PC를 포함시키는데
+            # 감정엔진과 하류 3기관(스토리디렉터 focus/NPC자율 집단게이트/iceberg Slot 14·16)은
+            # 전부 NPC 전용. PC가 흘러들면: 디렉터가 PC를 연출 대상으로(focus=도만 관측됨),
+            # 집단 게이트 인원 수 부풀림, PC 내면 힌트가 Pro에 주입(사칭 압력). PC=카메라 원칙.
+            _pc_masks_em = {
+                p.get("mask") for p in (context.narrative_anchors or {}).get("all_pcs", {}).values()
+                if isinstance(p, dict) and p.get("mask")
+            }
+            if psyche_states and _pc_masks_em:
+                _removed = [n for n in psyche_states if n in _pc_masks_em]
+                if _removed:
+                    psyche_states = {k: v for k, v in psyche_states.items() if k not in _pc_masks_em}
+                    logger.debug(f"[EmotionEngine] PC 제외: {', '.join(_removed)}")
             if psyche_states:
                 prev_emotions = {}
                 if channel_id:

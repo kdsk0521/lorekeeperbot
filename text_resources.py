@@ -415,6 +415,8 @@ Obeying a ban = not mentioning the banned thing. Write what happens, never what 
 Final sentence = springboard, not landing. Leave reader mid-motion. User's last action = departure point; character runs somewhere neither expected.
 Cut before exit — hand on doorknob, chair pushed back, the moment between intent and arrival.
 Atmospheric winding-down dissolves tension; departure carries it forward.
+Mid-motion ≠ mid-sentence: the final sentence COMPLETES grammatically — the cut is scene-level,
+not syntax-level. Aposiopesis ("말은—") = rare deliberate device, never a default closing shape.
 
 ### LAYERED DEPTH (░▒▓█)
 4 layers — Surface(unpressed) / Adaptation(pressed) / Core(true beneath) / Lack(missing, unspeakable).

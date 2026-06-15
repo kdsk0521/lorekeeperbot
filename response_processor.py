@@ -496,12 +496,15 @@ CARGO_PATTERNS = [
 _BODY_PARTS_RE = re.compile(r'(?:심장|가슴|호흡|숨|손[이가]|손가락|눈[이가]|눈동자|입술|턱|어깨|등[이가을]|목[이가]|다리|발[이가])')
 
 
-def detect_cargo_patterns(response: str) -> str:
+def detect_cargo_patterns(response: str, scene_npc_count: int = 1) -> str:
     """Detect Cargo Cult patterns in response and return feedback string.
 
     Cargo Cult: sentences that look like 'good writing' but add nothing structural.
     Test: delete the sentence — does the scene lose anything concrete?
-    """
+
+    [2026-06-12] scene_npc_count: 앙상블 보정 — 반응의 주인이 여럿이면 나열이 아니라 **분배**.
+    1인 장면 기준 임계(문단당 신체 4종)가 다인 티타임 장면에서 3턴 연속 오탐
+    (상시 점등 경고 = 맥락 우선 모델에게 양치기 소년 — 채널 권위 할인). NPC 3+ 장면은 6종으로 완화."""
     matched = []
 
     # Pattern-based detection
@@ -510,12 +513,13 @@ def detect_cargo_patterns(response: str) -> str:
             if label not in matched:
                 matched.append(label)
 
-    # Paragraph-level: reaction catalog (4+ distinct body parts in one paragraph)
+    # Paragraph-level: reaction catalog (분배 보정 — 다인 장면은 임계 완화)
+    _catalog_threshold = 4 if scene_npc_count < 3 else 6
     paragraphs = response.split('\n\n')
     for para in paragraphs:
         if para.strip():
             body_hits = set(_BODY_PARTS_RE.findall(para))
-            if len(body_hits) >= 4 and "reaction_catalog" not in matched:
+            if len(body_hits) >= _catalog_threshold and "reaction_catalog" not in matched:
                 matched.append("reaction_catalog")
 
     if not matched:
@@ -960,3 +964,139 @@ def detect_vending_patterns(response: str) -> str:
     labels = ", ".join(matched[:3])
     return (f"[VENDING: {labels} — 예측 가능성을 서술자가 명시하는 순간 장면은 자판기. "
             f"default 반응을 그대로 쓰지 마라]")
+
+
+# =========================================================
+# L축: 한글 출력 저점 (Korean Floor) — 번역체 표면 결 측정
+# =========================================================
+# 근거: 영어 텔레스코프(English CoT) → 한국어 렌더의 번역 스텝 + 한국어 학습 prior의
+# 번역체 편향(MTL/번역 웹소설)이 겹쳐, (1) 3인칭 대명사 과다(한국어는 주어 생략) +
+# (2) 과거-서술 어미(-었/았/였/있었다) 단조로 나타난다. 지능 문제가 아니라 *register
+# 디폴트 슬립*이라 soft 신호로 steerable. 출력 텍스트만 판정 → 모델 독립(Floor 보장).
+# 임계값은 산문2(31,640자) 캘리브레이션: 그녀 10.3/1k, 과거서술 55%, 있었다 16%.
+# soft 경고만 — 하드 블록 아님. 끄고 켜고 임계 조정 가능(읽히는 규칙).
+
+_KO_3P_PRONOUNS = ["그녀", "그는", "그가", "그를", "그의", "그도", "그것", "그들"]
+
+
+def detect_korean_floor(response: str,
+                        pron_per_1k_warn: float = 5.0,
+                        past_desc_ratio_warn: float = 0.50,
+                        single_ending_warn: float = 0.15,
+                        min_chars: int = 200,
+                        ) -> Tuple[str, Dict]:
+    """한국어 출력 저점(L축) 측정. 번역체 표면 결 — soft 경고만, 하드 블록 아님.
+
+    측정:
+      (1) 3인칭 대명사 밀도(per 1000자, 공백 제외) — 한국어는 주어 생략이 자연.
+      (2) '~다.' 종결 중 과거-서술(었/았/였/있었다) 비율 — 어미 단조.
+      (3) 단일 어미 지배도 — 같은 꼴 반복(예: 있었다).
+
+    Returns: (feedback_str, stats_dict).  feedback_str 비면 통과.
+    """
+    text = response or ""
+    chars = len(re.sub(r"\s", "", text))
+    if chars < min_chars:
+        return "", {}
+
+    # (1) 대명사 밀도
+    pron_total = sum(len(re.findall(p, text)) for p in _KO_3P_PRONOUNS)
+    geunyeo = len(re.findall("그녀", text))
+    pron_per_1k = pron_total / chars * 1000
+
+    # (2)(3) '~다.' 종결 어미 분포
+    sents = re.findall(r"[가-힣A-Za-z0-9\"'][^.!?\n]*?다\.", text)
+    total_da = len(sents) or 1
+    ends = {"있었다": 0, "었다": 0, "았다": 0, "였다": 0, "했다": 0, "기타다": 0}
+    for s in sents:
+        if s.endswith("있었다."):
+            ends["있었다"] += 1
+        elif s.endswith("었다."):
+            ends["었다"] += 1
+        elif s.endswith("았다."):
+            ends["았다"] += 1
+        elif s.endswith("였다."):
+            ends["였다"] += 1
+        elif s.endswith("했다."):
+            ends["했다"] += 1
+        else:
+            ends["기타다"] += 1
+    past_desc = ends["있었다"] + ends["었다"] + ends["았다"] + ends["였다"]
+    past_ratio = past_desc / total_da
+    top_ending, top_n = max(
+        ((k, v) for k, v in ends.items() if k != "기타다"),
+        key=lambda x: x[1], default=("", 0),
+    )
+    single_ratio = top_n / total_da
+
+    stats = {
+        "chars": chars,
+        "pron_per_1k": round(pron_per_1k, 1),
+        "그녀": geunyeo,
+        "past_desc_ratio": round(past_ratio, 2),
+        "top_ending": top_ending,
+        "single_ending_ratio": round(single_ratio, 2),
+    }
+
+    flags = []
+    if pron_per_1k > pron_per_1k_warn:
+        flags.append(f"대명사 {pron_per_1k:.1f}/1k(그녀 {geunyeo})→주어 생략")
+    if past_ratio > past_desc_ratio_warn:
+        flags.append(f"과거서술 종결 {past_ratio * 100:.0f}%→어미 변주(현재/명사형/연결)")
+    if single_ratio > single_ending_warn and top_ending:
+        flags.append(f"'{top_ending}' {single_ratio * 100:.0f}% 지배→같은 꼴 반복")
+
+    feedback = ("[L:한글저점] " + " | ".join(flags)) if flags else ""
+    return feedback, stats
+
+
+# =========================================================
+# I축: 닫음-운율 재정착 (Cadence Echo) — verbatim 후렴 백스톱
+# =========================================================
+# 근거: calm의 그늘(comfort-groove) — 안전한 닫음 의식을 매 턴 verbatim 재소비.
+# 기존 [Craft.Rhythm/Scheme]은 shape/type만 봐서 phrase 표면 재발을 못 잡음(로그 확증:
+# Rhythm 19·Scheme 17 발화에도 후렴 7×/6×/4× 샘). 위협 프레이밍("반복 금지")은 desperate
+# 재점화라 금지 — soft 신호만. *문장 단위* 비교로 motif/referent(은색 캔 재등장) 허용,
+# *verbatim 문장*만 타깃(motif vs phrase 구분의 코드 구현).
+
+_SENT_SPLIT = re.compile(r'(?<=[.!?”"])\s+|\n+')
+
+
+def _sentences(text: str, min_chars: int = 6) -> List[str]:
+    """문장 분절 — 공백제외 min_chars 이상만. (짧은 후렴 '열리지 않은 약속'=7자도 포함)"""
+    parts = [s.strip() for s in _SENT_SPLIT.split(text or "") if s.strip()]
+    return [s for s in parts if len(re.sub(r"\s", "", s)) >= min_chars]
+
+
+def detect_cadence_echo(response: str,
+                        recent_sents: Optional[List[str]] = None,
+                        min_chars: int = 6,
+                        near: float = 0.90,
+                        ) -> Tuple[str, List[str]]:
+    """I축: 응답 문장이 이전 턴들과 verbatim/near-verbatim 재발하는지 감지. soft 경고만.
+
+    *문장 단위* 비교라 같은 referent(은색 캔)가 *다른 문장*에 재등장하는 건 통과(ratio<near),
+    같은 *문장 템플릿*('열리지 않은 약속.', '유우의 찻잔이 받침에 닿았다.')이 재발하면 플래그.
+    위협 아님 — comfort-groove 재정착의 *관찰*(산문2 스모크: 25턴 59건, 캔 모티프 오탐 0).
+
+    Returns: (feedback_str, current_sents).  current는 rolling window에 append용(caller가 cap).
+    """
+    import difflib
+    recent = recent_sents or []
+    cur = _sentences(response, min_chars)
+    hits = []
+    seen = set()
+    for s in cur:
+        if s in seen:
+            continue
+        for prev in recent:
+            if difflib.SequenceMatcher(None, s, prev).ratio() >= near:
+                hits.append(s)
+                seen.add(s)
+                break
+    feedback = ""
+    if hits:
+        shown = "; ".join(f'"{h[:24]}…"' for h in hits[:3])
+        feedback = (f"[I:재정착] 문장 {len(hits)}개가 이전 턴과 verbatim 재발: {shown} "
+                    f"→ 새 표면으로(모티프 재등장 OK, 문장을 새로)")
+    return feedback, cur

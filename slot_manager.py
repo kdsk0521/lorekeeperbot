@@ -1135,7 +1135,10 @@ def build_34_step_prompt(ctx) -> str:
             scene_intel_parts.append("### Habitus\n" + "\n".join(hab_lines))
 
     # TemporalOrientation: iceberg 번역
-    temporal_text = iceberg.translate_temporal_orientation(dai.get("TemporalOrientation"))
+    # [2026-06-11 소비자 감사 #5] snake 폴백 누락 복구 — bus.dai는 temporal_orientation(snake)로
+    # 싣는데 여기만 Pascal 단독 읽기라 번역기가 영구 빈손이었음 (다른 Pascal 읽기들은 전부 이중 폴백).
+    temporal_text = iceberg.translate_temporal_orientation(
+        dai.get("TemporalOrientation", dai.get("temporal_orientation")))
     if temporal_text:
         scene_intel_parts.append(temporal_text)
 

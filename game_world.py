@@ -581,3 +581,46 @@ def resolve_clock_by_quest(channel_id: str, clock_name: str) -> str:
             return f"✅ **시계 해결: {clock_name}** (긴장도 {bonus_doom})"
     return ""
 
+
+# =========================================================
+# [2026-06-12] 명시 시간 선언(Time Decree) 파서
+# W3 Decree 원칙: 유저의 시간 선언 = 확립된 사실 — 클램프가 누를 대상이 아님.
+# 원래 Theoria의 explicit_hours 신호에 의존했으나(2026-05-23) 모델 교체로 미발화 관측
+# ("2시간 뒤" 인풋 → TimeSync가 120→4분 클램프) → 코드 regex 판정으로 보강.
+# =========================================================
+
+import re as _re_td
+
+_TD_KOR_NUM = {"한": 1, "두": 2, "세": 3, "네": 4, "다섯": 5,
+               "여섯": 6, "일곱": 7, "여덟": 8, "아홉": 9, "열": 10}
+_TD_PATTERN = _re_td.compile(
+    r'(\d{1,3}|한|두|세|네|다섯|여섯|일곱|여덟|아홉|열)\s*(분|시간)\s*(?:쯤|정도|가량|반)?\s*(?:뒤|후|이?\s*지나)'
+)
+# 대사 제외용 — 인물의 "2시간 뒤에 올게"는 선언이 아니라 발화
+_TD_QUOTES = _re_td.compile(r'"[^"]*"|“[^”]*”|『[^』]*』|「[^」]*」')
+
+
+def parse_time_decree(text) -> int:
+    """유저 인풋의 명시 시간 점프 선언 → 분 (없으면 0).
+
+    - 따옴표 안(대사)은 제외: 지문/선언부의 "N분/시간 뒤·후"만 Decree
+    - 상한 24시간 (그 이상의 점프는 !시간 설정 영역 — 오인 방지)
+    """
+    if not text or not isinstance(text, str):
+        return 0
+    stripped = _TD_QUOTES.sub(" ", text)
+    m = _TD_PATTERN.search(stripped)
+    if not m:
+        return 0
+    num, unit = m.group(1), m.group(2)
+    n = _TD_KOR_NUM.get(num)
+    if n is None:
+        try:
+            n = int(num)
+        except ValueError:
+            return 0
+    if n <= 0:
+        return 0
+    minutes = n * 60 if unit == "시간" else n
+    return max(1, min(minutes, 24 * 60))
+

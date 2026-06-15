@@ -164,27 +164,56 @@ def get_last_block(channel_id: str) -> str:
     return _last_block.get(channel_id, "")
 
 def _extract_want(psyche: Any) -> str:
-    """DAI psyche에서 want 후보 추출 — 스키마 관용 (LLM 출력이라 완벽 기대 안 함)."""
+    """DAI psyche에서 want 후보 추출 — 스키마 관용.
+
+    [2026-06-12 공실률 실측 보정] 평면 want 키 적중 0/69 — Theoria 실스키마는
+    psyche_states[npc] = {psyche:{active_needs[...],...}, soma, relation, deep_read, resurfacing}.
+    psyche.active_needs(행동 지배 욕구, 100% 적중)가 want의 실측 등가물. 평면 키는 미래 호환 폴백."""
     if not isinstance(psyche, dict):
         return ""
+    # 평면 키 (미래 호환)
     for key in ("want", "goal", "desire", "core_want", "current_want"):
         v = psyche.get(key)
         if isinstance(v, str) and v.strip():
             return v.strip()[:40]
+    # 실측 스키마: psyche.active_needs 첫 항목
+    inner = psyche.get("psyche")
+    if isinstance(inner, dict):
+        needs = inner.get("active_needs")
+        if isinstance(needs, list) and needs:
+            n = needs[0]
+            if isinstance(n, str) and n.strip():
+                return n.strip()[:40]
     return ""
 
 
-def _recent_npcs_from_dai(channel_id: str, turns: int = 10) -> List[str]:
+def _recent_npcs_from_dai(channel_id: str, turns: int = 10):
+    """최근 N턴 DAI 스캔. Returns (등장 인물 순서, NPC별 마지막 목격 psyche, 직전 턴 등장 인물).
+
+    [2026-06-12 첫 발화 결함 수정] 직전 턴 등장 인물 = 무대 위 — 막간 장부 대상에서 제외해야 함
+    (걔들의 막간은 산문이 직접 렌더; 첫 실전에서 케인 위에서 자던 리리스·비비가 routine으로 기록됨).
+    부재자의 want는 최신 턴이 아니라 **마지막 목격 턴**의 psyche에서."""
     import sqlite_store
+    logs = sqlite_store.read_dai_logs(channel_id, turns)  # 오래된→최신
     names: List[str] = []
-    for _turn, dai in sqlite_store.read_dai_logs(channel_id, turns):
+    last_psyche: Dict[str, Any] = {}
+    on_scene: set = set()
+    for idx, (_turn, dai) in enumerate(logs):
+        is_last = (idx == len(logs) - 1)
+        ps = dai.get("psyche_states")
         for key in ("npc_attitudes", "psyche_states"):
             d = dai.get(key)
             if isinstance(d, dict):
                 for n in d.keys():
                     if n not in names:
                         names.append(n)
-    return names
+                    if is_last:
+                        on_scene.add(n)
+        if isinstance(ps, dict):
+            for n, p in ps.items():
+                if isinstance(p, dict):
+                    last_psyche[n] = p  # 뒤(최신)가 덮어씀 = 마지막 목격
+    return names, last_psyche, on_scene
 
 
 def reconstruct_interim(channel_id: str) -> Optional[str]:
@@ -213,17 +242,26 @@ def reconstruct_interim(channel_id: str) -> Optional[str]:
         if band <= 0:
             return None
 
-        # 2. 대상 NPC 선정: 최근 DAI 등장 ∪ 스케줄 보유, 등록 NPC만, PC 제외, 상한
+        # 2. 대상 NPC 선정: 최근 DAI 등장 ∪ 스케줄 보유 — 단, **장면 밖 한정**:
+        #    직전 턴 등장 인물(무대 위)·PC·미등록 제외. 무대 위 인물의 막간은 산문 몫.
         registered = domain_manager.get_npcs(channel_id) or {}
         participants = domain_manager.get_domain(channel_id).get("participants", {})
         pc_masks = {p.get("mask", "") for p in participants.values()}
         session_mem = domain_manager.get_domain(channel_id).get("ai_session_memory", {}) or {}
         npc_summaries = session_mem.get("npc_summaries", {}) or {}
 
+        recent_names, last_psyche, on_scene_raw = _recent_npcs_from_dai(channel_id)
+        # on_scene을 등록 키로 정규화 (DAI 이름 ↔ 레지스트리 키 별칭 차 흡수)
+        on_scene_keys = set()
+        for n in on_scene_raw:
+            k = domain_manager._find_npc_key(registered, n)
+            if k:
+                on_scene_keys.add(k)
+
         candidates: List[str] = []
-        for n in _recent_npcs_from_dai(channel_id) + list(npc_summaries.keys()):
+        for n in recent_names + list(npc_summaries.keys()):
             key = domain_manager._find_npc_key(registered, n)
-            if key and key not in candidates and key not in pc_masks:
+            if key and key not in candidates and key not in pc_masks and key not in on_scene_keys:
                 candidates.append(key)
         cap = min(5, band + 2)
         selected = candidates[:cap]
@@ -242,11 +280,14 @@ def reconstruct_interim(channel_id: str) -> Optional[str]:
             if s in selected and t in selected and s not in pair_of:
                 pair_of[s] = t
 
-        # want 소스: 최신 DAI 1턴
-        latest_psyche: Dict[str, Any] = {}
-        logs = sqlite_store.read_dai_logs(channel_id, 1)
-        if logs:
-            latest_psyche = logs[-1][1].get("psyche_states") or {}
+        # want 소스: NPC별 **마지막 목격** psyche (부재자는 최신 턴에 없으므로 — 위에서 수집).
+        # DAI 원이름 → 등록 키 정규화 (별칭 차 흡수)
+        psyche_by_key: Dict[str, Any] = {}
+        for _rn, _p in last_psyche.items():
+            _k = domain_manager._find_npc_key(registered, _rn)
+            if _k and _k not in psyche_by_key:
+                psyche_by_key[_k] = _p
+        latest_psyche = psyche_by_key
 
         night = world.get("time_slot") in ("밤", "심야", "새벽")
         day_key = f"{curr_gt.get('day')}-{curr_gt.get('hour')}"

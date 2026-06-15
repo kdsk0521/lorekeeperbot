@@ -255,6 +255,20 @@ class OrchestrationService:
 
         # 시간 흐름 처리 (Delegated to GameSystem)
         time_flow = dai.get("time_flow", {})
+        # [2026-06-12] 명시 시간 Decree — 유저 인풋 regex 판정으로 explicit 신호 보강
+        # (Theoria explicit_hours가 모델 교체 후 미발화 → "2시간 뒤"가 클램프에 깎이던 건 차단)
+        ctx.time_decree_min = 0
+        try:
+            from game_world import parse_time_decree
+            _decree_min = parse_time_decree(ctx.action_text or "")
+            if _decree_min and not (time_flow or {}).get("explicit_hours"):
+                time_flow = dict(time_flow or {})
+                time_flow["explicit"] = True
+                time_flow["explicit_hours"] = _decree_min / 60.0
+                ctx.time_decree_min = _decree_min
+                logger.info(f"[TimeDecree] 명시 선언 감지: +{_decree_min}분 (클램프 면제)")
+        except Exception as _e_td:
+            logger.debug(f"[TimeDecree] skip: {_e_td}")
         time_msg = await game_system.process_time_flow(channel_id, time_flow, curr_scene)
         if time_msg:
             messages.append(time_msg)
@@ -993,8 +1007,8 @@ class OrchestrationService:
                 except Exception as e:
                     logger.warning(f"[EntityRelations] Failed to process: {e}")
 
-            if updates.get("PlayerMemoryUpdate"):
-                pmu = updates["PlayerMemoryUpdate"]
+            pmu = updates.get("PlayerMemoryUpdate")
+            if pmu:
                 if pmu.get("relationships"):
                     for nm, val in pmu["relationships"].items():
                         new_rel = domain_manager.update_npc_relationship(channel_id, ctx.user_id, nm, val)
@@ -1370,6 +1384,11 @@ class OrchestrationService:
                                 _scene = ctx.scene_type or _world.get("current_scene_type", "normal")
                                 _rules = config.SCENE_TIME_RULES.get(_scene, config.SCENE_TIME_RULES["normal"])
                                 max_min = _rules.get("max_ticks", 2) * 2
+                                # [2026-06-12] 명시 Decree 턴은 선언량+여유까지 허용 (이중 안전망 —
+                                # TimeFlow가 이미 선행 적용했으면 delta는 작아서 무해)
+                                _decree = getattr(ctx, "time_decree_min", 0) or 0
+                                if _decree:
+                                    max_min = max(max_min, _decree + 30)
                                 if delta_min > max_min:
                                     logger.info(
                                         f"[TimeSync] Clamped {delta_min}→{max_min}min (scene={_scene}, status={new_h:02d}:{new_m:02d})"
@@ -1397,7 +1416,12 @@ class OrchestrationService:
                         detect_explain_then_render_patterns, detect_vending_patterns,
                     )
                     cliche_fb = detect_cliche_patterns(response)
-                    cargo_fb = detect_cargo_patterns(response)
+                    # [2026-06-12] 앙상블 보정: 장면 NPC 수 전달 (분산 아닌 분배 — 다인 장면 반응 나열은 내용)
+                    _scene_npc_n = len(set(
+                        list((ctx.dai.get("npc_attitudes") or {}).keys())
+                        + list((ctx.dai.get("psyche_states") or {}).keys())
+                    )) if ctx.dai else 1
+                    cargo_fb = detect_cargo_patterns(response, scene_npc_count=max(1, _scene_npc_n))
                     # A7: HALLABONG 4-pattern detection
                     arrival_fb = detect_arrival_patterns(response)
                     declaration_fb = detect_declaration_patterns(response)
@@ -1446,6 +1470,30 @@ class OrchestrationService:
                         response, _recent_deflections
                     )
 
+                    # L축(한글 저점): log-only 관찰 — 출력/다음턴 미주입(스코프 v1).
+                    # try/except로 격리 — detector가 파이프를 절대 못 깨게.
+                    try:
+                        from response_processor import detect_korean_floor
+                        _kf_fb, _kf_stats = detect_korean_floor(response)
+                        if _kf_fb:
+                            logger.info(f"[KoreanFloor] {_kf_fb} {_kf_stats}")
+                    except Exception as _e_kf:
+                        logger.warning(f"[KoreanFloor] skipped: {_e_kf}")
+
+                    # I축(재정착): log-only 관찰 — verbatim 후렴 재발. 윈도우는 _tracking_update로 영속.
+                    _ce_window = None
+                    try:
+                        from response_processor import detect_cadence_echo
+                        _ce_recent = _mem_for_fb.get("recent_cadence_sents", [])
+                        if not isinstance(_ce_recent, list):
+                            _ce_recent = []
+                        _ce_fb, _ce_cur = detect_cadence_echo(response, _ce_recent)
+                        if _ce_fb:
+                            logger.info(f"[CadenceEcho] {_ce_fb}")
+                        _ce_window = (_ce_recent + _ce_cur)[-180:]
+                    except Exception as _e_ce:
+                        logger.warning(f"[CadenceEcho] skipped: {_e_ce}")
+
                     style_fb = " ".join(filter(None, [
                         cliche_fb, cargo_fb, rotation_fb, pidgin_fb,
                         struct_fb, tension_fb, deflection_fb,
@@ -1463,6 +1511,8 @@ class OrchestrationService:
                     }
                     if _current_deflections:
                         _tracking_update["recent_deflections"] = (_recent_deflections + _current_deflections)[-6:]
+                    if _ce_window is not None:
+                        _tracking_update["recent_cadence_sents"] = _ce_window
                     domain_manager.update_session_ai_memory(channel_id, _tracking_update)
                     if fmt_feedback:
                         logger.info(f"[FormatCheck] {fmt_feedback[:80]}")

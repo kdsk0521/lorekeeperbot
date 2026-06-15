@@ -750,9 +750,9 @@ async def cmd_notebook(ctx: CommandContext) -> None:
 
 
 
-@registry.register("npc", category="World", aliases=["엔피씨", "addnpc", "npc정보", "npc추가"], description="NPC 관리 (조회/추가/삭제/보이스카드)")
+@registry.register("npc", category="World", aliases=["엔피씨", "addnpc", "npc정보", "npc추가"], description="NPC 관리 (조회/추가/삭제/별칭/병합)")
 async def cmd_npc(ctx: CommandContext) -> None:
-    """!npc [이름] 조회 | !npc add [이름] [설명] | !npc remove [이름] | !npc voicecard [이름]"""
+    """!npc [이름] 조회 | !npc add [이름] [설명] | !npc remove [이름] | !npc 별칭 [이름] [별칭] | !npc 병합 [중복] [본체]"""
     # 1. File Content
     file_text = ""
     if ctx.message.attachments:
@@ -815,6 +815,37 @@ async def cmd_npc(ctx: CommandContext) -> None:
             await ctx.send("ℹ️ Voice Card 시스템은 제거되었습니다. hybrid 프로필의 ### Voice 섹션이 직접 사용됩니다.")
             return
 
+        # Subcommand: 별칭 / alias — 모델이 다른 언어로 부를 이름 등록 (리리스 ↔ Lilith)
+        # [2026-06-12] 공백 포함 이름 지원: 구분자(->) 또는 등록 키 기반 스마트 분할
+        if parts[0].lower() in ('alias', '별칭'):
+            rest = parts[1] if len(parts) > 1 else ""
+            npc_arg, alias_arg, perr = domain_manager.split_npc_pair(
+                domain_manager.get_npcs(channel_id), rest, both_npc=False)
+            if perr:
+                await ctx.send(f"⚠️ {perr}\n사용법: `!npc 별칭 [NPC이름] [별칭]` 또는 `!npc 별칭 이름없는 유령 -> Nameless`")
+                return
+            ok, key = domain_manager.add_npc_alias(channel_id, npc_arg, alias_arg)
+            if ok:
+                aliases = (domain_manager.get_npcs(channel_id).get(key) or {}).get("aliases", [])
+                await ctx.send(f"🏷️ **{key}** 별칭 등록: {', '.join(aliases)}")
+            elif key:
+                await ctx.send(f"⚠️ '{alias_arg}'는 이미 다른 NPC **{key}**로 해상됩니다.")
+            else:
+                await ctx.send(f"⚠️ NPC '{npc_arg}' 정보를 찾을 수 없습니다.")
+            return
+
+        # Subcommand: 병합 / merge — 중복 등록 NPC를 본체로 흡수 (흡수명 자동 별칭화)
+        if parts[0].lower() in ('merge', '병합'):
+            rest = parts[1] if len(parts) > 1 else ""
+            dup_arg, canon_arg, perr = domain_manager.split_npc_pair(
+                domain_manager.get_npcs(channel_id), rest, both_npc=True)
+            if perr:
+                await ctx.send(f"⚠️ {perr}\n사용법: `!npc 병합 [중복이름] [본체이름]` 또는 `!npc 병합 Ghost -> 이름없는 유령`")
+                return
+            ok, msg = domain_manager.merge_npc(channel_id, dup_arg, canon_arg)
+            await ctx.send(f"{'🔀' if ok else '⚠️'} {msg}")
+            return
+
     # 3. Batch Processing Logic (Restored from handle_npc_command)
     raw_lines = (arg + "\n" + file_text).strip().splitlines() if arg else (file_text or "").strip().splitlines()
     processed_count = 0
@@ -859,17 +890,12 @@ async def cmd_npc(ctx: CommandContext) -> None:
             if current_name:
                 blocks.append((current_name, current_lines))
 
-            # Helper: find existing NPC by alias match (e.g., "Limi" matches "리미 (Limi)")
+            # Helper: find existing NPC by equivalence (e.g., "Limi" ↔ "리미 (Limi)")
+            # [2026-06-12] 단방향 자체 매칭 → domain_manager 양방향 통합 해상도로 교체
+            # (리리스/Lilith 4중 분열 원인 중 하나: 여기가 새이름 base → 기존 맨키 방향을 못 봤음)
             existing_npcs = domain_manager.get_npcs(channel_id)
             def _find_existing(new_name: str) -> str:
-                if new_name in existing_npcs:
-                    return new_name
-                nl = new_name.lower().strip()
-                for en in existing_npcs:
-                    m = re.search(r'\(([^)]+)\)', en)
-                    if m and m.group(1).strip().lower() == nl:
-                        return en
-                return new_name  # no match → use as-is
+                return domain_manager.find_equivalent_npc_key(existing_npcs, new_name) or new_name
 
             for name, desc_lines in blocks:
                 while desc_lines and not desc_lines[0].strip():
