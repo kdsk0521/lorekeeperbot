@@ -222,7 +222,7 @@ class NPCAutonomousEngine:
         selected = triggers[:max_triggers]
         lines = [
             "[NPC Autonomous Behavior]",
-            "(Show through action only. Never name trigger types or psychology terms in prose.)",
+            "(shown through action only; the trigger types and psychology terms stay out of the prose.)",
         ]
         for t in selected:
             lines.append(f"- {t.npc_name}: {t.directive}")
@@ -240,7 +240,7 @@ def _check_henderson_need_critical(ctx: Dict) -> TriggerResult | None:
         need_str = "/".join(needs[:2])
         return TriggerResult(
             "henderson_need_critical", ctx["name"],
-            f"{ctx['name']}의 욕구({need_str})가 충족되지 않았다 — 이번 턴에 스스로 움직인다",
+            f"{ctx['name']}'s needs ({need_str}) go unmet — this turn they move on their own",
             priority=7,
         )
     return None
@@ -252,7 +252,7 @@ def _check_attachment_activation(ctx: Dict) -> TriggerResult | None:
     if attachment == "anxious":
         return TriggerResult(
             "attachment_activation", ctx["name"],
-            f"{ctx['name']}이(가) 가까움을 갈망한다 — 먼저 다가가고 확인을 구한다",
+            f"{ctx['name']} aches for closeness — reaching out first, seeking reassurance",
             priority=5,
         )
     return None
@@ -265,7 +265,7 @@ def _check_reactance(ctx: Dict) -> TriggerResult | None:
     if coping == "avoidant" and rel_val < -10:
         return TriggerResult(
             "reactance", ctx["name"],
-            f"{ctx['name']}이(가) 반발한다 — 기대에 저항하거나 거부한다",
+            f"{ctx['name']} pushes back — resisting or refusing what's expected",
             priority=6,
         )
     return None
@@ -285,13 +285,13 @@ def _check_info_gap(ctx: Dict) -> TriggerResult | None:
     if tension >= 50:
         return TriggerResult(
             "information_gap_fill", ctx["name"],
-            f"{ctx['name']}의 믿음이 흔들린다 — '{belief}'와 현실이 충돌. 방어하거나, 의심하거나, 무시한다",
+            f"{ctx['name']}'s belief wavers — '{belief}' collides with reality; defending, doubting, or dismissing it",
             priority=5,
         )
 
     return TriggerResult(
         "information_gap_fill", ctx["name"],
-        f"{ctx['name']}이(가) 뭔가 어긋남을 느낀다 — '{belief}'에 대해 확인하거나 캐묻는다",
+        f"{ctx['name']} senses something off — checking or pressing about '{belief}'",
         priority=4,
     )
 
@@ -311,13 +311,13 @@ def _check_secret_pressure(ctx: Dict) -> TriggerResult | None:
         fragment = secret[:30] if len(secret) > 30 else secret
         return TriggerResult(
             "secret_pressure", ctx["name"],
-            f"{ctx['name']}의 압력 한계 — '{fragment}'의 조각이 행동이나 말실수로 새어나온다",
+            f"{ctx['name']} at the pressure limit — a fragment of '{fragment}' slips out through action or a misspoken word",
             priority=6,
         )
 
     return TriggerResult(
         "secret_pressure", ctx["name"],
-        f"{ctx['name']}이(가) 비밀을 유지하기 힘들어한다 — 말실수나 행동으로 단서가 새어나올 수 있다",
+        f"{ctx['name']} struggles to keep the secret — a clue may slip out through a misstep or action",
         priority=5 if leak_risk == "high" else 3,
     )
 
@@ -354,13 +354,13 @@ def _check_emotional_contagion(ctx: Dict, all_psyche: Dict) -> TriggerResult | N
                 if current_polyvagal == "sympathetic":
                     return TriggerResult(
                         "emotional_contagion", ctx["name"],
-                        f"{ctx['name']}이(가) {other_name}의 고통을 감지한다 — 이미 곤두선 신경이 더 날카로워진다",
+                        f"{ctx['name']} senses {other_name}'s distress — already-taut nerves sharpen further",
                         priority=1,
                     )
                 # ventral (또는 기타): 기본 어조
                 return TriggerResult(
                     "emotional_contagion", ctx["name"],
-                    f"{ctx['name']}이(가) {other_name}의 고통을 감지한다 — 평온이 흔들리기 시작한다",
+                    f"{ctx['name']} senses {other_name}'s distress — the calm begins to waver",
                     priority=2,
                 )
     return None
@@ -373,7 +373,7 @@ def _check_moral_disengagement(ctx: Dict) -> TriggerResult | None:
     if attitude == "hostile" and self_opacity:
         return TriggerResult(
             "moral_disengagement_stable", ctx["name"],
-            f"{ctx['name']}이(가) 해로운 행동을 강화한다 — 스스로에게 합리화하며",
+            f"{ctx['name']} doubles down on the harmful behavior — rationalizing it to themselves",
             priority=4,
         )
     return None
@@ -481,15 +481,15 @@ def check_desistance_gate(
 
     if met_count >= 4:
         directive = (
-            f"{npc_name} — 전환점: 4조건 충족({', '.join(met_names)}). "
-            f"오래된 패턴이 무너지고 새로운 행동이 나타난다"
+            f"{npc_name} — turning point: 4 conditions met ({', '.join(met_names)}). "
+            f"the old pattern collapses and a new behavior emerges"
         )
         return {"met": met_count, "total": 4, "eligible": True,
                 "directive": directive}
     elif met_count >= 2:
         directive = (
-            f"{npc_name} — 균열 징후({met_count}/4: {', '.join(met_names)}). "
-            f"적대적 발언 감소, 짧은 침묵, 시선 회피"
+            f"{npc_name} — signs of cracking ({met_count}/4: {', '.join(met_names)}). "
+            f"fewer hostile remarks, brief silences, eyes averted"
         )
         return {"met": met_count, "total": 4, "eligible": True,
                 "directive": directive}
@@ -510,11 +510,11 @@ def _check_agenda_manifest(ctx: Dict) -> Optional[TriggerResult]:
     secrets = ctx.get("knowledge", {}).get("secrets_held", [])
     agenda_needs = ("autonomy", "esteem", "self-actualization", "belonging", "intimacy")
     if secrets or need in agenda_needs:
-        need_kr = {"autonomy": "자율성", "esteem": "인정", "self-actualization": "자아실현",
-                   "belonging": "소속감", "intimacy": "친밀감", "safety": "안전"}.get(need, need)
+        need_kr = {"autonomy": "autonomy", "esteem": "recognition", "self-actualization": "self-actualization",
+                   "belonging": "belonging", "intimacy": "intimacy", "safety": "safety"}.get(need, need)
         return TriggerResult(
             "agenda_manifest", ctx["name"],
-            f"{ctx['name']}의 개인 목표가 드러난다 — {need_kr}에 대한 욕구가 대사와 행동에 묻어난다",
+            f"{ctx['name']}'s personal aim shows — the want for {need_kr} bleeds into their words and actions",
             priority=2,
         )
     return None
@@ -546,7 +546,7 @@ def _check_ethical_arrest(ctx: Dict, all_psyche: Dict) -> Optional[TriggerResult
         if is_vulnerable:
             return TriggerResult(
                 "ethical_arrest", ctx["name"],
-                f"타자의 고통이 보였다 — {ctx['name']}의 행동이 멈추거나, 외면하거나, 더 잔인해진다",
+                f"another's suffering became visible — {ctx['name']} stops, looks away, or turns crueler",
                 priority=3,
             )
     return None
@@ -582,7 +582,7 @@ def _check_groupthink_pressure(ctx: Dict, all_psyche: Dict) -> TriggerResult | N
     if own_emotion == "fear" or own_conflict:
         return TriggerResult(
             "groupthink_pressure", ctx["name"],
-            f"{ctx['name']}이(가) 반대 의견을 삼킨다 — 집단 결론 쪽으로 말끝이 휘어진다",
+            f"{ctx['name']} swallows the dissent — their words bend toward the group's conclusion",
             priority=3,
         )
     return None
@@ -605,7 +605,7 @@ def _check_conformity_drift(ctx: Dict, all_psyche: Dict) -> TriggerResult | None
     if own_attachment == "anxious":
         return TriggerResult(
             "conformity_drift", ctx["name"],
-            f"{ctx['name']}이(가) 다수의 시선을 따른다 — 자기 판단을 유보한 채",
+            f"{ctx['name']} follows the many eyes — holding their own judgment in reserve",
             priority=3,
         )
     return None
@@ -628,7 +628,7 @@ def _check_obedience_cascade(ctx: Dict, all_psyche: Dict) -> TriggerResult | Non
     if own_attachment in ("disorganized", "avoidant"):
         return TriggerResult(
             "obedience_cascade", ctx["name"],
-            f"{ctx['name']}이(가) 권위의 흐름에 몸을 맡긴다 — 책임은 위에 있다고 믿는다",
+            f"{ctx['name']} yields to the flow of authority — believing the responsibility lies above",
             priority=4,
         )
     return None

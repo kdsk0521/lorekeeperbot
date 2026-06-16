@@ -157,14 +157,14 @@ def _detect_conflicts(parsed: List[ParsedNotation]) -> List[str]:
     music_vals = list(set(music_map.values()))
     if len(music_vals) > 1:
         pairs = [f"{k}={v}" for k, v in music_map.items()]
-        conflicts.append(f"♪ 충돌: {' vs '.join(pairs)}")
+        conflicts.append(f"♪ conflict: {' vs '.join(pairs)}")
 
     # 사진 축 충돌 (시간밀도)
     photo_map = {p.layer: p.photo for p in parsed if p.photo and not p.abbreviated}
     photo_vals = list(set(photo_map.values()))
     if len(photo_vals) > 1:
         pairs = [f"{k}={v}" for k, v in photo_map.items()]
-        conflicts.append(f"◎ 충돌: {' vs '.join(pairs)}")
+        conflicts.append(f"◎ conflict: {' vs '.join(pairs)}")
 
     return conflicts
 
@@ -257,7 +257,7 @@ def compose_notations(
     # 7. 출력 합성
     lines = []
     if global_tone:
-        lines.append(f"[전체 톤] {global_tone}")
+        lines.append(f"[overall tone] {global_tone}")
 
     # 지배 레이어 출력
     dom_parts = []
@@ -268,11 +268,11 @@ def compose_notations(
     if dominant.photo:
         dom_parts.append(f"◎ {dominant.photo}")
     dom_lens = f" ({dominant.lens})" if dominant.lens else ""
-    lines.append(f"[지배:{dominant.layer}{dom_lens}] {' | '.join(dom_parts)}")
+    lines.append(f"[dominant:{dominant.layer}{dom_lens}] {' | '.join(dom_parts)}")
 
     # 충돌 디렉티브
     for conflict in conflicts:
-        lines.append(f"[갈등] {conflict}")
+        lines.append(f"[conflict] {conflict}")
 
     # 차이 레이어
     for p in parsed:
@@ -299,14 +299,14 @@ def compose_transition(prev_frame: dict, current_energy: str) -> str:
         return ""
 
     transitions = {
-        ("idle", "rising"):       "[전환] 고요함이 깨진다 — 감각 전환점",
-        ("rising", "detonation"): "[전환] 폭발 직전 — 모든 감각이 수렴한다",
-        ("detonation", "aftershock"): "[전환] 폭발 이후 — 잔향이 공간을 채운다",
-        ("aftershock", "falling"): "[전환] 여진이 잦아든다 — 공간이 숨을 쉰다",
-        ("falling", "idle"):      "[전환] 정적이 돌아온다 — 새로운 균형",
-        ("rising", "idle"):       "[전환] 긴장이 허탈하게 풀린다",
-        ("detonation", "idle"):   "[전환] 폭풍 후의 고요",
-        ("idle", "detonation"):   "[전환] 기습적 폭발 — 전조 없는 충격",
+        ("idle", "rising"):       "[transition] the stillness breaks — a sensory turning point",
+        ("rising", "detonation"): "[transition] just before the burst — every sense converges",
+        ("detonation", "aftershock"): "[transition] after the burst — the reverberation fills the space",
+        ("aftershock", "falling"): "[transition] the aftershock subsides — the space breathes",
+        ("falling", "idle"):      "[transition] the quiet returns — a new equilibrium",
+        ("rising", "idle"):       "[transition] the tension slackens into emptiness",
+        ("detonation", "idle"):   "[transition] the calm after the storm",
+        ("idle", "detonation"):   "[transition] a sudden burst — shock with no warning",
     }
 
     return transitions.get((prev_energy, current_energy), "")

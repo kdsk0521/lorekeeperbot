@@ -258,7 +258,7 @@ class AnomalyModule:
             resolved_count = before_count - len(active_conds)
             if resolved_count > 0:
                 bus.anomaly["conditions_resolved_log"] = (
-                    f"🌤️ 조건 해소: {', '.join(condition_resolved[:3])} ({resolved_count}건)"
+                    f"condition resolved: {', '.join(condition_resolved[:3])} ({resolved_count})"
                 )
                 logger.info("[Storyteller] Conditions resolved: %s", condition_resolved)
 
@@ -414,8 +414,16 @@ class AnomalyModule:
                         # PMU가 다음 턴에 confirm하면 arc 등록 별도
 
                     # === 기존 일반 발사 흐름 ===
-                    bus.anomaly["triggered"] = True
-                    bus.anomaly["tag"] = selected.get("tag", "")
+                    # "계속되면 이변이 아니다" — 이미 standing인 조건의 재발사는 [이변]으로
+                    # 재공지하지 않는다(triggered=False → 배너/anomaly-shock 비트 억제). 조건은
+                    # active_conditions에 그대로 남아 장면에 조용히 영향.
+                    _sel_tag = selected.get("tag", "")
+                    _already_active = any(
+                        c.get("tag") == _sel_tag
+                        for c in st_state.get("active_conditions", [])
+                    )
+                    bus.anomaly["triggered"] = not _already_active
+                    bus.anomaly["tag"] = _sel_tag
                     bus.anomaly["category"] = selected.get("category", "")
                     bus.anomaly["intensity"] = self._normalize_intensity(selected.get("intensity", "Mid"))
                     bus.anomaly["polarity"] = self._normalize_polarity(selected.get("polarity"))
@@ -444,8 +452,9 @@ class AnomalyModule:
                             queue.pop(idx)
 
                     # Register Active Condition (Fate Aspect + Ironsworn Location)
+                    # 이미 standing이면 중복 등록 안 함(재공지 억제와 정합).
                     active_conds = st_state.get("active_conditions", [])
-                    if len(active_conds) < _cfg.ACTIVE_CONDITION_CAP:
+                    if not _already_active and len(active_conds) < _cfg.ACTIVE_CONDITION_CAP:
                         cond_location = bus.anomaly.get("location") or ""
                         if not cond_location:
                             cond_location = bus.dai.get("current_location", "") if hasattr(bus, "dai") else ""

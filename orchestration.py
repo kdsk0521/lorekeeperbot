@@ -1459,7 +1459,7 @@ class OrchestrationService:
                     _tension_fb_list = detect_tension_dissolution(response)
                     tension_fb = (
                         "[TENSION: " + "; ".join(f"{name}: {text}" for name, text in _tension_fb_list)
-                        + " — 갈등을 즉시 해소하지 마라. 긴장을 유지하라]"
+                        + " · the conflict stays unresolved; the friction holds]"
                     ) if _tension_fb_list else ""
 
                     # P3: Deflection repetition detection (NPC 회피기법 반복)
@@ -1470,8 +1470,9 @@ class OrchestrationService:
                         response, _recent_deflections
                     )
 
-                    # L축(한글 저점): log-only 관찰 — 출력/다음턴 미주입(스코프 v1).
-                    # try/except로 격리 — detector가 파이프를 절대 못 깨게.
+                    # L축(한글 저점): log-only 관측 — 검출은 사람한테 알리는 관측이지 쓰기-제어 아님.
+                    # 프롬프트 측은 KOREAN SENTENCE DOCTRINE이 직접 담당. (position-2 승격 2026-06-16 시도→철회:
+                    # 검출기 임계가 골드(산문2)도 잡아 자동주입 시 자연 한국어 과교정 위험. 검출↔쓰기 분리.)
                     try:
                         from response_processor import detect_korean_floor
                         _kf_fb, _kf_stats = detect_korean_floor(response)
@@ -1480,7 +1481,7 @@ class OrchestrationService:
                     except Exception as _e_kf:
                         logger.warning(f"[KoreanFloor] skipped: {_e_kf}")
 
-                    # I축(재정착): log-only 관찰 — verbatim 후렴 재발. 윈도우는 _tracking_update로 영속.
+                    # I축(재정착): log-only 관측. verbatim 후렴 재발. 윈도우는 _tracking_update로 영속.
                     _ce_window = None
                     try:
                         from response_processor import detect_cadence_echo

@@ -33,12 +33,12 @@ def _position_tier(value: float) -> str:
 def _mc_move(position: str, result: str) -> str:
     matrix = {
         ("desperate", "critical_failure"): "Catastrophic - something irreversible happens.",
-        ("desperate", "failure"): "Make the threat real - irreversible consequences.",
+        ("desperate", "failure"): "the threat becomes real - irreversible consequences.",
         ("desperate", "partial"): "Heavy price - gain what was sought but lose something.",
         ("desperate", "success"): "Dramatic turnaround - shining in the direst moment.",
         ("desperate", "critical_success"): "Miraculous reversal - transcendent moment.",
         ("risky", "critical_failure"): "Worst case unfolds - danger becomes reality.",
-        ("risky", "failure"): "Escalate - a new danger reveals itself.",
+        ("risky", "failure"): "the danger escalates - a new one reveals itself.",
         ("risky", "partial"): "Success with cost - complications follow.",
         ("risky", "success"): "Danger cleared - competent execution.",
         ("risky", "critical_success"): "Brilliant - impressive against the odds.",
@@ -145,13 +145,13 @@ def _build_world_layer(bus) -> str:
     action_name = str(action_meta.get("action", "")).strip()
     if action_name:
         difficulty = str(action_meta.get("difficulty", "normal"))
-        parts.append(f"'{action_name}' 시도 — {difficulty}")
+        parts.append(f"'{action_name}' attempt — {difficulty}")
         if not needs_judgment:
-            parts.append(f"판정 없음. 상황({pos_tier})과 세계 논리로 해결.")
+            parts.append(f"no roll; resolved by the situation ({pos_tier}) and the world's logic.")
 
     if not parts:
         return ""
-    return "── 세계 ──\n" + "\n".join(parts)
+    return "── World ──\n" + "\n".join(parts)
 
 
 def _build_events_layer(context, bus) -> str:
@@ -162,7 +162,7 @@ def _build_events_layer(context, bus) -> str:
     if anomaly.get("triggered"):
         line = anomaly.get("line", "")
         if line:
-            parts.append(f"세계 사건: {line}")
+            parts.append(f"world event: {line}")
 
     # Active Conditions → tag stripped
     _st_state = {}
@@ -179,8 +179,8 @@ def _build_events_layer(context, bus) -> str:
             _desc = cond.get("description", "")
             if _desc:
                 parts.append(
-                    f"현재 상황: {_desc} — "
-                    "환경, NPC 행동, 가용 행동에 반영하라."
+                    f"current situation: {_desc} — "
+                    "it shapes the environment, NPC behavior, and the available actions."
                 )
 
     # Omen → tag stripped
@@ -189,8 +189,8 @@ def _build_events_layer(context, bus) -> str:
         _omen_line = _omen.get("line", "")
         if _omen_line:
             parts.append(
-                f"전조: {_omen_line} — "
-                "감각적 디테일로만 암시하라. 이벤트 발동 금지."
+                f"omen: {_omen_line} — "
+                "hinted only through sensory detail; the event itself stays unfired."
             )
 
     # Condition resolved → text only
@@ -209,20 +209,20 @@ def _build_events_layer(context, bus) -> str:
                 threat = clock.get("threat", "")
                 cname = clock.get("name", "?")
                 parts.append(
-                    f"{cname}이 현실이 되었다 — {threat}. "
-                    "변화된 세계를 보여주라. 시점 전환 금지."
+                    f"{cname} has become real — {threat}. "
+                    "the changed world surfaces; the POV stays with the PC."
                 )
 
     # Climax → fact
     if doom.get("climax_triggered"):
-        parts.append("임계점 — 모든 것이 동시에 수렴했다. 최후의 선택.")
+        parts.append("critical point — everything has converged at once. the final choice.")
 
     # Defense → REMOVED (mechanical log)
 
     # Quest Failed → fact
     for fail in doom.get("quest_failed", []):
         if isinstance(fail, dict):
-            parts.append(f"{fail.get('quest', '?')}가 실패했다 — {fail.get('reason', '')}")
+            parts.append(f"{fail.get('quest', '?')} has failed — {fail.get('reason', '')}")
 
     # Imminent clocks → no numbers
     clocks = doom.get("clocks", [])
@@ -237,14 +237,14 @@ def _build_events_layer(context, bus) -> str:
             if remaining <= 1:
                 imminent.append(str(clock.get("name", "?")))
         if imminent:
-            parts.append(" | ".join(f"{n}이 곧 현실이 된다" for n in imminent[:3]))
+            parts.append(" | ".join(f"{n} is about to become real" for n in imminent[:3]))
 
     # Status effects → tag stripped
     status_seen = set()
     for container in (bus.vigor, bus.composure, bus.dai):
         if not isinstance(container, dict):
             continue
-        for key, label_kr in (("new_status_effects", "시작"), ("expired_status_effects", "종료")):
+        for key, label_kr in (("new_status_effects", "begins"), ("expired_status_effects", "ends")):
             entries = container.get(key, [])
             if not isinstance(entries, list):
                 continue
@@ -276,7 +276,7 @@ def _build_events_layer(context, bus) -> str:
         if not declaration:
             declaration = str(flashback.get("reason", "")).strip()
         if declaration:
-            parts.append(f"소급 선언: {declaration}")
+            parts.append(f"retroactive declaration: {declaration}")
 
     # Quest Echo → tag stripped
     # 매 턴 stale 퀘스트(QUEST_STALE_ARCHIVE_TURNS 이상) archive 이동 후,
@@ -302,7 +302,7 @@ def _build_events_layer(context, bus) -> str:
                 if stale_turns >= 8:
                     parts.append(
                         f"{q.get('content', '?')} — "
-                        "유저가 이 방향으로 행동할 때만 반영. 강제 진전 금지."
+                        "surfaces only when the user moves in this direction; the thread advances at their lead."
                     )
         except Exception:
             pass
@@ -313,45 +313,45 @@ def _build_events_layer(context, bus) -> str:
     _dt_activity = _dt_rest.get("activity", "rest")
     if _dt_activity != "rest" and _dt_rest.get("detected"):
         _dt_hints = {
-            "recover": "PC가 부상을 치료하며 시간을 보낸다.",
-            "vice": "PC가 쾌락에 빠져 시간을 보낸다.",
-            "train": "PC가 훈련에 몰두한다.",
-            "socialize": "PC가 사람들과 교류하며 시간을 보낸다.",
-            "project": "PC가 작업에 집중한다.",
+            "recover": "the PC spends time tending to injuries.",
+            "vice": "the PC spends time lost in indulgence.",
+            "train": "the PC throws themselves into training.",
+            "socialize": "the PC spends time among people.",
+            "project": "the PC focuses on their work.",
         }
-        parts.append(_dt_hints.get(_dt_activity, "PC가 목적 있는 시간을 보낸다."))
+        parts.append(_dt_hints.get(_dt_activity, "the PC spends the time with purpose."))
         if _dai_dt.get("vice_overindulge"):
-            parts.append("쾌락의 대가가 돌아왔다.")
+            parts.append("the cost of indulgence has come back around.")
 
     if not parts:
         return ""
-    return "── 사건 ──\n" + "\n".join(parts)
+    return "── Events ──\n" + "\n".join(parts)
 
 
 # Universal narrative principles — separated from MC Moves (genre flavor)
 CONSEQUENCE_DIRECTIVES = {
     "critical_success": (
-        "Show the PC achieving MORE than they intended. "
-        "A new possibility opens, or the PC seizes decisive control of the situation. "
-        "If NPCs are present, show how this success positively shifts the relationship."
+        "the PC achieves more than they intended. "
+        "A new possibility opens, or the PC takes decisive control of the situation. "
+        "with NPCs present, the success shifts the relationship for the better."
     ),
     "partial": (
-        "The PC's intent is achieved, but ONE unwanted change necessarily follows. "
-        "Concretely depict what was lost, exposed, or complicated. "
-        "A partial success with zero cost is FORBIDDEN. "
-        "If NPCs are present, let this cost leave a subtle mark on the relationship."
+        "the PC's intent is achieved, but one unwanted change follows with it. "
+        "What was lost, exposed, or complicated takes concrete shape. "
+        "a partial success carries a cost; the cost-free version doesn't exist. "
+        "with NPCs present, the cost leaves a subtle mark on the relationship."
     ),
     "failure": (
-        "The PC's intent is NOT achieved. "
-        "The situation is now different from before the attempt — do NOT simply say 'it didn't work.' "
-        "Show what has changed. "
-        "If NPCs are present, show their reaction to witnessing this failure."
+        "the PC's intent goes unachieved. "
+        "The situation is now different from before the attempt — more than 'it didn't work.' "
+        "What has changed shows in the scene. "
+        "with NPCs present, their reaction to witnessing it surfaces."
     ),
     "critical_failure": (
-        "An IRREVERSIBLE change occurs in this scene. "
-        "The opposite of the PC's intent is realized, or an unforeseen new reality is revealed. "
-        "The world after this moment is different from the world before. "
-        "If NPCs are present, this catastrophe fundamentally shakes the relationship."
+        "an irreversible change occurs in this scene. "
+        "The opposite of the PC's intent comes about, or an unforeseen reality reveals itself. "
+        "The world after this moment differs from the world before. "
+        "with NPCs present, the catastrophe shakes the relationship to its foundation."
     ),
 }
 
@@ -362,7 +362,7 @@ def _build_judgment_layer(bus, mask: str) -> str:
         return ""
 
     meta = judgment.get("meta", {}) if isinstance(judgment.get("meta"), dict) else {}
-    action = str(meta.get("action", "행동"))
+    action = str(meta.get("action", "action"))
     result = str(judgment.get("result", "failure"))
     reason = str(judgment.get("reason", "")).strip()
 
@@ -376,20 +376,20 @@ def _build_judgment_layer(bus, mask: str) -> str:
 
     # Natural language — no tags, no framework labels
     _result_kr = {
-        "critical_success": "대성공", "success": "성공",
-        "partial": "부분 성공", "failure": "실패", "critical_failure": "대실패",
+        "critical_success": "critical success", "success": "success",
+        "partial": "partial success", "failure": "failure", "critical_failure": "critical failure",
     }
-    _pos_kr = {"controlled": "안전한 상황", "risky": "위험한 상황", "desperate": "절망적 상황"}
+    _pos_kr = {"controlled": "controlled position", "risky": "risky position", "desperate": "dire position"}
     reason_part = f" {reason}" if reason else ""
     lines = [
-        f"{mask}가 '{action}'를 시도했다.{reason_part}",
+        f"{mask} attempted '{action}'.{reason_part}",
         f"{_result_kr.get(result, result)} — {_pos_kr.get(pos_tier, pos_tier)}.",
         move,
     ]
     if favorable:
-        lines.append("유리: " + ", ".join(favorable))
+        lines.append("in favor: " + ", ".join(favorable))
     if against:
-        lines.append("불리: " + ", ".join(against))
+        lines.append("against: " + ", ".join(against))
 
     # 범용 서사 원칙 (장르 불문) — tag stripped
     cons_dir = CONSEQUENCE_DIRECTIVES.get(result, "")
@@ -401,13 +401,13 @@ def _build_judgment_layer(bus, mask: str) -> str:
     if effort_used:
         eu_action = effort_used.get("action", "")
         if judgment.get("absorb_applied"):
-            lines.append(f"PC가 {eu_action}에 전력을 다했으나 실패. 각오 덕에 최악은 면했다.")
+            lines.append(f"the PC gave everything to {eu_action} and still failed; resolve spared them the worst.")
         elif result in ("failure", "critical_failure"):
-            lines.append(f"PC가 {eu_action}에 모든 걸 걸었지만 실패. 대가만큼 최악은 면했다.")
+            lines.append(f"the PC staked all on {eu_action} and failed; the price paid spared the worst.")
         else:
-            lines.append(f"PC가 {eu_action}에 대가를 치렀고 그만한 가치가 있었다.")
+            lines.append(f"the PC paid the price for {eu_action}, and it was worth it.")
     elif isinstance(bus.dai, dict) and bus.dai.get("effort_failed"):
-        lines.append("PC가 각오했지만 몸이 따르지 않았다.")
+        lines.append("the PC steeled themselves, but the body wouldn't follow.")
 
     return "\n".join(lines)
 
@@ -437,7 +437,7 @@ def _build_atmosphere_layer(context, bus) -> str:
     if _dominant:
         _lens = _reframe.get(_dominant, "")
         _lens_tag = f" ({_lens})" if _lens else ""
-        parts.append(f"[지배:{_dominant}{_lens_tag}]")
+        parts.append(f"[dominant:{_dominant}{_lens_tag}]")
 
     vigor_val = int(_to_float((bus.vigor or {}).get("value", 100), 100))
     composure_val = int(_to_float((bus.composure or {}).get("value", 100), 100))
@@ -475,9 +475,9 @@ def _build_atmosphere_layer(context, bus) -> str:
 
     # NPC Reaction → natural language
     if composure_val <= 14:
-        parts.append("주변 인물들이 PC의 불안정을 감지한다 — 걱정, 회피, 또는 이용.")
+        parts.append("those nearby sense the PC's instability — concern, avoidance, or exploitation.")
     if vigor_val <= 14:
-        parts.append("주변 인물들이 PC의 물리적 한계를 목격한다.")
+        parts.append("those nearby witness the PC's physical limit.")
 
     # Doom = Chapter Volume Gauge (Phase × Lens) — 둠 리브랜드 산문 주입
     # phase × lens atmosphere block을 산문 주입의 진짜 매체로 사용.
@@ -510,7 +510,7 @@ def _build_atmosphere_layer(context, bus) -> str:
 
     # 챕터 종결 라벨 (climax 발동 직후, 間 페이즈)
     if isinstance(bus.doom, dict) and bus.doom.get("intermission_active"):
-        parts.append("📖 챕터 종결 — 후일담/여운 페이즈. 새 시계는 다음 챕터로 이월.")
+        parts.append("chapter close — epilogue / lingering phase. new clocks carry over to the next chapter.")
 
     # ◎ optics (conditional — derived from DAI fields)
     dai = bus.dai if isinstance(bus.dai, dict) else {}
@@ -552,9 +552,9 @@ def _build_atmosphere_layer(context, bus) -> str:
 
     # Pacing rules (narrative constraints only — rhythm/density covered by ♪▶◎)
     if doom_val < 20:
-        parts.append("기존 긴장을 해결하지 마라. 씨앗만 심어라.")
+        parts.append("the existing tension stays unresolved; this turn plants seeds, not payoffs.")
     elif doom_val >= 80:
-        parts.append("해결은 PC 행동으로만 가능. 편의적 탈출구 금지.")
+        parts.append("resolution comes only through PC action; the way out is earned, not handed over.")
 
     # Distant conditions → natural language (camera NOT there)
     _st_atm = {}
@@ -568,33 +568,33 @@ def _build_atmosphere_layer(context, bus) -> str:
     for _c in _all_conds_atm:
         _cloc = (_c.get("location") or "").strip()
         if _cloc and _cloc != _pc_loc_atm:
-            parts.append(f"멀리서 {_c.get('tag', '?')}의 기운이 느껴진다")
+            parts.append(f"a sense of {_c.get('tag', '?')} drifts in from far off")
     # [World Conditions] → REMOVED (Events Active와 중복)
 
     # 서사 공간 → tag stripped
     narrative_space = int(_to_float((bus.doom or {}).get("narrative_space", 0), 0))
     if narrative_space > 0:
         if narrative_space >= 15:
-            intensity = "넓은"
+            intensity = "wide"
         elif narrative_space >= 8:
-            intensity = "적당한"
+            intensity = "moderate"
         else:
-            intensity = "작은"
+            intensity = "small"
         mechanic = context.request.genres.get("mechanic", {})
         primary_res = mechanic.get("primary_resource") or "vigor"
         if primary_res == "vigor":
             parts.append(
-                f"{intensity} 서사 공간 — 긴장이 풀렸다. 이 여유를 써라:\n"
-                "- 캐릭터 관계 심화 (대화, 감정 교류, 유대 확인)\n"
-                "- 유저 행동에 대한 세계의 반응과 되새김\n"
-                "- 다음 위기의 복선을 자연스럽게 배치"
+                f"{intensity} narrative space — the tension has eased. room to:\n"
+                "- deepen character relationships (dialogue, emotional exchange, confirming bonds)\n"
+                "- the world's response to the user's actions, and its echo\n"
+                "- a natural seed of foreshadowing for the next crisis"
             )
         else:
             parts.append(
-                f"{intensity} 서사 공간 — 일상이 돌아왔다. 이 여유를 써라:\n"
-                "- 인물 간 관계 심화 (소소한 대화, 감정 교류)\n"
-                "- 유저의 선택이 주변에 미친 영향 묘사\n"
-                "- 새로운 변화의 씨앗을 자연스럽게 배치"
+                f"{intensity} narrative space — the everyday has returned. room to:\n"
+                "- deepen relationships (small talk, emotional exchange)\n"
+                "- the effect the user's choices had on those around them\n"
+                "- a natural seed of new change"
             )
 
     # Clock surfacing → tag stripped (clock name removed, threat only)
@@ -613,14 +613,14 @@ def _build_atmosphere_layer(context, bus) -> str:
             threat = clock.get("threat", "")
             if ratio >= 0.75:
                 if primary_res == "vigor":
-                    parts.append(f"{threat}의 전조가 뚜렷하다 — PC 주변에서 구체적으로 묘사하라. 시점 전환 금지.")
+                    parts.append(f"the omen of {threat} is clear — it takes concrete shape around the PC; the POV stays with the PC.")
                 else:
-                    parts.append(f"{threat}의 전조가 감지된다 — 주변 인물의 태도 변화, 미묘한 분위기로 묘사하라. 시점 전환 금지.")
+                    parts.append(f"the omen of {threat} is felt — in shifts among those nearby, in subtle atmosphere; the POV stays with the PC.")
             elif ratio >= 0.5:
                 if primary_res == "vigor":
-                    parts.append(f"{threat}의 징후를 감각적 디테일로 암시하라.")
+                    parts.append(f"a sign of {threat} hinted through sensory detail.")
                 else:
-                    parts.append(f"{threat}의 전조를 일상의 작은 어긋남으로 암시하라.")
+                    parts.append(f"the omen of {threat} hinted through small everyday dissonances.")
 
     # Status effects → tag stripped
     status_effects = (context.narrative_anchors or {}).get("status_effects", [])
@@ -640,14 +640,14 @@ def _build_atmosphere_layer(context, bus) -> str:
         active_clocks = [c for c in clocks if isinstance(c, dict) and not c.get("resolved")]
         if active_clocks:
             parts.append(
-                "시계 이벤트는 PC 시점 안에서만 묘사하라. "
-                "'한편', '그 무렵', '다른 곳에서는' 등 시점 전환 절대 금지. "
-                "PC가 직접 목격·감지하는 것만 서술."
+                "Clock events are rendered strictly within the PC's POV. "
+                "No 'meanwhile', 'around that time', 'elsewhere' — no POV shift. "
+                "Only what the PC directly witnesses or senses."
             )
 
     if not parts:
         return ""
-    return "── 분위기 ──\n" + "\n".join(parts)
+    return "── Atmosphere ──\n" + "\n".join(parts)
 
 
 def _build_aspects_layer(context, bus) -> str:
@@ -700,9 +700,9 @@ def _build_aspects_layer(context, bus) -> str:
         return ""
 
     return (
-        "── 결합 흐름 ──\n"
+        "── Convergence Flow ──\n"
         + "\n".join(lines)
-        + "\n(이 결의 톤만 산문에 결로 반영. 명명 라벨 직접 노출 X.)"
+        + "\n(only the grain of these joins carries into the prose; the naming labels stay out of it.)"
     )
 
 
@@ -862,7 +862,7 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
     if not mem.get("loadout"):
         import config as _loadout_cfg
         _lo_slots = getattr(_loadout_cfg, "LOADOUT_SLOTS", 4)
-        mem["loadout"] = {"total_slots": _lo_slots, "used_slots": 0, "items": [], "load_type": "standard", "label": "표준"}
+        mem["loadout"] = {"total_slots": _lo_slots, "used_slots": 0, "items": [], "load_type": "standard", "label": "standard"}
 
     # Vigor/Composure migration: old "mental" → vigor + composure
     if "mental" in mem and "vigor" not in mem:
@@ -932,14 +932,14 @@ def sync_from_game_context(channel_id: str, user_id: str, ctx: Any) -> None:
                 # Trauma Trigger (사용 후 pop — 다음 턴 중복 방지)
                 if axis_bus.get("trauma_trigger"):
                     passives = mem.setdefault("passives", [])
-                    trauma_name = f"트라우마 ({axis_name} 각성)"
+                    trauma_name = f"Trauma ({axis_name} awakening)"
                     if not any(p.get("name") == trauma_name for p in passives if isinstance(p, dict)):
-                        label = "활력" if axis_name == "vigor" else "평형"
+                        label = "vigor" if axis_name == "vigor" else "composure"
                         passives.append({
                             "name": trauma_name,
                             "tags": ["Trauma", "Hard-to-cure"],
                             "modifier": -5,
-                            "desc": f"{label} 붕괴에서 깨어난 트라우마입니다. 모든 판정에 -5 패널티를 받습니다."
+                            "desc": f"a trauma awakened from {label} collapse; -5 penalty to all rolls."
                         })
                     axis_bus.pop("trauma_trigger", None)
 
@@ -1026,7 +1026,7 @@ class UniversalNarrativeEngine:
             if pdata.get("status") == "active":
                 game_character.process_status_expiry(channel_id, uid, turn_index)
 
-        observation_input = "[관찰 모드 — 직접적인 행동 없이 주변을 지켜본다]"
+        observation_input = "[observation mode — watching the surroundings without taking direct action]"
         context = convert_to_game_context(channel_id, base_uid, observation_input)
 
         # 판정 비활성화 (관찰은 행동이 아님)
@@ -1038,7 +1038,7 @@ class UniversalNarrativeEngine:
         result = self._extract_pc_result_v3(updated, "")
         return {
             "game_context": updated,
-            "directive": "[관찰 모드] 세계와 NPC의 자연스러운 활동을 묘사하라. PC의 행동은 없다.\n" + result["directive"],
+            "directive": "[observation mode] the world and its NPCs go about their natural activity; the PC takes no action.\n" + result["directive"],
             "system_message": result["system_msg"]
         }
 

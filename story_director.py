@@ -204,7 +204,7 @@ class StoryDirector:
                 _beats = StoryDirector._generate_beats(
                     _plot_hints_reserved, energy, is_idle,
                     anomaly_triggered, emotion_summary,
-                    suggested_beats=_llm_hints, cap=_cap
+                    suggested_beats=_llm_hints, cap=_cap, pacing=pacing
                 )
                 _last_planned = _cur_turn
                 beats_replanned = True
@@ -626,25 +626,25 @@ class StoryDirector:
     # ----- SD-Ba2 (2026-04-22): Beat Generator -----
     # LIBRA StoryAuthor nextBeats 최소 이식.
     # _analyze_plot_threads 결과(dict 리스트) + 장면 맥락을 자연어 지시문 리스트로 변환.
-    # 한국어 Directive 스타일 (Slot 33 recency zone에 주입됨).
+    # 영어 state-form Directive 스타일 (Slot 33 recency zone에 주입됨).
     # LLM 호출 없음 — 휴리스틱만으로 템플릿 렌더.
     # =========================================================
 
     # 체인 상태별 동사 매핑
     _CHAIN_VERB: Dict[str, str] = {
-        "OPEN":    "조심스럽게 한 걸음 진전시킨다",
-        "RISING":  "긴장을 한 층 더 끌어올린다",
-        "CLIMAX":  "결정적 국면으로 밀어붙인다",
-        "FALLING": "여파를 장면에 새기며 흐르게 둔다",
-        "CLOSED":  "닫힌 줄을 회상 단편으로 스쳐 보낸다",
+        "OPEN":    "steps forward one careful pace",
+        "RISING":  "draws the tension up another notch",
+        "CLIMAX":  "pushes into the decisive turn",
+        "FALLING": "lets the aftermath settle into the scene and flow",
+        "CLOSED":  "lets the closed thread pass by as a fragment of recollection",
     }
 
     # 강도별 수식어 매핑
     _INTENSITY_ADJ: Dict[str, str] = {
-        "Low":     "희미하게",
-        "Mid":     "뚜렷하게",
-        "High":    "짙게",
-        "Extreme": "압도적으로",
+        "Low":     "faint",
+        "Mid":     "vivid",
+        "High":    "thick",
+        "Extreme": "overwhelming",
     }
 
     @staticmethod
@@ -653,7 +653,7 @@ class StoryDirector:
         Theoria suggested_beats 1건을 정규화.
         - 공백 정리
         - 길이 가드 (>= 6 chars, <= 200 chars)
-        - 프리픽스 강제: "다음 비트:"가 없으면 붙여줌
+        - 프리픽스 강제: "Next beat:"가 없으면 붙여줌
         - 빈 값/금지 토큰 있으면 None
         """
         if not isinstance(raw, str):
@@ -666,8 +666,8 @@ class StoryDirector:
         # 렌더링 오염 방지: 기본 대사/내레이션 톤은 컷
         if '"' in s or '\n' in s:
             return None
-        if not s.startswith("다음 비트:"):
-            s = f"다음 비트: {s}"
+        if not s.startswith("Next beat:"):
+            s = f"Next beat: {s}"
         return s
 
     @staticmethod
@@ -718,10 +718,11 @@ class StoryDirector:
         anomaly_triggered: bool,
         emotion_summary: dict,
         suggested_beats: Optional[List[str]] = None,
-        cap: int = 6
+        cap: int = 6,
+        pacing: str = "hold"
     ) -> List[str]:
         """
-        Convert scored threads → natural-language beat directives (Korean).
+        Convert scored threads → natural-language beat directives (English state-form).
         LIBRA buildHeuristicPlan 상당. 순서 = priority 내림차순 (threads가 이미 정렬됨).
 
         SD-Bb3 (2026-04-22): suggested_beats 보강.
@@ -744,39 +745,43 @@ class StoryDirector:
                 # 간단화: urgency가 있으면 그걸 우선.
                 urgency = t.get("urgency")
                 if urgency == "stagnation":
-                    beats.append(f"다음 비트: 메인 줄거리 '{label}'이 정체됐다 — 외부 자극 하나를 새로 주입해 전진시킨다.")
+                    beats.append(f"Next beat: the main plot '{label}' has stalled — one fresh external stimulus enters and moves it forward.")
                 elif urgency == "convergence":
-                    beats.append(f"다음 비트: 여러 복선이 '{label}'으로 수렴한다 — 한 장면에서 교차시킨다.")
+                    beats.append(f"Next beat: several threads converge on '{label}' — they cross in a single scene.")
                 else:
                     # priority로 체인 단계 추론
                     pr = float(t.get("priority", 0.3))
                     if pr >= 0.95:
-                        beats.append(f"다음 비트: '{label}'을 결정적 국면으로 밀어붙인다.")
+                        beats.append(f"Next beat: '{label}' pushes into the decisive turn.")
                     elif pr >= 0.55:
-                        beats.append(f"다음 비트: '{label}'의 긴장을 한 층 더 끌어올린다.")
+                        beats.append(f"Next beat: the tension of '{label}' draws up another notch.")
                     elif pr >= 0.35:
-                        beats.append(f"다음 비트: '{label}'의 여파를 장면에 새기며 흐르게 둔다.")
+                        beats.append(f"Next beat: the aftermath of '{label}' settles into the scene and flows.")
                     else:
-                        beats.append(f"다음 비트: '{label}'을 조심스럽게 한 걸음 진전시킨다.")
+                        beats.append(f"Next beat: '{label}' steps forward one careful pace.")
 
             elif src == "active_condition":
                 # 상태 기반 지시문 (강도 수식)
                 # _analyze_plot_threads는 intensity_score만 priority로 보존 → 역산
                 pr = float(t.get("priority", 0.4))
                 if pr >= 0.9:
-                    adj = "압도적으로"
+                    adj = "overwhelming"
                 elif pr >= 0.6:
-                    adj = "짙게"
+                    adj = "thick"
                 elif pr >= 0.35:
-                    adj = "뚜렷하게"
+                    adj = "vivid"
                 else:
-                    adj = "희미하게"
+                    adj = "faint"
                 polarity = t.get("polarity", "mixed")
-                pol_hint = {"positive": "에 기대어", "negative": "에 눌려", "mixed": "을 양날로 쓰며"}.get(polarity, "")
-                beats.append(f"다음 비트: 상태 '{label}'{pol_hint} 한 순간이 {adj} 감각으로 번진다.")
+                pol_hint = {"positive": ", leaned on,", "negative": ", bearing down,", "mixed": ", a double edge,"}.get(polarity, "")
+                # O축: pacing이 push/pivot이면 dwell이 아니라 전진(슬롯16 pacing과 충돌 방지).
+                if pacing in ("push", "pivot"):
+                    beats.append(f"Next beat: the state '{label}'{pol_hint} advances in one motion.")
+                else:
+                    beats.append(f"Next beat: the state '{label}'{pol_hint} spreads through one moment as a {adj} sensation.")
 
             elif src == "memory":
-                beats.append(f"다음 비트: 과거 '{label}' 기억이 현재 장면의 한 틈으로 스며든다.")
+                beats.append(f"Next beat: the past memory of '{label}' seeps into a gap in the present scene.")
 
             if len(beats) >= cap:
                 break
@@ -788,7 +793,7 @@ class StoryDirector:
         ]
         if spike_npcs and len(beats) < cap:
             top_name = sorted(spike_npcs)[0]  # 결정적 tiebreak
-            beats.append(f"다음 비트: '{top_name}'의 감정 파고가 장면 질감을 물들인다.")
+            beats.append(f"Next beat: the emotional surge of '{top_name}' colors the texture of the scene.")
 
         # SD-Bb3: LLM 힌트 비트 정규화 + weave (휴리스틱 비트와 교차 배치)
         llm_beats: List[str] = []
@@ -803,16 +808,16 @@ class StoryDirector:
 
         # Anomaly가 막 터졌으면 최우선 비트 prepend
         if anomaly_triggered:
-            beats.insert(0, "다음 비트: 방금 발생한 이상 사건의 충격파를 장면 공기에 새긴다.")
+            beats.insert(0, "Next beat: the shockwave of the anomaly that just struck etches itself into the air of the scene.")
             beats = beats[:cap]
 
         # Idle 에너지 + 비트 없음 → ambient 진행 비트 보강
         if not beats:
             if energy in ("idle", "stagnant"):
-                beats.append("다음 비트: 환경(시간/날씨/NPC 일상)을 한 호흡 전진시켜 장면에 숨을 넣는다.")
+                beats.append("Next beat: the surroundings (time / weather / NPC routine) move one breath forward, giving the scene air.")
             elif energy in ("detonation", "aftershock"):
-                beats.append("다음 비트: 직전 격동의 여진을 장면 질감에 남긴다.")
+                beats.append("Next beat: the aftershock of the recent upheaval lingers in the texture of the scene.")
             else:
-                beats.append("다음 비트: 현재 장면의 미세한 긴장축을 한 단계 조인다.")
+                beats.append("Next beat: the fine axis of tension in the present scene tightens one degree.")
 
         return beats[:cap]

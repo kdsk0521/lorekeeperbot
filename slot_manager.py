@@ -106,12 +106,12 @@ def _build_status_layout(active_modules: list = None, present_chars: str = "") -
 # =========================================================
 
 _SPATIAL_HINTS = {
-    "enclosed":  "[§S] 밀폐 — 냄새와 체온이 오래 남는다. 시선을 피하기 어렵고, 침묵이 무겁다",
-    "resonant":  "[§S] 반향 — 발소리가 벽을 타고 돌아온다. 빈 공간이 존재감을 갖고, 속삭임도 멀리 간다",
-    "open":      "[§S] 개방 — 바람이 흔적을 지운다. 발자국만 남고, 거리가 몸 사이를 벌린다",
-    "elevated":  "[§S] 고소 — 바람이 체온을 앗아간다. 소리는 아래로 떨어지고, 몸이 노출된다",
-    "crowded":   "[§S] 군중 — 개별 흔적이 소음에 묻힌다. 가까이 붙어야 하고, 사적 공간이 사라진다",
-    "moving":    "[§S] 이동 — 흔적을 남길 수 없다. 진동이 몸에 전해지고, 공간 자체가 일시적이다",
+    "enclosed":  "[§S] enclosed — scent and body heat linger; eyes are hard to avoid, the silence sits heavy",
+    "resonant":  "[§S] resonant — footsteps return along the walls; the empty space has presence, even a whisper carries",
+    "open":      "[§S] open — wind erases traces; only footprints remain, distance opening between bodies",
+    "elevated":  "[§S] elevated — wind steals body heat; sound drops away below, the body exposed",
+    "crowded":   "[§S] crowded — individual traces drown in noise; bodies press close, private space gone",
+    "moving":    "[§S] moving — no trace can be left; vibration carries into the body, the space itself temporary",
 }
 
 # Architecture.decay_profile — 코드 보관, 후속 확장용 (현재 프롬프트 미사용)
@@ -348,9 +348,9 @@ class SlotPromptBuilder:
         if _cfg.RENDERER_BACKEND == "openai":
             _telescope += (
                 "\n\n### STRICT BUDGET (renderer-specific)"
-                "\n┣┫ block MUST stay ≤ 250 words. Telegraphic English only."
-                "\nProse MUST be ≥ 3× telescope length. If prose is short, telescope was too long."
-                "\nDo NOT repeat ┣ blocks. One ┣...┫ per response."
+                "\n┣┫ block stays ≤ 250 words. Telegraphic English only."
+                "\nProse runs at least 3× the telescope length; if the prose is short, the telescope ran long."
+                "\nEach ┣...┫ appears once per response, not repeated."
             )
         self.set_slot(34, _telescope)
 
@@ -423,7 +423,7 @@ class SlotPromptBuilder:
         if fermented_history:
             _mod_note = (
                 "Memory modulates current expression as gradient: recent turns (strongest) → "
-                "fermented (moderate) → deep past (weak). Layered ATOP profile baseline, never replacing it."
+                "fermented (moderate) → deep past (weak). Layered atop the profile baseline, which it leaves intact."
             )
             self.set_slot(9, f"<Fermented_Memory>\n{_mod_note}\n\n{fermented_history}\n</Fermented_Memory>")
 
@@ -456,9 +456,9 @@ class SlotPromptBuilder:
         # ===== DYNAMIC ZONE (27-34) =====
         # [27] Gemini 채팅 히스토리에 원문 이미 포함. 시간 우선순위 지시만 유지.
         self.set_slot(27, (
-            "[TEMPORAL PRIORITY] 현재 장면 데이터(Real_Time_Status, User_Input, Scene_Intelligence)가 "
-            "이전 대화 패턴보다 항상 우선한다. 과거 대화는 연속성 참고용이며, "
-            "동일한 감정 흐름·장면 구조·대사 패턴을 반복하지 말 것."
+            "[TEMPORAL PRIORITY] the current scene data (Real_Time_Status, User_Input, Scene_Intelligence) "
+            "takes clear precedence over prior conversation patterns. Past dialogue is for continuity reference only; "
+            "each turn finds its own emotional flow, scene structure, and dialogue pattern."
         ))
 
         # [28] Narrative Chain — PACING_CONTROL removed (codified into iceberg.translate_energy_direction)
@@ -583,11 +583,11 @@ def _prepend_quest_directive(obj_ctx: str) -> str:
         return obj_ctx
     quest_directive = (
         "[QUEST ≠ CHEKHOV'S GUN]\n"
-        "퀘스트는 서사적 약속이 아니라 세계에 존재하는 가능성이다.\n"
-        "- 유저의 DO(현재 행동)만 서사에 반영. WANT(퀘스트)를 DO로 끌어올리지 마라\n"
-        "- 유저가 퀘스트와 무관한 행동을 하면 퀘스트를 언급하지 마라\n"
-        "- 미해결 퀘스트는 해소 압박 없이 세계에 존재한다\n"
-        "- 퀘스트 환경 묘사는 유저 행동이 자연스럽게 겹칠 때만\n"
+        "a quest is not a narrative promise but a possibility that exists in the world.\n"
+        "- only the user's DO (current action) reaches the narrative; a WANT (quest) stays a want, not lifted into a DO\n"
+        "- when the user acts apart from a quest, the quest stays unmentioned\n"
+        "- an unresolved quest exists in the world with no pressure to resolve\n"
+        "- quest-environment description surfaces only where the user's action naturally overlaps\n"
     )
     return quest_directive + "\n" + obj_ctx
 
@@ -690,7 +690,7 @@ def _build_arc_directive(channel_id: str) -> str:
     if not lines:
         return ""
 
-    return "[현재의 큰 호흡]\n" + "\n\n".join(lines)
+    return "[the current larger breath]\n" + "\n\n".join(lines)
 
 
 def _render_arc_foreground(arc: dict) -> str:
@@ -710,23 +710,23 @@ def _render_arc_foreground(arc: dict) -> str:
     if decl or current_phase:
         tone_hint = []
         if decl:
-            tone_hint.append(f"이 흐름의 의도: {decl}")
+            tone_hint.append(f"this thread's intent: {decl}")
         if current_phase:
-            tone_hint.append(f"현재 결: {current_phase}")
+            tone_hint.append(f"current grain: {current_phase}")
         parts.append(" / ".join(tone_hint))
 
     # next_waypoint (라벨 + 변환 instruction)
     if next_wp:
         parts.append(
-            f"다가오는 그림자: {next_wp}\n"
-            "(직접 명명 금지. 환경/NPC 행동/사건에 결로만 암시.)"
+            f"an approaching shadow: {next_wp}\n"
+            "(stays unnamed; hinted only as grain in the environment, NPC behavior, events.)"
         )
 
     # 페이싱 모드 디렉티브
     if mode == "crucial":
-        parts.append("페이싱: 정교한 빌드업. 빙산 — 작가만 아는 진실이 표면을 누른다.")
+        parts.append("pacing: a careful build-up. Iceberg — a truth only the author knows presses up against the surface.")
     else:
-        parts.append("페이싱: 평범한 결. 일상의 vivid 디테일 우선. 음모/반전 강요 금지.")
+        parts.append("pacing: an ordinary grain. The vivid detail of daily life comes first; intrigue and twists arrive only when earned.")
 
     # sensory_foreshadowing — display cap 5
     sens = arc.get("sensory_foreshadowing") or []
@@ -735,7 +735,7 @@ def _render_arc_foreground(arc: dict) -> str:
         summaries = [s.get("summary", "") for s in recent if isinstance(s, dict)]
         summaries = [s for s in summaries if s]
         if summaries:
-            parts.append("이번 호흡의 단서:\n  - " + "\n  - ".join(summaries))
+            parts.append("this breath's threads:\n  - " + "\n  - ".join(summaries))
 
     return "\n".join(parts)
 
@@ -747,7 +747,7 @@ def _render_arc_background(arc: dict) -> str:
 
     decl = arc.get("declared_goal", "")
     if decl:
-        parts.append(f"먼 곳의 흐름: {decl}")
+        parts.append(f"a current far off: {decl}")
 
     # offscreen_actions — display cap 5
     off = arc.get("offscreen_actions") or []
@@ -756,12 +756,12 @@ def _render_arc_background(arc: dict) -> str:
         summaries = [s.get("summary", "") for s in recent if isinstance(s, dict)]
         summaries = [s for s in summaries if s]
         if summaries:
-            parts.append("저멀리: " + " / ".join(summaries) + "\n(전언/소문 톤. 직접 묘사 금지.)")
+            parts.append("far away: " + " / ".join(summaries) + "\n(hearsay / rumor tone; carried as word-of-mouth, not directly depicted.)")
 
     if not parts:
         return ""
 
-    return "[배경 호흡] " + "\n".join(parts)
+    return "[background breath] " + "\n".join(parts)
 
 
 # =========================================================
@@ -841,7 +841,7 @@ def build_34_step_prompt(ctx) -> str:
                 pc_sections = []
                 for uid, p in active_pcs.items():
                     info = domain_manager.get_unified_player_info(channel_id, uid)
-                    marker = " ★행동자" if uid == user_id else ""
+                    marker = " ★actor" if uid == user_id else ""
                     mask = p.get("mask", "Unknown")
                     pc_sections.append(f"### {mask}{marker}\n{info}")
                 player_info = "\n---\n".join(pc_sections)
@@ -987,7 +987,7 @@ def build_34_step_prompt(ctx) -> str:
         if _chronicles:
             _chronicle_unresolved = _chronicles[-1].get("unresolved", "")
     if _chronicle_unresolved:
-        fermented_history = f"[연대기 떡밥] {_chronicle_unresolved}\n\n{fermented_history}"
+        fermented_history = f"[chronicle hook] {_chronicle_unresolved}\n\n{fermented_history}"
 
     # --- [Slot 13] Input Analysis (Enhanced with Observation + Intent + Position/Effect) ---
     input_analysis_parts = []
@@ -1151,14 +1151,14 @@ def build_34_step_prompt(ctx) -> str:
     qflags = dai.get("quality_flags", {})
     qflag_text = iceberg.translate_quality_flags(qflags)
     if qflag_text:
-        scene_intel_parts.append("### 서사 품질 보정\n" + qflag_text)
+        scene_intel_parts.append("### narrative quality correction\n" + qflag_text)
 
     # W5: Pipeline Degradation Notice
     _degraded = dai.get("_degraded_stages", [])
     if _degraded:
         _deg_names = [d.get("stage", "?") for d in _degraded if isinstance(d, dict)]
         if _deg_names:
-            scene_intel_parts.append(f"[System] 제한된 분석: {', '.join(_deg_names)}")
+            scene_intel_parts.append(f"[System] limited analysis: {', '.join(_deg_names)}")
 
     # Scene Continuity: 불연속 감지 → 보정 지시
     continuity_data = dai.get("continuity_check", {})
@@ -1188,10 +1188,10 @@ def build_34_step_prompt(ctx) -> str:
             fs_items = "\n".join(f"- {f}" for f in _foreshadowing[:5] if f)
             if fs_items:
                 scene_intel_parts.append(
-                    "### Foreshadowing [AMBIENT — DO NOT RESOLVE]\n"
-                    "These seeds exist in the world. They are NOT dramatic promises awaiting payoff.\n"
-                    "Render only as background texture (environmental detail, NPC micro-behavior) — "
-                    "NEVER as climactic reveal or resolution, unless user action directly engages them.\n"
+                    "### Foreshadowing [AMBIENT — stays unresolved]\n"
+                    "These seeds exist in the world; they are possibilities, not dramatic promises awaiting payoff.\n"
+                    "They surface only as background texture (environmental detail, NPC micro-behavior), "
+                    "staying short of climactic reveal or resolution until the user's action directly engages them.\n"
                     + fs_items
                 )
 
@@ -1204,7 +1204,7 @@ def build_34_step_prompt(ctx) -> str:
     npc_attitudes = dai.get("NPCAttitudes", dai.get("npc_attitudes", {}))
     att_text = iceberg.translate_npc_attitudes(npc_attitudes)
     if att_text:
-        extended_intel_parts.append("### NPC 태도 방향\n" + att_text)
+        extended_intel_parts.append("### NPC attitude direction\n" + att_text)
 
     # NPCKnowledge: iceberg 번역 (leak_risk/would_share 제거, 내용 유지)
     npc_knowledge = dai.get("NPCKnowledge", dai.get("npc_knowledge", {}))
@@ -1217,8 +1217,8 @@ def build_34_step_prompt(ctx) -> str:
     intim_text = iceberg.translate_intimacy(intimacy)
     if intim_text:
         extended_intel_parts.append(
-            "### 친밀 장면 신체 상태\n"
-            "(신체 감각과 행동으로만 렌더링하라. 필드명이나 분석 용어를 산문에 쓰지 마.)\n"
+            "### intimate scene — physical state\n"
+            "(rendered only through bodily sensation and action; the field names and analytic terms stay out of the prose.)\n"
             + intim_text
         )
 
@@ -1242,7 +1242,7 @@ def build_34_step_prompt(ctx) -> str:
                 conn_lines.append(_line)
         if conn_lines:
             extended_intel_parts.append(
-                "### NPC 관계 깊이\n" + "\n".join(conn_lines)
+                "### NPC relationship depth\n" + "\n".join(conn_lines)
             )
 
     # Spatial Inscription: 공간 각인 렌더링 힌트
@@ -1357,11 +1357,11 @@ def build_34_step_prompt(ctx) -> str:
         # 설득력에 따른 렌더링 힌트
         plaus_hint = ""
         if fb_plaus == "stretch":
-            plaus_hint = " 가능하지만 의외다 — 의외성을 살려라."
+            plaus_hint = " possible but unexpected — the surprise of it carries."
         elif fb_plaus == "impossible":
-            plaus_hint = " 무리한 선언이다 — 실패하거나 대가가 따른다."
+            plaus_hint = " an overreaching claim — it fails, or a price follows."
         # 타입에 따른 방향
-        type_hint = "소급 선언" if fb_type == "standard" else "사전 준비물 소환"
+        type_hint = "retroactive declaration" if fb_type == "standard" else "pre-established prop summon"
         fb_instruction = (
             f"\n[FLASHBACK] \"{fb_decl}\"\n"
             f"Type: {type_hint} | Weight: {fb_tier}.{plaus_hint}\n"
@@ -1373,19 +1373,19 @@ def build_34_step_prompt(ctx) -> str:
     rest_eval = dai.get("rest_eval")
     if rest_eval and isinstance(rest_eval, dict) and rest_eval.get("detected"):
         _activity_kr = {
-            "rest": "쉬는 중", "recover": "치료/회복 중", "vice": "탐닉 중",
-            "train": "훈련 중", "socialize": "교류 중", "project": "작업 중",
+            "rest": "resting", "recover": "recovering", "vice": "indulging",
+            "train": "training", "socialize": "socializing", "project": "working",
         }
-        _quality_kr = {"full": "충분한", "brief": "짧은", "interrupted": "방해받는"}
+        _quality_kr = {"full": "full", "brief": "brief", "interrupted": "interrupted"}
         r_activity = rest_eval.get("activity", "rest")
         r_quality = rest_eval.get("quality", "brief")
         r_target = rest_eval.get("target")
         r_safe = rest_eval.get("safe_location", True)
         rest_dir = f"\n[DOWNTIME] {_quality_kr.get(r_quality, r_quality)} {_activity_kr.get(r_activity, r_activity)}"
         if r_target:
-            rest_dir += f" (대상: {r_target})"
+            rest_dir += f" (target: {r_target})"
         if not r_safe:
-            rest_dir += " — 안전하지 않은 장소. 긴장을 유지하라."
+            rest_dir += " — not a safe place; the tension holds."
         gm_mover = (gm_mover + rest_dir) if gm_mover else rest_dir
 
     # Idle Proactive Direction (유휴 입력 시 능동적 서사 전개 힌트)
@@ -1400,7 +1400,7 @@ def build_34_step_prompt(ctx) -> str:
             _idle_parts.append(f"Hint: {_idle_hint}")
         if _idle_npc:
             _idle_parts.append(f"Focus NPC: {_idle_npc}")
-        _idle_parts.append("유저가 능동적 입력을 하지 않았다 — 세계/NPC가 주도하여 장면을 전진시켜라.")
+        _idle_parts.append("the user gave no active input — the world and its NPCs take the lead and move the scene forward.")
         _idle_dir = "\n".join(_idle_parts)
         gm_mover = (gm_mover + f"\n{_idle_dir}") if gm_mover else _idle_dir
 
@@ -1441,20 +1441,20 @@ def build_34_step_prompt(ctx) -> str:
         _perc_type = _anomaly_prof.get("perception_type")
         if _perc_type and isinstance(_perc_type, str) and _perc_type.lower() != "null":
             _perc_hints = {
-                "veridical": "실제 일어난 일이다 — 명확하게 묘사하라",
-                "illusory": "감각이 왜곡되었다 — 혼란과 불일치를 섞어라",
-                "hallucinatory": "자극 없는 지각이다 — 생생하지만 타인은 반응하지 않는다",
-                "delusional": "확신에 찬 오해다 — 당사자에겐 절대적 진실이다",
+                "veridical": "it actually happened — depicted clearly",
+                "illusory": "the senses are distorted — confusion and mismatch run through it",
+                "hallucinatory": "perception with no stimulus — vivid, yet others don't react to it",
+                "delusional": "a conviction-laden misreading — to the one holding it, absolute truth",
             }
             _p_hint = _perc_hints.get(_perc_type.lower().strip(), "")
             if _p_hint:
-                _perc_dir = f"\n[이상현상 인식] {_p_hint}"
+                _perc_dir = f"\n[anomaly perception] {_p_hint}"
                 gm_mover = (gm_mover + _perc_dir) if gm_mover else _perc_dir
 
     # PROBE Mode: 탐침 입력 시 NPC 반응 지시 (H5)
     _input_mode = dai.get("input_mode", "decree")
     if _input_mode == "probe":
-        _probe_dir = "\n[PROBE] 유저 입력 = 압력. NPC는 복종하지 않고 반응한다 — 인식/신체 기억/사회적 습관/환경을 통해."
+        _probe_dir = "\n[PROBE] user input = pressure. The NPC doesn't obey but responds — through perception, body memory, social habit, environment."
         gm_mover = (gm_mover + _probe_dir) if gm_mover else _probe_dir
 
     # Inertia Delay (거울공방 0 item 15 — anomaly Cassandra Curve와 같은 라인)
@@ -1478,19 +1478,19 @@ def build_34_step_prompt(ctx) -> str:
             if _sat >= 0.6:
                 _climate_parts.append(
                     "[CLIMATE] Recent thread saturated with negative dwell (loneliness/grief/possession). "
-                    "Surface alternate texture this turn: light, banal detail, third-element distraction, or time-shift. "
-                    "Don't anchor identity to absence."
+                    "An alternate texture surfaces this turn: light, a banal detail, a third-element distraction, or a time-shift. "
+                    "The identity rests on more than its absence."
                 )
             elif _sat >= 0.4:
                 _climate_parts.append(
-                    "[CLIMATE] Negative weight present. Allow weather to pass — don't deepen wound as default."
+                    "[CLIMATE] Negative weight present. The weather passes; the wound isn't deepened by default."
                 )
             if _vfc > 0:
                 _samples = _last_climate.get("voidfill_samples") or []
                 _names = ", ".join((s.get("npc", "?") for s in _samples if isinstance(s, dict)))[:60]
                 _climate_parts.append(
                     f"[FIDELITY] Last turn invented {_vfc} item(s) absent from sheet ({_names or '?'}). "
-                    "This turn: render only stated facets. No stock backstory/defense/trauma arc."
+                    "This turn renders only the stated facets; stock backstory, defense, or trauma arc stays out."
                 )
             if _climate_parts:
                 _climate_dir = "\n" + "\n".join(_climate_parts)
@@ -1551,12 +1551,12 @@ def build_34_step_prompt(ctx) -> str:
         _gained = item_eval.get("items_gained", [])
         _item_parts = []
         if _consumed and isinstance(_consumed, list):
-            _item_parts.append(f"소비: {', '.join(str(i) for i in _consumed)}")
+            _item_parts.append(f"consumed: {', '.join(str(i) for i in _consumed)}")
         if _gained and isinstance(_gained, list):
-            _item_parts.append(f"획득: {', '.join(str(i) for i in _gained)}")
+            _item_parts.append(f"gained: {', '.join(str(i) for i in _gained)}")
         if _item_parts:
             _item_reason = item_eval.get("reason", "")
-            _item_text = f"[아이템 변동] {' | '.join(_item_parts)}"
+            _item_text = f"[item change] {' | '.join(_item_parts)}"
             if _item_reason:
                 _item_text += f" ({_item_reason})"
             real_time_data += f"\n\n{_item_text}"
@@ -1660,7 +1660,7 @@ def build_34_step_prompt(ctx) -> str:
             if _d_effect:
                 _base_19 = builder.get_slot(19) or ""
                 _dice_block = (
-                    "\n\n### [Seven Dice — 가시 제약 | this turn]\n"
+                    "\n\n### [Seven Dice — visible constraint | this turn]\n"
                     f"- Rolled: {_d_name}\n"
                     f"- Constraint: {_d_effect}\n"
                     "- This constraint is REQUIRED for this response only. Apply once, then release."

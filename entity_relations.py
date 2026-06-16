@@ -21,16 +21,16 @@ logger = logging.getLogger("EntityRelations")
 # Relation Types & Scoring
 # =========================================================
 RELATION_TYPES = {
-    "alliance":  {"label": "동맹",  "emoji": "🤝", "valence": +1},
-    "rivalry":   {"label": "경쟁",  "emoji": "⚔️",  "valence": -1},
-    "fear":      {"label": "공포",  "emoji": "😨", "valence": -1},
-    "respect":   {"label": "존경",  "emoji": "🙏", "valence": +1},
-    "distrust":  {"label": "불신",  "emoji": "🔍", "valence": -1},
-    "affection": {"label": "호감",  "emoji": "💗", "valence": +1},
-    "debt":      {"label": "빚",    "emoji": "⚖️",  "valence":  0},
-    "mentor":    {"label": "사제",  "emoji": "📖", "valence": +1},
-    "grudge":    {"label": "원한",  "emoji": "🔥", "valence": -1},
-    "neutral":   {"label": "중립",  "emoji": "⚪", "valence":  0},
+    "alliance":  {"label": "ally",      "emoji": "🤝", "valence": +1},
+    "rivalry":   {"label": "rival",     "emoji": "⚔️",  "valence": -1},
+    "fear":      {"label": "fear",      "emoji": "😨", "valence": -1},
+    "respect":   {"label": "respect",   "emoji": "🙏", "valence": +1},
+    "distrust":  {"label": "distrust",  "emoji": "🔍", "valence": -1},
+    "affection": {"label": "affection", "emoji": "💗", "valence": +1},
+    "debt":      {"label": "debt",      "emoji": "⚖️",  "valence":  0},
+    "mentor":    {"label": "mentor",    "emoji": "📖", "valence": +1},
+    "grudge":    {"label": "grudge",    "emoji": "🔥", "valence": -1},
+    "neutral":   {"label": "neutral",   "emoji": "⚪", "valence":  0},
 }
 
 # Maximum relations per channel (prevent unbounded growth)

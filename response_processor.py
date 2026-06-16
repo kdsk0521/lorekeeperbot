@@ -525,7 +525,7 @@ def detect_cargo_patterns(response: str, scene_npc_count: int = 1) -> str:
     if not matched:
         return ""
     labels = ", ".join(matched[:3])
-    return f"[CARGO: {labels} — 삭제해도 장면이 잃는 게 없는 문장. 구조적 기능이 있는 문장만 유지하라]"
+    return f"[CARGO: {labels} · cuttable with no loss; only load-bearing sentences stay]"
 
 
 # =========================================================
@@ -572,8 +572,8 @@ def detect_premature_closure(response: str, conclusion_proximity: int = 50,
     thread_note = ""
     if open_threads:
         thread_note = f" open_threads={len(open_threads)}"
-    return (f"[CLOSURE: {labels} — proximity={conclusion_proximity}%{thread_note}. "
-            f"세계의 기본 상태는 미해결이다. 유저가 직접 해결하지 않은 스레드를 닫지 마라]")
+    return (f"[CLOSURE: {labels} · proximity={conclusion_proximity}%{thread_note}. "
+            f"the world's default is unresolved; threads the player hasn't closed stay open]")
 
 
 # =========================================================
@@ -655,8 +655,8 @@ def detect_structural_repetition(response: str,
     feedback = ""
     if warnings:
         detail = ", ".join(warnings)
-        feedback = (f"[STRUCTURE: {detail} 3턴 연속 반복 — "
-                    f"다른 구조로 시작/종결하라 (dialogue↔action↔description↔environment)]")
+        feedback = (f"[STRUCTURE: {detail} 3 turns running · "
+                    f"a different open/close this turn (dialogue↔action↔description↔environment)]")
 
     return feedback, current_opening, current_closing
 
@@ -789,7 +789,7 @@ def detect_sensory_repetition(response: str,
         return "", current_parts
 
     parts_str = ", ".join(repeated[:3])
-    return (f"[ROTATION: {parts_str} 3턴 연속 — 다른 신체 부위로 감정/상태를 표현하라]",
+    return (f"[ROTATION: {parts_str} 3 turns running · a different body part carries the emotion/state]",
             current_parts)
 
 
@@ -880,8 +880,8 @@ def detect_arrival_patterns(response: str) -> str:
     if not matched:
         return ""
     labels = ", ".join(matched[:3])
-    return (f"[ARRIVAL: {labels} — 중심/본질/의미를 문장으로 명명하지 마라. "
-            f"언어화되는 순간 attractor는 theme으로 죽는다. 산문으로 감돌게 하라]")
+    return (f"[ARRIVAL: {labels} · attractor stays unnamed (naming kills it into theme); "
+            f"it circles in prose, not arriving]")
 
 
 # A7-2: DECLARATION — 서술자 편집 선언
@@ -908,8 +908,8 @@ def detect_declaration_patterns(response: str) -> str:
     if not matched:
         return ""
     labels = ", ".join(matched[:3])
-    return (f"[DECLARATION: {labels} — 서술자는 보여주고, 선언하지 않는다. "
-            f"의미 할당/강조 수사 금지]")
+    return (f"[DECLARATION: {labels} · narrator shows rather than declares; "
+            f"meaning emerges from action, not assigned]")
 
 
 # A7-3: EXPLAIN_THEN_RENDER — 예고 후 전달 (redundant pre-announcement)
@@ -934,8 +934,8 @@ def detect_explain_then_render_patterns(response: str) -> str:
     if not matched:
         return ""
     labels = ", ".join(matched[:3])
-    return (f"[EXPLAIN→RENDER: {labels} — 예고 후 전달 금지. "
-            f"바로 렌더하거나, 예고 없이 도래시켜라]")
+    return (f"[EXPLAIN→RENDER: {labels} · render directly; "
+            f"the event arrives unannounced]")
 
 
 # A7-4: VENDING — 자판기 응답 (W6 통합)
@@ -962,8 +962,8 @@ def detect_vending_patterns(response: str) -> str:
     if not matched:
         return ""
     labels = ", ".join(matched[:3])
-    return (f"[VENDING: {labels} — 예측 가능성을 서술자가 명시하는 순간 장면은 자판기. "
-            f"default 반응을 그대로 쓰지 마라]")
+    return (f"[VENDING: {labels} · naming predictability makes the scene a vending machine; "
+            f"a fresh surface, not the default]")
 
 
 # =========================================================
@@ -980,11 +980,14 @@ _KO_3P_PRONOUNS = ["그녀", "그는", "그가", "그를", "그의", "그도", "
 
 
 def detect_korean_floor(response: str,
-                        pron_per_1k_warn: float = 5.0,
-                        past_desc_ratio_warn: float = 0.50,
-                        single_ending_warn: float = 0.15,
+                        pron_per_1k_warn: float = 13.0,
+                        past_desc_ratio_warn: float = 0.70,
+                        single_ending_warn: float = 0.32,
                         min_chars: int = 200,
                         ) -> Tuple[str, Dict]:
+    # 임계 재캘리브레이션 2026-06-16: 골드 레퍼런스(산문2) 위로.
+    # 산문2 실측 = pron 10.4/1k · past_desc 0.55 · single 0.21 (전부 구 임계 초과 = 골드를 잡던 상태).
+    # 신 임계는 골드보다 *나쁠 때만* 발화 (log-only 관측 신호 품질용).
     """한국어 출력 저점(L축) 측정. 번역체 표면 결 — soft 경고만, 하드 블록 아님.
 
     측정:
@@ -1038,13 +1041,14 @@ def detect_korean_floor(response: str,
         "single_ending_ratio": round(single_ratio, 2),
     }
 
+    # feedback = 모델용 가이드(수치 없음). raw 수치는 stats dict로 로그에만.
     flags = []
     if pron_per_1k > pron_per_1k_warn:
-        flags.append(f"대명사 {pron_per_1k:.1f}/1k(그녀 {geunyeo})→주어 생략")
+        flags.append("3인칭 대명사(그녀 등)가 잦다 → 주어 생략으로")
     if past_ratio > past_desc_ratio_warn:
-        flags.append(f"과거서술 종결 {past_ratio * 100:.0f}%→어미 변주(현재/명사형/연결)")
+        flags.append("과거서술 어미가 단조롭다 → 현재·명사형·연결 어미로 변주")
     if single_ratio > single_ending_warn and top_ending:
-        flags.append(f"'{top_ending}' {single_ratio * 100:.0f}% 지배→같은 꼴 반복")
+        flags.append(f"'{top_ending}' 어미가 반복된다 → 꼴 바꾸기")
 
     feedback = ("[L:한글저점] " + " | ".join(flags)) if flags else ""
     return feedback, stats
@@ -1062,10 +1066,16 @@ def detect_korean_floor(response: str,
 _SENT_SPLIT = re.compile(r'(?<=[.!?”"])\s+|\n+')
 
 
+# 상태줄/시스템 라인 — verbatim 비교에서 제외(매 턴 동일해 오탐 유발)
+_STATUS_NOISE_RE = re.compile(r"로드아웃|\bDoom\b|활력\s*\d|평형\s*\d|위치 .+\| ?시간|파티\s*챗")
+
+
 def _sentences(text: str, min_chars: int = 6) -> List[str]:
-    """문장 분절 — 공백제외 min_chars 이상만. (짧은 후렴 '열리지 않은 약속'=7자도 포함)"""
+    """문장 분절 — 공백제외 min_chars 이상만. (짧은 후렴 '열리지 않은 약속'=7자도 포함)
+    상태줄/시스템 라인은 제외 — 매 턴 동일하므로 cadence echo 오탐원."""
     parts = [s.strip() for s in _SENT_SPLIT.split(text or "") if s.strip()]
-    return [s for s in parts if len(re.sub(r"\s", "", s)) >= min_chars]
+    return [s for s in parts
+            if len(re.sub(r"\s", "", s)) >= min_chars and not _STATUS_NOISE_RE.search(s)]
 
 
 def detect_cadence_echo(response: str,

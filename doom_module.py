@@ -652,7 +652,7 @@ def _fail_linked_quest(context: "GameContext", quest_name: str, clock_name: str)
             return
         result = game_character.remove_quest(channel_id, quest_name)
         context.shared_bus.doom.setdefault("quest_failed", []).append(
-            {"quest": quest_name, "reason": f"시계 '{clock_name}' 완성"}
+            {"quest": quest_name, "reason": f"clock '{clock_name}' completed"}
         )
         logger.info("[Doom] Quest failed: %s (clock '%s' completed) → %s",
                      quest_name, clock_name, result)
@@ -724,11 +724,11 @@ def _trigger_climax(context, bus, clocks: list, clock_events: list) -> None:
         ws = domain_manager.get_world_state(channel_id)
         current_turn = ws.get("turn_index", 0)
         queue.insert(0, {
-            "tag": "클라이맥스",
+            "tag": "climax",
             "category": "supernatural",
             "intensity": "Extreme",
             "polarity": "negative",
-            "line": "모든 시계가 완성된다 — 세계가 임계점에 도달했다.",
+            "line": "every clock completes — the world reaches its critical point.",
             "reason": "doom_climax",
             "queued_turn": current_turn,
         })

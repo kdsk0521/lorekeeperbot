@@ -155,7 +155,7 @@ def _to_tier(value: float, tiers: List[Tuple[float, str]]) -> str:
     for threshold, label in tiers:
         if value <= threshold:
             return label
-    return tiers[-1][1] if tiers else "알 수 없음"
+    return tiers[-1][1] if tiers else "unknown"
 
 
 
@@ -186,10 +186,10 @@ _DISSOCIATION_NOTATION = {
 }
 
 _LAYER_RENAMES = {
-    "Surface": "▸평소(80%)",
-    "Adaptation": "▸반복패턴",
-    "Core": "▸극한에서만",
-    "Lack": "▸직접 드러내지 마",
+    "Surface": "▸usual(80%)",
+    "Adaptation": "▸repeat-pattern",
+    "Core": "▸only-at-the-edge",
+    "Lack": "▸beneath the surface",
 }
 
 
@@ -208,27 +208,27 @@ def _filter_deep_read_by_depth(deep_read: str, depth: float) -> str:
         return ""
     renamed = _rename_layer_labels(deep_read)
     if depth >= 0.6:
-        # ▸평소만
+        # ▸usual only
         lines = renamed.split("▸")
         kept = [lines[0]]  # prefix before first ▸
         for part in lines[1:]:
-            if part.startswith("평소"):
+            if part.startswith("usual"):
                 kept.append("▸" + part)
         return "".join(kept).strip()
     if depth >= 0.4:
-        # ▸평소 + ▸반복패턴
+        # ▸usual + ▸repeat-pattern
         lines = renamed.split("▸")
         kept = [lines[0]]
         for part in lines[1:]:
-            if part.startswith("평소") or part.startswith("반복패턴"):
+            if part.startswith("usual") or part.startswith("repeat-pattern"):
                 kept.append("▸" + part)
         return "".join(kept).strip()
     if depth >= 0.2:
-        # ▸극한에서만 포함
+        # ▸only-at-the-edge included
         lines = renamed.split("▸")
         kept = [lines[0]]
         for part in lines[1:]:
-            if not part.startswith("직접 드러내지"):
+            if not part.startswith("beneath the surface"):
                 kept.append("▸" + part)
         return "".join(kept).strip()
     # depth < 0.2: 전부 노출
@@ -313,14 +313,14 @@ def translate_psyche_states(
                 lines.append(f"  └ {filtered}")
                 # B3: 노출 깊을수록 행동-only 제약 강화
                 if depth < 0.2:
-                    lines.append("    [환원불가: 이 캐릭터, 이 순간에만 가능한 반응으로. 수행(performed) 아닌 환원불가(irreducible).]")
+                    lines.append("    [irreducible: a reaction only this character, this moment makes — irreducible, not performed.]")
                 elif depth < 0.4:
-                    lines.append("    [행동/반사/신체반응으로만. 서술자 명명·심리용어 금지.]")
+                    lines.append("    [through action, reflex, bodily response; the naming and the psych vocabulary stay with the narrator, out of the prose.]")
 
         # resurfacing: depth < 0.6일 때만 노출 (intimate/social)
         resurface = state.get("resurfacing")
         if resurface and isinstance(resurface, str) and resurface != "null" and depth < 0.6:
-            lines.append(f"  └ 재부상: {resurface}")
+            lines.append(f"  └ resurfacing: {resurface}")
 
     return "\n".join(lines)
 
@@ -330,16 +330,16 @@ def translate_psyche_states(
 # =========================================================
 
 _POS_TIERS = [
-    (0.2, "절망적"),
-    (0.4, "불리"),
-    (0.6, "보통"),
-    (0.8, "유리"),
-    (1.0, "지배적"),
+    (0.2, "dire"),
+    (0.4, "adverse"),
+    (0.6, "even"),
+    (0.8, "favorable"),
+    (1.0, "dominant"),
 ]
 
 _POS_FRICTION = {
-    "절망적": "장벽은 실제로 존재한다. 서사적 편의가 아닌 세계의 논리를 따르라.",
-    "불리": "현재 상황에는 비용이 따른다. 그 비용을 정직하게 반영하라.",
+    "dire": "the barrier is real; world-logic governs, not narrative convenience.",
+    "adverse": "this situation carries a cost; the cost stays honest.",
 }
 
 
@@ -352,7 +352,7 @@ def translate_position_effect(
     if position and isinstance(position, dict):
         tier = _to_tier(position.get("value", 0.5), _POS_TIERS)
         reason = position.get("reason", "")
-        line = f"상황: {tier} — {reason}" if reason else f"상황: {tier}"
+        line = f"position: {tier} ({reason})" if reason else f"position: {tier}"
         friction = _POS_FRICTION.get(tier, "")
         if friction:
             line += f"\n  └ {friction}"
@@ -360,7 +360,7 @@ def translate_position_effect(
     if effect and isinstance(effect, dict):
         tier = _to_tier(effect.get("value", 0.5), _POS_TIERS)
         reason = effect.get("reason", "")
-        parts.append(f"영향력: {tier} — {reason}" if reason else f"영향력: {tier}")
+        parts.append(f"leverage: {tier} ({reason})" if reason else f"leverage: {tier}")
     return "\n".join(parts)
 
 
@@ -440,33 +440,33 @@ def translate_energy_direction(energy: str) -> str:
 # =========================================================
 
 _PACING_KR = {
-    "push":    "박자를 올려라 — 다음 비트로 빠르게 전진",
-    "hold":    "현재 리듬 유지 — 성급히 전진하지 마라",
-    "breathe": "숨을 돌려라 — 속도를 늦추고 여운을 남겨라",
-    "pivot":   "방향 전환 — 새로운 톤이나 장소로 전이하라",
+    "push":    "pacing: ♪ accelerando · ▶ push-in",
+    "hold":    "pacing: ♪ a tempo · ▶ static",
+    "breathe": "pacing: ♪ ritardando · ▶ slow-pull",
+    "pivot":   "pacing: ▶ cut-to · ♪ key-change",
 }
 
 _TENSION_KR = {
-    "critical":  "극한 긴장 — 모든 서술에 무게를 실어라",
-    "rising":    "긴장 상승 — 압박을 점진적으로 강화하라",
-    "plateau":   "긴장 유지 — 불안한 안정, 뭔가 올 것 같은 기류",
-    "falling":   "긴장 해소 — 이완과 성찰의 공간을 확보하라",
+    "critical":  "tension: ♪ ff · ▶ tight close-up",
+    "rising":    "tension: ♪ crescendo · ▶ slow push-in",
+    "plateau":   "tension: ♪ sostenuto · ▶ held frame, uneasy",
+    "falling":   "tension: ♪ diminuendo · ▶ pull-back",
 }
 
 _CUT_KR = {
-    "hard_cut":        "하드 컷: 빠르게 다음 비트로 전환",
-    "fade":            "페이드: 서서히 전환, 여운이 머물게",
-    "contrast_cut":    "대비 컷: 톤/장소를 의도적으로 전환",
-    "natural":         "자연 전환: 흐름을 따르라",
-    "dramatic_entrance": "극적 등장: 이벤트가 장면을 깨뜨린다",
+    "hard_cut":        "cut: ▶ hard-cut",
+    "fade":            "cut: ▶ fade",
+    "contrast_cut":    "cut: ▶ match-cut",
+    "natural":         "cut: ▶ continuous",
+    "dramatic_entrance": "cut: ▶ smash-cut",
 }
 
 _IDLE_SOURCE_KR = {
-    "active_condition":  "진행 중인 상황을 확대하라",
-    "narrative_chain":   "서사 체인을 이어가라",
-    "emotion":           "감정이 격한 NPC가 주도하게 하라",
-    "doom":              "환경 압력을 서사적으로 표현하라",
-    "ambient":           "세계가 스스로 움직이게 하라 — 소소한 진행",
+    "active_condition":  "an ongoing situation widens.",
+    "narrative_chain":   "the narrative chain carries forward.",
+    "emotion":           "the NPC whose feeling runs hottest takes the lead.",
+    "doom":              "environmental pressure surfaces through the narrative.",
+    "ambient":           "the world moves on its own; a small, quiet advance.",
 }
 
 
@@ -475,9 +475,9 @@ def translate_register(register) -> str:
     if not register or not isinstance(register, str):
         return ""
     _REGISTER_KR = {
-        "mirror": "[거울] 인물이 상대에게서 자신을 보되 자각하지 못한다 — 특질과 오인을 구체적으로 렌더링하라",
-        "law": "[법칙] 위계/기대/프로토콜이 입력에 의해 휘어진다 — 질서, 균열, 모른 척하는 자를 렌더링하라",
-        "remainder": "[잔여] 장면이 대화나 행동으로 소화할 수 없는 것 — 감각, 반복, 플롯에 봉사하지 않는 디테일을 남겨라",
+        "mirror": "[Mirror] the character sees themselves in the other without recognizing it; the trait and the misreading surface in concrete detail.",
+        "law": "[Law] hierarchy / expectation / protocol bends under the input; the order, the crack, and the one feigning ignorance all surface.",
+        "remainder": "[Remainder] what the scene can't digest into dialogue or action; sensation, repetition, a detail serving no plot stays behind.",
     }
     return _REGISTER_KR.get(register, "")
 
@@ -522,12 +522,12 @@ def infer_scene_register(
 # ----- B5: Propagation Shape (장면 전파 형태) -----
 
 _PROPAGATION_KR = {
-    "compression": "[압축파] 충격이 대상에게 가장 강하고 주변으로 감쇠. 직격의 무게를 먼저, 잔향은 느리게.",
-    "radiation": "[방사] 충격이 전방향으로 퍼진다. 각 인물의 개별 반응을 추적하라.",
-    "oscillation": "[왕복] 자극↔반응이 교대. 리듬적으로 묘사하되 매 왕복마다 점진 변화를 추적하라.",
-    "convergence": "[수렴] 복수의 힘이 한 점으로. 압력 누적을 보여주되 결과는 개별 힘의 합 이상.",
-    "divergence": "[발산] 하나의 결정이 갈래로 쪼개진다. 각 경로를 개별 추적하라.",
-    "torsion": "[비틀림] 겉과 속이 다른 방향. 표면의 말과 이면의 힘을 동시에 렌더링하라.",
+    "compression": "[Compression] impact hits the target hardest, damping outward; the direct weight lands first, the reverberation slower.",
+    "radiation": "[Radiation] impact spreads in all directions; each figure's own reaction tracks separately.",
+    "oscillation": "[Oscillation] stimulus and response alternate; rendered rhythmically, each pass carrying a gradual shift.",
+    "convergence": "[Convergence] several forces toward one point; the pressure accumulates, the result more than the sum of its parts.",
+    "divergence": "[Divergence] one decision splits into branches; each path tracks on its own.",
+    "torsion": "[Torsion] surface and interior pull opposite ways; the spoken surface and the under-force render at once.",
 }
 
 
@@ -621,7 +621,7 @@ def translate_story_direction(story_dir: Optional[dict], scene_type: str = "norm
             parts.append(cut_hint)
         suggest = transition.get("suggest_shift", "")
         if suggest:
-            parts.append(f"장면 전이 제안: → {suggest}")
+            parts.append(f"scene-shift cue: → {suggest}")
 
     # Focus spotlight
     focus = story_dir.get("focus", {})
@@ -629,7 +629,7 @@ def translate_story_direction(story_dir: Optional[dict], scene_type: str = "norm
         spotlight = focus.get("spotlight", "none")
         if spotlight and spotlight != "none":
             reason = focus.get("reason", "")
-            parts.append(f"초점: {spotlight}" + (f" ({reason})" if reason else ""))
+            parts.append(f"focus: {spotlight}" + (f" ({reason})" if reason else ""))
 
     # Idle direction (proactive scene guidance)
     idle_dir = story_dir.get("idle_direction")
@@ -637,17 +637,17 @@ def translate_story_direction(story_dir: Optional[dict], scene_type: str = "norm
         source = idle_dir.get("source", "ambient")
         idle_hint = _IDLE_SOURCE_KR.get(source, "")
         if idle_hint:
-            parts.append(f"[능동 전개] {idle_hint}")
+            parts.append(f"[active advance] {idle_hint}")
         npc = idle_dir.get("npc", "")
         if npc:
-            parts.append(f"주도 NPC: {npc}")
+            parts.append(f"leading NPC: {npc}")
 
     # Seven Dice (W9) — 은닉 4면만 Slot 16 분위기로. 가시 3면은 Slot 19(WRITING_DIRECTIVES) 경로.
     dice = story_dir.get("dice")
     if dice and isinstance(dice, dict) and not dice.get("visible"):
         effect = dice.get("effect", "")
         if effect:
-            parts.append(f"[서사 저류] {effect}")
+            parts.append(f"[narrative undercurrent] {effect}")
 
     if not parts:
         return ""
@@ -727,28 +727,28 @@ def translate_time_atmosphere(time_context: str, scene_type: str = "normal") -> 
 # =========================================================
 
 _FLAG_DIRECTIVES = {
-    "convergence_warning": "관계 변화가 빠르다. 이 속도에 맞는 근거가 있는지 확인하라.",
-    "echo_warning": "NPC가 PC 감정을 따라가고 있다. NPC 자신의 이유가 있는 반응인지 확인하라.",
-    "stagnation_warning": "3턴째 장면 에너지가 평평하다. 외부 자극을 자연스럽게 도입하라.",
-    "mse_deviation": "NPC 행동이 급변했다. 이전과 일관되는지 확인하고, 변화에 근거를 부여하라.",
-    "dissonance_flag": "NPC의 말과 행동이 어긋나고 있다. 그 어긋남이 해소되지 않은 채 몸짓·표정·호흡의 작은 불일치로 남는다.",
-    "redemption_warning": "NPC가 근거 없이 누그러지고 있다. 이전 패턴을 유지하라.",
-    "shallow_read": "분석이 표면에 머물렀다. 드러난 행동 아래를 더 보라 — 입 밖에 안 낸 것, 공간이 주는 압박, 갚지 못한 빚.",
-    "sensory_habituated": "같은 공간에서 감각이 적응했다. 동일한 감각을 반복하지 말고, 미세한 변화를 포착하거나 새로운 감각 채널로 전환하라.",
-    "label_internalization": "NPC가 자기에게 붙은 라벨을 믿기 시작했다. 라벨을 입으로 말하지 마 — 습관, 자세, 반응으로 보여줘라.",
-    "sheet_deducible": "⚠️ 자판기 위험: 반응이 시트 태그의 직역. 이 캐릭터, 이 순간에만 가능한 구체적 반응을 찾을 것.",
+    "convergence_warning": "relationship shifting fast; the pace needs a cause behind it.",
+    "echo_warning": "NPC tracking PC's emotion; the reaction wants its own reason.",
+    "stagnation_warning": "scene energy flat 3 turns; an external stimulus enters naturally.",
+    "mse_deviation": "NPC behavior jumped; it stays consistent with before, or the change earns a cause.",
+    "dissonance_flag": "NPC's words and actions diverge; the gap stays unresolved, surfacing as small mismatch in gesture, expression, breath.",
+    "redemption_warning": "NPC softening without cause; the prior pattern holds.",
+    "shallow_read": "analysis stayed at the surface; beneath the shown action lies the unsaid, the room's pressure, the unpaid debt.",
+    "sensory_habituated": "senses habituated in this space; the micro-shift, or a fresh sense channel, carries it now.",
+    "label_internalization": "NPC starts believing its label; the label stays unspoken, showing through habit, posture, reaction.",
+    "sheet_deducible": "vending-machine read: the reaction is a literal translation of sheet tags; the specific one belongs to this character, this moment.",
 }
 
-_SYMPTOM_TEMPLATE = "NPC가 {cluster} 증상을 보이고 있다. 한 세트로 일관되게 유지하라."
+_SYMPTOM_TEMPLATE = "NPC shows {cluster} symptoms; they hold as one consistent set."
 
 # =========================================================
 # 시간 방향 번역
 # =========================================================
 
 _TEMPORAL_KR = {
-    "past": "인물의 시선이 과거를 향한다",
-    "future": "인물의 시선이 앞을 향한다",
-    "present": "인물이 지금 이 순간에 머문다",
+    "past": "the character's gaze turns toward the past",
+    "future": "the character's gaze turns toward what's ahead",
+    "present": "the character stays in this exact moment",
 }
 
 
@@ -764,8 +764,8 @@ def translate_temporal_orientation(temporal_data: Optional[dict]) -> str:
     if not hint:
         return ""
     if intensity > 0.7:
-        hint += " — 강하게"
-    return f"### 시간 방향\n{hint}"
+        hint += ", strongly"
+    return f"### temporal orientation\n{hint}"
 
 
 def translate_quality_flags(flags: Optional[dict]) -> str:
@@ -788,21 +788,21 @@ def translate_quality_flags(flags: Optional[dict]) -> str:
 # =========================================================
 
 _CONTINUITY_TYPE_KR = {
-    "spatial_break": "공간 불연속",
-    "sensory_break": "감각 불연속",
-    "object_break": "사물 불연속",
-    "tone_break": "분위기 불연속",
-    "npc_break": "인물 불연속",
-    "rhythm_break": "리듬 불연속",
+    "spatial_break": "spatial discontinuity",
+    "sensory_break": "sensory discontinuity",
+    "object_break": "object discontinuity",
+    "tone_break": "tonal discontinuity",
+    "npc_break": "character discontinuity",
+    "rhythm_break": "rhythm discontinuity",
 }
 
 _SHIFT_HINTS = {
-    "gradual": "빛/색이 서서히 바뀌고 있다",
-    "sudden": "빛/색이 급변했다 — 신체 충격 수반",
+    "gradual": "light and color are shifting slowly",
+    "sudden": "light and color jumped; a bodily shock comes with it",
 }
 _THRESHOLD_HINTS = {
-    "mild": "공간이 바뀌었다 — 감각 한 문장 전환",
-    "sharp": "감각 낙차가 크다 — 눈부심/한기/바람 등 신체 반응",
+    "mild": "the space has changed; one sentence of sensory transition",
+    "sharp": "the sensory drop is steep; a bodily reaction — glare, chill, wind",
 }
 
 
@@ -823,11 +823,11 @@ def translate_spatial_inscription(spatial_read: Optional[dict]) -> str:
 
     flt = spatial_read.get("filter")
     if flt and isinstance(flt, str):
-        lines.append(f"  [지각 편향] {flt} — 물리적 변화 아님")
+        lines.append(f"  [perceptual bias] {flt}, not a physical change")
 
     tension = spatial_read.get("tension")
     if tension and isinstance(tension, str) and tension != "null":
-        lines.append(f"  [공간 간극] {tension}")
+        lines.append(f"  [spatial gap] {tension}")
 
     shift = spatial_read.get("shift")
     if shift and shift != "null":
@@ -842,9 +842,9 @@ def translate_spatial_inscription(spatial_read: Optional[dict]) -> str:
 
     if not lines:
         return ""
-    header = ("### 공간 각인\n(배경 질감. 전개하지 마.)\n"
+    header = ("### space imprint\n(background texture; it stays in the backdrop.)\n"
               if weight == "ambient" else
-              "### 공간 각인\n(공간이 겪은 것을 감각으로 보여줘라. 분석 용어 쓰지 마.)\n")
+              "### space imprint\n(what the space has been through surfaces as sensation; the analytic terms stay out of the prose.)\n")
     return header + "\n".join(lines)
 
 
@@ -867,22 +867,22 @@ def translate_continuity_check(check_data) -> str:
     # Retroactive rewriting cue
     rewrite = check_data.get("rewrite")
     if rewrite and isinstance(rewrite, str):
-        directives.append(f"- 소급: {rewrite}")
+        directives.append(f"- retroactive: {rewrite}")
     # anchor_consumed: 이전 감각 앵커 소비 여부
     if check_data.get("anchor_consumed"):
-        directives.append("- 이전 장면의 감각 앵커가 소비되었다. 새로운 감각 기점을 설정하라.")
+        directives.append("- the previous scene's sensory anchor is spent; a new sensory point of origin sets in.")
     if not directives:
         return ""
-    return ("### 씬 연속성 보정\n"
-            "이전 장면과의 불연속이 감지되었다. 자연스러운 연결을 만들어라.\n"
+    return ("### scene continuity\n"
+            "a discontinuity from the previous scene is present; a natural connection forms.\n"
             + "\n".join(directives))
 
 
 _SCHEME_KR = {
-    "deflection": "전환(농담/제스처로 회피)",
-    "displacement": "치환(무관한 곳에서 폭발)",
-    "circling": "선회(다른 각도에서 같은 것)",
-    "substitution": "대체(비슷하지만 다른 것 제공)",
+    "deflection": "deflection",
+    "displacement": "displacement",
+    "circling": "circling",
+    "substitution": "substitution",
 }
 
 def translate_prev_scheme(prev_scheme: str) -> str:
@@ -890,7 +890,7 @@ def translate_prev_scheme(prev_scheme: str) -> str:
     if not prev_scheme or prev_scheme == "none":
         return ""
     scheme_kr = _SCHEME_KR.get(prev_scheme, prev_scheme)
-    return f"직전 보류 수법: {scheme_kr}"
+    return f"prev scheme: {scheme_kr}"
 
 
 # =========================================================
@@ -941,9 +941,9 @@ def translate_npc_attitudes(attitudes: Optional[dict]) -> str:
             lines.append(f"  {reason}")
         # B7: Trust Dynamics 비대칭 힌트
         if trajectory == "declining" and attitude in ("friendly", "devoted"):
-            lines.append("  [신뢰 균열: 한 순간에 발생. 안정이 길었을수록 충격 더 큼. 재건은 최초보다 더 많은 증거 필요.]")
+            lines.append("  [trust fracture: it happens in one moment; the longer the calm held, the bigger the shock. Rebuilding needs more evidence than the first time.]")
         elif trajectory == "improving" and attitude in ("hostile", "unfriendly"):
-            lines.append("  [신뢰 재건 중: 회의가 기본값. 일관된 행동의 누적만이 증거.]")
+            lines.append("  [trust rebuilding: skepticism is the default; only an accumulation of consistent action counts as evidence.]")
     return "\n".join(lines)
 
 
@@ -987,12 +987,12 @@ _WINDOW_NOTATION = {
 }
 
 _DESIRE_HINTS = {
-    "attachment": "확인받고 싶다 — 거리가 생기면 불안",
-    "power": "주도권을 쥐고 싶다 — 상황을 쥐려 한다",
-    "escape": "여기서 벗어나고 싶다 — 지금 이 자리에서 빠지려 한다",
-    "connection": "연결되고 싶다 — 진짜 접촉",
-    "validation": "인정받고 싶다 — 나를 봐달라는 것",
-    "sensation": "느끼고 싶다 — 감각 그 자체를 원한다",
+    "attachment": "wants to be reassured; distance makes them anxious",
+    "power": "wants the upper hand; reaching to hold the situation",
+    "escape": "wants out of here; pulling away from this very spot",
+    "connection": "wants to connect; real contact",
+    "validation": "wants recognition; asking to be seen",
+    "sensation": "wants to feel; the sensation itself is the want",
 }
 
 
@@ -1022,9 +1022,9 @@ def translate_intimacy(intimacy_data: Optional[dict]) -> str:
             ses = controls.get("SES", "")
             sis = controls.get("SIS", "")
             if ses:
-                lines.append(f"- {char_name} — 끌어당기는 것: {ses}")
+                lines.append(f"- {char_name} — what draws them in: {ses}")
             if sis:
-                lines.append(f"- {char_name} — 멈추게 하는 것: {sis}")
+                lines.append(f"- {char_name} — what makes them stop: {sis}")
 
     # desire_type
     desire = intimacy_data.get("desire_type", {})
@@ -1032,24 +1032,24 @@ def translate_intimacy(intimacy_data: Optional[dict]) -> str:
         for char_name, dtype in desire.items():
             dtype_lower = str(dtype).lower().strip()
             hint = _DESIRE_HINTS.get(dtype_lower, dtype)
-            lines.append(f"- {char_name} 동기: {hint}")
+            lines.append(f"- {char_name} motive: {hint}")
 
     # power_dynamic (한국어 통과)
     power = intimacy_data.get("power_dynamic", "")
     if power:
-        lines.append(f"- 관계 역학: {power}")
+        lines.append(f"- relational dynamic: {power}")
 
     # body_memory (한국어 통과)
     body_mem = intimacy_data.get("body_memory", "")
     if body_mem:
-        lines.append(f"- 신체 기억: {body_mem}")
+        lines.append(f"- body memory: {body_mem}")
 
     # post_encounter_prediction: 친밀씬 후 가능한 행동 패턴 (확정 아님)
     post_pred = intimacy_data.get("post_encounter_prediction", {})
     if post_pred and isinstance(post_pred, dict):
         for char_name, prediction in post_pred.items():
             if prediction and isinstance(prediction, str) and prediction.lower() != "null":
-                lines.append(f"- {char_name} 이후 가능 반응 (성격·관계 패턴에 따라 다름): {prediction}")
+                lines.append(f"- {char_name} possible reaction afterward (varies with character and relational pattern): {prediction}")
 
     return "\n".join(lines)
 
@@ -1067,11 +1067,11 @@ _INTENSITY_NOTATION = [
 
 
 _STAGE_PACING = {
-    "escalating":         "가속 중 — 정점 아님. 텐션 빌드업, 결정적 순간 유보.",
-    "rising":             "상승 중 — 점진적 축적. 다음 자극의 효과가 증폭됨.",
-    "declining_from_peak": "정점 직후 — 잔류. 2-3턴 서서히 해소. 같은 자극 재투입 시 즉시 가속 복귀.",
-    "sustained":          "유지 — 균열 가능성 축적 중.",
-    "fading":             "해소 중 — 완전 해소는 장면 내에서 드묾.",
+    "escalating":         "accelerating, not yet at peak; tension builds, the decisive moment held back.",
+    "rising":             "rising, a gradual accumulation; the next stimulus lands amplified.",
+    "declining_from_peak": "just past peak, residual; easing over 2-3 turns, snapping back to acceleration if the same stimulus returns.",
+    "sustained":          "sustained; the chance of a crack accumulating.",
+    "fading":             "easing; full resolution within one scene is rare.",
 }
 
 
@@ -1119,8 +1119,8 @@ def translate_emotion_intensity(
     if not lines:
         return ""
     return (
-        "[감정 강도]\n"
-        "감정은 몸으로 보여줘라. 감정명, 강도 라벨, 수치를 산문에 쓰지 마.\n"
+        "[emotion intensity]\n"
+        "emotion lives in the body; its name, intensity label, and number stay out of the prose, shown through what the body does.\n"
         + "\n".join(lines)
     )
 
@@ -1135,8 +1135,8 @@ def translate_vigor_composure(vigor: int, composure: int) -> str:
     if gap < 30:
         return ""
     if vigor < composure:
-        return "몸은 한계, 겉은 버틴다. 그 어긋남을 동작으로. 명명 금지."
-    return "겉은 멀쩡, 속이 흔들린다. 그 어긋남을 동작으로. 명명 금지."
+        return "body at its limit, the surface holding; the gap shows in movement, unnamed."
+    return "surface intact, the inside shaking; the gap shows in movement, unnamed."
 
 
 # =========================================================
@@ -1149,9 +1149,9 @@ _DETAIL_DENSITY = {
     "exploration": "moderate", "rest": "sparse", "summary": "sparse",
 }
 _DENSITY_KR = {
-    "dense": "디테일 밀도 높게 — 물리적/감각적 세부 전부 렌더링",
-    "moderate": "디테일 적정 — 핵심 환경 + 필요 감각만",
-    "sparse": "디테일 최소 — 핵심 이벤트와 전환만",
+    "dense": "high detail density; physical and sensory specifics render in full.",
+    "moderate": "moderate detail; the key setting and only the senses it needs.",
+    "sparse": "minimal detail; only the key events and the transitions.",
 }
 
 
@@ -1197,19 +1197,19 @@ def translate_telescope_who(psyche_states: Optional[dict]) -> str:
 # =========================================================
 
 _CHAIN_STATUS_HINTS = {
-    "OPEN": "대화가 열려있다",
-    "LOCKED": "대화가 한 주제에 고정되어 있다",
-    "CLOSING": "대화가 마무리로 향하고 있다",
-    "CLOSED": "대화가 끝났다",
+    "OPEN": "exchange open",
+    "LOCKED": "exchange locked on one topic",
+    "CLOSING": "exchange closing",
+    "CLOSED": "exchange closed",
 }
 
 # conclusion_proximity: 0-100 → 서사 페이싱 힌트
 _PROXIMITY_HINTS = [
-    (20, ""),  # 아직 멀다 — 힌트 불필요
-    (45, "서사가 전개되고 있다. 새로운 실마리를 풀어놓아도 좋다"),
-    (70, "긴장이 고조되고 있다. 새 떡밥보다 기존 실을 조이라"),
-    (90, "절정이 가깝다. 모든 행동이 무게를 가진다"),
-    (100, "서사가 정점에 있다. 모든 행동이 결과를 낳는다"),
+    (20, ""),  # still far off — no hint needed
+    (45, "the narrative is unfolding; a new thread can be let loose."),
+    (70, "tension is climbing; the existing threads tighten rather than new ones opening."),
+    (90, "the climax is near; every action carries weight."),
+    (100, "the narrative is at its peak; every action produces a consequence."),
 ]
 
 _SILENCE_NOTATION = {
@@ -1234,7 +1234,7 @@ def translate_narrative_chain(chain_data: Optional[dict]) -> str:
     # topic_lock
     topic = chain_data.get("topic_lock")
     if topic and str(topic).lower() != "none":
-        parts.append(f"주제: {topic}")
+        parts.append(f"topic: {topic}")
 
     # conclusion_proximity: 0-100 → 페이싱 힌트
     proximity = chain_data.get("conclusion_proximity")
@@ -1299,7 +1299,7 @@ def translate_trait_connections(trait_conn: Optional[dict]) -> str:
         # trait_pair: 어떤 특질 조합이 연결되는지 표시
         pair = conn.get("trait_pair", "")
         prefix = f"[{pair}] " if pair else ""
-        line = f"- {npc_name}: {prefix}뻔한 방향({primary}) 대신 → {deflection}"
+        line = f"- {npc_name}: {prefix}instead of the obvious direction ({primary}) → {deflection}"
         hint = conn.get("render_hint", "")
         if hint:
             line += f" | {hint}"
@@ -1307,8 +1307,8 @@ def translate_trait_connections(trait_conn: Optional[dict]) -> str:
     if not lines:
         return ""
     return (
-        "### 뻔한 연결 경계\n"
-        "뻔한 연결은 클리셰다. 제안된 방향으로 굴절하라.\n"
+        "### obvious-link edge\n"
+        "the obvious link is a cliché; the prose refracts toward the suggested direction instead.\n"
         + "\n".join(lines)
     )
 
@@ -1328,26 +1328,26 @@ def translate_npc_knowledge(npc_knowledge: Optional[dict]) -> str:
         parts_k = []
         knows = info.get("knows", [])
         if knows and isinstance(knows, list):
-            parts_k.append(f"  알고 있는 것: {', '.join(str(k) for k in knows)}")
+            parts_k.append(f"  knows: {', '.join(str(k) for k in knows)}")
         secrets = info.get("secrets_held", [])
         if secrets and isinstance(secrets, list):
-            parts_k.append(f"  숨기는 것: {', '.join(str(s) for s in secrets)}")
+            parts_k.append(f"  hides: {', '.join(str(s) for s in secrets)}")
         false_beliefs = info.get("false_beliefs", [])
         if false_beliefs and isinstance(false_beliefs, list):
-            parts_k.append(f"  잘못 알고 있는 것: {', '.join(str(f) for f in false_beliefs)}")
+            parts_k.append(f"  believes wrongly: {', '.join(str(f) for f in false_beliefs)}")
         deception = info.get("deception_cues", [])
         if deception and isinstance(deception, list):
-            parts_k.append(f"  거짓말 단서: {', '.join(str(d) for d in deception)}")
+            parts_k.append(f"  tells of lying: {', '.join(str(d) for d in deception)}")
         # would_share: NPC가 자발적으로 정보를 공유하려는 의향
         if info.get("would_share"):
-            parts_k.append("  스스로 말하고 싶어한다 — 기회가 오면 자연스럽게 꺼낸다")
+            parts_k.append("  wants to tell it themselves; given the chance, it comes out naturally")
         if parts_k:
             lines.append(f"- {npc_name}\n" + "\n".join(parts_k))
     if not lines:
         return ""
     return (
-        "### NPC 지식 상태\n"
-        "(NPC가 아는 것/숨기는 것은 행동을 형성한다. 이 개념 자체를 산문에 쓰지 마.)\n"
+        "### NPC knowledge state\n"
+        "(what an NPC knows or hides shapes its behavior; the concept itself stays out of the prose, surfacing only as action.)\n"
         + "\n".join(lines)
     )
 
@@ -1358,58 +1358,58 @@ def translate_npc_knowledge(npc_knowledge: Optional[dict]) -> str:
 
 _STRATEGY_HINTS = {
     # coping (Lazarus)
-    "problem_focused": "직접적으로",
-    "emotion_focused": "감정으로 우회하여",
-    "avoidant": "화제를 돌리며",
+    "problem_focused": "directly",
+    "emotion_focused": "circling through emotion",
+    "avoidant": "changing the subject",
     # stage (Goffman)
-    "front": "체면을 유지하며",
-    "back": "꾸밈없이",
+    "front": "keeping up appearances",
+    "back": "without pretense",
     # decision_mode (Kahneman)
-    "reactive": "즉흥적으로",
-    "deliberate": "계산하며",
+    "reactive": "off the cuff",
+    "deliberate": "calculating",
     # negotiation_stance (NEGOTIATION 모듈)
-    "cooperative": "협력적으로",
-    "competitive": "먼저 말을 끊으며",
-    "exploitative": "상대 말의 약한 곳을 짚으며",
+    "cooperative": "cooperatively",
+    "competitive": "cutting in first",
+    "exploitative": "pressing the weak spot in what's said",
     # group_dynamic (GROUP_DYNAMICS 모듈)
-    "conformity": "주변이 동의한 다음에 말하며",
-    "obedience": "지시받은 대로 짧게 답하며",
-    "groupthink": "남의 결론을 자기 말로 반복하며",
-    "diffusion": "주어를 흐리고 다른 사람을 가리키며",
+    "conformity": "speaking only after the room agrees",
+    "obedience": "answering short, as told",
+    "groupthink": "echoing others' conclusions as their own",
+    "diffusion": "blurring the subject, pointing at someone else",
 }
 
 # relation.phase → 관계 단계별 대화 전략 힌트
 _PHASE_HINTS = {
-    "orientation": "탐색 중 — 조심스럽게 경계를 그리며",
-    "identification": "동질감 형성 중 — 공통점을 찾으며",
-    "exploitation": "관계 활용 중 — 편하게 요청하고 의지하며",
-    "resolution": "정리 중 — 관계의 의미를 되짚으며",
+    "orientation": "feeling it out — carefully drawing the lines",
+    "identification": "building rapport — looking for common ground",
+    "exploitation": "drawing on the bond — asking easily, leaning on it",
+    "resolution": "winding down — retracing what the relationship meant",
 }
 
 _NEEDS_HINTS = {
-    "safety": "안전을 확보하려",
-    "belonging": "소속감을 얻으려",
-    "esteem": "인정을 받으려",
-    "autonomy": "자율성을 지키려",
-    "competence": "능력을 증명하려",
-    "relatedness": "유대를 형성하려",
-    "trust": "신뢰를 쌓으려",
-    "identity": "정체성을 확인하려",
-    "control": "주도권을 잡으려",
-    "understanding": "상대를 파악하려",
-    "intimacy": "거리를 좁히려",
-    "power": "우위를 점하려",
-    "survival": "생존하려",
-    "justice": "공정함을 지키려",
-    "meaning": "의미를 찾으려",
+    "safety": "to secure safety",
+    "belonging": "to gain belonging",
+    "esteem": "to win recognition",
+    "autonomy": "to protect autonomy",
+    "competence": "to prove competence",
+    "relatedness": "to form a bond",
+    "trust": "to build trust",
+    "identity": "to confirm identity",
+    "control": "to take control",
+    "understanding": "to read the other",
+    "intimacy": "to close the distance",
+    "power": "to gain the upper hand",
+    "survival": "to survive",
+    "justice": "to uphold fairness",
+    "meaning": "to find meaning",
 }
 
 # relation.attachment → 소유욕 대체 행동 힌트 (secure=없음, non-secure=구체 행동)
 _ATTACHMENT_POSSESSIVENESS = {
     "secure":       "",
-    "anxious":      "거리가 벌어지면 먼저 묻고, 답이 늦으면 묻기를 거듭한다",
-    "avoidant":     "감정이 고조되면 한 발 물러서고, 가까워지면 시선을 다른 데 둔다",
-    "disorganized": "다가갔다가 갑자기 거리를 두고, 같은 사람을 다르게 대한다",
+    "anxious":      "asks first when distance opens, and asks again when the answer is slow",
+    "avoidant":     "steps back when feeling runs high, looks away when it gets close",
+    "disorganized": "moves close then suddenly pulls away, treats the same person differently",
 }
 
 _FRAMEWORK_TERMS_RE = re.compile(
@@ -1560,17 +1560,17 @@ def compose_dialogue_directives(
             actual = _extract_actual(opacity)
             if actual:
                 if _depth_for_npc < 0.4:
-                    directive_parts.append("(내면 잠김)")
+                    directive_parts.append("(interior sealed)")
                 else:
-                    directive_parts.append(f"(실제로는 {actual})")
+                    directive_parts.append(f"(actually {actual})")
 
         # 숨김: apprehension_gap (인식 왜곡)
         ag = psyche.get("apprehension_gap")
         if ag and isinstance(ag, str) and ag != "null":
             if _depth_for_npc < 0.4:
-                directive_parts.append("(인식 흐림)")
+                directive_parts.append("(perception blurred)")
             else:
-                directive_parts.append(f"(인식 왜곡: {ag})")
+                directive_parts.append(f"(perception skewed: {ag})")
 
         # 숨김: NPCKnowledge (leak_risk >= medium 일 때만)
         nk = knowledge.get(name, {})
@@ -1579,16 +1579,16 @@ def compose_dialogue_directives(
             if leak in ("medium", "high"):
                 secrets = nk.get("secrets_held", [])
                 if secrets and isinstance(secrets, list) and secrets[0]:
-                    directive_parts.append(f"숨기는 중: {secrets[0]}")
+                    directive_parts.append(f"hiding: {secrets[0]}")
                 false_b = nk.get("false_beliefs", [])
                 if false_b and isinstance(false_b, list) and false_b[0]:
-                    directive_parts.append(f"잘못 믿는 중: {false_b[0]}")
+                    directive_parts.append(f"wrongly believing: {false_b[0]}")
 
         # 갈등 (value_conflict)
         vc = relation.get("value_conflict")
         if vc and isinstance(vc, str) and vc != "null":
             conflict = vc.split("+")[0].strip() if "+" in vc else vc
-            directive_parts.append(f"갈등: {conflict}")
+            directive_parts.append(f"conflict: {conflict}")
 
         # 행동 각인 (imprints) — 최근 1-2개만
         if npc_imprints and isinstance(npc_imprints, dict):
@@ -1596,13 +1596,13 @@ def compose_dialogue_directives(
             if isinstance(imp_list, list):
                 for imp in imp_list[-2:]:
                     if isinstance(imp, dict) and imp.get("mark"):
-                        directive_parts.append(f"각인: {imp['mark']}")
+                        directive_parts.append(f"imprint: {imp['mark']}")
 
         # 말투 (voice quirks) — gaze=Full인 NPC만 (in_focus)
         if voice_quirks and isinstance(voice_quirks, dict) and in_focus:
             vq = voice_quirks.get(name, "")
             if vq:
-                directive_parts.append(f"말투: {vq}")
+                directive_parts.append(f"voice: {vq}")
 
         if directive_parts:
             lines.append(f"- {name}: {'. '.join(directive_parts)}")
@@ -1611,7 +1611,7 @@ def compose_dialogue_directives(
         return ""
 
     return (
-        "### 대사 방향\n"
-        "(NPC 대사의 목적과 전략. 이 용어를 산문에 쓰지 마 — 대사가 수행하게 하라.)\n"
+        "### dialogue direction\n"
+        "(the aim and strategy behind an NPC's lines; the terms stay out of the prose, the dialogue itself performing them.)\n"
         + "\n".join(lines)
     )
