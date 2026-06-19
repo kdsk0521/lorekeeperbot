@@ -62,35 +62,30 @@ def _find_quest(active: List, content: str) -> Optional[Dict]:
     """active 리스트에서 content가 포함된 퀘스트 dict를 찾습니다. 퍼지 매칭 지원."""
     if not content or not active:
         return None
-    # 1. 정확한 부분 일치
-    for q in active:
-        q_content = q["content"] if isinstance(q, dict) else q
-        if content in q_content or q_content in content:
-            return q
-    # 2. 퍼지 매칭: 공백/조사/따옴표/특수문자 정규화 후 비교
+    # Q-1/Q-2 fix: raw 부분일치 first-match + 글자집합 0.6 fuzzy 폐기(오매칭 근원).
+    def _qc(q):
+        return q["content"] if isinstance(q, dict) else q
     def _normalize(s: str) -> str:
         s = s.replace('\u2018', "'").replace('\u2019', "'").replace('\u201C', '"').replace('\u201D', '"')
         return re.sub(r'[의을를이가은는에서로부터과와및\s\'\""&,·\-_~:()]', '', s).lower()
     norm_content = _normalize(content)
-    best, best_q = 0.0, None
-    for q in active:
-        q_content = q["content"] if isinstance(q, dict) else q
-        norm_q = _normalize(q_content)
-        # 짧은 쪽이 긴 쪽에 포함되면 매칭
-        if norm_content in norm_q or norm_q in norm_content:
-            return q
-        # 공통 문자 비율로 유사도 계산 (글자 수 기반, 세트 기반보다 정확)
-        common = len(set(norm_content) & set(norm_q))
-        total = max(len(set(norm_content)), len(set(norm_q)), 1)
-        ratio = common / total
-        if ratio > best:
-            best, best_q = ratio, q
-    if best >= 0.6:
-        return best_q
-    # 매칭 실패 시 디버그 — 중복 체크/탐색 실패는 add_quest 중복체크 경로에서도 정상 발생하므로
-    # WARNING이 아니라 DEBUG 수준. 실제 실패 신호는 caller(advance/complete/remove)가 반환값으로 판단.
-    active_names = [q["content"] if isinstance(q, dict) else q for q in active]
-    logger.debug(f"[Quest] _find_quest MISS: '{content}' not matched in {active_names}")
+    if not norm_content:
+        return None
+    # 1. 정규화 정확 일치 (유일할 때만)
+    exacts = [q for q in active if _normalize(_qc(q)) == norm_content]
+    if len(exacts) == 1:
+        return exacts[0]
+    if len(exacts) > 1:
+        logger.debug(f"[Quest] _find_quest AMBIGUOUS(exact): '{content}' -> {len(exacts)}")
+        return None
+    # 2. 정규화 부분 포함(양방향) — 유일할 때만. 모호하면 None(엉뚱한 퀘스트 파괴 차단).
+    subs = [q for q in active if norm_content in _normalize(_qc(q)) or _normalize(_qc(q)) in norm_content]
+    if len(subs) == 1:
+        return subs[0]
+    if len(subs) > 1:
+        logger.debug(f"[Quest] _find_quest AMBIGUOUS(sub): '{content}' -> {len(subs)}; be specific")
+        return None
+    logger.debug(f"[Quest] _find_quest MISS: '{content}' not in {[_qc(q) for q in active]}")
     return None
 
 
@@ -150,6 +145,9 @@ def advance_quest_progress(channel_id: str, content: str, delta: int = 1) -> str
     old_progress = target["progress"]
     target["progress"] = max(0, min(target["max_progress"], old_progress + delta))
     new_progress = target["progress"]
+    # Q-5: 경계 클램프로 실제 변화 없으면(이미 max/0) 성공 메시지 대신 명시 (오해 방지)
+    if new_progress == old_progress and new_progress < target["max_progress"]:
+        return f"ℹ️ 퀘스트 '{target['content']}' 진행 변화 없음 (현재 {new_progress}/{target['max_progress']})"
     # Track last progress turn for stale quest detection
     try:
         import domain_manager
@@ -212,6 +210,14 @@ def remove_quest(channel_id: str, content: str) -> str:
         active.remove(target)
         board["active"] = active
         _save_board(channel_id, board)
+        # Q-3: 연결 시계의 dangling linked_quest 청소 (시계는 독립 위협으로 유지)
+        linked_clock = target.get("linked_clock") if isinstance(target, dict) else None
+        if linked_clock:
+            try:
+                import game_world
+                game_world.unlink_clock(channel_id, linked_clock)
+            except Exception as _e_unlink:
+                logger.debug(f"[Quest] unlink_clock 실패: {_e_unlink}")
         q_name = target["content"] if isinstance(target, dict) else target
         return f"🗑️ **퀘스트 제거:** {q_name}"
     return f"⚠️ 해당 퀘스트를 찾을 수 없습니다."
@@ -266,7 +272,11 @@ def archive_stale_quests(channel_id: str, current_turn: int, threshold: int = No
 # Memo Operations (Integrated into Notebook, per-user in V8)
 def add_memo(channel_id: str, content: str, user_id: str = "") -> str:
     current_nb = get_notebook_text(channel_id, user_id)
-    if f"- {content}" in current_nb:
+    # N-7 fix: 공백 정규화 dedup
+    _nc = re.sub(r'\s+', ' ', content.strip())
+    _existing = {re.sub(r'\s+', ' ', l.strip().lstrip('-').strip())
+                 for l in current_nb.splitlines() if l.strip().startswith('-')}
+    if _nc in _existing:
         return f"⚠️ 이미 노트북에 있는 내용입니다: {content}"
 
     new_nb = ""
@@ -280,13 +290,25 @@ def add_memo(channel_id: str, content: str, user_id: str = "") -> str:
     return f"📝 **노트북 기록:** {content}"
 
 def remove_memo(channel_id: str, content: str, user_id: str = "") -> str:
+    # N-3 fix: [메모] 섹션 한정 + 첫 매칭 1줄만 삭제.
+    # 기존엔 구역 게이트 없이 모든 '-'줄을 부분문자열로 삭제 → [소지품] 아이템까지 오삭제,
+    # 다중 줄 동시 삭제. resolve_memo_auto(자동 경로)가 이를 상속해 위험.
     current_nb = get_notebook_text(channel_id, user_id)
     lines = current_nb.splitlines()
     new_lines = []
     removed = False
+    in_memo = False
 
     for line in lines:
-        if content in line and line.strip().startswith("-"):
+        if _MEMO_HEADER in line:
+            in_memo = True
+            new_lines.append(line)
+            continue
+        if _SOJIPIN_HEADER in line:
+            in_memo = False
+            new_lines.append(line)
+            continue
+        if in_memo and not removed and content in line and line.strip().startswith("-"):
             removed = True
             continue
         new_lines.append(line)
@@ -297,20 +319,29 @@ def remove_memo(channel_id: str, content: str, user_id: str = "") -> str:
     return f"⚠️ '{content}' 내용을 찾을 수 없습니다."
 
 def edit_memo(channel_id: str, old_content: str, new_content: str, user_id: str = "") -> str:
+    # N-4 fix: [메모] 섹션 한정 + 첫 매칭만 + 부분치환(줄 전체 교체 X).
+    # 기존엔 구역 게이트 없이 매칭 줄을 통째 '- {new}'로 교체 → 긴 메모의 나머지 소실,
+    # 헤더/소지품 줄 오염 가능.
     current_nb = get_notebook_text(channel_id, user_id)
     lines = current_nb.splitlines()
     new_lines = []
     edited = False
+    in_memo = False
 
     for line in lines:
-        if old_content in line:
-            if line.strip().startswith("-"):
-                 new_lines.append(f"- {new_content}")
-            else:
-                 new_lines.append(line.replace(old_content, new_content))
-            edited = True
-        else:
+        if _MEMO_HEADER in line:
+            in_memo = True
             new_lines.append(line)
+            continue
+        if _SOJIPIN_HEADER in line:
+            in_memo = False
+            new_lines.append(line)
+            continue
+        if in_memo and not edited and old_content in line and line.strip().startswith("-"):
+            new_lines.append(line.replace(old_content, new_content, 1))
+            edited = True
+            continue
+        new_lines.append(line)
 
     if edited:
          update_notebook_text(channel_id, "\n".join(new_lines), user_id)
@@ -328,6 +359,34 @@ def update_notebook_text(channel_id: str, new_text: str, user_id: str = "") -> N
     domain_manager.update_notebook(channel_id, new_text, user_id)
     if user_id:
         sync_notebook_to_inventory(channel_id, user_id)
+
+
+_SOJIPIN_HEADER = "— [소지품] —"
+_MEMO_HEADER = "— [메모] —"
+
+def merge_notebook_preserve_inventory(live_notebook: str, extracted_notebook: str) -> str:
+    """[N-1/N-2 역할 경계 복원] 라이브 노트북의 [소지품] 섹션을 보존(item_usage 단독 소유)하고,
+    [메모] 섹션만 추출분(_extract_physical)으로 교체한다.
+    과거: _extract_physical의 full-overwrite가 stale 스냅샷 기준으로 [소지품]까지 덮어써
+          item_usage가 이번 턴에 한 인벤토리 add/remove를 되돌리던 충돌을 차단.
+    - 추출분에 [메모] 헤더가 없으면 라이브 [메모]를 보존(malformed 추출 방어).
+    - [소지품]은 항상 라이브 기준."""
+    live = live_notebook if (live_notebook and live_notebook.strip()) else f"{_SOJIPIN_HEADER}\n\n{_MEMO_HEADER}"
+
+    # 소지품 파트 = 라이브의 메모 헤더 이전 전체 (없으면 전체)
+    live_soji = live.split(_MEMO_HEADER, 1)[0].rstrip()
+    if not live_soji:
+        live_soji = _SOJIPIN_HEADER
+
+    # 메모 파트 = 추출분에 메모 헤더 있으면 그것, 없으면 라이브 메모 보존
+    if extracted_notebook and _MEMO_HEADER in extracted_notebook:
+        memo_part = _MEMO_HEADER + extracted_notebook.split(_MEMO_HEADER, 1)[1]
+    elif _MEMO_HEADER in live:
+        memo_part = _MEMO_HEADER + live.split(_MEMO_HEADER, 1)[1]
+    else:
+        memo_part = _MEMO_HEADER
+
+    return f"{live_soji}\n\n{memo_part.lstrip()}"
 
 
 def add_item_to_sojipin(channel_id: str, item_name: str, user_id: str = "") -> str:
@@ -353,33 +412,37 @@ def add_item_to_sojipin(channel_id: str, item_name: str, user_id: str = "") -> s
 
 
 def remove_item_from_sojipin(channel_id: str, item_name: str, user_id: str = "") -> str:
-    """[소지품] 섹션에서 아이템 제거. [메모]는 안 건드림."""
+    """[소지품] 섹션에서 아이템 제거. [메모]는 안 건드림.
+    N-5 fix: 정확 일치(`- {name}`) 우선, 없을 때만 부분일치 첫 매칭 →
+    '물약' 같은 일반 이름이 엉뚱한 포션 줄을 지우던 wrong-target 완화."""
     item_name = item_name.strip()
     if not item_name:
         return ""
     current_nb = get_notebook_text(channel_id, user_id)
     lines = current_nb.splitlines()
-    new_lines = []
-    removed = False
+
+    # 소지품 섹션 '-' 라인 인덱스 수집
     in_sojipin = False
-
-    for line in lines:
-        stripped = line.strip()
-        if "소지품" in stripped and stripped.startswith("—"):
+    soji_idx = []
+    for i, line in enumerate(lines):
+        s = line.strip()
+        if "소지품" in s and s.startswith("—"):
             in_sojipin = True
-            new_lines.append(line)
             continue
-        if stripped.startswith("—") and "메모" in stripped:
+        if s.startswith("—") and "메모" in s:
             in_sojipin = False
-            new_lines.append(line)
             continue
-        if in_sojipin and stripped.startswith("-") and item_name in stripped and not removed:
-            removed = True
-            continue
-        new_lines.append(line)
+        if in_sojipin and s.startswith("-"):
+            soji_idx.append(i)
 
-    if removed:
-        update_notebook_text(channel_id, "\n".join(new_lines), user_id)
+    # 정확 일치 우선 → 없으면 부분일치 첫 매칭
+    target_i = next((i for i in soji_idx if lines[i].strip() == f"- {item_name}"), None)
+    if target_i is None:
+        target_i = next((i for i in soji_idx if item_name in lines[i].strip()), None)
+
+    if target_i is not None:
+        del lines[target_i]
+        update_notebook_text(channel_id, "\n".join(lines), user_id)
         return f"소지품 제거: {item_name}"
     return f"소지품에서 '{item_name}' 못 찾음"
 

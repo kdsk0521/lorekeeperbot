@@ -539,6 +539,30 @@ class OrchestrationService:
             msg += f" ({reason})"
         return msg
 
+    def _apply_status_changes(self, channel_id: str, user_id: str, status_add, status_remove) -> None:
+        """[N-2 후속] _extract_physical이 추출한 status_add/remove를 실제 status_effects에 적용.
+        과거엔 'PlayerUpdate' 키로 묶였으나 소비처가 없어 전혀 적용되지 않았다(중복 위험 없음)."""
+        if not status_add and not status_remove:
+            return
+        p_data = domain_manager.get_participant_data(channel_id, user_id)
+        if not p_data:
+            return
+        try:
+            current_turn = domain_manager.get_world_state(channel_id).get("turn_index", 0)
+        except Exception:
+            current_turn = 0
+        changed = False
+        for name in (status_add or []):
+            if isinstance(name, str) and name.strip():
+                p_data, _ = game_character.update_status_effect(p_data, "add", name.strip(), None, current_turn)
+                changed = True
+        for name in (status_remove or []):
+            if isinstance(name, str) and name.strip():
+                p_data, _ = game_character.update_status_effect(p_data, "remove", name.strip(), None, current_turn)
+                changed = True
+        if changed:
+            domain_manager.save_participant_data(channel_id, user_id, p_data)
+
     def _process_downtime(self, channel_id: str, bus, rest_eval: dict, user_id: str) -> Optional[str]:
         """다운타임 활동 처리 (rest_eval.activity != 'rest'). Returns system message or None."""
         import random as _rng
@@ -773,19 +797,30 @@ class OrchestrationService:
         if extraction_hints["physical"]:
             async def immediate_physical_update():
                 try:
+                    # [N-1/N-2] 라이브 노트북 재읽기 (stale ctx.notebook_txt 대신).
+                    # update_world_state의 item_usage가 이번 턴에 한 [소지품] 변경을 반영하기 위함.
+                    live_notebook = game_character.get_notebook_text(channel_id, ctx.user_id)
                     status = game_character.get_status_effect_names(
                         ctx.player_data.get("status_effects", []) if ctx.player_data else []
                     )
                     phys_res = await cognition._extract_physical(
                         self.client, self.model_id_flash,
                         ctx.action_text, response,
-                        ctx.notebook_txt, status
+                        live_notebook, status
                     )
                     if phys_res:
+                        # [N-1/N-2] 역할 경계: [소지품]은 라이브 보존(item_usage 소유), [메모]만 추출분 머지.
                         nb_upd = phys_res.get("notebook_update")
-                        if nb_upd and nb_upd != ctx.notebook_txt:
-                            game_system.update_notebook_text(channel_id, nb_upd, ctx.user_id)
-                            await message.channel.send("📔 노트북 기록됨")
+                        if nb_upd:
+                            merged = game_character.merge_notebook_preserve_inventory(live_notebook, nb_upd)
+                            if merged != live_notebook:
+                                game_system.update_notebook_text(channel_id, merged, ctx.user_id)
+                                await message.channel.send("📔 노트북 기록됨")
+                        # status_add/remove 배선 — 과거엔 "PlayerUpdate" 키로 묶였으나 소비처가 없어 버려졌음.
+                        self._apply_status_changes(
+                            channel_id, ctx.user_id,
+                            phys_res.get("status_add"), phys_res.get("status_remove")
+                        )
                 except Exception as e:
                     logger.error(f"Immediate physical update error: {e}")
 
@@ -926,6 +961,11 @@ class OrchestrationService:
                 arc_promote_candidate=_arc_promote_cand,
             )
             
+            # [V10 검증 lite] 추출 self-check 로그 (detection-only — 아직 게이트 X)
+            _unc = updates.get("_uncertain") if isinstance(updates, dict) else None
+            if _unc:
+                logger.info(f"[Extract self-check] uncertain sections this turn: {_unc}")
+
             # Apply Updates (⚠️ 에러는 로그만, 성공만 Discord 출력)
             if updates.get("QuestUpdate"):
                 qu = updates["QuestUpdate"]

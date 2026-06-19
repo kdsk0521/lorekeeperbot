@@ -666,8 +666,11 @@ class StoryDirector:
         # 렌더링 오염 방지: 기본 대사/내레이션 톤은 컷
         if '"' in s or '\n' in s:
             return None
-        if not s.startswith("Next beat:"):
-            s = f"Next beat: {s}"
+        # Flash 제안 beat는 한국어 "다음 비트:" 프리픽스로 올 수 있음 → 둘 다 벗기고 영어로 통일(이중 프리픽스 방지)
+        for _pfx in ("Next beat:", "다음 비트:"):
+            if s.startswith(_pfx):
+                s = s[len(_pfx):].strip()
+        s = f"Next beat: {s}"
         return s
 
     @staticmethod

@@ -225,7 +225,10 @@ def assign_to_storyline(state: dict, turn_entry: dict) -> dict:
             best_match["current_context"] = brief[:260]
     else:
         # 새 스토리라인 생성
-        sl_id = len(state["storylines"]) + 1
+        # D-6 fix: len+1은 prune/resolve 후 id 충돌(중복) → arc_update가 first-match로 오라우팅.
+        # 모노토닉 카운터로 유일성 보장(기존 state는 len+1 fallback으로 backward-compat).
+        sl_id = state.get("_next_storyline_id", len(state["storylines"]) + 1)
+        state["_next_storyline_id"] = sl_id + 1
         new_sl = {
             "id": sl_id,
             "name": f"Storyline #{sl_id}",

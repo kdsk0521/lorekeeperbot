@@ -1,7 +1,8 @@
 """
-Lorekeeper UNE - Vigor/Composure Module (v3.0)
+Lorekeeper UNE - Vigor/Composure Module (v3.1)
 Manages 2-axis PC state: Vigor (physical+will) and Composure (mental+social).
 Replaces mental_module.py.
+v3.1: 회복 1+2 하이브리드(event_delta 게이트) + 트라우마 dwell 분리/일시 디버프.
 """
 
 import logging
@@ -232,13 +233,18 @@ class VigorComposureModule:
     def _process_axis(self, context: "GameContext", axis: dict, axis_name: str, primary_axis: str):
         """Process a single axis (vigor or composure)."""
         bus = context.shared_bus
+        _dai = bus.dai or {}  # V-5 fix: bus.dai None-guard (rest_eval/scene_type 등 .get 크래시 방지)
 
         # 1. Collect Delta
         delta = axis.get("delta", 0)
+        # event_delta: "이번 턴에 실제 사건이 있었나" 신호. AI impact + 판정 감정만 누적.
+        # baseline/cascade/status 같은 구조적 상시 드레인은 제외 → 자연회복 게이트가
+        # 사건 유무로 판정되게 한다 (구조 드레인이 회복을 영구 봉쇄하던 버그 차단).
+        event_delta = 0
 
         # 1a. Rest Recovery (both axes — composure at reduced rate)
         # activity != "rest"인 다운타임은 orchestration._process_downtime()에서 별도 처리
-        rest_eval = bus.dai.get("rest_eval")
+        rest_eval = _dai.get("rest_eval")
         if rest_eval and rest_eval.get("detected") and rest_eval.get("activity", "rest") == "rest":
             quality = rest_eval.get("quality", "brief")
             base_recovery = config.REST_RECOVERY.get(quality, 10)
@@ -263,6 +269,7 @@ class VigorComposureModule:
             }.get(j_result, 0)
             if j_emotion != 0:
                 delta += j_emotion
+                event_delta += j_emotion
                 axis["judgment_emotion"] = j_emotion
 
         # 1c. Cross-Axis Cascade — other axis's bad state drains this axis
@@ -290,7 +297,7 @@ class VigorComposureModule:
         impact_data = axis.get("impact", {})
         if impact_data.get("applicable", False):
             # 씬타입별 impact 상한: intimate ±8, social ±10, 나머지 ±15
-            scene_type = bus.dai.get("scene_type", "normal")
+            scene_type = _dai.get("scene_type", "normal")
             _SCENE_IMPACT_CAP = {"intimate": 8, "social": 10, "combat": 15, "normal": 15, "summary": 5}
             cap = _SCENE_IMPACT_CAP.get(scene_type, 15)
 
@@ -310,6 +317,7 @@ class VigorComposureModule:
                     logger.debug("[%s] Direction reversal damping: %d → %d", axis_name, impact_data.get("delta", 0), impact_delta)
 
             delta += impact_delta
+            event_delta += impact_delta
 
         # 2b. Passive Drain Modifiers (theory tag system)
         if delta < 0:
@@ -324,8 +332,10 @@ class VigorComposureModule:
             if drain_mult != 1.0:
                 delta = int(delta * drain_mult)
 
-        # 2a. Natural Recovery (G: |delta| ≤ T 시 자연 회복 가산)
-        if abs(delta) <= config.NATURAL_RECOVERY_THRESHOLD:
+        # 2a. Natural Recovery (1+2 하이브리드): 이번 턴 큰 사건이 없으면(|event_delta| ≤ T)
+        #     구조적 드레인(baseline/cascade/status) 여부와 무관하게 +1 트리클.
+        #     → 캐스케이드 걸린 조용한 턴에도 회복이 점화되어 일방통행 래칫이 풀린다.
+        if abs(event_delta) <= config.NATURAL_RECOVERY_THRESHOLD:
             current_val = axis.get("value", 100)
             if current_val < 100:
                 delta += config.NATURAL_RECOVERY_AMOUNT
@@ -347,28 +357,38 @@ class VigorComposureModule:
         current_val = axis.get("value", 100)
         current_stage = _get_stage(current_val)
 
-        base_target = max(0, min(100, current_val + delta))
-        base_stage = _get_stage(base_target)
-        clamp_floor = base_target
+        # V-1 fix: floor 계산을 실제 적용값(actual_delta) 기준으로 통일.
+        # 기존엔 base_target/base_stage를 inertia 적용 전 delta로 계산해, inertia로 증폭된
+        # actual_delta가 >2단계 낙폭이어도 floor가 그걸 못 막던 불일치.
+        target_val = max(0, min(100, current_val + actual_delta))
+        base_stage = _get_stage(target_val)
+        clamp_floor = target_val
 
         if base_stage > current_stage + 2:
             limit_stage = current_stage + 2
             floors = {0: 70, 1: 40, 2: 15, 3: 0}
             clamp_floor = floors.get(limit_stage, 0)
-
-        target_val = max(0, min(100, current_val + actual_delta))
         clamped = False
         if actual_delta < 0:
             if target_val < clamp_floor:
                 target_val = clamp_floor
                 clamped = True
 
-        # 5. Trauma Awakening (Collapse -> Recovery)
+        # 5. Trauma Awakening (Collapse dwell -> Rebound) — delta 부호와 분리.
+        #    stage 3(붕괴)에 TRAUMA_DWELL_TURNS 이상 연속으로 머물면 절박한 리바운드 발동.
+        #    회복 +1 같은 미동이 90 점프를 유발하던 엉킴 제거.
         trauma_triggered = False
-        if current_stage == 3 and actual_delta > 0:
-            target_val = 90
+        new_stage = _get_stage(target_val)
+        if new_stage == 3:
+            axis["stage3_turns"] = axis.get("stage3_turns", 0) + 1
+        else:
+            axis["stage3_turns"] = 0
+
+        if axis.get("stage3_turns", 0) >= config.TRAUMA_DWELL_TURNS:
+            target_val = config.TRAUMA_REBOUND_VALUE
             trauma_triggered = True
             axis["trauma_trigger"] = True
+            axis["stage3_turns"] = 0  # 리바운드 후 카운터 리셋 (즉시 재발동 방지)
 
         # 6. Update
         axis["value"] = target_val

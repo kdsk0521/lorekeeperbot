@@ -114,7 +114,16 @@ def _contents_to_messages(contents: Any, system_instruction: Any = None) -> List
 
 
 def _map_model(model: Optional[str]) -> str:
-    """Gemini 모델ID -> wellspring 모델ID. flash->flash, pro->pro, 기본 flash."""
+    """Gemini 모델ID -> wellspring 모델ID. flash->flash, pro->pro, 기본 flash.
+
+    단 heavy_analysis() 컨텍스트(1회성 추출)면 추론-가능 HEAVY 모델로 강제 라우팅한다.
+    Flash가 V3.2 같은 비추론 모델이면 reasoning_effort 격상이 그냥 죽기 때문.
+    """
+    _heavy_var = getattr(_appconfig, "ANALYSIS_HEAVY_EFFORT_VAR", None)
+    if _heavy_var is not None and _heavy_var.get():
+        heavy_model = getattr(_appconfig, "ANALYSIS_OPENAI_MODEL_HEAVY", "") or ""
+        if heavy_model:
+            return heavy_model
     m = (model or "").lower()
     if "pro" in m and "flash" not in m:
         return _appconfig.ANALYSIS_OPENAI_MODEL_PRO
@@ -137,9 +146,15 @@ def _config_to_kwargs(cfg: Any) -> dict:
         kwargs["max_tokens"] = max_out
     if getattr(cfg, "response_mime_type", None) == "application/json":
         kwargs["response_format"] = {"type": "json_object"}
-    # 분석은 JSON 채우기 → extended thinking off(출력/지연 폭증 방지).
+    # per-turn 분석은 JSON 채우기 → extended thinking off(출력/지연 폭증 방지) = 기본 none.
+    # 단 heavy_analysis() 컨텍스트(1회성 추출: 로어 적재 / 캐릭터 시트)면 HEAVY 로 격상.
     # 렌더가 reasoning_effort:none 으로 200 확인됨 → wellspring 수용. .env 로 상향 가능.
-    extra_body = {"reasoning_effort": getattr(_appconfig, "ANALYSIS_OPENAI_REASONING_EFFORT", "none")}
+    _heavy_var = getattr(_appconfig, "ANALYSIS_HEAVY_EFFORT_VAR", None)
+    if _heavy_var is not None and _heavy_var.get():
+        _effort = getattr(_appconfig, "ANALYSIS_OPENAI_REASONING_EFFORT_HEAVY", "low")
+    else:
+        _effort = getattr(_appconfig, "ANALYSIS_OPENAI_REASONING_EFFORT", "none")
+    extra_body = {"reasoning_effort": _effort}
     top_k = getattr(cfg, "top_k", None)
     if top_k is not None:
         # top_k 는 표준 파라미터가 아님 → extra_body.
@@ -165,8 +180,9 @@ class _NoCaches:
 
 
 class _Models:
-    def __init__(self, client: "AsyncOpenAI"):
+    def __init__(self, client: "AsyncOpenAI", embed_client: "AsyncOpenAI" = None):
         self._client = client
+        self._embed_client = embed_client or client  # 임베딩은 별도 엔드포인트(Voyage) — 미지정 시 메인 재사용
 
     async def generate_content(self, model=None, contents=None, config=None):
         messages = _contents_to_messages(contents, getattr(config, "system_instruction", None))
@@ -185,7 +201,7 @@ class _Models:
         texts = contents if isinstance(contents, list) else [contents]
         texts = [t if isinstance(t, str) else _flatten_text(t) for t in texts]
         try:
-            resp = await self._client.embeddings.create(
+            resp = await self._embed_client.embeddings.create(
                 model=_appconfig.ANALYSIS_OPENAI_EMBED_MODEL,
                 input=texts,
             )
@@ -207,8 +223,14 @@ class GenaiCompatClient:
     def __init__(self, api_key: str, base_url: str):
         if not _HAS_OPENAI:
             raise ImportError("openai 패키지 필요: pip install openai")
-        self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-        _models = _Models(self._client)
+        self._client = AsyncOpenAI(api_key=api_key, base_url=base_url, max_retries=0)  # SDK 재시도 OFF — cognition의 api_call_with_retry가 유일한 재시도 층(중첩 방지)
+        # 임베딩 전용 클라이언트 — LLM(Ollama Cloud)은 임베딩 서빙 X → Voyage 등 별도 엔드포인트/키로 분리
+        self._embed_client = AsyncOpenAI(
+            api_key=_appconfig.ANALYSIS_OPENAI_EMBED_API_KEY or api_key,
+            base_url=_appconfig.ANALYSIS_OPENAI_EMBED_BASE_URL or base_url,
+            max_retries=0,
+        )
+        _models = _Models(self._client, self._embed_client)
         self.aio = _Aio(_models)
         self.models = _models          # 일부 코드가 client.models.* 를 쓸 경우 대비
         self.caches = _NoCaches()

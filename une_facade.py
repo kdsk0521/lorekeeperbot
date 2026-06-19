@@ -854,6 +854,7 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
     # Bus initialization
     bus = SharedBus()
     bus.doom["value"] = world.get("doom", 40)
+    bus.doom["carry"] = world.get("doom_carry", 0.0)  # 소수 이월 누적 (round 0증발 방지)
     # Doom clocks (local threats)
     clocks = world.get("doom_clocks", [])
     bus.doom["clocks"] = clocks if isinstance(clocks, list) else []
@@ -875,9 +876,11 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
     vigor_data = mem.get("vigor", {"value": 100, "last_delta": 0})
     bus.vigor["value"] = vigor_data.get("value", 100)
     bus.vigor["last_delta"] = vigor_data.get("last_delta", 0)
+    bus.vigor["stage3_turns"] = vigor_data.get("stage3_turns", 0)  # 붕괴 dwell 카운터 (트라우마 트리거용)
     composure_data = mem.get("composure", {"value": 100, "last_delta": 0})
     bus.composure["value"] = composure_data.get("value", 100)
     bus.composure["last_delta"] = composure_data.get("last_delta", 0)
+    bus.composure["stage3_turns"] = composure_data.get("stage3_turns", 0)
 
     # Momentum 로드 (이전 턴 판정 결과의 여운)
     bus.judgment["momentum_carry"] = mem.get("judgment_momentum", 0)
@@ -901,6 +904,7 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
 
 def sync_from_game_context(channel_id: str, user_id: str, ctx: Any) -> None:
     """[UNE Bridge] GameContext -> ParticipantData/WorldState Sync"""
+    import config
     from orchestration_context import GameContext
     if isinstance(ctx, dict):
         ctx = GameContext.from_dict(ctx)
@@ -910,6 +914,7 @@ def sync_from_game_context(channel_id: str, user_id: str, ctx: Any) -> None:
     if bus.doom.get("active") or isinstance(bus.doom.get("clocks"), list):
         world = domain_manager.get_world_state(channel_id)
         world["doom"] = bus.doom["value"]
+        world["doom_carry"] = bus.doom.get("carry", 0.0)  # 소수 이월 영속
         if isinstance(bus.doom.get("clocks"), list):
             world["doom_clocks"] = bus.doom.get("clocks", [])
         domain_manager.update_world_state(channel_id, world)
@@ -928,18 +933,26 @@ def sync_from_game_context(channel_id: str, user_id: str, ctx: Any) -> None:
                 axis_sys = mem.setdefault(axis_name, {"value": 100, "last_delta": 0})
                 axis_sys["value"] = axis_bus["value"]
                 axis_sys["last_delta"] = axis_bus.get("last_delta", 0)
+                axis_sys["stage3_turns"] = axis_bus.get("stage3_turns", 0)  # 붕괴 dwell 카운터 영속
 
-                # Trauma Trigger (사용 후 pop — 다음 턴 중복 방지)
+                # Trauma Trigger → 일시적 판정 디버프 (turns-duration status_effect).
+                # 과거: 영구 passive + modifier:-5가 get_passive_modifiers에서 anomaly_defense로 오매핑되어
+                #       판정 롤엔 안 먹고, 만료도 없었음. 이제 status_mod 경로(modifiers.judgment)로 실제 -5 적용 +
+                #       process_status_expiry로 TRAUMA_DEBUFF_TURNS 후 자동 해제.
                 if axis_bus.get("trauma_trigger"):
-                    passives = mem.setdefault("passives", [])
-                    trauma_name = f"Trauma ({axis_name} awakening)"
-                    if not any(p.get("name") == trauma_name for p in passives if isinstance(p, dict)):
-                        label = "vigor" if axis_name == "vigor" else "composure"
-                        passives.append({
+                    se_list = p_data.setdefault("status_effects", [])
+                    label = "활력" if axis_name == "vigor" else "평형"
+                    trauma_name = f"트라우마 ({label} 붕괴)"
+                    if not any(isinstance(s, dict) and s.get("name") == trauma_name for s in se_list):
+                        _cur_turn = domain_manager.get_world_state(channel_id).get("turn_index", 0)
+                        se_list.append({
                             "name": trauma_name,
-                            "tags": ["Trauma", "Hard-to-cure"],
-                            "modifier": -5,
-                            "desc": f"a trauma awakened from {label} collapse; -5 penalty to all rolls."
+                            "tags": ["Trauma"],
+                            "type": "debuff",
+                            "severity": 0,  # 축 드레인(1d) 미발동 — 리바운드 직후 재드레인 방지
+                            "modifiers": {"judgment": config.TRAUMA_DEBUFF_MODIFIER},
+                            "duration": {"type": "turns", "value": config.TRAUMA_DEBUFF_TURNS, "start_turn": _cur_turn},
+                            "desc": f"{label} 붕괴에서 깨어난 트라우마; 모든 판정 {config.TRAUMA_DEBUFF_MODIFIER} ({config.TRAUMA_DEBUFF_TURNS}턴).",
                         })
                     axis_bus.pop("trauma_trigger", None)
 

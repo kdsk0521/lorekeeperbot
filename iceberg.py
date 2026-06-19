@@ -1329,6 +1329,15 @@ def translate_npc_knowledge(npc_knowledge: Optional[dict]) -> str:
         knows = info.get("knows", [])
         if knows and isinstance(knows, list):
             parts_k.append(f"  knows: {', '.join(str(k) for k in knows)}")
+        # [V10 지식 lite] suspects(의심, 불확실) — 플래그 ON 시만. 확신(knows)과 구분.
+        try:
+            import config as _cfg_kb
+            if getattr(_cfg_kb, "V10_KNOWLEDGE_BOUNDARY_INJECT", False):
+                suspects = info.get("suspects", [])
+                if suspects and isinstance(suspects, list):
+                    parts_k.append(f"  suspects (unsure): {', '.join(str(s) for s in suspects)}")
+        except Exception:
+            pass
         secrets = info.get("secrets_held", [])
         if secrets and isinstance(secrets, list):
             parts_k.append(f"  hides: {', '.join(str(s) for s in secrets)}")

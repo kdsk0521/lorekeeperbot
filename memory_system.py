@@ -720,6 +720,10 @@ def apply_ai_memory_updates(
             if "npc_summaries" not in session_mem: session_mem["npc_summaries"] = {}
             for name, summ in world_ctx["npc_summaries"].items():
                 session_mem["npc_summaries"][name] = summ
+            # M-7 fix: distinct NPC 무한 증가 방지 — 삽입순 최근 60개만 유지(transient NPC 누적 캡)
+            _NS_CAP = 60
+            if len(session_mem["npc_summaries"]) > _NS_CAP:
+                session_mem["npc_summaries"] = dict(list(session_mem["npc_summaries"].items())[-_NS_CAP:])
             updated = True
             
     if updated:

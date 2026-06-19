@@ -700,6 +700,62 @@ async def cmd_mask(ctx: CommandContext) -> None:
     await ctx.send(f"🎭 **{target}**(으)로 변신했습니다.{mapped_msg}")
 
 
+@registry.register("pc", category="Player", aliases=["주인공", "승격"], description="NPC를 PC(주인공)로 승격 / `!pc <NPC이름>`")
+async def cmd_pc_promote(ctx: CommandContext) -> None:
+    """!pc <NPC이름> — 로어북 분석이 NPC로 잘못 분류한 인물을 주인공(PC)으로 승격.
+
+    이미 추출된 NPC 데이터를 default_pc_info로 옮기고 NPC 목록에서 제거한다.
+    (LLM 재분석 없음 — 정보가 NPC 버킷에 그대로 있으므로 필드 재매핑만)
+    """
+    if not ctx.args:
+        await ctx.send("사용법: `!pc <NPC이름>` — 해당 NPC를 주인공(PC)으로 승격합니다.")
+        return
+
+    target = ctx.raw_args.strip()
+    channel_id = ctx.channel_id
+
+    result = npc_manager.npc_to_pc_info(channel_id, target)
+    if not result:
+        await ctx.send(f"⚠️ NPC **{target}**(을)를 찾을 수 없습니다. `!로어`로 등록된 이름을 확인하세요.")
+        return
+
+    matched_key, pc_info = result
+
+    # B(enrich): 보존된 원문이 충분하면 캐릭터 시트 분석 1회로 passives/inventory/background 복원.
+    # NPC 추출은 기계 필드를 안 뽑으므로, 승격 PC를 Tier 1 → Tier 3 fidelity로 끌어올림.
+    enrich_msg = ""
+    source_text = pc_info.get("description", "") or ""
+    if ctx.genai_client and len(source_text) >= 300:
+        try:
+            sheet = await cognition.analyze_character_sheet(ctx.genai_client, config.MODEL_ID_FLASH, source_text)
+            pc_info = npc_manager.merge_character_sheet_into_pc(pc_info, sheet)
+            n_pas, n_inv = len(pc_info.get("passives", [])), len(pc_info.get("inventory", []))
+            if n_pas or n_inv:
+                enrich_msg = f"\n🧩 시트 보강: 패시브 {n_pas}개 / 소지품 {n_inv}개"
+        except Exception as _e:
+            logger.warning(f"[PC Promote] 캐릭터 시트 보강 실패(기본 정보로 진행): {_e}")
+
+    domain_manager.set_default_pc_info(channel_id, pc_info)
+    domain_manager.delete_npc(channel_id, matched_key)
+
+    # 이름이 일치하는 기존 참가자에게 자동 동기화 (로어 적재 경로와 동일)
+    updated_uids = domain_manager.sync_matching_participants(channel_id, pc_info)
+    sync_msg = ""
+    if updated_uids:
+        names = []
+        for uid in updated_uids:
+            p = domain_manager.get_participant_data(channel_id, uid)
+            if p:
+                names.append(p.get("mask", "Player"))
+        if names:
+            sync_msg = f"\n✅ 캐릭터 적용: {', '.join(names)}"
+
+    await ctx.send(
+        f"👑 **{pc_info['name']}**(을)를 주인공(PC)으로 승격했습니다 (NPC 목록에서 제거).{enrich_msg}{sync_msg}\n"
+        f"다른 플레이어는 `!가면 {pc_info['name']}`(으)로 동기화할 수 있습니다."
+    )
+
+
 @registry.register("notebook", category="Player", aliases=["노트북", "note", "memo", "메모", "inven", "인벤"], description="노트북/인벤토리 관리")
 async def cmd_notebook(ctx: CommandContext) -> None:
     """!노트북 [추가/수정/삭제] [내용]"""
@@ -798,6 +854,7 @@ async def cmd_npc(ctx: CommandContext) -> None:
             target = parts[1].strip() if len(parts) > 1 else None
             npcs = domain_manager.get_npcs(channel_id)
             targets = {}
+            single = bool(target)
             if target:
                 key = domain_manager._find_npc_key(npcs, target)
                 if key:
@@ -806,13 +863,45 @@ async def cmd_npc(ctx: CommandContext) -> None:
                     await ctx.send(f"⚠️ NPC '{target}' 정보를 찾을 수 없습니다.")
                     return
             else:
-                # 인자 없으면 전체 일괄 재추출 (description 300자 이상)
+                # 인자 없으면 전체 일괄 (description 100자 이상)
                 targets = {k: v for k, v in npcs.items()
-                           if len(v.get("description") or v.get("desc", "")) > 300}
+                           if len((v.get("description") or v.get("desc", "")).strip()) > 100}
             if not targets:
-                await ctx.send("Voice Card 대상 NPC가 없습니다.")
+                await ctx.send("🎙️ 보이스카드 대상 NPC가 없습니다.")
                 return
-            await ctx.send("ℹ️ Voice Card 시스템은 제거되었습니다. hybrid 프로필의 ### Voice 섹션이 직접 사용됩니다.")
+
+            # voice 없는 NPC의 특징(description)에서 말투를 distill → tone 필드 저장.
+            # 배치는 이미 voice 있는 NPC(### Voice 섹션 or tone/speech) skip, 단일 타깃은 강제 재생성.
+            await ctx.send(f"🎙️ 보이스카드 추출 중... (대상 {len(targets)}명){'' if single else ' — 이미 말투 있는 NPC는 건너뜀'}")
+            done, skipped = [], []
+            for key, data in targets.items():
+                desc = (data.get("description") or data.get("desc", "")).strip()
+                has_voice = npc_manager._is_hybrid_profile(desc) or data.get("tone") or data.get("speech")
+                if has_voice and not single:
+                    skipped.append(key)
+                    continue
+                voice = await cognition.extract_voice_card(ctx.genai_client, config.MODEL_ID_FLASH, key, desc)
+                if voice:
+                    data["tone"] = voice
+                    domain_manager.update_npc(channel_id, key, data)
+                    done.append(key)
+                else:
+                    skipped.append(key)
+
+            msg = f"🎙️ **보이스카드 완료** — 말투 생성 {len(done)}명"
+            if done:
+                msg += f": {', '.join(done[:10])}" + (" 등" if len(done) > 10 else "")
+            if skipped:
+                msg += f"\n(건너뜀 {len(skipped)}명: 이미 말투 있음/특징 부족/추출 실패)"
+            # 생성된 말투 바로 확인: 단일 타깃은 전문, 배치는 조회 안내
+            if single and done:
+                _v = domain_manager.get_npc(channel_id, done[0])
+                _tone = (_v.get("tone") or _v.get("speech")) if _v else ""
+                if _tone:
+                    msg += f"\n\n**{done[0]} 말투:**\n{_tone}"
+            elif done:
+                msg += "\n각 NPC 말투는 `!npc <이름>`으로 확인하세요."
+            await ctx.send(msg)
             return
 
         # Subcommand: 별칭 / alias — 모델이 다른 언어로 부를 이름 등록 (리리스 ↔ Lilith)
@@ -1043,7 +1132,9 @@ async def cmd_npc(ctx: CommandContext) -> None:
 
             if npc.get('appearance'): msg.append(f"**외양:** {npc.get('appearance')}")
             if npc.get('background'): msg.append(f"**배경:** {npc.get('background')}")
-            
+            if npc.get('tone') or npc.get('speech'):
+                msg.append(f"**말투:** {npc.get('tone') or npc.get('speech')}")
+
             await send_long_message(ctx.message.channel, "\n".join(msg))
         else:
             await ctx.send(f"⚠️ NPC '{arg}' 정보를 찾을 수 없습니다.")

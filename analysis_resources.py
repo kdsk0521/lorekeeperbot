@@ -673,7 +673,7 @@ The mental_impact delta is distributed to PC's Vigor and Composure axes based on
 - Composure (emotional stability, social grace): Primary for romance, comedy, noir, slice_of_life
 - Primary axis receives full impact; secondary axis receives ~30-50%
 
-Negative: Violence witnessed (-5~15) | Personal threat (-5~10) | Supernatural (-10~20) | Loss (-15~25) | Moral violation (-10~20) | Betrayal (-10~20) | Torture (-15~35)
+Negative magnitude: express ONLY via the mental_impact severity enum (none/mild/heavy/extreme) in the DAI spec — do NOT output raw negative numbers here. Direction only: violence / threat / supernatural / loss / moral violation / betrayal / torture → negative load (heavier = more severe & RARE; see enum guide).
 Positive: Rest/safety (+5~10) | Social connection (+5~10) | Achievement (+5~15) | NPC comfort (+5~10)
 
 ### Doom Clocks (Situation Clocks — Offense/Defense)
@@ -728,6 +728,10 @@ Direct (witnessed, HIGH) | Reported (told, MEDIUM) | Inferred (deduced, LOW-MEDI
 Track what each NPC believes that DIFFERS from reality.
 Characters model others' beliefs, which may be wrong → misattributions, miscommunications, dramatic irony.
 false_beliefs: list of statements the NPC incorrectly believes to be true.
+
+### Suspected Knowledge (uncertain)
+suspects: list of things the NPC SUSPECTS but is NOT sure of — overheard, half-seen, inferred-but-unconfirmed.
+Distinct from `knows` (confirmed). Only when there is real ambiguity this turn; most turns empty.
 
 """
 

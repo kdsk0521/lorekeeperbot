@@ -318,6 +318,10 @@ async def _extract_batch(
         "## [BATCH EXTRACTION]",
         "Analyze the exchange and extract updates for ALL requested sections.",
         "Return JSON with the requested top-level keys. Each section is independent.",
+        # [V10 검증 lite] self-check: 모델이 자기 불확실 추출을 같은 콜에서 플래그 (콜0, 현재는 로그만).
+        "Also include top-level `_uncertain`: a list of section keys you are NOT confident about this turn "
+        "(prose was ambiguous, the extraction is a guess). Empty list if confident. "
+        "This is a self-audit — do NOT drop real updates because of it.",
     ]
     ctx_parts = []
 
@@ -628,6 +632,8 @@ async def _extract_physical(
         "4. DE-CLUTTER (Memos): Proactively REMOVE resolved tasks or information that is no longer relevant (e.g., 'Reached the room' is done) to prevent information overload.\n"
         "5. EXCLUSION: Do NOT record one-off transient actions or movement logs that have no long-term impact on the persistent state.\n"
         "6. HYGIENE: Do NOT re-list items/memos already present in the [Current Notebook] unless the quantity or status has changed.\n\n"
+        "### [ROLE BOUNDARY — IMPORTANT]\n"
+        "- The [소지품] (inventory) section is OWNED BY A SEPARATE SYSTEM. Reproduce it EXACTLY as given — make NO additions, removals, or edits there. Your authority is the [메모] section and status only. (Inventory edits you make are discarded.)\n\n"
         "### [FORMAT]\n"
         "- ALWAYS maintain '— [소지품] —' and '— [메모] —' headers."
     )
@@ -763,7 +769,7 @@ IMPORTANT: All string descriptions and guides must be in KOREAN.
             # 3중 방어: system_instruction(API레벨) + training pair(모델레벨) + safety_settings(필터레벨)
             system_instruction=text_resources.CONTENT_AUTHORIZATION_MANDATE,
             response_mime_type="application/json",
-            temperature=0.1,
+            temperature=config.ANALYSIS_TEMPERATURE_HEAVY,  # 1회성 추론 패스 → 더 낮은 온도(결정성↑)
             safety_settings=config.SAFETY_SETTINGS,
             # max_output_tokens 제한 해제 — 모델 기본값 사용 (대형 로어북도 잘리지 않도록)
         )
@@ -803,10 +809,11 @@ IMPORTANT: All string descriptions and guides must be in KOREAN.
             )
         ]
 
-        result = await api_call_with_retry(
-            client, model_id, contents, gen_config,
-            operation_name="Unified Lore Analysis"
-        )
+        with config.heavy_analysis():  # 1회성 추출 → reasoning_effort 격상 (per-turn 미적용)
+            result = await api_call_with_retry(
+                client, model_id, contents, gen_config,
+                operation_name="Unified Lore Analysis"
+            )
         
         if result:
             return safe_parse_json(result)
@@ -862,7 +869,7 @@ Extract detailed character information from the provided text to create a struct
         gen_config = types.GenerateContentConfig(
             system_instruction=text_resources.CONTENT_AUTHORIZATION_MANDATE,
             response_mime_type="application/json",
-            temperature=0.1,
+            temperature=config.ANALYSIS_TEMPERATURE_HEAVY,  # 1회성 추론 패스 → 더 낮은 온도(결정성↑)
             safety_settings=config.SAFETY_SETTINGS,
         )
         contents = [
@@ -885,10 +892,11 @@ Extract detailed character information from the provided text to create a struct
             )
         ]
 
-        result = await api_call_with_retry(
-            client, model_id, contents, gen_config,
-            operation_name="Character Sheet Analysis"
-        )
+        with config.heavy_analysis():  # 1회성 추출 → reasoning_effort 격상 (per-turn 미적용)
+            result = await api_call_with_retry(
+                client, model_id, contents, gen_config,
+                operation_name="Character Sheet Analysis"
+            )
         
         if result:
             return safe_parse_json(result)
@@ -897,3 +905,66 @@ Extract detailed character information from the provided text to create a struct
         logger.error(f"[CharacterAnalyzer] Analysis failed: {e}")
 
     return {}
+
+
+async def extract_voice_card(
+    client: genai.Client,
+    model_id: str,
+    npc_name: str,
+    description: str
+) -> str:
+    """[VoiceCard] NPC 특징 텍스트에서 '말투'만 distill 한다.
+
+    voice 스펙이 없는 레거시 NPC를 위해, 기존 description(성격/특징)에서 화법만 뽑아
+    2-3줄짜리 '말투 묘사' 평문을 만든다. 예시 대사는 넣지 않는다 — tone 필드는 매 턴
+    주입되므로, 샘플 대사가 있으면 Pro가 그걸 그대로 베껴 판박이/기계적으로 되기 때문.
+    묘사만 주면 Pro가 매 턴 그 스타일로 새 대사를 생성한다.
+    결과는 NPC의 `tone` 필드에 저장돼 렌더 프로필에 "말투: ..."로 주입된다.
+
+    1회성·사용자 명령(!npc voicecard) 전용이라 heavy_analysis()로 추론을 켠다.
+    실패/부적합 시 빈 문자열.
+    """
+    if not description or len(description.strip()) < 30:
+        return ""
+
+    desc = _sanitize_for_analysis(description)
+
+    system_prompt = (
+        "You are a dialogue/voice coach for TRPG NPCs.\n"
+        "From the character description, distill ONLY how this character SPEAKS (말투) — "
+        "ignore backstory, appearance, and plot.\n\n"
+        "Describe: tone/register, honorific level (존댓말/반말), sentence length & rhythm, "
+        "vocabulary tics, and any verbal habits or catchphrases.\n\n"
+        "Rules:\n"
+        "- KOREAN output only. Plain text (this becomes the '말투' field) — NO JSON, headers, or preamble.\n"
+        "- Concise: 2-3 lines describing the speech style.\n"
+        "- Describe the MANNER of speaking ONLY. Do NOT write any example/sample dialogue lines or quotes — "
+        "the renderer generates fresh dialogue from this description each turn, so samples would just get "
+        "copied and feel mechanical.\n"
+        "- If the description gives few speech cues, infer a fitting voice from personality, "
+        "but keep it SPECIFIC to this character — avoid generic 'speaks politely' filler."
+    )
+
+    try:
+        gen_config = types.GenerateContentConfig(
+            system_instruction=text_resources.CONTENT_AUTHORIZATION_MANDATE,
+            temperature=config.ANALYSIS_TEMPERATURE_HEAVY,
+            safety_settings=config.SAFETY_SETTINGS,
+            # 추론(heavy) 켜진 콜 — thinking 토큰이 별도로 소비되므로 답(content) 몫까지
+            # 넉넉히. 250으로 조이면 thinking이 다 먹고 content가 비어 "candidates 없음"이 뜸.
+            max_output_tokens=2048,
+        )
+        contents = [
+            types.Content(role="user", parts=[types.Part(text=system_prompt)]),
+            types.Content(role="model", parts=[types.Part(text="확인. 이 캐릭터의 말투만 한국어 평문으로 묘사합니다. 예시 대사는 넣지 않습니다.")]),
+            types.Content(role="user", parts=[types.Part(text=f"[NPC: {npc_name}]\n{desc}")]),
+        ]
+        with config.heavy_analysis():  # 1회성 → reasoning ON (per-turn 미적용)
+            result = await api_call_with_retry(
+                client, model_id, contents, gen_config,
+                operation_name="Voice Card"
+            )
+        return (result or "").strip()
+    except Exception as e:
+        logger.error(f"[VoiceCard] '{npc_name}' 추출 실패: {e}")
+        return ""

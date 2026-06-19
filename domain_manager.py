@@ -115,17 +115,25 @@ def get_notebook(channel_id: str, user_id: str = "") -> str:
     return d.get("notebook", "— [소지품] —\n\n— [메모] —")
 
 def update_notebook(channel_id: str, text: str, user_id: str = "") -> None:
-    """PC별 노트북 저장. user_id 있으면 participant에 저장."""
+    """PC별 노트북 저장. user_id 있으면 participant에 저장.
+    N-8 fix: participant 행이 아직 없어도 채널 fallback으로 쓰지 않고 해당 user 행을 생성.
+    (기존엔 미등록 user끼리 채널 레벨 d['notebook']을 공유 → cross-user 혼선 가능)"""
     d = get_domain(channel_id)
-    if user_id and user_id in d.get("participants", {}):
-        d["participants"][user_id]["notebook"] = text
+    if user_id:
+        participants = d.setdefault("participants", {})
+        participants.setdefault(user_id, {})["notebook"] = text
     else:
-        d["notebook"] = text  # Fallback
+        d["notebook"] = text  # user_id 없을 때만 채널 레벨
     save_domain(channel_id, d)
 
 def _append_memo_to_notebook(channel_id: str, content: str, user_id: str = "") -> None:
     current_nb = get_notebook(channel_id, user_id)
-    if f"- {content}" in current_nb:
+    # N-7 fix: 공백 정규화 dedup (기존 literal `- {content}` in nb는 공백차로 근접중복 누적)
+    import re as _re
+    _nc = _re.sub(r'\s+', ' ', content.strip())
+    _existing = {_re.sub(r'\s+', ' ', l.strip().lstrip('-').strip())
+                 for l in current_nb.splitlines() if l.strip().startswith('-')}
+    if _nc in _existing:
         return
 
     if "— [메모] —" in current_nb:
@@ -741,8 +749,12 @@ def merge_npc(channel_id: str, dup_name: str, canon_name: str) -> tuple:
     if dup_kn:
         canon_kn = knowledge.get(canon_key)
         if canon_kn:
-            canon_kn["knows"] = list(set(canon_kn.get("knows", [])) | set(dup_kn.get("knows", [])))[-20:]
-            canon_kn["secrets_held"] = list(set(canon_kn.get("secrets_held", [])) | set(dup_kn.get("secrets_held", [])))
+            # M-5 fix: set() 합집합은 프로세스 간 순서 비결정 → [-20:] 절단 시 어느 20개가 살지 예측 불가.
+            # dict.fromkeys로 순서 보존 dedup(결정론) 후 최근 20개.
+            canon_kn["knows"] = list(dict.fromkeys(
+                (canon_kn.get("knows", []) or []) + (dup_kn.get("knows", []) or [])))[-20:]
+            canon_kn["secrets_held"] = list(dict.fromkeys(
+                (canon_kn.get("secrets_held", []) or []) + (dup_kn.get("secrets_held", []) or [])))
             canon_kn["would_share"] = bool(canon_kn.get("would_share")) or bool(dup_kn.get("would_share"))
         else:
             knowledge[canon_key] = dup_kn
@@ -941,11 +953,18 @@ def update_npc_knowledge(channel_id: str, npc_name: str, knowledge_data: Dict[st
     new_knows = knowledge_data.get("knows", [])
     merged_knows = list(old_knows | set(new_knows))
 
+    # [V10 지식 lite] suspects(의심) 누적 + misbeliefs(=DAI false_beliefs 영속화).
+    # knows로 확정(승격)된 항목은 suspects에서 제거(의심→확신 전이).
+    _merged_susp = list((set(existing.get("suspects", [])) | set(knowledge_data.get("suspects", []))) - set(merged_knows))
+    _misbeliefs = knowledge_data.get("misbeliefs", knowledge_data.get("false_beliefs", existing.get("misbeliefs", [])))
+
     d["npc_knowledge"][npc_name] = {
         "knows": merged_knows[-20:],  # 최대 20개 유지
         "secrets_held": knowledge_data.get("secrets_held", existing.get("secrets_held", [])),
         "would_share": knowledge_data.get("would_share", existing.get("would_share", False)),
         "leak_risk": knowledge_data.get("leak_risk", existing.get("leak_risk", "none")),
+        "suspects": _merged_susp[-20:],
+        "misbeliefs": _misbeliefs[-20:] if isinstance(_misbeliefs, list) else [],
         "last_updated": time.strftime('%Y-%m-%d %H:%M')
     }
     save_domain(channel_id, d)
@@ -1011,14 +1030,25 @@ def propagate_npc_knowledge(channel_id: str, scene_npcs: list) -> int:
                 continue
             kn_b = all_knowledge.get(npc_b, {})
             existing_b = set(kn_b.get("knows", []))
-            new_facts = [f for f in shareable if f not in existing_b][:3]
-            if new_facts:
-                tagged = [f"{f} (via {npc_a})" for f in new_facts]
-                merged = list(existing_b) + tagged
-                kn_b_updated = dict(kn_b)
-                kn_b_updated["knows"] = merged[-20:]
-                all_knowledge[npc_b] = kn_b_updated
-                propagated += len(new_facts)
+            if getattr(config, "V10_KNOWLEDGE_BOUNDARY_INJECT", False):
+                # [V10 지식 lite] 들은 건 의심(suspects)으로 착지 — 직접 목격해야 knows 승격(정보 비대칭)
+                existing_sus = set(kn_b.get("suspects", []))
+                new_facts = [f for f in shareable if f not in existing_b and f not in existing_sus][:3]
+                if new_facts:
+                    tagged = [f"{f} (via {npc_a})" for f in new_facts]
+                    kn_b_updated = dict(kn_b)
+                    kn_b_updated["suspects"] = (list(existing_sus) + tagged)[-20:]
+                    all_knowledge[npc_b] = kn_b_updated
+                    propagated += len(new_facts)
+            else:
+                new_facts = [f for f in shareable if f not in existing_b][:3]
+                if new_facts:
+                    tagged = [f"{f} (via {npc_a})" for f in new_facts]
+                    merged = list(existing_b) + tagged
+                    kn_b_updated = dict(kn_b)
+                    kn_b_updated["knows"] = merged[-20:]
+                    all_knowledge[npc_b] = kn_b_updated
+                    propagated += len(new_facts)
 
     if propagated > 0:
         d = get_domain(channel_id)

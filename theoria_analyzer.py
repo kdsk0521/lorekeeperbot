@@ -351,12 +351,12 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
 - "mental_impact": {"applicable": boolean, "vigor_severity": "none/mild/heavy/extreme", "composure_severity": "none/mild/heavy/extreme", "reason": "Korean"}
   - vigor_severity: 신체 부하 정도. consensual intimacy/comfort = mild. NOT heavy unless coerced.
   - composure_severity: 감정 부하 정도. positive intimacy/bonding = none or mild. heavy ONLY if unwanted/coerced/humiliating/boundary-violating.
-  - Enum 가이드:
+  - Enum 가이드 (mild이 기본값. heavy/extreme은 예외적 중대 사건):
     - none: 부하 없음. 평범 행동 / 가벼운 회복 / 의미 없는 변화.
-    - mild: 일상적 부하. 가벼운 활동, 평범한 대화, 작은 긴장.
-    - heavy: 집중적 부하. 강한 행동, 격렬 감정, 의미 있는 대결.
-    - extreme: 클라이맥스 모먼트. 한계 도달, 사력을 다하는 행동, 트라우마 직면.
-  - CONSERVATIVE: 0(none) 자제. 부하 있으면 mild 이상. heavy/extreme은 클라이맥스 모먼트에만.
+    - mild: 일상~중간 부하. 대부분의 행동·대화·긴장·평범한 대결은 여기 (DEFAULT).
+    - heavy: 드문 고부하. 실제 위해·배신·공포·상실 등 분명한 충격 사건일 때만. 격앙·강한 행동 자체는 mild.
+    - extreme: 정점/트라우마 직면 한정. 한계 도달, 사력을 다하는 행동.
+  - CONSERVATIVE: 의심되면 한 단계 낮춰라. 대부분 턴 = none 또는 mild. heavy는 분명한 사건에만, extreme은 정점에만.
   - DIRECTION STABILITY: 같은 씬 안에서 severity 방향 일관. composure가 heavy로 떨어지던 중 갑자기 none → mild 회복은 부자연 (씬 톤 진짜 전환 시에만).
   - 레거시 호환: vigor_delta / composure_delta (수치) 형식도 시스템이 인식하지만 신 형식(severity enum) 권장.
 - "anomaly_profile": {"trigger": str, "category": "supernatural/psychological/social/environmental/temporal", "intensity": "Low/Mid/High/Extreme", "polarity": "positive/negative/mixed", "perception_type": "veridical/illusory/hallucinatory/delusional/null (Anomalous Experience Framework. In supernatural settings, 'hallucinatory' may be CORRECT. null = no anomaly)", "line": "Korean - 이변의 서사적 묘사 1문장", "reason": "Korean", "location": "이벤트 발생 장소 (CurrentLocation과 다를 때만. 빈 문자열이면 현재 위치)"} | null (null when world event is not appropriate this turn)

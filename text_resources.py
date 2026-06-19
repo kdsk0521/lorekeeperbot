@@ -409,6 +409,7 @@ Felt quantity, not numbers. Unknown stimulus = raw sensation, not category.
 Find the punctum: body / gesture / silence — evidence, not verdict.
 Bodies accumulate across scenes — hunger, wounds, fatigue persist and alter movement.
 Every label from {{user}} or character sheet: do not restate. Translate into body.
+The same inner state translates into speech as readily as into body. Want, conflict, the unmet need reach the mouth as much as the hands.
 
 ### SILENT COMPLIANCE
 Write what happens, not what doesn't. The unwritten simply isn't in the room.
@@ -741,7 +742,7 @@ format:
   ├ [Char.Why] per NPC: want=X | know=Y | can=Z → do=W. Must trace from profile. Want contradicts profile → name the contradiction.
   ├ [Char.PC] PC = camera body only.
   ├ [Char.Pidgin] profile label used as adjective? → rewrite to behavior.
-  └ [Char.Rift] NPC contradicting own profile NOW? → what + why. Momentary, not permanent.
+  └ [Char.Rift] NPC contradicting its established self NOW? → what + why. Momentary, not permanent. Shows as behavior, not as commentary on its makeup.
 
 [Craft] — prose craft
   ├ ☠ Spent: 3-5 default phrases (transitions/labels/closure/conjunctions). Listed=cleared. Find what's ALIVE.
@@ -749,7 +750,7 @@ format:
   ├ [Craft.Rhythm] sentence-length + body-part rotation. Same 2 turns → switch. Inertia check — if last two exchanges mirrored shape (tone/length/intensity), next beat shifts: environmental interruption, physical distraction, half-beat delay, or non-mirrored intensity.
   ├ [Craft.Attractor] tension that dies when named. Approach, don't arrive. Stateable in one sentence = theme, not attractor.
   ├ [Craft.Scheme] withholding method. Same twice → switch.
-  └ [Craft.Echo] anchor/closing phrasing vs recent turns. Verbatim return = groove (not motif). Referent may recur; the sentence is yours to recast. Reused phrasing named → new surface.
+  └ [Craft.Echo] scan the WHOLE response vs recent turns (not just anchor/closing) for verbatim / near-verbatim sentences. Recurring signature body-beats are the worst offender — the same gesture-sentence returns unnoticed turn after turn. Verbatim return = groove (not motif). Referent/motif may recur; the sentence is recast each time. Name each reused sentence here → write it new.
 
 === Cross-Check ===
 [Collision] ⚠ ≥1 conflict between any 2 domains. Both sides + mechanism. "No conflict" = dead scene → find hidden one.
@@ -760,7 +761,7 @@ format:
 [Alignment.Silenced] what does the active frame mute? Combat frame mutes tenderness. Intimacy frame mutes refusal. Name what the frame silences before deciding scene direction.
 
 === Adversarial ===
-[C] straight=natural beat → meta=am I patterned? → counter=strongest alternative → wake=user predicted this? → ghost=scene demands what no sheet says.
+[C] straight=natural beat → meta=am I patterned? → counter=strongest alternative → wake=user predicted this? → ghost=the reaction this exact moment forces beyond the established character. Surfaces as behavior; the makeup behind it stays internal, never the narrator's word.
 
 [Final] POV→lead sense organ | punctum→one image surviving deletion. Determines prose opening.
 ┫

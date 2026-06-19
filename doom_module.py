@@ -151,19 +151,16 @@ def _compute_scene_modifier(scene_type: str) -> float:
 
 
 def _apply_doom_multipliers(raw_delta: int, phase: str, lens_tags: List[str],
-                             flavor_tags: List[str], scene_type: str) -> int:
-    """raw doom delta에 phase × lens_curve × flavor × scene 모두 적용."""
+                             flavor_tags: List[str], scene_type: str) -> float:
+    """raw doom delta에 phase × lens_curve × flavor × scene 모두 적용. **float 반환**.
+    정수화/반올림은 호출부(process)에서 carry 누적과 함께 처리 — 작은 델타가 round로
+    0이 되어 증발하던 손실(轉 평원 정체)을 막기 위함. mult는 모두 ≥0이라 부호는 보존됨."""
     if raw_delta == 0:
-        return 0
+        return 0.0
     phase_mult = _compute_phase_multiplier(phase, lens_tags)
     flavor_mult, _ = _compute_flavor_modifier(flavor_tags)
     scene_mult = _compute_scene_modifier(scene_type)
-    final = raw_delta * phase_mult * flavor_mult * scene_mult
-    # 부호 보존 + 정수화
-    if raw_delta > 0:
-        return max(0, int(round(final)))
-    else:
-        return min(0, int(round(final)))
+    return float(raw_delta) * phase_mult * flavor_mult * scene_mult
 
 
 class DoomModule:
@@ -297,7 +294,8 @@ class DoomModule:
                 for clock in clocks:
                     if clock.get("name") == name and not clock.get("resolved"):
                         old_filled = int(clock.get("filled", clock.get("progress", 0)) or 0)
-                        new_filled = max(0, min(clock["segments"], old_filled + upd_delta))
+                        _seg = int(clock.get("segments", 6) or 6)  # D-5: 구버전/수기편집 string seg 방어
+                        new_filled = max(0, min(_seg, old_filled + upd_delta))
                         clock["filled"] = new_filled
                         flash_updated_names.add(name)
                         if new_filled != old_filled:
@@ -514,16 +512,10 @@ class DoomModule:
                         resolve_reward = config.CLOCK_RESOLVE_REWARD.get(seg, 3)
                         bus.doom["resolve_reward"] = bus.doom.get("resolve_reward", 0) + resolve_reward
 
-        # ── 4b. Status severity → doom_impact ─────────────────
-        from game_character import normalize_status_effects
-        raw_effects = (context.narrative_anchors or {}).get("status_effects", [])
-        status_effects = normalize_status_effects(raw_effects)
-        for eff in status_effects:
-            sev = eff.get("severity", 0)
-            sev_cfg = config.SEVERITY_EFFECTS.get(sev, {})
-            doom_impact = sev_cfg.get("doom_impact", 0)
-            if doom_impact > 0:
-                delta += doom_impact
+        # ── 4b. Status severity → doom_impact 제거됨 (D-1, 2026-06-18) ──────
+        # 부상/상태이상은 PC 상태지 "이야기 활성도"가 아님 — 매 턴 재주입은 자동 점화.
+        # 과거 이 +1/+3/+5가 轉 평원의 round 증발을 견디는 유일한 큰 상시 입력이라 climb을
+        # 떠받쳤으나, 그 역할은 아래 소수 carry 누적(작은 escalation 보존)이 대체한다.
 
         # ── 5. Doom Relief 제거됨 (2026-05-23) ───────────────
         # legacy 위기진폭 doom 잔재. 둠 = 서사 진행도/챕터 볼륨 리브랜드 정규편입 이후
@@ -534,10 +526,18 @@ class DoomModule:
         # 間 페이즈는 multiplier=0이라 자동으로 자연 감쇠로 넘어감 (별도 처리).
         raw_delta = delta
         if not in_intermission:
-            delta = _apply_doom_multipliers(raw_delta, current_phase, lens_tags, flavor_tags, scene_type)
+            # 소수 carry 누적: multiplier 적용 결과(float)를 이월 잔여와 합쳐 정수부만 적용하고
+            # 소수부는 다음 턴으로 이월. round로 작은 escalation(+1×0.4=0.4 등)이 0이 되어
+            # 증발하던 轉 평원 정체를 제거하되, 비례성은 유지(큰 델타는 빨리, 작은 건 누적).
+            final_float = _apply_doom_multipliers(raw_delta, current_phase, lens_tags, flavor_tags, scene_type)
+            carry = float(bus.doom.get("carry", 0.0) or 0.0)
+            total = final_float + carry
+            delta = int(total)                  # 0 방향 절단
+            bus.doom["carry"] = total - delta   # 잔여 소수 이월 (-1, 1)
         else:
-            # 間 페이즈: raw delta 무시, 자연 감쇠만 적용
+            # 間 페이즈: raw delta 무시, 자연 감쇠만 적용. 챕터 경계라 carry 청산.
             delta = -config.CHAPTER_INTERMISSION_DECAY
+            bus.doom["carry"] = 0.0
 
         # ── 6. 글로벌 둠 갱신 ────────────────────────────────
         bus.doom["delta"] = 0  # Consumed — Anomaly/Judgment can write fresh delta after this
@@ -721,8 +721,7 @@ def _trigger_climax(context, bus, clocks: list, clock_events: list) -> None:
         import domain_manager
         st_state = domain_manager.get_storyteller_state(channel_id)
         queue = st_state.get("event_queue", [])
-        ws = domain_manager.get_world_state(channel_id)
-        current_turn = ws.get("turn_index", 0)
+        current_turn = bus.dai.get("turn_index", 0)  # D-3: 모듈 전체와 turn source 통일(ws 아님)
         queue.insert(0, {
             "tag": "climax",
             "category": "supernatural",

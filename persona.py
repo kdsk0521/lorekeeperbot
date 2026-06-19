@@ -190,6 +190,7 @@ class OpenAIChatSessionAdapter:
         self._client = _openai_mod.AsyncOpenAI(
             api_key=config.OPENAI_API_KEY,
             base_url=config.OPENAI_BASE_URL,
+            max_retries=0,  # SDK 내장 재시도 OFF — 봇 자체 루프(range(MAX_RETRY_COUNT))가 유일한 재시도 층. 안 끄면 3×3=9콜 retry storm.
         )
         self.model = model
         self.temperature = temperature

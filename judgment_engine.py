@@ -30,11 +30,8 @@ class JudgmentEngine:
             if npc_name in psyche_states:
                 target_npc = psyche_states[npc_name]
                 break
-        if not target_npc:
-            for state in psyche_states.values():
-                if isinstance(state, dict):
-                    target_npc = state
-                    break
+        # J-5 fix: relevant NPC가 없으면 theory mod 0. 기존엔 psyche_states의 첫 dict를
+        # 임의 채택해 무관 NPC의 psyche를 ±20 보정으로 적용하던 wrong-target.
         if not target_npc:
             return 0
 

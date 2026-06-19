@@ -98,10 +98,21 @@ def _ensure_schema() -> bool:
                     would_share   INTEGER NOT NULL DEFAULT 0,
                     leak_risk     TEXT NOT NULL DEFAULT 'none',
                     updated_at    TEXT NOT NULL DEFAULT '',
+                    suspects      TEXT NOT NULL DEFAULT '[]',
+                    misbeliefs    TEXT NOT NULL DEFAULT '[]',
                     PRIMARY KEY (channel_id, npc_name)
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_channel ON npc_knowledge(channel_id)")
+            # [V10 지식 lite] 기존 배포 DB 마이그레이션 — 컬럼 없으면 추가(있으면 ALTER 실패→무시).
+            for _alter in (
+                "ALTER TABLE npc_knowledge ADD COLUMN suspects TEXT NOT NULL DEFAULT '[]'",
+                "ALTER TABLE npc_knowledge ADD COLUMN misbeliefs TEXT NOT NULL DEFAULT '[]'",
+            ):
+                try:
+                    conn.execute(_alter)
+                except Exception:
+                    pass
             # [V10 Sprint 2-B] NPC 본체 테이블 — 문서 컬럼(data JSON) + 질의용 메타 (§B-1)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS npcs (
@@ -178,6 +189,68 @@ def _ensure_schema() -> bool:
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_ledger_channel ON offscreen_ledger(channel_id, consumed, id)")
+            # [V10 적립 패러다임] 감정 매핑 장부 — emotion_engine 턴별 per-NPC 스냅샷.
+            # 기존엔 bus.emotion이 매 턴 계산→슬롯 주입→증발. 여기 적립해서 궤적/스파이크 질의 가능.
+            # 질의축을 컬럼으로 분해(잘 찾아오기) + 전체는 raw_json. 콜0·append-only·읽기경로 무변경.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS emotion_log (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_id      TEXT NOT NULL,
+                    turn            INTEGER NOT NULL,
+                    npc_name        TEXT NOT NULL,
+                    base            TEXT NOT NULL DEFAULT '',
+                    modifier        TEXT NOT NULL DEFAULT '',
+                    intensity       REAL NOT NULL DEFAULT 0,
+                    spike           INTEGER NOT NULL DEFAULT 0,
+                    scene_base      TEXT NOT NULL DEFAULT '',
+                    scene_mod       TEXT NOT NULL DEFAULT '',
+                    pair_confidence REAL NOT NULL DEFAULT 0,
+                    raw_json        TEXT NOT NULL DEFAULT '{}',
+                    created_at      REAL NOT NULL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_emolog_channel ON emotion_log(channel_id, id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_emolog_npc ON emotion_log(channel_id, npc_name, id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_emolog_turn ON emotion_log(channel_id, turn)")
+            # [V10 적립] 턴 스냅샷 — 턴당 1행, doom/storydir/vigor 스칼라 상태. (콜0·읽기경로 무변경)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS turn_snapshot (
+                    channel_id       TEXT NOT NULL,
+                    turn             INTEGER NOT NULL,
+                    doom_value       INTEGER,
+                    doom_phase       TEXT NOT NULL DEFAULT '',
+                    vigor            INTEGER,
+                    vigor_delta      INTEGER NOT NULL DEFAULT 0,
+                    composure        INTEGER,
+                    composure_delta  INTEGER NOT NULL DEFAULT 0,
+                    sd_pacing        TEXT NOT NULL DEFAULT '',
+                    sd_tension       TEXT NOT NULL DEFAULT '',
+                    sd_focus         TEXT NOT NULL DEFAULT '',
+                    sd_beat          INTEGER NOT NULL DEFAULT 0,
+                    sd_idle          INTEGER NOT NULL DEFAULT 0,
+                    judgment_active  INTEGER NOT NULL DEFAULT 0,
+                    anomaly_triggered INTEGER NOT NULL DEFAULT 0,
+                    raw_json         TEXT NOT NULL DEFAULT '{}',
+                    created_at       REAL NOT NULL,
+                    PRIMARY KEY (channel_id, turn)
+                )
+            """)
+            # [V10 적립] 태도 전이 이벤트 — 관계가 *언제* 뒤집혔나(실 전이만, no-op/cooldown 제외).
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS attitude_log (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_id    TEXT NOT NULL,
+                    turn          INTEGER NOT NULL,
+                    npc_name      TEXT NOT NULL,
+                    from_attitude TEXT NOT NULL DEFAULT '',
+                    to_attitude   TEXT NOT NULL DEFAULT '',
+                    result        TEXT NOT NULL DEFAULT '',
+                    reason        TEXT NOT NULL DEFAULT '',
+                    created_at    REAL NOT NULL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_attlog_npc ON attitude_log(channel_id, npc_name, id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_attlog_channel ON attitude_log(channel_id, id)")
             conn.commit()
             _initialized = True
             return True
@@ -433,15 +506,26 @@ def _row_to_knowledge(row) -> Dict[str, Any]:
         secrets = json.loads(row[1])
     except Exception:
         secrets = []
+    # [V10 지식 lite] suspects/misbeliefs는 끝에 append (row[5]/row[6]). 구DB 마이그레이션 전이면 빈 배열.
+    try:
+        suspects = json.loads(row[5]) if len(row) > 5 and row[5] else []
+    except Exception:
+        suspects = []
+    try:
+        misbeliefs = json.loads(row[6]) if len(row) > 6 and row[6] else []
+    except Exception:
+        misbeliefs = []
     return {
         "knows": knows,
         "secrets_held": secrets,
         "would_share": bool(row[2]),
         "leak_risk": row[3],
         "last_updated": row[4],
+        "suspects": suspects,
+        "misbeliefs": misbeliefs,
     }
 
-_KNOW_COLS = "knows, secrets_held, would_share, leak_risk, updated_at"
+_KNOW_COLS = "knows, secrets_held, would_share, leak_risk, updated_at, suspects, misbeliefs"
 
 
 def upsert_knowledge(channel_id: str, npc_name: str, kn: Dict[str, Any]) -> bool:
@@ -456,11 +540,12 @@ def upsert_knowledge(channel_id: str, npc_name: str, kn: Dict[str, Any]) -> bool
     try:
         conn.execute(
             f"INSERT INTO npc_knowledge (channel_id, npc_name, {_KNOW_COLS}) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(channel_id, npc_name) DO UPDATE SET "
             "knows=excluded.knows, secrets_held=excluded.secrets_held, "
             "would_share=excluded.would_share, leak_risk=excluded.leak_risk, "
-            "updated_at=excluded.updated_at",
+            "updated_at=excluded.updated_at, "
+            "suspects=excluded.suspects, misbeliefs=excluded.misbeliefs",
             (
                 channel_id, npc_name,
                 json.dumps(kn.get("knows", []), ensure_ascii=False),
@@ -468,6 +553,8 @@ def upsert_knowledge(channel_id: str, npc_name: str, kn: Dict[str, Any]) -> bool
                 1 if kn.get("would_share") else 0,
                 kn.get("leak_risk", "none"),
                 kn.get("last_updated", ""),
+                json.dumps(kn.get("suspects", []), ensure_ascii=False),
+                json.dumps(kn.get("misbeliefs", []), ensure_ascii=False),
             ),
         )
         conn.commit()
@@ -495,16 +582,19 @@ def upsert_knowledge_bulk(channel_id: str, all_kn: Dict[str, Dict[str, Any]]) ->
                 1 if kn.get("would_share") else 0,
                 kn.get("leak_risk", "none"),
                 kn.get("last_updated", ""),
+                json.dumps(kn.get("suspects", []), ensure_ascii=False),
+                json.dumps(kn.get("misbeliefs", []), ensure_ascii=False),
             )
             for name, kn in all_kn.items() if isinstance(kn, dict) and name
         ]
         conn.executemany(
             f"INSERT INTO npc_knowledge (channel_id, npc_name, {_KNOW_COLS}) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(channel_id, npc_name) DO UPDATE SET "
             "knows=excluded.knows, secrets_held=excluded.secrets_held, "
             "would_share=excluded.would_share, leak_risk=excluded.leak_risk, "
-            "updated_at=excluded.updated_at",
+            "updated_at=excluded.updated_at, "
+            "suspects=excluded.suspects, misbeliefs=excluded.misbeliefs",
             rows,
         )
         conn.commit()
@@ -784,7 +874,7 @@ def delete_channel_rows(channel_id: str) -> bool:
     try:
         for table in ("sessions", "npc_relations", "npc_knowledge", "npcs",
                       "history_log", "fermented_history", "deep_memory", "dai_logs",
-                      "offscreen_ledger"):
+                      "offscreen_ledger", "emotion_log", "turn_snapshot", "attitude_log"):
             conn.execute(f"DELETE FROM {table} WHERE channel_id=?", (channel_id,))
         conn.commit()
         return True
@@ -1111,6 +1201,289 @@ def read_dai_logs(channel_id: str, limit: int = 10) -> list:
     except Exception as e:
         logger.warning(f"[SQLiteStore] read_dai_logs 실패: {channel_id}: {e}")
         return []
+
+
+# =========================================================
+# [V10 적립 패러다임] emotion_log — 감정 매핑 장부 (생성자 + 독자)
+# =========================================================
+
+def append_emotion_log(channel_id: str, turn: int, emotion_bus: Dict[str, Any], keep: int = 1500) -> bool:
+    """bus.emotion summary를 턴별 per-NPC 행으로 적립. 채널당 최근 keep행 롤링. 실패 무해.
+    생성자(writer). emotion_bus = EmotionEngine.to_bus_dict() 결과."""
+    if not channel_id or not isinstance(emotion_bus, dict):
+        return False
+    summary = emotion_bus.get("summary") or {}
+    states = emotion_bus.get("states") or {}
+    if not isinstance(summary, dict) or not summary:
+        return False
+    if not _ensure_schema():
+        return False
+    conn = _get_conn()
+    if conn is None:
+        return False
+    try:
+        ts = time.time()
+        rows = []
+        for npc, s in summary.items():
+            if not isinstance(s, dict):
+                continue
+            rows.append((
+                channel_id, int(turn), str(npc),
+                str(s.get("base", "") or ""), str(s.get("modifier", "") or ""),
+                float(s.get("intensity", 0.0) or 0.0),
+                1 if s.get("spike") else 0,
+                str(s.get("scene_base", "") or ""), str(s.get("scene_mod", "") or ""),
+                float(s.get("pair_confidence", 0.0) or 0.0),
+                json.dumps(states.get(npc, {}), ensure_ascii=False, default=str),
+                ts,
+            ))
+        if not rows:
+            return False
+        conn.executemany(
+            "INSERT INTO emotion_log (channel_id, turn, npc_name, base, modifier, intensity, "
+            "spike, scene_base, scene_mod, pair_confidence, raw_json, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            rows,
+        )
+        conn.execute(
+            "DELETE FROM emotion_log WHERE channel_id=? AND id NOT IN "
+            "(SELECT id FROM emotion_log WHERE channel_id=? ORDER BY id DESC LIMIT ?)",
+            (channel_id, channel_id, int(keep)),
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] append_emotion_log 실패 (무시): {channel_id}: {e}")
+        return False
+
+
+def read_emotion_trajectory(channel_id: str, npc_name: str, limit: int = 30) -> list:
+    """독자: 한 NPC의 최근 감정 궤적 (오래된→최신).
+    [{turn, base, modifier, intensity, spike, scene_base, scene_mod, pair_confidence}, ...]"""
+    if not channel_id or not npc_name or limit <= 0 or not _ensure_schema():
+        return []
+    conn = _get_conn()
+    if conn is None:
+        return []
+    try:
+        cur = conn.execute(
+            "SELECT turn, base, modifier, intensity, spike, scene_base, scene_mod, pair_confidence "
+            "FROM emotion_log WHERE channel_id=? AND npc_name=? ORDER BY id DESC LIMIT ?",
+            (channel_id, npc_name, int(limit)),
+        )
+        out = []
+        for r in reversed(cur.fetchall()):
+            out.append({"turn": r[0], "base": r[1], "modifier": r[2], "intensity": r[3],
+                        "spike": bool(r[4]), "scene_base": r[5], "scene_mod": r[6], "pair_confidence": r[7]})
+        return out
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_emotion_trajectory 실패: {channel_id}: {e}")
+        return []
+
+
+def read_emotion_spikes(channel_id: str, limit: int = 20) -> list:
+    """독자: 최근 스파이크 이벤트만 (오래된→최신). [{turn, npc_name, base, modifier, intensity}, ...]"""
+    if not channel_id or limit <= 0 or not _ensure_schema():
+        return []
+    conn = _get_conn()
+    if conn is None:
+        return []
+    try:
+        cur = conn.execute(
+            "SELECT turn, npc_name, base, modifier, intensity FROM emotion_log "
+            "WHERE channel_id=? AND spike=1 ORDER BY id DESC LIMIT ?",
+            (channel_id, int(limit)),
+        )
+        return [{"turn": r[0], "npc_name": r[1], "base": r[2], "modifier": r[3], "intensity": r[4]}
+                for r in reversed(cur.fetchall())]
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_emotion_spikes 실패: {channel_id}: {e}")
+        return []
+
+
+def read_emotion_turn(channel_id: str, turn: int) -> list:
+    """독자: 특정 턴의 전 NPC 감정 스냅샷. [{npc_name, base, modifier, intensity, spike}, ...]"""
+    if not channel_id or not _ensure_schema():
+        return []
+    conn = _get_conn()
+    if conn is None:
+        return []
+    try:
+        cur = conn.execute(
+            "SELECT npc_name, base, modifier, intensity, spike FROM emotion_log "
+            "WHERE channel_id=? AND turn=? ORDER BY npc_name",
+            (channel_id, int(turn)),
+        )
+        return [{"npc_name": r[0], "base": r[1], "modifier": r[2], "intensity": r[3], "spike": bool(r[4])}
+                for r in cur.fetchall()]
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_emotion_turn 실패: {channel_id}: {e}")
+        return []
+
+
+# =========================================================
+# [V10 적립] turn_snapshot — 턴 스칼라 상태 (생성자 + 독자)
+# =========================================================
+
+def append_turn_snapshot(channel_id: str, turn: int, snap: Dict[str, Any], keep: int = 400) -> bool:
+    """턴당 스칼라 상태 1행(upsert: 같은 turn은 최신으로 교체). 채널당 최근 keep턴 롤링. 실패 무해."""
+    if not channel_id or not isinstance(snap, dict):
+        return False
+    if not _ensure_schema():
+        return False
+    conn = _get_conn()
+    if conn is None:
+        return False
+    try:
+        def _i(x):
+            try:
+                return int(x)
+            except Exception:
+                return None
+        conn.execute(
+            "INSERT OR REPLACE INTO turn_snapshot (channel_id, turn, doom_value, doom_phase, "
+            "vigor, vigor_delta, composure, composure_delta, sd_pacing, sd_tension, sd_focus, "
+            "sd_beat, sd_idle, judgment_active, anomaly_triggered, raw_json, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                channel_id, int(turn), _i(snap.get("doom_value")), str(snap.get("doom_phase", "") or ""),
+                _i(snap.get("vigor")), int(snap.get("vigor_delta", 0) or 0),
+                _i(snap.get("composure")), int(snap.get("composure_delta", 0) or 0),
+                str(snap.get("sd_pacing", "") or ""), str(snap.get("sd_tension", "") or ""),
+                str(snap.get("sd_focus", "") or ""),
+                1 if snap.get("sd_beat") else 0, 1 if snap.get("sd_idle") else 0,
+                1 if snap.get("judgment_active") else 0, 1 if snap.get("anomaly_triggered") else 0,
+                json.dumps(snap, ensure_ascii=False, default=str), time.time(),
+            ),
+        )
+        conn.execute(
+            "DELETE FROM turn_snapshot WHERE channel_id=? AND turn NOT IN "
+            "(SELECT turn FROM turn_snapshot WHERE channel_id=? ORDER BY turn DESC LIMIT ?)",
+            (channel_id, channel_id, int(keep)),
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] append_turn_snapshot 실패 (무시): {channel_id}: {e}")
+        return False
+
+
+def read_turn_snapshots(channel_id: str, limit: int = 30) -> list:
+    """독자: 최근 N턴 스냅샷 (오래된→최신)."""
+    if not channel_id or limit <= 0 or not _ensure_schema():
+        return []
+    conn = _get_conn()
+    if conn is None:
+        return []
+    try:
+        cur = conn.execute(
+            "SELECT turn, doom_value, doom_phase, vigor, vigor_delta, composure, composure_delta, "
+            "sd_pacing, sd_tension, sd_focus, sd_beat, sd_idle FROM turn_snapshot "
+            "WHERE channel_id=? ORDER BY turn DESC LIMIT ?",
+            (channel_id, int(limit)),
+        )
+        out = []
+        for r in reversed(cur.fetchall()):
+            out.append({"turn": r[0], "doom_value": r[1], "doom_phase": r[2], "vigor": r[3],
+                        "vigor_delta": r[4], "composure": r[5], "composure_delta": r[6],
+                        "sd_pacing": r[7], "sd_tension": r[8], "sd_focus": r[9],
+                        "sd_beat": bool(r[10]), "sd_idle": bool(r[11])})
+        return out
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_turn_snapshots 실패: {channel_id}: {e}")
+        return []
+
+
+# =========================================================
+# [V10 적립] attitude_log — 관계 태도 전이 이벤트 (생성자 + 독자)
+# =========================================================
+
+def append_attitude_log(channel_id: str, turn: int, npc_name: str, from_attitude: str,
+                        to_attitude: str, result: str = "accepted", reason: str = "",
+                        keep: int = 1000) -> bool:
+    """태도 전이 1건 적립 (실 전이만 — 호출부에서 no-op/cooldown 거름). 채널당 keep행 롤링. 실패 무해."""
+    if not channel_id or not npc_name:
+        return False
+    if not _ensure_schema():
+        return False
+    conn = _get_conn()
+    if conn is None:
+        return False
+    try:
+        conn.execute(
+            "INSERT INTO attitude_log (channel_id, turn, npc_name, from_attitude, to_attitude, "
+            "result, reason, created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (channel_id, int(turn), str(npc_name), str(from_attitude or ""), str(to_attitude or ""),
+             str(result or ""), str(reason or ""), time.time()),
+        )
+        conn.execute(
+            "DELETE FROM attitude_log WHERE channel_id=? AND id NOT IN "
+            "(SELECT id FROM attitude_log WHERE channel_id=? ORDER BY id DESC LIMIT ?)",
+            (channel_id, channel_id, int(keep)),
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] append_attitude_log 실패 (무시): {channel_id}: {e}")
+        return False
+
+
+def read_attitude_log(channel_id: str, npc_name: Optional[str] = None, limit: int = 30) -> list:
+    """독자: 태도 전이 이력 (오래된→최신). npc_name 주면 그 NPC만."""
+    if not channel_id or limit <= 0 or not _ensure_schema():
+        return []
+    conn = _get_conn()
+    if conn is None:
+        return []
+    try:
+        if npc_name:
+            cur = conn.execute(
+                "SELECT turn, npc_name, from_attitude, to_attitude, result, reason FROM attitude_log "
+                "WHERE channel_id=? AND npc_name=? ORDER BY id DESC LIMIT ?",
+                (channel_id, npc_name, int(limit)),
+            )
+        else:
+            cur = conn.execute(
+                "SELECT turn, npc_name, from_attitude, to_attitude, result, reason FROM attitude_log "
+                "WHERE channel_id=? ORDER BY id DESC LIMIT ?",
+                (channel_id, int(limit)),
+            )
+        return [{"turn": r[0], "npc_name": r[1], "from": r[2], "to": r[3], "result": r[4], "reason": r[5]}
+                for r in reversed(cur.fetchall())]
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_attitude_log 실패: {channel_id}: {e}")
+        return []
+
+
+def read_arc_window(channel_id: str, start_turn: int, end_turn: int) -> Dict[str, list]:
+    """독자(범위): 턴 [start,end]의 감정/태도/스냅샷을 한 번에. 발효 청크 호(弧) digest용.
+    {"emotion":[...], "attitudes":[...], "snapshots":[...]}. 실패 시 빈 묶음."""
+    out = {"emotion": [], "attitudes": [], "snapshots": []}
+    if not channel_id or not _ensure_schema():
+        return out
+    conn = _get_conn()
+    if conn is None:
+        return out
+    try:
+        s, e = int(start_turn), int(end_turn)
+        cur = conn.execute(
+            "SELECT turn, npc_name, base, modifier, intensity, spike FROM emotion_log "
+            "WHERE channel_id=? AND turn BETWEEN ? AND ? ORDER BY id", (channel_id, s, e))
+        out["emotion"] = [{"turn": r[0], "npc": r[1], "base": r[2], "modifier": r[3],
+                           "intensity": r[4], "spike": bool(r[5])} for r in cur.fetchall()]
+        cur = conn.execute(
+            "SELECT turn, npc_name, from_attitude, to_attitude, result FROM attitude_log "
+            "WHERE channel_id=? AND turn BETWEEN ? AND ? ORDER BY id", (channel_id, s, e))
+        out["attitudes"] = [{"turn": r[0], "npc": r[1], "from": r[2], "to": r[3], "result": r[4]}
+                            for r in cur.fetchall()]
+        cur = conn.execute(
+            "SELECT turn, doom_phase, sd_tension FROM turn_snapshot "
+            "WHERE channel_id=? AND turn BETWEEN ? AND ? ORDER BY turn", (channel_id, s, e))
+        out["snapshots"] = [{"turn": r[0], "phase": r[1], "tension": r[2]} for r in cur.fetchall()]
+        return out
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_arc_window 실패: {channel_id}: {e}")
+        return out
 
 
 def read_deep(channel_id: str) -> Optional[Dict[str, Any]]:

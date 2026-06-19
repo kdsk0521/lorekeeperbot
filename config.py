@@ -4,6 +4,8 @@ Consolidates all constants and configuration settings.
 """
 
 import os
+import contextlib
+import contextvars
 from typing import Dict, Any, Union
 from dotenv import load_dotenv
 from google.genai import types
@@ -26,19 +28,19 @@ MODEL_ID_PRO = "gemini-3.1-pro-preview"
 MODEL_ID_FLASH = "gemini-3-flash-preview"
 MODEL_ID = MODEL_ID_PRO
 
-# Renderer Backend: "gemini" (default) or "openai" (Fireworks/OpenAI-compatible)
-RENDERER_BACKEND = os.getenv("RENDERER_BACKEND", "gemini").lower()
+# Renderer Backend: "gemini" or "openai" (OpenAI-compatible; 현 운영=Ollama Cloud)
+RENDERER_BACKEND = os.getenv("RENDERER_BACKEND", "openai").lower()
 
-# OpenAI-compatible renderer (Fireworks + Kimi K2.5 Turbo 등)
-OPENAI_API_KEY = os.getenv("OPENAI_RENDERER_API_KEY", "")
-OPENAI_BASE_URL = os.getenv("OPENAI_RENDERER_BASE_URL", "https://api.fireworks.ai/inference/v1")
-OPENAI_MODEL_ID = os.getenv("OPENAI_RENDERER_MODEL", "accounts/fireworks/routers/kimi-k2p5-turbo")
+# OpenAI-compatible renderer — Ollama Cloud (https://ollama.com/v1, 모델명 :cloud 접미사)
+OPENAI_API_KEY = os.getenv("OPENAI_RENDERER_API_KEY", "")  # ollama.com/settings/keys 키 env로
+OPENAI_BASE_URL = os.getenv("OPENAI_RENDERER_BASE_URL", "https://ollama.com/v1")
+OPENAI_MODEL_ID = os.getenv("OPENAI_RENDERER_MODEL", "deepseek-v4-pro:cloud")
 # OpenAI-compatible generation parameters (top_k 미지원 → frequency/presence_penalty로 보정)
 OPENAI_TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", "1.05"))
 OPENAI_TOP_P = float(os.getenv("OPENAI_TOP_P", "0.80"))
 OPENAI_FREQUENCY_PENALTY = float(os.getenv("OPENAI_FREQUENCY_PENALTY", "0.3"))
 OPENAI_TOP_K = int(os.getenv("OPENAI_TOP_K", "40"))
-OPENAI_REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "low")  # none / low / medium / high
+OPENAI_REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "none")  # none / low / medium / high — 렌더러 비추론(none→reasoning_effort:none 전송)
 OPENAI_THINKING_BUDGET = int(os.getenv("OPENAI_THINKING_BUDGET", "8192"))  # thinking 토큰 별도 예산
 OPENAI_PRESENCE_PENALTY = float(os.getenv("OPENAI_PRESENCE_PENALTY", "0.1"))
 
@@ -48,15 +50,46 @@ OPENAI_PRESENCE_PENALTY = float(os.getenv("OPENAI_PRESENCE_PENALTY", "0.1"))
 # Gemini 키가 죽으면 "openai"로 전환 → Flash 분석을 deepseek-v4-flash로 라우팅.
 # =========================================================
 ANALYSIS_BACKEND = os.getenv("ANALYSIS_BACKEND", "gemini").lower()
-# 미지정 시 렌더러(OPENAI_*) 설정 재사용 — 같은 wellspring 게이트면 키/URL 공유 가능
+# 미지정 시 렌더러(OPENAI_*) 설정 재사용 — Ollama Cloud면 키/URL 자동 공유(상속)
 ANALYSIS_OPENAI_API_KEY = os.getenv("ANALYSIS_OPENAI_API_KEY", OPENAI_API_KEY)
 ANALYSIS_OPENAI_BASE_URL = os.getenv("ANALYSIS_OPENAI_BASE_URL", OPENAI_BASE_URL)
-ANALYSIS_OPENAI_MODEL_FLASH = os.getenv("ANALYSIS_OPENAI_MODEL_FLASH", "deepseek-v4-flash")
-ANALYSIS_OPENAI_MODEL_PRO = os.getenv("ANALYSIS_OPENAI_MODEL_PRO", "deepseek-v4-pro")
-ANALYSIS_OPENAI_EMBED_MODEL = os.getenv("ANALYSIS_OPENAI_EMBED_MODEL", "qwen3-embedding")
+ANALYSIS_OPENAI_MODEL_FLASH = os.getenv("ANALYSIS_OPENAI_MODEL_FLASH", "deepseek-v4-flash:cloud")
+ANALYSIS_OPENAI_MODEL_PRO = os.getenv("ANALYSIS_OPENAI_MODEL_PRO", "deepseek-v4-pro:cloud")
+# 임베딩 = Voyage AI (Ollama Cloud는 임베딩 서빙 X → 전용 엔드포인트/키 분리). 200M 토큰 무료(voyage-4 계열).
+# ⚠ ZDR은 Voyage 대시보드에서 opt-out 필요(기본 학습 ON). 차원 기본 1024. 공급자 바꿨으니 기존 벡터 1회 재임베딩 필요.
+ANALYSIS_OPENAI_EMBED_BASE_URL = os.getenv("ANALYSIS_OPENAI_EMBED_BASE_URL", "https://api.voyageai.com/v1")
+ANALYSIS_OPENAI_EMBED_API_KEY = os.getenv("ANALYSIS_OPENAI_EMBED_API_KEY", "")  # Voyage 키 env로
+ANALYSIS_OPENAI_EMBED_MODEL = os.getenv("ANALYSIS_OPENAI_EMBED_MODEL", "voyage-4")
 # 분석 = JSON 스키마 채우기(결정적 추출). extended thinking 불필요 → 기본 off(출력/지연 절감).
 # DAI 품질 부족 관측 시 .env 에서 "low"/"medium" 으로 상향.
 ANALYSIS_OPENAI_REASONING_EFFORT = os.getenv("ANALYSIS_OPENAI_REASONING_EFFORT", "none")
+
+# ── 1회성 무거운 분석만 추론 ON ──────────────────────────────────────────────
+# 로어 적재(analyze_lore_unified) / 캐릭터 시트(analyze_character_sheet)는 제약-만족
+# 분류라 추론 한 패스의 ROI가 크고, 캠페인당 드물게 돌아 지연 부담이 없다. per-turn DAI 는
+# 위의 기본값(none / ANALYSIS_TEMPERATURE) 유지. 호출별 격리는 async-safe contextvar 로.
+# 효과는 ANALYSIS_BACKEND="openai"(DeepSeek 등 wellspring) 경로에서 적용된다.
+ANALYSIS_OPENAI_REASONING_EFFORT_HEAVY = os.getenv("ANALYSIS_OPENAI_REASONING_EFFORT_HEAVY", "low")
+ANALYSIS_TEMPERATURE_HEAVY = float(os.getenv("ANALYSIS_TEMPERATURE_HEAVY", "0.05"))
+# 1회성 콜이 라우팅될 추론-가능 모델. Flash(ANALYSIS_OPENAI_MODEL_FLASH)가 V3.2 같은 비추론
+# 모델이면 effort 격상이 무의미하므로, heavy 컨텍스트에선 이 모델로 강제 라우팅한다.
+# 기본은 이미 떠 있는 PRO(예: deepseek-v4-pro) 재사용 — 새 모델 안 띄움.
+ANALYSIS_OPENAI_MODEL_HEAVY = os.getenv("ANALYSIS_OPENAI_MODEL_HEAVY", ANALYSIS_OPENAI_MODEL_PRO)
+ANALYSIS_HEAVY_EFFORT_VAR = contextvars.ContextVar("analysis_heavy_effort", default=False)
+
+
+@contextlib.contextmanager
+def heavy_analysis():
+    """이 블록 안에서 도는 분석 콜만 reasoning_effort 를 HEAVY 로 격상한다(1회성 추출 전용).
+
+    contextvar 라 async 태스크 단위로 격리되며 await 를 건너 전파된다. 블록을 벗어나면
+    자동으로 원복되므로 per-turn 경로에는 절대 새지 않는다.
+    """
+    _token = ANALYSIS_HEAVY_EFFORT_VAR.set(True)
+    try:
+        yield
+    finally:
+        ANALYSIS_HEAVY_EFFORT_VAR.reset(_token)
 
 # Generation Parameters - Analysis (Flash/Left Brain)
 ANALYSIS_TEMPERATURE = 0.1
@@ -367,17 +400,27 @@ ACTION_BASELINE_DRAIN = {
 }
 
 # F. Flash mental_impact severity enum → 수치 매핑
+# MI-2(2026-06-18): heavy 정의를 "드문 중대 사건"으로 상향 → 값도 severe쪽으로 재배치.
+# mild(기본)→heavy 점프(-2→-10, gap 8)를 heavy→extreme(gap 5)보다 크게 둬서
+# heavy가 '중간값'이 아니라 extreme과 한 묶음(중대)으로 읽히게 함. 운영 관찰 후 한 줄로 조정 가능.
 MENTAL_IMPACT_ENUM_SCALE = {
     "none":    0,
-    "mild":    -3,
-    "heavy":   -8,
+    "mild":    -2,   # 기본값. 대부분 턴
+    "heavy":   -10,  # 드문 중대 사건 (severe band)
     "extreme": -15,
 }
 
 # G. 회복 균형
-NATURAL_RECOVERY_THRESHOLD = 2   # |delta| ≤ T 시 자연 회복 가산
+NATURAL_RECOVERY_THRESHOLD = 2   # |event_delta| ≤ T 시 자연 회복 가산 (구조 드레인 baseline/cascade/status 제외, 사건성 델타만 판정)
 NATURAL_RECOVERY_AMOUNT = 1      # 양축 각각 +1
 CHAPTER_REFRESH_THRESHOLD = 60   # intermission_active 시 max(value, 60)
+
+# G-2. 트라우마 각성 (붕괴 dwell 기반 리바운드 + 일시적 판정 디버프)
+# delta 부호가 아니라 "stage 3(붕괴)에 연속으로 머문 턴 수"로 발동 → 회복 수학과 분리.
+TRAUMA_DWELL_TURNS = 2        # stage 3 연속 N턴 후 리바운드 발동
+TRAUMA_REBOUND_VALUE = 40     # 리바운드 목표값 (stage 1 바닥 = '겨우 기능'. 과거 90은 공짜 풀힐이라 폐기)
+TRAUMA_DEBUFF_TURNS = 3       # 리바운드 시 부여되는 판정 디버프 지속 턴 (turns-duration status_effect로 자동 만료)
+TRAUMA_DEBUFF_MODIFIER = -5   # 모든 판정 페널티 (status modifiers.judgment 경로 — 실제 롤에 반영)
 
 
 # [Phase 3 DEPRECATED] Effort (각오) — Phase 2 Flash modulator(extreme)가 자동 흡수 예정.
@@ -1224,6 +1267,17 @@ V10_NPCS_READ_FROM_SQLITE = True
 # 발화 0/콜 0/루프 0. OFF = 완전 무동작. spec: v10_sprint4_interim_ledger_spec.md
 # 2026-06-11 ON (스모크 35케이스 PASS 후). 문제 시 이 줄 False = 즉시 완전 무동작.
 V10_INTERIM_LEDGER = True
+# [V10 적립 활용] 발효 압축 시, 그 청크 턴범위의 감정/태도/페이즈 호(弧)를 코드로 뽑아
+# 발효 프롬프트에 보조 주입(콜 0, 영어 텔레그래픽=echo-safe). graceful-empty: 장부 비면 무주입,
+# 데이터 쌓이는 만큼 자동 활성. 문제 시 이 줄 False = 즉시 무동작.
+# 2026-06-19 ON (사용자 결정 — 장부 적립 중, graceful-empty라 위험 0).
+V10_ARC_DIGEST_FERMENT = True
+# [V10 지식 lite] npc_knowledge의 suspects/misbeliefs(의심·오해) 버킷 — 저장/추출은 무위험(상시),
+# 이 플래그는 *주입/전파-state*(읽기경로 변경: "A는 X를 의심한다" 산문 주입, knows→hearer suspects 착지)만 게이트.
+# 저장 스키마는 항상 쌓이고(populate 무조건), 이 플래그는 전파(knows→suspects 착지)+주입(iceberg suspects 렌더)만 게이트.
+# graceful-empty(버킷 빈 동안 무동작) + echo-safe(영어 텔레그래픽, 기존 knows/false_beliefs 주입과 동일 register).
+# 2026-06-19 ON (사용자 "바로 배선"). 문제 시 이 줄 False = 전파/주입 즉시 무동작(저장은 유지).
+V10_KNOWLEDGE_BOUNDARY_INJECT = True
 
 # =========================================================
 # Passive Theory Tag System (Phase 4-1)

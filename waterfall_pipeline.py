@@ -380,6 +380,13 @@ class WaterfallPipeline:
                         for name, state in emotion_results.items()
                     }
                     domain_manager.update_world_state(channel_id, world)
+                    # [V10 적립] emotion_log 적립 — bus.emotion 완성 직후, 코드만(콜0)·실패 무해.
+                    # 턴별 per-NPC 감정 스냅샷 → 궤적/스파이크 질의(독자: sqlite_store.read_emotion_*).
+                    try:
+                        import sqlite_store
+                        sqlite_store.append_emotion_log(channel_id, current_turn, bus.emotion)
+                    except Exception as _e_emolog:
+                        logger.debug(f"[V10] emotion log skipped: {_e_emolog}")
                 spikes = [
                     f"{n}({s.spike_detail})"
                     for n, s in emotion_results.items()
@@ -448,6 +455,31 @@ class WaterfallPipeline:
 
         # ===== Pipeline Summary Log =====
         self._log_pipeline_summary(bus)
+
+        # [V10 적립] turn_snapshot — 파이프라인 말미, 모든 신호 최종. 콜0·append-only·실패무해.
+        try:
+            import sqlite_store
+            _ts_ch = (context.narrative_anchors or {}).get("channel_id", "")
+            if _ts_ch:
+                _sd = bus.dai.get("story_direction", {}) if isinstance(bus.dai, dict) else {}
+                _snap = {
+                    "doom_value": bus.doom.get("value"),
+                    "doom_phase": bus.doom.get("chapter_phase", ""),
+                    "vigor": bus.vigor.get("value"),
+                    "vigor_delta": bus.vigor.get("delta_applied", 0) or 0,
+                    "composure": bus.composure.get("value"),
+                    "composure_delta": bus.composure.get("delta_applied", 0) or 0,
+                    "sd_pacing": _sd.get("pacing", ""),
+                    "sd_tension": _sd.get("tension_axis", ""),
+                    "sd_focus": (_sd.get("focus") or {}).get("spotlight", ""),
+                    "sd_beat": bool(_sd.get("next_beat")),
+                    "sd_idle": bool(_sd.get("is_idle_input")),
+                    "judgment_active": bool(bus.judgment.get("active")),
+                    "anomaly_triggered": bool(bus.anomaly.get("triggered")),
+                }
+                sqlite_store.append_turn_snapshot(_ts_ch, current_turn, _snap)
+        except Exception as _e_ts:
+            logger.debug(f"[V10] turn_snapshot skipped: {_e_ts}")
 
         return context
 

@@ -240,7 +240,7 @@ You will receive:
 {
   "deep_narrative": "Cohesive narrative (~800-1000 chars, Korean prose)",
   "crystallized_dialogues": [
-    {"context": "Scene context", "speaker": "Name", "line": "Verbatim critical line"}
+    {"context": "Intent/situation at utterance — WHY/in what emotional register it was said", "speaker": "Name", "line": "Verbatim critical line"}
   ],
   "active_memory_triggers": ["Unresolved hook 1", "Unresolved hook 2"],
   "character_milestones": {
@@ -263,6 +263,7 @@ You will receive:
 - ONLY preserve from blocks marked important=true
 - ONLY lines that are story-defining or promise-bearing
 - Maximum 5 dialogues (most critical only)
+- `context` MUST capture the speaker's INTENT/situation at utterance (why it was said, the emotional register), NOT just where it happened — so a later turn cannot mimic the line's tone while misreading its intent.
 
 ## active_memory_triggers
 - Carry forward UNRESOLVED triggers from fermented sessions
@@ -640,6 +641,49 @@ def gc_low_importance_fresh(
 # FRESH → FERMENTED 발효 (V3 Hybrid)
 # =========================================================
 
+def _build_arc_digest(channel_id: str, start_turn: int, end_turn: int) -> str:
+    """[V10 적립 활용] 청크 턴범위의 감정/태도/페이즈 호(弧)를 영어 텔레그래픽으로.
+    콜 0(순수 코드). echo-safe(영어/기호). 플래그 OFF·데이터 없음·범위 무효 → '' (무동작)."""
+    try:
+        if not getattr(config, "V10_ARC_DIGEST_FERMENT", False):
+            return ""
+        if not channel_id:
+            return ""
+        s, e = int(start_turn or 0), int(end_turn or 0)
+        if s <= 0 or e < s:
+            return ""
+        import sqlite_store
+        w = sqlite_store.read_arc_window(channel_id, s, e)
+        lines = []
+        # 태도 전이 (관계가 언제 뒤집혔나)
+        for a in w.get("attitudes", [])[:6]:
+            lines.append(f"- {a['npc']}: {a.get('from') or '?'}->{a['to']} (t{a['turn']})")
+        # 감정 호: NPC별 첫→끝 (변화 있을 때만)
+        emo = w.get("emotion", [])
+        if emo:
+            byn = {}
+            for r in emo:
+                byn.setdefault(r["npc"], []).append(r)
+            for npc, rows in list(byn.items())[:6]:
+                f, l = rows[0], rows[-1]
+                fi = f.get("intensity") or 0.0
+                li = l.get("intensity") or 0.0
+                if f.get("base") != l.get("base") or abs(li - fi) >= 0.2:
+                    lines.append(f"- {npc}: {f.get('base')}({fi:.1f})->{l.get('base')}({li:.1f})")
+        # 페이즈 호
+        snaps = w.get("snapshots", [])
+        if snaps:
+            p0, p1 = snaps[0].get("phase"), snaps[-1].get("phase")
+            if p0 and p1 and p0 != p1:
+                lines.append(f"- phase {p0}->{p1}")
+        if not lines:
+            return ""
+        return ("\n## Arc digest (emotional/relational trajectory this segment — code-derived, factual)\n"
+                + "\n".join(lines[:12]))
+    except Exception:
+        return ""
+
+
 async def compress_fresh_to_fermented(
     client,
     model_id: str,
@@ -694,9 +738,20 @@ async def compress_fresh_to_fermented(
     except Exception:
         pass
 
+    # [V10 적립 활용] 이 청크 턴범위의 감정/태도/페이즈 호를 코드로 주입 (콜0, 플래그 게이트, echo-safe).
+    arc_hint = ""
+    try:
+        if to_summarize:
+            _st = to_summarize[0].get("turn", 0)
+            _et = to_summarize[-1].get("turn", 0)
+            arc_hint = _build_arc_digest(channel_id, _st, _et)
+    except Exception:
+        arc_hint = ""
+
     user_prompt = f"""# Session Logs (Indexed)
 {history_text}
 {narrative_hint}
+{arc_hint}
 # Directive
 Analyze this TRPG session segment. Extract events, preserve significant dialogues verbatim,
 analyze psychological impact, and identify memory triggers.
@@ -1272,7 +1327,17 @@ async def auto_ferment(
             current_deep_data=current_deep_data
         )
 
-        if deep_result:
+        # M-4 fix: 압축 결과 유효성 가드. 빈/과단축(압축 실패 fallback의 truncated stub 등)이면
+        # 기존 deep_memory를 덮어쓰지 않고 fermented_history도 보존 → 다음 사이클 재시도.
+        # (기존: deep_result truthy면 무조건 overwrite + fermented 전체 wipe → 한 번의 실패가 영구 소실)
+        _new_deep = (deep_result.get("deep_narrative", "") if isinstance(deep_result, dict) else deep_result) if deep_result else ""
+        _prev_deep = current_deep or ""
+        _suspect = (not _new_deep) or (len(_prev_deep) > 200 and len(_new_deep) < len(_prev_deep) * 0.5)
+
+        if deep_result and _suspect:
+            logger.warning("[Fermentation] DEEP 압축 결과 의심(빈/과단축 %d→%d) — deep/fermented 보존, 다음 사이클 재시도",
+                           len(_prev_deep), len(_new_deep))
+        elif deep_result:
             # V3: 구조화된 데이터 저장
             if isinstance(deep_result, dict):
                 session_data["deep_memory"] = deep_result.get("deep_narrative", "")
@@ -1282,13 +1347,13 @@ async def auto_ferment(
                     "character_milestones": deep_result.get("character_milestones", {}),
                     "world_state_changes": deep_result.get("world_state_changes", [])
                 }
-                
+
                 # 전역 memory_triggers 업데이트 (DEEP에서 살아남은 것들)
                 session_data["active_memory_triggers"] = deep_result.get("active_memory_triggers", [])
             else:
                 # Legacy fallback
                 session_data["deep_memory"] = deep_result
-            
+
             session_data["fermented_history"] = []
             
             # 사용된 아카이브 비우기
@@ -1831,7 +1896,11 @@ def write_memory_slot(memory_data: dict, slot_name: str, content: str, turn: int
         # Keep important + most recent
         important_entries = [e for e in slot["entries"] if e.get("important")]
         normal_entries = [e for e in slot["entries"] if not e.get("important")]
-        normal_entries = normal_entries[-(retention_keep - len(important_entries)):]
+        # M-1 fix: important 수가 keep 이상이면 normal slot=0.
+        # 기존 [-(keep-len(important)):]은 important==keep이면 [-0:]=전체 보존,
+        # important>keep이면 음수 슬라이스로 oldest 잔존 → 캡 무력화 버그.
+        keep_n = max(0, retention_keep - len(important_entries))
+        normal_entries = normal_entries[-keep_n:] if keep_n else []
         slot["entries"] = important_entries + normal_entries
 
     return memory_data

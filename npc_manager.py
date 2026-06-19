@@ -319,6 +319,58 @@ def delete_npc(channel_id: str, name: str) -> tuple:
     return domain_manager.delete_npc(channel_id, name)
 
 
+def npc_to_pc_info(channel_id: str, name: str) -> Optional[tuple]:
+    """NPC를 PC(pc_info) 스키마로 재매핑한다. (matched_key, pc_info) 반환, 못 찾으면 None.
+
+    [2026-06-18] 로어북 분석이 주인공을 PC가 아닌 NPC로 분류하는 케이스(A) 대응.
+    정보는 이미 NPC 버킷에 추출돼 있으므로 새 LLM 콜 없이 필드만 재매핑한다.
+    매칭은 등록 경로와 동일하게 양방향(find_equivalent_npc_key) → fuzzy(find_similar_npc).
+    """
+    npcs = domain_manager.get_npcs(channel_id)
+    if not npcs:
+        return None
+    key = domain_manager.find_equivalent_npc_key(npcs, name) or find_similar_npc(channel_id, name)
+    if not key or key not in npcs:
+        return None
+    npc = npcs[key]
+    pc_info = {
+        "name": npc.get("name") or key,
+        "role": npc.get("role", ""),
+        "species": npc.get("species") or npc.get("race", ""),  # NPC는 'race', PC는 'species'
+        "appearance": npc.get("appearance", ""),
+        "description": npc.get("description") or npc.get("personality", ""),
+        "background": npc.get("background", ""),
+    }
+    # NPC가 우연히 갖고 있을 수 있는 선택 필드만 그대로 이월 (없으면 생략)
+    for opt in ("sexual_characteristics", "secret_info", "passives", "inventory", "personality", "gender"):
+        if npc.get(opt):
+            pc_info[opt] = npc[opt]
+    return key, pc_info
+
+
+def merge_character_sheet_into_pc(pc_info: dict, sheet: dict) -> dict:
+    """analyze_character_sheet 결과(Tier 3)를 승격 pc_info(Tier 1)에 병합한다.
+
+    [2026-06-18] 승격 enrich(B). NPC 추출은 passives/inventory를 안 뽑으므로 승격된 PC는
+    기계 필드가 빈다. 보존된 원문에 캐릭터 시트 분석을 돌려 그 필드를 복원.
+
+    병합 규칙:
+    - 기본 서술 필드: 비어 있을 때만 시트로 채움 (이미 든 raw 원문 description을 시트 요약으로
+      덮어쓰지 않기 위함 — 원문 보존이 우선).
+    - 기계 필드(passives/inventory): 시트가 뽑았으면 우선 채택 (modifiers 포함 구조화 버전).
+    """
+    if not sheet:
+        return pc_info
+    for k in ("name", "role", "species", "appearance", "description",
+              "background", "sexual_characteristics", "secret_info"):
+        if sheet.get(k) and not pc_info.get(k):
+            pc_info[k] = sheet[k]
+    for k in ("passives", "inventory"):
+        if sheet.get(k):
+            pc_info[k] = sheet[k]
+    return pc_info
+
+
 
 def find_similar_npc(channel_id: str, new_name: str, threshold: float = 0.85) -> Optional[str]:
     """
@@ -350,34 +402,68 @@ def find_similar_npc(channel_id: str, new_name: str, threshold: float = 0.85) ->
     return None
 
 
-def extract_npc_sections_from_lore(lore_text: str, npc_names: List[str]) -> Dict[str, str]:
-    """로어북 원문에서 NPC별 전체 섹션 텍스트 추출.
+# 헤더로 인정하는 라인 포맷들 (마크다운 / 대괄호 / 볼드 / 기호). 한 줄 전체가 헤더여야 함.
+_HEADER_LINE = re.compile(
+    r'^\s*(?:'
+    r'#{1,4}\s+(?P<md>.+?)'                              # ## 이름
+    r'|\[(?P<br>[^\]]+)\]'                               # [이름]
+    r'|\*\*(?P<bd>[^*]+)\*\*'                            # **이름**
+    r'|<(?P<xml>[^/<>]+?)>'                              # <이름>
+    r'|[■◆●▶★※□◇]+\s*(?P<sym>.+?)(?:\s*[■◆●▶★※□◇]+)?'   # ■ 이름 / ◆이름◆
+    r')\s*$'
+)
 
-    ## 또는 # 헤더로 구분된 NPC 섹션을 찾아 원문 그대로 반환.
-    Flash 요약 대신 원문을 보존하기 위한 용도.
+
+def _header_name(line: str):
+    """라인이 헤더 포맷이면 헤더 텍스트를, 아니면 None을 반환."""
+    m = _HEADER_LINE.match(line)
+    if not m:
+        return None
+    return (m.group('md') or m.group('br') or m.group('bd')
+            or m.group('xml') or m.group('sym') or '').strip()
+
+
+def extract_npc_sections_from_lore(lore_text: str, npc_names: List[str]) -> Dict[str, str]:
+    """로어북 원문에서 NPC별 전체 섹션 텍스트 추출. Flash 요약 대신 원문을 보존하기 위한 용도.
+
+    [2026-06-18] 보존 범위 확대: 마크다운(#/##) 헤더뿐 아니라 [이름]/**이름**/<이름>/
+    기호(■◆) 헤더 포맷도 인식. RisuAI 로어북은 비-마크다운 구분자가 흔해 기존엔 Flash
+    요약만 남던 케이스가 많았음.
+
+    경계는 'NPC 이름과 매칭되는 헤더 라인'만 사용한다(이름-앵커). 이름과 무관한 굵은글씨/
+    대괄호 줄이 실제 NPC 섹션을 중간에서 쪼개는 회귀를 막기 위함.
     """
     if not lore_text or not npc_names:
         return {}
 
-    # ## 또는 # 헤더 기준 분할 (### 내부 섹션은 보존)
-    sections = re.split(r'\n(?=#{1,2}(?!#)\s)', lore_text)
+    lines = lore_text.split('\n')
+    # "리미(Limi)" → ["리미", "Limi"]
+    name_parts_map = {
+        name: [p.strip() for p in re.split(r'[()]', name) if p.strip()]
+        for name in npc_names
+    }
 
-    result = {}
-    for section in sections:
-        header_m = re.match(r'#{1,2}\s+(.+)', section)
-        if not header_m:
+    # 1) NPC 이름과 매칭되는 헤더 라인만 섹션 경계로 수집
+    boundaries = []  # [(line_idx, matched_name)]
+    for i, ln in enumerate(lines):
+        h = _header_name(ln)
+        if h is None:
             continue
-        header = header_m.group(1).strip()
-
-        for name in npc_names:
-            if name in result:
-                continue
-            # 괄호 안 이름도 분리해서 비교: "리미(Limi)" → ["리미", "Limi"]
-            name_parts = [p.strip() for p in re.split(r'[()]', name) if p.strip()]
-            matched = any(part.lower() in header.lower() for part in name_parts)
-            if matched and len(section) > 500:
-                result[name] = section.strip()
+        h_low = h.lower()
+        for name, parts in name_parts_map.items():
+            if any(part.lower() in h_low for part in parts):
+                boundaries.append((i, name))
                 break
+
+    # 2) 각 경계부터 다음 경계 전까지를 본문으로 슬라이스 (첫 매칭만, 500자 초과만)
+    result: Dict[str, str] = {}
+    for b_idx, (start, name) in enumerate(boundaries):
+        if name in result:
+            continue
+        end = boundaries[b_idx + 1][0] if b_idx + 1 < len(boundaries) else len(lines)
+        body = '\n'.join(lines[start:end]).strip()
+        if len(body) > 500:
+            result[name] = body
 
     if result:
         logger.info(f"[NPC] 로어 원문에서 {len(result)}명 NPC 섹션 추출: {list(result.keys())}")
@@ -1238,6 +1324,11 @@ def update_npc_attitude_gated(
             logger.info(f"[AttitudeGate] {npc_name}: initial → {new_attitude} (accepted)")
         update_npc_attitude(channel_id, npc_name, new_attitude, reason)
         _save_attitude_turn(channel_id, npc_name, current_turn)
+        try:  # [V10 적립] attitude_log — 최초 태도 확립
+            import sqlite_store
+            sqlite_store.append_attitude_log(channel_id, current_turn, npc_name, "", new_attitude, "initial", reason)
+        except Exception:
+            pass
         return "accepted"
 
     old_attitude = existing.get("attitude", "neutral").lower().strip()
@@ -1258,6 +1349,11 @@ def update_npc_attitude_gated(
         clamped_attitude = _ATTITUDE_LEVEL_REVERSE.get(clamped_level, "neutral")
         update_npc_attitude(channel_id, npc_name, clamped_attitude, reason)
         _save_attitude_turn(channel_id, npc_name, current_turn)
+        try:  # [V10 적립] attitude_log — 클램프 전이(실 1단계 변화)
+            import sqlite_store
+            sqlite_store.append_attitude_log(channel_id, current_turn, npc_name, old_attitude, clamped_attitude, "clamped", reason)
+        except Exception:
+            pass
         logger.info(
             f"[AttitudeGate] {npc_name}: {old_attitude}→{new_attitude} "
             f"clamped to {clamped_attitude} (jump {diff}→±1)"
@@ -1267,6 +1363,12 @@ def update_npc_attitude_gated(
     # --- 정상 수락 ---
     update_npc_attitude(channel_id, npc_name, new_attitude, reason)
     _save_attitude_turn(channel_id, npc_name, current_turn)
+    if old_attitude != new_attitude:  # [V10 적립] attitude_log — 실 전이만(no-op accept 제외)
+        try:
+            import sqlite_store
+            sqlite_store.append_attitude_log(channel_id, current_turn, npc_name, old_attitude, new_attitude, "accepted", reason)
+        except Exception:
+            pass
     logger.info(f"[AttitudeGate] {npc_name}: {old_attitude}→{new_attitude} (accepted)")
     return "accepted"
 

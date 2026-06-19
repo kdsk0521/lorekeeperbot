@@ -562,6 +562,24 @@ def get_doom_forecast(channel_id: str) -> str:
     return msg
 
 
+def unlink_clock(channel_id: str, clock_name: str) -> None:
+    """[Q-3] 퀘스트 제거 시 연결 시계의 linked_quest 포인터만 청소(orphan 방지).
+    시계 자체는 독립 위협으로 유지 — 퀘스트 포기가 위협 소멸을 뜻하진 않음.
+    이렇게 해야 나중에 시계 완성 시 `_fail_linked_quest`가 이미 사라진 퀘스트를 가리키지 않는다."""
+    world = domain_manager.get_world_state(channel_id)
+    clocks = world.get("doom_clocks", [])
+    if not isinstance(clocks, list):
+        return
+    changed = False
+    for clock in clocks:
+        if isinstance(clock, dict) and clock.get("name") == clock_name and clock.get("linked_quest"):
+            clock["linked_quest"] = None
+            changed = True
+    if changed:
+        world["doom_clocks"] = clocks
+        domain_manager.update_world_state(channel_id, world)
+
+
 def resolve_clock_by_quest(channel_id: str, clock_name: str) -> str:
     """퀘스트 완료 → 연결된 시계 서사적 해결 + doom 하강."""
     world = domain_manager.get_world_state(channel_id)
