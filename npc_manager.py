@@ -741,6 +741,15 @@ _SCENE_SECTION_MAP = {
 }
 _MAX_TOTAL_PER_NPC = 50000  # [Sprint L 2026-04-29] 사고 방어 안전망만. 정상 운영 도달 X.
 
+# 배경/설정류 섹션 키 — 렌더러(Pro)엔 "직접 서술 금지, 현재 잔여로만" 프레임으로 제자리 강등.
+# Theoria(Flash 분석)는 원본 유지 (분석엔 배경 전체 필요). drop 아니라 wrap → Sprint L 헤더자유도 무손상.
+_BACKGROUND_SECTION_KEYS = ("background", "backstory", "biography", "배경", "설정", "내력", "과거", "생애")
+
+
+def _is_background_section(name: str) -> bool:
+    n = (name or "").lower()
+    return any(k in n for k in _BACKGROUND_SECTION_KEYS)
+
 
 def _is_hybrid_profile(desc: str) -> bool:
     """프로필이 hybrid v2 포맷인지 판별. '### Voice' 섹션 존재 여부로 결정."""
@@ -767,7 +776,7 @@ def _parse_sections(desc: str) -> Dict[str, str]:
     return sections
 
 
-def _select_profile_sections(desc: str, scene_type: str = "normal") -> str:
+def _select_profile_sections(desc: str, scene_type: str = "normal", demote_background: bool = False) -> str:
     """모든 섹션을 _CORE 우선으로 순서대로 노출.
 
     [Sprint L 2026-04-29] 시트 별 헤더 자유도 + 섹션 누락 방지.
@@ -784,6 +793,18 @@ def _select_profile_sections(desc: str, scene_type: str = "normal") -> str:
     result_parts = []
     included = set()
 
+    def _maybe_demote(sec_name, sec_text):
+        # 렌더러 경로에서만 배경/설정류 섹션을 "작가 참조, 직접 서술 금지" 프레임으로 감싼다.
+        if demote_background and _is_background_section(sec_name):
+            return (
+                "[AUTHOR REFERENCE — never narrated directly]\n"
+                "Backstory the writer holds. In prose it surfaces only as present residue "
+                "(a hesitation, a reflex, an avoidance, a tell), never recited as history or laid out as exposition.\n"
+                f"{sec_text}\n"
+                "[end author reference]"
+            )
+        return sec_text
+
     # _preamble 먼저 (있고 비어있지 않으면)
     preamble = parsed.get("_preamble", "")
     if preamble and preamble.strip():
@@ -795,7 +816,7 @@ def _select_profile_sections(desc: str, scene_type: str = "normal") -> str:
             if sec_name == "_preamble" or sec_name in included:
                 continue
             if core_name.lower() in sec_name.lower():
-                result_parts.append(sec_text)
+                result_parts.append(_maybe_demote(sec_name, sec_text))
                 included.add(sec_name)
                 break
 
@@ -803,7 +824,7 @@ def _select_profile_sections(desc: str, scene_type: str = "normal") -> str:
     for sec_name, sec_text in parsed.items():
         if sec_name == "_preamble" or sec_name in included:
             continue
-        result_parts.append(sec_text)
+        result_parts.append(_maybe_demote(sec_name, sec_text))
         included.add(sec_name)
 
     result = "\n\n".join(result_parts)
@@ -862,7 +883,7 @@ def get_npc_renderer_profiles(channel_id: str, names: list, scene_type: str = "n
             continue
         name = key
         desc = _get_npc_desc(data)
-        desc = _select_profile_sections(desc, scene_type)
+        desc = _select_profile_sections(desc, scene_type, demote_background=True)
         header = f"### {name}"
         meta_parts = []
         if data.get("role"):

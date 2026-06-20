@@ -38,6 +38,13 @@ class JudgmentEngine:
         soma = target_npc.get("soma", {})
         psyche = target_npc.get("psyche", {})
         relation = target_npc.get("relation", {})
+        # [Schema 안전망] Flash가 dict 대신 str로 채우면 .get() 크래시 (npc_autonomous와 동일 패턴, 2026-06-20)
+        if not isinstance(soma, dict):
+            soma = {}
+        if not isinstance(psyche, dict):
+            psyche = {}
+        if not isinstance(relation, dict):
+            relation = {}
 
         polyvagal = soma.get("polyvagal", "ventral")
         decision_mode = psyche.get("decision_mode", "deliberate")

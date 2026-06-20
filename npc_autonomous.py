@@ -121,6 +121,22 @@ class NPCAutonomousEngine:
         results = []
         if not isinstance(psyche_states, dict):
             return results
+
+        # [Schema 안전망] Flash가 soma/psyche/relation을 dict 대신 str 등으로 채우는 경우 방어.
+        # emotion_engine/iceberg는 이미 isinstance 가드 보유 — npc_autonomous에만 누락되어
+        # 2026-06-20 라이브 크래시 (AttributeError: 'str' object has no attribute 'get', _check_emotional_contagion).
+        # 빌드 ctx와 raw all_psyche(컨테이전/해리 트리거가 직접 읽는 경로) 양쪽을 단일 지점에서 정규화.
+        _norm: Dict[str, Any] = {}
+        for _n, _s in psyche_states.items():
+            if not isinstance(_s, dict):
+                continue
+            _s2 = dict(_s)
+            for _k in ("psyche", "soma", "relation"):
+                if not isinstance(_s2.get(_k), dict):
+                    _s2[_k] = {}
+            _norm[_n] = _s2
+        psyche_states = _norm
+
         for npc_name, state in psyche_states.items():
             if not isinstance(state, dict):
                 continue

@@ -380,7 +380,8 @@ class SlotPromptBuilder:
         gm_mover: str = "",
         user_input: str = "",
         author_note: str = "",
-        telescope_prefill: str = ""
+        telescope_prefill: str = "",
+        emdash_high: bool = False
     ) -> 'SlotPromptBuilder':
         """동적 슬롯들을 주입합니다. 레거시 함수들을 재사용."""
 
@@ -398,7 +399,7 @@ class SlotPromptBuilder:
             _pidgin = (
                 "[PIDGIN→CREOLE + KNOWLEDGE ISOLATION]\n"
                 "Profiles below = author reference, NOT prose vocabulary, NOT character knowledge.\n"
-                "If a profile word appears as an adjective in your output, you have failed. Transform:\n"
+                "A profile word is author shorthand; in prose it lands as physical consequence, never as an adjective. Transform:\n"
                 "- personality label → physical consequence (behavior, not adjective)\n"
                 "- appearance → arrives piecemeal through different moments/gazes, not listed\n"
                 "- background → residue in present behavior only (hesitation, reflex, avoidance)\n"
@@ -481,6 +482,12 @@ class SlotPromptBuilder:
             tail = "\n\n".join(paragraphs[-2:]) if len(paragraphs) > 2 else last_response
             if len(tail) > 500:
                 tail = tail[-500:]
+            # [Em-dash 감축] recency 앵커도 엠대쉬 줄여 미러링 차단 (Pro 히스토리 스크럽과 일관)
+            try:
+                from response_processor import reduce_emdashes
+                tail = reduce_emdashes(tail)
+            except Exception:
+                pass
             self.set_slot(31, f"<Last_Response_Tail>\n{tail}\n</Last_Response_Tail>")
 
         # [32] User Input (현재 유저 입력) — 비망록 prefill 직후 위치
@@ -501,6 +508,14 @@ class SlotPromptBuilder:
         elif self.active_genres or self.custom_tone:
             directive = legacy_builder.build_combined_directive(self.active_genres, self.custom_tone)
             self.set_slot(33, directive)
+
+        # [33+] Em-dash 댐퍼 (조건부): 직전 출력이 임계 초과면 이번 턴만 soft nudge append.
+        # 관측→초과 시에만 발화하는 1턴 지연 피드백 컨트롤러 (격랑 이식).
+        if emdash_high:
+            _nudge = getattr(text_resources, 'EMDASH_DAMPEN_NUDGE', '')
+            if _nudge:
+                _existing = self.slots.get(33, "")
+                self.set_slot(33, (_existing + "\n\n" + _nudge) if _existing else _nudge)
 
         # [34] Telescope prefill 동적 추가 (정적 규칙은 _build_static에서 이미 설정)
         if telescope_prefill:
@@ -1593,6 +1608,18 @@ def build_34_step_prompt(ctx) -> str:
                 last_response = smart_history[i].get('content', '')
                 break
 
+    # [Em-dash 댐퍼] 직전 출력의 엠대쉬 밀도 측정 (raw, 스크럽/필터 전).
+    # 임계 초과 시 이번 턴 Slot 33에 조건부 nudge 주입.
+    emdash_high = False
+    if last_response:
+        try:
+            from response_processor import emdash_density_high
+            emdash_high = emdash_density_high(last_response)
+            if emdash_high:
+                logger.info("[Em-dash] 직전 출력 엠대쉬 밀도 임계 초과 → Slot 33 댐퍼 주입")
+        except Exception:
+            emdash_high = False
+
     # =========================================================
     # 3.5. POV — Camera Eye 고정 (전지적 모드 제거)
 
@@ -1644,7 +1671,8 @@ def build_34_step_prompt(ctx) -> str:
         gm_mover=gm_mover,
         user_input=getattr(ctx, 'action_text', ''),
         author_note="",  # 장르/톤이 설정되어 있으면 자동으로 레거시 함수 사용
-        telescope_prefill=""  # V2: Slot 34에 넣지 않음 — ctx를 통해 모델 프리필로 전달
+        telescope_prefill="",  # V2: Slot 34에 넣지 않음 — ctx를 통해 모델 프리필로 전달
+        emdash_high=emdash_high  # 직전 출력 엠대쉬 밀도 초과 시 Slot 33 댐퍼
     )
 
     # =========================================================

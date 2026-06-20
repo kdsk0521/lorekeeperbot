@@ -389,6 +389,39 @@ def _normalize_npc_name(name: str) -> str:
     name = re.sub(r'\s+\)', ')', name)
     return name
 
+def _is_hangul(s: str) -> bool:
+    """문자열이 전부 완성형 한글인지."""
+    return bool(s) and all('가' <= c <= '힣' for c in s)
+
+def _name_forms(s: str) -> tuple:
+    """이름 문자열의 동일성 비교 단위 추출.
+    Returns (base, inner, forms): base=괄호 앞, inner=괄호 안, forms={정규화전체/base/inner}(lower)."""
+    base = re.split(r'[(\[（]', s)[0].strip()
+    m = re.search(r'[(\[（]([^)\]）]+)[)\]）]', s)
+    inner = m.group(1).strip() if m else ""
+    forms = {f.lower() for f in (_normalize_npc_name(s), base, inner) if f}
+    return base, inner, forms
+
+def _short_tokens(s: str) -> set:
+    """키에서 뽑는 축약형 후보 토큰. 공백 분리 토큰(≥2자) + 한글 성씨드롭 이름(3-4자→성 1자 제거).
+    예: 'Kuromiya Reina(쿠로미야 레이나)' → {kuromiya, reina, 쿠로미야, 레이나}
+        'Yoon Seo-rin(윤서린)' → {yoon, seo-rin, 윤서린, 서린}"""
+    base = re.split(r'[(\[（]', s)[0].strip()
+    m = re.search(r'[(\[（]([^)\]）]+)[)\]）]', s)
+    inner = m.group(1).strip() if m else ""
+    toks: set = set()
+    for form in (base, inner):
+        if not form:
+            continue
+        fl = form.lower()
+        for t in fl.split():
+            if len(t) >= 2:
+                toks.add(t)
+        # 한글 글자붙임 이름: '윤서린'→'서린', '강채윤'→'채윤' (성 1자 가정)
+        if _is_hangul(form) and " " not in form and 3 <= len(form) <= 4:
+            toks.add(fl[1:])
+    return toks
+
 # [V10 Sprint 2-B] NPC 본체 — JSON 진실원천 + npcs 문서테이블 dual-write.
 # 읽기는 config.V10_NPCS_READ_FROM_SQLITE 게이트 (기본 OFF).
 # 단건(get_npc)은 별칭 해상도(_find_npc_key)가 전체 dict를 요구하므로 get_npcs 경유 유지.
@@ -421,11 +454,15 @@ def get_npcs(channel_id: str) -> Dict[str, Dict[str, Any]]:
     return get_domain(channel_id).get("npcs", {})
 
 def _find_npc_key(npcs: dict, name: str) -> Optional[str]:
-    """NPC 키 검색: 정규화 매칭 → 부분 이름 매칭 (괄호 앞/안) → aliases 필드.
+    """NPC 키 검색: 정규화 → 대칭 base/inner 매칭 → aliases → 충돌가드 토큰(축약형).
 
-    [2026-06-12] aliases 정식 지원 — 괄호 컨벤션은 키에 별칭이 박힌 경우만 커버해서,
-    "리리스"로 등록된 NPC를 모델이 "Lilith"로 부르면 자동 등록이 중복 생성하던 구멍
-    (한↔영 교차는 통제 밖, deepseek은 특히 영문명 빈발). NPC data에 aliases: [".."] 리스트."""
+    [2026-06-12] aliases 정식 지원 (한↔영 교차 중복 차단).
+    [2026-06-20] 대칭화 + 토큰 매칭 — 기존 stage 2는 키에서만 base/inner를 뽑아
+    "순한글 키 + 영문(괄호) 질의"를 못 잡았고(auto-detect 게이트가 약한 _find_npc_key를
+    쓰는 탓에 새 분열), 축약형/이름만 부른 경우("스텔라"→Stella Valentine, "서린"→윤서린)는
+    아예 0매칭이었음 (deepseek이 풀네임/영문/이름을 턴마다 번갈아 호명 → NPC 폭증).
+    이제: ① 질의·키 양쪽에서 base/inner 추출 후 full-form 교집합(토큰 아님 — 안전),
+         ② 축약형은 토큰 후보가 '정확히 1명'일 때만 매칭(오병합 방지)."""
     norm = _normalize_npc_name(name)
     # 1) 정확한 정규화 매칭
     if norm in npcs:
@@ -433,16 +470,12 @@ def _find_npc_key(npcs: dict, name: str) -> Optional[str]:
     for k in npcs:
         if _normalize_npc_name(k) == norm:
             return k
-    # 2) 부분 매칭: "복셀" → "복셀(Voxel)", "Voxel" → "복셀(Voxel)"
-    nl = norm.lower()
+    # 2) 대칭 매칭: 질의/키 양쪽의 {전체,base,inner} full-form 교집합이 있으면 동일 인물.
+    #    "복셀↔복셀(Voxel)", "스텔라 발렌타인↔Stella Valentine(스텔라 발렌타인)" 양방향.
+    q_base, q_inner, q_forms = _name_forms(norm)
     for k in npcs:
-        # 괄호 앞 한글 이름으로 매칭
-        base = re.split(r'[(\[（]', k)[0].strip().lower()
-        if base == nl:
-            return k
-        # 괄호 안 영문 이름으로 매칭
-        m = re.search(r'[(\[（]([^)\]）]+)[)\]）]', k)
-        if m and m.group(1).strip().lower() == nl:
+        _, _, k_forms = _name_forms(k)
+        if q_forms & k_forms:
             return k
     # 3) aliases 필드 매칭 (data dict 내 명시 별칭 리스트)
     for k, data in npcs.items():
@@ -451,8 +484,16 @@ def _find_npc_key(npcs: dict, name: str) -> Optional[str]:
         aliases = data.get("aliases")
         if isinstance(aliases, list):
             for a in aliases:
-                if isinstance(a, str) and _normalize_npc_name(a).lower() == nl:
+                if isinstance(a, str) and _normalize_npc_name(a).lower() in q_forms:
                     return k
+    # 4) 축약형/이름 토큰 매칭 — 단일 토큰 질의가 정확히 1명의 토큰 후보에만 걸릴 때.
+    #    "스텔라"→Stella Valentine, "레이나"→쿠로미야 레이나, "서린"→윤서린(성씨드롭).
+    #    2명 이상 공유 토큰이면 None (애매 → 오병합 대신 명시 alias/병합에 위임).
+    if q_base and " " not in q_base and len(q_base) >= 2 and not q_inner:
+        ql = q_base.lower()
+        hits = [k for k in npcs if ql in _short_tokens(k)]
+        if len(hits) == 1:
+            return hits[0]
     return None
 
 def _resolve_npc_name(d: dict, name: str) -> str:

@@ -226,13 +226,21 @@ async def generate_response(
     # [Anti-Gravity] Use Smart Context Window
     history_to_inject = ctx.smart_history if ctx.smart_history else ctx.domain_data.get('history', [])
     is_openai = isinstance(session, persona.OpenAIChatSessionAdapter)
+    # [Em-dash 감축] 모델 자기 과거 출력에서 엠대쉬를 줄여 미러링 루프 차단 (격랑 이식).
+    # 유저 입력(role=User)은 보존, assistant/model 콘텐츠에만 적용.
+    from response_processor import reduce_emdashes
     for h in history_to_inject:
+        _content = str(h['content'])
         if is_openai:
             role = "user" if h['role'] == "User" else "assistant"
-            session.history.append({"role": role, "content": str(h['content'])})
+            if role == "assistant":
+                _content = reduce_emdashes(_content)
+            session.history.append({"role": role, "content": _content})
         else:
             role = "user" if h['role'] == "User" else "model"
-            session.history.append(types.Content(role=role, parts=[types.Part(text=str(h['content']))]))
+            if role == "model":
+                _content = reduce_emdashes(_content)
+            session.history.append(types.Content(role=role, parts=[types.Part(text=_content)]))
 
     # [Anti-Gravity] PC 사칭 탐지 및 BKSPC 처리가 통합된 생성 함수 호출
     # 사칭 감지 토글 확인 (기본값: 활성화)

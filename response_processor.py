@@ -19,6 +19,50 @@ logger = logging.getLogger(__name__)
 
 
 # =========================================================
+# Em-dash 감축 (격랑 V1.6 "필살 무기" 이식, 2026-06-20)
+# =========================================================
+# 딥식 V4 등 엠대쉬 과용 + 컨텍스트 미러링 모델 대응.
+# 출력을 강제 청소하지 않고, "모델이 보는 과거 출력"에서 엠대쉬를 줄여
+# 미러링 피드백 루프를 끊는다(= 없애기보단 줄이기).
+# 격랑의 editprocess regex `(\s*[—–―⸺⸻﹘－]\s*)` → 공백 치환과 동일 원리.
+_EMDASH_CHARS = "—–―⸺⸻﹘－"  # em, en, horizontal bar, two/three-em, small em, fullwidth hyphen
+_EMDASH_RUN = re.compile(r"\s*[" + _EMDASH_CHARS + r"]+\s*")
+# 숫자 범위(1–2, 10–20)의 en-dash는 보존 (어제 트림 정책과 일치)
+_DIGIT_ENDASH = re.compile(r"(?<=\d)\s*–\s*(?=\d)")
+
+
+def reduce_emdashes(text: str) -> str:
+    """엠대쉬류를 공백 한 칸으로 치환해 줄인다. 숫자 범위 en-dash는 보존.
+
+    컨텍스트(모델이 읽는 과거 출력) 전용. 사용자 입력에는 적용하지 않는다.
+    """
+    if not text:
+        return text
+    protected = _DIGIT_ENDASH.sub("\x00", text)
+    reduced = _EMDASH_RUN.sub(" ", protected)
+    return reduced.replace("\x00", "–")
+
+
+def count_emdashes(text: str) -> int:
+    """텍스트 내 엠대쉬류 문자 총 개수."""
+    if not text:
+        return 0
+    return sum(text.count(c) for c in _EMDASH_CHARS)
+
+
+def emdash_density_high(text: str, per_chars: int = 5000, limit: int = 10,
+                        min_len: int = 500) -> bool:
+    """엠대쉬 밀도가 임계(기본 5000자당 10개) 초과면 True.
+
+    짧은 출력은 노이즈 방지로 min_len 미만이면 항상 False.
+    조건부 디렉티브 주입 게이트로 사용.
+    """
+    if not text or len(text) < min_len:
+        return False
+    return (count_emdashes(text) / len(text)) * per_chars > limit
+
+
+# =========================================================
 # Status Line Time Parsing (모델 출력 status line → 내부 클록 동기화용, 2026-05-23)
 # =========================================================
 
