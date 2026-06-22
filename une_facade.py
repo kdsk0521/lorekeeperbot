@@ -1124,6 +1124,20 @@ class UniversalNarrativeEngine:
                     _filtered.append(t)
             triggers = _filtered
 
+        # [V10 적립] autonomy_log — 자율 트리거 발동 기록(npc/trigger/priority/directive).
+        # 대사·관계 압력의 출처. dai_logs는 이 시점 이전에 써져서 안 잡힘 → 전용 적립. 실패 무해.
+        if _cd_channel and triggers:
+            try:
+                import sqlite_store as _sq_auto
+                _auto_turn = int(_to_float((bus.dai or {}).get("turn_index", 0), 0))
+                _sq_auto.append_autonomy_log(_cd_channel, _auto_turn, [
+                    {"npc_name": t.npc_name, "trigger_id": t.trigger_id,
+                     "priority": t.priority, "directive": t.directive}
+                    for t in triggers
+                ])
+            except Exception as _e_autolog:
+                logger.debug(f"[AutonomyLog] skip: {_e_autolog}")
+
         auto_directive = NPCAutonomousEngine.build_autonomous_directive(triggers)
         # iceberg per-NPC depth 계산용 구조 데이터 저장
         if triggers:

@@ -28,11 +28,13 @@ PACING_TABLE: Dict[str, Dict[str, str]] = {
 }
 
 # Thread priority by chain status
+# chain_status enum = OPEN/CLOSED/DORMANT (Theoria 현행). 옛 극아크 RISING/CLIMAX/FALLING은
+# doom→챕터볼륨 起承轉結으로 이사 → 여기선 스레드 개폐만 가중.
+# ※ 값은 _generate_beats 인라인 임계(L757~: else<0.35=steps / >=0.55=draws up)에 캘리브레이션됨.
+#   OPEN=0.3(차분 steps forward, 정체 시 +0.3=0.6→draws up), DORMANT=0.2. 임계 바꾸면 여기도 동반 조정.
 CHAIN_PRIORITY: Dict[str, float] = {
     "OPEN": 0.3,
-    "RISING": 0.6,
-    "CLIMAX": 1.0,
-    "FALLING": 0.4,
+    "DORMANT": 0.2,
     "CLOSED": 0.0,
 }
 
@@ -204,7 +206,8 @@ class StoryDirector:
                 _beats = StoryDirector._generate_beats(
                     _plot_hints_reserved, energy, is_idle,
                     anomaly_triggered, emotion_summary,
-                    suggested_beats=_llm_hints, cap=_cap, pacing=pacing
+                    suggested_beats=_llm_hints, cap=_cap, pacing=pacing,
+                    doom_value=doom_value
                 )
                 _last_planned = _cur_turn
                 beats_replanned = True
@@ -331,9 +334,12 @@ class StoryDirector:
             direction["hint"] = "condition_escalation"
             return direction
 
-        # Priority 2: Unresolved narrative chain
-        chain_status = narrative_chain.get("status", "OPEN")
-        if chain_status in ("RISING", "CLIMAX"):
+        # Priority 2: Unresolved narrative chain still escalating.
+        # chain_status enum 진화(극아크 RISING/CLIMAX → 개폐 OPEN/CLOSED/DORMANT, 상승은 doom 起承轉結으로 이사).
+        # → OPEN(체인 살아있음) + 장면 energy 상승국면(rising/detonation)일 때만 이어감.
+        #   energy 게이트가 옛 RISING/CLIMAX 희소성을 대체(매 OPEN턴 과발화 방지, P3/P4 우선순위 보존).
+        chain_status = narrative_chain.get("chain_status", "OPEN")
+        if chain_status == "OPEN" and energy in ("rising", "detonation"):
             direction["source"] = "narrative_chain"
             direction["hint"] = "chain_continuation"
             direction["chain_status"] = chain_status
@@ -397,7 +403,7 @@ class StoryDirector:
         threads: List[Dict[str, Any]] = []
 
         # Thread from narrative chain
-        chain_status = narrative_chain.get("status", "OPEN")
+        chain_status = narrative_chain.get("chain_status", "OPEN")
         chain_priority = CHAIN_PRIORITY.get(chain_status, 0.3)
         if chain_status not in ("CLOSED",) and chain_priority > 0:
             thread = {
@@ -405,6 +411,7 @@ class StoryDirector:
                 "label": narrative_chain.get("current_thread", "main_plot"),
                 "priority": chain_priority,
                 "type": "continuation",
+                "chain_status": chain_status,
             }
             # Stagnation boost
             if quality_flags.get("stagnation_warning"):
@@ -427,6 +434,7 @@ class StoryDirector:
                 "priority": intensity_score,
                 "type": "condition_thread",
                 "polarity": cond.get("polarity", "mixed"),
+                "intensity": cond.get("intensity", "Mid"),
             })
 
         # Threads from memory triggers
@@ -552,7 +560,7 @@ class StoryDirector:
             focus["elements"].append({
                 "type": "thread",
                 "label": chain_thread,
-                "status": narrative_chain.get("status", "OPEN"),
+                "status": narrative_chain.get("chain_status", "OPEN"),
             })
 
         # 4. Relevant NPCs from Theoria (non-overlapping with spotlight)
@@ -594,14 +602,13 @@ class StoryDirector:
         score += (doom_value / 100.0) * 0.4
 
         # Chain status contribution
+        # chain 기여(개폐만). 극적 상승 텐션은 위 doom_value 기여가 담당 — 옛 RISING/CLIMAX는 doom 起承轉結으로 이사.
         chain_score = {
-            "OPEN": 0.0,
-            "RISING": 0.2,
-            "CLIMAX": 0.5,
-            "FALLING": -0.2,
+            "OPEN": 0.1,
+            "DORMANT": -0.1,
             "CLOSED": -0.3,
         }
-        score += chain_score.get(narrative_chain.get("status", "OPEN"), 0.0)
+        score += chain_score.get(narrative_chain.get("chain_status", "OPEN"), 0.0)
 
         # Mental state contribution (low vigor/composure = higher tension)
         avg_mental = (vigor_value + composure_value) / 2
@@ -630,13 +637,13 @@ class StoryDirector:
     # LLM 호출 없음 — 휴리스틱만으로 템플릿 렌더.
     # =========================================================
 
-    # 체인 상태별 동사 매핑
-    _CHAIN_VERB: Dict[str, str] = {
-        "OPEN":    "steps forward one careful pace",
-        "RISING":  "draws the tension up another notch",
-        "CLIMAX":  "pushes into the decisive turn",
-        "FALLING": "lets the aftermath settle into the scene and flow",
-        "CLOSED":  "lets the closed thread pass by as a fragment of recollection",
+    # 극적 강도 동사 — doom(챕터볼륨 활성도, 起承轉結)에서 읽음.
+    # 옛 _CHAIN_VERB(은퇴 chain 극아크 enum) 재설계: 드라마가 doom으로 이사 → 동사도 doom_value가 결정.
+    # chain_status(OPEN/DORMANT)는 전진/휴면만 결정. 정확한 起承轉結 boundary는 lens별(doom_module)이나 beat 힌트엔 이 휴리스틱으로 충분.
+    _DOOM_BEAT_VERB: Dict[str, str] = {
+        "climax": "pushes into the decisive turn",
+        "rising": "draws the tension up another notch",
+        "intro":  "steps forward one careful pace",
     }
 
     # 강도별 수식어 매핑
@@ -722,7 +729,8 @@ class StoryDirector:
         emotion_summary: dict,
         suggested_beats: Optional[List[str]] = None,
         cap: int = 6,
-        pacing: str = "hold"
+        pacing: str = "hold",
+        doom_value: int = 0
     ) -> List[str]:
         """
         Convert scored threads → natural-language beat directives (English state-form).
@@ -742,39 +750,23 @@ class StoryDirector:
                 continue
 
             if src == "narrative_chain":
-                # 체인 상태 기반 지시문
-                # threads[0]은 보통 narrative_chain 엔트리. status는 thread 내부 없음 →
-                # _analyze_plot_threads의 입력 narrative_chain을 참조해야 함.
-                # 간단화: urgency가 있으면 그걸 우선.
+                # chain_status(개폐) → 전진(OPEN)/휴면(DORMANT). 극적 강도 → doom_value(챕터볼륨 起承轉結, 드라마 출처).
                 urgency = t.get("urgency")
+                cs = t.get("chain_status", "OPEN")
                 if urgency == "stagnation":
                     beats.append(f"Next beat: the main plot '{label}' has stalled — one fresh external stimulus enters and moves it forward.")
                 elif urgency == "convergence":
                     beats.append(f"Next beat: several threads converge on '{label}' — they cross in a single scene.")
+                elif cs == "DORMANT":
+                    beats.append(f"Next beat: a quiet reminder of '{label}' surfaces, not yet pressed.")
                 else:
-                    # priority로 체인 단계 추론
-                    pr = float(t.get("priority", 0.3))
-                    if pr >= 0.95:
-                        beats.append(f"Next beat: '{label}' pushes into the decisive turn.")
-                    elif pr >= 0.55:
-                        beats.append(f"Next beat: the tension of '{label}' draws up another notch.")
-                    elif pr >= 0.35:
-                        beats.append(f"Next beat: the aftermath of '{label}' settles into the scene and flows.")
-                    else:
-                        beats.append(f"Next beat: '{label}' steps forward one careful pace.")
+                    # OPEN — advance; 극적 동사는 doom(챕터볼륨 활성도)에서 읽음
+                    _dk = "climax" if doom_value >= 75 else ("rising" if doom_value >= 45 else "intro")
+                    beats.append(f"Next beat: '{label}' {StoryDirector._DOOM_BEAT_VERB[_dk]}.")
 
             elif src == "active_condition":
-                # 상태 기반 지시문 (강도 수식)
-                # _analyze_plot_threads는 intensity_score만 priority로 보존 → 역산
-                pr = float(t.get("priority", 0.4))
-                if pr >= 0.9:
-                    adj = "overwhelming"
-                elif pr >= 0.6:
-                    adj = "thick"
-                elif pr >= 0.35:
-                    adj = "vivid"
-                else:
-                    adj = "faint"
+                # 강도는 조건의 실제 intensity → _INTENSITY_ADJ 직결 (priority 역산 프록시 제거, dict 부활).
+                adj = StoryDirector._INTENSITY_ADJ.get(t.get("intensity", "Mid"), "vivid")
                 polarity = t.get("polarity", "mixed")
                 pol_hint = {"positive": ", leaned on,", "negative": ", bearing down,", "mixed": ", a double edge,"}.get(polarity, "")
                 # O축: pacing이 push/pivot이면 dwell이 아니라 전진(슬롯16 pacing과 충돌 방지).

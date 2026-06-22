@@ -19,16 +19,9 @@ from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 import text_resources
 import config as _cfg
-# Kimi 전용 오버라이드: 존재하면 text_resources 상수를 덮어씀
-if _cfg.RENDERER_BACKEND == "openai":
-    try:
-        import text_resources_kimi as _kimi_tr
-        for _attr in dir(_kimi_tr):
-            if _attr.isupper() and not _attr.startswith("_"):
-                setattr(text_resources, _attr, getattr(_kimi_tr, _attr))
-        logging.getLogger("SlotManager").info("[SlotManager] Kimi text_resources override applied")
-    except ImportError:
-        pass
+# (2026-06-22) Kimi override 폐기 — openai 백엔드(DeepSeek/GLM 등)도 단일 text_resources로 운영.
+# 과거엔 RENDERER_BACKEND=="openai"일 때 text_resources_kimi가 상수를 덮어썼으나,
+# 두 파일 분기가 드리프트 원인(최근 산문 fix가 라이브에 미반영)이라 제거. 모델 routing은 무관(별도 경로).
 import iceberg
 
 # [레거시 재사용] 기존 모듈에서 유용한 함수 임포트

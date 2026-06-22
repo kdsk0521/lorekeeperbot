@@ -121,7 +121,6 @@ class WaterfallPipeline:
             analysis = {}
 
         # Store ALL Theoria results in SharedBus.dai (replaces nvc_result)
-        bus.dai["active"] = True
         bus.dai["input_analysis"] = analysis.get("InputAnalysis", {})
         bus.dai["observation"] = analysis.get("Observation", "")
         bus.dai["user_intent"] = analysis.get("UserIntent", "")

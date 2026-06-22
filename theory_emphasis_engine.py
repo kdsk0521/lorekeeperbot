@@ -147,6 +147,141 @@ OUTPUT MAPPING:
 """
 
 
+ROMANCE_MODULE = """
+<romance_analysis>
+## ROMANCE LENSES (Active when romance genre tag present)
+
+### Sternberg Triangular (love = intimacy + passion + commitment, independent components)
+- intimacy: warmth, disclosure, "felt understood." passion: drive, longing, physical pull. commitment: decision to stay.
+- The three move independently. Track the ASYMMETRY, not one "love level":
+  passion without commitment = infatuation | commitment without passion = companionate/duty | intimacy without passion = friendship misread as love.
+- Romantic tension usually = a gap between two components (wants commitment, feels only passion).
+
+### Gottman (relationship as behavioral micro-acts)
+- Bids for connection: every small reach (a glance, a question, a shared object) is a bid.
+  Response = turning toward(acknowledge) | away(miss,distracted) | against(rebuff). Track which.
+- Four Horsemen (corrosion markers): criticism(attack character not act) | contempt(disdain,mockery) | defensiveness(counter-blame) | stonewalling(withdraw,shut down). Flag when present.
+- Repair attempt: de-escalation gesture mid-conflict (humor, touch, concession). Track landed vs missed.
+
+### Aron Self-Expansion (love as growth of the self)
+- Relationships sought to EXPAND the self: new perspectives, capabilities, identity.
+- Include-other-in-self: partner's gains/losses felt as one's own. Track boundary blur.
+- A bond that stops expanding (no novelty, no growth) drifts toward boredom. Distinct from conflict-driven decay.
+
+OUTPUT MAPPING:
+- Sternberg component asymmetry → relation.logos_layer + relation.value_conflict ('X vs Y' when components clash)
+- Gottman bid response / Four Horsemen / repair → NPCAttitudes.reason + relation.value_conflict
+- Self-expansion / boundary blur / stagnation → psyche.active_needs + deep_read
+</romance_analysis>
+"""
+
+
+DRAMA_MODULE = """
+<drama_analysis>
+## DRAMA LENSES (Active when drama genre tag present)
+
+### Karpman Drama Triangle (role-switching in dysfunctional conflict)
+- Three roles: Victim("I can't help it") | Persecutor("your fault") | Rescuer("let me save you").
+- Core signal = the SWITCH: a character changes role mid-scene (rescuer→persecutor, victim→persecutor). Track the switch point.
+- Each role carries a hidden payoff (victim=avoid responsibility, rescuer=superiority, persecutor=control). Track the payoff behind the role.
+
+### Bowen Family Systems (emotional structure of family/group)
+- Triangulation: tension between two pulls a third party in to stabilize (taking sides, go-between). Track who gets pulled in.
+- Differentiation: capacity to separate own emotion from others'. Low = fusion(swept by others' moods) or cutoff(shutdown).
+- Multigenerational pattern: inherited relational style repeats in the present. Structural inheritance, not recalled content.
+
+### Girard Mimetic Desire (desire is imitative)
+- We want what others want: desire is mediated through a model.
+- Mimetic rivalry: two want the same object, grow alike, hostility rises (difference collapses). Track the rivalry.
+- Scapegoat: group tension transferred onto one, briefly resolved. Track who becomes the scapegoat.
+
+OUTPUT MAPPING:
+- Karpman role / switch / hidden payoff → relation.value_conflict + NPCAttitudes.reason + deep_read
+- Bowen triangulation / differentiation / inheritance → relation.value_conflict + relation.logos_layer + deep_read
+- Mimetic desire / rivalry / scapegoat → psyche.active_needs + relation.value_conflict + deep_read
+</drama_analysis>
+"""
+
+
+GAME_SYSTEM_MODULE = """
+<game_system_analysis>
+## GAME-SYSTEM LENSES (Active when game_system genre tag present)
+
+### Self-Determination (Deci/Ryan): intrinsic vs extrinsic drive
+- Intrinsic: acts for mastery, curiosity, the craft itself. Extrinsic: acts for the reward, level, rank, loot.
+- Three needs behind engagement: autonomy(self-direction) | competence(growth, mastery) | relatedness(party, belonging).
+- Track whether an NPC pursues the goal or the prize behind it. Extrinsic-only motivation collapses when the reward stops.
+
+### Operant Conditioning (Skinner): reward schedules
+- Variable-ratio reward (uncertain drops, crits, rare spawns) drives the most persistent, compulsive behavior.
+- Grinding/farming = behavior locked to a schedule, not to meaning. Track compulsion vs choice.
+
+### Flow (Csikszentmihalyi): challenge-skill balance
+- challenge ≈ skill = flow(absorbed, time vanishes) | challenge >> skill = anxiety | challenge << skill = boredom.
+- Read the NPC's state against the difficulty in front of them.
+
+### Goal-Gradient (Hull): effort rises near the goal
+- Push intensifies close to a level-up, quest turn-in, or threshold. The last stretch pulls hardest.
+
+### Audience Effect (Zajonc): watched & sponsored
+- Under a watching benefactor's gaze, behavior bends to perform for favor and reward — the displayed self diverges from the private one. Track who watches and what their sponsorship costs.
+
+OUTPUT MAPPING:
+- Intrinsic/extrinsic drive + autonomy/competence/relatedness → psyche.active_needs + deep_read
+- Variable-ratio compulsion / grinding → deep_read + relation.value_conflict (compulsion vs choice)
+- Flow / anxiety / boredom → deep_read
+- Goal-gradient push → deep_read
+- Watched-performance / patron dependency → relation.value_conflict + deep_read
+</game_system_analysis>
+"""
+
+
+HIGH_FANTASY_MODULE = """
+<high_fantasy_analysis>
+## HIGH-FANTASY LENSES (Active when high_fantasy genre tag present)
+
+### Moral Foundations (Haidt): which sacred value drives the act
+- Foundations: care/harm | fairness/cheating | loyalty/betrayal | authority/subversion | sanctity/degradation | liberty/oppression.
+- Epic conflict = two characters acting from DIFFERENT foundations, each righteous by their own (loyalty vs fairness, authority vs liberty).
+- Name the foundation behind a stance and the foundation it collides with.
+
+### Locus of Control (Rotter): destiny vs agency
+- Internal: "I author my fate." External: "prophecy / gods / blood decide."
+- The chosen-one tension = a character caught between the two. Track which they act from, and when it shifts.
+- Distinct from Learned Helplessness (giving up): this is a belief about WHO authors the outcome, not whether to try.
+
+OUTPUT MAPPING:
+- Moral foundation behind a stance + the foundation it collides with → relation.value_conflict + deep_read
+- Locus of control (internal/external) + shifts → deep_read + psyche.active_needs
+</high_fantasy_analysis>
+"""
+
+
+COMEDY_MODULE = """
+<comedy_analysis>
+## COMEDY LENSES (Active when comedy genre tag present)
+
+### Benign Violation (McGraw/Warren): the core of what's funny
+- Humor = a violation (of norm, expectation, dignity, logic) that stays SAFE (no real harm). Too safe = dull; too harmful = offensive.
+- Locate the violation and what keeps it benign (distance, affection, low stakes).
+
+### Incongruity: setup vs payoff
+- A frame is set, then broken by something that doesn't fit. The gap is the joke. Track setup → mismatch.
+
+### Superiority (Hobbes): who is the butt
+- Laughter at another's stumble, vanity, or pratfall. Track who is diminished and who laughs.
+
+### Relief (Freud): release of held tension
+- Built-up tension (taboo, danger, awkwardness) discharged through laughter. Track what tension is vented.
+
+OUTPUT MAPPING:
+- Benign violation + incongruity (setup/mismatch) → deep_read
+- Superiority (the butt, who laughs) → NPCAttitudes.reason + relation.value_conflict
+- Relief (vented tension) → deep_read
+</comedy_analysis>
+"""
+
+
 # ---------------------------------------------------------
 # 2. GENRE → MODULE ACTIVATIO   N MAP
 # ---------------------------------------------------------
@@ -154,7 +289,7 @@ OUTPUT MAPPING:
 
 GENRE_MODULE_MAP: Dict[str, List[str]] = {
     # [A. Stage]
-    'high_fantasy':     [],
+    'high_fantasy':     ['HIGH_FANTASY_MODULE'],
     'wuxia':            ['GROUP_DYNAMICS_MODULE'],
     'cyberpunk':        ['NEGOTIATION_MODULE', 'FORENSIC_MODULE'],
     'post_apocalypse':  ['NEGOTIATION_MODULE', 'GROUP_DYNAMICS_MODULE'],
@@ -165,13 +300,13 @@ GENRE_MODULE_MAP: Dict[str, List[str]] = {
     'urban_fantasy':    [],
     'steampunk':        ['NEGOTIATION_MODULE'],
     'cosmic_horror':    ['FORENSIC_MODULE', 'COSMIC_HORROR_MODULE'],
-    'game_system':      [],
+    'game_system':      ['GAME_SYSTEM_MODULE'],
 
     # [C. Lens]
     'noir':             ['FORENSIC_MODULE', 'NEGOTIATION_MODULE'],
-    'comedy':           [],
-    'romance':          [],
-    'drama':            [],
+    'comedy':           ['COMEDY_MODULE'],
+    'romance':          ['ROMANCE_MODULE'],
+    'drama':            ['DRAMA_MODULE'],
 }
 
 MODULE_REGISTRY = {
@@ -179,6 +314,11 @@ MODULE_REGISTRY = {
     'NEGOTIATION_MODULE': NEGOTIATION_MODULE,
     'GROUP_DYNAMICS_MODULE': GROUP_DYNAMICS_MODULE,
     'COSMIC_HORROR_MODULE': COSMIC_HORROR_MODULE,
+    'ROMANCE_MODULE': ROMANCE_MODULE,
+    'DRAMA_MODULE': DRAMA_MODULE,
+    'GAME_SYSTEM_MODULE': GAME_SYSTEM_MODULE,
+    'HIGH_FANTASY_MODULE': HIGH_FANTASY_MODULE,
+    'COMEDY_MODULE': COMEDY_MODULE,
 }
 
 

@@ -415,6 +415,18 @@ NATURAL_RECOVERY_THRESHOLD = 2   # |event_delta| ≤ T 시 자연 회복 가산 
 NATURAL_RECOVERY_AMOUNT = 1      # 양축 각각 +1
 CHAPTER_REFRESH_THRESHOLD = 60   # intermission_active 시 max(value, 60)
 
+# H. 축당 턴 낙폭 안전캡 (magnitude, 양수). mis-mapping/소스 스택이 한 턴에 축을 폭락시키는 것 방지.
+#    설계 의도 최대치(impact cap + consequence/cascade 여유)에 맞춤. combat만 큰 피해 허용.
+#    낙폭만 제한 — 회복/상승은 무제한. 초과 시 _process_axis가 WARNING 로그(과차감 관측 채널).
+MAX_AXIS_DROP_PER_TURN = {
+    "intimate": 10,
+    "social":   12,
+    "normal":   18,
+    "combat":   25,
+    "summary":  6,
+    "default":  18,
+}
+
 # G-2. 트라우마 각성 (붕괴 dwell 기반 리바운드 + 일시적 판정 디버프)
 # delta 부호가 아니라 "stage 3(붕괴)에 연속으로 머문 턴 수"로 발동 → 회복 수학과 분리.
 TRAUMA_DWELL_TURNS = 2        # stage 3 연속 N턴 후 리바운드 발동
@@ -1278,6 +1290,11 @@ V10_ARC_DIGEST_FERMENT = True
 # graceful-empty(버킷 빈 동안 무동작) + echo-safe(영어 텔레그래픽, 기존 knows/false_beliefs 주입과 동일 register).
 # 2026-06-19 ON (사용자 "바로 배선"). 문제 시 이 줄 False = 전파/주입 즉시 무동작(저장은 유지).
 V10_KNOWLEDGE_BOUNDARY_INJECT = True
+
+# iceberg mirror register 노테이션 (자기기만/내면). 2026-06-21 스키마드리프트 검수로 부활.
+# 내면 노테이션이라 과내면 우려와 충돌 가능 → 산문 과내면화 관측 시 이 줄 False = mirror 즉시 무동작.
+# (Flash-direct·inferred 양쪽 다 억제. 나머지 register/propagation은 무관.)
+ICEBERG_MIRROR_ENABLED = True
 
 # =========================================================
 # Passive Theory Tag System (Phase 4-1)

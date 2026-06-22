@@ -479,6 +479,13 @@ def translate_register(register) -> str:
         "law": "[Law] hierarchy / expectation / protocol bends under the input; the order, the crack, and the one feigning ignorance all surface.",
         "remainder": "[Remainder] what the scene can't digest into dialogue or action; sensation, repetition, a detail serving no plot stays behind.",
     }
+    if register == "mirror":
+        try:
+            import config as _cfg_ib
+            if not getattr(_cfg_ib, "ICEBERG_MIRROR_ENABLED", True):
+                return ""
+        except Exception:
+            pass
     return _REGISTER_KR.get(register, "")
 
 
@@ -499,18 +506,17 @@ def infer_scene_register(
         relation = state.get("relation", {})
         if not isinstance(relation, dict):
             relation = {}
-        # mirror: self_opacity 높고 + apprehension_gap 존재
-        opacity = psyche.get("self_opacity", 0)
-        try:
-            opacity = float(opacity)
-        except (ValueError, TypeError):
-            opacity = 0
-        if opacity > 0.6 and psyche.get("apprehension_gap"):
+        # mirror: self_opacity(자기기만, str) + apprehension_gap 존재
+        _so = psyche.get("self_opacity")
+        if (isinstance(_so, str) and _so.strip() and _so.strip().lower() != "null"
+                and psyche.get("apprehension_gap")):
+            logger.info("[Iceberg] register=mirror (inferred)")
             return "mirror"
-        # law: value_conflict + defensive/aggressive stance
+        # law: value_conflict + 적대적 협상자세(competitive/exploitative)
         if relation.get("value_conflict") and relation.get("negotiation_stance") in (
-            "defensive", "aggressive",
+            "competitive", "exploitative",
         ):
+            logger.info("[Iceberg] register=law (inferred)")
             return "law"
     # remainder: silence_type in narrative_chain
     if narrative_chain and isinstance(narrative_chain, dict):
@@ -542,19 +548,14 @@ def infer_propagation_shape(
     if not psyche_states or not isinstance(psyche_states, dict):
         return ""
 
-    # torsion: 기만/자기기만이 활성 — 최우선 (다른 전파와 겹쳐도 비틀림이 지배)
+    # torsion: 자기기만(self_opacity, str)이 활성 — 최우선 (다른 전파와 겹쳐도 비틀림이 지배)
     for _name, state in psyche_states.items():
         if not isinstance(state, dict):
             continue
         psyche = state.get("psyche", state.get("mental", {})) or {}
-        relation = state.get("relation", {}) or {}
-        if relation.get("deception_cues"):
-            return "torsion"
-        try:
-            opacity = float(psyche.get("self_opacity", 0))
-        except (ValueError, TypeError):
-            opacity = 0
-        if opacity > 0.7:
+        _so = psyche.get("self_opacity")
+        if isinstance(_so, str) and _so.strip() and _so.strip().lower() != "null":
+            logger.info("[Iceberg] propagation=torsion (inferred)")
             return "torsion"
 
     # convergence: open_threads 복수 수렴 + 높은 에너지
@@ -563,8 +564,9 @@ def infer_propagation_shape(
     if isinstance(threads, list) and len(threads) >= 3 and energy in ("detonation", "aftershock"):
         return "convergence"
 
-    # divergence: 선택/분기 + NPC별 반응 상이
-    if chain.get("chain_status") in ("branching", "diverging"):
+    # divergence: 복수 open_threads가 비-클라이맥스에서 벌어짐 (스키마에 native branching 없음 → open_threads proxy)
+    if isinstance(threads, list) and len(threads) >= 2 and energy in ("idle", "rising", "stagnant"):
+        logger.info("[Iceberg] propagation=divergence (inferred)")
         return "divergence"
 
     # radiation: 3명+ NPC + 공개적 장면
@@ -576,7 +578,8 @@ def infer_propagation_shape(
         if not isinstance(state, dict):
             continue
         relation = state.get("relation", {}) or {}
-        if relation.get("negotiation_stance") in ("defensive", "aggressive", "cooperative"):
+        if relation.get("negotiation_stance") in ("cooperative", "competitive", "exploitative"):
+            logger.info("[Iceberg] propagation=oscillation (inferred)")
             return "oscillation"
 
     # compression: 1:1 + 강한 에너지
@@ -1058,14 +1061,6 @@ def translate_intimacy(intimacy_data: Optional[dict]) -> str:
 # 8. emotion_intensity (Slot 29)
 # =========================================================
 
-_INTENSITY_NOTATION = [
-    (30,  "♪ pp"),
-    (60,  "♪ mf"),
-    (80,  "♪ f"),
-    (100, "♪ ff"),
-]
-
-
 _STAGE_PACING = {
     "escalating":         "accelerating, not yet at peak; tension builds, the decisive moment held back.",
     "rising":             "rising, a gradual accumulation; the next stimulus lands amplified.",
@@ -1079,7 +1074,11 @@ def translate_emotion_intensity(
     psyche_states: Optional[dict],
     prev_psyche_values: Optional[Dict[str, int]] = None,
 ) -> str:
-    """psyche value → ♪ dynamics notation + B4 stage pacing."""
+    """psyche value 턴간 *추세*(델타) → B4 stage pacing notation.
+
+    [2026-06-22 A3] 강도 절대값(intensity tier)은 Slot 16 build_emotion_context(emotion_engine 정규화본)가
+    소유 → 여기선 중복 제거하고 *추세만* 낸다. 변화(delta) 있는 NPC만 출력 → 블록 축소.
+    """
     if not psyche_states or not isinstance(psyche_states, dict):
         return ""
     prev = prev_psyche_values or {}
@@ -1090,37 +1089,33 @@ def translate_emotion_intensity(
         psyche = pdata.get("psyche", pdata.get("mental", {}))
         if not isinstance(psyche, dict):
             continue
-
-        val = abs(psyche.get("value", 0))
-        hint = _to_tier(val, _INTENSITY_NOTATION)
-        line = f"  {name}: {hint}"
-
-        # B4: 이전 턴 대비 stage pacing
+        # 추세는 이전 턴 값이 있어야 산출. 없으면 생략(강도는 Slot 16이 이미 보여줌).
         prev_val = prev.get(name)
-        if prev_val is not None:
-            try:
-                delta = val - abs(int(prev_val))
-            except (ValueError, TypeError):
-                delta = 0
-            if delta > 15:
-                trend = "escalating"
-            elif delta > 5:
-                trend = "rising"
-            elif delta < -5 and val > 40:
-                trend = "declining_from_peak"
-            elif abs(delta) <= 5:
-                trend = "sustained"
-            else:
-                trend = "fading"
-            pacing = _STAGE_PACING.get(trend, "")
-            if pacing and trend != "sustained":
-                line += f" — {pacing}"
-        lines.append(line)
+        if prev_val is None:
+            continue
+        val = abs(psyche.get("value", 0))
+        try:
+            delta = val - abs(int(prev_val))
+        except (ValueError, TypeError):
+            continue
+        if delta > 15:
+            trend = "escalating"
+        elif delta > 5:
+            trend = "rising"
+        elif delta < -5 and val > 40:
+            trend = "declining_from_peak"
+        elif abs(delta) <= 5:
+            continue  # sustained = 변화 없음 → 생략(과소비 방지)
+        else:
+            trend = "fading"
+        pacing = _STAGE_PACING.get(trend, "")
+        if pacing:
+            lines.append(f"  {name}: {pacing}")
     if not lines:
         return ""
     return (
-        "[emotion intensity]\n"
-        "emotion lives in the body; its name, intensity label, and number stay out of the prose, shown through what the body does.\n"
+        "[emotion trend]\n"
+        "emotion lives in the body; how it moves this turn (the rise or the ebb) shows through what the body does, not a stated number.\n"
         + "\n".join(lines)
     )
 
@@ -1198,9 +1193,8 @@ def translate_telescope_who(psyche_states: Optional[dict]) -> str:
 
 _CHAIN_STATUS_HINTS = {
     "OPEN": "exchange open",
-    "LOCKED": "exchange locked on one topic",
-    "CLOSING": "exchange closing",
     "CLOSED": "exchange closed",
+    "DORMANT": "exchange dormant; the thread rests, not resolved",
 }
 
 # conclusion_proximity: 0-100 → 서사 페이싱 힌트
@@ -1344,8 +1338,10 @@ def translate_npc_knowledge(npc_knowledge: Optional[dict]) -> str:
         false_beliefs = info.get("false_beliefs", [])
         if false_beliefs and isinstance(false_beliefs, list):
             parts_k.append(f"  believes wrongly: {', '.join(str(f) for f in false_beliefs)}")
-        deception = info.get("deception_cues", [])
-        if deception and isinstance(deception, list):
+        deception = info.get("deception_cues")
+        if isinstance(deception, str) and deception.strip() and deception.strip().lower() != "null":
+            parts_k.append(f"  tells of lying: {deception.strip()}")
+        elif isinstance(deception, list) and deception:
             parts_k.append(f"  tells of lying: {', '.join(str(d) for d in deception)}")
         # would_share: NPC가 자발적으로 정보를 공유하려는 의향
         if info.get("would_share"):

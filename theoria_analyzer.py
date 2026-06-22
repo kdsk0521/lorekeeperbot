@@ -350,7 +350,7 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
   }
 - "mental_impact": {"applicable": boolean, "vigor_severity": "none/mild/heavy/extreme", "composure_severity": "none/mild/heavy/extreme", "reason": "Korean"}
   - vigor_severity: 신체 부하 정도. consensual intimacy/comfort = mild. NOT heavy unless coerced.
-  - composure_severity: 감정 부하 정도. positive intimacy/bonding = none or mild. heavy ONLY if unwanted/coerced/humiliating/boundary-violating.
+  - composure_severity: 감정 부하 정도 = 평형 상실(loss of equilibrium). consensual/positive intimacy = none or mild REGARDLESS of explicitness/intensity — arousal·passion·vulnerability ≠ 평형 상실. heavy/extreme ONLY if unwanted/coerced/humiliating/boundary-violating/devastating.
   - Enum 가이드 (mild이 기본값. heavy/extreme은 예외적 중대 사건):
     - none: 부하 없음. 평범 행동 / 가벼운 회복 / 의미 없는 변화.
     - mild: 일상~중간 부하. 대부분의 행동·대화·긴장·평범한 대결은 여기 (DEFAULT).

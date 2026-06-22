@@ -281,8 +281,11 @@ class VigorComposureModule:
             delta += cascade
             axis["cascade_drain"] = cascade
 
-        # 1d. Status severity → drain (primary axis만)
-        if axis_name == primary_axis:
+        # 1d. Status severity → drain (primary axis만; intimate 씬 제외)
+        #     intimate는 주축이 composure로 뒤집히는데, 신체 status("vigor_drain")가 주축으로 라우팅돼
+        #     평형을 효과당 무제한 누적 차감(sev3=-15/개)→NSFW에서 평형만 크래시하던 버그. intimate는
+        #     이미 시계/판정/스토리텔러 suppress 대상이라 status 차감 제외가 일관됨.
+        if axis_name == primary_axis and _dai.get("scene_type") != "intimate":
             from game_character import normalize_status_effects
             raw_effects = (context.narrative_anchors or {}).get("status_effects", [])
             status_effects = normalize_status_effects(raw_effects)
@@ -352,6 +355,16 @@ class VigorComposureModule:
         actual_delta = delta
         if (delta > 0 and last_delta > 0) or (delta < 0 and last_delta < 0):
             actual_delta = int(delta * 1.1)
+
+        # 3b. Per-turn drop 안전캡 (mis-mapping/소스 스택이 한 턴에 축을 폭락시키는 것 방지).
+        #     소스가 무엇이든 턴당 낙폭을 scene별 상한으로 묶는다. 초과 시 WARNING 로그 →
+        #     다른 씬의 비정상 과차감 관측 채널(별도 검출기 불필요). 낙폭만 제한, 상승/회복은 무제한.
+        _scene = _dai.get("scene_type", "normal")
+        _drop_cap = config.MAX_AXIS_DROP_PER_TURN.get(_scene, config.MAX_AXIS_DROP_PER_TURN.get("default", 18))
+        if actual_delta < -_drop_cap:
+            logger.warning("[%s] per-turn drop %d exceeded safety cap -%d (scene=%s) — clamped; sources stacked abnormally.",
+                           axis_name, actual_delta, _drop_cap, _scene)
+            actual_delta = -_drop_cap
 
         # 4. Clamping (Max 2 stage drop per turn)
         current_val = axis.get("value", 100)

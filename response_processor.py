@@ -731,6 +731,33 @@ def detect_tension_dissolution(response: str) -> List[Tuple[str, str]]:
 
 
 # =========================================================
+# 미완 발화(aborted speech) 클리셰 — "입술이 열렸다/말은 나오지 않았다" 류 (log-only 관측)
+# 진짜 신호는 재발(recurrence). 프롬프트 SILENT COMPLIANCE가 실제 교정 담당.
+# =========================================================
+
+ABORTED_SPEECH_PATTERNS = [
+    ("words_wont_come", re.compile(r'말[은이]?\s*(?:[^.。!?\n]{0,8})?(?:나오지|새어?\s*나오지|터지지|흘러나오지)\s*(?:않|못)')),
+    ("lips_parted", re.compile(r'입술[이은]?\s*[^.。!?\n]{0,10}(?:열렸|벌어졌|달싹였?|들썩였?)')),
+    ("voice_stuck", re.compile(r'(?:목소리|소리)[가는이]?\s*[^.。!?\n]{0,12}목(?:젖|구멍|울대|구녕)에서\s*(?:멈|막|걸)')),
+    ("swallowed_words", re.compile(r'(?:말|소리|목소리)[을를]?\s*삼[켰키]')),
+    ("opened_mouth_but", re.compile(r'입(?:술)?[을를]?\s*열었(?:지만|으나|다가|다)[^.。!?\n]{0,12}(?:다물|닫|멈)')),
+    ("action_then_negated", re.compile(r'(?:했|졌|었|렸|혔)다\.\s*(?:그러나|하지만|그렇지만)[^.。!?\n]{0,20}(?:않|못)(?:았|었|했)?다')),
+]
+
+
+def detect_aborted_speech(response: str) -> List[Tuple[str, str]]:
+    """미완 발화 클리셰 family 검출 (log-only). 입술 열림/말 안나옴/목소리 막힘/삼킨 말 등.
+    *재발*이 진짜 문제이므로 caller가 턴별 hit를 롤링윈도우로 추적. Returns [(label, matched_text), ...]."""
+    results = []
+    if not response:
+        return results
+    for label, pattern in ABORTED_SPEECH_PATTERNS:
+        for m in pattern.finditer(response):
+            results.append((label, m.group()[:50]))
+    return results
+
+
+# =========================================================
 # P3: NPC Deflection Repetition Detection (회피기법 반복 추적)
 # =========================================================
 

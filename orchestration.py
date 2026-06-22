@@ -1535,6 +1535,23 @@ class OrchestrationService:
                     except Exception as _e_ce:
                         logger.warning(f"[CadenceEcho] skipped: {_e_ce}")
 
+                    # 미완 발화 클리셰(입술 열림/말 안나옴 류): log-only 관측. 프롬 SILENT COMPLIANCE가 실제 교정.
+                    # recurrence(최근 5턴 중 등장)가 진짜 신호 — 단발은 적절할 수 있음.
+                    _as_window = None
+                    try:
+                        from response_processor import detect_aborted_speech
+                        _as_hits = detect_aborted_speech(response)
+                        _as_recent = _mem_for_fb.get("recent_aborted_speech", [])
+                        if not isinstance(_as_recent, list):
+                            _as_recent = []
+                        _as_window = (_as_recent + [1 if _as_hits else 0])[-5:]
+                        if _as_hits:
+                            _as_labels = ", ".join(sorted({lbl for lbl, _ in _as_hits}))
+                            logger.info(f"[AbortedSpeech] {len(_as_hits)} hit(s) [{_as_labels}] · recurrence {sum(_as_window)}/5"
+                                        + (" HIGH" if sum(_as_window) >= 3 else ""))
+                    except Exception as _e_as:
+                        logger.warning(f"[AbortedSpeech] skipped: {_e_as}")
+
                     style_fb = " ".join(filter(None, [
                         cliche_fb, cargo_fb, rotation_fb, pidgin_fb,
                         struct_fb, tension_fb, deflection_fb,
@@ -1554,6 +1571,8 @@ class OrchestrationService:
                         _tracking_update["recent_deflections"] = (_recent_deflections + _current_deflections)[-6:]
                     if _ce_window is not None:
                         _tracking_update["recent_cadence_sents"] = _ce_window
+                    if _as_window is not None:
+                        _tracking_update["recent_aborted_speech"] = _as_window
                     domain_manager.update_session_ai_memory(channel_id, _tracking_update)
                     if fmt_feedback:
                         logger.info(f"[FormatCheck] {fmt_feedback[:80]}")

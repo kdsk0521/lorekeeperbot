@@ -22,7 +22,7 @@ import sqlite3
 import logging
 import threading
 import time
-from typing import Optional, Dict, Any, Iterator, Tuple
+from typing import Optional, Dict, Any, Iterator, Tuple, List
 
 import config
 
@@ -251,6 +251,22 @@ def _ensure_schema() -> bool:
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_attlog_npc ON attitude_log(channel_id, npc_name, id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_attlog_channel ON attitude_log(channel_id, id)")
+            # [V10 적립] autonomy_log — NPC 자율 트리거 발동(npc/trigger/priority/directive).
+            # 대사·관계 압력의 출처. dai_logs는 트리거 평가 전에 써져서 안 잡힘 → 전용 적립.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS autonomy_log (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_id  TEXT NOT NULL,
+                    turn        INTEGER NOT NULL,
+                    npc_name    TEXT NOT NULL,
+                    trigger_id  TEXT NOT NULL DEFAULT '',
+                    priority    INTEGER NOT NULL DEFAULT 0,
+                    directive   TEXT NOT NULL DEFAULT '',
+                    created_at  REAL NOT NULL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_autolog_npc ON autonomy_log(channel_id, npc_name, id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_autolog_channel ON autonomy_log(channel_id, id)")
             conn.commit()
             _initialized = True
             return True
@@ -1391,6 +1407,66 @@ def read_turn_snapshots(channel_id: str, limit: int = 30) -> list:
         return out
     except Exception as e:
         logger.warning(f"[SQLiteStore] read_turn_snapshots 실패: {channel_id}: {e}")
+        return []
+
+
+# =========================================================
+# [V10 적립] autonomy_log — NPC 자율 트리거 발동 (생성자 + 독자)
+# =========================================================
+
+def append_autonomy_log(channel_id: str, turn: int, entries: List[Dict[str, Any]], keep: int = 800) -> bool:
+    """NPC 자율 트리거 발동 1행/트리거. 대사·관계 압력의 출처 적립.
+    entries: [{npc_name, trigger_id, priority, directive}, ...]. 채널당 최근 keep행 롤링. 실패 무해."""
+    if not channel_id or not entries:
+        return False
+    if not _ensure_schema():
+        return False
+    conn = _get_conn()
+    if conn is None:
+        return False
+    try:
+        now = time.time()
+        rows = [
+            (channel_id, int(turn), str(e.get("npc_name", "") or ""), str(e.get("trigger_id", "") or ""),
+             int(e.get("priority", 0) or 0), str(e.get("directive", "") or ""), now)
+            for e in entries if isinstance(e, dict) and e.get("npc_name")
+        ]
+        if not rows:
+            return False
+        conn.executemany(
+            "INSERT INTO autonomy_log (channel_id, turn, npc_name, trigger_id, priority, directive, created_at) "
+            "VALUES (?,?,?,?,?,?,?)",
+            rows,
+        )
+        conn.execute(
+            "DELETE FROM autonomy_log WHERE channel_id=? AND id NOT IN "
+            "(SELECT id FROM autonomy_log WHERE channel_id=? ORDER BY id DESC LIMIT ?)",
+            (channel_id, channel_id, int(keep)),
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] append_autonomy_log 실패 (무시): {channel_id}: {e}")
+        return False
+
+
+def read_autonomy_log(channel_id: str, limit: int = 50) -> list:
+    """독자: 최근 N행 자율 트리거 (오래된→최신). [{turn, npc_name, trigger_id, priority, directive}, ...]"""
+    if not channel_id or limit <= 0 or not _ensure_schema():
+        return []
+    conn = _get_conn()
+    if conn is None:
+        return []
+    try:
+        cur = conn.execute(
+            "SELECT turn, npc_name, trigger_id, priority, directive FROM autonomy_log "
+            "WHERE channel_id=? ORDER BY id DESC LIMIT ?",
+            (channel_id, int(limit)),
+        )
+        return [{"turn": r[0], "npc_name": r[1], "trigger_id": r[2], "priority": r[3], "directive": r[4]}
+                for r in reversed(cur.fetchall())]
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_autonomy_log 실패: {channel_id}: {e}")
         return []
 
 
