@@ -110,7 +110,7 @@ class StoryDirector:
         dai = bus.dai
 
         # Gather inputs
-        energy = dai.get("energy_direction", "rising")
+        energy = dai.get("energy_direction", "idle")
         scene_type = dai.get("scene_type", "normal")
         narrative_chain = dai.get("narrative_chain", {})
         memory_triggers = dai.get("memory_triggers", [])

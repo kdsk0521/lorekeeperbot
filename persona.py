@@ -228,11 +228,8 @@ class OpenAIChatSessionAdapter:
             }
 
         try:
-            # Fireworks: max_tokens > 4096 requires stream=true
-            # Thinking 활성 시 budget만큼 max_tokens 확장 (출력 토큰 보호)
+            # max_tokens > 4096 이면 stream=true (긴 출력). 산문은 제 예산에 묶음(추론 토큰 별도 확장 X).
             _effective_max = self.max_tokens
-            if config.OPENAI_REASONING_EFFORT != "none":
-                _effective_max = max(self.max_tokens, config.OPENAI_THINKING_BUDGET + self.max_tokens)
             use_stream = _effective_max > 4096
             response = await self._client.chat.completions.create(
                 model=self.model,
@@ -244,10 +241,8 @@ class OpenAIChatSessionAdapter:
                 presence_penalty=self.presence_penalty,
                 stream=use_stream,
                 extra_body={
-                    "top_k": config.OPENAI_TOP_K,
-                    **({"thinking": {"type": "enabled", "budget_tokens": config.OPENAI_THINKING_BUDGET}}
-                       if config.OPENAI_REASONING_EFFORT != "none"
-                       else {"reasoning_effort": "none"}),
+                    # Ollama /v1: reasoning_effort만 전송(top_k 미지원 → 드롭). deepseek = none/high/max.
+                    "reasoning_effort": config.OPENAI_REASONING_EFFORT,
                 },
             )
 
@@ -275,8 +270,9 @@ class OpenAIChatSessionAdapter:
             if text:
                 # 히스토리에 assistant 응답 저장 (prefill 포함)
                 full_text = (prefill + text) if prefill else text
-                # 히스토리에는 Telescope CoT 제거
-                history_text = re.sub(r"┣[\s\S]*?┫\s*", "", full_text).strip() or full_text
+                # 히스토리엔 산문만: ┫ 이후(=┣ 앞 네이티브 thinking + 텔레스코프 동시 제외). ┫ 없으면 기존 블록 제거.
+                history_text = (full_text.rsplit("┫", 1)[-1].strip() if "┫" in full_text
+                                else re.sub(r"┣[\s\S]*?┫\s*", "", full_text).strip()) or full_text
                 self.history.append({"role": "assistant", "content": history_text})
                 return _OpenAIResponseShim(text, finish)
             else:

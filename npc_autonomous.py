@@ -238,7 +238,7 @@ class NPCAutonomousEngine:
         selected = triggers[:max_triggers]
         lines = [
             "[NPC Autonomous Behavior]",
-            "(shown through action only; the trigger types and psychology terms stay out of the prose.)",
+            "(surfaced through action or speech, a line of dialogue often the most direct channel; the trigger types and psychology terms stay out of the prose.)",
         ]
         for t in selected:
             lines.append(f"- {t.npc_name}: {t.directive}")

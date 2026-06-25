@@ -128,7 +128,7 @@ class WaterfallPipeline:
         bus.dai["location_risk"] = analysis.get("LocationRisk", "Low")
         bus.dai["time_context"] = analysis.get("TimeContext", "")
         bus.dai["scene_type"] = analysis.get("SceneType", "normal")
-        bus.dai["energy_direction"] = analysis.get("EnergyDirection", "rising")
+        bus.dai["energy_direction"] = analysis.get("EnergyDirection", "idle")  # 2026-06-25: 디폴트 rising→idle. omission/불확실 시 긴장을 만들지 않음(둠·톤·페이싱 안전쪽). Theoria가 보통 채움.
         bus.dai["quality_flags"] = analysis.get("QualityFlags", {})
         bus.dai["position"] = analysis.get("Position", {})
         bus.dai["effect"] = analysis.get("Effect", {})

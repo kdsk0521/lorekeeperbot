@@ -129,7 +129,7 @@ def _build_world_layer(bus) -> str:
     scene_type = str(dai.get("scene_type", "normal"))
 
     # Energy → directing notation ONLY (산문 힌트는 Slot 16 iceberg)
-    energy = str(dai.get("energy_direction", "steady"))
+    energy = str(dai.get("energy_direction", "idle"))
     energy_notation = _ENERGY_NOTATION.get(energy, "")
     if energy_notation:
         parts.append(energy_notation)

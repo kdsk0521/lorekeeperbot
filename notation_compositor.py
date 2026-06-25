@@ -104,6 +104,7 @@ class ParsedNotation:
     music: str = ""      # ♪ 축
     camera: str = ""     # ▶ 축
     photo: str = ""      # ◎ 축
+    color: str = ""      # [lighting, hue, saturation] 트리플 (▶ 안에서 분리)
     raw: str = ""        # 원본 텍스트
     abbreviated: bool = False
     lens: str = ""       # reframe 렌즈 주석
@@ -118,15 +119,20 @@ def _parse_notation(layer: str, notation: str) -> ParsedNotation:
     if m:
         p.music = m.group(1).strip()
 
-    # ▶ 추출
+    # ▶ 추출 ([color] 트리플은 아래서 별도 축으로 분리)
     m = re.search(r'▶\s*([^|♪◎]+)', notation)
     if m:
-        p.camera = m.group(1).strip()
+        p.camera = re.sub(r'\s*\[[^\]]*\]', '', m.group(1)).strip()
 
     # ◎ 추출
     m = re.search(r'◎\s*([^|♪▶]+)', notation)
     if m:
         p.photo = m.group(1).strip()
+
+    # [color] 트리플 추출 (▶ 안에 박힘 — 별도 축으로 분리해 cross-layer 색 대비)
+    m = re.search(r'\[([^\]]+)\]', notation)
+    if m:
+        p.color = m.group(1).strip()
 
     # 축 기호 없는 단순 텍스트
     if not p.music and not p.camera and not p.photo:
@@ -166,6 +172,12 @@ def _detect_conflicts(parsed: List[ParsedNotation]) -> List[str]:
         pairs = [f"{k}={v}" for k, v in photo_map.items()]
         conflicts.append(f"◎ conflict: {' vs '.join(pairs)}")
 
+    # [color/light] 축 충돌 — 전체 vocab(warm/amber/cool/grey/crimson + 조명/채도)으로 대비
+    color_map = {p.layer: p.color for p in parsed if p.color and not p.abbreviated}
+    if len(set(color_map.values())) > 1:
+        pairs = [f"{k}=[{v}]" for k, v in color_map.items()]
+        conflicts.append(f"[light] contrast: {' vs '.join(pairs)}")
+
     return conflicts
 
 
@@ -194,6 +206,8 @@ def _diff_from_dominant(notation: ParsedNotation, dominant: ParsedNotation) -> s
         diffs.append(f"▶ {notation.camera}")
     if notation.photo and notation.photo != dominant.photo:
         diffs.append(f"◎ {notation.photo}")
+    if notation.color and notation.color != dominant.color:
+        diffs.append(f"[{notation.color}]")
 
     return " | ".join(diffs) if diffs else ""
 
@@ -256,32 +270,42 @@ def compose_notations(
 
     # 7. 출력 합성
     lines = []
-    if global_tone:
-        lines.append(f"[overall tone] {global_tone}")
+    # CONTRAST-LEAD (발산=진폭): 대비를 먼저·강하게. consensus/dominant는 가벼운 바탕으로 강등.
+    # (원설계는 [overall tone]+[dominant] 수렴 리드였으나, 진폭 역할로 flip — 연출가-독자.)
+    if conflicts:
+        lines.append("[contrast — render each its own distinct tone; let the difference stand on the page]")
+        for conflict in conflicts:
+            lines.append(f"  {conflict}")
 
-    # 지배 레이어 출력
-    dom_parts = []
-    if dominant.music:
-        dom_parts.append(f"♪ {dominant.music}")
-    if dominant.camera:
-        dom_parts.append(f"▶ {dominant.camera}")
-    if dominant.photo:
-        dom_parts.append(f"◎ {dominant.photo}")
-    dom_lens = f" ({dominant.lens})" if dominant.lens else ""
-    lines.append(f"[dominant:{dominant.layer}{dom_lens}] {' | '.join(dom_parts)}")
-
-    # 충돌 디렉티브
-    for conflict in conflicts:
-        lines.append(f"[conflict] {conflict}")
-
-    # 차이 레이어
+    # per-layer 고유 변주 (dominant 대비 차이)
+    diff_lines = []
     for p in parsed:
         if p.abbreviated:
             continue
         diff = _diff_from_dominant(p, dominant)
         if diff:
             lens_tag = f" ({p.lens})" if p.lens else ""
-            lines.append(f"[{p.layer}{lens_tag}] {diff}")
+            diff_lines.append(f"  [{p.layer}{lens_tag}] {diff}")
+    if diff_lines:
+        lines.append("[per-layer variation]")
+        lines.extend(diff_lines)
+
+    # baseline (shared tone + anchor) — 대비가 deviate하는 가벼운 바탕 (대비 없으면 이것만 남음)
+    base = []
+    if global_tone:
+        base.append(f"shared {global_tone}")
+    dom_parts = []
+    if dominant.music:
+        dom_parts.append(f"♪ {dominant.music}")
+    if dominant.camera:
+        dom_parts.append(f"▶ {dominant.camera}")
+    if dominant.color:
+        dom_parts.append(f"[{dominant.color}]")
+    dom_lens = f" ({dominant.lens})" if dominant.lens else ""
+    if dom_parts:
+        base.append(f"anchor {dominant.layer}{dom_lens}: {' | '.join(dom_parts)}")
+    if base:
+        lines.append("[baseline] " + " · ".join(base))
 
     return "\n".join(lines)
 

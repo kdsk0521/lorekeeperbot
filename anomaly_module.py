@@ -90,7 +90,7 @@ class AnomalyModule:
             return "skip"
 
         # Timing table lookup
-        energy = dai.get("energy_direction", "rising")
+        energy = dai.get("energy_direction", "idle")
         last_event_turn = st_state.get("last_event_turn", 0)
         turns_since = max(0, current_turn - last_event_turn)
         turns_key = min(turns_since, 3)  # 3+ capped
@@ -332,7 +332,7 @@ class AnomalyModule:
             decision = self._decide_timing(bus, st_state, current_turn)
         bus.anomaly["decision"] = decision
         if not bus.anomaly.get("decision_reason"):
-            energy = bus.dai.get("energy_direction", "rising")
+            energy = bus.dai.get("energy_direction", "idle")
             turns_since = max(0, current_turn - st_state.get("last_event_turn", 0))
             bus.anomaly["decision_reason"] = f"table:{energy}/t{turns_since}"
 

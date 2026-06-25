@@ -155,10 +155,7 @@ def _config_to_kwargs(cfg: Any) -> dict:
     else:
         _effort = getattr(_appconfig, "ANALYSIS_OPENAI_REASONING_EFFORT", "none")
     extra_body = {"reasoning_effort": _effort}
-    top_k = getattr(cfg, "top_k", None)
-    if top_k is not None:
-        # top_k 는 표준 파라미터가 아님 → extra_body.
-        extra_body["top_k"] = top_k
+    # top_k 는 Ollama /v1 미지원 → 전송 안 함(드롭됨).
     kwargs["extra_body"] = extra_body
     return kwargs
 
@@ -180,7 +177,7 @@ class _NoCaches:
 
 
 class _Models:
-    def __init__(self, client: "AsyncOpenAI", embed_client: "AsyncOpenAI" = None):
+    def __init__(self, client: "AsyncOpenAI", embed_client: Optional["AsyncOpenAI"] = None):  # type: ignore
         self._client = client
         self._embed_client = embed_client or client  # 임베딩은 별도 엔드포인트(Voyage) — 미지정 시 메인 재사용
 
@@ -223,9 +220,9 @@ class GenaiCompatClient:
     def __init__(self, api_key: str, base_url: str):
         if not _HAS_OPENAI:
             raise ImportError("openai 패키지 필요: pip install openai")
-        self._client = AsyncOpenAI(api_key=api_key, base_url=base_url, max_retries=0)  # SDK 재시도 OFF — cognition의 api_call_with_retry가 유일한 재시도 층(중첩 방지)
+        self._client = AsyncOpenAI(api_key=api_key, base_url=base_url, max_retries=0)  # type: ignore  (SDK 재시도 OFF — cognition api_call_with_retry가 유일 재시도층, 중첩 방지)
         # 임베딩 전용 클라이언트 — LLM(Ollama Cloud)은 임베딩 서빙 X → Voyage 등 별도 엔드포인트/키로 분리
-        self._embed_client = AsyncOpenAI(
+        self._embed_client = AsyncOpenAI(  # type: ignore
             api_key=_appconfig.ANALYSIS_OPENAI_EMBED_API_KEY or api_key,
             base_url=_appconfig.ANALYSIS_OPENAI_EMBED_BASE_URL or base_url,
             max_retries=0,

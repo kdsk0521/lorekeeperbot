@@ -418,6 +418,7 @@ Observe the physical space. Architecture, not decoration.
 - tension (Lefebvre Production of Space): "designed X <-> lived Y" — mismatch between the space's intended purpose and how characters actually inhabit it. null when no mismatch.
 - spatial_type: enclosed(traces linger), resonant(echoes, emptiness), open(wind erases), elevated(exposed), crowded(traces drown), moving(transient).
 - weight: ambient=default(base palette only). render=mutation occurred.
+- light (base palette, every turn → spatial_read.light): the controlling light on the scene, DERIVED not picked. lighting follows the actual source + key + direction (where the light falls). hue follows the scene's dominant valence + source, across the full spectrum (amber/gold/rust/crimson/grey/steel/cool/green-cast/sodium/…) — the specific hue the conditions produce. saturation follows emotional intensity (vivid↔washed). the light is a function of its conditions: when the controlling valence or source shifts, the light shifts with it; while they hold, it holds.
 
 ### UNFAMILIAR DISCOVERY
 Surface reading is the minimum, not the goal. For each PC action, identify at least 3 forces operating beneath the obvious interpretation — unacknowledged needs, environmental pressures, relational debts, habitual patterns, or somatic states. If you find fewer than 3, your observation is still on the surface.

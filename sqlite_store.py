@@ -267,6 +267,17 @@ def _ensure_schema() -> bool:
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_autolog_npc ON autonomy_log(channel_id, npc_name, id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_autolog_channel ON autonomy_log(channel_id, id)")
+
+            # [!다시] 리두용 턴-직전 도메인 스냅샷 — 채널당 1개(REPLACE), 봇 재시작에도 보존.
+            #   인메모리 _RETRY_SNAPSHOTS가 인스턴스 재생성/재시작에 날아가도 retry_last가 여기서 폴백 복원.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS retry_snapshot (
+                    channel_id  TEXT PRIMARY KEY,
+                    turn        INTEGER NOT NULL,
+                    data        TEXT NOT NULL,
+                    created_at  REAL NOT NULL
+                )
+            """)
             conn.commit()
             _initialized = True
             return True
@@ -1117,6 +1128,44 @@ def append_dai_log(channel_id: str, turn: int, dai: Dict[str, Any], keep: int = 
     except Exception as e:
         logger.warning(f"[SQLiteStore] append_dai_log 실패 (무시): {channel_id}: {e}")
         return False
+
+
+def save_retry_snapshot(channel_id: str, turn: int, snapshot: Dict[str, Any]) -> bool:
+    """[!다시] 턴-직전 도메인 스냅샷 영속화 (채널당 1개 REPLACE, 봇 재시작에도 보존). 실패 무해."""
+    if not channel_id or not isinstance(snapshot, dict) or not snapshot:
+        return False
+    if not _ensure_schema():
+        return False
+    conn = _get_conn()
+    if conn is None:
+        return False
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO retry_snapshot (channel_id, turn, data, created_at) VALUES (?, ?, ?, ?)",
+            (channel_id, int(turn), json.dumps(snapshot, ensure_ascii=False, default=str), time.time()),
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] save_retry_snapshot 실패 (무시): {channel_id}: {e}")
+        return False
+
+
+def read_retry_snapshot(channel_id: str) -> Optional[Dict[str, Any]]:
+    """[!다시] 영속화된 스냅샷 조회 (인메모리 miss 시 폴백). 없으면 None."""
+    if not channel_id or not _ensure_schema():
+        return None
+    conn = _get_conn()
+    if conn is None:
+        return None
+    try:
+        cur = conn.execute("SELECT data FROM retry_snapshot WHERE channel_id=?", (channel_id,))
+        row = cur.fetchone()
+        if row and row[0]:
+            return json.loads(row[0])
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_retry_snapshot 실패: {channel_id}: {e}")
+    return None
 
 
 def append_ledger(channel_id: str, entry: Dict[str, Any], keep: int = 200) -> bool:

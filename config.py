@@ -36,12 +36,11 @@ OPENAI_API_KEY = os.getenv("OPENAI_RENDERER_API_KEY", "")  # ollama.com/settings
 OPENAI_BASE_URL = os.getenv("OPENAI_RENDERER_BASE_URL", "https://ollama.com/v1")
 OPENAI_MODEL_ID = os.getenv("OPENAI_RENDERER_MODEL", "deepseek-v4-pro:cloud")
 # OpenAI-compatible generation parameters (top_k 미지원 → frequency/presence_penalty로 보정)
-OPENAI_TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", "1.05"))
+OPENAI_TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", "0.8"))  # 추론 ON 시 0.7~0.8 권장(추론이 탐색 담당 → 출력은 일관성)
 OPENAI_TOP_P = float(os.getenv("OPENAI_TOP_P", "0.80"))
 OPENAI_FREQUENCY_PENALTY = float(os.getenv("OPENAI_FREQUENCY_PENALTY", "0.3"))
 OPENAI_TOP_K = int(os.getenv("OPENAI_TOP_K", "40"))
-OPENAI_REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "none")  # none / low / medium / high — 렌더러 비추론(none→reasoning_effort:none 전송)
-OPENAI_THINKING_BUDGET = int(os.getenv("OPENAI_THINKING_BUDGET", "8192"))  # thinking 토큰 별도 예산
+OPENAI_REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "high")  # none / low / medium / high — Ollama /v1 reasoning_effort로 전송(thinking 모델만 발동)
 OPENAI_PRESENCE_PENALTY = float(os.getenv("OPENAI_PRESENCE_PENALTY", "0.1"))
 
 # =========================================================
@@ -192,18 +191,8 @@ SCENE_TIME_RULES = {
 # Doom Max
 DOOM_MAX = 100
 
-# Doom Increase Rates
-DOOM_INCREASE_NIGHT = 1
-DOOM_INCREASE_NEMESIS_MIN = 1
-DOOM_INCREASE_NEMESIS_MAX = 2
-DOOM_INCREASE_HIGH_RISK = 4
-DOOM_INCREASE_MEDIUM_RISK = 2
-DOOM_INCREASE_LORE_RULE = 1
-
+# (DOOM_INCREASE_* / DOOM_DICE_BASELINE 제거 2026-06-25 — 옛 파멸-모델 잔재, 0소비)
 NEMESIS_THRESHOLD = -10
-
-# Doom Dice Modifier
-DOOM_DICE_BASELINE = 50
 
 # =========================================================
 # Doom Chapter Volume — Phase × Lens × Scene 결합
@@ -212,7 +201,15 @@ DOOM_DICE_BASELINE = 50
 # raw doom delta는 doom_module.process() 내부 자동 변동에만 multiplier 적용.
 # game_world.change_doom (OOC `!둠`, quest 보상)은 직접 amount 반영 (사용자 의도 보존).
 
-DOOM_RAW_GAIN_BASE = 2.5  # 평균 turn당 raw doom gain 기준
+DOOM_RAW_GAIN_BASE = 3.0  # turn당 raw doom gain base (energy tension_factor로 변조 → raw_delta 합류). 아크=4~6챕터/~300-500턴 타깃 (2026-06-25)
+# energy_direction → per-turn base doom gain 변조 (활성도 게이트, 2026-06-25 배선). calm 거의정지 / 긴장 상승.
+DOOM_TENSION_FACTOR = {
+    "detonation": 1.5,
+    "rising":     1.0,
+    "aftershock": 0.5,
+    "idle":       0.15,
+    "stagnant":   0.1,
+}
 CHAPTER_INTERMISSION_DECAY = 3  # 間 페이즈 자연 감쇠 (-3/턴)
 CHAPTER_RESET_FLOOR = 10  # 새 챕터 시작 floor (climax 후 doom 10 도달 시 起 진입)
 INTIMATE_LENS_GROUP = {"romance", "comedy", "noir", "drama"}  # manual climax (spike 발화)
@@ -237,44 +234,35 @@ CLOCK_RESOLVE_DOOM = {4: -5, 6: -10, 8: -15}  # segments → global doom 하강 
 CLOCK_MITIGATE_REWARD = 1           # 시계 1칸 감소당 활력/평형 +1
 CLOCK_RESOLVE_REWARD = {4: 2, 6: 3, 8: 5}  # 시계 해결 시 segments별 보상
 
-JUDGMENT_DOOM_DELTA = {
-    "critical_failure": 5,
-    "failure": 2,
-    "critical_success": -3,
-}
-DOOM_DICE_MODIFIER_STEP = 5
+# (JUDGMENT_DOOM_DELTA / DOOM_DICE_MODIFIER_STEP 제거 2026-06-25 — 옛 파멸-모델 잔재(0소비). 판정→doom 폐기, JUDGMENT_CONSEQUENCES가 대체.)
 
 # Judgment Consequences v4 — 결과별 기계적 세계 변경
 # primary_delta: 주축(vigor/composure) 직접 효과
 # momentum: 다음 턴 판정 보너스/페널티 (±10 cap)
 # clock_effect: 활성 시계 변경 (+전진/-후퇴), clock_all: 모든 시계 대상
+# (2026-06-25: doom_delta 키 제거 — 판정→doom 폐기. 둠=이야기 활성도라 판정 성패와 무관. primary/momentum/clock만.)
 JUDGMENT_CONSEQUENCES = {
     "critical_success": {
-        "doom_delta": -3,
         "primary_delta": 5,
         "momentum": 10,
         "clock_effect": -1,
     },
     "success": {
-        "doom_delta": 0,
         "primary_delta": 0,
         "momentum": 0,
         "clock_effect": 0,
     },
     "partial": {
-        "doom_delta": 1,
         "primary_delta": -2,
         "momentum": 0,
         "clock_effect": 0,
     },
     "failure": {
-        "doom_delta": 2,
         "primary_delta": -3,
         "momentum": -5,
         "clock_effect": 1,
     },
     "critical_failure": {
-        "doom_delta": 5,
         "primary_delta": -5,
         "momentum": -10,
         "clock_effect": 1,
@@ -484,8 +472,8 @@ ITEM_PERSISTENCE_RULES = {
 # Vector Search (N3 — 시맨틱 로어 검색)
 # =========================================================
 VECTOR_EMBEDDING_MODEL = "gemini-embedding-2"
-VECTOR_TOP_K = 5
-VECTOR_MIN_SCORE = 0.3
+VECTOR_TOP_K = 10          # [1M remap 2026-06-22] 5→10 (프롬 2.92%/1M, 로어만 활성 truncation이라 살짝 확대)
+VECTOR_MIN_SCORE = 0.2     # [1M remap] 0.3→0.2 (관련도 문턱 낮춰 더 admit)
 
 # Weighted Memory Retrieval (LIBRA-inspired scoring)
 MEMORY_SCORE_W_SIMILARITY = 0.4
@@ -1290,6 +1278,10 @@ V10_ARC_DIGEST_FERMENT = True
 # graceful-empty(버킷 빈 동안 무동작) + echo-safe(영어 텔레그래픽, 기존 knows/false_beliefs 주입과 동일 register).
 # 2026-06-19 ON (사용자 "바로 배선"). 문제 시 이 줄 False = 전파/주입 즉시 무동작(저장은 유지).
 V10_KNOWLEDGE_BOUNDARY_INJECT = True
+
+# I축(재정착): cadence_echo 턴-간 verbatim 후렴 되먹임. 2026-06-24 ON (추론ON도 cross-turn recall은 못 잡음 — 산문6 실증).
+# False = 탐지·로그는 유지, 다음턴 주입만 무동작.
+CADENCE_ECHO_INJECT = True
 
 # iceberg mirror register 노테이션 (자기기만/내면). 2026-06-21 스키마드리프트 검수로 부활.
 # 내면 노테이션이라 과내면 우려와 충돌 가능 → 산문 과내면화 관측 시 이 줄 False = mirror 즉시 무동작.

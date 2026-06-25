@@ -447,25 +447,17 @@ def _apply_consequences(context, result: str) -> None:
 
     consequence_log = []
 
-    # 0. Absorb: effort 선언 + 실패 → doom/clock consequence 자동 경감
-    doom_delta = cons.get("doom_delta", 0)
+    # 0. Absorb: effort 선언 + 실패 → clock consequence 자동 경감
+    # (2026-06-25: judgment→doom 폐기 — doom은 이야기 활성도라 판정 성패와 무관. clock_effect만 유지.)
     clock_effect = cons.get("clock_effect", 0)
     effort_used = bus.judgment.get("effort_used")
     if effort_used and result in ("failure", "critical_failure"):
-        doom_reduction = doom_delta // 2
         clock_cancelled = clock_effect > 0
-        if doom_reduction > 0:
-            doom_delta -= doom_reduction
         if clock_cancelled:
             clock_effect = 0
         bus.judgment["absorb_applied"] = {
-            "doom_reduced": doom_reduction,
             "clock_cancelled": clock_cancelled,
         }
-
-    # A. Doom Delta → bus.doom["delta"]에 누적 (Doom 모듈이 자연 소비)
-    if doom_delta != 0:
-        bus.doom["delta"] = bus.doom.get("delta", 0) + doom_delta
 
     # B. Primary Axis Direct Impact
     primary_delta = cons.get("primary_delta", 0)

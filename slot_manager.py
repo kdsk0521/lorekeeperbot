@@ -433,7 +433,7 @@ class SlotPromptBuilder:
 
         # [14] Psyche States
         if psyche_states:
-            self.set_slot(14, f"<Psyche_States source='theoria_flash'>\n[ANALYSIS] NPC psychology inferred by Flash model. Cross-reference with NPC profiles.\n{psyche_states}\n</Psyche_States>")
+            self.set_slot(14, f"<Psyche_States source='theoria_flash'>\n[ANALYSIS — the narrator's read of psyche/behavior, NOT prose. Render the scene THROUGH this; do NOT lift these phrases verbatim into the output. They are notes to interpret and re-voice as fresh action/sensation, never lines to copy. Cross-reference with NPC profiles.]\n{psyche_states}\n</Psyche_States>")
 
         # [16] Scene Intelligence (Aspects + SensoryAnchors + Habitus + Hook)
         if scene_intelligence:
@@ -442,6 +442,17 @@ class SlotPromptBuilder:
         # [17] Extended Intelligence (NPC Knowledge + Intimacy Analysis)
         if extended_intelligence:
             self.set_slot(17, f"<Extended_Intelligence>\n{extended_intelligence}\n</Extended_Intelligence>")
+
+        # [notation_probe 2026-06-24 임시 — 노테이션 번역검증용(§3.1b), 제거예정]
+        try:
+            if psyche_states or scene_intelligence or extended_intelligence:
+                import os as _np_os, datetime as _np_dt
+                _np_path = _np_os.path.join(_np_os.path.dirname(__file__), "notation_probe.log")
+                with open(_np_path, "w", encoding="utf-8") as _np_f:
+                    _np_f.write(f"===== {_np_dt.datetime.now().isoformat()} ch={locals().get('channel_id','')} =====\n")
+                    _np_f.write(f"[S13 input_analysis]\n{input_analysis}\n\n[S14 psyche]\n{psyche_states}\n\n[S16 scene_intel]\n{scene_intelligence}\n\n[S17 extended]\n{extended_intelligence}\n")
+        except Exception:
+            pass
 
         # ===== RULES ZONE (22-24) =====
         # [22-24] Content Level
@@ -542,6 +553,7 @@ class SlotPromptBuilder:
 
                 parts.append(content)
 
+        self._log_token_budget("full")
         return "\n\n".join(parts)
 
     def build_static_only(self) -> str:
@@ -578,7 +590,23 @@ class SlotPromptBuilder:
                 system_parts.append(content)
             else:
                 context_parts.append(content)
+        self._log_token_budget("split")
         return "\n\n".join(system_parts), "\n\n".join(context_parts)
+
+    def _log_token_budget(self, label: str = "") -> None:
+        """[budget] 임시 계측 — 조립 프롬 슬롯별 토큰 추정 + 총합/1M% (확인 후 제거)."""
+        try:
+            total = 0
+            sizes = []
+            for i in range(1, 35):
+                c = self.slots.get(i)
+                if c:
+                    t = int(len(c) / 3.5)
+                    total += t
+                    sizes.append(f"s{i}={t}")
+            logger.info(f"[budget][{label}] total≈{total}tok ({total/10000:.2f}%/1M) | " + " ".join(sizes))
+        except Exception:
+            pass
 
 
 # =========================================================
@@ -1057,7 +1085,7 @@ def build_34_step_prompt(ctx) -> str:
 
     # EnergyDirection: iceberg 번역 (라벨 → 톤/비트/종결 + 장면 빛)
     energy_dir = dai.get("energy_direction", "")
-    energy_hint = iceberg.translate_energy_direction(energy_dir)
+    energy_hint = iceberg.translate_energy_direction(energy_dir, (dai.get("spatial_read") or {}).get("light"))
     if energy_hint:
         scene_intel_parts.append(energy_hint)
 

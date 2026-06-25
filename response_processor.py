@@ -966,6 +966,13 @@ DECLARATION_PATTERNS = [
     (re.compile(r'(?:아이러니하게도|다름\s*아[닌닐])'), "rhetorical_flag"),
     # "(이후) 모든 것을 바꿀/뒤집을/흔들" — 운명론 코멘터리
     (re.compile(r'(?:이후|앞으로)?\s*모든\s*것을?\s*(?:바꿀|뒤집을|흔들)'), "fatalistic_commentary"),
+    # A8 (2026-06-25): 잔존 "말했다 공식" — 제스처가 의미를 진술/대신함 (산문8 L17/L21, 산문9 L36/L44). declaration_fb로 자동 피드백.
+    # "[제스처/사물]이 말했다/말하고 있었다" — gesture states the meaning
+    (re.compile(r'(?:것|사실|진실|움직임|기울기|동작|눈빛|침묵|손길|몸짓|온도|각도|시선|표정|숨|떨림)[이가]\s*(?:말했다|말하고\s*있었다|말한다|속삭였다)'), "gesture_speaks"),
+    # "[사실/것]이 ~을 대신하고 있었다" — a fact stands in for the unsaid
+    (re.compile(r'(?:사실|것|눈동자|시선|침묵)[이]\s*[^.]{1,40}(?:대신하고\s*있었다|대신했다)'), "stands_in_for"),
+    # "[제스처]가 아니었다. 그냥 Y" — negate-then-explain a gesture's meaning
+    (re.compile(r'(?:것이|게|동작이|움직임이|움직임은|제스처[가는])\s*아니었다\.\s*그냥'), "not_X_just_Y"),
 ]
 
 

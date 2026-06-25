@@ -235,6 +235,78 @@ def _filter_deep_read_by_depth(deep_read: str, depth: float) -> str:
     return renamed
 
 
+# 색 변조 vocab (Phase 1: per-NPC 빛 진폭 — warm-cluster 깸, Phase 2 compositor 입력 먹이)
+# 트리플 = NPC에게 내리쬐는 빛: [lighting 세팅, hue 색온도, saturation 강도]
+_HUE_GENERIC = {"warm", "amber", "cool", "grey"}   # crimson 등 distinctive hue는 보존(변조 제외)
+_SAT_TOKENS = {"solid", "vivid", "washed", "pastel"}
+_LIGHT_SOFT = {"diffused", "high_key"}             # backlight/single_source/golden_hour=distinctive, 보존
+_LIGHT_HARD = {"side_light", "low_key"}
+
+
+def _modulate_color_triplet(triplet: str, valence) -> str:
+    """[lighting, hue, saturation] 트리플을 valence로 변조 (= NPC에게 내리쬐는 빛).
+    hue: valence 부호 → 색온도(neg→cool/grey, pos→amber). generic hue만, crimson 등 distinctive 보존.
+    saturation: |valence| → 강도(강한 정동→vivid, 밋밋→washed).
+    lighting: |valence| → 경도(강한 정동→side_light 강한 빛, 밋밋→diffused 부드러운 빛). distinctive 보존.
+    위치 아닌 vocab으로 토큰 식별(2~3토큰 가변)."""
+    if not isinstance(valence, (int, float)):
+        return triplet
+    toks = [t.strip() for t in triplet.split(",")]
+    av = abs(valence)
+    for i, t in enumerate(toks):
+        if t in _HUE_GENERIC:
+            if valence <= -40:
+                toks[i] = "cool"
+            elif valence <= -15:
+                toks[i] = "grey"
+            elif valence >= 50:
+                toks[i] = "amber"
+        elif t in _SAT_TOKENS:
+            if av >= 60:
+                toks[i] = "vivid"
+            elif av <= 15:
+                toks[i] = "washed"
+        elif t in _LIGHT_SOFT:
+            if av >= 60:
+                toks[i] = "side_light"
+        elif t in _LIGHT_HARD:
+            if av <= 15:
+                toks[i] = "diffused"
+    return ", ".join(toks)
+
+
+def _value_modulate_notation(notation: str, psyche_val, relation_val) -> str:
+    """valence value(-100~+100)로 enum-base ♪▶◎에 intra-state 변주 삽입 (trajectory 삽입 패턴 일반화).
+    psyche.value → ♪ 수식어, relation.value → ▶ 거리. 같은 polyvagal state라도 NPC별로 갈라짐.
+    (2026-06-25: enum 고정 노테이션의 narrowness 보완 — 재료 더 먹여 변주.)"""
+    if not notation:
+        return notation
+    if isinstance(psyche_val, (int, float)):
+        m = ""
+        if psyche_val <= -50:
+            m = "marcato"
+        elif psyche_val <= -20:
+            m = "staccato"
+        elif psyche_val >= 50:
+            m = "dolce"
+        if m and " | ▶" in notation:
+            notation = notation.replace(" | ▶", f", {m} | ▶", 1)
+    if isinstance(relation_val, (int, float)):
+        c = ""
+        if relation_val >= 50:
+            c = "push-in"
+        elif relation_val <= -50:
+            c = "pull-back"
+        if c and " | ◎" in notation:
+            notation = notation.replace(" | ◎", f", {c} | ◎", 1)
+    # [color] 트리플 변조: valence 부호→hue 온도, |valence|→saturation 강도 (warm-cluster 깸)
+    if isinstance(psyche_val, (int, float)):
+        _cm = re.search(r"\[([^\]]+)\]", notation)
+        if _cm:
+            notation = notation[:_cm.start(1)] + _modulate_color_triplet(_cm.group(1), psyche_val) + notation[_cm.end(1):]
+    return notation
+
+
 def translate_psyche_states(
     psyche_data: dict,
     scene_type: str = "normal",
@@ -248,6 +320,7 @@ def translate_psyche_states(
 
     global_depth = _calc_depth(scene_type, energy)
     lines = []
+    _npc_notations = []  # Phase 2: cross-NPC 대비용 per-NPC 대표 노테이션(색 변조된 soma) 수집
 
     for name, state in psyche_data.items():
         if isinstance(state, str):
@@ -276,7 +349,9 @@ def translate_psyche_states(
         if pvg and isinstance(pvg, str):
             pvg_n = _POLYVAGAL_NOTATION.get(pvg.lower().strip())
             if pvg_n:
+                pvg_n = _value_modulate_notation(pvg_n, psyche.get("value"), relation.get("value"))
                 notations.append(pvg_n)
+                _npc_notations.append((name, pvg_n))
         ca = soma.get("cultural_affect", "")
         if ca and isinstance(ca, str) and ca != "null":
             ca_n = _CULTURAL_AFFECT_NOTATION.get(ca.lower().strip())
@@ -321,6 +396,17 @@ def translate_psyche_states(
         resurface = state.get("resurfacing")
         if resurface and isinstance(resurface, str) and resurface != "null" and depth < 0.6:
             lines.append(f"  └ resurfacing: {resurface}")
+
+    # [Phase 2] cross-NPC 대비 (연출가-독자): 2+ NPC면 색/♪▶◎ 진폭을 contrast-lead로 합성 → Slot14 envelope가 감쌈
+    if len(_npc_notations) >= 2:
+        try:
+            from notation_compositor import compose_notations
+            _contrast = compose_notations(_npc_notations, scene_type)
+            if _contrast:
+                lines.append("")
+                lines.append(_contrast)
+        except Exception:
+            pass
 
     return "\n".join(lines)
 
@@ -403,17 +489,24 @@ _ENERGY_END = {
 }
 
 
-def translate_energy_direction(energy: str) -> str:
+def translate_energy_direction(energy: str, scene_light: Optional[dict] = None) -> str:
     """energy_direction → light + tone + beat + end (conditional injection).
-    Replaces static PACING_CONTROL_PROTOCOL constant."""
+    Replaces static PACING_CONTROL_PROTOCOL constant.
+    scene_light: theoria spatial_read.light(조건-도출 씬-색) 있으면 Light 라인에 우선 사용, 없으면 energy 5버킷 fallback."""
     if not energy:
         return ""
     key = energy.lower().strip()
 
     parts = []
-    visual = _ENERGY_VISUAL.get(key, "")
-    if visual:
-        parts.append(f"Light: {visual}")
+    # scene Light: theoria 조건-도출 색 우선, 없으면 energy→visual fallback (역할분리: theoria=풍부, energy=폴백)
+    if isinstance(scene_light, dict) and (scene_light.get("lighting") or scene_light.get("hue")):
+        _trip = ", ".join(x for x in (scene_light.get("lighting"), scene_light.get("hue"), scene_light.get("saturation")) if x)
+        if _trip:
+            parts.append(f"Light: [{_trip}]")
+    else:
+        visual = _ENERGY_VISUAL.get(key, "")
+        if visual:
+            parts.append(f"Light: {visual}")
 
     tone = _ENERGY_TONE.get(key, "")
     if tone:

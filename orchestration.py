@@ -138,8 +138,8 @@ class OrchestrationService:
         from une_facade import UniversalNarrativeEngine
         self.une = UniversalNarrativeEngine(client_genai, model_id_flash)
 
-        # [!다시] 채널별 도메인 스냅샷 (전체 상태 롤백용, 인메모리)
-        self._retry_snapshots: Dict[str, Dict[str, Any]] = {}
+        # [!다시] 채널별 도메인 스냅샷 — 모듈-전역 공유(인스턴스 재생성에도 보존, 상단 _RETRY_SNAPSHOTS).
+        self._retry_snapshots = _RETRY_SNAPSHOTS
 
     # =========================================================
     # STEP 1: CONTEXT GATHERING
@@ -1332,6 +1332,14 @@ class OrchestrationService:
             if len(self._retry_snapshots) > 20:
                 oldest = min(self._retry_snapshots, key=lambda k: self._retry_snapshots[k].get("_ts", 0))
                 del self._retry_snapshots[oldest]
+            # [!다시] 디스크 영속화 — 봇 재시작/인스턴스 재생성에도 보존 (retry_last 폴백 조회).
+            try:
+                import sqlite_store
+                _snap_data = self._retry_snapshots[channel_id]["_data"]
+                _snap_turn = (_snap_data.get("world_state", {}) or {}).get("turn_index", 0)
+                sqlite_store.save_retry_snapshot(channel_id, _snap_turn, _snap_data)
+            except Exception as _e_rs:
+                logger.debug(f"[!다시] snapshot persist skipped: {_e_rs}")
 
             # async output (typing indicator)
             async with message.channel.typing():
@@ -1521,7 +1529,8 @@ class OrchestrationService:
                     except Exception as _e_kf:
                         logger.warning(f"[KoreanFloor] skipped: {_e_kf}")
 
-                    # I축(재정착): log-only 관측. verbatim 후렴 재발. 윈도우는 _tracking_update로 영속.
+                    # I축(재정착): verbatim 후렴 재발 → _ce_fb 넛지를 style_fb로 다음턴 주입(CADENCE_ECHO_INJECT). 윈도우 영속.
+                    _ce_fb = ""
                     _ce_window = None
                     try:
                         from response_processor import detect_cadence_echo
@@ -1556,6 +1565,7 @@ class OrchestrationService:
                         cliche_fb, cargo_fb, rotation_fb, pidgin_fb,
                         struct_fb, tension_fb, deflection_fb,
                         arrival_fb, declaration_fb, explain_render_fb, vending_fb,
+                        (_ce_fb if config.CADENCE_ECHO_INJECT else None),
                     ]))
                     if style_fb:
                         fmt_feedback = f"{fmt_feedback} {style_fb}".strip() if fmt_feedback else style_fb
@@ -1658,6 +1668,15 @@ class OrchestrationService:
         # 3. 도메인 스냅샷 복원 (퀘스트/NPC/둠/기력/히스토리 전부 롤백)
         snapshot_entry = self._retry_snapshots.get(channel_id)
         snapshot = snapshot_entry.get("_data") if snapshot_entry else None
+        if snapshot is None:
+            # 인메모리 miss (봇 재시작/인스턴스 재생성) → 디스크 영속본 폴백
+            try:
+                import sqlite_store
+                snapshot = sqlite_store.read_retry_snapshot(channel_id)
+                if snapshot:
+                    logger.info(f"[!다시] Snapshot loaded from disk for {channel_id}")
+            except Exception as _e_rs:
+                logger.debug(f"[!다시] disk snapshot read skipped: {_e_rs}")
         if snapshot:
             domain_manager.save_domain(channel_id, copy.deepcopy(snapshot))
             logger.info(f"[!다시] Domain snapshot restored for {channel_id}")
@@ -1856,6 +1875,11 @@ def get_orchestration_service(client_genai, model_id: str, model_id_flash: str) 
 # =========================================================
 # RUNTIME SINGLETON (Avoids main <-> command_handler cycles)
 # =========================================================
+
+# [!다시] 채널별 도메인 스냅샷 — 모듈-전역(인스턴스 재생성에도 보존).
+# get_orchestration_runtime이 params(client id/model) 변동 시 OrchestrationService를 재생성하는데,
+# 스냅샷이 인스턴스 속성이면 그때 비워져 !다시가 "no snapshot"→history-only 폴백→시간/기력/퀘스트 미복원이던 버그 fix.
+_RETRY_SNAPSHOTS = {}
 
 _orchestration_runtime = None
 _orchestration_params = None

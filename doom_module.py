@@ -521,10 +521,17 @@ class DoomModule:
         # legacy 위기진폭 doom 잔재. 둠 = 서사 진행도/챕터 볼륨 리브랜드 정규편입 이후
         # 평화 장면 → 자동 doom 감소는 의미 충돌. 진정/해소는 間 페이즈로만 흐름.
 
+        # ── 5.4. per-turn 활성도 base gain (2026-06-25 배선) ──
+        # DOOM_RAW_GAIN_BASE(의도됐으나 미배선이던 상수)를 energy 기반 tension으로 변조 → raw_delta 합류.
+        # calm=거의정지(起 유지), 긴장(rising/detonation)=상승. carry(소수누적)+phase가 셰이핑. 판정→doom 폐기 후 주 상승원.
+        energy_dir = bus.dai.get("energy_direction", "idle")
+        tension_factor = config.DOOM_TENSION_FACTOR.get(energy_dir, 0.15)
+        base_gain = config.DOOM_RAW_GAIN_BASE * tension_factor
+
         # ── 5.5. Phase × Lens × Scene multiplier 적용 ───────
-        # 누적된 raw delta(시계 완성/해결, status, judgment)에 결합 multiplier.
+        # 누적된 raw delta(시계 완성/해결 + base gain)에 결합 multiplier.
         # 間 페이즈는 multiplier=0이라 자동으로 자연 감쇠로 넘어감 (별도 처리).
-        raw_delta = delta
+        raw_delta = delta + base_gain
         if not in_intermission:
             # 소수 carry 누적: multiplier 적용 결과(float)를 이월 잔여와 합쳐 정수부만 적용하고
             # 소수부는 다음 턴으로 이월. round로 작은 escalation(+1×0.4=0.4 등)이 0이 되어

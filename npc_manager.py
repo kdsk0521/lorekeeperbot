@@ -157,7 +157,7 @@ def _extract_structured_fields(desc: str) -> Dict[str, str]:
     # Role (예: "- Rank/Role: Emergency physician / Sharehouse resident (Room 2)")
     role_m = re.search(r'(?:Rank/Role|Occupation)[:\s]+(.+)', desc, re.IGNORECASE)
     if role_m:
-        role_text = _clean_markdown(role_m.group(1))[:100]
+        role_text = _clean_markdown(role_m.group(1))   # [1M remap] 필드캡 제거(시트 5k자, 한 줄이라 자연 바운드)
         fields["role"] = role_text
 
     # Location — Sharehouse resident (Room X) 패턴 우선
@@ -177,12 +177,12 @@ def _extract_structured_fields(desc: str) -> Dict[str, str]:
     # Speech/Tone (예: "**Tone:** Low, tired, flat.")
     tone_m = re.search(r'\*?\*?Tone\*?\*?[:\s]+(.+)', desc)
     if tone_m:
-        fields["tone"] = _clean_markdown(tone_m.group(1))[:100]
+        fields["tone"] = _clean_markdown(tone_m.group(1))   # [1M remap] 캡 제거
 
     # Personality (Core Operating Principle에서 한 줄)
     personality_m = re.search(r'### Core Operating Principle\s*\n+(.+)', desc)
     if personality_m:
-        fields["personality"] = _clean_markdown(personality_m.group(1))[:120]
+        fields["personality"] = _clean_markdown(personality_m.group(1))   # [1M remap] 캡 제거
 
     # Hard Constraints (ALL-CAPS 마커: CANNOT, NEVER, MUST NOT 등)
     # 프로필 중간에 묻힌 핵심 제약을 자동 추출 → recency echo용
@@ -198,7 +198,7 @@ def _extract_structured_fields(desc: str) -> Dict[str, str]:
     if constraints:
         # 최대 3개, 가장 짧은 것 우선 (핵심일수록 짧음)
         constraints.sort(key=len)
-        fields["constraints"] = " | ".join(constraints[:3])
+        fields["constraints"] = " | ".join(constraints)   # [1M remap] 캡 제거(전 constraint, 항목당 20~200자 필터는 유지)
 
     # Relation Keywords — 프로필에서 관계 키워드 스캔 → initial_depth/tension
     _RELATION_KEYWORDS = {

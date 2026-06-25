@@ -59,10 +59,10 @@ _TELESCOPE_GATE_NAMES = (
     # V4 Layer 1 (The Real)
     "Field", "Probe",
     # V4 Layer 2 (The Symbolic)
-    "Scene", "Scene.Who", "Scene.When/Where", "Scene.What", "Scene.Causal", "Scene.Chain",
+    "Scene", "Scene.Who", "Scene.When/Where", "Scene.Stance", "Scene.Axioms", "Scene.What", "Scene.Causal", "Scene.Chain",
     "Character", "Char.Why", "Char.PC", "Char.Pidgin", "Char.Rift",
-    "Craft", "Craft.Cargo", "Craft.Rhythm", "Craft.Attractor", "Craft.Scheme",
-    "Collision", "Gravity", "Alignment", "Vending", "Unshown", "Final",
+    "Craft", "Craft.Spent", "Craft.Cargo", "Craft.Rhythm", "Craft.Attractor", "Craft.Scheme", "Craft.Echo",
+    "Collision", "Gravity", "Alignment", "Alignment.Silenced", "Vending", "Unshown", "Final", "Scope",
     # V4 Adversarial
     "C",
     # V2 legacy
@@ -158,6 +158,11 @@ def strip_telescope(raw_response: str) -> str:
     if not raw_response:
         return ""
     text = raw_response
+
+    # 격랑식 경계: ┫(텔레스코프 종료 마커)가 있으면 그 *마지막* 이후가 산문.
+    # → ┣ 앞 네이티브 thinking(추론 ON 시 inline 누출) + ┣…┫ 블록을 한 번에 제외.
+    if "┫" in text:
+        text = text.rsplit("┫", 1)[-1]
 
     # Layer 1: 블록 단위 제거 (전체 텍스트에서 반복)
     for pattern in _TELESCOPE_BLOCK_PATTERNS:
