@@ -380,6 +380,8 @@ async def cmd_lore(ctx: CommandContext) -> None:
                  # Save as default PC info for !mask to pick up
                  domain_manager.set_default_pc_info(channel_id, pc_info)
                  pc_msg = f"\n주인공 식별: {pc_info.get('name')} (가면 설정 시 자동 적용)"
+                 # 로어가 식별한 PC가 배경/설명만 있고 기계 필드가 비면 시트 자동 보강
+                 pc_msg += await maybe_enrich_pc_sheet(ctx.genai_client, channel_id)
                  
                  # Auto-apply to existing participants with matching name
                  updated_uids = domain_manager.sync_matching_participants(channel_id, pc_info)
@@ -698,6 +700,35 @@ async def cmd_mask(ctx: CommandContext) -> None:
              mapped_msg = " (PC 정보 동기화됨)"
              
     await ctx.send(f"🎭 **{target}**(으)로 변신했습니다.{mapped_msg}")
+
+
+async def maybe_enrich_pc_sheet(client, channel_id: str, force: bool = False) -> str:
+    """현재 default PC가 설명/배경은 있으나 기계 필드(passives/inventory)가 비면
+    analyze_character_sheet 1회로 시트를 보강한다. fill-empty(기존 값 보존).
+    `!pc` 승격 enrich와 동일 기계를 '로어북만 있는 PC'에도 적용하는 경로.
+    반환=상태 메시지(빈 문자열이면 미실행/보강할 것 없음)."""
+    if not client:
+        return ""
+    pc = domain_manager.get_default_pc_info(channel_id)
+    if not pc:
+        return ""
+    # 이미 기계 필드가 차 있으면 스킵 (force면 재분석 허용)
+    if not force and (pc.get("passives") or pc.get("inventory")):
+        return ""
+    source_text = "\n".join(s for s in (pc.get("description", ""), pc.get("background", "")) if s).strip()
+    if len(source_text) < 300:
+        return ""
+    try:
+        sheet = await cognition.analyze_character_sheet(client, config.MODEL_ID_FLASH, source_text)
+        pc = npc_manager.merge_character_sheet_into_pc(pc, sheet)
+        domain_manager.set_default_pc_info(channel_id, pc)
+        domain_manager.sync_matching_participants(channel_id, pc)
+        n_pas, n_inv = len(pc.get("passives", [])), len(pc.get("inventory", []))
+        if n_pas or n_inv or sheet:
+            return f"\n🧩 PC 시트 자동보강: 패시브 {n_pas}개 / 소지품 {n_inv}개"
+    except Exception as _e:
+        logger.warning(f"[PC Enrich] 자동보강 실패(기본 정보로 진행): {_e}")
+    return ""
 
 
 @registry.register("pc", category="Player", aliases=["주인공", "승격"], description="NPC를 PC(주인공)로 승격 / `!pc <NPC이름>`")
@@ -1290,19 +1321,19 @@ async def cmd_modules(ctx: CommandContext) -> None:
     """!모듈 - 모듈 상태 확인. 핵심 4모듈은 항상 활성."""
     arg = ctx.raw_args.strip().lower()
     active = domain_manager.get_active_modules(ctx.channel_id)
-    core_mods = [("judgment", "판정"), ("doom", "둠"), ("anomaly", "이변"), ("mental", "활력")]
+    core_mods = [("judgment", "판정"), ("doom", "둠"), ("anomaly", "이변")]
     extra_mods = [("board", "게시판")]
 
     # board만 일괄 토글 가능
     if arg in ['on', '켜기', 'true', 'all']:
         for code, _ in extra_mods:
             domain_manager.toggle_module(ctx.channel_id, code, True)
-        await ctx.send("✅ **부가 모듈이 활성화되었습니다.**\n• 게시판 ✅\n\n(판정/둠/이변/활력은 항상 활성)")
+        await ctx.send("✅ **부가 모듈이 활성화되었습니다.**\n• 게시판 ✅\n\n(판정/둠/이변은 항상 활성)")
         return
     if arg in ['off', '끄기', 'false', 'none']:
         for code, _ in extra_mods:
             domain_manager.toggle_module(ctx.channel_id, code, False)
-        await ctx.send("❌ **부가 모듈이 비활성화되었습니다.**\n• 게시판 ❌\n\n(판정/둠/이변/활력은 항상 활성)")
+        await ctx.send("❌ **부가 모듈이 비활성화되었습니다.**\n• 게시판 ❌\n\n(판정/둠/이변은 항상 활성)")
         return
 
     # 상태 확인
@@ -1310,11 +1341,13 @@ async def cmd_modules(ctx: CommandContext) -> None:
     for code, name in core_mods:
         msg.append(f"• {name} ({code}): ✅ ON")
     msg.append("")
-    msg.append("**부가 모듈** (토글 가능)")
+    msg.append("**토글 가능 모듈**")
+    _vc_on = domain_manager.is_vigor_composure_active(ctx.channel_id)
+    msg.append(f"• 활력/평형 (mental): {'✅ ON' if _vc_on else '❌ OFF'}")
     for code, name in extra_mods:
         status = "✅ ON" if code in active else "❌ OFF"
         msg.append(f"• {name} ({code}): {status}")
-    msg.append("\n💡 `!게시판 on/off` — 부가 모듈 제어")
+    msg.append("\n💡 `!활력모듈 on/off` · `!게시판 on/off` — 토글 모듈 제어")
 
     await ctx.send("\n".join(msg))
 
@@ -1343,10 +1376,30 @@ async def cmd_toggle_anomaly(ctx: CommandContext) -> None:
     "활력모듈",
     category="System",
     aliases=["기력모듈", "멘탈모듈", "mentalmod", "mental_mod", "vigor_mod", "활력mod", "기력mod", "평형모듈"],
-    description="활력/평형 모듈 정보"
+    description="활력/평형 모듈 on/off 토글 및 상태"
 )
 async def cmd_toggle_mental(ctx: CommandContext) -> None:
-    await ctx.send("💪 **활력/평형 모듈**: ✅ 항상 활성\n활력/평형 2축 시스템이 항상 작동합니다.")
+    """!활력모듈 [on/off] — 활력/평형 2축 시스템 채널 단위 토글."""
+    arg = ctx.raw_args.strip().lower()
+    if arg in ['on', '켜기', 'true', '활성', 'all']:
+        domain_manager.set_vigor_composure_active(ctx.channel_id, True)
+        await ctx.send("💪 **활력/평형 모듈: ✅ ON**\n활력/평형 2축 시스템이 작동합니다.")
+        return
+    if arg in ['off', '끄기', 'false', '비활성', 'none']:
+        domain_manager.set_vigor_composure_active(ctx.channel_id, False)
+        await ctx.send(
+            "💪 **활력/평형 모듈: ❌ OFF**\n"
+            "이 채널의 활력/평형 처리·수치 변동·프롬프트 주입이 모두 중단됩니다. (수치는 현재값으로 동결)\n"
+            "`!활력모듈 on` 으로 다시 켤 수 있습니다."
+        )
+        return
+    # 인자 없음 → 현재 상태 표시
+    _on = domain_manager.is_vigor_composure_active(ctx.channel_id)
+    _status = "✅ ON" if _on else "❌ OFF"
+    await ctx.send(
+        f"💪 **활력/평형 모듈**: {_status}\n"
+        "활력/평형 2축 시스템.  `!활력모듈 on` / `!활력모듈 off` 로 켜고 끌 수 있습니다."
+    )
 
 
 # =========================================================

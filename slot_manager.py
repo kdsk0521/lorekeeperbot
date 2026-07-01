@@ -960,7 +960,7 @@ def build_34_step_prompt(ctx) -> str:
     else:
         lore_content = getattr(ctx, 'lore_txt', '')
 
-    # --- [Slot 8+] Location Rules (!룰 추가) → Lore 하단 append ---
+    # --- [Slot 23] Active Rules (!룰 추가) → RULES zone (Lore→directive 위치, recency 무게↑) ---
     if channel_id:
         _ws = domain_manager.get_world_state(channel_id)
         _rules_parts = []
@@ -977,7 +977,8 @@ def build_34_step_prompt(ctx) -> str:
                 rule_lines.append(f"- {k}: {desc}")
             _rules_parts.append(" ".join(rule_lines))
         if _rules_parts:
-            lore_content += "\n\n### [ACTIVE RULES]\n" + "\n".join(_rules_parts)
+            # 0626: Lore(Slot8) append → RULES zone(Slot23, 빈슬롯). house/world 룰은 lore 참조보다 directive에 어울림 + recency로 무게↑.
+            builder.set_slot(23, "### [ACTIVE RULES — house/world rules; honor these every turn]\n" + "\n".join(_rules_parts))
 
     # --- [Slot 9] Fermented History + Memory Triggers ---
     fermented_base = getattr(ctx, 'fermented_summary_text', '')
@@ -1598,7 +1599,8 @@ def build_34_step_prompt(ctx) -> str:
             real_time_data += f"\n\n{_item_text}"
 
     # Vigor ↔ Composure CONTRAST: iceberg 번역 (수치·해석 제거, 괴리 사실만)
-    if channel_id:
+    # 채널 토글 OFF면 프롬프트 주입도 스킵 (점화원 제거)
+    if channel_id and domain_manager.is_vigor_composure_active(channel_id):
         try:
             _target_p = domain_manager.get_domain(channel_id).get("participants", {}).get(user_id, {})
             _mem = _target_p.get("ai_memory", {}) if isinstance(_target_p, dict) else {}

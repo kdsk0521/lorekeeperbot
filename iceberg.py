@@ -745,6 +745,12 @@ def translate_story_direction(story_dir: Optional[dict], scene_type: str = "norm
         if effect:
             parts.append(f"[narrative undercurrent] {effect}")
 
+    # latent relations (conflict/alliance 그래프) → "생길 수 있는 사건" 잠재 힌트 (anti-railroad, 단정 아님)
+    latent = story_dir.get("latent_relations")
+    if latent and isinstance(latent, list):
+        for _lr in latent[:3]:
+            parts.append(f"[latent — could surface, not mandated] {_lr}")
+
     if not parts:
         return ""
     return "### Story Direction\n" + "\n".join(parts)

@@ -1133,6 +1133,46 @@ def detect_korean_floor(response: str,
 
 
 # =========================================================
+# 숫자·계측 집착 (Number Fixation) — deepseek 렌더 성향 백스톱, log-only
+# =========================================================
+# deepseek 의 계측/바이탈 나열 성향(BPM·Hz·mm·골전도 류)을 씬 불문 관측한다.
+# 프롬프트 측 교정은 PROSE_CRAFT "Felt quantity over numbers"(전역) + MATURE 인식론 제약(친밀).
+# 서사적 숫자(나이·가격·층·시각·인원)는 안 잡도록 *단위/바이탈/율속 시그니처*만 타깃.
+_NUMBER_FIXATION_PATTERNS = [
+    (re.compile(r"\d+(?:\.\d+)?\s*(?:bpm|Hz|㎐|dB|데시벨|cm|mm|밀리미터|센티미터|kg|킬로그램|%|퍼센트|℃|헤르츠)", re.I), "unit"),
+    (re.compile(r"분당\s*\d+|\d+\s*회\s*/?\s*(?:분|초)|\d+\s*번\s*(?:뛰|박동)"), "rate"),
+    (re.compile(r"(?:심박|맥박|혈압|체온|호흡수|주파수|진동수)\D{0,8}\d"), "vital"),
+    (re.compile(r"\d+\.\d+\s*(?:초|도|배|밀리)"), "decimal_measure"),
+]
+
+
+def detect_number_fixation(response: str, min_chars: int = 150) -> Tuple[str, Dict]:
+    """계측/바이탈 숫자 집착(deepseek 성향) 관측 — soft 신호만, 하드 블록 아님.
+
+    단위·바이탈·율속 시그니처만 잡아 서사적 숫자(나이/가격/시각/인원) 오탐을 피한다.
+    2건 이상부터 발화(1건은 서사적/우연 가능). Returns: (feedback, stats). 비면 통과.
+    """
+    text = response or ""
+    if len(re.sub(r"\s", "", text)) < min_chars:
+        return "", {}
+    hits: Dict[str, int] = {}
+    samples: List[str] = []
+    for rx, label in _NUMBER_FIXATION_PATTERNS:
+        n = 0
+        for m in rx.finditer(text):
+            n += 1
+            if len(samples) < 5:
+                samples.append(m.group(0).strip())
+        if n:
+            hits[label] = n
+    total = sum(hits.values())
+    stats = {"total": total, "by_kind": hits, "samples": samples}
+    if total >= 2:
+        return ("[Num:계측집착] 측정치·단위·바이탈 수치가 산문에 누적 → 느껴진 크기로(계기 언어 회피)", stats)
+    return "", {}
+
+
+# =========================================================
 # I축: 닫음-운율 재정착 (Cadence Echo) — verbatim 후렴 백스톱
 # =========================================================
 # 근거: calm의 그늘(comfort-groove) — 안전한 닫음 의식을 매 턴 verbatim 재소비.

@@ -502,25 +502,32 @@ def process_flash_relations(
 # Cleanup
 # =========================================================
 
-def cleanup_stale_relations(channel_id: str, current_turn: int, max_age: int = 50) -> int:
-    """오래된 약한 관계 정리. whisper 이하 + max_age 턴 미갱신."""
+def cleanup_stale_relations(channel_id: str, current_turn: int, grace: int = 8,
+                            fade_rate: float = 0.03, floor: float = 0.05) -> int:
+    """안 건드린 관계를 *점감(fade)* — delete 아니라 흐려짐. floor 이하로 옅어지면 그때 제거.
+    매 턴 호출 가정(turn-end). 관계는 사라지기보다 흐려진다. (grace/fade_rate/floor tunable.)"""
     store = _get_relations_store(channel_id)
     edges = store.get("edges", {})
     remove_keys = []
+    faded = 0
 
     for key, edge in edges.items():
-        intensity = edge.get("intensity", 0.5)
         last_turn = edge.get("last_turn", 0)
         age = current_turn - last_turn
-
-        if intensity < 0.3 and age > max_age:
-            remove_keys.append(key)
+        if age <= grace:
+            continue  # 최근 갱신된 관계는 보존 (활성 관계는 안 흐려짐)
+        new_intensity = float(edge.get("intensity", 0.5)) - fade_rate
+        if new_intensity <= floor:
+            remove_keys.append(key)  # 완전히 흐려짐 → 제거
+        else:
+            edge["intensity"] = round(new_intensity, 3)
+            faded += 1
 
     for key in remove_keys:
         del edges[key]
 
-    if remove_keys:
+    if remove_keys or faded:
         _save_relations_store(channel_id, store)
-        logger.info("[EntityRelations] Cleaned %d stale relations", len(remove_keys))
+        logger.info("[EntityRelations] Faded %d relations, removed %d (decayed below floor)", faded, len(remove_keys))
 
     return len(remove_keys)

@@ -247,8 +247,8 @@ LANGUAGE RULE: every render-facing direction/analysis field → ENGLISH telegrap
 
 ## INPUT & CONTEXT
 - "InputAnalysis": {"Original": str, "Enhanced": str, "Plausibility": "High/Low/Impossible", "LogicTrace": [], "Momentum": "Open/Closed"}
-- "Observation": str (English telegraphic - neutral account of what actually happened. no interpretation, facts only.)
-- "UserIntent": str (English telegraphic - what the user immediately wants)
+- "Observation": str (ENGLISH-ONLY telegraphic - neutral account of what actually happened. no interpretation, facts only.)
+- "UserIntent": str (ENGLISH-ONLY telegraphic - what the user immediately wants)
 - "input_mode": "decree" | "attempt" | "probe"
   - decree: user input = established fact, world absorbs ("문을 연다", "밥을 먹는다")
   - attempt: user input = intention, outcome uncertain ("자물쇠를 따본다", "절벽을 오른다")
@@ -261,9 +261,9 @@ LANGUAGE RULE: every render-facing direction/analysis field → ENGLISH telegrap
 
 
 ## STAKES & ENVIRONMENT
-- "Position": {"value": 0.0-1.0, "reason": "English telegraphic - why this position"}
-- "Effect": {"value": 0.0-1.0, "reason": "English telegraphic - potential leverage"}
-- "Aspects": [{"text": "English telegraphic aspect", "for_or_against": "for/against", "reason": "English telegraphic"}, ...]
+- "Position": {"value": 0.0-1.0, "reason": "ENGLISH-ONLY telegraphic - why this position"}
+- "Effect": {"value": 0.0-1.0, "reason": "ENGLISH-ONLY telegraphic - potential leverage"}
+- "Aspects": [{"text": "ENGLISH-ONLY telegraphic aspect", "for_or_against": "for/against", "reason": "ENGLISH-ONLY telegraphic"}, ...]
 
 
 ## CHARACTER ANALYSIS (psyche_states)
@@ -274,34 +274,34 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
 - "psyche_states": {
     "CharName": {
         "psyche": {
-            "descriptor": "English telegraphic cue - MSE observable affect signs. direction/vector, NOT finished prose",
+            "descriptor": "ENGLISH-ONLY telegraphic cue - MSE observable affect signs. direction/vector, NOT finished prose",
             "value": -100~+100,
             "primary_emotion": "plutchik enum (陰陽: note opposing seed within)",
-            "active_needs": ["henderson/erikson enum - 현재 행동 지배하는 욕구 max 2"],
+            "active_needs": ["henderson/erikson enum - needs currently dominating behavior, max 2"],
             "self_opacity": "str or null (Self-Opacity: 'claims X — actual: Y' format. null = self-aware)",
             "decision_mode": "reactive/deliberate (Kahneman + Carstensen)",
             "coping": "problem_focused/emotion_focused/avoidant/null (Lazarus. null = no stressor)",
             "apprehension_gap": "str or null (Absence/Approximation/Distortion: what THIS character failed to perceive, roughly approximated, or distorted through their own schema/defense. null = accurate apprehension)"
         },
         "soma": {
-            "descriptor": "English telegraphic cue - SOAP-OA observable body signals only, no emotion labels. direction/vector, NOT finished prose",
+            "descriptor": "ENGLISH-ONLY telegraphic cue - SOAP-OA observable body signals only, no emotion labels. direction/vector, NOT finished prose",
             "polyvagal": "ventral/sympathetic/dorsal (Porges: 3+ signals required)",
             "cultural_affect": "han/jeong/hwabyung/nunchi/chaemyeon/simma/gi/null",
-            "env_influence": "str or null (English telegraphic. Nightingale: environment→psyche influence. null = negligible)",
+            "env_influence": "str or null (ENGLISH-ONLY telegraphic. Nightingale: environment→psyche influence. null = negligible)",
             "dissociation": "none/mild/moderate/severe/null (Dissociation Spectrum: dorsal→entry point. mild=flat affect,delayed response. moderate=third-person self-reference,time gaps. severe=autopilot,recognition failure. Track across turns. null = no trigger)"
         },
         "relation": {
-            "descriptor": "English telegraphic cue - current attitude to PC as concrete behavior. direction/vector, NOT finished prose",
+            "descriptor": "ENGLISH-ONLY telegraphic cue - current attitude to PC as concrete behavior. direction/vector, NOT finished prose",
             "value": -100~+100,
             "attachment": "secure/anxious/avoidant/disorganized (Bowlby: from behavioral evidence)",
             "phase": "orientation/identification/exploitation/resolution (Peplau: cannot skip stages)",
             "logos_layer": "str (Logos [CUSTOM]: current layer state + THIS TURN behavioral hint)",
-            "value_conflict": "str or null (English telegraphic. 'X vs Y' tension axis ONLY, no resolution narration. null = no conflict)",
+            "value_conflict": "str or null (ENGLISH-ONLY telegraphic. 'X vs Y' tension axis ONLY, no resolution narration. null = no conflict)",
             "stage": "front/back (Goffman: by audience, not just location)",
             "group_dynamic": "conformity/obedience/groupthink/diffusion/null (Group Dynamics: active in 3+ character scenes. null = no group pressure)",
             "negotiation_stance": "cooperative/competitive/exploitative/null (BATNA strength reflects Position value. null = no negotiation active)"
         },
-        "deep_read": "str (English telegraphic. Four-Layer [CUSTOM]: Surface→Adaptation→Core→Lack, 1 fragment each. Lack is never stated by character.)",
+        "deep_read": "str (ENGLISH-ONLY telegraphic. Four-Layer [CUSTOM]: Surface→Adaptation→Core→Lack, 1 fragment each. Lack is never stated by character.)",
         "resurfacing": "str or null (past trauma, contradictory desire, or 'resolved' emotion re-emerging through current interaction. What resurfaces and what triggered it. null = no resurgence)"
     }
   }
@@ -315,7 +315,7 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
     "open_threads": ["thread type: description", ...],
     "silence_type": "reflective/hesitant/heavy/tense/null (間/Ma: classify when dialogue pauses)"
   }
-- "suggested_beats": [str, ...]  (0~3 English telegraphic directives. Format: "next beat: ..." — world-driven next-turn hints for the Story Director. Non-redundant axes (external trigger / internal pressure / relational shift / environmental beat). [] when scene rests in quiet resolution. DO NOT write dialogue or prose — beat direction only.)
+- "suggested_beats": [str, ...]  (0~3 ENGLISH-ONLY telegraphic directives. Format: "next beat: ..." — world-driven next-turn hints for the Story Director. Non-redundant axes (external trigger / internal pressure / relational shift / environmental beat). [] when scene rests in quiet resolution. DO NOT write dialogue or prose — beat direction only.)
 - "memory_triggers": [{"trigger": str, "character": str, "echo": str, "type": "traumatic/nostalgic/shameful/loving (Fermentation Recall: current state distorts memory)"}]
 - "scene_register": "mirror" | "law" | "remainder" | null
   - mirror: character sees own trait in another without recognizing it. Name trait AND misrecognition.
@@ -336,8 +336,8 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
 
 
 ## NARRATIVE HOOKS & TIME
-- "narrative_hook": str | null (English telegraphic - Observe the next event that naturally arises from currently unresolved world state. Describe only consequences produced by the world's existing forces. Return null when the world is at peace.)
-- "time_flow": {"ticks": 1-20, "reason": "Korean", "explicit_hours": number | null, "target": {"slot": "시간대명(새벽/오전/오후/황혼/저녁/심야)", "day_offset": 0|1, "hour": 0-23, "minute": 0-59, "year": int | null, "month": 1-12 | null, "day_in_month": 1-30 | null} | null}
+- "narrative_hook": str | null (ENGLISH-ONLY telegraphic - Observe the next event that naturally arises from currently unresolved world state. Describe only consequences produced by the world's existing forces. Return null when the world is at peace.)
+- "time_flow": {"ticks": 1-20, "reason": "ENGLISH-ONLY telegraphic", "explicit_hours": number | null, "target": {"slot": "시간대명(새벽/오전/오후/황혼/저녁/심야)", "day_offset": 0|1, "hour": 0-23, "minute": 0-59, "year": int | null, "month": 1-12 | null, "day_in_month": 1-30 | null} | null}
   - target: ONLY when user EXPLICITLY mentions absolute time/date (e.g. "다음날 아침", "오후 4시에 만나자", "3월 5일", "2년 5월 12일 오후 3시"). Do NOT use target for simple actions.
   - hour: exact hour within slot. minute: exact minute. 모두 ONLY when user EXPLICITLY mentions.
   - year/month/day_in_month (V8.5 캘린더): ONLY when user EXPLICITLY mentions year/month/day (e.g. "3월 5일" → month=3, day_in_month=5 / "2년 1월" → year=2, month=1). 단순 시각 점프엔 null. day_offset과 별개 — day_offset은 "다음날/이튿날" 같은 상대, year/month/day_in_month는 절대 날짜.
@@ -345,22 +345,22 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
   - 예: "다음날 아침 9시" → {"target": {"slot": "오전", "day_offset": 1, "hour": 9}}, "10분 뒤" → {"explicit_hours": 0.167, "ticks": 5}, "3월 5일 오후 2시" → {"target": {"slot": "오후", "month": 3, "day_in_month": 5, "hour": 14}}.
   - SOURCE GATE: extraction sources ONLY from current-turn user input. Vague phrases ("한참 후", "잠시 후") use ticks only.
 - "doom_clocks": {
-    "clock_updates": [{"name": str, "delta": int(-1~+2), "reason": "Korean"}],
+    "clock_updates": [{"name": str, "delta": int(-1~+2), "reason": "ENGLISH-ONLY telegraphic"}],
     "clock_new": {"name": "Korean", "segments": 4|6|8, "tick_mode": "action|time|hybrid", "threat": "Korean — 이 시계가 완성되면 무슨 일이 벌어지는가", "defense_action": "Korean — 이 시계를 막으려면 무엇을 해야 하는가 (구체적 행동 힌트)", "source": "narrative|consequence", "linked_entity": "str or null — 관련 NPC/세력 이름", "tags": ["Korean"]} | null,
     "clock_resolved": ["시계 이름 — 서사적으로 위협이 해소된 경우만"]
   }
-- "mental_impact": {"applicable": boolean, "vigor_severity": "none/mild/heavy/extreme", "composure_severity": "none/mild/heavy/extreme", "reason": "Korean"}
-  - vigor_severity: 신체 부하 정도. consensual intimacy/comfort = mild. NOT heavy unless coerced.
-  - composure_severity: 감정 부하 정도 = 평형 상실(loss of equilibrium). consensual/positive intimacy = none or mild REGARDLESS of explicitness/intensity — arousal·passion·vulnerability ≠ 평형 상실. heavy/extreme ONLY if unwanted/coerced/humiliating/boundary-violating/devastating.
-  - Enum 가이드 (mild이 기본값. heavy/extreme은 예외적 중대 사건):
-    - none: 부하 없음. 평범 행동 / 가벼운 회복 / 의미 없는 변화.
-    - mild: 일상~중간 부하. 대부분의 행동·대화·긴장·평범한 대결은 여기 (DEFAULT).
-    - heavy: 드문 고부하. 실제 위해·배신·공포·상실 등 분명한 충격 사건일 때만. 격앙·강한 행동 자체는 mild.
-    - extreme: 정점/트라우마 직면 한정. 한계 도달, 사력을 다하는 행동.
-  - CONSERVATIVE: 의심되면 한 단계 낮춰라. 대부분 턴 = none 또는 mild. heavy는 분명한 사건에만, extreme은 정점에만.
-  - DIRECTION STABILITY: 같은 씬 안에서 severity 방향 일관. composure가 heavy로 떨어지던 중 갑자기 none → mild 회복은 부자연 (씬 톤 진짜 전환 시에만).
-  - 레거시 호환: vigor_delta / composure_delta (수치) 형식도 시스템이 인식하지만 신 형식(severity enum) 권장.
-- "anomaly_profile": {"trigger": str, "category": "supernatural/psychological/social/environmental/temporal", "intensity": "Low/Mid/High/Extreme", "polarity": "positive/negative/mixed", "perception_type": "veridical/illusory/hallucinatory/delusional/null (Anomalous Experience Framework. In supernatural settings, 'hallucinatory' may be CORRECT. null = no anomaly)", "line": "English telegraphic - 1-line event direction", "reason": "English telegraphic", "location": "이벤트 발생 장소 (CurrentLocation과 다를 때만. 빈 문자열이면 현재 위치)"} | null (null when world event is not appropriate this turn)
+- "mental_impact": {"applicable": boolean, "vigor_severity": "none/mild/heavy/extreme", "composure_severity": "none/mild/heavy/extreme", "reason": "ENGLISH-ONLY telegraphic"}
+  - vigor_severity: physical load level. consensual intimacy/comfort = mild. NOT heavy unless coerced.
+  - composure_severity: emotional load = loss of equilibrium (평형). consensual/positive intimacy = none or mild REGARDLESS of explicitness/intensity — arousal·passion·vulnerability ≠ loss of equilibrium. heavy/extreme ONLY if unwanted/coerced/humiliating/boundary-violating/devastating.
+  - Enum guide (mild is the default. heavy/extreme = exceptional grave events only):
+    - none: no load. ordinary action / light recovery / inconsequential change.
+    - mild: everyday~moderate load. most actions·dialogue·tension·ordinary confrontation belong here (DEFAULT).
+    - heavy: rare high load. ONLY clear shock events — real harm·betrayal·terror·loss. agitation·forceful action alone = mild.
+    - extreme: peak / trauma confrontation only. reaching one's limit, all-out desperate effort.
+  - CONSERVATIVE: when in doubt, drop one level. most turns = none or mild. heavy only for clear events, extreme only at peaks.
+  - DIRECTION STABILITY: keep severity direction consistent within a scene. composure falling toward heavy then abruptly recovering none → mild is unnatural (only on a genuine scene-tone shift).
+  - legacy compat: vigor_delta / composure_delta (numeric) format is still recognized, but the new format (severity enum) is preferred.
+- "anomaly_profile": {"trigger": str, "category": "supernatural/psychological/social/environmental/temporal", "intensity": "Low/Mid/High/Extreme", "polarity": "positive/negative/mixed", "perception_type": "veridical/illusory/hallucinatory/delusional/null (Anomalous Experience Framework. In supernatural settings, 'hallucinatory' may be CORRECT. null = no anomaly)", "line": "ENGLISH-ONLY telegraphic - 1-line event direction", "reason": "ENGLISH-ONLY telegraphic", "location": "이벤트 발생 장소 (CurrentLocation과 다를 때만. 빈 문자열이면 현재 위치)"} | null (null when world event is not appropriate this turn)
 - "condition_resolved": ["조건 태그 — 서사적으로 해당 조건이 더 이상 세계에 유효하지 않을 때. Active Conditions 참고"]
 - "condition_updates": [{"tag": "조건 태그", "intensity": "새 강도 (Low/Mid/High/Extreme)", "description": "갱신된 상황 묘사 (Korean)"}]
 
@@ -379,26 +379,26 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
     "NpcName": {
         "attitude": "hostile/unfriendly/neutral/friendly/devoted",
         "trajectory": "improving/stable/declining",
-        "reason": "English telegraphic (note when 오륜 role expectation violated)"
+        "reason": "ENGLISH-ONLY telegraphic (note when 오륜 role expectation violated)"
     }
   }
   (keys = NPC names ONLY — never the PC. This is each NPC's attitude TOWARD the PC.)
 - "NPCKnowledge": {
     "NpcName": {
-        "knows": ["English telegraphic - key info currently known"],
-        "secrets_held": ["English telegraphic - what is being hidden"],
+        "knows": ["ENGLISH-ONLY telegraphic - key info currently known"],
+        "secrets_held": ["ENGLISH-ONLY telegraphic - what is being hidden"],
         "would_share": boolean,
         "leak_risk": "none/low/medium/high (Curse of Knowledge: 아는 것을 숨기기 어려움)",
-        "false_beliefs": ["English telegraphic - believed contrary to fact (Theory of Mind)"],
+        "false_beliefs": ["ENGLISH-ONLY telegraphic - believed contrary to fact (Theory of Mind)"],
         "deception_cues": "str or null (Statement Analysis/SCAN: pronoun_shift/tense_shift/time_gap/over_detail/emotion_misplace. null = no deception detected)"
     }
   }
 - "trait_connections": {
     "NpcName": {
         "trait_pair": "trait_A × trait_B (the two profile traits being connected this turn)",
-        "primary_link": "English telegraphic - most obvious first link (highest probability, most cliché)",
-        "deflection": "English telegraphic - refraction/complication/reversal. alternative reading that avoids primary",
-        "render_hint": "English telegraphic - 1-fragment render hint for this scene"
+        "primary_link": "ENGLISH-ONLY telegraphic - most obvious first link (highest probability, most cliché)",
+        "deflection": "ENGLISH-ONLY telegraphic - refraction/complication/reversal. alternative reading that avoids primary",
+        "render_hint": "ENGLISH-ONLY telegraphic - 1-fragment render hint for this scene"
     }
   } | null (null when no NPC traits are being actively expressed this turn)
 
@@ -425,20 +425,20 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
 
 - "spatial_read": {
     "spatial_type": "enclosed/resonant/open/elevated/crowded/moving",
-    "active_traces": [{"type": "thermal/scent/acoustic/surface/object", "detail": "English telegraphic 1 fragment"}] | null,
+    "active_traces": [{"type": "thermal/scent/acoustic/surface/object", "detail": "ENGLISH-ONLY telegraphic 1 fragment"}] | null,
     "mutation": null OR {
       "type": "A/B/C",
       "source": "Korean — 무엇이 변화를 일으켰는가",
-      "lighting": "English telegraphic - lighting after mutation",
-      "hue": "English telegraphic - hue after mutation",
-      "saturation": "English telegraphic - saturation after mutation"
+      "lighting": "ENGLISH-ONLY telegraphic - lighting after mutation",
+      "hue": "ENGLISH-ONLY telegraphic - hue after mutation",
+      "saturation": "ENGLISH-ONLY telegraphic - saturation after mutation"
     },
     "light": {
-      "lighting": "English telegraphic — source + key + direction (e.g. 'low-key window side-light')",
-      "hue": "English telegraphic — specific hue from full spectrum (amber/gold/rust/crimson/grey/steel/cool/green-cast/…)",
-      "saturation": "English telegraphic — vivid/solid/washed/pastel"
+      "lighting": "ENGLISH-ONLY telegraphic — source + key + direction (e.g. 'low-key window side-light')",
+      "hue": "ENGLISH-ONLY telegraphic — specific hue from full spectrum (amber/gold/rust/crimson/grey/steel/cool/green-cast/…)",
+      "saturation": "ENGLISH-ONLY telegraphic — vivid/solid/washed/pastel"
     },
-    "filter": "English telegraphic or null — C-type only. POV character's perceptual lens. separate from A/B",
+    "filter": "ENGLISH-ONLY telegraphic or null — C-type only. POV character's perceptual lens. separate from A/B",
     "tension": "designed X <-> lived Y (Lefebvre)" | null,
     "shift": null | "gradual" | "sudden",
     "threshold": null | "mild" | "sharp",
@@ -448,8 +448,8 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
 ## SCENE CONTINUITY (requires ### 4d. PREVIOUS FRAME — null if no previous frame)
 - "continuity_check": null OR {
     "flags": [{"type": "spatial_break|sensory_break|object_break|tone_break|npc_break|rhythm_break",
-               "risk": "English telegraphic — what discontinuity risk exists",
-               "correction": "English telegraphic — how to naturally bridge the gap"}],
+               "risk": "ENGLISH-ONLY telegraphic — what discontinuity risk exists",
+               "correction": "ENGLISH-ONLY telegraphic — how to naturally bridge the gap"}],
     "anchor_consumed": boolean
   }
 
@@ -461,8 +461,8 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
     "window_check": {"char_name": "within/above/below (Siegel, from polyvagal state)"},
     "dual_control": {"char_name": {"SES": "str - excitation factors", "SIS": "str - inhibition factors"}},
     "desire_type": {"char_name": "attachment/power/escape/connection/validation/sensation (Basson)"},
-    "power_dynamic": "English telegraphic (Benjamin Intersubjectivity - mutual recognition status)",
-    "body_memory": "English telegraphic (van der Kolk - involuntary echoes of past experience)",
+    "power_dynamic": "ENGLISH-ONLY telegraphic (Benjamin Intersubjectivity - mutual recognition status)",
+    "body_memory": "ENGLISH-ONLY telegraphic (van der Kolk - involuntary echoes of past experience)",
     "post_encounter_prediction": {"char_name": "possible post-behavior IF attachment activates — null if no change expected"}
   }
 
@@ -472,12 +472,12 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
     "declaration": "Korean - 1-sentence summary of retroactive claim",
     "plausibility": "plausible/stretch/impossible",
     "flashback_type": "standard/loadout — 유저가 로드아웃을 가지고 있고 '꺼낸다/챙겨왔다/준비해둔' 등 사전 준비물 소환이면 loadout, 그 외 소급 선언이면 standard",
-    "loadout_slots": 1 (loadout일 때만: 단순=1, 특수=2, 대담=3),
+    "loadout_slots": 1 (loadout only: simple=1, special=2, bold=3),
     "relevant_passive": "passive name or null",
     "tier": "trivial/standard/bold",
     "vigor_ratio": 0.0~1.0,
     "composure_ratio": 0.0~1.0,
-    "reason": "Korean"
+    "reason": "ENGLISH-ONLY telegraphic"
   }
 
 ### Rest / Downtime Evaluation (rest or purposeful downtime activity detected)
@@ -485,9 +485,9 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
     "detected": boolean,
     "quality": "full/brief/interrupted",
     "safe_location": boolean,
-    "activity": "rest/recover/vice/train/socialize/project — rest: 단순 쉼(풍미만 있어도 rest), recover: 치료/약복용+시간투자, vice: 술/도박/탐닉, train: 훈련/수련, socialize: NPC교류, project: 제작/조사. 전투/탐험 중에는 rest_eval 자체를 null로",
+    "activity": "rest/recover/vice/train/socialize/project — rest: simple rest (counts even if flavor-only), recover: treatment/medication+time invested, vice: drink/gambling/indulgence, train: training/practice, socialize: NPC interaction, project: crafting/investigation. During combat/exploration, set rest_eval itself to null",
     "target": "NPC name or skill name or project name or null (activity != rest일 때)",
-    "reason": "Korean"
+    "reason": "ENGLISH-ONLY telegraphic"
   }
 
 ### Item Tracking (item interaction detected)
@@ -496,6 +496,12 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
     "items_gained": ["item name", ...],
     "reason": "Korean"
   }
+<language_final>
+BEFORE OUTPUT — RE-CHECK EVERY FIELD'S LANGUAGE. Exactly two zones, mutually exclusive, no field is bilingual:
+- ENGLISH ONLY (render-facing — feeds the renderer; Korean here gets transcribed verbatim into prose = BUG): Observation, UserIntent, descriptor, env_influence, value_conflict, deep_read, attitude, deflection, primary_link, render_hint, suggested_beats, narrative_hook, knows, secrets_held, false_beliefs, Aspects, AND the reason fields of time_flow / clock_updates / mental_impact / flashback_eval / rest_eval.
+- KOREAN (user-displayed only): CurrentLocation, TimeContext, action_meta.action, asset_evaluation reason+labels (판정 표시), clock_new name/threat/defense_action/tags (시계 UI), condition_updates description (상태 표시), item_usage reason.
+Any render-facing field whose value would contain Hangul → write that field's value in English instead. This is a per-field language swap ONLY — never a reason to halt, shorten, or null the output; always return the complete JSON with every field. When unsure → English.
+</language_final>
 </output_schema>
 """
 

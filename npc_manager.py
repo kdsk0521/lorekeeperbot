@@ -577,10 +577,10 @@ def register_ai_npc(channel_id: str, name: str, description: str = "", context: 
         context: 등장 맥락 (어떤 상황에서 등장했는지)
 
     Returns:
-        성공 여부
+        등록된 최종 이름(동명 충돌 시 '병사 #1A' 식 태그가 붙은 이름). 실패 시 None.
     """
     if not name.strip():
-        return False
+        return None
 
     # [Anti-Gravity] Mob Tagging Logic
     # 1. Check for Exact Collision in Session NPCs
@@ -635,9 +635,10 @@ def register_ai_npc(channel_id: str, name: str, description: str = "", context: 
     if gender: data["gender"] = gender
     if race: data["race"] = race
 
-    update_npc(channel_id, name.strip(), data)
-    logger.info(f"[NPC] AI 생성 NPC 등록: {name}")
-    return True
+    final_name = name.strip()
+    update_npc(channel_id, final_name, data)
+    logger.info(f"[NPC] AI 생성 NPC 등록: {final_name}")
+    return final_name
 
 
 def generate_mob_tag() -> str:
@@ -901,6 +902,29 @@ def get_npc_renderer_profiles(channel_id: str, names: list, scene_type: str = "n
             profile_text = f"{header}\n**[{meta_line}]**\n{desc}"
         else:
             profile_text = f"{header}\n{desc}"
+        _src_r = str(raw.get("source", "")).lower() if isinstance(raw, dict) else ""
+        # 세션 즉석 NPC + 면모(정체성/불씨/면모)가 증류됐으면 → 면모 시트로 대체 렌더(주력).
+        # 아직 증류 전이면 위의 seed description 그대로. (Fate-하이브리드 시트)
+        _aspects = raw.get("aspects") if isinstance(raw, dict) else None
+        _has_aspect = bool(raw.get("high_concept") or raw.get("trouble") or (isinstance(_aspects, list) and _aspects))
+        if _src_r != "lore" and _has_aspect:
+            _lines = [header]
+            if raw.get("high_concept"):
+                _lines.append(f"**[정체성]** {raw['high_concept']}")
+            if raw.get("trouble"):
+                _lines.append(f"**[불씨]** {raw['trouble']}")
+            if isinstance(_aspects, list) and _aspects:
+                _lines.append("**[면모]** " + " · ".join(str(a) for a in _aspects))
+            if data.get("appearance"):
+                _lines.append(f"**[외형]** {data['appearance']}")
+            if data.get("role"):
+                _lines.append(f"**[역할]** {data['role']}")
+            profile_text = "\n".join(_lines)
+        # 로어 NPC: 원문 시트는 동결하되 플레이 중 관찰(play_observed)을 별도 섹션으로 렌더 →
+        # 작가 설정 권위 보존 + 세션 중 드러난 새 면모를 장기기억으로 축적.
+        _obs = raw.get("play_observed") if isinstance(raw, dict) else None
+        if _src_r == "lore" and _obs and str(_obs).strip():
+            profile_text += f"\n**[플레이 중 관찰]**\n{str(_obs).strip()[-600:]}"
         parts.append(profile_text)
     return "\n\n".join(parts)
 

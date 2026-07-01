@@ -30,6 +30,7 @@ import logging
 from typing import Any, List, Optional
 
 import config as _appconfig
+import reasoning_policy
 
 logger = logging.getLogger(__name__)
 
@@ -146,17 +147,8 @@ def _config_to_kwargs(cfg: Any) -> dict:
         kwargs["max_tokens"] = max_out
     if getattr(cfg, "response_mime_type", None) == "application/json":
         kwargs["response_format"] = {"type": "json_object"}
-    # per-turn 분석은 JSON 채우기 → extended thinking off(출력/지연 폭증 방지) = 기본 none.
-    # 단 heavy_analysis() 컨텍스트(1회성 추출: 로어 적재 / 캐릭터 시트)면 HEAVY 로 격상.
-    # 렌더가 reasoning_effort:none 으로 200 확인됨 → wellspring 수용. .env 로 상향 가능.
-    _heavy_var = getattr(_appconfig, "ANALYSIS_HEAVY_EFFORT_VAR", None)
-    if _heavy_var is not None and _heavy_var.get():
-        _effort = getattr(_appconfig, "ANALYSIS_OPENAI_REASONING_EFFORT_HEAVY", "low")
-    else:
-        _effort = getattr(_appconfig, "ANALYSIS_OPENAI_REASONING_EFFORT", "none")
-    extra_body = {"reasoning_effort": _effort}
-    # top_k 는 Ollama /v1 미지원 → 전송 안 함(드롭됨).
-    kwargs["extra_body"] = extra_body
+    # reasoning(extra_body)은 generate_content 에서 resolved 모델 + tier 로 결정한다.
+    # 모델별 허용값이 달라(여기선 모델을 모름) reasoning_policy 로 매핑. top_k 는 Ollama /v1 미지원 → 드롭.
     return kwargs
 
 
@@ -184,11 +176,24 @@ class _Models:
     async def generate_content(self, model=None, contents=None, config=None):
         messages = _contents_to_messages(contents, getattr(config, "system_instruction", None))
         kwargs = _config_to_kwargs(config)
-        kwargs["model"] = _map_model(model)
+        resolved = _map_model(model)
+        kwargs["model"] = resolved
         kwargs["messages"] = messages
+        # reasoning tier: heavy(1회성 추출) 컨텍스트면 DEEP, 아니면 per-turn LIGHT.
+        # resolved 모델의 허용 knob 으로 매핑(GLM=high/max, deepseek=none/high/max 등).
+        _heavy_var = getattr(_appconfig, "ANALYSIS_HEAVY_EFFORT_VAR", None)
+        _heavy = bool(_heavy_var.get()) if _heavy_var is not None else False
+        _tier = (_appconfig.ANALYSIS_REASONING_TIER_HEAVY if _heavy
+                 else _appconfig.ANALYSIS_REASONING_TIER)
+        _extra = dict(kwargs.get("extra_body") or {})
+        _extra.update(reasoning_policy.build_reasoning_params(resolved, _tier))
+        kwargs["extra_body"] = _extra
         try:
             resp = await self._client.chat.completions.create(**kwargs)
-            text = resp.choices[0].message.content if getattr(resp, "choices", None) else ""
+            _msg = resp.choices[0].message if getattr(resp, "choices", None) else None
+            text = _msg.content if _msg else ""
+            logger.info("[reasoning-trace] analysis model=%s tier=%s reasoning_chars=%d",
+                        resolved, _tier, reasoning_policy.reasoning_trace_len(_msg))
             return _RespShim(text)
         except Exception as e:
             logger.error("[analysis-openai] generate_content failed (%s): %s", kwargs.get("model"), e)

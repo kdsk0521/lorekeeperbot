@@ -182,10 +182,13 @@ def complete_quest(channel_id: str, content: str) -> str:
     _save_board(channel_id, board)
 
     rank = target.get("rank", config.QUEST_DEFAULT_RANK) if isinstance(target, dict) else config.QUEST_DEFAULT_RANK
-    doom_reward = config.QUEST_RANK_SETTINGS.get(rank, {}).get("doom_reward", -5)
+    doom_gain = config.QUEST_RANK_SETTINGS.get(rank, {}).get("doom_reward", 3)  # 0626: 상승. pending 적립 → doom_module이 수식(phase×lens)+carry 통과 정산 (flat change_doom 폐기)
 
-    import game_world
-    doom_msg = game_world.change_doom(channel_id, doom_reward)
+    import game_world, domain_manager
+    _w = domain_manager.get_world_state(channel_id)
+    _w["pending_doom_gain"] = _w.get("pending_doom_gain", 0) + doom_gain
+    domain_manager.update_world_state(channel_id, _w)
+    doom_msg = f"📈 긴장도 +{doom_gain} (다음 정산 시 페이즈 변조 적용)"
 
     # 연결된 시계 해결
     linked_clock = target.get("linked_clock") if isinstance(target, dict) else None

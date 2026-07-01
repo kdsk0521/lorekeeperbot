@@ -268,6 +268,26 @@ class StoryDirector:
         if active_beat:
             direction["next_beat"] = active_beat
 
+        # [latent relations] conflict/alliance 그래프 → "생길 수 있는 사건" 잠재 힌트.
+        # anti-railroad: 강제 아닌 가능성. 씬에 있는 NPC(relevant_npcs) + 현저(함수가 intensity 게이트)만, 최대 3.
+        try:
+            import entity_relations as _er_l
+            _scene_npcs = set(dai.get("relevant_npcs", []) or [])
+            _chan_l = (context.narrative_anchors or {}).get("channel_id", "")
+            if _chan_l and len(_scene_npcs) >= 2:
+                _latent = []
+                for _s, _t, _e in _er_l.get_conflict_pairs(_chan_l):
+                    if _s in _scene_npcs and _t in _scene_npcs:
+                        _latent.append(f"{_s}↔{_t} {_e.get('type','tension')} could surface")
+                for _cl in _er_l.get_alliance_clusters(_chan_l):
+                    _present = [n for n in _cl if n in _scene_npcs]
+                    if len(_present) >= 2:
+                        _latent.append(f"{{{', '.join(_present)}}} could move together")
+                if _latent:
+                    direction["latent_relations"] = _latent[:3]
+        except Exception:
+            pass
+
         # Write to bus
         dai["story_direction"] = direction
 

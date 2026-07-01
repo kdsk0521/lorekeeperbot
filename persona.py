@@ -30,6 +30,7 @@ from typing import Optional, List
 from google import genai
 from google.genai import types
 import config
+import reasoning_policy
 
 from response_processor import filter_pc_impersonation
 import text_resources
@@ -40,6 +41,8 @@ try:
     _HAS_OPENAI = True
 except ImportError:
     _HAS_OPENAI = False
+
+logger = logging.getLogger(__name__)
 
 # =========================================================
 # 상수 정의
@@ -240,32 +243,42 @@ class OpenAIChatSessionAdapter:
                 frequency_penalty=self.frequency_penalty,
                 presence_penalty=self.presence_penalty,
                 stream=use_stream,
-                extra_body={
-                    # Ollama /v1: reasoning_effort만 전송(top_k 미지원 → 드롭). deepseek = none/high/max.
-                    "reasoning_effort": config.OPENAI_REASONING_EFFORT,
-                },
+                # reasoning: 메인 렌더 tier(기본 off) 를 이 모델이 받는 knob 으로 매핑.
+                # (top_k 는 Ollama /v1 미지원 → 애초에 안 실음.)
+                extra_body=reasoning_policy.build_reasoning_params(
+                    self.model, config.RENDERER_REASONING_TIER
+                ),
             )
 
             if use_stream:
-                # 스트리밍 청크 수집 — reasoning_content는 무시, content만 수집
+                # 스트리밍 청크 수집 — reasoning_content는 출력엔 안 넣고 길이만 관측
                 chunks = []
                 finish = "stop"
+                _reason_chars = 0
                 async for chunk in response:
                     if not chunk.choices:
                         continue
                     delta = chunk.choices[0].delta
                     if delta and delta.content:
                         chunks.append(delta.content)
-                    # reasoning_content는 의도적으로 무시 (thinking 토큰 분리)
+                    # thinking 토큰은 출력에서 분리(버림) — 단 실발동 확인용으로 길이만 집계
+                    _reason_chars += reasoning_policy.reasoning_trace_len(delta)
                     if chunk.choices[0].finish_reason:
                         finish = chunk.choices[0].finish_reason
                 text = "".join(chunks)
+                _think_tag = ("<think>" in text) or ("</think>" in text)
                 # </think> 태그 누출 정리
                 text = re.sub(r'</think>', '', text).strip()
+                logger.info("[reasoning-trace] render model=%s stream reasoning_chars=%d think_tag=%s",
+                            self.model, _reason_chars, _think_tag)
             else:
                 choice = response.choices[0] if response.choices else None
                 text = choice.message.content if choice and choice.message and choice.message.content else ""
                 finish = getattr(choice, "finish_reason", "stop") or "stop" if choice else "stop"
+                _msg = choice.message if choice else None
+                logger.info("[reasoning-trace] render model=%s nonstream reasoning_chars=%d think_tag=%s",
+                            self.model, reasoning_policy.reasoning_trace_len(_msg),
+                            ("<think>" in (text or "")))
 
             if text:
                 # 히스토리에 assistant 응답 저장 (prefill 포함)

@@ -127,12 +127,19 @@ class VigorComposureModule:
     async def prime(self, context: "GameContext") -> "GameContext":
         """Pre-pass for pipeline order: annotate current stage without consuming deltas."""
         bus = context.shared_bus
+        # 채널 토글 OFF면 기력/평형 전체 스킵 (수치 동결)
+        if not bus.vigor.get("module_active", True):
+            return context
         bus.vigor["stage"] = _get_stage(int(bus.vigor.get("value", 100)))
         bus.composure["stage"] = _get_stage(int(bus.composure.get("value", 100)))
         return context
 
     async def process(self, context: "GameContext") -> "GameContext":
         bus = context.shared_bus
+        # 채널 토글 OFF면 delta 소비/회복/baseline/로그 전부 스킵.
+        # "active" 미설정 → sync_from_game_context 쓰기도 스킵 → 수치 동결.
+        if not bus.vigor.get("module_active", True):
+            return context
         primary_axis = _get_primary_axis(context)
 
         # Phase 2 F: baseline drain (장르 × 축 + 씬타입 × 축, layer-cap)

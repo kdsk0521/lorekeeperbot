@@ -591,12 +591,10 @@ def resolve_clock_by_quest(channel_id: str, clock_name: str) -> str:
             continue
         if clock.get("name") == clock_name and not clock.get("resolved"):
             clock["resolved"] = True
-            seg = int(clock.get("segments", 6) or 6)
-            bonus_doom = config.CLOCK_RESOLVE_DOOM.get(seg, -10)
-            world["doom"] = max(0, min(100, world.get("doom", 0) + bonus_doom))
+            # 0626: 시계 해결 = doom NEUTRAL (해결도 능동 beat, fall은 間만 — 옛 bonus_doom 하락 cut)
             world["doom_clocks"] = clocks
             domain_manager.update_world_state(channel_id, world)
-            return f"✅ **시계 해결: {clock_name}** (긴장도 {bonus_doom})"
+            return f"✅ **시계 해결: {clock_name}**"
     return ""
 
 

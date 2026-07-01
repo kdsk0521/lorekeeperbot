@@ -272,12 +272,10 @@ class DoomModule:
                     if clock.get("name") == resolved_name and not clock.get("resolved"):
                         clock["resolved"] = True
                         seg = int(clock.get("segments", 6) or 6)
-                        resolve_doom = config.CLOCK_RESOLVE_DOOM.get(seg, -10)
-                        delta += resolve_doom
-                        # Defense reward: vigor/composure recovery on clock resolution
+                        # 0626: 시계 해결 = doom NEUTRAL (fall은 間만, 해결도 능동 beat). resolve_reward(vigor/composure 회복)는 유지.
                         resolve_reward = config.CLOCK_RESOLVE_REWARD.get(seg, 3)
                         bus.doom["resolve_reward"] = bus.doom.get("resolve_reward", 0) + resolve_reward
-                        clock_events.append(f"RESOLVED: {resolved_name} ({resolve_doom} doom, +{resolve_reward} recovery)")
+                        clock_events.append(f"RESOLVED: {resolved_name} (neutral doom, +{resolve_reward} recovery)")
                         break
 
         # ── 2. Flash clock_updates (action/hybrid delta, 씬타입 억제: flash_tick) ──

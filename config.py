@@ -76,6 +76,14 @@ ANALYSIS_TEMPERATURE_HEAVY = float(os.getenv("ANALYSIS_TEMPERATURE_HEAVY", "0.05
 ANALYSIS_OPENAI_MODEL_HEAVY = os.getenv("ANALYSIS_OPENAI_MODEL_HEAVY", ANALYSIS_OPENAI_MODEL_PRO)
 ANALYSIS_HEAVY_EFFORT_VAR = contextvars.ContextVar("analysis_heavy_effort", default=False)
 
+# ── Reasoning tier (semantic; reasoning_policy.py 가 모델별 값/파라미터로 매핑) ──────────
+# .env 는 키 + 모델 ID 만. "어느 role 이 어느 tier" 는 여기 코드 기본값(off/light/deep).
+# 모델을 GLM(high/max only) · deepseek(none/high/max) · 기타로 교체해도 policy 가 흡수한다.
+# (위의 OPENAI_REASONING_EFFORT / ANALYSIS_OPENAI_REASONING_EFFORT* 는 레거시 — 이제 미사용.)
+RENDERER_REASONING_TIER = os.getenv("RENDERER_REASONING_TIER", "off")               # 메인 렌더 = OFF (TELESCOPE 프롬프트-CoT 로 추론 대체)
+ANALYSIS_REASONING_TIER = os.getenv("ANALYSIS_REASONING_TIER", "light")             # 보조 per-turn 분석 = LIGHT (추론 ON)
+ANALYSIS_REASONING_TIER_HEAVY = os.getenv("ANALYSIS_REASONING_TIER_HEAVY", "deep")  # 1회성 무거운 추출 = DEEP
+
 
 @contextlib.contextmanager
 def heavy_analysis():
@@ -201,14 +209,14 @@ NEMESIS_THRESHOLD = -10
 # raw doom delta는 doom_module.process() 내부 자동 변동에만 multiplier 적용.
 # game_world.change_doom (OOC `!둠`, quest 보상)은 직접 amount 반영 (사용자 의도 보존).
 
-DOOM_RAW_GAIN_BASE = 3.0  # turn당 raw doom gain base (energy tension_factor로 변조 → raw_delta 합류). 아크=4~6챕터/~300-500턴 타깃 (2026-06-25)
+DOOM_RAW_GAIN_BASE = 2.0  # turn당 raw doom gain base (energy tension_factor 변조). 3.0→2.0 (0626): base=floor 트리클로 낮춤, 완성(시계/퀘스트)이 주 상승원. 아크 4~6챕터/300+턴 타깃
 # energy_direction → per-turn base doom gain 변조 (활성도 게이트, 2026-06-25 배선). calm 거의정지 / 긴장 상승.
 DOOM_TENSION_FACTOR = {
     "detonation": 1.5,
     "rising":     1.0,
     "aftershock": 0.5,
-    "idle":       0.15,
-    "stagnant":   0.1,
+    "idle":       0.04,   # 0.15→0.04 (2026-06-26): calm 둠 ~0.12/턴(3.0×0.04)으로 늦춤 — 소수누적 천천히. base/rising 유지라 tense는 300-타깃 보존, calm씬만 길어짐(300 넘어도 OK)
+    "stagnant":   0.03,   # stagnant<idle 순서 유지 위해 비례 하향 (deadlock도 calm-low)
 }
 CHAPTER_INTERMISSION_DECAY = 3  # 間 페이즈 자연 감쇠 (-3/턴)
 CHAPTER_RESET_FLOOR = 10  # 새 챕터 시작 floor (climax 후 doom 10 도달 시 起 진입)
@@ -227,8 +235,8 @@ SCENE_DOOM_MODIFIER = {
 
 # Doom v3 — Situation Clocks
 DOOM_CLIMAX_THRESHOLD = 95  # Default climax threshold (intense). intimate는 lens별 가변.
-CLOCK_COMPLETE_DOOM = {4: 10, 6: 15, 8: 20}  # segments → global doom 상승
-CLOCK_RESOLVE_DOOM = {4: -5, 6: -10, 8: -15}  # segments → global doom 하강 (해결 시)
+CLOCK_COMPLETE_DOOM = {4: 2, 6: 3, 8: 4}  # 완성(이벤트 발화)→상승. 10/15/20→2/3/4 (0626): 시계는 양념, 완성=활동 beat. 수식(phase×lens) 통과
+CLOCK_RESOLVE_DOOM = {4: 0, 6: 0, 8: 0}  # 해결=NEUTRAL (0626): doom=활동 모델선 해결도 능동 beat지 relief 아님. fall은 間(챕터휴식)만. (옛 −5/−10/−15 = 위협-미터 잔재, cut)
 
 # Clock Defense Rewards (→ primary vigor/composure axis)
 CLOCK_MITIGATE_REWARD = 1           # 시계 1칸 감소당 활력/평형 +1
@@ -575,11 +583,12 @@ ARC_BACKGROUND_CAP = 2                  # 동시 노출 배경
 
 # Quest Progress Track (DC-linked 5 Ranks)
 QUEST_RANK_SETTINGS = {
-    "easy":    {"max_progress": 4,  "doom_reward": -3,  "display": "쉬움"},
-    "normal":  {"max_progress": 6,  "doom_reward": -5,  "display": "보통"},
-    "hard":    {"max_progress": 8,  "doom_reward": -8,  "display": "어려움"},
-    "extreme": {"max_progress": 10, "doom_reward": -12, "display": "극난"},
-    "epic":    {"max_progress": 12, "doom_reward": -15, "display": "전설"},
+    # doom_reward: 0626 −하락→+상승 flip (퀘스트 완성=서사 활동↑, 주 상승원, quest>clock). 옛 키명 유지.
+    "easy":    {"max_progress": 4,  "doom_reward": 2,  "display": "쉬움"},
+    "normal":  {"max_progress": 6,  "doom_reward": 3,  "display": "보통"},
+    "hard":    {"max_progress": 8,  "doom_reward": 5,  "display": "어려움"},
+    "extreme": {"max_progress": 10, "doom_reward": 7,  "display": "극난"},
+    "epic":    {"max_progress": 12, "doom_reward": 9,  "display": "전설"},
 }
 QUEST_DEFAULT_RANK = "normal"
 

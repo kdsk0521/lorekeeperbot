@@ -1047,6 +1047,15 @@ class OrchestrationService:
                 except Exception as e:
                     logger.warning(f"[EntityRelations] Failed to process: {e}")
 
+            # [관계 decay] 안 건드린 관계 점감(fade) — 매 턴, npc_rels 유무 무관. delete 아닌 흐려짐.
+            try:
+                import entity_relations as _er_d
+                _ws_d = domain_manager.get_world_state(channel_id)
+                _turn_d = _ws_d.get("turn_index", 0) if _ws_d else 0
+                _er_d.cleanup_stale_relations(channel_id, _turn_d)
+            except Exception as _e_d:
+                logger.debug(f"[EntityRelations] decay skip: {_e_d}")
+
             pmu = updates.get("PlayerMemoryUpdate")
             if pmu:
                 if pmu.get("relationships"):
@@ -1144,6 +1153,156 @@ class OrchestrationService:
                 est_data = updates.get("EntityStateUpdate")
                 if est_data:
                     narrative_tracker.update_entity_states(nt_state, turn_idx, est_data)
+
+                    # [NPC 관찰 누적 + 틈틈이 재작성] 룰북형 로어북 경험: 플레이가 흐를수록 NPC 시트가
+                    # 알아서 자란다. Flash descriptor=이번 턴 드러난 '새 정체성 디테일'.
+                    # 관찰은 '설명 본문'이 아니라 별도 raw 필드 play_observed에 누적한다(무한 누적=의미
+                    # 퇴색 방지). 그 위에서:
+                    #   - 미등록          → 신규 세션 NPC 생성(desc 시드 + play_observed 시드)
+                    #   - new_individual   → 동명 '별개체'(몹) 자동 태그. (로어 제외)
+                    #   - source=lore      → 원문 시트 동결, play_observed에만 관찰 성장(장기기억 자산)
+                    #   - 세션 NPC         → 관찰이 250자씩 자랄 때마다 analyze_character_sheet 전용 콜로
+                    #                        role/외형/description/passives를 '재작성'(consolidation).
+                    # update_npc는 엔트리 통째 교체(source/aliases만 보존) → 항상 기존 dict를 full-merge.
+                    # analyze_character_sheet는 analysis_backend 파사드로 openai(현행)에서도 동작. PC 제외.
+                    try:
+                        _changes = est_data.get("changes") if (isinstance(est_data, dict) and "changes" in est_data) else est_data
+                        for _npc_name, _ch in (_changes.items() if isinstance(_changes, dict) else []):
+                            if not isinstance(_ch, dict):
+                                continue
+                            _desc = _ch.get("descriptor")
+                            if not _desc or not str(_desc).strip() or _npc_name in _pc_masks:
+                                continue
+                            _desc = str(_desc).strip()
+                            _new_indiv = bool(_ch.get("new_individual"))
+                            _existing = npc_manager.get_npc(channel_id, _npc_name)
+                            if not _existing:
+                                npc_manager.update_npc(channel_id, _npc_name, {
+                                    "source": "session", "description": _desc,
+                                    "status": "active", "play_observed": _desc,
+                                })
+                                logger.info(f"[NPC Sheet] 즉석 NPC 생성: {_npc_name}")
+                                continue
+                            _src = str(_existing.get("source", "")).lower()
+                            if _new_indiv and _src != "lore" and not npc_manager.is_mob_tag(_npc_name):
+                                _tagged = npc_manager.register_ai_npc(
+                                    channel_id, _npc_name, description=_desc, context="auto mob-tag (new_individual)")
+                                if _tagged and _tagged != _npc_name:
+                                    logger.info(f"[NPC Sheet] 동명 별개체 자동 태그: {_npc_name} → {_tagged}")
+                                continue
+                            # 관찰 누적(로어/세션 공통) — 별도 play_observed 필드, dedup + 1500자 cap
+                            _obs = str(_existing.get("play_observed", "") or "").strip()
+                            if _desc in _obs:
+                                continue  # 새 정보 없음
+                            _obs = (_obs + "\n" + _desc).strip()[-1500:] if _obs else _desc
+                            _merged = dict(_existing)
+                            _merged["play_observed"] = _obs
+                            _rewrote = False
+                            # 세션(비로어) NPC: 관찰이 충분히 자라면 틈틈이 '면모 시트' 재작성.
+                            # 이전 시트(정체성/불씨/면모)를 컨텍스트로 얹어 → 정체성은 안정 유지,
+                            # 면모는 정제/추가(Fate 마일스톤). NPC는 주사위 없음 → passives 미저장.
+                            if _src != "lore" and getattr(self, "client", None):
+                                _built = int(_existing.get("_obs_built_len", 0) or 0)
+                                if len(_obs) >= 250 and (len(_obs) - _built) >= 250:
+                                    try:
+                                        _prev = []
+                                        if _existing.get("high_concept"):
+                                            _prev.append(f"[기존 정체성] {_existing['high_concept']}")
+                                        if _existing.get("trouble"):
+                                            _prev.append(f"[기존 불씨] {_existing['trouble']}")
+                                        _pa = _existing.get("aspects")
+                                        if isinstance(_pa, list) and _pa:
+                                            _prev.append("[기존 면모] " + " / ".join(str(a) for a in _pa))
+                                        _distill_in = ("\n".join(_prev) + "\n\n" + _obs) if _prev else _obs
+                                        _sheet = await cognition.analyze_character_sheet(
+                                            self.client, self.model_id_flash, _distill_in)
+                                        if _sheet:
+                                            # 정체성/불씨: 새 값 있으면 갱신, 없으면 이전 보존(near-sacrosanct)
+                                            if _sheet.get("high_concept"):
+                                                _merged["high_concept"] = _sheet["high_concept"]
+                                            if _sheet.get("trouble"):
+                                                _merged["trouble"] = _sheet["trouble"]
+                                            _asp = _sheet.get("aspects")
+                                            if isinstance(_asp, list) and _asp:
+                                                _merged["aspects"] = [str(a).strip() for a in _asp if a and str(a).strip()][:6]
+                                            # 외형/역할: 큰 변경 시에만(모델이 준 경우만 덮음)
+                                            for _k in ("appearance", "role"):
+                                                if _sheet.get(_k):
+                                                    _merged[_k] = _sheet[_k]
+                                            _merged["_obs_built_len"] = len(_obs)
+                                            _rewrote = True
+                                            logger.info(f"[NPC Sheet] 세션 NPC 면모 재작성: {_npc_name} (관찰 {len(_obs)}자)")
+                                    except Exception as _e_cons:
+                                        logger.warning(f"[NPC Sheet] 면모 재작성 실패: {_e_cons}")
+                            npc_manager.update_npc(channel_id, _npc_name, _merged)
+                            if not _rewrote:
+                                logger.info(f"[NPC Sheet] 관찰 누적: {_npc_name} ({len(_obs)}자, {_src or 'session'})")
+                    except Exception as _e_sheet:
+                        logger.warning(f"[NPC Sheet] enrichment skipped: {_e_sheet}")
+
+                # [PC 시트 플레이기반 '진화'] 시트 없이 시작한 PC를 플레이로 채우고 계속 진화시킨다.
+                # 매 턴 pc_observed(드러난 PC 정체성)를 play_observed에 누적 → 300자씩 자랄 때마다
+                # analyze_character_sheet 전용 콜로 description/역할/외형/패시브를 '재작성'(덮어쓰기)한다.
+                # → 설명란 자체가 진화(자가종료 없음). 단 유저가 직접 올린 작가-시트(_pc_play_built 없이
+                #   기계필드 보유)는 '동결'해 덮지 않는다(NPC의 로어/세션 구분과 동일). PC 이름(가면) 필요.
+                try:
+                    _pc_obs = updates.get("PCObserved")
+                    if _pc_obs and str(_pc_obs).strip() and getattr(self, "client", None):
+                        _pc = domain_manager.get_default_pc_info(channel_id) or {}
+                        _pc_name = _pc.get("name") or (next(iter(_pc_masks)) if _pc_masks else "")
+                        if _pc_name:
+                            _obs_buf = str(_pc.get("play_observed", "") or "")
+                            _new = str(_pc_obs).strip()
+                            if _new and _new not in _obs_buf:
+                                _obs_buf = (_obs_buf + "\n" + _new).strip()[-2000:]
+                            _pc["name"] = _pc_name
+                            _pc["play_observed"] = _obs_buf
+                            # 작가-작성 시트(_pc_play_built 마커 없이 기계필드 보유) → 동결
+                            _authored = bool((_pc.get("passives") or _pc.get("inventory"))
+                                             and not _pc.get("_pc_play_built"))
+                            domain_manager.set_default_pc_info(channel_id, _pc)
+                            if not _authored:
+                                _built = int(_pc.get("_pc_build_len", 0) or 0)
+                                if len(_obs_buf) >= 300 and (len(_obs_buf) - _built) >= 300:
+                                    try:
+                                        # 이전 면모를 컨텍스트로 얹어 정체성 안정 유지(NPC와 동일)
+                                        _pv = []
+                                        if _pc.get("high_concept"):
+                                            _pv.append(f"[기존 정체성] {_pc['high_concept']}")
+                                        if _pc.get("trouble"):
+                                            _pv.append(f"[기존 불씨] {_pc['trouble']}")
+                                        _pca = _pc.get("aspects")
+                                        if isinstance(_pca, list) and _pca:
+                                            _pv.append("[기존 면모] " + " / ".join(str(a) for a in _pca))
+                                        _pc_distill = ("\n".join(_pv) + "\n\n" + _obs_buf) if _pv else _obs_buf
+                                        _sheet = await cognition.analyze_character_sheet(
+                                            self.client, self.model_id_flash, _pc_distill)
+                                        if _sheet:
+                                            # 기계층(판정 연동): PC는 유지 — role/외형/설명 + passives/inventory
+                                            for _k in ("role", "species", "appearance", "description", "background"):
+                                                if _sheet.get(_k):
+                                                    _pc[_k] = _sheet[_k]  # 진화: 덮어쓰기
+                                            if _sheet.get("passives"):
+                                                _pc["passives"] = _sheet["passives"]
+                                            if _sheet.get("inventory"):
+                                                _pc["inventory"] = _sheet["inventory"]
+                                            # 서사층(면모 시트): 정체성은 새 값 있을 때만(보존), 면모 6 cap
+                                            if _sheet.get("high_concept"):
+                                                _pc["high_concept"] = _sheet["high_concept"]
+                                            if _sheet.get("trouble"):
+                                                _pc["trouble"] = _sheet["trouble"]
+                                            _pas = _sheet.get("aspects")
+                                            if isinstance(_pas, list) and _pas:
+                                                _pc["aspects"] = [str(a).strip() for a in _pas if a and str(a).strip()][:6]
+                                            _pc["_pc_build_len"] = len(_obs_buf)
+                                            _pc["_pc_play_built"] = True
+                                            domain_manager.set_default_pc_info(channel_id, _pc)
+                                            domain_manager.sync_matching_participants(channel_id, _pc)
+                                            logger.info(f"[PC Build] PC 시트 재작성/진화(면모+기계): {_pc_name} (관찰 {len(_obs_buf)}자)")
+                                    except Exception as _e_pcb:
+                                        logger.warning(f"[PC Build] 시트 재작성 실패: {_e_pcb}")
+                except Exception as _e_pco:
+                    logger.warning(f"[PC Build] pc_observed 처리 skipped: {_e_pco}")
 
                 # 스토리라인 분류
                 last_entry = nt_state["turn_log"][-1] if nt_state.get("turn_log") else None
@@ -1528,6 +1687,15 @@ class OrchestrationService:
                             logger.info(f"[KoreanFloor] {_kf_fb} {_kf_stats}")
                     except Exception as _e_kf:
                         logger.warning(f"[KoreanFloor] skipped: {_e_kf}")
+
+                    # 숫자·계측 집착(deepseek 백스톱): log-only 관측. 프롬 PROSE_CRAFT/MATURE가 교정.
+                    try:
+                        from response_processor import detect_number_fixation
+                        _nf_fb, _nf_stats = detect_number_fixation(response)
+                        if _nf_fb:
+                            logger.info(f"[NumberFixation] {_nf_fb} {_nf_stats}")
+                    except Exception as _e_nf:
+                        logger.warning(f"[NumberFixation] skipped: {_e_nf}")
 
                     # I축(재정착): verbatim 후렴 재발 → _ce_fb 넛지를 style_fb로 다음턴 주입(CADENCE_ECHO_INJECT). 윈도우 영속.
                     _ce_fb = ""

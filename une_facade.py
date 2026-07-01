@@ -855,6 +855,12 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
     bus = SharedBus()
     bus.doom["value"] = world.get("doom", 40)
     bus.doom["carry"] = world.get("doom_carry", 0.0)  # 소수 이월 누적 (round 0증발 방지)
+    # 0626: pending_doom_gain(퀘스트 완성 등 외부 raw 적립) → bus.doom delta 합류 → doom_module이 수식(phase×lens)+carry 통과. 소비 후 클리어.
+    _pending_dg = world.get("pending_doom_gain", 0)
+    if _pending_dg:
+        bus.doom["delta"] = bus.doom.get("delta", 0) + _pending_dg
+        world["pending_doom_gain"] = 0
+        domain_manager.update_world_state(channel_id, world)
     # Doom clocks (local threats)
     clocks = world.get("doom_clocks", [])
     bus.doom["clocks"] = clocks if isinstance(clocks, list) else []
@@ -881,6 +887,11 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
     bus.composure["value"] = composure_data.get("value", 100)
     bus.composure["last_delta"] = composure_data.get("last_delta", 0)
     bus.composure["stage3_turns"] = composure_data.get("stage3_turns", 0)
+
+    # 기력/평형 채널 토글 (off면 prime/process가 스킵 → 수치 동결)
+    _vc_on = domain_manager.is_vigor_composure_active(channel_id)
+    bus.vigor["module_active"] = _vc_on
+    bus.composure["module_active"] = _vc_on
 
     # Momentum 로드 (이전 턴 판정 결과의 여운)
     bus.judgment["momentum_carry"] = mem.get("judgment_momentum", 0)

@@ -216,6 +216,8 @@ async def extract_all_updates(
 
         "EntityStateUpdate": est.get("changes") if est else None,
 
+        "PCObserved": est.get("pc_observed") if est else None,
+
         "RenderFingerprint": rfp if rfp else None,
 
         # === Arc System (Phase 4b) ===
@@ -437,11 +439,26 @@ async def _extract_batch(
             "\n### entity_state"
             "\nTrack per-NPC state CHANGES this turn. Only NPCs who appear or are mentioned."
             "\nOutput: `{\"changes\": {NpcName: {\"location\": str or null, \"mood\": str or null, "
-            "\"health\": str or null, \"notable\": str or null}}}`"
+            "\"health\": str or null, \"notable\": str or null, \"descriptor\": str or null, "
+            "\"new_individual\": bool}}, \"pc_observed\": str or null}`"
             "\n- location: NEW location if NPC moved this turn. null if unchanged."
             "\n- mood: Current emotional state in Korean (1-2 words). null if unclear."
             "\n- health: Health change description in Korean. null if unchanged."
             "\n- notable: One-line notable state change (Korean). null if nothing remarkable."
+            "\n- descriptor: Korean 1-2 sentences of NEW identity detail about this NPC revealed THIS turn "
+            "— role, appearance, manner, a defining trait or skill. Emit whenever something new about WHO "
+            "THEY ARE surfaces (their first appearance OR a later turn that reveals more), so an emergent "
+            "NPC's sheet deepens over time as they recur. null if nothing new about their identity this "
+            "turn (a plain re-appearance with no new facet). GROUND in what the scene actually showed — "
+            "never fabricate beyond the rendered text."
+            "\n- new_individual: true ONLY if this entry is a DIFFERENT person who merely shares a name "
+            "with an already-known NPC (e.g., a second, unrelated 병사). The SAME recurring NPC must leave "
+            "this false/omitted — that case deepens the existing sheet, it does not split it."
+            "\n- pc_observed (sibling of changes, NOT inside it): Korean 1-2 sentences about WHO THE PLAYER "
+            "CHARACTER is, as revealed THIS turn — appearance, role/identity, manner, a defining trait or "
+            "skill the PC demonstrated. This is for building a PC sheet for a player who started with none. "
+            "Capture only NEW identity details (not plot actions, not transient mood). null if nothing new "
+            "about who the PC is. GROUND in what was actually shown/said."
             "\nCONSERVATIVE: Only extract clearly evidenced changes. Most fields should be null."
             "\nIf no NPC state change: `{\"changes\": {}}`."
         )
@@ -852,6 +869,23 @@ Extract detailed character information from the provided text to create a struct
    - Return structured: {"name": "아이템명", "qty": 1, "tags": ["weapon", "melee"], "modifiers": {"judgment_combat": 5}}
    - modifiers keys: same as passives. Only relevant keys.
 5. Language: All descriptions must be in KOREAN.
+6. Identity Aspects (Fate-hybrid — distill WHO THEY ARE as narrative aspects):
+   - high_concept: 1 Korean phrase — the identity crystallized around their core hunger
+     (role + defining stance). Their most stable truth. Keep it stable across rewrites;
+     replace only on a strong contradiction.
+   - trouble: 1 Korean phrase — the core deficit / unmet need that drives them (the Lack;
+     "the hunger around which personality crystallizes"). The narrative engine. null until
+     it actually surfaces in the text.
+   - aspects: 3-6 Korean phrases. Each is NAME + BEHAVIOR, never a bare adjective
+     (GOOD "부르기 전엔 먼저 입을 열지 않는다", BAD "차갑다"). Draw across four reads of the
+     same person: DECLARED (the mask they present), BELIEVED (their self-story, defenses
+     included), ACTUAL (what the text shows but they won't admit), RESISTANCE (how they
+     push back when their core is violated). Contradiction is fine when the phrase resolves
+     it ("게으른 완벽주의자"). Aspects should interlock, implying behavior in unwritten
+     scenes. Gate strong traits (only-toward-X / only-when-Y) so the archetype is inferred,
+     never labeled outright.
+   - ANTI-CLICHE / GROUND: never fill an unshown aspect with the nearest cliché. If the
+     text has not shown it, omit it or return null. Silence is better than a borrowed gesture.
 
 ## Output JSON Schema:
 {
@@ -861,6 +895,9 @@ Extract detailed character information from the provided text to create a struct
   "appearance": "기계 의수, 흉터 등 외양 묘사",
   "description": "성격, 말투, 특징 요약",
   "background": "과거 이력 및 배경 설정",
+  "high_concept": "정체성 한 구절 (핵심 갈망 둘레로 굳은 정체성)",
+  "trouble": "불씨 한 구절 (서사 엔진인 결핍/미충족 필요; 미발현이면 null)",
+  "aspects": ["면모 구절 (명명+행동, 맨 형용사 금지)", "..."],
   "passives": [ {"name": "특성1", "desc": "효과 설명", "tags": ["tag1"], "theory_links": [], "modifiers": {"anomaly_defense": 10}} ],
   "inventory": [ {"name": "아이템1", "qty": 1, "tags": ["weapon"], "modifiers": {"judgment_combat": 5}} ]
 }"""

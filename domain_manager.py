@@ -1381,7 +1381,12 @@ def apply_pc_info_to_user(channel_id: str, user_id: str) -> bool:
     elif pc_info.get("personality"): mem["description"] = pc_info["personality"]
     
     if pc_info.get("background"): mem["background"] = pc_info["background"]
-    
+
+    # Identity aspects (면모 시트 — Fate 하이브리드: 정체성/불씨/면모)
+    for _ak in ("high_concept", "trouble", "aspects"):
+        if pc_info.get(_ak):
+            mem[_ak] = pc_info[_ak]
+
     # Passives Merge (Prevent Duplicates)
     new_passives = pc_info.get("passives", [])
     if new_passives:
@@ -1636,6 +1641,14 @@ def get_unified_player_info(channel_id: str, user_id: str) -> str:
 
     # 8. Construct Block
     lines = [f"## 🎭 {name} (Player Character)"]
+    # 면모 시트 (Fate 하이브리드) — 플레이로 자동 구축된 정체성/불씨/면모
+    if mem.get("high_concept"):
+        lines.append(f"- 정체성: {mem['high_concept']}")
+    if mem.get("trouble"):
+        lines.append(f"- 불씨: {mem['trouble']}")
+    _pc_aspects = mem.get("aspects")
+    if isinstance(_pc_aspects, list) and _pc_aspects:
+        lines.append("- 면모: " + " · ".join(str(a) for a in _pc_aspects))
     lines.append(f"- Status Condition: {status_text}")
     lines.append(f"- Vigor/Composure: {vc_text}")
     lines.append(f"- Traits: {passive_text}")
@@ -1731,6 +1744,17 @@ def toggle_module(channel_id: str, module_name: str, active: bool) -> None:
     else:
         modules.discard(module_name)
     update_settings(channel_id, active_modules=list(modules))
+
+def is_vigor_composure_active(channel_id: str) -> bool:
+    """기력/평형(활력/평형) 모듈 활성 여부.
+    명시적으로 끄지 않은 한 항상 ON (기본 True → 레거시 채널 무손실)."""
+    d = get_domain(channel_id)
+    return bool(d.get("settings", {}).get("vigor_composure_enabled", True))
+
+def set_vigor_composure_active(channel_id: str, active: bool) -> None:
+    """기력/평형 모듈을 채널 단위로 켜고 끈다.
+    off면 파이프라인 prime/process 스킵 + 프롬프트 주입 스킵 (수치 동결)."""
+    update_settings(channel_id, vigor_composure_enabled=bool(active))
 
 def set_response_mode(channel_id: str, mode: str) -> None:
     d = get_domain(channel_id)
