@@ -685,6 +685,8 @@ def apply_memory_edits(
 
 # =========================================================
 # Session Memory Update (Left Brain to World State)
+# ⚠ 미배선 (2026-07-06 감사): apply_ai_memory_updates 호출자 0 — 이름 유사한
+# apply_memory_edits(OOC 기억 편집)가 실사용 함수. 혼동 주의.
 # =========================================================
 
 def apply_ai_memory_updates(

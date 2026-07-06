@@ -762,6 +762,51 @@ def demote_to_storyline(sl: dict) -> None:
         sl.pop(key, None)
 
 
+def supernova_branch(arc: dict, current_turn: int) -> str:
+    """
+    spec v2 §4.5 Supernova 분기 (armed + trigger 닿음). [2026-07-06 배선]
+    상수(FORCED 0.7/VANISH 0.3)·armed 토글·absorb 흐름·demote_to_storyline은
+    전부 기구현이었고, 트리거→score→분기 커넥터만 없었음 (감사 A2).
+
+    호출처: ① anomaly_module ABSORB — 이미 armed인 arc에 같은 카테고리 시드 흡수 성공 시
+           ② tick_arcs — armed arc + PC 결정적 행동(ctx["decisive"]) 신호
+
+    Returns: "forced_climax" | "vanish" | "demote"
+    """
+    import config as _cfg
+    proximity = float(arc.get("proximity", 0.0) or 0.0)
+    momentum = float(arc.get("momentum", 0.0) or 0.0)
+    phase_pos = float(arc.get("phase_pos", 0.0) or 0.0)
+    pacing = float(arc.get("pacing", 0.0) or 0.0)
+    score = (proximity * 0.4 + momentum * 0.3 + phase_pos * 0.2
+             + (1.0 if pacing >= 0.7 else 0.0) * 0.1)
+
+    if score >= _cfg.ARC_SUPERNOVA_FORCED_THRESHOLD:
+        # forced_climax: proximity 1.0 점프 → 기존 채널(arc digest S11)로 산문 ignite.
+        # 시스템 메시지 알림 없음 (anti-railroad — GM 디렉팅 알림 금지).
+        arc["proximity"] = 1.0
+        if phase_pos > 0.9:
+            arc["status"] = "resolved"
+        arc["armed"] = False
+        _label = arc.get("declared_goal") or arc.get("summary") or str(arc.get("id", ""))
+        arc.setdefault("phases", []).append(f"[강제 발사: {_label}]")
+        arc["last_advanced_turn"] = int(current_turn)
+        branch = "forced_climax"
+    elif score <= _cfg.ARC_SUPERNOVA_VANISH_THRESHOLD:
+        # vanish silent: 산문 ignite X (안티체호프). 좌표/라벨 보존 — 재활성 가능.
+        arc["status"] = "dormant"
+        arc["armed"] = False
+        branch = "vanish"
+    else:
+        # 중간 score — 격하. 같은 카테고리 시드 재누적 시 재진입 가능.
+        demote_to_storyline(arc)
+        branch = "demote"
+
+    logger.info("[Arc] SUPERNOVA %s arc#%s score=%.2f (prox=%.2f mom=%.2f pos=%.2f pacing=%.2f)",
+                branch, arc.get("id"), score, proximity, momentum, phase_pos, pacing)
+    return branch
+
+
 # =========================================================
 # ARC SYSTEM (Phase 2: 라우터 helper)
 # =========================================================
@@ -799,11 +844,19 @@ def find_absorbing_arc(state: dict, category: str) -> dict | None:
     return candidates[0]
 
 
+def _reader_hangul_bigrams(text: str) -> set:
+    """[Reader-GM R4b] 한글 bigram — 독자 인용↔후보 line/reason 겹침 매칭(순수)."""
+    import re as _re
+    s = _re.sub(r"[^가-힣]", "", str(text))
+    return {s[i:i + 2] for i in range(len(s) - 1)}
+
+
 def check_promote_threshold(
     state: dict,
     candidate: dict,
     recent_categories: list,
     event_queue: list,
+    reader_axes: list = None,
 ) -> bool:
     """
     spec v2 §4.0/§4.2: arc_promote 임계 도달 검사.
@@ -812,6 +865,8 @@ def check_promote_threshold(
       - 같은 카테고리 active arc 없음 (있으면 흡수로 가야)
       - 같은 카테고리 누적 (recent_categories + event_queue + candidate) ≥ ARC_PROMOTE_CATEGORY_MIN (3)
       - 누적 항목 중 최소 1개 intensity High/Extreme
+    [Reader-GM R4b] reader_axes(독자 지속 축 인용)가 후보 line/reason과 겹치면 누적 증거 1표 가산 —
+      독자의 지속 수신도 "이 축이 살아있다"는 관측이므로. FEED=0이면 호출부가 None을 넘겨 무동작.
     """
     import config as _cfg
     cat = candidate.get("category", "")
@@ -829,6 +884,13 @@ def check_promote_threshold(
         if isinstance(e, dict) and e.get("category") == cat
     )
     total = recent_count + queue_count + 1  # +1 for candidate
+    if reader_axes:
+        _c_bg = _reader_hangul_bigrams(
+            f"{candidate.get('line', '')} {candidate.get('reason', '')}")
+        if _c_bg and any(
+            len(_reader_hangul_bigrams(a) & _c_bg) >= 3 for a in reader_axes
+        ):
+            total += 1  # 독자 1표
     if total < _cfg.ARC_PROMOTE_CATEGORY_MIN:
         return False
 
@@ -1319,6 +1381,14 @@ def tick_arcs(state: dict, ctx: dict, current_turn: int) -> dict:
         elif sl.get("weight", 0.0) < (_cfg.ARC_SUPERNOVA_ARMED_THRESHOLD - 0.05):
             sl["armed"] = False
 
+        # 6b. Supernova 트리거(b): armed + PC 결정적 행동 (spec §4.5 — 2026-07-06 배선).
+        #     이번 턴 armed 진입분은 제외 (spec: "자동 발사 X. 다음 trigger 대기").
+        if sl.get("armed") and prev_armed and ctx.get("decisive"):
+            _branch = supernova_branch(sl, current_turn)
+            events.setdefault("supernova", []).append((arc_id, _branch))
+            if _branch != "forced_climax":
+                continue  # vanish/demote — 이후 좌표 스텝(7/8) 진행 안 함
+
         # 7. trajectory 갱신 (ring buffer cap 20)
         traj = sl.setdefault("trajectory", [])
         traj.append((current_turn, sl["phase_pos"], sl["weight"]))
@@ -1399,17 +1469,11 @@ def compute_aspects(bus, state: dict, primary_axis: str = "vigor") -> list:
 
     v_val = int(vigor.get("value", 100) or 100)
     c_val = int(composure.get("value", 100) or 100)
-    v_trauma = bool(vigor.get("trauma_trigger"))
-    c_trauma = bool(composure.get("trauma_trigger"))
-    trauma_any = v_trauma or c_trauma
 
     primary_val = v_val if primary_axis == "vigor" else c_val
 
     arc_proximate = _any_active_arc_proximate(state)
     arc_armed = _any_arc_armed(state)
-    # arc forced_climax 감지: bus.anomaly.arc_absorbed에 forced_climax 신호가 있을 수 있음
-    # 또는 별도 신호. 현재 spec에는 단발 신호 없음. arc_armed를 가까운 대용으로.
-    arc_forced_climax = bool(anomaly.get("arc_forced_climax", False))
 
     # 외부 사건 통합 신호 (anomaly OR arc 흡수 OR 시계 발사)
     external_event = a_triggered or a_arc_absorbed or clock_fired
@@ -1431,13 +1495,10 @@ def compute_aspects(bus, state: dict, primary_axis: str = "vigor") -> list:
     if primary_axis == "composure" and (a_triggered or arc_proximate) and c_val <= _aspects_resource_threshold():
         aspects.append("Mind Fracture")
 
-    # === 5. Inner-Outer Convergence ===
-    if trauma_any and (a_triggered or arc_forced_climax):
-        aspects.append("Inner-Outer Convergence")
-
-    # === 6. Resurgence ===
-    if trauma_any and j_active:
-        aspects.append("Resurgence")
+    # === 5/6. Inner-Outer Convergence · Resurgence 제거 (2026-07-06) ===
+    # 둘 다 trauma_trigger(트라우마 각성) 게이트였음 — 각성 폐지로 함께 폐지.
+    # (부수 정리: 여기서 읽던 anomaly["arc_forced_climax"]는 생산자가 없던 유령 키.
+    #  supernova FORCED/VANISH 분기는 spec상 미구현 — 부활 시 신호 생산부터.)
 
     # === 7. Abyss ===
     if j_result == "critical_failure" and primary_val <= _aspects_abyss_threshold():

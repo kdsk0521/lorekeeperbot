@@ -423,7 +423,9 @@ def _short_tokens(s: str) -> set:
     return toks
 
 # [V10 Sprint 2-B] NPC 본체 — JSON 진실원천 + npcs 문서테이블 dual-write.
-# 읽기는 config.V10_NPCS_READ_FROM_SQLITE 게이트 (기본 OFF).
+# [2026-07-04 정정] 읽기는 config.V10_NPCS_READ_FROM_SQLITE 게이트 — 현재 값 = True(읽기 ON,
+#   read-through). 즉 get_npcs는 npcs 테이블에서 읽는다. 쓰기는 반드시 이 모듈의 미러(_mirror_npc/
+#   upsert_npc) 경유여야 stale 안 됨(직접 d["npcs"] 변형+save_domain만 하는 경로 금지).
 # 단건(get_npc)은 별칭 해상도(_find_npc_key)가 전체 dict를 요구하므로 get_npcs 경유 유지.
 
 def _mirror_npc(channel_id: str, npc_name: str, data: Dict[str, Any]) -> None:
@@ -858,7 +860,7 @@ def delete_npcs_by_source(channel_id: str, keep_sources: tuple = ("lore", "manua
 
 # NPC Attitude System
 # [V10 Sprint 1] 관계 도메인 — JSON 진실원천 + npc_relations 정규화 테이블 dual-write.
-# 읽기는 config.V10_RELATIONS_READ_FROM_SQLITE 플래그 게이트 (기본 OFF = V9 동작).
+# 읽기는 config.V10_RELATIONS_READ_FROM_SQLITE 플래그 게이트 (현재 값 = True, 읽기 ON).
 # spec: 파티쳇수정/v10_sprint1_relations_spec.md
 
 def _mirror_relation(channel_id: str, npc_name: str, rel: Dict[str, Any]) -> None:
@@ -965,7 +967,7 @@ def set_attitude_turn(channel_id: str, npc_name: str, turn: int) -> None:
 
 # NPC Knowledge Persistence
 # [V10 Sprint 2-A] JSON 진실원천 + npc_knowledge 테이블 dual-write.
-# 읽기는 config.V10_KNOWLEDGE_READ_FROM_SQLITE 게이트 (기본 OFF).
+# 읽기는 config.V10_KNOWLEDGE_READ_FROM_SQLITE 게이트 (현재 값 = True, 읽기 ON).
 
 def _mirror_knowledge(channel_id: str, npc_name: str, kn: Dict[str, Any]) -> None:
     """JSON에 쓰인 최종 지식 상태를 방벽 통과 후 npc_knowledge 테이블에 미러."""
@@ -1409,58 +1411,101 @@ def apply_pc_info_to_user(channel_id: str, user_id: str) -> bool:
                     passive_entry["modifiers"] = np_obj["modifiers"]
                 mem["passives"].append(passive_entry)
 
-    # Memos/Inventory Merge (Integrated with Notebook, per-user)
-    # Notes/Memos
-    notes = pc_info.get("notes") or pc_info.get("memos") or pc_info.get("background")
-    if notes and isinstance(notes, (str, list)):
-        _append_memo_to_notebook(channel_id, f"설정 동기화: {notes[:100]}...", user_id)
-
-    # Inventory (v3 structured list + legacy dict 하위 호환)
-    inv = pc_info.get("inventory")
-    if inv:
-        if isinstance(inv, list):
-            # v3 구조화 형식: [{name, qty, tags, modifiers}]
-            for item_obj in inv:
-                if isinstance(item_obj, dict):
-                    name = item_obj.get("name", "")
-                    qty = item_obj.get("qty", 1)
-                    if not name:
-                        continue
-                    structured = {"name": name, "qty": qty, "tags": item_obj.get("tags", [])}
-                    if item_obj.get("modifiers"):
-                        structured["modifiers"] = item_obj["modifiers"]
-                    add_to_ai_memory_list(channel_id, user_id, "inventory", structured)
-                    _append_memo_to_notebook(channel_id, f"{name} ({qty}개) - 설정 동기화", user_id)
-                elif isinstance(item_obj, str) and item_obj.strip():
-                    add_to_ai_memory_list(channel_id, user_id, "inventory", {"name": item_obj.strip(), "qty": 1, "tags": []})
-                    _append_memo_to_notebook(channel_id, f"{item_obj.strip()} (1개) - 설정 동기화", user_id)
-        elif isinstance(inv, dict):
-            # Legacy {"Item": "Qty"} 형식 → 구조화 변환
-            for item, qty in inv.items():
-                add_to_ai_memory_list(channel_id, user_id, "inventory", {"name": item, "qty": int(qty) if str(qty).isdigit() else 1, "tags": []})
-                _append_memo_to_notebook(channel_id, f"{item} ({qty}) - 설정 동기화", user_id)
-    
     save_participant_data(channel_id, user_id, p)
+
+    # [일지/인벤 라우팅 2026-07-04] ai_memory 저장 후(read-modify-write 순서 안전) 노트북 섹션 반영.
+    #  - notes(시트 '일지' 필드) → [일지] 섹션(시트 sync 단독 소유; [메모]·[소지품]과 격리라
+    #    background/NPC 누출 없음). 수동 !정보·자동 재작성 모두에서 연속성 일지가 누적.
+    #  - inventory → [소지품] 섹션(item_usage와 동일한 add_item_to_sojipin 정식 경로; 이후
+    #    sync_notebook_to_inventory가 ai_memory.inventory 재구축). 과거 [메모]에 "설정 동기화"
+    #    라벨로 덤프하던 노이즈 제거.
+    # add_to_journal/add_item_to_sojipin 둘 다 dedup 내장 → 자동 재작성 반복에도 중복 안 쌓임.
+    # [메모]는 플레이어 전용으로 불가침.
+    try:
+        import game_character as _gc
+        _journal = pc_info.get("notes") or pc_info.get("memos")
+        if isinstance(_journal, list):
+            _journal = " ".join(str(x) for x in _journal)
+        if _journal and str(_journal).strip():
+            _gc.add_to_journal(channel_id, str(_journal).strip(), user_id)
+
+        _inv = pc_info.get("inventory")
+        _names = []
+        if isinstance(_inv, list):
+            for _it in _inv:
+                if isinstance(_it, dict) and _it.get("name"):
+                    _names.append(str(_it["name"]).strip())
+                elif isinstance(_it, str) and _it.strip():
+                    _names.append(_it.strip())
+        elif isinstance(_inv, dict):
+            _names = [str(_k).strip() for _k in _inv.keys() if str(_k).strip()]
+        for _nm in _names:
+            if _nm:
+                _gc.add_item_to_sojipin(channel_id, _nm, user_id)
+    except Exception as _e_nb:
+        logging.debug(f"[PC Sync] 노트북 일지/인벤 반영 skipped: {_e_nb}")
+
     return True
 
 def sync_matching_participants(channel_id: str, pc_info: Dict[str, Any]) -> List[str]:
     """[V4] 캐릭터 이름(Mask)이 일치하는 모든 플레이어에게 기본 설정을 자동 동기화합니다."""
     if not pc_info or not pc_info.get("name"): return []
-    
+
     target_name = pc_info["name"].lower()
     d = get_domain(channel_id)
     updated_uids = []
-    
+
     for uid, p_data in d.get("participants", {}).items():
         if p_data.get("mask", "").lower() == target_name:
             if apply_pc_info_to_user(channel_id, uid):
                 updated_uids.append(uid)
-                
+
+    # [P-C] mask≠name 조용한 실패 관측 — PC 시트는 default_pc_info에 써졌는데 이름이 어느
+    # 참가자 mask와도 안 맞아 ai_memory/화면(!info·Slot6)에 전파가 0건이면 경고(무경고 사각 제거).
+    if not updated_uids:
+        _masks = [p.get("mask", "") for p in d.get("participants", {}).values() if p.get("mask")]
+        logging.warning(
+            "[PC Sync] default_pc_info name=%r 가 어떤 참가자 mask와도 불일치 → ai_memory 전파 0건. "
+            "참가자 mask=%s. !가면 이름 정합 확인 필요.", pc_info.get("name"), _masks)
+
     return updated_uids
 
 def get_ai_memory(channel_id: str, uid: str) -> Dict[str, Any]:
     p = get_participant_data(channel_id, uid)
     return p.get("ai_memory", {}) if p else {}
+
+# [일지 전체 로그 2026-07-04] 표시(노트북 [일지] 최근 N줄)와 저장(전체 이력)을 분리.
+# 노트북엔 최근 N줄만 렌더되어 매 턴 프롬프트 부담↓, 전체는 ai_memory.journal_log에 영속.
+_JOURNAL_LOG_CAP = 500  # 안전 상한 (초과 시 오래된 것부터 드롭 — 사실상 무제한에 가까움)
+
+def get_journal_log(channel_id: str, uid: str) -> List[str]:
+    """PC 일지 전체 이력(리스트). 노트북 [일지] 섹션은 이 로그의 최근 N줄 렌더."""
+    mem = get_ai_memory(channel_id, uid)
+    log = mem.get("journal_log", [])
+    return [str(x) for x in log] if isinstance(log, list) else []
+
+def append_journal_log(channel_id: str, uid: str, entry: str) -> List[str]:
+    """일지 1건을 전체 로그에 append(직전 항목과 정규화 중복이면 스킵) 후 저장. 갱신된 로그 반환."""
+    entry = str(entry or "").strip()
+    if not entry or not uid:
+        return get_journal_log(channel_id, uid) if uid else []
+    _norm = lambda s: re.sub(r'\s+', ' ', str(s).strip())
+    p = get_participant_data(channel_id, uid)
+    if not p:
+        return []
+    mem = p.get("ai_memory", {})
+    if not isinstance(mem, dict):
+        mem = {}
+    log = mem.get("journal_log", [])
+    if not isinstance(log, list):
+        log = []
+    if not log or _norm(log[-1]) != _norm(entry):  # 연속 중복만 방지(재발은 허용)
+        log.append(entry)
+    log = log[-_JOURNAL_LOG_CAP:]
+    mem["journal_log"] = log
+    p["ai_memory"] = mem
+    save_participant_data(channel_id, uid, p)
+    return log
 
 def update_ai_memory(channel_id: str, uid: str, updates: Dict[str, Any]) -> None:
     p = get_participant_data(channel_id, uid)
@@ -1588,6 +1633,14 @@ def get_unified_player_info(channel_id: str, user_id: str) -> str:
     if mem.get("appearance"): desc_parts.append(f"Appearance: {mem['appearance']}")
     if mem.get("description"): desc_parts.append(f"Description: {mem['description']}")
     if mem.get("background"): desc_parts.append(f"Background: {mem['background']}")
+
+    # [P-A] 빈시트 PC 초반: 재작성(임계) 전엔 ai_memory가 비어 있음 → default_pc_info의
+    # raw 관찰(play_observed)로 폴백해 렌더러가 굶지 않게. NPC 렌더러 폴백과 동형.
+    if not desc_parts:
+        _pcd = get_default_pc_info(channel_id) or {}
+        _pobs = str(_pcd.get("play_observed", "") or "").strip()
+        if _pobs:
+            desc_parts.append(f"관찰(진행 중): {_pobs[-600:]}")
 
     desc_text = "\n".join(desc_parts) if desc_parts else "No description available."
 
@@ -2172,8 +2225,18 @@ def reset_session_state(channel_id: str) -> None:
         import sqlite_store
         sqlite_store.clear_history_log(channel_id)
         sqlite_store.clear_ledger(channel_id)  # [Sprint 4] 막간 장부도 동일 정책
+        # [2026-07-05 혼입 수리] 세션 파생 8테이블(관계/지식/계측 로그)도 동일 정책 —
+        # 안 지우면 narrative_queries 계측·AttitudeGate 쿨다운·NPC 지식이 옛 세션을 새 세션에 급식.
+        sqlite_store.clear_session_scoped(channel_id)
     except Exception as _e:
         logging.debug(f"[V10] history log clear skipped: {_e}")
+
+    # [2026-07-05 혼입 수리] 플레이 파생 도메인 루트 키 — 태도/지식/엔티티관계는 세션 소속.
+    # (!클리어 스펙 "유지=로어북·참가자·룰·등록 NPC"에서 유지 대상은 NPC '시트'지 플레이 상태가 아님.
+    #  실측: 턴1에 AttitudeGate cooldown -64, 옛 지식 6 facts, 'Deep(은색 캔 약속)' 혼입.)
+    d["npc_attitudes"] = {}
+    d["npc_knowledge"] = {}
+    d["entity_relations"] = {}
     
     # 2. Reset World State
     d["world_state"] = config.DEFAULT_WORLD_STATE.copy()
@@ -2190,6 +2253,10 @@ def reset_session_state(channel_id: str) -> None:
         kept_npcs = {}
         for name, data in d["npcs"].items():
             if data.get("source") in ("lore", "manual"):
+                # [2026-07-05 혼입 수리] 시트 원본은 유지하되 플레이 파생 필드는 세션 소속 → 제거.
+                if isinstance(data, dict):
+                    data.pop("play_observed", None)
+                    data.pop("appearances", None)
                 kept_npcs[name] = data
         d["npcs"] = kept_npcs
         # [V10 Sprint 2-B] npcs 테이블 미러 (clear_session_npcs와 동일 보존 정책)

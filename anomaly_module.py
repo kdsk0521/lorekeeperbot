@@ -199,12 +199,31 @@ class AnomalyModule:
             if c.get("_source") == "queue":
                 score += 0.01
 
+            # [Reader-GM R4b] 독자 지속 축 부스트 — 신설 없이 기존 후보의 가점만.
+            # 매칭=독자 인용(한국어) vs 이벤트 line/reason 한글 bigram 겹침(>=3).
+            _axes = bus.anomaly.get("_reader_axes") or []
+            if _axes:
+                _ev_bg = self._hangul_bigrams(f"{c.get('line', '')} {c.get('reason', '')}")
+                if _ev_bg and any(
+                    len(self._hangul_bigrams(a) & _ev_bg) >= 3 for a in _axes
+                ):
+                    score += 0.25
+                    logger.info("[ReaderBoost] '%s' +0.25 (reader-persistent axis overlap)",
+                                c.get("tag", ""))
+
             scored.append((score, c))
 
         scored.sort(key=lambda x: x[0], reverse=True)
         return scored[0][1] if scored else {}
 
     # ----- Main Process -----
+
+    @staticmethod
+    def _hangul_bigrams(text: str) -> set:
+        """[Reader-GM R4b] 한글 문자 bigram — 독자 인용↔이벤트 line/reason 겹침 매칭용(순수)."""
+        import re as _re
+        s = _re.sub(r"[^가-힣]", "", str(text))
+        return {s[i:i + 2] for i in range(len(s) - 1)}
 
     async def process(self, context: GameContext) -> GameContext:
         bus = context.shared_bus
@@ -214,6 +233,20 @@ class AnomalyModule:
 
         # Load storyteller state
         st_state = bus.anomaly.get("_storyteller_state", {})
+        # [Reader-GM R4b] 독자 지속 축(한국어 인용) 로드 — FEED=1일 때만. 선택 *가점* 전용(이벤트 신설 없음),
+        # bus 휘발 키라 st_state 영속에 안 섞임. spec §6b.
+        try:
+            if getattr(_cfg, "READER_GM_FEED", 0):
+                _ch_r = bus.anomaly.get("_channel_id", "")
+                if _ch_r:
+                    import domain_manager as _dm_r
+                    _mem_r = _dm_r.get_session_ai_memory(_ch_r) or {}
+                    bus.anomaly["_reader_axes"] = [
+                        str(p.get("quote", "") or "")
+                        for p in (_mem_r.get("reader_candidates") or []) if p.get("quote")
+                    ][:8]
+        except Exception:
+            pass
         current_turn = bus.anomaly.get("_current_turn", 0)
         channel_id = bus.anomaly.get("_channel_id", "")
 
@@ -367,6 +400,7 @@ class AnomalyModule:
                         st_state, _normalized_cand,
                         st_state.get("recent_categories", []),
                         st_state.get("event_queue", []),
+                        reader_axes=bus.anomaly.get("_reader_axes"),  # [Reader-GM R4b] 독자 1표 (FEED=0이면 미적재=None)
                     ):
                         _route = "promote_candidate"
                 except Exception as _e_route:
@@ -374,6 +408,7 @@ class AnomalyModule:
 
                 if _route == "absorb":
                     # === (d) arc 흡수 — 일반 발사 흐름 skip ===
+                    _was_armed = bool(_target_arc.get("armed"))
                     try:
                         _absorbed = _nt.absorb_to_arc(_target_arc, _normalized_cand, current_turn)
                     except Exception as _e_abs:
@@ -401,6 +436,13 @@ class AnomalyModule:
                         "[Storyteller] ABSORB → arc#%s cat=%s accepted=%s",
                         _target_arc.get("id"), _normalized_cand["category"], _absorbed,
                     )
+                    # Supernova 트리거(a): 이미 armed였던 arc에 같은 카테고리 시드 흡수 성공
+                    # (spec §4.5 — 2026-07-06 배선). 이번 흡수로 armed된 경우는 다음 trigger 대기.
+                    if _absorbed and _was_armed:
+                        try:
+                            _nt.supernova_branch(_target_arc, current_turn)
+                        except Exception as _e_sn:
+                            logger.warning("[Storyteller] supernova branch failed: %s", _e_sn)
                     # 일반 발사 흐름 skip — active_condition / escalated 등록 X
                 else:
                     # === (e) promote_candidate 또는 (f) 일반 발사 ===

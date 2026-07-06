@@ -102,10 +102,9 @@ _MIXED_NOTATION = {
     "reckless":  "action | ♪ f, presto, sforzando | ▶ wide, jump-cut | ◎ slow-motion",
     "fragile":   "consciousness | ♪ p, adagio, legato | ▶ close-up:eyes, pillow | ◎ long-exposure",
 }
-_DOOM_NOTATION = {
-    "high":     "world | ♪ f, allegro, marcato | ▶ wide, facing | ◎ interval",
-    "critical": "world | ♪ ff, presto, sforzando | ▶ low-angle, jump-cut | ◎ slow-motion",
-}
+# _DOOM_NOTATION 제거 (2026-07-06 감사): 형제(_COMPOSURE/_MIXED)와 달리 소비자 0 —
+# 둠→챕터볼륨 리브랜드로 world-layer doom 연출 분기가 사라진 잔재. doom 무드는
+# doom_module lens×phase atmosphere가 담당.
 _SCENE_PHOTO_OVERRIDE = {
     "summary":  "◎ bulb",
     "combat":   "◎ slow-motion",
@@ -262,9 +261,17 @@ def _build_events_layer(context, bus) -> str:
                 if sig in status_seen:
                     continue
                 status_seen.add(sig)
-                line = f"{name} {label_kr}"
+                # [2026-07-06] 시스템 라벨("X begins") → 신체-우선 연출 지시 (body-before-mind).
+                # 상태명은 렌더러 참조용 컨텐츠 — 산문에 이름/상태언어로 올리지 말라는 프레임 내장.
+                if label_kr == "begins":
+                    line = (f"{name}: onset — the body notices before the mind names it "
+                            "(a sensation, a reflex, a small failure of ease). "
+                            "the state itself stays unnamed; no status language in prose.")
+                else:
+                    line = (f"{name}: lifting — register it as absence "
+                            "(breath comes easier, a weight quietly gone). no announcement.")
                 if hint:
-                    line += f" — {hint}"
+                    line += f" ({hint})"
                 parts.append(line)
 
     # Flashback → tag stripped
@@ -420,9 +427,14 @@ def _build_atmosphere_layer(context, bus) -> str:
 
     # [전환] 디렉티브 — 에너지 방향 변화 시에만
     from notation_compositor import compose_transition
-    prev_continuity = (context.narrative_anchors or {}).get("session_memory", {}).get("scene_continuity", {})
+    # [2026-07-02 shape fix] scene_continuity는 {"frames":[...]} — 마지막 프레임(=직전 턴)을 넘겨야
+    # 실제 전환에서만 발화. (기존엔 dict 통째로 넘겨 prev_energy 항상 idle → 상승 지속 중에도
+    # 매 턴 "정적이 깨진다" 오발화 + 진짜 전환(rising→falling 등)은 영구 침묵)
+    _sc_raw = (context.narrative_anchors or {}).get("session_memory", {}).get("scene_continuity", {})
+    _sc_frames = _sc_raw.get("frames", []) if isinstance(_sc_raw, dict) else []
+    prev_frame = _sc_frames[-1] if _sc_frames else {}
     current_energy = str(dai.get("energy_direction", "idle"))
-    _transition = compose_transition(prev_continuity, current_energy)
+    _transition = compose_transition(prev_frame, current_energy)
     if _transition:
         parts.append(_transition)
 
@@ -835,6 +847,55 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
     _npc_mgr.migrate_npc_fields(channel_id)  # desc→description 통일 + 구조화 필드 자동 추출
     anchors["npc_roster"] = _npc_mgr.get_npc_roster(channel_id)
 
+    # [2026-07-02 Offscreen Motion — 뮈토스 이식] 부재 등록 NPC 후보 → Theoria offscreen_trace 재료.
+    # 장면 밖 NPC의 "세계가 턴 사이에 움직인 흔적" 공급용. 후보 6명 캡, 실패 무해.
+    # [Phase 0] last_seen(emotion_log 기준)으로 부재 '기간' 동봉 — 오래 빈 인물일수록 흔적 가치↑.
+    try:
+        _scene_set = set(_npc_mgr.get_scene_npc_names(channel_id))
+        _all_reg = list((domain_manager.get_npcs(channel_id) or {}).keys())
+        _absent_names = [n for n in _all_reg if n not in _scene_set][:6]
+        if _absent_names:
+            _att_map = domain_manager.get_npc_attitudes(channel_id) or {}
+            _last_seen = {}
+            try:
+                import narrative_queries as _nq
+                _last_seen = _nq.last_seen_turns(channel_id)
+            except Exception:
+                _last_seen = {}
+            _cur_t = int(world.get("turn_index", 0) or 0)
+
+            def _ls_lookup(name: str):
+                if name in _last_seen:
+                    return _last_seen[name]
+                _base = name.split("(")[0].strip().lower()
+                for _k, _v in _last_seen.items():
+                    _kb = _k.split("(")[0].strip().lower()
+                    if _kb == _base or _base in _k.lower() or _kb in name.lower():
+                        return _v
+                return None
+
+            _cand_lines = []
+            for _an in _absent_names:
+                _aa = _att_map.get(_an, {}) if isinstance(_att_map, dict) else {}
+                _ls = _ls_lookup(_an)
+                _absent_str = (f", absent_for={max(0, _cur_t - int(_ls))} turns"
+                               if _ls is not None else ", absent_for=unknown")
+                _cand_lines.append(
+                    f"{_an}: attitude={_aa.get('attitude', 'neutral')}, depth={int(_aa.get('depth', 0) or 0)}{_absent_str}"
+                )
+            anchors["offscreen_candidates"] = _cand_lines
+    except Exception as _e_osc:
+        logger.debug(f"[OffscreenMotion] candidates skip: {_e_osc}")
+
+    # [Phase 0 2026-07-02] 최근 제안 비트 목록 → 반복 회피 재료 (suggested_beats가 매 턴 같은 축 반복 방지)
+    try:
+        import narrative_queries as _nq_rb
+        _rb = _nq_rb.recent_beats(channel_id, n=10, cap=8)
+        if _rb:
+            anchors["recent_beats_avoid"] = _rb
+    except Exception as _e_rb:
+        logger.debug(f"[Phase0] recent_beats skip: {_e_rb}")
+
     # [2026-06-11 소비자 감사 #6 부활] P6 capability hints — Flash *입력*으로 (원설계 배달).
     # 등록 NPC 전용 (PC는 npcs 레지스트리에 없음 — NPC 제한, PC 자율성 무관).
     try:
@@ -861,6 +922,13 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
         bus.doom["delta"] = bus.doom.get("delta", 0) + _pending_dg
         world["pending_doom_gain"] = 0
         domain_manager.update_world_state(channel_id, world)
+    # [Reader-GM Stage 3-A] 수신형 시계 후보 적립분 → bus 폴백 인테이크
+    # (doom_module이 Flash 제안 부재 시 소비 — 기존 캡·중복·間 규칙 그대로 통과. 소비 후 클리어.)
+    _pending_ck = world.get("pending_clock_new")
+    if _pending_ck:
+        bus.doom["pending_clock_new"] = _pending_ck
+        world["pending_clock_new"] = None
+        domain_manager.update_world_state(channel_id, world)
     # Doom clocks (local threats)
     clocks = world.get("doom_clocks", [])
     bus.doom["clocks"] = clocks if isinstance(clocks, list) else []
@@ -882,11 +950,10 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
     vigor_data = mem.get("vigor", {"value": 100, "last_delta": 0})
     bus.vigor["value"] = vigor_data.get("value", 100)
     bus.vigor["last_delta"] = vigor_data.get("last_delta", 0)
-    bus.vigor["stage3_turns"] = vigor_data.get("stage3_turns", 0)  # 붕괴 dwell 카운터 (트라우마 트리거용)
     composure_data = mem.get("composure", {"value": 100, "last_delta": 0})
     bus.composure["value"] = composure_data.get("value", 100)
     bus.composure["last_delta"] = composure_data.get("last_delta", 0)
-    bus.composure["stage3_turns"] = composure_data.get("stage3_turns", 0)
+    # stage3_turns(붕괴 dwell) 로드 제거 — 트라우마 각성 폐지 (2026-07-06)
 
     # 기력/평형 채널 토글 (off면 prime/process가 스킵 → 수치 동결)
     _vc_on = domain_manager.is_vigor_composure_active(channel_id)
@@ -944,28 +1011,31 @@ def sync_from_game_context(channel_id: str, user_id: str, ctx: Any) -> None:
                 axis_sys = mem.setdefault(axis_name, {"value": 100, "last_delta": 0})
                 axis_sys["value"] = axis_bus["value"]
                 axis_sys["last_delta"] = axis_bus.get("last_delta", 0)
-                axis_sys["stage3_turns"] = axis_bus.get("stage3_turns", 0)  # 붕괴 dwell 카운터 영속
+                # (트라우마 각성 소비 블록은 2026-07-06 폐지 — 히스토리는 감사 보고서 §E)
 
-                # Trauma Trigger → 일시적 판정 디버프 (turns-duration status_effect).
-                # 과거: 영구 passive + modifier:-5가 get_passive_modifiers에서 anomaly_defense로 오매핑되어
-                #       판정 롤엔 안 먹고, 만료도 없었음. 이제 status_mod 경로(modifiers.judgment)로 실제 -5 적용 +
-                #       process_status_expiry로 TRAUMA_DEBUFF_TURNS 후 자동 해제.
-                if axis_bus.get("trauma_trigger"):
-                    se_list = p_data.setdefault("status_effects", [])
-                    label = "활력" if axis_name == "vigor" else "평형"
-                    trauma_name = f"트라우마 ({label} 붕괴)"
-                    if not any(isinstance(s, dict) and s.get("name") == trauma_name for s in se_list):
-                        _cur_turn = domain_manager.get_world_state(channel_id).get("turn_index", 0)
-                        se_list.append({
-                            "name": trauma_name,
-                            "tags": ["Trauma"],
-                            "type": "debuff",
-                            "severity": 0,  # 축 드레인(1d) 미발동 — 리바운드 직후 재드레인 방지
-                            "modifiers": {"judgment": config.TRAUMA_DEBUFF_MODIFIER},
-                            "duration": {"type": "turns", "value": config.TRAUMA_DEBUFF_TURNS, "start_turn": _cur_turn},
-                            "desc": f"{label} 붕괴에서 깨어난 트라우마; 모든 판정 {config.TRAUMA_DEBUFF_MODIFIER} ({config.TRAUMA_DEBUFF_TURNS}턴).",
-                        })
-                    axis_bus.pop("trauma_trigger", None)
+        # [2026-07-06 status begins/ends 재배선 — 레티어스 승인: 플레이어 표시 X, 산문 힌트만]
+        # 스냅샷 diff: 직전 턴 status 이름 목록 vs 현재 → 신규=begins, 소실=ends.
+        # 소스 불문(추출 add/remove·turns 만료·수동 편집) 전부 커버 — 전용 이벤트 배선 불필요.
+        # sync가 Events 레이어(_extract)보다 먼저라 같은 턴 프롬프트에 실린다.
+        try:
+            _cur_names = [
+                str(s.get("name", "")).strip()
+                for s in (p_data.get("status_effects") or [])
+                if isinstance(s, dict) and str(s.get("name", "")).strip()
+            ]
+            _prev_names = mem.get("_status_names_prev")
+            if _prev_names is None:
+                pass  # 콜드 스타트: 기존 status를 begins로 오인하지 않게 스냅샷만 초기화
+            else:
+                _new = [n for n in _cur_names if n not in _prev_names]
+                _gone = [n for n in _prev_names if n not in _cur_names]
+                if _new and isinstance(bus.dai, dict):
+                    bus.dai.setdefault("new_status_effects", []).extend(_new)
+                if _gone and isinstance(bus.dai, dict):
+                    bus.dai.setdefault("expired_status_effects", []).extend(_gone)
+            mem["_status_names_prev"] = _cur_names
+        except Exception as _e_st:
+            logger.warning("[StatusTransition] diff skipped: %s", _e_st)
 
         # Momentum 저장 (다음 턴 carry)
         momentum_next = bus.judgment.get("momentum_next", 0)
@@ -984,6 +1054,9 @@ class UniversalNarrativeEngine:
         """단일 PC 행동 처리 (솔로/자동 모드용)"""
         turn_index = game_world.increment_turn_index(channel_id)
         game_character.process_status_expiry(channel_id, user_id, turn_index)
+        # [2026-07-02 감사 노트] expiry 반환값(만료 이름 리스트)을 bus.dai["expired_status_effects"]에
+        # 실으면 Events 레이어 "ends" 알림이 산문에 뜬다(현재 기아 소비자). 트라우마 각성 존폐 결정
+        # 대기로 배선 보류 — 원하면 여기 1줄.
         context = convert_to_game_context(channel_id, user_id, user_input, lore_chunks_ranked=lore_chunks_ranked)
         p_data = domain_manager.get_participant_data(channel_id, user_id)
         mask = p_data.get("mask") if p_data else "PC"

@@ -35,55 +35,53 @@ OFF = "off"
 LIGHT = "light"
 DEEP = "deep"
 
-# family -> tier -> (param_name, value)
-# param_name 은 extra_body 키. value 그대로 실린다.
-_POLICY = {
-    # GLM-5.2: reasoning_effort high/max 만. OFF 는 think=false 로.
-    "glm": {
-        OFF:   ("think", False),
-        LIGHT: ("reasoning_effort", "high"),
-        DEEP:  ("reasoning_effort", "max"),
-    },
-    # DeepSeek-V4 (Ollama): none/high/max (low/medium 미지원).
-    "deepseek": {
-        OFF:   ("reasoning_effort", "none"),
-        LIGHT: ("reasoning_effort", "high"),
-        DEEP:  ("reasoning_effort", "max"),
-    },
-    # 기타 OpenAI 호환 추론 모델(o-series 등): 표준 none/low/high.
-    "generic": {
-        OFF:   ("reasoning_effort", "none"),
-        LIGHT: ("reasoning_effort", "low"),
-        DEEP:  ("reasoning_effort", "high"),
-    },
+# Ollama /v1 reasoning_effort 계약(공식 문서 확인 2026-07): none / low / medium / high.
+#   ⚠ "max" 및 top-level "think" 는 /v1 미지원 → 보내면 무시/거부. 그래서 패밀리 분기 불필요:
+#   모든 Ollama-서빙 모델(GLM/DeepSeek/generic)이 이 계약을 공유하고 Ollama 가 모델별 thinking
+#   제어로 정규화한다. GLM-5.2 네이티브는 high/max뿐이지만 /v1 계층이 low/medium/none 을 받아 번역.
+#   off="none"(Ollama 가 no-think 삽입). deep="high"(=/v1 상한, max 는 스펙 밖).
+_TIER_EFFORT = {
+    OFF:   "none",
+    LIGHT: "low",     # per-turn 보조 최소 추론. GLM 5만자 과추론 억제 레버(실측으로 확인).
+    DEEP:  "high",    # 1회성 heavy 추출 최대치(/v1 상한).
 }
 
 
-def family_of(model_id: str) -> str:
-    """모델 ID 문자열에서 패밀리 추정 (기본 generic)."""
-    m = (model_id or "").lower()
-    if "glm" in m:
-        return "glm"
-    if "deepseek" in m:
-        return "deepseek"
-    return "generic"
-
-
 def build_reasoning_params(model_id: str, tier: str) -> dict:
-    """`model_id` 를 추론 `tier` 로 두는 extra_body 조각을 반환.
+    """추론 `tier` 를 Ollama /v1 extra_body(reasoning_effort)로 매핑.
 
-    예) build_reasoning_params("deepseek-v4-pro:cloud", "off") -> {"reasoning_effort": "none"}
-        build_reasoning_params("glm-5.2:cloud", "light")       -> {"reasoning_effort": "high"}
-        build_reasoning_params("glm-5.2:cloud", "off")         -> {"think": False}
+    Ollama /v1 은 none/low/medium/high 만 받고 모델별 thinking 제어로 번역하므로 모델 무관.
+    예) "off"->{"reasoning_effort":"none"}, "light"->"low", "deep"->"high".
     """
-    fam = family_of(model_id)
-    table = _POLICY.get(fam, _POLICY["generic"])
     t = (tier or LIGHT).lower()
-    if t not in table:
+    effort = _TIER_EFFORT.get(t)
+    if effort is None:
         logger.warning("[reasoning] unknown tier %r for %s → light", tier, model_id)
-        t = LIGHT
-    param, value = table[t]
-    return {param: value}
+        effort = _TIER_EFFORT[LIGHT]
+    return {"reasoning_effort": effort}
+
+
+# tier 별 추론 길이 캡(문자). off=제한없음(추론 off). DTG THOUGHTS_LIMIT 이식 — 추론만 조이고 출력은 무관.
+_TIER_CAP_CHARS = {LIGHT: 1200, DEEP: 3000}
+
+
+def reasoning_cap_instruction(tier: str, cap_chars: int = 0) -> str:
+    """추론 길이 캡 지시문(DTG THOUGHTS_LIMIT 이식). reasoning on(light/deep)일 때만 문자열 반환.
+
+    소프트 레버(모델이 문자수를 정확히 세진 않지만 방향으로 조임). GLM 등이 per-turn 에서
+    추론을 수만 자 쏟는 것(관측됨)을 억제. 출력(JSON/산문)은 절대 줄이지 말라고 명시.
+    cap_chars>0 이면 tier 기본값 대신 사용 (역할별 캡 — 렌더는 config.RENDERER_REASONING_CAP_CHARS).
+    """
+    cap = _TIER_CAP_CHARS.get((tier or "").lower())
+    if not cap:
+        return ""
+    if cap_chars and cap_chars > 0:
+        cap = cap_chars
+    return (
+        f"Constraint on internal reasoning only: keep the reasoning/thinking block under "
+        f"~{cap} characters — a few short analytical bullets, not prose. This limit applies "
+        f"ONLY to the reasoning block; do NOT shorten, summarize, or truncate the actual output."
+    )
 
 
 def reasoning_trace_len(obj) -> int:

@@ -226,71 +226,12 @@ async def extract_all_updates(
     }
 
 # =========================================================
-# N4: NPC PERSONA SNAPSHOT EXTRACTION
+# N4 persona snapshot 추출 제거 (2026-07-06 감사): extract_persona_updates /
+# build_persona_extraction_prompt — 호출자 0인 죽은 Flash 콜. NPC 상태 추출은
+# batch extraction(social 섹션)이 담당. 부활 시 별도 콜 대신 _extract_batch
+# 섹션으로 얹을 것(새 LLM 콜 금지 원칙). npc_manager.apply/get_persona_snapshot
+# (적용부)는 레거시 API 무리(감사 보고서 A11)로 별도 디스포지션.
 # =========================================================
-
-def build_persona_extraction_prompt(ai_response: str, npc_names: list) -> str:
-    """페르소나 업데이트 추출 프롬프트 생성."""
-    return f"""From the narrative response below, extract persona state updates for NPCs.
-Only include NPCs that APPEARED or were MENTIONED in the response.
-For each NPC, extract ONLY fields that CHANGED in this turn.
-
-NPCs to check: {', '.join(npc_names)}
-
-Response:
-{ai_response[:3000]}
-
-Return JSON:
-{{
-  "npc_name": {{
-    "state": {{
-      "emotional_state": "current emotion if changed",
-      "peplau_stage": "orientation|identification|exploitation|resolution if changed"
-    }}
-  }}
-}}
-Only include NPCs with actual changes. Empty dict if no changes."""
-
-
-async def extract_persona_updates(client, model_flash, ai_response: str, npc_names: list, temperature: float = 0.1) -> dict:
-    """Flash로 NPC 페르소나 업데이트 추출.
-    Returns: {npc_name: {"state": {...}, "core": {...}}, ...}
-    """
-    if not npc_names or not ai_response:
-        return {}
-
-    prompt = build_persona_extraction_prompt(ai_response, npc_names)
-
-    try:
-        cfg = types.GenerateContentConfig(
-            temperature=temperature,
-            response_mime_type="application/json",
-            safety_settings=config.SAFETY_SETTINGS,
-        )
-        cnt = [
-            types.Content(role="user", parts=[types.Part(text=prompt)]),
-        ]
-        res = await api_call_with_retry(client, model_flash, cnt, cfg, operation_name="N4-Persona")
-        if not res:
-            return {}
-
-        updates = safe_parse_json(res)
-        if not isinstance(updates, dict):
-            return {}
-
-        # Filter incomplete pairs
-        validated = {}
-        for npc_name, update in updates.items():
-            if isinstance(update, dict):
-                if "core" in update and "state" not in update:
-                    logger.warning(f"Incomplete persona pair for {npc_name}, discarding")
-                    continue
-                validated[npc_name] = update
-
-        return validated
-    except Exception as e:
-        logger.warning(f"Persona extraction failed: {e}")
-        return {}
 
 
 # Internal Extractors (Private)
@@ -438,6 +379,11 @@ async def _extract_batch(
         sys_parts.append(
             "\n### entity_state"
             "\nTrack per-NPC state CHANGES this turn. Only NPCs who appear or are mentioned."
+            "\nNAMING (avoid duplicate entities): for any NPC already in the provided list "
+            "(SceneNPCs/LoreNPCs), REUSE that exact name form. Never translate or re-romanize a "
+            "known character — 레나 stays 레나, not Rena; Rena stays Rena. Give a new name only to a "
+            "genuinely new person. If you must reference a known NPC in a different script, write it "
+            "as KnownName(otherform) e.g. 레나(Rena) so it resolves to one entity."
             "\nOutput: `{\"changes\": {NpcName: {\"location\": str or null, \"mood\": str or null, "
             "\"health\": str or null, \"notable\": str or null, \"descriptor\": str or null, "
             "\"new_individual\": bool}}, \"pc_observed\": str or null}`"
@@ -632,27 +578,20 @@ async def _extract_physical(
     status: Optional[List[str]]
 ) -> Dict[str, Any]:
     sys = (
-        "## [EXTRACT NOTEBOOK & PHYSICAL CHANGES - V3.6]\n"
+        "## [EXTRACT NOTEBOOK MEMOS & STATUS - V4]\n"
         "Return JSON with keys: notebook_update (string or null), status_add [list], status_remove [list].\n\n"
-        "### [STRICT SAFETY GUARDS]\n"
-        "1. ACQUISITION vs OBSERVATION (CRITICAL): Record items ONLY if player physically TAKES, RECEIVES, or BUYS them. Simply 'seeing' or 'inspecting' does NOT grant ownership. If no item was taken, `notebook_update` MUST be `null`.\n"
-        "2. NO CHANGE -> NULL: If there are no physical acquisitions, losses, or status changes, return `null` for `notebook_update`.\n\n"
-        "### [FEW-SHOT EXAMPLES]\n"
-        "- Input: 'I see a rusty sword on the wall and keep walking.'\n"
-        "  - Output: `{\"notebook_update\": null, \"status_add\": [], \"status_remove\": []}` (Observation only)\n"
-        "- Input: 'I pick up the rusty sword and put it in my bag.'\n"
-        "  - Output: `{\"notebook_update\": \"— [소지품] —\\n- Rusty Sword\", \"status_add\": [], \"status_remove\": []}` (Acquisition!)\n\n"
-        "### [DETAILED MANAGEMENT RULES]\n"
-        "1. LOSS & DESTRUCTION: If an item is lost, stolen, or destroyed, REMOVE it from the Notebook.\n"
-        "2. CONSUMPTION: If a consumable (food, potion, ammo) is used, update its quantity or REMOVE if empty.\n"
-        "3. STATE UPDATE: If an item's condition changes (e.g. 'Sword' becomes 'Broken Sword'), update the description.\n"
-        "4. DE-CLUTTER (Memos): Proactively REMOVE resolved tasks or information that is no longer relevant (e.g., 'Reached the room' is done) to prevent information overload.\n"
-        "5. EXCLUSION: Do NOT record one-off transient actions or movement logs that have no long-term impact on the persistent state.\n"
-        "6. HYGIENE: Do NOT re-list items/memos already present in the [Current Notebook] unless the quantity or status has changed.\n\n"
-        "### [ROLE BOUNDARY — IMPORTANT]\n"
-        "- The [소지품] (inventory) section is OWNED BY A SEPARATE SYSTEM. Reproduce it EXACTLY as given — make NO additions, removals, or edits there. Your authority is the [메모] section and status only. (Inventory edits you make are discarded.)\n\n"
+        "### [SCOPE — [메모] SECTION & STATUS ONLY]\n"
+        "You manage ONLY the [메모] section (durable, player-relevant notes) and status effects.\n"
+        "The [소지품](inventory) and [일지](journal) sections are OWNED BY SEPARATE SYSTEMS — copy them VERBATIM, make NO edits there (any inventory/journal edits you make are discarded). Do NOT record item pickups/losses here — a separate system handles inventory.\n\n"
+        "### [메모 MANAGEMENT RULES]\n"
+        "1. RELEVANCE: Add to [메모] only durable, player-relevant info — goals, clues, promises, unresolved tasks. Not item pickups, not transient action logs.\n"
+        "2. DE-CLUTTER: Proactively REMOVE resolved tasks or info no longer relevant (e.g. 'Reached the room' once it's done) to prevent overload.\n"
+        "3. UPDATE-IN-PLACE: If an existing memo's fact changed, REVISE that line rather than adding a duplicate.\n"
+        "4. HYGIENE: Do NOT re-list memos already present unless changed. If nothing in [메모] or status changed this turn, return `null` for notebook_update.\n\n"
+        "### [STATUS]\n"
+        "- status_add / status_remove: physical or mental conditions gained or cleared this turn.\n\n"
         "### [FORMAT]\n"
-        "- ALWAYS maintain '— [소지품] —' and '— [메모] —' headers."
+        "- notebook_update = the FULL notebook text with ALL headers preserved ('— [일지] —' if present, '— [소지품] —', '— [메모] —'), [일지]/[소지품] content copied VERBATIM; only the [메모] section reflects your edits."
     )
     ctx = f"Notebook Content:\n{notebook}\nStatus:{status}"
     usr = f"State:\n{ctx}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput FULL UPDATED Notebook JSON."
@@ -899,7 +838,8 @@ Extract detailed character information from the provided text to create a struct
   "trouble": "불씨 한 구절 (서사 엔진인 결핍/미충족 필요; 미발현이면 null)",
   "aspects": ["면모 구절 (명명+행동, 맨 형용사 금지)", "..."],
   "passives": [ {"name": "특성1", "desc": "효과 설명", "tags": ["tag1"], "theory_links": [], "modifiers": {"anomaly_defense": 10}} ],
-  "inventory": [ {"name": "아이템1", "qty": 1, "tags": ["weapon"], "modifiers": {"judgment_combat": 5}} ]
+  "inventory": [ {"name": "아이템1", "qty": 1, "tags": ["weapon"], "modifiers": {"judgment_combat": 5}} ],
+  "notes": "일지 — 이 캐릭터의 *현재* 여정 요약(몇 문장). 지금까지 한 일·알게 된 것·지금 향하는 목표를, 상황이 바뀌면 갱신하고 해결·종료된 건 빼는 living 요약으로. 노트북 [일지]는 매번 이 값으로 통째 교체되니 '누적 목록'이 아니라 '현재 상태 스냅샷'처럼 쓴다. 다른 인물의 설정·외형 나열 금지(필요하면 이름만 자연 언급), 배경 재서술 금지. 아직 요약할 게 없으면 null"
 }"""
 
     try:

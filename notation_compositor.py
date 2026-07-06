@@ -317,7 +317,9 @@ def compose_transition(prev_frame: dict, current_energy: str) -> str:
         prev_frame: previous DAI snapshot dict
         current_energy: current energy_direction string
     """
-    prev_energy = prev_frame.get("dai_snapshot", {}).get("energy_direction", "idle")
+    _snap = prev_frame.get("dai_snapshot", {}) if isinstance(prev_frame, dict) else {}
+    # [2026-07-02 key fix] dai_snapshot은 "energy"로 저장(orchestration.process_une_logic) — 구키 폴백 유지
+    prev_energy = _snap.get("energy") or _snap.get("energy_direction") or "idle"
 
     if prev_energy == current_energy:
         return ""

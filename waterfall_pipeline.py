@@ -104,13 +104,15 @@ class WaterfallPipeline:
 
         self._ensure_bus_schema(context.shared_bus)
         
-        # 1. Call 1: Analysis (Theoria) - Always Execute
+        # 1. [A안 v2 2026-07-02 직렬] 추출 콜(냉, 기계 필드) → 서사 콜(온, 방향+심리해석 필드).
+        # 병렬→직렬 전환(레티어스 "지연 감수"): 서사 콜이 이번 턴 추출 다이제스트를 입력으로 받아
+        # 동턴 정합 확보 — 2차 이사(deep_read 등 심리 해석층)의 전제. W5 강하는 콜별 독립 유지.
         bus = context.shared_bus
         try:
             analysis = await self.theoria.analyze_input(context)
         except Exception as e:
-            analysis = {}
             _degrade_stage(bus, "theoria_analysis", e)
+            analysis = {}
 
         # Safety: Gemini가 JSON 배열을 반환하면 첫 번째 요소를 사용
         if isinstance(analysis, list):
@@ -119,6 +121,57 @@ class WaterfallPipeline:
         if not isinstance(analysis, dict):
             logger.error(f"[Theoria] Invalid response type: {type(analysis)}")
             analysis = {}
+
+        try:
+            narrative = await self.theoria.analyze_narrative(context, extract=analysis)
+        except Exception as e:
+            _degrade_stage(bus, "narrative_analysis", e)
+            narrative = {}
+        if not isinstance(narrative, dict):
+            narrative = {}
+
+        # [A안] 서사 콜 결과 합류 — 서사 필드는 narrative 콜이 소유 (추출 스키마에서 제거됨).
+        # 서사 콜 실패 시 키 부재 → 아래 전개가 기존 디폴트({}/[]/None) 적용 = 현행 강하와 동일 동작.
+        if narrative:
+            _merge_keys = ("narrative_chain", "suggested_beats", "narrative_hook",
+                           "offscreen_trace", "scene_register", "trait_connections")
+            for _nk in _merge_keys:
+                _nv = narrative.get(_nk)
+                if _nv is not None:
+                    analysis[_nk] = _nv
+
+            # [2차 이사] psyche_narrative → psyche_states per-NPC 병합
+            # (deep_read/resurfacing=톱레벨, value_conflict=relation 내부 — 하류 소비 형태 그대로)
+            _pn = narrative.get("psyche_narrative")
+            _ps = analysis.get("psyche_states")
+            if isinstance(_pn, dict) and isinstance(_ps, dict) and _ps:
+                def _match_npc(name: str):
+                    if name in _ps:
+                        return name
+                    _b = name.split("(")[0].strip().lower()
+                    for _k in _ps:
+                        _kb = _k.split("(")[0].strip().lower()
+                        if _kb == _b or _b in _k.lower() or _kb in name.lower():
+                            return _k
+                    return None
+                for _pn_name, _pn_blk in _pn.items():
+                    if not isinstance(_pn_blk, dict):
+                        continue
+                    _tgt = _match_npc(str(_pn_name))
+                    if not _tgt or not isinstance(_ps.get(_tgt), dict):
+                        continue
+                    if _pn_blk.get("deep_read"):
+                        _ps[_tgt]["deep_read"] = _pn_blk["deep_read"]
+                    if _pn_blk.get("resurfacing") is not None:
+                        _ps[_tgt]["resurfacing"] = _pn_blk["resurfacing"]
+                    if _pn_blk.get("value_conflict") is not None:
+                        _rel = _ps[_tgt].setdefault("relation", {})
+                        if isinstance(_rel, dict):
+                            _rel["value_conflict"] = _pn_blk["value_conflict"]
+
+            logger.info("[Narrative] merged: "
+                        + ", ".join(k for k in _merge_keys if narrative.get(k) is not None)
+                        + (f" + psyche_narrative({len(_pn)})" if isinstance(_pn, dict) and _pn else ""))
 
         # Store ALL Theoria results in SharedBus.dai (replaces nvc_result)
         bus.dai["input_analysis"] = analysis.get("InputAnalysis", {})
@@ -141,6 +194,9 @@ class WaterfallPipeline:
             bus.dai["suggested_beats"] = [str(b).strip() for b in _sb_raw if isinstance(b, str) and b.strip()]
         else:
             bus.dai["suggested_beats"] = []
+        # [2026-07-02 Offscreen Motion — 뮈토스 이식] 부재 캐스트 흔적 (dict or null, null이 상례)
+        _ot_raw = analysis.get("offscreen_trace")
+        bus.dai["offscreen_trace"] = _ot_raw if isinstance(_ot_raw, dict) else None
         bus.dai["scene_register"] = analysis.get("scene_register")
         bus.dai["input_mode"] = analysis.get("input_mode", "decree")
         bus.dai["memory_triggers"] = analysis.get("memory_triggers", [])
@@ -292,14 +348,10 @@ class WaterfallPipeline:
             if event_location:
                 bus.anomaly["location"] = event_location
 
-        # M3: Chain CLOSED → force anomaly trigger
-        _nc = bus.dai.get('narrative_chain', {})
-        chain_status = _nc.get('status', 'OPEN') if isinstance(_nc, dict) else 'OPEN'
-        if chain_status == 'CLOSED' and not bus.anomaly.get('triggered'):
-            bus.anomaly['triggered'] = True
-            bus.anomaly['tag'] = bus.anomaly.get('tag') or 'chain_closure'
-            bus.anomaly['decision_reason'] = 'Narrative chain reached CLOSED state'
-            logger.info("[M3] Chain CLOSED → anomaly auto-triggered")
+        # M3 제거 (2026-07-02): "chain CLOSED → anomaly 강제" 컷.
+        # ① 키 드리프트('status' → 'chain_status')로 장기간 사망 상태였고 부재가 관측된 적 없음.
+        # ② 현 자세와 충돌 — quiet resolution 허용(Scheherazade 완화) + 페이싱은 doom 起承轉結/storyteller 결정이 담당.
+        # 부활 시: bus.dai["narrative_chain"].get("chain_status") == "CLOSED" 게이트로 재작성할 것.
 
         # Fallback: if no anomaly tag was proposed, pick from lore seeds
         if not bus.anomaly.get("tag"):

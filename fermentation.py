@@ -1399,6 +1399,21 @@ async def auto_ferment(
         except Exception as e:
             logger.warning(f"[Chronicle] Auto-generation failed: {e}")
 
+    # =========================================================
+    # [C안 2026-07-02] 메모리 GC — 발효 M회마다 (뮈토스 memoryFormat 정책 시드)
+    # deep_memory_data의 트리거/결정화대사/이정표/세계변화에서 해소·모순·중복 정리.
+    # 안전장치: 사전 백업(1세대) + 불확실하면 유지(보수) + 형태 검증 실패 시 무동작.
+    # =========================================================
+    _gc_interval = getattr(config, "MEMORY_GC_FERMENT_INTERVAL", 0)
+    last_gc_at = session_data.get("_last_memory_gc_ferment_count", 0)
+    if _gc_interval > 0 and ferment_count > 0 and ferment_count - last_gc_at >= _gc_interval:
+        try:
+            if await _run_memory_gc(client, model_id, session_data, channel_id):
+                changes_made = True
+            session_data["_last_memory_gc_ferment_count"] = ferment_count
+        except Exception as e:
+            logger.warning(f"[MemoryGC] failed (무해): {e}")
+
     # Sprint 4: 벡터 캐시 크기 제한 (채널별 최대 50 엔트리)
     if ch_id in _vector_similarity_cache and len(_vector_similarity_cache[ch_id]) > 50:
         _vector_similarity_cache[ch_id] = {}
@@ -1407,6 +1422,100 @@ async def auto_ferment(
         save_callback()
 
     return session_data
+
+
+_MEMORY_GC_SYSTEM = """You are the long-term memory garbage collector for a TRPG session.
+Input: the session's deep-memory data JSON. Output: the SAME JSON shape, cleaned.
+
+Policy:
+- Memory is durable state, not analysis. KEEP: unresolved questions, promises, delayed consequences, active goals, hidden information, changed alliances, important absences, unresolved scene state.
+- REMOVE: resolved items, contradicted or superseded entries, style/mood notes, repeated summaries.
+- MERGE near-duplicates into the more specific entry. Fragments over sentences.
+- WHEN UNCERTAIN, KEEP — deletion is irreversible; this collector is conservative.
+- Do NOT invent new entries. Do NOT rewrite meanings. Do NOT translate.
+
+Return valid JSON: {"active_memory_triggers": [str], "crystallized_dialogues": [obj], "character_milestones": {"name": [str]}, "world_state_changes": [str]}"""
+
+
+async def _run_memory_gc(client, model_id: str, session_data: dict, channel_id: str = "") -> bool:
+    """[C안 2026-07-02] deep_memory_data GC 1회 (뮈토스 memoryFormat 정책 시드).
+    변경 적용 시 True. 실패/형태 검증 실패/과도 삭제 의심 시 무동작 False."""
+    deep_data = session_data.get("deep_memory_data")
+    if not isinstance(deep_data, dict):
+        return False
+
+    payload = {
+        "active_memory_triggers": deep_data.get("active_memory_triggers") or [],
+        "crystallized_dialogues": deep_data.get("crystallized_dialogues") or [],
+        "character_milestones": deep_data.get("character_milestones") or {},
+        "world_state_changes": deep_data.get("world_state_changes") or [],
+    }
+    before = {k: len(v) for k, v in payload.items()}
+    if sum(before.values()) < 6:
+        return False  # 정리할 만큼 쌓이지 않음
+
+    gen_config = types.GenerateContentConfig(
+        system_instruction=_MEMORY_GC_SYSTEM,
+        response_mime_type="application/json",
+        # [2026-07-02] 4096→8192: GC 출력=유지 항목 미러라 기억이 두꺼우면 잘림 →
+        # repair가 잘린 배열을 '유효하게' 닫으면 은근 삭제가 70% 가드 밑으로 통과할 수 있음. 여유가 안전장치.
+        max_output_tokens=8192,
+        temperature=0.1,
+        safety_settings=config.SAFETY_SETTINGS,
+    )
+    response = await client.aio.models.generate_content(
+        model=model_id,
+        contents=[types.Content(role="user", parts=[types.Part(
+            text=json.dumps(payload, ensure_ascii=False))])],
+        config=gen_config,
+    )
+    if not response or not response.text:
+        return False
+
+    import bot_utils as _bu
+    cleaned_txt = _bu.clean_json_text(response.text)
+    try:
+        result = json.loads(cleaned_txt)
+    except json.JSONDecodeError:
+        result = json.loads(_bu.repair_json(cleaned_txt))
+
+    # 형태 검증 — 하나라도 어긋나면 무동작 (기억은 안전망 우선)
+    if not isinstance(result, dict):
+        return False
+    if not isinstance(result.get("active_memory_triggers"), list):
+        return False
+    if not isinstance(result.get("crystallized_dialogues"), list):
+        return False
+    if not isinstance(result.get("character_milestones"), dict):
+        return False
+    if not isinstance(result.get("world_state_changes"), list):
+        return False
+
+    after = {
+        "active_memory_triggers": len(result["active_memory_triggers"]),
+        "crystallized_dialogues": len(result["crystallized_dialogues"]),
+        "character_milestones": len(result["character_milestones"]),
+        "world_state_changes": len(result["world_state_changes"]),
+    }
+    # 과도 삭제 가드: 70% 초과 증발이면 오동작 의심 → 적용 안 함
+    if sum(after.values()) < sum(before.values()) * 0.3:
+        logger.warning(f"[MemoryGC] 과도 삭제 의심 ({sum(before.values())}→{sum(after.values())}) — 적용 안 함")
+        return False
+
+    # 백업(1세대) 후 적용
+    session_data["memory_gc_backup"] = {"ts": time.time(), "data": payload}
+    deep_data["active_memory_triggers"] = [str(x) for x in result["active_memory_triggers"] if x]
+    deep_data["crystallized_dialogues"] = [x for x in result["crystallized_dialogues"] if isinstance(x, dict)]
+    deep_data["character_milestones"] = {
+        str(k): [str(i) for i in v]
+        for k, v in result["character_milestones"].items() if isinstance(v, list)
+    }
+    deep_data["world_state_changes"] = [str(x) for x in result["world_state_changes"] if x]
+    # 루트 미러 동기화 (기존 이중 저장 관행 유지)
+    session_data["active_memory_triggers"] = list(deep_data["active_memory_triggers"])
+
+    logger.info("[MemoryGC] " + " ".join(f"{k} {before[k]}→{after[k]}" for k in before))
+    return True
 
 
 async def _auto_generate_chronicle(client, model_id: str, session_data: dict, channel_id: str = "") -> None:

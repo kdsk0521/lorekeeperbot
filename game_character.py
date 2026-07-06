@@ -366,6 +366,52 @@ def update_notebook_text(channel_id: str, new_text: str, user_id: str = "") -> N
 
 _SOJIPIN_HEADER = "— [소지품] —"
 _MEMO_HEADER = "— [메모] —"
+_JOURNAL_HEADER = "— [일지] —"
+_JOURNAL_DISPLAY_CAP = 10  # [일지] 섹션 표시 안전 상한(줄). 요약은 보통 몇 줄이라 거의 안 걸림.
+
+def _render_journal_section(channel_id: str, recent_lines: list, user_id: str = "") -> None:
+    """노트북 [일지] 섹션을 recent_lines로 교체(재구축). [소지품]/[메모]는 보존.
+    [일지]는 노트북 최상단([소지품] 앞) → merge가 [메모] 이전 전체를 보존하고, 소지품/메모
+    파서 토글이 맨 앞 [일지]를 자기 구역으로 안 봄(스모크 실증)."""
+    nb = get_notebook_text(channel_id, user_id)
+    _clean = lambda e: str(e).strip().lstrip('-').strip()
+    body = "\n".join(f"- {_clean(e)}" for e in recent_lines if _clean(e))
+    journal_block = _JOURNAL_HEADER + ("\n" + body if body else "")
+
+    if _JOURNAL_HEADER not in nb:
+        new_nb = journal_block + "\n\n" + nb.lstrip()
+    else:
+        before, _, after = nb.partition(_JOURNAL_HEADER)
+        # after = 기존 일지 본문 + 다음 섹션들. 다음 섹션 헤더(— …—) 전까지가 일지 본문(버림).
+        tail_lines, hit = [], False
+        for l in after.splitlines():
+            if not hit and l.strip().startswith("—"):
+                hit = True
+            if hit:
+                tail_lines.append(l)
+        tail = "\n".join(tail_lines).lstrip()
+        head = before.rstrip()
+        parts = [p for p in (head, journal_block) if p]
+        new_nb = "\n\n".join(parts)
+        if tail:
+            new_nb += "\n\n" + tail
+    update_notebook_text(channel_id, new_nb, user_id)
+
+def add_to_journal(channel_id: str, content: str, user_id: str = "") -> str:
+    """캐릭터 연속성 일지 갱신 [living-rewrite]. content = 캐릭터의 '현재 여정 요약'
+    (시트 notes가 매 재작성마다 재생성). 표시/저장 분리:
+      - 노트북 [일지] 섹션 → 이번 요약으로 **통째 교체**(옛 내용 수정/대체 = living document).
+      - 전체 이력(요약이 어떻게 진화했나) → append_journal_log(영속). !일지로 조회.
+    즉 노트북엔 항상 현재 요약만, 진화 이력은 로그에 보존."""
+    content = (content or "").strip()
+    if not content:
+        return ""
+    if user_id:
+        domain_manager.append_journal_log(channel_id, user_id, content)  # 진화 이력 보존
+    # [일지] 표시 = 최신 요약으로 교체(append 아님). 여러 줄이면 줄별 bullet, 안전 cap.
+    display = [l.strip() for l in content.splitlines() if l.strip()] or [content]
+    _render_journal_section(channel_id, display[:_JOURNAL_DISPLAY_CAP], user_id)
+    return f"📓 일지 갱신: {content[:40]}"
 
 def merge_notebook_preserve_inventory(live_notebook: str, extracted_notebook: str) -> str:
     """[N-1/N-2 역할 경계 복원] 라이브 노트북의 [소지품] 섹션을 보존(item_usage 단독 소유)하고,
@@ -974,6 +1020,9 @@ def migrate_notebook_to_inventory(notebook_data) -> dict:
 
 # =========================================================
 # INVENTORY TAG SYSTEM (Phase 4-1b)
+# ⚠ 미배선 (2026-07-06 감사): add/remove_inventory_item·get_inventory_for_context
+# 호출자 0. 실인벤토리는 notebook [소지품] 라인(item_usage → merge_notebook_preserve_inventory).
+# 인벤 버그 수정 시 여기 말고 notebook 라인을 볼 것. 구조화 인벤 부활 재료로 보존.
 # =========================================================
 
 def add_inventory_item(channel_id: str, user_id: str, name: str,
@@ -1221,101 +1270,9 @@ def get_vigor_composure_text(p_data: Dict[str, Any]) -> str:
     return f"활력 {v_val} | 평형 {c_val}"
 
 
-def update_mental(
-    user_data: Dict[str, Any],
-    delta: int,
-    reason: str,
-    channel_id: Optional[str],
-    user_id: Optional[str]
-) -> str:
-    """
-    V7 Mental Update Logic
-    - Handles Doom Penalty on Recovery
-    - Handles Trauma Awakening (Collapse -> Calm)
-    - Handles Clamping (Max 2 stage drop) and Inertia
-    """
-    mem = user_data.setdefault("ai_memory", {})
-    mental = mem.setdefault("mental", {"value": 100, "last_delta": 0})
-    
-    current_val = mental["value"]
-    current_stage = get_mental_stage_id(current_val)
-    
-    # 1. Doom Penalty (Recovery Only)
-    # We might need to fetch doom if available, but simplest is to assume 1.0 or require context.
-    # Since function signature is fixed, we can't easily get channel_id here without passing it.
-    # We will assume standard recovery unless doom is passed?
-    # Let's check update_mental usage. It's called from game_world which has channel_id.
-    # We should update signature or fetch context.
-    # HOWEVER, to keep it simple, we will apply doom penalty outside or fetch via domain_manager if possible (but we don't have channel_id).
-    # Plan B: Assume delta is already adjusted or ignore doom penalty here?
-    # No, PLAN says: "update_mental... 1. Doom Penalty".
-    # I will modify signature `update_mental(user_data, delta, reason, doom_stage=0)` in future. 
-    # For now, let's implement the core logic.
-    
-    actual_delta = delta
-    
-    # 2. Trauma Awakening (Collapse -> Recovery)
-    if current_stage == 3 and delta > 0:
-        # Check if delta is large enough or special flag? 
-        # Plan says "Mental Reboot... if special trigger".
-        # We will assume any significant recovery in Collapse triggers this check or just direct heal.
-        # But User requested "Trauma Awakening".
-        
-        # If we are in Stage 3 and healing, we grant Trauma and Reset to 100 (Calm)
-        # This is the "Awakening" mechanic.
-        
-        # Add Trauma Passive (requires valid IDs)
-        trauma_name = f"Trauma: {reason}"
-        if channel_id and user_id:
-            domain_manager.add_to_ai_memory_list(
-                channel_id,
-                user_id,
-                "passives",
-                {"name": trauma_name, "tags": ["Trauma", "Permanent"], "modifier": -5}
-            )
-        
-        # Reset
-        mental["value"] = 90 # High Calm
-        mental["last_delta"] = 0
-        
-        new_info = get_mental_info(90)
-        return f"🧠 **각성(Trauma Awakening):** 🫥 붕괴 → {new_info['emoji']} **{new_info['name']}** (트라우마 획득: {reason})"
-
-    # 3. Inertia & Clamping
-    # Inertia: If same direction, +10% effect?
-    last_delta = mental.get("last_delta", 0)
-    if (delta > 0 and last_delta > 0) or (delta < 0 and last_delta < 0):
-        actual_delta = int(actual_delta * 1.1)
-
-    # Clamp floor based on the *base* delta (before inertia)
-    base_target = max(0, min(100, current_val + delta))
-    base_stage = get_mental_stage_id(base_target)
-    clamp_floor = base_target
-
-    # Clamping: Prevent crossing more than 2 stages downwards
-    # Stage ranges: 0(70-100), 1(40-70), 2(15-40), 3(0-15)
-    if base_stage > current_stage + 2:
-        limit_stage = current_stage + 2
-        limit_info = config.MENTAL_STAGES.get(limit_stage)
-        clamp_floor = limit_info["range"][0]
-
-    target_val = max(0, min(100, current_val + actual_delta))
-    if delta < 0:
-        # Do not drop below the clamped floor when inertia amplifies damage.
-        target_val = max(target_val, clamp_floor)
-    target_stage = get_mental_stage_id(target_val)
-        
-    mental["value"] = target_val
-    mental["last_delta"] = delta # Store original delta
-    
-    # 4. Feedback
-    if target_stage != current_stage:
-        old_info = config.MENTAL_STAGES[current_stage]
-        new_info = config.MENTAL_STAGES[target_stage]
-        return f"🧠 **멘탈 변화:** {old_info['emoji']} → {new_info['emoji']} **{new_info['name']}** ({reason})"
-    
-    # Quiet update
-    return ""
+# update_mental 제거 (2026-07-06 감사+트라우마 폐지): V7 단일 멘탈 시스템의 유물,
+# 호출자 0. 자체 트라우마 각성(붕괴+회복→90 리셋+영구 Trauma 패시브)을 품고 있었음.
+# 현행은 vigor/composure 2축(vigor_composure_module)이 전담.
 
 def calculate_adaptation_pct(count: int) -> int:
     """V7 Log Scale: math.log(count + 1) * 25"""

@@ -489,8 +489,8 @@ def _collect_board_events(channel_id: str, dai: Dict[str, Any]) -> List[Dict[str
 
     # --- Scanner 10: Memory Trigger (filler) ---
     try:
-        session_mem = session_mem if 'session_mem' in dir() else domain_manager.get_session_ai_memory(channel_id)
-        triggers = session_mem.get("active_memory_triggers", [])
+        # [2026-07-02] 발효는 domain 루트에 저장 — ai_session_memory 읽기는 영구 빈손(Scanner 10 사망)이었음
+        triggers = domain_manager.get_domain(channel_id).get("active_memory_triggers", [])
         if isinstance(triggers, list) and triggers:
             # 부재 NPC 중 하나를 랜덤 선정
             absent = _get_absent_npcs(channel_id)

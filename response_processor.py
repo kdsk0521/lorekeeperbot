@@ -128,61 +128,8 @@ def parse_status_line_time(response_text: str) -> Optional[dict]:
     return None
 
 
-# =========================================================
-# Scene Type Detection (씬 타입 감지)
-# =========================================================
-
-def detect_scene_type_keywords(text: str) -> Optional[str]:
-    """
-    텍스트에서 씬 타입 전환 키워드를 감지합니다.
-
-    사용자가 특정 명령어를 입력하면 씬 타입이 변경됩니다.
-
-    Args:
-        text: 입력 텍스트
-
-    Returns:
-        감지된 씬 타입 또는 None
-        - 'gore': 고어 모드
-        - 'nsfw': NSFW 모드
-        - 'gore_nsfw': 고어+NSFW 모드
-        - 'normal': 일반 모드
-    """
-    # Scene type transition patterns
-    patterns = {
-        # Gore mode entry
-        'gore': [
-            r'\(scene:\s*gore\)',
-            r'\[gore\s*mode\]',
-        ],
-        # NSFW mode entry
-        'nsfw': [
-            r'\(scene:\s*nsfw\)',
-            r'\[nsfw\s*mode\]',
-        ],
-        # Gore+NSFW mode entry
-        'gore_nsfw': [
-            r'\(scene:\s*gore\+nsfw\)',
-            r'\[gore\+nsfw\s*mode\]',
-            r'\[all\s*mode\]',
-        ],
-        # Normal mode return
-        'normal': [
-            r'\(scene:\s*normal\)',
-            r'\[normal\s*mode\]',
-            r'\(scene\s*end\)',
-            r'\[scene\s*end\]',
-        ],
-    }
-
-    text_lower = text.lower()
-
-    for scene_type, pattern_list in patterns.items():
-        for pattern in pattern_list:
-            if re.search(pattern, text_lower):
-                return scene_type
-
-    return None
+# detect_scene_type_keywords 제거 (2026-07-06 감사): 인라인 "(scene: gore)" 키워드
+# 파서 — 호출자 0. 씬 타입은 !scene 명령(cmd_scene) + Flash DAI scene_type이 담당.
 
 
 def process_bkspc(text: str) -> str:

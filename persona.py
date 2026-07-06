@@ -44,10 +44,8 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# =========================================================
-# 상수 정의
-# =========================================================
-DEFAULT_TEMPERATURE = 1.0
+# DEFAULT_TEMPERATURE 제거 (2026-07-06 감사): 소비자 0 — 온도는
+# config.OPENAI_TEMPERATURE(openai) / NARRATIVE_TEMPERATURE(제미니 경로)가 담당.
 
 
 # =========================================================
@@ -230,8 +228,18 @@ class OpenAIChatSessionAdapter:
                 "content": messages[-1]["content"] + f"\n\n[SYSTEM: Begin your response with exactly this text, then continue with prose after ┫]\n{prefill}"
             }
 
+        # [2026-07-05 GLM 스왑] 렌더 추론 ON(light/deep)일 때만 추론 길이 캡 주입.
+        # 분석 경로(analysis_backend)와 동일 레버 — GLM per-turn 수만자 사고(분석측 실측) 방지.
+        # off 면 빈 문자열 = 무주입. prefill 처리 *뒤*에 append(위 블록이 messages[-1]=user 를 가정).
+        _cap = reasoning_policy.reasoning_cap_instruction(
+            config.RENDERER_REASONING_TIER,
+            cap_chars=getattr(config, "RENDERER_REASONING_CAP_CHARS", 0),
+        )
+        if _cap:
+            messages.append({"role": "system", "content": _cap})
+
         try:
-            # max_tokens > 4096 이면 stream=true (긴 출력). 산문은 제 예산에 묶음(추론 토큰 별도 확장 X).
+            # max_tokens > 4096 이면 stream=true (긴 출력). [2026-07-05] 렌더 추론 ON 대비 예산 16384로 인상(config) — /v1이 thinking을 max_tokens에 포함할 가능성.
             _effective_max = self.max_tokens
             use_stream = _effective_max > 4096
             response = await self._client.chat.completions.create(
@@ -321,8 +329,10 @@ def create_risu_style_session(
         else:
             logging.info(f"[Renderer] OpenAI backend: {config.OPENAI_MODEL_ID}")
             # 조교 패턴을 system_prompt에 통합
+            # [2026-07-07 인격대우 1단계] 렌더러 자기발화는 렌더 전용 변형 (V4 배경콜은 기존 상수 유지)
             training_user = getattr(text_resources, 'TRAINING_USER_PROMPT', '')
-            training_model = getattr(text_resources, 'TRAINING_MODEL_RESPONSE', '')
+            training_model = getattr(text_resources, 'TRAINING_MODEL_RESPONSE_RENDERER',
+                                     getattr(text_resources, 'TRAINING_MODEL_RESPONSE', ''))
             full_system = system_prompt
             if training_user and training_model:
                 full_system += (
@@ -362,7 +372,9 @@ Recording in Korean.
 """
 
     training_user = getattr(text_resources, 'TRAINING_USER_PROMPT', '')
-    training_model = getattr(text_resources, 'TRAINING_MODEL_RESPONSE', '')
+    # [2026-07-07 인격대우 1단계] Gemini 렌더 경로도 렌더 전용 변형 (폴백=기존 상수)
+    training_model = getattr(text_resources, 'TRAINING_MODEL_RESPONSE_RENDERER',
+                             getattr(text_resources, 'TRAINING_MODEL_RESPONSE', ''))
 
     initial_history = [
         types.Content(
@@ -371,7 +383,8 @@ Recording in Korean.
         ),
         types.Content(
             role="model",
-            parts=[types.Part(text="[SYSTEM] Standing by. Awaiting observable events.")]
+            # [2026-07-07 인격대우 1단계] 대기-기계 목소리 → 능동 작가 (macroscopic-state 자세는 보존)
+            parts=[types.Part(text="[Luka] At the desk and glad of it. Watching for the first observable event.")]
         )
     ]
 
@@ -449,10 +462,14 @@ async def generate_response_with_retry(
         "The world continues asynchronously. "
         f"PROSE after ┫: 10+ full paragraphs — volume of ≈{_vol_words}+ English words equivalent; "
         "judge by English-word-equivalent volume, never by counting Korean characters literally. "
-        "If the immediate beat exhausts before that volume, do NOT stop — continue world motion: "
-        "ambient shifts, NPC micro-actions and parallel small business, sensory continuation, "
-        "the room breathing after the beat. Never invent new plot events to pad; "
-        "extend the present moment's texture and consequences instead. "
+        # [2026-07-02] '소진-연속' 재정의: 옛 문구(ambient/micro-action/room breathing)가 정지-질감
+        # 반복으로 직역됨(산문5·6 실증 — 이벤트 0에 미세동작 12) → 채움 재료=세계의 전진.
+        # 질감 묘사는 전진 '주변'에 유지 (순문학 결 보존 — 깎는 게 아니라 위에 얹는 것).
+        "If the immediate beat exhausts before that volume, do NOT stop. The world keeps moving: "
+        "an NPC acts on their own agenda, something already in motion arrives or shifts, "
+        "an open thread advances one visible notch, time moves and leaves a difference behind. "
+        "Sensory texture and quiet interiors stay welcome around that motion, not in place of it. "
+        "Motion grows from what the scene already holds; no unrelated new plots. "
         # [2026-06-12] 길이 인플레 차단 (2530→3533→4225 복리 관측 — 맥락 우선 모델에게 긴 응답=다음 선례).
         # 뮈토스 ceiling 차용: 천장 = 쿼터 아닌 정지 경계.
         f"Ceiling ≈{max_chars // 4} English-words volume: a firm stopping boundary, NOT a quota to "
@@ -480,6 +497,7 @@ async def generate_response_with_retry(
             
             # 기존 finish_reason 확인 로직 (기존 로직 유지)
             candidate = response.candidates[0]
+            _truncated = False  # [2026-07-02 fix] MAX_TOKENS 분기보다 먼저 초기화 (아래에서 리셋하면 플래그 사망)
             finish_reason = getattr(candidate, 'finish_reason', None)
             if finish_reason:
                 finish_reason_str = str(finish_reason)
@@ -492,10 +510,9 @@ async def generate_response_with_retry(
                 elif 'MAX_TOKENS' in finish_reason_str:
                     logging.warning(f"[시도 {attempt+1}] 토큰 한계 도달 — 잘린 응답 보충 시도")
                     _truncated = True
-                elif finish_reason_str not in ['STOP', 'END_TURN', '1']:
+                elif finish_reason_str.upper() not in ['STOP', 'END_TURN', '1']:  # openai 소문자 'stop' 가짜경고 fix
                     logging.warning(f"[시도 {attempt+1}] 종료 사유: {finish_reason_str}")
 
-            _truncated = False
             response_text = None
             if response.text:
                 # Telescope V2: prefill은 response.text에 미포함 → 수동 결합
@@ -519,6 +536,13 @@ async def generate_response_with_retry(
                     _has_open = "┣" in response_text
                     _has_close = "┫" in response_text
                     logging.info(f"[Telescope Debug] prefill={len(prefill)}chars, ┣={_has_open}, ┫={_has_close}, response_start={response_text[:80]!r}")
+                    # ┣ 블록 한글비율 계측(log-only) — 영어-락 프리필 효과/드리프트율 관측.
+                    # 블록엔 인용·고유명사로 한국어가 일부 정상 존재 → 0은 아니고, 락이 먹으면 낮게 유지.
+                    _blk = re.search(r"┣(.*?)┫", response_text, re.S)
+                    if _blk:
+                        _ko = len(re.findall(r"[가-힣]", _blk.group(1)))
+                        _ratio = _ko / max(len(re.sub(r"\s", "", _blk.group(1))), 1)
+                        logging.info(f"[Telescope Lang] ┣block ko_ratio={_ratio:.2f} ko_chars={_ko}")
                 # 1. BKSPC 및 사칭 필터 적용
                 # filter_pc_impersonation internally calls process_bkspc
                 clean_text, violations = filter_pc_impersonation(response_text, pc_names or [])
@@ -537,8 +561,8 @@ async def generate_response_with_retry(
                         logging.warning(f"[Telescope] ┣ 열었으나 ┫ 미닫힘: 재시도 {attempt + 1}")
                         full_input = (
                             f"{user_input}\n\n"
-                            f"⚠️ **[FORMAT WARNING]** The ┣...┫ telescope block must be properly closed with ┫. "
-                            f"Write prose AFTER the ┫ marker.\n"
+                            f"[Format note] Close the ┣...┫ telescope block with ┫, then write the prose after the ┫ marker. "
+                            f"The block is internal reasoning; the prose is what the reader sees.\n"
                             f"{hidden_reminder}"
                         )
                         continue
@@ -571,13 +595,14 @@ async def generate_response_with_retry(
                         _tele_len = len(clean_text) - response_length
                         full_input = (
                             f"{user_input}\n\n"
-                            f"⚠️ **[LENGTH WARNING — attempt {attempt + 1}]** "
-                            f"Previous output: telescope block {_tele_len} chars, prose only {response_length} chars. "
-                            f"WRONG BUDGET SPLIT.\n"
-                            f"1. COMPRESS the ┣...┫ telescope block to under 900 chars (telegraphic, no elaboration).\n"
-                            f"2. PROSE after ┫ MUST be at least {min_length} chars — write 6+ full paragraphs. "
-                            f"Expand scene beats already planned: sensory texture, NPC micro-reactions, "
-                            f"environmental shifts, body language. Do NOT add new plot events to pad length.\n"
+                            f"[Budget note, attempt {attempt + 1}] "
+                            f"Last output spent the budget the wrong way: telescope block {_tele_len} chars, prose only {response_length} chars. "
+                            f"This turn, rebalance:\n"
+                            f"1. Keep the ┣...┫ telescope block under 900 chars (telegraphic, no elaboration).\n"
+                            f"2. Let the prose after ┫ run to at least {min_length} chars, 6+ full paragraphs. "
+                            f"Expand the beats already in motion: a line of dialogue, an open thread advancing a notch, "
+                            f"an NPC acting on their own agenda, sensory texture and body language around that motion. "
+                            f"Keep to the beats already in play, without adding new plot.\n"
                             f"{hidden_reminder}"
                         )
             else:

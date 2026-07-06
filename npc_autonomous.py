@@ -10,6 +10,10 @@ import config as _cfg
 
 # =========================================================
 # Trigger Definitions
+# ⚠ doc-only 카탈로그 (2026-07-06 감사): 아래 dict의 "check" 문자열은 어디서도
+# 역참조되지 않음 — 디스패처(evaluate_triggers)가 13개 _check_* 함수를 직접
+# 하드코딩 호출. 트리거 추가 시 dict만 고치면 아무 일도 일어나지 않는다.
+# evaluate_triggers 본문에 호출을 추가해야 배선 완료.
 # =========================================================
 NPC_AUTONOMOUS_TRIGGERS = {
     "henderson_need_critical": {

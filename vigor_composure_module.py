@@ -1,8 +1,10 @@
 """
-Lorekeeper UNE - Vigor/Composure Module (v3.1)
+Lorekeeper UNE - Vigor/Composure Module (v3.2)
 Manages 2-axis PC state: Vigor (physical+will) and Composure (mental+social).
 Replaces mental_module.py.
 v3.1: 회복 1+2 하이브리드(event_delta 게이트) + 트라우마 dwell 분리/일시 디버프.
+v3.2 (2026-07-06): 트라우마 각성 폐지. 회복 = 갭 비례 트리클(조용한 턴, 1+stage)
+      + 사건성 양의 impact(uplift/restore enum) + 휴식 + 間 챕터 리프레시.
 """
 
 import logging
@@ -211,11 +213,6 @@ class VigorComposureModule:
             log_parts.append("\n❗ **충격 완화** (활력 Clamping)")
         if bus.composure.get("_clamped"):
             log_parts.append("\n❗ **충격 완화** (평형 Clamping)")
-        if bus.vigor.get("trauma_trigger"):
-            log_parts.append("\n✨ **트라우마 각성** (활력 Awakening)")
-        if bus.composure.get("trauma_trigger"):
-            log_parts.append("\n✨ **트라우마 각성** (평형 Awakening)")
-
         combined_log = "".join(log_parts)
         bus.vigor["log"] = combined_log
         bus.composure["log"] = combined_log  # Same log for both
@@ -229,7 +226,7 @@ class VigorComposureModule:
                      c_val, "+" if c_delta >= 0 else "", c_delta,
                      primary_axis)
 
-        # Cleanup temp keys (trauma_trigger는 sync_from_game_context에서 사용 후 정리)
+        # Cleanup temp keys
         for axis in (bus.vigor, bus.composure):
             axis.pop("_final_delta", None)
             axis.pop("_clamped", None)
@@ -342,13 +339,15 @@ class VigorComposureModule:
             if drain_mult != 1.0:
                 delta = int(delta * drain_mult)
 
-        # 2a. Natural Recovery (1+2 하이브리드): 이번 턴 큰 사건이 없으면(|event_delta| ≤ T)
-        #     구조적 드레인(baseline/cascade/status) 여부와 무관하게 +1 트리클.
-        #     → 캐스케이드 걸린 조용한 턴에도 회복이 점화되어 일방통행 래칫이 풀린다.
+        # 2a. Natural Recovery (갭 비례, 2026-07-06 트라우마 각성 제거 후속): 이번 턴 큰
+        #     사건이 없으면(|event_delta| ≤ T) 구조 드레인과 무관하게 트리클. 낮을수록 강한
+        #     복원압 — stage 0/1/2/3 → +1/+2/+3/+4. 옛 트라우마 리바운드(바닥 텔레포트)를
+        #     자연 계단으로 대체: 바닥(10)에서 조용한 턴 +4, baseline -1~-2를 이기고 상승.
+        #     사건 턴은 여전히 게이트(회복은 사건성 +값 채널이 담당).
         if abs(event_delta) <= config.NATURAL_RECOVERY_THRESHOLD:
             current_val = axis.get("value", 100)
             if current_val < 100:
-                delta += config.NATURAL_RECOVERY_AMOUNT
+                delta += config.NATURAL_RECOVERY_AMOUNT + _get_stage(current_val)
 
         # delta == 0 시 stage 조정 없음 종료
         if delta == 0:
@@ -394,21 +393,10 @@ class VigorComposureModule:
                 target_val = clamp_floor
                 clamped = True
 
-        # 5. Trauma Awakening (Collapse dwell -> Rebound) — delta 부호와 분리.
-        #    stage 3(붕괴)에 TRAUMA_DWELL_TURNS 이상 연속으로 머물면 절박한 리바운드 발동.
-        #    회복 +1 같은 미동이 90 점프를 유발하던 엉킴 제거.
-        trauma_triggered = False
-        new_stage = _get_stage(target_val)
-        if new_stage == 3:
-            axis["stage3_turns"] = axis.get("stage3_turns", 0) + 1
-        else:
-            axis["stage3_turns"] = 0
-
-        if axis.get("stage3_turns", 0) >= config.TRAUMA_DWELL_TURNS:
-            target_val = config.TRAUMA_REBOUND_VALUE
-            trauma_triggered = True
-            axis["trauma_trigger"] = True
-            axis["stage3_turns"] = 0  # 리바운드 후 카운터 리셋 (즉시 재발동 방지)
+        # 5. Trauma Awakening 제거 (2026-07-06 레티어스 결정): 붕괴 dwell 2턴→40 리바운드
+        #    +판정 디버프 3턴의 자동 구제 장치였음. 바닥 탈출은 이제 2a 갭 비례 자연회복
+        #    (낮을수록 강한 복원압)+휴식+間 챕터 리프레시가 담당. NSFW 크래시 3중 방어
+        #    (프롬+1d 가드+낙폭캡)는 각성과 별개로 유지.
 
         # 6. Update
         axis["value"] = target_val

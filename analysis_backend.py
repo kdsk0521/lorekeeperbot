@@ -125,6 +125,26 @@ def _map_model(model: Optional[str]) -> str:
         heavy_model = getattr(_appconfig, "ANALYSIS_OPENAI_MODEL_HEAVY", "") or ""
         if heavy_model:
             return heavy_model
+    # [2026-07-05 GLM 스왑] 서사 콜 컨텍스트면 전용 모델(생성계=GLM 잔류, 추출=FLASH ds-flash).
+    # env(ANALYSIS_OPENAI_MODEL_NARRATIVE) 미설정("")이면 무효과 — FLASH 폴스루. heavy 우선(서사와 안 겹침).
+    _narr_var = getattr(_appconfig, "ANALYSIS_NARRATIVE_VAR", None)
+    if _narr_var is not None and _narr_var.get():
+        narrative_model = getattr(_appconfig, "ANALYSIS_OPENAI_MODEL_NARRATIVE", "") or ""
+        if narrative_model:
+            return narrative_model
+    # [2026-07-05 후속] per-turn 추출 콜 컨텍스트 → 전용 모델(V4-Pro 승격: 기계 읽기=V4 약점 무해 자리,
+    # 오독의 영속층 유입 상류 방어). env 미설정("")이면 FLASH 폴스루. FLASH=배경 콜 전용 잔류.
+    _ext_var = getattr(_appconfig, "ANALYSIS_EXTRACT_VAR", None)
+    if _ext_var is not None and _ext_var.get():
+        extract_model = getattr(_appconfig, "ANALYSIS_OPENAI_MODEL_EXTRACT", "") or ""
+        if extract_model:
+            return extract_model
+    # [Reader-GM] 독자 콜 컨텍스트 → 전용 모델(Gemma 후보 등). env 미설정=이름 폴스루(pro→V4-Pro).
+    _rdr_var = getattr(_appconfig, "ANALYSIS_READER_VAR", None)
+    if _rdr_var is not None and _rdr_var.get():
+        reader_model = getattr(_appconfig, "ANALYSIS_OPENAI_MODEL_READER", "") or ""
+        if reader_model:
+            return reader_model
     m = (model or "").lower()
     if "pro" in m and "flash" not in m:
         return _appconfig.ANALYSIS_OPENAI_MODEL_PRO
@@ -179,15 +199,26 @@ class _Models:
         resolved = _map_model(model)
         kwargs["model"] = resolved
         kwargs["messages"] = messages
-        # reasoning tier: heavy(1회성 추출) 컨텍스트면 DEEP, 아니면 per-turn LIGHT.
+        # reasoning tier: heavy(1회성 추출)=DEEP > per-turn 추출=OFF(수처1 실측: V4-Pro 캡 무시
+        # 7.6~13.6k자/턴=지연 주범, 기계 읽기라 원설계 복귀) > 그 외 per-turn=LIGHT.
         # resolved 모델의 허용 knob 으로 매핑(GLM=high/max, deepseek=none/high/max 등).
         _heavy_var = getattr(_appconfig, "ANALYSIS_HEAVY_EFFORT_VAR", None)
         _heavy = bool(_heavy_var.get()) if _heavy_var is not None else False
-        _tier = (_appconfig.ANALYSIS_REASONING_TIER_HEAVY if _heavy
-                 else _appconfig.ANALYSIS_REASONING_TIER)
+        _ext_var = getattr(_appconfig, "ANALYSIS_EXTRACT_VAR", None)
+        _extract = bool(_ext_var.get()) if _ext_var is not None else False
+        if _heavy:
+            _tier = _appconfig.ANALYSIS_REASONING_TIER_HEAVY
+        elif _extract:
+            _tier = getattr(_appconfig, "ANALYSIS_REASONING_TIER_EXTRACT", "off")
+        else:
+            _tier = _appconfig.ANALYSIS_REASONING_TIER
         _extra = dict(kwargs.get("extra_body") or {})
         _extra.update(reasoning_policy.build_reasoning_params(resolved, _tier))
         kwargs["extra_body"] = _extra
+        # 추론 ON 이면 추론 길이 캡 주입(DTG THOUGHTS_LIMIT 이식) — 추론만 조이고 JSON 출력은 유지.
+        _cap = reasoning_policy.reasoning_cap_instruction(_tier)
+        if _cap:
+            messages.append({"role": "system", "content": _cap})
         try:
             resp = await self._client.chat.completions.create(**kwargs)
             _msg = resp.choices[0].message if getattr(resp, "choices", None) else None

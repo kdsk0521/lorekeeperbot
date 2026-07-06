@@ -674,8 +674,9 @@ The mental_impact delta is distributed to PC's Vigor and Composure axes based on
 - Composure (emotional stability, social grace): Primary for romance, comedy, noir, slice_of_life
 - Primary axis receives full impact; secondary axis receives ~30-50%
 
-Negative magnitude: express ONLY via the mental_impact severity enum (none/mild/heavy/extreme) in the DAI spec — do NOT output raw negative numbers here. Direction only: violence / threat / supernatural / loss / moral violation / betrayal / torture → negative load (heavier = more severe & RARE; see enum guide).
-Positive: Rest/safety (+5~10) | Social connection (+5~10) | Achievement (+5~15) | NPC comfort (+5~10)
+Magnitude: express ONLY via the mental_impact severity enum (none/uplift/restore/mild/heavy/extreme) in the DAI spec — do NOT output raw numbers here.
+Negative direction: violence / threat / supernatural / loss / moral violation / betrayal / torture → mild/heavy/extreme (heavier = more severe & RARE; see enum guide).
+Positive direction: rest·safety / social connection / achievement / NPC comfort → uplift (common, small) or restore (rare, deep catharsis·true safety).
 
 ### Doom Clocks (Situation Clocks — Offense/Defense)
 Doom clocks represent world threats advancing against the player. You receive active clocks in CURRENT STATE. Your job:
@@ -920,31 +921,5 @@ Cross-reference the PC's NOTEBOOK (inventory + memos) on every turn.
 
 """
 
-# =========================================================
-# ANALYSIS CORE DNA (Unified Reference Block) — v2.0
-# =========================================================
-ANALYSIS_CORE_DNA = {
-    # --- Core Theory Blocks (PART A~E) ---
-    "identity_v2": THEORIA_IDENTITY_V2,
-    "lenses_established": ANALYTICAL_LENSES_ESTABLISHED,
-    "lenses_cultural": ANALYTICAL_LENSES_CULTURAL,
-    "lenses_custom": ANALYTICAL_LENSES_CUSTOM,
-    "lenses_literary": ANALYTICAL_LENSES_LITERARY,
-    # --- Rule Tables ---
-    "pc_check": THEORIA_PC_CHECK,
-    "state_v2": STATE_TRACKING_V2,
-    "observation": OBSERVATION_INTENT,
-    "temporal_v2": TEMPORAL_ORIENTATION_V2,
-    "chain": THEORIA_CHAIN,
-    "position_effect": THEORIA_POSITION_EFFECT,
-    "memory": THEORIA_MEMORY,
-    "npc_attitude": NPC_ATTITUDE_ANALYSIS,
-    "anomaly": ANOMALY_DETECTION,
-    "judgment": JUDGMENT_SUPPORT,
-    "doom_mental": DOOM_MENTAL_TRACKING,
-    "sensory": SENSORY_ANCHORS,
-    "npc_knowledge_v2": NPC_KNOWLEDGE_V2,
-    "sexual_psychology": SEXUAL_PSYCHOLOGY_ANALYSIS,
-    "flashback_rest": FLASHBACK_REST_DETECTION,
-    "item_awareness": ITEM_AWARENESS,
-}
+# ANALYSIS_CORE_DNA aggregator 제거 (2026-07-06 감사): v2.0 통합 참조 dict —
+# 소비자 0. 구성 상수들은 theoria_analyzer가 개별 직접 사용 (그쪽이 실배선).

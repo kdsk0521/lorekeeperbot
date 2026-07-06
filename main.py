@@ -53,7 +53,9 @@ GEMINI_API_KEY = config.GEMINI_API_KEY
 MODEL_ID = config.MODEL_ID
 MODEL_ID_FLASH = config.MODEL_ID_FLASH
 
-if not GEMINI_API_KEY: logging.warning("GEMINI_API_KEY Missing!")
+# [2026-07-02] Gemini 키는 gemini 백엔드 경로가 활성일 때만 필요 (openai 전환 후 하드 의존 제거).
+if not GEMINI_API_KEY and (config.ANALYSIS_BACKEND != "openai" or config.RENDERER_BACKEND != "openai"):
+    logging.warning("GEMINI_API_KEY Missing! (gemini 백엔드 경로 활성 — 롤백/폴백 시 필요)")
 
 client_genai = None
 try:
@@ -188,9 +190,13 @@ async def _process_message(message: discord.Message) -> None:
 
                 # OOC를 지시로 변환 + IC 맥락 포함
                 combined_directive = f"[플레이어 행동: {ic_text}] [OOC 지시: {ooc_content}]"
+                # [2026-07-02] IC 원문은 위에서 이미 기록(message_id 포함) — execute의 user 기록은
+                # 스킵해 이중 잔존 차단. 결합 디렉티브는 이번 턴 프롬프트로만 쓰고 히스토리엔 안 남김
+                # (OOC 메타가 IC 기록에 영구 노출되던 것도 함께 차단).
                 await generate_ai_response(
                     message, channel_id,
-                    user_input_override=combined_directive
+                    user_input_override=combined_directive,
+                    record_user_history=False
                 )
                 return
 
@@ -231,7 +237,8 @@ async def generate_ai_response(
     message: discord.Message,
     channel_id: str,
     system_trigger: Optional[str] = None,
-    user_input_override: Optional[str] = None
+    user_input_override: Optional[str] = None,
+    record_user_history: bool = True
 ) -> None:
     """AI 응답 생성 (OrchestrationService로 위임)"""
     orchestration = get_orchestration_runtime(client_genai, MODEL_ID, MODEL_ID_FLASH)
@@ -247,7 +254,8 @@ async def generate_ai_response(
             channel_id,
             system_trigger,
             feedback_msg=feedback_msg,
-            user_input_override=user_input_override
+            user_input_override=user_input_override,
+            record_user_history=record_user_history
         )
     except Exception as e:
         logging.error(f"Orchestration Error: {e}", exc_info=True)
@@ -351,7 +359,15 @@ async def generate_ooc_response(
 
 
 if __name__ == "__main__":
-    if DISCORD_TOKEN and GEMINI_API_KEY:
+    # [2026-07-02] 기동 게이트 백엔드-인지화: openai 전환 후 GEMINI_API_KEY 하드 의존 제거.
+    # 활성 분석 백엔드가 요구하는 키만 필수. (renderer openai 키 부재는 persona가 로그 후 폴백)
+    if config.ANALYSIS_BACKEND == "openai":
+        _ai_key_ok = bool(config.ANALYSIS_OPENAI_API_KEY)
+        _ai_key_name = "ANALYSIS_OPENAI_API_KEY"
+    else:
+        _ai_key_ok = bool(GEMINI_API_KEY)
+        _ai_key_name = "GEMINI_API_KEY"
+    if DISCORD_TOKEN and _ai_key_ok:
         client_discord.run(DISCORD_TOKEN)
     else:
-        print("MISSING API KEYS")
+        print(f"MISSING API KEYS (need DISCORD_TOKEN + {_ai_key_name})")

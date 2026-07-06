@@ -183,9 +183,11 @@ class OrchestrationService:
             for n_name, n_data in new_attitudes.items():
                 existing_npc = npc_manager.get_npc(channel_id, n_name)
                 if not existing_npc:
+                    # description 플레이스홀더를 넣지 않는다 — 이후 entity_state descriptor가
+                    # 실제 관찰로 채우고, 렌더는 그 전까지 이름/관찰만 보여줌.
+                    # (옛 "Auto-detected by AI" 리터럴이 산문에 노출되던 문제 제거)
                     npc_manager.update_npc(channel_id, n_name, {
                         "source": "session",
-                        "description": "Auto-detected by AI",
                         "status": "active"
                     })
                     logger.info(f"Auto-created Session NPC: {n_name}")
@@ -648,114 +650,13 @@ class OrchestrationService:
         )
 
     # =========================================================
-    # STEP 7A: INLINE EXTRACTION (V4 - No Extra API Call)
+    # STEP 7A/7B (V4) 제거 (2026-07-06 감사): _apply_inline_extraction +
+    # schedule_background_tasks — 호출자 0. 발효+추출 전부
+    # schedule_background_extraction(아래)이 대체 완료한 V4 이중 경로 유물.
     # =========================================================
-    async def _apply_inline_extraction(
-        self,
-        ctx: ResponseContext,
-        extraction_data: Optional[Dict[str, Any]],
-        message: discord.Message
-    ) -> None:
-        """
-        [V4] 서사 응답에서 추출된 데이터를 즉시 적용합니다.
-        별도 API 호출 없이 서사 생성 시 함께 추출된 데이터를 사용합니다.
-        """
-        if not extraction_data:
-            return
-
-        channel_id = ctx.channel_id
-        notifications = []
-
-        try:
-            # 1. Notebook Update (per-user)
-            notebook_delta = extraction_data.get("notebook")
-            if notebook_delta and notebook_delta != "null":
-                current_nb = game_system.get_notebook_text(channel_id, ctx.user_id) or ""
-                from datetime import datetime
-                timestamp = datetime.now().strftime("%m/%d %H:%M")
-                updated_nb = f"{current_nb}\n[{timestamp}] {notebook_delta}".strip()
-                game_system.update_notebook_text(channel_id, updated_nb, ctx.user_id)
-                notifications.append("📔 노트북 기록됨")
-                logger.info(f"[InlineExtract] Notebook: {notebook_delta}")
-
-            # 2. Quest Updates
-            quest_data = extraction_data.get("quest", {})
-            if quest_data:
-                for q in quest_data.get("add", []):
-                    if q:
-                        result = game_system.add_quest(channel_id, q)
-                        if result and not result.startswith("⚠️"):
-                            notifications.append(f"🆕 퀘스트: {q}")
-                for q in quest_data.get("complete", []):
-                    if q:
-                        result = game_system.complete_quest(channel_id, q)
-                        if result and not result.startswith("⚠️"):
-                            notifications.append(f"✅ 완료: {q}")
-
-            # 3. Relationship Updates
-            rel_data = extraction_data.get("rel", {})
-            if rel_data and isinstance(rel_data, dict):
-                for npc_name, delta in rel_data.items():
-                    if delta and delta != 0:
-                        domain_manager.update_npc_relationship(
-                            channel_id, ctx.user_id, npc_name, delta
-                        )
-                        logger.info(f"[InlineExtract] Relation: {npc_name} {delta:+d}")
-
-            # 4. Anomaly Flag
-            flag = extraction_data.get("flag")
-            if flag and flag != "null":
-                logger.info(f"[InlineExtract] Anomaly Flag: {flag}")
-                # 이상현상 트리거는 로깅만 (실제 처리는 UNE에서)
-
-            # Send notifications
-            if notifications:
-                await message.channel.send(" | ".join(notifications))
-
-        except Exception as e:
-            logger.error(f"[InlineExtract] Error applying extraction: {e}")
 
     # =========================================================
-    # STEP 7B: BACKGROUND TASKS (V4 - Fermentation Only)
-    # =========================================================
-    async def schedule_background_tasks(
-        self,
-        ctx: ResponseContext,
-        response: str,
-        message: discord.Message
-    ) -> None:
-        """
-        [V4] 백그라운드 작업 스케줄링 (발효만 수행).
-        추출은 이제 Inline Extraction으로 처리됩니다.
-        """
-        channel_id = ctx.channel_id
-
-        # Mnemosyne Fermentation (Low Priority)
-        async def background_fermentation_task():
-            try:
-                fresh_data = domain_manager.get_domain(channel_id)
-
-                def save_cb():
-                    domain_manager.save_domain(channel_id, fresh_data)
-
-                await fermentation.auto_ferment(
-                    self.client, self.model_id,
-                    fresh_data,
-                    channel_id=channel_id,
-                    save_callback=save_cb
-                )
-            except Exception as e:
-                logger.error(f"[Orchestrator] Fermentation task error: {e}")
-
-        await enqueue_background_task(
-            channel_id,
-            "BackgroundFermentation",
-            background_fermentation_task,
-            priority=TaskPriority.LOW
-        )
-
-    # =========================================================
-    # STEP 7 (Legacy): BACKGROUND EXTRACTION (Queue-based)
+    # STEP 7: BACKGROUND EXTRACTION (Queue-based)
     # =========================================================
     async def schedule_background_extraction(
         self,
@@ -1149,6 +1050,13 @@ class OrchestrationService:
                 ai_brief = str(response or "")[:300]
                 narrative_tracker.record_turn(nt_state, turn_idx, user_brief, ai_brief, involved_npcs, qf)
 
+                # [T-A] NPC 등장 카운트(구별 턴만) — 1회성/다회성 tier 계측. session만 내부 게이트.
+                try:
+                    for _inpc in involved_npcs:
+                        npc_manager.mark_npc_appearance(channel_id, _inpc, turn_idx)
+                except Exception as _e_appear:
+                    logger.debug(f"[NPC Tier] appearance mark skipped: {_e_appear}")
+
                 # 엔티티 상태 변화 기록
                 est_data = updates.get("EntityStateUpdate")
                 if est_data:
@@ -1197,6 +1105,11 @@ class OrchestrationService:
                             _obs = (_obs + "\n" + _desc).strip()[-1500:] if _obs else _desc
                             _merged = dict(_existing)
                             _merged["play_observed"] = _obs
+                            # [N-A] description이 비어 있으면(attitude 채널이 이름만 선점한 스텁 등)
+                            # 이번 관찰로 즉시 backfill → !npc/roster가 더는 빈칸이 아니고,
+                            # 이후 재작성(N-B)이 정제. 이미 있으면 건드리지 않음(작가/증류 보존).
+                            if not str(_merged.get("description", "") or "").strip():
+                                _merged["description"] = _desc
                             _rewrote = False
                             # 세션(비로어) NPC: 관찰이 충분히 자라면 틈틈이 '면모 시트' 재작성.
                             # 이전 시트(정체성/불씨/면모)를 컨텍스트로 얹어 → 정체성은 안정 유지,
@@ -1225,8 +1138,10 @@ class OrchestrationService:
                                             _asp = _sheet.get("aspects")
                                             if isinstance(_asp, list) and _asp:
                                                 _merged["aspects"] = [str(a).strip() for a in _asp if a and str(a).strip()][:6]
-                                            # 외형/역할: 큰 변경 시에만(모델이 준 경우만 덮음)
-                                            for _k in ("appearance", "role"):
+                                            # [N-B] 외형/역할/설명/배경: 모델이 준 경우만 덮음.
+                                            # description 추가 = PC 재작성(아래)과 패리티 — NPC만 빠져
+                                            # 있어서 증류돼도 설명란이 계속 비던 문제 수리.
+                                            for _k in ("appearance", "role", "description", "background"):
                                                 if _sheet.get(_k):
                                                     _merged[_k] = _sheet[_k]
                                             _merged["_obs_built_len"] = len(_obs)
@@ -1263,7 +1178,10 @@ class OrchestrationService:
                             domain_manager.set_default_pc_info(channel_id, _pc)
                             if not _authored:
                                 _built = int(_pc.get("_pc_build_len", 0) or 0)
-                                if len(_obs_buf) >= 300 and (len(_obs_buf) - _built) >= 300:
+                                # [P-B] 첫 충전은 ~130자(중간)로 당겨 초반 빈칸 단축, 이후 재작성은
+                                # 300자마다(과다 콜 방지). 진화 흐름 자체는 유지.
+                                _pc_thr = 130 if _built == 0 else 300
+                                if len(_obs_buf) >= _pc_thr and (len(_obs_buf) - _built) >= _pc_thr:
                                     try:
                                         # 이전 면모를 컨텍스트로 얹어 정체성 안정 유지(NPC와 동일)
                                         _pv = []
@@ -1279,7 +1197,8 @@ class OrchestrationService:
                                             self.client, self.model_id_flash, _pc_distill)
                                         if _sheet:
                                             # 기계층(판정 연동): PC는 유지 — role/외형/설명 + passives/inventory
-                                            for _k in ("role", "species", "appearance", "description", "background"):
+                                            # + notes(일지): apply_pc_info_to_user가 [일지] 섹션으로 라우팅
+                                            for _k in ("role", "species", "appearance", "description", "background", "notes"):
                                                 if _sheet.get(_k):
                                                     _pc[_k] = _sheet[_k]  # 진화: 덮어쓰기
                                             if _sheet.get("passives"):
@@ -1297,6 +1216,8 @@ class OrchestrationService:
                                             _pc["_pc_build_len"] = len(_obs_buf)
                                             _pc["_pc_play_built"] = True
                                             domain_manager.set_default_pc_info(channel_id, _pc)
+                                            # sync → apply_pc_info_to_user가 notes→[일지]·inventory→[소지품]로
+                                            # 라우팅(background 누출 없음). 자동 재작성마다 연속성 일지 누적.
                                             domain_manager.sync_matching_participants(channel_id, _pc)
                                             logger.info(f"[PC Build] PC 시트 재작성/진화(면모+기계): {_pc_name} (관찰 {len(_obs_buf)}자)")
                                     except Exception as _e_pcb:
@@ -1414,18 +1335,22 @@ class OrchestrationService:
     # EXECUTION ENTRY POINT
     # =========================================================
     async def execute(
-        self, 
-        message: discord.Message, 
-        channel_id: str, 
-        system_trigger: Optional[str] = None, 
+        self,
+        message: discord.Message,
+        channel_id: str,
+        system_trigger: Optional[str] = None,
         feedback_msg: Optional[discord.Message] = None,
-        user_input_override: Optional[str] = None
+        user_input_override: Optional[str] = None,
+        record_user_history: bool = True
     ) -> None:
         """
         AI 응답 생성 파이프라인을 실행합니다.
-        
+
         Args:
             feedback_msg: '서사 생성 중...' 안내 메시지 객체 (완료 후 삭제용)
+            record_user_history: False면 유저 입력 히스토리 기록 스킵 (chat_with_ooc —
+                main.py가 IC 원문을 message_id 포함 선기록한 턴. 결합 디렉티브를 또 적으면
+                IC 이중 잔존 + OOC 메타가 IC 기록에 영구 노출. 2026-07-02)
         """
         try:
             user_id = str(message.author.id)
@@ -1554,9 +1479,10 @@ class OrchestrationService:
 
                     # 8. [IMPORTANT] 히스토리에 사용자 입력과 AI 응답 저장
                     user_mask = ctx.user_mask or "User"
-                    domain_manager.append_history(channel_id, user_mask, ctx.action_text)
+                    if record_user_history:
+                        domain_manager.append_history(channel_id, user_mask, ctx.action_text)
                     domain_manager.append_history(channel_id, "Model", response)
-                    logger.debug(f"[History] Saved: {user_mask} + Model response ({len(response)} chars)")
+                    logger.debug(f"[History] Saved: {'skip-user + ' if not record_user_history else user_mask + ' + '}Model response ({len(response)} chars)")
 
                     # 8.4. [TimeSync] 모델 출력 status line 시간 → 내부 클록 동기화 (2026-05-23)
                     # G1/G2(사용자 인풋 명시) 다음 2순위. SCENE_TIME_RULES로 침묵 점프 차단.
@@ -1621,6 +1547,7 @@ class OrchestrationService:
                         # A7: HALLABONG Gemini-cliché detectors
                         detect_arrival_patterns, detect_declaration_patterns,
                         detect_explain_then_render_patterns, detect_vending_patterns,
+                        detect_premature_closure,
                     )
                     cliche_fb = detect_cliche_patterns(response)
                     # [2026-06-12] 앙상블 보정: 장면 NPC 수 전달 (분산 아닌 분배 — 다인 장면 반응 나열은 내용)
@@ -1634,6 +1561,27 @@ class OrchestrationService:
                     declaration_fb = detect_declaration_patterns(response)
                     explain_render_fb = detect_explain_then_render_patterns(response)
                     vending_fb = detect_vending_patterns(response)
+
+                    # CLOSURE: 조기 종결 검출 (2026-07-06 감사 — 검수 함대 유일 미배선분 합류).
+                    # proximity=doom 챕터 페이즈(結/間=정당한 종결 창), open_threads=직전 프레임 render_fingerprint.unresolved.
+                    closure_fb = ""
+                    try:
+                        _bus_for_cl = getattr(ctx, "shared_bus", None) or getattr(ctx, "bus", None)
+                        _doom_phase_cl = ""
+                        if _bus_for_cl is not None and isinstance(getattr(_bus_for_cl, "doom", None), dict):
+                            _doom_phase_cl = _bus_for_cl.doom.get("chapter_phase", "")
+                        _closure_prox = {"結": 80, "間": 75, "轉": 55}.get(_doom_phase_cl, 30)
+                        _prev_unresolved = (
+                            domain_manager.get_latest_frame(channel_id)
+                            .get("render_fingerprint", {}).get("unresolved") or []
+                        )
+                        if not isinstance(_prev_unresolved, list):
+                            _prev_unresolved = []
+                        closure_fb = detect_premature_closure(
+                            response, conclusion_proximity=_closure_prox, open_threads=_prev_unresolved
+                        )
+                    except Exception as _e_cl:
+                        logger.warning(f"[Closure] skipped: {_e_cl}")
 
                     # Sensory Rotation: rolling window 3턴
                     _mem_for_fb = domain_manager.get_session_ai_memory(channel_id)
@@ -1733,6 +1681,7 @@ class OrchestrationService:
                         cliche_fb, cargo_fb, rotation_fb, pidgin_fb,
                         struct_fb, tension_fb, deflection_fb,
                         arrival_fb, declaration_fb, explain_render_fb, vending_fb,
+                        closure_fb,
                         (_ce_fb if config.CADENCE_ECHO_INJECT else None),
                     ]))
                     if style_fb:
@@ -1772,6 +1721,69 @@ class OrchestrationService:
                             ))
                     except Exception:
                         pass
+
+                    # 9.6. [C안 2026-07-02] 영속층 감사 — N턴마다 백그라운드 (log-only, 검출≠쓰기).
+                    # knowledge/relations/world_tree 자동 적립분의 모순·중복·고아·출처불명 검출.
+                    try:
+                        _pa_interval = getattr(config, "PERSIST_AUDIT_INTERVAL", 0)
+                        _pa_turn = int(domain_manager.get_world_state(channel_id).get("turn_index", 0) or 0)
+                        if _pa_interval > 0 and _pa_turn > 0 and _pa_turn % _pa_interval == 0:
+                            import persistent_audit as _pa_mod
+
+                            async def _run_persist_audit():
+                                await _pa_mod.run_persistent_audit(self.client, self.model_id_flash, channel_id)
+
+                            await enqueue_background_task(
+                                channel_id, "PersistentAudit", _run_persist_audit,
+                                priority=TaskPriority.LOW,
+                            )
+                            logger.info(f"[PersistAudit] enqueued at turn {_pa_turn}")
+                    except Exception as _e_pa:
+                        logger.debug(f"[PersistAudit] enqueue skip: {_e_pa}")
+
+                    # 9.7. [Reader-GM Stage 0, 2026-07-05] 서브 GM 독자 — blind read(텔레스코프+산문만),
+                    # log-only 적립(reader_log). 프롬 급식 없음. async 지연 0. 스펙: trait_playbook §4 R1.
+                    try:
+                        _rg_interval = getattr(config, "READER_GM_INTERVAL", 0)
+                        _rg_turn = int(domain_manager.get_world_state(channel_id).get("turn_index", 0) or 0)
+                        if _rg_interval > 0 and _rg_turn > 0 and _rg_turn % _rg_interval == 0:
+                            import reader_gm as _rg_mod
+                            _rg_prose = response
+                            _rg_block = getattr(ctx, "telescope_raw_block", "") or ""
+
+                            async def _run_reader_gm():
+                                await _rg_mod.run_reader(
+                                    self.client, channel_id, _rg_turn, _rg_prose, _rg_block)
+
+                            await enqueue_background_task(
+                                channel_id, "ReaderGM", _run_reader_gm,
+                                priority=TaskPriority.LOW,
+                            )
+                    except Exception as _e_rg:
+                        logger.debug(f"[Reader] enqueue skip: {_e_rg}")
+
+                    # 9.8. [Reader-GM Stage 3-A] 間 진입 엣지 → 수신형 시드 번역 (배경 LOW, 1회/진입).
+                    try:
+                        if getattr(config, "READER_GM_SEED", 0):
+                            _interm_now = bool(ctx.shared_bus.doom.get("intermission_active"))
+                            _mem_rs = domain_manager.get_session_ai_memory(channel_id) or {}
+                            _interm_prev = bool(_mem_rs.get("_reader_seed_interm_prev"))
+                            if _interm_now != _interm_prev:
+                                domain_manager.update_session_ai_memory(
+                                    channel_id, {"_reader_seed_interm_prev": _interm_now})
+                            if _interm_now and not _interm_prev:
+                                import reader_gm as _rs_mod
+
+                                async def _run_reader_seed():
+                                    await _rs_mod.run_seed_replenish(self.client, channel_id)
+
+                                await enqueue_background_task(
+                                    channel_id, "ReaderSeed", _run_reader_seed,
+                                    priority=TaskPriority.LOW,
+                                )
+                                logger.info("[ReaderSeed] enqueued (間 entry)")
+                    except Exception as _e_rs:
+                        logger.debug(f"[ReaderSeed] enqueue skip: {_e_rs}")
                 else:
                     logger.warning(f"[!다시] No response generated for channel {channel_id}")
                     if feedback_msg:

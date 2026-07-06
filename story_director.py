@@ -130,6 +130,21 @@ class StoryDirector:
 
         # 2. Idle input detection
         is_idle = StoryDirector._detect_idle_input(user_input)
+        # [Reader-GM R4] 독자 거부권 — 직전 턴을 독자가 rising으로 수신했으면 idle 강등 방지.
+        # READER_GM_FEED=0(기본)이면 완전 무동작. 결정론 유지: enum 하나 → 분기 하나. spec §6b.
+        if is_idle:
+            try:
+                import config as _cfg
+                if getattr(_cfg, "READER_GM_FEED", 0):
+                    import sqlite_store as _ss
+                    _ch = context.narrative_anchors.get("channel_id", "")
+                    _rows = _ss.read_reader_log_tail(_ch, limit=1) if _ch else []
+                    _tr = (_rows[-1][1].get("tension_read") or {}).get("value", "") if _rows else ""
+                    if _tr == "rising":
+                        is_idle = False
+                        logger.info("[ReaderVeto] idle demotion blocked (reader received tension=rising)")
+            except Exception:
+                pass
         idle_direction = None
         if is_idle:
             idle_direction = StoryDirector._generate_idle_direction(

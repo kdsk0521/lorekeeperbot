@@ -142,12 +142,12 @@ class SharedBus:
     vigor: Dict[str, Any] = field(default_factory=lambda: {
         "active": False, "value": 0, "delta": 0, "last_delta": 0,
         "impact": {}, "rest_eval": None, "rest_log": "",
-        "judgment_emotion": 0, "trauma_trigger": False, "log": ""
+        "judgment_emotion": 0, "log": ""
     })
     composure: Dict[str, Any] = field(default_factory=lambda: {
         "active": False, "value": 0, "delta": 0, "last_delta": 0,
         "impact": {},
-        "judgment_emotion": 0, "trauma_trigger": False, "log": ""
+        "judgment_emotion": 0, "log": ""
     })
     # Phase 8: Emotion Engine (LIBRA-inspired)
     emotion: Dict[str, Any] = field(default_factory=lambda: {
@@ -311,6 +311,12 @@ async def gather_context(ctx: ResponseContext) -> ResponseContext:
 
     # 기존 NPC 태도
     ctx.existing_attitudes = domain_manager.get_npc_attitudes(channel_id)
+
+    # [2026-07-02] channel_id_ref 배선 — build_fermented_context 내부 2곳(벡터 가중 정렬,
+    # 완결 스토리라인 주입)이 이 키를 읽는데 쓰는 곳이 0이라 영구 기아였음
+    # (벡터 캐시는 실채널 키로 적립·소비는 ""로 조회 → 항상 키워드 폴백,
+    #  archived_storylines는 if 가드로 통째 스킵). lore_summary_data와 같은 주입 패턴.
+    ctx.domain_data["channel_id_ref"] = channel_id
 
     # 발효 요약 (V3 Hybrid - Mneme/Psyche)
     # build_fermented_context expects session_data dict, not separate args

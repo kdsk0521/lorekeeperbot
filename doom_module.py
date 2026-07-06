@@ -215,6 +215,12 @@ class DoomModule:
 
         # ── 1. Flash 시계 소비 ──────────────────────────────
         flash_new = bus.doom.pop("flash_clock_new", None)
+        # [Reader-GM Stage 3-A] 間 시드 콜이 적립한 수신형 시계 후보 — Flash 제안 없을 때만 폴백 소비
+        # (기존 캡·중복·間 do_not_resolve_yet 규칙을 그대로 통과 = 기존 기관의 규칙으로 생성).
+        if not (isinstance(flash_new, dict) and flash_new.get("name")):
+            _pending_ck = bus.doom.pop("pending_clock_new", None)
+            if isinstance(_pending_ck, dict) and _pending_ck.get("name"):
+                flash_new = _pending_ck
         flash_updates = bus.doom.pop("flash_clock_updates", [])
         flash_resolved = bus.doom.pop("flash_clock_resolved", [])
 

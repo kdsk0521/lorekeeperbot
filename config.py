@@ -76,13 +76,55 @@ ANALYSIS_TEMPERATURE_HEAVY = float(os.getenv("ANALYSIS_TEMPERATURE_HEAVY", "0.05
 ANALYSIS_OPENAI_MODEL_HEAVY = os.getenv("ANALYSIS_OPENAI_MODEL_HEAVY", ANALYSIS_OPENAI_MODEL_PRO)
 ANALYSIS_HEAVY_EFFORT_VAR = contextvars.ContextVar("analysis_heavy_effort", default=False)
 
+# ── 서사 콜 전용 모델 라우팅 (2026-07-05 GLM 스왑) ─────────────────────────────
+# 추출 콜=기계 읽기 → FLASH(deepseek-v4-flash: V4의 추론↔본문 갭이 무해한 자리).
+# 서사 콜(beats/hook/offscreen/psyche_narrative)=생성계 → GLM 잔류(V4 positivity bias가
+# 능동성 공급 재료를 순화시키는 것 방지). ""(기본)=분리 없음, FLASH 그대로 → env 삭제가 곧 롤백.
+ANALYSIS_OPENAI_MODEL_NARRATIVE = os.getenv("ANALYSIS_OPENAI_MODEL_NARRATIVE", "")
+ANALYSIS_NARRATIVE_VAR = contextvars.ContextVar("analysis_narrative_call", default=False)
+
+# ── 추출 콜 전용 모델 라우팅 (2026-07-05 후속) ─────────────────────────────────
+# per-turn 추출(analyze_input)만 별도 모델. 추출=기계 읽기 = V4 약점(추론↔본문 갭·positivity)이
+# 안 닿는 자리 + 오독은 psyche/지식→영속층에 무게이트로 박히는 "성공했는데 틀린 값" 클래스라
+# 독해 충실도가 오염의 상류 방어 → V4-Pro 승격. FLASH(ds-flash)는 배경 콜(발효/연대기/루카/감사/GC)
+# 전용으로 잔류(스코프 정밀 분리 — FLASH 통째 교체는 배경까지 Pro가 되는 과잉).
+# ""(기본)=분리 없음 → env 삭제가 곧 롤백. heavy > narrative > extract > 이름 순.
+ANALYSIS_OPENAI_MODEL_EXTRACT = os.getenv("ANALYSIS_OPENAI_MODEL_EXTRACT", "")
+ANALYSIS_EXTRACT_VAR = contextvars.ContextVar("analysis_extract_call", default=False)
+
+# ── Reader-GM 서브 GM 독자 (2026-07-05 Stage 0: log-only) ────────────────────
+# 수신측 공급 기관의 계기 단계: 렌더 후 async로 텔레스코프+산문만 blind read → reader_log 적립.
+# 프롬프트 급식 없음(Stage 2 승격=별도 결정, 게이트: 집계만·렌더러 직행 금지·계기 신뢰 후).
+# 스펙: 파티쳇수정/deepseek_v4_trait_playbook_2026-07-05.md §4 R1.
+READER_GM_INTERVAL = int(os.getenv("READER_GM_INTERVAL", "1"))  # 매 N턴 실행 (0=비활성)
+# [R4 구조 환류] 마스터 스위치 — 0(기본)=적립·계측만, 1=소비 개시(SD 거부권 등).
+# 관측 게이트는 소프트락 1회 확인(독자 콜이 성인·고어 장면을 거부/순화 없이 읽는가)뿐 — 확인 후 1로.
+READER_GM_FEED = int(os.getenv("READER_GM_FEED", "0"))
+# 지속성 게이트: 같은 축이 W턴 창에서 M턴 이상 수신될 때만 후보 승격(오독 1회의 상태화 차단).
+READER_PERSIST_WINDOW = int(os.getenv("READER_PERSIST_WINDOW", "5"))
+READER_PERSIST_MIN = int(os.getenv("READER_PERSIST_MIN", "3"))
+# [Stage 3-A 수신형 시드] 間(intermission) 진입마다 승격 축→이변 시드 번역(V4 배경 콜, 독자 계열 첫 영속 쓰기).
+# 5중 게이트: 지속성 통과·번역기 경유·source=reader 태그·캡·persist_audit 편입. 0=비활성.
+READER_GM_SEED = int(os.getenv("READER_GM_SEED", "0"))
+READER_SEED_CAP = int(os.getenv("READER_SEED_CAP", "6"))  # reader-유래 시드 최대 보유(FIFO)
+# 독자 모델: ""(기본)=PRO 폴스루(V4-Pro). Gemma 후보 시 env로 gemma4:31b-cloud 등 지정.
+ANALYSIS_OPENAI_MODEL_READER = os.getenv("ANALYSIS_OPENAI_MODEL_READER", "")
+ANALYSIS_READER_VAR = contextvars.ContextVar("analysis_reader_call", default=False)
+
 # ── Reasoning tier (semantic; reasoning_policy.py 가 모델별 값/파라미터로 매핑) ──────────
 # .env 는 키 + 모델 ID 만. "어느 role 이 어느 tier" 는 여기 코드 기본값(off/light/deep).
 # 모델을 GLM(high/max only) · deepseek(none/high/max) · 기타로 교체해도 policy 가 흡수한다.
 # (위의 OPENAI_REASONING_EFFORT / ANALYSIS_OPENAI_REASONING_EFFORT* 는 레거시 — 이제 미사용.)
-RENDERER_REASONING_TIER = os.getenv("RENDERER_REASONING_TIER", "off")               # 메인 렌더 = OFF (TELESCOPE 프롬프트-CoT 로 추론 대체)
+RENDERER_REASONING_TIER = os.getenv("RENDERER_REASONING_TIER", "off")               # 코드 기본 off. [2026-07-05 GLM 스왑] .env가 light로 상향 — 추론+TELESCOPE 병행(제미니 시절 원 구조 복원). 캡은 persona 배선
+# 렌더 전용 추론 캡(문자). 분석 light(1200)와 분리 — 1턴 실측 ~1900자에서 결과 좋았고(V1 갭 닫힘)
+# GLM RP 강점=thinking 결합이라 렌더만 소폭 상향(레티어스 2026-07-05). 0=tier 기본값(1200) 사용.
+RENDERER_REASONING_CAP_CHARS = int(os.getenv("RENDERER_REASONING_CAP_CHARS", "2000"))
 ANALYSIS_REASONING_TIER = os.getenv("ANALYSIS_REASONING_TIER", "light")             # 보조 per-turn 분석 = LIGHT (추론 ON)
 ANALYSIS_REASONING_TIER_HEAVY = os.getenv("ANALYSIS_REASONING_TIER_HEAVY", "deep")  # 1회성 무거운 추출 = DEEP
+# per-turn 추출 콜만 OFF [2026-07-05 수처1 실측]: V4-Pro가 캡 지시(1200자)를 무시하고 매턴 7.6~13.6k자
+# 사고(6회 측정, "low"→high 정규화 정황) = 턴 지연 주범. 추출=기계 읽기라 추론 가치 낮음(원설계 복귀).
+# 서사 콜(GLM)·배경 콜은 light 유지. 되돌리려면 env를 "light"로.
+ANALYSIS_REASONING_TIER_EXTRACT = os.getenv("ANALYSIS_REASONING_TIER_EXTRACT", "off")
 
 
 @contextlib.contextmanager
@@ -98,17 +140,66 @@ def heavy_analysis():
     finally:
         ANALYSIS_HEAVY_EFFORT_VAR.reset(_token)
 
+
+@contextlib.contextmanager
+def narrative_analysis():
+    """이 블록 안에서 도는 분석 콜만 서사 전용 모델(ANALYSIS_OPENAI_MODEL_NARRATIVE)로 라우팅.
+
+    contextvar 라 async 태스크 단위 격리 + await 전파. ANALYSIS_OPENAI_MODEL_NARRATIVE 가
+    비어 있으면 아무 효과 없음(FLASH 그대로) — heavy_analysis() 와 동일 패턴.
+    """
+    _token = ANALYSIS_NARRATIVE_VAR.set(True)
+    try:
+        yield
+    finally:
+        ANALYSIS_NARRATIVE_VAR.reset(_token)
+
+
+@contextlib.contextmanager
+def extract_analysis():
+    """이 블록 안에서 도는 분석 콜만 추출 전용 모델(ANALYSIS_OPENAI_MODEL_EXTRACT)로 라우팅.
+
+    heavy_analysis()/narrative_analysis() 와 동일 패턴. env 미설정이면 no-op.
+    """
+    _token = ANALYSIS_EXTRACT_VAR.set(True)
+    try:
+        yield
+    finally:
+        ANALYSIS_EXTRACT_VAR.reset(_token)
+
+
+@contextlib.contextmanager
+def reader_analysis():
+    """이 블록 안의 분석 콜만 독자 전용 모델(ANALYSIS_OPENAI_MODEL_READER)로 라우팅.
+
+    heavy/narrative/extract와 동일 패턴(4번째). env 미설정이면 no-op — 호출부가 넘긴
+    모델 이름("pro")으로 폴스루 = V4-Pro.
+    """
+    _token = ANALYSIS_READER_VAR.set(True)
+    try:
+        yield
+    finally:
+        ANALYSIS_READER_VAR.reset(_token)
+
 # Generation Parameters - Analysis (Flash/Left Brain)
-ANALYSIS_TEMPERATURE = 0.1
+# [2026-07-02 A안 분할] 추출 콜=냉(0.1, 모달 읽기 복귀 — 생성계 필드가 서사 콜로 이사했으므로),
+# 서사 콜=온(0.7, beats/hook/offscreen/chain의 다양성 = 능동성 엔진). 둘 다 env 튜닝 가능.
+# (경과: 0.1→0.25 한 콜 절충안을 거쳐, 2분할로 온도 동거 자체를 해소)
+ANALYSIS_TEMPERATURE = float(os.getenv("ANALYSIS_TEMPERATURE", "0.1"))
+ANALYSIS_TEMPERATURE_NARRATIVE = float(os.getenv("ANALYSIS_TEMPERATURE_NARRATIVE", "0.7"))
 ANALYSIS_TOP_K = 20
 ANALYSIS_TOP_P = 0.8
+
+# [C안 2026-07-02] 백그라운드 유지보수 (전부 async — 턴 지연 0. 0 = 비활성)
+PERSIST_AUDIT_INTERVAL = int(os.getenv("PERSIST_AUDIT_INTERVAL", "20"))       # N턴마다 영속층 감사 (log-only, 검출≠쓰기)
+MEMORY_GC_FERMENT_INTERVAL = int(os.getenv("MEMORY_GC_FERMENT_INTERVAL", "5"))  # 발효 M회마다 deep_memory_data GC (백업+보수적)
 # [Gemini 3] presence_penalty/frequency_penalty not supported - removed
 
 # Generation Parameters - Narrative (Pro/Right Brain)
 NARRATIVE_TEMPERATURE = 1.15  # 1.4 → 1.15 (감정 과장 어휘 fan-out 축소)
 NARRATIVE_TOP_K = 60          # 70 → 60 (wild 후보 trim)
 NARRATIVE_TOP_P = 0.80
-NARRATIVE_MAX_OUTPUT_TOKENS = 12288
+NARRATIVE_MAX_OUTPUT_TOKENS = 16384  # 12288→16384 [2026-07-05 GLM 스왑]: 렌더 추론 ON — Ollama /v1이 thinking을 max_tokens에 포함할 가능성 대비(산문 잘림=비대칭 실패, 서사 콜 8192 인상과 동일 논리)
 # 서사 출력 길이: 인원당 동적 조절 (텔레스코프 제거 후 기준)
 NARRATIVE_CHARS_BASE = 2200      # 기본 (1인 이하) [2026-06-11: 1500→2200, 산문 목표 2000자대 (1인 max 3000/floor 1800)]
 NARRATIVE_CHARS_PER_PLAYER = 800 # 참여 인원당 추가
@@ -200,7 +291,7 @@ SCENE_TIME_RULES = {
 DOOM_MAX = 100
 
 # (DOOM_INCREASE_* / DOOM_DICE_BASELINE 제거 2026-06-25 — 옛 파멸-모델 잔재, 0소비)
-NEMESIS_THRESHOLD = -10
+NEMESIS_THRESHOLD = -10  # ⚠ 미배선 (2026-07-06 감사): 소비자 0 — 튜닝해도 아무 효과 없음
 
 # =========================================================
 # Doom Chapter Volume — Phase × Lens × Scene 결합
@@ -234,9 +325,9 @@ SCENE_DOOM_MODIFIER = {
 }
 
 # Doom v3 — Situation Clocks
-DOOM_CLIMAX_THRESHOLD = 95  # Default climax threshold (intense). intimate는 lens별 가변.
+# DOOM_CLIMAX_THRESHOLD·CLOCK_RESOLVE_DOOM 제거 (2026-07-06 감사): 소비자 0.
+# climax는 LENS_DOOM_PHASE_RANGES가, 해결=NEUTRAL(0626 결정)은 doom_module 코드가 담당.
 CLOCK_COMPLETE_DOOM = {4: 2, 6: 3, 8: 4}  # 완성(이벤트 발화)→상승. 10/15/20→2/3/4 (0626): 시계는 양념, 완성=활동 beat. 수식(phase×lens) 통과
-CLOCK_RESOLVE_DOOM = {4: 0, 6: 0, 8: 0}  # 해결=NEUTRAL (0626): doom=활동 모델선 해결도 능동 beat지 relief 아님. fall은 間(챕터휴식)만. (옛 −5/−10/−15 = 위협-미터 잔재, cut)
 
 # Clock Defense Rewards (→ primary vigor/composure axis)
 CLOCK_MITIGATE_REWARD = 1           # 시계 1칸 감소당 활력/평형 +1
@@ -318,15 +409,13 @@ MENTAL_STAGES = {
     0: {"name": "충만", "emoji": "😌", "range": (70, 101), "desc": "신체와 의지가 충실한 상태"},
     1: {"name": "둔화", "emoji": "😰", "range": (40, 70),  "desc": "출력이 느려지고 체력이 흔들립니다"},
     2: {"name": "고갈", "emoji": "😱", "range": (15, 40),  "desc": "한계에 가깝습니다. 판단과 행동이 둔해집니다"},
-    3: {"name": "붕괴", "emoji": "🫥", "range": (0, 15),   "desc": "신체와 의지가 한계를 넘겼습니다. (트라우마 위험)"}
+    3: {"name": "붕괴", "emoji": "🫥", "range": (0, 15),   "desc": "신체와 의지가 한계를 넘겼습니다."}
 }
 
 # DOOM_STAGES 제거 — LENS_DOOM_PHASE_RANGES + LENS_DOOM_ATMOSPHERE로 대체 (line 698~)
 
-# Doom Stage (0-5) -> Mental Recovery Multiplier
-DOOM_MENTAL_RECOVERY_MOD = {
-    0: 1.0, 1: 0.9, 2: 0.8, 3: 0.6, 4: 0.4, 5: 0.2
-}
+# DOOM_MENTAL_RECOVERY_MOD 제거 (2026-07-06 감사): 소비자 0 — 옛 Doom Stage(0-5)
+# 멘탈 회복 배율. 회복은 vigor_composure_module 하이브리드 로직이 대체.
 
 # =========================================================
 # Aspects 부활 (시스템 교차 결합 신호)
@@ -401,6 +490,8 @@ ACTION_BASELINE_DRAIN = {
 # heavy가 '중간값'이 아니라 extreme과 한 묶음(중대)으로 읽히게 함. 운영 관찰 후 한 줄로 조정 가능.
 MENTAL_IMPACT_ENUM_SCALE = {
     "none":    0,
+    "uplift":  3,    # [2026-07-06 회복 리워크] 흔한 양의 비트 — 위안/유대/성취/안도
+    "restore": 8,    # 드문 깊은 회복 — 카타르시스/화해/고생 끝 승리/지속 위험 후 진짜 안전
     "mild":    -2,   # 기본값. 대부분 턴
     "heavy":   -10,  # 드문 중대 사건 (severe band)
     "extreme": -15,
@@ -423,12 +514,8 @@ MAX_AXIS_DROP_PER_TURN = {
     "default":  18,
 }
 
-# G-2. 트라우마 각성 (붕괴 dwell 기반 리바운드 + 일시적 판정 디버프)
-# delta 부호가 아니라 "stage 3(붕괴)에 연속으로 머문 턴 수"로 발동 → 회복 수학과 분리.
-TRAUMA_DWELL_TURNS = 2        # stage 3 연속 N턴 후 리바운드 발동
-TRAUMA_REBOUND_VALUE = 40     # 리바운드 목표값 (stage 1 바닥 = '겨우 기능'. 과거 90은 공짜 풀힐이라 폐기)
-TRAUMA_DEBUFF_TURNS = 3       # 리바운드 시 부여되는 판정 디버프 지속 턴 (turns-duration status_effect로 자동 만료)
-TRAUMA_DEBUFF_MODIFIER = -5   # 모든 판정 페널티 (status modifiers.judgment 경로 — 실제 롤에 반영)
+# G-2. 트라우마 각성 폐지 (2026-07-06 레티어스 결정): TRAUMA_DWELL_TURNS/REBOUND_VALUE/
+# DEBUFF_TURNS/DEBUFF_MODIFIER 제거. 바닥 탈출 = 갭 비례 자연회복+휴식+間 리프레시.
 
 
 # [Phase 3 DEPRECATED] Effort (각오) — Phase 2 Flash modulator(extreme)가 자동 흡수 예정.
@@ -440,7 +527,7 @@ EFFORT_COST = 8      # 활력/평형 선불 (흡수 보험 포함, 추가 비용
 # Theoria.flashback_eval 자동 감지는 유지 (산문 반영). 차감 코드는 orchestration에서 비활성화.
 FLASHBACK_COST_TIERS = {"trivial": 3, "standard": 8, "bold": 15}
 FLASHBACK_PASSIVE_DISCOUNT = 0.5  # 관련 특질 매칭 시 비용 50%
-FLASHBACK_MIN_MENTAL = 10  # 이 이하면 회상 불가
+FLASHBACK_MIN_MENTAL = 10  # 이 이하면 회상 불가 — ⚠ 'mental'은 폐지된 V7 단일축(2026-07-06). 플래시백 부활 시 vigor/composure 기준으로 재설계 필요
 
 # Rest Recovery (휴식) — 능동적 기력 회복
 REST_RECOVERY = {"full": 20, "brief": 10, "interrupted": 5}
@@ -468,6 +555,8 @@ LOADOUT_TYPES = {
 # Inventory System (N2 — 아이템 영속 + 인벤토리 검증)
 # =========================================================
 INVENTORY_SLOT_CAP = 4  # 로드아웃 고정 슬롯과 동기화
+# ⚠ 미배선 (2026-07-06 감사): 소비자 0 — 실제 아이템 영속은 notebook [소지품] 라인
+# (cognition item_usage → merge_notebook_preserve_inventory)이 담당. 참고 테이블로 보존.
 ITEM_PERSISTENCE_RULES = {
     "consumable": "remove_on_use",
     "weapon": "persist",
@@ -858,11 +947,8 @@ LEGACY_TAG_MAP = {
 NEGATIVE_STATUS_EFFECTS = {k: v["severity"] for k, v in STATUS_EFFECTS.items() if v["type"] == "debuff"}
 POSITIVE_STATUS_EFFECTS = {k: 1 for k, v in STATUS_EFFECTS.items() if v["type"] == "buff"}
 
-SEVERITY_DOOM_IMPACT = {
-    1: 1, # Minor -> +1 Doom
-    2: 3, # Major -> +3 Doom
-    3: 5, # Critical -> +5 Doom
-}
+# SEVERITY_DOOM_IMPACT 제거 (2026-07-06 감사): 소비자 0 — status-impact→doom
+# 라인(D-1)이 이미 잘린 뒤 남은 테이블.
 
 # Normality Stages (Range: 0-100)
 # Key: (min_inclusive, max_exclusive)
@@ -1186,15 +1272,17 @@ def get_lens_atmosphere(lens: str, phase: str) -> str:
 # Vigor = 기력 (신체 + 의지): 전투, 부상, 수면 부족, 과로, 공포
 # Composure = 평정 (정신 + 사회): 정신 충격, 배신, 수치, 고립, 정보 과부하
 
-VIGOR_STAGES = MENTAL_STAGES  # 동일 단계 (충만/동요/고갈/붕괴)
+# VIGOR_STAGES alias 제거 (2026-07-06 감사): 소비자 0. 단계 판정은 vigor_composure._get_stage.
 
 COMPOSURE_STAGES = {
     0: {"name": "안정", "emoji": "😌", "range": (70, 101), "desc": "정신적으로 안정된 상태"},
     1: {"name": "흔들림", "emoji": "😰", "range": (40, 70), "desc": "감정적 동요가 있습니다"},
     2: {"name": "동요", "emoji": "😱", "range": (15, 40), "desc": "정신적 한계에 가깝습니다"},
-    3: {"name": "붕괴", "emoji": "🫥", "range": (0, 15), "desc": "정신이 무너진 상태입니다. (트라우마 위험)"},
+    3: {"name": "붕괴", "emoji": "🫥", "range": (0, 15), "desc": "정신이 무너진 상태입니다."},
 }
 
+# ⚠ 미배선 (2026-07-06 감사): 소비자 0 — 실제 primary axis는 렌즈 계열
+# LENS_PRIMARY_RESOURCE → build mechanic(primary_resource) 경로가 결정. 여길 고쳐도 무효.
 GENRE_PRIMARY_RESOURCE = {
     "cosmic_horror": "vigor",
     "action": "vigor",
@@ -1206,6 +1294,7 @@ GENRE_PRIMARY_RESOURCE = {
 
 # Genre-Specific Disruption Axis (이변 교란 설정)
 # Phase 3: Anomaly 장르 교란 엔진
+# ⚠ 미배선 (2026-07-06 감사): 소비자 0 — 실제 disruption_axes는 렌즈 계열(mechanic dict)이 공급.
 GENRE_DISRUPTION_AXIS = {
     "cosmic_horror": {
         "primary_axis": "vigor",
@@ -1321,8 +1410,8 @@ PASSIVE_KEYWORD_MODIFIERS = {
     "공포": {"anomaly_defense": -15},
     "무모": {"judgment_social": -5},
     "우유부단": {"judgment_combat": -5, "judgment_social": -5},
-    # Trauma (from Trauma Awakening)
-    "Trauma": {"anomaly_defense": -5, "composure_drain": 1.15},
+    # "Trauma" 엔트리 제거 (2026-07-06): 트라우마 각성 폐지. 레거시 세이브의 Trauma
+    # 패시브는 매치 실패로 무해한 no-op.
 }
 
 
@@ -1404,6 +1493,8 @@ def get_item_modifiers(item) -> dict:
     return {}
 
 
+# ⚠ 미배선 (2026-07-06 감사): 소비자 0 — 모듈 목록은 cmd_modules가 하드코딩
+# (core=judgment/doom/anomaly, extra=board). "mental" 항목은 폐지된 V7 잔재.
 DEFAULT_MODULE_SETTINGS = {
     "active_modules": ["judgment", "doom", "anomaly", "mental"],
     "doom_fallback": 40,

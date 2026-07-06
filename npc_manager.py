@@ -701,8 +701,81 @@ def get_scene_npc_names(channel_id: str) -> List[str]:
 
 
 def _get_npc_desc(data: dict) -> str:
-    """NPC 설명 필드 읽기 (description/desc 호환)."""
-    return data.get("description") or data.get("desc", "")
+    """NPC 설명 필드 읽기 (description/desc 호환).
+    레거시 자동생성 플레이스홀더("Auto-detected by AI")는 빈 문자열로 취급 →
+    이미 그 값으로 저장된 기존 NPC도 DB 마이그레이션 없이 산문 노출이 사라진다."""
+    d = data.get("description") or data.get("desc", "")
+    if str(d).strip().lower() in ("auto-detected by ai", "auto-detected by ai."):
+        return ""
+    return d
+
+
+def _npc_desc_fallback(data: dict) -> str:
+    """[D-A] 표시용 설명 폴백 체인. description이 비면(자동 NPC 흔함) 실제로 채워진
+    관찰/면모로 대체 — 렌더러(get_npc_renderer_profiles)의 폴백을 명령/로스터에도 복제.
+    순서: description → play_observed → 면모(정체성/aspects/외형/역할)."""
+    if not isinstance(data, dict):
+        return ""
+    d = _get_npc_desc(data)
+    if str(d).strip():
+        return d
+    obs = str(data.get("play_observed", "") or "").strip()
+    if obs:
+        return obs
+    parts = []
+    if data.get("high_concept"):
+        parts.append(str(data["high_concept"]))
+    _asp = data.get("aspects")
+    if isinstance(_asp, list) and _asp:
+        parts.append(" · ".join(str(a) for a in _asp))
+    if data.get("appearance"):
+        parts.append(str(data["appearance"]))
+    if data.get("role"):
+        parts.append(str(data["role"]))
+    return " / ".join(parts)
+
+
+def get_npc_tier(data: dict) -> str:
+    """[T-A] 자동생성 NPC의 1회성/다회성 tier. lore/manual=작가권위라 항상 established.
+    session은: 시트 증류됨(관찰 재작성/면모 보유) OR 5개 구별 턴 이상 등장 → established, 그 외 provisional."""
+    if not isinstance(data, dict):
+        return "established"
+    src = str(data.get("source", "session")).lower()
+    if src in ("lore", "manual"):
+        return "established"
+    # 시트가 이미 재작성됐거나(관찰 증류) 면모가 있으면 비중 있는 조연 → established (가드레일 a)
+    if int(data.get("_obs_built_len", 0) or 0) > 0:
+        return "established"
+    _asp = data.get("aspects")
+    if data.get("high_concept") or (isinstance(_asp, list) and _asp):
+        return "established"
+    if int(data.get("appear_count", 0) or 0) >= 5:
+        return "established"
+    return "provisional"
+
+
+def mark_npc_appearance(channel_id: str, name: str, turn: int) -> None:
+    """[T-A] NPC가 이 턴 실제 등장했음을 기록(구별 턴만 카운트 = turn dedup).
+    lore/manual은 tier 계측 불필요(항상 established)라 스킵. 순수 부기, LLM 콜 없음."""
+    data = get_npc(channel_id, name)
+    if not isinstance(data, dict):
+        return
+    if str(data.get("source", "session")).lower() in ("lore", "manual"):
+        return
+    try:
+        last = int(data.get("_last_appear_turn", -1))
+    except (TypeError, ValueError):
+        last = -1
+    try:
+        turn = int(turn)
+    except (TypeError, ValueError):
+        return
+    if last == turn:
+        return  # 같은 턴 중복 카운트 방지
+    _new = dict(data)
+    _new["appear_count"] = int(data.get("appear_count", 0) or 0) + 1
+    _new["_last_appear_turn"] = turn
+    update_npc(channel_id, name, _new)
 
 
 def get_npc_roster(channel_id: str) -> str:
@@ -712,7 +785,8 @@ def get_npc_roster(channel_id: str) -> str:
         return ""
     lines = []
     for name, data in npcs.items():
-        desc = _get_npc_desc(data)
+        # [D-A] 분석(Theoria)은 전체 캐스트가 필요 → 접기 없이 폴백만(빈 description → 관찰/면모)
+        desc = _npc_desc_fallback(data)
         first_line = desc.split("\n")[0][:50] if desc else ""
         role = data.get("role", "")
         location = data.get("location", "")
@@ -920,6 +994,11 @@ def get_npc_renderer_profiles(channel_id: str, names: list, scene_type: str = "n
             if data.get("role"):
                 _lines.append(f"**[역할]** {data['role']}")
             profile_text = "\n".join(_lines)
+        elif _src_r != "lore":
+            # 세션 NPC + 아직 면모 증류 전 + desc 없음(플레이스홀더 숨김) → 관찰로 폴백.
+            _obs_s = raw.get("play_observed") if isinstance(raw, dict) else None
+            if _obs_s and str(_obs_s).strip() and not str(desc).strip():
+                profile_text = f"{header}\n{str(_obs_s).strip()[-600:]}"
         # 로어 NPC: 원문 시트는 동결하되 플레이 중 관찰(play_observed)을 별도 섹션으로 렌더 →
         # 작가 설정 권위 보존 + 세션 중 드러난 새 면모를 장기기억으로 축적.
         _obs = raw.get("play_observed") if isinstance(raw, dict) else None
@@ -929,15 +1008,19 @@ def get_npc_renderer_profiles(channel_id: str, names: list, scene_type: str = "n
     return "\n\n".join(parts)
 
 
-def get_npc_names_only(channel_id: str, exclude: list) -> str:
-    """지정된 NPC 제외한 나머지의 이름만 반환."""
+def get_npc_names_only(channel_id: str, exclude: list, include_provisional: bool = False) -> str:
+    """지정된 NPC 제외한 나머지의 이름만 반환 (렌더러 배경 버킷).
+    [T-B] 기본적으로 provisional(1회성 등 자동 NPC)은 배경 로스터에서 접는다.
+    현재 장면 NPC(relevant_npcs)는 이미 exclude로 빠진 뒤 풀 프로필로 렌더되므로 영향 없음."""
     npcs = get_npcs(channel_id)
     # DAI 이름 → 저장 키 해상도
     resolved_exclude = set()
     for ex in exclude:
         key = domain_manager._find_npc_key(npcs, ex)
         resolved_exclude.add(key if key else ex)
-    remaining = [name for name in npcs if name not in resolved_exclude]
+    remaining = [name for name, data in npcs.items()
+                 if name not in resolved_exclude
+                 and (include_provisional or get_npc_tier(data) == "established")]
     if not remaining:
         return ""
     return "기타 NPC: " + ", ".join(remaining)
@@ -1201,9 +1284,10 @@ def get_connection_milestone_hints(channel_id: str) -> List[str]:
 
         if current_stage != last_stage and last_stage != "":
             stage_info = config.get_connection_stage(depth)
+            # [2026-07-02] 문구 중립화: 단계 '하락'에도 "deepened"로 찍히던 것 — 방향 무가정.
             hints.append(
                 f"[NPC Connection Shift: {npc_name}] "
-                f"Relationship deepened — {stage_info['hint_en']} "
+                f"The relationship has crossed into different territory — {stage_info['hint_en']} "
                 f"(Show through behavior. Never name stage or score in prose.)"
             )
 

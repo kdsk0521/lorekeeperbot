@@ -278,6 +278,20 @@ def _ensure_schema() -> bool:
                     created_at  REAL NOT NULL
                 )
             """)
+
+            # [Reader-GM Stage 0, 2026-07-05] 서브 GM 독자의 턴별 수신 노트(blind read 다이제스트).
+            # log-only 적립 — 프롬프트 급식 없음(Stage 2 승격은 별도 결정). 스펙: deepseek_v4_trait_playbook §4 R1.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS reader_log (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_id  TEXT NOT NULL,
+                    turn        INTEGER NOT NULL,
+                    digest      TEXT NOT NULL,
+                    dropped     INTEGER NOT NULL DEFAULT 0,
+                    created_at  REAL NOT NULL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_readerlog_channel ON reader_log(channel_id, id)")
             conn.commit()
             _initialized = True
             return True
@@ -1244,6 +1258,81 @@ def clear_ledger(channel_id: str) -> bool:
         return False
 
 
+def write_reader_log(channel_id: str, turn: int, digest: Dict[str, Any], dropped: int = 0) -> bool:
+    """[Reader-GM Stage 0] 턴별 독자 다이제스트 적립 (log-only). 실패해도 봇 무영향."""
+    if not channel_id or not _ensure_schema():
+        return False
+    conn = _get_conn()
+    if conn is None:
+        return False
+    try:
+        conn.execute(
+            "INSERT INTO reader_log (channel_id, turn, digest, dropped, created_at) VALUES (?, ?, ?, ?, ?)",
+            (channel_id, int(turn), json.dumps(digest, ensure_ascii=False), int(dropped), time.time()),
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] write_reader_log 실패 (무시): {channel_id}: {e}")
+        return False
+
+
+def read_reader_log_tail(channel_id: str, limit: int = 5) -> list:
+    """[Reader-GM] 최근 N턴 독자 다이제스트 (오래된→최신). [(turn, digest_dict), ...].
+
+    Stage 0 소비자=사람(교정 대조). Stage 2 승격 시 narrative_queries 계열이 집계용으로 읽는다."""
+    if not channel_id or limit <= 0 or not _ensure_schema():
+        return []
+    conn = _get_conn()
+    if conn is None:
+        return []
+    try:
+        cur = conn.execute(
+            "SELECT turn, digest FROM reader_log WHERE channel_id=? ORDER BY id DESC LIMIT ?",
+            (channel_id, limit),
+        )
+        rows = cur.fetchall()
+        out = []
+        for turn, blob in reversed(rows):
+            try:
+                out.append((int(turn), json.loads(blob)))
+            except Exception:
+                continue
+        return out
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_reader_log_tail 실패: {channel_id}: {e}")
+        return []
+
+
+def clear_session_scoped(channel_id: str) -> bool:
+    """세션 파생 테이블 채널 행 일괄 삭제 — !클리어 혼입 수리 (2026-07-05).
+
+    발단: !클리어 후 첫 턴에 옛 세션 잔재 관측(AttitudeGate cooldown -64 / npc_knowledge 6 facts /
+    서사 콜 계측이 옛 dai_logs·emotion_log를 급식받아 'Deep(은색 캔 약속)' 혼입).
+    대상 8테이블 = 전부 플레이 파생. 여기서 안 지우는 것: sessions(채널 설정)·npcs(reset의
+    delete_npcs_except_sources가 별도 처리)·history_log/offscreen_ledger(기존 clear_* 담당)·
+    fermented_history/deep_memory(save_domain 빈 스냅샷 미러 담당).
+    """
+    if not channel_id or not _ensure_schema():
+        return False
+    conn = _get_conn()
+    if conn is None:
+        return False
+    tables = (
+        "npc_relations", "npc_knowledge", "dai_logs", "emotion_log",
+        "turn_snapshot", "attitude_log", "autonomy_log", "retry_snapshot",
+        "reader_log",  # [Reader-GM] 독자 노트도 세션 파생
+    )
+    try:
+        for t in tables:
+            conn.execute(f"DELETE FROM {t} WHERE channel_id=?", (channel_id,))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] clear_session_scoped 실패 (무시): {channel_id}: {e}")
+        return False
+
+
 def read_dai_logs(channel_id: str, limit: int = 10) -> list:
     """최근 N턴 DAI 스냅샷 (오래된→최신). [(turn, dai_dict), ...]"""
     if not channel_id or limit <= 0 or not _ensure_schema():
@@ -1517,6 +1606,45 @@ def read_autonomy_log(channel_id: str, limit: int = 50) -> list:
     except Exception as e:
         logger.warning(f"[SQLiteStore] read_autonomy_log 실패: {channel_id}: {e}")
         return []
+
+
+def read_npc_last_turns(channel_id: str) -> dict:
+    """[Phase 0 2026-07-02] 독자: NPC별 마지막 등장 턴 (emotion_log 기준 — 장면에 있던 턴만 기록됨).
+    {npc_name: last_turn}. offscreen 후보의 '부재 기간' 산출용."""
+    if not channel_id or not _ensure_schema():
+        return {}
+    conn = _get_conn()
+    if conn is None:
+        return {}
+    try:
+        cur = conn.execute(
+            "SELECT npc_name, MAX(turn) FROM emotion_log WHERE channel_id=? GROUP BY npc_name",
+            (channel_id,),
+        )
+        return {str(r[0]): int(r[1]) for r in cur.fetchall() if r[0] is not None and r[1] is not None}
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_npc_last_turns 실패: {channel_id}: {e}")
+        return {}
+
+
+def read_npc_intensity_sums(channel_id: str, turn_from: int, turn_to: int) -> dict:
+    """[Phase 0 2026-07-02] 독자: 구간 내 NPC별 감정 강도 합 (스크린타임 근사, B안 회고 팩용).
+    {npc_name: intensity_sum}"""
+    if not channel_id or not _ensure_schema():
+        return {}
+    conn = _get_conn()
+    if conn is None:
+        return {}
+    try:
+        cur = conn.execute(
+            "SELECT npc_name, SUM(intensity) FROM emotion_log "
+            "WHERE channel_id=? AND turn BETWEEN ? AND ? GROUP BY npc_name",
+            (channel_id, int(turn_from), int(turn_to)),
+        )
+        return {str(r[0]): float(r[1] or 0.0) for r in cur.fetchall() if r[0] is not None}
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_npc_intensity_sums 실패: {channel_id}: {e}")
+        return {}
 
 
 # =========================================================

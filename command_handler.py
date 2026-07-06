@@ -835,6 +835,15 @@ async def cmd_notebook(ctx: CommandContext) -> None:
         await ctx.send("✅ 노트북에 내용이 기록되었습니다.")
 
 
+@registry.register("journal", category="Player", aliases=["일지"], description="캐릭터 일지 전체 조회 (노트북엔 최근 몇 줄만 표시)")
+async def cmd_journal(ctx: CommandContext) -> None:
+    """!일지 — 밀려나서 노트북엔 안 보이는 것까지 포함한 전체 일지 이력 조회."""
+    log = domain_manager.get_journal_log(ctx.channel_id, ctx.user_id)
+    if not log:
+        await ctx.send("📓 아직 기록된 일지가 없습니다. (플레이가 흐르면 자동으로 쌓입니다)")
+        return
+    lines = [f"{i+1}. {e}" for i, e in enumerate(log)]
+    await send_long_message(ctx.message.channel, f"📓 **캐릭터 일지 (전체 {len(log)}건)**\n" + "\n".join(lines))
 
 
 @registry.register("npc", category="World", aliases=["엔피씨", "addnpc", "npc정보", "npc추가"], description="NPC 관리 (조회/추가/삭제/별칭/병합)")
@@ -1119,17 +1128,19 @@ async def cmd_npc(ctx: CommandContext) -> None:
         return
 
     # Look up NPC
-    if not arg:
+    _arg_l = arg.strip().lower() if arg else ""
+    if not arg or _arg_l in ("all", "전체", "목록"):
+        _show_all = _arg_l in ("all", "전체", "목록")
         npcs = domain_manager.get_npcs(channel_id)
         if not npcs:
             await ctx.send("👥 등록된 NPC가 없습니다.")
             return
-        
-        # List all
+
+        # List all — [D-A] 빈 description은 관찰/면모로 폴백, [T-B] provisional(1회성) 접기
         def _npc_preview(d: dict) -> str:
             if d.get("summary"):
                 return d["summary"][:60]
-            desc = d.get("description") or d.get("desc", "-")
+            desc = npc_manager._npc_desc_fallback(d) or "-"
             for line in desc.split("\n"):
                 s = line.strip()
                 if not s or s.startswith("#"):
@@ -1139,8 +1150,17 @@ async def cmd_npc(ctx: CommandContext) -> None:
                     continue
                 return cl[:60]
             return desc[:60]
-        name_list = [f"• **{n}**: {_npc_preview(d)}" for n, d in npcs.items()]
-        await send_long_message(ctx.message.channel, "👥 **NPC 목록**\n" + "\n".join(name_list))
+        _est, _prov = [], []
+        for n, d in npcs.items():
+            if not _show_all and npc_manager.get_npc_tier(d) == "provisional":
+                _prov.append((n, d))
+            else:
+                _est.append((n, d))
+        name_list = [f"• **{n}**: {_npc_preview(d)}" for n, d in _est]
+        body = "👥 **NPC 목록**\n" + ("\n".join(name_list) if name_list else "(정착 NPC 없음)")
+        if _prov and not _show_all:
+            body += f"\n\n_임시 {len(_prov)}명 (1회성/신규 등) — `!npc all` 로 전체 보기_"
+        await send_long_message(ctx.message.channel, body)
     else:
         # Specific NPC
         npc = domain_manager.get_npc(channel_id, arg.strip())

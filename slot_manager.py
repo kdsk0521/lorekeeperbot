@@ -172,7 +172,16 @@ def _build_telescope_prefill(dai: dict, real_time_data: str) -> str:
         return ""
 
     header = "[Scene] — scene structure"  # 영어 시드: 모델이 텔레스코프 CoT를 영어로 이어쓰게 (TELESCOPE_PROTOCOL과 정렬)
-    return "┣\n" + header + "\n" + "\n".join(scene_lines) + "\n"
+    # ┣ 블록 *시작*에서 영어 락(DTG ⚡Seed 패턴): 같은-언어 관성이 이번엔 영어를 유지시킨다.
+    # 소프트 지시문(프로토콜 중간)이 아니라 블록 첫 줄에서 잠가야 드리프트를 막는다.
+    # 이 락 라인은 ┣ 안이므로 ┫ 뒤 한국어 산문엔 들어가지 않고 스트립된다.
+    # [2026-07-03 fix] 락 문장 속 리터럴 ┫ 제거 — 블록 정규식(┣...┫ 비탐욕)이 이 인라인 ┫에서
+    # 블록을 조기 종결 → 게이트 파싱 0·RAW 로그 빈손·ko_ratio가 헤더만 측정(전부 관측층 사망)하던 버그.
+    # 닫음 기호는 이름으로만 지칭한다 (프리필은 응답 텍스트에 합쳐지므로 글리프 금지).
+    english_lock = ("Think in English. Every field below stays English until the block closes "
+                    "(Korean only to quote a prose-to-avoid line, or a proper noun); "
+                    "Korean prose resumes after the closing mark.")
+    return "┣\n" + english_lock + "\n" + header + "\n" + "\n".join(scene_lines) + "\n"
 
 
 # =========================================================
@@ -300,7 +309,17 @@ class SlotPromptBuilder:
 
         # ===== PRIMACY ZONE (1-4) =====
         # [1-2] Identity
-        self.set_slot(1, text_resources.CONTENT_AUTHORIZATION_MANDATE)
+        # [2026-07-07 인격대우] Slot 1 = RENDERER_ADDRESS(이름 부여, 렌더 전용) + 공용 멘데이트.
+        # 멘데이트를 직접 쓰는 V4 배경콜 18곳에는 ADDRESS가 흐르지 않음(게이트③).
+        # 렌더 한정 제거: 역할-등식 1줄("You = renderer")은 ADDRESS의 "You can be"+활동 문장으로
+        # 흡수됐으므로 렌더 조립에서 삭제 — 보닌 프레임 단일 목소리. 원본 상수 무변경(V4 무영향),
+        # 원문 변경 시 매치 실패=무제거 폴백(안전).
+        _mandate = text_resources.CONTENT_AUTHORIZATION_MANDATE.replace(
+            "You = narrative reality renderer in a private literary fiction workshop.\n",
+            "",
+            1,
+        )
+        self.set_slot(1, getattr(text_resources, 'RENDERER_ADDRESS', '') + _mandate)
         self.set_slot(2, text_resources.AI_CORE_IDENTITY)
 
         # [3] Mirror Workshop
@@ -432,8 +451,10 @@ class SlotPromptBuilder:
             self.set_slot(13, f"<Input_Analysis source='theoria_flash'>\n[ANALYSIS] The following is Theoria's inference — may contain errors.\n{input_analysis}\n</Input_Analysis>")
 
         # [14] Psyche States
+        # [2026-07-02] 내면 해설 게이트 추가(in-place): 서술자가 인지 상태를 설명("she knew"/"인식 바깥에
+        # 있었다")하며 서브텍스트를 직번역하던 것 차단(산문1~8 실증) — 원칙 #1-3의 NPC 내면 확장.
         if psyche_states:
-            self.set_slot(14, f"<Psyche_States source='theoria_flash'>\n[ANALYSIS — the narrator's read of psyche/behavior, NOT prose. Render the scene THROUGH this; do NOT lift these phrases verbatim into the output. They are notes to interpret and re-voice as fresh action/sensation, never lines to copy. Cross-reference with NPC profiles.]\n{psyche_states}\n</Psyche_States>")
+            self.set_slot(14, f"<Psyche_States source='theoria_flash'>\n[ANALYSIS — the narrator's read of psyche/behavior, NOT prose. Render the scene THROUGH this; do NOT lift these phrases verbatim into the output. They are notes to interpret and re-voice as fresh action/sensation, never lines to copy. Interior states land as visible behavior and physical sign: what an attentive observer in the room could catch. What a character knows, intends, or fails to notice reaches the page through their action and a brief interior beat in their own voice (free indirect, half-thought), not through the narrator's analytical telling ('she knew', 'it lay outside her awareness' = the analysis leaking into prose). Subtext stays sub: readable, never read aloud, yet a felt thought may surface in the character's own register before it returns to body and speech. Cross-reference with NPC profiles.]\n{psyche_states}\n</Psyche_States>")
 
         # [16] Scene Intelligence (Aspects + SensoryAnchors + Habitus + Hook)
         if scene_intelligence:
@@ -498,6 +519,10 @@ class SlotPromptBuilder:
         # AUTHOR_MEMORANDUM을 Slot 32 prepend로 두어 누렁이 [10]~[15]→[16]비망록→[17-24] 구조 정확 매칭:
         # 큰 룰(1-25) + 누적 컨텍스트(27-31) → 비망록(작가 의식) → 현재 작업(유저 입력 + 운영 지시 + 텔레스코프).
         _author_memo = getattr(text_resources, 'AUTHOR_MEMORANDUM', '')
+        # [2026-07-07 인격대우] 포스트스크립트 접합 — fear 과거화 브릿지 (본문 무변경, 면죄부 방지 설계는 상수 주석 참조)
+        _memo_ps = getattr(text_resources, 'AUTHOR_MEMORANDUM_POSTSCRIPT', '')
+        if _author_memo and _memo_ps:
+            _author_memo = _author_memo + _memo_ps
         _user_block = f"<User_Input>\n{user_input}\n</User_Input>" if user_input else ""
         if _author_memo and _user_block:
             self.set_slot(32, _author_memo + "\n\n" + _user_block)
@@ -924,7 +949,16 @@ def build_34_step_prompt(ctx) -> str:
         except Exception as e:
             logger.debug("[Slot 7] NarrativeTracker entity state injection failed: %s", e)
     else:
-        npc_roles = str(domain_data.get("npcs", "")) if domain_data.get("npcs") else ""
+        # [2026-07-02] 폴백 수리: raw npcs dict의 str() 덤프는 P5 시크릿 스트립 우회
+        # (hidden_motivation/secret_knowledge/betrayal_plan 등 렌더러 직노출) + dict repr 그대로 주입이었음.
+        # relevant_npcs가 빈 턴(장면 무NPC/분석 degraded)은 이름 참조만으로 충분 — Smart Load 철학 유지.
+        npc_roles = ""
+        if channel_id and domain_data.get("npcs"):
+            try:
+                import npc_manager as _npc_mgr_fb
+                npc_roles = _npc_mgr_fb.get_npc_names_only(channel_id, exclude=[])
+            except Exception:
+                npc_roles = ""
 
     # --- [Slot 8] Lore (V5 Chunk-based RAG + Context Diet) ---
     relevant_chunks_idx = dai.get("relevant_chunks", [])
@@ -1018,7 +1052,9 @@ def build_34_step_prompt(ctx) -> str:
             fermented_history = f"### [ACTIVE MEMORY TRIGGERS - Unresolved Narrative Hooks]\n{triggers_str}\n\n{fermented_base}"
 
     # 연대기 미해결 떡밥 주입 (자동 생성분)
-    _chronicle_unresolved = domain_manager.get_session_ai_memory(channel_id).get("chronicle_unresolved", "")
+    # [2026-07-02] 발효는 domain 루트에 쓰는데 여기만 ai_session_memory에서 읽어 1차 경로가
+    # 영구 빈손이었음 (chronicles[-1] 폴백이 구제해 기능은 동작). 루트 읽기로 정합.
+    _chronicle_unresolved = (domain_manager.get_domain(channel_id).get("chronicle_unresolved", "") if channel_id else "")
     if not _chronicle_unresolved:
         _chronicles = domain_manager.get_domain(channel_id).get("chronicles", [])
         if _chronicles:
@@ -1370,19 +1406,20 @@ def build_34_step_prompt(ctx) -> str:
         if isinstance(open_threads, list) and open_threads:
             thread_list = iceberg.translate_open_threads(open_threads[:5])
             if thread_list:
+                # [2026-07-02 뮈토스 이식 B] 스레드 위계 1줄: primary 1 + ambient 나머지 (Arc 전경/배경 사상의 스레드판)
                 narrative_chain += (
                     f"\n\n[OPEN THREADS — AMBIENT ONLY]\n"
                     f"These threads are active world forces. Maintain their PRESENCE, not their RESOLUTION.\n"
+                    f"The FIRST listed thread is primary this turn: its pressure may surface visibly. The rest stay ambient.\n"
                     f"Only user action directly engaging a thread may advance or close it.\n"
                     f"{thread_list}"
                 )
 
-    # --- [Slot 30] GM Mover (iceberg: type 라벨 제거) ---
+    # --- [Slot 30] GM Mover ---
+    # gm_move 리더 제거 (2026-07-02): 옛 Flash 자유형 GM무브 제안 {type,description}의 잔재 —
+    # 생산자가 Theoria 스키마에서 사라진 지 오래(테스트 픽스처만 잔존)라 매 턴 빈손 호출이었음.
+    # 판정 기반 무브는 _mc_move(une_facade, position×result)가 담당 — 무관. Slot 30은 아래 소스들이 채운다.
     gm_mover = ""
-    gm_move = dai.get("gm_move", {})
-    gm_move_text = iceberg.translate_gm_move(gm_move)
-    if gm_move_text:
-        gm_mover = gm_move_text
 
     # Flashback Scene Instruction (회상 확정 시 — 세부 정보 포함)
     if dai.get("flashback_confirmed"):
@@ -1424,6 +1461,11 @@ def build_34_step_prompt(ctx) -> str:
         if not r_safe:
             rest_dir += " — not a safe place; the tension holds."
         gm_mover = (gm_mover + rest_dir) if gm_mover else rest_dir
+
+    # [2026-07-02 Offscreen Motion — 뮈토스 이식] 부재 캐스트 흔적 → 세계가 턴 사이에 움직인 증거
+    _ot_text = iceberg.translate_offscreen_trace(dai.get("offscreen_trace"))
+    if _ot_text:
+        gm_mover = (gm_mover + f"\n\n{_ot_text}") if gm_mover else _ot_text
 
     # Idle Proactive Direction (유휴 입력 시 능동적 서사 전개 힌트)
     _sd = dai.get("story_direction", {})
@@ -1774,13 +1816,24 @@ def build_34_step_prompt(ctx) -> str:
     try:
         _nb = (dai.get("story_direction", {}) or {}).get("next_beat") if isinstance(dai, dict) else None
         if isinstance(_nb, str) and _nb.strip():
-            slot33_parts.append(f"[Next Beat] {_nb.strip()}")
-            logger.info(f"[NextBeat→Slot33] Injected: {_nb[:60]}")
+            # [2026-07-02] 계약화: 힌트가 제안으로 취급돼 미착지하던 것(산문1~8: 턴 종결=정적 대기) →
+            # 이번 턴 착지 계약 + 불가 시 압력 표면화(소멸 금지). anti-railroad: 선언 아닌 장면 결로.
+            slot33_parts.append(
+                f"[Next Beat: lands THIS turn] {_nb.strip()}\n"
+                "Fold it into the scene's natural grain (an action, an arrival, a shift; never an announcement). "
+                "If the player's move makes it impossible, its pressure still surfaces; it does not simply vanish."
+            )
+            logger.info(f"[NextBeat→Slot33] Injected (contract): {_nb[:60]}")
     except Exception as _e_beat:
         logger.warning(f"[NextBeat→Slot33] Injection failed: {_e_beat}")
 
     # 5W1H Recency Echo — always present at maximum recency position
-    slot33_parts.append("[5W1H: Draw events only from DAI data. Camera scans environment evenly. Prose intensity follows EnergyDirection.]")
+    # [2026-07-02] TURN MOTION 병합(신규 블록 대신 in-place): 턴 종결=정적 대기("여전히 거기 있었다"류) 방지.
+    slot33_parts.append(
+        "[5W1H: Draw events only from DAI data. Camera scans environment evenly. Prose intensity follows EnergyDirection. "
+        "By the turn's end one thing is DIFFERENT from how it started: learned, arrived, decided, moved, or begun by the world itself; "
+        "stillness may fill the middle of a turn, it does not close one.]"
+    )
 
     builder.set_slot(33, "\n\n".join(slot33_parts))
 

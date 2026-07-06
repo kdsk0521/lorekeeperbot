@@ -475,15 +475,15 @@ _ENERGY_TONE = {
 }
 
 _ENERGY_BEAT = {
-    "idle":       "1 beat (sensory)",
+    "idle":       "1 beat (sensory or a line of exchange)",
     "rising":     "1-2 beats (exchange+texture)",
     "detonation": "2 beats (action+consequence)",
-    "stagnant":   "1 beat (sensory)",
+    "stagnant":   "1 beat (sensory or a line of exchange)",
     "aftershock": "1 beat (residue)",
 }
 
 _ENERGY_END = {
-    "idle":       "stillness",
+    "idle":       "a quiet forward tilt",
     "rising":     "render tension weight",
     "aftershock": "residue, no verdict",
 }
@@ -534,7 +534,7 @@ def translate_energy_direction(energy: str, scene_light: Optional[dict] = None) 
 
 _PACING_KR = {
     "push":    "pacing: ♪ accelerando · ▶ push-in",
-    "hold":    "pacing: ♪ a tempo · ▶ static",
+    "hold":    "pacing: ♪ a tempo · ▶ held frame, still breathing",
     "breathe": "pacing: ♪ ritardando · ▶ slow-pull",
     "pivot":   "pacing: ▶ cut-to · ♪ key-change",
 }
@@ -611,9 +611,14 @@ def infer_scene_register(
         ):
             logger.info("[Iceberg] register=law (inferred)")
             return "law"
-    # remainder: silence_type in narrative_chain
+    # remainder: still-silence only (間). U1 게이팅(2026-07-04): 전진-charged 침묵(tense='한 마디에
+    # 다 바뀜' / hesitant='삼킨 말')은 push라 잔여(residue) 아님 → remainder 자동선택에서 제외.
+    # reflective(내면·시간지연)·heavy(둘 다 알고 침묵)만 remainder. 대사멈춤마다 카버 register
+    # 자동공급하던 것 축소(헤비노벨). Flash가 scene_register를 명시 선택한 경우는 이 폴백을 안 탐.
     if narrative_chain and isinstance(narrative_chain, dict):
-        if narrative_chain.get("silence_type"):
+        _sil = narrative_chain.get("silence_type")
+        if isinstance(_sil, str) and _sil.strip().lower() in ("reflective", "heavy"):
+            logger.info("[Iceberg] register=remainder (inferred, still-silence)")
             return "remainder"
     return ""
 
@@ -1263,15 +1268,31 @@ def translate_detail_density(scene_type: str = "normal", energy: str = "idle") -
     return _DENSITY_KR.get(final, "")
 
 
-def translate_gm_move(gm_data: Optional[dict]) -> str:
-    """GM Move → type 라벨 제거, description만."""
-    if not gm_data:
+# translate_gm_move 제거 (2026-07-02): dai["gm_move"] 생산자가 Theoria 스키마에서 사라져
+# 리더(slot_manager Slot 30)가 매 턴 빈손 호출이었음. 판정 기반 무브는 une_facade._mc_move가
+# 담당 — 별개 라인, 무영향. 부활 시 Theoria 스키마에 생산 필드부터 복원할 것.
+
+
+def translate_offscreen_trace(trace: Optional[dict]) -> str:
+    """[2026-07-02 Offscreen Motion — 뮈토스 이식] 부재 캐스트의 흔적 → Slot 30 장면 압력 힌트.
+
+    입력: dai["offscreen_trace"] = {"name", "movement", "visible_sign"} or None (null이 상례).
+    출력: 흔적만 장면에 닿게 하는 디렉티브. 도착/폭로/사인 확정 금지 프레임 내장.
+    """
+    if not trace or not isinstance(trace, dict):
         return ""
-    if isinstance(gm_data, dict):
-        return gm_data.get("description", "")
-    if isinstance(gm_data, str):
-        return gm_data
-    return ""
+    name = str(trace.get("name", "") or "").strip()
+    sign = str(trace.get("visible_sign", "") or "").strip()
+    movement = str(trace.get("movement", "") or "").strip()
+    if not name or not (sign or movement):
+        return ""
+    line = sign if sign else movement
+    return (
+        f"[offscreen] {name}: {line}\n"
+        "It reaches the scene only as a trace (rumor, delay, absence, changed readiness); "
+        "the cause stays uncertain. No arrival, no reveal: the world has simply kept moving, "
+        "and the scene may notice or ignore it."
+    )
 
 
 # =========================================================
