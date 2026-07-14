@@ -13,6 +13,7 @@ Integrates with:
 
 import logging
 import math
+import re
 from collections import Counter
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass, field, asdict
@@ -56,20 +57,31 @@ POLYVAGAL_BIAS = {
     "dorsal":       {"sadness": 0.2, "disgust": 0.05},
 }
 
-# Relational 8 팔레트 (ELEPHANT 9 − trust)
+# Relational 10 팔레트 (ELEPHANT 9 − trust + shame + poise)
 # Plutchik과 결합하여 base×modifier 페어를 구성. DAI relation/soma 층에서 결정적 도출 (P2).
+# [2026-07-13 L1] shame 추가 — Theoria가 3경로(memory_triggers.shameful / chaemyeon /
+# deep_read)에서 수치 신호를 생산하는데 착지 라벨이 없어 라벨 채널에서 전멸하던 공백 해소.
+# 수치·체면은 secret_pressure 트리거·눈치 문화의 감정 엔진 (pipeline_verification_log §7.2 L1).
+# [2026-07-13 poise 추가] NPC 당당함(침착한 자신감) 채널 — 평형(vigor/composure) 도메인은
+# PC 전용이라 NPC의 침착·자신감은 표현 채널 0이었음(겁-질림 편향의 이면). pair v2에서
+# VAD dominance 축이 삭제된 뒤 팔레트에 저각성-고지배 영역 부재 → poise가 그 자리 (§7.8).
 RELATIONAL_EMOTIONS = (
     "wonder", "comfort", "play", "respect",
     "desire", "resonance", "gratitude", "friction",
+    "shame", "poise",
 )
 
 # §5b _derive_relational 룰 테이블 — soma.cultural_affect → Relational 직통
+# [2026-07-13 L2] 관계 자세(stance) 성격의 affect만 여기 남김.
+# 내부 침전물 성격(han/hwabyung/simma)은 _psyche_to_raw_emotions의 raw 축 가산으로 이사 —
+# han→friction은 응고된 슬픔·갈망을 대립으로 오역하던 의미 불일치였음 (§7.2 L2).
+# chaemyeon은 respect→shame 재매핑: nunchi(장 읽기 자세)와 달리 chaemyeon의 감정 하중은
+# "위협받는 체면" — respect 착지는 수치 성분을 소거했음. gi는 감정 축이 아니라 에너지
+# 기술자 → 비매핑 유지 (vigor 도메인 소관).
 CULTURAL_AFFECT_MAP: Dict[str, str] = {
-    "han":       "friction",
     "jeong":     "comfort",
     "nunchi":    "respect",
-    "chaemyeon": "respect",
-    # hwabyung/simma/gi는 매핑 공백 → 폴백 경로로 진행
+    "chaemyeon": "shame",
 }
 
 # §5b memory_triggers[*].type → Relational
@@ -77,7 +89,7 @@ MEMORY_TYPE_MAP: Dict[str, str] = {
     "loving":    "gratitude",
     "traumatic": "friction",
     "nostalgic": "comfort",
-    # shameful은 매핑 공백 → 폴백 경로로 진행
+    "shameful":  "shame",   # [2026-07-13 L1] 공백 해소 — Fermentation Recall "Shame→suppressed but leaks"의 착지점
 }
 
 # §6a L2 히스토리 ring buffer 파라미터
@@ -96,6 +108,7 @@ SAME_AXIS_FORBIDDEN = frozenset([
     frozenset({"comfort",      "trust"}),
     frozenset({"gratitude",    "joy"}),
     frozenset({"desire",       "anticipation"}),
+    frozenset({"shame",        "disgust"}),   # [2026-07-13 L1] 수치=자기향 혐오 — 동축 증폭. shame×fear는 허용(노출 공포 합성)
 ])
 
 # T1 축·형용사 태그 풀 (9종 고정):
@@ -114,7 +127,7 @@ AXIS_TAGS: Dict[str, List[str]] = {
     "disgust":      ["avoid", "sharp-edged"],
     "anger":        ["approach", "sharp-edged"],
     "anticipation": ["forward-leaning"],
-    # Relational 8
+    # Relational 9
     "wonder":       ["approach", "expansive"],
     "comfort":      ["soft-edged", "receptive"],
     "play":         ["expansive", "forward-leaning"],
@@ -123,6 +136,8 @@ AXIS_TAGS: Dict[str, List[str]] = {
     "resonance":    ["expansive", "soft-edged"],
     "gratitude":    ["soft-edged", "receptive"],
     "friction":     ["avoid", "sharp-edged"],
+    "shame":        ["contracting", "bounded"],   # 시선 아래 움츠림 — fear/sadness(avoid+contracting)와 구분되는 사회적 구속 성분
+    "poise":        ["expansive", "bounded"],     # 펼쳐진 몸 + 자기 소유 — 당당함. wonder(approach+expansive)와 달리 대상 없이 서 있음
 }
 
 
@@ -257,7 +272,7 @@ class EmotionEngine:
             previous_emotions: 이전 턴 감정 상태 {npc_name: EmotionState.to_dict()}
             current_turn: 현재 턴 번호
             npc_attitudes: (선택) domain_manager의 NPC 태도 데이터
-            scene_ctx: (선택) {register, silence_type} — §5b Tier 6~7 입력
+            scene_ctx: (선택) {register, silence_type, scene_type} — §5b Tier 6~7 + 친밀 재서열 입력
             memory_triggers: (선택) DAI.memory_triggers 전체 리스트 — §5b Tier 4 입력
 
         Returns:
@@ -450,21 +465,31 @@ class EmotionEngine:
                 raw["fear"] = abs_val * 0.3
                 raw["anger"] = abs_val * 0.2
 
-        # active_needs: 미충족 욕구 수 → 긴장(anticipation) + 불안(fear)
+        # active_needs: 미충족 욕구 수 → 추동(anticipation)만.
+        # [2026-07-13 base 탈편향] fear 커플링 제거 — active_needs는 Theoria가 매턴
+        # 1~2개 *필수* 충전하는 필드(스키마 "Identify 1-2 needs driving behavior")라
+        # "욕구 존재=불안" 번역이 전 NPC 상시 fear 플로어로 작동했음(겁-질림 끌림 주입기 #1).
+        # 욕구는 drive지 위협이 아님 — 야망 있는 NPC의 ego-need가 fear로 읽히면 당당함이 죽는다.
+        # fear는 위협 신호(value 음수 / polyvagal sympathetic / dissociation) 소관으로 환원.
         needs = psyche.get("active_needs", [])
         if isinstance(needs, list) and needs:
             need_pressure = min(len(needs) / 5.0, 1.0)
             raw["anticipation"] = max(raw["anticipation"], need_pressure * 0.5)
-            raw["fear"] = max(raw["fear"], need_pressure * 0.3)
 
         # self_opacity: Theoria 스키마상 문자열("claims X — actual: Y") 또는 null.
         #   - 존재(비공백 문자열) → surprise 약가산
         #   - 과거 숫자 호환: > 0이면 정규화
+        # [2026-07-13 base 탈편향] 0.4 → 0.15 — 주석("약가산")과 실값(0.4)의 불일치 교정.
+        # self_opacity는 분석이 충실할수록 채워지는 해석 필드("자기이해 부정확")지 "동요"가 아닌데,
+        # 0.4 플로어는 (a) 중립 장면(value≈0)에서 무조건 surprise가 top이 되는 어트랙터
+        # (사용자 관측 "friction×surprise" 쏠림의 base 측), (b) opacity null↔str 깜빡임이
+        # delta 0.4 ≥ SPIKE_THRESHOLD 0.25로 가짜 spike 점화원이었음. 0.15는 델타가
+        # 임계 미달이라 spike 원천 차단 + "존재=약신호" 의미 복원.
         opacity = psyche.get("self_opacity")
         if isinstance(opacity, str) and opacity.strip():
-            raw["surprise"] = max(raw["surprise"], 0.4)
+            raw["surprise"] = max(raw["surprise"], 0.15)
         elif isinstance(opacity, (int, float)) and opacity > 0:
-            raw["surprise"] = max(raw["surprise"], min(opacity / 100.0, 1.0) * 0.4)
+            raw["surprise"] = max(raw["surprise"], min(opacity / 100.0, 1.0) * 0.15)
 
         # soma.dissociation: 해리 → 혐오(disgust) + 슬픔 강화
         dissociation = soma.get("dissociation", "none")
@@ -472,6 +497,25 @@ class EmotionEngine:
             severity = {"mild": 0.2, "moderate": 0.5, "severe": 0.8}[dissociation]
             raw["disgust"] = max(raw["disgust"], severity * 0.3)
             raw["sadness"] = max(raw["sadness"], severity * 0.2)
+
+        # [2026-07-13 L2] cultural_affect 내부 침전물 3종 → raw 축 가산.
+        # 관계 자세가 아니라 내부 상태인 affect는 relational 라벨(Tier 3 직통)이 아니라
+        # raw 분포를 물들인다. 정의: analysis_resources.py:166-175.
+        #   han: 응고된 슬픔 + 아직 뻗는 갈망 → sadness 주 + anticipation 소
+        #        (구 han→friction 직통은 갈망을 대립으로 오역 — 이사)
+        #   hwabyung: 신체화된 분노, 폭발 위험 → anger 주 + 억압 긴장 fear 소
+        #   simma: 자기파괴 내면 목소리 → disgust(자기향) 주 + fear 소
+        # 가산식(+clamp)은 primary_emotion 훅과 동일 스타일 — value 스칼라 경로 위에 얹힘.
+        affect = soma.get("cultural_affect")
+        if affect == "han":
+            raw["sadness"] = min(1.0, raw["sadness"] + 0.3)
+            raw["anticipation"] = min(1.0, raw["anticipation"] + 0.1)
+        elif affect == "hwabyung":
+            raw["anger"] = min(1.0, raw["anger"] + 0.3)
+            raw["fear"] = min(1.0, raw["fear"] + 0.1)
+        elif affect == "simma":
+            raw["disgust"] = min(1.0, raw["disgust"] + 0.25)
+            raw["fear"] = min(1.0, raw["fear"] + 0.15)
 
         # primary_emotion 훅: Flash가 명시한 감정 라벨을 raw에 직접 반영.
         # value-scalar 역추정만으론 anger처럼 구조적으로 약해지는 감정이
@@ -569,10 +613,11 @@ class EmotionEngine:
         npc_name: str,
         deep_read: str = "",
     ) -> Tuple[str, float]:
-        """DAI 재료에서 Relational 8 중 1개를 결정적으로 도출.
+        """DAI 재료에서 Relational 10 중 1개를 결정적으로 도출.
 
         상위 우선순위 매치 우선. pair_confidence는 tier 번호의 역수 스케일
         (Tier 1=1.0, Tier 8=0.3, Tier 9=0.0).
+        예외: scene_type=intimate이면 Tier 5→3(관계-긍정)이 Tier 1/2(갈등)보다 선발화.
 
         Returns:
             (relational_label, confidence). 매치 없으면 ("", 0.0).
@@ -582,6 +627,39 @@ class EmotionEngine:
         soma = soma if isinstance(soma, dict) else {}
         scene_ctx = scene_ctx if isinstance(scene_ctx, dict) else {}
         memory_triggers = memory_triggers if isinstance(memory_triggers, list) else []
+
+        # Tier 3/5 판정 헬퍼 — 친밀 장면 재서열에서 재사용 (로직 단일 원천)
+        def _tier3_culture():
+            ca = soma.get("cultural_affect")
+            if ca in CULTURAL_AFFECT_MAP:
+                return (CULTURAL_AFFECT_MAP[ca], 0.8)
+            return None
+
+        def _tier5_attachment():
+            att = relation.get("attachment")
+            phase = relation.get("phase")
+            try:
+                rel_val = float(relation.get("value", 0) or 0)
+            except (TypeError, ValueError):
+                rel_val = 0.0
+            if att == "anxious" and phase == "orientation":
+                return ("desire", 0.6)
+            if att == "secure" and rel_val > 60:
+                return ("gratitude", 0.6)
+            if phase == "exploitation" and rel_val > 50:
+                return ("desire", 0.6)
+            return None
+
+        # [2026-07-13 친밀 장면 재서열] SceneType=intimate에서는 관계-긍정 신호(Tier 5→3)가
+        # 갈등 신호(Tier 1/2)보다 먼저 발화권을 가진다.
+        # 근거: 친밀 장면은 분석 교리(want vs fear 양극 유지, WRITING_DIRECTIVES)상
+        # value_conflict가 거의 항상 충전되는 곳이라 Tier 1 friction(1.0)이
+        # desire/gratitude/comfort를 영구 선점 — 라이브 관측 "친밀 장면 friction×surprise
+        # 쏠림"의 modifier 측. 미발화 시 기존 캐스케이드 그대로 = 진짜 갈등은 여전히 friction.
+        if scene_ctx.get("scene_type") == "intimate":
+            _hit = _tier5_attachment() or _tier3_culture()
+            if _hit:
+                return _hit
 
         # Tier 1: value_conflict 존재 (관계 내부 구조적 모순)
         vc = relation.get("value_conflict")
@@ -596,9 +674,9 @@ class EmotionEngine:
             return ("resonance", 0.9)
 
         # Tier 3: soma.cultural_affect 직통 매핑
-        ca = soma.get("cultural_affect")
-        if ca in CULTURAL_AFFECT_MAP:
-            return (CULTURAL_AFFECT_MAP[ca], 0.8)
+        _t3 = _tier3_culture()
+        if _t3:
+            return _t3
 
         # Tier 4: memory_triggers (이 NPC 관련 또는 전역)
         for mt in memory_triggers:
@@ -613,22 +691,28 @@ class EmotionEngine:
                 return (MEMORY_TYPE_MAP[mt_type], 0.7)
 
         # Tier 5: attachment / phase / value 조합
-        att = relation.get("attachment")
-        phase = relation.get("phase")
-        try:
-            rel_val = float(relation.get("value", 0) or 0)
-        except (TypeError, ValueError):
-            rel_val = 0.0
-        if att == "anxious" and phase == "orientation":
-            return ("desire", 0.6)
-        if att == "secure" and rel_val > 60:
-            return ("gratitude", 0.6)
-        if phase == "exploitation" and rel_val > 50:
-            return ("desire", 0.6)
+        _t5 = _tier5_attachment()
+        if _t5:
+            return _t5
+
+        # Tier 5b [2026-07-13 poise]: 침착한 자신감 — NPC 당당함 채널.
+        # System 2 사고(deliberate) + 생리적 안전(ventral, 해리 없음) + 비-부정 가치
+        # = "동요 없음"의 능동태. Tier 1(value_conflict) 하위 배치라 내적 모순이 있는
+        # NPC는 애초에 도달 불가(당당함과 내적 갈등의 공존은 pair가 아니라 산문 소관).
+        # 친밀 pre-pass에는 미포함 — 침착한 표면 아래 갈등을 가리지 않기 위함.
+        if psyche.get("decision_mode") == "deliberate" \
+                and soma.get("polyvagal") == "ventral" \
+                and soma.get("dissociation", "none") not in ("mild", "moderate", "severe"):
+            try:
+                _pv_val = float(psyche.get("value", 0) or 0)
+            except (TypeError, ValueError):
+                _pv_val = 0.0
+            if _pv_val >= 0:
+                return ("poise", 0.55)
 
         # Tier 6: stage + phase 구조 / scene.register 장면 배경
         stage = relation.get("stage")
-        if stage == "front" and phase == "orientation":
+        if stage == "front" and relation.get("phase") == "orientation":
             return ("respect", 0.5)
         register = scene_ctx.get("register")
         if register == "mirror":
@@ -646,6 +730,9 @@ class EmotionEngine:
             return ("friction", 0.4)
 
         # Tier 8: deep_read Core 약신호 (Korean keyword simple match)
+        # [2026-07-13 L1] shame 키워드 선행 — wonder보다 구체적·희소 신호라 우선 매치
+        if deep_read and any(k in deep_read for k in ("수치", "부끄", "창피", "굴욕")):
+            return ("shame", 0.3)
         if deep_read and ("경탄" in deep_read or "호기심" in deep_read):
             return ("wonder", 0.3)
 
@@ -841,7 +928,8 @@ class EmotionEngine:
         merged = bt + [t for t in mt if t not in bt]
         if not merged:
             return f"{base} × {mod}"
-        return f"{base} × {mod} — {'·'.join(merged[:3])}"
+        # [2026-07-14 위생] 렌더-facing 엠대쉬 → 콜론 (미러링 실증에 따른 채널 전체 통일)
+        return f"{base} × {mod}: {'·'.join(merged[:3])}"
 
     # ---------------------------------------------------------
     # Utility: Prompt Context Builder (T0 + T1)
@@ -872,7 +960,12 @@ class EmotionEngine:
             reverse=True,
         )[:max_npcs]
 
-        lines = ["[Emotional States]"]
+        # [2026-07-13 gloss] 자매 블록(iceberg 번역: energy/Slot29 trend)은 전부
+        # "데이터 + 소비 지시 1줄" 문법인데 이 블록만 무주석 노테이션이었음 —
+        # 렌더러가 "이건 정보다"를 알아먹는가 문제(§7.10). iceberg :1221 문법 준용.
+        # [2026-07-14 위생] 렌더-facing 문자열의 엠대쉬 제거(미러링 실증) — 주석은 무관.
+        lines = ["[Emotional States] state data, not prose: it lives in the body; "
+                 "show through gesture and behavior, never name these labels."]
         drift_lines: List[str] = []
         for npc_name, state in sorted_npcs:
             if state.intensity < 0.05 or not state.base_label:
@@ -886,13 +979,21 @@ class EmotionEngine:
             # 다크 서킷 해소.
             if state.spike_detected and state.spike_detail:
                 _axes = state.spike_detail.split(": ", 1)[-1]
+                # [2026-07-14 수치 비노출] 델타 숫자 제거 — 렌더-facing 수치가 산문에
+                # 리터럴로 서술됨이 실증("7점 그대로", deepseek_interview_results §7).
+                # 방향(↑↓)만 남긴다. 진단용 원값은 spike 로그/bus에 그대로.
+                _axes = re.sub(r"\([0-9.]+\)", "", _axes)
                 spike_marker = f" ⚡[{_axes}]"
             elif state.spike_detected:
                 spike_marker = " ⚡"
             else:
                 spike_marker = ""
+            # [2026-07-14 수치 비노출] intensity 숫자 → 어휘 티어(light/medium/deep —
+            # analysis_resources 기존 어휘와 통일). 격랑 MEASURE(수치 없는 상태창)와
+            # Slot 29 gloss("not a stated number")가 같은 원칙의 방증. 정밀값은 bus 잔존.
+            _tier = "deep" if state.intensity >= 0.65 else ("medium" if state.intensity >= 0.35 else "light")
             lines.append(
-                f"  {npc_name}: {hint} ({state.intensity:.1f}){spike_marker}"
+                f"  {npc_name}: {hint} ({_tier}){spike_marker}"
             )
             # Scene drift 메타 — turn_pair ≠ scene_pair일 때만 블록 추가
             turn_pair = (state.base_label, state.modifier_label)
@@ -905,7 +1006,7 @@ class EmotionEngine:
 
         if drift_lines:
             lines.append("")
-            lines.append("[Scene Drift]")
+            lines.append("[Scene Drift] turn≠scene: feeling mid-shift; let the surface lag behind.")
             lines.extend(drift_lines)
 
         return "\n".join(lines) if len(lines) > 1 else ""

@@ -180,6 +180,23 @@ class OrchestrationService:
         # NPC ?? ????
         new_attitudes = dai.get("npc_attitudes")
         if new_attitudes and isinstance(new_attitudes, dict):
+            # [2026-07-13 PC 혼입 가드] Theoria가 per-NPC 필드에 PC를 섞는 사례는 실증됨
+            # (psyche_states — waterfall 감정 stage 카메라 원칙 마스킹과 동일 근거).
+            # 가드가 없으면 PC 이름의 세션 NPC가 자동 생성돼 이후 descriptor 관찰까지
+            # PC/NPC 이중 성장 — "유저/캐릭터 태그 없이 관찰 혼합"의 로스터 측 경로.
+            # 아래 trajectory/depth 루프도 같은 dict를 돌므로 원천에서 1회 필터.
+            _pc_masks_att = set()
+            try:
+                for _p in domain_manager.get_domain(channel_id).get("participants", {}).values():
+                    if _p.get("mask"):
+                        _pc_masks_att.add(_p["mask"])
+            except Exception:
+                pass
+            if _pc_masks_att:
+                _removed_att = [n for n in new_attitudes if n in _pc_masks_att]
+                if _removed_att:
+                    new_attitudes = {k: v for k, v in new_attitudes.items() if k not in _pc_masks_att}
+                    logger.debug(f"[NPC Attitude] PC 혼입 제외: {', '.join(_removed_att)}")
             for n_name, n_data in new_attitudes.items():
                 existing_npc = npc_manager.get_npc(channel_id, n_name)
                 if not existing_npc:
@@ -235,8 +252,30 @@ class OrchestrationService:
         # NPC Knowledge 영속화
         new_knowledge = dai.get("npc_knowledge")
         if new_knowledge and isinstance(new_knowledge, dict):
+            _atts_for_ledger = domain_manager.get_npc_attitudes(channel_id) or {}
             for npc_name, k_data in new_knowledge.items():
-                if isinstance(k_data, dict) and k_data.get("knows"):
+                if not isinstance(k_data, dict):
+                    continue
+                # [V10 Secret Ledger 2026-07-14] 원장 동기화 + 압력 상향.
+                # 코드 압력(축적)이 LLM leak_risk(턴 판단)보다 높으면 상향만 — 하향 없음
+                # (턴 낙관이 축적 압력을 리셋하는 것 방지).
+                _ledger = domain_manager.sync_secret_ledger(
+                    channel_id, npc_name, k_data, _atts_for_ledger.get(npc_name, {}))
+                _rank = {"none": 0, "low": 1, "medium": 2, "high": 3}
+                if _rank.get(_ledger["computed_risk"], 0) > _rank.get(k_data.get("leak_risk", "none"), 0):
+                    k_data["leak_risk"] = _ledger["computed_risk"]
+                # [v1.1 크로스턴 surface] 원장 surface를 당턴 DAI에 합성 주입 —
+                # 이 블록(4.5)은 슬롯 빌드(5) 이전이라 iceberg가 같은 턴에 소비.
+                # 추출이 이번 턴 surface를 준 비밀은 건드리지 않음(LLM 우선).
+                if _ledger.get("surfaces"):
+                    _ups = k_data.setdefault("secret_updates", [])
+                    _covered = {str(u.get("truth_ref", "")).strip().lower()
+                                for u in _ups if isinstance(u, dict) and u.get("surface")}
+                    for _truth, _surf in _ledger["surfaces"].items():
+                        if any(c and c in _truth.lower() for c in _covered):
+                            continue
+                        _ups.append({"truth_ref": _truth[:60], "surface": _surf})
+                if k_data.get("knows"):
                     domain_manager.update_npc_knowledge(channel_id, npc_name, k_data)
             logger.info(f"[NPC Knowledge] Persisted for {len(new_knowledge)} NPCs")
 
@@ -691,7 +730,13 @@ class OrchestrationService:
                 '퀘스트', '임무', '목표', '의뢰', '부탁', '완료', '달성', '단서', '정보', '비밀'
             ]),
             "world_state": True,  # Always run World State Updater (+1 Flash)
-            "render_fingerprint": True  # [Scene Continuity 2층] 항상 실행
+            "render_fingerprint": True,  # [Scene Continuity 2층] 항상 실행
+            # [2026-07-13 수리] entity_state 키가 이 dict에 아예 없어서 cognition 게이트
+            # (extraction_hints.get("entity_state", False))에서 영구 False — NPC descriptor/
+            # PCObserved 추출이 라이브에서 0회 실행. 07-04 관찰→표시 브릿지(N-A backfill/
+            # N-B 재작성/P-B PC임계/T-A tier)가 전부 입력 기아로 사문화된 근본 원인
+            # (증상: !npc에 세션 NPC 정보 안 참). 관찰은 성장 루프의 원료라 world_state처럼 상시.
+            "entity_state": True,
         }
 
         # Phase 1: 즉시 노트북 업데이트 (높은 우선순위)
@@ -1111,10 +1156,14 @@ class OrchestrationService:
                             if not str(_merged.get("description", "") or "").strip():
                                 _merged["description"] = _desc
                             _rewrote = False
-                            # 세션(비로어) NPC: 관찰이 충분히 자라면 틈틈이 '면모 시트' 재작성.
+                            # 세션 NPC: 관찰이 충분히 자라면 틈틈이 '면모 시트' 재작성.
                             # 이전 시트(정체성/불씨/면모)를 컨텍스트로 얹어 → 정체성은 안정 유지,
                             # 면모는 정제/추가(Fate 마일스톤). NPC는 주사위 없음 → passives 미저장.
-                            if _src != "lore" and getattr(self, "client", None):
+                            # [2026-07-13 manual 동결] lore뿐 아니라 manual(!npc 수제 프로필)도 재작성 제외 —
+                            # 수제 하이브리드 프로필(### Voice/Hard Rules가 description에 삶)이 증류본으로
+                            # 교체되며 파괴되던 충돌 수리. tier에서 lore/manual=작가권위 동급인데 재작성만
+                            # 비대칭이었음. 관찰은 lore처럼 play_observed로 계속 누적(렌더 별도 섹션).
+                            if _src not in ("lore", "manual") and getattr(self, "client", None):
                                 _built = int(_existing.get("_obs_built_len", 0) or 0)
                                 if len(_obs) >= 250 and (len(_obs) - _built) >= 250:
                                     try:
@@ -1126,7 +1175,30 @@ class OrchestrationService:
                                         _pa = _existing.get("aspects")
                                         if isinstance(_pa, list) and _pa:
                                             _prev.append("[기존 면모] " + " / ".join(str(a) for a in _pa))
-                                        _distill_in = ("\n".join(_prev) + "\n\n" + _obs) if _prev else _obs
+                                        # [2026-07-13 로어 접지] 이름/별칭이 등장하는 로어 청크(최대 2, 각 600자)를
+                                        # 증류 입력에 참고로 동봉 — 세계관 용어·소속이 로어와 어긋나게 증류되는 것 방지.
+                                        # 리터럴 매칭=콜 0·결정론. 통복사 방지 지시 포함. lore NPC는 재작성 자체가
+                                        # 동결(_src=="lore" 게이트)이라 이 경로와 무관.
+                                        _lore_ref = ""
+                                        try:
+                                            _names = [_npc_name] + [str(a) for a in (_existing.get("aliases") or []) if a]
+                                            _names += [n.split("(")[0].strip() for n in list(_names) if "(" in n]
+                                            _names = [n for n in dict.fromkeys(_names) if n]
+                                            _hits = []
+                                            for _chk in domain_manager.get_lore_chunks(channel_id):
+                                                _lbl = str(_chk.get("label", "") or "") if isinstance(_chk, dict) else ""
+                                                _txt = str(_chk.get("content", "") or "") if isinstance(_chk, dict) else str(_chk or "")
+                                                if any(n in _txt or n in _lbl for n in _names):
+                                                    _hits.append((f"({_lbl}) " if _lbl else "") + _txt.strip()[:600])
+                                                if len(_hits) >= 2:
+                                                    break
+                                            if _hits:
+                                                _lore_ref = ("[세계관 참고 — 로어 원문 발췌. 관찰 해석의 접지로만 쓰고 "
+                                                             "시트로 문장을 통복사하지 말 것. 관찰과 충돌하면 로어 우선]\n"
+                                                             + "\n---\n".join(_hits) + "\n\n")
+                                        except Exception:
+                                            _lore_ref = ""
+                                        _distill_in = _lore_ref + (("\n".join(_prev) + "\n\n" + _obs) if _prev else _obs)
                                         _sheet = await cognition.analyze_character_sheet(
                                             self.client, self.model_id_flash, _distill_in)
                                         if _sheet:

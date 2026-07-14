@@ -4,7 +4,6 @@ Orchestrates the sequence of narrative analysis and mechanical updates.
 """
 
 import logging
-import random
 from typing import Dict, Any
 from orchestration_context import GameContext, SharedBus
 from theoria_analyzer import TheoriaAnalyzer
@@ -353,17 +352,12 @@ class WaterfallPipeline:
         # ② 현 자세와 충돌 — quiet resolution 허용(Scheherazade 완화) + 페이싱은 doom 起承轉結/storyteller 결정이 담당.
         # 부활 시: bus.dai["narrative_chain"].get("chain_status") == "CLOSED" 게이트로 재작성할 것.
 
-        # Fallback: if no anomaly tag was proposed, pick from lore seeds
-        if not bus.anomaly.get("tag"):
-            seeds = context.request.lore_summary.get("anomaly_seeds", [])
-            if isinstance(seeds, list) and seeds:
-                seed = random.choice(seeds)
-                if isinstance(seed, dict):
-                    bus.anomaly["tag"] = seed.get("name", "기이한 현상")
-                    if not bus.anomaly.get("category"):
-                        bus.anomaly["category"] = seed.get("name", "")
-                else:
-                    bus.anomaly["tag"] = str(seed)
+        # Seed fallback 제거 (2026-07-09): "tag 제안 없음 → 시드 무작위 강제" 컷.
+        # M3(chain CLOSED→anomaly 강제)의 쌍둥이 — 조용한 턴 허용 + 페이싱=doom/storyteller 원칙에
+        # 동일하게 걸린다. 매 조용한 턴 무작위 시드 발화(Mid 강도 + "{tag}의 기운이 감돈다" 위협 프레임 line)는
+        # wingbeat 시드 재설계(작은·장르중립·로어접지)와 정면 충돌. 능동성 공급은 story_director/reader_gm/doom이
+        # 담당하고, 날개짓의 성장은 reader_gm replenish(축 기반, 게이트됨)가 맡는다.
+        # 부활 시: 무작위 강제가 아니라 stall 감지 게이트 + 중립 line + 적합 시드 선택으로 재작성할 것.
 
         # Normalize defaults for downstream use
         if bus.anomaly.get("tag") and not bus.anomaly.get("category"):
@@ -372,7 +366,8 @@ class WaterfallPipeline:
             bus.anomaly["intensity"] = "Mid"
         if not bus.anomaly.get("polarity"):
             bus.anomaly["polarity"] = "mixed"
-        # Fallback line for seed-based anomalies (Theoria didn't generate one)
+        # Default line for a Flash/Theoria-proposed anomaly that has a tag but no line.
+        # (Seed-based fallback 제거 2026-07-09 이후로 이 경로는 진짜 Flash anomaly에만 적용된다.)
         if bus.anomaly.get("tag") and not bus.anomaly.get("line"):
             bus.anomaly["line"] = f"{bus.anomaly['tag']}의 기운이 감돈다."
 
@@ -408,6 +403,8 @@ class WaterfallPipeline:
                 _scene_ctx = {
                     "register": bus.dai.get("scene_register"),
                     "silence_type": _narrative_chain.get("silence_type"),
+                    # [2026-07-13] 친밀 장면 재서열 신호 — intimate에서 관계-긍정 tier 선발화
+                    "scene_type": bus.dai.get("scene_type"),
                 }
                 emotion_results = EmotionEngine.process_turn(
                     psyche_states=psyche_states,

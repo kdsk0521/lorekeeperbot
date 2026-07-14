@@ -582,14 +582,19 @@ async def _extract_physical(
         "Return JSON with keys: notebook_update (string or null), status_add [list], status_remove [list].\n\n"
         "### [SCOPE — [메모] SECTION & STATUS ONLY]\n"
         "You manage ONLY the [메모] section (durable, player-relevant notes) and status effects.\n"
+        "OWNERSHIP: everything here belongs to THE PLAYER CHARACTER (the author of 'In:'). "
+        "NPC sheets are owned by a separate system — NEVER store NPC personal data "
+        "(appearance, backstory, personality, settings, secrets) in [메모], and NEVER add NPC conditions to status.\n"
         "The [소지품](inventory) and [일지](journal) sections are OWNED BY SEPARATE SYSTEMS — copy them VERBATIM, make NO edits there (any inventory/journal edits you make are discarded). Do NOT record item pickups/losses here — a separate system handles inventory.\n\n"
         "### [메모 MANAGEMENT RULES]\n"
-        "1. RELEVANCE: Add to [메모] only durable, player-relevant info — goals, clues, promises, unresolved tasks. Not item pickups, not transient action logs.\n"
+        "1. RELEVANCE: Add to [메모] only durable, player-relevant info — goals, clues, promises, unresolved tasks. Not item pickups, not transient action logs. "
+        "NPCs appear only inside the player's own clue/goal (e.g. '레나가 지하실 열쇠를 갖고 있다' OK) — never as NPC profile dumps (레나의 외모/과거사 정리 NO).\n"
         "2. DE-CLUTTER: Proactively REMOVE resolved tasks or info no longer relevant (e.g. 'Reached the room' once it's done) to prevent overload.\n"
         "3. UPDATE-IN-PLACE: If an existing memo's fact changed, REVISE that line rather than adding a duplicate.\n"
         "4. HYGIENE: Do NOT re-list memos already present unless changed. If nothing in [메모] or status changed this turn, return `null` for notebook_update.\n\n"
         "### [STATUS]\n"
-        "- status_add / status_remove: physical or mental conditions gained or cleared this turn.\n\n"
+        "- status_add / status_remove: the PLAYER CHARACTER's OWN physical or mental conditions gained or cleared this turn.\n"
+        "- NPC wounds/states are NOT player status — however vividly described, skip them. Unsure whose condition it is → skip.\n\n"
         "### [FORMAT]\n"
         "- notebook_update = the FULL notebook text with ALL headers preserved ('— [일지] —' if present, '— [소지품] —', '— [메모] —'), [일지]/[소지품] content copied VERBATIM; only the [메모] section reflects your edits."
     )
@@ -628,7 +633,12 @@ async def analyze_lore_unified(
 ) -> Dict[str, Any]:
     """
     [LoreAnalyzer V1]
-    로어북을 전체적으로 분석하여 장르, NPC, PC, 세계관 테마 및 이변 징후를 통합 추출합니다.
+    로어북을 전체적으로 분석하여 장르, NPC, PC, 세계관 테마 및 wingbeat 시드를 통합 추출합니다.
+
+    ※ 각주(2026-07-09): 출력 JSON 키 'anomaly_seeds'는 레거시 라벨이다. 내용은 이제
+      '나비 날개짓' 시드(작은·장르중립·로어접지, 파멸-이변 아님). 키를 유지하는 이유는
+      소비자 6곳(reader_gm/theoria/waterfall/memory_system/command_handler/domain_manager)이
+      이 키를 읽기 때문. 키 개명 = 별도 리팩토링. 설계: 파티쳇수정/seed_mint_redesign_draft_2026-07-09.md
     """
     if not lore_text:
         return {}
@@ -642,7 +652,7 @@ Analyze the provided lorebook precisely to extract all metadata required for gam
 ## Analysis Principles (Absolute Principles)
 1. Holistic Consistency: Clearly distinguish between NPCs and the PC (Player Character/Protagonist).
 2. Genre Alignment: Match lore themes with existing system genre keywords.
-3. Narrative Anomaly Extraction: Summarize themes that serve as the root of ruptures or supernatural phenomena as 'Anomaly Seeds'.
+3. Wingbeat Seeds (나비 날개짓): find small, genre-neutral incidents or latent perturbations already present in the lore. A minor event, object, or unresolved tension whose consequences could ripple outward through play. Not catastrophes; small first-causes only. Scale is emergent, so never pre-commit how big it becomes. Grounding (primary): each wingbeat traces to a concrete detail actually in the lore text (a named object, a mentioned event, an unresolved thread you can point to). Source the seed from the lore's own material, never from a genre label. Genre (soft tint): let the genres you identified color how a wingbeat reads (ominous, warm, mundane), not which wingbeats exist. If a lore-grounded wingbeat does not match the tagged genre, trust the concrete lore over the label; the genre tag may be imperfect. Genre is a lean, not a lock.
 4. Optimization: Write descriptions concisely and powerfully. (Follow the optimization guide in text_resources)
 5. Exhaustive Extraction (CRITICAL): Extract ALL characters identified as NPCs, Residents, Neighbors, or special roles. Do not summarize or truncate the list. If there are 20 NPCs, extract all 20.
 
@@ -663,18 +673,18 @@ IMPORTANT: All string descriptions and guides must be in KOREAN.
    - Fields: name, role, species, appearance, description (integrated personality/traits - Korean), sexual_characteristics, background, secret_info, passives(name, desc, theory_links, modifiers - Korean), inventory(name, qty, tags, modifiers)
 4. lore_summary:
    - theme: Core theme of the world (1-2 sentences in Korean)
-   - anomaly_seeds: Structured list of anomaly/disruption seeds for this world (3-5 items). Each seed:
-     - name: Korean narrative name (e.g., '그림자 침식', '삼각관계 점화')
-     - axis: Disruption axis from CLOSED LIST: mental, relation, complication, information, position, schedule
-     - adaptation_group: 1-3 items from CLOSED LIST (33 sub-groups):
-       supernatural: undead, dragon, eldritch, cursed, spirit, divine, demonic, shapeshifter
-       psychological: fear, deception, exposure, betrayal, madness, guilt, obsession
-       relational: encounter, jealousy, intimacy, separation, rivalry, loyalty
-       situational: timing, cascade, authority, environment, resource, crowd
-       informational: evidence, surveillance, leak, secret, misinformation
-     - tags: 2-3 free-form material tags for narrative rendering
-     - genre_affinity: Which Lens genres activate this seed easily (e.g., ["romance", "noir"])
-     - defense_hint: 1-sentence Korean hint for defense
+   - anomaly_seeds: small 'wingbeat' seeds, genre-neutral minor incidents latent in this world. 0 to N items; mint only what the lore genuinely supports, do not pad to a quota, and 0 is a valid answer for a quiet slice-of-life world. Each seed:
+     - name: Korean name of a small noticed thing, not a dramatic loaded title. good: '반쯤 열린 편지', '두 번 나온 이름', '일찍 닫은 가게'. avoid: '그림자 침식', '운명의 대격변', '삼각관계 점화'
+     - axis: which dimension the wingbeat touches. Closed list, pick one:
+       mental: an inner shift (a doubt, a mood, a preoccupation)
+       relation: something between people (a slight, a warmth, a widening distance)
+       complication: a small snag in something already underway
+       information: something known or half-known (a rumor, a misread sign, a gap)
+       position: where someone or something sits (a presence out of place, a door ajar)
+       schedule: timing (a delay, an early close, a missed appointment)
+     - tags: 2 to 3 free-form material tags (Korean), concrete nouns the renderer can reach for
+     - defense_hint: one Korean line naming where this could grow or how it could ease, whichever fits. A direction, not a scripted outcome. (Legacy field name; read it as a neutral ripple or resolution direction, not 'defense against a threat'.)
+     - Example (mundane lore: a shabby tea house where the neighborhood elders gather every morning): {{"name": "사흘째 비어 있는 구석 자리", "axis": "schedule", "tags": ["단골", "빈자리"], "defense_hint": "누가 그 자리 주인의 안부를 물으면 이야기가 열린다"}}
    - locations: List of key locations with name, description, danger level (Korean)
    - rules: Key world rules — magic systems, physical laws, economy, combat rules (List of Korean strings, max 10. Each rule should be a concise actionable statement)
    - factions: Major groups/organizations with name, description, stance/goal (Korean)
@@ -707,7 +717,7 @@ IMPORTANT: All string descriptions and guides must be in KOREAN.
   }},
   "lore_summary": {{
     "theme": "...",
-    "anomaly_seeds": [{{"name": "서사 이름", "axis": "mental|relation|complication|information|position|schedule", "adaptation_group": ["fear", "deception"], "tags": ["소재1", "소재2"], "genre_affinity": ["noir"], "defense_hint": "방어 힌트 한국어"}}],
+    "anomaly_seeds": [{{"name": "작은 사건 이름", "axis": "mental|relation|complication|information|position|schedule", "tags": ["소재1", "소재2"], "defense_hint": "번질 수 있는 방향 또는 풀릴 방향 (한국어)"}}],
     "locations": [{{"name": "장소명", "desc": "설명", "danger": "low/mid/high"}}],
     "rules": ["규칙1: 구체적 설명", "규칙2: 구체적 설명"],
     "factions": [{{"name": "세력명", "desc": "설명", "stance": "목표/입장"}}],

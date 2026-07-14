@@ -846,6 +846,61 @@ async def cmd_journal(ctx: CommandContext) -> None:
     await send_long_message(ctx.message.channel, f"📓 **캐릭터 일지 (전체 {len(log)}건)**\n" + "\n".join(lines))
 
 
+def _parse_foreign_single_profile(raw_lines: list) -> Optional[tuple]:
+    """[2026-07-13] 타인-제작 단일 캐릭터 시트(외부 포맷) 감지·파싱.
+
+    대상: h2(`##`) 헤더가 없고, `- Name:`/`Name:`/`이름:` 선언과 `###`/`####` 구조
+    헤더를 가진 key-value 불릿 시트 (RisuAI/커뮤니티 시트 관례 — 예: lore/am.txt 형).
+    이 형태가 기존 캐스케이드에서 simple 모드로 떨어지면 모든 `키: 값` 줄이
+    각각 NPC로 등록되는 폭발(Name/Alias/Hair…가 전부 NPC화)이 일어남 →
+    파일 전체를 NPC 1명으로 등록(원문 보존, manual=동결 소스).
+
+    Returns: (name, description, summary) 또는 None(비해당 → 기존 캐스케이드 진행).
+    """
+    text_lines = [l for l in raw_lines if l.strip()]
+    if not text_lines:
+        return None
+    # h2 있으면 마크다운 모드 소관
+    if any(re.match(r'^##(?!#)\s+', l.strip()) for l in text_lines):
+        return None
+    # 구조 헤더(###/####) 없으면 simple 모드 소관 (진짜 한줄 목록 파일 보호)
+    if not any(l.strip().startswith("###") for l in text_lines):
+        return None
+    name = None
+    for l in text_lines:
+        m = re.match(r'^[-*\s]*(?:Name|이름)\s*:\s*(.+)$', l.strip(), re.IGNORECASE)
+        if m:
+            name = m.group(1).strip()
+            break
+    if not name:
+        return None
+    # 긴 괄호 부연("AM (Originally ...)")은 base만 취함 — 짧은 복합표기 '이름(별칭)'은 유지
+    if "(" in name and len(name) > 24:
+        name = name.split("(")[0].strip() or name
+    # 요약 필드 추출 — 마크다운 모드 id_fields와 동일 규칙 (+occupation)
+    id_fields = {}
+    for l in text_lines:
+        cl = l.strip().lstrip("-* ").strip()
+        if ":" not in cl:
+            continue
+        fk, fv = cl.split(":", 1)
+        fk_l, fv = fk.strip().lower(), fv.strip()
+        if fk_l in ("species", "종족") and fv:
+            id_fields.setdefault("species", fv)
+        elif fk_l in ("rank/role", "role", "역할", "occupation") and fv:
+            id_fields.setdefault("role", fv)
+        elif fk_l in ("affiliation", "소속") and fv:
+            id_fields.setdefault("affiliation", fv)
+    summary_items = []
+    if "species" in id_fields:
+        summary_items.append(id_fields["species"])
+    if "role" in id_fields:
+        summary_items.append(id_fields["role"])
+    elif "affiliation" in id_fields:
+        summary_items.append(id_fields["affiliation"])
+    return (name, "\n".join(raw_lines).strip(), " / ".join(summary_items))
+
+
 @registry.register("npc", category="World", aliases=["엔피씨", "addnpc", "npc정보", "npc추가"], description="NPC 관리 (조회/추가/삭제/별칭/병합)")
 async def cmd_npc(ctx: CommandContext) -> None:
     """!npc [이름] 조회 | !npc add [이름] [설명] | !npc remove [이름] | !npc 별칭 [이름] [별칭] | !npc 병합 [중복] [본체]"""
@@ -984,6 +1039,22 @@ async def cmd_npc(ctx: CommandContext) -> None:
         if (not raw_lines or not raw_lines[0].strip()) and not file_text:
              await ctx.send("⚠️ 등록할 내용이 없습니다. `!npc추가 [이름]: [설명]` 또는 파일 첨부.")
              return
+
+        # --- Phase 0.5: 타인-제작 단일 시트 (## 없음 + Name: 불릿 + ###/#### 구조) ---
+        # [2026-07-13] 외부 포맷이 simple 모드로 떨어져 '키: 값' 줄마다 NPC가 등록되던
+        # 폭발 방지 — 파일 전체=1명·원문 보존. manual 소스라 동결(재작성 안 덮음).
+        _foreign = _parse_foreign_single_profile(raw_lines)
+        if _foreign:
+            _f_name, _f_desc, _f_summary = _foreign
+            _f_existing = domain_manager.get_npcs(channel_id)
+            _f_target = domain_manager.find_equivalent_npc_key(_f_existing, _f_name) or _f_name
+            _f_data = {"description": _f_desc, "source": "manual", "status": "Active"}
+            if _f_summary:
+                _f_data["summary"] = _f_summary
+            domain_manager.update_npc(channel_id, _f_target, _f_data)
+            await ctx.send(f"👥 **NPC 등록 (단일 시트):** {_f_target}"
+                           + (f"\n_{_f_summary}_" if _f_summary else ""))
+            return
 
         last_name = None
 

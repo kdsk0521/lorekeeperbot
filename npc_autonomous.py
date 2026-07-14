@@ -68,6 +68,10 @@ NPC_AUTONOMOUS_TRIGGERS = {
         "desc": "3+ NPC 씬 · obedience 다수 · disorganized/avoidant → 권위 추종 (Milgram)",
         "check": "_check_obedience_cascade",
     },
+    "cost_of_inaction": {
+        "desc": "판돈 有 + 압력 실측 + 회피성 멈춤 → 계산된 이니셔티브/능동 대기 (에로스 타워 E1, 2026-07-14)",
+        "check": "_check_cost_of_inaction",
+    },
 }
 
 
@@ -227,6 +231,11 @@ class NPCAutonomousEngine:
             if r:
                 results.append(r)
             r = _check_obedience_cascade(npc_ctx, psyche_states)
+            if r:
+                results.append(r)
+
+            # Cost of Inaction (에로스 타워 E1, 2026-07-14)
+            r = _check_cost_of_inaction(npc_ctx)
             if r:
                 results.append(r)
 
@@ -427,6 +436,31 @@ def _check_desistance(ctx: Dict) -> TriggerResult | None:
 # Leak Risk Calculator (replaces Flash leak_risk)
 # =========================================================
 
+def leak_pressure_score(
+    tension: int,
+    depth: int,
+    turns_since_secret: int,
+    moral_stance: str = "neutral",
+) -> int:
+    """비밀 압력 0-100 스코어. [V10 Secret Ledger 2026-07-14] calculate_leak_risk의
+    내부 공식을 노출 — 원장 leak_pressure 엔진으로 승격(기존 함수는 호출자 0 죽은 배선이었음)."""
+    time_pressure = min(turns_since_secret * 5, 30)
+    tension_factor = (tension or 0) * 0.4
+    depth_factor = max(0, ((depth or 0) - 40) * 0.3)
+    moral_mod = {"disengaged": -15, "conflicted": 15, "principled": 5, "neutral": 0}
+    moral_factor = moral_mod.get(moral_stance, 0)
+    return max(0, min(100, int(time_pressure + tension_factor + depth_factor + moral_factor)))
+
+
+def leak_risk_label(score: int) -> str:
+    """압력 스코어 → none/low/medium/high 라벨 (calculate_leak_risk 임계 보존)."""
+    if score >= 60:
+        return "high"
+    if score >= 30:
+        return "medium"
+    return "low"
+
+
 def calculate_leak_risk(
     secrets_held: list,
     tension: int,
@@ -439,20 +473,8 @@ def calculate_leak_risk(
     """
     if not secrets_held:
         return "none"
-
-    time_pressure = min(turns_since_secret * 5, 30)
-    tension_factor = tension * 0.4
-    depth_factor = max(0, (depth - 40) * 0.3)
-    moral_mod = {"disengaged": -15, "conflicted": 15, "principled": 5, "neutral": 0}
-    moral_factor = moral_mod.get(moral_stance, 0)
-
-    risk_score = time_pressure + tension_factor + depth_factor + moral_factor
-
-    if risk_score >= 60:
-        return "high"
-    elif risk_score >= 30:
-        return "medium"
-    return "low"
+    return leak_risk_label(
+        leak_pressure_score(tension, depth, turns_since_secret, moral_stance))
 
 
 # =========================================================
@@ -629,6 +651,50 @@ def _check_conformity_drift(ctx: Dict, all_psyche: Dict) -> TriggerResult | None
             priority=3,
         )
     return None
+
+
+def _check_cost_of_inaction(ctx: Dict) -> TriggerResult | None:
+    """Cost of Inaction (에로스 타워 E1, 2026-07-14): 멈춤의 비용이 행동 리스크를
+    넘어설 때 계산된 이니셔티브 또는 능동 대기.
+
+    게이트 3중 AND:
+      (a) 판돈 존재 — active_needs 또는 secrets_held (지킬/얻을 것이 있는 NPC만)
+      (b) 압력 실측 — attitude.tension >= 40 (무행동 비용의 근사 계기.
+          클록/퀘스트 신호는 이 레이어에 미공급 — v2에서 배선 검토)
+      (c) 멈춤이 '회피성'일 것 — coping == "avoidant" AND polyvagal != "dorsal".
+          dorsal(freeze)은 위기=드러냄 원칙상 강제 기동 금지(freezer freezes).
+          relation.value < -10 구간은 reactance 트리거 소유 — 중복 발화 방지 양보.
+
+    장면 게이트: agenda_manifest와 동일(social/normal/intimate) — 전투/위기 씬은
+    이미 움직이는 중이라 정체 처방 불요.
+
+    Directive는 두 갈래 모두 제시(행동 or 능동 대기) — 에로스 타워 momentum 원문의
+    "waiting is valid only when it is active" 보존. 계산 낭독 금지 단서는
+    build_autonomous_directive 공통 헤더가 커버.
+    """
+    if ctx.get("scene_type", "normal") not in ("social", "normal", "intimate"):
+        return None
+    needs = ctx["psyche"].get("active_needs", [])
+    secrets = ctx.get("knowledge", {}).get("secrets_held", [])
+    if not needs and not secrets:
+        return None  # (a) 판돈 없음
+    tension = ctx.get("attitude", {}).get("tension", 0)
+    if not isinstance(tension, (int, float)) or tension < 40:
+        return None  # (b) 압력 미달
+    coping = ctx["psyche"].get("coping")
+    polyvagal = ctx["soma"].get("polyvagal", "ventral")
+    rel_val = ctx["relation"].get("value", 0)
+    if coping != "avoidant" or polyvagal == "dorsal":
+        return None  # (c) 회피성 멈춤 아님 (freeze는 보호)
+    if isinstance(rel_val, (int, float)) and rel_val < -10:
+        return None  # reactance 소유 구간
+    return TriggerResult(
+        "cost_of_inaction", ctx["name"],
+        f"staying still now costs {ctx['name']} more than moving — "
+        f"they take one calculated step, or make the waiting itself active: "
+        f"preparing, repositioning, setting terms, buying time",
+        priority=4,
+    )
 
 
 def _check_obedience_cascade(ctx: Dict, all_psyche: Dict) -> TriggerResult | None:

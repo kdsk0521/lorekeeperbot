@@ -115,9 +115,23 @@ class TheoriaAnalyzer:
                 try:
                     result = json.loads(cleaned)
                 except json.JSONDecodeError:
-                    repaired = bot_utils.repair_json(cleaned)
-                    result = json.loads(repaired)
-                    logger.info("[Theoria] JSON repair succeeded")
+                    try:
+                        repaired = bot_utils.repair_json(cleaned)
+                        result = json.loads(repaired)
+                        logger.info("[Theoria] JSON repair succeeded")
+                    except json.JSONDecodeError as je2:
+                        # [2026-07-15] Python-repr 폴백 — 모델이 단따옴표 dict(파이썬 repr)로
+                        # 출력하는 케이스(GLM 추출 에코 실관측: [{'id': 'c27a...'}]).
+                        # repair_json은 키만 고치고 값 따옴표는 못 고침. literal_eval은
+                        # 리터럴 전용 평가라 코드 실행 위험 0. 실패 시 원래 에러 재던짐(재시도 유지).
+                        import ast
+                        try:
+                            result = ast.literal_eval(cleaned)
+                        except (ValueError, SyntaxError, MemoryError, RecursionError):
+                            raise je2
+                        if not isinstance(result, (dict, list)):
+                            raise je2
+                        logger.info("[Theoria] Python-literal fallback succeeded")
                 # Gemini가 간헐적으로 `[{...DAI...}]` 배열로 wrap하는 경우 구제.
                 # 원소 1개 + dict만 unwrap. 그 외는 기존 경로 유지.
                 if isinstance(result, list) and len(result) == 1 and isinstance(result[0], dict):
@@ -386,9 +400,12 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
         "would_share": boolean,
         "leak_risk": "none/low/medium/high (Curse of Knowledge: 아는 것을 숨기기 어려움)",
         "false_beliefs": ["ENGLISH-ONLY telegraphic - believed contrary to fact (Theory of Mind)"],
-        "deception_cues": "str or null (Statement Analysis/SCAN: pronoun_shift/tense_shift/time_gap/over_detail/emotion_misplace. null = no deception detected)"
+        "deception_cues": "str or null (Statement Analysis/SCAN: pronoun_shift/tense_shift/time_gap/over_detail/emotion_misplace. null = no deception detected)",
+        "secret_updates": [{"truth_ref": "short substring of the secrets_held entry this updates", "surface": "ENGLISH-ONLY - what it LOOKS like from outside (cover story, visible tell)", "reveal_gate": "condition that would crack it open, or ''", "knowers": ["who now knows the truth"], "suspecters": ["who now suspects"], "status": "kept/leaking/revealed"}]
     }
   }
+  (secret_updates: OPTIONAL, only when a secret's outward surface, gate, or who-knows changed THIS turn. Omit otherwise.)
+  (secrets_held for sheet-less NPCs: a PLAYED gap between what they present and what their behavior conceals counts — record it. Only from played evidence; never invent an unplayed secret.)
 (trait_connections → NARRATIVE pass 소유로 이사, 2026-07-02 2차)
 
 
@@ -408,7 +425,7 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
   }
 - "RelevantContext": ["Quoted lore/rule directly applicable", ...]
 - "RelevantNPCs": ["NPC name from roster relevant to THIS scene (max 5)"]
-- "relevant_chunks": [0, 2, 5] (indices from LORE CHUNKS — up to 7 most relevant)
+- "relevant_chunks": [0, 2, 5] (indices from LORE CHUNKS — up to 8 most relevant)
 
 ## SPATIAL PALETTE
 
@@ -515,7 +532,7 @@ Any render-facing field whose value would contain Hangul → write that field's 
                 lines.append(f"\n[{mask}]{marker}")
                 lines.append(f"- Appearance: {pc.get('appearance', 'N/A')}")
                 lines.append(f"- Personality: {pc.get('personality', 'N/A')}")
-                lines.append(f"- Passives: {pc.get('passives', [])}")
+                lines.append(f"- Passives: {json.dumps(pc.get('passives', []), ensure_ascii=False, default=str)}")
                 lines.append(f"- Vigor: {pc.get('vigor_value', 100)} | Composure: {pc.get('composure_value', 100)}")
             return "\n".join(lines)
 
@@ -524,10 +541,13 @@ Any render-facing field whose value would contain Hangul → write that field's 
         lines.append(f"- Appearance: {anchors.get('appearance', 'N/A')}")
         lines.append(f"- Personality: {anchors.get('personality', 'N/A')}")
         lines.append(f"- Background: {anchors.get('background', 'N/A')}")
-        lines.append(f"- Passives: {anchors.get('passives', [])}")
-        lines.append(f"- Inventory: {anchors.get('inventory', [])}")
-        lines.append(f"- Relations: {anchors.get('relations', [])}")
-        lines.append(f"- Memos: {anchors.get('memos', [])}")
+        # [2026-07-15] Python repr(단따옴표) 주입 금지 — 모델이 형식을 미러링해
+        # 단따옴표 dict로 응답(JSON 파싱 붕괴 실관측). json.dumps로 직렬화(§7.11 미러 원리).
+        _j = lambda v: json.dumps(v, ensure_ascii=False, default=str)
+        lines.append(f"- Passives: {_j(anchors.get('passives', []))}")
+        lines.append(f"- Inventory: {_j(anchors.get('inventory', []))}")
+        lines.append(f"- Relations: {_j(anchors.get('relations', []))}")
+        lines.append(f"- Memos: {_j(anchors.get('memos', []))}")
         return "\n".join(lines)
 
     def _build_mental_line(self, anchors: dict, bus) -> str:
@@ -781,7 +801,7 @@ Any render-facing field whose value would contain Hangul → write that field's 
         else:
             ordered = chunks
 
-        lines = ["### 6. LORE CHUNKS (Select relevant indices for relevant_chunks field, max 7)"]
+        lines = ["### 6. LORE CHUNKS (Select relevant indices for relevant_chunks field, max 8)"]
         for chunk in ordered:
             idx = chunk.get("index", 0)
             label = chunk.get("label", f"Section {idx}")

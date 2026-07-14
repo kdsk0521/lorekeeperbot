@@ -944,8 +944,11 @@ def get_npc_full_profiles(channel_id: str, names: list, scene_type: str = "norma
     return "\n\n".join(parts)
 
 
-def get_npc_renderer_profiles(channel_id: str, names: list, scene_type: str = "normal") -> str:
-    """P5: Renderer용 NPC 프로필 (비밀/숨겨진 정보 제거). 포맷은 get_npc_full_profiles와 동일."""
+def get_npc_renderer_profiles(channel_id: str, names: list, scene_type: str = "normal", user_mask: str = "") -> str:
+    """P5: Renderer용 NPC 프로필 (비밀/숨겨진 정보 제거). 포맷은 get_npc_full_profiles와 동일.
+
+    [2026-07-13] user_mask: RisuAI 관례 플레이스홀더 치환용 — 외부 시트의 {{char}}/{{user}}가
+    리터럴로 프롬에 새지 않게. 미지정 시 {{user}}는 보존(정보 손실 방지), {{char}}는 항상 치환."""
     npcs = get_npcs(channel_id)
     parts = []
     for name in names:
@@ -979,9 +982,11 @@ def get_npc_renderer_profiles(channel_id: str, names: list, scene_type: str = "n
         _src_r = str(raw.get("source", "")).lower() if isinstance(raw, dict) else ""
         # 세션 즉석 NPC + 면모(정체성/불씨/면모)가 증류됐으면 → 면모 시트로 대체 렌더(주력).
         # 아직 증류 전이면 위의 seed description 그대로. (Fate-하이브리드 시트)
+        # [2026-07-13 manual 동결] manual도 lore처럼 원문 렌더 — 면모 대체가 수제 프로필
+        # (### Voice/Hard Rules)을 5줄 시트로 갈아치우던 충돌 수리 (재작성 동결과 짝).
         _aspects = raw.get("aspects") if isinstance(raw, dict) else None
         _has_aspect = bool(raw.get("high_concept") or raw.get("trouble") or (isinstance(_aspects, list) and _aspects))
-        if _src_r != "lore" and _has_aspect:
+        if _src_r not in ("lore", "manual") and _has_aspect:
             _lines = [header]
             if raw.get("high_concept"):
                 _lines.append(f"**[정체성]** {raw['high_concept']}")
@@ -994,16 +999,21 @@ def get_npc_renderer_profiles(channel_id: str, names: list, scene_type: str = "n
             if data.get("role"):
                 _lines.append(f"**[역할]** {data['role']}")
             profile_text = "\n".join(_lines)
-        elif _src_r != "lore":
+        elif _src_r not in ("lore", "manual"):
             # 세션 NPC + 아직 면모 증류 전 + desc 없음(플레이스홀더 숨김) → 관찰로 폴백.
             _obs_s = raw.get("play_observed") if isinstance(raw, dict) else None
             if _obs_s and str(_obs_s).strip() and not str(desc).strip():
                 profile_text = f"{header}\n{str(_obs_s).strip()[-600:]}"
-        # 로어 NPC: 원문 시트는 동결하되 플레이 중 관찰(play_observed)을 별도 섹션으로 렌더 →
-        # 작가 설정 권위 보존 + 세션 중 드러난 새 면모를 장기기억으로 축적.
+        # 로어/수제(manual) NPC: 원문 시트는 동결하되 플레이 중 관찰(play_observed)을
+        # 별도 섹션으로 렌더 → 작가 설정 권위 보존 + 세션 중 드러난 새 면모를 장기기억으로 축적.
         _obs = raw.get("play_observed") if isinstance(raw, dict) else None
-        if _src_r == "lore" and _obs and str(_obs).strip():
+        if _src_r in ("lore", "manual") and _obs and str(_obs).strip():
             profile_text += f"\n**[플레이 중 관찰]**\n{str(_obs).strip()[-600:]}"
+        # [2026-07-13] 외부 시트 플레이스홀더 치환 ({{char}}=NPC 자신, {{user}}=현재 PC 가면)
+        if "{{" in profile_text:
+            profile_text = profile_text.replace("{{char}}", name).replace("{{Char}}", name)
+            if user_mask:
+                profile_text = profile_text.replace("{{user}}", user_mask).replace("{{User}}", user_mask)
         parts.append(profile_text)
     return "\n\n".join(parts)
 
@@ -1354,8 +1364,9 @@ def get_npc_time_progression(channel_id: str) -> List[str]:
             hints.append(f"{npc_name}: {schedule[time_slot]}")
             continue
 
-        # P3: 일반 랜덤 폴백
-        hints.append(f"{npc_name}: {random.choice(fallback_pool)}")
+        # P3 랜덤 폴백 제거 (2026-07-14 경로 감사): "TV 시청/술자리" 무근거 발명 활동
+        # = Contract-First 위반 + 자판기 노이즈. 근거(관찰 P1/스케줄 P2) 있는 NPC만 힌트.
+        # (fallback_pool·random import는 P3 부활 대비 잔존 — 소비자는 서사 콜 ABSENT CAST)
 
     return hints
 

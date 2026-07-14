@@ -1013,6 +1013,124 @@ def update_npc_knowledge(channel_id: str, npc_name: str, knowledge_data: Dict[st
     save_domain(channel_id, d)
     _mirror_knowledge(channel_id, npc_name, d["npc_knowledge"][npc_name])
 
+# =========================================================
+# [V10 Secret Ledger] NPC 지식경계 상태 기계 (에로스 타워 E3, 2026-07-14)
+# 스펙: 파티쳇수정/v10_secret_ledger_spec.md
+# 원칙: 추출은 재료 공급, 압력 계산은 코드(leak_pressure_score — 죽은 배선 승격),
+#       truth는 렌더러 직행 금지(iceberg는 surface 우선), 삭제 대신 retire.
+# =========================================================
+
+def _secret_id(npc_name: str, truth: str) -> str:
+    import hashlib
+    h = hashlib.sha1(truth.strip().encode("utf-8")).hexdigest()[:10]
+    return f"{npc_name}:{h}"
+
+
+def sync_secret_ledger(
+    channel_id: str,
+    npc_name: str,
+    kn_data: Dict[str, Any],
+    attitude: Dict[str, Any],
+) -> Dict[str, Any]:
+    """DAI NPCKnowledge → secret_ledger 델타 동기화 (턴당 1회/NPC).
+
+    - secrets_held 각 항목을 원장 행으로 upsert (기존 행은 turn_count+1, 압력 재계산)
+    - kn_data["secret_updates"] (추출 Optional 필드) 매칭 시 surface/gate/인식등급 갱신
+    - 반환: {"computed_risk": label, "max_pressure": int, "surfaces": {truth: surface}}
+      — 호출자가 leak_risk 상향 + 당턴 surface 주입에 사용
+    실패는 전부 삼킴 (봇 무영향)."""
+    result = {"computed_risk": "none", "max_pressure": 0, "surfaces": {}}
+    try:
+        import sqlite_store
+        from npc_autonomous import leak_pressure_score, leak_risk_label
+        secrets = [s for s in (kn_data.get("secrets_held") or []) if isinstance(s, str) and s.strip()]
+        updates = kn_data.get("secret_updates") or []
+        if not secrets and not updates:
+            return result
+        existing = {s["secret_id"]: s for s in sqlite_store.read_secrets(channel_id, include_closed=True)}
+        tension = attitude.get("tension", 0) if isinstance(attitude, dict) else 0
+        depth = attitude.get("depth", 0) if isinstance(attitude, dict) else 0
+        now = time.strftime('%Y-%m-%d %H:%M')
+        max_pressure = 0
+        for truth in secrets:
+            sid = _secret_id(npc_name, truth)
+            row = existing.get(sid) or {
+                "secret_id": sid, "truth": truth, "surface": "",
+                "owners": [npc_name], "knowers": [], "suspecters": [],
+                "cannot_know": [], "reveal_gate": "", "risk_if_revealed": "",
+                "status": "kept", "canon_level": "established", "turn_count": 0,
+            }
+            row["turn_count"] = int(row.get("turn_count", 0)) + 1
+            if row.get("status") in ("kept", "leaking"):
+                # kept↔leaking은 압력 파생 상태(왕복 가능) — 비가역은 revealed/retired만
+                _prev_status = row.get("status")
+                row["leak_pressure"] = leak_pressure_score(
+                    tension, depth, row["turn_count"])
+                row["status"] = "leaking" if row["leak_pressure"] >= 60 else "kept"
+                if _prev_status == "kept" and row["status"] == "leaking":
+                    # [v1.1 게이트 로그] 사후판독용 — 임계 진입 시 게이트 조건 노출 (log-only)
+                    logging.info(f"[secret-ledger] LEAKING {npc_name}: gate='{row.get('reveal_gate','') or '(none)'}' truth~'{row.get('truth','')[:40]}'")
+                max_pressure = max(max_pressure, row["leak_pressure"])
+            row["updated_at"] = now
+            existing[sid] = row
+        # 추출 Optional 필드 반영 — truth_ref 부분일치로 행 매칭
+        for up in updates:
+            if not isinstance(up, dict):
+                continue
+            ref = str(up.get("truth_ref", "") or "").strip().lower()
+            if not ref:
+                continue
+            for row in existing.values():
+                if npc_name not in row.get("owners", []):
+                    continue
+                if ref not in row.get("truth", "").lower():
+                    continue
+                for k_src, k_dst in (("surface", "surface"), ("reveal_gate", "reveal_gate"),
+                                     ("knowers", "knowers"), ("suspecters", "suspecters"),
+                                     ("cannot_know", "cannot_know")):
+                    v = up.get(k_src)
+                    if v:
+                        row[k_dst] = v
+                # LLM status 입력은 revealed/retired 전이만 수용 — kept/leaking은
+                # 압력 파생 상태라 LLM이 리셋 불가 (게이트③ 보강)
+                if up.get("status") in ("revealed", "retired"):
+                    if up["status"] == "revealed" and not row.get("reveal_gate"):
+                        # [v1.1 게이트 로그] 게이트 없는 공개 — 편의 공개 감시 (log-only, 차단 아님)
+                        logging.info(f"[secret-ledger] GATELESS-REVEAL {npc_name}: truth~'{row.get('truth','')[:40]}'")
+                    row["status"] = up["status"]
+                row["updated_at"] = now
+                break
+        wrote = 0
+        for row in existing.values():
+            if row.get("updated_at") == now and sqlite_store.upsert_secret(channel_id, row):
+                wrote += 1
+        if max_pressure > 0:
+            result["max_pressure"] = max_pressure
+            result["computed_risk"] = leak_risk_label(max_pressure)
+        # [v1.1 크로스턴 surface] 이 NPC의 활성 비밀 surface 지도 — 호출자가 당턴
+        # secret_updates에 합성 주입 → iceberg가 truth 대신 surface 공급 (게이트① 영속화)
+        result["surfaces"] = {
+            row["truth"]: row["surface"]
+            for row in existing.values()
+            if npc_name in row.get("owners", []) and row.get("surface")
+            and row.get("status") in ("kept", "leaking")
+        }
+        if wrote:
+            logging.info(f"[secret-ledger] {npc_name}: rows={wrote} max_pressure={max_pressure} risk={result['computed_risk']}")
+    except Exception as e:
+        logging.warning(f"[secret-ledger] sync 실패 (무시): {npc_name}: {e}")
+    return result
+
+
+def get_secret_ledger(channel_id: str, include_closed: bool = False) -> List[Dict[str, Any]]:
+    """비밀 원장 조회 (기본: kept/leaking만). 실패 시 빈 리스트."""
+    try:
+        import sqlite_store
+        return sqlite_store.read_secrets(channel_id, include_closed=include_closed)
+    except Exception:
+        return []
+
+
 def get_npc_knowledge(channel_id: str) -> Dict[str, Dict]:
     """저장된 전체 NPC 지식 상태 조회
 
@@ -1055,6 +1173,29 @@ def propagate_npc_knowledge(channel_id: str, scene_npcs: list) -> int:
     attitudes = get_npc_attitudes(channel_id)
     propagated = 0
 
+    # [v1.1 게이트②] cannot_know 전파 필터 — 원장 비밀의 truth와 내용어가 겹치는
+    # 사실은 해당 비밀의 cannot_know NPC에게 전파 금지. 자기 비밀 정확일치 제외만으로는
+    # 타 NPC 비밀 파편(knows에 실린)이 경계를 넘는 구멍이 있었음.
+    _guard_rows = []
+    try:
+        for _r in get_secret_ledger(channel_id):
+            if _r.get("cannot_know"):
+                _tw = {w for w in _r["truth"].lower().split() if len(w) >= 4}
+                if _tw:
+                    _guard_rows.append((_tw, set(_r["cannot_know"]), _r["truth"].lower()))
+    except Exception:
+        _guard_rows = []
+
+    def _blocked_for(npc: str, fact: str) -> bool:
+        f_low = fact.lower()
+        f_words = {w for w in f_low.split() if len(w) >= 4}
+        for _tw, _ck, _tl in _guard_rows:
+            if npc not in _ck:
+                continue
+            if _tl in f_low or f_low in _tl or len(_tw & f_words) >= 3:
+                return True
+        return False
+
     for npc_a in scene_npcs:
         kn_a = all_knowledge.get(npc_a, {})
         if not kn_a.get("would_share"):
@@ -1071,12 +1212,16 @@ def propagate_npc_knowledge(channel_id: str, scene_npcs: list) -> int:
             att_b = attitudes.get(npc_b, {}).get("attitude", "neutral")
             if att_b in ("hostile", "unfriendly"):
                 continue
+            if _guard_rows:
+                _shareable_b = [f for f in shareable if not _blocked_for(npc_b, f)]
+            else:
+                _shareable_b = shareable
             kn_b = all_knowledge.get(npc_b, {})
             existing_b = set(kn_b.get("knows", []))
             if getattr(config, "V10_KNOWLEDGE_BOUNDARY_INJECT", False):
                 # [V10 지식 lite] 들은 건 의심(suspects)으로 착지 — 직접 목격해야 knows 승격(정보 비대칭)
                 existing_sus = set(kn_b.get("suspects", []))
-                new_facts = [f for f in shareable if f not in existing_b and f not in existing_sus][:3]
+                new_facts = [f for f in _shareable_b if f not in existing_b and f not in existing_sus][:3]
                 if new_facts:
                     tagged = [f"{f} (via {npc_a})" for f in new_facts]
                     kn_b_updated = dict(kn_b)
@@ -1084,7 +1229,7 @@ def propagate_npc_knowledge(channel_id: str, scene_npcs: list) -> int:
                     all_knowledge[npc_b] = kn_b_updated
                     propagated += len(new_facts)
             else:
-                new_facts = [f for f in shareable if f not in existing_b][:3]
+                new_facts = [f for f in _shareable_b if f not in existing_b][:3]
                 if new_facts:
                     tagged = [f"{f} (via {npc_a})" for f in new_facts]
                     merged = list(existing_b) + tagged

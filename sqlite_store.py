@@ -292,6 +292,30 @@ def _ensure_schema() -> bool:
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_readerlog_channel ON reader_log(channel_id, id)")
+            # [V10 Secret Ledger] NPC 지식경계 상태 기계 (에로스 타워 E3, 2026-07-14).
+            # truth/surface 이중층 + 3단 인식 등급 + 압력 축적 + reveal_gate.
+            # 스펙: 파티쳇수정/v10_secret_ledger_spec.md. 삭제 대신 retire(status).
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS secret_ledger (
+                    channel_id     TEXT NOT NULL,
+                    secret_id      TEXT NOT NULL,
+                    truth          TEXT NOT NULL,
+                    surface        TEXT NOT NULL DEFAULT '',
+                    owners         TEXT NOT NULL DEFAULT '[]',
+                    knowers        TEXT NOT NULL DEFAULT '[]',
+                    suspecters     TEXT NOT NULL DEFAULT '[]',
+                    cannot_know    TEXT NOT NULL DEFAULT '[]',
+                    leak_pressure  INTEGER NOT NULL DEFAULT 0,
+                    reveal_gate    TEXT NOT NULL DEFAULT '',
+                    risk_if_revealed TEXT NOT NULL DEFAULT '',
+                    status         TEXT NOT NULL DEFAULT 'kept',
+                    canon_level    TEXT NOT NULL DEFAULT 'established',
+                    turn_count     INTEGER NOT NULL DEFAULT 0,
+                    updated_at     TEXT NOT NULL DEFAULT '',
+                    PRIMARY KEY (channel_id, secret_id)
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_secretledger_channel ON secret_ledger(channel_id)")
             conn.commit()
             _initialized = True
             return True
@@ -1304,6 +1328,114 @@ def read_reader_log_tail(channel_id: str, limit: int = 5) -> list:
         return []
 
 
+# =========================================================
+# [V10 Secret Ledger] CRUD (에로스 타워 E3, 2026-07-14)
+# JSON 키 계약: truth/surface/owners/knowers/suspecters/cannot_know/
+#   leak_pressure/reveal_gate/risk_if_revealed/status/canon_level/turn_count
+# =========================================================
+
+_SECRET_COLS = ("truth, surface, owners, knowers, suspecters, cannot_know, "
+                "leak_pressure, reveal_gate, risk_if_revealed, status, canon_level, "
+                "turn_count, updated_at")
+
+
+def _row_to_secret(row) -> Dict[str, Any]:
+    def _j(idx, default):
+        try:
+            v = json.loads(row[idx]) if row[idx] else default
+            return v if isinstance(v, list) else default
+        except Exception:
+            return default
+    return {
+        "secret_id": row[0],
+        "truth": row[1] or "",
+        "surface": row[2] or "",
+        "owners": _j(3, []),
+        "knowers": _j(4, []),
+        "suspecters": _j(5, []),
+        "cannot_know": _j(6, []),
+        "leak_pressure": int(row[7] or 0),
+        "reveal_gate": row[8] or "",
+        "risk_if_revealed": row[9] or "",
+        "status": row[10] or "kept",
+        "canon_level": row[11] or "established",
+        "turn_count": int(row[12] or 0),
+        "updated_at": row[13] or "",
+    }
+
+
+def upsert_secret(channel_id: str, entry: Dict[str, Any]) -> bool:
+    """비밀 1행 upsert. secret_id 필수. 실패해도 False (봇 무영향).
+    게이트 ③: revealed 행은 kept로 되돌리지 않음 — status 후퇴는 여기서 차단."""
+    sid = (entry or {}).get("secret_id", "")
+    if not channel_id or not sid or not entry.get("truth"):
+        return False
+    if not _ensure_schema():
+        return False
+    conn = _get_conn()
+    if conn is None:
+        return False
+    try:
+        # 게이트 ③: 기존 status가 revealed/retired면 kept/leaking으로 후퇴 금지
+        cur = conn.execute(
+            "SELECT status FROM secret_ledger WHERE channel_id=? AND secret_id=?",
+            (channel_id, sid))
+        old = cur.fetchone()
+        new_status = entry.get("status", "kept")
+        if old and old[0] in ("revealed", "retired") and new_status in ("kept", "leaking"):
+            new_status = old[0]
+        conn.execute(
+            f"INSERT INTO secret_ledger (channel_id, secret_id, {_SECRET_COLS}) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(channel_id, secret_id) DO UPDATE SET "
+            "truth=excluded.truth, surface=excluded.surface, owners=excluded.owners, "
+            "knowers=excluded.knowers, suspecters=excluded.suspecters, "
+            "cannot_know=excluded.cannot_know, leak_pressure=excluded.leak_pressure, "
+            "reveal_gate=excluded.reveal_gate, risk_if_revealed=excluded.risk_if_revealed, "
+            "status=excluded.status, canon_level=excluded.canon_level, "
+            "turn_count=excluded.turn_count, updated_at=excluded.updated_at",
+            (
+                channel_id, sid,
+                str(entry.get("truth", "")),
+                str(entry.get("surface", "")),
+                json.dumps(entry.get("owners", []), ensure_ascii=False),
+                json.dumps(entry.get("knowers", []), ensure_ascii=False),
+                json.dumps(entry.get("suspecters", []), ensure_ascii=False),
+                json.dumps(entry.get("cannot_know", []), ensure_ascii=False),
+                int(entry.get("leak_pressure", 0)),
+                str(entry.get("reveal_gate", "")),
+                str(entry.get("risk_if_revealed", "")),
+                new_status,
+                str(entry.get("canon_level", "established")),
+                int(entry.get("turn_count", 0)),
+                entry.get("updated_at", ""),
+            ),
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] upsert_secret 실패 (무시): {channel_id}/{sid}: {e}")
+        return False
+
+
+def read_secrets(channel_id: str, include_closed: bool = False) -> list:
+    """채널 비밀 전체. 기본은 kept/leaking만 (revealed/retired 제외)."""
+    if not channel_id or not _ensure_schema():
+        return []
+    conn = _get_conn()
+    if conn is None:
+        return []
+    try:
+        q = f"SELECT secret_id, {_SECRET_COLS} FROM secret_ledger WHERE channel_id=?"
+        if not include_closed:
+            q += " AND status IN ('kept','leaking')"
+        cur = conn.execute(q, (channel_id,))
+        return [_row_to_secret(r) for r in cur.fetchall()]
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_secrets 실패 (무시): {channel_id}: {e}")
+        return []
+
+
 def clear_session_scoped(channel_id: str) -> bool:
     """세션 파생 테이블 채널 행 일괄 삭제 — !클리어 혼입 수리 (2026-07-05).
 
@@ -1322,6 +1454,7 @@ def clear_session_scoped(channel_id: str) -> bool:
         "npc_relations", "npc_knowledge", "dai_logs", "emotion_log",
         "turn_snapshot", "attitude_log", "autonomy_log", "retry_snapshot",
         "reader_log",  # [Reader-GM] 독자 노트도 세션 파생
+        "secret_ledger",  # [V10 Secret Ledger] 비밀 원장도 세션 파생 (2026-07-14)
     )
     try:
         for t in tables:

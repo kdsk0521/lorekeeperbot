@@ -874,14 +874,29 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
                         return _v
                 return None
 
+            # [2026-07-14 고아 재배선] NPC 시간 힌트(P1 관찰/P2 스케줄, 무근거 폴백 없음)
+            # — ctx.rule_txt 고아 회로에서 버려지던 것을 offscreen_trace 재료로 이송.
+            # 서사 콜이 큐레이션 게이트 = 렌더러 직행 노이즈(random cast pull) 없음.
+            _time_hints = {}
+            try:
+                import npc_manager as _npm
+                for _h in (_npm.get_npc_time_progression(channel_id) or []):
+                    if ":" in _h:
+                        _hn, _hv = _h.split(":", 1)
+                        _time_hints[_hn.strip()] = _hv.strip()
+            except Exception:
+                _time_hints = {}
+
             _cand_lines = []
             for _an in _absent_names:
                 _aa = _att_map.get(_an, {}) if isinstance(_att_map, dict) else {}
                 _ls = _ls_lookup(_an)
                 _absent_str = (f", absent_for={max(0, _cur_t - int(_ls))} turns"
                                if _ls is not None else ", absent_for=unknown")
+                _th = _time_hints.get(_an) or _time_hints.get(_an.split("(")[0].strip())
+                _th_str = f", likely-now={_th}" if _th else ""
                 _cand_lines.append(
-                    f"{_an}: attitude={_aa.get('attitude', 'neutral')}, depth={int(_aa.get('depth', 0) or 0)}{_absent_str}"
+                    f"{_an}: attitude={_aa.get('attitude', 'neutral')}, depth={int(_aa.get('depth', 0) or 0)}{_absent_str}{_th_str}"
                 )
             anchors["offscreen_candidates"] = _cand_lines
     except Exception as _e_osc:

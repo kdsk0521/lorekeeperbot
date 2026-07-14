@@ -1431,6 +1431,26 @@ def translate_trait_connections(trait_conn: Optional[dict]) -> str:
 # NPCKnowledge (Slot 17) — 예측 라벨만 제거
 # =========================================================
 
+def _secret_surfaces(info: dict) -> list:
+    """[V10 Secret Ledger 게이트① 2026-07-14] 렌더러 공급용 비밀 표시 목록.
+    secret_updates에 surface가 있으면 truth 대신 surface(겉모습)를 공급 —
+    렌더러가 진실 문자열을 모르면 산문 누출 자체가 불가능. surface 없으면
+    truth 폴백(기존 동작 무변경 = 회귀 0)."""
+    secrets = info.get("secrets_held", [])
+    if not secrets or not isinstance(secrets, list):
+        return []
+    surface_map = {}
+    for up in (info.get("secret_updates") or []):
+        if isinstance(up, dict) and up.get("surface") and up.get("truth_ref"):
+            surface_map[str(up["truth_ref"]).strip().lower()] = str(up["surface"])
+    out = []
+    for s in secrets:
+        s = str(s)
+        matched = next((v for k, v in surface_map.items() if k and k in s.lower()), None)
+        out.append(matched if matched else s)
+    return out
+
+
 def translate_npc_knowledge(npc_knowledge: Optional[dict]) -> str:
     """NPCKnowledge — knows/secrets/false_beliefs/deception_cues/would_share 유지. leak_risk는 compose_dialogue_directives에서 소비."""
     if not npc_knowledge or not isinstance(npc_knowledge, dict):
@@ -1452,9 +1472,9 @@ def translate_npc_knowledge(npc_knowledge: Optional[dict]) -> str:
                     parts_k.append(f"  suspects (unsure): {', '.join(str(s) for s in suspects)}")
         except Exception:
             pass
-        secrets = info.get("secrets_held", [])
-        if secrets and isinstance(secrets, list):
-            parts_k.append(f"  hides: {', '.join(str(s) for s in secrets)}")
+        secrets = _secret_surfaces(info)
+        if secrets:
+            parts_k.append(f"  hides: {', '.join(secrets)}")
         false_beliefs = info.get("false_beliefs", [])
         if false_beliefs and isinstance(false_beliefs, list):
             parts_k.append(f"  believes wrongly: {', '.join(str(f) for f in false_beliefs)}")
@@ -1702,8 +1722,8 @@ def compose_dialogue_directives(
         if isinstance(nk, dict):
             leak = nk.get("leak_risk", "none")
             if leak in ("medium", "high"):
-                secrets = nk.get("secrets_held", [])
-                if secrets and isinstance(secrets, list) and secrets[0]:
+                secrets = _secret_surfaces(nk)
+                if secrets:
                     directive_parts.append(f"hiding: {secrets[0]}")
                 false_b = nk.get("false_beliefs", [])
                 if false_b and isinstance(false_b, list) and false_b[0]:

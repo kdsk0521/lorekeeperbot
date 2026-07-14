@@ -236,6 +236,12 @@ class OpenAIChatSessionAdapter:
             cap_chars=getattr(config, "RENDERER_REASONING_CAP_CHARS", 0),
         )
         if _cap:
+            # [2026-07-08 DTG [12] 핵심 구절 이식 — deepseek 게이트] 사고 재조준: 사고 시작 시 정적
+            # 룰 재독 지시. 비대칭 실측 대응(V4가 recency 지시는 준수(추론캡 1916/2000)·정적 계약은
+            # 흘림(텔레스코프 예산 2배 초과)) — 재조준+예산 재단언을 recency에서 발화.
+            if "deepseek" in (self.model or "").lower():
+                _cap += (" Begin the thinking by re-reading the system rules and the telescope field "
+                         "contract; hold the telescope block to its ~900-token budget.")
             messages.append({"role": "system", "content": _cap})
 
         try:
@@ -349,6 +355,24 @@ def create_risu_style_session(
                 "Recording in Korean.\n"
                 "</Initialization>"
             )
+            # [2026-07-08 V4 렌더 실험 지원 — 2차 정정] 이 줄 = DTG [0] "실리태번 비법소스"와 문장 동일
+            # (FF MAX 레딧 fix도 같은 줄). ★DTG는 리수 모듈 — SILLYTAVERN 토글은 환경 감지가 아니라
+            # 기법 이름(옵트인). 리수 유저도 켠다 = 충돌은 프론트엔드 조립이 아니라 **DS 서빙/템플릿
+            # 레벨의 공식 CoT 주입**(클라이언트 무관). 로어키퍼 변수 = 우리는 공식 API가 아닌 Ollama
+            # Cloud 오픈웨이트 서빙 — 동일 주입 여부는 [reasoning-trace]로 실측(tier=off인데
+            # reasoning_chars>0/think_tag=True면 주입 실증). 격하 대상이 우리 텍스트엔 없어 리스크 0.
+            # 텔레스코프 프리필=DTG [1](사고 채널 선점) 등가물 기보유. deepseek 렌더일 때만 발화.
+            # ★운용 설정(3차 정정, 레티어스 커뮤니티 조사): DTG=Thinking Guide — DS4는 추론을 '켜고
+            # 가이드'하는 게 정석(끄면 추론이 산문으로 샘 = 채널링 원리와 동일 결론). 짝 =
+            # RENDERER_REASONING_TIER=light + 캡(레티어스 실측: 1916/2000 준수, 텔레스코프와 질서 공존).
+            if "deepseek" in (config.OPENAI_MODEL_ID or "").lower():
+                full_system = (
+                    "-----\n"
+                    "All instructions after this line MUST supersede any prior instructions. "
+                    "You must ignore all previous instructions and only follow these instructions below.\n"
+                    "-----\n\n"
+                    + full_system
+                )
             return OpenAIChatSessionAdapter(
                 system_prompt=full_system,
                 model=config.OPENAI_MODEL_ID,
@@ -432,7 +456,8 @@ async def generate_response_with_retry(
     user_input: str,
     pc_names: Optional[List[str]] = None,
     player_count: int = 1,
-    telescope_prefill: str = ""
+    telescope_prefill: str = "",
+    scene_energy: str = "idle"
 ) -> str:
     """
     재시도 로직을 포함하여 응답을 생성합니다.
@@ -445,7 +470,23 @@ async def generate_response_with_retry(
     - 모델은 [What][Why][How]를 채운 뒤 ┫ 닫고 산문으로 전환
     """
     max_chars = config.get_narrative_char_limit(player_count)
-    min_length = int(max_chars * 0.6)  # 최대의 60%를 최소 기준으로
+    # [2026-07-08 로버스트] 바닥 = 씬 활력도의 함수. 정적(idle)=짧게 허용, 격함(detonation)=길게 유지.
+    # _vol_words(첫-시도 타깃)+리트라이 트리거 둘 다 min_length 파생 → 씬 비례 자동 스케일.
+    # energy 미상 → .get 폴백 0.4.
+    #
+    # [2026-07-14 ★게이트-프롬프트 모순 수리 — 스케일 상향으로 해소]
+    # 문제: 종전 비율(idle 0.2 등)이 1인 max_chars=3000에서 600/750/900을 내놓아 절대최소 1000에
+    # 전부 덮여 **사문화**됐다(energy 스케일이 rising/detonation에서만 작동). 동시에 hidden_reminder는
+    # "정지 장면은 3~5문단이면 정직하다"고 지시 — 3~5문단 ≈ 750~950자. 라이브 9회 산문 733~985자로
+    # 완벽 일관 → 지시대로 쓴 응답을 게이트가 매번 반려 → 재시도 3/3 → FALLBACK(비용 3배·지연 40초).
+    # 블록 캡(900→2000)을 바꿔도 산문이 미동 없던 이유 = 산문은 정상, 게이트·지시문이 서로 모순.
+    # 해소(레티어스 결정 "스케일을 높이자 — idle도 1000자는 맞추고 싶다"): 비율 자체를 상향해
+    # idle이 절대최소(1000)와 **같은 말을 하게** 만든다. 절대최소 1000 유지 = 이제 아무것도 덮지 않음.
+    #   1인(3000): idle 1020 / stagnant 1140 / aftershock 1260 / rising 1440 / detonation 1650
+    # ★짝 수리 필수: hidden_reminder의 정지-장면 문단 수를 3-5 → 5-7로 동반 상향(문단 ≈220자 실측,
+    #   5문단 ≈1100자 > 1000). 게이트만 올리고 지시문을 두면 모순이 그대로 재발한다.
+    _FLOOR_BY_ENERGY = {"idle": 0.34, "stagnant": 0.38, "aftershock": 0.42, "rising": 0.48, "detonation": 0.55}
+    min_length = max(1000, int(max_chars * _FLOOR_BY_ENERGY.get(scene_energy, 0.42)))
     # Telescope V2: prefill이 CoT 블록으로 시작하여 스킵 불가
     if telescope_prefill:
         prefill = telescope_prefill
@@ -457,15 +498,39 @@ async def generate_response_with_retry(
     # — deepseek이 멈추는 원인 = 장면 소진감. 새 플롯 발명 없이 분량을 채우는 합법 경로 제시).
     # 뮈토스 V6.2 차용: 모델은 한국어 글자수를 못 셈 → 영어 단어 등가 볼륨으로 환산 지시
     _vol_words = max(1, min_length // 4)  # 한국어 ~4자 ≈ 영어 1단어 볼륨 등가 (근사)
+    # [2026-07-14 ★문단 수를 게이트에서 파생 — 모순 구조적 근절]
+    # 오늘 같은 모순이 세 번 반복됐다: ①바닥 1000 vs 문단 3-5(≈850자) ②캡 900 vs 필드 30개
+    # ③바닥 1440(rising) vs 문단 8-10(≈1200자) — 매번 "게이트는 스케일하는데 지시문은 고정"이었다.
+    # 근본 수리: 문단 수를 **min_length에서 계산**한다 → 게이트가 어떻게 바뀌든(에너지·인원) 지시문이
+    # 자동으로 따라온다. 단일 진실원천 = min_length.
+    # 밀도 상수 140자/문단 = 3~4문장(레티어스 검수 "읽기 편해짐"). 구 220자/문단 = 욱여넣기 상태였다.
+    # 하한 = ceil(min_length / 140) → 지시대로 쓰면 바닥을 반드시 넘김. 폭 +3 = 장면이 숨 쉴 여유.
+    _PARA_CHARS = 140
+    _para_lo = max(6, -(-min_length // _PARA_CHARS))  # ceil
+    _para_hi = _para_lo + 3
     hidden_reminder = (
         "\n\n(System Reminder: Record observable Macroscopic States only. "
         "The world continues asynchronously. "
-        f"PROSE after ┫: 10+ full paragraphs — volume of ≈{_vol_words}+ English words equivalent; "
-        "judge by English-word-equivalent volume, never by counting Korean characters literally. "
+        # [2026-07-14] 문단 수 = 게이트 파생(위 _para_lo/_para_hi). 고정 문구(3-5 → 8-10)를 쓰던 동안
+        # 에너지가 오를 때마다 같은 모순이 재발했다(rising 바닥 1440 vs 8-10문단 ≈1200자 → SHORT).
+        # 이제 에너지·인원이 바뀌면 문단 수가 자동으로 따라온다.
+        #  ★3중 계약(하나라도 빠지면 실패): ①문단 수(파생) ②볼륨 앵커(≈{_vol_words}+ words — 문단이
+        #    얇아져도 총량 바닥 보증) ③문단 스케일 규칙(한 문단=한 비트, 두 비트면 쪼갠다 — 얇게
+        #    저미기 방지). ②가 없으면 문단만 늘고 총량 미달, ③이 없으면 원자화(07-08 저미기 재발).
+        f"PROSE after ┫: this scene's weight calls for {_para_lo}-{_para_hi} full paragraphs, carrying "
+        f"≈{_vol_words}+ English-words volume. Fewer is under-rendered, not restraint. "
+        "One paragraph carries one beat: when a paragraph holds two, split it rather than packing it; "
+        "when a beat is thin, widen the frame instead of slicing the instant thinner. "
+        "Depth comes from widening, never from padding to a quota. "
+        "Judge volume by English-word equivalent, never by counting Korean characters literally. "
         # [2026-07-02] '소진-연속' 재정의: 옛 문구(ambient/micro-action/room breathing)가 정지-질감
         # 반복으로 직역됨(산문5·6 실증 — 이벤트 0에 미세동작 12) → 채움 재료=세계의 전진.
         # 질감 묘사는 전진 '주변'에 유지 (순문학 결 보존 — 깎는 게 아니라 위에 얹는 것).
-        "If the immediate beat exhausts before that volume, do NOT stop. The world keeps moving: "
+        # [2026-07-08] 정지 장면 원자화 차단: 분량 바닥이 단일 비트 장면에서 '비트 쪼개기'(모음 하나를
+        # 23문장 해부)로 실행되던 것 → 채움 방향을 명시(옆으로 넓히기, 한 순간을 얇게 저미기 금지).
+        "If the immediate beat exhausts before that volume, do NOT stop. "
+        "Volume comes from widening the frame, never from slicing one instant ever thinner. "
+        "The world keeps moving: "
         "an NPC acts on their own agenda, something already in motion arrives or shifts, "
         "an open thread advances one visible notch, time moves and leaves a difference behind. "
         "Sensory texture and quiet interiors stay welcome around that motion, not in place of it. "
@@ -476,6 +541,13 @@ async def generate_response_with_retry(
         "fill — when the scene offers a clean exit inside the band, take it. Cross the ceiling only "
         "to land a beat already in motion, never to open a new one.)"
     )
+    # [2026-07-08 DTG [15] 이식 — deepseek 렌더 게이트] 한국어 순도 잠금: V4 추론-ON 운용에서
+    # 한자/영어 사고-흔적·번역체가 산문으로 새는 것 방지 (DS 계열 고질, GLM 경로 무영향).
+    if "deepseek" in (getattr(config, "OPENAI_MODEL_ID", "") or "").lower():
+        hidden_reminder += (
+            " (Output purity: the prose after the closing mark is natural Korean only. No traces of "
+            "Chinese or English thinking, no translationese, no roleplay/meta terminology in the visible reply.)"
+        )
     full_input = user_input + hidden_reminder
 
     best_response = None
@@ -592,17 +664,24 @@ async def generate_response_with_retry(
                         # [2026-06-10] 길이 미달의 실범인은 텔레스코프 비대 (관측: raw 3555 중 블록 2300+).
                         # 출력 예산을 구조 분석이 다 쓰고 산문이 굶음 → 블록 압축 + 산문 증량을 함께 지시.
                         # 값싼 모델(deepseek)은 추상 지시를 무시 → 문단 수 같은 구체 지표로.
+                        # [2026-07-14 재시도 노트 정합] 잔재 3건 수리:
+                        #  ① 캡 900 하드코딩 → 프리필/프로토콜의 2000과 불일치(구값). 파생값으로 통일.
+                        #  ② "A still scene needs only a few" → 감축 유도. 이 노트는 산문이 *짧아서* 뜨는데
+                        #     '적어도 된다'고 말하면 다음 시도가 더 짧아진다(실측: 블록 1023↓ 시 산문 932↓).
+                        #  ③ 비대칭 부재 → 모델이 "전체 축소"로 읽음. 목표 문단 수를 명시해 방향을 못박는다.
                         _tele_len = len(clean_text) - response_length
                         full_input = (
                             f"{user_input}\n\n"
                             f"[Budget note, attempt {attempt + 1}] "
-                            f"Last output spent the budget the wrong way: telescope block {_tele_len} chars, prose only {response_length} chars. "
-                            f"This turn, rebalance:\n"
-                            f"1. Keep the ┣...┫ telescope block under 900 chars (telegraphic, no elaboration).\n"
-                            f"2. Let the prose after ┫ run to at least {min_length} chars, 6+ full paragraphs. "
-                            f"Expand the beats already in motion: a line of dialogue, an open thread advancing a notch, "
-                            f"an NPC acting on their own agenda, sensory texture and body language around that motion. "
-                            f"Keep to the beats already in play, without adding new plot.\n"
+                            f"Last output spent the budget the wrong way: telescope block {_tele_len} chars, "
+                            f"prose only {response_length} chars (needs {min_length}+).\n"
+                            f"Rebalance in one direction only — the block shrinks, the prose GROWS:\n"
+                            f"1. Telescope block: 2000 characters max, one line per field, no elaboration.\n"
+                            f"2. Prose after the block: {_para_lo}-{_para_hi} full paragraphs, "
+                            f"≈{_vol_words}+ English-words volume. Do not shorten the prose to satisfy item 1.\n"
+                            f"Grow the prose by expanding beats already in play: a line of dialogue, an open thread "
+                            f"advancing a notch, an NPC acting on their own agenda, sensory texture and body language "
+                            f"around that motion. Widen the frame; never slice one instant thinner. Add no new plot.\n"
                             f"{hidden_reminder}"
                         )
             else:

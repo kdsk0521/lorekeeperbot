@@ -273,7 +273,11 @@ async def gather_context(ctx: ResponseContext) -> ResponseContext:
 
     # 기본 컨텍스트
     ctx.lore_txt = domain_manager.get_lore_with_npcs(channel_id)
-    ctx.rule_txt = domain_manager.get_rules(channel_id)
+    # [2026-07-14 경로 감사] ctx.rule_txt 조립 제거 — 소비처 0 고아 회로였음
+    # (get_rules=RULES_DIR 휴면 채널·NPC 시간 힌트·world_ctx 복제 3종이 매턴 조립 후 폐기).
+    # 살아있는 규칙 채널은 !룰→world_state["rules_text"]→Slot 23. NPC 시간 힌트는
+    # une_facade offscreen_candidates(서사 콜 ABSENT CAST)로 재배선.
+    # 상세: 파티쳇수정/lore_rules_path_audit_2026-07-14.md §3
     ctx.world_ctx = game_system.get_world_context(channel_id)
     ctx.obj_ctx = game_system.get_objective_context(channel_id, ctx.user_id)
     ctx.notebook_txt = game_system.get_notebook_text(channel_id, ctx.user_id)
@@ -300,14 +304,7 @@ async def gather_context(ctx: ResponseContext) -> ResponseContext:
     active_quests = game_character.get_active_quests(channel_id)
     ctx.quest_txt = " | ".join(active_quests) if active_quests else "None"
 
-    # NPC 시간 힌트
-    npc_hints = game_system.get_npc_time_progression(channel_id)
-    if npc_hints:
-        ctx.rule_txt += "\n\n### [NPC ACTIVITY HINTS (Time-based)]\n" + "\n".join(npc_hints)
-
-    # [Anti-Gravity] Inject World Context (Doom, Time) into Rules for Cognition
-    if ctx.world_ctx:
-        ctx.rule_txt += f"\n\n{ctx.world_ctx}"
+    # (NPC 시간 힌트·world_ctx의 rule_txt 병합 제거 — 위 경로 감사 주석 참조)
 
     # 기존 NPC 태도
     ctx.existing_attitudes = domain_manager.get_npc_attitudes(channel_id)

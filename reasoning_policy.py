@@ -77,9 +77,14 @@ def reasoning_cap_instruction(tier: str, cap_chars: int = 0) -> str:
         return ""
     if cap_chars and cap_chars > 0:
         cap = cap_chars
+    # [2026-07-08] DTG [4] 이식 확장: 분석-전용 규율 — thinking 안에서 산문/대사 드래프트 금지.
+    # 근거: 영어 추론 traces의 산문 초안이 한국어 출력에 문장단위 전사(원자화·역학-해석체의 seeder).
+    # 참조: session_summary_2026-07-08.md §3-1(Reasoning Lingua Franca) + §4(DTG [4]).
     return (
         f"Constraint on internal reasoning only: keep the reasoning/thinking block under "
-        f"~{cap} characters — a few short analytical bullets, not prose. This limit applies "
+        f"~{cap} characters — a few short analytical bullets, not prose. Analytical planning "
+        f"only: inside thinking, draft no prose, no dialogue, no narration in any language; "
+        f"plan in points, compose sentences only in the final output. This limit applies "
         f"ONLY to the reasoning block; do NOT shorten, summarize, or truncate the actual output."
     )
 

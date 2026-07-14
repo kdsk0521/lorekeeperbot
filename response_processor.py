@@ -1175,3 +1175,58 @@ def detect_cadence_echo(response: str,
         feedback = (f"[I:재정착] 문장 {len(hits)}개가 이전 턴과 verbatim 재발: {shown} "
                     f"→ 새 표면으로(모티프 재등장 OK, 문장을 새로)")
     return feedback, cur
+
+
+# =========================================================
+# [2026-07-08 루프-차단기] 저미기(영어-구조 전사) 검출 + 대사-앵커 추출
+# =========================================================
+# Slot 31(Last_Response_Tail)이 원자화된 산문을 고recency 재주입 → 자기-미러링 루프(새 세션=클린 실측,
+# 파티쳇수정/session_summary_2026-07-08.md §3). 차단기 = 리라이트가 아니라 **주입 교체**: 꼬리가 저며져
+# 있으면 raw 산문 대신 대사 라인만 앵커로 주입(사건·목소리 연속성 유지, 문체 모방 실례 제거).
+# 원리 = "앵무새는 못 막는다 → 모방 대상을 큐레이팅한다". 외부 선례 = risu_agents.js injectAgentNotes
+# (생성 최근접엔 항상 구조화 텍스트 — agent_plugins_5way_mapping.md §6-②).
+# 축 = 연결어미 밀도(실측: 저밈 ~0.11 / 건강 ~0.5) — 어미 단조(detect_korean_floor)와 별개 축.
+# 임계는 보수적(골드 정지-씬 오탐 방지: 함구-소녀 샘플이 통과하도록 2분기 설계). 튜닝은 [slice-metrics] 로그로.
+
+_CONNECTIVE_RE = re.compile(
+    r'[가-힣](?:다가|지만|는데|면서|니까|므로|려고|어도|거나|든지|며|아서|어서|여서|해서)(?=[,\s])'
+    r'|[가-힣]고(?=[,\s])(?!\s*(?:있|싶))'  # -고 연결어미. 단 '-고 있다/싶다'(상 표지)는 절-연쇄가 아니라 제외
+)
+_SENT_SPLIT_RE = re.compile(r'(?<=[.!?…])\s+')
+_NEG_ECHO_RE = re.compile(r'(?:지 않|수 없|아니었|않았)')
+_DIALOGUE_RE = re.compile(r'“[^”]*”|"[^"]*"|「[^」]*」|『[^』]*』')
+
+
+def analyze_slicing_structure(text: str) -> Dict:
+    """저미기 구조 계측. flagged 2분기(원자화 / 부정-포화형), 공통 게이트 = 문장수·초단문 평균."""
+    sents = [s.strip() for s in _SENT_SPLIT_RE.split(text or '') if s.strip()]
+    n = len(sents)
+    if n == 0:
+        return {"sentences": 0, "conn_density": 1.0, "avg_len": 0.0, "neg_ratio": 0.0, "flagged": False}
+    conn = len(_CONNECTIVE_RE.findall(text))
+    neg = sum(1 for s in sents if _NEG_ECHO_RE.search(s))
+    avg_len = sum(len(s) for s in sents) / n
+    conn_density = conn / n
+    neg_ratio = neg / n
+    flagged = (n >= 6 and avg_len < 19.0 and (
+        conn_density < 0.10                              # 분기1: 순수 원자화 (절-연쇄 거의 0)
+        or (conn_density < 0.18 and neg_ratio >= 0.25)   # 분기2: 부정-포화 저밈 (순환부정/반향형)
+    ))
+    return {"sentences": n, "conn_density": round(conn_density, 3),
+            "avg_len": round(avg_len, 1), "neg_ratio": round(neg_ratio, 2), "flagged": flagged}
+
+
+def extract_dialogue_anchor(text: str, cap: int = 500) -> str:
+    """직전 응답에서 대사 라인만 추출(뒤에서부터 cap자) — 저며진 꼬리의 대체 앵커.
+    대사 = 사건·목소리를 나르는 건강 채널(저미기는 지문에서 발생, 전 샘플 실측)."""
+    lines = _DIALOGUE_RE.findall(text or '')
+    if not lines:
+        return ""
+    out: List[str] = []
+    total = 0
+    for ln in reversed(lines):
+        if total + len(ln) > cap and out:
+            break
+        out.insert(0, ln)
+        total += len(ln)
+    return "\n".join(out)
