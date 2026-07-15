@@ -21,6 +21,7 @@ secrets.json
 .vscode/
 .idea/
 .claude/
+.hermes/
 
 # --- 5. 로컬 전용 (서버 불필요) ---
 data/
