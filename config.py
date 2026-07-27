@@ -576,6 +576,14 @@ VECTOR_MIN_SCORE = 0.2     # [1M remap] 0.3→0.2 (관련도 문턱 낮춰 더 a
 MEMORY_SCORE_W_SIMILARITY = 0.4
 MEMORY_SCORE_W_RECENCY = 0.35
 MEMORY_SCORE_W_IMPORTANCE = 0.25
+# [F1 2026-07-18] 발효 회상 evidence gate (FLASHBACK 이식 — Contract-First 조작화)
+MEMORY_EVIDENCE_GATE = True
+MEMORY_GATE_HIGH_SIM = 0.55       # 이 이상 벡터 유사도면 토큰 증거 없이도 통과
+MEMORY_GATE_MIN_OVERLAP = 1       # 최소 쿼리-엔트리 토큰 겹침 (구체 증거)
+MEMORY_GATE_RECENT_KEEP = 2       # 최신 K개 엔트리는 게이트 면제 (장면 꼬리 보장)
+# [F3 2026-07-18] 회상 recency 반감기 + 선발 중복 억제
+MEMORY_RECENCY_HALF_LIFE_ENTRIES = 4   # 엔트리 단위 반감기 (0.5^(age/H))
+MEMORY_DEDUP_JACCARD = 0.6             # 선발 시 기선발과 토큰 자카드 ≥ 이 값이면 스킵 (0=끔)
 # Downtime (다운타임) — 목적 있는 시간 투자 활동 (BITD Downtime)
 DOWNTIME_RECOVER = {"safe": {"vigor": 25, "composure": 15}, "unsafe": {"vigor": 15, "composure": 10}}
 DOWNTIME_VICE = {"base_vigor": 25, "base_composure": 20, "overindulge_threshold": 85, "overindulge_penalty": -15}
@@ -1380,6 +1388,33 @@ V10_KNOWLEDGE_BOUNDARY_INJECT = True
 # I축(재정착): cadence_echo 턴-간 verbatim 후렴 되먹임. 2026-06-24 ON (추론ON도 cross-turn recall은 못 잡음 — 산문6 실증).
 # False = 탐지·로그는 유지, 다음턴 주입만 무동작.
 CADENCE_ECHO_INJECT = True
+
+# [2026-07-22 카드2] 반복 문장 스크럽 — 재발한 verbatim 문장을 다음 턴 *주입본*(히스토리·S31)에서 제거.
+# 넛지(위 INJECT)는 "반복하지 마"라고 말하는 것이고 이건 "베낄 원본을 치우는" 것 — 후자가 이 스택의
+# 검증된 반복 억제 계보(엠대쉬 미러 트림, 07-08 루프차단기). 저장본·플레이어 노출본은 무손상.
+# False = 탐지·로그·넛지는 유지, 스크럽만 무동작(1줄 롤백).
+ECHO_SCRUB = True
+
+# =========================================================
+# [2026-07-22 카드1] 감정 압력 공급 · 포어그라운드 선별
+# 스펙: 파티쳇수정/phase3_card1_emotion_pressure_spec_v0.4.md
+# 원칙: 렌더러가 받는 감정을 "정체(what it is)"에서 "압력(what it does)"으로.
+#       감정 벡터(emotion_engine)는 말하지 않고 **밸브**로 일한다(선별·노출량).
+# =========================================================
+# 서사 콜 psyche_narrative에 pressure(drives/cannot) 요청·병합. False = 스키마 미요청(구 동작).
+PRESSURE_SUPPLY = True
+# 압력을 Slot 14로 방출. False = 생성만 하고 주입 0(관측 구간).
+PRESSURE_EMIT = True
+# deep_read 렌더러 방출. True = 구 경로 유지(롤백용). 신설계 기본 = False(상류 전용).
+DEEPREAD_EMIT = False
+
+# 포어그라운드 상한 — 2 확정(대비는 개수가 아니라 비율에서 나옴 + V4 전량이행 성향 방어).
+# 유저가 직접 지목·대화한 NPC는 이 상한을 넘어 강제 fg.
+FOREGROUND_CAP = 2
+# 점수 차가 이 값 미만이면 직전 턴 fg 유지(튐 방지). rotation penalty보다 커야 서로 삼키지 않음.
+FOREGROUND_HYSTERESIS = 0.15
+# 직전 턴 fg였던 NPC 감점(고착 방지). 히스테리시스보다 작게.
+FOREGROUND_ROTATION_PENALTY = 0.08
 
 # iceberg mirror register 노테이션 (자기기만/내면). 2026-06-21 스키마드리프트 검수로 부활.
 # 내면 노테이션이라 과내면 우려와 충돌 가능 → 산문 과내면화 관측 시 이 줄 False = mirror 즉시 무동작.

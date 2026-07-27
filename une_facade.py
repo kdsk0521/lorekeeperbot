@@ -887,6 +887,18 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
             except Exception:
                 _time_hints = {}
 
+            # [2026-07-18 고아 승격] world_tree last-known 위치 — 부재 NPC가 '마지막으로
+            # 목격된 장소' 앵커 (get_npc_location 소비 0이던 것). Contract-First 오프스크린 바닥.
+            _wt_loc = {}
+            try:
+                import world_tree as _wt
+                for _an in _absent_names:
+                    _lloc = _wt.get_npc_location(channel_id, _an)
+                    if _lloc:
+                        _wt_loc[_an] = _lloc
+            except Exception:
+                _wt_loc = {}
+
             _cand_lines = []
             for _an in _absent_names:
                 _aa = _att_map.get(_an, {}) if isinstance(_att_map, dict) else {}
@@ -895,8 +907,9 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
                                if _ls is not None else ", absent_for=unknown")
                 _th = _time_hints.get(_an) or _time_hints.get(_an.split("(")[0].strip())
                 _th_str = f", likely-now={_th}" if _th else ""
+                _loc_str = f", last_seen_at={_wt_loc[_an]}" if _an in _wt_loc else ""
                 _cand_lines.append(
-                    f"{_an}: attitude={_aa.get('attitude', 'neutral')}, depth={int(_aa.get('depth', 0) or 0)}{_absent_str}{_th_str}"
+                    f"{_an}: attitude={_aa.get('attitude', 'neutral')}, depth={int(_aa.get('depth', 0) or 0)}{_absent_str}{_loc_str}{_th_str}"
                 )
             anchors["offscreen_candidates"] = _cand_lines
     except Exception as _e_osc:
@@ -926,6 +939,52 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
 
     # Pending Flashback (회상 대기)
     anchors["pending_flashback"] = domain_manager.get_pending_flashback(channel_id)
+
+    # [2026-07-15 수리] theoria가 읽는데 아무도 안 쓰던 앵커 2종 (dead_scan B: anchors READ-ONLY).
+    # 07-04 entity_state / 07-15 arc 와 같은 병 — .get(k, default)라 조용히 default를 먹었다.
+    #
+    #  ① scene_type — theoria L76이 `anchors.get("scene_type", "normal")`로 읽어
+    #     `_build_system_instruction`의 조건부 게이트에 쓴다:
+    #         if scene_context.get("scene_type") == "intimate":
+    #             rule_tables += SEXUAL_PSYCHOLOGY_ANALYSIS
+    #     키가 없어 항상 "normal" → **SEXUAL_PSYCHOLOGY_ANALYSIS가 한 번도 로딩된 적 없음.**
+    #     추출 콜은 이번 턴 SceneType을 아직 모른다(그걸 생산하는 게 이 콜) → 직전 프레임의
+    #     dai_snapshot에서 가져온다. 장면은 이어지므로 1턴 지연은 감수(렌더러 쪽과 동일 성질).
+    #
+    #  ② turn_index — theoria L80이 `len(anchors.get("history", []))`로 turn_count를 세어
+    #     `get_session_spotlight(seed, turn_number, 5, ...)`에 넘긴다. 그 안에서
+    #         group_idx = turn_number % total_groups
+    #     즉 turn_number가 로테이션 축인데 항상 0 → group_idx 항상 0 → **매 턴 pool[0:5]
+    #     동일**. "This turn, actively apply these highlighted theories"라 써놓고 채널당
+    #     같은 5개 이론이 영구 고정이었다. history 길이 대신 실 카운터(turn_index)를 준다.
+    try:
+        _prev_frame = domain_manager.get_latest_frame(channel_id) or {}
+        _prev_dai = _prev_frame.get("dai_snapshot") or {}
+        anchors["scene_type"] = str(_prev_dai.get("scene_type", "normal") or "normal")
+    except Exception as _e_st:
+        logger.debug("[UNE] anchors.scene_type skip: %s", _e_st)
+        anchors["scene_type"] = "normal"
+    try:
+        anchors["turn_index"] = int(world.get("turn_index", 0) or 0)
+    except (TypeError, ValueError):
+        anchors["turn_index"] = 0
+
+    #  ③ active_genres — 같은 병 6번째 (dead_scan v2.3의 narrative_anchors 별칭이 드러냄).
+    #     doom_module L185가 `(context.narrative_anchors or {}).get("active_genres", [])`로
+    #     읽어 C-Lens/B-Flavor를 뽑는다:
+    #         lens_tags   = _extract_lens_tags(...)    → noir/comedy/romance/drama
+    #         flavor_tags = _extract_flavor_tags(...)  → urban_fantasy/steampunk/...
+    #         _get_doom_phase L109: primary = lens_tags[0] if lens_tags else "default"
+    #     키가 없어 항상 [] → **primary 영구 "default"** → doom_chapter_volume_plan의
+    #     lens×flavor×phase atmosphere 매트릭스가 통째로 미가동(起承轉結 경계가 늘 기본값).
+    #     생산자·소비자 모양은 이미 일치했다(command_handler L423-432가 layers.narrative_tone에
+    #     lens를, layers.style_tech에 flavor를 저장 / _extract_*가 {layers} 형식 판독).
+    #     **배달만 없었다.**
+    try:
+        anchors["active_genres"] = domain_manager.get_active_genres(channel_id)
+    except Exception as _e_ag:
+        logger.debug("[UNE] anchors.active_genres skip: %s", _e_ag)
+        anchors["active_genres"] = []
 
     # Bus initialization
     bus = SharedBus()
@@ -1166,7 +1225,7 @@ class UniversalNarrativeEngine:
         from npc_autonomous import NPCAutonomousEngine
 
         # Helena metrics(depth/tension) merge: domain 영속 데이터 → DAI attitudes
-        _dai_att = bus.dai.get("npc_attitudes", {})
+        _dai_att = bus.dai.get("npc_attitudes") or {}  # [07-27] 명시 null 방어
         _stored_att = (context.narrative_anchors or {}).get("stored_npc_attitudes", {})
         _merged_att = {}
         for _n, _a in _dai_att.items():

@@ -16,6 +16,7 @@ ANALYSIS_OPENAI_MODEL_READER env로 교체 가능(Gemma 4 31B 후보: 혈통·�
 
 import json
 import logging
+import re
 from typing import Any, Dict, Tuple
 
 import config
@@ -163,6 +164,49 @@ def _blurb_spoiler_scrub(blurb: str, channel_id: str) -> str:
         return blurb
 
 
+def _lore_digest(lore: str, budget: int = 8000) -> str:
+    """[2026-07-16 뒤표지 재료 개선] 앞 N자 절단 → 구조 인지 다이제스트.
+    전 섹션 목차 + 섹션별 앞부분 균등 배분 — 같은 예산으로 책 '전체'가 축소판으로 들어간다.
+    앞절단의 두 병(뒷섹션 통소실 / 앞섹션 예산 독식) 동시 해소. 결정적, 콜 0.
+    섹션이 많아 배분 몫이 너무 작아지면 균등 간격 표본으로 줄여 몫을 확보(전권 분포 유지).
+    헤더가 없는 통짜 로어는 front+tail 샘플링 폴백(앞절단보다 항상 낫다).
+    """
+    lore = (lore or "").strip()
+    if len(lore) <= budget:
+        return lore
+    _hdr = re.compile(r"^(#{1,6}\s+\S.*|\[[^\[\]\n]{1,60}\]\s*|={3,}\s*\S.*)$", re.MULTILINE)
+    marks = [(m.start(), m.group(0).strip()) for m in _hdr.finditer(lore)]
+    if len(marks) < 3:
+        head = int(budget * 0.6)
+        tail = budget - head - 30
+        return lore[:head] + "\n\n[... middle omitted ...]\n\n" + lore[-tail:]
+    sections = []
+    for i, (pos, _title) in enumerate(marks):
+        end = marks[i + 1][0] if i + 1 < len(marks) else len(lore)
+        body = lore[pos:end].strip()
+        if body:
+            sections.append(body)
+    toc_titles = [t.lstrip("#= ").strip("[] ").strip() for _, t in marks][:60]
+    toc = "### CONTENTS (full book)\n" + " / ".join(t for t in toc_titles if t)
+    remaining = budget - len(toc) - 40
+    if remaining < 500:
+        return toc[:budget]
+    quota = remaining // max(1, len(sections))
+    if quota < 300:
+        step = -(-300 * len(sections) // remaining)  # ceil — 균등 간격 표본
+        sections = sections[::max(1, step)]
+        quota = remaining // max(1, len(sections))
+    out = [toc]
+    total = len(toc)
+    for body in sections:
+        seg = body[:quota].rstrip()
+        if not seg or total + len(seg) + 2 > budget:
+            break
+        out.append(seg)
+        total += len(seg) + 2
+    return "\n\n".join(out)
+
+
 async def _get_or_build_blurb(client, channel_id: str) -> str:
     """[v1.2 뒤표지 2026-07-14] 로어북 → 독자용 소개글. 세션당 1회 생성(로어 해시 캐시),
     로어 변경 시에만 재생성. 새 콜이지만 1회성+백그라운드(조건부 정책 통과).
@@ -184,7 +228,8 @@ async def _get_or_build_blurb(client, channel_id: str) -> str:
         except Exception:
             pass
         # 예산 분리: 로어가 커도 규칙부(반드시-로딩 공간)가 잘리지 않게 각자 캡
-        material = "\n\n".join(x for x in (lore[:8000], rules[:4000]) if x)
+        # [2026-07-16] lore 앞 8000자 절단 → 구조 인지 다이제스트 (전 섹션 목차+균등 발췌)
+        material = "\n\n".join(x for x in (_lore_digest(lore, 8000), rules[:4000]) if x)
         if not material:
             return ""
         h = hashlib.sha1(material.encode("utf-8")).hexdigest()[:12]

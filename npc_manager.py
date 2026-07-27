@@ -661,8 +661,13 @@ def generate_mob_tag() -> str:
     return f"#{c1}{c2}"
 
 def is_mob_tag(name: str) -> bool:
-    """Checks if the name ends with a mob tag pattern."""
-    return "#" in name and len(name.split("#")[-1]) == 2
+    """Checks if the name ends with a mob tag pattern (#XY or 폴백 #NNNN).
+    [2026-07-18] 폴백 태그(#4자리, 50회 재추첨 전부 충돌 시) 인식 추가 —
+    미인식 시 폴백 개체가 재차 태깅 대상이 돼 이중 태그('병사 #1234 #2B') 위험."""
+    if "#" not in name:
+        return False
+    tail = name.split("#")[-1]
+    return len(tail) == 2 or (len(tail) == 4 and tail.isdigit())
 
 
 # =========================================================
@@ -1123,23 +1128,46 @@ def handle_identity_reveal(channel_id: str, old_name: str, new_name: str, reason
         # 로어 NPC라면 새 세션 NPC 항목을 생성?
         # 여기서는 세션 데이터 내에서만 처리한다고 가정.
         return f"⚠️ NPC '{old_name}' 데이터가 없습니다."
-        
+
+    # [2026-07-18 배선 보강] 대상 이름 충돌 가드 — new_name이 이미 다른 엔티티면
+    # 덮어쓰기(기존 한스 소멸) 대신 중단. 병합은 사람이 !npc 병합으로.
+    if get_npc(channel_id, new_name):
+        return f"⚠️ '{new_name}'은(는) 이미 존재하는 NPC입니다. 병합이 필요하면 !npc 병합을 사용하세요."
+
     # 데이터 복사 및 메타데이터 추가
     new_data = npc_data.copy()
-    
+
     # [FIX] Source 보존 (기본값 보존)
     if "source" not in new_data:
         new_data["source"] = "session"
-        
+
     new_data["identity_history"] = new_data.get("identity_history", [])
     new_data["identity_history"].append({
         "old_name": old_name,
         "revealed_at": time.strftime('%Y-%m-%d %H:%M'),
         "reason": reason
     })
-    
+
+    # [2026-07-18 배선 보강] 구명을 aliases로 보존 — 과거 기록·발효기억 속 "경비병 #2A"
+    # 참조가 domain_manager._find_npc_key aliases 매칭으로 새 키에 해소되도록.
+    _aliases = new_data.get("aliases")
+    _aliases = list(_aliases) if isinstance(_aliases, list) else []
+    if old_name not in _aliases:
+        _aliases.append(old_name)
+    new_data["aliases"] = _aliases
+
     # 새 항목 생성
     update_npc(channel_id, new_name, new_data)
+
+    # [2026-07-18 배선 보강] world_tree presence 이관 (구명 제거 + 신명 배치)
+    try:
+        import world_tree
+        _loc = world_tree.get_npc_location(channel_id, old_name)
+        world_tree.remove_npc_presence(channel_id, old_name)
+        if _loc:
+            world_tree.set_npc_location(channel_id, new_name, _loc)
+    except Exception:
+        pass
     
     # 구 항목 제거 (선택적: Redirect를 남길 수도 있으나, 혼동 방지 위해 제거가 깔끔)
     delete_npc(channel_id, old_name)
@@ -1611,3 +1639,115 @@ def get_persona_snapshot(channel_id: str, npc_name: str) -> dict:
     if not npc:
         return {}
     return npc.get("persona_snapshot", {})
+
+
+# =========================================================
+# [2026-07-22 카드3] 증류 로어 접지 — 이름 매칭 단독의 사문화 수리
+# =========================================================
+# 문제: analyze_character_sheet 증류 직전의 로어 접지가 **NPC 이름 리터럴 검색**이었다.
+#   프로필 NPC(이름이 로어북에 있음)에선 걸리지만, 모델이 방금 지어낸 **세션 NPC 이름은
+#   로어에 없으므로 영구 미스** — 정작 접지가 필요한 쪽에서만 사문화되는 구조였다.
+# 수리: 3단 폴백(이름 → 동시출현 청크 → 관찰↔청크 bigram 겹침) + 규칙부 발췌.
+#   전부 결정론·콜 순증 0. 임베딩 RAG는 인프라 미구축(로드맵 E)이라 이번 범위 밖.
+
+_KO_TOKEN_RE = re.compile(r"[가-힣]{2,}")
+
+
+def _ko_bigrams(text: str, cap: int = 400) -> set:
+    """한글 2-gram 집합 — 고유명사·세계관 용어 겹침 판정용(Reader-GM 매칭 선례와 동형)."""
+    grams = set()
+    for tok in _KO_TOKEN_RE.findall(text or "")[:cap]:
+        for i in range(len(tok) - 1):
+            grams.add(tok[i:i + 2])
+    return grams
+
+
+def build_distill_grounding(channel_id: str,
+                            npc_name: str,
+                            aliases: Optional[List[str]] = None,
+                            observations: str = "",
+                            seen_labels: Optional[Dict[str, int]] = None,
+                            max_chunks: int = 2,
+                            chunk_chars: int = 600,
+                            rules_chars: int = 1200) -> str:
+    """증류 입력에 얹을 접지 블록(로어 발췌 + 규칙부 발췌). 없으면 빈 문자열."""
+    parts: List[str] = []
+
+    # --- 규칙부: 청킹되지 않고 항상 로딩되는 영역(인물 불변 규칙이 사는 자리) ---
+    try:
+        _rules = (domain_manager.get_rules(channel_id) or "").strip()
+        if _rules:
+            parts.append(
+                "[규칙 참고 — 이 세계의 상시 규칙. 관찰 해석의 접지로만 쓰고 문장을 통복사하지 말 것]\n"
+                + _rules[:rules_chars]
+            )
+    except Exception:
+        pass
+
+    # --- 로어 청크: 3단 폴백 ---
+    try:
+        chunks = domain_manager.get_lore_chunks(channel_id) or []
+        if chunks:
+            names = [npc_name] + [str(a) for a in (aliases or []) if a]
+            names += [n.split("(")[0].strip() for n in list(names) if "(" in n]
+            names = [n for n in dict.fromkeys(names) if n]
+
+            picked: List[str] = []       # 렌더용 발췌
+            picked_idx: set = set()
+
+            def _add(i, chunk):
+                if i in picked_idx or len(picked) >= max_chunks:
+                    return
+                lbl = str(chunk.get("label", "") or "") if isinstance(chunk, dict) else ""
+                txt = str(chunk.get("content", "") or "") if isinstance(chunk, dict) else str(chunk or "")
+                if not txt.strip():
+                    return
+                picked_idx.add(i)
+                picked.append((f"({lbl}) " if lbl else "") + txt.strip()[:chunk_chars])
+
+            # 1단: 이름·별칭 리터럴 (프로필/로어 NPC에서 유효 — 기존 동작 보존)
+            for i, chunk in enumerate(chunks):
+                lbl = str(chunk.get("label", "") or "") if isinstance(chunk, dict) else ""
+                txt = str(chunk.get("content", "") or "") if isinstance(chunk, dict) else str(chunk or "")
+                if any(n in txt or n in lbl for n in names):
+                    _add(i, chunk)
+                if len(picked) >= max_chunks:
+                    break
+
+            # 2단: 동시출현 — 이 NPC가 등장한 턴들에 실제로 주입됐던 청크(빈도순)
+            if len(picked) < max_chunks and seen_labels:
+                for lbl, _cnt in sorted(seen_labels.items(), key=lambda kv: (-kv[1], kv[0])):
+                    for i, chunk in enumerate(chunks):
+                        _l = str(chunk.get("label", "") or "") if isinstance(chunk, dict) else ""
+                        if _l and _l == lbl:
+                            _add(i, chunk)
+                            break
+                    if len(picked) >= max_chunks:
+                        break
+
+            # 3단: 관찰 ↔ 청크 내용 한글 bigram 겹침(세계관 용어 공유)
+            if len(picked) < max_chunks and observations:
+                obs_g = _ko_bigrams(observations)
+                if obs_g:
+                    scored = []
+                    for i, chunk in enumerate(chunks):
+                        if i in picked_idx:
+                            continue
+                        txt = str(chunk.get("content", "") or "") if isinstance(chunk, dict) else str(chunk or "")
+                        ov = len(obs_g & _ko_bigrams(txt))
+                        if ov >= 3:
+                            scored.append((ov, i))
+                    for _ov, i in sorted(scored, key=lambda x: (-x[0], x[1])):
+                        _add(i, chunks[i])
+                        if len(picked) >= max_chunks:
+                            break
+
+            if picked:
+                parts.append(
+                    "[세계관 참고 — 로어 원문 발췌. 관찰 해석의 접지로만 쓰고 시트로 문장을 "
+                    "통복사하지 말 것. 관찰과 충돌하면 로어 우선]\n" + "\n---\n".join(picked)
+                )
+    except Exception:
+        pass
+
+    return ("\n\n".join(parts) + "\n\n") if parts else ""

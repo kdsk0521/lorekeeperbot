@@ -60,6 +60,8 @@ _TELESCOPE_GATE_NAMES = (
     "Collision", "Gravity", "Alignment", "Alignment.Silenced", "Vending", "Unshown", "Final", "Scope",
     # V4 Adversarial
     "C",
+    # V5 (2026-07-22) Author's Landing Note — 신규 필드명 (기존과 겹치는 Field/Scene/Gravity/Unshown/Scope는 위에 존재)
+    "Ground", "Voice", "Pull", "Spent", "Echo", "Punctum",
     # V2 legacy
     "Who", "When", "Where", "When/Where", "What", "Why", "How",
     # V1 legacy
@@ -234,7 +236,24 @@ async def generate_response(
     # (S31 꼬리는 컨텍스트 블록이라 히스토리보다 앞 — 메시지 순서 실측). 저며진 직전 응답은 주입본에서
     # 대사-앵커로 교체. 저장본 무손상(세션 매턴 재생성, 주입본만 큐레이팅 — 엠대쉬 스크럽과 동일 원리).
     # 마지막 1개만: 옛 턴은 영향 감쇠 + 연속성 보존. 대사가 0이면 raw 유지(히스토리 통짜 제거는 과격).
-    from response_processor import reduce_emdashes, analyze_slicing_structure, extract_dialogue_anchor
+    # [2026-07-22 카드2] 반복 문장 스크럽: 직전 턴에 verbatim 재발한 문장을 주입본에서 제거.
+    # 넛지(CADENCE_ECHO_INJECT)는 "말리기"였고 이건 "모방 대상 제거" — 실례가 남아 있으면 넛지가 진다.
+    from response_processor import (reduce_emdashes, analyze_slicing_structure,
+                                    extract_dialogue_anchor, scrub_echo_sentences)
+    _echo_scrub: list = []
+    if getattr(config, "ECHO_SCRUB", True):
+        try:
+            _echo_scrub = domain_manager.get_session_ai_memory(
+                getattr(ctx, "channel_id", "") or ""
+            ).get("echo_scrub_sents", []) or []
+            if not isinstance(_echo_scrub, list):
+                _echo_scrub = []
+        except Exception:
+            _echo_scrub = []
+    _scrub_total = 0
+    # 첫 등장 보존용 — 히스토리는 오래된 순이므로 최초 인스턴스는 남고 이후 재발분만 빠진다
+    # (지시대상이 그 문장으로만 언급된 경우 대상 자체가 사라지는 것 방지).
+    _echo_seen: set = set()
     _last_asst_idx = -1
     for _i in range(len(history_to_inject) - 1, -1, -1):
         if history_to_inject[_i]['role'] != "User":
@@ -245,6 +264,10 @@ async def generate_response(
         _is_user = h['role'] == "User"
         if not _is_user:
             _content = reduce_emdashes(_content)
+            if _echo_scrub:
+                _content, _n_scrub = scrub_echo_sentences(
+                    _content, _echo_scrub, already_seen=_echo_seen)
+                _scrub_total += _n_scrub
             if _idx == _last_asst_idx:
                 try:
                     _sl = analyze_slicing_structure(_content[-800:])  # 판정은 꼬리 기준(저미기는 꼬리 지배)
@@ -260,6 +283,9 @@ async def generate_response(
             session.history.append({"role": "user" if _is_user else "assistant", "content": _content})
         else:
             session.history.append(types.Content(role="user" if _is_user else "model", parts=[types.Part(text=_content)]))
+
+    if _scrub_total:
+        logging.info(f"[EchoScrub] history: {_scrub_total} sentence(s) removed from injection copy")
 
     # [Anti-Gravity] PC 사칭 탐지 및 BKSPC 처리가 통합된 생성 함수 호출
     # 사칭 감지 토글 확인 (기본값: 활성화)

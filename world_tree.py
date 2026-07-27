@@ -276,6 +276,20 @@ def set_npc_location(channel_id: str, npc_name: str, location_name: str) -> str:
     return "placed"
 
 
+def remove_npc_presence(channel_id: str, npc_name: str) -> bool:
+    """NPC를 모든 위치에서 제거 (개명/퇴장 시). [2026-07-18 identity reveal 배선용]"""
+    tree = _get_tree(channel_id)
+    removed = False
+    for nid, node in tree.get("nodes", {}).items():
+        npcs = node.get("npcs_present", [])
+        if npc_name in npcs:
+            npcs.remove(npc_name)
+            removed = True
+    if removed:
+        _save_tree(channel_id, tree)
+    return removed
+
+
 def get_npcs_at_location(channel_id: str, location_name: str) -> List[str]:
     """특정 위치의 NPC 목록."""
     node = get_node(channel_id, location_name)

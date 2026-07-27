@@ -191,6 +191,18 @@ def repair_json(text: str) -> str:
         r'\1', text)
     #   닫는 따옴표 뒤 괄호 주석: "...value" (해설), → "...value",
     text = re.sub(r'(")\s*\([^()"]*\)(?=\s*[,}\]\n])', r'\1', text)
+    # 2.6) [GLM 2026-07-27] 같은 버릇의 **엠대쉬/주석기호 판**. 2.5는 괄호만 잡아서 아래를 놓쳤고,
+    #   놓치면 수리가 아니라 **파싱 전면 실패**(재시도까지 소진 → Theoria 분석 통째로 유실)다.
+    #   실측 로그: "self_opacity": null — automaton; no self-model to be opaque about ...",
+    #   구분자를 :뒤 bare 리터럴로 한정(룩비하인드) — 문자열 값 안의 엠대쉬("tense — jaw tight")는 불가침.
+    #   줄 끝까지 삼키되 꼬리 콤마는 보존. ASCII 하이픈은 공백에 둘러싸인 경우만(음수 오탐 방지).
+    text = re.sub(
+        r'(?<=:)(\s*)(true|false|null|-?\d+(?:\.\d+)?)(?:\s*[—–]|\s+-|\s*//|\s*#)'
+        r'[^\n]*?(,?)(?=\s*(?:\n|[}\]]))',
+        r'\1\2\3', text)
+    # 2.7) [GLM 2026-07-27] 키 뒤 스트레이 `":` — 콜론을 두 번 찍는 버릇.
+    #   실측 로그: "for_or_against":": "for"  →  "for_or_against": "for"
+    text = re.sub(r'":\s*":\s*(?=")', '": ', text)
     # 3) Single-quoted 키 → double-quoted: {'key': → {"key":
     text = re.sub(r"""(?<=[\{,])\s*'([^']+)'\s*:""", r' "\1":', text)
     # 4) Unquoted 키 → double-quoted: {key: → {"key":  ,key: → ,"key":

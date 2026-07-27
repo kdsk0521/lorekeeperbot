@@ -1147,14 +1147,16 @@ def detect_cadence_echo(response: str,
                         recent_sents: Optional[List[str]] = None,
                         min_chars: int = 6,
                         near: float = 0.90,
-                        ) -> Tuple[str, List[str]]:
+                        ) -> Tuple[str, List[str], List[str]]:
     """I축: 응답 문장이 이전 턴들과 verbatim/near-verbatim 재발하는지 감지. soft 경고만.
 
     *문장 단위* 비교라 같은 referent(은색 캔)가 *다른 문장*에 재등장하는 건 통과(ratio<near),
     같은 *문장 템플릿*('열리지 않은 약속.', '유우의 찻잔이 받침에 닿았다.')이 재발하면 플래그.
     위협 아님 — comfort-groove 재정착의 *관찰*(산문2 스모크: 25턴 59건, 캔 모티프 오탐 0).
 
-    Returns: (feedback_str, current_sents).  current는 rolling window에 append용(caller가 cap).
+    Returns: (feedback_str, current_sents, echo_hits).
+      current = rolling window에 append용(caller가 cap).
+      echo_hits = 재발한 문장 원문 리스트 — **스크럽 대상**(카드2: 넛지로 말리는 대신 모방 대상에서 제거).
     """
     import difflib
     recent = recent_sents or []
@@ -1174,7 +1176,66 @@ def detect_cadence_echo(response: str,
         shown = "; ".join(f'"{h[:24]}…"' for h in hits[:3])
         feedback = (f"[I:재정착] 문장 {len(hits)}개가 이전 턴과 verbatim 재발: {shown} "
                     f"→ 새 표면으로(모티프 재등장 OK, 문장을 새로)")
-    return feedback, cur
+    return feedback, cur, hits
+
+
+# =========================================================
+# [2026-07-22 카드2] 반복 문장 스크럽 — 모방 대상 제거
+# =========================================================
+# 원리: verbatim 재발에 넛지는 이미 배선돼 있는데도 재발이 계속됐다(산문연구1 10문장).
+# 넛지는 1턴 지연 피드백인데 미러링 원천(히스토리 전문·S31 꼬리)은 매 턴 실시간 재공급 —
+# "반복하지 마"라고 말하면서 반복할 실례를 계속 보여주는 구조였다.
+# → 말리는 대신 **모방 대상에서 그 문장을 뺀다**. 계보: 엠대쉬 미러 트림(히스토리 엠대쉬 삭감),
+#   07-08 루프차단기(저며진 꼬리→대사 앵커 교체). 주입본만 큐레이팅, 저장본·플레이어 노출본 무손상.
+# 원칙 정합: "같은 문장이 또 나왔다"는 기계 판정 가능한 형식 사실 → 넛지=형식만 원칙 통과.
+
+def scrub_echo_sentences(text: str,
+                         echo_sents: Optional[List[str]] = None,
+                         near: float = 0.90,
+                         min_keep_ratio: float = 0.5,
+                         already_seen: Optional[set] = None) -> Tuple[str, int]:
+    """주입본에서 재발 문장을 제거. Returns: (scrubbed_text, removed_count).
+
+    **첫 등장 보존(already_seen 전달 시)**: 지시대상(모티프)이 오직 그 반복 문장으로만 언급된
+    경우 전량 삭제하면 주입본에서 대상 자체가 사라진다 → 히스토리를 오래된 순으로 돌며
+    첫 인스턴스는 남기고 *이후 재발분만* 제거한다. 검출기 원칙("모티프는 재등장 OK,
+    문장을 새로")과 동형. already_seen=None이면 전량 제거(단발 텍스트용, 예: S31 꼬리 —
+    echo 목록에 오른 문장은 이미 앞에서 최소 1회 등장했으므로 첫 인스턴스가 아니다).
+
+    안전판: 제거 후 본문이 원본의 min_keep_ratio 미만으로 쪼그라들면 **원본을 그대로 반환**
+    (통짜 삭제 방지 — 루프차단기의 '대사 0이면 raw 유지'와 같은 자세).
+    """
+    if not text or not echo_sents:
+        return text, 0
+    import difflib
+    targets = [s.strip() for s in echo_sents if s and s.strip()]
+    if not targets:
+        return text, 0
+    kept: List[str] = []
+    removed = 0
+    for sent in _SENT_SPLIT.split(text):
+        s = sent.strip()
+        if not s:
+            continue
+        matched: Optional[str] = None
+        for t in targets:
+            if s == t or difflib.SequenceMatcher(None, s, t).ratio() >= near:
+                matched = t
+                break
+        if matched is None:
+            kept.append(s)
+            continue
+        if already_seen is not None and matched not in already_seen:
+            already_seen.add(matched)   # 첫 등장 = 지시대상 보존
+            kept.append(s)
+            continue
+        removed += 1
+    if not removed:
+        return text, 0
+    out = " ".join(kept).strip()
+    if not out or len(re.sub(r"\s", "", out)) < len(re.sub(r"\s", "", text)) * min_keep_ratio:
+        return text, 0  # 과다 삭제 → 원본 유지
+    return out, removed
 
 
 # =========================================================

@@ -146,6 +146,15 @@ class OrchestrationService:
     # =========================================================
     async def gather_context(self, ctx: ResponseContext) -> ResponseContext:
         """??? ?? ???? ???? ?????. (Delegated)"""
+        # [F2 2026-07-18] 회상 벡터 캐시를 소비 직전에 현행 쿼리로 정합
+        # (기존: auto_ferment 시점 쿼리로만 적립 → 소비 턴과 한 턴 이상 어긋남).
+        # gather 내부의 build_fermented_context가 이 캐시를 읽는다. 실패 무해.
+        try:
+            await fermentation.refresh_recall_vector_cache(
+                self.client, ctx.domain_data, ctx.action_text, channel_id=ctx.channel_id
+            )
+        except Exception as _e_f2:
+            logger.debug(f"[F2] recall cache refresh skip: {_e_f2}")
         return await orch_ctx.gather_context(ctx)
 
     # STEP 2: COGNITION ANALYSIS (UNE Theoria 실행)
@@ -163,6 +172,16 @@ class OrchestrationService:
         current_location = dai.get("current_location")
         location_risk = dai.get("location_risk")
         if current_location:
+            # [2026-07-19 PersistAudit 처방] 위치 이름 정화 — 추출이 섞어 보내는 상태 꼬리
+            # ("쇼핑 애비뉴 (이동 완료)")가 그대로 domain location·world_tree 노드·presence로
+            # 오염되는 것 차단. 괄호 꼬리 중 상태/진행 서술만 제거 (지명 부속 괄호는 보존).
+            _loc_clean = re.sub(
+                r"\s*[\(（][^)）]*(?:완료|도착|이동|하는 중|중)[\)）]\s*$", "",
+                str(current_location),
+            ).strip()
+            if _loc_clean:
+                current_location = _loc_clean
+        if current_location:
             domain_manager.set_current_location(channel_id, current_location)
             # Tier 2: 새 위치 자동 등록 (world_tree에 없으면 추가)
             try:
@@ -172,6 +191,21 @@ class OrchestrationService:
                         channel_id, current_location, node_type="area",
                         properties={"risk": location_risk or "Low", "tags": ["auto_detected"]},
                     )
+            except Exception:
+                pass
+            # [2026-07-18 고아 승격] world_tree NPC presence 쓰기 — 장면 NPC를 현재 위치에 기록.
+            # 읽기 경로는 기배선인데(S16 build_location_context_text 'NPCs present' 렌더 +
+            # 오프스크린 last-known 소비) 쓰기가 0이라 통째로 사문이었다. 콜 순증 0.
+            try:
+                import world_tree
+                import npc_manager as _npm_wt
+                _scene_names = _npm_wt.get_scene_npc_names(channel_id) or []
+                _placed = sum(
+                    1 for _sn in _scene_names
+                    if _sn and world_tree.set_npc_location(channel_id, _sn, current_location) == "placed"
+                )
+                if _placed:
+                    logger.debug(f"[WorldTree] presence: {_placed} NPC @ {current_location}")
             except Exception:
                 pass
         if location_risk:
@@ -253,8 +287,21 @@ class OrchestrationService:
         new_knowledge = dai.get("npc_knowledge")
         if new_knowledge and isinstance(new_knowledge, dict):
             _atts_for_ledger = domain_manager.get_npc_attitudes(channel_id) or {}
+            # [2026-07-19 PC 혼입 가드] 지식 '보유자' 키에 PC가 오면 스킵 — PC 지식은 플레이어
+            # 소관, 영속 시 PC 이름의 지식 엔트리가 자라남 (07-13 npc_attitudes 가드·
+            # PersistAudit PC 명부 수리와 같은 병 계열: LLM 산출 이름의 PC/NPC 미구분).
+            _pc_masks_k = set()
+            try:
+                for _p in domain_manager.get_domain(channel_id).get("participants", {}).values():
+                    if isinstance(_p, dict) and _p.get("mask"):
+                        _pc_masks_k.add(_p["mask"])
+            except Exception:
+                pass
             for npc_name, k_data in new_knowledge.items():
                 if not isinstance(k_data, dict):
+                    continue
+                if npc_name in _pc_masks_k:
+                    logger.debug(f"[NPC Knowledge] PC 혼입 스킵: {npc_name}")
                     continue
                 # [V10 Secret Ledger 2026-07-14] 원장 동기화 + 압력 상향.
                 # 코드 압력(축적)이 LLM leak_risk(턴 판단)보다 높으면 상향만 — 하향 없음
@@ -268,7 +315,13 @@ class OrchestrationService:
                 # 이 블록(4.5)은 슬롯 빌드(5) 이전이라 iceberg가 같은 턴에 소비.
                 # 추출이 이번 턴 surface를 준 비밀은 건드리지 않음(LLM 우선).
                 if _ledger.get("surfaces"):
-                    _ups = k_data.setdefault("secret_updates", [])
+                    # [2026-07-19 프로덕션 픽스] setdefault는 키가 있고 값이 null이면 None을
+                    # 반환 — LLM이 "secret_updates": null을 명시로 뱉은 턴에 TypeError.
+                    # None/비리스트 전부 []로 정규화 (LLM schema pragmatism).
+                    _ups = k_data.get("secret_updates")
+                    if not isinstance(_ups, list):
+                        _ups = []
+                        k_data["secret_updates"] = _ups
                     _covered = {str(u.get("truth_ref", "")).strip().lower()
                                 for u in _ups if isinstance(u, dict) and u.get("surface")}
                     for _truth, _surf in _ledger["surfaces"].items():
@@ -279,8 +332,8 @@ class OrchestrationService:
                     domain_manager.update_npc_knowledge(channel_id, npc_name, k_data)
             logger.info(f"[NPC Knowledge] Persisted for {len(new_knowledge)} NPCs")
 
-            # Knowledge Propagation: 같은 장면 NPC 간 지식 전파
-            scene_npcs = list(new_knowledge.keys())
+            # Knowledge Propagation: 같은 장면 NPC 간 지식 전파 ([07-19] PC 혼입 가드 동반)
+            scene_npcs = [n for n in new_knowledge.keys() if n not in _pc_masks_k]
             if len(scene_npcs) >= 2:
                 prop_count = domain_manager.propagate_npc_knowledge(channel_id, scene_npcs)
                 if prop_count:
@@ -350,7 +403,7 @@ class OrchestrationService:
             "observation": str(dai.get("Observation", dai.get("observation", "")))[:200],
             "quality_flags": (lambda qf: {k: v for k, v in qf.items() if v and v != "null"} if isinstance(qf, dict) else {})(dai.get("QualityFlags") or dai.get("quality_flags") or {}),
             "chain_status": (dai.get("narrative_chain") or {}).get("chain_status", ""),
-            "open_threads": (dai.get("narrative_chain") or {}).get("open_threads", [])[:5],
+            "open_threads": ((dai.get("narrative_chain") or {}).get("open_threads") or [])[:5],  # [07-19] 명시 null 방어
             "relevant_chunks": dai.get("relevant_chunks", []),
             "psyche_values": {  # B4: 이전 턴 감정 강도 비교용 (NPC별 value만)
                 n: (s.get("psyche", s.get("mental", {})) or {}).get("value", 0)
@@ -547,8 +600,8 @@ class OrchestrationService:
 
     def _process_item_usage(self, channel_id: str, user_id: str, item_eval: dict) -> Optional[str]:
         """아이템 소비/획득 처리. Returns system message or None."""
-        consumed = item_eval.get("items_consumed", [])
-        gained = item_eval.get("items_gained", [])
+        consumed = item_eval.get("items_consumed") or []  # [07-19] 명시 null 방어
+        gained = item_eval.get("items_gained") or []
         reason = item_eval.get("reason", "")
 
         if not consumed and not gained:
@@ -737,6 +790,15 @@ class OrchestrationService:
             # N-B 재작성/P-B PC임계/T-A tier)가 전부 입력 기아로 사문화된 근본 원인
             # (증상: !npc에 세션 NPC 정보 안 참). 관찰은 성장 루프의 원료라 world_state처럼 상시.
             "entity_state": True,
+            # [2026-07-15 수리] entity_state와 같은 병 — 이 dict에 "arc" 키가 없어서
+            # cognition L112 batch_sections 게이트(extraction_hints.get("arc", False))에서
+            # 영구 False → arc 추출 0회. 그런데 파이프 나머지는 전부 지어져 있었다:
+            # 여기서 매 턴 _arc_context_str/_arc_promote_cand를 만들어 넘기고(L870-907),
+            # cognition이 ArcUpdates/ArcDecisions로 받고(L224-225), L1341에서
+            # narrative_tracker.apply_arc_updates/decisions로 적용 — 입력 기아로 전부 사문화.
+            # (Arc Phase 1~6 완료·226 PASS인데 라이브 미가동이었음.)
+            # 배치 섹션이라 LLM 콜 순증 0. 관측: [Arc] phase_transitions/Promoted 로그 빈도.
+            "arc": True,
         }
 
         # Phase 1: 즉시 노트북 업데이트 (높은 우선순위)
@@ -1119,10 +1181,47 @@ class OrchestrationService:
                     # update_npc는 엔트리 통째 교체(source/aliases만 보존) → 항상 기존 dict를 full-merge.
                     # analyze_character_sheet는 analysis_backend 파사드로 openai(현행)에서도 동작. PC 제외.
                     try:
+                        # [2026-07-22 카드3] 이번 턴 주입된 로어 청크 라벨 — NPC 등장 턴과의 동시출현을
+                        # 적립해 증류 접지 2단으로 쓴다(이름이 로어에 없는 세션 NPC의 접지 경로).
+                        # 인덱스가 아니라 **라벨**로 저장: 로어 재청킹 시 인덱스는 깨지지만 라벨은 남는다.
+                        _turn_labels = []
+                        try:
+                            _rc = (ctx.dai or {}).get("relevant_chunks", []) if ctx.dai else []
+                            _lc_all = domain_manager.get_lore_chunks(channel_id) or []
+                            for _i in _rc:
+                                if isinstance(_i, int) and 0 <= _i < len(_lc_all):
+                                    _c = _lc_all[_i]
+                                    _l = str(_c.get("label", "") or "").strip() if isinstance(_c, dict) else ""
+                                    if _l:
+                                        _turn_labels.append(_l)
+                        except Exception:
+                            _turn_labels = []
+
                         _changes = est_data.get("changes") if (isinstance(est_data, dict) and "changes" in est_data) else est_data
                         for _npc_name, _ch in (_changes.items() if isinstance(_changes, dict) else []):
                             if not isinstance(_ch, dict):
                                 continue
+                            # [2026-07-18 이름 획득 배선] 경비병 #2A가 "한스"를 얻는 순간 —
+                            # handle_identity_reveal 고아 출구 배선 (구명=aliases 보존, 태도·위치 이관).
+                            # 가드: PC 마스크·자기 자신·로어 NPC·기존 타 엔티티 충돌(→!npc 병합 후보).
+                            _named = _ch.get("named_as")
+                            if _named and str(_named).strip():
+                                _new_nm = str(_named).strip()
+                                try:
+                                    _src_np = npc_manager.get_npc(channel_id, _npc_name)
+                                    if (_new_nm != _npc_name and _new_nm not in _pc_masks
+                                            and _src_np
+                                            and str(_src_np.get("source", "")).lower() != "lore"):
+                                        if npc_manager.get_npc(channel_id, _new_nm):
+                                            logger.info(f"[NPC Naming] skip: '{_new_nm}' 기존 엔티티 (!npc 병합 후보)")
+                                        else:
+                                            npc_manager.handle_identity_reveal(
+                                                channel_id, _npc_name, _new_nm,
+                                                reason="explicit naming in scene")
+                                            logger.info(f"[NPC Naming] {_npc_name} → {_new_nm}")
+                                            _npc_name = _new_nm  # 이후 관찰 누적은 새 이름으로
+                                except Exception as _e_nm:
+                                    logger.debug(f"[NPC Naming] skip: {_e_nm}")
                             _desc = _ch.get("descriptor")
                             if not _desc or not str(_desc).strip() or _npc_name in _pc_masks:
                                 continue
@@ -1133,8 +1232,11 @@ class OrchestrationService:
                                 npc_manager.update_npc(channel_id, _npc_name, {
                                     "source": "session", "description": _desc,
                                     "status": "active", "play_observed": _desc,
+                                    # [카드3] 탄생 턴의 로어 청크 = 이 인물이 태어난 세계 좌표
+                                    "lore_seen": {_l: 1 for _l in _turn_labels},
                                 })
-                                logger.info(f"[NPC Sheet] 즉석 NPC 생성: {_npc_name}")
+                                logger.info(f"[NPC Sheet] 즉석 NPC 생성: {_npc_name}"
+                                            + (f" (lore: {','.join(_turn_labels[:3])})" if _turn_labels else ""))
                                 continue
                             _src = str(_existing.get("source", "")).lower()
                             if _new_indiv and _src != "lore" and not npc_manager.is_mob_tag(_npc_name):
@@ -1150,6 +1252,13 @@ class OrchestrationService:
                             _obs = (_obs + "\n" + _desc).strip()[-1500:] if _obs else _desc
                             _merged = dict(_existing)
                             _merged["play_observed"] = _obs
+                            # [카드3] 동시출현 청크 라벨 적립(빈도) — 상위 8개만 유지
+                            if _turn_labels:
+                                _seen = dict(_merged.get("lore_seen") or {})
+                                for _l in _turn_labels:
+                                    _seen[_l] = int(_seen.get(_l, 0) or 0) + 1
+                                _merged["lore_seen"] = dict(
+                                    sorted(_seen.items(), key=lambda kv: (-kv[1], kv[0]))[:8])
                             # [N-A] description이 비어 있으면(attitude 채널이 이름만 선점한 스텁 등)
                             # 이번 관찰로 즉시 backfill → !npc/roster가 더는 빈칸이 아니고,
                             # 이후 재작성(N-B)이 정제. 이미 있으면 건드리지 않음(작가/증류 보존).
@@ -1179,25 +1288,14 @@ class OrchestrationService:
                                         # 증류 입력에 참고로 동봉 — 세계관 용어·소속이 로어와 어긋나게 증류되는 것 방지.
                                         # 리터럴 매칭=콜 0·결정론. 통복사 방지 지시 포함. lore NPC는 재작성 자체가
                                         # 동결(_src=="lore" 게이트)이라 이 경로와 무관.
-                                        _lore_ref = ""
-                                        try:
-                                            _names = [_npc_name] + [str(a) for a in (_existing.get("aliases") or []) if a]
-                                            _names += [n.split("(")[0].strip() for n in list(_names) if "(" in n]
-                                            _names = [n for n in dict.fromkeys(_names) if n]
-                                            _hits = []
-                                            for _chk in domain_manager.get_lore_chunks(channel_id):
-                                                _lbl = str(_chk.get("label", "") or "") if isinstance(_chk, dict) else ""
-                                                _txt = str(_chk.get("content", "") or "") if isinstance(_chk, dict) else str(_chk or "")
-                                                if any(n in _txt or n in _lbl for n in _names):
-                                                    _hits.append((f"({_lbl}) " if _lbl else "") + _txt.strip()[:600])
-                                                if len(_hits) >= 2:
-                                                    break
-                                            if _hits:
-                                                _lore_ref = ("[세계관 참고 — 로어 원문 발췌. 관찰 해석의 접지로만 쓰고 "
-                                                             "시트로 문장을 통복사하지 말 것. 관찰과 충돌하면 로어 우선]\n"
-                                                             + "\n---\n".join(_hits) + "\n\n")
-                                        except Exception:
-                                            _lore_ref = ""
+                                        # [2026-07-22 카드3] 접지 3단 + 규칙부 — 구 이름-리터럴 단독은
+                                        # 세션 NPC(모델이 방금 지은 이름)에서 영구 미스라 사문화였다.
+                                        _lore_ref = npc_manager.build_distill_grounding(
+                                            channel_id, _npc_name,
+                                            aliases=_existing.get("aliases") or [],
+                                            observations=_obs,
+                                            seen_labels=_existing.get("lore_seen") or {},
+                                        )
                                         _distill_in = _lore_ref + (("\n".join(_prev) + "\n\n" + _obs) if _prev else _obs)
                                         _sheet = await cognition.analyze_character_sheet(
                                             self.client, self.model_id_flash, _distill_in)
@@ -1718,14 +1816,17 @@ class OrchestrationService:
                         logger.warning(f"[NumberFixation] skipped: {_e_nf}")
 
                     # I축(재정착): verbatim 후렴 재발 → _ce_fb 넛지를 style_fb로 다음턴 주입(CADENCE_ECHO_INJECT). 윈도우 영속.
+                    # [2026-07-22 카드2] + 재발 문장(_ce_hits)을 영속 → 다음 턴 주입본(히스토리·S31)에서 스크럽.
+                    #   넛지는 "말리기", 스크럽은 "모방 대상 제거" — 후자가 이 스택의 검증된 반복 억제 계보.
                     _ce_fb = ""
                     _ce_window = None
+                    _ce_hits = None
                     try:
                         from response_processor import detect_cadence_echo
                         _ce_recent = _mem_for_fb.get("recent_cadence_sents", [])
                         if not isinstance(_ce_recent, list):
                             _ce_recent = []
-                        _ce_fb, _ce_cur = detect_cadence_echo(response, _ce_recent)
+                        _ce_fb, _ce_cur, _ce_hits = detect_cadence_echo(response, _ce_recent)
                         if _ce_fb:
                             logger.info(f"[CadenceEcho] {_ce_fb}")
                         _ce_window = (_ce_recent + _ce_cur)[-180:]
@@ -1770,6 +1871,12 @@ class OrchestrationService:
                         _tracking_update["recent_deflections"] = (_recent_deflections + _current_deflections)[-6:]
                     if _ce_window is not None:
                         _tracking_update["recent_cadence_sents"] = _ce_window
+                    # [카드2] 스크럽 대상 문장 — 다음 턴 주입본에서 제거. 누적 캡 12(오래된 건 자연 소멸).
+                    if _ce_hits:
+                        _prev_scrub = _mem_for_fb.get("echo_scrub_sents", [])
+                        if not isinstance(_prev_scrub, list):
+                            _prev_scrub = []
+                        _tracking_update["echo_scrub_sents"] = (_prev_scrub + _ce_hits)[-12:]
                     if _as_window is not None:
                         _tracking_update["recent_aborted_speech"] = _as_window
                     domain_manager.update_session_ai_memory(channel_id, _tracking_update)

@@ -19,6 +19,8 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+import config  # [2026-07-22 카드1] 플래그·선별 상수 참조 (config는 leaf 모듈 — 순환 없음)
+
 logger = logging.getLogger("Iceberg")
 
 # =========================================================
@@ -91,6 +93,176 @@ _TRAJECTORY_DEPTH_MOD = {
 # --- Lack 층 보호 바닥 ---
 _DEFAULT_FLOOR = 0.20   # 기본: Lack(▸절대 직접 말하지 마) 비노출
 _EXTREME_FLOOR = 0.15   # intimate + 유대(80+) + 트리거 동시 충족 시에만
+
+
+def translate_input_brief(
+    input_analysis: Optional[Dict[str, Any]] = None,
+    observation: str = "",
+    user_intent: str = "",
+    position_effect: str = "",
+) -> str:
+    """[2026-07-22 Phase 3-b] 입력 분석 → **문장 브리핑**.
+
+    종전 S13은 분석 원문 직행 1위였다: `Original:/Enhanced:/Plausibility:/Momentum:/LogicTrace: A → B → C`.
+    필드명·화살표 추론 체인이 그대로 렌더러에 도착 → 지성화(#3)의 최상류 공급원.
+
+    처분(전 필드 엔진 소비 0 실측):
+      - LogicTrace  → **드롭**. 좌뇌 내부 추론 흔적이지 장면 재료가 아니다.
+      - Original    → **드롭**. 유저 입력 원문은 S32에 이미 있다(중복).
+      - Plausibility→ 비정상(Low/Impossible)일 때만 한 줄. High는 침묵(정상은 말하지 않는다).
+      - Momentum    → Closed일 때만 한 줄. Open은 기본값이라 침묵.
+      - Enhanced/Observation/UserIntent → 문장 그대로.
+    """
+    ia = input_analysis if isinstance(input_analysis, dict) else {}
+    lines: List[str] = []
+
+    def _s(v) -> str:
+        return v.strip() if isinstance(v, str) and v.strip() and v.strip().lower() != "null" else ""
+
+    _obs = _s(observation)
+    _enh = _s(ia.get("Enhanced"))
+    if _obs:
+        lines.append(_obs.rstrip("."))
+    if _enh and _enh != _obs:
+        lines.append(_enh.rstrip("."))
+
+    _intent = _s(user_intent)
+    if _intent:
+        lines.append(f"What the player is reaching for: {_intent.rstrip('.')}")
+
+    _plaus = _s(ia.get("Plausibility")).lower()
+    if _plaus.startswith("imposs"):
+        lines.append("The attempt overreaches what this world allows; it fails, or a price follows")
+    elif _plaus.startswith("low"):
+        lines.append("The attempt strains plausibility; it can land, but not cleanly")
+
+    if _s(ia.get("Momentum")).lower().startswith("clos"):
+        lines.append("This move closes a thread rather than opening one")
+
+    body = ". ".join(lines).strip()
+    if body and not body.endswith("."):
+        body += "."
+    _pe = _s(position_effect)
+    if _pe:
+        body = (body + "\n" + _pe) if body else _pe
+    return body
+
+
+def translate_scene_holds(
+    aspects: Optional[list] = None,
+    sensory: Optional[list] = None,
+    habitus: Optional[Dict[str, Any]] = None,
+) -> str:
+    """[2026-07-22 Phase 3-b] 장면이 쥐고 있는 것들 → 문장.
+
+    종전: `### Scene Aspects` + `- 항목` / `- anchor → memory_link` / `- key: value` 원문 리스트.
+    헤더·불릿·화살표가 그대로 렌더러에 도착(원문 직행 2위) → 목록을 훑어 소진하는 산문 유발.
+    지금: 한 문단의 문장. 항목은 재료지 체크리스트가 아니다.
+    """
+    out: List[str] = []
+
+    def _clean(v) -> str:
+        return str(v).strip().rstrip(".") if v is not None and str(v).strip() else ""
+
+    _asp = [_clean(a) for a in (aspects or []) if _clean(a)]
+    if _asp:
+        out.append("The scene holds: " + ", ".join(_asp[:5]) + ".")
+
+    _anchors = []
+    for s in (sensory or []):
+        if isinstance(s, dict):
+            _a = _clean(s.get("anchor"))
+            _m = _clean(s.get("memory_link"))
+            if _a:
+                _anchors.append(f"{_a} carries {_m}" if _m else _a)
+        elif _clean(s):
+            _anchors.append(_clean(s))
+    if _anchors:
+        out.append("Within reach of the senses: " + "; ".join(_anchors[:4]) + ".")
+
+    if isinstance(habitus, dict):
+        _hab = [_clean(v) for v in habitus.values() if _clean(v)]
+        if _hab:
+            out.append("Shaping how people move here: " + "; ".join(_hab[:4]) + ".")
+
+    return " ".join(out)
+
+
+def select_foreground(
+    psyche_data: Optional[Dict[str, Any]] = None,
+    emotion_states: Optional[Dict[str, Any]] = None,
+    autonomous_triggers: Optional[list] = None,
+    npc_attitudes: Optional[Dict[str, Any]] = None,
+    user_named: Optional[list] = None,
+    prev_foreground: Optional[list] = None,
+) -> Tuple[List[str], List[str]]:
+    """[2026-07-22 카드1] 이번 턴 포어그라운드 선별. Returns: (fg, bg).
+
+    지시문("Foreground is 1-2 per turn")과 공급을 일치시키는 기관. 종전 공급은 매 턴 전원
+    풀 리드라 형태가 "전원 동등"이라고 말하고 있었다(=균일 밀도의 공급측 원인).
+
+    결정론: 점수 정렬 + 이름 타이브레이크. dict 반복 순서에 의존하지 않는다(Pass D-2 교훈).
+    강제: user_named(유저가 직접 지목·대화)는 상한을 넘어서라도 fg.
+    히스테리시스: 2위와의 점수 차가 임계 미만이면 직전 턴 fg를 유지(인물 깜빡임 방지).
+    """
+    names = sorted([n for n in (psyche_data or {}) if n and isinstance(n, str)])
+    if not names:
+        return [], []
+    _cap = getattr(config, "FOREGROUND_CAP", 2)
+    _hys = getattr(config, "FOREGROUND_HYSTERESIS", 0.15)
+    _rot = getattr(config, "FOREGROUND_ROTATION_PENALTY", 0.08)
+    prev = set(prev_foreground or [])
+    forced = {n for n in (user_named or []) if n in names}
+
+    # 트리거 우선도 맵 (priority 높을수록 가점)
+    trig: Dict[str, int] = {}
+    for t in (autonomous_triggers or []):
+        if isinstance(t, dict):
+            _n = t.get("npc_name", "")
+            if _n in names:
+                trig[_n] = max(trig.get(_n, 0), int(t.get("priority", 0) or 0))
+
+    scored: List[Tuple[float, str]] = []
+    for n in names:
+        s = 0.0
+        st = (emotion_states or {}).get(n)
+        if st is not None:
+            try:
+                s += float(getattr(st, "intensity", 0.0) or 0.0)
+                if getattr(st, "spike_detected", False):
+                    s += 0.5
+            except Exception:
+                pass
+        if n in trig:
+            s += min(trig[n], 7) * 0.05
+        att = (npc_attitudes or {}).get(n)
+        if isinstance(att, dict):
+            s += {"rising": 0.15, "falling": 0.15}.get(str(att.get("trajectory", "")).lower(), 0.0)
+        if n in prev:
+            s -= _rot
+        scored.append((s, n))
+
+    scored.sort(key=lambda x: (-x[0], x[1]))
+
+    fg: List[str] = []
+    for _s, _n in scored:
+        if len(fg) >= _cap:
+            break
+        fg.append(_n)
+
+    # 히스테리시스: 경계선(마지막 fg vs 첫 bg) 점수 차가 미미하면 직전 fg를 우선
+    if len(scored) > _cap and prev:
+        _last_in = scored[_cap - 1]
+        _first_out = scored[_cap]
+        if abs(_last_in[0] - _first_out[0]) < _hys and _first_out[1] in prev and _last_in[1] not in prev:
+            fg[_cap - 1] = _first_out[1]
+
+    for n in sorted(forced):
+        if n not in fg:
+            fg.append(n)   # 유저 지목은 상한 초과 허용
+
+    bg = [n for n in names if n not in fg]
+    return fg, bg
 
 
 def compute_npc_depths(
@@ -312,9 +484,16 @@ def translate_psyche_states(
     scene_type: str = "normal",
     energy: str = "idle",
     npc_depths: Optional[Dict[str, float]] = None,
+    foreground: Optional[List[str]] = None,
 ) -> str:
     """6축 심리 데이터 → 관찰 가능한 행동 힌트로 변환.
-    npc_depths가 있으면 NPC별 개별 수면 적용, 없으면 전역 depth."""
+
+    [2026-07-22 카드1] foreground가 주어지면 **fg=압력 풀 / bg=한 줄**로 강약을 만든다.
+    - fg: 노테이션 + descriptor 전축 + 압력(drives/cannot) + resurfacing
+    - bg: 노테이션 최소 + soma descriptor + 압력 drives 1줄  ("한 줄로 산다", 소멸 아님)
+    deep_read 방출은 DEEPREAD_EMIT=False면 중지(상류 전용 — emotion_engine·npc_autonomous가 소비).
+    npc_depths는 롤백 경로(구 동작) 전용.
+    """
     if not psyche_data or not isinstance(psyche_data, dict):
         return ""
 
@@ -363,38 +542,62 @@ def translate_psyche_states(
             if diss_n:
                 notations.append(diss_n)
 
-        # prose descriptor 줄 (depth에 따라 축 제한)
+        # [카드1] fg/bg 분기 — foreground 미전달 시 구 동작(전원 fg 취급 + depth 게이팅)
+        _fg_mode = foreground is not None
+        _is_fg = (name in (foreground or [])) if _fg_mode else True
+
+        # prose descriptor 줄
+        #  fg: soma + env + psyche + relation 전축 / bg: soma(신체 사실)만
+        #  구 경로: depth 게이팅
         prose = []
         if soma.get("descriptor"):
             prose.append(soma["descriptor"])
         env = soma.get("env_influence")
         if env and isinstance(env, str) and env != "null":
             prose.append(env)
-        if depth < 0.8 and psyche.get("descriptor"):
-            prose.append(psyche["descriptor"])
-        if depth < 0.6 and relation.get("descriptor"):
-            prose.append(relation["descriptor"])
+        if _fg_mode:
+            if _is_fg:
+                if psyche.get("descriptor"):
+                    prose.append(psyche["descriptor"])
+                if relation.get("descriptor"):
+                    prose.append(relation["descriptor"])
+        else:
+            if depth < 0.8 and psyche.get("descriptor"):
+                prose.append(psyche["descriptor"])
+            if depth < 0.6 and relation.get("descriptor"):
+                prose.append(relation["descriptor"])
 
-        lines.append(f"- {name}:")
-        for n in notations:
+        lines.append(f"- {name}:" if _is_fg or not _fg_mode else f"- {name} (receded):")
+        for n in (notations if (_is_fg or not _fg_mode) else notations[:1]):
             lines.append(f"  {n}")
         if prose:
             lines.append(f"  {'. '.join(prose)}")
 
-        # deep_read: depth에 따라 필터링 + 렌더링 제약
-        if deep and isinstance(deep, str):
+        # [카드1] 압력 — 감정이 "무엇을 하게 만드는가". fg=drives+cannot / bg=drives 1줄.
+        if getattr(config, "PRESSURE_EMIT", True):
+            _pr = state.get("pressure")
+            if isinstance(_pr, dict):
+                _d = _pr.get("drives")
+                _c = _pr.get("cannot")
+                if isinstance(_d, str) and _d.strip():
+                    lines.append(f"  → {_d.strip()}")
+                if _is_fg and isinstance(_c, str) and _c.strip():
+                    lines.append(f"  ↛ {_c.strip()}")
+
+        # deep_read: 상류 전용(DEEPREAD_EMIT=False). True면 구 경로(depth 필터+B3 제약) 유지.
+        if getattr(config, "DEEPREAD_EMIT", False) and deep and isinstance(deep, str):
             filtered = _filter_deep_read_by_depth(deep, depth)
             if filtered:
                 lines.append(f"  └ {filtered}")
-                # B3: 노출 깊을수록 행동-only 제약 강화
                 if depth < 0.2:
                     lines.append("    [irreducible: a reaction only this character, this moment makes — irreducible, not performed.]")
                 elif depth < 0.4:
                     lines.append("    [through action, reflex, bodily response; the naming and the psych vocabulary stay with the narrator, out of the prose.]")
 
-        # resurfacing: depth < 0.6일 때만 노출 (intimate/social)
+        # resurfacing: fg 한정(구 경로는 depth<0.6). 상류 소비자가 없어 방출을 끊으면 죽은 배선이 된다.
         resurface = state.get("resurfacing")
-        if resurface and isinstance(resurface, str) and resurface != "null" and depth < 0.6:
+        _resurf_ok = _is_fg if _fg_mode else (depth < 0.6)
+        if resurface and isinstance(resurface, str) and resurface != "null" and _resurf_ok:
             lines.append(f"  └ resurfacing: {resurface}")
 
     # [Phase 2] cross-NPC 대비 (연출가-독자): 2+ NPC면 색/♪▶◎ 진폭을 contrast-lead로 합성 → Slot14 envelope가 감쌈
@@ -542,7 +745,7 @@ _PACING_KR = {
 _TENSION_KR = {
     "critical":  "tension: ♪ ff · ▶ tight close-up",
     "rising":    "tension: ♪ crescendo · ▶ slow push-in",
-    "plateau":   "tension: ♪ sostenuto · ▶ held frame, uneasy",
+    "plateau":   "tension: ♪ sostenuto · ▶ held frame, breathing",  # [2026-07-16 tone_gravity] uneasy 제거 — 일상 최빈 축(plateau)에 상시 불안 주입이던 무드 바닥
     "falling":   "tension: ♪ diminuendo · ▶ pull-back",
 }
 
@@ -827,6 +1030,42 @@ def translate_time_atmosphere(time_context: str, scene_type: str = "normal") -> 
     if not parts:
         return ""
     return "\n".join(parts)
+
+
+# --- 환경 노화 (D1, 2026-07-15) -----------------------------------------
+# 딥스키 0712 §5-6 "환경의 에이전시" — 대화가 길어지면 인물만 움직이는 게 아니라
+# 사물도 시간을 진다. 우리 기존 라인 2개와 인접하지만 겹치지 않는다:
+#   TEMPORAL_FLOW_DOCTRINE(S10) "time proven by environmental shifts" = 장면 **간**
+#   PROSE_CRAFT(S25) "object weight before its mood"                  = 사물의 **개시**
+#   D1                                                                = 장면 **내** 지속
+# 딥스키는 모델에게 "매번 알아서 늙혀라"라고 요청 → 트리거 부재(원칙#5) → 상시 발화 →
+# 카탈로그화. 우리는 세계시계 경과가 임계를 넘을 때만 발화한다. 프롬 순증 ≈ 0.
+_AGING_TIERS = [
+    (240, "hours have gone by here: the light has moved off what it was on, and something "
+          "left out has changed state"),
+    (90,  "a long while here: what was hot is cool, what was cold has beaded and slipped, "
+          "shadows sit differently"),
+    (30,  "time has passed in this room: one object has moved with the clock"),
+]
+
+
+def translate_environment_aging(elapsed_min: int) -> str:
+    """장면 내 세계시계 경과(분) → 환경 노화 힌트. 임계 미만이면 "".
+
+    결정적. LLM 콜 0. 한 티어만 발화(원칙 #6 — 겹쳐 쌓으면 카탈로그가 된다).
+    수치는 노출하지 않는다: 렌더-facing 수치가 산문에 리터럴로 전사된 실증이 있다
+    (2026-07-14 spike 델타 비노출과 같은 이유).
+    """
+    try:
+        m = int(elapsed_min or 0)
+    except (TypeError, ValueError):
+        return ""
+    if m < 30:
+        return ""
+    for threshold, hint in _AGING_TIERS:
+        if m >= threshold:
+            return f"[Environment] {hint}. One detail carries it; it stays background."
+    return ""
 
 
 # =========================================================
@@ -1158,7 +1397,12 @@ def translate_intimacy(intimacy_data: Optional[dict]) -> str:
             if prediction and isinstance(prediction, str) and prediction.lower() != "null":
                 lines.append(f"- {char_name} possible reaction afterward (varies with character and relational pattern): {prediction}")
 
-    return "\n".join(lines)
+    if not lines:
+        return ""
+    # [2026-07-22 단일 관문화] 헤더·소비 지시도 여기 소유 — 종전엔 slot_manager가 인라인으로 씌웠다.
+    return ("### intimate scene — physical state\n"
+            "(rendered only through bodily sensation and action; the field names and analytic terms "
+            "stay out of the prose.)\n" + "\n".join(lines))
 
 
 # =========================================================
@@ -1327,6 +1571,7 @@ _PROXIMITY_HINTS = [
 ]
 
 _SILENCE_NOTATION = {
+    "companionable": "♪ mp, andante, legato | ◎ steady frame, warm",  # [2026-07-16 tone_gravity L3]
     "reflective": "♪ pp, adagio, legato | ◎ long-exposure",
     "hesitant":   "♪ p, andante, staccato | ◎ slow-motion",
     "heavy":      "♪ pp, largo, legato | ◎ freeze",
@@ -1593,8 +1838,14 @@ def compose_dialogue_directives(
     npc_depths: Optional[Dict[str, float]] = None,
     npc_imprints: Optional[Dict[str, list]] = None,
     voice_quirks: Optional[Dict[str, str]] = None,
+    foreground: Optional[List[str]] = None,
 ) -> str:
     """psyche_states + NPCKnowledge + 이전 gaze → NPC별 대사 방향 지시.
+
+    [2026-07-22 카드1] foreground 전달 시 bg는 skip(구 depth>=0.8 skip 대체).
+    침묵 커밋: pressure.cannot이 발화를 막고 있으면 그 침묵이 *무슨 대답인지*를 공급한다
+    (PROSE_CRAFT "a silent reply still commits"가 처음으로 공급을 갖는 자리 —
+    종전엔 렌더러가 매 턴 발명해야 했고 V4는 관찰 보고서로 대체했다).
 
     Gaze 심도:
       이름 in gaze → full directive (전 축)
@@ -1614,8 +1865,11 @@ def compose_dialogue_directives(
         if not isinstance(state, dict):
             continue
 
-        # 얕은 수면(depth >= 0.8) → skip
-        if npc_depths and npc_depths.get(name, 0.5) >= 0.8:
+        # [카드1] bg는 대사 지시 생략(교환은 fg가 진다). foreground 미전달 시 구 경로(depth skip).
+        if foreground is not None:
+            if name not in foreground:
+                continue
+        elif npc_depths and npc_depths.get(name, 0.5) >= 0.8:
             continue
 
         relation = state.get("relation", {})
@@ -1625,9 +1879,26 @@ def compose_dialogue_directives(
         if not isinstance(psyche, dict):
             psyche = {}
 
-        # logos_layer 없으면 skip (분석 안 된 NPC)
+        # [2026-07-22 카드1] 침묵 커밋 — cannot이 발화를 막고 있으면 그 침묵이 *무슨 대답인지* 공급한다.
+        # 렌더러가 매 턴 발명하던 자리(→ 관찰 보고서·미완발화 클리셰로 대체되던 자리).
+        # ★logos_layer 게이트보다 **앞**에 둔다: 침묵하는 인물일수록 분석이 빈약할 수 있는데,
+        #   그때 커밋까지 함께 사라지면 처방이 정확히 필요한 자리에서 무력해진다.
+        _silence_part = ""
+        _pr = state.get("pressure")
+        if getattr(config, "PRESSURE_EMIT", True) and isinstance(_pr, dict):
+            _cannot = _pr.get("cannot")
+            if isinstance(_cannot, str) and _cannot.strip():
+                _silence_part = (
+                    f"held back: {_cannot.strip()} — the silence answers in one surface "
+                    "(a nod, a stilled hand, a note, breath), gives the player something to act on, "
+                    "and the exchange passes to whoever can carry it"
+                )
+
+        # logos_layer 없으면 skip (분석 안 된 NPC) — 단 침묵 커밋이 있으면 그것만이라도 내보낸다.
         logos = relation.get("logos_layer", "")
         if not logos or not isinstance(logos, str):
+            if _silence_part:
+                lines.append(f"- {name}: {_silence_part}")
             continue
 
         # Gaze 기반 심도 결정 (exact match — substring 위양성 방지)
@@ -1749,6 +2020,9 @@ def compose_dialogue_directives(
             if vq:
                 directive_parts.append(f"voice: {vq}")
 
+        if _silence_part:
+            directive_parts.append(_silence_part)
+
         if directive_parts:
             lines.append(f"- {name}: {'. '.join(directive_parts)}")
 
@@ -1759,4 +2033,293 @@ def compose_dialogue_directives(
         "### dialogue direction\n"
         "(the aim and strategy behind an NPC's lines; the terms stay out of the prose, the dialogue itself performing them.)\n"
         + "\n".join(lines)
+    )
+
+
+# =========================================================
+# [2026-07-22 단일 관문화] slot_manager 인라인 조립 → iceberg 이관
+# =========================================================
+# 계약 §2 원칙 2 "경계는 하나". 종전엔 새 정보원이 생길 때마다 slot_manager 빌더에 문자열을
+# 한 줄 append하는 게 제일 싸서, 번역이 iceberg와 빌더 두 곳에 나뉘어 있었다(주입 원천 45개로
+# 자란 경로 그 자체). 문안은 그대로 옮기고, 앞으로 새 정보는 여기 함수로만 들어온다.
+#   iceberg = 번역 단일 관문 / slot_manager = 순서·조립.
+# 전부 순수 함수(dai 조각 in → 문장 out). ctx·domain 접근 없음.
+
+def translate_flashback(dai_flashback_eval: Optional[Dict[str, Any]] = None,
+                        declaration: str = "") -> str:
+    """회상 확정 → 장면 지시 문장."""
+    fb = dai_flashback_eval if isinstance(dai_flashback_eval, dict) else {}
+    decl = str(declaration or fb.get("declaration", "") or "").strip()
+    plaus = str(fb.get("plausibility", "plausible") or "").strip()
+    tier = str(fb.get("tier", "standard") or "").strip()
+    ftype = str(fb.get("flashback_type", "standard") or "").strip()
+    plaus_hint = ""
+    if plaus == "stretch":
+        plaus_hint = " possible but unexpected: the surprise of it carries."
+    elif plaus == "impossible":
+        plaus_hint = " an overreaching claim: it fails, or a price follows."
+    type_hint = "retroactive declaration" if ftype == "standard" else "pre-established prop summon"
+    return (f"\nA memory opens on \"{decl}\" — {type_hint}, carrying {tier} weight."
+            f"{plaus_hint} Two or three sentences inside it, then the present resumes.")
+
+
+_REST_ACTIVITY = {
+    "rest": "resting", "recover": "recovering", "vice": "indulging",
+    "train": "training", "socialize": "socializing", "project": "working",
+}
+_REST_QUALITY = {"full": "full", "brief": "brief", "interrupted": "interrupted"}
+
+
+def translate_downtime(rest_eval: Optional[Dict[str, Any]] = None) -> str:
+    """휴식/다운타임 → 장면 지시 문장."""
+    r = rest_eval if isinstance(rest_eval, dict) else {}
+    if not r.get("detected"):
+        return ""
+    q = str(r.get("quality", "brief") or "")
+    a = str(r.get("activity", "rest") or "")
+    out = f"\nThe turn takes a {_REST_QUALITY.get(q, q)} stretch of {_REST_ACTIVITY.get(a, a)}"
+    if r.get("target"):
+        out += f", aimed at {r['target']}"
+    out += "." if r.get("safe_location", True) else ". The place is not safe; the tension holds."
+    return out
+
+
+def translate_idle_direction(story_direction: Optional[Dict[str, Any]] = None) -> str:
+    """무입력 턴 → 세계가 주도한다는 문장."""
+    sd = story_direction if isinstance(story_direction, dict) else {}
+    if not (sd.get("is_idle_input") and sd.get("idle_direction")):
+        return ""
+    idle = sd.get("idle_direction") or {}
+    if not isinstance(idle, dict):
+        return ""
+    parts = ["The player made no active move; the world and its people take the lead this turn"]
+    if idle.get("hint"):
+        parts.append(f"what stirs: {idle['hint']}")
+    if idle.get("npc"):
+        parts.append(f"it moves through {idle['npc']}")
+    return "\n" + ", ".join(parts) + f" ({idle.get('source', 'ambient')})."
+
+
+_PERCEPTION_HINTS = {
+    "veridical": "it actually happened — depicted clearly",
+    "illusory": "the senses are distorted — confusion and mismatch run through it",
+    "hallucinatory": "perception with no stimulus — vivid, yet others don't react to it",
+    "delusional": "a conviction-laden misreading — to the one holding it, absolute truth",
+}
+
+
+def translate_anomaly_perception(anomaly_profile: Optional[Dict[str, Any]] = None) -> str:
+    """이상현상 인식 유형 → 문장."""
+    ap = anomaly_profile if isinstance(anomaly_profile, dict) else {}
+    t = ap.get("perception_type")
+    if not t or not isinstance(t, str) or t.lower() == "null":
+        return ""
+    hint = _PERCEPTION_HINTS.get(t.lower().strip(), "")
+    return f"\nWhat is perceived: {hint}." if hint else ""
+
+
+def translate_input_mode(input_mode: str = "") -> str:
+    """probe 입력 → 압력으로 착지한다는 문장."""
+    if str(input_mode or "").strip().lower() != "probe":
+        return ""
+    return ("\nThe input lands as pressure rather than command: the NPC does not obey, "
+            "it responds, through perception, body memory, social habit, environment.")
+
+
+def translate_inertia(energy_direction: str = "") -> str:
+    """정체 에너지 → 반박자 지연 신호."""
+    if str(energy_direction or "").lower() not in ("stagnant", "idle"):
+        return ""
+    return ("\nThe sequence carries inertia: the predicted move arrives half a beat late, "
+            "and a suppressed tone gets room to surface.")
+
+
+def translate_climate(last_climate: Optional[Dict[str, Any]] = None) -> str:
+    """직전 턴 감정 포화·발명 신호 → 이번 턴 환기 문장."""
+    lc = last_climate if isinstance(last_climate, dict) else {}
+    parts: List[str] = []
+    try:
+        sat = float(lc.get("saturation", 0.0) or 0.0)
+    except Exception:
+        sat = 0.0
+    if sat >= 0.6:
+        parts.append(
+            "The recent thread has been sitting in negative dwell (loneliness, grief, possession); "
+            "an alternate texture surfaces this turn — light, a banal detail, a third-element "
+            "distraction, or a shift in time. The identity rests on more than its absence."
+        )
+    elif sat >= 0.4:
+        parts.append("Negative weight is present; the weather passes, and the wound is not deepened by default.")
+    try:
+        vfc = int(lc.get("voidfill_count", 0) or 0)
+    except Exception:
+        vfc = 0
+    if vfc > 0:
+        samples = lc.get("voidfill_samples") or []
+        names = ", ".join((s.get("npc", "?") for s in samples if isinstance(s, dict)))[:60]
+        parts.append(
+            f"Last turn put {vfc} thing(s) on the page that the sheet never held ({names or '?'}). "
+            "This turn renders only what is stated; stock backstory, defence, and trauma arcs stay out."
+        )
+    return ("\n" + "\n".join(parts)) if parts else ""
+
+
+def translate_pc_autonomy(pc_check: Optional[Dict[str, Any]] = None) -> str:
+    """PC 자율 침범 사실 → 이번 턴 경계 문장."""
+    pc = pc_check if isinstance(pc_check, dict) else {}
+    flags = []
+    if pc.get("pc_thought"):
+        flags.append("inner thought")
+    if pc.get("pc_moved_unprompted"):
+        flags.append("movement without the player")
+    if not flags:
+        return ""
+    focus = str(pc.get("gm_focus", "") or "").strip()
+    return ("\n\nLast turn the narration reached into the PC (" + ", ".join(flags) + "). "
+            + (f"Focus: {focus}. " if focus else "")
+            + "This turn narrates the world's reactions only; the PC's speech and thoughts belong to the player.")
+
+
+def translate_item_usage(item_eval: Optional[Dict[str, Any]] = None) -> str:
+    """아이템 소비/획득 → 문장."""
+    ie = item_eval if isinstance(item_eval, dict) else {}
+    parts = []
+    consumed = ie.get("items_consumed")
+    gained = ie.get("items_gained")
+    if isinstance(consumed, list) and consumed:
+        parts.append("consumed: " + ", ".join(str(i) for i in consumed))
+    if isinstance(gained, list) and gained:
+        parts.append("gained: " + ", ".join(str(i) for i in gained))
+    if not parts:
+        return ""
+    out = "Changed hands this turn — " + "; ".join(parts)
+    if ie.get("reason"):
+        out += f" ({ie['reason']})"
+    return out
+
+
+def translate_degraded_stages(degraded: Optional[list] = None) -> str:
+    """파이프 강하 → 분석 제한 고지."""
+    names = [d.get("stage", "?") for d in (degraded or []) if isinstance(d, dict)]
+    return f"Some analysis was limited this turn ({', '.join(names)})." if names else ""
+
+
+def translate_foreshadowing(items: Optional[list] = None) -> str:
+    """복선 → ambient 사실 문장."""
+    seeds = [str(f).strip() for f in (items or [])[:5] if f and str(f).strip()]
+    if not seeds:
+        return ""
+    return ("Seeds already in the world, still unresolved: " + "; ".join(seeds) + ". "
+            "They surface only as background texture (an environmental detail, a micro-behaviour), "
+            "staying short of reveal or resolution until the player's action engages them.")
+
+
+def translate_open_invitations(items: Optional[list] = None) -> str:
+    """플레이어향 전방 affordance → 문장."""
+    inv = [str(v).strip()[:160] for v in (items or [])[:2] if v and str(v).strip()]
+    if not inv:
+        return ""
+    return ("Hands the scene already extends toward the player: " + "; ".join(inv) + ". "
+            "They stay visibly open, take-or-refuse; the PC's answer is the player's to give.")
+
+
+def translate_narrative_hook(hook: str = "") -> str:
+    """서사 훅 → 문장(태그 없음)."""
+    h = str(hook or "").strip()
+    return f"A pull the scene could take: {h}" if h else ""
+
+
+def translate_dice_constraint(dice: Optional[Dict[str, Any]] = None) -> str:
+    """Seven Dice 가시면 → 이번 턴 조건 문장."""
+    d = dice if isinstance(dice, dict) else {}
+    if not d.get("visible") or not d.get("effect"):
+        return ""
+    return (f"\n\nOne condition binds this response and no other: {d['effect']} "
+            f"({d.get('name', '?')}). Apply it once, then let it go.")
+
+
+def translate_next_beat(next_beat: str = "") -> str:
+    """디렉터 비트 → 이번 턴 착지 계약 문장."""
+    nb = str(next_beat or "").strip()
+    if not nb:
+        return ""
+    return (f"This turn lands: {nb}. "
+            "It arrives in the scene's own grain — an action, an arrival, a shift, never an announcement. "
+            "If the player's move makes it impossible, its pressure still surfaces; it does not simply vanish.")
+
+
+def translate_arc_foreground(arc: Optional[Dict[str, Any]] = None) -> str:
+    """전경 arc → 문장. (2026-07-22 단일 관문화: slot_manager `_render_arc_foreground`에서 이관.
+    declared_goal/current_phase는 typological, next_waypoint는 라벨+변환 지시, foreshadowing은 요약 노출.)"""
+    a = arc if isinstance(arc, dict) else {}
+    parts: List[str] = []
+
+    decl = a.get("declared_goal", "")
+    phases = a.get("phases", []) or []
+    current_phase = phases[-1] if phases else ""
+    next_wp = a.get("next_waypoint", "")
+    pacing = a.get("pacing", 0.3)
+    mode = "crucial" if (isinstance(pacing, (int, float)) and pacing >= 0.6) else "mundane"
+
+    if decl or current_phase:
+        tone_hint = []
+        if decl:
+            tone_hint.append(f"this thread's intent: {decl}")
+        if current_phase:
+            tone_hint.append(f"current grain: {current_phase}")
+        parts.append(" / ".join(tone_hint))
+
+    if next_wp:
+        parts.append(
+            f"an approaching shadow: {next_wp}\n"
+            "(stays unnamed; hinted only as grain in the environment, NPC behavior, events.)"
+        )
+
+    if mode == "crucial":
+        parts.append("pacing: a careful build-up. Iceberg — a truth only the author knows presses up against the surface.")
+    else:
+        parts.append("pacing: an ordinary grain. The vivid detail of daily life comes first; intrigue and twists arrive only when earned.")
+
+    sens = a.get("sensory_foreshadowing") or []
+    if sens:
+        cap = getattr(config, "ARC_FORESHADOWING_DISPLAY_CAP", 5)
+        summaries = [s.get("summary", "") for s in sens[-cap:] if isinstance(s, dict)]
+        summaries = [s for s in summaries if s]
+        if summaries:
+            parts.append("this breath's threads:\n  - " + "\n  - ".join(summaries))
+
+    return "\n".join(parts)
+
+
+def translate_arc_background(arc: Optional[Dict[str, Any]] = None) -> str:
+    """배경 arc → 문장 (전언 톤). slot_manager `_render_arc_background`에서 이관."""
+    a = arc if isinstance(arc, dict) else {}
+    parts: List[str] = []
+
+    decl = a.get("declared_goal", "")
+    if decl:
+        parts.append(f"a current far off: {decl}")
+
+    off = a.get("offscreen_actions") or []
+    if off:
+        cap = getattr(config, "ARC_OFFSCREEN_DISPLAY_CAP", 5)
+        summaries = [s.get("summary", "") for s in off[-cap:] if isinstance(s, dict)]
+        summaries = [s for s in summaries if s]
+        if summaries:
+            parts.append("far away: " + " / ".join(summaries)
+                         + "\n(hearsay / rumor tone; carried as word-of-mouth, not directly depicted.)")
+
+    return ("[background breath] " + "\n".join(parts)) if parts else ""
+
+
+def wrap_open_threads(thread_list: str = "") -> str:
+    """열린 스레드 목록 → ambient 유지 계약 블록. (단일 관문화: slot_manager 인라인 래퍼 이관.
+    뮈토스 이식 B의 스레드 위계 1줄 포함 — primary 1 + ambient 나머지.)"""
+    if not thread_list or not thread_list.strip():
+        return ""
+    return (
+        "\n\nThese threads are live forces in the world; keep their PRESENCE, not their RESOLUTION. "
+        "The first one listed is primary this turn and its pressure may surface visibly; the rest stay ambient. "
+        "Only the player's action, engaging a thread directly, can advance or close it.\n"
+        + thread_list
     )

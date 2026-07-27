@@ -18,6 +18,8 @@ from collections import Counter
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass, field, asdict
 
+import config  # [2026-07-22 카드1] PRESSURE_EMIT 플래그 (config는 leaf 모듈 — 순환 없음)
+
 logger = logging.getLogger("EmotionEngine")
 
 
@@ -39,6 +41,12 @@ EMOTION_DECAY = 0.7  # 70% 유지, 30% 감쇠
 # 점진 drift는 무시하는 경험치 — Pass B에서 warm→friction 델타 ≈ 0.36이
 # 정상 발동, gradual drift 델타 ≈ 0.18은 무발동. 필요 시 0.2~0.3 구간 튜닝.
 SPIKE_THRESHOLD = 0.25
+
+# [2026-07-16 undertone] 3위 억눌린 축 노출 게이트 — pair(2슬롯)에 못 든 blended 축 중
+# 최강 후보가 아래 둘 다 만족할 때만 undertone으로 노출. 드물게·유의미하게 발화가 설계 의도
+# (거울공방 이중신호: 억눌린 결이 스토리). 미달이면 "" — 조용한 턴은 pair만.
+UNDERTONE_MIN = 0.15          # 절대 강도 바닥
+UNDERTONE_RATIO = 0.55        # blended top 대비 비율 (팽팽한 혼합 상태에서만 발화)
 
 # 감정 강도 → 메모리 중요도 부스트 매핑
 IMPORTANCE_BOOST_CURVE = {
@@ -176,6 +184,8 @@ class EmotionState:
     base_source: str = ""           # "plutchik" | "relational"
     mod_source: str = ""            # "plutchik" | "relational"
     pair_confidence: float = 0.0    # 0.0~1.0, 룰 매치 강도 (디버깅 로그용)
+    # [2026-07-16] 3위 억눌린 축 — pair에 못 든 blended 최강 축, 게이트 통과 시만. 평시 "".
+    undertone_label: str = ""
 
     # --- 씬 페어 (P3: 아래 history ring buffer에서 파생) ---
     scene_base: str = ""
@@ -209,6 +219,7 @@ class EmotionState:
         obj.base_source = data.get("base_source", "")
         obj.mod_source = data.get("mod_source", "")
         obj.pair_confidence = data.get("pair_confidence", 0.0)
+        obj.undertone_label = data.get("undertone_label", "")
         obj.scene_base = data.get("scene_base", "")
         obj.scene_mod = data.get("scene_mod", "")
         # L2 히스토리 복원. list of list/tuple 모두 수용, 비정상 엔트리는 스킵.
@@ -377,6 +388,13 @@ class EmotionEngine:
                 mod_source = ""
                 pair_confidence = round(pair_confidence * 0.5, 3)  # 반감 (디버깅 신호)
 
+            # 10b. [2026-07-16] undertone 도출 — pair에 못 든 blended 최강 축.
+            # 팔레트 풍부함의 렌더 지출처: 2슬롯 인터페이스는 유지하고, 팽팽한 혼합
+            # 상태에서만 3위 축이 "억눌린 결"로 새어나감 (게이트: UNDERTONE_MIN/RATIO).
+            undertone_label = EmotionEngine._derive_undertone(
+                blended, base_label, modifier_label
+            )
+
             # 11. L2 히스토리 갱신 (이전 히스토리 복사 후 이번 턴 페어 append)
             new_history = EmotionEngine._append_history(
                 list(prev_state.history),
@@ -412,6 +430,7 @@ class EmotionEngine:
                 base_source=base_source,
                 mod_source=mod_source,
                 pair_confidence=round(pair_confidence, 3),
+                undertone_label=undertone_label,
                 scene_base=scene_base,
                 scene_mod=scene_mod,
                 history=new_history,
@@ -662,9 +681,25 @@ class EmotionEngine:
                 return _hit
 
         # Tier 1: value_conflict 존재 (관계 내부 구조적 모순)
+        # [2026-07-16 tone_gravity friction 조정] 단독 value_conflict는 선점하지 않는다 —
+        # 장면에 갈등의 두 번째 증인(적대 stance / sympathetic 동원 / heavy·tense 침묵 /
+        # 음수 관계값)이 있을 때만 friction(1.0). 없으면 캐스케이드 계속.
+        # 근거: value_conflict는 "거의 항상 충전"(상류 null 규율 배포됐지만 방어 이중화),
+        # 내적 갈등 자체는 deep_read/value_conflict 텍스트로 산문에 전달되므로 pair 결까지
+        # friction일 필요 없음 — "갈등과 평온한 표면의 공존은 pair가 아니라 산문 소관"
+        # (07-13 poise 각주와 동일 원리). 진짜 갈등 장면은 거의 항상 두 번째 증인을 동반.
         vc = relation.get("value_conflict")
         if isinstance(vc, str) and vc.strip():
-            return ("friction", 1.0)
+            try:
+                _rv = float(relation.get("value", 0) or 0)
+            except (TypeError, ValueError):
+                _rv = 0.0
+            if (relation.get("negotiation_stance") in ("competitive", "exploitative")
+                    or soma.get("polyvagal") == "sympathetic"
+                    or scene_ctx.get("silence_type") in ("heavy", "tense")
+                    or _rv < 0):
+                return ("friction", 1.0)
+            # 단독 신호(성격 재독) → 미선점, 아래 티어가 장면 온도를 결정
 
         # Tier 2: negotiation_stance
         ns = relation.get("negotiation_stance")
@@ -723,8 +758,10 @@ class EmotionEngine:
             return ("friction", 0.5)
 
         # Tier 7: silence_type
+        # [2026-07-16 tone_gravity L3] companionable 신설(편안한 공유 침묵 — 일상 최빈 침묵의
+        # 착지 라벨 공백 해소, tone_gravity_audit A2①) → comfort. reflective와 같은 통.
         silence = scene_ctx.get("silence_type")
-        if silence == "reflective":
+        if silence in ("reflective", "companionable"):
             return ("comfort", 0.4)
         if silence in ("heavy", "tense"):
             return ("friction", 0.4)
@@ -733,6 +770,12 @@ class EmotionEngine:
         # [2026-07-13 L1] shame 키워드 선행 — wonder보다 구체적·희소 신호라 우선 매치
         if deep_read and any(k in deep_read for k in ("수치", "부끄", "창피", "굴욕")):
             return ("shame", 0.3)
+        # [2026-07-16 tone_gravity L4] play 도출 경로 신설 — 팔레트 정의만 있고 도달 경로 0이던
+        # 죽은 라벨(dead_scan B형, tone_gravity_audit A4). 영어 키워드는 서사 콜 deep_read가
+        # ENGLISH-ONLY인 것 대응, 한국어는 추출계 폴백.
+        if deep_read and any(k in deep_read.lower() for k in (
+                "장난", "놀이", "웃음", "playful", "teasing", "banter", "mischie", "joking")):
+            return ("play", 0.3)
         if deep_read and ("경탄" in deep_read or "호기심" in deep_read):
             return ("wonder", 0.3)
 
@@ -825,6 +868,39 @@ class EmotionEngine:
         if a == b:
             return True
         return frozenset({a, b}) in SAME_AXIS_FORBIDDEN
+
+    # ---------------------------------------------------------
+    # Step 10b: Undertone (3위 억눌린 축) — [2026-07-16]
+    # ---------------------------------------------------------
+    @staticmethod
+    def _derive_undertone(
+        blended: Dict[str, float],
+        base_label: str,
+        modifier_label: str,
+    ) -> str:
+        """pair(base×modifier)에 못 든 blended 축 중 최강 후보를 undertone으로.
+
+        결정적 로직 (추가 콜 0). 조건:
+          - pair 양측과 다른 라벨이고 같은 의미 축(SAME_AXIS_FORBIDDEN)도 아님
+          - 강도 ≥ UNDERTONE_MIN 그리고 blended top 대비 ≥ UNDERTONE_RATIO
+        미달 → "" (평시 침묵이 기본). tiebreak: 강도 내림차순 → 이름 알파벳
+        (dict 순서 의존 금지, Pass D-2 교훈).
+        """
+        if not blended:
+            return ""
+        top_val = max(blended.values())
+        if top_val <= 0.0:
+            return ""
+        for axis, val in sorted(blended.items(), key=lambda x: (-x[1], x[0])):
+            if val < UNDERTONE_MIN or val < top_val * UNDERTONE_RATIO:
+                break  # 정렬돼 있으므로 이후는 전부 미달
+            if axis == base_label or axis == modifier_label:
+                continue
+            if EmotionEngine._is_same_axis(axis, base_label) \
+                    or EmotionEngine._is_same_axis(axis, modifier_label):
+                continue
+            return axis
+        return ""
 
     # ---------------------------------------------------------
     # Step 11: Append to L2 History Ring Buffer (§6a)
@@ -964,15 +1040,53 @@ class EmotionEngine:
         # "데이터 + 소비 지시 1줄" 문법인데 이 블록만 무주석 노테이션이었음 —
         # 렌더러가 "이건 정보다"를 알아먹는가 문제(§7.10). iceberg :1221 문법 준용.
         # [2026-07-14 위생] 렌더-facing 문자열의 엠대쉬 제거(미러링 실증) — 주석은 무관.
+        # [2026-07-22 카드1] 벡터=밸브 — 라벨·수치·pair는 렌더러에 말하지 않는다.
+        # emotion_engine의 결정론·NPC간 비교·턴간 연속성은 그대로 살아 있고(선별 점수·노출량·SD·doom),
+        # 산문에 넘어가는 건 압력이 못 만드는 관계·장면 층(전염·drift·undertone)뿐 — 그것도 있을 때만.
+        # 구 가드문("never name these labels")은 삭제: 금지할 라벨이 애초에 넘어가지 않는다.
+        if not getattr(config, "PRESSURE_EMIT", True):
+            return EmotionEngine._build_emotion_context_legacy(sorted_npcs)
+
+        lines: List[str] = []
+        drift_lines: List[str] = []
+        has_undertone = False
+        for npc_name, state in sorted_npcs:
+            if state.intensity < 0.05 or not state.base_label:
+                continue
+            if state.undertone_label:
+                has_undertone = True
+            turn_pair = (state.base_label, state.modifier_label)
+            scene_pair = (state.scene_base, state.scene_mod)
+            if scene_pair[0] and turn_pair != scene_pair:
+                drift_lines.append(f"  {npc_name}: the surface still carries the older weather")
+
+        if has_undertone:
+            lines.append(
+                "[Undercurrent] a suppressed current runs beneath at least one figure: "
+                "it leaks through timing, breath, and small slips, never fully surfacing."
+            )
+        if drift_lines:
+            lines.append("[Scene Drift] feeling mid-shift; let the surface lag behind.")
+            lines.extend(drift_lines)
+        return "\n".join(lines) if lines else ""
+
+    @staticmethod
+    def _build_emotion_context_legacy(sorted_npcs) -> str:
+        """구 경로(라벨×라벨 + 티어 + spike) — PRESSURE_EMIT=False 롤백용."""
         lines = ["[Emotional States] state data, not prose: it lives in the body; "
                  "show through gesture and behavior, never name these labels."]
         drift_lines: List[str] = []
+        has_undertone = False
         for npc_name, state in sorted_npcs:
             if state.intensity < 0.05 or not state.base_label:
                 continue
             hint = EmotionEngine._compose_pair_hint(
                 state.base_label, state.modifier_label
             )
+            # [2026-07-16 undertone] 억눌린 3위 축 — 존재 시에만 인라인 접미.
+            if state.undertone_label:
+                hint = f"{hint}; under it, {state.undertone_label}"
+                has_undertone = True
             # ⚡ marker + spike axes (DC-01 배선): spike_detail 문자열에서
             # "{npc} 감정 급변: " 접두 제거 후 축 목록을 직접 노출.
             # 모델이 "spike 났다"만 알고 어떤 감정 축이 얼마나 튀었는지 모르던
@@ -1003,6 +1117,12 @@ class EmotionEngine:
                 drift_lines.append(
                     f"  {npc_name}: turn vs scene «{scene_hint}»"
                 )
+
+        if has_undertone:
+            lines.append(
+                "  (an 'under it' current stays suppressed: it leaks through timing, "
+                "breath, and small slips, never fully surfacing, never co-equal.)"
+            )
 
         if drift_lines:
             lines.append("")

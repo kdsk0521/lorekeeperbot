@@ -123,7 +123,7 @@ class JudgmentEngine:
         status_effects = (context.narrative_anchors or {}).get("status_effects", [])
         effects = normalize_status_effects(status_effects)
 
-        action_meta = context.shared_bus.dai.get("action_meta", {})
+        action_meta = context.shared_bus.dai.get("action_meta") or {}  # [07-27] 명시 null 방어
         action_type = str(action_meta.get("type") or action_meta.get("action_type") or "").strip().lower()
 
         total = 0

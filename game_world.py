@@ -87,9 +87,27 @@ def get_formatted_time(channel_id: str) -> str:
 
 
 def advance_minutes(channel_id: str, minutes: int) -> str:
-    """지정 분만큼 시간 경과. 슬롯 전환/날짜 변경 자동 처리."""
+    """지정 분만큼 시간 경과. 슬롯 전환/날짜 변경 자동 처리.
+
+    [2026-07-15 D1] 여기서 장면 경과(scene_elapsed_min)도 누적한다. 세계시계의
+    단일 깔때기이기 때문(advance_tick·process_time_flow 전부 여기로 위임).
+
+    ★왜 턴이 아니라 분인가 (레티어스: "세계의 시간과 사람의 시간이 다르다"):
+      사람의 시간 = turn_index, 매 턴 무조건 +1.
+      세계의 시간 = 여기. theoria의 time_flow.ticks가 **유저 입력에서만** 추출돼
+                    (SOURCE GATE) 흘러든다. 1 tick = 5~10분.
+      → 칼싸움 20턴 = 20턴/ticks≈0 → 세계시계 정지 → 노화 없음(자동으로 옳다).
+        "한참 후" 1턴 = 1턴/ticks 20 → 100~200분 → 한 턴에 크게 늙는다.
+      턴 기반이면 3분짜리 칼싸움 도중에 찻물이 식는다. 분 기반이면 예외 처리가
+      아예 필요 없다. 팽창 케이스가 공짜로 딸려온다.
+    """
     world = domain_manager.get_world_state(channel_id)
     _init_clock(world)
+
+    try:
+        world["scene_elapsed_min"] = int(world.get("scene_elapsed_min", 0) or 0) + max(0, int(minutes))
+    except (TypeError, ValueError):
+        world["scene_elapsed_min"] = max(0, int(minutes or 0))
 
     old_hour = world["hour"]
     old_slot = world.get("time_slot", _slot_for_hour(old_hour))

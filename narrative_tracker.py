@@ -679,15 +679,22 @@ def get_active_arcs(state: dict) -> list:
     ]
 
 
-def get_focus_arc(state: dict) -> dict | None:
-    """current_focus_arc_id가 가리키는 arc. 없으면 None."""
-    fid = state.get("current_focus_arc_id")
-    if fid is None:
-        return None
-    for sl in state.get("storylines", []):
-        if sl.get("id") == fid and sl.get("is_arc"):
-            return sl
-    return None
+# [2026-07-15 폐기] get_focus_arc / current_focus_arc_id — 제거.
+#
+# 불가능한 함수였다: fid는 state["current_focus_arc_id"](spec §1.1 = storyteller_state
+# = world_state["storyteller"])에서, 순회는 state["storylines"](narrative_tracker_state
+# = ai_memory["narrative_tracker"])에서 읽었다. 두 키가 같은 dict에 있는 상태는 없다
+# → 어느 쪽을 넘겨도 무조건 None. 스펙 §1.1이 포인터를 대상과 다른 저장소에 배치했고,
+# 게터는 합쳐진 상태를 가정해 쓰였다. 세터는 애초에 명세되지 않아 존재한 적 없다.
+#
+# 개념 자체도 흡수·폐기됨:
+#   - 계획서(arc_director_integration_plan §2.2/2.6)의 자동 세팅 = "pc_engagement 최고"
+#     → spec v2에서 pc_engagement가 proximity로 개명되며 slot_manager의
+#       proximity 임계 필터 + 내림차순 정렬로 흡수됨. focus가 하려던 일을 이미 함.
+#   - 남은 갈래 `!아크 포커스` 수동 지정 → 조작면 최소주의(새 명령어 기본 0)
+#   - 남은 갈래 자동 전환 Discord 알림 → GM 디렉팅 알림 금지(anti-railroad)
+#
+# 되살릴 일이 생기면 스키마 필드는 그대로 두었으니 세터부터 명세할 것.
 
 
 def promote_to_arc(

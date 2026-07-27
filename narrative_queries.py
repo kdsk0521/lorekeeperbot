@@ -73,6 +73,83 @@ def _format_recent_beats(dai_rows: List[Tuple[int, Dict[str, Any]]], cap: int = 
     return out
 
 
+def _beat_at_turn(dai: Dict[str, Any]) -> str:
+    """한 턴의 DAI → 그 턴이 무엇에 관한 장면이었나 1구. 없으면 "".
+
+    우선순위: 그 턴에 실제로 열린 스레드 > 제안 비트 > 장면 레지스터.
+    (suggested_beats는 '제안'이라 실현 보장이 없지만, spike가 난 턴의 제안은
+     그 턴의 압력 축과 사실상 같다 — 폴백으로 유효.)
+    """
+    if not isinstance(dai, dict):
+        return ""
+    chain = dai.get("narrative_chain") or {}
+    if isinstance(chain, dict):
+        th = chain.get("open_threads")
+        if isinstance(th, list) and th:
+            s = str(th[0]).strip()
+            if s:
+                return s
+    sb = dai.get("suggested_beats")
+    if isinstance(sb, list):
+        for b in sb:
+            if isinstance(b, str) and b.strip():
+                return b.strip()
+    sr = dai.get("scene_register")
+    if isinstance(sr, str) and sr.strip():
+        return sr.strip()
+    return ""
+
+
+def _format_emotion_residue(
+    spikes: List[Dict[str, Any]],
+    dai_rows: List[Tuple[int, Dict[str, Any]]],
+    current_turn: int,
+    cap: int = 4,
+) -> List[str]:
+    """spike 턴 × 그 턴의 DAI = 잔열의 출처. (최신 우선, cap개)
+
+    [2026-07-15] 감정 부채·이자 (딥스키 0712 §7-2 / preset_analysis_deepseek0712).
+    emotion_log·dai_logs 둘 다 turn 키를 갖는데, 기존 포맷터가 양쪽에서
+    턴을 버려(_format_emotion_arc=개수만, _format_recent_beats=`_turn` 폐기)
+    서사 콜이 '언제 튀었나'와 '그때 무슨 일'을 조인할 수 없었다.
+    여기서 코드가 미리 붙여 급식한다 → 서사 콜의 psyche_narrative.resurfacing 재료.
+
+    LLM 콜 0 · 새 테이블/필드 0 · emotion_engine 무접촉 (읽기 전용 조인).
+    """
+    if not spikes:
+        return []
+    by_turn: Dict[int, Dict[str, Any]] = {}
+    for t, d in (dai_rows or []):
+        try:
+            by_turn[int(t)] = d
+        except (TypeError, ValueError):
+            continue
+    out: List[str] = []
+    for s in reversed(spikes):  # 최신부터
+        try:
+            t = int(s.get("turn", -1))
+        except (TypeError, ValueError):
+            continue
+        if t < 0:
+            continue
+        age = int(current_turn) - t
+        if age < 1:
+            continue  # 이번 턴 스파이크는 잔열이 아니라 현재 사건
+        npc = str(s.get("npc_name") or "").strip()
+        if not npc:
+            continue
+        base = str(s.get("base") or "").strip()
+        mod = str(s.get("modifier") or "").strip()
+        pair = f"{base}x{mod}" if base and mod else (base or mod or "?")
+        beat = _beat_at_turn(by_turn.get(t, {}))
+        # 조인 실패(그 턴 DAI가 보관 범위 밖) → 나이·페어만. 발명 금지.
+        src = f" amid «{beat}»" if beat else ""
+        out.append(f"{npc}: {pair} spiked {age} turns ago{src}")
+        if len(out) >= cap:
+            break
+    return out
+
+
 def _format_thread_ages(dai_rows: List[Tuple[int, Dict[str, Any]]]) -> List[Tuple[str, int]]:
     """dai_logs 행(오래된→최신) → 현재 열린 스레드별 나이(턴). [(thread, age)] 나이 내림차순."""
     if not dai_rows:
@@ -125,6 +202,23 @@ def _format_emotion_arc(npc: str, traj: List[Dict[str, Any]]) -> str:
     return f"{npc}: dominant {dominant}, intensity {trend} ({early:.2f}->{late:.2f}), spikes {spikes}/{len(traj)}"
 
 
+def _format_attitude_shifts(rows: List[Dict[str, Any]], cap: int = 5) -> List[str]:
+    """attitude_log 행(오래된→최신) → 'T12 리아 wary→open (사유)' 라인.
+    initial 제외(확립은 이력이 아니라 기준점) — accepted/clamped 실전이만."""
+    out = []
+    for r in rows:
+        if not isinstance(r, dict) or r.get("result") not in ("accepted", "clamped"):
+            continue
+        reason = (r.get("reason") or "").strip()
+        reason_str = f" ({reason[:40]})" if reason else ""
+        clamp_str = " [clamped]" if r.get("result") == "clamped" else ""
+        out.append(
+            f"T{r.get('turn', '?')} {r.get('npc_name', '?')} "
+            f"{r.get('from') or '?'}->{r.get('to', '?')}{clamp_str}{reason_str}"
+        )
+    return out[-cap:]
+
+
 def _format_screen_time(sums: Dict[str, float], autonomy_counts: Dict[str, int]) -> List[Tuple[str, float]]:
     """감정 강도 합 + 자율 트리거 수 → 정규화 비중 내림차순. [(npc, share 0~1)]"""
     if not sums and not autonomy_counts:
@@ -148,6 +242,17 @@ def pacing_curve(channel_id: str, n: int = 8) -> str:
     except Exception as e:
         logger.debug(f"[NQ] pacing_curve skip: {e}")
         return ""
+
+
+def attitude_shifts(channel_id: str, n: int = 20, cap: int = 5) -> List[str]:
+    """[고아 승격 2026-07-18] read_attitude_log → 최근 실전이 라인.
+    태도가 '왜 지금 이 값인지'의 이력 급식 (D2 감정부채와 동병동처방)."""
+    try:
+        import sqlite_store
+        return _format_attitude_shifts(sqlite_store.read_attitude_log(channel_id, limit=n), cap=cap)
+    except Exception as e:
+        logger.debug(f"[NQ] attitude_shifts skip: {e}")
+        return []
 
 
 def recent_beats(channel_id: str, n: int = 10, cap: int = 8) -> List[str]:
@@ -175,6 +280,26 @@ def emotion_arc(channel_id: str, npc: str, n: int = 12) -> str:
     except Exception as e:
         logger.debug(f"[NQ] emotion_arc skip: {e}")
         return ""
+
+
+def emotion_residue(channel_id: str, current_turn: int, n: int = 8, cap: int = 4) -> List[str]:
+    """[2026-07-15] 잔열의 출처 — 과거 spike × 그 턴의 사건.
+
+    read_emotion_spikes(고아 승격: 외부 호출 0건이었음) + read_dai_logs 조인.
+    dai_logs limit은 spike 조회창(n)보다 넉넉히(x5, 상한 100=append_dai_log keep) —
+    스파이크가 dai 보관창 밖이면 조인이 조용히 실패하므로.
+    """
+    try:
+        import sqlite_store
+        spikes = sqlite_store.read_emotion_spikes(channel_id, limit=n)
+        if not spikes:
+            return []
+        _span = max(int(n) * 5, 40)
+        dai_rows = sqlite_store.read_dai_logs(channel_id, limit=min(_span, 100))
+        return _format_emotion_residue(spikes, dai_rows, current_turn, cap=cap)
+    except Exception as e:
+        logger.debug(f"[NQ] emotion_residue skip: {e}")
+        return []
 
 
 def last_seen_turns(channel_id: str) -> Dict[str, int]:

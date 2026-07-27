@@ -993,12 +993,31 @@ def update_npc_knowledge(channel_id: str, npc_name: str, knowledge_data: Dict[st
     existing = d["npc_knowledge"].get(npc_name, {})
     # Merge: 기존 knows에 새 항목 추가 (중복 제거)
     old_knows = set(existing.get("knows", []))
-    new_knows = knowledge_data.get("knows", [])
-    merged_knows = list(old_knows | set(new_knows))
+    new_knows = knowledge_data.get("knows", []) or []
+
+    # [2026-07-19 PersistAudit 처방] 근사중복 흡수 — set union은 exact-match만 걸러
+    # "PC is VIP guest"/"PC is a VIP guest" 류 표면형 변형이 무한 누적됐다.
+    # 토큰 자카드 ≥0.75면 더 긴(정보 많은) 항목만 유지. 결정론·콜0.
+    def _absorb_near_dupes(items):
+        kept = []
+        kept_toks = []
+        for it in sorted((str(x) for x in items if x), key=len, reverse=True):
+            toks = {t for t in it.lower().split() if len(t) > 1}
+            if toks and any(
+                kt and len(toks & kt) / max(len(toks | kt), 1) >= 0.75
+                for kt in kept_toks
+            ):
+                continue
+            kept.append(it)
+            kept_toks.append(toks)
+        return kept
+
+    merged_knows = _absorb_near_dupes(old_knows | set(new_knows))
 
     # [V10 지식 lite] suspects(의심) 누적 + misbeliefs(=DAI false_beliefs 영속화).
     # knows로 확정(승격)된 항목은 suspects에서 제거(의심→확신 전이).
-    _merged_susp = list((set(existing.get("suspects", [])) | set(knowledge_data.get("suspects", []))) - set(merged_knows))
+    _merged_susp = _absorb_near_dupes(
+        (set(existing.get("suspects", []) or []) | set(knowledge_data.get("suspects", []) or [])) - set(merged_knows))
     _misbeliefs = knowledge_data.get("misbeliefs", knowledge_data.get("false_beliefs", existing.get("misbeliefs", [])))
 
     d["npc_knowledge"][npc_name] = {
@@ -1706,32 +1725,9 @@ def add_to_ai_memory_list(channel_id: str, uid: str, key: str, item: Union[str, 
     save_participant_data(channel_id, uid, p)
 
 # [Phase 2] PsychProfile Accessors
-def get_psych_profile(channel_id: str, uid: str) -> Dict[str, Any]:
-    p = get_participant_data(channel_id, uid)
-    if not p: return {}
-    ai_mem: Dict[str, Any] = p.get("ai_memory", {})
-    return ai_mem.get("psych_profile", {})
+# [2026-07-18 고아 삭제] get_psych_profile — 구세대(Phase 2) Maslow 심리 프로필 — 현행 DAI psyche/deep_read/emotion_engine이 대체 (dead_scan 참조0 확인, git 이력 복원 가능)
 
-def update_psych_profile(channel_id: str, uid: str, profile_updates: Dict[str, Any]) -> None:
-    p = get_participant_data(channel_id, uid)
-    if not p: return
-    
-    if "psych_profile" not in p["ai_memory"]:
-        p["ai_memory"]["psych_profile"] = {
-             "needs": {"survival": 50, "safety": 50, "love": 50, "esteem": 50, "self_actualization": 50},
-             "values": ["security"], "instinct": "neutral"
-        }
-    
-    current = p["ai_memory"]["psych_profile"]
-    
-    # Deep merge for 'needs'
-    if "needs" in profile_updates:
-        current["needs"].update(profile_updates["needs"])
-        del profile_updates["needs"]
-        
-    current.update(profile_updates)
-    p["ai_memory"]["psych_profile"] = current
-    save_participant_data(channel_id, uid, p)
+# [2026-07-18 고아 삭제] update_psych_profile — 구세대(Phase 2) Maslow 심리 프로필 — 현행 DAI psyche/deep_read/emotion_engine이 대체 (dead_scan 참조0 확인, git 이력 복원 가능)
 
 def update_helena_metric(channel_id: str, npc_name: str, depth_delta: int = 0, tension_delta: int = 0) -> None:
     """[Phase 2] Update Helena metrics (Depth/Tension) for an NPC relation"""
@@ -1882,6 +1878,13 @@ def get_current_location(channel_id: str) -> str:
 
 def set_current_location(channel_id: str, location: str) -> None:
     ws = get_world_state(channel_id)
+    # [2026-07-15 D1 환경 노화] 장면 경계 = 장소 변경. 여기가 유일한 진입점
+    # (orchestration L166 단일 호출)이라 앵커 리셋을 여기 둔다.
+    # ⚠ 매 턴 같은 장소로도 호출되므로 **실제 변경일 때만** 리셋 — 안 그러면
+    #    경과가 매 턴 0으로 깎여 노화가 영원히 임계를 못 넘는다.
+    _prev = ws.get("current_location")
+    if _prev != location:
+        ws["scene_elapsed_min"] = 0
     ws["current_location"] = location
     update_world_state(channel_id, ws)
 
@@ -2433,10 +2436,7 @@ def get_chronicles(channel_id: str) -> list:
     """저장된 연대기 목록 조회."""
     return get_domain(channel_id).get("chronicles", [])
 
-def get_latest_chronicle(channel_id: str) -> Optional[Dict]:
-    """가장 최근 연대기 조회."""
-    chronicles = get_chronicles(channel_id)
-    return chronicles[-1] if chronicles else None
+# [2026-07-18 고아 삭제] get_latest_chronicle — 연대기 주입은 별도 경로(S9/chronicle) 생존, 이 편의 게터만 잉여 (dead_scan 참조0 확인, git 이력 복원 가능)
 
 # =========================================================
 # 6. UNE ADAPTER (Bridge)

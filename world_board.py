@@ -30,6 +30,39 @@ DEFAULT_BOARD_FREQUENCY = 10  # 전체 기본값 (개별 미설정 시 폴백)
 DEFAULT_CHANNEL_FREQUENCY = {"bulletin": 10, "sns": 11, "message": 12}
 
 
+def _genre_labels(channel_id: str) -> tuple:
+    """장르 → (stage, atmosphere) 표시 라벨. 없으면 ("미정", "미정").
+
+    [2026-07-15 수리] 기존: `world.get("genres", {})`에서 `{"stage": [...],
+    "atmosphere": ...}`를 기대 → **삼중 드리프트로 항상 "미정"**이었다(dead_scan B:
+    world.genres READ-ONLY = 읽는데 쓰는 놈 없음):
+      저장소 — world_state가 아니라 **domain**("active_genres")
+      키     — "genres"가 아니라 **"active_genres"**
+      모양   — stage/atmosphere가 아니라 **layers{world_setting,style_tech,
+               narrative_tone} + atmosphere_guide** (command_handler L423-432가
+               set_active_genres로 이 형태를 저장)
+    옛 스키마를 향해 쓰인 코드다. 실제 생산자에 맞춘다.
+    매핑: stage ← layers.world_setting(무대/세계설정) / atmosphere ← atmosphere_guide.
+    ⚠ 레거시 세션은 get_active_genres가 list(["noir"])를 돌려줄 수 있다 → 양쪽 수용.
+    """
+    try:
+        import domain_manager as _dm
+        g = _dm.get_active_genres(channel_id)
+    except Exception:
+        return ("미정", "미정")
+    if isinstance(g, dict):
+        layers = g.get("layers") or {}
+        ws = layers.get("world_setting") or []
+        stage = ", ".join(str(t) for t in ws if t) if isinstance(ws, list) else ""
+        atmosphere = str(g.get("atmosphere_guide") or "")
+    elif isinstance(g, list):           # 레거시: ["noir"] 평면 리스트
+        stage = ", ".join(str(t) for t in g if t)
+        atmosphere = ""
+    else:
+        return ("미정", "미정")
+    return (stage or "미정", atmosphere or "미정")
+
+
 def _calc_post_count(npc_count: int) -> int:
     """NPC 수 → 채널당 최대 게시물 수. cap=3."""
     if npc_count <= 2:
@@ -631,13 +664,7 @@ def _build_board_prompt(
     doom = world.get("doom", 0)
 
     # 장르 정보
-    genres = world.get("genres", {})
-    if isinstance(genres, dict):
-        stage = ", ".join(genres.get("stage", [])) or "미정"
-        atmosphere = genres.get("atmosphere", "") or "미정"
-    else:
-        stage = "미정"
-        atmosphere = "미정"
+    stage, atmosphere = _genre_labels(channel_id)
 
     # 세계 규칙
     wc = world.get("world_constraints", {})
@@ -897,9 +924,7 @@ def _build_event_prompt(
     minute = world.get("minute", 0)
     time_slot = world.get("time_slot", "오후")
 
-    genres = world.get("genres", {})
-    stage = ", ".join(genres.get("stage", [])) if isinstance(genres, dict) else "미정"
-    atmosphere = genres.get("atmosphere", "미정") if isinstance(genres, dict) else "미정"
+    stage, atmosphere = _genre_labels(channel_id)
 
     # NPC 프로필 (1명만)
     npc_name = event.get("npc") or ""

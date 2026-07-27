@@ -1610,19 +1610,61 @@ async def _auto_generate_chronicle(client, model_id: str, session_data: dict, ch
 _vector_similarity_cache: Dict[str, Dict[int, float]] = {}  # {channel_id: {entry_idx: similarity}}
 
 
+# [F2 2026-07-18] 공유 엔진 — 매 호출 새 인스턴스면 chunk 캐시가 즉사해 entry 요약을
+# 매번 재임베딩했다. 모듈 싱글턴으로 요약 임베딩은 1회, 매 턴 비용은 쿼리 1건.
+_vector_engine = None
+
+
+def _get_vector_engine(client):
+    global _vector_engine
+    if _vector_engine is None or getattr(_vector_engine, "client", None) is not client:
+        from vector_search import VectorSearchEngine
+        import config as _cfg_emb
+        _vector_engine = VectorSearchEngine(client, _cfg_emb.VECTOR_EMBEDDING_MODEL)
+    return _vector_engine
+
+
+async def refresh_recall_vector_cache(
+    client,
+    session_data: Dict[str, Any],
+    current_input: str,
+    channel_id: str = "",
+) -> None:
+    """[F2 2026-07-18] 회상 시점 벡터 캐시 정합 — 쿼리 = 현재 입력 + 직전 턴 꼬리.
+
+    병: precompute가 auto_ferment(백그라운드) 시점의 '그때 최근 3메시지'로 캐시를 만들고,
+    소비(build_fermented_context)는 다음 턴 현재 입력으로 일어남 → 유사도가 항상 한 턴
+    이상 뒤처진 쿼리 기준이었다. 턴 시작(gather_context)에서 현재 쿼리로 재계산.
+    FLASHBACK Un+T(n-1) fusion 대응: 현재 입력(주) + 직전 턴 페어(보조)."""
+    if not client or not isinstance(session_data, dict):
+        return
+    fermented = session_data.get("fermented_history", [])
+    if not fermented:
+        return
+    tail = ""
+    hist = session_data.get("history", [])
+    if isinstance(hist, list) and hist:
+        tail = " ".join(
+            m.get("content", "")[:300] for m in hist[-2:] if isinstance(m, dict)
+        )
+    query = f"{(current_input or '')[:400]} {tail}".strip()
+    if query:
+        await precompute_vector_scores(client, fermented, query, channel_id=channel_id)
+
+
 async def precompute_vector_scores(
     client,
     entries: list,
     query: str,
     channel_id: str = "",
 ) -> None:
-    """auto_ferment 내에서 호출. 벡터 유사도를 미리 계산하여 캐시."""
+    """벡터 유사도를 미리 계산하여 캐시.
+    호출 2곳: ① 턴 시작 refresh_recall_vector_cache(현행 쿼리 — 소비가 읽는 것)
+    ② auto_ferment 말미(발효 시점 쿼리 — ①의 폴백, 다음 턴 ①이 덮어씀)."""
     if not query or not entries:
         return
     try:
-        from vector_search import VectorSearchEngine
-        import config as _cfg_emb
-        engine = VectorSearchEngine(client, _cfg_emb.VECTOR_EMBEDDING_MODEL)
+        engine = _get_vector_engine(client)
 
         # 각 entry summary를 chunk로 변환
         chunks = []
@@ -1706,12 +1748,21 @@ def score_fermented_entries(entries: list, query: str = "", channel_id: str = ""
         except Exception:
             pass  # 현재 scene 추출 실패 → mood_boost 모두 1.0 (saliency만 작동)
 
+    # [F1 2026-07-18] Evidence gate 설정 — Contract-First의 회상측 조작화 (FLASHBACK 이식)
+    _gate_on = getattr(_cfg, 'MEMORY_EVIDENCE_GATE', True)
+    _gate_high_sim = getattr(_cfg, 'MEMORY_GATE_HIGH_SIM', 0.55)
+    _gate_min_overlap = getattr(_cfg, 'MEMORY_GATE_MIN_OVERLAP', 1)
+    _gate_recent_keep = getattr(_cfg, 'MEMORY_GATE_RECENT_KEEP', 2)
+    _gate_dropped = 0
+
     for idx, entry in enumerate(entries):
         if not isinstance(entry, dict):
             continue
 
-        # Recency: 0.0 (oldest) to 1.0 (newest)
-        recency = (idx + 1) / total if total > 0 else 0.5
+        # [F3 2026-07-18] Recency: 선형 → story-order 반감기 (FLASHBACK 0.5^(age/H) 이식).
+        # 선형은 옛 엔트리에도 상당 가중이 남아 최근성 신호가 무뎠다. 지수 감쇠로 교체.
+        _half_life = max(1, getattr(_cfg, 'MEMORY_RECENCY_HALF_LIFE_ENTRIES', 4))
+        recency = 0.5 ** ((total - 1 - idx) / _half_life) if total > 0 else 0.5
 
         # Importance: any block marked important?
         blocks = entry.get("compressed_blocks", [])
@@ -1720,11 +1771,9 @@ def score_fermented_entries(entries: list, query: str = "", channel_id: str = ""
         )
         importance = 1.0 if has_important else 0.0
 
-        # Similarity: 벡터 캐시 우선, 없으면 키워드 폴백
-        similarity = 0.0
-        if idx in vec_cache:
-            similarity = vec_cache[idx]
-        elif query_tokens:
+        # 토큰 겹침(구체 증거) — 게이트 판정에도 쓰므로 벡터 캐시 유무와 무관하게 계산
+        overlap = 0
+        if query_tokens:
             summary = (entry.get("summary", "") or "").lower()
             arc = entry.get("arc_observations", {})
             if isinstance(arc, dict):
@@ -1734,7 +1783,21 @@ def score_fermented_entries(entries: list, query: str = "", channel_id: str = ""
             entry_tokens = {t for t in entry_tokens if len(t) > 1}
             if entry_tokens:
                 overlap = len(query_tokens & entry_tokens)
-                similarity = overlap / max(len(query_tokens), 1)
+
+        # Similarity: 벡터 캐시 우선, 없으면 키워드 폴백
+        similarity = 0.0
+        if idx in vec_cache:
+            similarity = vec_cache[idx]
+        elif query_tokens:
+            similarity = overlap / max(len(query_tokens), 1)
+
+        # [F1 2026-07-18] Evidence gate — 구체 증거(토큰 겹침) 0이고 벡터 유사도도 높지
+        # 않으면 회상 제외("느낌만 비슷한" 잡음이 예산을 점유하는 것 차단). 최신 K개는
+        # 면제(장면 꼬리 보장 — FLASHBACK current_scene_tail_min_keep 대응).
+        if (_gate_on and query_tokens and idx < total - _gate_recent_keep
+                and overlap < _gate_min_overlap and similarity < _gate_high_sim):
+            _gate_dropped += 1
+            continue
 
         score = (similarity * w_sim + recency * w_rec + importance * w_imp) * layer_weight
 
@@ -1770,6 +1833,12 @@ def score_fermented_entries(entries: list, query: str = "", channel_id: str = ""
         # 옛 엔트리 (emotion_at_save 없음 또는 빈/비정상) → boost 1.0 (no-op)
 
         scored.append((entry, score))
+
+    if _gate_dropped:
+        logger.info(
+            "[Fermentation] evidence gate: %d/%d dropped (q_tokens=%d)",
+            _gate_dropped, total, len(query_tokens),
+        )
 
     scored.sort(key=lambda x: -x[1])
     return scored
@@ -1843,9 +1912,28 @@ def build_fermented_context(
         else:
             ordered_entries = list(reversed(fermented))
 
+        # [F3 2026-07-18] 선발 중복 억제 — 이미 뽑힌 엔트리와 토큰 자카드가 높으면 스킵
+        # (FLASHBACK MMR의 결정론 축소판. 같은 사건의 재발효/유사 에피소드 이중 주입 차단)
+        import config as _cfg_dd
+        _dedup_thr = getattr(_cfg_dd, 'MEMORY_DEDUP_JACCARD', 0.6)
+        _selected_token_sets = []
+
+        def _entry_tokens(s):
+            toks = set((s or "").lower().split())
+            return {t for t in toks if len(t) > 1}
+
         for entry in ordered_entries:
             summary = entry.get("summary", "")
             timestamp = entry.get("timestamp", "")
+
+            if _dedup_thr and 0 < _dedup_thr < 1:
+                _toks = _entry_tokens(summary)
+                if _toks and any(
+                    len(_toks & prev) / max(len(_toks | prev), 1) >= _dedup_thr
+                    for prev in _selected_token_sets
+                ):
+                    continue
+                _selected_token_sets.append(_toks)
 
             # [LIBRA #2 c 2026-04-28] from/to msg_id 으로 상대 시기 prefix 추가 (흔적)
             # 기존 entry는 from_msg_id가 없어 표현 추가 안 됨 (legacy 호환)
@@ -2266,208 +2354,9 @@ def ensure_memory_fields(session_data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # =========================================================
-# CONTEXT CACHING SYSTEM
-# Gemini API Context Caching for System Prompts
+# [2026-07-18 삭제 집행] CONTEXT CACHING SYSTEM (Gemini Context Caching 유물)
+# 발효 리팩토링 해소(2026-07-15)에서 확정된 삭제 후보 — openai(Ollama) 백엔드 전환 후
+# 호출 0 (dead_scan 2회 확인). 함수 9종(should_use_caching/_stable_hash/create_context_cache/
+# get_cached_content_name/is_cache_valid/invalidate_cache/delete_context_cache/
+# get_cache_stats/get_or_create_cache)+_channel_caches 제거. Gemini 롤백 시 git 이력 복원.
 # =========================================================
-
-# 캐싱 상수
-CACHE_MIN_TOKENS = 4096  # Gemini 최소 캐싱 토큰
-CACHE_DEFAULT_TTL_MINUTES = 60  # 기본 TTL (1시간)
-CACHE_SESSION_TTL_MINUTES = 180  # 세션용 TTL (3시간)
-
-# 채널별 캐시 저장소 (메모리)
-_channel_caches: Dict[str, Dict[str, Any]] = {}
-
-
-def should_use_caching(lore_text: str, deep_memory: str = "") -> bool:
-    """캐싱을 사용해야 하는지 판단합니다."""
-    total_content = lore_text + (deep_memory or "")
-    estimated_tokens = estimate_tokens(total_content)
-    
-    logger.debug(f"[Caching] 추정 토큰: {estimated_tokens} (최소: {CACHE_MIN_TOKENS})")
-    
-    return estimated_tokens >= CACHE_MIN_TOKENS
-
-
-def _stable_hash(text: str) -> str:
-    """프로세스 재시작 간 안정적인 해시. Python hash()는 비결정론적."""
-    return hashlib.sha256(text.encode()).hexdigest()[:16]
-
-
-async def create_context_cache(
-    client,
-    model_id: str,
-    channel_id: str,
-    lore_text: str,
-    rule_text: str = "",
-    deep_memory: str = "",
-    system_instruction: str = "",
-    ttl_minutes: int = CACHE_SESSION_TTL_MINUTES
-) -> Optional[str]:
-    """
-    컨텍스트 캐시를 생성합니다.
-    
-    [7] =====CACHE BOUNDARY===== 이전의 정적 컨텐츠를 캐싱합니다.
-    """
-    if not client:
-        return None
-
-    # OpenAI 호환 분석 백엔드(wellspring)는 명시적 컨텍스트 캐시 미지원(암묵 prefix 캐싱).
-    # → 캐시 생성 스킵, 호출부는 None 처리하여 비캐시 경로를 탄다.
-    if getattr(config, "ANALYSIS_BACKEND", "gemini") == "openai":
-        return None
-
-    if not should_use_caching(lore_text, deep_memory):
-        logger.info(f"[Caching] 토큰 부족으로 캐싱 스킵 - {channel_id}")
-        return None
-    
-    try:
-        # 캐시할 컨텐츠 구성 (프리셋 순서 1-6)
-        cache_content = f"""
-{system_instruction}
-
-<Fermented>
-### Deep Memory (초장기 기억)
-{deep_memory if deep_memory else "(No deep memory yet)"}
-</Fermented>
-
-<Lore>
-### 세계관 (World Setting)
-{lore_text}
-
-### 규칙 (Rules)
-{rule_text if rule_text else "(Standard TRPG rules apply)"}
-</Lore>
-
-==========CACHE BOUNDARY==========
-"""
-        
-        from datetime import timedelta
-        ttl = timedelta(minutes=ttl_minutes)
-        
-        cache = client.caches.create(
-            model=model_id,
-            config=types.CreateCachedContentConfig(
-                display_name=f"lorekeeper-{channel_id}",
-                system_instruction=system_instruction,
-                contents=[
-                    types.Content(
-                        role="user",
-                        parts=[types.Part(text=cache_content)]
-                    )
-                ],
-                ttl=ttl
-            )
-        )
-        
-        _channel_caches[channel_id] = {
-            "cache_name": cache.name,
-            "created_at": get_timestamp(),
-            "ttl_minutes": ttl_minutes,
-            "lore_hash": _stable_hash(lore_text),
-            "deep_hash": _stable_hash(deep_memory or "")
-        }
-        
-        logger.info(f"[Caching] 캐시 생성 완료 - {channel_id}: {cache.name}")
-        return cache.name
-        
-    except Exception as e:
-        logger.error(f"[Caching] 캐시 생성 실패 - {channel_id}: {e}")
-        return None
-
-
-def get_cached_content_name(channel_id: str) -> Optional[str]:
-    """채널의 캐시 이름을 반환합니다."""
-    cache_info = _channel_caches.get(channel_id)
-    if cache_info:
-        return cache_info.get("cache_name")
-    return None
-
-
-def is_cache_valid(
-    channel_id: str, 
-    lore_text: str, 
-    deep_memory: str = ""
-) -> bool:
-    """캐시가 유효한지 확인합니다."""
-    cache_info = _channel_caches.get(channel_id)
-    if not cache_info:
-        return False
-    
-    current_lore_hash = _stable_hash(lore_text)
-    current_deep_hash = _stable_hash(deep_memory or "")
-    
-    if cache_info.get("lore_hash") != current_lore_hash:
-        logger.info(f"[Caching] 로어 변경 감지 - {channel_id}")
-        return False
-    
-    if cache_info.get("deep_hash") != current_deep_hash:
-        logger.info(f"[Caching] DEEP 메모리 변경 감지 - {channel_id}")
-        return False
-    
-    return True
-
-
-def invalidate_cache(channel_id: str) -> bool:
-    """채널의 캐시를 무효화합니다."""
-    if channel_id in _channel_caches:
-        del _channel_caches[channel_id]
-        logger.info(f"[Caching] 캐시 무효화 - {channel_id}")
-        return True
-    return False
-
-
-async def delete_context_cache(client, channel_id: str) -> bool:
-    """Gemini API에서 캐시를 삭제합니다."""
-    cache_name = get_cached_content_name(channel_id)
-    if not cache_name:
-        return False
-    
-    try:
-        client.caches.delete(name=cache_name)
-        invalidate_cache(channel_id)
-        logger.info(f"[Caching] 캐시 삭제 완료 - {channel_id}")
-        return True
-    except Exception as e:
-        logger.error(f"[Caching] 캐시 삭제 실패 - {channel_id}: {e}")
-        invalidate_cache(channel_id)
-        return False
-
-
-def get_cache_stats() -> Dict[str, Any]:
-    """전체 캐시 통계를 반환합니다."""
-    return {
-        "total_caches": len(_channel_caches),
-        "channels": list(_channel_caches.keys()),
-        "details": {
-            ch: {
-                "created_at": info.get("created_at"),
-                "ttl_minutes": info.get("ttl_minutes")
-            }
-            for ch, info in _channel_caches.items()
-        }
-    }
-
-
-async def get_or_create_cache(
-    client,
-    model_id: str,
-    channel_id: str,
-    lore_text: str,
-    rule_text: str = "",
-    deep_memory: str = "",
-    system_instruction: str = ""
-) -> Optional[str]:
-    """캐시를 가져오거나 없으면 생성합니다."""
-    if is_cache_valid(channel_id, lore_text, deep_memory):
-        cache_name = get_cached_content_name(channel_id)
-        if cache_name:
-            logger.debug(f"[Caching] 기존 캐시 사용 - {channel_id}")
-            return cache_name
-    
-    return await create_context_cache(
-        client, model_id, channel_id,
-        lore_text, rule_text, deep_memory,
-        system_instruction
-    )
-

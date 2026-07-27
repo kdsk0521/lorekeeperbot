@@ -1588,24 +1588,7 @@ def read_emotion_spikes(channel_id: str, limit: int = 20) -> list:
         return []
 
 
-def read_emotion_turn(channel_id: str, turn: int) -> list:
-    """독자: 특정 턴의 전 NPC 감정 스냅샷. [{npc_name, base, modifier, intensity, spike}, ...]"""
-    if not channel_id or not _ensure_schema():
-        return []
-    conn = _get_conn()
-    if conn is None:
-        return []
-    try:
-        cur = conn.execute(
-            "SELECT npc_name, base, modifier, intensity, spike FROM emotion_log "
-            "WHERE channel_id=? AND turn=? ORDER BY npc_name",
-            (channel_id, int(turn)),
-        )
-        return [{"npc_name": r[0], "base": r[1], "modifier": r[2], "intensity": r[3], "spike": bool(r[4])}
-                for r in cur.fetchall()]
-    except Exception as e:
-        logger.warning(f"[SQLiteStore] read_emotion_turn 실패: {channel_id}: {e}")
-        return []
+# [2026-07-18 고아 삭제] read_emotion_turn — D2 감정부채 때 read_emotion_spikes만 승격 — turn 단위 리더 소비 계획 없음 (dead_scan 참조0 확인, git 이력 복원 가능)
 
 
 # =========================================================

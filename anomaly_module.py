@@ -82,6 +82,20 @@ class AnomalyModule:
         if queue:
             oldest_queued_turn = queue[0].get("queued_turn", 0)
             if current_turn - oldest_queued_turn >= _cfg.STORYTELLER_STARVATION_TURNS:
+                # [2026-07-15] 하드 억제 씬(allowed=빈 집합: combat/intimate)은 굶주림도 못 뚫는다.
+                # ⚠ 이 return이 아래 씬 필터(L111~)를 건너뛴다 — 굶주림이 발동하면 combat/intimate
+                #   한복판에 이벤트가 터졌다. _select_event의 소프트 필터도 `if allowed is not None
+                #   and allowed:`라 빈 집합이면 falsy → 거기서도 안 걸러 **두 번 뚫림**.
+                # 잠복 버그였다가 이번에 도달 가능해졌음: ANOMALY_DETECTION의 null 탈출구를
+                # 좁히기(같은 날) 전엔 제안률 0 → 큐가 늘 비어 굶주림 자체가 발동한 적 없음.
+                # 제안이 흐르기 시작하니 3턴마다 발동 → 하드 억제가 무력화.
+                # 소프트 불일치(social에 psychological 등, allowed 비어있지 않음)는 그대로 통과 —
+                # 굶주림은 압력 밸브고, _select_event가 `if filtered:`로 이미 소프트 처리 중.
+                _st_starv = dai.get("scene_type", "normal")
+                _allowed_starv = _cfg.STORYTELLER_SCENE_CATEGORIES.get(_st_starv)
+                if _allowed_starv is not None and not _allowed_starv:
+                    bus.anomaly["decision_reason"] = f"scene_suppression:{_st_starv}"
+                    return "defer"
                 return "act"
 
         # No proposal and no queue → nothing to schedule
@@ -100,7 +114,7 @@ class AnomalyModule:
 
         # DAI promotion: defer → act
         if decision == "defer":
-            quality_flags = dai.get("quality_flags", {})
+            quality_flags = dai.get("quality_flags") or {}  # [07-27] 명시 null 방어
             if quality_flags.get("stagnation_warning"):
                 decision = "act"
                 bus.anomaly["decision_reason"] = "stagnation_promotion"

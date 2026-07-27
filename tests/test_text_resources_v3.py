@@ -123,11 +123,11 @@ def test_migrated_content():
           "### COMBAT" not in npc,
           "Combat section should be removed (covered by MW SENSORY RULES + VISCERAL)")
 
-    # TELESCOPE v3 구조 확인
+    # TELESCOPE v5 구조 확인 (2026-07-22 one-body Phase 2: 착지 노트 11필드)
     telescope = text_resources.TELESCOPE_PROTOCOL
-    check("TELESCOPE v3 Phase A/B structure",
-          "Phase A" in telescope and "Phase B" in telescope,
-          "TELESCOPE v3 structure missing")
+    check("TELESCOPE v5 landing-note structure",
+          "Author's Landing Note" in telescope and "[Punctum]" in telescope and "[Ground]" in telescope,
+          "TELESCOPE v5 structure missing")
 
 # =========================================================
 # 4. Master Reference Table

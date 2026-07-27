@@ -133,6 +133,7 @@ class WaterfallPipeline:
         # 서사 콜 실패 시 키 부재 → 아래 전개가 기존 디폴트({}/[]/None) 적용 = 현행 강하와 동일 동작.
         if narrative:
             _merge_keys = ("narrative_chain", "suggested_beats", "narrative_hook",
+                           "open_invitations",  # [H9 2026-07-18] 플레이어향 전방 affordance
                            "offscreen_trace", "scene_register", "trait_connections")
             for _nk in _merge_keys:
                 _nv = narrative.get(_nk)
@@ -167,6 +168,19 @@ class WaterfallPipeline:
                         _rel = _ps[_tgt].setdefault("relation", {})
                         if isinstance(_rel, dict):
                             _rel["value_conflict"] = _pn_blk["value_conflict"]
+                    # [2026-07-22 카드1] pressure(drives/cannot) 병합 — 렌더러가 받는 "감정이 무엇을
+                    # 하게 만드는가". LLM이 명시 null로 줄 수도 있으므로 setdefault 금지·isinstance 정규화.
+                    _pr = _pn_blk.get("pressure")
+                    if isinstance(_pr, dict):
+                        _drives = _pr.get("drives")
+                        _cannot = _pr.get("cannot")
+                        _clean = {}
+                        if isinstance(_drives, str) and _drives.strip() and _drives.strip().lower() != "null":
+                            _clean["drives"] = _drives.strip()
+                        if isinstance(_cannot, str) and _cannot.strip() and _cannot.strip().lower() != "null":
+                            _clean["cannot"] = _cannot.strip()
+                        if _clean:
+                            _ps[_tgt]["pressure"] = _clean
 
             logger.info("[Narrative] merged: "
                         + ", ".join(k for k in _merge_keys if narrative.get(k) is not None)
@@ -228,6 +242,25 @@ class WaterfallPipeline:
         bus.dai["spatial_read"] = analysis.get("spatial_read", {})
         bus.dai["continuity_check"] = analysis.get("continuity_check")
 
+        # [2026-07-19 명시 null 정규화] LLM Optional 필드는 "누락"뿐 아니라 "명시 null"로도
+        # 온다 — .get(k, default)는 키가 존재하면 null을 그대로 통과시킴 (E3 프로덕션 크래시
+        # 교훈). 형 계약 필드를 여기서 일괄 정규화 — 하류 무가드 순회/슬라이스 방어 초크포인트.
+        # (의미상 null 허용 필드는 제외: anomaly는 {}=falsy로 동치, offscreen_trace/scene_register/
+        #  intimacy_analysis/flashback_eval/rest_eval/item_usage/continuity_check는 null 계약 유지)
+        for _lk in ("aspects", "memory_triggers", "sensory_anchors", "relevant_context",
+                    "relevant_npcs", "relevant_chunks", "suggested_beats", "open_invitations"):
+            if not isinstance(bus.dai.get(_lk), list):
+                bus.dai[_lk] = []
+        for _dk in ("input_analysis", "quality_flags", "position", "effect", "psyche_states",
+                    "narrative_chain", "time_flow", "doom_clocks", "mental_impact",
+                    "anomaly_profile", "pc_autonomy_check", "temporal_orientation",
+                    "npc_attitudes", "npc_knowledge", "habitus_analysis", "action_meta",
+                    "asset_evaluation", "trait_connections", "spatial_read"):
+            if not isinstance(bus.dai.get(_dk), dict):
+                bus.dai[_dk] = {}
+        if not isinstance(bus.dai["narrative_chain"].get("open_threads"), list):
+            bus.dai["narrative_chain"]["open_threads"] = []
+
         # [2026-06-11 소비자 감사 #6] 죽은 저장 제거 — capability hints는 이제 anchors 경유로
         # Theoria *입력*에 배달됨 (une_facade에서 계산, theoria_analyzer 로스터 옆 렌더 — 원설계).
         # 기존 이 자리 코드는 Flash 콜 후 저장 + 독자 0 + npc_roster가 str이라 isinstance(dict)
@@ -261,10 +294,10 @@ class WaterfallPipeline:
         bus.judgment["gate_reason"] = gate_reason
         if final_needs:
             bus.judgment["last_judgment_turn"] = current_turn
-            bus.judgment["meta"] = analysis.get("action_meta", {})
-            eval_data = analysis.get("asset_evaluation", {})
+            bus.judgment["meta"] = analysis.get("action_meta") or {}  # [07-27] 명시 null 방어
+            eval_data = analysis.get("asset_evaluation") or {}  # [07-19] 명시 null 방어
             bus.judgment["eval"] = eval_data
-            bus.judgment["modifications"] = eval_data.get("modifications", [])
+            bus.judgment["modifications"] = eval_data.get("modifications") or []
             bus.judgment["narrative_hook"] = analysis.get("narrative_hook", "")
 
         # [V10] DAI 스냅샷 롤링 보존 — bus.dai 완성 직후, 코드만(콜 0)·실패 무해.
@@ -282,9 +315,9 @@ class WaterfallPipeline:
         # relief 제거 (2026-05-23) — legacy 위기진폭 잔재. 둠은 서사 진행도라 평화 장면 자동 감소는 의미 충돌.
         doom_clocks_output = analysis.get("doom_clocks") or {}
         if isinstance(doom_clocks_output, dict):
-            bus.doom["flash_clock_updates"] = doom_clocks_output.get("clock_updates", [])
+            bus.doom["flash_clock_updates"] = doom_clocks_output.get("clock_updates") or []  # [07-19] 명시 null 방어
             bus.doom["flash_clock_new"] = doom_clocks_output.get("clock_new")
-            bus.doom["flash_clock_resolved"] = doom_clocks_output.get("clock_resolved", [])
+            bus.doom["flash_clock_resolved"] = doom_clocks_output.get("clock_resolved") or []
 
         # Vigor/Composure Impact 연동
         mental_impact = analysis.get("mental_impact") or {}
@@ -509,7 +542,7 @@ class WaterfallPipeline:
             import sqlite_store
             _ts_ch = (context.narrative_anchors or {}).get("channel_id", "")
             if _ts_ch:
-                _sd = bus.dai.get("story_direction", {}) if isinstance(bus.dai, dict) else {}
+                _sd = (bus.dai.get("story_direction") or {}) if isinstance(bus.dai, dict) else {}
                 _snap = {
                     "doom_value": bus.doom.get("value"),
                     "doom_phase": bus.doom.get("chapter_phase", ""),
@@ -574,7 +607,7 @@ class WaterfallPipeline:
         parts.append(f"  Vigor: {v_val} ({v_sign}) | Composure: {c_val} ({c_sign})")
 
         # Story Director (SD-A4 새 스키마 — plot_hints/transition.mood 제거, focus.spotlight/next_beat 사용)
-        sd = bus.dai.get("story_direction", {})
+        sd = bus.dai.get("story_direction") or {}  # [07-27] 명시 null 방어 (요약 로그는 try 밖)
         if sd.get("active"):
             sd_pacing = sd.get("pacing", "?")
             sd_tension = sd.get("tension_axis", "?")

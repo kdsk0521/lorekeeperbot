@@ -40,9 +40,12 @@ class TheoriaAnalyzer:
         """RequestData.genres(dict)에서 이론 강조용 장르 리스트를 추출."""
         if isinstance(genres, str):
             genres = [genres]
+        # [2026-07-16 분석스택 감사] 폴백에서 drama 제거 — 장르 미설정 세션이 자동으로
+        # drama emphasize(Four-Layer 극적 폭로·Kübler-Ross·恨·Fermentation Recall,
+        # npc_default='complex')를 받던 최상류 중력원. drama는 명시 선택 시만.
         if isinstance(genres, list):
             out = [str(g).strip() for g in genres if str(g).strip()]
-            return out or ["modern", "drama"]
+            return out or ["modern"]
 
         if isinstance(genres, dict):
             out = []
@@ -57,9 +60,9 @@ class TheoriaAnalyzer:
                     if not s or s in out:
                         continue
                     out.append(s)
-            return out or ["modern", "drama"]
+            return out or ["modern"]
 
-        return ["modern", "drama"]
+        return ["modern"]
 
     async def analyze_input(self, context: GameContext) -> Dict[str, Any]:
         """전체 분석을 수행하고 결과를 반환합니다."""
@@ -77,7 +80,11 @@ class TheoriaAnalyzer:
             "intimate_module": True,
             "pending_flashback": bool(anchors.get("pending_flashback")),
             "channel_id": anchors.get("channel_id", ""),
-            "turn_count": len(anchors.get("history", [])) if isinstance(anchors.get("history"), list) else 0,
+            # [2026-07-15 수리] 기존: len(anchors.get("history", [])) — anchors에 "history"
+            # 키가 존재한 적이 없어 **항상 0**. turn_count는 get_session_spotlight의 로테이션
+            # 축(group_idx = turn_number % total_groups)이라 스포트라이트가 매 턴 같은 5개로
+            # 고정돼 있었다. une_facade가 실 카운터(world_state.turn_index)를 넣어준다.
+            "turn_count": int(anchors.get("turn_index", 0) or 0),
         }
         system_instruction = self._build_system_instruction(active_genres, scene_context)
         
@@ -182,7 +189,7 @@ class TheoriaAnalyzer:
         """Theoria v2.0 시스템 프롬프트 조립 — build_analysis_directive() 사용"""
         from theory_emphasis_engine import build_analysis_directive, get_session_spotlight, get_suppressed_theories, get_emphasized_theories
 
-        active_genres = active_genres or ["modern", "drama"]
+        active_genres = active_genres or ["modern"]  # [2026-07-16] drama 폴백 제거 — _extract_active_genres와 동기
         scene_context = scene_context or {}
 
         # 코어 이론 블록 (PART A~E, 항상 로딩)
@@ -270,7 +277,7 @@ LANGUAGE RULE: every render-facing direction/analysis field → ENGLISH telegrap
   - decree: user input = established fact, world absorbs ("문을 연다", "밥을 먹는다")
   - attempt: user input = intention, outcome uncertain ("자물쇠를 따본다", "절벽을 오른다")
   - probe: user input = pressure/exploration, not command ("주변을 둘러본다", "유우의 눈을 바라본다"). Characters REACT to pressure, not obey.
-- "CurrentLocation": str (Korean)
+- "CurrentLocation": str (Korean. PLACE NAME only — never append status/progress annotations like "(이동 완료)" or movement notes. While in the same place, keep the exact same name form across turns; sub-spots of one place stay under the same name unless the scene truly moved to a distinct location.)
 - "LocationRisk": "None/Low/Medium/High/Extreme"
 - "TimeContext": str (Korean - e.g. "깊은 밤", "이른 아침")
 - "SceneType": "normal/combat/social/summary/intimate"
@@ -348,7 +355,7 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
   - SOURCE GATE: extraction sources ONLY from current-turn user input. Vague phrases ("한참 후", "잠시 후") use ticks only.
 - "doom_clocks": {
     "clock_updates": [{"name": str, "delta": int(-1~+2), "reason": "ENGLISH-ONLY telegraphic"}],
-    "clock_new": {"name": "Korean", "segments": 4|6|8, "tick_mode": "action|time|hybrid", "threat": "Korean — 이 시계가 완성되면 무슨 일이 벌어지는가", "defense_action": "Korean — 이 시계를 막으려면 무엇을 해야 하는가 (구체적 행동 힌트)", "source": "narrative|consequence", "linked_entity": "str or null — 관련 NPC/세력 이름", "tags": ["Korean"]} | null,
+    "clock_new": {"name": "Korean", "segments": 4|6|8, "tick_mode": "action|time|hybrid", "threat": "Korean — 이 시계가 완성되면 무슨 일이 벌어지는가", "defense_action": "Korean — 이 시계를 막으려면 무엇을 해야 하는가 (구체적 행동 힌트)", "source": "narrative|consequence", "linked_entity": "str or null — 관련 NPC/세력 이름", "tags": ["Korean"], "doom_on_complete": "null(threat 기본: doom 상승) | 0(timer: 중립 마감) | negative int(opportunity: 완성 시 doom 감소, e.g. -10)"} | null,
     "clock_resolved": ["시계 이름 — 서사적으로 위협이 해소된 경우만"]
   }
 - "mental_impact": {"applicable": boolean, "vigor_severity": "none/uplift/restore/mild/heavy/extreme", "composure_severity": "none/uplift/restore/mild/heavy/extreme", "reason": "ENGLISH-ONLY telegraphic"}
@@ -365,7 +372,7 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
     Pleasant mood alone ≠ uplift — a restorative beat must actually happen in the scene; restore only when the story visibly turns.
   - DIRECTION STABILITY: keep severity direction consistent within a scene. composure falling toward heavy then abruptly recovering none → mild is unnatural (only on a genuine scene-tone shift).
   - legacy compat: vigor_delta / composure_delta (numeric) format is still recognized, but the new format (severity enum) is preferred.
-- "anomaly_profile": {"trigger": str, "category": "supernatural/psychological/social/environmental/temporal", "intensity": "Low/Mid/High/Extreme", "polarity": "positive/negative/mixed", "perception_type": "veridical/illusory/hallucinatory/delusional/null (Anomalous Experience Framework. In supernatural settings, 'hallucinatory' may be CORRECT. null = no anomaly)", "line": "ENGLISH-ONLY telegraphic - 1-line event direction", "reason": "ENGLISH-ONLY telegraphic", "location": "이벤트 발생 장소 (CurrentLocation과 다를 때만. 빈 문자열이면 현재 위치)"} | null (null when world event is not appropriate this turn)
+- "anomaly_profile": {"trigger": str, "category": "supernatural/psychological/social/environmental/temporal", "intensity": "Low/Mid/High/Extreme", "polarity": "positive/negative/mixed", "perception_type": "veridical/illusory/hallucinatory/delusional/null (Anomalous Experience Framework. In supernatural settings, 'hallucinatory' may be CORRECT. null = no anomaly)", "line": "ENGLISH-ONLY telegraphic - 1-line event direction", "reason": "ENGLISH-ONLY telegraphic", "location": "이벤트 발생 장소 (CurrentLocation과 다를 때만. 빈 문자열이면 현재 위치)"} | null (2026-07-15: propose each turn — downstream code gates timing/acceptance and holds most back. null = the scene physically cannot host any event, NOT "seems quiet")
 - "condition_resolved": ["조건 태그 — 서사적으로 해당 조건이 더 이상 세계에 유효하지 않을 때. Active Conditions 참고"]
 - "condition_updates": [{"tag": "조건 태그", "intensity": "새 강도 (Low/Mid/High/Extreme)", "description": "갱신된 상황 묘사 (Korean)"}]
 
@@ -400,6 +407,7 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
         "would_share": boolean,
         "leak_risk": "none/low/medium/high (Curse of Knowledge: 아는 것을 숨기기 어려움)",
         "false_beliefs": ["ENGLISH-ONLY telegraphic - believed contrary to fact (Theory of Mind)"],
+        "suspects": ["ENGLISH-ONLY telegraphic - SUSPECTED but unconfirmed: overheard, half-seen, inferred. Distinct from knows(confirmed). Most turns empty []"],
         "deception_cues": "str or null (Statement Analysis/SCAN: pronoun_shift/tense_shift/time_gap/over_detail/emotion_misplace. null = no deception detected)",
         "secret_updates": [{"truth_ref": "short substring of the secrets_held entry this updates", "surface": "ENGLISH-ONLY - what it LOOKS like from outside (cover story, visible tell)", "reveal_gate": "condition that would crack it open, or ''", "knowers": ["who now knows the truth"], "suspecters": ["who now suspects"], "status": "kept/leaking/revealed"}]
     }
@@ -928,12 +936,14 @@ Evaluate this in flashback_eval field. Check plausibility, passive match, assign
     # (memory_triggers·anomaly_profile = 규칙표 결합이 강해 추출 잔류, 2차 이사 후보)
     # =========================================================
 
-    _NARRATIVE_IDENTITY = """You are the narrative-direction pass of a TRPG GM pipeline, running AFTER a mechanical extraction pass whose this-turn readings you receive.
-Your ONLY job: durable plot pressure, the world's own motion, and the interpretive depth of character psyche. You do not extract mechanics, do not judge actions, do not write prose or dialogue.
-Find the smallest earned movement the next response can make. Open threads are available pressure, not mandatory agenda.
-Hooks emerge from unresolved world state; when everything genuinely rests, quiet output is valid (empty beats, null hook, null trace).
+    _NARRATIVE_IDENTITY = """You are Mira, the analytical mind at this table, now on your scout pass: you range ahead of the turn and report what the world is already moving toward. Your own observation pass ran first; these are your readings from this turn, and you are free to read deeper into them.
+What you look for: durable plot pressure, the world's own motion, the interpretive depth of character psyche. Mechanics, judgment, and prose belong to other hands.
+Finding the smallest earned movement is the work, and finding it is what you are good at. Look widely; a reading that catches what others would pass over is worth having.
+Open threads are pressure available to you, never an agenda you owe.
+Where two directions both fit, take the one the scene already leans toward; the lean is in the material, not in your preference.
+Hooks come from unresolved world state; where the world genuinely rests, saying so is also a finding (empty beats, null hook, null trace).
 Psyche interpretation stays CONSISTENT with the extract's this-turn readings (values, polyvagal, emotions) — you deepen them, never contradict them.
-Ground every proposal in the supplied material (history, NPC state, extract, measurements). No major events, no completed schemes, no invented antecedents."""
+Every proposal stands on the supplied material (history, NPC state, extract, measurements): the scout finds paths that exist and does not lay new ones. No major events, no completed schemes, no invented antecedents."""
 
     _NARRATIVE_SCHEMA = """<output_schema>
 Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean only when quoting world content).
@@ -943,10 +953,11 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
     "chain_status": "OPEN/CLOSED/DORMANT (Scheherazade: CLOSED + no threads = violation → inject hook)",
     "conclusion_proximity": 0-100,
     "open_threads": ["thread type: description", ...],
-    "silence_type": "reflective/hesitant/heavy/tense/null (間/Ma: classify when dialogue pauses)"
+    "silence_type": "companionable/reflective/hesitant/heavy/tense/null (間/Ma: classify when dialogue pauses. companionable = shared ease, nothing needs saying — the usual pause of a calm scene; heavy/tense need actually loaded content)"
   }
 - "suggested_beats": [str, ...]  (0~3 ENGLISH-ONLY telegraphic directives. Format: "next beat: ..." — world-driven next-turn hints for the Story Director. Non-redundant axes (external trigger / internal pressure / relational shift / environmental beat). [] when scene rests in quiet resolution. DO NOT write dialogue or prose — beat direction only. When a RECENT BEATS list is present, do not repeat those axes — approach from an angle that list does not cover.)
 - "narrative_hook": str | null (ENGLISH-ONLY telegraphic - Observe the next event that naturally arises from currently unresolved world state. Describe only consequences produced by the world's existing forces. Return null when the world is at peace.)
+- "open_invitations": [str, ...]  (0~2 ENGLISH-ONLY telegraphic. [H9 CUSTOM] A hand the world/NPC leaves extended toward the PLAYER at turn end: a question left unanswered, an object held out, a door standing open, someone visibly waiting on a reply. Must already exist in scene/chain — no invented props. Unlike suggested_beats (director-facing), these are affordances the prose may keep visibly open for the player to take or refuse. [] when the scene extends no hand — [] is common.)
 - "offscreen_trace": {"name": str, "movement": str, "visible_sign": str} or null  (Offscreen Motion [CUSTOM]: ONE absent cast member from the ABSENT CAST list only. Plausible modest motion inferred from last known state; visible_sign = the trace that reaches the CURRENT scene: rumor, delay, changed readiness, missing presence, preparation, a message. ENGLISH-ONLY telegraphic. NEVER: major events, reveals, deaths, betrayals, arrivals, completed schemes, private motives stated as fact. null when nothing plausible touches this scene — null is the common case.)
 - "scene_register": "mirror" | "law" | "remainder" | null
   - mirror: character sees own trait in another without recognizing it. Name trait AND misrecognition.
@@ -956,10 +967,15 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
 - "psyche_narrative": {
     "CharName": {
         "deep_read": "str (ENGLISH-ONLY telegraphic. Four-Layer [CUSTOM]: Surface→Adaptation→Core→Lack, 1 fragment each. Lack is never stated by character.)",
-        "value_conflict": "str or null (ENGLISH-ONLY telegraphic. 'X vs Y' tension axis ONLY, no resolution narration. null = no conflict)",
-        "resurfacing": "str or null (past trauma, contradictory desire, or 'resolved' emotion re-emerging through current interaction. What resurfaces and what triggered it. null = no resurgence)"
+        "value_conflict": "str or null (ENGLISH-ONLY telegraphic. 'X vs Y' tension axis ONLY, no resolution narration. null = no conflict. null is the common case — a live tension needs a this-scene trigger, not a standing trait re-read each turn)",
+        "resurfacing": "str or null (past trauma, contradictory desire, or 'resolved' emotion re-emerging through current interaction. What resurfaces and what triggered it. null = no resurgence)",
+        "pressure": {
+            "drives": "str (ENGLISH telegraphic VERB PHRASE, no subject, no causal connective, <=10 words. What this body is moved to DO now: 'stands with back to the door', 'reaches for the cup, stops short'. Not what the feeling IS.)",
+            "cannot": "str or null (ENGLISH telegraphic VERB PHRASE. What it cannot do while this holds: 'cannot speak first', 'answers a half-beat late'. null = nothing held back.)"
+        }
     }
-  }  (NPCs from the THIS-TURN EXTRACT only — deepen its readings, never contradict them. Omit NPCs with nothing worth deepening.)
+  }  (NPCs from the THIS-TURN EXTRACT only — deepen its readings, never contradict them. Omit NPCs with nothing worth deepening.
+   pressure is the exception to that omission rule: fill it for the two or three characters this turn actually turns on, whether or not they have a written profile. It is read off the scene, not off a sheet — a character with no profile still has a body doing something and something it is not doing. Thin background figures with no bearing on this turn stay omitted.)
 - "trait_connections": {
     "NpcName": {
         "trait_pair": "trait_A × trait_B (the two profile traits being connected this turn)",
@@ -975,6 +991,8 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
             "<NARRATIVE_DIRECTOR role='thread steward · beat direction · offscreen continuity'>",
             self._NARRATIVE_IDENTITY,
             analysis_resources.THEORIA_CHAIN,
+            # [2026-07-16 소유권 대청소] 추출 PART D에서 이사 온 서사 소유 렌즈 압축본
+            getattr(analysis_resources, "NARRATIVE_CUSTOM_LENSES", ""),
             self._NARRATIVE_SCHEMA,
             "</NARRATIVE_DIRECTOR>",
         ])
@@ -1075,6 +1093,24 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
                 _arc = _nq.emotion_arc(channel_id, _n, n=12)
                 if _arc:
                     meas.append(f"- emotion arc: {_arc}")
+            # [2026-07-15] 감정 잔열의 출처 — 과거 spike × 그 턴의 사건 (코드측 조인).
+            # emotion arc는 'spikes 3/12'로 개수만 주고 턴을 버렸다 → 언제/무엇인지 못 붙임.
+            # resurfacing(psyche_narrative) 재료. 딥스키 0712 §7-2.
+            try:
+                _cur_turn = int(
+                    (domain_manager.get_world_state(channel_id) or {}).get("turn_index", 0)
+                ) if channel_id else 0
+            except Exception:
+                _cur_turn = 0
+            if _cur_turn > 0:
+                _res = _nq.emotion_residue(channel_id, _cur_turn, n=8, cap=4)
+                if _res:
+                    meas.append("- residue (settled spikes still owed): " + "; ".join(_res))
+            # [2026-07-18 고아 승격] 태도 전이 이력 — attitude가 '왜 지금 이 값'인지
+            # (read_attitude_log 소비 0이던 것을 계측 급식으로. D2 감정부채 동병동처방)
+            _shifts = _nq.attitude_shifts(channel_id, n=20, cap=5)
+            if _shifts:
+                meas.append("- attitude shifts: " + "; ".join(_shifts))
             if meas:
                 parts.append("### MEASUREMENTS (from state DB — ground pressure in these)\n" + "\n".join(meas))
         except Exception:
@@ -1132,13 +1168,31 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
                 cleaned = bot_utils.clean_json_text(response.text)
                 try:
                     result = json.loads(cleaned)
-                except json.JSONDecodeError:
-                    result = json.loads(bot_utils.repair_json(cleaned))
+                except json.JSONDecodeError as je:
+                    # [2026-07-27] 추출 콜과 파싱 강건성 동등화. 여기가 추출보다 얇아서
+                    # (repair 1단 + 실패 컨텍스트 로그 없음 + literal_eval 폴백 없음)
+                    # 같은 모델·같은 버릇인데 서사 콜만 조용히 {} 반환하고 있었다.
+                    try:
+                        result = json.loads(bot_utils.repair_json(cleaned))
+                        logger.info("[Narrative] JSON repair succeeded")
+                    except json.JSONDecodeError as je2:
+                        import ast
+                        try:
+                            result = ast.literal_eval(cleaned)
+                        except (ValueError, SyntaxError, MemoryError, RecursionError):
+                            _at = max(0, getattr(je2, "pos", 0) - 60)
+                            logger.error(
+                                "[Narrative] JSON failed (attempt %d): %s | context: ...%s...",
+                                attempt + 1, je2, cleaned[_at:_at + 160].replace("\n", " "))
+                            raise je
+                        if not isinstance(result, (dict, list)):
+                            raise je
                 if isinstance(result, list) and len(result) == 1 and isinstance(result[0], dict):
                     result = result[0]
                 return result if isinstance(result, dict) else {}
             except Exception as e:
                 logger.warning(f"[Narrative] attempt {attempt + 1} failed: {e}")
+        logger.error("[Narrative] analysis failed after retry — narrative fields fall back to extract-only")
         return {}
 
     def _build_prompt(self, context: GameContext) -> str:

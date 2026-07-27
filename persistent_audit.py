@@ -31,7 +31,7 @@ The state below accumulated automatically from per-turn LLM analysis — some en
 Detect ONLY these four categories:
 - contradictions: two entries asserting incompatible facts (within one NPC's knowledge, between NPCs, or between knowledge and relations).
 - duplicates: the same fact stored twice — near-duplicate phrasings, or cross-NPC copies left by knowledge propagation.
-- orphans: knowledge/relations referencing names absent from the roster; auto-registered locations that nothing references.
+- orphans: knowledge/relations referencing names absent from the roster; auto-registered locations that nothing references. Names in the PLAYER CHARACTERS list are known entities — references to them are NEVER orphans (they are simply not NPCs).
 - suspicious: knowledge an NPC could not plausibly have acquired (no witnessing path), or a relation edge with no plausible origin.
 
 Rules: detection only — do NOT propose rewrites, do NOT invent context. One telegraphic English line per finding, names included. Empty arrays when clean; clean is the common case.
@@ -46,6 +46,22 @@ def _build_state_dump(channel_id: str) -> str:
     npcs = domain_manager.get_npcs(channel_id) or {}
     roster = list(npcs.keys())
     parts.append("## ROSTER\n" + (", ".join(roster) if roster else "(empty)"))
+
+    # [2026-07-19 PC 혼입 계열 수리] PC 마스크를 별도 명부로 동봉 — PC를 참조하는
+    # 관계/지식("사쿠라→레이선")이 "명부에 없는 이름=고아"로 오탐되던 것 차단.
+    # (07-13 npc_attitudes PC 혼입 가드와 같은 병 계열: PC/NPC 구분 누락)
+    try:
+        pc_masks = sorted({
+            str(p.get("mask")) for p in
+            (domain_manager.get_domain(channel_id).get("participants", {}) or {}).values()
+            if isinstance(p, dict) and p.get("mask")
+        })
+        if pc_masks:
+            parts.append(
+                "## PLAYER CHARACTERS (valid reference targets — NOT NPCs, "
+                "never orphans when referenced)\n" + ", ".join(pc_masks))
+    except Exception:
+        pass
 
     knowledge = domain_manager.get_npc_knowledge(channel_id) or {}
     if knowledge:

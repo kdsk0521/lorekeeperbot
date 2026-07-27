@@ -125,6 +125,33 @@ class StoryDirector:
         active_conditions = bus.anomaly.get("_storyteller_state", {}).get("active_conditions", [])
         quality_flags = dai.get("quality_flags", {})
 
+        # [2026-07-15 A6] Arc → 디렉터. spec v2 L574: "phases 누적 history: Pro에 안 줌.
+        # 디렉터의 _generate_beats 입력으로만." — 스펙이 유일 소비자로 지목했는데 Phase
+        # 목록(1~7)에 이 배선이 없어 증발했고, story_director는 arc를 몰랐다(언급 0회).
+        # 결과: phases 누적(ARC_PHASES_CAP=10 링버퍼)의 실소비자가 `!아크` 표시뿐이었음.
+        # ⚠ arc는 storyteller_state가 아니라 narrative_tracker_state 소속 — bus에 없어서
+        #   여기서 직접 읽는다. spec §1.1이 두 저장소를 혼동해 focus 포인터를 엉뚱한 곳에
+        #   뒀고, 그래서 get_focus_arc는 항상 None이었다 → 2026-07-15 폐기(narrative_tracker).
+        # 노출 게이트는 slot_manager _render_arc_foreground와 동일 임계 — 산문에 안 뜨는
+        # arc가 비트만 밀면 근거 없는 압력이 된다.
+        _active_arcs = []
+        try:
+            _ch_arc = (context.narrative_anchors or {}).get("channel_id", "")
+            if _ch_arc:
+                import domain_manager as _dm_arc
+                import config as _cfg_arc
+                _nt_arc = _dm_arc.get_narrative_tracker_state(_ch_arc)
+                _thr_arc = getattr(_cfg_arc, "ARC_PROXIMITY_EXPOSURE_THRESHOLD", 0.3)
+                _active_arcs = [
+                    s for s in (_nt_arc.get("storylines", []) or [])
+                    if isinstance(s, dict)
+                    and s.get("is_arc") and s.get("status") == "active"
+                    and float(s.get("proximity", 0.0) or 0.0) >= _thr_arc
+                ]
+        except Exception as _e_arc:
+            logger.debug("[StoryDirector] arc read skip: %s", _e_arc)
+            _active_arcs = []
+
         # 1. Pacing decision
         pacing = StoryDirector._decide_pacing(scene_type, energy)
 
@@ -156,7 +183,7 @@ class StoryDirector:
         #    [SD-A4] 생산자 유지(축 B 재활용 후보) — 현재는 bus 미송출.
         _plot_hints_reserved = StoryDirector._analyze_plot_threads(
             narrative_chain, memory_triggers, active_conditions,
-            quality_flags, energy
+            quality_flags, energy, active_arcs=_active_arcs
         )
 
         # 4. Scene transition guidance
@@ -432,9 +459,15 @@ class StoryDirector:
         memory_triggers: List[Any],
         active_conditions: List[dict],
         quality_flags: dict,
-        energy: str
+        energy: str,
+        active_arcs: Optional[List[Dict[str, Any]]] = None
     ) -> List[Dict[str, Any]]:
-        """Score and rank unresolved plot threads for advancement hints."""
+        """Score and rank unresolved plot threads for advancement hints.
+
+        [2026-07-15 A6] active_arcs 추가 — arc = 세 번째 thread source.
+        기존 두 source(narrative_chain / active_condition)와 같은 모양이라
+        새 배관 없이 얹힌다. Optional 기본 None = 미전달 시 기존 경로 동일.
+        """
         threads: List[Dict[str, Any]] = []
 
         # Thread from narrative chain
@@ -489,8 +522,41 @@ class StoryDirector:
                     "type": "memory_callback",
                 })
 
-        # Sort by priority descending
-        threads.sort(key=lambda t: t["priority"], reverse=True)
+        # Threads from active arcs [2026-07-15 A6 — spec v2 L574]
+        # 여기가 phases 누적 history의 자리다. next_waypoint는 쓰지 않는다:
+        # slot_manager._render_arc_foreground가 이미 "an approaching shadow"로 Pro에
+        # 주고 있어, 비트로 또 밀면 같은 웨이포인트가 두 채널로 이중 주입된다.
+        # (계획서 A6은 next_waypoint 시드였으나 spec v2가 phases 누적으로 바꿈 — 후자 채택.)
+        for arc in (active_arcs or []):
+            if not isinstance(arc, dict):
+                continue
+            label = arc.get("declared_goal") or arc.get("origin_category") or ""
+            if not label:
+                continue
+            phases = [p for p in (arc.get("phases") or []) if isinstance(p, str)]
+            try:
+                prio = float(arc.get("proximity", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                prio = 0.0
+            th = {
+                "source": "arc",
+                "label": label,
+                "priority": min(1.0, max(0.0, prio)),
+                "type": "arc_thread",
+                "phase": phases[-1] if phases else "",
+                "arc_id": arc.get("id"),
+            }
+            # phases 누적의 유일한 판독거리 — 같은 국면 라벨이 3연속이면 arc가 제자리를
+            # 돈다. narrative_chain의 stagnation_warning과 동형 처리(+0.3).
+            if len(phases) >= 3 and len(set(phases[-3:])) == 1:
+                th["urgency"] = "stagnation"
+                th["priority"] = min(1.0, th["priority"] + 0.3)
+            threads.append(th)
+
+        # Sort by priority descending.
+        # [2026-07-15] label tiebreak 추가 — 동점 시 dict 삽입순 의존이었음.
+        # Pass D-2 교훈(결정론): 같은 입력 → 같은 출력. arc source 합류로 동점 확률↑.
+        threads.sort(key=lambda t: (-t["priority"], str(t.get("label", ""))))
 
         # Return top threads (cap at 3 to avoid information overload)
         return threads[:3]
@@ -798,6 +864,24 @@ class StoryDirector:
                     # OPEN — advance; 극적 동사는 doom(챕터볼륨 활성도)에서 읽음
                     _dk = "climax" if doom_value >= 75 else ("rising" if doom_value >= 45 else "intro")
                     beats.append(f"Next beat: '{label}' {StoryDirector._DOOM_BEAT_VERB[_dk]}.")
+
+            elif src == "arc":
+                # [2026-07-15 A6] 긴 호흡. 레일은 있어도 되지만 이름이 보이면 안 된다
+                # (anti-railroad = 탄 걸 모르게. 시스템 메시지 금지지 레일 금지가 아님).
+                # declared_goal은 slot_manager가 typological 톤으로만 노출 중 — 여기서도
+                # 라벨을 산문에 박으라고 하지 않는다.
+                if t.get("urgency") == "stagnation":
+                    beats.append(
+                        f"Next beat: the long arc '{label}' has circled the same grain three times over — "
+                        "this scene shifts its footing, unannounced."
+                    )
+                else:
+                    _ph = t.get("phase", "")
+                    _grain = f" within its current grain ({_ph})" if _ph else ""
+                    beats.append(
+                        f"Next beat: '{label}' advances one step{_grain} — carried by environment, "
+                        "NPC behavior, or consequence, never named as a goal."
+                    )
 
             elif src == "active_condition":
                 # 강도는 조건의 실제 intensity → _INTENSITY_ADJ 직결 (priority 역산 프록시 제거, dict 부활).

@@ -105,6 +105,34 @@ class TriggerResult:
         return f"TriggerResult({self.trigger_id}, {self.npc_name}, pri={self.priority})"
 
 
+# =========================================================
+# LLM 값 정규화 헬퍼 (2026-07-27)
+# =========================================================
+# 병: LLM은 Optional 필드를 "누락"으로도 보내지만 **명시 null**로도 보낸다.
+# `d.get("k", [])`는 키가 존재하고 값이 null이면 기본값이 아니라 None을 반환 —
+# 하류의 len()/비교 연산이 그대로 TypeError.
+#   라이브 크래시: psyche.active_needs=null → _check_henderson_need_critical
+#   `len(needs)` TypeError (2026-07-27). 07-19 secret_ledger setdefault 건과 동병.
+# emotion_engine·iceberg·interim_engine은 이미 isinstance 가드 보유 —
+# npc_autonomous만 무방비였다(2026-06-20 str 방어 때 컨테이너만 막고 잎은 놓침).
+# 정책: LLM 유래 값은 default 인자에 의존하지 말고 타입으로 판정한다.
+
+def _as_list(v) -> list:
+    return v if isinstance(v, list) else []
+
+
+def _as_dict(v) -> dict:
+    return v if isinstance(v, dict) else {}
+
+
+def _as_num(v, default: float = 0):
+    return v if isinstance(v, (int, float)) and not isinstance(v, bool) else default
+
+
+def _as_str(v, default: str = "") -> str:
+    return v if isinstance(v, str) else default
+
+
 class NPCAutonomousEngine:
     """Evaluates NPC psychological triggers from Flash psyche_states data."""
 
@@ -152,10 +180,11 @@ class NPCAutonomousEngine:
             psyche = state.get("psyche", {})
             soma = state.get("soma", {})
             relation = state.get("relation", {})
-            deep_read = state.get("deep_read", "")
+            deep_read = _as_str(state.get("deep_read"))
 
-            kn = npc_knowledge.get(npc_name, {}) if npc_knowledge else {}
-            att = npc_attitudes.get(npc_name, {}) if npc_attitudes else {}
+            # knowledge/attitude도 명시 null 가능 — _norm은 psyche_states만 훑는다.
+            kn = _as_dict(npc_knowledge.get(npc_name)) if isinstance(npc_knowledge, dict) else {}
+            att = _as_dict(npc_attitudes.get(npc_name)) if isinstance(npc_attitudes, dict) else {}
 
             npc_ctx = {
                 "name": npc_name,
@@ -264,7 +293,7 @@ class NPCAutonomousEngine:
 
 def _check_henderson_need_critical(ctx: Dict) -> TriggerResult | None:
     """Henderson 14 Needs: 핵심 욕구가 active_needs에 2개 이상이면 자발적 행동."""
-    needs = ctx["psyche"].get("active_needs", [])
+    needs = [n for n in _as_list(ctx["psyche"].get("active_needs")) if isinstance(n, str) and n.strip()]
     if len(needs) >= 2:
         need_str = "/".join(needs[:2])
         return TriggerResult(
@@ -290,7 +319,7 @@ def _check_attachment_activation(ctx: Dict) -> TriggerResult | None:
 def _check_reactance(ctx: Dict) -> TriggerResult | None:
     """Reactance: coping=avoidant + negative relation → NPC pushes back."""
     coping = ctx["psyche"].get("coping")
-    rel_val = ctx["relation"].get("value", 0)
+    rel_val = _as_num(ctx["relation"].get("value"))
     if coping == "avoidant" and rel_val < -10:
         return TriggerResult(
             "reactance", ctx["name"],
@@ -303,11 +332,12 @@ def _check_reactance(ctx: Dict) -> TriggerResult | None:
 def _check_info_gap(ctx: Dict) -> TriggerResult | None:
     """Information Gap: NPC has false_beliefs → investigate or conflict.
     High tension + false_belief → belief collision (defensive/confrontational)."""
-    false_beliefs = ctx["knowledge"].get("false_beliefs", [])
+    false_beliefs = [b for b in _as_list(ctx["knowledge"].get("false_beliefs"))
+                     if isinstance(b, str) and b.strip()]
     if not false_beliefs:
         return None
 
-    tension = ctx.get("attitude", {}).get("tension", 0)
+    tension = _as_num(_as_dict(ctx.get("attitude")).get("tension"))
     belief = false_beliefs[0][:40]
 
     # High tension → belief collision (5-7: False Belief→Conflict)
@@ -327,12 +357,13 @@ def _check_info_gap(ctx: Dict) -> TriggerResult | None:
 
 def _check_secret_pressure(ctx: Dict) -> TriggerResult | None:
     """Secret pressure: leak_risk medium+ → NPC may slip. high+tension≥60 → concrete fragment leak."""
-    leak_risk = ctx["knowledge"].get("leak_risk", "none")
-    secrets = ctx["knowledge"].get("secrets_held", [])
+    leak_risk = _as_str(ctx["knowledge"].get("leak_risk"), "none")
+    secrets = [s for s in _as_list(ctx["knowledge"].get("secrets_held"))
+               if isinstance(s, str) and s.strip()]
     if not secrets or leak_risk not in ("medium", "high"):
         return None
 
-    tension = ctx.get("attitude", {}).get("tension", 0)
+    tension = _as_num(_as_dict(ctx.get("attitude")).get("tension"))
     secret = secrets[0]
 
     # high risk + high tension → concrete secret fragment in directive
@@ -374,10 +405,10 @@ def _check_emotional_contagion(ctx: Dict, all_psyche: Dict) -> TriggerResult | N
     for other_name, other_state in all_psyche.items():
         if other_name == ctx["name"] or not isinstance(other_state, dict):
             continue
-        other_soma = other_state.get("soma", {})
+        other_soma = _as_dict(other_state.get("soma"))
         other_polyvagal = other_soma.get("polyvagal", "ventral")
         if other_polyvagal in ("sympathetic", "dorsal"):
-            other_relation = other_state.get("relation", {})
+            other_relation = _as_dict(other_state.get("relation"))
             other_val = other_relation.get("value", 0)
             if isinstance(other_val, (int, float)) and other_val < -30:
                 if current_polyvagal == "sympathetic":
@@ -397,7 +428,7 @@ def _check_emotional_contagion(ctx: Dict, all_psyche: Dict) -> TriggerResult | N
 
 def _check_moral_disengagement(ctx: Dict) -> TriggerResult | None:
     """Moral disengagement: NPC with hostile attitude maintains harmful patterns."""
-    attitude = ctx["attitude"].get("attitude", "neutral")
+    attitude = _as_str(_as_dict(ctx["attitude"]).get("attitude"), "neutral")
     self_opacity = ctx["psyche"].get("self_opacity")
     if attitude == "hostile" and self_opacity:
         return TriggerResult(
@@ -414,8 +445,8 @@ def _check_desistance(ctx: Dict) -> TriggerResult | None:
     4/4 met → full transition eligible, priority 5
     2-3/4 met → micro-cracks, priority 2
     0-1/4 met → denied"""
-    attitude_data = ctx["attitude"]
-    attitude = attitude_data.get("attitude", "neutral")
+    attitude_data = _as_dict(ctx["attitude"])
+    attitude = _as_str(attitude_data.get("attitude"), "neutral")
 
     if attitude not in ("hostile", "unfriendly"):
         return None
@@ -461,20 +492,19 @@ def leak_risk_label(score: int) -> str:
     return "low"
 
 
-def calculate_leak_risk(
-    secrets_held: list,
-    tension: int,
-    depth: int,
-    turns_since_secret: int,
-    moral_stance: str,
-) -> str:
-    """비밀 누출 위험도 코드 계산. Flash의 leak_risk 대체.
-    Returns: "none", "low", "medium", or "high"
-    """
-    if not secrets_held:
-        return "none"
-    return leak_risk_label(
-        leak_pressure_score(tension, depth, turns_since_secret, moral_stance))
+# [2026-07-15 정리] calculate_leak_risk 제거 — 07-14 E3(secret_ledger)가 남긴 껍데기.
+#
+# E3가 이 함수의 **로직을 둘로 쪼개 꺼냈고**(leak_pressure_score = 압력 0-100 스코어,
+# leak_risk_label = 스코어→라벨, 임계 보존), domain_manager L1045가 그 **둘만 import**해
+# 원장 행마다 직접 호출한다. 원 함수는 `return leak_risk_label(leak_pressure_score(...))`
+# 얇은 래퍼로 남아 아무도 안 불렀다(dead_scan A, 2026-07-15).
+#
+# 유일하게 래퍼만 갖던 것 = `if not secrets_held: return "none"` 가드. 이건 소실되지 않는다:
+# domain_manager.sync_secret_ledger는 **secrets_held에서 파생된 원장 행을 순회**하므로
+# 비밀이 없으면 행이 없고 → 계산 자체가 안 돈다. 가드가 구조로 대체됨.
+#
+# 승격된 건 함수가 아니라 그 안의 계산이었다. MEMORY의 "calculate_leak_risk 죽은 배선
+# 승격"은 그런 뜻이고, 껍데기 회수가 07-14에 누락됐다.
 
 
 # =========================================================
@@ -496,17 +526,19 @@ def check_desistance_gate(
     - 2-3/4 met → micro-cracks, priority 2 trigger
     - 0-1/4 met → earned change denied
     """
-    att_label = attitude.get("attitude", "neutral")
+    attitude = _as_dict(attitude)
+    psyche = _as_dict(psyche)
+    att_label = _as_str(attitude.get("attitude"), "neutral")
     if att_label not in ("hostile", "unfriendly"):
         return {"met": 0, "total": 4, "eligible": False,
                 "directive": ""}
 
     # Build context dict for lambda evaluation
     gate_ctx = {
-        "depth": attitude.get("depth", 0),
-        "trajectory": attitude.get("trajectory", "stable"),
+        "depth": _as_num(attitude.get("depth")),
+        "trajectory": _as_str(attitude.get("trajectory"), "stable"),
         "attitude": att_label,
-        "active_needs": psyche.get("active_needs", []),
+        "active_needs": _as_list(psyche.get("active_needs")),
     }
     if static_traits:
         gate_ctx.update(static_traits)
@@ -542,14 +574,14 @@ def check_desistance_gate(
 
 def _check_agenda_manifest(ctx: Dict) -> Optional[TriggerResult]:
     """NPC 개인 어젠다가 인씬에서 드러남."""
-    needs = ctx["psyche"].get("active_needs", [])
-    scene_type = ctx.get("scene_type", "normal")
+    needs = [n for n in _as_list(ctx["psyche"].get("active_needs")) if isinstance(n, str) and n.strip()]
+    scene_type = _as_str(ctx.get("scene_type"), "normal")
     if scene_type not in ("social", "normal", "intimate"):
         return None
     if not needs or len(needs) >= 2:  # 2+ needs → henderson이 처리
         return None
     need = needs[0]
-    secrets = ctx.get("knowledge", {}).get("secrets_held", [])
+    secrets = _as_list(_as_dict(ctx.get("knowledge")).get("secrets_held"))
     agenda_needs = ("autonomy", "esteem", "self-actualization", "belonging", "intimacy")
     if secrets or need in agenda_needs:
         need_kr = {"autonomy": "autonomy", "esteem": "recognition", "self-actualization": "self-actualization",
@@ -566,16 +598,16 @@ def _check_ethical_arrest(ctx: Dict, all_psyche: Dict) -> Optional[TriggerResult
     """Ethical Arrest (Lévinas): NPC witnesses vulnerability → pre-rational ethical call.
     Hostile/unfriendly NPC + another character in dorsal/severe state → 3 possible responses:
     stops, looks away, or becomes MORE cruel. The outcome depends on NPC's initial conditions."""
-    attitude = ctx.get("attitude", {}).get("attitude", "neutral")
+    attitude = _as_str(_as_dict(ctx.get("attitude")).get("attitude"), "neutral")
     if attitude not in ("hostile", "unfriendly", "neutral"):
         return None  # friendly+ NPCs don't need this trigger
 
     for other_name, other_state in all_psyche.items():
         if other_name == ctx["name"] or not isinstance(other_state, dict):
             continue
-        other_soma = other_state.get("soma", {})
+        other_soma = _as_dict(other_state.get("soma"))
         other_polyvagal = other_soma.get("polyvagal", "ventral")
-        other_psyche = other_state.get("psyche", {})
+        other_psyche = _as_dict(other_state.get("psyche"))
         other_val = other_psyche.get("value", 0)
         dissociation = other_soma.get("dissociation", "none")
 
@@ -672,13 +704,13 @@ def _check_cost_of_inaction(ctx: Dict) -> TriggerResult | None:
     "waiting is valid only when it is active" 보존. 계산 낭독 금지 단서는
     build_autonomous_directive 공통 헤더가 커버.
     """
-    if ctx.get("scene_type", "normal") not in ("social", "normal", "intimate"):
+    if _as_str(ctx.get("scene_type"), "normal") not in ("social", "normal", "intimate"):
         return None
-    needs = ctx["psyche"].get("active_needs", [])
-    secrets = ctx.get("knowledge", {}).get("secrets_held", [])
+    needs = _as_list(ctx["psyche"].get("active_needs"))
+    secrets = _as_list(_as_dict(ctx.get("knowledge")).get("secrets_held"))
     if not needs and not secrets:
         return None  # (a) 판돈 없음
-    tension = ctx.get("attitude", {}).get("tension", 0)
+    tension = _as_dict(ctx.get("attitude")).get("tension")
     if not isinstance(tension, (int, float)) or tension < 40:
         return None  # (b) 압력 미달
     coping = ctx["psyche"].get("coping")
