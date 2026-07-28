@@ -35,7 +35,7 @@ def _split_lore_chunks(lore_text: str, min_len: int = 50,
 
     _SEP = re.compile(r'^[\s]*[=\-\*~]{3,}[\s]*$')
     # 마크다운 헤더만 (# Title / ## Title)
-    # 봇 원본은 \d+\. / SECTION 패턴도 잡지만 일반 본문 false positive 많아 도구에서만 제거
+    # 07-28 대조: 봇 원본도 V3에서 \d+\. / SECTION 패턴 제거 완료 — 두 정규식 동일.
     _MAJOR = re.compile(r'^#{1,2}\s+')
     _MINOR = re.compile(
         r'^(?:\[[\d.]+\]\s|---\s+.+\s+---|#{3,}\s+)'

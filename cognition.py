@@ -230,7 +230,8 @@ async def extract_all_updates(
 # build_persona_extraction_prompt — 호출자 0인 죽은 Flash 콜. NPC 상태 추출은
 # batch extraction(social 섹션)이 담당. 부활 시 별도 콜 대신 _extract_batch
 # 섹션으로 얹을 것(새 LLM 콜 금지 원칙). npc_manager.apply/get_persona_snapshot
-# (적용부)는 레거시 API 무리(감사 보고서 A11)로 별도 디스포지션.
+# (적용부)도 2026-07-28 NPC 라인 통일화에서 삭제됨 — Peplau 클램프는 프롬프트 레벨
+# (relation.phase + "cannot skip stages")이 담당 중이라 코드판은 이중 구현이었다.
 # =========================================================
 
 

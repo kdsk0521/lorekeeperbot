@@ -15,6 +15,7 @@ Lorekeeper TRPG Bot - Slot-Based Prompt Manager (V2 Refactored)
 """
 
 import logging
+import re
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 import text_resources
@@ -28,6 +29,49 @@ import iceberg
 import prompt_builder as legacy_builder
 
 logger = logging.getLogger("SlotManager")
+
+
+# =========================================================
+# [2026-07-28] 호명 판정 — 한국어 경계 인식
+# =========================================================
+# 병: 구 판정은 `이름 in action_text` 단순 포함이라 **'유라'가 '유라시아'에 걸렸다**.
+#   호명으로 오인되면 iceberg.select_foreground의 forced 경로를 타 **상한(FOREGROUND_CAP)을
+#   넘어서라도 fg로 승격**되므로, 오탐 1건이 그 턴의 시점 배분을 통째로 흔든다.
+# 처방: 앞뒤 경계를 본다. 한국어는 조사가 붙으므로("유라가", "유라에게") 공백 경계로는
+#   부족하고, 조사·호칭 화이트리스트로 허용한다. 뒤에 조사 아닌 한글이 이어지면 다른 낱말.
+_HANGUL_CHAR = re.compile(r"[가-힣]")
+
+# 길이 내림차순으로 검사(2글자 조사가 1글자에 가려지지 않게)
+_NAME_SUFFIX_OK = tuple(sorted(
+    ("가", "이", "은", "는", "을", "를", "에", "의", "와", "과", "도", "만", "랑", "께", "야", "아",
+     "님", "씨", "여", "에게", "한테", "이랑", "께서", "처럼", "같이", "보다", "부터", "까지",
+     "마저", "조차", "이나", "라도", "이라", "이야", "이여"),
+    key=len, reverse=True,
+))
+
+
+def _is_named_in(name: str, text: str) -> bool:
+    """유저 입력에서 이 이름이 실제로 '호명'됐는가. 부분문자열 오탐을 막는다."""
+    if not name or not text:
+        return False
+    start = 0
+    while True:
+        i = text.find(name, start)
+        if i < 0:
+            return False
+        start = i + 1
+        # 앞 경계: 한글이 바로 앞에 붙어 있으면 다른 낱말의 꼬리(…아유라)
+        if i > 0 and _HANGUL_CHAR.match(text[i - 1]):
+            continue
+        j = i + len(name)
+        if j >= len(text):
+            return True
+        nxt = text[j]
+        if not _HANGUL_CHAR.match(nxt):
+            return True                      # 공백·구두점·영문 = 경계
+        if any(text[j:j + 3].startswith(p) for p in _NAME_SUFFIX_OK):
+            return True                      # 조사·호칭
+        # 조사 아닌 한글이 이어짐 → 다른 낱말(유라시아). 다음 출현 위치를 계속 본다.
 
 
 # N5: 카테고리-슬롯 자동 배치 매핑
@@ -132,7 +176,7 @@ def _resolve_spatial(dai: dict) -> str:
 # 5W1H Telescope Prefill Builder
 # =========================================================
 
-def _build_telescope_prefill(dai: dict, real_time_data: str) -> str:
+def _build_telescope_prefill(dai: dict, real_time_data: str, channel_id: str = "") -> str:
     """Telescope v5 프리필: [Ground] 시드(who | when/where | spatial)를 코드에서 조립.
 
     코드 프리필 = GROUND_TRUTH → 환각 불가.
@@ -160,8 +204,24 @@ def _build_telescope_prefill(dai: dict, real_time_data: str) -> str:
         if observation:
             ground_parts.append(f"(observation) {observation[:150]}")
 
-    # spatial (구 §S)
+    # spatial (구 §S) — [2026-07-27] **변화 시에만** 주입.
+    #   근거: TEMPORAL "Rendered once: re-render only on change" + PROSE_CRAFT "a fixed feature is
+    #   established once … not re-named each beat"의 **코드화**. 종전엔 같은 공간이 이어져도 매 턴
+    #   같은 §S 힌트가 시드로 도착해, 모델이 매 턴 그 환경을 산문화 → 환경 상수 문장(파도·하늘·바람)
+    #   이 verbatim 재발로 검출됐다(라이브 로그 07-27). "반복하지 마"라면서 반복할 재료를 매 턴 주는
+    #   구조 — 카드2(에코 스크럽) 원리와 동일하게 **공급을 끊는다**. 공간이 바뀌면 다시 1회 주입.
     spatial_hint = _resolve_spatial(dai)
+    if spatial_hint and channel_id:
+        try:
+            import domain_manager as _dm_sp
+            _sp_key = (dai.get("spatial_read") or {}).get("spatial_type", "") or spatial_hint[:24]
+            _prev_sp = (_dm_sp.get_session_ai_memory(channel_id) or {}).get("_prev_spatial_type", "")
+            if _sp_key == _prev_sp:
+                spatial_hint = ""  # 같은 공간 지속 → 침묵(이미 산문에 established)
+            else:
+                _dm_sp.update_session_ai_memory(channel_id, {"_prev_spatial_type": _sp_key})
+        except Exception:
+            pass
     if spatial_hint:
         ground_parts.append(spatial_hint)
 
@@ -830,23 +890,15 @@ def _build_chapter_with_storylines(chapter_ctx: str, channel_id: str) -> str:
     return chapter_ctx
 
 
-def _extract_voice_quirks_from_profile(desc: str) -> str:
-    """NPC 프로필에서 voice quirks 추출 (대사 디렉티브 합성용).
-    hybrid: Voice 섹션 첫 대사 줄, legacy: 빈 문자열."""
-    import npc_manager as _nm
-    if not _nm._is_hybrid_profile(desc):
-        return ""
-    voice_text = _nm._extract_voice_section(desc)
-    if not voice_text:
-        return ""
-    # 첫 의미있는 대사 줄 추출
-    for line in voice_text.split("\n"):
-        stripped = line.strip()
-        if not stripped or stripped.startswith("###"):
-            continue
-        if stripped.startswith('"') or stripped.startswith('\u201c') or stripped.endswith("~"):
-            return stripped[:120]
-    return ""
+# ⛔[2026-07-28 삭제] _extract_voice_quirks_from_profile
+#   Voice 섹션에서 "따옴표로 시작하거나 ~로 끝나는 줄" 하나를 뽑아 Slot 17 대사
+#   디렉티브에 얇던 함수. 제거 사유 2가지:
+#   ① **중복** — npc_manager._extract_voice_summary_from_section이 **같은 규칙으로 같은 줄**을
+#      뽑아 Slot 33 recency echo에 이미 넣고 있었다. Voice 전문은 Slot 7에 통째로 가므로
+#      같은 텍스트가 3중으로 주입되던 셈.
+#   ② **대표성 없음** — Voice를 1인칭 산문으로 쓰는 시트(섹션 전체가 목소리 겸 인물
+#      설명)에서는 뽑히는 게 `"What I'm bad at~"` 같은 **소제목**이었다.
+#   대사 톤 급식은 Slot 7 전문 + Slot 33 발췌로 충분하다.
 
 
 # =========================================================
@@ -1100,14 +1152,20 @@ def build_34_step_prompt(ctx) -> str:
         _rules_text = _ws.get("rules_text", "")
         if _rules_text:
             _rules_parts.append(_rules_text)
-        # 개별 추가 규칙 (!룰 추가 key desc)
+        # 개별 추가 규칙 (!룰 추가 [키워드:] 설명)
         _loc_rules = _ws.get("location_rules", {})
         if _loc_rules:
             rule_lines = []
             for k, v in _loc_rules.items():
                 desc = v.get("desc", "") if isinstance(v, dict) else str(v)
-                rule_lines.append(f"- {k}: {desc}")
-            _rules_parts.append(" ".join(rule_lines))
+                if not desc:
+                    continue
+                # [07-28] "_" 접두 = 키워드 없이 등록된 규칙 → 무의미 라벨(`- _1:`)이
+                # 프롬프트에 나가지 않게 억제. 라벨 있는 규칙만 `키: 설명` 유지.
+                rule_lines.append(f"- {desc}" if str(k).startswith("_") else f"- {k}: {desc}")
+            # [07-28] 구 " ".join = 불릿이 한 줄로 뭉개짐(`- a: x - b: y`). 개행이 맞다.
+            if rule_lines:
+                _rules_parts.append("\n".join(rule_lines))
         if _rules_parts:
             # 0626: Lore(Slot8) append → RULES zone(Slot23, 빈슬롯). house/world 룰은 lore 참조보다 directive에 어울림 + recency로 무게↑.
             builder.set_slot(23, "### [ACTIVE RULES: house/world rules, in force this turn]\n" + "\n".join(_rules_parts)
@@ -1402,6 +1460,30 @@ def build_34_step_prompt(ctx) -> str:
     scene_type = dai.get("scene_type", "normal")
     energy_dir_raw = dai.get("energy_direction", "idle")
 
+    # [2026-07-28] psyche_states PC 혼입 가드 — 스키마는 "NPCs ONLY — never include the PC"
+    # (theoria_analyzer L295: PC 내면은 플레이어 것, PC 커버리지=PCAutonomyCheck만)를 명시하지만
+    # **프롬프트로만 막고 있었다**. NPCAttitudes(orchestration L222)·npc_knowledge(L293)·
+    # scene_npcs(L336)·interim_engine에는 전부 코드 가드가 있는데 이 필드만 없었다.
+    # PC가 새면 하류가 전부 오염된다: fg 선별(PC가 내면 시점 소유자로 지정 = Slot 18 위반)
+    # · npc_depths · 대사 방향 지시. LLM은 스키마를 완벽히 지키지 않는다는 게 전제이므로
+    # 프롬프트 규칙에는 코드측 짝이 있어야 한다.
+    if psyche_data and channel_id and isinstance(psyche_data, dict):
+        try:
+            _pc_masks_ps = {
+                _p["mask"] for _p in
+                (domain_manager.get_domain(channel_id).get("participants", {}) or {}).values()
+                if isinstance(_p, dict) and _p.get("mask")
+            }
+            _leaked_ps = [n for n in psyche_data if n in _pc_masks_ps]
+            if _leaked_ps:
+                psyche_data = {k: v for k, v in psyche_data.items() if k not in _pc_masks_ps}
+                logger.warning(
+                    "[PsycheStates] PC 혼입 제외: %s (스키마 위반 — PC 내면은 플레이어 소유)",
+                    ", ".join(_leaked_ps),
+                )
+        except Exception as _e_ps:
+            logger.debug(f"[PsycheStates] PC guard skipped: {_e_ps}")
+
     if psyche_data and channel_id:
         _turn_count = 0
         _conn_depths = {}
@@ -1440,20 +1522,25 @@ def build_34_step_prompt(ctx) -> str:
             _prev_fg = []
             if channel_id:
                 _prev_fg = (domain_manager.get_session_ai_memory(channel_id) or {}).get("prev_foreground", []) or []
-            _user_named = []
+            # [2026-07-28] 이 목록은 **유저가 이번 입력에서 호명한 NPC**다(유저 자신의 이름 아님).
+            # 구 라벨 `user_named=`가 "유저 이름"으로 읽혀 오해를 샀다 — 로그는 `유저호명NPC=`.
+            _named_npcs = []
             _act = (getattr(ctx, "action_text", "") or "")
             if _act:
-                _user_named = [n for n in psyche_data if n and isinstance(n, str) and n.split("(")[0].strip() in _act]
+                _named_npcs = [
+                    n for n in psyche_data
+                    if n and isinstance(n, str) and _is_named_in(n.split("(")[0].strip(), _act)
+                ]
             _foreground, _background = iceberg.select_foreground(
                 psyche_data=psyche_data,
                 emotion_states=dai.get("_emotion_states_for_slot", {}),
                 autonomous_triggers=dai.get("autonomous_triggers", []),
                 npc_attitudes=dai.get("NPCAttitudes", dai.get("npc_attitudes", {})),
-                user_named=_user_named,
+                user_named=_named_npcs,
                 prev_foreground=_prev_fg,
             )
             logger.info(f"[Foreground] fg={','.join(_foreground) or '-'} | bg={','.join(_background) or '-'}"
-                        + (f" | user_named={','.join(_user_named)}" if _user_named else ""))
+                        + (f" | 유저호명NPC={','.join(_named_npcs)}" if _named_npcs else ""))
             if channel_id:
                 domain_manager.update_session_ai_memory(channel_id, {"prev_foreground": _foreground})
         except Exception as _e_fg:
@@ -1467,22 +1554,14 @@ def build_34_step_prompt(ctx) -> str:
         _prev_gaze = _latest.get("render_fingerprint", {}).get("gaze", "")
 
     _npc_imprints = domain_manager.get_npc_imprints(channel_id) if channel_id else {}
-    # Voice quirks for dialogue directive merge (5-9)
-    _voice_quirks = {}
-    if channel_id:
-        import npc_manager as _npc_mgr
-        for _npc_n in (psyche_data or {}):
-            _nd = _npc_mgr.get_npc(channel_id, _npc_n)
-            if _nd:
-                _desc = _npc_mgr._get_npc_desc(_nd)
-                _vq = _extract_voice_quirks_from_profile(_desc)
-                if _vq:
-                    _voice_quirks[_npc_n] = _vq
+    # [2026-07-28] voice_quirks 배선 제거 — Slot 33 recency echo가 같은 규칙으로 같은 줄을
+    # 이미 뽑고 있었고(중복), Voice 전문은 Slot 7에 통째로 간다. 인자는 하류 호환 위해
+    # 빈 dict로 유지(compose_dialogue_directives 시그니처 무변경).
     _dialogue_dir = iceberg.compose_dialogue_directives(
         psyche_data, npc_knowledge,
         prev_gaze=_prev_gaze, npc_depths=npc_depths,
         npc_imprints=_npc_imprints,
-        voice_quirks=_voice_quirks,
+        voice_quirks={},
         foreground=_foreground,
     )
     if _dialogue_dir:
@@ -1697,7 +1776,7 @@ def build_34_step_prompt(ctx) -> str:
 
     # 5W1H Telescope 프리필 조립 (코드 레벨 GROUND_TRUTH)
     # V2: Slot 34 대신 ctx에 저장 → 모델 응답 프리필로 직접 주입 (스킵 불가)
-    telescope_prefill = _build_telescope_prefill(dai, real_time_data)
+    telescope_prefill = _build_telescope_prefill(dai, real_time_data, getattr(ctx, "channel_id", "") or "")
     # [2026-07-08 로버스트 길이] 씬 활력도(energy_direction)를 ctx에 실어 렌더 함수 min_length 스케일에 사용 (dai 스코프 피기백)
     ctx.scene_energy = dai.get("energy_direction", "idle")
     if telescope_prefill:

@@ -1290,11 +1290,14 @@ class OrchestrationService:
                                         # 동결(_src=="lore" 게이트)이라 이 경로와 무관.
                                         # [2026-07-22 카드3] 접지 3단 + 규칙부 — 구 이름-리터럴 단독은
                                         # 세션 NPC(모델이 방금 지은 이름)에서 영구 미스라 사문화였다.
-                                        _lore_ref = npc_manager.build_distill_grounding(
+                                        # [2026-07-28] 3단이 임베딩 의미 유사도로 승격 — client 전달.
+                                        # 공용 엔진 캐시 공유(위 L1559 로어 랭킹과 동일 청크) → 순증은 쿼리 1건.
+                                        _lore_ref = await npc_manager.build_distill_grounding(
                                             channel_id, _npc_name,
                                             aliases=_existing.get("aliases") or [],
                                             observations=_obs,
                                             seen_labels=_existing.get("lore_seen") or {},
+                                            client=self.client,
                                         )
                                         _distill_in = _lore_ref + (("\n".join(_prev) + "\n\n" + _obs) if _prev else _obs)
                                         _sheet = await cognition.analyze_character_sheet(
@@ -1556,10 +1559,13 @@ class OrchestrationService:
 
             # 1.1 N3: Optional vector search for lore chunk ranking
             try:
-                from vector_search import VectorSearchEngine
+                from vector_search import get_shared_engine
                 _lore_chunks = ctx.domain_data.get("lore_chunks", [])
                 if _lore_chunks and len(_lore_chunks) > config.VECTOR_TOP_K:
-                    _vs = VectorSearchEngine(self.client, config.VECTOR_EMBEDDING_MODEL)
+                    # [2026-07-28] 매턴 새 인스턴스 → 공용 싱글턴. 구 코드는 인스턴스 로컬
+                    # _cache가 턴마다 즉사해 **로어 청크 전량을 매턴 재임베딩**하고 있었다.
+                    # 이제 청크 벡터는 1회, 매턴 과금은 쿼리 1건 + 증류 접지와 캐시 공유.
+                    _vs = get_shared_engine(self.client)
                     _query = ctx.action_text or ""
                     _ranked = await _vs.search(_query, _lore_chunks,
                                                top_k=config.VECTOR_TOP_K,

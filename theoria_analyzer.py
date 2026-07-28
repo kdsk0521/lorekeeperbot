@@ -4,6 +4,7 @@ Lorekeeper UNE - Integrated Theoria Analyzer (좌뇌 분석 엔진)
 """
 
 import logging
+import re
 import json
 from typing import Dict, Any, Optional
 
@@ -19,6 +20,43 @@ from google.genai import types
 # We maintain the original complexity but wrap them in clear instructional tags.
 
 logger = logging.getLogger("Theoria")
+
+
+# [2026-07-27] render-facing 필드 언어 드리프트 계측 — **이상할 때만 1줄**(정상 시 로그 0).
+# 배경: 지시(스키마 "ENGLISH ONLY … Korean here gets transcribed verbatim into prose = BUG")는
+#   있었으나 이행 여부를 아무도 보지 않았다(ko_ratio는 텔레스코프 전용). 리더 로그에서 같은 병이
+#   실증돼(07-27 노트 전량 한글) 계측을 붙인다. 신규 태그이나 정상 상태에서 미발화 → 판독 부담 0
+#   (iceberg "정상은 말하지 않는다" 원칙). 값은 고치지 않는다 — 검출≠쓰기. 순수 함수.
+_RENDER_FACING_KEYS = frozenset({
+    # 확실히 영어 서술이어야 하는 필드만. line/reason/Aspects 같은 **범용 키는 제외** —
+    # 퀘스트 내용·시계 라벨·사물명처럼 한글이 정당한 자리에서 오탐이 난다(레티어스 지적 07-27).
+    "Observation", "UserIntent", "descriptor", "env_influence", "value_conflict", "deep_read",
+    "attitude", "deflection", "primary_link", "render_hint", "suggested_beats", "offscreen_trace",
+    "narrative_hook", "knows", "secrets_held", "false_beliefs",
+})
+_HANGUL_RF = re.compile(r"[가-힣]")
+# 고유명사는 한글 허용("Korean only for proper nouns") → 1글자라도 잡으면 오탐 대량.
+# 비율 임계: 서술 자체가 한글로 넘어간 경우만(고유명사 몇 개 섞인 영문은 보통 20% 미만).
+_LANG_DRIFT_RATIO = 0.4
+
+
+def _scan_lang_drift(node, _hits=None, _key=None):
+    """render-facing 값의 한글 비율이 임계 초과인 필드만 수집. 반환: {키: 비율}."""
+    if _hits is None:
+        _hits = {}
+    if isinstance(node, dict):
+        for k, v in node.items():
+            _scan_lang_drift(v, _hits, k)
+    elif isinstance(node, list):
+        for v in node:
+            _scan_lang_drift(v, _hits, _key)
+    elif isinstance(node, str) and _key in _RENDER_FACING_KEYS:
+        t = node.strip()
+        if len(t) >= 8:  # 짧은 값(고유명사 단독 등)은 비율이 튀므로 제외
+            ratio = len(_HANGUL_RF.findall(t)) / len(t)
+            if ratio >= _LANG_DRIFT_RATIO:
+                _hits[_key] = max(_hits.get(_key, 0.0), ratio)
+    return _hits
 
 # =========================================================
 # THEORIA SYSTEM PROMPTS (UNE 통합 분석 엔진)
@@ -183,6 +221,15 @@ class TheoriaAnalyzer:
                 qf = {}
             qf["shallow_read"] = True
             dai["quality_flags"] = qf
+        # 언어 드리프트: 발견 시에만 1줄(정상=무발화).
+        try:
+            _drift = _scan_lang_drift(dai)
+            if _drift:
+                logger.warning("[LangDrift] %d field(s) mostly Korean: %s", len(_drift),
+                               ", ".join(f"{k} {int(r*100)}%" for k, r in
+                                         sorted(_drift.items(), key=lambda x: -x[1])[:3]))
+        except Exception:
+            pass
         return dai
 
     def _build_system_instruction(self, active_genres=None, scene_context=None) -> str:
@@ -1129,7 +1176,7 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
         except Exception:
             pass
 
-        parts.append("### OUTPUT\nReturn ONLY the JSON per schema.")
+        parts.append("### OUTPUT\nReturn ONLY the JSON per schema. Render-facing fields stay English: the scene you read is Korean, your readings are not. Korean belongs inside quoted lines and proper nouns only.")
         return "\n\n".join(parts)
 
     async def analyze_narrative(self, context: GameContext, extract=None) -> Dict[str, Any]:
@@ -1253,4 +1300,5 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
 {self._build_pending_flashback(anchors)}{self._build_chunk_index(req.lore_chunks, ranked_chunks=req.lore_chunks_ranked)}
 ---
 Perform FULL Theoria analysis and return JSON with ALL required fields.
+Render-facing fields stay English: the scene you read is Korean, your readings are not. Korean belongs inside quoted lines and proper nouns only.
 """

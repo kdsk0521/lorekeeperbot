@@ -99,13 +99,13 @@ ANALYSIS_EXTRACT_VAR = contextvars.ContextVar("analysis_extract_call", default=F
 READER_GM_INTERVAL = int(os.getenv("READER_GM_INTERVAL", "1"))  # 매 N턴 실행 (0=비활성)
 # [R4 구조 환류] 마스터 스위치 — 0(기본)=적립·계측만, 1=소비 개시(SD 거부권 등).
 # 관측 게이트는 소프트락 1회 확인(독자 콜이 성인·고어 장면을 거부/순화 없이 읽는가)뿐 — 확인 후 1로.
-READER_GM_FEED = int(os.getenv("READER_GM_FEED", "0"))
+READER_GM_FEED = int(os.getenv("READER_GM_FEED", "1"))
 # 지속성 게이트: 같은 축이 W턴 창에서 M턴 이상 수신될 때만 후보 승격(오독 1회의 상태화 차단).
 READER_PERSIST_WINDOW = int(os.getenv("READER_PERSIST_WINDOW", "5"))
 READER_PERSIST_MIN = int(os.getenv("READER_PERSIST_MIN", "3"))
 # [Stage 3-A 수신형 시드] 間(intermission) 진입마다 승격 축→이변 시드 번역(V4 배경 콜, 독자 계열 첫 영속 쓰기).
 # 5중 게이트: 지속성 통과·번역기 경유·source=reader 태그·캡·persist_audit 편입. 0=비활성.
-READER_GM_SEED = int(os.getenv("READER_GM_SEED", "0"))
+READER_GM_SEED = int(os.getenv("READER_GM_SEED", "1"))
 READER_SEED_CAP = int(os.getenv("READER_SEED_CAP", "6"))  # reader-유래 시드 최대 보유(FIFO)
 # 독자 모델: ""(기본)=PRO 폴스루(V4-Pro). Gemma 후보 시 env로 gemma4:31b-cloud 등 지정.
 ANALYSIS_OPENAI_MODEL_READER = os.getenv("ANALYSIS_OPENAI_MODEL_READER", "")

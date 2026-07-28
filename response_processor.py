@@ -1174,8 +1174,13 @@ def detect_cadence_echo(response: str,
     feedback = ""
     if hits:
         shown = "; ".join(f'"{h[:24]}…"' for h in hits[:3])
-        feedback = (f"[I:재정착] 문장 {len(hits)}개가 이전 턴과 verbatim 재발: {shown} "
-                    f"→ 새 표면으로(모티프 재등장 OK, 문장을 새로)")
+        # [2026-07-27] 영어화 + **변주 허용 명시**. 종전 한글 문안은 렌더 프롬으로 주입되며(style_fb)
+        #   미러링 위험 + render-facing 언어 일관성 위반이었다. 그리고 골격 변주가 의미를 진행시키는
+        #   경우(예: "잡을 것을 찾는 손" → "아무것도 잡지 못한 손")는 기법이므로, 억제 대상은
+        #   **문장이 통째로 돌아오는 경우**로 좁힌다(레티어스 07-27: "너무 팍팍하게 잡나").
+        feedback = (f"[I:재정착] {len(hits)} sentence(s) returned whole from earlier turns: {shown} "
+                    f"A motif may return, and a variation that carries it forward is craft; "
+                    f"when the sentence itself comes back intact, give it a fresh surface.")
     return feedback, cur, hits
 
 

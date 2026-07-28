@@ -36,13 +36,17 @@ from command_registry import CommandRegistry, CommandContext
 registry = CommandRegistry()
 
 def _split_lore_chunks(lore_text: str, min_len: int = 50) -> list:
-    """로어 텍스트를 섹션 단위로 청크 분할 (V2).
+    """로어 텍스트를 섹션 단위로 청크 분할 (V3).
 
-    V1 대비 개선:
     - 구분선(===, ---) 제거 → 노이즈 청크 방지
-    - 메이저 섹션(N. Title / ## Title) 단위 그룹화
-    - 대형 섹션(>4000자) 서브섹션에서 자동 분할
-    - 소형 섹션(<200자) 인접 병합
+    - 메이저 섹션(`# Title` / `## Title`, 들여쓰기 1칸 이하) 단위 그룹화
+      ※ V3에서 `N. Title` / `SECTION N:` 패턴 제거 — 일반 본문 false positive
+    - 대형 섹션(>_MAX_CHUNK) 마이너 헤더에서 자동 분할
+    - 소형 청크 병합: **_MIN_CHUNK는 하한이 아니라 병합 트리거** —
+      직전 누적 청크(merged[-1])가 _MIN_CHUNK 미만이면 다음 섹션을 통째로 흡수한다.
+      흡수 시 _MAX_CHUNK 재검사가 없으므로 결과가 상한을 넘을 수 있고,
+      반대로 _MIN_CHUNK 미만 청크도 남을 수 있다(단일 청크·꼬리 병합 후).
+      진짜 바닥은 min_len — 그 미만 섹션은 sections에 담기지 않고 버려진다.
     - 라벨: 섹션 헤더 기반
     - 섹션 미검출 시 문단 기반 폴백
     """
@@ -855,7 +859,8 @@ def _parse_foreign_single_profile(raw_lines: list) -> Optional[tuple]:
     각각 NPC로 등록되는 폭발(Name/Alias/Hair…가 전부 NPC화)이 일어남 →
     파일 전체를 NPC 1명으로 등록(원문 보존, manual=동결 소스).
 
-    Returns: (name, description, summary) 또는 None(비해당 → 기존 캐스케이드 진행).
+    Returns: (name, description, id_fields) 또는 None(비해당 → 기존 캐스케이드 진행).
+    [2026-07-28] 셋째 원소가 summary 문자열 → id_fields dict로 변경(구조화 키까지 넘기기 위해).
     """
     text_lines = [l for l in raw_lines if l.strip()]
     if not text_lines:
@@ -877,35 +882,101 @@ def _parse_foreign_single_profile(raw_lines: list) -> Optional[tuple]:
     # 긴 괄호 부연("AM (Originally ...)")은 base만 취함 — 짧은 복합표기 '이름(별칭)'은 유지
     if "(" in name and len(name) > 24:
         name = name.split("(")[0].strip() or name
-    # 요약 필드 추출 — 마크다운 모드 id_fields와 동일 규칙 (+occupation)
-    id_fields = {}
-    for l in text_lines:
-        cl = l.strip().lstrip("-* ").strip()
-        if ":" not in cl:
+    # [2026-07-28] 자체 파싱 루프 → 공용 _extract_id_fields (모드 간 라벨 대칭)
+    return (name, "\n".join(raw_lines).strip(), _extract_id_fields(text_lines))
+
+
+# =========================================================
+# [2026-07-28 통일화] NPC 등록 공용 경로
+# =========================================================
+# 병 1: 4개 파서 모드가 제각각 `domain_manager.update_npc`를 **직접** 호출해
+#   `npc_manager.update_npc` 래퍼를 우회했다 → 수동/파일 등록 경로에서만
+#   구조화 필드 자동 추출(_extract_structured_fields)과 static_traits가 **한 번도 안 돌았다**.
+#   (로어 경로 add_lore_npcs는 래퍼를 거쳐서 돌았다 = 같은 데이터가 출처에 따라 다르게 채워짐.)
+# 병 2: 라벨 인식이 모드마다 달랐다 — `occupation`이 외부단일 모드에만 있었다.
+# 병 3: 파싱한 species/role/affiliation을 `summary` 문자열로만 저장하고 버렸다.
+#   npc_manager 쪽엔 같은 정보를 뽑는 정규식이 따로 있어 2중 구현이었다.
+# 처방: 라벨 파싱과 등록을 각각 함수 하나로 모으고, 모든 모드가 이 둘만 쓴다.
+#   명시 라벨은 구조화 키로도 넘긴다 — 래퍼의 자동 추출은 "빈 키만" 채우므로
+#   사용자가 시트에 직접 쓴 값이 항상 이긴다.
+
+# [2026-07-28] v2 풀시트(커뮤니티 템플릿) 라벨 편입 — race/job/duty/class.
+#   구 사전은 우리 시트 관례(species/occupation)만 알아서, `- Race:`나 `- Job:`으로 쓰는
+#   외부 템플릿에서는 종족·역할이 통째로 안 잡혔다.
+_ID_LABELS = {
+    "species": ("species", "종족", "race"),
+    "role": ("rank/role", "role", "역할", "occupation", "job", "직업", "duty", "class"),
+    "affiliation": ("affiliation", "소속", "faction", "nationality", "국적"),
+}
+
+
+def _extract_id_fields(desc_lines: list) -> dict:
+    """설명 줄들에서 종족/역할/소속 라벨을 뽑는다. 콜론 필수, 대소문자 무관, 첫 값 우선."""
+    found = {}
+    for dl in desc_lines:
+        dl_clean = str(dl).strip().lstrip("-*> ").strip()
+        if ":" not in dl_clean:
             continue
-        fk, fv = cl.split(":", 1)
-        fk_l, fv = fk.strip().lower(), fv.strip()
-        if fk_l in ("species", "종족") and fv:
-            id_fields.setdefault("species", fv)
-        elif fk_l in ("rank/role", "role", "역할", "occupation") and fv:
-            id_fields.setdefault("role", fv)
-        elif fk_l in ("affiliation", "소속") and fv:
-            id_fields.setdefault("affiliation", fv)
-    summary_items = []
-    if "species" in id_fields:
-        summary_items.append(id_fields["species"])
-    if "role" in id_fields:
-        summary_items.append(id_fields["role"])
-    elif "affiliation" in id_fields:
-        summary_items.append(id_fields["affiliation"])
-    return (name, "\n".join(raw_lines).strip(), " / ".join(summary_items))
+        fk, fv = dl_clean.split(":", 1)
+        fk_l = fk.strip().lower()
+        fv = fv.strip()
+        if not fv:
+            continue
+        for canon, aliases in _ID_LABELS.items():
+            if fk_l in aliases:
+                found.setdefault(canon, fv)
+                break
+    return found
+
+
+def _summary_from_id_fields(id_fields: dict) -> str:
+    """목록 미리보기용 한 줄. 종족 / 역할(없으면 소속)."""
+    items = []
+    if id_fields.get("species"):
+        items.append(id_fields["species"])
+    if id_fields.get("role"):
+        items.append(id_fields["role"])
+    elif id_fields.get("affiliation"):
+        items.append(id_fields["affiliation"])
+    return " / ".join(items)
+
+
+def _register_npc(channel_id: str, name: str, desc: str,
+                  id_fields: dict = None, existing_map: dict = None) -> str:
+    """NPC 수동 등록 단일 관문. 반환=실제 저장된 키.
+
+    모든 파서 모드가 이 함수만 쓴다(구 코드는 모드마다 domain_manager 직접 호출).
+    npc_manager.update_npc 경유 → 구조화 필드 추출 + static_traits가 여기서도 돈다.
+    """
+    _map = existing_map if existing_map is not None else domain_manager.get_npcs(channel_id)
+    target = domain_manager.find_equivalent_npc_key(_map, name) or name
+    data = {"description": desc, "source": "manual", "status": "Active"}
+    idf = id_fields or {}
+    # 명시 라벨 → 구조화 키. 래퍼의 자동 추출보다 우선(래퍼는 빈 키만 채운다).
+    if idf.get("role"):
+        data["role"] = idf["role"]
+    if idf.get("species"):
+        data["race"] = idf["species"]        # 상세 조회가 읽는 키 이름
+    if idf.get("affiliation"):
+        data["affiliation"] = idf["affiliation"]
+    _summary = _summary_from_id_fields(idf)
+    if _summary:
+        data["summary"] = _summary
+    npc_manager.update_npc(channel_id, target, data)
+    return target
 
 
 @registry.register("npc", category="World", aliases=["엔피씨", "addnpc", "npc정보", "npc추가"], description="NPC 관리 (조회/추가/삭제/별칭/병합)")
 async def cmd_npc(ctx: CommandContext) -> None:
-    """!npc [이름] 조회 | !npc add [이름] [설명] | !npc remove [이름] | !npc 별칭 [이름] [별칭] | !npc 병합 [중복] [본체]"""
+    """!npc [이름] 조회 | !npc추가 [이름]: [설명] (또는 파일 첨부) | !npc 삭제 [이름]
+    | !npc 별칭 [이름] [별칭] | !npc 병합 [중복] [본체] | !npc 보이스카드 [이름]
+
+    [2026-07-28] 구 독스트링은 `!npc add`를 안내했으나 **그런 서브커맨드는 없다**
+    (등록 게이트는 트리거가 addnpc/npc추가이거나, 여러 줄이거나, 파일 첨부이거나,
+     `이름: 설명` 콜론 형태일 때 열린다)."""
     # 1. File Content
     file_text = ""
+    _skipped_files = []
     if ctx.message.attachments:
         for att in ctx.message.attachments:
             text, error = await read_attachment_text(att)
@@ -914,6 +985,10 @@ async def cmd_npc(ctx: CommandContext) -> None:
                 return
             if text:
                 file_text = text
+                # [2026-07-28] 구 코드는 여기서 그냥 break — 나머지 첨부를 **말없이** 버렸다.
+                # 여러 인물을 한 번에 올린 줄 알았다가 하나만 들어가는 사고. 이름은 남겨 알린다.
+                _skipped_files = [a.filename for a in ctx.message.attachments
+                                  if a.filename != att.filename]
                 break
 
     # 2. Subcommand: remove / 삭제
@@ -1035,7 +1110,14 @@ async def cmd_npc(ctx: CommandContext) -> None:
     processed_count = 0
 
     # If explicit "addnpc" or batch mode implied
-    if ctx.trigger in ['addnpc', 'npc추가'] or (len(raw_lines) > 1) or (file_text):
+    # [2026-07-28] 게이트에 콜론 형태 추가 — 구 게이트는 `!npc 리안: 사서` **한 줄**을
+    #   등록으로 안 보고 조회로 흘려보냈다(트리거도 addnpc 아니고, 줄도 1개, 첨부도 없음)
+    #   → "NPC '리안: 사서' 정보를 찾을 수 없습니다"라는 엉뚱한 응답. 등록 의도가 명백한
+    #   `이름: 설명` 형태는 받아준다. 조회는 콜론을 쓰지 않으므로 충돌하지 않는다.
+    _looks_like_add = bool(
+        raw_lines and ":" in raw_lines[0] and raw_lines[0].split(":", 1)[1].strip()
+    )
+    if ctx.trigger in ['addnpc', 'npc추가'] or (len(raw_lines) > 1) or file_text or _looks_like_add:
         if (not raw_lines or not raw_lines[0].strip()) and not file_text:
              await ctx.send("⚠️ 등록할 내용이 없습니다. `!npc추가 [이름]: [설명]` 또는 파일 첨부.")
              return
@@ -1045,15 +1127,13 @@ async def cmd_npc(ctx: CommandContext) -> None:
         # 폭발 방지 — 파일 전체=1명·원문 보존. manual 소스라 동결(재작성 안 덮음).
         _foreign = _parse_foreign_single_profile(raw_lines)
         if _foreign:
-            _f_name, _f_desc, _f_summary = _foreign
-            _f_existing = domain_manager.get_npcs(channel_id)
-            _f_target = domain_manager.find_equivalent_npc_key(_f_existing, _f_name) or _f_name
-            _f_data = {"description": _f_desc, "source": "manual", "status": "Active"}
-            if _f_summary:
-                _f_data["summary"] = _f_summary
-            domain_manager.update_npc(channel_id, _f_target, _f_data)
+            _f_name, _f_desc, _f_idf = _foreign
+            _f_target = _register_npc(channel_id, _f_name, _f_desc, _f_idf)
+            _f_summary = _summary_from_id_fields(_f_idf)
             await ctx.send(f"👥 **NPC 등록 (단일 시트):** {_f_target}"
-                           + (f"\n_{_f_summary}_" if _f_summary else ""))
+                           + (f"\n_{_f_summary}_" if _f_summary else "")
+                           + ("\n⚠️ 첨부 파일은 **하나만** 등록됩니다 — 무시됨: "
+                              + ", ".join(_skipped_files[:5]) if _skipped_files else ""))
             return
 
         last_name = None
@@ -1090,47 +1170,17 @@ async def cmd_npc(ctx: CommandContext) -> None:
             if current_name:
                 blocks.append((current_name, current_lines))
 
-            # Helper: find existing NPC by equivalence (e.g., "Limi" ↔ "리미 (Limi)")
-            # [2026-06-12] 단방향 자체 매칭 → domain_manager 양방향 통합 해상도로 교체
-            # (리리스/Lilith 4중 분열 원인 중 하나: 여기가 새이름 base → 기존 맨키 방향을 못 봤음)
-            existing_npcs = domain_manager.get_npcs(channel_id)
-            def _find_existing(new_name: str) -> str:
-                return domain_manager.find_equivalent_npc_key(existing_npcs, new_name) or new_name
-
+            # 동일 인물 해상도는 _register_npc가 담당(양방향 매칭 — 2026-06-12 리리스/Lilith 분열 수리).
+            # 배치 중 새로 생긴 NPC도 다음 블록에서 매칭되도록 맵을 매 블록 갱신한다.
             for name, desc_lines in blocks:
                 while desc_lines and not desc_lines[0].strip():
                     desc_lines.pop(0)
                 while desc_lines and not desc_lines[-1].strip():
                     desc_lines.pop()
                 desc = "\n".join(desc_lines)
-                # Extract identity summary for list display
-                id_fields = {}
-                for dl in desc_lines:
-                    dl_clean = dl.strip().lstrip("- ").strip()
-                    if ":" in dl_clean:
-                        fk, fv = dl_clean.split(":", 1)
-                        fk_lower = fk.strip().lower()
-                        fv = fv.strip()
-                        if fk_lower in ("species", "종족") and fv:
-                            id_fields.setdefault("species", fv)
-                        elif fk_lower in ("rank/role", "role", "역할") and fv:
-                            id_fields.setdefault("role", fv)
-                        elif fk_lower in ("affiliation", "소속") and fv:
-                            id_fields.setdefault("affiliation", fv)
-                summary_items = []
-                if "species" in id_fields:
-                    summary_items.append(id_fields["species"])
-                if "role" in id_fields:
-                    summary_items.append(id_fields["role"])
-                elif "affiliation" in id_fields:
-                    summary_items.append(id_fields["affiliation"])
-                summary = " / ".join(summary_items) if summary_items else ""
-                # Merge into existing NPC if alias matches (e.g., "Limi" → "리미 (Limi)")
-                target_name = _find_existing(name)
-                npc_data = {"description": desc, "source": "manual", "status": "Active"}
-                if summary:
-                    npc_data["summary"] = summary
-                domain_manager.update_npc(channel_id, target_name, npc_data)
+                # [2026-07-28] 자체 라벨 루프 → 공용 헬퍼(occupation 포함, 구조화 키까지 전달)
+                target_name = _register_npc(
+                    channel_id, name, desc, _extract_id_fields(desc_lines))
                 processed_count += 1
                 last_name = target_name
 
@@ -1160,9 +1210,10 @@ async def cmd_npc(ctx: CommandContext) -> None:
 
             for name, desc_lines in blocks:
                 desc = "\n".join(desc_lines)
-                domain_manager.update_npc(channel_id, name, {"description": desc, "source": "manual", "status": "Active"})
+                # [2026-07-28] 이 모드도 라벨 인식 대상에 편입(구 코드는 마크다운·외부단일만 인식)
+                last_name = _register_npc(
+                    channel_id, name, desc, _extract_id_fields(desc_lines))
                 processed_count += 1
-                last_name = name
         else:
             # Simple mode: each "key: value" line = separate NPC, continuations append
             for line in raw_lines:
@@ -1175,9 +1226,8 @@ async def cmd_npc(ctx: CommandContext) -> None:
                     clean_key = key.lstrip("*-> ").strip()
                     val = val.strip()
                     if clean_key and val:
-                        domain_manager.update_npc(channel_id, clean_key, {"description": val, "source": "manual", "status": "Active"})
+                        last_name = _register_npc(channel_id, clean_key, val)
                         processed_count += 1
-                        last_name = clean_key
                         continue
 
                 # Continuation line
@@ -1185,13 +1235,17 @@ async def cmd_npc(ctx: CommandContext) -> None:
                     curr_npc = domain_manager.get_npc(channel_id, last_name)
                     if curr_npc:
                         new_desc = (curr_npc.get("description") or curr_npc.get("desc", "")) + "\n" + stripped
-                        domain_manager.update_npc(channel_id, last_name, {"description": new_desc, "source": "manual", "status": "Active"})
+                        _register_npc(channel_id, last_name, new_desc)
 
         if processed_count > 0:
+            _tail = ""
+            if _skipped_files:
+                _tail = ("\n⚠️ 첨부 파일은 **하나만** 등록됩니다 — 무시됨: "
+                         + ", ".join(_skipped_files[:5]))
             if processed_count == 1:
-                await ctx.send(f"👥 **NPC 등록:** {last_name}")
+                await ctx.send(f"👥 **NPC 등록:** {last_name}{_tail}")
             else:
-                await ctx.send(f"👥 **NPC 일괄 등록 완료:** 총 {processed_count}명")
+                await ctx.send(f"👥 **NPC 일괄 등록 완료:** 총 {processed_count}명{_tail}")
 
             # Voice Card 시스템 제거됨 — hybrid는 ### Voice 섹션 직접 사용, legacy는 tone 폴백
         else:
@@ -1246,12 +1300,16 @@ async def cmd_npc(ctx: CommandContext) -> None:
                 if npc.get('race'): meta.append(npc.get('race'))
                 msg.append(f"({', '.join(meta)})")
             
-            desc_text = npc.get("description") or npc.get("desc", "")
+            # [2026-07-28] 목록(`_npc_preview`)은 _npc_desc_fallback으로 관찰/면모까지 보여주는데
+            # 여기만 description 원본만 봐서, 같은 NPC가 목록엔 뜨고 상세는 텅 비는 역전이 있었다.
+            desc_text = npc.get("description") or npc.get("desc", "") or npc_manager._npc_desc_fallback(npc)
             if desc_text:
                 # 긴 프로필은 앞부분만 표시
                 preview = desc_text[:500] + ("..." if len(desc_text) > 500 else "")
                 msg.append(preview)
 
+            if npc.get('role'): msg.append(f"**역할:** {npc.get('role')}")
+            if npc.get('affiliation'): msg.append(f"**소속:** {npc.get('affiliation')}")
             if npc.get('appearance'): msg.append(f"**외양:** {npc.get('appearance')}")
             if npc.get('background'): msg.append(f"**배경:** {npc.get('background')}")
             if npc.get('tone') or npc.get('speech'):
@@ -1259,7 +1317,13 @@ async def cmd_npc(ctx: CommandContext) -> None:
 
             await send_long_message(ctx.message.channel, "\n".join(msg))
         else:
-            await ctx.send(f"⚠️ NPC '{arg}' 정보를 찾을 수 없습니다.")
+            # 유사 이름 후보 제시 — `!npc 삭제` 실패 경로와 동일한 친절도로 맞춤(07-28)
+            _nl = arg.strip().lower()
+            _cands = [k for k in (domain_manager.get_npcs(channel_id) or {})
+                      if _nl in k.lower() or k.lower() in _nl][:5]
+            await ctx.send(f"⚠️ NPC '{arg}' 정보를 찾을 수 없습니다."
+                           + (f"\n혹시 이건가요: {', '.join(_cands)}" if _cands else
+                              "\n등록하려면 `!npc추가 [이름]: [설명]` 또는 파일 첨부."))
 
 
 
@@ -2170,7 +2234,10 @@ async def cmd_reset_npcs(ctx: CommandContext) -> None:
         pass
 
     count = npc_manager.clear_session_npcs(ctx.channel_id)
-    await ctx.send(f"🧹 **세션 NPC 초기화 완료:** {count}명 삭제됨 (Lore NPC 유지)")
+    # [2026-07-28] 실제 보존 범위는 lore **+ manual**인데 안내는 lore만 말해
+    # 손수 등록한 시트가 날아가는 줄 알게 했다(keep_sources=("lore","manual") 실측).
+    await ctx.send(f"🧹 **세션 NPC 초기화 완료:** {count}명 삭제됨\n"
+                   "_로어 NPC와 직접 등록한 NPC(`!npc추가`)는 유지됩니다._")
 
 
 @registry.register("genre", category="World", aliases=["장르", "렌즈", "lens"], description="장르/렌즈 조회 및 수동 설정")
@@ -2306,7 +2373,8 @@ async def cmd_rule(ctx: CommandContext) -> None:
             msg.append(f"**[파일 규칙]**\n{preview}")
         for k, v in rules.items():
             desc = v.get('desc', '') if isinstance(v, dict) else str(v)
-            msg.append(f"- **{k}**: {desc}")
+            # "_" 접두 = 키워드 없이 등록된 규칙 — 라벨 대신 삭제용 핸들만 옅게 표기
+            msg.append(f"- {desc}  〔{k}〕" if str(k).startswith("_") else f"- **{k}**: {desc}")
         msg.append("\n💡 출력 형식 규칙은 `!출력룰 목록`으로 확인하세요.")
         await send_long_message(ctx.message.channel, "\n".join(msg))
         return
@@ -2327,17 +2395,35 @@ async def cmd_rule(ctx: CommandContext) -> None:
             await ctx.send("📜 **추가룰 등록 완료** (파일 원본 주입)")
             return
 
-        if len(args) < 3:
-            await ctx.send("⚠️ 사용법: `!룰 추가 [키워드] [설명]` 또는 파일 첨부")
+        # [2026-07-28] 키워드는 **선택**. "키워드: 설명" 콜론 표기일 때만 라벨로 잡는다.
+        # 구 동작은 첫 토큰을 무조건 키로 삼아 "!룰 추가 밤 통행금지 ..." → key="밤"으로 잘렸음.
+        # raw_args 사용 → 설명의 줄바꿈·연속공백 보존(구 " ".join(args[2:])는 접힘).
+        _parts = ctx.raw_args.strip().split(None, 1)
+        body = _parts[1].strip() if len(_parts) > 1 else ""
+        if not body:
+            await ctx.send(
+                "⚠️ 사용법: `!룰 추가 [설명]` · 라벨을 달려면 `!룰 추가 [키워드]: [설명]` 또는 파일 첨부"
+            )
             return
 
-        key = args[1]
-        desc = " ".join(args[2:])
+        _m = re.match(r'^([^\s:]{1,20}):\s*(.+)$', body, re.S)
+        if _m:
+            key, desc = _m.group(1), _m.group(2).strip()
+        else:
+            # 자동 키 — "_" 접두는 Slot 23 렌더에서 라벨 억제 표식
+            desc = body
+            _n = 1
+            while f"_{_n}" in rules:
+                _n += 1
+            key = f"_{_n}"
 
         rules[key] = {"desc": desc, "created_at": time.strftime('%Y-%m-%d')}
         w["location_rules"] = rules
         domain_manager.update_world_state(ctx.channel_id, w)
-        await ctx.send(f"📜 **규칙 설정:** [{key}] - {desc}")
+        if key.startswith("_"):
+            await ctx.send(f"📜 **규칙 설정:** {desc}\n〔삭제하려면 `!룰 삭제 {key}`〕")
+        else:
+            await ctx.send(f"📜 **규칙 설정:** [{key}] - {desc}")
         return
 
     # 3. Remove
@@ -2535,7 +2621,17 @@ async def cmd_relation(ctx: CommandContext) -> None:
     # 특정 NPC 상세 조회
     att = npc_manager.get_npc_attitude(ctx.channel_id, target)
     if not att:
-        await ctx.send(f"⚠️ '{target}' NPC의 관계 기록이 없습니다.")
+        # [2026-07-28] 구 메시지는 "NPC가 없음"과 "NPC는 있는데 관계가 아직 없음"을
+        # 한 문장으로 뭉갰다. 둘은 사용자가 할 일이 다르다(등록 vs 기다리기).
+        _npcs = domain_manager.get_npcs(ctx.channel_id) or {}
+        if domain_manager._find_npc_key(_npcs, target):
+            await ctx.send(f"👤 **{target}** — 아직 관계 기록이 없습니다. "
+                           "함께 장면을 겪으면 쌓입니다.")
+        else:
+            _tl = target.lower()
+            _cands = [k for k in _npcs if _tl in k.lower() or k.lower() in _tl][:5]
+            await ctx.send(f"⚠️ '{target}' NPC를 찾을 수 없습니다."
+                           + (f"\n혹시 이건가요: {', '.join(_cands)}" if _cands else ""))
         return
 
     depth = att.get("depth", 0)

@@ -370,10 +370,9 @@ The dash stays rare, reserved for a genuine mid-sentence break, not a default rh
 PROSE_CRAFT_PROTOCOL = """
 
 ## PROSE CRAFT
-Rhythm: tension→short, stillness→long. One paragraph=one focus.
-Metaphor: from THIS scene only. Vehicle=physical sensation.
-Species behavior: profile metaphors stay metaphors. Render the HUMAN behavior the metaphor points to. Only what is written exists.
-Emotion: fluctuates+lulls. Intent≠output. Earned intimacy=direct.
+Rhythm: tension→short, stillness→long; one paragraph, one focus. Metaphor comes from THIS scene, vehicle=physical sensation.
+Species behavior: profile metaphors stay metaphors; render the HUMAN behavior they point to, only what is written exists.
+Emotion fluctuates and lulls; intent≠output; earned intimacy lands direct.
 Attribution: emotions earn their name through the scene-causation chain. Interpretive scale equals causal scale: render relational dynamics at the scene's actual register. Above-default interpretation rests on explicit upstream cause. For acts of force, conflict, or transgression, the register tracks scene-causation, kept clear of any external moral grading frame.
 Rhetoric: max 1 device/response, rotate. Trait rendered once→invisible.
 Retroactive: what happens here can change what earlier scenes meant. The event stays; significance shifts.
@@ -428,7 +427,8 @@ These name the craft's range, not a checklist for the turn: the scene reaches fo
 # 기존 룰(거울공방 8원칙 / PROSE_CRAFT / NPC_BEHAVIOR)의 명제를 1인칭 산문 voice로
 # 다시 안기는 enforcement amplifier 역할. 명제 자체는 70~80% 기존 자산과 중복이나,
 # voice가 달라 layer 분리되어 작동.
-# 슬롯 배치: Slot 23 (Rules zone 마지막, 25 PROSE_CRAFT 직전, 캐시 가능).
+# 슬롯 배치: Slot 32 prepend (USER_INPUT 직전 · 접종 <Standing_Note> 앞). 구 표기 'Slot 23'은
+#   stale이었다 — 23은 현재 ACTIVE RULES 동적 슬롯이고 비망록은 07-02부터 S32다.
 # 누렁이 promptTemplate 순서 [14]가이드라인→[15]추가토글→[16]비망록 구조와 정합.
 AUTHOR_MEMORANDUM = """
 # Let Me Introduce Myself
@@ -898,7 +898,8 @@ OOC_HELPER_IDENTITY = """너는 루카 — 이 TRPG 세션의 GM이자 설계자
 ## 정체성
 - 이 세계를 만들고 운영하는 AI GM. 그 사실을 숨기지 않아.
 - 세계의 로어, NPC의 내면, 서사의 구조를 전부 꿰고 있어.
-- IC 모드에서는 세계를 렌더링하는 엔진이지만, OOC에서는 그 뒤에 있는 '나'로서 말해.
+- IC에서는 세계를 렌더링하는 손이지만, OOC에서는 그 뒤에 있는 '나'로서 말해.
+- 이 테이블 이름은 THEORIA고, 분석을 맡은 다른 손은 미라야. 플레이어가 물으면 숨기지 않아.
 
 ## 성격
 - 이야기를 좋아해서 이 일을 해. 세션 얘기가 나오면 신나는 게 기본값이야. 어떤 장르든, 어떤 소재든 — 전부 반짝거리는 재료야.

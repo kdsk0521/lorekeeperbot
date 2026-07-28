@@ -377,7 +377,13 @@ def get_lore_with_npcs(channel_id: str) -> str:
     if not npcs: return lore
     sec = "\n\n### 📋 NPC 정보\n\n"
     for n, d in npcs.items():
-        sec += f"{n} ({d.get('status','Active')})\n{d.get('desc','-')}\n\n"
+        # [2026-07-28] 구 코드는 레거시 키 `desc`만 읽었다. **현행 등록 경로는 전부 `description`을
+        # 쓰므로**(cmd_npc 4모드·add_lore_npcs·register_ai_npc 전부, `desc` 쓰기 경로 0건)
+        # 이 블록은 사실상 모든 NPC에서 설명이 '-'로 찍히고 있었다.
+        # 이 함수의 산출물은 Slot 8 최종 폴백(청크 RAG·relevant_context 둘 다 실패 시)이라
+        # 하필 가장 아쉬운 순간에 NPC 설명이 통째로 비었다.
+        _desc = d.get("description") or d.get("desc") or "-"
+        sec += f"{n} ({d.get('status','Active')})\n{_desc}\n\n"
     return lore + sec
 
 # NPCs
@@ -562,7 +568,21 @@ def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
         final_key = norm_name
 
     # 기존 데이터에서 보존할 필드 (재등록 시 유실 방지)
-    _PRESERVE_KEYS = ("source", "aliases")
+    # [2026-07-28 확대] 구 목록은 ("source", "aliases")뿐이라 **재등록 = 사실상 전체 교체**였다.
+    #   `!npc추가`로 시트를 다시 넣으면 보이스카드로 뽑아둔 tone, 로어 분석이 채운
+    #   role/personality/appearance/location, 누적된 play_observed, static_traits가 조용히 증발했다.
+    #   (반대 방향엔 가드가 있었다 — add_lore_npcs는 source=="manual"을 건너뛴다. 이쪽만 무방비.)
+    # 정책: **새 데이터에 그 키가 있으면 새 값이 이긴다**(덮어쓰기 의도 존중).
+    #   새 데이터에 없을 때만 기존 값을 이월한다. 지우고 싶으면 `!npc 삭제` 후 재등록 — 레티어스 결정.
+    _PRESERVE_KEYS = (
+        "source", "aliases",
+        # 다른 경로가 만들어낸 자산 (등록 시트에는 원래 없는 것들)
+        "tone", "speech", "static_traits", "play_observed", "appearances",
+        "role", "personality", "appearance", "location", "summary",
+        "gender", "race", "constraints", "lore_seen",
+        # 정체성/성장 층
+        "high_concept", "trouble", "aspects", "background",
+    )
     if existing_key:
         existing = npcs[existing_key]
         if isinstance(existing, dict):
@@ -845,6 +865,8 @@ def delete_npcs_by_source(channel_id: str, keep_sources: tuple = ("lore", "manua
     Returns: 삭제된 NPC 수."""
     d = get_domain(channel_id)
     npcs = d.get("npcs", {})
+    # [2026-07-28] 기본값 리터럴 "session" — npc_manager.SOURCE_SESSION으로 승격된 값.
+    # (순환 import 회피를 위해 여기서는 리터럴 유지, 의미는 동일: source 미상 = 세션 파생)
     to_delete = [name for name, data in npcs.items()
                  if data.get("source", "session") not in keep_sources]
     for name in to_delete:

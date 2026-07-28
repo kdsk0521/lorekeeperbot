@@ -25,10 +25,17 @@ from npc_profile_harness import extract_static_traits
 # NPC SOURCE TYPES (출처 구분)
 # =========================================================
 SOURCE_LORE = "lore"              # 로어 분석으로 추출된 NPC
-SOURCE_MANUAL = "manual"          # !npc add 등 수동 추가
-SOURCE_AI_GENERATED = "ai_generated"  # 세션 중 AI가 생성한 NPC
+SOURCE_MANUAL = "manual"          # !npc추가 등 수동 등록
+SOURCE_AI_GENERATED = "ai_generated"  # 세션 중 AI가 생성한 NPC (register_ai_npc 경로)
+# [2026-07-28] "session"은 상수가 없는데 **실제로 가장 많이 쓰이던 값**이었다 —
+#   쓰기 4곳(command_handler 툴콜 등록, npc_manager 개명, orchestration 2곳)이 리터럴로 넣고
+#   있었는데 VALID_SOURCES엔 없어서, get_npcs_by_source(AI_GENERATED)로는 안 잡혔다.
+#   데이터 마이그레이션 없이 정식 값으로 승격한다(기존 DB 그대로 유효).
+SOURCE_SESSION = "session"        # 플레이 중 자동 등록 (AI_GENERATED와 동급 — 둘 다 세션 파생)
 
-VALID_SOURCES = {SOURCE_LORE, SOURCE_MANUAL, SOURCE_AI_GENERATED}
+VALID_SOURCES = {SOURCE_LORE, SOURCE_MANUAL, SOURCE_AI_GENERATED, SOURCE_SESSION}
+# 시트가 동결되는(자동 증류가 덮지 않는) 출처 — lore/manual 판정의 단일 출처
+FROZEN_SOURCES = (SOURCE_LORE, SOURCE_MANUAL)
 
 # 태도 레벨 정의 (0-4 scale for gating distance calculation)
 ATTITUDE_LEVELS = {
@@ -48,15 +55,9 @@ logger = logging.getLogger(__name__)
 PEPLAU_ORDER = ['orientation', 'identification', 'exploitation', 'resolution']
 
 
-def validate_peplau_transition(current: str, proposed: str) -> str:
-    """Peplau 단계 건너뛰기 방지. 다음 단계로만 진행 가능."""
-    if current not in PEPLAU_ORDER or proposed not in PEPLAU_ORDER:
-        return proposed  # unknown stages pass through
-    curr_idx = PEPLAU_ORDER.index(current)
-    prop_idx = PEPLAU_ORDER.index(proposed)
-    if prop_idx > curr_idx + 1:  # skip prevention
-        return PEPLAU_ORDER[curr_idx + 1]
-    return proposed
+# ⛔[2026-07-28 삭제] validate_peplau_transition — 호출처 0.
+#   단계 건너뛰기 방지는 프롬프트 지시(theoria "cannot skip stages")가 담당 중.
+#   PEPLAU_ORDER 상수는 아래에 남긴다(단계 이름 자체는 여전히 참조 가치).
 
 
 # =========================================================
@@ -136,6 +137,15 @@ def migrate_npc_fields(channel_id: str) -> int:
                 if key not in data or not data[key]:
                     data[key] = val
                     changed = True
+        # [2026-07-28] static_traits 백필 — 구 코드는 구조화 필드만 복구하고
+        #   static_traits는 손대지 않은 채 domain_manager.update_npc를 직접 불렀다.
+        #   그 결과 "치료제"인 이 함수가 정작 static_traits는 영영 못 고쳤고,
+        #   그에 의존하는 기능(npc_autonomous 등)이 구 NPC에서 계속 비활성이었다.
+        if desc_text and len(desc_text) >= 100 and not data.get("static_traits"):
+            _st = extract_static_traits(name, desc_text)
+            if _st:
+                data["static_traits"] = _st
+                changed = True
         if changed:
             domain_manager.update_npc(channel_id, name, data)
             migrated += 1
@@ -175,7 +185,9 @@ def _extract_structured_fields(desc: str) -> Dict[str, str]:
                 fields["location"] = place_m.group(1).strip()
 
     # Speech/Tone (예: "**Tone:** Low, tired, flat.")
-    tone_m = re.search(r'\*?\*?Tone\*?\*?[:\s]+(.+)', desc)
+    # [2026-07-28] v2 풀시트는 같은 정보를 `- Speaking Style:` / `- 말투:`로 쓴다 — 편입.
+    tone_m = re.search(
+        r'\*?\*?(?:Tone|Speaking\s*Style|Speech\s*Style|말투|어조)\*?\*?[:\s]+(.+)', desc, re.I)
     if tone_m:
         fields["tone"] = _clean_markdown(tone_m.group(1))   # [1M remap] 캡 제거
 
@@ -297,17 +309,32 @@ def get_npc_label_keywords(channel_id: str, npc_names: List[str]) -> Dict[str, L
 
 
 def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
-    # desc/description 텍스트에서 구조화 필드 자동 추출 (없는 경우만)
+    """NPC 등록/갱신의 정본 관문. 자동 추출을 얹은 뒤 domain_manager로 넘긴다.
+
+    [2026-07-28] 우선순위 3단으로 정리:
+      ① 새 data에 명시된 값  ② 기존 저장값(보존)  ③ 자동 추출값
+    구 코드는 기존값을 보지 않아 ①>③>② 순이었다 — 재등록 때 자동 추출이 **먼저** 값을
+    채워버려서 domain_manager의 _PRESERVE_KEYS(`pk not in data` 조건)가 무력화됐다.
+    그 결과 보이스카드로 뽑아둔 tone, 최초 등록 시점 static_traits가 재등록마다
+    새 추출값으로 조용히 갈렸다(스모크 A2가 검출).
+    """
+    _prev = domain_manager.get_npc(channel_id, name) or {}
+    if not isinstance(_prev, dict):
+        _prev = {}
+    # desc/description 텍스트에서 구조화 필드 자동 추출 (새 데이터·기존값 둘 다 없을 때만)
     desc_text = data.get("description") or data.get("desc", "")
     if desc_text and len(desc_text) > 200:
         extracted = _extract_structured_fields(desc_text)
+        _applied = []
         for key, val in extracted.items():
-            if key not in data or not data[key]:
+            if not data.get(key) and not _prev.get(key):
                 data[key] = val
-        if extracted:
-            logger.info(f"[NPC] Auto-extracted fields for '{name}': {list(extracted.keys())}")
-    # N6: 정적 심리 특성 추출 (프로필 충분할 때만, 기존 traits 없을 때만)
-    if desc_text and len(desc_text) >= 100 and "static_traits" not in data:
+                _applied.append(key)
+        if _applied:
+            logger.info(f"[NPC] Auto-extracted fields for '{name}': {_applied}")
+    # N6: 정적 심리 특성 추출 (프로필 충분할 때만, 신규이거나 기존에 없을 때만)
+    if (desc_text and len(desc_text) >= 100
+            and not data.get("static_traits") and not _prev.get("static_traits")):
         static_traits = extract_static_traits(name, desc_text)
         if static_traits:
             data["static_traits"] = static_traits
@@ -679,7 +706,9 @@ def get_npcs_by_source(channel_id: str, source: str) -> Dict[str, Dict[str, Any]
     all_npcs = get_npcs(channel_id)
     return {
         name: data for name, data in all_npcs.items()
-        if data.get("source", SOURCE_AI_GENERATED) == source
+        # [2026-07-28] 기본값 AI_GENERATED → SESSION. source 미상 NPC의 실제 다수는
+        # 리터럴 "session"으로 등록된 것들이라 기본값도 그쪽이 맞다.
+        if data.get("source", SOURCE_SESSION) == source
     }
 
 
@@ -745,8 +774,8 @@ def get_npc_tier(data: dict) -> str:
     session은: 시트 증류됨(관찰 재작성/면모 보유) OR 5개 구별 턴 이상 등장 → established, 그 외 provisional."""
     if not isinstance(data, dict):
         return "established"
-    src = str(data.get("source", "session")).lower()
-    if src in ("lore", "manual"):
+    src = str(data.get("source", SOURCE_SESSION)).lower()
+    if src in FROZEN_SOURCES:
         return "established"
     # 시트가 이미 재작성됐거나(관찰 증류) 면모가 있으면 비중 있는 조연 → established (가드레일 a)
     if int(data.get("_obs_built_len", 0) or 0) > 0:
@@ -765,7 +794,7 @@ def mark_npc_appearance(channel_id: str, name: str, turn: int) -> None:
     data = get_npc(channel_id, name)
     if not isinstance(data, dict):
         return
-    if str(data.get("source", "session")).lower() in ("lore", "manual"):
+    if str(data.get("source", SOURCE_SESSION)).lower() in FROZEN_SOURCES:
         return
     try:
         last = int(data.get("_last_appear_turn", -1))
@@ -792,33 +821,102 @@ def get_npc_roster(channel_id: str) -> str:
     for name, data in npcs.items():
         # [D-A] 분석(Theoria)은 전체 캐스트가 필요 → 접기 없이 폴백만(빈 description → 관찰/면모)
         desc = _npc_desc_fallback(data)
-        first_line = desc.split("\n")[0][:50] if desc else ""
+        blurb = _roster_blurb(desc, data)
         role = data.get("role", "")
         location = data.get("location", "")
         tag = f" [{role}]" if role else ""
         tag += f" @{location}" if location else ""
-        lines.append(f"- {name}{tag}: {first_line}")
+        lines.append(f"- {name}{tag}: {blurb}")
     return "\n".join(lines)
+
+
+# 로스터 요약에서 건너뛸 라벨 — 판별력이 없거나 이미 다른 자리에 있는 것들.
+#   이름/별칭은 `- {name}` 자리에, 종족은 summary에 이미 있다.
+#   나이·성별·신체·복장은 "이 인물을 이번 장면에 부를까"와 무관한 정보라 자리만 먹는다.
+_ROSTER_SKIP_LABELS = (
+    "name", "이름", "alias", "별칭", "aka",
+    "age", "나이", "sex", "gender", "성별",
+    "species", "종족", "race", "physical", "외모", "외형", "attire", "복장",
+    "abilities", "능력", "outfit", "body", "aura", "overall look", "hair", "eyes",
+    # v2 풀시트 계열의 저정보 항목
+    "birthday", "생일", "faith", "religion", "종교", "nationality", "국적",
+    "class", "hobby", "hobbies", "취미", "like", "dislike", "hate",
+)
+# 반대로 **가장 판별력 있는** 라벨 — 있으면 이걸 먼저 쓴다.
+# ※ 역할/직업 계열(role·job·occupation·duty)은 여기 넣지 않는다 — 이미 summary로 앞에 붙으므로
+#   preferred로 또 고르면 같은 말이 두 번 나가고 정작 서사 재료(과거·평판)를 밀어낸다.
+_ROSTER_PREFER_LABELS = (
+    "background", "배경", "past", "과거", "history",
+    "reputation", "평판", "social status", "lifestyle", "residence",
+)
+
+
+def _roster_blurb(desc: str, data: dict = None, cap: int = 90) -> str:
+    """Theoria가 '이번 턴 이 인물을 부를까'를 판단하는 유일한 재료.
+
+    [2026-07-28] 구 코드는 `desc.split("\\n")[0][:50]` — **첫 줄을 그대로** 썼다.
+    시트가 `### Identity`로 시작하는 흔한 포맷(외부 캐릭터 시트 관례)에서는
+    전 인물의 요약이 똑같이 "### Identity"가 되어 **선별이 사실상 무작위**였다.
+    시트 쪽에 "첫 줄은 평문으로 쓰라"를 요구하는 대신 읽는 쪽을 고친다.
+
+    순서: ① summary(종족/역할 라벨에서 조립된 것) ② Background/Occupation 값이 있으면 그것
+    ③ 없으면 첫 실질 문장 — 헤더·구분선·저정보 라벨(나이/성별/신체/복장)을 건너뛰고,
+    불릿이면 `라벨: 값`의 값 쪽을 쓴다.
+    """
+    _d = data or {}
+    parts = []
+    _summary = str(_d.get("summary", "") or "").strip()
+    if _summary:
+        # v2 풀시트는 종족/역할 값이 길다("Sentient Subterranean Supercomputer Complex …").
+        # 그대로 두면 summary가 캡을 다 먹고 정작 판별에 쓸 문장이 안 들어간다 → 절반까지만.
+        _half = max(30, cap // 2)
+        if len(_summary) > _half:
+            _summary = _summary[:_half].rstrip(" /-—") + "…"
+        parts.append(_summary)
+
+    preferred, fallback = "", ""
+    for raw in (desc or "").split("\n"):
+        s = raw.strip()
+        if not s or s.startswith("#") or re.match(r'^[=\-*~]{3,}$', s):
+            continue
+        s = s.lstrip("-*> ").strip()
+        if not s:
+            continue
+        _label = ""
+        if ":" in s:
+            _k, _v = s.split(":", 1)
+            _label = _k.strip().lower()
+            if _label in _ROSTER_SKIP_LABELS:
+                continue
+            # 불릿 라벨이면 값 쪽이 내용이다 (`- Background: …` → `…`)
+            if len(_k.strip()) <= 20 and _v.strip():
+                s = _v.strip()
+        if len(s) < 8:      # "Female", "Mm~" 같은 단발 값은 판별력이 없다
+            continue
+        if _label in _ROSTER_PREFER_LABELS and not preferred:
+            preferred = s
+            break
+        if not fallback:
+            fallback = s
+    if preferred or fallback:
+        parts.append(preferred or fallback)
+
+    return " — ".join(parts)[:cap] if parts else ""
 
 
 # =========================================================
 # Scene-Aware Section Selection
 # =========================================================
-# 항상 포함되는 코어 섹션
+# 항상 포함되는 코어 섹션 (이름에 이 문자열이 있으면 프로필 맨 앞으로 당김)
 _CORE_SECTIONS = ["Identity", "Hard Rules"]
-# scene_type별 추가 로딩 섹션
-# "Voice" = hybrid v2 포맷의 1인칭 서술 블록 (Core+Emotional+Speech+Interpersonal 통합)
-_SCENE_SECTION_MAP = {
-    "combat":      ["Voice", "Combat Profile", "Appearance", "Core Operating Principle", "Values"],
-    "social":      ["Voice", "Core Operating Principle", "Interpersonal Style", "Emotional Architecture",
-                    "Secrets", "Speech Pattern"],
-    "intimate":    ["Voice", "Intimacy Reference", "Emotional Architecture", "Sexuality", "Secrets",
-                    "Interpersonal Style", "Core Operating Principle"],
-    "exploration": ["Voice", "Appearance Reference", "Core Operating Principle", "Background", "Values", "Appearance"],
-    "summary":     ["Voice", "Core Operating Principle"],
-    "normal":      ["Voice", "Core Operating Principle", "Speech Pattern", "Interpersonal Style",
-                    "Emotional Architecture", "Secrets"],
-}
+
+# ⛔[2026-07-28 삭제] _SCENE_SECTION_MAP — 장면 유형별 섹션 화이트리스트.
+#   정의만 있고 **참조처 0**이었다(grep 확인). `_select_profile_sections(scene_type=...)`의
+#   인자는 남아 있지만 내부에서 쓰지 않는다 = 전투/사교/친밀/탐험 구분 없이 전 섹션 상시 노출.
+#   레티어스 결정(2026-07-28): **이 기능은 만들지 않는다** → 오해 유발 코드라 제거.
+#   되살릴 일이 생기면 git 이력에서. 당시 키: combat/social/intimate/exploration/summary/normal.
+#   ※ scene_type 인자 자체는 호출부 호환 위해 존치(무해).
+
 _MAX_TOTAL_PER_NPC = 50000  # [Sprint L 2026-04-29] 사고 방어 안전망만. 정상 운영 도달 X.
 
 # 배경/설정류 섹션 키 — 렌더러(Pro)엔 "직접 서술 금지, 현재 잔여로만" 프레임으로 제자리 강등.
@@ -832,8 +930,9 @@ def _is_background_section(name: str) -> bool:
 
 
 def _is_hybrid_profile(desc: str) -> bool:
-    """프로필이 hybrid v2 포맷인지 판별. '### Voice' 섹션 존재 여부로 결정."""
-    return bool(re.search(r'^###\s+Voice\b', desc, re.MULTILINE))
+    """Voice 섹션(1인칭 목소리 블록)을 가진 시트인가.
+    [2026-07-28] h4형 시트(`#### Voice`)도 인정 — 섹션 깊이 판정과 보조를 맞춘다."""
+    return bool(re.search(r'^#{3,4}(?!#)\s+Voice\b', desc or "", re.MULTILINE))
 
 
 def _extract_voice_section(desc: str) -> str:
@@ -842,15 +941,37 @@ def _extract_voice_section(desc: str) -> str:
     return sections.get("Voice", "")
 
 
+def _section_header_depth(desc: str) -> int:
+    """이 프로필에서 **실질 섹션 구분자로 쓰인 헤더 깊이**를 판정한다(3 또는 4).
+
+    [2026-07-28] 외부 캐릭터 시트에는 두 계열이 있다:
+      · h3형 — `### Identity` `### Voice` … (h3가 여러 개, 우리 시트 관례)
+      · h4형 — `### 캐릭터 이름` 하나 아래 `#### Basic Info` `#### Background` … 16개
+               (커뮤니티 풀시트 템플릿 관례)
+    구 코드는 `###`만 잘라서 h4형이 **통째로 한 덩어리**가 됐다. 12,000자짜리 시트에서
+    `#### Background`가 섹션으로 안 잡히니 "직접 낭독 금지" 프레임도 안 붙고,
+    코어 섹션 정렬도 무의미해졌다.
+    판정: h3가 2개 이상이면 h3형. h3가 1개 이하인데 h4가 2개 이상이면 h4형.
+    """
+    h3 = len(re.findall(r'^###(?!#)\s+\S', desc or "", re.MULTILINE))
+    h4 = len(re.findall(r'^####(?!#)\s+\S', desc or "", re.MULTILINE))
+    return 4 if (h3 <= 1 and h4 >= 2) else 3
+
+
 def _parse_sections(desc: str) -> Dict[str, str]:
-    """### 헤더 기준으로 프로필을 섹션 dict로 분할."""
+    """마크다운 헤더 기준으로 프로필을 섹션 dict로 분할.
+
+    구분자 깊이는 _section_header_depth가 시트 형태를 보고 정한다(h3형/h4형).
+    """
     sections: Dict[str, str] = {}
-    parts = re.split(r'\n(?=###\s)', desc)
-    for part in parts:
-        header_m = re.match(r'###\s+(.+)', part)
+    depth = _section_header_depth(desc)
+    hashes = "#" * depth
+    split_re = re.compile(r'\n(?=' + hashes + r'(?!#)\s)')
+    head_re = re.compile(hashes + r'(?!#)\s+(.+)')
+    for part in split_re.split(desc or ""):
+        header_m = head_re.match(part)
         if header_m:
-            sec_name = header_m.group(1).strip()
-            sections[sec_name] = part.strip()
+            sections[header_m.group(1).strip()] = part.strip()
         elif not sections:
             sections["_preamble"] = part.strip()
     return sections
@@ -915,42 +1036,16 @@ def _select_profile_sections(desc: str, scene_type: str = "normal", demote_backg
     return result
 
 
-def get_npc_full_profiles(channel_id: str, names: list, scene_type: str = "normal") -> str:
-    """지정된 NPC들의 프로필 반환. scene_type에 따라 필요한 섹션만 선택."""
-    npcs = get_npcs(channel_id)
-    parts = []
-    for name in names:
-        # DAI 이름 → 저장 키 해상도 (e.g. "이하윤" → "Lee Ha-yoon(이하윤)")
-        key = domain_manager._find_npc_key(npcs, name) or name
-        data = npcs.get(key)
-        if data:
-            name = key  # 프로필 헤더에도 정규 이름 사용
-            desc = _get_npc_desc(data)
-            desc = _select_profile_sections(desc, scene_type)
-            header = f"### {name}"
-            meta_parts = []
-            if data.get("role"):
-                meta_parts.append(f"역할: {data['role']}")
-            if data.get("location"):
-                meta_parts.append(f"위치: {data['location']}")
-            if data.get("personality"):
-                meta_parts.append(f"성격: {data['personality']}")
-            if data.get("tone") or data.get("speech"):
-                meta_parts.append(f"말투: {data.get('tone') or data.get('speech')}")
-            if data.get("appearance"):
-                meta_parts.append(f"외형: {data['appearance']}")
-            meta_line = " | ".join(meta_parts)
-            if meta_line:
-                profile_text = f"{header}\n**[{meta_line}]**\n{desc}"
-            else:
-                profile_text = f"{header}\n{desc}"
-
-            parts.append(profile_text)
-    return "\n\n".join(parts)
+# ⛔[2026-07-28 삭제] get_npc_full_profiles — "비밀 제거 없는 전문" 조립기.
+#   호출처 0(grep 확인). Theoria(분석)는 프로필 전문이 아니라 get_npc_roster의
+#   **인물당 첫 줄 50자 요약**만 받는 구조라 이 함수가 쓰일 자리가 없었다.
+#   렌더러용은 get_npc_renderer_profiles(비밀 스트립 + {{char}} 치환 + 관찰 병기)가 정본.
+#   ★비밀이 제거되지 않는 경로였으므로, 되살릴 땐 스트립 여부를 먼저 결정할 것.
 
 
 def get_npc_renderer_profiles(channel_id: str, names: list, scene_type: str = "normal", user_mask: str = "") -> str:
-    """P5: Renderer용 NPC 프로필 (비밀/숨겨진 정보 제거). 포맷은 get_npc_full_profiles와 동일.
+    """P5: Renderer용 NPC 프로필 (비밀/숨겨진 정보 제거). **프로필 조립의 유일한 정본**
+    (2026-07-28: 쌍이던 get_npc_full_profiles는 호출처 0으로 삭제).
 
     [2026-07-13] user_mask: RisuAI 관례 플레이스홀더 치환용 — 외부 시트의 {{char}}/{{user}}가
     리터럴로 프롬에 새지 않게. 미지정 시 {{user}}는 보존(정보 손실 방지), {{char}}는 항상 치환."""
@@ -1079,28 +1174,28 @@ def get_npc_recency_reminders(channel_id: str, npc_names: list) -> str:
     return "\n\n".join(parts)
 
 
-def _extract_voice_summary_from_section(name: str, voice_section: str) -> str:
-    """Voice 섹션에서 대사 줄을 추출하여 1줄 요약.
-    따옴표/~로 끝나는 줄 우선, 없으면 첫 의미있는 줄."""
-    # 대사 줄 추출 (따옴표로 시작하거나 ~로 끝나는 줄)
-    dialogue_lines = []
-    for line in voice_section.split("\n"):
-        stripped = line.strip()
-        if not stripped or stripped.startswith("###"):
-            continue
-        if stripped.startswith('"') or stripped.startswith('"') or stripped.endswith('~"') or stripped.endswith("~"):
-            dialogue_lines.append(stripped[:80])
-            if len(dialogue_lines) >= 3:
-                break
-    if dialogue_lines:
-        return f"- {name}: {' / '.join(dialogue_lines)}"
+def _extract_voice_summary_from_section(name: str, voice_section: str, cap: int = 220) -> str:
+    """Voice 섹션을 recency에 다시 얹을 짧은 발췌.
 
-    # 폴백: 첫 의미있는 줄
-    content_lines = [l.strip() for l in voice_section.split("\n")
-                     if l.strip() and not l.strip().startswith("###")]
-    if content_lines:
-        return f"- {name}: {content_lines[0][:120]}"
-    return ""
+    [2026-07-28] 구 코드는 **따옴표로 시작하거나 `~`로 끝나는 줄**을 사냥해 최대 3줄을
+    이어붙였다. Voice를 1인칭 산문으로 쓰는 시트(섹션 전체가 목소리 겸 인물 설명)에서는
+    그런 줄이 없거나, 있어도 `"What I'm bad at~"` 같은 **소제목**이 뽑혀 그 한 줄이
+    "이 인물의 목소리"로 강조되는 역효과가 났다.
+    Voice 섹션은 앞부분부터가 이미 그 인물의 말투다 — 사냥하지 말고 앞을 쓴다.
+    """
+    body = "\n".join(
+        l.strip() for l in (voice_section or "").split("\n")
+        if l.strip() and not l.strip().startswith("###")
+    ).strip()
+    if not body:
+        return ""
+    excerpt = body[:cap].rstrip()
+    if len(body) > len(excerpt):
+        # 문장 중간에서 끊기면 마지막 종결부까지만
+        _cut = max(excerpt.rfind("."), excerpt.rfind("~"), excerpt.rfind("?"), excerpt.rfind("!"))
+        if _cut > cap * 0.5:
+            excerpt = excerpt[:_cut + 1]
+    return f"- {name}: {excerpt}"
 
 
 # =========================================================
@@ -1203,70 +1298,13 @@ def delete_npc_attitude(channel_id: str, npc_name: str) -> bool:
     return domain_manager.delete_npc_attitude(channel_id, npc_name)
 
 
-def get_relationship_summary(channel_id: str) -> str:
-    """
-    전체 NPC-PC 관계 요약 문자열 생성.
-    AI 프롬프트에 삽입하기 좋은 형태.
-    """
-    npcs = get_npcs(channel_id)
-    attitudes = get_npc_attitudes(channel_id)
-
-    if not npcs:
-        return "[No NPCs registered]"
-
-    lines = []
-    for npc_name, npc_data in npcs.items():
-        source = npc_data.get("source", "unknown")
-        source_tag = {"lore": "📜", "manual": "✏️", "ai_generated": "🤖"}.get(source, "❓")
-
-        att_info = attitudes.get(npc_name, {})
-        attitude = att_info.get("attitude", "neutral")
-        reason = att_info.get("reason", "")
-
-        # 태도 이모지
-        att_emoji = {
-            "hostile": "🔴",
-            "unfriendly": "🟠",
-            "neutral": "⚪",
-            "friendly": "🟢",
-            "loyal": "💚"
-        }.get(attitude, "⚪")
-
-        desc = npc_data.get("description", "")[:50]
-        if len(npc_data.get("description", "")) > 50:
-            desc += "..."
-
-        # [Gender/Race Display]
-        meta_info = []
-        if npc_data.get("race"): meta_info.append(npc_data["race"])
-        if npc_data.get("gender"): meta_info.append(npc_data["gender"])
-        meta_str = f"[{'/'.join(meta_info)}] " if meta_info else ""
-
-        line = f"{source_tag} **{npc_name}** {att_emoji}{attitude} - {meta_str}{desc}"
-
-        lines.append(line)
-
-    return "\n".join(lines) if lines else "[No NPCs]"
+# ⛔[2026-07-28 삭제] get_relationship_summary(44줄) — 호출처 0.
+#   프롬프트용 관계 요약 문자열 조립기였으나 소비처가 사라졌다.
+#   현행 표시 경로는 get_connection_display(!관계 명령), 프롬프트 급식은 une_facade 앵커.
 
 
-def get_attitude_for_prompt(channel_id: str) -> str:
-    """
-    AI 프롬프트용 태도 요약 (간결한 형태).
-    """
-    attitudes = get_npc_attitudes(channel_id)
-    if not attitudes:
-        return ""
-
-    lines = ["[NPC ATTITUDES TOWARD PC]"]
-    for npc_name, att_info in attitudes.items():
-        attitude = att_info.get("attitude", "neutral")
-        reason = att_info.get("reason", "")
-        line = f"- {npc_name}: {attitude}"
-        if reason:
-            line += f" ({reason})"
-        lines.append(line)
-
-    return "\n".join(lines)
+# ⛔[2026-07-28 삭제] get_attitude_for_prompt — 호출처 0.
+#   une_facade가 anchors["stored_npc_attitudes"] 원본 dict를 직접 넘기는 방식으로 대체된 잔재.
 
 
 # =========================================================
@@ -1551,94 +1589,12 @@ def _save_attitude_turn(channel_id: str, npc_name: str, turn: int) -> None:
 # N4: NPC 페르소나 스냅샷
 # =========================================================
 
-def apply_persona_snapshot(channel_id: str, npc_name: str, updates: dict, current_turn: int) -> str:
-    """페르소나 스냅샷 업데이트 적용. Delta-only 이력 기록.
-
-    updates format: {
-        "state": {"emotional_state": "...", "peplau_stage": "...", ...},
-        "core": {"motivation": "...", ...}  # optional
-    }
-
-    Returns: "applied", "incomplete_pair", "peplau_clamped", "npc_not_found"
-    """
-    npc = get_npc(channel_id, npc_name)
-    if not npc:
-        return "npc_not_found"
-
-    # Incomplete pair rejection
-    if "core" in updates and "state" not in updates:
-        return "incomplete_pair"
-
-    snapshot = npc.get("persona_snapshot", {
-        "core": {},
-        "state": {},
-        "history": [],
-        "last_updated_turn": 0,
-    })
-
-    result = "applied"
-
-    # Apply state updates
-    if "state" in updates:
-        state_updates = updates["state"]
-        old_state = snapshot.get("state", {})
-
-        # Peplau stage validation
-        if "peplau_stage" in state_updates:
-            old_peplau = old_state.get("peplau_stage", "orientation")
-            validated = validate_peplau_transition(old_peplau, state_updates["peplau_stage"])
-            if validated != state_updates["peplau_stage"]:
-                result = "peplau_clamped"
-            state_updates["peplau_stage"] = validated
-
-        # Static traits override protection (N6)
-        static_traits = npc.get("static_traits", {})
-        if static_traits.get("attachment_style"):
-            state_updates.pop("attachment_style", None)  # Code-provided, Flash can't override
-
-        # Delta-only history recording
-        for key, new_val in state_updates.items():
-            old_val = old_state.get(key)
-            if old_val != new_val and old_val is not None:
-                snapshot.setdefault("history", []).append({
-                    "turn": current_turn,
-                    "field": key,
-                    "old": old_val,
-                    "new": new_val,
-                })
-
-        snapshot["state"] = {**old_state, **state_updates}
-
-    # Apply core updates (less frequent)
-    if "core" in updates:
-        old_core = snapshot.get("core", {})
-        snapshot["core"] = {**old_core, **updates["core"]}
-
-    snapshot["last_updated_turn"] = current_turn
-
-    # Keep history bounded (last 20 entries)
-    if len(snapshot.get("history", [])) > 20:
-        snapshot["history"] = snapshot["history"][-20:]
-
-    # Save [V10 Sprint 2: update_npc 경유로 교체 (JSON+SQLite 동시, 직접 조작 제거)]
-    npc["persona_snapshot"] = snapshot
-    d = domain_manager.get_domain(channel_id)
-    npcs = d.get("npcs", {})
-    resolved_name = domain_manager._find_npc_key(npcs, npc_name) or npc_name
-    if resolved_name in npcs:
-        npc_data = dict(npcs[resolved_name])
-        npc_data["persona_snapshot"] = snapshot
-        domain_manager.update_npc(channel_id, resolved_name, npc_data)
-
-    return result
-
-
-def get_persona_snapshot(channel_id: str, npc_name: str) -> dict:
-    """NPC 페르소나 스냅샷 반환."""
-    npc = get_npc(channel_id, npc_name)
-    if not npc:
-        return {}
-    return npc.get("persona_snapshot", {})
+# ⛔[2026-07-28 삭제] N4 NPC 페르소나 스냅샷 서브시스템
+#   apply_persona_snapshot(80줄) + get_persona_snapshot — 둘 다 호출처 0(grep 확인).
+#   여기 있던 Peplau 단계 클램프는 **프롬프트 레벨에서 이미 살아 돌고 있다**
+#   (relation.phase + theoria/analysis_resources의 "cannot skip stages" 지시).
+#   즉 같은 규칙의 코드판 중복이었고, 죽은 쪽이 이 함수들이었다.
+#   ★기능이 사라진 게 아니라 이중 구현 중 안 쓰는 쪽을 걷어낸 것.
 
 
 # =========================================================
@@ -1647,8 +1603,14 @@ def get_persona_snapshot(channel_id: str, npc_name: str) -> dict:
 # 문제: analyze_character_sheet 증류 직전의 로어 접지가 **NPC 이름 리터럴 검색**이었다.
 #   프로필 NPC(이름이 로어북에 있음)에선 걸리지만, 모델이 방금 지어낸 **세션 NPC 이름은
 #   로어에 없으므로 영구 미스** — 정작 접지가 필요한 쪽에서만 사문화되는 구조였다.
-# 수리: 3단 폴백(이름 → 동시출현 청크 → 관찰↔청크 bigram 겹침) + 규칙부 발췌.
-#   전부 결정론·콜 순증 0. 임베딩 RAG는 인프라 미구축(로드맵 E)이라 이번 범위 밖.
+# 수리: 3단 폴백(이름 → 동시출현 청크 → 관찰↔청크 의미 유사도) + 규칙부 발췌.
+#
+# [2026-07-28 임베딩 배선] 구 주석은 "임베딩 RAG는 인프라 미구축(로드맵 E)이라 범위 밖"이라
+#   적혀 있었으나 **stale**이었다 — vector_search.py는 이미 있었고, 심지어 **같은 lore_chunks
+#   풀**을 orchestration L1559가 벡터로 랭킹 중이었다(같은 데이터, 한쪽은 임베딩, 한쪽은 2-gram).
+#   3단을 의미 유사도로 교체하고 한글 bigram은 3-b 폴백으로 강등. 1·2단은 무변경
+#   (이름 리터럴=정확 신호, 동시출현=실제 플레이 증거 — 임베딩보다 강하다).
+#   client 미전달·API 실패·빈 결과면 전 구간이 구 결정론 경로로 온전히 떨어진다.
 
 _KO_TOKEN_RE = re.compile(r"[가-힣]{2,}")
 
@@ -1662,15 +1624,19 @@ def _ko_bigrams(text: str, cap: int = 400) -> set:
     return grams
 
 
-def build_distill_grounding(channel_id: str,
-                            npc_name: str,
-                            aliases: Optional[List[str]] = None,
-                            observations: str = "",
-                            seen_labels: Optional[Dict[str, int]] = None,
-                            max_chunks: int = 2,
-                            chunk_chars: int = 600,
-                            rules_chars: int = 1200) -> str:
-    """증류 입력에 얹을 접지 블록(로어 발췌 + 규칙부 발췌). 없으면 빈 문자열."""
+async def build_distill_grounding(channel_id: str,
+                                  npc_name: str,
+                                  aliases: Optional[List[str]] = None,
+                                  observations: str = "",
+                                  seen_labels: Optional[Dict[str, int]] = None,
+                                  max_chunks: int = 2,
+                                  chunk_chars: int = 600,
+                                  rules_chars: int = 1200,
+                                  client=None) -> str:
+    """증류 입력에 얹을 접지 블록(로어 발췌 + 규칙부 발췌). 없으면 빈 문자열.
+
+    client 전달 시 3단이 임베딩 의미 유사도로 동작(공용 엔진 캐시 사용, 쿼리 1건).
+    미전달이면 구 결정론 경로 그대로 — 호출부가 client를 못 주는 상황에서도 안전."""
     parts: List[str] = []
 
     # --- 규칙부: 청킹되지 않고 항상 로딩되는 영역(인물 불변 규칙이 사는 자리) ---
@@ -1725,7 +1691,36 @@ def build_distill_grounding(channel_id: str,
                     if len(picked) >= max_chunks:
                         break
 
-            # 3단: 관찰 ↔ 청크 내용 한글 bigram 겹침(세계관 용어 공유)
+            # 3단: 관찰 ↔ 청크 **의미 유사도**(임베딩). 구 bigram은 3-b로 강등.
+            #   쿼리=관찰 텍스트. 청크 벡터는 공용 엔진 캐시에 남아 로어 랭킹과 공유된다.
+            if len(picked) < max_chunks and observations and client is not None:
+                try:
+                    import vector_search as _vs_mod
+                    _pool = []
+                    for i, chunk in enumerate(chunks):
+                        if i in picked_idx:
+                            continue
+                        _txt = str(chunk.get("content", "") or "") if isinstance(chunk, dict) else str(chunk or "")
+                        if _txt.strip():
+                            _pool.append({"content": _txt, "_idx": i})
+                    if _pool:
+                        _eng = _vs_mod.get_shared_engine(client)
+                        _res = await _eng.search(
+                            observations[:1500], _pool,
+                            top_k=max(1, max_chunks - len(picked)),
+                            min_score=getattr(config, "VECTOR_MIN_SCORE", 0.2),
+                        )
+                        for _c, _score in _res:
+                            if isinstance(_c, dict) and "_idx" in _c:
+                                _add(_c["_idx"], chunks[_c["_idx"]])
+                                if len(picked) >= max_chunks:
+                                    break
+                        if _res:
+                            logger.debug("[DistillGrounding] vector picked %d for %s", len(_res), npc_name)
+                except Exception as _e_vs:
+                    logger.debug("[DistillGrounding] vector unavailable (%s) — bigram fallback", _e_vs)
+
+            # 3-b단(폴백): 관찰 ↔ 청크 내용 한글 bigram 겹침(세계관 용어 공유)
             if len(picked) < max_chunks and observations:
                 obs_g = _ko_bigrams(observations)
                 if obs_g:

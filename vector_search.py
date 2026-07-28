@@ -140,3 +140,37 @@ class VectorSearchEngine:
     @property
     def cache_size(self) -> int:
         return len(self._cache)
+
+
+# =========================================================
+# [2026-07-28] 공용 엔진 싱글턴
+# =========================================================
+# 병: 소비자마다 `VectorSearchEngine(...)`를 새로 만들면 인스턴스 로컬 `_cache`가
+#   즉사해 **같은 로어 청크를 소비자 수만큼 반복 임베딩**한다. fermentation은 이미
+#   자체 싱글턴(_get_vector_engine, F2 2026-07-18)으로 이 병을 피했지만, 로어 청크를
+#   공유하는 소비자들(로어 랭킹·증류 접지)은 각자 새 인스턴스였다.
+# 처방: 로어 청크 계열 소비자는 이 공용 엔진을 쓴다 → 청크 임베딩 1회, 이후 쿼리만 과금.
+_shared_engine: Optional["VectorSearchEngine"] = None
+
+# 캐시 무한 성장 방지(공유하면 성장 속도가 빨라진다). dict 삽입순 → 오래된 것부터 트림.
+_CACHE_MAX = 4000
+
+
+def get_shared_engine(client, embedding_model: Optional[str] = None) -> "VectorSearchEngine":
+    """로어 청크 계열 소비자 공용 엔진. client가 바뀌면 재생성(캐시 무효)."""
+    global _shared_engine
+    if _shared_engine is None or getattr(_shared_engine, "client", None) is not client:
+        if embedding_model is None:
+            try:
+                import config as _cfg
+                embedding_model = _cfg.VECTOR_EMBEDDING_MODEL
+            except Exception:
+                embedding_model = "gemini-embedding-2"
+        _shared_engine = VectorSearchEngine(client, embedding_model)
+        logger.debug("[VectorSearch] shared engine (re)created")
+    elif len(_shared_engine._cache) > _CACHE_MAX:
+        _drop = len(_shared_engine._cache) - _CACHE_MAX
+        for _k in list(_shared_engine._cache.keys())[:_drop]:
+            _shared_engine._cache.pop(_k, None)
+        logger.debug("[VectorSearch] shared cache trimmed %d", _drop)
+    return _shared_engine

@@ -295,8 +295,14 @@ class OpenAIChatSessionAdapter:
                             ("<think>" in (text or "")))
 
             if text:
-                # 히스토리에 assistant 응답 저장 (prefill 포함)
-                full_text = (prefill + text) if prefill else text
+                # [2026-07-27 중복 수리] openai 경로는 프리필을 **user 지시**로 주입한다(L225 근처:
+                #   "Begin your response with exactly this text") → 모델이 ┣·[Ground]를 스스로
+                #   재현하며 시작하므로 응답에 이미 프리필이 포함돼 있다. 여기서 또 접합하면
+                #   ┣·[Ground]가 2회(라이브 로그 실측: 1차는 verbatim 복사, 2차는 재작성본).
+                #   Gemini 경로는 role="model" 주입이라 응답에 프리필이 없어 접합이 맞다(L136) —
+                #   그 로직이 이 경로까지 흘러온 것이 원인. 이 경로에서는 접합하지 않는다.
+                #   모델이 블록을 아예 생략하면 기존 경고("No telescope block…")가 잡는다.
+                full_text = text
                 # 히스토리엔 산문만: ┫ 이후(=┣ 앞 네이티브 thinking + 텔레스코프 동시 제외). ┫ 없으면 기존 블록 제거.
                 history_text = (full_text.rsplit("┫", 1)[-1].strip() if "┫" in full_text
                                 else re.sub(r"┣[\s\S]*?┫\s*", "", full_text).strip()) or full_text
