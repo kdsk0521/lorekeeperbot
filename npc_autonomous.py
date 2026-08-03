@@ -11,9 +11,11 @@ import config as _cfg
 # =========================================================
 # Trigger Definitions
 # ⚠ doc-only 카탈로그 (2026-07-06 감사): 아래 dict의 "check" 문자열은 어디서도
-# 역참조되지 않음 — 디스패처(evaluate_triggers)가 13개 _check_* 함수를 직접
-# 하드코딩 호출. 트리거 추가 시 dict만 고치면 아무 일도 일어나지 않는다.
+# 역참조되지 않음 — 디스패처(evaluate_triggers)가 _check_* 함수를 직접 하드코딩 호출.
+# 트리거 추가 시 dict만 고치면 아무 일도 일어나지 않는다.
 # evaluate_triggers 본문에 호출을 추가해야 배선 완료.
+# (2026-07-28: 구 주석의 "13개"는 cost_of_inaction 추가 후 갱신 안 된 수치라 개수 표기를 뺐다.
+#  스키마 enum에 있는 group_dynamic "diffusion"은 아직 전용 훅이 없다 — 대사 수식어로만 반영.)
 # =========================================================
 NPC_AUTONOMOUS_TRIGGERS = {
     "henderson_need_critical": {
@@ -21,7 +23,10 @@ NPC_AUTONOMOUS_TRIGGERS = {
         "check": "_check_henderson_need_critical",
     },
     "attachment_activation": {
-        "desc": "PC 부재 시 anxious NPC가 찾아옴",
+        # [2026-07-28] desc 정정 — 구 문구는 "PC 부재 시"였으나 구현에 부재 조건이 없다.
+        # 실동작: relation.attachment == "anxious"이면 씬 종류와 무관하게 발화(priority 5,
+        # 쿨다운 3턴이 유일한 제약). 부재 판정을 새로 만들기보다 문구를 실동작에 맞춘다.
+        "desc": "anxious 애착 NPC가 먼저 접촉을 시도 (씬 무관, 쿨다운으로만 페이싱)",
         "check": "_check_attachment_activation",
     },
     "reactance": {
@@ -78,12 +83,24 @@ NPC_AUTONOMOUS_TRIGGERS = {
 # =========================================================
 # Desistance 4-Condition Gate (Maruna / Narrative Identity)
 # =========================================================
+# [2026-07-28 논리 모순 수리] 구 `social_support`는 `attitude in ("friendly","loyal")`이었다.
+#   그런데 이 게이트는 **hostile/unfriendly인 NPC만 진입**한다(check_desistance_gate 앞부분).
+#   진입 시점에 ctx["attitude"]는 hostile/unfriendly로 고정 → 이 조건은 **절대 True가 될 수 없고**,
+#   met_count 최대치가 3에 묶여 "4/4 = 완전한 전환"(priority 5) 분기가 영구 사문이었다.
+#   재정의: 개심의 사회적 지지는 "지금 이미 우호적인가"(모순)가 아니라
+#   **적대에서 벗어날 발판이 있는가** — 애착이 회피형이 아니고(관계 자체를 끊지 않음),
+#   도덕적으로 완전히 이탈하지 않았으며(disengaged 아님), 관계가 최소한 열려 있는가(depth>=25).
+#   ★static_traits(attachment_style/moral_stance)가 여기서 **처음으로 실제 판정에 쓰인다** —
+#   구 코드는 gate_ctx.update(static_traits)로 주입만 하고 어느 조건도 그 키를 읽지 않아
+#   N6 "desistance gate enrichment"가 0% 영향이었다.
 DESISTANCE_CONDITIONS = {
     "alternative_identity":
         lambda ctx: ctx.get("depth", 0) >= 50
                     and ctx.get("trajectory") == "improving",
     "social_support":
-        lambda ctx: ctx.get("attitude") in ("friendly", "loyal"),
+        lambda ctx: ctx.get("depth", 0) >= 25
+                    and ctx.get("attachment_style") != "avoidant"
+                    and ctx.get("moral_stance") != "disengaged",
     "generative_motivation":
         lambda ctx: bool(
             set(ctx.get("active_needs", []))
@@ -277,7 +294,26 @@ class NPCAutonomousEngine:
         """Convert trigger results into a directive string for the renderer."""
         if not triggers:
             return ""
-        selected = triggers[:max_triggers]
+        # [2026-07-28] 구 코드는 전체 리스트에서 상위 N개를 그냥 잘랐다(`triggers[:max_triggers]`).
+        #   한 NPC가 트리거를 여럿 얻으면 상위 슬롯을 혼자 차지해 그 턴 다른 인물의 자율 행동이
+        #   지시문에 아예 안 실렸다(bus.dai에는 남아 depth 계산엔 쓰이므로 더 눈치채기 어려움).
+        #   NPC당 가장 높은 것 1개씩 먼저 뽑아 인물 다양성을 확보한다(이미 priority 내림차순 정렬).
+        _seen, selected = set(), []
+        for t in triggers:
+            if t.npc_name in _seen:
+                continue
+            _seen.add(t.npc_name)
+            selected.append(t)
+            if len(selected) >= max_triggers:
+                break
+        # 자리가 남으면 나머지(같은 NPC의 2순위 등)로 채운다
+        if len(selected) < max_triggers:
+            for t in triggers:
+                if t in selected:
+                    continue
+                selected.append(t)
+                if len(selected) >= max_triggers:
+                    break
         lines = [
             "[NPC Autonomous Behavior]",
             "(surfaced through action or speech, a line of dialogue often the most direct channel; the trigger types and psychology terms stay out of the prose.)",
@@ -540,7 +576,11 @@ def check_desistance_gate(
         "attitude": att_label,
         "active_needs": _as_list(psyche.get("active_needs")),
     }
-    if static_traits:
+    # static_traits(attachment_style / moral_stance / coping_style / core_needs)를 판정 재료로 합류.
+    # [2026-07-28] 구 코드도 이 update는 했지만 **어느 조건도 이 키들을 읽지 않아** 0% 영향이었다
+    # (N6 "desistance gate enrichment"가 매 턴 계산·주입만 되고 죽어 있던 배선).
+    # 이제 social_support가 attachment_style/moral_stance를 실제로 읽는다.
+    if isinstance(static_traits, dict) and static_traits:
         gate_ctx.update(static_traits)
 
     met_count = 0

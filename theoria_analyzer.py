@@ -449,12 +449,12 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
   so it resolves to one entity, not two.
 - "NPCKnowledge": {
     "NpcName": {
-        "knows": ["ENGLISH-ONLY telegraphic - key info currently known"],
+        "knows": ["ENGLISH-ONLY telegraphic - key info currently known. Direct witness or confirmed telling; what was only overheard or inferred belongs in suspects"],
         "secrets_held": ["ENGLISH-ONLY telegraphic - what is being hidden"],
         "would_share": boolean,
         "leak_risk": "none/low/medium/high (Curse of Knowledge: 아는 것을 숨기기 어려움)",
         "false_beliefs": ["ENGLISH-ONLY telegraphic - believed contrary to fact (Theory of Mind)"],
-        "suspects": ["ENGLISH-ONLY telegraphic - SUSPECTED but unconfirmed: overheard, half-seen, inferred. Distinct from knows(confirmed). Most turns empty []"],
+        "suspects": ["ENGLISH-ONLY telegraphic - SUSPECTED but unconfirmed: overheard, half-seen, inferred. Distinct from knows(confirmed). Seeing a result does not give the actor, cause, method, ownership, motive, or private thought behind it — those land here"],
         "deception_cues": "str or null (Statement Analysis/SCAN: pronoun_shift/tense_shift/time_gap/over_detail/emotion_misplace. null = no deception detected)",
         "secret_updates": [{"truth_ref": "short substring of the secrets_held entry this updates", "surface": "ENGLISH-ONLY - what it LOOKS like from outside (cover story, visible tell)", "reveal_gate": "condition that would crack it open, or ''", "knowers": ["who now knows the truth"], "suspecters": ["who now suspects"], "status": "kept/leaking/revealed"}]
     }
@@ -470,7 +470,7 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
 - "QualityFlags": {
     "convergence_warning": "boolean - unearned comfort / premature resolution",
     "echo_warning": "boolean - NPC mirroring PC",
-    "stagnation_warning": "boolean - 3+ turns flat",
+    "stagnation_warning": "boolean - 3+ turns flat. Test: does this turn repeat a prior scene's purpose, the same location-function pair, the same investigation step, the same waiting state, the same dialogue aim, or the same emotional beat, without new evidence? YES → true",
     "mse_deviation": "boolean - MSE mental state anomaly detected",
     "dissonance_flag": "boolean - NPC contradictory beliefs/actions (Festinger)",
     "redemption_warning": "boolean - NPC showing unearned positive behavioral change (Bandura/Maruna)",
@@ -630,11 +630,16 @@ Any render-facing field whose value would contain Hangul → write that field's 
         parts = []
         attitudes = anchors.get("stored_npc_attitudes", {})
         knowledge = anchors.get("stored_npc_knowledge", {})
-        if not attitudes and not knowledge:
+        # [2026-08-02 B축 지속] 이전 턴 soma. 스키마의 `dissociation: Track across turns`가
+        #   그동안 **집행 재료 없이** 서 있었다 — 이전 턴 값이 어디에도 안 돌아왔으므로
+        #   모델은 매 턴 히스토리에서 재유추(=재발명)할 수밖에 없었다.
+        soma_prev = anchors.get("stored_npc_soma", {}) or {}
+        if not attitudes and not knowledge and not soma_prev:
             return ""
 
         parts.append("### 4b. NPC STATE (Previous Turn)")
-        for npc_name in set(list(attitudes.keys()) + list(knowledge.keys())):
+        for npc_name in set(list(attitudes.keys()) + list(knowledge.keys())
+                            + list(soma_prev.keys())):
             npc_lines = [f"{npc_name}:"]
             att = attitudes.get(npc_name, {})
             if att:
@@ -653,6 +658,12 @@ Any render-facing field whose value would contain Hangul → write that field's 
                 if kn.get("secrets_held"):
                     npc_lines.append(f"  Secrets: [{'; '.join(kn['secrets_held'][:3])}]")
                 npc_lines.append(f"  LeakRisk={kn.get('leak_risk', 'none')}")
+            _sm = soma_prev.get(npc_name) or {}
+            if isinstance(_sm, dict) and _sm:
+                # 값만 돌려준다 — 해석·지시 없이. 유지/심화/회복 판단은 이번 턴 관찰의 몫.
+                _bits = [f"{k}={v}" for k, v in _sm.items() if v]
+                if _bits:
+                    npc_lines.append("  Soma(prev): " + ", ".join(_bits))
             parts.append("\n".join(npc_lines))
 
         # [V10 Sprint 4] 막간 장부 — 분석이 막간 사실을 알아야 NPC 심리 추론이 정합

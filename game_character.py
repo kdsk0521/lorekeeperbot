@@ -1109,7 +1109,14 @@ async def call_gemini_api(
                 try:
                     return json.loads(clean)
                 except json.JSONDecodeError:
-                    return {"summary": resp.text} # Fallback for non-JSON text
+                    # [2026-08-01] 공용 수리기 경유. 모델이 JSON 값 뒤에 해설을 다는 버릇
+                    # (V4=괄호 / GLM=엠대쉬 / 스트레이 콜론)을 여기서도 놓치고 있었다.
+                    # 수리에 성공하면 구조를 살리고, 실패해야 비로소 원문 폴백.
+                    try:
+                        import bot_utils as _bu
+                        return json.loads(_bu.repair_json(_bu.clean_json_text(clean)))
+                    except Exception:
+                        return {"summary": resp.text} # Fallback for non-JSON text
         except Exception as e:
             logging.warning(f"API Error: {e}")
             await asyncio.sleep(config.RETRY_DELAY_SECONDS)

@@ -289,6 +289,22 @@ async def _extract_batch(
             "\nnpc_imprints: ONLY for events that leave lasting behavioral marks (betrayal, injury, confession, trauma, "
             "major gift, life-saving). mark = observable physical/behavioral change (English telegraphic, 1 fragment)."
             "Max 1 per NPC per turn."
+            # [2026-08-02 C축] 압력 단계. ★수치를 요구하지 않는다 — 단계 이름만.
+            #   코드가 쿨다운·±1단계로 클램프하므로 델타 캡이 필요 없다.
+            #   각 단계에 **관찰 정의**를 붙이되 **예시 문장은 주지 않는다**
+            #   (예시는 코퍼스가 되어 출력이 그리로 수렴한다 — VISCERAL 비명 예시 전례).
+            "\nnpc_drive: {NpcName: {\"axis\": str, \"stage\": str, \"released\": bool}}. "
+            "An unresolved pull that has been accumulating and is starting to force action. "
+            "axis = what the pull is about, one lowercase word the scene supports "
+            "(lust / vengeance / hunger / longing / fear / ambition / grief …). "
+            "stage = none | faint | disrupted | driven | impulse. "
+            "none: no unresolved pull. faint: noticed at the edge, set aside. "
+            "disrupted: attention keeps returning to it. driven: it changes what they choose. "
+            "impulse: it moves before deliberation, without erasing cognition, identity, target, or defense. "
+            "released=true ONLY when this turn actually discharged or broke the pull "
+            "(satisfied, interrupted, goal shifted, target removed). "
+            "Report the CURRENT stage, not the change. Omit an NPC entirely when there is no pull. "
+            "Most turns this is empty."
             "\nnpc_relations: NPC↔NPC directed relationships observed this turn. "
             "Format: [{\"source\": \"A\", \"target\": \"B\", \"type\": \"rivalry\", \"intensity\": 0.7, \"reason\": \"경쟁 장면\"}]. "
             "Type: alliance/rivalry/fear/respect/distrust/affection/debt/mentor/grudge/neutral. "

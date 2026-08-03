@@ -293,6 +293,11 @@ class DoomModule:
                     continue
                 name = update.get("name", "")
                 upd_delta = int(update.get("delta", 0) or 0)
+                # [C2 2026-08-01] 선언(-1~+2) 집행. 아래 min(_seg, ...)는 세그먼트 **범위**
+                # 클램프라, 모델이 크게 뱉으면 6칸 시계가 한 턴에 다 찼다
+                # (= 위기가 예고 없이 완성됨). 선언만 있고 집행이 없던 자리.
+                import bot_utils as _bu_cap
+                upd_delta, _ = _bu_cap.cap_llm_delta(upd_delta, "doom.clock", "delta", subject=name)
                 if not name or upd_delta == 0:
                     continue
                 for clock in clocks:

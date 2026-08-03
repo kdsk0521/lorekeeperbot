@@ -144,6 +144,48 @@ async def safe_delete_message(message: discord.Message) -> None:
     except Exception as e:
         logging.warning(f"메시지 삭제 실패: {e}")
 
+def cap_llm_delta(value, source: str, field: str, *, subject: str = ""):
+    """[C1 2026-08-01] LLM이 제안한 수치 델타를 **선언 범위로** 자른다.
+
+    왜 필요한가 — 범위 클램프는 델타 클램프가 아니다.
+    `max(0, min(100, cur + delta))`는 결과가 0~100 안에만 있으면 통과시키므로,
+    모델이 한 번 크게 뱉으면 depth 5 → 100이 한 턴에 성립한다. 크래시도 안 나고
+    무결성 검사도 통과해서 산문에만 "갑자기 가까워진 것처럼" 나온다(조용한 병).
+    프롬프트에 범위를 적는 것만으로는 집행이 아니다 — SimCore v0.38.3의 교훈:
+    "AI의 협조가 아니라 구조로 막는다."
+
+    ⚠ **주체 라벨이 있는 이유**: 같은 세터를 코드도 쓴다(다운타임 사교 +10~15,
+    NPC 시트 initial_depth, trajectory 맵). 무차별 캡은 정상 경로를 자른다.
+    그래서 캡은 `source`가 `config.LLM_DELTA_CAPS`에 등재된 **LLM 경로에만** 걸린다.
+    코드 소스는 source를 비워 호출하면 무캡(기본값).
+
+    잘릴 때 조용히 자르지 않고 WARNING 1줄을 남긴다 — 그래야 "모델이 얼마나 자주
+    선언을 넘는가"가 사후 판독된다(조작면 순증 0, 화면 변화 0).
+
+    Returns: (capped_value, was_clamped)
+    """
+    import config as _cfg
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return value, False
+    caps = getattr(_cfg, 'LLM_DELTA_CAPS', {}).get(source)
+    if not caps:
+        return value, False          # 등재되지 않은 주체(=코드 소스) → 무캡
+    bounds = caps.get(field)
+    if not bounds:
+        return value, False
+    lo, hi = bounds
+    capped = max(lo, min(hi, v))
+    if capped == v:
+        return value, False
+    logging.warning(
+        "[DeltaCap] %s.%s%s: %s → %s (선언 %s~%s 초과)",
+        source, field, f" [{subject}]" if subject else "", v, capped, lo, hi,
+    )
+    return (int(capped) if isinstance(value, int) else capped), True
+
+
 def clean_json_text(text: str) -> str:
     """JSON 문자열에서 코드 블록 마커 + trailing comma + 자연어 prefix/suffix 등을 제거합니다."""
     import re

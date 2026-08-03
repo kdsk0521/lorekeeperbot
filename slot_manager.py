@@ -1274,8 +1274,9 @@ def build_34_step_prompt(ctx) -> str:
 
     # WorldTree: 공간 그래프 컨텍스트 (계층 경로 + 연결 + 출구)
     # ⚠ 옛 주석은 "NPC 위치"도 약속했으나 resolve_location_context의 npcs_here는
-    #   node["npcs_present"]에서 오고 그걸 쓰는 코드가 없다(set_npc_location 고아,
-    #   2026-07-15 dead_scan) → 항상 빈 리스트. 누락이지 오류는 아님. 주석만 정정.
+    #   node["npcs_present"]에서 온다. [2026-07-28 갱신] 07-18에 쓰기가 배선됐고(orchestration
+    #   world_tree presence), 그 배선이 전체 명부를 밀어넣던 오염도 같은 날 수리됐다 —
+    #   이제 최근 등장 인물만 기록된다. 구 주석의 "항상 빈 리스트"는 stale.
     if channel_id:
         try:
             import world_tree
@@ -1446,6 +1447,29 @@ def build_34_step_prompt(ctx) -> str:
                 "### NPC relationship depth\n" + "\n".join(conn_lines)
             )
 
+        # [2026-08-02 C축] 누적 충동 압력. 상태는 코드(npcs.data.drives)에 살고
+        #   여기서는 **단계 이름 없이 결과만** 나간다. none/faint는 침묵.
+        try:
+            _drv_lines = []
+            for _dn, _dd in (domain_manager.get_npcs(channel_id) or {}).items():
+                if not isinstance(_dd, dict):
+                    continue
+                _dr = _dd.get("drives")
+                if not isinstance(_dr, dict):
+                    continue
+                for _ax, _rec in _dr.items():
+                    if not isinstance(_rec, dict):
+                        continue
+                    _t = iceberg.translate_drive_pressure(_dn, _rec.get("stage", ""), _ax)
+                    if _t:
+                        _drv_lines.append(_t)
+            if _drv_lines:
+                extended_intel_parts.append(
+                    "### standing pressure\n" + "\n".join(_drv_lines)
+                )
+        except Exception as _e_drv:
+            logger.debug(f"[Drive] slot17 skip: {_e_drv}")
+
     # Spatial Inscription: 공간 각인 렌더링 힌트
     spatial_read = dai.get("spatial_read")
     spatial_text = iceberg.translate_spatial_inscription(spatial_read)
@@ -1557,12 +1581,24 @@ def build_34_step_prompt(ctx) -> str:
     # [2026-07-28] voice_quirks 배선 제거 — Slot 33 recency echo가 같은 규칙으로 같은 줄을
     # 이미 뽑고 있었고(중복), Voice 전문은 Slot 7에 통째로 간다. 인자는 하류 호환 위해
     # 빈 dict로 유지(compose_dialogue_directives 시그니처 무변경).
+    # [2026-07-28] 시트 정적 트레잇 급식 — 동적 분석이 얇은 턴에 인물 결을 유지하는 폴백.
+    _static_traits_map = {}
+    if channel_id and psyche_data:
+        try:
+            import npc_manager as _npc_mgr_st
+            for _stn in psyche_data:
+                _st = _npc_mgr_st.get_npc_static_traits(channel_id, _stn)
+                if _st:
+                    _static_traits_map[_stn] = _st
+        except Exception as _e_st:
+            logger.debug(f"[Slot 17] static_traits 급식 skip: {_e_st}")
     _dialogue_dir = iceberg.compose_dialogue_directives(
         psyche_data, npc_knowledge,
         prev_gaze=_prev_gaze, npc_depths=npc_depths,
         npc_imprints=_npc_imprints,
         voice_quirks={},
         foreground=_foreground,
+        static_traits=_static_traits_map,
     )
     if _dialogue_dir:
         if extended_intelligence:

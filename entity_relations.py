@@ -483,6 +483,11 @@ def process_flash_relations(
         try:
             if "delta" in upd:
                 delta = float(upd.get("delta", 0))
+                # [C4 2026-08-01] 선언(±0.1~0.3) 집행. adjust_intensity의 0.0~1.0은
+                # **범위** 클램프라, delta 0.9 하나로 관계가 한 턴에 바닥→최대가 됐다.
+                import bot_utils as _bu_cap
+                delta, _ = _bu_cap.cap_llm_delta(
+                    delta, "relation.intensity", "delta", subject=f"{src}->{tgt}")
                 result = adjust_intensity(channel_id, src, tgt, delta, reason, current_turn)
                 if result is not None:
                     count += 1

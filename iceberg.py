@@ -288,6 +288,8 @@ def compute_npc_depths(
     trigger_map: Dict[str, int] = {}
     if autonomous_triggers:
         for t in autonomous_triggers:
+            if not isinstance(t, dict):   # [07-28] 자매 함수 select_foreground와 가드 일관성
+                continue
             n = t.get("npc_name", "")
             p = t.get("priority", 0)
             if n in result:
@@ -491,7 +493,7 @@ def translate_psyche_states(
     [2026-07-22 카드1] foreground가 주어지면 **fg=압력 풀 / bg=한 줄**로 강약을 만든다.
     - fg: 노테이션 + descriptor 전축 + 압력(drives/cannot) + resurfacing
     - bg: 노테이션 최소 + soma descriptor + 압력 drives 1줄  ("한 줄로 산다", 소멸 아님)
-    deep_read 방출은 DEEPREAD_EMIT=False면 중지(상류 전용 — emotion_engine·npc_autonomous가 소비).
+    deep_read 방출은 DEEPREAD_EMIT=False면 중지(상류 전용 — emotion_engine이 소비 (npc_autonomous는 컨텍스트에 담기만 하고 어느 트리거도 안 읽음, 07-28 실측)).
     npc_depths는 롤백 경로(구 동작) 전용.
     """
     if not psyche_data or not isinstance(psyche_data, dict):
@@ -590,7 +592,7 @@ def translate_psyche_states(
             if filtered:
                 lines.append(f"  └ {filtered}")
                 if depth < 0.2:
-                    lines.append("    [irreducible: a reaction only this character, this moment makes — irreducible, not performed.]")
+                    lines.append("    [irreducible: a reaction only this character, this moment makes; irreducible, not performed.]")
                 elif depth < 0.4:
                     lines.append("    [through action, reflex, bodily response; the naming and the psych vocabulary stay with the narrator, out of the prose.]")
 
@@ -957,7 +959,7 @@ def translate_story_direction(story_dir: Optional[dict], scene_type: str = "norm
     latent = story_dir.get("latent_relations")
     if latent and isinstance(latent, list):
         for _lr in latent[:3]:
-            parts.append(f"[latent — could surface, not mandated] {_lr}")
+            parts.append(f"[latent: could surface, not mandated] {_lr}")
 
     if not parts:
         return ""
@@ -1075,7 +1077,18 @@ def translate_environment_aging(elapsed_min: int) -> str:
 _FLAG_DIRECTIVES = {
     "convergence_warning": "relationship shifting fast; the pace needs a cause behind it.",
     "echo_warning": "NPC tracking PC's emotion; the reaction wants its own reason.",
-    "stagnation_warning": "scene energy flat 3 turns; an external stimulus enters naturally.",
+    # [G2 2026-08-02] 구 문안 "scene energy flat 3 turns; an external stimulus enters naturally."
+    #   결함 둘. ①**이중 투입** — anomaly_module L118이 이미 이 플래그로 defer→act 승격,
+    #   즉 코드가 외부 이벤트를 넣는 중인데 산문에도 하나 더 지어내라고 시킨다.
+    #   ②**나가는 방향이 밖** — 정체의 처방을 외부 자극으로 주면 인과 부모 없는 사건이 붙는다
+    #   (NARRATIVE_PRIORITY "resolution needs a causal parent"와 충돌).
+    #   교체: 반복 채널 6종을 이름 붙여 무엇이 replay인지 알려 주고, 처방은 삭제도 외부 투입도
+    #   아닌 **최소 결과 보존**(긍정형) — 이미 벌어진 것 중 지금을 제약하는 것만 남기고 거기서 간다.
+    "stagnation_warning": "the turn repeats something already spent (a scene purpose, a "
+                          "place-function pair, an investigation step, a waiting state, a "
+                          "dialogue aim, an emotional beat); of what already happened, keep "
+                          "only the least that still constrains now, and let the turn move "
+                          "from that constraint.",
     "mse_deviation": "NPC behavior jumped; it stays consistent with before, or the change earns a cause.",
     "dissonance_flag": "NPC's words and actions diverge; the gap stays unresolved, surfacing as small mismatch in gesture, expression, breath.",
     "redemption_warning": "NPC softening without cause; the prior pattern holds.",
@@ -1148,7 +1161,7 @@ _SHIFT_HINTS = {
 }
 _THRESHOLD_HINTS = {
     "mild": "the space has changed; one sentence of sensory transition",
-    "sharp": "the sensory drop is steep; a bodily reaction — glare, chill, wind",
+    "sharp": "the sensory drop is steep; a bodily reaction of glare, chill, wind",
 }
 
 
@@ -1322,6 +1335,32 @@ def translate_connection_depth(
     return f"- {npc_name}:\n  {notation}"
 
 
+def translate_drive_pressure(npc_name: str, stage: str, axis: str = "") -> str:
+    """[2026-08-02 C축] 누적 충동 압력 단계 → 문장.
+
+    ★단계 이름도 축 이름도 산문에 나가지 않는다. `translate_connection_depth`가 depth를
+      인자로 받되 출력에 안 쓰는 것과 같은 형태 — 상태는 코드에, 산문에는 결과만.
+      그래서 "driven"이라는 라벨 대신 *그 단계에서 인물이 무엇을 하는가*를 준다.
+
+    none/faint는 빈 문자열 — 압력이 장면을 안 건드리면 침묵한다(미도달=침묵).
+    """
+    _s = str(stage or "").lower().strip()
+    if _s in ("", "none", "faint"):
+        return ""
+    _line = {
+        "disrupted": "attention keeps returning to something unfinished; it costs them a beat "
+                     "each time and they cover the cost",
+        "driven":    "an unfinished pull now bends what they choose; goals reroute around it "
+                     "and the reroute is visible in what they do, not in what they say",
+        "impulse":   "the pull moves first and deliberation catches up after; the reach, the step, "
+                     "the word arrives ahead of the decision. Aim, defense, and who they are stay "
+                     "intact and are still legible in how it lands",
+    }.get(_s)
+    if not _line:
+        return ""
+    return f"- {npc_name}: {_line}."
+
+
 # =========================================================
 # 7. IntimacyAnalysis (Slot 17)
 # =========================================================
@@ -1368,9 +1407,9 @@ def translate_intimacy(intimacy_data: Optional[dict]) -> str:
             ses = controls.get("SES", "")
             sis = controls.get("SIS", "")
             if ses:
-                lines.append(f"- {char_name} — what draws them in: {ses}")
+                lines.append(f"- {char_name}, what draws them in: {ses}")
             if sis:
-                lines.append(f"- {char_name} — what makes them stop: {sis}")
+                lines.append(f"- {char_name}, what makes them stop: {sis}")
 
     # desire_type
     desire = intimacy_data.get("desire_type", {})
@@ -1400,7 +1439,7 @@ def translate_intimacy(intimacy_data: Optional[dict]) -> str:
     if not lines:
         return ""
     # [2026-07-22 단일 관문화] 헤더·소비 지시도 여기 소유 — 종전엔 slot_manager가 인라인으로 씌웠다.
-    return ("### intimate scene — physical state\n"
+    return ("### intimate scene: physical state\n"
             "(rendered only through bodily sensation and action; the field names and analytic terms "
             "stay out of the prose.)\n" + "\n".join(lines))
 
@@ -1770,10 +1809,10 @@ _STRATEGY_HINTS = {
 
 # relation.phase → 관계 단계별 대화 전략 힌트
 _PHASE_HINTS = {
-    "orientation": "feeling it out — carefully drawing the lines",
-    "identification": "building rapport — looking for common ground",
-    "exploitation": "drawing on the bond — asking easily, leaning on it",
-    "resolution": "winding down — retracing what the relationship meant",
+    "orientation": "feeling it out: carefully drawing the lines",
+    "identification": "building rapport: looking for common ground",
+    "exploitation": "drawing on the bond: asking easily, leaning on it",
+    "resolution": "winding down: retracing what the relationship meant",
 }
 
 _NEEDS_HINTS = {
@@ -1800,6 +1839,19 @@ _ATTACHMENT_POSSESSIVENESS = {
     "anxious":      "asks first when distance opens, and asks again when the answer is slow",
     "avoidant":     "steps back when feeling runs high, looks away when it gets close",
     "disorganized": "moves close then suddenly pulls away, treats the same person differently",
+}
+
+# [2026-07-28] 시트에서 뽑은 **정적** 대처 방식(static_traits.coping_style) → 대사 결.
+# psyche.coping(매 턴 Theoria 판단)의 enum과 다른 층이라 별도 매핑이 필요하다.
+#   동적 coping = "이번 장면에서 이렇게 대처 중"
+#   정적 coping_style = "이 인물은 원래 압박을 이렇게 넘긴다"
+# 그래서 **동적 값이 빈 턴의 폴백**으로 쓴다 — 분석이 얇은 턴에도 인물의 결이 유지된다.
+# adaptive(기본값)는 빈 문자열: 기본값이 매 턴 주입되면 전 인물이 같은 말을 달고 나간다.
+_COPING_STYLE_HINTS = {
+    "adaptive":        "",
+    "avoidant":        "under pressure the subject gets changed, not refused",
+    "confrontational": "under pressure the answer comes straight, and lands first",
+    "intellectual":    "under pressure it turns into explaining; reasons offered where feeling was asked for",
 }
 
 _FRAMEWORK_TERMS_RE = re.compile(
@@ -1839,6 +1891,7 @@ def compose_dialogue_directives(
     npc_imprints: Optional[Dict[str, list]] = None,
     voice_quirks: Optional[Dict[str, str]] = None,
     foreground: Optional[List[str]] = None,
+    static_traits: Optional[Dict[str, dict]] = None,
 ) -> str:
     """psyche_states + NPCKnowledge + 이전 gaze → NPC별 대사 방향 지시.
 
@@ -1889,7 +1942,7 @@ def compose_dialogue_directives(
             _cannot = _pr.get("cannot")
             if isinstance(_cannot, str) and _cannot.strip():
                 _silence_part = (
-                    f"held back: {_cannot.strip()} — the silence answers in one surface "
+                    f"held back: {_cannot.strip()} the silence answers in one surface "
                     "(a nod, a stilled hand, a note, breath), gives the player something to act on, "
                     "and the exchange passes to whoever can carry it"
                 )
@@ -1943,8 +1996,17 @@ def compose_dialogue_directives(
             if phase_hint:
                 directive_parts.append(phase_hint)
 
-        # 애착 유형 → 소유욕 대체 행동
+        # [2026-07-28] 시트 기반 정적 트레잇 — **동적 값이 빈 턴의 폴백**으로만 쓴다.
+        # 그동안 static_traits는 capability_hints(Flash 프롬프트)에만 실렸고 렌더 경로엔
+        # 도달한 적이 없었다. 여기 연결되면 "시트에 쓴 성향이 대사 결에 남는다"가 성립한다.
+        _st = (static_traits or {}).get(name) if isinstance(static_traits, dict) else None
+        if not isinstance(_st, dict):
+            _st = {}
+
+        # 애착 유형 → 소유욕 대체 행동 (동적 relation.attachment 우선, 없으면 시트값)
         attachment = relation.get("attachment", "")
+        if not (attachment and isinstance(attachment, str) and attachment != "null"):
+            attachment = _st.get("attachment_style", "")   # enum이 동일해 그대로 폴백 가능
         if attachment and isinstance(attachment, str) and attachment != "null":
             att_hint = _ATTACHMENT_POSSESSIVENESS.get(attachment.lower().strip(), "")
             if att_hint:
@@ -1952,12 +2014,21 @@ def compose_dialogue_directives(
 
         # 전략 수식어: coping, decision_mode, stage, negotiation_stance, group_dynamic
         strategy_mods = []
+        _has_dynamic_coping = False
         for field in ("coping", "decision_mode"):
             val = psyche.get(field, "")
             if val and isinstance(val, str) and val != "null":
+                if field == "coping":
+                    _has_dynamic_coping = True
                 mod = _STRATEGY_HINTS.get(val, "")
                 if mod:
                     strategy_mods.append(mod)
+        # 이번 턴 동적 coping이 없으면 시트의 정적 대처 방식으로 결을 유지
+        if not _has_dynamic_coping:
+            _cs = str(_st.get("coping_style", "") or "").lower().strip()
+            _cs_hint = _COPING_STYLE_HINTS.get(_cs, "")
+            if _cs_hint:
+                strategy_mods.append(_cs_hint)
         for field in ("stage", "negotiation_stance", "group_dynamic"):
             val = relation.get(field, "")
             if val and isinstance(val, str) and val != "null":
@@ -2059,7 +2130,7 @@ def translate_flashback(dai_flashback_eval: Optional[Dict[str, Any]] = None,
     elif plaus == "impossible":
         plaus_hint = " an overreaching claim: it fails, or a price follows."
     type_hint = "retroactive declaration" if ftype == "standard" else "pre-established prop summon"
-    return (f"\nA memory opens on \"{decl}\" — {type_hint}, carrying {tier} weight."
+    return (f"\nA memory opens on \"{decl}\": {type_hint}, carrying {tier} weight."
             f"{plaus_hint} Two or three sentences inside it, then the present resumes.")
 
 
@@ -2101,10 +2172,10 @@ def translate_idle_direction(story_direction: Optional[Dict[str, Any]] = None) -
 
 
 _PERCEPTION_HINTS = {
-    "veridical": "it actually happened — depicted clearly",
-    "illusory": "the senses are distorted — confusion and mismatch run through it",
-    "hallucinatory": "perception with no stimulus — vivid, yet others don't react to it",
-    "delusional": "a conviction-laden misreading — to the one holding it, absolute truth",
+    "veridical": "it actually happened: depicted clearly",
+    "illusory": "the senses are distorted: confusion and mismatch run through it",
+    "hallucinatory": "perception with no stimulus: vivid, yet others don't react to it",
+    "delusional": "a conviction-laden misreading: to the one holding it, absolute truth",
 }
 
 
@@ -2145,7 +2216,7 @@ def translate_climate(last_climate: Optional[Dict[str, Any]] = None) -> str:
     if sat >= 0.6:
         parts.append(
             "The recent thread has been sitting in negative dwell (loneliness, grief, possession); "
-            "an alternate texture surfaces this turn — light, a banal detail, a third-element "
+            "an alternate texture surfaces this turn: light, a banal detail, a third-element "
             "distraction, or a shift in time. The identity rests on more than its absence."
         )
     elif sat >= 0.4:
@@ -2192,7 +2263,7 @@ def translate_item_usage(item_eval: Optional[Dict[str, Any]] = None) -> str:
         parts.append("gained: " + ", ".join(str(i) for i in gained))
     if not parts:
         return ""
-    out = "Changed hands this turn — " + "; ".join(parts)
+    out = "Changed hands this turn: " + "; ".join(parts)
     if ie.get("reason"):
         out += f" ({ie['reason']})"
     return out
@@ -2244,7 +2315,7 @@ def translate_next_beat(next_beat: str = "") -> str:
     if not nb:
         return ""
     return (f"This turn lands: {nb}. "
-            "It arrives in the scene's own grain — an action, an arrival, a shift, never an announcement. "
+            "It arrives in the scene's own grain: an action, an arrival, a shift, never an announcement. "
             "If the player's move makes it impossible, its pressure still surfaces; it does not simply vanish.")
 
 
@@ -2276,7 +2347,7 @@ def translate_arc_foreground(arc: Optional[Dict[str, Any]] = None) -> str:
         )
 
     if mode == "crucial":
-        parts.append("pacing: a careful build-up. Iceberg — a truth only the author knows presses up against the surface.")
+        parts.append("pacing: a careful build-up. Iceberg: a truth only the author knows presses up against the surface.")
     else:
         parts.append("pacing: an ordinary grain. The vivid detail of daily life comes first; intrigue and twists arrive only when earned.")
 

@@ -635,7 +635,18 @@ def format_storylines_for_prompt(state: dict, current_turn: int = 0) -> str:
 
 def format_entity_state_for_prompt(state: dict, npc_name: str) -> str:
     """NPC 상태 이력을 프롬프트용 텍스트로 변환. Slot 7 NPC 프로필에 추가."""
-    log = state.get("entity_state_log", {}).get(npc_name)
+    _logs = state.get("entity_state_log", {}) or {}
+    log = _logs.get(npc_name)
+    # [2026-07-28] 이름 해상도 — 기록 시점과 조회 시점의 표기가 다를 수 있다
+    # (Theoria가 "리리스"/"Lilith(리리스)"를 번갈아 씀). 리터럴 미스면 별칭·정규화로 한 번 더.
+    if not log and _logs:
+        try:
+            import domain_manager as _dm_res
+            _alt = _dm_res._find_npc_key(_logs, npc_name)
+            if _alt:
+                log = _logs.get(_alt)
+        except Exception:
+            pass
     if not log:
         return ""
 

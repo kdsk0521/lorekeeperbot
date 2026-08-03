@@ -38,10 +38,19 @@ def _inject_capability_hints(npc_profiles: dict) -> str:
             limits = caps.get("limits", "?")
             parts.append(f"can={strengths} | cannot={limits}")
         if static_traits:
+            # [2026-07-28] 기본값은 힌트로 내보내지 않는다 — coping_style이 구조적으로
+            # 항상 "adaptive"였던 탓에 **전 NPC에 같은 문구**가 매 턴 나가고 있었다
+            # (빈 값보다 나쁘다: Flash가 "이 인물은 적응적/중립적"이라고 읽는다).
+            # 패턴 보강으로 이제 실제 값이 나오지만, 기본값이면 침묵이 맞다.
             coping = static_traits.get("coping_style", "")
             moral = static_traits.get("moral_stance", "")
-            if coping or moral:
-                parts.append(f"coping={coping}, moral={moral}")
+            _bits = []
+            if coping and coping != "adaptive":
+                _bits.append(f"coping={coping}")
+            if moral and moral != "neutral":
+                _bits.append(f"moral={moral}")
+            if _bits:
+                parts.append(", ".join(_bits))
 
         if parts:
             hints.append(f"[{name}] {' | '.join(parts)}")
@@ -261,6 +270,40 @@ class WaterfallPipeline:
         if not isinstance(bus.dai["narrative_chain"].get("open_threads"), list):
             bus.dai["narrative_chain"]["open_threads"] = []
 
+        # [2026-07-28 PC 혼입 단일 정제] ★같은 병의 5·6번째 재발을 끊는 자리.
+        # 그동안은 **소비처마다** 가드를 새로 달았다(NPCAttitudes 07-13 / npc_knowledge /
+        # scene_npcs / psyche_states 07-28). 그런데 그 가드들은 대개 **지역 변수만** 정제하고
+        # bus.dai 원본은 그대로 둬서, 원본을 보는 하류(world_board·story_director·
+        # narrative_tracker)는 여전히 PC가 섞인 데이터를 받았다 — world_board는 PC 이름으로
+        # 세계 게시물을 만들 수 있는 상태였다.
+        # 처방: **DAI가 만들어지는 이 초크포인트에서 한 번만** 걷어내고 하류는 믿게 한다.
+        # (PC=카메라 원칙. 개별 가드는 이중 안전으로 남겨도 무해하다.)
+        try:
+            _pc_masks_dai = {
+                p.get("mask") for p in (context.narrative_anchors or {}).get("all_pcs", {}).values()
+                if isinstance(p, dict) and p.get("mask")
+            }
+            _pc_masks_dai.discard("")
+            if _pc_masks_dai:
+                _purged = []
+                for _nk in ("psyche_states", "npc_attitudes", "npc_knowledge"):
+                    _blk = bus.dai.get(_nk)
+                    if isinstance(_blk, dict):
+                        _hit = [n for n in _blk if n in _pc_masks_dai]
+                        if _hit:
+                            bus.dai[_nk] = {k: v for k, v in _blk.items() if k not in _pc_masks_dai}
+                            _purged.append(f"{_nk}({','.join(_hit)})")
+                _rn = bus.dai.get("relevant_npcs")
+                if isinstance(_rn, list):
+                    _hit = [n for n in _rn if n in _pc_masks_dai]
+                    if _hit:
+                        bus.dai["relevant_npcs"] = [n for n in _rn if n not in _pc_masks_dai]
+                        _purged.append(f"relevant_npcs({','.join(_hit)})")
+                if _purged:
+                    logger.warning("[DAI] PC 혼입 제외: %s", " / ".join(_purged))
+        except Exception as _e_pcp:
+            logger.debug(f"[DAI] PC purge skipped: {_e_pcp}")
+
         # [2026-06-11 소비자 감사 #6] 죽은 저장 제거 — capability hints는 이제 anchors 경유로
         # Theoria *입력*에 배달됨 (une_facade에서 계산, theoria_analyzer 로스터 옆 렌더 — 원설계).
         # 기존 이 자리 코드는 Flash 콜 후 저장 + 독자 0 + npc_roster가 str이라 isinstance(dict)
@@ -443,7 +486,6 @@ class WaterfallPipeline:
                     psyche_states=psyche_states,
                     previous_emotions=prev_emotions,
                     current_turn=current_turn,
-                    npc_attitudes=bus.dai.get("npc_attitudes", {}),
                     scene_ctx=_scene_ctx,
                     memory_triggers=bus.dai.get("memory_triggers", []),
                 )
@@ -461,6 +503,30 @@ class WaterfallPipeline:
                         for name, state in emotion_results.items()
                     }
                     domain_manager.update_world_state(channel_id, world)
+                    # [2026-08-02 B축 지속] soma 스냅샷 저장.
+                    #   `dissociation` 스키마엔 **"Track across turns"**가 이미 적혀 있는데
+                    #   이전 턴 값이 어디에도 남지 않아 **집행 재료 없는 사문 지시**였다.
+                    #   (npc_emotion_states엔 Plutchik 8축만, PREVIOUS FRAME엔 위치/에너지/밀도/시선만)
+                    #   ★새 게이지를 만들지 않는다 — 이미 있는 enum을 다음 턴에 되돌려줄 뿐.
+                    try:
+                        _psy = bus.dai.get("psyche_states") or {}
+                        _soma_snap = {}
+                        for _sn, _sblk in _psy.items():
+                            if not isinstance(_sblk, dict):
+                                continue
+                            _s = _sblk.get("soma")
+                            if not isinstance(_s, dict):
+                                continue
+                            _keep = {k: _s.get(k) for k in ("polyvagal", "dissociation")
+                                     if _s.get(k)}
+                            if _keep:
+                                _soma_snap[_sn] = _keep
+                        if _soma_snap:
+                            world = domain_manager.get_world_state(channel_id)
+                            world["npc_soma_states"] = _soma_snap
+                            domain_manager.update_world_state(channel_id, world)
+                    except Exception as _e_soma:
+                        logger.debug(f"[Soma] snapshot skip: {_e_soma}")
                     # [V10 적립] emotion_log 적립 — bus.emotion 완성 직후, 코드만(콜0)·실패 무해.
                     # 턴별 per-NPC 감정 스냅샷 → 궤적/스파이크 질의(독자: sqlite_store.read_emotion_*).
                     try:

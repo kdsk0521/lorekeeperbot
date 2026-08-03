@@ -141,6 +141,13 @@ def validate_knowledge_write(npc_name: Any, payload: Any) -> Optional[Dict[str, 
         "secrets_held": _safe_str_list(payload.get("secrets_held")),
         "would_share": bool(payload.get("would_share")),
         "leak_risk": leak_risk,
+        # [2026-07-28] suspects/misbeliefs 누락 수리 — JSON 쓰기(update_npc_knowledge)는
+        #   두 필드를 정상 저장하고 SQLite에도 컬럼·읽기가 다 구현돼 있었는데,
+        #   **이 방벽만 필드를 빠뜨려** upsert_knowledge의 kn.get("suspects", [])가 늘 []였다.
+        #   V10_KNOWLEDGE_READ_FROM_SQLITE=True라 read-through가 켜진 채널에서는
+        #   "들은 건 suspects, 목격해야 knows로 승격"이라는 정보 비대칭 기능이 통째로 무력화.
+        "suspects": _safe_str_list(payload.get("suspects"), cap=20),
+        "misbeliefs": _safe_str_list(payload.get("misbeliefs"), cap=20),
         "last_updated": last_updated,
     }
 

@@ -223,46 +223,12 @@ def _chunk_by_paragraph(text: str, min_len: int, max_chunk: int, parent_label: s
 # =========================================================
 # SYSTEM HANDLER LOGIC (Absorbed)
 # =========================================================
-async def process_ai_system_action(channel_id: str, sys_action: Dict[str, Any], user_id: str = "") -> Optional[str]:
-    """AI가 제안한 시스템 액션을 처리합니다."""
-    if not sys_action or not isinstance(sys_action, dict): return None
-
-    tool = sys_action.get("tool")
-    atype = sys_action.get("type")
-    content = sys_action.get("content")
-
-    if not all([tool, atype, content]): return None
-
-    auto_msg = None
-    if tool == "Memo":
-        if atype == "Add": auto_msg = game_system.add_memo(channel_id, content, user_id)
-        elif atype == "Remove": auto_msg = game_system.remove_memo(channel_id, content, user_id)
-        elif atype == "Archive": auto_msg = game_system.resolve_memo_auto(channel_id, content, user_id)
-        
-    elif tool == "Quest":
-        if atype == "Add": auto_msg = game_system.add_quest(channel_id, content)
-        elif atype == "Complete":
-            # [V6.2] Item 2: Quest Completion reduces Doom
-            auto_msg = game_system.complete_quest(channel_id, content)
-            game_world.change_doom(channel_id, -5) # Tension release
-            
-    elif tool == "NPC" and atype == "Add":
-        name = content.split(":", 1)[0].strip() if ":" in content else content
-        desc = content.split(":", 1)[1].strip() if ":" in content else "Auto Registered"
-        domain_manager.update_npc(channel_id, name, {"description": desc, "source": "session", "status": "Active"})
-        auto_msg = f"🎭 NPC: {name}"
-
-    elif tool == "Doom" and atype == "Reduce":
-        # [V6.2] Item 4: AI can explicitly request Doom reduction (e.g. via item use)
-        try:
-            amt = int(content)
-        except (ValueError, TypeError):
-            logger.debug(f"[무시됨] Doom 감소량 파싱 실패, 기본값(3) 사용: {content}")
-            amt = 3
-        game_world.change_doom(channel_id, -amt)
-        auto_msg = f"📉 긴급 안정화 ({amt}%)"
-        
-    return auto_msg
+# ⛔[2026-07-28 삭제] process_ai_system_action(40줄) — 호출처 0(grep 확인).
+#   AI 툴콜(NPC/Add, Doom/Reduce 등)을 처리하던 구세대 경로. NPC 분기가
+#   `domain_manager.update_npc`를 **직접** 불러 등록 관문(npc_manager.update_npc)을 우회했다 —
+#   살아있었다면 구조화 추출·static_traits·PRESERVE_KEYS 병합이 전부 빠지는 네 번째 등록 경로.
+#   2026-07-28 관문 단일화 기준으로 되살릴 이유가 없다. 현행 세션 NPC 등록은
+#   orchestration의 관찰 누적 경로 + npc_manager.register_ai_npc(몹 태그)가 담당.
 
 
 # =========================================================

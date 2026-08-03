@@ -118,7 +118,13 @@ ANALYSIS_READER_VAR = contextvars.ContextVar("analysis_reader_call", default=Fal
 RENDERER_REASONING_TIER = os.getenv("RENDERER_REASONING_TIER", "off")               # 코드 기본 off. [2026-07-05 GLM 스왑] .env가 light로 상향 — 추론+TELESCOPE 병행(제미니 시절 원 구조 복원). 캡은 persona 배선
 # 렌더 전용 추론 캡(문자). 분석 light(1200)와 분리 — 1턴 실측 ~1900자에서 결과 좋았고(V1 갭 닫힘)
 # GLM RP 강점=thinking 결합이라 렌더만 소폭 상향(레티어스 2026-07-05). 0=tier 기본값(1200) 사용.
-RENDERER_REASONING_CAP_CHARS = int(os.getenv("RENDERER_REASONING_CAP_CHARS", "2000"))
+# [2026-08-01] 2000 → 3500. KOREAN PROSE 3단 변환(영→일→한) 배포에 따른 실행 공간 확보:
+#   다리는 추론에서만 건넌다("The bridge runs in reasoning alone") → 캡이 다리의 실제 예산.
+#   추정 소요 = 영어 beat 구성 800~1200 + 일어 재구조화 500~1000 + 기존 사고 ~1000 ≈ 2300~3200자.
+#   현행 2000(실측 ~2582, 소프트캡이라 초과 사용)으로는 변환분 자리가 없다. 3500 = 추정 상한 +여유.
+#   ⚠V4-Pro 추론 폭주 이력(7.6~13.6k, off tier의 원 사유)이 있어 무제한 아님 — 소프트캡 유지.
+#   판별: persona의 reasoning_trace_len 로그. 캡 근처 상시 = 부족 / 짧은데 보조용언 무변화 = ritual화.
+RENDERER_REASONING_CAP_CHARS = int(os.getenv("RENDERER_REASONING_CAP_CHARS", "3500"))
 ANALYSIS_REASONING_TIER = os.getenv("ANALYSIS_REASONING_TIER", "light")             # 보조 per-turn 분석 = LIGHT (추론 ON)
 ANALYSIS_REASONING_TIER_HEAVY = os.getenv("ANALYSIS_REASONING_TIER_HEAVY", "deep")  # 1회성 무거운 추출 = DEEP
 # per-turn 추출 콜만 OFF [2026-07-05 수처1 실측]: V4-Pro가 캡 지시(1200자)를 무시하고 매턴 7.6~13.6k자
@@ -240,6 +246,9 @@ FRAME_HISTORY_DEPTH = 10            # Scene Continuity rolling window size
 
 FERMENT_CHUNK_SIZE = 12             # [Cost-Diet] Chunk size matches render window (6턴=12msg)
 FERMENTED_THRESHOLD = 8             # Max fermented summaries before Deep Memory compression
+FERMENT_MAX_FAIL_STREAK = 3         # [2026-08-01] FRESH 발효 JSON 파싱 연속 실패 허용 횟수.
+                                    # 이 횟수 전까지는 원본 history를 보존하고 재시도한다.
+                                    # 도달하면 저품질 stub을 수용해 정체를 푼다(무한 누적 방지).
 
 # UI/Display
 NPC_PREVIEW_LIMIT = 5               # Max NPCs shown in preview
@@ -583,6 +592,48 @@ MEMORY_GATE_MIN_OVERLAP = 1       # 최소 쿼리-엔트리 토큰 겹침 (구�
 MEMORY_GATE_RECENT_KEEP = 2       # 최신 K개 엔트리는 게이트 면제 (장면 꼬리 보장)
 # [F3 2026-07-18] 회상 recency 반감기 + 선발 중복 억제
 MEMORY_RECENCY_HALF_LIFE_ENTRIES = 4   # 엔트리 단위 반감기 (0.5^(age/H))
+
+# [H3 2026-08-01] 작중 시간 감쇠 (HypaPlus 이식). recency에 곱해지는 두 번째 축.
+#   recency = 0.5^(순번age/H) * story_factor**W,  story_factor = 1/sqrt(1 + 작중일수/S)
+#   W=0 이면 story_factor**0 = 1 → 기존 동작과 완전 동일(한 줄 롤백).
+#   타임스킵 없는 캠페인은 작중일수≈0 → story_factor≈1 → W와 무관하게 no-op.
+# S 값별 감쇠 (W=1 기준): 작중 7일→0.90 / 30일→0.71 / 90일→0.50 / 360일→0.28  (S=30)
+#                          작중 7일→0.96 / 30일→0.85 / 90일→0.69 / 360일→0.45  (S=90)
+# 곡선을 지수가 아니라 1/sqrt로 잡은 이유: 타임스킵 이전 기억이 통째로 회상 불가가
+# 되면 안 되기 때문. 완만한 꼬리를 남긴다.
+MEMORY_RECENCY_STORY_WEIGHT = 1.0      # 0.0=끄기(기존 동작), 1.0=완전 적용
+MEMORY_RECENCY_STORY_SCALE_DAYS = 30.0 # 작중 며칠이 지나야 0.71배가 되는가
+
+# [H2 2026-08-01] noisy-OR 구제 슬롯. 가중합(AND 성향)이 밀어내는
+# "오래됐지만 질의와 정확히 일치하는" 엔트리를 건져 올린다.
+#   가중합 상위 POSITION개는 그대로 두고, 그 밖에서 noisy-OR `1-(1-sim)(1-rec)`
+#   최상위 SLOTS개를 POSITION 자리에 끼워 넣는다. 점수는 안 건드리고 순위만 바꾼다.
+#   밀려나는 건 가중합 기준 경계선 항목뿐 → 비용 유계. SLOTS=0이면 완전 no-op.
+MEMORY_RESCUE_SLOTS = 1                # 0=끄기. 한 턴에 건져 올릴 최대 개수
+MEMORY_RESCUE_POSITION = 3             # 이 순위까지는 가중합 결과 불가침
+
+# ── [C1 2026-08-01] LLM 제안 수치 델타의 코드측 상한 (SimCore "선언 = 집행") ──
+# 프롬프트에 적은 범위를 **여기에 같은 값으로** 둔다. 지금까지는 프롬프트에만 있어서
+# 집행이 없었다 — 범위 클램프(0~100)는 델타 클램프가 아니라, 한 턴에 5→100이 통과했다.
+# 적용은 bot_utils.cap_llm_delta. 잘리면 [DeltaCap] WARNING 1줄(조작면 순증 0).
+#
+# ⚠ **키는 주체(source) 라벨이다.** 같은 세터를 코드도 쓴다(다운타임 사교 depth +10~15,
+#    NPC 시트 initial_depth, trajectory 맵) — 그 경로는 여기 없으므로 무캡이다.
+#    무차별 캡은 정상 설계를 자른다(SimCore "정상 설계에 경고를 내지 않는다"의 코드판).
+#
+# 동기화 검증: smoke_llm_delta_caps.py 가 프롬프트 원문의 선언 문구를 파싱해 이 표와 대조.
+# 값을 고치면 프롬프트도 같이 고쳐야 스모크가 통과한다.
+LLM_DELTA_CAPS = {
+    # cognition.py `### social` — "depth_delta (+1~+5 bonding, -1~-3 distancing)
+    #                              and tension_delta (+1~+10 conflict, -1~-5 resolution)"
+    "helena.cognition":    {"depth": (-3, 5),     "tension": (-5, 10)},
+    # fermentation.py FERMENT_PROMPT_V4 — "## helena_delta (범위: -10 ~ +10)"
+    "helena.fermentation": {"depth": (-10, 10),   "tension": (-10, 10)},
+    # theoria_analyzer.py — "clock_updates": [{"delta": int(-1~+2)}]
+    "doom.clock":          {"delta": (-1, 2)},
+    # cognition.py `### social` — "delta ±0.1~0.3 (modify existing)"
+    "relation.intensity":  {"delta": (-0.3, 0.3)},
+}
 MEMORY_DEDUP_JACCARD = 0.6             # 선발 시 기선발과 토큰 자카드 ≥ 이 값이면 스킵 (0=끔)
 # Downtime (다운타임) — 목적 있는 시간 투자 활동 (BITD Downtime)
 DOWNTIME_RECOVER = {"safe": {"vigor": 25, "composure": 15}, "unsafe": {"vigor": 15, "composure": 10}}
@@ -705,6 +756,51 @@ NPC_TRAJECTORY_DEPTH_MAP = {
 }
 
 NPC_TENSION_DRAMA_THRESHOLD = 50
+
+# [2026-08-02 A축 감쇠] depth/tension은 `update_helena_metric`의 max(0,min(100,cur+delta))
+#   단조 누적뿐이라 **한 번 오른 값이 절대 안 내려왔다** — 관계가 식지 않는다.
+#   같은 코드베이스에 감쇠 전례가 넷(entity_relations fade / EMOTION_DECAY / 태도 3턴 쿨다운 /
+#   vigor 자연회복)인데 여기만 빠져 있었다.
+#   형태는 entity_relations.cleanup_stale_relations의 grace/fade/floor를 따른다:
+#   **삭제가 아니라 흐려짐.** 활성 관계(grace 안)는 건드리지 않는다.
+#   끄기: RELATION_DECAY_GRACE = 0  → 전면 no-op.
+RELATION_DECAY_GRACE = 10      # 이 턴 수만큼 무변화면 그때부터 감쇠 (0 = 기능 끔)
+RELATION_DECAY_DEPTH = 1       # 감쇠 턴당 depth 하락폭
+RELATION_DECAY_TENSION = 2     # tension은 더 빨리 식는다 (갈등은 관계보다 휘발성)
+RELATION_DECAY_FLOOR = 0       # 이 값 아래로는 안 내려간다 (엔트리 제거는 안 함)
+
+# =========================================================
+# [2026-08-02 C축] DRIVE — 해소되지 않은 충동이 누적되어 행동을 강제하는 압력
+# =========================================================
+# 왜 신설: A축(관계·축적형)·B축(신체·반응형)은 재료가 있는데 **압력형만 없었다**.
+#   인접 후보 전수 기각 — doom=씬 레벨 / Arc=장기 호흡 / needs=상태(누적 아님) /
+#   D2 감정부채=로그 판독(변수 아님) / entity_relations "debt"=관계 종류 라벨.
+#
+# ★수치 게이지를 만들지 않는다. 레티어스 원칙 "일부러 수치적 상태를 안 준 거야" —
+#   노출 층이 전부 수치를 단계로 덮고 있고(depth→5단계, intensity→light/medium/deep,
+#   vigor→4단계, spike 델타→↑↓만), LLM에겐 아예 수치를 안 준다.
+#   그래서 본은 `cap_llm_delta`(수치 캡)가 아니라 **`update_npc_attitude_gated`**다:
+#   enum 단계 + 쿨다운 + ±1단계 클램프. LLM은 단계 이름만 낸다 → 캡할 수치가 없다.
+#
+# 일반형이라 NSFW 밖에서도 산다: 전투=전의·복수심, 연애=갈망, 드라마=못 한 말.
+# 끄기: DRIVE_ENABLED = False → 전면 no-op.
+DRIVE_ENABLED = True
+
+DRIVE_STAGES = {
+    "none":       {"level": 0, "hint_en": "no unresolved pull; attention is free"},
+    "faint":      {"level": 1, "hint_en": "a pull at the edge; noticed, set aside"},
+    "disrupted":  {"level": 2, "hint_en": "the pull competes with thought; attention keeps returning"},
+    "driven":     {"level": 3, "hint_en": "the pull changes what is chosen; goals bend around it"},
+    "impulse":    {"level": 4, "hint_en": "impulse moves before deliberation, without erasing "
+                                          "cognition, identity, target, or defense"},
+}
+DRIVE_LEVEL_TO_STAGE = {v["level"]: k for k, v in DRIVE_STAGES.items()}
+
+# 압력형의 비대칭 — 천천히 차고 빠르게 빠진다.
+DRIVE_RISE_COOLDOWN = 2   # 상승은 이 턴 수 간격 (관계 3턴보다 짧게: 압력은 빠르게 찬다)
+DRIVE_RISE_MAX_STEP = 1   # 상승은 한 번에 1단계
+DRIVE_RELEASE_FREE = True # 해소 이벤트는 쿨다운·단계 제한 면제 (다단 하강 허용)
+DRIVE_IDLE_TURNS = 6      # 무변화 이 턴 수마다 1단계 자연 하강 (0 = 자연 하강 끔)
 
 def get_connection_stage(depth: int) -> Dict[str, Any]:
     """커넥션 단계 정보 반환."""

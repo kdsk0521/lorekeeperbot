@@ -24,6 +24,11 @@ from npc_profile_harness import extract_static_traits
 # =========================================================
 # NPC SOURCE TYPES (출처 구분)
 # =========================================================
+# ★설계 의도(레티어스 2026-07-28) — 이 3종 구분을 통합하려 들지 말 것.
+#   lore/manual = 사람이 쓴 확정 데이터 → **고장 확률 거의 0**. 손댈 건 "보조가 붙었나"뿐.
+#   session/ai_generated = 플레이 중 모델 생성 → **고장 확률 높음**. 그래서 별도 저장 +
+#     관찰 성장 + 증류 재작성이라는 전용 기관을 얹고, 거기에 앞 둘용 보조도 함께 물렸다.
+#   점검 축도 다르다: 안정 2종은 "붙어야 할 게 붙었나", 세션 NPC는 "잃는 게 없나".
 SOURCE_LORE = "lore"              # 로어 분석으로 추출된 NPC
 SOURCE_MANUAL = "manual"          # !npc추가 등 수동 등록
 SOURCE_AI_GENERATED = "ai_generated"  # 세션 중 AI가 생성한 NPC (register_ai_npc 경로)
@@ -69,6 +74,30 @@ def get_npcs(channel_id: str) -> Dict[str, Dict[str, Any]]:
 
 def get_npc(channel_id: str, name: str) -> Optional[Dict[str, Any]]:
     return domain_manager.get_npc(channel_id, name)
+
+
+def get_npc_current_location(channel_id: str, npc_name: str, data: dict = None) -> str:
+    """NPC의 **현재 위치**. world_tree가 단일 진실, 시트 값은 폴백.
+
+    [2026-07-28 결정(레티어스): "로케이션은 월드트리를 주축으로"]
+    그동안 같은 이름의 두 시스템이 동기화 없이 병존했다:
+      · `npc_data["location"]` — 등록 시점 1회 추출, **갱신 로직 전무**(시간이 갈수록 stale)
+      · `world_tree`          — set/get/remove로 실시간 추적하는 그래프 (이쪽이 설계 의도)
+    프로필·로스터가 전자를 표시하는 바람에, 인물이 움직여도 표시는 등록 시점에 머물렀다.
+    이제 이 함수 하나가 우선순위를 정한다: **world_tree → 없으면 시트의 거처 → 빈 문자열.**
+    """
+    if not npc_name:
+        return ""
+    try:
+        import world_tree
+        _loc = world_tree.get_npc_location(channel_id, npc_name)
+        if _loc:
+            return str(_loc)
+    except Exception as _e:
+        logger.debug(f"[NPC Location] world_tree 조회 skip: {_e}")
+    if data is None:
+        data = get_npc(channel_id, npc_name) or {}
+    return str((data or {}).get("location", "") or "")
 
 
 def get_npc_static_traits(channel_id: str, npc_name: str) -> dict:
@@ -170,19 +199,21 @@ def _extract_structured_fields(desc: str) -> Dict[str, str]:
         role_text = _clean_markdown(role_m.group(1))   # [1M remap] 필드캡 제거(시트 5k자, 한 줄이라 자연 바운드)
         fields["role"] = role_text
 
-    # Location — Sharehouse resident (Room X) 패턴 우선
-    loc_m = re.search(r'Sharehouse resident\s*\(([^)]+)\)', desc, re.IGNORECASE)
+    # Location — [2026-07-28 재정의] **현재 위치의 진실은 world_tree**다(레티어스 결정).
+    #   여기서 뽑는 값은 "시트에 적힌 거처/소속 장소" = world_tree에 기록이 아직 없을 때의
+    #   표시용 폴백일 뿐이다. get_npc_current_location이 우선순위를 관리한다.
+    #   구 코드는 `Dungeon N|Sunset Villa|Sage's Chamber` 같은 **특정 캠페인 지명 하드코딩**이라
+    #   새 세계관에선 아무것도 못 잡았다 → 일반 라벨 인식으로 교체.
+    loc_m = re.search(
+        r'(?:^|\n)\s*[-*]?\s*(?:Residence|Location|Home|Base|Quarters|거처|주소|위치)'
+        r'\s*[:：]\s*(.+)', desc, re.IGNORECASE)
+    if not loc_m:
+        # "Sharehouse resident (Room 3)" 류 괄호 표기 (기존 시트 호환)
+        loc_m = re.search(r'resident\s*\(([^)]+)\)', desc, re.IGNORECASE)
     if loc_m:
-        fields["location"] = loc_m.group(1).strip()
-    else:
-        # Fallback: Occupation에서 장소명만 추출
-        occ_m = re.search(r'(?:Occupation|Affiliation)[:\s]+(.+)', desc, re.IGNORECASE)
-        if occ_m:
-            occ_text = occ_m.group(1).strip()
-            # "Dungeon 25 convenience store owner" → "Dungeon 25"
-            place_m = re.search(r'(Dungeon\s*\d+|Error\s*\d+|Sunset\s*Villa|Sage\'s Chamber)', occ_text, re.IGNORECASE)
-            if place_m:
-                fields["location"] = place_m.group(1).strip()
+        _loc = _clean_markdown(loc_m.group(1)).strip()
+        if _loc and len(_loc) <= 60:
+            fields["location"] = _loc
 
     # Speech/Tone (예: "**Tone:** Low, tired, flat.")
     # [2026-07-28] v2 풀시트는 같은 정보를 `- Speaking Style:` / `- 말투:`로 쓴다 — 편입.
@@ -333,6 +364,10 @@ def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
         if _applied:
             logger.info(f"[NPC] Auto-extracted fields for '{name}': {_applied}")
     # N6: 정적 심리 특성 추출 (프로필 충분할 때만, 신규이거나 기존에 없을 때만)
+    # [2026-07-28 판정] "한 번만 뽑는다"는 **의도된 설계**다(결함 아님).
+    #   변하는 것을 추적하는 층은 이미 셋 — npc_attitudes(매 턴)/psyche.coping(매 턴)/
+    #   세션 NPC 시트 재작성(관찰 250자마다). static_traits는 그 밑의 바닥이라
+    #   여기까지 움직이면 층이 겹친다. 갱신이 필요하면 `!npc 삭제` 후 재등록.
     if (desc_text and len(desc_text) >= 100
             and not data.get("static_traits") and not _prev.get("static_traits")):
         static_traits = extract_static_traits(name, desc_text)
@@ -548,48 +583,10 @@ def add_lore_npcs(channel_id: str, npc_list: List[Dict[str, Any]]) -> int:
 
 
 
-def add_manual_npc(channel_id: str, name: str, description: str, gender: str = None, race: str = None, **kwargs) -> bool:
-    """
-    수동으로 NPC 추가 (!npc add 명령 등).
-
-    Args:
-        channel_id: 채널 ID
-        name: NPC 이름
-        description: NPC 설명
-        **kwargs: 추가 필드 (role, personality 등)
-
-    Returns:
-        성공 여부
-    """
-    if not name.strip():
-        return False
-
-    data = {
-        "description": description,
-        "source": SOURCE_MANUAL,
-        "registered_at": time.strftime('%Y-%m-%d %H:%M'),
-    }
-    if gender: data["gender"] = gender
-    if race: data["race"] = race
-    data.update(kwargs)
-
-    real_name = name.strip()
-    
-    # [Check Duplicate]
-    sim_name = find_similar_npc(channel_id, real_name)
-    if sim_name and sim_name.lower() != real_name.lower():
-        # Warn user? Currently returns bool. 
-        # But we assume the user intends to overwrite if they type exact name.
-        # If they type SIMILAR name, they might mean the existing one or a new one.
-        # Strict deduplication: prevent similar.
-        # But maybe they want "Guard A" and "Guard B".
-        # Let's only block if very high similarity or warn?
-        # For manual add, we should probably allow it BUT maybe standardise name?
-        pass
-
-    update_npc(channel_id, real_name, data)
-    logger.info(f"[NPC] 수동 NPC 추가: {name}")
-    return True
+# ⛔[2026-07-28 삭제] add_manual_npc — 이름과 달리 **호출처 0**(grep 확인).
+#   실제 수동 등록은 command_handler._register_npc → npc_manager.update_npc 경로다
+#   (2026-07-28 등록 관문 단일화). 이름만 보고 "여기가 !npc추가 진입점"이라 오인하기 쉬워
+#   제거한다 — 등록 진입점을 셀 때 혼동을 만들던 잔재.
 
 
 def register_ai_npc(channel_id: str, name: str, description: str = "", context: str = "", gender: str = None, race: str = None) -> bool:
@@ -730,8 +727,45 @@ def get_session_npcs(channel_id: str) -> Dict[str, Dict[str, Any]]:
     }
 
 def get_scene_npc_names(channel_id: str) -> List[str]:
-    """세션(Scene) NPC 이름 목록 반환 (Background Extraction용)"""
+    """⚠ 이름과 달리 **'장면 인물'이 아니다** — 로어가 아닌 **전체** 등록 NPC 목록이다.
+    (등장 여부와 무관. 이름이 오해를 불러 실제로 2곳에서 오용됐다 — 2026-07-28 수리.)
+    용도: 추출 콜에 "이 이름들 중에서 고르라"고 줄 **후보 전체 명부**.
+    이번 턴 실제로 장면에 있는 인물이 필요하면 get_onstage_npc_names를 쓸 것.
+    """
     return list(get_session_npcs(channel_id).keys())
+
+
+def get_onstage_npc_names(channel_id: str, within_turns: int = 1) -> List[str]:
+    """최근 `within_turns` 턴 안에 실제로 등장한 NPC 이름.
+
+    [2026-07-28 신설] DAI가 만들어지기 **전** 단계(위치 기록·오프스크린 후보 계산)에서
+    "지금 무대에 있는 사람"을 알아야 하는 자리가 있다. 그동안 이 자리들이
+    get_scene_npc_names(=전체 명부)를 써서 다음 두 병을 만들었다:
+      · world_tree 위치 기록 — PC가 이동할 때마다 **등록된 NPC 전원이 그 장소로 순간이동**
+        (set_npc_location이 기존 위치에서 제거 후 재배치하므로 위치 기록 자체가 무의미해짐)
+      · 오프스크린 후보 — "부재 인물"에서 전체 명부를 빼니 로어 NPC만 남고,
+        정작 노리던 '한동안 안 나온 세션 NPC'는 절대 후보에 못 올랐다
+    판정 재료는 mark_npc_appearance가 매 턴 갱신하는 `_last_appear_turn`.
+    턴 정보를 못 읽으면 빈 목록(호출부는 폴백을 갖는다) — 잘못된 전체 명부보다 안전하다.
+    """
+    try:
+        turn = int((domain_manager.get_world_state(channel_id) or {}).get("turn_index", 0) or 0)
+    except (TypeError, ValueError, AttributeError):
+        return []
+    if turn <= 0:
+        return []
+    cutoff = turn - max(0, int(within_turns))
+    names = []
+    for name, data in (get_npcs(channel_id) or {}).items():
+        if not isinstance(data, dict):
+            continue
+        try:
+            last = int(data.get("_last_appear_turn", -1))
+        except (TypeError, ValueError):
+            continue
+        if last >= cutoff:
+            names.append(name)
+    return names
 
 
 def _get_npc_desc(data: dict) -> str:
@@ -823,7 +857,8 @@ def get_npc_roster(channel_id: str) -> str:
         desc = _npc_desc_fallback(data)
         blurb = _roster_blurb(desc, data)
         role = data.get("role", "")
-        location = data.get("location", "")
+        # [2026-07-28] world_tree 우선 — 등록 시점에 굳은 시트 값이 아니라 지금 있는 곳
+        location = get_npc_current_location(channel_id, name, data)
         tag = f" [{role}]" if role else ""
         tag += f" @{location}" if location else ""
         lines.append(f"- {name}{tag}: {blurb}")
@@ -1066,8 +1101,10 @@ def get_npc_renderer_profiles(channel_id: str, names: list, scene_type: str = "n
         meta_parts = []
         if data.get("role"):
             meta_parts.append(f"역할: {data['role']}")
-        if data.get("location"):
-            meta_parts.append(f"위치: {data['location']}")
+        # [2026-07-28] world_tree 우선 — 인물이 움직였는데 등록 시점 위치가 표시되던 것 해소
+        _cur_loc = get_npc_current_location(channel_id, name, data)
+        if _cur_loc:
+            meta_parts.append(f"위치: {_cur_loc}")
         if data.get("personality"):
             meta_parts.append(f"성격: {data['personality']}")
         if data.get("tone") or data.get("speech"):
@@ -1199,12 +1236,21 @@ def _extract_voice_summary_from_section(name: str, voice_section: str, cap: int 
 
 
 # =========================================================
-# NPC 정체 발각 (이름 변경 추적)
+# NPC 개명 — 주 용도는 "모브가 이름을 얻는 것"
 # =========================================================
+# 함수명이 "정체 발각"이라 극적 폭로처럼 읽히지만, 실무상 대부분은
+#   `경비병 #2A` → `한스`
+# 처럼 **몹 태그가 고유명으로 승격**되는 흔한 사건이다. 극 중에 명명 장면이 따로 있는 것도,
+# 명명을 저장하는 별도 경로가 있는 것도 아니라서 코드가 대신 처리한다.
+# → 그래서 "드물게 일어나는 특수 이벤트"가 아니라 **자주 도는 통로**로 보고 다뤄야 한다.
+#   (2026-07-28: 여기서 태도 이관이 매번 실패하고 있었다 = 몹이 이름을 얻는 순간마다
+#    그 몹으로 쌓은 관계가 0으로 리셋됐다는 뜻.)
 
 def handle_identity_reveal(channel_id: str, old_name: str, new_name: str, reason: str = "") -> str:
-    """
-    NPC 정체 발각 (OldName -> NewName) 처리
+    """NPC 개명 (OldName → NewName). 몹 태그 → 고유명 승격이 주 용도.
+
+    본체(npc_data)는 copy()로 통째 이동하므로 appear_count·play_observed·static_traits 등은
+    자동으로 따라간다. 별도 도메인(태도/지식/각인/관계 엣지)은 아래에서 손으로 옮긴다.
     """
     if old_name == new_name: return "⚠️ 이름이 동일합니다."
     
@@ -1264,16 +1310,65 @@ def handle_identity_reveal(channel_id: str, old_name: str, new_name: str, reason
     except Exception:
         pass
     
+    # [2026-07-28 순서 버그 수리] 구 코드는 **delete_npc(구명) 뒤에** 태도를 읽었다.
+    #   delete_npc는 npc_attitudes/npc_knowledge도 함께 지우므로 get_npc_attitude가 항상 None →
+    #   `if att:`가 영영 False = **태도 이관이 매번 조용히 실패**했다.
+    #   결과: 정체 발각(가면 NPC의 핵심 서사 이벤트)마다 PC와 쌓은 depth/tension이 전량 소실.
+    #   게다가 지식(knows/secrets_held/suspects)은 이관 코드 자체가 없었다.
+    # 처방: 삭제 **전에** 통째로 캡처 → 삭제 → 새 이름으로 dict 그대로 복원.
+    #   (update_npc_attitude는 attitude/reason만 받아 depth·tension을 잃으므로 직접 대입한다.)
+    _old_att = get_npc_attitude(channel_id, old_name)
+    _old_know = None
+    _old_imprint = None
+    try:
+        _old_know = domain_manager.get_npc_knowledge(channel_id).get(old_name)
+    except Exception:
+        pass
+    try:
+        _old_imprint = (domain_manager.get_npc_imprints(channel_id) or {}).get(old_name)
+    except Exception:
+        pass
+
     # 구 항목 제거 (선택적: Redirect를 남길 수도 있으나, 혼동 방지 위해 제거가 깔끔)
     delete_npc(channel_id, old_name)
-    
-    # 태도 정보도 이동
-    att = get_npc_attitude(channel_id, old_name)
-    if att:
-        # 기존 태도 삭제하고 새 이름으로 등록 (domain_manager 기능 한계로 직접 조작 필요할 수 있으나, update_npc_attitude 사용)
-        update_npc_attitude(channel_id, new_name, att.get("attitude", "neutral"), att.get("reason", "") + " (Identity Reveal)")
-        delete_npc_attitude(channel_id, old_name)
-    
+
+    if isinstance(_old_att, dict) and _old_att:
+        try:
+            _d = domain_manager.get_domain(channel_id)
+            _atts = _d.setdefault("npc_attitudes", {})
+            _moved = dict(_old_att)
+            _reason = str(_moved.get("reason", "") or "").strip()
+            _moved["reason"] = (_reason + " (개명)").strip()
+            _atts[new_name] = _moved            # depth/tension/trajectory 통째 이관
+            _atts.pop(old_name, None)
+            domain_manager.save_domain(channel_id, _d)
+            domain_manager._mirror_relation(channel_id, new_name, _moved)
+            logger.info("[개명] 태도 이관 %s → %s (depth=%s)",
+                        old_name, new_name, _moved.get("depth"))
+        except Exception as _e_att:
+            logger.warning("[개명] 태도 이관 실패: %s", _e_att)
+
+    if isinstance(_old_know, dict) and _old_know:
+        try:
+            domain_manager.update_npc_knowledge(channel_id, new_name, _old_know)
+            logger.info("[개명] 지식 이관 %s → %s (%d knows)",
+                        old_name, new_name, len(_old_know.get("knows") or []))
+        except Exception as _e_kn:
+            logger.warning("[개명] 지식 이관 실패: %s", _e_kn)
+
+    # 각인·관계엣지·감정이력 — 이름을 키로 붙들고 있는 부수 저장소 전부(공용 헬퍼).
+    # 구 이름은 위 delete_npc에서 이미 지워졌으므로, 남아 있는 부수 데이터만 옮겨진다.
+    try:
+        if _old_imprint:
+            _d2 = domain_manager.get_domain(channel_id)
+            _d2.setdefault("npc_imprints", {})[old_name] = _old_imprint
+            domain_manager.save_domain(channel_id, _d2)
+        _migrated = domain_manager.migrate_npc_side_data(channel_id, old_name, new_name)
+        if _migrated:
+            logger.info("[개명] 부수 이관 %s → %s: %s", old_name, new_name, ", ".join(_migrated))
+    except Exception as _e_er:
+        logger.debug("[개명] 부수 이관 skip: %s", _e_er)
+
     return f"🎭 **정체 드러남:** {old_name} ➔ {new_name}"
 
 # =========================================================
@@ -1746,3 +1841,143 @@ async def build_distill_grounding(channel_id: str,
         pass
 
     return ("\n\n".join(parts) + "\n\n") if parts else ""
+
+
+# =========================================================
+# [2026-08-02] C축 DRIVE — 해소되지 않은 충동 압력 (per-NPC, enum 상태기계)
+# =========================================================
+# ★수치 게이지를 만들지 않는다. 저장은 단계 문자열 + 턴 도장 둘뿐.
+#   본은 `update_npc_attitude_gated`(위) — enum + 쿨다운 + ±1단계 클램프.
+#   LLM은 "다음 단계 이름"만 내므로 델타 캡(cap_llm_delta)이 필요 없다. 캡할 수치가 없다.
+#
+# 저장 위치는 `npcs[name]["drives"]` = **자유 문서 컬럼**(npcs.data).
+#   npc_relations는 화이트리스트 방벽이라 새 키가 조용히 증발한다(실측 확인).
+#   실험 단계인 축은 자유 문서에 두고, 값이 굳으면 컬럼으로 승격한다.
+#
+# 압력형의 비대칭: 상승은 게이팅(천천히), 해소는 자유(빠르게), 방치는 자연 하강.
+
+_DRIVE_ROOT = "drives"
+
+
+def _drive_cfg(key, default):
+    return getattr(config, key, default)
+
+
+def _drive_level(stage: str) -> int:
+    return int((_drive_cfg("DRIVE_STAGES", {}).get(str(stage).lower()) or {}).get("level", 0))
+
+
+def _drive_stage_name(level: int) -> str:
+    _map = _drive_cfg("DRIVE_LEVEL_TO_STAGE", {0: "none"})
+    _max = max(_map) if _map else 0
+    return _map.get(max(0, min(_max, int(level))), "none")
+
+
+def get_drive(channel_id: str, npc_name: str, axis: str = "lust") -> Dict[str, Any]:
+    """현재 단계 조회. 없으면 none 기준값. (읽기는 항상 안전 — 없으면 0단계)"""
+    data = get_npc(channel_id, npc_name)
+    if not isinstance(data, dict):
+        return {"stage": "none", "level": 0, "last_change_turn": -1}
+    rec = ((data.get(_DRIVE_ROOT) or {}).get(axis) or {}) if isinstance(data.get(_DRIVE_ROOT), dict) else {}
+    stage = str(rec.get("stage", "none")).lower()
+    if stage not in _drive_cfg("DRIVE_STAGES", {}):
+        stage = "none"
+    return {
+        "stage": stage,
+        "level": _drive_level(stage),
+        "last_change_turn": int(rec.get("last_change_turn", -1) or -1),
+    }
+
+
+def set_drive_gated(channel_id: str, npc_name: str, target_stage: str,
+                    current_turn: int, axis: str = "lust",
+                    released: bool = False, reason: str = "") -> str:
+    """단계 전이 관문. LLM이 제안한 단계를 코드가 클램프한다.
+
+    Rules
+      1. 하강은 항상 자유롭다 — 압력은 빠르게 빠진다(해소·중단·목표 전환).
+         `released=True`면 쿨다운도 면제하고 제안 단계로 바로 내린다.
+      2. 상승은 쿨다운(DRIVE_RISE_COOLDOWN) + 최대 DRIVE_RISE_MAX_STEP 단계.
+      3. 같은 단계면 no-op (도장도 안 찍는다 — 자연 하강 시계를 살려두기 위해).
+
+    Returns: "accepted" | "clamped" | "cooldown" | "unchanged" | "disabled" | "invalid"
+    """
+    if not _drive_cfg("DRIVE_ENABLED", False):
+        return "disabled"
+    stages = _drive_cfg("DRIVE_STAGES", {})
+    target = str(target_stage or "").lower().strip()
+    if target not in stages:
+        logger.warning("[Drive] 알 수 없는 단계 %r (%s) — 무시", target_stage, npc_name)
+        return "invalid"
+    data = get_npc(channel_id, npc_name)
+    if not isinstance(data, dict):
+        return "invalid"
+
+    cur = get_drive(channel_id, npc_name, axis)
+    old_level, new_level = cur["level"], _drive_level(target)
+    if new_level == old_level:
+        return "unchanged"
+
+    result = "accepted"
+    if new_level > old_level:
+        # --- 상승: 쿨다운 + 단계 제한 ---
+        last = cur["last_change_turn"]
+        cd = int(_drive_cfg("DRIVE_RISE_COOLDOWN", 2))
+        if last >= 0 and current_turn - last < cd:
+            logger.info("[Drive] %s/%s: cooldown (%d/%d)", npc_name, axis,
+                        current_turn - last, cd)
+            return "cooldown"
+        step = int(_drive_cfg("DRIVE_RISE_MAX_STEP", 1))
+        if new_level - old_level > step:
+            new_level = old_level + step
+            result = "clamped"
+    elif not released and not _drive_cfg("DRIVE_RELEASE_FREE", True):
+        # 해소 플래그가 없고 자유 하강도 꺼져 있으면 상승과 같은 제한
+        step = int(_drive_cfg("DRIVE_RISE_MAX_STEP", 1))
+        if old_level - new_level > step:
+            new_level = old_level - step
+            result = "clamped"
+
+    _stage = _drive_stage_name(new_level)
+    _root = data.get(_DRIVE_ROOT)
+    if not isinstance(_root, dict):
+        _root = {}
+    _root[axis] = {"stage": _stage, "last_change_turn": int(current_turn)}
+    update_npc(channel_id, npc_name, {_DRIVE_ROOT: _root})
+    logger.info("[Drive] %s/%s: %s→%s (%s, turn=%d) %s",
+                npc_name, axis, cur["stage"], _stage, result, current_turn, reason)
+    return result
+
+
+def tick_drive_decay(channel_id: str, current_turn: int, axis: str = "lust") -> int:
+    """매 턴 호출: 무변화 DRIVE_IDLE_TURNS 턴마다 1단계 자연 하강.
+
+    A축 감쇠(domain_manager.decay_stale_relations)와 같은 턴-종료 자리에서 돈다.
+    다른 점: A축 시계는 **등장**(안 만나면 식음), C축 시계는 **무변화**(안 건드리면 가라앉음).
+    압력은 만나지 않아도 스스로 가라앉는다.
+    """
+    idle = int(_drive_cfg("DRIVE_IDLE_TURNS", 0))
+    if not _drive_cfg("DRIVE_ENABLED", False) or idle <= 0:
+        return 0
+    npcs = get_npcs(channel_id) or {}
+    lowered = 0
+    for name, data in npcs.items():
+        if not isinstance(data, dict):
+            continue
+        rec = ((data.get(_DRIVE_ROOT) or {}).get(axis) or {}) if isinstance(data.get(_DRIVE_ROOT), dict) else {}
+        if not rec:
+            continue
+        lvl = _drive_level(rec.get("stage", "none"))
+        if lvl <= 0:
+            continue
+        last = int(rec.get("last_change_turn", -1) or -1)
+        if last < 0 or current_turn - last < idle:
+            continue
+        _root = dict(data.get(_DRIVE_ROOT) or {})
+        _root[axis] = {"stage": _drive_stage_name(lvl - 1),
+                       "last_change_turn": int(current_turn)}
+        update_npc(channel_id, name, {_DRIVE_ROOT: _root})
+        lowered += 1
+    if lowered:
+        logger.info("[Drive] %d NPC 압력 자연 하강 (idle=%d, turn=%d)", lowered, idle, current_turn)
+    return lowered

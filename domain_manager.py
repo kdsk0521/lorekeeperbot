@@ -608,8 +608,11 @@ def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
                         seen.add(nc)
                 if not aliases:
                     data.pop("aliases", None)
-            # 태도/지식도 함께 이사 (구 키에 쌓인 관계 고아화 방지)
-            for _dom in ("npc_attitudes", "npc_knowledge"):
+            # 태도/지식/각인도 함께 이사 (구 키에 쌓인 관계 고아화 방지)
+            # [2026-07-28] npc_imprints 추가 — 행동 각인은 iceberg·world_board가 실제로 읽는데
+            #   이사 목록에 없어 개명 때마다 구 키에 고아로 남았다.
+            rename_entity_relation_edges(d, existing_key, final_key)
+            for _dom in ("npc_attitudes", "npc_knowledge", "npc_imprints"):
                 _dd = d.get(_dom, {})
                 if existing_key in _dd and final_key not in _dd:
                     _dd[final_key] = _dd.pop(existing_key)
@@ -648,10 +651,12 @@ def delete_npc(channel_id: str, name: str) -> tuple:
     target = _find_npc_key(npcs, name)
     if target:
         del npcs[target]
-        # 고아 정리: 같은 키의 태도/지식도 함께 (JSON)
-        d.get("npc_attitudes", {}).pop(target, None)
-        d.get("npc_knowledge", {}).pop(target, None)
         save_domain(channel_id, d)
+        # [2026-07-28] 고아 정리 확대 — 구 코드는 태도/지식만 지워서 각인·관계엣지·감정이
+        # 이름만 남은 고아로 누적됐다(장기 세션일수록). 이관(migrate)의 짝으로 한 곳에 모음.
+        _purged = purge_npc_side_data(channel_id, target)
+        if _purged:
+            logging.debug(f"[NPC] 삭제 부수정리 {target}: {', '.join(_purged)}")
         try:
             import sqlite_store
             sqlite_store.delete_npc_row(channel_id, target)
@@ -824,6 +829,13 @@ def merge_npc(channel_id: str, dup_name: str, canon_name: str) -> tuple:
 
     save_domain(channel_id, d)
 
+    # [2026-07-28] 부수 저장소 이관 — 구 병합은 태도·지식만 다뤄서 각인·관계엣지·감정이
+    # 중복 이름 아래 고아로 남았다(개명 경로와 비대칭이었음). 같은 헬퍼로 대칭을 맞춘다.
+    _migrated = migrate_npc_side_data(channel_id, dup_key, canon_key)
+    if _migrated:
+        logging.info(f"[NPC 병합] 부수 이관 {dup_key}→{canon_key}: {', '.join(_migrated)}")
+    d = get_domain(channel_id)   # 헬퍼가 저장했으므로 최신 상태 재로드
+
     # 5) SQLite 미러: 중복 행 삭제 + 본체 재미러
     try:
         import sqlite_store
@@ -953,7 +965,15 @@ def get_npc_attitude(channel_id: str, npc_name: str) -> Optional[Dict]:
                 return rel
         except Exception as _e:
             logging.warning(f"[V10] relation 단건 read-through 실패, JSON 폴백: {_e}")
-    return d.get("npc_attitudes", {}).get(npc_name)
+    # [2026-07-28] 대량 조회(get_npc_attitudes)는 JSON 폴백 시 그 자리에서 SQLite로 옮기는데
+    # 단건 경로만 lazy-migration이 없어, 다른 쓰기가 그 NPC를 건드리기 전까지 미러 행이 안 생겼다.
+    _rel = d.get("npc_attitudes", {}).get(npc_name)
+    if _rel and getattr(config, "V10_RELATIONS_READ_FROM_SQLITE", False):
+        try:
+            _mirror_relation(channel_id, npc_name, _rel)
+        except Exception:
+            pass
+    return _rel
 
 def delete_npc_attitude(channel_id: str, npc_name: str) -> bool:
     """NPC 태도 삭제 (identity reveal 등). [V10 §3b] 직접 조작 정식화 — JSON+SQLite 동시."""
@@ -1299,6 +1319,127 @@ def propagate_npc_knowledge(channel_id: str, scene_npcs: list) -> int:
     return propagated
 
 # NPC Behavioral Imprints
+_NPC_SIDE_DOMAINS = ("npc_attitudes", "npc_knowledge", "npc_imprints")
+
+
+def migrate_npc_side_data(channel_id: str, old_name: str, new_name: str) -> list:
+    """[2026-07-28 신설] 개명/병합 시 NPC 이름을 키로 쓰는 **부수 저장소**를 통째로 옮긴다.
+
+    NPC 본체(npcs dict) 밖에도 이름을 키로 붙들고 있는 곳이 여럿인데, 그동안 경로마다
+    옮기는 목록이 달라서(개명은 태도·지식만, 병합은 태도·지식만) 각인·관계엣지·감정이
+    옛 이름 아래 고아로 남았다. 옮길 목록을 여기 한 곳에 모은다.
+    ★특히 `npc_emotion_states`는 domain이 아니라 **world_state**에 살아서
+      도메인 순회 루프로는 구조적으로 안 잡혔다 — 여기서만 처리된다.
+    Returns: 옮긴 항목 이름 리스트(로그용).
+    """
+    moved = []
+    if not old_name or not new_name or old_name == new_name:
+        return moved
+    d = get_domain(channel_id)
+    for _dom in _NPC_SIDE_DOMAINS:
+        _dd = d.get(_dom)
+        if isinstance(_dd, dict) and old_name in _dd:
+            if new_name not in _dd:
+                _dd[new_name] = _dd.pop(old_name)
+                moved.append(_dom)
+            else:
+                _dd.pop(old_name, None)     # 양쪽 존재 시 새 이름 유지
+    if rename_entity_relation_edges(d, old_name, new_name):
+        moved.append("entity_relations")
+    save_domain(channel_id, d)
+
+    # 감정 이력 — world_state 소관(별도 저장소)
+    try:
+        _w = get_world_state(channel_id) or {}
+        _em = _w.get("npc_emotion_states")
+        if isinstance(_em, dict) and old_name in _em:
+            if new_name not in _em:
+                _em[new_name] = _em.pop(old_name)
+            else:
+                _em.pop(old_name, None)
+            update_world_state(channel_id, _w)
+            moved.append("npc_emotion_states")
+    except Exception as _e:
+        logging.debug(f"[NPC] emotion_states 이관 skip: {_e}")
+    return moved
+
+
+def purge_npc_side_data(channel_id: str, name: str) -> list:
+    """[2026-07-28 신설] NPC 삭제 시 부수 저장소 청소. 이관의 짝.
+
+    구 delete_npc는 npcs/attitudes/knowledge(+SQLite)만 지워서 각인·관계엣지·감정이
+    이름만 남은 고아가 됐다(장기 세션일수록 누적).
+    """
+    purged = []
+    if not name:
+        return purged
+    d = get_domain(channel_id)
+    for _dom in _NPC_SIDE_DOMAINS:
+        _dd = d.get(_dom)
+        if isinstance(_dd, dict) and _dd.pop(name, None) is not None:
+            purged.append(_dom)
+    # 관계 엣지: 이 이름이 걸린 방향 전부 제거
+    try:
+        _edges = (d.get("entity_relations") or {}).get("edges")
+        if isinstance(_edges, dict):
+            _drop = [k for k in _edges
+                     if "→" in k and name in k.split("→", 1)]
+            for k in _drop:
+                _edges.pop(k, None)
+            if _drop:
+                purged.append(f"entity_relations({len(_drop)})")
+    except Exception:
+        pass
+    save_domain(channel_id, d)
+    try:
+        _w = get_world_state(channel_id) or {}
+        _em = _w.get("npc_emotion_states")
+        if isinstance(_em, dict) and _em.pop(name, None) is not None:
+            update_world_state(channel_id, _w)
+            purged.append("npc_emotion_states")
+    except Exception:
+        pass
+    return purged
+
+
+def rename_entity_relation_edges(d: Dict[str, Any], old_name: str, new_name: str) -> int:
+    """[2026-07-28 신설] 개명 시 entity_relations 엣지의 이름 참조를 따라 옮긴다.
+
+    엣지는 `"A→B"` 복합 키 + 내부 source/target 필드라, 일반 `dict[name]` 이관 루프로는
+    절대 안 옮겨진다 — 그래서 개명·병합 때마다 옛 이름을 가리키는 관계가 고아로 남았다.
+    (관계 그래프는 story_director의 conflict/alliance, slot 주입이 실제로 읽는 살아있는 데이터.)
+    Returns: 옮긴 엣지 수. 도메인 dict를 제자리 수정하므로 호출부가 save_domain을 책임진다.
+    """
+    if not old_name or not new_name or old_name == new_name:
+        return 0
+    try:
+        store = d.get("entity_relations")
+        edges = store.get("edges") if isinstance(store, dict) else None
+        if not isinstance(edges, dict):
+            return 0
+        moved = {}
+        for ek in list(edges.keys()):
+            if "→" not in ek:
+                continue
+            src, tgt = ek.split("→", 1)
+            if src != old_name and tgt != old_name:
+                continue
+            val = edges.pop(ek)
+            n_src = new_name if src == old_name else src
+            n_tgt = new_name if tgt == old_name else tgt
+            if isinstance(val, dict):
+                if val.get("source") == old_name:
+                    val["source"] = new_name
+                if val.get("target") == old_name:
+                    val["target"] = new_name
+            moved[f"{n_src}→{n_tgt}"] = val
+        edges.update(moved)
+        return len(moved)
+    except Exception as _e:
+        logging.debug(f"[EntityRelations] rename skipped: {_e}")
+        return 0
+
+
 def update_npc_imprints(channel_id: str, imprints: Dict[str, Dict[str, str]], turn: int = 0) -> None:
     """NPC 행동 각인 저장. imprints: {NpcName: {"event": str, "mark": str}}"""
     d = get_domain(channel_id)
@@ -1751,12 +1892,38 @@ def add_to_ai_memory_list(channel_id: str, uid: str, key: str, item: Union[str, 
 
 # [2026-07-18 고아 삭제] update_psych_profile — 구세대(Phase 2) Maslow 심리 프로필 — 현행 DAI psyche/deep_read/emotion_engine이 대체 (dead_scan 참조0 확인, git 이력 복원 가능)
 
-def update_helena_metric(channel_id: str, npc_name: str, depth_delta: int = 0, tension_delta: int = 0) -> None:
-    """[Phase 2] Update Helena metrics (Depth/Tension) for an NPC relation"""
+def update_helena_metric(channel_id: str, npc_name: str, depth_delta: int = 0, tension_delta: int = 0,
+                         source: str = "") -> None:
+    """[Phase 2] Update Helena metrics (Depth/Tension) for an NPC relation
+
+    [C1 2026-08-01] `source` 신설 — LLM이 제안한 델타만 선언 범위로 자른다.
+    아래 0~100 클램프는 **범위** 클램프지 **델타** 클램프가 아니라, 모델이 한 번
+    크게 뱉으면 depth 5 → 100이 한 턴에 통과했다(프롬프트엔 +1~+5/-10~+10이라 적혀
+    있었지만 집행이 없었음). 캡 표 = config.LLM_DELTA_CAPS.
+
+    ⚠ source 기본값은 무캡이다. 이 세터는 코드도 쓴다 —
+    다운타임 사교(depth +10~15), NPC 시트 initial_depth, trajectory 맵.
+    그 경로에 캡을 걸면 정상 설계가 잘린다. LLM 경로만 명시적으로 라벨을 넘긴다.
+    """
+    if source:
+        import bot_utils as _bu
+        depth_delta, _ = _bu.cap_llm_delta(depth_delta, source, "depth", subject=npc_name)
+        tension_delta, _ = _bu.cap_llm_delta(tension_delta, source, "tension", subject=npc_name)
     d = get_domain(channel_id)
     if "npc_attitudes" not in d: d["npc_attitudes"] = {}
     npc_name = _resolve_npc_name(d, npc_name)
-    if npc_name not in d["npc_attitudes"]: return # Must exist first
+    if npc_name not in d["npc_attitudes"]:
+        # [2026-07-28] 구 코드는 여기서 **로그 없이 return**했다("Must exist first").
+        #   호출 3경로 중 둘(NPCDepthUpdate의 npc_depth_hints, 발효의 helena_delta)은
+        #   그 턴 dai.npc_attitudes와 무관한 후행 추출 결과라, 태도 레코드가 아직 없는 NPC가
+        #   흔히 들어온다 → 관계 진행분이 조용히 사라졌다. 없으면 만들어서 받는다.
+        if not isinstance(npc_name, str) or not npc_name.strip():
+            return
+        d["npc_attitudes"][npc_name] = {
+            "attitude": "neutral", "reason": "(자동 생성 — 관계 지표 수신)",
+            "depth": 0, "tension": 0,
+        }
+        logging.debug("[Helena] %s 태도 레코드 신규 생성 후 지표 반영", npc_name)
 
     target = d["npc_attitudes"][npc_name]
     
@@ -1771,6 +1938,82 @@ def update_helena_metric(channel_id: str, npc_name: str, depth_delta: int = 0, t
 
     save_domain(channel_id, d)
     _mirror_relation(channel_id, npc_name, target)  # [V10 Sprint 1] dual-write
+
+
+def decay_stale_relations(channel_id: str, current_turn: int) -> int:
+    """[2026-08-02 A축] 안 건드린 관계의 depth/tension을 점감. 매 턴 호출 가정(turn-end).
+
+    왜: `update_helena_metric`이 `max(0, min(100, cur + delta))` 단조 누적뿐이라
+      **한 번 오른 값이 절대 안 내려왔다.** 관계가 식지 않는다.
+      감쇠 전례는 넷이나 있는데(entity_relations fade / EMOTION_DECAY / 태도 3턴 쿨다운 /
+      vigor 자연회복) depth/tension만 빠져 있었다.
+
+    형태: entity_relations.cleanup_stale_relations와 같은 grace/fade/floor.
+      **삭제가 아니라 흐려짐** — 엔트리는 남기고 값만 내린다(관계는 사라지기보다 흐려진다).
+
+    ★시계는 `npcs[name]["_last_appear_turn"]`(mark_npc_appearance가 매 턴 찍는 등장 기록).
+      **관계는 레코드를 안 건드려서가 아니라 "안 만나서" 식는다** — 서사적으로도 그게 맞고,
+      부작용도 없다. 후보였던 `last_change_turn`은 태도 enum 쿨다운(3턴) 판정에 쓰이므로
+      여기서 같이 찍으면 **태도가 영구 동결**된다(depth 틱이 매 턴 도니까). 재사용 금지.
+      새 키를 만들지 않으므로 npc_relations 화이트리스트(5곳)도 안 건드린다.
+
+    ⚠수치를 새로 만들지 않는다. 기존 컬럼만 내린다.
+    끄기: config.RELATION_DECAY_GRACE = 0.
+
+    Returns: 감쇠된 NPC 수.
+    """
+    grace = int(getattr(config, "RELATION_DECAY_GRACE", 0) or 0)
+    if grace <= 0:
+        return 0  # 기능 끔
+    d_drop = int(getattr(config, "RELATION_DECAY_DEPTH", 1) or 0)
+    t_drop = int(getattr(config, "RELATION_DECAY_TENSION", 2) or 0)
+    floor = int(getattr(config, "RELATION_DECAY_FLOOR", 0) or 0)
+    if d_drop <= 0 and t_drop <= 0:
+        return 0
+
+    atts = get_npc_attitudes(channel_id)   # read-through (SQLite 우선)
+    if not isinstance(atts, dict) or not atts:
+        return 0
+    npcs = get_npcs(channel_id) or {}
+
+    faded = 0
+    for name, rel in list(atts.items()):
+        if not isinstance(rel, dict):
+            continue
+        # 등장 기록이 없으면 감쇠 대상 아님 — 언제 마지막으로 만났는지 모르는 상태에서
+        # 임의로 깎으면 구 세션이 한 턴에 바닥난다. 다음 등장에서 도장이 찍히면 그때부터.
+        _npc = npcs.get(name)
+        last = _npc.get("_last_appear_turn") if isinstance(_npc, dict) else None
+        try:
+            last = int(last)
+        except (TypeError, ValueError):
+            continue
+        if last < 0 or current_turn - last <= grace:
+            continue  # 최근에 만난 관계는 보존
+
+        cur_d = int(rel.get("depth", 0) or 0)
+        cur_t = int(rel.get("tension", 0) or 0)
+        new_d = max(floor, cur_d - d_drop)
+        new_t = max(floor, cur_t - t_drop)
+        if new_d == cur_d and new_t == cur_t:
+            continue  # 이미 바닥
+
+        rel["depth"] = new_d
+        rel["tension"] = new_t
+        # JSON 원본도 같이 내린다 — read-through가 꺼진 롤백 상태에서도 일관되게.
+        _json = get_domain(channel_id).setdefault("npc_attitudes", {}).get(name)
+        if isinstance(_json, dict):
+            _json["depth"] = new_d
+            _json["tension"] = new_t
+        _mirror_relation(channel_id, name, rel)
+        faded += 1
+
+    if faded:
+        save_domain(channel_id, get_domain(channel_id))
+        logging.info("[RelationDecay] %d NPC 관계 점감 (grace=%d, turn=%d)",
+                     faded, grace, current_turn)
+    return faded
+
 
 # UI Helpers
 def get_unified_player_info(channel_id: str, user_id: str) -> str:
@@ -2407,6 +2650,9 @@ def reset_session_state(channel_id: str) -> None:
     d["npc_attitudes"] = {}
     d["npc_knowledge"] = {}
     d["entity_relations"] = {}
+    # [2026-07-28] npc_imprints 추가 — 다른 세션 파생 데이터는 다 지우면서 각인만 남아
+    # 리셋 후에도 옛 행동 기록이 따라왔다(감정 이력은 world_state 리셋으로 함께 사라짐).
+    d["npc_imprints"] = {}
     
     # 2. Reset World State
     d["world_state"] = config.DEFAULT_WORLD_STATE.copy()

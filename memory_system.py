@@ -241,7 +241,13 @@ def safe_parse_json(text: Optional[str], expect_list: bool = False) -> Any:
             return [] if expect_list else {}
         
         json_str = cleaned_text[start_idx:end_idx]
-        data = json.loads(json_str)
+        try:
+            data = json.loads(json_str)
+        except json.JSONDecodeError:
+            # [2026-08-01] 공용 수리기 경유. 위 슬라이싱은 바깥 괄호만 맞출 뿐,
+            # 값 뒤 해설(V4=괄호 / GLM=엠대쉬 / 스트레이 콜론)은 그대로 통과시켰다.
+            import bot_utils as _bu
+            data = json.loads(_bu.repair_json(json_str))
         
         if expect_list:
             if isinstance(data, list):

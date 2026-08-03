@@ -199,7 +199,10 @@ class OrchestrationService:
             try:
                 import world_tree
                 import npc_manager as _npm_wt
-                _scene_names = _npm_wt.get_scene_npc_names(channel_id) or []
+                # [2026-07-28] get_scene_npc_names(=전체 명부) → 최근 등장 인물로 교체.
+                # 구 코드는 PC가 이동할 때마다 **등록 NPC 전원**을 그 장소로 옮겨
+                # (set_npc_location은 기존 위치에서 제거 후 재배치) 위치 기록을 매번 오염시켰다.
+                _scene_names = _npm_wt.get_onstage_npc_names(channel_id, within_turns=1) or []
                 _placed = sum(
                     1 for _sn in _scene_names
                     if _sn and world_tree.set_npc_location(channel_id, _sn, current_location) == "placed"
@@ -1016,8 +1019,37 @@ class OrchestrationService:
                         d_d = deltas.get("depth_delta", 0)
                         t_d = deltas.get("tension_delta", 0)
                         if d_d or t_d:
-                            domain_manager.update_helena_metric(channel_id, npc_name, depth_delta=int(d_d), tension_delta=int(t_d))
+                            # [C1] LLM(cognition npc_depth_hints) 제안 → 선언 범위로 캡
+                            domain_manager.update_helena_metric(
+                                channel_id, npc_name,
+                                depth_delta=int(d_d), tension_delta=int(t_d),
+                                source="helena.cognition",
+                            )
 
+            # [2026-08-02 C축] npc_drive — LLM은 **단계 이름만** 낸다.
+            #   수치가 없으므로 cap_llm_delta가 아니라 set_drive_gated가 클램프한다
+            #   (쿨다운 + ±1단계 / 해소는 면제·다단 하강). 콜 순증 0 — 같은 추출 콜에 필드만 얹음.
+            _drive_hints = updates.get("npc_drive")
+            if isinstance(_drive_hints, dict) and _drive_hints:
+                try:
+                    _ws_dr = domain_manager.get_world_state(channel_id) or {}
+                    _turn_dr = int(_ws_dr.get("turn_index", 0) or 0)
+                    for _npc_n, _dv in _drive_hints.items():
+                        if not isinstance(_dv, dict):
+                            continue
+                        _stage = str(_dv.get("stage", "") or "").lower().strip()
+                        if not _stage:
+                            continue
+                        npc_manager.set_drive_gated(
+                            channel_id, _npc_n, _stage, _turn_dr,
+                            axis=str(_dv.get("axis", "lust") or "lust").lower().strip(),
+                            released=bool(_dv.get("released")),
+                            reason="cognition.npc_drive",
+                        )
+                except Exception as _e_dr:
+                    logger.debug(f"[Drive] hint 처리 skip: {_e_dr}")
+
+            if npc_depth and isinstance(npc_depth, dict):
                 # Convergence Detection
                 convergence_warnings = []
                 for npc_name, deltas in npc_depth.items():
@@ -1063,6 +1095,23 @@ class OrchestrationService:
                 _er_d.cleanup_stale_relations(channel_id, _turn_d)
             except Exception as _e_d:
                 logger.debug(f"[EntityRelations] decay skip: {_e_d}")
+
+            # [2026-08-02 A축 감쇠] PC↔NPC 관계(depth/tension)도 같은 자리에서 점감.
+            #   NPC↔NPC(위)만 흐려지고 정작 PC 관계는 단조 누적이라 **한 번 오른 값이
+            #   절대 안 내려왔다**. 시계는 등장 기록(_last_appear_turn) — 안 만나면 식는다.
+            #   같은 턴-종료 지점에 두어 매 턴 도는 루프를 하나로 유지한다.
+            try:
+                domain_manager.decay_stale_relations(channel_id, _turn_d)
+            except Exception as _e_rd:
+                logger.debug(f"[RelationDecay] skip: {_e_rd}")
+
+            # [2026-08-02 C축] 충동 압력 자연 하강. A축과 시계가 다르다 —
+            #   A축=등장(안 만나면 식음) / C축=무변화(안 건드리면 가라앉음).
+            #   압력은 만나지 않아도 스스로 내려간다.
+            try:
+                npc_manager.tick_drive_decay(channel_id, _turn_d)
+            except Exception as _e_dd:
+                logger.debug(f"[Drive] decay skip: {_e_dd}")
 
             pmu = updates.get("PlayerMemoryUpdate")
             if pmu:
@@ -1166,6 +1215,22 @@ class OrchestrationService:
 
                 # 엔티티 상태 변화 기록
                 est_data = updates.get("EntityStateUpdate")
+                # [2026-07-28] PC 혼입 가드 — 이건 waterfall의 DAI 정제와 **다른 콜**(후행 추출
+                # extract_all_updates)의 산출이라 그 초크포인트를 안 지난다. 무가드로 두면
+                # PC의 위치·건강·기분이 NPC 엔티티 로그에 영구 저장되고 Slot 7로 되돌아온다.
+                if isinstance(est_data, dict) and est_data:
+                    _pc_masks_est = set()
+                    try:
+                        for _p in domain_manager.get_domain(channel_id).get("participants", {}).values():
+                            if isinstance(_p, dict) and _p.get("mask"):
+                                _pc_masks_est.add(_p["mask"])
+                    except Exception:
+                        pass
+                    if _pc_masks_est:
+                        _est_hit = [n for n in est_data if n in _pc_masks_est]
+                        if _est_hit:
+                            est_data = {k: v for k, v in est_data.items() if k not in _pc_masks_est}
+                            logger.debug(f"[EntityState] PC 혼입 제외: {', '.join(_est_hit)}")
                 if est_data:
                     narrative_tracker.update_entity_states(nt_state, turn_idx, est_data)
 
@@ -1239,7 +1304,16 @@ class OrchestrationService:
                                             + (f" (lore: {','.join(_turn_labels[:3])})" if _turn_labels else ""))
                                 continue
                             _src = str(_existing.get("source", "")).lower()
-                            if _new_indiv and _src != "lore" and not npc_manager.is_mob_tag(_npc_name):
+                            # [2026-07-28] `_src != "lore"` → FROZEN_SOURCES(lore+manual).
+                            # 근거는 **"등록된 NPC는 무조건 고유 인물"**이라는 운영 원칙이다
+                            # (레티어스 확인: `!npc추가`를 몹 템플릿으로 쓰지 않는다).
+                            # 고유 인물에게 동명 별개체(`경비병 #4F`)가 붙을 이유가 없다.
+                            # ※ 옆의 두 게이트(증류 재작성 L1294 / 면모 대체 npc_manager L1164)도
+                            #   lore+manual을 함께 배제하지만 **성격은 다르다** — 그 둘은 원본 시트를
+                            #   덮는 것을 막는 것이고, 몹 태그는 원본을 안 건드리고 새 엔티티를 만든다.
+                            #   형태가 같다고 같은 이유로 묶지 말 것(이 배제의 근거는 위의 운영 원칙뿐).
+                            if (_new_indiv and _src not in npc_manager.FROZEN_SOURCES
+                                    and not npc_manager.is_mob_tag(_npc_name)):
                                 _tagged = npc_manager.register_ai_npc(
                                     channel_id, _npc_name, description=_desc, context="auto mob-tag (new_individual)")
                                 if _tagged and _tagged != _npc_name:

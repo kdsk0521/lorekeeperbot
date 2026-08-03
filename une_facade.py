@@ -832,6 +832,12 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
     # NPC Knowledge & Attitudes (피드백용)
     anchors["stored_npc_knowledge"] = domain_manager.get_npc_knowledge(channel_id)
     anchors["stored_npc_attitudes"] = domain_manager.get_npc_attitudes(channel_id)
+    # [2026-08-02 B축 지속] 이전 턴 soma(polyvagal/dissociation) — `Track across turns` 집행 재료.
+    try:
+        anchors["stored_npc_soma"] = (domain_manager.get_world_state(channel_id) or {}).get(
+            "npc_soma_states", {}) or {}
+    except Exception:
+        anchors["stored_npc_soma"] = {}
 
     # [V10 Sprint 4] 막간 장부 (이번 턴 재구성분) — Theoria가 막간을 알아야 NPC 심리 추론 정합
     try:
@@ -851,7 +857,11 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
     # 장면 밖 NPC의 "세계가 턴 사이에 움직인 흔적" 공급용. 후보 6명 캡, 실패 무해.
     # [Phase 0] last_seen(emotion_log 기준)으로 부재 '기간' 동봉 — 오래 빈 인물일수록 흔적 가치↑.
     try:
-        _scene_set = set(_npc_mgr.get_scene_npc_names(channel_id))
+        # [2026-07-28] 구 코드는 get_scene_npc_names(=로어 아닌 **전체** 명부)를 "무대 위"로 봤다.
+        # 그래서 _absent_names에는 거의 로어 NPC만 남고, 정작 노리던 "한동안 안 나온 세션 NPC"는
+        # 절대 후보에 못 올랐다 — 오프스크린 흔적 기능이 사실상 사문.
+        # 최근 2턴 등장자를 무대 위로 보고, 그 외 전원을 부재 후보로 둔다.
+        _scene_set = set(_npc_mgr.get_onstage_npc_names(channel_id, within_turns=2))
         _all_reg = list((domain_manager.get_npcs(channel_id) or {}).keys())
         _absent_names = [n for n in _all_reg if n not in _scene_set][:6]
         if _absent_names:
@@ -1275,8 +1285,13 @@ class UniversalNarrativeEngine:
                 if _npc_mgr.get_npc(_cd_channel, t.npc_name) is None:
                     logger.debug(f"[NPC Autonomy] '{t.npc_name}' 미등록(PC 추정) — trigger '{t.trigger_id}' 제외")
                     continue
+                # [2026-07-28] 쿨다운은 **중대 결정(priority>=4)에만** 적용한다.
+                # 구 코드는 우선순위를 안 보고 그 NPC의 **모든 트리거**를 막아서,
+                # 한 번 중대 결정이 나면 이후 2~3턴간 emotional_contagion(1)·agenda_manifest(2)
+                # 같은 사소한 반응까지 전부 차단 = "결정 페이싱"이 아니라 "자율성 정지"였다.
+                # (쿨다운을 거는 쪽도 priority>=4 기준이므로 대칭이 맞다 — 아래 set_decision_cooldown.)
                 cd = _npc_mgr.check_decision_cooldown(_cd_channel, t.npc_name)
-                if cd > 0:
+                if cd > 0 and t.priority >= 4:
                     logger.debug(f"[NPC Autonomy] {t.npc_name} trigger '{t.trigger_id}' suppressed — cooldown {cd} turns remaining")
                 else:
                     _filtered.append(t)

@@ -719,7 +719,8 @@ false_beliefs: list of statements the NPC incorrectly believes to be true.
 
 ### Suspected Knowledge (uncertain)
 suspects: list of things the NPC SUSPECTS but is NOT sure of — overheard, half-seen, inferred-but-unconfirmed.
-Distinct from `knows` (confirmed). Only when there is real ambiguity this turn; most turns empty.
+Channel routing: Direct → `knows`. Reported / Inferred / Rumored → `suspects`, until that NPC confirms it firsthand.
+Seeing a result does not give the actor, cause, method, ownership, motive, or private thought behind it — those are suspicions, not knowledge.
 
 """
 

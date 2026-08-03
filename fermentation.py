@@ -23,6 +23,7 @@
 """
 
 import json
+import math
 import hashlib
 import logging
 import asyncio
@@ -72,8 +73,24 @@ logger = logging.getLogger("Fermentation")
 
 
 def _repair_truncated_json(text: str) -> Optional[Dict]:
-    """max_output_tokens 초과로 잘린 JSON을 복구 시도."""
-    # 열린 괄호/대괄호 카운트 후 닫아줌
+    """LLM이 뱉은 깨진 JSON을 복구 시도. 2단 — 공용 수리기 → 로컬 괄호닫기.
+
+    [2026-08-01] 1단 신설. 이 함수는 원래 truncation(잘린 괄호/따옴표)만 다뤘고,
+    모델이 **값 뒤에 해설을 다는 버릇**(V4=괄호 / GLM=엠대쉬 / 스트레이 콜론)은
+    통째로 못 잡았다. 그 버릇 대응은 2026-07-27에 `bot_utils.repair_json`으로
+    배포됐는데(스모크 32항목) 발효 라인만 배선에서 빠져 있었다.
+    발효는 영속층이라 수리 실패의 대가가 "재시도"가 아니라 "구간 영구 유실"이므로
+    가장 강한 수리기를 먼저 태운다. 로컬 로직은 폴백으로 존치.
+    """
+    # 1단: 공용 수리기 (제어문자·JS리터럴·값뒤해설 3종·따옴표/괄호 보충)
+    try:
+        import bot_utils as _bu
+        _cleaned = _bu.clean_json_text(text)
+        return json.loads(_bu.repair_json(_cleaned))
+    except Exception:
+        pass
+
+    # 2단: 로컬 괄호/따옴표 닫기 (기존 로직)
     try:
         trimmed = text.rstrip()
         # 끝에 잘린 문자열 닫기: 열린 " 찾아서 닫기
@@ -176,12 +193,13 @@ FERMENT_PROMPT_V4 = """
   - 핵심 반전/폭로
   - 미해결 위협/미스터리
   - 중요 NPC 첫 만남
-- events: 한국어, 과거형, 1-3문장. 고유명사/용어 보존
-- dialogues: 원문 보존 대상:
-  - 감정적으로 중요한 교환
-  - 약속, 위협, 고백
-  - 플롯 핵심 정보
-  - 인사, 일상 대화, 반복 내용은 제외
+  - 인물이 핵심 정보를 처음 알게 됨 (누가 알게 되었는지 events에 명시)
+- events: 한국어, 과거형 "~했다."/"~하였다."로 끝낸다 (~함/~했음 금지). 1-3문장. 고유명사/용어 보존.
+  대명사 금지 — 그/그녀/그곳 대신 항상 이름과 장소를 쓴다. 이 요약은 원문 없이 단독으로 다시 읽힌다.
+- dialogues: 블록당 최대 5줄. 아래에 해당할 때만 남긴다:
+  - 고백/결별, 위협/선언, 맹세·약속, 정체·비밀 폭로, 플롯 핵심 정보
+  - 인사·일상 대화·반복은 제외. 해당 없으면 빈 배열.
+  - 원문 그대로. 삭제만 허용 — 축약·환언·다듬기 금지.
 
 ## arc_observations (종단 패턴 — 이 구간 전체를 보고 판단)
 - pc_pattern: 개별 턴이 아니라 구간 전체에서 보이는 PC 행동 경향.
@@ -207,8 +225,8 @@ FERMENT_PROMPT_V4 = """
 # Compression Guidelines
 
 1. 인덱스: 최소 4개씩 묶어 범위 구성. 장면 전환/시간 도약에서 분할.
-2. 사건: 한국어, 과거형, 1-3문장. 고유명사/용어 정확히 보존.
-3. 대사: 감정적/플롯 핵심만 원문 보존. 일상 대화 제외. 같은 화자 연속 시 배열로.
+2. 사건: 위 events 규칙(과거형 어미·대명사 금지) 그대로. 새로 드러난 사실은 누가 알게 되었는지 함께.
+3. 대사: 위 dialogues 규칙(최대 5줄·삭제만 허용) 그대로. 같은 화자 연속 시 배열로.
 4. important: 약속/서약/핵심 반전이 있는 블록만. DEEP 압축에서도 살아남음.
 5. 종단 패턴: 개별 사건이 아닌 구간 전체의 흐름을 관찰. 추측 금지, 관찰된 것만.
 """
@@ -346,29 +364,51 @@ def estimate_tokens(text: str) -> int:
     return int(len(text) / CHARS_PER_TOKEN)
 
 
-def _game_time_range_header(history: List[Dict[str, Any]]) -> str:
-    """V8.5: history 첫/끝 메시지의 game_time 메타로 시간 거리 헤더 생성.
-    예: '[시간 범위] 1년 3월 5일 14:00 ~ 1년 3월 12일 09:30 (7일간)' 또는 빈 문자열."""
-    if not history:
-        return ""
+def _gt_abs_minutes(gt: Optional[Dict[str, Any]]) -> Optional[int]:
+    """game_time dict → 캘린더 절대 분. 360일/년, 30일/월 (game_world 캘린더).
+
+    [H3 2026-08-01] 원래 `_game_time_range_header` 안의 로컬 `_abs`였다.
+    회상 스코어(score_fermented_entries)에서도 같은 계산이 필요해 모듈 레벨로 승격 —
+    같은 캘린더 규칙이 두 벌 존재하면 조용히 어긋난다.
+    """
+    if not isinstance(gt, dict):
+        return None
+    try:
+        return (((int(gt.get("year", 1)) - 1) * 360
+                 + (int(gt.get("month", 1)) - 1) * 30
+                 + (int(gt.get("day", 1)) - 1)) * 1440
+                + int(gt.get("hour", 12)) * 60 + int(gt.get("minute", 0)))
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_game_time_bounds(
+    history: List[Dict[str, Any]],
+) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    """구간의 첫/끝 game_time 메타를 뽑는다. 없으면 (None, None)."""
     first_gt = None
     last_gt = None
-    for entry in history:
+    for entry in history or []:
         gt = entry.get("game_time") if isinstance(entry, dict) else None
         if isinstance(gt, dict):
             if first_gt is None:
                 first_gt = gt
             last_gt = gt
+    return first_gt, last_gt
+
+
+def _game_time_range_header(history: List[Dict[str, Any]]) -> str:
+    """V8.5: history 첫/끝 메시지의 game_time 메타로 시간 거리 헤더 생성.
+    예: '[시간 범위] 1년 3월 5일 14:00 ~ 1년 3월 12일 09:30 (7일간)' 또는 빈 문자열."""
+    if not history:
+        return ""
+    first_gt, last_gt = _extract_game_time_bounds(history)
     if not first_gt or not last_gt:
         return ""
     def _fmt(gt):
         return (f"{gt.get('year', 1)}년 {gt.get('month', 1)}월 {gt.get('day', 1)}일 "
                 f"{gt.get('hour', 12):02d}:{gt.get('minute', 0):02d}")
-    # 절대 분 차이
-    def _abs(gt):
-        return ((gt.get("year", 1) - 1) * 360 + (gt.get("month", 1) - 1) * 30
-                + (gt.get("day", 1) - 1)) * 1440 + gt.get("hour", 12) * 60 + gt.get("minute", 0)
-    diff_min = _abs(last_gt) - _abs(first_gt)
+    diff_min = (_gt_abs_minutes(last_gt) or 0) - (_gt_abs_minutes(first_gt) or 0)
     if diff_min < 0:
         diff_min = 0
     diff_days = diff_min // 1440
@@ -798,10 +838,18 @@ Output VALID JSON following the schema exactly.
                 if repaired:
                     logger.info("[Fermentation V4] JSON repair succeeded")
                     return _normalize_ferment_result(repaired, use_v3, channel_id=channel_id)
-                logger.error("[Fermentation V4] JSON repair failed, using fallback")
+                logger.error("[Fermentation V4] JSON repair failed, returning degraded stub")
                 # Bug 2a fallback patch (2026-05-20): fallback dict도 emotion_at_save 필드 포함.
                 # _normalize_ferment_result를 우회하지만 schema 일관성 유지 (빈 값 = backward compat).
+                #
+                # [2026-08-01] `_parse_failed` 플래그 신설. 이 dict는 truthy라서 호출부
+                # `if result_data:`를 그냥 통과했고, 곧바로 원본 history를 잘라냈다
+                # (12메시지 → 깨진 원문 500자, 복구 불가). DEEP 쪽엔 이미 보존·재시도
+                # 가드가 있는데 FRESH만 없던 비대칭. 호출부가 이 플래그를 보고
+                # 원본을 보존하고 다음 사이클에 재시도한다. 연속 실패가 누적되면
+                # 그때 이 stub을 받아들여 정체를 푼다(FERMENT_MAX_FAIL_STREAK).
                 return {
+                    "_parse_failed": True,
                     "summary": text_result[:500],
                     "compressed_blocks": [],
                     "arc_observations": {},
@@ -1060,8 +1108,11 @@ Important:
                 if repaired:
                     logger.info("[Fermentation V4] DEEP JSON repair succeeded")
                     return _normalize_deep_result(repaired)
-                logger.error("[Fermentation V4] DEEP JSON repair failed, using fallback")
+                logger.error("[Fermentation V4] DEEP JSON repair failed, returning degraded stub")
+                # [2026-08-01] `_parse_failed` — 호출부 _suspect 판정은 길이 휴리스틱이라
+                # 원문 조각이 기존 deep와 비슷한 길이면 그냥 통과해 덮어쓴다. 명시 플래그로 승격.
                 return {
+                    "_parse_failed": True,
                     "deep_narrative": text_result[:1000],
                     "crystallized_dialogues": all_dialogues[:5],
                     "active_memory_triggers": list(set(all_triggers)),
@@ -1184,6 +1235,30 @@ async def auto_ferment(
             channel_id=ch_id,  # Bug 2a (2026-05-20): emotion_at_save 캡처용
         )
         
+        # [2026-08-01] 파싱 실패 가드 — DEEP(아래 _suspect)과 대칭.
+        # 이 블록 이전에는 깨진 stub도 truthy라 그대로 저장되고 history[:12]가
+        # 파기됐다(복구 경로 0). 이제 원본을 남기고 다음 사이클에 재시도한다.
+        # 무한 정체 방지: 연속 실패가 임계에 닿으면 stub을 받아들이고 진행.
+        if isinstance(result_data, dict) and result_data.get("_parse_failed"):
+            _streak = int(session_data.get("ferment_fail_streak", 0) or 0) + 1
+            _max_streak = getattr(config, "FERMENT_MAX_FAIL_STREAK", 3)
+            session_data["ferment_fail_streak"] = _streak
+            if _streak < _max_streak:
+                logger.warning(
+                    "[Fermentation V4] FRESH 파싱 실패 %d/%d — history %d개 보존, 다음 사이클 재시도",
+                    _streak, _max_streak, len(history),
+                )
+                result_data = None
+            else:
+                logger.error(
+                    "[Fermentation V4] FRESH 파싱 %d회 연속 실패 — 저품질 stub 수용하고 진행 "
+                    "(구간 %d개 압축 손실). 모델 JSON 출력 점검 필요.",
+                    _streak, FERMENT_CHUNK_SIZE,
+                )
+                session_data["ferment_fail_streak"] = 0
+        elif result_data:
+            session_data["ferment_fail_streak"] = 0
+
         if result_data:
             summary_text = result_data.get("summary", "")
 
@@ -1201,11 +1276,18 @@ async def auto_ferment(
                     _to_msg_id = _e["message_id"]
                     break
 
+            # [H3 2026-08-01] 구간의 작중 시간 경계 보존. 회상 감쇠(score_fermented_entries)가
+            # "몇 턴 전이냐"만 보고 "작중 얼마나 지났느냐"를 못 보던 것을 메우는 재료.
+            # 옛 엔트리엔 이 키가 없다 → 회상 쪽에서 no-op 폴백.
+            _gt_first, _gt_last = _extract_game_time_bounds(_to_summarize)
+
             # V4 포맷으로 저장
             fermented_entry = {
                 "timestamp": get_timestamp(),
                 "summary": summary_text,
                 "message_count": FERMENT_CHUNK_SIZE,
+                "game_time_start": _gt_first,
+                "game_time_end": _gt_last,
                 "compressed_blocks": result_data.get("compressed_blocks", []),
                 "memory_triggers": result_data.get("memory_triggers", []),
                 "arc_observations": result_data.get("arc_observations", {}),
@@ -1229,10 +1311,12 @@ async def auto_ferment(
                     import domain_manager
 
                     for npc_name, deltas in result_data["helena_delta"].items():
+                        # [C1 2026-08-01] LLM(발효 helena_delta) 제안 → 선언 -10~+10로 캡
                         domain_manager.update_helena_metric(
                             ch_id, npc_name,
                             depth_delta=deltas.get("depth", 0),
-                            tension_delta=deltas.get("tension", 0)
+                            tension_delta=deltas.get("tension", 0),
+                            source="helena.fermentation",
                         )
                 except Exception as e:
                     logger.warning(f"[Fermentation V4] Helena Delta 적용 실패: {e}")
@@ -1332,7 +1416,14 @@ async def auto_ferment(
         # (기존: deep_result truthy면 무조건 overwrite + fermented 전체 wipe → 한 번의 실패가 영구 소실)
         _new_deep = (deep_result.get("deep_narrative", "") if isinstance(deep_result, dict) else deep_result) if deep_result else ""
         _prev_deep = current_deep or ""
-        _suspect = (not _new_deep) or (len(_prev_deep) > 200 and len(_new_deep) < len(_prev_deep) * 0.5)
+        # [2026-08-01] 길이 휴리스틱에 명시 플래그 추가 — 파싱 실패 stub이 기존 deep와
+        # 비슷한 길이면 휴리스틱만으로는 통과해 덮어썼다.
+        _parse_failed = isinstance(deep_result, dict) and bool(deep_result.get("_parse_failed"))
+        _suspect = (
+            _parse_failed
+            or (not _new_deep)
+            or (len(_prev_deep) > 200 and len(_new_deep) < len(_prev_deep) * 0.5)
+        )
 
         if deep_result and _suspect:
             logger.warning("[Fermentation] DEEP 압축 결과 의심(빈/과단축 %d→%d) — deep/fermented 보존, 다음 사이클 재시도",
@@ -1732,10 +1823,14 @@ def score_fermented_entries(entries: list, query: str = "", channel_id: str = ""
     # get_world_state 호출은 단 1회 — 이전 블록 완전 제거. 중복 곱 방지.
     current_scene_base = ""
     current_scene_mod = ""
+    _now_minutes = None            # [H3] 현재 작중 시각 (절대 분)
     if channel_id:
         try:
             import domain_manager as _dm
-            _emo_states = _dm.get_world_state(channel_id).get("npc_emotion_states", {})
+            _world = _dm.get_world_state(channel_id)
+            # [H3 2026-08-01] 같은 get_world_state 호출을 재사용 — 콜 순증 0.
+            _now_minutes = _gt_abs_minutes(_world)
+            _emo_states = _world.get("npc_emotion_states", {})
             if _emo_states:
                 max_npc = max(
                     (s for s in _emo_states.values() if isinstance(s, dict)),
@@ -1755,6 +1850,45 @@ def score_fermented_entries(entries: list, query: str = "", channel_id: str = ""
     _gate_recent_keep = getattr(_cfg, 'MEMORY_GATE_RECENT_KEEP', 2)
     _gate_dropped = 0
 
+    # [H3 2026-08-01] 작중 시간 감쇠 설정 (HypaPlus 이식).
+    # 기존 recency는 **엔트리 순번**만 봤다 — 작중 3개월을 건너뛰어도 "몇 턴 전이냐"로만
+    # 계산돼 시간 도약이 회상에 전혀 반영되지 않았다. game_time 메타는 이미 매 메시지에
+    # 붙어 있었고 발효 입력 헤더에도 들어갔지만, 회상에는 한 번도 도달하지 않던 사각.
+    #
+    # 곡선을 일부러 다르게 잡는다:
+    #   순번 축 = 0.5^(age/H)  지수 — "대화상 최근"은 빨리 죽는 게 맞다.
+    #   작중 축 = 1/sqrt(1+d/T) 완만 — 작중 1년 전 사건도 0이 되면 안 된다.
+    #                                  (타임스킵 이전이 통째로 회상 불가가 되는 것 방지)
+    # 결합 = recency_order * story_factor**w. 두 개의 no-op 성질을 보장한다:
+    #   ① w=0  → story_factor**0 = 1 → 기존 동작과 **완전 동일**(설정 한 줄 롤백)
+    #   ② 타임스킵 없는 캠페인 → d≈0 → story_factor≈1 → w와 무관하게 no-op
+    #   ③ 옛 엔트리(game_time_* 키 없음) → story_factor=1 → 하위호환
+    _story_w = float(getattr(_cfg, 'MEMORY_RECENCY_STORY_WEIGHT', 1.0))
+    _story_scale = max(1.0, float(getattr(_cfg, 'MEMORY_RECENCY_STORY_SCALE_DAYS', 30.0)))
+    _story_on = _story_w > 0.0 and _now_minutes is not None
+    _trace = []  # [H2′] 계측 — 튜닝 판단용, 소비 없음
+
+    # [H2 2026-08-01] noisy-OR 구제 슬롯 (HypaPlus 이식).
+    # 가중합(sim·recency·important)은 AND 성향이라 "고르게 괜찮은 것"을 뽑는다.
+    # 그래서 **오래됐지만 지금 질의와 정확히 일치하는** 엔트리가 recency(0.35)에 눌려
+    # 밀린다 — 기록이 있는데 못 꺼내는 것, Contract-First의 반대편이다.
+    # noisy-OR `1-(1-sim)(1-rec)`은 OR 성향이라 한 축만 압도적이어도 통과시킨다.
+    #
+    # 교체가 아니라 **델타**다: 가중합 순위 상위 _rescue_at개는 그대로 두고,
+    # 그 밖의 엔트리 중 noisy-OR 최상위 _rescue_n개를 _rescue_at 위치에 끼워 넣는다.
+    #   - 상위권 이미 선발된 최신 엔트리는 후보에서 빠지므로, 남은 후보 중에서는
+    #     자연히 "고유사도·저최근성"이 이긴다(그게 이 장치의 표적).
+    #   - 밀려나는 건 가중합 기준 **경계선 항목**뿐. 비용이 유계다.
+    #   - 상류 F1 evidence gate가 이미 "느낌만 비슷한" 잡음을 걸렀으므로
+    #     OR의 관대함이 무제한으로 풀리지 않는다.
+    #   - _rescue_n=0 → 완전 no-op(설정 한 줄 롤백).
+    # 관측이 누적돼야만 보이는 종류라 계측 대기 없이 선배포(레티어스 판단 2026-08-01):
+    # 안 하면 손해, 해도 손해는 유계.
+    _rescue_n = int(getattr(_cfg, 'MEMORY_RESCUE_SLOTS', 1))
+    _rescue_at = max(1, int(getattr(_cfg, 'MEMORY_RESCUE_POSITION', 3)))
+    _or_by_id = {}   # id(entry) -> noisy-OR score
+    _pos_by_id = {}  # id(entry) -> 원본 인덱스 (결정론 tiebreak)
+
     for idx, entry in enumerate(entries):
         if not isinstance(entry, dict):
             continue
@@ -1763,6 +1897,17 @@ def score_fermented_entries(entries: list, query: str = "", channel_id: str = ""
         # 선형은 옛 엔트리에도 상당 가중이 남아 최근성 신호가 무뎠다. 지수 감쇠로 교체.
         _half_life = max(1, getattr(_cfg, 'MEMORY_RECENCY_HALF_LIFE_ENTRIES', 4))
         recency = 0.5 ** ((total - 1 - idx) / _half_life) if total > 0 else 0.5
+
+        # [H3 2026-08-01] 작중 시간 축 결합. 위 블록의 설계 근거 참조.
+        story_factor = 1.0
+        story_days = None
+        if _story_on:
+            _end = _gt_abs_minutes(entry.get("game_time_end"))
+            if _end is not None:
+                story_days = max(0.0, (_now_minutes - _end) / 1440.0)
+                story_factor = 1.0 / math.sqrt(1.0 + story_days / _story_scale)
+        _recency_order = recency
+        recency = recency * (story_factor ** _story_w)
 
         # Importance: any block marked important?
         blocks = entry.get("compressed_blocks", [])
@@ -1833,6 +1978,11 @@ def score_fermented_entries(entries: list, query: str = "", channel_id: str = ""
         # 옛 엔트리 (emotion_at_save 없음 또는 빈/비정상) → boost 1.0 (no-op)
 
         scored.append((entry, score))
+        _trace.append((idx, similarity, _recency_order, story_factor, story_days, score))
+
+        # [H2] noisy-OR 병행 계산 — 순위 주입에만 쓰이고 score는 건드리지 않는다.
+        _or_by_id[id(entry)] = 1.0 - (1.0 - similarity) * (1.0 - recency)
+        _pos_by_id[id(entry)] = idx
 
     if _gate_dropped:
         logger.info(
@@ -1840,7 +1990,53 @@ def score_fermented_entries(entries: list, query: str = "", channel_id: str = ""
             _gate_dropped, total, len(query_tokens),
         )
 
-    scored.sort(key=lambda x: -x[1])
+    # [2026-08-01] 동점 tiebreak 명시화. 기존 `sort(key=-score)`는 파이썬 stable sort +
+    # entries 순서 입력에 **암묵적으로** 기대고 있었다(결과는 같지만 계약이 아니었다).
+    # 구제 슬롯이 이 순위 위에 얹히므로 계약을 명시한다 — Pass D-2 결정론 규율.
+    # 동점이면 오래된 것 먼저(= 기존 stable sort 결과와 동일, 동작 무변경).
+    scored.sort(key=lambda x: (-x[1], _pos_by_id.get(id(x[0]), 0)))
+
+    # [H2 2026-08-01] 구제 슬롯 주입. 위 블록의 설계 근거 참조.
+    # 결정론(Pass D-2): -or_score → 원본 인덱스 내림차순(최신 우선) 순으로 tiebreak.
+    #                   dict 반복 순서에 절대 의존하지 않는다.
+    _rescued = []
+    if _rescue_n > 0 and len(scored) > _rescue_at:
+        _head = scored[:_rescue_at]
+        _tail = scored[_rescue_at:]
+        _cands = sorted(
+            _tail,
+            key=lambda t: (-_or_by_id.get(id(t[0]), 0.0), -_pos_by_id.get(id(t[0]), 0)),
+        )
+        _pick = _cands[:_rescue_n]
+        _pick_ids = {id(e) for e, _ in _pick}
+        if _pick_ids:
+            _tail = [t for t in _tail if id(t[0]) not in _pick_ids]
+            scored = _head + _pick + _tail
+            _rescued = [
+                (_pos_by_id.get(id(e), -1), _or_by_id.get(id(e), 0.0)) for e, _ in _pick
+            ]
+
+    # [H2′ 계측 2026-08-01] 회상 선택 로그 1줄. 소비자 없음 — 사후 판독 전용.
+    # 판독 목적: "오래됐지만 질의와 정확히 일치하는 엔트리가 밀리는가"(maxsim rank).
+    #   구제 슬롯이 켜져 있으면 `resc=` 필드가 실제로 무엇을 건져 올렸는지 보여준다 —
+    #   sim이 낮은 것만 계속 건지면 _rescue_n을 0으로 내리면 된다.
+    # 형식: idx:sim/recOrd*story(작중일)=score  — 상위 6개만, score 내림차순.
+    if _trace:
+        _rank = {t[0]: r for r, t in enumerate(
+            sorted(_trace, key=lambda t: -t[5]))}
+        _parts = []
+        for t in sorted(_trace, key=lambda t: -t[5])[:6]:
+            _idx, _sim, _ro, _sf, _sd, _sc = t
+            _d = f"{_sd:.0f}d" if _sd is not None else "-"
+            _parts.append(f"{_idx}:{_sim:.2f}/{_ro:.2f}*{_sf:.2f}({_d})={_sc:.3f}")
+        _top_sim = max(_trace, key=lambda t: t[1])
+        _resc = (" resc=" + ",".join(f"{i}(or{o:.2f})" for i, o in _rescued)) if _rescued else ""
+        logger.info(
+            "[Fermentation] recall n=%d story_w=%.1f | %s | maxsim idx=%d sim=%.2f rank=%d%s",
+            total, _story_w if _story_on else 0.0, " ".join(_parts),
+            _top_sim[0], _top_sim[1], _rank.get(_top_sim[0], -1), _resc,
+        )
+
     return scored
 
 
@@ -2349,7 +2545,11 @@ def ensure_memory_fields(session_data: Dict[str, Any]) -> Dict[str, Any]:
     
     if "deep_memory" not in session_data:
         session_data["deep_memory"] = ""
-    
+
+    # [2026-08-01] FRESH 발효 파싱 연속 실패 카운터. 성공 시 0으로 리셋된다.
+    if "ferment_fail_streak" not in session_data:
+        session_data["ferment_fail_streak"] = 0
+
     return session_data
 
 

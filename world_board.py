@@ -63,13 +63,9 @@ def _genre_labels(channel_id: str) -> tuple:
     return (stage or "미정", atmosphere or "미정")
 
 
-def _calc_post_count(npc_count: int) -> int:
-    """NPC 수 → 채널당 최대 게시물 수. cap=3."""
-    if npc_count <= 2:
-        return 1
-    if npc_count <= 5:
-        return 2
-    return 3
+# ⛔[2026-07-28 삭제] _calc_post_count — NPC 수에 따라 채널당 게시물을 1~3으로 늘리려던 함수.
+#   호출처 0(실제 호출부는 `max_posts=1` 하드코딩). 게시판이 심심하다고 느껴지면 그 숫자만
+#   올리면 되므로 분기 함수를 유지할 이유가 없다. 구 규칙: ≤2명→1, ≤5명→2, 그 외 3.
 
 
 # =========================================================
@@ -572,10 +568,26 @@ def _select_best_event(
         if last_two[0] and last_two[0] == last_two[1]:
             blocked_npcs.add(last_two[0])
 
+    # [2026-07-28] 이름 정규화 — absent_set/blocked_npcs는 domain 정규 키인데,
+    # Scanner 1(npc_emotion_states 키)·2(dai npc_attitudes 키)가 넘기는 npc는 Theoria가 그 턴에
+    # 쓴 **원시 표기**다. 표기가 어긋나면 실제 부재 NPC의 이벤트가 "부재 아님"으로 판정돼
+    # 통째로 드롭되거나 message로 오분류됐다. (Scanner 5/6/10은 canonical 경유라 원래 안전.)
+    _npc_map_canon = domain_manager.get_npcs(channel_id) or {}
+
+    def _canon(n):
+        if not n:
+            return n
+        try:
+            return domain_manager._find_npc_key(_npc_map_canon, n) or n
+        except Exception:
+            return n
+
     candidates = []
     for ev in events:
         ch = ev.get("channel", "sns")
-        npc = ev.get("npc")
+        npc = _canon(ev.get("npc"))
+        if npc and npc != ev.get("npc"):
+            ev["npc"] = npc          # 하류(게시·이력 기록)도 정규 이름을 쓰게
         ev_type = ev.get("type", "")
         weight = ev.get("weight", 0)
 

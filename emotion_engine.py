@@ -269,7 +269,6 @@ class EmotionEngine:
         psyche_states: Dict[str, Any],
         previous_emotions: Dict[str, Dict],
         current_turn: int,
-        npc_attitudes: Optional[Dict[str, Any]] = None,
         scene_ctx: Optional[Dict[str, Any]] = None,
         memory_triggers: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, EmotionState]:
@@ -282,7 +281,8 @@ class EmotionEngine:
                                        deep_read:str, resurfacing:str|null}}
             previous_emotions: 이전 턴 감정 상태 {npc_name: EmotionState.to_dict()}
             current_turn: 현재 턴 번호
-            npc_attitudes: (선택) domain_manager의 NPC 태도 데이터
+            (2026-07-28: npc_attitudes 인자 제거 — 본문에서 한 번도 안 읽었고,
+             관계층은 이미 DAI의 relation 레이어로 들어온다 = 중복 경로였다.)
             scene_ctx: (선택) {register, silence_type, scene_type} — §5b Tier 6~7 + 친밀 재서열 입력
             memory_triggers: (선택) DAI.memory_triggers 전체 리스트 — §5b Tier 4 입력
 
@@ -327,7 +327,22 @@ class EmotionEngine:
             raw_snapshot = dict(raw)
 
             # 3. 이전 턴과 블렌딩 (시간 감쇠)
-            prev_data = previous_emotions.get(npc_name, {})
+            # [2026-07-28] 이름 해상도 — Theoria는 턴마다 표기를 흔든다("리리스" / "Lilith(리리스)").
+            #   리터럴 조회만 하면 표기가 바뀐 턴에 이전 감정을 못 찾아 **has_previous=False**가 되고,
+            #   블렌딩 기준·스파이크 베이스라인이 조용히 0으로 리셋된다 → 급변이 아닌데 스파이크로
+            #   오탐되고, 그 오탐이 world_board 이벤트·story_director 스포트라이트까지 번진다.
+            #   저장 키가 정규 이름이 아닐 수도 있으므로 양방향으로 찾는다.
+            prev_data = previous_emotions.get(npc_name)
+            if not prev_data and previous_emotions:
+                try:
+                    import domain_manager as _dm_res
+                    _alt = _dm_res._find_npc_key(previous_emotions, npc_name)
+                    if _alt:
+                        prev_data = previous_emotions.get(_alt)
+                except Exception:
+                    pass
+            if not isinstance(prev_data, dict):
+                prev_data = {}
             prev_state = EmotionState.from_dict(prev_data)
             has_previous = any(v > 0 for v in prev_state.emotions.values())
             if has_previous:
