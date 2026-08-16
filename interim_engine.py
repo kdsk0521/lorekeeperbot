@@ -258,10 +258,16 @@ def reconstruct_interim(channel_id: str) -> Optional[str]:
             if k:
                 on_scene_keys.add(k)
 
+        # [2026-08-11 사망 파이프라인] 생존축 필터 — 구멍 순위 1.
+        #   막간 후보는 **부재자 집합**이라 죽거나 쓰러진 인물이 정의상 영구 후보였다
+        #   (사후 2턴째부터 시체가 시장에 가고 사람을 만나며 SQLite에 적립됐다).
+        import npc_manager as _npm
         candidates: List[str] = []
         for n in recent_names + list(npc_summaries.keys()):
             key = domain_manager._find_npc_key(registered, n)
             if key and key not in candidates and key not in pc_masks and key not in on_scene_keys:
+                if not _npm.is_npc_active(registered.get(key) or {}):
+                    continue
                 candidates.append(key)
         cap = min(5, band + 2)
         selected = candidates[:cap]

@@ -146,13 +146,25 @@ async def run_persistent_audit(client, model_id: str, channel_id: str) -> Option
                 items = []
                 report[cat] = []
             counts[cat] = len(items)
-            for it in items[:8]:
-                logger.warning(f"[PersistAudit] {cat}: {str(it)[:200]}")
 
         total = sum(counts.values())
         _turn = domain_manager.get_world_state(channel_id).get("turn_index", 0)
         logger.info(f"[PersistAudit] turn={_turn} total={total} "
                     + " ".join(f"{k}={v}" for k, v in counts.items()))
+        # [2026-08-03] 항목 전문은 verbose 채널로.
+        #   종전엔 카테고리 4종 × 최대 8건 × 200자 절단을 **journal에 warning으로** 쏟아
+        #   감사 도는 턴마다 최대 1600자가 흐름을 덮었다. 게다가 200자에서 잘려 정작
+        #   긴 항목(모순 쌍의 양쪽 인용)은 뒷부분이 사라졌다 — 시끄러운데 안 보이는 상태.
+        #   journal은 위 카운트 한 줄(훑기 충분), 전문은 tail -f logs/verbose.log.
+        if total:
+            try:
+                bot_utils.vlog(
+                    "PersistAudit",
+                    json.dumps(report, ensure_ascii=False, indent=2),
+                    channel_id,
+                )
+            except Exception:
+                pass
 
         # 보고서 저장 (사람 리뷰용 — 자동 수리 없음)
         domain_manager.update_session_ai_memory(channel_id, {

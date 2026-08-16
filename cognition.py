@@ -383,7 +383,16 @@ async def _extract_batch(
             "\n### world_state"
             "\nOutput: `{\"active_threads\": [], \"resolved_threads\": [], \"world_changes\": [],"
             " \"npc_schedule_hints\": {}, \"basic_needs_flags\": {}, \"current_arc\": \"\","
-            " \"residual_effects\": \"\"}`"
+            " \"residual_effects\": \"\", \"scene_minutes_elapsed\": 0}`"
+            # [2026-08-16 상태창 코드 조립] 구 구조는 렌더러가 상태줄에 시각을 적고 코드가 그걸
+            #   정규식으로 되읽어 시계를 밀었다. 상태창이 코드 소유가 되면서 모델 몫으로 남는 건
+            #   "이번 턴 산문이 얼마나 흘렀나" 하나뿐 — 그걸 여기(배경 추출)로 옮겨 묻어간다.
+            #   ★절대 시각이 아니라 **경과 분**을 묻는다: 모델이 세계 시계를 몰라도 답할 수 있고,
+            #   코드 쪽 클램프(SCENE_TIME_RULES)가 그대로 재사용된다.
+            "\nscene_minutes_elapsed: integer. In-story minutes the AI RESPONSE covered, from its "
+            "first beat to its last. Read it off the prose: a held moment, a single exchange, or a "
+            "still scene is 0. Do not guess or round up to feel eventful — with no evidence of "
+            "passing time, 0 is the accurate answer."
             "\nactive_threads: Merge with existing, remove resolved. Max 10. Korean."
             "\nresolved_threads: Threads resolved THIS turn. Korean."
             "\nworld_changes: NEW environmental changes only. Max 5. Korean."
@@ -405,16 +414,34 @@ async def _extract_batch(
             "\n### entity_state"
             "\nTrack per-NPC state CHANGES this turn. Only NPCs who appear or are mentioned."
             "\nNAMING (avoid duplicate entities): for any NPC already in the provided list "
-            "(SceneNPCs/LoreNPCs), REUSE that exact name form. Never translate or re-romanize a "
+            # [2026-08-17 인덱스-온리] 명부는 **색인**이지 신규 등재 후보가 아니다. 이름만
+            #   급식된 NPC(로어 목록발)를 모델이 "처음 보는 사람"으로 다시 지어내던 자리.
+            "(SceneNPCs/LoreNPCs), REUSE that exact name form. A name on that roster is an entity that "
+            "already exists — it is recognized, never re-created as a new person. "
+            "Never translate or re-romanize a "
             "known character — 레나 stays 레나, not Rena; Rena stays Rena. Give a new name only to a "
             "genuinely new person. If you must reference a known NPC in a different script, write it "
             "as KnownName(otherform) e.g. 레나(Rena) so it resolves to one entity."
             "\nOutput: `{\"changes\": {NpcName: {\"location\": str or null, \"mood\": str or null, "
-            "\"health\": str or null, \"notable\": str or null, \"descriptor\": str or null, "
+            "\"health\": str or null, \"incapacitated\": {\"value\": bool, \"evidence\": str} or null, "
+            "\"notable\": str or null, \"descriptor\": str or null, "
             "\"new_individual\": bool, \"named_as\": str or null}}, \"pc_observed\": str or null}`"
             "\n- location: NEW location if NPC moved this turn. null if unchanged."
             "\n- mood: Current emotional state in Korean (1-2 words). null if unclear."
             "\n- health: Health change description in Korean. null if unchanged."
+            # [2026-08-11 사망 파이프라인] 신설 스키마가 아니라 health **옆자리**다.
+            #   health는 자유 서술이라 코드 전이를 걸 수 없었다(유일한 관측 재료였는데
+            #   소비자가 없었던 이유). 계약을 빡빡하게 쓰는 게 이 필드의 본체 —
+            #   느슨하면 "위험해 보인다"가 상태 전이로 승격된다(날조).
+            #   ※ 이 주석은 인접한 문자열 리터럴 **사이**에 있다(프롬프트에 안 들어감).
+            "\n- incapacitated: the scene showed this NPC STOP being able to act — killed, knocked "
+            "out, bound and helpless, collapsed unconscious. Emit `{\"value\": true, \"evidence\": "
+            "\"<the clause from the text that states it>\"}`. STATED AND SETTLED ONLY: the text says "
+            "it happened, not that it might. A wound, bleeding, exhaustion, losing a fight, being "
+            "threatened, being at risk, someone fearing it, or an intent to kill are NOT this field "
+            "— those belong in `health`. Quote, do not paraphrase; evidence must be a fragment that "
+            "is actually in the rendered text. No fragment means no entry. null in every other case, "
+            "which is nearly every turn."
             "\n- notable: One-line notable state change (Korean). null if nothing remarkable."
             "\n- descriptor: Korean 1-2 sentences of NEW identity detail about this NPC revealed THIS turn "
             "— role, appearance, manner, a defining trait or skill. Emit whenever something new about WHO "
@@ -422,6 +449,12 @@ async def _extract_batch(
             "NPC's sheet deepens over time as they recur. null if nothing new about their identity this "
             "turn (a plain re-appearance with no new facet). GROUND in what the scene actually showed — "
             "stay within what the rendered text shows."
+            # [2026-08-17 미래연속성 테스트] 보존 가치 = **나중에 이 사실이 필요한가**로 판정.
+            #   descriptor는 "새 디테일이면 다 적어"였고, 인사·잡담·이동·식사가 시트로 굳었다.
+            #   판정문 1줄 + 배제 4~5항목만(전량 나열은 순회를 부른다).
+            "\n  Worth recording is the detail whose absence later becomes a continuity error, or that "
+            "explains a subsequent decision, relationship, obligation, knowledge, possession, or condition. "
+            "Greetings, small talk, plain movement, meals, and attempts that changed nothing are null."
             "\n- new_individual: true ONLY if this entry is a DIFFERENT person who merely shares a name "
             "with an already-known NPC (e.g., a second, unrelated 병사). The SAME recurring NPC must leave "
             "this false/omitted — that case deepens the existing sheet, it does not split it."
@@ -446,7 +479,13 @@ async def _extract_batch(
             "\nAnalyze the AI RESPONSE's rendering properties (not story content)."
             "\nOutput: `{\"gaze\": str, \"lighting\": str, \"palette\": str, "
             "\"rhythm\": str, \"temporal_density\": str, \"unresolved\": [], \"withholding_scheme\": str}`"
-            "\n- gaze: narrative gaze/focus — what is close-up vs background (English telegraphic, 1 fragment)"
+            # [2026-08-12 fingerprint 프레임 소급] gaze 형식 계약 — 소비자 셋(Slot 20 인물란·
+            #   world_board 출석·iceberg 대사심도)이 전부 **이름 쉼표 나열**을 가정하고 exact match를 건다.
+            #   서술 조각이 오면 매칭 0 → 전 NPC 배경 강등이라, 계약을 이름 목록으로 좁힌다.
+            "\n- gaze: comma-separated NPC NAMES the camera actually stayed with this turn — "
+            "onstage names copied exactly as listed in SceneNPCs (closest first). "
+            "Names only: no description, no phrases, no off-stage or unnamed figures. "
+            "null when the turn held no NPC in focus."
             "\n- lighting: name the controlling light SOURCE + key + direction (e.g. 'low-key window side-light', 'overhead high-key flat', 'single-source backlit') — derive from where the light actually falls. (English telegraphic, 1 phrase)"
             "\n- palette: controlling light-COLOR, derived from the scene's dominant valence + source — name the specific hue from the full spectrum (amber/gold/rust/crimson/grey/steel/cool/green-cast/sodium/…). hold the prior hue while its condition persists; name a fresh hue the moment valence or source shifts. (English telegraphic, 1 phrase)"
             "\n- rhythm: prose rhythm — sentence-length pattern, punctuation density, breath (English telegraphic, 1 phrase)"
@@ -682,7 +721,7 @@ Analyze the provided lorebook precisely to extract all metadata required for gam
 ## Analysis Principles (Absolute Principles)
 1. Holistic Consistency: Clearly distinguish between NPCs and the PC (Player Character/Protagonist).
 2. Genre Alignment: Match lore themes with existing system genre keywords.
-3. Wingbeat Seeds (나비 날개짓): find small, genre-neutral incidents or latent perturbations already present in the lore. A minor event, object, or unresolved tension whose consequences could ripple outward through play. Not catastrophes; small first-causes only. Scale is emergent, so never pre-commit how big it becomes. Grounding (primary): each wingbeat traces to a concrete detail actually in the lore text (a named object, a mentioned event, an unresolved thread you can point to). Source the seed from the lore's own material, never from a genre label. Genre (soft tint): let the genres you identified color how a wingbeat reads (ominous, warm, mundane), not which wingbeats exist. If a lore-grounded wingbeat does not match the tagged genre, trust the concrete lore over the label; the genre tag may be imperfect. Genre is a lean, not a lock.
+3. Wingbeat Seeds (나비 날개짓): find small, genre-neutral incidents or latent perturbations already present in the lore. A minor event, object, unresolved tension, small comfort, or recurring quirk whose consequences could ripple outward through play. Not catastrophes; small first-causes only. Scale is emergent, so never pre-commit how big it becomes. Grounding (primary): each wingbeat traces to a concrete detail actually in the lore text (a named object, a mentioned event, an unresolved thread you can point to). Source the seed from the lore's own material, never from a genre label. Genre (soft tint): let the genres you identified — narrative_tone above all — color how a wingbeat reads (ominous, warm, comic, mundane). A seed is not a clue by default: in a comedy world a wingbeat reads as a running joke about to land, in a romance as a warmth about to be noticed; unexplained does not mean suspicious. Genre does not decide which wingbeats exist. If a lore-grounded wingbeat does not match the tagged genre, trust the concrete lore over the label; the genre tag may be imperfect. Genre is a lean, not a lock.
 4. Optimization: Write descriptions concisely and powerfully. (Follow the optimization guide in text_resources)
 5. Exhaustive Extraction (CRITICAL): Extract ALL characters identified as NPCs, Residents, Neighbors, or special roles. Do not summarize or truncate the list. If there are 20 NPCs, extract all 20.
 
@@ -704,7 +743,7 @@ IMPORTANT: All string descriptions and guides must be in KOREAN.
 4. lore_summary:
    - theme: Core theme of the world (1-2 sentences in Korean)
    - anomaly_seeds: small 'wingbeat' seeds, genre-neutral minor incidents latent in this world. 0 to N items; mint only what the lore genuinely supports, do not pad to a quota, and 0 is a valid answer for a quiet slice-of-life world. Each seed:
-     - name: Korean name of a small noticed thing, not a dramatic loaded title. good: '반쯤 열린 편지', '두 번 나온 이름', '일찍 닫은 가게'. avoid: '그림자 침식', '운명의 대격변', '삼각관계 점화'
+     - name: Korean name of a small noticed thing, not a dramatic loaded title. Register follows the tagged narrative_tone — mystery is one register, not the default. good: '반쯤 열린 편지' (noir), '늘 두 잔을 시키는 손님' (romance), '매주 한 글자씩 늘어나는 간판 오타' (comedy), '사흘째 같은 넥타이' (drama). avoid: '그림자 침식', '운명의 대격변', '삼각관계 점화'
      - axis: which dimension the wingbeat touches. Closed list, pick one:
        mental: an inner shift (a doubt, a mood, a preoccupation)
        relation: something between people (a slight, a warmth, a widening distance)
@@ -948,18 +987,30 @@ async def extract_voice_card(
 
     system_prompt = (
         "You are a dialogue/voice coach for TRPG NPCs.\n"
-        "From the character description, distill ONLY how this character SPEAKS (말투) — "
-        "ignore backstory, appearance, and plot.\n\n"
-        "Describe: tone/register, honorific level (존댓말/반말), sentence length & rhythm, "
-        "vocabulary tics, and any verbal habits or catchphrases.\n\n"
+        "From the character description, distill ONLY how this character SPEAKS (말투). "
+        "Ignore backstory, appearance, and plot.\n\n"
+        "Write it as what this character DOES when speaking, not as what the speaking sounds like: "
+        "honorific level (존댓말/반말/사투리), sentence length and where they break, what they ask "
+        "or refuse to ask, what they repeat, where they trail off or cut short, verbal habits.\n\n"
         "Rules:\n"
-        "- KOREAN output only. Plain text (this becomes the '말투' field) — NO JSON, headers, or preamble.\n"
-        "- Concise: 2-3 lines describing the speech style.\n"
-        "- Describe the MANNER of speaking ONLY. Do NOT write any example/sample dialogue lines or quotes — "
-        "the renderer generates fresh dialogue from this description each turn, so samples would just get "
+        "- KOREAN output only. Plain text (this becomes the '말투' field): NO JSON, headers, or preamble.\n"
+        "- Concise: 2-3 lines.\n"
+        # [2026-08-02] ★성질 명명 → 행동 명세. 구 지시가 "describing the speech style"이라
+        #   "임상적이고 따뜻하고 사무적인 어조" 같은 형용사 목록이 나왔고, 이 필드는 한국어라
+        #   렌더러가 번역 없이 **그대로 서술**했다(실관측). 성질을 명명하면 모델은 그 성질을
+        #   '연기'하는 대신 '보고'한다. 행동으로 쓰면 대사가 그렇게 들린다.
+        #   ⚠초판은 여기에 "NO adjective lists. Do not write '~적이고 ~한 어조'"라고 썼는데
+        #   그건 feedback_llm_bias_patch_design 원리1(토큰 명명 금지) 정면 위반이다 —
+        #   막으려는 패턴을 프롬프트에 리터럴로 실어 보내면 오히려 점화된다.
+        #   구조로 배제한다: **형용사 나열은 행동이 아니므로** 행동 명세만 요구하면 통과 못 한다.
+        "- Each line names a concrete verbal behavior observable in one exchange: a level, "
+        "a length, a habit, a thing asked or refused. Qualities of the voice arrive inside "
+        "that behavior, so a writer can perform the line straight from it.\n"
+        "- Describe the MANNER of speaking ONLY. Do NOT write any example/sample dialogue lines or quotes, "
+        "because the renderer generates fresh dialogue from this description each turn, so samples would just get "
         "copied and feel mechanical.\n"
         "- If the description gives few speech cues, infer a fitting voice from personality, "
-        "but keep it SPECIFIC to this character — avoid generic 'speaks politely' filler."
+        "but keep it SPECIFIC to this character rather than generic 'speaks politely' filler."
     )
 
     try:
@@ -973,7 +1024,9 @@ async def extract_voice_card(
         )
         contents = [
             types.Content(role="user", parts=[types.Part(text=system_prompt)]),
-            types.Content(role="model", parts=[types.Part(text="확인. 이 캐릭터의 말투만 한국어 평문으로 묘사합니다. 예시 대사는 넣지 않습니다.")]),
+            # 프리필도 같은 말을 해야 한다 — "묘사합니다"가 남아 있으면 규칙은 행동을 요구하는데
+            # 모델의 자기선언은 묘사를 약속하는 꼴이 된다(두 층이 반대로 말하는 그 병).
+            types.Content(role="model", parts=[types.Part(text="확인. 이 캐릭터가 말할 때 하는 행동만 한국어 평문으로 적습니다. 예시 대사는 넣지 않습니다.")]),
             types.Content(role="user", parts=[types.Part(text=f"[NPC: {npc_name}]\n{desc}")]),
         ]
         with config.heavy_analysis():  # 1회성 → reasoning ON (per-turn 미적용)

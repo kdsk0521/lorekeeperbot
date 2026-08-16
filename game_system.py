@@ -61,10 +61,9 @@ edit_memo = game_character.edit_memo
 remove_memo = game_character.remove_memo
 resolve_memo_auto = game_character.resolve_memo_auto
 
-# Mental & Adaptation (Legacy removed)
-calculate_adaptation_percentage = game_character.calculate_adaptation_pct
+# Mental (Legacy removed)
+# [2026-08-11 비일상적응도 삭제] calculate_adaptation_percentage / get_abnormal_context 재수출 제거
 get_mental_status_text = game_character.get_mental_status_text
-get_abnormal_context = game_character.get_abnormal_context
 
 # Export
 export_session_history = game_character.export_session_history

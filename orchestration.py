@@ -41,8 +41,38 @@ from orchestration_context import ResponseContext
 logger = logging.getLogger("Orchestration")
 
 
+# [2026-08-13 대사 포맷 부활] 혼합 계약의 판정 임계 (로컬 상수 — config 노출 안 함)
+_BARE_SPEECH_QUOTE_RATIO = 0.6   # 인용부 길이가 줄의 60% 이상 = 발화가 줄을 지배
+_BARE_SPEECH_TAG_TAIL = 12       # 따옴표로 여는 줄의 잔여 서술이 이 이하면 대사태그 수준 → 여전히 bare
+_QUOTED_SPAN_PAT = re.compile(r'"([^"]*)"')
+
+
+def _is_bare_speech_line(line: str) -> bool:
+    """[2026-08-13 대사 포맷 부활] 이 줄이 '독립 대사줄'인가 (혼합 계약의 대상 판별).
+
+    True = 따옴표 발화가 줄을 지배하는 줄 → `이름: "대사"` 형식 대상.
+    False = 서술 문장 안 인용 / FID / 서술뿐인 줄 → 자유 (04-26 W12·W16 충돌 사유 존중).
+
+    판정: (a) 인용부 총길이가 줄의 60%(_BARE_SPEECH_QUOTE_RATIO) 이상,
+          또는 (b) 줄이 따옴표로 시작하고 나머지 서술이 12자(_BARE_SPEECH_TAG_TAIL) 이하.
+    오탐이 미탐보다 비싸므로 둘 다 보수적으로 잡는다."""
+    stripped = (line or "").strip()
+    if not stripped:
+        return False
+    spans = [m.group(1) for m in _QUOTED_SPAN_PAT.finditer(stripped) if len(m.group(1).strip()) >= 2]
+    if not spans:
+        return False
+    quoted_len = sum(len(s) + 2 for s in spans)  # 따옴표 두 개 포함
+    if quoted_len / len(stripped) >= _BARE_SPEECH_QUOTE_RATIO:
+        return True
+    if stripped.startswith('"') and (len(stripped) - quoted_len) <= _BARE_SPEECH_TAG_TAIL:
+        return True
+    return False
+
+
 def _check_dialogue_format(response: str, pc_names: list = None, user_input: str = "") -> str:
     """AI 응답에서 대사 포맷 위반을 감지하여 피드백 문자열 반환.
+    [2026-08-13 대사 포맷 부활] 혼합 계약: 독립 대사줄(_is_bare_speech_line)만 `이름: "대사"` 대상.
     PC 대사 에코(유저 입력 재출력)와 AI 창작 PC 대사를 구분:
     - 유저 입력에 포함된 대사와 5자 이상 겹치면 에코 → 제외
     - 겹치지 않으면 AI 창작 → [IMPERSONATION] 피드백"""
@@ -96,22 +126,46 @@ def _check_dialogue_format(response: str, pc_names: list = None, user_input: str
                     impersonations.append(stripped[:40])
             continue  # PC 줄은 포맷 위반 체크에서 항상 제외
 
-        if quote_pat.search(stripped) and not correct_pat.match(stripped):
+        # [2026-08-13 대사 포맷 부활] 전면 강제 → 독립 대사줄 한정
+        if _is_bare_speech_line(stripped) and not correct_pat.match(stripped):
             violations.append(stripped[:40])
 
+    # [2026-08-13 기본형 승격 — 합법 우회 차단] 혼합 계약("bare면 prefix")은 조건문이라
+    # 대사를 **전부 서술에 녹이면** bare 줄이 안 생겨 우회됐다(레티어스 "안 지켜진다" 실관측).
+    # 계약을 기본형-긍정(발화=자기 줄+이름:이 기본, 녹임=의도적 예외)으로 승격했으므로,
+    # 대사가 여럿(3+)인데 이름: 줄이 0이면 기본형 미준수. 낱개 woven은 정당한 선택 — 임계로 보호.
+    _named_lines = 0
+    _total_quotes = 0
+    for line in lines:
+        s = line.strip()
+        if not s or system_pat.match(s) or tag_pat.match(s):
+            continue
+        if _pc_pats and any(p.match(s) for p in _pc_pats):
+            continue
+        if correct_pat.match(s):
+            _named_lines += 1
+        _total_quotes += len(quote_pat.findall(s))
+
     parts = []
-    # [FORMAT] 출력 제거 (2026-04-26): 이름: "대사" prefix 강제가 W12 Three Chairs / W16 FID 표현과 충돌.
-    # detect 로직(violations 변수)은 운영 분석 가치를 위해 유지하되 모델에 피드백 주입은 안 함.
-    # if violations:
-    #     examples = violations[:2]
-    #     parts.append(f"[FORMAT] 대사 포맷 위반 {len(violations)}건. 예: {'; '.join(examples)}. 반드시 이름: \"대사\" 형식을 지켜라.")
+    # [FORMAT] 경위: 2026-04-26 전면 강제(kimi 시절 "Every spoken line MUST follow")가
+    #   W12 Three Chairs / W16 FID 표현과 충돌 → 피드백 주입 중단(검출만 유지).
+    #   [2026-08-13 대사 포맷 부활] 충돌을 혼합 계약으로 해소하고 재활성:
+    #   독립 대사줄만 `이름: "대사"`(멀티플레이 화자 가독), 서술 안 인용·FID는 그대로 자유.
+    if violations:
+        examples = violations[:2]
+        parts.append(
+            f"[FORMAT] 화자 없는 독립 대사줄 {len(violations)}건. 예: {'; '.join(examples)}. "
+            f"bare speech lines open 이름: \"대사\"; quotes inside narration stay free."
+        )
+    elif _named_lines == 0 and _total_quotes >= 3:
+        # [2026-08-13 기본형 승격] 전량 서술 삽입형 = 기본형 우회. bare 위반과 동시 점등 방지(elif).
+        parts.append(
+            f"[FORMAT] 대사 {_total_quotes}건 전부 서술 삽입형(이름: 줄 0) — "
+            f"spoken exchange defaults to its own line opening 이름: \"대사\"; weaving stays the deliberate exception."
+        )
     if impersonations:
         imp_examples = impersonations[:2]
         parts.append(f"[IMPERSONATION] PC 대사 창작 {len(impersonations)}건: {'; '.join(imp_examples)}. PC의 대사를 만들지 마라 — 유저가 입력한 대사만 재현하라.")
-    if violations:
-        # 운영 분석용 디버그만 (피드백 주입 X)
-        import logging
-        logging.getLogger(__name__).debug(f"[FormatDetect] dialogue prefix 부재 {len(violations)}건 — FID 허용 정책으로 무시")
     return " ".join(parts)
 
 
@@ -234,6 +288,18 @@ class OrchestrationService:
                 if _removed_att:
                     new_attitudes = {k: v for k, v in new_attitudes.items() if k not in _pc_masks_att}
                     logger.debug(f"[NPC Attitude] PC 혼입 제외: {', '.join(_removed_att)}")
+            # [2026-08-11 사망 파이프라인] 자동 재등록 게이트 ① — 태도 채널.
+            #   여기는 "모르는 이름이면 스텁을 만든다"는 자리라, 죽은 인물 이름이 분석에
+            #   다시 뜨면 태도·깊이가 시체 위에 계속 적립된다. dead면 채널 전체에서 뺀다
+            #   (아래 두 루프가 같은 dict를 도므로 입구 한 곳에서 거른다).
+            #   ★down은 거르지 않는다 — 쓰러진 인물도 관측 대상이고, 되살아나는 경로는
+            #     mark_npc_appearance(등장 관측의 단일 관문)가 따로 쥐고 있다.
+            _dead_att = [n for n in new_attitudes
+                         if npc_manager.get_npc_status(
+                             npc_manager.get_npc(channel_id, n) or {}) == "dead"]
+            if _dead_att:
+                new_attitudes = {k: v for k, v in new_attitudes.items() if k not in _dead_att}
+                logger.info(f"[NPC Status] dead 태도 갱신 차단(환각 등장 신호): {', '.join(_dead_att)}")
             for n_name, n_data in new_attitudes.items():
                 existing_npc = npc_manager.get_npc(channel_id, n_name)
                 if not existing_npc:
@@ -268,7 +334,9 @@ class OrchestrationService:
                 if depth_range != (0, 0):
                     depth_delta = _rng.randint(min(depth_range), max(depth_range))
                     if depth_delta != 0:
-                        domain_manager.update_helena_metric(channel_id, n_name, depth_delta=depth_delta)
+                        # origin=감사 라벨 전용(캡 미발동 — source와 분리된 인자)
+                        domain_manager.update_helena_metric(channel_id, n_name, depth_delta=depth_delta,
+                                                            origin="trajectory")
 
             # 첫 등장 NPC: 프로필에서 초기 depth 가져오기
             for n_name in new_attitudes:
@@ -281,7 +349,8 @@ class OrchestrationService:
                         domain_manager.update_helena_metric(
                             channel_id, n_name,
                             depth_delta=initial_depth,
-                            tension_delta=initial_tension
+                            tension_delta=initial_tension,
+                            origin="npc_sheet_initial",
                         )
 
             ctx.existing_attitudes = domain_manager.get_npc_attitudes(channel_id)
@@ -425,9 +494,9 @@ class OrchestrationService:
                 qf["sensory_habituated"] = True
                 dai["quality_flags"] = qf
 
-        # [Flashback] (Phase 3 DEPRECATED) vigor 차감 / 로드아웃 / 인벤토리 X.
-        # Theoria.flashback_eval 자동 감지는 유지 — dai 표시만 → 산문 반영.
-        # _process_flashback 함수 자체는 dead 보존 (미래 재활성화 가능).
+        # [Flashback] 자원 차감·로드아웃·인벤토리 없음 — dai 플래그만 → Slot 30 산문 반영.
+        # [2026-08-11 로드아웃 삭제] 차감/슬롯 엔진 `_process_flashback`(loadout_used 쓰기 포함) 제거.
+        # 남은 건 입력의 소급 선언을 장면 연출로 옮기는 이 통로뿐 (명령 계보와 무관).
         fb_eval = dai.get("flashback_eval")
         if fb_eval and fb_eval.get("detected") and fb_eval.get("plausibility") != "impossible":
             updated_context.shared_bus.dai["flashback_confirmed"] = True
@@ -472,134 +541,6 @@ class OrchestrationService:
         messages = [system_log] if system_log else []
         
         return ctx, messages, directive
-
-    def _process_flashback(self, channel_id: str, bus, fb_eval: dict, user_id: str = "") -> Optional[str]:
-        """회상 평가 → 기력 차감 + DAI 확정. Returns system message or None."""
-        plausibility = fb_eval.get("plausibility", "plausible")
-        tier = fb_eval.get("tier", "standard")
-        declaration = fb_eval.get("declaration", "")
-        dai = bus.dai
-
-        # ── Loadout 분기 (flashback_type == "loadout") ──
-        if fb_eval.get("flashback_type") == "loadout" and user_id:
-            # 1) 인벤토리에 이미 있는 아이템 → 슬롯/기력 소비 없이 통과
-            existing_inv = domain_manager.get_ai_memory(channel_id, user_id).get("inventory", [])
-            if isinstance(existing_inv, dict):
-                existing_inv = existing_inv.get("items", [])
-            inv_names = {(i.get("name", "") if isinstance(i, dict) else str(i)).lower()
-                         for i in existing_inv if i}
-            if declaration and declaration.strip().lower() in inv_names:
-                dai["flashback_confirmed"] = True
-                dai["flashback_declaration"] = declaration
-                return f"🎒 인벤토리: {declaration} (이미 소지 중)"
-
-            # 2) 로드아웃 자동 초기화
-            loadout = domain_manager.get_loadout(channel_id, user_id)
-            if not loadout:
-                domain_manager.set_loadout(channel_id, user_id, "standard", config.LOADOUT_SLOTS, "표준")
-                loadout = domain_manager.get_loadout(channel_id, user_id)
-
-            slots_needed = fb_eval.get("loadout_slots", 1)
-            remaining = loadout["total_slots"] - loadout.get("used_slots", 0)
-            cost = config.LOADOUT_SLOT_COST.get(slots_needed, 3)
-            current_vigor = int(bus.vigor.get("value", 100))
-
-            # 3) 슬롯 부족 시 → 기력 추가 차감으로 소프트 대체 (하드블록 안 함)
-            overflow_cost = 0
-            if slots_needed > remaining:
-                overflow_cost = (slots_needed - remaining) * 5  # 초과 슬롯당 기력 5 추가
-                slots_needed = remaining  # 남은 슬롯만 소비
-
-            total_cost = cost + overflow_cost
-            if current_vigor < total_cost:
-                dai["flashback_confirmed"] = False
-                return f"❌ 기력 부족 (현재 {current_vigor}, 필요 {total_cost})"
-
-            bus.vigor["value"] = max(0, current_vigor - total_cost)
-            if slots_needed > 0:
-                domain_manager.consume_loadout_slot(channel_id, user_id, slots_needed, declaration)
-            dai["flashback_confirmed"] = True
-            dai["flashback_declaration"] = declaration
-            dai["loadout_used"] = True
-            # 회상 아이템 → 노트북 [소지품] + 인벤토리 자동 동기화
-            game_character.add_item_to_sojipin(channel_id, declaration, user_id)
-            new_vigor = bus.vigor["value"]
-            new_remaining = remaining - slots_needed
-
-            overflow_note = f" (슬롯 초과 → 기력 추가 -{overflow_cost})" if overflow_cost else ""
-            return (
-                f"🎒 장비: {declaration}\n"
-                f"⚡ 슬롯 {slots_needed}개 소비 (잔여 {new_remaining}/{loadout['total_slots']}) | "
-                f"기력 -{total_cost} → {new_vigor}/100{overflow_note}"
-            )
-
-        # 불가능한 회상 → 거부
-        if plausibility == "impossible":
-            dai["flashback_confirmed"] = False
-            domain_manager.clear_pending_flashback(channel_id)
-            return f"❌ 회상 거부: {fb_eval.get('reason', '논리적 모순')}"
-
-        cost = int(config.FLASHBACK_COST_TIERS.get(tier, 8))
-        # 특질 할인: 관련 특질 매칭 시 비용 50%
-        relevant_passive = fb_eval.get("relevant_passive")
-        if relevant_passive:
-            cost = max(1, int(cost * config.FLASHBACK_PASSIVE_DISCOUNT))
-        current_vigor = int(bus.vigor.get("value", 100))
-        current_composure = int(bus.composure.get("value", 100))
-
-        # v3: 2축 비율 차감 (한 축 부족분은 다른 축으로 전가)
-        try:
-            vigor_ratio = float(fb_eval.get("vigor_ratio", 1.0) or 0.0)
-            composure_ratio = float(fb_eval.get("composure_ratio", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            vigor_ratio, composure_ratio = 1.0, 0.0
-
-        vigor_ratio = max(0.0, vigor_ratio)
-        composure_ratio = max(0.0, composure_ratio)
-        ratio_sum = vigor_ratio + composure_ratio
-        if ratio_sum <= 0:
-            vigor_ratio, composure_ratio = 1.0, 0.0
-            ratio_sum = 1.0
-
-        vigor_cost = int(round(cost * (vigor_ratio / ratio_sum)))
-        composure_cost = cost - vigor_cost
-
-        # 한 축 부족분 전가
-        if current_vigor < vigor_cost:
-            deficit = vigor_cost - current_vigor
-            vigor_cost = current_vigor
-            composure_cost += deficit
-        if current_composure < composure_cost:
-            deficit = composure_cost - current_composure
-            composure_cost = current_composure
-            vigor_cost += deficit
-
-        # 양축 합이 비용을 감당 못하면 실패
-        if (vigor_cost + composure_cost) < cost:
-            dai["flashback_confirmed"] = False
-            domain_manager.clear_pending_flashback(channel_id)
-            return (
-                f"❌ 회상 불가: 자원 부족 "
-                f"(기력 {current_vigor}, 평정 {current_composure}, 비용 {cost})"
-            )
-
-        new_vigor = max(0, current_vigor - vigor_cost)
-        new_composure = max(0, current_composure - composure_cost)
-        bus.vigor["value"] = new_vigor
-        bus.composure["value"] = new_composure
-        dai["flashback_confirmed"] = True
-        dai["flashback_declaration"] = declaration
-        domain_manager.clear_pending_flashback(channel_id)
-
-        passive_note = ""
-        if relevant_passive:
-            passive_note = f" (특질 '{relevant_passive}' 할인 → 비용 50%↓)"
-
-        return (
-            f"🔮 회상 발동: {declaration}\n"
-            f"⚡ 기력 -{vigor_cost} → {new_vigor}/100 | 평정 -{composure_cost} → {new_composure}/100 "
-            f"[{tier}]{passive_note}"
-        )
 
     def _process_item_usage(self, channel_id: str, user_id: str, item_eval: dict) -> Optional[str]:
         """아이템 소비/획득 처리. Returns system message or None."""
@@ -708,7 +649,8 @@ class OrchestrationService:
             depth_gain = 0
             if target:
                 depth_gain = _rng.randint(*cfg.get("depth_delta_range", (10, 15)))
-                domain_manager.update_helena_metric(channel_id, target, depth_delta=depth_gain, tension_delta=0)
+                domain_manager.update_helena_metric(channel_id, target, depth_delta=depth_gain, tension_delta=0,
+                                                    origin="downtime_socialize")
             return f"🤝 사교({target or '일반'}): 평정 +{cfg.get('composure', 15)}, 유대 +{depth_gain}"
 
         elif dt_type == "project":
@@ -897,6 +839,71 @@ class OrchestrationService:
             priority=TaskPriority.LOW
         )
 
+    def _with_status_header(self, channel_id: str, response: str) -> str:
+        """[2026-08-16 상태창 코드 조립] 표시용으로만 상태 헤더를 접합한다.
+
+        ⚠ 반환값을 `response` 변수에 되담지 말 것 — 히스토리·검수·리더·배경 추출이
+        전부 원본 `response`를 읽는다(표시/저장 분리가 이 이관의 계약이다).
+        """
+        try:
+            header = game_world.build_status_header(channel_id)
+        except Exception as _e_sh:
+            logger.debug(f"[StatusHeader] skipped: {_e_sh}")
+            return response
+        return f"{header}\n\n{response}" if header else response
+
+    def _panel_view(self, channel_id: str):
+        """[2026-08-16 상태패널 v0] 패널 정의(!출력룰 panel/상태창)가 등록된 채널에만 💠 버튼.
+
+        미등록 채널은 None → send_long_message 가 종전과 완전히 동일하게 동작한다.
+        View 는 persistent(custom_id 고정)라 매 턴 새로 만들어 붙여도 재시작 후 main.on_ready
+        의 add_view 가 콜백을 다시 잡는다.
+
+        [2026-08-16 도착물 라우트] 합성 지점 이동 — 한 메시지에 View 는 하나뿐이라
+        💠/💌/💭를 한 묶음으로 만들어야 한다. 전송 **시점**엔 message_id 가 없으므로
+        (=도착물 조회 불가) 여기서 나오는 건 💠뿐이고, 💌/💭는 도착물이 실제로 생긴 뒤
+        turn_mail.attach_button 이 같은 메시지를 edit 해서 붙인다(사후 부착).
+        """
+        try:
+            import turn_mail
+            return turn_mail.build_view(channel_id)
+        except Exception as _e_pv:
+            logger.debug(f"[StatusPanel] view skip: {_e_pv}")
+            return None
+
+    def _advance_scene_time(self, channel_id: str, ctx: ResponseContext, delta_min: int) -> None:
+        """[2026-08-16 상태창 코드 조립] 이번 턴 산문 경과 분을 세계 시계에 반영.
+
+        구 TimeSync(모델 상태줄 정규식 되읽기)에서 **입력원만** 갈아끼운 것 —
+        SCENE_TIME_RULES 클램프와 Decree 이중 안전망은 그대로 옮겨 왔다.
+        G1/G2(사용자 인풋 명시 선언) 다음 2순위, 침묵 점프 차단.
+        """
+        try:
+            delta_min = int(delta_min)
+        except (TypeError, ValueError):
+            return
+        if delta_min <= 0:
+            return
+        try:
+            _world = domain_manager.get_world_state(channel_id)
+            _scene = getattr(ctx, "scene_type", "") or _world.get("current_scene_type", "normal")
+            _rules = config.SCENE_TIME_RULES.get(_scene, config.SCENE_TIME_RULES["normal"])
+            max_min = _rules.get("max_ticks", 2) * 2   # 1 tick = 2분
+            # [2026-06-12] 명시 Decree 턴은 선언량+여유까지 허용 (이중 안전망 —
+            # TimeFlow가 이미 선행 적용했으면 delta는 작아서 무해)
+            _decree = getattr(ctx, "time_decree_min", 0) or 0
+            if _decree:
+                max_min = max(max_min, _decree + 30)
+            if delta_min > max_min:
+                logger.info(f"[TimeSync] Clamped {delta_min}→{max_min}min (scene={_scene})")
+                delta_min = max_min
+            # advance_minutes로 자연 진행 (day wrap 포함)
+            from game_world import advance_minutes as _adv
+            _adv(channel_id, delta_min)
+            logger.info(f"[TimeSync] scene_minutes_elapsed → {delta_min}min applied (scene={_scene})")
+        except Exception as _e_ts:
+            logger.debug(f"[TimeSync] skipped: {_e_ts}")
+
     async def _execute_background_extraction(
         self,
         ctx: ResponseContext,
@@ -928,6 +935,11 @@ class OrchestrationService:
             
             session_memory = domain_manager.get_session_ai_memory(channel_id)
             prev_continuity = domain_manager.get_latest_frame(channel_id)
+            # [2026-08-12 fingerprint 프레임 소급] 이 dict는 dai_snapshot(frames[-1]이 정답)과
+            #   지문(직전에 실제로 찍힌 프레임이 정답)이 섞여 있다. 지문 쪽은 frames[-1]=이번 턴 빈
+            #   프레임이라 cognition의 이전값 참조(Lighting/Palette/Rhythm/…)가 상시 공백이었다.
+            #   **지문만** 공용 관문으로 교체 — dai_snapshot 경로는 무변경.
+            prev_continuity["render_fingerprint"] = domain_manager.get_prev_fingerprint(channel_id)
             # Fresh notebook reload (stale ctx 방지 — 배경 작업은 지연 실행될 수 있음)
             fresh_notebook = game_system.get_notebook_text(channel_id, ctx.user_id)
 
@@ -1168,6 +1180,10 @@ class OrchestrationService:
                     mem_updates["basic_needs_flags"] = wsu["basic_needs_flags"]
                 if wsu.get("residual_effects") and isinstance(wsu["residual_effects"], str):
                     mem_updates["residual_effects"] = wsu["residual_effects"]
+                # [2026-08-16 상태창 코드 조립] 시간 전진 — 구 status line 파싱의 후계.
+                #   session memory가 아니라 world_state로 가므로 mem_updates 밖에서 처리한다.
+                if wsu.get("scene_minutes_elapsed"):
+                    self._advance_scene_time(channel_id, ctx, wsu["scene_minutes_elapsed"])
                 if mem_updates:
                     domain_manager.update_session_ai_memory(channel_id, mem_updates)
                     logger.info(f"[WorldState] Updated session memory: {list(mem_updates.keys())}")
@@ -1263,6 +1279,7 @@ class OrchestrationService:
                             _turn_labels = []
 
                         _changes = est_data.get("changes") if (isinstance(est_data, dict) and "changes" in est_data) else est_data
+                        _pending_down = []   # [2026-08-11 사망 파이프라인] (이름, 근거) — 루프 뒤 일괄 적용
                         for _npc_name, _ch in (_changes.items() if isinstance(_changes, dict) else []):
                             if not isinstance(_ch, dict):
                                 continue
@@ -1287,6 +1304,29 @@ class OrchestrationService:
                                             _npc_name = _new_nm  # 이후 관찰 누적은 새 이름으로
                                 except Exception as _e_nm:
                                     logger.debug(f"[NPC Naming] skip: {_e_nm}")
+                            # [2026-08-11 사망 파이프라인] 자동 재등록 게이트 ② — entity_state 채널.
+                            #   dead면 이 엔트리 전체를 버린다(스텁 생성·관찰 누적·몹 태그 전부).
+                            #   로그를 남기는 이유: 죽은 이름이 장면에 다시 뜬 것 자체가 관측 재료다.
+                            if npc_manager.get_npc_status(
+                                    npc_manager.get_npc(channel_id, _npc_name) or {}) == "dead":
+                                logger.info(f"[NPC Status] entity_state에 dead '{_npc_name}' — "
+                                            "재등록·관찰 누적 차단 (환각 등장 신호)")
+                                continue
+                            # [2026-08-11 사망 파이프라인] 무력화 관측 → down(가역).
+                            #   자동 경로는 여기까지만 만들 수 있다. dead 확정은 수동 명령뿐이고,
+                            #   근거(evidence)가 비면 관문이 거부한다 — 계약이 느슨하면
+                            #   "필드는 있는데 트리거가 없다"의 역방향(날조 승격)이 된다.
+                            #   ★쓰기는 **루프 뒤로 미룬다**: 이 자리에서 쓰면 아래 스텁 생성
+                            #     (`status:"active"`)이 같은 턴에 덮고, 첫 등장에서 쓰러진 인물은
+                            #     레코드가 아직 없어 관문이 rejected_invalid로 버린다.
+                            _inc = _ch.get("incapacitated")
+                            if (isinstance(_inc, dict) and _inc.get("value")
+                                    and _npc_name not in _pc_masks):
+                                _inc_ev = str(_inc.get("evidence") or "").strip()
+                                if _inc_ev:
+                                    _pending_down.append((_npc_name, _inc_ev))
+                                else:
+                                    logger.info(f"[NPC Status] {_npc_name}: incapacitated 근거 없음 — 무효")
                             _desc = _ch.get("descriptor")
                             if not _desc or not str(_desc).strip() or _npc_name in _pc_masks:
                                 continue
@@ -1399,6 +1439,13 @@ class OrchestrationService:
                             npc_manager.update_npc(channel_id, _npc_name, _merged)
                             if not _rewrote:
                                 logger.info(f"[NPC Sheet] 관찰 누적: {_npc_name} ({len(_obs)}자, {_src or 'session'})")
+                        # [2026-08-11 사망 파이프라인] 무력화 관측 일괄 적용 — 시트 쓰기가 전부 끝난 뒤.
+                        #   이 순서라야 (a) 방금 생성된 즉석 NPC도 down이 되고
+                        #   (b) 스텁의 `status:"active"`가 이번 턴 관측을 되돌리지 않는다.
+                        for _dn, _dev in _pending_down:
+                            npc_manager.set_npc_status_gated(
+                                channel_id, _dn, "down", source="extraction",
+                                evidence=_dev, current_turn=turn_idx)
                     except Exception as _e_sheet:
                         logger.warning(f"[NPC Sheet] enrichment skipped: {_e_sheet}")
 
@@ -1568,7 +1615,10 @@ class OrchestrationService:
             # [Scene Continuity 2층] 렌더링 지문 저장
             rfp = updates.get("RenderFingerprint")
             if rfp and isinstance(rfp, dict):
-                fingerprint = {k: rfp.get(k, "") for k in ("gaze", "lighting", "palette", "rhythm", "temporal_density")}
+                # [2026-08-12 출력파생 §8] withholding_scheme 추가 — Flash가 생산(cognition:462,469)하고
+                # 소비자 2곳(slot_manager rotation / iceberg.translate_prev_scheme)이 대기 중인데
+                # 화이트리스트에 키가 없어 저장 시 버려지고 있었음(끊긴 배선).
+                fingerprint = {k: rfp.get(k, "") for k in ("gaze", "lighting", "palette", "rhythm", "temporal_density", "withholding_scheme")}
                 fingerprint["unresolved"] = rfp.get("unresolved", [])
                 domain_manager.update_scene_continuity(channel_id, render_fingerprint=fingerprint)
                 logger.debug("[RenderFP] Stored: gaze=%s, lighting=%s",
@@ -1658,9 +1708,19 @@ class OrchestrationService:
 
 
             # [!다시] 도메인 스냅샷 (UNE 실행 전 전체 상태 저장)
+            # [2026-08-12 !다시 유령 정리] SQLite 로그 워터마크 동봉 — 도메인(JSON)만 되돌아가고
+            # append 로그(reader_log·dai_logs·emotion_log·…)는 무접촉이라 폐기 턴 행이 유령으로
+            # 남았다. 여기서 max(id)를 찍어 두고 retry_last가 복원 직후 초과분을 트림한다.
+            try:
+                import sqlite_store as _ss_wm
+                _log_marks = _ss_wm.snapshot_log_watermarks(channel_id)
+            except Exception as _e_wm:
+                _log_marks = {}
+                logger.debug(f"[!다시] watermark skip: {_e_wm}")
             self._retry_snapshots[channel_id] = {
                 "_ts": time.time(),
-                "_data": copy.deepcopy(domain_manager.get_domain(channel_id))
+                "_data": copy.deepcopy(domain_manager.get_domain(channel_id)),
+                "_marks": _log_marks,
             }
             # 메모리 누수 방지: 최대 20개 채널 스냅샷만 유지
             if len(self._retry_snapshots) > 20:
@@ -1671,7 +1731,7 @@ class OrchestrationService:
                 import sqlite_store
                 _snap_data = self._retry_snapshots[channel_id]["_data"]
                 _snap_turn = (_snap_data.get("world_state", {}) or {}).get("turn_index", 0)
-                sqlite_store.save_retry_snapshot(channel_id, _snap_turn, _snap_data)
+                sqlite_store.save_retry_snapshot(channel_id, _snap_turn, _snap_data, marks=_log_marks)
             except Exception as _e_rs:
                 logger.debug(f"[!다시] snapshot persist skipped: {_e_rs}")
 
@@ -1711,6 +1771,19 @@ class OrchestrationService:
                 # 6. Response Generation (V4: returns Tuple[response, extraction_data])
                 response, extraction_data = await self.generate_response(ctx, full_prompt)
 
+                # [2026-08-12 출력파생 §8] 렌더 실패 안내는 유저에게만 — 산문 파이프라인에서 배제.
+                #   구 동작: 안내 문자열이 `if response:`를 통과해 히스토리 적립·검출기·배경 추출
+                #   입력까지 오염(§7-11). 여기서 None으로 낮추면 아래 else가 종전 실패 경로를 탄다.
+                if persona.is_render_failure(response):
+                    logger.warning("[Render] 폴백 안내 반환 — 히스토리·검출기·배경콜 전량 스킵")
+                    _fail_msg = await message.channel.send(response)
+                    # 안내 메시지도 !다시 정리 대상으로 유지(종전 동작: 안내가 응답 자리를 차지해
+                    # message_ids/has_response에 실렸다 — 안내 문구가 "다시 시도"를 권하므로 재시도 경로 보존).
+                    if _fail_msg:
+                        current_retry_ctx["message_ids"].append(_fail_msg.id)
+                        current_retry_ctx["has_response"] = True
+                    response = None
+
                 if response:
                     # [UI Feedback] 완료 시 안내 메시지 삭제
                     if feedback_msg:
@@ -1720,7 +1793,15 @@ class OrchestrationService:
                             pass # 이미 삭제되었거나 권한 부족 시 무시
 
                     # 7. Send Response
-                    sent_msgs = await bot_utils.send_long_message(message.channel, response)
+                    # [2026-08-16 상태창 코드 조립] 헤더는 **표시 계층에서만** 붙는다.
+                    #   `response` 변수는 손대지 않는다 — 아래 append_history·검출기 함대·
+                    #   배경 추출·리더가 전부 이 변수를 쓰므로, 오염시키면 기계 표기가 히스토리에
+                    #   되돌아가 에코 소스가 된다(이관의 부수 목표가 히스토리 순수화).
+                    #   [2026-08-16 상태패널 v0] 💠 버튼은 **메인 경로만** v0 (배치·관찰 경로 무접촉).
+                    sent_msgs = await bot_utils.send_long_message(
+                        message.channel, self._with_status_header(channel_id, response),
+                        view=self._panel_view(channel_id),
+                    )
 
                     # Store message IDs for retry deletion
                     if sent_msgs:
@@ -1734,57 +1815,11 @@ class OrchestrationService:
                     domain_manager.append_history(channel_id, "Model", response)
                     logger.debug(f"[History] Saved: {'skip-user + ' if not record_user_history else user_mask + ' + '}Model response ({len(response)} chars)")
 
-                    # 8.4. [TimeSync] 모델 출력 status line 시간 → 내부 클록 동기화 (2026-05-23)
-                    # G1/G2(사용자 인풋 명시) 다음 2순위. SCENE_TIME_RULES로 침묵 점프 차단.
-                    # V8.5: year/month 캘린더 확장 — 절대 분 차이 계산
-                    try:
-                        from response_processor import parse_status_line_time
-                        parsed_time = parse_status_line_time(response)
-                        if parsed_time:
-                            _world = domain_manager.get_world_state(channel_id)
-                            from game_world import _init_clock as _ic
-                            _ic(_world)
-                            cur_y = _world.get("year", 1)
-                            cur_mo = _world.get("month", 1)
-                            cur_d = _world.get("day", 1)
-                            cur_h = _world.get("hour", 12)
-                            cur_m = _world.get("minute", 0)
-                            new_y = parsed_time["year"]
-                            new_mo = parsed_time["month"]
-                            new_day = parsed_time["day"]
-                            new_h = parsed_time["hour"]
-                            new_m = parsed_time["minute"]
-                            # V8.5: year/month/day 절대 분 차이 (1년=360일=518400분, 1달=30일=43200분, 1일=1440분)
-                            cur_abs = ((cur_y - 1) * 360 + (cur_mo - 1) * 30 + (cur_d - 1)) * 1440 + cur_h * 60 + cur_m
-                            new_abs = ((new_y - 1) * 360 + (new_mo - 1) * 30 + (new_day - 1)) * 1440 + new_h * 60 + new_m
-                            delta_min = new_abs - cur_abs
-                            if delta_min < 0:
-                                logger.warning(
-                                    f"[TimeSync] Negative delta blocked: world={cur_y}/{cur_mo}/{cur_d} {cur_h:02d}:{cur_m:02d} → status={new_y}/{new_mo}/{new_day} {new_h:02d}:{new_m:02d}"
-                                )
-                            elif delta_min > 0:
-                                # SCENE_TIME_RULES 클램프 (1 tick = 2분)
-                                _scene = ctx.scene_type or _world.get("current_scene_type", "normal")
-                                _rules = config.SCENE_TIME_RULES.get(_scene, config.SCENE_TIME_RULES["normal"])
-                                max_min = _rules.get("max_ticks", 2) * 2
-                                # [2026-06-12] 명시 Decree 턴은 선언량+여유까지 허용 (이중 안전망 —
-                                # TimeFlow가 이미 선행 적용했으면 delta는 작아서 무해)
-                                _decree = getattr(ctx, "time_decree_min", 0) or 0
-                                if _decree:
-                                    max_min = max(max_min, _decree + 30)
-                                if delta_min > max_min:
-                                    logger.info(
-                                        f"[TimeSync] Clamped {delta_min}→{max_min}min (scene={_scene}, status={new_h:02d}:{new_m:02d})"
-                                    )
-                                    delta_min = max_min
-                                # advance_minutes로 자연 진행 (day wrap 포함)
-                                from game_world import advance_minutes as _adv
-                                _adv(channel_id, delta_min)
-                                logger.info(
-                                    f"[TimeSync] world {cur_h:02d}:{cur_m:02d} → status {new_h:02d}:{new_m:02d} ({delta_min}min applied)"
-                                )
-                    except Exception as _e_ts:
-                        logger.debug(f"[TimeSync] skipped: {_e_ts}")
+                    # 8.4. ⚰[2026-08-16 상태창 코드 조립] 구 TimeSync(모델 상태줄 정규식 되읽기) 삭제.
+                    #   상태창을 코드가 그리게 되면서 파싱 대상 자체가 없어졌다. 시간 전진은
+                    #   배경 추출 world_state.scene_minutes_elapsed → _advance_scene_time으로 이관
+                    #   (클램프·Decree 안전망은 그 함수에 그대로 이사했다). 구 파싱도 렌더 후 실행이라
+                    #   타이밍 등가 — 반영이 다음 턴 프롬프트 전이면 충분하다.
 
                     # 8.5. Dialogue Format Feedback + Style Detectors (다음 턴 피드백용)
                     _pc_names_for_fmt = [user_mask] if user_mask and user_mask != "Unknown" else []
@@ -1798,6 +1833,8 @@ class OrchestrationService:
                         detect_arrival_patterns, detect_declaration_patterns,
                         detect_explain_then_render_patterns, detect_vending_patterns,
                         detect_premature_closure,
+                        # [2026-08-03 합류점] 가족 처방 1회 병합 + 로그용 태그 요약
+                        merge_style_feedback, style_feedback_tags,
                     )
                     cliche_fb = detect_cliche_patterns(response)
                     # [2026-06-12] 앙상블 보정: 장면 NPC 수 전달 (분산 아닌 분배 — 다인 장면 반응 나열은 내용)
@@ -1812,6 +1849,20 @@ class OrchestrationService:
                     explain_render_fb = detect_explain_then_render_patterns(response)
                     vending_fb = detect_vending_patterns(response)
 
+                    # [2026-08-02] 형용사 나열 관측 — log-only, 처방 없음.
+                    #   실관측 "임상적이고, 따뜻하고, 사무적이었다"는 시트 tone 필드
+                    #   (한국어 묘사문)가 그대로 서술된 것. 생성 프롬프트와 Slot 33 헤더를
+                    #   고쳤으나 **기존 DB tone 값은 여전히 형용사 나열**이라 빈도를 봐야 한다.
+                    #   ⚠피드백에 합류시키지 않는다 — 대비 나열은 정당한 기법이다
+                    #   ([[feedback_detection_not_writing]]: 검출→사람이 판독→사람이 튜닝).
+                    try:
+                        from response_processor import detect_adjective_stacking
+                        _adj_log, _adj_n = detect_adjective_stacking(response)
+                        if _adj_log:
+                            logger.info(_adj_log)
+                    except Exception as _e_adj:
+                        logger.debug(f"[AdjStack] skip: {_e_adj}")
+
                     # CLOSURE: 조기 종결 검출 (2026-07-06 감사 — 검수 함대 유일 미배선분 합류).
                     # proximity=doom 챕터 페이즈(結/間=정당한 종결 창), open_threads=직전 프레임 render_fingerprint.unresolved.
                     closure_fb = ""
@@ -1821,9 +1872,11 @@ class OrchestrationService:
                         if _bus_for_cl is not None and isinstance(getattr(_bus_for_cl, "doom", None), dict):
                             _doom_phase_cl = _bus_for_cl.doom.get("chapter_phase", "")
                         _closure_prox = {"結": 80, "間": 75, "轉": 55}.get(_doom_phase_cl, 30)
+                        # [2026-08-12 fingerprint 프레임 소급] get_latest_frame은 frames[-1] —
+                        #   여긴 렌더 직후 동기 실행이라 이번 턴 지문은 아직 배경 추출 전이다(레이스).
+                        #   지문이 실제 찍힌 최근 프레임을 공용 관문으로 읽는다.
                         _prev_unresolved = (
-                            domain_manager.get_latest_frame(channel_id)
-                            .get("render_fingerprint", {}).get("unresolved") or []
+                            domain_manager.get_prev_fingerprint(channel_id).get("unresolved") or []
                         )
                         if not isinstance(_prev_unresolved, list):
                             _prev_unresolved = []
@@ -1930,13 +1983,18 @@ class OrchestrationService:
                     except Exception as _e_as:
                         logger.warning(f"[AbortedSpeech] skipped: {_e_as}")
 
-                    style_fb = " ".join(filter(None, [
+                    # [2026-08-03 합류점] 종전엔 `" ".join(filter(None, [...]))`로 13종이
+                    # 무순위·무캡 연결됐다. 공급자는 완전한데(13종 전부 침묵 경로 보유)
+                    # 합류에 중복 제거가 없어, TELLING 4종·REPETITION 3종이 **같은 처방을
+                    # 각각** 실어 날랐다(399+310자). merge_style_feedback가 라벨은 전부
+                    # 보존한 채 처방만 1회로 묶는다. 순서·개수 캡은 별건(빈도 계측 후).
+                    style_fb = merge_style_feedback([
                         cliche_fb, cargo_fb, rotation_fb, pidgin_fb,
                         struct_fb, tension_fb, deflection_fb,
                         arrival_fb, declaration_fb, explain_render_fb, vending_fb,
                         closure_fb,
                         (_ce_fb if config.CADENCE_ECHO_INJECT else None),
-                    ]))
+                    ])
                     if style_fb:
                         fmt_feedback = f"{fmt_feedback} {style_fb}".strip() if fmt_feedback else style_fb
 
@@ -1960,8 +2018,13 @@ class OrchestrationService:
                     if _as_window is not None:
                         _tracking_update["recent_aborted_speech"] = _as_window
                     domain_manager.update_session_ai_memory(channel_id, _tracking_update)
+                    # [2026-08-03] journal엔 **태그만**, 전문은 verbose 로거로.
+                    #   구 `fmt_feedback[:80]`은 80자에서 잘려 뒤쪽 검출기가 터져도
+                    #   로그에 흔적이 없었다 — "뭐가 자주 터지나"라는 감각이 실제 빈도가
+                    #   아니라 join 순서로 만들어지고 있었다. 태그 요약은 길이 무관 전량 노출.
                     if fmt_feedback:
-                        logger.info(f"[FormatCheck] {fmt_feedback[:80]}")
+                        logger.info(f"[FormatCheck] {style_feedback_tags(fmt_feedback)}")
+                        bot_utils.vlog("FormatCheck", fmt_feedback)
 
                     # 9. Background Extraction (Flash 모델로 별도 API 호출)
                     # V4 Inline Extraction 대신 기존 Background Extraction 복원
@@ -1972,14 +2035,84 @@ class OrchestrationService:
                         import world_board
                         if isinstance(message.channel, discord.TextChannel):
                             _board_dai = dict(ctx.dai) if ctx.dai else {}
+                            # [2026-08-16 도착물 라우트] 산문 메시지 id 전달 — 착지 모드가
+                            #   button 인 채널종은 스레드 대신 **이 메시지**에 💌를 붙인다.
+                            #   마지막 청크를 넘긴다(send_long_message 가 view 를 붙이는 청크와 동일).
+                            _prose_msg = sent_msgs[-1] if sent_msgs else None
                             asyncio.create_task(world_board.trigger_board_update(
                                 message.channel, self.client,
                                 config.MODEL_ID_FLASH, channel_id,
                                 trigger="turn",
                                 dai=_board_dai,
+                                prose_message=_prose_msg,
                             ))
                     except Exception:
                         pass
+
+                    # 9.55. [2026-08-16 상태패널 v0] 하단 상태 패널 — 배경 콜 1개 + 코드 저장.
+                    #   패널 정의(!출력룰 panel/상태창) 미등록이면 콜 0. 산문은 **저장본과 같은
+                    #   순수 response**(표시용 헤더가 섞인 문자열이 아니다 — 헤더는 표시 계층 전용).
+                    try:
+                        import status_panel as _sp_mod
+                        if _sp_mod.get_panel_definition(channel_id):
+                            _sp_prose = response
+
+                            async def _run_status_panel():
+                                _res = await _sp_mod.generate_panel(
+                                    self.client, self.model_id_flash, channel_id, _sp_prose)
+                                if not _res or not _sp_mod.apply_panel_result(channel_id, _res):
+                                    return
+                                logger.info(
+                                    "[StatusPanel] updated turn=%s fields=%d comments=%d",
+                                    domain_manager.get_world_state(channel_id).get("turn_index", 0),
+                                    len(_res.get("fields") or {}), len(_res.get("comments") or []))
+
+                            await enqueue_background_task(
+                                channel_id, "StatusPanel", _run_status_panel,
+                                priority=TaskPriority.LOW,
+                            )
+                    except Exception as _e_sp:
+                        logger.debug(f"[StatusPanel] enqueue skip: {_e_sp}")
+
+                    # 9.56. [2026-08-17 속마음 v1] 💭 속마음 — **기본 on**(전역 TURN_MIND_ENABLED
+                    #   × 채널 모듈 "mind"). 상태패널과 **같은 시점·같은 큐**(LOW)의 배경 콜이라
+                    #   턴 임계 경로에 1ms도 얹지 않는다.
+                    #     [게이트] 무대 ∩ 점수 → 0명이면 콜도 저장도 없다(조용).
+                    #     [콜]     선별분 psyche + 산문 꼬리 → NPC별 한국어 1인칭 한 호흡
+                    #     [폴백]   콜 실패·TURN_MIND_CALL=0 → v0 선별기(콜 0)가 같은 명단으로 선다
+                    try:
+                        import turn_mail as _tm_mod
+                        if _tm_mod.mind_enabled(channel_id) and sent_msgs:
+                            _mind_dai = dict(ctx.dai) if ctx.dai else {}
+                            _mind_msg = sent_msgs[-1]
+                            _mind_prose = response
+
+                            async def _run_turn_mind():
+                                _targets = _tm_mod.select_mind_targets(channel_id, _mind_dai)
+                                if not _targets:
+                                    return          # 대상 0명 = mail 미생성(버튼도 안 붙는다)
+                                _names = [t["name"] for t in _targets]
+                                _payload = None
+                                if int(getattr(config, "TURN_MIND_CALL", 1) or 0):
+                                    _payload = await _tm_mod.generate_mind_call(
+                                        self.client, self.model_id_flash, channel_id,
+                                        _mind_dai, _mind_prose, targets=_targets)
+                                if not _payload:
+                                    # 결정론 폴백 — 콜이 죽어도 💭는 그 턴 재료로 뜬다
+                                    _payload = _tm_mod.generate_mind(channel_id, _mind_dai, names=_names)
+                                if not _payload:
+                                    return
+                                logger.info("[TurnMind] source=%s npcs=%d",
+                                            _payload.get("source", "?"), len(_payload.get("entries") or []))
+                                await _tm_mod.deliver(
+                                    _mind_msg, channel_id, _tm_mod.KIND_MIND, _payload)
+
+                            await enqueue_background_task(
+                                channel_id, "TurnMind", _run_turn_mind,
+                                priority=TaskPriority.LOW,
+                            )
+                    except Exception as _e_tm:
+                        logger.debug(f"[TurnMail] mind enqueue skip: {_e_tm}")
 
                     # 9.6. [C안 2026-07-02] 영속층 감사 — N턴마다 백그라운드 (log-only, 검출≠쓰기).
                     # knowledge/relations/world_tree 자동 적립분의 모순·중복·고아·출처불명 검출.
@@ -2000,8 +2133,10 @@ class OrchestrationService:
                     except Exception as _e_pa:
                         logger.debug(f"[PersistAudit] enqueue skip: {_e_pa}")
 
-                    # 9.7. [Reader-GM Stage 0, 2026-07-05] 서브 GM 독자 — blind read(텔레스코프+산문만),
-                    # log-only 적립(reader_log). 프롬 급식 없음. async 지연 0. 스펙: trait_playbook §4 R1.
+                    # 9.7. [Reader-GM 2026-07-05] 서브 GM 독자 — blind read(텔레스코프+산문만) → reader_log 적립.
+                    # [2026-08-11 리더 §7] 구 "Stage 0 / log-only / 프롬 급식 없음"은 stale — 현행 FEED=1에서
+                    # **다음 턴 좌뇌 서사 콜**에 조건부 급식(fog 재조명·굴절). 렌더 프롬프트 직행만 여전히 금지.
+                    # async 지연 0. 스펙: trait_playbook §4 R1, 리더GM_지도_2026-08-11.
                     try:
                         _rg_interval = getattr(config, "READER_GM_INTERVAL", 0)
                         _rg_turn = int(domain_manager.get_world_state(channel_id).get("turn_index", 0) or 0)
@@ -2107,18 +2242,31 @@ class OrchestrationService:
         # 3. 도메인 스냅샷 복원 (퀘스트/NPC/둠/기력/히스토리 전부 롤백)
         snapshot_entry = self._retry_snapshots.get(channel_id)
         snapshot = snapshot_entry.get("_data") if snapshot_entry else None
+        # [2026-08-12 !다시 유령 정리] 도메인과 같은 시점의 SQLite 로그 워터마크 (구 스냅샷이면 None/빈 dict)
+        log_marks = snapshot_entry.get("_marks") if snapshot_entry else None
         if snapshot is None:
             # 인메모리 miss (봇 재시작/인스턴스 재생성) → 디스크 영속본 폴백
             try:
                 import sqlite_store
                 snapshot = sqlite_store.read_retry_snapshot(channel_id)
                 if snapshot:
+                    log_marks = sqlite_store.read_retry_marks(channel_id)
                     logger.info(f"[!다시] Snapshot loaded from disk for {channel_id}")
             except Exception as _e_rs:
                 logger.debug(f"[!다시] disk snapshot read skipped: {_e_rs}")
         if snapshot:
             domain_manager.save_domain(channel_id, copy.deepcopy(snapshot))
             logger.info(f"[!다시] Domain snapshot restored for {channel_id}")
+            # [2026-08-12 !다시 유령 정리] 복원 **직후**, 재실행 **전**에 트림 — 순서가 계약이다.
+            # (재실행분은 트림 뒤에 쌓이므로 절대 지워지지 않는다.)
+            if log_marks:
+                try:
+                    import sqlite_store as _ss_tr
+                    _trimmed = _ss_tr.trim_logs_to_watermarks(channel_id, log_marks)
+                    if _trimmed:
+                        logger.info(f"[Retry] sqlite ghosts trimmed: {_trimmed} rows")
+                except Exception as _e_tr:
+                    logger.debug(f"[Retry] sqlite trim skipped: {_e_tr}")
         else:
             # 스냅샷 없음 (봇 재시작 등) — 히스토리만 정리 (레거시 폴백)
             d = domain_manager.get_domain(channel_id)
@@ -2212,8 +2360,17 @@ class OrchestrationService:
                     try: await feedback_msg.delete()
                     except Exception: pass
 
+                # [2026-08-12 출력파생 §8] 렌더 실패 안내는 유저에게만 (§7-11)
+                if persona.is_render_failure(response):
+                    logger.warning("[Render] 폴백 안내 반환 — 배치 경로 히스토리·배경콜 스킵")
+                    await message.channel.send(response)
+                    response = None
+
                 if response:
-                    await bot_utils.send_long_message(message.channel, response)
+                    # [2026-08-16 상태창 코드 조립] 표시 전용 헤더 (저장본은 무오염)
+                    await bot_utils.send_long_message(
+                        message.channel, self._with_status_header(channel_id, response)
+                    )
                     # 히스토리: PC 행동은 이미 waiting 모드에서 저장됨, Model 응답만 추가
                     domain_manager.append_history(channel_id, "Model", response)
 
@@ -2286,8 +2443,17 @@ class OrchestrationService:
                     try: await feedback_msg.delete()
                     except Exception: pass
 
+                # [2026-08-12 출력파생 §8] 렌더 실패 안내는 유저에게만 (§7-11)
+                if persona.is_render_failure(response):
+                    logger.warning("[Render] 폴백 안내 반환 — 관찰 경로 히스토리·배경콜 스킵")
+                    await message.channel.send(response)
+                    response = None
+
                 if response:
-                    await bot_utils.send_long_message(message.channel, response)
+                    # [2026-08-16 상태창 코드 조립] 표시 전용 헤더 (저장본은 무오염)
+                    await bot_utils.send_long_message(
+                        message.channel, self._with_status_header(channel_id, response)
+                    )
                     domain_manager.append_history(channel_id, "관찰", "[관찰 모드]")
                     domain_manager.append_history(channel_id, "Model", response)
 

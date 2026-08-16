@@ -98,6 +98,8 @@ def validate_relation_write(
         "last_updated": last_updated,
     }
 
+    # [2026-08-17] `last_change`(감사 도장)는 여기서 의도적으로 탈락한다 — 정규화 테이블에
+    #   컬럼이 없고, 만들지도 않는다(스키마 마이그레이션 0). 도장은 진실원천 JSON + 로그에만.
     # last_change_turn: 키 부재는 부재로 보존 (§1b quirk — NULL 미러)
     if "last_change_turn" in payload:
         lct = payload.get("last_change_turn")
@@ -172,6 +174,12 @@ def validate_history_write(entry: Any) -> Optional[Dict[str, Any]]:
     gt = entry.get("game_time")
     if isinstance(gt, dict):
         clean["game_time"] = gt
+    # [2026-08-11 arc digest 부활] turn 도장 보존 — 이 방벽은 화이트리스트라 명시하지 않은 키는
+    # 조용히 증발한다(npc_relations suspects 전례). 미러(sqlite_store.append_history)는 명시 컬럼만
+    # INSERT하므로 여기서 통과시켜도 스키마 영향 0 — parity 유지용.
+    t = entry.get("turn")
+    if isinstance(t, int) and t > 0:
+        clean["turn"] = t
     return clean
 
 

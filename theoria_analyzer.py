@@ -116,7 +116,6 @@ class TheoriaAnalyzer:
         scene_context = {
             "scene_type": anchors.get("scene_type", "normal"),
             "intimate_module": True,
-            "pending_flashback": bool(anchors.get("pending_flashback")),
             "channel_id": anchors.get("channel_id", ""),
             # [2026-07-15 수리] 기존: len(anchors.get("history", [])) — anchors에 "history"
             # 키가 존재한 적이 없어 **항상 0**. turn_count는 get_session_spotlight의 로테이션
@@ -270,8 +269,10 @@ class TheoriaAnalyzer:
         # 조건부 규칙표
         if scene_context.get("scene_type") == "intimate":
             rule_tables += "\n\n" + analysis_resources.SEXUAL_PSYCHOLOGY_ANALYSIS
-        if scene_context.get("pending_flashback"):
-            rule_tables += "\n\n" + analysis_resources.FLASHBACK_REST_DETECTION
+        # [2026-08-11 로드아웃 삭제] pending_flashback 게이트 + FLASHBACK_REST_DETECTION 규칙표 제거.
+        # 이 규칙표의 유일한 게이트가 !회상 명령의 대기 앵커였다 = 명령 비활성 이후 한 번도 주입된 적 없음
+        # (rest 절반도 같이 사문이었고, rest_eval 지침은 스키마 §Rest/Downtime이 이미 전부 들고 있다).
+        # 같은 파일: _build_pending_flashback 빌더 + flashback_eval의 로드아웃·비용 서브필드 5종도 함께 제거.
 
         directive = build_analysis_directive(
             active_genres=active_genres,
@@ -465,7 +466,7 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
 
 
 ## SAFETY & QUALITY
-- "PCAutonomyCheck": {"pc_spoke": boolean, "pc_thought": boolean, "pc_moved_unprompted": boolean, "gm_focus": "1-sentence: what the GM narrates this turn (world/NPC reactions only)"}
+- "PCAutonomyCheck": {"pc_spoke": boolean, "pc_thought": boolean, "pc_moved_unprompted": "boolean - narration invented a WILLED PC action. World-caused displacement/impact/involuntary reflex (knockback, wound, flinch) = false", "gm_focus": "1-sentence: what the GM narrates this turn (world/NPC reactions; consequence landing on the PC's body included)"}
 - "TemporalOrientation": {"focus": "past/present/future", "intensity": 0.0-1.0}
 - "QualityFlags": {
     "convergence_warning": "boolean - unearned comfort / premature resolution",
@@ -527,17 +528,12 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
     "post_encounter_prediction": {"char_name": "possible post-behavior IF attachment activates — null if no change expected"}
   }
 
-### Flashback Evaluation (trigger pattern detected — !회상 명령 없이도, 유저 입력에 소급 선언("사실 미리 ~했다", "이미 ~해뒀다")이 있으면 생성하라)
+### Flashback Evaluation (유저 입력에 소급 선언("사실 미리 ~했다", "이미 ~해뒀다")이 있으면 생성하라)
 - "flashback_eval": null OR {
     "detected": boolean,
     "declaration": "Korean - 1-sentence summary of retroactive claim",
     "plausibility": "plausible/stretch/impossible",
-    "flashback_type": "standard/loadout — 유저가 로드아웃을 가지고 있고 '꺼낸다/챙겨왔다/준비해둔' 등 사전 준비물 소환이면 loadout, 그 외 소급 선언이면 standard",
-    "loadout_slots": 1 (loadout only: simple=1, special=2, bold=3),
-    "relevant_passive": "passive name or null",
     "tier": "trivial/standard/bold",
-    "vigor_ratio": 0.0~1.0,
-    "composure_ratio": 0.0~1.0,
     "reason": "ENGLISH-ONLY telegraphic"
   }
 
@@ -634,6 +630,8 @@ Any render-facing field whose value would contain Hangul → write that field's 
         #   그동안 **집행 재료 없이** 서 있었다 — 이전 턴 값이 어디에도 안 돌아왔으므로
         #   모델은 매 턴 히스토리에서 재유추(=재발명)할 수밖에 없었다.
         soma_prev = anchors.get("stored_npc_soma", {}) or {}
+        # [2026-08-11 사망 파이프라인] {이름: down|dead}. 전원 생존이면 빈 dict.
+        _inactive = anchors.get("npc_inactive", {}) or {}
         if not attitudes and not knowledge and not soma_prev:
             return ""
 
@@ -659,11 +657,31 @@ Any render-facing field whose value would contain Hangul → write that field's 
                     npc_lines.append(f"  Secrets: [{'; '.join(kn['secrets_held'][:3])}]")
                 npc_lines.append(f"  LeakRisk={kn.get('leak_risk', 'none')}")
             _sm = soma_prev.get(npc_name) or {}
+            # [2026-08-11 사망 파이프라인] 생존축 필터 — 구멍 순위 5.
+            #   soma 스냅샷은 08-11 오프스테이지 잔존 이후 **관측이 끊겨도 남는다**.
+            #   그래서 죽거나 쓰러진 인물의 몸 상태가 `(held Nt)`를 달고 매 턴 재급식됐다
+            #   — 시체에게 "이 상태가 12턴째 지속 중"이라고 알려주는 꼴.
+            #   침묵이 정답: 값을 지우지는 않는다(회복하면 그 자리에서 다시 흐른다).
+            if _inactive.get(npc_name):
+                _sm = {}
             if isinstance(_sm, dict) and _sm:
                 # 값만 돌려준다 — 해석·지시 없이. 유지/심화/회복 판단은 이번 턴 관찰의 몫.
-                _bits = [f"{k}={v}" for k, v in _sm.items() if v]
+                # [2026-08-11 soma 지속] enum 두 축만 렌더 — since_turn은 내부 시계지 상태가 아니다.
+                _bits = [f"{k}={_sm.get(k)}" for k in ("polyvagal", "dissociation") if _sm.get(k)]
                 if _bits:
-                    npc_lines.append("  Soma(prev): " + ", ".join(_bits))
+                    # 무변화 지속 턴수. 임계 미만은 **침묵**(1턴짜리 = 노이즈).
+                    # SQLite 조회 없음 — world_state가 실어 온 값만 뺀다(매 턴 경로).
+                    _hold = ""
+                    try:
+                        _since = _sm.get("since_turn")
+                        _cur_t = int(anchors.get("turn_index", 0) or 0)
+                        if _since is not None and _cur_t > 0:
+                            _held = _cur_t - int(_since)
+                            if _held >= int(getattr(config, "SOMA_PERSIST_MIN_TURNS", 2)):
+                                _hold = f" (held {_held}t)"
+                    except (TypeError, ValueError):
+                        _hold = ""
+                    npc_lines.append("  Soma(prev): " + ", ".join(_bits) + _hold)
             parts.append("\n".join(npc_lines))
 
         # [V10 Sprint 4] 막간 장부 — 분석이 막간 사실을 알아야 NPC 심리 추론이 정합
@@ -877,21 +895,6 @@ Any render-facing field whose value would contain Hangul → write that field's 
                 lines.append(f"[{idx}] {label}")
         return "\n".join(lines) + "\n"
 
-    def _build_pending_flashback(self, anchors: dict) -> str:
-        """대기 중인 회상 선언을 프롬프트에 포함"""
-        pending = anchors.get("pending_flashback")
-        if not pending:
-            return ""
-        content = pending.get("content", "") if isinstance(pending, dict) else str(pending)
-        if not content:
-            return ""
-        return f"""### 5b. PENDING FLASHBACK DECLARATION
-The player explicitly declared a flashback via !회상 command:
-"{content}"
-Evaluate this in flashback_eval field. Check plausibility, passive match, assign tier, and provide vigor_ratio/composure_ratio split.
-
-"""
-
     @staticmethod
     def _build_clock_context(clocks: list) -> str:
         """활성 둠 시계 현황을 Flash 프롬프트용 텍스트로 변환."""
@@ -1021,7 +1024,7 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
   - mirror: character sees own trait in another without recognizing it. Name trait AND misrecognition.
   - law: protocol/hierarchy/expectation bends under input pressure. Name order, bend, who pretends not to notice.
   - remainder: what scene cannot metabolize into dialogue or action. Sensory residue, weight without plot function.
-  - null: no dominant register
+  - null: no dominant register. null is the common case — a register is what the scene TURNS ON, not a condition the words happen to satisfy. A granted request, a courtesy, an uncontested choice bends no order and mirrors nothing. Name one only when removing it would flatten the scene.
 - "psyche_narrative": {
     "CharName": {
         "deep_read": "str (ENGLISH-ONLY telegraphic. Four-Layer [CUSTOM]: Surface→Adaptation→Core→Lack, 1 fragment each. Lack is never stated by character.)",
@@ -1187,6 +1190,18 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
         except Exception:
             pass
 
+        # [2026-08-11 리더 소비자] C1(fog 재조명) + C3(예측가능성 굴절) — 독자 신호 블록.
+        # 지도 §9 1·3순위. 콜 0(휘발 세션 메모리 읽기), 게이트=READER_GM_FEED, 없으면 "".
+        # 여기 붙는 이유: 재조명은 narrative_hook/open_invitations가 소유한 결정 —
+        # 렌더러가 아니라 **방향을 정하는 콜**이 받아야 다음 턴 산문이 자연히 다시 비춘다.
+        try:
+            import narrative_queries as _nq_reader
+            _rs = _nq_reader.reader_signal_block(channel_id) if channel_id else ""
+            if _rs:
+                parts.append(_rs)
+        except Exception:
+            pass
+
         parts.append("### OUTPUT\nReturn ONLY the JSON per schema. Render-facing fields stay English: the scene you read is Korean, your readings are not. Korean belongs inside quoted lines and proper nouns only.")
         return "\n\n".join(parts)
 
@@ -1308,7 +1323,7 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
 ### 5. RECENT HISTORY
 {req.history_text or '[No history]'}
 
-{self._build_pending_flashback(anchors)}{self._build_chunk_index(req.lore_chunks, ranked_chunks=req.lore_chunks_ranked)}
+{self._build_chunk_index(req.lore_chunks, ranked_chunks=req.lore_chunks_ranked)}
 ---
 Perform FULL Theoria analysis and return JSON with ALL required fields.
 Render-facing fields stay English: the scene you read is Korean, your readings are not. Korean belongs inside quoted lines and proper nouns only.

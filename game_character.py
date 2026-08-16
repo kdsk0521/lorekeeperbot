@@ -1,6 +1,6 @@
 """
 Lorekeeper TRPG Bot - Game Character Module
-Handles Character Inventory, Status Effects, Quests, Memos, and Mechanics (Dice, Normality).
+Handles Character Inventory, Status Effects, Quests, Memos, and Mechanics (Dice).
 Extracted from game_system.py
 """
 
@@ -8,7 +8,6 @@ import logging
 import time
 import re
 import asyncio
-import math
 from typing import List, Tuple, Dict, Any, Optional
 
 from google import genai
@@ -823,11 +822,6 @@ def get_status_summary(user_data: Dict[str, Any]) -> str:
     vc_txt = get_vigor_composure_text(user_data)
     parts.append(f"활력/평형: {vc_txt}")
     
-    # [Anti-Gravity] 3. Adaptation / Abnormal Exposure
-    abnormal_txt = get_abnormal_context(user_data)
-    if abnormal_txt != "None":
-        parts.append(f"적응도(Adaptation): {abnormal_txt}")
-
     # 4. Passives (Helper utilized)
     passives = get_passives_for_context(user_data) # Returns "Passives: ..."
     parts.append(passives)
@@ -1197,7 +1191,7 @@ def get_lore_book(channel_id: str) -> str:
 
 # =========================================================
 # =========================================================
-# V7: MENTAL & ADAPTATION SYSTEM
+# V7: MENTAL SYSTEM
 # =========================================================
 
 def get_mental_stage_id(value: int) -> int:
@@ -1250,29 +1244,10 @@ def get_vigor_composure_text(p_data: Dict[str, Any]) -> str:
 # 호출자 0. 자체 트라우마 각성(붕괴+회복→90 리셋+영구 Trauma 패시브)을 품고 있었음.
 # 현행은 vigor/composure 2축(vigor_composure_module)이 전담.
 
-def calculate_adaptation_pct(count: int) -> int:
-    """V7 Log Scale: math.log(count + 1) * 25"""
-    if count <= 0: return 0
-    val = math.log(count + 1) * 25
-    return min(100, int(val))
-
-# Alias for Health Check / Legacy
-calculate_adaptation_percentage = calculate_adaptation_pct
-
-def get_abnormal_context(user_data: Dict[str, Any]) -> str:
-    """
-    Returns a formatted string of the character's abnormal exposure.
-    """
-    mem = user_data.get("ai_memory", {})
-    exp = mem.get("abnormal_exposure", {})
-    if not exp: return "None"
-    
-    entries = []
-    for tag, data in exp.items():
-        count = data.get("count", 0)
-        pct = calculate_adaptation_pct(count)
-        entries.append(f"{tag}({pct}%)")
-    return ", ".join(entries)
+# [2026-08-11 비일상적응도 삭제] calculate_adaptation_pct / calculate_adaptation_percentage /
+# get_abnormal_context 제거 — 노출 카운트를 올리는 쓰기 경로(apply_abnormal_impact)가 이미
+# 사라져 abnormal_exposure는 영구 빈 딕셔너리였음. 읽기측(get_status_summary 적응도 줄,
+# !정보 게이지)도 함께 철거. 복원은 git 이력.
 
 
 # History/Archive Exports
@@ -1308,37 +1283,79 @@ def export_session_history(channel_id: str, incremental: bool = False) -> Tuple[
     return "\n".join(lines), f"✅ **대화 내역 추출 완료** ({mode_text}, {len(target_history)} lines)"
 
 def export_chronicle_book(channel_id: str, incremental: bool = False) -> Tuple[str, str]:
+    """연대기 내보내기 — 소스 통합 (2026-08-11).
+
+    소스 2곳:
+      ① quest_board["lore"] — 레거시 연대기. append-only → 기존 인덱스 커서(last_chronicle_idx) 유지.
+      ② domain["chronicles"] — 자동(발효 3회마다)/수동(!연대기) 연대기. 10개 롤링이라
+         인덱스가 못 쓰임 → 타임스탬프 워터마크(last_chronicle_export_ts)로 증분 추적.
+    구판은 ①만 읽어 ②를 내보내지 못했다(연대기 3계통 분단). 이사(내보내기)가 목적인
+    기능이므로 ②가 본진이다.
+    """
     board = _get_board(channel_id)
     lore_entries = board.get("lore", [])
-    
-    if not lore_entries:
-        return "", "⚠️ 기록된 연대기가 없습니다."
+    domain = domain_manager.get_domain(channel_id)
+    chronicle_entries = domain.get("chronicles", [])
 
-    start_idx = 0
+    lore_start_idx = 0
+    ts_watermark = 0.0
     mode_text = "전체"
 
     if incremental:
-        start_idx = domain_manager.get_last_chronicle_idx(channel_id)
-        if start_idx >= len(lore_entries):
-             return "", "✅ 새로운 연대기 기록이 없습니다."
+        lore_start_idx = domain_manager.get_last_chronicle_idx(channel_id)
+        ts_watermark = domain_manager.get_last_chronicle_export_ts(channel_id)
         mode_text = "증분"
 
-    target_entries = lore_entries[start_idx:]
+    _TYPE_TITLES = {"auto": "자동 연대기", "session_summary": "세션 연대기"}
+    items = []
+    n_board = 0
+    n_chron = 0
+    for entry in lore_entries[lore_start_idx:]:
+        items.append({
+            "title": entry.get("title", "Untitled"),
+            "content": entry.get("content", ""),
+            "timestamp": entry.get("timestamp", 0) or 0,
+            "unresolved": "",
+        })
+        n_board += 1
+    max_chron_ts = 0.0
+    for entry in chronicle_entries:
+        ts = entry.get("timestamp", 0) or 0
+        if incremental and ts <= ts_watermark:
+            continue
+        items.append({
+            "title": _TYPE_TITLES.get(entry.get("type", ""), "연대기"),
+            "content": entry.get("content", ""),
+            "timestamp": ts,
+            "unresolved": entry.get("unresolved", "") or "",
+        })
+        n_chron += 1
+        if ts > max_chron_ts:
+            max_chron_ts = ts
+
+    if not items:
+        if incremental and (lore_entries or chronicle_entries):
+            return "", "✅ 새로운 연대기 기록이 없습니다."
+        return "", "⚠️ 기록된 연대기가 없습니다."
+
+    items.sort(key=lambda x: x.get("timestamp", 0))
+
     lines = []
     lines.append(f"# Chronicle Export ({mode_text}) - {channel_id}")
     lines.append(f"Date: {time.strftime('%Y-%m-%d %H:%M')}")
-    lines.append(f"Range: #{start_idx+1} ~ #{len(lore_entries)}\n")
-    
-    for entry in target_entries:
-        title = entry.get("title", "Untitled")
+    lines.append(f"Items: {len(items)} (기록보드 {n_board} / 연대기 {n_chron})\n")
+
+    for entry in items:
         date_str = time.strftime('%Y-%m-%d', time.localtime(entry.get('timestamp', 0)))
-        content = entry.get("content", "")
-        
-        lines.append(f"## [{date_str}] {title}")
-        lines.append(content)
+        lines.append(f"## [{date_str}] {entry['title']}")
+        lines.append(entry["content"])
+        if entry.get("unresolved"):
+            lines.append(f"\n> 미해결: {entry['unresolved']}")
         lines.append("\n" + "="*30 + "\n")
 
     if incremental:
         domain_manager.set_last_chronicle_idx(channel_id, len(lore_entries))
-        
-    return "\n".join(lines), f"✅ **연대기 추출 완료** ({mode_text}, {len(target_entries)} items)"
+        if max_chron_ts > ts_watermark:
+            domain_manager.set_last_chronicle_export_ts(channel_id, max_chron_ts)
+
+    return "\n".join(lines), f"✅ **연대기 추출 완료** ({mode_text}, {len(items)} items)"

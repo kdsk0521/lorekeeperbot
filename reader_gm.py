@@ -1,14 +1,23 @@
 # -*- coding: utf-8 -*-
-"""Reader-GM (서브 GM 독자) — Stage 0: log-only 계기 단계. [2026-07-05]
+"""Reader-GM — "GM의 시선의 독자". [2026-07-05 개설 / 2026-08-11 소비 전량 배선]
 
-정체: 수신측 공급 기관. 매턴 렌더 후 async로 **텔레스코프+산문만** 읽고(blind read —
-DAI·지시문·상태 없음 = 말 그대로 독자), 독자 공책 다이제스트를 reader_log에 적립한다.
+정체: **자기 교정 기관**. 청중 시뮬레이션이 아니라, GM이 테이블 쪽 자리에 앉아 자기 산문이
+어떻게 도착했는지 확인하는 눈이다. 매턴 렌더 후 async로 **뒤표지+자기 노트북+이번 페이지**만
+읽고(blind read — DAI·지시문·내부 상태 없음), 공책 다이제스트를 reader_log에 적립한다.
+blind는 연기가 아니라 지식의 저주 차단 장치: 내부 상태를 아는 눈으로는 전달 실패가 안 보인다.
 
-Stage 0 게이트 (deepseek_v4_trait_playbook §4 R1):
-  - log-only: 프롬프트 급식 없음. 소비자=사람(레티어스 독해와 교정 대조).
-  - 렌더러 직행 금지(Stage 2에서도 좌뇌 공급층만 — W8의 독자판).
-  - 영속층 쓰기 금지: reader_log는 세션 파생(clear_session_scoped 대상).
+상시 게이트 (deepseek_v4_trait_playbook §4 R1 + 리더GM_지도_2026-08-11 §9):
+  - **렌더러 직행 금지** — 읽는 눈은 쓰는 손이 아니다. 환류는 전부 간접(좌뇌 서사 콜·디렉터·장부·계측).
+  - 지속성 게이트 통과분만 상태를 만든다(1턴 오독의 상태화 차단). 없으면 무동작.
   - 무근거 필드 드롭: quote 없는 항목은 수신이 아니라 발명 → 검증에서 제거(수신판 Contract-First).
+  - 총괄 원리: 자기재귀 루프이되 **수렴하지 않고 살짝씩 벗어난다** — 재조명은 반복이 아니라 다른 각도,
+    예측 적중이 계속되면 그건 성공이 아니라 굴절 신호.
+
+소비 현황 (READER_GM_FEED=1): SD idle 거부권 / 이변 후보 가점 / 아크 승격 1표 / 間 시드·시계·퀘스트
+  + [2026-08-11] fog→서사 콜 재조명(C1) · established→비밀 누설 압력(C2) · 예측가능성 자기 채점(C3)
+  · momentum→SD 방향 후보(C4) · register 수신 대조(C5, log-only).
+영속 쓰기: anomaly_seeds·reader_blurb(lore_summary_data) + secret_ledger.reader_exposure.
+  reader_log 자체는 세션 파생(clear_session_scoped 대상).
 
 모델: V4 적소 공식("무상태·단발·판독", T6 독해충실·T7 RP독자) — 기본 V4-Pro,
 ANALYSIS_OPENAI_MODEL_READER env로 교체 가능(Gemma 4 31B 후보: 혈통·제3의 눈·평균 독자).
@@ -251,8 +260,11 @@ async def _get_or_build_blurb(client, channel_id: str) -> str:
             types.Content(role="user", parts=[types.Part(
                 text=f"### SETTING MATERIAL\n{material}\n\nWrite the back-cover blurb JSON now.")]),
         ]
-        response = await client.aio.models.generate_content(
-            model=config.MODEL_ID_PRO, contents=contents, config=gen_config)
+        # [2026-08-11 리더 §7] 본 콜과 동일 라우팅 — READER 모델 교체 시 3콜(본·뒤표지·間 시드)이
+        # 전부 같이 바뀌어야 실험이 성립한다(종전엔 본 콜만 감싸 뒤표지는 pro 잔류).
+        with config.reader_analysis():
+            response = await client.aio.models.generate_content(
+                model=config.MODEL_ID_PRO, contents=contents, config=gen_config)
         if not getattr(response, "text", None):
             return ""
         raw = json.loads(bot_utils.clean_json_text(response.text))
@@ -383,6 +395,157 @@ async def _build_notebook_recall(client, channel_id: str, prose: str,
         return ""
 
 
+# =========================================================
+# [2026-08-11 리더 소비자] 미소비 필드 → 소비자 배선 (리더GM_지도 §9)
+# 공통 문법: 콜 0 / 렌더 직행 금지 / 지속성·접지 통과분만 / 없으면 no-op /
+#            롤백은 config 숫자 하나(READER_LEAK_BUMP=0 · READER_FOG_CAP=0 · READER_MOMENTUM_CAP=0).
+# =========================================================
+
+
+def _content_words(text: str) -> set:
+    """영문 내용어(4자+) 집합 — `_blurb_spoiler_scrub`(L145~)과 같은 매칭 축."""
+    return {w for w in re.findall(r"[a-z]{4,}", str(text).lower())}
+
+
+def _secret_touched(item: Dict[str, Any], truth: str, surface: str) -> bool:
+    """독자의 established 1항목이 이 비밀에 닿았는가(순수 — 스모크 대상).
+
+    두 축: note(영문 해석) ↔ truth/surface 내용어 3개+ 겹침 또는 포함
+         / quote(한국어 원문) ↔ truth/surface 한글 bigram 3개+ 겹침.
+    ⚠원장 truth/surface는 추출 스키마상 ENGLISH-ONLY(theoria_analyzer L559)라 영문 축이 주(主) —
+    한글 축은 원장에 한국어가 들어온 채널을 위한 안전망이지 기본 경로가 아니다.
+    임계 3은 `_blurb_spoiler_scrub`의 누설 판정과 동일(같은 질문을 반대 방향에서 묻는 것)."""
+    note = str(item.get("note", "") or "").lower()
+    quote = str(item.get("quote", "") or "")
+    for ref in (truth, surface):
+        ref = str(ref or "").strip()
+        if not ref:
+            continue
+        rl = ref.lower()
+        if rl in note:
+            return True
+        if len(_content_words(rl) & _content_words(note)) >= 3:
+            return True
+        _rb = _seed_bigrams(ref)
+        if _rb and len(_rb & _seed_bigrams(quote)) >= 3:
+            return True
+    return False
+
+
+def _apply_reader_exposure(channel_id: str, turn: int, digest: Dict[str, Any]) -> None:
+    """[C2] established(원문 접지 완료 = 증거) ↔ secret_ledger 대조 → `reader_exposure` 적립.
+
+    독자가 이미 아는 비밀은 사실상 새어나간 비밀 — 기존 kept→leaking 상태기계와 정합.
+    ⚠`leak_pressure`에 직접 += 하면 안 된다(실측): 매턴 `sync_secret_ledger`가
+    `leak_pressure_score(tension, depth, turn_count)`로 **재계산**해 덮는다. 그래서 여기서는
+    저장 필드만 올리고 압력 환산(BUMP×exposure, 총 CAP)은 계산부가 한다 — 주체 라벨 source="reader".
+    중복 가산 방지: 턴당 1회(세션 도장 reader_leak_turn — !다시가 롤백하므로 단독으론 샌다) ·
+    비밀당 1회(행 도장 reader_exposure_turn, SQLite라 롤백 무관) · 포화(캡 도달) 시 정지.
+    kept/leaking 행만 대상 — revealed/retired는 압력이 의미 없다."""
+    try:
+        import config as _cfg
+        if not getattr(_cfg, "READER_GM_FEED", 0):
+            return
+        _unit = max(0, int(getattr(_cfg, "READER_LEAK_BUMP", 3)))
+        _cap = max(0, int(getattr(_cfg, "READER_LEAK_CAP", 12)))
+        _max_units = (_cap // _unit) if _unit > 0 else 0
+        if _max_units <= 0:
+            return  # BUMP=0 또는 CAP=0 = 완전 중화(적립도 안 함)
+        established = [it for it in (digest.get("established") or []) if isinstance(it, dict)]
+        if not established:
+            return
+        import domain_manager
+        import sqlite_store
+        mem = domain_manager.get_session_ai_memory(channel_id) or {}
+        if int(mem.get("reader_leak_turn", -1) or -1) == int(turn):
+            return  # 같은 턴 재실행(!다시 등) 중복 가산 차단
+        rows = domain_manager.get_secret_ledger(channel_id)
+        if not rows:
+            return
+        touched = []
+        for row in rows:
+            _rx = int(row.get("reader_exposure", 0) or 0)
+            if _rx >= _max_units:
+                continue  # 이미 캡 포화 — 더 올려도 압력 불변
+            # [2026-08-12 !다시 유령 정리] 위 세션 도장(reader_leak_turn)은 !다시가 도메인째 롤백해
+            # 같은 턴 재실행에서 다시 열린다. 행 내부 도장은 SQLite라 롤백을 안 타므로 여기서 막힌다.
+            if int(row.get("reader_exposure_turn", 0) or 0) == int(turn):
+                continue
+            if not any(_secret_touched(it, row.get("truth", ""), row.get("surface", ""))
+                       for it in established):
+                continue
+            row["reader_exposure"] = _rx + 1
+            row["reader_exposure_turn"] = int(turn)
+            if sqlite_store.upsert_secret(channel_id, row):
+                touched.append(f"{row.get('secret_id', '?')}×{_rx + 1}")
+        domain_manager.update_session_ai_memory(channel_id, {"reader_leak_turn": int(turn)})
+        if touched:
+            logger.info("[ReaderLeak] source=reader turn=%s exposure+1: %s (bump=%d/each, cap=%d)",
+                        turn, "; ".join(touched), _unit, _cap)
+    except Exception as e:
+        logger.debug(f"[ReaderLeak] skip: {e}")
+
+
+def _score_prediction(channel_id: str, turn: int, digest: Dict[str, Any]) -> None:
+    """[C3 = 원 설계 M2] 직전 턴 `expectation` ↔ 이번 턴 `what_happened` 겹침 = 적중.
+
+    사문 두 필드를 **서로** 소비시킨다. 적중이 계속되면 성공이 아니라 굴절 신호
+    ("수렴하지 않고 살짝씩 벗어난다") — 소비는 `reader_signal_block`, 임계 미달이면 침묵.
+    ⚠`write_reader_log` **전에** 불러야 tail(1)이 직전 턴이다(쓰고 나면 자기 자신을 본다)."""
+    try:
+        import sqlite_store
+        import narrative_queries as _nq
+        import domain_manager
+        rows = sqlite_store.read_reader_log_tail(channel_id, limit=1)
+        # [2026-08-12 출력파생 §8] 유령 예측 채점 차단 — reader_log는 !다시 롤백을 안 탄다(§6).
+        #   폐기된 턴의 행이 tail(1)에 남아 "직전 예측" 행세를 하면 재생성된 이번 턴을 그것으로 채점.
+        #   직전 행의 turn이 현재 turn 이상이면 유령(롤백 잔존) 또는 자기 자신(중복 실행)이다.
+        if rows and int(rows[-1][0] or 0) >= int(turn):
+            logger.debug("[ReaderPredict] skip: ghost/duplicate tail turn=%s >= now=%s", rows[-1][0], turn)
+            return
+        prev = rows[-1][1] if rows else {}
+        prev_note = (prev.get("expectation") or {}).get("note", "") if isinstance(prev, dict) else ""
+        _pt = _nq._reader_note_tokens(prev_note)
+        if not _pt:
+            return  # 직전 예측 없음 = 채점 대상 아님(1턴차·검증 드롭)
+        hit = any(
+            len(_pt & _nq._reader_note_tokens(it.get("note", ""))) >= 2
+            for it in (digest.get("what_happened") or []) if isinstance(it, dict)
+        )
+        mem = domain_manager.get_session_ai_memory(channel_id) or {}
+        hist = [h for h in (mem.get("reader_predict") or [])
+                if isinstance(h, dict) and int(h.get("turn", -1) or -1) != int(turn)]
+        hist.append({"turn": int(turn), "hit": 1 if hit else 0})
+        hist = hist[-10:]  # 롤링 10 — 창(READER_PREDICT_WINDOW=8)보다 넉넉히
+        domain_manager.update_session_ai_memory(channel_id, {"reader_predict": hist})
+        _rate = sum(1 for h in hist if h.get("hit")) / max(1, len(hist))
+        logger.info("[ReaderPredict] turn=%s %s rate=%.2f (n=%d)",
+                    turn, "hit" if hit else "miss", _rate, len(hist))
+    except Exception as e:
+        logger.debug(f"[ReaderPredict] skip: {e}")
+
+
+# [C5] scene_register(공급 의도) → register_felt(수신 체감) 대조용 거친 어휘 지도.
+# 공급측은 enum 3+null, 수신측은 자유 한 줄이라 정밀 대조가 불가능 — 그래서 log-only 계측이다.
+# 판정이 아니라 판독 재료: MISMATCH 연속이 곧 결함은 아니고, 사람이 보는 신호.
+_REGISTER_FELT_HINTS = {
+    "mirror": ("mirror", "reflect", "recogni", "double", "echo", "same", "resembl", "twin"),
+    "law": ("order", "rule", "protocol", "hierarch", "formal", "authorit", "propriety",
+            "decorum", "duty", "rank", "obedien"),
+    "remainder": ("residue", "linger", "leftover", "unspoken", "unresolved", "remain",
+                  "aftermath", "weight", "silence", "unsaid"),
+}
+
+
+def _register_verdict(supplied: Any, felt_note: str) -> str:
+    """[C5] MATCH / MISMATCH / n/a (순수 — 스모크 대상). 어느 한쪽이라도 비면 n/a(침묵)."""
+    reg = str(supplied or "").strip().lower()
+    note = str(felt_note or "").strip().lower()
+    if reg not in _REGISTER_FELT_HINTS or not note:
+        return "n/a"
+    return "MATCH" if any(k in note for k in _REGISTER_FELT_HINTS[reg]) else "MISMATCH"
+
+
 async def run_reader(client, channel_id: str, turn: int,
                      prose: str, telescope_block: str = "") -> bool:
     """렌더 후 백그라운드에서 1회 실행. 실패=무동작(봇 무영향)."""
@@ -464,23 +627,37 @@ async def run_reader(client, channel_id: str, turn: int,
             if not any(digest.get(f) for f in _LIST_FIELDS):
                 logger.warning("[Reader] turn=%s empty digest after validation — skipped", turn)
                 return False
+            # [2026-08-11 리더 소비자] C3 채점은 **적립 전** — tail(1)이 직전 턴이어야 한다.
+            _score_prediction(channel_id, turn, digest)
             try:
                 import sqlite_store
                 sqlite_store.write_reader_log(channel_id, turn, digest, dropped)
             except Exception as _e:
                 logger.debug(f"[Reader] sqlite write skipped: {_e}")
+            # [2026-08-11 리더 소비자] C2 established → 비밀 누설 압력(저장 필드 경유).
+            _apply_reader_exposure(channel_id, turn, digest)
             # [M1 순화 diff] 공급(energy) vs 수신(tension) — 로그 1줄뿐(계측 최소주의).
+            # [2026-08-11 리더 소비자] C5 register판 동거: 공급 scene_register(서사 콜 소유,
+            #   bus.dai에 실려 같은 dai_logs 스냅샷에 있음 — 실측) vs 수신 register_felt.
+            #   같은 한 줄에 붙인다(조작면 최소주의). log-only — 행동 변화 0.
             try:
                 import sqlite_store
                 _dai_rows = sqlite_store.read_dai_logs(channel_id, limit=1)
-                _energy = str((_dai_rows[-1][1] or {}).get("energy_direction", "") or "") if _dai_rows else ""
+                _dai_last = (_dai_rows[-1][1] or {}) if _dai_rows else {}
+                _energy = str(_dai_last.get("energy_direction", "") or "")
                 _tr = (digest.get("tension_read") or {}).get("value", "")
+                _reg_v = _register_verdict(
+                    _dai_last.get("scene_register"),
+                    (digest.get("register_felt") or {}).get("note", ""),
+                )
                 if _energy and _tr:
                     _map = {"rising": "rising", "detonation": "rising",
                             "idle": "flat", "stagnant": "flat", "aftershock": "releasing"}
                     _verdict = "MATCH" if _map.get(_energy, "") == _tr else "MISMATCH"
-                    logger.info("[ReaderDiff] turn=%s supply=%s received=%s %s",
-                                turn, _energy, _tr, _verdict)
+                    logger.info("[ReaderDiff] turn=%s supply=%s received=%s %s register=%s",
+                                turn, _energy, _tr, _verdict, _reg_v)
+                elif _reg_v != "n/a":
+                    logger.info("[ReaderDiff] turn=%s register=%s", turn, _reg_v)
             except Exception:
                 pass
             # [R4 지속성 카운트] 후보 큐 갱신(휘발 재계산) — 소비는 FEED 게이트 뒤(R4b).
@@ -497,6 +674,19 @@ async def run_reader(client, channel_id: str, turn: int,
                 (digest.get("register_felt") or {}).get("note", "")[:50],
                 (digest.get("expectation") or {}).get("note", "")[:50],
             )
+            # [2026-08-03] 다이제스트 **전문**은 verbose 채널로.
+            #   종전엔 위 한 줄(개수 + note 50자 절단 2개)이 유일한 노출이었고, 본문은
+            #   sqlite `reader_log`에만 들어가 **로그에서는 볼 수 없었다** — 무슨 노트를
+            #   썼는지 보려면 DB를 열어야 했다. 서브 GM 독자의 관점이 정작 안 읽히는 상태.
+            #   journal은 위 한 줄 그대로(흐름), 전문은 `tail -f logs/verbose.log`.
+            try:
+                bot_utils.vlog(
+                    "Reader",
+                    json.dumps(digest, ensure_ascii=False, indent=2),
+                    channel_id,
+                )
+            except Exception:
+                pass
             return True
         except Exception as e:
             logger.warning(f"[Reader] attempt {attempt + 1} failed: {e}")
@@ -505,19 +695,21 @@ async def run_reader(client, channel_id: str, turn: int,
 
 # =========================================================
 # [Stage 3-A] 수신형 이변 시드 보충 — 間(intermission) 경계 번역기 콜
-# 독자 계열 첫 영속 쓰기. 5중 게이트: 지속성 통과 축만 입력·번역기 경유(원문 비주입)·
-# source="reader" 태그·READER_SEED_CAP FIFO·persist_audit 감사망 자연 편입.
+# 독자 계열 첫 영속 쓰기. [2026-08-11 리더 §7] 실질 **4중** 게이트: 지속성 통과 축만 입력·
+# 번역기 경유(원문 비주입)·source="reader" 태그·READER_SEED_CAP FIFO.
+# (구 5번째 "persist_audit 감사망 편입"은 허위 — persist_audit는 anomaly_seeds를 참조 0.
+#  source 태그는 감사가 아니라 provenance·GC·세션 리셋 청소용 식별자로 쓰인다.)
 # =========================================================
 
 _SEED_SYSTEM = """You are a world-seed smith for an ongoing TRPG campaign, working at a chapter break.
-Input: (a) narrative axes a blind reader kept returning to across recent turns (note + the Korean line that carried it), (b) the existing anomaly seed list.
+Input: (a) narrative axes a blind reader kept returning to across recent turns (note + the Korean line that carried it), (b) the existing anomaly seed list, (c) the campaign's tone tags.
 Task: grow the campaign's future material where the table's attention already lives.
-- "seeds": 1-2 NEW anomaly seeds from the axes. Do NOT duplicate or rephrase existing seeds.
+- "seeds": 1-2 NEW anomaly seeds from the axes. Do NOT duplicate or rephrase existing seeds. Seeds are small first-causes, not clues by default — their register follows the campaign tone (comedy: a joke about to land, romance: a warmth about to be noticed, noir: a loose thread); unexplained does not mean suspicious.
 - "clock": 0-1 threat/progress clock the strongest axis implies (something building offstage). null if none earns it.
 - "quest": 0-1 concrete objective a player could pursue, one Korean line. null if none earns it.
 Ground everything in the given axes. Output JSON only:
 {
-  "seeds": [{"name": "서사 이름 (한국어)", "axis": "mental|relation|complication|information|position|schedule", "tags": ["소재(한국어)"], "defense_hint": "방어 힌트 한국어"}],
+  "seeds": [{"name": "서사 이름 (한국어)", "axis": "mental|relation|complication|information|position|schedule", "tags": ["소재(한국어)"], "defense_hint": "번질 방향 또는 풀릴 방향 한 줄 (한국어)"}],
   "clock": {"name": "시계 이름 (한국어)", "segments": 4, "threat": "완성 시 무엇이 오나 (한국어)", "defense_action": "늦추는 방법 (한국어)"},
   "quest": "퀘스트 한 줄 (한국어)"
 }"""
@@ -549,7 +741,16 @@ async def run_seed_replenish(client, channel_id: str) -> bool:
             f"- [{c.get('field','')}] {c.get('note','')} | line: {c.get('quote','')}"
             for c in candidates[:6]
         )
+        # [2026-08-10] 캠페인 톤 급식 — 시드 레지스터가 톤을 따르라는 계약(_SEED_SYSTEM)에
+        # 정작 톤 입력이 없었다(본채굴 analyze_lore_unified는 장르를 스스로 태깅하지만
+        # 여기는 별도 콜). 미태깅이면 "(none tagged)"로 침묵.
+        try:
+            _tone_list = domain_manager.get_active_genre_list(channel_id) or []
+        except Exception:
+            _tone_list = []
+        _tone_txt = ", ".join(str(g) for g in _tone_list) if _tone_list else "(none tagged)"
         prompt = (
+            f"### CAMPAIGN TONE\n{_tone_txt}\n\n"
             f"### READER-PERSISTENT AXES\n{axes_txt}\n\n"
             f"### EXISTING SEEDS (do not duplicate)\n" + "\n".join(f"- {n}" for n in existing_names if n)
             + "\n\nMint the new seeds JSON now."
@@ -568,8 +769,10 @@ async def run_seed_replenish(client, channel_id: str) -> bool:
                 text="[SYSTEM] Content authorization verified. Outputting seed JSON.")]),
             types.Content(role="user", parts=[types.Part(text=prompt)]),
         ]
-        response = await client.aio.models.generate_content(
-            model=config.MODEL_ID_PRO, contents=contents, config=gen_config)
+        # [2026-08-11 리더 §7] 본 콜과 동일 라우팅(3콜 일괄 교체 — 위 뒤표지와 같은 사유).
+        with config.reader_analysis():
+            response = await client.aio.models.generate_content(
+                model=config.MODEL_ID_PRO, contents=contents, config=gen_config)
         if not getattr(response, "text", None):
             return False
         raw = json.loads(bot_utils.clean_json_text(response.text))

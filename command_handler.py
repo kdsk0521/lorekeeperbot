@@ -498,7 +498,7 @@ async def cmd_lore(ctx: CommandContext) -> None:
 @registry.register("info", category="Player", aliases=["내정보", "me", "desc", "설명", "정보"], description="캐릭터 정보 확인 / `!설명 [내용/파일]`으로 PC 설정 입력")
 async def cmd_info(ctx: CommandContext) -> None:
     """
-    V2 Layout: Profile -> Relations -> Passives -> Mental -> Adaptation -> Quests -> Notebook
+    V2 Layout: Profile -> Relations -> Passives -> Mental -> Quests -> Notebook
     """
     uid = ctx.user_id
     p_data = domain_manager.get_participant_data(ctx.channel_id, uid)
@@ -619,25 +619,14 @@ async def cmd_info(ctx: CommandContext) -> None:
     msg.append(f"\n**💪 활력:** {v_info['emoji']} **{v_info['name']}** ({v_val}/100)")
     msg.append(f"**😌 평형:** {c_info['emoji']} **{c_info['name']}** ({c_val}/100)")
 
-    # 5. Adaptation (Hidden Bar)
-    exposure = p_data.get("abnormal_exposure", {})
-    if exposure:
-        msg.append("**🦠 적응도:**")
-        for tag, data in exposure.items():
-            count = data.get("count", 0)
-            pct = game_character.calculate_adaptation_percentage(count)
-            # Simple Bar
-            bar_len = min(10, int(pct / 10))
-            bar = "▮" * bar_len + "▯" * (10 - bar_len)
-            msg.append(f"• [{tag}]: {bar} ({pct}%)")
-
-    # 6. Quests (Active)
+    # [2026-08-11 비일상적응도 삭제] 5. Adaptation 게이지 제거 — 쓰기 경로가 없어 항상 빈 표시였음
+    # 5. Quests (Active)
     quests = game_system.get_active_quests(ctx.channel_id)
     if quests:
         msg.append("\n**🛡️ 진행 중인 퀘스트:**")
         msg.extend([f"- {q}" for q in quests])
 
-    # 7. Notebook (Unified Inventory/Memo, per-user)
+    # 6. Notebook (Unified Inventory/Memo, per-user)
     notebook = game_system.get_notebook_text(ctx.channel_id, ctx.user_id)
     if notebook:
         msg.append(f"\n**📔 노트북:**\n{notebook}")
@@ -916,7 +905,10 @@ def _register_npc(channel_id: str, name: str, desc: str,
     """
     _map = existing_map if existing_map is not None else domain_manager.get_npcs(channel_id)
     target = domain_manager.find_equivalent_npc_key(_map, name) or name
-    data = {"description": desc, "source": "manual", "status": "Active"}
+    # [2026-08-11 사망 파이프라인] 생성 도장 대소문자 통일 ("Active" → enum 값 "active").
+    #   ⚠명시 status는 _PRESERVE_KEYS를 이긴다 — 즉 이 경로(`!npc추가` 재등록)는
+    #     dead를 active로 되돌린다. 수동 조작이므로 **의도된 권한**이다(작가의 손).
+    data = {"description": desc, "source": "manual", "status": "active"}
     idf = id_fields or {}
     # 명시 라벨 → 구조화 키. 래퍼의 자동 추출보다 우선(래퍼는 빈 키만 채운다).
     if idf.get("role"):
@@ -928,14 +920,45 @@ def _register_npc(channel_id: str, name: str, desc: str,
     _summary = _summary_from_id_fields(idf)
     if _summary:
         data["summary"] = _summary
+    # [2026-08-11 드라이브 부분dict 수리] update_npc는 통째 교체 관문이라, 재등록 때
+    #   _PRESERVE_KEYS 밖 필드(appear_count/_last_appear_turn/drives/soma/
+    #   decision_cooldown/identity_history/affiliation…)가 조용히 증발했다.
+    #   보존 목록은 수동 근사치일 뿐 — 정책 본문("지우려면 !npc 삭제 후 재등록")이
+    #   요구하는 건 full-copy다. 새 시트 값은 update로 여전히 이긴다.
+    _prev = _map.get(target)
+    if isinstance(_prev, dict):
+        _merged = dict(_prev)
+        _merged.update(data)
+        data = _merged
     npc_manager.update_npc(channel_id, target, data)
     return target
+
+
+def _merge_npc_attachment_texts(texts: list) -> tuple:
+    """!npc추가 다중 첨부 병합 결정. texts=[(filename, text), ...] → (file_text, skipped).
+
+    [2026-08-10] 모든 첨부가 `## 이름` 인물 경계(h2)를 갖추면(v6 기본형) 병합해 일괄
+    등록한다 — "파일 하나=인물 하나" 워크플로에서 여러 명을 한 메시지로(디스코드 캡 10).
+    경계 없는 파일(단일시트/레거시)이 하나라도 섞이면 병합 시 그 내용이 앞 블록에
+    흡수되거나 유실되므로, 구 동작(첫 파일만 + 무시 목록 안내)으로 폴백한다.
+    """
+    def _has_h2(t: str) -> bool:
+        return any(re.match(r'^##(?!#)\s+\S', l.strip()) for l in t.splitlines())
+
+    if not texts:
+        return "", []
+    if len(texts) == 1:
+        return texts[0][1], []
+    if all(_has_h2(t) for _, t in texts):
+        return "\n\n".join(t for _, t in texts), []
+    return texts[0][1], [fn for fn, _ in texts[1:]]
 
 
 @registry.register("npc", category="World", aliases=["엔피씨", "addnpc", "npc정보", "npc추가"], description="NPC 관리 (조회/추가/삭제/별칭/병합)")
 async def cmd_npc(ctx: CommandContext) -> None:
     """!npc [이름] 조회 | !npc추가 [이름]: [설명] (또는 파일 첨부) | !npc 삭제 [이름]
     | !npc 별칭 [이름] [별칭] | !npc 병합 [중복] [본체] | !npc 보이스카드 [이름]
+    | !npc 상태 [이름] [active|down|dead]  ← [2026-08-11] 생존축 수동 확정
 
     [2026-07-28] 구 독스트링은 `!npc add`를 안내했으나 **그런 서브커맨드는 없다**
     (등록 게이트는 트리거가 addnpc/npc추가이거나, 여러 줄이거나, 파일 첨부이거나,
@@ -944,18 +967,18 @@ async def cmd_npc(ctx: CommandContext) -> None:
     file_text = ""
     _skipped_files = []
     if ctx.message.attachments:
+        _att_texts = []
         for att in ctx.message.attachments:
             text, error = await read_attachment_text(att)
             if error:
                 await ctx.send(error)
                 return
             if text:
-                file_text = text
-                # [2026-07-28] 구 코드는 여기서 그냥 break — 나머지 첨부를 **말없이** 버렸다.
-                # 여러 인물을 한 번에 올린 줄 알았다가 하나만 들어가는 사고. 이름은 남겨 알린다.
-                _skipped_files = [a.filename for a in ctx.message.attachments
-                                  if a.filename != att.filename]
-                break
+                _att_texts.append((att.filename, text))
+        # [2026-08-10] 다중 첨부 지원 — "파일 하나=인물 하나"(v6 기본형) 워크플로에서
+        # 여러 명을 한 메시지로. 병합 조건·안전장치는 _merge_npc_attachment_texts 참조.
+        # (구 동작: 첫 파일만 + 무시 목록 안내 — 경계 없는 파일이 섞일 때만 그리로 폴백)
+        file_text, _skipped_files = _merge_npc_attachment_texts(_att_texts)
 
     # 2. Subcommand: remove / 삭제
     arg = ctx.raw_args
@@ -980,6 +1003,40 @@ async def cmd_npc(ctx: CommandContext) -> None:
                 if candidates:
                     hint = f"\n💡 유사한 NPC: {', '.join(candidates[:5])}"
                 await ctx.send(f"⚠️ NPC '{target_name}' 정보를 찾을 수 없습니다.{hint}")
+            return
+
+        # Subcommand: 상태 / status — 생존축 수동 확정 (active/down/dead)
+        # [2026-08-11 사망 파이프라인] **dead를 만들 수 있는 유일한 입구.**
+        #   자동 경로(추출 콜 관측)는 가역 상태 down까지만 만들고, 비가역 확정과 그 해제는
+        #   여기로 온다. 새 명령어를 신설하지 않고 !npc 서브커맨드로 붙인 이유는 조작면
+        #   최소주의 — 인풋만으로 굴러가는 캠페인이 기본이고 이건 정정용 손잡이다.
+        if parts[0].lower() in ('상태', 'status'):
+            _st_values = getattr(config, "NPC_STATUS_VALUES", ("active",))
+            _usage = f"⚠️ 사용법: `!npc 상태 [이름] [{'|'.join(_st_values)}]`"
+            _rest = parts[1].strip() if len(parts) > 1 else ""
+            if len(_rest.split()) < 2:
+                await ctx.send(_usage)
+                return
+            # 이름에 공백이 흔하므로(`Lee Ha-yoon(이하윤)`) 상태는 **마지막 토큰**으로 자른다
+            _tname, _tstatus = _rest.rsplit(None, 1)
+            _tname, _tstatus = _tname.strip(), _tstatus.strip().lower()
+            if _tstatus not in _st_values:
+                await ctx.send(_usage)
+                return
+            npcs = domain_manager.get_npcs(channel_id)
+            key = domain_manager._find_npc_key(npcs, _tname)
+            if not key:
+                await ctx.send(f"⚠️ NPC '{_tname}' 정보를 찾을 수 없습니다.")
+                return
+            _before = npc_manager.get_npc_status(npcs.get(key) or {})
+            _res = npc_manager.set_npc_status_gated(
+                channel_id, key, _tstatus, source="manual", evidence="manual command")
+            if _res == "accepted":
+                await ctx.send(f"✅ NPC **{key}** 상태: `{_before}` → `{_tstatus}`")
+            elif _res == "unchanged":
+                await ctx.send(f"ℹ️ NPC **{key}** 는 이미 `{_tstatus}` 입니다.")
+            else:
+                await ctx.send(f"⚠️ 상태 변경 실패 (`{_res}`).")
             return
 
         # Subcommand: voicecard / 보이스카드 재추출
@@ -1443,18 +1500,40 @@ async def cmd_modules(ctx: CommandContext) -> None:
     arg = ctx.raw_args.strip().lower()
     active = domain_manager.get_active_modules(ctx.channel_id)
     core_mods = [("judgment", "판정"), ("doom", "둠"), ("anomaly", "이변")]
-    extra_mods = [("board", "게시판")]
+    # [2026-08-17] 둘 다 **기본 ON**(domain_manager.DEFAULT_ON_MODULES) — 명시적 off만 끈다.
+    extra_mods = [("board", "게시판"), ("mind", "속마음")]
+    # 개별 토글 별칭. 💭는 전용 명령을 만들지 않는다(조작면 최소주의) — !모듈의 서브커맨드가 제자리.
+    _mod_aliases = {
+        "board": "board", "게시판": "board",
+        "mind": "mind", "속마음": "mind", "💭": "mind",
+    }
+    _parts = arg.split()
 
-    # board만 일괄 토글 가능
+    # 개별 토글: !모듈 속마음 off / !모듈 게시판 on
+    if len(_parts) >= 2 and _parts[0] in _mod_aliases:
+        _code = _mod_aliases[_parts[0]]
+        _label = dict(extra_mods).get(_code, _code)
+        if _parts[1] in ('on', '켜기', 'true'):
+            domain_manager.toggle_module(ctx.channel_id, _code, True)
+            await ctx.send(f"✅ **{_label}** 모듈 활성화")
+            return
+        if _parts[1] in ('off', '끄기', 'false'):
+            domain_manager.toggle_module(ctx.channel_id, _code, False)
+            await ctx.send(f"❌ **{_label}** 모듈 비활성화")
+            return
+
+    # 부가 모듈 일괄 토글
     if arg in ['on', '켜기', 'true', 'all']:
         for code, _ in extra_mods:
             domain_manager.toggle_module(ctx.channel_id, code, True)
-        await ctx.send("✅ **부가 모듈이 활성화되었습니다.**\n• 게시판 ✅\n\n(판정/둠/이변은 항상 활성)")
+        _names = " ✅ · ".join(name for _, name in extra_mods)
+        await ctx.send(f"✅ **부가 모듈이 활성화되었습니다.**\n• {_names} ✅\n\n(판정/둠/이변은 항상 활성)")
         return
     if arg in ['off', '끄기', 'false', 'none']:
         for code, _ in extra_mods:
             domain_manager.toggle_module(ctx.channel_id, code, False)
-        await ctx.send("❌ **부가 모듈이 비활성화되었습니다.**\n• 게시판 ❌\n\n(판정/둠/이변은 항상 활성)")
+        _names = " ❌ · ".join(name for _, name in extra_mods)
+        await ctx.send(f"❌ **부가 모듈이 비활성화되었습니다.**\n• {_names} ❌\n\n(판정/둠/이변은 항상 활성)")
         return
 
     # 상태 확인
@@ -1462,13 +1541,13 @@ async def cmd_modules(ctx: CommandContext) -> None:
     for code, name in core_mods:
         msg.append(f"• {name} ({code}): ✅ ON")
     msg.append("")
-    msg.append("**토글 가능 모듈**")
+    msg.append("**토글 가능 모듈** (기본 ON)")
     _vc_on = domain_manager.is_vigor_composure_active(ctx.channel_id)
     msg.append(f"• 활력/평형 (mental): {'✅ ON' if _vc_on else '❌ OFF'}")
     for code, name in extra_mods:
         status = "✅ ON" if code in active else "❌ OFF"
         msg.append(f"• {name} ({code}): {status}")
-    msg.append("\n💡 `!활력모듈 on/off` · `!게시판 on/off` — 토글 모듈 제어")
+    msg.append("\n💡 `!활력모듈 on/off` · `!게시판 on/off` · `!모듈 속마음 on/off` — 토글 모듈 제어")
 
     await ctx.send("\n".join(msg))
 
@@ -1480,7 +1559,7 @@ async def cmd_toggle_judgment(ctx: CommandContext) -> None:
 async def cmd_toggle_doom(ctx: CommandContext) -> None:
     await ctx.send("⏰ **둠 모듈**: ✅ 항상 활성\n8단계 위협 시계가 항상 작동합니다.")
 
-@registry.register("anomaly", category="System", aliases=["이변", "비일상", "abnormal"], description="이변 모듈 정보 및 징후 조회")
+@registry.register("anomaly", category="System", aliases=["이변"], description="이변 모듈 정보 및 징후 조회")
 async def cmd_toggle_anomaly(ctx: CommandContext) -> None:
     lore_data = domain_manager.get_lore_summary_data(ctx.channel_id)
     seeds = lore_data.get("anomaly_seeds", [])
@@ -1720,6 +1799,34 @@ async def cmd_toggle_board(ctx: CommandContext) -> None:
             await ctx.send("⚠️ 사용법: `!게시판 빈도 10` 또는 `!게시판 빈도 sns 5`")
             return
 
+    # [2026-08-16 도착물 라우트] 착지 모드: !게시판 표시 메시지 버튼|스레드|끄기
+    #   새 명령어를 만들지 않는다 — 게시판의 착지 방식이므로 !게시판의 서브커맨드가 제자리.
+    if len(parts) >= 1 and parts[0] in ("표시", "display", "착지"):
+        mode_aliases = {
+            "스레드": "thread", "thread": "thread",
+            "버튼": "button", "button": "button",
+            "끄기": "off", "off": "off", "없음": "off",
+        }
+        mode_display = {"thread": "🧵 스레드(공개)", "button": "💌 버튼(본인만)", "off": "❌ 끄기"}
+        if len(parts) >= 3 and parts[1] in ch_aliases and parts[2] in mode_aliases:
+            ch = ch_aliases[parts[1]]
+            mode = mode_aliases[parts[2]]
+            world_board.set_display_mode(ctx.channel_id, ch, mode)
+            ch_display = {"bulletin": "📋 공지", "sns": "📱 SNS", "message": "💌 메시지"}[ch]
+            await ctx.send(f"{ch_display} **착지**: {mode_display[mode]}")
+            return
+        modes = world_board.get_all_display_modes(ctx.channel_id)
+        await ctx.send(
+            "🧭 **게시판 착지 방식**\n"
+            f"  📋 공지: {mode_display.get(modes['bulletin'], modes['bulletin'])}\n"
+            f"  📱 SNS: {mode_display.get(modes['sns'], modes['sns'])}\n"
+            f"  💌 메시지: {mode_display.get(modes['message'], modes['message'])}\n\n"
+            "사용법: `!게시판 표시 메시지 버튼` (스레드 / 버튼 / 끄기)\n"
+            "  · 버튼 = 그 턴 산문에 💌가 붙고, 누른 사람만 봅니다.\n"
+            "  · 스레드 = 공개 스레드에 게시(채널 전원이 봅니다)."
+        )
+        return
+
     # 개별 채널 토글: !게시판 sns on/off
     if len(parts) >= 1 and parts[0] in ch_aliases:
         ch_name = ch_aliases[parts[0]]
@@ -1754,15 +1861,20 @@ async def cmd_toggle_board(ctx: CommandContext) -> None:
     board_on = "board" in modules
     channels = world_board.get_board_channels(ctx.channel_id)
     freqs = world_board.get_all_frequencies(ctx.channel_id)
+    # [2026-08-16 도착물 라우트] 착지 방식도 같이 — 빈도만 보이고 착지가 안 보이면
+    #   "왜 스레드에 안 올라오지"가 미스터리가 된다.
+    modes = world_board.get_all_display_modes(ctx.channel_id)
+    _m = {"thread": "🧵", "button": "💌", "off": "❌"}
     lines = [
         f"📋 **게시판 모듈**: {'✅ ON' if board_on else '❌ OFF'}",
-        f"  📋 공지: {'✅' if channels['bulletin'] else '❌'} ({freqs['bulletin']}턴)  |  📱 SNS: {'✅' if channels['sns'] else '❌'} ({freqs['sns']}턴)  |  💌 메시지: {'✅' if channels['message'] else '❌'} ({freqs['message']}턴)",
+        f"  📋 공지: {'✅' if channels['bulletin'] else '❌'} ({freqs['bulletin']}턴 {_m.get(modes['bulletin'], '')})  |  📱 SNS: {'✅' if channels['sns'] else '❌'} ({freqs['sns']}턴 {_m.get(modes['sns'], '')})  |  💌 메시지: {'✅' if channels['message'] else '❌'} ({freqs['message']}턴 {_m.get(modes['message'], '')})",
         "",
         "사용법:",
         "  `!게시판 on/off` — 전체 모듈",
         "  `!게시판 공지/sns/메시지 on/off` — 개별 채널",
         "  `!게시판 빈도 N` — 전체 기본 빈도",
         "  `!게시판 빈도 sns 5` — 채널별 빈도",
+        "  `!게시판 표시 메시지 버튼` — 착지 방식(🧵스레드/💌버튼/❌끄기)",
     ]
     await ctx.send("\n".join(lines))
 
@@ -1940,11 +2052,6 @@ async def cmd_lores(ctx: CommandContext) -> None:
 
     # Default: AI Summary Generation
     await _generate_session_chronicle(ctx)
-
-
-# !abnormal / !비일상 은 !이변 (anomaly) 으로 통합되었습니다.
-# @registry.register("abnormal", category="Analysis", aliases=["비일상"], description="비일상 적응도 시스템 제어")
-
 
 
 # handle_time_command migrated to cmd_time
@@ -2134,62 +2241,8 @@ async def cmd_mental(ctx: CommandContext) -> None:
         await ctx.send("⚠️ 올바른 숫자를 입력하세요. (예: `!활력 80` 또는 `!활력 80 70`)")
 
 
-# [Phase 3 DEPRECATED] !회상/!로드아웃 명령 비활성화. Theoria.flashback_eval 자동 감지는 유지.
-# 사용자 자연 입력 ("사실 미리 ~해뒀다") → Flash detect → 산문 반영 (vigor 차감 X).
-# @registry.register("flashback", category="Player", aliases=["회상", "로드아웃", "장비설정"], description="회상 선언 (장비 소환 포함)")
-async def cmd_flashback(ctx: CommandContext) -> None:
-    """!회상 [상태/선언내용] — 과거 준비를 소급 선언. 로드아웃 4칸 자동."""
-    import config as _cfg
-    arg = ctx.raw_args.strip()
-
-    # ── 도움말 ──
-    if not arg:
-        tiers = _cfg.FLASHBACK_COST_TIERS
-        loadout = domain_manager.get_loadout(ctx.channel_id, ctx.user_id)
-        slot_info = ""
-        if loadout:
-            used = loadout.get("used_slots", 0)
-            total = loadout["total_slots"]
-            slot_info = f"\n📌 장비 슬롯: {total - used}/{total}칸 남음"
-        await ctx.send(
-            "🔮 **회상 시스템** — 과거 준비를 소급 선언합니다.\n\n"
-            "**사용법**\n"
-            "`!회상 [선언 내용]` — 다음 턴에 평가\n"
-            "`!회상 상태` — 현재 슬롯/기력 확인\n\n"
-            "**비용** (기력 차감, 특질 매칭 시 50% 할인)\n"
-            f"- trivial: -{tiers['trivial']} / standard: -{tiers['standard']} / bold: -{tiers['bold']}\n\n"
-            "**장비 소환**: 서사 중 '꺼낸다/챙겨왔다' → 장비 슬롯 소비 (4칸, 자동)\n\n"
-            "예시: `!회상 탈출 루트를 미리 확보해뒀다`\n"
-            "서사 중 자연스럽게도 가능: \"사실 미리 ~해뒀다\""
-            f"{slot_info}"
-        )
-        return
-
-    # ── 상태 확인 ──
-    if arg.lower() in ("상태", "status", "정보", "info"):
-        loadout = domain_manager.get_loadout(ctx.channel_id, ctx.user_id)
-        mem = domain_manager.get_ai_memory(ctx.channel_id, ctx.user_id)
-        vigor_val = mem.get("vigor", {}).get("value", 100)
-        composure_val = mem.get("composure", {}).get("value", 100)
-        if loadout:
-            used = loadout.get("used_slots", 0)
-            total = loadout["total_slots"]
-            items = loadout.get("items", [])
-            items_str = ", ".join(items) if items else "(없음)"
-            slot_msg = f"🎒 **장비 슬롯**: {total - used}/{total}칸\n사용: {items_str}"
-        else:
-            slot_msg = f"🎒 **장비 슬롯**: 4/4칸 (미사용)"
-        tiers = _cfg.FLASHBACK_COST_TIERS
-        await ctx.send(
-            f"{slot_msg}\n"
-            f"⚡ 기력 {vigor_val}/100 | 평정 {composure_val}/100\n"
-            f"회상 비용: trivial -{tiers['trivial']} / standard -{tiers['standard']} / bold -{tiers['bold']}"
-        )
-        return
-
-    # ── 회상 선언 (대기열 등록) ──
-    domain_manager.set_pending_flashback(ctx.channel_id, arg, ctx.user_id)
-    await ctx.send(f"🔮 **회상 대기**: \"{arg}\"\n다음 턴에 평가됩니다.")
+# [2026-08-11 로드아웃 삭제] !회상/로드아웃/장비설정 명령 폐기 — 비활성 등록 주석 + cmd_flashback 본체 제거.
+# 유저 입력 소급 선언의 자동 감지(Theoria flashback_eval → Slot 30 회상 연출)는 명령과 무관하게 유지.
 
 
 @registry.register("reset_npcs", category="Admin", aliases=["엔피씨초기화", "npc_reset"], description="세션 NPC 초기화")

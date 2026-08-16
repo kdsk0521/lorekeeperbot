@@ -46,8 +46,16 @@ class RateLimiter:
 rate_limiter = RateLimiter()
 
 
-async def send_long_message(channel: discord.TextChannel, text: str) -> List[discord.Message]:
-    """2000자가 넘는 메시지를 나누어 전송하는 함수. 전송된 메시지 리스트 반환."""
+async def send_long_message(
+    channel: discord.TextChannel,
+    text: str,
+    view: Optional["discord.ui.View"] = None,
+) -> List[discord.Message]:
+    """2000자가 넘는 메시지를 나누어 전송하는 함수. 전송된 메시지 리스트 반환.
+
+    [2026-08-16 상태패널 v0] view는 **마지막 청크에만** 붙는다(💠 상태 패널 토글 버튼).
+    기본값 None = 종전 동작 그대로 — 기존 호출부 14곳 무변경.
+    """
     if not text:
         return []
 
@@ -56,16 +64,18 @@ async def send_long_message(channel: discord.TextChannel, text: str) -> List[dis
 
     if len(text) <= config.MAX_DISCORD_MESSAGE_LENGTH:
         await rate_limiter.wait_if_needed(channel_id)
-        msg = await channel.send(text)
+        msg = await channel.send(text, view=view) if view else await channel.send(text)
         return [msg]
 
     # 메시지 분할 전송
-    for i in range(0, len(text), config.MAX_DISCORD_MESSAGE_LENGTH):
+    _starts = list(range(0, len(text), config.MAX_DISCORD_MESSAGE_LENGTH))
+    for i in _starts:
         chunk = text[i:i + config.MAX_DISCORD_MESSAGE_LENGTH]
         await rate_limiter.wait_if_needed(channel_id)
-        msg = await channel.send(chunk)
+        _v = view if (view is not None and i == _starts[-1]) else None
+        msg = await channel.send(chunk, view=_v) if _v else await channel.send(chunk)
         sent_messages.append(msg)
-    
+
     return sent_messages
 
 
@@ -267,3 +277,72 @@ def repair_json(text: str) -> str:
     if open_b > 0:
         text += '}' * open_b
     return text
+
+
+# =========================================================
+# Verbose 로그 채널 (전문 전용)
+# [2026-08-03]
+#
+# 문제: 전문이 필요한 로그(텔레스코프 ┣ 블록, FormatCheck 전량, 발효 원문…)와
+# 흐름 파악용 한 줄 로그가 **같은 스트림**에 섞여 있었다. 그래서 둘 중 하나를 포기해야
+# 했다 — 전문을 남기면 `journalctl -u bot -f`가 블록으로 도배돼 흐름이 안 보이고,
+# 흐름을 살리려고 자르면(`[:80]`, `[:200]`) 정작 봐야 할 게 잘렸다.
+# 실측: 절단 지점 12곳. 그중 FormatCheck[:80]은 검출기 13종 중 앞 한둘만 남겼다.
+#
+# 해법: 전용 로거 `lk.verbose` + 자체 파일 핸들러 + `propagate=False`.
+#   - journal(=stdout) : 흐름 한 줄 + 태그 요약        → `journalctl -u bot -f -o cat`
+#   - logs/verbose.log : 전문                          → `tail -f logs/verbose.log`
+# 핸들러가 안 붙은 환경(스모크·도구에서 모듈만 import)에서는 propagate=False라
+# 레코드가 조용히 버려진다 — 크래시도, 콘솔 오염도 없다.
+#
+# 확장: 새 전문을 빼고 싶으면 그 자리에서 `bot_utils.vlog("태그", 전문)` 한 줄.
+# 끄기: .env `VERBOSE_LOG_ENABLED=0` (또는 파일 핸들러 미설치 = 자동 무동작).
+# =========================================================
+VERBOSE_LOGGER_NAME = "lk.verbose"
+_verbose_logger = logging.getLogger(VERBOSE_LOGGER_NAME)
+_verbose_logger.propagate = False   # journal/bot.log로 새지 않는다
+
+
+def setup_verbose_log() -> bool:
+    """전용 파일 핸들러 설치. main에서 1회. 이미 설치돼 있으면 no-op.
+
+    Returns: 설치 여부(비활성/실패 시 False — 호출부는 무시해도 안전).
+    """
+    if not getattr(config, "VERBOSE_LOG_ENABLED", True):
+        return False
+    if _verbose_logger.handlers:
+        return True
+    try:
+        import os
+        import logging.handlers
+        path = getattr(config, "VERBOSE_LOG_PATH", "logs/verbose.log")
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        h = logging.handlers.RotatingFileHandler(
+            path,
+            maxBytes=int(getattr(config, "VERBOSE_LOG_MAX_BYTES", 20_000_000)),
+            backupCount=int(getattr(config, "VERBOSE_LOG_BACKUP", 3)),
+            encoding="utf-8",
+        )
+        # 전문은 여러 줄이라 구분자가 필요하다 — 헤더 한 줄 + 본문.
+        h.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+        _verbose_logger.addHandler(h)
+        _verbose_logger.setLevel(logging.INFO)
+        return True
+    except Exception as e:  # 로그 설정 실패로 봇이 죽지 않는다
+        logging.warning(f"[VerboseLog] setup 실패 (무시): {e}")
+        return False
+
+
+def vlog(tag: str, body: str, channel_id: Optional[str] = None) -> None:
+    """전문을 verbose 채널로. 핸들러 없으면 조용히 무동작.
+
+    tag  : 나중에 grep할 라벨 (예: "Telescope", "FormatCheck")
+    body : 자르지 않은 원문
+    """
+    if not body:
+        return
+    try:
+        _ch = f" ch={channel_id}" if channel_id else ""
+        _verbose_logger.info("┌─[%s]%s\n%s\n└─", tag, _ch, body)
+    except Exception:
+        pass

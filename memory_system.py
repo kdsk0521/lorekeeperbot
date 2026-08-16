@@ -330,7 +330,6 @@ async def process_ooc_memory_edit(
         "relationships": ai_mem.get("relationships", {}),
         "passives": ai_mem.get("passives", []),
         "status_effects": p_data.get("status_effects", []),
-        "abnormal_exposure": p_data.get("abnormal_exposure", {})
     }
     
     system_prompt = (
@@ -347,12 +346,11 @@ async def process_ooc_memory_edit(
         "  \"edits\": [\n"
         "    {\"field\": \"notebook\", \"action\": \"append\", \"value\": \"- Obtained Holy Sword\"},\n"
         "    {\"field\": \"relationships\", \"action\": \"update\", \"key\": \"NPCName\", \"value\": \"New Relation\"},\n"
-        "    {\"field\": \"abnormal_exposure\", \"action\": \"update\", \"key\": \"[Tag]\", \"value\": {\"count\": 10}},\n"
         "    {\"field\": \"status_effects\", \"action\": \"remove\", \"value\": \"Poison\"}\n"
         "  ],\n"
         "  \"confirmation_message\": \"Response to user (Korean)\"\n"
         "}\n"
-        "Valid fields: appearance, personality, background, relationships, passives, status_effects, notebook, abnormal_exposure.\n"
+        "Valid fields: appearance, personality, background, relationships, passives, status_effects, notebook.\n"
     )
     
     user_prompt = f"Current State: {json.dumps(current_state, ensure_ascii=False)}\nNotebook:\n{notebook_text}\n\nOOC Request: {ooc_content}"
@@ -403,22 +401,6 @@ def apply_memory_edits(
             elif action == "append":
                 new_mem[field] = (new_mem.get(field, "") + " " + str(value)).strip()
         
-        elif field == "abnormal_exposure":
-            target = new_p_data.get("abnormal_exposure", {})
-            if action in ["set", "update"] and key:
-                # [V6.1 Fix] Handle both raw count and dict format
-                if isinstance(value, dict):
-                    target[key] = value
-                else:
-                    try:
-                        target[key] = {"count": int(value)}
-                    except (ValueError, TypeError):
-                        logger.debug(f"[무시됨] abnormal_exposure 값 변환 실패, 기본값 사용: {value}")
-                        target[key] = {"count": 1}  # Fallback
-            elif action == "remove" and key:
-                target.pop(key, None)
-            new_p_data["abnormal_exposure"] = target
-                
         elif field == "relationships":
             if action in ["set", "update"] and key:
                 if "relationships" not in new_mem: new_mem["relationships"] = {}
@@ -500,23 +482,10 @@ def apply_memory_edits(
                         break
                         
             new_mem[field] = target
-                
-        elif field == "normalization":
-            # [V6.1 Migration] Redirect legacy normalization to abnormal_exposure
-            target = new_p_data.get("abnormal_exposure", {})
-            if action in ["set", "update"] and key:
-                try:
-                    # Legacy value might be a percentage string or int.
-                    # Convert to approximate count if possible, or just treat as raw count for safety.
-                    raw_val = int(str(value).replace('%', '').strip())
-                    # If it was a percentage (e.g. 74), we need to reverse the log formula or just store as count.
-                    # For OOC edits, usually users intend to set the LEVEL.
-                    target[key] = {"count": raw_val}
-                except (ValueError, TypeError):
-                    logger.debug(f"[무시됨] normalization 값 변환 실패, 기본값 사용: {value}")
-                    target[key] = {"count": 1}
-            new_p_data["abnormal_exposure"] = target
-            
+
+    # [2026-08-11 비일상적응도 삭제] abnormal_exposure 편집 분기 + 레거시 normalization
+    # 리다이렉트 분기 제거. OOC로만 값이 들어가고 플레이 중 갱신하는 코드는 없던 필드라
+    # 스키마·프롬프트 필드 목록·예시 JSON도 같이 철거. 복원은 git 이력.
     return new_mem, new_p_data
 
 

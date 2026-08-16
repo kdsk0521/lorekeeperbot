@@ -11,6 +11,8 @@ from typing import List, Dict, Any, Optional
 import config
 import domain_manager
 
+logger = logging.getLogger(__name__)
+
 # =========================================================
 # WORLD TIME & WEATHER
 # =========================================================
@@ -499,6 +501,76 @@ def build_real_time_display(
                 lines.append(" ".join(clock_parts))
 
     return "\n".join(lines).strip()
+
+
+# =========================================================
+# [2026-08-16 상태창 코드 조립] 표시용 상태 헤더 — 값의 주인이 그린다
+# =========================================================
+# 구 구조: Slot 20이 렌더러에게 "응답 맨 위에 상태줄을 그려라"고 시키고,
+#   response_processor.parse_status_line_time이 그 그림을 정규식으로 되읽어 세계 시간을 전진시켰다.
+#   기계 표기를 산문 모델에 위임한 대가가 3중이었다 — 준수 드리프트, 없는 값 환각(로드아웃 0/4),
+#   검수 오탐 방어(_STATUS_NOISE_RE).
+# 현행: 필드 전부가 코드 소유값이므로 코드가 그린다. 표시 계층 전용(저장·검수·리더 입력엔 미포함).
+def build_status_header(channel_id: str) -> str:
+    """표시용 상태 헤더 3행. 형식은 구 Slot 20 계약 그대로(위치/시간/인물 · Doom · 시계).
+
+    읽기 전용 — 도메인 저장을 하지 않는다(_init_clock의 인메모리 백필은 build_real_time_display와
+    동일한 기존 읽기 경로). 따라서 헤더는 무상태고 !다시(스냅샷 롤백)에 영향이 없다.
+    시계가 없으면 3행은 생략. 실패 시 빈 문자열(헤더 없이 산문만 나간다).
+    """
+    try:
+        world = domain_manager.get_world_state(channel_id) or {}
+        _init_clock(world)  # V8.5 캘린더 마이그레이션 + hour/minute 초기화 (읽기 경로 공용)
+
+        location = world.get("current_location") or world.get("location", "Unknown")
+        time_slot = world.get("time_slot", "Unknown")
+        time_str = f"{int(world.get('hour', 12)):02d}:{int(world.get('minute', 0)):02d}"
+        cal_str = format_calendar(world)  # "N년 M월 D일"
+
+        # 인물 = 활성 PC 가면 + 무대 위 NPC.
+        # NPC 소스 정본은 get_onstage_npc_names(_last_appear_turn 기반 출석) —
+        # 지문 gaze는 "카메라가 머문 NPC"라 출석의 부분집합이고 자유서술 오염 이력이 있다.
+        # 다만 출석 마킹은 배경 추출(=직전 턴)이 찍으므로 빈손일 때만 gaze로 보강한다.
+        present = _get_active_player_masks(channel_id)
+        try:
+            import npc_manager as _npcm
+            onstage = _npcm.get_onstage_npc_names(channel_id, within_turns=1)
+        except Exception:
+            onstage = []
+        if not onstage:
+            try:
+                _gaze = domain_manager.get_prev_fingerprint(channel_id).get("gaze", "")
+                if _gaze and isinstance(_gaze, str):
+                    onstage = [g.strip() for g in _gaze.replace("\n", ",").split(",") if g.strip()]
+            except Exception:
+                onstage = []
+        for name in onstage:
+            if name and name not in present:
+                present.append(name)
+        present_text = ", ".join(present) if present else "None"
+
+        # [2026-08-16 당일 정정(레티어스)] Doom 줄 제거 — 내부 활성도 지표는 내부에.
+        # 시계는 플레이어향 트래커라 존치.
+        lines = [
+            f"위치 {location} | 시간 {cal_str} {time_str} ({time_slot}) | 인물 {present_text}",
+        ]
+
+        clock_parts: List[str] = []
+        for clock in (world.get("doom_clocks") or []):
+            if not isinstance(clock, dict) or clock.get("resolved"):
+                continue
+            name = str(clock.get("name", "Clock")).strip()
+            segments = int(clock.get("segments", 4) or 4)
+            filled = int(clock.get("filled", clock.get("progress", 0)) or 0)
+            clock_parts.append(f"[{name} {filled}/{segments}]")
+        if clock_parts:
+            lines.append(" ".join(clock_parts))
+
+        return "\n".join(lines)
+    except Exception as e:
+        logger.debug(f"[StatusHeader] build skipped: {e}")
+        return ""
+
 
 def get_world_context(channel_id: str) -> str:
     world = domain_manager.get_world_state(channel_id)

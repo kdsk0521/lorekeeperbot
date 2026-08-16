@@ -158,7 +158,8 @@ class StoryDirector:
         # 2. Idle input detection
         is_idle = StoryDirector._detect_idle_input(user_input)
         # [Reader-GM R4] 독자 거부권 — 직전 턴을 독자가 rising으로 수신했으면 idle 강등 방지.
-        # READER_GM_FEED=0(기본)이면 완전 무동작. 결정론 유지: enum 하나 → 분기 하나. spec §6b.
+        # [2026-08-11 리더 §7] 현행 READER_GM_FEED=1(라이브) — 구 주석의 "0(기본)이면 무동작"은
+        # Stage 0 시절 기술. 끄려면 env로 0. 결정론 유지: enum 하나 → 분기 하나. spec §6b.
         if is_idle:
             try:
                 import config as _cfg
@@ -176,7 +177,9 @@ class StoryDirector:
         if is_idle:
             idle_direction = StoryDirector._generate_idle_direction(
                 energy, scene_type, active_conditions,
-                narrative_chain, emotion_summary, doom_value
+                narrative_chain, emotion_summary, doom_value,
+                # [2026-08-11 리더 소비자] C4 — momentum 후보 조회용. ""면 기존 사다리 그대로.
+                channel_id=(context.narrative_anchors or {}).get("channel_id", ""),
             )
 
         # 3. Plot thread tracking & advancement hints
@@ -377,9 +380,12 @@ class StoryDirector:
         active_conditions: List[dict],
         narrative_chain: dict,
         emotion_summary: dict,
-        doom_value: int
+        doom_value: int,
+        channel_id: str = ""
     ) -> Dict[str, Any]:
-        """Generate proactive direction when input is idle/passive."""
+        """Generate proactive direction when input is idle/passive.
+
+        [2026-08-11 리더 소비자] channel_id는 C4(독자 momentum) 후보 조회용 — 기본 ""=기존 동작."""
         direction: Dict[str, Any] = {"type": "proactive"}
 
         # Priority 1: Active conditions with escalation potential
@@ -445,6 +451,30 @@ class StoryDirector:
             direction["source"] = "doom"
             direction["hint"] = "environmental_pressure"
             return direction
+
+        # [2026-08-11 리더 소비자 → 당일 정정(레티어스 "렌더 직행 애매")] Priority 5 (폴백 직전):
+        # 독자 momentum은 **선택자이지 텍스트 소스가 아니다.** 구판은 note 원문을 hint에 실었고
+        # hint는 iceberg translate_idle_direction의 `what stirs:`로 **렌더 프롬프트에 그대로**
+        # 떨어졌다 = 렌더 직행(독자가 저자 펜을 쥠). 정정: hint를 비워 iceberg의 고정 문장
+        # ("the motion already read at the table carries forward")만 렌더에 가고, note 원문은
+        # 서사 콜 블록(narrative_queries.reader_signal_block — 좌뇌 재해석 경유)이 나른다.
+        # 거부권(L160~)과 같은 문법: 독자는 행동을 바꾸되 문장을 못 싣는다.
+        try:
+            import config as _cfg_rm
+            _rm_cap = int(getattr(_cfg_rm, "READER_MOMENTUM_CAP", 120))
+            if channel_id and _rm_cap > 0 and getattr(_cfg_rm, "READER_GM_FEED", 0):
+                import sqlite_store as _ss_rm
+                _rm_rows = _ss_rm.read_reader_log_tail(channel_id, limit=1)
+                _rm_list = (_rm_rows[-1][1].get("momentum") or []) if _rm_rows else []
+                _has_rm = any(isinstance(_it, dict) and str(_it.get("note", "") or "").strip()
+                              for _it in _rm_list)
+                if _has_rm:
+                    direction["source"] = "reader_momentum"
+                    direction["hint"] = ""  # 텍스트 금지 — 고정 문장은 iceberg _IDLE_SOURCE_KR 몫
+                    logger.info("[ReaderMomentum] idle slot claimed (text withheld — selector only)")
+                    return direction
+        except Exception:
+            pass
 
         # Default: world-driven ambient progression
         direction["source"] = "ambient"

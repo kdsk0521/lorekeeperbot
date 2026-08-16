@@ -151,6 +151,32 @@ def _map_model(model: Optional[str]) -> str:
     return _appconfig.ANALYSIS_OPENAI_MODEL_FLASH
 
 
+def _dsh_anchor(resolved_model: str, tier: str) -> str:
+    """[2026-08-16 DSH 앵커 — 분석 관문] deepseek 로 **해석된** 콜에만 붙는 추론 레지스터 앵커.
+
+    렌더 경로(persona) 실측: V4 0813 이 캡 지시를 무시하고 12,867자 사고 → 앵커 투입 후 4,268자(-67%).
+    기전 = DSH(네이티브 하네스) 밖에서는 학습 분포 앵커("We need" 개시 관성)가 추론을 훈련된
+    레지스터로 접는다. "We need" 토큰은 불변(번역·의역 금지 — RL 코퍼스 관성이 본체).
+    단계 내용물은 **분석 콜용**(작가 3단 변환 파이프라인이 아니라 스키마 채우기).
+
+    순수 함수(I/O 0): 모델·tier 만 보고 문자열을 만든다. deepseek 아니면 "" (GLM·기타 무접촉),
+    tier 의 추론 캡이 0(=off/none)이면 "" — 추론 안 하는 콜에 추론 지시를 넣지 않는다.
+    마지막 1절(format stays as specified below)은 json_object 모드 콜 방어 — 앵커가 시스템
+    머리에 서면서 "4) the answer itself" 가 서술형 서두를 유도하지 않도록 못을 박는다.
+    """
+    if "deepseek" not in (resolved_model or "").lower():
+        return ""
+    cap = reasoning_policy.reasoning_cap_chars(tier)
+    if not cap:
+        return ""
+    return (
+        'Private reasoning register: open your thinking with "We need" and count the steps. '
+        "We need: 1) what this task asks; 2) the fields owed; 3) the evidence lines; "
+        f"4) the answer itself. Land near {cap} characters of thought and answer. "
+        "The answer format stays exactly as specified below."
+    )
+
+
 def _config_to_kwargs(cfg: Any) -> dict:
     """GenerateContentConfig -> chat.completions.create kwargs (safety_settings 무시)."""
     kwargs: dict = {}
@@ -206,15 +232,30 @@ class _Models:
         _heavy = bool(_heavy_var.get()) if _heavy_var is not None else False
         _ext_var = getattr(_appconfig, "ANALYSIS_EXTRACT_VAR", None)
         _extract = bool(_ext_var.get()) if _ext_var is not None else False
+        # [2026-08-11 리더 §7] 독자 콜 tier 분리 — env 미설정("")이면 공용 tier 폴스루 = 무변화.
+        _rdr_var = getattr(_appconfig, "ANALYSIS_READER_VAR", None)
+        _reader_tier = (getattr(_appconfig, "ANALYSIS_REASONING_TIER_READER", "") or "") \
+            if (_rdr_var is not None and _rdr_var.get()) else ""
         if _heavy:
             _tier = _appconfig.ANALYSIS_REASONING_TIER_HEAVY
         elif _extract:
             _tier = getattr(_appconfig, "ANALYSIS_REASONING_TIER_EXTRACT", "off")
+        elif _reader_tier:
+            _tier = _reader_tier
         else:
             _tier = _appconfig.ANALYSIS_REASONING_TIER
         _extra = dict(kwargs.get("extra_body") or {})
         _extra.update(reasoning_policy.build_reasoning_params(resolved, _tier))
         kwargs["extra_body"] = _extra
+        # [2026-08-16 DSH 앵커 — 분석 관문] 콜사이트마다 심지 않는다(자매 소급 병). 해석된 실모델이
+        # deepseek 일 때만, 시스템 메시지 **머리(위치 0)**에 접합 — 위치도 기전이다(꼬리 배치 실패 이력).
+        # 렌더 경로(persona)는 이미 배포됨 = 무접촉. GLM·기타 모델은 _dsh_anchor 가 "" 반환.
+        _anchor = _dsh_anchor(resolved, _tier)
+        if _anchor:
+            if messages and messages[0].get("role") == "system":
+                messages[0]["content"] = _anchor + "\n\n" + messages[0]["content"]
+            else:
+                messages.insert(0, {"role": "system", "content": _anchor})
         # 추론 ON 이면 추론 길이 캡 주입(DTG THOUGHTS_LIMIT 이식) — 추론만 조이고 JSON 출력은 유지.
         _cap = reasoning_policy.reasoning_cap_instruction(_tier)
         if _cap:
@@ -223,8 +264,9 @@ class _Models:
             resp = await self._client.chat.completions.create(**kwargs)
             _msg = resp.choices[0].message if getattr(resp, "choices", None) else None
             text = _msg.content if _msg else ""
-            logger.info("[reasoning-trace] analysis model=%s tier=%s reasoning_chars=%d",
-                        resolved, _tier, reasoning_policy.reasoning_trace_len(_msg))
+            logger.info("[reasoning-trace] analysis model=%s tier=%s anchor=%s reasoning_chars=%d",
+                        resolved, _tier, "on" if _anchor else "off",
+                        reasoning_policy.reasoning_trace_len(_msg))
             return _RespShim(text)
         except Exception as e:
             logger.error("[analysis-openai] generate_content failed (%s): %s", kwargs.get("model"), e)

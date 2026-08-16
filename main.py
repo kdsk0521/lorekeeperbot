@@ -48,6 +48,10 @@ _file_h.setFormatter(_log_fmt)
 
 logging.basicConfig(level=logging.INFO, handlers=[_console_h, _file_h])
 
+# [2026-08-03] 전문 전용 채널 분리 — journal은 흐름만, 전문은 logs/verbose.log.
+# propagate=False라 이 위 두 핸들러로 새지 않는다. 실패해도 봇은 그대로 뜬다.
+bot_utils.setup_verbose_log()
+
 DISCORD_TOKEN = config.DISCORD_TOKEN
 GEMINI_API_KEY = config.GEMINI_API_KEY
 MODEL_ID = config.MODEL_ID
@@ -117,6 +121,26 @@ async def on_ready():
     logging.info(f'Logged in as {client_discord.user}')
     await client_discord.change_presence(activity=discord.Game(name="!help | TRPG"))
     client_discord.loop.create_task(_auto_backup_loop())
+
+    # [2026-08-16 도착물 라우트] 💠/💌/💭 합성 View = persistent (custom_id 고정).
+    #   전 버튼을 가진 인스턴스 하나면 부분집합만 달린 메시지도 커버한다 — 디스패치는
+    #   View 동일성이 아니라 custom_id 매칭이다. status_panel 보다 **먼저** 등록해
+    #   💠 자리는 저쪽 원본 콜백이 최종적으로 잡게 둔다(동일 동작, 소유권만 원래대로).
+    try:
+        import turn_mail
+        client_discord.add_view(turn_mail.TurnView())
+        logging.info("[TurnMail] persistent view registered")
+    except Exception as e:
+        logging.warning(f"[TurnMail] view registration failed: {e}")
+
+    # [2026-08-16 상태패널 v0] 💠 상태 패널 버튼 = persistent view (custom_id 고정).
+    #   여기서 등록해야 봇 재시작 이전에 보낸 산문 메시지의 버튼도 다시 살아난다.
+    try:
+        import status_panel
+        client_discord.add_view(status_panel.PanelView())
+        logging.info("[StatusPanel] persistent view registered")
+    except Exception as e:
+        logging.warning(f"[StatusPanel] view registration failed: {e}")
 
 @client_discord.event
 async def on_message(message: discord.Message) -> None:

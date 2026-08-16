@@ -24,6 +24,14 @@ VERSION = "8.0"
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
+# [2026-08-14 조사] gemini-3.7-flash = Stable(08-13 출시), 일반 API 키로 사용 가능(Vertex 전용 아님).
+#   입력 1,048,576 / 출력 65,536, thinking low·medium·high("minimal"은 에러 반환).
+#   제미니 복귀 시 후보값: PRO=FLASH="gemini-3.7-flash".
+#   ★★ 단, PRO를 3.7-flash로 두면 analysis_backend._map_model(148~151행)의 이름 폴스루가 깨진다.
+#      판정이 `"pro" in m and "flash" not in m`이라 "gemini-3.7-flash"는 FLASH 분기로 떨어지고,
+#      openai 경로에서 MODEL_ID_PRO를 쓰는 reader_gm(267/616/775행)이 V4-Pro→GLM으로 조용히 갈아탄다.
+#      → 3.7로 갈 거면 ANALYSIS_OPENAI_MODEL_READER를 명시하거나 _map_model 판정을 먼저 고칠 것.
+#   아래 두 preview 모델은 2026-08-14 기준 생존 확인됨.
 MODEL_ID_PRO = "gemini-3.1-pro-preview"
 MODEL_ID_FLASH = "gemini-3-flash-preview"
 MODEL_ID = MODEL_ID_PRO
@@ -92,21 +100,41 @@ ANALYSIS_NARRATIVE_VAR = contextvars.ContextVar("analysis_narrative_call", defau
 ANALYSIS_OPENAI_MODEL_EXTRACT = os.getenv("ANALYSIS_OPENAI_MODEL_EXTRACT", "")
 ANALYSIS_EXTRACT_VAR = contextvars.ContextVar("analysis_extract_call", default=False)
 
-# ── Reader-GM 서브 GM 독자 (2026-07-05 Stage 0: log-only) ────────────────────
-# 수신측 공급 기관의 계기 단계: 렌더 후 async로 텔레스코프+산문만 blind read → reader_log 적립.
-# 프롬프트 급식 없음(Stage 2 승격=별도 결정, 게이트: 집계만·렌더러 직행 금지·계기 신뢰 후).
-# 스펙: 파티쳇수정/deepseek_v4_trait_playbook_2026-07-05.md §4 R1.
+# ── Reader-GM "GM의 시선의 독자" (2026-07-05 개설 → 2026-08-11 소비 전량 배선) ──
+# 렌더 후 async로 텔레스코프+산문만 blind read → reader_log 적립 후, 다음 턴 방향 재료로만 환류.
+# 렌더 프롬프트 직행은 여전히 금지(읽는 눈은 쓰는 손이 아니다) — 좌뇌 서사 콜·디렉터·장부·계측까지.
+# 스펙: 파티쳇수정/deepseek_v4_trait_playbook_2026-07-05.md §4 R1, 지도: 리더GM_지도_2026-08-11.md.
 READER_GM_INTERVAL = int(os.getenv("READER_GM_INTERVAL", "1"))  # 매 N턴 실행 (0=비활성)
-# [R4 구조 환류] 마스터 스위치 — 0(기본)=적립·계측만, 1=소비 개시(SD 거부권 등).
-# 관측 게이트는 소프트락 1회 확인(독자 콜이 성인·고어 장면을 거부/순화 없이 읽는가)뿐 — 확인 후 1로.
+# [R4 구조 환류] 마스터 스위치 — 0=적립·계측만, 1(현행 기본)=소비 개시.
+# 소비 경로: SD idle 거부권·이변 가점·아크 승격 1표 + [2026-08-11 리더 소비자] fog 급식·momentum 방향 후보.
 READER_GM_FEED = int(os.getenv("READER_GM_FEED", "1"))
+# [2026-08-11 리더 소비자] 뒤표지 토글 — reader_gm._get_or_build_blurb가 읽는데 정의가 없던 유령. 0=뒤표지 없이 독자 콜.
+READER_GM_BLURB = int(os.getenv("READER_GM_BLURB", "1"))
 # 지속성 게이트: 같은 축이 W턴 창에서 M턴 이상 수신될 때만 후보 승격(오독 1회의 상태화 차단).
 READER_PERSIST_WINDOW = int(os.getenv("READER_PERSIST_WINDOW", "5"))
 READER_PERSIST_MIN = int(os.getenv("READER_PERSIST_MIN", "3"))
+# [2026-08-11 리더 소비자] C1 comprehension_fog → 서사 콜 "독자가 놓친 것" 블록. 지속성 통과분 최대 N개. 0=중화.
+READER_FOG_CAP = int(os.getenv("READER_FOG_CAP", "3"))
+# [2026-08-11 리더 소비자] C3 예측가능성 자기 채점(expectation ↔ 다음 턴 what_happened).
+# 최근 WINDOW턴 중 HIGH턴 이상 적중이면 서사 콜에 굴절 1줄. HIGH > WINDOW = 중화(채점·로그는 유지).
+READER_PREDICT_WINDOW = int(os.getenv("READER_PREDICT_WINDOW", "8"))
+READER_PREDICT_HIGH = int(os.getenv("READER_PREDICT_HIGH", "6"))
+# [2026-08-11 리더 소비자] C2 established → 비밀 누설 압력. leak_pressure는 매 sync 재계산되는 **파생값**이라
+# 직접 += 는 덮인다 → 저장 필드 secret_ledger.reader_exposure(관측 턴수)를 두고 점수 계산부가 가산항으로 읽는다.
+# 가산 = BUMP × exposure, 총 가산 상한 CAP. BUMP=0 = 중화(관측 적립은 계속, 압력만 0).
+READER_LEAK_BUMP = int(os.getenv("READER_LEAK_BUMP", "3"))
+READER_LEAK_CAP = int(os.getenv("READER_LEAK_CAP", "12"))
+# [2026-08-11 리더 소비자] C4 momentum → SD idle 방향 후보(ambient 폴백 직전). 힌트 글자 캡, 0=중화.
+READER_MOMENTUM_CAP = int(os.getenv("READER_MOMENTUM_CAP", "120"))
 # [Stage 3-A 수신형 시드] 間(intermission) 진입마다 승격 축→이변 시드 번역(V4 배경 콜, 독자 계열 첫 영속 쓰기).
-# 5중 게이트: 지속성 통과·번역기 경유·source=reader 태그·캡·persist_audit 편입. 0=비활성.
+# [2026-08-11 리더 §7] 4중 게이트: 지속성 통과·번역기 경유·source=reader 태그·캡. 0=비활성.
+# (구 "5중"의 persist_audit 편입 항목은 허위 — persist_audit는 시드를 감사하지 않는다.)
 READER_GM_SEED = int(os.getenv("READER_GM_SEED", "1"))
 READER_SEED_CAP = int(os.getenv("READER_SEED_CAP", "6"))  # reader-유래 시드 최대 보유(FIFO)
+# [2026-08-11 리더 §7 → 당일 정정(레티어스)] reader_log는 계측 로그 계열이 아니라
+# history_log와 같은 **영구 사료**(독자 공책 원본 — 챕터 회고 등 미래 소비자 재료) → **무캡이 기본**.
+# 읽기는 항상 LIMIT≤40이라 조회 비용 불변. >0 설정 시에만 롤링(손잡이 잔존).
+READER_LOG_KEEP = int(os.getenv("READER_LOG_KEEP", "0"))
 # 독자 모델: ""(기본)=PRO 폴스루(V4-Pro). Gemma 후보 시 env로 gemma4:31b-cloud 등 지정.
 ANALYSIS_OPENAI_MODEL_READER = os.getenv("ANALYSIS_OPENAI_MODEL_READER", "")
 ANALYSIS_READER_VAR = contextvars.ContextVar("analysis_reader_call", default=False)
@@ -127,10 +155,18 @@ RENDERER_REASONING_TIER = os.getenv("RENDERER_REASONING_TIER", "off")           
 RENDERER_REASONING_CAP_CHARS = int(os.getenv("RENDERER_REASONING_CAP_CHARS", "3500"))
 ANALYSIS_REASONING_TIER = os.getenv("ANALYSIS_REASONING_TIER", "light")             # 보조 per-turn 분석 = LIGHT (추론 ON)
 ANALYSIS_REASONING_TIER_HEAVY = os.getenv("ANALYSIS_REASONING_TIER_HEAVY", "deep")  # 1회성 무거운 추출 = DEEP
-# per-turn 추출 콜만 OFF [2026-07-05 수처1 실측]: V4-Pro가 캡 지시(1200자)를 무시하고 매턴 7.6~13.6k자
-# 사고(6회 측정, "low"→high 정규화 정황) = 턴 지연 주범. 추출=기계 읽기라 추론 가치 낮음(원설계 복귀).
-# 서사 콜(GLM)·배경 콜은 light 유지. 되돌리려면 env를 "light"로.
+# [2026-08-11 노선 갱신(레티어스)] **추론은 이제 어지간하면 켠다 — 축은 on/off가 아니라 "얼마나"(tier).**
+# .env의 EXTRACT=light는 잔재가 아니라 이 노선의 의도적 재론이다. 아래 07-05 기록은 당시 실측
+# 근거로 보존(코드 기본값 off도 유지 — env가 노선을 싣는다. V4-Pro 추론 폭주 이력은 캡 소프트 유지 사유):
+#   구) per-turn 추출 콜만 OFF [2026-07-05 수처1 실측]: V4-Pro가 캡 지시(1200자)를 무시하고 매턴
+#   7.6~13.6k자 사고(6회 측정) = 턴 지연 주범. 추출=기계 읽기라 추론 가치 낮음.
 ANALYSIS_REASONING_TIER_EXTRACT = os.getenv("ANALYSIS_REASONING_TIER_EXTRACT", "off")
+# [2026-08-11 리더 §7] 독자 콜 전용 tier — **손잡이만**. ""(기본)=미설정 → 위 공용
+# ANALYSIS_REASONING_TIER("light") 폴스루 = 배포 시점 행동 변화 0.
+# 배경 매턴 콜이라 추출처럼 off로 뺄 후보이긴 하나, 독자는 "읽고 해석"이라 추론 가치가
+# 기계 읽기와 다르다(추출 off의 근거를 그대로 못 옮긴다) → 실측 전까지 기본 유지.
+# 끄려면 .env에 ANALYSIS_REASONING_TIER_READER=off.
+ANALYSIS_REASONING_TIER_READER = os.getenv("ANALYSIS_REASONING_TIER_READER", "")
 
 
 @contextlib.contextmanager
@@ -223,6 +259,20 @@ DATA_DIR = "data"
 SESSIONS_DIR = os.path.join(DATA_DIR, "sessions")
 LORE_DIR = os.path.join(DATA_DIR, "lores")
 RULES_DIR = os.path.join(DATA_DIR, "rules")
+
+# =========================================================
+# Verbose 로그 채널 (전문 전용) — [2026-08-03]
+# 전문(텔레스코프 ┣ 블록·FormatCheck 전량 등)과 흐름 한 줄이 같은 스트림에 섞여
+# 있어 둘 중 하나를 포기해야 했다(전문 남기면 journal 도배 / 자르면 뒤쪽 증발).
+# 전용 로거 `lk.verbose` + propagate=False로 분리. 설치는 bot_utils.setup_verbose_log().
+#   journal : journalctl -u bot -f -o cat     (흐름 + 태그 요약)
+#   전문    : tail -f logs/verbose.log
+# 0으로 두면 완전 무동작(핸들러 미설치 → vlog가 조용히 버림).
+# =========================================================
+VERBOSE_LOG_ENABLED = os.getenv("VERBOSE_LOG_ENABLED", "1") == "1"
+VERBOSE_LOG_PATH = os.getenv("VERBOSE_LOG_PATH", os.path.join("logs", "verbose.log"))
+VERBOSE_LOG_MAX_BYTES = int(os.getenv("VERBOSE_LOG_MAX_BYTES", "20000000"))   # 20MB × 3 = 60MB
+VERBOSE_LOG_BACKUP = int(os.getenv("VERBOSE_LOG_BACKUP", "3"))
 
 # =========================================================
 # Discord & Input Limits
@@ -394,7 +444,7 @@ MOD_SOURCE_CAPS = {
 FRESH_THRESHOLD = 24  # [Cost-Diet] 24개 초과 시 발효 (렌더 12 + 여유 12)
 
 # =========================================================
-# V7 Core Systems: Mental, Doom, Abnormal
+# V7 Core Systems: Mental, Doom
 # =========================================================
 # Storyteller (World Initiative) Constants
 STORYTELLER_QUEUE_MAX = 5
@@ -532,11 +582,9 @@ MAX_AXIS_DROP_PER_TURN = {
 EFFORT_BONUS = 10    # 판정 +10
 EFFORT_COST = 8      # 활력/평형 선불 (흡수 보험 포함, 추가 비용 없음)
 
-# [Phase 3 DEPRECATED] Flashback (회상) — 능동적 기력 소비.
-# Theoria.flashback_eval 자동 감지는 유지 (산문 반영). 차감 코드는 orchestration에서 비활성화.
-FLASHBACK_COST_TIERS = {"trivial": 3, "standard": 8, "bold": 15}
-FLASHBACK_PASSIVE_DISCOUNT = 0.5  # 관련 특질 매칭 시 비용 50%
-FLASHBACK_MIN_MENTAL = 10  # 이 이하면 회상 불가 — ⚠ 'mental'은 폐지된 V7 단일축(2026-07-06). 플래시백 부활 시 vigor/composure 기준으로 재설계 필요
+# [2026-08-11 로드아웃 삭제] 회상 비용(FLASHBACK_COST_TIERS/PASSIVE_DISCOUNT/MIN_MENTAL)과
+# 로드아웃 슬롯(LOADOUT_SLOTS/SLOT_COST/TYPES) 상수 제거 — !회상 명령 폐기로 소비자 0.
+# 자동 감지 산문 반영은 상수 없이 동작(플래그·문장만).
 
 # Rest Recovery (휴식) — 능동적 기력 회복
 REST_RECOVERY = {"full": 20, "brief": 10, "interrupted": 5}
@@ -551,19 +599,10 @@ CROSS_AXIS_CASCADE = {
     3: -5,   # Collapse — severe drain on other axis
 }
 
-# [Phase 3 DEPRECATED] Loadout (로드아웃) — flashback과 함께 비활성화.
-# 단순 dead 보존 (미래 재활성화 가능).
-LOADOUT_SLOTS = 4
-LOADOUT_SLOT_COST = {1: 3, 2: 6, 3: 10}
-# 하위 호환용 (제거 예정)
-LOADOUT_TYPES = {
-    "standard": {"slots": 4, "label": "표준"},
-}
-
 # =========================================================
 # Inventory System (N2 — 아이템 영속 + 인벤토리 검증)
 # =========================================================
-INVENTORY_SLOT_CAP = 4  # 로드아웃 고정 슬롯과 동기화
+INVENTORY_SLOT_CAP = 4  # 인벤토리 고정 4칸
 # ⚠ 미배선 (2026-07-06 감사): 소비자 0 — 실제 아이템 영속은 notebook [소지품] 라인
 # (cognition item_usage → merge_notebook_preserve_inventory)이 담당. 참고 테이블로 보존.
 ITEM_PERSISTENCE_RULES = {
@@ -611,6 +650,24 @@ MEMORY_RECENCY_STORY_SCALE_DAYS = 30.0 # 작중 며칠이 지나야 0.71배가 �
 #   밀려나는 건 가중합 기준 경계선 항목뿐 → 비용 유계. SLOTS=0이면 완전 no-op.
 MEMORY_RESCUE_SLOTS = 1                # 0=끄기. 한 턴에 건져 올릴 최대 개수
 MEMORY_RESCUE_POSITION = 3             # 이 순위까지는 가중합 결과 불가침
+
+# ── [2026-08-11 엔티티 회상 채널] 발효 회상의 세 번째 축 ──
+# 기존 스코어는 텍스트(sim)·시간(recency)·중요도뿐이라 **"누가 얽혀 있었나"를 보지 못했다** —
+# 지금 무대에 선 인물이 등장하는 과거 엔트리를 우대할 채널이 0이었다.
+#   쓰기: 발효 시 청크 턴범위의 narrative_tracker turn_log entities 빈도 상위 N개를
+#         엔트리에 `entities`로 도장(코드 계측, LLM 콜 0).
+#   읽기: (전경 NPC ∪ 쿼리 텍스트에 나온 이름) ∩ 엔트리 entities 겹침 수로 부스트.
+# 결합은 무드일치 부스트와 **같은 문법의 유계 곱셈**. 가중합 3항(0.4/0.35/0.25)은 불변 —
+# 재배분하면 기존 튜닝이 전부 흔들린다.
+# no-op 3중: ①엔트리에 entities 키 없음(옛 엔트리) ②전경·쿼리 이름 집합 공집합
+#            ③BOOST=1.0 설정 → 셋 다 부스트 1.0.
+MEMORY_ENTITY_BOOST = 1.25             # 겹침 1명 (1.0=끄기)
+MEMORY_ENTITY_BOOST_STRONG = 1.4       # 겹침 2명 이상
+# 무드일치×엔티티 총 부스트 상한. ⚠ saliency 부스트 단독 최대가 2.0(IMPORTANCE_BOOST_CURVE)이라
+# 이 캡보다 크다 — 그래서 코드는 **캡이 무드 단독값보다 낮으면 무드 단독까지만** 내린다.
+# 엔티티 채널이 감점원이 되면 안 되기 때문(부스트는 더하기만 한다).
+MEMORY_ENTITY_BOOST_MAX = 1.8
+MEMORY_ENTITY_STAMP_TOP_N = 8          # 발효 엔트리에 도장 찍을 인물 수 (빈도 상위)
 
 # ── [C1 2026-08-01] LLM 제안 수치 델타의 코드측 상한 (SimCore "선언 = 집행") ──
 # 프롬프트에 적은 범위를 **여기에 같은 값으로** 둔다. 지금까지는 프롬프트에만 있어서
@@ -757,6 +814,27 @@ NPC_TRAJECTORY_DEPTH_MAP = {
 
 NPC_TENSION_DRAMA_THRESHOLD = 50
 
+# =========================================================
+# [2026-08-11 사망 파이프라인] NPC 생존축 enum
+# =========================================================
+# `npcs.data["status"]` 자리는 06월부터 있었지만(WHERE 인덱스까지 완비) 값은 생성 도장
+# "active" 리터럴 하나뿐이었다 — 쓰는 코드 0, 읽는 소비자 0. 죽음은 오직 "모델이 그
+# 텍스트를 다시 읽기를" 기대하는 방식으로만 유지됐고, 막간·오프스크린·자동 재등록이
+# 시체를 매 턴 무대로 되돌렸다.
+#
+#   active … 기본. 무대 후보로 정상 순환.
+#   down   … 생사불명·무력화. **가역** — 재등장 관측 하나로 풀린다.
+#   dead   … **비가역**. 자동 경로는 이 값을 못 쓰고, 해제도 수동 명령만.
+#
+# ★권한 분리가 이 enum의 본체다. 자동 경로(LLM 관측)는 가역 상태까지만 만든다.
+#   근거=실패 비용 비대칭. 미탐(죽었는데 못 잡음)은 **발생형**이라 다음 턴 산문에서
+#   눈에 띄고 수동 명령 한 줄로 고친다. 오탐(안 죽었는데 dead)은 **반사실형**이라
+#   그 인물이 조용히 캐스트에서 사라질 뿐 로그에 아무것도 안 찍힌다.
+#   비가역 전이를 LLM에 주면 안 되는 이유가 이것이고, 같은 문법이 비밀 원장의
+#   revealed/retired 후퇴 금지 게이트(sqlite_store.upsert_secret)에 이미 서 있다.
+NPC_STATUS_VALUES = ("active", "down", "dead")
+NPC_STATUS_IRREVERSIBLE = ("dead",)   # 이 값으로/에서 나가는 전이는 source=="manual"만
+
 # [2026-08-02 A축 감쇠] depth/tension은 `update_helena_metric`의 max(0,min(100,cur+delta))
 #   단조 누적뿐이라 **한 번 오른 값이 절대 안 내려왔다** — 관계가 식지 않는다.
 #   같은 코드베이스에 감쇠 전례가 넷(entity_relations fade / EMOTION_DECAY / 태도 3턴 쿨다운 /
@@ -842,12 +920,6 @@ DEFAULT_RULES = """
 ## 🎭 캐릭터 성장
 성장은 경험치나 레벨이 아닌 서사적 성취를 통해 이루어집니다:
 - 특질: 반복된 행동이나 경험을 통해 습득하는 특성 (독 내성, 야간 시야, 파이어볼 등)
-
-## 🌓 비일상 적응
-초자연적/비일상적 존재나 현상에 반복 노출되면 점차 익숙해집니다:
-- 처음: 공포, 혼란, 패닉
-- 적응 중: 경계하지만 대처 가능
-- 일상화: 담담하게 받아들임
 
 ## ⚔️ 전투
 - 캐릭터 능력, 특질, 상황을 종합하여 서사적으로 결정
@@ -1054,27 +1126,12 @@ POSITIVE_STATUS_EFFECTS = {k: 1 for k, v in STATUS_EFFECTS.items() if v["type"] 
 # SEVERITY_DOOM_IMPACT 제거 (2026-07-06 감사): 소비자 0 — status-impact→doom
 # 라인(D-1)이 이미 잘린 뒤 남은 테이블.
 
-# Normality Stages (Range: 0-100)
-# Key: (min_inclusive, max_exclusive)
-NORMALITY_STAGES = {
-    (0, 10): {"stage": 0, "name": "초기", "reaction_hint": "Shock, Fear, Confusion"},
-    (10, 30): {"stage": 1, "name": "접촉", "reaction_hint": "Wariness, Unease"},
-    (30, 60): {"stage": 2, "name": "적응", "reaction_hint": "Acceptance, Coping"},
-    (60, 90): {"stage": 3, "name": "익숙함", "reaction_hint": "Familiarity, Routine"},
-    (90, 101): {"stage": 4, "name": "일상화", "reaction_hint": "Indifference, Mastery"},
-}
-
-def get_normality_stage_info(val: Union[int, str, float]) -> Dict[str, Any]:
-    """정상화 단계 정보를 반환합니다."""
-    try:
-        val = int(val)
-    except (ValueError, TypeError):
-        val = 0
-
-    for (low, high), info in NORMALITY_STAGES.items():
-        if low <= val < high:
-            return info
-    return NORMALITY_STAGES[(90, 101)]
+# [2026-08-11 비일상적응도 삭제] 이 파일에서 함께 제거된 것들:
+#   ① NORMALITY_STAGES + get_normality_stage_info (정상성 5단계 — 소비자 0)
+#   ② ADAPTATION_TAXONOMY + get_parent_category (노출 태그 33종 + 상위 전이 규칙 — 소비자 0)
+#   ③ DEFAULT_RULES 안의 "## 🌓 비일상 적응" 섹션 — 노출 카운트를 올리는 코드가 없는데도
+#      규칙문이 적응 진행을 약속하고 있었고, get_rules → NPC 증류 접지 블록으로 LLM에 실렸음.
+# 복원은 git 이력.
 
 # =========================================================
 # UNE (Universal Narrative Engine) Configs
@@ -1301,26 +1358,6 @@ def build_mechanic_profile(narrative_tone: list, style_tech: list = None) -> dic
 
 
 # =========================================================
-# Anomaly Adaptation Taxonomy (2-Level, 33 Sub-Groups)
-# =========================================================
-# 직접 매칭 100% + 같은 상위 카테고리 내 전이 50%
-ADAPTATION_TAXONOMY = {
-    "supernatural": ["undead", "dragon", "eldritch", "cursed", "spirit", "divine", "demonic", "shapeshifter"],
-    "psychological": ["fear", "deception", "exposure", "betrayal", "madness", "guilt", "obsession"],
-    "relational": ["encounter", "jealousy", "intimacy", "separation", "rivalry", "loyalty"],
-    "situational": ["timing", "cascade", "authority", "environment", "resource", "crowd"],
-    "informational": ["evidence", "surveillance", "leak", "secret", "misinformation"],
-}
-
-
-def get_parent_category(group: str):
-    """하위 그룹의 상위 카테고리를 반환. 없으면 None."""
-    for parent, children in ADAPTATION_TAXONOMY.items():
-        if group in children:
-            return parent
-    return None
-
-# =========================================================
 # Genre Doom Sources (서사 긴장도 변동 사유 — Flash 참조용)
 # =========================================================
 # 곡선/단계 시스템은 LENS_DOOM_PHASE_RANGES + LENS_DOOM_ATMOSPHERE로 통합.
@@ -1474,6 +1511,13 @@ V10_INTERIM_LEDGER = True
 # 데이터 쌓이는 만큼 자동 활성. 문제 시 이 줄 False = 즉시 무동작.
 # 2026-06-19 ON (사용자 결정 — 장부 적립 중, graceful-empty라 위험 0).
 V10_ARC_DIGEST_FERMENT = True
+# [2026-08-11 soma 지속] B축(신체) 지속 시계 — `dissociation: Track across turns` 집행 재료.
+# npc_soma_states에 since_turn(무변화 시작 턴)을 도장하고, 추출 콜에 지속 턴수를 되돌린다.
+# MIN_TURNS: 이 턴수 미만 지속은 **침묵**(1턴짜리 = 노이즈, 어차피 값 자체가 이미 붙어 나간다).
+# LOG_KEEP: soma_log 채널당 롤링 상한 (attitude_log 1000 / emotion_log 1500과 같은 계열,
+#           전이 이벤트만 쌓이므로 더 성김 → 800).
+SOMA_PERSIST_MIN_TURNS = 2
+SOMA_LOG_KEEP = 800
 # [V10 지식 lite] npc_knowledge의 suspects/misbeliefs(의심·오해) 버킷 — 저장/추출은 무위험(상시),
 # 이 플래그는 *주입/전파-state*(읽기경로 변경: "A는 X를 의심한다" 산문 주입, knows→hearer suspects 착지)만 게이트.
 # 저장 스키마는 항상 쌓이고(populate 무조건), 이 플래그는 전파(knows→suspects 착지)+주입(iceberg suspects 렌더)만 게이트.
@@ -1490,6 +1534,11 @@ CADENCE_ECHO_INJECT = True
 # 검증된 반복 억제 계보(엠대쉬 미러 트림, 07-08 루프차단기). 저장본·플레이어 노출본은 무손상.
 # False = 탐지·로그·넛지는 유지, 스크럽만 무동작(1줄 롤백).
 ECHO_SCRUB = True
+
+# [2026-08-11 S31 꼬리주입 오프] Slot 31(직전 응답 500자 꼬리) 주입 게이트.
+# S27과 동병 소급: 원문은 히스토리 마지막 assistant에 전문으로 실리고 방어 3종도 그쪽에
+# 동일 적용 — 이중 주입은 비용+저미기 미러링 벡터만 더함. True = 구 동작 복귀(기계 휴면 보존).
+SLOT31_TAIL_INJECT = False
 
 # =========================================================
 # [2026-07-22 카드1] 감정 압력 공급 · 포어그라운드 선별
@@ -1655,6 +1704,33 @@ DLC_MODULE_DESCRIPTIONS = {
         "desc": "PC의 총체적 컨디션 (체력/집중/평판/정신). 판정 보정·이변 방어에 영향."
     }
 }
+
+# =========================================================
+# [2026-08-16 도착물 라우트] 턴 도착물 (💌 편지 · 💭 속마음)
+# =========================================================
+# 월드보드 스레드가 **공개**라 남에게 보이는 문제의 해법 — 도착물은 그 턴 산문 메시지의
+# 버튼에서 ephemeral 로 열린다. KEEP = 채널당 turn_mail 행 롤링 상한(버튼이 만료되는 지점).
+TURN_MAIL_KEEP = int(os.getenv("TURN_MAIL_KEEP", "500"))
+# 💭 속마음 — **기본 on** (2026-08-17 v1). 전역 킬스위치이자 기본값이고, 채널 단위 off는
+# `!모듈 속마음 off`(domain_manager.DEFAULT_ON_MODULES/"mind")가 소유한다. 0이면 채널 설정
+# 무관하게 전면 정지(콜 0·저장 0).
+TURN_MIND_ENABLED = int(os.getenv("TURN_MIND_ENABLED", "1"))
+# [2026-08-17 속마음 v1] 전용 배경 콜. 0이면 콜을 안 돌고 구 경로(psyche_narrative 원문
+# 선별, 콜 0)만 남는다 — 롤백 한 줄. 콜 실패 시에도 같은 구 경로가 폴백으로 선다.
+TURN_MIND_CALL = int(os.getenv("TURN_MIND_CALL", "1"))
+# 대상 게이트: **무대에 선 인물**(get_onstage_npc_names ∪ gaze) ∩ **점수 임계**.
+#   점수 = 이번 턴 emotion intensity(0~1) + spike 가산 + foreground 가산.
+#   FG 가산 = 임계와 같은 값 → 전경 인물은 무조건 통과, 배경 인물은 제 감정으로만 통과.
+TURN_MIND_SCORE_MIN = float(os.getenv("TURN_MIND_SCORE_MIN", "0.35"))
+TURN_MIND_FOREGROUND_BONUS = float(os.getenv("TURN_MIND_FOREGROUND_BONUS", "0.35"))
+TURN_MIND_SPIKE_BONUS = float(os.getenv("TURN_MIND_SPIKE_BONUS", "0.25"))
+# 콜 1회당 인물 상한(선별이 이보다 많으면 점수순 절단). 표시 상한은 turn_mail.MAX_MIND_ENTRIES.
+TURN_MIND_MAX_NPCS = int(os.getenv("TURN_MIND_MAX_NPCS", "3"))
+# 인물당 속마음 길이 캡(문자). 속마음은 장면 요약이 아니라 한 호흡 — 짧게.
+TURN_MIND_CHARS = int(os.getenv("TURN_MIND_CHARS", "160"))
+# 콜 입력에 붙이는 산문 꼬리 길이(문자). "언제의 속인가"를 잡는 용도라 짧게 — status_panel의
+# PROSE_TAIL_CHARS(2500)보다 조인다(패널은 값 갱신, 속마음은 타이밍만 필요).
+TURN_MIND_PROSE_TAIL = int(os.getenv("TURN_MIND_PROSE_TAIL", "1200"))
 
 # =========================================================
 # Safety Settings

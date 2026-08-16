@@ -125,7 +125,7 @@ def check_v6_features():
     # Anomaly System: Migrated to UNE AnomalyModule (game_world legacy removed)
     print(f"✅ Anomaly System       : OK (UNE AnomalyModule)")
 
-    # 6. Mental & Adaptation (UNE/game_character)
+    # 6. Mental (UNE/game_character)
     try:
         import game_character
         if not hasattr(game_character, "MENTAL_STAGES"):
@@ -153,24 +153,9 @@ def check_v6_features():
         print(f"❌ Mental/Info System   : FAILED ({e})")
         failed.append("MentalSystem")
 
-    # 7. Abnormal Mode (domain_manager)
-    try:
-        import domain_manager
-        # Manual check of default value (mock)
-        dummy_dom = domain_manager._get_default_session()
-        if not dummy_dom["settings"].get("abnormal_mode", False):
-            # It should be True by default now
-            print(f"⚠️ Abnormal Mode Default: False (Expected True?)")
-        else:
-            print(f"✅ Abnormal Mode Default: True (OK)")
-            
-        if not hasattr(domain_manager, "get_abnormal_mode"):
-            raise AttributeError("get_abnormal_mode accessor missing")
-        print(f"✅ Domain Settings      : OK")
-    except Exception as e:
-        print(f"❌ Domain Settings      : FAILED ({e})")
-        failed.append("DomainSettings")
-        
+    # [2026-08-11 비일상적응도 삭제] 7. Abnormal Mode 검사 제거 — settings.abnormal_mode /
+    # get_abnormal_mode 접근자 자체가 사라져 검사 대상이 없음.
+
     return not failed
 
 def check_static_analysis():

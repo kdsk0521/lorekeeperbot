@@ -764,6 +764,9 @@ _IDLE_SOURCE_KR = {
     "narrative_chain":   "the narrative chain carries forward.",
     "emotion":           "the NPC whose feeling runs hottest takes the lead.",
     "doom":              "environmental pressure surfaces through the narrative.",
+    # [2026-08-11 리더 소비자] C4 — 새 source가 이 지도에 없으면 Slot 16 줄이 조용히 증발한다
+    #   (필드는 있는데 트리거가 없는 병). 구체 방향은 idle_direction.hint가 따로 나른다.
+    "reader_momentum":   "the motion already read at the table carries forward.",
     "ambient":           "the world moves on its own; a small, quiet advance.",
 }
 
@@ -1538,7 +1541,19 @@ _DENSITY_KR = {
 
 
 def translate_detail_density(scene_type: str = "normal", energy: str = "idle") -> str:
-    """scene_type + energy → 디테일 밀도 힌트."""
+    """scene_type + energy → 디테일 밀도 힌트. 중립(moderate)은 침묵.
+
+    [2026-08-03 침묵 경로 — Slot 16 합류점 감사]
+    종전엔 빈 문자열이 나올 경로가 없어 **매 턴 무조건** 켜졌다(기본 인자 normal/idle,
+    맵 폴백 moderate, 최종 _DENSITY_KR 조회까지 전부 값 보장). Slot 16 공급자 20 중
+    침묵 못 하는 유일한 자리였다 — 자매 함수 translate_energy_direction은
+    `if not energy: return ""`를 갖고 있다.
+    ★moderate를 침묵시키는 근거는 길이가 아니라 원칙 #8("모델이 알아서 하는 건 쓰지 말고,
+      기본값으로 못하는 것만 써라"): moderate = "the key setting and only the senses it needs"
+      는 지시가 없을 때 모델이 하는 그것이다. 게다가 이 블록의 입력(scene_type·energy)은
+      같은 슬롯 안 다른 블록으로 **이미 도착**한다 — 재료와 그 재료의 파생 결론이 이중 투입.
+    sparse/dense만 발화 = 중립에서 밀려났을 때만 말한다. 롤백 = 아래 두 줄 삭제.
+    """
     base = _DETAIL_DENSITY.get(scene_type, "moderate")
     # energy 보정: detonation/aftershock → +1, idle → -1
     density_order = ["sparse", "moderate", "dense"]
@@ -1548,6 +1563,8 @@ def translate_detail_density(scene_type: str = "normal", energy: str = "idle") -
     elif energy == "idle":
         idx = max(idx - 1, 0)
     final = density_order[idx]
+    if final == "moderate":
+        return ""
     return _DENSITY_KR.get(final, "")
 
 
@@ -1913,6 +1930,19 @@ def compose_dialogue_directives(
     knowledge = npc_knowledge if isinstance(npc_knowledge, dict) else {}
     has_gaze = bool(prev_gaze and prev_gaze.strip())
 
+    # [2026-08-12 fingerprint 프레임 소급] 무매칭 가드 — gaze는 이름 쉼표 나열 계약이지만,
+    #   형식을 벗어난 값(구 계약의 서술 조각 등)이 오면 아래 exact match가 전멸해 **전 NPC MINIMAL**로
+    #   강등된다(gaze 빈손 시절의 전원 moderate보다 나쁜 결과). 매칭이 하나도 없으면 gaze 없음으로
+    #   간주하고 기존 경로(moderate)로 폴백한다 — 형식 이탈의 바닥이 종전 동작.
+    _gaze_names = set()
+    if has_gaze:
+        _gaze_names = {g.strip() for g in prev_gaze.replace("\n", ",").split(",") if g.strip()}
+        if not (_gaze_names & set(psyche_states.keys())):
+            logger.debug(
+                "[Iceberg] gaze no-match → depth fallback (gaze=%r)", prev_gaze[:80]
+            )
+            has_gaze = False
+
     lines = []
     for name, state in psyche_states.items():
         if not isinstance(state, dict):
@@ -1956,7 +1986,6 @@ def compose_dialogue_directives(
 
         # Gaze 기반 심도 결정 (exact match — substring 위양성 방지)
         if has_gaze:
-            _gaze_names = {g.strip() for g in prev_gaze.replace("\n", ",").split(",") if g.strip()}
             in_focus = name in _gaze_names
         else:
             in_focus = True  # 첫 턴: moderate for all
@@ -2123,14 +2152,14 @@ def translate_flashback(dai_flashback_eval: Optional[Dict[str, Any]] = None,
     decl = str(declaration or fb.get("declaration", "") or "").strip()
     plaus = str(fb.get("plausibility", "plausible") or "").strip()
     tier = str(fb.get("tier", "standard") or "").strip()
-    ftype = str(fb.get("flashback_type", "standard") or "").strip()
     plaus_hint = ""
     if plaus == "stretch":
         plaus_hint = " possible but unexpected: the surprise of it carries."
     elif plaus == "impossible":
         plaus_hint = " an overreaching claim: it fails, or a price follows."
-    type_hint = "retroactive declaration" if ftype == "standard" else "pre-established prop summon"
-    return (f"\nA memory opens on \"{decl}\": {type_hint}, carrying {tier} weight."
+    # [2026-08-11 로드아웃 삭제] flashback_type 분기 제거 — 두 값 중 하나가 로드아웃(장비 소환)이었고,
+    # 그쪽이 폐기돼 남은 값은 소급 선언뿐. 스키마에서도 필드를 뺐다.
+    return (f"\nA memory opens on \"{decl}\": retroactive declaration, carrying {tier} weight."
             f"{plaus_hint} Two or three sentences inside it, then the present resumes.")
 
 
@@ -2248,7 +2277,8 @@ def translate_pc_autonomy(pc_check: Optional[Dict[str, Any]] = None) -> str:
     focus = str(pc.get("gm_focus", "") or "").strip()
     return ("\n\nLast turn the narration reached into the PC (" + ", ".join(flags) + "). "
             + (f"Focus: {focus}. " if focus else "")
-            + "This turn narrates the world's reactions only; the PC's speech and thoughts belong to the player.")
+            + "This turn narrates the world's reactions; consequence may still land on the PC's body, "
+              "but the PC's speech, thoughts, and willed moves belong to the player.")
 
 
 def translate_item_usage(item_eval: Optional[Dict[str, Any]] = None) -> str:

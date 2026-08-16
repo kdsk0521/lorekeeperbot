@@ -660,6 +660,14 @@ def register_ai_npc(channel_id: str, name: str, description: str = "", context: 
     if race: data["race"] = race
 
     final_name = name.strip()
+    # [2026-08-11 드라이브 부분dict 수리] 위 `is_mob_tag(name)` 분기는 **기존** 태그 몹을
+    #   갱신하는 경로다(신규 태그는 바로 위에서 미존재를 확인함). 그 경우 이 부분 dict가
+    #   통째 교체 관문에 들어가 _PRESERVE_KEYS 밖 필드를 날린다 → 기존값 위에 덮는다.
+    _prev = get_npc(channel_id, final_name)
+    if isinstance(_prev, dict):
+        _merged = dict(_prev)
+        _merged.update(data)
+        data = _merged
     update_npc(channel_id, final_name, data)
     logger.info(f"[NPC] AI 생성 NPC 등록: {final_name}")
     return final_name
@@ -822,12 +830,117 @@ def get_npc_tier(data: dict) -> str:
     return "provisional"
 
 
+# =========================================================
+# [2026-08-11 사망 파이프라인] 생존축 — 단일 판정 함수 + 전이 관문
+# =========================================================
+
+def get_npc_status(npc_data: dict) -> str:
+    """저장된 생존축 값(정규화). 부재·미지 값은 전부 active.
+
+    관용이 기본인 이유: 이 필드는 08-11에 처음 값을 갖는다. 그 전에 등록된 NPC는
+    전원 `""` 또는 `"Active"`(대문자 생성 도장)라, 엄격하게 읽으면 **기존 캐스트가
+    통째로 무대에서 사라진다**. 모르는 값 = 살아있다(=아무것도 안 한다)가 안전측.
+    """
+    if not isinstance(npc_data, dict):
+        return "active"
+    s = str(npc_data.get("status", "") or "").strip().lower()
+    return s if s in getattr(config, "NPC_STATUS_VALUES", ("active",)) else "active"
+
+
+def is_npc_active(npc_data: dict) -> bool:
+    """무대 후보 자격. **생존축 필터는 전부 이 함수 하나로 판정한다.**
+
+    소비처(막간·오프스크린·world_board·로스터·soma 렌더)마다 `!= "dead"` 같은
+    조건식을 직접 심으면, 다음에 enum이 늘 때 자매 자리가 소급을 못 받는다
+    (VISCERAL/MATURE·GRADIA 이중투입과 같은 병 — 규약을 세울 때 형제 자리를
+    같이 세지 않는 습관).
+    ⚠회상·발효·감쇠에는 대지 말 것 — 죽은 자의 과거는 정당한 기억이고,
+      값만 내리는 감쇠는 시체에도 무해하다. 이 필터는 **능동 후보 조립 전용**.
+    """
+    return get_npc_status(npc_data) not in ("down", "dead")
+
+
+def set_npc_status_gated(channel_id: str, name: str, new_status: str,
+                         source: str, evidence: str = "",
+                         current_turn: Optional[int] = None) -> str:
+    """생존축 전이 관문. LLM이 만들 수 있는 상태를 코드가 제한한다.
+
+    Rules
+      1. →down : source 불문 허용. 단 **자동(source != "manual")은 evidence 필수** —
+         근거 없는 하강은 관측이 아니라 추측이고, 하류는 그 인물을 조용히 접는다.
+      2. down→active : 항상 허용. 가역이 down의 정의다(재등장 관측·수동 둘 다).
+      3. *→dead / dead→* : **source == "manual"만.** 자동 시도는 거부 + 로그 1줄
+         (사람 판독용 — 모델이 누구를 죽이려 했는지가 관측 재료).
+      4. 같은 상태면 no-op, 도장도 안 찍는다(status_changed_turn 시계 보존 —
+         set_drive_gated L1946과 같은 규율).
+
+    Returns: "accepted" | "rejected_authority" | "rejected_invalid" | "unchanged"
+    """
+    _values = getattr(config, "NPC_STATUS_VALUES", ("active",))
+    target = str(new_status or "").strip().lower()
+    if target not in _values:
+        logger.warning("[NPC Status] 알 수 없는 상태 %r (%s) — 무시", new_status, name)
+        return "rejected_invalid"
+    data = get_npc(channel_id, name)
+    if not isinstance(data, dict):
+        return "rejected_invalid"
+    cur = get_npc_status(data)
+    if cur == target:
+        return "unchanged"
+    _manual = str(source or "").strip().lower() == "manual"
+    _irrev = getattr(config, "NPC_STATUS_IRREVERSIBLE", ("dead",))
+    if (target in _irrev or cur in _irrev) and not _manual:
+        logger.info("[NPC Status] %s: %s→%s 거부 — 비가역 전이는 수동만 (source=%s) %s",
+                    name, cur, target, source, str(evidence or "")[:80])
+        return "rejected_authority"
+    if target == "down" and not _manual and not str(evidence or "").strip():
+        logger.info("[NPC Status] %s: →down 거부 — 자동 경로는 근거 필수 (source=%s)",
+                    name, source)
+        return "rejected_authority"
+    if current_turn is None:
+        try:
+            current_turn = int((domain_manager.get_world_state(channel_id) or {}).get(
+                "turn_index", 0) or 0)
+        except (TypeError, ValueError, AttributeError):
+            current_turn = 0
+    try:
+        current_turn = int(current_turn)
+    except (TypeError, ValueError):
+        current_turn = 0   # 호출부가 문자열 턴을 넘겨도 전이 자체는 살린다
+    # ★update_npc는 엔트리 **통째 교체** 관문이다 — 부분 dict를 넘기면 시트가 날아간다.
+    #   mark_npc_appearance와 같은 full-copy 패턴을 지킨다.
+    _new = dict(data)
+    _new["status"] = target
+    _new["status_changed_turn"] = current_turn
+    _ev = str(evidence or "").strip()
+    if _ev:
+        _new["status_evidence"] = _ev[:300]
+    update_npc(channel_id, name, _new)
+    logger.info("[NPC Status] %s: %s→%s (source=%s, turn=%d) %s",
+                name, cur, target, source, current_turn, _ev[:80])
+    return "accepted"
+
+
 def mark_npc_appearance(channel_id: str, name: str, turn: int) -> None:
     """[T-A] NPC가 이 턴 실제 등장했음을 기록(구별 턴만 카운트 = turn dedup).
     lore/manual은 tier 계측 불필요(항상 established)라 스킵. 순수 부기, LLM 콜 없음."""
     data = get_npc(channel_id, name)
     if not isinstance(data, dict):
         return
+    # [2026-08-11 사망 파이프라인] down→active 자동 복귀.
+    #   등장 관측의 단일 관문이 여기라 복귀 판단도 여기 하나뿐이다.
+    #   ★frozen 조기반환보다 **위**에 둔다 — lore/manual NPC도 쓰러지고 돌아온다
+    #     (아래 return은 tier 계측 스킵일 뿐, 생존축과는 무관한 사유다).
+    #   dead는 복귀시키지 않는다: 자동 경로엔 비가역 해제 권한이 없다.
+    #     로그만 남긴다 — 죽은 이름이 장면에 다시 뜬 것 자체가 환각 신호다.
+    _st = get_npc_status(data)
+    if _st == "down":
+        if set_npc_status_gated(channel_id, name, "active", source="reappearance",
+                                evidence="on-stage this turn", current_turn=turn) == "accepted":
+            # 아래 부기가 **갱신 전 스냅샷**으로 덮어써 status를 되돌리지 않도록 재조회
+            data = get_npc(channel_id, name) or data
+    elif _st == "dead":
+        logger.info("[NPC Status] %s: dead인데 등장 관측 — 복귀 없음 (환각 등장 신호)", name)
     if str(data.get("source", SOURCE_SESSION)).lower() in FROZEN_SOURCES:
         return
     try:
@@ -853,6 +966,11 @@ def get_npc_roster(channel_id: str) -> str:
         return ""
     lines = []
     for name, data in npcs.items():
+        # [2026-08-11 사망 파이프라인] dead만 제외. 분석 콜에 "지금 부를 수 있는 사람"을
+        #   주는 자리라 시체가 섞이면 그대로 후보가 된다.
+        #   down은 남긴다 — 가역 상태라 분석이 "깨어나는가"를 판단할 재료가 필요하다.
+        if get_npc_status(data) == "dead":
+            continue
         # [D-A] 분석(Theoria)은 전체 캐스트가 필요 → 접기 없이 폴백만(빈 description → 관찰/면모)
         desc = _npc_desc_fallback(data)
         blurb = _roster_blurb(desc, data)
@@ -967,13 +1085,15 @@ def _is_background_section(name: str) -> bool:
 def _is_hybrid_profile(desc: str) -> bool:
     """Voice 섹션(1인칭 목소리 블록)을 가진 시트인가.
     [2026-07-28] h4형 시트(`#### Voice`)도 인정 — 섹션 깊이 판정과 보조를 맞춘다."""
-    return bool(re.search(r'^#{3,4}(?!#)\s+Voice\b', desc or "", re.MULTILINE))
+    # [2026-08-10] Aside판(방백 생성 템플릿, v5 후계) 인식 — 섹션명만 다르고 역할은 Voice와 동일.
+    #   미인식 시 보이스카드 증류 대상 + echo 스킵 미적용(오늘 접은 고정조각 반복이 재입장).
+    return bool(re.search(r'^#{3,4}(?!#)\s+(?:Voice|Aside)\b', desc or "", re.MULTILINE))
 
 
 def _extract_voice_section(desc: str) -> str:
     """프로필에서 ### Voice 섹션 텍스트만 추출. 없으면 빈 문자열."""
     sections = _parse_sections(desc)
-    return sections.get("Voice", "")
+    return sections.get("Voice") or sections.get("Aside", "")
 
 
 def _section_header_depth(desc: str) -> int:
@@ -1165,19 +1285,33 @@ def get_npc_names_only(channel_id: str, exclude: list, include_provisional: bool
     for ex in exclude:
         key = domain_manager._find_npc_key(npcs, ex)
         resolved_exclude.add(key if key else ex)
-    remaining = [name for name, data in npcs.items()
-                 if name not in resolved_exclude
-                 and (include_provisional or get_npc_tier(data) == "established")]
-    if not remaining:
-        return ""
-    return "기타 NPC: " + ", ".join(remaining)
+    # [2026-08-11 사망 파이프라인] 이 줄은 렌더러가 "가용 캐스트"로 읽는 자리다 —
+    #   dead가 섞여 있으면 부를 수 있는 사람 명부에 시체가 앉아 있는 셈.
+    #   대신 **삭제하지 않고 별도 1줄로 옮긴다**: 죽음 사실을 발효·히스토리 원문의
+    #   재독 확률에 맡기지 않고 구조로 잔존시키기 위해(LLM 콜 0, 한 줄).
+    #   down은 표기하지 않는다 — 능동 제외만 하고, 상태 판단은 분석 콜의 몫.
+    remaining, departed = [], []
+    for name, data in npcs.items():
+        if get_npc_status(data) == "dead":
+            departed.append(name)
+            continue
+        if name in resolved_exclude:
+            continue
+        if include_provisional or get_npc_tier(data) == "established":
+            remaining.append(name)
+    lines = []
+    if remaining:
+        lines.append("기타 NPC: " + ", ".join(remaining))
+    if departed:
+        lines.append("Departed: " + ", ".join(departed))
+    return "\n".join(lines)
 
 
 def get_npc_recency_reminders(channel_id: str, npc_names: list) -> str:
     """활성 NPC의 말투 + 핵심 제약을 compact하게 생성. Recency 슬롯 주입용.
 
     Lost-in-the-Middle 대응: Slot 7 프로필이 중간에 묻히므로 핵심만 recency에 echo.
-    hybrid: Voice 섹션에서 대사 추출, legacy: tone 폴백, 둘 다 없으면 스킵.
+    hybrid(Voice 섹션 보유): echo 스킵 — Slot 7 전문이 시드. legacy: tone echo 유지.
     """
     if not channel_id or not npc_names:
         return ""
@@ -1188,14 +1322,16 @@ def get_npc_recency_reminders(channel_id: str, npc_names: list) -> str:
         if not data:
             continue
         # --- Voice ---
+        # [2026-08-10] hybrid 시트는 Voice recency 재주입 **스킵** (레티어스 판정).
+        #   Voice 전문이 Slot 7로 이미 가는데 앞 220자 고정 조각을 생성 최근접에 매턴
+        #   반복하면, v5류 시트가 "고정 표본은 반복된다"며 지운 예시-대사를 시스템이
+        #   재도입하는 꼴 — 게다가 카메라 모놀로그 레지스터는 장면 대사 레지스터가
+        #   아니고, 조각은 항상 첫 화제(복장)다. 07-28에 같은 사유(중복·대표성 없음)로
+        #   Slot 17 quirks 3중 주입을 지웠고, 오늘 2중의 나머지 반쪽을 접는다.
+        #   tone-only 레거시는 유지 — tone은 Slot 7에 원문이 없어 echo가 유일한 상기
+        #   (08-02 위임형 헤더 하에서 무해). 말투 표류 관측 시 이 분기 복원이 롤백.
         desc = _get_npc_desc(data)
-        if _is_hybrid_profile(desc):
-            voice_text = _extract_voice_section(desc)
-            if voice_text:
-                summary = _extract_voice_summary_from_section(name, voice_text)
-                if summary:
-                    voice_lines.append(summary)
-        else:
+        if not _is_hybrid_profile(desc):
             tone = data.get("tone", "")
             if tone:
                 voice_lines.append(f"- {name}: {tone}")
@@ -1205,14 +1341,38 @@ def get_npc_recency_reminders(channel_id: str, npc_names: list) -> str:
             constraint_lines.append(f"- {name}: {constraints}")
     parts = []
     if constraint_lines:
-        parts.append("[NPC HARD RULES — VIOLATING THESE = HALLUCINATION]\n" + "\n".join(constraint_lines))
+        # em-dash 쓸이(커미션 전환규칙 ⑦). firmness 자체는 §7에서 정당 — 문구는 그대로.
+        parts.append("[NPC HARD RULES: VIOLATING THESE = HALLUCINATION]\n" + "\n".join(constraint_lines))
     if voice_lines:
-        parts.append("[NPC Voice — match these speech patterns]\n" + "\n".join(voice_lines))
+        # [2026-08-02] 구 헤더 "[NPC Voice — match these speech patterns]"가 증상의 직접 원인.
+        #   tone 필드는 **한국어 묘사문**("임상적이고 따뜻하고 사무적인 어조")이라, "이 패턴을
+        #   맞춰라"로 받으면 렌더러가 그 형용사를 **그대로 서술**한다 — 실관측:
+        #   "말을 거는 톤이었다. 임상적이고, 따뜻하고, 사무적이었다."
+        #   게다가 여기는 Slot 33(recency)이라 생성 최근접이다.
+        #   theoria L563이 이미 진단을 적어 뒀다 — "Korean here gets transcribed verbatim
+        #   into prose = BUG". 그 ENGLISH-ONLY 목록에 tone만 빠져 있었다.
+        #   ⚠기존 DB 값이 이미 형용사 나열이므로 생성 프롬프트 수정만으론 안 낫는다.
+        #   주입 지점에서 **읽는 법**을 계약으로 준다.
+        # [재작성] 초판이 "never as the description itself: no sentence names the tone,
+        #   lists its adjectives, or reports how the speaking felt"였다. 형용사 나열을
+        #   막으려고 **동사 3연 나열**을 쓴 셈 — 커미션 전환규칙 ①(명령→초대)·④(실패를
+        #   명명하지 마라)에 어긋나고, 여기가 recency 자리라 그 캐던스가 산문에 미러링될
+        #   자리이기도 하다. 계약은 그대로 두고 방향만 뒤집는다: 금지가 아니라 **위임**.
+        parts.append(
+            "[NPC Voice]\n"
+            "Notes for the writer on how each one sounds. They stay on your side of the page: "
+            "the reader meets the voice in the line itself, in word choice, sentence length, "
+            "where it breaks, and what gets asked or held back.\n"
+            + "\n".join(voice_lines)
+        )
     return "\n\n".join(parts)
 
 
 def _extract_voice_summary_from_section(name: str, voice_section: str, cap: int = 220) -> str:
     """Voice 섹션을 recency에 다시 얹을 짧은 발췌.
+
+    ⏸[2026-08-10] 휴면(호출 0) — hybrid echo 스킵으로 유일 호출 제거. 롤백 대비 보존,
+    orphan 아님(staged).
 
     [2026-07-28] 구 코드는 **따옴표로 시작하거나 `~`로 끝나는 줄**을 사냥해 최대 3줄을
     이어붙였다. Voice를 1인칭 산문으로 쓰는 시트(섹션 전체가 목소리 겸 인물 설명)에서는
@@ -1943,7 +2103,14 @@ def set_drive_gated(channel_id: str, npc_name: str, target_stage: str,
     if not isinstance(_root, dict):
         _root = {}
     _root[axis] = {"stage": _stage, "last_change_turn": int(current_turn)}
-    update_npc(channel_id, npc_name, {_DRIVE_ROOT: _root})
+    # [2026-08-11 드라이브 부분dict 수리] update_npc는 엔트리 **통째 교체** 관문이다.
+    #   구 코드는 `{_DRIVE_ROOT: _root}`만 넘겨서, 단계 전이가 일어날 때마다
+    #   _PRESERVE_KEYS 밖 필드(description/desc/appear_count/_last_appear_turn/
+    #   decision_cooldown/identity_history 등)가 조용히 증발했다.
+    #   mark_npc_appearance와 같은 full-copy 패턴으로 통일한다.
+    _new = dict(data)
+    _new[_DRIVE_ROOT] = _root
+    update_npc(channel_id, npc_name, _new)
     logger.info("[Drive] %s/%s: %s→%s (%s, turn=%d) %s",
                 npc_name, axis, cur["stage"], _stage, result, current_turn, reason)
     return result
@@ -1961,7 +2128,9 @@ def tick_drive_decay(channel_id: str, current_turn: int, axis: str = "lust") -> 
         return 0
     npcs = get_npcs(channel_id) or {}
     lowered = 0
-    for name, data in npcs.items():
+    # [2026-08-11 드라이브 부분dict 수리] list() — 루프 안에서 update_npc가 돌므로
+    #   (키 정규화 이사 시 del/재삽입) 라이브 dict 직접 순회는 RuntimeError 위험.
+    for name, data in list(npcs.items()):
         if not isinstance(data, dict):
             continue
         rec = ((data.get(_DRIVE_ROOT) or {}).get(axis) or {}) if isinstance(data.get(_DRIVE_ROOT), dict) else {}
@@ -1976,7 +2145,12 @@ def tick_drive_decay(channel_id: str, current_turn: int, axis: str = "lust") -> 
         _root = dict(data.get(_DRIVE_ROOT) or {})
         _root[axis] = {"stage": _drive_stage_name(lvl - 1),
                        "last_change_turn": int(current_turn)}
-        update_npc(channel_id, name, {_DRIVE_ROOT: _root})
+        # [2026-08-11 드라이브 부분dict 수리] 자연 하강도 같은 병이었다 —
+        #   부분 dict를 넘기면 하강 한 번에 해당 NPC 시트 본문이 날아간다.
+        #   data는 이 루프가 도는 npcs[name] 본인 것이므로 그대로 full-copy 한다.
+        _new = dict(data)
+        _new[_DRIVE_ROOT] = _root
+        update_npc(channel_id, name, _new)
         lowered += 1
     if lowered:
         logger.info("[Drive] %d NPC 압력 자연 하강 (idle=%d, turn=%d)", lowered, idle, current_turn)

@@ -326,6 +326,7 @@ def screen_time(channel_id: str, turn_from: int, turn_to: int) -> List[Tuple[str
         return _format_screen_time(sums, counts)
     except Exception as e:
         logger.debug(f"[NQ] screen_time skip: {e}")
+        return []  # [2026-08-11 리더 §7] 형제 함수 계약 통일 — 종전 None 반환(암묵 fall-through)
 
 
 # =========================================================
@@ -338,6 +339,10 @@ def screen_time(channel_id: str, turn_from: int, turn_to: int) -> List[Tuple[str
 _READER_STOP = {"this", "that", "with", "from", "into", "what", "where", "when", "will",
                 "would", "could", "next", "turn", "still", "them", "they", "their", "have"}
 _READER_PERSIST_FIELDS = ("live_threads", "table_affordances", "open_questions")
+# [2026-08-11 리더 소비자] C1 — fog는 **별도 축**으로 돈다. 같은 클러스터러를 쓰되 결과를 섞지 않는다:
+# reader_candidates를 먹는 기존 소비자(anomaly _reader_axes[:8] quote축 / 間 시드 입력[:6])의
+# 입력 혼합비를 건드리면 안 되기 때문(철칙). 산출 키도 reader_fog로 분리 — 소비자는 서사 콜 하나뿐.
+_READER_FOG_FIELDS = ("comprehension_fog",)
 
 
 def _reader_note_tokens(note: str) -> set:
@@ -345,14 +350,17 @@ def _reader_note_tokens(note: str) -> set:
     return {t for t in re.findall(r"[a-z]{4,}", str(note).lower()) if t not in _READER_STOP}
 
 
-def _cluster_reader_notes(rows: List[Tuple[int, Dict[str, Any]]], min_turns: int) -> List[Dict[str, Any]]:
+def _cluster_reader_notes(rows: List[Tuple[int, Dict[str, Any]]], min_turns: int,
+                          fields: Optional[Tuple[str, ...]] = None) -> List[Dict[str, Any]]:
     """reader_log tail(오래된→최신) → 지속 축 클러스터. 순수 — 스모크 대상.
 
     같은 필드에서 내용어 2개 이상 공유하면 같은 축(거친 매칭 — 과소검출 허용).
-    산출: [{field, note(최신), turns(재수신 턴 수)}] — turns >= min_turns만."""
+    산출: [{field, note(최신), turns(재수신 턴 수)}] — turns >= min_turns만.
+    fields=None(기본)이면 기존 3종 그대로 — 기존 호출·스모크 시그니처 불변."""
+    _fields = tuple(fields) if fields else _READER_PERSIST_FIELDS
     clusters: List[Dict[str, Any]] = []  # {field, tokens, turns:set, note}
     for turn, digest in rows:
-        for f in _READER_PERSIST_FIELDS:
+        for f in _fields:
             for it in (digest.get(f) or []):
                 toks = _reader_note_tokens(it.get("note", ""))
                 if not toks:
@@ -380,19 +388,95 @@ def reader_persistence(channel_id: str) -> List[Dict[str, Any]]:
     try:
         import config
         import sqlite_store
+        # [2026-08-11 리더 §7] 창=reader_log **행 수** 기준(턴 수 아님) — READER_GM_INTERVAL>1이면
+        # 실창이 5×INTERVAL턴으로 늘어난다(현행 INTERVAL=1이라 행=턴, 무해).
         window = getattr(config, "READER_PERSIST_WINDOW", 5)
         min_turns = getattr(config, "READER_PERSIST_MIN", 3)
         rows = sqlite_store.read_reader_log_tail(channel_id, limit=window)
         promoted = _cluster_reader_notes(rows, min_turns)[:8]
+        # [2026-08-11 리더 소비자] C1 — fog는 **두 번째 패스**로 따로 뽑아 별도 키에 넣는다.
+        # 같은 리스트에 합치면 anomaly/시드가 보는 입력이 바뀐다(기존 소비자 입력 불변이 철칙).
+        fog = _cluster_reader_notes(
+            rows, min_turns, fields=_READER_FOG_FIELDS
+        )[:max(0, int(getattr(config, "READER_FOG_CAP", 3)))]
         # 윈도우 기반 재계산이라 누적 아님(휘발) — 매번 통째 교체.
         import domain_manager
-        domain_manager.update_session_ai_memory(channel_id, {"reader_candidates": promoted})
+        domain_manager.update_session_ai_memory(
+            channel_id, {"reader_candidates": promoted, "reader_fog": fog})
         if promoted:
             logger.info("[ReaderPersist] %d candidate(s): %s",
                         len(promoted),
                         "; ".join(f"{p['field']}×{p['turns']}: {p['note'][:40]}" for p in promoted))
+        if fog:
+            logger.info("[ReaderFog] %d persisted fog: %s",
+                        len(fog),
+                        "; ".join(f"×{p['turns']}: {p['note'][:40]}" for p in fog))
         return promoted
     except Exception as e:
         logger.debug(f"[NQ] reader_persistence skip: {e}")
         return []
-        return []
+
+
+def reader_signal_block(channel_id: str, cap_chars: int = 300) -> str:
+    """[2026-08-11 리더 소비자] C1+C3 — 서사 콜에 붙는 독자 신호 블록. 없으면 "" (조건부).
+
+    C1 fog: 지속성 게이트를 통과한 comprehension_fog = GM이 전달에 실패했고 독자가 계속
+      발이 걸린 자리. 지시는 **다른 각도의 재조명** — 같은 장면 재생은 NO REPLAY 위반이자
+      "수렴하지 않고 살짝 벗어나는 진행"의 반대편.
+    C3 예측가능성: 최근 창에서 독자 예측이 계속 맞으면 = 전개가 뻔하다 → 굴절 1줄.
+    FEED 게이트 공유. 렌더 직행 아님(좌뇌 서사 콜 입력)."""
+    try:
+        import config
+        if not getattr(config, "READER_GM_FEED", 0):
+            return ""
+        import domain_manager
+        mem = domain_manager.get_session_ai_memory(channel_id) or {}
+        lines: List[str] = []
+
+        fog = [f for f in (mem.get("reader_fog") or []) if isinstance(f, dict) and f.get("note")]
+        fog = fog[:max(0, int(getattr(config, "READER_FOG_CAP", 3)))]
+        if fog:
+            _turns = max(int(f.get("turns", 0) or 0) for f in fog)
+            _notes = "; ".join(str(f.get("note", "")).strip() for f in fog)[:cap_chars]
+            lines.append(
+                f"READER FOG (a blind reader lost these threads, persisted {_turns} turns): {_notes}"
+            )
+            lines.append(
+                "Re-illuminate from a NEW angle; never replay the original scene."
+            )
+
+        hist = [h for h in (mem.get("reader_predict") or []) if isinstance(h, dict)]
+        _win = max(1, int(getattr(config, "READER_PREDICT_WINDOW", 8)))
+        _high = int(getattr(config, "READER_PREDICT_HIGH", 6))
+        _recent = hist[-_win:]
+        if len(_recent) >= _high > 0 and sum(1 for h in _recent if h.get("hit")) >= _high:
+            lines.append(
+                "PREDICTABILITY high: the table guesses your arcs — deflect slightly; "
+                "bend the expected beat, do not break it."
+            )
+
+        # [2026-08-11 당일 정정] C4 momentum note의 정당한 착지는 여기다 — 렌더 직행이 아니라
+        # 좌뇌 서사 콜의 재해석 재료(레티어스: "렌더 직행 애매" → SD 쪽 텍스트 회수, 본문은 이관).
+        _rm_cap = int(getattr(config, "READER_MOMENTUM_CAP", 120))
+        if _rm_cap > 0:
+            try:
+                import sqlite_store
+                _rows = sqlite_store.read_reader_log_tail(channel_id, limit=1)
+                _mlist = (_rows[-1][1].get("momentum") or []) if _rows else []
+                for _it in _mlist:
+                    _n = str(_it.get("note", "") or "").strip() if isinstance(_it, dict) else ""
+                    if _n:
+                        lines.append(
+                            f"READER MOMENTUM (the push a blind reader felt): {_n[:_rm_cap]} "
+                            "— direction material, not prose to copy."
+                        )
+                        break
+            except Exception:
+                pass
+
+        if not lines:
+            return ""
+        return "### READER SIGNAL (from the blind reader's notebook — direction, not content)\n" + "\n".join(lines)
+    except Exception as e:
+        logger.debug(f"[NQ] reader_signal_block skip: {e}")
+        return ""

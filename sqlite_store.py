@@ -251,6 +251,24 @@ def _ensure_schema() -> bool:
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_attlog_npc ON attitude_log(channel_id, npc_name, id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_attlog_channel ON attitude_log(channel_id, id)")
+            # [2026-08-11 soma 지속] B축 전이 이벤트 — 몸 상태(polyvagal/dissociation)가 *언제*
+            # 뒤집혔나. attitude_log 동형(관측 턴의 실 전이만, 무변화·오프스테이지는 기록 안 함).
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS soma_log (
+                    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_id        TEXT NOT NULL,
+                    turn              INTEGER NOT NULL,
+                    npc_name          TEXT NOT NULL,
+                    from_polyvagal    TEXT NOT NULL DEFAULT '',
+                    to_polyvagal      TEXT NOT NULL DEFAULT '',
+                    from_dissociation TEXT NOT NULL DEFAULT '',
+                    to_dissociation   TEXT NOT NULL DEFAULT '',
+                    created_at        REAL NOT NULL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_somalog_npc ON soma_log(channel_id, npc_name, id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_somalog_channel ON soma_log(channel_id, id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_somalog_turn ON soma_log(channel_id, turn)")
             # [V10 적립] autonomy_log — NPC 자율 트리거 발동(npc/trigger/priority/directive).
             # 대사·관계 압력의 출처. dai_logs는 트리거 평가 전에 써져서 안 잡힘 → 전용 적립.
             conn.execute("""
@@ -267,6 +285,23 @@ def _ensure_schema() -> bool:
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_autolog_npc ON autonomy_log(channel_id, npc_name, id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_autolog_channel ON autonomy_log(channel_id, id)")
+            # [2026-08-16 도착물 라우트] turn_mail — 이번 턴 산문 메시지에 딸린 **도착물**
+            # (💌 편지·쪽지 = world_board message 채널 / 💭 속마음). 공개 스레드 대신 그 턴의
+            # 산문 메시지 버튼 → ephemeral 로 본다. message_id 가 **턴 고정 키** —
+            # 조회는 항상 (channel_id, message_id)로, 나중 턴의 내용이 옛 버튼에 새지 않는다.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS turn_mail (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_id  TEXT NOT NULL,
+                    message_id  INTEGER NOT NULL,
+                    turn        INTEGER NOT NULL DEFAULT 0,
+                    kind        TEXT NOT NULL DEFAULT 'mail',
+                    payload     TEXT NOT NULL DEFAULT '{}',
+                    created_at  REAL NOT NULL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_turnmail_msg ON turn_mail(channel_id, message_id, kind)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_turnmail_channel ON turn_mail(channel_id, id)")
 
             # [!다시] 리두용 턴-직전 도메인 스냅샷 — 채널당 1개(REPLACE), 봇 재시작에도 보존.
             #   인메모리 _RETRY_SNAPSHOTS가 인스턴스 재생성/재시작에 날아가도 retry_last가 여기서 폴백 복원.
@@ -275,12 +310,21 @@ def _ensure_schema() -> bool:
                     channel_id  TEXT PRIMARY KEY,
                     turn        INTEGER NOT NULL,
                     data        TEXT NOT NULL,
-                    created_at  REAL NOT NULL
+                    created_at  REAL NOT NULL,
+                    marks       TEXT NOT NULL DEFAULT '{}'
                 )
             """)
+            # [2026-08-12 !다시 유령 정리] 기존 배포 DB 마이그레이션 — 컬럼 없으면 추가(있으면 ALTER 실패→무시).
+            # marks = 스냅샷 시점 로그 테이블별 max(id). data는 복원 시 **그대로 도메인이 되므로**
+            # 여기 섞으면 도메인 오염 — 별 컬럼이 정답.
+            try:
+                conn.execute("ALTER TABLE retry_snapshot ADD COLUMN marks TEXT NOT NULL DEFAULT '{}'")
+            except Exception:
+                pass
 
-            # [Reader-GM Stage 0, 2026-07-05] 서브 GM 독자의 턴별 수신 노트(blind read 다이제스트).
-            # log-only 적립 — 프롬프트 급식 없음(Stage 2 승격은 별도 결정). 스펙: deepseek_v4_trait_playbook §4 R1.
+            # [Reader-GM 2026-07-05] 서브 GM 독자의 턴별 수신 노트(blind read 다이제스트).
+            # [2026-08-11 리더 §7] 구 "log-only·프롬프트 급식 없음"은 stale — 현행 FEED=1에서 13경로가
+            # 소비(서사 콜 조건부 급식 포함). 세션 파생이라 clear_session_scoped 대상 + 채널당 KEEP 롤링.
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS reader_log (
                     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -312,10 +356,26 @@ def _ensure_schema() -> bool:
                     canon_level    TEXT NOT NULL DEFAULT 'established',
                     turn_count     INTEGER NOT NULL DEFAULT 0,
                     updated_at     TEXT NOT NULL DEFAULT '',
+                    reader_exposure INTEGER NOT NULL DEFAULT 0,
+                    reader_exposure_turn INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (channel_id, secret_id)
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_secretledger_channel ON secret_ledger(channel_id)")
+            # [2026-08-11 리더 소비자] 기존 배포 DB 마이그레이션 — 컬럼 없으면 추가(있으면 ALTER 실패→무시).
+            # reader_exposure = 독자가 established로 접지한 사실이 이 비밀과 겹친 턴 수(누적 관측).
+            # leak_pressure가 파생 재계산이라 직접 가산이 덮이는 문제의 저장측 해법.
+            try:
+                conn.execute("ALTER TABLE secret_ledger ADD COLUMN reader_exposure INTEGER NOT NULL DEFAULT 0")
+            except Exception:
+                pass
+            # [2026-08-12 !다시 유령 정리] reader_exposure_turn = 마지막 가산 턴.
+            # 동턴 dedup 도장이 세션(session_ai_memory.reader_leak_turn)에만 있어 !다시가 그걸 롤백 →
+            # 재실행 시 같은 비밀이 또 가산됐다. **행 내부** 도장이라 도메인 롤백과 무관.
+            try:
+                conn.execute("ALTER TABLE secret_ledger ADD COLUMN reader_exposure_turn INTEGER NOT NULL DEFAULT 0")
+            except Exception:
+                pass
             conn.commit()
             _initialized = True
             return True
@@ -939,7 +999,8 @@ def delete_channel_rows(channel_id: str) -> bool:
     try:
         for table in ("sessions", "npc_relations", "npc_knowledge", "npcs",
                       "history_log", "fermented_history", "deep_memory", "dai_logs",
-                      "offscreen_ledger", "emotion_log", "turn_snapshot", "attitude_log"):
+                      "offscreen_ledger", "emotion_log", "turn_snapshot", "attitude_log",
+                      "soma_log"):  # [2026-08-11 soma 지속]
             conn.execute(f"DELETE FROM {table} WHERE channel_id=?", (channel_id,))
         conn.commit()
         return True
@@ -953,7 +1014,8 @@ def delete_channel_rows(channel_id: str) -> bool:
 # =========================================================
 
 def append_history(channel_id: str, entry: Dict[str, Any]) -> bool:
-    """history_log에 1행 append (방벽 통과 후). 영구 기록 — DELETE는 리셋뿐."""
+    """history_log에 1행 append (방벽 통과 후). 영구 기록 — DELETE는 리셋과
+    !다시 워터마크 트림(trim_logs_to_watermarks)뿐. 후자는 **폐기된 턴**만 회수한다."""
     if not channel_id or not isinstance(entry, dict):
         return False
     if not _ensure_schema():
@@ -1168,8 +1230,12 @@ def append_dai_log(channel_id: str, turn: int, dai: Dict[str, Any], keep: int = 
         return False
 
 
-def save_retry_snapshot(channel_id: str, turn: int, snapshot: Dict[str, Any]) -> bool:
-    """[!다시] 턴-직전 도메인 스냅샷 영속화 (채널당 1개 REPLACE, 봇 재시작에도 보존). 실패 무해."""
+def save_retry_snapshot(channel_id: str, turn: int, snapshot: Dict[str, Any],
+                        marks: Optional[Dict[str, int]] = None) -> bool:
+    """[!다시] 턴-직전 도메인 스냅샷 영속화 (채널당 1개 REPLACE, 봇 재시작에도 보존). 실패 무해.
+
+    [2026-08-12 !다시 유령 정리] marks = snapshot_log_watermarks() 결과(로그 테이블별 max(id)).
+    data와 **별 컬럼**인 이유: data는 read_retry_snapshot이 그대로 도메인으로 복원한다."""
     if not channel_id or not isinstance(snapshot, dict) or not snapshot:
         return False
     if not _ensure_schema():
@@ -1179,8 +1245,10 @@ def save_retry_snapshot(channel_id: str, turn: int, snapshot: Dict[str, Any]) ->
         return False
     try:
         conn.execute(
-            "INSERT OR REPLACE INTO retry_snapshot (channel_id, turn, data, created_at) VALUES (?, ?, ?, ?)",
-            (channel_id, int(turn), json.dumps(snapshot, ensure_ascii=False, default=str), time.time()),
+            "INSERT OR REPLACE INTO retry_snapshot (channel_id, turn, data, created_at, marks) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (channel_id, int(turn), json.dumps(snapshot, ensure_ascii=False, default=str), time.time(),
+             json.dumps(marks or {}, ensure_ascii=False)),
         )
         conn.commit()
         return True
@@ -1204,6 +1272,92 @@ def read_retry_snapshot(channel_id: str) -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.warning(f"[SQLiteStore] read_retry_snapshot 실패: {channel_id}: {e}")
     return None
+
+
+def read_retry_marks(channel_id: str) -> Dict[str, int]:
+    """[!다시] 영속 스냅샷에 동봉된 로그 워터마크. 구 스냅샷/없음이면 빈 dict = trim no-op."""
+    if not channel_id or not _ensure_schema():
+        return {}
+    conn = _get_conn()
+    if conn is None:
+        return {}
+    try:
+        cur = conn.execute("SELECT marks FROM retry_snapshot WHERE channel_id=?", (channel_id,))
+        row = cur.fetchone()
+        if row and row[0]:
+            m = json.loads(row[0])
+            if isinstance(m, dict):
+                return {str(k): int(v) for k, v in m.items()}
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_retry_marks 실패: {channel_id}: {e}")
+    return {}
+
+
+# =========================================================
+# [2026-08-12 !다시 유령 정리] 로그 워터마크 — 폐기 턴이 SQLite에 남긴 유령 행 회수
+# 병: retry_last는 JSON 도메인 스냅샷만 되돌리고 SQLite append 로그는 무접촉이라,
+#     폐기된 턴의 행이 남은 채 재실행분이 또 쌓였다(아크 창·narrative_queries 창·
+#     리더 recall 풀 오염). 스냅샷 시점 max(id)를 동봉해 두고 복원 직후 초과분을 지운다.
+# 대상 = AUTOINCREMENT id + channel_id를 가진 **행 추가형** 로그 8종.
+#   제외: turn_snapshot — PK(channel_id, turn) upsert형이라 재실행이 같은 턴 행을 REPLACE(자가치유),
+#         애초에 id 컬럼이 없어 워터마크가 성립 안 함.
+#   제외: sessions/npcs/npc_relations/npc_knowledge/secret_ledger/fermented_history/
+#         deep_memory/retry_snapshot — 상태·설정 테이블(upsert형).
+# =========================================================
+
+_RETRY_LOG_TABLES = (
+    "history_log", "dai_logs", "offscreen_ledger", "emotion_log",
+    "attitude_log", "soma_log", "autonomy_log", "reader_log",
+    # [2026-08-16 도착물 라우트] turn_mail — id 컬럼 있는 행 추가형. !다시가 산문 메시지를
+    # 지우면 그 message_id를 가리키던 도착물 행은 영영 못 여는 유령이 된다 → 같이 회수.
+    "turn_mail",
+)
+
+
+def snapshot_log_watermarks(channel_id: str) -> Dict[str, int]:
+    """로그성 테이블별 현재 max(id) (행 없으면 0). 실패 시 빈 dict = trim no-op."""
+    if not channel_id or not _ensure_schema():
+        return {}
+    conn = _get_conn()
+    if conn is None:
+        return {}
+    try:
+        marks: Dict[str, int] = {}
+        for t in _RETRY_LOG_TABLES:
+            cur = conn.execute(f"SELECT COALESCE(MAX(id), 0) FROM {t} WHERE channel_id=?", (channel_id,))
+            marks[t] = int(cur.fetchone()[0] or 0)
+        return marks
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] snapshot_log_watermarks 실패 (무시): {channel_id}: {e}")
+        return {}
+
+
+def trim_logs_to_watermarks(channel_id: str, marks: Dict[str, int]) -> int:
+    """워터마크 초과분 삭제 → 삭제 행 수. 실패해도 raise 안 함.
+    테이블명은 _RETRY_LOG_TABLES 화이트리스트로만 — marks 키가 SQL 조각이 되지 않는 단일 관문."""
+    if not channel_id or not isinstance(marks, dict) or not marks:
+        return 0
+    if not _ensure_schema():
+        return 0
+    conn = _get_conn()
+    if conn is None:
+        return 0
+    total = 0
+    try:
+        for t in _RETRY_LOG_TABLES:
+            if t not in marks:
+                continue  # 부분 marks(구 스냅샷/신설 테이블) — 모르는 자리는 건드리지 않는다
+            try:
+                mark = int(marks[t])
+            except Exception:
+                continue
+            cur = conn.execute(f"DELETE FROM {t} WHERE channel_id=? AND id>?", (channel_id, mark))
+            total += max(0, int(cur.rowcount or 0))
+        conn.commit()
+        return total
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] trim_logs_to_watermarks 실패 (무시): {channel_id}: {e}")
+        return total
 
 
 def append_ledger(channel_id: str, entry: Dict[str, Any], keep: int = 200) -> bool:
@@ -1282,18 +1436,32 @@ def clear_ledger(channel_id: str) -> bool:
         return False
 
 
-def write_reader_log(channel_id: str, turn: int, digest: Dict[str, Any], dropped: int = 0) -> bool:
-    """[Reader-GM Stage 0] 턴별 독자 다이제스트 적립 (log-only). 실패해도 봇 무영향."""
+def write_reader_log(channel_id: str, turn: int, digest: Dict[str, Any], dropped: int = 0,
+                     keep: Optional[int] = None) -> bool:
+    """[Reader-GM] 턴별 독자 다이제스트 적립. 실패해도 봇 무영향.
+
+    [2026-08-11 리더 §7 → 당일 정정(레티어스)] **무캡이 기본이 맞다** — reader_log는
+    계측 로그(keep 트림 계열)가 아니라 history_log와 같은 **영구 사료**(독자 공책의 원본.
+    챕터 회고 등 미래 소비자의 재료). 읽기는 항상 LIMIT≤40이라 조회 비용 불변, DB만 자람.
+    keep>0 설정 시에만 롤링(손잡이 잔존, 기본 0=무캡)."""
     if not channel_id or not _ensure_schema():
         return False
     conn = _get_conn()
     if conn is None:
         return False
+    if keep is None:
+        keep = int(getattr(config, "READER_LOG_KEEP", 0) or 0)
     try:
         conn.execute(
             "INSERT INTO reader_log (channel_id, turn, digest, dropped, created_at) VALUES (?, ?, ?, ?, ?)",
             (channel_id, int(turn), json.dumps(digest, ensure_ascii=False), int(dropped), time.time()),
         )
+        if keep > 0:
+            conn.execute(
+                "DELETE FROM reader_log WHERE channel_id=? AND id NOT IN "
+                "(SELECT id FROM reader_log WHERE channel_id=? ORDER BY id DESC LIMIT ?)",
+                (channel_id, channel_id, int(keep)),
+            )
         conn.commit()
         return True
     except Exception as e:
@@ -1304,7 +1472,9 @@ def write_reader_log(channel_id: str, turn: int, digest: Dict[str, Any], dropped
 def read_reader_log_tail(channel_id: str, limit: int = 5) -> list:
     """[Reader-GM] 최근 N턴 독자 다이제스트 (오래된→최신). [(turn, digest_dict), ...].
 
-    Stage 0 소비자=사람(교정 대조). Stage 2 승격 시 narrative_queries 계열이 집계용으로 읽는다."""
+    [2026-08-11 리더 §7] 소비자 정정: 사람(로그 대조)뿐이던 Stage 0은 끝났다 — 현행
+    READER_GM_FEED=1에서 narrative_queries.reader_persistence·story_director 거부권·
+    reader_gm 자기 노트북/예측 채점 등 13경로가 이 tail을 읽는다(항상 LIMIT≤40)."""
     if not channel_id or limit <= 0 or not _ensure_schema():
         return []
     conn = _get_conn()
@@ -1336,7 +1506,9 @@ def read_reader_log_tail(channel_id: str, limit: int = 5) -> list:
 
 _SECRET_COLS = ("truth, surface, owners, knowers, suspecters, cannot_know, "
                 "leak_pressure, reveal_gate, risk_if_revealed, status, canon_level, "
-                "turn_count, updated_at")
+                "turn_count, updated_at, reader_exposure, "
+                # [2026-08-11 리더 소비자] reader_exposure / [2026-08-12 !다시 유령 정리] _turn — 둘 다 말미 추가
+                "reader_exposure_turn")
 
 
 def _row_to_secret(row) -> Dict[str, Any]:
@@ -1361,6 +1533,10 @@ def _row_to_secret(row) -> Dict[str, Any]:
         "canon_level": row[11] or "established",
         "turn_count": int(row[12] or 0),
         "updated_at": row[13] or "",
+        # [2026-08-11 리더 소비자] 독자 관측 누적 — leak_pressure 재계산의 가산항 원천
+        "reader_exposure": int(row[14] or 0) if len(row) > 14 else 0,
+        # [2026-08-12 !다시 유령 정리] 마지막 가산 턴 — 행 내부 도장(도메인 롤백 무관)
+        "reader_exposure_turn": int(row[15] or 0) if len(row) > 15 else 0,
     }
 
 
@@ -1386,14 +1562,16 @@ def upsert_secret(channel_id: str, entry: Dict[str, Any]) -> bool:
             new_status = old[0]
         conn.execute(
             f"INSERT INTO secret_ledger (channel_id, secret_id, {_SECRET_COLS}) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(channel_id, secret_id) DO UPDATE SET "
             "truth=excluded.truth, surface=excluded.surface, owners=excluded.owners, "
             "knowers=excluded.knowers, suspecters=excluded.suspecters, "
             "cannot_know=excluded.cannot_know, leak_pressure=excluded.leak_pressure, "
             "reveal_gate=excluded.reveal_gate, risk_if_revealed=excluded.risk_if_revealed, "
             "status=excluded.status, canon_level=excluded.canon_level, "
-            "turn_count=excluded.turn_count, updated_at=excluded.updated_at",
+            "turn_count=excluded.turn_count, updated_at=excluded.updated_at, "
+            "reader_exposure=excluded.reader_exposure, "
+            "reader_exposure_turn=excluded.reader_exposure_turn",
             (
                 channel_id, sid,
                 str(entry.get("truth", "")),
@@ -1409,6 +1587,8 @@ def upsert_secret(channel_id: str, entry: Dict[str, Any]) -> bool:
                 str(entry.get("canon_level", "established")),
                 int(entry.get("turn_count", 0)),
                 entry.get("updated_at", ""),
+                int(entry.get("reader_exposure", 0) or 0),  # [2026-08-11 리더 소비자]
+                int(entry.get("reader_exposure_turn", 0) or 0),  # [2026-08-12 !다시 유령 정리]
             ),
         )
         conn.commit()
@@ -1453,8 +1633,10 @@ def clear_session_scoped(channel_id: str) -> bool:
     tables = (
         "npc_relations", "npc_knowledge", "dai_logs", "emotion_log",
         "turn_snapshot", "attitude_log", "autonomy_log", "retry_snapshot",
+        "soma_log",  # [2026-08-11 soma 지속] 몸 상태 전이도 세션 파생
         "reader_log",  # [Reader-GM] 독자 노트도 세션 파생
         "secret_ledger",  # [V10 Secret Ledger] 비밀 원장도 세션 파생 (2026-07-14)
+        "turn_mail",  # [2026-08-16 도착물 라우트] 도착물은 그 턴 전용 — 세션 파생
     )
     try:
         for t in tables:
@@ -1824,10 +2006,153 @@ def read_attitude_log(channel_id: str, npc_name: Optional[str] = None, limit: in
         return []
 
 
+# =========================================================
+# [2026-08-11 soma 지속] soma_log — B축(신체) 전이 이벤트 (생성자 + 독자)
+# =========================================================
+
+def append_soma_log(channel_id: str, turn: int, npc_name: str,
+                    from_polyvagal: Optional[str] = None, to_polyvagal: Optional[str] = None,
+                    from_dissociation: Optional[str] = None, to_dissociation: Optional[str] = None,
+                    keep: Optional[int] = None) -> bool:
+    """몸 상태 전이 1건 적립 (실 전이만 — 호출부에서 무변화 거름). 채널당 keep행 롤링. 실패 무해.
+
+    최초 관측(이전 상태 없음)은 from_*=None → attitude_log의 'initial'과 동형으로 ''로 저장한다."""
+    if not channel_id or not npc_name:
+        return False
+    if not _ensure_schema():
+        return False
+    conn = _get_conn()
+    if conn is None:
+        return False
+    if keep is None:
+        keep = int(getattr(config, "SOMA_LOG_KEEP", 800) or 800)
+    try:
+        conn.execute(
+            "INSERT INTO soma_log (channel_id, turn, npc_name, from_polyvagal, to_polyvagal, "
+            "from_dissociation, to_dissociation, created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (channel_id, int(turn), str(npc_name), str(from_polyvagal or ""),
+             str(to_polyvagal or ""), str(from_dissociation or ""), str(to_dissociation or ""),
+             time.time()),
+        )
+        conn.execute(
+            "DELETE FROM soma_log WHERE channel_id=? AND id NOT IN "
+            "(SELECT id FROM soma_log WHERE channel_id=? ORDER BY id DESC LIMIT ?)",
+            (channel_id, channel_id, int(keep)),
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] append_soma_log 실패 (무시): {channel_id}: {e}")
+        return False
+
+
+def read_soma_log(channel_id: str, npc_name: Optional[str] = None, limit: int = 30) -> list:
+    """독자: 몸 상태 전이 이력 (오래된→최신). npc_name 주면 그 NPC만."""
+    if not channel_id or limit <= 0 or not _ensure_schema():
+        return []
+    conn = _get_conn()
+    if conn is None:
+        return []
+    _cols = ("SELECT turn, npc_name, from_polyvagal, to_polyvagal, from_dissociation, "
+             "to_dissociation FROM soma_log ")
+    try:
+        if npc_name:
+            cur = conn.execute(_cols + "WHERE channel_id=? AND npc_name=? ORDER BY id DESC LIMIT ?",
+                               (channel_id, npc_name, int(limit)))
+        else:
+            cur = conn.execute(_cols + "WHERE channel_id=? ORDER BY id DESC LIMIT ?",
+                               (channel_id, int(limit)))
+        return [{"turn": r[0], "npc": r[1], "from_polyvagal": r[2], "to_polyvagal": r[3],
+                 "from_dissociation": r[4], "to_dissociation": r[5]}
+                for r in reversed(cur.fetchall())]
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_soma_log 실패: {channel_id}: {e}")
+        return []
+
+
+# =========================================================
+# [2026-08-16 도착물 라우트] turn_mail — 턴 도착물 (생성자 + 독자)
+# =========================================================
+
+def append_turn_mail(channel_id: str, message_id: int, turn: int, kind: str,
+                     payload: Dict[str, Any], keep: Optional[int] = None) -> bool:
+    """도착물 1건 적립. (channel_id, message_id, kind) 자리에 이미 있으면 **교체**.
+
+    교체가 계약인 이유: 같은 턴을 두 번 계산해도(배경 태스크 재실행) 버튼 하나에
+    같은 내용이 두 번 붙지 않아야 한다. 실패는 무해(False) — 버튼이 안 붙을 뿐이다.
+    """
+    if not channel_id or not message_id or not isinstance(payload, dict):
+        return False
+    if not _ensure_schema():
+        return False
+    conn = _get_conn()
+    if conn is None:
+        return False
+    if keep is None:
+        keep = int(getattr(config, "TURN_MAIL_KEEP", 500) or 500)
+    try:
+        conn.execute(
+            "DELETE FROM turn_mail WHERE channel_id=? AND message_id=? AND kind=?",
+            (channel_id, int(message_id), str(kind or "mail")),
+        )
+        conn.execute(
+            "INSERT INTO turn_mail (channel_id, message_id, turn, kind, payload, created_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (channel_id, int(message_id), int(turn or 0), str(kind or "mail"),
+             json.dumps(payload, ensure_ascii=False), time.time()),
+        )
+        conn.execute(
+            "DELETE FROM turn_mail WHERE channel_id=? AND id NOT IN "
+            "(SELECT id FROM turn_mail WHERE channel_id=? ORDER BY id DESC LIMIT ?)",
+            (channel_id, channel_id, int(keep)),
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] append_turn_mail 실패 (무시): {channel_id}: {e}")
+        return False
+
+
+def read_turn_mail(channel_id: str, message_id: int, kind: Optional[str] = None) -> list:
+    """독자: 그 메시지에 딸린 도착물 (오래된→최신). kind 주면 그 종류만.
+    반환 [{"turn", "kind", "payload"}]. 트림으로 사라졌으면 [] (= 버튼이 만료 안내)."""
+    if not channel_id or not message_id or not _ensure_schema():
+        return []
+    conn = _get_conn()
+    if conn is None:
+        return []
+    try:
+        if kind:
+            cur = conn.execute(
+                "SELECT turn, kind, payload FROM turn_mail "
+                "WHERE channel_id=? AND message_id=? AND kind=? ORDER BY id",
+                (channel_id, int(message_id), str(kind)),
+            )
+        else:
+            cur = conn.execute(
+                "SELECT turn, kind, payload FROM turn_mail "
+                "WHERE channel_id=? AND message_id=? ORDER BY id",
+                (channel_id, int(message_id)),
+            )
+        out = []
+        for r in cur.fetchall():
+            try:
+                payload = json.loads(r[2])
+            except Exception:
+                payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+            out.append({"turn": r[0], "kind": r[1], "payload": payload})
+        return out
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_turn_mail 실패: {channel_id}: {e}")
+        return []
+
+
 def read_arc_window(channel_id: str, start_turn: int, end_turn: int) -> Dict[str, list]:
-    """독자(범위): 턴 [start,end]의 감정/태도/스냅샷을 한 번에. 발효 청크 호(弧) digest용.
-    {"emotion":[...], "attitudes":[...], "snapshots":[...]}. 실패 시 빈 묶음."""
-    out = {"emotion": [], "attitudes": [], "snapshots": []}
+    """독자(범위): 턴 [start,end]의 감정/태도/몸/스냅샷을 한 번에. 발효 청크 호(弧) digest용.
+    {"emotion":[...], "attitudes":[...], "soma":[...], "snapshots":[...]}. 실패 시 빈 묶음."""
+    out = {"emotion": [], "attitudes": [], "soma": [], "snapshots": []}
     if not channel_id or not _ensure_schema():
         return out
     conn = _get_conn()
@@ -1845,6 +2170,14 @@ def read_arc_window(channel_id: str, start_turn: int, end_turn: int) -> Dict[str
             "WHERE channel_id=? AND turn BETWEEN ? AND ? ORDER BY id", (channel_id, s, e))
         out["attitudes"] = [{"turn": r[0], "npc": r[1], "from": r[2], "to": r[3], "result": r[4]}
                             for r in cur.fetchall()]
+        # [2026-08-11 soma 지속] 몸 상태 전이 창 — 기존 키 무변경, "soma" 추가만.
+        cur = conn.execute(
+            "SELECT turn, npc_name, from_polyvagal, to_polyvagal, from_dissociation, "
+            "to_dissociation FROM soma_log "
+            "WHERE channel_id=? AND turn BETWEEN ? AND ? ORDER BY id", (channel_id, s, e))
+        out["soma"] = [{"turn": r[0], "npc": r[1], "from_polyvagal": r[2], "to_polyvagal": r[3],
+                        "from_dissociation": r[4], "to_dissociation": r[5]}
+                       for r in cur.fetchall()]
         cur = conn.execute(
             "SELECT turn, doom_phase, sd_tension FROM turn_snapshot "
             "WHERE channel_id=? AND turn BETWEEN ? AND ? ORDER BY turn", (channel_id, s, e))

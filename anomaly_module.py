@@ -414,7 +414,7 @@ class AnomalyModule:
                         st_state, _normalized_cand,
                         st_state.get("recent_categories", []),
                         st_state.get("event_queue", []),
-                        reader_axes=bus.anomaly.get("_reader_axes"),  # [Reader-GM R4b] 독자 1표 (FEED=0이면 미적재=None)
+                        reader_axes=bus.anomaly.get("_reader_axes"),  # [Reader-GM R4b] 독자 1표 (현행 FEED=1 라이브 적재 — [2026-08-11 리더 §7] 구 "FEED=0이면 미적재" 정정)
                     ):
                         _route = "promote_candidate"
                 except Exception as _e_route:

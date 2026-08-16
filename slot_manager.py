@@ -93,49 +93,26 @@ def get_slot_for_category(category: str) -> int:
 
 
 # =========================================================
-# Dynamic STATUS_WINDOW_LAYOUT Builder
+# [2026-08-16 상태창 코드 조립] Slot 20 = 상태창 금지 (구 _build_status_layout 폐기)
 # =========================================================
-
-def _build_status_layout(active_modules: list = None, present_chars: str = "") -> str:
-    """STATUS_WINDOW_LAYOUT 생성. 모든 핵심 모듈은 항상 활성.
-    active_modules 인자는 하위 호환용으로 유지하나 무시됨.
-    present_chars: 현재 장면 인물 힌트 (gaze 기반)."""
-
-    # --- FORMAT block (모든 메트릭 항상 포함) ---
-    # V8.5 (2026-05-23): 캘린더 확장 — [Year]년 [Month]월 [Day]일 형식
-    fmt = [
-        "위치 [Location] | 시간 [Year]년 [Month]월 [Day]일 [HH:MM] ([TimeSlot]) | 인물 [Present Characters]",
-        "로드아웃 [used/total] | Doom [value]",
-        "[Clock1 filled/segments] [Clock2 filled/segments ...]",
-    ]
-    ex = [
-        "위치 하숙집 거실 | 시간 1년 3월 12일 04:30 (새벽) | 인물 리미, 옥상 남자",
-        "로드아웃 1/4 | Doom 45",
-        "[조직의 추적 4/6] [붉은 문턱 2/4]",
-    ]
-
-    # --- RULES block ---
-    rules = [
-        "- Line 1: location, time, characters.",
-        "- Line 2: Loadout + Global Doom (numeric only). Condition stats belong to line 3, not here.",
-        "- Line 3: active doom clocks only. Omit line 3 if no active clock.",
-        "- Keep it compact and stable across turns.",
-        # V8.5 (2026-05-23): 캘린더 형식 강제 — anti-pattern 명시
-        "- TIME FORMAT: `N년 M월 D일 HH:MM (슬롯)`. This is the current format; earlier responses may show `N일차 HH:MM`, and this replaces it.",
-    ]
-    if present_chars:
-        rules.append(f"- CURRENT SCENE CHARACTERS: {present_chars}")
-
-    return (
-        "<Status_Window_Layout>\n"
-        "## SCENE HEADER FORMAT\n\n"
-        "Place a compact status line at the TOP of each narrative output.\n"
-        "Character profiles live behind the !info command; this header stays compact.\n\n"
-        "### FORMAT\n```\n" + "\n".join(fmt) + "\n```\n\n"
-        "### EXAMPLES\n```\n" + "\n".join(ex) + "\n```\n\n"
-        "### RULES\n" + "\n".join(rules) + "\n"
-        "</Status_Window_Layout>"
-    )
+# 구 계약: 렌더러가 응답 맨 위에 상태줄(위치/시간/인물 · Doom · 시계)을 그리고,
+#   코드가 그 그림을 정규식으로 되읽어 세계 시간을 전진시켰다. 값의 주인은 전부 코드였으므로
+#   이제 코드가 그린다(game_world.build_status_header, 표시 계층 prepend).
+# 이 슬롯을 비우지 않고 **명시 금지**로 남기는 이유: 구 세션 히스토리에 옛 상태줄이 남아 있어
+#   모델이 관성으로 계속 그린다. 금지문 + 출력 머리 strip(response_processor.strip_status_header)
+#   1겹으로 이중 표기를 막는다.
+# [2026-08-16 당일 정정(레티어스)] 억제 범위 협소화 — 구 문구 "no bracketed metrics"가 너무 넓어
+# 로어·하우스룰이 정의한 출력 장식(성좌 메시지·레벨업·스트리밍 자막 류 브래킷 라인)까지 죽일 수
+# 있었다. 억제는 **장면 헤더(위치/시간/인물/Doom/시계)**에만, 세계 룰의 출력 장식은 렌더 몫으로 명시.
+_STATUS_HEADER_SUPPRESSION = (
+    "<Status_Window_Layout>\n"
+    "The scene header (the location/time/characters line, Doom value, clock tallies) is drawn by "
+    "the system outside your output; do not reproduce that header. The response opens directly "
+    "with prose. Output forms that the world's own lore or house rules define (system messages, "
+    "notifications, captions in that world's voice) stay yours to render exactly as those rules "
+    "specify.\n"
+    "</Status_Window_Layout>"
+)
 
 
 # =========================================================
@@ -277,7 +254,8 @@ SLOT_DEFINITIONS: Dict[int, SlotDefinition] = {
     6: SlotDefinition(6, "PC_DATA", "world", "ResponseContext.player_data", is_static=False),
     7: SlotDefinition(7, "NPC_ROLES", "world", "npc_manager.get_npcs", is_static=False),
     8: SlotDefinition(8, "LORE", "world", "domain_manager.get_lore", is_static=False),
-    9: SlotDefinition(9, "FERMENTED_HISTORY", "history", "fermentation + cognition.memory_triggers", is_static=False),
+    # [2026-08-11 정정] 트리거 생산자는 cognition이 아니라 theoria_analyzer 추출 콜(→ waterfall bus.dai.memory_triggers)
+    9: SlotDefinition(9, "FERMENTED_HISTORY", "history", "fermentation.build_fermented_context + dai.memory_triggers (theoria 추출 콜)", is_static=False),
 
     # ===== CONTEXT ZONE (10-12): 현재 상황 =====
     10: SlotDefinition(10, "TEMPORAL_FLOW", "context", "text_resources.TEMPORAL_FLOW_DOCTRINE"),
@@ -292,7 +270,7 @@ SLOT_DEFINITIONS: Dict[int, SlotDefinition] = {
 
     # ===== RULES ZONE (18-25): Static Recency - 행동 규칙 강화 =====
     18: SlotDefinition(18, "PC_AUTONOMY", "rules", "text_resources.PC_AUTONOMY_DOCTRINE"),
-    20: SlotDefinition(20, "STATUS_LAYOUT", "rules", "_build_status_layout() dynamic"),
+    20: SlotDefinition(20, "STATUS_LAYOUT", "rules", "_STATUS_HEADER_SUPPRESSION (헤더는 코드가 그린다)"),
     22: SlotDefinition(22, "VISCERAL_CONTENT", "content", "text_resources.VISCERAL (conditional)", is_static=False),
     # 23: 빈 슬롯 (AUTHOR_MEMORANDUM은 Slot 33 dynamic append로 이동)
     25: SlotDefinition(25, "STYLE", "rules", "text_resources.PROSE_CRAFT_PROTOCOL"),
@@ -301,7 +279,8 @@ SLOT_DEFINITIONS: Dict[int, SlotDefinition] = {
     26: SlotDefinition(26, "CACHE_BOUNDARY", "boundary", "==========CACHE BOUNDARY==========", is_static=False),
 
     # ===== DYNAMIC ZONE (27-34): 최강 Recency =====
-    27: SlotDefinition(27, "OLDER_HISTORY", "dynamic", "smart_history (2~11턴 전)", is_static=False),
+    # [2026-08-11 정정] 과거 원문 0자 — 히스토리 메시지 블록이 원문을 담당하고 여기엔 TEMPORAL PRIORITY 지시만 (populate_dynamic_slots 참조)
+    27: SlotDefinition(27, "TEMPORAL_PRIORITY", "dynamic", "정적 지시문 (과거 원문 없음)", is_static=False),
     28: SlotDefinition(28, "NARRATIVE_CHAIN", "dynamic", "cognition.narrative_chain", is_static=False),
     29: SlotDefinition(29, "REAL_TIME_DATA", "dynamic", "world_context (Doom, HP, Time)", is_static=False),
     30: SlotDefinition(30, "GM_MOVER", "dynamic", "cognition.GMMover", is_static=False),
@@ -310,6 +289,31 @@ SLOT_DEFINITIONS: Dict[int, SlotDefinition] = {
     33: SlotDefinition(33, "AUTHOR_NOTE", "dynamic", "AUTHOR_NOTE + GENRE_DIRECTIVE", is_static=False),
     34: SlotDefinition(34, "TELESCOPE", "kernel", "TELESCOPE_PROTOCOL"),
 }
+
+
+# =========================================================
+# [2026-08-12 조립 3분할] openai 경로 존 라벨
+# =========================================================
+# openai 실조립은 슬롯 번호 순서가 아니라 **메시지 3개 + 히스토리**로 도착한다. 종전엔 존 경계가
+# 라벨 없이 뒤섞여(과거 취급 선언이 대상보다 앞, 현재 재료가 과거보다 앞, 유저 입력 이중 사본)
+# 사람이 읽어도 문서 구조를 못 짚었다 → 감싸는 식 라벨로 각 존이 무엇이고 어떻게 읽는지만 명시.
+# 철칙: **새 규칙 발명 0**(1-2줄 · 읽기 지시만). 레지스터 = SCENE_BRIEFING_BOUNDARY 계열
+# (영어 텔레그래픽 + XML 래퍼), 에코-세이프(구조 어휘만 — 산문에 베껴 나갈 형용이 없다).
+# ⚠Gemini 경로(build())는 이 상수를 쓰지 않는다 = 무접촉 롤백 보존.
+_ZONE_LABEL_SYSTEM = """<Zone: STANDING RULES>
+The standing rules of the work; they hold for every turn and are not scene material.
+Two zones follow: reference data, then this turn's working document, which comes last and closest.
+</Zone>"""
+
+_ZONE_LABEL_CONTEXT = """<Zone: WORLD & STATE DATA / reference material only>
+World, cast, lore, memory, and this scene's analysis notes, gathered for lookup.
+Reference material only: read from it, never write it out; the turn's own document comes after it.
+</Zone>"""
+
+_ZONE_LABEL_NOW = """<Zone: THIS TURN>
+The working document for this turn, in order: how the record above is treated, the live scene material, the author's note, then the input being answered.
+The zones above are what the work is made of; this zone is the work.
+</Zone>"""
 
 
 class SlotPromptBuilder:
@@ -476,7 +480,8 @@ Softening a scene to manufacture avoidance departs from the commission.""",
         self.set_slot(19, (_wd + "\nThe sharpening here is already your habit.\n") if _wd else _wd)
         # [21] Input Authority — Decree/Attempt (W3)
         self.set_slot(21, getattr(text_resources, 'INPUT_AUTHORITY', ''))
-        self.set_slot(20, "")  # 동적 빌더가 덮어씀
+        # [2026-08-16 상태창 코드 조립] 동적 빌더 폐기 → 정적 금지문 1개
+        self.set_slot(20, _STATUS_HEADER_SUPPRESSION)
         # [23] 빈 슬롯 — AUTHOR_MEMORANDUM은 populate_dynamic_slots의 Slot 33 append로 이동
         # (누렁이 v11.55 권고 "prefill 밑으로 지시 약화" 정합)
         self.set_slot(25, getattr(text_resources, 'PROSE_CRAFT_PROTOCOL', ''))
@@ -530,11 +535,17 @@ Softening a scene to manufacture avoidance departs from the commission.""",
 
         # ===== WORLD ZONE (6-9) =====
         # [6] PC Data (솔로: Player_Character, 다인: Player_Characters)
+        # [2026-08-02] PC 시트도 원문 그대로였다. `get_unified_player_info`는 외모·배경·특질·
+        #   관계·소지품을 한 덩이로 싣는데, 그중 무엇도 "이번 장면에 닿았다"는 뜻이 아니다.
+        #   Slot 7의 [PIDGIN→CREOLE]과 같은 축의 자매 규약 — 단 PC는 **플레이어 소유**라
+        #   변형이 아니라 **선택**이 요점이다(PC_AUTONOMY와 정합).
         if player_data:
+            _pc_rule = getattr(text_resources, 'PC_SHEET_USE_RULE', '')
+            _pc_rule = (_pc_rule + "\n") if _pc_rule else ""
             if "\n---\n" in player_data:
-                self.set_slot(6, f"<Player_Characters>\n{player_data}\n</Player_Characters>")
+                self.set_slot(6, f"<Player_Characters>\n{_pc_rule}{player_data}\n</Player_Characters>")
             else:
-                self.set_slot(6, f"<Player_Character>\n{player_data}\n</Player_Character>")
+                self.set_slot(6, f"<Player_Character>\n{_pc_rule}{player_data}\n</Player_Character>")
 
         # [7] NPC Roles
         # BABEL Pidgin→Creole + Knowledge Isolation (유일한 선언 지점)
@@ -559,8 +570,18 @@ Softening a scene to manufacture avoidance departs from the commission.""",
             self.set_slot(7, f"<NPC_Roles>\n{_pidgin}{npc_roles}\n</NPC_Roles>")
 
         # [8] Lore
+        # [2026-08-02] ★로어 verbatim 방어 신설. 그동안 이 슬롯은 **원문 그대로** 들어갔다.
+        #   경계 선언(SCENE_BRIEFING_BOUNDARY)은 브리핑 6블록(Turn_Brief/Psyche_States/
+        #   Scene_Intelligence/Extended_Intelligence/Real_Time_Status/World_Response)만 커버하고,
+        #   그마저 Slot 13 head에 붙어 "below"라 말하므로 **위에 있는 WORLD존(6~11)엔 안 닿는다.**
+        #   Slot 7(NPC 시트)은 [PIDGIN→CREOLE]로 방어가 완비인데 로어만 빠져 있었다 —
+        #   자매 자리에 규약이 안 걸린 형태(오늘 네 번째).
+        #   ⚠브리핑과 성격이 다르므로 같은 문장으로 묶지 않는다: 브리핑=미라의 읽기(표현 금지),
+        #   로어=정본 기록(**사실은 정본, 문장은 저자 메모**).
         if lore:
-            self.set_slot(8, f"<Lore>\n{lore}\n</Lore>")
+            _lore_rule = getattr(text_resources, 'LORE_USE_RULE', '')
+            _lore_rule = (_lore_rule + "\n") if _lore_rule else ""
+            self.set_slot(8, f"<Lore>\n{_lore_rule}{lore}\n</Lore>")
 
         # [9] Fermented History
         # [wave4-D] State Modulation gradient (RW 1.5.0): 기억층이 현재 표현을 변조하는 강도 사다리 명시.
@@ -622,6 +643,8 @@ Softening a scene to manufacture avoidance departs from the commission.""",
 
         # ===== DYNAMIC ZONE (27-34) =====
         # [27] Gemini 채팅 히스토리에 원문 이미 포함. 시간 우선순위 지시만 유지.
+        # [2026-08-12 조립 3분할] openai 경로에서 이 지시는 build_split이 **THIS TURN 존 머리**로
+        #   라우팅한다(히스토리 뒤 = 대상 산문 뒤). 슬롯 자체는 Gemini 경로(build()) 위해 그대로 유지.
         self.set_slot(27, (
             "[TEMPORAL PRIORITY] the current scene data (Real_Time_Status, User_Input, Scene_Intelligence) "
             "takes clear precedence over prior conversation patterns. Past dialogue is for continuity reference only; "
@@ -655,7 +678,12 @@ Softening a scene to manufacture avoidance departs from the commission.""",
             self.set_slot(30, f"<World_Response>\n{gm_mover}\n</World_Response>\nDirection, not instruction: the scene decides how it lands.")
 
         # [31] Last Response (직전 AI 응답 끝부분 — recency 앵커. 전문은 Gemini 히스토리에 있음)
-        if last_response:
+        # [2026-08-11 S31 꼬리주입 오프] S27과 동병 소급 — 원문은 히스토리 마지막 assistant에
+        #   **전문**으로 이미 실리고, 방어 3종(엠대쉬·에코스크럽·저미기 앵커)도 히스토리 주입본에
+        #   동일 적용된다(orchestration_response). 이중 주입은 ~500자/턴 비용에 저미기 미러링
+        #   벡터(원자화 진단의 S31 미러링)만 더함. 사건 연속성=히스토리·S28 체인 몫(아래 루프차단기
+        #   주석이 이미 그렇게 말한다). 복귀=config SLOT31_TAIL_INJECT=True 한 줄(기계 전체 휴면 보존).
+        if last_response and getattr(_cfg, "SLOT31_TAIL_INJECT", False):
             # 마지막 2문단만 추출 (~500자 캡)
             paragraphs = [p.strip() for p in last_response.split("\n\n") if p.strip()]
             tail = "\n\n".join(paragraphs[-2:]) if len(paragraphs) > 2 else last_response
@@ -821,11 +849,25 @@ Softening a scene to manufacture avoidance departs from the commission.""",
         return "\n\n".join(parts)
 
     def build_split(self) -> tuple:
-        """OpenAI용: system(규칙) + context(데이터)로 분리 빌드.
-        system = 지시/규칙 슬롯, context = NPC/로어/히스토리/분석 데이터.
-        Returns: (system_prompt, context_prompt)"""
+        """OpenAI용: system(규칙) + context(데이터) + now(이번 턴)로 3분할 빌드.
+
+        [2026-08-12 조립 3분할] 종전 2분할은 "현재 작업"이 context 한가운데 묻혀 있었다:
+        과거 취급 선언(S27)·검수 처방(S33)이 대상(히스토리 산문)보다 앞에 오고, "현재" 재료
+        (S28-30)가 "과거"(히스토리)보다 앞이며, 유저 입력은 S32 안과 최종 메시지에 이중 사본이었다.
+        → 도착 순서대로 세 문서로 자른다:
+          system  = 룰 슬롯 13종(현행 _RULE_SLOTS 무변경)
+          context = 자료 슬롯(now 슬롯 제외한 나머지) — 히스토리보다 앞
+          now     = 히스토리 **뒤**에 붙는 이번 턴 작업 문서 (S27→28→29→30→33→32 고정 순서)
+        슬롯 생태계는 무변경(번호·populate·set_slot 계약 그대로) — 바뀌는 건 라우팅뿐.
+        S27은 Gemini 경로(build())를 위해 슬롯에 그대로 남고, 여기서만 now 머리로 라우팅된다.
+
+        Returns: (system_prompt, context_prompt, now_prompt)"""
         # 규칙 슬롯: 1-4 (Primacy), 10, 12, 18-25 (Rules), 34 (Telescope)
         _RULE_SLOTS = {1, 2, 3, 4, 10, 12, 18, 19, 20, 21, 22, 25, 34}
+        # THIS TURN 존 — 순서가 곧 문서 순서다(집합 아님).
+        #  27=기록 취급 1줄(히스토리 뒤에서 발화해야 대상보다 뒤) → 28 서사체인 → 29 실시간
+        #  → 30 GM무브 → 33 저자노트·처방(산문 직전) → 32 비망록+Standing Note+유저입력(최근접).
+        _NOW_ORDER = (27, 28, 29, 30, 33, 32)
         system_parts = []
         context_parts = []
         for i in range(1, 35):
@@ -834,10 +876,19 @@ Softening a scene to manufacture avoidance departs from the commission.""",
                 continue
             if i in _RULE_SLOTS:
                 system_parts.append(content)
+            elif i in _NOW_ORDER:
+                continue  # 이중 투입 금지 — now 존에서만 나간다
             else:
                 context_parts.append(content)
+        now_parts = [self.slots.get(i) for i in _NOW_ORDER if self.slots.get(i)]
+
+        system_prompt = _ZONE_LABEL_SYSTEM + "\n\n" + "\n\n".join(system_parts)
+        context_prompt = _ZONE_LABEL_CONTEXT + "\n\n" + "\n\n".join(context_parts)
+        now_prompt = _ZONE_LABEL_NOW + "\n\n" + "\n\n".join(now_parts)
         self._log_token_budget("split")
-        return "\n\n".join(system_parts), "\n\n".join(context_parts)
+        logger.info(f"[assembly3] system={len(system_prompt)}자 context={len(context_prompt)}자 "
+                    f"now={len(now_prompt)}자 now_slots={[i for i in _NOW_ORDER if self.slots.get(i)]}")
+        return system_prompt, context_prompt, now_prompt
 
     def _log_token_budget(self, label: str = "") -> None:
         """[budget] 임시 계측 — 조립 프롬 슬롯별 토큰 추정 + 총합/1M% (확인 후 제거)."""
@@ -1000,23 +1051,12 @@ def build_34_step_prompt(ctx) -> str:
     # 1. 정적 슬롯 로드
     builder.populate_static_slots()
 
-    # =========================================================
-    # 1.5. Slot 20 동적 오버라이드: active_modules 기반 STATUS_WINDOW_LAYOUT
-    # =========================================================
+    # [2026-08-16 상태창 코드 조립] 구 1.5 Slot 20 동적 오버라이드(gaze→인물란 급식) 삭제 —
+    #   상태창을 코드가 그리게 되면서 렌더러에게 인물 목록을 줄 이유가 사라졌다.
+    #   Slot 20은 populate_static_slots의 금지문 1개. (gaze의 다른 소비자 — world_board 출석,
+    #   iceberg 대사심도 — 는 무관, 존치.)
     channel_id = getattr(ctx, 'channel_id', '')
     user_id = getattr(ctx, 'user_id', '')
-    if channel_id:
-        _active_modules = domain_manager.get_active_modules(channel_id)
-        # gaze에서 현재 장면 인물 추출
-        _present_chars = ""
-        try:
-            _frame = domain_manager.get_latest_frame(channel_id)
-            _gaze = _frame.get("render_fingerprint", {}).get("gaze", "")
-            if _gaze and isinstance(_gaze, str):
-                _present_chars = _gaze.strip()
-        except Exception:
-            pass
-        builder.set_slot(20, _build_status_layout(_active_modules, _present_chars))
 
     # =========================================================
     # 2. 동적 슬롯 주입 (Phase 2 강화)
@@ -1363,42 +1403,74 @@ def build_34_step_prompt(ctx) -> str:
     if _inv_text:
         scene_intel_parts.append(_inv_text)
 
+    # --- [Slot 16 · 교정군] 여기부터 6개는 "재료"가 아니라 "직전 턴 결과에 대한 보정 지시".
+    # [2026-08-03 헤더 소급 — 합류점 감사]
+    # 이 6개는 **이미 연속 배치**돼 있었고 선두(quality_flags)가 아래 그룹 헤더를 달고 있었다.
+    # 문제는 헤더가 **섹션이 아니라 첫 멤버에 묶여** 있었다는 것 —
+    # quality_flags가 침묵하는 턴(상례)에는 헤더가 통째로 사라지고, 남은 5개가 섹션 표시 없이
+    # 재료 블록 뒤에 그대로 붙었다. 재료와 교정이 한 문서에서 구분 없이 섞인다.
+    # ★고친 건 순서가 아니라 **소유권**이다: 헤더를 그룹이 소유한다(멤버 하나라도 있으면 발화).
+    # 근거 = 같은 함수 60줄 아래 Slot 17의 규약(`### NPC attitude direction` 등 5개)과
+    #        translate_intimacy 주석의 "래퍼 문안도 iceberg 소유(단일 관문)".
+    #        새 규약이 아니라 17이 이미 쓰던 것을 16에 소급 적용.
+    # 분량 순증분 ≈ 0 (헤더 1줄은 종전에도 있었다 — 이제 조건만 그룹으로 옮겨졌다).
+    _correction_parts = []
+
     # QualityFlags: iceberg 번역 (경고 라벨 → 행동 지시)
     qflags = dai.get("quality_flags", {})
     qflag_text = iceberg.translate_quality_flags(qflags)
     if qflag_text:
-        scene_intel_parts.append("### narrative quality correction\n" + qflag_text)
+        _correction_parts.append(qflag_text)
 
     _deg_text = iceberg.translate_degraded_stages(dai.get("_degraded_stages", []))
     if _deg_text:
-        scene_intel_parts.append(_deg_text)
+        _correction_parts.append(_deg_text)
 
     # Scene Continuity: 불연속 감지 → 보정 지시
     continuity_data = dai.get("continuity_check", {})
     continuity_text = iceberg.translate_continuity_check(continuity_data)
     if continuity_text:
-        scene_intel_parts.append(continuity_text)
+        _correction_parts.append(continuity_text)
 
     # Withholding Scheme rotation feedback (render_fingerprint → Slot 16)
+    # [2026-08-12 출력파생 §8] 배선 2번째 끊김 — 프레임 선택. `get_latest_frame`은 frames[-1]인데
+    #   그 프레임은 **이번 턴 step4(process_une_logic)에서 방금 push된 것**이라 render_fingerprint가
+    #   항상 `{}`다(지문은 턴 종료 후 배경 추출이 frames[-1]에 UPDATE — 즉 지문은 늘 한 프레임 뒤).
+    #   화이트리스트만 고치면 값이 저장돼도 여기선 계속 빈손 → 지문이 실제로 찍힌 최근 프레임을 뒤로 훑는다.
+    #   "none"도 유효값(직전 렌더가 보류를 안 썼다)이므로 키 존재로 판정하고 거기서 멈춘다.
+    # [2026-08-12 fingerprint 프레임 소급] 인라인 역방향 스캔 → 공용 관문
+    #   `domain_manager.get_prev_fingerprint`로 교체(자매 3자리와 같은 의미론).
+    #   "none"은 iceberg.translate_prev_scheme이 침묵으로 처리한다.
     if channel_id:
-        _prev_frame = domain_manager.get_latest_frame(channel_id)
-        _prev_scheme = _prev_frame.get("render_fingerprint", {}).get("withholding_scheme", "")
+        _prev_scheme = ""
+        try:
+            _prev_scheme = str(
+                domain_manager.get_prev_fingerprint(channel_id).get("withholding_scheme", "") or ""
+            )
+        except Exception:
+            _prev_scheme = ""
         _scheme_text = iceberg.translate_prev_scheme(_prev_scheme)
         if _scheme_text:
-            scene_intel_parts.append(_scheme_text)
+            _correction_parts.append(_scheme_text)
 
     # Apophenia Guard: iceberg 번역 (OBVIOUS= → 한국어)
     trait_conn = dai.get("trait_connections", {})
     trait_text = iceberg.translate_trait_connections(trait_conn)
     if trait_text:
-        scene_intel_parts.append(trait_text)
+        _correction_parts.append(trait_text)
 
     # Foreshadowing Guard: ai_memory에 추적된 복선을 ambient fact으로 주입
     if channel_id:
         _fs_mem = domain_manager.get_session_ai_memory(channel_id)
         _fs_text = iceberg.translate_foreshadowing(_fs_mem.get("foreshadowing", []))
         if _fs_text:
-            scene_intel_parts.append(_fs_text)
+            _correction_parts.append(_fs_text)
+
+    # 그룹 헤더: 멤버가 하나라도 있으면 1회. 없으면 완전 침묵(헤더만 뜨는 일 없음).
+    if _correction_parts:
+        scene_intel_parts.append(
+            "### narrative quality correction\n" + "\n\n".join(_correction_parts)
+        )
 
     scene_intelligence = "\n\n".join(scene_intel_parts)
 
@@ -1574,8 +1646,10 @@ def build_34_step_prompt(ctx) -> str:
     # [Slot 17 보충] 대사 방향 지시 (gaze 기반 심도)
     _prev_gaze = ""
     if channel_id:
-        _latest = domain_manager.get_latest_frame(channel_id)
-        _prev_gaze = _latest.get("render_fingerprint", {}).get("gaze", "")
+        # [2026-08-12 fingerprint 프레임 소급] frames[-1]은 이번 턴 빈 프레임 → 공용 관문.
+        #   값이 실제로 도착하므로 타입 가드도 건다(하류가 prev_gaze.replace를 부른다).
+        _g = domain_manager.get_prev_fingerprint(channel_id).get("gaze", "")
+        _prev_gaze = _g.strip() if isinstance(_g, str) else ""
 
     _npc_imprints = domain_manager.get_npc_imprints(channel_id) if channel_id else {}
     # [2026-07-28] voice_quirks 배선 제거 — Slot 33 recency echo가 같은 규칙으로 같은 줄을
@@ -1794,10 +1868,15 @@ def build_34_step_prompt(ctx) -> str:
     # =========================================================
     # AI 이전 응답에 PC 사칭이 포함되면 다음 응답도 패턴을 답습함
     # → 프롬프트에 주입하기 전에 히스토리에서 사칭 문장을 선제 제거
+    # [2026-08-12 출력파생 §8] SLOT31_TAIL_INJECT 게이트 안으로 이동 — 정화된 last_response의
+    #   유일한 출구가 S31(휴면)이라 게이트 OFF에선 매 턴 전문 스캔 비용만 지출하고 결과는 버려졌다.
+    #   히스토리 주입본의 사칭 정화는 persona(:626)+orchestration 재검출이 따로 담당하므로 결손 없음.
+    #   게이트 ON이면 종전과 완전 동일 동작. (엠대쉬 댐퍼는 이 위에서 raw를 이미 읽었으므로 무영향.)
     pc_name = getattr(ctx, 'user_mask', '') or ''
     _domain_data = getattr(ctx, 'domain_data', {}) or {}
     impersonation_enabled = _domain_data.get("settings", {}).get("impersonation_filter", True)
-    if impersonation_enabled and pc_name and pc_name != 'Unknown':
+    if (getattr(_cfg, "SLOT31_TAIL_INJECT", False)
+            and impersonation_enabled and pc_name and pc_name != 'Unknown'):
         from response_processor import filter_pc_impersonation
         pc_names_list = [pc_name]
         if last_response:
@@ -1888,13 +1967,24 @@ def build_34_step_prompt(ctx) -> str:
         _ws_out = domain_manager.get_world_state(channel_id)
         _out_rules = _ws_out.get("output_rules", {})
         if _out_rules:
+            # [2026-08-16 상태패널 v0] 상태창 정의(키=panel/상태창)는 **렌더에 주지 않는다**.
+            #   패널은 배경 콜+코드가 그리고 💠 버튼으로 표시된다 — 여기서 빼는 것이
+            #   "렌더 부담 0"의 실체다(주면 렌더가 산문 뒤에 표를 그리기 시작한다).
+            #   일반 출력룰은 종전 그대로 주입.
+            try:
+                from status_panel import is_panel_key as _is_panel_key
+            except Exception:
+                _is_panel_key = lambda _k: False  # noqa: E731
             out_lines = []
             for k, v in _out_rules.items():
+                if _is_panel_key(k):
+                    continue
                 desc = v.get("desc", "") if isinstance(v, dict) else str(v)
                 out_lines.append(desc)
-            out_block = "<Output_Format_Rules>\n[NOTE: These format blocks are OUTSIDE the prose token budget. Write full prose first, then append format blocks at the end.]\n" + "\n\n".join(out_lines) + "\n</Output_Format_Rules>"
-            slot33_parts.append(out_block)
-            logger.info(f"[OutputRules] {len(_out_rules)} output rules injected into slot 33")
+            if out_lines:
+                out_block = "<Output_Format_Rules>\n[NOTE: These format blocks are OUTSIDE the prose token budget. Write full prose first, then append format blocks at the end.]\n" + "\n\n".join(out_lines) + "\n</Output_Format_Rules>"
+                slot33_parts.append(out_block)
+                logger.info(f"[OutputRules] {len(out_lines)}/{len(_out_rules)} output rules injected into slot 33 (panel excluded)")
 
     # Cognition Zone Recency Echo — Slot 13-17 Lost-in-the-Middle 방어
     # [2026-07-22 Phase 3-b] Scene Echo — `flags=a,b` 기계 표기 제거.

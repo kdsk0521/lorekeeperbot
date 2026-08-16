@@ -75,6 +75,76 @@ def _degrade_stage(bus, stage_name: str, error: Exception) -> None:
         logger.error("[Degradation] Handler itself failed for %s: %s", stage_name, inner)
 
 
+# =========================================================
+# [2026-08-11 soma 지속] B축 몸 상태 병합 (순수 함수 — I/O 0)
+# =========================================================
+def _merge_soma_states(prev: dict, psyche_states: dict, current_turn: int) -> tuple[dict, list]:
+    """이번 턴 psyche 관측분을 이전 턴 soma 스냅샷에 **NPC별로 병합**하고,
+    상태가 실제로 뒤집힌 NPC만 전이 리스트로 돌려준다.
+
+    반환: (새 npc_soma_states, [(npc, from_polyvagal, to_polyvagal,
+                                from_dissociation, to_dissociation), ...])
+
+    ★I/O 0 — world_state 읽기/쓰기도, soma_log 적립도 여기서 하지 않는다(호출부 책임).
+
+    [2026-08-02 B축 지속] 왜 스냅샷을 남기나.
+      `dissociation` 스키마엔 **"Track across turns"**가 이미 적혀 있는데
+      이전 턴 값이 어디에도 남지 않아 **집행 재료 없는 사문 지시**였다.
+      (npc_emotion_states엔 Plutchik 8축만, PREVIOUS FRAME엔 위치/에너지/밀도/시선만)
+      ★새 게이지를 만들지 않는다 — 이미 있는 enum을 다음 턴에 되돌려줄 뿐.
+
+    [2026-08-11 soma 지속] 통짜 교체 → **NPC별 병합 + since_turn 도장**.
+      구 코드는 `world["npc_soma_states"] = _soma_snap`으로 dict를 통째 갈아서
+      (a) 이번 턴 psyche에 없는 NPC = **증발**(안 만나면 몸 상태 기억이 사라짐)
+      (b) 같은 상태가 언제부터인지 = 알 방법 없음(1턴 창).
+
+    오프스테이지 잔존: 이번 턴 관측분으로 덮되, 못 본 NPC는 그대로 둔다.
+      그래서 전이 로그도 **관측 턴에만** 쌓인다 — 잔존은 사건이 아니다.
+
+    시계 문법: A축=등장 / C축=무변화 / **B축=무변화**(같은 상태가 언제부터냐).
+      ★무변화면 도장을 안 찍는다 — npc_manager.set_drive_gated L1946과 같은 규율.
+        동일 상태에 재도장하면 지속 시계가 매 턴 리셋돼 영원히 임계를 못 넘는다.
+
+    ⚠`psyche_states`는 **PC 제외본**을 넘겨야 한다(execute()의 `_pc_masks_em` 필터 결과).
+      bus.dai 원본은 PC를 품고 있어, 잔존 배선과 만나면 PC 몸 상태가 **영구**
+      잔류한다(통짜 교체로 매 턴 증발하던 시절엔 무해했다).
+    """
+    _psy = psyche_states or {}
+    _soma_prev = prev if isinstance(prev, dict) else {}
+    _soma_snap = {k: dict(v) for k, v in _soma_prev.items()
+                  if isinstance(v, dict)}
+    _soma_moves = []
+    for _sn, _sblk in _psy.items():
+        if not isinstance(_sblk, dict):
+            continue
+        _s = _sblk.get("soma")
+        if not isinstance(_s, dict):
+            continue
+        _keep = {k: _s.get(k) for k in ("polyvagal", "dissociation")
+                 if _s.get(k)}
+        if not _keep:
+            continue
+        _old = _soma_prev.get(_sn)
+        if not isinstance(_old, dict):
+            _old = None
+        _same = bool(_old) and all(
+            (_old.get(_k) or None) == (_keep.get(_k) or None)
+            for _k in ("polyvagal", "dissociation")
+        )
+        if _same:
+            _keep["since_turn"] = int(_old.get("since_turn", current_turn) or 0)
+        else:
+            _keep["since_turn"] = int(current_turn)
+            # 전이 로그는 **관측 턴에만** — 오프스테이지 잔존은 사건이 아니다.
+            _soma_moves.append((
+                _sn,
+                (_old or {}).get("polyvagal"), _keep.get("polyvagal"),
+                (_old or {}).get("dissociation"), _keep.get("dissociation"),
+            ))
+        _soma_snap[_sn] = _keep
+    return _soma_snap, _soma_moves
+
+
 class WaterfallPipeline:
     def __init__(self, client, model_id: str):
         self.theoria = TheoriaAnalyzer(client, model_id)
@@ -503,28 +573,26 @@ class WaterfallPipeline:
                         for name, state in emotion_results.items()
                     }
                     domain_manager.update_world_state(channel_id, world)
-                    # [2026-08-02 B축 지속] soma 스냅샷 저장.
-                    #   `dissociation` 스키마엔 **"Track across turns"**가 이미 적혀 있는데
-                    #   이전 턴 값이 어디에도 남지 않아 **집행 재료 없는 사문 지시**였다.
-                    #   (npc_emotion_states엔 Plutchik 8축만, PREVIOUS FRAME엔 위치/에너지/밀도/시선만)
-                    #   ★새 게이지를 만들지 않는다 — 이미 있는 enum을 다음 턴에 되돌려줄 뿐.
+                    # [2026-08-11 soma 지속] B축 스냅샷 — 병합·도장 본체는 `_merge_soma_states()`
+                    #   (모듈 상단, 근거 주석 전량 독스트링). 여기선 읽기/저장/적립만.
                     try:
-                        _psy = bus.dai.get("psyche_states") or {}
-                        _soma_snap = {}
-                        for _sn, _sblk in _psy.items():
-                            if not isinstance(_sblk, dict):
-                                continue
-                            _s = _sblk.get("soma")
-                            if not isinstance(_s, dict):
-                                continue
-                            _keep = {k: _s.get(k) for k in ("polyvagal", "dissociation")
-                                     if _s.get(k)}
-                            if _keep:
-                                _soma_snap[_sn] = _keep
-                        if _soma_snap:
-                            world = domain_manager.get_world_state(channel_id)
+                        _psy = psyche_states or {}  # ⚠PC 제외본(위 _pc_masks_em 필터 결과)
+                        world = domain_manager.get_world_state(channel_id)
+                        _soma_prev = world.get("npc_soma_states")
+                        if not isinstance(_soma_prev, dict):
+                            _soma_prev = {}
+                        _soma_snap, _soma_moves = _merge_soma_states(_soma_prev, _psy, current_turn)
+                        if _soma_snap != _soma_prev:
                             world["npc_soma_states"] = _soma_snap
                             domain_manager.update_world_state(channel_id, world)
+                        if _soma_moves:
+                            try:  # [V10 적립] soma_log — 몸 상태가 *언제* 뒤집혔나. 실패 무해.
+                                import sqlite_store
+                                for _tn, _fp, _tp, _fd, _td in _soma_moves:
+                                    sqlite_store.append_soma_log(
+                                        channel_id, current_turn, _tn, _fp, _tp, _fd, _td)
+                            except Exception as _e_somalog:
+                                logger.debug(f"[Soma] log skipped: {_e_somalog}")
                     except Exception as _e_soma:
                         logger.debug(f"[Soma] snapshot skip: {_e_soma}")
                     # [V10 적립] emotion_log 적립 — bus.emotion 완성 직후, 코드만(콜0)·실패 무해.
@@ -709,13 +777,46 @@ class WaterfallPipeline:
                 _base = s.get("base", "?") or "?"
                 _mod = s.get("modifier", "")
                 _pair = f"{_base}×{_mod}" if _mod else _base
+                # [2026-08-03] pair_confidence 노출. 이미 계산돼 bus에 실려 있었는데
+                #   요약 로그만 안 찍어서, "왜 이 modifier가 붙었나"를 소스에서
+                #   역추적해야 했다. confidence는 _derive_relational의 **티어 번호 역수**라
+                #   값 하나로 어느 티어가 결정했는지 특정된다:
+                #     1.0=T1 value_conflict / 0.9=T2 negotiation_stance / 0.8=T3 cultural_affect
+                #     0.7=T4 memory_trigger / 0.6=T5 attachment / 0.55=T5b poise
+                #     0.5=T6 register / 0.4=T7 silence_type / 0.3=T8 deep_read
+                #   ★특히 T6·T7은 scene_ctx(장면 공유) 소스라, 여러 NPC가 **같은 modifier**로
+                #     몰렸을 때 "개인 신호인가 장면 필드가 덮었나"를 이걸로 가른다.
+                #   solo base(modifier 없음)면 confidence 무의미 → 생략.
+                _conf = s.get("pair_confidence", 0)
+                _conf_s = f"/{_conf:.2f}" if _mod and _conf else ""
                 emo_parts.append(
-                    f"{n}={_pair}({s.get('intensity',0):.1f})"
+                    f"{n}={_pair}({s.get('intensity',0):.1f}{_conf_s})"
                     + (" ⚡" if s.get("spike") else "")
                 )
             if emo_parts:
                 parts.append(f"  Emotion: {', '.join(emo_parts)}")
         else:
             parts.append("  Emotion: inactive")
+
+            # [2026-08-03] Scene register / silence_type — **modifier 쏠림 때만** 발화.
+            #   _derive_relational의 Tier 6(register)·Tier 7(silence_type)은 scene_ctx 소스라
+            #   한 값이 전원의 modifier를 덮는다. 그래서 "여러 NPC가 같은 modifier"는
+            #   개인 신호가 아니라 장면 필드가 결정했다는 신호고, 그때만 이 두 필드가
+            #   설명력을 갖는다. register는 감정 modifier뿐 아니라 Slot 16 연출 지시
+            #   (iceberg.translate_register)도 만들어서, 오판정이면 두 곳이 같이 틀린다.
+            #   ★상시 출력하지 않는다 — 쏠림이 없는 턴엔 설명할 게 없다(침묵 경로).
+            #     오늘 detail_density에서 고친 것과 같은 규율을 이 줄에도 적용.
+            try:
+                _mods = [s.get("modifier") for s in summaries.values()
+                         if s.get("modifier") and s.get("intensity", 0) > 0.05]
+                if len(_mods) >= 2 and len(set(_mods)) == 1:
+                    _sr = (bus.dai.get("scene_register") or "") if isinstance(bus.dai, dict) else ""
+                    _sil = ((bus.dai.get("narrative_chain") or {}).get("silence_type") or "") \
+                        if isinstance(bus.dai, dict) else ""
+                    parts.append(
+                        f"  └ modifier {len(_mods)}인 쏠림 — register={_sr or '-'} silence={_sil or '-'}"
+                    )
+            except Exception:
+                pass
 
         logger.info("\n".join(parts))

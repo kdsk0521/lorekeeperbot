@@ -149,6 +149,8 @@ class VectorSearchEngine:
 #   즉사해 **같은 로어 청크를 소비자 수만큼 반복 임베딩**한다. fermentation은 이미
 #   자체 싱글턴(_get_vector_engine, F2 2026-07-18)으로 이 병을 피했지만, 로어 청크를
 #   공유하는 소비자들(로어 랭킹·증류 접지)은 각자 새 인스턴스였다.
+#   [2026-08-11] fermentation 전용 싱글턴도 이 공용 엔진에 합류 — 아래 트림 정책 밖에서
+#   무제한 성장하던 유일한 예외였다. 이제 발효 회상 = get_shared_engine 위임 래퍼.
 # 처방: 로어 청크 계열 소비자는 이 공용 엔진을 쓴다 → 청크 임베딩 1회, 이후 쿼리만 과금.
 _shared_engine: Optional["VectorSearchEngine"] = None
 

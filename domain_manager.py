@@ -81,8 +81,7 @@ def _get_default_session() -> Dict[str, Any]:
         "settings": {
             "response_mode": "auto", 
             "session_locked": False, 
-            "growth_system": "default", 
-            "abnormal_mode": True,
+            "growth_system": "default",
             "scene_type": "normal",  # normal / gore / nsfw / gore_nsfw
             "active_modules": ["judgment", "doom", "anomaly", "mental"]
         },
@@ -290,6 +289,19 @@ def get_last_chronicle_idx(channel_id: str) -> int:
 def set_last_chronicle_idx(channel_id: str, idx: int) -> None:
     d = get_domain(channel_id)
     d["last_chronicle_idx"] = idx
+    save_domain(channel_id, d)
+
+# [2026-08-11 연대기 내보내기 통합] domain["chronicles"](자동/수동 연대기)는 10개 롤링이라
+# 인덱스 커서가 못 쓰인다(앞이 잘리면 인덱스 밀림) → 타임스탬프 워터마크로 증분 추적.
+def get_last_chronicle_export_ts(channel_id: str) -> float:
+    try:
+        return float(get_domain(channel_id).get("last_chronicle_export_ts", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+def set_last_chronicle_export_ts(channel_id: str, ts: float) -> None:
+    d = get_domain(channel_id)
+    d["last_chronicle_export_ts"] = float(ts)
     save_domain(channel_id, d)
 
 # =========================================================
@@ -539,6 +551,13 @@ def find_equivalent_npc_key(npcs: dict, name: str) -> Optional[str]:
 def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
     """NPC 등록/갱신.
 
+    ⚠[2026-08-11 드라이브 부분dict 수리] **부분 dict 금지 — 여기는 엔트리 통째 교체
+    관문이다.** 아래 _PRESERVE_KEYS에 든 것만 이월되고, 목록 밖 필드(description/desc/
+    appear_count/_last_appear_turn/drives/soma/decision_cooldown/identity_history …)는
+    넘긴 dict에 없으면 그냥 사라진다. 한 필드만 갱신하려면 반드시 full-copy 후 넘겨라:
+        _new = dict(get_npc(...)); _new["필드"] = 값; update_npc(..., _new)
+    (보존 목록에 키를 더 얹는 것은 근본 해법이 아니다 — 목록은 항상 뒤처진다.)
+
     [2026-06-12] 중복 탐지 보강 — 기존엔 정규화 동일성만 봐서 (등록 경로별로
     매칭이 제각각이라) 같은 인물이 키 형태마다 병렬 생성됐음. 이제:
     ① find_equivalent_npc_key로 양방향 매칭
@@ -582,6 +601,12 @@ def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
         "gender", "race", "constraints", "lore_seen",
         # 정체성/성장 층
         "high_concept", "trouble", "aspects", "background",
+        # [2026-08-11 사망 파이프라인] 생존축 — **비가역성이 여기 걸려 있다.**
+        #   status가 보존 목록 밖이면 `!npc추가` 재등록이나 시트 재작성 한 번에 dead가
+        #   조용히 증발한다(= 죽음이 취소되는데 로그가 안 남는 반사실형 실패).
+        #   명시 status를 담은 새 데이터는 여전히 이긴다(위 정책 그대로) — 자동
+        #   재생성 경로는 그 앞단에서 이름 단위로 차단한다(orchestration).
+        "status", "status_changed_turn", "status_evidence",
     )
     if existing_key:
         existing = npcs[existing_key]
@@ -805,8 +830,15 @@ def merge_npc(channel_id: str, dup_name: str, canon_name: str) -> tuple:
     if dup_att:
         canon_att = attitudes.get(canon_key)
         if canon_att:
-            canon_att["depth"] = max(canon_att.get("depth", 0) or 0, dup_att.get("depth", 0) or 0)
-            canon_att["tension"] = max(canon_att.get("tension", 0) or 0, dup_att.get("tension", 0) or 0)
+            _pre_d = canon_att.get("depth", 0) or 0
+            _pre_t = canon_att.get("tension", 0) or 0
+            canon_att["depth"] = max(_pre_d, dup_att.get("depth", 0) or 0)
+            canon_att["tension"] = max(_pre_t, dup_att.get("tension", 0) or 0)
+            # [2026-08-17 감사] 흡수로 값이 올라간 경우만 도장 — 본체가 이미 컸으면 no-op.
+            _stamp_relation_change(channel_id, canon_key, canon_att,
+                                   [("depth", _pre_d, canon_att["depth"]),
+                                    ("tension", _pre_t, canon_att["tension"])],
+                                   "merge", note=f"absorbed {dup_key}")
         else:
             attitudes[canon_key] = dup_att
             canon_att = dup_att
@@ -910,6 +942,64 @@ def _mirror_relation(channel_id: str, npc_name: str, rel: Dict[str, Any]) -> Non
     except Exception as _e:
         logging.debug(f"[V10] relation mirror skipped: {_e}")
 
+def _relation_turn(channel_id: str) -> int:
+    """감사 도장에 쓸 현재 턴 — world_state.turn_index
+    (emotion_log/attitude_log/turn_snapshot이 쓰는 바로 그 카운터)."""
+    try:
+        return int((get_domain(channel_id).get("world_state") or {}).get("turn_index", 0) or 0)
+    except Exception:
+        return 0
+
+
+def _stamp_relation_change(channel_id: str, npc_name: str, rel: Dict[str, Any],
+                           changes, source: str, note: str = "",
+                           turn: Optional[int] = None) -> bool:
+    """[2026-08-17] depth/tension 변경의 **사후 판독** 도장.
+
+    왜: 태도(attitude)엔 reason이 붙는데 depth/tension엔 없다. 값이 움직여도
+      누가(감쇠? 추출? 병합?) 언제 밀었는지 뒤에 알 방법이 없었다 — 감쇠(A축)가
+      들어오면서 "왜 식었지"가 판독 불가가 됐다.
+
+    형태: 새 컬럼·스키마 마이그레이션·LLM 새 필드 **전부 없음**. 관계 레코드에
+      `last_change` 키 하나 = {turn, field, from, to, source, note}.
+      note는 **코드가 아는 것만** 적는다(모델에게 이유를 묻지 않는다).
+      두 필드가 같이 움직이면 field="depth+tension", from/to는 같은 순서의 리스트.
+
+    ★변경이 없으면 안 찍는다(no-op 보존). 매 턴 갱신되는 도장은 판독값이 0이다.
+    ※ 미러(npc_relations)는 화이트리스트 방벽이라 이 키를 안 받는다 → 진실원천 JSON에만
+      남는다. 그래서 같은 내용을 로그 1줄로도 흘린다(조작면 순증 0, 화면 변화 0).
+
+    changes: [(field, old, new), ...] — 호출부가 후보를 다 넘기고 필터는 여기서.
+    Returns: 도장을 찍었으면 True.
+    """
+    if not isinstance(rel, dict):
+        return False
+    try:
+        moved = [(f, o, n) for f, o, n in changes if o != n]
+    except (TypeError, ValueError):
+        return False
+    if not moved:
+        return False
+    if len(moved) == 1:
+        field, old, new = moved[0]
+    else:
+        field = "+".join(f for f, _, _ in moved)
+        old = [o for _, o, _ in moved]
+        new = [n for _, _, n in moved]
+    rel["last_change"] = {
+        "turn": int(turn) if turn is not None else _relation_turn(channel_id),
+        "field": field,
+        "from": old,
+        "to": new,
+        "source": source or "code",
+        "note": note or "",
+    }
+    logging.info("[Relation] %s %s %s→%s source=%s%s",
+                 npc_name, field, old, new, source or "code",
+                 f" note={note}" if note else "")
+    return True
+
+
 def update_npc_attitude(channel_id: str, npc_name: str, attitude: str, reason: str = "") -> None:
     """NPC의 PC에 대한 태도 업데이트 (depth/tension 보존)
 
@@ -928,6 +1018,10 @@ def update_npc_attitude(channel_id: str, npc_name: str, attitude: str, reason: s
         "tension": existing.get("tension", 0),
         "last_updated": time.strftime('%Y-%m-%d %H:%M')
     }
+    # [2026-08-17] 이 경로는 depth/tension을 **안 움직인다**(값 이월). 그러니 새 도장도 안 찍는다.
+    #   다만 dict 재구성이라 기존 도장이 같이 증발했다 — 판독 흔적만 그대로 이월.
+    if isinstance(existing.get("last_change"), dict):
+        d["npc_attitudes"][npc_name]["last_change"] = existing["last_change"]
     save_domain(channel_id, d)
     _mirror_relation(channel_id, npc_name, d["npc_attitudes"][npc_name])
 
@@ -1125,8 +1219,18 @@ def sync_secret_ledger(
             if row.get("status") in ("kept", "leaking"):
                 # kept↔leaking은 압력 파생 상태(왕복 가능) — 비가역은 revealed/retired만
                 _prev_status = row.get("status")
+                # [2026-08-11 리더 소비자] C2 독자 관측 가산 — leak_pressure는 매 sync **재계산되는 파생값**이라
+                # 직접 += 는 다음 sync에 덮인다. 저장 필드 reader_exposure(관측 턴수)를 여기서 가산항으로 환산.
+                # 주체 라벨: source="reader". BUMP=0이면 가산 0 = 07-14 공식 그대로.
+                _rx = int(row.get("reader_exposure", 0) or 0)
+                _rbump = min(_rx * int(getattr(config, "READER_LEAK_BUMP", 3)),
+                             int(getattr(config, "READER_LEAK_CAP", 12))) if _rx > 0 else 0
                 row["leak_pressure"] = leak_pressure_score(
-                    tension, depth, row["turn_count"])
+                    tension, depth, row["turn_count"], reader_bump=_rbump)
+                if _rbump > 0:
+                    logging.info(
+                        f"[ReaderLeak] source=reader {npc_name}: exposure={_rx} bump=+{_rbump} "
+                        f"→ pressure={row['leak_pressure']} truth~'{row.get('truth','')[:30]}'")
                 row["status"] = "leaking" if row["leak_pressure"] >= 60 else "kept"
                 if _prev_status == "kept" and row["status"] == "leaking":
                     # [v1.1 게이트 로그] 사후판독용 — 임계 진입 시 게이트 조건 노출 (log-only)
@@ -1320,6 +1424,12 @@ def propagate_npc_knowledge(channel_id: str, scene_npcs: list) -> int:
 
 # NPC Behavioral Imprints
 _NPC_SIDE_DOMAINS = ("npc_attitudes", "npc_knowledge", "npc_imprints")
+# [2026-08-11 사망 파이프라인] 같은 성격인데 **domain이 아니라 world_state**에 사는 것들.
+#   도메인 순회 루프로는 구조적으로 안 잡혀서 이관·청소 때마다 개별 손코딩이었고,
+#   그래서 08-02에 신설된 `npc_soma_states`가 두 자리 모두에서 빠졌다
+#   (오프스테이지 잔존이 붙은 뒤로는 지워지지도 않는 영구 고아).
+#   목록을 만들어 둔다 — 다음에 world_state 하위 NPC 저장소가 늘면 여기만 고친다.
+_NPC_SIDE_WORLD_KEYS = ("npc_emotion_states", "npc_soma_states")
 
 
 def migrate_npc_side_data(channel_id: str, old_name: str, new_name: str) -> list:
@@ -1348,19 +1458,23 @@ def migrate_npc_side_data(channel_id: str, old_name: str, new_name: str) -> list
         moved.append("entity_relations")
     save_domain(channel_id, d)
 
-    # 감정 이력 — world_state 소관(별도 저장소)
+    # 감정 이력·soma 스냅샷 — world_state 소관(별도 저장소)
     try:
         _w = get_world_state(channel_id) or {}
-        _em = _w.get("npc_emotion_states")
-        if isinstance(_em, dict) and old_name in _em:
-            if new_name not in _em:
-                _em[new_name] = _em.pop(old_name)
-            else:
-                _em.pop(old_name, None)
+        _dirty = False
+        for _wk in _NPC_SIDE_WORLD_KEYS:
+            _wd = _w.get(_wk)
+            if isinstance(_wd, dict) and old_name in _wd:
+                if new_name not in _wd:
+                    _wd[new_name] = _wd.pop(old_name)
+                else:
+                    _wd.pop(old_name, None)   # 양쪽 존재 시 새 이름 유지
+                _dirty = True
+                moved.append(_wk)
+        if _dirty:
             update_world_state(channel_id, _w)
-            moved.append("npc_emotion_states")
     except Exception as _e:
-        logging.debug(f"[NPC] emotion_states 이관 skip: {_e}")
+        logging.debug(f"[NPC] world_state 부수 저장소 이관 skip: {_e}")
     return moved
 
 
@@ -1393,12 +1507,26 @@ def purge_npc_side_data(channel_id: str, name: str) -> list:
     save_domain(channel_id, d)
     try:
         _w = get_world_state(channel_id) or {}
-        _em = _w.get("npc_emotion_states")
-        if isinstance(_em, dict) and _em.pop(name, None) is not None:
+        _dirty = False
+        for _wk in _NPC_SIDE_WORLD_KEYS:
+            _wd = _w.get(_wk)
+            if isinstance(_wd, dict) and _wd.pop(name, None) is not None:
+                _dirty = True
+                purged.append(_wk)
+        if _dirty:
             update_world_state(channel_id, _w)
-            purged.append("npc_emotion_states")
     except Exception:
         pass
+    # [2026-08-11 사망 파이프라인] world_tree 잔존 presence.
+    #   `remove_npc_presence`는 독스트링에 "개명/퇴장 시"라 적혀 있는데 **퇴장 호출자가 0**이었다
+    #   — 삭제된 인물이 노드의 npcs_present에 영원히 서 있었고, 그 목록은 장면 조회로 흘러간다.
+    #   (import는 지연 — world_tree가 domain_manager를 모듈 최상단에서 import한다.)
+    try:
+        import world_tree as _wt
+        if _wt.remove_npc_presence(channel_id, name):
+            purged.append("world_tree")
+    except Exception as _e:
+        logging.debug(f"[NPC] world_tree presence 정리 skip: {_e}")
     return purged
 
 
@@ -1595,12 +1723,11 @@ def _create_default_participant(display_name: str) -> Dict[str, Any]:
         "status_effects": [],
         "ai_memory": {
             "appearance": "", "personality": "", "background": "", "relationships": {},
-            "passives": [], "normalization": {}, "notes": "", "archived_info": [],
+            "passives": [], "notes": "", "archived_info": [],
             # [V7→V3.0] Core Systems: 2-Axis (Vigor/Composure)
             "vigor": {"value": 100, "last_delta": 0},
             "composure": {"value": 100, "last_delta": 0},
-            "abnormal_exposure": {}, # {Tag: {count: N, level: N}}
-            
+
             # [Phase 2] Mnemosyne: PsychProfile
             "psych_profile": {
                 "needs": {"survival": 50, "safety": 50, "love": 50, "esteem": 50, "self_actualization": 50},
@@ -1893,7 +2020,7 @@ def add_to_ai_memory_list(channel_id: str, uid: str, key: str, item: Union[str, 
 # [2026-07-18 고아 삭제] update_psych_profile — 구세대(Phase 2) Maslow 심리 프로필 — 현행 DAI psyche/deep_read/emotion_engine이 대체 (dead_scan 참조0 확인, git 이력 복원 가능)
 
 def update_helena_metric(channel_id: str, npc_name: str, depth_delta: int = 0, tension_delta: int = 0,
-                         source: str = "") -> None:
+                         source: str = "", origin: str = "") -> None:
     """[Phase 2] Update Helena metrics (Depth/Tension) for an NPC relation
 
     [C1 2026-08-01] `source` 신설 — LLM이 제안한 델타만 선언 범위로 자른다.
@@ -1904,11 +2031,16 @@ def update_helena_metric(channel_id: str, npc_name: str, depth_delta: int = 0, t
     ⚠ source 기본값은 무캡이다. 이 세터는 코드도 쓴다 —
     다운타임 사교(depth +10~15), NPC 시트 initial_depth, trajectory 맵.
     그 경로에 캡을 걸면 정상 설계가 잘린다. LLM 경로만 명시적으로 라벨을 넘긴다.
+
+    [2026-08-17] `origin` 신설 — **감사 라벨 전용**. source를 코드 경로에 붙이면 캡이 같이
+    걸려버리므로(정상 설계가 잘림), 판독용 이름은 캡과 분리된 인자로 받는다. 값은 last_change.source에만 쓰인다.
     """
+    _capped = False
     if source:
         import bot_utils as _bu
-        depth_delta, _ = _bu.cap_llm_delta(depth_delta, source, "depth", subject=npc_name)
-        tension_delta, _ = _bu.cap_llm_delta(tension_delta, source, "tension", subject=npc_name)
+        depth_delta, _c1 = _bu.cap_llm_delta(depth_delta, source, "depth", subject=npc_name)
+        tension_delta, _c2 = _bu.cap_llm_delta(tension_delta, source, "tension", subject=npc_name)
+        _capped = bool(_c1 or _c2)
     d = get_domain(channel_id)
     if "npc_attitudes" not in d: d["npc_attitudes"] = {}
     npc_name = _resolve_npc_name(d, npc_name)
@@ -1932,9 +2064,16 @@ def update_helena_metric(channel_id: str, npc_name: str, depth_delta: int = 0, t
     if "tension" not in target: target["tension"] = 0
     
     # Update and Clamp (0-100)
+    _old_d, _old_t = target["depth"], target["tension"]
     target["depth"] = max(0, min(100, target["depth"] + depth_delta))
     target["tension"] = max(0, min(100, target["tension"] + tension_delta))
     target["last_updated"] = time.strftime('%Y-%m-%d %H:%M')
+    # [2026-08-17 감사] 실제로 움직인 필드만 도장. 델타가 0이거나 이미 바닥/천장이면 no-op.
+    _stamp_relation_change(
+        channel_id, npc_name, target,
+        [("depth", _old_d, target["depth"]), ("tension", _old_t, target["tension"])],
+        source or origin, note="capped" if _capped else "",
+    )
 
     save_domain(channel_id, d)
     _mirror_relation(channel_id, npc_name, target)  # [V10 Sprint 1] dual-write
@@ -1975,6 +2114,13 @@ def decay_stale_relations(channel_id: str, current_turn: int) -> int:
     if not isinstance(atts, dict) or not atts:
         return 0
     npcs = get_npcs(channel_id) or {}
+    # [2026-08-17 수리] 도메인 핸들을 **한 번만** 잡는다. get_domain은 매 호출 deep copy를
+    #   돌려주므로(cache_manager.get_session), 구 코드처럼 루프 안에서 새로 부르고 마지막에
+    #   또 `save_domain(ch, get_domain(ch))`를 하면 **방금 내린 값이 저장 대상에 없다** —
+    #   JSON 쪽 감쇠가 통째로 no-op이었다(미러만 내려가서, 롤백/다음 update_helena_metric이
+    #   JSON의 안 식은 값을 기준으로 되돌려놓는다). 같은 dict를 내리고 그 dict를 저장한다.
+    d_json = get_domain(channel_id)
+    json_atts = d_json.setdefault("npc_attitudes", {})
 
     faded = 0
     for name, rel in list(atts.items()):
@@ -2000,16 +2146,24 @@ def decay_stale_relations(channel_id: str, current_turn: int) -> int:
 
         rel["depth"] = new_d
         rel["tension"] = new_t
+        # [2026-08-17 감사] 감쇠는 **아무도 시키지 않은 변경**이라 판독이 특히 필요하다.
+        _stamp_relation_change(channel_id, name, rel,
+                               [("depth", cur_d, new_d), ("tension", cur_t, new_t)],
+                               "decay", note=f"stale decay, unseen {current_turn - last}t",
+                               turn=current_turn)
         # JSON 원본도 같이 내린다 — read-through가 꺼진 롤백 상태에서도 일관되게.
-        _json = get_domain(channel_id).setdefault("npc_attitudes", {}).get(name)
+        _json = json_atts.get(name)
         if isinstance(_json, dict):
             _json["depth"] = new_d
             _json["tension"] = new_t
+            # 도장은 진실원천 JSON 쪽이 본체 (미러는 화이트리스트라 이 키를 안 받는다).
+            if isinstance(rel.get("last_change"), dict):
+                _json["last_change"] = rel["last_change"]
         _mirror_relation(channel_id, name, rel)
         faded += 1
 
     if faded:
-        save_domain(channel_id, get_domain(channel_id))
+        save_domain(channel_id, d_json)
         logging.info("[RelationDecay] %d NPC 관계 점감 (grace=%d, turn=%d)",
                      faded, grace, current_turn)
     return faded
@@ -2190,26 +2344,53 @@ def update_settings(channel_id: str, **kwargs) -> None:
 
 CORE_MODULES = {"judgment", "doom", "anomaly", "mental"}
 
+# [2026-08-17 기본 ON 부가 모듈]
+# 구 모델은 "리스트에 있으면 켜짐" 하나뿐이라 **미설정 = 꺼짐**이었다. 그래서 world_board는
+# `!게시판 on`을 친 채널에서만 돌았고 실측 가동률이 0이었다(기능은 있는데 아무도 안 켬).
+# 기본을 뒤집되 "명시적 off"는 살려야 하므로 축을 하나 더 둔다:
+#   settings.active_modules   = 명시적 ON 기록 (구 스키마 그대로 — 옛 `!게시판 on` 채널 보존)
+#   settings.disabled_modules = 명시적 OFF 기록 (신설 — 기본 ON을 이기는 유일한 값)
+# 판정 = CORE ∪ 명시ON ∪ (기본ON − 명시OFF). 미설정 채널만 기본이 바뀐다.
+# ⚠ 구 off 경로는 "리스트에서 제거"였다 = 미설정과 **구별 불가**했다. 그 시절 off를 친
+#   채널은 이번 전환에서 ON으로 돌아온다(기록이 존재하지 않으므로 존중할 값이 없다).
+#   지금부터의 off는 disabled_modules에 남아 영구히 존중된다.
+DEFAULT_ON_MODULES = {"board", "mind"}
+
 def get_active_modules(channel_id: str) -> List[str]:
     """현재 활성화된 모듈 리스트를 반환합니다.
     핵심 4모듈(judgment, doom, anomaly, mental)은 항상 활성.
-    board 등 부가 모듈만 토글 가능."""
+    board/mind 등 부가 모듈은 **기본 ON**이며 명시적 off(disabled_modules)만 이를 끈다."""
     d = get_domain(channel_id)
-    stored = set(d.get("settings", {}).get("active_modules", []))
-    # 핵심 모듈은 항상 포함
-    return list(CORE_MODULES | stored)
+    settings = d.get("settings", {}) or {}
+    stored = set(settings.get("active_modules", []) or [])
+    disabled = set(settings.get("disabled_modules", []) or [])
+    # 핵심 모듈은 항상 포함 / 기본 ON 모듈은 명시적으로 껐을 때만 빠진다
+    return list(CORE_MODULES | (stored - disabled) | (DEFAULT_ON_MODULES - disabled))
 
 def toggle_module(channel_id: str, module_name: str, active: bool) -> None:
-    """부가 모듈(board 등)을 켜거나 끕니다.
-    핵심 4모듈은 토글 불가 (항상 활성)."""
+    """부가 모듈(board/mind 등)을 켜거나 끕니다.
+    핵심 4모듈은 토글 불가 (항상 활성).
+
+    두 축을 **항상 반대로** 갱신한다 — on은 disabled에서 지우고, off는 disabled에 적는다.
+    (한 축만 만지면 기본 ON 모듈의 off가 무시되거나, 켠 기록이 남아 off를 이긴다.)
+    구 구현은 `set(get_active_modules(...))`를 읽어 CORE·기본ON까지 저장 리스트에 눌러
+    담았다 — 저장본이 판정에 못 미치는 노이즈였다. 저장 리스트만 읽는다.
+    """
     if module_name in CORE_MODULES:
         return  # 핵심 모듈은 항상 활성 — 토글 무시
-    modules = set(get_active_modules(channel_id))
+    d = get_domain(channel_id)
+    settings = d.get("settings", {}) or {}
+    modules = set(settings.get("active_modules", []) or [])
+    disabled = set(settings.get("disabled_modules", []) or [])
     if active:
         modules.add(module_name)
+        disabled.discard(module_name)
     else:
         modules.discard(module_name)
-    update_settings(channel_id, active_modules=list(modules))
+        disabled.add(module_name)
+    update_settings(channel_id,
+                    active_modules=sorted(modules),
+                    disabled_modules=sorted(disabled))
 
 def is_vigor_composure_active(channel_id: str) -> bool:
     """기력/평형(활력/평형) 모듈 활성 여부.
@@ -2231,15 +2412,10 @@ def get_response_mode(channel_id: str) -> str:
     d = get_domain(channel_id)
     return d["settings"].get("response_mode", "auto")
 
-def get_abnormal_mode(channel_id: str) -> bool:
-    """비일상 적응도 시스템 활성화 여부 (Default: True)"""
-    settings: Dict[str, Any] = get_domain(channel_id).get("settings", {})
-    return settings.get("abnormal_mode", True)
-
-def set_abnormal_mode(channel_id: str, enabled: bool) -> None:
-    d = get_domain(channel_id)
-    d["settings"]["abnormal_mode"] = enabled
-    save_domain(channel_id, d)
+# [2026-08-11 비일상적응도 삭제] get_abnormal_mode / set_abnormal_mode 및 settings.abnormal_mode
+# 기본값 제거 — 토글할 대상(노출 카운트 누적)이 코드에 없어 참조 0인 스위치였음.
+# 참가자 스키마 abnormal_exposure / 레거시 normalization 기본값·리셋도 같이 철거.
+# 저장된 세션의 고아 키는 그대로 둔다(읽는 코드가 없어 무해). 복원은 git 이력.
 
 # History
 def append_history(channel_id: str, role: str, content: str, message_id: Optional[int] = None) -> None:
@@ -2278,6 +2454,14 @@ def append_history(channel_id: str, role: str, content: str, message_id: Optiona
             "minute": world.get("minute", 0),
             "slot": world.get("time_slot", "오후"),
         }
+        # [2026-08-11 arc digest 부활] 턴 도장 — 발효 청크의 턴범위를 알 유일한 단서였는데 없었다.
+        # 소스는 world_state.turn_index: emotion_log/attitude_log/turn_snapshot이 쓰는 바로 그 카운터
+        # (waterfall_pipeline:454 current_turn / npc_manager:1625 current_turn ← 둘 다 turn_index).
+        # read_arc_window가 그 turn으로 조회하므로 소스가 갈리면 창이 통째로 빈다. 비용 0 (world 재사용).
+        # 0(첫 턴 진입 전)이면 키 자체 생략 — legacy 엔트리와 동형으로 조용히 스킵.
+        _ti = int(world.get("turn_index", 0) or 0)
+        if _ti > 0:
+            entry["turn"] = _ti
     except Exception as _e_gt:
         logging.debug(f"[History] game_time meta skip: {_e_gt}")
 
@@ -2478,6 +2662,29 @@ def get_latest_frame(channel_id: str) -> Dict[str, Any]:
     }
 
 
+def get_prev_fingerprint(channel_id: str) -> Dict[str, Any]:
+    """지문이 실제로 찍힌 가장 최근 프레임의 render_fingerprint를 반환(없으면 {}).
+
+    [2026-08-12 fingerprint 프레임 소급] `get_latest_frame`은 frames[-1]을 주는데, 그 프레임은
+    **이번 턴 시작에 push된 빈 프레임**이라 render_fingerprint가 항상 `{}`다(지문은 턴 종료 후
+    배경 추출이 frames[-1]에 UPDATE — 즉 지문은 늘 한 프레임 뒤). 따라서 지문 소비자는
+    get_latest_frame이 아니라 **이 함수 하나**를 쓴다. 소비자마다 조건식을 따로 심으면
+    자매 자리 소급 누락이 재발한다(단일 관문).
+
+    판정은 값 truthiness가 아니라 **키 존재**(fingerprint dict 비어있지 않음) 기준 —
+    "none"도 유효값(직전 렌더가 그 수법을 안 썼다)이므로 거기서 멈춘다.
+    """
+    try:
+        frames = (get_scene_continuity(channel_id) or {}).get("frames", []) or []
+    except Exception:
+        return {}
+    for f in reversed(frames):
+        fp = (f or {}).get("render_fingerprint") or {}
+        if isinstance(fp, dict) and fp:
+            return fp
+    return {}
+
+
 # Bot Active State
 def get_bot_active(channel_id: str) -> bool:
     return get_domain(channel_id).get("bot_active", True)
@@ -2495,48 +2702,9 @@ def set_ooc_mode(channel_id: str, active: bool) -> None:
     d["ooc_mode"] = active
     save_domain(channel_id, d)
 
-# Pending Flashback (회상 대기)
-def get_pending_flashback(channel_id: str) -> Optional[Dict]:
-    """대기 중인 회상 선언 조회. Returns {"content": str, "user_id": str} or None."""
-    return get_domain(channel_id).get("pending_flashback")
-
-def set_pending_flashback(channel_id: str, content: str, user_id: str) -> None:
-    """회상 선언을 대기열에 저장."""
-    d = get_domain(channel_id)
-    d["pending_flashback"] = {"content": content, "user_id": user_id}
-    save_domain(channel_id, d)
-
-def clear_pending_flashback(channel_id: str) -> None:
-    """회상 대기열 초기화."""
-    d = get_domain(channel_id)
-    d.pop("pending_flashback", None)
-    save_domain(channel_id, d)
-
-# Loadout (로드아웃 — BITD Load)
-def get_loadout(channel_id: str, user_id: str) -> Optional[Dict]:
-    """유저의 로드아웃 설정 조회. Returns {"total_slots": int, "used_slots": int, "items": list, "load_type": str} or None."""
-    mem = get_ai_memory(channel_id, user_id)
-    return mem.get("loadout")
-
-def set_loadout(channel_id: str, user_id: str, load_type: str, slots: int, label: str) -> None:
-    """로드아웃 초기 설정."""
-    update_ai_memory(channel_id, user_id, {
-        "loadout": {"total_slots": slots, "used_slots": 0, "items": [], "load_type": load_type, "label": label}
-    })
-
-def consume_loadout_slot(channel_id: str, user_id: str, slots_needed: int, item_name: str) -> bool:
-    """로드아웃 슬롯 소비. 성공 시 True."""
-    mem = get_ai_memory(channel_id, user_id)
-    loadout = mem.get("loadout")
-    if not loadout:
-        return False
-    remaining = loadout["total_slots"] - loadout.get("used_slots", 0)
-    if slots_needed > remaining:
-        return False
-    loadout["used_slots"] = loadout.get("used_slots", 0) + slots_needed
-    loadout.setdefault("items", []).append(item_name)
-    update_ai_memory(channel_id, user_id, {"loadout": loadout})
-    return True
+# [2026-08-11 로드아웃 삭제] pending_flashback 3함수 + loadout 3함수 제거 — !회상 명령 폐기로 호출처 0.
+# 기존 세션에 남은 domain["pending_flashback"] / ai_memory["loadout"] 키는 읽는 코드가 없어 무해한 고아
+# (마이그레이션 없음 — 세션 리셋 때 자연 소멸).
 
 # Training / Project Progress (다운타임 진행도)
 def advance_training(channel_id: str, user_id: str, skill_name: str, progress: int = 1) -> Dict:
@@ -2653,7 +2821,26 @@ def reset_session_state(channel_id: str) -> None:
     # [2026-07-28] npc_imprints 추가 — 다른 세션 파생 데이터는 다 지우면서 각인만 남아
     # 리셋 후에도 옛 행동 기록이 따라왔다(감정 이력은 world_state 리셋으로 함께 사라짐).
     d["npc_imprints"] = {}
-    
+
+    # [2026-08-11 리더 §7] reader 유래 이변 시드 청소 — 영속/휘발 비대칭 해소.
+    # 시드는 lore_summary_data(영속)인데 근거인 reader_log는 clear_session_scoped로 사라져,
+    # 새 세션에 "왜 있는지 모르는" 옛 독자 시드가 잔류했다. cognition 유래 시드는 로어 채굴
+    # 산물이라 존치(로어를 유지하는 !클리어 스펙과 정합). reader_blurb도 존치 — 로어 sha1
+    # 해시 기반이라 로어가 같으면 재사용이 정당하고, 바뀌면 해시 미스로 자동 재생성된다.
+    try:
+        _lsd = d.get("lore_summary_data") or {}
+        _seeds = _lsd.get("anomaly_seeds")
+        if isinstance(_seeds, list):
+            _kept = [s for s in _seeds
+                     if not (isinstance(s, dict) and s.get("source") == "reader")]
+            if len(_kept) != len(_seeds):
+                _lsd["anomaly_seeds"] = _kept
+                d["lore_summary_data"] = _lsd
+                logging.info(f"[Reset] reader 유래 이변 시드 {len(_seeds) - len(_kept)}개 제거 "
+                             f"(근거 reader_log가 함께 삭제됨)")
+    except Exception as _e_rs:
+        logging.debug(f"[Reset] reader seed purge skipped: {_e_rs}")
+
     # 2. Reset World State
     d["world_state"] = config.DEFAULT_WORLD_STATE.copy()
     d["settings"]["session_locked"] = False # Unlock for re-start
@@ -2688,8 +2875,6 @@ def reset_session_state(channel_id: str) -> None:
         mem["vigor"] = {"value": 100, "last_delta": 0}
         mem["composure"] = {"value": 100, "last_delta": 0}
         mem.pop("mental", None)  # 레거시 제거
-        mem["abnormal_exposure"] = {}
-        mem["normalization"] = {}
         mem["judgment_momentum"] = 0
         pdata["notebook"] = "— [소지품] —\n\n— [메모] —"
         pdata["status_effects"] = []

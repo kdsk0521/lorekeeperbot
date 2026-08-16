@@ -220,9 +220,14 @@ def assign_to_storyline(state: dict, turn_entry: dict) -> dict:
             if e not in existing:
                 best_match["entities"].append(e)
         # 현재 컨텍스트 업데이트
+        # [2026-08-12 출력파생 §8] context_kind 도장 — ai_brief는 **직전 산문 머리 300자 원문**
+        #   (orchestration.py:1090 `response[:300]`, 요약 아님)이므로 출처를 "raw"로 표기한다.
+        #   렌더 가장자리(format_storylines_for_prompt)가 이 도장을 보고 원문 재진입을 막는다.
+        #   발효 압축(fermentation:830)은 분석 콜이라 kind 무관 원문 그대로 소비 — 무접촉.
         brief = turn_entry.get("ai_brief", "")
         if brief:
             best_match["current_context"] = brief[:260]
+            best_match["context_kind"] = "raw"
     else:
         # 새 스토리라인 생성
         # D-6 fix: len+1은 prune/resolve 후 id 충돌(중복) → arc_update가 first-match로 오라우팅.
@@ -237,6 +242,7 @@ def assign_to_storyline(state: dict, turn_entry: dict) -> dict:
             "first_turn": turn,
             "last_turn": turn,
             "current_context": turn_entry.get("ai_brief", "")[:260],
+            "context_kind": "raw",  # [2026-08-12 출력파생 §8] 산문 원문 출처 — 렌더 미주입
             "key_points": [],
             "ongoing_tensions": [],
             "summaries": [],
@@ -324,6 +330,9 @@ async def summarize_if_needed(state: dict, current_turn: int, client=None, model
             if len(sl["summaries"]) > 10:
                 sl["summaries"] = sl["summaries"][-10:]
             sl["current_context"] = summary
+            # [2026-08-12 출력파생 §8] 이 휴리스틱 요약은 ai_brief를 " → "로 이은 것 = **여전히 산문 원문**.
+            #   앞선 Flash 요약이 남긴 "summary" 도장을 반드시 되돌린다(안 하면 raw가 요약 행세).
+            sl["context_kind"] = "raw"
 
     # Flash 요약 콜 (client가 있을 때만)
     if client and model_id and active_storylines:
@@ -399,6 +408,8 @@ async def _flash_summarize_storylines(state, storylines, recent_log, client, mod
             if sl.get("id") == sl_id:
                 if context:
                     sl["current_context"] = context[:260]
+                    # [2026-08-12 출력파생 §8] Flash 요약 콜 산출 = 파생 요약 → 렌더 주입 허가
+                    sl["context_kind"] = "summary"
                 if tension:
                     sl["ongoing_tensions"] = sl.get("ongoing_tensions", [])
                     sl["ongoing_tensions"].append(tension[:120])
@@ -602,7 +613,15 @@ def format_storylines_for_prompt(state: dict, current_turn: int = 0) -> str:
     for sl in active[:4]:
         name = sl.get("name", "?")
         entities = ", ".join(sl.get("entities", [])[:5])
-        context = sl.get("current_context", "")[:180]
+        # [2026-08-12 출력파생 §8] 산문 원문 봉인 — 지문 원문의 렌더 재진입은 히스토리 한 곳뿐이다.
+        #   current_context는 5턴마다 Flash 요약으로 덮이지만 그 사이 턴은 **직전 산문 머리 원문**이라
+        #   Slot 11로 직행하고 있었다(§7-3). "summary" 도장이 찍힌 것만 본문으로 싣고,
+        #   raw/legacy(도장 없음 = 보수적으로 raw 취급)는 엔티티 라벨 한 줄로 대체한다.
+        #   → 스토리라인의 **존재·구성원·긴장**은 그대로 전달되고 문장만 빠진다.
+        if sl.get("context_kind") == "summary":
+            context = sl.get("current_context", "")[:180]
+        else:
+            context = "(unfolding)"
         # tensions: priority+decay 룰 적용 후 surface
         raw = sl.get("ongoing_tensions", [])
         promptable = []
@@ -884,7 +903,8 @@ def check_promote_threshold(
       - 같은 카테고리 누적 (recent_categories + event_queue + candidate) ≥ ARC_PROMOTE_CATEGORY_MIN (3)
       - 누적 항목 중 최소 1개 intensity High/Extreme
     [Reader-GM R4b] reader_axes(독자 지속 축 인용)가 후보 line/reason과 겹치면 누적 증거 1표 가산 —
-      독자의 지속 수신도 "이 축이 살아있다"는 관측이므로. FEED=0이면 호출부가 None을 넘겨 무동작.
+      독자의 지속 수신도 "이 축이 살아있다"는 관측이므로. [2026-08-11 리더 §7] 현행 FEED=1이라
+      호출부가 실제 축을 넘긴다(구 "FEED=0이면 None" 기술 정정). 단 강도 조건(High+ 1개)은 우회 불가.
     """
     import config as _cfg
     cat = candidate.get("category", "")

@@ -53,20 +53,15 @@ RECENT_HISTORY_FOR_ANALYSIS = config.RECENT_HISTORY_FOR_ANALYSIS
 _SAFETY_SETTINGS = config.SAFETY_SETTINGS
 
 # 컨텍스트 비율 (HypaMemory V3 참고)
-DEEP_RATIO = 0.10             # 10% - 장기 기억
+DEEP_RATIO = 0.10             # 10% - 장기 기억 [2026-08-11 배선] build_fermented_context 딥 블록 예산 (그전까지 선언만·참조 0)
 FERMENTED_RATIO = 0.30        # 30% - 중기 기억
-FRESH_RATIO = 0.60            # 60% - 최근 대화
-
-# AI 컨텍스트 윈도우
-IMMEDIATE_DISPLAY_COUNT = 30      # Immediate 섹션에 표시할 메시지 수
 
 # 토큰 추정용
 MAX_CONTEXT_TOKENS = 8000     # 메모리용 최대 토큰 (전체 컨텍스트의 일부)
 CHARS_PER_TOKEN = 3.5         # 한글/영어 혼합 기준
 
-# 요약 목표 길이 (문자)
-FERMENT_SUMMARY_LENGTH = 500  # 각 발효 요약 목표 길이
-DEEP_SUMMARY_LENGTH = 1000    # DEEP 메모리 목표 길이
+# [2026-08-11 고아 정리] 장식 상수 4종 삭제 — FRESH_RATIO/IMMEDIATE_DISPLAY_COUNT/
+# FERMENT_SUMMARY_LENGTH/DEEP_SUMMARY_LENGTH, 전 트리 참조 0(선언만). 복원 불필요.
 
 # 로깅
 logger = logging.getLogger("Fermentation")
@@ -397,6 +392,56 @@ def _extract_game_time_bounds(
     return first_gt, last_gt
 
 
+def _collect_chunk_entities(
+    nt_state: Optional[Dict[str, Any]],
+    history: List[Dict[str, Any]],
+) -> List[str]:
+    """[2026-08-11 엔티티 회상 채널] 이 청크에 얽힌 인물 이름 상위 N개 (빈도순).
+
+    재료는 이미 매 턴 쌓이고 있던 narrative_tracker turn_log(`{turn, entities[:8], ...}`).
+    회상 스코어가 텍스트·시간축만 보던 사각을 메우는 **쓰기 쪽 절반** — 도장이 없으면
+    읽기 쪽 부스트는 영원히 1.0이다. LLM 출력이 아니라 코드 계측이므로 콜 0.
+
+    턴범위는 청크 내 **실 도장의 min/max**(양 끝 엔트리 고정 참조 아님 —
+    도장 이전 legacy 항목이 섞인 청크도 살리기 위해. arc digest와 같은 규율).
+    도장이 하나도 없는 순수 legacy 청크는 빈 목록 → 호출부가 키 자체를 생략한다.
+    """
+    _turns = [
+        int(m.get("turn", 0) or 0)
+        for m in (history or [])
+        if isinstance(m, dict) and isinstance(m.get("turn"), int)
+    ]
+    _turns = [t for t in _turns if t > 0]
+    if not _turns:
+        return []
+    s, e = min(_turns), max(_turns)
+
+    turn_log = nt_state.get("turn_log") if isinstance(nt_state, dict) else None
+    if not isinstance(turn_log, list):
+        return []
+
+    counts: Dict[str, int] = {}
+    first_seen: Dict[str, int] = {}
+    for rec in turn_log:
+        if not isinstance(rec, dict):
+            continue
+        t = rec.get("turn")
+        if not isinstance(t, int) or not (s <= t <= e):
+            continue
+        for raw in (rec.get("entities") or []):
+            name = str(raw).strip()
+            if not name:
+                continue
+            counts[name] = counts.get(name, 0) + 1
+            first_seen.setdefault(name, len(first_seen))
+
+    if not counts:
+        return []
+    top_n = max(1, int(getattr(config, "MEMORY_ENTITY_STAMP_TOP_N", 8)))
+    # 동점 tiebreak = 첫 등장 순 (dict 반복 순서에 의존하지 않는 결정론)
+    return sorted(counts, key=lambda n: (-counts[n], first_seen[n]))[:top_n]
+
+
 def _game_time_range_header(history: List[Dict[str, Any]]) -> str:
     """V8.5: history 첫/끝 메시지의 game_time 메타로 시간 거리 헤더 생성.
     예: '[시간 범위] 1년 3월 5일 14:00 ~ 1년 3월 12일 09:30 (7일간)' 또는 빈 문자열."""
@@ -698,6 +743,16 @@ def _build_arc_digest(channel_id: str, start_turn: int, end_turn: int) -> str:
         # 태도 전이 (관계가 언제 뒤집혔나)
         for a in w.get("attitudes", [])[:6]:
             lines.append(f"- {a['npc']}: {a.get('from') or '?'}->{a['to']} (t{a['turn']})")
+        # [2026-08-11 soma 지속] 몸 상태 전이 (관측 턴의 실 전이만 적립됨 — 없으면 침묵).
+        # write-only 로그를 만들지 않기 위한 즉시 소비자. 태도 줄과 동형 포맷.
+        for _sm in w.get("soma", [])[:4]:
+            _sb = []
+            if _sm.get("to_polyvagal") and _sm.get("to_polyvagal") != _sm.get("from_polyvagal"):
+                _sb.append(f"{_sm.get('from_polyvagal') or '?'}->{_sm['to_polyvagal']}")
+            if _sm.get("to_dissociation") and _sm.get("to_dissociation") != _sm.get("from_dissociation"):
+                _sb.append(f"dissoc {_sm.get('from_dissociation') or '?'}->{_sm['to_dissociation']}")
+            if _sb:
+                lines.append(f"- {_sm['npc']} soma: {', '.join(_sb)} (t{_sm['turn']})")
         # 감정 호: NPC별 첫→끝 (변화 있을 때만)
         emo = w.get("emotion", [])
         if emo:
@@ -781,10 +836,18 @@ async def compress_fresh_to_fermented(
     # [V10 적립 활용] 이 청크 턴범위의 감정/태도/페이즈 호를 코드로 주입 (콜0, 플래그 게이트, echo-safe).
     arc_hint = ""
     try:
-        if to_summarize:
-            _st = to_summarize[0].get("turn", 0)
-            _et = to_summarize[-1].get("turn", 0)
-            arc_hint = _build_arc_digest(channel_id, _st, _et)
+        # [2026-08-11 arc digest 부활] 첫/끝 엔트리 고정 참조 → 청크 내 실 도장의 min/max.
+        # 이유: 양 끝 엔트리에 도장이 없으면(도장 이전의 legacy 항목) s=0으로 범위가 통째로 무효화됐다
+        # (_build_arc_digest L693 `if s <= 0: return ""`). 도장 있는 것만 세면 혼재 청크도 산다.
+        # 도장이 하나도 없는 순수 legacy 청크는 기존대로 조용히 스킵(빈 문자열).
+        _turns = [
+            int(m.get("turn", 0) or 0)
+            for m in to_summarize
+            if isinstance(m, dict) and isinstance(m.get("turn"), int)
+        ]
+        _turns = [t for t in _turns if t > 0]
+        if _turns:
+            arc_hint = _build_arc_digest(channel_id, min(_turns), max(_turns))
     except Exception:
         arc_hint = ""
 
@@ -822,7 +885,15 @@ Output VALID JSON following the schema exactly.
 
         if response and response.text:
             text_result = response.text.strip()
-            logger.info(f"[Fermentation V4] Raw Response: {text_result[:150]}...")
+            # [2026-08-03] journal엔 훑을 한 줄, 전문은 verbose 채널로.
+            #   구 `[:150]`은 JSON 앞머리만 잘라 보여줘서(대개 `{"fermented_summary": "…`)
+            #   정작 뭘 압축했는지는 못 보고 journal만 길어졌다.
+            logger.info(f"[Fermentation V4] FRESH raw {len(text_result)}자 → verbose")
+            try:
+                import bot_utils as _bu
+                _bu.vlog("Ferment.FRESH", text_result, channel_id)
+            except Exception:
+                pass
 
             try:
                 clean_json = text_result.replace("```json", "").replace("```", "").strip()
@@ -1091,7 +1162,13 @@ Important:
 
         if response and response.text:
             text_result = response.text.strip()
-            logger.info(f"[Fermentation V4] DEEP Raw: {text_result[:150]}...")
+            # [2026-08-03] 전문은 verbose로 (FRESH와 동형). 이 함수엔 channel_id가 없다.
+            logger.info(f"[Fermentation V4] DEEP raw {len(text_result)}자 → verbose")
+            try:
+                import bot_utils as _bu
+                _bu.vlog("Ferment.DEEP", text_result)
+            except Exception:
+                pass
 
             try:
                 clean_json = text_result.replace("```json", "").replace("```", "").strip()
@@ -1281,6 +1358,16 @@ async def auto_ferment(
             # 옛 엔트리엔 이 키가 없다 → 회상 쪽에서 no-op 폴백.
             _gt_first, _gt_last = _extract_game_time_bounds(_to_summarize)
 
+            # [2026-08-11 엔티티 회상 채널] 이 구간에 얽힌 인물 도장.
+            # 여기(auto_ferment)에 두는 이유: _normalize_ferment_result는 **LLM 출력** 정규화
+            # 자리다. 이 값은 turn_log를 코드가 센 계측이므로 생산 주체 라벨이 갈린다.
+            # 도장 불가(턴 번호 없는 legacy 청크)면 키 자체를 안 만든다 — 옛 엔트리와 동형.
+            _chunk_entities = []
+            try:
+                _chunk_entities = _collect_chunk_entities(_nt_state_for_ferment, _to_summarize)
+            except Exception:
+                _chunk_entities = []
+
             # V4 포맷으로 저장
             fermented_entry = {
                 "timestamp": get_timestamp(),
@@ -1295,6 +1382,9 @@ async def auto_ferment(
                 "from_msg_id": _from_msg_id,
                 "to_msg_id": _to_msg_id,
             }
+            if _chunk_entities:
+                # [2026-08-11 엔티티 회상 채널] 빈 리스트도 키 생략 — 읽기 쪽 no-op 경로 단일화
+                fermented_entry["entities"] = _chunk_entities
             session_data["fermented_history"].append(fermented_entry)
 
             # memory_triggers를 전역 목록에 추가
@@ -1702,17 +1792,14 @@ _vector_similarity_cache: Dict[str, Dict[int, float]] = {}  # {channel_id: {entr
 
 
 # [F2 2026-07-18] 공유 엔진 — 매 호출 새 인스턴스면 chunk 캐시가 즉사해 entry 요약을
-# 매번 재임베딩했다. 모듈 싱글턴으로 요약 임베딩은 1회, 매 턴 비용은 쿼리 1건.
-_vector_engine = None
-
-
+# 매번 재임베딩했다. 싱글턴으로 요약 임베딩은 1회, 매 턴 비용은 쿼리 1건.
+# [2026-08-11] 전용 싱글턴(_vector_engine 전역) 폐기 → 공용 엔진 위임.
+# 이유: 전용 인스턴스는 vector_search의 캐시 트림(_CACHE_MAX 4000) 밖이라 무제한 성장했다.
+# 규율 "새 소비자는 반드시 get_shared_engine"에 발효만 예외로 남아 있던 자리.
+# 함수는 래퍼로 존치 — 호출부 무변경 + 롤백 한 줄.
 def _get_vector_engine(client):
-    global _vector_engine
-    if _vector_engine is None or getattr(_vector_engine, "client", None) is not client:
-        from vector_search import VectorSearchEngine
-        import config as _cfg_emb
-        _vector_engine = VectorSearchEngine(client, _cfg_emb.VECTOR_EMBEDDING_MODEL)
-    return _vector_engine
+    import vector_search
+    return vector_search.get_shared_engine(client)
 
 
 async def refresh_recall_vector_cache(
@@ -1843,6 +1930,32 @@ def score_fermented_entries(entries: list, query: str = "", channel_id: str = ""
         except Exception:
             pass  # 현재 scene 추출 실패 → mood_boost 모두 1.0 (saliency만 작동)
 
+    # [2026-08-11 엔티티 회상 채널] 쿼리측 인물 집합
+    #   = (지금 무대에 선 NPC) ∪ (쿼리 텍스트에 이름이 나온 인물)
+    # 전경 소스로 위의 `npc_emotion_states` 키를 재활용하지 **않는다**: 저 dict는 한 번이라도
+    # 감정이 붙은 NPC 전원을 이름으로 붙들고 있어(개명·삭제 시 별도 이관 코드가 필요할 만큼
+    # 영속적) 사실상 명부다 — 그걸 쓰면 거의 모든 엔트리가 겹쳐 선별성이 0이 된다
+    # (바로 위 주석의 구 _global_emotion_boost가 죽은 이유와 같은 병).
+    # 판정 재료는 매 턴 갱신되는 `_last_appear_turn`(get_onstage_npc_names).
+    _scene_entities = set()
+    if channel_id:
+        try:
+            import npc_manager as _npm
+            _scene_entities = {
+                str(n).strip()
+                for n in (_npm.get_onstage_npc_names(channel_id, within_turns=1) or [])
+                if str(n).strip()
+            }
+        except Exception:
+            pass  # 전경 조회 실패 → 쿼리 텍스트 채널만 남는다 (부스트는 여전히 유계)
+    _query_low = (query or "").lower()
+    _ent_boost_1 = float(getattr(_cfg, 'MEMORY_ENTITY_BOOST', 1.25))
+    _ent_boost_2 = float(getattr(_cfg, 'MEMORY_ENTITY_BOOST_STRONG', 1.4))
+    _ent_boost_cap = float(getattr(_cfg, 'MEMORY_ENTITY_BOOST_MAX', 1.8))
+    # no-op ③: 두 부스트가 다 1.0이면 루프에서 아예 계산하지 않는다 (설정 한 줄 롤백)
+    _ent_on = (_ent_boost_1 > 1.0 or _ent_boost_2 > 1.0) and bool(_scene_entities or _query_low)
+    _ent_hits_total = 0   # 계측용 — 판독 로그에만
+
     # [F1 2026-07-18] Evidence gate 설정 — Contract-First의 회상측 조작화 (FLASHBACK 이식)
     _gate_on = getattr(_cfg, 'MEMORY_EVIDENCE_GATE', True)
     _gate_high_sim = getattr(_cfg, 'MEMORY_GATE_HIGH_SIM', 0.55)
@@ -1947,6 +2060,7 @@ def score_fermented_entries(entries: list, query: str = "", channel_id: str = ""
         score = (similarity * w_sim + recency * w_rec + importance * w_imp) * layer_weight
 
         # ----- Bug 2a: Mood-Congruent + Saliency Max 결합 -----
+        mood_final = 1.0  # 옛 엔트리 (emotion_at_save 없음 또는 빈/비정상) → 1.0 (no-op)
         emo_save = entry.get("emotion_at_save", {})
         if isinstance(emo_save, dict) and emo_save:
             save_base = emo_save.get("scene_base", "")
@@ -1972,10 +2086,41 @@ def score_fermented_entries(entries: list, query: str = "", channel_id: str = ""
                 saliency_boost = 1.0
 
             # (3) Max 결합 — 곱이 아니라 max로 합쳐서 부풀림 방지
-            final_boost = max(mood_boost, saliency_boost)
-            if final_boost > 1.0:
-                score *= final_boost
-        # 옛 엔트리 (emotion_at_save 없음 또는 빈/비정상) → boost 1.0 (no-op)
+            mood_final = max(mood_boost, saliency_boost)
+
+        # ----- [2026-08-11 엔티티 회상 채널] 인물 겹침 부스트 -----
+        # 무드와 **독립 곱**이다(max 결합 아님): "지금 기분과 닮았나"와 "지금 무대의 인물이
+        # 얽혔나"는 다른 질문이라, max로 뭉개면 늘 큰 쪽만 남고 다른 축이 사문화된다.
+        # 대신 총 부스트에 캡을 씌워 부풀림을 막는다 — 유계 곱셈이라는 문법은 그대로.
+        # no-op ①: 엔트리에 entities 키 없음(옛 엔트리·legacy 청크) → 1.0
+        # no-op ②: 전경·쿼리 어디에도 이름이 안 걸림 → 1.0
+        ent_boost = 1.0
+        _ent_hit = 0
+        if _ent_on:
+            _ents = entry.get("entities")
+            if isinstance(_ents, list) and _ents:
+                _seen = set()
+                for _raw in _ents:
+                    _nm = str(_raw).strip()
+                    if not _nm or _nm in _seen:
+                        continue
+                    _seen.add(_nm)
+                    if _nm in _scene_entities or (_query_low and _nm.lower() in _query_low):
+                        _ent_hit += 1
+                if _ent_hit >= 2:
+                    ent_boost = _ent_boost_2
+                elif _ent_hit == 1:
+                    ent_boost = _ent_boost_1
+            _ent_hits_total += _ent_hit
+
+        total_boost = mood_final * ent_boost
+        if total_boost > _ent_boost_cap:
+            # ⚠ 캡이 무드 단독값보다 낮을 수 있다(saliency 최대 2.0 > 캡 1.8).
+            #    그 경우 무드 단독까지만 내린다 — 엔티티 채널은 **더하기만** 하고 절대 깎지 않는다
+            #    (안 그러면 BOOST=1.0 롤백이 아니라 '켜면 손해'가 되는 자리가 생긴다).
+            total_boost = max(_ent_boost_cap, mood_final)
+        if total_boost > 1.0:
+            score *= total_boost
 
         scored.append((entry, score))
         _trace.append((idx, similarity, _recency_order, story_factor, story_days, score))
@@ -2031,13 +2176,40 @@ def score_fermented_entries(entries: list, query: str = "", channel_id: str = ""
             _parts.append(f"{_idx}:{_sim:.2f}/{_ro:.2f}*{_sf:.2f}({_d})={_sc:.3f}")
         _top_sim = max(_trace, key=lambda t: t[1])
         _resc = (" resc=" + ",".join(f"{i}(or{o:.2f})" for i, o in _rescued)) if _rescued else ""
+        # [2026-08-11 엔티티 회상 채널] ent=전경인물수/총겹침수 — 소비자 없음, 사후 판독용.
+        #   판독: 전경이 0이면 채널 자체가 안 켜진 것(온스테이지 배선 점검),
+        #         전경은 있는데 겹침이 계속 0이면 도장이 안 찍히는 것(legacy 청크뿐).
         logger.info(
-            "[Fermentation] recall n=%d story_w=%.1f | %s | maxsim idx=%d sim=%.2f rank=%d%s",
-            total, _story_w if _story_on else 0.0, " ".join(_parts),
+            "[Fermentation] recall n=%d story_w=%.1f ent=%d/%d | %s | maxsim idx=%d sim=%.2f rank=%d%s",
+            total, _story_w if _story_on else 0.0,
+            len(_scene_entities), _ent_hits_total, " ".join(_parts),
             _top_sim[0], _top_sim[1], _rank.get(_top_sim[0], -1), _resc,
         )
 
     return scored
+
+
+def _clip_at_boundary(text: str, limit: int) -> str:
+    """[2026-08-11] 머리 보존 절단 — 초과분을 꼬리에서 버리되 문단(없으면 문장) 경계에서 끊는다.
+
+    이유: 딥은 가장 오래된 증류층이라 머리가 대체 불가. 꼬리 쪽 최신분은 발효·프레시 층이
+    아직 보유하므로 버려도 유실이 아니다. 절단 마커는 넣지 않는다 — 산문이 그대로 에코할 위험.
+    """
+    if limit <= 0:
+        return ""
+    if len(text) <= limit:
+        return text
+    head = text[:limit]
+    floor = limit // 2  # 경계를 너무 앞에서 잡으면 머리 보존의 의미가 없다
+    cut = head.rfind("\n\n")
+    if cut >= floor:
+        return head[:cut].rstrip()
+    best = -1
+    for _mark in ("다.", ".", "?", "!", "…", "\n"):
+        _i = head.rfind(_mark)
+        if _i >= floor:
+            best = max(best, _i + len(_mark))
+    return (head[:best] if best > 0 else head).rstrip()
 
 
 def build_fermented_context(
@@ -2060,35 +2232,57 @@ def build_fermented_context(
 
     # --- Deep Memory (장기 기억) ---
     if deep_memory:
-        deep_section = f"### Deep Memory\n{deep_memory}"
+        # [2026-08-11] DEEP_RATIO 배선 — 딥 블록만 예산이 없어 장기 캠페인에서 조용히 비대해졌다
+        # (에피소드 섹션은 FERMENTED_RATIO 캡 보유, 이정표는 NPC 수 무캡, 딥 서사는 DEEP 압축의
+        #  _suspect 가드 때문에 줄어드는 방향이 막혀 단조 성장).
+        # 잘라내기가 아니라 우선순위 소비: 딥 서사 → 결정화 대사 → 이정표 → 세계변화 순으로
+        # 예산을 먹고, 남은 예산에 안 들어가는 항목은 뒷순위부터 통째로 탈락(항목 중간 절단 금지).
+        _deep_budget = int(max_tokens * DEEP_RATIO * CHARS_PER_TOKEN)
+
+        _deep_head = "### Deep Memory\n"
+        # 딥 서사 단독으로 예산을 넘길 때만 절단(머리 보존). 미달이면 원문 그대로 = 회귀 0.
+        deep_section = _deep_head + _clip_at_boundary(deep_memory, _deep_budget - len(_deep_head))
+        _deep_used = len(deep_section)
 
         deep_data = session_data.get("deep_memory_data", {})
+
+        # 후순위 3블록 — 먼저 문자열로 지어 두고, 예산에 들어가는 것만 붙인다.
+        _optional_blocks = []
 
         # 결정화된 대화
         crystallized = deep_data.get("crystallized_dialogues", [])
         if crystallized:
-            deep_section += "\n\n결정화된 대사:\n"
+            _blk = "\n\n결정화된 대사:\n"
             for d in crystallized[:5]:
                 ctx = d.get("context", "")
                 speaker = d.get("speaker", "")
                 line = d.get("line", "")
                 if line:
-                    deep_section += f"- [{ctx}] {speaker}: \"{line}\"\n"
+                    _blk += f"- [{ctx}] {speaker}: \"{line}\"\n"
+            _optional_blocks.append(_blk)
 
         # 캐릭터 이정표
         milestones = deep_data.get("character_milestones", {})
         if milestones:
-            deep_section += "\n이정표:\n"
+            _blk = "\n이정표:\n"
             for char, events in milestones.items():
                 if events:
-                    deep_section += f"- {char}: {', '.join(events[:5])}\n"
+                    _blk += f"- {char}: {', '.join(events[:5])}\n"
+            _optional_blocks.append(_blk)
 
         # 세계 변화
         world_changes = deep_data.get("world_state_changes", [])
         if world_changes:
-            deep_section += "\n세계 변화:\n"
+            _blk = "\n세계 변화:\n"
             for change in world_changes[:5]:
-                deep_section += f"- {change}\n"
+                _blk += f"- {change}\n"
+            _optional_blocks.append(_blk)
+
+        for _blk in _optional_blocks:
+            if _deep_used + len(_blk) > _deep_budget:
+                break  # 하나가 안 들어가면 그 뒤도 전부 탈락 (우선순위 = 조립 순서)
+            deep_section += _blk
+            _deep_used += len(_blk)
 
         content_parts.append(deep_section)
 
@@ -2347,191 +2541,7 @@ def format_memory_for_injection(memory_data: dict, layer: str = "fresh") -> str:
     return "\n".join(lines)
 
 
-# =========================================================
-# 메모리 상태 조회
-# =========================================================
-
-def get_memory_stats(session_data: Dict[str, Any]) -> Dict[str, Any]:
-    """현재 메모리 상태 통계를 반환합니다."""
-    history = session_data.get("history", [])
-    fermented = session_data.get("fermented_history", [])
-    deep = session_data.get("deep_memory", "")
-    
-    fresh_tokens = sum(
-        estimate_tokens(h.get("content", "")) 
-        for h in history
-    )
-    fermented_tokens = sum(
-        estimate_tokens(f.get("summary", ""))
-        for f in fermented
-    )
-    deep_tokens = estimate_tokens(deep)
-    
-    # Sprint 4: 벡터 캐시 정보
-    vec_cached = sum(len(v) for v in _vector_similarity_cache.values())
-
-    return {
-        "fresh_count": len(history),
-        "fermented_count": len(fermented),
-        "deep_length": len(deep),
-        "fresh_tokens": fresh_tokens,
-        "fermented_tokens": fermented_tokens,
-        "deep_tokens": deep_tokens,
-        "total_estimated_tokens": fresh_tokens + fermented_tokens + deep_tokens,
-        "needs_fermentation": should_ferment_fresh(session_data),
-        "needs_deep_compression": should_compress_to_deep(session_data),
-        "vector_cache_entries": vec_cached,
-    }
-
-
-def get_memory_display(session_data: Dict[str, Any]) -> str:
-    """메모리 상태를 사용자에게 표시할 문자열로 반환합니다."""
-    stats = get_memory_stats(session_data)
-    
-    lines = [
-        "📚 메모리 상태",
-        f"├ 📄 FRESH: {stats['fresh_count']}개 메시지 (~{stats['fresh_tokens']}토큰)",
-        f"├ 🍷 FERMENTED: {stats['fermented_count']}개 요약 (~{stats['fermented_tokens']}토큰)",
-        f"└ 🏛️ DEEP: {stats['deep_length']}자 (~{stats['deep_tokens']}토큰)",
-        "",
-        f"📊 총 추정 토큰: {stats['total_estimated_tokens']}"
-    ]
-    
-    if stats['needs_fermentation']:
-        lines.append(f"⚠️ FRESH 발효 필요 ({FRESH_THRESHOLD}개 초과)")
-    if stats['needs_deep_compression']:
-        lines.append(f"⚠️ DEEP 압축 필요 (FERMENTED {FERMENTED_THRESHOLD}개 초과)")
-    
-    return "\n".join(lines)
-
-
-# =========================================================
-# 강제 발효 (수동 트리거)
-# =========================================================
-
-async def force_ferment(
-    client,
-    model_id: str,
-    session_data: Dict[str, Any],
-    save_callback=None,
-    channel_id: str = "",
-) -> Tuple[bool, str]:
-    """
-    조건과 관계없이 강제로 발효를 실행합니다.
-
-    Returns:
-        (성공 여부, 메시지)
-    """
-    history = session_data.get("history", [])
-
-    if len(history) < 10:
-        return False, "발효할 히스토리가 부족합니다 (최소 10개 필요)"
-
-    ferment_count = min(len(history), FERMENT_CHUNK_SIZE)
-
-    # Sprint 4: 스토리라인 힌트 로드
-    _nt_state = {}
-    if channel_id:
-        try:
-            import domain_manager as _dm
-            _nt_state = _dm.get_narrative_tracker_state(channel_id)
-        except Exception:
-            pass
-
-    result_data = await compress_fresh_to_fermented(
-        client, model_id,
-        history[:ferment_count],
-        use_v3=True,
-        nt_state=_nt_state,
-        channel_id=channel_id,  # Bug 2a (2026-05-20): emotion_at_save 캡처용
-    )
-
-    if not result_data:
-        return False, "발효 중 오류가 발생했습니다."
-
-    if "fermented_history" not in session_data:
-        session_data["fermented_history"] = []
-
-    # V4 포맷으로 저장 (auto_ferment과 동일)
-    summary_text = result_data.get("summary", "") if isinstance(result_data, dict) else str(result_data)
-    # [LIBRA #2 C2 2026-04-28] from/to message_id 보존 (force_ferment)
-    _to_summarize_force = history[:ferment_count]
-    _from_msg_id_f = None
-    _to_msg_id_f = None
-    for _e in _to_summarize_force:
-        if isinstance(_e, dict) and _e.get("message_id") is not None:
-            _from_msg_id_f = _e["message_id"]
-            break
-    for _e in reversed(_to_summarize_force):
-        if isinstance(_e, dict) and _e.get("message_id") is not None:
-            _to_msg_id_f = _e["message_id"]
-            break
-    session_data["fermented_history"].append({
-        "timestamp": get_timestamp(),
-        "summary": summary_text,
-        "message_count": ferment_count,
-        "forced": True,
-        "compressed_blocks": result_data.get("compressed_blocks", []) if isinstance(result_data, dict) else [],
-        "memory_triggers": result_data.get("memory_triggers", []) if isinstance(result_data, dict) else [],
-        "arc_observations": result_data.get("arc_observations", {}) if isinstance(result_data, dict) else {},
-        "helena_delta": result_data.get("helena_delta", {}) if isinstance(result_data, dict) else {},
-        "from_msg_id": _from_msg_id_f,
-        "to_msg_id": _to_msg_id_f,
-    })
-    
-    session_data["history"] = history[ferment_count:]
-    
-    if save_callback:
-        save_callback()
-    
-    return True, f"✅ {ferment_count}개 메시지를 발효했습니다."
-
-
-async def force_deep_compress(
-    client,
-    model_id: str,
-    session_data: Dict[str, Any],
-    save_callback=None
-) -> Tuple[bool, str]:
-    """
-    조건과 관계없이 강제로 DEEP 압축을 실행합니다.
-    
-    Returns:
-        (성공 여부, 메시지)
-    """
-    fermented = session_data.get("fermented_history", [])
-    
-    if len(fermented) < 2:
-        return False, "압축할 FERMENTED 메모리가 부족합니다 (최소 2개 필요)"
-    
-    current_deep = session_data.get("deep_memory", "")
-    
-    deep_result = await compress_fermented_to_deep(
-        client, model_id,
-        fermented, current_deep
-    )
-
-    if not deep_result:
-        return False, "DEEP 압축 중 오류가 발생했습니다."
-
-    # V3: 구조화된 데이터 저장 (auto_ferment과 동일)
-    if isinstance(deep_result, dict):
-        session_data["deep_memory"] = deep_result.get("deep_narrative", "")
-        session_data["deep_memory_data"] = {
-            "crystallized_dialogues": deep_result.get("crystallized_dialogues", []),
-            "active_memory_triggers": deep_result.get("active_memory_triggers", []),
-            "character_milestones": deep_result.get("character_milestones", {}),
-            "world_state_changes": deep_result.get("world_state_changes", [])
-        }
-        session_data["active_memory_triggers"] = deep_result.get("active_memory_triggers", [])
-    else:
-        session_data["deep_memory"] = deep_result
-    session_data["fermented_history"] = []
-
-    if save_callback:
-        save_callback()
-
-    return True, f"✅ {len(fermented)}개 FERMENTED를 DEEP으로 압축했습니다."
+# [2026-08-11 고아 정리] force_* 4종 삭제 — 구 강제요약 잔존, 연대기로 대체(레티어스 판정). 복원 불필요.
 
 
 # =========================================================

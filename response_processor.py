@@ -63,69 +63,57 @@ def emdash_density_high(text: str, per_chars: int = 5000, limit: int = 10,
 
 
 # =========================================================
-# Status Line Time Parsing (모델 출력 status line → 내부 클록 동기화용, 2026-05-23)
+# [2026-08-16 상태창 코드 조립] Status Line 처리 — 되읽기 폐지, 머리 strip으로 교체
 # =========================================================
-
-# Status line 형식 (V8.5): "위치 ... | 시간 N년 M월 D일 HH:MM (슬롯) | 인물 ..."
-# Legacy (V8.4): "위치 ... | 시간 N일차 HH:MM (슬롯) | 인물 ..." — 마이그레이션 기간 호환
-# slot_manager._build_status_layout 의 정확 형식만 채택 (G5 strict)
-_STATUS_TIME_PATTERN_V85 = re.compile(
-    r'시간\s+(\d+)년\s+(\d+)월\s+(\d+)일\s+(\d{1,2}):(\d{2})\s*\(([^)]+)\)'
+# ⚰ parse_status_line_time (2026-05-23~2026-08-16): 모델이 그린 상태줄을 정규식으로 되읽어
+#   세계 시간을 전진시키던 함수. 상태창이 코드 조립으로 넘어가면서 입력원이 사라졌다
+#   (시간 전진은 배경 추출 world_state.scene_minutes_elapsed → orchestration._advance_scene_time).
+#   부활 금지 — 기계 표기를 산문 모델에 위임하던 계약 자체를 접은 것이다.
+#
+# 아래는 그 반대 방향: 구 세션 관성으로 렌더가 상태줄을 계속 그릴 때 **머리에서만** 걷어낸다.
+# (히스토리·검수·리더 입력이 전부 이 정제본을 받으므로 에코 소스도 함께 마른다.)
+_HEADER_LINE1_RE = re.compile(r"^\s*위치\s+.*\|\s*시간\s")
+_HEADER_DOOM_RE = re.compile(
+    r"^\s*(?:활력\s*\d+\s*\|\s*평형\s*\d+\s*\|\s*)?(?:Doom|둠)\s*[:：]?\s*\d+\s*$",
+    re.IGNORECASE,
 )
-_STATUS_TIME_PATTERN_LEGACY = re.compile(
-    r'시간\s+(\d+)일차\s+(\d{1,2}):(\d{2})\s*\(([^)]+)\)'
-)
+_HEADER_CLOCK_RE = re.compile(r"^\s*(?:\[[^\[\]]+?\s+\d+\s*/\s*\d+[^\[\]]*\]\s*)+$")
+_HEADER_FENCE_RE = re.compile(r"^\s*(?:```|~~~|---+|═+)\s*$")
+_HEADER_SCAN_LINES = 8
 
 
-def parse_status_line_time(response_text: str) -> Optional[dict]:
-    """모델 응답 텍스트에서 status line의 시간 추출.
+def strip_status_header(text: str) -> str:
+    """응답 머리에 남은 (구 계약) 상태줄 블록 제거. 못 찾으면 원문 그대로.
 
-    Returns:
-        {"year": int, "month": int, "day": int, "hour": int, "minute": int, "slot": str} or None.
-        Legacy 매칭 시 year=1, month=1 기본값. 패턴 미발견 / 형식 위반 시 None.
+    앵커는 1행("위치 … | 시간 …")뿐 — 앵커 없이는 아무것도 지우지 않는다.
+    앵커 앞은 빈 줄·펜스만 허용(산문이 먼저 시작했으면 헤더가 아니다).
     """
-    if not response_text or not isinstance(response_text, str):
-        return None
+    if not text or not isinstance(text, str):
+        return text
+    lines = text.split("\n")
+    anchor = -1
+    for i in range(min(len(lines), _HEADER_SCAN_LINES)):
+        if _HEADER_LINE1_RE.match(lines[i]):
+            anchor = i
+            break
+        if lines[i].strip() and not _HEADER_FENCE_RE.match(lines[i]):
+            return text          # 산문이 먼저 = 헤더 없음
+    if anchor < 0:
+        return text
 
-    # V8.5 풀 캘린더 먼저 시도
-    m = _STATUS_TIME_PATTERN_V85.search(response_text)
-    if m:
-        try:
-            year = int(m.group(1))
-            month = int(m.group(2))
-            day = int(m.group(3))
-            hour = int(m.group(4))
-            minute = int(m.group(5))
-            slot = m.group(6).strip()
-            if not (1 <= year and 1 <= month <= 12 and 1 <= day <= 31
-                    and 0 <= hour <= 23 and 0 <= minute <= 59):
-                return None
-            return {"year": year, "month": month, "day": day,
-                    "hour": hour, "minute": minute, "slot": slot}
-        except (ValueError, IndexError):
-            return None
+    end = anchor + 1
+    while end < len(lines):
+        ln = lines[end]
+        if (not ln.strip() or _HEADER_DOOM_RE.match(ln)
+                or _HEADER_CLOCK_RE.match(ln) or _HEADER_FENCE_RE.match(ln)):
+            end += 1
+            continue
+        break
 
-    # Legacy fallback (V8.4 N일차 형식)
-    m = _STATUS_TIME_PATTERN_LEGACY.search(response_text)
-    if m:
-        try:
-            legacy_day = int(m.group(1))
-            hour = int(m.group(2))
-            minute = int(m.group(3))
-            slot = m.group(4).strip()
-            if not (1 <= legacy_day and 0 <= hour <= 23 and 0 <= minute <= 59):
-                return None
-            # legacy day → year/month/day 자동 분해
-            zero_idx = legacy_day - 1
-            year = 1 + zero_idx // 360
-            month = 1 + (zero_idx % 360) // 30
-            day = 1 + (zero_idx % 30)
-            return {"year": year, "month": month, "day": day,
-                    "hour": hour, "minute": minute, "slot": slot}
-        except (ValueError, IndexError):
-            return None
-
-    return None
+    remainder = "\n".join(lines[end:]).strip()
+    if not remainder:
+        return text              # 헤더가 응답 전부였다면 손대지 않는다(빈 응답 방지)
+    return remainder
 
 
 # detect_scene_type_keywords 제거 (2026-07-06 감사): 인라인 "(scene: gore)" 키워드
@@ -162,11 +150,83 @@ def process_bkspc(text: str) -> str:
 # PC Impersonation Detection (PC 사칭 감지)
 # =========================================================
 
-def detect_pc_impersonation(response: str, pc_names: List[str]) -> List[Dict]:
+# =========================================================
+# [2026-08-13] 출처(provenance) 판정 — 직조 vs 발명
+#
+#   왜: Slot 21 DECREE는 "weave each stated action at its point of occurrence"로
+#   유저 행동을 산문에 짜 넣으라 지시하는데, 검출기는 그 결과를 사칭으로 보고
+#   **문장째 하드 삭제**했다. 지시를 따른 렌더가 벌받는 구조.
+#   근본 결함은 동사 목록이 아니라 검출기가 **이번 턴 입력을 못 본다**는 것:
+#     유저 "문을 연다"  → GM "당신은 문을 열었다" = 직조(준수)
+#     유저 입력에 없음  → GM "당신은 문을 열었다" = 발명(위반)
+#   두 문자열이 동일하므로 응답만 봐선 원리적으로 구분 불가.
+#
+#   판정 방식: 의미 판정("PC다운가")이 아니라 **출처 판정**("입력에 있었나").
+#   = Contract-First의 '바닥(ground)' 원칙과 같은 수. LLM 콜 0, 결정적.
+#   종성을 버린 (초성,중성) 키로 비교해 활용·불규칙(열다→연다, 돕다→도와)을 흡수한다.
+#
+#   안전 성질: 매칭 실패 = 현행 동작(삭제) 그대로. 오검출을 줄이기만 하고 늘리지 않는다.
+#   thought 타입은 **면제 없음** — PC 내면은 입력에 있든 없든 렌더 대상이 아니다.
+# =========================================================
+
+# 조사·어미·기능 음절 (내용 음절에서 제외)
+_GRAMMAR_SYLLABLES = set("은는이가을를에의로와과도만부터까지처럼보다"
+                         "다했었았였셨고며서면자요네죠는걸것수있없")
+
+
+def _syllable_keys(text: str) -> set:
+    """한글 음절 → (초성, 중성) 키 집합. 종성을 버려 활용/불규칙을 흡수."""
+    keys = set()
+    for ch in text:
+        code = ord(ch) - 0xAC00
+        if 0 <= code < 11172:
+            keys.add((code // 588, (code % 588) // 28))
+    return keys
+
+
+# PC 지시어 — 내용 음절에서 제외. 남겨두면 분모를 부풀리고, 종성을 버린 키가
+# 무관한 음절과 우연히 충돌(당↔다)해 판정이 그 우연에 기댄다.
+_PC_REFERENTS = ("플레이어", "당신", "그대", "너")
+
+
+def _content_syllables(text: str, pc_names: List[str]) -> str:
+    """PC 이름·지시어와 기능 음절을 제거한 내용 음절만 남긴다."""
+    for pc in pc_names or []:
+        if pc and pc != "Unknown":
+            text = text.replace(pc, " ")
+    for ref in _PC_REFERENTS:
+        text = text.replace(ref, " ")
+    return "".join(ch for ch in text
+                   if 0 <= ord(ch) - 0xAC00 < 11172 and ch not in _GRAMMAR_SYLLABLES)
+
+
+def _is_supplied_by_input(matched: str, user_input: str, pc_names: List[str],
+                          threshold: float = 0.34) -> bool:
+    """매칭 문장의 내용이 이번 턴 입력에서 온 것인가(직조) 판정.
+
+    임계는 **느슨하게**(0.34) 잡는다: 유저 행동을 짜 넣으면서 GM이 움직임을 조금 잇는 것은
+    정상 서술이지 발명이 아니다. 비용이 비대칭 — 오삭제는 산문을 파괴하고, 오통과는
+    경고 하나에 프롬프트 규율(Slot 18)이 그대로 살아 있다. 조이는 쪽으로 튜닝 금지.
+    """
+    if not user_input:
+        return False
+    content = _content_syllables(matched, pc_names)
+    if len(content) < 2:
+        return False  # 판정 재료 부족 → 현행 동작(삭제) 유지
+    src = _syllable_keys(user_input)
+    hit = sum(1 for k in _syllable_keys(content) if k in src)
+    total = len(_syllable_keys(content))
+    return total > 0 and (hit / total) >= threshold
+
+
+def detect_pc_impersonation(response: str, pc_names: List[str],
+                            user_input: str = "") -> List[Dict]:
     """
     AI 응답에서 PC 사칭 패턴을 검출합니다.
 
     V2: 범용 한국어 동사 어미 패턴으로 확장.
+    V3 (2026-08-13): user_input 출처 판정 추가 — 유저가 이번 턴에 공급한 행동의
+      직조는 위반이 아니다(Slot 21 DECREE 준수). user_input 미전달 시 종전과 동일 동작.
     예외: 따옴표 내 대사, NPC가 PC를 언급하는 경우는 허용.
     """
     violations = []
@@ -176,13 +236,32 @@ def detect_pc_impersonation(response: str, pc_names: List[str]) -> List[Dict]:
     # 내면/사고 동사 (진짜 사칭)
     THOUGHT_VERBS = r'(?:생각했다|느꼈다|깨달았다|결심했다|기억했다|떠올렸다|추측했다|알았다|몰랐다|원했다|바랐다|후회했다|의심했다|확신했다|짐작했다)'
     # 반사적/불수의 반응 동사 (허용 — PC 선택이 아닌 물리 반응)
+    # [2026-08-13] 환자태(세계→PC 벡터) 확장 — 전투 상해·구속·전도 동사가 목록 밖이라
+    # "당신의 팔이 부러졌다" 같은 정당한 결과 묘사가 문장째 절단되던 결함 수리.
+    # 기준: 세계가 PC 몸에 가한 결과(충격·상해·구속·불수의)=허용 / PC 의지 행동·내면=차단 유지.
+    # 능동 동형(던졌다·올렸다·남겼다 등)은 넣지 않는다. 사로잡혔다(감정 피동)는 lookbehind로 제외.
     REFLEXIVE_VERBS = re.compile(
         r'(?:밀렸다|밀려났다|떨렸다|떨려왔다|흔들렸다|굳었다|경직됐다|경직되었다|'
         r'거칠어졌다|빨라졌다|느려졌다|멈췄다|멈추었다|떨어졌다|넘어졌다|쏠렸다|'
         r'미끄러졌다|부딪혔다|부딪쳤다|맞았다|닿았다|스쳤다|꿰뚫렸다|찔렸다|베였다|'
         r'젖었다|얼어붙었다|뜨거워졌다|차가워졌다|흐려졌다|어두워졌다|'
         r'커졌다|작아졌다|조여왔다|풀렸다|터졌다|갈라졌다|'
-        r'움찔했다|휘청했다|비틀거렸다|주저앉았다|쓰러졌다|의식이\s*(?:흐려졌다|멀어졌다|끊겼다))'
+        r'움찔했다|휘청했다|비틀거렸다|주저앉았다|쓰러졌다|의식이\s*(?:흐려졌다|멀어졌다|끊겼다)|'
+        # 전도/넉백
+        r'튕겨났다|튕겨나갔다|나가떨어졌다|내동댕이쳐졌다|나뒹굴었다|고꾸라졌다|자빠졌다|'
+        r'엎어졌다|처박혔다|곤두박질쳤다|떠밀렸다|밀쳐졌다|내쳐졌다|던져졌다|패대기쳐졌다|'
+        # 구속/제압
+        r'(?<!사로)잡혔다|붙들렸다|끌려갔다|끌려왔다|짓눌렸다|눌렸다|깔렸다|묶였다|매달렸다|'
+        # 상해
+        r'부러졌다|꺾였다|찢겼다|찢어졌다|뜯겼다|물렸다|긁혔다|할퀴였다|으스러졌다|뭉개졌다|'
+        r'바스러졌다|뚫렸다|박혔다|데였다|데었다|그을렸다|접질렸다|삐끗했다|피를?\s*흘렸다|'
+        # 의식/생리
+        r'기절했다|실신했다|질식했다|(?:정신|의식)을\s*잃었다|숨이\s*막혔다|목이\s*졸렸다|'
+        # 일반 피동 마커 + 피해 한자어
+        r'당했다|당하고|당한\s*채|'
+        # 조사 4종 — 모음 끝(마비·압도)은 가/를을 취한다. **허용 목록이라 넓히는 방향이 안전**
+        # (삭제 목록을 넓히면 오삭제가 는다 — detector_census B 판정 시 이 구분을 지킬 것).
+        r'(?:골절|마비|감전|중독|제압|압도|포박|구속|절단|관통)(?:이|가|을|를)?\s*(?:됐다|되었다|당했다))'
     )
 
     # 1. PC 이름 기반 탐지
@@ -246,6 +325,10 @@ def detect_pc_impersonation(response: str, pc_names: List[str]) -> List[Dict]:
             continue  # 따옴표 내 → 허용
         if v['type'] != 'thought' and is_reflexive(v['matched']):
             continue  # 반사적 반응 → 허용 (thought 타입은 예외 없이 차단)
+        # 5. 출처 예외 — 유저가 공급한 행동의 직조는 위반이 아니다.
+        #    thought는 면제 없음: PC 내면은 공급 여부와 무관하게 렌더 대상이 아니다.
+        if v['type'] != 'thought' and _is_supplied_by_input(v['matched'], user_input, pc_names):
+            continue
         filtered_violations.append(v)
 
     return filtered_violations
@@ -296,7 +379,8 @@ def _remove_violation_sentences(text: str, violations: List[Dict]) -> str:
     return ' '.join(result)
 
 
-def filter_pc_impersonation(response: str, pc_names: List[str]) -> Tuple[str, List[Dict]]:
+def filter_pc_impersonation(response: str, pc_names: List[str],
+                            user_input: str = "") -> Tuple[str, List[Dict]]:
     """
     PC 사칭 부분을 검출하고 제거한 최종 텍스트를 반환합니다.
 
@@ -306,8 +390,8 @@ def filter_pc_impersonation(response: str, pc_names: List[str]) -> Tuple[str, Li
     # 1. BKSPC 먼저 처리
     clean_text = process_bkspc(response)
 
-    # 2. 사칭 검출
-    violations = detect_pc_impersonation(clean_text, pc_names)
+    # 2. 사칭 검출 (user_input 있으면 출처 판정 적용)
+    violations = detect_pc_impersonation(clean_text, pc_names, user_input)
 
     # 3. 사칭 문장 실제 제거
     if violations:
@@ -1296,3 +1380,190 @@ def extract_dialogue_anchor(text: str, cap: int = 500) -> str:
         out.insert(0, ln)
         total += len(ln)
     return "\n".join(out)
+
+
+# =========================================================
+# Style Feedback 합류 — 같은 처방을 가진 검출을 한 줄로
+# [2026-08-03 합류점 감사]
+#
+# 배경: 검출기 13종의 결과가 orchestration 8.5에서 `" ".join(filter(None, [...]))`로
+# 무순위·무캡 연결됐다. 공급자 층은 완전하다(13종 전부 `if not matched: return ""` 침묵
+# 경로 보유) — 문제는 합류에만 있었다.
+#
+# ★고친 건 "몇 개를 버릴까"가 아니라 **중복 제거**다. 세어 보니 두 무리가
+#   **검출 대상은 다 다른데 처방이 거의 같았다**:
+#     ARRIVAL "attractor stays unnamed … not arriving"
+#     DECLARATION "narrator shows rather than declares; meaning emerges from action"
+#     EXPLAIN→RENDER "render directly; the event arrives unannounced"
+#     VENDING "naming predictability … a fresh surface, not the default"
+#       → 넷 다 "이름 붙이지 말고 렌더해라". 동시 점등 시 같은 지시를 네 번(399자).
+#     ROTATION/STRUCTURE/DEFLECTION → 셋 다 "3턴 연속 → 다양화하라"(310자).
+#
+# 처방을 1회로 묶되 **라벨은 전부 보존**한다(뭐가 걸렸는지는 그대로 전달).
+# 13블록 → 8블록, 고정분 1061자 → 약 550자. 등급 판단이 아니라 중복 제거라
+# 관측을 기다릴 이유가 없다([[feedback_counterfactual_no_observation_gate]] 아님 —
+# 이건 반사실형이 아니라 순수 중복).
+#
+# 가족에 속하지 않는 문자열은 **파싱하지 않고 원본 그대로 통과**시킨다.
+# (TENSION·I:재정착처럼 태그 문법이 다른 것들이 있어 일괄 파싱은 위험.)
+# 가족 줄의 위치 = 그 가족 **첫 멤버가 있던 자리** → 기존 순서 감각 보존.
+# =========================================================
+
+# 태그 → (가족, 축 이름). 축 이름은 병합 줄에서 뭐가 걸렸는지 구분하는 라벨.
+_STYLE_FAMILY_MEMBERS = {
+    "ARRIVAL": ("TELLING", "arrival"),
+    "DECLARATION": ("TELLING", "declaration"),
+    "EXPLAIN→RENDER": ("TELLING", "explain-first"),
+    "VENDING": ("TELLING", "vending"),
+    "ROTATION": ("REPETITION", "body-part"),
+    "STRUCTURE": ("REPETITION", "open/close"),
+    "DEFLECTION": ("REPETITION", "deflection"),
+}
+
+# 가족 → 처방 1회. {labels}에 축별 검출 내용이 들어간다.
+_STYLE_FAMILY_TEMPLATE = {
+    "TELLING": "[TELLING: {labels} · name nothing; the meaning arrives through action, not assignment]",
+    "REPETITION": "[REPETITION: {labels} · 3 turns running; vary each axis this turn]",
+}
+
+# 멤버 문자열에서 라벨만 남기려고 떼는 꼬리 — 가족 줄이 한 번만 말하므로 중복.
+_STYLE_LABEL_TAIL = re.compile(r'\s*(?:3\s*turns\s*running|3턴\s*연속\s*사용|3턴\s*연속)\s*$')
+
+
+def _style_family_of(fb: str) -> Optional[Tuple[str, str]]:
+    """피드백 문자열의 선두 태그로 가족을 판정. 비가족이면 None."""
+    if not fb.startswith("["):
+        return None
+    head = fb[1:fb.find(":")] if ":" in fb[:32] else ""
+    return _STYLE_FAMILY_MEMBERS.get(head.strip())
+
+
+def _style_labels_of(fb: str) -> str:
+    """`[TAG: labels · 처방]` / `[TAG: labels — 처방]`에서 labels만."""
+    body = fb[fb.find(":") + 1:]
+    for sep in ("·", "—"):
+        idx = body.find(sep)
+        if idx >= 0:
+            body = body[:idx]
+    return _STYLE_LABEL_TAIL.sub("", body.strip()).strip(" .")
+
+
+def merge_style_feedback(parts: List[str]) -> str:
+    """검출 결과 리스트 → 가족 처방을 1회로 묶은 합류 문자열.
+
+    검출 수는 그대로, 처방만 중복 제거. 비가족은 원본 통과.
+    """
+    out: List[Optional[str]] = []
+    slot: Dict[str, int] = {}
+    items: Dict[str, List[str]] = {}
+
+    for fb in parts:
+        if not fb:
+            continue
+        fam = _style_family_of(fb)
+        if fam is None:
+            out.append(fb)
+            continue
+        family, axis = fam
+        if family not in items:
+            items[family] = []
+            slot[family] = len(out)
+            out.append(None)  # 자리 예약 — 첫 멤버 위치를 유지
+        _lab = _style_labels_of(fb)
+        items[family].append(f"{axis}={_lab}" if _lab else axis)
+
+    for family, labs in items.items():
+        out[slot[family]] = _STYLE_FAMILY_TEMPLATE[family].format(labels="; ".join(labs))
+
+    return " ".join(x for x in out if x)
+
+
+def style_feedback_tags(merged: str) -> str:
+    """로그용 태그 요약. 전문은 verbose 로거로, journal엔 이것만.
+
+    [2026-08-03] 종전 FormatCheck 로그는 앞 80자만 남겨서, **뒤쪽 검출기가 터져도
+    흔적이 없었다** — "뭐가 자주 터지나"에 대한 감각이 실제 빈도가 아니라 join 순서로
+    만들어지고 있었다는 뜻이다. 태그만 남기면 길이 걱정 없이 전량이 보이고,
+    등급이 추측 대신 계측이 된다.
+    (⚠구 코드 리터럴을 여기 적지 말 것 — 절단 지점 전수 스캔에 오탐으로 잡힌다.)
+    """
+    seen: List[str] = []
+    text = merged or ""
+    for m in re.finditer(r'\[', text):
+        s = m.end()
+        _c, _b = text.find(":", s), text.find("]", s)
+        ends = [x for x in (_c, _b) if x >= 0]
+        if not ends:
+            continue
+        tag = text[s:min(ends)].strip()
+        # `[I:재정착]`처럼 콜론 앞이 한 글자인 접두 태그는 `]`까지 통째로 쓴다.
+        if len(tag) < 3 and _b > s:
+            tag = text[s:_b].strip()
+        if tag and len(tag) <= 24 and tag not in seen:
+            seen.append(tag)
+    return f"{', '.join(seen)} ({len(seen)})" if seen else ""
+
+
+# =========================================================
+# [2026-08-02] 형용사 나열 검출 — 시트 tone 필드 직역 관측
+# =========================================================
+# 실관측: "말을 거는 톤이었다. 임상적이고, 따뜻하고, 사무적이었다."
+#   원인은 NPC 시트 `tone` 필드가 **한국어 묘사문**(형용사 나열)이고, Slot 33 recency 헤더가
+#   "match these speech patterns"라 그 형용사를 그대로 서술하게 만든 것. 둘 다 수리했으나
+#   **기존 DB의 tone 값은 여전히 형용사 나열**이라 관측이 필요하다.
+#
+# ★리터럴 목록으로 안 잡는다. `BANNED_EXPRESSIONS["voice_tone"]`이 이미 있지만
+#   영어 위주(dryness/measured/businesslike)이고 한국어는 3개뿐이라, 실관측 문장의
+#   "임상적/따뜻한"은 하나도 안 걸렸다. 형용사는 무한하므로 **구조**로 잡는다:
+#   `A이고, B하고, C이었다` = 한 문장 안 3연 이상 나열.
+#
+# ⚠log-only. 임계가 정당한 산문도 잡는다(대비 나열은 기법이다) —
+#   [[feedback_detection_not_writing]]: 검출→사람이 로그 판독→사람이 프롬 튜닝.
+#   두 형태를 다 잡는다 — 초판은 (a)만 잡고 (b)를 놓쳤다:
+#     (a) 서술형 종결   "임상적이고, 따뜻하고, 사무적이었다"
+#     (b) 관형형 + 명사 "차갑고 날카롭고 건조한 목소리였다"
+_ADJ_STACK = re.compile(
+    r"(?:[가-힣]{1,}(?:적이|스럽|롭|하)?(?:고|며|면서),?\s+){2,}"
+    r"[가-힣]{2,}(?:"
+    r"(?:적이|스럽|롭|하)?(?:었|았|였|다|음)"          # (a) 종결
+    r"|(?:운|은|는|한|린|긴|픈)?\s*[가-힣]{2,}"          # (b) 관형형 → 명사
+    r")"
+)
+# 톤/목소리를 **명명**하는 서술 — 대사가 아니라 대사에 대한 보고
+# [2026-08-13] 조사 `는`/`가` 누락 수리 — 모음으로 끝나는 명사(목소리·어조·말투)는
+#   주격/주제격이 가/는이라 **한 번도 매칭된 적이 없다**(자음 끝 톤·음성만 걸렸음).
+#   가장 흔한 셋이 통째로 미검출 → 톤 명명 관측이 계속 과소계상 중이었다.
+_TONE_REPORT = re.compile(r"(?:톤|어조|말투|목소리|음성)(?:이|가|은|는|였|이었|으로)")
+
+
+def detect_adjective_stacking(response: str) -> Tuple[str, int]:
+    """형용사 3연 이상 나열 + 톤 명명 서술을 센다. 반환=(로그 문자열, 건수).
+
+    처방을 만들지 않는다 — 관측만. 프롬프트 수정 전후 빈도를 비교하는 게 용도다.
+    """
+    if not response:
+        return "", 0
+    hits = []
+    for raw in response.split("\n"):
+        line = raw.strip()
+        if len(line) < 12:
+            continue
+        for sent in re.split(r"(?<=[.!?。])\s+|(?<=다\.)\s*", line):
+            sent = sent.strip()
+            if len(sent) < 12:
+                continue
+            _stack = bool(_ADJ_STACK.search(sent))
+            _named = bool(_TONE_REPORT.search(sent))
+            # [2026-08-13 오기 수리] 구 `_stack or (_named and _stack)`은 항등식(뒤 절이 앞에 흡수)이라
+            #   톤 명명 **단독은 한 번도 안 세졌다** — 위 _TONE_REPORT 조사 수리 주석("관측 과소계상")이
+            #   세는 의도를 증언하므로 오기로 판정(레티어스도 기억 없음 → 코드 고고학 판정).
+            #   라벨 3분화로 판독 분리. log-only 불변 — 처방 미합류.
+            if _stack or _named:
+                _kind = "stack+named" if (_stack and _named) else ("stack" if _stack else "named")
+                hits.append((_kind, sent[:70]))
+    if not hits:
+        return "", 0
+    _log = "[AdjStack] %d건 — %s" % (
+        len(hits), " | ".join(f"({k}) {s}" for k, s in hits[:3])
+    )
+    return _log, len(hits)

@@ -65,6 +65,15 @@ def build_reasoning_params(model_id: str, tier: str) -> dict:
 _TIER_CAP_CHARS = {LIGHT: 1200, DEEP: 3000}
 
 
+def reasoning_cap_chars(tier: str) -> int:
+    """tier → 추론 길이 캡(문자). 미지정/off = 0 (추론 OFF = 캡 대상 아님).
+
+    [2026-08-16 DSH 앵커 — 분석 관문] _TIER_CAP_CHARS 의 유일한 외부 접근점.
+    앵커 문안의 {cap} 이 캡 지시문과 같은 수치를 쓰도록(하드코딩 금지) 게터로 노출.
+    """
+    return _TIER_CAP_CHARS.get((tier or "").lower(), 0)
+
+
 def reasoning_cap_instruction(tier: str, cap_chars: int = 0) -> str:
     """추론 길이 캡 지시문(DTG THOUGHTS_LIMIT 이식). reasoning on(light/deep)일 때만 문자열 반환.
 
@@ -72,7 +81,7 @@ def reasoning_cap_instruction(tier: str, cap_chars: int = 0) -> str:
     추론을 수만 자 쏟는 것(관측됨)을 억제. 출력(JSON/산문)은 절대 줄이지 말라고 명시.
     cap_chars>0 이면 tier 기본값 대신 사용 (역할별 캡 — 렌더는 config.RENDERER_REASONING_CAP_CHARS).
     """
-    cap = _TIER_CAP_CHARS.get((tier or "").lower())
+    cap = reasoning_cap_chars(tier)
     if not cap:
         return ""
     if cap_chars and cap_chars > 0:

@@ -821,61 +821,11 @@ avoidant NPC pulling away after intimacy is NOT rejection -- it is protection pa
 """
 
 # =========================================================
-# [§25] FLASHBACK & REST DETECTION
+# [§25] (비어 있음) — [2026-08-11 로드아웃 삭제] FLASHBACK_REST_DETECTION 규칙표 제거.
+# 회상 절반은 !회상 명령의 비용·슬롯 계약(trivial 3/standard 8/bold 15, 로드아웃 게이트)을 설명하던
+# 문서라 명령과 함께 사문. rest 절반은 유효하나 주입 게이트가 pending_flashback 하나뿐이라 같이 죽어
+# 있었고, 지침 실물은 theoria 스키마 §Rest/Downtime Evaluation이 이미 전부 들고 있다(중복 사본).
 # =========================================================
-FLASHBACK_REST_DETECTION = """
-
-## FLASHBACK DETECTION
-Flashback = player retroactively declares past preparation ("사실 미리 ~해뒀다", pulls out unmentioned item, reveals prior arrangement).
-
-### Inventory/Memo Gate (CRITICAL — check FIRST)
-Before evaluating as flashback, check the PC's notebook (inventory + memos):
-- Item EXISTS in notebook/inventory → NOT a flashback. Normal use. Output null.
-- Item does NOT exist in notebook/inventory → Flashback. Evaluate below.
-Notebook items are established resources (like Fate aspects / Cypher cyphers) — using them costs nothing.
-
-### Trigger Patterns
-- Explicit: "미리 ~해뒀다", "사실 ~를 챙겨왔다", "전에 ~를 준비해놨다"
-- Implicit: produces item/tool NOT in notebook/inventory, reveals pre-planned escape route, claims prior arrangement with NPC
-- `!회상` command sets pending_flashback anchor — evaluate when present
-
-### Evaluation
-1. plausibility: "plausible" / "stretch" / "impossible"
-   - Consider: PC background, location access, timeline logic, world constraints, notebook contents
-   - "impossible" = physically/logically contradicts established facts (auto-reject)
-2. relevant_passive: Check PC passives — if a passive directly supports the declaration, tier = "trivial"
-3. tier: "trivial" (passive match, cost 3) / "standard" (reasonable, cost 8) / "bold" (extraordinary, cost 15)
-4. declaration: Summarize what the PC is retroactively claiming (1 sentence)
-
-### CRITICAL RULE
-Flashback CANNOT change stats (활력, doom, HP). Position/situation change ONLY.
-- REJECT: "회복약을 미리 챙겨왔다" (stat change attempt)
-- ACCEPT: "탈출 루트를 미리 확보해뒀다" (position change)
-
-## REST / DOWNTIME DETECTION
-Rest = player narratively describes resting, sleeping, taking a break, OR engaging in purposeful downtime activity.
-
-### Trigger Patterns
-- "잠을 잤다", "쉬었다", "휴식", "눈을 붙였다", "잠시 쉬자", "여관에서 하룻밤"
-- Downtime activities: "술집에서 한잔", "검 연습이나 하자", "NPC를 만나러 가자", "상처를 치료한다", "비밀 통로를 만든다"
-- 전투/탐험/모험 중에는 rest_eval을 null로 유지
-
-### Evaluation
-1. quality: "full" (proper sleep/long rest) / "brief" (short nap/break) / "interrupted" (disturbed rest)
-2. safe_location: true/false — is the rest location reasonably safe?
-3. activity: 기존 분석(time_flow, item_usage, action_meta)을 종합하여 판단
-   - "rest": 단순 쉼. 풍미(커피, 물)가 있어도 목적 없는 휴식이면 rest
-   - "recover": 치료, 응급처치, 약 복용, 명상 + 시간 투자
-   - "vice": 술, 도박, 유흥, 약물, 개인적 탐닉
-   - "train": 연습, 훈련, 수련, 학습, 기술 연마
-   - "socialize": NPC를 만나러 감, 대화, 교류, 인맥 형성
-   - "project": 장기 작업 (제작, 건설, 조사, 정보망 구축)
-4. target: activity가 rest가 아닐 때 — NPC 이름, 기술명, 프로젝트명 등
-5. reason: 1-sentence justification
-
-Output null for both fields if neither pattern is detected.
-
-"""
 
 # =========================================================
 # [§26] ITEM AWARENESS (Base Layer)

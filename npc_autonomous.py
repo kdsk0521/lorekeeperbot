@@ -508,15 +508,20 @@ def leak_pressure_score(
     depth: int,
     turns_since_secret: int,
     moral_stance: str = "neutral",
+    reader_bump: int = 0,
 ) -> int:
     """비밀 압력 0-100 스코어. [V10 Secret Ledger 2026-07-14] calculate_leak_risk의
-    내부 공식을 노출 — 원장 leak_pressure 엔진으로 승격(기존 함수는 호출자 0 죽은 배선이었음)."""
+    내부 공식을 노출 — 원장 leak_pressure 엔진으로 승격(기존 함수는 호출자 0 죽은 배선이었음).
+
+    [2026-08-11 리더 소비자] reader_bump = 이미 캡까지 계산된 외부 가산항(호출자 소유, 기본 0=현행 동일).
+    여기서 config를 읽지 않는 이유: 이 함수는 순수 공식이어야 스모크가 값을 고정할 수 있다."""
     time_pressure = min(turns_since_secret * 5, 30)
     tension_factor = (tension or 0) * 0.4
     depth_factor = max(0, ((depth or 0) - 40) * 0.3)
     moral_mod = {"disengaged": -15, "conflicted": 15, "principled": 5, "neutral": 0}
     moral_factor = moral_mod.get(moral_stance, 0)
-    return max(0, min(100, int(time_pressure + tension_factor + depth_factor + moral_factor)))
+    return max(0, min(100, int(time_pressure + tension_factor + depth_factor
+                               + moral_factor + max(0, reader_bump or 0))))
 
 
 def leak_risk_label(score: int) -> str:

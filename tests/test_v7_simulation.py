@@ -93,59 +93,12 @@ def test_v7_mental_system():
     assert any("Trauma" in p["name"] for p in passives)
     print("✅ Mental System Verified")
 
-def test_v7_adaptation_system():
-    print("\n=== Test 2: Adaptation System ===")
-    
-    # Setup Logic Check
-    # Formula: log(count+1) * 25
-    c1 = 1
-    p1 = game_character.calculate_adaptation_pct(c1)
-    print(f"Count 1 -> {p1}% (Expected ~17% log(2)=0.69 * 25)")
-    assert 15 <= p1 <= 19
-    
-    c3 = 3
-    p3 = game_character.calculate_adaptation_pct(c3)
-    print(f"Count 3 -> {p3}% (Expected ~34% log(4)=1.38 * 25)")
-    assert 30 <= p3 <= 38
-    
-    c10 = 10
-    p10 = game_character.calculate_adaptation_pct(c10)
-    print(f"Count 10 -> {p10}% (Expected ~60% log(11)=2.39 * 25)")
-    
-    print("✅ Adaptation Formula Verified")
-
-def test_v7_abnormal_encounter():
-    print("\n=== Test 3: Abnormal Encounter ===")
-    uid = "user2"
-    user_data = {
-        "mask": "Survivor",
-        "ai_memory": {
-            "mental": {"value": 100},
-            "abnormal_exposure": {}
-        }
-    }
-    
-    tag = "Ghost"
-    intensity = "Mid" # Dmg 20
-    
-    print(f"Encounter: {tag} (1st Time)")
-    # Force Roll Failure (Mock Random?)
-    # Instead rely on low adapt (0%) vs DC (30). Roll 1-100.
-    # To test logic, we accept random result but check structure.
-    
-    res, pct = game_character.apply_abnormal_impact(user_data, tag, intensity)
-    print(f"Impact Result: {res}")
-    
-    exp = user_data["ai_memory"]["abnormal_exposure"]
-    count = exp[tag]["count"]
-    print(f"New Count: {count}, New Pct: {pct}%")
-    
-    assert count == 1
-    assert pct > 0
-    print("✅ Encounter Logic Verified")
+# [2026-08-11 비일상적응도 삭제] Test 2(Adaptation Formula) / Test 3(Abnormal Encounter) 제거 —
+# 검사 대상 calculate_adaptation_pct·apply_abnormal_impact가 모두 사라짐
+# (apply_abnormal_impact는 이 패스 이전에 이미 삭제되어 Test 3은 깨진 상태였음).
 
 def test_v7_doom_update():
-    print("\n=== Test 4: Doom Update (Hidden) ===")
+    print("\n=== Test 2: Doom Update (Hidden) ===")
     
     channel_id = "test_ch"
     mock_dm.world["doom"] = 10
@@ -166,6 +119,4 @@ def test_v7_doom_update():
 
 if __name__ == "__main__":
     test_v7_mental_system()
-    test_v7_adaptation_system()
-    test_v7_abnormal_encounter()
     test_v7_doom_update()

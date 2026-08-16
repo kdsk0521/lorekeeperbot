@@ -110,31 +110,78 @@ def set_board_frequency(channel_id: str, freq: int, ch_name: str = None) -> None
 
 
 def get_board_frequency(channel_id: str, ch_name: str = None) -> int:
-    """빈도 조회. ch_name별 개별 빈도 → 없으면 전체 기본값."""
+    """빈도 조회. 채널별 설정 > 유저가 정한 전체 > 채널별 기본 상수 > 전역 기본 상수.
+
+    [2026-08-16 도착물 라우트 §4] 구 우선순위는 `!게시판 빈도 10`(전체)을 ch_name 조회에서
+    **버렸다** — `DEFAULT_CHANNEL_FREQUENCY.get(ch_name, default)`라 채널 키가 있으면
+    유저 전체 설정이 절대 안 읽혔다. 전역 게이트만 쓰던 시절엔 안 드러났지만, 게이트를
+    채널종별로 고치면 이번엔 전체 설정이 죽는다. 두 손잡이가 다 살도록 순위를 세운다.
+    """
     world = domain_manager.get_world_state(channel_id)
     board_state = world.get("world_board", {})
     if ch_name:
         freq_map = board_state.get("frequency_per_channel", {})
-        per_ch = freq_map.get(ch_name)
+        per_ch = freq_map.get(ch_name) if isinstance(freq_map, dict) else None
         if per_ch is not None:
-            return per_ch
-    default = board_state.get("frequency", DEFAULT_BOARD_FREQUENCY)
+            return max(1, int(per_ch))
+    user_default = board_state.get("frequency")
+    if user_default is not None:
+        return max(1, int(user_default))
     if ch_name:
-        return DEFAULT_CHANNEL_FREQUENCY.get(ch_name, default)
-    return default
+        return DEFAULT_CHANNEL_FREQUENCY.get(ch_name, DEFAULT_BOARD_FREQUENCY)
+    return DEFAULT_BOARD_FREQUENCY
+
+
+# =========================================================
+# [2026-08-16 도착물 라우트] 착지 모드 (thread / button / off)
+# =========================================================
+# v1 착지는 **공개 스레드**뿐이었다 — 편지·쪽지가 채널 전원에게 보인다. 채널종별로
+# 착지를 고른다: thread=종전 스레드 게시 / button=그 턴 산문 메시지의 💌 버튼(ephemeral)
+# / off=드롭(로그만). message 만 기본을 button 으로 — 사적 도착물이 공개되던 자리다.
+# bulletin/sns 는 원래 공개 게시물이라 thread 유지(v1 무변경).
+DISPLAY_MODES = ("thread", "button", "off")
+DEFAULT_DISPLAY_MODE = {"bulletin": "thread", "sns": "thread", "message": "button"}
+
+
+def get_display_mode(channel_id: str, ch_name: str) -> str:
+    """채널종의 착지 모드. 미설정이면 DEFAULT_DISPLAY_MODE, 알 수 없는 값이면 thread."""
+    world = domain_manager.get_world_state(channel_id)
+    board_state = world.get("world_board", {})
+    modes = board_state.get("display_mode", {})
+    mode = modes.get(ch_name) if isinstance(modes, dict) else None
+    if mode not in DISPLAY_MODES:
+        mode = DEFAULT_DISPLAY_MODE.get(ch_name, "thread")
+    return mode
+
+
+def set_display_mode(channel_id: str, ch_name: str, mode: str) -> bool:
+    """착지 모드 설정. 모르는 모드는 거부(False) — 조용한 오설정 방지."""
+    if mode not in DISPLAY_MODES:
+        return False
+    world = domain_manager.get_world_state(channel_id)
+    board_state = world.get("world_board", {})
+    modes = board_state.get("display_mode", {})
+    if not isinstance(modes, dict):
+        modes = {}
+    modes[ch_name] = mode
+    board_state["display_mode"] = modes
+    world["world_board"] = board_state
+    domain_manager.update_world_state(channel_id, world)
+    return True
+
+
+def get_all_display_modes(channel_id: str) -> Dict[str, str]:
+    """3채널 착지 모드 한 번에 (명령 UI 표시용)."""
+    return {ch: get_display_mode(channel_id, ch) for ch in BOARD_CHANNELS}
 
 
 def get_all_frequencies(channel_id: str) -> Dict[str, int]:
-    """전체 + 채널별 빈도 조회."""
-    world = domain_manager.get_world_state(channel_id)
-    board_state = world.get("world_board", {})
-    default = board_state.get("frequency", DEFAULT_BOARD_FREQUENCY)
-    freq_map = board_state.get("frequency_per_channel", {})
-    return {
-        "bulletin": freq_map.get("bulletin", DEFAULT_CHANNEL_FREQUENCY.get("bulletin", default)),
-        "sns":      freq_map.get("sns", DEFAULT_CHANNEL_FREQUENCY.get("sns", default)),
-        "message":  freq_map.get("message", DEFAULT_CHANNEL_FREQUENCY.get("message", default)),
-    }
+    """전체 + 채널별 빈도 조회.
+
+    [2026-08-16 도착물 라우트 §4] 게이트와 **같은 함수**로 계산한다 — 표시와 판정이
+    따로 계산하던 게 "명령 UI가 거짓말하는" 구조였다. 우선순위 중복 구현 제거.
+    """
+    return {ch: get_board_frequency(channel_id, ch) for ch in BOARD_CHANNELS}
 
 
 # =========================================================
@@ -207,14 +254,22 @@ def _get_absent_npcs(channel_id: str) -> List[str]:
     npcs = domain_manager.get_npcs(channel_id)
     if not npcs:
         return []
-    all_names = set(npcs.keys())
+    # [2026-08-11 사망 파이프라인] 생존축 필터 — 구멍 순위 4.
+    #   여기서 뽑힌 이름이 SNS/게시판/메시지의 **작성자**가 된다. 무필터일 때
+    #   죽은 인물이 부상 소식을 전하는 장면이 나온다(injury/confession은 message 채널 승격).
+    import npc_manager as _npm
+    all_names = {n for n, d in npcs.items() if _npm.is_npc_active(d)}
+    if not all_names:
+        return []
 
     # 최신 프레임에서 출석 NPC 추출
-    frame = domain_manager.get_latest_frame(channel_id)
+    # [2026-08-12 fingerprint 프레임 소급] get_latest_frame(=frames[-1])은 이번 턴에 push된 빈 프레임이라
+    #   지문이 상시 빈손 → 온스테이지 인물까지 결석 처리되어 SNS/게시판 **작성자 후보**가 됐다.
+    #   지문이 실제 찍힌 최근 프레임을 공용 관문으로 읽는다.
     present = set()
 
     # render_fingerprint.gaze → "이름, 이름" 형식
-    gaze = frame.get("render_fingerprint", {}).get("gaze", "")
+    gaze = domain_manager.get_prev_fingerprint(channel_id).get("gaze", "")
     if gaze and isinstance(gaze, str):
         for g in gaze.replace("\n", ",").split(","):
             name = g.strip()
@@ -1106,6 +1161,24 @@ async def _post_message(
 # Main Trigger Entry Point
 # =========================================================
 
+def _mail_payload(post: Dict[str, Any], ch_name: str) -> Dict[str, Any]:
+    """[2026-08-16 도착물 라우트] 게시물 dict → turn_mail payload (표시층 공용 평면형).
+
+    채널종마다 이름이 다른 필드(author/from·to/board_name·feed_name·format_name)를
+    여기서 한 번만 흡수한다 — 표시(turn_mail._mail_embed)는 평면 키만 안다.
+    """
+    label = (post.get("format_name") or post.get("board_name")
+             or post.get("feed_name") or "")
+    return {
+        "channel_kind": ch_name,
+        "title": str(post.get("title") or "")[:250],
+        "body": str(post.get("body") or "")[:4000],
+        "author": str(post.get("author") or post.get("from") or "")[:200],
+        "recipient": str(post.get("to") or "")[:200],
+        "format_name": str(label or "")[:200],
+    }
+
+
 async def trigger_board_update(
     channel: discord.TextChannel,
     client,
@@ -1114,8 +1187,13 @@ async def trigger_board_update(
     trigger: str = "turn",
     extra_context: str = "",
     dai: Optional[Dict[str, Any]] = None,
+    prose_message: Optional[discord.Message] = None,
 ) -> None:
-    """이벤트 드리븐 게시판 트리거 (v2). 이벤트 없으면 0 API 콜."""
+    """이벤트 드리븐 게시판 트리거 (v2). 이벤트 없으면 0 API 콜.
+
+    [2026-08-16 도착물 라우트] prose_message = 이번 턴 산문의 **마지막** 메시지.
+    착지 모드가 button 인 채널종은 스레드 대신 이 메시지에 💌를 사후 부착한다.
+    """
     # 모듈 활성 체크
     modules = domain_manager.get_active_modules(channel_id)
     if "board" not in modules:
@@ -1131,9 +1209,18 @@ async def trigger_board_update(
     current_turn = world.get("turn_index", 0)
     board_state = world.get("world_board", {})
     last_post_turn = board_state.get("last_post_turn", 0)
-    min_interval = get_board_frequency(channel_id)  # 기본 10 → 최소 간격
-    if trigger == "turn" and current_turn - last_post_turn < min_interval:
-        return
+    # [2026-08-16 도착물 라우트 §4] 구: `get_board_frequency(channel_id)` — 인자 없이 부르면
+    #   **전역 기본값만** 읽는다. 그래서 `!게시판 빈도 sns 5`는 저장은 되고 실효는 0이었다
+    #   (명령 UI가 채널별 빈도를 표시하는데 게이트는 안 보던 자리). 채널종별 빈도가 살려면
+    #   라우팅 뒤에 재판정해야 하는데, 라우팅 전엔 어느 종인지 모른다 → **2단 게이트**:
+    #   여기선 활성 채널종 중 **가장 짧은** 빈도로 조기 탈출만(계산 낭비 방지, API 콜 0),
+    #   실제 판정은 라우팅 직후 그 종의 빈도로 한다.
+    if trigger == "turn":
+        _enabled_freqs = [get_board_frequency(channel_id, ch)
+                          for ch, on in enabled_channels.items() if on]
+        _min_gate = min(_enabled_freqs) if _enabled_freqs else get_board_frequency(channel_id)
+        if current_turn - last_post_turn < _min_gate:
+            return
 
     # 이벤트 수집
     events = _collect_board_events(channel_id, dai or {})
@@ -1151,6 +1238,28 @@ async def trigger_board_update(
     if not final_channel:
         return
 
+    # [2026-08-16 도착물 라우트 §4] 라우팅된 채널종의 실제 빈도로 재판정.
+    if trigger == "turn":
+        _ch_interval = get_board_frequency(channel_id, final_channel)
+        if current_turn - last_post_turn < _ch_interval:
+            logger.debug(
+                f"[WorldBoard] gate ch={final_channel} interval={_ch_interval} "
+                f"since={current_turn - last_post_turn} → skip")
+            return
+
+    # [2026-08-16 도착물 라우트] 착지 모드 판정 — **Flash 콜 앞**에서 한다.
+    #   off = 드롭(콜 0). button 인데 붙일 산문 메시지가 없는 경로(!시간 진행 등)도 여기서
+    #   드롭한다 — 스레드로 폴백하면 "공개되면 안 되는 것"이 다시 공개되므로 폴백은 금지.
+    display_mode = get_display_mode(channel_id, final_channel)
+    if display_mode == "off":
+        logger.info(f"[WorldBoard] dropped (display=off) ch={final_channel} "
+                    f"event={best_event.get('tag', '?')}")
+        return
+    if display_mode == "button" and prose_message is None:
+        logger.info(f"[WorldBoard] dropped (display=button, no prose message) "
+                    f"ch={final_channel} trigger={trigger}")
+        return
+
     # 이벤트 맞춤 프롬프트로 Flash 콜
     prompt = _build_event_prompt(channel_id, best_event, final_channel)
     active_channels = {final_channel: True}
@@ -1164,7 +1273,7 @@ async def trigger_board_update(
         logger.info(f"[WorldBoard] Flash returned empty for event={best_event.get('tag', '?')}")
         return
 
-    # Discord에 게시 (기존 embed 함수 재사용)
+    # Discord에 착지 — [2026-08-16 도착물 라우트] thread(종전) / button(그 턴 메시지 💌).
     posted_count = 0
     raw = posts.get(final_channel)
     items = raw if isinstance(raw, list) else [raw] if raw else []
@@ -1172,6 +1281,20 @@ async def trigger_board_update(
     for post in items:
         if not post or not isinstance(post, dict) or not post.get("body"):
             continue
+
+        if display_mode == "button":
+            # 공개 스레드 대신 turn_mail 적립 + 산문 메시지에 버튼 사후 부착.
+            # 저장 키 = 그 턴 산문 메시지 id → 다음 턴 내용이 옛 버튼에 새지 않는다.
+            try:
+                import turn_mail
+                if await turn_mail.deliver(prose_message, channel_id, turn_mail.KIND_MAIL,
+                                           _mail_payload(post, final_channel),
+                                           turn=current_turn):
+                    posted_count += 1
+            except Exception as e:
+                logger.warning(f"[WorldBoard] turn_mail deliver 실패: {e}")
+            continue
+
         if thread is None:
             thread_name_map = {
                 "bulletin": f"📋 {post.get('board_name', '게시판')}",
@@ -1239,5 +1362,5 @@ async def trigger_board_update(
 
     logger.info(
         f"[WorldBoard] Posted {posted_count} event={best_event.get('tag', '?')} "
-        f"ch={final_channel} trigger={trigger}"
+        f"ch={final_channel} trigger={trigger} display={display_mode}"
     )

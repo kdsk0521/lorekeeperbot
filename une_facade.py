@@ -838,6 +838,18 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
             "npc_soma_states", {}) or {}
     except Exception:
         anchors["stored_npc_soma"] = {}
+    # [2026-08-11 사망 파이프라인] 생존축이 anchors로 안 흘러 theoria가 볼 수가 없었다.
+    #   가장 싼 배선 = **비활성 이름만** 여기서 동봉(전체 status 맵은 대부분 active라 낭비).
+    #   빈 dict가 정상값(전원 생존) — 소비처는 `.get(name)`으로 조용히 통과한다.
+    try:
+        import npc_manager as _npm_st
+        anchors["npc_inactive"] = {
+            _n: _npm_st.get_npc_status(_d)
+            for _n, _d in (domain_manager.get_npcs(channel_id) or {}).items()
+            if not _npm_st.is_npc_active(_d)
+        }
+    except Exception:
+        anchors["npc_inactive"] = {}
 
     # [V10 Sprint 4] 막간 장부 (이번 턴 재구성분) — Theoria가 막간을 알아야 NPC 심리 추론 정합
     try:
@@ -862,8 +874,12 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
         # 절대 후보에 못 올랐다 — 오프스크린 흔적 기능이 사실상 사문.
         # 최근 2턴 등장자를 무대 위로 보고, 그 외 전원을 부재 후보로 둔다.
         _scene_set = set(_npc_mgr.get_onstage_npc_names(channel_id, within_turns=2))
-        _all_reg = list((domain_manager.get_npcs(channel_id) or {}).keys())
-        _absent_names = [n for n in _all_reg if n not in _scene_set][:6]
+        _reg_all = domain_manager.get_npcs(channel_id) or {}
+        # [2026-08-11 사망 파이프라인] 생존축 필터 — 구멍 순위 2.
+        #   죽은/쓰러진 인물은 정의상 **항상 부재**라 상시 offscreen_trace 후보였다
+        #   (그 자리에 `likely-now=` 현재 추정 행동까지 붙었다).
+        _absent_names = [n for n, _d in _reg_all.items()
+                         if n not in _scene_set and _npc_mgr.is_npc_active(_d)][:6]
         if _absent_names:
             _att_map = domain_manager.get_npc_attitudes(channel_id) or {}
             _last_seen = {}
@@ -947,9 +963,6 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
     # Session Memory (World State Updater 피드백용)
     anchors["session_memory"] = domain_manager.get_session_ai_memory(channel_id)
 
-    # Pending Flashback (회상 대기)
-    anchors["pending_flashback"] = domain_manager.get_pending_flashback(channel_id)
-
     # [2026-07-15 수리] theoria가 읽는데 아무도 안 쓰던 앵커 2종 (dead_scan B: anchors READ-ONLY).
     # 07-04 entity_state / 07-15 arc 와 같은 병 — .get(k, default)라 조용히 default를 먹었다.
     #
@@ -1017,11 +1030,8 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
     clocks = world.get("doom_clocks", [])
     bus.doom["clocks"] = clocks if isinstance(clocks, list) else []
 
-    # Loadout 자동 지급 — 고정 4슬롯, 미설정 시 세션 시작과 함께 생성
-    if not mem.get("loadout"):
-        import config as _loadout_cfg
-        _lo_slots = getattr(_loadout_cfg, "LOADOUT_SLOTS", 4)
-        mem["loadout"] = {"total_slots": _lo_slots, "used_slots": 0, "items": [], "load_type": "standard", "label": "standard"}
+    # [2026-08-11 로드아웃 삭제] loadout 자동 지급 + anchors["pending_flashback"] 급식 제거.
+    # (전자는 아무도 안 읽는 dict를 매 세션 심고 있었고, 후자의 생산자 !회상 명령이 폐기됨.)
 
     # Vigor/Composure migration: old "mental" → vigor + composure
     if "mental" in mem and "vigor" not in mem:
@@ -1081,7 +1091,7 @@ def sync_from_game_context(channel_id: str, user_id: str, ctx: Any) -> None:
             world["doom_clocks"] = bus.doom.get("clocks", [])
         domain_manager.update_world_state(channel_id, world)
 
-    # 2. Participant Data Sync (Vigor, Composure, Adaptation)
+    # 2. Participant Data Sync (Vigor, Composure)
     p_data = domain_manager.get_participant_data(channel_id, user_id)
     if p_data:
         mem = p_data.setdefault("ai_memory", {})
@@ -1362,7 +1372,7 @@ class UniversalNarrativeEngine:
             "system_msg": _build_system_message(bus),
             "has_anomaly": bool(bus.anomaly and bus.anomaly.get("triggered")),
             "anomaly_header": "",
-            "adaptation_line": "",
+            # [2026-08-11 비일상적응도 삭제] adaptation_line 키 제거 — 항상 "" + 소비자 0
             "mental_log": bus.vigor.get("log", "") if bus.vigor else "",
         }
 

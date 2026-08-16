@@ -346,6 +346,17 @@ def create_risu_style_session(
             training_model = getattr(text_resources, 'TRAINING_MODEL_RESPONSE_RENDERER',
                                      getattr(text_resources, 'TRAINING_MODEL_RESPONSE', ''))
             full_system = system_prompt
+            # [2026-08-16 추론 레지스터 앵커 — 위치 이동(레티어스 "최상위 맞아?")] 분포 앵커는
+            # 네이티브 하네스에서 그 문구가 살던 자리 = **시스템 머리(위치 0)**에서 가장 세다.
+            # hidden_reminder 꼬리 배치는 이동 폐기(복제 금지). deepseek 한정, 존 라벨보다도 앞.
+            # "We need" 토큰 불변(RL 개시 관성), 단계 내용물=작가 파이프라인, 캡=config 파생.
+            if "deepseek" in (config.OPENAI_MODEL_ID or "").lower():
+                full_system = (
+                    "Private reasoning register: open your thinking with \"We need\" and count the steps. "
+                    "We need: 1) the beat this input earns; 2) EN beat sketch; 3) JA restructure; "
+                    f"4) KO prose draft. Land near {int(getattr(config, 'RENDERER_REASONING_CAP_CHARS', 3500))} "
+                    "characters of thought and write.\n\n"
+                ) + full_system
             if training_user and training_model:
                 full_system += (
                     f"\n\n<TrainingDialogue>\n"
@@ -456,6 +467,19 @@ Recording in Korean.
 # =========================================================
 # 응답 생성 (재시도 포함)
 # =========================================================
+# [2026-08-12 출력파생 §8] 렌더 전면 실패 안내 — **산문이 아니다**.
+#   구 동작은 이 문자열이 `if response:`를 통과해 정상 응답 행세를 했다:
+#   히스토리 적립 → 다음 턴 주입본·발효·추출 콜 입력까지 오염(§7-11).
+#   유저 노출은 유지하되 파이프라인 투입은 차단하기 위해 상수로 승격 + 대조 함수 제공.
+#   차단은 호출부(orchestration) 한 지점씩 — 여기서 None을 반환하면 안내 자체가 사라진다.
+RENDER_FAILURE_NOTICE = "⚠️ **[시스템 경고]** 기록 장치 오류. 잠시 후 다시 시도해주세요."
+
+
+def is_render_failure(text: Optional[str]) -> bool:
+    """응답이 렌더 실패 안내(=산문 아님)인지 판정."""
+    return bool(text) and str(text).strip() == RENDER_FAILURE_NOTICE
+
+
 async def generate_response_with_retry(
     client: genai.Client,
     chat_session: ChatSessionAdapter,
@@ -554,6 +578,15 @@ async def generate_response_with_retry(
             " (Output purity: the prose after the closing mark is natural Korean only. No traces of "
             "Chinese or English thinking, no translationese, no roleplay/meta terminology in the visible reply.)"
         )
+        # [2026-08-16 추론 레지스터 앵커 — DSH 이탈 보정] V4 0813 실측: 캡 지시 무시, 추론 12.9k자
+        # (07-05 폭주 이력 재발, [reasoning-trace] render reasoning_chars). 커뮤니티 관측(DSH 밖에서는
+        # 학습 분포 앵커가 과추론을 줄임)에서 **이식 가능한 알맹이만**: 엔지니어 페르소나·툴 카탈로그
+        # 줄은 정체성 오염이라 기각, 추론 채널 오프너 앵커("We need" 개시 = RL 코퍼스 관성)만 채택 —
+        # 조교/프리필 계열 문법. ★3단 변환 다리(영→일→한) 보존이 제약: 앵커가 다리를 자르면 역효과라
+        # 단계 구조 안에 다리를 명시. 캡 숫자는 config 파생(단일 진실원천). 관측=reasoning_chars 추이.
+        # [2026-08-16 추론 레지스터 앵커 → 당일 위치 이동] 꼬리(hidden_reminder) 배치는 폐기 —
+        # 분포 앵커는 시스템 머리(위치 0)가 정위치(레티어스 "최상위 맞아?" 적중). 본문은
+        # create_risu_style_session의 deepseek 분기(full_system 머리)로 이동. 복제 금지.
     full_input = user_input + hidden_reminder
 
     best_response = None
@@ -623,7 +656,10 @@ async def generate_response_with_retry(
                         logging.info(f"[Telescope Lang] ┣block ko_ratio={_ratio:.2f} ko_chars={_ko}")
                 # 1. BKSPC 및 사칭 필터 적용
                 # filter_pc_impersonation internally calls process_bkspc
-                clean_text, violations = filter_pc_impersonation(response_text, pc_names or [])
+                # [2026-08-13] user_input 전달 = 출처 판정 활성. 유저가 이번 턴에 공급한
+                # 행동의 직조(Slot 21 DECREE 준수)를 사칭으로 오삭제하던 것 차단.
+                clean_text, violations = filter_pc_impersonation(
+                    response_text, pc_names or [], user_input)
                 response_length = len(clean_text)
                 
                 # 2. 사칭 검출 → 경고 로그만 (재시도 없음)
@@ -703,7 +739,7 @@ async def generate_response_with_retry(
         logging.warning(f"[Retry] FALLBACK: 최선의 응답 반환 ({len(best_response)}자)")
         return best_response
     
-    return "⚠️ **[시스템 경고]** 기록 장치 오류. 잠시 후 다시 시도해주세요."
+    return RENDER_FAILURE_NOTICE
 
 # =========================================================
 # 유틸리티 함수
