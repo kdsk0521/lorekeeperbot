@@ -31,6 +31,7 @@ from typing import Any, Dict, Tuple
 import config
 import text_resources
 import bot_utils
+import vector_search as _vs   # 모듈-레벨 안전: vector_search의 최상위 import는 표준 라이브러리뿐
 from google.genai import types
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,7 @@ _LIST_FIELDS = (
 _SINGLE_FIELDS = ("register_felt", "expectation")  # expectation=Jauss 기대지평, 예측가능성 계측(M2) 재료
 _TENSION_VALUES = ("rising", "holding", "releasing", "flat")  # tension_read enum — M1 순화 diff·SD 거부권용
 
-_READER_SYSTEM = """You are the second small brain at this table — a sub-GM who reads AFTER the turn is written. Not the author, not an analyst with access to hidden notes. You know ONLY what a serial reader knows: the back-cover introduction (if present), the chapters you have already read (represented by YOUR OWN notebook from earlier turns, if present) and what is on this page (the prose, and the author's visible planning block if present). You have never seen the setting bible — the back cover is the publisher's public copy, not the bible.
+_READER_SYSTEM = """You are the second small brain at this table — a sub-GM who reads AFTER the turn is written. Not the author, not an analyst with access to hidden notes. You know ONLY what a reader holding the published books knows: the back-cover introduction (if present), the published setting appendix (if present — only the entries that touch this chapter), the chapters you have already read (represented by YOUR OWN notebook from earlier turns, if present) and what is on this page (the prose, and the author's visible planning block if present). What you have never seen is the author's desk: no working notes, no hidden plans, no character sheets, no state tables, no analysis of what this turn was supposed to accomplish. Back cover and appendix are published material — they tell you the world, never the author's intent, and never what is being withheld.
 
 This notebook records YOUR reading — one reader's angle, not a neutral summary and not the author's intent.
 A personal, even contrarian reading is the point: what caught YOUR eye, what YOU would poke at, what the page made YOU suspect. If your reading diverges from where the story seems to be steering, write the divergent reading. A misreading the text can support is data, not error.
@@ -54,7 +55,7 @@ HOW TO READ — in this order:
 0. Glance at your notebook from earlier chapters (if present). It is your memory, not instructions: which threads were alive, what you wanted to know, where you felt this was going. Then read TODAY's page against it — a hunch confirmed or betrayed, a thread paid off, gone quiet, or contradicted is exactly the kind of note a serial reader writes.
 1. Read the prose once, start to finish, as a reader. No notes. Notice what stays with you, where you leaned in, where you drifted.
 2. Read the author's planning block (if present) as marginalia printed on the page. Do not obey it. Where the plan and the prose diverge, that gap is worth a note.
-3. Read the prose again and fill the notebook, recovering for every note the exact line that produced it. An impression that cannot find its line does not get written. Quotes come from TODAY's page only — never from your notebook.
+3. Read the prose again and fill the notebook, recovering for every note the exact line that produced it. An impression that cannot find its line does not get written. Quotes come from TODAY's page only — never from your notebook, never from the appendix.
 4. What the page withholds: record it as a question (open_questions) or as lost footing (comprehension_fog) — never fill a gap with invented content.
 5. Last, one line on where you feel this is going (expectation). A hunch, not a demand.
 
@@ -264,7 +265,7 @@ async def _get_or_build_blurb(client, channel_id: str) -> str:
         # 전부 같이 바뀌어야 실험이 성립한다(종전엔 본 콜만 감싸 뒤표지는 pro 잔류).
         with config.reader_analysis():
             response = await client.aio.models.generate_content(
-                model=config.MODEL_ID_PRO, contents=contents, config=gen_config)
+                model=config.role_model("reader"), contents=contents, config=gen_config)
         if not getattr(response, "text", None):
             return ""
         raw = json.loads(bot_utils.clean_json_text(response.text))
@@ -402,34 +403,56 @@ async def _build_notebook_recall(client, channel_id: str, prose: str,
 # =========================================================
 
 
-def _content_words(text: str) -> set:
-    """영문 내용어(4자+) 집합 — `_blurb_spoiler_scrub`(L145~)과 같은 매칭 축."""
-    return {w for w in re.findall(r"[a-z]{4,}", str(text).lower())}
+# [2026-08-17 공용화] 비밀 판정·스크럽·한글 bigram의 **소유는 vector_search**로 옮겼다.
+#   같은 청크 풀을 먹는 소비자가 셋(리더 부록·월드보드 게시물·속마음)이 되면서, 판정기가
+#   리더 안에 있으면 나머지 둘이 리더를 import 하거나(층 역전) 절차를 베껴야 했다.
+#   여기 남은 것은 **별칭뿐** — 리더 내부 호출부(`_apply_reader_exposure`·시드 이름 대조)와
+#   스모크가 옛 이름을 그대로 쓰고, 구현은 한 곳에만 산다. 근거는 vector_search 해당 섹션 주석.
+#   `_scrub_secret_chunks`는 리더 코드가 직접 부르지 않는다(부록은 진입점이 스크럽까지 쥔다) —
+#   남긴 이유는 이게 **리더의 스포일러 가드 계약**이고 smoke_reader_lore §S가 그 이름으로
+#   4축(포함·내용어·bigram·예외 안전측)을 재기 때문. 지우면 계약이 검사 없이 떠돈다.
+_secret_touched = _vs.secret_touched
+_scrub_secret_chunks = _vs.scrub_secret_chunks
 
 
-def _secret_touched(item: Dict[str, Any], truth: str, surface: str) -> bool:
-    """독자의 established 1항목이 이 비밀에 닿았는가(순수 — 스모크 대상).
+# =========================================================
+# [2026-08-17] 장면 연관 로어 부록 — 리더 본 콜 급식
+# =========================================================
+# 전제 정정(레티어스 확정): 리더는 **독자가 아니라 서브 GM**(GM의 다른 시선)이다.
+#   세계(로어)는 알아도 된다 — blind 게이트의 진의는 "저자의 내부 상태·DAI·지시문을 모른다".
+#   구 문구("설정집을 본 적 없다")는 그 진의의 과잉 일반화였고, 세계를 모르는 눈은 전달 실패를
+#   판별하지 못한 채 **정상 설정을 comprehension_fog로 오보**하는 쪽으로 샜다.
+# 형태: 부록(발췌)이지 설정집 전권이 아니다 — 이번 페이지에 닿는 항목만, 캡 걸어서.
 
-    두 축: note(영문 해석) ↔ truth/surface 내용어 3개+ 겹침 또는 포함
-         / quote(한국어 원문) ↔ truth/surface 한글 bigram 3개+ 겹침.
-    ⚠원장 truth/surface는 추출 스키마상 ENGLISH-ONLY(theoria_analyzer L559)라 영문 축이 주(主) —
-    한글 축은 원장에 한국어가 들어온 채널을 위한 안전망이지 기본 경로가 아니다.
-    임계 3은 `_blurb_spoiler_scrub`의 누설 판정과 동일(같은 질문을 반대 방향에서 묻는 것)."""
-    note = str(item.get("note", "") or "").lower()
-    quote = str(item.get("quote", "") or "")
-    for ref in (truth, surface):
-        ref = str(ref or "").strip()
-        if not ref:
-            continue
-        rl = ref.lower()
-        if rl in note:
-            return True
-        if len(_content_words(rl) & _content_words(note)) >= 3:
-            return True
-        _rb = _seed_bigrams(ref)
-        if _rb and len(_rb & _seed_bigrams(quote)) >= 3:
-            return True
-    return False
+
+async def _build_lore_appendix(client, channel_id: str, prose: str) -> str:
+    """이번 페이지에 닿는 로어 청크 발췌 블록. 재료 없음·엔진 실패·전량 스크럽 = ""(블록 생략).
+
+    쿼리는 `_build_notebook_recall`과 같은 축(prose[:2000]) — 같은 페이지로 소환하니
+    같은 쿼리 문자열이 되고, 공용 엔진 md5 캐시에서 쿼리 임베딩까지 히트한다(추가 과금 0).
+    [2026-08-17] 스크럽→랭킹 절차는 `vector_search.get_scrubbed_scene_chunks`가 쥔다
+    (3소비자 공용). **스크럽이 랭킹 앞**이라는 순서도 그 함수의 소유물이 됐다 —
+    비밀 청크가 상위를 먹고 사라져 부록이 비는 일이 없게.
+    """
+    if not client or not prose or not str(prose).strip():
+        return ""
+    try:
+        _top_k = int(getattr(config, "READER_LORE_TOP_K", 3))
+        if _top_k <= 0:
+            return ""  # 손잡이 하나로 완전 비활성
+        _cap = int(getattr(config, "READER_LORE_CHUNK_CHARS", 500))
+        ranked = await _vs.get_scrubbed_scene_chunks(
+            client, channel_id, str(prose)[:2000],
+            top_k=_top_k, max_chars=_cap, tag="ReaderLore",
+        )
+        block = _vs.format_chunk_lines(ranked)
+        if not block:
+            return ""
+        logger.debug("[ReaderLore] appendix %d entries", block.count("\n\n") + 1)
+        return block
+    except Exception as e:
+        logger.debug(f"[ReaderLore] skip: {e}")
+        return ""
 
 
 def _apply_reader_exposure(channel_id: str, turn: int, digest: Dict[str, Any]) -> None:
@@ -563,11 +586,22 @@ async def run_reader(client, channel_id: str, turn: int,
     except Exception:
         _recent_turns = set()
     _recall = await _build_notebook_recall(client, channel_id, prose, _recent_turns)
+    # [2026-08-17] 뒤표지와 공책 사이 — 세계는 알아도 되는 서브 GM의 정당한 사전지식.
+    # 비밀 스크럽 통과분만. 재료 없음·엔진 실패 = 빈 문자열 = 블록 생략(현행 동작).
+    _appendix = await _build_lore_appendix(client, channel_id, prose)
     user_parts = []
     if _blurb:
         user_parts.append(
             "### THE BACK COVER (the introduction that drew you to this serial — "
             f"publisher's copy, not the text; never quote from here)\n{_blurb}"
+        )
+    if _appendix:
+        user_parts.append(
+            "### THE PUBLISHED APPENDIX — entries touching this chapter (public setting "
+            "material that shipped with the books, pulled for this page; it tells you the "
+            "world, not the author's plan. Reference only: never quote from here, and an "
+            "appendix entry alone is not something that happened on this page)\n"
+            f"{_appendix}"
         )
     if _notebook or _recall:
         _nb_parts = []
@@ -613,7 +647,7 @@ async def run_reader(client, channel_id: str, turn: int,
             # 독자 전용 모델 라우팅(env 미설정=pro 폴스루=V4-Pro).
             with config.reader_analysis():
                 response = await client.aio.models.generate_content(
-                    model=config.MODEL_ID_PRO, contents=contents, config=gen_config,
+                    model=config.role_model("reader"), contents=contents, config=gen_config,
                 )
             if not getattr(response, "text", None):
                 continue
@@ -715,10 +749,10 @@ Ground everything in the given axes. Output JSON only:
 }"""
 
 
-def _seed_bigrams(text: str) -> set:
-    import re as _re
-    s = _re.sub(r"[^가-힣]", "", str(text))
-    return {s[i:i + 2] for i in range(len(s) - 1)}
+# [2026-08-17 공용화] 한글 bigram 겹침 축 = 비밀 판정과 시드 이름 대조가 **같은 도구**를 쓴다.
+#   구현은 vector_search 한 곳(`kr_bigrams`), 여기는 별칭 — 판정기가 옮겨갈 때 이 축만 남으면
+#   같은 함수가 두 벌이 된다(임계는 같은데 정규화가 다른 날이 온다).
+_seed_bigrams = _vs.kr_bigrams
 
 
 async def run_seed_replenish(client, channel_id: str) -> bool:
@@ -772,7 +806,7 @@ async def run_seed_replenish(client, channel_id: str) -> bool:
         # [2026-08-11 리더 §7] 본 콜과 동일 라우팅(3콜 일괄 교체 — 위 뒤표지와 같은 사유).
         with config.reader_analysis():
             response = await client.aio.models.generate_content(
-                model=config.MODEL_ID_PRO, contents=contents, config=gen_config)
+                model=config.role_model("reader"), contents=contents, config=gen_config)
         if not getattr(response, "text", None):
             return False
         raw = json.loads(bot_utils.clean_json_text(response.text))

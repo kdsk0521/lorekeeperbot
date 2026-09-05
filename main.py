@@ -54,8 +54,11 @@ bot_utils.setup_verbose_log()
 
 DISCORD_TOKEN = config.DISCORD_TOKEN
 GEMINI_API_KEY = config.GEMINI_API_KEY
-MODEL_ID = config.MODEL_ID
-MODEL_ID_FLASH = config.MODEL_ID_FLASH
+# [2026-08-18 라우팅 개편] 제미니 모델명을 이름표로 돌리지 않는다 — **역할**을 선언한다.
+#   main = 구 MODEL_ID 자리(발효·연대기·GC·OOC 편집) / flash = 배경 분석 공용.
+#   gemini 백엔드면 실명, openai 면 "role:main"/"role:flash" 토큰이 온다(config.role_model).
+MODEL_ID = config.role_model("main")
+MODEL_ID_FLASH = config.role_model("flash")
 
 # [2026-07-02] Gemini 키는 gemini 백엔드 경로가 활성일 때만 필요 (openai 전환 후 하드 의존 제거).
 if not GEMINI_API_KEY and (config.ANALYSIS_BACKEND != "openai" or config.RENDERER_BACKEND != "openai"):
@@ -391,7 +394,15 @@ if __name__ == "__main__":
     else:
         _ai_key_ok = bool(GEMINI_API_KEY)
         _ai_key_name = "GEMINI_API_KEY"
-    if DISCORD_TOKEN and _ai_key_ok:
+    # [2026-08-18 모델 env 단일 레버] config 에 모델 기본값이 없다 → 빠지면 조용히 굴러가는 대신
+    # **빠진 이름을 전부 나열**하고 기동 거부. 검사는 여기서만 호출한다(config import 는 무해 유지).
+    _missing_models = config.validate_model_env()
+    if _missing_models:
+        print("MISSING MODEL ENV (.env 에 아래 이름을 채우세요 — 코드 기본값 없음)")
+        for _n in _missing_models:
+            print(f"  - {_n}")
+        print(f"  (backend: RENDERER={config.RENDERER_BACKEND} / ANALYSIS={config.ANALYSIS_BACKEND})")
+    elif DISCORD_TOKEN and _ai_key_ok:
         client_discord.run(DISCORD_TOKEN)
     else:
         print(f"MISSING API KEYS (need DISCORD_TOKEN + {_ai_key_name})")

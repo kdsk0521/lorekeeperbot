@@ -15,7 +15,7 @@ import re
 import time
 import random
 import logging
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 import difflib
 import config
 import domain_manager
@@ -136,14 +136,21 @@ def get_npc_context_for_renderer(channel_id: str, npc_name: str) -> dict:
     # Description text에서 [Secret]/[Hidden] 섹션 제거
     desc = result.get("description", "")
     if desc:
-        # Remove sections starting with [Secret], [Hidden], [비밀], [숨겨진]
-        desc = re.sub(
-            r'(?:\[(?:Secret|Hidden|비밀|숨겨진)[^\]]*\])[^\[]*',
-            '', desc, flags=re.IGNORECASE
-        )
-        result["description"] = desc.strip()
+        result["description"] = strip_hidden_markers(desc)
 
     return result
+
+
+# [2026-08-17] 마커 은닉 제거를 상수+함수로 승격. 구 코드는 이 정규식이 위 함수 안에
+#   리터럴로 있었고, 시트를 읽는 두 번째 소비자(속마음 시트 요지)가 생기면서 **같은
+#   판단이 두 벌**이 될 자리였다. 규칙을 베끼는 순간 한쪽만 고쳐지는 날이 온다.
+_HIDDEN_MARKER_RE = re.compile(
+    r'(?:\[(?:Secret|Hidden|비밀|숨겨진)[^\]]*\])[^\[]*', re.IGNORECASE)
+
+
+def strip_hidden_markers(desc: str) -> str:
+    """`[Secret]`/`[Hidden]`/`[비밀]`/`[숨겨진]` 마커와 그 뒤 조각을 제거."""
+    return _HIDDEN_MARKER_RE.sub('', str(desc or "")).strip()
 
 
 def migrate_npc_fields(channel_id: str) -> int:
@@ -187,6 +194,51 @@ def _clean_markdown(s: str) -> str:
     return re.sub(r'\*{1,2}', '', s).strip().strip('"').strip()
 
 
+# [2026-09-02] 라벨 값 추출 단일 관문 — 구 정규식 3병 수리.
+#   병1 `[:\s]+` = **콜론 없이 공백만으로도** 매칭 → 헤더 줄 `## 6. Speech Style & Tone`이
+#        값 줄로 오인돼 `tone="& Tone"`이 저장됐다. role도 같은 형태였다.
+#   병2 role에는 라벨 볼드 허용이 없어 `**Occupation**: Physician`이 **통째로 유실**됐다
+#        (tone엔 있었다 = 자매 자리 소급 누락).
+#   병3 두 벌의 정규식이 같은 판단을 따로 했다 → 한쪽만 고쳐지는 자리.
+#   ⚠ `tone`은 domain_manager._PRESERVE_KEYS라 오염 값이 **재등록으로 안 지워진다**.
+#      마이그레이션은 돌리지 않기로 함(레티어스 09-02) — 신규 등록만 깨끗해진다.
+_HEADER_LN = re.compile(r'^\s*#')
+
+
+def _label_value(desc: str, label_re: str) -> str:
+    r"""`라벨: 값` 한 줄에서 값만. 2단 판정.
+
+    ① 헤더가 아닌 줄의 `라벨: 값` (콜론 **필수**, 라벨 볼드 허용)
+    ② 없으면 **헤더 이름이 라벨 그 자체**인 섹션의 첫 본문 줄
+
+    ②를 남기는 이유: `### Tone\n무뚝뚝하다.` 형 시트가 실제로 있고 그건 옳은 추출이었다.
+    ②는 헤더 이름이 라벨과 **같을 때만** 성립한다 — 부분일치를 허용하면 병1이 그대로 돌아온다
+    (`### 6. Speech Style & Tone`은 라벨이 아니라 라벨을 **포함한** 이름이다).
+    """
+    if not desc:
+        return ""
+    lines = desc.splitlines()
+    pat = re.compile(r'^[-*>\s]*\**\s*(?:' + label_re + r')\s*\**\s*[:：]\s*(.+)$', re.I)
+    for ln in lines:
+        if _HEADER_LN.match(ln):
+            continue
+        m = pat.match(ln.strip())
+        if m:
+            return _clean_markdown(m.group(1))
+    head = re.compile(r'^\s*#{1,4}\s*(?:\d+[.)]\s*)?(?:' + label_re + r')\s*$', re.I)
+    for i, ln in enumerate(lines):
+        if head.match(ln):
+            for nxt in lines[i + 1:]:
+                if nxt.strip() and not _HEADER_LN.match(nxt):
+                    return _clean_markdown(nxt.strip())
+            break
+    return ""
+
+
+_ROLE_LABELS = r'Rank/Role|Occupation'
+_TONE_LABELS = r'Tone|Speaking\s*Style|Speech\s*Style|말투|어조'
+
+
 def _extract_structured_fields(desc: str) -> Dict[str, str]:
     """NPC 프로필 텍스트에서 구조화 필드(role, location, tone, personality) 자동 추출."""
     fields = {}
@@ -194,10 +246,9 @@ def _extract_structured_fields(desc: str) -> Dict[str, str]:
         return fields
 
     # Role (예: "- Rank/Role: Emergency physician / Sharehouse resident (Room 2)")
-    role_m = re.search(r'(?:Rank/Role|Occupation)[:\s]+(.+)', desc, re.IGNORECASE)
-    if role_m:
-        role_text = _clean_markdown(role_m.group(1))   # [1M remap] 필드캡 제거(시트 5k자, 한 줄이라 자연 바운드)
-        fields["role"] = role_text
+    _role = _label_value(desc, _ROLE_LABELS)   # [1M remap] 필드캡 제거(시트 5k자, 한 줄이라 자연 바운드)
+    if _role:
+        fields["role"] = _role
 
     # Location — [2026-07-28 재정의] **현재 위치의 진실은 world_tree**다(레티어스 결정).
     #   여기서 뽑는 값은 "시트에 적힌 거처/소속 장소" = world_tree에 기록이 아직 없을 때의
@@ -217,10 +268,9 @@ def _extract_structured_fields(desc: str) -> Dict[str, str]:
 
     # Speech/Tone (예: "**Tone:** Low, tired, flat.")
     # [2026-07-28] v2 풀시트는 같은 정보를 `- Speaking Style:` / `- 말투:`로 쓴다 — 편입.
-    tone_m = re.search(
-        r'\*?\*?(?:Tone|Speaking\s*Style|Speech\s*Style|말투|어조)\*?\*?[:\s]+(.+)', desc, re.I)
-    if tone_m:
-        fields["tone"] = _clean_markdown(tone_m.group(1))   # [1M remap] 캡 제거
+    _tone = _label_value(desc, _TONE_LABELS)   # [1M remap] 캡 제거
+    if _tone:
+        fields["tone"] = _tone
 
     # Personality (Core Operating Principle에서 한 줄)
     personality_m = re.search(r'### Core Operating Principle\s*\n+(.+)', desc)
@@ -376,6 +426,47 @@ def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
             logger.info(f"[NPC] Static traits extracted for '{name}': {static_traits}")
     domain_manager.update_npc(channel_id, name, data)
 
+    # [2026-09-02 R4] 시트 거처 폴백 배치 — 스펙 §2.6 표 3행("시트 거처 폴백 배치").
+    # 병: 출석이 `get_npcs_at_location`이 되는 순간, 어느 노드에도 없는 인물은
+    #   **영원히 등장 못 하는 사람**이 된다(현행 Flash 기반엔 없던 구멍). `!npc추가`로
+    #   등록만 된 인물이 여기 해당한다.
+    # 처방: 시트에 거처(`location`: "Room 2" 등)가 적혀 있으면 **쓰기 시점에 앉힌다**
+    #   (`get_npc_current_location`의 읽기 폴백을 앞당긴 형태). 노드가 없으면 만든다.
+    #   등록 정본 관문이 여기 하나라 배치 지점도 하나여야 한다.
+    # ⚠ 멱등 — `update_npc`는 매 턴 불린다(mark_npc_appearance가 부기를 여기로 흘린다).
+    #   **미배치일 때만** 실행한다. 이미 어딘가 있으면 손대지 않는다: 관찰(gaze)이 옮겨 놓은
+    #   위치를 시트 거처가 매 턴 되돌리면 그건 배치가 아니라 순간이동이다(관찰 > 시트).
+    # ⚠ `add_node`가 "capped"(MAX_NODES)면 배치를 생략한다 — 노드 없이 set_npc_location을
+    #   부르면 조용히 "location_not_found"라, 실패를 debug 한 줄로 남기고 넘어간다.
+    try:
+        _all = get_npcs(channel_id) or {}
+        _key = domain_manager._find_npc_key(_all, name) or name
+        _sheet_loc = str((_all.get(_key) or {}).get("location", "") or "").strip()
+        if _sheet_loc:
+            import world_tree as _wt_res
+            if not _wt_res.get_npc_location(channel_id, _key):
+                _ok = True
+                if not _wt_res.resolve_node_id(channel_id, _sheet_loc):
+                    _ar = _wt_res.add_node(
+                        channel_id, _sheet_loc, node_type="area",
+                        properties={"tags": ["sheet_residence"]},
+                    )
+                    _ok = (_ar == "created")
+                    if not _ok:
+                        logger.debug("[presence-check] sheet residence node '%s' not created: %s",
+                                     _sheet_loc, _ar)
+                if _ok:
+                    _pr = _wt_res.set_npc_location(channel_id, _key, _sheet_loc)
+                    if _pr == "placed":
+                        logger.info("[presence-check] sheet residence placed: %s @ %s",
+                                    _key, _sheet_loc)
+                    else:
+                        logger.debug("[presence-check] sheet residence place failed: %s @ %s (%s)",
+                                     _key, _sheet_loc, _pr)
+    except Exception as _e_sheet:
+        logger.debug(f"[presence-check] sheet residence skip: {_e_sheet}")
+
+
 def delete_npc(channel_id: str, name: str) -> tuple:
     """Returns (success: bool, matched_key: str or None)"""
     return domain_manager.delete_npc(channel_id, name)
@@ -449,17 +540,33 @@ def find_similar_npc(channel_id: str, new_name: str, threshold: float = 0.85) ->
         if domain_manager._normalize_npc_name(name).lower() == n_norm:
             return name
 
-    # 2. Containment Check (Only for names >= 3 chars)
+    # 2. 토큰 매칭 — [2026-09-02] 구 코드는 **부분문자열 포함**이었다.
+    #    실측 로그: 'Shirase Rin'→'Rin' / 'Endo Rina'→'Rin' / 'Reina'→'Rei'.
+    #    짧은 기존 이름 하나가 그것을 문자열로 품은 **모든** 새 이름을 삼킨다.
+    #    일본·한국식 이름(Rin/Rina/Reina/Rei/Ren)에서 사실상 상시 오작동이고,
+    #    호출부(add_lore_npcs)는 매칭되면 **등록을 건너뛰므로** 인물이 조용히 유실된다.
+    #    ★오늘 `_section_family`에서 고친 것과 **같은 병**: 부분일치는 낱말 경계를 모른다.
+    #    처방: 낱말 토큰 교집합 + **후보가 정확히 1명일 때만**
+    #    (domain_manager._find_npc_key 4단계의 "2명 이상 공유 토큰이면 None"과 같은 규율).
     if len(n_norm) >= 3:
-        for name in existing_npcs:
-            e_norm = domain_manager._normalize_npc_name(name).lower()
-            if n_norm in e_norm or e_norm in n_norm:
-                return name
+        _split = lambda x: {t for t in re.split(r'[\s·・,./\-]+', x) if t}
+        q_tok = _split(n_norm)
+        hits = [name for name in existing_npcs
+                if q_tok & _split(domain_manager._normalize_npc_name(name).lower())]
+        if len(hits) == 1:
+            return hits[0]
+        if len(hits) > 1:
+            return None      # 애매하면 오병합 대신 별개 등록에 위임
 
-    # 3. Fuzzy Match
-    matches = difflib.get_close_matches(new_name, existing_npcs.keys(), n=1, cutoff=threshold)
-    if matches:
-        return matches[0]
+    # 3. Fuzzy Match — 짧은 이름에는 적용하지 않는다.
+    #    difflib 비율은 짧을수록 쉽게 넘는다: "Rina"↔"Rin" = 0.857 ≥ 0.85 → 통과해버린다.
+    #    (2단계를 토큰으로 고쳐도 여기서 같은 오병합이 되살아나던 자리.)
+    if len(n_norm) >= 5:
+        _cands = [k for k in existing_npcs
+                  if len(domain_manager._normalize_npc_name(k)) >= 5]
+        matches = difflib.get_close_matches(new_name, _cands, n=1, cutoff=threshold)
+        if matches:
+            return matches[0]
 
     return None
 
@@ -536,7 +643,21 @@ def add_lore_npcs(channel_id: str, npc_list: List[Dict[str, Any]]) -> int:
     """
     로어 분석 결과로 NPC 일괄 등록.
     [Deduplication Added] 유사한 이름이 있으면 스킵하거나 병합합니다.
+
+    ⚠[2026-09-02] **기본 비활성**(`config.LORE_NPC_AUTO_REGISTER`, 기본 0).
+      레티어스 판정: NPC는 `!npc추가`로 따로 넣는 워크플로로 바뀌었고, 출처가 둘이면
+      판정이 두 벌이 된다. 로어 추출은 이름 정확도가 낮아(로어 본문에서 뽑는다) 짧은
+      이름의 **유령 NPC**를 만들고, 이후 수동 등록은 별개 항목이 되어 둘이 공존한다
+      (수동 경로 `_find_npc_key`는 안전하게 분리하므로) — 청소 경로가 없다.
+      코드는 남긴다: 로어북만 넣고 시작하는 워크플로로 되돌릴 때 환경변수 1줄이면 된다.
+    ※ Flash의 NPC 추출 자체는 통합 분석의 일부라 그대로 돈다(콜 절감 아님). 여기서 막는
+      것은 **쓰기**뿐이고, pc_info·genres·lore_summary는 영향 없다.
     """
+    if not getattr(config, "LORE_NPC_AUTO_REGISTER", False):
+        if npc_list:
+            logger.info("[NPC] 로어 NPC 자동등록 비활성 — %d명 건너뜀 "
+                        "(LORE_NPC_AUTO_REGISTER=1 로 재활성)", len(npc_list))
+        return 0
     count = 0
     for npc in npc_list:
         name = npc.get("name", "").strip()
@@ -545,7 +666,9 @@ def add_lore_npcs(channel_id: str, npc_list: List[Dict[str, Any]]) -> int:
         # [Check Duplicate]
         sim_name = find_similar_npc(channel_id, name)
         if sim_name:
-             logger.info(f"[NPC] 로어 NPC '{name}' -> 유사한 기존 NPC '{sim_name}' 발견. 병합/스킵 처리.")
+             # [2026-09-02] 구 문구는 "병합/스킵"이었지만 코드는 **스킵만** 한다.
+             #   문서와 동작이 어긋나면 로그를 읽는 사람이 유실을 병합으로 오독한다.
+             logger.info(f"[NPC] 로어 NPC '{name}' -> 기존 '{sim_name}'와 동일 인물로 판정. **등록 건너뜀**(병합 아님).")
              # Merge logic: Append description if source matches or just update timestamps?
              # For Lore extraction, usually we want to enrich existing if possible, 
              # but often extract might be repetitive.
@@ -743,19 +866,53 @@ def get_scene_npc_names(channel_id: str) -> List[str]:
     return list(get_session_npcs(channel_id).keys())
 
 
-def get_onstage_npc_names(channel_id: str, within_turns: int = 1) -> List[str]:
-    """최근 `within_turns` 턴 안에 실제로 등장한 NPC 이름.
+# [2026-09-02 R4] 레거시 폴백 로그의 턴당 1회 게이트 — {channel_id: turn_index}.
+_ONSTAGE_FALLBACK_LOGGED: Dict[str, int] = {}
 
-    [2026-07-28 신설] DAI가 만들어지기 **전** 단계(위치 기록·오프스크린 후보 계산)에서
-    "지금 무대에 있는 사람"을 알아야 하는 자리가 있다. 그동안 이 자리들이
-    get_scene_npc_names(=전체 명부)를 써서 다음 두 병을 만들었다:
-      · world_tree 위치 기록 — PC가 이동할 때마다 **등록된 NPC 전원이 그 장소로 순간이동**
-        (set_npc_location이 기존 위치에서 제거 후 재배치하므로 위치 기록 자체가 무의미해짐)
-      · 오프스크린 후보 — "부재 인물"에서 전체 명부를 빼니 로어 NPC만 남고,
-        정작 노리던 '한동안 안 나온 세션 NPC'는 절대 후보에 못 올랐다
-    판정 재료는 mark_npc_appearance가 매 턴 갱신하는 `_last_appear_turn`.
-    턴 정보를 못 읽으면 빈 목록(호출부는 폴백을 갖는다) — 잘못된 전체 명부보다 안전하다.
+
+def get_onstage_npc_names(channel_id: str, within_turns: int = 1) -> List[str]:
+    """지금 무대에 있는 NPC 이름 = **PC와 같은 위치 노드의 인원**(0단).
+
+    [2026-09-02 R4 판정 뒤집기] 스펙 §2 / §6 R4 — **출석은 위치의 함수다.**
+    병: 출석의 원본이 Flash였다. `psyche_states ∪ npc_attitudes`가 `mark_npc_appearance`로
+        `_last_appear_turn`에 찍히고 이 판독기가 그걸 되읽었다 — 매 턴 **N명분의 판정**이
+        독립적으로 틀릴 수 있고, 한 번 잘못 찍히면 그 턴의 소비처 여섯이 같이 틀린다(§1.4).
+    처방: **판독기 내부만** 0단(`get_presence_tiers`의 scene)으로 바꾼다. 시그니처도
+        소비처 6곳도 그대로다 — 판독기가 여기 하나로 모여 있어서 가능한 전환(§6 ★).
+        오류 표면이 N → **위치 1개**로 줄고(§2.3), 사람은 턴을 넘어 지속한다
+        (latch: 이동이 곧 퇴장 — `set_npc_location`의 remove-then-place, §2.1).
+    ⚠ `within_turns`는 **호환용 잔존 인자**다(시그니처 무변경이 이 전환의 전제).
+        위치는 턴 창이 아니라 **상태**라 0단에는 창이 없다 — 퇴장 이벤트 없이도 이동이
+        인원을 옮기므로 "몇 턴 안에"라는 물음 자체가 사라진다. 아래 레거시 폴백에서만 쓰인다.
+    폴백(단 하나): PC 노드를 해상 못 하면(`unresolved` — 전환 직후·위치 미기록 세션)
+        레거시 `_last_appear_turn` 경로로 내려간다. 위치 그래프가 아직 비어 있는 판에서
+        무대가 상시 빈손이면 상태창·속마음·출석 변수가 통째로 죽는다 — 그건 판정 개선이
+        아니라 봇이 벙어리가 되는 것이다. 들어갈 때 `[presence-check]` 한 줄을 남긴다.
+    ★`mark_npc_appearance`/`_last_appear_turn`은 **계속 쓴다** — `get_npc_tier`의
+        appear_count 계측이 그 부기를 소비한다. R4가 바꾸는 것은 **읽기**뿐이다.
     """
+    _tiers = get_presence_tiers(channel_id)
+    if not _tiers.get("unresolved"):
+        return [str(n) for n in (_tiers.get("scene") or []) if str(n).strip()]
+
+    try:
+        _pc_loc = domain_manager.get_current_location(channel_id)
+    except Exception:
+        _pc_loc = ""
+    # 턴당 한 줄 — 이 판독기는 한 턴에 소비처 여섯에서 불린다(§1.4 표). 매 호출 로그면
+    # 전환 직후 세션 로그가 같은 줄 여섯 개로 도배되고, 그러면 아무도 안 읽는다.
+    try:
+        _t_key = int((domain_manager.get_world_state(channel_id) or {}).get("turn_index", 0) or 0)
+    except Exception:
+        _t_key = 0
+    if _ONSTAGE_FALLBACK_LOGGED.get(channel_id) != _t_key:
+        _ONSTAGE_FALLBACK_LOGGED[channel_id] = _t_key
+        logger.info("[presence-check] onstage fallback=legacy (pc location unresolved: %s)",
+                    _pc_loc or "-")
+
+    # ── 레거시 경로 (2026-07-28 원본 그대로) ─────────────────────────────
+    # 판정 재료는 mark_npc_appearance가 매 턴 갱신하는 `_last_appear_turn`.
+    # 턴 정보를 못 읽으면 빈 목록(호출부는 폴백을 갖는다) — 잘못된 전체 명부보다 안전하다.
     try:
         turn = int((domain_manager.get_world_state(channel_id) or {}).get("turn_index", 0) or 0)
     except (TypeError, ValueError, AttributeError):
@@ -774,6 +931,142 @@ def get_onstage_npc_names(channel_id: str, within_turns: int = 1) -> List[str]:
         if last >= cutoff:
             names.append(name)
     return names
+
+
+# [2026-09-02 R4] 미배치·비연결 인물의 홉 거리. 정렬 안정성을 위해 무한대가 아닌 유한값.
+UNPLACED_HOPS = 999
+
+
+def get_presence_tiers(channel_id: str) -> Dict[str, Any]:
+    """위치 그래프가 말하는 3단 출석 + 홉 거리. 스펙 §2.4.
+
+    [2026-09-02 R2] log-only 검증자로 신설 → **[R4] 출석의 정본**이 됐다.
+      `get_onstage_npc_names`가 여기 scene(0단)을 그대로 돌려주므로, 이 함수의 판정이
+      곧 소비처 6곳의 출석이다(§1.4 표). 바꿀 때 그 여섯을 같이 생각할 것.
+
+    출석은 이진이 아니라 **거리**다(스펙 ⓐ). 트리는 애초에 거리를 표현하려고 설계돼 있다
+    (`connections` 간선 + 형제/부모/자식):
+      · scene(0단)     = PC와 같은 노드 — 지금 여기 있다
+      · reachable(1단) = 부모 / 자식 / 연결 이웃 / 형제 — **들어올 수 있다**
+      · absent(2단)    = 그 외 등록 NPC 중 활성(`is_npc_active`)인 사람
+      · hops           = PC 노드로부터의 그래프 거리(부모·자식·간선 BFS)
+
+    ⚠ 티어와 홉은 **같은 축이 아니다.** 티어는 규칙이고 홉은 거리다 — 형제는 부모를 거쳐
+      2홉인데도 1단이고, 간선 이웃은 1홉이다. 둘이 어긋나는 게 정상이고, 2단 정렬(§2.4
+      "옆방 흔적이 다른 도시 흔적보다 먼저")은 규칙이 아니라 거리를 봐야 한다.
+
+    PC 노드를 해상 못 하면 전원을 absent로 몰지 **않는다** — 그건 "아무도 없다"는
+    거짓 단정이고, 위치 미기록과 부재는 다른 사실이다. 대신 `unresolved: True`를 얹은
+    빈 3단을 돌려주고 호출부가 폴백하게 한다(R4: `get_onstage_npc_names`의 레거시 경로).
+
+    Returns: {"scene": [...], "reachable": [...], "absent": [...], "hops": {name: int}}
+             (+ PC 노드 미해상 시 "unresolved": True)
+    """
+    empty: Dict[str, Any] = {"scene": [], "reachable": [], "absent": [],
+                             "hops": {}, "unresolved": True}
+    try:
+        import world_tree
+    except Exception as _e:
+        logger.debug(f"[presence-tiers] world_tree import skip: {_e}")
+        return empty
+
+    try:
+        pc_loc = domain_manager.get_current_location(channel_id)
+    except Exception:
+        pc_loc = ""
+    if not pc_loc or str(pc_loc).strip().lower() in ("", "unknown"):
+        return empty
+
+    node_id = world_tree.resolve_node_id(channel_id, pc_loc)
+    if not node_id:
+        return empty
+    nodes = world_tree.get_all_nodes(channel_id) or {}
+    node = nodes.get(node_id)
+    if not isinstance(node, dict):
+        return empty
+    node_name = str(node.get("name", node_id))
+
+    # 0단 — PC와 같은 노드
+    scene: List[str] = []
+    for n in (node.get("npcs_present", []) or []):
+        if n and n not in scene:
+            scene.append(n)
+
+    # 1단 — 연결 이웃 + 형제(get_nearby_locations) + 부모 노드의 인원
+    reachable: List[str] = []
+
+    def _add_reach(names):
+        for _n in (names or []):
+            if _n and _n not in scene and _n not in reachable:
+                reachable.append(_n)
+
+    try:
+        for nb in (world_tree.get_nearby_locations(channel_id, node_name) or []):
+            _add_reach(world_tree.get_npcs_at_location(channel_id, nb.get("name", "")))
+    except Exception as _e:
+        logger.debug(f"[presence-tiers] nearby skip: {_e}")
+    _parent = nodes.get(node.get("parent_id", "") or "")
+    if isinstance(_parent, dict):
+        _add_reach(_parent.get("npcs_present", []))
+    # [2026-09-02 검수 수리] **자식 노드도 1단.** 스펙 §2.4 문면("부모/연결 이웃/형제")엔 자식이
+    #   빠져 있었고 구현자가 그대로 옮겨 방향 비대칭을 만들었다 — PC가 "저택 서재"면 "저택"의
+    #   인물은 근접인데, PC가 "저택"이면 "저택 서재"의 인물은 부재였다. 근접(들어올 수 있다)은
+    #   대칭이어야 한다: 로비에 있으면 서재 사람이 문을 열고 나올 수 있다. 트리 거리로도
+    #   부모·자식은 같은 1홉이다(형제는 2홉인데도 포함되므로 자식 제외는 더더욱 근거가 없다).
+    for _cid in (node.get("children", []) or []):
+        _child = nodes.get(_cid)
+        if isinstance(_child, dict):
+            _add_reach(_child.get("npcs_present", []))
+
+    # 2단 — 나머지. 생존축 필터는 is_npc_active 하나로만 판정한다(자매 자리 소급용 단일 관문).
+    absent: List[str] = []
+    for name, data in (get_npcs(channel_id) or {}).items():
+        if not isinstance(data, dict):
+            continue
+        if name in scene or name in reachable:
+            continue
+        if not is_npc_active(data):
+            continue
+        absent.append(name)
+
+    # [2026-09-02 R4] 홉 거리 — PC 노드에서 부모·자식·연결 간선 BFS. 스펙 §2.4.
+    # 왜 필요한가: 2단(부재)은 평평한 목록이면 "다른 도시 사람"과 "옆방 사람"이 같은 무게로
+    #   offscreen_trace 후보에 오른다. 거리를 실어야 옆방 흔적이 먼저 온다.
+    # 미배치(어느 노드에도 없음)·비연결 노드는 UNPLACED_HOPS — 큰 유한값이라 정렬 맨 뒤에
+    #   서면서도 비교가 터지지 않는다.
+    hops: Dict[str, int] = {}
+    try:
+        _dist = {node_id: 0}
+        _queue = [node_id]
+        while _queue:
+            _cur = _queue.pop(0)
+            _cn = nodes.get(_cur) or {}
+            _adj: List[str] = []
+            _pid = _cn.get("parent_id", "") or ""
+            if _pid:
+                _adj.append(_pid)
+            _adj.extend([c for c in (_cn.get("children", []) or []) if c])
+            for _conn in (_cn.get("connections", []) or []):
+                _tid = (_conn or {}).get("target_id", "") or ""
+                if _tid:
+                    _adj.append(_tid)
+            for _nb in _adj:
+                if _nb in nodes and _nb not in _dist:
+                    _dist[_nb] = _dist[_cur] + 1
+                    _queue.append(_nb)
+        for _nid, _nd in nodes.items():
+            if not isinstance(_nd, dict):
+                continue
+            _d = _dist.get(_nid, UNPLACED_HOPS)
+            for _n in (_nd.get("npcs_present", []) or []):
+                if _n and _d < hops.get(_n, UNPLACED_HOPS + 1):
+                    hops[_n] = _d
+    except Exception as _e_hop:
+        logger.debug(f"[presence-tiers] hops skip: {_e_hop}")
+    for _n in (scene + reachable + absent):
+        hops.setdefault(_n, UNPLACED_HOPS)
+
+    return {"scene": scene, "reachable": reachable, "absent": absent, "hops": hops}
 
 
 def _get_npc_desc(data: dict) -> str:
@@ -1061,7 +1354,10 @@ def _roster_blurb(desc: str, data: dict = None, cap: int = 90) -> str:
 # Scene-Aware Section Selection
 # =========================================================
 # 항상 포함되는 코어 섹션 (이름에 이 문자열이 있으면 프로필 맨 앞으로 당김)
-_CORE_SECTIONS = ["Identity", "Hard Rules"]
+# 우선 배치 — **가족**으로 판정한다(구 코드는 정확일치 리스트라 `## 1. Basic Info`처럼
+#   번호·자유 명명 시트에서 전부 빗나갔다). 순서 = 인물이 먼저, 규율이 다음(09-02 결정).
+_CORE_FAMILIES = ("identity", "rules")
+_CORE_SECTIONS = ["Identity", "Hard Rules"]   # 호환 표기(도구 npc_section_gui가 import한다)
 
 # ⛔[2026-07-28 삭제] _SCENE_SECTION_MAP — 장면 유형별 섹션 화이트리스트.
 #   정의만 있고 **참조처 0**이었다(grep 확인). `_select_profile_sections(scene_type=...)`의
@@ -1074,26 +1370,129 @@ _MAX_TOTAL_PER_NPC = 50000  # [Sprint L 2026-04-29] 사고 방어 안전망만. 
 
 # 배경/설정류 섹션 키 — 렌더러(Pro)엔 "직접 서술 금지, 현재 잔여로만" 프레임으로 제자리 강등.
 # Theoria(Flash 분석)는 원본 유지 (분석엔 배경 전체 필요). drop 아니라 wrap → Sprint L 헤더자유도 무손상.
-_BACKGROUND_SECTION_KEYS = ("background", "backstory", "biography", "배경", "설정", "내력", "과거", "생애")
+# ══ 섹션 가족 판정 — 공용 단일 관문 (2026-09-02) ══════════════════════════
+# 병: 같은 판단("이 섹션은 무엇인가")이 세 자리에 흩어져 있었다 —
+#   _BACKGROUND_SECTION_KEYS(여기) / _VOICE_SECTION_KEYS·_HIDDEN_SECTION_KEYS(build_voice_digest
+#   근처) / _CORE_SECTIONS(정확일치 리스트). 그중 은닉·목소리 사전은 **소비자가
+#   build_voice_digest 하나뿐**이라 렌더러 프로필은 아무 혜택도 못 받고 있었다.
+#   사전이 여러 벌이면 한쪽만 고쳐지는 날이 온다 → 한 자리로 모으고 판정 함수 하나만 쓴다.
+#
+# ★정본 가족은 시트 관례가 아니라 **코드가 실제로 다르게 대우하는 기능**에서 나온다:
+#     hidden=렌더러에서 감싸기 / voice=목소리 재료 / rules·identity=우선 배치 /
+#     background=강등 / **미매칭=원문 순서 통과(이름을 만들지 않는다)**
+#   이 다섯에 안 걸리는 정본 이름을 만들어봐야 아무 일도 하지 않는다.
+# ★사전이 뒤처져도 안전한 이유(= _PRESERVE_KEYS와 다른 점): 여기서 뒤처짐의 손해는
+#   "기능이 안 걸림"뿐이고 섹션 내용은 통과 경로로 온전히 남는다(유실 0·가역).
+# 설계: 파티쳇수정/npc_sheet_ingest_spec_2026-09-02.md §5
+
+# 은닉 — 목소리보다 **먼저** 걸린다("Secret Voice"는 목소리가 아니라 비밀이다).
+# "정체"는 넣지 않는다: 흔한 섹션명 `정체성`(=Identity)을 오폭한다.
+_HIDDEN_SECTION_KEYS = (
+    "secret", "hidden", "true identity", "agenda", "betrayal", "deception",
+    "비밀", "숨겨진", "기밀", "속내",
+)
+# 목소리 — v7/v6=Core Traits·Aside, v5=Voice, 그 외 외부 시트의 성격·말투 계열.
+# ("speech"가 `Speech Style & Tone`을 이미 덮으므로 조합형 항목을 따로 넣지 않는다.)
+_VOICE_SECTION_KEYS = (
+    "core traits", "aside", "voice", "personality", "speech", "tone",
+    "성격", "말투", "어조", "핵심 특성", "방백",
+)
+# 행동 규율 — v7 정본의 `Direction`이 여기다(구 사전엔 어디에도 없어 통과되고 있었다).
+_RULES_SECTION_KEYS = (
+    "direction", "hard rules", "rules", "guideline", "guidelines",
+    "directive", "discipline", "규칙", "규율", "원칙", "금칙",
+)
+# 배경 — 강등(작가 참조) 대상.
+_BACKGROUND_SECTION_KEYS = (
+    "background", "backstory", "biography", "lore", "history",
+    "배경", "설정", "내력", "과거", "생애",
+)
+# 정체 — 우선 배치 1순위. `core` 단독은 넣지 않는다(`Core Wound`가 끌려 올라온다).
+_IDENTITY_SECTION_KEYS = (
+    "identity", "basic info", "basic profile", "overview",
+    "기본", "정체", "개요",
+)
+
+# 판정 순서 = 특수 → 일반. 첫 매치 승. 겹치는 이름에서 결과가 흔들리지 않게 **고정**한다.
+_SECTION_FAMILIES = (
+    ("hidden", _HIDDEN_SECTION_KEYS),
+    ("voice", _VOICE_SECTION_KEYS),
+    ("rules", _RULES_SECTION_KEYS),
+    ("background", _BACKGROUND_SECTION_KEYS),
+    ("identity", _IDENTITY_SECTION_KEYS),
+)
+
+_SEC_NUM_PREFIX = re.compile(r'^\s*\d+[.)]\s*')
+# ASCII 키는 낱말 경계를 요구한다 — "stone"이 `tone`에, "milestone"이 목소리에 걸리는 걸 막는다.
+# 단 **뒤쪽 복수형 s는 허용**한다: v7 정본의 실제 섹션명이 `Secrets`인데 키는 `secret`이라,
+#   경계만 걸면 정작 잡아야 할 섹션이 튕긴다(2026-09-02 스모크가 검출). `secretary`는
+#   s? 뒤의 경계가 여전히 막으므로 오탐은 열리지 않는다.
+# 한글 키는 경계 개념이 없으므로 부분일치 그대로(오탐 사례 없음).
+_SEC_KEY_RE = {}
+
+
+def _normalize_section_name(name: str) -> str:
+    """번호 접두·마크다운 장식 제거 후 소문자.
+
+    외부 시트는 `## 6. Speech Style & Tone`처럼 번호를 붙인다 — 정규화 없이 정확일치를
+    쓰면(구 _CORE_SECTIONS) 그런 시트에서 전부 빗나간다.
+    """
+    n = _SEC_NUM_PREFIX.sub("", str(name or ""))
+    n = re.sub(r'[*_#]', '', n)
+    return n.strip().lower()
+
+
+def _section_family(name: str) -> str:
+    """섹션 이름 → 정본 가족(hidden/voice/rules/background/identity). 못 붙으면 ""(=통과)."""
+    n = _normalize_section_name(name)
+    if not n:
+        return ""
+    for fam, keys in _SECTION_FAMILIES:
+        for k in keys:
+            if k.isascii():
+                r = _SEC_KEY_RE.get(k)
+                if r is None:
+                    r = _SEC_KEY_RE[k] = re.compile(
+                        r'(?<![a-z0-9])' + re.escape(k) + r's?(?![a-z0-9])')
+                if r.search(n):
+                    return fam
+            elif k in n:
+                return fam
+    return ""
 
 
 def _is_background_section(name: str) -> bool:
-    n = (name or "").lower()
-    return any(k in n for k in _BACKGROUND_SECTION_KEYS)
+    return _section_family(name) == "background"
+
+
+# ⚠ **넓은 _VOICE_SECTION_KEYS와 일부러 구분한다.** 그쪽은 "목소리 **재료**"(성격·말투·핵심
+#   특성까지 넓게)이고, 이쪽은 "**1인칭 목소리 블록**을 가졌는가"라는 좁은 판정이다.
+#   가족 판정으로 넓히면 `### Personality`만 있는 시트가 hybrid로 잡혀 보이스카드 증류를
+#   건너뛴다 = 정작 말투 추출이 필요한 시트가 빠진다. 저쪽이 묶어 놓은 걸 분리해서 판정한다.
+_VOICE_BLOCK_RE = re.compile(r'^(?:voice|aside)\b')
 
 
 def _is_hybrid_profile(desc: str) -> bool:
     """Voice 섹션(1인칭 목소리 블록)을 가진 시트인가.
-    [2026-07-28] h4형 시트(`#### Voice`)도 인정 — 섹션 깊이 판정과 보조를 맞춘다."""
-    # [2026-08-10] Aside판(방백 생성 템플릿, v5 후계) 인식 — 섹션명만 다르고 역할은 Voice와 동일.
-    #   미인식 시 보이스카드 증류 대상 + echo 스킵 미적용(오늘 접은 고정조각 반복이 재입장).
-    return bool(re.search(r'^#{3,4}(?!#)\s+(?:Voice|Aside)\b', desc or "", re.MULTILINE))
+    [2026-07-28] h4형 시트(`#### Voice`)도 인정 — 섹션 깊이 판정과 보조를 맞춘다.
+    [2026-08-10] Aside판(방백 생성 템플릿, v5 후계) 인식 — 섹션명만 다르고 역할은 Voice와 동일.
+      미인식 시 보이스카드 증류 대상 + echo 스킵 미적용(접은 고정조각 반복이 재입장).
+    [2026-09-02] 구 코드는 `#{3,4}` 리터럴이라 h1/h2형 시트의 `## Voice`를 못 봤다 →
+      섹션 파서를 거쳐 **시트 자신의 깊이**로 판정한다(번호 접두도 여기서 벗겨진다)."""
+    return any(_n != "_preamble" and _VOICE_BLOCK_RE.match(_normalize_section_name(_n))
+               for _n in _parse_sections(desc or ""))
 
 
 def _extract_voice_section(desc: str) -> str:
-    """프로필에서 ### Voice 섹션 텍스트만 추출. 없으면 빈 문자열."""
-    sections = _parse_sections(desc)
-    return sections.get("Voice") or sections.get("Aside", "")
+    """프로필에서 Voice(또는 Aside) 섹션 텍스트만 추출. 없으면 빈 문자열.
+
+    [2026-09-02] 구 코드는 `sections.get("Voice")` **정확일치**라 `## 6. Voice Notes`나
+      번호 접두가 붙은 시트에서 통째로 빗나갔다. 판정을 _is_hybrid_profile과 한 벌로 맞춘다.
+    """
+    for _n, _t in _parse_sections(desc or "").items():
+        if _n != "_preamble" and _VOICE_BLOCK_RE.match(_normalize_section_name(_n)):
+            return _t
+    return ""
 
 
 def _section_header_depth(desc: str) -> int:
@@ -1106,11 +1505,21 @@ def _section_header_depth(desc: str) -> int:
     구 코드는 `###`만 잘라서 h4형이 **통째로 한 덩어리**가 됐다. 12,000자짜리 시트에서
     `#### Background`가 섹션으로 안 잡히니 "직접 낭독 금지" 프레임도 안 붙고,
     코어 섹션 정렬도 무의미해졌다.
-    판정: h3가 2개 이상이면 h3형. h3가 1개 이하인데 h4가 2개 이상이면 h4형.
+    [2026-09-02] h1·h2형 편입. 외부 시트에는 `# 이름 Profile` 한 줄 아래 `## 1. Basic Info`
+      … 형이 흔한데, 구 판정은 h3/h4만 봐서 **3을 반환하고 섹션을 하나도 못 잘랐다**
+      (통짜 → 배경 강등도 은닉 감싸기도 호출조차 안 됨).
+    판정: **깊이 1~4 중 헤더가 2개 이상인 가장 얕은 깊이.** 없으면 3.
+      구 두 계열을 그대로 재현한다 — h3형은 h3 채택, `### 이름` 1개 + `#### 섹션` 16개는
+      h3가 2개 미만이라 탈락하고 h4 채택. 회귀 없이 h1·h2만 얹는 확장이다.
+    "2개 이상"이 하는 일: `# Airi Profile`처럼 **하나뿐인 제목 헤더**를 구분자에서 뺀다.
+      안 빼면 파일 전체가 한 섹션이 되어 아무것도 안 잘린다.
+    ★깊이가 중요한 이유는 개수가 아니라 **범위**다 — 어느 깊이를 구분자로 삼느냐가
+      하위 헤더를 부모 안에 남길지 형제로 쪼갤지를 정하고, 그게 강등·은닉이 걸리는 범위다.
     """
-    h3 = len(re.findall(r'^###(?!#)\s+\S', desc or "", re.MULTILINE))
-    h4 = len(re.findall(r'^####(?!#)\s+\S', desc or "", re.MULTILINE))
-    return 4 if (h3 <= 1 and h4 >= 2) else 3
+    for _d in (1, 2, 3, 4):
+        if len(re.findall(r'^' + '#' * _d + r'(?!#)\s+\S', desc or "", re.MULTILINE)) >= 2:
+            return _d
+    return 3
 
 
 def _parse_sections(desc: str) -> Dict[str, str]:
@@ -1139,8 +1548,11 @@ def _select_profile_sections(desc: str, scene_type: str = "normal", demote_backg
     scene_type 인자는 호환성 위해 유지 (내부 사용 X — 미래 exclusion 후보).
     _MAX_TOTAL_PER_NPC = 50000은 사고 방어 안전망 (정상 운영 도달 X).
     """
-    if not desc or '###' not in desc:
-        return (desc[:_MAX_TOTAL_PER_NPC] if desc else "")
+    # [2026-09-02] 구 조기 반환 `'###' not in desc`는 h1/h2형 시트를 통째로 돌려보냈다
+    #   (섹션이 안 잘리니 강등·은닉이 호출조차 안 됨). 판정은 깊이 함수 하나에 맡긴다 —
+    #   헤더가 없으면 아래 `len(parsed) <= 1`이 같은 일을 한다.
+    if not desc:
+        return ""
 
     parsed = _parse_sections(desc)
     if len(parsed) <= 1:
@@ -1149,16 +1561,32 @@ def _select_profile_sections(desc: str, scene_type: str = "normal", demote_backg
     result_parts = []
     included = set()
 
-    def _maybe_demote(sec_name, sec_text):
-        # 렌더러 경로에서만 배경/설정류 섹션을 "작가 참조, 직접 서술 금지" 프레임으로 감싼다.
-        if demote_background and _is_background_section(sec_name):
-            return (
-                "[AUTHOR REFERENCE — never narrated directly]\n"
-                "Backstory the writer holds. In prose it surfaces only as present residue "
-                "(a hesitation, a reflex, an avoidance, a tell), never recited as history or laid out as exposition.\n"
-                f"{sec_text}\n"
-                "[end author reference]"
-            )
+    def _maybe_frame(sec_name, sec_text):
+        """렌더러 경로에서만 배경·은닉 섹션에 **태그**를 씌운다.
+
+        [2026-09-02] 구 코드는 배경에 241자짜리 산문 프레임을 **섹션마다·NPC마다** 붙였다
+        → 무대 인원에 선형으로 불어난다(5명이 배경+비밀이면 프레임만 ~2.9k자/턴).
+        크래프트는 이미 상시로 있다 — NPC_BEHAVIOR_SYSTEM(언제 풀리는가)·
+        PROSE_CRAFT_PROTOCOL(어떻게 쓰는가)·조교 패턴. 여기서 다시 가르치면 **이중 투입**이다.
+        이 자리에 필요한 건 "이 텍스트가 그것이다"라는 **표시**뿐이라 태그만 남긴다.
+        태그 낱말 자체가 지시를 진다(withheld/backstory) — 선언이 멀어진 값을 그걸로 치른다.
+
+        ★되돌릴 땐 길이가 아니라 **태그 낱말**부터: [backstory] → [backstory — residue only]
+          → (그래도 안 되면) 프레임 복귀. 길이부터 되돌리면 없앤 이중 투입이 그대로 돌아온다.
+
+        은닉은 **여기가 첫 배선**이다. 구 코드는 필드 키(RENDERER_STRIP_KEYS)와 대괄호 마커
+        (strip_hidden_markers)만 막고 **섹션은 그냥 통과**시켜, v7 `### Secrets`가 렌더러
+        프로필로 새고 있었다(내심 콜에서만 막히던 역전). 드롭이 아니라 감싸기인 이유:
+        드롭하면 비밀이 **행동을 물들이지 못한다** — 값은 발설이 아니라 회피의 모양에 있다.
+        설계: 파티쳇수정/npc_sheet_ingest_spec_2026-09-02.md §7-B·§7-C
+        """
+        if not demote_background:
+            return sec_text
+        _fam = _section_family(sec_name)
+        if _fam == "hidden":
+            return f"[withheld]\n{sec_text}\n[/withheld]"
+        if _fam == "background":
+            return f"[backstory]\n{sec_text}\n[/backstory]"
         return sec_text
 
     # _preamble 먼저 (있고 비어있지 않으면)
@@ -1166,13 +1594,13 @@ def _select_profile_sections(desc: str, scene_type: str = "normal", demote_backg
     if preamble and preamble.strip():
         result_parts.append(preamble)
 
-    # _CORE 우선 매칭 (Identity + Hard Rules)
-    for core_name in _CORE_SECTIONS:
+    # _CORE 우선 매칭 — identity → rules (가족 판정, 번호 접두·자유 명명 무관)
+    for core_name in _CORE_FAMILIES:
         for sec_name, sec_text in parsed.items():
             if sec_name == "_preamble" or sec_name in included:
                 continue
-            if core_name.lower() in sec_name.lower():
-                result_parts.append(_maybe_demote(sec_name, sec_text))
+            if _section_family(sec_name) == core_name:
+                result_parts.append(_maybe_frame(sec_name, sec_text))
                 included.add(sec_name)
                 break
 
@@ -1180,7 +1608,7 @@ def _select_profile_sections(desc: str, scene_type: str = "normal", demote_backg
     for sec_name, sec_text in parsed.items():
         if sec_name == "_preamble" or sec_name in included:
             continue
-        result_parts.append(_maybe_demote(sec_name, sec_text))
+        result_parts.append(_maybe_frame(sec_name, sec_text))
         included.add(sec_name)
 
     result = "\n\n".join(result_parts)
@@ -1393,6 +1821,111 @@ def _extract_voice_summary_from_section(name: str, voice_section: str, cap: int 
         if _cut > cap * 0.5:
             excerpt = excerpt[:_cut + 1]
     return f"- {name}: {excerpt}"
+
+
+# =========================================================
+# [2026-08-17] 시트 요지 — 목소리 조각 (속마음 콜 접지)
+# =========================================================
+# 병: 💭 전용 콜(turn_mail)의 per-NPC 재료는 psyche(해석층) + 상태층(soma·toward_pc)뿐이었다.
+#   "지금 무엇이 움직이는가"는 있고 **"이 사람이 어떻게 말하는가"가 없다** → 인물이 달라도
+#   내심의 목소리가 같아진다(시트 없는 목소리 = 화자 한 명).
+# 왜 이 모듈인가: 섹션 파서(`_parse_sections`)·헤더 깊이 판정·은닉 마커·RENDERER_STRIP_KEYS가
+#   전부 여기 산다. 소비자 쪽에서 시트를 다시 파싱하면 "어디까지가 비밀인가"가 두 벌이 되고,
+#   그때부터 한쪽만 고쳐진다(=조용히 새는 날).
+# ⚠ 이 함수는 **secret_ledger 대조를 하지 않는다** — 그건 채널 상태(런타임)고 소비자의 일이다.
+#   여기서 막는 것은 시트 **구조상** 은닉인 것: v6 `### Secrets` 섹션 · `[Secret]` 마커 ·
+#   RENDERER_STRIP_KEYS 계열 필드. 두 겹은 층이 다르고, 둘 다 필요하다.
+# ⚠ Direction(v6)은 일부러 뺐다 — 발화조건 붙은 **행동 규칙**이라, 내심을 쓰는 콜에
+#   넣으면 "이렇게 하라"는 지시로 읽힌다(목소리가 아니라 연출 주문).
+
+# 목소리·은닉 사전은 **위 §섹션 가족 판정 블록으로 이관**(2026-09-02) — 소비자가 여기
+# 하나뿐이라 렌더러 프로필이 혜택을 못 받던 것을 공용화. 판정은 `_section_family()`.
+
+VOICE_DIGEST_CHARS = 400      # 요지 총량 캡 — **코드 상수**(env 레버 신설 안 함)
+_VOICE_FRAGMENT_CHARS = 160   # 조각 하나 캡
+
+
+def _voice_trim(text: str, cap: int) -> str:
+    """캡에서 자르되 문장 중간이면 마지막 종결부까지만(발췌가 말을 끊지 않게)."""
+    t = str(text or "").strip()
+    if len(t) <= cap:
+        return t
+    cut = t[:cap].rstrip()
+    _end = max(cut.rfind("."), cut.rfind("?"), cut.rfind("!"),
+               cut.rfind("~"), cut.rfind("다 "), cut.rfind("…"))
+    if _end > cap * 0.5:
+        cut = cut[:_end + 1]
+    return cut.rstrip()
+
+
+def build_voice_digest(data: Dict[str, Any], name: str = "",
+                       cap: int = VOICE_DIGEST_CHARS) -> List[str]:
+    """시트 → **목소리 조각 목록**(라벨 붙은 짧은 문자열). 재료가 없으면 [].
+
+    담는 것: 말투(tone)·성격 한 줄(personality)·핵심 트레잇/방백 발췌.
+    빼는 것: 은닉 섹션·비밀 필드·배경/설정(과거는 목소리가 아니다)·관계표·수치.
+
+    반환이 문자열 한 덩어리가 아니라 **리스트**인 이유: 소비자가 원장(secret_ledger)과
+    대조해 **조각 단위로 떨어뜨릴** 수 있어야 한다. 미리 이어 붙이면 한 문장이 비밀에
+    닿았을 때 선택지가 "전부 버리기"뿐이다.
+    값이 없는 라벨은 만들지 않는다(빈 라벨은 재료가 아니라 소음 — 기존 관례).
+    `name`이 오면 외부 시트 플레이스홀더 `{{char}}`를 치환한다(v6 중심문장이 이 표기를 쓴다).
+    렌더러 경로(`get_npc_renderer_profiles`)와 같은 규율 — 리터럴이 프롬에 새지 않게.
+    """
+    if not isinstance(data, dict):
+        return []
+
+    frags: List[str] = []
+    seen: set = set()
+    total = 0
+
+    def _add(label: str, text: Any) -> None:
+        nonlocal total
+        if total >= cap:
+            return
+        t = _clean_markdown(re.sub(r"\s+", " ", str(text or ""))).strip()
+        if name:
+            t = t.replace("{{char}}", str(name)).replace("{{Char}}", str(name))
+        if len(t) < 4:
+            return
+        _key = t[:40].lower()
+        if _key in seen:
+            return                      # 같은 값이 필드와 섹션 양쪽에 있는 시트가 흔하다
+        seen.add(_key)
+        _lab = str(label or "").strip().lower()[:24] or "voice"
+        _room = cap - total - len(_lab) - 2          # 캡은 **라벨 포함** 총량이다
+        t = _voice_trim(t, min(_VOICE_FRAGMENT_CHARS, max(1, _room)))
+        if len(t) < 4:
+            return
+        # 라벨 구분자는 기존 material 과 같은 `k: v` — 엠대쉬를 새로 들이지 않는다
+        # (내심은 한국어 산문으로 나가고, 재료의 문장부호는 그대로 베껴지는 축이다).
+        _frag = f"{_lab}: {t}"
+        frags.append(_frag)
+        total += len(_frag)
+
+    # ① 구조화 필드(= `_extract_structured_fields`가 시트에서 이미 증류해 둔 한 줄).
+    #    비밀 계열 키는 애초에 읽지 않는다(RENDERER_STRIP_KEYS와 같은 명단).
+    for _k, _lab in (("tone", "speech"), ("personality", "core")):
+        if _k in RENDERER_STRIP_KEYS:
+            continue
+        _add(_lab, data.get(_k))
+
+    # ② 시트 섹션 — 은닉 판정이 목소리 판정보다 앞선다.
+    desc = strip_hidden_markers(_get_npc_desc(data))
+    if desc:
+        for _name, _body in _parse_sections(desc).items():
+            if total >= cap:
+                break
+            if _name == "_preamble":
+                continue
+            # [2026-09-02] 자체 루프 → 공용 관문(_section_family). 판정 순서(은닉 우선)는
+            #   그 안에 고정돼 있고, 번호 접두(`## 6. Speech Style & Tone`)도 거기서 벗겨진다.
+            if _section_family(_name) != "voice":
+                continue
+            _text = re.sub(r'^#{1,6}\s+.*', '', _body, count=1).strip()
+            _add(_name, _text)
+
+    return frags
 
 
 # =========================================================
@@ -1637,6 +2170,32 @@ def get_connection_milestone_hints(channel_id: str) -> List[str]:
 # NPC SIMULATION
 # =========================================================
 
+def _schedule_entry(npc_data: dict, slot: str) -> Tuple[str, str]:
+    """NPC `schedule`의 한 시간대를 (활동, 장소)로 읽는다. 스펙 §6 R6 ① / §2.8.
+
+    [2026-09-03 R6] 병: `schedule` 값이 두 형태다. 레거시 `{슬롯: "루틴 문자열"}`(현행
+      P2가 읽던 것)과 신형 `{슬롯: {"activity":.., "location":..}}`(`!npc 일정`이 쓰는 것).
+      형태 분기를 소비처마다 심으면 힌트(P2)와 스케줄 틱 두 자리에서 규칙이 갈리고,
+      "힌트는 신형을 읽는데 이동은 레거시를 읽는다" 같은 조용한 어긋남이 생긴다.
+    처방: 읽기 관문을 이 함수 하나로 모은다. 소비자는 형태를 몰라도 된다.
+      · 레거시 문자열 -> (문자열, "") = **장소가 없으니 이동도 없다**(스펙 문면).
+      · 신형이라도 location이 비면 같은 판정: 활동은 힌트로 살고 이동은 안 한다.
+      · 없거나 형태가 어긋나면 ("", "").
+    """
+    if not isinstance(npc_data, dict) or not slot:
+        return ("", "")
+    sched = npc_data.get("schedule")
+    if not isinstance(sched, dict):
+        return ("", "")
+    entry = sched.get(slot)
+    if isinstance(entry, str):
+        return (entry.strip(), "")
+    if isinstance(entry, dict):
+        return (str(entry.get("activity", "") or "").strip(),
+                str(entry.get("location", "") or "").strip())
+    return ("", "")
+
+
 def get_npc_time_progression(channel_id: str) -> List[str]:
     """
     시간 경과에 따른 NPC 상태 변화 힌트 생성 (3-Tier Hybrid)
@@ -1680,9 +2239,12 @@ def get_npc_time_progression(channel_id: str) -> List[str]:
             continue
 
         # P2: 프리셋 스케줄 (lore/manual NPC에 schedule 필드가 있을 때)
-        schedule = npc_data.get("schedule", {})
-        if isinstance(schedule, dict) and time_slot in schedule:
-            hints.append(f"{npc_name}: {schedule[time_slot]}")
+        # [2026-09-03 R6] 형태 분기(문자열/딕셔너리)는 _schedule_entry 하나가 흡수한다.
+        #   신형 스케줄의 activity도 여기서 그대로 힌트가 된다. location은 힌트가 아니라
+        #   스케줄 틱(orchestration)이 쓰는 재료라 여기선 읽지 않는다.
+        _sch_act, _ = _schedule_entry(npc_data, time_slot)
+        if _sch_act:
+            hints.append(f"{npc_name}: {_sch_act}")
             continue
 
         # P3 랜덤 폴백 제거 (2026-07-14 경로 감사): "TV 시청/술자리" 무근거 발명 활동

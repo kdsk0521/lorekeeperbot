@@ -6,79 +6,53 @@ NPC 프로필 섹션 분할 미리보기 도구.
     python check_npc_sections.py <파일.txt> --preview 80
     python check_npc_sections.py <파일.txt> --no-content
 
-봇 코드 의존 없음. npc_manager._parse_sections / _select_profile_sections
-(Sprint L 2026-04-29 기준)을 그대로 복제한 standalone 버전.
+[2026-09-02] **복제본 폐기 → 실물 호출.**
+구 버전은 "봇 코드 의존 없음"을 위해 npc_manager의 섹션 로직을 복제했는데, 실측 결과
+Sprint L(2026-04-29) 상태로 **넉 달간 드리프트**해 있었다 — h4 깊이 판정(07-28)도,
+Aside 인식(08-10)도, 강등 프레임도 없었다. 즉 도구가 **봇이 하지 않는 일을 보고**하고
+있었다. 의존을 피하려다 얻은 게 "틀린 미리보기"라면 그 거래는 손해다.
+→ 실물을 import하고, 무거운 외부 패키지만 스텁으로 흡수한다(스모크와 같은 골격).
 """
 
-import re
 import sys
 import argparse
+import types as _t
 from pathlib import Path
 from typing import Dict
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-# =========================================================
-# 섹션 분할 로직 (npc_manager.py에서 복제)
-# =========================================================
+for _n in ("google", "google.genai", "google.api_core", "openai", "discord",
+           "aiohttp", "voyageai"):
+    if _n in sys.modules:
+        continue
+    try:
+        __import__(_n)
+    except ModuleNotFoundError:
+        class _Any:
+            def __init__(self, *a, **k): pass
+            def __call__(self, *a, **k): return self
+            def __getattr__(self, k): return self
+        _m = _t.ModuleType(_n)
+        _m.__getattr__ = lambda n, _A=_Any: _A()
+        sys.modules[_n] = _m
+        if "." in _n:
+            _parent, _child = _n.rsplit(".", 1)
+            setattr(sys.modules[_parent], _child, _m)
 
-_CORE_SECTIONS = ["Identity", "Hard Rules"]
-_MAX_TOTAL_PER_NPC = 50000
+import npc_manager as _nm   # noqa: E402
 
-
-def _parse_sections(desc: str) -> Dict[str, str]:
-    """### 헤더 기준으로 프로필을 섹션 dict로 분할."""
-    sections: Dict[str, str] = {}
-    parts = re.split(r'\n(?=###\s)', desc)
-    for part in parts:
-        header_m = re.match(r'###\s+(.+)', part)
-        if header_m:
-            sec_name = header_m.group(1).strip()
-            sections[sec_name] = part.strip()
-        elif not sections:
-            sections["_preamble"] = part.strip()
-    return sections
-
-
-def _is_hybrid_profile(desc: str) -> bool:
-    """프로필이 hybrid v2 포맷인지 판별. '### Voice' 섹션 존재 여부로 결정."""
-    return bool(re.search(r'^###\s+Voice\b', desc, re.MULTILINE))
+_CORE_SECTIONS = _nm._CORE_SECTIONS          # 구 표기(호환). 실제 판정은 아래 둘을 쓴다.
+_CORE_FAMILIES = _nm._CORE_FAMILIES
+_section_family = _nm._section_family
+_MAX_TOTAL_PER_NPC = _nm._MAX_TOTAL_PER_NPC
+_parse_sections = _nm._parse_sections
+_is_hybrid_profile = _nm._is_hybrid_profile
 
 
 def _select_profile_sections(desc: str) -> str:
-    """모든 섹션을 _CORE 우선으로 순서대로 노출 (Sprint L 2026-04-29)."""
-    if not desc or '###' not in desc:
-        return desc[:_MAX_TOTAL_PER_NPC] if desc else ""
-
-    parsed = _parse_sections(desc)
-    if len(parsed) <= 1:
-        return desc[:_MAX_TOTAL_PER_NPC]
-
-    result_parts = []
-    included = set()
-
-    preamble = parsed.get("_preamble", "")
-    if preamble and preamble.strip():
-        result_parts.append(preamble)
-
-    for core_name in _CORE_SECTIONS:
-        for sec_name, sec_text in parsed.items():
-            if sec_name == "_preamble" or sec_name in included:
-                continue
-            if core_name.lower() in sec_name.lower():
-                result_parts.append(sec_text)
-                included.add(sec_name)
-                break
-
-    for sec_name, sec_text in parsed.items():
-        if sec_name == "_preamble" or sec_name in included:
-            continue
-        result_parts.append(sec_text)
-        included.add(sec_name)
-
-    result = "\n\n".join(result_parts)
-    if len(result) > _MAX_TOTAL_PER_NPC:
-        result = result[:_MAX_TOTAL_PER_NPC].rstrip()
-    return result
+    """렌더러가 실제로 받는 형태 — 강등·은닉 태그 포함(demote_background=True)."""
+    return _nm._select_profile_sections(desc, demote_background=True)
 
 
 # =========================================================
@@ -92,12 +66,12 @@ def analyze(desc: str) -> dict:
 
     core_found = []
     core_missing = []
-    for core in _CORE_SECTIONS:
+    for core in _nm._CORE_FAMILIES:      # [09-02] 정확일치 리스트 → 가족 판정(실물과 동일)
         found = False
         for sec_name in parsed:
             if sec_name == "_preamble":
                 continue
-            if core.lower() in sec_name.lower():
+            if _nm._section_family(sec_name) == core:
                 core_found.append((core, sec_name))
                 found = True
                 break
@@ -124,7 +98,8 @@ def format_report(desc: str, preview_chars: int = 0) -> str:
     lines = []
 
     # 헤더 통계
-    fmt = "Hybrid v2 (Voice 통합)" if info["is_hybrid"] else "Legacy (다중 ### 섹션)"
+    _hh = "#" * _nm._section_header_depth(desc)
+    fmt = "Hybrid (Voice/Aside 블록 보유)" if info["is_hybrid"] else ("Legacy (다중 %s 섹션)" % _hh)
     lines.append(f"포맷:      {fmt}")
     lines.append(f"총 길이:   {info['total_size']:,}자")
     lines.append(f"섹션 수:   {info['section_count']}개")
@@ -138,7 +113,7 @@ def format_report(desc: str, preview_chars: int = 0) -> str:
 
     if info["section_count"] == 0 and not info["preamble_size"]:
         lines.append("")
-        lines.append("⚠ ### 섹션 없음 — 봇은 _MAX_TOTAL_PER_NPC 자르기만 적용")
+        lines.append("⚠ 섹션 구분자 없음 — 봇은 _MAX_TOTAL_PER_NPC 자르기만 적용")
         return "\n".join(lines)
 
     lines.append("")
@@ -163,7 +138,7 @@ def format_report(desc: str, preview_chars: int = 0) -> str:
         idx += 1
 
     # CORE 섹션 (★)
-    for core_name in _CORE_SECTIONS:
+    for core_name in _nm._CORE_FAMILIES:
         for sec_name, sec_text in parsed.items():
             if sec_name == "_preamble" or sec_name in included:
                 continue
@@ -171,7 +146,7 @@ def format_report(desc: str, preview_chars: int = 0) -> str:
                 size = len(sec_text)
                 bar = "█" * min(40, size // 100)
                 lines.append(f"[{idx:>2}] ★CORE   ({size:>5,}자) {bar}")
-                lines.append(f"             ### {sec_name}")
+                lines.append(f"             {_hh} {sec_name}")
                 if preview_chars > 0:
                     preview = sec_text[:preview_chars].replace("\n", " ⏎ ")
                     if len(sec_text) > preview_chars:
@@ -189,7 +164,7 @@ def format_report(desc: str, preview_chars: int = 0) -> str:
         size = len(sec_text)
         bar = "█" * min(40, size // 100)
         lines.append(f"[{idx:>2}]         ({size:>5,}자) {bar}")
-        lines.append(f"             ### {sec_name}")
+        lines.append(f"             {_hh} {sec_name}")
         if preview_chars > 0:
             preview = sec_text[:preview_chars].replace("\n", " ⏎ ")
             if len(sec_text) > preview_chars:

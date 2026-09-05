@@ -5,6 +5,14 @@ Replaces mental_module.py.
 v3.1: 회복 1+2 하이브리드(event_delta 게이트) + 트라우마 dwell 분리/일시 디버프.
 v3.2 (2026-07-06): 트라우마 각성 폐지. 회복 = 갭 비례 트리클(조용한 턴, 1+stage)
       + 사건성 양의 impact(uplift/restore enum) + 휴식 + 間 챕터 리프레시.
+v4.0 (2026-08-18 Phase 2.5 — **평형 전담**): 기력(vigor) 축을 대형식화 레지스트리로 이관하고
+      이 모듈에서 **기력 공식을 전량 삭제**했다 — baseline drain·cross-axis cascade·status
+      severity·AI impact·자연회복·관성·낙폭캡·휴식 회복·챕터 리프레시가 전부 평형 전용이 됐다.
+      기력의 움직임은 이제 rule 자연어(선언) + 추출 콜의 관측 델타 + 판정 Effort 선불뿐이고,
+      코드가 지키는 건 범위 클램프·비대칭 캡(하강 7/상승 5)·판정 구간표 셋이다.
+      bus.vigor 는 **읽기 사본**으로 남는다: une_facade 가 레지스트리에서 채우고,
+      평형의 cross-axis cascade 와 하류 표시(로그·스냅샷·notation)가 그것을 읽는다.
+      값의 정본 = custom_vars(world_state.custom_var_values["기력"]).
 """
 
 import logging
@@ -127,12 +135,18 @@ class VigorComposureModule:
         pass
 
     async def prime(self, context: "GameContext") -> "GameContext":
-        """Pre-pass for pipeline order: annotate current stage without consuming deltas."""
+        """Pre-pass for pipeline order: annotate current stage without consuming deltas.
+
+        [Phase 2.5] 기력 stage 는 **여전히 찍는다** — 소비자가 평형의 cross-axis cascade 이기
+        때문이다(평형 로직 무접촉). 값은 레지스트리에서 온 읽기 사본이고, 여기서 쓰지 않는다.
+        `_turn_start` 는 이번 턴 기력 이동폭(판정 Effort 등)을 로그로 되돌려주기 위한 기준선.
+        """
         bus = context.shared_bus
         # 채널 토글 OFF면 기력/평형 전체 스킵 (수치 동결)
         if not bus.vigor.get("module_active", True):
             return context
         bus.vigor["stage"] = _get_stage(int(bus.vigor.get("value", 100)))
+        bus.vigor["_turn_start"] = int(bus.vigor.get("value", 100))
         bus.composure["stage"] = _get_stage(int(bus.composure.get("value", 100)))
         return context
 
@@ -145,33 +159,35 @@ class VigorComposureModule:
         primary_axis = _get_primary_axis(context)
 
         # Phase 2 F: baseline drain (장르 × 축 + 씬타입 × 축, layer-cap)
+        # [Phase 2.5] **평형분만** 소비한다. 기력의 구조적 상시 드레인은 코드 공식이라 삭제됐고,
+        #   그 자리는 선언 rule("wears down a little under strain and pressure")이 대신한다.
         try:
             active_genres = context.request.genres or {}
             scene_type = bus.dai.get("scene_type", "normal") if bus.dai else "normal"
             baseline = _compute_baseline_drain(active_genres, scene_type)
-            if baseline["vigor"] != 0:
-                bus.vigor["delta"] = bus.vigor.get("delta", 0) + baseline["vigor"]
             if baseline["composure"] != 0:
                 bus.composure["delta"] = bus.composure.get("delta", 0) + baseline["composure"]
         except Exception as _e_base:
             logger.warning("[VigorComposure] baseline drain skipped: %s", _e_base)
 
-        # Process each axis
-        self._process_axis(context, bus.vigor, "vigor", primary_axis)
+        # Process axis — 평형만. 기력은 레지스트리 소유라 여기서 계산하지 않는다.
         self._process_axis(context, bus.composure, "composure", primary_axis)
 
-        # Phase 2 G: 챕터 종결 refresh (intermission_active 시 max value 60)
+        # Phase 2 G: 챕터 종결 refresh (intermission_active 시 max value 60) — 평형 전용.
+        #   기력의 "間 리프레시"도 코드 회복 공식이므로 함께 삭제됐다.
         if bus.doom.get("intermission_active"):
             threshold = config.CHAPTER_REFRESH_THRESHOLD
-            for ax in (bus.vigor, bus.composure):
-                if int(ax.get("value", 100) or 100) < threshold:
-                    ax["value"] = threshold
+            if int(bus.composure.get("value", 100) or 100) < threshold:
+                bus.composure["value"] = threshold
 
         # Combine logs
         mask = context.get_acting_mask()
         v_val = bus.vigor["value"]
         c_val = bus.composure["value"]
-        v_delta = bus.vigor.get("_final_delta", 0)
+        # 기력 이동폭 = 이번 턴 안에서 실제로 움직인 만큼(판정 Effort 등 코드 소유 쓰기).
+        #   추출 콜의 관측 델타는 응답 이후에 들어오므로 다음 턴 로그에 잡힌다 — 의도된 지연.
+        _v_start = bus.vigor.get("_turn_start")
+        v_delta = int(v_val) - int(_v_start if isinstance(_v_start, (int, float)) else v_val)
         c_delta = bus.composure.get("_final_delta", 0)
 
         log_parts = []
@@ -182,35 +198,22 @@ class VigorComposureModule:
         elif bus.vigor.get("active") or bus.composure.get("active"):
             log_parts.append(f"{mask}: 💪 활력 {v_val}/100 | 😌 평형 {c_val}/100 (자연 회복)")
 
-        # Judgment emotion
-        v_emo = bus.vigor.get("judgment_emotion", 0)
+        # Judgment emotion — 평형 전용(주축이 기력이면 판정 감정은 보조축=평형에 실린다).
         c_emo = bus.composure.get("judgment_emotion", 0)
-        if v_emo > 0:
-            log_parts.append(f" (판정 고양 +{v_emo})")
-        elif v_emo < 0:
-            log_parts.append(f" (판정 절망 {v_emo})")
-        if c_emo and c_emo != v_emo:
+        if c_emo:
             log_parts.append(f" (평형 판정 {'+' if c_emo > 0 else ''}{c_emo})")
 
-        # Rest log
-        rest_log = bus.vigor.get("rest_log")
-        if rest_log:
-            log_parts.append(f"\n{rest_log}")
+        # Rest log — 평형 전용. 기력의 휴식 회복은 코드 공식이라 삭제됐다(선언 rule 이 담당).
         c_rest_log = bus.composure.get("rest_log")
         if c_rest_log:
             log_parts.append(f"\n{c_rest_log}")
 
-        # Cascade log
-        v_cascade = bus.vigor.get("cascade_drain", 0)
+        # Cascade log — 평형이 기력 stage 를 읽는 한 방향만 남았다.
         c_cascade = bus.composure.get("cascade_drain", 0)
-        if v_cascade:
-            log_parts.append(f"\n🔗 활력 ← 평형 cascade ({v_cascade})")
         if c_cascade:
             log_parts.append(f"\n🔗 평형 ← 활력 cascade ({c_cascade})")
 
         # Clamping/Trauma
-        if bus.vigor.get("_clamped"):
-            log_parts.append("\n❗ **충격 완화** (활력 Clamping)")
         if bus.composure.get("_clamped"):
             log_parts.append("\n❗ **충격 완화** (평형 Clamping)")
         combined_log = "".join(log_parts)
@@ -231,6 +234,7 @@ class VigorComposureModule:
             axis.pop("_final_delta", None)
             axis.pop("_clamped", None)
             axis.pop("cascade_drain", None)
+            axis.pop("_turn_start", None)
 
         return context
 

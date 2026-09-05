@@ -15,7 +15,11 @@ import config
 logger = logging.getLogger(__name__)
 # game_system might be needed if logic requires it, but for now mostly domain IO
 
-RESET_CONFIRM_TIMEOUT = 5.0
+# [2026-09-02] 5.0 → 30.0. 구 값은 **물리적으로 누르기 어려웠다** — 봇이 경고 메시지를 보내고
+#   자기 이모지를 단 뒤 사용자가 그걸 보고 클릭하기까지가 5초 안에 끝나야 했다.
+#   그래서 `!리셋`이 "안 먹는" 것처럼 보였다(레티어스 실사용 보고). 타임아웃 문구는 f-string이라
+#   이 상수만 고치면 안내도 같이 따라온다.
+RESET_CONFIRM_TIMEOUT = 30.0
 RESET_CONFIRM_EMOJI = "💥"
 FALLBACK_PURGE_DELAY = 2
 
@@ -42,7 +46,11 @@ class SessionManager:
         except asyncio.TimeoutError:
             try:
                 await confirm_msg.delete()
-                await message.channel.send("❌ 초기화 취소됨 (시간 초과).", delete_after=5)
+                # [2026-09-02] delete_after=5 → 20. 취소 안내가 5초 만에 사라져서 사용자가
+                #   "아무 반응이 없었다"고 읽었다 — 실패가 소리를 내지 않는 자리였다.
+                await message.channel.send(
+                    f"❌ 초기화 취소됨 ({RESET_CONFIRM_TIMEOUT:.0f}초 내 확인 없음). "
+                    "다시 하려면 `!리셋`을 입력하고 💥 를 눌러주세요.", delete_after=20)
             except Exception as e:
                 logger.debug(f"[무시됨] 초기화 취소 메시지 처리 실패: {e}")
             return

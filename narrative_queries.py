@@ -480,3 +480,118 @@ def reader_signal_block(channel_id: str, cap_chars: int = 300) -> str:
     except Exception as e:
         logger.debug(f"[NQ] reader_signal_block skip: {e}")
         return ""
+
+
+# =========================================================
+# [2026-08-17 쪽지 서사 접지] 보낸 문자·쪽지 → 다음 턴 서사 콜 재료 (1턴 큐)
+# =========================================================
+# 병: 세계가 PC에게 편지를 보내 놓고 **이야기는 그 사실을 몰랐다**. 착지가 표시층(💌 버튼)
+#   에서 끝나고 어떤 분석·서사 입력에도 도착하지 않았다 — 다음 턴 산문은 편지가 없던 것처럼
+#   흘렀고, 답장하지 않은 편지가 아무 압력도 만들지 못했다.
+# 처방: 쓰기·읽기 자매 한 쌍. 적재는 착지 지점(world_board), 소비는 좌뇌 **서사 콜**.
+#   렌더 직행이 아니다 — 방향을 정하는 콜이 받아야 산문이 자연히 그 편지를 딛는다(리더 신호 동형).
+# ★큐 키는 **새 이름**(`recent_world_mail`). 걷어낸 `pending_state_conflicts` 를 재사용하면
+#   옛 세션에 남은 orphan 값이 새 소비자에게 튄다 — 골격만 물려받고 이름은 물려받지 않는다.
+_WORLD_MAIL_KEY = "recent_world_mail"
+# 💭(속마음)은 애초에 이 문을 못 지난다 — 턴 소멸이 확정된 표시물이라 "세계가 보낸 것"이
+#   아니다. 착지부가 안 부르는 게 1차 방어고, 여기 집합이 2차(호출부가 늘어도 규율은 하나).
+_WORLD_MAIL_EXCLUDE_KINDS = {"mind"}
+
+
+def queue_world_mail(channel_id: str, sender: str, kind: str, summary: str,
+                     turn: int = 0) -> bool:
+    """보낸 문자·쪽지 1건을 1턴 큐에 적재. 실패·게이트 오프 = False(무해).
+
+    kind = 세계 안에서의 매체 이름(쪽지/편지/전보…) 또는 채널종. 표시용 라벨일 뿐이라
+    스키마를 강제하지 않는다(빈 값이면 라벨 없이 실린다).
+    """
+    try:
+        import config
+        if not int(getattr(config, "WORLD_MAIL_QUEUE", 1) or 0):
+            return False
+        _summary = str(summary or "").strip()
+        if not _summary:
+            return False
+        _cap = max(20, int(getattr(config, "WORLD_MAIL_SUMMARY_CHARS", 160)))
+        import domain_manager
+        mem = domain_manager.get_session_ai_memory(channel_id) or {}
+        q = [e for e in (mem.get(_WORLD_MAIL_KEY) or []) if isinstance(e, dict)]
+        q.append({
+            "sender": str(sender or "").strip()[:100],
+            "kind": str(kind or "").strip()[:60],
+            "summary": _summary[:_cap],
+            "turn": int(turn or 0),
+        })
+        # 1턴 큐라 길어질 일이 없지만, 소비자가 죽어 있을 때 무한 성장하지 않게 꼬리만 남긴다.
+        domain_manager.update_session_ai_memory(channel_id, {_WORLD_MAIL_KEY: q[-3:]})
+        logger.info("[WorldMail] queued sender=%s kind=%s turn=%s len=%d",
+                    sender or "?", kind or "?", turn, len(_summary))
+        return True
+    except Exception as e:
+        logger.debug(f"[NQ] queue_world_mail skip: {e}")
+        return False
+
+
+def _format_world_mail(entries: List[Dict[str, Any]]) -> str:
+    """큐 항목 → 서사 콜 블록. 빈 목록이면 "". 순수 — 스모크 대상.
+
+    톤은 **재료**다: 인용도 답장도 강요하지 않는다. 처방으로 쓰면 다음 턴 산문이
+    편지 낭독으로 시작한다(리더 신호에서 배운 자리 — 방향 재료지 대사가 아니다).
+    """
+    lines: List[str] = []
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        _s = str(e.get("summary", "") or "").strip()
+        if not _s:
+            continue
+        _sender = str(e.get("sender", "") or "").strip() or "someone"
+        _kind = str(e.get("kind", "") or "").strip()
+        _label = f" ({_kind})" if _kind else ""
+        lines.append(f"- Last turn {_sender} sent the PC a message{_label}: {_s}")
+    if not lines:
+        return ""
+    return (
+        "### WORLD MAIL (already delivered — what the world itself sent)\n"
+        + "\n".join(lines)
+        + "\nThe world remembers what it sent — an unanswered letter is still in play.\n"
+          "Material, not an instruction: nothing here has to be quoted, opened, or answered this turn."
+    )
+
+
+def world_mail_block(channel_id: str, current_turn: int = 0) -> str:
+    """큐를 **소비**(읽고 비운다)하고 서사 콜 블록을 돌려준다. 없으면 "".
+
+    소비 = 1턴. 읽은 뒤 큐를 비우므로 같은 편지가 두 턴 연속 재료가 되지 않는다
+    (편지는 사건이지 상태가 아니다 — 상태로 만들 값은 관계 depth 쪽이 이미 쥔다).
+    나이 초과분(WORLD_MAIL_MAX_AGE)은 블록에 안 싣고 같이 버린다 — 지연 도착한 편지가
+    열 턴 뒤 산문에 튀어나오는 편이 더 나쁘다.
+    """
+    try:
+        import config
+        if not int(getattr(config, "WORLD_MAIL_QUEUE", 1) or 0):
+            return ""
+        import domain_manager
+        mem = domain_manager.get_session_ai_memory(channel_id) or {}
+        q = [e for e in (mem.get(_WORLD_MAIL_KEY) or []) if isinstance(e, dict)]
+        if not q:
+            return ""
+        # 소비는 성패와 무관하게 **먼저** 확정한다 — 포맷이 빈손이어도 큐는 비운다.
+        domain_manager.update_session_ai_memory(channel_id, {_WORLD_MAIL_KEY: []})
+        _max_age = int(getattr(config, "WORLD_MAIL_MAX_AGE", 2) or 0)
+        fresh, stale = [], 0
+        for e in q:
+            if str(e.get("kind", "")).strip().lower() in _WORLD_MAIL_EXCLUDE_KINDS:
+                continue
+            _age = int(current_turn or 0) - int(e.get("turn", 0) or 0)
+            if _max_age > 0 and int(current_turn or 0) > 0 and _age > _max_age:
+                stale += 1
+                continue
+            fresh.append(e)
+        block = _format_world_mail(fresh)
+        logger.info("[WorldMail] consumed %d (stale dropped %d) block=%s",
+                    len(fresh), stale, "yes" if block else "no")
+        return block
+    except Exception as e:
+        logger.debug(f"[NQ] world_mail_block skip: {e}")
+        return ""

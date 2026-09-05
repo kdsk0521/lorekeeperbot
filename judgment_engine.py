@@ -9,6 +9,50 @@ from orchestration_context import GameContext
 
 logger = logging.getLogger("Judgment")
 
+
+# [2026-08-18 Phase 2.5] 레지스트리 조회에 필요한 두 좌표. anchors 가 정본이다
+# (channel_id·acting_user_id 는 une_facade.build_game_context 가 심는다).
+def _jud_channel(context) -> str:
+    return str((getattr(context, "narrative_anchors", None) or {}).get("channel_id", "") or "")
+
+
+def _jud_actor(context) -> str:
+    return str((getattr(context, "narrative_anchors", None) or {}).get("acting_user_id", "") or "")
+
+
+# 주자원 구간표 — **이관 전후 불변**. 값이 같으면 가중도 같아야 한다(래칫).
+_MENTAL_BANDS = ((70, 20, "충만"), (40, 10, "동요"), (15, 0, "고갈"))
+_MENTAL_FLOOR = (-10, "붕괴")
+
+
+def _mental_band(value) -> tuple:
+    """주자원 값 → (판정 가중, 라벨). 기력이 어디에 저장돼 있든 이 표는 같다."""
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        v = 100
+    for floor, mod, label in _MENTAL_BANDS:
+        if v >= floor:
+            return mod, label
+    return _MENTAL_FLOOR
+
+
+def _primary_value(context, bus, primary_axis: str) -> int:
+    """판정이 보는 주자원 값. **기력만 레지스트리 우선**, 없으면 bus(구 경로) 폴백.
+
+    ★값의 위치만 바뀐다 — 구간표(_mental_band)는 이 함수 밖에 있고 손대지 않았다.
+    """
+    if primary_axis == "vigor":
+        try:
+            import custom_vars as _cv_j
+            v = _cv_j.get_system_value(_jud_channel(context), "기력", _jud_actor(context))
+            if v is not None:
+                return int(v)
+        except Exception as e:
+            logger.debug("[Judgment] 기력 레지스트리 조회 skip: %s", e)
+    return int(getattr(bus, primary_axis, {}).get("value", 100))
+
+
 class JudgmentEngine:
     def __init__(self, client, model_id: str):
         self.client = client
@@ -174,22 +218,14 @@ class JudgmentEngine:
         import config as _cfg
         mechanic = context.request.genres.get("mechanic", {})
         primary_axis = mechanic.get("primary_resource") or "vigor"
-        primary_val = getattr(bus, primary_axis).get("value", 100)
-        mental_mod = 0
-        mental_label = "충만"
-        if primary_val >= 70:
-            mental_mod = 20
-            mental_label = "충만"
-        elif primary_val >= 40:
-            mental_mod = 10
-            mental_label = "동요"
-        elif primary_val >= 15:
-            mental_mod = 0
-            mental_label = "고갈"
-        else:
-            mental_mod = -10
-            mental_label = "붕괴"
-            
+        # [2026-08-18 Phase 2.5] 기력은 레지스트리 변수다 — **값의 위치만 바뀌었다.**
+        #   구간표(70/40/15 → +20/+10/0/−10)는 손대지 않는다: 같은 값이면 같은 가중이어야
+        #   이관이 판정을 조용히 흔들지 않았다고 말할 수 있다(래칫).
+        #   레지스트리에 없으면(기능 off·미이관 채널) bus 값으로 폴백 — 구 경로 그대로.
+        primary_val = _primary_value(context, bus, primary_axis)
+        mental_mod, mental_label = _mental_band(primary_val)
+
+
         # 2.2 Memo Bonus (Flash가 관련 메모/단서 발견 시 +0~10)
         memo_relevant = eval_data.get("memo_relevant")
         memo_mod = 0
@@ -275,8 +311,24 @@ class JudgmentEngine:
                 mechanic = context.request.genres.get("mechanic", {})
                 axis_choice = mechanic.get("primary_resource") or "vigor"
             axis_bus = bus.vigor if axis_choice == "vigor" else bus.composure
-            if axis_bus.get("value", 0) >= effort_cost:
-                axis_bus["value"] = max(0, axis_bus["value"] - effort_cost)
+            # [2026-08-18 Phase 2.5] 기력 선불은 **코드 특권**이다 — 레지스트리 값에 직접 차감
+            #   (apply 경유, evidence="effort", 비대칭 캡 면제). 캡은 모델의 과장에 거는 재갈이지
+            #   규칙이 정한 선불을 깎을 근거가 아니다. bus 는 같은 턴 하류(로그·스냅샷·notation)가
+            #   읽으므로 같이 맞춘다 — 저장의 주인은 레지스트리, bus 는 이번 턴 사본.
+            _eff_cur = (_primary_value(context, bus, "vigor") if axis_choice == "vigor"
+                        else axis_bus.get("value", 0))
+            if _eff_cur >= effort_cost:
+                _applied = None
+                if axis_choice == "vigor":
+                    try:
+                        import custom_vars as _cv_e2
+                        _applied = _cv_e2.apply_system_delta(
+                            _jud_channel(context), "기력", -effort_cost, "effort",
+                            actor=_jud_actor(context), exempt_cap=True, source="judgment.effort",
+                        )
+                    except Exception as _e_cve2:
+                        logger.debug("[Judgment] Effort 레지스트리 차감 skip: %s", _e_cve2)
+                axis_bus["value"] = int(_applied["to"]) if _applied else max(0, _eff_cur - effort_cost)
                 effort_mod = _cfg.EFFORT_BONUS
                 bus.judgment["effort_used"] = {
                     "axis": axis_choice, "cost": effort_cost, "bonus": effort_mod,

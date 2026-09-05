@@ -97,6 +97,30 @@ def _emotion_composite_score(emo: Dict[str, Any]) -> float:
     return score
 
 
+
+# =========================================================
+# [2026-08-28] ambient 진행 비트 — 세계 전진의 **단일 공급원**
+# =========================================================
+# 왜 밖으로 나왔나: 구조는 **이중 투입**이었다 — 코드가 next_beat로 사건을 하나 지정하는데
+#   persona 꼬리(최대 recency)가 산문에게 "세계가 움직인다" 목록 4종을 또 내밀었다
+#   ([[project-plugin-gradia]] 동병). 처방은 지시문에 "하나만"이라 쓰는 게 아니라
+#   **공급원을 하나로 만드는 것** → 꼬리 목록 삭제 + 여기가 유일 발화처.
+#   그래서 이 문안은 story_director 내부용이 아니라 **계약**이 됐다. 바꿀 땐 소비자 둘을 같이 본다
+#   (`_generate_beats` 폴백 / `slot_manager` next_beat 주입 보증).
+_AMBIENT_BEAT = {
+    "idle":       "Next beat: the surroundings (time / weather / NPC routine) move one breath forward, giving the scene air.",
+    "stagnant":   "Next beat: the surroundings (time / weather / NPC routine) move one breath forward, giving the scene air.",
+    "detonation": "Next beat: the aftershock of the recent upheaval lingers in the texture of the scene.",
+    "aftershock": "Next beat: the aftershock of the recent upheaval lingers in the texture of the scene.",
+}
+_AMBIENT_BEAT_DEFAULT = "Next beat: the fine axis of tension in the present scene tightens one degree."
+
+
+def ambient_beat(energy: str = "") -> str:
+    """energy → 최소 진행 비트 1개. 비트 큐가 비었을 때와 주입이 빈손일 때 같은 것을 쓴다."""
+    return _AMBIENT_BEAT.get(str(energy or "").lower().strip(), _AMBIENT_BEAT_DEFAULT)
+
+
 class StoryDirector:
     """Stateless narrative direction engine. All state comes from SharedBus."""
 
@@ -956,12 +980,10 @@ class StoryDirector:
             beats = beats[:cap]
 
         # Idle 에너지 + 비트 없음 → ambient 진행 비트 보강
+        # [2026-08-28] 문안을 모듈 레벨 `ambient_beat()`로 노출 — slot_manager가 주입 보증에
+        #   같은 것을 쓴다(단일 진실원천). 꼬리에서 세계 전진 목록을 뺐으므로 그 자리를
+        #   코드가 반드시 채워야 한다("선언=집행"). 여기서만 알던 문안을 밖에서도 쓴다.
         if not beats:
-            if energy in ("idle", "stagnant"):
-                beats.append("Next beat: the surroundings (time / weather / NPC routine) move one breath forward, giving the scene air.")
-            elif energy in ("detonation", "aftershock"):
-                beats.append("Next beat: the aftershock of the recent upheaval lingers in the texture of the scene.")
-            else:
-                beats.append("Next beat: the fine axis of tension in the present scene tightens one degree.")
+            beats.append(ambient_beat(energy))
 
         return beats[:cap]

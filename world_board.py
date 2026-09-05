@@ -26,8 +26,32 @@ BOARD_CHANNELS = {
     "message":  ("message_thread_id",  "💌", "메시지"),
 }
 
-DEFAULT_BOARD_FREQUENCY = 10  # 전체 기본값 (개별 미설정 시 폴백)
-DEFAULT_CHANNEL_FREQUENCY = {"bulletin": 10, "sns": 11, "message": 12}
+# [2026-08-17 v1.1 §4] 게시 최소 간격의 **유일한** 하드 제한이 이 빈도다(별도 턴 캡 없음 —
+#   그 밖의 게이트는 NPC 연속 2회 차단·이벤트 타입 감쇠처럼 턴이 아니라 이력 기반이다).
+#   구 모듈 상수를 config 로 승격했다. 상수 이름은 back-compat 로 남기되 **판정은 아래
+#   `_default_frequency()`가 매번 config 를 다시 읽는다** — 상수를 import 시점에 굳혀 두면
+#   .env 를 고쳐도 안 먹고, 스모크가 레버를 흔들어 볼 수도 없다.
+_FREQ_CONFIG_KEY = {
+    "bulletin": "BOARD_FREQUENCY_BULLETIN",
+    "sns":      "BOARD_FREQUENCY_SNS",
+    "message":  "BOARD_FREQUENCY_MESSAGE",
+}
+
+
+def _default_frequency(ch_name: Optional[str] = None) -> int:
+    """설정이 하나도 없을 때의 최소 간격(턴). 채널종 기본 → 전역 기본 순."""
+    glob = int(getattr(config, "BOARD_FREQUENCY_DEFAULT", 10) or 10)
+    key = _FREQ_CONFIG_KEY.get(ch_name or "")
+    if key:
+        try:
+            return max(1, int(getattr(config, key, glob) or glob))
+        except (TypeError, ValueError):
+            return max(1, glob)
+    return max(1, glob)
+
+
+DEFAULT_BOARD_FREQUENCY = int(getattr(config, "BOARD_FREQUENCY_DEFAULT", 10) or 10)
+DEFAULT_CHANNEL_FREQUENCY = {ch: _default_frequency(ch) for ch in _FREQ_CONFIG_KEY}
 
 
 def _genre_labels(channel_id: str) -> tuple:
@@ -127,20 +151,29 @@ def get_board_frequency(channel_id: str, ch_name: str = None) -> int:
     user_default = board_state.get("frequency")
     if user_default is not None:
         return max(1, int(user_default))
-    if ch_name:
-        return DEFAULT_CHANNEL_FREQUENCY.get(ch_name, DEFAULT_BOARD_FREQUENCY)
-    return DEFAULT_BOARD_FREQUENCY
+    return _default_frequency(ch_name)
 
 
 # =========================================================
 # [2026-08-16 도착물 라우트] 착지 모드 (thread / button / off)
 # =========================================================
 # v1 착지는 **공개 스레드**뿐이었다 — 편지·쪽지가 채널 전원에게 보인다. 채널종별로
-# 착지를 고른다: thread=종전 스레드 게시 / button=그 턴 산문 메시지의 💌 버튼(ephemeral)
-# / off=드롭(로그만). message 만 기본을 button 으로 — 사적 도착물이 공개되던 자리다.
-# bulletin/sns 는 원래 공개 게시물이라 thread 유지(v1 무변경).
+# 착지를 고른다: thread=종전 스레드 게시 / button=그 턴 산문 메시지의 버튼(ephemeral)
+# / off=드롭(로그만).
+#
+# [2026-08-17 v1.1 §3] **기본을 셋 다 button 으로.** v1은 message 만 button 이고
+#   bulletin/sns 는 "원래 공개 게시물"이라 thread 를 유지했는데, 08-17 모듈 기본 ON 전환이
+#   그 자리를 되살려 "표시 기본이 버튼인데 왜 스레드가 생기나"가 됐다. 실측 결과 살아 있던
+#   별도 경로 같은 건 없었다 — 스레드 생성부는 `_ensure_thread` 하나뿐이고, 그걸 부르는
+#   것도 이 아래 착지 루프 하나뿐이다. 즉 원인은 배선이 아니라 **이 기본값 두 칸**이었다.
+#   공지·SNS도 채널을 스레드로 어지럽히지 않고 📰 버튼(kind=board)으로 내려앉는다.
+#   스레드를 원하는 채널은 `!게시판 표시 공지 스레드`로 **명시**해야 구 경로를 탄다.
 DISPLAY_MODES = ("thread", "button", "off")
-DEFAULT_DISPLAY_MODE = {"bulletin": "thread", "sns": "thread", "message": "button"}
+DEFAULT_DISPLAY_MODE = {"bulletin": "button", "sns": "button", "message": "button"}
+
+# 채널종 → turn_mail kind. 사적 도착물(message)은 💌, 공개 게시물(공지·SNS)은 📰로 나뉜다
+# — 한 버튼에 섞으면 "나한테 온 것"을 여는 질문에 세상 소식이 끼어든다.
+BOARD_MAIL_KIND = {"bulletin": "board", "sns": "board", "message": "mail"}
 
 
 def get_display_mode(channel_id: str, ch_name: str) -> str:
@@ -598,6 +631,84 @@ def _collect_board_events(channel_id: str, dai: Dict[str, Any]) -> List[Dict[str
     return events
 
 
+def _allowed_sender_sources() -> Optional[set]:
+    """발신자 가산이 붙는 출처 집합. None = 출처 축 끔(config 빈 값).
+
+    계보는 turn_mail._allowed_mind_sources 와 같다 — 새 분류를 만들지 않는다.
+    다만 여기서는 **차단이 아니라 가산**이다(💭는 게이트, 발신자는 우선순위).
+    """
+    raw = getattr(config, "BOARD_SENDER_SOURCES", "lore,manual")
+    if raw is None:
+        return None
+    raw = str(raw).strip()
+    if not raw:
+        return None
+    out = {s.strip().lower() for s in raw.split(",") if s.strip()}
+    return out or None
+
+
+def _sender_source(rec: Optional[Dict[str, Any]]) -> str:
+    """시트 출처 문자열. 미상은 npc_manager 관례대로 session 으로 접힌다."""
+    try:
+        import turn_mail as _tm
+        return _tm._npc_source(rec)
+    except Exception:
+        if not isinstance(rec, dict):
+            return ""
+        return str(rec.get("source", "session") or "session").lower()
+
+
+def _sender_affinity(channel_id: str, npc: str) -> Dict[str, Any]:
+    """[2026-08-17 발신자 긴밀화] 이 NPC가 PC에게 **사적으로** 쓸 만한 사이인가.
+
+    사적 매체(message)의 발신자는 관계가 곧 매체다 — 공지·SNS는 낯선 이름이 정상이지만
+    편지·쪽지는 아니다. 세 재료를 하나의 가산으로 접는다:
+      depth   npc_attitudes[npc].depth (0~100) — **주 가중**. 관계 축의 정본.
+      appear  npcs[npc].appear_count — 보조. 포화형(SAT 회 이상이면 만점)이라
+              깊이 없는 다등장이 depth 를 이기지 못한다.
+      source  lore/manual(사람이 쓴 확정 시트) 가산. 그 턴 즉석 등재분은 못 받는다.
+    반환 {bonus, depth, appear, source} — 하드 필터(MIN_DEPTH)도 같은 depth 를 쓴다.
+    실패는 전부 0 가산(무해) — 관계를 못 읽은 것이 관계 없음의 근거는 아니다.
+    """
+    out = {"bonus": 0.0, "depth": 0, "appear": 0, "source": ""}
+    if not npc:
+        return out
+    try:
+        _att = domain_manager.get_npc_attitudes(channel_id) or {}
+        rel = _att.get(npc)
+        if not isinstance(rel, dict):
+            # 정규 키가 아닌 표기로 들어온 경우 — 이름 해상도 1회만 더.
+            _k = domain_manager._find_npc_key(_att, npc)
+            rel = _att.get(_k) if _k else None
+        if isinstance(rel, dict):
+            out["depth"] = max(0, int(rel.get("depth", 0) or 0))
+    except Exception as e:
+        logger.debug(f"[WorldBoard] sender depth skip ({npc}): {e}")
+    _rec = None
+    try:
+        _npcs = domain_manager.get_npcs(channel_id) or {}
+        _k = domain_manager._find_npc_key(_npcs, npc)
+        _rec = _npcs.get(_k) if _k else _npcs.get(npc)
+        if isinstance(_rec, dict):
+            out["appear"] = max(0, int(_rec.get("appear_count", 0) or 0))
+    except Exception as e:
+        logger.debug(f"[WorldBoard] sender record skip ({npc}): {e}")
+    out["source"] = _sender_source(_rec)
+
+    _depth_w = float(getattr(config, "BOARD_SENDER_DEPTH_BONUS", 0.40))
+    _appear_w = float(getattr(config, "BOARD_SENDER_APPEAR_BONUS", 0.15))
+    _sat = max(1, int(getattr(config, "BOARD_SENDER_APPEAR_SAT", 6)))
+    _src_w = float(getattr(config, "BOARD_SENDER_SOURCE_BONUS", 0.10))
+    _allowed = _allowed_sender_sources()
+
+    bonus = _depth_w * min(1.0, out["depth"] / 100.0)
+    bonus += _appear_w * min(1.0, out["appear"] / float(_sat))
+    if _allowed is not None and out["source"] in _allowed:
+        bonus += _src_w
+    out["bonus"] = round(bonus, 4)
+    return out
+
+
 def _select_best_event(
     events: List[Dict[str, Any]],
     channel_id: str,
@@ -666,13 +777,35 @@ def _select_best_event(
         if weight < 0.3:
             continue
 
+        # [2026-08-17 발신자 긴밀화] 사적 매체(message)만 관계 가중.
+        #   공지·SNS는 공적 매체라 무변경 — 낯선 이름이 정상인 자리다.
+        #   가중은 threshold **뒤**에 얹는다: 관계가 이벤트의 최소 자격을 대신하지 않는다
+        #   (관계 깊은 인물이 아무 사건 없이 편지를 보내지는 않는다).
+        if ch == "message" and npc:
+            aff = _sender_affinity(channel_id, npc)
+            _min_depth = int(getattr(config, "BOARD_SENDER_MIN_DEPTH", 0) or 0)
+            if _min_depth > 0 and aff["depth"] < _min_depth:
+                logger.debug(
+                    f"[WorldBoard] sender gate dropped {npc} "
+                    f"(depth={aff['depth']} < {_min_depth})")
+                continue
+            weight += aff["bonus"]
+            ev["_sender_affinity"] = aff
+
         candidates.append((weight, ev))
 
     if not candidates:
         return None
 
     candidates.sort(key=lambda x: x[0], reverse=True)
-    return candidates[0][1]
+    best = candidates[0][1]
+    _aff = best.get("_sender_affinity")
+    if _aff:
+        logger.info(
+            "[WorldBoard] sender=%s depth=%s appear=%s src=%s bonus=%.2f",
+            best.get("npc", "?"), _aff.get("depth"), _aff.get("appear"),
+            _aff.get("source") or "?", _aff.get("bonus", 0.0))
+    return best
 
 
 def _route_event_channel(
@@ -704,7 +837,109 @@ def _route_event_channel(
     return None
 
 
-def _build_board_prompt(
+# =========================================================
+# 생성 계약 (2026-08-17) — 작성자 정보 격리 + 매체 문법 분리
+# =========================================================
+# SNSGod 대조에서 가져온 건 문구가 아니라 **구조 두 개**다:
+#   ① 매체마다 스키마·규칙을 따로 세운다(저쪽은 sns_posting / sns-comment / snsdm 프롬이
+#      아예 다른 콜이다) — 우리는 한 콜이므로 계약 테이블을 채널종으로 갈라서, 라우팅된
+#      종의 계약만 프롬프트에 실린다(교차 오염 0). 길이·격식·즉흥성이 종마다 다른 게 요지.
+#   ② 이전 산출을 입력으로 넣어 "고정 문구 폴백"을 탐지·회피한다(저쪽 previousPosts +
+#      "generic fallback diary line 금지"). 우리는 recent_summaries가 이미 들어가고 있었는데
+#      계약이 "반복 금지"뿐이었다 — **이어쓰기**(같은 목소리의 나중 순간)까지 명시한다.
+# ⛔기각: stats(views/likes/replies) 숫자 발명 — 수치를 LLM에 위임하지 않는다는 우리 규율 위반.
+#   댓글 스레드도 기각(표시면·답글 루프 = 파이프라인 신설). 태그는 스키마 신설 없이
+#   본문 안에서만, 그것도 그 세계에 그런 매체가 있을 때만.
+_BOARD_AUTHORSHIP = """## AUTHORSHIP
+The writer is a person inside this world, filing this alone. The brief above is the analysis
+layer, not what the author knows — an author writes from what was seen, heard, or told, and a
+post that holds the whole event is the narrator wearing someone's name.
+Where the profile and the knowledge list are silent, the author was not there. An invented
+witness is a different failure than an incomplete one.
+Dialogue spoken in the scene belongs to the scene: quoted or paraphrased, the post is a relay.
+A post that closes the situation, answers what is still open, or tells the reader how to feel
+about it is narration in a post's clothing. The situation is still open when this is filed.
+No tallies — views, likes, replies, readers, dice, mechanics. A number the brief did not
+supply was invented.
+Write the post itself in Korean."""
+
+# 매체 문법. **라우팅된 종의 것만** 프롬프트에 실린다.
+_MEDIA_CONTRACT = {
+    "bulletin": """Public notice, posted where strangers read it. The title carries the fact; the body
+carries what is asked of whoever reads it. Signed by an office, a rank, or a duty before a
+person — private feeling reaches the page only as what the notice declines to say.
+Register stays fixed and impersonal even when the writer is not. 120-250자.""",
+    "sns": """Personal feed, unedited, filed the moment the thought arrived. One thought, no structure,
+no briefing for followers who already live here. The event may surface only sideways — a mood,
+an aside, something adjacent; naming it whole turns the post into a press release.
+If this world's medium marks posts with tags or sigils, they sit inside the body — none
+invented for a world that has none. 40-140자.""",
+    "message": """Private, to one named recipient who shares the writer's history. What the two already
+know stays unexplained; an unglossed reference belongs here, and a sentence supplying
+background is addressed to an audience this does not have.
+Opening and signature follow this world's form for the named format. 100-220자.""",
+}
+
+# 출력 스키마도 같은 테이블에서 — 두 빌더가 각자 들고 있으면 드리프트한다.
+# (구 board 빌더 쪽 문자열은 `{{`가 f-string 밖에서 쓰여 최종 프롬프트에 이중 중괄호로
+#  샜다 — 여기로 합치면서 단일 중괄호로 교정. 길이는 스키마가 아니라 매체 계약이 쥔다.)
+_MEDIA_SCHEMA = {
+    "bulletin": '"bulletin": [{"board_name": "게시판 이름(장르에 맞게)", "author": "작성자 이름/직함", "title": "제목", "body": "본문"}]',
+    "sns": '"sns": [{"feed_name": "SNS 이름(장르에 맞게)", "author": "작성자", "body": "본문"}]',
+    "message": '"message": [{"format_name": "형식 이름(장르에 맞게: 편지/쪽지/전보/마법통신 등)", "from": "발신자", "to": "수신자", "body": "본문"}]',
+}
+
+# =========================================================
+# [2026-08-17] 이 사건이 만지는 세계 발췌 (장면 연관 로어)
+# =========================================================
+# 병: 게시물 생성 콜은 **세계를 거의 모른 채** 썼다. 구 `_build_board_prompt`에 "마지막 장면의
+#   로어 재사용" 블록이 있었지만 청크 키를 `text`로 읽었고(정본은 `content`) 이벤트 경로에는
+#   아예 없었다 — 즉 실제로 실린 세계 지식은 world_constraints 한 줄뿐이었다.
+#   그 상태의 작성자는 지명·관습·내력을 **발명**하거나, 반대로 아무것도 안 딛고 붕 뜬다.
+# 처방: 리더 부록과 **같은 검색층 진입점**(스크럽→랭킹)으로 이 사건에 닿는 청크만 발췌.
+# 계약이 요지다 — 이 블록은 `_BOARD_AUTHORSHIP`의 정보 격리와 **충돌하지 않아야** 한다:
+#   AUTHORSHIP은 "브리핑은 작성자의 지식이 아니다"(사건 축)를 말하고, 여기는 "발췌는
+#   작성자가 아는 **공적 세계 지식**이지 이번 사건의 목격이 아니다"(세계 축)를 말한다.
+#   둘은 같은 규율의 두 축이지 예외가 아니다. 그래서 문구도 목격/증언 어휘로 맞춰 쓴다.
+# 인용 금지: 청크는 설정 문장이라 그대로 실으면 게시물이 사전 항목이 된다(리더 부록과 동일).
+_BOARD_LORE_CONTRACT = """## WORLD REFERENCE (public knowledge — not this event)
+Common ground: places, custom, standing arrangement — what a person here may already know before
+anything happened today. None of it is testimony. Nothing below was witnessed, reported, or
+confirmed by the author, and no entry describes the event being filed.
+An entry the post does not need stays out; a phrase carried over word for word is a page recited,
+not a person writing."""
+
+
+async def _build_lore_reference(client, channel_id: str, query: str) -> str:
+    """게시물 콜용 세계 발췌 블록(헤더 포함). 재료 없음·검색 실패·TOP_K=0 = ""(블록 생략).
+
+    쿼리는 호출부가 정한다(이벤트 경로=`detail_kr` 브리핑 / 정기 경로=현재 장면 observation).
+    비밀 스크럽은 진입점이 랭킹 **앞**에서 건다 — 게시물은 공개물이라 누출이 즉시 공표다.
+    """
+    if not client or not query or not str(query).strip():
+        return ""
+    try:
+        _top_k = int(getattr(config, "BOARD_LORE_TOP_K", 2))
+        if _top_k <= 0:
+            return ""  # 손잡이 하나로 완전 비활성
+        _cap = int(getattr(config, "BOARD_LORE_CHUNK_CHARS", 400))
+        import vector_search as _vs
+        ranked = await _vs.get_scrubbed_scene_chunks(
+            client, channel_id, str(query)[:2000],
+            top_k=_top_k, max_chars=_cap, tag="BoardLore",
+        )
+        body = _vs.format_chunk_lines(ranked)
+        if not body:
+            return ""
+        logger.debug("[BoardLore] %d entries", len(ranked))
+        return f"{_BOARD_LORE_CONTRACT}\n{body}"
+    except Exception as e:
+        logger.debug(f"[BoardLore] skip: {e}")
+        return ""
+
+
+async def _build_board_prompt(
+    client,
     channel_id: str,
     active_channels: Dict[str, bool],
     trigger: str = "time",
@@ -776,26 +1011,17 @@ def _build_board_prompt(
     npc_names = _npc_keys  # 기존 호환
     npc_section = "\n\n".join(npc_profiles) if npc_profiles else "None"
 
-    # 서사 앵커링: 최신 DAI observation + 로어 청크 재사용
+    # 서사 앵커링: 최신 DAI observation
     frame = domain_manager.get_latest_frame(channel_id)
     dai_snap = frame.get("dai_snapshot", {})
     observation = dai_snap.get("observation", "")
 
-    # 마지막 Theoria가 선택한 로어 청크 재사용 (추가 API 콜 0)
-    lore_chunks = domain_manager.get_lore_chunks(channel_id)
-    last_chunk_idx = dai_snap.get("relevant_chunks", [])
-    lore_section = ""
-    if last_chunk_idx and lore_chunks:
-        chunk_texts = []
-        for idx in last_chunk_idx:
-            if isinstance(idx, int) and 0 <= idx < len(lore_chunks):
-                chunk = lore_chunks[idx]
-                label = chunk.get("label", f"Chunk {idx}")
-                text = chunk.get("text", "")
-                if text:
-                    chunk_texts.append(f"[{label}] {text}")
-        if chunk_texts:
-            lore_section = "\n".join(chunk_texts)
+    # [2026-08-17] 세계 발췌 — 이벤트 빌더와 **같은 함수·같은 계약**(드리프트 0).
+    #   구 블록은 "마지막 Theoria가 고른 청크 재사용(콜 0)"이었으나 청크를 `chunk["text"]`로
+    #   읽었다 — 정본 키는 `content`(command_handler 청커)라 **항상 빈 문자열**이었고,
+    #   결과적으로 이 프롬프트에 로어가 실린 적이 없다(죽은 읽기). 살아 있는 경로로 교체.
+    #   쿼리는 이 빌더가 아는 "지금 장면" = observation. 없으면 블록 생략.
+    lore_section = await _build_lore_reference(client, channel_id, observation)
 
     # 스토리텔러 최근 이벤트
     storyteller = world.get("storyteller", {})
@@ -818,39 +1044,24 @@ def _build_board_prompt(
 
     post_label = f"1-{max_posts} posts" if max_posts > 1 else "1 post"
 
+    # 매체 계약은 활성 채널종의 것만 실린다 — 세 종을 한 번에 켜면 셋이 나란히 서지만,
+    # 꺼진 종의 문법은 프롬프트에 존재하지 않는다(이벤트 경로는 항상 1종).
     if active_channels.get("bulletin"):
-        task_parts.append(f"""{task_num}. **bulletin** — Public board (guild board, notice board, news bulletin, etc.)
-   {post_label}: official notice, job posting, news, warning, etc.
-   Each by a DIFFERENT NPC or organization IN the world.""")
-        output_fields.append("""  "bulletin": [{{
-    "board_name": "게시판 이름 (장르에 맞게)",
-    "author": "작성자 이름/직함",
-    "title": "제목",
-    "body": "본문 (100-200자)"
-  }}]""")
+        task_parts.append(f"""{task_num}. **bulletin** — {post_label}, each by a DIFFERENT office, role, or person in the world.
+{_MEDIA_CONTRACT['bulletin']}""")
+        output_fields.append("  " + _MEDIA_SCHEMA["bulletin"])
         task_num += 1
 
     if active_channels.get("sns"):
-        task_parts.append(f"""{task_num}. **sns** — Personal feed (social media, tavern gossip, personal diary, etc.)
-   {post_label}: casual, personal, showing NPC daily life or rumors.
-   Each by a DIFFERENT NPC or anonymous character.""")
-        output_fields.append("""  "sns": [{{
-    "feed_name": "SNS 이름 (장르에 맞게)",
-    "author": "작성자",
-    "body": "본문 (100-200자)"
-  }}]""")
+        task_parts.append(f"""{task_num}. **sns** — {post_label}, each by a DIFFERENT NPC or anonymous account.
+{_MEDIA_CONTRACT['sns']}""")
+        output_fields.append("  " + _MEDIA_SCHEMA["sns"])
         task_num += 1
 
     if active_channels.get("message"):
-        task_parts.append(f"""{task_num}. **message** — Private message (letter, note, telegram, magical communication, etc.)
-   {post_label}: personal letter, secret note, intercepted communication, etc.
-   Each FROM a DIFFERENT NPC TO another NPC or to the PC. Genre-appropriate format.""")
-        output_fields.append("""  "message": [{{
-    "format_name": "형식 이름 (장르에 맞게: 편지/쪽지/전보/마법통신 등)",
-    "from": "발신자",
-    "to": "수신자",
-    "body": "본문 (100-200자)"
-  }}]""")
+        task_parts.append(f"""{task_num}. **message** — {post_label}, each FROM a DIFFERENT sender TO one named recipient.
+{_MEDIA_CONTRACT['message']}""")
+        output_fields.append("  " + _MEDIA_SCHEMA["message"])
 
     task_text = "\n\n".join(task_parts)
     output_text = ",\n".join(output_fields)
@@ -860,7 +1071,10 @@ def _build_board_prompt(
     if observation:
         context_lines.append(f"- Current Scene: {observation}")
     if recent_summaries:
-        context_lines.append(f"- Recent Posts (DO NOT repeat): {' / '.join(recent_summaries)}")
+        context_lines.append(
+            f"- Already posted (same world, earlier — the next post is a later moment in the "
+            f"same voice, not a restart; repeating one of these subjects files a copy): "
+            f"{' / '.join(recent_summaries)}")
     if handle_registry:
         reg_parts = [f"{name}: {info}" for name, info in handle_registry.items()]
         context_lines.append(f"- Known Accounts (reuse EXACT names): {' | '.join(reg_parts)}")
@@ -879,7 +1093,7 @@ Rating: NC-21+. NPC posts reflect their FULL personality — crude language, dar
 - Doom Level: {doom}%
 - World Rules: {constraints_text or 'None'}
 {f'- Active Rules:{chr(10)}{active_rules_text}' if active_rules_text else ''}
-{f'{chr(10)}## WORLD LORE (from last scene){chr(10)}{lore_section}' if lore_section else ''}
+{f'{chr(10)}{lore_section}' if lore_section else ''}
 
 ## AVAILABLE NPCs (off-screen)
 {npc_section}
@@ -895,13 +1109,11 @@ Generate content for the following channels in this world:
 {task_text}
 
 ## RULES
-- Write in Korean
-- Each post 100-200 characters (body)
-- Match the world's genre and atmosphere
+- Match the world's genre and atmosphere. Time-appropriate — a dawn post is not a night post.
 - ONLY use NPCs from the AVAILABLE NPCs section above. Match their personality and speech style.
-- Time-appropriate content (dawn posts differ from night posts)
-- DO NOT reference game mechanics or meta information
-- DO NOT repeat topics from Recent Posts
+- Length and register are set by each channel's medium above, not shared across them.
+
+{_BOARD_AUTHORSHIP}
 
 ## OUTPUT FORMAT (JSON)
 ```json
@@ -927,7 +1139,8 @@ async def generate_posts(
     from google.genai import types
     import text_resources
 
-    prompt = override_prompt or _build_board_prompt(channel_id, active_channels, trigger, extra_context, max_posts, absent_npcs)
+    prompt = override_prompt or await _build_board_prompt(
+        client, channel_id, active_channels, trigger, extra_context, max_posts, absent_npcs)
 
     cfg = types.GenerateContentConfig(
         # 3중 방어: system_instruction(API레벨) + training pair(모델레벨) + safety_settings(필터레벨)
@@ -971,7 +1184,69 @@ async def generate_posts(
 # Event-Driven Prompt Builder (v2)
 # =========================================================
 
-def _build_event_prompt(
+# digest 라벨 → POSTING NPC 섹션의 기존 한국어 라벨. 구조화 필드 두 개만 대응이 있고
+# (`tone`→말투 / `personality`→성격), 시트 섹션에서 온 조각은 제 섹션 이름을 그대로 쓴다.
+# 형식(`k: v`)은 양쪽이 같아서 라벨만 갈아 끼우면 섹션 모양이 바뀌지 않는다.
+_VOICE_LABEL_KR = {"speech": "말투", "core": "성격"}
+
+
+def _voice_meta(npc_data: Dict[str, Any], npc_name: str) -> List[str]:
+    """시트 → POSTING NPC 메타 조각 목록. 재료 없음·digest 불가 = [] (줄 생략).
+
+    `npc_manager.build_voice_digest`(은닉 3종 방어 내장)의 반환을 기존 섹션 형식에 맞춰
+    라벨만 한국어로 되돌린다. 실패는 **빈 목록**이지 옛 경로 폴백이 아니다 — 폴백하면
+    digest 를 부르는 이유(은닉 방어)가 예외 한 번에 사라진다.
+    """
+    try:
+        import npc_manager as _npm
+        frags = _npm.build_voice_digest(npc_data, npc_name)
+    except Exception as e:
+        logger.debug(f"[WorldBoard] voice digest skipped ({npc_name}): {e}")
+        return []
+    out: List[str] = []
+    for f in frags or []:
+        _lab, _, _val = str(f).partition(": ")
+        if not _val:
+            out.append(str(f))
+            continue
+        out.append(f"{_VOICE_LABEL_KR.get(_lab.strip().lower(), _lab)}: {_val}")
+    return out
+
+
+def _scrub_knows(channel_id: str, knows: List[str]) -> List[str]:
+    """`알고 있는 것` 조각을 비밀 원장과 대조해 **닿은 조각만** 떨군다. 원장 불가 = [].
+
+    판정기·임계는 로어 청크 스크럽·속마음 시트와 공용(`vector_search.secret_touched`) —
+    같은 질문을 같은 임계로 묻는다. 조각 텍스트를 note·quote 두 축에 동시 투입하는 것도
+    `scrub_secret_chunks`와 같다(원장 truth 는 ENGLISH-ONLY라 영문 축이 주, 한글 축은 안전망).
+    """
+    if not knows:
+        return []
+    try:
+        import vector_search as _vs
+        refs = _vs.secret_refs(channel_id, tag="WorldBoard")
+    except Exception as e:
+        logger.debug(f"[WorldBoard] knows scrub unavailable — knows omitted: {e}")
+        return []
+    if refs is None:
+        return []
+    if not refs:
+        return list(knows)
+    try:
+        kept = [k for k in knows
+                if not any(_vs.secret_touched({"note": k, "quote": k}, _tr, _sf)
+                           for _tr, _sf in refs)]
+    except Exception as e:
+        logger.debug(f"[WorldBoard] knows scrub failed — knows omitted: {e}")
+        return []
+    if len(kept) != len(knows):
+        logger.debug("[WorldBoard] knows scrub dropped %d/%d fragments",
+                     len(knows) - len(kept), len(knows))
+    return kept
+
+
+async def _build_event_prompt(
+    client,
     channel_id: str,
     event: Dict[str, Any],
     channel_type: str,
@@ -1003,16 +1278,43 @@ def _build_event_prompt(
         meta = []
         if npc_data.get("role"):
             meta.append(f"역할: {npc_data['role']}")
-        if npc_data.get("personality"):
-            meta.append(f"성격: {npc_data['personality']}")
-        if npc_data.get("tone") or npc_data.get("speech"):
-            meta.append(f"말투: {npc_data.get('tone') or npc_data.get('speech')}")
+        # [2026-08-18 §3] 말투·성격 수동 증류 → `npc_manager.build_voice_digest` 재사용.
+        #   구 코드는 tone/personality 두 필드를 날것으로 실었다 — 그 두 필드가 은닉 계열
+        #   키였거나(RENDERER_STRIP_KEYS) 시트 본문에 `[Secret]`이 섞여 있어도 아무도 안 봤다.
+        #   digest 는 은닉 3종(v6 `### Secrets` 섹션·`[Secret]` 마커·비밀 필드)을 애초에 안
+        #   담고, `{{char}}` 플레이스홀더 치환·조각 캡까지 한다. 여기서 바뀌는 건 **재료
+        #   원천뿐**이고 섹션 형식(`k: v`를 ` | `로 이은 한 줄)은 그대로다.
+        #   빈 반환이면 구 코드와 같이 줄(조각)이 아예 없다.
+        meta.extend(_voice_meta(npc_data, npc_name))
         npc_section = f"Name: {npc_name}\n" + " | ".join(meta) if meta else f"Name: {npc_name}"
 
         # NPC 태도/감정
         att = domain_manager.get_npc_attitude(channel_id, npc_key)
+        # [2026-08-18 §1] 사적 매체(message)에 한해 관계 **수치**를 동반한다.
+        #   공지·SNS는 공적 매체라 무변경 — PC와의 depth/tension 은 거기서 무관하고,
+        #   실으면 "누구에게 쓰는 글인가"를 흐린다(발신 게이트가 message 한정인 것과 같은 이치).
+        #   형식은 속마음 `toward_pc`와 같다: 라벨=값 나열. **수치는 주되 지시하지 않는다**
+        #   (연출·환산은 이 재료의 일이 아니다).
+        #   depth 는 게이트가 이미 계산해 이벤트에 실어 둔 `_sender_affinity`를 재사용한다
+        #   — 재조회 0. 없는 경로(선호 채널이 sns 였다가 온스테이지 라우팅으로 message 가
+        #   된 이벤트)만 태도 dict 에서 읽는다. tension 은 게이트가 안 쓰는 축이라 늘 dict.
+        _att_bits = []
         if isinstance(att, dict) and att.get("attitude"):
-            npc_section += f"\n태도: {att['attitude']}"
+            _a = str(att["attitude"]).strip()
+            if _a and _a.lower() != "null":
+                _att_bits.append(_a)
+        if channel_type == "message":
+            _aff = event.get("_sender_affinity")
+            _depth = _aff.get("depth") if isinstance(_aff, dict) else None
+            if not isinstance(_depth, (int, float)) and isinstance(att, dict):
+                _depth = att.get("depth")
+            if isinstance(_depth, (int, float)):
+                _att_bits.append(f"depth={int(_depth)}")
+            _tension = att.get("tension") if isinstance(att, dict) else None
+            if isinstance(_tension, (int, float)):
+                _att_bits.append(f"tension={int(_tension)}")
+        if _att_bits:
+            npc_section += f"\n태도: {', '.join(_att_bits)}"
 
         emo = world.get("npc_emotion_states", {}).get(npc_key, {})
         # pair 스키마 v2: 'dominant' 제거 → base_label/modifier_label (full EmotionState.to_dict())
@@ -1022,12 +1324,19 @@ def _build_event_prompt(
             _emo_text = f"{_base} × {_mod}" if _mod else _base
             npc_section += f" | 감정: {_emo_text}"
 
-        # NPC 지식
+        # NPC 지식 — [2026-08-18 §2] 원장 대조 스크럽. 게시물은 **공개물**이라 누출이 즉시
+        #   공표고(게다가 recent_summaries·handle_registry 를 타고 다음 턴 재료로 굳는다),
+        #   `knows`는 유일하게 무검증으로 실리던 재료였다. 판정기·임계는 로어 스크럽·속마음
+        #   시트와 **같다**(`vector_search.secret_touched`, 내용어 3 / bigram 3 / 포함).
+        #   조각 단위 드롭 — 한 항목이 비밀에 닿았다고 지식을 통째로 잃으면 결손이다.
+        #   원장을 못 읽으면(refs None) knows 전량 생략(안전측). 전 채널 공통: 유출 경로는
+        #   공지·SNS도 같다(오히려 더 넓다).
         knowledge = domain_manager.get_npc_knowledge_for(channel_id, npc_key)
         if isinstance(knowledge, dict):
-            knows = knowledge.get("knows", [])
+            knows = [str(k).strip() for k in (knowledge.get("knows") or []) if str(k).strip()]
+            knows = _scrub_knows(channel_id, knows)
             if knows:
-                npc_section += f"\n알고 있는 것: {'; '.join(str(k) for k in knows[-5:])}"
+                npc_section += f"\n알고 있는 것: {'; '.join(knows[-5:])}"
 
     # 중복 방지
     recent_summaries = _get_recent_post_summaries(channel_id)
@@ -1040,16 +1349,14 @@ def _build_event_prompt(
         reg_parts = [f"{name}: {info}" for name, info in handle_registry.items()]
         handle_str = f"\n## KNOWN ACCOUNTS (reuse EXACT names)\n{' | '.join(reg_parts)}"
 
-    # 채널별 포맷 지시
-    CHANNEL_INSTRUCTIONS = {
-        "bulletin": ("공공 게시물: 공지, 루머, 뉴스, 경고, 구인. 제목 포함.",
-                     '"bulletin": [{"board_name": "게시판명", "author": "작성자", "title": "제목", "body": "본문(100-200자)"}]'),
-        "sns": ("개인 SNS 포스트: 일상, 감정, 가십. NPC의 개인적 목소리로.",
-                '"sns": [{"feed_name": "SNS명", "author": "작성자", "body": "본문(100-200자)"}]'),
-        "message": ("개인 메시지: 편지, 쪽지, DM. 발신자→수신자 형식.",
-                    '"message": [{"format_name": "형식명", "from": "발신자", "to": "수신자", "body": "본문(100-200자)"}]'),
-    }
-    task_desc, json_schema = CHANNEL_INSTRUCTIONS.get(channel_type, CHANNEL_INSTRUCTIONS["sns"])
+    # 채널별 계약·스키마 — **라우팅된 종 하나만** 실린다(다른 매체의 문법은 이 프롬프트에 없다).
+    media_contract = _MEDIA_CONTRACT.get(channel_type, _MEDIA_CONTRACT["sns"])
+    json_schema = _MEDIA_SCHEMA.get(channel_type, _MEDIA_SCHEMA["sns"])
+
+    # [2026-08-17] 이 사건이 만지는 세계 발췌. 쿼리 = 이벤트 브리핑 원문(detail_kr).
+    #   자리는 **이벤트 앞** — 자료(공적 세계 지식)가 먼저 서고 이번 사건이 뒤에 온다
+    #   (openai 3분할 조립의 자료→THIS TURN 순서와 같은 이치). 없으면 통째로 빠진다.
+    lore_block = await _build_lore_reference(client, channel_id, event.get("detail_kr", ""))
 
     prompt = f"""You are a world content generator for a fictional TTRPG session.
 All characters and events are entirely fictional. Rating: NC-21+.
@@ -1057,21 +1364,26 @@ NPC posts reflect their FULL personality — crude language, dark humor, flirtat
 
 ## CONTEXT
 Genre: {stage} | Location: {location} | Time: Y{year}/M{month}/D{day} {hour:02d}:{minute:02d} ({time_slot}) | Mood: {atmosphere}
-
-## THIS TURN'S EVENT
+{f'{chr(10)}{lore_block}{chr(10)}' if lore_block else ''}
+## THIS TURN'S EVENT (brief — analysis layer, not the author's knowledge)
 {event.get("detail_kr", "")}
 
 ## POSTING NPC
 {npc_section or "(세계 이벤트 — 적절한 NPC 또는 익명 작성자를 선택하라)"}
 {handle_str}
 
-## RECENT POSTS (DO NOT REPEAT)
+## ALREADY POSTED (same world, earlier)
 {recent_str}
+These exist. The next post is a later moment in the same voice, not a restart — repeating one
+of their subjects files a copy. A thread this author opened earlier may be continued.
+
+## MEDIUM — {channel_type}
+{media_contract}
+
+{_BOARD_AUTHORSHIP}
 
 ## TASK
-Write 1 {channel_type} post. {task_desc}
-The post must be a REACTION to the event above. Write in Korean. 100-200자.
-Do not reference game mechanics or meta information.
+One post, written because of the event above and for no other reason.
 
 ## OUTPUT (JSON)
 ```json
@@ -1250,6 +1562,12 @@ async def trigger_board_update(
     # [2026-08-16 도착물 라우트] 착지 모드 판정 — **Flash 콜 앞**에서 한다.
     #   off = 드롭(콜 0). button 인데 붙일 산문 메시지가 없는 경로(!시간 진행 등)도 여기서
     #   드롭한다 — 스레드로 폴백하면 "공개되면 안 되는 것"이 다시 공개되므로 폴백은 금지.
+    #
+    # [2026-08-17 v1.1 §3c] off 의미론 = **"콜 앞 드롭"으로 확정**(생성 후 숨김이 아니다).
+    #   "저장은 하되 표시 0"으로 바꾸면 아무도 볼 수 없는 게시물 하나당 Flash 콜 1개가
+    #   순증하고, 그 산출이 _save_post_summaries·_update_handle_registry 를 통해 다음 턴
+    #   프롬프트 재료로 흘러든다 — 즉 "표시만 끈" 게 아니라 **보이지 않는 세계가 계속 자란다**.
+    #   끄기는 끄기여야 한다. 이력이 필요하면 button 을 쓰면 되고, 그건 이미 저장된다.
     display_mode = get_display_mode(channel_id, final_channel)
     if display_mode == "off":
         logger.info(f"[WorldBoard] dropped (display=off) ch={final_channel} "
@@ -1261,14 +1579,18 @@ async def trigger_board_update(
         return
 
     # 이벤트 맞춤 프롬프트로 Flash 콜
-    prompt = _build_event_prompt(channel_id, best_event, final_channel)
+    # [2026-08-17 light 라우트] 감싸는 건 **실제 LLM 콜**(generate_posts)뿐이다 —
+    #   프롬프트 빌더(_build_event_prompt)는 임베딩만 쓰고(_map_model 무관) 라우팅 대상이 아니다.
+    #   contextvar 라 generate_posts → api_call_with_retry → 백엔드까지 await 를 타고 살아간다.
+    prompt = await _build_event_prompt(client, channel_id, best_event, final_channel)
     active_channels = {final_channel: True}
-    posts = await generate_posts(
-        client, model_id, channel_id, active_channels,
-        trigger, extra_context, max_posts=1,
-        absent_npcs=absent_npcs,
-        override_prompt=prompt,
-    )
+    with config.light_call():
+        posts = await generate_posts(
+            client, model_id, channel_id, active_channels,
+            trigger, extra_context, max_posts=1,
+            absent_npcs=absent_npcs,
+            override_prompt=prompt,
+        )
     if not posts:
         logger.info(f"[WorldBoard] Flash returned empty for event={best_event.get('tag', '?')}")
         return
@@ -1285,9 +1607,11 @@ async def trigger_board_update(
         if display_mode == "button":
             # 공개 스레드 대신 turn_mail 적립 + 산문 메시지에 버튼 사후 부착.
             # 저장 키 = 그 턴 산문 메시지 id → 다음 턴 내용이 옛 버튼에 새지 않는다.
+            # [2026-08-17 v1.1 §3] kind 는 채널종이 정한다 — message=💌, 공지·SNS=📰.
             try:
                 import turn_mail
-                if await turn_mail.deliver(prose_message, channel_id, turn_mail.KIND_MAIL,
+                _kind = BOARD_MAIL_KIND.get(final_channel, turn_mail.KIND_MAIL)
+                if await turn_mail.deliver(prose_message, channel_id, _kind,
                                            _mail_payload(post, final_channel),
                                            turn=current_turn):
                     posted_count += 1
@@ -1315,6 +1639,26 @@ async def trigger_board_update(
             post_fn = {"bulletin": _post_bulletin, "sns": _post_sns, "message": _post_message}
             await post_fn[final_channel](thread, post, channel_id)
             posted_count += 1
+
+    # [2026-08-17 쪽지 서사 접지] 사적 도착물이 **표시층에서 끝나지 않게** — 보낸 사실+내용을
+    #   1턴 큐에 적재하고, 다음 턴 좌뇌 서사 콜이 소비한다(narrative_queries.world_mail_block).
+    #   자리가 여기인 이유: 착지 모드(button/thread) 둘 다를 지나는 **유일한 합류점**이라
+    #   한 번만 적재된다(모드별로 걸면 이중 적재나 한쪽 결손이 난다).
+    #   공지·SNS는 공적 매체라 제외 — "나한테 온 것"이 아니면 답장하지 않은 편지도 아니다.
+    if posted_count > 0 and final_channel == "message":
+        try:
+            import narrative_queries as _nq_mail
+            _post0 = next((p for p in items if isinstance(p, dict) and p.get("body")), {})
+            _nq_mail.queue_world_mail(
+                channel_id,
+                sender=str(_post0.get("from") or _post0.get("author") or
+                           best_event.get("npc") or ""),
+                kind=str(_post0.get("format_name") or ""),
+                summary=str(_post0.get("body") or ""),
+                turn=current_turn,
+            )
+        except Exception as e:
+            logger.debug(f"[WorldBoard] world mail queue skipped: {e}")
 
     # 상태 업데이트
     if posted_count > 0:

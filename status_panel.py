@@ -26,6 +26,7 @@ Status Panel — 하단 상태 패널 v0  [2026-08-16 상태패널 v0]
 
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 import discord
@@ -42,6 +43,12 @@ PANEL_BUTTON_ID = "lorekeeper:status_panel"
 # `!출력룰 추가 <키> ...` 의 키가 이 중 하나면 = 상태 패널 정의.
 _PANEL_KEYS = ("panel", "상태창")
 
+# [2026-08-18 대형식화 v1] 같은 저작 문의 다른 키 = **상단 헤더 형식**.
+#   `!출력룰 추가 헤더 잔고 [빚] / 평판 [평판]` → build_status_header 가 `[변수]`를 치환한다.
+#   패널 키와 나란히 두는 이유: 둘 다 "표시 저작"이고, 둘 다 **렌더에 주지 않는다**
+#   (주면 산문 모델이 상태줄을 그리기 시작한다 — 08-16 이관이 없앤 바로 그 왕복).
+_HEADER_KEYS = ("헤더", "header", "상단")
+
 # 콜 입력에 넣는 산문 꼬리 길이 캡. 패널은 "이번 턴이 무엇을 움직였나"만 알면 된다.
 PROSE_TAIL_CHARS = 2500
 MAX_COMMENTS = 3
@@ -55,6 +62,30 @@ MAX_FIELDS = 20          # discord embed field 25 한도 - 코드 소유값 여�
 def is_panel_key(key: Any) -> bool:
     """출력룰 키가 상태 패널 정의인가. 대소문자·공백 관용."""
     return str(key or "").strip().lower() in _PANEL_KEYS
+
+
+def is_header_key(key: Any) -> bool:
+    """출력룰 키가 상단 헤더 형식 저작인가. 대소문자·공백 관용."""
+    return str(key or "").strip().lower() in _HEADER_KEYS
+
+
+def get_header_template(channel_id: str) -> str:
+    """world_state["output_rules"] 중 헤더 항목의 desc. 없으면 "" (= 헤더는 종전 형식)."""
+    try:
+        rules = (domain_manager.get_world_state(channel_id) or {}).get("output_rules", {})
+    except Exception as e:
+        logger.debug(f"[StatusPanel] header template read skipped: {e}")
+        return ""
+    if not isinstance(rules, dict):
+        return ""
+    for k, v in rules.items():
+        if not is_header_key(k):
+            continue
+        desc = v.get("desc", "") if isinstance(v, dict) else str(v)
+        desc = str(desc or "").strip()
+        if desc:
+            return desc
+    return ""
 
 
 def get_panel_definition(channel_id: str) -> str:
@@ -74,6 +105,23 @@ def get_panel_definition(channel_id: str) -> str:
         if desc:
             return desc
     return ""
+
+
+def has_panel_content(channel_id: str) -> bool:
+    """💠 버튼을 띄울 이유가 있나 = 패널 정의 **또는** 선언 변수.
+
+    [2026-08-18 대형식화 v0] 구 게이트는 패널 정의 하나였다. 선언 변수는 정의 없이도
+    표시 대상이므로(값의 주인이 코드라 콜이 필요 없다) 여기서 OR 로 받는다.
+    게이트는 계속 한 곳 — turn_mail.build_view 가 이 함수만 본다.
+    """
+    if get_panel_definition(channel_id):
+        return True
+    try:
+        import custom_vars
+        return bool(custom_vars.get_declarations(channel_id))
+    except Exception as e:
+        logger.debug(f"[StatusPanel] custom var gate skipped: {e}")
+        return False
 
 
 def get_saved_panel(channel_id: str) -> Dict[str, Any]:
@@ -298,43 +346,350 @@ def apply_panel_result(channel_id: str, result: Optional[Dict[str, Any]]) -> boo
 # =========================================================
 # Display (discord 비의존 순수 함수 → 얇은 Embed 래퍼)
 # =========================================================
+# [2026-08-19 미화 1단] 아래 블록은 **표시 렌더만**이다. 값·캡·순서·저장·급식은 무변경 —
+#   여기서 하는 일은 이미 정해진 값에 시각 요소(게이지 바·단계 도트·섹션 헤더)를 입히는 것뿐.
+#   ★팔레트가 아니라 시각 요소다: 모델에게 주는 어휘가 아니라 코드가 그리는 그림이라
+#     "목록을 주면 순회한다" 함정(project_content_tier_rewrite)의 사정권 밖에 있다.
+
+GAUGE_CELLS = 10
+_GAUGE_FULL = "▰"
+_GAUGE_EMPTY = "▱"
+_STAGE_FULL = "●"
+_STAGE_EMPTY = "○"
+
+# `80/100` 꼴 — gauge 표기의 유일한 인식 패턴. 슬래시 양옆이 숫자일 때만.
+_RATIO_RE = re.compile(r"(?<![\d/])(\d{1,6})\s*/\s*(\d{1,6})(?![\d/])")
+
+# discord.Embed 하드 제약. 넘으면 API가 400을 던지므로 조립 단계에서 자른다.
+EMBED_FIELD_LIMIT = 25
+EMBED_VALUE_LIMIT = 1024
+EMBED_NAME_LIMIT = 256
+_ZWSP = "​"           # 빈 값 금지(discord) 회피용 폭 0 공백
+
+# 섹션 = (이모지 헤더, 행 목록). **섹션당 이모지 1개** — 절제가 규칙이다.
+SECTION_PC = "🧍 PC"
+SECTION_WORLD = "🌍 세계"
+SECTION_RELATION = "🤝 관계"
+SECTION_SCENE = "📜 장면"
+
+
+def _gauge_bar(value: Any, lo: Any = 0, hi: Any = 100) -> str:
+    """비율 → 10칸 바. 범위가 없으면 "" (바를 못 그리면 안 그린다).
+
+    ★단조: 값이 크면 채움 칸이 절대 줄지 않는다(round 는 단조 비감소).
+    """
+    try:
+        v, lo_f, hi_f = float(value), float(lo), float(hi)
+    except (TypeError, ValueError):
+        return ""
+    if hi_f <= lo_f:
+        return ""
+    ratio = max(0.0, min(1.0, (v - lo_f) / (hi_f - lo_f)))
+    filled = int(round(ratio * GAUGE_CELLS))
+    filled = max(0, min(GAUGE_CELLS, filled))
+    return _GAUGE_FULL * filled + _GAUGE_EMPTY * (GAUGE_CELLS - filled)
+
+
+def _stage_dots(idx: int, total: int) -> str:
+    """단계 진행 위치. `무명 ●○○○○` 의 꼬리 — 몇 번째 단계인지를 눈으로."""
+    if total <= 0 or idx < 0 or idx >= total:
+        return ""
+    return _STAGE_FULL * (idx + 1) + _STAGE_EMPTY * (total - idx - 1)
+
+
+def _decorate_line(line: str, spec: Optional[Dict[str, Any]]) -> str:
+    """행 한 줄에 게이지 바 / 단계 도트를 입힌다. 못 알아보면 원문 그대로.
+
+    변화 꼬리(` · t12 +5`)는 건드리지 않는다 — 머리(값 표기)에만 그린다.
+    """
+    text = str(line)
+    if not text or text.startswith("↕"):
+        return text
+    head, sep, tail = text.partition(" · ")
+    vtype = str((spec or {}).get("type", "") or "")
+    stages = [str(s) for s in ((spec or {}).get("stages") or []) if str(s).strip()]
+
+    if vtype in ("", "gauge"):
+        m = _RATIO_RE.search(head)
+        if m:
+            bar = _gauge_bar(m.group(1), 0, m.group(2))
+            if bar:
+                head = f"{head[:m.start()]}{bar} {head[m.start():]}"
+                return f"{head}{sep}{tail}"
+
+    if stages:
+        present = [s for s in stages if s in head]
+        if present:
+            best = max(present, key=len)
+            dots = _stage_dots(stages.index(best), len(stages))
+            if dots:
+                return f"{head} {dots}{sep}{tail}"
+    return text
+
+
+def _decorate_value(value: str, spec: Optional[Dict[str, Any]]) -> str:
+    """행 값(여러 줄일 수 있다) 전체 장식 + 임베드 값 캡 재적용."""
+    out = "\n".join(_decorate_line(ln, spec) for ln in str(value).split("\n"))
+    return out[:1000]
+
 
 def _code_owned_fields(channel_id: str) -> List[Tuple[str, str]]:
     """코드가 소유한 값 = 기력/평형(PC). 콜에 안 맡긴다.
 
-    소스 실측: participants[uid]["ai_memory"]["vigor"|"composure"]["value"]
-    (레거시 세션은 vigor 자리에 "mental" — domain_manager.build_player_block 과 동일 폴백).
+    소스 실측: 평형 = participants[uid]["ai_memory"]["composure"]["value"].
+    **기력은 2026-08-18(Phase 2.5)부로 레지스트리**(custom_var_values["기력"][uid]) —
+    값의 위치만 바뀌고 이 줄의 모양은 그대로다(custom_vars.vigor_value 가 폴백 계단을 안다).
     모듈이 꺼진 채널(is_vigor_composure_active=False)이면 수치가 동결이므로 표시도 생략.
     """
     out: List[Tuple[str, str]] = []
     try:
         if not domain_manager.is_vigor_composure_active(channel_id):
             return out
+        try:
+            import custom_vars as _cv_v
+        except Exception:
+            _cv_v = None
         for _uid, p in (domain_manager.get_active_participants(channel_id) or {}).items():
             if not isinstance(p, dict):
                 continue
             mem = p.get("ai_memory", {}) or {}
             vigor = mem.get("vigor") or mem.get("mental") or {}
             composure = mem.get("composure") or {}
-            v = vigor.get("value") if isinstance(vigor, dict) else None
+            v = (_cv_v.vigor_value(channel_id, _uid, mem) if _cv_v
+                 else (vigor.get("value") if isinstance(vigor, dict) else None))
             c = composure.get("value") if isinstance(composure, dict) else None
             parts = []
             if isinstance(v, (int, float)):
-                parts.append(f"기력 {int(v)}/100")
+                parts.append(f"기력 {_gauge_bar(v)} {int(v)}/100".replace("  ", " "))
             if isinstance(c, (int, float)):
-                parts.append(f"평형 {int(c)}/100")
+                parts.append(f"평형 {_gauge_bar(c)} {int(c)}/100".replace("  ", " "))
             if not parts:
                 continue
-            out.append((str(p.get("mask") or "PC")[:200], " | ".join(parts)))
+            # 두 게이지는 **줄을 나눈다** — 바가 옆으로 붙으면 어느 바가 어느 값인지 안 읽힌다.
+            out.append((str(p.get("mask") or "PC")[:200], "\n".join(parts)))
     except Exception as e:
         logger.debug(f"[StatusPanel] vc fields skipped: {e}")
     return out
 
 
+def _custom_var_fields(channel_id: str) -> List[Tuple[str, str]]:
+    """[2026-08-18 대형식화 v0] 유저 선언 변수 = **코드 소유값**. 콜에 안 맡긴다.
+
+    기력·평형과 같은 자리·같은 문법 — 값의 주인이 그린다. 킬스위치 off 면 빈 리스트.
+
+    [2026-08-19 미화 1단] 행을 만드는 건 여전히 custom_vars 다. 여기서는 **선언(spec)을
+    옆에 놓고 시각 요소만 입힌다** — gauge 는 바, enum(stages) 은 단계 도트. 값·캡·순서·
+    저장은 손대지 않으므로 custom_vars 쪽 계약(급식·집행)은 그대로다.
+    """
+    try:
+        import custom_vars
+        rows = custom_vars.build_display_rows(channel_id)
+    except Exception as e:
+        logger.debug(f"[StatusPanel] custom var fields skipped: {e}")
+        return []
+    try:
+        decl = custom_vars.get_declarations(channel_id) or {}
+    except Exception as e:
+        logger.debug(f"[StatusPanel] custom var spec lookup skipped: {e}")
+        decl = {}
+    out: List[Tuple[str, str]] = []
+    for name, text in rows:
+        spec = decl.get(name) if isinstance(decl, dict) else None
+        out.append((name, _decorate_value(text, spec if isinstance(spec, dict) else None)))
+    return out
+
+
+# A축(관계) 표시 상한. 인물이 늘어도 패널이 관계표로 변하지 않게 — 최근 움직인 순.
+MAX_RELATION_ROWS = 5
+# 표시 자체를 끄는 코드 상수(env 아님). 커스텀 변수 킬스위치와 **별개 축**이다 —
+# A축은 레지스트리 값이 아니라 코드 기관 값이라서.
+SHOW_RELATIONS = True
+
+# [2026-08-19 ① 내부 용어 누출 수리] A축 태도 enum → 한국어 라벨. **표시 전용 사전**이다.
+#   판정·게이트·저장·모델 급식은 전부 영어 enum 그대로 쓴다(state_guards.KNOWN_ATTITUDES /
+#   npc_manager.ATTITUDE_LEVELS) — 여기서 새 상태값을 만들지 않는다.
+#   원칙 = **내부 지표는 내부에**(Doom 수치 표시 제거와 같은 전례): depth/tension 은
+#   수치도 용어도 유저 화면에 가지 않는다. 유저가 볼 것은 "태도"와 "어느 쪽으로 움직였나"뿐.
+_ATTITUDE_KO = {
+    "hostile": "적대", "nemesis": "적대", "enemy": "적대",
+    "unfriendly": "냉담",
+    "wary": "경계",
+    "neutral": "덤덤",
+    "friendly": "우호", "buddy": "우호",
+    "warm": "따뜻함",
+    "loyal": "충직",
+    "devoted": "헌신",
+}
+# 방향 판정용 서열(표시엔 안 나온다). 등재 밖 값은 서열 없음 = 방향 판정 보류.
+_ATTITUDE_ORDER = ("hostile", "unfriendly", "wary", "neutral",
+                   "friendly", "warm", "loyal", "devoted")
+
+
+def _attitude_label(attitude: Any) -> str:
+    """태도 enum → 한국어 라벨. 못 알아보는 ASCII 값은 **침묵**(영어 내부 용어 누출 금지).
+
+    모델이 한국어로 적어 둔 값(비ASCII)은 이미 사람 말이므로 그대로 통과시킨다.
+    """
+    key = str(attitude or "").strip()
+    if not key:
+        return ""
+    ko = _ATTITUDE_KO.get(key.lower())
+    if ko:
+        return ko
+    return key if any(ord(ch) > 0x7F for ch in key) else ""
+
+
+def _change_direction(lc: Optional[Dict[str, Any]]) -> str:
+    """`last_change` 도장 → **방향 기호만**. 필드명·수치·턴은 표시로 넘어가지 않는다.
+
+    depth = 가까워졌나 멀어졌나, attitude = 서열이 올랐나 내렸나로 읽는다.
+    tension 은 방향으로 번역하지 않는다(긴장 상승이 관계 악화라는 보장이 없다) —
+    "무언가 움직였다"는 ↕ 로만 남는다. 도장이 없으면 기호도 없다(no-op 보존).
+    """
+    if not isinstance(lc, dict):
+        return ""
+    field = str(lc.get("field", "") or "")
+    if not field:
+        return ""
+    fields = field.split("+")
+    olds = lc.get("from") if isinstance(lc.get("from"), list) else [lc.get("from")]
+    news = lc.get("to") if isinstance(lc.get("to"), list) else [lc.get("to")]
+    signs = set()
+    stirred = False
+    for i, f in enumerate(fields):
+        old = olds[i] if i < len(olds) else None
+        new = news[i] if i < len(news) else None
+        f = f.strip().lower()
+        if f == "depth":
+            try:
+                signs.add(1 if float(new) > float(old) else -1 if float(new) < float(old) else 0)
+            except (TypeError, ValueError):
+                stirred = True
+        elif f == "attitude":
+            try:
+                a = _ATTITUDE_ORDER.index(str(old or "").strip().lower())
+                b = _ATTITUDE_ORDER.index(str(new or "").strip().lower())
+                signs.add(1 if b > a else -1 if b < a else 0)
+            except ValueError:
+                stirred = True
+        else:
+            stirred = True          # tension 등 — 방향으로 번역하지 않는다
+    signs.discard(0)
+    if len(signs) == 1:
+        return "↑" if signs.pop() > 0 else "↓"
+    if signs or stirred:
+        return "↕"
+    return ""
+
+
+def _relation_allowed_names(channel_id: str) -> set:
+    """[2026-08-19 ② 몹·무출처 누출 수리] A축 **표시** 대상 = source∈{lore,manual} ∧ 몹 태그 아님.
+
+    ★새 분류를 만들지 않는다 — npc_manager.FROZEN_SOURCES 를 그대로 읽는다. 💭 속마음
+      게이트(turn_mail._allowed_mind_sources)·NPC 스코프 변수 게이트
+      (custom_vars.allowed_npc_names)와 **같은 계보**다. source 없는 구 레코드는
+      npc_manager 관례대로 session 으로 접히므로 기본에서 제외된다("보급 담당원" 부류).
+    ⚠ 게이트는 **표시 층에만** 산다 — A축 상태기계(저장·감쇠·게이팅)는 전 NPC 그대로 돈다.
+    """
+    try:
+        import npc_manager as _npm
+        allowed = {str(s).lower() for s in getattr(_npm, "FROZEN_SOURCES", ("lore", "manual"))}
+        default = getattr(_npm, "SOURCE_SESSION", "session")
+        npcs = _npm.get_npcs(channel_id) or {}
+    except Exception as e:
+        logger.debug(f"[StatusPanel] relation source gate skipped: {e}")
+        return set()
+    out = set()
+    for nm, rec in (npcs or {}).items():
+        if not isinstance(rec, dict):
+            continue
+        if str(rec.get("source", default) or default).lower() not in allowed:
+            continue
+        try:
+            if _npm.is_mob_tag(str(nm)):
+                continue
+        except Exception:
+            pass
+        out.add(str(nm))
+    return out
+
+
+def _relation_fields(channel_id: str) -> List[Tuple[str, str]]:
+    """[2026-08-19 실전 관측 수리] A축 = **한국어 태도 + 최근 변화 방향**. 그게 전부다.
+
+    레지스트리가 아니라 **패널 합성 추가**다(호감도는 코드 기관 값이니까).
+    최근 변화는 `last_change` 도장(_stamp_relation_change)을 그대로 읽는다 —
+    새 계측·새 저장 0. 도장이 없으면 방향 기호가 없다(no-op 보존 규율의 표시판).
+
+    depth/tension 은 **정렬에만** 쓴다(무엇을 먼저 보여줄지). 화면엔 안 나간다.
+    """
+    if not SHOW_RELATIONS:
+        return []
+    out: List[Tuple[str, str]] = []
+    try:
+        atts = domain_manager.get_npc_attitudes(channel_id) or {}
+        if not isinstance(atts, dict) or not atts:
+            return []
+        allowed = _relation_allowed_names(channel_id)
+        if not allowed:
+            return []
+        rows = []
+        for name, rel in atts.items():
+            if not isinstance(rel, dict) or str(name) not in allowed:
+                continue
+            lc = rel.get("last_change") if isinstance(rel.get("last_change"), dict) else None
+            label = _attitude_label(rel.get("attitude"))
+            direction = _change_direction(lc)
+            if not label and not direction:
+                continue      # 보여줄 사람 말이 없으면 줄도 없다
+            try:
+                depth = int(rel.get("depth") or 0)
+            except (TypeError, ValueError):
+                depth = 0
+            turn = int(lc.get("turn", -1) or -1) if lc else -1
+            rows.append((turn, depth, str(name), label, direction))
+        # 최근에 움직인 관계 우선, 그다음 깊이(내부 정렬 키). 조용한 관계는 잘린다.
+        rows.sort(key=lambda r: (r[0], r[1]), reverse=True)
+        for _turn, _d, name, label, direction in rows[:MAX_RELATION_ROWS]:
+            text = " ".join(p for p in (label, direction) if p)
+            out.append((str(name)[:250], text[:1000]))
+    except Exception as e:
+        logger.debug(f"[StatusPanel] relation fields skipped: {e}")
+    return out
+
+
+def _fit_sections(sections: List[Tuple[str, List[Tuple[str, str]]]],
+                  reserve: int) -> List[Tuple[str, List[Tuple[str, str]]]]:
+    """discord 필드 25칸 예산 배분. 헤더도 한 칸을 먹는다는 사실을 여기서만 안다.
+
+    ★자르는 규율: 섹션은 **헤더+행 1개**를 못 넣을 바에야 통째로 생략한다
+      (머리만 남은 섹션은 정보가 아니라 노이즈다). 데이터·순서는 무변경 — 표시 절단만.
+    """
+    budget = EMBED_FIELD_LIMIT - max(0, reserve)
+    out: List[Tuple[str, List[Tuple[str, str]]]] = []
+    for title, rows in sections:
+        if not rows or budget < 2:
+            continue
+        take = min(len(rows), budget - 1)
+        if take <= 0:
+            continue
+        out.append((title, rows[:take]))
+        budget -= (1 + take)
+    return out
+
+
+def _inline_ok(value: str) -> bool:
+    """짧은 한 줄 값만 인라인으로 묶는다 — 여러 줄·긴 값은 제 폭을 다 쓴다."""
+    text = str(value)
+    return "\n" not in text and len(text) <= 40
+
+
 def build_panel_embed_data(channel_id: str) -> Optional[Dict[str, Any]]:
     """표시 데이터 조립 — **discord 비의존 순수 함수**(스모크가 여기까지 검증한다).
 
-    반환: {"title", "fields": [(name, value)], "comments": [str], "footer"}
+    반환: {"title", "sections": [(헤더, [(name, value)])], "fields": [(name, value)],
+           "comments": [str], "footer"}
+    `fields` = sections 를 평평하게 편 것(헤더 제외) — 기존 소비자·검정의 계약 그대로다.
     코드 소유값(기력·평형)이 유저 정의 필드 **앞**에 온다. footer = 시간·위치(+갱신 턴).
     표시할 게 아무것도 없으면 None.
     """
@@ -342,15 +697,26 @@ def build_panel_embed_data(channel_id: str) -> Optional[Dict[str, Any]]:
     raw_fields = saved.get("fields") if isinstance(saved.get("fields"), dict) else {}
     comments = [str(c) for c in (saved.get("comments") or []) if str(c).strip()][:MAX_COMMENTS]
 
-    fields: List[Tuple[str, str]] = list(_code_owned_fields(channel_id))
+    scene_rows: List[Tuple[str, str]] = []
     for k, v in (raw_fields or {}).items():
         name = str(k or "").strip()
         val = _flatten_value(v)
         if not name or not val:
             continue
-        fields.append((name[:250], val[:1000]))
-        if len(fields) >= 25:
-            break
+        scene_rows.append((name[:250], val[:1000]))
+
+    # 코드 소유값이 유저 정의 필드 **앞**에 온다: 기력·평형 → 선언 변수 → A축 관계 → 장면.
+    # 빈 섹션은 헤더째 생략된다(_fit_sections).
+    sections = _fit_sections(
+        [
+            (SECTION_PC, list(_code_owned_fields(channel_id))),
+            (SECTION_WORLD, list(_custom_var_fields(channel_id))),
+            (SECTION_RELATION, list(_relation_fields(channel_id))),
+            (SECTION_SCENE, scene_rows),
+        ],
+        reserve=1 if comments else 0,
+    )
+    fields: List[Tuple[str, str]] = [row for _t, rows in sections for row in rows]
 
     if not fields and not comments:
         return None
@@ -365,6 +731,7 @@ def build_panel_embed_data(channel_id: str) -> Optional[Dict[str, Any]]:
 
     return {
         "title": "💠 상태",
+        "sections": sections,
         "fields": fields,
         "comments": comments,
         "footer": " · ".join(footer_parts),
@@ -372,17 +739,21 @@ def build_panel_embed_data(channel_id: str) -> Optional[Dict[str, Any]]:
 
 
 def build_panel_embed(channel_id: str) -> Optional[discord.Embed]:
-    """위 dict → Embed. 얇게 — 여기엔 로직을 두지 않는다."""
+    """위 dict → Embed. 얇게 — 여기엔 로직을 두지 않는다(예산·장식은 위에서 끝났다)."""
     data = build_panel_embed_data(channel_id)
     if not data:
         return None
     embed = discord.Embed(title=data["title"], color=0x5865F2)
-    for name, value in data["fields"]:
-        embed.add_field(name=name, value=value, inline=True)
+    for title, rows in data.get("sections") or []:
+        embed.add_field(name=str(title)[:EMBED_NAME_LIMIT], value=_ZWSP, inline=False)
+        for name, value in rows:
+            text = str(value)[:EMBED_VALUE_LIMIT] or _ZWSP
+            embed.add_field(name=(str(name)[:EMBED_NAME_LIMIT] or _ZWSP),
+                            value=text, inline=_inline_ok(text))
     if data["comments"]:
         embed.add_field(
-            name="​",
-            value="\n".join(f"› {c}" for c in data["comments"])[:1024],
+            name=_ZWSP,
+            value="\n".join(f"› {c}" for c in data["comments"])[:EMBED_VALUE_LIMIT],
             inline=False,
         )
     if data["footer"]:

@@ -15,6 +15,18 @@ import game_world
 
 logger = logging.getLogger("UNE")
 
+
+def _cv_vigor(channel_id: str, user_id: str, mem: Dict[str, Any]) -> int:
+    """[2026-08-18 Phase 2.5] 기력 = 레지스트리 값. 폴백 계단은 custom_vars 한 곳에만 있다."""
+    try:
+        import custom_vars as _cv
+        return _cv.vigor_value(channel_id, user_id, mem)
+    except Exception as e:
+        logger.debug(f"[CustomVar] 기력 조회 skip: {e}")
+        src = (mem or {}).get("vigor") or (mem or {}).get("mental") or {}
+        return int(src.get("value", 100) or 100)
+
+
 def _to_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
@@ -823,7 +835,8 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
                 "appearance": pmem.get("appearance", ""),
                 "personality": pmem.get("personality", ""),
                 "passives": pmem.get("passives", []),
-                "vigor_value": pmem.get("vigor", pmem.get("mental", {})).get("value", 100),
+                # [Phase 2.5] 기력은 레지스트리 우선(PC별 슬롯), 없으면 옛 자리 폴백.
+                "vigor_value": _cv_vigor(channel_id, uid, pmem),
                 "composure_value": pmem.get("composure", {}).get("value", 100),
             }
     anchors["all_pcs"] = all_pcs
@@ -865,6 +878,23 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
     _npc_mgr.migrate_npc_fields(channel_id)  # desc→description 통일 + 구조화 필드 자동 추출
     anchors["npc_roster"] = _npc_mgr.get_npc_roster(channel_id)
 
+    # [2026-09-02 R4/R5] 3단 출석 앵커 — 스펙 §2.4 / §6 R4·R5.
+    # 여기서 한 번만 뽑아 세 소비자에게 나눠 준다: scene_cast(R5 psyche 대상 명시),
+    #   nearby_cast(1단 = "들어올 수 있다"), absent+hops(아래 offscreen 후보 정렬).
+    # 앵커가 **비었으면 키를 안 넣는다** — 빈 목록을 넣으면 프롬프트에 "아무도 없다"는
+    #   블록이 서는데, 위치 미기록과 부재는 다른 사실이다(§2.4 unresolved 규율과 같은 이유).
+    _tiers = {}
+    try:
+        _tiers = _npc_mgr.get_presence_tiers(channel_id) or {}
+        if not _tiers.get("unresolved"):
+            if _tiers.get("scene"):
+                anchors["scene_cast"] = list(_tiers.get("scene") or [])
+            if _tiers.get("reachable"):
+                anchors["nearby_cast"] = list(_tiers.get("reachable") or [])
+    except Exception as _e_tiers:
+        logger.debug(f"[presence-check] tiers anchor skip: {_e_tiers}")
+        _tiers = {}
+
     # [2026-07-02 Offscreen Motion — 뮈토스 이식] 부재 등록 NPC 후보 → Theoria offscreen_trace 재료.
     # 장면 밖 NPC의 "세계가 턴 사이에 움직인 흔적" 공급용. 후보 6명 캡, 실패 무해.
     # [Phase 0] last_seen(emotion_log 기준)으로 부재 '기간' 동봉 — 오래 빈 인물일수록 흔적 가치↑.
@@ -872,34 +902,62 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
         # [2026-07-28] 구 코드는 get_scene_npc_names(=로어 아닌 **전체** 명부)를 "무대 위"로 봤다.
         # 그래서 _absent_names에는 거의 로어 NPC만 남고, 정작 노리던 "한동안 안 나온 세션 NPC"는
         # 절대 후보에 못 올랐다 — 오프스크린 흔적 기능이 사실상 사문.
-        # 최근 2턴 등장자를 무대 위로 보고, 그 외 전원을 부재 후보로 둔다.
-        _scene_set = set(_npc_mgr.get_onstage_npc_names(channel_id, within_turns=2))
+        # [2026-09-02 R4] 그 "무대 위의 여집합"을 **2단(absent)**으로 교체한다. 스펙 §2.4.
+        #   병: 여집합은 평평하다 — 옆방 사람과 다른 도시 사람이 같은 무게로 후보에 오르고,
+        #     1단(근접)이 통째로 여기 섞여 "들어올 수 있는 사람"이 부재 흔적으로 소비됐다.
+        #   처방: 후보는 2단만, 정렬은 **홉 오름차순**(옆방 흔적이 다른 도시 흔적보다 먼저).
+        #     같은 홉이면 현행 규칙 — 오래 안 보인 사람이 먼저(흔적 가치↑, 아래 last_seen).
         _reg_all = domain_manager.get_npcs(channel_id) or {}
-        # [2026-08-11 사망 파이프라인] 생존축 필터 — 구멍 순위 2.
-        #   죽은/쓰러진 인물은 정의상 **항상 부재**라 상시 offscreen_trace 후보였다
-        #   (그 자리에 `likely-now=` 현재 추정 행동까지 붙었다).
-        _absent_names = [n for n, _d in _reg_all.items()
-                         if n not in _scene_set and _npc_mgr.is_npc_active(_d)][:6]
-        if _absent_names:
-            _att_map = domain_manager.get_npc_attitudes(channel_id) or {}
+        _att_map = domain_manager.get_npc_attitudes(channel_id) or {}
+        _last_seen = {}
+        try:
+            import narrative_queries as _nq
+            _last_seen = _nq.last_seen_turns(channel_id)
+        except Exception:
             _last_seen = {}
+        _cur_t = int(world.get("turn_index", 0) or 0)
+
+        def _ls_lookup(name: str):
+            if name in _last_seen:
+                return _last_seen[name]
+            _base = name.split("(")[0].strip().lower()
+            for _k, _v in _last_seen.items():
+                _kb = _k.split("(")[0].strip().lower()
+                if _kb == _base or _base in _k.lower() or _kb in name.lower():
+                    return _v
+            return None
+
+        if (not _tiers) or _tiers.get("unresolved"):
+            # 폴백 — PC 노드 미해상(전환 직후·위치 미기록)이거나 tiers 조회 자체가 실패한 경우.
+            # 판독기(`get_onstage_npc_names`)가 같은 조건에서 같은 레거시로 내려가므로 정합.
+            _scene_set = set(_npc_mgr.get_onstage_npc_names(channel_id, within_turns=2))
+            # [2026-08-11 사망 파이프라인] 생존축 필터 — 구멍 순위 2.
+            #   죽은/쓰러진 인물은 정의상 **항상 부재**라 상시 offscreen_trace 후보였다
+            #   (그 자리에 `likely-now=` 현재 추정 행동까지 붙었다).
+            _absent_pool = [n for n, _d in _reg_all.items()
+                            if n not in _scene_set and _npc_mgr.is_npc_active(_d)]
+            _hops_map = {}
+        else:
+            _absent_pool = list(_tiers.get("absent") or [])   # 생존축 필터는 tiers가 이미 건다
+            _hops_map = _tiers.get("hops") or {}
+        # 정렬 키는 전부 유한·결정적이다(미배치=UNPLACED_HOPS, 미관측=-1, 마지막은 이름) —
+        #   dict 반복 순서에 기대는 선택은 버그 후보라는 Pass D-2 교훈.
+        _far = int(getattr(_npc_mgr, "UNPLACED_HOPS", 999))
+
+        def _absent_sort_key(_n):
             try:
-                import narrative_queries as _nq
-                _last_seen = _nq.last_seen_turns(channel_id)
-            except Exception:
-                _last_seen = {}
-            _cur_t = int(world.get("turn_index", 0) or 0)
+                _h = int(_hops_map.get(_n, _far))
+            except (TypeError, ValueError):
+                _h = _far
+            try:
+                _l = _ls_lookup(_n)
+                _l = int(_l) if _l is not None else -1   # 미관측 = 가장 오래된 쪽으로
+            except (TypeError, ValueError):
+                _l = -1
+            return (_h, _l, str(_n))
 
-            def _ls_lookup(name: str):
-                if name in _last_seen:
-                    return _last_seen[name]
-                _base = name.split("(")[0].strip().lower()
-                for _k, _v in _last_seen.items():
-                    _kb = _k.split("(")[0].strip().lower()
-                    if _kb == _base or _base in _k.lower() or _kb in name.lower():
-                        return _v
-                return None
-
+        _absent_names = sorted(_absent_pool, key=_absent_sort_key)[:6]
+        if _absent_names:
             # [2026-07-14 고아 재배선] NPC 시간 힌트(P1 관찰/P2 스케줄, 무근거 폴백 없음)
             # — ctx.rule_txt 고아 회로에서 버려지던 것을 offscreen_trace 재료로 이송.
             # 서사 콜이 큐레이션 게이트 = 렌더러 직행 노이즈(random cast pull) 없음.
@@ -1041,8 +1099,20 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
         mem["composure"] = {"value": old_val, "last_delta": 0}
         del mem["mental"]
 
+    # [2026-08-18 Phase 2.5] 기력의 정본은 **레지스트리**(custom_var_values["기력"][user_id]).
+    #   bus.vigor 는 이번 턴 읽기 사본이다 — 하류(판정 폴백·notation·cascade·스냅샷·로그)가
+    #   전부 bus 를 읽으므로 여기 한 곳만 갈아끼우면 배선이 통째로 옮겨간다.
+    #   레지스트리가 답을 못 주면(기능 off) 옛 자리로 폴백 — 이월 승계와 같은 계단.
     vigor_data = mem.get("vigor", {"value": 100, "last_delta": 0})
-    bus.vigor["value"] = vigor_data.get("value", 100)
+    _vigor_val = vigor_data.get("value", 100)
+    try:
+        import custom_vars as _cv_bus
+        _reg_v = _cv_bus.get_system_value(channel_id, "기력", user_id)
+        if _reg_v is not None:
+            _vigor_val = _reg_v
+    except Exception as _e_cvb:
+        logger.debug(f"[CustomVar] 기력 레지스트리 로드 skip: {_e_cvb}")
+    bus.vigor["value"] = _vigor_val
     bus.vigor["last_delta"] = vigor_data.get("last_delta", 0)
     composure_data = mem.get("composure", {"value": 100, "last_delta": 0})
     bus.composure["value"] = composure_data.get("value", 100)
@@ -1099,7 +1169,11 @@ def sync_from_game_context(channel_id: str, user_id: str, ctx: Any) -> None:
         # Remove legacy "mental" key if present
         mem.pop("mental", None)
 
-        for axis_name in ("vigor", "composure"):
+        # [2026-08-18 Phase 2.5] **평형만** 여기서 영속한다. 기력의 저장처는 레지스트리로
+        #   옮겨갔고 쓰기는 그쪽 관문(apply_deltas / apply_system_delta)이 전담한다 —
+        #   두 자리에 같은 수를 적으면 어느 쪽이 정본인지 아무도 모르게 된다.
+        #   ai_memory["vigor"] 는 손대지 않고 그대로 둔다: 이월 승계의 소스이기 때문이다.
+        for axis_name in ("composure",):
             axis_bus = getattr(bus, axis_name)
             if axis_bus.get("active"):
                 axis_sys = mem.setdefault(axis_name, {"value": 100, "last_delta": 0})

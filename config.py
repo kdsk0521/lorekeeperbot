@@ -27,14 +27,20 @@ GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 # [2026-08-14 조사] gemini-3.7-flash = Stable(08-13 출시), 일반 API 키로 사용 가능(Vertex 전용 아님).
 #   입력 1,048,576 / 출력 65,536, thinking low·medium·high("minimal"은 에러 반환).
 #   제미니 복귀 시 후보값: PRO=FLASH="gemini-3.7-flash".
-#   ★★ 단, PRO를 3.7-flash로 두면 analysis_backend._map_model(148~151행)의 이름 폴스루가 깨진다.
-#      판정이 `"pro" in m and "flash" not in m`이라 "gemini-3.7-flash"는 FLASH 분기로 떨어지고,
-#      openai 경로에서 MODEL_ID_PRO를 쓰는 reader_gm(267/616/775행)이 V4-Pro→GLM으로 조용히 갈아탄다.
-#      → 3.7로 갈 거면 ANALYSIS_OPENAI_MODEL_READER를 명시하거나 _map_model 판정을 먼저 고칠 것.
+#   ★★ [2026-08-18 완전 해소 — 라우팅 전면 개편] 이 셋은 **제미니 경로 전용 실제 모델 ID**다.
+#      openai 경로 라우팅과 **완전히 무관**하다 — 콜사이트가 이제 모델명이 아니라 역할
+#      (config.role_model("reader") 등)을 선언하고, 아래 _ROLE_CHAINS 가 env 슬롯을 지목한다.
+#      PRO="gemini-3.7-flash" 든 PRO=FLASH 동일값이든 openai 해석은 1비트도 안 움직인다.
+#      _(구 경고 2종 — "PRO를 3.7-flash로 두면 reader_gm 이 조용히 GLM으로", "PRO=FLASH면
+#        부분문자열 폴백에 맡겨짐" — 둘 다 사문. 이름표 역할 자체가 폐지됐다.)_
 #   아래 두 preview 모델은 2026-08-14 기준 생존 확인됨.
-MODEL_ID_PRO = "gemini-3.1-pro-preview"
-MODEL_ID_FLASH = "gemini-3-flash-preview"
-MODEL_ID = MODEL_ID_PRO
+# [2026-08-18 기본값 전량 제거 — env 단일 레버] 모델 이름은 **오직 .env 에서만** 온다.
+#   폴백 리터럴이 있으면 "env 를 고쳤는데 안 바뀐다 / 지웠는데 계속 돈다"가 생긴다.
+#   미설정 = "" → gemini 백엔드로 기동하면 validate_model_env() 가 이름을 나열하고 기동 거부.
+#   (import 시점엔 절대 안 죽는다 — 스모크·도구가 env 없이 config 를 import 한다.)
+MODEL_ID_PRO = os.getenv("GEMINI_MODEL_PRO", "")
+MODEL_ID_FLASH = os.getenv("GEMINI_MODEL_FLASH", "")
+MODEL_ID = os.getenv("GEMINI_MODEL_ID", MODEL_ID_PRO)
 
 # Renderer Backend: "gemini" or "openai" (OpenAI-compatible; 현 운영=Ollama Cloud)
 RENDERER_BACKEND = os.getenv("RENDERER_BACKEND", "openai").lower()
@@ -42,7 +48,7 @@ RENDERER_BACKEND = os.getenv("RENDERER_BACKEND", "openai").lower()
 # OpenAI-compatible renderer — Ollama Cloud (https://ollama.com/v1, 모델명 :cloud 접미사)
 OPENAI_API_KEY = os.getenv("OPENAI_RENDERER_API_KEY", "")  # ollama.com/settings/keys 키 env로
 OPENAI_BASE_URL = os.getenv("OPENAI_RENDERER_BASE_URL", "https://ollama.com/v1")
-OPENAI_MODEL_ID = os.getenv("OPENAI_RENDERER_MODEL", "deepseek-v4-pro:cloud")
+OPENAI_MODEL_ID = os.getenv("OPENAI_RENDERER_MODEL", "")
 # OpenAI-compatible generation parameters (top_k 미지원 → frequency/presence_penalty로 보정)
 OPENAI_TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", "0.8"))  # 추론 ON 시 0.7~0.8 권장(추론이 탐색 담당 → 출력은 일관성)
 OPENAI_TOP_P = float(os.getenv("OPENAI_TOP_P", "0.80"))
@@ -60,13 +66,13 @@ ANALYSIS_BACKEND = os.getenv("ANALYSIS_BACKEND", "gemini").lower()
 # 미지정 시 렌더러(OPENAI_*) 설정 재사용 — Ollama Cloud면 키/URL 자동 공유(상속)
 ANALYSIS_OPENAI_API_KEY = os.getenv("ANALYSIS_OPENAI_API_KEY", OPENAI_API_KEY)
 ANALYSIS_OPENAI_BASE_URL = os.getenv("ANALYSIS_OPENAI_BASE_URL", OPENAI_BASE_URL)
-ANALYSIS_OPENAI_MODEL_FLASH = os.getenv("ANALYSIS_OPENAI_MODEL_FLASH", "deepseek-v4-flash:cloud")
-ANALYSIS_OPENAI_MODEL_PRO = os.getenv("ANALYSIS_OPENAI_MODEL_PRO", "deepseek-v4-pro:cloud")
+ANALYSIS_OPENAI_MODEL_FLASH = os.getenv("ANALYSIS_OPENAI_MODEL_FLASH", "")
+ANALYSIS_OPENAI_MODEL_PRO = os.getenv("ANALYSIS_OPENAI_MODEL_PRO", "")
 # 임베딩 = Voyage AI (Ollama Cloud는 임베딩 서빙 X → 전용 엔드포인트/키 분리). 200M 토큰 무료(voyage-4 계열).
 # ⚠ ZDR은 Voyage 대시보드에서 opt-out 필요(기본 학습 ON). 차원 기본 1024. 공급자 바꿨으니 기존 벡터 1회 재임베딩 필요.
 ANALYSIS_OPENAI_EMBED_BASE_URL = os.getenv("ANALYSIS_OPENAI_EMBED_BASE_URL", "https://api.voyageai.com/v1")
 ANALYSIS_OPENAI_EMBED_API_KEY = os.getenv("ANALYSIS_OPENAI_EMBED_API_KEY", "")  # Voyage 키 env로
-ANALYSIS_OPENAI_EMBED_MODEL = os.getenv("ANALYSIS_OPENAI_EMBED_MODEL", "voyage-4")
+ANALYSIS_OPENAI_EMBED_MODEL = os.getenv("ANALYSIS_OPENAI_EMBED_MODEL", "")  # 기본값 없음 — .env 필수(분석=openai)
 # 분석 = JSON 스키마 채우기(결정적 추출). extended thinking 불필요 → 기본 off(출력/지연 절감).
 # DAI 품질 부족 관측 시 .env 에서 "low"/"medium" 으로 상향.
 ANALYSIS_OPENAI_REASONING_EFFORT = os.getenv("ANALYSIS_OPENAI_REASONING_EFFORT", "none")
@@ -135,9 +141,40 @@ READER_SEED_CAP = int(os.getenv("READER_SEED_CAP", "6"))  # reader-유래 시드
 # history_log와 같은 **영구 사료**(독자 공책 원본 — 챕터 회고 등 미래 소비자 재료) → **무캡이 기본**.
 # 읽기는 항상 LIMIT≤40이라 조회 비용 불변. >0 설정 시에만 롤링(손잡이 잔존).
 READER_LOG_KEEP = int(os.getenv("READER_LOG_KEEP", "0"))
+# [2026-08-17 장면 연관 로어 급식] 리더 본 콜에 "출판된 설정 부록 — 이 장면 관련 발췌" 블록 주입.
+# 전제(레티어스 확정): 리더=독자가 아니라 **서브 GM**(GM의 다른 시선) — 세계(로어)는 알아도 된다.
+# blind 게이트의 진의는 "저자의 내부 상태·DAI·지시문을 모른다"이지 "세계를 모른다"가 아니었다.
+# 쿼리=이번 턴 산문(기존 _build_notebook_recall과 같은 축), 풀=lore_chunks, 엔진=공용 싱글턴.
+# TOP_K=0 = 블록 완전 비활성(현행 폴백 = 부록 없는 리더 콜). 청크당 문자 캡은 CHARS.
+# ⚠비밀 스크럽 필수: secret_ledger truth에 닿는 청크는 드롭 — 안 그러면 `_apply_reader_exposure`가
+#   재는 "리더가 비밀을 만졌나"가 '읽어서 안 것'과 '급식받아 안 것'을 구분 못 해 계측이 오염된다.
+READER_LORE_TOP_K = int(os.getenv("READER_LORE_TOP_K", "3"))
+READER_LORE_CHUNK_CHARS = int(os.getenv("READER_LORE_CHUNK_CHARS", "500"))
 # 독자 모델: ""(기본)=PRO 폴스루(V4-Pro). Gemma 후보 시 env로 gemma4:31b-cloud 등 지정.
 ANALYSIS_OPENAI_MODEL_READER = os.getenv("ANALYSIS_OPENAI_MODEL_READER", "")
 ANALYSIS_READER_VAR = contextvars.ContextVar("analysis_reader_call", default=False)
+
+# ── 로어 통합 분석 전용 추론 tier (2026-09-02) ─────────────────────────────
+# heavy/extract/reader와 동일 패턴(5번째 자매). heavy 블록 안에서 돌지만 **로어가 이긴다**.
+# ★근거 = 폭주 실측. 같은 콜에서 reasoning_chars 851 → **13,562**(캡 지시문 3000자의 4.5배).
+#   OpenAI 호환 라우트는 추론이 출력과 **같은 max_tokens 예산**을 쓰므로, 추론 폭주가 곧
+#   JSON 잘림이 된다(실측: `[Unified Lore Analysis] 출력 토큰 한도 초과`).
+#   [[feedback-reasoning-on-doctrine]]의 "off 처방은 **폭주 실측 시만**" 조건이 충족된 자리다.
+# 이 콜의 성격도 근거를 보탠다 — 대부분이 추출(NPC 목록·장소·세력·규칙)이고 해석이 필요한 건
+#   wingbeat 시드 정도다. deep으로 되돌리려면 env를 deep으로.
+ANALYSIS_REASONING_TIER_LORE = os.getenv("ANALYSIS_REASONING_TIER_LORE", "light")
+ANALYSIS_LORE_VAR = contextvars.ContextVar("analysis_lore_call", default=False)
+
+# ── light 라우트 — 단문 배경 콜 3종 전용 모델 (2026-08-17) ─────────────────────
+# 대상: 게시판(world_board.trigger_board_update → generate_posts) / 하단 상태 패널
+# (status_panel.generate_panel) / 💭 속마음(turn_mail.generate_mind_call).
+# 셋의 공통 성질 = **짧은 산출 + 단발 완결 + 턴 임계경로 밖**(전부 배경 큐/태스크).
+# 판을 크게 읽을 필요가 없는 자리라 큰 모델을 태울 이유가 없다 — 값싼 모델로 분리.
+# 발효·연대기·추출 등 나머지 FLASH 경로 콜은 **무변경**(이 컨텍스트에 안 들어옴).
+# ""(기본)=분리 없음 → 기존 판정 그대로 폴스루 = 배포 시점 행동 변화 0. env 삭제가 곧 롤백.
+# 권장값: deepseek-v4-flash:cloud   (사다리 = heavy > narrative > extract > reader > light > 이름)
+ANALYSIS_OPENAI_MODEL_LIGHT = os.getenv("ANALYSIS_OPENAI_MODEL_LIGHT", "")
+ANALYSIS_LIGHT_VAR = contextvars.ContextVar("analysis_light_call", default=False)
 
 # ── Reasoning tier (semantic; reasoning_policy.py 가 모델별 값/파라미터로 매핑) ──────────
 # .env 는 키 + 모델 ID 만. "어느 role 이 어느 tier" 는 여기 코드 기본값(off/light/deep).
@@ -155,6 +192,15 @@ RENDERER_REASONING_TIER = os.getenv("RENDERER_REASONING_TIER", "off")           
 RENDERER_REASONING_CAP_CHARS = int(os.getenv("RENDERER_REASONING_CAP_CHARS", "3500"))
 ANALYSIS_REASONING_TIER = os.getenv("ANALYSIS_REASONING_TIER", "light")             # 보조 per-turn 분석 = LIGHT (추론 ON)
 ANALYSIS_REASONING_TIER_HEAVY = os.getenv("ANALYSIS_REASONING_TIER_HEAVY", "deep")  # 1회성 무거운 추출 = DEEP
+
+# 1회성 heavy 분석(로어 통합 분석 등)의 출력 토큰 상한.
+# [2026-09-02] ⚠**명시하지 않으면 "무제한"이 아니라 "제공자 기본값"이다.** OpenAI 호환 라우트는
+#   max_output_tokens 가 없으면 max_tokens 를 아예 싣지 않아 ollama 기본값(보통 4k대)이 걸린다.
+#   구 코드는 "대형 로어북도 잘리지 않도록" 상한을 **지웠는데**, 그게 오히려 잘림을 만들었다
+#   (실측: `[Unified Lore Analysis] 출력 토큰 한도 초과`). 잘림 감지 자체도 죽어 있어서
+#   증상이 "분석 결과 비어있음"으로만 보였다(_RespShim finish_reason 수리로 되살림).
+#   여전히 잘리면 이 값을 올린다. 제공자가 모델 상한을 넘는 값을 거부하면 내린다.
+ANALYSIS_MAX_OUTPUT_TOKENS_HEAVY = int(os.getenv("ANALYSIS_MAX_OUTPUT_TOKENS_HEAVY", "8192"))
 # [2026-08-11 노선 갱신(레티어스)] **추론은 이제 어지간하면 켠다 — 축은 on/off가 아니라 "얼마나"(tier).**
 # .env의 EXTRACT=light는 잔재가 아니라 이 노선의 의도적 재론이다. 아래 07-05 기록은 당시 실측
 # 근거로 보존(코드 기본값 off도 유지 — env가 노선을 싣는다. V4-Pro 추론 폭주 이력은 캡 소프트 유지 사유):
@@ -167,6 +213,170 @@ ANALYSIS_REASONING_TIER_EXTRACT = os.getenv("ANALYSIS_REASONING_TIER_EXTRACT", "
 # 기계 읽기와 다르다(추출 off의 근거를 그대로 못 옮긴다) → 실측 전까지 기본 유지.
 # 끄려면 .env에 ANALYSIS_REASONING_TIER_READER=off.
 ANALYSIS_REASONING_TIER_READER = os.getenv("ANALYSIS_REASONING_TIER_READER", "")
+
+
+# =========================================================
+# 역할 레지스트리 (2026-08-18 라우팅 전면 개편)
+# =========================================================
+# 병: 콜사이트가 **제미니 모델명**(MODEL_ID_PRO/FLASH/MODEL_ID)을 이름표로 넘기고,
+#     analysis_backend 가 그 이름을 부분문자열("pro" in m …)로 해석했다. 제미니 이름이
+#     "실제 모델 ID"와 "라우팅 라벨" 두 역할을 겸한 것이 뿌리 — GEMINI_MODEL_PRO 에
+#     flash 든 이름을 넣으면 리더·heavy 가 조용히 갈아탔다.
+# 처방: **콜사이트가 역할을 선언한다.** config.role_model("reader") 처럼.
+#     · ANALYSIS_BACKEND=gemini → 아래 _ROLE_GEMINI 로 **실명** 반환(제미니 경로 무변경).
+#     · ANALYSIS_BACKEND=openai → "role:reader" **토큰** 반환. analysis_backend 가
+#       _ROLE_CHAINS 로 최종 해석. 해석 지점은 이 파일 + analysis_backend 두 곳뿐.
+# 렌더러 역할만 RENDERER_BACKEND 를 본다(백엔드 두 개가 갈라져 설정될 수 있으므로).
+_ROLE_TOKEN_PREFIX = "role:"
+
+# openai 경로: 앞에서부터 **비어있지 않은 첫 슬롯**. (env 이름 문자열 — 값은 호출 시점 조회라
+# 스모크가 config 속성을 monkeypatch 해도 그대로 먹는다.)
+_ROLE_CHAINS = {
+    "renderer":  ("OPENAI_MODEL_ID",),                                          # 우뇌 렌더(persona 는 실제론 OPENAI_MODEL_ID 직접 사용)
+    "main":      ("ANALYSIS_OPENAI_MODEL_PRO",),                                # 구 MODEL_ID 자리(발효·연대기·GC·OOC 편집)
+    "pro":       ("ANALYSIS_OPENAI_MODEL_PRO",),
+    "flash":     ("ANALYSIS_OPENAI_MODEL_FLASH",),
+    "extract":   ("ANALYSIS_OPENAI_MODEL_EXTRACT", "ANALYSIS_OPENAI_MODEL_FLASH"),
+    "narrative": ("ANALYSIS_OPENAI_MODEL_NARRATIVE", "ANALYSIS_OPENAI_MODEL_FLASH"),
+    "reader":    ("ANALYSIS_OPENAI_MODEL_READER", "ANALYSIS_OPENAI_MODEL_PRO"),
+    "heavy":     ("ANALYSIS_OPENAI_MODEL_HEAVY", "ANALYSIS_OPENAI_MODEL_PRO"),
+    "light":     ("ANALYSIS_OPENAI_MODEL_LIGHT", "ANALYSIS_OPENAI_MODEL_FLASH"),
+}
+
+# gemini 경로: 역할 → 실제 제미니 모델 상수. **개편 전 각 콜사이트가 실제로 넘기던 값**을
+# 실측해서 박았다(래칫). 주의 — heavy/extract/narrative 는 PRO 가 아니라 FLASH 다:
+# 그 콜들의 콜사이트가 전부 MODEL_ID_FLASH 를 넘기고 있었고(모델 분리는 openai 전용
+# contextvar/env 로만 걸려 있었다), 제미니 경로에선 분리 자체가 없었다.
+_ROLE_GEMINI = {
+    "renderer":  "MODEL_ID",
+    "main":      "MODEL_ID",
+    "pro":       "MODEL_ID_PRO",
+    "reader":    "MODEL_ID_PRO",
+    "flash":     "MODEL_ID_FLASH",
+    "extract":   "MODEL_ID_FLASH",
+    "narrative": "MODEL_ID_FLASH",
+    "heavy":     "MODEL_ID_FLASH",
+    "light":     "MODEL_ID_FLASH",
+}
+
+# 이 역할만 RENDERER_BACKEND 로 게이트(나머지는 ANALYSIS_BACKEND).
+_ROLE_RENDERER_GATED = frozenset({"renderer"})
+
+
+def known_roles() -> tuple:
+    """등록된 역할 이름 전량 — 스모크/판독기용."""
+    return tuple(sorted(_ROLE_CHAINS))
+
+
+def parse_role_token(label) -> "Union[str, None]":
+    """'role:reader' → 'reader'. 역할 토큰이 아니면 None."""
+    if isinstance(label, str):
+        s = label.strip().lower()
+        if s.startswith(_ROLE_TOKEN_PREFIX):
+            return s[len(_ROLE_TOKEN_PREFIX):].strip() or None
+    return None
+
+
+def resolve_role_chain(role: str) -> str:
+    """openai 경로 최종 해석 — 역할의 env 슬롯 체인에서 비어있지 않은 첫 값.
+
+    미지 역할은 FLASH(종전 이름 판정의 기본값과 동일)로 떨어진다.
+
+    [2026-08-18 기본값 제거] 체인이 **끝까지 비면 조용한 폴백을 하지 않는다** — 어느 역할의
+    어느 체인이 비었는지 이름을 달아 RuntimeError. 모델 이름의 유일한 주인이 .env 가 된 이상,
+    빈 슬롯은 "기본값으로 굴러갔다"가 아니라 **설정 사고**다. 조용히 엉뚱한 모델로 가는 것보다
+    시끄럽게 죽는 편이 싸다(부팅 시점 방어는 validate_model_env()).
+    """
+    _g = globals()
+    r = (role or "").strip().lower()
+    chain = _ROLE_CHAINS.get(r)
+    for _name in (chain or ()):
+        _v = (_g.get(_name) or "").strip()
+        if _v:
+            return _v
+    # **등록된** 역할인데 체인이 끝까지 비었다 = 설정 사고. FLASH 로 몰래 접지 않는다
+    # (renderer 가 분석 FLASH 로 조용히 갈아타는 것이 정확히 막고 싶은 사고다).
+    if chain:
+        raise RuntimeError(
+            f"[config] 모델 env 미설정 — 역할 {r!r} 의 체인이 끝까지 비었습니다: "
+            + " > ".join(chain)
+            + " (.env 에서 이 중 하나를 채우세요)"
+        )
+    # 미등록 역할만 FLASH 로 (종전 이름 판정의 기본값과 동일). 그것마저 비면 역시 예외.
+    _fallback = (_g.get("ANALYSIS_OPENAI_MODEL_FLASH") or "").strip()
+    if _fallback:
+        return _fallback
+    raise RuntimeError(
+        f"[config] 모델 env 미설정 — 미등록 역할 {r!r} 의 기본 슬롯"
+        " ANALYSIS_OPENAI_MODEL_FLASH 도 비어 있습니다 (.env 를 확인하세요)"
+    )
+
+
+# =========================================================
+# 부팅 검증 — 현재 백엔드가 요구하는 모델 env 슬롯 (2026-08-18)
+# =========================================================
+# 원칙: 모델 이름의 주인은 .env 단독. 코드 기본값이 없으므로 "빠졌는데 조용히 돌아감"이
+# 성립하지 않아야 한다 → 기동 시 **빠진 이름을 전부 나열**하고 거부한다.
+# ⚠ 이 함수는 **호출될 때만** 검사한다(import 부작용 0). 스모크·도구가 env 없이 config 를
+#    import 하므로 모듈 최상단에서 부르면 안 된다 — 호출 자리는 main.py 기동 게이트 하나뿐.
+# (const 이름, env 이름) — 운영자가 고치는 건 env 이름이므로 그쪽을 출력한다.
+_MODEL_ENV_NAMES = {
+    "OPENAI_MODEL_ID": "OPENAI_RENDERER_MODEL",
+    "ANALYSIS_OPENAI_MODEL_PRO": "ANALYSIS_OPENAI_MODEL_PRO",
+    "ANALYSIS_OPENAI_MODEL_FLASH": "ANALYSIS_OPENAI_MODEL_FLASH",
+    "ANALYSIS_OPENAI_EMBED_MODEL": "ANALYSIS_OPENAI_EMBED_MODEL",
+    "MODEL_ID_PRO": "GEMINI_MODEL_PRO",
+    "MODEL_ID_FLASH": "GEMINI_MODEL_FLASH",
+    "VECTOR_EMBEDDING_MODEL": "VECTOR_EMBEDDING_MODEL",
+}
+
+
+def required_model_slots() -> tuple:
+    """현재 백엔드 조합이 요구하는 (const 이름) 튜플. 렌더/분석 백엔드는 갈라질 수 있다."""
+    _g = globals()
+    need = []
+    if (_g.get("RENDERER_BACKEND") or "").lower() == "openai":
+        need.append("OPENAI_MODEL_ID")                    # 우뇌 렌더
+    else:
+        need.append("MODEL_ID_PRO")                       # MODEL_ID 의 파생 원천
+    if (_g.get("ANALYSIS_BACKEND") or "").lower() == "openai":
+        need += ["ANALYSIS_OPENAI_MODEL_PRO",             # main/pro/reader·heavy 체인 끝
+                 "ANALYSIS_OPENAI_MODEL_FLASH",           # flash/extract/narrative/light 체인 끝
+                 "ANALYSIS_OPENAI_EMBED_MODEL"]           # 임베딩(Voyage)
+    else:
+        need += ["MODEL_ID_PRO", "MODEL_ID_FLASH",        # 제미니 실명 2종
+                 "VECTOR_EMBEDDING_MODEL"]                # 임베딩(gemini 경로 주인)
+    out = []
+    for n in need:
+        if n not in out:
+            out.append(n)
+    return tuple(out)
+
+
+def validate_model_env() -> list:
+    """빠진 env 이름 전량(정렬)을 반환. 빈 리스트 = 정상. **예외를 던지지 않는다** —
+    호출자(main 기동 게이트)가 전부 나열해서 출력하고 거부하도록."""
+    _g = globals()
+    missing = []
+    for const in required_model_slots():
+        if not (_g.get(const) or "").strip():
+            env_name = _MODEL_ENV_NAMES.get(const, const)
+            if env_name not in missing:
+                missing.append(env_name)
+    return sorted(missing)
+
+
+def role_model(role: str) -> str:
+    """콜사이트가 부르는 유일한 함수. 백엔드에 따라 실명(gemini) 또는 역할 토큰(openai).
+
+    사용: `await client.aio.models.generate_content(model=config.role_model("reader"), …)`
+    """
+    r = (role or "").strip().lower()
+    _g = globals()
+    backend = _g.get("RENDERER_BACKEND") if r in _ROLE_RENDERER_GATED else _g.get("ANALYSIS_BACKEND")
+    if (backend or "").lower() == "openai":
+        return _ROLE_TOKEN_PREFIX + r
+    return _g.get(_ROLE_GEMINI.get(r, "MODEL_ID_FLASH")) or _g.get("MODEL_ID_FLASH")
 
 
 @contextlib.contextmanager
@@ -222,6 +432,43 @@ def reader_analysis():
         yield
     finally:
         ANALYSIS_READER_VAR.reset(_token)
+
+
+@contextlib.contextmanager
+def lore_analysis():
+    """이 블록 안의 분석 콜만 로어 전용 추론 tier(ANALYSIS_REASONING_TIER_LORE)를 쓴다.
+
+    heavy/narrative/extract/reader와 동일 패턴(5번째). heavy_analysis()와 **중첩**해서 쓰며,
+    tier 사다리에서 로어가 heavy를 이긴다(analysis_backend). 모델 라우팅은 heavy 그대로 —
+    바꾸는 것은 추론 예산뿐이다.
+    """
+    _token = ANALYSIS_LORE_VAR.set(True)
+    try:
+        yield
+    finally:
+        ANALYSIS_LORE_VAR.reset(_token)
+
+
+@contextlib.contextmanager
+def light_analysis():
+    """이 블록 안의 분석 콜만 경량 모델(ANALYSIS_OPENAI_MODEL_LIGHT)로 라우팅.
+
+    용도 = 단문 배경 콜 3종(게시판·상태 패널·속마음). heavy/narrative/extract/reader 와
+    동일 패턴(5번째). env 미설정이면 no-op — 호출부가 넘긴 모델 이름(flash)으로 폴스루.
+
+    async: contextvar 라 await 를 건너 전파되고 태스크 단위로 격리된다. 배경 큐로 넘기는
+    코루틴은 **코루틴 안에서** 감쌀 것(create_task 바깥에서 감싸면 컨텍스트 복사 시점에
+    의존하게 된다 — 3 콜사이트는 전부 실제 콜을 감싼다).
+    """
+    _token = ANALYSIS_LIGHT_VAR.set(True)
+    try:
+        yield
+    finally:
+        ANALYSIS_LIGHT_VAR.reset(_token)
+
+
+# 호출부 표기 별칭 — light_call() 로도 부른다(라우트 이름이 'light' 라 _analysis 접미가 장황).
+light_call = light_analysis
 
 # Generation Parameters - Analysis (Flash/Left Brain)
 # [2026-07-02 A안 분할] 추출 콜=냉(0.1, 모달 읽기 복귀 — 생성계 필드가 서사 콜로 이사했으므로),
@@ -281,6 +528,15 @@ MAX_DISCORD_MESSAGE_LENGTH = 2000
 MAX_FILE_SIZE_MB = 10
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 MAX_TEXT_INPUT_LENGTH = 100000  # [V4] Doubled from 50k for detailed lore
+# ⚠**바이트가 아니라 글자 수**다(bot_utils.read_attachment_text). 영어 시트는 1자=1바이트라
+#   178KB 파일이 그대로 178,000자가 되어 걸린다(한글이면 3바이트/자라 같은 용량도 통과).
+#   올릴 때 주의: 이 캡은 NPC·로어·룰·복원 첨부가 **공유**한다.
+
+# 로어북 분석에서 뽑힌 NPC를 자동 등록할지. [2026-09-02] 기본 오프 —
+#   NPC는 `!npc추가`로 따로 넣는 워크플로로 바뀌었고, 출처가 둘이면 판정이 두 벌이 된다.
+#   로어 추출은 이름 정확도가 낮아 짧은 이름의 유령 NPC를 만들고 청소 경로가 없다.
+#   로어북만 넣고 시작하는 워크플로로 되돌리려면 1로.
+LORE_NPC_AUTO_REGISTER = os.getenv("LORE_NPC_AUTO_REGISTER", "0") == "1"
 SUPPORTED_TEXT_EXTENSIONS = ['.txt', '.md', '.json', '.log', '.py', '.yaml', '.yml']
 
 # =========================================================
@@ -616,7 +872,11 @@ ITEM_PERSISTENCE_RULES = {
 # =========================================================
 # Vector Search (N3 — 시맨틱 로어 검색)
 # =========================================================
-VECTOR_EMBEDDING_MODEL = "gemini-embedding-2"
+# [2026-08-18 기본값 제거] 값의 주인은 .env 단독(VECTOR_EMBEDDING_MODEL). 코드 폴백 없음.
+# 발화 경로: **gemini 분석 백엔드일 때만** 실제 임베딩 모델 ID로 콜에 실린다.
+# openai(현행) 경로에선 analysis_backend.embed_content 가 model 인자를 무시하고
+# ANALYSIS_OPENAI_EMBED_MODEL(voyage-4)을 쓰므로 이 값은 무효 — 손잡이는 그쪽.
+VECTOR_EMBEDDING_MODEL = os.getenv("VECTOR_EMBEDDING_MODEL", "")
 VECTOR_TOP_K = 10          # [1M remap 2026-06-22] 5→10 (프롬 2.92%/1M, 로어만 활성 truncation이라 살짝 확대)
 VECTOR_MIN_SCORE = 0.2     # [1M remap] 0.3→0.2 (관련도 문턱 낮춰 더 admit)
 
@@ -1706,6 +1966,14 @@ DLC_MODULE_DESCRIPTIONS = {
 }
 
 # =========================================================
+# [2026-08-18 대형식화 v0] 선언형 변수 레지스트리 — 킬스위치 **하나**
+# =========================================================
+# 0 이면 전면 no-op: 저작 명령 거부 · 추출 급식 0 · 델타 적용 0 · 패널 합성 0.
+# ★env 레버는 이것뿐이다. 볼륨 캡·이름 길이·타입 목록은 전부 custom_vars.py 의
+#   **코드 상수** — 유저가 튜닝할 축이 아니라 계약이라서(스펙 §7 원칙).
+CUSTOM_VARS_ENABLED = int(os.getenv("CUSTOM_VARS_ENABLED", "1"))
+
+# =========================================================
 # [2026-08-16 도착물 라우트] 턴 도착물 (💌 편지 · 💭 속마음)
 # =========================================================
 # 월드보드 스레드가 **공개**라 남에게 보이는 문제의 해법 — 도착물은 그 턴 산문 메시지의
@@ -1724,13 +1992,79 @@ TURN_MIND_CALL = int(os.getenv("TURN_MIND_CALL", "1"))
 TURN_MIND_SCORE_MIN = float(os.getenv("TURN_MIND_SCORE_MIN", "0.35"))
 TURN_MIND_FOREGROUND_BONUS = float(os.getenv("TURN_MIND_FOREGROUND_BONUS", "0.35"))
 TURN_MIND_SPIKE_BONUS = float(os.getenv("TURN_MIND_SPIKE_BONUS", "0.25"))
+# [2026-08-17 v1.1 §2] 전경 무임승차 제거 — FG 가산 **이전의 생값**(intensity + spike 가산)에
+#   걸리는 최소 바. 전경이라는 이유만으로 감정 0인 인물이 통과하던 자리를 "살짝" 거른다.
+#   ⚠ 이 바는 **계측이 있을 때만** 선다. 감정층이 통째로 비어 있는 턴(엔진 미가동)은
+#     계측이 낮은 게 아니라 **없는** 것이므로 바를 세우지 않는다(재료 죽음 ≠ 기능 침묵).
+TURN_MIND_EMOTION_FLOOR = float(os.getenv("TURN_MIND_EMOTION_FLOOR", "0.15"))
+# [2026-08-17 v1.1 §1] 대상 NPC의 **출처** 게이트(npc_manager.SOURCE_* 값, 쉼표 구분).
+#   lore/manual = 사람이 쓴 확정 시트 → 내면이라 부를 축적이 있다.
+#   ai_generated/session = 그 턴에 즉석 등재된 인물 → 시트 자체가 방금 생긴 산물이라
+#     "속"을 열면 심리가 아니라 즉흥 설정이 나온다. 기본은 앞의 둘만.
+#   빈 문자열 = 필터 끔(전 출처 허용). source 필드가 없는 구 레코드는 npc_manager 관례대로
+#   SOURCE_SESSION 으로 접힌다 → 기본 설정에서는 제외된다.
+TURN_MIND_SOURCES = os.getenv("TURN_MIND_SOURCES", "lore,manual")
+# [2026-08-17 v1.1 §4] 월드보드 게시 빈도(최소 간격 턴). 채널별 설정(`!게시판 빈도 sns 5`) >
+#   유저 전체 설정(`!게시판 빈도 10`) > 아래 채널별 기본 > 전역 기본 순으로 읽힌다
+#   (world_board.get_board_frequency = 표시·판정 단일 함수). 구 하드코딩 상수를 승격한 것.
+BOARD_FREQUENCY_DEFAULT = int(os.getenv("BOARD_FREQUENCY_DEFAULT", "10"))
+BOARD_FREQUENCY_BULLETIN = int(os.getenv("BOARD_FREQUENCY_BULLETIN", "10"))
+BOARD_FREQUENCY_SNS = int(os.getenv("BOARD_FREQUENCY_SNS", "11"))
+BOARD_FREQUENCY_MESSAGE = int(os.getenv("BOARD_FREQUENCY_MESSAGE", "12"))
 # 콜 1회당 인물 상한(선별이 이보다 많으면 점수순 절단). 표시 상한은 turn_mail.MAX_MIND_ENTRIES.
 TURN_MIND_MAX_NPCS = int(os.getenv("TURN_MIND_MAX_NPCS", "3"))
 # 인물당 속마음 길이 캡(문자). 속마음은 장면 요약이 아니라 한 호흡 — 짧게.
 TURN_MIND_CHARS = int(os.getenv("TURN_MIND_CHARS", "160"))
-# 콜 입력에 붙이는 산문 꼬리 길이(문자). "언제의 속인가"를 잡는 용도라 짧게 — status_panel의
-# PROSE_TAIL_CHARS(2500)보다 조인다(패널은 값 갱신, 속마음은 타이밍만 필요).
-TURN_MIND_PROSE_TAIL = int(os.getenv("TURN_MIND_PROSE_TAIL", "1200"))
+# [2026-08-17 앵커 교체] 구 `TURN_MIND_PROSE_TAIL`(산문 꼬리 1200자) **제거**. 속마음 콜은
+#   더 이상 렌더 산문을 받지 않는다 — 복붙 금지 계약이 필요했던 원천이 그 꼬리였고,
+#   원천 제거가 규칙보다 싸다. 대체 = `turn_mail._build_scene_anchor`(구조 앵커).
+#   아래는 그 앵커에서 유일하게 자유 문자열인 칸(추출 콜 Observation)의 길이 캡.
+#   나머지 칸은 전부 enum·이름이라 캡이 필요 없다. status_panel 의 PROSE_TAIL_CHARS(2500)와
+#   비교 대상이 아니다 — 패널은 산문에서 값을 읽고, 속마음은 타이밍만 필요하다.
+TURN_MIND_ANCHOR_CHARS = int(os.getenv("TURN_MIND_ANCHOR_CHARS", "300"))
+# [2026-08-17 장면 연관 로어 — 2·3번째 소비자] 리더 부록(READER_LORE_*)과 같은 검색층
+#   진입점(`vector_search.get_scrubbed_scene_chunks`)을 쓰되, 레버는 소비자별로 따로 쥔다.
+#   ── 게시판: 쿼리 = 이번 이벤트 브리핑(`detail_kr`). 발췌 = 작성자가 아는 **공적 세계 지식**
+#      (지리·관습·내력)이지 이번 사건의 목격이 아니다 — `_BOARD_AUTHORSHIP` 정보 격리와 정합.
+#      게시물은 짧고(40~250자) 발췌가 길면 그 문장을 베끼므로 리더(3/500)보다 조인다.
+BOARD_LORE_TOP_K = int(os.getenv("BOARD_LORE_TOP_K", "2"))
+BOARD_LORE_CHUNK_CHARS = int(os.getenv("BOARD_LORE_CHUNK_CHARS", "400"))
+#   ── 속마음: 쿼리 = 구조 재료 조합(앵커의 Observation + 현재 위치 라벨). 산문이 없으니
+#      쿼리도 산문에서 오지 않는다(앵커 교체 원칙 유지). 발췌 = 인물이 아는 세계의 결
+#      (생각이 접지할 지형)이지 이번 턴 사건이 아니다. 한 호흡(160자) 출력이라 가장 조인다.
+#      쿼리 재료가 다 비면 검색 자체를 안 한다(빈 쿼리 = 임베딩 콜 0).
+TURN_MIND_LORE_TOP_K = int(os.getenv("TURN_MIND_LORE_TOP_K", "2"))
+TURN_MIND_LORE_CHUNK_CHARS = int(os.getenv("TURN_MIND_LORE_CHUNK_CHARS", "300"))
+
+# =========================================================
+# [2026-08-17 발신자 긴밀화] 문자·쪽지(message 채널)의 **발신 NPC 선정 가중**
+# =========================================================
+# 병: 이벤트 weight 만 보고 고르니 관계가 0인 인물이 PC에게 사적 편지를 보냈다.
+#   공지·SNS는 공적 매체라 낯선 이름이 정상이지만, 사적 매체의 발신자는 **관계가 매체다**.
+# 처방은 하드 필터가 아니라 **가중 우선** — 낯선 발신도 가능은 하게 둔다(세계 생동감).
+#   하드로 바꾸고 싶으면 MIN_DEPTH 를 올린다(0 = 가중만, 기본).
+BOARD_SENDER_MIN_DEPTH = int(os.getenv("BOARD_SENDER_MIN_DEPTH", "0"))
+# depth(0~100) 만점 시 더해지는 가중. 주 가중이라 가장 크다.
+BOARD_SENDER_DEPTH_BONUS = float(os.getenv("BOARD_SENDER_DEPTH_BONUS", "0.40"))
+# 등장 횟수 보조 가중(포화형). SAT 회 이상 등장하면 만점 — 관계 깊이의 대용이지 대체가 아니다.
+BOARD_SENDER_APPEAR_BONUS = float(os.getenv("BOARD_SENDER_APPEAR_BONUS", "0.15"))
+BOARD_SENDER_APPEAR_SAT = int(os.getenv("BOARD_SENDER_APPEAR_SAT", "6"))
+# 사람이 쓴 확정 시트(lore/manual)에서 온 발신자 가산. 계보 = turn_mail._allowed_mind_sources.
+BOARD_SENDER_SOURCE_BONUS = float(os.getenv("BOARD_SENDER_SOURCE_BONUS", "0.10"))
+BOARD_SENDER_SOURCES = os.getenv("BOARD_SENDER_SOURCES", "lore,manual")
+
+# =========================================================
+# [2026-08-17 쪽지 서사 접지] 보낸 문자·쪽지를 다음 턴 서사 콜 재료로
+# =========================================================
+# 세계가 PC에게 편지를 보내 놓고 이야기는 그 사실을 모르는 상태였다(표시층에서 끝났다).
+#   1턴 큐(ai_session_memory.recent_world_mail) → 다음 턴 좌뇌 **서사 콜**이 소비하고 비운다.
+#   렌더 직행 아님 — 방향을 정하는 콜이 받아야 산문이 자연히 그 편지를 딛는다.
+WORLD_MAIL_QUEUE = int(os.getenv("WORLD_MAIL_QUEUE", "1"))
+# 소비 시 폐기 임계(턴). 적재 후 이 턴수 넘게 안 먹힌 항목은 버린다 — 지연 도착한 편지가
+#   열 턴 뒤 산문에 튀어나오는 게 더 나쁘다.
+WORLD_MAIL_MAX_AGE = int(os.getenv("WORLD_MAIL_MAX_AGE", "2"))
+# 큐에 담는 본문 요약 캡(문자). 전문이 아니라 **무엇을 보냈는지**만 실린다.
+WORLD_MAIL_SUMMARY_CHARS = int(os.getenv("WORLD_MAIL_SUMMARY_CHARS", "160"))
 
 # =========================================================
 # Safety Settings

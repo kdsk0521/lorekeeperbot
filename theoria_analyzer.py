@@ -144,11 +144,12 @@ class TheoriaAnalyzer:
         last_error = None
         for attempt in range(2):
             try:
-                # [2026-07-05 후속] per-turn 추출만 전용 모델(V4-Pro)로 라우팅.
-                # env(ANALYSIS_OPENAI_MODEL_EXTRACT) 미설정이면 no-op — FLASH 그대로.
+                # [2026-07-05 후속] per-turn 추출만 전용 모델로 라우팅.
+                # [2026-08-18 역할 선언] 모델은 역할 토큰이 지목한다(extract 체인 = EXTRACT>FLASH).
+                # contextvar 는 잔류 — 추론 tier(ANALYSIS_REASONING_TIER_EXTRACT)를 여전히 소유한다.
                 with config.extract_analysis():
                     response = await self.client.aio.models.generate_content(
-                        model=self.model_id, contents=contents, config=gen_config
+                        model=config.role_model("extract"), contents=contents, config=gen_config
                     )
 
                 if not response.text:
@@ -326,6 +327,8 @@ LANGUAGE RULE: every render-facing direction/analysis field → ENGLISH telegrap
   - attempt: user input = intention, outcome uncertain ("자물쇠를 따본다", "절벽을 오른다")
   - probe: user input = pressure/exploration, not command ("주변을 둘러본다", "유우의 눈을 바라본다"). Characters REACT to pressure, not obey.
 - "CurrentLocation": str (Korean. PLACE NAME only — never append status/progress annotations like "(이동 완료)" or movement notes. While in the same place, keep the exact same name form across turns; sub-spots of one place stay under the same name unless the scene truly moved to a distinct location.)
+- "location_path": [str] | null (OPTIONAL. Korean place names, root → current, max 4 elements. Last element = CurrentLocation exactly. e.g. ["아르카디아", "백작 저택", "서재"]. Omit when the place has no containing place worth naming.)
+- "location_type": "region" | "area" | "room" | null (OPTIONAL. Type of the LAST location_path node only — travel scale, not depth: region=hours, area=minutes, room=instant.)
 - "LocationRisk": "None/Low/Medium/High/Extreme"
 - "TimeContext": str (Korean - e.g. "깊은 밤", "이른 아침")
 - "SceneType": "normal/combat/social/summary/intimate"
@@ -342,6 +345,8 @@ LANGUAGE RULE: every render-facing direction/analysis field → ENGLISH telegrap
 Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPENDENT (Cartesian Dualism).
 **NPCs ONLY — never include the PC.** PC interiority belongs to the player; PC coverage = PCAutonomyCheck only.
 NPCs perceive the PC through what the input SHOWS (words, actions), not through a PC psyche profile.
+- SCENE CAST lists who is physically in this scene. Fill psyche_states for those names; a character only mentioned, remembered, or discussed is not in the scene and gets no entry.
+- When SCENE CAST is absent, judge presence from the input as before.
 
 - "psyche_states": {
     "CharName": {
@@ -557,7 +562,7 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
 <language_final>
 BEFORE OUTPUT — RE-CHECK EVERY FIELD'S LANGUAGE. Exactly two zones, mutually exclusive, no field is bilingual:
 - ENGLISH ONLY (render-facing — feeds the renderer; Korean here gets transcribed verbatim into prose = BUG): Observation, UserIntent, descriptor, env_influence, value_conflict, deep_read, attitude, deflection, primary_link, render_hint, suggested_beats, offscreen_trace, narrative_hook, knows, secrets_held, false_beliefs, Aspects, AND the reason fields of time_flow / clock_updates / mental_impact / flashback_eval / rest_eval.
-- KOREAN (user-displayed only): CurrentLocation, TimeContext, action_meta.action, asset_evaluation reason+labels (판정 표시), clock_new name/threat/defense_action/tags (시계 UI), condition_updates description (상태 표시), item_usage reason.
+- KOREAN (user-displayed only): CurrentLocation, location_path, TimeContext, action_meta.action, asset_evaluation reason+labels (판정 표시), clock_new name/threat/defense_action/tags (시계 UI), condition_updates description (상태 표시), item_usage reason.
 Any render-facing field whose value would contain Hangul → write that field's value in English instead. This is a per-field language swap ONLY — never a reason to halt, shorten, or null the output; always return the complete JSON with every field. When unsure → English.
 </language_final>
 </output_schema>
@@ -693,6 +698,19 @@ Any render-facing field whose value would contain Hangul → write that field's 
         # 이사 — offscreen_trace/suggested_beats 생산이 그쪽이므로 재료도 그쪽에만 공급.
 
         return "\n".join(parts)
+
+    @staticmethod
+    def _build_scene_cast(anchors: dict) -> str:
+        """[2026-09-02 R5] SCENE CAST 블록 — 스펙 §6 R5.
+        psyche_states 조항이 "누가 있나"까지 판정하던 것을 "있는 사람들이 어떤가"로 좁힌다.
+        무대 인원은 이제 코드가 알고 있으므로(위치 0단) 프롬프트가 **받는** 쪽이 된다.
+        앵커가 없으면 빈 문자열 — 블록이 없을 때의 조항("judge presence from the input as
+        before")이 그대로 살아 있으므로 위치 미기록 세션에서도 손해가 없다."""
+        cast = anchors.get("scene_cast") or []
+        if not cast:
+            return ""
+        return ("### SCENE CAST (registered NPCs physically in this scene right now)\n"
+                + "\n".join(f"- {c}" for c in cast))
 
     def _build_session_memory_context(self, anchors: dict) -> str:
         """세션 메모리(active_threads, arc, NPC schedules)를 프롬프트에 포함"""
@@ -1127,6 +1145,17 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
                 + "\n".join(f"- {a}" for a in absent)
             )
 
+        # [2026-09-02 R4] NEARBY CAST — 3단 출석의 1단(근접). 스펙 §2.4 / §6 R4.
+        # 레티어스: "있되 만날 수 있나 그런 정보를 건네주게." 부재(2단)와 출석(0단) 사이가
+        # 그동안 통째로 비어 있어서, 옆방 사람이 "없는 사람"과 같은 칸에 들어갔다.
+        # ABSENT CAST 바로 옆·같은 형식으로 둔다 — 새 슬롯 0, 새 콜 0, 서사 콜 앵커 하나 추가.
+        nearby = anchors.get("nearby_cast", [])
+        if nearby:
+            parts.append(
+                "### NEARBY CAST (reachable from the current scene, could enter)\n"
+                + "\n".join(f"- {n}" for n in nearby)
+            )
+
         # RECENT BEATS — suggested_beats 반복 회피 대조 목록 (Phase 0)
         beats_avoid = anchors.get("recent_beats_avoid", [])
         if beats_avoid:
@@ -1202,6 +1231,21 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
         except Exception:
             pass
 
+        # [2026-08-17 쪽지 서사 접지] 지난 턴 세계가 PC에게 보낸 문자·쪽지 (1턴 큐 소비).
+        #   리더 신호 바로 옆인 이유가 같다 — 답장하지 않은 편지는 열린 초대이고, 그 결정은
+        #   narrative_hook/open_invitations 소유다. 소비 후 큐는 비워진다(사건이지 상태가 아님).
+        try:
+            import narrative_queries as _nq_mail
+            if channel_id:
+                _wm = _nq_mail.world_mail_block(
+                    channel_id,
+                    int((domain_manager.get_world_state(channel_id) or {}).get("turn_index", 0) or 0),
+                )
+                if _wm:
+                    parts.append(_wm)
+        except Exception:
+            pass
+
         parts.append("### OUTPUT\nReturn ONLY the JSON per schema. Render-facing fields stay English: the scene you read is Korean, your readings are not. Korean belongs inside quoted lines and proper nouns only.")
         return "\n\n".join(parts)
 
@@ -1231,10 +1275,10 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
         for attempt in range(2):
             try:
                 # [2026-07-05 GLM 스왑] 서사 콜만 전용 모델로 라우팅(추출=ds-flash / 서사=GLM).
-                # env(ANALYSIS_OPENAI_MODEL_NARRATIVE) 미설정이면 no-op — 기존과 동일.
+                # [2026-08-18 역할 선언] narrative 체인 = NARRATIVE>FLASH. contextvar 는 잔류.
                 with config.narrative_analysis():
                     response = await self.client.aio.models.generate_content(
-                        model=self.model_id, contents=contents, config=gen_config
+                        model=config.role_model("narrative"), contents=contents, config=gen_config
                     )
                 if not response.text:
                     continue
@@ -1287,6 +1331,7 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
         _cap_hints = anchors.get("capability_hints", "")
         if _cap_hints:
             npc_roster = f"{npc_roster}\n\n#### Capability bounds (reference, not hard limits)\n{_cap_hints}"
+        scene_cast_block = self._build_scene_cast(anchors)
         session_memory_context = self._build_session_memory_context(anchors)
         continuity_context = self._build_continuity_context(anchors)
         channel_id = anchors.get("channel_id", "")
@@ -1315,6 +1360,8 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
 
 ### 4a. NPC ROSTER (Select relevant NPCs for RelevantNPCs field, max 5)
 {npc_roster or '[No NPCs registered]'}
+
+{scene_cast_block}
 
 {session_memory_context}
 

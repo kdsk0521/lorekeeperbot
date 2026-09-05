@@ -44,13 +44,35 @@ except ImportError:  # pragma: no cover
 
 # ── 응답 shim (Gemini 응답 인터페이스 흉내) ──────────────────────────────────
 
+class _Cand:
+    """candidates[0] 흉내 — finish_reason만 나른다."""
+    __slots__ = ("finish_reason", "safety_ratings")
+
+    def __init__(self, finish_reason=None):
+        self.finish_reason = finish_reason
+        self.safety_ratings = []
+
+
 class _RespShim:
-    """generate_content 응답 흉내 — 호출부가 쓰는 .text 만 보장."""
+    """generate_content 응답 흉내 — 호출부가 쓰는 .text 와 finish_reason 보장.
+
+    [2026-09-02] **죽은 배선 수리.** 구 shim은 `candidates=[object()]`라 finish_reason이
+    없었고, `memory_system.api_call_with_retry`의 `'MAX_TOKENS' in fr_str` 갈래가
+    **OpenAI 라우트에서 통째로 사문**이었다 → 제공자가 출력을 잘라도 봇은 그 사실을
+    알 길이 없고, 잘린 JSON이 그대로 파서로 내려가 "분석 결과 비어있음"으로만 보였다.
+    (`max_output_tokens`를 명시 해제해 **제공자 기본값**이 적용되는 구조라 더 잘 걸린다.)
+    OpenAI 호환 응답의 finish_reason "length" = 토큰 한도 도달 → Gemini 표기로 번역해
+    기존 갈래를 되살린다.
+    """
     __slots__ = ("text", "candidates", "prompt_feedback", "usage_metadata")
 
-    def __init__(self, text: Optional[str]):
+    _FR_MAP = {"length": "MAX_TOKENS", "content_filter": "SAFETY", "stop": "STOP"}
+
+    def __init__(self, text: Optional[str], finish_reason: Optional[str] = None):
         self.text = text or ""
-        self.candidates = [object()] if text else []
+        _fr = self._FR_MAP.get(str(finish_reason or "").lower()) if finish_reason else None
+        # 잘림은 본문이 있어도 보고돼야 한다 — candidates를 비우면 그 사유가 사라진다.
+        self.candidates = [_Cand(_fr)] if (text or _fr) else []
         self.prompt_feedback = None
         self.usage_metadata = None
 
@@ -114,41 +136,121 @@ def _contents_to_messages(contents: Any, system_instruction: Any = None) -> List
     return messages
 
 
-def _map_model(model: Optional[str]) -> str:
-    """Gemini 모델ID -> wellspring 모델ID. flash->flash, pro->pro, 기본 flash.
+def _norm(s: Optional[str]) -> str:
+    """모델 이름표 정규화 — 대소문자·양끝 공백만. 정체 비교용(변형 아님)."""
+    return (s or "").strip().lower()
 
-    단 heavy_analysis() 컨텍스트(1회성 추출)면 추론-가능 HEAVY 모델로 강제 라우팅한다.
-    Flash가 V3.2 같은 비추론 모델이면 reasoning_effort 격상이 그냥 죽기 때문.
+
+_LEGACY_WARNED = set()
+
+
+def _legacy_warn(kind: str, label: str) -> None:
+    """하위 호환 층 진입 1회 경고. 관측용 — 다음 패스에서 그 층을 걷을 근거가 된다."""
+    _key = (kind, (label or "")[:64])
+    if _key in _LEGACY_WARNED:
+        return
+    _LEGACY_WARNED.add(_key)
+    logger.warning("[model-route] legacy label (%s): %r — 콜사이트를 config.role_model()로 전환할 것",
+                   kind, label)
+
+
+def _resolve_model_route(model: Optional[str]) -> tuple:
+    """(해석된 모델ID, 라우트 라벨). _map_model 의 본체 — 라벨은 로그 표기 전용.
+
+    라벨을 따로 만들지 않고 여기서 같이 내는 이유: 사다리를 두 벌 쓰면 반드시 갈라진다
+    (자매 자리 소급 안 함 병). 로그도 판정도 이 함수 하나만 본다.
+
+    [2026-08-18 라우팅 전면 개편] 판정 순서:
+      0) **역할 토큰**("role:reader") — 콜사이트가 config.role_model() 로 선언한 역할.
+         최우선이자 유일한 정규 입력. config._ROLE_CHAINS 테이블이 env 슬롯을 지목한다.
+      1) contextvar 사다리(heavy>narrative>extract>reader>light) — **하위 호환 층**.
+         역할 토큰이 전면화되면 잉여지만 이번 패스에선 남긴다(경고 로그 1줄).
+         ※ heavy/reader tier 결정에는 여전히 contextvar 가 쓰인다(모델 판정만 토큰으로 이관).
+      2) 구 제미니 이름표 정체 비교 — **하위 호환 층**(경고).
+      3) 미지 문자열 — 모델 실명 직접 지정으로 보고 **그대로 통과**(경고).
+    구 부분문자열 판정(모델명에 pro 라는 글자가 들었나 보던 줄)은 **삭제**됐다. 그게 병의 뿌리 —
+    제미니 이름이 라우팅 라벨을 겸했다.
     """
+    # ── 0. 역할 토큰 (정규 경로) ──
+    _role = None
+    try:
+        _role = _appconfig.parse_role_token(model)
+    except AttributeError:  # config 가 구버전이면 조용히 건너뜀
+        _role = None
+    if _role:
+        return _appconfig.resolve_role_chain(_role), "role:" + _role
+
+    # ── 1. contextvar 사다리 (하위 호환) ──
     _heavy_var = getattr(_appconfig, "ANALYSIS_HEAVY_EFFORT_VAR", None)
     if _heavy_var is not None and _heavy_var.get():
         heavy_model = getattr(_appconfig, "ANALYSIS_OPENAI_MODEL_HEAVY", "") or ""
         if heavy_model:
-            return heavy_model
+            return heavy_model, "heavy"
     # [2026-07-05 GLM 스왑] 서사 콜 컨텍스트면 전용 모델(생성계=GLM 잔류, 추출=FLASH ds-flash).
     # env(ANALYSIS_OPENAI_MODEL_NARRATIVE) 미설정("")이면 무효과 — FLASH 폴스루. heavy 우선(서사와 안 겹침).
     _narr_var = getattr(_appconfig, "ANALYSIS_NARRATIVE_VAR", None)
     if _narr_var is not None and _narr_var.get():
         narrative_model = getattr(_appconfig, "ANALYSIS_OPENAI_MODEL_NARRATIVE", "") or ""
         if narrative_model:
-            return narrative_model
+            return narrative_model, "narrative"
     # [2026-07-05 후속] per-turn 추출 콜 컨텍스트 → 전용 모델(V4-Pro 승격: 기계 읽기=V4 약점 무해 자리,
     # 오독의 영속층 유입 상류 방어). env 미설정("")이면 FLASH 폴스루. FLASH=배경 콜 전용 잔류.
     _ext_var = getattr(_appconfig, "ANALYSIS_EXTRACT_VAR", None)
     if _ext_var is not None and _ext_var.get():
         extract_model = getattr(_appconfig, "ANALYSIS_OPENAI_MODEL_EXTRACT", "") or ""
         if extract_model:
-            return extract_model
+            return extract_model, "extract"
     # [Reader-GM] 독자 콜 컨텍스트 → 전용 모델(Gemma 후보 등). env 미설정=이름 폴스루(pro→V4-Pro).
     _rdr_var = getattr(_appconfig, "ANALYSIS_READER_VAR", None)
     if _rdr_var is not None and _rdr_var.get():
         reader_model = getattr(_appconfig, "ANALYSIS_OPENAI_MODEL_READER", "") or ""
         if reader_model:
-            return reader_model
-    m = (model or "").lower()
-    if "pro" in m and "flash" not in m:
-        return _appconfig.ANALYSIS_OPENAI_MODEL_PRO
-    return _appconfig.ANALYSIS_OPENAI_MODEL_FLASH
+            return reader_model, "reader"
+    # [2026-08-17 light 라우트] 단문 배경 콜 3종(게시판·상태 패널·속마음) 전용 경량 모델.
+    # 사다리 **맨 끝**에 붙는다 — 기존 4단이 전부 먼저 평가되므로 기존 동작 무변경이 구조적으로 보장된다
+    # (실제로 light 는 heavy/narrative/extract/reader 와 겹칠 일이 없다: 배경 큐 전용 자리).
+    # env(ANALYSIS_OPENAI_MODEL_LIGHT) 미설정("")이면 무효과 → 이름 폴스루(flash) = 현행 그대로.
+    _light_var = getattr(_appconfig, "ANALYSIS_LIGHT_VAR", None)
+    if _light_var is not None and _light_var.get():
+        light_model = getattr(_appconfig, "ANALYSIS_OPENAI_MODEL_LIGHT", "") or ""
+        if light_model:
+            return light_model, "light"
+    # ── 2. 구 제미니 이름표 정체 비교 (하위 호환 층) ──
+    # 콜사이트 전수 전환 후엔 여기 닿을 일이 없다. 닿으면 그 콜사이트가 미전환이라는 뜻 —
+    # 경고 1줄로 잡아낸다. 정규화는 대소문자·양끝 공백까지만(그 이상은 정체 비교가 아니다).
+    m = _norm(model)
+    if not m:
+        return _appconfig.ANALYSIS_OPENAI_MODEL_FLASH, "empty"
+    _pro_label = _norm(getattr(_appconfig, "MODEL_ID_PRO", None))
+    _flash_label = _norm(getattr(_appconfig, "MODEL_ID_FLASH", None))
+    _main_label = _norm(getattr(_appconfig, "MODEL_ID", None))
+    _distinct = bool(_pro_label) and bool(_flash_label) and _pro_label != _flash_label
+    if _distinct and m == _pro_label:
+        _legacy_warn("legacy-name", model)
+        return _appconfig.ANALYSIS_OPENAI_MODEL_PRO, "legacy:pro"
+    if _distinct and m == _flash_label:
+        _legacy_warn("legacy-name", model)
+        return _appconfig.ANALYSIS_OPENAI_MODEL_FLASH, "legacy:flash"
+    # MODEL_ID(주 모델, 기본=PRO 파생)가 별개 값이면 그것도 PRO 슬롯.
+    if _main_label and m == _main_label and _main_label != _flash_label:
+        _legacy_warn("legacy-name", model)
+        return _appconfig.ANALYSIS_OPENAI_MODEL_PRO, "legacy:pro"
+
+    # ── 3. 미지 문자열 = 모델 실명 직접 지정 → 그대로 통과 ──
+    # 구 부분문자열 판정(모델명 안에 pro 라는 글자가 있나 냄새 맡던 줄)을 여기서 **삭제**했다.
+    # 이름이 라우팅을 겸하지 않는다 — 그게 병의 뿌리였다.
+    # 실명이 틀렸으면 백엔드가 시끄럽게 죽는다 — 조용히 엉뚱한 슬롯으로 가는 것보다 낫다.
+    _legacy_warn("raw-model-id", model)
+    return model, "raw"
+
+
+def _map_model(model: Optional[str]) -> str:
+    """Gemini 모델ID -> wellspring 모델ID. flash->flash, pro->pro, 기본 flash.
+
+    사다리 본체는 _resolve_model_route (라벨 동반). 이 얇은 래퍼는 모델만 필요한
+    호출부·스모크용으로 남긴다.
+    """
+    return _resolve_model_route(model)[0]
 
 
 def _dsh_anchor(resolved_model: str, tier: str) -> str:
@@ -222,7 +324,7 @@ class _Models:
     async def generate_content(self, model=None, contents=None, config=None):
         messages = _contents_to_messages(contents, getattr(config, "system_instruction", None))
         kwargs = _config_to_kwargs(config)
-        resolved = _map_model(model)
+        resolved, _route = _resolve_model_route(model)
         kwargs["model"] = resolved
         kwargs["messages"] = messages
         # reasoning tier: heavy(1회성 추출)=DEEP > per-turn 추출=OFF(수처1 실측: V4-Pro 캡 무시
@@ -236,7 +338,14 @@ class _Models:
         _rdr_var = getattr(_appconfig, "ANALYSIS_READER_VAR", None)
         _reader_tier = (getattr(_appconfig, "ANALYSIS_REASONING_TIER_READER", "") or "") \
             if (_rdr_var is not None and _rdr_var.get()) else ""
-        if _heavy:
+        # [2026-09-02] 로어 분석은 heavy 블록 안에서 돌지만 **로어가 heavy를 이긴다** —
+        #   추론 폭주(851→13,562자)가 출력 예산을 먹어 JSON이 잘리던 자리. 사다리 최상단.
+        _lore_var = getattr(_appconfig, "ANALYSIS_LORE_VAR", None)
+        _lore_tier = (getattr(_appconfig, "ANALYSIS_REASONING_TIER_LORE", "") or "") \
+            if (_lore_var is not None and _lore_var.get()) else ""
+        if _lore_tier:
+            _tier = _lore_tier
+        elif _heavy:
             _tier = _appconfig.ANALYSIS_REASONING_TIER_HEAVY
         elif _extract:
             _tier = getattr(_appconfig, "ANALYSIS_REASONING_TIER_EXTRACT", "off")
@@ -264,10 +373,13 @@ class _Models:
             resp = await self._client.chat.completions.create(**kwargs)
             _msg = resp.choices[0].message if getattr(resp, "choices", None) else None
             text = _msg.content if _msg else ""
-            logger.info("[reasoning-trace] analysis model=%s tier=%s anchor=%s reasoning_chars=%d",
-                        resolved, _tier, "on" if _anchor else "off",
+            # [2026-08-17 light 라우트] route= 는 사다리 어느 단이 이겼는지(heavy/narrative/extract/
+            # reader/light/name:*). 신규 줄을 파지 않고 기존 한 줄만 넓힌다.
+            logger.info("[reasoning-trace] analysis model=%s route=%s tier=%s anchor=%s reasoning_chars=%d",
+                        resolved, _route, _tier, "on" if _anchor else "off",
                         reasoning_policy.reasoning_trace_len(_msg))
-            return _RespShim(text)
+            return _RespShim(text, getattr(resp.choices[0], "finish_reason", None)
+                             if getattr(resp, "choices", None) else None)
         except Exception as e:
             logger.error("[analysis-openai] generate_content failed (%s): %s", kwargs.get("model"), e)
             return _RespShim("")

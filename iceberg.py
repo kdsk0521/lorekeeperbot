@@ -672,7 +672,7 @@ _ENERGY_VISUAL = {
 _ENERGY_TONE = {
     "rising":        "tension builds → sensory weight",
     "detonation":    "peak → max rendering",
-    "stagnant":      "world at rest → sensory density",
+    "stagnant":      "world at rest → sensory density (density of what the moment holds now, not of material already spent)",
     "aftershock":    "debris settling → residue only, no verdict",
     "exploration":   "threads open → ground in body, evidence",
     "establishment": "personality drives → comfort earned, no echo",
@@ -764,7 +764,8 @@ _IDLE_SOURCE_KR = {
     "narrative_chain":   "the narrative chain carries forward.",
     "emotion":           "the NPC whose feeling runs hottest takes the lead.",
     "doom":              "environmental pressure surfaces through the narrative.",
-    # [2026-08-11 리더 소비자] C4 — 새 source가 이 지도에 없으면 Slot 16 줄이 조용히 증발한다
+    # [2026-08-11 리더 소비자] C4 — 새 source가 이 지도에 없으면 그 해석 줄이 조용히 증발한다
+    #   (2026-08-28: 소비자가 Slot 16 → **Slot 30 translate_idle_direction** 하나로 이전됨)
     #   (필드는 있는데 트리거가 없는 병). 구체 방향은 idle_direction.hint가 따로 나른다.
     "reader_momentum":   "the motion already read at the table carries forward.",
     "ambient":           "the world moves on its own; a small, quiet advance.",
@@ -940,16 +941,11 @@ def translate_story_direction(story_dir: Optional[dict], scene_type: str = "norm
             reason = focus.get("reason", "")
             parts.append(f"focus: {spotlight}" + (f" ({reason})" if reason else ""))
 
-    # Idle direction (proactive scene guidance)
-    idle_dir = story_dir.get("idle_direction")
-    if idle_dir and isinstance(idle_dir, dict):
-        source = idle_dir.get("source", "ambient")
-        idle_hint = _IDLE_SOURCE_KR.get(source, "")
-        if idle_hint:
-            parts.append(f"[active advance] {idle_hint}")
-        npc = idle_dir.get("npc", "")
-        if npc:
-            parts.append(f"leading NPC: {npc}")
+    # [2026-08-28 코드↔코드 중복 제거] idle_direction 블록을 걷었다.
+    #   구 구조: 같은 사실(무입력 턴·주도 source·주도 NPC)이 여기 Slot 16과
+    #   `translate_idle_direction`의 Slot 30으로 **동시에** 갔다(idle 턴이면 둘 다 발화).
+    #   소유자 = Slot 30 — 완전판이고(hint 동반) World_Response라는 자리도 맞다.
+    #   여기가 갖고 있던 `_IDLE_SOURCE_KR` 해석은 그쪽으로 흡수됐다(손실 0).
 
     # Seven Dice (W9) — 은닉 4면만 Slot 16 분위기로. 가시 3면은 Slot 19(WRITING_DIRECTIVES) 경로.
     dice = story_dir.get("dice")
@@ -1096,7 +1092,23 @@ _FLAG_DIRECTIVES = {
     "dissonance_flag": "NPC's words and actions diverge; the gap stays unresolved, surfacing as small mismatch in gesture, expression, breath.",
     "redemption_warning": "NPC softening without cause; the prior pattern holds.",
     "shallow_read": "analysis stayed at the surface; beneath the shown action lies the unsaid, the room's pressure, the unpaid debt.",
-    "sensory_habituated": "senses habituated in this space; the micro-shift, or a fresh sense channel, carries it now.",
+    # [2026-08-28 묘사반복 수리] 구 문안 "the micro-shift, or a fresh sense channel, carries it now."
+    #   ★처방이 병을 이사시켰다 — 감각 반복을 막으려고 **캐리어를 미세 변화로 지정**하니 감각 반복 대신
+    #   **동작 반복**이 났다(실측: 한 턴 53문장에 `[부위]가 조금 [방향]했다` 9회). 발화 조건
+    #   `check_sensory_habituation`=최근 3프레임 같은 location+palette+lighting → 한 방에서 대화하면
+    #   **매 턴 켜진다**(상례). 즉 매 턴 미세 동작을 순회시키고 있었다.
+    #   교체: 캐리어 지정을 없애고 지면을 대사·행동으로 넘긴다(긍정형) + 감각 복귀에 조건을 단다.
+    #   문형은 옆 블록 stagnation_warning(08-02 G2 교체분)을 베낌 — 새 규칙 아님.
+    # [2026-08-28 2차 — 충돌 감사 E1/E2] 1차 교체문("it drops to a line or to none")이 같은 Slot 16의
+    #   `_ENERGY_TONE["stagnant"]="world at rest → sensory density"`·`_DENSITY_KR["dense"]="physical and
+    #   sensory specifics render in full"`과 **정면 대립**을 만들었다(한 방 교착 대화 = 동시 점등 상례).
+    #   ★구 문안은 감각을 *줄이라*고 하지 않아 대립이 없었다 — 내가 "줄여라"로 바꾸며 충돌을 지었다.
+    #   수리 = 대상을 **방의 상시 디테일**로 좁힌다. 인물의 몸이 지금 겪는 감각은 살아 있어
+    #   dense("physical and sensory specifics")·stagnant("sensory density")가 그쪽으로 만족된다.
+    "sensory_habituated": "this room has stopped being news; its standing detail drops to a line or to "
+                          "none, and the sense that still lands is the one a body in it is having right "
+                          "now. A room detail returns when something in it actually changed, not to keep "
+                          "the channel fed.",
     "label_internalization": "NPC starts believing its label; the label stays unspoken, showing through habit, posture, reaction.",
     "sheet_deducible": "vending-machine read: the reaction is a literal translation of sheet tags; the specific one belongs to this character, this moment.",
 }
@@ -1971,9 +1983,18 @@ def compose_dialogue_directives(
         if getattr(config, "PRESSURE_EMIT", True) and isinstance(_pr, dict):
             _cannot = _pr.get("cannot")
             if isinstance(_cannot, str) and _cannot.strip():
+                # [2026-08-28 이중 투입 수리] 구 문안은 Slot 25 DIALOGUE의 **예시목록과 판정문을
+                #   그대로 복제**했다 — 저쪽이 상시로 `the "line" may be a syllable, a nod that
+                #   answers, a written note, or a silence held exactly where a word was due.
+                #   A silent reply still commits: one specific answer the player can act on`을 갖고 있다.
+                #   ★코드가 소유하는 건 **인스턴스**(누가·무엇에 막혔나 = cannot)와 그 턴의 교대.
+                #   ⚠1차엔 commit 속성("something to act on")까지 걷었다가 되돌렸다 —
+                #     `smoke_card1_pressure`가 그걸 **공급 계약**으로 잡고 있었고(07-22 카드1),
+                #     Slot 25는 멀다. **압축 재앵커는 정당, 전문 복제가 결함**이다.
+                #     그래서 제거 대상은 **예시목록**(a nod, a stilled hand, a note, breath) 하나뿐.
                 _silence_part = (
-                    f"held back: {_cannot.strip()} the silence answers in one surface "
-                    "(a nod, a stilled hand, a note, breath), gives the player something to act on, "
+                    f"held back: {_cannot.strip()} the silence is this figure's answer here and "
+                    "still gives the player something to act on, "
                     "and the exchange passes to whoever can carry it"
                 )
 
@@ -2192,12 +2213,20 @@ def translate_idle_direction(story_direction: Optional[Dict[str, Any]] = None) -
     idle = sd.get("idle_direction") or {}
     if not isinstance(idle, dict):
         return ""
+    # [2026-08-28 코드↔코드 중복 수리] 같은 idle 사실이 두 슬롯으로 갔다 —
+    #   Slot 16(`translate_story_direction`)의 `[active advance] … leading NPC: X`와
+    #   여기 Slot 30 문장. 완전판(hint 포함)이자 자리가 맞는 쪽(World_Response)이 여기라
+    #   Slot 16 블록을 걷고 저쪽이 갖고 있던 **source 해석**(_IDLE_SOURCE_KR)을 흡수한다.
+    #   ★raw 태그 `(ambient)`는 해석이 들어오면 잉여라 함께 제거.
     parts = ["The player made no active move; the world and its people take the lead this turn"]
+    _src_read = _IDLE_SOURCE_KR.get(str(idle.get("source", "ambient")), "")
+    if _src_read:
+        parts.append(f"what leads: {_src_read.rstrip('.')}")
     if idle.get("hint"):
         parts.append(f"what stirs: {idle['hint']}")
     if idle.get("npc"):
         parts.append(f"it moves through {idle['npc']}")
-    return "\n" + ", ".join(parts) + f" ({idle.get('source', 'ambient')})."
+    return "\n" + ", ".join(parts) + "."
 
 
 _PERCEPTION_HINTS = {
@@ -2219,11 +2248,17 @@ def translate_anomaly_perception(anomaly_profile: Optional[Dict[str, Any]] = Non
 
 
 def translate_input_mode(input_mode: str = "") -> str:
-    """probe 입력 → 압력으로 착지한다는 문장."""
+    """probe 입력 → 이번 턴의 모드 표기(깃발).
+
+    [2026-08-28 이중 투입 수리] 구 문안은 Slot 21 INPUT_AUTHORITY의 PROBE 조항을
+    **4채널 열거까지 축자 복제**했다("perception, body memory, social habit, environment").
+    그런데 그 상수 자신이 `Current mode is signaled upstream; apply the marked mode`로
+    ★**코드=깃발 / 지시문=규칙**이라고 이미 계약을 끊어 놨다 — 코드가 규칙까지 다시 쓸 이유가 없다.
+    규칙은 Slot 21이 상시 갖고 있으므로 여기서는 **어느 모드인지만** 말한다.
+    """
     if str(input_mode or "").strip().lower() != "probe":
         return ""
-    return ("\nThe input lands as pressure rather than command: the NPC does not obey, "
-            "it responds, through perception, body memory, social habit, environment.")
+    return "\nThis turn's input arrives in PROBE mode."
 
 
 def translate_inertia(energy_direction: str = "") -> str:
@@ -2316,12 +2351,21 @@ def translate_foreshadowing(items: Optional[list] = None) -> str:
 
 
 def translate_open_invitations(items: Optional[list] = None) -> str:
-    """플레이어향 전방 affordance → 문장."""
+    """플레이어향 전방 affordance → 문장.
+
+    [2026-08-28] 꼬리 2절 추가. 구 문안은 답을 **쓰지 말라**고만 해서
+    "무응답 서술 = 답을 쓴 게 아님"이라는 우회로가 열려 있었다(실측: NPC가 되묻고
+    같은 턴에 "대답이 없네"로 자답). 앞 절=허가(손 내민 뒤 남은 지면의 주인 지정),
+    뒤 절=**양방향** 관측 차단(잡혔든 아니든 이번 턴이 보고할 것이 아니다).
+    주범 수리는 slot_manager TURN MOTION 쪽 — 여기는 우회로 봉쇄.
+    """
     inv = [str(v).strip()[:160] for v in (items or [])[:2] if v and str(v).strip()]
     if not inv:
         return ""
     return ("Hands the scene already extends toward the player: " + "; ".join(inv) + ". "
-            "They stay visibly open, take-or-refuse; the PC's answer is the player's to give.")
+            "They stay visibly open, take-or-refuse; the PC's answer is the player's to give. "
+            "The page after an extended hand belongs to the one extending it — their body, their waiting, the room; "
+            "whether it was taken is not this turn's to report; anyone else present may react to the asking, never answer it for the player.")
 
 
 def translate_narrative_hook(hook: str = "") -> str:
@@ -2344,8 +2388,14 @@ def translate_next_beat(next_beat: str = "") -> str:
     nb = str(next_beat or "").strip()
     if not nb:
         return ""
+    # [2026-08-28 충돌 감사 C2] Slot 4 `"Open threads are pressure, not agenda: … never dictate the
+    #   next event"`와 정면 충돌이었다 — nb의 출처가 narrative_chain/arc, 곧 **열린 실 자신**인데
+    #   "This turn lands"는 dictate다. 게다가 story_director `_generate_beats`에 `if not beats:`
+    #   폴백이 있어 이 문안은 **사실상 상시**. 수리 = 착지의 힘은 두되 Slot 4의 조건
+    #   ("only when present characters, objects, or pressure pull it forward")을 흡수한다.
     return (f"This turn lands: {nb}. "
-            "It arrives in the scene's own grain: an action, an arrival, a shift, never an announcement. "
+            "It arrives in the scene's own grain: an action, an arrival, a shift, never an announcement, "
+            "and it arrives because something present pulls it forward, never because a queue holds it. "
             "If the player's move makes it impossible, its pressure still surfaces; it does not simply vanish.")
 
 

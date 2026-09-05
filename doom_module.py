@@ -773,21 +773,28 @@ def _apply_pressure(context: "GameContext", bus) -> None:
     mechanic = context.request.genres.get("mechanic", {})
     primary = mechanic.get("primary_resource") or "vigor"
     secondary = "composure" if primary == "vigor" else "vigor"
-    primary_bus = getattr(bus, primary)
-    secondary_bus = getattr(bus, secondary)
+    # [2026-08-18 Phase 2.5] 기력은 레지스트리 소유 — 둠 압력·방어 보상이 **기력 쪽에 쓰던 델타는
+    #   삭제**한다(코드 공식). 평형이 주축이든 보조축이든 평형 몫은 그대로 간다.
+    #   ★새 자리로 옮기지 않는다: 옮기면 "코드가 정한 회복"이 이름만 바꿔 살아남는다.
+    _vc = {"vigor": None, "composure": bus.composure}
+    primary_bus = _vc.get(primary, bus.composure)
+    secondary_bus = _vc.get(secondary)
 
     if pressure > 0:
-        primary_bus["delta"] = primary_bus.get("delta", 0) + pressure
-        secondary_bus["delta"] = secondary_bus.get("delta", 0) + int(pressure * 0.5)
+        if primary_bus is not None:
+            primary_bus["delta"] = primary_bus.get("delta", 0) + pressure
+        if secondary_bus is not None:
+            secondary_bus["delta"] = secondary_bus.get("delta", 0) + int(pressure * 0.5)
     if label:
         bus.doom["mental_pressure_log"] = label
 
-    # Defense rewards → primary axis recovery
+    # Defense rewards → primary axis recovery (기력이 주축이면 보상은 사라진다 — 위 판정과 동형)
     defense_reward = bus.doom.get("defense_reward", 0)
     resolve_reward = bus.doom.get("resolve_reward", 0)
     total_reward = defense_reward + resolve_reward
     if total_reward > 0:
-        primary_bus["delta"] = primary_bus.get("delta", 0) + total_reward
+        if primary_bus is not None:
+            primary_bus["delta"] = primary_bus.get("delta", 0) + total_reward
         reward_parts = []
         if defense_reward > 0:
             reward_parts.append(f"완화 +{defense_reward}")

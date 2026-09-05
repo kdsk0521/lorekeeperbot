@@ -94,6 +94,10 @@ async def extract_all_updates(
     # === Arc System (Phase 4b) ===
     arc_context: str = "",                                      # active arcs 컨텍스트 (orchestration이 전달)
     arc_promote_candidate: Optional[Dict[str, Any]] = None,     # bus.anomaly.arc_promote_candidate
+    # === 대형식화 v0 (2026-08-18) ===
+    # **이미 mentions 게이트를 지난** 선언 목록만 온다(custom_vars.select_mentioned).
+    #   빈 리스트/None = 섹션 자체를 안 만든다 = 프롬프트 순증 0.
+    custom_vars_feed: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
 
     # Default: Run ALL if no hints provided
@@ -110,6 +114,14 @@ async def extract_all_updates(
 
     # Non-physical: batch into 1 Flash call (saves ~60% input tokens)
     batch_sections = [s for s in ["social", "narrative", "quest", "world_state", "entity_state", "render_fingerprint", "arc"] if extraction_hints.get(s, False)]
+    # [2026-08-18 대형식화] 선언 변수 섹션은 hints 가 아니라 **급식분 유무**가 게이트다 —
+    #   이번 턴 산문에 이름이 안 나온 변수는 애초에 급식되지 않으므로(mentions),
+    #   feed 가 비면 섹션도 없다. 빈 배열이 정상 턴.
+    #   [Phase 2.5] 단 **시스템 변수(기력)는 mentions 면제**라 기능이 켜진 채널에선 이 섹션이
+    #   상시 선다 — 능력을 쓴 장면에 "기력"이라는 낱말이 없어도 소모는 일어나기 때문이다.
+    #   새 콜은 여전히 0(같은 배치 콜의 섹션 하나).
+    if custom_vars_feed:
+        batch_sections.append("custom_vars")
     if batch_sections:
         tasks.append(_extract_batch(
             client, model_id_flash, player_input, ai_response,
@@ -123,6 +135,7 @@ async def extract_all_updates(
             previous_continuity=previous_continuity,
             arc_context=arc_context,
             arc_promote_candidate=arc_promote_candidate,
+            custom_vars_feed=custom_vars_feed,
         ))
         task_keys.append("batch")
 
@@ -155,6 +168,7 @@ async def extract_all_updates(
     est: Dict[str, Any] = batch.get("entity_state", {})
     rfp: Dict[str, Any] = batch.get("render_fingerprint", {})
     arc_res: Dict[str, Any] = batch.get("arc", {}) if isinstance(batch.get("arc"), dict) else {}
+    cvr: Dict[str, Any] = batch.get("custom_vars", {}) if isinstance(batch.get("custom_vars"), dict) else {}
     
     # Sanitize Physical (Notebook + Status)
     p_upd = None
@@ -212,6 +226,11 @@ async def extract_all_updates(
 
         "NPCRelationUpdate": soc.get("npc_relations") if soc else None,
 
+        # [2026-08-18 합류점 수리] C축 DRIVE — 프롬프트(social §npc_drive)와 소비부
+        # (orchestration `updates.get("npc_drive")`)는 2026-08-02부터 있었는데 **이 화이트리스트에만
+        # 없었다** → 단계 신고가 매 턴 조용히 증발. 이 return 이 유일한 관문이라 여기 없으면 없는 것.
+        "npc_drive": soc.get("npc_drive") if soc else None,
+
         "WorldStateUpdate": wst if wst else None,
 
         "EntityStateUpdate": est.get("changes") if est else None,
@@ -223,6 +242,11 @@ async def extract_all_updates(
         # === Arc System (Phase 4b) ===
         "ArcUpdates": arc_res.get("arc_updates") if arc_res else None,
         "ArcDecisions": arc_res.get("arc_decisions") if arc_res else None,
+
+        # === 대형식화 v0 (2026-08-18) ===
+        # ⚠ 이 줄이 합류점이다 — 프롬프트에 섹션을 쓰고 소비부를 배선해도 여기 없으면 증발한다
+        #   (바로 위 npc_drive 가 그 전례). 값은 [{"name","delta","evidence"}] 리스트.
+        "CustomVarDeltas": cvr.get("custom_var_deltas") if cvr else None,
     }
 
 # =========================================================
@@ -256,6 +280,8 @@ async def _extract_batch(
     # Arc System context (Phase 4b)
     arc_context: str = "",
     arc_promote_candidate: Optional[Dict[str, Any]] = None,
+    # 대형식화 v0 — mentions 게이트를 지난 선언 목록
+    custom_vars_feed: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Batch extraction: social+narrative+quest+world_state+render_fingerprint in 1 Flash call."""
     sys_parts = [
@@ -575,6 +601,92 @@ async def _extract_batch(
                 _arc_cand_str = str(arc_promote_candidate)[:200]
         ctx_parts.append(f"[Arc Context]\n{_arc_ctx_str}\n[Promote Candidate] {_arc_cand_str}")
 
+    # [2026-08-18 대형식화 v0] 유저가 선언한 세계 변수. 급식되는 건 **이번 턴 이름이 등장한
+    #   변수뿐**(mentions 게이트는 호출부가 이미 통과시켰다). 코드는 rule 을 해석하지 않는다 —
+    #   rule 이 여기 그대로 실리는 것이 이 설계의 전부.
+    #   ★모델은 **델타만** 낸다. 절대값(현재 총량)은 코드가 쥐고 있으므로 신고 대상이 아니다
+    #     — STATED 계열 게이트와 같은 톤: 근거 조각이 없으면 항목 자체가 없다.
+    if "custom_vars" in sections and custom_vars_feed:
+        # [2026-08-18 v1] 타입이 넷이라 신고 모양도 셋이다(수치 델타 / 단계 이름 / 항목 연산).
+        #   ★한 섹션·한 배열을 유지한다 — 소비부(apply_deltas)가 타입으로 분기하므로
+        #     프롬프트에 배열을 늘리면 합류점만 늘고 얻는 게 없다.
+        _cv_lines = []
+        _has_enum = _has_list = _has_npc = False
+        for _v in custom_vars_feed:
+            if not isinstance(_v, dict):
+                continue
+            _t = str(_v.get("type", "gauge"))
+            _scope = str(_v.get("scope", "global"))
+            _head = f"- {_v.get('name')} ({_t}, {_scope})"
+            if _t == "enum":
+                _has_enum = True
+                _stages = " > ".join(str(s) for s in (_v.get("stages") or []))
+                _cur = _v.get("current") if _scope != "npc" else _v.get("current_by_npc")
+                _head += (f" stages: {_stages}"
+                          f"{' [단조 — never steps back]' if _v.get('monotonic') else ''}"
+                          f" | now: {_cur}")
+            elif _t == "list":
+                _has_list = True
+                _ir = _v.get("item_range") or [0, 0]
+                _items = _v.get("items") or []
+                _head += (f" {_v.get('item_mode', 'stock')} entries {_ir[0]}~{_ir[1]}"
+                          f" | now: {', '.join(str(i) for i in _items) if _items else '(empty)'}")
+            else:
+                _rng = _v.get("range") or [0, 0]
+                _head += f" {_rng[0]}~{_rng[1]}"
+                if _scope == "npc":
+                    _head += f" | now: {_v.get('current_by_npc')}"
+            if _scope == "npc":
+                _has_npc = True
+                _head += f" | characters: {', '.join(str(n) for n in (_v.get('npcs') or [])) or '(none)'}"
+            _cv_lines.append(f"{_head}: {_v.get('rule', '')}")
+
+        _cv_block = [
+            "\n### custom_vars",
+            "\nOutput: `{\"custom_var_deltas\": [{\"name\": str, \"delta\": int, \"evidence\": str}]}`",
+            "\nThese are world variables the player declared. Each carries the player's own rule for "
+            "when it moves; that rule is the only authority on this variable.",
+            "\n- name: copy the declared name exactly. A variable not on the list below does not exist.",
+            "\n- delta: the CHANGE this exchange caused, signed (-12, +3). You do not hold the current "
+            "total and are not asked for it — the code holds it and adds your delta. A number that reads "
+            "like a total is the wrong answer.",
+            "\n- evidence: the fragment of this turn's text that shows the move. Quote, do not paraphrase. "
+            "No fragment means no entry.",
+        ]
+        if _has_enum:
+            # ★수치 델타가 아니라 **목표 단계 이름**이다 — C축 DRIVE(npc_drive)와 같은 문법.
+            #   코드가 한 걸음씩만 옮기고 단조 변수는 역행을 거부하므로, 여기서 넘겨야 할 것은
+            #   "어디까지 갔나"가 아니라 "이 장면이 어느 단계를 보여줬나" 하나다.
+            _cv_block.append(
+                "\n- stage (variables listed with `stages:`): name the step this exchange has reached, "
+                "copied from that variable's list. These carry no numbers, so send `stage`, not `delta`. "
+                "The listed order runs low to high; a variable marked 단조 never returns to an earlier "
+                "step. Name the neighbouring step you saw arrive, not the destination you expect."
+            )
+        if _has_list:
+            _cv_block.append(
+                "\n- op / item (variables listed with entries): `{\"name\", \"op\": \"add\"|\"remove\"|"
+                "\"delta\", \"item\": str, \"delta\": int, \"goal\": int, \"evidence\"}`. "
+                "add = this exchange brought a new entry into existence (send its starting `value`, and "
+                "`goal` when the text states a target). remove = the entry is gone. delta = an existing "
+                "entry's number moved. Use the entry name already listed under `now:` when it exists; a "
+                "new name creates a new entry, so spell an existing one exactly. An entry reaching its "
+                "target does not move anywhere on its own — that is the story's business, not yours."
+            )
+        if _has_npc:
+            _cv_block.append(
+                "\n- npc (variables listed with `characters:`): these hold one value per character, so "
+                "each entry needs `npc` set to a name from that variable's character list. A name outside "
+                "the list is dropped."
+            )
+        _cv_block.append(
+            "\nReport a variable only when the exchange actually moved it under its own rule. A variable "
+            "merely mentioned, discussed, or looked at has not moved. Most turns this list is empty, and "
+            "an empty list is the accurate answer rather than a gap."
+            "\nDeclared variables:\n" + "\n".join(_cv_lines)
+        )
+        sys_parts.append("".join(_cv_block))
+
     sys_prompt = "\n".join(sys_parts)
     ctx_text = "\n".join(ctx_parts)
     usr = f"State:\n{ctx_text}\nIn:\n{p_in}\nAI:\n{ai_out}\nOutput JSON with keys: {', '.join(sections)}."
@@ -695,9 +807,46 @@ async def _call_extract(
 # PART 4: UNIFIED LORE ANALYSIS (LORE ANALYZER)
 # =========================================================
 
+# [2026-09-02] 빈 분석의 **원인을 이름 붙이는** 관측 줄.
+# 병: 층마다 조용히 삼킨다 — safe_parse_json은 파싱 실패를 `logging.debug`로만 남기고 {}를
+#   돌려주고, 호출부는 "분석 결과 비어있음" 한 줄만 찍는다. 그래서 실패가 ①빈 응답
+#   ②JSON 없는 산문 ③잘린 JSON ④키 불일치 중 무엇인지 **로그만 봐서는 구분이 안 된다**
+#   (실측: 2026-09-02, HTTP 200 + reasoning_chars=914 인데 결과만 비어 있었다).
+# 이건 log-only 관측이다 — 판정도 수리도 하지 않는다([[feedback-detection-not-writing]]).
+def _diagnose_empty_analysis(tag: str, raw, parsed) -> None:
+    """빈 분석 1건을 한 줄로 특징짓는다. 실패의 이름은 로그가 대야 한다."""
+    try:
+        text = raw if isinstance(raw, str) else ("" if raw is None else str(raw))
+        n = len(text)
+        if raw is None:
+            logger.warning("[%s] 빈 분석 — 원인=**응답 없음**(콜이 None 반환) "
+                           "— 상위 로그의 사유를 볼 것(안전필터/토큰한도/candidates 없음)", tag)
+            return
+        if n == 0:
+            logger.warning("[%s] 빈 분석 — 원인=**응답 본문 0자** "
+                           "(추론에만 출력을 썼거나 콜이 빈 content 반환)", tag)
+            return
+        head = text[:200].replace("\n", "\\n")
+        tail = text[-200:].replace("\n", "\\n") if n > 200 else ""
+        has_open, has_close = "{" in text, "}" in text
+        think = "<think" in text.lower()
+        if not has_open:
+            cause = "**JSON 없음**(산문만)"
+        elif not has_close:
+            cause = "**닫는 괄호 없음**(출력 잘림 의심)"
+        elif isinstance(parsed, dict) and parsed:
+            cause = "**파싱은 됐으나 기대 키 없음**(스키마 불일치) keys=%s" % list(parsed)[:8]
+        else:
+            cause = "**파싱 실패**(수리기까지 통과 못 함)"
+        logger.warning("[%s] 빈 분석 — 원인=%s len=%d think_tag=%s\n  head=%s\n  tail=%s",
+                       tag, cause, n, think, head, tail)
+    except Exception as _e:      # 관측이 본류를 죽이지 않는다
+        logger.warning("[%s] 빈 분석 — 진단 자체 실패: %s", tag, _e)
+
+
 async def analyze_lore_unified(
     client: genai.Client,
-    model_id: str,
+    model_id: str,  # [2026-08-18] 라우팅 미사용 — 이 함수는 heavy 역할 고정(아래 role_model). 시그니처 호환 잔류
     lore_text: str
 ) -> Dict[str, Any]:
     """
@@ -714,6 +863,34 @@ async def analyze_lore_unified(
 
     # 미성년자 표현 전처리 — 원본은 이미 save_lore_original()로 저장됨
     lore_text = _sanitize_for_analysis(lore_text)
+
+    # [2026-09-02] **안 쓸 것을 시키지 않는다.** 로어 NPC 자동등록이 꺼져 있으면(기본)
+    #   `extracted_npcs`의 남은 소비처는 ①이름 앵커(extract_npc_sections_from_lore)
+    #   ②등록 완료 메시지의 이름·인원수 뿐이다(command_handler 실측).
+    #   그런데 구 스키마는 NPC마다 gender/race/role/location/Detailed Description을 요구했고,
+    #   그 대부분이 곧바로 버려졌다 — 출력 토큰 한도 초과의 실질 재료.
+    #   플래그가 켜지면 스키마도 같이 돌아온다(되돌리기 1줄).
+    if getattr(config, "LORE_NPC_AUTO_REGISTER", False):
+        _npc_schema_desc = (
+            "List of NPCs (Name, Gender, Race, Detailed Description "
+            "(Personality/Appearance integrated - Korean))\n"
+            "   - MUST EXTRACT ALL NPCs found in the document.\n"
+            "   - role: Character's job or social role (e.g., \"Resident\", \"Store Owner\", \"Neighbor\").\n"
+            "   - location: Primary location or residence (e.g., \"Room 2\", \"Dungeon 25\", \"Error 404\")."
+        )
+        # ⚠ 이 값은 f-string **소스가 아니라 런타임 데이터**다 — 중괄호를 이스케이프하면
+        #   `{{` 가 그대로 모델에게 간다. 홑괄호로 쓴다.
+        _npc_schema_json = ('[ { "name": "...", "gender": "...", "race": "...", '
+                            '"role": "...", "location": "...", "description": "..." } ]')
+    else:
+        _npc_schema_desc = (
+            "**Names only.** List every character who appears as an NPC, as bare names.\n"
+            "   - MUST list ALL NPCs found in the document. Do not summarize the list.\n"
+            "   - Emit the name exactly as the document writes it (the name is used as an anchor "
+            "to locate that character's section in the original text).\n"
+            "   - No other fields for NPCs: no gender, race, role, location, or description."
+        )
+        _npc_schema_json = '[ { "name": "..." } ]'
 
     system_prompt = f"""You are an experienced TRPG Campaign Designer and 'Lore Analysis Engine (LoreAnalyzer)'.
 Analyze the provided lorebook precisely to extract all metadata required for game operations.
@@ -734,10 +911,7 @@ IMPORTANT: All string descriptions and guides must be in KOREAN.
    - narrative_tone (C-Layer: EMOTIONAL tone): The story's mood/feel. Choose 1-2 ONLY from: noir, comedy, romance, drama
    - atmosphere_guide: Short atmosphere guide for the narrator (Korean)
    ⚠️ CROSS-ASSIGNMENT PROHIBITION: cyberpunk/modern/space_opera CANNOT appear in style_tech. urban_fantasy/cosmic_horror CANNOT appear in world_setting. comedy/romance CANNOT appear in style_tech.
-2. npcs: List of NPCs (Name, Gender, Race, Detailed Description (Personality/Appearance integrated - Korean))
-   - MUST EXTRACT ALL NPCs found in the document.
-   - role: Character's job or social role (e.g., "Resident", "Store Owner", "Neighbor").
-   - location: Primary location or residence (e.g., "Room 2", "Dungeon 25", "Error 404").
+2. npcs: {_npc_schema_desc}
 3. pc_info: Identification of the Protagonist. null if no clear protagonist.
    - Fields: name, role, species, appearance, description (integrated personality/traits - Korean), sexual_characteristics, background, secret_info, passives(name, desc, theory_links, modifiers - Korean), inventory(name, qty, tags, modifiers)
 4. lore_summary:
@@ -771,7 +945,7 @@ IMPORTANT: All string descriptions and guides must be in KOREAN.
     "narrative_tone": ["..."],
     "atmosphere_guide": "..."
   }},
-  "npcs": [ {{ "name": "...", "gender": "...", "race": "...", "role": "...", "location": "...", "description": "..." }} ],
+  "npcs": {_npc_schema_json},
   "pc_info": {{
     "name": "...",
     "role": "...",
@@ -806,7 +980,10 @@ IMPORTANT: All string descriptions and guides must be in KOREAN.
             response_mime_type="application/json",
             temperature=config.ANALYSIS_TEMPERATURE_HEAVY,  # 1회성 추론 패스 → 더 낮은 온도(결정성↑)
             safety_settings=config.SAFETY_SETTINGS,
-            # max_output_tokens 제한 해제 — 모델 기본값 사용 (대형 로어북도 잘리지 않도록)
+            # [2026-09-02] 상한을 **다시 명시한다.** 구 주석("제한 해제 — 모델 기본값 사용")은
+            #   Gemini 기준의 의도였고, OpenAI 호환 라우트에서는 미지정 = max_tokens 미전송 =
+            #   **제공자 기본값**(4k대)이라 대형 로어북이 오히려 잘렸다. 값은 config에서 조정.
+            max_output_tokens=getattr(config, "ANALYSIS_MAX_OUTPUT_TOKENS_HEAVY", 8192),
         )
         contents = [
             types.Content(
@@ -844,14 +1021,23 @@ IMPORTANT: All string descriptions and guides must be in KOREAN.
             )
         ]
 
-        with config.heavy_analysis():  # 1회성 추출 → reasoning_effort 격상 (per-turn 미적용)
+        # [2026-08-18 역할 선언] 이 함수는 **언제나** heavy 콜이다 — 역할을 7개 콜사이트에
+        # 복사하면 자매 자리가 어긋난다(소급 안 함 병). 라우팅은 여기 한 곳이 소유한다.
+        # contextvar 는 잔류: 추론 tier(ANALYSIS_REASONING_TIER_HEAVY)는 여전히 그쪽 소유.
+        # [2026-09-02] heavy(모델 라우팅) + lore(추론 tier) 중첩. 추론 폭주가 출력 예산을
+        #   먹어 JSON이 잘리던 자리 — 바꾸는 것은 추론 예산뿐, 모델은 heavy 그대로다.
+        with config.heavy_analysis(), config.lore_analysis():
             result = await api_call_with_retry(
-                client, model_id, contents, gen_config,
+                client, config.role_model("heavy"), contents, gen_config,
                 operation_name="Unified Lore Analysis"
             )
         
         if result:
-            return safe_parse_json(result)
+            _parsed = safe_parse_json(result)
+            if not _parsed or not any(_parsed.get(k) for k in ("npcs", "genres", "lore_summary")):
+                _diagnose_empty_analysis("LoreAnalyzer", result, _parsed)
+            return _parsed
+        _diagnose_empty_analysis("LoreAnalyzer", result, None)
 
     except Exception as e:
         logger.error(f"[LoreAnalyzer] Analysis failed: {e}")
@@ -861,7 +1047,7 @@ IMPORTANT: All string descriptions and guides must be in KOREAN.
 
 async def analyze_character_sheet(
     client: genai.Client,
-    model_id: str,
+    model_id: str,  # [2026-08-18] 라우팅 미사용 — 이 함수는 heavy 역할 고정(아래 role_model). 시그니처 호환 잔류
     sheet_text: str
 ) -> Dict[str, Any]:
     """
@@ -948,9 +1134,10 @@ Extract detailed character information from the provided text to create a struct
             )
         ]
 
+        # [2026-08-18 역할 선언] heavy 고정 — 위 analyze_lore_unified 와 동일 사유.
         with config.heavy_analysis():  # 1회성 추출 → reasoning_effort 격상 (per-turn 미적용)
             result = await api_call_with_retry(
-                client, model_id, contents, gen_config,
+                client, config.role_model("heavy"), contents, gen_config,
                 operation_name="Character Sheet Analysis"
             )
         
@@ -965,7 +1152,7 @@ Extract detailed character information from the provided text to create a struct
 
 async def extract_voice_card(
     client: genai.Client,
-    model_id: str,
+    model_id: str,  # [2026-08-18] 라우팅 미사용 — 이 함수는 heavy 역할 고정(아래 role_model). 시그니처 호환 잔류
     npc_name: str,
     description: str
 ) -> str:
@@ -1029,12 +1216,139 @@ async def extract_voice_card(
             types.Content(role="model", parts=[types.Part(text="확인. 이 캐릭터가 말할 때 하는 행동만 한국어 평문으로 적습니다. 예시 대사는 넣지 않습니다.")]),
             types.Content(role="user", parts=[types.Part(text=f"[NPC: {npc_name}]\n{desc}")]),
         ]
+        # [2026-08-18 역할 선언] heavy 고정 — 위 두 함수와 동일 사유.
         with config.heavy_analysis():  # 1회성 → reasoning ON (per-turn 미적용)
             result = await api_call_with_retry(
-                client, model_id, contents, gen_config,
+                client, config.role_model("heavy"), contents, gen_config,
                 operation_name="Voice Card"
             )
         return (result or "").strip()
     except Exception as e:
         logger.error(f"[VoiceCard] '{npc_name}' 추출 실패: {e}")
         return ""
+
+
+def _norm_for_match(text: str) -> str:
+    """장소 대조용 정규화 (소문자 + 공백 축약). [2026-09-03 R6]"""
+    return " ".join(str(text or "").lower().split())
+
+
+async def extract_schedule(
+    client: genai.Client,
+    model_id: str,  # [2026-09-03] 라우팅 미사용 (extract_voice_card와 동일 사유). 시그니처 호환 잔류
+    npc_name: str,
+    description: str
+) -> Dict[str, Any]:
+    """[Schedule] NPC 시트에서 시간대별 루틴(활동 + 장소)을 뽑는다. 스펙 §6 R6 ② / §2.8.
+
+    [2026-09-03 R6] 병: `schedule` 필드의 **생산자가 0곳**이었다. 소비자(P2 힌트)만 있고
+      시트 파서도 등록 경로도 이 필드를 안 만들어서, 실제로 schedule을 가진 NPC가 없다.
+      R6의 자율 이동은 이 필드를 재료로 삼는데 재료가 비어 있으면 기능 자체가 사문이 된다.
+    처방: 보이스카드와 같은 부류의 **1회성 사용자 명령 콜**(`!npc 일정`)로 채운다.
+      턴 경로에는 콜을 붙이지 않는다(매 턴 새 LLM 콜 0은 그대로).
+
+    ★추출은 LLM, **검출은 코드**다. 07-14에 지운 P3(랜덤 활동 = 무근거 발명)이 LLM 버전으로
+      부활하는 것을 막는 게이트를 파싱 뒤에 둔다:
+        (a) `DEFAULT_TIME_SLOTS` 밖의 키는 버린다.
+        (b) location이 **시트 원문에 없으면** 빈 문자열로 강등한다. activity는 남긴다
+            (힌트로는 쓰이되 이동은 안 한다 = 발명된 장소로 사람을 옮기지 않는다).
+        (c) activity와 location이 둘 다 비면 그 슬롯을 버린다.
+      게이트가 무엇을 버렸는지는 logger.info 한 줄로 모아 남긴다.
+
+    ★system_instruction에 CONTENT_AUTHORIZATION_MANDATE를 붙이지 않는다. 이 콜은 서사
+      생성이 아니라 표 추출이고, 서사용 권능 선언은 여기서 할 일이 없다(보이스카드가
+      붙이고 있어도 이쪽으로 옮기지 않는다).
+
+    Returns: {슬롯: {"activity": str, "location": str}} / 실패나 근거 없음이면 {}
+    """
+    if not description or len(description.strip()) < 30:
+        return {}
+
+    desc = _sanitize_for_analysis(description)
+    slots = list(getattr(config, "DEFAULT_TIME_SLOTS", []) or [])
+    if not slots:
+        return {}
+
+    system_prompt = (
+        "You are extracting a daily routine table from a TRPG character sheet.\n"
+        "Write down ONLY the routine the sheet already states.\n\n"
+        "Output ONE JSON object. Keys are time slots, chosen from exactly this list:\n"
+        "  " + ", ".join(slots) + "\n"
+        'Each value is an object: {"activity": "...", "location": "..."}\n'
+        "  activity: what this character does then. Short Korean phrase.\n"
+        "  location: the place name AS WRITTEN IN THE SHEET, copied character for character.\n\n"
+        "Rules:\n"
+        "- The sheet decides. A slot the sheet says nothing about gets no key at all.\n"
+        "- The sheet may write time in its own words (아침/점심/밤/근무 후). Map those onto the "
+        "slot list above.\n"
+        "- Copy place names from the sheet verbatim. No summarizing, no translating, no inventing. "
+        'If the sheet gives an activity but no place, write location as "".\n'
+        "- A sheet that states no routine yields {} , an empty object.\n"
+        "- JSON only. No prose, no code fence, no commentary."
+    )
+
+    try:
+        gen_config = types.GenerateContentConfig(
+            # ★작업 지시만. 서사 권능 선언(CONTENT_AUTHORIZATION_MANDATE)은 붙이지 않는다.
+            system_instruction=(
+                "You extract structured data from character sheets. "
+                "You return one JSON object and nothing else."
+            ),
+            temperature=config.ANALYSIS_TEMPERATURE,   # 추출 콜은 냉(0.1) 계열
+            safety_settings=config.SAFETY_SETTINGS,
+            # [2026-09-03] 상한을 **명시**한다. 로어 분석에서 겪은 병: 추론이 출력 예산을 먹어
+            #   content가 비고 "candidates 없음"이 뜬다. light 티어(추론 최소) + 명시 상한이 처방.
+            max_output_tokens=1024,
+        )
+        contents = [
+            types.Content(role="user", parts=[types.Part(text=system_prompt)]),
+            types.Content(role="model", parts=[types.Part(
+                text="확인. 시트에 적힌 루틴만 JSON 객체 하나로 적습니다. 장소는 시트 표기를 그대로 옮깁니다.")]),
+            types.Content(role="user", parts=[types.Part(text=f"[NPC: {npc_name}]\n{desc}")]),
+        ]
+        # [2026-09-03 역할 선언] light 고정. 표를 옮겨 적는 일이라 추론 예산이 필요 없고,
+        #   예산을 켜면 위 max_output_tokens를 thinking이 먼저 먹는다.
+        with config.light_analysis():
+            result = await api_call_with_retry(
+                client, config.role_model("heavy"), contents, gen_config,
+                operation_name="NPC Schedule"
+            )
+        parsed = safe_parse_json(result) if result else None
+    except Exception as e:
+        logger.error(f"[Schedule] '{npc_name}' 추출 실패: {e}")
+        return {}
+
+    if not isinstance(parsed, dict):
+        logger.error(f"[Schedule] '{npc_name}' 파싱 실패 (JSON 객체가 아님)")
+        return {}
+
+    # ── 코드 검증 게이트 ────────────────────────────────────────────
+    sheet_norm = _norm_for_match(desc)
+    cleaned: Dict[str, Any] = {}
+    dropped_key, demoted, dropped_empty = [], [], []
+    for raw_key, raw_val in parsed.items():
+        key = str(raw_key or "").strip()
+        if key not in slots:
+            dropped_key.append(key)
+            continue
+        if isinstance(raw_val, str):
+            activity, location = raw_val.strip(), ""
+        elif isinstance(raw_val, dict):
+            activity = str(raw_val.get("activity", "") or "").strip()
+            location = str(raw_val.get("location", "") or "").strip()
+        else:
+            dropped_empty.append(key)
+            continue
+        if location and _norm_for_match(location) not in sheet_norm:
+            demoted.append(f"{key}:{location}")
+            location = ""
+        if not activity and not location:
+            dropped_empty.append(key)
+            continue
+        cleaned[key] = {"activity": activity, "location": location}
+
+    if dropped_key or demoted or dropped_empty:
+        logger.info(
+            "[Schedule] '%s' gate: bad_slot=%s, location_not_in_sheet=%s, empty=%s",
+            npc_name, dropped_key, demoted, dropped_empty)
+    return cleaned

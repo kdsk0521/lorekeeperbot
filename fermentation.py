@@ -1936,7 +1936,7 @@ def score_fermented_entries(entries: list, query: str = "", channel_id: str = ""
     # 감정이 붙은 NPC 전원을 이름으로 붙들고 있어(개명·삭제 시 별도 이관 코드가 필요할 만큼
     # 영속적) 사실상 명부다 — 그걸 쓰면 거의 모든 엔트리가 겹쳐 선별성이 0이 된다
     # (바로 위 주석의 구 _global_emotion_boost가 죽은 이유와 같은 병).
-    # 판정 재료는 매 턴 갱신되는 `_last_appear_turn`(get_onstage_npc_names).
+    # 판정 재료는 get_onstage_npc_names — [2026-09-02 R4] 위치(0단) 기반. `_last_appear_turn`은 폴백만.
     _scene_entities = set()
     if channel_id:
         try:

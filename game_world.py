@@ -449,6 +449,21 @@ def _get_status_target_participant(channel_id: str, user_id: str = "") -> Dict[s
     return {}
 
 
+def _get_status_target_uid(channel_id: str, user_id: str = "") -> str:
+    """위 함수와 **같은 고르기**의 user_id 판. per-PC 레지스트리 값(기력) 조회에 필요하다."""
+    participants = domain_manager.get_domain(channel_id).get("participants", {})
+    if not isinstance(participants, dict):
+        return ""
+    if user_id:
+        direct = participants.get(user_id)
+        if isinstance(direct, dict) and direct.get("status") == "active":
+            return str(user_id)
+    for uid, p_data in participants.items():
+        if isinstance(p_data, dict) and p_data.get("status") == "active":
+            return str(uid)
+    return ""
+
+
 def build_real_time_display(
     channel_id: str,
     user_id: str = "",
@@ -477,10 +492,27 @@ def build_real_time_display(
     legacy_mental = mem.get("mental", {}) if isinstance(mem, dict) else {}
     vigor_src = mem.get("vigor", legacy_mental) if isinstance(mem, dict) else {}
     composure_src = mem.get("composure", legacy_mental) if isinstance(mem, dict) else {}
-    vigor_val = int(vigor_src.get("value", 100) or 100)
+    # [2026-08-18 Phase 2.5] 기력 = 레지스트리 값. 이 줄의 모양은 그대로다(표시 무변경).
+    try:
+        import custom_vars as _cv_v
+        vigor_val = int(_cv_v.vigor_value(channel_id, _get_status_target_uid(channel_id, user_id), mem))
+    except Exception as _e_cvv:
+        logger.debug(f"[CustomVar] 기력 표시 폴백: {_e_cvv}")
+        vigor_val = int(vigor_src.get("value", 100) or 100)
     composure_val = int(composure_src.get("value", 100) or 100)
     doom_val = int(world.get("doom", 0) or 0)
-    lines.append(f"활력 {vigor_val} | 평형 {composure_val} | Doom {doom_val}")
+    # [2026-08-28 중복 제거] `Doom N`을 뺀다.
+    #   ⚠초판 사유("읽는 법이 프롬프트에 없다")는 **오진이었다** — 레티어스 지적으로 정정.
+    #   읽는 법은 있다: `une_facade._build_atmosphere_layer`가 매 턴 directive 층에
+    #   `[Tension {doom}% — phase {起承轉結間}, {lens}]` + `LENS_DOOM_ATMOSPHERE` 블록을 넣는다
+    #   (그 함수 주석 자체가 "Doom = Chapter Volume Gauge — 둠 리브랜드 산문 주입").
+    #   ★진짜 결함은 **같은 값이 두 이름으로 두 번 도착하는 것**이다:
+    #     directive=`Tension 40%`(읽는 법 동반) / 여기=`Doom 40`(벌거벗음).
+    #     모델이 별개의 두 게이지로 읽을 수 있고, `Doom`은 챕터 볼륨 리브랜드의 **폐기어**다.
+    #     출처도 갈린다 — 저쪽은 `bus.doom["value"]`(이번 턴), 여기는 `world["doom"]`(영속).
+    #   활력·평형은 남긴다: 저쪽에도 오지만 여기 수치는 `translate_vigor_composure`가 번역하는
+    #   **같은 이름의 같은 축**이라 두 게이지 오인 위험이 없다.
+    lines.append(f"활력 {vigor_val} | 평형 {composure_val}")
 
     if True:  # doom clocks always active
         clocks = world.get("doom_clocks", [])
@@ -499,6 +531,20 @@ def build_real_time_display(
                 clock_parts.append(f"[{name} {filled}/{segments}{tick_mark}]")
             if clock_parts:
                 lines.append(" ".join(clock_parts))
+
+    # [2026-08-18 대형식화] 선언 변수 현재값 → 산문 재료. 스펙 §3-5 "값을 재료로만 급식".
+    #   같은 자리(Slot 29 <Real_Time_Status>)·같은 문법(코드 소유 수치를 한 줄로) —
+    #   위 `활력 | 평형 | Doom` 줄의 유저-정의판이다. 값의 주인은 코드고, 패널·헤더·산문
+    #   셋이 같은 소스(custom_vars.format_value)를 읽으므로 표시가 어긋나지 않는다.
+    #   블록 머리 1절이 처분(낭독 금지)을 확정한다 — custom_vars.PROSE_FEED_HEADER.
+    #   킬스위치 off / 선언 0 / 표시할 값 0 이면 "" 이라 줄 자체가 없다(순증 0).
+    try:
+        import custom_vars as _cv_prose
+        _cv_block = _cv_prose.build_prose_feed(channel_id)
+        if _cv_block:
+            lines.append(_cv_block)
+    except Exception as _e_cv:
+        logger.debug(f"[CustomVar] 산문 급식 skip: {_e_cv}")
 
     return "\n".join(lines).strip()
 
@@ -528,7 +574,7 @@ def build_status_header(channel_id: str) -> str:
         cal_str = format_calendar(world)  # "N년 M월 D일"
 
         # 인물 = 활성 PC 가면 + 무대 위 NPC.
-        # NPC 소스 정본은 get_onstage_npc_names(_last_appear_turn 기반 출석) —
+        # NPC 소스 정본은 get_onstage_npc_names([2026-09-02 R4] 위치 0단 기반; _last_appear_turn은 폴백) —
         # 지문 gaze는 "카메라가 머문 NPC"라 출석의 부분집합이고 자유서술 오염 이력이 있다.
         # 다만 출석 마킹은 배경 추출(=직전 턴)이 찍으므로 빈손일 때만 gaze로 보강한다.
         present = _get_active_player_masks(channel_id)
@@ -537,13 +583,12 @@ def build_status_header(channel_id: str) -> str:
             onstage = _npcm.get_onstage_npc_names(channel_id, within_turns=1)
         except Exception:
             onstage = []
-        if not onstage:
-            try:
-                _gaze = domain_manager.get_prev_fingerprint(channel_id).get("gaze", "")
-                if _gaze and isinstance(_gaze, str):
-                    onstage = [g.strip() for g in _gaze.replace("\n", ",").split(",") if g.strip()]
-            except Exception:
-                onstage = []
+        # [2026-09-02 R4 검수] gaze 폴백 **제거**. 구 코드는 onstage가 빈손이면 직전 턴 gaze로
+        #   보강했다. 출석이 위치의 함수가 된 뒤엔 이 보강이 틀린다: PC가 새 노드로 막 옮긴 턴에
+        #   노드가 비어 있는 건 **정확한 정보**("아직 아무도 없다")인데, 직전 장면 사람들을
+        #   렌더 프롬프트 인물 줄에 올리면 유령 동행을 유도한다. gaze는 이제 위치 쓰기의
+        #   1순위 신호(orchestration 관찰 쓰기)라 여기서 다시 읽을 이유도 없다.
+        #   PC 위치 미해상 케이스는 get_onstage_npc_names 안의 레거시 폴백이 맡는다.
         for name in onstage:
             if name and name not in present:
                 present.append(name)
@@ -554,6 +599,20 @@ def build_status_header(channel_id: str) -> str:
         lines = [
             f"위치 {location} | 시간 {cal_str} {time_str} ({time_slot}) | 인물 {present_text}",
         ]
+
+        # [2026-08-18 대형식화 v1] 유저 정의 헤더 줄 — `!출력룰 추가 헤더 잔고 [빚] · 평판 [평판]`.
+        #   `[변수명]`만 치환하고 **나머지 문자열은 유저가 쓴 그대로** 나간다(미선언 자리표시자
+        #   포함 — 코드가 유저 저작을 지우지 않는다). 미등록 채널은 이 줄 자체가 없다.
+        try:
+            import status_panel as _sp
+            import custom_vars as _cv
+            _tpl = _sp.get_header_template(channel_id)
+            if _tpl:
+                _rendered = _cv.render_placeholders(channel_id, _tpl).strip()
+                if _rendered:
+                    lines.append(_rendered)
+        except Exception as _e_tpl:
+            logger.debug(f"[StatusHeader] 자리표시자 치환 skip: {_e_tpl}")
 
         clock_parts: List[str] = []
         for clock in (world.get("doom_clocks") or []):

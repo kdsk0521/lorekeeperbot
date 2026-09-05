@@ -1077,8 +1077,13 @@ class EmotionEngine:
 
         if has_undertone:
             lines.append(
+                # [2026-08-28 이중 투입 수리] 구 구조: 이 줄은 게이트(UNDERTONE_MIN∧RATIO)로
+                #   **드물게** 발화하는데 `WRITING_DIRECTIVES` §PAIR VECTOR가 같은 것을 같은 채널
+                #   목록으로 **상시** 요구했다 → 저류가 없는 턴에도 발명. 지시문 줄을 삭제하고
+                #   그쪽이 갖고 있던 제약(never named / never co-equal)을 여기로 흡수한다.
                 "[Undercurrent] a suppressed current runs beneath at least one figure: "
-                "it leaks through timing, breath, and small slips, never fully surfacing."
+                "it leaks through timing, breath, and small slips, never fully surfacing, "
+                "never named, and never co-equal with the pair."
             )
         if drift_lines:
             lines.append("[Scene Drift] feeling mid-shift; let the surface lag behind.")

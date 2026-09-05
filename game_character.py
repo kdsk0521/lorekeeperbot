@@ -1230,12 +1230,24 @@ def get_composure_info(value: int) -> Dict[str, Any]:
     return config.COMPOSURE_STAGES[0]
 
 
-def get_vigor_composure_text(p_data: Dict[str, Any]) -> str:
-    """Returns "활력 85 | 평형 70" format."""
+def get_vigor_composure_text(p_data: Dict[str, Any],
+                             channel_id: str = "", user_id: str = "") -> str:
+    """Returns "활력 85 | 평형 70" format.
+
+    [2026-08-18 Phase 2.5] 기력의 정본은 레지스트리다. channel_id 를 주면 그쪽을 읽고,
+    안 주면 p_data 의 옛 자리로 폴백한다 — 이 함수는 채널 문맥 없이 불리는 자리가 있어서
+    (game_system 재수출) 인자를 필수로 못 만든다.
+    """
     mem = p_data.get("ai_memory", {})
     vigor = mem.get("vigor", mem.get("mental", {"value": 100}))
     composure = mem.get("composure", {"value": 100})
     v_val = vigor.get("value", 100)
+    if channel_id:
+        try:
+            import custom_vars as _cv_gc
+            v_val = _cv_gc.vigor_value(channel_id, user_id, mem)
+        except Exception:
+            pass
     c_val = composure.get("value", 100)
     return f"활력 {v_val} | 평형 {c_val}"
 

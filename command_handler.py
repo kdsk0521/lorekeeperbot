@@ -314,7 +314,7 @@ async def cmd_lore(ctx: CommandContext) -> None:
     if ctx.genai_client:
         try:
             # [LoreAnalyzer V1] Unified Analysis — Flash 사용 (메타데이터 추출, Pro 안전 필터 회피)
-            unified_res = await cognition.analyze_lore_unified(ctx.genai_client, config.MODEL_ID_FLASH, full_content)
+            unified_res = await cognition.analyze_lore_unified(ctx.genai_client, config.role_model("heavy"), full_content)
 
             if not unified_res or not any(unified_res.get(k) for k in ("npcs", "genres", "lore_summary")):
                 logger.warning("[LoreAnalyzer] 분석 결과 비어있음 — 로어 텍스트만 저장")
@@ -536,7 +536,7 @@ async def cmd_info(ctx: CommandContext) -> None:
             
             # AI Analysis Integration
             if ctx.genai_client:
-                analysis = await cognition.analyze_character_sheet(ctx.genai_client, config.MODEL_ID_FLASH, full_arg)
+                analysis = await cognition.analyze_character_sheet(ctx.genai_client, config.role_model("heavy"), full_arg)
                 if analysis:
                     # Save as PC Template (always — so apply uses fresh data)
                     domain_manager.set_default_pc_info(ctx.channel_id, analysis)
@@ -609,10 +609,14 @@ async def cmd_info(ctx: CommandContext) -> None:
             msg.append("\n**✨ 특성:**")
             msg.append(" / ".join(p_list))
 
-    # 4. Vigor/Composure
+    # 4. Vigor/Composure — [Phase 2.5] 기력은 레지스트리 값(표시 무변경)
     vigor_data = mem.get("vigor", mem.get("mental", {}))
     composure_data = mem.get("composure", {})
-    v_val = vigor_data.get("value", 100)
+    try:
+        import custom_vars as _cv_info
+        v_val = _cv_info.vigor_value(ctx.channel_id, ctx.user_id, mem)
+    except Exception:
+        v_val = vigor_data.get("value", 100)
     c_val = composure_data.get("value", 100)
     v_info = game_character.get_mental_info(v_val)
     c_info = game_character.get_composure_info(c_val)
@@ -678,7 +682,7 @@ async def maybe_enrich_pc_sheet(client, channel_id: str, force: bool = False) ->
     if len(source_text) < 300:
         return ""
     try:
-        sheet = await cognition.analyze_character_sheet(client, config.MODEL_ID_FLASH, source_text)
+        sheet = await cognition.analyze_character_sheet(client, config.role_model("heavy"), source_text)
         pc = npc_manager.merge_character_sheet_into_pc(pc, sheet)
         domain_manager.set_default_pc_info(channel_id, pc)
         domain_manager.sync_matching_participants(channel_id, pc)
@@ -717,7 +721,7 @@ async def cmd_pc_promote(ctx: CommandContext) -> None:
     source_text = pc_info.get("description", "") or ""
     if ctx.genai_client and len(source_text) >= 300:
         try:
-            sheet = await cognition.analyze_character_sheet(ctx.genai_client, config.MODEL_ID_FLASH, source_text)
+            sheet = await cognition.analyze_character_sheet(ctx.genai_client, config.role_model("heavy"), source_text)
             pc_info = npc_manager.merge_character_sheet_into_pc(pc_info, sheet)
             n_pas, n_inv = len(pc_info.get("passives", [])), len(pc_info.get("inventory", []))
             if n_pas or n_inv:
@@ -896,6 +900,22 @@ def _summary_from_id_fields(id_fields: dict) -> str:
     return " / ".join(items)
 
 
+def _format_schedule_lines(npc: dict) -> list:
+    """신형 `schedule`({슬롯: {activity, location}})을 표시 줄로. 레거시 문자열형·부재는 [].
+    [2026-09-03 R6] `!npc 일정` 단일 결과 표시와 `!npc <이름>` 조회가 같은 모양을 쓴다."""
+    _sc = (npc or {}).get("schedule") if isinstance(npc, dict) else None
+    if not isinstance(_sc, dict):
+        return []
+    _lines = []
+    for _slot in getattr(config, "DEFAULT_TIME_SLOTS", []):
+        _e = _sc.get(_slot)
+        if not isinstance(_e, dict):
+            continue
+        _loc = str(_e.get("location", "") or "").strip()
+        _lines.append(f"· {_slot}: {_e.get('activity', '')}" + (f" @ {_loc}" if _loc else ""))
+    return _lines
+
+
 def _register_npc(channel_id: str, name: str, desc: str,
                   id_fields: dict = None, existing_map: dict = None) -> str:
     """NPC 수동 등록 단일 관문. 반환=실제 저장된 키.
@@ -934,6 +954,89 @@ def _register_npc(channel_id: str, name: str, desc: str,
     return target
 
 
+# =========================================================
+# [2026-09-02] 엔벨로프 — 인물 경계 **선언**
+# =========================================================
+# 병: 아래 캐스케이드 4모드는 경계를 **추측**한다(h2 헤더 / Name: 선언 / 콜론 줄).
+#   외부 시트는 관례가 제각각이라 추측은 항상 *다음* 시트에서 진다. 실측(09-02):
+#     `# 이름` + 불릿  → simple 폭발: NPC 키가 `종족`/`역할`로 등록되고 이름 줄은 버려짐
+#     `# 이름` + `## 섹션` → h2 모드가 **섹션명을 인물로** 등록. 게다가 "성공"으로 보고된다.
+# 처방: 사람이 태그로 경계를 선언하면 추측을 **0**으로 만든다. 07-28 harness 판정
+#   ("자동 추출은 보조로 격하, 확실히 하고 싶으면 명시 라벨")을 인물 경계 축에 적용한 것.
+# 표기 근거: npc_manager._HEADER_LINE에 `<(?P<xml>[^/<>]+?)>` 갈래가 **이미 있다**(로어 경로가
+#   쓴다). 새 문법 발명이 아니라 이미 쓰는 표기를 등록 경로에도 들이는 것. 닫는 태그는
+#   그 정규식이 `/`를 배제하므로 충돌하지 않는다.
+# 설계: 파티쳇수정/npc_sheet_ingest_spec_2026-09-02.md §3
+_ENV_OPEN = re.compile(r'^<([^<>/]{1,120})>$')
+_ENV_CLOSE = re.compile(r'^</([^<>/]{0,120})>$')
+
+
+def _has_envelope(text: str) -> bool:
+    return any(_ENV_OPEN.match(l.strip()) for l in (text or "").splitlines())
+
+
+def _parse_envelope_sheets(raw_lines: list) -> tuple:
+    """`<이름> … </이름>` 블록을 자른다. Returns (blocks, warnings).
+
+    blocks=[(name, body)] / 엔벨로프가 하나도 없으면 ([], []) → 기존 캐스케이드로 폴백.
+    **엔벨로프가 하나라도 있으면 내부의 h1·h2·`Name:`·`====`는 경계로 보지 않는다.** 그게 요점이다.
+
+    관대함이 원칙이다(사람이 손으로 쓰는 표기다) — 닫힘 누락·이름 불일치·중첩을 전부 받아준다.
+    다만 관대함이 조용하면 그게 다시 위 병(틀린 등록을 "성공"으로 보고)이 되므로,
+    **추측으로 메꾼 자리마다 경고를 남긴다.** 짝만 맞으면 경고는 0줄이다.
+    """
+    if not any(_ENV_OPEN.match(str(l).strip()) for l in raw_lines):
+        return [], []
+    blocks, warns = [], []
+    cur_name, cur_body, stray = None, [], 0
+    stray_first = ""      # [2026-09-02] "1줄 무시"만으로는 **어느 줄인지** 알 수 없다 — 실물을 보여준다.
+    for ln in raw_lines:
+        s_ = str(ln).strip()
+        mo, mc = _ENV_OPEN.match(s_), _ENV_CLOSE.match(s_)
+        if mo:
+            _nm = mo.group(1).strip()
+            if '="' in _nm or "='" in _nm:      # 속성은 쓰지 않는다(라벨 사전이 이미 잡는다)
+                _nm = _nm.split()[0]
+                warns.append("태그 속성은 읽지 않습니다. 이름만 사용: `%s`" % _nm)
+            if cur_name is not None:
+                blocks.append((cur_name, "\n".join(cur_body)))
+                warns.append("`%s`가 닫히기 전에 `%s`가 열려 그 지점에서 끊었습니다." % (cur_name, _nm))
+            cur_name, cur_body = _nm, []
+            continue
+        if mc and cur_name is not None:
+            _cn = mc.group(1).strip()
+            if _cn and _cn != cur_name:
+                warns.append("닫는 태그 이름이 다릅니다 (`%s` / `%s`). 닫힘으로 처리했습니다." % (cur_name, _cn))
+            blocks.append((cur_name, "\n".join(cur_body)))
+            cur_name, cur_body = None, []
+            continue
+        if cur_name is None:
+            if s_:
+                stray += 1
+                if not stray_first:
+                    stray_first = s_[:60] + ("…" if len(s_) > 60 else "")
+            continue
+        cur_body.append(str(ln).rstrip())
+    if cur_name is not None:
+        blocks.append((cur_name, "\n".join(cur_body)))
+        warns.append("`%s` 닫는 태그가 없어 파일 끝까지를 본문으로 처리했습니다." % cur_name)
+    if stray:
+        # 흔한 원인: 첫 태그 앞 제목 줄 / 마지막 닫는 태그 뒤 꼬리 / 태그에 `/`가 섞인 줄
+        # (`<A/>`·`<Lee/Kim>`는 여는 태그로 인식되지 않는다).
+        warns.append("태그 밖 텍스트 %d줄이 무시되었습니다. 첫 줄: `%s`" % (stray, stray_first))
+    return [(n, b.strip()) for n, b in blocks if n and b.strip()], warns
+
+
+def _envelope_warning_tail(warns: list) -> str:
+    """경고는 최대 2줄 + 그 외 N건. 5명 등록에 경고 12줄이면 그것대로 안 읽힌다."""
+    if not warns:
+        return ""
+    tail = "".join("\n⚠️ " + w for w in warns[:2])
+    if len(warns) > 2:
+        tail += "\n⚠️ 그 외 %d건" % (len(warns) - 2)
+    return tail
+
+
 def _merge_npc_attachment_texts(texts: list) -> tuple:
     """!npc추가 다중 첨부 병합 결정. texts=[(filename, text), ...] → (file_text, skipped).
 
@@ -949,7 +1052,8 @@ def _merge_npc_attachment_texts(texts: list) -> tuple:
         return "", []
     if len(texts) == 1:
         return texts[0][1], []
-    if all(_has_h2(t) for _, t in texts):
+    # [2026-09-02] 엔벨로프도 병합 안전 신호 — 경계가 선언돼 있으면 흡수·유실이 없다.
+    if all(_has_h2(t) for _, t in texts) or all(_has_envelope(t) for _, t in texts):
         return "\n\n".join(t for _, t in texts), []
     return texts[0][1], [fn for fn, _ in texts[1:]]
 
@@ -1073,7 +1177,7 @@ async def cmd_npc(ctx: CommandContext) -> None:
                 if has_voice and not single:
                     skipped.append(key)
                     continue
-                voice = await cognition.extract_voice_card(ctx.genai_client, config.MODEL_ID_FLASH, key, desc)
+                voice = await cognition.extract_voice_card(ctx.genai_client, config.role_model("heavy"), key, desc)
                 if voice:
                     data["tone"] = voice
                     domain_manager.update_npc(channel_id, key, data)
@@ -1094,6 +1198,76 @@ async def cmd_npc(ctx: CommandContext) -> None:
                     msg += f"\n\n**{done[0]} 말투:**\n{_tone}"
             elif done:
                 msg += "\n각 NPC 말투는 `!npc <이름>`으로 확인하세요."
+            await ctx.send(msg)
+            return
+
+        # Subcommand: 일정 / schedule 추출 (스펙 §6 R6 ② / §2.8)
+        # [2026-09-03 R6] 병: `schedule` 필드는 소비자만 있고 **생산자가 0곳**이었다.
+        #   시트 파서도 등록 경로도 이 필드를 안 만들어서, R6 자율 이동이 읽을 재료가
+        #   세션 어디에도 없었다(기능이 켜져도 아무도 안 움직인다).
+        # 처방: 보이스카드와 같은 부류의 1회성 사용자 명령. 턴 경로에는 콜을 안 붙인다.
+        #   등록(`!npc 추가`) 경로에도 안 붙인다 - 178KB 3분할 업로드에 NPC당 콜을 끼우면
+        #   느려지고 실패 지점이 하나 는다. 필요할 때 사람이 부른다.
+        if parts[0].lower() in ('일정', '스케줄', 'schedule', 'sched'):
+            if not ctx.genai_client:
+                await ctx.send("⚠️ AI 클라이언트가 초기화되지 않았습니다.")
+                return
+            target = parts[1].strip() if len(parts) > 1 else None
+            npcs = domain_manager.get_npcs(channel_id)
+            targets = {}
+            single = bool(target)
+            if target:
+                key = domain_manager._find_npc_key(npcs, target)
+                if key:
+                    targets[key] = npcs[key]
+                else:
+                    await ctx.send(f"⚠️ NPC '{target}' 정보를 찾을 수 없습니다.")
+                    return
+            else:
+                # 인자 없으면 전체 일괄 (description 100자 이상 - 보이스카드와 같은 문턱)
+                targets = {k: v for k, v in npcs.items()
+                           if len((v.get("description") or v.get("desc", "")).strip()) > 100}
+            if not targets:
+                await ctx.send("🕰️ 일정 추출 대상 NPC가 없습니다.")
+                return
+
+            def _has_slot_schedule(_d):
+                """이미 **신형**(딕셔너리) 일정을 가졌나. 레거시 문자열형은 '없음'으로
+                친다 - 문자열은 장소가 없어 이동을 못 하므로 승격 대상이다."""
+                _s = (_d or {}).get("schedule")
+                return (isinstance(_s, dict) and bool(_s)
+                        and any(isinstance(_v, dict) for _v in _s.values()))
+
+            await ctx.send(f"🕰️ 일정 추출 중... (대상 {len(targets)}명)"
+                           f"{'' if single else ' - 이미 시간대별 일정이 있는 NPC는 건너뜀'}")
+            done, skipped = [], []
+            for key, data in targets.items():
+                desc = (data.get("description") or data.get("desc", "")).strip()
+                if _has_slot_schedule(data) and not single:
+                    skipped.append(key)
+                    continue
+                sched = await cognition.extract_schedule(
+                    ctx.genai_client, config.role_model("heavy"), key, desc)
+                if sched:
+                    data["schedule"] = sched
+                    domain_manager.update_npc(channel_id, key, data)
+                    done.append(key)
+                else:
+                    # 빈 결과는 **저장하지 않는다** - 근거 없는 {}로 기존 값을 지우면
+                    #   추출 한 번 실패가 곧 데이터 삭제가 된다.
+                    skipped.append(key)
+
+            msg = f"🕰️ **일정 추출 완료** - 생성 {len(done)}명"
+            if done:
+                msg += f": {', '.join(done[:10])}" + (" 등" if len(done) > 10 else "")
+            if skipped:
+                msg += f"\n(건너뜀 {len(skipped)}명: 이미 일정 있음/시트에 루틴 없음/추출 실패)"
+            if single and done:
+                _lines = _format_schedule_lines(domain_manager.get_npc(channel_id, done[0]))
+                if _lines:
+                    msg += f"\n\n**{done[0]} 일정:**\n" + "\n".join(_lines)
+            elif done:
+                msg += "\n각 NPC 일정은 `!npc <이름>`으로 확인하세요."
             await ctx.send(msg)
             return
 
@@ -1144,6 +1318,23 @@ async def cmd_npc(ctx: CommandContext) -> None:
         if (not raw_lines or not raw_lines[0].strip()) and not file_text:
              await ctx.send("⚠️ 등록할 내용이 없습니다. `!npc추가 [이름]: [설명]` 또는 파일 첨부.")
              return
+
+        # --- Phase -1: 엔벨로프 (인물 경계 **선언**) — 있으면 추측 0 ---
+        _env_blocks, _env_warns = _parse_envelope_sheets(raw_lines)
+        if _env_blocks:
+            _env_names = [
+                _register_npc(channel_id, _n, _b, _extract_id_fields(_b.splitlines()))
+                for _n, _b in _env_blocks
+            ]
+            _env_tail = _envelope_warning_tail(_env_warns)
+            if _skipped_files:
+                _env_tail += ("\n⚠️ 첨부 파일은 **하나만** 등록됩니다 — 무시됨: "
+                              + ", ".join(_skipped_files[:5]))
+            _shown = ", ".join(_env_names[:10])
+            if len(_env_names) > 10:
+                _shown += " 외 %d명" % (len(_env_names) - 10)
+            await ctx.send("👥 **NPC 등록:** %s%s" % (_shown, _env_tail))
+            return
 
         # --- Phase 0.5: 타인-제작 단일 시트 (## 없음 + Name: 불릿 + ###/#### 구조) ---
         # [2026-07-13] 외부 포맷이 simple 모드로 떨어져 '키: 값' 줄마다 NPC가 등록되던
@@ -1337,6 +1528,11 @@ async def cmd_npc(ctx: CommandContext) -> None:
             if npc.get('background'): msg.append(f"**배경:** {npc.get('background')}")
             if npc.get('tone') or npc.get('speech'):
                 msg.append(f"**말투:** {npc.get('tone') or npc.get('speech')}")
+            # [2026-09-03 R6 검수] `!npc 일정` 배치 완료 메시지가 "여기서 확인하라"고 가리키는데
+            #   정작 이 조회엔 일정 줄이 없었다(가리키는 곳이 빈 자리). 신형(딕셔너리) 일정만 표시.
+            _sch_lines = _format_schedule_lines(npc)
+            if _sch_lines:
+                msg.append("**일정:**\n" + "\n".join(_sch_lines))
 
             await send_long_message(ctx.message.channel, "\n".join(msg))
         else:
@@ -1397,7 +1593,7 @@ async def cmd_start(ctx: CommandContext) -> None:
 async def cmd_retry(ctx: CommandContext) -> None:
     """!다시 [수정 입력] — 빈칸이면 같은 입력으로 리롤, 내용 있으면 입력 교체 후 재생성"""
     from orchestration import get_orchestration_runtime
-    orchestration = get_orchestration_runtime(ctx.genai_client, ctx.model_id, config.MODEL_ID_FLASH)
+    orchestration = get_orchestration_runtime(ctx.genai_client, ctx.model_id, config.role_model("flash"))
 
     if not orchestration:
         await ctx.send("⚠️ AI 서비스가 초기화되지 않았습니다.")
@@ -1807,7 +2003,9 @@ async def cmd_toggle_board(ctx: CommandContext) -> None:
             "버튼": "button", "button": "button",
             "끄기": "off", "off": "off", "없음": "off",
         }
-        mode_display = {"thread": "🧵 스레드(공개)", "button": "💌 버튼(본인만)", "off": "❌ 끄기"}
+        # [2026-08-17 v1.1 §3] 공지·SNS도 기본 button → 라벨을 💌 고정에서 "버튼"으로 중립화
+        #   (실제 이모지는 채널종이 정한다: 메시지=💌 / 공지·SNS=📰).
+        mode_display = {"thread": "🧵 스레드(공개)", "button": "🔘 버튼(누른 사람만)", "off": "❌ 끄기"}
         if len(parts) >= 3 and parts[1] in ch_aliases and parts[2] in mode_aliases:
             ch = ch_aliases[parts[1]]
             mode = mode_aliases[parts[2]]
@@ -1822,8 +2020,9 @@ async def cmd_toggle_board(ctx: CommandContext) -> None:
             f"  📱 SNS: {mode_display.get(modes['sns'], modes['sns'])}\n"
             f"  💌 메시지: {mode_display.get(modes['message'], modes['message'])}\n\n"
             "사용법: `!게시판 표시 메시지 버튼` (스레드 / 버튼 / 끄기)\n"
-            "  · 버튼 = 그 턴 산문에 💌가 붙고, 누른 사람만 봅니다.\n"
-            "  · 스레드 = 공개 스레드에 게시(채널 전원이 봅니다)."
+            "  · 버튼 = 그 턴 산문에 버튼이 붙고(메시지 💌 / 공지·SNS 📰), 누른 사람만 봅니다.\n"
+            "  · 스레드 = 공개 스레드에 게시(채널 전원이 봅니다). **명시해야만** 스레드가 생깁니다.\n"
+            "  · 끄기 = 생성 자체를 안 합니다(저장도 없음)."
         )
         return
 
@@ -1864,7 +2063,7 @@ async def cmd_toggle_board(ctx: CommandContext) -> None:
     # [2026-08-16 도착물 라우트] 착지 방식도 같이 — 빈도만 보이고 착지가 안 보이면
     #   "왜 스레드에 안 올라오지"가 미스터리가 된다.
     modes = world_board.get_all_display_modes(ctx.channel_id)
-    _m = {"thread": "🧵", "button": "💌", "off": "❌"}
+    _m = {"thread": "🧵", "button": "🔘", "off": "❌"}
     lines = [
         f"📋 **게시판 모듈**: {'✅ ON' if board_on else '❌ OFF'}",
         f"  📋 공지: {'✅' if channels['bulletin'] else '❌'} ({freqs['bulletin']}턴 {_m.get(modes['bulletin'], '')})  |  📱 SNS: {'✅' if channels['sns'] else '❌'} ({freqs['sns']}턴 {_m.get(modes['sns'], '')})  |  💌 메시지: {'✅' if channels['message'] else '❌'} ({freqs['message']}턴 {_m.get(modes['message'], '')})",
@@ -1956,7 +2155,8 @@ def _build_chronicle_input(deep_memory: str, fermented: list, history: list) -> 
 
 
 async def _generate_session_chronicle(ctx: CommandContext) -> None:
-    """Flash API로 세션 연대기 생성."""
+    """세션 연대기 생성. [2026-08-18] 역할=main — 발효·연대기 라인과 **같은 모델**로 통일
+    (종전 "flash"였다: 같은 연대기가 자동 발효(main)와 !연대기(flash) 두 모델로 갈렸다)."""
     channel_id = ctx.channel_id
     d_data = domain_manager.get_domain(channel_id)
 
@@ -1985,7 +2185,7 @@ async def _generate_session_chronicle(ctx: CommandContext) -> None:
 
     try:
         response = await ctx.genai_client.aio.models.generate_content(
-            model=config.MODEL_ID_FLASH,
+            model=config.role_model("main"),
             contents=[
                 types.Content(role="user", parts=[types.Part(text=chronicle_input)])
             ],
@@ -2202,10 +2402,15 @@ async def cmd_mental(ctx: CommandContext) -> None:
 
     vigor = mem.get("vigor", {"value": 100, "last_delta": 0})
     composure = mem.get("composure", {"value": 100, "last_delta": 0})
+    # [2026-08-18 Phase 2.5] 기력의 정본은 레지스트리. 조회도 설정도 그쪽을 본다.
+    try:
+        import custom_vars as _cv_m
+    except Exception:
+        _cv_m = None
 
     # [View Mode]
     if not ctx.args:
-        v_val = vigor.get("value", 100)
+        v_val = _cv_m.vigor_value(ctx.channel_id, uid, mem) if _cv_m else vigor.get("value", 100)
         c_val = composure.get("value", 100)
         v_info = game_character.get_mental_info(v_val)
         c_info = game_character.get_composure_info(c_val)
@@ -2222,6 +2427,14 @@ async def cmd_mental(ctx: CommandContext) -> None:
         v_target = max(0, min(100, int(ctx.args[0])))
         c_target = max(0, min(100, int(ctx.args[1]))) if len(ctx.args) > 1 else composure.get("value", 100)
 
+        # 기력 = 레지스트리 쓰기(코드 소유, 캡 면제 — 운영자 수동 설정은 관측 델타가 아니다).
+        #   옛 자리(ai_memory["vigor"])도 같이 맞춰 둔다: 레지스트리가 꺼진 채널의 폴백값이
+        #   설정 직후에도 어긋나지 않게. 정본은 여전히 레지스트리다.
+        _v_now = _cv_m.vigor_value(ctx.channel_id, uid, mem) if _cv_m else vigor.get("value", 100)
+        if _cv_m and v_target != _v_now:
+            _cv_m.apply_system_delta(ctx.channel_id, "기력", v_target - _v_now,
+                                     "manual set", actor=uid, exempt_cap=True,
+                                     source="command.활력")
         mem.setdefault("vigor", {})["value"] = v_target
         mem["vigor"]["last_delta"] = 0
         mem.setdefault("composure", {})["value"] = c_target
@@ -2472,15 +2685,143 @@ async def cmd_rule(ctx: CommandContext) -> None:
     await ctx.send("⚠️ 사용법: `!룰 [목록/추가/삭제/초기화]` — 파일 첨부로 일괄 등록 가능")
 
 
+# [2026-08-18 대형식화 v0] `!출력룰 … 변수 …` 의 예약 키워드.
+#   새 최상위 명령어를 만들지 않는다 — "출력·상태 저작 = !출력룰" 하나로 유지(조작면 최소주의).
+_VAR_SUBKEYS = ("변수", "var", "vars", "variable", "변수선언")
+
+
+async def _handle_custom_var_subcommand(ctx: CommandContext, sub: str, payload: str) -> None:
+    """`!출력룰 추가/수정/삭제/목록 변수 …` 처리.
+
+    저작 두 경로:
+      (a) 반구조 파이프 문법 — `마나 | 0-100 | 시작 80 | PC | 마법 쓰면 준다`. 결정론.
+      (b) 자연어 한 문장 → **1회성 변환 콜**(light). 실패하면 (a)가 폴백.
+    두 경로 모두 같은 검증기를 지나고, 거부 시 규칙 요지를 그대로 동봉한다.
+    """
+    import custom_vars
+
+    if not custom_vars.is_enabled():
+        await ctx.send("⚠️ 변수 기능이 꺼져 있습니다 (`CUSTOM_VARS_ENABLED=0`).")
+        return
+
+    # 목록
+    if sub in ('list', '목록', '조회', 'l') or not payload:
+        await send_long_message(ctx.message.channel, custom_vars.format_list(ctx.channel_id))
+        return
+
+    # 삭제
+    if sub in ('remove', 'delete', 'del', '삭제', '제거', 'r'):
+        name = payload.strip()
+        # [Phase 2.5] 시스템 변수는 코드가 심은 기관이라 지울 수 없다 — 대신 고칠 수 있다.
+        _sys = custom_vars.system_name(name)
+        if _sys:
+            await ctx.send(
+                f"🔒 `{_sys}`은(는) 코드가 심어 둔 시스템 변수라 지울 수 없습니다.\n"
+                f"규칙과 캡은 고칠 수 있습니다: "
+                f"`!출력룰 수정 변수 {_sys} | 상승 5 하강 7 | (새 규칙)`"
+            )
+            return
+        if custom_vars.unregister(ctx.channel_id, name):
+            await ctx.send(f"🗑️ **변수 삭제:** [{name}]")
+        else:
+            await ctx.send(f"⚠️ 변수 '{name}'(을)를 찾을 수 없습니다.")
+        return
+
+    # 추가 / 수정
+    if sub not in ('add', '추가', 'set', '설정', 'a', '수정', 'edit', 'modify', 'update', 'u'):
+        await ctx.send(
+            "⚠️ 사용법: `!출력룰 [추가/수정/삭제/목록] 변수 …`\n\n" + custom_vars.RULES_TEXT
+        )
+        return
+
+    existing = custom_vars.get_declarations(ctx.channel_id)
+    spec = None
+    src = "파이프"
+    if '|' in payload:
+        spec, perr = custom_vars.parse_pipe_declaration(payload)
+        if spec is None:
+            await send_long_message(ctx.message.channel, f"⚠️ {perr}\n\n{custom_vars.RULES_TEXT}")
+            return
+    else:
+        # 자연어 경로 — 저작 시 **1회성** 콜(매턴 순증 0).
+        notice = await ctx.send("📊 문장을 변수 선언으로 옮기는 중…")
+        spec, cerr = await custom_vars.convert_natural_declaration(
+            ctx.genai_client, config.role_model("light"), payload, list(existing.keys()),
+        )
+        try:
+            if notice:
+                await notice.delete()
+        except Exception:
+            pass
+        if spec is None:
+            await send_long_message(
+                ctx.message.channel,
+                f"⚠️ 자연어 변환에 실패했습니다 ({cerr}).\n아래 형식으로 직접 적어 주세요.\n\n"
+                + custom_vars.RULES_TEXT,
+            )
+            return
+        src = "자연어"
+
+    clean, verr = custom_vars.validate_declaration(spec, existing)
+    if clean is None:
+        await send_long_message(ctx.message.channel, f"⚠️ {verr}")
+        return
+
+    ok, verb = custom_vars.register(ctx.channel_id, clean)
+    if not ok:
+        await ctx.send(f"⚠️ {verb}")
+        return
+
+    # [2026-08-18 v1] 타입마다 "모양"이 다르다 — 범위/단계/항목모드. 확인문은 등록된 그대로 되읽는다
+    #   (유저가 방금 무엇을 만들었는지가 여기서 한 번에 보여야 파이프 저작의 오해가 즉시 잡힌다).
+    _t = clean.get("type", "gauge")
+    if _t == "enum":
+        _shape = " > ".join(clean.get("stages") or [])
+        if clean.get("monotonic"):
+            _shape += " · 단조(역행 불가)"
+    elif _t == "list":
+        _ilo, _ihi = (clean.get("item_range") or [0, 0])[:2]
+        _shape = f"{clean.get('item_mode', 'stock')} 항목 {_ilo}-{_ihi}"
+    else:
+        _lo, _hi = clean["range"]
+        _shape = f"범위 {_lo}-{_hi}"
+        if clean.get("max_gain") or clean.get("max_loss"):
+            _shape += f" · 캡 +{clean.get('max_gain', '∞')}/-{clean.get('max_loss', '∞')}"
+    _cur = (custom_vars.get_values(ctx.channel_id).get(clean["name"]) or {}).get("value", clean.get("init"))
+    _cur_text = custom_vars.format_value(clean, _cur) if not isinstance(_cur, dict) else (
+        "—" if not _cur else ", ".join(f"{k}" for k in list(_cur)[:4]))
+    await ctx.send(
+        f"📊 **변수 {verb}:** [{clean['name']}] — 현재 `{_cur_text}` ({_shape}, "
+        f"{_t}, {clean['scope']})\n"
+        f"> 규칙: {clean['rule']}\n"
+        f"-# {src} 저작 · 💠 상태 버튼에서 확인"
+    )
+
+
 @registry.register("outputrule", category="World", aliases=["출력룰", "출력규칙", "outputrules", "출력"], description="출력 형식 규칙 관리 (Recency 슬롯)")
 async def cmd_output_rule(ctx: CommandContext) -> None:
     """!출력룰 [추가/삭제/목록/초기화] [키워드] [내용]  — 파일 첨부 시 일괄 등록
-    출력 형식 지시(상태창, 포맷 등)를 Recency 영역에 주입합니다."""
+    출력 형식 지시(상태창, 포맷 등)를 Recency 영역에 주입합니다.
+
+    [2026-08-18] `변수` 키워드는 선언형 변수 레지스트리로 분기한다(별도 명령어 없음).
+    """
     args = ctx.args
     if not args:
         sub = "list"
     else:
         sub = args[0].lower()
+
+    # === 대형식화 분기 ===  `!출력룰 변수` (목록) / `!출력룰 추가 변수 …`
+    if args and args[0].strip().lower() in _VAR_SUBKEYS:
+        _p = ctx.raw_args.strip()[len(args[0]):].strip()
+        await _handle_custom_var_subcommand(ctx, "add" if _p else "list", _p)
+        return
+    if len(args) >= 2 and args[1].strip().lower() in _VAR_SUBKEYS:
+        _rest = ctx.raw_args.strip()
+        _rest = _rest[len(args[0]):].lstrip()
+        _rest = _rest[len(args[1]):].lstrip()
+        await _handle_custom_var_subcommand(ctx, sub, _rest)
+        return
 
     w = domain_manager.get_world_state(ctx.channel_id)
     rules = w.get("output_rules", {})
@@ -2495,6 +2836,14 @@ async def cmd_output_rule(ctx: CommandContext) -> None:
             desc = v.get('desc', '') if isinstance(v, dict) else str(v)
             preview = desc[:80] + "..." if len(desc) > 80 else desc
             msg.append(f"- **{k}**: {preview}")
+        # [2026-08-18 대형식화] 같은 명령어의 다른 문 — 선언 변수가 있으면 여기서 안내한다.
+        try:
+            import custom_vars as _cv_hint
+            _decl = _cv_hint.get_declarations(ctx.channel_id)
+            if _decl:
+                msg.append(f"\n📊 선언 변수 {len(_decl)}개 — `!출력룰 목록 변수`")
+        except Exception:
+            pass
         await send_long_message(ctx.message.channel, "\n".join(msg))
         return
 
@@ -2681,7 +3030,7 @@ async def _trigger_board(ctx: 'CommandContext', trigger: str = "time") -> None:
         if ctx.genai_client and isinstance(ctx.message.channel, discord.TextChannel):
             await world_board.trigger_board_update(
                 ctx.message.channel, ctx.genai_client,
-                config.MODEL_ID_FLASH, ctx.channel_id, trigger=trigger,
+                config.role_model("light"), ctx.channel_id, trigger=trigger,
             )
     except Exception as e:
         logging.getLogger("WorldBoard").debug(f"[WorldBoard] Trigger error: {e}")
@@ -2863,7 +3212,7 @@ async def cmd_time(ctx: CommandContext) -> None:
 async def cmd_turn(ctx: CommandContext) -> None:
     """!진행 — 축적된 행동 처리 또는 관찰 턴"""
     from orchestration import get_orchestration_runtime
-    orch = get_orchestration_runtime(ctx.genai_client, ctx.model_id, config.MODEL_ID_FLASH)
+    orch = get_orchestration_runtime(ctx.genai_client, ctx.model_id, config.role_model("flash"))
     if not orch:
         await ctx.send("⚠️ AI 서비스가 초기화되지 않았습니다.")
         return

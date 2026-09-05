@@ -1214,6 +1214,9 @@ def detect_number_fixation(response: str, min_chars: int = 150) -> Tuple[str, Di
 
 _SENT_SPLIT = re.compile(r'(?<=[.!?”"])\s+|\n+')
 
+# [2026-08-28] 대사 조각 판정 — 분절 때문에 따옴표가 한쪽만 남을 수 있어 **짝을 요구하지 않는다**.
+_QUOTE_ANY_RE = re.compile(r'["“”「」『』]')
+
 
 # 상태줄/시스템 라인 — verbatim 비교에서 제외(매 턴 동일해 오탐 유발)
 _STATUS_NOISE_RE = re.compile(r"로드아웃|\bDoom\b|활력\s*\d|평형\s*\d|위치 .+\| ?시간|파티\s*챗")
@@ -1300,6 +1303,22 @@ def scrub_echo_sentences(text: str,
     targets = [s.strip() for s in echo_sents if s and s.strip()]
     if not targets:
         return text, 0
+
+    # [2026-08-28 후렴 승격 — 첫 인스턴스 보존의 만료]
+    # 병: 첫 등장 보존이 **모방 원본을 영구히 남긴다**. 지우는 건 매번 사본이고 원본은 계속
+    #   히스토리에 있어서, 다음 턴 모델은 그 문장을 또 본다 → 무한 재발(실측: 두 턴 사이
+    #   verbatim 5건이 검출기에 잡히는데도 계속 돌아옴). 검출은 멀쩡했고 **처방이 못 끊었다**.
+    # 처방: 재발 횟수로 모티프/후렴을 가른다. 호출부(orchestration)가 echo_scrub_sents에
+    #   턴마다 hits를 append하므로 **목록 안 중복 개수 = 재발한 턴 수**다(새 상태 0).
+    #   1회 재발까지 = 모티프일 수 있다 → 첫 인스턴스 보존(현행 유지).
+    #   2회 이상 = 후렴 확정 → 첫 인스턴스도 뺀다.
+    # ★단조 안전: 판정이 안 서면 현행 동작. 통짜삭제 안전판(min_keep_ratio)은 그대로 뒤에서 받는다.
+    def _repeat_count(t: str) -> int:
+        n = 0
+        for x in targets:
+            if x == t or difflib.SequenceMatcher(None, x, t).ratio() >= near:
+                n += 1
+        return n
     kept: List[str] = []
     removed = 0
     for sent in _SENT_SPLIT.split(text):
@@ -1315,9 +1334,22 @@ def scrub_echo_sentences(text: str,
             kept.append(s)
             continue
         if already_seen is not None and matched not in already_seen:
-            already_seen.add(matched)   # 첫 등장 = 지시대상 보존
-            kept.append(s)
-            continue
+            already_seen.add(matched)   # 첫 등장 = 지시대상 보존 후보
+            # [2026-08-28 충돌 감사 — 대사 면제] 후렴 승격을 **서술 문장에만** 건다.
+            #   실증: `소니아: "그렇습니다. 주인님의 말씀이 옳습니다."` 같은 짧은 입버릇이
+            #   3턴에 걸쳐 재발하면 승격 조건을 만족해 **원본까지 히스토리에서 사라졌다**
+            #   (긴 턴에선 min_keep_ratio 안전판도 안 걸린다). 그런데 Slot 25는
+            #   "Each character keeps a linguistic fingerprint (habitual openers, pet phrases)"를
+            #   요구한다 — ★**지문은 안정된 재발이 곧 정체성**이라 후렴과 성질이 반대다.
+            #   서술 문체 관성(잉크는 아직 검고 번들거렸다)만 후렴이고, 대사는 아니다.
+            #   ⚠`_DIALOGUE_RE`(짝 맞은 인용)로는 안 된다 — 문장 분절이 닫는 따옴표 뒤에서
+            #     잘라 `소니아: "그렇습니다.` / `주인님의 말씀이 옳습니다."`처럼 **한쪽 따옴표만**
+            #     가진 조각이 나온다(실측). 그래서 따옴표가 **하나라도 있으면** 면제한다.
+            #     ★단조 안전: 면제는 제거를 줄이기만 한다(오삭제 위험만 낮아짐).
+            if _repeat_count(matched) < 2 or _QUOTE_ANY_RE.search(s):
+                kept.append(s)          # 재발 1회까지 = 모티프 / 대사 = 지문(면제)
+                continue
+            # 2회 이상 재발한 **서술** 문장 = 후렴 → 첫 인스턴스도 모방 대상에서 뺀다
         removed += 1
     if not removed:
         return text, 0

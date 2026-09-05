@@ -1823,7 +1823,9 @@ def build_34_step_prompt(ctx) -> str:
             _mem = _target_p.get("ai_memory", {}) if isinstance(_target_p, dict) else {}
             _v_dict = _mem.get("vigor") or _mem.get("mental") or {}
             _c_dict = _mem.get("composure") or {}
-            _v = int(_v_dict.get("value", 100)) if _v_dict.get("value") is not None else 100
+            # [2026-08-18 Phase 2.5] 기력 = 레지스트리 값. 괴리(contrast) 번역은 무변경.
+            import custom_vars as _cv_slot
+            _v = int(_cv_slot.vigor_value(channel_id, user_id, _mem))
             _c = int(_c_dict.get("value", 100)) if _c_dict.get("value") is not None else 100
             contrast_text = iceberg.translate_vigor_composure(_v, _c)
             if contrast_text:
@@ -1971,13 +1973,17 @@ def build_34_step_prompt(ctx) -> str:
             #   패널은 배경 콜+코드가 그리고 💠 버튼으로 표시된다 — 여기서 빼는 것이
             #   "렌더 부담 0"의 실체다(주면 렌더가 산문 뒤에 표를 그리기 시작한다).
             #   일반 출력룰은 종전 그대로 주입.
+            #   [2026-08-18 대형식화 v1] 헤더 형식 저작(키=헤더/header)도 같은 이유로 제외한다 —
+            #   상단 줄은 코드가 그린다(build_status_header). 렌더에 형식 문자열을 주면
+            #   산문 앞에 상태줄을 **두 번** 그리는 결과가 된다.
             try:
-                from status_panel import is_panel_key as _is_panel_key
+                from status_panel import is_panel_key as _is_panel_key, is_header_key as _is_header_key
             except Exception:
                 _is_panel_key = lambda _k: False  # noqa: E731
+                _is_header_key = lambda _k: False  # noqa: E731
             out_lines = []
             for k, v in _out_rules.items():
-                if _is_panel_key(k):
+                if _is_panel_key(k) or _is_header_key(k):
                     continue
                 desc = v.get("desc", "") if isinstance(v, dict) else str(v)
                 out_lines.append(desc)
@@ -1997,7 +2003,20 @@ def build_34_step_prompt(ctx) -> str:
     # 5W1H 바로 앞, 최근접 주의(Recency) 위치에 배치.
     try:
         _nb = (dai.get("story_direction", {}) or {}).get("next_beat") if isinstance(dai, dict) else None
+        # [2026-08-28 세계 전진 소유권 이전] persona 꼬리에서 "The world keeps moving: …" 목록 4종을
+        #   **삭제**했다(이중 투입 — 코드가 여기서 사건을 하나 지정하는데 산문에게 또 만들라고 시켰다).
+        #   그러므로 이 자리가 **유일 공급원**이고, 비면 그 턴엔 세계 전진 지시가 통째로 사라진다.
+        #   ★"선언=집행"([[project-plugin-simcore]]): 지시문에서 뺐으면 코드가 보증해야 한다.
+        #   폴백 문안은 story_director.ambient_beat() 단일 진실원천(비트 큐 폴백과 같은 것).
         _nb_text = iceberg.translate_next_beat(_nb if isinstance(_nb, str) else "")
+        if not _nb_text:
+            try:
+                import story_director as _sd_amb
+                _nb_text = iceberg.translate_next_beat(
+                    _sd_amb.ambient_beat(dai.get("energy_direction", "") if isinstance(dai, dict) else ""))
+                logger.info("[NextBeat→Slot33] empty → ambient_beat 보증 주입")
+            except Exception as _e_amb:
+                logger.warning(f"[NextBeat→Slot33] ambient 보증 실패: {_e_amb}")
         if _nb_text:
             slot33_parts.append(_nb_text)
             logger.info(f"[NextBeat→Slot33] Injected (contract): {str(_nb)[:60]}")
@@ -2006,10 +2025,18 @@ def build_34_step_prompt(ctx) -> str:
 
     # 5W1H Recency Echo — always present at maximum recency position
     # [2026-07-02] TURN MOTION 병합(신규 블록 대신 in-place): 턴 종결=정적 대기("여전히 거기 있었다"류) 방지.
+    # [2026-08-28 자문자답 수리] 변화 목록 5개가 **전부 완결형**이라 "PC에게 질문을 던져놓고 열어둠"이
+    #   차이로 안 쳐졌다 → 질문으로 바닥을 넘긴 턴은 "정지로 닫힘"이 되고 그건 금지 → 렌더가 바닥을
+    #   되찾을 구실로 **PC 무응답을 발명**("대답이 없네"). 처방=억제줄 손대지 않고 목록에 미완결형
+    #   6번째를 추가(허가). stillness 절엔 범위 한정 한 절만("내민 손은 정지가 아니다").
+    #   ★`unanswered`류 낱말은 의도적으로 안 씀 — 병 자체가 그 낱말을 뱉는 것이라 팔레트 교훈 적용.
+    #   자매 수리=iceberg.translate_open_invitations 꼬리. 보류 카드=Slot 18 침묵 줄 분리(억제:허가 비율).
     slot33_parts.append(
         "[5W1H: Draw events only from DAI data. Camera scans environment evenly. Prose intensity follows EnergyDirection. "
-        "By the turn's end one thing is DIFFERENT from how it started: learned, arrived, decided, moved, or begun by the world itself; "
-        "stillness may fill the middle of a turn, it does not close one.]"
+        "By the turn's end one thing is DIFFERENT from how it started: learned, arrived, decided, moved, begun by the world itself, "
+        "or handed to the PC and left standing — a question put, a hand held out, is itself this turn's difference, "
+        "and the turn closes there; what comes back is the next turn's. "
+        "Stillness may fill the middle of a turn, it does not close one; a hand deliberately left out is a move, not stillness.]"
     )
 
     builder.set_slot(33, "\n\n".join(slot33_parts))

@@ -15,7 +15,8 @@ from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from check_npc_sections import analyze, format_report, _CORE_SECTIONS, _MAX_TOTAL_PER_NPC
+from check_npc_sections import (analyze, format_report, _CORE_FAMILIES,
+                                _section_family, _MAX_TOTAL_PER_NPC)
 
 
 class NPCSectionGUI:
@@ -174,12 +175,13 @@ class NPCSectionGUI:
             self.sections_text.insert(tk.END, "\n")
             idx += 1
 
-        # CORE 섹션 (★)
-        for core_name in _CORE_SECTIONS:
+        # CORE 섹션 (★) — [2026-09-02] 정확일치 리스트 → 가족 판정(실물·CLI와 동일).
+        #   구 코드는 `## 1. Basic Info`처럼 번호·자유 명명 시트에서 전부 빗나갔다.
+        for core_name in _CORE_FAMILIES:
             for sec_name, sec_text in parsed.items():
                 if sec_name == "_preamble" or sec_name in included:
                     continue
-                if core_name.lower() in sec_name.lower():
+                if _section_family(sec_name) == core_name:
                     size = len(sec_text)
                     bar = "█" * min(40, size // 100)
                     self.sections_text.insert(tk.END, f"[{idx:>2}] ", "core")

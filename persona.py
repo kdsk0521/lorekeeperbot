@@ -480,6 +480,23 @@ def is_render_failure(text: Optional[str]) -> bool:
     return bool(text) and str(text).strip() == RENDER_FAILURE_NOTICE
 
 
+_USER_INPUT_TAG_RE = re.compile(r"<User_Input>\s*(.*?)\s*</User_Input>", re.S)
+
+
+def _extract_user_input_for_origin(blob: str) -> str:
+    """PC 사칭 **출처 판정**용 소스만 뽑는다.
+
+    렌더 호출에 넘어오는 문자열은 조립된 프롬프트 전문(또는 THIS TURN 문서)이라
+    출처 판정의 소스로 쓰면 로어·시트·히스토리의 한글까지 '유저가 준 것'이 된다.
+    Slot 32가 유저 입력을 `<User_Input>…</User_Input>`으로 감싸므로 그 블록만 쓴다.
+    태그가 없으면(구 조립·테스트 등) 원본을 그대로 돌려 **종전 동작**을 유지한다.
+    """
+    if not blob:
+        return ""
+    m = _USER_INPUT_TAG_RE.search(blob)
+    return m.group(1) if m else blob
+
+
 async def generate_response_with_retry(
     client: genai.Client,
     chat_session: ChatSessionAdapter,
@@ -539,7 +556,7 @@ async def generate_response_with_retry(
     _para_lo = max(6, -(-min_length // _PARA_CHARS))  # ceil
     _para_hi = _para_lo + 3
     hidden_reminder = (
-        "\n\n(System Reminder: Record observable Macroscopic States only. "
+        "\n\n(System Reminder: Dice logs and system readouts stay off the page. "
         "The world continues asynchronously. "
         # [2026-07-14] 문단 수 = 게이트 파생(위 _para_lo/_para_hi). 고정 문구(3-5 → 8-10)를 쓰던 동안
         # 에너지가 오를 때마다 같은 모순이 재발했다(rising 바닥 1440 vs 8-10문단 ≈1200자 → SHORT).
@@ -547,28 +564,70 @@ async def generate_response_with_retry(
         #  ★3중 계약(하나라도 빠지면 실패): ①문단 수(파생) ②볼륨 앵커(≈{_vol_words}+ words — 문단이
         #    얇아져도 총량 바닥 보증) ③문단 스케일 규칙(한 문단=한 비트, 두 비트면 쪼갠다 — 얇게
         #    저미기 방지). ②가 없으면 문단만 늘고 총량 미달, ③이 없으면 원자화(07-08 저미기 재발).
+        # [2026-08-28 억지 증량 수리 = ⓐ단위충돌 + ⓑ하한출구]
+        #  ⓐ 구 문구 "One paragraph carries one **beat**"가 iceberg `_ENERGY_BEAT`("idle: 1 beat")와
+        #    **같은 낱말 다른 단위**였다(저쪽=사건 단위, 여기=문단 단위). idle 실측 = 비트 1 vs 문단 8-11
+        #    → 산술을 맞추려면 **없는 비트를 8~11개 발명**해야 한다. 그 발명이 (a)미세 동작 문형
+        #    (b)이전 턴 재탕으로 나갔다. → beat → movement로 낱말 분리(저미기 방지 기능은 불변).
+        #  ⓑ "Fewer is under-rendered, not restraint."가 **짧게 끝낼 길을 원천봉쇄**해서, 재료가 없어도
+        #    채우게 만들었다. → **밴드를 양방향으로**: 재료 있는 턴=상단 끝(구 압력 보존), 재료가
+        #    한 교환뿐인 턴=하단 끝이 정답. + **재탕은 분량에 안 든다** 판정문(재탕이 이득이 아니게).
+        #    ★초안은 하단 출구만 열어 한쪽으로 기울었다(레티어스 "길면 좋지만 억지는 싫다") → 대칭화.
+        #    ★하한 자체는 불변 — min_length 게이트가 여전히 미달을 반려한다. 푼 것은 **하한 위로
+        #    계속 밀어올리는 압력**뿐이고, 하단 끝도 문단 하한(idle 8문단 ≈1120자) > 게이트 1020.
+        # [2026-08-28 압축] widening 계열이 **4문장 중복**이었다(구 3중 + ⓑ가 1 추가):
+        #   "Either end is reached by widening…" / "when a beat is thin, widen the frame…" /
+        #   "Depth comes from widening…" / "Volume comes from widening the frame…".
+        #   레티어스: "많이 지시하기보다 정확히 지시하는 걸 선호." → 넷을 **route 하나를 공유하는
+        #   한 문장**으로 합친다(금지 3종이 같은 호흡의 `widening`에 매달림 = 전환규칙 ④ 유지).
+        #   위임 표지도 별도 문장에서 밴드 선언 안으로 접었다. 기능 손실 0.
+        # [2026-08-28 840자 FALLBACK 수리 — 보존] 볼륨 바닥은 **밴드 양끝 공통**이고, 하단 선택의
+        #   대상은 **문단 수**다("fewer paragraphs, never thinner ones"). 8문단×140 = 1120 > 게이트 1020.
+        #   구 결함: ⓑ 조건화가 앵커 직후의 무조건 강제문을 치워 하단 출구가 "총량을 줄여라"로 읽혔다.
         f"PROSE after ┫: this scene's weight calls for {_para_lo}-{_para_hi} full paragraphs, carrying "
-        f"≈{_vol_words}+ English-words volume. Fewer is under-rendered, not restraint. "
-        "One paragraph carries one beat: when a paragraph holds two, split it rather than packing it; "
-        "when a beat is thin, widen the frame instead of slicing the instant thinner. "
-        "Depth comes from widening, never from padding to a quota. "
+        f"≈{_vol_words}+ English-words volume, and that floor holds at both ends of the band; which "
+        "end this turn takes is yours to read from the material in hand. A turn carrying real "
+        "material takes the upper end, and fewer than that is under-rendered, not restraint; a turn "
+        "whose material is honestly one exchange takes the low end of the paragraph count: fewer "
+        "paragraphs, never thinner ones. "
+        "One paragraph holds one movement: when a paragraph holds two, split it rather than packing it. "
+        "If the immediate beat exhausts before that volume, do NOT stop: volume comes from widening "
+        "the frame, never from slicing one instant ever thinner, never from padding to a quota, and "
+        "never by re-rendering what an earlier turn already put on the page, since a beat already "
+        "spent adds nothing to this volume. "
         "Judge volume by English-word equivalent, never by counting Korean characters literally. "
         # [2026-07-02] '소진-연속' 재정의: 옛 문구(ambient/micro-action/room breathing)가 정지-질감
         # 반복으로 직역됨(산문5·6 실증 — 이벤트 0에 미세동작 12) → 채움 재료=세계의 전진.
         # 질감 묘사는 전진 '주변'에 유지 (순문학 결 보존 — 깎는 게 아니라 위에 얹는 것).
         # [2026-07-08] 정지 장면 원자화 차단: 분량 바닥이 단일 비트 장면에서 '비트 쪼개기'(모음 하나를
         # 23문장 해부)로 실행되던 것 → 채움 방향을 명시(옆으로 넓히기, 한 순간을 얇게 저미기 금지).
-        "If the immediate beat exhausts before that volume, do NOT stop. "
-        "Volume comes from widening the frame, never from slicing one instant ever thinner. "
-        "The world keeps moving: "
-        "an NPC acts on their own agenda, something already in motion arrives or shifts, "
-        "an open thread advances one visible notch, time moves and leaves a difference behind. "
-        "Sensory texture and quiet interiors stay welcome around that motion, not in place of it. "
-        "Motion grows from what the scene already holds; no unrelated new plots. "
+        # [2026-08-28 ⓖ 사건 중복 차단] 실측: 같은 장면에서 "작은 접수원이 발돋움해 새 양피지를 꽂는다"가
+        #   **두 턴 연속 일어남**(이미 꽂힌 공지를 또 꽂음 = 세계 상태 모순). 기전 = 증량 압력으로 턴N이
+        #   세계 이벤트를 **미리 발명**해 놓고, 턴N+1에 코드(anomaly)가 진짜 같은 이변을 발화 → 이중 도착.
+        #   [[project-plugin-gradia]] "코드가 이미 하는 걸 산문에도 시킴"과 같은 병. 처방=전진의 **지속성**
+        #   명시(일어난 것은 그 상태로 남는다) — 금지가 아니라 상태 규칙이라 배경 앙상블 루프도 같이 끊긴다.
+        # [2026-08-28 충돌 감사 C3] 세계 전진이 **3중 투입**이었다: ①Slot 33 next_beat "This turn
+        #   lands: X" ②TURN MOTION "one thing is DIFFERENT … begun by the world itself" ③이 목록.
+        #   교차 참조 0 + 증량 압력이 합산을 보상 → 한 턴에 세계 사건 2~3개([[gradia]] 이중 투입 재발).
+        #   ★진짜 결함은 **목록이 메뉴인데 모델이 체크리스트로 읽는 것**(팔레트 교훈 재현) →
+        #   개수를 1로 못박고, 그 하나를 이번 턴 재료가 이미 지목한 것으로 묶어 ①과 같은 것을 가리키게 한다.
+        # [2026-08-28 소유권 이전] 구 문안은 세계 전진 목록 4종 + "one motion … never one of each".
+        #   ★이중 투입이었다 — `story_director`가 매 턴 `next_beat`("This turn lands: X")로 사건을
+        #   **이미 하나 지정**하는데(폴백 3갈래가 큐를 늘 채운다) 여기서 산문에게 또 만들라고 시켰다.
+        #   내가 08-28에 넣은 "never one of each"는 그 사실을 **지시문으로 덮은 것**이었다.
+        #   레티어스: "코드에서 이미 조립해서 보내주는 걸 일부러 더 넣을 필요는 없지."
+        #   → 목록·개수절 삭제, 발화처는 Slot 33 하나. 코드 쪽 보증은 slot_manager 주입부에.
+        #   남은 지속성 조항은 앞 문장이 사라졌으므로 주어를 자립시킨다(That motion → A motion).
+        # [2026-08-28 압축] 같은 예시 2개(posted/stamped) → 1개. `not in place of it`은 바로 위
+        #   "one motion … never one of each"가 이미 사건 1개를 보장하므로 잉여였고, 동시에
+        #   감사 A3(`_ENERGY_TONE["stagnant"]="world at rest"`와 대립)의 당사자였다 — 빼서 둘 다 해소.
+        "A motion the world makes happens once and then stands: what was posted stays posted, and a later turn "
+        "finds it already done rather than doing it again. It grows from what the scene already "
+        "holds; sensory texture and quiet interiors stay welcome around it, and no unrelated new plots. "
         # [2026-06-12] 길이 인플레 차단 (2530→3533→4225 복리 관측 — 맥락 우선 모델에게 긴 응답=다음 선례).
         # 뮈토스 ceiling 차용: 천장 = 쿼터 아닌 정지 경계.
         f"Ceiling ≈{max_chars // 4} English-words volume: a firm stopping boundary, NOT a quota to "
-        "fill — when the scene offers a clean exit inside the band, take it. Cross the ceiling only "
+        "fill; when the scene offers a clean exit inside the band, take it. Cross the ceiling only "
         "to land a beat already in motion, never to open a new one.)"
     )
     # [2026-07-08 DTG [15] 이식 — deepseek 렌더 게이트] 한국어 순도 잠금: V4 추론-ON 운용에서
@@ -658,8 +717,20 @@ async def generate_response_with_retry(
                 # filter_pc_impersonation internally calls process_bkspc
                 # [2026-08-13] user_input 전달 = 출처 판정 활성. 유저가 이번 턴에 공급한
                 # 행동의 직조(Slot 21 DECREE 준수)를 사칭으로 오삭제하던 것 차단.
+                # [2026-08-28 ★출처 판정 배선 수리 — 검출기가 죽어 있었다]
+                #   구 배선: 여기 `user_input`은 **조립된 프롬프트 전문**이다
+                #   (`orchestration_response._user_input = _now_doc if tuple else prompt`).
+                #   `_is_supplied_by_input`은 음절키 겹침 0.34로 면제를 주는데, 소스가 프롬프트
+                #   전문(NPC 시트·로어·히스토리의 한글 수천 자)이면 **거의 모든 한국어 문장이
+                #   면제**된다 — 실측: `아린이 "그건 내가 할게"라고 말했다` 면제 True.
+                #   → dialogue·impersonation_2nd 하드 삭제가 08-13부터 사실상 사문(thought만 생존).
+                #   ★08-13 스모크가 통과한 이유 = 깨끗한 한 줄 입력을 먹였다. **실전 배선을 안 봤다**
+                #   ([[project-observation-bridge]] "게이트 스모크는 호출경로 끝까지").
+                #   수리: 판정 소스를 Slot 32 <User_Input> 블록으로 **좁힌다**. 태그가 없으면
+                #   종전 값 그대로(단조 안전 — 면제 범위를 넓히지 않는다).
+                _origin = _extract_user_input_for_origin(user_input)
                 clean_text, violations = filter_pc_impersonation(
-                    response_text, pc_names or [], user_input)
+                    response_text, pc_names or [], _origin)
                 response_length = len(clean_text)
                 
                 # 2. 사칭 검출 → 경고 로그만 (재시도 없음)

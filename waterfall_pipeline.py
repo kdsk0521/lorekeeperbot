@@ -270,6 +270,12 @@ class WaterfallPipeline:
         bus.dai["observation"] = analysis.get("Observation", "")
         bus.dai["user_intent"] = analysis.get("UserIntent", "")
         bus.dai["current_location"] = analysis.get("CurrentLocation", "")
+        # [2026-09-02 R1] 위치 계층 재료 — 스펙 §2.5 ⓑ. 자동 노드 생성이 parent 미지정이라
+        #   전부 루트로 앉던 구멍(§4)을 메우려면 "루트부터의 경로"가 필요하다.
+        #   선택 필드라 부재가 상례 → `or []` / `or ""`로 **명시 null도 누락과 같게** 받는다.
+        _lp = analysis.get("location_path")
+        bus.dai["location_path"] = _lp if isinstance(_lp, list) else []
+        bus.dai["location_type"] = str(analysis.get("location_type") or "")
         bus.dai["location_risk"] = analysis.get("LocationRisk", "Low")
         bus.dai["time_context"] = analysis.get("TimeContext", "")
         bus.dai["scene_type"] = analysis.get("SceneType", "normal")
@@ -432,27 +438,29 @@ class WaterfallPipeline:
             bus.doom["flash_clock_new"] = doom_clocks_output.get("clock_new")
             bus.doom["flash_clock_resolved"] = doom_clocks_output.get("clock_resolved") or []
 
-        # Vigor/Composure Impact 연동
+        # Composure Impact 연동
+        # [2026-08-18 Phase 2.5] **기력 라우팅 삭제.** 기력은 레지스트리 변수라 서사 임팩트가
+        #   아니라 추출 콜의 custom_var_deltas 로 움직인다 — bus.vigor["impact"] 를 계속 쓰면
+        #   소비자 없는 죽은 키가 되고, 그 키가 살아 있는 것처럼 보이는 게 더 나쁘다.
+        #   theoria 의 vigor_severity 필드는 계약에 남겨 둔다(평형 severity 와 한 블록이고,
+        #   분석문 자체는 서사 재료로 계속 읽힌다).
         mental_impact = analysis.get("mental_impact") or {}
         if mental_impact.get("applicable", False):
             reason = mental_impact.get("reason", "")
             # Phase 2 F: severity enum 형식 우선 (none/mild/heavy/extreme)
             if "vigor_severity" in mental_impact or "composure_severity" in mental_impact:
-                v_sev = mental_impact.get("vigor_severity", "none")
                 c_sev = mental_impact.get("composure_severity", "none")
-                bus.vigor["impact"] = {"applicable": True, "severity": v_sev, "reason": reason}
                 bus.composure["impact"] = {"applicable": True, "severity": c_sev, "reason": reason}
             # 레거시 호환: 직접 delta 수치 (v3 schema)
             elif "vigor_delta" in mental_impact or "composure_delta" in mental_impact:
-                v_delta = int(mental_impact.get("vigor_delta", 0) or 0)
                 c_delta = int(mental_impact.get("composure_delta", 0) or 0)
-                bus.vigor["impact"] = {"applicable": True, "delta": v_delta, "reason": reason}
                 bus.composure["impact"] = {"applicable": True, "delta": c_delta, "reason": reason}
             else:
-                # Legacy fallback: single delta -> route to primary axis
+                # Legacy fallback: single delta -> route to primary axis (평형이 주축일 때만)
                 mechanic = context.request.genres.get("mechanic", {})
                 primary = mechanic.get("primary_resource") or "vigor"
-                getattr(bus, primary)["impact"] = mental_impact
+                if primary == "composure":
+                    bus.composure["impact"] = mental_impact
 
         # Anomaly Profile 연동
         anomaly_profile = analysis.get("anomaly_profile") or {}

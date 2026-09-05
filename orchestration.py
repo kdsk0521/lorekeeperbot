@@ -74,7 +74,7 @@ def _check_dialogue_format(response: str, pc_names: list = None, user_input: str
     """AI 응답에서 대사 포맷 위반을 감지하여 피드백 문자열 반환.
     [2026-08-13 대사 포맷 부활] 혼합 계약: 독립 대사줄(_is_bare_speech_line)만 `이름: "대사"` 대상.
     PC 대사 에코(유저 입력 재출력)와 AI 창작 PC 대사를 구분:
-    - 유저 입력에 포함된 대사와 5자 이상 겹치면 에코 → 제외
+    - 출처 판정(response_processor._is_supplied_by_input, 음절키 겹침)으로 에코 → 제외
     - 겹치지 않으면 AI 창작 → [IMPERSONATION] 피드백"""
     lines = response.split('\n')
     correct_pat = re.compile(r'^\s*.+?\s*:\s*"')  # 이름(공백 포함): "대사"
@@ -116,11 +116,25 @@ def _check_dialogue_format(response: str, pc_names: list = None, user_input: str
             q_match = quote_pat.search(stripped)
             if q_match:
                 ai_quote = q_match.group(1).strip()[:20]
-                # 유저 입력과 겹치면 에코 → 제외
-                is_echo = any(
-                    ai_quote[:5] in uq or uq[:5] in ai_quote
-                    for uq in _user_quotes
-                ) if _user_quotes else False
+                # [2026-08-28 충돌 수리] 구 판정은 **앞 5자 접두 일치**였다 —
+                #   Slot 18이 `PC dialogue = player-supplied only (polish flow) … Never copy
+                #   verbatim`이라고 시키는데, 다듬을수록 접두가 어긋나 사칭으로 잡히고
+                #   **그대로 베낄수록 통과**했다. ★지시가 시키는 걸 검출기가 벌하는 형태
+                #   ([[project-preset-aos]] 08-13과 같은 병, 다른 자리).
+                #   → 08-13에 이미 배포한 **출처 판정**(음절키 겹침, 활용·불규칙 흡수)으로 교체.
+                #   ★단조 안전: 판정 재료가 없으면(입력 무·짧음) 구 접두 규칙으로 폴백.
+                is_echo = False
+                if user_input:
+                    try:
+                        from response_processor import _is_supplied_by_input as _origin_ok
+                        is_echo = _origin_ok(ai_quote, user_input, pc_names or [])
+                    except Exception:
+                        is_echo = False
+                if not is_echo and _user_quotes:
+                    is_echo = any(
+                        ai_quote[:5] in uq or uq[:5] in ai_quote
+                        for uq in _user_quotes
+                    )
                 if not is_echo:
                     # AI가 창작한 PC 대사 → 사칭
                     impersonations.append(stripped[:40])
@@ -165,7 +179,7 @@ def _check_dialogue_format(response: str, pc_names: list = None, user_input: str
         )
     if impersonations:
         imp_examples = impersonations[:2]
-        parts.append(f"[IMPERSONATION] PC 대사 창작 {len(impersonations)}건: {'; '.join(imp_examples)}. PC의 대사를 만들지 마라 — 유저가 입력한 대사만 재현하라.")
+        parts.append(f"[IMPERSONATION] PC 대사 창작 {len(impersonations)}건: {'; '.join(imp_examples)}. PC의 대사는 플레이어의 것이다: 입력에 없는 말을 새로 짓지 않는다(다듬는 것은 정상).")
     return " ".join(parts)
 
 
@@ -238,33 +252,95 @@ class OrchestrationService:
         if current_location:
             domain_manager.set_current_location(channel_id, current_location)
             # Tier 2: 새 위치 자동 등록 (world_tree에 없으면 추가)
+            # [2026-09-02 R1 계층 생성] 스펙 §2.5 ⓑ / §4.
+            # 병: 여기 자동 생성이 `parent_id` 미지정 = **전부 루트**라 플레이 중 계층이 안 자랐다.
+            #     "저택"과 "저택 서재"가 부모-자식이 아니라 **형제(둘 다 루트)**가 되어
+            #     §2.4의 1단(근접 = 들어올 수 있는 사람)이 영원히 텅 빈다.
+            # 처방: (a) Flash `location_path`(루트부터, 깊이 캡 4)를 앞에서부터 순회하며
+            #     없는 노드를 parent=직전 노드로 만든다. 이미 있는데 **루트**인 노드는
+            #     path상 부모가 명확하면 붙인다(평평 노드 승격).
+            #     (b) path가 없으면 이름 접두 폴백(world_tree.infer_parent_by_prefix).
+            #     그 외엔 현행 동작 유지(루트 area 1개).
+            # 근거: 새 LLM 콜 0 — 기존 Theoria 스키마에 선택 필드를 얹은 것뿐(스펙 §6 "전 단계 콜 0").
+            #     선택 필드라 부재가 상례 → `or []` / `or ""`로 명시 null도 누락과 같게 받는다.
             try:
                 import world_tree
-                if not world_tree.get_node(channel_id, current_location):
-                    world_tree.add_node(
-                        channel_id, current_location, node_type="area",
-                        properties={"risk": location_risk or "Low", "tags": ["auto_detected"]},
-                    )
+                _lp_raw = dai.get("location_path") or []
+                _lpath = ([str(_p).strip() for _p in _lp_raw
+                           if isinstance(_p, str) and str(_p).strip()]
+                          if isinstance(_lp_raw, list) else [])
+                # 계약 방어 — "마지막 원소 = current_location"(스펙 ⓑ). Flash가 어기면
+                #   현재 위치 노드가 아예 안 생기고, 바로 아래 presence 쓰기
+                #   (set_npc_location)가 통째로 "location_not_found"로 유실된다. 꼬리를 덧댄다.
+                if _lpath and _lpath[-1] != str(current_location).strip():
+                    _lpath.append(str(current_location).strip())
+                # 깊이 캡 4(스펙 ⓑ). 초과분은 **앞쪽(가장 거친 층)**을 버린다 —
+                #   "마지막 원소 = current_location" 계약이 하류 전부의 전제라 꼬리를 지킨다.
+                if len(_lpath) > 4:
+                    _lpath = _lpath[-4:]
+                _ltype = str(dai.get("location_type") or "").strip().lower()
+                if _ltype not in ("region", "area", "room"):
+                    _ltype = ""
+                _lprops = {"risk": location_risk or "Low", "tags": ["auto_detected"]}
+                if _lpath:
+                    _prev_name = ""
+                    for _i, _pname in enumerate(_lpath):
+                        _is_last = (_i == len(_lpath) - 1)
+                        # [2026-09-02 검수 수리] 경로 원소는 **정본 이름**이라 정확·별칭만 본다
+                        #   (allow_token=False). 토큰 단일후보를 허용하면 평평한 자식("저택 서재")이
+                        #   부모 이름("저택")을 삼켜 부모가 영영 안 생겼다(스모크 R1-6 래칫).
+                        _nid = world_tree.resolve_node_id(channel_id, _pname, allow_token=False)
+                        if not _nid:
+                            _ar = world_tree.add_node(
+                                channel_id, _pname,
+                                node_type=((_ltype or "area") if _is_last else "area"),
+                                parent_id=_prev_name,
+                                properties=(_lprops if _is_last else {"tags": ["auto_detected"]}),
+                            )
+                            if _ar != "created":
+                                # capped/invalid_parent가 조용히 지나가면 계층이 부분만 생긴 채
+                                # 아무도 모른다 — 관측 한 줄(수리 아님).
+                                logger.info("[presence-check] path node '%s' not created: %s (path=%s)",
+                                            _pname, _ar, _lpath)
+                            _nid = world_tree.resolve_node_id(channel_id, _pname, allow_token=False)
+                        elif _prev_name:
+                            _nd = world_tree.get_all_nodes(channel_id).get(_nid) or {}
+                            if not _nd.get("parent_id"):
+                                _ur = world_tree.update_node(
+                                    channel_id, _nd.get("name", _pname), parent_id=_prev_name,
+                                )
+                                if _ur not in ("updated", "ok", True):
+                                    logger.info("[presence-check] reparent '%s' under '%s' refused: %s",
+                                                _nd.get("name", _pname), _prev_name, _ur)
+                        _prev_name = (
+                            (world_tree.get_all_nodes(channel_id).get(_nid) or {}).get("name", _pname)
+                            if _nid else _pname
+                        )
+                else:
+                    _exist = world_tree.get_node(channel_id, current_location)
+                    _pname_fb = world_tree.infer_parent_by_prefix(channel_id, current_location)
+                    if not _exist:
+                        world_tree.add_node(
+                            channel_id, current_location,
+                            node_type=(_ltype or "area"), parent_id=_pname_fb,
+                            properties=_lprops,
+                        )
+                    elif _pname_fb and not _exist.get("parent_id"):
+                        world_tree.update_node(
+                            channel_id, _exist.get("name", current_location), parent_id=_pname_fb,
+                        )
             except Exception:
                 pass
-            # [2026-07-18 고아 승격] world_tree NPC presence 쓰기 — 장면 NPC를 현재 위치에 기록.
-            # 읽기 경로는 기배선인데(S16 build_location_context_text 'NPCs present' 렌더 +
-            # 오프스크린 last-known 소비) 쓰기가 0이라 통째로 사문이었다. 콜 순증 0.
-            try:
-                import world_tree
-                import npc_manager as _npm_wt
-                # [2026-07-28] get_scene_npc_names(=전체 명부) → 최근 등장 인물로 교체.
-                # 구 코드는 PC가 이동할 때마다 **등록 NPC 전원**을 그 장소로 옮겨
-                # (set_npc_location은 기존 위치에서 제거 후 재배치) 위치 기록을 매번 오염시켰다.
-                _scene_names = _npm_wt.get_onstage_npc_names(channel_id, within_turns=1) or []
-                _placed = sum(
-                    1 for _sn in _scene_names
-                    if _sn and world_tree.set_npc_location(channel_id, _sn, current_location) == "placed"
-                )
-                if _placed:
-                    logger.debug(f"[WorldTree] presence: {_placed} NPC @ {current_location}")
-            except Exception:
-                pass
+            # [2026-09-02 R4] ★여기 있던 presence 쓰기를 **제거**했다. 스펙 §1.3 / §6 R4.
+            # 있던 것: `get_onstage_npc_names(1)`로 뽑은 **onstage 전원을 current_location에
+            #   재배치**(2026-07-18 고아 승격 → 07-28 전체 명부 수리).
+            # 병(R4 이후): `get_onstage_npc_names`가 이제 **위치에서 읽는다.** 그 결과를 다시
+            #   위치에 쓰면 순환이다 — 출석이 만든 위치로 출석을 확인하는 꼴(§1.3의 그 그림이
+            #   방향만 뒤집힌 채 되살아난다). 게다가 PC가 이동할 때마다 직전 노드 인원이 통째로
+            #   따라 붙어 §2.4의 1·2단이 영원히 비고, 이동이 곧 퇴장이라는 latch(§2.1)도 깨진다.
+            # 대신: **관찰 신호로만** 쓴다 — gaze(1순위) + psyche의 unplaced 입장.
+            #   자리는 아래 `_execute_background_extraction`의 render_fingerprint 저장 직후다
+            #   (gaze가 거기서 생기므로 그 앞에서는 쓸 재료가 없다). 검색어: "[2026-09-02 R4] 관찰".
         if location_risk:
             domain_manager.set_current_risk(channel_id, location_risk)
 
@@ -602,7 +678,14 @@ class OrchestrationService:
             domain_manager.save_participant_data(channel_id, user_id, p_data)
 
     def _process_downtime(self, channel_id: str, bus, rest_eval: dict, user_id: str) -> Optional[str]:
-        """다운타임 활동 처리 (rest_eval.activity != 'rest'). Returns system message or None."""
+        """다운타임 활동 처리 (rest_eval.activity != 'rest'). Returns system message or None.
+
+        [2026-08-18 Phase 2.5] **기력 가감 전량 삭제.** 다운타임 명시 회복(+25/+15/-5…)은
+        기력 이관이 지우기로 한 코드 공식의 대표 사례다 — "쉬면 얼마 찬다"를 코드가 정하는 대신
+        선언 rule("Refills with rest, sleep, and calm")이 추출 콜에 실리고, 실제 이동은 그 턴
+        산문이 무엇을 보여줬는가에 따라 관측 델타로 들어온다(캡 상승 5가 속도를 문다).
+        평형 가감은 무접촉 — 평형은 아직 코드 기관이다.
+        """
         import random as _rng
         dt_type = rest_eval.get("activity", "recover")
         target = rest_eval.get("target")
@@ -611,40 +694,34 @@ class OrchestrationService:
 
         if dt_type == "recover":
             cfg = config.DOWNTIME_RECOVER.get("safe" if safe else "unsafe", {})
-            bus.vigor["delta"] = bus.vigor.get("delta", 0) + cfg.get("vigor", 15)
             bus.composure["delta"] = bus.composure.get("delta", 0) + cfg.get("composure", 10)
             tag = "안전" if safe else "불안정"
-            return f"💤 치료({tag}): 기력 +{cfg.get('vigor', 15)}, 평정 +{cfg.get('composure', 10)}"
+            return f"💤 치료({tag}): 평정 +{cfg.get('composure', 10)}"
 
         elif dt_type == "vice":
             cfg = config.DOWNTIME_VICE
-            v_gain = cfg.get("base_vigor", 25)
             c_gain = cfg.get("base_composure", 20)
-            bus.vigor["delta"] = bus.vigor.get("delta", 0) + v_gain
             bus.composure["delta"] = bus.composure.get("delta", 0) + c_gain
             projected = bus.composure.get("value", 50) + c_gain
             if projected > cfg.get("overindulge_threshold", 85):
                 penalty = cfg.get("overindulge_penalty", -15)
                 bus.composure["delta"] = bus.composure.get("delta", 0) + penalty
                 dai["vice_overindulge"] = True
-                return f"🍺 부업: 기력 +{v_gain}, 평정 +{c_gain} → 과용! 평정 {penalty}"
-            return f"🍺 부업: 기력 +{v_gain}, 평정 +{c_gain}"
+                return f"🍺 부업: 평정 +{c_gain} → 과용! 평정 {penalty}"
+            return f"🍺 부업: 평정 +{c_gain}"
 
         elif dt_type == "train":
             cfg = config.DOWNTIME_TRAIN
-            v_cost = cfg.get("vigor_cost", 5)
             c_cost = cfg.get("composure_cost", 5)
-            bus.vigor["value"] = max(0, bus.vigor.get("value", 100) - v_cost)
             bus.composure["value"] = max(0, bus.composure.get("value", 100) - c_cost)
             progress_msg = ""
             if target and user_id:
                 entry = domain_manager.advance_training(channel_id, user_id, target, cfg.get("progress_per_session", 1))
                 progress_msg = f", 진행도 {entry.get('progress', 1)}/{entry.get('target', 3)}"
-            return f"⚔️ 훈련({target or '일반'}): 기력 -{v_cost}, 평정 -{c_cost}{progress_msg}"
+            return f"⚔️ 훈련({target or '일반'}): 평정 -{c_cost}{progress_msg}"
 
         elif dt_type == "socialize":
             cfg = config.DOWNTIME_SOCIALIZE
-            bus.vigor["delta"] = bus.vigor.get("delta", 0) + cfg.get("vigor", 5)
             bus.composure["delta"] = bus.composure.get("delta", 0) + cfg.get("composure", 15)
             depth_gain = 0
             if target:
@@ -655,13 +732,11 @@ class OrchestrationService:
 
         elif dt_type == "project":
             cfg = config.DOWNTIME_PROJECT
-            v_cost = cfg.get("vigor_cost", 3)
             c_cost = cfg.get("composure_cost", 3)
-            bus.vigor["value"] = max(0, bus.vigor.get("value", 100) - v_cost)
             bus.composure["value"] = max(0, bus.composure.get("value", 100) - c_cost)
             if target and user_id:
                 domain_manager.advance_project(channel_id, user_id, target)
-            return f"🔧 프로젝트({target or '?'}): 기력 -{v_cost}, 평정 -{c_cost}, 진행 +1"
+            return f"🔧 프로젝트({target or '?'}): 평정 -{c_cost}, 진행 +1"
 
         return None
 
@@ -682,7 +757,7 @@ class OrchestrationService:
     ) -> Optional[str]:
         """AI 응답을 생성합니다. (Delegated)"""
         return await orch_res.generate_response(
-            self.client, self.model_id, 
+            self.client, config.role_model("renderer"), 
             ctx, prompt, self.nvc_filter_config
         )
 
@@ -969,6 +1044,19 @@ class OrchestrationService:
             except Exception as _e_arc_pre:
                 logger.debug(f"[Arc] PMU context build skipped: {_e_arc_pre}")
 
+            # === [2026-08-18 대형식화 v0] mentions 게이트 ===
+            #   선언 전량이 아니라 **이번 턴 산문·입력에 이름이 등장한 변수만** 급식한다.
+            #   "캡은 크기를 막지 빈도를 못 막는다" — 변수 12개 시대의 프롬프트 비대 방지.
+            #   등장 0이면 리스트가 비고, 그러면 추출 콜에 섹션 자체가 안 생긴다(순증 0).
+            _cv_feed = []
+            try:
+                import custom_vars as _cv
+                _cv_feed = _cv.select_mentioned(channel_id, ctx.action_text, response)
+                if _cv_feed:
+                    logger.debug(f"[CustomVar] mentions gate: {[v['name'] for v in _cv_feed]}")
+            except Exception as _e_cv:
+                logger.debug(f"[CustomVar] mentions gate skipped: {_e_cv}")
+
             updates = await cognition.extract_all_updates(
                 self.client, self.model_id_flash,
                 ctx.action_text, response,
@@ -982,6 +1070,7 @@ class OrchestrationService:
                 previous_continuity=prev_continuity,
                 arc_context=_arc_context_str,
                 arc_promote_candidate=_arc_promote_cand,
+                custom_vars_feed=_cv_feed,
             )
             
             # [V10 검증 lite] 추출 self-check 로그 (detection-only — 아직 게이트 X)
@@ -1060,6 +1149,23 @@ class OrchestrationService:
                         )
                 except Exception as _e_dr:
                     logger.debug(f"[Drive] hint 처리 skip: {_e_dr}")
+
+            # [2026-08-18 대형식화 v0] 선언 변수 델타 적용.
+            #   LLM은 델타만 냈다 — 이전 값+델타 → 범위 클램프 → 저장은 전부 코드 몫이고,
+            #   근거 없는 항목은 apply_deltas 가 폐기한다(evidence 필수). 저장처가 world_state 라
+            #   !다시 스냅샷 롤백이 공짜로 따라온다.
+            _cv_deltas = updates.get("CustomVarDeltas")
+            if _cv_deltas:
+                try:
+                    import custom_vars as _cv2
+                    _ws_cv = domain_manager.get_world_state(channel_id) or {}
+                    # actor = 이번 턴 행동 PC. per_actor 시스템 변수(기력)가 어느 PC의 슬롯으로
+                    #   들어갈지는 코드가 안다 — 모델에게 물을 일이 아니다.
+                    _cv2.apply_deltas(channel_id, _cv_deltas,
+                                      turn=int(_ws_cv.get("turn_index", 0) or 0),
+                                      actor=ctx.user_id)
+                except Exception as _e_cv2:
+                    logger.debug(f"[CustomVar] delta 적용 skip: {_e_cv2}")
 
             if npc_depth and isinstance(npc_depth, dict):
                 # Convergence Detection
@@ -1217,6 +1323,25 @@ class OrchestrationService:
                 except Exception:
                     pass
                 involved_npcs = [n for n in _scene_names if n not in _pc_masks]
+                # [2026-09-02 P0 선행 수리] 스펙 §1.5 / §6 P0 — 출석 마킹 입력에서
+                #   `npc_schedule_hints`를 뺀다.
+                # 병: 그 필드는 cognition 지시문이 **"Only mentioned NPCs"**라고 정의한 재료다
+                #   (cognition.py npc_schedule_hints 조항). 그 키가 위 합집합을 타고
+                #   mark_npc_appearance까지 흘러, PC가 "리안은 지금 뭐 하려나" 한마디만 해도
+                #   리안이 **출석**으로 기록됐다. Flash 오판이 아니라 *정의상 언급*인 재료를
+                #   코드가 출석에 합친 것 — "이름만 부르면 무대에 뜨나"의 실물 답이 여기다.
+                #   한 번 잘못 찍히면 그 턴의 출석 소비처 여섯이 같이 틀린다(§1.4).
+                # 경위: 힌트는 원래 storyline 분류용 엔티티 목록에 보조로 합류시킨 것이고
+                #   (06-11 주석 참조), 출석 마킹(T-A)이 나중에 **같은 목록에 얹혔다.**
+                #   두 소비자가 한 목록을 쓰다 한쪽에 안 맞는 재료가 섞인 형태.
+                # 처방: 목록을 둘로 — storyline(record_turn)은 합집합 유지(_scene_names 무변경),
+                #   출석 마킹만 psyche ∪ attitudes − PC 가면.
+                # ⚠ 이 스펙과 **무관한 독립 수리**다(출석 판정 방식 자체는 A에서 안 바꾼다).
+                _present_names = list(dict.fromkeys(
+                    list((_dai_d.get("npc_attitudes") or {}).keys())
+                    + list((_dai_d.get("psyche_states") or {}).keys())
+                ))
+                present_npcs = [n for n in _present_names if n not in _pc_masks]
                 qf = ctx.dai.get("quality_flags", {}) if ctx.dai else {}
                 user_brief = str(ctx.action_text or "")[:200]
                 ai_brief = str(response or "")[:300]
@@ -1224,10 +1349,34 @@ class OrchestrationService:
 
                 # [T-A] NPC 등장 카운트(구별 턴만) — 1회성/다회성 tier 계측. session만 내부 게이트.
                 try:
-                    for _inpc in involved_npcs:
+                    # [2026-09-02 P0] involved_npcs(=storyline용 합집합) → present_npcs.
+                    #   위 주석 참조: 힌트는 정의상 "mentioned"라 출석 재료가 아니다(§1.5).
+                    for _inpc in present_npcs:
                         npc_manager.mark_npc_appearance(channel_id, _inpc, turn_idx)
                 except Exception as _e_appear:
                     logger.debug(f"[NPC Tier] appearance mark skipped: {_e_appear}")
+
+                # [2026-09-02 R2 검증자 — log-only] 스펙 §6 R2.
+                # 출석의 원본은 아직 Flash다(판정 뒤집기는 덩어리 B/R4). 여기서는 위치 그래프가
+                # 말하는 0단(같은 노드)과 방금 찍은 Flash 출석의 **차집합만 기록**한다.
+                # 목적: 전환 전에 두 판정이 실제로 얼마나 벌어지는지 실측을 쌓는 것.
+                # ⚠ 관측이 본류를 죽이면 안 된다 — 예외는 전부 삼키고 debug로 내린다.
+                try:
+                    _tiers = npc_manager.get_presence_tiers(channel_id)
+                    if not _tiers.get("unresolved"):
+                        _flash_set = set(present_npcs)
+                        _scene_set = set(_tiers.get("scene") or [])
+                        _f_only = sorted(_flash_set - _scene_set)
+                        _n_only = sorted(_scene_set - _flash_set)
+                        if _f_only or _n_only:
+                            logger.info(
+                                "[presence-check] flash_only=%d(%s) node_only=%d(%s) @ %s",
+                                len(_f_only), ", ".join(_f_only[:5]) or "-",
+                                len(_n_only), ", ".join(_n_only[:5]) or "-",
+                                domain_manager.get_current_location(channel_id),
+                            )
+                except Exception as _e_ptier:
+                    logger.debug(f"[presence-check] skipped: {_e_ptier}")
 
                 # 엔티티 상태 변화 기록
                 est_data = updates.get("EntityStateUpdate")
@@ -1415,7 +1564,7 @@ class OrchestrationService:
                                         )
                                         _distill_in = _lore_ref + (("\n".join(_prev) + "\n\n" + _obs) if _prev else _obs)
                                         _sheet = await cognition.analyze_character_sheet(
-                                            self.client, self.model_id_flash, _distill_in)
+                                            self.client, config.role_model("heavy"), _distill_in)
                                         if _sheet:
                                             # 정체성/불씨: 새 값 있으면 갱신, 없으면 이전 보존(near-sacrosanct)
                                             if _sheet.get("high_concept"):
@@ -1488,7 +1637,7 @@ class OrchestrationService:
                                             _pv.append("[기존 면모] " + " / ".join(str(a) for a in _pca))
                                         _pc_distill = ("\n".join(_pv) + "\n\n" + _obs_buf) if _pv else _obs_buf
                                         _sheet = await cognition.analyze_character_sheet(
-                                            self.client, self.model_id_flash, _pc_distill)
+                                            self.client, config.role_model("heavy"), _pc_distill)
                                         if _sheet:
                                             # 기계층(판정 연동): PC는 유지 — role/외형/설명 + passives/inventory
                                             # + notes(일지): apply_pc_info_to_user가 [일지] 섹션으로 라우팅
@@ -1601,7 +1750,7 @@ class OrchestrationService:
 
                 # 5턴 간격 스토리라인 요약 (Flash 소형 콜)
                 import config as _cfg
-                flash_model = _cfg.MODEL_ID_FLASH
+                flash_model = _cfg.role_model("flash")
                 await narrative_tracker.summarize_if_needed(
                     nt_state, turn_idx,
                     client=self.client if hasattr(self, 'client') else None,
@@ -1613,6 +1762,8 @@ class OrchestrationService:
                 logger.warning("[NarrativeTracker] Update failed: %s", nt_err)
 
             # [Scene Continuity 2층] 렌더링 지문 저장
+            _gaze_now = ""   # [2026-09-02 R4] 이번 턴 gaze — 바로 아래 관찰 쓰기가 소비한다.
+            _observed_now = set()   # [2026-09-03 R6] 이번 턴 관찰이 옮기거나 입장시킨 등록 키. 스케줄 틱의 제외 집합.
             rfp = updates.get("RenderFingerprint")
             if rfp and isinstance(rfp, dict):
                 # [2026-08-12 출력파생 §8] withholding_scheme 추가 — Flash가 생산(cognition:462,469)하고
@@ -1623,6 +1774,154 @@ class OrchestrationService:
                 domain_manager.update_scene_continuity(channel_id, render_fingerprint=fingerprint)
                 logger.debug("[RenderFP] Stored: gaze=%s, lighting=%s",
                              fingerprint.get("gaze", "")[:50], fingerprint.get("lighting", "")[:50])
+                _gaze_now = str(fingerprint.get("gaze", "") or "")
+
+            # [2026-09-02 R4] 관찰 → 위치 쓰기 (입장·이동). 스펙 §2.6 ⓒ / §2.7 ⓓ / §6 R4.
+            # 병: 출석이 위치의 함수가 되는 순간, 아무도 배치하지 않으면 **영원히 등장 못 하는
+            #   사람**이 생긴다(§2.6 — 현행 Flash 기반엔 없던 구멍). 그렇다고 "언급되면 배치"로
+            #   열면 R4가 고치려던 병("이름만 부르면 무대에 뜬다")이 위치 축으로 그대로 이사한다.
+            # 처방: 입장은 **서술이 결정한다** — §2.6 "산문 우선·psyche 보조"의 실물.
+            #   ① gaze = 1순위(강). `render_fingerprint.gaze`는 렌더 **산문에서** 뽑은
+            #      "카메라가 이번 턴 실제로 머문 등록 NPC 이름"이다(cognition gaze 조항:
+            #      SceneNPCs 이름 정확일치, 오프스테이지·무명 제외). 이미 매 턴 도는 산문 우선
+            #      게이트라 새 콜 0. 그러므로 **이미 어디에 있든** PC 노드로 옮긴다 —
+            #      "카메라가 머물렀다 = 그 사람은 여기 있다"가 저장된 위치를 이긴다(관찰 > 위치).
+            #   ② psyche_states = 보조(약). **`unplaced`(어느 노드에도 없는) 인물만** 입장.
+            #      이미 배치된 인물은 psyche로 **옮기지 않는다** — psyche 조항엔 (R5 전까지)
+            #      "이 장면에 실재하는 인물만"이 없어서, 언급 한 번에 텔레포트가 일어난다.
+            #      Flash 판정은 인물당 딱 한 번(unplaced → placed)만 개입한다(§2.6).
+            # ★자리: gaze는 render_fingerprint가 **렌더 후**에 추출하므로 이 함수 위쪽의
+            #   P0/mark 루프 시점엔 아직 존재하지 않는다. fingerprint 저장 **직후**가 유일한
+            #   자리다. 그 시점엔 update_world_state(STEP 3)의 set_current_location도 이미 돌아
+            #   PC 노드가 서 있다(없으면 set_npc_location이 location_not_found로 조용히 샌다).
+            # ⚠ 1턴 지연은 **의도**다 — 이번 턴 관찰이 다음 턴 출석이 된다. 현행
+            #   `_last_appear_turn`도 턴 끝에 찍고 다음 턴에 읽는 같은 구조다(부기의 지연이지
+            #   장면의 지연이 아니다). latch(§2.1) 덕분에 한 턴 늦어도 사람이 사라지지 않는다.
+            # ⚠ 등록되지 않은 이름은 배치하지 않는다 — 노드에 낯선 문자열을 앉히면 그것이
+            #   그대로 0단(출석)이 되어 상태창에 뜬다. 해상 실패는 침묵이 정답.
+            try:
+                import world_tree as _wt_obs
+                _cur_loc = domain_manager.get_current_location(channel_id)
+                if _cur_loc and str(_cur_loc).strip().lower() not in ("", "unknown"):
+                    _pc_masks_obs = set()
+                    try:
+                        for _p in domain_manager.get_domain(channel_id).get("participants", {}).values():
+                            if isinstance(_p, dict) and _p.get("mask"):
+                                _pc_masks_obs.add(_p["mask"])
+                    except Exception:
+                        pass
+                    _reg_obs = domain_manager.get_npcs(channel_id) or {}
+
+                    def _obs_key(_raw):
+                        """관찰된 이름 → 등록 키. 미등록·PC 가면은 빈 문자열(=건너뜀)."""
+                        _r = str(_raw or "").strip()
+                        if not _r or _r in _pc_masks_obs:
+                            return ""
+                        _k = domain_manager._find_npc_key(_reg_obs, _r)
+                        return _k if (_k and _k not in _pc_masks_obs) else ""
+
+                    # [2026-09-03 R6] 카운터 옆에 **이름 집합**(_observed_now, 위에서 초기화)도 채운다.
+                    #   아래 스케줄 틱이 "이번 턴 관찰이 손댄 사람"을 제외 집합에 넣어야 하는데,
+                    #   개수만으로는 누구였는지 알 수 없다(관찰 > 스케줄의 실물이 이 집합이다).
+                    _gaze_moved = 0
+                    for _g in str(_gaze_now or "").replace("\n", ",").split(","):
+                        _gk = _obs_key(_g)
+                        if _gk and _wt_obs.set_npc_location(channel_id, _gk, _cur_loc) == "placed":
+                            _gaze_moved += 1
+                            _observed_now.add(_gk)
+                    _psy_entered = 0
+                    for _pn in ((ctx.dai or {}).get("psyche_states") or {}):
+                        _pk = _obs_key(_pn)
+                        if not _pk or _wt_obs.get_npc_location(channel_id, _pk):
+                            continue   # 미등록이거나 **이미 배치됨** → psyche는 옮기지 않는다
+                        if _wt_obs.set_npc_location(channel_id, _pk, _cur_loc) == "placed":
+                            _psy_entered += 1
+                            _observed_now.add(_pk)
+                    if _gaze_moved or _psy_entered:
+                        logger.info(
+                            "[presence-check] observed→location: gaze=%d placed/moved, "
+                            "psyche=%d entered @ %s", _gaze_moved, _psy_entered, _cur_loc)
+            except Exception as _e_obs:
+                logger.debug(f"[presence-check] observation write skipped: {_e_obs}")
+
+            # [2026-09-03 R6] 스케줄 틱 - 시간대 **전환 턴**에만 도는 자율 이동. 스펙 §6 R6 ③ / §2.8.
+            # 병: 2단(부재)이 "실제로 다른 곳에 있는 사람"이 아니라 "아직 아무도 안 옮긴 사람"이다.
+            #   시트에 루틴이 적혀 있어도 위치는 관찰이 건드릴 때까지 그대로라, 무대 밖 세계가 정지한다.
+            #   (07-14에 지운 P3 랜덤 활동이 하려던 일의 Contract-First 형태 = 시트 루틴은 발명이 아니다.)
+            # 처방 ① 전환 감지는 **마커 비교**지 writer 훅이 아니다. 시간대 writer는 3경로
+            #   (game_world.advance_minutes/advance_to_slot/advance_time, `!시간` 수동, game_system)라
+            #   훅을 달면 같은 코드가 3벌로 복제된다. world_state에 `schedule_tick_slot` 한 칸을 두고
+            #   현재 time_slot과 비교하면 자리가 하나로 모이고, 수동 전환도 다음 턴에 자연히 잡힌다.
+            #   마커가 같으면 완전 무동작(로그도 없다). 마커 부재 = 세션 첫 턴이 곧 첫 틱.
+            # 처방 ② **관찰 > 스케줄.** 제외 집합 = 0단(tiers["scene"]) ∪ 이번 턴 관찰이 옮기거나
+            #   입장시킨 이름 ∪ PC 가면 ∪ 비활성(is_npc_active). 0단 제외가 latch(§2.1)의 실물이다:
+            #   스케줄은 **무대 밖 사람만** 움직인다. 눈앞의 인물이 루틴 때문에 사라지면 안 된다.
+            # 처방 ③ PC 노드를 못 세는 턴(tiers.unresolved)은 **틱 전체를 건너뛰고 마커도 안 찍는다.**
+            #   0단을 모르면 누구를 지켜야 할지도 모른다. 안전 쪽으로 넘어지고, 해상되는 다음 턴에 돈다.
+            # 새 LLM 콜 0 - 순수 코드다. 루틴 장소가 마침 PC 노드면 다음 턴 0단이 되는데 그건 의도다
+            #   (근거 있는 등장). 자리는 관찰 쓰기 **뒤** - 그래야 "이번 턴 관찰 집합"과 0단이 확정된다.
+            try:
+                _ws_tick = domain_manager.get_world_state(channel_id) or {}
+                _slot_now = str(_ws_tick.get("time_slot", "") or "").strip()
+                # 마커는 **비교 전에** 떠 둔다. get_world_state는 도메인의 살아 있는 dict를
+                #   그대로 돌려주므로, 아래에서 마커를 찍은 뒤에 읽으면 새 값이 나온다.
+                _prev_slot = str(_ws_tick.get("schedule_tick_slot", "") or "-")
+                if _slot_now and _ws_tick.get("schedule_tick_slot") != _slot_now:
+                    _tiers_tick = npc_manager.get_presence_tiers(channel_id) or {}
+                    if _tiers_tick.get("unresolved"):
+                        logger.debug("[presence-check] schedule tick skipped: PC node unresolved "
+                                     "(slot=%s, marker unchanged)", _slot_now)
+                    else:
+                        import world_tree as _wt_sch
+                        # 관찰 쓰기가 예외로 죽은 턴이면 위 초기화 그대로 빈 집합 = 관찰이 옮긴 사람 0명.
+                        _obs_excl = set(_observed_now)
+                        _pc_masks_sch = set()
+                        try:
+                            for _p in domain_manager.get_domain(channel_id).get("participants", {}).values():
+                                if isinstance(_p, dict) and _p.get("mask"):
+                                    _pc_masks_sch.add(_p["mask"])
+                        except Exception:
+                            pass
+                        _scene_tick = set(_tiers_tick.get("scene") or [])
+                        _excluded = _scene_tick | _obs_excl | _pc_masks_sch
+                        _sch_moved = 0
+                        for _sn, _sd in (domain_manager.get_npcs(channel_id) or {}).items():
+                            if not isinstance(_sd, dict) or _sn in _excluded:
+                                continue
+                            if not npc_manager.is_npc_active(_sd):
+                                continue   # 생존축 필터는 tiers와 **같은 관문** 하나로만
+                            _sch_dest = npc_manager._schedule_entry(_sd, _slot_now)[1]
+                            if not _sch_dest:
+                                continue   # 레거시 문자열형·장소 없는 신형 = 이동 없음
+                            _dest_id = _wt_sch.resolve_node_id(channel_id, _sch_dest)
+                            if not _dest_id:
+                                # 시트 거처 폴백 배치(npc_manager.update_npc)와 같은 형태.
+                                _ar = _wt_sch.add_node(channel_id, _sch_dest, node_type="area",
+                                                       properties={"tags": ["schedule"]})
+                                if _ar != "created":
+                                    logger.debug("[presence-check] schedule node '%s' not created: %s",
+                                                 _sch_dest, _ar)
+                                    continue   # capped 등 - 없는 노드에 앉히지 않는다
+                                _dest_id = _wt_sch.resolve_node_id(channel_id, _sch_dest)
+                            _cur_node = _wt_sch.get_npc_location(channel_id, _sn)
+                            if _cur_node and _wt_sch.resolve_node_id(channel_id, _cur_node) == _dest_id:
+                                continue   # 이미 그 노드 - 불필요한 저장 없음
+                            if _wt_sch.set_npc_location(channel_id, _sn, _sch_dest) == "placed":
+                                _sch_moved += 1
+                        _ws_mark = domain_manager.get_world_state(channel_id) or {}
+                        _ws_mark["schedule_tick_slot"] = _slot_now
+                        domain_manager.update_world_state(channel_id, _ws_mark)
+                        if _sch_moved:
+                            logger.info("[presence-check] schedule tick %s→%s: moved=%d "
+                                        "(scene=%d, observed=%d excluded)",
+                                        _prev_slot, _slot_now, _sch_moved,
+                                        len(_scene_tick), len(_obs_excl))
+                        else:
+                            logger.debug("[presence-check] schedule tick %s→%s: moved=0 "
+                                         "(scene=%d, observed=%d excluded)",
+                                         _prev_slot, _slot_now, len(_scene_tick), len(_obs_excl))
+            except Exception as _e_sch:
+                logger.debug(f"[presence-check] schedule tick skipped: {_e_sch}")
 
         except Exception as e:
             logger.error(f"Background Extraction Failed: {e}\n{traceback.format_exc()}")
@@ -1682,21 +1981,21 @@ class OrchestrationService:
             ctx = await self.gather_context(ctx)
 
             # 1.1 N3: Optional vector search for lore chunk ranking
+            # [2026-08-17] 인라인 절차 → `vector_search.get_scene_relevant_chunks` 공용 진입점.
+            #   랭킹 로직 소유는 검색층. 게이트(풀 ≤ TOP_K면 랭킹 생략)·폴백([] = 하류가 전량 사용)·
+            #   공용 엔진 규율(캐시 공유, 구 인스턴스-로컬 캐시의 매턴 전량 재임베딩 병)은 함수 안에 산다.
             try:
-                from vector_search import get_shared_engine
+                import vector_search as _vs_mod
                 _lore_chunks = ctx.domain_data.get("lore_chunks", [])
-                if _lore_chunks and len(_lore_chunks) > config.VECTOR_TOP_K:
-                    # [2026-07-28] 매턴 새 인스턴스 → 공용 싱글턴. 구 코드는 인스턴스 로컬
-                    # _cache가 턴마다 즉사해 **로어 청크 전량을 매턴 재임베딩**하고 있었다.
-                    # 이제 청크 벡터는 1회, 매턴 과금은 쿼리 1건 + 증류 접지와 캐시 공유.
-                    _vs = get_shared_engine(self.client)
-                    _query = ctx.action_text or ""
-                    _ranked = await _vs.search(_query, _lore_chunks,
-                                               top_k=config.VECTOR_TOP_K,
-                                               min_score=config.VECTOR_MIN_SCORE)
-                    if _ranked:
-                        ctx.domain_data["lore_chunks_ranked"] = _ranked
-                        logger.debug(f"[VectorSearch] Ranked {len(_ranked)} chunks from {len(_lore_chunks)}")
+                _ranked = await _vs_mod.get_scene_relevant_chunks(
+                    self.client, channel_id, ctx.action_text or "",
+                    top_k=config.VECTOR_TOP_K,
+                    min_score=config.VECTOR_MIN_SCORE,
+                    chunks=_lore_chunks,
+                )
+                if _ranked:
+                    ctx.domain_data["lore_chunks_ranked"] = _ranked
+                    logger.debug(f"[VectorSearch] Ranked {len(_ranked)} chunks from {len(_lore_chunks)}")
             except Exception as _vs_err:
                 logger.debug(f"[VectorSearch] unavailable: {_vs_err}")
 
@@ -2041,7 +2340,7 @@ class OrchestrationService:
                             _prose_msg = sent_msgs[-1] if sent_msgs else None
                             asyncio.create_task(world_board.trigger_board_update(
                                 message.channel, self.client,
-                                config.MODEL_ID_FLASH, channel_id,
+                                config.role_model("light"), channel_id,
                                 trigger="turn",
                                 dai=_board_dai,
                                 prose_message=_prose_msg,
@@ -2058,8 +2357,12 @@ class OrchestrationService:
                             _sp_prose = response
 
                             async def _run_status_panel():
-                                _res = await _sp_mod.generate_panel(
-                                    self.client, self.model_id_flash, channel_id, _sp_prose)
+                                # [2026-08-17 light 라우트] 단문 배경 콜 → 경량 모델.
+                                # with 가 **코루틴 안**에 있어야 실행 시점 컨텍스트에 걸린다
+                                # (큐 적재 바깥에서 감싸면 실행 전에 reset 된다).
+                                with config.light_call():
+                                    _res = await _sp_mod.generate_panel(
+                                        self.client, config.role_model("light"), channel_id, _sp_prose)
                                 if not _res or not _sp_mod.apply_panel_result(channel_id, _res):
                                     return
                                 logger.info(
@@ -2078,14 +2381,17 @@ class OrchestrationService:
                     #   × 채널 모듈 "mind"). 상태패널과 **같은 시점·같은 큐**(LOW)의 배경 콜이라
                     #   턴 임계 경로에 1ms도 얹지 않는다.
                     #     [게이트] 무대 ∩ 점수 → 0명이면 콜도 저장도 없다(조용).
-                    #     [콜]     선별분 psyche + 산문 꼬리 → NPC별 한국어 1인칭 한 호흡
+                    #     [콜]     선별분 psyche + 구조 장면 앵커 → NPC별 한국어 1인칭 한 호흡
                     #     [폴백]   콜 실패·TURN_MIND_CALL=0 → v0 선별기(콜 0)가 같은 명단으로 선다
+                    #   ⚠[2026-08-17 앵커 교체] 산문(response)을 **넘기지 않는다**. 구 배선은
+                    #     직전 렌더 원문 꼬리를 콜 입력에 실었고, 그래서 "대사 복붙 금지"를
+                    #     프롬프트로 방어해야 했다. 장면 앵커는 turn_mail 이 채널·DAI(구조층)
+                    #     에서 직접 세운다 — 상태패널(9.55)과 달리 여기는 산문 무접촉이다.
                     try:
                         import turn_mail as _tm_mod
                         if _tm_mod.mind_enabled(channel_id) and sent_msgs:
                             _mind_dai = dict(ctx.dai) if ctx.dai else {}
                             _mind_msg = sent_msgs[-1]
-                            _mind_prose = response
 
                             async def _run_turn_mind():
                                 _targets = _tm_mod.select_mind_targets(channel_id, _mind_dai)
@@ -2094,9 +2400,11 @@ class OrchestrationService:
                                 _names = [t["name"] for t in _targets]
                                 _payload = None
                                 if int(getattr(config, "TURN_MIND_CALL", 1) or 0):
-                                    _payload = await _tm_mod.generate_mind_call(
-                                        self.client, self.model_id_flash, channel_id,
-                                        _mind_dai, _mind_prose, targets=_targets)
+                                    # [2026-08-17 light 라우트] 상태 패널과 같은 자리 — 코루틴 안에서 감싼다.
+                                    with config.light_call():
+                                        _payload = await _tm_mod.generate_mind_call(
+                                            self.client, config.role_model("light"), channel_id,
+                                            _mind_dai, targets=_targets)
                                 if not _payload:
                                     # 결정론 폴백 — 콜이 죽어도 💭는 그 턴 재료로 뜬다
                                     _payload = _tm_mod.generate_mind(channel_id, _mind_dai, names=_names)

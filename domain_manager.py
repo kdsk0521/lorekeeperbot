@@ -597,6 +597,10 @@ def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
         "source", "aliases",
         # 다른 경로가 만들어낸 자산 (등록 시트에는 원래 없는 것들)
         "tone", "speech", "static_traits", "play_observed", "appearances",
+        # [2026-09-03 R6] schedule. tone과 **같은 사유**로 보존한다: 시트에는 원래 없고
+        #   `!npc 일정`(1회성 추출 콜)이 만들어 넣는 자산이라, 목록 밖이면 시트
+        #   재업로드(`!npc 추가`) 한 번에 조용히 증발한다. 스펙 §6 R6 ②.
+        "schedule",
         "role", "personality", "appearance", "location", "summary",
         "gender", "race", "constraints", "lore_seen",
         # 정체성/성장 층
@@ -2234,8 +2238,14 @@ def get_unified_player_info(channel_id: str, user_id: str) -> str:
     rel_text = ", ".join(rel_parts) if rel_parts else "None"
 
     # 5. Vigor/Composure Status
+    # [2026-08-18 Phase 2.5] 기력 = 레지스트리 값(custom_var_values["기력"][uid]). 표시 무변경.
     vigor = mem.get("vigor", mem.get("mental", {}))
-    vigor_val = vigor.get("value", 100)
+    try:
+        import custom_vars as _cv_pb
+        vigor_val = _cv_pb.vigor_value(channel_id, user_id, mem)
+    except Exception as _e_cvpb:
+        logger.debug(f"[CustomVar] 기력 표시 폴백: {_e_cvpb}")
+        vigor_val = vigor.get("value", 100)
     composure = mem.get("composure", {})
     composure_val = composure.get("value", 100)
     vc_text = f"기력 {vigor_val}/100 | 평정 {composure_val}/100"
@@ -2302,8 +2312,24 @@ def set_current_location(channel_id: str, location: str) -> None:
     # ⚠ 매 턴 같은 장소로도 호출되므로 **실제 변경일 때만** 리셋 — 안 그러면
     #    경과가 매 턴 0으로 깎여 노화가 영원히 임계를 못 넘는다.
     _prev = ws.get("current_location")
+    # [2026-09-02 R3 갱신 누락 관측] 스펙 §5 / §6 R3.
+    # 병: 위치 기반 출석으로 넘어가면 임계 경로가 **PC 이동 감지 하나**로 이사한다.
+    #   지금은 매 턴 전량 재판정이라 1~2턴이면 자기 치유되지만, 위치가 stale해지면
+    #   장면이 통째로 안 바뀐다(치명). `get_npc_current_location` 주석이 경고하는 그 병
+    #   ("갱신 로직 전무 → 시간이 갈수록 stale")이 출석 축으로 옮겨오는 형태다.
+    # 처방: 값 1개짜리 관측 — 같은 장소로 몇 턴째 호출되는지 세고, 10턴마다 한 줄.
+    #   임계를 넘겼다고 아무것도 고치지 않는다(사람이 로그를 보고 판단). 동작 무변경.
     if _prev != location:
         ws["scene_elapsed_min"] = 0
+        ws["_loc_stale_turns"] = 0
+    else:
+        try:
+            _stale = int(ws.get("_loc_stale_turns", 0) or 0) + 1
+        except (TypeError, ValueError):
+            _stale = 1
+        ws["_loc_stale_turns"] = _stale
+        if _stale % 10 == 0:
+            logging.info("[presence-check] location stale %d turns: %s", _stale, location)
     ws["current_location"] = location
     update_world_state(channel_id, ws)
 
@@ -2870,6 +2896,15 @@ def reset_session_state(channel_id: str) -> None:
             logging.debug(f"[V10] reset npc mirror skipped: {_e}")
 
     # 5. Reset Participant Runtime State (vigor/composure/notebook — 로어 프로필은 유지)
+    # [2026-08-18 Phase 2.5] 기력의 정본은 레지스트리로 옮겨갔다 — PC별 슬롯을 함께 비운다.
+    #   (옛 자리도 계속 100으로 되돌린다: 레지스트리 off 채널의 폴백값이라 같이 리셋돼야 한다.)
+    try:
+        _ws_rst = d.setdefault("world_state", {})
+        _vals_rst = _ws_rst.get("custom_var_values")
+        if isinstance(_vals_rst, dict) and "기력" in _vals_rst:
+            _vals_rst["기력"] = {"value": {}, "last_change": {}}
+    except Exception as _e_rst:
+        logging.debug(f"[V10] reset 기력 registry skipped: {_e_rst}")
     for uid, pdata in d.get("participants", {}).items():
         mem = pdata.get("ai_memory", {})
         mem["vigor"] = {"value": 100, "last_delta": 0}
