@@ -49,7 +49,9 @@ _TELESCOPE_BLOCK_PATTERNS = (
     r"<TELESCOPE>[\s\S]*?</TELESCOPE>",
     r"```telescope[\s\S]*?```",
     r"<<TELESCOPE[\s\S]*?TELESCOPE>>",
-    r"<<[\s\S]*?>>",
+    # ⛔[2026-09-24 감사] 범용 `<<…>>` 제거 — 현행 텔레스코프는 ┣┫이고 text_resources 어디에도 `<<`가 없다.
+    #   이 패턴이 산문 속 세계 시스템 메시지(`<<레벨이 올랐습니다>>`, Slot 20 이 렌더 몫이라 한 것)와
+    #   멀리 떨어진 `<<`~`>>` 사이 문단까지 지웠다. 옛 명시형 `<<TELESCOPE…TELESCOPE>>`는 위에 남는다.
 )
 
 # 5W1H 게이트명 (개별 라인 감지용) + legacy 호환
@@ -345,13 +347,16 @@ async def generate_response(
     # (지시대상이 그 문장으로만 언급된 경우 대상 자체가 사라지는 것 방지).
     _echo_seen: set = set()
     _last_asst_idx = -1
+    # [2026-09-24 감사] 히스토리 role 규약 = 모델 응답 "Model", 그 외는 PC 가면 이름(append_history 호출부 전부).
+    #   전엔 `== "User"`로 갈라 **PC 턴까지 전부 assistant 로 주입**됐다(모델이 PC 행동을 자기 글로 읽음 →
+    #   사칭 유인, 유저 입력에도 엠대쉬 감축·에코 스크럽 적용, 루프차단기 대상이 PC 메시지로 빗나감).
     for _i in range(len(history_to_inject) - 1, -1, -1):
-        if history_to_inject[_i]['role'] != "User":
+        if history_to_inject[_i].get('role') == "Model":
             _last_asst_idx = _i
             break
     for _idx, h in enumerate(history_to_inject):
         _content = str(h['content'])
-        _is_user = h['role'] == "User"
+        _is_user = h.get('role') != "Model"
         if not _is_user:
             _content = reduce_emdashes(_content)
             if _echo_scrub:
@@ -463,10 +468,12 @@ async def generate_response(
         #    [NARRATIVE] 태그 제거도 이 블록 안에 중첩돼 있어 함께 사문 → 같이 삭제.
         #    반환 시그니처 (response, extraction_data)는 유지, 값은 None 고정.
 
-    # [Anti-Gravity] Mob Tag Cleaning (System Level)
-    if response:
-        from response_processor import clean_mob_tags
-        response = clean_mob_tags(response)
+    # ⚰[2026-09-17 화자 표기 D3] 몹 태그 벗김(`clean_mob_tags`)을 여기서 **표시 계층으로 이사**.
+    #   여기서 벗기면 `response` 자체가 바뀌어 히스토리·배경 추출·검출기가 전부 태그 없는 산문을
+    #   받았다 → 렌더러가 `학생 #2A:`로 두 사람을 갈라 써도 한 턴 뒤 증발, 추출은 `학생:` 둘을 한 키로.
+    #   태그는 기계 표기다: 저장·분석·렌더러 입력엔 남기고 **보는 산문만** 벗긴다
+    #   (orchestration `_prose_for_display`, 렌더 전송 3곳). 명령어 핸들(`!npc 삭제 경비병 #2A`)은 무접촉.
+    #   계획서 `파티쳇수정/prose/speaker_notation_plan_2026-09-17.md` §8 T1.
 
     # [2026-08-16 상태창 코드 조립] 렌더가 관성으로 그린 상태줄을 머리에서 제거.
     #   헤더는 표시 계층에서 코드가 붙이므로 여기 남으면 이중 표기 + 히스토리 에코 소스가 된다.

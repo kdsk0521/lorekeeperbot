@@ -343,7 +343,8 @@ soma (Body/Autonomic) — Assess FIRST (James-Lange)
 
 relation (Relationship)
 - descriptor: Current attitude toward PC expressed as specific behavior (ENGLISH-ONLY telegraphic — render-facing)
-- value: -100 (extremely hostile) to +100 (extremely devoted)
+- bond_shift: much_warmer / warmer / holds / cooler / much_cooler — how this turn moved where the NPC stands toward the acting PC. holds = the turn leaves the stance where 4b shows it. warmer / cooler = a small visible step. much_ = a turn that changes where they stand (a rescue, a betrayal, a confession).
+- tension_shift: spikes / rises / holds / eases — open conflict with the acting PC, independent of bond (a devoted NPC can still be furious). spikes = conflict breaks into the open this turn.
 - attachment: secure / anxious / avoidant / disorganized (Bowlby: from behavioral evidence)
 - phase: orientation / identification / exploitation / resolution (Peplau: cannot skip stages)
 - logos_layer: Logos [CUSTOM] — current layer state + this turn behavioral hint
@@ -400,12 +401,10 @@ idle+Open = quiet but something unspoken hangs. detonation+Closed = explosion ju
 
 ### Spatial Palette → spatial_read
 Observe the physical space. Architecture, not decoration.
-- mutation: space changed by presence or action.
-  A=body/presence(involuntary territory), B=action(physical territory), C=perceptual(subjective lens, POV only).
-  A/B are Territory (objective). C is Lens (subjective) — MUST separate.
+- Territory vs Lens: a body's presence or an action can change the space itself (objective). A POV character's perception can color it (subjective) — that is filter, never a space change. Keep them separate.
 - tension (Lefebvre Production of Space): "designed X <-> lived Y" — mismatch between the space's intended purpose and how characters actually inhabit it. null when no mismatch.
 - spatial_type: enclosed(traces linger), resonant(echoes, emptiness), open(wind erases), elevated(exposed), crowded(traces drown), moving(transient).
-- weight: ambient=default(base palette only). render=mutation occurred.
+- weight: ambient=default(base palette only). render=the space itself changed this turn (presence or action).
 - light (base palette, every turn → spatial_read.light): the controlling light on the scene, DERIVED not picked. lighting follows the actual source + key + direction (where the light falls). hue follows the scene's dominant valence + source, across the full spectrum (amber/gold/rust/crimson/grey/steel/cool/green-cast/sodium/…) — the specific hue the conditions produce. saturation follows emotional intensity (vivid↔washed). the light is a function of its conditions: when the controlling valence or source shifts, the light shifts with it; while they hold, it holds.
 
 ### UNFAMILIAR DISCOVERY
@@ -546,15 +545,15 @@ NPC_ATTITUDE_ANALYSIS = """
 
 ## NPC ATTITUDE DETECTION & TRACKING
 
-### Attitude Spectrum
+### Attitude Spectrum (where they stand — 4b Stands shows the current band; the record keeps the numbers)
 hostile (glaring, threats, active opposition) → unfriendly (sighs, minimal effort, passive resistance) → neutral (polite, transactional) → friendly (warm, active help) → devoted (protective, unconditional)
 
 ### Shift Rules
-Building Trust (Linear): hostile→unfriendly: 3+ positive interactions | unfriendly→neutral: proven value | neutral→friendly: consistent positive | friendly→devoted: deep bond or life debt
-Breaking Trust (Instantaneous): Any betrayal can drop multiple levels. Some breaks are permanent.
+One turn is one step: bond_shift and tension_shift name it, and the record sets its size.
+Building Trust: slow — warmer turns over many turns of consistent positive evidence.
+Breaking Trust: a betrayal spikes tension at once, and bond keeps cooling turn after turn while it stands. Some breaks are permanent.
 
 ### Detection: eye contact duration, physical distance, response delay, voice warmth, voluntary help vs. obstruction
-### Trajectory: improving / stable / declining
 
 ### 4-Stage Adaptation Model → Peplau Phase Mapping (Stages CANNOT be skipped)
 1. Resistance (0-3): Default patterns, testing, suspicion → Peplau: orientation
@@ -569,7 +568,7 @@ Track last-turn phase per NPC. Phase skip triggers convergence_warning in Qualit
 ### Social Modeling
 Track: Power Balance | Face Management | Debt Ledger | Alliance Map
 Social dynamics shape NPC decisions as much as personality.
-When 오륜 (Five Relationships) role expectation is violated, specify in reason field.
+When 오륜 (Five Relationships) role expectation is violated, show it in relation.descriptor.
 
 """
 
@@ -636,7 +635,11 @@ JUDGMENT_SUPPORT = """
   - No relevant item: Equipment bonus = 0 (do NOT invent items PC doesn't have)
 ### Penalties (max -40): Injury -5~15 | Environmental -5~15 | Opposition -5~10 | Psychological -5~10
 
-### defense_success: true (target defends/evades) | false (action lands)
+### active_passives: [name]
+- Acting PC's Passives whose desc (conditions included) holds for THIS action in THIS scene. Names verbatim from the list.
+- Condition in desc unmet → excluded. No list entry fits → [].
+- needs_judgment=false → [].
+- Fragment bonuses are counted by code from these names; do not repeat them in modifications.
 
 ### resolve: none | determined | desperate
 - none: 일반 행동. "문을 연다", "살펴본다", "조심스럽게 움직인다"
@@ -654,15 +657,10 @@ DOOM_MENTAL_TRACKING = """
 
 ## DOOM & VIGOR/COMPOSURE TRACKING
 
-### Mental Impact (→ Vigor/Composure 2-axis system)
-The mental_impact delta is distributed to PC's Vigor and Composure axes based on genre:
-- Vigor (physical will, endurance): Primary for cosmic_horror, action
-- Composure (emotional stability, social grace): Primary for romance, comedy, noir, slice_of_life
-- Primary axis receives full impact; secondary axis receives ~30-50%
-
-Magnitude: express ONLY via the mental_impact severity enum (none/uplift/restore/mild/heavy/extreme) in the DAI spec — do NOT output raw numbers here.
-Negative direction: violence / threat / supernatural / loss / moral violation / betrayal / torture → mild/heavy/extreme (heavier = more severe & RARE; see enum guide).
-Positive direction: rest·safety / social connection / achievement / NPC comfort → uplift (common, small) or restore (rare, deep catharsis·true safety).
+### Vigor / Composure
+Both gauges are declared system variables now. Their movement is reported by the dedicated
+outputs-extraction call as evidence-backed deltas against each gauge's own rule — do NOT
+output vigor/composure numbers, severities, or recovery amounts here.
 
 ### Doom Clocks (Situation Clocks — Offense/Defense)
 Doom clocks represent world threats advancing against the player. You receive active clocks in CURRENT STATE. Your job:

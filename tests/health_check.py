@@ -106,9 +106,10 @@ def check_instantiation():
     # 4. Command Handler (Dependencies: game_system, etc.)
     try:
         import command_handler
-        # Just check existence, calling logic requires async/discord mocks
-        if not hasattr(command_handler, "handle_participant_command"):
-            raise AttributeError("handle_participant_command missing")
+        # [2026-09-05] handle_participant_command 스텁이 삭제되어 hasattr 검사도 제거.
+        # import가 통과하면(레지스트리 데코레이터 전부 실행) 그것으로 충분하다.
+        if not hasattr(command_handler, "dispatch_command"):
+            raise AttributeError("dispatch_command missing")
         print(f"✅ Command Handler      : OK")
     except Exception as e:
         print(f"❌ Command Handler      : FAILED ({e})")

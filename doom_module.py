@@ -614,7 +614,7 @@ class DoomModule:
             bus.doom["clock_log"] = " | ".join(clock_events)
 
         # ── 9. Vigor/Composure Pressure (FitD 8-segment) ────
-        _apply_pressure(context, bus)
+        apply_defense_reward(context, bus)
 
         # ── 10. Summary log ──────────────────────────────────
         final_doom = bus.doom.get("value", 0)
@@ -623,9 +623,6 @@ class DoomModule:
             parts.append(f"delta={'+' + str(delta) if delta > 0 else str(delta)}")
         if clock_events:
             parts.append(f"clocks: {', '.join(clock_events)}")
-        pressure_log = bus.doom.get("mental_pressure_log", "")
-        if pressure_log:
-            parts.append(f"pressure→{pressure_log}")
         logger.info(" | ".join(parts))
 
         return context
@@ -642,11 +639,11 @@ def _auto_link_quest_clock(context: "GameContext", clock: dict) -> None:
             return
         board = game_character._get_board(channel_id)
         active_quests = board.get("active", [])
-        clock_name = clock.get("name", "").strip().lower()
+        clock_name = (clock.get("name") or "").strip().lower()
         for quest in active_quests:
             if not isinstance(quest, dict):
                 continue
-            quest_name = quest.get("content", "").strip().lower()
+            quest_name = (quest.get("content") or "").strip().lower()
             # 퍼지 매칭: 시계 이름이 퀘스트에 포함 (단방향 — 퀘스트가 상위 개념)
             if clock_name in quest_name:
                 clock["linked_quest"] = quest.get("content", "")
@@ -753,51 +750,41 @@ def _trigger_climax(context, bus, clocks: list, clock_events: list) -> None:
     logger.info("[Doom] CLIMAX TRIGGERED — all clocks forced, event queued for next turn")
 
 
-def _apply_pressure(context: "GameContext", bus) -> None:
-    """Vigor/Composure Recovery — 활성도 페이즈 기반.
-    리브랜드: 마이너스 패널티 제거. 起 페이즈(저-doom) 회복만 유지.
-    "조용한 세계 = 쉴 시간 있음" / "분주한 세계 = 쉴 틈은 없지만 깎이지도 않음".
+def apply_defense_reward(context: "GameContext", bus, reward: int = 0) -> int:
+    """시계 완화·해소 보상 → 평형 회복 (**코드 소유 쓰기**).
+
+    [2026-09-06 P8b] 이 함수가 옛 `_apply_pressure` 를 대신한다. 지운 것과 남긴 것의 경계가
+    여기서 제일 또렷하다:
+      - **삭제**: 페이즈 기반 회복(doom<13 → +2, <25 → +1). "조용한 세계 = 쉴 시간 있음"은
+        장면을 분류해서 숫자를 정하는 코드다 — 정확히 rule 의 몫이고, 회복은 산문이 보여줬을 때
+        관측 델타로 들어온다. 압력 라벨(mental_pressure_log)도 그 공식의 표시라 함께 삭제.
+      - **유지**: 시계 완화/해소 보상. 시계가 몇 칸 줄었는지는 코드가 이미 확정한 **사건**이고,
+        이 회복은 그 사건의 대가다(judgment Effort 선불과 같은 부류). 그래서 캡 면제 문을 쓴다.
+    Returns: 실제로 움직인 평형 델타(없으면 0).
     """
-    dv = bus.doom.get("value", 0)
-    # 페이즈 기반 회복 (起 영역만 +1/+2). 그 외 모두 0.
-    if dv < 13:
-        pressure, label = 2, "😌 이완"
-    elif dv < 25:
-        pressure, label = 1, "😌 안정"
-    else:
-        # 承/轉/結/間 — 페이즈 라벨만 노출, pressure 0
-        phase = bus.doom.get("chapter_phase", "")
-        pressure = 0
-        label = f"📖 페이즈 {phase}" if phase else ""
+    total = int(reward or 0) + int(bus.doom.get("defense_reward", 0)) + int(bus.doom.get("resolve_reward", 0))
+    if total <= 0:
+        return 0
+    moved = 0
+    try:
+        import custom_vars as _cv_dm
+        rec = _cv_dm.apply_system_delta(
+            (context.narrative_anchors or {}).get("channel_id", ""), "평형", total,
+            "clock mitigated", actor=(context.narrative_anchors or {}).get("acting_user_id", ""),
+            exempt_cap=True, source="doom.defense_reward",
+        )
+        if rec:
+            moved = int(rec.get("delta", 0) or 0)
+            if isinstance(bus.composure, dict):
+                bus.composure["value"] = int(rec.get("to", bus.composure.get("value", 100)))
+    except Exception as e:
+        logger.debug("[Doom] 평형 보상 skip: %s", e)
 
-    mechanic = context.request.genres.get("mechanic", {})
-    primary = mechanic.get("primary_resource") or "vigor"
-    secondary = "composure" if primary == "vigor" else "vigor"
-    # [2026-08-18 Phase 2.5] 기력은 레지스트리 소유 — 둠 압력·방어 보상이 **기력 쪽에 쓰던 델타는
-    #   삭제**한다(코드 공식). 평형이 주축이든 보조축이든 평형 몫은 그대로 간다.
-    #   ★새 자리로 옮기지 않는다: 옮기면 "코드가 정한 회복"이 이름만 바꿔 살아남는다.
-    _vc = {"vigor": None, "composure": bus.composure}
-    primary_bus = _vc.get(primary, bus.composure)
-    secondary_bus = _vc.get(secondary)
-
-    if pressure > 0:
-        if primary_bus is not None:
-            primary_bus["delta"] = primary_bus.get("delta", 0) + pressure
-        if secondary_bus is not None:
-            secondary_bus["delta"] = secondary_bus.get("delta", 0) + int(pressure * 0.5)
-    if label:
-        bus.doom["mental_pressure_log"] = label
-
-    # Defense rewards → primary axis recovery (기력이 주축이면 보상은 사라진다 — 위 판정과 동형)
-    defense_reward = bus.doom.get("defense_reward", 0)
-    resolve_reward = bus.doom.get("resolve_reward", 0)
-    total_reward = defense_reward + resolve_reward
-    if total_reward > 0:
-        if primary_bus is not None:
-            primary_bus["delta"] = primary_bus.get("delta", 0) + total_reward
-        reward_parts = []
-        if defense_reward > 0:
-            reward_parts.append(f"완화 +{defense_reward}")
-        if resolve_reward > 0:
-            reward_parts.append(f"해소 +{resolve_reward}")
+    reward_parts = []
+    if bus.doom.get("defense_reward", 0) > 0:
+        reward_parts.append(f"완화 +{bus.doom['defense_reward']}")
+    if bus.doom.get("resolve_reward", 0) > 0:
+        reward_parts.append(f"해소 +{bus.doom['resolve_reward']}")
+    if reward_parts:
         bus.doom["defense_log"] = f"🛡️ {' | '.join(reward_parts)}"
+    return moved

@@ -42,6 +42,75 @@ VALID_SOURCES = {SOURCE_LORE, SOURCE_MANUAL, SOURCE_AI_GENERATED, SOURCE_SESSION
 # 시트가 동결되는(자동 증류가 덮지 않는) 출처 — lore/manual 판정의 단일 출처
 FROZEN_SOURCES = (SOURCE_LORE, SOURCE_MANUAL)
 
+
+def npc_source(data: Any, channel_id: Optional[str] = None, name: Optional[str] = None) -> str:
+    """[2026-09-16 시트 2차b] `source` 파생값 — 페이지 lore 절 있으면 lore/manual, 없으면 session.
+    dict만 주면 `get_npcs()` 뷰가 페이지에서 찍은 도장을 읽고, channel_id·name을 주면 페이지를 직접 본다."""
+    return domain_manager.derive_npc_source(data, channel_id, name)
+
+
+def is_authored(data: Any, channel_id: Optional[str] = None, name: Optional[str] = None) -> bool:
+    """승격 = 원문 유무 = `wiki_store.has_lore_sections`(판정 하나)."""
+    return domain_manager.is_authored_npc(data, channel_id, name)
+
+
+def npc_lore_sections(channel_id: Optional[str], name: Optional[str], *, resolve: bool = False) -> Dict[str, str]:
+    """NPC 시트 원문의 정본 = 페이지 lore 절 {절: 본문}. 없으면 {}.
+    `resolve`=True면 이름이 저장 키와 다를 때(별칭·축약) `_find_npc_key`로 한 번 더 찾는다."""
+    if not channel_id or not name:
+        return {}
+    try:
+        import wiki_store
+        secs = wiki_store.get_lore_sections(channel_id, wiki_store.page_id_for("character", name))
+        if secs or not resolve:
+            return secs
+        key = domain_manager._find_npc_key(get_npcs(channel_id) or {}, name)
+        if key and key != name:
+            return wiki_store.get_lore_sections(channel_id, wiki_store.page_id_for("character", key))
+    except Exception as e:
+        logger.debug(f"[NPC] lore sections skip ({name}): {e}")
+    return {}
+
+
+_LORE_CHUNK_HDR = re.compile(r'^####\s+(.+?)\s*$', re.MULTILINE)
+
+
+def _lore_chunks(section: str, body: str) -> List[tuple]:
+    """lore 절 본문 → [(원 헤더, 본문)]. `map_sheet_sections`가 붙인 `#### 원헤더`로 가른다.
+    헤더 앞 본문은 절 이름을 헤더로 쓴다."""
+    out = []
+    b = str(body or "")
+    ms = list(_LORE_CHUNK_HDR.finditer(b))
+    head = b[:ms[0].start()] if ms else b
+    if head.strip():
+        out.append((section, head.strip()))
+    for i, m in enumerate(ms):
+        end = ms[i + 1].start() if i + 1 < len(ms) else len(b)
+        txt = b[m.end():end].strip()
+        if txt:
+            out.append((m.group(1), txt))
+    return out
+
+
+def lore_has_voice_block(sections: Dict[str, str]) -> bool:
+    """`_is_hybrid_profile`의 페이지판 — 절 이름 또는 보존된 원 헤더가 Voice/Aside인가."""
+    for sec, body in (sections or {}).items():
+        for hdr, _t in _lore_chunks(sec, body):
+            if _VOICE_BLOCK_RE.match(_normalize_section_name(hdr)):
+                return True
+    return False
+
+
+def _page_observed(channel_id: Optional[str], name: Optional[str]) -> str:
+    """NPC 페이지 play 절 Observed 본문(구 play_observed 필드 자리). 없으면 ""."""
+    if not channel_id or not name:
+        return ""
+    try:
+        import wiki_store
+        return wiki_store.get_play_body(channel_id, wiki_store.page_id_for("character", name))[0].strip()
+    except Exception:
+        return ""
+
 # 태도 레벨 정의 (0-4 scale for gating distance calculation)
 ATTITUDE_LEVELS = {
     "hostile": 0,
@@ -126,17 +195,21 @@ def get_npc_context_for_renderer(channel_id: str, npc_name: str) -> dict:
     if not npc:
         return {}
 
-    # Description 내부의 비밀 섹션도 제거
     result = {}
     for k, v in npc.items():
         if k in RENDERER_STRIP_KEYS:
             continue
         result[k] = v
 
-    # Description text에서 [Secret]/[Hidden] 섹션 제거
-    desc = result.get("description", "")
-    if desc:
-        result["description"] = strip_hidden_markers(desc)
+    # [시트 2차b] description = 페이지 lore 절에서 **Secrets 절을 뺀** 조립 + [Secret]/[Hidden] 마커 제거.
+    #   (구: dict 원문 문자열에서 마커만 제거.) 렌더 프로필은 이 값을 쓰지 않고 절을 직접 읽는다.
+    try:
+        import wiki_store
+        _secs = {k: v for k, v in npc_lore_sections(channel_id, npc_name).items()
+                 if _section_family(k) != "hidden"}
+        result["description"] = strip_hidden_markers(wiki_store.assemble_lore_text(_secs))
+    except Exception:
+        result["description"] = ""
 
     return result
 
@@ -161,10 +234,7 @@ def migrate_npc_fields(channel_id: str) -> int:
     migrated = 0
     for name, data in npcs.items():
         changed = False
-        # desc → description 통일
-        if "desc" in data and "description" not in data:
-            data["description"] = data.pop("desc")
-            changed = True
+        # [시트 2차b] desc→description 통일 단계 삭제 — 원문은 페이지 lore 절, data의 description은 뷰 조립본.
         # 구조화 필드 추출 (없는 경우만)
         desc_text = data.get("description", "")
         if desc_text and len(desc_text) > 200:
@@ -293,40 +363,86 @@ def _extract_structured_fields(desc: str) -> Dict[str, str]:
         constraints.sort(key=len)
         fields["constraints"] = " | ".join(constraints)   # [1M remap] 캡 제거(전 constraint, 항목당 20~200자 필터는 유지)
 
-    # Relation Keywords — 프로필에서 관계 키워드 스캔 → initial_depth/tension
-    _RELATION_KEYWORDS = {
-        # (depth, tension) 초기값
-        # 친밀/가족
-        "소꿉친구": (60, 5), "childhood friend": (60, 5),
-        "절친": (65, 5), "best friend": (65, 5),
-        "가족": (55, 10), "family": (55, 10),
-        "형제": (50, 15), "자매": (50, 15), "sibling": (50, 15),
-        "부모": (55, 15), "parent": (55, 15),
-        "연인": (70, 10), "lover": (70, 10), "애인": (70, 10),
-        "partner": (60, 10), "배우자": (65, 10), "spouse": (65, 10),
-        # 중립/직업
-        "동료": (30, 5), "colleague": (30, 5),
-        "이웃": (20, 5), "neighbor": (20, 5),
-        "지인": (15, 5), "acquaintance": (15, 5),
-        "스승": (40, 10), "mentor": (40, 10),
-        "제자": (35, 10), "student": (35, 10),
-        "친구": (40, 5), "friend": (40, 5),
-        # 적대/갈등
-        "원수": (40, 70), "enemy": (40, 70),
-        "라이벌": (35, 50), "rival": (35, 50),
-        "적": (30, 60),
-    }
-    desc_lower = desc.lower()
-    best_depth, best_tension = 0, 0
-    for keyword, (d, t) in _RELATION_KEYWORDS.items():
-        if keyword in desc_lower:
-            if d > best_depth:
-                best_depth, best_tension = d, t
-    if best_depth > 0:
-        fields["initial_depth"] = best_depth
-        fields["initial_tension"] = best_tension
-
+    # [2026-09-24 감사 §5-2 #12 — 레티어스 판정] 관계 키워드 시드는 여기서 **안 뽑는다**.
+    #   구: 시트 전문 어디든 키워드가 있으면 initial_depth/tension 으로 저장 → 그 NPC 의 **첫 PC 엣지**에 심겼다.
+    #   누구와의 관계인지 안 봐서 "전쟁에서 가족을 잃었다"가 PC 에게 bond +55 로 박혔다(턴 캡 ±5 라 오래 안 빠짐).
+    #   이제 엣지가 처음 생길 때 상대 PC 를 가리키는 문장에서만 본다 → `relation_seed_for`(아래).
     return fields
+
+
+
+# [2026-09-24 감사 §5-2 #12] 관계 키워드 → (bond, tension). 값은 **bond(부호 있음)** — 적대는 음수.
+#   bare "적"은 부분문자열로 적극적·감정적·목적에 걸려 "적대"로 좁혔다. 영문은 낱말 경계(복수형 허용).
+RELATION_SEED_KEYWORDS = {
+    # 친밀/가족
+    "소꿉친구": (60, 5), "childhood friend": (60, 5),
+    "절친": (65, 5), "best friend": (65, 5),
+    "가족": (55, 10), "family": (55, 10),
+    "형제": (50, 15), "자매": (50, 15), "sibling": (50, 15),
+    "부모": (55, 15), "parent": (55, 15),
+    "연인": (70, 10), "lover": (70, 10), "애인": (70, 10),
+    "partner": (60, 10), "배우자": (65, 10), "spouse": (65, 10),
+    # 중립/직업
+    "동료": (30, 5), "colleague": (30, 5),
+    "이웃": (20, 5), "neighbor": (20, 5),
+    "지인": (15, 5), "acquaintance": (15, 5),
+    "스승": (40, 10), "mentor": (40, 10),
+    "제자": (35, 10), "student": (35, 10),
+    "친구": (40, 5), "friend": (40, 5),
+    # 적대/갈등
+    "원수": (-40, 70), "enemy": (-40, 70),
+    "라이벌": (-15, 50), "rival": (-15, 50),
+    "적대": (-30, 60),
+}
+
+
+def _seed_word_hit(text_lower: str, word: str) -> bool:
+    w = str(word or "").strip().lower()
+    if not w:
+        return False
+    if w.isascii():
+        # \b 대신 영숫자 둘레 검사 — `{{user}}`처럼 기호로 시작·끝나는 이름에도 맞는다.
+        return re.search(r"(?<![a-z0-9])" + re.escape(w) + r"s?(?![a-z0-9])", text_lower) is not None
+    return w in text_lower
+
+
+def relation_seed_for(desc: str, pc_names: Any) -> Optional[Tuple[int, int]]:
+    """[2026-09-24 감사 §5-2 #12 — 레티어스 판정] NPC 시트에서 **그 PC 를 가리키는 문장**만 보고 관계 시드 → (bond, tension).
+
+    PC 를 가리킨다 = `{{user}}` 또는 PC 가면 이름(괄호 앞/안, 공백 토큰 2자↑)이 들어 있는 문장. 제3자 서술
+    ("전쟁에서 가족을 잃었다")은 안 본다. 한 문장에 적대·우호 키워드가 같이 있으면 **적대 우선**
+    ("{{user}}의 가족을 죽인 원수") — 그 밖엔 |bond| 가 큰 쪽. 없으면 None(= 시드 없이 0 에서 시작)."""
+    text = str(desc or "")
+    if not text.strip():
+        return None
+    names = {"{{user}}"}
+    for n in (pc_names if isinstance(pc_names, (list, tuple, set)) else [pc_names]):
+        n = str(n or "").strip()
+        if not n:
+            continue
+        names.add(n)
+        _b = re.split(r"[(\[（]", n)[0].strip()
+        _m = re.search(r"[(\[（]([^)\]）]+)[)\]）]", n)
+        for _f in [_b, _m.group(1).strip() if _m else ""] + _b.split():
+            if len(_f) >= 2:
+                names.add(_f)
+    best_pos, best_neg = (0, 0), (0, 0)
+    for sent in re.split(r"(?<=[.!?。])\s+|\n+", text):
+        sl = sent.lower()
+        if not any(_seed_word_hit(sl, nm) for nm in names):
+            continue
+        for kw, (d, t) in RELATION_SEED_KEYWORDS.items():
+            if not _seed_word_hit(sl, kw):
+                continue
+            if d < 0 and d < best_neg[0]:
+                best_neg = (d, t)
+            elif d > 0 and d > best_pos[0]:
+                best_pos = (d, t)
+    if best_neg[0]:
+        return best_neg
+    if best_pos[0]:
+        return best_pos
+    return None
 
 
 # Generic labels to exclude from pidgin echo detection
@@ -472,12 +588,38 @@ def delete_npc(channel_id: str, name: str) -> tuple:
     return domain_manager.delete_npc(channel_id, name)
 
 
-def npc_to_pc_info(channel_id: str, name: str) -> Optional[tuple]:
-    """NPC를 PC(pc_info) 스키마로 재매핑한다. (matched_key, pc_info) 반환, 못 찾으면 None.
+def pc_box_from_info(info: Optional[dict], sheet_text: str = "") -> dict:
+    """[2026-09-16 시트 2차 §8] PC 대기 상자 모양으로 접는다 — 서술 필드는 **저장하지 않는다**.
+    {name, aliases?, species?, sheet_text, passives?, inventory?}. 원문이 없으면(로어 절 못 찾음)
+    추출 서술 필드를 `### 필드` 절로 이어 원문 대용으로 쓴다(유실 0, 파서가 절로 가른다)."""
+    info = info if isinstance(info, dict) else {}
+    text = str(sheet_text or "").strip()
+    if not text:
+        _parts = []
+        for _k, _h in (("role", "Role"), ("appearance", "Appearance"), ("description", "Core Traits"),
+                       ("personality", "Core Traits"), ("background", "Background"),
+                       ("sexual_characteristics", "Sexual Characteristics"), ("secret_info", "Secrets")):
+            _v = str(info.get(_k) or "").strip()
+            if _v:
+                _parts.append(f"### {_h}\n{_v}")
+        text = "\n\n".join(_parts)
+    box = {"name": str(info.get("name") or "").strip(), "sheet_text": text}
+    if info.get("species") or info.get("race"):
+        box["species"] = info.get("species") or info.get("race")
+    if isinstance(info.get("aliases"), list) and info["aliases"]:
+        box["aliases"] = list(info["aliases"])
+    for k in ("passives", "inventory"):
+        if info.get(k):
+            box[k] = info[k]
+    return box
 
-    [2026-06-18] 로어북 분석이 주인공을 PC가 아닌 NPC로 분류하는 케이스(A) 대응.
-    정보는 이미 NPC 버킷에 추출돼 있으므로 새 LLM 콜 없이 필드만 재매핑한다.
-    매칭은 등록 경로와 동일하게 양방향(find_equivalent_npc_key) → fuzzy(find_similar_npc).
+
+def npc_to_pc_info(channel_id: str, name: str) -> Optional[tuple]:
+    """NPC를 PC 대기 상자 모양으로 재매핑한다. (matched_key, pc_info) 반환, 못 찾으면 None.
+
+    [2026-06-18] 로어북 분석이 주인공을 PC가 아닌 NPC로 분류하는 케이스(A) 대응. 새 LLM 콜 없음.
+    [2026-09-16 시트 2차] 서술 필드 복사 폐지 — NPC 원문(description)이 곧 `sheet_text`
+    (흡수 시 PC 페이지 lore 절로), passives/inventory만 이월.
     """
     npcs = domain_manager.get_npcs(channel_id)
     if not npcs:
@@ -486,41 +628,34 @@ def npc_to_pc_info(channel_id: str, name: str) -> Optional[tuple]:
     if not key or key not in npcs:
         return None
     npc = npcs[key]
-    pc_info = {
-        "name": npc.get("name") or key,
-        "role": npc.get("role", ""),
-        "species": npc.get("species") or npc.get("race", ""),  # NPC는 'race', PC는 'species'
-        "appearance": npc.get("appearance", ""),
-        "description": npc.get("description") or npc.get("personality", ""),
-        "background": npc.get("background", ""),
-    }
-    # NPC가 우연히 갖고 있을 수 있는 선택 필드만 그대로 이월 (없으면 생략)
-    for opt in ("sexual_characteristics", "secret_info", "passives", "inventory", "personality", "gender"):
+    # [시트 2차b] 원문 = 페이지 lore 절 그대로(dict 뷰 description 경유 안 함).
+    import wiki_store
+    _sheet = wiki_store.assemble_lore_text(npc_lore_sections(channel_id, key))
+    info = {"name": npc.get("name") or key, "species": npc.get("species") or npc.get("race", ""),
+            "aliases": npc.get("aliases") if isinstance(npc.get("aliases"), list) else None}
+    for opt in ("passives", "inventory"):
         if npc.get(opt):
-            pc_info[opt] = npc[opt]
-    return key, pc_info
+            info[opt] = npc[opt]
+    return key, pc_box_from_info(info, _sheet)
 
 
 def merge_character_sheet_into_pc(pc_info: dict, sheet: dict) -> dict:
-    """analyze_character_sheet 결과(Tier 3)를 승격 pc_info(Tier 1)에 병합한다.
-
-    [2026-06-18] 승격 enrich(B). NPC 추출은 passives/inventory를 안 뽑으므로 승격된 PC는
-    기계 필드가 빈다. 보존된 원문에 캐릭터 시트 분석을 돌려 그 필드를 복원.
-
-    병합 규칙:
-    - 기본 서술 필드: 비어 있을 때만 시트로 채움 (이미 든 raw 원문 description을 시트 요약으로
-      덮어쓰지 않기 위함 — 원문 보존이 우선).
-    - 기계 필드(passives/inventory): 시트가 뽑았으면 우선 채택 (modifiers 포함 구조화 버전).
-    """
+    """analyze_character_sheet 결과를 대기 상자에 병합 — 조각(passives/inventory)·이름·species만.
+    서술은 원문(`sheet_text`)이 정본이라 병합하지 않는다(2026-09-16 시트 2차)."""
     if not sheet:
         return pc_info
-    for k in ("name", "role", "species", "appearance", "description",
-              "background", "sexual_characteristics", "secret_info"):
+    for k in ("name", "species"):
         if sheet.get(k) and not pc_info.get(k):
             pc_info[k] = sheet[k]
-    for k in ("passives", "inventory"):
-        if sheet.get(k):
-            pc_info[k] = sheet[k]
+    if sheet.get("inventory"):
+        pc_info["inventory"] = sheet["inventory"]
+    if sheet.get("passives"):
+        # [2026-09-16 3차] 조각 새 모양(origin=sheet)으로 접어 담는다.
+        from game_character import normalize_fragment
+        _raw = sheet["passives"] if isinstance(sheet["passives"], list) else []
+        _fr = [f for f in (normalize_fragment(x, "sheet") for x in _raw) if f]
+        if _fr:
+            pc_info["passives"] = _fr
     return pc_info
 
 
@@ -660,7 +795,7 @@ def add_lore_npcs(channel_id: str, npc_list: List[Dict[str, Any]]) -> int:
         return 0
     count = 0
     for npc in npc_list:
-        name = npc.get("name", "").strip()
+        name = (npc.get("name") or "").strip()
         if not name: continue
         
         # [Check Duplicate]
@@ -678,7 +813,7 @@ def add_lore_npcs(channel_id: str, npc_list: List[Dict[str, Any]]) -> int:
              # NEW Logic: Skip overwrite if manual source, strictly update if lore source.
              
              existing = get_npc(channel_id, sim_name)
-             if existing and existing.get("source") == SOURCE_MANUAL:
+             if existing and npc_source(existing) == SOURCE_MANUAL:
                  continue # Manual overrides Lore usually
              
              # If both are Lore/AI, we merge descriptions?
@@ -756,25 +891,24 @@ def register_ai_npc(channel_id: str, name: str, description: str = "", context: 
         
         # Exception: Identity Reveal handled elsewhere.
         
-        # Logic: Auto-tag the NEW one.
-        tag = generate_mob_tag()
-        tagged_name = f"{name} {tag}"
-        
-        # Uniqueness check (with iteration limit)
-        for _attempt in range(50):
-            if not get_npc(channel_id, tagged_name):
-                break
-            tag = generate_mob_tag()
-            tagged_name = f"{name} {tag}"
-        else:
-            tagged_name = f"{name} #{int(time.time()) % 10000}"
-            
+        # [2026-09-18 식별 허브 S1] 발급 = issue_mob_tag 단일 관문(구 50회 재추첨 + 시각 폴백 대체).
+        #   구 경로는 실패 시 `#1234`(4자리) 폴백으로 넘어갔는데 그 모양은 표시 벗김이 안 잡아
+        #   화면에 샜다. 소진이면 태그 없이 두고 아래 병합 경로로 떨어진다.
+        _tag = issue_mob_tag(channel_id, name)
+        if not _tag:
+            logger.error(f"[NPC] 표식 발급 실패 — 동명 별개체 등록 포기: {name}")
+            return None
+        tagged_name = f"{name} #{_tag}"
         logger.info(f"[NPC] Name Collision '{name}' -> Auto-tagged as '{tagged_name}'")
         name = tagged_name
         # Proceed to register as NEW entry (data below)
 
+    # [2026-09-16 2차b 추기] 세션 경로는 원문(lore 절)을 쓰지 않는다 — description 인자는
+    #   관찰(Observed)로만 갈 수 있고, 여기선 등록만 한다. 옛 "description": description 은
+    #   쓰기 관문을 타고 lore 절이 되어 세션 NPC가 manual로 승격·deleted 페이지를 부활시켰다.
+    if description:
+        logger.debug(f"[NPC] register_ai_npc: description 인자 무시(세션 NPC는 원문 없음): {name}")
     data = {
-        "description": description,
         "source": SOURCE_AI_GENERATED,
         "registered_at": time.strftime('%Y-%m-%d %H:%M'),
         "appearances": [{"context": context, "at": time.strftime('%Y-%m-%d %H:%M')}] if context else []
@@ -794,6 +928,54 @@ def register_ai_npc(channel_id: str, name: str, description: str = "", context: 
     update_npc(channel_id, final_name, data)
     logger.info(f"[NPC] AI 생성 NPC 등록: {final_name}")
     return final_name
+
+
+_MOB_TAG_ALL = tuple([f"{d}{l}" for d in "0123456789" for l in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"]
+                     + [f"{l}{d}" for l in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" for d in "0123456789"])
+
+
+def issued_tags(channel_id: str) -> set:
+    """[2026-09-20 재검] 채널 명부(키+별칭)에 실제로 붙어 있는 표식 집합 — 표시 벗김의 범위.
+    표식이 산문에 나오지 않는 설계에서 벗김은 안전망이고, 안전망이 `방 #3B호실`까지 지우면 그게 새 병이다."""
+    out = set()
+    try:
+        npcs = get_npcs(channel_id) or {}
+    except Exception:
+        return out
+    for k, v in npcs.items():
+        for nm in [k] + list((v.get("aliases") or []) if isinstance(v, dict) else []):
+            m = domain_manager._TAG_TAIL_RE.search(domain_manager._normalize_npc_name(str(nm)))
+            if m:
+                out.add(m.group(1).upper())
+    return out
+
+
+def issue_mob_tag(channel_id: str, base: str) -> Optional[str]:
+    """[2026-09-18 식별 허브 S1] 역할명 `base`에 붙일 **아직 안 쓰인** 표식 하나. 없으면 None.
+
+    발급은 코드만 한다(산문엔 표식이 나오지 않는다 — identity_hub_design_v0.1_2026-09-18).
+    유일성 판정은 **완성된 이름**(`경비병 #2A`) 기준이라 역할명마다 520개를 쓴다.
+    이름공간 = 명부 키 + 각 레코드의 aliases(개명으로 물러난 옛 표식 이름이 여기 산다).
+    무작위 순회 — 소진 시 None 을 주고 호출부가 등록을 포기한다(조용한 중복보다 낫다)."""
+    _b = str(base or "").strip()
+    if not _b:
+        return None
+    try:
+        npcs = get_npcs(channel_id) or {}
+    except Exception:
+        npcs = {}
+    used = set()
+    for k, v in npcs.items():
+        for nm in [k] + list((v.get("aliases") or []) if isinstance(v, dict) else []):
+            n = domain_manager._normalize_npc_name(str(nm))
+            m = domain_manager._TAG_TAIL_RE.search(n)
+            if m and n[:m.start()].strip().lower() == _b.lower():
+                used.add(m.group(1).upper())
+    pool = [t for t in _MOB_TAG_ALL if t not in used]
+    if not pool:
+        logger.error("[NPC] 표식 소진: base='%s' (%d개 전부 사용)", _b, len(_MOB_TAG_ALL))
+        return None
+    return random.choice(pool)
 
 
 def generate_mob_tag() -> str:
@@ -836,7 +1018,7 @@ def get_npcs_by_source(channel_id: str, source: str) -> Dict[str, Dict[str, Any]
         name: data for name, data in all_npcs.items()
         # [2026-07-28] 기본값 AI_GENERATED → SESSION. source 미상 NPC의 실제 다수는
         # 리터럴 "session"으로 등록된 것들이라 기본값도 그쪽이 맞다.
-        if data.get("source", SOURCE_SESSION) == source
+        if npc_source(data) == source
     }
 
 
@@ -854,8 +1036,202 @@ def get_session_npcs(channel_id: str) -> Dict[str, Dict[str, Any]]:
     all_npcs = get_npcs(channel_id)
     return {
         name: data for name, data in all_npcs.items()
-        if data.get("source", SOURCE_AI_GENERATED) != SOURCE_LORE
+        if npc_source(data) != SOURCE_LORE
     }
+
+# =========================================================
+# [2026-09-18 식별 허브 S2] 식별 재료 — 읽기 전용 파생(저장 0, 콜 0)
+#   목적: 산문이 인물을 이름 대신 묘사로 부른 턴에, 추출이 "그게 누구냐"를 되짚을 재료.
+#   ⚠ 아무것도 저장하지 않는다 — high_concept 를 채워 넣으면 get_npc_tier 가 그 인물을
+#     established 로 올려 명부·상태창 노출이 바뀐다(파생과 저장의 경계).
+# =========================================================
+_RECOG_SPLIT = "\n。.!?"
+
+
+def _first_sentence(text: str, max_chars: int) -> str:
+    t = " ".join(str(text or "").split())
+    if not t:
+        return ""
+    cut = len(t)
+    for ch in _RECOG_SPLIT:
+        i = t.find(ch)
+        if 0 <= i < cut:
+            cut = i
+    out = t[:cut].strip() or t.strip()
+    return out[:max_chars].strip()
+
+
+def recognition_line(channel_id: str, name: str, data: Optional[dict] = None,
+                     max_chars: int = 60) -> str:
+    """이 인물을 남이 보고 알아볼 한 줄. 우선순위 high_concept → 페이지 lore `Identity` 첫 문장
+    → play `Observed` 첫 줄 → "". 저장 0."""
+    if not channel_id or not str(name or "").strip():
+        return ""
+    d = data if isinstance(data, dict) else (get_npc(channel_id, name) or {})
+    hc = str(d.get("high_concept") or "").strip()
+    if hc:
+        return _first_sentence(hc, max_chars)
+    try:
+        import wiki_store
+        secs = wiki_store.get_lore_sections(channel_id, wiki_store.page_id_for("character", name)) or {}
+        ident = _first_sentence(secs.get("Identity") or "", max_chars)
+        if ident:
+            return ident
+    except Exception:
+        pass
+    return _first_sentence(_page_observed(channel_id, name), max_chars)
+
+
+def onstage_roster(channel_id: str, exclude: Any = (), cap: int = 8,
+                   max_chars: int = 60) -> List[Dict[str, str]]:
+    """지금 무대(0단)에 있는 인물 명부 — [{"key": 키, "line": 식별 한 줄}]. 위치의 함수라 콜 0.
+    exclude = PC 가면 등. 위치 미해상 턴엔 빈 목록(폴백은 get_onstage_npc_names 안쪽 규율 그대로)."""
+    try:
+        names = get_onstage_npc_names(channel_id) or []
+    except Exception:
+        return []
+    _ex = {str(x).strip() for x in (exclude or ()) if str(x or "").strip()}
+    out: List[Dict[str, str]] = []
+    for nm in names:
+        k = str(nm or "").strip()
+        if not k or k in _ex or len(out) >= max(1, int(cap)):
+            continue
+        out.append({"key": k, "line": recognition_line(channel_id, k, max_chars=max_chars)})
+    return out
+
+
+def onstage_roster_lines(channel_id: str, exclude: Any = (), cap: int = 8) -> List[str]:
+    """급식용 줄 — `- 키 | 식별 한 줄`(줄 없으면 `- 키`). 괄호를 쓰지 않는다(추출 NAMING 의
+    `KnownName(otherform)` 별칭 표기와 충돌)."""
+    return [f"- {r['key']} | {r['line']}" if r.get("line") else f"- {r['key']}"
+            for r in onstage_roster(channel_id, exclude=exclude, cap=cap)]
+
+
+# =========================================================
+# [2026-09-18 식별 허브 S5] 항목 판정 — 순수 함수(저장·콜 0). 스펙 S5.
+#   ① 묘사가 무대의 누구를 가리키면 그 키로 합류(refers) — 풀은 **무대뿐**. 무대 밖 인물로의
+#      흡수는 금지(F1과 같은 오병합).
+#   ② 이미 명부에 있으면 종전 흐름(register).
+#   ③ 새 라벨은 **등록 문턱**을 넘을 때만 등록: (PC가 말을 걸었다 ∨ 그 라벨이 대사 화자로 섰다)
+#      ∧ (추출이 남길 사실이라 판정했다 = descriptor). 이름을 얻었으면(named_as) 단독 통과.
+#      한쪽만 보면 묘사 인물이 뚫리거나(설명만) 웨이터가 인물이 된다(말 걸기만).
+#   ④ 고유명 신규는 그대로 등록.
+# =========================================================
+
+
+def _norm_label(s: Any) -> str:
+    return " ".join(str(s or "").split()).lower()
+
+
+def _label_spoke(prose: str, label: str) -> bool:
+    """이번 턴 산문에서 그 라벨이 **대사 화자**로 섰는가 — `라벨: "…"` 줄."""
+    lb = _norm_label(label)
+    if not lb:
+        return False
+    for line in str(prose or "").splitlines():
+        t = line.strip()
+        if not t or ":" not in t:
+            continue
+        head, _, tail = t.partition(":")
+        if _norm_label(head) == lb and tail.strip()[:1] in ('"', '\u201c', '\u300c'):
+            return True
+    return False
+
+
+def decide_entity(npcs: Dict[str, Any], key: str, entry: Dict[str, Any],
+                  onstage: Any = (), pc_masks: Any = (),
+                  *, pc_input: str = "", prose: str = "") -> Dict[str, Any]:
+    """(판정) → {"action": "refers|register|skip", "key": 최종키, "need_tag": bool,
+                 "alias": (라벨, "stable")|None, "scene_label": 라벨|None, "why": str}"""
+    _pcm = {str(x) for x in (pc_masks or ())}
+    _on = [str(x) for x in (onstage or ()) if str(x or "").strip() and str(x) not in _pcm]
+    e = entry if isinstance(entry, dict) else {}
+    kind = str(e.get("name_kind") or "").strip().lower()
+    alias_kind = str(e.get("alias_kind") or "").strip().lower()
+    label = str(key or "").strip()
+
+    # ① 묘사 → 무대 인물
+    ref = str(e.get("refers_to") or "").strip()
+    if ref and _on:
+        pool = {n: (npcs.get(n) if isinstance(npcs, dict) else {}) or {} for n in _on}
+        hit = domain_manager._find_npc_key(pool, ref)
+        if hit and hit not in _pcm:
+            return {"action": "refers", "key": hit, "need_tag": False,
+                    "alias": (label, "stable") if alias_kind == "stable" and _norm_label(label) != _norm_label(hit) else None,
+                    "scene_label": label if alias_kind != "stable" else None, "why": "refers_to"}
+
+    # ② 기존 키
+    # [2026-09-24 감사] 원문 라벨이 아니라 **정본 키**를 돌려준다 — 라벨(별칭·짧은 이름·대소문자 변형)을 그대로
+    #   넘기면 하류(grow_sheet 페이지 id·handle_identity_reveal 부수 데이터 이관)가 그림자 페이지를 만들거나
+    #   이관 대신 삭제했다.
+    # [2026-09-24 감사 §5-2 #10 — 레티어스 판정] 괄호식 라벨(`레나(Rena)`)도 **키를 안 바꾼다**. 추출 프롬프트가
+    #   크로스 스크립트 호칭을 `KnownName(otherform)`으로 쓰라고 시키므로 이건 LLM 표기지 사용자 등록 의도가 아니다
+    #   (update_npc 의 괄호 업그레이드는 명령·로어 등록 경로 전용으로 남는다). 괄호 속 다른 표기는 별칭 후보로만
+    #   돌려준다 → 로스터 패스가 `_promote_alias`(충돌 가드)로 올린다.
+    if isinstance(npcs, dict):
+        _hit2 = domain_manager._find_npc_key(npcs, label)
+        if _hit2:
+            _alias2 = None
+            _pm = re.search(r'[(\[（]([^)\]）]+)[)\]）]', label)
+            if _pm:
+                _hd = npcs.get(_hit2) if isinstance(npcs.get(_hit2), dict) else {}
+                _known = {_norm_label(x) for x in
+                          [_hit2, re.split(r'[(\[（]', str(_hit2))[0]]
+                          + [a for a in (_hd.get("aliases") or []) if isinstance(a, str)]}
+                for _form in (_pm.group(1).strip(), re.split(r'[(\[（]', label)[0].strip()):
+                    if _form and _norm_label(_form) not in _known:
+                        _alias2 = (_form, "stable")
+                        break
+            return {"action": "register", "key": _hit2, "need_tag": False,
+                    "alias": _alias2, "scene_label": None, "why": "existing"}
+
+    # ②′ 표식 없는 역할명(`경비병`) ↔ 무대의 표식 인물(`경비병 #2A`)
+    #   S1이 역할명 단독 질의의 명부 전체 흡수를 막았으므로(F1), 여기서 **무대 안**으로만 좁혀 다시 본다.
+    #   무대에 그 역할이 딱 한 사람이면 그 사람이다 — refers_to 를 안 줘도 새 사람을 만들지 않는다.
+    #   둘 이상이면 모호 = 침묵(등록도 합류도 0). 억지로 하나를 고르면 F1의 오병합이다.
+    if kind == "label" and _on and not is_mob_tag(domain_manager._normalize_npc_name(label)):
+        _lb_n = _norm_label(domain_manager._normalize_npc_name(label))
+        _same = []
+        for n in _on:
+            _nn = domain_manager._normalize_npc_name(n)
+            _m = domain_manager._TAG_TAIL_RE.search(_nn)
+            if _m and _norm_label(_nn[:_m.start()]) == _lb_n:
+                _same.append(n)
+        if len(_same) == 1:
+            return {"action": "refers", "key": _same[0], "need_tag": False, "alias": None,
+                    "scene_label": label if alias_kind != "stable" else None, "why": "onstage_role"}
+        if len(_same) > 1:
+            return {"action": "skip", "key": label, "need_tag": False, "alias": None,
+                    "scene_label": label, "why": "ambiguous_role"}
+
+    # ③④ 신규
+    if kind == "label":
+        named_as = str(e.get("named_as") or "").strip()
+        if named_as in _pcm:
+            named_as = ""        # PC 가면을 이름으로 댄 건 혼동 — 이름 획득으로 치지 않는다
+        named = bool(named_as)
+        # 새 라벨이 이 턴에 이름을 댔다 → 그 사람은 처음부터 **그 이름**이다. 표식을 달아 등록한 뒤
+        #   개명하려 들면 등록 전이라 개명 가드(get_npc)가 막혀 이름이 유실된다(재검 09-20).
+        if named:
+            _own = domain_manager._find_npc_key(npcs, named_as) if isinstance(npcs, dict) else None
+            if _own:
+                return {"action": "refers", "key": _own, "need_tag": False, "alias": None,
+                        "scene_label": None, "why": "named_existing"}
+            return {"action": "register", "key": named_as, "need_tag": False, "alias": None,
+                    "scene_label": None, "why": "named_new"}
+        addressed = _norm_label(label) in _norm_label(pc_input) or _label_spoke(prose, label)
+        worth = bool(str(e.get("descriptor") or "").strip())
+        if not (named or (addressed and worth)):
+            return {"action": "skip", "key": label, "need_tag": False, "alias": None,
+                    "scene_label": label, "why": "below_threshold"}
+        if is_mob_tag(domain_manager._normalize_npc_name(label)):
+            return {"action": "register", "key": label, "need_tag": False, "alias": None,
+                    "scene_label": None, "why": "label_marked"}
+        return {"action": "register", "key": label, "need_tag": True, "alias": None,
+                "scene_label": None, "why": "label_threshold"}
+    return {"action": "register", "key": label, "need_tag": False, "alias": None,
+            "scene_label": None, "why": "name"}
+
 
 def get_scene_npc_names(channel_id: str) -> List[str]:
     """⚠ 이름과 달리 **'장면 인물'이 아니다** — 로어가 아닌 **전체** 등록 NPC 목록이다.
@@ -1070,7 +1446,8 @@ def get_presence_tiers(channel_id: str) -> Dict[str, Any]:
 
 
 def _get_npc_desc(data: dict) -> str:
-    """NPC 설명 필드 읽기 (description/desc 호환).
+    """NPC 설명 필드 읽기 (description/desc 호환). [시트 2차b] `get_npcs()` 뷰 dict의 description은
+    페이지 lore 절 조립본이다 — 이 함수 하위 소비자(로스터 폴백 등)는 무접촉.
     레거시 자동생성 플레이스홀더("Auto-detected by AI")는 빈 문자열로 취급 →
     이미 그 값으로 저장된 기존 NPC도 DB 마이그레이션 없이 산문 노출이 사라진다."""
     d = data.get("description") or data.get("desc", "")
@@ -1079,16 +1456,16 @@ def _get_npc_desc(data: dict) -> str:
     return d
 
 
-def _npc_desc_fallback(data: dict) -> str:
+def _npc_desc_fallback(data: dict, *, channel_id: Optional[str] = None, name: Optional[str] = None) -> str:
     """[D-A] 표시용 설명 폴백 체인. description이 비면(자동 NPC 흔함) 실제로 채워진
     관찰/면모로 대체 — 렌더러(get_npc_renderer_profiles)의 폴백을 명령/로스터에도 복제.
-    순서: description → play_observed → 면모(정체성/aspects/외형/역할)."""
+    순서: description → 페이지 Observed 절(channel_id·name 줄 때) → 면모(정체성/aspects/외형/역할)."""
     if not isinstance(data, dict):
         return ""
     d = _get_npc_desc(data)
     if str(d).strip():
         return d
-    obs = str(data.get("play_observed", "") or "").strip()
+    obs = _page_observed(channel_id, name)   # [시트 2차] 관찰 = 페이지 Observed 절
     if obs:
         return obs
     parts = []
@@ -1104,17 +1481,22 @@ def _npc_desc_fallback(data: dict) -> str:
     return " / ".join(parts)
 
 
-def get_npc_tier(data: dict) -> str:
+def get_npc_tier(data: dict, *, channel_id: Optional[str] = None, name: Optional[str] = None) -> str:
     """[T-A] 자동생성 NPC의 1회성/다회성 tier. lore/manual=작가권위라 항상 established.
     session은: 시트 증류됨(관찰 재작성/면모 보유) OR 5개 구별 턴 이상 등장 → established, 그 외 provisional."""
     if not isinstance(data, dict):
         return "established"
-    src = str(data.get("source", SOURCE_SESSION)).lower()
+    src = npc_source(data)
     if src in FROZEN_SOURCES:
         return "established"
-    # 시트가 이미 재작성됐거나(관찰 증류) 면모가 있으면 비중 있는 조연 → established (가드레일 a)
-    if int(data.get("_obs_built_len", 0) or 0) > 0:
-        return "established"
+    # 시트가 이미 정리됐거나(grow_sheet 정리 마커 = 페이지 built_len) 면모가 있으면 비중 있는 조연 → established (가드레일 a)
+    if channel_id and name:
+        try:
+            import wiki_store
+            if wiki_store.get_built_len(channel_id, wiki_store.page_id_for("character", name)) > 0:
+                return "established"
+        except Exception:
+            pass
     _asp = data.get("aspects")
     if data.get("high_concept") or (isinstance(_asp, list) and _asp):
         return "established"
@@ -1216,7 +1598,7 @@ def set_npc_status_gated(channel_id: str, name: str, new_status: str,
 
 def mark_npc_appearance(channel_id: str, name: str, turn: int) -> None:
     """[T-A] NPC가 이 턴 실제 등장했음을 기록(구별 턴만 카운트 = turn dedup).
-    lore/manual은 tier 계측 불필요(항상 established)라 스킵. 순수 부기, LLM 콜 없음."""
+    lore/manual은 tier 계측(appear_count) 불필요(항상 established)라 스킵 — 등장 도장만 찍는다. 순수 부기, LLM 콜 없음."""
     data = get_npc(channel_id, name)
     if not isinstance(data, dict):
         return
@@ -1234,8 +1616,10 @@ def mark_npc_appearance(channel_id: str, name: str, turn: int) -> None:
             data = get_npc(channel_id, name) or data
     elif _st == "dead":
         logger.info("[NPC Status] %s: dead인데 등장 관측 — 복귀 없음 (환각 등장 신호)", name)
-    if str(data.get("source", SOURCE_SESSION)).lower() in FROZEN_SOURCES:
-        return
+    # [2026-09-24 감사] frozen(lore/manual)도 **등장 도장(_last_appear_turn)은 찍는다** — tier 계측(appear_count)만 스킵.
+    #   전엔 조기 return 이 도장까지 막아, PC 위치 미해상 턴의 레거시 출석 폴백(get_onstage_npc_names)에
+    #   작가 NPC 가 영영 안 올랐다(세션 NPC 만으로 무대가 채워짐).
+    _frozen = npc_source(data) in FROZEN_SOURCES
     try:
         last = int(data.get("_last_appear_turn", -1))
     except (TypeError, ValueError):
@@ -1247,7 +1631,8 @@ def mark_npc_appearance(channel_id: str, name: str, turn: int) -> None:
     if last == turn:
         return  # 같은 턴 중복 카운트 방지
     _new = dict(data)
-    _new["appear_count"] = int(data.get("appear_count", 0) or 0) + 1
+    if not _frozen:
+        _new["appear_count"] = int(data.get("appear_count", 0) or 0) + 1
     _new["_last_appear_turn"] = turn
     update_npc(channel_id, name, _new)
 
@@ -1265,7 +1650,7 @@ def get_npc_roster(channel_id: str) -> str:
         if get_npc_status(data) == "dead":
             continue
         # [D-A] 분석(Theoria)은 전체 캐스트가 필요 → 접기 없이 폴백만(빈 description → 관찰/면모)
-        desc = _npc_desc_fallback(data)
+        desc = _npc_desc_fallback(data, channel_id=channel_id, name=name)
         blurb = _roster_blurb(desc, data)
         role = data.get("role", "")
         # [2026-07-28] world_tree 우선 — 등록 시점에 굳은 시트 값이 아니라 지금 있는 곳
@@ -1383,7 +1768,7 @@ _MAX_TOTAL_PER_NPC = 50000  # [Sprint L 2026-04-29] 사고 방어 안전망만. 
 #   이 다섯에 안 걸리는 정본 이름을 만들어봐야 아무 일도 하지 않는다.
 # ★사전이 뒤처져도 안전한 이유(= _PRESERVE_KEYS와 다른 점): 여기서 뒤처짐의 손해는
 #   "기능이 안 걸림"뿐이고 섹션 내용은 통과 경로로 온전히 남는다(유실 0·가역).
-# 설계: 파티쳇수정/npc_sheet_ingest_spec_2026-09-02.md §5
+# 설계: 파티쳇수정/npc/npc_sheet_ingest_spec_2026-09-02.md §5
 
 # 은닉 — 목소리보다 **먼저** 걸린다("Secret Voice"는 목소리가 아니라 비밀이다).
 # "정체"는 넣지 않는다: 흔한 섹션명 `정체성`(=Identity)을 오폭한다.
@@ -1578,16 +1963,10 @@ def _select_profile_sections(desc: str, scene_type: str = "normal", demote_backg
         (strip_hidden_markers)만 막고 **섹션은 그냥 통과**시켜, v7 `### Secrets`가 렌더러
         프로필로 새고 있었다(내심 콜에서만 막히던 역전). 드롭이 아니라 감싸기인 이유:
         드롭하면 비밀이 **행동을 물들이지 못한다** — 값은 발설이 아니라 회피의 모양에 있다.
-        설계: 파티쳇수정/npc_sheet_ingest_spec_2026-09-02.md §7-B·§7-C
+        설계: 파티쳇수정/npc/npc_sheet_ingest_spec_2026-09-02.md §7-B·§7-C
+        (판정 본문은 `_frame_section` — 페이지 절 선택기와 한 벌.)
         """
-        if not demote_background:
-            return sec_text
-        _fam = _section_family(sec_name)
-        if _fam == "hidden":
-            return f"[withheld]\n{sec_text}\n[/withheld]"
-        if _fam == "background":
-            return f"[backstory]\n{sec_text}\n[/backstory]"
-        return sec_text
+        return _frame_section(sec_name, sec_text, demote_background)
 
     # _preamble 먼저 (있고 비어있지 않으면)
     preamble = parsed.get("_preamble", "")
@@ -1619,6 +1998,46 @@ def _select_profile_sections(desc: str, scene_type: str = "normal", demote_backg
     return result
 
 
+def _frame_section(sec_name: str, sec_text: str, demote_background: bool) -> str:
+    """렌더러 경로 배경·은닉 태그(`_select_profile_sections._maybe_frame` 문서 참조). 두 선택기 공용."""
+    if not demote_background:
+        return sec_text
+    _fam = _section_family(sec_name)
+    if _fam == "hidden":
+        return f"[withheld]\n{sec_text}\n[/withheld]"
+    if _fam == "background":
+        return f"[backstory]\n{sec_text}\n[/backstory]"
+    return sec_text
+
+
+def _select_lore_sections(sections: Dict[str, str], demote_background: bool = False) -> str:
+    """[2026-09-16 시트 2차b] `_select_profile_sections`의 페이지판 — 입력이 원문 문자열이 아니라
+    페이지 lore 절 dict. 순서 규칙 같음(_CORE 가족 우선 → 나머지 enum 순), 절마다 `### 절` 헤더,
+    `[Secret]` 마커 제거는 절 단위, 배경·은닉 태그는 `_frame_section`."""
+    if not sections:
+        return ""
+    items = [(k, strip_hidden_markers(v)) for k, v in sections.items()]
+    items = [(k, v) for k, v in items if v.strip()]
+    parts, included = [], set()
+    for core_name in _CORE_FAMILIES:
+        for sec, body in items:
+            if sec in included:
+                continue
+            if _section_family(sec) == core_name:
+                parts.append(_frame_section(sec, f"### {sec}\n{body}", demote_background))
+                included.add(sec)
+                break
+    for sec, body in items:
+        if sec in included:
+            continue
+        parts.append(_frame_section(sec, f"### {sec}\n{body}", demote_background))
+        included.add(sec)
+    result = "\n\n".join(parts)
+    if len(result) > _MAX_TOTAL_PER_NPC:
+        result = result[:_MAX_TOTAL_PER_NPC].rstrip()
+    return result
+
+
 # ⛔[2026-07-28 삭제] get_npc_full_profiles — "비밀 제거 없는 전문" 조립기.
 #   호출처 0(grep 확인). Theoria(분석)는 프로필 전문이 아니라 get_npc_roster의
 #   **인물당 첫 줄 50자 요약**만 받는 구조라 이 함수가 쓰일 자리가 없었다.
@@ -1643,8 +2062,9 @@ def get_npc_renderer_profiles(channel_id: str, names: list, scene_type: str = "n
         if not data:
             continue
         name = key
-        desc = _get_npc_desc(data)
-        desc = _select_profile_sections(desc, scene_type, demote_background=True)
+        # [시트 2차b] 절 직접 — 페이지 lore 절을 받아 고른다(원문 조립→재파싱 왕복 없음).
+        _secs_r = npc_lore_sections(channel_id, key)
+        desc = _select_lore_sections(_secs_r, demote_background=True)
         header = f"### {name}"
         meta_parts = []
         if data.get("role"):
@@ -1664,7 +2084,7 @@ def get_npc_renderer_profiles(channel_id: str, names: list, scene_type: str = "n
             profile_text = f"{header}\n**[{meta_line}]**\n{desc}"
         else:
             profile_text = f"{header}\n{desc}"
-        _src_r = str(raw.get("source", "")).lower() if isinstance(raw, dict) else ""
+        _src_r = npc_source(raw)
         # 세션 즉석 NPC + 면모(정체성/불씨/면모)가 증류됐으면 → 면모 시트로 대체 렌더(주력).
         # 아직 증류 전이면 위의 seed description 그대로. (Fate-하이브리드 시트)
         # [2026-07-13 manual 동결] manual도 lore처럼 원문 렌더 — 면모 대체가 수제 프로필
@@ -1675,25 +2095,30 @@ def get_npc_renderer_profiles(channel_id: str, names: list, scene_type: str = "n
             _lines = [header]
             if raw.get("high_concept"):
                 _lines.append(f"**[정체성]** {raw['high_concept']}")
-            if raw.get("trouble"):
-                _lines.append(f"**[불씨]** {raw['trouble']}")
-            if isinstance(_aspects, list) and _aspects:
-                _lines.append("**[면모]** " + " · ".join(str(a) for a in _aspects))
+            # [2026-09-22 충돌카드 4] `불씨`(trouble)는 렌더러에 안 보낸다 — 결핍을 명명해 목소리에게
+            #   건네는 줄이라, 매 장면 그 결핍을 소환한다(v7 §1 "안아줬으면 좋겠다" / §6.5 간극 명명).
+            #   값은 domain에 그대로 남는다(orchestration이 계속 저장). 소비처는 디렉터·자율 엔진 쪽이
+            #   맞고, 현재 렌더 외 소비처 0 — 배선은 별건.
             if data.get("appearance"):
                 _lines.append(f"**[외형]** {data['appearance']}")
             if data.get("role"):
                 _lines.append(f"**[역할]** {data['role']}")
+            # [2026-09-22 voice_seed §I] 면모 대체가 **시드 절을 지우지 않게** 두 절을 뒤에 그대로 얹는다.
+            #   병: 시드 NPC가 증류로 aspects를 얻는 순간 이 분기가 켜지고, Core Traits(기전 두 줄+seam)와
+            #   Aside가 렌더에서 통째로 사라졌다 — 목소리를 얻자마자 잃는 모양.
+            #   `_secs_r`는 위에서 이미 조회한 것이다 — 재조회 0.
+            # [2026-09-22 충돌카드 4] 순서를 정체성·외형·역할 → Core Traits → Aside → 면모로.
+            #   면모는 이름+행동이라도 " · " 한 줄은 키워드 목록 모양이라(v7 §4 필드 압축), 기제(Core Traits)와
+            #   목소리(Aside)보다 먼저 읽히면 그쪽이 시트로 잡힌다. 기제·목소리가 있으면 면모는 그 뒤의 보강.
+            for _sec_r in ("Core Traits", "Aside"):
+                _body_r = strip_hidden_markers(str((_secs_r or {}).get(_sec_r) or "")).strip()
+                if _body_r:
+                    _lines.append(f"### {_sec_r}\n{_body_r}")
+            if isinstance(_aspects, list) and _aspects:
+                _lines.append("**[면모]** " + " · ".join(str(a) for a in _aspects))
             profile_text = "\n".join(_lines)
-        elif _src_r not in ("lore", "manual"):
-            # 세션 NPC + 아직 면모 증류 전 + desc 없음(플레이스홀더 숨김) → 관찰로 폴백.
-            _obs_s = raw.get("play_observed") if isinstance(raw, dict) else None
-            if _obs_s and str(_obs_s).strip() and not str(desc).strip():
-                profile_text = f"{header}\n{str(_obs_s).strip()[-600:]}"
-        # 로어/수제(manual) NPC: 원문 시트는 동결하되 플레이 중 관찰(play_observed)을
-        # 별도 섹션으로 렌더 → 작가 설정 권위 보존 + 세션 중 드러난 새 면모를 장기기억으로 축적.
-        _obs = raw.get("play_observed") if isinstance(raw, dict) else None
-        if _src_r in ("lore", "manual") and _obs and str(_obs).strip():
-            profile_text += f"\n**[플레이 중 관찰]**\n{str(_obs).strip()[-600:]}"
+        # [2026-09-16 시트 2차] 관찰(구 play_observed) 렌더 두 갈래 삭제 — 관찰은 페이지 Observed 절이고,
+        #   같은 Slot 7에 wiki compile_for(T3)가 play 절을 이미 얹는다(이중 투입 금지). 600자 절단도 같이 소멸.
         # [2026-07-13] 외부 시트 플레이스홀더 치환 ({{char}}=NPC 자신, {{user}}=현재 PC 가면)
         if "{{" in profile_text:
             profile_text = profile_text.replace("{{char}}", name).replace("{{Char}}", name)
@@ -1725,7 +2150,7 @@ def get_npc_names_only(channel_id: str, exclude: list, include_provisional: bool
             continue
         if name in resolved_exclude:
             continue
-        if include_provisional or get_npc_tier(data) == "established":
+        if include_provisional or get_npc_tier(data, channel_id=channel_id, name=name) == "established":
             remaining.append(name)
     lines = []
     if remaining:
@@ -1758,8 +2183,8 @@ def get_npc_recency_reminders(channel_id: str, npc_names: list) -> str:
         #   Slot 17 quirks 3중 주입을 지웠고, 오늘 2중의 나머지 반쪽을 접는다.
         #   tone-only 레거시는 유지 — tone은 Slot 7에 원문이 없어 echo가 유일한 상기
         #   (08-02 위임형 헤더 하에서 무해). 말투 표류 관측 시 이 분기 복원이 롤백.
-        desc = _get_npc_desc(data)
-        if not _is_hybrid_profile(desc):
+        # [시트 2차b] 절 직접 — 페이지 lore 절에서 Voice/Aside 블록 판정.
+        if not lore_has_voice_block(npc_lore_sections(channel_id, name, resolve=True)):
             tone = data.get("tone", "")
             if tone:
                 voice_lines.append(f"- {name}: {tone}")
@@ -1859,7 +2284,7 @@ def _voice_trim(text: str, cap: int) -> str:
 
 
 def build_voice_digest(data: Dict[str, Any], name: str = "",
-                       cap: int = VOICE_DIGEST_CHARS) -> List[str]:
+                       cap: int = VOICE_DIGEST_CHARS, *, channel_id: Optional[str] = None) -> List[str]:
     """시트 → **목소리 조각 목록**(라벨 붙은 짧은 문자열). 재료가 없으면 [].
 
     담는 것: 말투(tone)·성격 한 줄(personality)·핵심 트레잇/방백 발췌.
@@ -1911,6 +2336,22 @@ def build_voice_digest(data: Dict[str, Any], name: str = "",
         _add(_lab, data.get(_k))
 
     # ② 시트 섹션 — 은닉 판정이 목소리 판정보다 앞선다.
+    # [시트 2차b] channel_id가 오면 **절 직접**: 페이지 lore 절에서 Secrets 절을 빼고, 보존된 원 헤더
+    #   (`#### Voice` 등) 단위로 voice 가족만. 원문 조립→재파싱 왕복 없음.
+    if channel_id:
+        for _sec, _body in npc_lore_sections(channel_id, name, resolve=True).items():
+            if total >= cap:
+                break
+            if _section_family(_sec) == "hidden":
+                continue
+            for _hdr, _txt in _lore_chunks(_sec, strip_hidden_markers(_body)):
+                if total >= cap:
+                    break
+                if _section_family(_hdr) != "voice":
+                    continue
+                _add(_hdr, _txt)
+        return frags
+    # channel_id 없는 순수 호출(도구·스모크 픽스처) — dict 원문 문자열을 파싱한다.
     desc = strip_hidden_markers(_get_npc_desc(data))
     if desc:
         for _name, _body in _parse_sections(desc).items():
@@ -1942,7 +2383,7 @@ def build_voice_digest(data: Dict[str, Any], name: str = "",
 def handle_identity_reveal(channel_id: str, old_name: str, new_name: str, reason: str = "") -> str:
     """NPC 개명 (OldName → NewName). 몹 태그 → 고유명 승격이 주 용도.
 
-    본체(npc_data)는 copy()로 통째 이동하므로 appear_count·play_observed·static_traits 등은
+    본체(npc_data)는 copy()로 통째 이동하므로 appear_count·static_traits 등은
     자동으로 따라간다. 별도 도메인(태도/지식/각인/관계 엣지)은 아래에서 손으로 옮긴다.
     """
     if old_name == new_name: return "⚠️ 이름이 동일합니다."
@@ -1963,6 +2404,17 @@ def handle_identity_reveal(channel_id: str, old_name: str, new_name: str, reason
         # 여기서는 세션 데이터 내에서만 처리한다고 가정.
         return f"⚠️ NPC '{old_name}' 데이터가 없습니다."
 
+    # [2026-09-24 감사] 이하 전부 **정본 키**로 — get_npc 는 별칭·표기 변형(`경비병#2a`, 짧은 이름)을 풀어
+    #   찾아 주는데, 나머지(world_tree 위치·관계 엣지 이관·지식·각인·delete_npc)는 원문 old_name 으로
+    #   정확일치해서, 변형 표기로 온 개명은 부수 데이터가 이관 대신 **삭제**됐다.
+    try:
+        _canon_old = domain_manager._find_npc_key(get_npcs(channel_id) or {}, old_name)
+        if _canon_old:
+            old_name = _canon_old
+    except Exception as _e_co:
+        logger.debug(f"[NPC] 개명 원 키 정규화 skip: {_e_co}")
+    if old_name == new_name: return "⚠️ 이름이 동일합니다."
+
     # [2026-07-18 배선 보강] 대상 이름 충돌 가드 — new_name이 이미 다른 엔티티면
     # 덮어쓰기(기존 한스 소멸) 대신 중단. 병합은 사람이 !npc 병합으로.
     if get_npc(channel_id, new_name):
@@ -1970,10 +2422,21 @@ def handle_identity_reveal(channel_id: str, old_name: str, new_name: str, reason
 
     # 데이터 복사 및 메타데이터 추가
     new_data = npc_data.copy()
+    # [2026-09-16 시트 2차b] 원문 = 페이지 lore 절. 뷰 조립본(description)을 재파싱해 새로 깔지 않고
+    #   옛 페이지의 절을 **그대로** 새 페이지로 옮긴다(아래 rename_npc_page — 09-24 복사→이사).
+    new_data.pop("description", None)
+    # [2026-09-24 감사 §5-2 #9 — 레티어스 판정] 정체 공개도 **이사**(키 승격 `update_npc` 과 같은 `rename_npc_page`):
+    #   lore 절 + play 절(Observed 등 관찰 기록)을 새 페이지로 옮기고, 비워진 옛 페이지 행은 치운다.
+    #   구: lore 절만 복사 → 관찰 기록이 삭제 표시된 옛 페이지에 갇혀 "한스"가 빈 Observed 로 시작했다.
+    #   같은 사람의 이름이 바뀐 것이라 기록은 이어진다(옛 이름은 새 페이지 aliases). 묘비(status=deleted)는
+    #   진짜 삭제(delete_npc 단독) 전용. 시드 도장 유지·절 충돌 강등(History)은 rename_npc_page 가 한다.
+    try:
+        import wiki_store
+        wiki_store.rename_npc_page(channel_id, old_name, new_name, new_data)
+    except Exception as _e_lore:
+        logger.warning(f"[NPC] 개명 페이지 이사 실패: {old_name}->{new_name}: {_e_lore}")
 
-    # [FIX] Source 보존 (기본값 보존)
-    if "source" not in new_data:
-        new_data["source"] = "session"
+    # [2026-09-16] source는 쓰기 관문(update_npc)이 description 유무로 파생 도장 — 여기서 기본값을 박지 않는다.
 
     new_data["identity_history"] = new_data.get("identity_history", [])
     new_data["identity_history"].append({
@@ -2003,14 +2466,15 @@ def handle_identity_reveal(channel_id: str, old_name: str, new_name: str, reason
     except Exception:
         pass
     
-    # [2026-07-28 순서 버그 수리] 구 코드는 **delete_npc(구명) 뒤에** 태도를 읽었다.
-    #   delete_npc는 npc_attitudes/npc_knowledge도 함께 지우므로 get_npc_attitude가 항상 None →
-    #   `if att:`가 영영 False = **태도 이관이 매번 조용히 실패**했다.
-    #   결과: 정체 발각(가면 NPC의 핵심 서사 이벤트)마다 PC와 쌓은 depth/tension이 전량 소실.
-    #   게다가 지식(knows/secrets_held/suspects)은 이관 코드 자체가 없었다.
-    # 처방: 삭제 **전에** 통째로 캡처 → 삭제 → 새 이름으로 dict 그대로 복원.
-    #   (update_npc_attitude는 attitude/reason만 받아 depth·tension을 잃으므로 직접 대입한다.)
-    _old_att = get_npc_attitude(channel_id, old_name)
+    # [2026-09-15 관계 통합] 관계는 relations 엣지 — delete_npc가 이름 걸린 엣지를 지우므로
+    #   **삭제 전에** 엣지 이름을 새 이름으로 옮긴다(depth/tension 소실 병의 같은 자리).
+    try:
+        import sqlite_store as _ss_rn
+        _n_mv = _ss_rn.rename_edge_entity(channel_id, old_name, new_name)
+        if _n_mv:
+            logger.info("[개명] 관계 엣지 이관 %s → %s (%d)", old_name, new_name, _n_mv)
+    except Exception as _e_att:
+        logger.warning("[개명] 관계 엣지 이관 실패: %s", _e_att)
     _old_know = None
     _old_imprint = None
     try:
@@ -2024,22 +2488,6 @@ def handle_identity_reveal(channel_id: str, old_name: str, new_name: str, reason
 
     # 구 항목 제거 (선택적: Redirect를 남길 수도 있으나, 혼동 방지 위해 제거가 깔끔)
     delete_npc(channel_id, old_name)
-
-    if isinstance(_old_att, dict) and _old_att:
-        try:
-            _d = domain_manager.get_domain(channel_id)
-            _atts = _d.setdefault("npc_attitudes", {})
-            _moved = dict(_old_att)
-            _reason = str(_moved.get("reason", "") or "").strip()
-            _moved["reason"] = (_reason + " (개명)").strip()
-            _atts[new_name] = _moved            # depth/tension/trajectory 통째 이관
-            _atts.pop(old_name, None)
-            domain_manager.save_domain(channel_id, _d)
-            domain_manager._mirror_relation(channel_id, new_name, _moved)
-            logger.info("[개명] 태도 이관 %s → %s (depth=%s)",
-                        old_name, new_name, _moved.get("depth"))
-        except Exception as _e_att:
-            logger.warning("[개명] 태도 이관 실패: %s", _e_att)
 
     if isinstance(_old_know, dict) and _old_know:
         try:
@@ -2068,13 +2516,9 @@ def handle_identity_reveal(channel_id: str, old_name: str, new_name: str, reason
 # NPC ATTITUDE SYSTEM
 # =========================================================
 
-def update_npc_attitude(channel_id: str, npc_name: str, attitude: str, reason: str = "") -> None:
-    """NPC의 PC에 대한 태도 업데이트"""
-    domain_manager.update_npc_attitude(channel_id, npc_name, attitude, reason)
-
-def get_npc_attitudes(channel_id: str) -> Dict[str, Dict]:
-    """저장된 NPC 태도 조회"""
-    return domain_manager.get_npc_attitudes(channel_id)
+def get_npc_attitudes(channel_id: str, pc: Optional[str] = None) -> Dict[str, Dict]:
+    """NPC→PC 관계 조회 — relations 엣지 파생(domain_manager.get_npc_attitudes)."""
+    return domain_manager.get_npc_attitudes(channel_id, pc=pc)
 
 def get_npc_attitude(channel_id: str, npc_name: str) -> Optional[Dict]:
     """특정 NPC의 태도 조회"""
@@ -2305,102 +2749,8 @@ def tick_all_cooldowns(channel_id: str) -> None:
         logger.debug(f"[DecisionCooldown] Ticked cooldowns for {channel_id}")
 
 
-# =========================================================
-# M5: NPC 태도 변경 쿨다운 게이트 (3턴 + 1단계)
-# =========================================================
-
-_ATTITUDE_LEVEL_REVERSE = {v: k for k, v in ATTITUDE_LEVELS.items()}
-
-
-def update_npc_attitude_gated(
-    channel_id: str,
-    npc_name: str,
-    new_attitude: str,
-    current_turn: int,
-    reason: str = ""
-) -> str:
-    """NPC 태도 변경에 쿨다운(3턴) + 최대 1단계 제한 적용.
-
-    Returns:
-        "accepted"  — 변경 승인, 저장 완료
-        "cooldown"  — 3턴 미경과로 거부
-        "clamped"   — 2단계 이상 점프 → ±1로 클램핑 후 저장
-    """
-    new_attitude = new_attitude.lower().strip()
-    if new_attitude not in ATTITUDE_LEVELS:
-        logger.warning(f"[AttitudeGate] Unknown attitude '{new_attitude}' for {npc_name}")
-        return "accepted"  # 알 수 없는 태도는 그냥 통과 (기존 동작 유지)
-
-    existing = get_npc_attitude(channel_id, npc_name)
-
-    # --- Rule 1: 이전 태도가 없으면 neutral 기준 ±1 클램프 적용 ---
-    if not existing or "attitude" not in existing:
-        new_level = ATTITUDE_LEVELS[new_attitude]
-        neutral_level = ATTITUDE_LEVELS["neutral"]  # 2
-        diff = new_level - neutral_level
-        if abs(diff) > 1:
-            clamped_level = neutral_level + (1 if diff > 0 else -1)
-            clamped_level = max(0, min(len(ATTITUDE_LEVELS) - 1, clamped_level))
-            new_attitude = _ATTITUDE_LEVEL_REVERSE.get(clamped_level, "neutral")
-            logger.info(f"[AttitudeGate] {npc_name}: initial → {new_attitude} (clamped from jump {diff})")
-        else:
-            logger.info(f"[AttitudeGate] {npc_name}: initial → {new_attitude} (accepted)")
-        update_npc_attitude(channel_id, npc_name, new_attitude, reason)
-        _save_attitude_turn(channel_id, npc_name, current_turn)
-        try:  # [V10 적립] attitude_log — 최초 태도 확립
-            import sqlite_store
-            sqlite_store.append_attitude_log(channel_id, current_turn, npc_name, "", new_attitude, "initial", reason)
-        except Exception:
-            pass
-        return "accepted"
-
-    old_attitude = existing.get("attitude", "neutral").lower().strip()
-    old_level = ATTITUDE_LEVELS.get(old_attitude, 2)  # default neutral
-    new_level = ATTITUDE_LEVELS[new_attitude]
-
-    # --- Rule 2: 3턴 쿨다운 ---
-    last_turn = existing.get("last_change_turn", -999)
-    if current_turn - last_turn < 3:
-        logger.info(f"[AttitudeGate] {npc_name}: cooldown ({current_turn - last_turn}/3 turns)")
-        return "cooldown"
-
-    # --- Rule 3: 최대 1단계 점프 ---
-    diff = new_level - old_level
-    if abs(diff) > 1:
-        clamped_level = old_level + (1 if diff > 0 else -1)
-        clamped_level = max(0, min(4, clamped_level))
-        clamped_attitude = _ATTITUDE_LEVEL_REVERSE.get(clamped_level, "neutral")
-        update_npc_attitude(channel_id, npc_name, clamped_attitude, reason)
-        _save_attitude_turn(channel_id, npc_name, current_turn)
-        try:  # [V10 적립] attitude_log — 클램프 전이(실 1단계 변화)
-            import sqlite_store
-            sqlite_store.append_attitude_log(channel_id, current_turn, npc_name, old_attitude, clamped_attitude, "clamped", reason)
-        except Exception:
-            pass
-        logger.info(
-            f"[AttitudeGate] {npc_name}: {old_attitude}→{new_attitude} "
-            f"clamped to {clamped_attitude} (jump {diff}→±1)"
-        )
-        return "clamped"
-
-    # --- 정상 수락 ---
-    update_npc_attitude(channel_id, npc_name, new_attitude, reason)
-    _save_attitude_turn(channel_id, npc_name, current_turn)
-    if old_attitude != new_attitude:  # [V10 적립] attitude_log — 실 전이만(no-op accept 제외)
-        try:
-            import sqlite_store
-            sqlite_store.append_attitude_log(channel_id, current_turn, npc_name, old_attitude, new_attitude, "accepted", reason)
-        except Exception:
-            pass
-    logger.info(f"[AttitudeGate] {npc_name}: {old_attitude}→{new_attitude} (accepted)")
-    return "accepted"
-
-
-def _save_attitude_turn(channel_id: str, npc_name: str, turn: int) -> None:
-    """attitude 데이터에 last_change_turn을 기록.
-    [V10 Sprint 1: domain_manager 정식 API로 위임 (JSON+SQLite 동시)]"""
-    domain_manager.set_attitude_turn(channel_id, npc_name, turn)
-
+# ⛔[2026-09-15 관계 통합 삭제] M5 태도 게이트(update_npc_attitude_gated·_save_attitude_turn).
+#   NPCAttitudes 질문이 relation 층 bond 하나로 흡수됐다 — 이동폭 캡은 sqlite_store.upsert_edge가 쥔다.
 
 # =========================================================
 # N4: NPC 페르소나 스냅샷
@@ -2458,7 +2808,10 @@ async def build_distill_grounding(channel_id: str,
 
     # --- 규칙부: 청킹되지 않고 항상 로딩되는 영역(인물 불변 규칙이 사는 자리) ---
     try:
-        _rules = (domain_manager.get_rules(channel_id) or "").strip()
+        # [2026-09-17] get_rules()는 휴면 경로(RULES_DIR 파일 + DEFAULT_RULES 폴백) —
+        #   `!룰` 파일을 넣어도 기본 룰 보일러플레이트가 대신 실렸다. reader_gm(07-14)과 같은
+        #   원천 교정: 살아있는 규칙 채널 world_state["rules_text"]에서 읽는다.
+        _rules = str((domain_manager.get_world_state(channel_id) or {}).get("rules_text") or "").strip()
         if _rules:
             parts.append(
                 "[규칙 참고 — 이 세계의 상시 규칙. 관찰 해석의 접지로만 쓰고 문장을 통복사하지 말 것]\n"
@@ -2569,11 +2922,11 @@ async def build_distill_grounding(channel_id: str,
 # [2026-08-02] C축 DRIVE — 해소되지 않은 충동 압력 (per-NPC, enum 상태기계)
 # =========================================================
 # ★수치 게이지를 만들지 않는다. 저장은 단계 문자열 + 턴 도장 둘뿐.
-#   본은 `update_npc_attitude_gated`(위) — enum + 쿨다운 + ±1단계 클램프.
+#   본은 set_drive_gated — enum + 쿨다운 + ±1단계 클램프(구 M5 태도 게이트와 같은 문법, 그쪽은 09-15 삭제).
 #   LLM은 "다음 단계 이름"만 내므로 델타 캡(cap_llm_delta)이 필요 없다. 캡할 수치가 없다.
 #
 # 저장 위치는 `npcs[name]["drives"]` = **자유 문서 컬럼**(npcs.data).
-#   npc_relations는 화이트리스트 방벽이라 새 키가 조용히 증발한다(실측 확인).
+#   (구 npc_relations 테이블은 화이트리스트 방벽이라 새 키가 조용히 증발했다 — 실측 전례.)
 #   실험 단계인 축은 자유 문서에 두고, 값이 굳으면 컬럼으로 승격한다.
 #
 # 압력형의 비대칭: 상승은 게이팅(천천히), 해소는 자유(빠르게), 방치는 자연 하강.
@@ -2681,8 +3034,8 @@ def set_drive_gated(channel_id: str, npc_name: str, target_stage: str,
 def tick_drive_decay(channel_id: str, current_turn: int, axis: str = "lust") -> int:
     """매 턴 호출: 무변화 DRIVE_IDLE_TURNS 턴마다 1단계 자연 하강.
 
-    A축 감쇠(domain_manager.decay_stale_relations)와 같은 턴-종료 자리에서 돈다.
-    다른 점: A축 시계는 **등장**(안 만나면 식음), C축 시계는 **무변화**(안 건드리면 가라앉음).
+    A축 감쇠(domain_manager.decay_relation_edges)와 같은 턴-종료 자리에서 돈다.
+    다른 점: A축 시계는 **엣지 관측**(안 보면 식음), C축 시계는 **무변화**(안 건드리면 가라앉음).
     압력은 만나지 않아도 스스로 가라앉는다.
     """
     idle = int(_drive_cfg("DRIVE_IDLE_TURNS", 0))

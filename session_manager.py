@@ -13,6 +13,22 @@ import domain_manager
 import config
 
 logger = logging.getLogger(__name__)
+
+
+async def _drain_background(channel_id: str, timeout: float = 30.0) -> bool:
+    """[2026-09-24 감사] 리셋·클리어 전 배경 큐 비우기 + 실행 중 태스크 대기(`!다시`와 같은 문).
+
+    안 하면 마지막 턴의 배경 작업(추출·발효·리더 등)이 리셋 **뒤에** 끝나 옛 세션 상태(fermented·deep·
+    세션 NPC·메모리·위키 play 절)를 새 세션에 다시 썼다. 대기 시간 안에 못 끝나면 False.
+    """
+    try:
+        from background_task_queue import get_task_queue
+        q = get_task_queue()
+        await q.flush_channel(channel_id)
+        return bool(await q.wait_for_channel(channel_id, timeout=timeout))
+    except Exception as e:
+        logger.debug(f"[Session] background drain skip: {e}")
+        return True
 # game_system might be needed if logic requires it, but for now mostly domain IO
 
 # [2026-09-02] 5.0 → 30.0. 구 값은 **물리적으로 누르기 어려웠다** — 봇이 경고 메시지를 보내고
@@ -56,6 +72,9 @@ class SessionManager:
             return
         
         # Reset Data
+        if not await _drain_background(channel_id):   # [2026-09-24 감사]
+            await message.channel.send("⏳ 이전 턴 배경 작업이 아직 도는 중입니다. 잠시 뒤 `!리셋`을 다시 입력해 주세요.")
+            return
         domain_manager.reset_domain(channel_id) # Clears cache and files
         
         # Recreate Channel
@@ -98,7 +117,7 @@ class SessionManager:
                 "⚠️ **[세션 초기화 경고]**\n"
                 "`!클리어` 명령어는 단순 채팅 청소가 아닙니다.\n"
                 "**현재 세션의 진행 상황(히스토리, 퀘스트, 월드 상태)을 모두 초기화합니다.**\n"
-                "(단, 로어북과 참가자는 유지됩니다.)\n\n"
+                "(단, 로어북·룰·참가자·NPC 시트·출력 선언은 유지됩니다.)\n\n"
                 "진행하시려면: `!클리어 확인` 또는 `!클리어 confirm` 입력."
             )
             return
@@ -106,6 +125,9 @@ class SessionManager:
         channel_id = str(message.channel.id)
         try:
             # 1. Soft Reset State
+            if not await _drain_background(channel_id):   # [2026-09-24 감사]
+                await message.channel.send("⏳ 이전 턴 배경 작업이 아직 도는 중입니다. 잠시 뒤 `!클리어 확인`을 다시 입력해 주세요.")
+                return
             domain_manager.reset_session_state(channel_id)
             
             # 2. Visual Wipe
@@ -117,7 +139,8 @@ class SessionManager:
             await message.channel.send(
                 "✨ **세션이 리셋되었습니다.**\n"
                 f"• 삭제됨: {len(deleted)}개 메시지, 히스토리, 진행 상황\n"
-                "• 유지됨: 로어북, 참가자, 룰, 등록 NPC\n"
+                "• 유지됨: 로어북, 참가자, 룰, 등록 NPC, 출력 선언(변수·섹션·전이·형식)\n"
+                "  — 선언은 남고 **값만 시작값**으로 돌아갑니다.\n"
                 "이제 **!시작**을 입력하여 새 이야기를 시작하세요.",
                 delete_after=10
             )
@@ -129,23 +152,96 @@ class SessionManager:
             await message.channel.send(f"⚠️ 초기화 실패: {e}")
 
     async def check_preparation(self, message: discord.Message) -> None:
-        """Checks if session is ready to start (Lore/Rules)."""
+        """세션 준비 점검 — 4항목.
+
+        [2026-09-05] 종전엔 로어 유무 + 룰 모드(항상 ✅)만 봐서 "무엇이 덜 됐는지"를
+        알려주지 못했다. ① 로어 ② 참가자별 가면 ③ 세계 규칙 ④ 출력 규칙 넷을 표시한다.
+        `prepared` 플래그의 의미는 그대로 — **①만 필수**, ②~④는 안내다.
+        """
         channel_id = str(message.channel.id)
         lore = domain_manager.get_lore(channel_id)
-        
+
         ready = True
         msg = "🔍 **시스템 준비 확인**\n"
-        
+
+        # ① 세계관 (필수)
         if lore and lore.strip() and lore != "No Lore Saved" and lore != config.DEFAULT_LORE:
              msg += "✅ 세계관(Lore) 로드됨\n"
         else:
              msg += "❌ 세계관 미설정 (`!lore [내용/파일]` 필요)\n"
              ready = False
 
-        rules_mode = domain_manager.get_rules_mode(channel_id)
-        mode_kr = "기본 (Default)" if rules_mode == "default" else "사용자 설정 (Custom)"
-        msg += f"✅ 룰 설정: {mode_kr}\n"
-        
+        # ② 참가자별 가면
+        try:
+            _parts = domain_manager.get_active_participants(channel_id) or {}
+        except Exception:
+            _parts = {}
+        if not _parts:
+            msg += "⬜ 가면: 참가자 없음 (`!가면 [이름]`으로 등록)\n"
+        else:
+            _no_mask = [str(p.get("name") or uid) for uid, p in _parts.items() if not (p or {}).get("mask")]
+            if _no_mask:
+                msg += f"❌ 가면 미설정 {len(_no_mask)}명: {', '.join(_no_mask)} (`!가면 [이름]`)\n"
+            else:
+                msg += f"✅ 가면: 참가자 {len(_parts)}명 전원 설정됨\n"
+
+        # ③ 세계 규칙 추가 여부
+        # [2026-09-17] 신호를 rules_mode → world_state 실물로 교체. `!룰 추가`는 파일 첨부면
+        #   `rules_text`, 한 줄이면 `location_rules`에 쓴다(Slot 23·world_board가 읽는 자리).
+        #   rules_mode를 세우던 append_rules·set_custom_rules_from_file은 호출자 0 —
+        #   옛 신호는 영원히 "default"라 파일을 넣어도 ⬜만 떴다.
+        _ws = domain_manager.get_world_state(channel_id) or {}
+        _rules_text = str(_ws.get("rules_text") or "").strip()
+        _loc_rules = _ws.get("location_rules") or {}
+        _n_loc = len(_loc_rules) if isinstance(_loc_rules, dict) else 0
+        if _rules_text or _n_loc:
+            _bits = []
+            if _rules_text:
+                _bits.append(f"파일 {len(_rules_text):,}자")
+            if _n_loc:
+                _bits.append(f"개별 {_n_loc}건")
+            msg += f"✅ 세계 규칙: {' · '.join(_bits)}\n"
+        else:
+            msg += "⬜ 세계 규칙: 추가된 규칙 없음 (`!룰 추가 [내용/파일]`)\n"
+
+        # ④ 출력 선언 — [2026-09-06 P7] `!출력룰` 한 명령이 넷으로 흩어졌으니(변수·섹션·
+        #   전이·형식) 점검도 넷을 센다. 옛 문구는 형식 하나만 봐서, 변수만 선언한 채널을
+        #   "출력 규칙 없음"으로 잘못 알렸다.
+        #   변수는 **유저 선언만** 센다 — SYSTEM_VARS 기본형이 늘 얹혀 비지 않으므로
+        #   그대로 세면 신호가 안 된다.
+        _n_var = _n_sec = _n_tr = _n_fmt = 0
+        try:
+            import custom_vars as _cv_rd
+            _n_var = len([1 for _v in _cv_rd.get_declarations(channel_id).values()
+                          if isinstance(_v, dict) and not _v.get("system")])
+        except Exception:
+            pass
+        try:
+            import status_panel as _sp_rd
+            _n_sec = len(_sp_rd.list_panel_sections(channel_id))
+        except Exception:
+            pass
+        try:
+            import expr_engine as _ee_rd
+            _n_tr = len(_ee_rd.list_transitions(channel_id))
+        except Exception:
+            pass
+        try:
+            _n_fmt = len(domain_manager.get_output_rules(channel_id))
+        except Exception:
+            pass
+        _n_all = _n_var + _n_sec + _n_tr + _n_fmt
+        if _n_all:
+            msg += (f"✅ 출력 선언 {_n_all}건: 변수 {_n_var} · 섹션 {_n_sec} · "
+                    f"전이 {_n_tr} · 형식 {_n_fmt}\n")
+        else:
+            msg += "⬜ 출력 선언 없음 (`!출력룰 추가` + 파일)\n"
+
+        # [2026-09-07 P9] 문구만 — 상태창은 이제 매턴 응답 하단 임베드다(상단 헤더 폐지).
+        msg += "🪧 상태창은 매턴 응답 **바로 밑 임베드**로 전 장 자동 표시됩니다 (최대 10장).\n"
+        # [2026-09-13 P9c] `!노트북` 폐기 뒤 유저가 제 노트북을 보는 길이 💠 하나다 — 그래서 적는다.
+        msg += "💠 = 노트북·기록·일지·도착물 (매턴 버튼)\n"
+
         if ready:
             d = domain_manager.get_domain(channel_id)
             d["prepared"] = True

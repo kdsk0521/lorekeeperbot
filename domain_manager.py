@@ -9,7 +9,9 @@ import json
 import re
 import logging
 import time
-from typing import Dict, Any, Optional, List, Union
+import tempfile
+import shutil
+from typing import Dict, Any, Optional, List, Union, Tuple
 
 import config
 from cache_manager import cache
@@ -19,7 +21,9 @@ from cache_manager import cache
 # =========================================================
 
 def initialize_folders() -> None:
-    for path in [config.SESSIONS_DIR, config.LORE_DIR, config.RULES_DIR]:
+    # [2026-09-14 W0] 채널 폴더로 접힘 — 만드는 건 CHANNELS_DIR 하나뿐.
+    #   sessions/ lores/ rules/ 는 더 이상 만들지 않는다(채널 폴더 안으로 이사).
+    for path in [config.CHANNELS_DIR]:
         if not os.path.exists(path):
             try:
                 os.makedirs(path)
@@ -29,27 +33,88 @@ def initialize_folders() -> None:
 
 initialize_folders()  # 모듈 임포트 시 자동 실행
 
-def get_session_file_path(channel_id: str) -> str: return os.path.join(config.SESSIONS_DIR, f"{channel_id}.json")
-def get_lore_file_path(channel_id: str) -> str: return os.path.join(config.LORE_DIR, f"{channel_id}.txt")
-def get_lore_original_file_path(channel_id: str) -> str: return os.path.join(config.LORE_DIR, f"{channel_id}_original.txt")
-def get_rules_file_path(channel_id: str) -> str: return os.path.join(config.RULES_DIR, f"{channel_id}.txt")
+
+# =========================================================
+# [2026-09-14 W0] 채널 폴더 — data/channels/{channel_id}/
+#   state.json / memory.db / lore/{lore,original,rules,summary}.txt
+#   수명이 같은 것끼리 한 곳 → 리셋 = 폴더 삭제.
+# =========================================================
+
+def get_channel_dir(channel_id: str) -> str:
+    """채널 폴더 경로. 만들지는 않는다(순수 함수)."""
+    return os.path.join(config.CHANNELS_DIR, str(channel_id))
+
+
+def _ensure_channel_dir(channel_id: str) -> str:
+    """채널 폴더 + lore/ 생성(멱등). 실패해도 예외를 밖으로 던지지 않는다."""
+    d = get_channel_dir(channel_id)
+    try:
+        os.makedirs(os.path.join(d, config.CHANNEL_LORE_DIR), exist_ok=True)
+    except Exception as e:
+        logging.error(f"Failed to create channel dir {d}: {e}")
+    return d
+
+
+def _channel_lore_path(channel_id: str, fname: str) -> str:
+    return os.path.join(get_channel_dir(channel_id), config.CHANNEL_LORE_DIR, fname)
+
+
+def get_session_file_path(channel_id: str) -> str: return os.path.join(get_channel_dir(channel_id), config.CHANNEL_STATE_FILE)
+def get_lore_file_path(channel_id: str) -> str: return _channel_lore_path(channel_id, "lore.txt")
+def get_lore_original_file_path(channel_id: str) -> str: return _channel_lore_path(channel_id, "original.txt")
+def get_rules_file_path(channel_id: str) -> str: return _channel_lore_path(channel_id, "rules.txt")
 
 def load_json(filepath: str, default_val: Any) -> Any:
+    # [2026-09-05 P0-2] 파싱 실패는 조용히 삼키지 않는다: 원본을 .broken-<ts>로 격리하고
+    # error 로그 + default 반환. 파일 없음은 기존대로 조용히 default.
     if not os.path.exists(filepath): return default_val
     try:
         with open(filepath, 'r', encoding='utf-8') as f: return json.load(f)
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        quarantine = f"{filepath}.broken-{int(time.time())}"
+        try:
+            os.replace(filepath, quarantine)
+            logging.error("[Domain] corrupt session file quarantined: %s -> %s (%s)", filepath, quarantine, e)
+        except Exception as move_err:
+            logging.error("[Domain] corrupt session file could not be quarantined: %s (%s / %s)", filepath, e, move_err)
+        return default_val
     except Exception as e:
         logging.error(f"JSON load error {filepath}: {e}")
         return default_val
 
-def save_json(filepath: str, data: Any) -> bool:
+def _atomic_write(filepath: str, writer) -> bool:
+    """[2026-09-05 P0-1] 같은 디렉토리에 임시파일 -> flush+fsync -> os.replace(원자적).
+    실패 시 임시파일 정리 후 False. 기존 계약(반환 bool) 불변.
+
+    [2026-09-14 W0 §0-④] 새 채널 첫 저장 때 채널 폴더가 아직 없다 —
+    아래 `os.makedirs(directory, exist_ok=True)`가 이미 그 자리를 덮는다
+    (state.json이면 채널 폴더, lore/*.txt면 lore/까지). save_json/save_text는
+    channel_id를 모르는 filepath 계약이라 _ensure_channel_dir을 따로 부르지 않는다."""
+    directory = os.path.dirname(filepath) or "."
+    tmp_path = None
     try:
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.makedirs(directory, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', delete=False,
+                                         dir=directory, prefix=".tmp-",
+                                         suffix=os.path.splitext(filepath)[1] or ".tmp") as f:
+            tmp_path = f.name
+            writer(f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, filepath)
         return True
     except Exception as e:
-        logging.error(f"JSON save error {filepath}: {e}")
+        logging.error(f"Atomic write error {filepath}: {e}")
+        if tmp_path:
+            try: os.remove(tmp_path)
+            except OSError: pass
         return False
+
+def save_json(filepath: str, data: Any) -> bool:
+    # [2026-09-24 감사 §5-2 성능 — 레티어스 판정] 들여쓰기 끔 + `json.dumps` 한 번. 세션 JSON 은 사람이 읽는 문서가
+    #   아니라 작업 기억의 디스크 사본(읽기는 RAM 캐시 → 재시작 때만 파일)이다. `json.dump(indent=2)`는 순수 파이썬
+    #   인코더라 턴당 ~15회 저장에서 루프를 붙잡았다(275KB 합성 실측 14ms → 3ms/회). 열어 볼 땐 편집기 정렬로.
+    return _atomic_write(filepath, lambda f: f.write(json.dumps(data, ensure_ascii=False)))
 
 def load_text(filepath: str, default_val: str) -> str:
     if not os.path.exists(filepath): return default_val
@@ -60,12 +125,7 @@ def load_text(filepath: str, default_val: str) -> str:
         return default_val
 
 def save_text(filepath: str, text: str) -> bool:
-    try:
-        with open(filepath, 'w', encoding='utf-8') as f: f.write(text)
-        return True
-    except Exception as e:
-        logging.error(f"Text save error {filepath}: {e}")
-        return False
+    return _atomic_write(filepath, lambda f: f.write(text))
 
 # =========================================================
 # 2. CORE SESSION ACCESS
@@ -77,7 +137,9 @@ def _get_default_session() -> Dict[str, Any]:
         "npcs": {},
         "history": [],
         "quest_board": {"active": [], "completed": [], "memos": [], "archive": [], "lore": []},
-        "world_state": config.DEFAULT_WORLD_STATE.copy(),
+        # [2026-09-24 감사] deepcopy — 얕은 사본은 중첩 list/dict(doom_clocks·storyteller 등)를 config 기본값과 공유해
+        #   새 채널에서의 첫 변형이 **기본값 자체**를 오염시킬 수 있었다.
+        "world_state": __import__("copy").deepcopy(config.DEFAULT_WORLD_STATE),
         "settings": {
             "response_mode": "auto", 
             "session_locked": False, 
@@ -88,60 +150,233 @@ def _get_default_session() -> Dict[str, Any]:
         "active_genres": ["noir"],
         "custom_tone": None,
         "ai_session_memory": {
-            "world_summary": "", "current_arc": "", "active_threads": [], "resolved_threads": [],
+            # [2026-09-25 스레드 장부] active_threads/resolved_threads 삭제 — 정본은 thread_log(옛 JSON 값은 무해·무독자).
+            "world_summary": "", "current_arc": "",
             "key_events": [], "foreshadowing": [], "world_changes": [], "npc_summaries": {},
             "party_dynamics": "", "last_updated": ""
         },
-        "fermented_history": [],
-        "deep_memory": "",
+        # [2026-09-05 P4] fermented_history·deep_memory·deep_memory_data는 default에서 뺐다 —
+        # 행이 정본이고, JSON에 있으면 save_domain 이음매가 행으로 보내고 dict에서 뺀다.
+        # root active_memory_triggers는 JSON 소유(world_board:610)라 그대로 남긴다.
+        "active_memory_triggers": [],
         "last_export_idx": 0,
         "last_chronicle_idx": 0,
         "telescope_logs": [],
         "bot_active": True,  # Default: Bot is ON
-        "notebook": "— [소지품] —\n\n— [메모] —", # [V5.1] Unified Notebook
+        "notebook": notebook_default(),  # [V5.1→v2 2026-09-06] 정본은 섹션 dict
+        "notebook_shared": notebook_default(),  # [v2] 채널 스코프 섹션 — 이번 단계엔 쓰는 곳 0(자리만)
         "last_execution_context": None  # [!다시] Persistent retry data
     }
 
-def get_notebook(channel_id: str, user_id: str = "") -> str:
-    """PC별 노트북 반환. user_id 있으면 participant에서 조회, 없으면 채널 fallback."""
+
+# =========================================================
+# NOTEBOOK v2 — 섹션 dict 정본 (2026-09-06 P0, 스펙 §4-6)
+# 저장 모양: {"v":2,"sections":{"소지품":{"items":{name:{"qty":int}}},
+#                               "메모":{"user":[str],"llm":[str]},
+#                               "일지":{"lines":[str]}}}
+# 텍스트 한 덩이는 **표시 산출물**일 뿐 — notebook_render()가 옛 모양 그대로 뽑는다.
+# WHY: 텍스트를 정본으로 두면 모든 ops가 리터럴 헤더 split에 의존해 구역 오염·유저 메모
+#      소실(전문 덮어쓰기)이 구조적으로 재발한다. dict가 정본이면 2색·수량이 공짜.
+# =========================================================
+NOTEBOOK_SOJIPIN_HEADER = "— [소지품] —"
+NOTEBOOK_MEMO_HEADER = "— [메모] —"
+NOTEBOOK_JOURNAL_HEADER = "— [일지] —"
+
+
+def notebook_default() -> Dict[str, Any]:
+    """빈 노트북 dict. 리셋/신규 참가자/파싱 실패 폴백이 전부 여기 하나를 쓴다."""
+    return {"v": 2, "sections": {
+        "소지품": {"items": {}},
+        "메모": {"user": [], "llm": []},
+        "일지": {"lines": []},
+    }}
+
+
+def _nb_norm_line(s: str) -> str:
+    return re.sub(r"\s+", " ", str(s or "").strip())
+
+
+def _nb_parse_item_line(body: str):
+    """'철 ×2' → ('철', 2). 수량 표기 없으면 qty=1."""
+    m = re.match(r"^(.*?)\s*[×xX]\s*(\d+)$", body.strip())
+    if m and m.group(1).strip():
+        try:
+            return m.group(1).strip(), max(1, int(m.group(2)))
+        except Exception:
+            pass
+    return body.strip(), 1
+
+
+def notebook_parse(data) -> Dict[str, Any]:
+    """무엇이 들어와도 v2 dict로. (lazy 마이그레이션 — 읽기는 쓰지 않는다)
+    - dict: 정규화해서 통과
+    - str : 옛 텍스트 파싱(헤더 split · '- ' 유저줄 · '> ' LLM줄 · '×N' 수량)
+    - None/기타: 기본값
+    """
+    nb = notebook_default()
+    if data is None:
+        return nb
+    if isinstance(data, dict):
+        src = data.get("sections") if isinstance(data.get("sections"), dict) else data
+        soj = (src or {}).get("소지품") or {}
+        items = soj.get("items") if isinstance(soj, dict) else None
+        if isinstance(items, dict):
+            for k, v in items.items():
+                name = str(k).strip()
+                if not name:
+                    continue
+                try:
+                    q = int(v.get("qty", 1)) if isinstance(v, dict) else int(v)
+                except Exception:
+                    q = 1
+                nb["sections"]["소지품"]["items"][name] = {"qty": max(1, q)}
+        elif isinstance(items, list):
+            for it in items:
+                name = (it.get("name") if isinstance(it, dict) else str(it) or "").strip()
+                if name:
+                    q = int(it.get("qty", 1)) if isinstance(it, dict) else 1
+                    nb["sections"]["소지품"]["items"][name] = {"qty": max(1, q)}
+        memo = (src or {}).get("메모") or {}
+        if isinstance(memo, dict):
+            for color in ("user", "llm"):
+                for l in (memo.get(color) or []):
+                    t = _nb_norm_line(l)
+                    if t and t not in nb["sections"]["메모"][color]:
+                        nb["sections"]["메모"][color].append(t)
+        journal = (src or {}).get("일지") or {}
+        if isinstance(journal, dict):
+            for l in (journal.get("lines") or []):
+                t = _nb_norm_line(l)
+                if t:
+                    nb["sections"]["일지"]["lines"].append(t)
+        return nb
+    if not isinstance(data, str):
+        return nb
+
+    cur = None  # None = 헤더 이전(프리앰블) → 정보 손실 0을 위해 [메모] user로 회수
+    for raw in data.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("—"):
+            if "소지품" in line:
+                cur = "소지품"; continue
+            if "메모" in line:
+                cur = "메모"; continue
+            if "일지" in line:
+                cur = "일지"; continue
+            continue  # 알 수 없는 헤더는 버린다(구역 토글만 담당)
+        if cur == "소지품":
+            if line.startswith("-"):
+                name, qty = _nb_parse_item_line(line.lstrip("-").strip())
+                if name:
+                    prev = nb["sections"]["소지품"]["items"].get(name, {}).get("qty", 0)
+                    nb["sections"]["소지품"]["items"][name] = {"qty": prev + qty}
+        elif cur == "일지":
+            t = _nb_norm_line(line.lstrip("-").strip())
+            if t:
+                nb["sections"]["일지"]["lines"].append(t)
+        else:  # 메모 또는 프리앰블
+            color = "llm" if line.startswith(">") else "user"
+            t = _nb_norm_line(line.lstrip(">").lstrip("-").strip())
+            if t and t not in nb["sections"]["메모"][color]:
+                nb["sections"]["메모"][color].append(t)
+    return nb
+
+
+NOTEBOOK_SHARED_JOURNAL_TAIL = 3
+
+
+def notebook_render(nb, shared=None, shared_journal_tail: int = NOTEBOOK_SHARED_JOURNAL_TAIL) -> str:
+    """dict → 옛 텍스트 모양. 읽기 소비자(컨텍스트·ctx.notebook_txt·!캐릭터·B-1 입력)는
+    전부 이 결과를 받는다 — 호출부는 안 바뀐다.
+    shared: 채널 스코프 섹션(d['notebook_shared']).
+
+    shared_journal_tail: 공유 일지의 **노출 꼬리**(기본 3줄, 0=전량).
+      보관 축과 노출 축을 가른다 — 데이터엔 NOTEBOOK_JOURNAL_MAX 줄이 남고
+      notebook_log 엔 전량이 남지만, 컨텍스트로 나가는 건 최근 며칠뿐이다.
+      일지가 길어지면 그날 장면이 아니라 요약이 프롬프트를 채우기 시작한다."""
+    nb = notebook_parse(nb)
+    sec = nb["sections"]
+    blocks = []
+    journal = sec["일지"]["lines"]
+    if journal:
+        blocks.append(NOTEBOOK_JOURNAL_HEADER + "\n" + "\n".join(f"- {l}" for l in journal))
+    soji = [NOTEBOOK_SOJIPIN_HEADER]
+    for name, meta in sec["소지품"]["items"].items():
+        q = int(meta.get("qty", 1))
+        soji.append(f"- {name}" + (f" ×{q}" if q > 1 else ""))
+    blocks.append("\n".join(soji))
+    memo = [NOTEBOOK_MEMO_HEADER]
+    memo += [f"- {l}" for l in sec["메모"]["user"]]
+    memo += [f"> {l}" for l in sec["메모"]["llm"]]
+    blocks.append("\n".join(memo))
+    out = "\n\n".join(blocks)
+    if shared:
+        shared_nb = notebook_parse(shared)
+        ssec = shared_nb["sections"]
+        try:
+            tail = int(shared_journal_tail or 0)
+        except (TypeError, ValueError):
+            tail = 0
+        if tail > 0:
+            ssec["일지"]["lines"] = ssec["일지"]["lines"][-tail:]
+        if ssec["소지품"]["items"] or ssec["메모"]["user"] or ssec["메모"]["llm"] or ssec["일지"]["lines"]:
+            # 재귀 호출엔 shared 를 안 넘기므로 꼬리 인자도 의미가 없다(이미 잘라 두었다).
+            out += "\n\n" + notebook_render(shared_nb)
+    return out
+
+
+def get_notebook_shared(channel_id: str) -> Dict[str, Any]:
+    """채널 스코프(공유) 노트북 섹션. 자리만 판 상태 — 쓰는 곳 0(P2+에서 채운다)."""
+    return notebook_parse(get_domain(channel_id).get("notebook_shared"))
+
+
+def get_notebook_data(channel_id: str, user_id: str = "") -> Dict[str, Any]:
+    """노트북 정본 dict. 옛 텍스트가 저장돼 있으면 읽는 김에 파싱만 한다(쓰지 않음)."""
     d = get_domain(channel_id)
     if user_id:
         p = d.get("participants", {}).get(user_id, {})
         nb = p.get("notebook")
         if nb is not None:
-            return nb
-    # Fallback: 기존 채널 레벨 (마이그레이션 전 호환)
-    return d.get("notebook", "— [소지품] —\n\n— [메모] —")
+            return notebook_parse(nb)
+    return notebook_parse(d.get("notebook"))
 
-def update_notebook(channel_id: str, text: str, user_id: str = "") -> None:
-    """PC별 노트북 저장. user_id 있으면 participant에 저장.
-    N-8 fix: participant 행이 아직 없어도 채널 fallback으로 쓰지 않고 해당 user 행을 생성.
-    (기존엔 미등록 user끼리 채널 레벨 d['notebook']을 공유 → cross-user 혼선 가능)"""
+
+def update_notebook_data(channel_id: str, nb: Dict[str, Any], user_id: str = "") -> None:
+    """노트북 dict 저장. user_id 있으면 participant 행(없으면 생성), 없으면 채널 레벨."""
+    nb = notebook_parse(nb)
     d = get_domain(channel_id)
     if user_id:
-        participants = d.setdefault("participants", {})
-        participants.setdefault(user_id, {})["notebook"] = text
+        d.setdefault("participants", {}).setdefault(user_id, {})["notebook"] = nb
     else:
-        d["notebook"] = text  # user_id 없을 때만 채널 레벨
+        d["notebook"] = nb
     save_domain(channel_id, d)
 
+
+def get_notebook(channel_id: str, user_id: str = "") -> str:
+    """PC별 노트북 **렌더 텍스트**(표시/프롬프트용). 정본은 get_notebook_data()."""
+    return notebook_render(get_notebook_data(channel_id, user_id), get_notebook_shared(channel_id))
+
+
+def update_notebook(channel_id: str, text, user_id: str = "") -> None:
+    """[legacy shim] 텍스트를 받아도 파싱해서 dict로 저장한다.
+    WHY 잔류: 옛 텍스트 경로가 어디선가 남아 있어도 저장 모양이 v2로 수렴하게."""
+    update_notebook_data(channel_id, notebook_parse(text), user_id)
+
+
 def _append_memo_to_notebook(channel_id: str, content: str, user_id: str = "") -> None:
-    current_nb = get_notebook(channel_id, user_id)
-    # N-7 fix: 공백 정규화 dedup (기존 literal `- {content}` in nb는 공백차로 근접중복 누적)
-    import re as _re
-    _nc = _re.sub(r'\s+', ' ', content.strip())
-    _existing = {_re.sub(r'\s+', ' ', l.strip().lstrip('-').strip())
-                 for l in current_nb.splitlines() if l.strip().startswith('-')}
-    if _nc in _existing:
+    """채널/유저 메모 append — **유저색(-) 줄**. dedup은 공백 정규화 기준(기존 규칙 유지)."""
+    nb = get_notebook_data(channel_id, user_id)
+    t = _nb_norm_line(content)
+    if not t:
         return
+    memo = nb["sections"]["메모"]
+    if t in memo["user"] or t in memo["llm"]:
+        return
+    memo["user"].append(t)
+    update_notebook_data(channel_id, nb, user_id)
 
-    if "— [메모] —" in current_nb:
-        parts = current_nb.split("— [메모] —")
-        new_nb = parts[0] + "— [메모] —" + parts[1] + f"\n- {content}"
-    else:
-        new_nb = current_nb + f"\n\n— [메모] —\n- {content}"
-
-    update_notebook(channel_id, new_nb, user_id)
 
 # =========================================================
 # MATURE MODE MANAGEMENT (via settings.scene_type)
@@ -183,7 +418,10 @@ def get_domain(channel_id: str) -> Dict[str, Any]:
     if not isinstance(data, dict):
         data = default
 
-    # Ensure keys
+    # [V10 P4] 레거시 파일에 남은 fermented/deep 세 키 정리(이주 또는 폐기). 캐시 적재 전 1회.
+    _migrate_legacy_history_keys(channel_id, data)
+
+    # Ensure keys — default에 세 키가 없으므로 여기서 다시 생기지 않는다
     for k in default:
         if k not in data:
             data[k] = default[k]
@@ -212,6 +450,11 @@ def save_domain(channel_id: str, data: Dict[str, Any]) -> bool:
     [V10 Sprint 0] JSON 저장 성공 후 SQLite에도 미러(dual-write).
     SQLite 실패는 봇에 영향 없음 — JSON이 진실의 원천. 롤백 = 아래 dual-write 블록 삭제.
     """
+    # [V10 P4] 이음매 — 세 키가 dict에 있으면 행으로 보내고 dict에서 뺀다.
+    # !다시·!복구·reset_domain·apply_ferment_result 등 세 키를 dict에 넣는 모든 옛 경로가
+    # 여기 하나를 통과한다. save_json 앞이어야 JSON에 안 남는다.
+    _route_history_keys_to_rows(channel_id, data)
+
     # 파일 저장 성공 후 캐시 업데이트 (동기화 안전성)
     if not save_json(get_session_file_path(channel_id), data):
         return False
@@ -224,55 +467,180 @@ def save_domain(channel_id: str, data: Dict[str, Any]) -> bool:
     except Exception as _e:
         logging.debug(f"[V10] dual-write skipped: {_e}")
 
-    # [V10 Sprint 3] 이력 도메인 스냅샷 미러 — 발효(auto_ferment)의 모든 저장이
-    # save_domain(=save_cb)으로 수렴하므로 여기가 유일한 미러 지점 (발효 코드 무수정).
-    _sync_history_domain(channel_id, data)
-
     return True
 
-# [V10 Sprint 3] 변경 감지 가드 — save_domain은 모든 도메인 저장마다 불리므로,
-# fermented/deep이 안 변했으면 미러 skip (무의미한 DELETE+INSERT 방지).
-_hist_sync_cache: Dict[str, tuple] = {}
+# =========================================================
+# [2026-09-05 발효 계약] 발효 결과 적용
+# =========================================================
 
-def _sync_history_domain(channel_id: str, data: Dict[str, Any]) -> None:
+def apply_ferment_result(channel_id: str, result) -> bool:
+    """발효 결과를 live 도메인에 얹는다. get_domain→대입→save_domain 사이 await 0 (동기 RMW)."""
+    if not result.changed:
+        return False
+    d = get_domain(channel_id)
+    # 검출 1줄 — 발효가 든 스냅샷 이후 몇 턴이 지났나 (가설 "6턴마다 뚝" 실측용)
+    live_ti = int((d.get("world_state") or {}).get("turn_index", 0) or 0)
+    if live_ti > result.snapshot_turn_index:
+        logging.info("[Fermentation] apply over %d newer turn(s): held=%d live=%d",
+                     live_ti - result.snapshot_turn_index, result.snapshot_turn_index, live_ti)
+    for k, v in result.values.items():
+        if k == "history":
+            continue
+        d[k] = v
+    if result.history_after is not None:
+        d["history"] = _merge_ferment_history(d.get("history") or [], result.history_before, result.history_after)
+    for uid in result.participants_archive_cleared:
+        mem = ((d.get("participants") or {}).get(uid) or {}).get("ai_memory")
+        if isinstance(mem, dict):
+            mem["archived_info"] = []
+            mem["archived_foreshadowing"] = []
+    # [V10 P4] 행 쓰기는 save_domain 이음매(_route_history_keys_to_rows)가 한다 — 여기서 안 쓴다.
+    return save_domain(channel_id, d)
+
+
+def _merge_ferment_history(live: list, before: list, after: list) -> list:
+    """발효는 스냅샷 history의 **앞부분**만 손댄다(GC 마커 치환, 청크 12 절단).
+    live = before + 그 사이 append된 꼬리 — 이면 after + 꼬리. (fast path, 정상 경로)
+    prefix가 어긋나면(!다시 복원·수동 편집 등) 소비 집합 제거로 폴백."""
+    n = len(before)
+    if live[:n] == before:
+        tail = live[n:]
+        logging.debug("[Fermentation] history merge fast-path: +%d newer entries kept", len(tail))
+        return after + tail
+    # fallback: before에 있었는데 after에 없는 엔트리를 live에서 첫 일치 1개씩 제거
+    removed = [e for e in before if e not in after]
+    out = list(live)
+    for e in removed:
+        try:
+            out.remove(e)   # dict 등가 = 엔트리 전체 일치(role+content+message_id+turn+game_time)
+        except ValueError:
+            pass
+    logging.warning("[Fermentation] history prefix drifted (live=%d before=%d): fallback removed %d/%d",
+                    len(live), n, len(live) - len(out), len(removed))
+    return out
+
+
+# =========================================================
+# [V10 P4 / 2026-09-05] fermented/deep 이음매 — 행이 정본
+# =========================================================
+_HISTORY_ROW_KEYS = ("fermented_history", "deep_memory", "deep_memory_data")
+
+if getattr(config, "V10_HISTORY_STRIP_JSON", False) and not getattr(config, "V10_HISTORY_READ_FROM_SQLITE", False):
+    logging.error("[V10] V10_HISTORY_STRIP_JSON=True인데 V10_HISTORY_READ_FROM_SQLITE=False — "
+                  "JSON에서 뺀 키를 읽을 곳이 없다. config를 맞춰라.")
+
+
+def _route_history_keys_to_rows(channel_id: str, data: Dict[str, Any]) -> None:
+    """[V10 P4] dict에 세 키가 있으면 행으로 보내고 dict에서 뺀다.
+
+    행 쓰기 실패 시 그 키를 JSON에 남긴다(퇴화 모드 — 다음 save에서 재시도).
+    STRIP OFF(롤백)면 행에는 계속 쓰되 pop만 안 한다 = P3 dual 그대로.
+    """
+    present = [k for k in _HISTORY_ROW_KEYS if k in data]
+    if not present:
+        return
+    strip = bool(getattr(config, "V10_HISTORY_STRIP_JSON", False))
     try:
         import sqlite_store
-        fermented = data.get("fermented_history", [])
-        deep = data.get("deep_memory", "")
-        deep_data = data.get("deep_memory_data", {})
-        f_key = hash(json.dumps(fermented, ensure_ascii=False, sort_keys=True, default=str))
-        d_key = hash(json.dumps([deep, deep_data], ensure_ascii=False, sort_keys=True, default=str))
-        cached = _hist_sync_cache.get(channel_id)
-        f_ok = d_ok = True
-        if cached is None or cached[0] != f_key:
-            f_ok = sqlite_store.sync_fermented(channel_id, fermented if isinstance(fermented, list) else [])
-        if cached is None or cached[1] != d_key:
-            d_ok = sqlite_store.sync_deep(channel_id, deep, deep_data)
-        if f_ok and d_ok:
-            _hist_sync_cache[channel_id] = (f_key, d_key)
     except Exception as _e:
-        logging.debug(f"[V10] history domain sync skipped: {_e}")
+        logging.error(f"[V10] history row routing 불가 (sqlite_store import 실패): {_e}")
+        return
+    ok_f = ok_d = True
+    if "fermented_history" in data:
+        fh = data.get("fermented_history")
+        ok_f = sqlite_store.sync_fermented(channel_id, fh if isinstance(fh, list) else [])
+    if "deep_memory" in data or "deep_memory_data" in data:
+        # 한쪽만 있으면 다른 쪽은 현재 행 값으로 보충 (sync_deep은 통째 upsert라 부분 쓰기 불가)
+        cur = sqlite_store.read_deep(channel_id) or {"narrative": "", "data": {}}
+        nar = data.get("deep_memory", cur.get("narrative", "")) or ""
+        dat = data.get("deep_memory_data", cur.get("data", {})) or {}
+        ok_d = sqlite_store.sync_deep(channel_id, nar if isinstance(nar, str) else str(nar),
+                                      dat if isinstance(dat, dict) else {})
+    if strip:
+        if ok_f:
+            data.pop("fermented_history", None)
+        if ok_d:
+            data.pop("deep_memory", None)
+            data.pop("deep_memory_data", None)
+    if not (ok_f and ok_d):
+        logging.error("[V10] history rows write failed (fermented=%s deep=%s) — keys kept in JSON for retry",
+                      ok_f, ok_d)
+
+
+def _migrate_legacy_history_keys(channel_id: str, data: Dict[str, Any]) -> None:
+    """[V10 P4] get_domain 캐시 미스 시 1회 — 레거시 JSON 파일에 남은 세 키를 정리한다.
+
+    행이 비었으면 파일 값을 행으로 이주, 행이 이미 있으면 파일 값은 stale 사본이므로 버린다.
+    파일 재쓰기는 하지 않는다(다음 save_domain이 자연히 뺀다).
+    주의: 여기서 get_fermented_history/get_deep_memory(게터)를 쓰면 get_domain 재귀다 — sqlite_store 직접."""
+    if not getattr(config, "V10_HISTORY_STRIP_JSON", False):
+        return
+    if not any(k in data for k in _HISTORY_ROW_KEYS):
+        return
+    try:
+        import sqlite_store
+        migrated, dropped = [], []
+        if "fermented_history" in data:
+            rows = sqlite_store.read_fermented(channel_id)
+            fh = data.get("fermented_history") or []
+            if rows is None:
+                return                     # 연결 실패 — 아무것도 버리지 않는다(퇴화 모드 유지)
+            if not rows and fh:
+                sqlite_store.sync_fermented(channel_id, fh); migrated.append("fermented_history")
+            else:
+                dropped.append("fermented_history")
+            data.pop("fermented_history", None)
+        if "deep_memory" in data or "deep_memory_data" in data:
+            row = sqlite_store.read_deep(channel_id)
+            j_nar = data.get("deep_memory", "") or ""
+            j_dat = data.get("deep_memory_data", {}) or {}
+            if row is None:
+                return
+            if not (row.get("narrative") or row.get("data")) and (j_nar or j_dat):
+                sqlite_store.sync_deep(channel_id, j_nar, j_dat); migrated.append("deep_memory")
+            else:
+                dropped.append("deep_memory")
+            data.pop("deep_memory", None)
+            data.pop("deep_memory_data", None)
+        if migrated:
+            logging.info("[V10] legacy history keys migrated to rows: %s (%s)", ", ".join(migrated), channel_id)
+        if dropped:
+            logging.info("[V10] legacy history keys dropped from JSON (rows exist): %s (%s)",
+                         ", ".join(dropped), channel_id)
+    except Exception as _e:
+        logging.warning(f"[V10] legacy history migration skipped: {_e}")
+
 
 def reset_domain(channel_id: str) -> None:
-    """채널의 모든 데이터 초기화 (파일 삭제 + 캐시 무효화)"""
-    paths = [get_session_file_path(channel_id), get_lore_file_path(channel_id),
-             get_lore_original_file_path(channel_id), get_rules_file_path(channel_id)]
-    for p in paths:
-        if os.path.exists(p):
-            try:
-                os.remove(p)
-            except (OSError, PermissionError) as e:
-                logging.warning(f"Failed to delete {p}: {e}")
+    """채널의 모든 데이터 초기화.
 
-    # 모든 캐시 무효화
+    [2026-09-14 W0] 리셋 = 채널 폴더 삭제. 종전의 파일별 삭제(세션 JSON·lore·original·
+    rules·summary)는 폴더 삭제 하나로 접힌다. 레거시 모드(sqlite_store._DB_PATH 설정)
+    에서는 DB가 폴더 밖 단일 파일이라 delete_channel_rows가 행 목록 삭제를 계속 맡는다.
+    !리셋은 채널을 재생성(새 id)하지만, 같은 id로 이어 써도 다음 저장에서 폴더가 다시 생긴다."""
+    # 캐시 무효화 먼저 — 폴더가 사라진 뒤 옛 값이 되살아나지 않게.
     cache.invalidate_all(channel_id)
 
-    # [V10] SQLite 행도 삭제 — 안 지우면 읽기 플래그 ON 시 유령 데이터 부활 (Sprint 1 누락분 보강)
+    # [V10] SQLite 행/파일 정리 — 연결 닫기 포함. 폴더 삭제 전에 해야 Windows에서 잠기지 않는다.
     try:
         import sqlite_store
         sqlite_store.delete_channel_rows(channel_id)
     except Exception as _e:
         logging.debug(f"[V10] channel rows delete skipped: {_e}")
+
+    # [2026-09-14 W4] 휘발 회상 흔적 dict — 폴더 삭제는 프로세스 메모리를 못 건드린다.
+    try:
+        import fermentation
+        fermentation.forget_channel_recall(channel_id)
+    except Exception as _e:
+        logging.debug(f"[Wiki] forget_channel_recall skipped: {_e}")
+
+    # 폴더 통째 삭제 (없으면 무시)
+    d = get_channel_dir(channel_id)
+    try:
+        shutil.rmtree(d, ignore_errors=True)
+    except Exception as e:
+        logging.warning(f"Failed to delete channel dir {d}: {e}")
 
 # Export Indices
 def get_last_export_idx(channel_id: str) -> int:
@@ -350,7 +718,8 @@ def get_lore_original(channel_id: str) -> Optional[str]:
     return None
 
 def get_event_lore_summary_file_path(channel_id: str) -> str:
-    return os.path.join(config.LORE_DIR, f"{channel_id}_summary.txt")
+    # [2026-09-14 W0] 채널 폴더 lore/summary.txt
+    return _channel_lore_path(channel_id, "summary.txt")
 
 def get_event_lore_summary(channel_id: str) -> str:
     path = get_event_lore_summary_file_path(channel_id)
@@ -399,12 +768,24 @@ def get_lore_with_npcs(channel_id: str) -> str:
     return lore + sec
 
 # NPCs
+# [2026-09-18 식별 허브 S1] 몹 표식 정규형 — 키는 **꼬리형 한 가지**(`경비병 #2A`).
+#   산문엔 표식이 나오지 않지만(설계: identity_hub_design_v0.1_2026-09-18) 사람이 손으로 앞에
+#   칠 수 있고(`#2A 경비병`), 모델·명령어가 공백·대소문자를 흔든다. 한 모양으로 접어 키가 갈리지 않게 한다.
+_TAG_HEAD_RE = re.compile(r'^#([A-Za-z0-9]{2}|\d{4})\s+')
+_TAG_TAIL_RE = re.compile(r'\s*#([A-Za-z0-9]{2}|\d{4})$')
+
+
 def _normalize_npc_name(name: str) -> str:
-    """NPC 이름 정규화: 괄호 주변 공백 통일. '리미 (Limi)' → '리미(Limi)'"""
+    """NPC 이름 정규화: 괄호 주변 공백 통일 + 몹 표식 꼬리형 통일.
+    '리미 (Limi)' → '리미(Limi)' / '#2a 경비병'·'경비병#2A' → '경비병 #2A'"""
     name = name.strip()
     name = re.sub(r'\s+\(', '(', name)
     name = re.sub(r'\(\s+', '(', name)
     name = re.sub(r'\s+\)', ')', name)
+    _h = _TAG_HEAD_RE.match(name)
+    if _h:
+        name = (name[_h.end():].strip() + ' #' + _h.group(1).upper()).strip()
+    name = _TAG_TAIL_RE.sub(lambda m: ' #' + m.group(1).upper(), name)
     return name
 
 def _is_hangul(s: str) -> bool:
@@ -424,7 +805,14 @@ def _short_tokens(s: str) -> set:
     """키에서 뽑는 축약형 후보 토큰. 공백 분리 토큰(≥2자) + 한글 성씨드롭 이름(3-4자→성 1자 제거).
     예: 'Kuromiya Reina(쿠로미야 레이나)' → {kuromiya, reina, 쿠로미야, 레이나}
         'Yoon Seo-rin(윤서린)' → {yoon, seo-rin, 윤서린, 서린}"""
-    base = re.split(r'[(\[（]', s)[0].strip()
+    # [2026-09-18 식별 허브 S1] 표식 달린 키는 축약형 후보에서 제외.
+    #   표식이 붙었다는 것 자체가 "역할명을 여럿이 공유한다"는 표지다 — 역할명 단독 질의(`경비병`)가
+    #   표식 인물(`경비병 #2A`)에 닿으면 남의 시트에 관찰이 쌓인다(F1, 실측 오병합).
+    #   ★경위: 이 흡수는 표식이 히스토리에서 벗겨지던 시절 몹에 닿는 **유일한 길**이었다.
+    #   표식이 키에 보존되고 무대 명부가 급식되는 지금은 보상 동작이 해악으로 뒤집힌다.
+    base = re.split(r'[(\[（]', _normalize_npc_name(s))[0].strip()
+    if _TAG_TAIL_RE.search(base):
+        return set()
     m = re.search(r'[(\[（]([^)\]）]+)[)\]）]', s)
     inner = m.group(1).strip() if m else ""
     toks: set = set()
@@ -446,8 +834,232 @@ def _short_tokens(s: str) -> set:
 #   upsert_npc) 경유여야 stale 안 됨(직접 d["npcs"] 변형+save_domain만 하는 경로 금지).
 # 단건(get_npc)은 별칭 해상도(_find_npc_key)가 전체 dict를 요구하므로 get_npcs 경유 유지.
 
+# [2026-09-16 시트 2차b] NPC 시트 원문의 정본 = 위키 인물 페이지 lore 절.
+#   **쓰기 관문 하나**: NPC dict가 저장 관문(update_npc·_mirror_npc)에 들어오면 `description`/`desc`를
+#   dict에서 **빼서** 페이지로만 보낸다(`wiki_store.set_sheet_text` → `set_lore_sections`). dict에는
+#   원문 키가 저장되지 않는다. 들어온 원문이 지금 페이지 조립본과 같으면(= get_npc() 뷰를 그대로
+#   되돌려 쓴 경우) 쓰기 0. 원문 키가 없으면 페이지 lore 절은 **무접촉**(부분 dict가 원문을 지우지 않는다).
+#   세션 NPC(원문 없음)는 lore 절 없이 페이지만(WIKI_PAGES) — play 절 Observed는 grow_sheet 몫.
+#   읽기는 `get_npcs()`가 페이지 lore 절을 조립해 `description`을 채운다(파생, 캐시 없음).
+_NPC_TEXT_KEYS = ("description", "desc")
+_NPC_DESC_PLACEHOLDERS = ("auto-detected by ai", "auto-detected by ai.")
+
+
+def _npc_page_id(npc_name: str) -> str:
+    import wiki_store
+    return wiki_store.page_id_for("character", npc_name)
+
+
+def _authored_source(hint: Any) -> str:
+    """원문 있는 인물의 출처 표기 — 로어 업로드로 온 것은 "lore", 그 외 "manual"."""
+    return "lore" if str(hint or "").lower() == "lore" else "manual"
+
+
+def _npc_sheet_gate(channel_id: str, npc_name: str, data: Dict[str, Any]) -> None:
+    """NPC 쓰기 관문(원문→페이지 + source 파생 도장). data를 **제자리에서** 고친다.
+
+    [2026-09-22 voice_seed §H] `_seed_stamp`(=§G 관문이 시드 원문을 넣으며 세운 표식)가 있으면
+    페이지 source 를 `"seed"` 로 찍는다. 시드도 lore 절에 앉기 때문에 도장이 없으면 그 즉시
+    manual 로 읽혀 동결·몹 태그 제외가 따라온다(§H). 도장은 **여기서 pop** 한다 —
+    저장소 장애로 일찍 돌아가는 길에서도 dict 에 남지 않게 맨 앞에서 뗀다."""
+    if not isinstance(data, dict) or not channel_id or not npc_name:
+        return
+    _seed = bool(data.pop("_seed_stamp", None))
+    try:
+        import wiki_store
+        _avail = wiki_store.store_available(channel_id)
+    except Exception:
+        _avail = False
+    if not _avail:
+        # 저장소 장애 = "원문 없음"이 아니다 — source를 session으로 떨구지 않고(클리어가 작가 시트를
+        #   지우는 반사실형 실패 방지) 원문 키도 빼지 않는다(유실 방지). 다음 정상 쓰기가 페이지로 옮긴다.
+        _h = str(data.get("source") or "").lower()
+        data["source"] = _h if _h in ("lore", "manual") else "session"
+        logging.error(f"[Wiki] npc sheet gate: 위키 저장소 불가 — 원문 보류 {channel_id}/{npc_name}")
+        return
+    text = ""
+    for _k in _NPC_TEXT_KEYS:
+        _v = data.pop(_k, None)
+        if not text and isinstance(_v, str) and _v.strip():
+            text = _v.strip()
+    if text.lower() in _NPC_DESC_PLACEHOLDERS:
+        text = ""
+    try:
+        import wiki_store
+        pid = wiki_store.page_id_for("character", npc_name)
+        aliases = data.get("aliases") if isinstance(data.get("aliases"), list) else None
+        turn = data.get("updated_turn")
+        # [voice_seed §H] 지금 페이지에 시드 도장이 서 있나 — 이번 쓰기가 **원문을 새로 앉히지 않으면**
+        #   그 도장은 유지된다. 유지하지 않으면 세션 NPC의 흔한 부분 갱신(면모 병합·쿨다운 틱 등)이
+        #   매번 source="session"으로 도장을 덮고, 그 다음 읽기가 "절은 있는데 도장은 seed가 아님"
+        #   = manual 로 판정해 시드 NPC가 조용히 동결된다(§H 기각안 H-3이 뒷문으로 들어오는 꼴).
+        _seed_now = (wiki_store.page_source(channel_id, pid) == wiki_store.SEED_SOURCE)
+        _wrote = False
+        if text and text != wiki_store.assemble_lore_text(wiki_store.get_lore_sections(channel_id, pid)):
+            if wiki_store.ensure_page(channel_id, "character", npc_name, aliases=aliases,
+                                      source=(wiki_store.SEED_SOURCE if _seed
+                                              else _authored_source(data.get("source"))), turn=turn):
+                n = wiki_store.set_sheet_text(channel_id, pid, text, turn)
+                _wrote = True
+                logging.info(f"[Wiki] npc sheet page={pid} sections={n}"
+                             + (" source=seed" if _seed else ""))
+        # [voice_seed §H] 승격 판정 = 절 유무 ∧ 도장≠seed. 절 유무만 보면 시드가 manual로 승격한다.
+        authored = wiki_store.is_authored_page(channel_id, pid)
+        data["source"] = _authored_source(data.get("source")) if authored else "session"
+        _keep_seed = _seed or (_seed_now and not _wrote)
+        if authored or getattr(config, "WIKI_PAGES", False):
+            wiki_store.ensure_page(channel_id, "character", npc_name, aliases=aliases,
+                                   source=(wiki_store.SEED_SOURCE if _keep_seed else data["source"]),
+                                   turn=turn)
+    except Exception as _e:
+        logging.warning(f"[Wiki] npc sheet gate 실패: {channel_id}/{npc_name}: {_e}")
+        data["source"] = derive_npc_source(data)
+        if text and not any(k in data for k in _NPC_TEXT_KEYS):
+            data["description"] = text          # 쓰기 실패 = 원문 보류(유실 0)
+
+
+def _npc_seed_gate(channel_id: str, final_key: str, name: str, data: Dict[str, Any],
+                   session: Optional[Dict[str, Any]] = None) -> None:
+    """[2026-09-22 voice_seed §G] 세션 NPC 탄생 시 버퍼 시드 소비. data를 **제자리에서** 고친다.
+
+    호출 위치 = `update_npc`, `_wiki_rename_npc`·`_npc_sheet_gate` **앞** 한 곳.
+    세션 NPC 탄생 경로가 셋인데 셋 다 여기를 지나기 때문이다(단일 소비점):
+      ① `orchestration._npc_roster_pass` 스텁 생성 — `npc_manager.update_npc(... status/lore_seen)`
+      ② `npc_manager.register_ai_npc` (new_individual 몹 태그) — 끝에서 `update_npc(태그된 이름)`
+      ③ `orchestration` psyche relation 자동생성 — `npc_manager.update_npc(... source=session)`,
+         **렌더 전**이라 ①보다 먼저 등록해 버릴 수 있다. 그래서 소비를 로스터 패스에 두면 안 된다.
+    (①②③ 모두 `npc_manager.update_npc` → 여기. 그 함수는 자동 추출만 얹고 그대로 넘긴다.)
+
+    조건 둘 — data에 원문 키가 **없고**(작가·수동 쓰기가 아니고) ∧ 페이지에 lore 절이 **없다**
+    (이미 시트가 있는 인물 위에 시드를 얹지 않는다, v4 §10 lore/manual 무접촉).
+    소비하면 원문은 `description` 으로 넣고 기존 `_npc_sheet_gate` 경로(pop → set_sheet_text)를
+    그대로 탄다 — **새 쓰기 경로 0**. 저장소 장애면 그 관문이 원문을 dict에 보류하므로 유실도 0.
+
+    `session` = 호출자가 들고 있는 세션 스냅숏(`get_domain` 반환값). **필수에 가깝다**:
+    `get_domain`은 캐시의 **deep copy**를 주므로, 소비(버퍼 쓰기)가 저장된 뒤에 호출자가
+    자기 스냅숏을 `save_domain` 하면 옛 `pending_seeds`가 되살아난다(= 시드가 무한 재소비).
+    그래서 소비 직후 스냅숏의 버퍼도 최신본으로 갈아 끼운다.
+
+    VOICE_SEED OFF: `buffer_take`가 곧장 None → 무동작(버퍼도 비어 있다).
+    시드는 best-effort다 — 여기서 나는 예외는 삼키고 로그만 남긴다(등록 자체를 막지 않는다).
+    """
+    if not isinstance(data, dict) or not channel_id or not final_key:
+        return
+    try:
+        if any(k in data for k in _NPC_TEXT_KEYS):
+            return
+        import wiki_store
+        if wiki_store.has_lore_sections(channel_id, _npc_page_id(final_key)):
+            return
+        import voice_seed
+        entry = voice_seed.buffer_take(
+            channel_id, [final_key, name, voice_seed.mob_base(final_key)])
+        if not entry:
+            return
+        _sess_mem = session.get("ai_session_memory") if isinstance(session, dict) else None
+        if isinstance(_sess_mem, dict):
+            _sess_mem[voice_seed.BUFFER_KEY] = voice_seed.buffer_state(channel_id)
+        text = voice_seed.seed_sheet_text(entry)
+        if not text:
+            return
+        data["description"] = text
+        _roll = entry.get("roll")
+        if isinstance(_roll, dict):
+            # §1.5 — NPC dict 유일 신설 필드. 읽는 코드 없음(관측·표 튜닝용).
+            data["core_traits_roll"] = {**_roll, "turn": entry.get("born_turn")}
+        data["_seed_stamp"] = True          # §H — `_npc_sheet_gate`가 읽고 pop
+        logging.info(f"[Seed] 관문 소비: {final_key} (state={entry.get('state')})")
+    except Exception as _e:
+        logging.warning(f"[Seed] 관문 소비 실패(무시): {channel_id}/{final_key}: {_e}")
+
+
+def _npc_read_view(channel_id: str, npcs: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """저장 dict → 읽기 뷰(얕은 사본). `description` = 페이지 lore 절 조립, `source` = lore 절 유무 파생.
+    페이지 조회는 채널당 1회(`character_lore_map`). 조회 실패면 저장된 source 도장을 그대로 두고
+    description은 ""(원문을 지어내지 않는다).
+
+    [2026-09-22 voice_seed §H] 같은 한 번의 조회에 page source 도장을 실어 온다(`with_source=True`) —
+    시드 절(도장 "seed")을 가진 세션 NPC가 여기서 manual로 승격하지 않게. 판정식은
+    `wiki_store.is_authored_page`와 **같다**: 절 있음 ∧ 도장≠seed."""
+    if not isinstance(npcs, dict):
+        return npcs
+    try:
+        import wiki_store
+        lore = wiki_store.character_lore_map(channel_id, with_source=True)
+    except Exception:
+        wiki_store = None
+        lore = None
+    out: Dict[str, Dict[str, Any]] = {}
+    for k, v in npcs.items():
+        if not isinstance(v, dict):
+            out[k] = v
+            continue
+        d = dict(v)
+        d.pop("desc", None)
+        if lore is None:
+            d["description"] = ""
+        else:
+            secs, _psrc = wiki_store.lore_map_entry(lore.get(wiki_store.page_id_for("character", k)))
+            d["description"] = wiki_store.assemble_lore_text(secs)
+            d["source"] = (_authored_source(v.get("source"))
+                           if (secs and _psrc != wiki_store.SEED_SOURCE) else "session")
+        out[k] = d
+    return out
+
+
+def _wiki_rename_npc(channel_id: str, old_name: str, new_name: str, data: Dict[str, Any]) -> None:
+    # [시트 2차b] lore 절이 정본이라 이관은 WIKI_PAGES와 무관하게 돈다.
+    try:
+        import wiki_store
+        wiki_store.rename_npc_page(channel_id, old_name, new_name, data)
+    except Exception as _e:
+        logging.debug(f"[Wiki] npc page rename skipped: {_e}")
+
+
+def _wiki_mark_deleted(channel_id: str, npc_name: str) -> None:
+    if not getattr(config, "WIKI_PAGES", False):
+        return
+    try:
+        import wiki_store
+        wiki_store.mark_page_deleted(channel_id, "character", npc_name)
+    except Exception as _e:
+        logging.debug(f"[Wiki] npc page delete-mark skipped: {_e}")
+
+
+# [2026-09-16 시트 2차 §9 승격 → 2차b] `source`는 **파생값**이다 — 페이지 lore 절 유무 하나로 정한다
+#   (`wiki_store.is_authored_page`). 원문 있음 = 작가 시트("lore" 표기 유지, 그 외 "manual") / 없음 = "session".
+#   [2026-09-22 voice_seed §H] 판정에 조건 하나가 더 붙었다 — **페이지 source 도장이 "seed" 가 아닐 것**.
+#   시드 원문도 lore 절에 앉으므로, 절 유무만 보면 세션 NPC가 시드를 받는 순간 manual 이 된다.
+#   description 쪽 판정은 삭제(dict엔 원문이 저장되지 않는다).
+#   · channel_id·name을 주면 페이지를 직접 본다(쓰기 관문·JSON 원본을 도는 삭제 경로).
+#   · dict만 주면 그 dict의 `source`를 읽는다 — `get_npcs()` 뷰가 페이지에서 찍은 도장이다.
+def derive_npc_source(data: Any, channel_id: Optional[str] = None, name: Optional[str] = None,
+                      lore_map: Optional[dict] = None) -> str:
+    hint = data.get("source") if isinstance(data, dict) else ""
+    if channel_id and name:
+        import wiki_store
+        if lore_map is not None:
+            # [voice_seed §H] 절 유무 ∧ 도장≠seed. 도장 없는 옛 모양 lore_map 이면 절 유무만(종전 동작).
+            _secs, _psrc = wiki_store.lore_map_entry(lore_map.get(_npc_page_id(name)))
+            authored = bool(_secs) and _psrc != wiki_store.SEED_SOURCE
+        else:
+            authored = wiki_store.is_authored_page(channel_id, _npc_page_id(name))
+        return _authored_source(hint) if authored else "session"
+    h = str(hint or "").lower()
+    return h if h in ("lore", "manual") else "session"
+
+
+def is_authored_npc(data: Any, channel_id: Optional[str] = None, name: Optional[str] = None) -> bool:
+    return derive_npc_source(data, channel_id, name) != "session"
+
+
 def _mirror_npc(channel_id: str, npc_name: str, data: Dict[str, Any]) -> None:
-    """NPC 1건을 방벽 통과 후 npcs 테이블에 미러."""
+    """NPC 1건을 방벽 통과 후 npcs 테이블에 미러. 원문 키는 쓰기 관문이 페이지로 보내고 dict에선 뺀다."""
+    if isinstance(data, dict):
+        _src_dict = data
+        data = dict(data)
+        _npc_sheet_gate(channel_id, npc_name, data)
+        _src_dict["source"] = data.get("source")
     try:
         import sqlite_store
         import state_guards
@@ -464,16 +1076,49 @@ def get_npcs(channel_id: str) -> Dict[str, Dict[str, Any]]:
             import sqlite_store
             npcs = sqlite_store.read_npcs(channel_id)
             if npcs is not None:
-                return npcs
+                return _npc_read_view(channel_id, npcs)
             npcs_json = get_domain(channel_id).get("npcs", {})
             for _name, _data in npcs_json.items():
                 _mirror_npc(channel_id, _name, _data)
-            return npcs_json
+            return _npc_read_view(channel_id, npcs_json)
         except Exception as _e:
             logging.warning(f"[V10] npcs read-through 실패, JSON 폴백: {_e}")
-    return get_domain(channel_id).get("npcs", {})
+    return _npc_read_view(channel_id, get_domain(channel_id).get("npcs", {}))
 
-def _find_npc_key(npcs: dict, name: str) -> Optional[str]:
+# =========================================================
+# [V10 P3 / 2026-09-05] fermented·deep read-through
+# =========================================================
+
+def get_fermented_history(channel_id: str) -> list:
+    """[V10 P4] 행이 정본. 행 [] = 데이터 없음(정상). 행 None = 실패 → JSON에 남은 키로 퇴화 폴백."""
+    if getattr(config, "V10_HISTORY_READ_FROM_SQLITE", False):
+        try:
+            import sqlite_store
+            rows = sqlite_store.read_fermented(channel_id)
+            if rows is not None:
+                return rows
+            logging.error("[V10] fermented row read failed — falling back to JSON leftovers (%s)", channel_id)
+        except Exception as _e:
+            logging.warning(f"[V10] fermented read-through 실패, JSON 폴백: {_e}")
+    return get_domain(channel_id).get("fermented_history", []) or []
+
+
+def get_deep_memory(channel_id: str) -> tuple:
+    """[V10 P4] (narrative, data). 계약은 get_fermented_history와 동형."""
+    if getattr(config, "V10_HISTORY_READ_FROM_SQLITE", False):
+        try:
+            import sqlite_store
+            row = sqlite_store.read_deep(channel_id)
+            if row is not None:
+                return (row.get("narrative") or "", row.get("data") or {})
+            logging.error("[V10] deep row read failed — falling back to JSON leftovers (%s)", channel_id)
+        except Exception as _e:
+            logging.warning(f"[V10] deep read-through 실패, JSON 폴백: {_e}")
+    d = get_domain(channel_id)
+    return (d.get("deep_memory", "") or "", d.get("deep_memory_data", {}) or {})
+
+
+def _find_npc_key(npcs: dict, name: str, *, allow_token: bool = True) -> Optional[str]:
     """NPC 키 검색: 정규화 → 대칭 base/inner 매칭 → aliases → 충돌가드 토큰(축약형).
 
     [2026-06-12] aliases 정식 지원 (한↔영 교차 중복 차단).
@@ -509,7 +1154,9 @@ def _find_npc_key(npcs: dict, name: str) -> Optional[str]:
     # 4) 축약형/이름 토큰 매칭 — 단일 토큰 질의가 정확히 1명의 토큰 후보에만 걸릴 때.
     #    "스텔라"→Stella Valentine, "레이나"→쿠로미야 레이나, "서린"→윤서린(성씨드롭).
     #    2명 이상 공유 토큰이면 None (애매 → 오병합 대신 명시 alias/병합에 위임).
-    if q_base and " " not in q_base and len(q_base) >= 2 and not q_inner:
+    # [2026-09-24 감사] allow_token=False — 명부 **부분집합**(이번 턴 결과·사망자·추적 dict)에 대고 부를 때.
+    #   "후보 정확히 1명" 규칙은 전체 명부에서만 유일성을 보장한다: 부분집합에 "Shirase Rin"만 있으면 "Rin"이 그리로 붙었다.
+    if allow_token and q_base and " " not in q_base and len(q_base) >= 2 and not q_inner:
         ql = q_base.lower()
         hits = [k for k in npcs if ql in _short_tokens(k)]
         if len(hits) == 1:
@@ -558,6 +1205,11 @@ def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
         _new = dict(get_npc(...)); _new["필드"] = 값; update_npc(..., _new)
     (보존 목록에 키를 더 얹는 것은 근본 해법이 아니다 — 목록은 항상 뒤처진다.)
 
+    [2026-09-22 voice_seed §G] 세션 NPC **탄생 경로 셋이 전부 여기를 지난다** —
+    ① `_npc_roster_pass` 스텁 ② `register_ai_npc`(new_individual 몹 태그) ③ orchestration psyche
+    relation 자동생성(렌더 전). 그래서 시드 버퍼 소비점도 여기 하나(`_npc_seed_gate`)다:
+    로스터 패스에만 달면 ③이 먼저 등록해 시드가 영영 안 앉는다.
+
     [2026-06-12] 중복 탐지 보강 — 기존엔 정규화 동일성만 봐서 (등록 경로별로
     매칭이 제각각이라) 같은 인물이 키 형태마다 병렬 생성됐음. 이제:
     ① find_equivalent_npc_key로 양방향 매칭
@@ -596,7 +1248,7 @@ def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
     _PRESERVE_KEYS = (
         "source", "aliases",
         # 다른 경로가 만들어낸 자산 (등록 시트에는 원래 없는 것들)
-        "tone", "speech", "static_traits", "play_observed", "appearances",
+        "tone", "speech", "static_traits", "appearances",
         # [2026-09-03 R6] schedule. tone과 **같은 사유**로 보존한다: 시트에는 원래 없고
         #   `!npc 일정`(1회성 추출 콜)이 만들어 넣는 자산이라, 목록 밖이면 시트
         #   재업로드(`!npc 추가`) 한 번에 조용히 증발한다. 스펙 §6 R6 ②.
@@ -640,16 +1292,41 @@ def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
             # 태도/지식/각인도 함께 이사 (구 키에 쌓인 관계 고아화 방지)
             # [2026-07-28] npc_imprints 추가 — 행동 각인은 iceberg·world_board가 실제로 읽는데
             #   이사 목록에 없어 개명 때마다 구 키에 고아로 남았다.
-            rename_entity_relation_edges(d, existing_key, final_key)
-            for _dom in ("npc_attitudes", "npc_knowledge", "npc_imprints"):
+            for _dom in ("npc_knowledge", "npc_imprints"):
                 _dd = d.get(_dom, {})
                 if existing_key in _dd and final_key not in _dd:
                     _dd[final_key] = _dd.pop(existing_key)
                 elif existing_key in _dd:
                     _dd.pop(existing_key)  # 양쪽 존재 시 final 쪽 유지
 
+    # [2026-09-22 voice_seed §G] 버퍼 시드 소비 — 이관·쓰기 관문 **앞**. 원문 키가 여기서 생기면
+    #   아래 관문이 그대로 페이지 lore 절로 옮긴다(새 쓰기 경로 0). 자세한 계약은 _npc_seed_gate.
+    _npc_seed_gate(channel_id, final_key, name, data, session=d)
+    # [시트 2차b] 개명이면 페이지(play·lore 절) 이관을 먼저 — 들어온 원문이 새 페이지에 앉도록.
+    if existing_key and existing_key != final_key:
+        _wiki_rename_npc(channel_id, existing_key, final_key, data)
+    _npc_sheet_gate(channel_id, final_key, data)   # 원문 → 페이지 lore 절, dict에서 제거 + source 파생 도장
     npcs[final_key] = data
     save_domain(channel_id, d)
+    # [2026-09-24 감사] 키 승격(괄호식 `레나`→`레나(Rena)`)이면 world_state 부수 저장소(감정·soma — 여긴 인라인
+    #   이관 목록 밖)와 world_tree 출석도 옮긴다. 전엔 옛 키에 고아로 남아 감정 연속성이 끊기고, 노드에 옛
+    #   이름이 유령 출석으로 남아 같은 인물이 0단에 두 번 떴다. (도메인 쪽은 위에서 이미 옮겨 no-op)
+    if existing_key and existing_key != final_key:
+        try:
+            migrate_npc_side_data(channel_id, existing_key, final_key)
+        except Exception as _e_msd:
+            logging.debug(f"[NPC] 키 승격 부수 이관 skip: {_e_msd}")
+        try:
+            import world_tree as _wt_up
+            _loc_up = _wt_up.get_npc_location(channel_id, existing_key)
+            if _loc_up:
+                _wt_up.remove_npc_presence(channel_id, existing_key)
+                if not _wt_up.get_npc_location(channel_id, final_key):
+                    _wt_up.set_npc_location(channel_id, final_key, _loc_up)
+        except Exception as _e_wtu:
+            logging.debug(f"[NPC] 키 승격 출석 이관 skip: {_e_wtu}")
+        d = get_domain(channel_id)   # 위 두 이관이 도메인을 다시 저장했다 — 이하 코드가 옛 사본을 쓰지 않게
+        npcs = d.get("npcs", {})
 
     # [V10 Sprint 2-B] 미러 — 키 마이그레이션 발생 시 구 행 삭제 + 신 행, 한 트랜잭션
     try:
@@ -659,10 +1336,8 @@ def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
         if clean is not None:
             if existing_key and existing_key != final_key:
                 sqlite_store.rename_npc(channel_id, existing_key, final_key, clean)
-                sqlite_store.delete_relation(channel_id, existing_key)
+                sqlite_store.rename_edge_entity(channel_id, existing_key, final_key)  # [관계 통합] 엣지 이름 이관
                 sqlite_store.delete_knowledge(channel_id, existing_key)
-                if final_key in d.get("npc_attitudes", {}):
-                    _mirror_relation(channel_id, final_key, d["npc_attitudes"][final_key])
                 if final_key in d.get("npc_knowledge", {}):
                     _mirror_knowledge(channel_id, final_key, d["npc_knowledge"][final_key])
             else:
@@ -689,10 +1364,12 @@ def delete_npc(channel_id: str, name: str) -> tuple:
         try:
             import sqlite_store
             sqlite_store.delete_npc_row(channel_id, target)
-            sqlite_store.delete_relation(channel_id, target)
             sqlite_store.delete_knowledge(channel_id, target)
         except Exception as _e:
             logging.debug(f"[V10] npc delete mirror skipped: {_e}")
+        # [2026-09-14 W1] 페이지는 **지우지 않는다** — status='deleted' 표시만(삭제 0 원칙).
+        #   플레이가 쌓은 play 절은 인물이 퇴장해도 사건의 증거로 남는다.
+        _wiki_mark_deleted(channel_id, target)
         return True, target
     return False, None
 
@@ -828,24 +1505,13 @@ def merge_npc(channel_id: str, dup_name: str, canon_name: str) -> tuple:
     npcs[canon_key] = canon
     del npcs[dup_key]
 
-    # 3) 태도 병합 (본체 우선, depth/tension은 max)
-    attitudes = d.get("npc_attitudes", {})
-    dup_att = attitudes.pop(dup_key, None)
-    if dup_att:
-        canon_att = attitudes.get(canon_key)
-        if canon_att:
-            _pre_d = canon_att.get("depth", 0) or 0
-            _pre_t = canon_att.get("tension", 0) or 0
-            canon_att["depth"] = max(_pre_d, dup_att.get("depth", 0) or 0)
-            canon_att["tension"] = max(_pre_t, dup_att.get("tension", 0) or 0)
-            # [2026-08-17 감사] 흡수로 값이 올라간 경우만 도장 — 본체가 이미 컸으면 no-op.
-            _stamp_relation_change(channel_id, canon_key, canon_att,
-                                   [("depth", _pre_d, canon_att["depth"]),
-                                    ("tension", _pre_t, canon_att["tension"])],
-                                   "merge", note=f"absorbed {dup_key}")
-        else:
-            attitudes[canon_key] = dup_att
-            canon_att = dup_att
+    # 3) 관계 엣지 이관 — [2026-09-15 관계 통합] 엣지 PK가 이름이라 이름만 옮긴다.
+    #   양쪽에 같은 방향 엣지가 있으면 본체(canon) 쪽 유지(rename_edge_entity 충돌 규칙).
+    try:
+        import sqlite_store as _ss_m
+        _ss_m.rename_edge_entity(channel_id, dup_key, canon_key)
+    except Exception as _e_em:
+        logging.debug(f"[NPC 병합] 엣지 이관 skip: {_e_em}")
 
     # 4) 지식 병합 (합집합)
     knowledge = d.get("npc_knowledge", {})
@@ -876,13 +1542,20 @@ def merge_npc(channel_id: str, dup_name: str, canon_name: str) -> tuple:
     try:
         import sqlite_store
         sqlite_store.delete_npc_row(channel_id, dup_key)
-        sqlite_store.delete_relation(channel_id, dup_key)
         sqlite_store.delete_knowledge(channel_id, dup_key)
     except Exception as _e:
         logging.debug(f"[V10] merge dup row cleanup skipped: {_e}")
-    _mirror_npc(channel_id, canon_key, canon)
-    if canon_key in d.get("npc_attitudes", {}):
-        _mirror_relation(channel_id, canon_key, d["npc_attitudes"][canon_key])
+    # [시트 2차b] 원문 = 페이지 lore 절. 본체 우선·빈 자리만 채움(필드 병합과 같은 정책).
+    #   중복 페이지는 지우지 않는다(삭제 0) — 본체에 원문이 없을 때만 중복의 lore 절을 복사한다.
+    _canon_w = dict(canon)                 # 원문 키는 JSON 본체에 얹지 않는다(관문 입력 사본만)
+    try:
+        import wiki_store as _ws_m
+        _dup_lore = _ws_m.get_lore_sections(channel_id, _npc_page_id(dup_key))
+        if _dup_lore and not _ws_m.has_lore_sections(channel_id, _npc_page_id(canon_key)):
+            _canon_w["description"] = _ws_m.assemble_lore_text(_dup_lore)
+    except Exception as _e_ml:
+        logging.debug(f"[NPC 병합] 원문 이관 skip: {_e_ml}")
+    _mirror_npc(channel_id, canon_key, _canon_w)
     if canon_key in d.get("npc_knowledge", {}):
         _mirror_knowledge(channel_id, canon_key, d["npc_knowledge"][canon_key])
 
@@ -892,6 +1565,10 @@ def merge_npc(channel_id: str, dup_name: str, canon_name: str) -> tuple:
 def bulk_update_npcs(channel_id: str, npcs: Dict[str, Dict[str, Any]]) -> None:
     """[V10 §3b] NPC dict 전체 교체 (tick_all_cooldowns 등 bulk 쓰기 정식화).
     JSON + SQLite 동시, SQLite는 단일 트랜잭션."""
+    # [시트 2차b] 뷰(get_npcs)를 그대로 되돌려 쓰는 bulk 경로 — 조립된 원문 키는 저장하지 않는다
+    #   (원문 제출 관문이 아니다: 쿨다운 틱 등). 페이지 lore 절 무접촉.
+    npcs = {k: ({_k: _v for _k, _v in v.items() if _k not in _NPC_TEXT_KEYS} if isinstance(v, dict) else v)
+            for k, v in (npcs or {}).items()}
     d = get_domain(channel_id)
     d["npcs"] = npcs
     save_domain(channel_id, d)
@@ -915,8 +1592,14 @@ def delete_npcs_by_source(channel_id: str, keep_sources: tuple = ("lore", "manua
     npcs = d.get("npcs", {})
     # [2026-07-28] 기본값 리터럴 "session" — npc_manager.SOURCE_SESSION으로 승격된 값.
     # (순환 import 회피를 위해 여기서는 리터럴 유지, 의미는 동일: source 미상 = 세션 파생)
+    try:
+        import wiki_store as _ws_d
+        _lm = _ws_d.character_lore_map(channel_id, with_source=True)   # [§H] 시드 도장 동반 — 시드 NPC는 세션 소속으로 지워진다
+    except Exception:
+        _lm = None
     to_delete = [name for name, data in npcs.items()
-                 if data.get("source", "session") not in keep_sources]
+                 if (derive_npc_source(data, channel_id, name, lore_map=_lm) if _lm is not None
+                     else derive_npc_source(data)) not in keep_sources]
     for name in to_delete:
         del npcs[name]
     if to_delete:
@@ -928,182 +1611,525 @@ def delete_npcs_by_source(channel_id: str, keep_sources: tuple = ("lore", "manua
             logging.debug(f"[V10] npc bulk delete mirror skipped: {_e}")
     return len(to_delete)
 
-# NPC Attitude System
-# [V10 Sprint 1] 관계 도메인 — JSON 진실원천 + npc_relations 정규화 테이블 dual-write.
-# 읽기는 config.V10_RELATIONS_READ_FROM_SQLITE 플래그 게이트 (현재 값 = True, 읽기 ON).
-# spec: 파티쳇수정/v10_sprint1_relations_spec.md
+# =========================================================
+# [2026-09-15 관계 통합 1차] 관계 = relations 엣지 하나 (sqlite_store 소유).
+#   설계: 파티쳇수정/state_v10/relation_unify_design_v0.1_2026-09-15.md §2~§5.
+#   옛 저장소 셋(npc_attitudes JSON+npc_relations 미러 / ai_memory.relationships /
+#   entity_relations.edges)은 **마이그레이션 없이 삭제** — 읽지도 쓰지도 않는다.
+#   쓰기 경로 3: Theoria relation 층(write_theoria_relations) / 배치 npc_relations
+#   (entity_relations.process_batch_relations) / OOC(apply_ooc_relation_edits). 감쇠 1: decay_relation_edges.
+#   게터(get_npc_attitudes/get_npc_attitude)는 이름·반환 모양 유지, 값은 엣지에서 **파생**.
+# =========================================================
 
-def _mirror_relation(channel_id: str, npc_name: str, rel: Dict[str, Any]) -> None:
-    """JSON에 쓰인 최종 상태를 방벽 통과 후 npc_relations에 미러.
-    철칙: JSON이 받은 건 다 받는다 (existing_npcs 체크 안 함 — parity 우선).
-    실패해도 봇 무영향 (JSON이 진실원천)."""
+# attitude는 저장하지 않는다 — bond 구간에서 코드가 파생(설계 §2 파생값, 지시서 §3).
+_ATTITUDE_BANDS = ((-60, "hostile"), (-20, "unfriendly"))   # bond ≤ 경계
+_ATTITUDE_BANDS_UP = ((20, "neutral"), (60, "friendly"))    # bond < 경계
+# [2026-09-25 관계 정성] tension 구간 — 모델에게 가는 말(friction low/strained/high/breaking). 경계는 하류 문턱과 맞춤
+#   (slot 연결 깊이 >20 · iceberg marcato >50 · emotion Tier 5.5 friction ≥60 사이).
+_TENSION_BANDS = ((20, "low"), (50, "strained"), (80, "high"))  # tension < 경계
+
+
+def tension_band(tension: Any) -> str:
+    """tension 0~100 → low / strained / high / breaking."""
     try:
-        import sqlite_store
-        import state_guards
-        clean = state_guards.validate_relation_write(npc_name, rel)
-        if clean is not None:
-            sqlite_store.upsert_relation(channel_id, npc_name, clean)
-    except Exception as _e:
-        logging.debug(f"[V10] relation mirror skipped: {_e}")
+        t = int(tension)
+    except (TypeError, ValueError):
+        return "low"
+    for edge_v, label in _TENSION_BANDS:
+        if t < edge_v:
+            return label
+    return "breaking"
+
+
+def relation_words(att: Any, with_attitude: bool = True) -> str:
+    """[2026-09-25 관계 정성] 관계 수치 → 모델에게 가는 말 한 벌(숫자 0).
+    "friendly, warming · friction strained". Theoria 4b · 월드보드 편지 · 속마음 toward_pc 가 같이 쓴다."""
+    if not isinstance(att, dict):
+        return ""
+    parts = []
+    if with_attitude:
+        _a = str(att.get("attitude") or "").strip()
+        if not _a or _a.lower() == "null":
+            _b = att.get("bond", att.get("depth"))
+            _a = attitude_from_bond(_b) if _b is not None else ""
+        if _a:
+            parts.append(_a)
+    _tr = att.get("trajectory")
+    if _tr in ("improving", "declining"):
+        parts.append("warming" if _tr == "improving" else "cooling")
+    out = ", ".join(parts)
+    if isinstance(att.get("tension"), (int, float)) and not isinstance(att.get("tension"), bool):
+        out = (out + " · " if out else "") + f"friction {tension_band(att['tension'])}"
+    return out
+
+
+def attitude_from_bond(bond: Any) -> str:
+    """bond ≤−60 hostile / ≤−20 unfriendly / <20 neutral / <60 friendly / ≥60 devoted."""
+    try:
+        b = int(bond)
+    except (TypeError, ValueError):
+        return "neutral"
+    for edge_v, label in _ATTITUDE_BANDS:
+        if b <= edge_v:
+            return label
+    for edge_v, label in _ATTITUDE_BANDS_UP:
+        if b < edge_v:
+            return label
+    return "devoted"
+
 
 def _relation_turn(channel_id: str) -> int:
-    """감사 도장에 쓸 현재 턴 — world_state.turn_index
-    (emotion_log/attitude_log/turn_snapshot이 쓰는 바로 그 카운터)."""
+    """엣지 시계에 쓸 현재 턴 — world_state.turn_index."""
     try:
         return int((get_domain(channel_id).get("world_state") or {}).get("turn_index", 0) or 0)
     except Exception:
         return 0
 
 
-def _stamp_relation_change(channel_id: str, npc_name: str, rel: Dict[str, Any],
-                           changes, source: str, note: str = "",
-                           turn: Optional[int] = None) -> bool:
-    """[2026-08-17] depth/tension 변경의 **사후 판독** 도장.
-
-    왜: 태도(attitude)엔 reason이 붙는데 depth/tension엔 없다. 값이 움직여도
-      누가(감쇠? 추출? 병합?) 언제 밀었는지 뒤에 알 방법이 없었다 — 감쇠(A축)가
-      들어오면서 "왜 식었지"가 판독 불가가 됐다.
-
-    형태: 새 컬럼·스키마 마이그레이션·LLM 새 필드 **전부 없음**. 관계 레코드에
-      `last_change` 키 하나 = {turn, field, from, to, source, note}.
-      note는 **코드가 아는 것만** 적는다(모델에게 이유를 묻지 않는다).
-      두 필드가 같이 움직이면 field="depth+tension", from/to는 같은 순서의 리스트.
-
-    ★변경이 없으면 안 찍는다(no-op 보존). 매 턴 갱신되는 도장은 판독값이 0이다.
-    ※ 미러(npc_relations)는 화이트리스트 방벽이라 이 키를 안 받는다 → 진실원천 JSON에만
-      남는다. 그래서 같은 내용을 로그 1줄로도 흘린다(조작면 순증 0, 화면 변화 0).
-
-    changes: [(field, old, new), ...] — 호출부가 후보를 다 넘기고 필터는 여기서.
-    Returns: 도장을 찍었으면 True.
-    """
-    if not isinstance(rel, dict):
-        return False
+def get_pc_masks(channel_id: str) -> set:
+    """참가자 마스크 집합 — 엣지 방향 가드의 기준(PC 노드)."""
+    out = set()
     try:
-        moved = [(f, o, n) for f, o, n in changes if o != n]
+        for _p in (get_domain(channel_id).get("participants") or {}).values():
+            if isinstance(_p, dict) and _p.get("mask"):
+                out.add(str(_p["mask"]))
+    except Exception:
+        pass
+    return out
+
+
+def get_relation_edges(channel_id: str, source: Optional[str] = None,
+                       target: Optional[str] = None) -> List[Dict[str, Any]]:
+    """엣지 원본 조회(얇은 위임)."""
+    try:
+        import sqlite_store
+        return sqlite_store.get_edges(channel_id, source=source, target=target)
+    except Exception as _e:
+        logging.debug(f"[Relation] get_edges skip: {_e}")
+        return []
+
+
+def upsert_relation_edge(channel_id: str, source: str, target: str, *,
+                         bond: Optional[int] = None, tension: Optional[int] = None,
+                         stance: Optional[str] = None, kind: Optional[str] = None,
+                         turn: Optional[int] = None, origin: str = "theoria") -> Optional[Dict[str, Any]]:
+    """엣지 쓰기 앞단 — 방향 가드 + 이름 해상도 + 시트 seed, 그다음 sqlite_store.upsert_edge(클램프).
+
+    방향 가드(구 orch:357 PC 혼입 가드의 이사):
+      - source가 PC 마스크면 거부(PC→X 방향은 두지 않는다, 설계 §7-6).
+      - kind 없음(NPC→PC): target이 PC 마스크가 **아니면** 거부.
+      - kind 있음(NPC↔NPC): target이 PC 마스크면 거부.
+    seed: NPC→PC 엣지가 처음 생길 때 NPC 시트의 initial_depth/initial_tension을 source="seed"로 먼저 심는다.
+    """
+    if not channel_id or not isinstance(source, str) or not isinstance(target, str):
+        return None
+    source, target = source.strip(), target.strip()
+    if not source or not target or source == target:
+        return None
+    masks = get_pc_masks(channel_id)
+    if source in masks:
+        logging.info("[Relation] 거부: source가 PC(%s) — PC→X 엣지 없음", source)
+        return None
+    if kind is None and target not in masks:
+        logging.info("[Relation] 거부: NPC→PC 쓰기인데 target(%s)이 PC 마스크 아님", target)
+        return None
+    if kind is not None and target in masks:
+        logging.info("[Relation] 거부: NPC↔NPC 쓰기인데 target(%s)이 PC", target)
+        return None
+    try:
+        import sqlite_store
+        d = get_domain(channel_id)
+        source = _resolve_npc_name(d, source)
+        if kind is not None:
+            target = _resolve_npc_name(d, target)
+        t = _relation_turn(channel_id) if turn is None else int(turn)
+        if kind is None and origin not in ("seed", "npc_sheet_initial") \
+                and sqlite_store.get_edge(channel_id, source, target) is None:
+            # [2026-09-24 감사 §5-2 #12 — 레티어스 판정] 시드 = 시트 중 **이 PC 를 가리키는 문장**의 관계 키워드.
+            #   저장된 initial_depth/initial_tension 은 읽지 않는다 — 유일한 생산자가 시트 전문 키워드 스캔이라
+            #   제3자 서술("가족을 잃었다")이 PC 에게 +55 로 박힌 값이 섞여 있다(옛 세션 dict 에 남은 키는 무해).
+            _ib, _it = _npc_pc_seed(channel_id, source, target)  # [2026-09-25] 헬퍼로 이사(미리보기와 공유)
+            if _ib or _it:
+                sqlite_store.upsert_edge(channel_id, source, target, bond=_ib, tension=_it,
+                                         turn=t, origin="seed")
+        _prev = sqlite_store.get_edge(channel_id, source, target) if kind is None else None
+        r = sqlite_store.upsert_edge(channel_id, source, target, bond=bond, tension=tension,
+                                     stance=stance, kind=kind, turn=t, origin=origin)
+        # attitude_log(narrative_queries 실전이 급식 원천)은 파생 attitude 구간이 바뀔 때만 적립.
+        #   구 M5 게이트가 유일 적립자였다 — 게이트 삭제로 로그가 굶지 않게 같은 뜻을 여기서 잇는다.
+        if r and kind is None:
+            _fa = attitude_from_bond(_prev["bond"]) if _prev else ""
+            _ta = attitude_from_bond(r["bond"])
+            if _fa != _ta:
+                try:
+                    sqlite_store.append_attitude_log(channel_id, t, source, _fa, _ta,
+                                                     "initial" if not _prev else origin,
+                                                     r.get("stance", "") or "")
+                except Exception:
+                    pass
+        return r
+    except Exception as _e:
+        logging.warning(f"[Relation] upsert 실패(무시): {source}->{target}: {_e}")
+        return None
+
+
+def _npc_pc_seed(channel_id: str, source: str, target: str) -> Tuple[int, int]:
+    """NPC→PC 첫 엣지 시드 (bond, tension). 시트 중 그 PC 를 가리키는 문장의 관계 키워드(§5-2 #12).
+    upsert_relation_edge(실제 심기)와 preview_theoria_relation(미리보기)이 같이 쓴다."""
+    _ib, _it = 0, 0
+    try:
+        import npc_manager as _nm_seed
+        _desc_seed = ((get_npcs(channel_id) or {}).get(source) or {}).get("description") or ""
+        _sd = _nm_seed.relation_seed_for(_desc_seed, [target])
+        if _sd:
+            _ib, _it = int(_sd[0]), int(_sd[1])
+    except Exception as _e_seed:
+        logging.debug(f"[Relation] 시드 계산 건너뜀: {_e_seed}")
+    return _ib, _it
+
+
+def _theoria_edge_view(channel_id: str, npc_name: str, pc_mask: str, turn: int):
+    """미리보기 공통부 — (저장 엣지 또는 시드 가상 엣지, turn). NPC→PC 방향이 아니면 None. 쓰기 0.
+    이름 해상도·시드는 저장 경로(upsert_relation_edge)와 같은 함수(_resolve_npc_name / _npc_pc_seed)."""
+    if not channel_id or not isinstance(npc_name, str) or not npc_name.strip() or not pc_mask:
+        return None
+    masks = get_pc_masks(channel_id)
+    if npc_name.strip() in masks or pc_mask not in masks:
+        return None
+    import sqlite_store
+    source = _resolve_npc_name(get_domain(channel_id), npc_name.strip())
+    if not source or source == pc_mask:
+        return None
+    t = int(turn or 0)
+    existing = sqlite_store.get_edge(channel_id, source, pc_mask)
+    if existing is None:
+        _ib, _it = _npc_pc_seed(channel_id, source, pc_mask)
+        if _ib or _it:
+            _ib, _it = max(-100, min(100, _ib)), max(0, min(100, _it))
+            existing = {"bond": _ib, "tension": _it,
+                        "history": [{"turn": t, "bond": _ib, "tension": _it, "source": "seed"}]}
+    return existing, t
+
+
+def preview_theoria_relation(channel_id: str, npc_name: str, pc_mask: str,
+                             bond: Optional[int], tension: Optional[int],
+                             turn: int) -> Optional[Tuple[int, int]]:
+    """Theoria relation 값 → 이번 턴 upsert_relation_edge(origin="theoria")가 **저장할** (bond, tension). 쓰기 0.
+
+    [2026-09-25 관계 한 숫자] 이름 해상도·시드·턴당 캡·하드 범위를 저장 경로와 같은 함수로 계산한다
+    (sqlite_store.edge_step_values / _edge_base / _npc_pc_seed). 방향이 NPC→PC 가 아니면 None."""
+    v = _theoria_edge_view(channel_id, npc_name, pc_mask, turn)
+    if v is None:
+        return None
+    import sqlite_store
+    return sqlite_store.edge_step_values(v[0], v[1], bond, tension, "theoria")
+
+
+def resolve_theoria_shift(channel_id: str, npc_name: str, pc_mask: str,
+                          bond_shift: Optional[str], tension_shift: Optional[str],
+                          turn: int) -> Optional[Tuple[int, int]]:
+    """[2026-09-25 관계 정성] 이동 말 → 이번 턴 저장될 (bond, tension). 기준점 = 이번 턴 **이전** 값(_edge_base —
+    같은 턴 재쓰기면 그 전 값), 폭 = config.REL_BOND_SHIFT / REL_TENSION_SHIFT. 말이 둘 다 없거나 방향이 아니면 None."""
+    _bmap = getattr(config, "REL_BOND_SHIFT", {}) or {}
+    _tmap = getattr(config, "REL_TENSION_SHIFT", {}) or {}
+    db = _bmap.get(bond_shift) if bond_shift else None
+    dt = _tmap.get(tension_shift) if tension_shift else None
+    if db is None and dt is None:
+        return None
+    v = _theoria_edge_view(channel_id, npc_name, pc_mask, turn)
+    if v is None:
+        return None
+    import sqlite_store
+    base_b, base_t = sqlite_store._edge_base(v[0], v[1], "theoria")
+    tb = base_b + int(db) if db is not None else None
+    tt = base_t + int(dt) if dt is not None else None
+    return sqlite_store.edge_step_values(v[0], v[1], tb, tt, "theoria")
+
+
+def _rel_int(v) -> Optional[int]:
+    if v is None or isinstance(v, bool):
+        return None
+    try:
+        return int(float(v))
     except (TypeError, ValueError):
-        return False
+        return None
+
+
+def align_theoria_relations(channel_id: str, psyche_states: Dict[str, Any],
+                            pc_mask: Optional[str], turn: int) -> int:
+    """[2026-09-25 관계 한 숫자] Theoria 직후·감정 단계 전 — psyche_states[NPC].relation 의 bond/tension 을
+    **이번 턴 저장될 값**으로 제자리 교체한다. 감정 엔진·iceberg·저장이 같은 숫자 하나를 본다.
+
+    - 모델이 낸 칸만 만진다(없는 칸은 채우지 않음 — 채우면 쓰기 경로가 매턴 last_turn 을 갱신해 감쇠가 멈춘다).
+    - 옛 `value` 키로 왔으면 `bond` 에도 같은 값을 둔다(읽는 쪽이 bond 우선).
+    - 행동 PC 마스크가 없거나 PC 이름 항목이면 무접촉(쓰기 경로도 안 쓴다).
+    Returns: 정렬한 칸 수(이동 말 환산 + 캡에 걸린 숫자)."""
+    if not channel_id or not pc_mask or not isinstance(psyche_states, dict):
+        return 0
+    changed = []
+    for name, st in psyche_states.items():
+        if not isinstance(name, str) or not isinstance(st, dict):
+            continue
+        rel = st.get("relation")
+        if not isinstance(rel, dict):
+            continue
+        # [2026-09-25 관계 정성] 모델은 이동 말(bond_shift/tension_shift)을 낸다 → 여기서 숫자로(저장될 값과 같은 식).
+        #   숫자(bond/tension)가 같이 와도 말이 이긴다. 말이 없을 때만 아래 옛 숫자 경로(폴백).
+        _bs = str(rel.get("bond_shift") or "").strip().lower()
+        _ts = str(rel.get("tension_shift") or "").strip().lower()
+        _bs = _bs if _bs in (getattr(config, "REL_BOND_SHIFT", {}) or {}) else ""
+        _ts = _ts if _ts in (getattr(config, "REL_TENSION_SHIFT", {}) or {}) else ""
+        if _bs or _ts:
+            try:
+                res = resolve_theoria_shift(channel_id, name, pc_mask, _bs or None, _ts or None, turn)
+            except Exception as _e_sh:
+                logging.debug(f"[Relation] shift skip {name}: {_e_sh}")
+                res = None
+            if res is not None:
+                nb, nt = res
+                if _bs:
+                    rel["bond"] = nb
+                    if "value" in rel:
+                        rel["value"] = nb
+                    changed.append(f"{name} {_bs}→bond {nb}")
+                if _ts:
+                    rel["tension"] = nt
+                    changed.append(f"{name} tension {_ts}→{nt}")
+            continue
+        _b = _rel_int(rel.get("bond", rel.get("value")))
+        _t = _rel_int(rel.get("tension"))
+        if _b is None and _t is None:
+            continue
+        try:
+            res = preview_theoria_relation(channel_id, name, pc_mask, _b, _t, turn)
+        except Exception as _e_al:
+            logging.debug(f"[Relation] align skip {name}: {_e_al}")
+            continue
+        if res is None:
+            continue
+        nb, nt = res
+        if _b is not None:
+            if nb != _b:
+                changed.append(f"{name} bond {_b}→{nb}")
+            rel["bond"] = nb
+            if "value" in rel:
+                rel["value"] = nb
+        if _t is not None:
+            if nt != _t:
+                changed.append(f"{name} tension {_t}→{nt}")
+            rel["tension"] = nt
+    if changed:
+        logging.info("[Relation] align(pre-emotion): " + "; ".join(changed))
+    return len(changed)
+
+
+def write_theoria_relations(channel_id: str, psyche_states: Dict[str, Any],
+                            pc_mask: Optional[str], turn: Optional[int] = None,
+                            skip: Optional[set] = None) -> int:
+    """Theoria relation 층 → NPC→행동PC 엣지. 새 LLM 콜 0(이미 받은 DAI만 읽음).
+
+    - pc_mask 없으면 쓰지 않는다(§7-12: 마스크 없는 uid는 참가자가 아니다).
+    - bond는 `bond`, 없으면 옛 `value` 폴백. tension·descriptor(stance)는 있으면 쓴다.
+    - 턴당 캡은 upsert_edge(origin="theoria")가 자른다.
+    Returns: 쓴 엣지 수."""
+    if not pc_mask or not isinstance(psyche_states, dict):
+        return 0
+    n = 0
+    for npc_name, st in psyche_states.items():
+        if not isinstance(npc_name, str) or (skip and npc_name in skip) or not isinstance(st, dict):
+            continue
+        rel = st.get("relation")
+        if not isinstance(rel, dict):
+            continue
+        _b = rel.get("bond", rel.get("value"))
+        _t = rel.get("tension")
+        try:
+            _b = None if _b is None or isinstance(_b, bool) else int(float(_b))
+        except (TypeError, ValueError):
+            _b = None
+        try:
+            _t = None if _t is None or isinstance(_t, bool) else int(float(_t))
+        except (TypeError, ValueError):
+            _t = None
+        _stance = rel.get("descriptor")
+        _stance = _stance.strip() if isinstance(_stance, str) and _stance.strip() else None
+        if _b is None and _t is None and _stance is None:
+            continue
+        if upsert_relation_edge(channel_id, npc_name, pc_mask, bond=_b, tension=_t,
+                                stance=_stance, turn=turn, origin="theoria"):
+            n += 1
+    return n
+
+
+def apply_ooc_relation_edits(channel_id: str, uid: str, edits: List[Dict[str, Any]]) -> List[str]:
+    """OOC 관계 편집 → 엣지 직접 set(캡 면제, source="ooc"). 행동 PC 마스크가 target.
+    edit = {"field": "relation", "action": "set|remove", "key": NPC, "stance"?, "bond"?, "tension"?}
+    Returns: 되비침 줄."""
+    lines: List[str] = []
+    p = get_participant_data(channel_id, uid) or {}
+    mask = p.get("mask")
+    if not mask:
+        return lines
+    for e in edits or []:
+        if not isinstance(e, dict):
+            continue
+        npc = str(e.get("key") or "").strip()
+        if not npc:
+            continue
+        action = str(e.get("action") or "set").lower()
+        if action == "remove":
+            try:
+                import sqlite_store
+                _k = _resolve_npc_name(get_domain(channel_id), npc)
+                if sqlite_store.get_edge(channel_id, _k, mask) is not None:
+                    conn = sqlite_store._get_conn(channel_id)
+                    conn.execute("DELETE FROM relations WHERE channel_id=? AND source=? AND target=?",
+                                 (channel_id, _k, mask))
+                    conn.commit()
+                    lines.append(f"관계 삭제: {_k}")
+            except Exception as _e:
+                logging.debug(f"[OOC] 관계 삭제 skip: {_e}")
+            continue
+
+        def _int(v):
+            try:
+                return None if v is None or isinstance(v, bool) else int(float(v))
+            except (TypeError, ValueError):
+                return None
+        stance = e.get("stance", e.get("value"))
+        stance = str(stance).strip() if isinstance(stance, (str, int, float)) and str(stance).strip() else None
+        r = upsert_relation_edge(channel_id, npc, mask, bond=_int(e.get("bond")),
+                                 tension=_int(e.get("tension")), stance=stance, origin="ooc")
+        if r:
+            lines.append(f"관계: {r['source']} → bond {r['bond']} / tension {r['tension']}"
+                         + (f" — {r['stance']}" if r.get("stance") else ""))
+    return lines
+
+
+def decay_relation_edges(channel_id: str, current_turn: int) -> int:
+    """감쇠 한 곳 — sqlite_store.decay_edges 위임(last_turn 시계, bond→0, tension 하한 0)."""
+    try:
+        import sqlite_store
+        return sqlite_store.decay_edges(channel_id, int(current_turn))
+    except Exception as _e:
+        logging.debug(f"[Relation] decay skip: {_e}")
+        return 0
+
+
+def trajectory_from_delta(delta: Any) -> str:
+    """bond 한 걸음의 **부호**만 → improving/declining/stable (설계 §2 1차 파생 = 구간·부호까지).
+    불감대 = 턴당 캡(EDGE_BOND_STEP_CAP): 캡만큼 밀려야 방향으로 친다 — T=0.1 판독 흔들림(±1~2)을 방향으로 안 읽는다."""
+    try:
+        import sqlite_store
+        dead = int(getattr(sqlite_store, "EDGE_BOND_STEP_CAP", 5))
+        # [2026-09-25 관계 정성] 불감대 = 가장 작은 이동 말(warmer 3). 말은 흔들림이 없어서 warmer 한 걸음도 방향이다.
+        #   (옛 불감대=캡은 T=0.1 숫자 판독 흔들림 ±1~2 를 거르려던 것 — 숫자 폴백 경로에도 3이면 충분하다.)
+        _steps = [abs(int(v)) for v in (getattr(config, "REL_BOND_SHIFT", {}) or {}).values() if v]
+        if _steps:
+            dead = min(dead, min(_steps))
+        d = int(delta)
+    except (TypeError, ValueError):
+        return "stable"
+    return "improving" if d >= dead else "declining" if d <= -dead else "stable"
+
+
+def _edge_last_change(edge: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """history 마지막 두 항목 → 옛 `last_change` 도장 모양(status_panel 방향 기호용). 파생, 저장 안 함."""
+    hist = [h for h in (edge.get("history") or []) if isinstance(h, dict)]
+    if not hist:
+        return None
+    cur = hist[-1]
+    prev = hist[-2] if len(hist) >= 2 else {"bond": 0, "tension": 0}
+    moved = [(f, prev.get(k, 0), cur.get(k, 0)) for f, k in (("depth", "bond"), ("tension", "tension"))
+             if prev.get(k, 0) != cur.get(k, 0)]
     if not moved:
-        return False
+        return None
     if len(moved) == 1:
         field, old, new = moved[0]
     else:
-        field = "+".join(f for f, _, _ in moved)
-        old = [o for _, o, _ in moved]
-        new = [n for _, _, n in moved]
-    rel["last_change"] = {
-        "turn": int(turn) if turn is not None else _relation_turn(channel_id),
-        "field": field,
-        "from": old,
-        "to": new,
-        "source": source or "code",
-        "note": note or "",
+        field = "+".join(m[0] for m in moved)
+        old, new = [m[1] for m in moved], [m[2] for m in moved]
+    return {"turn": cur.get("turn"), "field": field, "from": old, "to": new,
+            "source": cur.get("source", ""), "note": ""}
+
+
+def _edge_to_attitude(edge: Dict[str, Any]) -> Dict[str, Any]:
+    """NPC→PC 엣지 → 옛 attitude dict 모양(소비자 무변경용 파생 뷰)."""
+    bond = int(edge.get("bond", 0) or 0)
+    out = {
+        "attitude": attitude_from_bond(bond),
+        "reason": edge.get("stance", "") or "",
+        "depth": bond,                         # 옛 depth 자리 = bond(−100~+100)
+        "tension": int(edge.get("tension", 0) or 0),
+        "bond": bond,
+        "stance": edge.get("stance", "") or "",
+        "target": edge.get("target"),
     }
-    logging.info("[Relation] %s %s %s→%s source=%s%s",
-                 npc_name, field, old, new, source or "code",
-                 f" note={note}" if note else "")
-    return True
-
-
-def update_npc_attitude(channel_id: str, npc_name: str, attitude: str, reason: str = "") -> None:
-    """NPC의 PC에 대한 태도 업데이트 (depth/tension 보존)
-
-    주의: dict 재구성이므로 last_change_turn은 의도적으로 소실됨 (기존 동작 보존, §1b quirk).
-    gated 경로에선 직후 set_attitude_turn이 재기록."""
-    d = get_domain(channel_id)
-    if "npc_attitudes" not in d:
-        d["npc_attitudes"] = {}
-    npc_name = _resolve_npc_name(d, npc_name)
-
-    existing = d["npc_attitudes"].get(npc_name, {})
-    d["npc_attitudes"][npc_name] = {
-        "attitude": attitude,
-        "reason": reason,
-        "depth": existing.get("depth", 0),
-        "tension": existing.get("tension", 0),
-        "last_updated": time.strftime('%Y-%m-%d %H:%M')
-    }
-    # [2026-08-17] 이 경로는 depth/tension을 **안 움직인다**(값 이월). 그러니 새 도장도 안 찍는다.
-    #   다만 dict 재구성이라 기존 도장이 같이 증발했다 — 판독 흔적만 그대로 이월.
-    if isinstance(existing.get("last_change"), dict):
-        d["npc_attitudes"][npc_name]["last_change"] = existing["last_change"]
-    save_domain(channel_id, d)
-    _mirror_relation(channel_id, npc_name, d["npc_attitudes"][npc_name])
-
-def get_npc_attitudes(channel_id: str) -> Dict[str, Dict]:
-    """저장된 NPC 태도 조회 (전체)
-
-    [V10] 플래그 ON 시 read-through: SQLite 우선, 행 없으면 JSON 폴백 + lazy migration."""
-    if getattr(config, "V10_RELATIONS_READ_FROM_SQLITE", False):
+    _h = [h for h in (edge.get("history") or []) if isinstance(h, dict)]
+    out["trajectory"] = (trajectory_from_delta(int(_h[-1].get("bond", 0) or 0) - int(_h[-2].get("bond", 0) or 0))
+                         if len(_h) >= 2 else "stable")
+    # [2026-09-24 감사 §5-2 #11] 이 관계의 최저 bond(history 창 안) — desistance "회복폭" 재료.
+    _lows = [bond]
+    for _hh in _h:
         try:
-            import sqlite_store
-            rels = sqlite_store.read_relations(channel_id)
-            if rels is not None:
-                return rels  # B 발동: 통짜 JSON 안 거침
-            # 구 세션 — JSON에서 읽고 그 자리에서 SQLite로 lazy 이주
-            att = get_domain(channel_id).get("npc_attitudes", {})
-            for _name, _rel in att.items():
-                _mirror_relation(channel_id, _name, _rel)
-            return att
-        except Exception as _e:
-            logging.warning(f"[V10] relations read-through 실패, JSON 폴백: {_e}")
-    d = get_domain(channel_id)
-    return d.get("npc_attitudes", {})
-
-def get_npc_attitude(channel_id: str, npc_name: str) -> Optional[Dict]:
-    """특정 NPC의 태도 조회 (단건)
-
-    [V10] 플래그 ON 시 포인트 질의 (npc_relations 단일 행 SELECT)."""
-    d = get_domain(channel_id)
-    npc_name = _resolve_npc_name(d, npc_name)
-    if getattr(config, "V10_RELATIONS_READ_FROM_SQLITE", False):
-        try:
-            import sqlite_store
-            rel = sqlite_store.read_relation(channel_id, npc_name)
-            if rel is not None:
-                return rel
-        except Exception as _e:
-            logging.warning(f"[V10] relation 단건 read-through 실패, JSON 폴백: {_e}")
-    # [2026-07-28] 대량 조회(get_npc_attitudes)는 JSON 폴백 시 그 자리에서 SQLite로 옮기는데
-    # 단건 경로만 lazy-migration이 없어, 다른 쓰기가 그 NPC를 건드리기 전까지 미러 행이 안 생겼다.
-    _rel = d.get("npc_attitudes", {}).get(npc_name)
-    if _rel and getattr(config, "V10_RELATIONS_READ_FROM_SQLITE", False):
-        try:
-            _mirror_relation(channel_id, npc_name, _rel)
-        except Exception:
+            _lows.append(int(_hh.get("bond")))
+        except (TypeError, ValueError):
             pass
-    return _rel
+    out["bond_low"] = min(_lows)
+    if edge.get("last_turn") is not None:
+        out["last_change_turn"] = edge["last_turn"]
+    lc = _edge_last_change(edge)
+    if lc:
+        out["last_change"] = lc
+    return out
+
+
+def get_npc_attitudes(channel_id: str, pc: Optional[str] = None) -> Dict[str, Dict]:
+    """NPC→PC 관계 조회 (전체) — 이름·반환 모양 유지, 내부는 엣지(kind NULL) 파생.
+
+    pc 지정: 그 PC를 target으로 하는 엣지만.
+    pc 생략: NPC마다 **가장 최근 관측(last_turn)** 엣지 하나(동률은 |bond| 큰 쪽) — 솔로면 유일 엣지와 같다.
+    """
+    out: Dict[str, Dict] = {}
+    best: Dict[str, Dict[str, Any]] = {}
+    for e in get_relation_edges(channel_id, target=pc):
+        if e.get("kind") is not None:
+            continue
+        src = e.get("source")
+        prev = best.get(src)
+        key = (int(e.get("last_turn") or -1), abs(int(e.get("bond") or 0)))
+        if prev is None or key > (int(prev.get("last_turn") or -1), abs(int(prev.get("bond") or 0))):
+            best[src] = e
+    for src, e in best.items():
+        out[src] = _edge_to_attitude(e)
+    return out
+
+
+def get_npc_attitude(channel_id: str, npc_name: str, pc: Optional[str] = None) -> Optional[Dict]:
+    """특정 NPC의 NPC→PC 관계 조회 (단건) — get_npc_attitudes 파생 규칙 동일."""
+    if not npc_name:
+        return None
+    d = get_domain(channel_id)
+    key = _resolve_npc_name(d, npc_name)
+    return get_npc_attitudes(channel_id, pc=pc).get(key)
+
 
 def delete_npc_attitude(channel_id: str, npc_name: str) -> bool:
-    """NPC 태도 삭제 (identity reveal 등). [V10 §3b] 직접 조작 정식화 — JSON+SQLite 동시."""
-    d = get_domain(channel_id)
-    npc_name = _resolve_npc_name(d, npc_name)
-    attitudes = d.get("npc_attitudes", {})
-    if npc_name not in attitudes:
+    """NPC→PC 엣지 삭제 (identity reveal 등). NPC↔NPC 엣지는 남긴다."""
+    try:
+        import sqlite_store
+        d = get_domain(channel_id)
+        key = _resolve_npc_name(d, npc_name)
+        conn = sqlite_store._get_conn(channel_id) if sqlite_store._ensure_schema(channel_id) else None
+        if conn is None:
+            return False
+        cur = conn.execute("DELETE FROM relations WHERE channel_id=? AND source=? AND kind IS NULL",
+                           (channel_id, key))
+        conn.commit()
+        return (cur.rowcount or 0) > 0
+    except Exception as _e:
+        logging.debug(f"[Relation] delete skip: {_e}")
         return False
-    del attitudes[npc_name]
-    save_domain(channel_id, d)
-    try:
-        import sqlite_store
-        sqlite_store.delete_relation(channel_id, npc_name)
-    except Exception as _e:
-        logging.debug(f"[V10] relation delete mirror skipped: {_e}")
-    return True
-
-def set_attitude_turn(channel_id: str, npc_name: str, turn: int) -> None:
-    """attitude에 last_change_turn 기록 (쿨다운 게이트용). [V10 §3b] 직접 조작 정식화.
-    기존 _save_attitude_turn 동작 보존: NPC 태도가 존재할 때만."""
-    d = get_domain(channel_id)
-    npc_name = _resolve_npc_name(d, npc_name)
-    attitudes = d.get("npc_attitudes", {})
-    if npc_name not in attitudes:
-        return
-    attitudes[npc_name]["last_change_turn"] = int(turn)
-    save_domain(channel_id, d)
-    try:
-        import sqlite_store
-        sqlite_store.set_relation_turn(channel_id, npc_name, int(turn))
-    except Exception as _e:
-        logging.debug(f"[V10] relation turn mirror skipped: {_e}")
 
 # NPC Knowledge Persistence
 # [V10 Sprint 2-A] JSON 진실원천 + npc_knowledge 테이블 dual-write.
@@ -1120,11 +2146,16 @@ def _mirror_knowledge(channel_id: str, npc_name: str, kn: Dict[str, Any]) -> Non
     except Exception as _e:
         logging.debug(f"[V10] knowledge mirror skipped: {_e}")
 
-def update_npc_knowledge(channel_id: str, npc_name: str, knowledge_data: Dict[str, Any]) -> None:
+def update_npc_knowledge(channel_id: str, npc_name: str, knowledge_data: Dict[str, Any],
+                        src: Optional[Dict[str, Any]] = None) -> None:
     """NPC의 지식 상태 업데이트 (Theoria 분석 결과 저장)
 
     주의: knows는 set union 머지라 순서 비결정 (기존 동작 — parity 비교는 set 기준).
-    DAI의 false_beliefs는 여기 저장 안 됨 (턴 내 소비 전용, spec §A-1)."""
+    DAI의 false_beliefs는 여기 저장 안 됨 (턴 내 소비 전용, spec §A-1).
+
+    [2026-09-14 S5a] src={"turn": int|None, "message_id": int|None} — 주면 이번 호출로
+    **실제 새로 들어간** knows 항목의 첫 출처를 fact_sources 원장에 적립.
+    src 없음(예: rename 경로) = 출처 기록 생략. knows 형태는 무변경."""
     d = get_domain(channel_id)
     if "npc_knowledge" not in d:
         d["npc_knowledge"] = {}
@@ -1138,26 +2169,37 @@ def update_npc_knowledge(channel_id: str, npc_name: str, knowledge_data: Dict[st
     # [2026-07-19 PersistAudit 처방] 근사중복 흡수 — set union은 exact-match만 걸러
     # "PC is VIP guest"/"PC is a VIP guest" 류 표면형 변형이 무한 누적됐다.
     # 토큰 자카드 ≥0.75면 더 긴(정보 많은) 항목만 유지. 결정론·콜0.
+    # [2026-09-24 감사] 순서 보존 — 전엔 set 합집합을 **길이 내림차순**으로 정렬한 뒤 `[-20:]`로 잘라,
+    #   20개가 차면 정보가 가장 많은 긴 사실부터 버렸다(새로 들어온 긴 사실은 저장 즉시 탈락).
+    #   이제 입력 순서(기존 → 새) 그대로 두고, 근사중복은 더 긴 쪽을 **최신 자리**에 남긴다 → [-20:]=최신 20.
     def _absorb_near_dupes(items):
-        kept = []
-        kept_toks = []
-        for it in sorted((str(x) for x in items if x), key=len, reverse=True):
-            toks = {t for t in it.lower().split() if len(t) > 1}
-            if toks and any(
-                kt and len(toks & kt) / max(len(toks | kt), 1) >= 0.75
-                for kt in kept_toks
-            ):
+        out = []   # [(text, toks)] 오래된→최신
+        seen = set()
+        for it in (str(x) for x in items if x):
+            if it in seen:
                 continue
-            kept.append(it)
-            kept_toks.append(toks)
-        return kept
+            seen.add(it)
+            toks = {t for t in it.lower().split() if len(t) > 1}
+            dup = None
+            if toks:
+                for i, (_t, kt) in enumerate(out):
+                    if kt and len(toks & kt) / max(len(toks | kt), 1) >= 0.75:
+                        dup = i
+                        break
+            if dup is None:
+                out.append((it, toks))
+                continue
+            prev = out.pop(dup)
+            out.append((it, toks) if len(it) >= len(prev[0]) else prev)
+        return [t for t, _ in out]
 
-    merged_knows = _absorb_near_dupes(old_knows | set(new_knows))
+    merged_knows = _absorb_near_dupes(list(existing.get("knows", []) or []) + list(new_knows))
 
     # [V10 지식 lite] suspects(의심) 누적 + misbeliefs(=DAI false_beliefs 영속화).
     # knows로 확정(승격)된 항목은 suspects에서 제거(의심→확신 전이).
-    _merged_susp = _absorb_near_dupes(
-        (set(existing.get("suspects", []) or []) | set(knowledge_data.get("suspects", []) or [])) - set(merged_knows))
+    _susp_all = list(existing.get("suspects", []) or []) + list(knowledge_data.get("suspects", []) or [])
+    _susp_left = set(_susp_all) - set(merged_knows)
+    _merged_susp = _absorb_near_dupes([x for x in _susp_all if x in _susp_left])
     _misbeliefs = knowledge_data.get("misbeliefs", knowledge_data.get("false_beliefs", existing.get("misbeliefs", [])))
 
     d["npc_knowledge"][npc_name] = {
@@ -1172,9 +2214,25 @@ def update_npc_knowledge(channel_id: str, npc_name: str, knowledge_data: Dict[st
     save_domain(channel_id, d)
     _mirror_knowledge(channel_id, npc_name, d["npc_knowledge"][npc_name])
 
+    # [2026-09-14 S5a] 출처 원장 — 근사중복 흡수·20개 트림을 **통과해 실제로 남은** 신규 항목만.
+    # 흡수돼 사라진 표면형 변형은 출처를 남기지 않는다(원장이 knows 실물과 어긋나지 않게).
+    try:
+        if getattr(config, "V10_FACT_SOURCES", False) and isinstance(src, dict):
+            _new_facts = [k for k in d["npc_knowledge"][npc_name].get("knows", [])
+                          if k not in old_knows]
+            if _new_facts:
+                import sqlite_store
+                _n = sqlite_store.append_fact_sources(
+                    channel_id, npc_name, _new_facts,
+                    src.get("turn"), src.get("message_id"))
+                if _n and _n > 0:
+                    logging.info(f"[Evidence] fact_sources npc={npc_name} new={_n} turn={src.get('turn')}")
+    except Exception as _e:
+        logging.debug(f"[Evidence] fact_sources skipped: {_e}")
+
 # =========================================================
 # [V10 Secret Ledger] NPC 지식경계 상태 기계 (에로스 타워 E3, 2026-07-14)
-# 스펙: 파티쳇수정/v10_secret_ledger_spec.md
+# 스펙: 파티쳇수정/state_v10/v10_secret_ledger_spec.md
 # 원칙: 추출은 재료 공급, 압력 계산은 코드(leak_pressure_score — 죽은 배선 승격),
 #       truth는 렌더러 직행 금지(iceberg는 surface 우선), 삭제 대신 retire.
 # =========================================================
@@ -1234,11 +2292,11 @@ def sync_secret_ledger(
                 if _rbump > 0:
                     logging.info(
                         f"[ReaderLeak] source=reader {npc_name}: exposure={_rx} bump=+{_rbump} "
-                        f"→ pressure={row['leak_pressure']} truth~'{row.get('truth','')[:30]}'")
+                        f"→ pressure={row['leak_pressure']} truth~'{(row.get('truth') or '')[:30]}'")
                 row["status"] = "leaking" if row["leak_pressure"] >= 60 else "kept"
                 if _prev_status == "kept" and row["status"] == "leaking":
                     # [v1.1 게이트 로그] 사후판독용 — 임계 진입 시 게이트 조건 노출 (log-only)
-                    logging.info(f"[secret-ledger] LEAKING {npc_name}: gate='{row.get('reveal_gate','') or '(none)'}' truth~'{row.get('truth','')[:40]}'")
+                    logging.info(f"[secret-ledger] LEAKING {npc_name}: gate='{row.get('reveal_gate','') or '(none)'}' truth~'{(row.get('truth') or '')[:40]}'")
                 max_pressure = max(max_pressure, row["leak_pressure"])
             row["updated_at"] = now
             existing[sid] = row
@@ -1252,7 +2310,7 @@ def sync_secret_ledger(
             for row in existing.values():
                 if npc_name not in row.get("owners", []):
                     continue
-                if ref not in row.get("truth", "").lower():
+                if ref not in (row.get("truth") or "").lower():
                     continue
                 for k_src, k_dst in (("surface", "surface"), ("reveal_gate", "reveal_gate"),
                                      ("knowers", "knowers"), ("suspecters", "suspecters"),
@@ -1265,7 +2323,7 @@ def sync_secret_ledger(
                 if up.get("status") in ("revealed", "retired"):
                     if up["status"] == "revealed" and not row.get("reveal_gate"):
                         # [v1.1 게이트 로그] 게이트 없는 공개 — 편의 공개 감시 (log-only, 차단 아님)
-                        logging.info(f"[secret-ledger] GATELESS-REVEAL {npc_name}: truth~'{row.get('truth','')[:40]}'")
+                        logging.info(f"[secret-ledger] GATELESS-REVEAL {npc_name}: truth~'{(row.get('truth') or '')[:40]}'")
                     row["status"] = up["status"]
                 row["updated_at"] = now
                 break
@@ -1386,22 +2444,27 @@ def propagate_npc_knowledge(channel_id: str, scene_npcs: list) -> int:
             else:
                 _shareable_b = shareable
             kn_b = all_knowledge.get(npc_b, {})
-            existing_b = set(kn_b.get("knows", []))
+            # [2026-09-24 감사] 저장값은 `사실 (via A)` 꼬리가 붙는데 dedup 은 원문 사실로 비교해 영원히 안 맞았다 →
+            #   같은 사실이 매 턴 재전파(suspects 중복 누적 + 턴마다 불필요한 save_domain·bulk upsert). 꼬리를 떼고 비교.
+            _via_re = re.compile(r"\s*\(via [^)]*\)\s*$")
+            existing_b = {_via_re.sub("", str(x)) for x in kn_b.get("knows", [])}
             if getattr(config, "V10_KNOWLEDGE_BOUNDARY_INJECT", False):
                 # [V10 지식 lite] 들은 건 의심(suspects)으로 착지 — 직접 목격해야 knows 승격(정보 비대칭)
-                existing_sus = set(kn_b.get("suspects", []))
-                new_facts = [f for f in _shareable_b if f not in existing_b and f not in existing_sus][:3]
+                _sus_list = list(kn_b.get("suspects", []) or [])
+                existing_sus = {_via_re.sub("", str(x)) for x in _sus_list}
+                new_facts = [f for f in _shareable_b
+                             if _via_re.sub("", str(f)) not in existing_b and _via_re.sub("", str(f)) not in existing_sus][:3]
                 if new_facts:
-                    tagged = [f"{f} (via {npc_a})" for f in new_facts]
+                    tagged = [f"{_via_re.sub('', str(f))} (via {npc_a})" for f in new_facts]
                     kn_b_updated = dict(kn_b)
-                    kn_b_updated["suspects"] = (list(existing_sus) + tagged)[-20:]
+                    kn_b_updated["suspects"] = (_sus_list + tagged)[-20:]
                     all_knowledge[npc_b] = kn_b_updated
                     propagated += len(new_facts)
             else:
-                new_facts = [f for f in _shareable_b if f not in existing_b][:3]
+                new_facts = [f for f in _shareable_b if _via_re.sub("", str(f)) not in existing_b][:3]
                 if new_facts:
-                    tagged = [f"{f} (via {npc_a})" for f in new_facts]
-                    merged = list(existing_b) + tagged
+                    tagged = [f"{_via_re.sub('', str(f))} (via {npc_a})" for f in new_facts]
+                    merged = list(kn_b.get("knows", []) or []) + tagged
                     kn_b_updated = dict(kn_b)
                     kn_b_updated["knows"] = merged[-20:]
                     all_knowledge[npc_b] = kn_b_updated
@@ -1427,7 +2490,7 @@ def propagate_npc_knowledge(channel_id: str, scene_npcs: list) -> int:
     return propagated
 
 # NPC Behavioral Imprints
-_NPC_SIDE_DOMAINS = ("npc_attitudes", "npc_knowledge", "npc_imprints")
+_NPC_SIDE_DOMAINS = ("npc_knowledge", "npc_imprints")
 # [2026-08-11 사망 파이프라인] 같은 성격인데 **domain이 아니라 world_state**에 사는 것들.
 #   도메인 순회 루프로는 구조적으로 안 잡혀서 이관·청소 때마다 개별 손코딩이었고,
 #   그래서 08-02에 신설된 `npc_soma_states`가 두 자리 모두에서 빠졌다
@@ -1458,9 +2521,13 @@ def migrate_npc_side_data(channel_id: str, old_name: str, new_name: str) -> list
                 moved.append(_dom)
             else:
                 _dd.pop(old_name, None)     # 양쪽 존재 시 새 이름 유지
-    if rename_entity_relation_edges(d, old_name, new_name):
-        moved.append("entity_relations")
     save_domain(channel_id, d)
+    try:
+        import sqlite_store as _ss_mv
+        if _ss_mv.rename_edge_entity(channel_id, old_name, new_name):
+            moved.append("relations")
+    except Exception as _e_mv:
+        logging.debug(f"[NPC] 엣지 이관 skip: {_e_mv}")
 
     # 감정 이력·soma 스냅샷 — world_state 소관(별도 저장소)
     try:
@@ -1496,19 +2563,15 @@ def purge_npc_side_data(channel_id: str, name: str) -> list:
         _dd = d.get(_dom)
         if isinstance(_dd, dict) and _dd.pop(name, None) is not None:
             purged.append(_dom)
-    # 관계 엣지: 이 이름이 걸린 방향 전부 제거
+    save_domain(channel_id, d)
+    # 관계 엣지: 이 이름이 걸린 방향 전부 제거 (relations 테이블)
     try:
-        _edges = (d.get("entity_relations") or {}).get("edges")
-        if isinstance(_edges, dict):
-            _drop = [k for k in _edges
-                     if "→" in k and name in k.split("→", 1)]
-            for k in _drop:
-                _edges.pop(k, None)
-            if _drop:
-                purged.append(f"entity_relations({len(_drop)})")
+        import sqlite_store as _ss_pg
+        _n_edges = _ss_pg.delete_edges(channel_id, name)
+        if _n_edges:
+            purged.append(f"relations({_n_edges})")
     except Exception:
         pass
-    save_domain(channel_id, d)
     try:
         _w = get_world_state(channel_id) or {}
         _dirty = False
@@ -1532,44 +2595,6 @@ def purge_npc_side_data(channel_id: str, name: str) -> list:
     except Exception as _e:
         logging.debug(f"[NPC] world_tree presence 정리 skip: {_e}")
     return purged
-
-
-def rename_entity_relation_edges(d: Dict[str, Any], old_name: str, new_name: str) -> int:
-    """[2026-07-28 신설] 개명 시 entity_relations 엣지의 이름 참조를 따라 옮긴다.
-
-    엣지는 `"A→B"` 복합 키 + 내부 source/target 필드라, 일반 `dict[name]` 이관 루프로는
-    절대 안 옮겨진다 — 그래서 개명·병합 때마다 옛 이름을 가리키는 관계가 고아로 남았다.
-    (관계 그래프는 story_director의 conflict/alliance, slot 주입이 실제로 읽는 살아있는 데이터.)
-    Returns: 옮긴 엣지 수. 도메인 dict를 제자리 수정하므로 호출부가 save_domain을 책임진다.
-    """
-    if not old_name or not new_name or old_name == new_name:
-        return 0
-    try:
-        store = d.get("entity_relations")
-        edges = store.get("edges") if isinstance(store, dict) else None
-        if not isinstance(edges, dict):
-            return 0
-        moved = {}
-        for ek in list(edges.keys()):
-            if "→" not in ek:
-                continue
-            src, tgt = ek.split("→", 1)
-            if src != old_name and tgt != old_name:
-                continue
-            val = edges.pop(ek)
-            n_src = new_name if src == old_name else src
-            n_tgt = new_name if tgt == old_name else tgt
-            if isinstance(val, dict):
-                if val.get("source") == old_name:
-                    val["source"] = new_name
-                if val.get("target") == old_name:
-                    val["target"] = new_name
-            moved[f"{n_src}→{n_tgt}"] = val
-        edges.update(moved)
-        return len(moved)
-    except Exception as _e:
-        logging.debug(f"[EntityRelations] rename skipped: {_e}")
-        return 0
 
 
 def update_npc_imprints(channel_id: str, imprints: Dict[str, Dict[str, str]], turn: int = 0) -> None:
@@ -1723,10 +2748,11 @@ def get_growth_system(channel_id: str) -> str:
 def _create_default_participant(display_name: str) -> Dict[str, Any]:
     return {
         "mask": display_name, "status": "active",
-        "notebook": "— [소지품] —\n\n— [메모] —",
+        "notebook": notebook_default(),  # [notebook v2] 섹션 dict 정본
         "status_effects": [],
         "ai_memory": {
-            "appearance": "", "personality": "", "background": "", "relationships": {},
+            # [2026-09-16 시트 2차] 서술 필드(appearance/personality/background/description) 삭제 —
+            #   PC 서술의 정본은 위키 PC 페이지 lore 절(`!가면`이 페이지를 세운다).
             "passives": [], "notes": "", "archived_info": [],
             # [V7→V3.0] Core Systems: 2-Axis (Vigor/Composure)
             "vigor": {"value": 100, "last_delta": 0},
@@ -1816,77 +2842,68 @@ def set_user_mask(channel_id: str, uid: str, mask: str) -> None:
         d["participants"][str(uid)]["mask"] = mask
         save_domain(channel_id, d)
 
-def set_user_description(channel_id: str, uid: str, desc: str) -> None:
-    # Used for simple storage
-    p = get_participant_data(channel_id, uid)
-    if p:
-        p["ai_memory"]["appearance"] = desc # Map to AI memory
-        save_participant_data(channel_id, uid, p)
+# [2026-09-16 시트 2차 §8] `default_pc_info` = **대기 상자**. 모양:
+#   {"name", "aliases"?, "species"?, "sheet_text"(시트 원문), "passives"?, "inventory"?}
+#   마스크가 맞는 참가자(PC 페이지 보유)가 나타나면 원문은 페이지 lore 절로, passives/inventory는
+#   지금 자리(ai_memory·노트북 [소지품]) 그대로 이월하고 상자를 **비운다**.
+def pc_mask_matches(mask: Any, name: Any, aliases: Any = None) -> bool:
+    """마스크 매칭 하나 — `_norm_quote` 정규화 후 정확일치 또는 aliases. 부분일치 없음."""
+    try:
+        from fermentation import _norm_quote as _nq
+    except Exception:
+        _nq = lambda x: re.sub(r"\s+", " ", str(x or "")).strip()
+    m = _nq(str(mask or "")).lower()
+    if not m:
+        return False
+    cands = [name] + (list(aliases) if isinstance(aliases, list) else [])
+    return any(isinstance(c, str) and c.strip() and _nq(c).lower() == m for c in cands)
+
+
+def get_pc_page_id(channel_id: str, uid: Any) -> Optional[str]:
+    try:
+        import wiki_store
+        return wiki_store.pc_page_id(channel_id, uid)
+    except Exception:
+        return None
+
 
 def apply_pc_info_to_user(channel_id: str, user_id: str) -> bool:
+    """대기 상자 → 이 참가자에 흡수. 페이지(`!가면`) 없으면 흡수 안 함(False, 상자 유지).
+    매칭 판정은 호출자가 한다(`sync_matching_participants`·`!가면`은 `pc_mask_matches`, `!설명`은 본인)."""
     pc_info = get_default_pc_info(channel_id)
     if not pc_info: return False
-    
+
     p = get_participant_data(channel_id, user_id)
     if not p: return False
-    
+    pid = get_pc_page_id(channel_id, user_id)
+    if not pid:
+        return False
+
+    _text = str(pc_info.get("sheet_text") or "").strip()
+    if _text:
+        try:
+            import wiki_store
+            wiki_store.set_sheet_text(channel_id, pid, _text, as_notes=bool(pc_info.get("sheet_fallback")))
+        except Exception as _e_ws:
+            logging.warning(f"[PC Sync] 시트 원문 → 페이지 실패: {_e_ws}")
+            return False
+
     mem = p.get("ai_memory", {})
     if not mem:
         mem = _create_default_participant("")["ai_memory"]
         p["ai_memory"] = mem
-    
-    # Map basic PC info
-    if pc_info.get("appearance"): mem["appearance"] = pc_info["appearance"]
-    if pc_info.get("description"): mem["description"] = pc_info["description"]
-    elif pc_info.get("personality"): mem["description"] = pc_info["personality"]
-    
-    if pc_info.get("background"): mem["background"] = pc_info["background"]
 
-    # Identity aspects (면모 시트 — Fate 하이브리드: 정체성/불씨/면모)
-    for _ak in ("high_concept", "trouble", "aspects"):
-        if pc_info.get(_ak):
-            mem[_ak] = pc_info[_ak]
-
-    # Passives Merge (Prevent Duplicates)
+    # [2026-09-16 3차] 조각 이월 — 새 모양 {name, desc, value, origin=sheet}, 이름 기준 교체.
     new_passives = pc_info.get("passives", [])
     if new_passives:
-        if "passives" not in mem: mem["passives"] = []
-        current_names = [item['name'] if isinstance(item, dict) else str(item) for item in mem["passives"]]
-        for np in new_passives:
-            np_obj = np if isinstance(np, dict) else {"name": str(np), "desc": "Extracted"}
-            name_key = np_obj.get("name", "Unknown")
-            if name_key not in current_names:
-                passive_entry = {
-                    "name": name_key,
-                    "desc": np_obj.get("desc", "Extracted from Template"),
-                    "tags": np_obj.get("tags", ["Sync", "+Auto"]),
-                    "acquired_at": time.strftime('%Y-%m-%d')
-                }
-                # Carry over theory_links and modifiers if present (Phase 4-1)
-                if np_obj.get("theory_links"):
-                    passive_entry["theory_links"] = np_obj["theory_links"]
-                if np_obj.get("modifiers"):
-                    passive_entry["modifiers"] = np_obj["modifiers"]
-                mem["passives"].append(passive_entry)
+        from game_character import merge_fragments
+        mem["passives"], _ = merge_fragments(mem.get("passives", []), new_passives, "sheet")
 
     save_participant_data(channel_id, user_id, p)
 
-    # [일지/인벤 라우팅 2026-07-04] ai_memory 저장 후(read-modify-write 순서 안전) 노트북 섹션 반영.
-    #  - notes(시트 '일지' 필드) → [일지] 섹션(시트 sync 단독 소유; [메모]·[소지품]과 격리라
-    #    background/NPC 누출 없음). 수동 !정보·자동 재작성 모두에서 연속성 일지가 누적.
-    #  - inventory → [소지품] 섹션(item_usage와 동일한 add_item_to_sojipin 정식 경로; 이후
-    #    sync_notebook_to_inventory가 ai_memory.inventory 재구축). 과거 [메모]에 "설정 동기화"
-    #    라벨로 덤프하던 노이즈 제거.
-    # add_to_journal/add_item_to_sojipin 둘 다 dedup 내장 → 자동 재작성 반복에도 중복 안 쌓임.
-    # [메모]는 플레이어 전용으로 불가침.
+    # inventory → 노트북 [소지품] (add_item_to_sojipin 정식 경로, dedup 내장). 위치 무변경.
     try:
         import game_character as _gc
-        _journal = pc_info.get("notes") or pc_info.get("memos")
-        if isinstance(_journal, list):
-            _journal = " ".join(str(x) for x in _journal)
-        if _journal and str(_journal).strip():
-            _gc.add_to_journal(channel_id, str(_journal).strip(), user_id)
-
         _inv = pc_info.get("inventory")
         _names = []
         if isinstance(_inv, list):
@@ -1901,32 +2918,25 @@ def apply_pc_info_to_user(channel_id: str, user_id: str) -> bool:
             if _nm:
                 _gc.add_item_to_sojipin(channel_id, _nm, user_id)
     except Exception as _e_nb:
-        logging.debug(f"[PC Sync] 노트북 일지/인벤 반영 skipped: {_e_nb}")
+        logging.debug(f"[PC Sync] 노트북 인벤 반영 skipped: {_e_nb}")
 
+    clear_default_pc_info(channel_id)   # 흡수 후 상자는 비운다(동기화 대상 소멸)
     return True
 
 def sync_matching_participants(channel_id: str, pc_info: Dict[str, Any]) -> List[str]:
-    """[V4] 캐릭터 이름(Mask)이 일치하는 모든 플레이어에게 기본 설정을 자동 동기화합니다."""
+    """대기 상자의 이름(또는 aliases)과 마스크가 맞는 **PC 페이지 보유** 참가자 하나에 흡수.
+    흡수는 상자를 비우므로 첫 매치 하나만 받는다."""
     if not pc_info or not pc_info.get("name"): return []
-
-    target_name = pc_info["name"].lower()
     d = get_domain(channel_id)
-    updated_uids = []
-
     for uid, p_data in d.get("participants", {}).items():
-        if p_data.get("mask", "").lower() == target_name:
+        if not isinstance(p_data, dict) or not get_pc_page_id(channel_id, uid):
+            continue
+        if pc_mask_matches(p_data.get("mask", ""), pc_info.get("name"), pc_info.get("aliases")):
             if apply_pc_info_to_user(channel_id, uid):
-                updated_uids.append(uid)
-
-    # [P-C] mask≠name 조용한 실패 관측 — PC 시트는 default_pc_info에 써졌는데 이름이 어느
-    # 참가자 mask와도 안 맞아 ai_memory/화면(!info·Slot6)에 전파가 0건이면 경고(무경고 사각 제거).
-    if not updated_uids:
-        _masks = [p.get("mask", "") for p in d.get("participants", {}).values() if p.get("mask")]
-        logging.warning(
-            "[PC Sync] default_pc_info name=%r 가 어떤 참가자 mask와도 불일치 → ai_memory 전파 0건. "
-            "참가자 mask=%s. !가면 이름 정합 확인 필요.", pc_info.get("name"), _masks)
-
-    return updated_uids
+                return [uid]
+            return []
+    logging.info("[PC Sync] 대기 상자 name=%r — 마스크 맞는 PC 페이지 없음, 대기 유지.", pc_info.get("name"))
+    return []
 
 def get_ai_memory(channel_id: str, uid: str) -> Dict[str, Any]:
     p = get_participant_data(channel_id, uid)
@@ -1971,24 +2981,27 @@ def update_ai_memory(channel_id: str, uid: str, updates: Dict[str, Any]) -> None
     
     mem = p.get("ai_memory", {})
     
-    # Special handling for dictionaries (deep merge)
     for k, v in updates.items():
-        if k == "relationships" and isinstance(v, dict):
-            current_rels = mem.get("relationships", {})
-            current_rels.update(v)
-            mem[k] = current_rels
-        else:
-            mem[k] = v
+        mem[k] = v
             
     p["ai_memory"] = mem
     save_participant_data(channel_id, uid, p)
 
-def update_npc_relationship(channel_id: str, uid: str, npc_name: str, rel_text: Union[str, int]) -> Union[str, int]:
-    """[Extracted from Memory] Update specific NPC relationship in Player AI Memory"""
-    d = get_domain(channel_id)
-    npc_name = _resolve_npc_name(d, npc_name)
-    update_ai_memory(channel_id, uid, {"relationships": {npc_name: rel_text}})
-    return rel_text
+def return_removed_play_fragments(channel_id: str, uid: str, old_mem: Dict[str, Any],
+                                  new_mem: Dict[str, Any]) -> int:
+    """[2026-09-16 3차] OOC로 사라진 origin=play 조각의 desc 를 PC 페이지 Observed 끝에 되돌린다(가역).
+    쓰기는 wiki_store.append_observed_tail 하나. Returns: 되돌린 줄 수."""
+    import memory_system
+    import wiki_store
+    gone = memory_system.removed_play_fragments(old_mem, new_mem)
+    pid = wiki_store.pc_page_id(channel_id, uid) if gone else None
+    n = 0
+    for fr in gone:
+        desc = str(fr.get("desc") or "").strip()
+        if pid and desc and wiki_store.append_observed_tail(channel_id, pid, desc).get("ok"):
+            n += 1
+    return n
+
 
 def add_to_ai_memory_list(channel_id: str, uid: str, key: str, item: Union[str, Dict[str, Any]]) -> None:
     p = get_participant_data(channel_id, uid)
@@ -1996,7 +3009,13 @@ def add_to_ai_memory_list(channel_id: str, uid: str, key: str, item: Union[str, 
     
     mem = p.get("ai_memory", {})
     if key not in mem: mem[key] = []
-    
+    if key == "passives":
+        # [2026-09-16 3차] 조각은 새 모양으로만 저장된다(옛 tags/theory_links/modifiers 경로 0).
+        from game_character import normalize_fragment
+        item = normalize_fragment(item, "sheet")
+        if not item:
+            return
+
     if isinstance(mem[key], list):
         # [Fix] Deep Deduplication for Dict items (Passives, Inventory)
         is_duplicate = False
@@ -2023,158 +3042,44 @@ def add_to_ai_memory_list(channel_id: str, uid: str, key: str, item: Union[str, 
 
 # [2026-07-18 고아 삭제] update_psych_profile — 구세대(Phase 2) Maslow 심리 프로필 — 현행 DAI psyche/deep_read/emotion_engine이 대체 (dead_scan 참조0 확인, git 이력 복원 가능)
 
-def update_helena_metric(channel_id: str, npc_name: str, depth_delta: int = 0, tension_delta: int = 0,
-                         source: str = "", origin: str = "") -> None:
-    """[Phase 2] Update Helena metrics (Depth/Tension) for an NPC relation
-
-    [C1 2026-08-01] `source` 신설 — LLM이 제안한 델타만 선언 범위로 자른다.
-    아래 0~100 클램프는 **범위** 클램프지 **델타** 클램프가 아니라, 모델이 한 번
-    크게 뱉으면 depth 5 → 100이 한 턴에 통과했다(프롬프트엔 +1~+5/-10~+10이라 적혀
-    있었지만 집행이 없었음). 캡 표 = config.LLM_DELTA_CAPS.
-
-    ⚠ source 기본값은 무캡이다. 이 세터는 코드도 쓴다 —
-    다운타임 사교(depth +10~15), NPC 시트 initial_depth, trajectory 맵.
-    그 경로에 캡을 걸면 정상 설계가 잘린다. LLM 경로만 명시적으로 라벨을 넘긴다.
-
-    [2026-08-17] `origin` 신설 — **감사 라벨 전용**. source를 코드 경로에 붙이면 캡이 같이
-    걸려버리므로(정상 설계가 잘림), 판독용 이름은 캡과 분리된 인자로 받는다. 값은 last_change.source에만 쓰인다.
-    """
-    _capped = False
-    if source:
-        import bot_utils as _bu
-        depth_delta, _c1 = _bu.cap_llm_delta(depth_delta, source, "depth", subject=npc_name)
-        tension_delta, _c2 = _bu.cap_llm_delta(tension_delta, source, "tension", subject=npc_name)
-        _capped = bool(_c1 or _c2)
-    d = get_domain(channel_id)
-    if "npc_attitudes" not in d: d["npc_attitudes"] = {}
-    npc_name = _resolve_npc_name(d, npc_name)
-    if npc_name not in d["npc_attitudes"]:
-        # [2026-07-28] 구 코드는 여기서 **로그 없이 return**했다("Must exist first").
-        #   호출 3경로 중 둘(NPCDepthUpdate의 npc_depth_hints, 발효의 helena_delta)은
-        #   그 턴 dai.npc_attitudes와 무관한 후행 추출 결과라, 태도 레코드가 아직 없는 NPC가
-        #   흔히 들어온다 → 관계 진행분이 조용히 사라졌다. 없으면 만들어서 받는다.
-        if not isinstance(npc_name, str) or not npc_name.strip():
-            return
-        d["npc_attitudes"][npc_name] = {
-            "attitude": "neutral", "reason": "(자동 생성 — 관계 지표 수신)",
-            "depth": 0, "tension": 0,
-        }
-        logging.debug("[Helena] %s 태도 레코드 신규 생성 후 지표 반영", npc_name)
-
-    target = d["npc_attitudes"][npc_name]
-    
-    # Initialize if missing (Migration support)
-    if "depth" not in target: target["depth"] = 0
-    if "tension" not in target: target["tension"] = 0
-    
-    # Update and Clamp (0-100)
-    _old_d, _old_t = target["depth"], target["tension"]
-    target["depth"] = max(0, min(100, target["depth"] + depth_delta))
-    target["tension"] = max(0, min(100, target["tension"] + tension_delta))
-    target["last_updated"] = time.strftime('%Y-%m-%d %H:%M')
-    # [2026-08-17 감사] 실제로 움직인 필드만 도장. 델타가 0이거나 이미 바닥/천장이면 no-op.
-    _stamp_relation_change(
-        channel_id, npc_name, target,
-        [("depth", _old_d, target["depth"]), ("tension", _old_t, target["tension"])],
-        source or origin, note="capped" if _capped else "",
-    )
-
-    save_domain(channel_id, d)
-    _mirror_relation(channel_id, npc_name, target)  # [V10 Sprint 1] dual-write
-
-
-def decay_stale_relations(channel_id: str, current_turn: int) -> int:
-    """[2026-08-02 A축] 안 건드린 관계의 depth/tension을 점감. 매 턴 호출 가정(turn-end).
-
-    왜: `update_helena_metric`이 `max(0, min(100, cur + delta))` 단조 누적뿐이라
-      **한 번 오른 값이 절대 안 내려왔다.** 관계가 식지 않는다.
-      감쇠 전례는 넷이나 있는데(entity_relations fade / EMOTION_DECAY / 태도 3턴 쿨다운 /
-      vigor 자연회복) depth/tension만 빠져 있었다.
-
-    형태: entity_relations.cleanup_stale_relations와 같은 grace/fade/floor.
-      **삭제가 아니라 흐려짐** — 엔트리는 남기고 값만 내린다(관계는 사라지기보다 흐려진다).
-
-    ★시계는 `npcs[name]["_last_appear_turn"]`(mark_npc_appearance가 매 턴 찍는 등장 기록).
-      **관계는 레코드를 안 건드려서가 아니라 "안 만나서" 식는다** — 서사적으로도 그게 맞고,
-      부작용도 없다. 후보였던 `last_change_turn`은 태도 enum 쿨다운(3턴) 판정에 쓰이므로
-      여기서 같이 찍으면 **태도가 영구 동결**된다(depth 틱이 매 턴 도니까). 재사용 금지.
-      새 키를 만들지 않으므로 npc_relations 화이트리스트(5곳)도 안 건드린다.
-
-    ⚠수치를 새로 만들지 않는다. 기존 컬럼만 내린다.
-    끄기: config.RELATION_DECAY_GRACE = 0.
-
-    Returns: 감쇠된 NPC 수.
-    """
-    grace = int(getattr(config, "RELATION_DECAY_GRACE", 0) or 0)
-    if grace <= 0:
-        return 0  # 기능 끔
-    d_drop = int(getattr(config, "RELATION_DECAY_DEPTH", 1) or 0)
-    t_drop = int(getattr(config, "RELATION_DECAY_TENSION", 2) or 0)
-    floor = int(getattr(config, "RELATION_DECAY_FLOOR", 0) or 0)
-    if d_drop <= 0 and t_drop <= 0:
-        return 0
-
-    atts = get_npc_attitudes(channel_id)   # read-through (SQLite 우선)
-    if not isinstance(atts, dict) or not atts:
-        return 0
-    npcs = get_npcs(channel_id) or {}
-    # [2026-08-17 수리] 도메인 핸들을 **한 번만** 잡는다. get_domain은 매 호출 deep copy를
-    #   돌려주므로(cache_manager.get_session), 구 코드처럼 루프 안에서 새로 부르고 마지막에
-    #   또 `save_domain(ch, get_domain(ch))`를 하면 **방금 내린 값이 저장 대상에 없다** —
-    #   JSON 쪽 감쇠가 통째로 no-op이었다(미러만 내려가서, 롤백/다음 update_helena_metric이
-    #   JSON의 안 식은 값을 기준으로 되돌려놓는다). 같은 dict를 내리고 그 dict를 저장한다.
-    d_json = get_domain(channel_id)
-    json_atts = d_json.setdefault("npc_attitudes", {})
-
-    faded = 0
-    for name, rel in list(atts.items()):
-        if not isinstance(rel, dict):
-            continue
-        # 등장 기록이 없으면 감쇠 대상 아님 — 언제 마지막으로 만났는지 모르는 상태에서
-        # 임의로 깎으면 구 세션이 한 턴에 바닥난다. 다음 등장에서 도장이 찍히면 그때부터.
-        _npc = npcs.get(name)
-        last = _npc.get("_last_appear_turn") if isinstance(_npc, dict) else None
-        try:
-            last = int(last)
-        except (TypeError, ValueError):
-            continue
-        if last < 0 or current_turn - last <= grace:
-            continue  # 최근에 만난 관계는 보존
-
-        cur_d = int(rel.get("depth", 0) or 0)
-        cur_t = int(rel.get("tension", 0) or 0)
-        new_d = max(floor, cur_d - d_drop)
-        new_t = max(floor, cur_t - t_drop)
-        if new_d == cur_d and new_t == cur_t:
-            continue  # 이미 바닥
-
-        rel["depth"] = new_d
-        rel["tension"] = new_t
-        # [2026-08-17 감사] 감쇠는 **아무도 시키지 않은 변경**이라 판독이 특히 필요하다.
-        _stamp_relation_change(channel_id, name, rel,
-                               [("depth", cur_d, new_d), ("tension", cur_t, new_t)],
-                               "decay", note=f"stale decay, unseen {current_turn - last}t",
-                               turn=current_turn)
-        # JSON 원본도 같이 내린다 — read-through가 꺼진 롤백 상태에서도 일관되게.
-        _json = json_atts.get(name)
-        if isinstance(_json, dict):
-            _json["depth"] = new_d
-            _json["tension"] = new_t
-            # 도장은 진실원천 JSON 쪽이 본체 (미러는 화이트리스트라 이 키를 안 받는다).
-            if isinstance(rel.get("last_change"), dict):
-                _json["last_change"] = rel["last_change"]
-        _mirror_relation(channel_id, name, rel)
-        faded += 1
-
-    if faded:
-        save_domain(channel_id, d_json)
-        logging.info("[RelationDecay] %d NPC 관계 점감 (grace=%d, turn=%d)",
-                     faded, grace, current_turn)
-    return faded
-
-
 # UI Helpers
-def get_unified_player_info(channel_id: str, user_id: str) -> str:
+def get_pc_sheet_text(channel_id: str, user_id: str, sections: Optional[list] = None) -> str:
+    """PC 페이지 lore 절(+Observed) 발췌 렌더. 발췌 규칙은 `render_page` 기존 규칙(절당 600) 그대로.
+    페이지 없으면 ""."""
+    pid = get_pc_page_id(channel_id, user_id)
+    if not pid:
+        return ""
+    try:
+        import wiki_store
+        if sections is None:
+            sections = list(getattr(config, "WIKI_LORE_SECTIONS", {}).get("character", ())) + ["Observed"]
+        txt = wiki_store.render_page(channel_id, pid, sections)
+        # 첫 줄 `## 이름`은 호출자 헤더와 겹친다 — 절만 돌려준다.
+        return txt.split("\n", 1)[1].strip() if "\n" in txt else ""
+    except Exception as _e:
+        logging.debug(f"[PC Sheet] render skipped: {_e}")
+        return ""
+
+
+def apply_ooc_sheet_edits(channel_id: str, uid: str, edits: List[Dict[str, Any]]) -> List[str]:
+    """OOC 절 편집(field=절 이름) → PC 페이지 lore 절. 되비침 줄 반환."""
+    pid = get_pc_page_id(channel_id, uid)
+    if not pid:
+        return ["⚠️ 시트 편집: `!가면`으로 캐릭터 페이지를 먼저 세워 주세요."]
+    out = []
+    try:
+        import wiki_store
+        for e in edits or []:
+            sec = str(e.get("field") or "")
+            act = str(e.get("action") or "set")
+            if wiki_store.edit_lore_section(channel_id, pid, sec, str(e.get("value") or ""), action=act):
+                out.append(f"📄 {sec} {act}")
+    except Exception as _e:
+        logging.error(f"[OOC] 시트 절 편집 실패: {_e}")
+    return out
+
+
+def get_unified_player_info(channel_id: str, user_id: str, *, shape: str = "render") -> Any:
     """
     [V8] 통합 플레이어 정보 반환 (프롬프트 주입용)
     - 캐릭터 이름/외모/배경
@@ -2186,27 +3091,21 @@ def get_unified_player_info(channel_id: str, user_id: str) -> str:
     - 노트북
     """
     p = get_participant_data(channel_id, user_id)
+    if shape == "anchor":
+        # [2026-09-16 시트 2차 §8 뷰 하나] 좌뇌(une anchors → theoria)용 모양 — 같은 원천(페이지 절).
+        if not p:
+            return {"mask": "Unknown", "sheet": "", "passives": []}
+        _m = p.get("ai_memory", {}) or {}
+        return {"mask": p.get("mask", "Unknown"), "sheet": get_pc_sheet_text(channel_id, user_id),
+                "passives": _m.get("passives", [])}
     if not p:
         return "## 🎭 Unknown Player\n(No data available)"
 
     name = p.get("mask", "Unknown")
     mem = p.get("ai_memory", {})
 
-    # 1. Description (Appearance + Personality + Background)
-    desc_parts = []
-    if mem.get("appearance"): desc_parts.append(f"Appearance: {mem['appearance']}")
-    if mem.get("description"): desc_parts.append(f"Description: {mem['description']}")
-    if mem.get("background"): desc_parts.append(f"Background: {mem['background']}")
-
-    # [P-A] 빈시트 PC 초반: 재작성(임계) 전엔 ai_memory가 비어 있음 → default_pc_info의
-    # raw 관찰(play_observed)로 폴백해 렌더러가 굶지 않게. NPC 렌더러 폴백과 동형.
-    if not desc_parts:
-        _pcd = get_default_pc_info(channel_id) or {}
-        _pobs = str(_pcd.get("play_observed", "") or "").strip()
-        if _pobs:
-            desc_parts.append(f"관찰(진행 중): {_pobs[-600:]}")
-
-    desc_text = "\n".join(desc_parts) if desc_parts else "No description available."
+    # 1. Sheet — PC 페이지 lore 절 + Observed(렌더 발췌 규칙은 render_page 그대로)
+    desc_text = get_pc_sheet_text(channel_id, user_id) or "No description available."
 
     # 2. Status Effects
     status_effects = p.get("status_effects", [])
@@ -2226,7 +3125,8 @@ def get_unified_player_info(channel_id: str, user_id: str) -> str:
     passive_text = " / ".join(passive_lines) if passive_lines else "None"
 
     # 4. Relationships — 태도(attitude) + 친밀 단계(depth stage)
-    attitudes = get_npc_attitudes(channel_id)
+    # [2026-09-15 관계 통합] 채널 전역이 아니라 **이 PC를 target으로 하는 엣지**(설계 §5 Slot 6).
+    attitudes = get_npc_attitudes(channel_id, pc=name) if name and name != "Unknown" else {}
     rel_parts = []
     if attitudes:
         from config import get_connection_stage_name
@@ -2244,10 +3144,16 @@ def get_unified_player_info(channel_id: str, user_id: str) -> str:
         import custom_vars as _cv_pb
         vigor_val = _cv_pb.vigor_value(channel_id, user_id, mem)
     except Exception as _e_cvpb:
-        logger.debug(f"[CustomVar] 기력 표시 폴백: {_e_cvpb}")
         vigor_val = vigor.get("value", 100)
+    # [2026-09-24 감사] 평형도 레지스트리 문 경유 — P8b 이후 ai_memory.composure 는 동결이라
+    #   Slot 6 이 옛 값을, Slot 29 가 레지스트리 값을 찍어 한 프롬프트에 평형이 두 값이었다.
+    #   (위 except 의 `logger` 는 이 모듈에 정의가 없어 폴백 경로에서 NameError → 제거)
     composure = mem.get("composure", {})
-    composure_val = composure.get("value", 100)
+    try:
+        import custom_vars as _cv_pb2
+        composure_val = _cv_pb2.composure_value(channel_id, user_id, mem)
+    except Exception:
+        composure_val = composure.get("value", 100)
     vc_text = f"기력 {vigor_val}/100 | 평정 {composure_val}/100"
 
     # 6. Known Info (PC가 알고 있는 정보)
@@ -2264,21 +3170,13 @@ def get_unified_player_info(channel_id: str, user_id: str) -> str:
 
     # 8. Construct Block
     lines = [f"## 🎭 {name} (Player Character)"]
-    # 면모 시트 (Fate 하이브리드) — 플레이로 자동 구축된 정체성/불씨/면모
-    if mem.get("high_concept"):
-        lines.append(f"- 정체성: {mem['high_concept']}")
-    if mem.get("trouble"):
-        lines.append(f"- 불씨: {mem['trouble']}")
-    _pc_aspects = mem.get("aspects")
-    if isinstance(_pc_aspects, list) and _pc_aspects:
-        lines.append("- 면모: " + " · ".join(str(a) for a in _pc_aspects))
     lines.append(f"- Status Condition: {status_text}")
     lines.append(f"- Vigor/Composure: {vc_text}")
     lines.append(f"- Traits: {passive_text}")
     lines.append(f"- Relationships: {rel_text}")
     if ki_text:
         lines.append(f"- Known Info: {ki_text}")
-    lines.append(f"- Description:\n{desc_text}")
+    lines.append(f"- Sheet:\n{desc_text}")
     lines.append(f"\n### 📓 Player Notebook (Inventory & Memos)\n{notebook}")
     lines.append(f"\n⚠️ CRITICAL: YOU ARE THE GM. {name} IS THE PLAYER.\nDO NOT speak for {name}. DO NOT describe {name}'s actions.\nOnly describe the world's reaction to {name}.")
     return "\n".join(lines)
@@ -2287,8 +3185,104 @@ def get_unified_player_info(channel_id: str, user_id: str) -> str:
 # 5. STATE ACCESSORS (From legacy domain_manager)
 # =========================================================
 
+# ---------------------------------------------------------
+# [2026-09-06 P1 선언 층] output_decl — 유저가 **선언한 출력 저작**의 자리.
+#   world_state 가 아니라 **도메인 루트**에 산다. 이유 하나: 수명.
+#   world_state 는 `!클리어`(reset_session_state)가 통째로 DEFAULT 로 갈아엎는 곳이라
+#   거기 둔 저작(패널 형식)은 세션 리셋마다 사라졌다 — 저작은 세션이 아니라 채널의 것이다.
+#   생존은 **무접촉**으로 얻는다: reset_session_state 에 이 키를 적는 줄이 한 줄도 없어야
+#   생존이 코드 변경에 안 흔들린다(적으면 그 줄이 곧 삭제 후보가 된다).
+#   reset_domain 은 파일을 지우므로 여기도 함께 소멸 — 그건 의도한 수명이다.
+# 이 단계(P1)엔 panel_sections 만 담는다. custom_vars·output_rules 이관은 P7.
+OUTPUT_DECL_VERSION = 1
+# 선언 층의 dict 칸 — 화이트리스트가 한 곳이라야 새 칸이 다른 모듈의 저장에
+# 조용히 지워지지 않는다(expr_engine·status_panel 은 층 전체를 읽어 되쓴다).
+_DECL_DICT_KEYS = ("panel_sections", "derives", "transitions",
+                   "custom_vars", "output_rules",
+                   # [2026-09-13 P16] 조건부 지시. 화이트리스트 밖이면 저장이 조용히 증발한다.
+                   "directives")
+
+
+def output_decl_default() -> Dict[str, Any]:
+    # [2026-09-06 P3] derives·transitions 가 panel_sections 옆에 선다 — 셋 다 **선언**이라
+    #   같은 층(클리어 생존)에 살아야 한다(스펙 ④-7). 값·발화 이력은 world_state 다.
+    # [2026-09-06 P7] custom_vars(변수 선언)·output_rules(형식·헤더 저작)가 합류한다 —
+    #   P6 보고서 §5 "한 파일의 등록물이 수명이 갈린다"를 닫는 자리다. 값(custom_var_values)
+    #   은 따라오지 않는다: 선언은 채널의 것이고 값은 세션의 것이라 수명이 다르다.
+    return {"v": OUTPUT_DECL_VERSION, "panel_sections": {}, "derives": {}, "transitions": {},
+            "custom_vars": {}, "output_rules": {}, "directives": {}}
+
+
+def get_output_decl(channel_id: str) -> Dict[str, Any]:
+    """선언 층 읽기. 없으면 기본값 **사본**(읽기가 파일을 만들지 않는다)."""
+    decl = get_domain(channel_id).get("output_decl")
+    out = output_decl_default()
+    if isinstance(decl, dict):
+        out.update(decl)
+    for _k in _DECL_DICT_KEYS:
+        if not isinstance(out.get(_k), dict):
+            out[_k] = {}
+    if not isinstance(out.get("v"), int):
+        out["v"] = OUTPUT_DECL_VERSION
+    return out
+
+
+def update_output_decl(channel_id: str, decl: Dict[str, Any]) -> None:
+    """선언 층 쓰기. 형태가 아니면 기본값으로 눕힌다(저장은 항상 같은 모양)."""
+    if not isinstance(decl, dict):
+        decl = output_decl_default()
+    d = get_domain(channel_id)
+    out = {"v": decl.get("v") if isinstance(decl.get("v"), int) else OUTPUT_DECL_VERSION}
+    for _k in _DECL_DICT_KEYS:
+        out[_k] = decl.get(_k) if isinstance(decl.get(_k), dict) else {}
+    d["output_decl"] = out
+    save_domain(channel_id, d)
+
+
+# ---------------------------------------------------------
+# [2026-09-06 P7] 형식·헤더 저작(`!출력룰`)의 단일 관문.
+#   종전엔 world_state["output_rules"] 를 7개 파일이 각자 첨자로 열었다 — 그래서
+#   `!클리어`(world_state 통째 교체)가 저작을 지우는 것을 아무도 못 막았다.
+#   여기 한 곳으로 모으면 수명은 함수 두 개의 성질이 된다.
+# **lazy 이월**(08-18 규율): 읽기는 옛 자리를 볼 뿐 옮기지 않는다 — 읽기가 파일을
+#   바꾸면 "언제 이사했는가"가 사용 기록에 녹아 롤백이 불가능해진다. 첫 쓰기가 옮긴다.
+
+def get_output_rules(channel_id: str) -> Dict[str, Any]:
+    """{키: {desc, created_at, source}}. 선언 층이 비면 옛 자리(world_state)를 읽는다."""
+    try:
+        cur = get_output_decl(channel_id).get("output_rules")
+    except Exception as e:
+        logging.debug(f"[P7] output_rules decl read skipped: {e}")
+        cur = None
+    if isinstance(cur, dict) and cur:
+        return dict(cur)
+    try:
+        legacy = (get_world_state(channel_id) or {}).get("output_rules")
+    except Exception as e:
+        logging.debug(f"[P7] output_rules legacy read skipped: {e}")
+        legacy = None
+    return dict(legacy) if isinstance(legacy, dict) else {}
+
+
+def set_output_rules(channel_id: str, rules: Dict[str, Any]) -> None:
+    """선언 층에 쓰고 **옛 자리는 비운다** — 두 자리에 남으면 폴백이 삭제를 되살린다
+    (`!출력룰 초기화` 가 조용히 아무것도 못 지우는 사고)."""
+    decl = get_output_decl(channel_id)
+    decl["output_rules"] = dict(rules) if isinstance(rules, dict) else {}
+    update_output_decl(channel_id, decl)
+    try:
+        ws = get_world_state(channel_id) or {}
+        if ws.get("output_rules") is not None:
+            ws["output_rules"] = {}
+            update_world_state(channel_id, ws)
+    except Exception as e:
+        logging.debug(f"[P7] legacy output_rules purge skipped: {e}")
+
+
 def get_world_state(channel_id: str) -> Dict[str, Any]:
-    ws = get_domain(channel_id).get("world_state", config.DEFAULT_WORLD_STATE.copy())
+    ws = get_domain(channel_id).get("world_state")
+    if not isinstance(ws, dict):
+        ws = __import__("copy").deepcopy(config.DEFAULT_WORLD_STATE)  # [2026-09-24 감사] 얕은 사본 공유 방지
     # Backfill new fields for legacy sessions
     if "doom_clocks" not in ws or not isinstance(ws.get("doom_clocks"), list):
         ws["doom_clocks"] = []
@@ -2557,12 +3551,17 @@ def get_party_status_context(channel_id: str) -> str:
     if not participants: return "Active Players: None"
     from game_character import format_status_effects
     active = []
-    for _, p in participants.items():
+    for _uid_look, p in participants.items():
         if p.get("status") != "active": continue
 
-        mem = p.get("ai_memory", {})
         mask = p.get("mask", "Unknown")
-        look = mem.get("appearance", "Unknown")[:50]
+        _pid_look = get_pc_page_id(channel_id, _uid_look)
+        try:
+            import wiki_store as _ws_look
+            look = (_ws_look.get_lore_sections(channel_id, _pid_look).get("Identity", "") if _pid_look else "") or "Unknown"
+        except Exception:
+            look = "Unknown"
+        look = look[:50]
         cond = format_status_effects(p.get("status_effects", [])) or "Normal"
         active.append(f"[{mask}] Look:{look}, Cond:{cond}")
         
@@ -2825,9 +3824,16 @@ def reset_session_state(channel_id: str) -> None:
     d["history"] = []
     d["fermented_history"] = []
     d["deep_memory"] = ""
+    # [2026-09-24 감사] deep_memory_data 를 안 비우면 P4 이음매가 기존 행 값을 이어 써 옛 세션 active triggers·
+    #   [chronicle hook] 이 새 세션 Slot 9·게시판에 급식됐다. 발효 소유 루트 키도 같이 초기화(연대기·GC 카운터 포함).
+    d["deep_memory_data"] = {}
+    for _fk in ("active_memory_triggers", "chronicles", "chronicle_unresolved", "structured_slots",
+                "memory_gc_backup", "ferment_fail_streak", "ferment_empty_streak",
+                "_last_chronicle_ferment_count", "_last_memory_gc_ferment_count"):
+        d.pop(_fk, None)
     d["ai_session_memory"] = _get_default_session()["ai_session_memory"]
     # [V10 Sprint 3] 영구 로그도 삭제 — 리셋=완전 새 이야기 (사용자 결정 2026-06-10).
-    # fermented/deep 테이블은 함수 끝 save_domain의 스냅샷 미러가 빈 상태로 동기화.
+    # [V10 P4] fermented/deep 테이블은 함수 끝 save_domain의 이음매가 위 빈 값으로 비운다.
     try:
         import sqlite_store
         sqlite_store.clear_history_log(channel_id)
@@ -2841,9 +3847,10 @@ def reset_session_state(channel_id: str) -> None:
     # [2026-07-05 혼입 수리] 플레이 파생 도메인 루트 키 — 태도/지식/엔티티관계는 세션 소속.
     # (!클리어 스펙 "유지=로어북·참가자·룰·등록 NPC"에서 유지 대상은 NPC '시트'지 플레이 상태가 아님.
     #  실측: 턴1에 AttitudeGate cooldown -64, 옛 지식 6 facts, 'Deep(은색 캔 약속)' 혼입.)
-    d["npc_attitudes"] = {}
+    # [2026-09-15 관계 통합] 옛 관계 키 둘은 비우지 않고 **삭제**(relations 엣지는 clear_session_scoped가 지운다).
+    d.pop("npc_attitudes", None)
     d["npc_knowledge"] = {}
-    d["entity_relations"] = {}
+    d.pop("entity_relations", None)
     # [2026-07-28] npc_imprints 추가 — 다른 세션 파생 데이터는 다 지우면서 각인만 남아
     # 리셋 후에도 옛 행동 기록이 따라왔다(감정 이력은 world_state 리셋으로 함께 사라짐).
     d["npc_imprints"] = {}
@@ -2868,23 +3875,37 @@ def reset_session_state(channel_id: str) -> None:
         logging.debug(f"[Reset] reader seed purge skipped: {_e_rs}")
 
     # 2. Reset World State
-    d["world_state"] = config.DEFAULT_WORLD_STATE.copy()
+    # [2026-09-24 감사] `!룰 추가`의 하우스 룰은 world_state(rules_text·location_rules)에 산다 — 통째 교체로
+    #   매 `!클리어`마다 사라졌는데 완료 안내는 "유지됨: …룰"이었다. 두 키는 이월한다.
+    _old_ws = d.get("world_state") or {}
+    import copy as _copy_rs
+    d["world_state"] = _copy_rs.deepcopy(config.DEFAULT_WORLD_STATE)  # 얕은 .copy()는 중첩 list(doom_clocks 등)를 기본값과 공유
+    for _rk in ("rules_text", "location_rules"):
+        if _old_ws.get(_rk):
+            d["world_state"][_rk] = _old_ws[_rk]
     d["settings"]["session_locked"] = False # Unlock for re-start
     
     # 3. Reset Quests & Notebook (Keep Lore Items if any? No, reset all dynamic)
     d["quest_board"] = {"active": [], "completed": [], "memos": [], "archive": [], "lore": []}
-    d["notebook"] = "— [소지품] —\n\n— [메모] —"
+    d["notebook"] = notebook_default()
+    d["notebook_shared"] = notebook_default()
     d["ooc_mode"] = False
     
     # 4. Reset Session NPCs (Keep 'lore' + 'manual' NPCs)
     # AI가 생성한 세션 NPC만 제거, 유저가 직접 등록한 NPC는 보존
     if "npcs" in d:
         kept_npcs = {}
+        try:
+            import wiki_store as _ws_r
+            _lm_r = _ws_r.character_lore_map(channel_id, with_source=True)   # [§H] 시드 도장 동반
+        except Exception:
+            _lm_r = None
         for name, data in d["npcs"].items():
-            if data.get("source") in ("lore", "manual"):
+            if (derive_npc_source(data, channel_id, name, lore_map=_lm_r) if _lm_r is not None
+                    else derive_npc_source(data)) in ("lore", "manual"):
                 # [2026-07-05 혼입 수리] 시트 원본은 유지하되 플레이 파생 필드는 세션 소속 → 제거.
+                #   (관찰은 2026-09-16부터 페이지 play 절 — wiki_store.clear_play가 비운다)
                 if isinstance(data, dict):
-                    data.pop("play_observed", None)
                     data.pop("appearances", None)
                 kept_npcs[name] = data
         d["npcs"] = kept_npcs
@@ -2895,23 +3916,38 @@ def reset_session_state(channel_id: str) -> None:
         except Exception as _e:
             logging.debug(f"[V10] reset npc mirror skipped: {_e}")
 
-    # 5. Reset Participant Runtime State (vigor/composure/notebook — 로어 프로필은 유지)
-    # [2026-08-18 Phase 2.5] 기력의 정본은 레지스트리로 옮겨갔다 — PC별 슬롯을 함께 비운다.
-    #   (옛 자리도 계속 100으로 되돌린다: 레지스트리 off 채널의 폴백값이라 같이 리셋돼야 한다.)
+    # [2026-09-14 W4] 내부 위키 수명 — 페이지는 npcs와 **같은 정책**이다.
+    #   play 절·리비전 전량 + source ∉ {lore, manual} 페이지 삭제. lore 절·lore 페이지는 생존.
+    #   (npcs 블록 밖에 둔다: 위키 페이지는 d["npcs"]가 비어 있어도 DB에 남아 있을 수 있다.)
+    if getattr(config, "WIKI_PAGES", False):
+        try:
+            import wiki_store
+            wiki_store.clear_play(channel_id)
+        except Exception as _e:
+            logging.debug(f"[Wiki] clear_play skipped: {_e}")
+
+    # [2026-09-14 W4] 휘발 회상 흔적 — 프로세스 메모리라 DB 삭제가 못 건드린다.
+    #   안 비우면 옛 세션 이름이 다음 턴 [Recall] trace 영수증에 섞인다.
     try:
-        _ws_rst = d.setdefault("world_state", {})
-        _vals_rst = _ws_rst.get("custom_var_values")
-        if isinstance(_vals_rst, dict) and "기력" in _vals_rst:
-            _vals_rst["기력"] = {"value": {}, "last_change": {}}
-    except Exception as _e_rst:
-        logging.debug(f"[V10] reset 기력 registry skipped: {_e_rst}")
+        import fermentation
+        fermentation.forget_channel_recall(channel_id)
+    except Exception as _e:
+        logging.debug(f"[Wiki] forget_channel_recall skipped: {_e}")
+
+    # 5. Reset Participant Runtime State (vigor/composure/notebook — 로어 프로필은 유지)
+    # [2026-08-18 Phase 2.5] 기력의 정본은 레지스트리로 옮겨갔다.
+    #   (옛 자리는 계속 100으로 되돌린다: 레지스트리 off 채널의 폴백값이라 같이 리셋돼야 한다.)
+    # [2026-09-06 P7 삭제] 여기 있던 레지스트리 값 비우기 한 줄은 **no-op** 였다 —
+    #   2단(위)에서 world_state 를 DEFAULT 사본으로 통째 갈아엎은 뒤라 값 층 자체가 이미 없다.
+    #   남겨두면 "값 층이 여기서 관리된다"는 거짓 신호가 되고, 선언/값 층 분리(P7) 뒤엔
+    #   값 초기화의 정본이 custom_vars._initial_value 폴백이라는 사실을 가린다.
     for uid, pdata in d.get("participants", {}).items():
         mem = pdata.get("ai_memory", {})
         mem["vigor"] = {"value": 100, "last_delta": 0}
         mem["composure"] = {"value": 100, "last_delta": 0}
         mem.pop("mental", None)  # 레거시 제거
         mem["judgment_momentum"] = 0
-        pdata["notebook"] = "— [소지품] —\n\n— [메모] —"
+        pdata["notebook"] = notebook_default()
         pdata["status_effects"] = []
 
     save_domain(channel_id, d)

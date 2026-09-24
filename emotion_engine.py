@@ -18,7 +18,6 @@ from collections import Counter
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass, field, asdict
 
-import config  # [2026-07-22 카드1] PRESSURE_EMIT 플래그 (config는 leaf 모듈 — 순환 없음)
 
 logger = logging.getLogger("EmotionEngine")
 
@@ -50,9 +49,8 @@ UNDERTONE_RATIO = 0.55        # blended top 대비 비율 (팽팽한 혼합 상�
 
 # 감정 강도 → 메모리 중요도 부스트 매핑
 IMPORTANCE_BOOST_CURVE = {
-    # intensity range → boost multiplier
-    0.0: 1.0,   # 무감정 → 부스트 없음
-    0.3: 1.0,   # 약한 감정 → 부스트 없음
+    # intensity range → boost multiplier (0.5 미만 = 기본 1.0, get_importance_boost 초기값)
+    # [2026-09-15 §12] 무효 구간(0.0/0.3→1.0) 삭제 — 기본값과 같은 값이라 결과 무변화.
     0.5: 1.2,   # 중간 감정 → 20% 부스트
     0.7: 1.5,   # 강한 감정 → 50% 부스트
     0.9: 2.0,   # 극한 감정 → 100% 부스트
@@ -78,6 +76,10 @@ RELATIONAL_EMOTIONS = (
     "desire", "resonance", "gratitude", "friction",
     "shame", "poise",
 )
+
+# [2026-09-15 §12] Tier 5.5 — relation 층 tension(0~100)이 이 값 이상이면 friction 후보(conf 0.58).
+# 60 = Tier 5의 bond 문턱(>60)과 같은 눈금.
+TENSION_FRICTION_MIN = 60
 
 # §5b _derive_relational 룰 테이블 — soma.cultural_affect → Relational 직통
 # [2026-07-13 L2] 관계 자세(stance) 성격의 affect만 여기 남김.
@@ -119,34 +121,7 @@ SAME_AXIS_FORBIDDEN = frozenset([
     frozenset({"shame",        "disgust"}),   # [2026-07-13 L1] 수치=자기향 혐오 — 동축 증폭. shame×fear는 허용(노출 공포 합성)
 ])
 
-# T1 축·형용사 태그 풀 (9종 고정):
-#   방향성: approach/avoid | 몸상태: expansive/contracting
-#   강도:  sharp-edged/soft-edged | 자세: receptive/forward-leaning (+ bounded 보조)
-#
-# 라벨당 1~2 태그. 의도적 중첩 3쌍(joy~wonder, comfort~gratitude, disgust~friction)은
-# semantic proximity 신호로 유지. surprise/anticipation은 맥락의존 축이라 1태그.
-AXIS_TAGS: Dict[str, List[str]] = {
-    # Plutchik 8
-    "joy":          ["approach", "expansive"],
-    "trust":        ["soft-edged", "receptive"],
-    "fear":         ["avoid", "contracting"],
-    "surprise":     ["sharp-edged"],
-    "sadness":      ["avoid", "contracting"],
-    "disgust":      ["avoid", "sharp-edged"],
-    "anger":        ["approach", "sharp-edged"],
-    "anticipation": ["forward-leaning"],
-    # Relational 9
-    "wonder":       ["approach", "expansive"],
-    "comfort":      ["soft-edged", "receptive"],
-    "play":         ["expansive", "forward-leaning"],
-    "respect":      ["receptive", "bounded"],
-    "desire":       ["forward-leaning", "approach"],
-    "resonance":    ["expansive", "soft-edged"],
-    "gratitude":    ["soft-edged", "receptive"],
-    "friction":     ["avoid", "sharp-edged"],
-    "shame":        ["contracting", "bounded"],   # 시선 아래 움츠림 — fear/sadness(avoid+contracting)와 구분되는 사회적 구속 성분
-    "poise":        ["expansive", "bounded"],     # 펼쳐진 몸 + 자기 소유 — 당당함. wonder(approach+expansive)와 달리 대상 없이 서 있음
-}
+# [2026-09-15 §12 사문 정리] T1 축·형용사 태그 사전 삭제 — 소비자는 라벨 노출 롤백 렌더(휴면)뿐이었다.
 
 
 # =========================================================
@@ -192,15 +167,24 @@ class EmotionState:
     scene_mod: str = ""
 
     # --- L2 히스토리 ring buffer (최근 HISTORY_MAX_LEN 턴의 유효 페어) ---
-    # 각 엔트리: [base, mod, intensity, turn] — JSON 직렬화 호환을 위해 list-of-list
+    # 각 엔트리: [base, mod, intensity, turn, spike] — JSON 직렬화 호환을 위해 list-of-list
+    #   [2026-09-15 §12] 5번째 spike(bool) 추가 — 감정 부채(narrative_queries.emotion_residue) 원천.
+    #   구 4원소 엔트리는 spike=False로 읽는다.
     # _append_history가 intensity < HISTORY_INTENSITY_THRESHOLD 엔트리 거름
     history: List[List[Any]] = field(default_factory=list)
 
     # 메타
     turn: int = 0
 
+    # [2026-09-15 §12] 외부 소비 0인 진단 키 — 영속(world_state)·버스 states에서 빼고
+    #   emotion_log raw_json에만 싣는다(waterfall이 log_extra로 동봉). 속성 자체는 유지.
+    LOG_ONLY_KEYS = ("base_source", "mod_source")
+
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        for k in self.LOG_ONLY_KEYS:
+            d.pop(k, None)
+        return d
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'EmotionState':
@@ -238,7 +222,8 @@ class EmotionState:
                     if not base or not mod:
                         continue  # 비정상 또는 빈 페어 — _append_history 자체 가드와 일치
                     try:
-                        clean.append([base, mod, float(e[2]), int(e[3])])
+                        clean.append([base, mod, float(e[2]), int(e[3]),
+                                      bool(e[4]) if len(e) >= 5 else False])
                     except (TypeError, ValueError):
                         continue
             obj.history = clean[-HISTORY_MAX_LEN:]
@@ -249,6 +234,34 @@ class EmotionState:
             obj.base_label = legacy_dominant
             obj.base_source = "plutchik"
         return obj
+
+
+def present_emotion_states(world_state: Any, current_turn: Optional[int] = None) -> Dict[str, Dict[str, Any]]:
+    """[2026-09-15 §12] world_state `npc_emotion_states` 중 **감쇠 항목을 뺀** 출석분만.
+
+    추적기 병합(`EmotionEngine.merge_tracked_states`)은 부재 NPC를 `_decayed_at` 도장과 함께
+    남긴다. 이 dict를 직접 읽던 소비자(world_board 감정 줄, fermentation scene pair 후보)가
+    병합 이전과 같은 집합(= 결과가 난 NPC)만 보도록 거르는 단일 판정원.
+    current_turn을 주면 그 턴 이전·당일 도장만 감쇠로 본다(미래 도장 방어). 순수 함수, 입력 무변경.
+    """
+    if not isinstance(world_state, dict):
+        return {}
+    states = world_state.get("npc_emotion_states", {})
+    if not isinstance(states, dict):
+        return {}
+    out: Dict[str, Dict[str, Any]] = {}
+    for name, st in states.items():
+        if not isinstance(st, dict):
+            continue
+        _d = st.get("_decayed_at")
+        if _d is not None:
+            try:
+                if current_turn is None or int(_d) <= int(current_turn):
+                    continue
+            except (TypeError, ValueError):
+                continue
+        out[name] = st
+    return out
 
 
 # =========================================================
@@ -322,7 +335,7 @@ class EmotionEngine:
 
             # raw 스냅샷 — 블렌딩 전 상태를 보관해 다음 턴 spike 검출의 비교 기준으로 사용.
             # 이유: blended 도메인은 EMOTION_DECAY=0.7 때문에 단일 턴 최대 델타 ≤ 0.3로 압축돼
-            # SPIKE_THRESHOLD 0.5가 수학적으로 도달 불가능했음. raw는 입력 그 자체라
+            # 당시 임계(0.5)가 수학적으로 도달 불가능했음(현 SPIKE_THRESHOLD=0.25도 raw 기준). raw는 입력 그 자체라
             # "실제 장면 입력이 얼마나 급변했나"를 직접 측정.
             raw_snapshot = dict(raw)
 
@@ -336,7 +349,7 @@ class EmotionEngine:
             if not prev_data and previous_emotions:
                 try:
                     import domain_manager as _dm_res
-                    _alt = _dm_res._find_npc_key(previous_emotions, npc_name)
+                    _alt = _dm_res._find_npc_key(previous_emotions, npc_name, allow_token=False)  # [2026-09-24 감사] 부분집합
                     if _alt:
                         prev_data = previous_emotions.get(_alt)
                 except Exception:
@@ -414,6 +427,7 @@ class EmotionEngine:
             new_history = EmotionEngine._append_history(
                 list(prev_state.history),
                 base_label, modifier_label, intensity, current_turn,
+                spike=spike,
             )
 
             # 12. 씬 페어 파생 (최근 SCENE_WINDOW 턴의 intensity 가중 최빈 페어)
@@ -457,6 +471,93 @@ class EmotionEngine:
                 logger.warning(f"[EmotionEngine] {npc_name}: {spike_detail}")
 
         return results
+
+    # ---------------------------------------------------------
+    # Tracker: 부재 NPC 기준선 감쇠 병합 — [2026-09-15 §12]
+    # ---------------------------------------------------------
+    @staticmethod
+    def merge_tracked_states(
+        previous: Dict[str, Any],
+        results: Dict[str, 'EmotionState'],
+        current_turn: int,
+        dead_names: Optional[Any] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        """world_state `npc_emotion_states`를 **통째 교체가 아니라 병합**한다.
+
+        - 이번 턴 결과가 있는 NPC: 엔진 결과(to_dict).
+        - 없는 NPC(부재): 이전 상태를 `emotions × EMOTION_DECAY^경과턴`으로 감쇠해 유지.
+          raw_emotions(스파이크 비교 기준)·history·라벨·turn(마지막 관측)은 그대로, history 안 붙임.
+          이번 턴 스파이크는 아니므로 spike 플래그는 내리고, scene pair는 창(SCENE_WINDOW) 기준 재파생
+          (엔진 본류의 자연 소멸 규칙과 동일). 전 축 0.01 미만이면 dict에서 제거.
+          `_decayed_at`(마지막 감쇠 턴)으로 같은 턴 재실행 시 이중 감쇠를 막는다.
+        - dead_names(이름 모음, dict면 키)에 걸리는 NPC: 즉시 제거(결과가 있어도).
+        새 LLM 콜 0 · 입력 dict 무변경.
+        """
+        results = results if isinstance(results, dict) else {}
+        previous = previous if isinstance(previous, dict) else {}
+        try:
+            import domain_manager as _dm_m
+            _find = _dm_m._find_npc_key
+        except Exception:
+            _find = None
+        dead = {str(n): True for n in (dead_names or [])}
+
+        def _hit(pool: Dict[str, Any], name: str) -> bool:
+            if not pool:
+                return False
+            if name in pool:
+                return True
+            if _find is not None:
+                try:
+                    # [2026-09-24 감사] pool 은 부분집합(이번 턴 결과·사망자) — 토큰 단계 끔(Rin/Shirase Rin 혼입 차단).
+                    return bool(_find(pool, name, allow_token=False))
+                except Exception:
+                    return False
+            return False
+
+        out: Dict[str, Dict[str, Any]] = {}
+        for name, state in results.items():
+            if _hit(dead, name):
+                continue
+            out[name] = state.to_dict() if hasattr(state, "to_dict") else dict(state)
+        try:
+            cur = int(current_turn)
+        except (TypeError, ValueError):
+            cur = 0
+        for name, pdata in previous.items():
+            if not isinstance(pdata, dict) or name in out:
+                continue
+            if _hit(results, name) or _hit(dead, name):
+                continue  # 이번 턴 결과(표기만 다른 같은 인물)가 대체 / 사망 = 즉시 제거
+            try:
+                last = max(int(pdata.get("turn", 0) or 0), int(pdata.get("_decayed_at", 0) or 0))
+            except (TypeError, ValueError):
+                last = 0
+            steps = cur - last
+            if steps <= 0:
+                out[name] = pdata  # 같은 턴 재실행 — 이미 반영됨
+                continue
+            factor = EMOTION_DECAY ** steps
+            st = EmotionState.from_dict(pdata)
+            decayed = {}
+            for e in CORE_EMOTIONS:
+                try:
+                    v = float(st.emotions.get(e, 0.0) or 0.0) * factor
+                except (TypeError, ValueError):
+                    v = 0.0
+                decayed[e] = v if v >= 0.01 else 0.0
+            if not any(v > 0.0 for v in decayed.values()):
+                continue  # 기준선 도달 — 제거
+            st.emotions = decayed
+            st.intensity = max(decayed.values())
+            st.spike_detected = False
+            st.spike_detail = ""
+            st.scene_base, st.scene_mod = EmotionEngine._derive_scene_pair(
+                st.history, cur, window=SCENE_WINDOW)
+            d = st.to_dict()
+            d["_decayed_at"] = cur
+            out[name] = d
+        return out
 
     # ---------------------------------------------------------
     # Step 1: Psyche → Raw Emotions  (nested DAI layer aware)
@@ -551,7 +652,7 @@ class EmotionEngine:
             raw["disgust"] = min(1.0, raw["disgust"] + 0.25)
             raw["fear"] = min(1.0, raw["fear"] + 0.15)
 
-        # primary_emotion 훅: Flash가 명시한 감정 라벨을 raw에 직접 반영.
+        # primary_emotion 훅: 추출 콜(Theoria)이 명시한 감정 라벨을 raw에 직접 반영.
         # value-scalar 역추정만으론 anger처럼 구조적으로 약해지는 감정이
         # 절대 top이 될 수 없는 문제를 보정한다. 다른 경로 수학은 건드리지 않음.
         # Plutchik 8축 멤버인 경우에만 +0.10 가산 (Relational 라벨은 _derive_relational이 처리).
@@ -673,7 +774,7 @@ class EmotionEngine:
             att = relation.get("attachment")
             phase = relation.get("phase")
             try:
-                rel_val = float(relation.get("value", 0) or 0)
+                rel_val = float(relation.get("bond", relation.get("value", 0)) or 0)  # [09-15 관계 통합] bond, 옛 value 폴백
             except (TypeError, ValueError):
                 rel_val = 0.0
             if att == "anxious" and phase == "orientation":
@@ -682,6 +783,18 @@ class EmotionEngine:
                 return ("gratitude", 0.6)
             if phase == "exploitation" and rel_val > 50:
                 return ("desire", 0.6)
+            return None
+
+        def _tier55_tension():
+            t = relation.get("tension")
+            if t is None or isinstance(t, bool):
+                return None
+            try:
+                t = max(0.0, min(100.0, float(t)))  # 범위 방어(턴 캡은 엣지 upsert 몫)
+            except (TypeError, ValueError):
+                return None
+            if t >= TENSION_FRICTION_MIN:
+                return ("friction", 0.58)
             return None
 
         # [2026-07-13 친밀 장면 재서열] SceneType=intimate에서는 관계-긍정 신호(Tier 5→3)가
@@ -706,7 +819,7 @@ class EmotionEngine:
         vc = relation.get("value_conflict")
         if isinstance(vc, str) and vc.strip():
             try:
-                _rv = float(relation.get("value", 0) or 0)
+                _rv = float(relation.get("bond", relation.get("value", 0)) or 0)
             except (TypeError, ValueError):
                 _rv = 0.0
             if (relation.get("negotiation_stance") in ("competitive", "exploitative")
@@ -744,6 +857,14 @@ class EmotionEngine:
         _t5 = _tier5_attachment()
         if _t5:
             return _t5
+
+        # Tier 5.5 [2026-09-15 §12 엣지 입력 — 한 방향]: 이번 턴 relation 층 tension(0~100, bond와
+        # 같은 자리). 갈등 축이 높으면 friction 후보 — Tier 5(attachment)와 같은 꼴(값 → 후보 하나),
+        # 기존 어휘(friction) 안에서. bond와 독립이라 "유대 높음 + 갈등 높음"도 여기서 friction.
+        # 이모션→엣지 쓰기는 없다(§5b). tension 부재 = 이 티어 무발화 = 종전 캐스케이드와 동일.
+        _t55 = _tier55_tension()
+        if _t55:
+            return _t55
 
         # Tier 5b [2026-07-13 poise]: 침착한 자신감 — NPC 당당함 채널.
         # System 2 사고(deliberate) + 생리적 안전(ventral, 해리 없음) + 비-부정 가치
@@ -850,7 +971,7 @@ class EmotionEngine:
         except (TypeError, ValueError):
             pv = 0.0
         try:
-            rv = abs(float(relation.get("value", 0) or 0))
+            rv = abs(float(relation.get("bond", relation.get("value", 0)) or 0))
         except (TypeError, ValueError):
             rv = 0.0
         if dm == "deliberate" and rv > pv:
@@ -928,6 +1049,7 @@ class EmotionEngine:
         intensity: float,
         turn: int,
         max_len: int = HISTORY_MAX_LEN,
+        spike: bool = False,
     ) -> List[List[Any]]:
         """히스토리 ring buffer에 이번 턴 페어 append.
 
@@ -943,7 +1065,7 @@ class EmotionEngine:
             intensity = 0.0
         if intensity < HISTORY_INTENSITY_THRESHOLD:
             return history[-max_len:] if len(history) > max_len else history
-        history.append([base, mod, intensity, int(turn)])
+        history.append([base, mod, intensity, int(turn), bool(spike)])
         return history[-max_len:]
 
     # ---------------------------------------------------------
@@ -999,30 +1121,6 @@ class EmotionEngine:
         return boost
 
     # ---------------------------------------------------------
-    # Utility: Pair Hint Composer (T1 축 태그 합성)
-    # ---------------------------------------------------------
-    @staticmethod
-    def _compose_pair_hint(base: str, mod: str) -> str:
-        """base × modifier → 축 태그 합성 힌트.
-
-        - AXIS_TAGS 룩업: 라벨당 1~2 태그
-        - 조합표 아님. 태그 리스트 merge만 수행
-        - 빈 mod 허용: base만 있는 경우 (P1 과도기 또는 Tier 3 pair=None)
-        - 태그 전혀 없는 라벨: 라벨만 출력
-        """
-        bt = [t for t in AXIS_TAGS.get(base, []) if t]
-        if not mod:
-            if not bt:
-                return base
-            return f"{base} — {'·'.join(bt[:3])}"
-        mt = [t for t in AXIS_TAGS.get(mod, []) if t]
-        merged = bt + [t for t in mt if t not in bt]
-        if not merged:
-            return f"{base} × {mod}"
-        # [2026-07-14 위생] 렌더-facing 엠대쉬 → 콜론 (미러링 실증에 따른 채널 전체 통일)
-        return f"{base} × {mod}: {'·'.join(merged[:3])}"
-
-    # ---------------------------------------------------------
     # Utility: Prompt Context Builder (T0 + T1)
     # ---------------------------------------------------------
     @staticmethod
@@ -1032,13 +1130,12 @@ class EmotionEngine:
     ) -> str:
         """슬롯 주입용 감정 컨텍스트 텍스트 생성.
 
-        출력 구조:
-          [Emotional States]
-            {NPC}: {base × mod — tag·tag·tag} ({intensity:.1f}){spike_marker}
-          [Scene Drift]                               # turn_pair ≠ scene_pair 시
-            {NPC}: turn vs scene «{scene_hint}»
+        출력 구조 (라벨·수치 비노출, 있을 때만):
+          [Undercurrent] ...                          # undertone 게이트 통과 NPC가 있을 때
+          [Scene Drift] ...                           # turn_pair ≠ scene_pair 시
+            {NPC}: the surface still carries the older weather
 
-        slot_manager.py:886에서 호출되어 Slot 16 scene_intelligence에 주입.
+        slot_manager Slot 16 조립부(scene_intelligence)에서 호출되어 주입.
         emotion_engine이 감정 도메인 iceberg로서 자기완결 (iceberg.py 경유 없음).
         """
         if not emotion_states:
@@ -1059,9 +1156,7 @@ class EmotionEngine:
         # emotion_engine의 결정론·NPC간 비교·턴간 연속성은 그대로 살아 있고(선별 점수·노출량·SD·doom),
         # 산문에 넘어가는 건 압력이 못 만드는 관계·장면 층(전염·drift·undertone)뿐 — 그것도 있을 때만.
         # 구 가드문("never name these labels")은 삭제: 금지할 라벨이 애초에 넘어가지 않는다.
-        if not getattr(config, "PRESSURE_EMIT", True):
-            return EmotionEngine._build_emotion_context_legacy(sorted_npcs)
-
+        # [2026-09-15 §12] 라벨×라벨 노출 롤백 분기와 그 플래그 삭제 — 아래 압력 경로만 남는다.
         lines: List[str] = []
         drift_lines: List[str] = []
         has_undertone = False
@@ -1089,67 +1184,6 @@ class EmotionEngine:
             lines.append("[Scene Drift] feeling mid-shift; let the surface lag behind.")
             lines.extend(drift_lines)
         return "\n".join(lines) if lines else ""
-
-    @staticmethod
-    def _build_emotion_context_legacy(sorted_npcs) -> str:
-        """구 경로(라벨×라벨 + 티어 + spike) — PRESSURE_EMIT=False 롤백용."""
-        lines = ["[Emotional States] state data, not prose: it lives in the body; "
-                 "show through gesture and behavior, never name these labels."]
-        drift_lines: List[str] = []
-        has_undertone = False
-        for npc_name, state in sorted_npcs:
-            if state.intensity < 0.05 or not state.base_label:
-                continue
-            hint = EmotionEngine._compose_pair_hint(
-                state.base_label, state.modifier_label
-            )
-            # [2026-07-16 undertone] 억눌린 3위 축 — 존재 시에만 인라인 접미.
-            if state.undertone_label:
-                hint = f"{hint}; under it, {state.undertone_label}"
-                has_undertone = True
-            # ⚡ marker + spike axes (DC-01 배선): spike_detail 문자열에서
-            # "{npc} 감정 급변: " 접두 제거 후 축 목록을 직접 노출.
-            # 모델이 "spike 났다"만 알고 어떤 감정 축이 얼마나 튀었는지 모르던
-            # 다크 서킷 해소.
-            if state.spike_detected and state.spike_detail:
-                _axes = state.spike_detail.split(": ", 1)[-1]
-                # [2026-07-14 수치 비노출] 델타 숫자 제거 — 렌더-facing 수치가 산문에
-                # 리터럴로 서술됨이 실증("7점 그대로", deepseek_interview_results §7).
-                # 방향(↑↓)만 남긴다. 진단용 원값은 spike 로그/bus에 그대로.
-                _axes = re.sub(r"\([0-9.]+\)", "", _axes)
-                spike_marker = f" ⚡[{_axes}]"
-            elif state.spike_detected:
-                spike_marker = " ⚡"
-            else:
-                spike_marker = ""
-            # [2026-07-14 수치 비노출] intensity 숫자 → 어휘 티어(light/medium/deep —
-            # analysis_resources 기존 어휘와 통일). 격랑 MEASURE(수치 없는 상태창)와
-            # Slot 29 gloss("not a stated number")가 같은 원칙의 방증. 정밀값은 bus 잔존.
-            _tier = "deep" if state.intensity >= 0.65 else ("medium" if state.intensity >= 0.35 else "light")
-            lines.append(
-                f"  {npc_name}: {hint} ({_tier}){spike_marker}"
-            )
-            # Scene drift 메타 — turn_pair ≠ scene_pair일 때만 블록 추가
-            turn_pair = (state.base_label, state.modifier_label)
-            scene_pair = (state.scene_base, state.scene_mod)
-            if scene_pair[0] and turn_pair != scene_pair:
-                scene_hint = EmotionEngine._compose_pair_hint(*scene_pair)
-                drift_lines.append(
-                    f"  {npc_name}: turn vs scene «{scene_hint}»"
-                )
-
-        if has_undertone:
-            lines.append(
-                "  (an 'under it' current stays suppressed: it leaks through timing, "
-                "breath, and small slips, never fully surfacing, never co-equal.)"
-            )
-
-        if drift_lines:
-            lines.append("")
-            lines.append("[Scene Drift] turn≠scene: feeling mid-shift; let the surface lag behind.")
-            lines.extend(drift_lines)
-
-        return "\n".join(lines) if len(lines) > 1 else ""
 
     # ---------------------------------------------------------
     # Utility: Bus Output Builder

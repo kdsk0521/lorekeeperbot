@@ -219,6 +219,24 @@ def _is_supplied_by_input(matched: str, user_input: str, pc_names: List[str],
     return total > 0 and (hit / total) >= threshold
 
 
+# [2026-09-12] 과거형 어미 = 리터럴 목록이 아니라 **종성 ㅆ**이라는 기전.
+#   옛 목록 `(?:했다|었다|았다|였다|셨다|ㅆ다)`의 마지막 갈래 `ㅆ다`는 자모가 음절 안에
+#   합성돼 있어 **영영 매치되지 않는 죽은 줄**이었다(`re.search('ㅆ다','갔다')` → False).
+#   그 결과 갔다·났다·봤다·섰다·쳤다·혔다류 2인칭 사칭이 통째로 통과했다(실측 7중 5 놓침).
+#   허용 목록(REFLEXIVE_VERBS)엔 이미 부딪혔다·끌려갔다·곤두박질쳤다가 들어 있었다 —
+#   **검출이 못 닿는 어미를 면제하고 있었으니 그쪽도 반쯤 사문이었다.**
+#   ⚠이건 삭제 목록을 넓히는 방향이다(아래 REFLEXIVE_VERBS 주석의 경고 대상).
+#   그래서 실측으로 재 봤다: 산문 표본 14개(산문1~9·산문로그1~3·수처1~2)에서
+#   새로 잘리는 문장 **0건**. 2인칭 패턴 자체가 실사용 산문에 거의 없다(전체 검출 1).
+#   기전으로 바꿔도 오삭제가 늘지 않는 이유 = 앞단 `(?:당신|너|그대|플레이어)[은는이가]`가
+#   이미 좁은 관문이라서. 어미만 넓힌 것이지 관문을 넓힌 게 아니다.
+_JONG_SSANGSIOT = 20  # (ord(c) - 0xAC00) % 28 == 20 이면 종성이 ㅆ
+_PAST_TENSE_SYLLABLES = "".join(
+    chr(c) for c in range(0xAC00, 0xD7A4) if (c - 0xAC00) % 28 == _JONG_SSANGSIOT
+)
+_PAST_TENSE_ENDING = f"(?:[{_PAST_TENSE_SYLLABLES}]다)"
+
+
 def detect_pc_impersonation(response: str, pc_names: List[str],
                             user_input: str = "") -> List[Dict]:
     """
@@ -231,8 +249,8 @@ def detect_pc_impersonation(response: str, pc_names: List[str],
     """
     violations = []
 
-    # 한국어 과거형 동사 어미 (범용)
-    VERB_ENDING = r'(?:했다|었다|았다|였다|셨다|ㅆ다)'
+    # 한국어 과거형 동사 어미 (범용) — 2026-09-12 리터럴 목록 → 기전
+    VERB_ENDING = _PAST_TENSE_ENDING
     # 내면/사고 동사 (진짜 사칭)
     THOUGHT_VERBS = r'(?:생각했다|느꼈다|깨달았다|결심했다|기억했다|떠올렸다|추측했다|알았다|몰랐다|원했다|바랐다|후회했다|의심했다|확신했다|짐작했다)'
     # 반사적/불수의 반응 동사 (허용 — PC 선택이 아닌 물리 반응)
@@ -293,9 +311,11 @@ def detect_pc_impersonation(response: str, pc_names: List[str],
     # 2. 2인칭 지칭 행동 강제 탐지
     second_person_patterns = [
         # 당신/너 + 주격조사 + 동사
-        (rf'(?:당신|너|그대|플레이어)[은는이가]\s+.{{1,40}}{VERB_ENDING}', 'impersonation_2nd'),
+        # [2026-09-24 감사] 왼쪽 경계 추가 — "건너는/빨아 너는"의 `너는`을 2인칭으로 읽고 NPC 문장을 하드 삭제했다.
+        #   경계는 삭제 범위를 **좁히기만** 한다(삭제 목록 넓히기 금지 원칙과 같은 방향).
+        (rf'(?<![가-힣])(?:당신|너|그대|플레이어)[은는이가]\s+.{{1,40}}{VERB_ENDING}', 'impersonation_2nd'),
         # 당신의 신체/감정 + 주격 동사 (NPC→PC 행동 허용)
-        (rf'(?:당신|너|그대)(?:의|이)\s*(?:눈|손|몸|기억|생각|가슴|심장|호흡|얼굴|표정|시선|발|다리|팔|목소리|숨결)[이가]\s*.{{1,25}}{VERB_ENDING}', 'impersonation_2nd'),
+        (rf'(?<![가-힣])(?:당신|너|그대)(?:의|이)\s*(?:눈|손|몸|기억|생각|가슴|심장|호흡|얼굴|표정|시선|발|다리|팔|목소리|숨결)[이가]\s*.{{1,25}}{VERB_ENDING}', 'impersonation_2nd'),
     ]
 
     for pattern, vtype in second_person_patterns:
@@ -365,18 +385,18 @@ def _remove_violation_sentences(text: str, violations: List[Dict]) -> str:
             merged.append([start, end])
 
     # 제거 후 텍스트 재조립
+    # [2026-09-24 감사] 원래 구분자(문단 \n\n) 보존 — 전엔 조각을 ' '.join 해서 삭제 한 건에 앞뒤 문단이 합쳐졌다.
     result = []
     last_end = 0
     for start, end in merged:
-        chunk = text[last_end:start].strip()
-        if chunk:
-            result.append(chunk)
+        result.append(text[last_end:start])
         last_end = end
-    trailing = text[last_end:].strip()
-    if trailing:
-        result.append(trailing)
-
-    return ' '.join(result)
+    result.append(text[last_end:])
+    out = "".join(result)
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    out = re.sub(r"[ \t]+\n", "\n", out)
+    out = re.sub(r"\n{3,}", "\n\n", out)
+    return out.strip()
 
 
 def filter_pc_impersonation(response: str, pc_names: List[str],
@@ -410,7 +430,7 @@ def filter_pc_impersonation(response: str, pc_names: List[str],
 # Mob Tag Cleaning (System-Level Hiding)
 # =========================================================
 
-def clean_mob_tags(text: str) -> str:
+def clean_mob_tags(text: str, tags=None) -> str:
     """
     텍스트에서 모브 태그(예: #1A, #9Z)를 제거하여 사용자에게 숨깁니다.
     
@@ -431,13 +451,17 @@ def clean_mob_tags(text: str) -> str:
     # Pattern: `(\s?)#[a-zA-Z0-9]{2}(?![a-zA-Z0-9])`
     # (?![a-zA-Z0-9]) ensures we don't match #1AB (3 chars).
     
-    pattern = r'(\s?)#[a-zA-Z0-9]{2}(?![a-zA-Z0-9])'
-    
+    # [2026-09-20 재검] `tags`(채널에 실제 발급된 표식 집합)를 주면 **그 표식만** 벗긴다 —
+    #   산문에 표식이 없는 설계에서 이 함수는 안전망이라, 범위를 명부에 묶어야 `방 #3B호실`이 안 다친다.
+    #   tags=None 이면 종전 동작(2자 전부).
+    pattern = r'(\s?)#([a-zA-Z0-9]{2})(?![a-zA-Z0-9])'
+    _allow = {str(t).upper() for t in tags} if tags is not None else None
+
     def repl(match):
-        # If it was "Name #1A", match group 1 is space. We remove both.
-        # If it was "#1A" (start of line), match group 1 is empty. We remove tag.
-        return "" 
-        
+        if _allow is not None and match.group(2).upper() not in _allow:
+            return match.group(0)
+        return ""
+
     cleaned_text = re.sub(pattern, repl, text)
     return cleaned_text
 
@@ -676,9 +700,24 @@ _CLOSING_PATTERNS = [
 ]
 
 
+# [2026-09-17→09-18 이사] 한 줄을 여닫는 인라인 태그 쌍 — `<Other> "대사" </Other>`. 형식 태그 면제(tag_pat)는
+#   **블록의 여닫는 줄**(<Members> … </Members>)을 위한 것인데, 대사를 태그로 감싼 한 줄도 `<`로
+#   시작해 통째로 면제됐다 → 화자 없는 대사가 [FORMAT] 두 검사(bare·서술 삽입형 카운트)를 모두 빠져나감.
+#   감싼 줄은 속을 꺼내 판정한다. 블록 여닫는 줄(속이 없음)은 여전히 면제.
+_INLINE_TAG_WRAP = re.compile(r'^\s*<([A-Za-z_][\w-]*)[^>]*>(.*?)</\1\s*>\s*$')
+
+
+def _unwrap_inline_tag(line: str) -> Optional[str]:
+    """`<X…>속</X>` 한 줄이면 속(strip)을, 아니면 None."""
+    m = _INLINE_TAG_WRAP.match(line or "")
+    return m.group(2).strip() if m else None
+
+
 def _classify_opening(response: str) -> str:
     """Classify the opening type of a response."""
     first_line = response.strip().split('\n')[0] if response.strip() else ""
+    # [2026-09-18 S7] 태그로 감싼 첫 줄(`<Other> "대사" </Other>`)이 description 폴백으로 오분류되던 자리.
+    first_line = _unwrap_inline_tag(first_line) or first_line
     for otype, pattern in _OPENING_PATTERNS:
         if pattern.search(first_line):
             return otype
@@ -1213,6 +1252,16 @@ def detect_number_fixation(response: str, min_chars: int = 150) -> Tuple[str, Di
 # *verbatim 문장*만 타깃(motif vs phrase 구분의 코드 구현).
 
 _SENT_SPLIT = re.compile(r'(?<=[.!?”"])\s+|\n+')
+_SENT_SPLIT_INLINE = re.compile(r'(?<=[.!?”"])[ \t]+')  # [2026-09-24 감사] 줄 안 문장 경계(줄바꿈 보존용)
+
+
+def _sim_ge(a: str, b: str, near: float) -> bool:
+    """[2026-09-24 감사] `SequenceMatcher(None, a, b).ratio() >= near` 와 **결과 동일** — 값싼 상한 두 단계로 먼저 거른다
+    (real_quick_ratio ≥ quick_ratio ≥ ratio). 에코 검출·스크럽이 이벤트 루프 위에서 턴당 ~0.5s 먹던 자리."""
+    import difflib
+    sm = difflib.SequenceMatcher(None, a, b)
+    return sm.real_quick_ratio() >= near and sm.quick_ratio() >= near and sm.ratio() >= near
+
 
 # [2026-08-28] 대사 조각 판정 — 분절 때문에 따옴표가 한쪽만 남을 수 있어 **짝을 요구하지 않는다**.
 _QUOTE_ANY_RE = re.compile(r'["“”「」『』]')
@@ -1254,7 +1303,7 @@ def detect_cadence_echo(response: str,
         if s in seen:
             continue
         for prev in recent:
-            if difflib.SequenceMatcher(None, s, prev).ratio() >= near:
+            if _sim_ge(s, prev, near):
                 hits.append(s)
                 seen.add(s)
                 break
@@ -1316,44 +1365,51 @@ def scrub_echo_sentences(text: str,
     def _repeat_count(t: str) -> int:
         n = 0
         for x in targets:
-            if x == t or difflib.SequenceMatcher(None, x, t).ratio() >= near:
+            if x == t or _sim_ge(x, t, near):
                 n += 1
         return n
-    kept: List[str] = []
     removed = 0
-    for sent in _SENT_SPLIT.split(text):
-        s = sent.strip()
-        if not s:
-            continue
+
+    def _echo_keep(s: str) -> bool:
+        """한 문장의 존치 여부 — 판정 규칙은 종전 루프 본문 그대로(첫 등장 보존·후렴 승격·대사 면제)."""
         matched: Optional[str] = None
         for t in targets:
-            if s == t or difflib.SequenceMatcher(None, s, t).ratio() >= near:
+            if s == t or _sim_ge(s, t, near):
                 matched = t
                 break
         if matched is None:
-            kept.append(s)
-            continue
+            return True
         if already_seen is not None and matched not in already_seen:
             already_seen.add(matched)   # 첫 등장 = 지시대상 보존 후보
-            # [2026-08-28 충돌 감사 — 대사 면제] 후렴 승격을 **서술 문장에만** 건다.
-            #   실증: `소니아: "그렇습니다. 주인님의 말씀이 옳습니다."` 같은 짧은 입버릇이
-            #   3턴에 걸쳐 재발하면 승격 조건을 만족해 **원본까지 히스토리에서 사라졌다**
-            #   (긴 턴에선 min_keep_ratio 안전판도 안 걸린다). 그런데 Slot 25는
-            #   "Each character keeps a linguistic fingerprint (habitual openers, pet phrases)"를
-            #   요구한다 — ★**지문은 안정된 재발이 곧 정체성**이라 후렴과 성질이 반대다.
-            #   서술 문체 관성(잉크는 아직 검고 번들거렸다)만 후렴이고, 대사는 아니다.
-            #   ⚠`_DIALOGUE_RE`(짝 맞은 인용)로는 안 된다 — 문장 분절이 닫는 따옴표 뒤에서
-            #     잘라 `소니아: "그렇습니다.` / `주인님의 말씀이 옳습니다."`처럼 **한쪽 따옴표만**
-            #     가진 조각이 나온다(실측). 그래서 따옴표가 **하나라도 있으면** 면제한다.
-            #     ★단조 안전: 면제는 제거를 줄이기만 한다(오삭제 위험만 낮아짐).
+            # [2026-08-28 충돌 감사 — 대사 면제] 후렴 승격은 **서술 문장에만**. 대사 지문(입버릇)은
+            #   안정된 재발이 곧 정체성이라 면제. 분절 때문에 한쪽 따옴표만 남을 수 있어
+            #   따옴표가 **하나라도 있으면** 면제(단조 안전 — 제거를 줄이기만 한다).
             if _repeat_count(matched) < 2 or _QUOTE_ANY_RE.search(s):
-                kept.append(s)          # 재발 1회까지 = 모티프 / 대사 = 지문(면제)
-                continue
+                return True             # 재발 1회까지 = 모티프 / 대사 = 지문(면제)
             # 2회 이상 재발한 **서술** 문장 = 후렴 → 첫 인스턴스도 모방 대상에서 뺀다
-        removed += 1
+        return False
+
+    # [2026-09-24 감사] 줄 구조 보존 — 전엔 `\n+`까지 문장 경계로 쪼갠 뒤 " ".join 해서, 에코 문장이 하나라도
+    #   빠진 과거 응답은 문단·`이름: "대사"` 자기 줄이 전부 한 덩어리 벽글로 주입됐다(모델이 따라 할 형식 붕괴).
+    #   이제 줄 단위로 돌고 줄 안에서만 문장을 가른다. 판정·안전판은 종전 그대로.
+    _line_out: List[str] = []
+    for _seg in re.split(r'(\n+)', text):
+        if not _seg or _seg.startswith("\n"):
+            _line_out.append(_seg)
+            continue
+        _kept_line: List[str] = []
+        for sent in _SENT_SPLIT_INLINE.split(_seg):
+            s = sent.strip()
+            if not s:
+                continue
+            if _echo_keep(s):
+                _kept_line.append(s)
+            else:
+                removed += 1
+        _line_out.append(" ".join(_kept_line))
     if not removed:
         return text, 0
-    out = " ".join(kept).strip()
+    out = re.sub(r"\n{3,}", "\n\n", re.sub(r"[ \t]+\n", "\n", "".join(_line_out))).strip()
     if not out or len(re.sub(r"\s", "", out)) < len(re.sub(r"\s", "", text)) * min_keep_ratio:
         return text, 0  # 과다 삭제 → 원본 유지
     return out, removed
@@ -1363,7 +1419,7 @@ def scrub_echo_sentences(text: str,
 # [2026-07-08 루프-차단기] 저미기(영어-구조 전사) 검출 + 대사-앵커 추출
 # =========================================================
 # Slot 31(Last_Response_Tail)이 원자화된 산문을 고recency 재주입 → 자기-미러링 루프(새 세션=클린 실측,
-# 파티쳇수정/session_summary_2026-07-08.md §3). 차단기 = 리라이트가 아니라 **주입 교체**: 꼬리가 저며져
+# 파티쳇수정/ops/session_summary_2026-07-08.md §3). 차단기 = 리라이트가 아니라 **주입 교체**: 꼬리가 저며져
 # 있으면 raw 산문 대신 대사 라인만 앵커로 주입(사건·목소리 연속성 유지, 문체 모방 실례 제거).
 # 원리 = "앵무새는 못 막는다 → 모방 대상을 큐레이팅한다". 외부 선례 = risu_agents.js injectAgentNotes
 # (생성 최근접엔 항상 구조화 텍스트 — agent_plugins_5way_mapping.md §6-②).

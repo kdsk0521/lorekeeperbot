@@ -53,6 +53,44 @@ def _primary_value(context, bus, primary_axis: str) -> int:
     return int(getattr(bus, primary_axis, {}).get("value", 100))
 
 
+# [2026-09-06 P8b] **판정 감정 = 코드 소유 쓰기.** 옛 자리는 vigor_composure._process_axis
+#   1b 였다 — 거기 있던 이유가 없다(감정의 원인은 판정 결과이고, 그 결과를 확정하는 건 이 엔진
+#   이다). 장면을 분류해 숫자를 정하는 코드가 아니라 **사건이 코드에서 확정된 뒤의 대가**라
+#   삭제 대상이 아니고, Effort 선불과 같은 문(apply_system_delta, 캡 면제)을 쓴다.
+#   축은 언제나 평형이다: 판정의 정서적 여파는 정의상 평형(집중·의지)의 몫이고, 주축이
+#   무엇이냐로 감정이 신체로 옮겨가던 옛 라우팅은 중합 게이지 정의와 어긋났다.
+_JUDGMENT_EMOTION = {
+    "critical_success": 3,
+    "success": 1,
+    "partial": 0,
+    "failure": -2,
+    "critical_failure": -4,
+}
+
+
+def apply_judgment_emotion(context, bus, result: str) -> int:
+    """판정 결과 → 평형 델타(코드 소유 쓰기). 움직인 만큼 반환, 없으면 0."""
+    delta = _JUDGMENT_EMOTION.get(str(result or ""), 0)
+    if not delta:
+        return 0
+    try:
+        import custom_vars as _cv_em
+        rec = _cv_em.apply_system_delta(
+            _jud_channel(context), "평형", delta, f"judgment {result}",
+            actor=_jud_actor(context), exempt_cap=True, source="judgment.emotion",
+        )
+    except Exception as e:
+        logger.debug("[Judgment] 평형 감정 델타 skip: %s", e)
+        return 0
+    if not rec:
+        return 0
+    moved = int(rec.get("delta", 0) or 0)
+    if isinstance(bus.composure, dict):
+        bus.composure["value"] = int(rec.get("to", bus.composure.get("value", 100)))
+        bus.composure["judgment_emotion"] = moved
+    return moved
+
+
 class JudgmentEngine:
     def __init__(self, client, model_id: str):
         self.client = client
@@ -204,6 +242,7 @@ class JudgmentEngine:
         # DC Table
         dc_table = {"trivial": 0, "easy": 20, "normal": 40, "hard": 60, "extreme": 80}
         dc = dc_table.get(difficulty.lower(), 40)
+        dc_base = dc
 
         # 1b. Position → DC Modifier (DAI position = PC의 통제력)
         position_data = bus.dai.get("position", {})
@@ -241,34 +280,26 @@ class JudgmentEngine:
         # 2.4b Theory Modifier (Flash psyche → ±20)
         theory_mod = self._calculate_theory_mod(context)
 
-        # 2.5 Passive Modifiers (action_type 기반)
+        # 2.5 Passive(조각) Modifiers — [2026-09-16 3차 §10.3] GM 판단 → 코드 숫자.
+        #   action_type 문자열 기계 매칭 폐지. Theoria 가 찍은 `active_passives` 안의 조각만
+        #   value.roll_<action_type> 합산(±FRAGMENT_ROLL_CAP) + cost 합산(effort 선불 할인).
+        #   active_passives 가 없으면 조각 기여 0.
         import config as _cfg2
         from game_character import get_inventory_items as _get_inv
-        action_meta = bus.judgment.get("meta", {})
+        action_meta = bus.judgment.get("meta", {}) or {}
         action_type = str(action_meta.get("type") or action_meta.get("action_type") or "").strip().lower()
-        passives = (context.narrative_anchors or {}).get("passives", [])
-        passive_mod = 0
-        for passive in passives:
-            mods = _cfg2.get_passive_modifiers(passive)
-            if not mods:
-                continue
-            if action_type and f"judgment_{action_type}" in mods:
-                passive_mod += mods[f"judgment_{action_type}"]
-            elif "judgment" in mods:
-                passive_mod += mods["judgment"]
-        passive_mod = max(-20, min(20, passive_mod))
+        passive_mod, passive_discount, _used_passives = _fragment_terms(
+            (context.narrative_anchors or {}).get("passives", []),
+            action_meta.get("active_passives"), action_type)
+        bus.judgment["active_passives"] = _used_passives
 
-        # 2.5b Inventory Modifiers (action_type 기반)
+        # 2.5b Inventory Modifiers — roll_<action_type> 만(조각과 같은 키 공간)
         inv_items = _get_inv(context.narrative_anchors)
         inv_mod = 0
         for item in inv_items:
             mods = _cfg2.get_item_modifiers(item)
-            if not mods:
-                continue
-            if action_type and f"judgment_{action_type}" in mods:
-                inv_mod += mods[f"judgment_{action_type}"]
-            elif "judgment" in mods:
-                inv_mod += mods["judgment"]
+            if mods and action_type:
+                inv_mod += int(mods.get(f"roll_{action_type}", 0) or 0)
         inv_mod = max(-10, min(15, inv_mod))
 
         # 2.6 Status Modifiers (status_effects)
@@ -278,6 +309,7 @@ class JudgmentEngine:
         momentum_mod = int(bus.judgment.get("momentum_carry", 0) or 0)
         momentum_mod = max(-10, min(10, momentum_mod))
         bus.judgment["momentum_carry"] = 0  # 1회성 소비
+        bus.judgment["momentum_consumed"] = True  # [2026-09-24 감사] sync 가 "판정이 실제로 carry 를 먹었나"를 안다
 
         # 2.8 Condition Modifier (Active Conditions at PC's location)
         condition_mod = 0
@@ -302,10 +334,12 @@ class JudgmentEngine:
 
         # 2.9 Effort Modifier (각오 선불 — Cypher Effort)
         effort_mod = 0
+        effort_cost = 0
         action_meta = bus.dai.get("action_meta", {}) if isinstance(bus.dai, dict) else {}
         resolve = action_meta.get("resolve", "none")
         if resolve == "desperate" and bus.judgment.get("active"):
-            effort_cost = _cfg.EFFORT_COST
+            # [2026-09-16 3차] 조각 cost 합 = 선불 할인(하한 0).
+            effort_cost = max(0, int(_cfg.EFFORT_COST) - int(passive_discount))
             axis_choice = action_meta.get("resource_axis", "vigor")
             if axis_choice == "both":
                 mechanic = context.request.genres.get("mechanic", {})
@@ -315,19 +349,29 @@ class JudgmentEngine:
             #   (apply 경유, evidence="effort", 비대칭 캡 면제). 캡은 모델의 과장에 거는 재갈이지
             #   규칙이 정한 선불을 깎을 근거가 아니다. bus 는 같은 턴 하류(로그·스냅샷·notation)가
             #   읽으므로 같이 맞춘다 — 저장의 주인은 레지스트리, bus 는 이번 턴 사본.
+            # [2026-09-24 감사] 평형 축도 레지스트리 문으로 — 전엔 bus 사본만 깎고 턴 끝 _load 가
+            #   레지스트리 값으로 되덮어 **보너스만 받고 비용 0**이었다(P8b 되저장 삭제로 발현).
+            _eff_name = "기력" if axis_choice == "vigor" else "평형"
             _eff_cur = (_primary_value(context, bus, "vigor") if axis_choice == "vigor"
                         else axis_bus.get("value", 0))
+            if axis_choice != "vigor":
+                try:
+                    import custom_vars as _cv_e1
+                    _v_c = _cv_e1.get_system_value(_jud_channel(context), "평형", _jud_actor(context))
+                    if _v_c is not None:
+                        _eff_cur = int(_v_c)
+                except Exception as _e_cve1:
+                    logger.debug("[Judgment] 평형 레지스트리 조회 skip: %s", _e_cve1)
             if _eff_cur >= effort_cost:
                 _applied = None
-                if axis_choice == "vigor":
-                    try:
-                        import custom_vars as _cv_e2
-                        _applied = _cv_e2.apply_system_delta(
-                            _jud_channel(context), "기력", -effort_cost, "effort",
-                            actor=_jud_actor(context), exempt_cap=True, source="judgment.effort",
-                        )
-                    except Exception as _e_cve2:
-                        logger.debug("[Judgment] Effort 레지스트리 차감 skip: %s", _e_cve2)
+                try:
+                    import custom_vars as _cv_e2
+                    _applied = _cv_e2.apply_system_delta(
+                        _jud_channel(context), _eff_name, -effort_cost, "effort",
+                        actor=_jud_actor(context), exempt_cap=True, source="judgment.effort",
+                    )
+                except Exception as _e_cve2:
+                    logger.debug("[Judgment] Effort 레지스트리 차감 skip: %s", _e_cve2)
                 axis_bus["value"] = int(_applied["to"]) if _applied else max(0, _eff_cur - effort_cost)
                 effort_mod = _cfg.EFFORT_BONUS
                 bus.judgment["effort_used"] = {
@@ -336,6 +380,7 @@ class JudgmentEngine:
                 }
             else:
                 bus.dai["effort_failed"] = True
+                effort_cost = 0
 
         # 2.10 Context Modifiers (Flash 분석 보정 — 특질/상황)
         _flash_mods = bus.judgment.get("modifications", [])
@@ -355,17 +400,22 @@ class JudgmentEngine:
         
         # 4. Determine Result
         result = "failure"
+        crit_reason = ""
         # Success/Failure/Critical logic
         if roll >= 96: 
             result = "critical_success"
+            crit_reason = "natural_high"
         elif roll <= 5:
             # Safeguard: DC <= 20 (Trivial, Easy) only crit fail on 1
             if dc <= 20 and roll > 1:
                 result = "failure"
+                crit_reason = "natural_low_softened"
             else:
                 result = "critical_failure"
+                crit_reason = "natural_low"
         elif final_roll >= dc + 20:
             result = "critical_success"
+            crit_reason = "margin"
         elif final_roll >= dc: 
             result = "success"
         elif final_roll >= dc - 20:
@@ -399,6 +449,17 @@ class JudgmentEngine:
         bus.judgment["dc"] = dc
         bus.judgment["result"] = result
         bus.judgment["reason"] = eval_data.get("reason", "")
+        # [2026-09-16 3차 §10.3 가시성] 항별 값(0 포함) — 합 = final_roll − roll. 저장은 turn_snapshot.judgment.
+        bus.judgment["dc_base"] = dc_base
+        bus.judgment["crit_reason"] = crit_reason
+        bus.judgment["effort_cost"] = int(effort_cost if effort_mod else 0)
+        bus.judgment["terms"] = {
+            "mental": mental_mod, "theory": theory_mod, "memo": memo_mod, "passive": passive_mod,
+            "inventory": inv_mod, "status": status_mod, "aspect": aspect_mod, "momentum": momentum_mod,
+            "condition": condition_mod, "effort": effort_mod, "context": context_mod,
+        }
+        # 판정 감정 — 결과가 확정된 그 자리에서 평형에 실린다(코드 소유 쓰기).
+        apply_judgment_emotion(context, bus, result)
         
         # 6. Format Output (Multi-line)
         res_map = {
@@ -487,6 +548,31 @@ class JudgmentEngine:
         return context
 
 
+def _fragment_terms(passives, active_names, action_type: str) -> tuple:
+    """[2026-09-16 3차] 조각 판정 항. Returns: (roll 합(±캡), cost 할인 합(≥0), 실제 쓴 이름 목록).
+
+    `active_names`(Theoria active_passives)에 **없는** 조각은 0 기여. 이름 대조는 공백 정리 후 일치."""
+    import config as _cfg_f
+    names = [str(n).strip() for n in (active_names if isinstance(active_names, list) else []) if str(n).strip()]
+    if not names:
+        return 0, 0, []
+    want = set(names)
+    atype = str(action_type or "").strip().lower()
+    roll = 0
+    discount = 0
+    used = []
+    for p in (passives if isinstance(passives, list) else []):
+        if not isinstance(p, dict) or str(p.get("name") or "").strip() not in want:
+            continue
+        v = _cfg_f.get_passive_modifiers(p)
+        if atype in _cfg_f.ACTION_TYPES:
+            roll += int(v.get(f"roll_{atype}", 0) or 0)
+        discount += -int(v.get("cost", 0) or 0)
+        used.append(str(p.get("name")).strip())
+    cap = int(_cfg_f.FRAGMENT_ROLL_CAP)
+    return max(-cap, min(cap, roll)), max(0, discount), used
+
+
 # ── Consequence Helpers ──────────────────────────────────────
 
 def _apply_consequences(context, result: str) -> None:
@@ -516,10 +602,22 @@ def _apply_consequences(context, result: str) -> None:
     if primary_delta != 0:
         mechanic = context.request.genres.get("mechanic", {})
         primary_axis = mechanic.get("primary_resource") or "vigor"
-        p_bus = getattr(bus, primary_axis)
-        p_bus["delta"] = p_bus.get("delta", 0) + primary_delta
-        sign = "+" if primary_delta > 0 else ""
-        consequence_log.append(f"{'회복' if primary_delta > 0 else '소모'} {sign}{primary_delta}")
+        # [2026-09-16 3차] 옛 `p_bus["delta"]` 쓰기는 P8b 이후 읽는 곳이 없었다(표시만 되고 적용 0).
+        #   레지스트리 코드 소유 쓰기로 실제 적용하고, 표시는 **도장에 찍힌 실제 이동폭**을 쓴다.
+        _reg = {"vigor": "기력", "composure": "평형"}.get(primary_axis, "기력")
+        _rec = None
+        try:
+            import custom_vars as _cv_pd
+            _rec = _cv_pd.apply_system_delta(
+                _jud_channel(context), _reg, primary_delta, "judgment consequence",
+                actor=_jud_actor(context), exempt_cap=True, source="judgment.consequence",
+            )
+        except Exception as _e_pd:
+            logger.debug("[Judgment] primary_delta 레지스트리 skip: %s", _e_pd)
+        bus.judgment["primary_applied"] = _rec
+        if _rec:
+            _d = int(_rec.get("delta", 0) or 0)
+            consequence_log.append(f"{'회복' if _d > 0 else '소모'} {'+' if _d > 0 else ''}{_d}")
 
     # C. Clock Effect (DLC 안전: clocks 없으면 스킵)
     if clock_effect != 0:

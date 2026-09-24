@@ -44,6 +44,10 @@ update_notebook_text = game_character.update_notebook_text
 add_item_to_sojipin = game_character.add_item_to_sojipin
 remove_item_from_sojipin = game_character.remove_item_from_sojipin
 sync_notebook_to_inventory = game_character.sync_notebook_to_inventory
+# [notebook v2 2026-09-06] 섹션 dict 정본 접근자 + LLM색 메모 적용기
+get_notebook_data = game_character.get_notebook_data
+update_notebook_data = game_character.update_notebook_data
+apply_llm_memos = game_character.apply_llm_memos
 add_quest = game_character.add_quest
 complete_quest = game_character.complete_quest
 remove_quest = game_character.remove_quest
@@ -53,7 +57,6 @@ get_active_quests_text = game_character.get_active_quests_text
 get_status_message = game_character.get_status_message
 get_objective_context = game_character.get_objective_context
 update_status_effect = game_character.update_status_effect
-get_status_summary = game_character.get_status_summary
 
 # Memo
 add_memo = game_character.add_memo
@@ -98,6 +101,33 @@ def build_time_directive(ticks: int, scene_type: str = "normal") -> str:
     return f"[TIME] ~{minutes:.0f}min. Describe the passage of time naturally."
 
 
+def _tf_num(v, default=0, lo=None, hi=None, cast=int):
+    try:
+        x = cast(v)
+    except (TypeError, ValueError):
+        return default
+    if lo is not None and x < lo:
+        x = lo
+    if hi is not None and x > hi:
+        x = hi
+    return x
+
+
+def normalize_time_target(tg: Any) -> Optional[Dict[str, Any]]:
+    """time_flow `target` 모양 정규화(순수) — 비dict → None, 숫자 칸은 범위 클램프.
+    [2026-09-25 스레드 장부] process_time_flow 인라인 정규화를 뽑아 thread_ledger.resolve_due(기한)와 공유 — 규칙 한 벌."""
+    if not isinstance(tg, dict):
+        return None
+    tg = dict(tg)
+    tg["day_offset"] = _tf_num(tg.get("day_offset"), 0, lo=0)
+    for _k, _lo, _hi in (("hour", 0, 23), ("minute", 0, 59),
+                         ("month", 1, config.CALENDAR_MONTHS_PER_YEAR),
+                         ("day_in_month", 1, config.CALENDAR_DAYS_PER_MONTH), ("year", 1, None)):
+        if tg.get(_k) is not None:
+            tg[_k] = _tf_num(tg.get(_k), None, lo=_lo, hi=_hi)
+    return tg
+
+
 async def process_time_flow(channel_id: str, time_flow: Dict, scene_type: str = "normal") -> Optional[str]:
     """
     시간 흐름을 처리합니다. (Ticks 증가, Slot 변경, Doom 체크)
@@ -107,8 +137,29 @@ async def process_time_flow(channel_id: str, time_flow: Dict, scene_type: str = 
         time_flow: NVC 분석 결과의 TimeFlow 데이터
         scene_type: 현재 씬 타입 ('normal', 'combat', 'intimate' 등)
     """
-    if not time_flow:
+    if not time_flow or not isinstance(time_flow, dict):
         return None
+
+    # [2026-09-24 감사] 숫자 필드 정규화 — Theoria 스키마가 target 하위를 `|null`로 적어 null/문자열이 온다.
+    #   `None > 0` TypeError 가 try 밖(orchestration 4.5)에서 터지면 추출·서사 콜을 다 쓴 턴이 통째 죽었다.
+    #   절대 날짜는 범위 안으로 자른다(month 13·hour 25 가 그대로 저장되던 자리).
+    def _num(v, default=0, lo=None, hi=None, cast=int):
+        try:
+            x = cast(v)
+        except (TypeError, ValueError):
+            return default
+        if lo is not None and x < lo:
+            x = lo
+        if hi is not None and x > hi:
+            x = hi
+        return x
+    time_flow = dict(time_flow)
+    time_flow["ticks"] = _num(time_flow.get("ticks"), 0)
+    if time_flow.get("explicit_hours") is not None:
+        time_flow["explicit_hours"] = _num(time_flow.get("explicit_hours"), None, cast=float)
+    _tg = time_flow.get("target")
+    if _tg is not None:
+        time_flow["target"] = normalize_time_target(_tg)  # [2026-09-25] 모듈 함수로 이사(규칙 무변경)
 
     # 절대 시간 점프 (target) — 유저가 명시적으로 시간을 언급한 경우만
     target = time_flow.get("target")
@@ -132,6 +183,8 @@ async def process_time_flow(channel_id: str, time_flow: Dict, scene_type: str = 
         abs_month = target.get("month")
         abs_day = target.get("day_in_month")
         if abs_month or abs_day or abs_year:
+            _old = (world.get("year", 1), world.get("month", 1), world.get("day", 1),
+                    world.get("hour", 0), world.get("minute", 0))
             world["year"] = int(abs_year) if abs_year else world.get("year", 1)
             world["month"] = int(abs_month) if abs_month else world.get("month", 1)
             if abs_day:
@@ -141,6 +194,14 @@ async def process_time_flow(channel_id: str, time_flow: Dict, scene_type: str = 
             if target.get("minute") is not None:
                 world["minute"] = int(target.get("minute"))
             world["time_slot"] = target_slot
+            # [2026-09-24 감사] 절대 날짜 점프도 장면 경과에 합산(환경 노화 힌트 재료).
+            try:
+                _dd = ((int(world["year"]) - int(_old[0])) * config.CALENDAR_DAYS_PER_YEAR
+                       + (int(world["month"]) - int(_old[1])) * config.CALENDAR_DAYS_PER_MONTH
+                       + (int(world.get("day", 1)) - int(_old[2])))
+                game_world._add_scene_elapsed(world, _old[3], _old[4], _dd)
+            except Exception:
+                pass
             domain_manager.update_world_state(channel_id, world)
             return f"📅 {game_world.format_calendar(world)} {world['hour']:02d}:{world['minute']:02d} ({target_slot})"
         # 같은 슬롯 + day_offset 0 + hour/minute 없음 → 시간 점프 불필요

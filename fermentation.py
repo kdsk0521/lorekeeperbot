@@ -24,9 +24,14 @@
 
 import json
 import math
+import copy
+import re
+import unicodedata
+from collections import Counter
 import hashlib
 import logging
 import asyncio
+from dataclasses import dataclass
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
 import time
@@ -44,6 +49,7 @@ except ImportError:
 # =========================================================
 
 import config
+import config as _cfg  # [2026-09-13] compress_fresh_to_fermented는 로컬 `config`(GenerateContentConfig)로 모듈을 가린다
 
 # 발효 트리거 임계값
 FRESH_THRESHOLD = config.FRESH_THRESHOLD
@@ -171,9 +177,6 @@ FERMENT_PROMPT_V4 = """
     "emotional_arc": "감정 곡선 형태 (한국어, 1문장)",
     "stagnation_flag": false
   },
-  "helena_delta": {
-    "NPC_Name": {"depth": 0, "tension": 0}
-  },
   "memory_triggers": []
 }
 
@@ -204,11 +207,6 @@ FERMENT_PROMPT_V4 = """
 - emotional_arc: 이 구간의 감정 곡선 형태.
   "상승→절정→여운", "평탄→급락", "진동(긴장↔이완 반복)" 등.
 - stagnation_flag: 서사가 3턴 이상 실질적으로 진행하지 않았으면 true.
-
-## helena_delta (범위: -10 ~ +10)
-유의미한 변화가 있는 NPC만:
-- depth: 신뢰/유대 변화. 위기 공유 → +. 배신 → -
-- tension: 극적 긴장. 갈등/비밀 → +. 해소 → -
 
 ## memory_triggers
 미래 콜백이 필요한 서사 떡밥:
@@ -422,6 +420,7 @@ def _collect_chunk_entities(
 
     counts: Dict[str, int] = {}
     first_seen: Dict[str, int] = {}
+    _w5_extra = bool(getattr(_cfg, "WIKI_PLACES", False))
     for rec in turn_log:
         if not isinstance(rec, dict):
             continue
@@ -434,6 +433,14 @@ def _collect_chunk_entities(
                 continue
             counts[name] = counts.get(name, 0) + 1
             first_seen.setdefault(name, len(first_seen))
+        # [2026-09-14 W5] 장소·세력(`extra`)도 같은 빈도 목록에 합류 — 반환 형태·상한은 불변.
+        #   `first_seen`을 인물 전부 뒤(+1,000,000)로 밀어 **동률이면 인물이 앞**에 온다.
+        for raw in ((rec.get("extra") or []) if _w5_extra else []):
+            name = str(raw).strip()
+            if not name:
+                continue
+            counts[name] = counts.get(name, 0) + 1
+            first_seen.setdefault(name, 1000000 + len(first_seen))
 
     if not counts:
         return []
@@ -779,6 +786,158 @@ def _build_arc_digest(channel_id: str, start_turn: int, end_turn: int) -> str:
         return ""
 
 
+# [2026-09-13 S0 / E5] 출력 예산 절단 경고 — 플래그 무관, 항상.
+#   조용한 절단(JSON repair가 삼켜 버리는 손실)을 로그에서 먼저 보게 한다.
+def _warn_output_cap(response, text_result: str, tag: str, cap_tokens: int = 8192) -> None:
+    """finish_reason=MAX_TOKENS 명시 신호 + 길이 휴리스틱 두 갈래 경고."""
+    try:
+        cands = getattr(response, "candidates", None) or []
+        if cands:
+            fr = getattr(cands[0], "finish_reason", None)
+            if fr and "MAX_TOKENS" in str(fr):
+                logger.warning(
+                    "[%s] output cap hit (finish_reason=MAX_TOKENS) len=%d",
+                    tag, len(text_result or ""),
+                )
+    except Exception:
+        pass
+    try:
+        from orchestration_context import _estimate_tokens as _est
+        ratio = float(getattr(config, "FERMENT_OUTPUT_CAP_WARN_RATIO", 0.95))
+        used = _est(text_result or "")
+        if used >= cap_tokens * ratio:
+            logger.warning(
+                "[%s] output cap pressure %.0f%% — silent truncation risk",
+                tag, 100.0 * used / max(1, cap_tokens),
+            )
+    except Exception:
+        pass
+
+
+# [2026-09-13 S0] 인용 게이트용 프롬프트 부록. FERMENT_PROMPT_V4 원문은 건드리지 않고
+# 플래그 ON일 때만 뒤에 결합한다. OFF면 프롬프트는 바이트 단위로 종전과 동일.
+FERMENT_PROMPT_EVIDENCE_ADDENDUM = """
+
+---
+
+# Output Schema 보강 (compressed_blocks 항목에 세 키 추가)
+compressed_blocks의 각 블록에 아래 세 키를 **추가로** 넣는다:
+{
+  "evidence": ["청크 원문에서 글자 그대로 옮긴 짧은 근거 발췌"],
+  "temporal": "current",
+  "certainty": "confirmed"
+}
+
+# Field Definitions 보강
+- evidence: important=true 블록에만. 최대 2개, 각 160자 이하. **원문에서 글자 그대로**(축약·환언·다듬기 금지 — 코드가 원문과 대조해 다른 건 버린다). 사건·약속·상태 변화를 단독으로 뒷받침하는 문장. 대사 표본이 아니다(그건 dialogues). 해당 없으면 빈 배열.
+- temporal: 이 블록 사건의 시제. current(이 구간에서 일어남) | historical(이전에 일어난 일을 언급) | flashback(회상 장면) | reported(전언·소문) | hypothetical(가정·계획·질문). 기본 current.
+- certainty: confirmed(원문이 확정) | uncertain(암시·추정) | conflict(원문 안에서 진술이 엇갈림). 기본 confirmed.
+
+# Directive 보강
+- 질문·계획·조건은 "말해졌다"만 증명한다 — 결과가 일어난 것으로 적지 말 것.
+"""
+
+
+# [2026-09-14 W2] 페이지 절 패치 부록. FERMENT_PROMPT_V4 원문은 건드리지 않고
+# 플래그 ON **이고 노트가 있을 때만** 뒤에 결합한다(OFF면 프롬프트는 종전과 바이트 동일).
+# [2026-09-14 W5] kind 한 줄 부록. WIKI_PLACES ON일 때만 위 부록 뒤에 결합한다.
+# [2026-09-14 S5b E14] Observed 가산성 한 줄 부록. MEMORY_LINEAGE ON일 때만 W2 부록 뒤에
+#   결합한다(원문 상수 무수정 — 결합만). OFF면 프롬프트는 W2 시점과 바이트 동일.
+FERMENT_PROMPT_LINEAGE_ADDENDUM = (
+    "  Observed는 가산적이다. 새로 확립된 사실만 쓰고, 안 쓴 문장은 프로그램이 보존한다.\n"
+    "  지워야 할 기존 문장은 page_patches[*].retract: [\"원문 그대로\"]에 넣어라(확인된 모순일 때만).\n"
+    "  page_patches[*].from_block: 이 패치의 근거가 된 compressed_blocks 인덱스(선택).\n"
+)
+
+FERMENT_PROMPT_WIKI_KIND_ADDENDUM = (
+    '  page_patches[*].kind: "character|location|faction"(Wiki Notes의 kind 그대로)\n'
+)
+
+FERMENT_PROMPT_WIKI_PATCH_ADDENDUM = """
+
+---
+
+# Output Schema 보강 (최상위 키 하나 추가)
+{
+  "page_patches": [{"page": "이름", "section": "Observed|Relationships+|Knowledge|History", "op": "upsert|append", "content": "…", "base_hash": "노트의 hash 또는 null"}]
+}
+
+# Field Definitions 보강
+- page_patches: Wiki Notes에 있는 페이지만. 바뀐 절만 반환하고, 안 바뀐 절은 프로그램이 보존한다. 확인된 변화가 없으면 빈 배열.
+  Observed(upsert, 텍스트): 이 청크로 **확립된 지속 사실**만 — 일시 반응·계획·질문·가능성은 events에 남기고 여기 쓰지 않는다. 기존 본문을 받아 다시 쓴다(4,000자 이내).
+  Relationships+ / Knowledge / History(append, 한 줄씩): 이미 있는 줄 반복 금지.
+  base_hash: 노트에 적힌 hash를 그대로 돌려준다. 페이지가 노트에 없으면 패치하지 않는다.
+"""
+
+
+def _w5_aggregate_kind(channel_id: str, name: str) -> str:
+    """[2026-09-14 W5] 페이지가 없는 이름이 모음 줄에 있나 → 'location'|'faction'|''.
+
+    장소는 world_tree 노드 존재로(잎은 노드는 있고 페이지가 없다), 세력은 `세력 모음`
+    Entries 등장으로 본다. 조회만 — 콜 0·부작용 0."""
+    try:
+        import wiki_store as _ws5
+        import world_tree as _wt5
+        if _wt5.resolve_node_id(channel_id, name):
+            return "location"
+        if _ws5.aggregate_has(channel_id, "faction", name):
+            return "faction"
+    except Exception:
+        return ""
+    return ""
+
+
+def _build_wiki_notes(channel_id: str, names: List[str]) -> List[Dict[str, Any]]:
+    """[2026-09-14 W2] F1 입력용 페이지 노트 = 청크 entities의 play 절 현재 본문 + hash.
+
+    설계 §4 `existingNotes`+`contentHash`의 우리판. 조회만 하므로 콜 0·부작용 0.
+    모호·미존재 페이지는 조용히 건너뛴다(W1 `resolve_page` 계약). play 절이 하나도
+    없으면 `sections: {}` — 신규 Observed를 허용하되 hash 기준은 '빈 절'이 된다.
+    """
+    if not channel_id or not names:
+        return []
+    if not (getattr(_cfg, "WIKI_PAGES", False) and getattr(_cfg, "WIKI_PATCHES", False)):
+        return []
+    notes: List[Dict[str, Any]] = []
+    try:
+        import wiki_store
+        max_pages = int(getattr(_cfg, "WIKI_PATCH_MAX_PAGES", 6))
+        note_chars = int(getattr(_cfg, "WIKI_PATCH_NOTE_CHARS", 1500))
+        # [2026-09-14 W5] kind 순회 `character → location → faction`(첫 해결 kind).
+        #   W5 OFF면 종전대로 character만 본다(노트 바이트 동일 — `kind` 키도 안 붙는다).
+        _w5 = bool(getattr(_cfg, "WIKI_PLACES", False))
+        _kinds = ("character", "location", "faction") if _w5 else ("character",)
+        for name in list(names)[:max_pages]:
+            pid, knd = "", ""
+            for _k in _kinds:
+                _p = wiki_store.resolve_page(channel_id, name, kind=_k)
+                if _p:
+                    pid, knd = _p, _k
+                    break
+            if not pid:
+                # 페이지가 없어도 **모음 줄에 있는 이름**은 패치를 받을 수 있게 노트를 준다.
+                #   내용은 버려지고 계수만 오른다(wiki_store.apply_patches 게이트 ①).
+                if _w5:
+                    _agg = _w5_aggregate_kind(channel_id, name)
+                    if _agg:
+                        notes.append({"page": name, "kind": _agg, "aggregate": True, "sections": {}})
+                continue
+            secs: Dict[str, Any] = {}
+            for row in wiki_store.get_sections(channel_id, pid, owner="play"):
+                secs[row.get("section")] = {
+                    "hash": row.get("hash") or "",
+                    "body": (row.get("body") or "")[:note_chars],
+                }
+            note = {"page": name, "page_id": pid, "sections": secs}
+            if _w5:
+                note["kind"] = knd
+            notes.append(note)
+    except Exception as e:
+        logger.warning(f"[Wiki] notes 수집 실패(무시): {e}")
+        return []
+    return notes
+
+
 async def compress_fresh_to_fermented(
     client,
     model_id: str,
@@ -787,6 +946,7 @@ async def compress_fresh_to_fermented(
     use_v3: bool = True,
     nt_state: Optional[Dict[str, Any]] = None,
     channel_id: str = "",  # Bug 2a (2026-05-20): emotion_at_save 캡처용
+    wiki_notes: Optional[List[Dict[str, Any]]] = None,  # [2026-09-14 W2] 페이지 play 절 노트
 ) -> Optional[Dict[str, Any]]:
     """
     오래된 히스토리를 요약하여 FERMENTED 메모리로 변환합니다.
@@ -800,7 +960,6 @@ async def compress_fresh_to_fermented(
             "compressed_blocks": [...],
             "summary": "...",
             "arc_observations": {...},
-            "helena_delta": {...},
             "memory_triggers": [...]
         }
     """
@@ -813,6 +972,28 @@ async def compress_fresh_to_fermented(
     history_text = format_history_indexed(to_summarize)
 
     system_instruction = FERMENT_PROMPT_V4
+    if getattr(_cfg, "V10_HISTORY_EVIDENCE", False):
+        # [2026-09-13 S0] 결합만 — 원문 상수는 무수정.
+        system_instruction = FERMENT_PROMPT_V4 + FERMENT_PROMPT_EVIDENCE_ADDENDUM
+    if getattr(_cfg, "WIKI_PATCHES", False) and wiki_notes:
+        # [2026-09-14 W2] 결합만 — 원문 상수는 무수정. 노트가 없으면 블록 자체가 없다.
+        _wiki_add = FERMENT_PROMPT_WIKI_PATCH_ADDENDUM
+        if getattr(_cfg, "WIKI_PLACES", False):
+            _wiki_add = _wiki_add + FERMENT_PROMPT_WIKI_KIND_ADDENDUM
+        if getattr(_cfg, "MEMORY_LINEAGE", False):
+            # [2026-09-14 S5b] 결합만 — 원문 상수(W2 부록)는 무수정.
+            # [2026-09-24 감사 §5-2 #28 — 코드 우선] 가산 병합(WIKI_OBSERVED_ADDITIVE)이 켜져 있으면 코드가 옛 문장을
+            #   보존한다(`wiki_store._merge_observed`: 새 문장 + 안 쓴 옛 문장). 그런데 W2 부록의 "기존 본문을 받아 다시
+            #   쓴다"가 LINEAGE 부록의 "새로 확립된 사실만"과 같이 붙어, 모델이 옛 문장을 환언해 다시 쓰면 환언본과
+            #   원문이 둘 다 남았다(중복). 가산 모드에선 그 한 구절만 뺀다(원문 상수는 무수정 — 결합 때 치환).
+            if getattr(_cfg, "WIKI_OBSERVED_ADDITIVE", False):
+                _wiki_add = _wiki_add.replace(" 기존 본문을 받아 다시 쓴다(4,000자 이내).", "")
+            _wiki_add = _wiki_add + FERMENT_PROMPT_LINEAGE_ADDENDUM
+        system_instruction = (
+            system_instruction + _wiki_add
+            + "\n# Wiki Notes (play sections of pages involved; hash = current version)\n"
+            + json.dumps(wiki_notes, ensure_ascii=False) + "\n"
+        )
 
     # Sprint 4: NarrativeTracker 서사 컨텍스트 주입 (압축 품질 향상)
     narrative_hint = ""
@@ -827,7 +1008,7 @@ async def compress_fresh_to_fermented(
                 for sl in active_sls[:4]:
                     name = sl.get("name", "?")
                     entities = ", ".join(sl.get("entities", [])[:5])
-                    sl_ctx = sl.get("current_context", "")[:80]
+                    sl_ctx = (sl.get("current_context") or "")[:80]
                     sl_hints.append(f"- {name} [{entities}]: {sl_ctx}")
                 narrative_hint = "\n## Active Storylines (context for compression)\n" + "\n".join(sl_hints)
     except Exception:
@@ -888,6 +1069,7 @@ Output VALID JSON following the schema exactly.
             # [2026-08-03] journal엔 훑을 한 줄, 전문은 verbose 채널로.
             #   구 `[:150]`은 JSON 앞머리만 잘라 보여줘서(대개 `{"fermented_summary": "…`)
             #   정작 뭘 압축했는지는 못 보고 journal만 길어졌다.
+            _warn_output_cap(response, text_result, "Fermentation V4")
             logger.info(f"[Fermentation V4] FRESH raw {len(text_result)}자 → verbose")
             try:
                 import bot_utils as _bu
@@ -900,7 +1082,7 @@ Output VALID JSON following the schema exactly.
                 data = json.loads(clean_json)
 
                 # V3 포맷 검증 및 정규화
-                normalized = _normalize_ferment_result(data, use_v3, channel_id=channel_id)
+                normalized = _normalize_ferment_result(data, use_v3, channel_id=channel_id, source_entries=to_summarize)
                 return normalized
 
             except json.JSONDecodeError as je:
@@ -908,7 +1090,7 @@ Output VALID JSON following the schema exactly.
                 repaired = _repair_truncated_json(clean_json)
                 if repaired:
                     logger.info("[Fermentation V4] JSON repair succeeded")
-                    return _normalize_ferment_result(repaired, use_v3, channel_id=channel_id)
+                    return _normalize_ferment_result(repaired, use_v3, channel_id=channel_id, source_entries=to_summarize)
                 logger.error("[Fermentation V4] JSON repair failed, returning degraded stub")
                 # Bug 2a fallback patch (2026-05-20): fallback dict도 emotion_at_save 필드 포함.
                 # _normalize_ferment_result를 우회하지만 schema 일관성 유지 (빈 값 = backward compat).
@@ -924,7 +1106,6 @@ Output VALID JSON following the schema exactly.
                     "summary": text_result[:500],
                     "compressed_blocks": [],
                     "arc_observations": {},
-                    "helena_delta": {},
                     "memory_triggers": [],
                     "emotion_at_save": {
                         "scene_base": "",
@@ -940,10 +1121,267 @@ Output VALID JSON following the schema exactly.
     return None
 
 
+def _extractive_ferment_stub(entries: Any) -> Dict[str, Any]:
+    """[2026-09-24 감사 §3] LLM 없이 만드는 FRESH 대체 결과 — 빈 응답이 문턱까지 이어졌을 때만.
+
+    요약 = 각 항목의 화자 + 본문 앞부분(줄바꿈 접음), 합 1500자 캡. 파싱 실패 stub 과 같은 모양·같은
+    `_parse_failed` 표식이라 하류(DEEP `_suspect` 등)가 저품질로 다룬다. 창작 0 — 원문 조각만."""
+    parts: List[str] = []
+    for e in (entries or []):
+        if not isinstance(e, dict):
+            continue
+        who = str(e.get("role") or e.get("speaker") or "").strip()
+        txt = " ".join(str(e.get("content") or e.get("text") or "").split())
+        if not txt:
+            continue
+        parts.append((f"{who}: " if who else "") + txt[:140])
+    summary = " / ".join(parts)[:1500]
+    return {
+        "_parse_failed": True,
+        "_extractive": True,
+        "summary": summary,
+        "compressed_blocks": [],
+        "arc_observations": {},
+        "memory_triggers": [],
+        "emotion_at_save": {"scene_base": "", "scene_mod": "", "max_intensity_at_save": 0.0, "captured_turn": 0},
+    }
+
+
+# =========================================================
+# [2026-09-13 S0] 발효 인용 게이트 (evidence grounding)
+#   LLM이 내놓은 evidence 발췌를 **코드가** 청크 원문과 대조한다(LLM 판정자 0).
+#   통과 못 한 인용은 버리되 요약·events·dialogues·기존 키는 한 글자도 안 바꾼다.
+# =========================================================
+_WS = re.compile(r"\s+")
+
+_TEMPORAL_VALUES = ("current", "historical", "flashback", "reported", "hypothetical")
+_CERTAINTY_VALUES = ("confirmed", "uncertain", "conflict")
+
+
+def _norm_quote(s: str) -> str:
+    """인용 대조용 정규화 — NFKC + 공백 접기. 전각/이중공백 차이만으론 안 버린다."""
+    return _WS.sub(" ", unicodedata.normalize("NFKC", s or "")).strip()
+
+
+# [2026-09-14 S5b] 문장 분할 — `。.!?\n` 경계. 종결부호는 앞 문장에 붙여 둔다(원문 보존).
+#   wiki_store E14 병합도 이 함수를 쓴다(규칙 하나, re.compile 0).
+_SENT_ENDS = "\u3002.!?\n"
+
+
+def _split_sentences(text: str) -> List[str]:
+    out: List[str] = []
+    buf: List[str] = []
+    for ch in (text or ""):
+        buf.append(ch)
+        if ch in _SENT_ENDS:
+            t = "".join(buf).strip()
+            if t:
+                out.append(t)
+            buf = []
+    t = "".join(buf).strip()
+    if t:
+        out.append(t)
+    return out
+
+
+# [2026-09-14 S5b E12] 블록의 "가리키는 이름" 표면. 실측(§0 ②): compressed_blocks 항목엔
+#   entities 키가 없다(indices/important/events/dialogues + S0의 evidence/temporal/certainty).
+#   블록 단위로 실재하는 유일한 이름 필드가 `dialogues[*].speaker`라서 그것을 집합으로 쓴다.
+def _blk_entity_set(blk) -> set:
+    out = set()
+    if not isinstance(blk, dict):
+        return out
+    for d in (blk.get("dialogues") or []):
+        if isinstance(d, dict):
+            n = _norm_quote(d.get("speaker") if isinstance(d.get("speaker"), str) else "")
+            if n:
+                out.add(n)
+    return out
+
+
+def _ground_ferment_blocks(blocks, source_entries) -> Dict[str, Any]:
+    """compressed_blocks의 evidence/temporal/certainty를 청크 원문에 대조해 in-place 정리.
+
+    블록 삭제·events/summary 수정·dialogues 삭제/수정은 **하지 않는다**.
+    dialogues는 손대지 않고 같은 모양의 `dialogue_verbatim`(bool 격자)만 덧붙인다(S2 몫).
+
+    Returns: 영수증 dict(ev_kept/ev_dropped/drop_reasons/dlg_lines/dlg_verbatim
+             + temporal/certainty 분포).
+    """
+    max_per_block = int(getattr(config, "FERMENT_EVIDENCE_MAX_PER_BLOCK", 2))
+    max_chars = int(getattr(config, "FERMENT_EVIDENCE_MAX_CHARS", 160))
+
+    norm_sources = [
+        (i, _norm_quote((e or {}).get("content", "") if isinstance(e, dict) else ""), e)
+        for i, e in enumerate(source_entries or [], 1)
+    ]
+
+    kept = dropped = 0
+    reasons = {"no_match": 0, "len": 0, "over_cap": 0, "not_important": 0}
+    dlg_lines = dlg_verbatim = 0
+    # [2026-09-14 S5b E12] 판정 결과 표시(삭제 0). 플래그 OFF면 키도 계수도 안 생긴다.
+    _lineage = bool(getattr(config, "MEMORY_LINEAGE", False))
+    ungrounded = spread = 0
+    temporal_dist = Counter()
+    certainty_dist = Counter()
+
+    def _find(q: str):
+        for i, nsrc, e in norm_sources:
+            if nsrc and q in nsrc:
+                return i, e
+        return None, None
+
+    for blk in (blocks or []):
+        if not isinstance(blk, dict):
+            continue
+
+        # --- temporal / certainty (없으면 기본값을 넣는다) ---
+        t = blk.get("temporal")
+        blk["temporal"] = t if t in _TEMPORAL_VALUES else "current"
+        c = blk.get("certainty")
+        blk["certainty"] = c if c in _CERTAINTY_VALUES else "confirmed"
+        temporal_dist[blk["temporal"]] += 1
+        certainty_dist[blk["certainty"]] += 1
+
+        # --- evidence ---
+        raw_ev = blk.get("evidence")
+        if not isinstance(raw_ev, list):
+            raw_ev = []
+        if not blk.get("important"):
+            # important=false 블록의 인용은 통째 드롭
+            dropped += len(raw_ev)
+            reasons["not_important"] += len(raw_ev)
+            blk["evidence"] = []
+        else:
+            grounded = []
+            for item in raw_ev:
+                if len(grounded) >= max_per_block:
+                    dropped += 1
+                    reasons["over_cap"] += 1
+                    continue
+                q = _norm_quote(item if isinstance(item, str) else "")
+                if not (2 <= len(q) <= max_chars):
+                    dropped += 1
+                    reasons["len"] += 1
+                    continue
+                idx, ent = _find(q)
+                if idx is None:
+                    dropped += 1
+                    reasons["no_match"] += 1
+                    continue
+                ent = ent if isinstance(ent, dict) else {}
+                grounded.append({
+                    "text": q,
+                    "idx": idx,
+                    "role": ent.get("role"),
+                    "message_id": ent.get("message_id"),
+                    "game_time": ent.get("game_time"),
+                    "turn": ent.get("turn"),
+                })
+                kept += 1
+            blk["evidence"] = grounded
+            # [2026-09-14 S5b E12] 인용을 냈는데 하나도 못 댄 블록만 False.
+            #   evidence 자체가 없으면 키 생략(판정 불가 != 미검증).
+            if _lineage and raw_ev:
+                blk["grounded"] = bool(grounded)
+                if not grounded:
+                    ungrounded += 1
+
+        # --- dialogues: 무수정. 같은 모양의 bool 격자만 부착 ---
+        dlgs = blk.get("dialogues")
+        if isinstance(dlgs, list):
+            grid = []
+            for d in dlgs:
+                lines = d.get("lines") if isinstance(d, dict) else None
+                if not isinstance(lines, list):
+                    grid.append([])
+                    continue
+                row = []
+                for ln in lines:
+                    q = _norm_quote(ln if isinstance(ln, str) else "")
+                    ok = bool(q) and _find(q)[0] is not None
+                    row.append(ok)
+                    dlg_lines += 1
+                    if ok:
+                        dlg_verbatim += 1
+                grid.append(row)
+            blk["dialogue_verbatim"] = grid
+
+    # [2026-09-14 S5b E12] 전파 1 — 같은 발효 결과 안에서 1회 폐포(단방향, 순환 없음).
+    #   미검증 블록의 이름 집합을 **정확히 포함**하고 자기 인용이 없는(판정 불가) 블록만 전염.
+    #   자기 인용이 있는 블록(grounded 키 보유)은 이웃이 틀려도 산다.
+    if _lineage and ungrounded:
+        _bad = [_blk_entity_set(b) for b in (blocks or [])
+                if isinstance(b, dict) and b.get("grounded") is False]
+        _bad = [x for x in _bad if x]
+        if _bad:
+            for blk in (blocks or []):
+                if not isinstance(blk, dict) or "grounded" in blk:
+                    continue
+                _own = _blk_entity_set(blk)
+                if _own and any(u <= _own for u in _bad):
+                    blk["grounded"] = False
+                    spread += 1
+
+    return {
+        "ungrounded": ungrounded,
+        "spread": spread,
+        "ev_kept": kept,
+        "ev_dropped": dropped,
+        "drop_reasons": reasons,
+        "dlg_lines": dlg_lines,
+        "dlg_verbatim": dlg_verbatim,
+        "temporal": dict(temporal_dist),
+        "certainty": dict(certainty_dist),
+    }
+
+
+def _mark_ungrounded_patches(patches, blocks) -> int:
+    """[2026-09-14 S5b E12] 미검증 블록에서 나온 page_patch의 `content` 머리에 표시.
+
+    거부·삭제는 없다 — 표시만 붙여 그대로 적용한다. 플래그 OFF면 무동작(0)."""
+    if not getattr(config, "MEMORY_LINEAGE", False):
+        return 0
+    if not isinstance(patches, list) or not patches:
+        return 0
+    blks = [b for b in (blocks or []) if isinstance(b, dict)]
+    bad_idx = {i for i, b in enumerate(blks) if b.get("grounded") is False}
+    if not bad_idx:
+        return 0
+    bad_sents = set()
+    for i in bad_idx:
+        for t in _split_sentences(str(blks[i].get("events") or "")):
+            q = _norm_quote(t)
+            if len(q) >= 2:
+                bad_sents.add(q)
+    mark = str(getattr(config, "MEMORY_UNGROUNDED_MARK", "(미검증)"))
+    n = 0
+    for p in patches:
+        if not isinstance(p, dict):
+            continue
+        content = str(p.get("content") or "")
+        if not content or content.lstrip().startswith(mark):
+            continue
+        fb = p.get("from_block")
+        hit = False
+        if isinstance(fb, int) and not isinstance(fb, bool):
+            if fb in bad_idx:
+                hit = True
+        else:
+            cq = _norm_quote(content)
+            hit = bool(cq) and any(q in cq for q in bad_sents)
+        if hit:
+            p["content"] = mark + " " + content
+            p["_ungrounded"] = True
+            n += 1
+    return n
+
+
 def _normalize_ferment_result(
     data: Dict[str, Any],
     is_v3: bool = True,
     channel_id: str = "",
+    source_entries: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """발효 결과를 정규화합니다.
 
@@ -964,7 +1402,6 @@ def _normalize_ferment_result(
             "emotional_arc": "",
             "stagnation_flag": False
         },
-        "helena_delta": {},
         "memory_triggers": [],
         # Bug 2a (2026-05-20): mood-congruent recall 매칭용 스냅샷.
         # 기본값은 빈 상태 — channel_id가 비어 있거나 emo_states가 없으면 그대로 유지.
@@ -976,33 +1413,85 @@ def _normalize_ferment_result(
         },
     }
 
+    # [2026-09-24 감사] LLM 출력 **타입** 정규화. 소비자(score_fermented_entries·precompute_vector_scores의
+    #   `summary +=`/`.lower()`, build_fermented_context·compress_fermented_to_deep의 `block.get`/`d.get`,
+    #   auto_ferment의 `set.update(memory_triggers)`)는 모양 가드가 없어, 모델이 list/dict/str를 한 번
+    #   섞어 내면 그 엔트리가 저장된 뒤 회상·DEEP 압축이 매번 예외로 죽었다. 저장 입구에서 모양을 고정한다.
+    #   최상위가 dict가 아니면(JSON 배열·문자열) 정상 결과로 받지 않는다 — 빈 결과로 받으면 history 12개가
+    #   빈 요약으로 잘린다. 예외 → 호출부가 None(발효 실패)으로 처리한다.
+    if not isinstance(data, dict):
+        raise TypeError(f"ferment result is not a JSON object: {type(data).__name__}")
+
+    def _txt(v) -> str:
+        if v is None:
+            return ""
+        if isinstance(v, str):
+            return v
+        if isinstance(v, (list, tuple)):
+            return " ".join(_txt(x) for x in v if x is not None).strip()
+        if isinstance(v, dict):
+            return json.dumps(v, ensure_ascii=False)
+        return str(v)
+
+    def _blk(b: dict) -> dict:
+        b = dict(b)
+        if "events" in b:
+            b["events"] = _txt(b.get("events"))
+        _dl = b.get("dialogues")
+        if _dl is not None:
+            _out = []
+            for d in (_dl if isinstance(_dl, list) else []):
+                if not isinstance(d, dict):
+                    continue
+                d = dict(d)
+                _ln = d.get("lines")
+                if isinstance(_ln, str):
+                    d["lines"] = [_ln]
+                elif isinstance(_ln, list):
+                    d["lines"] = [x if isinstance(x, str) else _txt(x) for x in _ln if x is not None]
+                elif _ln is not None:
+                    d["lines"] = [_txt(_ln)]
+                if "speaker" in d and not isinstance(d.get("speaker"), str):
+                    d["speaker"] = _txt(d.get("speaker"))
+                _out.append(d)
+            b["dialogues"] = _out
+        return b
+
+    _blocks_raw = data.get("compressed_blocks")
+    _blocks = [_blk(b) for b in _blocks_raw if isinstance(b, dict)] if isinstance(_blocks_raw, list) else []
+
     # Summary
     if "summary" in data:
-        result["summary"] = data["summary"]
+        result["summary"] = _txt(data["summary"])
     elif "compressed_blocks" in data:
-        events = [b.get("events", "") for b in data["compressed_blocks"]]
+        events = [b.get("events", "") or "" for b in _blocks]
         result["summary"] = " ".join(events)[:500]
 
     # Compressed Blocks
     if "compressed_blocks" in data:
-        result["compressed_blocks"] = data["compressed_blocks"]
+        result["compressed_blocks"] = _blocks
 
     # Arc Observations (V4)
     if "arc_observations" in data:
         ao = data["arc_observations"]
         if isinstance(ao, dict):
-            result["arc_observations"]["pc_pattern"] = ao.get("pc_pattern")
-            result["arc_observations"]["relationship_shifts"] = ao.get("relationship_shifts", {})
-            result["arc_observations"]["emotional_arc"] = ao.get("emotional_arc", "")
+            _pc = ao.get("pc_pattern")
+            result["arc_observations"]["pc_pattern"] = (_txt(_pc) or None) if _pc is not None else None
+            _rs = ao.get("relationship_shifts", {})
+            result["arc_observations"]["relationship_shifts"] = _rs if isinstance(_rs, dict) else {}
+            result["arc_observations"]["emotional_arc"] = _txt(ao.get("emotional_arc", ""))
             result["arc_observations"]["stagnation_flag"] = bool(ao.get("stagnation_flag", False))
-
-    # Helena Delta
-    if "helena_delta" in data:
-        result["helena_delta"] = data["helena_delta"]
 
     # Memory Triggers
     if "memory_triggers" in data:
-        result["memory_triggers"] = data["memory_triggers"]
+        _mt = data["memory_triggers"]
+        if isinstance(_mt, str):
+            _mt = [_mt]
+        # 스키마 = 문자열 떡밥 목록. set에 들어가야 하므로 str만(숫자는 문자열화, dict/list 항목은 버림).
+        result["memory_triggers"] = [
+            str(t).strip() for t in (_mt if isinstance(_mt, list) else [])
+            if isinstance(t, (str, int, float)) and not isinstance(t, bool) and str(t).strip()
+        ]
 
     # Bug 2a proper fix (2026-05-20): 발효 시점의 지배적인 감정 스냅샷 캡처.
     # intensity 최대 NPC의 scene_pair를 "이 장면의 지배 정서"로 채택.
@@ -1010,7 +1499,9 @@ def _normalize_ferment_result(
         try:
             import domain_manager as _dm
             world = _dm.get_world_state(channel_id)
-            emo_states = world.get("npc_emotion_states", {})
+            # [2026-09-15 §12] 부재 감쇠 항목 제외 — scene pair 후보는 출석 NPC만(병합 이전과 동형).
+            from emotion_engine import present_emotion_states as _present_emo
+            emo_states = _present_emo(world, world.get("turn_index"))
             if emo_states:
                 max_npc = max(
                     (s for s in emo_states.values() if isinstance(s, dict)),
@@ -1024,6 +1515,41 @@ def _normalize_ferment_result(
                 result["emotion_at_save"]["captured_turn"] = int(world.get("turn_index", 0))
         except Exception:
             pass  # 캡처 실패는 graceful — 옛 entry처럼 빈 값 유지
+
+    # [2026-09-14 W2] F1이 낸 페이지 절 패치. 플래그 OFF면 키 자체가 안 생긴다
+    # (엔트리·결과 dict 모두 종전과 동형). 여기선 **모양만** 정규화하고 게이트는
+    # wiki_store.apply_patches가 진다(적용 자리 = auto_ferment, 계약 밖 = 행).
+    if getattr(config, "WIKI_PATCHES", False):
+        _pp = data.get("page_patches")
+        if not isinstance(_pp, list):
+            _pp = []
+        result["page_patches"] = [p for p in _pp if isinstance(p, dict)]
+
+    # [2026-09-13 S0] 발효 인용 게이트. OFF거나 원문이 없으면 이 블록 전체가 무동작
+    # (엔트리·로그 바이트 단위로 종전과 동일).
+    try:
+        if getattr(config, "V10_HISTORY_EVIDENCE", False) and source_entries:
+            receipt = _ground_ferment_blocks(result["compressed_blocks"], source_entries)
+            result["_grounding"] = receipt
+            # [2026-09-14 S5b E12] 전파 2 — 미검증 블록에서 나온 페이지 패치에 표시만 붙인다.
+            #   거부가 아니다(삭제 0). `from_block`(F1 선택 출력, 인덱스)이 있으면 그것을,
+            #   없으면 미검증 블록 events와 문장이 겹칠 때만.
+            receipt["ungrounded_marked"] = _mark_ungrounded_patches(
+                result.get("page_patches"), result["compressed_blocks"])
+            _t = ",".join(f"{k}:{v}" for k, v in sorted(receipt["temporal"].items()))
+            _c = ",".join(f"{k}:{v}" for k, v in sorted(receipt["certainty"].items()))
+            _r = receipt["drop_reasons"]
+            logger.info(
+                f"[Evidence] F1 gate ev_kept={receipt['ev_kept']} ev_dropped={receipt['ev_dropped']} "
+                f"no_match={_r['no_match']} len={_r['len']} over_cap={_r['over_cap']} "
+                f"dlg_verbatim={receipt['dlg_verbatim']}/{receipt['dlg_lines']} "
+                f"temporal={_t} certainty={_c}"
+                + (f" ungrounded={receipt['ungrounded']} spread={receipt['spread']}"
+                   f" marked={receipt.get('ungrounded_marked', 0)}"
+                   if getattr(config, "MEMORY_LINEAGE", False) else "")
+            )
+    except Exception as _ge:
+        logger.warning(f"[Evidence] F1 gate 실패(무시): {_ge}")
 
     return result
 
@@ -1061,7 +1587,24 @@ async def compress_fermented_to_deep(
     all_blocks = []
     all_triggers = []
     all_dialogues = []
-    
+    # [2026-09-13 S2 F2] 원문 승격 — S0가 남긴 evidence/dialogue_verbatim을 모아
+    #   deep 압축 입에 "글자 그대로 쓸 수 있는 줄" 목록으로 올린다. 새 콜 0(입력 줄만 추가).
+    #   주의: 이 함수는 아래에서 `config` 이름을 지역 변수로 재사용(L~1356 GenerateContentConfig)
+    #   하므로 모듈 config를 직접 참조하면 UnboundLocalError. 별칭으로 읽는다.
+    import config as _cfg
+    _evid_on = bool(getattr(_cfg, "V10_HISTORY_EVIDENCE", False))
+    verbatim_pool = []
+    _vp_seen = set()
+
+    def _vp_add(text, role, game_time):
+        if len(verbatim_pool) >= 12:
+            return
+        q = _norm_quote(text if isinstance(text, str) else "")
+        if not q or q in _vp_seen:
+            return
+        _vp_seen.add(q)
+        verbatim_pool.append({"text": q, "role": role, "game_time": game_time})
+
     fermented_texts = []
     for i, entry in enumerate(fermented_list):
         timestamp = entry.get("timestamp", f"Session {i+1}")
@@ -1082,6 +1625,23 @@ async def compress_fermented_to_deep(
                         "speaker": d.get("speaker", "Unknown"),
                         "lines": d.get("lines", [])
                     })
+                if _evid_on:
+                    # ① S0 게이트를 통과한 evidence(원문 substring 확정)
+                    for _ev in (block.get("evidence") or []):
+                        if isinstance(_ev, dict):
+                            _vp_add(_ev.get("text"), _ev.get("role"), _ev.get("game_time"))
+                    # ② dialogue_verbatim True인 대사 줄만(환언 줄은 안 올린다)
+                    _grid = block.get("dialogue_verbatim")
+                    if isinstance(_grid, list):
+                        for _j, _d in enumerate(dialogues):
+                            _row = _grid[_j] if _j < len(_grid) else None
+                            if not isinstance(_row, list):
+                                continue
+                            _lines = (_d.get("lines") or []) if isinstance(_d, dict) else []
+                            _spk = _d.get("speaker", "Unknown") if isinstance(_d, dict) else "Unknown"
+                            for _k, _ln in enumerate(_lines):
+                                if _k < len(_row) and _row[_k]:
+                                    _vp_add(_ln, _spk, None)
         
         all_triggers.extend(triggers)
         
@@ -1117,6 +1677,13 @@ async def compress_fermented_to_deep(
     if all_dialogues:
         context_part += f"# Important Dialogues to Crystallize\n{json.dumps(all_dialogues[:10], ensure_ascii=False, indent=2)}\n\n---\n\n"
     
+    # [2026-09-13 S2 F2] 원문 그대로 쓸 수 있는 줄 — 영구층(deep)까지 원문을 끌고 올라간다.
+    if _evid_on and verbatim_pool:
+        context_part += (
+            "# Verbatim Evidence (exact source lines; prefer these for crystallized_dialogues, unchanged)\n"
+            f"{json.dumps(verbatim_pool, ensure_ascii=False, indent=2)}\n\n---\n\n"
+        )
+    
     # 수집된 메모리 트리거 전달
     if all_triggers:
         unique_triggers = list(set(all_triggers))
@@ -1137,6 +1704,9 @@ Important:
 - Carry forward unresolved memory_triggers
 - Track character milestones and world state changes
 """
+    if _evid_on and verbatim_pool:
+        user_prompt += ("- For crystallized_dialogues, copy a line from Verbatim Evidence "
+                        "exactly when one fits; do not rewrite it.\n")
     
     try:
         import text_resources as _tr
@@ -1163,6 +1733,7 @@ Important:
         if response and response.text:
             text_result = response.text.strip()
             # [2026-08-03] 전문은 verbose로 (FRESH와 동형). 이 함수엔 channel_id가 없다.
+            _warn_output_cap(response, text_result, "Fermentation V4 DEEP")
             logger.info(f"[Fermentation V4] DEEP raw {len(text_result)}자 → verbose")
             try:
                 import bot_utils as _bu
@@ -1175,7 +1746,7 @@ Important:
                 data = json.loads(clean_json)
 
                 # 정규화
-                result = _normalize_deep_result(data)
+                result = _normalize_deep_result(data, verbatim_pool if _evid_on else None)
                 logger.info(f"[Fermentation V4] DEEP 압축 완료: {len(fermented_list)}개 → {len(result.get('deep_narrative', ''))}자")
                 return result
 
@@ -1184,7 +1755,7 @@ Important:
                 repaired = _repair_truncated_json(clean_json)
                 if repaired:
                     logger.info("[Fermentation V4] DEEP JSON repair succeeded")
-                    return _normalize_deep_result(repaired)
+                    return _normalize_deep_result(repaired, verbatim_pool if _evid_on else None)
                 logger.error("[Fermentation V4] DEEP JSON repair failed, returning degraded stub")
                 # [2026-08-01] `_parse_failed` — 호출부 _suspect 판정은 길이 휴리스틱이라
                 # 원문 조각이 기존 deep와 비슷한 길이면 그냥 통과해 덮어쓴다. 명시 플래그로 승격.
@@ -1203,15 +1774,145 @@ Important:
     return None
 
 
-def _normalize_deep_result(data: Dict[str, Any]) -> Dict[str, Any]:
-    """DEEP 압축 결과를 정규화합니다."""
-    return {
+def _mark_crystallized_verbatim(dialogues, verbatim_pool) -> int:
+    """[2026-09-13 S2 F2 §2.2] crystallized_dialogues에 `verbatim: bool` 표시(드롭 0).
+
+    판정은 코드가 한다(LLM 판정자 0): 정규화 후 완전 일치, 또는 한쪽이 다른 쪽의
+    substring(짧은 인용이 긴 대사 안에 든 경우 / 그 역). 항목 삭제·수정은 없다.
+    """
+    norms = []
+    for it in (verbatim_pool or []):
+        t = it.get("text") if isinstance(it, dict) else it
+        q = _norm_quote(t if isinstance(t, str) else "")
+        if q:
+            norms.append(q)
+    hit = 0
+    for d in (dialogues or []):
+        if not isinstance(d, dict):
+            continue
+        ln = _norm_quote(d.get("line") if isinstance(d.get("line"), str) else "")
+        ok = bool(ln) and any((ln == q) or (q in ln) or (ln in q) for q in norms)
+        d["verbatim"] = ok
+        if ok:
+            hit += 1
+    return hit
+
+
+def _normalize_deep_result(data: Dict[str, Any], verbatim_pool=None) -> Dict[str, Any]:
+    """DEEP 압축 결과를 정규화합니다.
+
+    [2026-09-13 S2] verbatim_pool이 None이 아니면(=플래그 ON) crystallized_dialogues에
+    `verbatim` 표시를 단다. None이면 키 자체가 안 생긴다(종전 바이트 동일).
+    """
+    result = {
         "deep_narrative": data.get("deep_narrative", ""),
         "crystallized_dialogues": data.get("crystallized_dialogues", []),
         "active_memory_triggers": data.get("active_memory_triggers", []),
         "character_milestones": data.get("character_milestones", {}),
         "world_state_changes": data.get("world_state_changes", [])
     }
+    if verbatim_pool is not None:
+        try:
+            _cd = result["crystallized_dialogues"]
+            _n = len(_cd) if isinstance(_cd, list) else 0
+            _k = _mark_crystallized_verbatim(_cd if isinstance(_cd, list) else [], verbatim_pool)
+            logger.info(f"[Evidence] F2 crystallized verbatim={_k}/{_n} pool={len(verbatim_pool)}")
+        except Exception as _e_vb:
+            logger.debug(f"[Evidence] F2 verbatim mark skip: {_e_vb}")
+    return result
+
+
+# =========================================================
+# [2026-09-05 발효 계약] 입력 빌더 / 결과 추출
+# =========================================================
+
+# 발효가 대입하는 키의 정본. 여기 없는 키에 대입하면 smoke_ferment_contract P1-b가 잡는다.
+# changes_made 자기 신고는 폐지 — 전후 diff로 계산한다.
+FERMENT_OWNED_KEYS = (
+    "history", "fermented_history", "deep_memory", "deep_memory_data",
+    "active_memory_triggers", "ferment_fail_streak", "ferment_empty_streak",
+    "_last_chronicle_ferment_count", "_last_memory_gc_ferment_count",
+    "memory_gc_backup", "chronicles", "chronicle_unresolved", "structured_slots",
+)
+# participants는 하위 두 필드만 발효가 비운다. 통째 소유 아님.
+FERMENT_PARTICIPANT_FIELDS = ("archived_info", "archived_foreshadowing")
+
+
+def build_ferment_input(domain: Dict[str, Any], channel_id: str) -> Dict[str, Any]:
+    """도메인 통째가 아니라 발효가 읽는 키만 deepcopy한 작업용 사본.
+    auto_ferment는 이 dict를 마음대로 변형한다(사본이므로 안전).
+
+    [V10 P4 / 2026-09-05] channel_id는 **필수**. fermented/deep은 JSON이 아니라 행이 정본이라,
+    channel_id 없이 만든 사본은 세 키가 비어 있고 auto_ferment가 그 빈 값을 정본으로 착각한다
+    (= 적용 시 장기기억이 조용히 날아간다). 그래서 빠뜨리면 조용히 넘어가지 않고 여기서 멈춘다."""
+    if not channel_id:
+        raise ValueError("build_ferment_input requires channel_id since P4 — "
+                         "rows are the source of fermented/deep")
+    snap = {k: copy.deepcopy(domain.get(k)) for k in FERMENT_OWNED_KEYS if k in domain}
+    snap["participants"] = copy.deepcopy(domain.get("participants", {}))
+    snap["channel_id_ref"] = domain.get("channel_id_ref")
+    snap["_ferment_snapshot_turn_index"] = int((domain.get("world_state") or {}).get("turn_index", 0) or 0)
+    # [2026-09-24 감사] 행이 정본일 때(READ_FROM_SQLITE)는 게터의 "행 None → JSON 잔여 키" 폴백을 타지 않는다.
+    #   P4 STRIP 이후 그 키는 늘 없어 폴백 = [] / "" 인데, 그 빈 값을 정본으로 착각한 채 FRESH 발효가 겹치면
+    #   apply → sync_fermented(DELETE 후 INSERT)가 기존 fermented 전부를 새 1건으로 덮는다(장기기억 유실).
+    #   행을 직접 읽고 실패(None/예외)면 **이번 발효를 멈춘다** — 호출자(background_fermentation_task)가
+    #   예외를 잡아 로그만 남기고, 원본(history·행)은 무접촉이라 다음 턴에 그대로 재시도된다.
+    if getattr(config, "V10_HISTORY_READ_FROM_SQLITE", False):
+        import sqlite_store as _ss
+        _rows = _ss.read_fermented(channel_id)
+        _deep = _ss.read_deep(channel_id)
+        if _rows is None or _deep is None:
+            raise RuntimeError(f"[V10] ferment input row read failed (fermented={_rows is not None} "
+                               f"deep={_deep is not None}) — 발효 중단, 다음 턴 재시도 ({channel_id})")
+        snap["fermented_history"] = copy.deepcopy(_rows)
+        snap["deep_memory"] = _deep.get("narrative") or ""
+        snap["deep_memory_data"] = copy.deepcopy(_deep.get("data") or {})
+        return snap
+    try:
+        import domain_manager as _dm
+        snap["fermented_history"] = copy.deepcopy(_dm.get_fermented_history(channel_id))
+        _nar, _data = _dm.get_deep_memory(channel_id)
+        snap["deep_memory"] = _nar
+        snap["deep_memory_data"] = copy.deepcopy(_data)
+    except Exception as _e:
+        logger.warning(f"[V10] ferment input read-through 실패, JSON 사본 유지: {_e}")
+    return snap
+
+
+@dataclass
+class FermentResult:
+    changed_keys: set                    # FERMENT_OWNED_KEYS 중 값이 바뀐 것
+    values: dict                         # {key: after 값} — changed_keys만
+    history_before: list                 # 스냅샷 history (prefix 대조용)
+    history_after: Optional[list]        # history가 바뀌었을 때만
+    participants_archive_cleared: list   # ai_memory 두 필드가 비워진 uid
+    snapshot_turn_index: int
+
+    @property
+    def changed(self) -> bool:
+        return bool(self.changed_keys or self.participants_archive_cleared)
+
+
+def extract_ferment_result(before: Dict[str, Any], after: Dict[str, Any]) -> FermentResult:
+    """before = build_ferment_input 직후 deepcopy, after = auto_ferment가 변형한 그 dict."""
+    changed, values = set(), {}
+    for k in FERMENT_OWNED_KEYS:
+        if before.get(k) != after.get(k):
+            changed.add(k)
+            values[k] = after.get(k)
+    cleared = []
+    for uid, p in (after.get("participants") or {}).items():
+        b = ((before.get("participants") or {}).get(uid) or {}).get("ai_memory") or {}
+        a = (p or {}).get("ai_memory") or {}
+        if any(b.get(f) and not a.get(f) for f in FERMENT_PARTICIPANT_FIELDS):
+            cleared.append(uid)
+    return FermentResult(
+        changed, values,
+        before.get("history") or [],
+        after.get("history") if "history" in changed else None,
+        cleared,
+        int(before.get("_ferment_snapshot_turn_index", 0) or 0),
+    )
 
 
 # =========================================================
@@ -1228,7 +1929,15 @@ async def auto_ferment(
     """
     세션 데이터를 검사하고 필요 시 자동으로 발효합니다.
     V3: memory_triggers, compressed_blocks 지원
+
+    [2026-09-05 계약] save_callback은 더 이상 호출되지 않는다. 호출자는
+    build_ferment_input → auto_ferment → extract_ferment_result →
+    domain_manager.apply_ferment_result 순으로 쓴다.
     """
+    if save_callback is not None:
+        logger.warning("[Fermentation] save_callback is ignored since 2026-09-05 contract; "
+                       "use extract_ferment_result + domain_manager.apply_ferment_result")
+
     changes_made = False
     
     if "fermented_history" not in session_data:
@@ -1282,6 +1991,12 @@ async def auto_ferment(
             for sl in list(_nt_state_for_ferment.get("storylines", [])):
                 if sl.get("status") != "active":
                     continue
+                # [2026-09-24 감사] Arc는 제외 — promote_to_arc가 last_turn을 격상 시점 값으로 두고 arc tick은
+                #   이 값을 안 올린다(엔티티 겹침 배정만 올림). 그래서 이 20턴 판정이 arc 자체 dormant 임계
+                #   (compute_dormant_threshold, 최장 50턴)보다 먼저 arc를 resolve(=storylines에서 삭제)했다.
+                #   arc 수명은 narrative_tracker의 dormant 판정이 따로 진다.
+                if sl.get("is_arc"):
+                    continue
                 last = sl.get("last_turn", 0)
                 if current_turn - last >= STORYLINE_STALE_TURNS:
                     _nt.resolve_storyline(_nt_state_for_ferment, sl.get("id", 0))
@@ -1304,19 +2019,51 @@ async def auto_ferment(
 
         history = session_data["history"]
 
+        # [2026-09-14 W2] 엔티티 도장을 **콜 앞으로** 당긴다(같은 함수·같은 인자, 순수 계측).
+        # 이유: F1 입력에 그 인물 페이지의 play 절 노트를 실어야 하기 때문(설계 §4 existingNotes).
+        # 엔트리 조립(아래)도 이 값을 그대로 재사용한다 — 계산은 한 번.
+        _to_summarize_pre = history[:FERMENT_CHUNK_SIZE]
+        _chunk_entities = []
+        try:
+            _chunk_entities = _collect_chunk_entities(_nt_state_for_ferment, _to_summarize_pre)
+        except Exception:
+            _chunk_entities = []
+        _wiki_notes = _build_wiki_notes(ch_id, _chunk_entities)
+
         result_data = await compress_fresh_to_fermented(
             client, model_id,
             history[:FERMENT_CHUNK_SIZE],
             use_v3=True,
             nt_state=_nt_state_for_ferment,
             channel_id=ch_id,  # Bug 2a (2026-05-20): emotion_at_save 캡처용
+            wiki_notes=_wiki_notes,
         )
         
         # [2026-08-01] 파싱 실패 가드 — DEEP(아래 _suspect)과 대칭.
         # 이 블록 이전에는 깨진 stub도 truthy라 그대로 저장되고 history[:12]가
         # 파기됐다(복구 경로 0). 이제 원본을 남기고 다음 사이클에 재시도한다.
         # 무한 정체 방지: 연속 실패가 임계에 닿으면 stub을 받아들이고 진행.
-        if isinstance(result_data, dict) and result_data.get("_parse_failed"):
+        # [2026-09-24 감사 §3 — 레티어스 위임 판정] None(빈 응답·API 예외)은 파싱 실패와 **따로** 센다.
+        #   구: 셈 없이 매 사이클 재시도 — 모델이 특정 청크를 계속 빈손으로 돌려주면(내용 거절 등) 발효가 영구 정체,
+        #   history 는 끝없이 자라고 매턴 실패 콜이 나갔다. 그렇다고 파싱 실패처럼 3회에 stub 을 받으면 짧은 API 장애에
+        #   요약 없는 stub 으로 12메시지가 압축된다. → 문턱을 넉넉히(FERMENT_MAX_EMPTY_STREAK, 기본 6) 두고, 닿으면
+        #   **LLM 없이 코드 발췌 stub**(원문 줄 앞부분)으로 진행한다 — 빈 요약보다 사실이 남는다.
+        if result_data is None and client and history:
+            _es = int(session_data.get("ferment_empty_streak", 0) or 0) + 1
+            _max_es = int(getattr(config, "FERMENT_MAX_EMPTY_STREAK", 6) or 6)
+            session_data["ferment_empty_streak"] = _es
+            if _es < _max_es:
+                logger.warning("[Fermentation V4] FRESH 결과 없음(빈 응답/예외) %d/%d — 원본 보존, 다음 사이클 재시도",
+                               _es, _max_es)
+            else:
+                logger.error("[Fermentation V4] FRESH 빈 응답 %d회 연속 — 코드 발췌 stub 으로 진행(구간 %d개). "
+                             "모델 응답(거절·장애) 점검 필요.", _es, FERMENT_CHUNK_SIZE)
+                result_data = _extractive_ferment_stub(history[:FERMENT_CHUNK_SIZE])
+                session_data["ferment_empty_streak"] = 0
+        elif result_data is not None:
+            session_data["ferment_empty_streak"] = 0
+        if (isinstance(result_data, dict) and result_data.get("_parse_failed")
+                and not result_data.get("_extractive")):   # 발췌 stub 은 이미 문턱을 지난 결과 — 재시도 셈 밖
             _streak = int(session_data.get("ferment_fail_streak", 0) or 0) + 1
             _max_streak = getattr(config, "FERMENT_MAX_FAIL_STREAK", 3)
             session_data["ferment_fail_streak"] = _streak
@@ -1362,11 +2109,7 @@ async def auto_ferment(
             # 여기(auto_ferment)에 두는 이유: _normalize_ferment_result는 **LLM 출력** 정규화
             # 자리다. 이 값은 turn_log를 코드가 센 계측이므로 생산 주체 라벨이 갈린다.
             # 도장 불가(턴 번호 없는 legacy 청크)면 키 자체를 안 만든다 — 옛 엔트리와 동형.
-            _chunk_entities = []
-            try:
-                _chunk_entities = _collect_chunk_entities(_nt_state_for_ferment, _to_summarize)
-            except Exception:
-                _chunk_entities = []
+            # [2026-09-14 W2] 계산 자리는 콜 앞으로 이동(위 `_chunk_entities`). 값·의미 동일.
 
             # V4 포맷으로 저장
             fermented_entry = {
@@ -1378,14 +2121,34 @@ async def auto_ferment(
                 "compressed_blocks": result_data.get("compressed_blocks", []),
                 "memory_triggers": result_data.get("memory_triggers", []),
                 "arc_observations": result_data.get("arc_observations", {}),
-                "helena_delta": result_data.get("helena_delta", {}),
                 "from_msg_id": _from_msg_id,
                 "to_msg_id": _to_msg_id,
             }
             if _chunk_entities:
                 # [2026-08-11 엔티티 회상 채널] 빈 리스트도 키 생략 — 읽기 쪽 no-op 경로 단일화
                 fermented_entry["entities"] = _chunk_entities
+            _grounding = result_data.get("_grounding")
+            if _grounding:
+                # [2026-09-13 S0] 인용 게이트 영수증. 플래그 OFF면 키 자체가 없다(entities와 같은 규약).
+                fermented_entry["grounding"] = _grounding
             session_data["fermented_history"].append(fermented_entry)
+
+            # [2026-09-14 W2] 페이지 절 패치 적용. 사건 문서(위 엔트리)는 스냅샷 dict가 지고,
+            # 절은 **행**이라 `apply_ferment_result` 계약 밖 → 여기서 wiki_store로 직접 쓴다.
+            # hash CAS가 발효 중 끼어든 쓰기를 막는다. 실패는 전부 삼킨다(발효는 계속).
+            if getattr(config, "WIKI_PATCHES", False) and _wiki_notes:
+                try:
+                    import wiki_store as _ws_p
+                    _w_turn = 0
+                    try:
+                        import domain_manager as _dm_p
+                        _w_turn = int((_dm_p.get_world_state(ch_id) or {}).get("turn_index", 0) or 0)
+                    except Exception:
+                        _w_turn = 0
+                    _ws_p.apply_patches(ch_id, result_data.get("page_patches"),
+                                        _wiki_notes, _to_summarize_pre, _w_turn)
+                except Exception as _e_wp:
+                    logger.warning(f"[Wiki] 패치 적용 실패(무시): {_e_wp}")
 
             # memory_triggers를 전역 목록에 추가
             new_triggers = result_data.get("memory_triggers", [])
@@ -1395,21 +2158,8 @@ async def auto_ferment(
                 session_data["active_memory_triggers"] = list(existing)
                 logger.info(f"[Fermentation V4] Memory Triggers 추가: {new_triggers}")
 
-            # Helena Delta 적용 (depth/tension → iceberg compute_npc_depths)
-            if "helena_delta" in result_data:
-                try:
-                    import domain_manager
-
-                    for npc_name, deltas in result_data["helena_delta"].items():
-                        # [C1 2026-08-01] LLM(발효 helena_delta) 제안 → 선언 -10~+10로 캡
-                        domain_manager.update_helena_metric(
-                            ch_id, npc_name,
-                            depth_delta=deltas.get("depth", 0),
-                            tension_delta=deltas.get("tension", 0),
-                            source="helena.fermentation",
-                        )
-                except Exception as e:
-                    logger.warning(f"[Fermentation V4] Helena Delta 적용 실패: {e}")
+            # ⛔[2026-09-15 관계 통합] helena_delta 적용 삭제(설계 §7-7) — 발효 LLM의 두 번째 관계 델타 판독.
+            #   관계 서술의 되먹임은 위키 인물 페이지 play 절(F1 page_patches)이 맡는다.
 
             # N5: Write compression result to structured memory slot
             _turn = len(session_data.get("fermented_history", []))
@@ -1471,7 +2221,7 @@ async def auto_ferment(
                     archived_context_str += (
                         f"- {asl.get('name', '?')} "
                         f"[{', '.join(asl.get('entities', [])[:4])}]: "
-                        f"{asl.get('summary', '')[:120]}\n"
+                        f"{(asl.get('summary') or '')[:120]}\n"
                     )
 
             # 엔티티 critical moments를 DEEP에 보존
@@ -1482,7 +2232,7 @@ async def auto_ferment(
                 if moments:
                     for m in moments[-3:]:
                         critical_parts.append(
-                            f"- {npc_name} T{m.get('turn', '?')}: {m.get('description', '')[:80]}"
+                            f"- {npc_name} T{m.get('turn', '?')}: {(m.get('description') or '')[:80]}"
                         )
             if critical_parts:
                 archived_context_str += "\n### Entity Critical Moments\n" + "\n".join(critical_parts[:10])
@@ -1536,7 +2286,12 @@ async def auto_ferment(
                 session_data["deep_memory"] = deep_result
 
             session_data["fermented_history"] = []
-            
+            # [2026-09-24 감사] 아래 연대기·메모리 GC 트리거는 len(fermented_history)로 센다. 목록을 비우면서
+            #   last_* 를 그대로 두면(예: 연대기 6, GC 5) 다음 사이클 최대치 8에서 차이가 3·5에 못 닿아
+            #   첫 DEEP 이후 두 트리거가 영구 불발이었다. 카운터를 목록과 같이 0으로 되돌린다.
+            session_data["_last_chronicle_ferment_count"] = 0
+            session_data["_last_memory_gc_ferment_count"] = 0
+
             # 사용된 아카이브 비우기
             for uid in participants:
                 if "ai_memory" in participants[uid]:
@@ -1558,7 +2313,7 @@ async def auto_ferment(
         # 최근 히스토리에서 쿼리 추출 (최근 3메시지)
         recent_msgs = session_data.get("history", [])[-3:]
         vec_query = " ".join(
-            m.get("content", "")[:100] for m in recent_msgs if isinstance(m, dict)
+            (m.get("content") or "")[:100] for m in recent_msgs if isinstance(m, dict)
         )
         if vec_query.strip():
             try:
@@ -1599,9 +2354,6 @@ async def auto_ferment(
     if ch_id in _vector_similarity_cache and len(_vector_similarity_cache[ch_id]) > 50:
         _vector_similarity_cache[ch_id] = {}
 
-    if changes_made and save_callback:
-        save_callback()
-
     return session_data
 
 
@@ -1616,6 +2368,22 @@ Policy:
 - Do NOT invent new entries. Do NOT rewrite meanings. Do NOT translate.
 
 Return valid JSON: {"active_memory_triggers": [str], "crystallized_dialogues": [obj], "character_milestones": {"name": [str]}, "world_state_changes": [str]}"""
+
+
+# [2026-09-14 S5b F3] GC 보호 한 줄 부록. 원문 상수(_MEMORY_GC_SYSTEM) 무수정 — 결합만.
+_MEMORY_GC_PROTECT_ADDENDUM = (
+    "\nDo not remove items marked conflict or past; the program restores them.\n"
+)
+
+
+def _gc_dialogue_key(d) -> str:
+    """[2026-09-14 S5b F3] 대사 항목 동일성 키 = 정규화 텍스트(`line`, 없으면 `text`)."""
+    if not isinstance(d, dict):
+        return ""
+    v = d.get("line")
+    if not isinstance(v, str) or not v.strip():
+        v = d.get("text")
+    return _norm_quote(v if isinstance(v, str) else "")
 
 
 async def _run_memory_gc(client, model_id: str, session_data: dict, channel_id: str = "") -> bool:
@@ -1635,8 +2403,21 @@ async def _run_memory_gc(client, model_id: str, session_data: dict, channel_id: 
     if sum(before.values()) < 6:
         return False  # 정리할 만큼 쌓이지 않음
 
+    # [2026-09-14 S5b F3] 보호 대상 — 실측(§0 ⑥): deep 항목에 certainty/temporal 표시는 없고
+    #   S2가 다는 `verbatim`(crystallized_dialogues)만 있다 → 그 키만 보호한다. 복원만, 삭제 0.
+    _prot_on = bool(getattr(config, "MEMORY_GC_PROTECT", False)) and bool(
+        getattr(config, "MEMORY_LINEAGE", False))
+    _prot_keys = set()
+    if _prot_on:
+        for _d in payload["crystallized_dialogues"]:
+            if isinstance(_d, dict) and _d.get("verbatim") is True:
+                _k = _gc_dialogue_key(_d)
+                if _k:
+                    _prot_keys.add(_k)
+    _sys_gc = _MEMORY_GC_SYSTEM + (_MEMORY_GC_PROTECT_ADDENDUM if _prot_on else "")
+
     gen_config = types.GenerateContentConfig(
-        system_instruction=_MEMORY_GC_SYSTEM,
+        system_instruction=_sys_gc,
         response_mime_type="application/json",
         # [2026-07-02] 4096→8192: GC 출력=유지 항목 미러라 기억이 두꺼우면 잘림 →
         # repair가 잘린 배열을 '유효하게' 닫으면 은근 삭제가 70% 가드 밑으로 통과할 수 있음. 여유가 안전장치.
@@ -1672,6 +2453,23 @@ async def _run_memory_gc(client, model_id: str, session_data: dict, channel_id: 
     if not isinstance(result.get("world_state_changes"), list):
         return False
 
+    # [2026-09-14 S5b F3] 보호 항목 복원 — 원 순서 유지 재조립. 결과에만 있는 것은 뒤에.
+    _restored = 0
+    if _prot_on and _prot_keys:
+        _before_list = payload["crystallized_dialogues"]
+        _res_list = [x for x in result["crystallized_dialogues"] if isinstance(x, dict)]
+        _res_keys = {_gc_dialogue_key(x) for x in _res_list}
+        _before_keys = {_gc_dialogue_key(x) for x in _before_list if isinstance(x, dict)}
+        _missing = {k for k in _prot_keys if k and k not in _res_keys}
+        if _missing:
+            _rebuilt = [x for x in _before_list
+                        if isinstance(x, dict)
+                        and (_gc_dialogue_key(x) in _res_keys
+                             or _gc_dialogue_key(x) in _prot_keys)]
+            _rebuilt += [x for x in _res_list if _gc_dialogue_key(x) not in _before_keys]
+            result["crystallized_dialogues"] = _rebuilt
+            _restored = len(_missing)
+
     after = {
         "active_memory_triggers": len(result["active_memory_triggers"]),
         "crystallized_dialogues": len(result["crystallized_dialogues"]),
@@ -1695,7 +2493,8 @@ async def _run_memory_gc(client, model_id: str, session_data: dict, channel_id: 
     # 루트 미러 동기화 (기존 이중 저장 관행 유지)
     session_data["active_memory_triggers"] = list(deep_data["active_memory_triggers"])
 
-    logger.info("[MemoryGC] " + " ".join(f"{k} {before[k]}→{after[k]}" for k in before))
+    logger.info("[MemoryGC] " + " ".join(f"{k} {before[k]}→{after[k]}" for k in before)
+                + (f" protected={len(_prot_keys)} restored={_restored}" if _prot_on else ""))
     return True
 
 
@@ -1724,7 +2523,7 @@ async def _auto_generate_chronicle(client, model_id: str, session_data: dict, ch
             parts.append("## Fermented\n" + "\n".join(texts))
     if history:
         recent = history[-20:]
-        lines = [f"{h.get('role','?')}: {h.get('content','')[:300]}" for h in recent if isinstance(h, dict)]
+        lines = [f"{h.get('role','?')}: {(h.get('content') or '')[:300]}" for h in recent if isinstance(h, dict)]
         if lines:
             parts.append("## Recent\n" + "\n".join(lines))
 
@@ -1802,6 +2601,20 @@ def _get_vector_engine(client):
     return vector_search.get_shared_engine(client)
 
 
+def _joint_recall_query(current_input: str, hist: Any, n: int = 2) -> str:
+    """[2026-09-13 S3 E8] 회상 쿼리 조립식 — 현재 입력(주) + 직전 n개 메시지 꼬리(보조).
+
+    벡터 경로(refresh_recall_vector_cache)와 키워드 경로(build_fermented_context)가
+    **같은 문자열**을 쓰도록 조립을 한 곳에 모은다. n=2일 때 종전 벡터 쿼리와 바이트 동일.
+    """
+    tail = ""
+    if isinstance(hist, list) and hist and n > 0:
+        tail = " ".join(
+            (m.get("content") or "")[:300] for m in hist[-n:] if isinstance(m, dict)
+        )
+    return f"{(current_input or '')[:400]} {tail}".strip()
+
+
 async def refresh_recall_vector_cache(
     client,
     session_data: Dict[str, Any],
@@ -1817,17 +2630,98 @@ async def refresh_recall_vector_cache(
     if not client or not isinstance(session_data, dict):
         return
     fermented = session_data.get("fermented_history", [])
+    # [2026-09-24 감사] 호출 시점(orchestration.gather_context → orch_ctx 이전)의 session_data는
+    #   get_domain 원본이라 P4 STRIP 이후 fermented_history 키가 없다 → 매 턴 즉시 return(캐시 영구 정체).
+    #   소비자(build_fermented_context)와 같은 게터로 행을 읽는다 — 인덱스(seq 순)도 소비 쪽과 같다.
+    #   키가 있으면(호출부가 행 값을 실어 준 경우) 그대로 쓰고, **키가 없을 때만** 게터로 읽는다.
+    if channel_id and "fermented_history" not in session_data:
+        try:
+            import domain_manager as _dm
+            fermented = _dm.get_fermented_history(channel_id)
+        except Exception as _e:
+            logger.debug("[VectorSearch] recall refresh fermented read skip: %s", _e)
     if not fermented:
         return
-    tail = ""
-    hist = session_data.get("history", [])
-    if isinstance(hist, list) and hist:
-        tail = " ".join(
-            m.get("content", "")[:300] for m in hist[-2:] if isinstance(m, dict)
-        )
-    query = f"{(current_input or '')[:400]} {tail}".strip()
+    query = _joint_recall_query(
+        current_input,
+        session_data.get("history", []),
+        int(getattr(config, "MEMORY_JOINT_QUERY_TAIL", 2)),
+    )
     if query:
         await precompute_vector_scores(client, fermented, query, channel_id=channel_id)
+
+
+# [2026-09-14 W3b] 위키 절 벡터 유사도 캐시 — S3 `_vector_similarity_cache`와 **같은 모양**
+#   (async 선계산 -> sync 소비). 키는 (page_id, section), 값은 현행 쿼리와의 코사인 유사도.
+#   소비자는 `wiki_store.compile_for`(벡터 시드). 결측은 결측이지 실패가 아니다(직접 시드만).
+_wiki_similarity_cache: Dict[str, Dict[tuple, float]] = {}
+
+
+async def refresh_wiki_vector_cache(
+    client,
+    channel_id: str = "",
+    current_input: str = "",
+    hist: Any = None,
+) -> None:
+    """턴 시작에 위키 절 벡터를 채우고(배치) 현행 쿼리와의 유사도를 선계산한다.
+
+    새 LLM 콜 0 — 임베딩 콜만, 그것도 `vector_search.get_shared_engine`의 md5 캐시를 탄다.
+    쿼리 문자열은 S3 `refresh_recall_vector_cache`와 **같은 조립**(`_joint_recall_query`)이라
+    같은 턴 두 번째 호출은 캐시 히트 = 추가 과금 0.
+    미임베딩 절은 한 턴에 `WIKI_VEC_BATCH`개까지만 — 나머지는 다음 턴(큐 없음, live-stored가 큐).
+    예외는 전부 삼킨다(키워드/직접 시드 폴백 = 현행)."""
+    if not client or not channel_id:
+        return
+    if not bool(getattr(_cfg, "WIKI_VECTORS", False)):
+        return
+    if not bool(getattr(_cfg, "WIKI_PAGES", False)):
+        return
+    try:
+        import wiki_store as _ws
+        live = _ws.vec_live_sections(channel_id)
+        stored = _ws.vec_get_all(channel_id)
+        missing = [k for k, v in live.items() if stored.get(k, ("", []))[0] != v[0]]
+        missing.sort()
+        batch = int(getattr(_cfg, "WIKI_VEC_BATCH", 32))
+        take = missing[:max(batch, 0)]
+        pending = len(missing) - len(take)
+        embedded = 0
+        engine = _get_vector_engine(client)
+        if take:
+            cut = int(getattr(_cfg, "WIKI_VEC_SECTION_CHARS", 2000))
+            vecs = await engine.embed_chunks([live[k][1][:cut] for k in take])
+            rows = []
+            for k, vec in zip(take, vecs or []):
+                if not vec:
+                    continue          # 빈 벡터(API 실패) = 저장 0, 다음 턴 재시도
+                rows.append((k[0], k[1], live[k][0], vec))
+                stored[k] = (live[k][0], list(vec))
+            embedded = _ws.vec_put_many(channel_id, rows,
+                                        model=str(getattr(engine, "model", "") or ""))
+        # 쿼리 임베딩 -> 저장된 절 전부 점수
+        scored = 0
+        query = _joint_recall_query(
+            current_input, hist, int(getattr(_cfg, "MEMORY_JOINT_QUERY_TAIL", 2)))
+        if query:
+            qv = await engine.embed_chunks([query])
+            qvec = (qv or [[]])[0]
+            if qvec:
+                import vector_search as _vs
+                out = {}
+                for k, (_h, vec) in stored.items():
+                    if k not in live or not vec:
+                        continue
+                    out[k] = _vs.cosine_similarity(qvec, vec)
+                _wiki_similarity_cache[channel_id] = out
+                scored = len(out)
+        gone = _ws.vec_delete_missing(channel_id, set(live.keys()))
+        if embedded > 0 or pending > 0:
+            logger.info("[Wiki] vec live=%d embedded=%d pending=%d scored=%d",
+                        len(live), embedded, pending, scored)
+        if gone:
+            logger.debug("[Wiki] vec pruned=%d", gone)
+    except Exception as e:
+        logger.debug("[Wiki] vec refresh skip: %s", e)
 
 
 async def precompute_vector_scores(
@@ -1895,6 +2789,43 @@ def score_fermented_entries(entries: list, query: str = "", channel_id: str = ""
     w_imp = getattr(_cfg, 'MEMORY_SCORE_W_IMPORTANCE', 0.25)
     layer_weight = MEMORY_INFLUENCE_WEIGHT.get("fermented", 0.6)
 
+    _sel_v2 = bool(getattr(_cfg, 'MEMORY_SELECT_V2', False))
+
+    # [2026-09-13 S3 E4] 과거 의도 클램프 — "언제/그때/전에…" 류 질의에서는 최근성 가중을
+    # 눌러 '오래됐지만 정확한 답'이 최신 잡음에 밀리는 것을 막는다(LIBRA 30098).
+    # 줄인 만큼 w_sim에 그대로 얹어 **세 가중의 합은 불변**으로 유지한다 — score 스케일이
+    # 변하지 않으므로 게이트 임계·구제 로직·안정화 가산 어디에도 파급이 없다.
+    # 마커는 전부 2자 이상(P13 낱말 경계 병은 1~2자 마커에서만 난다) → 단순 포함 판정.
+    if _sel_v2 and query:
+        _past_markers = getattr(_cfg, 'MEMORY_PAST_INTENT_MARKERS', ())
+        if any(m in query for m in _past_markers):
+            _rec_cap = float(getattr(_cfg, 'MEMORY_PAST_RECENCY_CAP', 0.06))
+            if w_rec > _rec_cap:
+                w_sim += (w_rec - _rec_cap)
+                w_rec = _rec_cap
+            logger.info("[Recall] past_intent w_rec=%.2f", w_rec)
+
+    # [2026-09-13 S3 E9] 전달이력 안정화 — 지난 턴 Slot 9에 실제로 실렸던 엔트리에 미세 가산.
+    # 매 턴 회상 집합이 통째로 갈아엎히면 산문이 맥락을 놓친다(HAYAKU 29149).
+    # BONUS=0이면 완전 no-op(설정 한 줄 롤백). TTL 밖이면 스냅샷 무시.
+    _stab_bonus = float(getattr(_cfg, 'MEMORY_STABILITY_BONUS', 0.0)) if _sel_v2 else 0.0
+    _stab_keys = set()
+    if _stab_bonus > 0.0 and channel_id:
+        _pv = _PREV_DELIVERED.get(channel_id)
+        if _pv:
+            _ttl = float(getattr(_cfg, 'MEMORY_STABILITY_TTL_SEC', 600))
+            try:
+                if (time.time() - float(_pv[0])) <= _ttl:
+                    _stab_keys = set(_pv[1] or ())
+            except Exception:
+                _stab_keys = set()
+    _stab_hits = 0
+
+    # [2026-09-14 S5b E12] 미검증 감점 스위치. OFF면 배율 계산 자체가 없다.
+    _ungr_on = bool(getattr(_cfg, 'MEMORY_LINEAGE', False))
+    _ungr_pen = float(getattr(_cfg, 'MEMORY_UNGROUNDED_PENALTY', 0.85))
+    _ungr_hits = 0
+
     # Sprint 4: 벡터 캐시 조회
     vec_cache = _vector_similarity_cache.get(channel_id, {})
 
@@ -1917,7 +2848,9 @@ def score_fermented_entries(entries: list, query: str = "", channel_id: str = ""
             _world = _dm.get_world_state(channel_id)
             # [H3 2026-08-01] 같은 get_world_state 호출을 재사용 — 콜 순증 0.
             _now_minutes = _gt_abs_minutes(_world)
-            _emo_states = _world.get("npc_emotion_states", {})
+            # [2026-09-15 §12] 부재 감쇠 항목 제외 — 현재 scene pair는 출석 NPC만.
+            from emotion_engine import present_emotion_states as _present_emo
+            _emo_states = _present_emo(_world, _world.get("turn_index"))
             if _emo_states:
                 max_npc = max(
                     (s for s in _emo_states.values() if isinstance(s, dict)),
@@ -2122,12 +3055,35 @@ def score_fermented_entries(entries: list, query: str = "", channel_id: str = ""
         if total_boost > 1.0:
             score *= total_boost
 
+        # [2026-09-14 S5b E12] 미검증 감점 — 곱(부스트) 뒤, 가산(안정화) 앞.
+        #   important 블록 중 grounded=False 비율 r → score *= 1 - (1-P)*r. 제외·삭제는 없다.
+        if _ungr_on:
+            _imp_b = [b for b in (entry.get("compressed_blocks") or [])
+                      if isinstance(b, dict) and b.get("important")]
+            if _imp_b:
+                _bad_n = sum(1 for b in _imp_b if b.get("grounded") is False)
+                if _bad_n:
+                    _r = _bad_n / float(len(_imp_b))
+                    score *= 1.0 - (1.0 - _ungr_pen) * _r
+                    _ungr_hits += 1
+
+        # [S3 E9] 안정화 가산 — 부스트(곱) 이후, 구제·정렬 이전. 가산이라 부풀림 없음.
+        if _stab_keys:
+            _sk = _recall_entry_key(entry)
+            if _sk and _sk in _stab_keys:
+                score += _stab_bonus
+                _stab_hits += 1
+
         scored.append((entry, score))
         _trace.append((idx, similarity, _recency_order, story_factor, story_days, score))
 
         # [H2] noisy-OR 병행 계산 — 순위 주입에만 쓰이고 score는 건드리지 않는다.
         _or_by_id[id(entry)] = 1.0 - (1.0 - similarity) * (1.0 - recency)
         _pos_by_id[id(entry)] = idx
+
+    _LAST_STABLE_HITS[channel_id or ""] = _stab_hits
+    if _ungr_on and _ungr_hits:
+        logger.info("[Recall] ungrounded penalty entries=%d x%.2f", _ungr_hits, _ungr_pen)
 
     if _gate_dropped:
         logger.info(
@@ -2212,6 +3168,200 @@ def _clip_at_boundary(text: str, limit: int) -> str:
     return (head[:best] if best > 0 else head).rstrip()
 
 
+# =========================================================
+# [2026-09-13 S1] Slot 9 읽기 계약 — 꼬리표 · 회상 영수증(③→④, ④→①)
+# =========================================================
+
+_TAG_TEMPORAL = {
+    "reported": "[전언]",
+    "flashback": "[회상]",
+    "hypothetical": "[가정\u00b7계획, 결과 미확정]",
+}
+
+# 채널별 "직전 턴에 무엇을 회상시켰나" 스냅샷. 다음 턴 산문 확정 시 1회 소비(pop)된다.
+_LAST_RECALL: Dict[str, Dict[str, Any]] = {}
+
+# [2026-09-13 S3 E9] 채널별 "지난 턴에 실제로 주입한 엔트리 키" 스냅샷.
+#   _LAST_RECALL은 log_recall_trace가 **pop**해 버리므로 다음 턴 점수 가산에는 쓸 수 없다.
+#   그래서 같은 적재 지점(_stash_recall)에서 pop되지 않는 사본을 따로 둔다. (ts, keys)
+_PREV_DELIVERED: Dict[str, Tuple[float, set]] = {}
+
+# 직전 score_fermented_entries 호출에서 안정화 가산을 받은 엔트리 수(영수증 전용).
+_LAST_STABLE_HITS: Dict[str, int] = {}
+
+
+def _recall_entry_key(entry: Dict[str, Any]) -> str:
+    """회상 엔트리의 동일성 키 — 적재(_stash_recall)와 조회(E9 가산)가 **같은 규칙**을 쓴다."""
+    if not isinstance(entry, dict):
+        return ""
+    return str(entry.get("from_msg_id") or entry.get("timestamp") or "")
+
+
+def _s1_period_tags(entry: Dict[str, Any], now_minutes: Optional[int]) -> List[str]:
+    """엔트리 하나의 시기 꼬리표. 근거가 없으면 빈 리스트(= 렌더 줄 자체가 없음)."""
+    tags: List[str] = []
+    blocks = [b for b in (entry.get("compressed_blocks") or []) if isinstance(b, dict)]
+
+    # 확신: 어느 블록이든 conflict면 표시(S0 certainty 소비)
+    if any(b.get("certainty") == "conflict" for b in blocks):
+        tags.append("[증언 엇갈림]")
+
+    # 시제: important 블록 전부가 같은 값일 때만. 섞이면 무표시.
+    # (중요 블록이 없으면 전체 블록 기준. temporal 키가 없는 옛 엔트리는 None이라 매칭 0.)
+    _imp = [b for b in blocks if b.get("important")]
+    _basis = _imp or blocks
+    if _basis:
+        _temps = {b.get("temporal") for b in _basis}
+        if len(_temps) == 1:
+            _t = next(iter(_temps))
+            if _t in _TAG_TEMPORAL:
+                tags.append(_TAG_TEMPORAL[_t])
+
+    # 작중 시간 거리(실시간 _rel과 별개 — _rel 표기는 손대지 않는다)
+    _end = _gt_abs_minutes(entry.get("game_time_end"))
+    if _end is not None and now_minutes is not None:
+        _d = (now_minutes - _end) // 1440
+        if _d >= 1:
+            tags.append(f"[작중 {_d}일 전]")
+    return tags
+
+
+# [2026-09-14 W3a] 흔적 영수증 — T3 위키 컴파일이 실은 페이지 이름을 여기 적어 두면
+#   같은 턴의 _stash_recall이 entities에 합친다(Slot 7 -> Slot 9 순서라 항상 앞선다).
+#   log_recall_trace의 `[Recall] trace entities=a/N`이 페이지 이름 겹침도 세게 된다.
+_PENDING_WIKI_PAGES: Dict[str, set] = {}
+
+
+def note_wiki_pages(channel_id: str, names: Any) -> None:
+    """W3a 컴파일러가 이번 턴 실어 보낸 페이지 이름. 예외 전부 삼킴(무해)."""
+    try:
+        if not channel_id:
+            return
+        _ns = {str(n).strip() for n in (names or []) if str(n or "").strip()}
+        if not _ns:
+            return
+        _PENDING_WIKI_PAGES.setdefault(channel_id, set()).update(_ns)
+    except Exception:
+        pass
+
+
+# [2026-09-14 W3b] 두 레인 예산 공유 — 위키 레인이 바닥보다 덜 쓰면 그 차액을 Slot 9
+#   사다리 **마지막 단**에 얹는다("로어가 가벼울수록 발효가 무겁다"). 반대 방향은 없다.
+#   실측(§0 ④): Slot 9(build_fermented_context)는 gather_context에서, Slot 7(T3 compile)은
+#   프롬프트 조립에서 계산된다 -> 컴파일이 **뒤**다. 그래서 이 값은 **다음 턴**에 쓰인다
+#   (한 턴 지연). 예산 사다리는 원래 천천히 움직이는 레버라 한 턴 지연은 무해하다.
+_WIKI_LANE_RETURN: Dict[str, int] = {}
+
+
+def note_wiki_lane(channel_id: str, used: Any, floor: Any) -> int:
+    """T3 컴파일이 실제로 쓴 자수(used)와 바닥(floor). Returns 돌려줄 자수(클램프 후)."""
+    try:
+        if not channel_id:
+            return 0
+        r = int(max(int(floor or 0) - int(used or 0), 0))
+        r = min(r, int(getattr(_cfg, "WIKI_LANE_RETURN_MAX", 1500)))
+        _WIKI_LANE_RETURN[channel_id] = r
+        return r
+    except Exception:
+        return 0
+
+
+def wiki_lane_return(channel_id: str) -> int:
+    """이전 턴 위키 레인이 남긴 반환 예산(자). 없으면 0."""
+    try:
+        if not bool(getattr(_cfg, "WIKI_VECTORS", False)):
+            return 0
+        return int(_WIKI_LANE_RETURN.get(channel_id or "", 0) or 0)
+    except Exception:
+        return 0
+
+
+def forget_channel_recall(channel_id: str) -> int:
+    """[2026-09-14 W4] 채널의 휘발 회상 흔적 dict를 비운다 — `!클리어`·`!리셋` 때.
+
+    `_PENDING_WIKI_PAGES`(W3a 위키 페이지 이름)·`_PREV_DELIVERED`(S3 안정화 가산)·
+    `_LAST_RECALL`(S1 흔적 영수증)은 프로세스 메모리라 폴더 삭제·DB 삭제가 못 건드린다.
+    안 비우면 옛 세션 이름이 다음 턴 `[Recall] trace`에 섞여 영수증이 거짓말을 한다.
+    [2026-09-14 W3b] `_wiki_similarity_cache`(절 벡터 점수)·`_WIKI_LANE_RETURN`(레인 반환)도
+    같은 이유로 여기서 간다 — 지운 채널의 옛 점수가 다음 세션 시드를 오염시키면 안 된다.
+    Returns 비운 키 개수(0~5). 예외 전부 삼킴(무해)."""
+    n = 0
+    for _d in (_PENDING_WIKI_PAGES, _PREV_DELIVERED, _LAST_RECALL,
+               _wiki_similarity_cache, _WIKI_LANE_RETURN):
+        try:
+            if _d.pop(channel_id, None) is not None:
+                n += 1
+        except Exception:
+            pass
+    return n
+
+
+def _stash_recall(channel_id: str, entries: List[Dict[str, Any]]) -> None:
+    """이번 턴 Slot 9에 실제로 실린 엔트리들의 키/엔티티/인용을 적재(③→④)."""
+    _min_len = int(getattr(config, "MEMORY_TRACE_MIN_TOKEN_LEN", 2))
+    keys: List[str] = []
+    ents = set()
+    quotes: List[str] = []
+    for e in entries or []:
+        if not isinstance(e, dict):
+            continue
+        keys.append(_recall_entry_key(e))
+        for x in (e.get("entities") or []):
+            if isinstance(x, str) and len(x.strip()) >= _min_len:
+                ents.add(x.strip())
+        for b in (e.get("compressed_blocks") or []):
+            if not isinstance(b, dict):
+                continue
+            for ev in (b.get("evidence") or []):
+                _t = ev.get("text") if isinstance(ev, dict) else (ev if isinstance(ev, str) else "")
+                if _t:
+                    quotes.append(_t)
+            if b.get("important"):
+                for d in (b.get("dialogues") or []):
+                    _lines = d.get("lines") if isinstance(d, dict) else None
+                    if isinstance(_lines, list) and _lines and isinstance(_lines[0], str) and _lines[0]:
+                        quotes.append(_lines[0])
+    # [2026-09-14 W3a] 같은 턴 위키 컴파일이 실어 보낸 페이지 이름도 흔적 대상에 합친다.
+    try:
+        for _pn in _PENDING_WIKI_PAGES.pop(channel_id, set()) or set():
+            if len(_pn) >= _min_len:
+                ents.add(_pn)
+    except Exception:
+        pass
+    _now_ts = time.time()
+    _LAST_RECALL[channel_id] = {
+        "keys": keys, "entities": ents, "quotes": quotes, "turn_ts": _now_ts,
+    }
+    # [S3 E9] pop되지 않는 사본 — 다음 턴 안정화 가산의 유일한 재료.
+    _PREV_DELIVERED[channel_id] = (_now_ts, {k for k in keys if k})
+
+
+def log_recall_trace(channel_id: str, response: str) -> None:
+    """④→①: 회상시킨 재료가 산문에 실제로 닿았는지 1회만 세어 로그로 남긴다(무해)."""
+    try:
+        rec = _LAST_RECALL.pop(channel_id, None)
+        if not rec:
+            return
+        _resp = _norm_quote(response or "")
+        _ents = rec.get("entities") or set()
+        _a = sum(1 for x in _ents if x and x in _resp)
+        _quotes = rec.get("quotes") or []
+        _b = 0
+        for q in _quotes:
+            _nq = _norm_quote(q)
+            if not _nq:
+                continue
+            _probe = _nq if len(_nq) <= 40 else _nq[:40]
+            if _probe and _probe in _resp:
+                _b += 1
+        logger.info(
+            f"[Recall] trace entities={_a}/{len(_ents)} quotes={_b}/{len(_quotes)} "
+            f"keys={len(rec.get('keys') or [])}"
+        )
+    except Exception:
+        pass
+
+
 def build_fermented_context(
     session_data: Dict[str, Any],
     max_tokens: int = MAX_CONTEXT_TOKENS,
@@ -2258,7 +3408,7 @@ def build_fermented_context(
                 speaker = d.get("speaker", "")
                 line = d.get("line", "")
                 if line:
-                    _blk += f"- [{ctx}] {speaker}: \"{line}\"\n"
+                    _blk += f"- [{ctx}] {speaker}의 말 \"{line}\"\n"
             _optional_blocks.append(_blk)
 
         # 캐릭터 이정표
@@ -2289,16 +3439,78 @@ def build_fermented_context(
     # --- 에피소드 요약 + 종단 패턴 ---
     # (메모리 트리거는 여기서 출력하지 않음 — slot_manager가 DAI 트리거를 Slot 9에 붙임)
     if fermented:
-        max_fermented_chars = int(max_tokens * FERMENTED_RATIO * CHARS_PER_TOKEN)
+        _cap_chars = int(max_tokens * FERMENTED_RATIO * CHARS_PER_TOKEN)
+        max_fermented_chars = _cap_chars
 
         fermented_texts = []
         total_chars = 0
 
+        # [2026-09-13 S1] 읽기 계약 — 꼬리표·작중 시간순 구획·생략 영수증.
+        # OFF면 아래 세 갈래가 전부 종전 경로로 흐른다(렌더 바이트 동일).
+        import config as _cfg_s1
+        _mrc = bool(getattr(_cfg_s1, 'MEMORY_READ_CONTRACT', False))
+        # [2026-09-14 S5b E12] 미검증 꼬리. 실측(§0 ④): Slot 9는 **엔트리 한 줄**이 단위라
+        #   블록 줄이 따로 없다 → important 블록 중 grounded=False가 하나라도 있으면
+        #   엔트리 줄 끝에 붙인다(계약 `[시기]` 줄과 다른 줄이라 겹침 0).
+        _ungr_mark = (str(getattr(_cfg_s1, 'MEMORY_UNGROUNDED_MARK', '(미검증)'))
+                      if getattr(_cfg_s1, 'MEMORY_LINEAGE', False) else "")
+        _sel_pairs = []      # (entry, entry_text) — ON일 때만 채운다
+        _omit_budget = 0     # 예산으로 못 실은 (중복 억제 통과) 후보 수
+        _omit_dedup = 0      # 중복 억제로 걸러진 수
+        _budget_full = False
+        _now_min = None
+        if _mrc:
+            try:
+                _ws = session_data.get("world_state")
+                if not isinstance(_ws, dict):
+                    import domain_manager as _dm_s1
+                    _ch_s1 = session_data.get("channel_id_ref", "")
+                    _ws = _dm_s1.get_world_state(_ch_s1) if _ch_s1 else None
+                _now_min = _gt_abs_minutes(_ws) if isinstance(_ws, dict) else None
+            except Exception:
+                _now_min = None
+
+        # [2026-09-13 S3] 선택 산수 v2 — 조인트 쿼리 · 예산 사다리 · 그리디 채움.
+        # OFF면 아래 세 레버가 전부 죽고 S1 상태와 바이트 동일(사다리 빈 리스트·그리디 False·
+        # max_fermented_chars = 종전 고정 상한).
+        _sel_v2 = bool(getattr(_cfg_s1, 'MEMORY_SELECT_V2', False))
+        _greedy = _sel_v2 and bool(getattr(_cfg_s1, 'MEMORY_GREEDY_FILL', True))
+        _ladder = []
+        _ladder_idx = 0
+        _rel_min = float(getattr(_cfg_s1, 'MEMORY_LADDER_MIN_REL_SCORE', 0.6))
+        _score_by_id = {}
+        _top_score = None
+        _lane_ret = 0
+        _ch_id = session_data.get("channel_id_ref", "")
+
+        # [S3 E8] 키워드 경로 쿼리도 벡터 경로와 같은 조립식으로 — 직전 메시지 꼬리를 붙여
+        # "그때 그 얘기" 류 대명사 질의가 맨몸으로 점수를 받던 비대칭을 없앤다.
+        _q_kw = query
+        if _sel_v2 and query:
+            _q_kw = _joint_recall_query(
+                query,
+                session_data.get("history", []),
+                int(getattr(_cfg_s1, 'MEMORY_JOINT_QUERY_TAIL', 2)),
+            )
+
         # Weighted scoring: query가 있으면 점수 기반 정렬, 없으면 역순(최신 우선)
         if query:
-            _ch_id = session_data.get("channel_id_ref", "")
-            scored = score_fermented_entries(fermented, query=query, channel_id=_ch_id)
+            scored = score_fermented_entries(fermented, query=_q_kw, channel_id=_ch_id)
             ordered_entries = [entry for entry, _score in scored]
+            # [S3 E11] 사다리는 점수가 있을 때만 — query 없으면 종전 상한 고정.
+            if _sel_v2:
+                _score_by_id = {id(e): sc for e, sc in scored}
+                _rungs = getattr(_cfg_s1, 'MEMORY_LADDER_CHARS', (_cap_chars,))
+                _ladder = sorted(
+                    {min(int(c), _cap_chars) for c in (_rungs or ()) if int(c) > 0}
+                    | {_cap_chars}
+                )
+                # [2026-09-14 W3b] 두 레인 예산 공유 — 위키가 바닥보다 가볍게 썼으면 그 차액을
+                # **마지막 단에만** 얹는다(첫 단·중간 단 불변 = 평소 예산은 그대로).
+                _lane_ret = wiki_lane_return(_ch_id)
+                if _lane_ret > 0:
+                    _ladder[-1] = _ladder[-1] + _lane_ret
+                max_fermented_chars = _ladder[0]
         else:
             ordered_entries = list(reversed(fermented))
 
@@ -2322,6 +3534,7 @@ def build_fermented_context(
                     len(_toks & prev) / max(len(_toks | prev), 1) >= _dedup_thr
                     for prev in _selected_token_sets
                 ):
+                    _omit_dedup += 1
                     continue
                 _selected_token_sets.append(_toks)
 
@@ -2334,6 +3547,11 @@ def build_fermented_context(
                 entry_text = f"[{timestamp} / {_rel}] {summary}"
             else:
                 entry_text = f"[{timestamp}] {summary}"
+            if _ungr_mark and any(
+                    b.get("grounded") is False
+                    for b in (entry.get("compressed_blocks") or [])
+                    if isinstance(b, dict) and b.get("important")):
+                entry_text += " " + _ungr_mark
 
             # important 블록의 대화 보존
             blocks = entry.get("compressed_blocks", [])
@@ -2344,7 +3562,7 @@ def build_fermented_context(
                         speaker = d.get("speaker", "")
                         lines = d.get("lines", [])
                         if lines:
-                            important_dialogues.append(f'{speaker}: "{lines[0]}"')
+                            important_dialogues.append(f'{speaker}의 말 "{lines[0]}"')
 
             if important_dialogues:
                 entry_text += "\n  " + " | ".join(important_dialogues[:3])
@@ -2366,13 +3584,93 @@ def build_fermented_context(
                 if arc_parts:
                     entry_text += "\n  [패턴] " + " | ".join(arc_parts)
 
+            # [S1 E6] 꼬리표 — 블록 분포에서 산출. 태그가 없으면 줄 자체가 없다(옛 엔트리 무변).
+            if _mrc:
+                _tags = _s1_period_tags(entry, _now_min)
+                if _tags:
+                    entry_text += "\n  [시기] " + " · ".join(_tags)
+
             if total_chars + len(entry_text) > max_fermented_chars:
-                break
+                if not _mrc:
+                    break
+                # [S3 E11] 사다리 — 막힌 후보가 "상위 점수 x MEMORY_LADDER_MIN_REL_SCORE"
+                # 이상이면 다음 계단(들어갈 수 있는 최소 계단)으로 상한을 올리고 계속 담는다.
+                # 마지막 계단(= 종전 8,400)을 넘지 않는다. 자격 미달이면 올리지 않는다.
+                _raised = False
+                if _ladder and _ladder_idx + 1 < len(_ladder):
+                    _sc = _score_by_id.get(id(entry))
+                    # 아직 아무것도 못 담았으면 비교 대상이 없다 → 최상위 후보이므로 자격 인정.
+                    if _sc is not None and (_top_score is None
+                                            or _sc >= _top_score * _rel_min):
+                        _j = _ladder_idx
+                        while (_j + 1 < len(_ladder)
+                               and total_chars + len(entry_text) > _ladder[_j]):
+                            _j += 1
+                        if total_chars + len(entry_text) <= _ladder[_j]:
+                            _ladder_idx = _j
+                            max_fermented_chars = _ladder[_j]
+                            _raised = True
+                if not _raised:
+                    if _greedy:
+                        # [S3 E7] 그리디 채움 — 이 후보만 건너뛰고 더 작은 후보로 채운다.
+                        # 순서는 점수순 그대로(결정론 유지). break가 아니라 continue.
+                        _omit_budget += 1
+                        continue
+                    # ON(S1): 선택 집합은 첫 초과에서 확정. 루프는 끊지 않고 나머지를 세기만 한다.
+                    _budget_full = True
+
+            if _budget_full:
+                _omit_budget += 1
+                continue
 
             fermented_texts.insert(0, entry_text)
             total_chars += len(entry_text)
+            if _mrc:
+                _sel_pairs.append((entry, entry_text))
+            if _sel_v2 and _score_by_id:
+                _s_this = _score_by_id.get(id(entry))
+                if _s_this is not None and (_top_score is None or _s_this > _top_score):
+                    _top_score = _s_this
 
-        if fermented_texts:
+        if _mrc:
+            if _sel_pairs:
+                # [S1 E10] 작중 시간순 구획 — 선택 집합은 그대로 두고 표시 순서만 바꾼다.
+                _timed, _untimed = [], []
+                for _i, (_e, _t) in enumerate(_sel_pairs):
+                    _k = _gt_abs_minutes(_e.get("game_time_end"))
+                    (_timed if _k is not None else _untimed).append((_k, _i, _t))
+                _timed.sort(key=lambda x: (x[0], x[1]))
+                _secs = []
+                if not _timed:
+                    # 작중 시간이 하나도 없으면 구획을 나눌 근거가 없다 → 종전 헤더·종전 순서
+                    # (옛 엔트리만 실린 회상은 바이트 동일).
+                    _secs.append("### 에피소드\n"
+                                 + "\n---\n".join(t for _, _, t in reversed(_untimed)))
+                else:
+                    _secs.append("### 에피소드 (작중 시간순, 이른 것부터)\n"
+                                 + "\n---\n".join(t for _, _, t in _timed))
+                    if _untimed:
+                        # 시기 불명 구획은 종전 표시 순서(역순 삽입)를 유지한다.
+                        _secs.append("### 에피소드 (시기 불명)\n"
+                                     + "\n---\n".join(t for _, _, t in reversed(_untimed)))
+                if _omit_budget > 0:
+                    _secs[-1] += f"\n[이 밖에 기록 {_omit_budget}건은 분량으로 생략됨]"
+                content_parts.append("\n\n".join(_secs))
+            logger.info(
+                f"[Recall] slot9 selected={len(_sel_pairs)} omitted_budget={_omit_budget} "
+                f"omitted_dedup={_omit_dedup} pool={len(fermented)} "
+                f"stable={_LAST_STABLE_HITS.get(_ch_id or '', 0)} "
+                f"ladder={_ladder_idx} budget={max_fermented_chars}"
+                + (f" lane_return={_lane_ret}" if _lane_ret > 0 else "")
+            )
+            # [S1 ③→④] 다음 턴 흔적 대조 재료. 채널 키가 없으면 저장 생략.
+            try:
+                _ch_lr = session_data.get("channel_id_ref", "")
+                if _ch_lr and _sel_pairs:
+                    _stash_recall(_ch_lr, [e for e, _ in _sel_pairs])
+            except Exception:
+                pass
+        elif fermented_texts:
             content_parts.append("### 에피소드\n" + "\n---\n".join(fermented_texts))
 
     # Sprint 4: Archived storylines → 발효 컨텍스트에 주입
@@ -2388,7 +3686,7 @@ def build_fermented_context(
                 for asl in archived[-8:]:
                     name = asl.get("name", "?")
                     entities = ", ".join(asl.get("entities", [])[:4])
-                    summary = asl.get("summary", "")[:150]
+                    summary = (asl.get("summary") or "")[:150]
                     turns = asl.get("turns", 0)
                     arch_lines.append(f"- {name} [{entities}] ({turns}턴): {summary}")
                 if arch_lines:
@@ -2559,6 +3857,9 @@ def ensure_memory_fields(session_data: Dict[str, Any]) -> Dict[str, Any]:
     # [2026-08-01] FRESH 발효 파싱 연속 실패 카운터. 성공 시 0으로 리셋된다.
     if "ferment_fail_streak" not in session_data:
         session_data["ferment_fail_streak"] = 0
+    # [2026-09-24 감사 §3] 빈 응답·API 예외(None) 연속 카운터 — 파싱 실패와 따로 센다.
+    if "ferment_empty_streak" not in session_data:
+        session_data["ferment_empty_streak"] = 0
 
     return session_data
 

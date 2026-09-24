@@ -2,7 +2,7 @@
 Lorekeeper V10 Sprint 4 — 막간 장부 (Interim Ledger) 전진 엔진
 
 장면 밖 NPC의 행적을 환각이 아니라 기록으로 만든다.
-spec: 파티쳇수정/v10_sprint4_interim_ledger_spec.md
+spec: 파티쳇수정/state_v10/v10_sprint4_interim_ledger_spec.md
 
 원칙:
 - 침묵: 선제 발화 0. 이 모듈은 말하지 않는다, 준비만 한다.

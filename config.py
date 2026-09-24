@@ -109,7 +109,7 @@ ANALYSIS_EXTRACT_VAR = contextvars.ContextVar("analysis_extract_call", default=F
 # ── Reader-GM "GM의 시선의 독자" (2026-07-05 개설 → 2026-08-11 소비 전량 배선) ──
 # 렌더 후 async로 텔레스코프+산문만 blind read → reader_log 적립 후, 다음 턴 방향 재료로만 환류.
 # 렌더 프롬프트 직행은 여전히 금지(읽는 눈은 쓰는 손이 아니다) — 좌뇌 서사 콜·디렉터·장부·계측까지.
-# 스펙: 파티쳇수정/deepseek_v4_trait_playbook_2026-07-05.md §4 R1, 지도: 리더GM_지도_2026-08-11.md.
+# 스펙: 파티쳇수정/analysis_line/deepseek_v4_trait_playbook_2026-07-05.md §4 R1, 지도: 리더GM_지도_2026-08-11.md.
 READER_GM_INTERVAL = int(os.getenv("READER_GM_INTERVAL", "1"))  # 매 N턴 실행 (0=비활성)
 # [R4 구조 환류] 마스터 스위치 — 0=적립·계측만, 1(현행 기본)=소비 개시.
 # 소비 경로: SD idle 거부권·이변 가점·아크 승격 1표 + [2026-08-11 리더 소비자] fog 급식·momentum 방향 후보.
@@ -189,7 +189,12 @@ RENDERER_REASONING_TIER = os.getenv("RENDERER_REASONING_TIER", "off")           
 #   현행 2000(실측 ~2582, 소프트캡이라 초과 사용)으로는 변환분 자리가 없다. 3500 = 추정 상한 +여유.
 #   ⚠V4-Pro 추론 폭주 이력(7.6~13.6k, off tier의 원 사유)이 있어 무제한 아님 — 소프트캡 유지.
 #   판별: persona의 reasoning_trace_len 로그. 캡 근처 상시 = 부족 / 짧은데 보조용언 무변화 = ritual화.
-RENDERER_REASONING_CAP_CHARS = int(os.getenv("RENDERER_REASONING_CAP_CHARS", "3500"))
+# [2026-09-24 감사 후속] 3500 → 5000. 위 추정(2300~3200)은 08-01 기준 — 08-16 DSH 앵커가 4단계
+#   "KO prose draft"를 추론 안에 넣었는데 캡은 그대로였다. 한국어 초안 ≈ 출력 산문 길이(1턴 ≈ 2000자,
+#   ARC_EXPECTED_VOLUME_LENGTH 주석) → 1500~2000 추가 ≈ 3800~5200. 5000 = 그 상단(레티어스: 초안 작성은
+#   "생각 금지"와 다른 것 — 캡이 초안 자리를 먹으면 안 된다). V4-Pro 폭주 구간(7.6k~)과는 여전히 거리.
+#   max_tokens(NARRATIVE_MAX_OUTPUT_TOKENS 16384)가 추론을 포함해도 추론 ~5k자 + 출력 ~3k자로 여유.
+RENDERER_REASONING_CAP_CHARS = int(os.getenv("RENDERER_REASONING_CAP_CHARS", "5000"))
 ANALYSIS_REASONING_TIER = os.getenv("ANALYSIS_REASONING_TIER", "light")             # 보조 per-turn 분석 = LIGHT (추론 ON)
 ANALYSIS_REASONING_TIER_HEAVY = os.getenv("ANALYSIS_REASONING_TIER_HEAVY", "deep")  # 1회성 무거운 추출 = DEEP
 
@@ -201,6 +206,12 @@ ANALYSIS_REASONING_TIER_HEAVY = os.getenv("ANALYSIS_REASONING_TIER_HEAVY", "deep
 #   증상이 "분석 결과 비어있음"으로만 보였다(_RespShim finish_reason 수리로 되살림).
 #   여전히 잘리면 이 값을 올린다. 제공자가 모델 상한을 넘는 값을 거부하면 내린다.
 ANALYSIS_MAX_OUTPUT_TOKENS_HEAVY = int(os.getenv("ANALYSIS_MAX_OUTPUT_TOKENS_HEAVY", "8192"))
+# [2026-09-13 레티어스] 출력룰 라우터(`output_router._call_router`)는 1회성 콜인데 heavy 상한 8192를
+#   그대로 썼다 — 이유는 없었다(09-02 로어 분석 값을 나눠 쓴 것). heavy tier=deep 이라 추론이
+#   **같은 예산**을 먹고(09-02 실측 추론 13,562자), 심코어급 파일(값 68·항목 100+)은 JSON만 12k라
+#   8192엔 반도 못 넣는다 → 전용 상한. 항목 100개 JSON ≈12k + 추론 몫 → 32k. 아낄 이유 0(1회성).
+#   제공자가 모델 상한을 넘는 값을 거부하면 내린다(env).
+ROUTER_MAX_OUTPUT_TOKENS = int(os.getenv("ROUTER_MAX_OUTPUT_TOKENS", "32768"))
 # [2026-08-11 노선 갱신(레티어스)] **추론은 이제 어지간하면 켠다 — 축은 on/off가 아니라 "얼마나"(tier).**
 # .env의 EXTRACT=light는 잔재가 아니라 이 노선의 의도적 재론이다. 아래 07-05 기록은 당시 실측
 # 근거로 보존(코드 기본값 off도 유지 — env가 노선을 싣는다. V4-Pro 추론 폭주 이력은 캡 소프트 유지 사유):
@@ -503,9 +514,17 @@ def get_narrative_char_limit(player_count: int = 1) -> int:
 # File & Data Paths
 # =========================================================
 DATA_DIR = "data"
-SESSIONS_DIR = os.path.join(DATA_DIR, "sessions")
-LORE_DIR = os.path.join(DATA_DIR, "lores")
-RULES_DIR = os.path.join(DATA_DIR, "rules")
+# [2026-09-14 W0] 아래 셋은 **W0 이후 미사용(레거시 도구 참조용)** — 지우지 않는다.
+#   옛 판독 도구·옛 스모크가 import 하므로 이름만 남긴다. 봇 실행 경로는 CHANNELS_DIR.
+SESSIONS_DIR = os.path.join(DATA_DIR, "sessions")   # W0 이후 미사용(레거시 도구 참조)
+LORE_DIR = os.path.join(DATA_DIR, "lores")          # W0 이후 미사용(레거시 도구 참조)
+RULES_DIR = os.path.join(DATA_DIR, "rules")         # W0 이후 미사용(레거시 도구 참조)
+
+# [2026-09-14 W0] 채널 폴더 — 수명이 같은 것끼리 한 곳. 리셋 = 폴더 삭제.
+CHANNELS_DIR = os.path.join(DATA_DIR, "channels")
+CHANNEL_STATE_FILE = "state.json"
+CHANNEL_DB_FILE = "memory.db"
+CHANNEL_LORE_DIR = "lore"      # lore.txt / original.txt / rules.txt / summary.txt
 
 # =========================================================
 # Verbose 로그 채널 (전문 전용) — [2026-08-03]
@@ -555,6 +574,9 @@ FERMENTED_THRESHOLD = 8             # Max fermented summaries before Deep Memory
 FERMENT_MAX_FAIL_STREAK = 3         # [2026-08-01] FRESH 발효 JSON 파싱 연속 실패 허용 횟수.
                                     # 이 횟수 전까지는 원본 history를 보존하고 재시도한다.
                                     # 도달하면 저품질 stub을 수용해 정체를 푼다(무한 누적 방지).
+FERMENT_MAX_EMPTY_STREAK = int(os.getenv("FERMENT_MAX_EMPTY_STREAK", "6"))
+                                    # [2026-09-24 감사 §3] FRESH 빈 응답·API 예외 연속 허용 횟수(파싱 실패와 별도).
+                                    # 짧은 장애는 재시도로 넘기고, 닿으면 LLM 없이 코드 발췌 stub 으로 진행.
 
 # UI/Display
 NPC_PREVIEW_LIMIT = 5               # Max NPCs shown in preview
@@ -575,6 +597,26 @@ TIME_SLOT_HOURS = {
     "심야": (23, 3),    # 23:00 ~ 03:59 (wrap)
 }
 DEFAULT_WEATHER_TYPES = ["맑음", "흐림", "비", "안개", "돌풍"]
+
+# [2026-09-25 스레드 장부] 약속·사안 장부(thread_ledger.py). 스펙 state_v10/thread_ledger_spec_v0.1_2026-09-25.md
+#   끄면: 배치 스키마 threads 줄·Slot 29 블록·Theoria 4c·루카 줄 전부 무동작(옛 active_threads 로 폴백 없음).
+THREAD_LEDGER = os.getenv("THREAD_LEDGER", "1") not in ("0", "false", "False")
+THREAD_EXTRACT_MAX = 15          # 배치 입력 장부 줄 수(열림·멈춤, 최근 활동순)
+THREAD_RENDER_MAX = 6            # Slot 29 줄 수
+THREAD_TITLE_MAX = 40            # 라벨 길이(렌더엔 라벨만 — 인용 0)
+THREAD_SOON_MIN = 60             # '곧' 문턱(분)
+THREAD_MINUTE_GRACE = 60         # 시각 지정 기한의 창 폭(분)
+THREAD_OVERDUE_HIDE_DAYS = 7     # 기한이 이만큼 지나면 렌더에서만 뺀다(닫지 않음)
+THREAD_WITNESS_LCS = 12          # 리더 증인 인용 겹침 최소 공통 길이
+
+# [2026-09-25 관계 정성] 모델은 관계를 **말**로 내고 받는다 — 숫자는 코드 소유(09-16 메모 "숫자 델타는 코드가 환산").
+#   NPC→PC(Theoria relation): 이동 말 → 턴 기준점 + 폭. 폭은 턴당 캡(sqlite_store 5 / +10·−5) 안이라 much_ = 캡.
+#   스펙 파티쳇수정/state_v10/relation_words_spec_v0.1_2026-09-25.md
+REL_BOND_SHIFT = {"much_warmer": 5, "warmer": 3, "holds": 0, "cooler": -3, "much_cooler": -5}
+REL_TENSION_SHIFT = {"spikes": 10, "rises": 5, "holds": 0, "eases": -5}
+#   NPC↔NPC(배치 npc_relations): 새 관계 세기 → |bond|, 기존 관계 이동 → ±|bond|.
+REL_PAIR_STRENGTH = {"faint": 25, "clear": 50, "strong": 75}
+REL_PAIR_SHIFT = {"deepens": 10, "weakens": -10}
 DEFAULT_LORE = "기본 세계관: 어두운 도시, 수수께끼의 사건들..."
 
 
@@ -734,7 +776,7 @@ MENTAL_STAGES = {
 
 # =========================================================
 # Aspects 부활 (시스템 교차 결합 신호)
-# 자세히: 파티쳇수정/vigor_composure_design_brief.md (관련 메모)
+# 자세히: 파티쳇수정/narrative/vigor_composure_design_brief.md (관련 메모)
 # Arc 사이클 시 백업, 부활 사이클로 V3 재이식.
 # 내부 라벨 + 산문 typological palette (Arc 패턴 D).
 # =========================================================
@@ -758,76 +800,26 @@ ASPECTS_DIRECTIVES = {
 
 # =========================================================
 # Phase 2 (Vigor/Composure 리브랜딩) — F+G 메커닉
-# 자세히: 파티쳇수정/vigor_composure_rebrand_log.md
+# 자세히: 파티쳇수정/narrative/vigor_composure_rebrand_log.md
 # =========================================================
 
-# F. 자동 소비 baseline 매트릭스 — 장르 × 축 (Y/N)
-# Y=True면 그 축에 -1 baseline drain (layer-cap: 같은 layer 다중 Y는 단일 -1)
-GENRE_BASELINE_DRAIN = {
-    # A. The Stage
-    "high_fantasy":    {"vigor": True,  "composure": False},
-    "wuxia":           {"vigor": True,  "composure": False},
-    "cyberpunk":       {"vigor": False, "composure": True},
-    "post_apocalypse": {"vigor": True,  "composure": True},
-    "space_opera":     {"vigor": False, "composure": False},
-    "modern":          {"vigor": False, "composure": False},
-    # B. The Flavor
-    "urban_fantasy":   {"vigor": False, "composure": False},
-    "steampunk":       {"vigor": False, "composure": False},
-    "cosmic_horror":   {"vigor": False, "composure": True},
-    "game_system":     {"vigor": False, "composure": True},
-    # C. The Lens
-    "noir":            {"vigor": False, "composure": True},
-    "comedy":          {"vigor": False, "composure": False},
-    "romance":         {"vigor": False, "composure": True},
-    "drama":           {"vigor": False, "composure": True},
-}
-
-# Genre Layer 분류 (layer-cap 계산용)
-GENRE_LAYERS = {
-    "A": {"high_fantasy", "wuxia", "cyberpunk", "post_apocalypse", "space_opera", "modern"},
-    "B": {"urban_fantasy", "steampunk", "cosmic_horror", "game_system"},
-    "C": {"noir", "comedy", "romance", "drama"},
-}
-
-# F. 씬타입 × 축 baseline (5 SceneType)
-ACTION_BASELINE_DRAIN = {
-    "combat":   {"vigor": True,  "composure": True},
-    "intimate": {"vigor": False, "composure": False},  # cap이 본업
-    "social":   {"vigor": False, "composure": True},
-    "normal":   {"vigor": False, "composure": False},  # 장르가 결정
-    "summary":  {"vigor": False, "composure": False},
-}
-
-# F. Flash mental_impact severity enum → 수치 매핑
-# MI-2(2026-06-18): heavy 정의를 "드문 중대 사건"으로 상향 → 값도 severe쪽으로 재배치.
-# mild(기본)→heavy 점프(-2→-10, gap 8)를 heavy→extreme(gap 5)보다 크게 둬서
-# heavy가 '중간값'이 아니라 extreme과 한 묶음(중대)으로 읽히게 함. 운영 관찰 후 한 줄로 조정 가능.
-MENTAL_IMPACT_ENUM_SCALE = {
-    "none":    0,
-    "uplift":  3,    # [2026-07-06 회복 리워크] 흔한 양의 비트 — 위안/유대/성취/안도
-    "restore": 8,    # 드문 깊은 회복 — 카타르시스/화해/고생 끝 승리/지속 위험 후 진짜 안전
-    "mild":    -2,   # 기본값. 대부분 턴
-    "heavy":   -10,  # 드문 중대 사건 (severe band)
-    "extreme": -15,
-}
-
-# G. 회복 균형
-NATURAL_RECOVERY_THRESHOLD = 2   # |event_delta| ≤ T 시 자연 회복 가산 (구조 드레인 baseline/cascade/status 제외, 사건성 델타만 판정)
-NATURAL_RECOVERY_AMOUNT = 1      # 양축 각각 +1
-CHAPTER_REFRESH_THRESHOLD = 60   # intermission_active 시 max(value, 60)
-
-# H. 축당 턴 낙폭 안전캡 (magnitude, 양수). mis-mapping/소스 스택이 한 턴에 축을 폭락시키는 것 방지.
-#    설계 의도 최대치(impact cap + consequence/cascade 여유)에 맞춤. combat만 큰 피해 허용.
-#    낙폭만 제한 — 회복/상승은 무제한. 초과 시 _process_axis가 WARNING 로그(과차감 관측 채널).
-MAX_AXIS_DROP_PER_TURN = {
-    "intimate": 10,
-    "social":   12,
-    "normal":   18,
-    "combat":   25,
-    "summary":  6,
-    "default":  18,
-}
+# =========================================================
+# [2026-09-06 P8b] **Vigor/Composure 코드 공식 상수 전량 삭제.**
+# 판정 기준 한 줄: *장면을 분류해서 숫자를 정하는 코드는 전부 rule 의 몫*.
+#   - GENRE_BASELINE_DRAIN / GENRE_LAYERS / ACTION_BASELINE_DRAIN (장르 14태그 × 씬타입 5)
+#       → 대체: 기력·평형의 rule 문장. 중합 게이지(기력=HP·체력·지구력, 평형=MP·정신력·집중력)에
+#         장르별 상시 소모율을 매기는 것은 애초에 성립하지 않았다.
+#   - MENTAL_IMPACT_ENUM_SCALE → 대체: 전담 추출 콜의 deltas(캡 7/5). Theoria mental_impact 폐기.
+#   - NATURAL_RECOVERY_THRESHOLD / _AMOUNT (조용한 턴 트리클) → 대체: 없음. 회복은 산문이
+#         보여줬을 때 관측 델타로 들어온다. "아무것도 안 함"은 감지 대상이 아니다.
+#   - CHAPTER_REFRESH_THRESHOLD (間 리프레시) → 대체: 없음(같은 이유).
+#   - MAX_AXIS_DROP_PER_TURN (턴당 낙폭 안전캡) → 대체: 선언의 비대칭 캡(max_loss 7/max_gain 5)
+#         하나가 속도 규율을 전담한다. 소스가 스택되던 구조 자체가 사라져 안전캡이 무의미해졌다.
+#   - REST_RECOVERY / REST_UNSAFE_MODIFIER / REST_COMPOSURE_RATIO → 대체: rule 문장(휴식).
+#   - CROSS_AXIS_CASCADE → 대체: 없음. 한 축의 나쁨이 다른 축을 깎는 것은 산문이 말할 일이다.
+#   - DOWNTIME_RECOVER / _VICE / _SOCIALIZE / _PROJECT → 대체: 없음(다운타임 감지 폐지).
+#     DOWNTIME_TRAIN 만 남는다 — domain_manager.advance_training 의 목표치 상수로 쓰인다.
+# =========================================================
 
 # G-2. 트라우마 각성 폐지 (2026-07-06 레티어스 결정): TRAUMA_DWELL_TURNS/REBOUND_VALUE/
 # DEBUFF_TURNS/DEBUFF_MODIFIER 제거. 바닥 탈출 = 갭 비례 자연회복+휴식+間 리프레시.
@@ -842,25 +834,52 @@ EFFORT_COST = 8      # 활력/평형 선불 (흡수 보험 포함, 추가 비용
 # 로드아웃 슬롯(LOADOUT_SLOTS/SLOT_COST/TYPES) 상수 제거 — !회상 명령 폐기로 소비자 0.
 # 자동 감지 산문 반영은 상수 없이 동작(플래그·문장만).
 
-# Rest Recovery (휴식) — 능동적 기력 회복
-REST_RECOVERY = {"full": 20, "brief": 10, "interrupted": 5}
-REST_UNSAFE_MODIFIER = 0.5  # 위험 장소 회복량 반감
-REST_COMPOSURE_RATIO = 0.6  # composure = 60% of vigor's rest rate
-
-# Cross-Axis Cascade: one axis's bad state drains the other
-CROSS_AXIS_CASCADE = {
-    0: 0,    # Fullness — no cascade
-    1: 0,    # Agitation — no cascade
-    2: -2,   # Exhaustion — mild drain on other axis
-    3: -5,   # Collapse — severe drain on other axis
-}
-
 # =========================================================
 # Inventory System (N2 — 아이템 영속 + 인벤토리 검증)
 # =========================================================
 INVENTORY_SLOT_CAP = 4  # 인벤토리 고정 4칸
+# [notebook v2 2026-09-06] LLM이 쓰는 [메모] 줄('>' 색)의 상한. 킬스위치가 아니라 상한 상수다 —
+# 유저 줄('-')은 이 상한과 무관하게 전부 보존된다. 초과 시 오래된 LLM 줄부터 탈락.
+NOTEBOOK_LLM_MEMO_MAX = 12
+# [경계 틱 2026-09-06 P2] 채널 스코프 일지(notebook_shared["일지"])의 줄 상한.
+# 하루 1줄~3줄이 쌓이므로 열흘치가 컨텍스트 상한. 초과 시 오래된 날부터 탈락(행은 남는다).
+NOTEBOOK_JOURNAL_MAX = 10
+# 경계 콜 입력에 넣는 **어제 산문** 행 수 상한(최근 순). 각 행은 코드가 다시 1200자로 자른다.
+BOUNDARY_PROSE_ROWS = 12
+# [expr 2026-09-06 P3] 산문 재료 블록 예산(스펙 §3.5 "예산 고정"). env 레버 아님.
+#   values = 값 줄 상한 / events = 전이 발화 `<사건>` 줄 상한(1턴만 사는 재료).
+#   절단 순서는 코드가 안다: always 절대 안 자름 → 이번 턴 변화분 → 나머지 침묵.
+#   ⚠ custom_vars.PROSE_FEED_MAX(=1200)와 이름이 겹치지만 축이 다르다 — 저쪽은 **문자** 캡,
+#     여기는 **줄** 캡이다. 둘 다 물어야 "장부가 아니라 재료"가 유지된다.
+#   [2026-09-13 P15] 12 → 40. 근거는 SimCore 내장 템플릿 실측이다: 전형 14종 중 7종
+#     (rpg 19·business 15·survival 16·politics 14·vtuber 16·delve 17·zombie 17)이 12에서
+#     이미 잘렸고, idol 의 promptState 자리표시자는 45, 아틀리에는 38이다. 임베드(핸드아웃)는
+#     6000자/10장이라 그 규모를 다 싣는데 급식(앵커)만 12에서 잘리면 **GM 이 모르는
+#     핸드아웃**이 생긴다 — 두 뷰가 같은 원천을 다른 규칙으로 자르던 자리가 여기다.
+PROSE_FEED_MAX = {"values": 40, "events": 3}
+# [조건부 지시 2026-09-13 P16] 조건이 참인 동안 매턴 산문에 실리는 유저 문장(`<지시>` 줄).
+#   count = 한 턴에 실리는 지시 줄 수 / chars = 그 줄들의 글자 합. 선언 순서가 우선이고
+#   넘치면 뒤엣것부터 탈락한다(로그 `[Directive] drop`). env 레버 아님 — 급식 예산은 코드 소유다.
+#   ★값 줄(PROSE_FEED_MAX)과 갈라 둔 이유: 지시는 값이 아니라 **문장**이라 길이 축이 다르다.
+#     한 예산으로 묶으면 지시 두 줄이 값 서른 줄을 밀어낸다.
+DIRECTIVE_FEED_MAX = {"count": 8, "chars": 800}
+# 채널당 지시 선언 상한. SimCore directives 실측(아틀리에 105·전형 3~7·idol 13) 위로 넉넉히.
+MAX_DIRECTIVES = 40
+# [append 기록 2026-09-09 P12] 이름 붙은 append-only 패널 섹션(mode="append").
+#   저장은 무한(sqlite notebook_log 행) — 여기 있는 건 전부 **표시 캡**이다.
+#   KEEP_DEFAULT = 턴 임베드 한 행이 보여주는 최근 줄 수(선언이 keep 을 말 안 했을 때).
+#   KEEP_MAX     = 선언 keep 의 상한이자 💠 섹션 장이 보여주는 줄 수.
+#   TEXT_MAX     = 한 항목 본문(도장 접두 제외)의 글자 캡. 항목 한 줄 = 몇 글자짜리 메모다.
+#   FEED         = 패널 급식(Slot 29)에 각 append 섹션의 최근 1줄을 얹을지. 콜 0·줄 1.
+APPEND_LOG_KEEP_DEFAULT = 3
+APPEND_LOG_KEEP_MAX = 10
+APPEND_LOG_TEXT_MAX = 120
+APPEND_LOG_FEED = True
+# 4.7 진입 시 채널 배경 큐 drain 대기(초). 스펙 §0.7(e) — 타임아웃이면 로그 1줄 + 진행.
+#   렌더를 잡지 않는 것이 우선이라 짧다. `!다시` 가 쓰는 10.0 과 다른 수인 이유가 그것이다.
+EXPR_DRAIN_TIMEOUT = 3.0
 # ⚠ 미배선 (2026-07-06 감사): 소비자 0 — 실제 아이템 영속은 notebook [소지품] 라인
-# (cognition item_usage → merge_notebook_preserve_inventory)이 담당. 참고 테이블로 보존.
+# (cognition item_usage → add/remove_item_to_sojipin)이 담당. 참고 테이블로 보존.
 ITEM_PERSISTENCE_RULES = {
     "consumable": "remove_on_use",
     "weapon": "persist",
@@ -941,23 +960,16 @@ MEMORY_ENTITY_STAMP_TOP_N = 8          # 발효 엔트리에 도장 찍을 인�
 # 동기화 검증: smoke_llm_delta_caps.py 가 프롬프트 원문의 선언 문구를 파싱해 이 표와 대조.
 # 값을 고치면 프롬프트도 같이 고쳐야 스모크가 통과한다.
 LLM_DELTA_CAPS = {
-    # cognition.py `### social` — "depth_delta (+1~+5 bonding, -1~-3 distancing)
-    #                              and tension_delta (+1~+10 conflict, -1~-5 resolution)"
-    "helena.cognition":    {"depth": (-3, 5),     "tension": (-5, 10)},
-    # fermentation.py FERMENT_PROMPT_V4 — "## helena_delta (범위: -10 ~ +10)"
-    "helena.fermentation": {"depth": (-10, 10),   "tension": (-10, 10)},
+    # [2026-09-15 관계 통합] helena.cognition(npc_depth_hints)·helena.fermentation(helena_delta) 삭제 —
+    #   두 델타 질문 자체가 없어졌다. NPC→PC 이동폭 캡은 sqlite_store.upsert_edge(origin="theoria")가 쥔다.
     # theoria_analyzer.py — "clock_updates": [{"delta": int(-1~+2)}]
     "doom.clock":          {"delta": (-1, 2)},
     # cognition.py `### social` — "delta ±0.1~0.3 (modify existing)"
     "relation.intensity":  {"delta": (-0.3, 0.3)},
 }
 MEMORY_DEDUP_JACCARD = 0.6             # 선발 시 기선발과 토큰 자카드 ≥ 이 값이면 스킵 (0=끔)
-# Downtime (다운타임) — 목적 있는 시간 투자 활동 (BITD Downtime)
-DOWNTIME_RECOVER = {"safe": {"vigor": 25, "composure": 15}, "unsafe": {"vigor": 15, "composure": 10}}
-DOWNTIME_VICE = {"base_vigor": 25, "base_composure": 20, "overindulge_threshold": 85, "overindulge_penalty": -15}
+# [2026-09-06 P8b] 다운타임 활동별 회복/차감 테이블 삭제(위 WHY 블록). 훈련 목표치만 남는다.
 DOWNTIME_TRAIN = {"vigor_cost": 5, "composure_cost": 5, "progress_per_session": 1, "required_progress": 3}
-DOWNTIME_SOCIALIZE = {"vigor": 5, "composure": 15, "depth_delta_range": (10, 15)}
-DOWNTIME_PROJECT = {"vigor_cost": 3, "composure_cost": 3, "clock_progress": 1}
 
 # Doom Clock Pacing: stage → extra auto-tick for time/hybrid clocks
 DOOM_CLOCK_ACCELERATION = {
@@ -1017,7 +1029,7 @@ QUEST_STALE_ARCHIVE_TURNS = 12
 # =========================================================
 # 시계 = 0D 압력 누적 / 퀘스트 = 1D 단계 진행 / Arc = 5D 좌표 자율 표류
 # Storyline 확장 (is_arc=True) — 별도 자료구조 X, carrier 재활용
-# 자세히: 파티쳇수정/arc_spec_v2.md
+# 자세히: 파티쳇수정/narrative/arc_spec_v2.md
 # Phase 1 (스키마만, tick_arcs는 Phase 3)
 
 # 호흡 길이 (운영 측정 산출)
@@ -1066,12 +1078,6 @@ NPC_CONNECTION_STAGES = {
     "유대":  {"range": (80, 101), "hint_en": "Bonded — deep loyalty, will sacrifice, reveals full self",              "hint_kr": "깊은 유대, 헌신적"},
 }
 
-NPC_TRAJECTORY_DEPTH_MAP = {
-    "improving": (5, 10),
-    "stable": (0, 0),
-    "declining": (-5, -3),
-}
-
 NPC_TENSION_DRAMA_THRESHOLD = 50
 
 # =========================================================
@@ -1095,17 +1101,13 @@ NPC_TENSION_DRAMA_THRESHOLD = 50
 NPC_STATUS_VALUES = ("active", "down", "dead")
 NPC_STATUS_IRREVERSIBLE = ("dead",)   # 이 값으로/에서 나가는 전이는 source=="manual"만
 
-# [2026-08-02 A축 감쇠] depth/tension은 `update_helena_metric`의 max(0,min(100,cur+delta))
-#   단조 누적뿐이라 **한 번 오른 값이 절대 안 내려왔다** — 관계가 식지 않는다.
-#   같은 코드베이스에 감쇠 전례가 넷(entity_relations fade / EMOTION_DECAY / 태도 3턴 쿨다운 /
-#   vigor 자연회복)인데 여기만 빠져 있었다.
-#   형태는 entity_relations.cleanup_stale_relations의 grace/fade/floor를 따른다:
-#   **삭제가 아니라 흐려짐.** 활성 관계(grace 안)는 건드리지 않는다.
-#   끄기: RELATION_DECAY_GRACE = 0  → 전면 no-op.
-RELATION_DECAY_GRACE = 10      # 이 턴 수만큼 무변화면 그때부터 감쇠 (0 = 기능 끔)
-RELATION_DECAY_DEPTH = 1       # 감쇠 턴당 depth 하락폭
+# [2026-09-15 관계 통합 1차] 감쇠는 한 곳 — sqlite_store.decay_edges(relations 엣지).
+#   시계 = 엣지 last_turn(마지막 관측). grace 턴 넘게 안 관측되면 bond는 0으로 수렴, tension은 하한 0.
+#   **삭제가 아니라 흐려짐**(엣지는 남는다). 끄기: RELATION_DECAY_GRACE = 0.
+#   (구: npc_attitudes depth/tension 감쇠 + entity_relations intensity fade 둘 따로, 시계도 달랐다.)
+RELATION_DECAY_GRACE = 10      # 이 턴 수만큼 무관측이면 그때부터 감쇠 (0 = 기능 끔)
+RELATION_DECAY_DEPTH = 1       # 감쇠 턴당 |bond| 하락폭 (0 쪽으로)
 RELATION_DECAY_TENSION = 2     # tension은 더 빨리 식는다 (갈등은 관계보다 휘발성)
-RELATION_DECAY_FLOOR = 0       # 이 값 아래로는 안 내려간다 (엔트리 제거는 안 함)
 
 # =========================================================
 # [2026-08-02 C축] DRIVE — 해소되지 않은 충동이 누적되어 행동을 강제하는 압력
@@ -1117,8 +1119,8 @@ RELATION_DECAY_FLOOR = 0       # 이 값 아래로는 안 내려간다 (엔트�
 # ★수치 게이지를 만들지 않는다. 레티어스 원칙 "일부러 수치적 상태를 안 준 거야" —
 #   노출 층이 전부 수치를 단계로 덮고 있고(depth→5단계, intensity→light/medium/deep,
 #   vigor→4단계, spike 델타→↑↓만), LLM에겐 아예 수치를 안 준다.
-#   그래서 본은 `cap_llm_delta`(수치 캡)가 아니라 **`update_npc_attitude_gated`**다:
-#   enum 단계 + 쿨다운 + ±1단계 클램프. LLM은 단계 이름만 낸다 → 캡할 수치가 없다.
+#   그래서 본은 `cap_llm_delta`(수치 캡)가 아니라 **`npc_manager.set_drive_gated`**다(구 M5 태도 게이트와
+#   같은 문법 — 태도 게이트는 2026-09-15 관계 통합으로 삭제): enum 단계 + 쿨다운 + ±1단계 클램프.
 #
 # 일반형이라 NSFW 밖에서도 산다: 전투=전의·복수심, 연애=갈망, 드라마=못 한 말.
 # 끄기: DRIVE_ENABLED = False → 전면 no-op.
@@ -1141,7 +1143,16 @@ DRIVE_RELEASE_FREE = True # 해소 이벤트는 쿨다운·단계 제한 면제 
 DRIVE_IDLE_TURNS = 6      # 무변화 이 턴 수마다 1단계 자연 하강 (0 = 자연 하강 끔)
 
 def get_connection_stage(depth: int) -> Dict[str, Any]:
-    """커넥션 단계 정보 반환."""
+    """커넥션 단계 정보 반환.
+
+    [2026-09-15 관계 통합] depth 자리가 bond(−100~+100)가 됐다. 음수(적대 쪽)는 표의 어느 구간에도
+    안 들어가 **맨 끝 폴백 '유대'로 떨어지던** 자리 — 음수는 가장 낮은 단계로 고정한다."""
+    try:
+        if depth < 0:
+            _first = next(iter(NPC_CONNECTION_STAGES))
+            return {"name": _first, **NPC_CONNECTION_STAGES[_first]}
+    except TypeError:
+        pass
     for stage_name, info in NPC_CONNECTION_STAGES.items():
         low, high = info["range"]
         if low <= depth < high:
@@ -1753,15 +1764,21 @@ NPC_AUTONOMOUS_ENABLED = True
 # =========================================================
 # V10 — 상태 우선 아키텍처 플래그
 # =========================================================
-# Sprint 1: 관계(npc_attitudes) 읽기를 SQLite npc_relations에서.
-# False = V9 동작 (읽기 JSON, 쓰기는 dual-write로 테이블 쌓임).
-# 서버에서 쓰기 며칠 돌려 parity 확인 후 True로. 문제 시 이 한 줄로 즉시 복귀.
-V10_RELATIONS_READ_FROM_SQLITE = True
+# Sprint 1 관계 플래그(V10_RELATIONS_READ_FROM_SQLITE)는 2026-09-15 관계 통합으로 삭제 —
+#   관계는 relations 엣지 하나뿐이라 JSON 폴백 경로 자체가 없다.
 # Sprint 2-A: NPC 지식(npc_knowledge) / 2-B: NPC 본체(npcs).
 # 2026-06-10 셋 동시 ON (사용자 결정): 도메인 독립 + lazy migration이라 빈 테이블에서도 안전
 # (첫 읽기는 JSON 폴백 → 자동 이주). 문제 시 셋 다 False로 즉시 V9 복귀.
 V10_KNOWLEDGE_READ_FROM_SQLITE = True
 V10_NPCS_READ_FROM_SQLITE = True
+# Sprint 3 Phase 3 (2026-09-05): fermented/deep 읽기를 SQLite에서. JSON 키는 dual로 계속 씀(P4 전까지).
+# False = 읽기 JSON(현행). 테이블은 _sync_history_domain 미러로 이미 채워져 있어 ON이 안전. 문제 시 이 줄 False.
+V10_HISTORY_READ_FROM_SQLITE = True
+# Sprint 3 Phase 4 (2026-09-05): 세 키(fermented_history·deep_memory·deep_memory_data)를
+# JSON에서 뺀다 — 행이 정본. save_domain 이음매(_route_history_keys_to_rows)가 라우팅한다.
+# False = P3 상태(dual)로 즉시 복귀(행은 계속 씀, JSON에도 다시 쌓임).
+# ★ V10_HISTORY_READ_FROM_SQLITE=True 전제 — STRIP만 켜면 읽을 곳이 사라진다.
+V10_HISTORY_STRIP_JSON = True
 # Sprint 4: 막간 장부 (침묵 틱) — 장면 밖 NPC 행적을 코드로 전진시켜 기록.
 # 발화 0/콜 0/루프 0. OFF = 완전 무동작. spec: v10_sprint4_interim_ledger_spec.md
 # 2026-06-11 ON (스모크 35케이스 PASS 후). 문제 시 이 줄 False = 즉시 완전 무동작.
@@ -1771,6 +1788,116 @@ V10_INTERIM_LEDGER = True
 # 데이터 쌓이는 만큼 자동 활성. 문제 시 이 줄 False = 즉시 무동작.
 # 2026-06-19 ON (사용자 결정 — 장부 적립 중, graceful-empty라 위험 0).
 V10_ARC_DIGEST_FERMENT = True
+
+# [2026-09-13 S0] 발효 인용 게이트 — 프롬프트 evidence 요청 + 코드 substring 판정 + 시제/확신 필드.
+#   OFF = 종전 동작 그대로(프롬프트·엔트리·로그 무변경).
+V10_HISTORY_EVIDENCE = True           # 09-13 S0 스모크 51/51 GREEN → ON
+FERMENT_EVIDENCE_MAX_PER_BLOCK = 2    # important 블록당 인용 상한
+FERMENT_EVIDENCE_MAX_CHARS = 160      # 인용 1개 상한(정규화 후). 하한 2
+FERMENT_OUTPUT_CAP_WARN_RATIO = 0.95  # 출력 예산 대비 경고 임계(LIBRA 42641)
+
+# [2026-09-13 S2] T1 재등장 인물 원문 근거 + F2 원문 승격. V10_HISTORY_EVIDENCE 하위.
+RECALL_EVIDENCE_MAX_NPCS = 3
+RECALL_EVIDENCE_ROWS_PER_NPC = 2
+RECALL_EVIDENCE_LINE_CHARS = 200
+RECALL_EVIDENCE_SEARCH_LIMIT = 4
+
+# [2026-09-13 S1] Slot 9 읽기 계약 보강·꼬리표·시간순 구획·회상 영수증. OFF = 종전 렌더 바이트 동일.
+MEMORY_READ_CONTRACT = True
+MEMORY_TRACE_MIN_TOKEN_LEN = 2   # ④→① 흔적 겹침에서 세는 토큰 최소 길이
+
+# [2026-09-13 S3] 회상 선택 산수 v2. OFF = S1 상태 그대로.
+MEMORY_SELECT_V2 = True
+MEMORY_PAST_INTENT_MARKERS = ("언제", "그때", "그 때", "전에", "했었", "기억나", "기억 나", "처음에", "지난", "예전", "옛날", "그날", "그 날")
+MEMORY_PAST_RECENCY_CAP = 0.06          # 과거 의도면 w_rec <= 이 값(LIBRA 30098)
+MEMORY_LADDER_CHARS = (5000, 6500, 8400)  # 에피소드 예산 사다리(자). 마지막 = 종전 상한
+MEMORY_LADDER_MIN_REL_SCORE = 0.6       # 다음 후보 점수 >= 상위 점수 x 이 값일 때만 확장
+MEMORY_GREEDY_FILL = True               # 미적합 엔트리를 건너뛰고 더 작은 후보로 채움
+MEMORY_STABILITY_BONUS = 0.025          # 지난 턴 실제 주입된 엔트리 가산(HAYAKU 29149)
+MEMORY_STABILITY_TTL_SEC = 600
+MEMORY_JOINT_QUERY_TAIL = 2             # 키워드 쿼리에 붙일 직전 메시지 수(벡터 경로와 동일)
+
+# [2026-09-13 S4] 루카 과거형 질문 -> history_log 발췌. V10_HISTORY_EVIDENCE 하위.
+#   마커는 MEMORY_PAST_INTENT_MARKERS(S3) 공유 — 여기서 재정의하지 않는다.
+LUKA_RECALL_ROWS = 6
+LUKA_RECALL_CHARS = 1200
+LUKA_RECALL_LINE_CHARS = 160
+LUKA_RECALL_KEYWORDS = 3
+
+# [2026-09-14 S5a] 지식 사실 출처 원장 + 영속 감사 각주. OFF = 쓰기·각주 모두 없음.
+V10_FACT_SOURCES = True            # 09-14 S5a 스모크 81/81 GREEN → ON
+FACT_SOURCE_FACT_CHARS = 200     # fact_norm 저장 상한(정규화 후)
+FACT_SOURCE_AUDIT_MAX = 20       # 감사 각주 조회 상한(항목 수)
+
+# [2026-09-14 S5b] 계보 잔여(E12 기각 전파 · E14 Observed 가산성 · F3 GC 보호).
+#   전부 바닥(표시·감점·복원) — 삭제·드롭 0. OFF = 종전 바이트 동일.
+MEMORY_LINEAGE = True            # 09-14 S5b 스모크 73/73 GREEN → ON
+MEMORY_UNGROUNDED_PENALTY = 0.85        # E12: 인용을 하나도 못 댄 important 블록의 엔트리 점수 배율
+MEMORY_UNGROUNDED_MARK = "(미검증)"      # E12: Slot 9 렌더 꼬리 · 패치 content 머리
+WIKI_OBSERVED_ADDITIVE = True           # E14: Observed upsert를 문장 단위 병합으로(누락 보존, retract만 삭제)
+WIKI_OBSERVED_KEEP_ORDER = "new_first"  # 병합 순서: F1이 낸 본문 먼저, 보존 문장 뒤
+MEMORY_GC_PROTECT = True                # F3: 보호 항목을 GC 결과에 복원
+
+# [2026-09-14 W1] 내부 위키 페이지. OFF = 테이블은 생겨도 쓰기·읽기 0.
+#   설계: memory_lore/internal_wiki_spec_2026-09-14.md §2·§3·§4·§7 / 지시서 wiki_w1_pages_todo.
+#   W1 범위 = character 페이지만(생산자가 있는 kind). 나머지 kind는 테이블·API만 받는다(W2).
+WIKI_PAGES = True             # 09-14 W1 스모크 117/117 + 회귀 63 GREEN → ON
+# [2026-09-16 레티어스] 저장 캡 없음 — 아래 두 값은 더 이상 저장 거부·절단에 쓰지 않는다(스모크 픽스처 크기 기준으로만 잔존).
+#   lore 절(작가 원문)은 정본이라 절단 불가, Observed는 grow_sheet 정리 콜(+250자)이 길이 관리.
+WIKI_PAGE_MAX_CHARS = 16000
+WIKI_TEXT_SECTION_MAX_CHARS = 4000
+WIKI_ITEM_SECTION_MAX = 60
+WIKI_KINDS = ("character", "location", "faction", "item", "concept", "other")
+WIKI_LORE_SECTIONS = {"character": ("Identity", "Core Traits", "Aside", "Direction", "Relationships", "Secrets", "Background", "Notes"),
+                      "location": ("Identity", "Layout"), "faction": ("Identity", "Stance"), "item": ("Identity",),
+                      "concept": ("Body",), "other": ("Body",)}
+WIKI_PLAY_SECTIONS = {"character": ("Observed", "Relationships+", "Knowledge", "History"),
+                      "location": ("Observed", "History"), "faction": ("Members+", "Observed", "History"),
+                      "item": ("Observed", "History"),
+                      # [2026-09-14 W5] concept = 모음 페이지(장소 모음·세력 모음) — `Entries`가 잎 줄이다.
+                      "concept": ("Entries", "Observed", "History"), "other": ("Observed", "History")}
+WIKI_ITEM_SECTIONS = ("Relationships+", "Knowledge", "History", "Members+", "Entries")   # 항목 절(줄 단위), 나머지는 텍스트 절
+
+# [2026-09-14 W2] F1 발효가 페이지 play 절을 패치한다. OFF = 프롬프트·엔트리·행 종전 동일.
+#   설계 §4(F1 행·패치 적용·되감기·영수증) / 지시서 wiki_w2_patches_todo. WIKI_PAGES 하위.
+WIKI_PATCHES = True           # 09-14 W2 스모크 81/81 + 회귀 64 GREEN → ON
+WIKI_PATCH_MAX_PAGES = 6          # 한 발효에서 노트를 주고 패치를 받는 페이지 상한(청크 entities 상위)
+WIKI_PATCH_NOTE_CHARS = 1500      # 페이지당 F1 입력 노트 상한(play 절 발췌)
+WIKI_PATCH_MAX_PER_PAGE = 3       # 페이지당 패치 절 상한
+
+# [2026-09-14 W3a] 위키 play 절 분배(독자별 컴파일러, LLM 0콜). OFF = 세 입 모두 종전 문자열 바이트 동일.
+#   설계 §5(독자별 섹션 프로파일·렌더·영수증) / 지시서 wiki_w3a_compile_todo. WIKI_PAGES 하위.
+#   W3a = 직접 시드(이름)만. 벡터 시드·두 레인 예산 공유·cache.db는 W3b.
+WIKI_COMPILE = True          # 09-14 W3a 스모크 77/77 + 회귀 65 GREEN → ON
+WIKI_COMPILE_EXCERPT_CHARS = 600
+WIKI_COMPILE_PROFILES = {   # 독자 -> (허용 절 순서, 페이지당 절 발췌 상한, 총 상한)
+    # [2026-09-14 W5] `Members+`(faction 항목 절) + 투영 절 `Occupants`·`Layout`(location, 저장 0)
+    #   추가. character 페이지엔 이 절들이 아예 없으므로 W5 OFF면 출력 바이트는 종전과 같다.
+    "T3": (("Observed", "Relationships+", "Members+", "Occupants", "Layout"), 600, 2400),
+    "T1": (("Observed", "Relationships+", "Members+", "Occupants", "Layout", "History"), 400, 2000),
+    "C1": (("Observed", "Relationships+", "Knowledge", "Members+", "History"), 300, 1200),
+}
+WIKI_COMPILE_MAX_PAGES = 6
+WIKI_COMPILE_HISTORY_LINKS = 3
+
+# [2026-09-14 W5] 장소·세력 페이지. 뿌리·부모만 페이지, 잎은 모음의 한 줄. OFF = 종전 바이트 동일.
+#   설계 §3·§4·§5 / 지시서 wiki_w5_places_factions_todo. WIKI_PAGES 하위.
+WIKI_PLACES = True           # 09-14 W5 스모크 75/75 GREEN → ON
+WIKI_LOC_PAGE_TYPES = ("region", "area")     # 개별 페이지 자격 노드 타입(room 제외)
+WIKI_PROMOTE_MIN_PATCHES = 3                 # 모음 줄이 이 횟수 패치를 받으면 페이지 승격
+WIKI_AGGREGATE_PAGES = {"location": "장소 모음", "faction": "세력 모음"}   # kind concept, source lore
+WIKI_TURNLOG_EXTRA_MAX = 4                   # 턴당 extra_entities 상한(장소 1 + 세력 <=3)
+CHANNEL_CACHE_FILE = "cache.db"   # [2026-09-14 W3b] 채널 폴더의 재생성 가능 캐시 DB(절 벡터)
+
+# [2026-09-14 W3b] 섹션 벡터 시드 + 두 레인 예산 공유. 상수는 바닥(보장)이지 문턱이 아니다.
+#   설계 §5·§9 / 지시서 wiki_w3b_vectors_todo. WIKI_COMPILE 하위. 새 LLM 콜 0(임베딩만).
+WIKI_VECTORS = True          # 09-14 W3b 스모크 55/55 + 회귀 GREEN → ON
+WIKI_VEC_MIN_SCORE = 0.12         # FLASHBACK 바닥. 이 아래는 시드 후보에서 제외(직접 시드는 무관)
+WIKI_VEC_TOP_PAGES = 4            # 벡터 시드로 더할 페이지 상한(직접 시드와 별도)
+WIKI_VEC_SECTION_CHARS = 2000     # 절 본문 임베딩 입력 절단(앞부분)
+WIKI_LANE_FLOOR = {"T3": 800, "T1": 600, "C1": 400}   # 독자별 위키 레인 보장 자수(직접 시드 우선)
+WIKI_LANE_RETURN_MAX = 1500       # 위키 레인이 바닥보다 덜 쓰면 Slot 9 사다리 천장에 돌려주는 상한
+WIKI_VEC_BATCH = 32               # 한 턴에 임베딩할 절 수 상한(나머지는 다음 턴)
 # [2026-08-11 soma 지속] B축(신체) 지속 시계 — `dissociation: Track across turns` 집행 재료.
 # npc_soma_states에 since_turn(무변화 시작 턴)을 도장하고, 추출 콜에 지속 턴수를 되돌린다.
 # MIN_TURNS: 이 턴수 미만 지속은 **침묵**(1턴짜리 = 노이즈, 어차피 값 자체가 이미 붙어 나간다).
@@ -1802,14 +1929,14 @@ SLOT31_TAIL_INJECT = False
 
 # =========================================================
 # [2026-07-22 카드1] 감정 압력 공급 · 포어그라운드 선별
-# 스펙: 파티쳇수정/phase3_card1_emotion_pressure_spec_v0.4.md
+# 스펙: 파티쳇수정/narrative/phase3_card1_emotion_pressure_spec_v0.4.md
 # 원칙: 렌더러가 받는 감정을 "정체(what it is)"에서 "압력(what it does)"으로.
 #       감정 벡터(emotion_engine)는 말하지 않고 **밸브**로 일한다(선별·노출량).
 # =========================================================
 # 서사 콜 psyche_narrative에 pressure(drives/cannot) 요청·병합. False = 스키마 미요청(구 동작).
 PRESSURE_SUPPLY = True
-# 압력을 Slot 14로 방출. False = 생성만 하고 주입 0(관측 구간).
-PRESSURE_EMIT = True
+# [2026-09-15 §12] 압력 방출 on/off 플래그 삭제 — True 경로만 남음(Slot 14 압력 방출 상시,
+#   emotion_engine 라벨 노출 롤백 경로 폐기).
 # deep_read 렌더러 방출. True = 구 경로 유지(롤백용). 신설계 기본 = False(상류 전용).
 DEEPREAD_EMIT = False
 
@@ -1827,59 +1954,45 @@ FOREGROUND_ROTATION_PENALTY = 0.08
 ICEBERG_MIRROR_ENABLED = True
 
 # =========================================================
-# Passive Theory Tag System (Phase 4-1)
+# 시트 조각("패시브") — 2026-09-16 3차 (설계 relation_unify §10.2)
 # =========================================================
-# Legacy keyword → modifier fallback (for passives without explicit modifiers)
-# New passives will have Flash-generated "modifiers" dict; this table handles old-format passives.
-PASSIVE_KEYWORD_MODIFIERS = {
-    # Positive traits
-    "용감": {"anomaly_defense": 15, "judgment_combat": 5},
-    "냉정": {"anomaly_defense": 15, "judgment_social": 5},
-    "강인": {"anomaly_defense": 15, "vigor_drain": 0.85},
-    "침착": {"anomaly_defense": 10, "composure_drain": 0.85},
-    "민첩": {"judgment_combat": 10},
-    "지혜": {"judgment_social": 10},
-    "직감": {"anomaly_defense": 10, "judgment_social": 5},
-    "인내": {"anomaly_defense": 10, "vigor_drain": 0.85},
-    "카리스마": {"judgment_social": 10},
-    "은밀": {"judgment_combat": 5, "anomaly_defense": 5},
-    # Negative traits
-    "겁쟁이": {"anomaly_defense": -15, "judgment_combat": -5},
-    "나약": {"anomaly_defense": -15, "vigor_drain": 1.2},
-    "불안": {"anomaly_defense": -10, "composure_drain": 1.2},
-    "공포": {"anomaly_defense": -15},
-    "무모": {"judgment_social": -5},
-    "우유부단": {"judgment_combat": -5, "judgment_social": -5},
-    # "Trauma" 엔트리 제거 (2026-07-06): 트라우마 각성 폐지. 레거시 세이브의 Trauma
-    # 패시브는 매치 실패로 무해한 no-op.
-}
+# 조각 = {name, desc, value:{roll_<type>: ±n, cost: -n}, origin: sheet|play}. 닫힌 키 둘.
+# type enum 은 **한 곳** — theoria action_meta.type 과 조각 value 키가 같은 상수를 읽는다.
+# 이름 키워드표 폴백(용감/민첩…)은 삭제: value 없으면 판정 기여 0.
+ACTION_TYPES = ("combat", "social", "exploration", "stealth", "survival", "crafting", "general")
+FRAGMENT_VALUE_KEYS = tuple(f"roll_{_t}" for _t in ACTION_TYPES) + ("cost",)
+FRAGMENT_ORIGINS = ("sheet", "play")
+FRAGMENT_ROLL_CAP = 20          # 판정 passive 항 캡(±) — 조각 하나의 roll 도 이 안으로 접는다
+FRAGMENT_COST_MAX = 8           # cost 하나의 절댓값 상한(= EFFORT_COST — 선불보다 큰 할인은 뜻이 없다)
+
+
+def normalize_fragment_value(raw) -> dict:
+    """조각 value 정규화 — 닫힌 키(roll_<type>·cost)만, 정수만, 0 은 버린다. cost 는 항상 음수(-n)."""
+    out = {}
+    if not isinstance(raw, dict):
+        return out
+    for k, v in raw.items():
+        k = str(k).strip()
+        if k not in FRAGMENT_VALUE_KEYS or isinstance(v, bool):
+            continue
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            continue
+        if k == "cost":
+            n = -min(FRAGMENT_COST_MAX, abs(n))
+        else:
+            n = max(-FRAGMENT_ROLL_CAP, min(FRAGMENT_ROLL_CAP, n))
+        if n:
+            out[k] = n
+    return out
 
 
 def get_passive_modifiers(passive) -> dict:
-    """패시브에서 modifier dict를 추출. explicit modifiers 우선, 없으면 keyword fallback.
-    str과 dict 양쪽 패시브 형식 모두 지원."""
-    # str 패시브 (legacy): keyword fallback만 시도
-    if isinstance(passive, str):
-        for keyword, kw_mods in PASSIVE_KEYWORD_MODIFIERS.items():
-            if keyword in passive:
-                return kw_mods
-        return {}
+    """조각 → value dict({roll_<type>: n, cost: -n}). value 없으면 {} — 이름 폴백 없음(3차)."""
     if not isinstance(passive, dict):
         return {}
-    # 1. Explicit modifiers (new format)
-    mods = passive.get("modifiers")
-    if mods and isinstance(mods, dict):
-        return mods
-    # 2. Legacy single modifier field (e.g., Trauma: {"modifier": -5})
-    legacy_mod = passive.get("modifier")
-    if isinstance(legacy_mod, (int, float)):
-        return {"anomaly_defense": int(legacy_mod)}
-    # 3. Keyword fallback — match passive name against known keywords
-    p_name = passive.get("name", "")
-    for keyword, kw_mods in PASSIVE_KEYWORD_MODIFIERS.items():
-        if keyword in p_name:
-            return kw_mods
-    return {}
+    return normalize_fragment_value(passive.get("value"))
 
 
 # =========================================================
@@ -1887,27 +2000,33 @@ def get_passive_modifiers(passive) -> dict:
 # =========================================================
 # Legacy keyword → modifier fallback (for items without explicit modifiers)
 # New items will have Flash-generated "modifiers" dict; this table handles old-format items.
+# [2026-09-16 3차] 키 공간 = 조각과 같은 roll_<type>(ACTION_TYPES). anomaly_defense·drain·perception·
+#   craft 키는 읽는 곳이 없어 삭제(perception→exploration, craft→crafting 으로 옮겨 적었다).
 ITEM_KEYWORD_MODIFIERS = {
-    # Protective/holy items
-    "성수": {"anomaly_defense_cosmic_horror": 15, "anomaly_defense": 10},
-    "부적": {"anomaly_defense_cosmic_horror": 10, "anomaly_defense": 5},
-    "십자가": {"anomaly_defense_cosmic_horror": 10},
-    "횃불": {"anomaly_defense_cosmic_horror": 5, "anomaly_defense": 5},
-    "해독제": {"anomaly_defense": 10},
-    "가면": {"anomaly_defense": 5},
     # Weapons
-    "단검": {"judgment_combat": 5},
-    "검": {"judgment_combat": 10},
-    "총": {"judgment_combat": 15},
-    "방패": {"judgment_combat": 5, "anomaly_defense": 5},
-    # Social/relationship items
-    "목걸이": {"composure_drain_loneliness": 0.8},
-    "편지": {"composure_drain_loneliness": 0.8},
+    "단검": {"roll_combat": 5},
+    "검": {"roll_combat": 10},
+    "총": {"roll_combat": 15},
+    "방패": {"roll_combat": 5},
     # Utility
-    "망원경": {"judgment_perception": 5},
-    "열쇠": {"judgment_craft": 5},
-    "로프": {"judgment_combat": 3, "judgment_craft": 5},
+    "망원경": {"roll_exploration": 5},
+    "열쇠": {"roll_crafting": 5},
+    "로프": {"roll_combat": 3, "roll_crafting": 5},
 }
+
+
+def _roll_keys_only(mods) -> dict:
+    """인벤토리 modifiers 에서 roll_<type> 키만(정수). 옛 judgment_*·anomaly_* 키는 0 기여."""
+    out = {}
+    if not isinstance(mods, dict):
+        return out
+    for k, v in mods.items():
+        if str(k).startswith("roll_") and str(k)[5:] in ACTION_TYPES and not isinstance(v, bool):
+            try:
+                out[str(k)] = int(v)
+            except (TypeError, ValueError):
+                continue
+    return out
 
 
 def get_item_modifiers(item) -> dict:
@@ -1921,10 +2040,10 @@ def get_item_modifiers(item) -> dict:
         return {}
     if not isinstance(item, dict):
         return {}
-    # 1. Explicit modifiers (new format)
+    # 1. Explicit modifiers — roll_<type> 키만 읽는다(3차)
     mods = item.get("modifiers")
     if mods and isinstance(mods, dict):
-        return mods
+        return _roll_keys_only(mods)
     # 2. Keyword fallback — match item name against known keywords
     i_name = item.get("name", "")
     for keyword, kw_mods in ITEM_KEYWORD_MODIFIERS.items():
@@ -2004,13 +2123,9 @@ TURN_MIND_EMOTION_FLOOR = float(os.getenv("TURN_MIND_EMOTION_FLOOR", "0.15"))
 #   빈 문자열 = 필터 끔(전 출처 허용). source 필드가 없는 구 레코드는 npc_manager 관례대로
 #   SOURCE_SESSION 으로 접힌다 → 기본 설정에서는 제외된다.
 TURN_MIND_SOURCES = os.getenv("TURN_MIND_SOURCES", "lore,manual")
-# [2026-08-17 v1.1 §4] 월드보드 게시 빈도(최소 간격 턴). 채널별 설정(`!게시판 빈도 sns 5`) >
-#   유저 전체 설정(`!게시판 빈도 10`) > 아래 채널별 기본 > 전역 기본 순으로 읽힌다
-#   (world_board.get_board_frequency = 표시·판정 단일 함수). 구 하드코딩 상수를 승격한 것.
-BOARD_FREQUENCY_DEFAULT = int(os.getenv("BOARD_FREQUENCY_DEFAULT", "10"))
-BOARD_FREQUENCY_BULLETIN = int(os.getenv("BOARD_FREQUENCY_BULLETIN", "10"))
-BOARD_FREQUENCY_SNS = int(os.getenv("BOARD_FREQUENCY_SNS", "11"))
-BOARD_FREQUENCY_MESSAGE = int(os.getenv("BOARD_FREQUENCY_MESSAGE", "12"))
+# ⚰[2026-09-13 P14] `BOARD_FREQUENCY_*` 넷 삭제. WHY: 이 레버가 돌리던 턴 간격 게이트가
+#   같은 카드에서 사라졌다(도착물은 선언 전이 `deliver`·분석 신호 `arrival` 이 부를 때만 온다).
+#   읽는 코드가 0 인 env 를 남기면 .env 의 숫자가 여전히 무언가를 조종하는 것처럼 보인다.
 # 콜 1회당 인물 상한(선별이 이보다 많으면 점수순 절단). 표시 상한은 turn_mail.MAX_MIND_ENTRIES.
 TURN_MIND_MAX_NPCS = int(os.getenv("TURN_MIND_MAX_NPCS", "3"))
 # 인물당 속마음 길이 캡(문자). 속마음은 장면 요약이 아니라 한 호흡 — 짧게.
@@ -2065,6 +2180,18 @@ WORLD_MAIL_QUEUE = int(os.getenv("WORLD_MAIL_QUEUE", "1"))
 WORLD_MAIL_MAX_AGE = int(os.getenv("WORLD_MAIL_MAX_AGE", "2"))
 # 큐에 담는 본문 요약 캡(문자). 전문이 아니라 **무엇을 보냈는지**만 실린다.
 WORLD_MAIL_SUMMARY_CHARS = int(os.getenv("WORLD_MAIL_SUMMARY_CHARS", "160"))
+
+# =========================================================
+# [2026-09-22 voice_seed] 세션 NPC 시드 — 배선 스펙 §3
+# =========================================================
+# 마스터 OFF 가 곧 롤백이다(별도 롤백 게이트 없음). 실패 바닥 = 현행 콜드 즉흥.
+VOICE_SEED = os.getenv("VOICE_SEED", "1") not in ("0", "false", "False")
+# 굴려 놓고 등록 안 된 시드의 수명(턴). 넘으면 조용히 퍼지 — 만료는 "장면 소품이었다"는 뜻.
+VOICE_SEED_TTL = int(os.getenv("VOICE_SEED_TTL", "5"))
+# 한 턴에 굴리는 신규 인물 상한. 프로필 블록 팽창 방지(RelevantNPCs 는 최대 5).
+VOICE_SEED_MAX_PER_TURN = int(os.getenv("VOICE_SEED_MAX_PER_TURN", "3"))
+# 무대 차집합 재굴림 상한. 고갈하면 겹침을 허용한다 — 인물을 못 만드는 것보다 낫다.
+VOICE_SEED_STAGE_REROLL = int(os.getenv("VOICE_SEED_STAGE_REROLL", "5"))
 
 # =========================================================
 # Safety Settings

@@ -105,7 +105,7 @@ class SharedBus:
         # Judgment Support
         "needs_judgment": False,
         "action_meta": {},
-        "asset_evaluation": {"reason": "", "modifications": [], "memo_relevant": [], "defense_success": False},
+        "asset_evaluation": {"reason": "", "modifications": [], "memo_relevant": []},
         # Psychological & Narrative
         "psyche_states": {},
         "narrative_chain": {},
@@ -114,7 +114,8 @@ class SharedBus:
         "narrative_hook": "",
         "time_flow": {},
         # "doom_relief" 제거 (2026-05-23) — legacy 위기진폭 잔재, 둠은 서사 진행도로 리브랜드됨
-        "mental_impact": {},
+        # [2026-09-06 P8b] "mental_impact" 칸 삭제 — Theoria 스키마·dai 매핑·bus 번역이 모두
+        #   사라졌다. 생산자 0 인 칸을 기본형에 남기면 "살아 있는 것처럼 보이는" 죽은 키가 된다.
         "anomaly_profile": {},
         # Safety & Debug
         "pc_autonomy_check": {},
@@ -139,14 +140,17 @@ class SharedBus:
         "tag": "", "category": "", "intensity": "", "polarity": "",
         "line": "", "source": "", "decision": "", "decision_reason": "",
     })
+    # [2026-09-06 P8b] 두 축은 **읽기 사본**이다 — 값의 정본은 custom_vars 레지스트리이고
+    #   vigor_composure_module 은 읽어서 여기 싣기만 한다. 삭제된 칸: impact(AI 임팩트 소비),
+    #   rest_eval/rest_log(휴식 회복), delta(모듈이 더 이상 델타를 합산하지 않는다).
+    #   남은 칸: value/stage/delta_applied/log + module_active(토글) — 26곳 소비자의 계약.
     vigor: Dict[str, Any] = field(default_factory=lambda: {
-        "active": False, "value": 0, "delta": 0, "last_delta": 0,
-        "impact": {}, "rest_eval": None, "rest_log": "",
-        "judgment_emotion": 0, "log": ""
+        "active": False, "value": 0, "stage": 0, "last_delta": 0,
+        "delta_applied": 0, "log": ""
     })
     composure: Dict[str, Any] = field(default_factory=lambda: {
-        "active": False, "value": 0, "delta": 0, "last_delta": 0,
-        "impact": {},
+        "active": False, "value": 0, "stage": 0, "last_delta": 0,
+        "delta_applied": 0,
         "judgment_emotion": 0, "log": ""
     })
     # Phase 8: Emotion Engine (LIBRA-inspired)
@@ -160,7 +164,7 @@ class SharedBus:
 class GameContext:
     request: RequestData = field(default_factory=RequestData)
     narrative_anchors: Dict[str, Any] = field(default_factory=lambda: {
-        "appearance": "", "personality": "", "background": "",
+        "sheet": "",
         "relations": [], "passives": [], "inventory": [], "memos": []
     })
     shared_bus: SharedBus = field(default_factory=SharedBus)
@@ -216,7 +220,6 @@ class ResponseContext:
     rule_txt: str = ""
     world_ctx: str = ""
     obj_ctx: str = ""
-    passives_txt: str = ""
     hist_text: str = ""
     notebook_txt: str = ""
     quest_txt: str = "" 
@@ -234,6 +237,9 @@ class ResponseContext:
 
     # 판정 결과
     judgment_context: str = ""
+    # [2026-09-06 P3] 판정 성패 한 낱말(success/failure/…). 4.7 expr 의 `check=judgment` 가
+    #   보는 유일한 창 — bus 는 process_une_logic 로컬이라 여기까지 안 온다.
+    judgment_result: str = ""
 
     # 발효된 요약 (V3 Hybrid)
     fermented_summary_text: str = ""
@@ -245,6 +251,10 @@ class ResponseContext:
     
     # PC Impersonation Tracking
     pc_impersonation_warnings: List[str] = field(default_factory=list)
+
+    # [2026-09-24 감사] 이번 턴 SharedBus 사본 — orchestration 하류(Arc 승격 후보·tick_arcs·CLOSURE
+    #   proximity·ReaderSeed)가 `ctx.bus`/`ctx.shared_bus` 로 읽는데 필드도 대입도 없어 전부 기본값이었다.
+    bus: Any = None
 
 
 @dataclass
@@ -277,7 +287,7 @@ async def gather_context(ctx: ResponseContext) -> ResponseContext:
     # (get_rules=RULES_DIR 휴면 채널·NPC 시간 힌트·world_ctx 복제 3종이 매턴 조립 후 폐기).
     # 살아있는 규칙 채널은 !룰→world_state["rules_text"]→Slot 23. NPC 시간 힌트는
     # une_facade offscreen_candidates(서사 콜 ABSENT CAST)로 재배선.
-    # 상세: 파티쳇수정/lore_rules_path_audit_2026-07-14.md §3
+    # 상세: 파티쳇수정/memory_lore/lore_rules_path_audit_2026-07-14.md §3
     ctx.world_ctx = game_system.get_world_context(channel_id)
     ctx.obj_ctx = game_system.get_objective_context(channel_id, ctx.user_id)
     ctx.notebook_txt = game_system.get_notebook_text(channel_id, ctx.user_id)
@@ -294,8 +304,15 @@ async def gather_context(ctx: ResponseContext) -> ResponseContext:
     except Exception as _e_interim:
         logger.debug(f"[Interim] skip: {_e_interim}")
 
-    # 플레이어 패시브
-    ctx.passives_txt = game_character.get_passives_for_context(ctx.player_data)
+    # [2026-09-25 스레드 장부] Slot 29 <Standing_Threads> — 턴 진입 1회, 코드만(콜 0). 0개면 "".
+    ctx.thread_ledger_block = ""
+    try:
+        import thread_ledger
+        ctx.thread_ledger_block = thread_ledger.build_render_block(channel_id) or ""
+    except Exception as _e_tl:
+        logger.debug(f"[Thread] render skip: {_e_tl}")
+
+    # [2026-09-16 3차] passives_txt 삭제 — 읽는 곳 0(조각은 Slot 6·theoria 앵커로 간다).
 
     # 히스토리 (스마트 컨텍스트 윈도우)
     ctx.hist_text = _build_smart_history(ctx)
@@ -314,6 +331,13 @@ async def gather_context(ctx: ResponseContext) -> ResponseContext:
     # (벡터 캐시는 실채널 키로 적립·소비는 ""로 조회 → 항상 키워드 폴백,
     #  archived_storylines는 if 가드로 통째 스킵). lore_summary_data와 같은 주입 패턴.
     ctx.domain_data["channel_id_ref"] = channel_id
+
+    # [V10 P3 / 2026-09-05] fermented/deep 읽기 read-through — build_fermented_context에
+    # 넘기기 직전 세 키를 행 값으로 덮는다. 플래그 OFF면 게터가 JSON을 그대로 돌려준다.
+    ctx.domain_data["fermented_history"] = domain_manager.get_fermented_history(channel_id)
+    _dn, _dd = domain_manager.get_deep_memory(channel_id)
+    ctx.domain_data["deep_memory"] = _dn
+    ctx.domain_data["deep_memory_data"] = _dd
 
     # 발효 요약 (V3 Hybrid - Mneme/Psyche)
     # build_fermented_context expects session_data dict, not separate args

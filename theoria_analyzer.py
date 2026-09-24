@@ -1,6 +1,16 @@
 """
 Lorekeeper UNE - Integrated Theoria Analyzer (좌뇌 분석 엔진)
 인지 + 분석 통합: 상황 관찰, 의도 해석, Position/Effect, Psyche, Narrative Chain
+
+[2026-09-06 P8b] 출력 스키마에서 두 필드를 **삭제**했다 — WHY:
+  - `mental_impact` (applicable/vigor_severity/composure_severity): 장면을 severity 로 분류해
+    두 축의 숫자를 정하던 자리. 값의 변화는 이제 전담 추출 콜의 `deltas` 가 선언 rule 을 보고
+    evidence 를 붙여 신고한다(비대칭 캡 7/5). 같은 사건을 두 콜이 각자 번역하면 어느 쪽이
+    정본인지 알 수 없어진다. 대체 = 기력·평형의 rule 문장.
+  - `rest_eval` (detected/quality/safe_location/activity/target): **부재를 감지하는 필드**였다.
+    "아무것도 안 함을 감지하는 것만큼 쓸데없는 감지가 없다" — 휴식은 감지 대상이 아니라 산문에
+    있으면 델타의 근거일 뿐이다. 대체 = 없음(다운타임 코드 효과와 함께 폐기).
+  ENGLISH ONLY 목록에서도 둘의 reason 이 빠졌다.
 """
 
 import logging
@@ -272,7 +282,7 @@ class TheoriaAnalyzer:
             rule_tables += "\n\n" + analysis_resources.SEXUAL_PSYCHOLOGY_ANALYSIS
         # [2026-08-11 로드아웃 삭제] pending_flashback 게이트 + FLASHBACK_REST_DETECTION 규칙표 제거.
         # 이 규칙표의 유일한 게이트가 !회상 명령의 대기 앵커였다 = 명령 비활성 이후 한 번도 주입된 적 없음
-        # (rest 절반도 같이 사문이었고, rest_eval 지침은 스키마 §Rest/Downtime이 이미 전부 들고 있다).
+        # (휴식 절반도 같이 사문이었고, 그 스키마 §Rest/Downtime 은 2026-09-06 P8b 에서 삭제됐다).
         # 같은 파일: _build_pending_flashback 빌더 + flashback_eval의 로드아웃·비용 서브필드 5종도 함께 제거.
 
         directive = build_analysis_directive(
@@ -288,11 +298,17 @@ class TheoriaAnalyzer:
         suppressed = get_suppressed_theories(active_genres)
         emphasized = get_emphasized_theories(active_genres)
         spotlight = get_session_spotlight(session_seed, turn_number, 5, suppressed, emphasized)
+        # [2026-09-24 감사 §5-2 #27] 추출판 스포트라이트 — 서사 소유 칸 매핑은 떼고(서사 콜이 같은 선택을 받는다).
+        from theory_emphasis_engine import retarget_for_extraction
+        spotlight = retarget_for_extraction(spotlight)
 
         # 조건부 null 가이드: 모듈 미로딩 시 해당 필드 null 기본값 안내
         from theory_emphasis_engine import get_active_modules
         active_mods = set(get_active_modules(active_genres))
         null_hints = []
+        # [2026-09-13 P14] 도착물 신호는 **부재가 기본**이다. 모듈과 무관하게 늘 실린다 —
+        #   "부재=false"를 말하지 않으면 모델이 매 턴 true 를 찍고 편지 콜이 매 턴 돈다.
+        null_hints.append("- arrival: false unless this scene itself calls for something to arrive")
         if 'COSMIC_HORROR_MODULE' not in active_mods:
             null_hints.append("- soma.dissociation: null unless extreme trauma/shutdown observed")
             null_hints.append("- anomaly_profile.perception_type: null unless supernatural elements confirmed in setting")
@@ -319,7 +335,7 @@ LANGUAGE RULE: every render-facing direction/analysis field → ENGLISH telegrap
 
 
 ## INPUT & CONTEXT
-- "InputAnalysis": {"Original": str, "Enhanced": str, "Plausibility": "High/Low/Impossible", "LogicTrace": [], "Momentum": "Open/Closed"}
+- "InputAnalysis": {"Enhanced": str, "LogicTrace": ["≤3 short links: why this can or cannot happen here"], "Plausibility": "High/Low/Impossible", "Momentum": "Open/Closed"}
 - "Observation": str (ENGLISH-ONLY telegraphic - neutral account of what actually happened. no interpretation, facts only.)
 - "UserIntent": str (ENGLISH-ONLY telegraphic - what the user immediately wants)
 - "input_mode": "decree" | "attempt" | "probe"
@@ -368,8 +384,9 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
             "dissociation": "none/mild/moderate/severe/null (Dissociation Spectrum: dorsal→entry point. mild=flat affect,delayed response. moderate=third-person self-reference,time gaps. severe=autopilot,recognition failure. Track across turns. null = no trigger)"
         },
         "relation": {
-            "descriptor": "ENGLISH-ONLY telegraphic cue - current attitude to PC as concrete behavior. direction/vector, NOT finished prose",
-            "value": -100~+100,
+            "descriptor": "ENGLISH-ONLY telegraphic cue - current stance toward the acting PC as concrete behavior. direction/vector, NOT finished prose. Observable behavior only; no state/trait/emotion naming",
+            "bond_shift": "much_warmer/warmer/holds/cooler/much_cooler (toward the acting PC. 4b Stands = where they stand now; name how this turn moved it — holds when it did not)",
+            "tension_shift": "spikes/rises/holds/eases (open conflict with the acting PC, independent of bond; 4b friction = where it stands now)",
             "attachment": "secure/anxious/avoidant/disorganized (Bowlby: from behavioral evidence)",
             "phase": "orientation/identification/exploitation/resolution (Peplau: cannot skip stages)",
             "logos_layer": "str (Logos [CUSTOM]: current layer state + THIS TURN behavioral hint)",
@@ -389,12 +406,11 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
 
 ## JUDGMENT SUPPORT
 - "needs_judgment": boolean
-- "action_meta": {"action": "Korean — describe the CURRENT user input ONLY. Do NOT repeat or rephrase previous turn's action.", "type": "combat/social/exploration/stealth/survival/crafting/general", "resource_axis": "vigor/composure/both", "difficulty": "easy/normal/hard/extreme", "resolve": "none/determined/desperate — none: 일반 행동, determined: 강한 의지+노력(서사 강조만), desperate: 대가 감수 각오(기력/평정 선불→판정 보너스). 핵심 구분: '강하게 한다'(determined)≠'대가를 치르더라도 한다'(desperate). needs_judgment=false이면 항상 none"}
+- "action_meta": {"action": "Korean — describe the CURRENT user input ONLY. Do NOT repeat or rephrase previous turn's action.", "type": "__ACTION_TYPES__", "active_passives": ["verbatim name from the acting PC's Passives whose desc applies to THIS action; [] when none"], "resource_axis": "vigor/composure/both", "difficulty": "easy/normal/hard/extreme", "resolve": "none/determined/desperate — none: 일반 행동, determined: 강한 의지+노력(서사 강조만), desperate: 대가 감수 각오(기력/평정 선불→판정 보너스). 핵심 구분: '강하게 한다'(determined)≠'대가를 치르더라도 한다'(desperate). needs_judgment=false이면 항상 none"}
 - "asset_evaluation": {
     "reason": "Korean",
     "modifications": [{"label": "Korean", "value": int}],
-    "memo_relevant": {"content": "relevant memo/clue excerpt (Korean)", "bonus": 5, "reason": "why this helps (Korean)"} | null,
-    "defense_success": boolean
+    "memo_relevant": {"content": "relevant memo/clue excerpt (Korean)", "bonus": 5, "reason": "why this helps (Korean)"} | null
   }
 
 
@@ -411,20 +427,6 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
     "clock_new": {"name": "Korean", "segments": 4|6|8, "tick_mode": "action|time|hybrid", "threat": "Korean — 이 시계가 완성되면 무슨 일이 벌어지는가", "defense_action": "Korean — 이 시계를 막으려면 무엇을 해야 하는가 (구체적 행동 힌트)", "source": "narrative|consequence", "linked_entity": "str or null — 관련 NPC/세력 이름", "tags": ["Korean"], "doom_on_complete": "null(threat 기본: doom 상승) | 0(timer: 중립 마감) | negative int(opportunity: 완성 시 doom 감소, e.g. -10)"} | null,
     "clock_resolved": ["시계 이름 — 서사적으로 위협이 해소된 경우만"]
   }
-- "mental_impact": {"applicable": boolean, "vigor_severity": "none/uplift/restore/mild/heavy/extreme", "composure_severity": "none/uplift/restore/mild/heavy/extreme", "reason": "ENGLISH-ONLY telegraphic"}
-  - vigor_severity: physical load level. consensual intimacy/comfort = mild. NOT heavy unless coerced.
-  - composure_severity: emotional load = loss of equilibrium (평형). consensual/positive intimacy = none or mild REGARDLESS of explicitness/intensity — arousal·passion·vulnerability ≠ loss of equilibrium. heavy/extreme ONLY if unwanted/coerced/humiliating/boundary-violating/devastating.
-  - Enum guide (mild is the default. heavy/extreme = exceptional grave events only):
-    - none: no load. ordinary action / light recovery / inconsequential change.
-    - uplift: a genuine positive beat LANDS on the page — comfort given, bond deepened, achievement, humor shared, relief after real tension. small restoration.
-    - restore: RARE deep restoration — catharsis, reconciliation, hard-won victory, true safety after sustained danger.
-    - mild: everyday~moderate load. most actions·dialogue·tension·ordinary confrontation belong here (DEFAULT).
-    - heavy: rare high load. ONLY clear shock events — real harm·betrayal·terror·loss. agitation·forceful action alone = mild.
-    - extreme: peak / trauma confrontation only. reaching one's limit, all-out desperate effort.
-  - CONSERVATIVE: when in doubt, drop one level. most turns = none or mild. heavy only for clear events, extreme only at peaks.
-    Pleasant mood alone ≠ uplift — a restorative beat must actually happen in the scene; restore only when the story visibly turns.
-  - DIRECTION STABILITY: keep severity direction consistent within a scene. composure falling toward heavy then abruptly recovering none → mild is unnatural (only on a genuine scene-tone shift).
-  - legacy compat: vigor_delta / composure_delta (numeric) format is still recognized, but the new format (severity enum) is preferred.
 - "anomaly_profile": {"trigger": str, "category": "supernatural/psychological/social/environmental/temporal", "intensity": "Low/Mid/High/Extreme", "polarity": "positive/negative/mixed", "perception_type": "veridical/illusory/hallucinatory/delusional/null (Anomalous Experience Framework. In supernatural settings, 'hallucinatory' may be CORRECT. null = no anomaly)", "line": "ENGLISH-ONLY telegraphic - 1-line event direction", "reason": "ENGLISH-ONLY telegraphic", "location": "이벤트 발생 장소 (CurrentLocation과 다를 때만. 빈 문자열이면 현재 위치)"} | null (2026-07-15: propose each turn — downstream code gates timing/acceptance and holds most back. null = the scene physically cannot host any event, NOT "seems quiet")
 - "condition_resolved": ["조건 태그 — 서사적으로 해당 조건이 더 이상 세계에 유효하지 않을 때. Active Conditions 참고"]
 - "condition_updates": [{"tag": "조건 태그", "intensity": "새 강도 (Low/Mid/High/Extreme)", "description": "갱신된 상황 묘사 (Korean)"}]
@@ -440,15 +442,7 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
 
 
 ## NPC TRACKING
-- "NPCAttitudes": {
-    "NpcName": {
-        "attitude": "hostile/unfriendly/neutral/friendly/devoted",
-        "trajectory": "improving/stable/declining",
-        "reason": "ENGLISH-ONLY telegraphic (note when 오륜 role expectation violated)"
-    }
-  }
-  (keys = NPC names ONLY — never the PC. This is each NPC's attitude TOWARD the PC.)
-  NAMING (avoid duplicate entities): reuse the EXACT name form of any NPC already in the
+- NAMING (all per-NPC keys — psyche_states / NPCKnowledge; avoid duplicate entities): reuse the EXACT name form of any NPC already in the
   NPC ROSTER / 4b NPC STATE. Never translate or re-romanize a known character — 레나 stays
   레나, not Rena; Rena stays Rena. A new name only for a genuinely new person. For a
   cross-script reference to a KNOWN NPC, write it as KnownName(otherform) e.g. 레나(Rena)
@@ -471,7 +465,7 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
 
 
 ## SAFETY & QUALITY
-- "PCAutonomyCheck": {"pc_spoke": boolean, "pc_thought": boolean, "pc_moved_unprompted": "boolean - narration invented a WILLED PC action. World-caused displacement/impact/involuntary reflex (knockback, wound, flinch) = false", "gm_focus": "1-sentence: what the GM narrates this turn (world/NPC reactions; consequence landing on the PC's body included)"}
+- "PCAutonomyCheck": {"pc_thought": boolean, "pc_moved_unprompted": "boolean - narration invented a WILLED PC action. World-caused displacement/impact/involuntary reflex (knockback, wound, flinch) = false", "gm_focus": "1-sentence: what the GM narrates this turn (world/NPC reactions; consequence landing on the PC's body included)"}
 - "TemporalOrientation": {"focus": "past/present/future", "intensity": 0.0-1.0}
 - "QualityFlags": {
     "convergence_warning": "boolean - unearned comfort / premature resolution",
@@ -493,19 +487,12 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
 - "spatial_read": {
     "spatial_type": "enclosed/resonant/open/elevated/crowded/moving",
     "active_traces": [{"type": "thermal/scent/acoustic/surface/object", "detail": "ENGLISH-ONLY telegraphic 1 fragment"}] | null,
-    "mutation": null OR {
-      "type": "A/B/C",
-      "source": "Korean — 무엇이 변화를 일으켰는가",
-      "lighting": "ENGLISH-ONLY telegraphic - lighting after mutation",
-      "hue": "ENGLISH-ONLY telegraphic - hue after mutation",
-      "saturation": "ENGLISH-ONLY telegraphic - saturation after mutation"
-    },
     "light": {
       "lighting": "ENGLISH-ONLY telegraphic — source + key + direction (e.g. 'low-key window side-light')",
       "hue": "ENGLISH-ONLY telegraphic — specific hue from full spectrum (amber/gold/rust/crimson/grey/steel/cool/green-cast/…)",
       "saturation": "ENGLISH-ONLY telegraphic — vivid/solid/washed/pastel"
     },
-    "filter": "ENGLISH-ONLY telegraphic or null — C-type only. POV character's perceptual lens. separate from A/B",
+    "filter": "ENGLISH-ONLY telegraphic or null — POV character's perceptual lens (subjective). Never a change to the space itself",
     "tension": "designed X <-> lived Y (Lefebvre)" | null,
     "shift": null | "gradual" | "sudden",
     "threshold": null | "mild" | "sharp",
@@ -542,16 +529,6 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
     "reason": "ENGLISH-ONLY telegraphic"
   }
 
-### Rest / Downtime Evaluation (rest or purposeful downtime activity detected)
-- "rest_eval": null OR {
-    "detected": boolean,
-    "quality": "full/brief/interrupted",
-    "safe_location": boolean,
-    "activity": "rest/recover/vice/train/socialize/project — rest: simple rest (counts even if flavor-only), recover: treatment/medication+time invested, vice: drink/gambling/indulgence, train: training/practice, socialize: NPC interaction, project: crafting/investigation. During combat/exploration, set rest_eval itself to null",
-    "target": "NPC name or skill name or project name or null (activity != rest일 때)",
-    "reason": "ENGLISH-ONLY telegraphic"
-  }
-
 ### Item Tracking — 이 필드가 노트북 [소지품] 자동 반영의 유일한 소스다(놓치면 인벤 미갱신). 아이템이 실제로 손에 들어오거나 나갔으면 반드시 채운다.
 - "item_usage": null OR {
     "items_gained": ["플레이어가 이번 턴 실제로 집음/받음/구매/획득한 아이템만 — 보기·살펴보기·언급만은 소유 아님(제외)"],
@@ -559,14 +536,20 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
     "reason": "Korean"
   }
   실제로 손에 들어오거나 나간 게 없으면 null. 예: "검을 집어 가방에 넣는다"→items_gained:["검"] / "벽의 검을 보고 지나간다"→null / "물약을 마신다"→items_consumed:["물약"]
+### Arrival signal — 이 장면이 도착물(편지·공고·기사·전언)을 부르는가. **불리언 하나**.
+- "arrival": boolean (true ONLY when the scene itself calls for something to ARRIVE — a letter
+  handed over, a notice going up, word reaching the PC. This is not detection of an arrival that
+  already happened in the prose; it is the signal that this moment wants one. Absence = false.
+  Do NOT decide what arrives, from whom, or through which medium — the arrival call chooses that.)
+
 <language_final>
 BEFORE OUTPUT — RE-CHECK EVERY FIELD'S LANGUAGE. Exactly two zones, mutually exclusive, no field is bilingual:
-- ENGLISH ONLY (render-facing — feeds the renderer; Korean here gets transcribed verbatim into prose = BUG): Observation, UserIntent, descriptor, env_influence, value_conflict, deep_read, attitude, deflection, primary_link, render_hint, suggested_beats, offscreen_trace, narrative_hook, knows, secrets_held, false_beliefs, Aspects, AND the reason fields of time_flow / clock_updates / mental_impact / flashback_eval / rest_eval.
+- ENGLISH ONLY (render-facing — feeds the renderer; Korean here gets transcribed verbatim into prose = BUG): Observation, UserIntent, descriptor, env_influence, value_conflict, deep_read, attitude, deflection, primary_link, render_hint, suggested_beats, offscreen_trace, narrative_hook, knows, secrets_held, false_beliefs, Aspects, AND the reason fields of time_flow / clock_updates / flashback_eval.
 - KOREAN (user-displayed only): CurrentLocation, location_path, TimeContext, action_meta.action, asset_evaluation reason+labels (판정 표시), clock_new name/threat/defense_action/tags (시계 UI), condition_updates description (상태 표시), item_usage reason.
 Any render-facing field whose value would contain Hangul → write that field's value in English instead. This is a per-field language swap ONLY — never a reason to halt, shorten, or null the output; always return the complete JSON with every field. When unsure → English.
 </language_final>
 </output_schema>
-"""
+""".replace("__ACTION_TYPES__", "/".join(config.ACTION_TYPES))  # [2026-09-16 3차] type enum 한 곳(config.ACTION_TYPES)
 
     def _build_pc_section(self, anchors: dict) -> str:
         """PC 정보 섹션 빌드 (솔로/다인 자동 분기)"""
@@ -586,23 +569,20 @@ Any render-facing field whose value would contain Hangul → write that field's 
                 mask = pc.get("mask", "Unknown")
                 marker = " (행동자)" if uid == acting_uid else ""
                 lines.append(f"\n[{mask}]{marker}")
-                lines.append(f"- Appearance: {pc.get('appearance', 'N/A')}")
-                lines.append(f"- Personality: {pc.get('personality', 'N/A')}")
+                lines.append(f"- Sheet:\n{pc.get('sheet') or 'N/A'}")
                 lines.append(f"- Passives: {json.dumps(pc.get('passives', []), ensure_ascii=False, default=str)}")
                 lines.append(f"- Vigor: {pc.get('vigor_value', 100)} | Composure: {pc.get('composure_value', 100)}")
             return "\n".join(lines)
 
         # 솔로 플레이 (기존 형식 유지)
         lines = ["### 3. PLAYER CHARACTER"]
-        lines.append(f"- Appearance: {anchors.get('appearance', 'N/A')}")
-        lines.append(f"- Personality: {anchors.get('personality', 'N/A')}")
-        lines.append(f"- Background: {anchors.get('background', 'N/A')}")
+        # [2026-09-16 시트 2차] 서술 = PC 페이지 lore 절 발췌(절 이름 그대로) — personality 키 소멸.
+        lines.append(f"- Sheet:\n{anchors.get('sheet') or 'N/A'}")
         # [2026-07-15] Python repr(단따옴표) 주입 금지 — 모델이 형식을 미러링해
         # 단따옴표 dict로 응답(JSON 파싱 붕괴 실관측). json.dumps로 직렬화(§7.11 미러 원리).
         _j = lambda v: json.dumps(v, ensure_ascii=False, default=str)
         lines.append(f"- Passives: {_j(anchors.get('passives', []))}")
         lines.append(f"- Inventory: {_j(anchors.get('inventory', []))}")
-        lines.append(f"- Relations: {_j(anchors.get('relations', []))}")
         lines.append(f"- Memos: {_j(anchors.get('memos', []))}")
         return "\n".join(lines)
 
@@ -637,23 +617,41 @@ Any render-facing field whose value would contain Hangul → write that field's 
         soma_prev = anchors.get("stored_npc_soma", {}) or {}
         # [2026-08-11 사망 파이프라인] {이름: down|dead}. 전원 생존이면 빈 dict.
         _inactive = anchors.get("npc_inactive", {}) or {}
-        if not attitudes and not knowledge and not soma_prev:
+        # [2026-09-13 S2 T1] 재등장 인물 로그 원문(4e)만 있어도 렌더해야 한다 —
+        #   종전 조기 return은 attitudes/knowledge/soma 셋만 봤다.
+        recall_evidence = anchors.get("recall_evidence", {}) or {}
+        if not attitudes and not knowledge and not soma_prev and not recall_evidence:
             return ""
 
-        parts.append("### 4b. NPC STATE (Previous Turn)")
-        for npc_name in set(list(attitudes.keys()) + list(knowledge.keys())
-                            + list(soma_prev.keys())):
+        _npc_state_names = set(list(attitudes.keys()) + list(knowledge.keys())
+                               + list(soma_prev.keys()))
+        if _npc_state_names:
+            parts.append("### 4b. NPC STATE (Previous Turn)")
+        for npc_name in _npc_state_names:
             npc_lines = [f"{npc_name}:"]
             att = attitudes.get(npc_name, {})
             if att:
-                npc_lines.append(f"  Attitude={att.get('attitude', 'neutral')} ({att.get('reason', '')})")
-                # Depth↔Psyche feedback hint
-                depth = att.get("depth", 0)
-                if isinstance(depth, (int, float)):
-                    for threshold, hint in sorted(self._DEPTH_PSYCHE_HINTS.items(), reverse=True):
-                        if depth >= threshold:
-                            npc_lines.append(f"  Depth={int(depth)} → {hint}")
-                            break
+                # [2026-09-15 관계 통합] 엣지 값을 **그대로** 돌려준다 — relation 층 bond/tension의 앵커.
+                #   (구: Attitude enum + Depth 힌트만, tension·이전 relation.value는 안 돌아왔다.)
+                _bond = att.get("bond", att.get("depth", 0))
+                _stance = str(att.get("stance", att.get("reason", "")) or "").strip()
+                try:
+                    _bond_i = int(_bond)
+                except (TypeError, ValueError):
+                    _bond_i = 0
+                # [2026-09-25 관계 정성] 숫자 대신 말(구간·방향·마찰, domain_manager.relation_words 한 벌). 숫자는 코드 소유 —
+                #   모델은 bond_shift/tension_shift 로 이동만 낸다. _bond_i 는 아래 psyche 힌트 문턱(코드 안)에만 쓴다.
+                try:
+                    import domain_manager as _dm4b
+                    _rw = _dm4b.relation_words(att)
+                except Exception:
+                    _rw = ""
+                npc_lines.append(f"  Stands: {_rw or 'neutral'}" + (f" — {_stance}" if _stance else ""))
+                # Bond↔Psyche feedback hint (구 Depth 힌트 문장 유지)
+                for threshold, hint in sorted(self._DEPTH_PSYCHE_HINTS.items(), reverse=True):
+                    if _bond_i >= threshold:
+                        npc_lines.append(f"  → {hint}")
+                        break
             kn = knowledge.get(npc_name, {})
             if kn and kn.get("knows"):
                 knows_str = "; ".join(kn["knows"][:5])
@@ -694,6 +692,57 @@ Any render-facing field whose value would contain Hangul → write that field's 
         if interim:
             parts.append(interim)
 
+        # [2026-09-13 S2 T1] 4e. RECALL EVIDENCE — 30창 밖에서 다시 불려 나온 인물의
+        #   로그 원문 행. 연속성 재료일 뿐 현재 상태가 아니다(계약 문장으로 못박는다).
+        if recall_evidence:
+            _rc = ["### 4e. RECALL EVIDENCE (verbatim log rows; continuity only)",
+                   "These rows prove what was said or done then, not the present state; "
+                   "a present character knows them only if the record shows it."]
+            for _name, _lines in recall_evidence.items():
+                if not _lines:
+                    continue
+                _rc.append(f"{_name}:")
+                for _ln in _lines:
+                    _rc.append(f"  - {_ln}")
+            parts.append("\n".join(_rc))
+
+        # [2026-09-14 W3a] 4f. WIKI — 페이지 play 절(T1 프로파일). LLM 콜 0.
+        #   Knowledge는 위 4b가 이미 `Knows:`로 주므로 **제외**(이중 투입 금지).
+        #   lore 절도 제외 — compile_for는 play 절만 낸다.
+        try:
+            if getattr(config, "WIKI_COMPILE", False):
+                _ch_w3 = str(anchors.get("channel_id", "") or "")
+                if _ch_w3:
+                    _w3_names = []
+                    for _n in (list(anchors.get("scene_cast") or [])
+                               + list(anchors.get("nearby_cast") or [])
+                               + list(_npc_state_names)
+                               + list(recall_evidence.keys())):
+                        if not isinstance(_n, str) or not _n.strip():
+                            continue
+                        if str(_inactive.get(_n) or "") == "dead":
+                            continue
+                        if _n not in _w3_names:
+                            _w3_names.append(_n)
+                    # [2026-09-14 W5] 현재 위치 + 이번 턴 세력을 뒤에 붙인다(상한 그대로).
+                    try:
+                        if getattr(config, "WIKI_PLACES", False):
+                            import wiki_store as _ws_w5
+                            for _n5 in _ws_w5.extra_entity_names(
+                                    _ch_w3, str(anchors.get("action_text", "") or "")):
+                                if _n5 not in _w3_names:
+                                    _w3_names.append(_n5)
+                    except Exception:
+                        pass
+                    if _w3_names:
+                        import wiki_store as _ws_w3
+                        _wc = _ws_w3.compile_for(_ch_w3, "T1", _w3_names,
+                                                 exclude_sections=("Knowledge",))
+                        if _wc.get("text"):
+                            parts.append("### 4f. WIKI (play sections)\n" + _wc["text"])
+        except Exception as e:
+            logger.debug("[Theoria] wiki compile skipped: %s", e)
+
         # [A안 2026-07-02] ABSENT CAST(4c)·RECENT BEATS(4d)는 서사 콜(_build_narrative_prompt)로
         # 이사 — offscreen_trace/suggested_beats 생산이 그쪽이므로 재료도 그쪽에만 공급.
 
@@ -713,7 +762,7 @@ Any render-facing field whose value would contain Hangul → write that field's 
                 + "\n".join(f"- {c}" for c in cast))
 
     def _build_session_memory_context(self, anchors: dict) -> str:
-        """세션 메모리(active_threads, arc, NPC schedules)를 프롬프트에 포함"""
+        """세션 메모리(arc, NPC schedules) + 스레드 장부 줄을 프롬프트에 포함"""
         mem = anchors.get("session_memory", {})
         if not mem:
             return ""
@@ -723,9 +772,14 @@ Any render-facing field whose value would contain Hangul → write that field's 
         if arc:
             parts.append(f"- Current Arc: {arc}")
 
-        threads = mem.get("active_threads", [])
-        if threads:
-            parts.append(f"- Active Threads: {'; '.join(threads[:8])}")
+        # [2026-09-25 스레드 장부] 옛 active_threads(통째 재작성 리스트) → 장부(상태·기한·남은 몫).
+        try:
+            import thread_ledger as _tl4c
+            _tl_line = _tl4c.analysis_line(anchors.get("channel_id", ""))
+        except Exception:
+            _tl_line = ""
+        if _tl_line:
+            parts.append(_tl_line)
 
         npc_schedules = mem.get("npc_summaries", {})
         if npc_schedules:
@@ -734,7 +788,7 @@ Any render-facing field whose value would contain Hangul → write that field's 
 
         world_changes = mem.get("world_changes", [])
         if world_changes:
-            parts.append(f"- Recent World Changes: {'; '.join(world_changes[-5:])}")
+            parts.append(f"- Recent World Changes: {'; '.join(str(w) for w in world_changes[-5:])}")  # [2026-09-24 감사]
 
         needs = mem.get("basic_needs_flags", {})
         active_needs = [k for k, v in needs.items() if v]
@@ -1063,6 +1117,9 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
         "render_hint": "ENGLISH-ONLY telegraphic - 1-fragment render hint for this scene"
     }
   } | null (null when no NPC traits are being actively expressed this turn)
+- "newcomer_seeds": { "<name>": { "seam": str, "aside": str } }  (NEWCOMERS block only, one entry per listed name, {} otherwise.
+   seam = ONE conditional sentence: the condition under which trait 1 yields to trait 2 (or the reverse). when/until, never a ranking. hint conflict → the two collide and the seam says who wins where; amplify → the seam says where the shared push tips over; free → the seam says which room each trait owns.
+   aside = 2-3 lines of stage direction fusing both traits + vocabulary well + pressure + speech rule into one body's movement and habit of speech. ENGLISH telegraphic. No quoted lines, no rules, no third trait, no softening of the rolled traits. Fill only the blanks the tables delegate (a regular's topic, a home dialect of THIS world, a kind of document unread, a loved thing); invent nothing the PC says.)
 </output_schema>"""
 
     def _build_narrative_system(self) -> str:
@@ -1108,8 +1165,19 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
                     _bits.append(str(_p.get("primary_emotion")))
                 if _s.get("polyvagal"):
                     _bits.append(str(_s.get("polyvagal")))
-                if _r.get("value") is not None:
-                    _bits.append(f"rel {_r.get('value')}")
+                # [2026-09-25 관계 정성] 서사 콜에도 숫자 대신 이번 턴 이동 말(추출 콜이 낸 그대로). 옛 숫자 출력이면 구간 이름.
+                _bs_d, _ts_d = _r.get("bond_shift"), _r.get("tension_shift")
+                if _bs_d or _ts_d:
+                    _bits.append("rel " + ", ".join(x for x in (str(_bs_d) if _bs_d else "",
+                                                               f"tension {_ts_d}" if _ts_d else "") if x))
+                else:
+                    _rb = _r.get("bond") if _r.get("bond") is not None else _r.get("value")
+                    if _rb is not None:
+                        try:
+                            import domain_manager as _dm_dg
+                            _bits.append(f"rel {_dm_dg.attitude_from_bond(_rb)}")
+                        except Exception:
+                            pass
                 if _p.get("self_opacity"):
                     _bits.append("self-opaque")
                 if _bits:
@@ -1156,6 +1224,20 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
                 + "\n".join(f"- {n}" for n in nearby)
             )
 
+        # [2026-09-22 voice_seed §2 C] NEWCOMERS — 이번 턴 미등록 신규 인물의 굴린 뼈대.
+        #   NEARBY CAST 바로 뒤(출석 3단 옆에 "아직 이름뿐인 사람"을 둔다). 블록 문안은
+        #   voice_seed 소유 — 기전·본문만 닿고 라벨·칸 번호는 코드에 남는다(스펙 §2.1).
+        #   앵커에 newcomer_rolls 가 없으면 블록 자체가 없다(프롬프트 순증 0).
+        _nc_rolls = anchors.get("newcomer_rolls")
+        if _nc_rolls:
+            try:
+                import voice_seed as _vs
+                _nc_block = _vs.narrative_block(_nc_rolls)
+            except Exception:
+                _nc_block = ""
+            if _nc_block:
+                parts.append(_nc_block)
+
         # RECENT BEATS — suggested_beats 반복 회피 대조 목록 (Phase 0)
         beats_avoid = anchors.get("recent_beats_avoid", [])
         if beats_avoid:
@@ -1177,7 +1259,7 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
             _att = anchors.get("stored_npc_attitudes", {}) or {}
             _top = sorted(
                 _att.items(),
-                key=lambda kv: -(kv[1].get("depth", 0) if isinstance(kv[1], dict) else 0),
+                key=lambda kv: -(abs(kv[1].get("depth", 0) or 0) if isinstance(kv[1], dict) else 0),
             )[:3]
             for _n, _ in _top:
                 _arc = _nq.emotion_arc(channel_id, _n, n=12)
@@ -1243,6 +1325,18 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
                 )
                 if _wm:
                     parts.append(_wm)
+        except Exception:
+            pass
+
+        # [2026-09-24 감사 §5-2 #27] 장르 렌즈 — 추출 콜과 같은 모듈·스포트라이트 선택의 서사 칸 매핑만.
+        #   (전엔 이 매핑이 추출 콜에만 실려 생산자인 이 콜은 못 받았다.) 콜 0, 없으면 블록 0.
+        try:
+            from theory_emphasis_engine import build_narrative_lens_block
+            _lens = build_narrative_lens_block(
+                self._extract_active_genres(getattr(req, "genres", None)),
+                hash(str(channel_id or "")), int(anchors.get("turn_index", 0) or 0))
+            if _lens:
+                parts.append(_lens)
         except Exception:
             pass
 

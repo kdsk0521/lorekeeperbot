@@ -78,7 +78,7 @@ NEGOTIATION_MODULE = """
 OUTPUT MAPPING:
 - BATNA → Position.value (strong BATNA = high position)
 - Prisoner's Dilemma → relation.logos_layer (trust boundary state)
-- Signaling → NPCAttitudes.reason (signal cost noted)
+- Signaling → relation.descriptor (signal cost noted)
 - Negotiation stance → relation.negotiation_stance
 - Zero-Sum/Positive-Sum → deep_read (reframing potential)
 </negotiation_analysis>
@@ -170,7 +170,7 @@ ROMANCE_MODULE = """
 
 OUTPUT MAPPING:
 - Sternberg component asymmetry → relation.logos_layer + relation.value_conflict ('X vs Y' when components clash)
-- Gottman bid response / Four Horsemen / repair → NPCAttitudes.reason + relation.value_conflict
+- Gottman bid response / Four Horsemen / repair → relation.descriptor + relation.value_conflict
 - Self-expansion / boundary blur / stagnation → psyche.active_needs + deep_read
 </romance_analysis>
 """
@@ -196,7 +196,7 @@ DRAMA_MODULE = """
 - Scapegoat: group tension transferred onto one, briefly resolved. Track who becomes the scapegoat.
 
 OUTPUT MAPPING:
-- Karpman role / switch / hidden payoff → relation.value_conflict + NPCAttitudes.reason + deep_read
+- Karpman role / switch / hidden payoff → relation.value_conflict + relation.descriptor + deep_read
 - Bowen triangulation / differentiation / inheritance → relation.value_conflict + relation.logos_layer + deep_read
 - Mimetic desire / rivalry / scapegoat → psyche.active_needs + relation.value_conflict + deep_read
 </drama_analysis>
@@ -276,7 +276,7 @@ COMEDY_MODULE = """
 
 OUTPUT MAPPING:
 - Benign violation + incongruity (setup/mismatch) → deep_read
-- Superiority (the butt, who laughs) → NPCAttitudes.reason + relation.value_conflict
+- Superiority (the butt, who laughs) → relation.descriptor + relation.value_conflict
 - Relief (vented tension) → deep_read
 </comedy_analysis>
 """
@@ -723,6 +723,77 @@ def build_theory_emphasis(active_genres: List[str]) -> str:
     return header + "\n\n".join(parts) + footer
 
 
+# [2026-09-24 감사 §5-2 #27 — 레티어스 판정(생성 토큰 낭비 → 연결)] 출력 필드 소유권.
+#   이 필드들은 **서사 콜**(theoria_analyzer.analyze_narrative)이 만든다. 추출 콜 스키마는 "do NOT output them here"
+#   인데 장르 모듈·스포트라이트의 OUTPUT MAPPING(`X → deep_read + …`)은 추출 콜에만 실려, 추출 모델은 못 쓰는 칸을
+#   가리키고 생산자(서사 콜)는 그 렌즈를 못 받았다. → 추출판은 서사 칸을 떼고, 서사 콜엔 서사 칸 매핑만 싣는다.
+NARRATIVE_OWNED_FIELDS = ("deep_read", "value_conflict", "narrative_chain", "resurfacing", "trait_connections")
+
+
+def _split_mapping(line: str):
+    """`머리 → a + b` → (머리, [a, b]). 화살표 없으면 None. 마지막 화살표 기준(본문 속 화살표는 머리에 남는다)."""
+    if "→" not in line:
+        return None
+    head, tail = line.rsplit("→", 1)
+    return head, [t.strip() for t in tail.split("+") if t.strip()]
+
+
+def _narr_target(t: str) -> bool:
+    return any(f in t for f in NARRATIVE_OWNED_FIELDS)
+
+
+def retarget_for_extraction(text: str) -> str:
+    """추출 콜용 — 매핑 줄에서 서사 소유 칸을 뗀다. 남는 칸이 없으면 그 줄을 뺀다(그 밖의 줄은 그대로)."""
+    out = []
+    for ln in str(text or "").splitlines():
+        sp = _split_mapping(ln)
+        if not sp or not any(_narr_target(t) for t in sp[1]):
+            out.append(ln)
+            continue
+        keep = [t for t in sp[1] if not _narr_target(t)]
+        if keep:
+            out.append(f"{sp[0].rstrip()} → {' + '.join(keep)}")
+    return "\n".join(out)
+
+
+def narrative_targets_only(text: str) -> List[str]:
+    """서사 콜용 — 서사 소유 칸을 가리키는 매핑 줄만, 그 칸만 남겨 돌려준다."""
+    out = []
+    for ln in str(text or "").splitlines():
+        sp = _split_mapping(ln)
+        if not sp:
+            continue
+        # 서사 스키마엔 relation 객체가 없다 — value_conflict 는 psyche_narrative[NPC] 칸이다.
+        keep = [t.replace("relation.value_conflict", "value_conflict") for t in sp[1] if _narr_target(t)]
+        if keep:
+            out.append(f"{sp[0].rstrip()} → {' + '.join(keep)}")
+    return out
+
+
+def build_narrative_lens_block(active_genres: List[str], session_seed: int, turn_number: int) -> str:
+    """서사 콜 렌즈 — 이번 턴 추출 콜이 받은 장르 모듈·스포트라이트와 **같은 선택**의 서사 칸 매핑.
+
+    추가 LLM 콜 0. 없으면 ""(블록 자체가 없다)."""
+    genres = active_genres or ["modern"]
+    lines = narrative_targets_only(build_module_text(genres))
+    try:
+        lines += narrative_targets_only(get_session_spotlight(
+            session_seed, turn_number, 5,
+            get_suppressed_theories(genres), get_emphasized_theories(genres)))
+    except Exception:
+        pass
+    seen, uniq = set(), []
+    for ln in lines:
+        k = ln.strip()
+        if k and k not in seen:
+            seen.add(k)
+            uniq.append(ln.strip())
+    if not uniq:
+        return ""
+    return ("### GENRE LENSES (this turn's theory mappings into your fields)\n"
+            + "\n".join(f"- {x.lstrip('-* ').strip()}" for x in uniq))
+
+
 def build_analysis_directive(
     active_genres: List[str],
     core_theories: str,           # PART A~E 압축 이론 블록 (항상 로딩)
@@ -754,7 +825,8 @@ def build_analysis_directive(
         sections.append(emphasis)
 
     # [4] Conditional Modules — 장르에 의해 활성화
-    modules = build_module_text(active_genres)
+    #   [2026-09-24 감사 §5-2 #27] 추출판: 서사 소유 칸(deep_read·value_conflict…)은 매핑에서 뗀다.
+    modules = retarget_for_extraction(build_module_text(active_genres))
     if modules:
         sections.append(modules)
 
@@ -783,14 +855,14 @@ NON_SLOT_THEORIES = [
     "Yin-Yang - does primary_emotion contain its opposite seed? → psyche.primary_emotion(陰陽 note)",
     "Five Skandhas - did I analyze soma BEFORE psyche? → [process: soma→psyche field order]",
     "Manas - is Self-Opacity structural, not just ignorance? → psyche.self_opacity",
-    "Wulun - are role expectations (elder/younger, host/guest) active? → NPCAttitudes.reason + relation.value_conflict",
+    "Wulun - are role expectations (elder/younger, host/guest) active? → relation.descriptor + relation.value_conflict",
     "Simma - is an inner demon voice active? → psyche.self_opacity + soma.cultural_affect(simma)",
     "Gi - is energy flow blocked/flowing/depleted? → soma.cultural_affect(gi) + soma.descriptor",
     # -- 사회 / 관계 역학 --
     "Reactance - is freedom being threatened? Expect resistance. → psyche.active_needs + deep_read",
     "Learned Helplessness - repeated failure present? Track passivity. → psyche.decision_mode(reactive) + psyche.coping(avoidant)",
     "Prospect Theory - is loss aversion driving behavior? → deep_read + Position/Effect.reason",
-    "Emotional Contagion - multiple NPCs present? Check emotion spread. → NPCAttitudes.trajectory + psyche.primary_emotion",
+    "Emotional Contagion - multiple NPCs present? Check emotion spread. → relation.bond + psyche.primary_emotion",
     "Curse of Knowledge - known secrets leaking through behavior? → NPCKnowledge.leak_risk + deception_cues",
     "Bem Gender Schema - gender-typed behavior appropriate for THIS character? → relation.stage + deep_read",
     "Carstensen SST - time horizon affecting decision mode? → psyche.decision_mode + TemporalOrientation",

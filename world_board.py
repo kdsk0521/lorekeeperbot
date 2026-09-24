@@ -26,32 +26,15 @@ BOARD_CHANNELS = {
     "message":  ("message_thread_id",  "💌", "메시지"),
 }
 
-# [2026-08-17 v1.1 §4] 게시 최소 간격의 **유일한** 하드 제한이 이 빈도다(별도 턴 캡 없음 —
-#   그 밖의 게이트는 NPC 연속 2회 차단·이벤트 타입 감쇠처럼 턴이 아니라 이력 기반이다).
-#   구 모듈 상수를 config 로 승격했다. 상수 이름은 back-compat 로 남기되 **판정은 아래
-#   `_default_frequency()`가 매번 config 를 다시 읽는다** — 상수를 import 시점에 굳혀 두면
-#   .env 를 고쳐도 안 먹고, 스모크가 레버를 흔들어 볼 수도 없다.
-_FREQ_CONFIG_KEY = {
-    "bulletin": "BOARD_FREQUENCY_BULLETIN",
-    "sns":      "BOARD_FREQUENCY_SNS",
-    "message":  "BOARD_FREQUENCY_MESSAGE",
-}
-
-
-def _default_frequency(ch_name: Optional[str] = None) -> int:
-    """설정이 하나도 없을 때의 최소 간격(턴). 채널종 기본 → 전역 기본 순."""
-    glob = int(getattr(config, "BOARD_FREQUENCY_DEFAULT", 10) or 10)
-    key = _FREQ_CONFIG_KEY.get(ch_name or "")
-    if key:
-        try:
-            return max(1, int(getattr(config, key, glob) or glob))
-        except (TypeError, ValueError):
-            return max(1, glob)
-    return max(1, glob)
-
-
-DEFAULT_BOARD_FREQUENCY = int(getattr(config, "BOARD_FREQUENCY_DEFAULT", 10) or 10)
-DEFAULT_CHANNEL_FREQUENCY = {ch: _default_frequency(ch) for ch in _FREQ_CONFIG_KEY}
+# ⚰[2026-09-13 P14] 게시 최소 간격(`_FREQ_CONFIG_KEY`·`_default_frequency`·
+#   `DEFAULT_BOARD_FREQUENCY`·`DEFAULT_CHANNEL_FREQUENCY`·`set/get_board_frequency`·
+#   `get_all_frequencies`) 전량 삭제.
+#   WHY: 저건 **콜을 아끼려고** 둔 자동 발화 타이머였다("N턴마다 한 번은 뭔가 올려라").
+#   P14 가 방아쇠를 둘로 갈랐다 — ① 선언 전이 `deliver`(규칙이 정한 때) ② 분석 신호
+#   `arrival`(장면이 부를 때). 둘 다 "지금 도착물이 필요하다"를 **말해서** 여는 문이고,
+#   그 옆에서 턴을 세는 문은 같은 질문에 다른 답을 내는 두 번째 소유자가 된다:
+#   편지가 온 턴에 게이트가 또 열려 공고가 하나 더 붙거나, 아무도 부르지 않은 턴에
+#   세계가 혼자 말을 건다. 소비자 0 이 된 손잡이(`!게시판 빈도`)도 같은 카드에서 내렸다.
 
 
 def _genre_labels(channel_id: str) -> tuple:
@@ -119,41 +102,6 @@ def set_board_channel(channel_id: str, ch_name: str, enabled: bool) -> None:
     domain_manager.update_world_state(channel_id, world)
 
 
-def set_board_frequency(channel_id: str, freq: int, ch_name: str = None) -> None:
-    """게시판 빈도 설정. ch_name 지정 시 개별 채널, 미지정 시 전체 기본값."""
-    world = domain_manager.get_world_state(channel_id)
-    board_state = world.get("world_board", {})
-    if ch_name:
-        freq_map = board_state.get("frequency_per_channel", {})
-        freq_map[ch_name] = max(1, freq)
-        board_state["frequency_per_channel"] = freq_map
-    else:
-        board_state["frequency"] = max(1, freq)
-    world["world_board"] = board_state
-    domain_manager.update_world_state(channel_id, world)
-
-
-def get_board_frequency(channel_id: str, ch_name: str = None) -> int:
-    """빈도 조회. 채널별 설정 > 유저가 정한 전체 > 채널별 기본 상수 > 전역 기본 상수.
-
-    [2026-08-16 도착물 라우트 §4] 구 우선순위는 `!게시판 빈도 10`(전체)을 ch_name 조회에서
-    **버렸다** — `DEFAULT_CHANNEL_FREQUENCY.get(ch_name, default)`라 채널 키가 있으면
-    유저 전체 설정이 절대 안 읽혔다. 전역 게이트만 쓰던 시절엔 안 드러났지만, 게이트를
-    채널종별로 고치면 이번엔 전체 설정이 죽는다. 두 손잡이가 다 살도록 순위를 세운다.
-    """
-    world = domain_manager.get_world_state(channel_id)
-    board_state = world.get("world_board", {})
-    if ch_name:
-        freq_map = board_state.get("frequency_per_channel", {})
-        per_ch = freq_map.get(ch_name) if isinstance(freq_map, dict) else None
-        if per_ch is not None:
-            return max(1, int(per_ch))
-    user_default = board_state.get("frequency")
-    if user_default is not None:
-        return max(1, int(user_default))
-    return _default_frequency(ch_name)
-
-
 # =========================================================
 # [2026-08-16 도착물 라우트] 착지 모드 (thread / button / off)
 # =========================================================
@@ -206,15 +154,6 @@ def set_display_mode(channel_id: str, ch_name: str, mode: str) -> bool:
 def get_all_display_modes(channel_id: str) -> Dict[str, str]:
     """3채널 착지 모드 한 번에 (명령 UI 표시용)."""
     return {ch: get_display_mode(channel_id, ch) for ch in BOARD_CHANNELS}
-
-
-def get_all_frequencies(channel_id: str) -> Dict[str, int]:
-    """전체 + 채널별 빈도 조회.
-
-    [2026-08-16 도착물 라우트 §4] 게이트와 **같은 함수**로 계산한다 — 표시와 판정이
-    따로 계산하던 게 "명령 UI가 거짓말하는" 구조였다. 우선순위 중복 구현 제거.
-    """
-    return {ch: get_board_frequency(channel_id, ch) for ch in BOARD_CHANNELS}
 
 
 # =========================================================
@@ -375,7 +314,7 @@ def _save_post_summaries(channel_id: str, posts_data: Dict[str, Any]) -> None:
             if not post or not isinstance(post, dict):
                 continue
             author = post.get("author", post.get("from", "?"))
-            body = post.get("body", "")[:60]
+            body = (post.get("body") or "")[:60]
             if body:
                 summaries.append(f"{author}: {body}")
     board_state["recent_summaries"] = summaries[-10:]  # 최근 10개만 유지
@@ -386,6 +325,18 @@ def _save_post_summaries(channel_id: str, posts_data: Dict[str, Any]) -> None:
 # =========================================================
 # Event-Driven Board v2: Scanners + Selection + Routing
 # =========================================================
+
+def _turn_recent(turn: Any, current_turn: Any) -> bool:
+    """[2026-09-24 감사] 도장 턴이 이번 턴 또는 직전 턴인가(Scanner 5·6 공용).
+
+    배경 추출은 턴 N 의 산문 **뒤**에 N 도장으로 쓰고, 스캐너는 턴 N+1 의 산문 **앞**에서 돈다.
+    None·문자열 도장은 거짓(예전 `==` 가 None 을 조용히 넘기던 것과 같은 결과, 예외 0).
+    """
+    try:
+        return int(turn) >= int(current_turn) - 1
+    except (TypeError, ValueError):
+        return False
+
 
 def _collect_board_events(channel_id: str, dai: Dict[str, Any]) -> List[Dict[str, Any]]:
     """파이프라인 산출물에서 보드 이벤트 수집. 0 API 콜. 실패한 스캐너는 무시."""
@@ -516,7 +467,10 @@ def _collect_board_events(channel_id: str, dai: Dict[str, Any]) -> List[Dict[str
             latest = imp_list[-1]
             if not isinstance(latest, dict):
                 continue
-            if latest.get("turn") == current_turn:
+            # [2026-09-24 감사] `== current_turn` → 직전 턴까지. 각인은 배경 추출이 턴 N 도장으로
+            #   산문 **뒤**에 쓰고, 이 스캐너는 턴 N+1 의 4.75(산문 앞)에서 돈다 — 같은 턴 비교는
+            #   영원히 거짓이라 스캐너가 사문이었다.
+            if _turn_recent(latest.get("turn"), current_turn):
                 event_type = latest.get("event", "")
                 mark = latest.get("mark", "")
                 channel = "message" if event_type in ("confession", "injury", "trauma") else "sns"
@@ -543,7 +497,8 @@ def _collect_board_events(channel_id: str, dai: Dict[str, Any]) -> List[Dict[str
             if not history:
                 continue
             last_entry = history[-1]
-            if isinstance(last_entry, dict) and last_entry.get("turn") == current_turn:
+            # [2026-09-24 감사] Scanner 5 와 같은 시계 어긋남 — 엣지 history 도 배경 추출(턴 N)이 쓴다.
+            if isinstance(last_entry, dict) and _turn_recent(last_entry.get("turn"), current_turn):
                 source = edge.get("source", "")
                 target = edge.get("target", "")
                 reason = last_entry.get("reason", "")
@@ -582,21 +537,28 @@ def _collect_board_events(channel_id: str, dai: Dict[str, Any]) -> List[Dict[str
         pass
 
     # --- Scanner 8: Thread Resolved ---
+    # [2026-09-25 스레드 장부] 옛 ai_session_memory.resolved_threads(쓰기 삭제) → 장부의 최근 닫힌 **사안**(matter·done).
+    #   약속(promise)은 당사자 사이 일이라 공개 게시판 소재가 아니다. 게시 기록 키 = 스레드 id(제목 충돌 없음).
     try:
-        session_mem = session_mem if 'session_mem' in dir() else domain_manager.get_session_ai_memory(channel_id)
-        resolved = session_mem.get("resolved_threads", [])
-        if isinstance(resolved, list) and resolved:
-            latest_resolved = resolved[-1] if isinstance(resolved[-1], str) else ""
-            if latest_resolved:
-                events.append({
-                    "type": "thread_resolved",
-                    "weight": 0.6,
-                    "npc": None,
-                    "target_npc": None,
-                    "channel": "bulletin",
-                    "detail_kr": f"사건 해소: {latest_resolved}",
-                    "tag": f"resolved:{latest_resolved[:20]}",
-                })
+        import thread_ledger as _tl_wb
+        _closed = [s for s in _tl_wb.load_states(channel_id).values()
+                   if s.get("status") == "closed" and s.get("kind") == "matter" and s.get("outcome") == "done"
+                   and s.get("title")]
+        _closed.sort(key=lambda s: -(s.get("last_turn") or 0))
+        _latest = _closed[0] if _closed else None
+        # [2026-09-24 감사] 이미 게시한 해소는 다시 내지 않는다 — 게시 기록은 _update_board_state 의 `posted_resolved_threads`.
+        _posted_res = set((world.get("world_board", {}) or {}).get("posted_resolved_threads", []) or [])
+        if _latest and _latest["id"] not in _posted_res:
+            events.append({
+                "type": "thread_resolved",
+                "weight": 0.6,
+                "npc": None,
+                "target_npc": None,
+                "channel": "bulletin",
+                "detail_kr": f"사건 해소: {_latest['title']}",
+                "tag": f"resolved:{_latest['title'][:20]}",
+                "thread": _latest["id"],
+            })
     except Exception:
         pass
 
@@ -663,14 +625,17 @@ def _sender_affinity(channel_id: str, npc: str) -> Dict[str, Any]:
 
     사적 매체(message)의 발신자는 관계가 곧 매체다 — 공지·SNS는 낯선 이름이 정상이지만
     편지·쪽지는 아니다. 세 재료를 하나의 가산으로 접는다:
-      depth   npc_attitudes[npc].depth (0~100) — **주 가중**. 관계 축의 정본.
+      depth   npc_attitudes[npc].depth(= bond, −100~+100) — **주 가중은 그 절대값(strength)**. 관계 축의 정본.
+              [2026-09-24 감사 §5-2 #13 — 레티어스 판정] 적대도 "얽힌 사이"다 — 원수의 협박장·결투장처럼
+              사적 편지를 보낼 만한 사이라 |bond| 로 가중한다(구: max(0,·) 로 적대 = 낯선 이). 부호 있는
+              depth 는 그대로 두어 편지 프롬프트 `태도:` 줄이 hostile 옆에 depth=0 을 싣던 모순도 없앤다.
       appear  npcs[npc].appear_count — 보조. 포화형(SAT 회 이상이면 만점)이라
               깊이 없는 다등장이 depth 를 이기지 못한다.
       source  lore/manual(사람이 쓴 확정 시트) 가산. 그 턴 즉석 등재분은 못 받는다.
-    반환 {bonus, depth, appear, source} — 하드 필터(MIN_DEPTH)도 같은 depth 를 쓴다.
+    반환 {bonus, depth, strength, appear, source} — 하드 필터(MIN_DEPTH)는 strength(= |depth|)를 쓴다.
     실패는 전부 0 가산(무해) — 관계를 못 읽은 것이 관계 없음의 근거는 아니다.
     """
-    out = {"bonus": 0.0, "depth": 0, "appear": 0, "source": ""}
+    out = {"bonus": 0.0, "depth": 0, "strength": 0, "appear": 0, "source": ""}
     if not npc:
         return out
     try:
@@ -681,7 +646,8 @@ def _sender_affinity(channel_id: str, npc: str) -> Dict[str, Any]:
             _k = domain_manager._find_npc_key(_att, npc)
             rel = _att.get(_k) if _k else None
         if isinstance(rel, dict):
-            out["depth"] = max(0, int(rel.get("depth", 0) or 0))
+            out["depth"] = int(rel.get("depth", 0) or 0)
+            out["strength"] = min(100, abs(out["depth"]))
     except Exception as e:
         logger.debug(f"[WorldBoard] sender depth skip ({npc}): {e}")
     _rec = None
@@ -701,7 +667,7 @@ def _sender_affinity(channel_id: str, npc: str) -> Dict[str, Any]:
     _src_w = float(getattr(config, "BOARD_SENDER_SOURCE_BONUS", 0.10))
     _allowed = _allowed_sender_sources()
 
-    bonus = _depth_w * min(1.0, out["depth"] / 100.0)
+    bonus = _depth_w * min(1.0, out["strength"] / 100.0)
     bonus += _appear_w * min(1.0, out["appear"] / float(_sat))
     if _allowed is not None and out["source"] in _allowed:
         bonus += _src_w
@@ -784,10 +750,10 @@ def _select_best_event(
         if ch == "message" and npc:
             aff = _sender_affinity(channel_id, npc)
             _min_depth = int(getattr(config, "BOARD_SENDER_MIN_DEPTH", 0) or 0)
-            if _min_depth > 0 and aff["depth"] < _min_depth:
+            if _min_depth > 0 and aff["strength"] < _min_depth:   # [2026-09-24 §5-2 #13] 관계 강도
                 logger.debug(
                     f"[WorldBoard] sender gate dropped {npc} "
-                    f"(depth={aff['depth']} < {_min_depth})")
+                    f"(|depth|={aff['strength']} < {_min_depth})")
                 continue
             weight += aff["bonus"]
             ev["_sender_affinity"] = aff
@@ -883,6 +849,198 @@ Opening and signature follow this world's form for the named format. 100-220자.
 # 출력 스키마도 같은 테이블에서 — 두 빌더가 각자 들고 있으면 드리프트한다.
 # (구 board 빌더 쪽 문자열은 `{{`가 f-string 밖에서 쓰여 최종 프롬프트에 이중 중괄호로
 #  샜다 — 여기로 합치면서 단일 중괄호로 교정. 길이는 스키마가 아니라 매체 계약이 쥔다.)
+def mail_format_hint(channel_id: str) -> str:
+    """선언된 **도착물 형식**(surface="mail") 이름 목록 한 줄. 없으면 "".
+
+    [2026-09-07 P10] 유저가 "편지는 봉랍으로 닫는다"를 형식으로 선언해 놨는데 게시물
+    생성 콜은 그 이름을 모른 채 `format_name` 을 매번 새로 지어냈다(≈889 자유 기입).
+    이름만 알려 준다 — 본문 렌더는 여전히 작성자(모델)의 것이고, 코드는 봉투에 뭐라
+    적혔는지만 맞춘다. 없으면 줄 자체가 빠진다(빈 지침은 노이즈다).
+    """
+    try:
+        import status_panel as _sp
+        names = [n for n in (_sp.mail_format_names(channel_id) or []) if str(n).strip()]
+    except Exception as e:
+        logger.debug(f"[WorldBoard] mail format hint skipped: {e}")
+        return ""
+    if not names:
+        return ""
+    return ("- Declared arrival formats (reuse one of these EXACT names for format_name "
+            "when it fits): " + ", ".join(str(n) for n in names[:12]))
+
+
+# =========================================================
+# [2026-09-13 P14] 도착물 = 산문의 입력(핸드아웃). 방아쇠 둘 · 틀 하나.
+# =========================================================
+# 💌 개인(letter) = PC 앞으로 오는 것 / 📰 공개(bulletin·sns) = 세상에 걸리는 것.
+# 선언 전이의 `deliver.kind` 는 여기서 채널종으로 번역된다 — 유저 어휘(개인/공개)와
+# 게시판 내부 어휘(message/bulletin/sns) 사이의 **단 하나의 사전**이다.
+DELIVER_CHANNEL = {"letter": "message", "bulletin": "bulletin", "sns": "sns"}
+
+# 틀이 채워야 할 두 칸. 라우터 내부 표기지 유저 문법이 아니다(§2).
+MAIL_SLOT_BODY = "{{본문}}"
+MAIL_SLOT_SIGN = "{{서명}}"
+
+
+def _declared_event(req: Dict[str, Any], final_channel: str) -> Dict[str, Any]:
+    """선언(`deliver`) → 이벤트 dict. 이벤트 수집·선별을 건너뛰는 유일한 자리.
+
+    `detail_kr` 이 곧 브리핑이다 — 프롬프트의 THIS TURN'S EVENT 칸에 그대로 앉는다.
+    본문은 여기 없다: brief 는 "무엇에 대한 것인가" 한 문장이고 글은 콜이 쓴다.
+    """
+    brief = str(req.get("brief") or "").strip()
+    who = str(req.get("from") or "").strip()
+    return {
+        "tag": "declared",
+        "type": "declared",
+        "weight": 99,
+        "npc": who,
+        "channel": final_channel,
+        "detail_kr": brief or "(선언된 도착물 — 지금 이 장면에 닿는 것 하나)",
+    }
+
+
+def pick_arrival_request(channel_id: str, dai: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """이번 턴 도착물 요청 하나. 없으면 None. **턴당 1**, 겹치면 선언이 이긴다.
+
+    ① 선언 전이 `deliver` — `expr_engine` 이 4.7 에서 적재해 둔 행(집으면 소멸).
+    ② 분석 신호 `arrival` — 불리언 하나. "이 장면이 도착물을 부른다"는 신호일 뿐이라
+       **종류도 내용도 내지 않는다**(그건 도착물 콜이 dai 이벤트·선언 형식 목록을 보고 고른다).
+    둘이 같은 턴에 서면 ①이다: 규칙이 정한 때가 장면의 기색보다 구체적이다.
+    """
+    rows: List[Dict[str, Any]] = []
+    try:
+        import expr_engine as _ee
+        rows = _ee.take_deliver_requests(channel_id)
+    except Exception as e:
+        logger.debug(f"[WorldBoard] deliver 픽업 skip: {e}")
+        rows = []
+    if rows:
+        row = rows[0]
+        dv = row.get("deliver") or {}
+        if len(rows) > 1:
+            logger.info("[WorldBoard] 같은 턴 도착물 선언 %d 건 — 첫 건만(턴당 1)", len(rows))
+            # [2026-09-24 감사] 나머지는 버리지 않고 보류 알림으로 되돌린다(한 줄 알림으로 flush).
+            #   take_deliver_requests 가 전부 비워 가므로, 예전엔 둘째 건부터 알림째 증발했다.
+            _restore_pending_rows(channel_id, rows[1:])
+        return {"source": "declared",
+                "kind": str(dv.get("kind") or "letter"),
+                "from": dv.get("from") or str(row.get("author") or "") or None,
+                "brief": str(dv.get("brief") or row.get("body") or ""),
+                "format_name": str(row.get("format_name") or ""),
+                # [2026-09-24 감사] 원 행 — 핸드아웃이 무산되면 restore_arrival_request 가 되돌린다.
+                "_row": row}
+    if isinstance(dai, dict) and dai.get("arrival") is True:
+        return {"source": "arrival", "kind": None, "from": None, "brief": "", "format_name": ""}
+    return None
+
+
+def _restore_pending_rows(channel_id: str, rows: List[Dict[str, Any]]) -> int:
+    """[2026-09-24 감사] 집어 간 선언 행을 보류 알림(`pending_mails`)으로 되돌린다. 되돌린 수 반환.
+
+    `deliver` 칸은 떼고 돌린다 — 되돌린 행은 **핸드아웃 재시도가 아니라** 종전 한 줄 알림이다
+    (take_deliver_requests 의 약속: "집히지 않은 채 턴이 끝나면 flush 가 한 줄 알림으로").
+    같은 턴 9.52 flush_mails 가 산문 메시지에 붙인다. 읽기→쓰기 사이 await 0(경합 창 없음).
+    """
+    back = []
+    for r in rows or []:
+        if isinstance(r, dict):
+            if str(r.get("notify") or "") == "none":
+                continue   # 선언이 알림을 끈 전이 — 한 줄 알림으로도 안 낸다
+            rr = dict(r)
+            rr.pop("deliver", None)
+            rr.pop("notify", None)
+            back.append(rr)
+    if not back:
+        return 0
+    try:
+        import expr_engine as _ee
+        world = domain_manager.get_world_state(channel_id) or {}
+        pend = world.get(_ee.PENDING_MAILS_KEY)
+        pend = list(pend) if isinstance(pend, list) else []
+        pend.extend(back)
+        world[_ee.PENDING_MAILS_KEY] = pend
+        domain_manager.update_world_state(channel_id, world)
+        logger.info("[WorldBoard] 도착물 선언 %d 건 → 한 줄 알림으로 복귀", len(back))
+        return len(back)
+    except Exception as e:
+        logger.warning(f"[WorldBoard] 도착물 선언 복귀 실패(알림 유실): {e}")
+        return 0
+
+
+def restore_arrival_request(channel_id: str, req: Optional[Dict[str, Any]]) -> bool:
+    """[2026-09-24 감사] 핸드아웃이 무산된 선언 요청을 보류 알림으로 되돌린다(한 번만).
+
+    `pick_arrival_request` 는 성공 확인 **전에** 행을 소비한다(take_deliver_requests). 콜이
+    무산되면(게시판 모듈 off·채널 off·빈 산출·예외) 예전엔 알림째 증발했다. `_row` 를 pop 해서
+    두 번 불려도(trigger_board_update 래퍼 + 호출부) 한 번만 돌린다. arrival 신호는 돌릴 행이 없다.
+    """
+    if not isinstance(req, dict) or req.get("source") != "declared":
+        return False
+    row = req.pop("_row", None)
+    if not isinstance(row, dict):
+        return False
+    return _restore_pending_rows(channel_id, [row]) > 0
+
+
+def mail_frame(channel_id: str, format_name: str) -> str:
+    """선언된 mail 형식의 **틀**. 없으면 "".
+
+    [2026-09-13 P14] P10 이 세운 `template` 을 도착물 본문에 처음 쓴다. 코드가 채울 수 있는
+    칸(`[날짜]`·`[수신자]`·선언 변수)은 `render_placeholders` 가 먼저 채우고, 남는 건
+    `{{본문}}`·`{{서명}}` 둘뿐이다 — "코드가 채울 수 있는 건 코드가, 나머지는 LLM".
+    미해석 자리표시자는 원문 그대로 둔다(P10 계약 — 유저 저작을 코드가 지우지 않는다).
+    """
+    nm = str(format_name or "").strip()
+    if not nm:
+        return ""
+    try:
+        import status_panel as _sp
+        if nm not in (_sp.mail_format_names(channel_id) or []):
+            return ""
+        tpl = next((t for n, t, _e in (_sp.list_template_formats(channel_id) or [])
+                    if n == nm and str(t or "").strip()), "")
+        blanks = next((e for n, _t, e in (_sp.list_template_formats(channel_id) or [])
+                       if n == nm), {})
+    except Exception as e:
+        logger.debug(f"[WorldBoard] mail frame skip: {e}")
+        return ""
+    if not tpl:
+        return ""
+    try:
+        import custom_vars as _cv
+        return _cv.render_placeholders(channel_id, tpl, blanks)
+    except Exception as e:
+        logger.debug(f"[WorldBoard] frame render skip: {e}")
+        return tpl
+
+
+def handout_text(result: Optional[Dict[str, Any]]) -> str:
+    """핸드아웃 블록 본문 — 산문 콜이 "편지를 읽은 채로" 시작하게 하는 재료 한 덩이.
+
+    지시가 아니라 **종이**다: 인용도 답장도 강요하지 않는다(쪽지 큐와 같은 톤 규율).
+    """
+    if not isinstance(result, dict):
+        return ""
+    p = result.get("payload") or {}
+    ch = str(result.get("channel_kind") or p.get("channel_kind") or "")
+    head = "💌" if ch == "message" else "📰"
+    title = str(p.get("title") or "").strip()
+    author = str(p.get("author") or "").strip()
+    recipient = str(p.get("recipient") or "").strip()
+    fmt = str(p.get("format_name") or "").strip()
+    body = str(p.get("body") or "").strip()
+    if not body:
+        return ""
+    bits = [b for b in (title, fmt) if b]
+    line = f"{head} " + (" · ".join(bits) if bits else "도착물")
+    if author and recipient:
+        line += f" — {author} → {recipient}"
+    elif author:
+        line += f" — {author}"
+    return f"{line}\n{body[:1200]}"
+
+
 _MEDIA_SCHEMA = {
     "bulletin": '"bulletin": [{"board_name": "게시판 이름(장르에 맞게)", "author": "작성자 이름/직함", "title": "제목", "body": "본문"}]',
     "sns": '"sns": [{"feed_name": "SNS 이름(장르에 맞게)", "author": "작성자", "body": "본문"}]',
@@ -1062,6 +1220,9 @@ async def _build_board_prompt(
         task_parts.append(f"""{task_num}. **message** — {post_label}, each FROM a DIFFERENT sender TO one named recipient.
 {_MEDIA_CONTRACT['message']}""")
         output_fields.append("  " + _MEDIA_SCHEMA["message"])
+        _fmt_hint = mail_format_hint(channel_id)
+        if _fmt_hint:
+            task_parts.append(_fmt_hint)     # [2026-09-07 P10] 선언된 도착물 형식 이름 1줄
 
     task_text = "\n\n".join(task_parts)
     output_text = ",\n".join(output_fields)
@@ -1190,7 +1351,7 @@ async def generate_posts(
 _VOICE_LABEL_KR = {"speech": "말투", "core": "성격"}
 
 
-def _voice_meta(npc_data: Dict[str, Any], npc_name: str) -> List[str]:
+def _voice_meta(npc_data: Dict[str, Any], npc_name: str, channel_id: Optional[str] = None) -> List[str]:
     """시트 → POSTING NPC 메타 조각 목록. 재료 없음·digest 불가 = [] (줄 생략).
 
     `npc_manager.build_voice_digest`(은닉 3종 방어 내장)의 반환을 기존 섹션 형식에 맞춰
@@ -1199,7 +1360,7 @@ def _voice_meta(npc_data: Dict[str, Any], npc_name: str) -> List[str]:
     """
     try:
         import npc_manager as _npm
-        frags = _npm.build_voice_digest(npc_data, npc_name)
+        frags = _npm.build_voice_digest(npc_data, npc_name, channel_id=channel_id)   # [시트 2차b] 페이지 lore 절 직접
     except Exception as e:
         logger.debug(f"[WorldBoard] voice digest skipped ({npc_name}): {e}")
         return []
@@ -1250,8 +1411,13 @@ async def _build_event_prompt(
     channel_id: str,
     event: Dict[str, Any],
     channel_type: str,
+    frame: str = "",
 ) -> str:
-    """이벤트 맞춤 프롬프트. 기존 대비 ~50% 축소."""
+    """이벤트 맞춤 프롬프트. 기존 대비 ~50% 축소.
+
+    [2026-09-13 P14] `frame` = 선언된 편지 틀(코드 칸이 이미 채워진 것). 있으면 스키마 대신
+      "이 틀의 두 칸만 써라"가 된다 — 봉투·머리·서식은 유저 저작이고 글만 모델 몫이다.
+    """
     world = domain_manager.get_world_state(channel_id)
     try:
         import game_world as _gw
@@ -1285,7 +1451,7 @@ async def _build_event_prompt(
         #   담고, `{{char}}` 플레이스홀더 치환·조각 캡까지 한다. 여기서 바뀌는 건 **재료
         #   원천뿐**이고 섹션 형식(`k: v`를 ` | `로 이은 한 줄)은 그대로다.
         #   빈 반환이면 구 코드와 같이 줄(조각)이 아예 없다.
-        meta.extend(_voice_meta(npc_data, npc_name))
+        meta.extend(_voice_meta(npc_data, npc_name, channel_id))
         npc_section = f"Name: {npc_name}\n" + " | ".join(meta) if meta else f"Name: {npc_name}"
 
         # NPC 태도/감정
@@ -1303,20 +1469,20 @@ async def _build_event_prompt(
             _a = str(att["attitude"]).strip()
             if _a and _a.lower() != "null":
                 _att_bits.append(_a)
-        if channel_type == "message":
-            _aff = event.get("_sender_affinity")
-            _depth = _aff.get("depth") if isinstance(_aff, dict) else None
-            if not isinstance(_depth, (int, float)) and isinstance(att, dict):
-                _depth = att.get("depth")
-            if isinstance(_depth, (int, float)):
-                _att_bits.append(f"depth={int(_depth)}")
-            _tension = att.get("tension") if isinstance(att, dict) else None
-            if isinstance(_tension, (int, float)):
-                _att_bits.append(f"tension={int(_tension)}")
+        if channel_type == "message" and isinstance(att, dict):
+            # [2026-09-25 관계 정성] depth=/tension= 숫자 → 말(방향·마찰). 태도 이름은 위에서 이미 실었다.
+            try:
+                _rw = domain_manager.relation_words(att, with_attitude=False)
+            except Exception:
+                _rw = ""
+            if _rw:
+                _att_bits.append(_rw)
         if _att_bits:
             npc_section += f"\n태도: {', '.join(_att_bits)}"
 
-        emo = world.get("npc_emotion_states", {}).get(npc_key, {})
+        # [2026-09-15 §12] 부재 감쇠 항목 제외 — 추적기 병합 이전과 같은 집합만(출력 무변경).
+        from emotion_engine import present_emotion_states as _present_emo
+        emo = _present_emo(world, world.get("turn_index")).get(npc_key, {})
         # pair 스키마 v2: 'dominant' 제거 → base_label/modifier_label (full EmotionState.to_dict())
         if isinstance(emo, dict) and emo.get("base_label"):
             _base = emo.get("base_label", "")
@@ -1352,6 +1518,9 @@ async def _build_event_prompt(
     # 채널별 계약·스키마 — **라우팅된 종 하나만** 실린다(다른 매체의 문법은 이 프롬프트에 없다).
     media_contract = _MEDIA_CONTRACT.get(channel_type, _MEDIA_CONTRACT["sns"])
     json_schema = _MEDIA_SCHEMA.get(channel_type, _MEDIA_SCHEMA["sns"])
+    _fmt_hint = mail_format_hint(channel_id)
+    if _fmt_hint:
+        media_contract = f"{media_contract}\n{_fmt_hint}"
 
     # [2026-08-17] 이 사건이 만지는 세계 발췌. 쿼리 = 이벤트 브리핑 원문(detail_kr).
     #   자리는 **이벤트 앞** — 자료(공적 세계 지식)가 먼저 서고 이번 사건이 뒤에 온다
@@ -1388,13 +1557,27 @@ One post, written because of the event above and for no other reason.
 ## OUTPUT (JSON)
 ```json
 {{{json_schema}}}
-```"""
+```{_frame_block(frame)}"""
     return prompt
 
 
 # =========================================================
 # Discord Posting
 # =========================================================
+
+def _frame_block(frame: str) -> str:
+    """[2026-09-13 P14] 틀 블록. 틀이 없으면 "" — 종전 자유 본문 그대로다."""
+    f = str(frame or "").strip()
+    if not f:
+        return ""
+    return f"""
+
+## FORM (the declared stationery — already filled in where the code could)
+{f}
+Write ONLY the two slots: {MAIL_SLOT_BODY} and {MAIL_SLOT_SIGN}. Your "body" field is the whole
+form above with those two slots replaced — every other character stays exactly as printed,
+including labels, brackets, punctuation and line breaks. Nothing is added outside the form."""
+
 
 def _get_time_footer(channel_id: str) -> tuple:
     """공통 시간 정보 반환. V8.5: year/month 포함 마이그레이션 보장."""
@@ -1491,6 +1674,96 @@ def _mail_payload(post: Dict[str, Any], ch_name: str) -> Dict[str, Any]:
     }
 
 
+
+
+# =========================================================
+# [2026-09-13 P14] 착지 뒤 정산 둘 — 종전 꼬리를 함수로. 핸드아웃(declared)과 착지 경로가
+#   **같은 코드**를 타야 한다: 세계가 자기가 쓴 걸 기억하는 자리(중복 방지·핸들·쪽지 큐)를
+#   한쪽만 타면 그 경로의 글만 매번 같은 말을 다시 쓴다.
+# =========================================================
+
+def _queue_world_mail(channel_id: str, final_channel: str, items: List[Any],
+                      best_event: Dict[str, Any], current_turn: int) -> None:
+    """[2026-08-17 쪽지 서사 접지] 사적 도착물 → 1턴 큐(다음 턴 좌뇌 서사 콜 재료).
+
+    공지·SNS는 공적 매체라 제외 — "나한테 온 것"이 아니면 답장하지 않은 편지도 아니다.
+    """
+    if final_channel != "message":
+        return
+    try:
+        import narrative_queries as _nq_mail
+        _post0 = next((p for p in items if isinstance(p, dict) and p.get("body")), {})
+        _nq_mail.queue_world_mail(
+            channel_id,
+            sender=str(_post0.get("from") or _post0.get("author") or
+                       best_event.get("npc") or ""),
+            kind=str(_post0.get("format_name") or ""),
+            summary=str(_post0.get("body") or ""),
+            turn=current_turn,
+        )
+    except Exception as e:
+        logger.debug(f"[WorldBoard] world mail queue skipped: {e}")
+
+
+def _update_board_state(channel_id: str, best_event: Dict[str, Any], final_channel: str,
+                        posts: Dict[str, Any], posted_count: int, current_turn: int) -> None:
+    """게시 뒤 세계 상태 적립 — 카운트·NPC 이력·타입 이력·시계 마일스톤·요약·핸들.
+
+    ⚠`last_post_turn` 은 **게이트가 아니다**(P14 에서 턴 간격 게이트 소멸). 마지막 게시가
+      언제였나는 여전히 사실이라 남긴다 — 읽는 쪽이 없어졌을 뿐이다.
+    """
+
+    world = domain_manager.get_world_state(channel_id)
+    board_state = world.get("world_board", {})
+
+    # 기본 카운트
+    board_state["total_posts"] = board_state.get("total_posts", 0) + posted_count
+    board_state["last_post_turn"] = current_turn
+
+    # NPC 포스트 히스토리 (쿨다운용, max 10)
+    npc_history = board_state.get("npc_post_history", [])
+    npc_history.append({
+        "npc": best_event.get("npc", ""),
+        "turn": current_turn,
+        "channel": final_channel,
+        "type": best_event.get("type", ""),
+    })
+    board_state["npc_post_history"] = npc_history[-10:]
+
+    # 이벤트 타입 히스토리 (반복 감쇠용, max 3)
+    recent_types = board_state.get("recent_event_types", [])
+    recent_types.append(best_event.get("type", ""))
+    board_state["recent_event_types"] = recent_types[-3:]
+
+    # 시계 마일스톤 추적
+    tag = best_event.get("tag", "")
+    if tag.startswith("clock_"):
+        milestones = board_state.get("posted_clock_milestones", [])
+        milestone_key = tag.replace("clock_complete:", "").replace("clock_half:", "")
+        suffix = "complete" if "complete" in tag else "half"
+        milestones.append(f"{milestone_key}:{suffix}")
+        board_state["posted_clock_milestones"] = milestones[-20:]
+
+    # [2026-09-24 감사] 해소 스레드 게시 기록 — Scanner 8 이 같은 해소를 다시 내지 않게.
+    if best_event.get("type") == "thread_resolved" and best_event.get("thread"):
+        done = board_state.get("posted_resolved_threads", [])
+        done = list(done) if isinstance(done, list) else []
+        if best_event["thread"] not in done:
+            done.append(str(best_event["thread"]))
+        board_state["posted_resolved_threads"] = done[-20:]
+
+    # world_change 인덱스 추적
+    if best_event.get("type") == "world_change":
+        session_mem = domain_manager.get_session_ai_memory(channel_id)
+        wc = session_mem.get("world_changes", [])
+        board_state["last_world_change_idx"] = len(wc)
+
+    world["world_board"] = board_state
+    domain_manager.update_world_state(channel_id, world)
+    _save_post_summaries(channel_id, posts)
+    _update_handle_registry(channel_id, posts)
+
+
 async def trigger_board_update(
     channel: discord.TextChannel,
     client,
@@ -1500,64 +1773,92 @@ async def trigger_board_update(
     extra_context: str = "",
     dai: Optional[Dict[str, Any]] = None,
     prose_message: Optional[discord.Message] = None,
-) -> None:
+    deliver: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """[2026-09-24 감사] 얇은 래퍼 — 본체는 `_trigger_board_update`(docstring 그쪽).
+
+    선언 핸드아웃(`trigger="declared"`)이 무산되면(None·예외) 소비된 선언 행을 보류 알림으로
+    되돌린다(`restore_arrival_request`). 본체엔 None 을 내는 자리가 여섯이라 한 곳에서 문다.
+    """
+    try:
+        result = await _trigger_board_update(
+            channel, client, model_id, channel_id, trigger=trigger,
+            extra_context=extra_context, dai=dai, prose_message=prose_message,
+            deliver=deliver)
+    except BaseException:
+        if trigger == "declared":
+            restore_arrival_request(channel_id, deliver)
+        raise
+    if result is None and trigger == "declared":
+        restore_arrival_request(channel_id, deliver)
+    return result
+
+
+async def _trigger_board_update(
+    channel: discord.TextChannel,
+    client,
+    model_id: str,
+    channel_id: str,
+    trigger: str = "turn",
+    extra_context: str = "",
+    dai: Optional[Dict[str, Any]] = None,
+    prose_message: Optional[discord.Message] = None,
+    deliver: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
     """이벤트 드리븐 게시판 트리거 (v2). 이벤트 없으면 0 API 콜.
 
     [2026-08-16 도착물 라우트] prose_message = 이번 턴 산문의 **마지막** 메시지.
     착지 모드가 button 인 채널종은 스레드 대신 이 메시지에 💌를 사후 부착한다.
+
+    [2026-09-13 P14 핸드아웃] `trigger="declared"` = 도착물이 **산문의 입력**인 모드.
+      생산자는 그대로다(같은 이벤트 수집·같은 프롬프트·같은 콜 1). 다른 건 세 가지뿐:
+        · 게이트 우회 — 부른 쪽이 이미 "지금이다"를 말했다(턴 간격 게이트는 P14 에서 소멸).
+        · 착지를 **안 한다** — 산문이 아직 없으니 붙일 메시지가 없다. 산출을 **반환**하고
+          표시(봉투/임베드)·적립은 호출부(orchestration 4.75)가 산문 **앞**에서 한다.
+        · `deliver` = 선언이 정한 것(kind·from·brief·format_name). `kind` 가 있으면 채널종을
+          강제하고, 없으면(=`arrival` 신호) 종전대로 dai 이벤트가 고른다.
+      반환 `{"channel_kind", "kind"(turn_mail), "payload", "event"}` — 실패·무발화는 None.
     """
+    declared = (trigger == "declared")
+    req = deliver if isinstance(deliver, dict) else {}
     # 모듈 활성 체크
     modules = domain_manager.get_active_modules(channel_id)
     if "board" not in modules:
-        return
+        return None
 
     # 활성 채널 확인
     enabled_channels = get_board_channels(channel_id)
     if not any(enabled_channels.values()):
-        return
+        return None
 
-    # 최소 간격 게이트 (빈도 설정을 최소 간격으로 재해석)
+    # ⚰[2026-09-13 P14] 턴 간격 게이트(2단: 조기탈출 + 라우팅 후 재판정) 삭제 — 파일 머리 묘비 참조.
     world = domain_manager.get_world_state(channel_id)
     current_turn = world.get("turn_index", 0)
-    board_state = world.get("world_board", {})
-    last_post_turn = board_state.get("last_post_turn", 0)
-    # [2026-08-16 도착물 라우트 §4] 구: `get_board_frequency(channel_id)` — 인자 없이 부르면
-    #   **전역 기본값만** 읽는다. 그래서 `!게시판 빈도 sns 5`는 저장은 되고 실효는 0이었다
-    #   (명령 UI가 채널별 빈도를 표시하는데 게이트는 안 보던 자리). 채널종별 빈도가 살려면
-    #   라우팅 뒤에 재판정해야 하는데, 라우팅 전엔 어느 종인지 모른다 → **2단 게이트**:
-    #   여기선 활성 채널종 중 **가장 짧은** 빈도로 조기 탈출만(계산 낭비 방지, API 콜 0),
-    #   실제 판정은 라우팅 직후 그 종의 빈도로 한다.
-    if trigger == "turn":
-        _enabled_freqs = [get_board_frequency(channel_id, ch)
-                          for ch, on in enabled_channels.items() if on]
-        _min_gate = min(_enabled_freqs) if _enabled_freqs else get_board_frequency(channel_id)
-        if current_turn - last_post_turn < _min_gate:
-            return
 
-    # 이벤트 수집
-    events = _collect_board_events(channel_id, dai or {})
-    if not events:
-        return
-
-    # 최고 weight 이벤트 선택
-    best_event = _select_best_event(events, channel_id)
-    if not best_event:
-        return
-
-    # 채널 라우팅
     absent_npcs = _get_absent_npcs(channel_id)
-    final_channel = _route_event_channel(best_event, enabled_channels, absent_npcs)
-    if not final_channel:
-        return
+    if declared and str(req.get("kind") or ""):
+        # 선언이 종류를 정했다 — 이벤트 수집·선별을 건너뛰고 **선언 자체가 이벤트**다.
+        #   (무엇을 쓸지는 brief 가, 누가 쓸지는 from 이 말한다. 코드는 본문을 안 쓴다.)
+        final_channel = DELIVER_CHANNEL.get(str(req.get("kind")), "message")
+        if not enabled_channels.get(final_channel):
+            logger.info(f"[WorldBoard] declared dropped (channel off) ch={final_channel}")
+            return None
+        best_event = _declared_event(req, final_channel)
+    else:
+        # 이벤트 수집
+        events = _collect_board_events(channel_id, dai or {})
+        if not events:
+            return None
 
-    # [2026-08-16 도착물 라우트 §4] 라우팅된 채널종의 실제 빈도로 재판정.
-    if trigger == "turn":
-        _ch_interval = get_board_frequency(channel_id, final_channel)
-        if current_turn - last_post_turn < _ch_interval:
-            logger.debug(
-                f"[WorldBoard] gate ch={final_channel} interval={_ch_interval} "
-                f"since={current_turn - last_post_turn} → skip")
-            return
+        # 최고 weight 이벤트 선택
+        best_event = _select_best_event(events, channel_id)
+        if not best_event:
+            return None
+
+        # 채널 라우팅
+        final_channel = _route_event_channel(best_event, enabled_channels, absent_npcs)
+        if not final_channel:
+            return None
 
     # [2026-08-16 도착물 라우트] 착지 모드 판정 — **Flash 콜 앞**에서 한다.
     #   off = 드롭(콜 0). button 인데 붙일 산문 메시지가 없는 경로(!시간 진행 등)도 여기서
@@ -1568,21 +1869,25 @@ async def trigger_board_update(
     #   순증하고, 그 산출이 _save_post_summaries·_update_handle_registry 를 통해 다음 턴
     #   프롬프트 재료로 흘러든다 — 즉 "표시만 끈" 게 아니라 **보이지 않는 세계가 계속 자란다**.
     #   끄기는 끄기여야 한다. 이력이 필요하면 button 을 쓰면 되고, 그건 이미 저장된다.
+    # [2026-09-13 P14] declared 는 착지 판정 밖이다 — 산문 **앞** 제 메시지로 서므로
+    #   "붙일 산문 메시지"도 "공개 스레드"도 묻지 않는다. off 만은 존중한다(끄기는 끄기다).
     display_mode = get_display_mode(channel_id, final_channel)
     if display_mode == "off":
         logger.info(f"[WorldBoard] dropped (display=off) ch={final_channel} "
                     f"event={best_event.get('tag', '?')}")
-        return
-    if display_mode == "button" and prose_message is None:
+        return None
+    if not declared and display_mode == "button" and prose_message is None:
         logger.info(f"[WorldBoard] dropped (display=button, no prose message) "
                     f"ch={final_channel} trigger={trigger}")
-        return
+        return None
 
     # 이벤트 맞춤 프롬프트로 Flash 콜
     # [2026-08-17 light 라우트] 감싸는 건 **실제 LLM 콜**(generate_posts)뿐이다 —
     #   프롬프트 빌더(_build_event_prompt)는 임베딩만 쓰고(_map_model 무관) 라우팅 대상이 아니다.
     #   contextvar 라 generate_posts → api_call_with_retry → 백엔드까지 await 를 타고 살아간다.
-    prompt = await _build_event_prompt(client, channel_id, best_event, final_channel)
+    _frame = mail_frame(channel_id, str(req.get("format_name") or "")) if declared else ""
+    prompt = await _build_event_prompt(client, channel_id, best_event, final_channel,
+                                       frame=_frame)
     active_channels = {final_channel: True}
     with config.light_call():
         posts = await generate_posts(
@@ -1593,7 +1898,27 @@ async def trigger_board_update(
         )
     if not posts:
         logger.info(f"[WorldBoard] Flash returned empty for event={best_event.get('tag', '?')}")
-        return
+        return None
+
+    # [2026-09-13 P14] declared — 착지 대신 **반환**. 상태 적립(중복 방지 재료)은 종전과 같은
+    #   함수를 탄다: 핸드아웃이라고 세계가 자기가 쓴 걸 잊으면 다음 글이 같은 말을 다시 쓴다.
+    if declared:
+        _raw = posts.get(final_channel)
+        _items = _raw if isinstance(_raw, list) else [_raw] if _raw else []
+        _post = next((p for p in _items if isinstance(p, dict) and p.get("body")), None)
+        if not _post:
+            logger.info("[WorldBoard] declared: 본문 없는 산출 → 핸드아웃 없음")
+            return None
+        if str(req.get("format_name") or "") and not _post.get("format_name"):
+            _post["format_name"] = str(req.get("format_name"))
+        _update_board_state(channel_id, best_event, final_channel, posts, 1, current_turn)
+        _queue_world_mail(channel_id, final_channel, _items, best_event, current_turn)
+        return {
+            "channel_kind": final_channel,
+            "kind": BOARD_MAIL_KIND.get(final_channel, "mail"),
+            "payload": _mail_payload(_post, final_channel),
+            "event": best_event,
+        }
 
     # Discord에 착지 — [2026-08-16 도착물 라우트] thread(종전) / button(그 턴 메시지 💌).
     posted_count = 0
@@ -1645,64 +1970,13 @@ async def trigger_board_update(
     #   자리가 여기인 이유: 착지 모드(button/thread) 둘 다를 지나는 **유일한 합류점**이라
     #   한 번만 적재된다(모드별로 걸면 이중 적재나 한쪽 결손이 난다).
     #   공지·SNS는 공적 매체라 제외 — "나한테 온 것"이 아니면 답장하지 않은 편지도 아니다.
-    if posted_count > 0 and final_channel == "message":
-        try:
-            import narrative_queries as _nq_mail
-            _post0 = next((p for p in items if isinstance(p, dict) and p.get("body")), {})
-            _nq_mail.queue_world_mail(
-                channel_id,
-                sender=str(_post0.get("from") or _post0.get("author") or
-                           best_event.get("npc") or ""),
-                kind=str(_post0.get("format_name") or ""),
-                summary=str(_post0.get("body") or ""),
-                turn=current_turn,
-            )
-        except Exception as e:
-            logger.debug(f"[WorldBoard] world mail queue skipped: {e}")
+    if posted_count > 0:
+        _queue_world_mail(channel_id, final_channel, items, best_event, current_turn)
 
     # 상태 업데이트
     if posted_count > 0:
-        world = domain_manager.get_world_state(channel_id)
-        board_state = world.get("world_board", {})
-
-        # 기본 카운트
-        board_state["total_posts"] = board_state.get("total_posts", 0) + posted_count
-        board_state["last_post_turn"] = current_turn
-
-        # NPC 포스트 히스토리 (쿨다운용, max 10)
-        npc_history = board_state.get("npc_post_history", [])
-        npc_history.append({
-            "npc": best_event.get("npc", ""),
-            "turn": current_turn,
-            "channel": final_channel,
-            "type": best_event.get("type", ""),
-        })
-        board_state["npc_post_history"] = npc_history[-10:]
-
-        # 이벤트 타입 히스토리 (반복 감쇠용, max 3)
-        recent_types = board_state.get("recent_event_types", [])
-        recent_types.append(best_event.get("type", ""))
-        board_state["recent_event_types"] = recent_types[-3:]
-
-        # 시계 마일스톤 추적
-        tag = best_event.get("tag", "")
-        if tag.startswith("clock_"):
-            milestones = board_state.get("posted_clock_milestones", [])
-            milestone_key = tag.replace("clock_complete:", "").replace("clock_half:", "")
-            suffix = "complete" if "complete" in tag else "half"
-            milestones.append(f"{milestone_key}:{suffix}")
-            board_state["posted_clock_milestones"] = milestones[-20:]
-
-        # world_change 인덱스 추적
-        if best_event.get("type") == "world_change":
-            session_mem = domain_manager.get_session_ai_memory(channel_id)
-            wc = session_mem.get("world_changes", [])
-            board_state["last_world_change_idx"] = len(wc)
-
-        world["world_board"] = board_state
-        domain_manager.update_world_state(channel_id, world)
-        _save_post_summaries(channel_id, posts)
-        _update_handle_registry(channel_id, posts)
+        _update_board_state(channel_id, best_event, final_channel, posts,
+                            posted_count, current_turn)
 
     logger.info(
         f"[WorldBoard] Posted {posted_count} event={best_event.get('tag', '?')} "

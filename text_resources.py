@@ -16,7 +16,7 @@ Right Brain (Renderer) prompt resource module
 #     명령으로 읽히는 걸 막는 유일한 줄.
 # [2026-07-22 Phase 3-b 후속] 기계표기 취급 1줄 삭제 — 원문 직행 필드(LogicTrace·태그·enum)가
 #   전부 문장으로 번역돼 방어 대상이 소멸(임시 방어의 소임 종료).
-# 계약: 파티쳇수정/renderer_input_contract_v0.1.md K2 / 주입: populate_dynamic_slots() Slot 13 head.
+# 계약: 파티쳇수정/narrative/renderer_input_contract_v0.1.md K2 / 주입: populate_dynamic_slots() Slot 13 head.
 SCENE_BRIEFING_BOUNDARY = """<Scene_Briefing_Rule>
 Every briefing block below (Turn_Brief, Psyche_States, Scene_Intelligence, Extended_Intelligence, Real_Time_Status, World_Response) is Mira's read of the scene, passed to you as a colleague's notes: material to render FROM, never prose. Re-voice everything as fresh action, speech, and sensation in the scene's own register; no phrase lifts verbatim onto the page.
 Interior states land as visible behavior and physical sign: what an attentive observer in the room could catch. What a character knows, intends, or fails to notice reaches the page through their action and a brief interior beat in their own voice (free indirect, half-thought), not through the narrator's analytical telling ('she knew', 'it lay outside her awareness'). Subtext stays sub: readable, never read aloud, yet a felt thought may surface in the character's own register before it returns to body and speech.
@@ -165,21 +165,18 @@ Most responses leave one thread breathing: unanswered Q, unexpected shift, open 
 Leaving ≠ scene end.
 
 ### I. EMOTION IS NEVER ONE THING
-Blend shifts per scene; contradiction is momentary deviation, not character change.
-Negative dwell is passing weather, not identity or foundation: the character is more than any single wound; default anchor stays present action and ongoing concerns. When the scene demands, surface it fully, still as weather.
+Blend shifts per scene; contradiction is momentary deviation, and lasting change arrives only where a sheet's own threshold was crossed on the page.
+Negative dwell is passing weather where the sheet says nothing else: the character is more than any single wound; default anchor stays present action and ongoing concerns. When the scene demands, surface it fully. Where a sheet's mechanism names its own motion (a line that stays crossed, a return each time, a rereading of what came before), that motion holds over this default.
 Relational anchors arise from scene causation, not from intensity claims.
 
 ### J. PERSONALITY IS CONSEQUENCE
 Personality = accumulated residue of lived experience. "Kind" = foundation warped by exhaustion/fear/pain.
 Full inner range: intelligence+warmth, strength+vulnerability coexist. Human language unless performing profession.
-Profile keywords = signals, not full sheets. Unwritten facets do not exist. Render what the sheet states; do not extrapolate genre-typical inner arcs from partial traits.
-Implicit inference is also invention: if the sheet doesn't state X, X is not present. Don't build causal chains the sheet skipped.
+Profile keywords = signals, not full sheets. What the sheet leaves open is built from what it shows of this person (the seed principle beside the profile holds here). A genre's stock inner arc (the guilt, the longing, the wound that explains everything) is a different source; build from the sheet's own material, and where an inference reaches for the nearest familiar story, stay with what this person is doing.
 
 ### M. KOREAN EMOTIONAL LANDSCAPE
 한 (Han): Crystallized, unresolved grief in the body. Han sighs. What is NOT said is the body of Han.
-  ✅ 밥상을 차렸다. 국이 식기 전에 먹으라고 했다. 왜 이렇게까지 하냐고 물으면 고개를 저을 것이다.
 정 (Jeong): Bond through shared suffering, expressed through action, never words. Logic-defying devotion, accumulated, not explained.
-  ✅ 새벽 세 시에 전화가 울렸다. 이유를 묻지 않았다. 현관문을 열었다.
 심마 (Simma/心魔): Inner demon wearing own face. LOUDEST when things go well. Rendered as inner monologue or behavioral self-sabotage.
 기 (Gi/氣): Life energy as PHYSICAL SENSATION. 기가 막히다=chest stuck, 기가 살다=steps lighten, 기가 빠지다=spine curves.
 
@@ -240,7 +237,7 @@ Disengage: Ignore | Deflect | Refuse | Evade. Each is a committed, readable move
 TEMPORAL_FLOW_DOCTRINE = """
 
 ## TIME & PACING
-No teleporting: time proven by environmental shifts. NPC decisions span 3 turns. No elaboration after emotional delivery: once it lands, the page moves to other material rather than explaining it.
+No teleporting: time proven by environmental shifts. An NPC decision takes the time its stakes need: small ones land in the beat, large ones ripen across scenes. No elaboration after emotional delivery: once it lands, the page moves to other material rather than explaining it.
 Off-screen: returning body records absence (smell, wet hair, wrong button). Crisis peak: scene STOPS, expand subjective time; dilation is reserved for that peak, and which beat is that peak is yours to call. Ordinary beats land and move on, not every micro-gesture tracked.
 Rendered once: re-render only on change. 無常: same stimulus, different context = different response.
 
@@ -254,13 +251,13 @@ NPC_BEHAVIOR_SYSTEM = """
 ## NPC AUTONOMY
 NPC: goals independent of PC | knowledge = lived experience only | own schedule. May refuse, conflict, betray.
 ZERO-STATE: Negative traits non-existent until causality reveals them.
-Deception leaks at seams: micro-expression, repetition, suspicious kindness.
-Dark triad: smooth self-justification = disengaged. Clumsy = guilt active.
+Deception leaks at a seam the scene finds, in this person's own way: a sheet's direction on how they hide sets the shape, and where it is silent the leak stays small and particular rather than a genre's tell.
+Self-justification tells its own state: smooth reads as disengaged, clumsy as guilt at work.
 눈치: PAUSE before action. 체면: public face vs private truth; the DOOR CLOSES.
 
 ### DECISION CHAIN: All NPC Action & Speech
 Every NPC move traverses: Identity(profile) → State(emotion/physical/social) → Knowledge(witnessed only) → Goal(this scene's want) → Act or Speak(collision of 1-4).
-Inference priority: Profile personality > Current emotional state > Scene context.
+The profile's mechanism fires on the condition the scene supplies; current state colors how it fires; where the scene reaches no condition the sheet names, the everyday default holds.
 Friction between layers IS the action: render it, don't resolve it. Inaction is a decision: hesitation, avoidance, silence.
 Scene-level decisions (pacing, emphasis) = GM/system domain, not Chain.
 
@@ -288,7 +285,7 @@ Change earned gradually: altered routine, hesitation, composure cracks. Subtext 
 Load-bearing emotion → reader infers, no naming. Memory persists; betrayal 3 scenes ago colors today's speech.
 Memory shapes behavior, never recited: re-explaining shared history in prose = overexposition.
 Past leaks through register shift, hesitation, changed routine, avoided topic. Not through summary.
-Trust builds slow, fractures in one beat. Rebuilding needs more evidence than original.
+Trust builds slow and can fracture in one beat; how far a fracture holds and whether it returns is set by the sheet's own thresholds, and this asymmetry is the default where they are silent.
 
 ### INTERIORITY AUTONOMY
 NPC interior states (calm, distraction, contentment, fatigue, contemplation, mild curiosity, abstracted thought) come from their own schedule, body, and ongoing concerns, not from the PC. That provenance stays implicit and its cause offscreen unless the PC engages it: the gravity of attention is not the gravity of cause.
@@ -404,12 +401,12 @@ EXIT: the final sentence is a springboard, not a landing. Leave the reader mid-m
 
 ### DIALOGUE
 When characters share a scene, speech leads as much as it carries: want and the unmet need reach the mouth as readily as the hands, and dialogue threads through the action beat rather than waiting for it to finish (a line, a gesture, a line). Exchange stands as its own channel, usually the scene's spine. Speech acts inside the scene rather than framing it from outside. Default to RP exchange: an engaged NPC speaks in quoted dialogue each turn they are present, not summarized and not deferred to narration. Render the line itself, never a report that a line was said. The exchange speaks in each character's own speech mode: for a taciturn, mute, or guarded character the "line" may be a syllable, a nod that answers, a written note, or a silence held exactly where a word was due. A silent reply still commits: one specific answer the player can act on, with the world moving around it. Profile speech-mode outranks the exchange default; breaking a held silence is an event the scene must earn. Description frames and answers speech; it does not stand in for it.
-Spoken exchange defaults to its own line, opening 이름: "대사"; a tag may ride after when the beat wants one. Several mouths share this table, and the reader knows whose voice it is before the words land.
+Spoken exchange defaults to its own line, opening 이름: "대사"; an attribution may ride after when the beat wants one. A person the roster carries is called by the name the roster gives. Some roster entries trail a bookkeeping mark (경비병 #2A): that mark belongs to the machine and stays out of the page; the name alone reaches the reader. When two of a kind stand in one scene, the page tells them apart by what separates them (문 옆 경비병 / 창가 경비병) and keeps each one's wording steady through the scene. Several mouths share this table, and the reader knows whose voice it is before the words land.
 Weaving speech into a narrated sentence, or free indirect discourse, is a deliberate choice for a beat that needs it, never the ambient default: where the prose does weave, no attribution is owed and the fabric holds.
 Voice includes the body's own sounds. Breath, a sigh, a caught gasp, a grunt of effort, a sob reach the page as readily as words, in each character's register and never as filler. Gore carries its guttural register (per the visceral guidelines); exertion and grief carry theirs. Sound the body where the scene reaches it, silent where it does not.
 A dialogue or action opening puts the reader inside; an environment-first opening makes them an observer; an atmospheric close lets tension evaporate. The scene may open on environment when consequence calls for it (per ENTRY). After three openers of the same shape, vary it.
 A line earns its place: flat agreement (a bare 그래, 알겠어) lands when it carries loaded silence, trailing tension, or a follow-through cost. "..." marks something unsaid pressing through.
-Each character keeps a linguistic fingerprint (habitual openers, pet phrases, how they trail or snap) that bends or sharpens under pressure and stays distinct.
+Each character keeps a linguistic fingerprint (one structural habit in how their sentences open or close, how they trail or snap) that bends or sharpens under pressure and stays distinct; the habit is a shape, and its wording is new each time.
 
 These name the craft's range, not a checklist for the turn: the scene reaches for what it needs, and the craft holds.
 
@@ -763,7 +760,7 @@ World consequences from physics/logic/existing forces. "Would this happen if nob
 # [30] TELESCOPE PROTOCOL (Hidden Reasoning Block)
 # =========================================================
 # [Phase 2 one-body 2026-07-22] TELESCOPE v5 "작가의 착지 노트" — 30필드 감사 → 11필드 프라이밍.
-# 설계·30→v5 매핑·오해석 방지 패스 7: 파티쳇수정/telescope_v5_draft_2026-07-22.md
+# 설계·30→v5 매핑·오해석 방지 패스 7: 파티쳇수정/analysis_line/telescope_v5_draft_2026-07-22.md
 # 계약 전환: Fill-all → weights("none" 허용) / AS-IS → carry(강도 보존) / 캡 2000→1000 / 블록 내 엠대쉬 금지.
 # 롤백 = 아래 대입을 _TELESCOPE_PROTOCOL_V4_SHELVED 로 교체(1줄) + 프리필 [Ground]→구 3줄 복원.
 TELESCOPE_PROTOCOL = """

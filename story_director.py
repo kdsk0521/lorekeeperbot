@@ -291,7 +291,16 @@ class StoryDirector:
                 _st_state["last_planned_turn"] = _last_planned
                 try:
                     import domain_manager as _dm_beat
-                    _dm_beat.update_storyteller_state(_chan_beat, _st_state)
+                    # [2026-09-24 감사] 자기 키 두 개만 **최신 상태 위에** 얹는다. _st_state 는 waterfall 이 턴 앞에서 뜬
+                    #   사본이라 통째 저장하면 그 사이 쓰인 값 — 7단계 DiceEngine 의 recent_dice(→ 3연속 차단 영구 무발동),
+                    #   Doom climax 의 event_queue 삽입 — 을 옛 값으로 되덮었다.
+                    _fresh_st = _dm_beat.get_storyteller_state(_chan_beat)
+                    if not isinstance(_fresh_st, dict):
+                        _fresh_st = dict(_st_state)
+                    _fresh_st["next_beats"] = _beats
+                    _fresh_st["last_planned_turn"] = _last_planned
+                    _dm_beat.update_storyteller_state(_chan_beat, _fresh_st)
+                    _st_state = _fresh_st
                 except Exception as _e_persist:
                     logger.warning("[StoryDirector] Beat queue persist failed: %s", _e_persist)
                 # bus 쪽 복제본도 최신화 (같은 턴 내 다른 단계가 읽을 수 있음)
@@ -530,7 +539,10 @@ class StoryDirector:
         if chain_status not in ("CLOSED",) and chain_priority > 0:
             thread = {
                 "source": "narrative_chain",
-                "label": narrative_chain.get("current_thread", "main_plot"),
+                # [2026-09-24 감사] 서사 콜 스키마엔 current_thread 가 없다(topic_lock) — 가짜 이름 'main_plot'이
+                #   Slot 33 "This turn lands: Next beat: 'main_plot' …"로 최대 recency 자리에 박혔다.
+                "label": (narrative_chain.get("topic_lock") or narrative_chain.get("current_thread")
+                          or "the current thread"),
                 "priority": chain_priority,
                 "type": "continuation",
                 "chain_status": chain_status,
@@ -564,7 +576,9 @@ class StoryDirector:
             if isinstance(trigger, dict):
                 threads.append({
                     "source": "memory",
-                    "label": trigger.get("tag", trigger.get("key", "memory")),
+                    # [2026-09-24 감사] 스키마 키는 "trigger"(Theoria memory_triggers) — 'memory' 폴백 방지.
+                    "label": (trigger.get("trigger") or trigger.get("tag") or trigger.get("key")
+                              or trigger.get("echo") or "an old memory"),
                     "priority": 0.3,
                     "type": "memory_callback",
                 })
@@ -829,8 +843,9 @@ class StoryDirector:
         if '"' in s or '\n' in s:
             return None
         # Flash 제안 beat는 한국어 "다음 비트:" 프리픽스로 올 수 있음 → 둘 다 벗기고 영어로 통일(이중 프리픽스 방지)
-        for _pfx in ("Next beat:", "다음 비트:"):
-            if s.startswith(_pfx):
+        # [2026-09-24 감사] 스키마 예시가 소문자 "next beat: ..." — 대소문자 무시로 벗긴다("Next beat: next beat:" 방지).
+        for _pfx in ("next beat:", "다음 비트:"):
+            if s.lower().startswith(_pfx):
                 s = s[len(_pfx):].strip()
         s = f"Next beat: {s}"
         return s

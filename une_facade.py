@@ -27,6 +27,19 @@ def _cv_vigor(channel_id: str, user_id: str, mem: Dict[str, Any]) -> int:
         return int(src.get("value", 100) or 100)
 
 
+def _cv_composure(channel_id: str, user_id: str, mem: Dict[str, Any]) -> int:
+    """[2026-09-24 감사] 평형 = 레지스트리 값(P8b 이후 ai_memory.composure 는 이월 승계용으로 동결).
+    `_cv_vigor` 와 같은 문 — 폴백 계단은 custom_vars.composure_value 한 곳."""
+    try:
+        import custom_vars as _cv
+        return _cv.composure_value(channel_id, user_id, mem)
+    except Exception as e:
+        logger.debug(f"[CustomVar] 평형 조회 skip: {e}")
+        src = (mem or {}).get("composure") or {}
+        v = src.get("value", 100)
+        return int(v) if v is not None else 100
+
+
 def _to_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
@@ -72,7 +85,8 @@ def _collect_aspect_stance(aspects: Any) -> Tuple[List[str], List[str]]:
     for aspect in aspects:
         if not isinstance(aspect, dict):
             continue
-        name = str(aspect.get("name", "")).strip()
+        # [2026-09-24 감사] 스키마 키는 "text"(Theoria Aspects) — "name" 만 읽어 in favor/against 줄이 영구 미출력.
+        name = str(aspect.get("text") or aspect.get("name") or "").strip()
         if not name:
             continue
         stance = str(aspect.get("for_or_against", aspect.get("stance", ""))).strip().lower()
@@ -326,21 +340,7 @@ def _build_events_layer(context, bus) -> str:
         except Exception:
             pass
 
-    # Downtime activity (from dead code migration)
-    _dai_dt = bus.dai if isinstance(bus.dai, dict) else {}
-    _dt_rest = _dai_dt.get("rest_eval") or {}
-    _dt_activity = _dt_rest.get("activity", "rest")
-    if _dt_activity != "rest" and _dt_rest.get("detected"):
-        _dt_hints = {
-            "recover": "the PC spends time tending to injuries.",
-            "vice": "the PC spends time lost in indulgence.",
-            "train": "the PC throws themselves into training.",
-            "socialize": "the PC spends time among people.",
-            "project": "the PC focuses on their work.",
-        }
-        parts.append(_dt_hints.get(_dt_activity, "the PC spends the time with purpose."))
-        if _dai_dt.get("vice_overindulge"):
-            parts.append("the cost of indulgence has come back around.")
+    # [2026-09-06 P8b] 다운타임 산문 힌트 삭제 — 생산자(rest_eval)가 사라졌다. 신설 감지 0.
 
     if not parts:
         return ""
@@ -744,7 +744,8 @@ def _build_system_message(bus) -> str:
 
     doom = bus.doom if isinstance(bus.doom, dict) else {}
     # relief_log 제거 (2026-05-23) — legacy 위기진폭 잔재
-    for key in ("mental_pressure_log", "clock_log", "log"):
+    # [2026-09-06 P8b] mental_pressure_log 제거 — 페이즈 기반 회복 공식과 함께 생산자가 사라졌다.
+    for key in ("clock_log", "log"):
         val = doom.get(key)
         if val:
             chunks.append(str(val))
@@ -763,6 +764,143 @@ def _build_system_message(bus) -> str:
         deduped.append(text)
 
     return "\n".join(deduped).strip()
+
+# =========================================================
+# [2026-09-13 S2 T1] 재등장 인물 원문 근거 (recall_evidence)
+#   30창 밖으로 밀려난 인물이 이번 입력에 다시 불려 나왔을 때, 그 인물에 대한
+#   **로그 원문 행**을 Theoria(분석·JSON 입, echo 0)에만 넘긴다. 산문 입엔 안 간다.
+#   판정 ①=엄격: 입력에 있고 AND 30창에 없고 AND scene/nearby cast에도 없을 때만.
+# =========================================================
+import re as _re_recall
+
+_RECALL_WORDCHAR = _re_recall.compile(r"[0-9A-Za-z\uac00-\ud7a3]")
+
+
+def _recall_name_in_input(name: str, text: str) -> int:
+    """이름이 입력 텍스트에 '단어로' 나오면 그 위치, 아니면 -1.
+
+    2자 이하 이름은 **왼쪽 경계**만 요구한다(앞 글자가 한글/영문/숫자가 아님).
+    오른쪽은 한국어 조사가 붙으므로 경계를 요구하지 않는다("미라가", "미라는").
+    이 왼쪽 경계가 09-02·09-10에서 났던 "금"⊂"지금" 류 오탐을 막는다.
+    """
+    if not name or not text:
+        return -1
+    start = 0
+    while True:
+        i = text.find(name, start)
+        if i < 0:
+            return -1
+        if len(name) >= 3:
+            return i
+        if i == 0 or not _RECALL_WORDCHAR.match(text[i - 1]):
+            return i
+        start = i + 1
+
+
+def _recall_fmt_game_time(gt) -> str:
+    """game_time dict → '(작중 1년 3월 5일 14:00) ' 접두. 없으면 빈 문자열."""
+    if not isinstance(gt, dict):
+        return ""
+    try:
+        return (f"(작중 {gt.get('year', 1)}년 {gt.get('month', 1)}월 {gt.get('day', 1)}일 "
+                f"{int(gt.get('hour', 0)):02d}:{int(gt.get('minute', 0)):02d}) ")
+    except (TypeError, ValueError):
+        return ""
+
+
+def _build_recall_evidence(channel_id: str, user_input: str, history_text: str,
+                           anchors: dict) -> dict:
+    """재등장 인물별 로그 원문 행. 실패·해당 없음이면 빈 dict(키를 안 넣는다)."""
+    import config as _cfg
+    if not getattr(_cfg, "V10_HISTORY_EVIDENCE", False):
+        return {}
+    max_npcs = int(getattr(_cfg, "RECALL_EVIDENCE_MAX_NPCS", 3))
+    rows_per = int(getattr(_cfg, "RECALL_EVIDENCE_ROWS_PER_NPC", 2))
+    line_chars = int(getattr(_cfg, "RECALL_EVIDENCE_LINE_CHARS", 200))
+    search_limit = int(getattr(_cfg, "RECALL_EVIDENCE_SEARCH_LIMIT", 4))
+
+    text = user_input or ""
+    if not text or not channel_id:
+        return {}
+
+    import npc_manager as _nm
+    npcs = domain_manager.get_npcs(channel_id) or {}
+
+    # PC 마스크는 제외 (07-19 교훈: 명부 대조 코드는 PC 포함 여부를 항상 점검).
+    pc_masks = set()
+    for _pc in (anchors.get("all_pcs") or {}).values():
+        _m = (_pc or {}).get("mask")
+        if _m:
+            pc_masks.add(str(_m))
+
+    cast = list(anchors.get("scene_cast") or []) + list(anchors.get("nearby_cast") or [])
+
+    def _in_cast(nm: str) -> bool:
+        return any(nm and c and (nm in str(c) or str(c) in nm) for c in cast)
+
+    # 후보: 이름 + aliases → 대표 이름(키)로 접는다.
+    hits = []  # (pos, canon, matched)
+    for canon, data in npcs.items():
+        if not isinstance(canon, str) or canon in pc_masks:
+            continue
+        try:
+            if _nm.get_npc_status(data) == "dead":
+                continue
+        except Exception:
+            pass
+        names = [canon]
+        for a in ((data or {}).get("aliases") or []):
+            if isinstance(a, str) and a and a not in pc_masks:
+                names.append(a)
+        best = -1
+        matched = canon
+        for nm in names:
+            pos = _recall_name_in_input(nm, text)
+            if pos < 0:
+                continue
+            # 엄격: 30창에 있으면 재등장이 아니다 / 무대·근접에 있어도 아니다.
+            if nm in (history_text or "") or _in_cast(nm):
+                best = -1
+                break
+            if best < 0 or pos < best:
+                best = pos
+                matched = nm
+        if best >= 0 and not _in_cast(canon) and canon not in (history_text or ""):
+            hits.append((best, canon, matched))
+
+    hits.sort(key=lambda x: x[0])
+    hits = hits[:max_npcs]
+    if not hits:
+        return {}
+
+    import sqlite_store as _ss
+    out = {}
+    rows_total = 0
+    for _pos, canon, matched in hits:
+        try:
+            rows = _ss.search_history_log(channel_id, matched, limit=search_limit) or []
+        except Exception as _e_q:
+            logger.debug(f"[Evidence] T1 search skip {canon}: {_e_q}")
+            continue
+        rows = rows[:rows_per]          # search_history_log는 최신순
+        if not rows:
+            continue                     # 행 0이면 그 인물 생략
+        lines = []
+        for r in reversed(rows):         # 렌더는 오래된→최신
+            if not isinstance(r, dict):
+                continue
+            content = str(r.get("content") or "")[:line_chars]
+            if not content:
+                continue
+            lines.append(f"{_recall_fmt_game_time(r.get('game_time'))}{r.get('role')}: {content}")
+        if lines:
+            out[canon] = lines
+            rows_total += len(lines)
+
+    if out:
+        logger.info(f"[Evidence] T1 recall npcs={len(out)} rows={rows_total}")
+    return out
+
 
 def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore_chunks_ranked: list = None) -> GameContext:
     """[UNE Bridge] ParticipantData -> GameContext"""
@@ -812,12 +950,11 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
     lore_text = domain_manager.get_lore(channel_id)
 
     # Narrative Anchors (행동자 PC)
+    # [2026-09-16 시트 2차 §8 뷰 하나] 서술 = get_unified_player_info의 좌뇌용 모양(PC 페이지 절).
+    _pc_anchor = domain_manager.get_unified_player_info(channel_id, user_id, shape="anchor")
     anchors = {
         "channel_id": channel_id,
-        "appearance": mem.get("appearance", ""),
-        "personality": mem.get("personality", ""),
-        "background": mem.get("background", ""),
-        "relations": mem.get("relationships", {}),
+        "sheet": _pc_anchor.get("sheet", ""),
         "passives": mem.get("passives", []),
         "status_effects": p_data.get("status_effects", []) if p_data else [],
         "inventory": game_character.migrate_notebook_to_inventory(mem.get("inventory", [])).get("items", []),
@@ -832,19 +969,21 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
             pmem = pdata.get("ai_memory", {})
             all_pcs[uid] = {
                 "mask": pdata.get("mask", "Unknown"),
-                "appearance": pmem.get("appearance", ""),
-                "personality": pmem.get("personality", ""),
+                "sheet": domain_manager.get_unified_player_info(channel_id, uid, shape="anchor").get("sheet", ""),
                 "passives": pmem.get("passives", []),
                 # [Phase 2.5] 기력은 레지스트리 우선(PC별 슬롯), 없으면 옛 자리 폴백.
                 "vigor_value": _cv_vigor(channel_id, uid, pmem),
-                "composure_value": pmem.get("composure", {}).get("value", 100),
+                "composure_value": _cv_composure(channel_id, uid, pmem),  # [2026-09-24 감사] 동결된 옛 자리 읽기 교정
             }
     anchors["all_pcs"] = all_pcs
     anchors["acting_user_id"] = user_id
 
     # NPC Knowledge & Attitudes (피드백용)
     anchors["stored_npc_knowledge"] = domain_manager.get_npc_knowledge(channel_id)
-    anchors["stored_npc_attitudes"] = domain_manager.get_npc_attitudes(channel_id)
+    # [2026-09-15 관계 통합] 4b 앵커 = **행동 PC를 target으로 하는 엣지**(다인에서 다른 PC 값이 앵커로 새지 않게).
+    #   마스크 없으면 종전(NPC별 최근 관측 엣지).
+    _acting_mask = (p_data or {}).get("mask") if p_data else None
+    anchors["stored_npc_attitudes"] = domain_manager.get_npc_attitudes(channel_id, pc=_acting_mask or None)
     # [2026-08-02 B축 지속] 이전 턴 soma(polyvagal/dissociation) — `Track across turns` 집행 재료.
     try:
         anchors["stored_npc_soma"] = (domain_manager.get_world_state(channel_id) or {}).get(
@@ -1019,7 +1158,23 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
         logger.debug(f"[P6] capability hints skip: {_e_cap}")
 
     # Session Memory (World State Updater 피드백용)
+    # [2026-09-14 W5] 이번 턴 입력 원문 — theoria 4f(T1)가 세력 이름 부분일치에 쓴다.
+    #   플래그 OFF면 키 자체가 없다(앵커 dict 모양 종전 동일).
+    try:
+        import config as _cfg_w5
+        if getattr(_cfg_w5, "WIKI_PLACES", False):
+            anchors["action_text"] = str(user_input or "")
+    except Exception:
+        pass
     anchors["session_memory"] = domain_manager.get_session_ai_memory(channel_id)
+
+    # [2026-09-13 S2 T1] 재등장 인물 원문 근거 — Theoria 전용(분석 입). 예외 전부 삼킴.
+    try:
+        _recall = _build_recall_evidence(channel_id, user_input, history_text, anchors)
+        if _recall:
+            anchors["recall_evidence"] = _recall
+    except Exception as _e_recall:
+        logger.debug(f"[Evidence] T1 recall skip: {_e_recall}")
 
     # [2026-07-15 수리] theoria가 읽는데 아무도 안 쓰던 앵커 2종 (dead_scan B: anchors READ-ONLY).
     # 07-04 entity_state / 07-15 arc 와 같은 병 — .get(k, default)라 조용히 default를 먹었다.
@@ -1071,6 +1226,12 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
     bus = SharedBus()
     bus.doom["value"] = world.get("doom", 40)
     bus.doom["carry"] = world.get("doom_carry", 0.0)  # 소수 이월 누적 (round 0증발 방지)
+    # [2026-09-24 감사] 챕터 상태 3키 적재 — bus 는 매 턴 신조인데 이 셋은 영속되지 않아
+    #   間 페이즈가 다음 턴에 안 이어졌다 → doom ≥ climax 임계면 매 턴 _trigger_climax 재발화
+    #   (전 시계 강제 완성 + storyteller 큐에 climax 삽입), 間 자연 감쇠·챕터 리셋(起)은 사문.
+    bus.doom["intermission_active"] = bool(world.get("doom_intermission_active", False))
+    bus.doom["climax_triggered"] = bool(world.get("doom_climax_triggered", False))
+    bus.doom["climax_armed"] = bool(world.get("doom_climax_armed", False))
     # 0626: pending_doom_gain(퀘스트 완성 등 외부 raw 적립) → bus.doom delta 합류 → doom_module이 수식(phase×lens)+carry 통과. 소비 후 클리어.
     _pending_dg = world.get("pending_doom_gain", 0)
     if _pending_dg:
@@ -1114,8 +1275,17 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
         logger.debug(f"[CustomVar] 기력 레지스트리 로드 skip: {_e_cvb}")
     bus.vigor["value"] = _vigor_val
     bus.vigor["last_delta"] = vigor_data.get("last_delta", 0)
+    # [2026-09-06 P8b] 평형도 레지스트리 소유 — 기력과 완전 대칭. bus.composure 는 읽기 사본.
     composure_data = mem.get("composure", {"value": 100, "last_delta": 0})
-    bus.composure["value"] = composure_data.get("value", 100)
+    _composure_val = composure_data.get("value", 100)
+    try:
+        import custom_vars as _cv_bus2
+        _reg_c = _cv_bus2.get_system_value(channel_id, "평형", user_id)
+        if _reg_c is not None:
+            _composure_val = _reg_c
+    except Exception as _e_cvc:
+        logger.debug(f"[CustomVar] 평형 레지스트리 로드 skip: {_e_cvc}")
+    bus.composure["value"] = _composure_val
     bus.composure["last_delta"] = composure_data.get("last_delta", 0)
     # stage3_turns(붕괴 dwell) 로드 제거 — 트라우마 각성 폐지 (2026-07-06)
 
@@ -1157,6 +1327,9 @@ def sync_from_game_context(channel_id: str, user_id: str, ctx: Any) -> None:
         world = domain_manager.get_world_state(channel_id)
         world["doom"] = bus.doom["value"]
         world["doom_carry"] = bus.doom.get("carry", 0.0)  # 소수 이월 영속
+        world["doom_intermission_active"] = bool(bus.doom.get("intermission_active", False))  # [2026-09-24 감사]
+        world["doom_climax_triggered"] = bool(bus.doom.get("climax_triggered", False))
+        world["doom_climax_armed"] = bool(bus.doom.get("climax_armed", False))
         if isinstance(bus.doom.get("clocks"), list):
             world["doom_clocks"] = bus.doom.get("clocks", [])
         domain_manager.update_world_state(channel_id, world)
@@ -1169,17 +1342,10 @@ def sync_from_game_context(channel_id: str, user_id: str, ctx: Any) -> None:
         # Remove legacy "mental" key if present
         mem.pop("mental", None)
 
-        # [2026-08-18 Phase 2.5] **평형만** 여기서 영속한다. 기력의 저장처는 레지스트리로
-        #   옮겨갔고 쓰기는 그쪽 관문(apply_deltas / apply_system_delta)이 전담한다 —
+        # [2026-09-06 P8b] **두 축 다 여기서 영속하지 않는다.** 기력에 이어 평형의 저장처도
+        #   레지스트리로 옮겨갔고, 쓰기는 그쪽 관문(apply_deltas / apply_system_delta)이 전담한다 —
         #   두 자리에 같은 수를 적으면 어느 쪽이 정본인지 아무도 모르게 된다.
-        #   ai_memory["vigor"] 는 손대지 않고 그대로 둔다: 이월 승계의 소스이기 때문이다.
-        for axis_name in ("composure",):
-            axis_bus = getattr(bus, axis_name)
-            if axis_bus.get("active"):
-                axis_sys = mem.setdefault(axis_name, {"value": 100, "last_delta": 0})
-                axis_sys["value"] = axis_bus["value"]
-                axis_sys["last_delta"] = axis_bus.get("last_delta", 0)
-                # (트라우마 각성 소비 블록은 2026-07-06 폐지 — 히스토리는 감사 보고서 §E)
+        #   ai_memory["vigor"]·["composure"] 는 손대지 않고 그대로 둔다: 이월 승계의 소스다.
 
         # [2026-07-06 status begins/ends 재배선 — 레티어스 승인: 플레이어 표시 X, 산문 힌트만]
         # 스냅샷 diff: 직전 턴 status 이름 목록 vs 현재 → 신규=begins, 소실=ends.
@@ -1206,10 +1372,12 @@ def sync_from_game_context(channel_id: str, user_id: str, ctx: Any) -> None:
             logger.warning("[StatusTransition] diff skipped: %s", _e_st)
 
         # Momentum 저장 (다음 턴 carry)
+        # [2026-09-24 감사] 판정이 carry 를 **실제로 소비한 턴**에만 교체/삭제한다. 전엔 판정 없는 턴마다
+        #   pop → 3차에서 복원된 쿨다운(T+1 판정 차단)과 겹쳐 기세가 표시만 되고 적용 0이었다.
         momentum_next = bus.judgment.get("momentum_next", 0)
         if momentum_next != 0:
             mem["judgment_momentum"] = momentum_next
-        else:
+        elif bus.judgment.get("momentum_consumed"):
             mem.pop("judgment_momentum", None)
 
         domain_manager.save_participant_data(channel_id, user_id, p_data)
@@ -1325,15 +1493,15 @@ class UniversalNarrativeEngine:
         for _n, _a in _dai_att.items():
             _m = dict(_a) if isinstance(_a, dict) else {}
             # DAI 이름 → 저장 키 해상도 (e.g. "이하윤" → "Lee Ha-yoon(이하윤)")
-            _resolved = _n
-            for _sk in _stored_att:
-                if _sk == _n:
-                    _resolved = _sk
-                    break
-                _sk_base = _sk.split("(")[0].strip().lower() if "(" in _sk else _sk.lower()
-                if _sk_base == _n.strip().lower() or _n.strip().lower() in _sk.lower():
-                    _resolved = _sk
-                    break
+            # [2026-09-24 감사] 공용 해상도(_find_npc_key: 정규화→base/inner→aliases→충돌가드 토큰)로 —
+            #   부분문자열 첫 일치("Rin" ⊂ "Karin")가 다른 NPC 의 저장 depth/tension 을 끌어와
+            #   info_gap/secret_pressure 등 자율 트리거가 오발했다.
+            _resolved = _n if _n in _stored_att else None
+            if _resolved is None:
+                try:
+                    _resolved = domain_manager._find_npc_key(_stored_att, _n) or _n
+                except Exception:
+                    _resolved = _n
             _s = _stored_att.get(_resolved, {})
             if isinstance(_s, dict):
                 _m.setdefault("depth", _s.get("depth", 0))

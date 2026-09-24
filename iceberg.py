@@ -164,7 +164,11 @@ def translate_scene_holds(
     def _clean(v) -> str:
         return str(v).strip().rstrip(".") if v is not None and str(v).strip() else ""
 
-    _asp = [_clean(a) for a in (aspects or []) if _clean(a)]
+    # [2026-09-24 감사] Theoria Aspects 원소는 {"text","for_or_against","reason"} dict — 전엔 str(dict)가
+    #   그대로 "The scene holds: {'text': ...}" 파이썬 repr 로 렌더러에 도착했다. text 만 쓴다(문자열 원소도 허용).
+    def _asp_text(a):
+        return _clean(a.get("text") or a.get("name")) if isinstance(a, dict) else _clean(a)
+    _asp = [_asp_text(a) for a in (aspects or []) if _asp_text(a)]
     if _asp:
         out.append("The scene holds: " + ", ".join(_asp[:5]) + ".")
 
@@ -237,7 +241,10 @@ def select_foreground(
             s += min(trig[n], 7) * 0.05
         att = (npc_attitudes or {}).get(n)
         if isinstance(att, dict):
-            s += {"rising": 0.15, "falling": 0.15}.get(str(att.get("trajectory", "")).lower(), 0.0)
+            # [2026-09-24 감사] 실제 값은 improving/declining/stable(domain_manager.trajectory_from_delta) —
+            #   rising/falling 만 봐서 태도 변화 가점이 한 번도 안 붙었다. 옛 표기도 같이 받는다.
+            s += {"rising": 0.15, "falling": 0.15, "improving": 0.15, "declining": 0.15}.get(
+                str(att.get("trajectory", "")).lower(), 0.0)
         if n in prev:
             s -= _rot
         scored.append((s, n))
@@ -530,7 +537,7 @@ def translate_psyche_states(
         if pvg and isinstance(pvg, str):
             pvg_n = _POLYVAGAL_NOTATION.get(pvg.lower().strip())
             if pvg_n:
-                pvg_n = _value_modulate_notation(pvg_n, psyche.get("value"), relation.get("value"))
+                pvg_n = _value_modulate_notation(pvg_n, psyche.get("value"), relation.get("bond", relation.get("value")))
                 notations.append(pvg_n)
                 _npc_notations.append((name, pvg_n))
         ca = soma.get("cultural_affect", "")
@@ -576,15 +583,14 @@ def translate_psyche_states(
             lines.append(f"  {'. '.join(prose)}")
 
         # [카드1] 압력 — 감정이 "무엇을 하게 만드는가". fg=drives+cannot / bg=drives 1줄.
-        if getattr(config, "PRESSURE_EMIT", True):
-            _pr = state.get("pressure")
-            if isinstance(_pr, dict):
-                _d = _pr.get("drives")
-                _c = _pr.get("cannot")
-                if isinstance(_d, str) and _d.strip():
-                    lines.append(f"  → {_d.strip()}")
-                if _is_fg and isinstance(_c, str) and _c.strip():
-                    lines.append(f"  ↛ {_c.strip()}")
+        _pr = state.get("pressure")
+        if isinstance(_pr, dict):
+            _d = _pr.get("drives")
+            _c = _pr.get("cannot")
+            if isinstance(_d, str) and _d.strip():
+                lines.append(f"  → {_d.strip()}")
+            if _is_fg and isinstance(_c, str) and _c.strip():
+                lines.append(f"  ↛ {_c.strip()}")
 
         # deep_read: 상류 전용(DEEPREAD_EMIT=False). True면 구 경로(depth 필터+B3 제약) 유지.
         if getattr(config, "DEEPREAD_EMIT", False) and deep and isinstance(deep, str):
@@ -1980,7 +1986,7 @@ def compose_dialogue_directives(
         #   그때 커밋까지 함께 사라지면 처방이 정확히 필요한 자리에서 무력해진다.
         _silence_part = ""
         _pr = state.get("pressure")
-        if getattr(config, "PRESSURE_EMIT", True) and isinstance(_pr, dict):
+        if isinstance(_pr, dict):
             _cannot = _pr.get("cannot")
             if isinstance(_cannot, str) and _cannot.strip():
                 # [2026-08-28 이중 투입 수리] 구 문안은 Slot 25 DIALOGUE의 **예시목록과 판정문을
@@ -2184,25 +2190,9 @@ def translate_flashback(dai_flashback_eval: Optional[Dict[str, Any]] = None,
             f"{plaus_hint} Two or three sentences inside it, then the present resumes.")
 
 
-_REST_ACTIVITY = {
-    "rest": "resting", "recover": "recovering", "vice": "indulging",
-    "train": "training", "socialize": "socializing", "project": "working",
-}
-_REST_QUALITY = {"full": "full", "brief": "brief", "interrupted": "interrupted"}
-
-
-def translate_downtime(rest_eval: Optional[Dict[str, Any]] = None) -> str:
-    """휴식/다운타임 → 장면 지시 문장."""
-    r = rest_eval if isinstance(rest_eval, dict) else {}
-    if not r.get("detected"):
-        return ""
-    q = str(r.get("quality", "brief") or "")
-    a = str(r.get("activity", "rest") or "")
-    out = f"\nThe turn takes a {_REST_QUALITY.get(q, q)} stretch of {_REST_ACTIVITY.get(a, a)}"
-    if r.get("target"):
-        out += f", aimed at {r['target']}"
-    out += "." if r.get("safe_location", True) else ". The place is not safe; the tension holds."
-    return out
+# [2026-09-06 P8b] `translate_downtime` + _REST_ACTIVITY/_REST_QUALITY 삭제 — 생산자였던
+#   Theoria `rest_eval` 이 스키마에서 사라져 호출자가 0이 됐다(slot_manager 한 곳).
+#   "부재를 감지하지 않는다": 휴식은 감지 대상이 아니라, 산문에 있으면 관측 델타의 근거다.
 
 
 def translate_idle_direction(story_direction: Optional[Dict[str, Any]] = None) -> str:
@@ -2474,3 +2464,54 @@ def wrap_open_threads(thread_list: str = "") -> str:
         "Only the player's action, engaging a thread directly, can advance or close it.\n"
         + thread_list
     )
+
+
+# =========================================================
+# 세션 NPC 시드 카드 (Slot 7 꼬리) — [2026-09-22] 배선 스펙 §2 E
+# =========================================================
+# 머리 한 줄 = 스펙 §5 의 영문. 카드는 **자료**다 — 명령문도 수량·형식 지시도 없다
+# (약한 모델은 어차피 무시하고, 강한 모델은 없어도 한다).
+_NEWCOMER_SEED_HEAD = ("New faces this turn — rolled material, not a checklist; "
+                       "the scene calls what it needs.")
+
+
+def translate_newcomer_seeds(seeds: Optional[dict], registered=None) -> str:
+    """이번 턴 굴린 미등록 인물 → 프로필 블록과 같은 급의 카드 묶음 (배선 스펙 §2 E).
+
+        New faces this turn — ...
+        ### <이름>
+        Core Traits: <기전 1> / <기전 2> / <seam>
+        Aside: <aside>
+
+    · 본문 조립은 `voice_seed.seed_card_text` 하나가 한다 — 라벨·앵커·칸 번호가 새지 않는
+      **단일 관문**이고(스펙 §2.1), 스모크 ⑤가 그 함수 출력을 표 전 칸으로 훑는다.
+      여기서 문장을 다시 짜면 그 관문 밖에 텍스트가 하나 더 생긴다. 하지 않는다.
+    · `registered(name)` 이 참이면 그 이름은 건너뛴다 — 렌더 전에 이미 등록됐다는 뜻이고
+      (orchestration psyche relation 자동생성), 그 인물은 `get_npc_renderer_profiles` 가
+      같은 내용을 lore 절로 이미 렌더한다(이중 투입 금지, W3a 선례).
+    · 굴림이 없으면 빈 문자열 — 빈 껍데기 머리줄만 내보내지 않는다.
+    """
+    if not isinstance(seeds, dict) or not seeds:
+        return ""
+    try:
+        import voice_seed as _vs
+    except Exception:
+        logger.debug("[Iceberg] voice_seed 미탑재 — 시드 카드 생략")
+        return ""
+
+    blocks: List[str] = []
+    for name, entry in seeds.items():
+        if not isinstance(name, str) or not name.strip():
+            continue
+        if callable(registered):
+            try:
+                if registered(name):
+                    continue
+            except Exception:
+                pass                      # 대조 실패는 "모른다" — 카드는 내보낸다(빈손보다 낫다)
+        card = _vs.seed_card_text(entry, name=name.strip())
+        if card:
+            blocks.append(card)
+    if not blocks:
+        return ""
+    return _NEWCOMER_SEED_HEAD + "\n\n" + "\n\n".join(blocks)

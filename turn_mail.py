@@ -18,8 +18,8 @@ message_id 가 턴 고정 키다. 다음 턴 도착물이 옛 버튼에 새지 �
   실제로 생겼을 때만 edit 으로 붙인다. 없는 턴의 버튼 = 0.
 
 ⚠ 렌더(우뇌) 무접촉. 34슬롯·산문 프롬프트에 이 모듈은 한 글자도 넣지 않는다.
-⚠ status_panel 무수정 — 💠 버튼은 여기서 **위임 호출**만 한다(한 메시지에 View 는 하나뿐이라
-   버튼 합성이 필요하고, 합성은 이 쪽에서 한다).
+⚠ status_panel 무수정. [2026-09-13 P9b] 💠 위임 호출이 사라져 이 모듈은 이제 status_panel 을
+   import 하지도 않는다 — 상태창은 매턴 산문 밑 임베드가 통째로 맡는다.
 
 [2026-08-17 속마음 v1] 💭가 **전용 배경 콜**로 승격됐다. v0는 psyche_narrative 원문(영어
 텔레그래픽 분석문)을 라벨만 붙여 그대로 보여 줬다 — 콜 0이라 싸지만 품질이 그 턴 분석문의
@@ -47,11 +47,16 @@ import discord
 import bot_utils
 import config
 import domain_manager
+# [2026-09-13 P9c] 💠 가 이 View 로 돌아왔다 — 버튼 **합성 자리는 한 메시지에 하나**뿐이라
+#   (discord: message 당 View 하나) 💌💭📰 와 같은 View 에서 만들어야 한다.
+#   status_panel 은 turn_mail 을 import 하지 않는다(순환 0) — 화살표는 여기서 저쪽 한 방향.
 import status_panel
 
 logger = logging.getLogger("TurnMail")
 
 # custom_id 고정 = persistent view. 재시작 후에도 옛 메시지 버튼이 살아난다.
+# [2026-09-13 P9c] 💠 의 custom_id 는 **status_panel 이 소유**한다(PANEL_BUTTON_ID) —
+#   이미 나가 있는 옛 메시지의 버튼과 같은 값이라야 그 버튼도 새 창을 연다.
 MAIL_BUTTON_ID = "lorekeeper:turn_mail"
 MIND_BUTTON_ID = "lorekeeper:turn_mind"
 BOARD_BUTTON_ID = "lorekeeper:turn_board"
@@ -248,10 +253,9 @@ def _npc_source(rec: Optional[Dict[str, Any]]) -> str:
         return ""
     try:
         import npc_manager as _npm
-        _default = getattr(_npm, "SOURCE_SESSION", "session")
+        return _npm.npc_source(rec)   # [2026-09-16 시트 2차] 파생 source(원문 유무)
     except Exception:
-        _default = "session"
-    return str(rec.get("source", _default) or _default).lower()
+        return str(rec.get("source", "session") or "session").lower()
 
 
 def _emotion_score(name: str, dai: Dict[str, Any], channel_id: str) -> Tuple[float, bool]:
@@ -347,16 +351,13 @@ def _state_material(name: str, soma_map: Dict[str, Any], att_map: Dict[str, Any]
     except Exception:
         _at = None
     if isinstance(_at, dict):
-        bits = []
-        _a = str(_at.get("attitude", "") or "").strip()
-        if _a and _a.lower() != "null":
-            bits.append(f"attitude={_a}")
-        for _k in ("depth", "tension"):
-            _v = _at.get(_k)
-            if isinstance(_v, (int, float)):
-                bits.append(f"{_k}={int(_v)}")
-        if bits:
-            out["toward_pc"] = ", ".join(bits)[:_FIELD_CAP]
+        # [2026-09-25 관계 정성] depth=/tension= 숫자 → 말 한 벌(domain_manager.relation_words). 숫자는 코드 소유.
+        try:
+            _rw = domain_manager.relation_words(_at)
+        except Exception:
+            _rw = ""
+        if _rw:
+            out["toward_pc"] = _rw[:_FIELD_CAP]
     return out
 
 
@@ -378,7 +379,7 @@ def _secret_refs(channel_id: str) -> Optional[List[Tuple[str, str]]]:
 
 
 def _sheet_material(name: str, rec: Optional[Dict[str, Any]],
-                    refs: Optional[List[Tuple[str, str]]]) -> Dict[str, str]:
+                    refs: Optional[List[Tuple[str, str]]], channel_id: Optional[str] = None) -> Dict[str, str]:
     """[2026-08-17 시트 접지] 시트 요지 한 줄(`voice`). 재료 없음·스크럽 불가 = {}.
 
     psyche(해석)와 상태(soma·toward_pc)는 **지금 무엇이 움직이는가**만 말한다. 그 위에
@@ -397,7 +398,7 @@ def _sheet_material(name: str, rec: Optional[Dict[str, Any]],
         return {}
     try:
         import npc_manager as _npm
-        frags = _npm.build_voice_digest(rec, name)
+        frags = _npm.build_voice_digest(rec, name, channel_id=channel_id)   # [시트 2차b] 페이지 lore 절 직접
     except Exception as e:
         logger.debug(f"[TurnMind] sheet digest skipped: {e}")
         return {}
@@ -528,7 +529,7 @@ def select_mind_targets(channel_id: str,
         # 시트 요지도 **게이트 뒤**(같은 이유 — 시트만 두껍고 속이 빈 인물이 칸을 먹으면 안 된다).
         # 자리는 재료의 **맨 앞**: 시트는 상시(이 사람은 원래 이렇다)고 psyche·상태는 이번 턴이라,
         # 출력 최근접에는 지금 움직이는 것이 서야 한다(앵커→지형→인물과 같은 순서 규율).
-        _sheet = _sheet_material(name, _rec, _refs)
+        _sheet = _sheet_material(name, _rec, _refs, channel_id)
         if _sheet:
             material = {**_sheet, **material}
         scored.append((score, name, {
@@ -589,7 +590,9 @@ def _build_scene_anchor(channel_id: str, dai: Optional[Dict[str, Any]]) -> str:
 
     ★고르는 기준 = "장면이 어디서 어떻게 서 있나"만. 다음 턴 방향(suggested_beats /
       narrative_hook / open_invitations / offscreen_trace)은 **일부러 뺀다** — 비관측 계약
-      ("다음 비트를 정하지 않는다")과 정면으로 부딪히는 재료다. 유저 입력 원문
+      ("다음 비트를 정하지 않는다")과 정면으로 부딪히는 재료다. [2026-09-22] 시드
+      (newcomer_seeds)도 같은 자리에서 뺀다 — 아직 등록도 안 된 인물의 굴린 뼈대를 편지가
+      읽을 이유가 없다(비관측 계약, 배선 스펙 §2 D 4). 유저 입력 원문
       (InputAnalysis.Original)·감각 앵커(SensoryAnchors)도 뺀다: 전자는 대사 원문 계열이고,
       후자는 어휘 팔레트라 주면 순회한다(08-13 팔레트 교훈).
     """
@@ -1018,6 +1021,36 @@ def _mail_embed(row: Dict[str, Any]) -> discord.Embed:
     return embed
 
 
+# [2026-09-13 P14] 💌 봉투 한 줄. 개인 도착물은 **내용을 채널에 안 흘린다** — 채널엔
+#   "왔다"만 서고 본문은 💌 버튼 클릭 → ephemeral(종전 `_respond` 경로 그대로).
+#   📰(공개)는 봉투가 없다: 세상에 걸린 것이라 임베드 본문이 곧 그 자리다.
+ENVELOPE_EMOJI = "✉"
+
+
+def envelope_line(payload: Optional[Dict[str, Any]]) -> str:
+    """개인 도착물의 봉투 문구. 공개물·빈 payload 면 "" (봉투 없음).
+
+    수신자 이름 외엔 아무것도 안 싣는다 — 제목조차 내용의 일부다.
+    """
+    if not isinstance(payload, dict):
+        return ""
+    if str(payload.get("channel_kind") or "") != "message":
+        return ""
+    who = str(payload.get("recipient") or "").strip()
+    if who:
+        return f"{ENVELOPE_EMOJI} {who}에게 도착한 것이 있다."
+    return f"{ENVELOPE_EMOJI} 도착한 것이 있다."
+
+
+def handout_embed(payload: Optional[Dict[str, Any]], turn: int = 0) -> discord.Embed:
+    """[2026-09-13 P14] 아직 저장 전인 도착물 하나를 임베드로. 📰 핸드아웃 메시지 본체.
+
+    조립기는 `_mail_embed` **그대로** 쓴다 — 산문 앞 임베드와 버튼이 여는 임베드가
+    다른 함수로 그려지면 같은 편지가 두 모양이 된다.
+    """
+    return _mail_embed({"payload": payload or {}, "turn": turn})
+
+
 def _mind_line(line: Any) -> str:
     """한 줄 렌더. 라벨은 **선택**이다.
 
@@ -1039,7 +1072,21 @@ def _mind_embed(row: Dict[str, Any]) -> Optional[discord.Embed]:
     p = row.get("payload") or {}
     entries = p.get("entries")
     if not isinstance(entries, list) or not entries:
-        return None
+        # [2026-09-24 감사] 평면 payload(`title`/`body`)도 그린다. 전이 알림 `notify="mind"` 는
+        #   expr_engine.flush_mails 가 이 모양으로 적립하는데, entries 만 알던 이 조립기가 None 을
+        #   내서 💭 버튼은 붙고 누르면 "만료" 안내만 나왔다(알림이 영영 안 보임).
+        body = str(p.get("body") or "").strip()
+        if not body:
+            return None
+        embed = discord.Embed(title=str(p.get("title") or "💭 속마음")[:250],
+                              description=body[:4000], color=0x9B59B6)
+        _foot = [x for x in (str(p.get("format_name") or "").strip(),) if x]
+        turn = row.get("turn")
+        if isinstance(turn, int) and turn > 0:
+            _foot.append(f"t{turn}")
+        if _foot:
+            embed.set_footer(text=" · ".join(_foot)[:2048])
+        return embed
     embed = discord.Embed(title=str(p.get("title") or "💭 속마음")[:250], color=0x9B59B6)
     for ent in entries[:MAX_MIND_ENTRIES]:
         if not isinstance(ent, dict):
@@ -1071,6 +1118,17 @@ def build_embeds(channel_id: str, message_id: int, kind: str) -> List[discord.Em
             embed = None
         if embed is not None:
             out.append(embed)
+        # [2026-09-24 감사 §5-2 #19a] 합쳐 둔 전이 알림(notes) — 속마음 아래 한 장씩.
+        if kind == KIND_MIND:
+            for _n in ((row.get("payload") or {}).get("notes") or []):
+                if not isinstance(_n, dict):
+                    continue
+                try:
+                    _ne = _mind_embed({"payload": _n, "turn": row.get("turn")})
+                except Exception:
+                    _ne = None
+                if _ne is not None:
+                    out.append(_ne)
     return out[:10]
 
 
@@ -1082,21 +1140,26 @@ _EXPIRED_MSG = "📭 도착물이 만료되었거나 없습니다."
 
 
 class TurnView(discord.ui.View):
-    """산문 메시지 꼬리 버튼 묶음 — 💠 상태 · 💌 도착물 · 💭 속마음 · 📰 소식.
+    """산문 메시지 꼬리 버튼 묶음 — 💠 쌓인 것 · 💌 도착물 · 💭 속마음 · 📰 소식.
+
+    [2026-09-13 P9c] 💠 가 돌아왔다. P9b 가 뺐던 이유(버튼이 여는 화면이 이미 그 메시지에
+      있다)는 **여는 화면이 바뀌면서** 사라졌다 — 지금 💠 가 여는 건 매턴 임베드의 재탕이
+      아니라 **쌓인 것**(노트북·기록 전체·일지·도착물 목록·관계 전체)이다. 매턴 임베드 =
+      "지금 어떤가"(자동), 💠 = "그동안 무엇이 쌓였나"(눌러서). 축이 다르므로 메아리가 아니다.
+      💠 는 **게이트가 없다** — 매턴 항상 붙는다(눌렀을 때 빈 채널이면 그 창이 한 줄로 답한다).
+      옛 메시지의 💠 도 custom_id 가 같아 같은 창을 연다.
 
     한 메시지에 View 는 하나뿐이라 **합성이 강제**된다. 상황별 부분집합은 생성자에서
     필요 없는 버튼을 떼어 만든다. persistent 등록(main.on_ready)은 전 버튼을 가진
     인스턴스 하나로 충분하다 — 디스패치는 custom_id 매칭이지 View 동일성이 아니다.
     ⚠ 버튼을 새로 세울 때는 ①custom_id 상수 ②KIND 상수 ③생성자 drop 축 ④build_view 게이트
       ⑤build_embeds 분기 다섯 자리를 **함께** 세운다(자매 자리 소급 누락 방지).
+      💠 는 ③④ 를 쓰지 않는다(무조건) — 셋과 달리 message_id 에 매이지 않기 때문이다.
     """
 
-    def __init__(self, *, panel: bool = True, mail: bool = True, mind: bool = True,
-                 board: bool = True):
+    def __init__(self, *, mail: bool = True, mind: bool = True, board: bool = True):
         super().__init__(timeout=None)
         drop = set()
-        if not panel:
-            drop.add(status_panel.PANEL_BUTTON_ID)
         if not mail:
             drop.add(MAIL_BUTTON_ID)
         if not mind:
@@ -1108,24 +1171,18 @@ class TurnView(discord.ui.View):
                 self.remove_item(item)
 
     @discord.ui.button(
-        label="상태", emoji="💠", style=discord.ButtonStyle.secondary,
+        label="쌓인 것", emoji="💠", style=discord.ButtonStyle.secondary,
         custom_id=status_panel.PANEL_BUTTON_ID,
     )
-    async def show_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """status_panel 위임 — 로직은 저쪽 소유, 여기선 자리만 빌려 준다."""
-        channel_id = str(interaction.channel_id)
-        try:
-            embed = status_panel.build_panel_embed(channel_id)
-        except Exception as e:
-            logger.warning(f"[TurnMail] panel delegate failed: {e}")
-            embed = None
-        if embed is None:
-            await interaction.response.send_message(
-                "💠 아직 표시할 상태 패널이 없습니다. (`!출력룰 추가 상태창 …` 으로 형식을 등록하세요)",
-                ephemeral=True,
-            )
-            return
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+    async def show_archive(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """응답 본체는 `status_panel.respond_archive` **한 곳**이다.
+
+        ⚠ 같은 custom_id 를 `status_panel.ArchiveView` 도 잡는다(옛 메시지용 등록).
+          discord.py 의 persistent 디스패치는 (component_type, custom_id) 사전이라
+          나중 등록이 앞 등록을 덮어쓴다 — 어느 쪽이 이기든 **같은 함수**가 응답하도록
+          두 자리 모두 여기로 위임한다. 분기를 두면 두 화면이 조용히 갈라진다.
+        """
+        await status_panel.respond_archive(interaction)
 
     @discord.ui.button(
         label="도착물", emoji="💌", style=discord.ButtonStyle.secondary,
@@ -1165,31 +1222,45 @@ class TurnView(discord.ui.View):
 
 
 def build_view(channel_id: str, message_id: int = 0) -> Optional[discord.ui.View]:
-    """이 메시지에 붙일 View. 붙일 버튼이 하나도 없으면 None(= 종전과 동일한 무버튼 전송).
+    """이 메시지에 붙일 View. **합성 규칙의 단 하나의 자리.**
 
-    - 💠 = 상태 패널 정의 **또는** 선언 변수가 있는 채널만 (status_panel 이 게이트를 소유)
+    - 💠 = **항상**(게이트 0). 매턴 전송 시점에도 붙는다.
     - 💌/💭/📰 = message_id 로 실제 적립된 도착물이 있을 때만 (사후 부착 경로에서 쓰인다)
-    """
-    try:
-        panel = bool(status_panel.has_panel_content(channel_id))
-    except Exception as e:
-        logger.debug(f"[TurnMail] panel gate skipped: {e}")
-        panel = False
 
+    [2026-09-13 P9c] 전송 시점(message_id=0)에도 이제 None 이 아니다 — 💠 하나가 붙는다.
+      **덮어쓰기 안전**이 이 한 자리에 달려 있다: 도착물이 생기면 `attach_button` 이
+      `message.edit(view=...)` 로 View 를 통째로 갈아끼우는데, 그 새 View 도 이 함수가
+      만들므로 💠 가 같이 다시 그려진다. 여기서 💠 를 조건부로 만들면 그 edit 한 번에
+      💠 가 조용히 사라진다.
+    """
     kinds = kinds_for_message(channel_id, message_id) if message_id else []
     mail = KIND_MAIL in kinds
     mind = KIND_MIND in kinds
     board = KIND_BOARD in kinds
-    if not (panel or mail or mind or board):
-        return None
-    return TurnView(panel=panel, mail=mail, mind=mind, board=board)
+    return TurnView(mail=mail, mind=mind, board=board)
+
+
+def recent_mail(channel_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+    """💠 "쌓인 것" 창의 ④ 도착물 **목록** 재료 — 채널 최근 N건, 최신 위.
+
+    본문이 아니라 목록이다(본문은 그 턴 메시지의 💌/📰 가 연다). 트림(TURN_MAIL_KEEP)
+    너머는 없다 — 없는 건 없는 대로 짧은 목록이 된다.
+    """
+    if not channel_id or limit <= 0:
+        return []
+    try:
+        import sqlite_store
+        return sqlite_store.read_channel_mail(str(channel_id), int(limit))
+    except Exception as e:
+        logger.debug(f"[TurnMail] recent read skipped: {e}")
+        return []
 
 
 async def attach_button(message: Optional[discord.Message], channel_id: str) -> bool:
     """도착물 적립 **후** 그 산문 메시지에 버튼을 다시 그린다(사후 부착).
 
-    전송 시점엔 도착물 유무를 모른다(배경 태스크) → 생겼을 때만 edit. 💠가 이미 붙어
-    있던 메시지도 build_view 가 통째로 다시 만들므로 기존 버튼이 사라지지 않는다.
+    전송 시점엔 도착물 유무를 모른다(배경 태스크) → 생겼을 때만 edit. build_view 가
+    통째로 다시 만들므로 이미 붙어 있던 버튼이 사라지지 않는다.
     실패는 무해(False) — 도착물은 DB에 남고 버튼만 안 붙는다.
     """
     if message is None:
@@ -1205,6 +1276,42 @@ async def attach_button(message: Optional[discord.Message], channel_id: str) -> 
         return False
 
 
+def _merge_mind_payload(old: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, Any]:
+    """[2026-09-24 감사 §5-2 #19a] 같은 메시지 💭 자리의 두 내용 합치기.
+
+    💭 에 오는 것은 둘이다 — TurnMind 속마음(`entries`)과 전이 알림 `notify="mind"`(평면 `title`/`body`,
+    expr_engine.flush_mails). 적립이 (메시지, kind) **교체**라 뒤에 온 쪽이 앞의 것을 지웠다(보통 배경 TurnMind 가
+    산문 직후 flush 된 전이 알림을). 교체의 목적(재실행 중복 0)은 지키고 서로 다른 둘은 둘 다 남긴다:
+      entries 는 **새 것이 이긴다**(TurnMind 재실행 = 교체), 평면 알림은 `notes` 로 모으되 같은 (title, body)는 한 번."""
+    old = old if isinstance(old, dict) else {}
+    new = new if isinstance(new, dict) else {}
+
+    def _flat(p):
+        return {k: p.get(k) for k in ("title", "body", "format_name") if p.get(k)} \
+            if str(p.get("body") or "").strip() and not p.get("entries") else None
+
+    notes = [n for n in (old.get("notes") or []) if isinstance(n, dict)]
+    for cand in (_flat(old), _flat(new)):
+        if cand and not any((n.get("title"), n.get("body")) == (cand.get("title"), cand.get("body")) for n in notes):
+            notes.append(cand)
+    for n in (new.get("notes") or []):
+        if isinstance(n, dict) and not any((x.get("title"), x.get("body")) == (n.get("title"), n.get("body")) for x in notes):
+            notes.append(n)
+    base = new if new.get("entries") else (old if old.get("entries") else None)
+    if base is None:
+        # 둘 다 평면 — 첫 알림을 본체로, 나머지를 notes 로
+        if not notes:
+            return new
+        out = dict(notes[0])
+        if len(notes) > 1:
+            out["notes"] = notes[1:]
+        return out
+    out = {k: v for k, v in base.items() if k not in ("notes",)}
+    if notes:
+        out["notes"] = notes
+    return out
+
+
 async def deliver(message: Optional[discord.Message], channel_id: str, kind: str,
                   payload: Optional[Dict[str, Any]], turn: Optional[int] = None) -> bool:
     """적립 + 사후 부착 한 묶음. 착지 지점들이 부르는 단일 관문."""
@@ -1212,6 +1319,14 @@ async def deliver(message: Optional[discord.Message], channel_id: str, kind: str
         return False
     if turn is None:
         turn = _current_turn(channel_id)
+    # [2026-09-24 감사 §5-2 #19a] 💭 는 교체 대신 합치기 — 전이 알림과 속마음이 서로를 지우지 않게.
+    if kind == KIND_MIND:
+        try:
+            _prev = get_mail_for_message(channel_id, message.id, KIND_MIND)
+            if _prev:
+                payload = _merge_mind_payload(_prev[-1].get("payload") or {}, payload)
+        except Exception as _e_mg:
+            logger.debug(f"[TurnMail] mind merge skip: {_e_mg}")
     if not store_mail(channel_id, message.id, turn, kind, payload):
         return False
     ok = await attach_button(message, channel_id)

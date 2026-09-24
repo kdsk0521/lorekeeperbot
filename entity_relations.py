@@ -8,7 +8,11 @@ LIBRA EntityManager에서 이식:
 - 관계 변화 이력 (delta-only)
 - 서사용 관계 컨텍스트 생성
 
-저장: domain_data["entity_relations"] (기존 dict 기반, 스키마 변경 불필요)
+[2026-09-15 관계 통합 1차] 저장소 없음 — **엣지(relations 테이블) 위 NPC↔NPC 파생 뷰 + 배치 쓰기 변환기**.
+  옛 domain_data["entity_relations"]["edges"] 저장·감쇠(set_relation/adjust_intensity/cleanup_stale_relations)는
+  삭제(마이그레이션 없음). 게터 이름·반환 모양은 유지: type=kind, intensity=abs(bond)/100, reason=stance.
+  감쇠는 domain_manager.decay_relation_edges 한 곳. 모듈을 흡수하지 않고 남긴 이유: 소비자 5곳
+  (slot_manager·story_director·interim·world_board·persistent_audit)이 이 이름으로 import — 소비자 무변경.
 """
 
 import logging
@@ -33,11 +37,6 @@ RELATION_TYPES = {
     "neutral":   {"label": "neutral",   "emoji": "⚪", "valence":  0},
 }
 
-# Maximum relations per channel (prevent unbounded growth)
-MAX_RELATIONS = 50
-# History cap per relation edge
-MAX_HISTORY_PER_EDGE = 10
-
 # Intensity thresholds for narrative importance
 INTENSITY_THRESHOLDS = {
     "whisper": (0.0, 0.3),   # Background, barely noticeable
@@ -48,187 +47,44 @@ INTENSITY_THRESHOLDS = {
 
 
 # =========================================================
-# Core CRUD
+# Edge view (relations 테이블 → 옛 edge dict 모양)
 # =========================================================
-
-def _get_relations_store(channel_id: str) -> Dict[str, Any]:
-    """domain_data에서 entity_relations 가져오기."""
-    d = domain_manager.get_domain(channel_id)
-    return d.get("entity_relations", {})
-
-
-def _save_relations_store(channel_id: str, store: Dict[str, Any]) -> None:
-    """entity_relations 저장."""
-    d = domain_manager.get_domain(channel_id)
-    d["entity_relations"] = store
-    domain_manager.save_domain(channel_id, d)
-
 
 def _edge_key(source: str, target: str) -> str:
     """방향성 엣지 키 생성 (A→B)."""
     return f"{source}→{target}"
 
 
-def get_relation(channel_id: str, source: str, target: str) -> Optional[Dict[str, Any]]:
-    """특정 방향의 관계 조회."""
-    store = _get_relations_store(channel_id)
-    edges = store.get("edges", {})
-    return edges.get(_edge_key(source, target))
+def _valence_sign(kind: Optional[str]) -> int:
+    return -1 if RELATION_TYPES.get(kind or "neutral", RELATION_TYPES["neutral"])["valence"] < 0 else 1
 
 
 def get_all_relations(channel_id: str) -> Dict[str, Dict[str, Any]]:
-    """모든 관계 엣지 반환."""
-    store = _get_relations_store(channel_id)
-    return store.get("edges", {})
-
-
-def set_relation(
-    channel_id: str,
-    source: str,
-    target: str,
-    relation_type: str,
-    intensity: float = 0.5,
-    reason: str = "",
-    current_turn: int = 0,
-    bidirectional: bool = False
-) -> str:
-    """
-    관계 설정 또는 업데이트.
-
-    Args:
-        source: 관계의 주체 NPC
-        target: 관계의 대상 NPC
-        relation_type: RELATION_TYPES 키 중 하나
-        intensity: 0.0 ~ 1.0
-        reason: 변경 사유
-        current_turn: 현재 턴
-        bidirectional: True면 역방향도 동일하게 설정
-
-    Returns:
-        "created", "updated", "capped"
-    """
-    relation_type = relation_type.lower().strip()
-    if relation_type not in RELATION_TYPES:
-        relation_type = "neutral"
-
-    intensity = max(0.0, min(1.0, float(intensity)))
-
-    store = _get_relations_store(channel_id)
-    if "edges" not in store:
-        store["edges"] = {}
-
-    edges = store["edges"]
-    key = _edge_key(source, target)
-
-    # Cap check
-    if key not in edges and len(edges) >= MAX_RELATIONS:
-        logger.warning("[EntityRelations] Edge cap reached (%d), skipping %s", MAX_RELATIONS, key)
-        return "capped"
-
-    existing = edges.get(key)
-    result = "created" if not existing else "updated"
-
-    # Build edge
-    edge: Dict[str, Any] = existing or {
-        "source": source,
-        "target": target,
-        "history": [],
-        "created_turn": current_turn,
-    }
-
-    # Record history if type or intensity changed
-    if existing:
-        old_type = existing.get("type", "neutral")
-        old_intensity = existing.get("intensity", 0.5)
-        if old_type != relation_type or abs(old_intensity - intensity) > 0.1:
-            edge.setdefault("history", []).append({
-                "turn": current_turn,
-                "old_type": old_type,
-                "old_intensity": round(old_intensity, 2),
-                "new_type": relation_type,
-                "new_intensity": round(intensity, 2),
-                "reason": reason,
-            })
-            # Cap history
-            if len(edge["history"]) > MAX_HISTORY_PER_EDGE:
-                edge["history"] = edge["history"][-MAX_HISTORY_PER_EDGE:]
-
-    edge["type"] = relation_type
-    edge["intensity"] = round(intensity, 2)
-    edge["reason"] = reason
-    edge["last_turn"] = current_turn
-
-    edges[key] = edge
-    store["edges"] = edges
-
-    # Bidirectional
-    if bidirectional:
-        reverse_key = _edge_key(target, source)
-        if reverse_key not in edges and len(edges) < MAX_RELATIONS:
-            reverse_edge = {
-                "source": target,
-                "target": source,
-                "type": relation_type,
-                "intensity": round(intensity, 2),
-                "reason": reason,
-                "last_turn": current_turn,
-                "created_turn": current_turn,
-                "history": [],
-            }
-            edges[reverse_key] = reverse_edge
-
-    _save_relations_store(channel_id, store)
-    logger.info("[EntityRelations] %s: %s→%s [%s %.2f] %s",
-                result, source, target, relation_type, intensity, reason[:50])
-    return result
-
-
-def remove_relation(channel_id: str, source: str, target: str) -> bool:
-    """관계 엣지 제거."""
-    store = _get_relations_store(channel_id)
-    edges = store.get("edges", {})
-    key = _edge_key(source, target)
-    if key in edges:
-        del edges[key]
-        _save_relations_store(channel_id, store)
-        return True
-    return False
-
-
-def adjust_intensity(
-    channel_id: str,
-    source: str, target: str,
-    delta: float,
-    reason: str = "",
-    current_turn: int = 0
-) -> Optional[float]:
-    """기존 관계의 intensity를 delta만큼 조정. 관계가 없으면 None 반환."""
-    store = _get_relations_store(channel_id)
-    edges = store.get("edges", {})
-    key = _edge_key(source, target)
-    edge = edges.get(key)
-    if not edge:
-        return None
-
-    old_intensity = edge.get("intensity", 0.5)
-    new_intensity = max(0.0, min(1.0, old_intensity + delta))
-    edge["intensity"] = round(new_intensity, 2)
-    edge["last_turn"] = current_turn
-
-    if abs(delta) >= 0.1:
-        edge.setdefault("history", []).append({
-            "turn": current_turn,
-            "old_type": edge["type"],
-            "old_intensity": round(old_intensity, 2),
-            "new_type": edge["type"],
-            "new_intensity": round(new_intensity, 2),
-            "reason": reason,
-        })
-        if len(edge["history"]) > MAX_HISTORY_PER_EDGE:
-            edge["history"] = edge["history"][-MAX_HISTORY_PER_EDGE:]
-
-    _save_relations_store(channel_id, store)
-    return new_intensity
+    """모든 NPC↔NPC 관계 엣지(kind 있는 엣지) — 파생 뷰. {"A→B": {source,target,type,intensity,reason,last_turn,history}}"""
+    out: Dict[str, Dict[str, Any]] = {}
+    for e in domain_manager.get_relation_edges(channel_id):
+        if e.get("kind") is None:
+            continue
+        hist = []
+        for h in e.get("history") or []:
+            if isinstance(h, dict):
+                hh = dict(h)
+                hh.setdefault("new_type", e["kind"])
+                hh.setdefault("new_intensity", round(abs(int(h.get("bond", 0) or 0)) / 100.0, 2))
+                hist.append(hh)
+        out[_edge_key(e["source"], e["target"])] = {
+            "source": e["source"],
+            "target": e["target"],
+            "type": e["kind"],
+            "relation_type": e["kind"],
+            "intensity": round(abs(int(e.get("bond", 0) or 0)) / 100.0, 2),
+            "bond": int(e.get("bond", 0) or 0),
+            "tension": int(e.get("tension", 0) or 0),
+            "reason": e.get("stance", "") or "",
+            "last_turn": e.get("last_turn"),
+            "history": hist,
+        }
+    return out
 
 
 # =========================================================
@@ -448,25 +304,19 @@ def build_npc_relation_summary(channel_id: str, npc_name: str) -> str:
 # Batch Update (for Theoria/Flash output processing)
 # =========================================================
 
-def process_flash_relations(
+def process_batch_relations(
     channel_id: str,
     relation_updates: List[Dict[str, Any]],
     current_turn: int = 0
 ) -> int:
-    """
-    Flash/Theoria가 출력한 NPC 관계 변화를 일괄 처리.
+    """배치 추출 `social.npc_relations` → NPC↔NPC 엣지(upsert, origin="batch").
 
-    Expected format:
-    [
-        {"source": "Alice", "target": "Bob", "type": "rivalry", "intensity": 0.7, "reason": "..."},
-        {"source": "Carol", "target": "Alice", "type": "alliance", "delta": +0.2, "reason": "..."},
-    ]
-
-    Returns: number of successfully processed updates.
-    """
+    프롬 계약(intensity 0~1 / delta ±0.1~0.3)은 그대로 받아 bond로 옮긴다:
+      bond = ±intensity×100 (부호 = kind valence, 음수 계열 rivalry/fear/distrust/grudge는 −)
+      delta 모드 = |bond| += delta×100 (delta는 선언 캡 ±0.3 유지), 기존 엣지 없으면 무시(옛 동작).
+    Returns: 쓴 엣지 수."""
     if not relation_updates or not isinstance(relation_updates, list):
         return 0
-
     count = 0
     for upd in relation_updates:
         if not isinstance(upd, dict):
@@ -475,64 +325,64 @@ def process_flash_relations(
         tgt = (upd.get("target") or "").strip()
         if not src or not tgt or src == tgt:
             continue
-
-        rtype = (upd.get("type") or "neutral").lower().strip()
+        rtype = str(upd.get("type") or "neutral").lower().strip()
+        if rtype not in RELATION_TYPES:
+            rtype = "neutral"
         reason = upd.get("reason", "")
-
-        # Delta mode vs absolute mode
+        reason = reason.strip() if isinstance(reason, str) and reason.strip() else None
+        # [2026-09-25 관계 정성] 모델은 말(strength / shift)을 낸다 → 숫자는 여기서. 옛 숫자(intensity / delta)는 폴백.
+        import config as _cfg_rel
+        _pair_str = getattr(_cfg_rel, "REL_PAIR_STRENGTH", {}) or {}
+        _pair_shift = getattr(_cfg_rel, "REL_PAIR_SHIFT", {}) or {}
+        _shift = str(upd.get("shift") or "").strip().lower()
+        _strength = str(upd.get("strength") or "").strip().lower()
+        _shift = _shift if _shift in _pair_shift else ""
+        _strength = _strength if _strength in _pair_str else ""
         try:
-            if "delta" in upd:
-                delta = float(upd.get("delta", 0))
-                # [C4 2026-08-01] 선언(±0.1~0.3) 집행. adjust_intensity의 0.0~1.0은
-                # **범위** 클램프라, delta 0.9 하나로 관계가 한 턴에 바닥→최대가 됐다.
-                import bot_utils as _bu_cap
-                delta, _ = _bu_cap.cap_llm_delta(
-                    delta, "relation.intensity", "delta", subject=f"{src}->{tgt}")
-                result = adjust_intensity(channel_id, src, tgt, delta, reason, current_turn)
-                if result is not None:
-                    count += 1
+            if _shift or "delta" in upd:
+                if _shift:
+                    delta = _pair_shift[_shift] / 100.0
+                else:
+                    delta = float(upd.get("delta", 0))
+                    import bot_utils as _bu_cap
+                    delta, _ = _bu_cap.cap_llm_delta(
+                        delta, "relation.intensity", "delta", subject=f"{src}->{tgt}")
+                # [2026-09-24 감사] 조회도 쓰기 쪽(upsert_relation_edge → _resolve_npc_name)처럼 이름을 정본 키로 푼다 —
+                #   정확일치 조회라 배치가 별칭·변형 이름으로 delta 를 주면 증감이 로그 없이 버려졌다.
+                try:
+                    _npcs_er = domain_manager.get_npcs(channel_id) or {}
+                    _src_q = domain_manager._find_npc_key(_npcs_er, src) or src
+                    _tgt_q = domain_manager._find_npc_key(_npcs_er, tgt) or tgt
+                except Exception:
+                    _src_q, _tgt_q = src, tgt
+                cur = domain_manager.get_relation_edges(channel_id, source=_src_q, target=_tgt_q)
+                cur = [e for e in cur if e.get("kind") is not None]
+                if not cur:
+                    # 말로 온 이동인데 엣지가 없으면 새 관계로 연다(세기 = strength, 없으면 clear). 옛 숫자 delta 는 종전대로 무시.
+                    if _shift:
+                        _mag0 = int(_pair_str.get(_strength or "clear", 50))
+                        r0 = domain_manager.upsert_relation_edge(
+                            channel_id, src, tgt, bond=_valence_sign(rtype) * _mag0, stance=reason,
+                            kind=rtype, turn=current_turn, origin="batch")
+                        if r0:
+                            count += 1
+                    continue
+                kind = cur[0]["kind"]
+                mag = max(0, min(100, abs(int(cur[0]["bond"])) + int(round(delta * 100))))
+                r = domain_manager.upsert_relation_edge(
+                    channel_id, src, tgt, bond=_valence_sign(kind) * mag, stance=reason,
+                    kind=kind, turn=current_turn, origin="batch")
             else:
-                intensity = float(upd.get("intensity", 0.5))
-                result = set_relation(channel_id, src, tgt, rtype, intensity, reason, current_turn)
-                if result in ("created", "updated"):
-                    count += 1
+                if _strength:
+                    intensity = _pair_str[_strength] / 100.0
+                else:
+                    intensity = max(0.0, min(1.0, float(upd.get("intensity", 0.5))))
+                r = domain_manager.upsert_relation_edge(
+                    channel_id, src, tgt, bond=_valence_sign(rtype) * int(round(intensity * 100)),
+                    stance=reason, kind=rtype, turn=current_turn, origin="batch")
+            if r:
+                count += 1
         except (TypeError, ValueError):
             logger.warning("[EntityRelations] Skipping invalid update: %s", upd)
             continue
-
     return count
-
-
-# =========================================================
-# Cleanup
-# =========================================================
-
-def cleanup_stale_relations(channel_id: str, current_turn: int, grace: int = 8,
-                            fade_rate: float = 0.03, floor: float = 0.05) -> int:
-    """안 건드린 관계를 *점감(fade)* — delete 아니라 흐려짐. floor 이하로 옅어지면 그때 제거.
-    매 턴 호출 가정(turn-end). 관계는 사라지기보다 흐려진다. (grace/fade_rate/floor tunable.)"""
-    store = _get_relations_store(channel_id)
-    edges = store.get("edges", {})
-    remove_keys = []
-    faded = 0
-
-    for key, edge in edges.items():
-        last_turn = edge.get("last_turn", 0)
-        age = current_turn - last_turn
-        if age <= grace:
-            continue  # 최근 갱신된 관계는 보존 (활성 관계는 안 흐려짐)
-        new_intensity = float(edge.get("intensity", 0.5)) - fade_rate
-        if new_intensity <= floor:
-            remove_keys.append(key)  # 완전히 흐려짐 → 제거
-        else:
-            edge["intensity"] = round(new_intensity, 3)
-            faded += 1
-
-    for key in remove_keys:
-        del edges[key]
-
-    if remove_keys or faded:
-        _save_relations_store(channel_id, store)
-        logger.info("[EntityRelations] Faded %d relations, removed %d (decayed below floor)", faded, len(remove_keys))
-
-    return len(remove_keys)

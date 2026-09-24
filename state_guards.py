@@ -39,74 +39,50 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
-def validate_relation_write(
-    npc_name: Any,
-    payload: Any,
-    existing_npcs: Optional[Iterable[str]] = None,
-) -> Optional[Dict[str, Any]]:
-    """관계 쓰기 직전 검증/정규화 방벽. 모든 upsert_relation은 이걸 통과한다.
+# [2026-09-15 관계 통합 1차] relations 엣지 방벽 — 테이블 **전 칸** 화이트리스트.
+#   전례: 옛 npc_relations 방벽이 `last_change`를 몰라 조용히 떨궜다. 칸을 늘리면 여기도 같이.
+EDGE_FIELDS = ("source", "target", "bond", "tension", "stance", "kind", "last_turn", "history")
+EDGE_KINDS = ("alliance", "rivalry", "fear", "respect", "distrust",
+              "affection", "debt", "mentor", "grudge", "neutral")
+_EDGE_HISTORY_KEYS = ("turn", "bond", "tension", "source")
 
-    Args:
-        npc_name: 저장 키가 될 NPC 이름 (_resolve_npc_name을 이미 거친 이름이어야 함)
-        payload: JSON attitude dict 포맷 후보
-                 (attitude/reason/depth/tension/last_updated[/last_change_turn])
-        existing_npcs: 제공 시 Contract-First 실재 확인 (없는 NPC엔 안 씀)
 
-    Returns:
-        정제된 dict (DB에 그대로 넣어도 안전) — 또는 None (이번 쓰기만 무시, 행 무손상)
-    """
-    # --- 거부 사유 1: 행을 특정할 수 없음 ---
-    if not isinstance(npc_name, str) or not npc_name.strip():
-        logger.warning("[Guard] relation write 거부: npc_name 불량 (%r)", npc_name)
+def validate_edge_write(source: Any, target: Any, payload: Any) -> Optional[Dict[str, Any]]:
+    """엣지 쓰기 직전 정규화. 행을 특정 못 하면(None/빈 이름/자기 자신/payload 비dict) None.
+    bond −100~+100 · tension 0~100 하드 클램프, kind는 enum 밖이면 'neutral'(NULL은 NPC→PC로 보존),
+    history는 dict 항목의 4키만 남기고 최근 20."""
+    if not isinstance(source, str) or not source.strip() or not isinstance(target, str) or not target.strip():
+        logger.warning("[Guard] edge write 거부: 이름 불량 (%r → %r)", source, target)
         return None
-    if not isinstance(payload, dict):
-        logger.warning("[Guard] relation write 거부: payload가 dict 아님 (%s) for %s",
-                       type(payload).__name__, npc_name)
+    source, target = source.strip(), target.strip()
+    if source == target or not isinstance(payload, dict):
         return None
-
-    npc_name = npc_name.strip()
-
-    # --- 거부 사유 2: Contract-First — 실재하지 않는 NPC ---
-    if existing_npcs is not None and npc_name not in set(existing_npcs):
-        logger.warning("[Guard] relation write 거부: 미등록 NPC '%s' (Contract-First)", npc_name)
-        return None
-
-    # --- 정규화 (거부 아님 — JSON이 받는 건 받되, 타입만 강제) ---
-    attitude = payload.get("attitude", "neutral")
-    if not isinstance(attitude, str) or not attitude:
-        attitude = "neutral"
-    elif attitude not in KNOWN_ATTITUDES:
-        # enum 강제 ❌ — parity 철칙. 경고만.
-        logger.warning("[Guard] unknown attitude '%s' for %s (저장은 함)", attitude, npc_name)
-
-    reason = payload.get("reason", "")
-    if not isinstance(reason, str):
-        reason = str(reason) if reason is not None else ""
-
-    depth = max(_CLAMP_MIN, min(_CLAMP_MAX, _safe_int(payload.get("depth"), 0)))
-    tension = max(_CLAMP_MIN, min(_CLAMP_MAX, _safe_int(payload.get("tension"), 0)))
-
-    last_updated = payload.get("last_updated", "")
-    if not isinstance(last_updated, str):
-        last_updated = str(last_updated) if last_updated is not None else ""
-
-    clean: Dict[str, Any] = {
-        "attitude": attitude,
-        "reason": reason,
-        "depth": depth,
-        "tension": tension,
-        "last_updated": last_updated,
+    unknown = [k for k in payload if k not in EDGE_FIELDS]
+    if unknown:
+        logger.debug("[Guard] edge write 미등록 키 탈락: %s", unknown)
+    kind = payload.get("kind")
+    if kind is not None:
+        kind = str(kind).lower().strip() or None
+        if kind is not None and kind not in EDGE_KINDS:
+            kind = "neutral"
+    stance = payload.get("stance", "")
+    stance = "" if stance is None else (stance if isinstance(stance, str) else str(stance))
+    lt = payload.get("last_turn")
+    lt = None if lt is None else _safe_int(lt, 0)
+    hist = []
+    for h in (payload.get("history") or []) if isinstance(payload.get("history"), list) else []:
+        if isinstance(h, dict):
+            hist.append({k: h.get(k) for k in _EDGE_HISTORY_KEYS})
+    return {
+        "source": source,
+        "target": target,
+        "bond": max(-100, min(100, _safe_int(payload.get("bond"), 0))),
+        "tension": max(0, min(100, _safe_int(payload.get("tension"), 0))),
+        "stance": stance[:500],
+        "kind": kind,
+        "last_turn": lt,
+        "history": hist[-20:],
     }
-
-    # [2026-08-17] `last_change`(감사 도장)는 여기서 의도적으로 탈락한다 — 정규화 테이블에
-    #   컬럼이 없고, 만들지도 않는다(스키마 마이그레이션 0). 도장은 진실원천 JSON + 로그에만.
-    # last_change_turn: 키 부재는 부재로 보존 (§1b quirk — NULL 미러)
-    if "last_change_turn" in payload:
-        lct = payload.get("last_change_turn")
-        if lct is not None:
-            clean["last_change_turn"] = _safe_int(lct, -999)
-
-    return clean
 
 
 def _safe_str_list(value: Any, cap: int = 0) -> list:

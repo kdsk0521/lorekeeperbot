@@ -180,6 +180,24 @@ class _OpenAIResponseShim:
         return self._finish_reason
 
 
+_OPENAI_CLIENTS: dict = {}
+
+
+def _shared_openai_client():
+    """[2026-09-24 감사] 렌더 클라이언트 재사용 — 전엔 턴마다(세션 어댑터마다) AsyncOpenAI 를 새로 만들고 닫지 않아
+    httpx 커넥션 풀·TLS 핸드셰이크가 매턴 새로 생기고 누수됐다. (api_key, base_url) 당 하나. 설정값·동작은 종전 그대로."""
+    key = (config.OPENAI_API_KEY, config.OPENAI_BASE_URL)
+    c = _OPENAI_CLIENTS.get(key)
+    if c is None:
+        c = _openai_mod.AsyncOpenAI(
+            api_key=config.OPENAI_API_KEY,
+            base_url=config.OPENAI_BASE_URL,
+            max_retries=0,  # SDK 내장 재시도 OFF — 봇 자체 루프(range(MAX_RETRY_COUNT))가 유일한 재시도 층. 안 끄면 3×3=9콜 retry storm.
+        )
+        _OPENAI_CLIENTS[key] = c
+    return c
+
+
 class OpenAIChatSessionAdapter:
     """OpenAI-compatible API용 세션 어댑터. ChatSessionAdapter와 동일 인터페이스."""
 
@@ -188,11 +206,7 @@ class OpenAIChatSessionAdapter:
                  frequency_penalty: float = 0.0, presence_penalty: float = 0.0):
         if not _HAS_OPENAI:
             raise ImportError("openai 패키지가 설치되지 않았습니다. pip install openai")
-        self._client = _openai_mod.AsyncOpenAI(
-            api_key=config.OPENAI_API_KEY,
-            base_url=config.OPENAI_BASE_URL,
-            max_retries=0,  # SDK 내장 재시도 OFF — 봇 자체 루프(range(MAX_RETRY_COUNT))가 유일한 재시도 층. 안 끄면 3×3=9콜 retry storm.
-        )
+        self._client = _shared_openai_client()
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
@@ -207,12 +221,14 @@ class OpenAIChatSessionAdapter:
         MAX_HISTORY_CHARS = 100000
         if len(self.history) <= 2:
             return
+        # [2026-09-24 감사] 앞 2개(history[0]=자료 슬롯 context_data, [1]=ack)는 보호 — Gemini 어댑터와 같게
+        #   index 2 부터 버린다. 전엔 pop(0)이라 로어 전문 폴백 등으로 커지면 **세계·상태 자료 블록부터** 사라졌다.
         total_chars = sum(len(m["content"]) for m in self.history)
         while total_chars > MAX_HISTORY_CHARS and len(self.history) > 2:
-            removed = self.history.pop(0)
+            removed = self.history.pop(2)
             total_chars -= len(removed["content"])
         while len(self.history) > MAX_HISTORY_MESSAGES and len(self.history) > 2:
-            self.history.pop(0)
+            self.history.pop(2)
 
     async def send_message(self, content: str, prefill: str = ""):
         self._trim_history()
@@ -234,14 +250,16 @@ class OpenAIChatSessionAdapter:
         _cap = reasoning_policy.reasoning_cap_instruction(
             config.RENDERER_REASONING_TIER,
             cap_chars=getattr(config, "RENDERER_REASONING_CAP_CHARS", 0),
+            bridge=True,   # [2026-09-24 감사 §5-2 #29] 렌더 = 언어 다리 문구(분석용 "draft no prose"와 충돌 해소)
         )
         if _cap:
             # [2026-07-08 DTG [12] 핵심 구절 이식 — deepseek 게이트] 사고 재조준: 사고 시작 시 정적
             # 룰 재독 지시. 비대칭 실측 대응(V4가 recency 지시는 준수(추론캡 1916/2000)·정적 계약은
             # 흘림(텔레스코프 예산 2배 초과)) — 재조준+예산 재단언을 recency에서 발화.
             if "deepseek" in (self.model or "").lower():
+                # [2026-09-24 감사 §5-2 #29] 예산 수치를 프로토콜(Slot 34 v5 `~1000 characters`)과 같게 — 전엔 ~900 토큰.
                 _cap += (" Begin the thinking by re-reading the system rules and the telescope field "
-                         "contract; hold the telescope block to its ~900-token budget.")
+                         "contract; hold the telescope block to its ~1000-character budget.")
             messages.append({"role": "system", "content": _cap})
 
         try:
@@ -684,9 +702,13 @@ async def generate_response_with_retry(
                     logging.warning(f"[시도 {attempt+1}] 종료 사유: {finish_reason_str}")
 
             response_text = None
+            # [2026-09-24 감사] 수동 결합은 **Gemini 경로 전용**. openai 어댑터는 프리필을 user 지시로 주므로
+            #   응답에 이미 ┣…[Ground]가 들어 있다(07-27 주석은 어댑터 히스토리 접합만 뺐고 이 줄이 남았다) →
+            #   ┣ 2회, 그리고 모델이 블록 없이 산문만 쓰면 "┣ 있고 ┫ 없음"으로 판정돼 재시도·강제 ┫로 산문 소실.
+            _join_prefill = bool(prefill) and not isinstance(chat_session, OpenAIChatSessionAdapter)
             if response.text:
-                # Telescope V2: prefill은 response.text에 미포함 → 수동 결합
-                response_text = (prefill + response.text) if prefill else response.text
+                # Telescope V2: prefill은 response.text에 미포함 → 수동 결합 (Gemini)
+                response_text = (prefill + response.text) if _join_prefill else response.text
             else:
                 # content.parts 직접 확인
                 # candidate = response.candidates[0] # Already defined above
@@ -696,7 +718,7 @@ async def generate_response_with_retry(
                         text_parts = [p.text for p in parts if hasattr(p, 'text') and p.text]
                         if text_parts:
                             raw = "".join(text_parts)
-                            response_text = (prefill + raw) if prefill else raw
+                            response_text = (prefill + raw) if _join_prefill else raw
                             logging.info(f"[시도 {attempt+1}] parts에서 텍스트 복구: {len(response_text)}자")
 
 
@@ -789,7 +811,8 @@ async def generate_response_with_retry(
                             f"Last output spent the budget the wrong way: telescope block {_tele_len} chars, "
                             f"prose only {response_length} chars (needs {min_length}+).\n"
                             f"Rebalance in one direction only — the block shrinks, the prose GROWS:\n"
-                            f"1. Telescope block: 2000 characters max, one line per field, no elaboration.\n"
+                            # [2026-09-24 감사 §5-2 #29] 2000 → 1000(Slot 34 v5 프로토콜 예산과 같은 수치).
+                            f"1. Telescope block: 1000 characters max, one line per field, no elaboration.\n"
                             f"2. Prose after the block: {_para_lo}-{_para_hi} full paragraphs, "
                             f"≈{_vol_words}+ English-words volume. Do not shorten the prose to satisfy item 1.\n"
                             f"Grow the prose by expanding beats already in play: a line of dialogue, an open thread "

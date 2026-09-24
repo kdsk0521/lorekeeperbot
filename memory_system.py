@@ -317,19 +317,22 @@ async def process_ooc_memory_edit(
     ooc_content: str, 
     ai_mem: Dict[str, Any], 
     p_data: Dict[str, Any],
-    notebook_text: str = ""
+    notebook_text: str = "",
+    declared_block: str = "",
+    relations_state: Optional[Dict[str, Any]] = None,
+    sheet_sections: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
     사용자의 OOC 요청을 해석하여 캐릭터 메모리 수정 명령을 생성합니다.
     (Notebook 지원 추가)
     """
+    # [2026-09-16 시트 2차] 서술 편집 = PC 페이지 lore 절 편집(field = 절 이름). ai_memory 서술 키 없음.
     current_state = {
-        "appearance": ai_mem.get("appearance", ""),
-        "personality": ai_mem.get("personality", ""),
-        "background": ai_mem.get("background", ""),
-        "relationships": ai_mem.get("relationships", {}),
+        "sheet": sheet_sections or {},
         "passives": ai_mem.get("passives", []),
         "status_effects": p_data.get("status_effects", []),
+        # [2026-09-15 관계 통합] ai_memory.relationships 삭제 — 관계는 NPC→이 PC 엣지(bond/tension/stance).
+        "relations": relations_state or {},
     }
     
     system_prompt = (
@@ -345,13 +348,42 @@ async def process_ooc_memory_edit(
         "  \"interpretation\": \"What the user wants (Korean)\",\n"
         "  \"edits\": [\n"
         "    {\"field\": \"notebook\", \"action\": \"append\", \"value\": \"- Obtained Holy Sword\"},\n"
-        "    {\"field\": \"relationships\", \"action\": \"update\", \"key\": \"NPCName\", \"value\": \"New Relation\"},\n"
+        "    {\"field\": \"relation\", \"action\": \"set\", \"key\": \"NPCName\", \"stance\": \"telegraphic observable behavior toward this PC\", \"bond\": 20, \"tension\": 10},\n"
         "    {\"field\": \"status_effects\", \"action\": \"remove\", \"value\": \"Poison\"}\n"
         "  ],\n"
         "  \"confirmation_message\": \"Response to user (Korean)\"\n"
         "}\n"
-        "Valid fields: appearance, personality, background, relationships, passives, status_effects, notebook.\n"
+        "Valid fields: relation, passives, status_effects, notebook, or a character-sheet section name "
+        "(Identity, Core Traits, Aside, Direction, Relationships, Secrets, Background, Notes — the keys of "
+        "Current State.sheet) with action set|append|remove and value = that section's text.\n"
+        "passives = sheet fragments: action add|set|remove. add/set value = {\"name\", \"desc\" (Korean, conditions in words), "
+        "\"value\": {roll_<type>: int -20~+20, cost: negative int}} with type in " + "/".join(__import__("config").ACTION_TYPES) +
+        "; relevant keys only. remove value = name.\n"
+        "relation = how an NPC stands toward this PC: action set|remove, key = NPC name, stance (English telegraphic, "
+        "observable behavior only), bond -100~+100, tension 0~100 — include only the parts the user asked to change.\n"
     )
+
+    # [2026-09-10 P13] 선언 칸 한 줄. 옛 7필드 문안은 위에서 한 글자도 안 바뀌었다 —
+    #   이 블록은 그 채널에 **선언이 있을 때만** 붙는다(없으면 프롬프트도 종전 그대로).
+    if declared_block:
+        system_prompt += (
+            "\n### Declared State (this channel)\n"
+            "The block below lists what this world declares. To change a declared value, use\n"
+            "field='declared':\n"
+            '{"field":"declared","name":"금","op":"set|delta|add|remove|rename|append",'
+            '"value":50,"item":"양파","to":"당근","record":"수분"}\n'
+            "- op set/delta: a number (gauge/counter) or a stage name (enum).\n"
+            "- Lists hold records: use item=<record name>, record=<field name> for a field,\n"
+            "  add/remove to create or destroy the record itself.\n"
+            "- **rename vs remove+add**: if the user is CORRECTING a name for the same thing\n"
+            "  (\"the carrot was actually an onion\"), use rename (item -> to) — the record keeps\n"
+            "  every field. If it is a NEW thing in that slot (\"replanted\"), emit remove then\n"
+            "  add — the new record starts from its declared initial values.\n"
+            "- op append: add one line to a log section (record-keeping sections only).\n"
+            "- Values only. Rules, ranges, formats and transitions are edited in files, not OOC.\n"
+            "- Never invent a name that is not in the block.\n"
+            + declared_block + "\n"
+        )
     
     user_prompt = f"Current State: {json.dumps(current_state, ensure_ascii=False)}\nNotebook:\n{notebook_text}\n\nOOC Request: {ooc_content}"
 
@@ -395,20 +427,9 @@ def apply_memory_edits(
         value = edit.get("value")
         key = edit.get("key")
         
-        if field in ["appearance", "personality", "background"]:
-            if action == "set":
-                new_mem[field] = value
-            elif action == "append":
-                new_mem[field] = (new_mem.get(field, "") + " " + str(value)).strip()
-        
-        elif field == "relationships":
-            if action in ["set", "update"] and key:
-                if "relationships" not in new_mem: new_mem["relationships"] = {}
-                new_mem["relationships"][key] = value
-            elif action == "remove" and key:
-                if "relationships" in new_mem: new_mem["relationships"].pop(key, None)
-                
-        elif field == "status_effects":
+        # [2026-09-16 시트 2차] 시트 절 편집(field=절 이름)은 호출부가 페이지 편집으로 분리한다 — 여기 안 온다.
+        # [2026-09-15 관계 통합] field="relation"은 호출부(command_handler)가 엣지 편집으로 분리한다 — 여기 안 온다.
+        if field == "status_effects":
             from game_character import normalize_status_effects
             target = normalize_status_effects(new_p_data.get("status_effects", []))
 
@@ -443,7 +464,29 @@ def apply_memory_edits(
 
             new_p_data["status_effects"] = target
 
-        elif field in ["passives", "known_info", "foreshadowing"]:
+        elif field == "passives":
+            # [2026-09-16 3차] 조각 편집 — add/set 은 새 모양으로 접어 이름 기준 교체, remove 는 이름.
+            #   OOC 로 넣은 조각은 작가 편집이라 기본 origin=sheet(정리 콜이 못 덮는다).
+            from game_character import normalize_fragment
+            target = [f for f in (normalize_fragment(x, "sheet") for x in (new_mem.get("passives") or [])) if f]
+            if action in ("add", "set", "update", "replace"):
+                _raw = value if isinstance(value, dict) else ({"name": value} if isinstance(value, str) else None)
+                if isinstance(_raw, dict) and key and not _raw.get("name"):
+                    _raw = dict(_raw, name=key)
+                frag = normalize_fragment(_raw, "sheet") if _raw is not None else None
+                if frag:
+                    _old = key if (action != "add" and key) else frag["name"]
+                    idx = next((i for i, x in enumerate(target) if x["name"] in (_old, frag["name"])), None)
+                    if idx is None:
+                        target.append(frag)
+                    else:
+                        target[idx] = frag
+            elif action == "remove":
+                _nm = value.get("name") if isinstance(value, dict) else (value if value is not None else key)
+                target = [x for x in target if x["name"] != str(_nm or "").strip()]
+            new_mem["passives"] = target
+
+        elif field in ["known_info", "foreshadowing"]:
             target = new_mem.get(field, [])
             if field not in new_mem:
                 new_mem[field] = []
@@ -487,6 +530,13 @@ def apply_memory_edits(
     # 리다이렉트 분기 제거. OOC로만 값이 들어가고 플레이 중 갱신하는 코드는 없던 필드라
     # 스키마·프롬프트 필드 목록·예시 JSON도 같이 철거. 복원은 git 이력.
     return new_mem, new_p_data
+
+
+def removed_play_fragments(old_mem: Dict[str, Any], new_mem: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """[2026-09-16 3차] OOC 편집 전후 비교 — 사라진 origin=play 조각(이름 기준). 가역 되돌림 재료."""
+    new_names = {str(p.get("name")) for p in (new_mem or {}).get("passives", []) or [] if isinstance(p, dict)}
+    return [p for p in (old_mem or {}).get("passives", []) or []
+            if isinstance(p, dict) and p.get("origin") == "play" and str(p.get("name")) not in new_names]
 
 
 # =========================================================

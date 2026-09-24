@@ -33,8 +33,14 @@ def record_turn(
     ai_brief: str,
     involved_entities: List[str],
     quality_flags: Optional[dict] = None,
+    extra_entities: Optional[List[str]] = None,
 ) -> dict:
-    """턴 로그에 새 턴 기록. quality_flags에서 중요도 추론."""
+    """턴 로그에 새 턴 기록. quality_flags에서 중요도 추론.
+
+    [2026-09-14 W5] `extra_entities`(장소·세력 이름)는 **별도 키** `extra`로 간다.
+    `entities`에 섞으면 `_infer_importance`의 `len(entities) >= 3`이 흔들리고
+    `entities[:8]` 상한이 인물을 밀어낸다 — 둘 다 W5의 관심사가 아니다(지시서 §0 ③).
+    값이 없으면 키 자체를 안 만든다(기존 엔트리 모양 불변)."""
     if "turn_log" not in state:
         state["turn_log"] = []
 
@@ -48,6 +54,15 @@ def record_turn(
         "entities": involved_entities[:8],
         "importance": importance,
     }
+    if extra_entities:
+        try:
+            import config as _cfg_nt
+            _xmax = int(getattr(_cfg_nt, "WIKI_TURNLOG_EXTRA_MAX", 4))
+        except Exception:
+            _xmax = 4
+        _x = [str(n).strip() for n in extra_entities if str(n or "").strip()]
+        if _x:
+            entry["extra"] = _x[:max(0, _xmax)]
     state["turn_log"].append(entry)
 
     # 최대 크기 유지
@@ -241,7 +256,7 @@ def assign_to_storyline(state: dict, turn_entry: dict) -> dict:
             "turns": [turn],
             "first_turn": turn,
             "last_turn": turn,
-            "current_context": turn_entry.get("ai_brief", "")[:260],
+            "current_context": (turn_entry.get("ai_brief") or "")[:260],
             "context_kind": "raw",  # [2026-08-12 출력파생 §8] 산문 원문 출처 — 렌더 미주입
             "key_points": [],
             "ongoing_tensions": [],
@@ -249,7 +264,7 @@ def assign_to_storyline(state: dict, turn_entry: dict) -> dict:
             "status": "active",
             # === Arc 시스템 (Phase 1) ===
             # 신규 storyline은 is_arc=False. Arc 격상 시 promote 함수가 신규 필드 추가.
-            # 자세히: 파티쳇수정/arc_spec_v2.md §4.1
+            # 자세히: 파티쳇수정/narrative/arc_spec_v2.md §4.1
             "is_arc": False,
         }
         state["storylines"].append(new_sl)
@@ -361,7 +376,7 @@ async def _flash_summarize_storylines(state, storylines, recent_log, client, mod
         sl_turns = set(sl.get("turns", []))
         related = [t for t in recent_log if t.get("turn") in sl_turns][-5:]
         turn_text = " | ".join(
-            f"T{t['turn']}: {_sanitize(t.get('user_brief', '')[:60])} → {_sanitize(t.get('ai_brief', '')[:80])}"
+            f"T{t['turn']}: {_sanitize((t.get('user_brief') or '')[:60])} → {_sanitize((t.get('ai_brief') or '')[:80])}"
             for t in related
         )
         entities_str = ",".join(_sanitize(e) for e in sl.get("entities", [])[:5])
@@ -537,7 +552,12 @@ def apply_tension_labels(state: dict, labeled_tensions: list, current_turn: int)
         kind_raw = str(raw.get("kind", "open_question"))
         kind = kind_raw if kind_raw in ("open_question", "payoff", "lock") else "open_question"
         primary = bool(raw.get("primary", False))
-        priority = max(0.0, min(1.0, float(raw.get("priority", 0.5))))
+        # [2026-09-24 감사] null/문자열 priority 방어 — 이 함수는 NarrativeTracker 블록 try 안이라
+        #   TypeError 하나가 그 턴의 tracker 저장 전체를 날린다.
+        try:
+            priority = max(0.0, min(1.0, float(raw.get("priority") if raw.get("priority") is not None else 0.5)))
+        except (TypeError, ValueError):
+            priority = 0.5
 
         # 매칭 — substring 양방향
         matched = False
@@ -619,7 +639,7 @@ def format_storylines_for_prompt(state: dict, current_turn: int = 0) -> str:
         #   raw/legacy(도장 없음 = 보수적으로 raw 취급)는 엔티티 라벨 한 줄로 대체한다.
         #   → 스토리라인의 **존재·구성원·긴장**은 그대로 전달되고 문장만 빠진다.
         if sl.get("context_kind") == "summary":
-            context = sl.get("current_context", "")[:180]
+            context = (sl.get("current_context") or "")[:180]
         else:
             context = "(unfolding)"
         # tensions: priority+decay 룰 적용 후 surface
@@ -685,7 +705,7 @@ def format_entity_state_for_prompt(state: dict, npc_name: str) -> str:
     critical = log.get("critical_moments", [])[-2:]
     if critical:
         for c in critical:
-            parts.append(f"  Critical(T{c.get('turn', '?')}): {c.get('description', '')[:80]}")
+            parts.append(f"  Critical(T{c.get('turn', '?')}): {(c.get('description') or '')[:80]}")
 
     return "\n".join(parts)
 
@@ -693,7 +713,7 @@ def format_entity_state_for_prompt(state: dict, npc_name: str) -> str:
 # =========================================================
 # ARC SYSTEM (Phase 1: 스키마 + helper)
 # =========================================================
-# 자세히: 파티쳇수정/arc_spec_v2.md
+# 자세히: 파티쳇수정/narrative/arc_spec_v2.md
 # Phase 1 = 자료구조 + 격상/격하 함수만. 좌표 갱신(tick_arcs)은 Phase 3.
 
 def is_arc(sl: dict) -> bool:
@@ -1505,8 +1525,9 @@ def compute_aspects(bus, state: dict, primary_axis: str = "vigor") -> list:
     a_arc_absorbed = isinstance(anomaly.get("arc_absorbed"), dict)
     clock_fired = bool(doom.get("completed_this_turn"))
 
-    v_val = int(vigor.get("value", 100) or 100)
-    c_val = int(composure.get("value", 100) or 100)
+    # [2026-09-24 감사] `or 100` 이 값 0(완전 고갈)을 100 으로 바꿔 고갈 aspect·abyss 판정이 정확히 0 에서 실패했다.
+    v_val = int(vigor.get("value") if vigor.get("value") is not None else 100)
+    c_val = int(composure.get("value") if composure.get("value") is not None else 100)
 
     primary_val = v_val if primary_axis == "vigor" else c_val
 

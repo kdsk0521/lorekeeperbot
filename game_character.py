@@ -271,130 +271,129 @@ def archive_stale_quests(channel_id: str, current_turn: int, threshold: int = No
 
     return archived_names
 
-# Memo Operations (Integrated into Notebook, per-user in V8)
+# Memo Operations — notebook v2 (섹션 dict 정본, 2026-09-06)
+#  · 유저 줄('-')은 **코드만** 만들고 지운다. LLM은 읽기만 한다.
+#  · LLM 줄('>')은 apply_llm_memos()가 단독 소유(B-1 memo_add/memo_remove).
+#  리터럴 헤더 split은 전부 사라졌다 — 구역 오염/유저 메모 소실이 구조적으로 불가능.
+def get_notebook_data(channel_id: str, user_id: str = "") -> dict:
+    return domain_manager.get_notebook_data(channel_id, user_id)
+
+
+def update_notebook_data(channel_id: str, nb: dict, user_id: str = "") -> None:
+    domain_manager.update_notebook_data(channel_id, nb, user_id)
+    if user_id:
+        sync_notebook_to_inventory(channel_id, user_id)
+
+
+def _norm(s: str) -> str:
+    return re.sub(r'\s+', ' ', str(s or '').strip())
+
+
 def add_memo(channel_id: str, content: str, user_id: str = "") -> str:
-    current_nb = get_notebook_text(channel_id, user_id)
-    # N-7 fix: 공백 정규화 dedup
-    _nc = re.sub(r'\s+', ' ', content.strip())
-    _existing = {re.sub(r'\s+', ' ', l.strip().lstrip('-').strip())
-                 for l in current_nb.splitlines() if l.strip().startswith('-')}
-    if _nc in _existing:
+    """유저색 메모 1줄 추가. 공백 정규화 dedup(두 색 전체 대조)."""
+    t = _norm(content)
+    if not t:
+        return ""
+    nb = get_notebook_data(channel_id, user_id)
+    memo = nb["sections"]["메모"]
+    if t in memo["user"] or t in memo["llm"]:
         return f"⚠️ 이미 노트북에 있는 내용입니다: {content}"
-
-    new_nb = ""
-    if "— [메모] —" in current_nb:
-        parts = current_nb.split("— [메모] —")
-        new_nb = parts[0] + "— [메모] —" + parts[1] + f"\n- {content}"
-    else:
-        new_nb = current_nb + f"\n\n— [메모] —\n- {content}"
-
-    update_notebook_text(channel_id, new_nb, user_id)
+    memo["user"].append(t)
+    update_notebook_data(channel_id, nb, user_id)
     return f"📝 **노트북 기록:** {content}"
 
+
 def remove_memo(channel_id: str, content: str, user_id: str = "") -> str:
-    # N-3 fix: [메모] 섹션 한정 + 첫 매칭 1줄만 삭제.
-    # 기존엔 구역 게이트 없이 모든 '-'줄을 부분문자열로 삭제 → [소지품] 아이템까지 오삭제,
-    # 다중 줄 동시 삭제. resolve_memo_auto(자동 경로)가 이를 상속해 위험.
-    current_nb = get_notebook_text(channel_id, user_id)
-    lines = current_nb.splitlines()
-    new_lines = []
-    removed = False
-    in_memo = False
-
-    for line in lines:
-        if _MEMO_HEADER in line:
-            in_memo = True
-            new_lines.append(line)
-            continue
-        if _SOJIPIN_HEADER in line:
-            in_memo = False
-            new_lines.append(line)
-            continue
-        if in_memo and not removed and content in line and line.strip().startswith("-"):
-            removed = True
-            continue
-        new_lines.append(line)
-
-    if removed:
-        update_notebook_text(channel_id, "\n".join(new_lines), user_id)
-        return f"🗑️ **노트북 삭제:** {content}"
+    """메모 1줄 삭제(부분일치 첫 매칭). 유저색 우선, 없으면 LLM색."""
+    t = _norm(content)
+    if not t:
+        return ""
+    nb = get_notebook_data(channel_id, user_id)
+    memo = nb["sections"]["메모"]
+    for color in ("user", "llm"):
+        for i, line in enumerate(memo[color]):
+            if t in line:
+                del memo[color][i]
+                update_notebook_data(channel_id, nb, user_id)
+                return f"🗑️ **노트북 삭제:** {content}"
     return f"⚠️ '{content}' 내용을 찾을 수 없습니다."
 
+
 def edit_memo(channel_id: str, old_content: str, new_content: str, user_id: str = "") -> str:
-    # N-4 fix: [메모] 섹션 한정 + 첫 매칭만 + 부분치환(줄 전체 교체 X).
-    # 기존엔 구역 게이트 없이 매칭 줄을 통째 '- {new}'로 교체 → 긴 메모의 나머지 소실,
-    # 헤더/소지품 줄 오염 가능.
-    current_nb = get_notebook_text(channel_id, user_id)
-    lines = current_nb.splitlines()
-    new_lines = []
-    edited = False
-    in_memo = False
-
-    for line in lines:
-        if _MEMO_HEADER in line:
-            in_memo = True
-            new_lines.append(line)
-            continue
-        if _SOJIPIN_HEADER in line:
-            in_memo = False
-            new_lines.append(line)
-            continue
-        if in_memo and not edited and old_content in line and line.strip().startswith("-"):
-            new_lines.append(line.replace(old_content, new_content, 1))
-            edited = True
-            continue
-        new_lines.append(line)
-
-    if edited:
-         update_notebook_text(channel_id, "\n".join(new_lines), user_id)
-         return f"📝 **노트북 수정:** {old_content} -> {new_content}"
+    """메모 1줄 부분치환(첫 매칭). 줄 전체 교체가 아니라 substring 치환."""
+    o, n = _norm(old_content), _norm(new_content)
+    if not o:
+        return ""
+    nb = get_notebook_data(channel_id, user_id)
+    memo = nb["sections"]["메모"]
+    for color in ("user", "llm"):
+        for i, line in enumerate(memo[color]):
+            if o in line:
+                memo[color][i] = _norm(line.replace(o, n, 1))
+                update_notebook_data(channel_id, nb, user_id)
+                return f"📝 **노트북 수정:** {old_content} -> {new_content}"
     return f"⚠️ '{old_content}' 내용을 찾을 수 없습니다."
+
 
 def resolve_memo_auto(channel_id: str, content: str, user_id: str = "") -> str:
     return remove_memo(channel_id, content, user_id) + " (자동 해결)"
 
-# Notebook System (New in V5.1, per-user in V8)
+
+def apply_llm_memos(channel_id: str, user_id: str, memo_add=None, memo_remove=None) -> bool:
+    """B-1(_extract_physical) 산출을 **LLM색 줄에만** 적용한다. 유저색 배열 무접촉.
+    WHY: 옛 계약(notebook_update 전문 반환)은 stale 스냅샷으로 유저 메모를 통째 덮어썼다.
+    상한 config.NOTEBOOK_LLM_MEMO_MAX 초과 시 오래된 LLM 줄부터 탈락."""
+    add = [_norm(x) for x in (memo_add or []) if _norm(x)]
+    rem = [_norm(x) for x in (memo_remove or []) if _norm(x)]
+    if not add and not rem:
+        return False
+    nb = get_notebook_data(channel_id, user_id)
+    memo = nb["sections"]["메모"]
+    before = list(memo["llm"])
+    for r in rem:
+        for i, line in enumerate(list(memo["llm"])):
+            if r in line:
+                memo["llm"].remove(line)
+                break
+    for a in add:
+        if a not in memo["llm"] and a not in memo["user"]:
+            memo["llm"].append(a)
+    cap = int(getattr(config, "NOTEBOOK_LLM_MEMO_MAX", 12))
+    if cap > 0 and len(memo["llm"]) > cap:
+        memo["llm"] = memo["llm"][-cap:]
+    if memo["llm"] == before:
+        return False
+    update_notebook_data(channel_id, nb, user_id)
+    return True
+
+
+# Notebook System (New in V5.1, per-user in V8; v2 섹션 dict 2026-09-06)
 def get_notebook_text(channel_id: str, user_id: str = "") -> str:
+    """표시/프롬프트용 렌더 텍스트. 정본 아님 — 쓰기는 get/update_notebook_data로."""
     return domain_manager.get_notebook(channel_id, user_id)
 
-def update_notebook_text(channel_id: str, new_text: str, user_id: str = "") -> None:
+
+def update_notebook_text(channel_id: str, new_text, user_id: str = "") -> None:
+    """[legacy shim] 텍스트를 받으면 파싱해 dict로 저장. 새 코드는 쓰지 마라."""
     domain_manager.update_notebook(channel_id, new_text, user_id)
     if user_id:
         sync_notebook_to_inventory(channel_id, user_id)
 
 
-_SOJIPIN_HEADER = "— [소지품] —"
-_MEMO_HEADER = "— [메모] —"
-_JOURNAL_HEADER = "— [일지] —"
+# [notebook v2] 헤더 리터럴의 주인은 domain_manager(렌더 전용). 여기선 더 이상 split하지 않는다.
+_SOJIPIN_HEADER = domain_manager.NOTEBOOK_SOJIPIN_HEADER
+_MEMO_HEADER = domain_manager.NOTEBOOK_MEMO_HEADER
+_JOURNAL_HEADER = domain_manager.NOTEBOOK_JOURNAL_HEADER
 _JOURNAL_DISPLAY_CAP = 10  # [일지] 섹션 표시 안전 상한(줄). 요약은 보통 몇 줄이라 거의 안 걸림.
 
 def _render_journal_section(channel_id: str, recent_lines: list, user_id: str = "") -> None:
-    """노트북 [일지] 섹션을 recent_lines로 교체(재구축). [소지품]/[메모]는 보존.
-    [일지]는 노트북 최상단([소지품] 앞) → merge가 [메모] 이전 전체를 보존하고, 소지품/메모
-    파서 토글이 맨 앞 [일지]를 자기 구역으로 안 봄(스모크 실증)."""
-    nb = get_notebook_text(channel_id, user_id)
-    _clean = lambda e: str(e).strip().lstrip('-').strip()
-    body = "\n".join(f"- {_clean(e)}" for e in recent_lines if _clean(e))
-    journal_block = _JOURNAL_HEADER + ("\n" + body if body else "")
+    """노트북 [일지] 섹션을 recent_lines로 **교체**(living-rewrite). [소지품]/[메모] 무접촉 —
+    v2에선 섹션이 별개 키라 파서 토글 사고가 원천적으로 없다."""
+    _clean = lambda e: _norm(str(e).lstrip('-'))
+    nb = get_notebook_data(channel_id, user_id)
+    nb["sections"]["일지"]["lines"] = [_clean(e) for e in recent_lines if _clean(e)]
+    update_notebook_data(channel_id, nb, user_id)
 
-    if _JOURNAL_HEADER not in nb:
-        new_nb = journal_block + "\n\n" + nb.lstrip()
-    else:
-        before, _, after = nb.partition(_JOURNAL_HEADER)
-        # after = 기존 일지 본문 + 다음 섹션들. 다음 섹션 헤더(— …—) 전까지가 일지 본문(버림).
-        tail_lines, hit = [], False
-        for l in after.splitlines():
-            if not hit and l.strip().startswith("—"):
-                hit = True
-            if hit:
-                tail_lines.append(l)
-        tail = "\n".join(tail_lines).lstrip()
-        head = before.rstrip()
-        parts = [p for p in (head, journal_block) if p]
-        new_nb = "\n\n".join(parts)
-        if tail:
-            new_nb += "\n\n" + tail
-    update_notebook_text(channel_id, new_nb, user_id)
 
 def add_to_journal(channel_id: str, content: str, user_id: str = "") -> str:
     """캐릭터 연속성 일지 갱신 [living-rewrite]. content = 캐릭터의 '현재 여정 요약'
@@ -412,101 +411,70 @@ def add_to_journal(channel_id: str, content: str, user_id: str = "") -> str:
     _render_journal_section(channel_id, display[:_JOURNAL_DISPLAY_CAP], user_id)
     return f"📓 일지 갱신: {content[:40]}"
 
-def merge_notebook_preserve_inventory(live_notebook: str, extracted_notebook: str) -> str:
-    """[N-1/N-2 역할 경계 복원] 라이브 노트북의 [소지품] 섹션을 보존(item_usage 단독 소유)하고,
-    [메모] 섹션만 추출분(_extract_physical)으로 교체한다.
-    과거: _extract_physical의 full-overwrite가 stale 스냅샷 기준으로 [소지품]까지 덮어써
-          item_usage가 이번 턴에 한 인벤토리 add/remove를 되돌리던 충돌을 차단.
-    - 추출분에 [메모] 헤더가 없으면 라이브 [메모]를 보존(malformed 추출 방어).
-    - [소지품]은 항상 라이브 기준."""
-    live = live_notebook if (live_notebook and live_notebook.strip()) else f"{_SOJIPIN_HEADER}\n\n{_MEMO_HEADER}"
-
-    # 소지품 파트 = 라이브의 메모 헤더 이전 전체 (없으면 전체)
-    live_soji = live.split(_MEMO_HEADER, 1)[0].rstrip()
-    if not live_soji:
-        live_soji = _SOJIPIN_HEADER
-
-    # 메모 파트 = 추출분에 메모 헤더 있으면 그것, 없으면 라이브 메모 보존
-    if extracted_notebook and _MEMO_HEADER in extracted_notebook:
-        memo_part = _MEMO_HEADER + extracted_notebook.split(_MEMO_HEADER, 1)[1]
-    elif _MEMO_HEADER in live:
-        memo_part = _MEMO_HEADER + live.split(_MEMO_HEADER, 1)[1]
-    else:
-        memo_part = _MEMO_HEADER
-
-    return f"{live_soji}\n\n{memo_part.lstrip()}"
+# [삭제 2026-09-06] merge_notebook_preserve_inventory — WHY: 전문 반환 계약(notebook_update)을
+# 사후 봉합하려고 [소지품] 파트만 라이브에서 되살리던 함수. v2에선 B-1이 memo_add/remove만
+# 돌려주고 섹션이 dict로 분리돼 있어 봉합할 충돌 자체가 없다. 호출자 0(orchestration 정리 완료).
 
 
-def add_item_to_sojipin(channel_id: str, item_name: str, user_id: str = "") -> str:
-    """[소지품] 섹션에 아이템 추가. 중복 방지."""
-    item_name = item_name.strip()
+def add_item_to_sojipin(channel_id: str, item_name: str, user_id: str = "", qty: int = 1) -> str:
+    """[소지품]에 수량 추가. 이미 있으면 qty 누적."""
+    item_name = (item_name or "").strip()
     if not item_name:
         return ""
-    current_nb = get_notebook_text(channel_id, user_id)
-    if f"- {item_name}" in current_nb:
-        return f"이미 소지품에 있음: {item_name}"
-
-    if "— [메모] —" in current_nb:
-        parts = current_nb.split("— [메모] —", 1)
-        inventory_part = parts[0].rstrip()
-        new_nb = inventory_part + f"\n- {item_name}\n\n— [메모] —" + parts[1]
-    elif "— [소지품] —" in current_nb:
-        new_nb = current_nb.rstrip() + f"\n- {item_name}"
-    else:
-        new_nb = f"— [소지품] —\n- {item_name}\n\n— [메모] —\n" + current_nb
-
-    update_notebook_text(channel_id, new_nb, user_id)
-    return f"소지품 추가: {item_name}"
+    try:
+        qty = max(1, int(qty))
+    except Exception:
+        qty = 1
+    nb = get_notebook_data(channel_id, user_id)
+    items = nb["sections"]["소지품"]["items"]
+    existed = item_name in items
+    items[item_name] = {"qty": int(items.get(item_name, {}).get("qty", 0)) + qty}
+    update_notebook_data(channel_id, nb, user_id)
+    if existed:
+        return f"이미 소지품에 있음: {item_name} (×{items[item_name]['qty']})"
+    return f"소지품 추가: {item_name}" + (f" ×{qty}" if qty > 1 else "")
 
 
-def remove_item_from_sojipin(channel_id: str, item_name: str, user_id: str = "") -> str:
-    """[소지품] 섹션에서 아이템 제거. [메모]는 안 건드림.
-    N-5 fix: 정확 일치(`- {name}`) 우선, 없을 때만 부분일치 첫 매칭 →
-    '물약' 같은 일반 이름이 엉뚱한 포션 줄을 지우던 wrong-target 완화."""
-    item_name = item_name.strip()
+def remove_item_from_sojipin(channel_id: str, item_name: str, user_id: str = "", qty=None) -> str:
+    """[소지품]에서 제거. qty=None이면 항목 전부, 숫자면 그만큼 차감(0 이하 → 항목 삭제).
+    정확 일치 우선, 없을 때만 부분일치 첫 매칭(일반 이름의 wrong-target 완화 — 기존 규칙 승계)."""
+    item_name = (item_name or "").strip()
     if not item_name:
         return ""
-    current_nb = get_notebook_text(channel_id, user_id)
-    lines = current_nb.splitlines()
-
-    # 소지품 섹션 '-' 라인 인덱스 수집
-    in_sojipin = False
-    soji_idx = []
-    for i, line in enumerate(lines):
-        s = line.strip()
-        if "소지품" in s and s.startswith("—"):
-            in_sojipin = True
-            continue
-        if s.startswith("—") and "메모" in s:
-            in_sojipin = False
-            continue
-        if in_sojipin and s.startswith("-"):
-            soji_idx.append(i)
-
-    # 정확 일치 우선 → 없으면 부분일치 첫 매칭
-    target_i = next((i for i in soji_idx if lines[i].strip() == f"- {item_name}"), None)
-    if target_i is None:
-        target_i = next((i for i in soji_idx if item_name in lines[i].strip()), None)
-
-    if target_i is not None:
-        del lines[target_i]
-        update_notebook_text(channel_id, "\n".join(lines), user_id)
-        return f"소지품 제거: {item_name}"
-    return f"소지품에서 '{item_name}' 못 찾음"
+    nb = get_notebook_data(channel_id, user_id)
+    items = nb["sections"]["소지품"]["items"]
+    key = item_name if item_name in items else next((k for k in items if item_name in k), None)
+    if key is None:
+        return f"소지품에서 '{item_name}' 못 찾음"
+    if qty is None:
+        del items[key]
+    else:
+        try:
+            n = max(1, int(qty))
+        except Exception:
+            n = 1
+        left = int(items[key].get("qty", 1)) - n
+        if left > 0:
+            items[key] = {"qty": left}
+        else:
+            del items[key]
+    update_notebook_data(channel_id, nb, user_id)
+    return f"소지품 제거: {key}"
 
 
 def sync_notebook_to_inventory(channel_id: str, user_id: str) -> None:
-    """노트북 [소지품] 섹션에서 ai_memory.inventory를 재구축."""
+    """[소지품] dict → ai_memory.inventory 재구축.
+    소비자 실재(orchestration._process_item_usage 검증 / une_facade narrative anchors)라 유지."""
     if not user_id:
         return
-    notebook_text = get_notebook_text(channel_id, user_id)
-    parsed = migrate_notebook_to_inventory(notebook_text)
-
+    nb = domain_manager.get_notebook_data(channel_id, user_id)
+    items = [create_inventory_item(name=k, qty=int(v.get("qty", 1)))
+             for k, v in nb["sections"]["소지품"]["items"].items()]
     p = domain_manager.get_participant_data(channel_id, user_id)
     if not p:
         return
     mem = p.get("ai_memory", {})
-    mem["inventory"] = parsed.get("items", [])
+    mem["inventory"] = items
     p["ai_memory"] = mem
     domain_manager.save_participant_data(channel_id, user_id, p)
 
@@ -806,94 +774,70 @@ def update_status_effect(
 
 # [DEPRECATED] perform_check moved to UNE JudgmentEngine
 
-def get_status_summary(user_data: Dict[str, Any]) -> str:
-    """Returns a concise summary of player status for AI analysis."""
-    parts = []
-    
-    # 1. Status Effects
-    effects = user_data.get("status_effects", [])
-    effects_text = format_status_effects(effects)
-    if effects_text:
-        parts.append(f"상태(Status): {effects_text}")
-    else:
-        parts.append("상태(Status): 정상")
-    
-    # [V3.0] 2. Vigor/Composure State
-    vc_txt = get_vigor_composure_text(user_data)
-    parts.append(f"활력/평형: {vc_txt}")
-    
-    # 4. Passives (Helper utilized)
-    passives = get_passives_for_context(user_data) # Returns "Passives: ..."
-    parts.append(passives)
-
-    # 5. Companions (Collaborators)
-    mem = user_data.get("ai_memory", {})
-    companions = mem.get("companions", [])
-    if companions:
-        if isinstance(companions, list) and len(companions) > 0:
-            parts.append(f"동행(Companions): {', '.join(companions)}")
-    
-    return "\n".join(parts)
+# [2026-09-16 3차] get_status_summary 삭제 — 호출자 0(game_system 재export만), 사문.
 
 # [2026-07-18 고아 삭제] get_recent_relationships — ai_memory.relationships 렌더는 시트/노트북 경로가 담당, 잉여 헬퍼 (dead_scan 참조0 확인, git 이력 복원 가능)
 
-def add_passive(channel_id: str, user_id: str, name: str, tags: List[str] = None, desc: str = "",
-                 theory_links: List[str] = None, modifiers: dict = None) -> str:
-    """하이브리드 패시브 추가 (이론 태그 + 수정치 시스템 포함)"""
-    if tags is None: tags = []
+# =========================================================
+# 시트 조각("패시브") — 2026-09-16 3차 (설계 relation_unify §10.2)
+#   조각 = {name, desc, value:{roll_<type>: ±n, cost: -n}, origin: sheet|play}. 저장 = ai_memory.passives.
+#   ⛔ add_passive(생산자 0)·get_passives_for_context(→ passives_txt, 읽는 곳 0) 삭제.
+#   tags·theory_links·acquired_at·modifiers 는 저장하지 않는다 — 모든 쓰기 경로가 normalize_fragment 를 지난다.
+# =========================================================
 
-    # AI Memory에 저장 (영구적)
-    new_passive = {
-        "name": name,
-        "tags": tags,
-        "desc": desc,
-        "acquired_at": time.strftime('%Y-%m-%d')
-    }
-    if theory_links:
-        new_passive["theory_links"] = theory_links
-    if modifiers:
-        new_passive["modifiers"] = modifiers
+# 조각 채택·교체 계수(프로세스 수명). 채택 안 된 후보는 여기 숫자로만 남는다.
+FRAGMENT_STATS: Dict[str, int] = {"adopted": 0, "replaced": 0, "no_quote": 0, "sheet_locked": 0, "invalid": 0}
 
-    domain_manager.add_to_ai_memory_list(channel_id, user_id, "passives", new_passive)
 
-    tag_str = f" [{', '.join(tags)}]" if tags else ""
-    return f"🏆 **특질 획득:** {name}{tag_str}\n_{desc}_"
+def normalize_fragment(raw: Any, origin: str = "sheet") -> Optional[Dict[str, Any]]:
+    """어떤 모양이 들어와도 조각 네 칸으로 접는다. 이름 없으면 None.
 
-def get_passives_for_context(user_data: Optional[Dict[str, Any]]) -> str:
-    if not user_data:
-        return "None"
-    # Merge explicit user passives and ai_memory passives
-    p_list: List[Any] = user_data.get("passives", [])
-    ai_mem: Dict[str, Any] = user_data.get("ai_memory", {})
-    ai_p: List[Any] = ai_mem.get("passives", [])
-    
-    # Dedup by name
-    all_passives = {}
-    
-    for p in p_list:
-        if isinstance(p, dict): all_passives[p['name']] = p
-        else: all_passives[str(p)] = {"name": str(p), "tags": []}
-        
-    for p in ai_p:
-        if isinstance(p, dict):
-            # AI memory usually authoritative for new style
-            all_passives[p['name']] = p
+    옛 `modifiers.judgment_<type>`은 입력 쪽에서만 `value.roll_<type>`으로 옮겨 읽는다(저장은 새 모양뿐)."""
+    if isinstance(raw, str):
+        raw = {"name": raw}
+    if not isinstance(raw, dict):
+        return None
+    name = str(raw.get("name") or "").strip()
+    if not name:
+        return None
+    val_in = dict(raw.get("value")) if isinstance(raw.get("value"), dict) else {}
+    old_mods = raw.get("modifiers")
+    if isinstance(old_mods, dict):
+        for k, v in old_mods.items():
+            k = str(k)
+            if k.startswith("judgment_") and f"roll_{k[9:]}" not in val_in:
+                val_in[f"roll_{k[9:]}"] = v
+    org = str(raw.get("origin") or "").strip()
+    if org not in config.FRAGMENT_ORIGINS:
+        org = origin if origin in config.FRAGMENT_ORIGINS else "sheet"
+    return {"name": name, "desc": str(raw.get("desc") or "").strip(),
+            "value": config.normalize_fragment_value(val_in), "origin": org}
+
+
+def merge_fragments(existing: Any, incoming: Any, origin: str) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+    """이름 기준 병합. 같은 이름이 origin=sheet 면 **incoming origin=play 는 무시**(desc·value 교체 금지).
+
+    Returns: (새 목록, {"added", "replaced", "sheet_locked"}). 기존 항목도 새 모양으로 접힌다."""
+    out: List[Dict[str, Any]] = []
+    for e in (existing if isinstance(existing, list) else []):
+        f = normalize_fragment(e, "sheet")
+        if f and not any(x["name"] == f["name"] for x in out):
+            out.append(f)
+    st = {"added": 0, "replaced": 0, "sheet_locked": 0}
+    for raw in (incoming if isinstance(incoming, list) else []):
+        f = normalize_fragment(raw, origin)
+        if not f:
+            continue
+        idx = next((i for i, x in enumerate(out) if x["name"] == f["name"]), None)
+        if idx is None:
+            out.append(f)
+            st["added"] += 1
+        elif out[idx]["origin"] == "sheet" and f["origin"] == "play":
+            st["sheet_locked"] += 1
         else:
-             if str(p) not in all_passives:
-                 all_passives[str(p)] = {"name": str(p), "tags": []}
-    
-    if not all_passives: return "Passives: None"
-
-    lines = []
-    for p in all_passives.values():
-        p_tags: List[str] = p.get('tags', [])
-        tag_str = f"({', '.join(p_tags)})" if p_tags else ""
-        # Include theory_links for Flash analysis
-        t_links = p.get('theory_links', [])
-        link_str = f" [theories:{','.join(t_links)}]" if t_links else ""
-        lines.append(f"{p['name']}{tag_str}{link_str}")
-
-    return f"Passives: {', '.join(lines)}"
+            out[idx] = f
+            st["replaced"] += 1
+    return out, st
 
 
 # =========================================================
@@ -984,7 +928,7 @@ def migrate_notebook_to_inventory(notebook_data) -> dict:
 # =========================================================
 # INVENTORY TAG SYSTEM (Phase 4-1b)
 # ⚠ 미배선 (2026-07-06 감사): add/remove_inventory_item·get_inventory_for_context
-# 호출자 0. 실인벤토리는 notebook [소지품] 라인(item_usage → merge_notebook_preserve_inventory).
+# 호출자 0. 실인벤토리는 notebook [소지품] 섹션 dict(item_usage → add/remove_item_to_sojipin).
 # 인벤 버그 수정 시 여기 말고 notebook 라인을 볼 것. 구조화 인벤 부활 재료로 보존.
 # =========================================================
 
@@ -1017,7 +961,7 @@ def remove_inventory_item(channel_id: str, user_id: str, name: str) -> str:
             new_inv.append(item)
             continue
         if isinstance(item, dict):
-            if item.get("name", "").strip().lower() == name_lower:
+            if (item.get("name") or "").strip().lower() == name_lower:
                 removed = True
                 continue
         elif isinstance(item, str):
@@ -1242,13 +1186,15 @@ def get_vigor_composure_text(p_data: Dict[str, Any],
     vigor = mem.get("vigor", mem.get("mental", {"value": 100}))
     composure = mem.get("composure", {"value": 100})
     v_val = vigor.get("value", 100)
+    c_val = composure.get("value", 100)
     if channel_id:
+        # [2026-09-06 P8b] 평형도 레지스트리 소유 — 두 축이 같은 문을 쓴다(표기 무변경).
         try:
             import custom_vars as _cv_gc
             v_val = _cv_gc.vigor_value(channel_id, user_id, mem)
+            c_val = _cv_gc.composure_value(channel_id, user_id, mem)
         except Exception:
             pass
-    c_val = composure.get("value", 100)
     return f"활력 {v_val} | 평형 {c_val}"
 
 

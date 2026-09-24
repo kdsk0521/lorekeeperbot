@@ -15,6 +15,7 @@ LIBRA HierarchicalWorldManager에서 이식.
 import re
 import logging
 from typing import Any, Dict, List, Optional, Tuple
+import config
 import domain_manager
 
 logger = logging.getLogger("WorldTree")
@@ -154,6 +155,37 @@ def infer_parent_by_prefix(channel_id: str, name: str) -> str:
 # CRUD Operations
 # =========================================================
 
+# =========================================================
+# [2026-09-14 W5] 위키 장소 페이지 훅 — 뿌리·부모만 페이지, 잎은 모음 한 줄.
+#   여기는 **호출만** 한다(자격 판정·모음 줄·승격 규칙은 전부 wiki_store).
+#   예외는 전부 삼킨다 — 트리 쓰기가 위키 때문에 죽으면 안 된다.
+# =========================================================
+
+def _wiki_place_hook(channel_id: str, node_id: str, *, promote_parent: bool = True) -> None:
+    try:
+        import config as _cfg_w5
+        if not (getattr(_cfg_w5, "WIKI_PAGES", False) and getattr(_cfg_w5, "WIKI_PLACES", False)):
+            return
+        import wiki_store as _ws_w5
+        nodes = get_all_nodes(channel_id) or {}
+        node = nodes.get(node_id)
+        if not node:
+            return
+        pid = node.get("parent_id") or ""
+        parent = nodes.get(pid) or {}
+        tags = [str(t) for t in ((node.get("properties") or {}).get("tags") or [])]
+        _ws_w5.sync_location_page(
+            channel_id, node,
+            source=("play" if "auto_detected" in tags else "lore"),
+            parent_name=str(parent.get("name") or ""),
+        )
+        # 잎이 부모가 됐다 = 승격 사유 ⓐ. 자식이 붙는 쪽(부모)을 검사한다.
+        if promote_parent and parent.get("name"):
+            _ws_w5.promote(channel_id, "location", str(parent["name"]), reason="parent")
+    except Exception as _e_w5:
+        logger.debug("[Wiki] place hook skipped: %s", _e_w5)
+
+
 def add_node(
     channel_id: str,
     name: str,
@@ -226,6 +258,7 @@ def add_node(
 
     _save_tree(channel_id, tree)
     logger.info("[WorldTree] Created %s '%s' (parent=%s)", node_type, name, parent_id or "root")
+    _wiki_place_hook(channel_id, node_id)
     return "created"
 
 
@@ -253,6 +286,7 @@ def update_node(
     if not node:
         return "not_found"
 
+    _w5_reparented = False
     if parent_id is not None:
         new_pid = resolve_node_id(channel_id, parent_id) if str(parent_id).strip() else ""
         if str(parent_id).strip() and not new_pid:
@@ -281,6 +315,7 @@ def update_node(
                     _nc.append(node_id)
             elif node_id not in root_ids:
                 root_ids.append(node_id)
+            _w5_reparented = bool(new_pid)
 
     if properties:
         node["properties"] = {**node.get("properties", {}), **properties}
@@ -290,6 +325,9 @@ def update_node(
         node["environmental_effects"] = environmental_effects
 
     _save_tree(channel_id, tree)
+    # [2026-09-14 W5] 재부모 = "잎이 부모가 됨" 이벤트 — 새 부모를 승격 검사한다.
+    if _w5_reparented:
+        _wiki_place_hook(channel_id, node_id)
     return "updated"
 
 
@@ -333,6 +371,103 @@ def get_node(channel_id: str, name: str) -> Optional[Dict[str, Any]]:
     if not node_id:
         return None
     return _get_tree(channel_id).get("nodes", {}).get(node_id)
+
+
+# =========================================================
+# [2026-09-18 식별 허브 S5] 장소 표지(extras) — 이름을 아직 안 가진 사람을 **장소에 매단다**
+#   설계: state_v10/identity_hub_design_v0.1_2026-09-18 §3.2 / 스펙 S5.
+#   왜 시간이 아니라 공간인가: 턴 수명으로 재면 짧으면 되돌아온 인물을 놓치고 길면 세계가
+#   엑스트라로 찬다. 출석이 이미 위치의 함수(0단)이므로 표지도 같은 축에 둔다 — PC가 그 장소에
+#   있을 때만 후보로 떠오르고, 다른 도시의 동명 역할은 애초에 후보가 아니다.
+#   ⚠ `npcs_present`에는 넣지 않는다 — 그 목록은 출석·상태창·0단의 원천이고 미등록 이름을
+#     앉히면 그게 그대로 무대 인원이 된다(R4 계약). extras는 별도 칸.
+# =========================================================
+_EXTRAS_CAP_DEFAULT = 8
+
+
+def anchor_node_id(channel_id: str, location_name: str = "") -> str:
+    """표지를 매달 **닻 노드** — 현재 노드에서 위로 올라가 처음 만나는 region/area.
+    room은 부모로 말려 올라간다(도시에 성문·잡화점·뒷골목이 달리면 그 경비병은 그 도시의 사람).
+    해당 없으면 "" (전부 room이거나 위치 미해상)."""
+    try:
+        loc = str(location_name or domain_manager.get_current_location(channel_id) or "").strip()
+    except Exception:
+        loc = str(location_name or "").strip()
+    if not loc or loc.lower() == "unknown":
+        return ""
+    nid = resolve_node_id(channel_id, loc)
+    if not nid:
+        return ""
+    nodes = _get_tree(channel_id).get("nodes", {})
+    _types = tuple(getattr(config, "WIKI_LOC_PAGE_TYPES", ("region", "area")) or ("region", "area"))
+    seen = set()
+    while nid and nid in nodes and nid not in seen:
+        seen.add(nid)
+        if str(nodes[nid].get("type") or "") in _types:
+            return nid
+        nid = nodes[nid].get("parent_id") or ""
+    return ""
+
+
+def get_extras(channel_id: str, node_id: str) -> List[Dict[str, Any]]:
+    """그 노드에 매달린 장소 표지 목록(최신이 뒤). 없으면 []."""
+    if not node_id:
+        return []
+    node = _get_tree(channel_id).get("nodes", {}).get(node_id) or {}
+    ex = node.get("extras")
+    return [e for e in ex if isinstance(e, dict)] if isinstance(ex, list) else []
+
+
+def find_extra(channel_id: str, node_id: str, label: str) -> Optional[Dict[str, Any]]:
+    """그 노드에서 같은 표지 찾기(정규화 비교). 없으면 None."""
+    q = " ".join(str(label or "").split()).lower()
+    if not q:
+        return None
+    for e in get_extras(channel_id, node_id):
+        if " ".join(str(e.get("label") or "").split()).lower() == q:
+            return e
+    return None
+
+
+def upsert_extra(channel_id: str, node_id: str, label: str, line: str = "",
+                 turn: Optional[int] = None, cap: int = _EXTRAS_CAP_DEFAULT, key: str = "") -> bool:
+    """표지 하나를 그 노드에 올린다(같은 표지면 갱신). 상한 초과 시 **오래된 것부터** 밀어낸다.
+    수명(턴)은 두지 않는다 — 고삐는 상한 하나.
+    `key` = 이 호칭이 가리킨 **명부 인물**(있으면). 다음 턴 같은 장소에서 같은 호칭이 오면
+    판정 없이 그 사람에게 붙는 재료다(설계 §3.1 "판정은 한 번, 그 뒤는 조회").
+    key 없는 표지 = 아직 인물이 아닌 엑스트라(같은 표지가 다시 와도 같은 엑스트라)."""
+    lb = " ".join(str(label or "").split())
+    if not node_id or not lb:
+        return False
+    tree = _get_tree(channel_id)
+    node = tree.get("nodes", {}).get(node_id)
+    if not isinstance(node, dict):
+        return False
+    ex = [e for e in (node.get("extras") or []) if isinstance(e, dict)]
+    ex = [e for e in ex if " ".join(str(e.get("label") or "").split()).lower() != lb.lower()]
+    ex.append({"label": lb, "line": str(line or "")[:60], "last_turn": turn,
+               "key": str(key or "").strip()})
+    node["extras"] = ex[-max(1, int(cap)):]
+    _save_tree(channel_id, tree)
+    return True
+
+
+def remove_extra(channel_id: str, node_id: str, label: str) -> bool:
+    """표지 제거(인물로 승격됐을 때)."""
+    lb = " ".join(str(label or "").split()).lower()
+    if not node_id or not lb:
+        return False
+    tree = _get_tree(channel_id)
+    node = tree.get("nodes", {}).get(node_id)
+    if not isinstance(node, dict):
+        return False
+    ex = [e for e in (node.get("extras") or []) if isinstance(e, dict)]
+    keep = [e for e in ex if " ".join(str(e.get("label") or "").split()).lower() != lb]
+    if len(keep) == len(ex):
+        return False
+    node["extras"] = keep
+    _save_tree(channel_id, tree)
+    return True
 
 
 def get_all_nodes(channel_id: str) -> Dict[str, Dict[str, Any]]:
@@ -766,7 +901,7 @@ def import_locations_from_lore(
     for loc in locations:
         if not isinstance(loc, dict):
             continue
-        name = loc.get("name", "").strip()
+        name = (loc.get("name") or "").strip()
         if not name:
             continue
 
@@ -789,7 +924,7 @@ def import_locations_from_lore(
     for loc in locations:
         if not isinstance(loc, dict):
             continue
-        name = loc.get("name", "").strip()
+        name = (loc.get("name") or "").strip()
         connections = loc.get("connections", [])
         for conn in connections:
             if isinstance(conn, str):

@@ -71,7 +71,7 @@ def _build_state_dump(channel_id: str) -> str:
                 continue
             knows = "; ".join(str(x) for x in (k.get("knows") or [])[:12])
             secrets = "; ".join(str(x) for x in (k.get("secrets_held") or [])[:6])
-            fb = "; ".join(str(x) for x in (k.get("false_beliefs") or [])[:6])
+            fb = "; ".join(str(x) for x in (k.get("misbeliefs") or k.get("false_beliefs") or [])[:6])  # [2026-09-24 감사] 저장 키=misbeliefs
             k_lines.append(f"- {name}: knows=[{knows}] secrets=[{secrets}] false_beliefs=[{fb}]")
         parts.append("## KNOWLEDGE\n" + "\n".join(k_lines))
 
@@ -105,6 +105,68 @@ def _build_state_dump(channel_id: str) -> str:
         pass
 
     return "\n\n".join(parts)
+
+
+_AUDIT_CATS = ("contradictions", "duplicates", "orphans", "suspicious")
+
+
+def _annotate_with_sources(channel_id: str, report: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """[2026-09-14 S5a] 감사 보고서 **사본**에 출처 각주를 붙인다 (LLM 재호출 0).
+
+    항목 문자열과 원장 fact_norm을 정규화 후 양방향 substring으로 대조 — 첫 일치 행의
+    turn/msg를 항목 끝에 덧붙인다. 무일치는 `(출처 없음)`.
+    원본 `report`는 한 글자도 바꾸지 않는다(저장·반환 경로 보존).
+    원장 조회 실패(None)면 각주 전체 생략 = None 반환(로그도 없음).
+    """
+    try:
+        import sqlite_store
+        from fermentation import _norm_quote
+        cap = int(getattr(config, "FACT_SOURCE_AUDIT_MAX", 20))
+        rows = sqlite_store.lookup_fact_sources(channel_id, None, cap * 5)
+        if rows is None:
+            return None
+        norm_rows = []
+        for r in rows:
+            fn = _norm_quote(str((r or {}).get("fact_norm") or ""))
+            if fn:
+                norm_rows.append((fn, r))
+        out_report: Dict[str, Any] = {}
+        hit = 0
+        seen = 0
+        for cat in _AUDIT_CATS:
+            items = report.get(cat)
+            if not isinstance(items, list):
+                out_report[cat] = []
+                continue
+            out_items = []
+            for it in items:
+                txt = str(it)
+                if seen >= cap:
+                    out_items.append(txt)
+                    continue
+                seen += 1
+                ns = _norm_quote(txt)
+                found = None
+                if ns:
+                    for fn, r in norm_rows:
+                        if fn in ns or ns in fn:
+                            found = r
+                            break
+                if found is not None:
+                    hit += 1
+                    out_items.append(
+                        f"{txt} (출처 turn {found.get('src_turn')} / msg {found.get('src_msg_id')})")
+                else:
+                    out_items.append(f"{txt} (출처 없음)")
+            out_report[cat] = out_items
+        for k, v in report.items():
+            if k not in out_report:
+                out_report[k] = v
+        logger.info(f"[Evidence] audit src hit={hit}/{seen}")
+        return out_report
+    except Exception as e:
+        logger.debug(f"[Evidence] audit src 각주 생략 (무해): {e}")
+        return None
 
 
 async def run_persistent_audit(client, model_id: str, channel_id: str) -> Optional[Dict[str, Any]]:
@@ -147,6 +209,11 @@ async def run_persistent_audit(client, model_id: str, channel_id: str) -> Option
                 report[cat] = []
             counts[cat] = len(items)
 
+        # [2026-09-14 S5a] 출처 각주 — report 확정 직후, 카운트 로그 전. 로그·vlog용 사본에만.
+        _annotated = None
+        if getattr(config, "V10_FACT_SOURCES", False):
+            _annotated = _annotate_with_sources(channel_id, report)
+
         total = sum(counts.values())
         _turn = domain_manager.get_world_state(channel_id).get("turn_index", 0)
         logger.info(f"[PersistAudit] turn={_turn} total={total} "
@@ -160,7 +227,8 @@ async def run_persistent_audit(client, model_id: str, channel_id: str) -> Option
             try:
                 bot_utils.vlog(
                     "PersistAudit",
-                    json.dumps(report, ensure_ascii=False, indent=2),
+                    json.dumps(_annotated if _annotated is not None else report,
+                               ensure_ascii=False, indent=2),
                     channel_id,
                 )
             except Exception:

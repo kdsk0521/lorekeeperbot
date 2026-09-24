@@ -1,133 +1,79 @@
 """
-Lorekeeper UNE - Vigor/Composure Module (v3.2)
-Manages 2-axis PC state: Vigor (physical+will) and Composure (mental+social).
-Replaces mental_module.py.
-v3.1: 회복 1+2 하이브리드(event_delta 게이트) + 트라우마 dwell 분리/일시 디버프.
-v3.2 (2026-07-06): 트라우마 각성 폐지. 회복 = 갭 비례 트리클(조용한 턴, 1+stage)
-      + 사건성 양의 impact(uplift/restore enum) + 휴식 + 間 챕터 리프레시.
-v4.0 (2026-08-18 Phase 2.5 — **평형 전담**): 기력(vigor) 축을 대형식화 레지스트리로 이관하고
-      이 모듈에서 **기력 공식을 전량 삭제**했다 — baseline drain·cross-axis cascade·status
-      severity·AI impact·자연회복·관성·낙폭캡·휴식 회복·챕터 리프레시가 전부 평형 전용이 됐다.
-      기력의 움직임은 이제 rule 자연어(선언) + 추출 콜의 관측 델타 + 판정 Effort 선불뿐이고,
-      코드가 지키는 건 범위 클램프·비대칭 캡(하강 7/상승 5)·판정 구간표 셋이다.
-      bus.vigor 는 **읽기 사본**으로 남는다: une_facade 가 레지스트리에서 채우고,
-      평형의 cross-axis cascade 와 하류 표시(로그·스냅샷·notation)가 그것을 읽는다.
-      값의 정본 = custom_vars(world_state.custom_var_values["기력"]).
+Lorekeeper UNE - Vigor/Composure Module (v5.0 — 얇은 리더)
+
+v5.0 (2026-09-06 P8b — **기계화**): 레티어스 결정 "룰의 주인은 자연어, 숫자만 코드의 것".
+      08-18 에 기력에서 지운 코드 공식을 **평형에서도 전량 삭제**했다. 삭제 판정 기준 한 줄:
+      *장면을 분류해서 숫자를 정하는 코드는 전부 rule 의 몫*. 그래서 사라진 것 —
+        baseline drain(장르 14태그 × 씬타입, layer-cap) · cross-axis cascade ·
+        자연회복(갭 비례 트리클) · 휴식 회복(rest_eval) · status severity drain ·
+        AI mental_impact 소비(방향 전환 감쇠·씬별 캡) · 관성(1.1배) · 낙폭 안전캡 ·
+        2단계 Clamping · 챕터 리프레시 · 트라우마 dwell 잔재.
+      기력·평형은 이제 **둘 다 custom_vars 의 시스템 선언**이고, 값을 미는 문은 둘뿐이다:
+        ① LLM 관측 델타(전담 추출 콜 `extract_outputs.deltas`, 비대칭 캡 7/5)
+        ② 코드 소유 쓰기(judgment 감정 · doom defense reward · judgment Effort 선불) —
+           셋 다 **사건이 코드에서 확정된 뒤의 대가**지 장면 분류가 아니다.
+      이 모듈에 남은 일은 하나 — **읽어서 bus 에 싣는 것**. 26곳/13파일의 소비자가
+      `bus.vigor/composure` 를 읽으므로 이름과 모양(value/stage/delta_applied/log)은 그대로다.
+      값의 정본 = custom_vars(world_state.custom_var_values["기력"|"평형"]).
 """
 
 import logging
-from typing import TYPE_CHECKING
-import config
+from typing import TYPE_CHECKING, Optional
 
 logger = logging.getLogger("VigorComposure")
 
 if TYPE_CHECKING:
     from orchestration_context import GameContext
 
+_AXES = (("vigor", "기력"), ("composure", "평형"))
+
 
 def _get_stage(val: int) -> int:
+    """값 → 4단계. **값의 함수**라 남는다 — 판정 구간표·표시가 읽는다(계산 자리만 여기)."""
     if val >= 70: return 0
     if val >= 40: return 1
     if val >= 15: return 2
     return 3
 
 
-def _get_primary_axis(context: "GameContext") -> str:
-    mechanic = context.request.genres.get("mechanic", {})
-    return mechanic.get("primary_resource") or "vigor"
+def _channel(context: "GameContext") -> str:
+    return str((context.narrative_anchors or {}).get("channel_id", "") or "")
 
 
-def _extract_active_genre_tags(active_genres) -> set:
+def _actor(context: "GameContext") -> str:
+    return str((context.narrative_anchors or {}).get("acting_user_id", "") or "")
+
+
+def _read(context: "GameContext", name: str) -> Optional[int]:
+    """레지스트리 한 문. 기능이 꺼졌거나 못 읽으면 None → 호출부가 bus 사본을 유지한다."""
+    try:
+        import custom_vars as _cv
+        return _cv.get_system_value(_channel(context), name, _actor(context))
+    except Exception as e:
+        logger.debug("[VigorComposure] %s 레지스트리 조회 skip: %s", name, e)
+        return None
+
+
+def _last_change_delta(context: "GameContext", name: str) -> int:
+    """이번 턴 레지스트리 이동폭 = 그 축 도장의 delta(같은 턴 것만).
+
+    ★모듈이 델타를 **계산하지 않는다**는 것을 로그가 그대로 드러내야 한다 — 여기 숫자는
+      누군가(추출 콜/판정/둠)가 이미 밀어 놓은 결과를 되읽은 것뿐이다.
     """
-    active_genres에서 14개 장르 태그(stage 6 + flavor 4 + lens 4) 추출.
-    형식 다양 지원: str / list / dict({stage,flavor,lens} 또는 {layers}).
-
-    Returns: set of tag strings (GENRE_BASELINE_DRAIN 키에 있는 것만).
-    """
-    known = set(config.GENRE_BASELINE_DRAIN.keys())
-    tags = set()
-
-    if isinstance(active_genres, str):
-        if active_genres in known:
-            tags.add(active_genres)
-        return tags
-
-    if isinstance(active_genres, list):
-        for g in active_genres:
-            if isinstance(g, str) and g in known:
-                tags.add(g)
-        return tags
-
-    if isinstance(active_genres, dict):
-        # stage/flavor/lens 직접 형식
-        for key in ("stage", "flavor", "lens"):
-            val = active_genres.get(key, [])
-            if isinstance(val, list):
-                for v in val:
-                    if isinstance(v, str) and v in known:
-                        tags.add(v)
-            elif isinstance(val, str) and val in known:
-                tags.add(val)
-
-        # layers 형식
-        layers = active_genres.get("layers", {})
-        if isinstance(layers, dict):
-            for lst in layers.values():
-                if isinstance(lst, list):
-                    for v in lst:
-                        if isinstance(v, str) and v in known:
-                            tags.add(v)
-
-        # fallback: 모든 값 순회
-        if not tags:
-            for v in active_genres.values():
-                if isinstance(v, list):
-                    for item in v:
-                        if isinstance(item, str) and item in known:
-                            tags.add(item)
-                elif isinstance(v, str) and v in known:
-                    tags.add(v)
-
-    return tags
-
-
-def _compute_baseline_drain(active_genres, scene_type: str) -> dict:
-    """
-    F: 장르 × 축 + 씬타입 × 축 baseline drain 계산. layer-cap 적용.
-
-    Returns: {"vigor": int (≤0), "composure": int (≤0)}
-    """
-    tags = _extract_active_genre_tags(active_genres)
-
-    # 같은 axis Y 켜진 layer 수 (layer-cap)
-    vigor_layers = set()
-    composure_layers = set()
-    for tag in tags:
-        drain = config.GENRE_BASELINE_DRAIN.get(tag)
-        if not drain:
-            continue
-        # tag가 속한 layer 찾기
-        tag_layer = None
-        for layer_key, layer_tags in config.GENRE_LAYERS.items():
-            if tag in layer_tags:
-                tag_layer = layer_key
-                break
-        if not tag_layer:
-            continue
-        if drain.get("vigor"):
-            vigor_layers.add(tag_layer)
-        if drain.get("composure"):
-            composure_layers.add(tag_layer)
-
-    genre_v = -len(vigor_layers)  # 최대 -3
-    genre_c = -len(composure_layers)
-
-    # 씬타입 baseline
-    scene_sig = config.ACTION_BASELINE_DRAIN.get(scene_type, {"vigor": False, "composure": False})
-    scene_v = -1 if scene_sig.get("vigor") else 0
-    scene_c = -1 if scene_sig.get("composure") else 0
-
-    return {"vigor": genre_v + scene_v, "composure": genre_c + scene_c}
+    try:
+        import custom_vars as _cv
+        entry = _cv.get_values(_channel(context)).get(name) or {}
+        stamps = entry.get("last_change")
+        stamp = stamps.get(_actor(context)) if isinstance(stamps, dict) else None
+        if not isinstance(stamp, dict):
+            return 0
+        turn = int((context.shared_bus.dai or {}).get("turn_index", -1))
+        if turn >= 0 and int(stamp.get("turn", -1)) != turn:
+            return 0
+        return int(stamp.get("delta", 0) or 0)
+    except Exception as e:
+        logger.debug("[VigorComposure] %s 도장 조회 skip: %s", name, e)
+        return 0
 
 
 class VigorComposureModule:
@@ -135,276 +81,47 @@ class VigorComposureModule:
         pass
 
     async def prime(self, context: "GameContext") -> "GameContext":
-        """Pre-pass for pipeline order: annotate current stage without consuming deltas.
-
-        [Phase 2.5] 기력 stage 는 **여전히 찍는다** — 소비자가 평형의 cross-axis cascade 이기
-        때문이다(평형 로직 무접촉). 값은 레지스트리에서 온 읽기 사본이고, 여기서 쓰지 않는다.
-        `_turn_start` 는 이번 턴 기력 이동폭(판정 Effort 등)을 로그로 되돌려주기 위한 기준선.
-        """
-        bus = context.shared_bus
-        # 채널 토글 OFF면 기력/평형 전체 스킵 (수치 동결)
-        if not bus.vigor.get("module_active", True):
-            return context
-        bus.vigor["stage"] = _get_stage(int(bus.vigor.get("value", 100)))
-        bus.vigor["_turn_start"] = int(bus.vigor.get("value", 100))
-        bus.composure["stage"] = _get_stage(int(bus.composure.get("value", 100)))
+        """턴 시작 — 두 축의 현재값·stage 를 bus 에 싣는다. 쓰기 0."""
+        self._load(context)
         return context
 
     async def process(self, context: "GameContext") -> "GameContext":
+        """턴 끝 — 값을 **다시 읽고**(그 사이 코드 소유 쓰기가 있었다) 로그 한 줄."""
         bus = context.shared_bus
-        # 채널 토글 OFF면 delta 소비/회복/baseline/로그 전부 스킵.
-        # "active" 미설정 → sync_from_game_context 쓰기도 스킵 → 수치 동결.
         if not bus.vigor.get("module_active", True):
-            return context
-        primary_axis = _get_primary_axis(context)
+            return context      # 채널 토글 OFF = 동결. 읽기도 로그도 없다(구 semantics 보존).
 
-        # Phase 2 F: baseline drain (장르 × 축 + 씬타입 × 축, layer-cap)
-        # [Phase 2.5] **평형분만** 소비한다. 기력의 구조적 상시 드레인은 코드 공식이라 삭제됐고,
-        #   그 자리는 선언 rule("wears down a little under strain and pressure")이 대신한다.
-        try:
-            active_genres = context.request.genres or {}
-            scene_type = bus.dai.get("scene_type", "normal") if bus.dai else "normal"
-            baseline = _compute_baseline_drain(active_genres, scene_type)
-            if baseline["composure"] != 0:
-                bus.composure["delta"] = bus.composure.get("delta", 0) + baseline["composure"]
-        except Exception as _e_base:
-            logger.warning("[VigorComposure] baseline drain skipped: %s", _e_base)
-
-        # Process axis — 평형만. 기력은 레지스트리 소유라 여기서 계산하지 않는다.
-        self._process_axis(context, bus.composure, "composure", primary_axis)
-
-        # Phase 2 G: 챕터 종결 refresh (intermission_active 시 max value 60) — 평형 전용.
-        #   기력의 "間 리프레시"도 코드 회복 공식이므로 함께 삭제됐다.
-        if bus.doom.get("intermission_active"):
-            threshold = config.CHAPTER_REFRESH_THRESHOLD
-            if int(bus.composure.get("value", 100) or 100) < threshold:
-                bus.composure["value"] = threshold
-
-        # Combine logs
+        self._load(context)
         mask = context.get_acting_mask()
-        v_val = bus.vigor["value"]
-        c_val = bus.composure["value"]
-        # 기력 이동폭 = 이번 턴 안에서 실제로 움직인 만큼(판정 Effort 등 코드 소유 쓰기).
-        #   추출 콜의 관측 델타는 응답 이후에 들어오므로 다음 턴 로그에 잡힌다 — 의도된 지연.
-        _v_start = bus.vigor.get("_turn_start")
-        v_delta = int(v_val) - int(_v_start if isinstance(_v_start, (int, float)) else v_val)
-        c_delta = bus.composure.get("_final_delta", 0)
+        v_val, c_val = int(bus.vigor.get("value", 0)), int(bus.composure.get("value", 0))
+        v_delta = int(bus.vigor.get("delta_applied", 0))
+        c_delta = int(bus.composure.get("delta_applied", 0))
 
-        log_parts = []
-        if v_delta != 0 or c_delta != 0:
+        if v_delta or c_delta:
             v_sign = f"+{v_delta}" if v_delta > 0 else str(v_delta)
             c_sign = f"+{c_delta}" if c_delta > 0 else str(c_delta)
-            log_parts.append(f"{mask}: 💪 활력 {v_sign} → {v_val}/100 | 😌 평형 {c_sign} → {c_val}/100")
-        elif bus.vigor.get("active") or bus.composure.get("active"):
-            log_parts.append(f"{mask}: 💪 활력 {v_val}/100 | 😌 평형 {c_val}/100 (자연 회복)")
+            log = f"{mask}: 💪 활력 {v_sign} → {v_val}/100 | 😌 평형 {c_sign} → {c_val}/100"
+        else:
+            log = f"{mask}: 💪 활력 {v_val}/100 | 😌 평형 {c_val}/100"
+        bus.vigor["log"] = log
+        bus.composure["log"] = log      # 두 축 같은 줄 — 하류 표시가 한 줄만 집는다
 
-        # Judgment emotion — 평형 전용(주축이 기력이면 판정 감정은 보조축=평형에 실린다).
-        c_emo = bus.composure.get("judgment_emotion", 0)
-        if c_emo:
-            log_parts.append(f" (평형 판정 {'+' if c_emo > 0 else ''}{c_emo})")
-
-        # Rest log — 평형 전용. 기력의 휴식 회복은 코드 공식이라 삭제됐다(선언 rule 이 담당).
-        c_rest_log = bus.composure.get("rest_log")
-        if c_rest_log:
-            log_parts.append(f"\n{c_rest_log}")
-
-        # Cascade log — 평형이 기력 stage 를 읽는 한 방향만 남았다.
-        c_cascade = bus.composure.get("cascade_drain", 0)
-        if c_cascade:
-            log_parts.append(f"\n🔗 평형 ← 활력 cascade ({c_cascade})")
-
-        # Clamping/Trauma
-        if bus.composure.get("_clamped"):
-            log_parts.append("\n❗ **충격 완화** (평형 Clamping)")
-        combined_log = "".join(log_parts)
-        bus.vigor["log"] = combined_log
-        bus.composure["log"] = combined_log  # Same log for both
-
-        # Delta applied (Pipeline Summary에서 참조)
-        bus.vigor["delta_applied"] = v_delta
-        bus.composure["delta_applied"] = c_delta
-
-        logger.info("[VigorComposure] vigor=%d(%s%d) composure=%d(%s%d) primary=%s",
-                     v_val, "+" if v_delta >= 0 else "", v_delta,
-                     c_val, "+" if c_delta >= 0 else "", c_delta,
-                     primary_axis)
-
-        # Cleanup temp keys
-        for axis in (bus.vigor, bus.composure):
-            axis.pop("_final_delta", None)
-            axis.pop("_clamped", None)
-            axis.pop("cascade_drain", None)
-            axis.pop("_turn_start", None)
-
+        logger.info("[VigorComposure] vigor=%d(%+d) composure=%d(%+d)",
+                    v_val, v_delta, c_val, c_delta)
         return context
 
-    def _process_axis(self, context: "GameContext", axis: dict, axis_name: str, primary_axis: str):
-        """Process a single axis (vigor or composure)."""
+    def _load(self, context: "GameContext") -> None:
+        """레지스트리 → bus 읽기 사본. **이 모듈의 전부**."""
         bus = context.shared_bus
-        _dai = bus.dai or {}  # V-5 fix: bus.dai None-guard (rest_eval/scene_type 등 .get 크래시 방지)
-
-        # 1. Collect Delta
-        delta = axis.get("delta", 0)
-        # event_delta: "이번 턴에 실제 사건이 있었나" 신호. AI impact + 판정 감정만 누적.
-        # baseline/cascade/status 같은 구조적 상시 드레인은 제외 → 자연회복 게이트가
-        # 사건 유무로 판정되게 한다 (구조 드레인이 회복을 영구 봉쇄하던 버그 차단).
-        event_delta = 0
-
-        # 1a. Rest Recovery (both axes — composure at reduced rate)
-        # activity != "rest"인 다운타임은 orchestration._process_downtime()에서 별도 처리
-        rest_eval = _dai.get("rest_eval")
-        if rest_eval and rest_eval.get("detected") and rest_eval.get("activity", "rest") == "rest":
-            quality = rest_eval.get("quality", "brief")
-            base_recovery = config.REST_RECOVERY.get(quality, 10)
-            if not rest_eval.get("safe_location", True):
-                base_recovery = int(base_recovery * config.REST_UNSAFE_MODIFIER)
-            if axis_name != "vigor":
-                base_recovery = int(base_recovery * config.REST_COMPOSURE_RATIO)
-            if base_recovery > 0:
-                delta += base_recovery
-                safe_tag = "safe" if rest_eval.get("safe_location", True) else "unsafe"
-                axis["rest_log"] = f"💤 휴식({quality}) +{base_recovery} ({safe_tag})"
-
-        # 1b. Judgment Emotional Impact (보조축에 적용 — 주축은 consequence primary_delta가 담당)
-        if axis_name != primary_axis and bus.judgment.get("active"):
-            j_result = bus.judgment.get("result", "")
-            j_emotion = {
-                "critical_success": 3,
-                "success": 1,
-                "partial": 0,
-                "failure": -2,
-                "critical_failure": -4,
-            }.get(j_result, 0)
-            if j_emotion != 0:
-                delta += j_emotion
-                event_delta += j_emotion
-                axis["judgment_emotion"] = j_emotion
-
-        # 1c. Cross-Axis Cascade — other axis's bad state drains this axis
-        other_name = "composure" if axis_name == "vigor" else "vigor"
-        other_bus = getattr(bus, other_name)
-        other_stage = other_bus.get("stage", 0)  # prime()에서 설정된 턴 시작 스테이지
-        cascade = config.CROSS_AXIS_CASCADE.get(other_stage, 0)
-        if cascade != 0:
-            delta += cascade
-            axis["cascade_drain"] = cascade
-
-        # 1d. Status severity → drain (primary axis만; intimate 씬 제외)
-        #     intimate는 주축이 composure로 뒤집히는데, 신체 status("vigor_drain")가 주축으로 라우팅돼
-        #     평형을 효과당 무제한 누적 차감(sev3=-15/개)→NSFW에서 평형만 크래시하던 버그. intimate는
-        #     이미 시계/판정/스토리텔러 suppress 대상이라 status 차감 제외가 일관됨.
-        if axis_name == primary_axis and _dai.get("scene_type") != "intimate":
-            from game_character import normalize_status_effects
-            raw_effects = (context.narrative_anchors or {}).get("status_effects", [])
-            status_effects = normalize_status_effects(raw_effects)
-            for eff in status_effects:
-                sev = eff.get("severity", 0)
-                sev_cfg = config.SEVERITY_EFFECTS.get(sev, {})
-                drain = sev_cfg.get("vigor_drain", 0)
-                if drain != 0:
-                    delta += drain
-
-        # 2. AI-Analyzed Impact (씬타입별 클램프 + 방향 전환 감쇠)
-        impact_data = axis.get("impact", {})
-        if impact_data.get("applicable", False):
-            # 씬타입별 impact 상한: intimate ±8, social ±10, 나머지 ±15
-            scene_type = _dai.get("scene_type", "normal")
-            _SCENE_IMPACT_CAP = {"intimate": 8, "social": 10, "combat": 15, "normal": 15, "summary": 5}
-            cap = _SCENE_IMPACT_CAP.get(scene_type, 15)
-
-            # Phase 2 F: severity enum → 수치 (새 형식). 레거시 delta 필드 폴백.
-            severity = impact_data.get("severity")
-            if severity is not None:
-                raw_delta = config.MENTAL_IMPACT_ENUM_SCALE.get(str(severity).lower(), 0)
-            else:
-                raw_delta = impact_data.get("delta", 0)
-            impact_delta = max(-cap, min(cap, raw_delta))
-
-            # 방향 전환 감쇠: 이전 턴 delta와 반대 방향이면 50% 감쇠 (요요 방지)
-            prev_delta = axis.get("last_delta", 0)
-            if prev_delta != 0 and impact_delta != 0:
-                if (impact_delta > 0 and prev_delta < 0) or (impact_delta < 0 and prev_delta > 0):
-                    impact_delta = int(impact_delta * 0.5)
-                    logger.debug("[%s] Direction reversal damping: %d → %d", axis_name, impact_data.get("delta", 0), impact_delta)
-
-            delta += impact_delta
-            event_delta += impact_delta
-
-        # 2b. Passive Drain Modifiers (theory tag system)
-        if delta < 0:
-            drain_key = f"{axis_name}_drain"
-            passives = (context.narrative_anchors or {}).get("passives", [])
-            drain_mult = 1.0
-            for passive in passives:
-                mods = config.get_passive_modifiers(passive)
-                if drain_key in mods:
-                    drain_mult *= mods[drain_key]
-            drain_mult = max(0.5, min(1.5, drain_mult))  # 극단값 방지
-            if drain_mult != 1.0:
-                delta = int(delta * drain_mult)
-
-        # 2a. Natural Recovery (갭 비례, 2026-07-06 트라우마 각성 제거 후속): 이번 턴 큰
-        #     사건이 없으면(|event_delta| ≤ T) 구조 드레인과 무관하게 트리클. 낮을수록 강한
-        #     복원압 — stage 0/1/2/3 → +1/+2/+3/+4. 옛 트라우마 리바운드(바닥 텔레포트)를
-        #     자연 계단으로 대체: 바닥(10)에서 조용한 턴 +4, baseline -1~-2를 이기고 상승.
-        #     사건 턴은 여전히 게이트(회복은 사건성 +값 채널이 담당).
-        if abs(event_delta) <= config.NATURAL_RECOVERY_THRESHOLD:
-            current_val = axis.get("value", 100)
-            if current_val < 100:
-                delta += config.NATURAL_RECOVERY_AMOUNT + _get_stage(current_val)
-
-        # delta == 0 시 stage 조정 없음 종료
-        if delta == 0:
-            axis["active"] = True
-            axis["last_delta"] = 0
-            axis["_final_delta"] = 0
+        if not bus.vigor.get("module_active", True):
             return
-
-        # 3. Inertia (Successive changes amplification)
-        last_delta = axis.get("last_delta", 0)
-        actual_delta = delta
-        if (delta > 0 and last_delta > 0) or (delta < 0 and last_delta < 0):
-            actual_delta = int(delta * 1.1)
-
-        # 3b. Per-turn drop 안전캡 (mis-mapping/소스 스택이 한 턴에 축을 폭락시키는 것 방지).
-        #     소스가 무엇이든 턴당 낙폭을 scene별 상한으로 묶는다. 초과 시 WARNING 로그 →
-        #     다른 씬의 비정상 과차감 관측 채널(별도 검출기 불필요). 낙폭만 제한, 상승/회복은 무제한.
-        _scene = _dai.get("scene_type", "normal")
-        _drop_cap = config.MAX_AXIS_DROP_PER_TURN.get(_scene, config.MAX_AXIS_DROP_PER_TURN.get("default", 18))
-        if actual_delta < -_drop_cap:
-            logger.warning("[%s] per-turn drop %d exceeded safety cap -%d (scene=%s) — clamped; sources stacked abnormally.",
-                           axis_name, actual_delta, _drop_cap, _scene)
-            actual_delta = -_drop_cap
-
-        # 4. Clamping (Max 2 stage drop per turn)
-        current_val = axis.get("value", 100)
-        current_stage = _get_stage(current_val)
-
-        # V-1 fix: floor 계산을 실제 적용값(actual_delta) 기준으로 통일.
-        # 기존엔 base_target/base_stage를 inertia 적용 전 delta로 계산해, inertia로 증폭된
-        # actual_delta가 >2단계 낙폭이어도 floor가 그걸 못 막던 불일치.
-        target_val = max(0, min(100, current_val + actual_delta))
-        base_stage = _get_stage(target_val)
-        clamp_floor = target_val
-
-        if base_stage > current_stage + 2:
-            limit_stage = current_stage + 2
-            floors = {0: 70, 1: 40, 2: 15, 3: 0}
-            clamp_floor = floors.get(limit_stage, 0)
-        clamped = False
-        if actual_delta < 0:
-            if target_val < clamp_floor:
-                target_val = clamp_floor
-                clamped = True
-
-        # 5. Trauma Awakening 제거 (2026-07-06 레티어스 결정): 붕괴 dwell 2턴→40 리바운드
-        #    +판정 디버프 3턴의 자동 구제 장치였음. 바닥 탈출은 이제 2a 갭 비례 자연회복
-        #    (낮을수록 강한 복원압)+휴식+間 챕터 리프레시가 담당. NSFW 크래시 3중 방어
-        #    (프롬+1d 가드+낙폭캡)는 각성과 별개로 유지.
-
-        # 6. Update
-        axis["value"] = target_val
-        axis["active"] = True
-        axis["last_delta"] = delta
-        axis["_final_delta"] = actual_delta
-        axis["_clamped"] = clamped
+        for attr, name in _AXES:
+            axis = getattr(bus, attr)
+            val = _read(context, name)
+            if val is not None:
+                axis["value"] = int(val)
+            # [2026-09-24 감사] `or 100` 이 값 0(탈진·붕괴)을 100 으로 바꿔 stage 가 0(최상)으로
+            #   뒤집혔다. 기본값은 값이 **없을 때(None)만** 100.
+            _v = axis.get("value")
+            axis["stage"] = _get_stage(int(_v) if _v is not None else 100)
+            axis["delta_applied"] = _last_change_delta(context, name)

@@ -7,7 +7,7 @@ narrative_queries — V10 적립층 위 읽기 전용 서사 집계 레이어 (P
       반복=대조(recent_beats), 정체=수치(thread_ages/pacing_curve),
       소외=비중(screen_time), 부재=기간(last_seen).
 
-설계 문서: 파티쳇수정/ab_db_design_review_2026-07.md
+설계 문서: 파티쳇수정/memory_lore/ab_db_design_review_2026-07.md
 원칙:
   - 전부 순수 코드 (LLM 콜 0). 실패 시 빈값 — 파이프라인 무해.
   - 산출은 1~2줄 텔레그래픽 고정 (집계 요약이 길어지면 본말전도).
@@ -114,7 +114,7 @@ def _format_emotion_residue(
     서사 콜이 '언제 튀었나'와 '그때 무슨 일'을 조인할 수 없었다.
     여기서 코드가 미리 붙여 급식한다 → 서사 콜의 psyche_narrative.resurfacing 재료.
 
-    LLM 콜 0 · 새 테이블/필드 0 · emotion_engine 무접촉 (읽기 전용 조인).
+    LLM 콜 0 · 읽기 전용 조인. (09-15 §12: spikes 원천이 emotion_log → 추적 상태 history)
     """
     if not spikes:
         return []
@@ -207,7 +207,9 @@ def _format_attitude_shifts(rows: List[Dict[str, Any]], cap: int = 5) -> List[st
     initial 제외(확립은 이력이 아니라 기준점) — accepted/clamped 실전이만."""
     out = []
     for r in rows:
-        if not isinstance(r, dict) or r.get("result") not in ("accepted", "clamped"):
+        # [2026-09-24 감사] 09-15 이후 유일 적립자(domain_manager.upsert_relation_edge)는 result 에
+        #   "initial" 또는 origin("theoria"/"ooc")을 쓴다 — accepted/clamped 만 받던 필터라 줄이 영구 공백.
+        if not isinstance(r, dict) or not r.get("result") or r.get("result") == "initial":
             continue
         reason = (r.get("reason") or "").strip()
         reason_str = f" ({reason[:40]})" if reason else ""
@@ -274,6 +276,9 @@ def thread_ages(channel_id: str, n: int = 40) -> List[Tuple[str, int]]:
 
 
 def emotion_arc(channel_id: str, npc: str, n: int = 12) -> str:
+    """[2026-09-15 §12] 원천은 emotion_log 유지 — 추적 상태 history로 못 옮긴다:
+    history는 NPC당 최근 5엔트리(HISTORY_MAX_LEN)·페어가 선 턴만(solo·저강도 턴 스킵)이라
+    n=12 창의 dominant/추세/`spikes k/n` 분모를 같은 뜻으로 만들 수 없다(값이 달라진다)."""
     try:
         import sqlite_store
         return _format_emotion_arc(npc, sqlite_store.read_emotion_trajectory(channel_id, npc, limit=n))
@@ -282,20 +287,49 @@ def emotion_arc(channel_id: str, npc: str, n: int = 12) -> str:
         return ""
 
 
+def _spikes_from_history(emotion_states: Dict[str, Any], n: int = 8) -> List[Dict[str, Any]]:
+    """[2026-09-15 §12] 추적 상태 history → 스파이크 이벤트(오래된→최신, 최근 n개).
+    엔트리 [base, mod, intensity, turn, spike] 중 spike=True만. 구 4원소 엔트리는 스파이크 아님.
+    반환 모양은 구 read_emotion_spikes와 같다: {turn, npc_name, base, modifier, intensity}. 순수 함수."""
+    out: List[Dict[str, Any]] = []
+    if not isinstance(emotion_states, dict):
+        return out
+    for npc, st in emotion_states.items():
+        hist = st.get("history") if isinstance(st, dict) else None
+        if not isinstance(hist, list):
+            continue
+        for e in hist:
+            if not (isinstance(e, (list, tuple)) and len(e) >= 5 and e[4] is True):
+                continue
+            try:
+                out.append({"turn": int(e[3]), "npc_name": str(npc), "base": str(e[0] or ""),
+                            "modifier": str(e[1] or ""), "intensity": float(e[2])})
+            except (TypeError, ValueError):
+                continue
+    out.sort(key=lambda r: (r["turn"], r["npc_name"]))
+    return out[-int(n):] if n and int(n) > 0 else []
+
+
 def emotion_residue(channel_id: str, current_turn: int, n: int = 8, cap: int = 4) -> List[str]:
     """[2026-07-15] 잔열의 출처 — 과거 spike × 그 턴의 사건.
 
-    read_emotion_spikes(고아 승격: 외부 호출 0건이었음) + read_dai_logs 조인.
-    dai_logs limit은 spike 조회창(n)보다 넉넉히(x5, 상한 100=append_dai_log keep) —
-    스파이크가 dai 보관창 밖이면 조인이 조용히 실패하므로.
+    [2026-09-15 §12] 스파이크 원천 = world_state `npc_emotion_states[*].history`(추적 상태) —
+    emotion_log 조인 폐지(같은 값 두 군데 계산). 자동 소멸은 부재 감쇠(상태 제거)와 history 링이 맡는다.
+    그 턴의 사건(beat)은 종전대로 dai_logs 조인 — limit은 스파이크 창(n)보다 넉넉히(x5, 상한 100).
     """
     try:
-        import sqlite_store
-        spikes = sqlite_store.read_emotion_spikes(channel_id, limit=n)
+        import domain_manager
+        _states = (domain_manager.get_world_state(channel_id) or {}).get("npc_emotion_states", {})
+        spikes = _spikes_from_history(_states, n)
         if not spikes:
             return []
-        _span = max(int(n) * 5, 40)
-        dai_rows = sqlite_store.read_dai_logs(channel_id, limit=min(_span, 100))
+        dai_rows = []
+        try:
+            import sqlite_store
+            _span = max(int(n) * 5, 40)
+            dai_rows = sqlite_store.read_dai_logs(channel_id, limit=min(_span, 100))
+        except Exception as _e_dai:
+            logger.debug(f"[NQ] emotion_residue dai join skip: {_e_dai}")
         return _format_emotion_residue(spikes, dai_rows, current_turn, cap=cap)
     except Exception as e:
         logger.debug(f"[NQ] emotion_residue skip: {e}")

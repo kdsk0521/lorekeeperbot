@@ -135,7 +135,7 @@ class AnomalyModule:
                 elif proposal_cat and proposal_cat not in allowed:
                     # Check queue for allowed events
                     has_allowed = any(
-                        (e.get("category", "").lower() in allowed) for e in queue
+                        ((e.get("category") or "").lower() in allowed) for e in queue
                     )
                     if not has_allowed:
                         decision = "defer"
@@ -174,7 +174,7 @@ class AnomalyModule:
         scene_type = dai.get("scene_type", "normal")
         allowed = _cfg.STORYTELLER_SCENE_CATEGORIES.get(scene_type)
         if allowed is not None and allowed:
-            filtered = [c for c in candidates if c.get("category", "").lower() in allowed]
+            filtered = [c for c in candidates if (c.get("category") or "").lower() in allowed]
             if filtered:
                 candidates = filtered
 
@@ -405,13 +405,24 @@ class AnomalyModule:
                 }
                 _route = "emit"  # 기본
                 _target_arc = None
+                # [2026-09-24 감사] 아크는 storyteller 상태가 아니라 narrative_tracker 상태(storylines)에 산다.
+                #   전엔 st_state(storylines 키 없음)를 넘겨 흡수 분기 영구 None · 승격 임계의 "같은 카테고리
+                #   활성 아크 없음" 검사가 공허(승격이 살아나면 같은 카테고리 아크 중복 승격 위험)였다.
+                _nt_state_r = None
+                try:
+                    if channel_id:
+                        import domain_manager as _dm_arc
+                        _nt_state_r = _dm_arc.get_narrative_tracker_state(channel_id)
+                except Exception as _e_ntl:
+                    logger.debug("[Storyteller] nt_state load skip: %s", _e_ntl)
+                _arc_state = _nt_state_r if isinstance(_nt_state_r, dict) else {}
                 try:
                     import narrative_tracker as _nt
-                    _target_arc = _nt.find_absorbing_arc(st_state, _normalized_cand["category"])
+                    _target_arc = _nt.find_absorbing_arc(_arc_state, _normalized_cand["category"])
                     if _target_arc:
                         _route = "absorb"
                     elif _nt.check_promote_threshold(
-                        st_state, _normalized_cand,
+                        _arc_state, _normalized_cand,
                         st_state.get("recent_categories", []),
                         st_state.get("event_queue", []),
                         reader_axes=bus.anomaly.get("_reader_axes"),  # [Reader-GM R4b] 독자 1표 (현행 FEED=1 라이브 적재 — [2026-08-11 리더 §7] 구 "FEED=0이면 미적재" 정정)
@@ -457,6 +468,13 @@ class AnomalyModule:
                             _nt.supernova_branch(_target_arc, current_turn)
                         except Exception as _e_sn:
                             logger.warning("[Storyteller] supernova branch failed: %s", _e_sn)
+                    # [2026-09-24 감사] 흡수는 in-place 변형이라 tracker 상태를 저장해야 남는다.
+                    #   ⚠ 배경 추출(직전 턴)이 같은 상태를 들고 있으면 나중 저장이 이긴다 — best-effort.
+                    if _absorbed and isinstance(_nt_state_r, dict) and channel_id:
+                        try:
+                            _dm_arc.update_narrative_tracker_state(channel_id, _nt_state_r)
+                        except Exception as _e_nts:
+                            logger.warning("[Storyteller] absorb save failed: %s", _e_nts)
                     # 일반 발사 흐름 skip — active_condition / escalated 등록 X
                 else:
                     # === (e) promote_candidate 또는 (f) 일반 발사 ===

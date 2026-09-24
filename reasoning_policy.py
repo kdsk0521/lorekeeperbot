@@ -74,7 +74,7 @@ def reasoning_cap_chars(tier: str) -> int:
     return _TIER_CAP_CHARS.get((tier or "").lower(), 0)
 
 
-def reasoning_cap_instruction(tier: str, cap_chars: int = 0) -> str:
+def reasoning_cap_instruction(tier: str, cap_chars: int = 0, bridge: bool = False) -> str:
     """추론 길이 캡 지시문(DTG THOUGHTS_LIMIT 이식). reasoning on(light/deep)일 때만 문자열 반환.
 
     소프트 레버(모델이 문자수를 정확히 세진 않지만 방향으로 조임). GLM 등이 per-turn 에서
@@ -89,6 +89,17 @@ def reasoning_cap_instruction(tier: str, cap_chars: int = 0) -> str:
     # [2026-07-08] DTG [4] 이식 확장: 분석-전용 규율 — thinking 안에서 산문/대사 드래프트 금지.
     # 근거: 영어 추론 traces의 산문 초안이 한국어 출력에 문장단위 전사(원자화·역학-해석체의 seeder).
     # 참조: session_summary_2026-07-08.md §3-1(Reasoning Lingua Franca) + §4(DTG [4]).
+    if bridge:
+        # [2026-09-24 감사 §5-2 #29 — 문안 정합] 렌더(bridge=True) 전용. 렌더 추론은 언어 다리가 도는 자리다 —
+        #   KOREAN PROSE(08-01 "The bridge runs in reasoning alone")와 DSH 앵커(08-16 "EN beat sketch → JA restructure →
+        #   KO prose draft")가 그렇게 시킨다. 아래 분석용 "draft no prose … in any language"(07-08 DTG)가 같은 턴
+        #   recency 자리에 붙어 앵커와 정면충돌했다. 렌더엔 다리 문구로, 분석 콜은 종전 그대로.
+        return (
+            f"Constraint on internal reasoning only: keep the reasoning/thinking block under "
+            f"~{cap} characters. The language bridge runs here: English beats, the Japanese "
+            f"restructure, the Korean draft. This limit applies ONLY to the reasoning block; "
+            f"do NOT shorten, summarize, or truncate the actual output."
+        )
     return (
         f"Constraint on internal reasoning only: keep the reasoning/thinking block under "
         f"~{cap} characters — a few short analytical bullets, not prose. Analytical planning "

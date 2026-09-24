@@ -50,21 +50,55 @@ async def send_long_message(
     channel: discord.TextChannel,
     text: str,
     view: Optional["discord.ui.View"] = None,
+    embeds: Optional[List["discord.Embed"]] = None,
 ) -> List[discord.Message]:
     """2000자가 넘는 메시지를 나누어 전송하는 함수. 전송된 메시지 리스트 반환.
 
     [2026-08-16 상태패널 v0] view는 **마지막 청크에만** 붙는다(💠 상태 패널 토글 버튼).
     기본값 None = 종전 동작 그대로 — 기존 호출부 14곳 무변경.
+
+    [2026-09-07 P9] embeds 도 같은 규율 — **마지막 청크에만**, view 와 **같은 send 호출**로.
+    상태 임베드가 중간 청크에 붙으면 산문이 임베드 아래로 흘러 "꼬리에 붙는다"는
+    계약이 깨지고, 청크마다 붙으면 같은 표가 N번 나온다. 기본값 None = 종전 동작.
     """
     if not text:
         return []
 
     channel_id = str(channel.id)
     sent_messages: List[discord.Message] = []
+    _embeds = [e for e in (embeds or []) if e is not None]
+
+    def _kw(last: bool) -> dict:
+        """마지막 청크에만 붙는 인자들. 빈 값은 아예 넘기지 않는다(종전 호출 모양 보존)."""
+        out = {}
+        if last and view is not None:
+            out["view"] = view
+        if last and _embeds:
+            out["embeds"] = _embeds
+        return out
+
+    async def _send(body: str, kw: dict) -> discord.Message:
+        """[2026-09-24 감사] 임베드를 실은 send 가 거절되면 **임베드만 버리고** 산문을 다시 보낸다.
+
+        임베드는 산문 마지막 청크와 같은 send 에 실린다 — 임베드 하나가 서버 한도(6000자 등)를
+        넘어 400 이 나면 그 청크(=턴 산문 꼬리)까지 같이 죽고, 호출부는 그 턴 전체를 오류로 본다.
+        표시 전용인 임베드 때문에 산문을 잃지 않게 한다. 5xx(DiscordServerError)는 제외 —
+        서버가 이미 메시지를 만들었을 수 있어 재전송하면 산문이 두 번 나갈 수 있다.
+        """
+        if not kw:
+            return await channel.send(body)
+        try:
+            return await channel.send(body, **kw)
+        except discord.HTTPException as e:
+            if "embeds" not in kw or isinstance(e, discord.DiscordServerError):
+                raise
+            logging.warning(f"[send_long_message] 임베드 포함 전송 거절 → 임베드 없이 재전송: {e}")
+            kw2 = {k: v for k, v in kw.items() if k != "embeds"}
+            return await channel.send(body, **kw2) if kw2 else await channel.send(body)
 
     if len(text) <= config.MAX_DISCORD_MESSAGE_LENGTH:
         await rate_limiter.wait_if_needed(channel_id)
-        msg = await channel.send(text, view=view) if view else await channel.send(text)
+        msg = await _send(text, _kw(True))
         return [msg]
 
     # 메시지 분할 전송
@@ -72,8 +106,7 @@ async def send_long_message(
     for i in _starts:
         chunk = text[i:i + config.MAX_DISCORD_MESSAGE_LENGTH]
         await rate_limiter.wait_if_needed(channel_id)
-        _v = view if (view is not None and i == _starts[-1]) else None
-        msg = await channel.send(chunk, view=_v) if _v else await channel.send(chunk)
+        msg = await _send(chunk, _kw(i == _starts[-1]))
         sent_messages.append(msg)
 
     return sent_messages

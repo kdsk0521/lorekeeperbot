@@ -93,12 +93,22 @@ NPC_AUTONOMOUS_TRIGGERS = {
 #   ★static_traits(attachment_style/moral_stance)가 여기서 **처음으로 실제 판정에 쓰인다** —
 #   구 코드는 gate_ctx.update(static_traits)로 주입만 하고 어느 조건도 그 키를 읽지 않아
 #   N6 "desistance gate enrichment"가 0% 영향이었다.
+# [2026-09-24 감사 §5-2 #11 — 레티어스 판정] **적대에서 벗어나는 움직임**으로 재정의.
+#   09-15 관계 통합 뒤 depth 자리 = bond(−100~+100)인데 게이트 진입이 hostile/unfriendly(= bond ≤ −20)라,
+#   depth ≥ 25/50/70 을 요구하던 세 조건은 진입 순간 전부 불가능 → 최대 1/4, 한 번도 발화 안 한 사문이었다.
+#   적대 NPC 는 bond 가 음수인 게 전제다 — 따뜻함의 절대값이 아니라 **방향·회복폭**을 본다(Maruna 도 과정 이론).
+#     alternative_identity  최근 한 걸음이 오르는 중(trajectory improving — 불감대 = 턴당 캡)
+#     social_support        긴장이 가라앉아 있고(tension < 50) 관계를 끊는 기질이 아님(회피형·도덕 이탈 아님)
+#     generative_motivation (그대로) 관계·인정 계열 욕구가 살아 있음
+#     redemption_narrative  이 관계의 최저점 대비 bond +30 이상 회복(`bond_low` = 엣지 history 최저)
+#   발화는 2/4 이상 **이면서 움직임(alternative_identity·redemption_narrative) 하나 이상** — 정적인 적대 NPC 가
+#   긴장 낮음 + 욕구만으로 매 턴 "균열"을 받지 않게(기본값 = moral_disengagement_stable 유지).
+DESISTANCE_MOVEMENT = ("alternative_identity", "redemption_narrative")
 DESISTANCE_CONDITIONS = {
     "alternative_identity":
-        lambda ctx: ctx.get("depth", 0) >= 50
-                    and ctx.get("trajectory") == "improving",
+        lambda ctx: ctx.get("trajectory") == "improving",
     "social_support":
-        lambda ctx: ctx.get("depth", 0) >= 25
+        lambda ctx: ctx.get("tension", 100) < 50
                     and ctx.get("attachment_style") != "avoidant"
                     and ctx.get("moral_stance") != "disengaged",
     "generative_motivation":
@@ -107,7 +117,7 @@ DESISTANCE_CONDITIONS = {
             & {"belonging", "intimacy", "esteem", "self-actualization"}
         ),
     "redemption_narrative":
-        lambda ctx: ctx.get("depth", 0) >= 70,
+        lambda ctx: ctx.get("depth", 0) - ctx.get("bond_low", ctx.get("depth", 0)) >= 30,
 }
 
 
@@ -355,7 +365,7 @@ def _check_attachment_activation(ctx: Dict) -> TriggerResult | None:
 def _check_reactance(ctx: Dict) -> TriggerResult | None:
     """Reactance: coping=avoidant + negative relation → NPC pushes back."""
     coping = ctx["psyche"].get("coping")
-    rel_val = _as_num(ctx["relation"].get("value"))
+    rel_val = _as_num(ctx["relation"].get("bond", ctx["relation"].get("value")))  # [09-15] bond, value 폴백
     if coping == "avoidant" and rel_val < -10:
         return TriggerResult(
             "reactance", ctx["name"],
@@ -445,7 +455,7 @@ def _check_emotional_contagion(ctx: Dict, all_psyche: Dict) -> TriggerResult | N
         other_polyvagal = other_soma.get("polyvagal", "ventral")
         if other_polyvagal in ("sympathetic", "dorsal"):
             other_relation = _as_dict(other_state.get("relation"))
-            other_val = other_relation.get("value", 0)
+            other_val = other_relation.get("bond", other_relation.get("value", 0))  # [09-15 관계 통합] bond<−30
             if isinstance(other_val, (int, float)) and other_val < -30:
                 if current_polyvagal == "sympathetic":
                     return TriggerResult(
@@ -566,6 +576,7 @@ def check_desistance_gate(
     - 4/4 met → full transition eligible, priority 5 trigger
     - 2-3/4 met → micro-cracks, priority 2 trigger
     - 0-1/4 met → earned change denied
+    - [2026-09-24] 움직임 조건(DESISTANCE_MOVEMENT) 0개면 몇 개를 채워도 denied
     """
     attitude = _as_dict(attitude)
     psyche = _as_dict(psyche)
@@ -580,6 +591,10 @@ def check_desistance_gate(
         "trajectory": _as_str(attitude.get("trajectory"), "stable"),
         "attitude": att_label,
         "active_needs": _as_list(psyche.get("active_needs")),
+        # [2026-09-24 감사 §5-2 #11] 벗어남 판정 재료 — 엣지 파생 뷰(_edge_to_attitude)가 준다.
+        #   tension 이 없으면 100(= 미충족) — 모르는 긴장을 "가라앉음"으로 읽지 않는다.
+        "tension": _as_num(attitude.get("tension"), 100),
+        "bond_low": _as_num(attitude.get("bond_low"), _as_num(attitude.get("depth"))),
     }
     # static_traits(attachment_style / moral_stance / coping_style / core_needs)를 판정 재료로 합류.
     # [2026-07-28] 구 코드도 이 update는 했지만 **어느 조건도 이 키들을 읽지 않아** 0% 영향이었다
@@ -597,6 +612,10 @@ def check_desistance_gate(
                 met_names.append(cond_name)
         except Exception:
             pass  # malformed data → condition not met
+
+    # [2026-09-24 감사 §5-2 #11] 움직임 조건이 하나도 없으면 발화하지 않는다(위 DESISTANCE_MOVEMENT 주석).
+    if not any(n in met_names for n in DESISTANCE_MOVEMENT):
+        return {"met": met_count, "total": 4, "eligible": False, "directive": ""}
 
     if met_count >= 4:
         directive = (
@@ -760,7 +779,7 @@ def _check_cost_of_inaction(ctx: Dict) -> TriggerResult | None:
         return None  # (b) 압력 미달
     coping = ctx["psyche"].get("coping")
     polyvagal = ctx["soma"].get("polyvagal", "ventral")
-    rel_val = ctx["relation"].get("value", 0)
+    rel_val = ctx["relation"].get("bond", ctx["relation"].get("value", 0))
     if coping != "avoidant" or polyvagal == "dorsal":
         return None  # (c) 회피성 멈춤 아님 (freeze는 보호)
     if isinstance(rel_val, (int, float)) and rel_val < -10:

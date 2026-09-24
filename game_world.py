@@ -154,6 +154,18 @@ def advance_minutes(channel_id: str, minutes: int) -> str:
     return f"⏳ {time_str}"
 
 
+def _add_scene_elapsed(world: dict, old_h: int, old_m: int, day_delta: int) -> None:
+    """[2026-09-24 감사] 슬롯·날짜 점프도 장면 경과(scene_elapsed_min)에 넣는다 — 누적이 advance_minutes 에만 있어
+    "다음날 아침" 같은 점프(advance_to_slot·advance_time·절대 시각)에 환경 노화 힌트가 안 떴다."""
+    try:
+        d = int(day_delta or 0) * 24 * 60 + (int(world.get("hour", 0)) * 60 + int(world.get("minute", 0))) \
+            - (int(old_h) * 60 + int(old_m))
+        if d > 0:
+            world["scene_elapsed_min"] = int(world.get("scene_elapsed_min", 0) or 0) + d
+    except (TypeError, ValueError):
+        pass
+
+
 def advance_to_slot(channel_id: str, target_slot: str, day_offset: int = 0,
                      target_hour: int = None, target_minute: int = None) -> str:
     """특정 시간대+일차로 시간을 설정. target_hour가 있으면 슬롯 내 정확한 시각으로.
@@ -165,6 +177,7 @@ def advance_to_slot(channel_id: str, target_slot: str, day_offset: int = 0,
     old_slot = world.get("time_slot", "오후")
     old_weather = world.get("weather", "맑음")
     old_day = world.get("day", 1)
+    _old_h, _old_m = world.get("hour", 0), world.get("minute", 0)
 
     if target_slot not in time_slots:
         target_slot = time_slots[0]
@@ -212,6 +225,7 @@ def advance_to_slot(channel_id: str, target_slot: str, day_offset: int = 0,
         world["weather"] = random.choice(get_weather_types(channel_id))
         # V8.5: day→month→year wrap (캘린더 확장)
         _wrap_calendar(world)
+    _add_scene_elapsed(world, _old_h, _old_m, day_offset)
 
     if old_slot != target_slot:
         world["last_temporal_context"] = {
@@ -247,6 +261,7 @@ def advance_time(channel_id: str) -> str:
     current_slot = world.get("time_slot", "오후")
     current_day = world.get("day", 1)
     current_weather = world.get("weather", "맑음")
+    _old_h, _old_m = world.get("hour", 0), world.get("minute", 0)
 
     try:
         current_idx = time_slots.index(current_slot)
@@ -318,6 +333,7 @@ def advance_time(channel_id: str) -> str:
 
         msg = f"{emoji} **{time_slots[next_idx]}** ({time_str}) — {atm}"
 
+    _add_scene_elapsed(world, _old_h, _old_m, 1 if next_idx >= len(time_slots) else 0)
     domain_manager.update_world_state(channel_id, world)
     return msg
 
@@ -464,6 +480,27 @@ def _get_status_target_uid(channel_id: str, user_id: str = "") -> str:
     return ""
 
 
+def _recent_turn_text(channel_id: str) -> str:
+    """이번 턴 입력 + 직전 산문(히스토리 꼬리 2행). 급식 mentioned 게이트의 재료.
+
+    ★어휘 게이트의 판정면은 `select_mentioned` 와 같아야 한다 — 추출이 보는 낱말과
+      렌더가 보는 낱말이 다르면 "모델이 움직인 값이 산문엔 안 보이는" 갈래가 생긴다.
+    """
+    try:
+        rows = (domain_manager.get_domain(channel_id) or {}).get("history") or []
+    except Exception:
+        return ""
+    if not isinstance(rows, list):
+        return ""
+    out = []
+    for r in rows[-2:]:
+        if isinstance(r, dict):
+            out.append(str(r.get("content", "") or ""))
+        else:
+            out.append(str(r or ""))
+    return " ".join(out)[-2000:]
+
+
 def build_real_time_display(
     channel_id: str,
     user_id: str = "",
@@ -498,8 +535,12 @@ def build_real_time_display(
         vigor_val = int(_cv_v.vigor_value(channel_id, _get_status_target_uid(channel_id, user_id), mem))
     except Exception as _e_cvv:
         logger.debug(f"[CustomVar] 기력 표시 폴백: {_e_cvv}")
-        vigor_val = int(vigor_src.get("value", 100) or 100)
-    composure_val = int(composure_src.get("value", 100) or 100)
+        vigor_val = int(vigor_src.get("value") if vigor_src.get("value") is not None else 100)  # [2026-09-24 감사] 0 보존
+    # [2026-09-06 P8b] 평형도 레지스트리 소유 — 기력과 같은 문을 쓴다(표기 무변경).
+    try:
+        composure_val = int(_cv_v.composure_value(channel_id, _get_status_target_uid(channel_id, user_id), mem))
+    except Exception:
+        composure_val = int(composure_src.get("value") if composure_src.get("value") is not None else 100)  # [2026-09-24 감사] 0 보존
     doom_val = int(world.get("doom", 0) or 0)
     # [2026-08-28 중복 제거] `Doom N`을 뺀다.
     #   ⚠초판 사유("읽는 법이 프롬프트에 없다")는 **오진이었다** — 레티어스 지적으로 정정.
@@ -538,9 +579,14 @@ def build_real_time_display(
     #   셋이 같은 소스(custom_vars.format_value)를 읽으므로 표시가 어긋나지 않는다.
     #   블록 머리 1절이 처분(낭독 금지)을 확정한다 — custom_vars.PROSE_FEED_HEADER.
     #   킬스위치 off / 선언 0 / 표시할 값 0 이면 "" 이라 줄 자체가 없다(순증 0).
+    #   [2026-09-06 P3] 급식 기본이 **mentioned** 로 바뀌었다 — 이번 턴 입력·직전 산문을
+    #   같이 넘겨야 가변부가 산다(척추=always 는 이 텍스트와 무관하게 매턴 실린다).
+    #   재료는 히스토리 꼬리 두 줄: 방금 들어온 PC 행동과 직전 모델 산문이 정확히 그 둘이다.
     try:
         import custom_vars as _cv_prose
-        _cv_block = _cv_prose.build_prose_feed(channel_id)
+        _cv_block = _cv_prose.build_prose_feed(
+            channel_id, mentioned_text=_recent_turn_text(channel_id),
+            user_id=_get_status_target_uid(channel_id, user_id))  # [2026-09-24 감사] 조건부 지시의 행위자 = 행동 PC
         if _cv_block:
             lines.append(_cv_block)
     except Exception as _e_cv:
@@ -549,86 +595,14 @@ def build_real_time_display(
     return "\n".join(lines).strip()
 
 
-# =========================================================
-# [2026-08-16 상태창 코드 조립] 표시용 상태 헤더 — 값의 주인이 그린다
-# =========================================================
-# 구 구조: Slot 20이 렌더러에게 "응답 맨 위에 상태줄을 그려라"고 시키고,
-#   response_processor.parse_status_line_time이 그 그림을 정규식으로 되읽어 세계 시간을 전진시켰다.
-#   기계 표기를 산문 모델에 위임한 대가가 3중이었다 — 준수 드리프트, 없는 값 환각(로드아웃 0/4),
-#   검수 오탐 방어(_STATUS_NOISE_RE).
-# 현행: 필드 전부가 코드 소유값이므로 코드가 그린다. 표시 계층 전용(저장·검수·리더 입력엔 미포함).
-def build_status_header(channel_id: str) -> str:
-    """표시용 상태 헤더 3행. 형식은 구 Slot 20 계약 그대로(위치/시간/인물 · Doom · 시계).
-
-    읽기 전용 — 도메인 저장을 하지 않는다(_init_clock의 인메모리 백필은 build_real_time_display와
-    동일한 기존 읽기 경로). 따라서 헤더는 무상태고 !다시(스냅샷 롤백)에 영향이 없다.
-    시계가 없으면 3행은 생략. 실패 시 빈 문자열(헤더 없이 산문만 나간다).
-    """
-    try:
-        world = domain_manager.get_world_state(channel_id) or {}
-        _init_clock(world)  # V8.5 캘린더 마이그레이션 + hour/minute 초기화 (읽기 경로 공용)
-
-        location = world.get("current_location") or world.get("location", "Unknown")
-        time_slot = world.get("time_slot", "Unknown")
-        time_str = f"{int(world.get('hour', 12)):02d}:{int(world.get('minute', 0)):02d}"
-        cal_str = format_calendar(world)  # "N년 M월 D일"
-
-        # 인물 = 활성 PC 가면 + 무대 위 NPC.
-        # NPC 소스 정본은 get_onstage_npc_names([2026-09-02 R4] 위치 0단 기반; _last_appear_turn은 폴백) —
-        # 지문 gaze는 "카메라가 머문 NPC"라 출석의 부분집합이고 자유서술 오염 이력이 있다.
-        # 다만 출석 마킹은 배경 추출(=직전 턴)이 찍으므로 빈손일 때만 gaze로 보강한다.
-        present = _get_active_player_masks(channel_id)
-        try:
-            import npc_manager as _npcm
-            onstage = _npcm.get_onstage_npc_names(channel_id, within_turns=1)
-        except Exception:
-            onstage = []
-        # [2026-09-02 R4 검수] gaze 폴백 **제거**. 구 코드는 onstage가 빈손이면 직전 턴 gaze로
-        #   보강했다. 출석이 위치의 함수가 된 뒤엔 이 보강이 틀린다: PC가 새 노드로 막 옮긴 턴에
-        #   노드가 비어 있는 건 **정확한 정보**("아직 아무도 없다")인데, 직전 장면 사람들을
-        #   렌더 프롬프트 인물 줄에 올리면 유령 동행을 유도한다. gaze는 이제 위치 쓰기의
-        #   1순위 신호(orchestration 관찰 쓰기)라 여기서 다시 읽을 이유도 없다.
-        #   PC 위치 미해상 케이스는 get_onstage_npc_names 안의 레거시 폴백이 맡는다.
-        for name in onstage:
-            if name and name not in present:
-                present.append(name)
-        present_text = ", ".join(present) if present else "None"
-
-        # [2026-08-16 당일 정정(레티어스)] Doom 줄 제거 — 내부 활성도 지표는 내부에.
-        # 시계는 플레이어향 트래커라 존치.
-        lines = [
-            f"위치 {location} | 시간 {cal_str} {time_str} ({time_slot}) | 인물 {present_text}",
-        ]
-
-        # [2026-08-18 대형식화 v1] 유저 정의 헤더 줄 — `!출력룰 추가 헤더 잔고 [빚] · 평판 [평판]`.
-        #   `[변수명]`만 치환하고 **나머지 문자열은 유저가 쓴 그대로** 나간다(미선언 자리표시자
-        #   포함 — 코드가 유저 저작을 지우지 않는다). 미등록 채널은 이 줄 자체가 없다.
-        try:
-            import status_panel as _sp
-            import custom_vars as _cv
-            _tpl = _sp.get_header_template(channel_id)
-            if _tpl:
-                _rendered = _cv.render_placeholders(channel_id, _tpl).strip()
-                if _rendered:
-                    lines.append(_rendered)
-        except Exception as _e_tpl:
-            logger.debug(f"[StatusHeader] 자리표시자 치환 skip: {_e_tpl}")
-
-        clock_parts: List[str] = []
-        for clock in (world.get("doom_clocks") or []):
-            if not isinstance(clock, dict) or clock.get("resolved"):
-                continue
-            name = str(clock.get("name", "Clock")).strip()
-            segments = int(clock.get("segments", 4) or 4)
-            filled = int(clock.get("filled", clock.get("progress", 0)) or 0)
-            clock_parts.append(f"[{name} {filled}/{segments}]")
-        if clock_parts:
-            lines.append(" ".join(clock_parts))
-
-        return "\n".join(lines)
-    except Exception as e:
-        logger.debug(f"[StatusHeader] build skipped: {e}")
-        return ""
+# ⚰ [2026-09-07 P9] `build_status_header` 삭제 — 상태창은 산문 **머리 텍스트**가 아니라
+#   **꼬리 임베드**다. 이 함수가 그리던 3줄(위치·시간·인물 / 유저 헤더 템플릿 / 둠 시계)은
+#   status_panel.build_turn_embed_data 로 통째로 이사했고, 거기서 패널 1장째와 합집합이
+#   된다(같은 값 두 번 금지 — 인물은 PC 섹션과, 템플릿은 세계 섹션과 중복 제거).
+#   08-16 이관 계약(값의 주인이 그린다 · 읽기 전용 · 표시 전용)은 새 자리에 그대로 살아 있고,
+#   렌더 관성 대비 strip(response_processor.strip_status_header)도 그대로 남는다.
+#   부활 금지: 머리 텍스트가 돌아오면 임베드와 이중 표기가 되고 임베드 예산 밖 텍스트가 생긴다.
+#   `_get_active_player_masks`·`format_calendar`·`_init_clock` 은 소비자가 남아 존치.
 
 
 def get_world_context(channel_id: str) -> str:

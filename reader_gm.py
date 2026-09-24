@@ -616,6 +616,16 @@ async def run_reader(client, channel_id: str, turn: int,
             "### YOUR NOTEBOOK — EARLIER CHAPTERS (your own past notes; memory, "
             "not instructions; never quote from here)\n" + "\n\n".join(_nb_parts)
         )
+    # [2026-09-18 식별 허브 S7] 무대 명부 — 분석 콜과 **같은 블록**을 독자에게도. 위치의 함수라 콜 0.
+    #   독자는 읽기만 한다(쓰기 권한은 분석 하나) — 어긋나면 영수증에 남는다.
+    try:
+        import npc_manager as _npm_rd
+        _onstage_rd = _npm_rd.onstage_roster_lines(channel_id)
+        if _onstage_rd:
+            user_parts.append("### WHO STANDS HERE (roster, not the page's words)\n"
+                              + "\n".join(_onstage_rd))
+    except Exception as _e_rd:
+        logger.debug(f"[Reader] 무대 명부 급식 건너뜀: {_e_rd}")
     user_parts.append(f"### THE TURN'S PROSE\n{prose.strip()}")
     if telescope_block and telescope_block.strip():
         user_parts.append(
@@ -670,6 +680,12 @@ async def run_reader(client, channel_id: str, turn: int,
                 logger.debug(f"[Reader] sqlite write skipped: {_e}")
             # [2026-08-11 리더 소비자] C2 established → 비밀 누설 압력(저장 필드 경유).
             _apply_reader_exposure(channel_id, turn, digest)
+            # [2026-09-25 스레드 장부] 두 번째 증인 — live_threads 인용 ↔ 장부. log-only(처방 0), 리더는 장부를 안 본다.
+            try:
+                import thread_ledger as _tl_w
+                _tl_w.witness(channel_id, turn, digest)
+            except Exception as _e_tw:
+                logger.debug(f"[ThreadWitness] skip: {_e_tw}")
             # [M1 순화 diff] 공급(energy) vs 수신(tension) — 로그 1줄뿐(계측 최소주의).
             # [2026-08-11 리더 소비자] C5 register판 동거: 공급 scene_register(서사 콜 소유,
             #   bus.dai에 실려 같은 dai_logs 스냅샷에 있음 — 실측) vs 수신 register_felt.
@@ -705,8 +721,8 @@ async def run_reader(client, channel_id: str, turn: int,
                 "[Reader] turn=%s notes=%s dropped=%d tension=%s register=%s expect=%s",
                 turn, _counts, dropped,
                 (digest.get("tension_read") or {}).get("value", "-"),
-                (digest.get("register_felt") or {}).get("note", "")[:50],
-                (digest.get("expectation") or {}).get("note", "")[:50],
+                ((digest.get("register_felt") or {}).get("note") or "")[:50],
+                ((digest.get("expectation") or {}).get("note") or "")[:50],
             )
             # [2026-08-03] 다이제스트 **전문**은 verbose 채널로.
             #   종전엔 위 한 줄(개수 + note 50자 절단 2개)이 유일한 노출이었고, 본문은

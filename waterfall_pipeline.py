@@ -12,9 +12,10 @@ from judgment_engine import JudgmentEngine
 from anomaly_module import AnomalyModule
 from doom_module import DoomModule
 from judgment_gate import gate_judgment
-from emotion_engine import EmotionEngine
+from emotion_engine import EmotionEngine, EmotionState
 from story_director import StoryDirector
 import domain_manager
+import voice_seed  # [2026-09-22] 세션 NPC 시드 — 게이트·굴림·버퍼(배선 스펙 §2 A·D·F)
 
 logger = logging.getLogger("Waterfall")
 
@@ -58,6 +59,81 @@ def _inject_capability_hints(npc_profiles: dict) -> str:
     return "\n".join(hints) if hints else ""
 
 
+def _pc_masks(context) -> set:
+    """이번 턴 PC 마스크 집합 — DAI PC 정제(아래 ★단일 정제)와 시드 게이트의 **같은 원천**.
+
+    [2026-09-22 voice_seed §2 A 2] 시드 게이트는 자기 명단을 따로 만들지 않는다.
+    한쪽만 고쳐져 두 판정이 갈리는 걸 막으려고 원천을 함수 하나로 묶었다."""
+    anchors = getattr(context, "narrative_anchors", None) or {}
+    try:
+        masks = {p.get("mask") for p in (anchors.get("all_pcs", {}) or {}).values()
+                 if isinstance(p, dict) and p.get("mask")}
+    except Exception:
+        return set()
+    masks.discard("")
+    return masks
+
+
+def _turn_now(context) -> int:
+    """[2026-09-22] 시드 TTL·born_turn 시계. 아래 판정 게이트 current_turn 과 같은 읽기 순서
+    (세션 메모리 turn_count → world_state turn_index)."""
+    anchors = getattr(context, "narrative_anchors", None) or {}
+    try:
+        t = (anchors.get("session_memory") or {}).get("turn_count", 0)
+        if not t:
+            t = domain_manager.get_world_state(anchors.get("channel_id", "")).get("turn_index", 0)
+        return int(t or 0)
+    except Exception:
+        return 0
+
+
+def load_last_judgment_turn(channel_id: str, actor: str = "") -> int:
+    """[2026-09-16 3차] Rule2 쿨다운 정본 = 채널 world_state["last_judgment_turn"](bus 는 매턴 신조).
+
+    [2026-09-24 감사] **PC(uid)별**로 갈랐다 — 채널 공용 한 칸이면 `!진행` 배치에서 첫 PC 저장 뒤
+      둘째 PC가 같은 턴 diff 0 ≤ 1 로 차단되고, 솔로 다인 채널에서도 A 가 굴린 다음 턴 B 가 막혔다.
+      옛 int 값은 actor 무관 공용값으로 읽는다(이행 호환).
+    """
+    try:
+        if channel_id:
+            v = domain_manager.get_world_state(channel_id).get("last_judgment_turn", -10)
+            if isinstance(v, dict):
+                return int(v.get(str(actor or ""), -10))
+            return int(v)
+    except Exception:
+        pass
+    return -10
+
+
+def save_last_judgment_turn(channel_id: str, turn: int, actor: str = "") -> None:
+    try:
+        if channel_id:
+            ws = domain_manager.get_world_state(channel_id)
+            cur = ws.get("last_judgment_turn")
+            m = dict(cur) if isinstance(cur, dict) else {}
+            m[str(actor or "")] = int(turn)
+            ws["last_judgment_turn"] = m
+            domain_manager.update_world_state(channel_id, ws)
+    except Exception as e:
+        logger.debug(f"[Gate] last_judgment_turn 저장 skip: {e}")
+
+
+def judgment_snapshot(j: dict):
+    """[2026-09-16 3차 §10.3] turn_snapshot `judgment` dict — 판정이 돈 턴만(게이트가 막은 턴은 gate 만).
+
+    terms 는 0 포함 전 항 — 합 = final − roll(불변식). 판정 요청이 없던 턴은 None."""
+    j = j if isinstance(j, dict) else {}
+    if not j.get("active"):
+        return {"gate": j.get("gate_reason", "")} if j.get("gate_requested") else None
+    return {
+        "roll": j.get("roll"), "final": j.get("final_roll"), "dc_base": j.get("dc_base"),
+        "dc_pos_mod": j.get("position_dc_mod"), "result": j.get("result"),
+        "terms": dict(j.get("terms") or {}), "active_passives": list(j.get("active_passives") or []),
+        "crit_reason": j.get("crit_reason", ""), "effort_cost": j.get("effort_cost", 0),
+        "gate": j.get("gate_reason", ""),
+    }
+
+
 def _degrade_stage(bus, stage_name: str, error: Exception) -> None:
     """W5: Record pipeline degradation and apply fallback from config table."""
     try:
@@ -78,6 +154,18 @@ def _degrade_stage(bus, stage_name: str, error: Exception) -> None:
 # =========================================================
 # [2026-08-11 soma 지속] B축 몸 상태 병합 (순수 함수 — I/O 0)
 # =========================================================
+def _write_emotion_tracker(channel_id, prev_emotions, emotion_results, current_turn, context) -> None:
+    """[2026-09-15 §12] world_state `npc_emotion_states` 병합 쓰기 — 본체는 `EmotionEngine.merge_tracked_states`.
+    사망 이름 = anchors `npc_inactive`의 dead(down은 유지). 값이 같으면 쓰지 않는다."""
+    _inactive = (getattr(context, "narrative_anchors", None) or {}).get("npc_inactive", {}) or {}
+    _dead = [n for n, v in _inactive.items() if str(v).lower() == "dead"] if isinstance(_inactive, dict) else []
+    merged = EmotionEngine.merge_tracked_states(prev_emotions or {}, emotion_results or {}, current_turn, _dead)
+    world = domain_manager.get_world_state(channel_id)
+    if world.get("npc_emotion_states") != merged:
+        world["npc_emotion_states"] = merged
+        domain_manager.update_world_state(channel_id, world)
+
+
 def _merge_soma_states(prev: dict, psyche_states: dict, current_turn: int) -> tuple[dict, list]:
     """이번 턴 psyche 관측분을 이전 턴 soma 스냅샷에 **NPC별로 병합**하고,
     상태가 실제로 뒤집힌 NPC만 전이 리스트로 돌려준다.
@@ -145,6 +233,37 @@ def _merge_soma_states(prev: dict, psyche_states: dict, current_turn: int) -> tu
     return _soma_snap, _soma_moves
 
 
+
+def _relation_view(psyche_states, stored: dict = None) -> dict:
+    """[2026-09-15 관계 통합] psyche_states[NPC].relation → {NPC: {attitude, reason, bond, trajectory}} 파생.
+    bond 없으면 옛 value 폴백. trajectory = 저장 엣지 대비 이번 판독의 부호(domain_manager.trajectory_from_delta).
+    저장하지 않는다."""
+    out = {}
+    if not isinstance(psyche_states, dict):
+        return out
+    try:
+        from domain_manager import attitude_from_bond, trajectory_from_delta
+    except Exception:
+        return out
+    for _n, _st in psyche_states.items():
+        _rel = _st.get("relation") if isinstance(_st, dict) else None
+        if not isinstance(_n, str) or not isinstance(_rel, dict):
+            continue
+        _b = _rel.get("bond", _rel.get("value"))
+        try:
+            _b = int(float(_b)) if _b is not None and not isinstance(_b, bool) else None
+        except (TypeError, ValueError):
+            _b = None
+        if _b is None:
+            continue
+        # depth/tension은 싣지 않는다 — 소비부(une_facade 자율 병합)가 저장 엣지 값으로 채운다(구 동작 유지).
+        _prev = (stored or {}).get(_n) if isinstance(stored, dict) else None
+        _traj = (trajectory_from_delta(_b - int(_prev.get("bond", _prev.get("depth", 0)) or 0))
+                 if isinstance(_prev, dict) else "stable")
+        out[_n] = {"attitude": attitude_from_bond(_b), "reason": str(_rel.get("descriptor") or ""),
+                   "bond": _b, "trajectory": _traj}
+    return out
+
 class WaterfallPipeline:
     def __init__(self, client, model_id: str):
         self.theoria = TheoriaAnalyzer(client, model_id)
@@ -172,7 +291,7 @@ class WaterfallPipeline:
         Judgment trigger is gated by judgment_gate (N1).
 
         Data-flow map (SharedBus ownership):
-        - Theoria: bus.dai (all analysis), bus.judgment, bus.doom, bus.vigor/composure.impact
+        - Theoria: bus.dai (all analysis), bus.judgment, bus.doom
         - Mental(pre): stage snapshot only (no delta consumption)
         - Judgment: resolves action, writes consequences (doom.delta, primary axis delta, clock effects, momentum)
         - Storyteller: bus.anomaly.triggered/tag/decision (narrative only, no deltas)
@@ -199,6 +318,29 @@ class WaterfallPipeline:
         if not isinstance(analysis, dict):
             logger.error(f"[Theoria] Invalid response type: {type(analysis)}")
             analysis = {}
+        # [2026-09-24 감사] analyze_input 은 파싱 실패·빈 응답·API 예외를 raise 하지 않고
+        #   `{"error": ...}` 로 반환한다 → 위 except 를 안 타서 W5 강하 기록(_degraded_stages·Slot 16 고지)이
+        #   주된 실패 모드에서 침묵했다. 오류 전용 dict 는 강하로 기록하고 빈 분석으로 바꾼다.
+        if set(analysis.keys()) == {"error"}:
+            _degrade_stage(bus, "theoria_analysis", RuntimeError(str(analysis.get("error"))[:200]))
+            analysis = {}
+
+        # [2026-09-22 voice_seed §2 A] 미등록 신규 인물 게이트 + 굴림 — 서사 콜 **앞**.
+        #   새 콜 0(전부 코드). 굴림은 서사 콜 입력(§2 C NEWCOMERS 블록)의 재료가 된다.
+        #   시드는 best-effort다 — 어디서 터져도 예외를 삼키고 턴은 그대로 간다.
+        _seed_ch = (context.narrative_anchors or {}).get("channel_id", "")
+        _seed_turn = _turn_now(context)
+        _seed_rolls = {}
+        try:
+            voice_seed.tick(_seed_ch, _seed_turn)          # TTL 퍼지(게이트 직전, §2 F)
+            _seed_rolls = voice_seed.gate_and_roll(
+                _seed_ch, analysis.get("RelevantNPCs"), _pc_masks(context)) or {}
+            # 빈 dict면 앵커 키 자체를 안 넣는다 — 서사 콜 프롬프트 순증 0(§2 C).
+            if _seed_rolls and isinstance(context.narrative_anchors, dict):
+                context.narrative_anchors["newcomer_rolls"] = _seed_rolls
+        except Exception as _e_seed:
+            logger.warning("[Seed] gate/roll skipped: %s", _e_seed)
+            _seed_rolls = {}
 
         try:
             narrative = await self.theoria.analyze_narrative(context, extract=analysis)
@@ -213,7 +355,8 @@ class WaterfallPipeline:
         if narrative:
             _merge_keys = ("narrative_chain", "suggested_beats", "narrative_hook",
                            "open_invitations",  # [H9 2026-07-18] 플레이어향 전방 affordance
-                           "offscreen_trace", "scene_register", "trait_connections")
+                           "offscreen_trace", "scene_register", "trait_connections",
+                           "newcomer_seeds")  # [2026-09-22 voice_seed §2 D 1] 여기 빠지면 증발한다
             for _nk in _merge_keys:
                 _nv = narrative.get(_nk)
                 if _nv is not None:
@@ -299,14 +442,38 @@ class WaterfallPipeline:
         bus.dai["input_mode"] = analysis.get("input_mode", "decree")
         bus.dai["memory_triggers"] = analysis.get("memory_triggers", [])
         bus.dai["narrative_hook"] = analysis.get("narrative_hook", "")
+        # [2026-09-24 감사] H9 open_invitations 전개 누락 복구 — 위 _merge_keys 로 analysis 에는 합류했으나
+        #   bus.dai 매핑이 없어 아래 정규화가 [] 로 채웠다 → Slot 16 translate_open_invitations 영구 빈손(07-18~).
+        bus.dai["open_invitations"] = analysis.get("open_invitations") or []
         bus.dai["time_flow"] = analysis.get("TimeFlow", analysis.get("time_flow", {}))
         bus.dai["doom_clocks"] = analysis.get("doom_clocks", {})
         # doom_relief 제거 (2026-05-23) — legacy 위기진폭 잔재
-        bus.dai["mental_impact"] = analysis.get("mental_impact", {})
+        # [2026-09-06 P8b] mental_impact 매핑 삭제 — Theoria 스키마에서 필드가 사라졌다.
+        #   옛 모델이 그 키를 계속 보내도 매핑이 없으니 bus 에 실리지 않는다(무시 = 정규화).
         bus.dai["anomaly_profile"] = analysis.get("anomaly_profile", {})
         bus.dai["pc_autonomy_check"] = analysis.get("PCAutonomyCheck", {})
         bus.dai["temporal_orientation"] = analysis.get("TemporalOrientation", {})
-        bus.dai["npc_attitudes"] = analysis.get("NPCAttitudes", {})
+        # [2026-09-15 관계 통합] NPCAttitudes 질문 삭제 — 이 버스 키는 이제 **이번 턴 relation 층의 파생 뷰**
+        #   (attitude=bond 구간, reason=descriptor). 저장 아님(저장은 orchestration의 write_theoria_relations → 엣지).
+        #   하류(slot iceberg·자율 트리거·world_board·presence) 소비 모양 유지용.
+        # [2026-09-25 관계 한 숫자 — 레티어스 "한 턴 안에 두 숫자가 따로 노는 건 위험"] + [관계 정성]
+        #   Theoria relation 을 **이번 턴 저장될 값**으로 먼저 맞춘다: 이동 말(bond_shift/tension_shift) → 숫자,
+        #   옛 숫자 출력이면 시드·턴당 캡·범위로 클램프. ★자리 = 이 파생 뷰(_relation_view) **앞** — 첫 수리(감정 단계 앞)는
+        #   이 뷰가 날숫자를 읽는 걸 놓쳤다(npc_attitudes → iceberg·자율 트리거·월드보드·presence). 감정·iceberg·저장도 같은 값.
+        #   행동 PC = anchors.acting_user_id 의 mask(쓰기 경로 ctx.user_id 마스크와 같은 사람), 턴 = 같은 turn_index.
+        try:
+            _anch_al = context.narrative_anchors or {}
+            _ch_al = _anch_al.get("channel_id", "")
+            _acting_al = ((_anch_al.get("all_pcs") or {}).get(_anch_al.get("acting_user_id", "")) or {}).get("mask")
+            if _ch_al and _acting_al:
+                _turn_al = int(domain_manager.get_world_state(_ch_al).get("turn_index", 0) or 0)
+                domain_manager.align_theoria_relations(
+                    _ch_al, analysis.get("psyche_states") or {}, _acting_al, _turn_al)
+        except Exception as _e_al:
+            logger.debug(f"[Relation] align skip: {_e_al}")
+        bus.dai["npc_attitudes"] = _relation_view(
+            analysis.get("psyche_states"),
+            (context.narrative_anchors or {}).get("stored_npc_attitudes"))
         bus.dai["npc_knowledge"] = analysis.get("NPCKnowledge", {})
         bus.dai["sensory_anchors"] = analysis.get("SensoryAnchors", [])
         bus.dai["habitus_analysis"] = analysis.get("HabitusAnalysis", {})
@@ -318,26 +485,35 @@ class WaterfallPipeline:
         bus.dai["action_meta"] = analysis.get("action_meta", {})
         bus.dai["asset_evaluation"] = analysis.get("asset_evaluation", {})
         bus.dai["flashback_eval"] = analysis.get("flashback_eval")
-        bus.dai["rest_eval"] = analysis.get("rest_eval")
+        # [2026-09-06 P8b] rest_eval 매핑 삭제 — "부재를 감지하지 않는다". 소비자(다운타임
+        #   코드 효과·휴식 회복·산문 지시)는 같은 카드에서 전부 폐기됐다.
         bus.dai["item_usage"] = analysis.get("item_usage")
+        # [2026-09-13 P14] 도착물 방아쇠 ② — 불리언 하나. 부재/비불리언 = False(무동작).
+        #   소비자는 world_board.pick_arrival_request 하나뿐이고, 종류·내용은 여기서 안 온다.
+        bus.dai["arrival"] = bool(analysis.get("arrival") is True)
         # [2026-06-11 소비자 감사 #2~4] 운송 누락 복구 — Theoria 스키마에 실재(=Flash가 매 턴 생산)
         # 했으나 매핑이 빠져 슬롯 번역기 3종(trait_connections/spatial_inscription/continuity_check)이
         # 영구 빈손이었음 (dai_consumer_audit.md). 번역기들은 빈값 관용이라 연결만으로 안전.
         bus.dai["trait_connections"] = analysis.get("trait_connections", {})
         bus.dai["spatial_read"] = analysis.get("spatial_read", {})
         bus.dai["continuity_check"] = analysis.get("continuity_check")
+        # [2026-09-22 voice_seed §2 D 2] 굴림 + 서사 콜 콜라주 병합. 굴린 이름만 채택하고
+        #   목록 밖 이름은 버린다(모델이 인물을 발명하는 자리를 여기서 막는다).
+        #   굴림이 없으면(게이트 통과 0 · 마스터 OFF) `{}` — 하류(Slot 7 꼬리)는 빈손이면 침묵.
+        bus.dai["newcomer_seeds"] = voice_seed.merge_collage(
+            _seed_rolls, analysis.get("newcomer_seeds")) if _seed_rolls else {}
 
         # [2026-07-19 명시 null 정규화] LLM Optional 필드는 "누락"뿐 아니라 "명시 null"로도
         # 온다 — .get(k, default)는 키가 존재하면 null을 그대로 통과시킴 (E3 프로덕션 크래시
         # 교훈). 형 계약 필드를 여기서 일괄 정규화 — 하류 무가드 순회/슬라이스 방어 초크포인트.
         # (의미상 null 허용 필드는 제외: anomaly는 {}=falsy로 동치, offscreen_trace/scene_register/
-        #  intimacy_analysis/flashback_eval/rest_eval/item_usage/continuity_check는 null 계약 유지)
+        #  intimacy_analysis/flashback_eval/item_usage/continuity_check는 null 계약 유지)
         for _lk in ("aspects", "memory_triggers", "sensory_anchors", "relevant_context",
                     "relevant_npcs", "relevant_chunks", "suggested_beats", "open_invitations"):
             if not isinstance(bus.dai.get(_lk), list):
                 bus.dai[_lk] = []
         for _dk in ("input_analysis", "quality_flags", "position", "effect", "psyche_states",
-                    "narrative_chain", "time_flow", "doom_clocks", "mental_impact",
+                    "narrative_chain", "time_flow", "doom_clocks",
                     "anomaly_profile", "pc_autonomy_check", "temporal_orientation",
                     "npc_attitudes", "npc_knowledge", "habitus_analysis", "action_meta",
                     "asset_evaluation", "trait_connections", "spatial_read"):
@@ -355,14 +531,12 @@ class WaterfallPipeline:
         # 처방: **DAI가 만들어지는 이 초크포인트에서 한 번만** 걷어내고 하류는 믿게 한다.
         # (PC=카메라 원칙. 개별 가드는 이중 안전으로 남겨도 무해하다.)
         try:
-            _pc_masks_dai = {
-                p.get("mask") for p in (context.narrative_anchors or {}).get("all_pcs", {}).values()
-                if isinstance(p, dict) and p.get("mask")
-            }
-            _pc_masks_dai.discard("")
+            _pc_masks_dai = _pc_masks(context)   # [2026-09-22] 시드 게이트와 같은 원천(단일 함수)
             if _pc_masks_dai:
                 _purged = []
-                for _nk in ("psyche_states", "npc_attitudes", "npc_knowledge"):
+                # [2026-09-22 voice_seed §2 D 3] newcomer_seeds 편입 — 게이트 2가 이미 걸렀지만
+                #   서사 콜이 키를 PC 이름으로 바꿔 돌려줄 수 있어 이중으로 본다.
+                for _nk in ("psyche_states", "npc_attitudes", "npc_knowledge", "newcomer_seeds"):
                     _blk = bus.dai.get(_nk)
                     if isinstance(_blk, dict):
                         _hit = [n for n in _blk if n in _pc_masks_dai]
@@ -380,6 +554,14 @@ class WaterfallPipeline:
         except Exception as _e_pcp:
             logger.debug(f"[DAI] PC purge skipped: {_e_pcp}")
 
+        # [2026-09-22 voice_seed §2 F] 버퍼 적재 — **정제 뒤**다(PC 키가 버퍼에 눕지 않게).
+        #   등록 관문(§G, PR 3)이 이걸 집어 lore 절로 앉힌다. 여기서도 예외는 삼킨다.
+        try:
+            if bus.dai.get("newcomer_seeds"):
+                voice_seed.buffer_put(_seed_ch, bus.dai["newcomer_seeds"], _seed_turn)
+        except Exception as _e_seedbuf:
+            logger.warning("[Seed] buffer_put skipped: %s", _e_seedbuf)
+
         # [2026-06-11 소비자 감사 #6] 죽은 저장 제거 — capability hints는 이제 anchors 경유로
         # Theoria *입력*에 배달됨 (une_facade에서 계산, theoria_analyzer 로스터 옆 렌더 — 원설계).
         # 기존 이 자리 코드는 Flash 콜 후 저장 + 독자 0 + npc_roster가 str이라 isinstance(dict)
@@ -388,7 +570,11 @@ class WaterfallPipeline:
         # N1: Judgment Gate — Flash의 needs_judgment를 코드 게이트로 검증
         raw_needs = analysis.get("needs_judgment", False)
         resolve = (analysis.get("action_meta") or {}).get("resolve", "none")
-        last_j_turn = bus.judgment.get("last_judgment_turn", -10)
+        # [2026-09-16 3차] Rule2 쿨다운 복원 — bus 는 매턴 신조라 채널 world_state 가 정본.
+        last_j_turn = bus.judgment.get("last_judgment_turn")
+        if last_j_turn is None:
+            last_j_turn = load_last_judgment_turn((context.narrative_anchors or {}).get("channel_id", ""),
+                                                  (context.narrative_anchors or {}).get("acting_user_id", ""))
         current_turn = (context.narrative_anchors or {}).get(
             "session_memory", {}
         ).get("turn_count", 0) or domain_manager.get_world_state(
@@ -411,8 +597,11 @@ class WaterfallPipeline:
 
         bus.judgment["active"] = final_needs
         bus.judgment["gate_reason"] = gate_reason
+        bus.judgment["gate_requested"] = bool(raw_needs)
         if final_needs:
             bus.judgment["last_judgment_turn"] = current_turn
+            save_last_judgment_turn((context.narrative_anchors or {}).get("channel_id", ""), current_turn,
+                                    (context.narrative_anchors or {}).get("acting_user_id", ""))
             bus.judgment["meta"] = analysis.get("action_meta") or {}  # [07-27] 명시 null 방어
             eval_data = analysis.get("asset_evaluation") or {}  # [07-19] 명시 null 방어
             bus.judgment["eval"] = eval_data
@@ -422,13 +611,8 @@ class WaterfallPipeline:
         # [V10] DAI 스냅샷 롤링 보존 — bus.dai 완성 직후, 코드만(콜 0)·실패 무해.
         # 용도: ①관측 — 필드 비대/모델 JSON 버릇을 실데이터로 ②Sprint 4 동적 NPC 원재료
         # (턴별 심리·사회 이력 질의). 읽기: sqlite_store.read_dai_logs(channel_id, n).
-        try:
-            import sqlite_store
-            _dai_ch = (context.narrative_anchors or {}).get("channel_id", "")
-            if _dai_ch:
-                sqlite_store.append_dai_log(_dai_ch, current_turn, bus.dai)
-        except Exception as _e_dai:
-            logger.debug(f"[V10] dai log skipped: {_e_dai}")
+        # [2026-09-24 감사] 적재 자리를 StoryDirector **뒤**로 옮겼다(아래 5.5 직후) — 여기서 찍으면
+        #   story_direction.next_beat 가 아직 없어 서사 콜 RECENT BEATS(반복 회피 목록)에 디렉터 비트가 영영 안 들어갔다.
         
         # Doom Clocks v3 연동 (clock_updates, clock_new, clock_resolved)
         # relief 제거 (2026-05-23) — legacy 위기진폭 잔재. 둠은 서사 진행도라 평화 장면 자동 감소는 의미 충돌.
@@ -438,29 +622,10 @@ class WaterfallPipeline:
             bus.doom["flash_clock_new"] = doom_clocks_output.get("clock_new")
             bus.doom["flash_clock_resolved"] = doom_clocks_output.get("clock_resolved") or []
 
-        # Composure Impact 연동
-        # [2026-08-18 Phase 2.5] **기력 라우팅 삭제.** 기력은 레지스트리 변수라 서사 임팩트가
-        #   아니라 추출 콜의 custom_var_deltas 로 움직인다 — bus.vigor["impact"] 를 계속 쓰면
-        #   소비자 없는 죽은 키가 되고, 그 키가 살아 있는 것처럼 보이는 게 더 나쁘다.
-        #   theoria 의 vigor_severity 필드는 계약에 남겨 둔다(평형 severity 와 한 블록이고,
-        #   분석문 자체는 서사 재료로 계속 읽힌다).
-        mental_impact = analysis.get("mental_impact") or {}
-        if mental_impact.get("applicable", False):
-            reason = mental_impact.get("reason", "")
-            # Phase 2 F: severity enum 형식 우선 (none/mild/heavy/extreme)
-            if "vigor_severity" in mental_impact or "composure_severity" in mental_impact:
-                c_sev = mental_impact.get("composure_severity", "none")
-                bus.composure["impact"] = {"applicable": True, "severity": c_sev, "reason": reason}
-            # 레거시 호환: 직접 delta 수치 (v3 schema)
-            elif "vigor_delta" in mental_impact or "composure_delta" in mental_impact:
-                c_delta = int(mental_impact.get("composure_delta", 0) or 0)
-                bus.composure["impact"] = {"applicable": True, "delta": c_delta, "reason": reason}
-            else:
-                # Legacy fallback: single delta -> route to primary axis (평형이 주축일 때만)
-                mechanic = context.request.genres.get("mechanic", {})
-                primary = mechanic.get("primary_resource") or "vigor"
-                if primary == "composure":
-                    bus.composure["impact"] = mental_impact
+        # [2026-09-06 P8b] **Composure Impact 번역 삭제.** 여기가 mental_impact 를 bus.composure
+        #   의 impact 칸으로 옮기던 마지막 다리였다 — severity enum → 수치(MENTAL_IMPACT_ENUM_SCALE),
+        #   씬타입별 캡, 방향 전환 감쇠까지 전부 "장면을 분류해 숫자를 정하는 코드"라 함께 사라졌다.
+        #   평형의 이동은 이제 전담 추출 콜의 deltas 한 경로뿐이다(기력과 완전 대칭).
 
         # Anomaly Profile 연동
         anomaly_profile = analysis.get("anomaly_profile") or {}
@@ -531,6 +696,8 @@ class WaterfallPipeline:
         if channel_id:
             current_turn = domain_manager.get_world_state(channel_id).get("turn_index", 0)
 
+        # [2026-09-25] 관계 정렬(align_theoria_relations)은 위 `_relation_view` 앞으로 옮겼다 — 여기서는 이미 한 숫자.
+
         try:
             psyche_states = bus.dai.get("psyche_states", {})
             # [2026-06-12] PC 혼입 차단 (4호) — Theoria가 psyche_states에 PC를 포함시키는데
@@ -574,13 +741,12 @@ class WaterfallPipeline:
                 # 이 라이브 dict가 가장 신선하므로 직접 주입한다.
                 # 값 타입: Dict[str, EmotionState] — slot_manager가 그대로 소비.
                 bus.dai["_emotion_states_for_slot"] = emotion_results
+                if channel_id:
+                    # [2026-09-15 §12 추적기] 통째 교체 → 병합. 이번 턴 결과가 없는 NPC는 탈락이 아니라
+                    #   기준선 감쇠(prev×EMOTION_DECAY), 사망은 즉시 제거. 버스·Slot 16·log는 이번 턴 결과만(무변경).
+                    _write_emotion_tracker(channel_id, prev_emotions, emotion_results, current_turn, context)
                 if channel_id and emotion_results:
                     world = domain_manager.get_world_state(channel_id)
-                    world["npc_emotion_states"] = {
-                        name: state.to_dict()
-                        for name, state in emotion_results.items()
-                    }
-                    domain_manager.update_world_state(channel_id, world)
                     # [2026-08-11 soma 지속] B축 스냅샷 — 병합·도장 본체는 `_merge_soma_states()`
                     #   (모듈 상단, 근거 주석 전량 독스트링). 여기선 읽기/저장/적립만.
                     try:
@@ -607,7 +773,10 @@ class WaterfallPipeline:
                     # 턴별 per-NPC 감정 스냅샷 → 궤적/스파이크 질의(독자: sqlite_store.read_emotion_*).
                     try:
                         import sqlite_store
-                        sqlite_store.append_emotion_log(channel_id, current_turn, bus.emotion)
+                        sqlite_store.append_emotion_log(
+                            channel_id, current_turn, bus.emotion,
+                            log_extra={n: {k: getattr(st, k, "") for k in EmotionState.LOG_ONLY_KEYS}
+                                       for n, st in emotion_results.items()})
                     except Exception as _e_emolog:
                         logger.debug(f"[V10] emotion log skipped: {_e_emolog}")
                 spikes = [
@@ -617,6 +786,11 @@ class WaterfallPipeline:
                 ]
                 if spikes:
                     logger.info(f"[EmotionEngine] Spikes: {', '.join(spikes)}")
+            elif channel_id:
+                # [2026-09-15 §12] 이번 턴 psyche_states가 비어도 부재 감쇠는 돈다(전원 부재 턴).
+                _prev_only = domain_manager.get_world_state(channel_id).get("npc_emotion_states", {})
+                if _prev_only:
+                    _write_emotion_tracker(channel_id, _prev_only, {}, current_turn, context)
         except Exception as e:
             _degrade_stage(bus, "emotion_engine", e)
 
@@ -660,6 +834,15 @@ class WaterfallPipeline:
         except Exception as e:
             _degrade_stage(bus, "story_director", e)
 
+        # [V10 Sprint 0] 턴별 DAI 스냅샷 적재 — [2026-09-24 감사] 위(분석 전개 직후)에서 이사: 디렉터 비트 포함.
+        try:
+            import sqlite_store
+            _dai_ch = (context.narrative_anchors or {}).get("channel_id", "")
+            if _dai_ch:
+                sqlite_store.append_dai_log(_dai_ch, current_turn, bus.dai)
+        except Exception as _e_dai:
+            logger.debug(f"[V10] dai log skipped: {_e_dai}")
+
         # 5.6 Seven Dice persistence → DiceEngine가 자체 처리 (dice_engine.py)
 
         # 6. Doom Update — consumes judgment doom_delta naturally
@@ -697,7 +880,7 @@ class WaterfallPipeline:
                     "sd_focus": (_sd.get("focus") or {}).get("spotlight", ""),
                     "sd_beat": bool(_sd.get("next_beat")),
                     "sd_idle": bool(_sd.get("is_idle_input")),
-                    "judgment_active": bool(bus.judgment.get("active")),
+                    "judgment": judgment_snapshot(bus.judgment),
                     "anomaly_triggered": bool(bus.anomaly.get("triggered")),
                 }
                 sqlite_store.append_turn_snapshot(_ts_ch, current_turn, _snap)
