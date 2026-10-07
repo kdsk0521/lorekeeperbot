@@ -200,6 +200,12 @@ def _content_syllables(text: str, pc_names: List[str]) -> str:
                    if 0 <= ord(ch) - 0xAC00 < 11172 and ch not in _GRAMMAR_SYLLABLES)
 
 
+# [2026-09-30 wave8_2nd A-3] 대사의 출처 = 입력의 따옴표 안 말. 입력 전체와 음절 34%만 겹쳐도 면제하던 탓에
+#   "설득해 두 배로 받아 낸다" 뒤에 GM이 지은 `아담: "두 배다. 지혈까지…"`가 공급분으로 통과했다(리플레이 실측).
+#   행동 직조(dialogue 아닌 유형)의 출처·임계 0.34는 그대로 — 조이는 건 대사 한 갈래뿐(레티어스 09-29 "봉인은 대사만").
+_QUOTED_INPUT_RE = re.compile(r'["\u201C\u300C]([^"\u201D\u300D\n]{1,400})["\u201D\u300D]')
+
+
 def _is_supplied_by_input(matched: str, user_input: str, pc_names: List[str],
                           threshold: float = 0.34) -> bool:
     """매칭 문장의 내용이 이번 턴 입력에서 온 것인가(직조) 판정.
@@ -237,6 +243,26 @@ _PAST_TENSE_SYLLABLES = "".join(
 _PAST_TENSE_ENDING = f"(?:[{_PAST_TENSE_SYLLABLES}]다)"
 
 
+# [2026-09-29 반죽 후속 · 사칭 검출기 수리] 마스크 이름 변형.
+#   구 결함: pc_names = [마스크]인데 마스크가 `아담(Adam)`처럼 괄호 병기면, 산문 속 `아담이 …`·`아담: "…"`에
+#   **아무 패턴도 안 걸렸다**(hard 삭제기 통째 사문). 괄호 앞 이름과 괄호 안 이름을 풀어 같이 본다.
+#   파생 변형은 2자 이상만(한 글자 파생은 무관 문장을 잘라낼 위험). 마스크 원형은 길이와 무관하게 유지.
+def pc_name_variants(names) -> List[str]:
+    out: List[str] = []
+    for n in (names or []):
+        n = (n or "").strip()
+        if not n or n == "Unknown":
+            continue
+        cands = [n]
+        m = re.match(r"^\s*([^()（）]+?)\s*[(（]\s*([^()（）]+?)\s*[)）]\s*$", n)
+        if m:
+            cands += [c for c in (m.group(1).strip(), m.group(2).strip()) if len(c) >= 2]
+        for c in cands:
+            if c not in out:
+                out.append(c)
+    return out
+
+
 def detect_pc_impersonation(response: str, pc_names: List[str],
                             user_input: str = "") -> List[Dict]:
     """
@@ -248,6 +274,7 @@ def detect_pc_impersonation(response: str, pc_names: List[str],
     예외: 따옴표 내 대사, NPC가 PC를 언급하는 경우는 허용.
     """
     violations = []
+    pc_names = pc_name_variants(pc_names)   # [2026-09-29] 괄호 병기 마스크 풀기
 
     # 한국어 과거형 동사 어미 (범용) — 2026-09-12 리터럴 목록 → 기전
     VERB_ENDING = _PAST_TENSE_ENDING
@@ -293,6 +320,11 @@ def detect_pc_impersonation(response: str, pc_names: List[str],
                 # PC 대사 생성
                 (rf'{safe_pc}[이가은는]?\s*[""\u201C\u300C].*?[""\u201D\u300D]', 'dialogue'),
                 (rf'[""\u201C\u300C].*?[""\u201D\u300D].*?(?:라고|하고|이라며)\s*{safe_pc}', 'dialogue'),
+                # [2026-09-29] 하우스 대사 형식 `이름: "대사"` — 08-13에 되살린 형식인데 검출기가 몰랐다.
+                #   줄 전체를 잡는다(문장 경계가 따옴표 안 마침표에서 끊겨 따옴표가 반쯤 남지 않게).
+                (rf'(?m)^[ \t]*{safe_pc}[ \t]*:[ \t]*["\u201C\u300C][^\n]*', 'dialogue'),
+                # [2026-09-29] 따옴표 선행 + 화자 귀속 `"…" 아담이 말했다` (라고/하고 없는 형)
+                (rf'["\u201C][^"\u201D\n]{{1,200}}["\u201D]\s*{safe_pc}[이가은는]?\s*(?:말했|물었|대답했|중얼거렸|덧붙였|외쳤|속삭였)[^.\n]*', 'dialogue'),
 
                 # PC 내면 묘사
                 (rf'{safe_pc}[은는이가]?\s*.{{0,15}}{THOUGHT_VERBS}', 'thought'),
@@ -340,6 +372,8 @@ def detect_pc_impersonation(response: str, pc_names: List[str],
         return bool(REFLEXIVE_VERBS.search(matched_text))
 
     filtered_violations = []
+    # [2026-09-30 wave8_2nd A-3] 따옴표 대사가 있는 입력이면 dialogue 유형의 출처를 그 대사로 좁힌다. 없으면 현행(입력 전체).
+    _quoted_src = " ".join(_QUOTED_INPUT_RE.findall(user_input or ""))
     for v in violations:
         if is_inside_quotes(response, v['start']):
             continue  # 따옴표 내 → 허용
@@ -347,7 +381,8 @@ def detect_pc_impersonation(response: str, pc_names: List[str],
             continue  # 반사적 반응 → 허용 (thought 타입은 예외 없이 차단)
         # 5. 출처 예외 — 유저가 공급한 행동의 직조는 위반이 아니다.
         #    thought는 면제 없음: PC 내면은 공급 여부와 무관하게 렌더 대상이 아니다.
-        if v['type'] != 'thought' and _is_supplied_by_input(v['matched'], user_input, pc_names):
+        _src = _quoted_src if (v['type'] == 'dialogue' and _quoted_src) else user_input
+        if v['type'] != 'thought' and _is_supplied_by_input(v['matched'], _src, pc_names):
             continue
         filtered_violations.append(v)
 
@@ -1398,6 +1433,7 @@ def scrub_echo_sentences(text: str,
             _line_out.append(_seg)
             continue
         _kept_line: List[str] = []
+        _line_removed = 0
         for sent in _SENT_SPLIT_INLINE.split(_seg):
             s = sent.strip()
             if not s:
@@ -1405,14 +1441,30 @@ def scrub_echo_sentences(text: str,
             if _echo_keep(s):
                 _kept_line.append(s)
             else:
-                removed += 1
-        _line_out.append(" ".join(_kept_line))
+                _line_removed += 1
+        _new_line = " ".join(_kept_line)
+        # [2026-10-02 잔여수리1 F1a] 대사 줄 반쪽 삭제 금지 — 문장 경계가 따옴표 안에서도 갈라서
+        #   (`스캐빈저: "그런 건... 아, 값. 값부터 정하자니까."` → 세 조각) 재발 조각 하나만 빠지면 닫는 따옴표가
+        #   같이 사라졌다. 짝 잃은 따옴표는 하류 대사 앵커의 짝을 통째로 밀어 지문을 "대사"로 뽑게 했다
+        #   (b2f T5 주입본 `스캐빈저: "⏎"` 껍데기). 지운 뒤 줄의 따옴표 짝이 깨지면 그 줄은 원문 유지(단조 안전).
+        if _line_removed and _quotes_balanced(_seg) and not _quotes_balanced(_new_line):
+            _new_line = _seg
+            _line_removed = 0
+        removed += _line_removed
+        _line_out.append(_new_line)
     if not removed:
         return text, 0
     out = re.sub(r"\n{3,}", "\n\n", re.sub(r"[ \t]+\n", "\n", "".join(_line_out))).strip()
     if not out or len(re.sub(r"\s", "", out)) < len(re.sub(r"\s", "", text)) * min_keep_ratio:
         return text, 0  # 과다 삭제 → 원본 유지
     return out, removed
+
+
+def _quotes_balanced(s: str) -> bool:
+    """[2026-10-02 잔여수리1] scrub_echo_sentences 전용(호출 시점 해석 — 스모크의 함수 단위 exec 구간 안에 둔다). 한 줄의 따옴표 짝 — 곧은 따옴표는 짝수, 굽은·꺾쇠 따옴표는 여닫이 수가 같아야 한다."""
+    s = s or ""
+    return (s.count('"') % 2 == 0 and s.count("“") == s.count("”")
+            and s.count("「") == s.count("」") and s.count("『") == s.count("』"))
 
 
 # =========================================================
@@ -1432,7 +1484,9 @@ _CONNECTIVE_RE = re.compile(
 )
 _SENT_SPLIT_RE = re.compile(r'(?<=[.!?…])\s+')
 _NEG_ECHO_RE = re.compile(r'(?:지 않|수 없|아니었|않았)')
-_DIALOGUE_RE = re.compile(r'“[^”]*”|"[^"]*"|「[^」]*」|『[^』]*』')
+# [2026-10-02 잔여수리1 F1b] 줄바꿈을 넘지 않는다 — 짝 잃은 따옴표 하나가 이후 짝을 전부 밀어
+#   지문 구간("…⏎⏎그가 웃는다…스캐빈저: ")을 대사로 뽑던 병. 줄 안에서만 짝을 찾으면 다음 줄에서 다시 맞춰진다.
+_DIALOGUE_RE = re.compile(r'“[^”\n]*”|"[^"\n]*"|「[^」\n]*」|『[^』\n]*』')
 
 
 def analyze_slicing_structure(text: str) -> Dict:

@@ -7,7 +7,9 @@ config.py 코드 기본값(RENDERER/ANALYSIS_REASONING_TIER*)이 정하고, "그
 허용값 집합이 다르기 때문이다:
 
   - Generic (OpenAI o-series 계열): reasoning_effort = none | low | medium | high
-  - DeepSeek-V4 (Ollama):          reasoning_effort = none | high | max     (low/medium 없음)
+  - DeepSeek-V4 (Ollama):          reasoning_effort = none | low | high | max
+                                    [2026-10-02] 공식 API 문서는 low/high/max(기본 high). 실측(렌더 리플레이)에서
+                                    low가 high보다 추론 ~3할 짧게 먹었다 → "low 없음"은 옛 정보.
   - GLM-5.2 (Ollama / OpenAI 호환): reasoning_effort = high | max 만 (thinking 기본 ON,
                                     미지정/무효값 → 기본 max 로 폴백). OFF 는 reasoning_effort 로
                                     안 되고 think=false 로 꺼야 한다.
@@ -17,8 +19,8 @@ config.py 코드 기본값(RENDERER/ANALYSIS_REASONING_TIER*)이 정하고, "그
 
 Tier (모델 불문 의미):
     "off"   — 확장 추론 없음
-    "light" — 최소/가벼운 추론 한 패스 (GLM·DeepSeek 은 실질 최소치가 high)
-    "deep"  — 최대 추론 (1회성 heavy 추출 등)
+    "light" — 최소/가벼운 추론 한 패스 (GLM 은 실질 최소치가 high. DeepSeek-V4 는 low 가 실제로 먹는다 — 10-02 실측)
+    "deep"  — 최대 추론 (1회성 heavy 추출 등. [2026-10-02] 렌더 기본 tier — DeepSeek 기본 effort high)
 
 ⚠ Ollama /v1 은 reasoning_effort 전달 이슈 이력이 있다. 네이티브 knob 은 think(bool/level).
    실발동 여부는 경험적으로 확인할 것(응답에 reasoning/think 토큰이 실제로 오는지). 안 넘어가면
@@ -90,14 +92,16 @@ def reasoning_cap_instruction(tier: str, cap_chars: int = 0, bridge: bool = Fals
     # 근거: 영어 추론 traces의 산문 초안이 한국어 출력에 문장단위 전사(원자화·역학-해석체의 seeder).
     # 참조: session_summary_2026-07-08.md §3-1(Reasoning Lingua Franca) + §4(DTG [4]).
     if bridge:
+        # [2026-10-01 1차] 소비자 0 — persona 렌더 꼬리 캡 삭제(분석렌더_1차_구현스펙 §5). 가지는 남겨 둔다(되살릴 때 한 줄).
         # [2026-09-24 감사 §5-2 #29 — 문안 정합] 렌더(bridge=True) 전용. 렌더 추론은 언어 다리가 도는 자리다 —
         #   KOREAN PROSE(08-01 "The bridge runs in reasoning alone")와 DSH 앵커(08-16 "EN beat sketch → JA restructure →
         #   KO prose draft")가 그렇게 시킨다. 아래 분석용 "draft no prose … in any language"(07-08 DTG)가 같은 턴
         #   recency 자리에 붙어 앵커와 정면충돌했다. 렌더엔 다리 문구로, 분석 콜은 종전 그대로.
         return (
-            f"Constraint on internal reasoning only: keep the reasoning/thinking block under "
-            f"~{cap} characters. The language bridge runs here: English beats, the Japanese "
-            f"restructure, the Korean draft. This limit applies ONLY to the reasoning block; "
+            # [2026-09-29 배치1] C9 추론 길이 = 근처(레티어스, 머리 앵커 'Land near'와 같은 말) + JA 삭제.
+            f"Constraint on internal reasoning only: land the reasoning/thinking block near "
+            f"~{cap} characters. "   # [2026-09-29 반죽] 다리 절 삭제 — 머리 단계(persona)·RB_KOREAN이 집
+            f"This target applies ONLY to the reasoning block; "
             f"do NOT shorten, summarize, or truncate the actual output."
         )
     return (

@@ -345,25 +345,25 @@ def _to_tier(value: float, tiers: List[Tuple[float, str]]) -> str:
 # =========================================================
 
 _POLYVAGAL_NOTATION = {
-    "ventral":     "soma | ♪ mp, andante, legato | ▶ two-shot, parallel [diffused, warm, solid] | ◎ real-time",
-    "sympathetic": "soma | ♪ f, allegro, staccato | ▶ close-up, back-to-back, cut [side_light, cool, vivid] | ◎ slow-motion",
-    "dorsal":      "soma | ♪ pp, largo, legato | ▶ long-take, pillow [single_source, grey, washed] | ◎ freeze",
+    "ventral":     "soma | ♪ mp, andante, legato | ▶ two-shot, parallel [diffused, warm, solid] | ◎ midground",
+    "sympathetic": "soma | ♪ f, allegro, staccato | ▶ close-up, back-to-back, cut [side_light, cool, vivid] | ◎ foreground",
+    "dorsal":      "soma | ♪ pp, largo, legato | ▶ long-take, pillow [single_source, grey, washed] | ◎ spotlight",
 }
 
 _CULTURAL_AFFECT_NOTATION = {
-    "han":       "affect | ♪ p, adagio, legato, diminuendo | ▶ long-take, back-to-back [backlight, grey, washed] | ◎ long-exposure",
-    "jeong":     "affect | ♪ mp, andante, legato | ▶ two-shot, pillow [diffused, amber, solid] | ◎ real-time",
-    "hwabyung":  "affect | ♪ ff, presto, sforzando | ▶ close-up, facing [side_light, crimson, vivid] | ◎ slow-motion",
-    "nunchi":    "affect | ♪ p, andante, staccato | ▶ over-the-shoulder, height-gap [side_light, grey] | ◎ slow-motion",
-    "chaemyeon": "affect | ♪ mf, andante, legato | ▶ two-shot, facing [high_key, solid] | ◎ real-time",
-    "simma":     "affect | ♪ mf, allegro, staccato, crescendo | ▶ close-up [side_light, amber, vivid] | ◎ slow-motion",
-    "gi":        "affect | ♪ f, allegro, marcato | ▶ wide, height-gap [single_source, vivid] | ◎ real-time",
+    "han":       "affect | ♪ p, adagio, legato, diminuendo | ▶ long-take, back-to-back [backlight, grey, washed] | ◎ background",
+    "jeong":     "affect | ♪ mp, andante, legato | ▶ two-shot, pillow [diffused, amber, solid] | ◎ midground",
+    "hwabyung":  "affect | ♪ ff, presto, sforzando | ▶ close-up, facing [side_light, crimson, vivid] | ◎ foreground",
+    "nunchi":    "affect | ♪ p, andante, staccato | ▶ over-the-shoulder, height-gap [side_light, grey] | ◎ foreground",
+    "chaemyeon": "affect | ♪ mf, andante, legato | ▶ two-shot, facing [high_key, solid] | ◎ midground",
+    "simma":     "affect | ♪ mf, allegro, staccato, crescendo | ▶ close-up [side_light, amber, vivid] | ◎ foreground",
+    "gi":        "affect | ♪ f, allegro, marcato | ▶ wide, height-gap [single_source, vivid] | ◎ midground",
 }
 
 _DISSOCIATION_NOTATION = {
-    "mild":     "consciousness | ♪ pp, adagio, legato | ▶ eye-level, pillow [diffused, grey, pastel] | ◎ long-exposure",
-    "moderate": "consciousness | ♪ pp, largo, staccato | ▶ high-angle, height-gap [single_source, grey, washed] | ◎ interval",
-    "severe":   "consciousness | ♪ pp, largo, legato | ▶ long-take, back-to-back [low_key, grey, washed] | ◎ freeze",
+    "mild":     "consciousness | ♪ pp, adagio, legato | ▶ eye-level, pillow [diffused, grey, pastel] | ◎ background",
+    "moderate": "consciousness | ♪ pp, largo, staccato | ▶ high-angle, height-gap [single_source, grey, washed] | ◎ glimpses",
+    "severe":   "consciousness | ♪ pp, largo, legato | ▶ long-take, back-to-back [low_key, grey, washed] | ◎ spotlight",
 }
 
 _LAYER_RENAMES = {
@@ -634,6 +634,16 @@ _POS_TIERS = [
     (1.0, "dominant"),
 ]
 
+def position_word(value: float) -> str:
+    """dai.position.value → 위치 낱말(5단). [2026-10-06 어휘 V1 · P-a] 렌더의 위치 낱말은 이 사다리 하나 —
+    Turn_Brief(아래 translate_position_effect)·판정 줄·[Outcome] 시드·Mira 굴림 줄(une_facade.position_label)."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        v = 0.5
+    return _to_tier(v, _POS_TIERS)
+
+
 _POS_FRICTION = {
     "dire": "the barrier is real; world-logic governs, not narrative convenience.",
     "adverse": "this situation carries a cost; the cost stays honest.",
@@ -647,7 +657,7 @@ def translate_position_effect(
     """Position/Effect 수치 → 서수 tier + reason + friction."""
     parts = []
     if position and isinstance(position, dict):
-        tier = _to_tier(position.get("value", 0.5), _POS_TIERS)
+        tier = position_word(position.get("value", 0.5))
         reason = position.get("reason", "")
         line = f"position: {tier} ({reason})" if reason else f"position: {tier}"
         friction = _POS_FRICTION.get(tier, "")
@@ -685,13 +695,6 @@ _ENERGY_TONE = {
     "rupture":       "contradictions coexist → no immunity",
 }
 
-_ENERGY_BEAT = {
-    "idle":       "1 beat (sensory or a line of exchange)",
-    "rising":     "1-2 beats (exchange+texture)",
-    "detonation": "2 beats (action+consequence)",
-    "stagnant":   "1 beat (sensory or a line of exchange)",
-    "aftershock": "1 beat (residue)",
-}
 
 _ENERGY_END = {
     "idle":       "a quiet forward tilt",
@@ -723,16 +726,14 @@ def translate_energy_direction(energy: str, scene_light: Optional[dict] = None) 
     if tone:
         parts.append(tone)
 
-    beat = _ENERGY_BEAT.get(key, "")
-    if beat:
-        parts.append(f"Beat: {beat}")
+    # [2026-09-29 배치2 2c] "Beat: N beats" 줄 삭제 — 꼬리 분량(블록 수)과 다른 단위라 추론이 산술을
+    #   맞추느라 숙고했다(C2). 비트 수는 This turn lands와 재료가 말한다. 표(_ENERGY_BEAT)도 소비 0이라 뺐다.
 
     end = _ENERGY_END.get(key, "")
     if end:
         parts.append(f"End: {end}")
 
-    if key in ("detonation", "rupture"):
-        parts.append("Time lock: this turn = one moment")
+    # [2026-10-02 시간 단일 주인 T3] "Time lock: this turn = one moment" 삭제 — [TIME] 복제 + "one moment"가 분량 계획으로 옮겨 적혔다.
 
     if not parts:
         return ""
@@ -916,27 +917,34 @@ def translate_story_direction(story_dir: Optional[dict], scene_type: str = "norm
 
     parts = []
 
-    # Pacing
+    # Pacing / Tension
+    # [2026-09-29 배치2 R2] 카메라 둘 금지 — pacing과 tension이 각자 ▶를 줘서 "held frame" 대 "slow push-in"
+    #   (push+falling = push-in 대 pull-back 등)이 한 블록에 섰다. tension이 있으면 ▶는 tension 하나, pacing은 ♪만.
+    #   값 앞 이름표("pacing: …")가 이미 있어 래퍼의 "Pacing: " 이중 이름표도 뺐다.
     pacing = story_dir.get("pacing", "")
     pacing_hint = _PACING_KR.get(pacing, "")
-    if pacing_hint:
-        parts.append(f"Pacing: {pacing_hint}")
-
-    # Tension
     tension = story_dir.get("tension_axis", "")
     tension_hint = _TENSION_KR.get(tension, "")
+    if pacing_hint and tension_hint and "▶" in tension_hint:
+        _body = pacing_hint.split(":", 1)[1] if ":" in pacing_hint else pacing_hint
+        _segs = [x.strip() for x in _body.split("·") if x.strip() and "▶" not in x]
+        pacing_hint = ("pacing: " + " · ".join(_segs)) if _segs else ""
+    if pacing_hint:
+        parts.append(pacing_hint)
     if tension_hint:
-        parts.append(f"Tension: {tension_hint}")
+        parts.append(tension_hint)
 
     # Transition
     transition = story_dir.get("transition", {})
     if isinstance(transition, dict):
-        cut = transition.get("cut", "")
-        cut_hint = _CUT_KR.get(cut, "")
-        if cut_hint:
-            parts.append(cut_hint)
+        # [2026-09-29 배치2 R3] cut은 장면 전환이 있을 때만 — suggest_shift 없이 매 턴 "cut: ▶ continuous /
+        #   smash-cut"이 실렸다(자를 장면이 없는 cut). 이변 턴 smash-cut은 같은 블록의 held frame과 부딪쳤다.
         suggest = transition.get("suggest_shift", "")
         if suggest:
+            cut = transition.get("cut", "")
+            cut_hint = _CUT_KR.get(cut, "")
+            if cut_hint:
+                parts.append(cut_hint)
             parts.append(f"scene-shift cue: → {suggest}")
 
     # Focus spotlight
@@ -953,12 +961,11 @@ def translate_story_direction(story_dir: Optional[dict], scene_type: str = "norm
     #   소유자 = Slot 30 — 완전판이고(hint 동반) World_Response라는 자리도 맞다.
     #   여기가 갖고 있던 `_IDLE_SOURCE_KR` 해석은 그쪽으로 흡수됐다(손실 0).
 
-    # Seven Dice (W9) — 은닉 4면만 Slot 16 분위기로. 가시 3면은 Slot 19(WRITING_DIRECTIVES) 경로.
-    dice = story_dir.get("dice")
-    if dice and isinstance(dice, dict) and not dice.get("visible"):
-        effect = dice.get("effect", "")
-        if effect:
-            parts.append(f"[narrative undercurrent] {effect}")
+    # Seven Dice (W9) — 가시 3면은 Slot 19 경로(translate_dice_constraint).
+    # [2026-09-29 배치2 2a-3] 은닉 4면(silence·broken·ghost·yours)은 프롬프트에 싣지 않는다.
+    #   설계상 은닉면 = "수동/부재의 힘", 곧 이번 턴 주사위가 아무것도 시키지 않는 면이다. 그런데 한국어
+    #   명령문("말해야 할 NPC가 침묵…")으로 매 턴(20/22) 실려 말하기 요와 정면 충돌했다(C1). broken은
+    #   장면에서 뜻이 없고 yours는 RB_PC 턴 넘김과 중복. 굴림·저장(3연속 차단·가중치)은 dice_engine에 그대로.
 
     # latent relations (conflict/alliance 그래프) → "생길 수 있는 사건" 잠재 힌트 (anti-railroad, 단정 아님)
     latent = story_dir.get("latent_relations")
@@ -1094,10 +1101,8 @@ _FLAG_DIRECTIVES = {
                           "dialogue aim, an emotional beat); of what already happened, keep "
                           "only the least that still constrains now, and let the turn move "
                           "from that constraint.",
-    "mse_deviation": "NPC behavior jumped; it stays consistent with before, or the change earns a cause.",
     "dissonance_flag": "NPC's words and actions diverge; the gap stays unresolved, surfacing as small mismatch in gesture, expression, breath.",
     "redemption_warning": "NPC softening without cause; the prior pattern holds.",
-    "shallow_read": "analysis stayed at the surface; beneath the shown action lies the unsaid, the room's pressure, the unpaid debt.",
     # [2026-08-28 묘사반복 수리] 구 문안 "the micro-shift, or a fresh sense channel, carries it now."
     #   ★처방이 병을 이사시켰다 — 감각 반복을 막으려고 **캐리어를 미세 변화로 지정**하니 감각 반복 대신
     #   **동작 반복**이 났다(실측: 한 턴 53문장에 `[부위]가 조금 [방향]했다` 9회). 발화 조건
@@ -1115,7 +1120,6 @@ _FLAG_DIRECTIVES = {
                           "none, and the sense that still lands is the one a body in it is having right "
                           "now. A room detail returns when something in it actually changed, not to keep "
                           "the channel fed.",
-    "label_internalization": "NPC starts believing its label; the label stays unspoken, showing through habit, posture, reaction.",
     "sheet_deducible": "vending-machine read: the reaction is a literal translation of sheet tags; the specific one belongs to this character, this moment.",
 }
 
@@ -1126,9 +1130,10 @@ _SYMPTOM_TEMPLATE = "NPC shows {cluster} symptoms; they hold as one consistent s
 # =========================================================
 
 _TEMPORAL_KR = {
-    "past": "the character's gaze turns toward the past",
-    "future": "the character's gaze turns toward what's ahead",
-    "present": "the character stays in this exact moment",
+    # [2026-10-02 T4] 인물 마음의 초점(장면 시간 아님) — "stays in this exact moment"가 장면 시간 잠금처럼 읽혔다.
+    "past": "the character's mind keeps turning to the past",
+    "future": "the character's mind keeps reaching toward what's ahead",
+    "present": "the character's mind stays on what is in front of them",
 }
 
 
@@ -1145,7 +1150,7 @@ def translate_temporal_orientation(temporal_data: Optional[dict]) -> str:
         return ""
     if intensity > 0.7:
         hint += ", strongly"
-    return f"### temporal orientation\n{hint}"
+    return f"### mind's focus\n{hint}"
 
 
 def translate_quality_flags(flags: Optional[dict]) -> str:
@@ -1186,20 +1191,77 @@ _THRESHOLD_HINTS = {
 }
 
 
-def translate_spatial_inscription(spatial_read: Optional[dict]) -> str:
+# [2026-09-29 배치2 2a-2] 공간 재공급 차단(C11) — 분석이 지난 산문의 감각을 다시 뽑아 매 턴 같은 trace를
+#   공급했다(실측: "antiseptic over old blood" 3턴 연속, "copper blood over disinfectant" 3턴 연속).
+#   "Rendered once: re-render only on change"와 부딪친다. 바뀐 것만 고르는 건 분석 모델이 못 하니 코드가 비교한다.
+#   비교 = 내용어 겹침 계수(교집합 / 작은 쪽 크기) ≥ 0.5 → 같은 감각. 영어 trace끼리만 비교한다.
+_TRACE_STOP = frozenset((
+    "the", "and", "over", "from", "with", "into", "under", "through", "its", "one", "off", "but", "not",
+    "both", "than", "toward", "between", "above", "below", "beginning", "faint", "thin", "distant", "small",
+    "short", "slow", "fresh", "old", "sharp", "cold", "warm", "hot", "wet", "steady", "still", "just",
+))
+_TRACE_SEEN_RATIO = 0.5
+
+
+def _trace_tokens(text: str) -> set:
+    out = set()
+    for w in re.findall(r"[a-z]+", str(text or "").lower()):
+        if len(w) < 3 or w in _TRACE_STOP:
+            continue
+        for suf in ("ing", "ed", "es", "s"):
+            if w.endswith(suf) and not w.endswith("ss") and len(w) - len(suf) >= 4:
+                w = w[: -len(suf)]
+                break
+        out.add(w)
+    return out
+
+
+def trace_seen(detail: str, prior: Optional[list]) -> bool:
+    """이 trace가 지난 턴들에 공급된 trace와 같은 감각인가."""
+    a = _trace_tokens(detail)
+    if not a or not prior:
+        return False
+    for p in prior:
+        b = _trace_tokens(p)
+        if b and len(a & b) / min(len(a), len(b)) >= _TRACE_SEEN_RATIO:
+            return True
+    return False
+
+
+def space_traces(spatial_read: Optional[dict]) -> list:
+    """이번 턴 active_traces의 detail 문자열(비교 기록용)."""
+    if not isinstance(spatial_read, dict):
+        return []
+    traces = spatial_read.get("active_traces")
+    if not isinstance(traces, list):
+        return []
+    return [str(t["detail"]) for t in traces[:4] if isinstance(t, dict) and t.get("detail")]
+
+
+def space_changed(spatial_read: Optional[dict]) -> bool:
+    """이번 턴 공간이 바뀌었나(shift/threshold 힌트가 켜지는가). 익숙함 교정과의 중재에 쓴다."""
+    if not isinstance(spatial_read, dict):
+        return False
+    shift = spatial_read.get("shift")
+    threshold = spatial_read.get("threshold")
+    return bool((shift and shift != "null" and _SHIFT_HINTS.get(shift))
+                or (threshold and threshold != "null" and _THRESHOLD_HINTS.get(threshold)))
+
+
+def translate_spatial_inscription(spatial_read: Optional[dict], seen_traces: Optional[list] = None) -> str:
     """spatial_read → 공간 각인/전환 렌더링 힌트.
-    ambient이면 배경 질감. render이면 전부."""
+    ambient이면 배경 질감. render이면 전부.
+    seen_traces: 지난 턴들에 공급된 trace — 같은 감각은 다시 싣지 않는다(배치2 2a-2)."""
     if not spatial_read or not isinstance(spatial_read, dict):
         return ""
     weight = spatial_read.get("weight", "ambient")
 
     lines = []
 
-    traces = spatial_read.get("active_traces")
-    if traces and isinstance(traces, list):
-        for t in traces[:4]:
-            if isinstance(t, dict) and t.get("detail"):
-                lines.append(f"  {t['detail']}")
+    for detail in space_traces(spatial_read):
+        if seen_traces and trace_seen(detail, seen_traces):
+            continue
+        lines.append(f"  {detail}")
 
     flt = spatial_read.get("filter")
     if flt and isinstance(flt, str):
@@ -1224,7 +1286,7 @@ def translate_spatial_inscription(spatial_read: Optional[dict]) -> str:
         return ""
     header = ("### space imprint\n(background texture; it stays in the backdrop.)\n"
               if weight == "ambient" else
-              "### space imprint\n(what the space has been through surfaces as sensation; the analytic terms stay out of the prose.)\n")
+              "### space imprint\n")   # [2026-09-29 반죽] 분석어 금지 머리 → RB_TABLE(브리핑 읽는 법). ambient 무게 표시는 값이라 남김
     return header + "\n".join(lines)
 
 
@@ -1240,6 +1302,11 @@ def translate_continuity_check(check_data) -> str:
         if not isinstance(f, dict):
             continue
         ftype = f.get("type", "")
+        # [2026-10-02 잔여수리1 F3] 분석의 리듬 처방은 싣지 않는다 — correction이 산문 리듬·문장 길이를 직접 처방했다
+        #   ("let the release land as a single physical beat", "keep sentences short …"; gv 인용 69/30).
+        #   리듬·호흡은 렌더 권한(RB_TABLE "the how: rhythm, sentences, … pacing") — W8 역할 경계.
+        if ftype == "rhythm_break":
+            continue
         correction = f.get("correction", "") or f.get("risk", "")
         type_kr = _CONTINUITY_TYPE_KR.get(ftype, ftype)
         if correction:
@@ -1287,18 +1354,25 @@ _TRAJECTORY_NOTATION = {
 }
 
 _ATTITUDE_NOTATION = {
-    "hostile":    "attitude | ♪ f, allegro, staccato | ▶ facing, height-gap [side_light, cool, vivid] | ◎ slow-motion",
-    "unfriendly": "attitude | ♪ mf, andante, staccato | ▶ back-to-back [side_light, cool] | ◎ real-time",
+    "hostile":    "attitude | ♪ f, allegro, staccato | ▶ facing, height-gap [side_light, cool, vivid] | ◎ foreground",
+    "unfriendly": "attitude | ♪ mf, andante, staccato | ▶ back-to-back [side_light, cool] | ◎ midground",
     "neutral":    "",
-    "friendly":   "attitude | ♪ mp, andante, legato | ▶ two-shot, parallel [diffused, amber, solid] | ◎ real-time",
-    "devoted":    "attitude | ♪ mp, adagio, legato | ▶ close-up, pillow [golden_hour, amber, solid] | ◎ real-time",
+    "friendly":   "attitude | ♪ mp, andante, legato | ▶ two-shot, parallel [diffused, amber, solid] | ◎ midground",
+    "devoted":    "attitude | ♪ mp, adagio, legato | ▶ close-up, pillow [golden_hour, amber, solid] | ◎ midground",
 }
 
 
-def translate_npc_attitudes(attitudes: Optional[dict]) -> str:
-    """NPCAttitudes → ♪▶◎ notation + trajectory 방향 합성 + reason prose."""
+def translate_npc_attitudes(attitudes: Optional[dict], shown: str = "") -> str:
+    """NPCAttitudes → ♪▶◎ notation + trajectory 방향 합성 + reason prose.
+
+    [2026-10-06 이중주입 H1] `shown` = 같은 턴 렌더에 이미 실린 글(Psyche_States).
+      09-15 관계 통합 뒤 reason = relation.descriptor 라, 전경 NPC는 Psyche 산문 줄과 같은 문장이
+      두 통로로 갔다. reason이 shown 안에 그대로 있으면 reason 줄을 싣지 않는다(노테이션·trust 힌트는 유지,
+      노테이션 없는 NPC는 줄째 빠진다). 스펙 composition/어휘엇갈림·이중주입_수리스펙_2026-10-06.md §3 H1.
+    """
     if not attitudes or not isinstance(attitudes, dict):
         return ""
+    _shown_norm = " ".join(str(shown or "").split())
     lines = []
     for name, att in attitudes.items():
         if not isinstance(att, dict):
@@ -1306,6 +1380,8 @@ def translate_npc_attitudes(attitudes: Optional[dict]) -> str:
         attitude = att.get("attitude", "neutral")
         trajectory = att.get("trajectory", "stable")
         reason = att.get("reason", "")
+        if reason and _shown_norm and " ".join(str(reason).split()) in _shown_norm:
+            reason = ""
         notation = _ATTITUDE_NOTATION.get(attitude, "") if attitude else ""
         if not notation:
             if reason:
@@ -1332,11 +1408,11 @@ def translate_npc_attitudes(attitudes: Optional[dict]) -> str:
 # =========================================================
 
 _STAGE_NOTATION = {
-    "Initial":     "distance | ♪ p, andante, staccato | ▶ wide, height-gap | ◎ real-time",
-    "Warming":     "distance | ♪ mp, andante, legato, crescendo | ▶ two-shot | ◎ real-time",
-    "Established": "distance | ♪ mf, andante, legato | ▶ two-shot, match-cut | ◎ real-time",
-    "Intimate":    "distance | ♪ mp, adagio, legato | ▶ close-up, pillow | ◎ real-time",
-    "Ruptured":    "distance | ♪ f, allegro, staccato | ▶ back-to-back, cut | ◎ freeze",
+    "Initial":     "distance | ♪ p, andante, staccato | ▶ wide, height-gap | ◎ midground",
+    "Warming":     "distance | ♪ mp, andante, legato, crescendo | ▶ two-shot | ◎ midground",
+    "Established": "distance | ♪ mf, andante, legato | ▶ two-shot, match-cut | ◎ midground",
+    "Intimate":    "distance | ♪ mp, adagio, legato | ▶ close-up, pillow | ◎ midground",
+    "Ruptured":    "distance | ♪ f, allegro, staccato | ▶ back-to-back, cut | ◎ spotlight",
 }
 
 
@@ -1387,9 +1463,9 @@ def translate_drive_pressure(npc_name: str, stage: str, axis: str = "") -> str:
 # =========================================================
 
 _WINDOW_NOTATION = {
-    "within": "♪ mf, andante, legato | ◎ real-time",
-    "above":  "♪ ff, presto, staccato | ◎ slow-motion",
-    "below":  "♪ pp, largo, legato | ◎ freeze",
+    "within": "♪ mf, andante, legato | ◎ midground",
+    "above":  "♪ ff, presto, staccato | ◎ foreground",
+    "below":  "♪ pp, largo, legato | ◎ spotlight",
 }
 
 _DESIRE_HINTS = {
@@ -1638,18 +1714,20 @@ _CHAIN_STATUS_HINTS = {
 # conclusion_proximity: 0-100 → 서사 페이싱 힌트
 _PROXIMITY_HINTS = [
     (20, ""),  # still far off — no hint needed
-    (45, "the narrative is unfolding; a new thread can be let loose."),
+    # [2026-09-29 배치2 2a-6] 45 구간 "a new thread can be let loose" 삭제 — RB_WORLD "A future beat is
+    #   seeded only where … pull it forward"와 부딪치는 조건 없는 허가(C16). 20 미만처럼 빈 값.
+    (45, ""),
     (70, "tension is climbing; the existing threads tighten rather than new ones opening."),
     (90, "the climax is near; every action carries weight."),
     (100, "the narrative is at its peak; every action produces a consequence."),
 ]
 
 _SILENCE_NOTATION = {
-    "companionable": "♪ mp, andante, legato | ◎ steady frame, warm",  # [2026-07-16 tone_gravity L3]
-    "reflective": "♪ pp, adagio, legato | ◎ long-exposure",
-    "hesitant":   "♪ p, andante, staccato | ◎ slow-motion",
-    "heavy":      "♪ pp, largo, legato | ◎ freeze",
-    "tense":      "♪ p, allegro, staccato | ◎ slow-motion",
+    "companionable": "♪ mp, andante, legato | ◎ midground, warm",  # [2026-07-16 tone_gravity L3]
+    "reflective": "♪ pp, adagio, legato | ◎ background",
+    "hesitant":   "♪ p, andante, staccato | ◎ foreground",
+    "heavy":      "♪ pp, largo, legato | ◎ spotlight",
+    "tense":      "♪ p, allegro, staccato | ◎ foreground",
 }
 
 
@@ -1678,7 +1756,8 @@ def translate_narrative_chain(chain_data: Optional[dict]) -> str:
                     parts.append(hint)
                 break
 
-    result = ". ".join(parts) + "." if parts else ""
+    # [2026-09-29 배치2] 부품이 이미 마침표로 끝나면 ".."가 났다 — 끝 마침표를 벗기고 한 번만 붙인다.
+    result = ". ".join(str(p).rstrip(". ") for p in parts) + "." if parts else ""
 
     # silence_type → ♪◎ notation (별도 줄)
     silence = chain_data.get("silence_type")
@@ -1718,32 +1797,26 @@ def translate_open_threads(threads: Optional[list]) -> str:
 # =========================================================
 
 def translate_trait_connections(trait_conn: Optional[dict]) -> str:
-    """OBVIOUS= 라벨 → 한국어, 나머지 구조 유지."""
+    """[2026-09-30 wave8_2nd F] 렌더엔 인물별 행동 손잡이(render_hint)만 싣는다.
+    짝(trait_pair)·뻔한 읽기(primary_link)·굴절 해석(deflection)은 분석 안에 남는다(스키마 무변경 —
+    힌트가 굴절과 한 번에 만들어지므로 분석 쪽을 건드리면 힌트 질이 흔들린다).
+    근거: 리플레이(gt_s1 T2, 3인) — 블록 통째 삭제 = 5중 3 폭주·대사 1줄로 붕괴·분석 받아쓰기,
+    힌트만 = 산문 orig급·추론 최단, 굴절 해석이 산문에 심리 서술로 드러난 건 전 팔 0.
+    레티어스 09-30: 2중뇌는 산문 착지에 무리가 안 가게 한 것 — 렌더엔 쓸 손잡이만.
+    스펙: 파티쳇수정/composition/wave8_2nd_이식_구현스펙_2026-09-30.md §4-b."""
     if not trait_conn or not isinstance(trait_conn, dict):
         return ""
     lines = []
     for npc_name, conn in trait_conn.items():
         if not isinstance(conn, dict):
             continue
-        primary = conn.get("primary_link", "")
-        deflection = conn.get("deflection", "")
-        if not primary or not deflection:
+        hint = str(conn.get("render_hint", "") or "").strip()
+        if not hint:
             continue
-        # trait_pair: 어떤 특질 조합이 연결되는지 표시
-        pair = conn.get("trait_pair", "")
-        prefix = f"[{pair}] " if pair else ""
-        line = f"- {npc_name}: {prefix}instead of the obvious direction ({primary}) → {deflection}"
-        hint = conn.get("render_hint", "")
-        if hint:
-            line += f" | {hint}"
-        lines.append(line)
+        lines.append(f"- {npc_name}: {hint}")
     if not lines:
         return ""
-    return (
-        "### obvious-link edge\n"
-        "the obvious link is a cliché; the prose refracts toward the suggested direction instead.\n"
-        + "\n".join(lines)
-    )
+    return "### small tells\n" + "\n".join(lines)
 
 
 # =========================================================
@@ -1810,8 +1883,7 @@ def translate_npc_knowledge(npc_knowledge: Optional[dict]) -> str:
     if not lines:
         return ""
     return (
-        "### NPC knowledge state\n"
-        "(what an NPC knows or hides shapes its behavior; the concept itself stays out of the prose, surfacing only as action.)\n"
+        "### NPC knowledge state\n"   # [2026-09-29 반죽] 읽기 머리 → RB_TABLE
         + "\n".join(lines)
     )
 
@@ -1999,9 +2071,7 @@ def compose_dialogue_directives(
                 #     Slot 25는 멀다. **압축 재앵커는 정당, 전문 복제가 결함**이다.
                 #     그래서 제거 대상은 **예시목록**(a nod, a stilled hand, a note, breath) 하나뿐.
                 _silence_part = (
-                    f"held back: {_cannot.strip()} the silence is this figure's answer here and "
-                    "still gives the player something to act on, "
-                    "and the exchange passes to whoever can carry it"
+                    f"held back: {_cannot.strip()}"   # [2026-09-29 반죽] 침묵의 답·교대 절 → RB_SPEECH("A silent reply still commits")
                 )
 
         # logos_layer 없으면 skip (분석 안 된 NPC) — 단 침묵 커밋이 있으면 그것만이라도 내보낸다.
@@ -2027,30 +2097,16 @@ def compose_dialogue_directives(
         # === FULL / MODERATE DIRECTIVE (초점 NPC) ===
         directive_parts = []
 
-        # 목적 (Purpose): active_needs → Korean
-        needs = psyche.get("active_needs", [])
-        if isinstance(needs, list) and needs:
-            need_hints = []
-            for n in needs[:2]:
-                hint = _NEEDS_HINTS.get(n.lower().strip(), "")
-                if hint:
-                    need_hints.append(hint)
-                elif n.strip():
-                    need_hints.append(n.strip())  # fallback: raw need
-            if need_hints:
-                directive_parts.append(" ".join(need_hints))
+        # [2026-10-01 3단계 D1] 목적(active_needs → "to secure safety" …, 표 밖이면 enum 원문) 힌트 삭제 — 기계 라벨
+        #   이어붙이기("to secure safety ego_integrity.")가 추론 붙잡이였다(신장 62/22). 동기는 Psyche_States drives가 쥔다.
+        #   스펙 composition/분석렌더_3단계_스레드대사방향_스펙_2026-10-01.md. _NEEDS_HINTS 표는 참조용으로 남는다.
 
         # 전략 (Strategy): logos_layer (core)
         clean_logos = _strip_framework_terms(logos)
         if clean_logos:
             directive_parts.append(clean_logos)
 
-        # 관계 단계 (phase): 대화 전략의 기저 톤
-        phase = relation.get("phase", "")
-        if phase and isinstance(phase, str) and phase != "null":
-            phase_hint = _PHASE_HINTS.get(phase.lower().strip(), "")
-            if phase_hint:
-                directive_parts.append(phase_hint)
+        # [2026-10-01 3단계 D1] 관계 단계 힌트("feeling it out: carefully drawing the lines" …) 삭제 — 같은 라벨 꼴.
 
         # [2026-07-28] 시트 기반 정적 트레잇 — **동적 값이 빈 턴의 폴백**으로만 쓴다.
         # 그동안 static_traits는 capability_hints(Flash 프롬프트)에만 실렸고 렌더 경로엔
@@ -2120,12 +2176,10 @@ def compose_dialogue_directives(
         if isinstance(nk, dict):
             leak = nk.get("leak_risk", "none")
             if leak in ("medium", "high"):
-                secrets = _secret_surfaces(nk)
-                if secrets:
-                    directive_parts.append(f"hiding: {secrets[0]}")
-                false_b = nk.get("false_beliefs", [])
-                if false_b and isinstance(false_b, list) and false_b[0]:
-                    directive_parts.append(f"wrongly believing: {false_b[0]}")
+                # [2026-09-29 배치2 2a-7] 내용 재수록 삭제 — 같은 npc_knowledge를 knowledge state 블록이
+                #   "hides:"·"believes wrongly:"로 이미 싣는다(글자 그대로 중복, C5). 여기선 leak_risk 신호만.
+                if _secret_surfaces(nk):
+                    directive_parts.append("the secret presses near the surface")
 
         # 갈등 (value_conflict)
         vc = relation.get("value_conflict")
@@ -2157,8 +2211,7 @@ def compose_dialogue_directives(
         return ""
 
     return (
-        "### dialogue direction\n"
-        "(the aim and strategy behind an NPC's lines; the terms stay out of the prose, the dialogue itself performing them.)\n"
+        "### dialogue direction\n"   # [2026-09-29 반죽] 읽기 머리 → RB_TABLE
         + "\n".join(lines)
     )
 
@@ -2289,23 +2342,7 @@ def translate_climate(last_climate: Optional[Dict[str, Any]] = None) -> str:
     return ("\n" + "\n".join(parts)) if parts else ""
 
 
-def translate_pc_autonomy(pc_check: Optional[Dict[str, Any]] = None) -> str:
-    """PC 자율 침범 사실 → 이번 턴 경계 문장."""
-    pc = pc_check if isinstance(pc_check, dict) else {}
-    flags = []
-    if pc.get("pc_thought"):
-        flags.append("inner thought")
-    if pc.get("pc_moved_unprompted"):
-        flags.append("movement without the player")
-    if not flags:
-        return ""
-    focus = str(pc.get("gm_focus", "") or "").strip()
-    return ("\n\nLast turn the narration reached into the PC (" + ", ".join(flags) + "). "
-            + (f"Focus: {focus}. " if focus else "")
-            + "This turn narrates the world's reactions; consequence may still land on the PC's body, "
-              "but the PC's speech, thoughts, and willed moves belong to the player.")
-
-
+# [2026-10-07 a묶음 A2] translate_pc_autonomy 삭제 — PCAutonomyCheck 칸 폐기(154판 켜짐 0, 렌더 뒤 detect_pc_impersonation과 중복).
 def translate_item_usage(item_eval: Optional[Dict[str, Any]] = None) -> str:
     """아이템 소비/획득 → 문장."""
     ie = item_eval if isinstance(item_eval, dict) else {}
@@ -2349,13 +2386,13 @@ def translate_open_invitations(items: Optional[list] = None) -> str:
     뒤 절=**양방향** 관측 차단(잡혔든 아니든 이번 턴이 보고할 것이 아니다).
     주범 수리는 slot_manager TURN MOTION 쪽 — 여기는 우회로 봉쇄.
     """
-    inv = [str(v).strip()[:160] for v in (items or [])[:2] if v and str(v).strip()]
+    # [2026-09-29 배치2 2a-8] 항목 끝 마침표를 벗긴다 — ".;"·".."가 났다.
+    inv = [str(v).strip()[:160].rstrip(". ") for v in (items or [])[:2] if v and str(v).strip()]
+    inv = [v for v in inv if v]
     if not inv:
         return ""
-    return ("Hands the scene already extends toward the player: " + "; ".join(inv) + ". "
-            "They stay visibly open, take-or-refuse; the PC's answer is the player's to give. "
-            "The page after an extended hand belongs to the one extending it — their body, their waiting, the room; "
-            "whether it was taken is not this turn's to report; anyone else present may react to the asking, never answer it for the player.")
+    # [2026-09-29 반죽] 손의 규칙(열려 있음·뒤 지면의 주인·PC 답은 플레이어) → RB_PC. 값만.
+    return "Hands the scene already extends toward the player: " + "; ".join(inv) + "."
 
 
 def translate_narrative_hook(hook: str = "") -> str:
@@ -2369,8 +2406,11 @@ def translate_dice_constraint(dice: Optional[Dict[str, Any]] = None) -> str:
     d = dice if isinstance(dice, dict) else {}
     if not d.get("visible") or not d.get("effect"):
         return ""
-    return (f"\n\nOne condition binds this response and no other: {d['effect']} "
-            f"({d.get('name', '?')}). Apply it once, then let it go.")
+    # [2026-09-29 배치2 2a-4] 이름표의 한국어 반쪽("Agon/적")은 싣지 않는다 — 효과문은 config에서 영어.
+    _nm = str(d.get("name", "") or "").split("/")[0].strip()
+    _eff = str(d["effect"]).rstrip(". ")
+    return (f"\n\nOne condition binds this response and no other: {_eff}"
+            + (f" ({_nm})" if _nm else "") + ". Apply it once, then let it go.")
 
 
 def translate_next_beat(next_beat: str = "") -> str:
@@ -2383,10 +2423,13 @@ def translate_next_beat(next_beat: str = "") -> str:
     #   "This turn lands"는 dictate다. 게다가 story_director `_generate_beats`에 `if not beats:`
     #   폴백이 있어 이 문안은 **사실상 상시**. 수리 = 착지의 힘은 두되 Slot 4의 조건
     #   ("only when present characters, objects, or pressure pull it forward")을 흡수한다.
-    return (f"This turn lands: {nb}. "
-            "It arrives in the scene's own grain: an action, an arrival, a shift, never an announcement, "
-            "and it arrives because something present pulls it forward, never because a queue holds it. "
-            "If the player's move makes it impossible, its pressure still surfaces; it does not simply vanish.")
+    # [2026-09-29 반죽] 착지 방식 절 → RB_WORLD "Threads and advance". 값만.
+    # [2026-09-29 배치2 2a-1] 큐 비트의 "Next beat:" 접두가 값 안으로 샜다("This turn lands: Next beat: …..").
+    #   접두를 벗기고 끝 마침표를 하나로 한다.
+    nb = re.sub(r"^\s*next beat\s*:\s*", "", nb, flags=re.I).rstrip(". ").strip()
+    if not nb:
+        return ""
+    return f"This turn lands: {nb}."
 
 
 def translate_arc_foreground(arc: Optional[Dict[str, Any]] = None) -> str:
@@ -2458,12 +2501,8 @@ def wrap_open_threads(thread_list: str = "") -> str:
     뮈토스 이식 B의 스레드 위계 1줄 포함 — primary 1 + ambient 나머지.)"""
     if not thread_list or not thread_list.strip():
         return ""
-    return (
-        "\n\nThese threads are live forces in the world; keep their PRESENCE, not their RESOLUTION. "
-        "The first one listed is primary this turn and its pressure may surface visibly; the rest stay ambient. "
-        "Only the player's action, engaging a thread directly, can advance or close it.\n"
-        + thread_list
-    )
+    # [2026-09-29 반죽] 스레드 위계·전진 계약 → RB_TABLE("first listed is primary")·RB_WORLD. 값만.
+    return "\n\n" + thread_list
 
 
 # =========================================================
@@ -2471,8 +2510,7 @@ def wrap_open_threads(thread_list: str = "") -> str:
 # =========================================================
 # 머리 한 줄 = 스펙 §5 의 영문. 카드는 **자료**다 — 명령문도 수량·형식 지시도 없다
 # (약한 모델은 어차피 무시하고, 강한 모델은 없어도 한다).
-_NEWCOMER_SEED_HEAD = ("New faces this turn — rolled material, not a checklist; "
-                       "the scene calls what it needs.")
+_NEWCOMER_SEED_HEAD = "New faces this turn:"   # [2026-09-29 반죽] 읽기 절 → RB_TABLE(NPC profiles)
 
 
 def translate_newcomer_seeds(seeds: Optional[dict], registered=None) -> str:

@@ -165,7 +165,7 @@ def _detect_conflicts(parsed: List[ParsedNotation]) -> List[str]:
         pairs = [f"{k}={v}" for k, v in music_map.items()]
         conflicts.append(f"♪ conflict: {' vs '.join(pairs)}")
 
-    # 사진 축 충돌 (시간밀도)
+    # 사진 축 충돌 (무대 깊이 — 10-02 전엔 시간밀도 낱말)
     photo_map = {p.layer: p.photo for p in parsed if p.photo and not p.abbreviated}
     photo_vals = list(set(photo_map.values()))
     if len(photo_vals) > 1:

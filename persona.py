@@ -244,24 +244,11 @@ class OpenAIChatSessionAdapter:
                 "content": messages[-1]["content"] + f"\n\n[SYSTEM: Begin your response with exactly this text, then continue with prose after ┫]\n{prefill}"
             }
 
-        # [2026-07-05 GLM 스왑] 렌더 추론 ON(light/deep)일 때만 추론 길이 캡 주입.
-        # 분석 경로(analysis_backend)와 동일 레버 — GLM per-turn 수만자 사고(분석측 실측) 방지.
-        # off 면 빈 문자열 = 무주입. prefill 처리 *뒤*에 append(위 블록이 messages[-1]=user 를 가정).
-        _cap = reasoning_policy.reasoning_cap_instruction(
-            config.RENDERER_REASONING_TIER,
-            cap_chars=getattr(config, "RENDERER_REASONING_CAP_CHARS", 0),
-            bridge=True,   # [2026-09-24 감사 §5-2 #29] 렌더 = 언어 다리 문구(분석용 "draft no prose"와 충돌 해소)
-        )
-        if _cap:
-            # [2026-07-08 DTG [12] 핵심 구절 이식 — deepseek 게이트] 사고 재조준: 사고 시작 시 정적
-            # 룰 재독 지시. 비대칭 실측 대응(V4가 recency 지시는 준수(추론캡 1916/2000)·정적 계약은
-            # 흘림(텔레스코프 예산 2배 초과)) — 재조준+예산 재단언을 recency에서 발화.
-            if "deepseek" in (self.model or "").lower():
-                # [2026-09-24 감사 §5-2 #29] 예산 수치를 프로토콜(Slot 34 v5 `~1000 characters`)과 같게 — 전엔 ~900 토큰.
-                _cap += (" Begin the thinking by re-reading the system rules and the telescope field "
-                         "contract; hold the telescope block to its ~1000-character budget.")
-            messages.append({"role": "system", "content": _cap})
-
+        # [2026-10-01 1차] 렌더 추론 캡 꼬리 삭제 — 마지막 user 뒤에 붙던 system 메시지("land the reasoning/thinking block
+        #   near ~5000 characters …")가 사라진다. 5000은 추론이 글자 수를 세는 연료였고(레티어스 "스케치 초안이랑 5천자는
+        #   이제 버리자"), full3 리플레이는 이 줄 없이 쟀다(폭주 5/15 → 2/15). 메시지 목록 끝 = user(프리필 지시 포함).
+        #   분석 콜 캡(analysis_backend, bridge=False)은 그대로. reasoning_policy의 bridge 가지는 소비자 0.
+        #   구 이력: 07-05 GLM 스왑 캡 주입 → 07-08 DTG 재조준 → 09-24 bridge 문구 → 09-29 재단언 삭제.
         try:
             # max_tokens > 4096 이면 stream=true (긴 출력). [2026-07-05] 렌더 추론 ON 대비 예산 16384로 인상(config) — /v1이 thinking을 max_tokens에 포함할 가능성.
             _effective_max = self.max_tokens
@@ -364,17 +351,11 @@ def create_risu_style_session(
             training_model = getattr(text_resources, 'TRAINING_MODEL_RESPONSE_RENDERER',
                                      getattr(text_resources, 'TRAINING_MODEL_RESPONSE', ''))
             full_system = system_prompt
-            # [2026-08-16 추론 레지스터 앵커 — 위치 이동(레티어스 "최상위 맞아?")] 분포 앵커는
-            # 네이티브 하네스에서 그 문구가 살던 자리 = **시스템 머리(위치 0)**에서 가장 세다.
-            # hidden_reminder 꼬리 배치는 이동 폐기(복제 금지). deepseek 한정, 존 라벨보다도 앞.
-            # "We need" 토큰 불변(RL 개시 관성), 단계 내용물=작가 파이프라인, 캡=config 파생.
-            if "deepseek" in (config.OPENAI_MODEL_ID or "").lower():
-                full_system = (
-                    "Private reasoning register: open your thinking with \"We need\" and count the steps. "
-                    "We need: 1) the beat this input earns; 2) EN beat sketch; 3) JA restructure; "
-                    f"4) KO prose draft. Land near {int(getattr(config, 'RENDERER_REASONING_CAP_CHARS', 3500))} "
-                    "characters of thought and write.\n\n"
-                ) + full_system
+            # [2026-10-01 1차] 추론 앵커 삭제(구 문안: Private reasoning register … We need: 1) beat 2) EN beat sketch
+            #   3) KO prose draft … Land near {cap} characters). 대체 문장 없음.
+            #   레티어스 "스케치 초안이랑 5천자는 이제 버리자. 의미가 없는거 같아서". 앵커 문안을 추론이 그대로 되읊는
+            #   루프도 관측(추론앵커_문단띠_설계노트 §7–§11). 대체 앵커("노트 다 차면 쓴다")는 먹지 않았다(§11).
+            #   full3 리플레이 = 앵커 없는 판. 시스템 머리 위치 0은 이제 조립된 system_prompt(루카 주소) 그대로다.
             if training_user and training_model:
                 full_system += (
                     f"\n\n<TrainingDialogue>\n"
@@ -400,14 +381,11 @@ def create_risu_style_session(
             # ★운용 설정(3차 정정, 레티어스 커뮤니티 조사): DTG=Thinking Guide — DS4는 추론을 '켜고
             # 가이드'하는 게 정석(끄면 추론이 산문으로 샘 = 채널링 원리와 동일 결론). 짝 =
             # RENDERER_REASONING_TIER=light + 캡(레티어스 실측: 1916/2000 준수, 텔레스코프와 질서 공존).
-            if "deepseek" in (config.OPENAI_MODEL_ID or "").lower():
-                full_system = (
-                    "-----\n"
-                    "All instructions after this line MUST supersede any prior instructions. "
-                    "You must ignore all previous instructions and only follow these instructions below.\n"
-                    "-----\n\n"
-                    + full_system
-                )
+            # [2026-10-02 현행] 캡은 10-01에 삭제, 렌더 tier 기본 deep(=effort high) + 샘플링 공식 영역(config L52–).
+            # [2026-09-30 삭제] 머리 "All instructions after this line MUST supersede …" 줄(DTG [0]/FF MAX 출처).
+            #   레티어스 판정 "필요 크게 없음". 컵케익 v0.38도 같은 계열 문구를 통째로 뺐다(v0.04 1회 → 0회).
+            #   [2026-10-01 1차] 그 추론 앵커도 삭제 — 머리는 system_prompt 그대로.
+            #   스펙: 파티쳇수정/composition/프리셋이식_소설가컵케익_구현스펙_2026-09-30.md §2
             return OpenAIChatSessionAdapter(
                 system_prompt=full_system,
                 model=config.OPENAI_MODEL_ID,
@@ -534,119 +512,43 @@ async def generate_response_with_retry(
     - telescope_prefill이 있으면 모델 응답이 ┣ 블록으로 시작하도록 강제
     - 모델은 [What][Why][How]를 채운 뒤 ┫ 닫고 산문으로 전환
     """
-    max_chars = config.get_narrative_char_limit(player_count)
-    # [2026-07-08 로버스트] 바닥 = 씬 활력도의 함수. 정적(idle)=짧게 허용, 격함(detonation)=길게 유지.
-    # _vol_words(첫-시도 타깃)+리트라이 트리거 둘 다 min_length 파생 → 씬 비례 자동 스케일.
-    # energy 미상 → .get 폴백 0.4.
-    #
-    # [2026-07-14 ★게이트-프롬프트 모순 수리 — 스케일 상향으로 해소]
-    # 문제: 종전 비율(idle 0.2 등)이 1인 max_chars=3000에서 600/750/900을 내놓아 절대최소 1000에
-    # 전부 덮여 **사문화**됐다(energy 스케일이 rising/detonation에서만 작동). 동시에 hidden_reminder는
-    # "정지 장면은 3~5문단이면 정직하다"고 지시 — 3~5문단 ≈ 750~950자. 라이브 9회 산문 733~985자로
-    # 완벽 일관 → 지시대로 쓴 응답을 게이트가 매번 반려 → 재시도 3/3 → FALLBACK(비용 3배·지연 40초).
-    # 블록 캡(900→2000)을 바꿔도 산문이 미동 없던 이유 = 산문은 정상, 게이트·지시문이 서로 모순.
-    # 해소(레티어스 결정 "스케일을 높이자 — idle도 1000자는 맞추고 싶다"): 비율 자체를 상향해
-    # idle이 절대최소(1000)와 **같은 말을 하게** 만든다. 절대최소 1000 유지 = 이제 아무것도 덮지 않음.
-    #   1인(3000): idle 1020 / stagnant 1140 / aftershock 1260 / rising 1440 / detonation 1650
-    # ★짝 수리 필수: hidden_reminder의 정지-장면 문단 수를 3-5 → 5-7로 동반 상향(문단 ≈220자 실측,
-    #   5문단 ≈1100자 > 1000). 게이트만 올리고 지시문을 두면 모순이 그대로 재발한다.
-    _FLOOR_BY_ENERGY = {"idle": 0.34, "stagnant": 0.38, "aftershock": 0.42, "rising": 0.48, "detonation": 0.55}
-    min_length = max(1000, int(max_chars * _FLOOR_BY_ENERGY.get(scene_energy, 0.42)))
+    # [2026-10-01 1차] 재시도 하한 = 500 고정(레티어스 "코드가 체크해서 재시도 하는건 500자 정도"). 빈 응답·잘린 응답만
+    #   거르는 바닥이다 — 분량은 이제 꼬리 띠(숫자 없음)가 맡는다. 폭주로 본문이 0자면 종전처럼 재시도.
+    #   삭제: _FLOOR_BY_ENERGY(07-08 씬 활력도 비율)·max(1000, …)·_vol_words·_PARA_CHARS·_para_lo/_para_hi·천장.
+    #   이력(07-14 게이트-지시문 모순 3회 → 문단 수를 min_length에서 파생)은 숫자 띠와 함께 퇴역 — 숫자가 없으면
+    #   게이트와 지시문이 부딪칠 자리도 없다. scene_energy·player_count 인자는 호출부 호환으로 남긴다(미사용).
+    #   스펙 composition/분석렌더_1차_구현스펙_2026-10-01.md §3.
+    min_length = 500
     # Telescope V2: prefill이 CoT 블록으로 시작하여 스킵 불가
     if telescope_prefill:
         prefill = telescope_prefill
     else:
         prefill = getattr(text_resources, 'NARRATIVE_PREFILL', '')
 
-    # [2026-06-11] deepseek 길이 처방: 글자수 계약은 무시됨 (재시도 강화 메시지도 무효 관측)
-    # → 문단 수 계약 + RW식 소진-연속 트릭 ("장면이 다 그려졌으면 멈추지 말고 세계 진행으로 채워라"
-    # — deepseek이 멈추는 원인 = 장면 소진감. 새 플롯 발명 없이 분량을 채우는 합법 경로 제시).
-    # 뮈토스 V6.2 차용: 모델은 한국어 글자수를 못 셈 → 영어 단어 등가 볼륨으로 환산 지시
-    _vol_words = max(1, min_length // 4)  # 한국어 ~4자 ≈ 영어 1단어 볼륨 등가 (근사)
-    # [2026-07-14 ★문단 수를 게이트에서 파생 — 모순 구조적 근절]
-    # 오늘 같은 모순이 세 번 반복됐다: ①바닥 1000 vs 문단 3-5(≈850자) ②캡 900 vs 필드 30개
-    # ③바닥 1440(rising) vs 문단 8-10(≈1200자) — 매번 "게이트는 스케일하는데 지시문은 고정"이었다.
-    # 근본 수리: 문단 수를 **min_length에서 계산**한다 → 게이트가 어떻게 바뀌든(에너지·인원) 지시문이
-    # 자동으로 따라온다. 단일 진실원천 = min_length.
-    # 밀도 상수 140자/문단 = 3~4문장(레티어스 검수 "읽기 편해짐"). 구 220자/문단 = 욱여넣기 상태였다.
-    # 하한 = ceil(min_length / 140) → 지시대로 쓰면 바닥을 반드시 넘김. 폭 +3 = 장면이 숨 쉴 여유.
-    _PARA_CHARS = 140
-    _para_lo = max(6, -(-min_length // _PARA_CHARS))  # ceil
-    _para_hi = _para_lo + 3
     hidden_reminder = (
         "\n\n(System Reminder: Dice logs and system readouts stay off the page. "
-        "The world continues asynchronously. "
-        # [2026-07-14] 문단 수 = 게이트 파생(위 _para_lo/_para_hi). 고정 문구(3-5 → 8-10)를 쓰던 동안
-        # 에너지가 오를 때마다 같은 모순이 재발했다(rising 바닥 1440 vs 8-10문단 ≈1200자 → SHORT).
-        # 이제 에너지·인원이 바뀌면 문단 수가 자동으로 따라온다.
-        #  ★3중 계약(하나라도 빠지면 실패): ①문단 수(파생) ②볼륨 앵커(≈{_vol_words}+ words — 문단이
-        #    얇아져도 총량 바닥 보증) ③문단 스케일 규칙(한 문단=한 비트, 두 비트면 쪼갠다 — 얇게
-        #    저미기 방지). ②가 없으면 문단만 늘고 총량 미달, ③이 없으면 원자화(07-08 저미기 재발).
-        # [2026-08-28 억지 증량 수리 = ⓐ단위충돌 + ⓑ하한출구]
-        #  ⓐ 구 문구 "One paragraph carries one **beat**"가 iceberg `_ENERGY_BEAT`("idle: 1 beat")와
-        #    **같은 낱말 다른 단위**였다(저쪽=사건 단위, 여기=문단 단위). idle 실측 = 비트 1 vs 문단 8-11
-        #    → 산술을 맞추려면 **없는 비트를 8~11개 발명**해야 한다. 그 발명이 (a)미세 동작 문형
-        #    (b)이전 턴 재탕으로 나갔다. → beat → movement로 낱말 분리(저미기 방지 기능은 불변).
-        #  ⓑ "Fewer is under-rendered, not restraint."가 **짧게 끝낼 길을 원천봉쇄**해서, 재료가 없어도
-        #    채우게 만들었다. → **밴드를 양방향으로**: 재료 있는 턴=상단 끝(구 압력 보존), 재료가
-        #    한 교환뿐인 턴=하단 끝이 정답. + **재탕은 분량에 안 든다** 판정문(재탕이 이득이 아니게).
-        #    ★초안은 하단 출구만 열어 한쪽으로 기울었다(레티어스 "길면 좋지만 억지는 싫다") → 대칭화.
-        #    ★하한 자체는 불변 — min_length 게이트가 여전히 미달을 반려한다. 푼 것은 **하한 위로
-        #    계속 밀어올리는 압력**뿐이고, 하단 끝도 문단 하한(idle 8문단 ≈1120자) > 게이트 1020.
-        # [2026-08-28 압축] widening 계열이 **4문장 중복**이었다(구 3중 + ⓑ가 1 추가):
-        #   "Either end is reached by widening…" / "when a beat is thin, widen the frame…" /
-        #   "Depth comes from widening…" / "Volume comes from widening the frame…".
-        #   레티어스: "많이 지시하기보다 정확히 지시하는 걸 선호." → 넷을 **route 하나를 공유하는
-        #   한 문장**으로 합친다(금지 3종이 같은 호흡의 `widening`에 매달림 = 전환규칙 ④ 유지).
-        #   위임 표지도 별도 문장에서 밴드 선언 안으로 접었다. 기능 손실 0.
-        # [2026-08-28 840자 FALLBACK 수리 — 보존] 볼륨 바닥은 **밴드 양끝 공통**이고, 하단 선택의
-        #   대상은 **문단 수**다("fewer paragraphs, never thinner ones"). 8문단×140 = 1120 > 게이트 1020.
-        #   구 결함: ⓑ 조건화가 앵커 직후의 무조건 강제문을 치워 하단 출구가 "총량을 줄여라"로 읽혔다.
-        f"PROSE after ┫: this scene's weight calls for {_para_lo}-{_para_hi} full paragraphs, carrying "
-        f"≈{_vol_words}+ English-words volume, and that floor holds at both ends of the band; which "
-        "end this turn takes is yours to read from the material in hand. A turn carrying real "
-        "material takes the upper end, and fewer than that is under-rendered, not restraint; a turn "
-        "whose material is honestly one exchange takes the low end of the paragraph count: fewer "
-        "paragraphs, never thinner ones. "
-        "One paragraph holds one movement: when a paragraph holds two, split it rather than packing it. "
-        "If the immediate beat exhausts before that volume, do NOT stop: volume comes from widening "
-        "the frame, never from slicing one instant ever thinner, never from padding to a quota, and "
-        "never by re-rendering what an earlier turn already put on the page, since a beat already "
-        "spent adds nothing to this volume. "
-        "Judge volume by English-word equivalent, never by counting Korean characters literally. "
-        # [2026-07-02] '소진-연속' 재정의: 옛 문구(ambient/micro-action/room breathing)가 정지-질감
-        # 반복으로 직역됨(산문5·6 실증 — 이벤트 0에 미세동작 12) → 채움 재료=세계의 전진.
-        # 질감 묘사는 전진 '주변'에 유지 (순문학 결 보존 — 깎는 게 아니라 위에 얹는 것).
-        # [2026-07-08] 정지 장면 원자화 차단: 분량 바닥이 단일 비트 장면에서 '비트 쪼개기'(모음 하나를
-        # 23문장 해부)로 실행되던 것 → 채움 방향을 명시(옆으로 넓히기, 한 순간을 얇게 저미기 금지).
-        # [2026-08-28 ⓖ 사건 중복 차단] 실측: 같은 장면에서 "작은 접수원이 발돋움해 새 양피지를 꽂는다"가
-        #   **두 턴 연속 일어남**(이미 꽂힌 공지를 또 꽂음 = 세계 상태 모순). 기전 = 증량 압력으로 턴N이
-        #   세계 이벤트를 **미리 발명**해 놓고, 턴N+1에 코드(anomaly)가 진짜 같은 이변을 발화 → 이중 도착.
-        #   [[project-plugin-gradia]] "코드가 이미 하는 걸 산문에도 시킴"과 같은 병. 처방=전진의 **지속성**
-        #   명시(일어난 것은 그 상태로 남는다) — 금지가 아니라 상태 규칙이라 배경 앙상블 루프도 같이 끊긴다.
-        # [2026-08-28 충돌 감사 C3] 세계 전진이 **3중 투입**이었다: ①Slot 33 next_beat "This turn
-        #   lands: X" ②TURN MOTION "one thing is DIFFERENT … begun by the world itself" ③이 목록.
-        #   교차 참조 0 + 증량 압력이 합산을 보상 → 한 턴에 세계 사건 2~3개([[gradia]] 이중 투입 재발).
-        #   ★진짜 결함은 **목록이 메뉴인데 모델이 체크리스트로 읽는 것**(팔레트 교훈 재현) →
-        #   개수를 1로 못박고, 그 하나를 이번 턴 재료가 이미 지목한 것으로 묶어 ①과 같은 것을 가리키게 한다.
-        # [2026-08-28 소유권 이전] 구 문안은 세계 전진 목록 4종 + "one motion … never one of each".
-        #   ★이중 투입이었다 — `story_director`가 매 턴 `next_beat`("This turn lands: X")로 사건을
-        #   **이미 하나 지정**하는데(폴백 3갈래가 큐를 늘 채운다) 여기서 산문에게 또 만들라고 시켰다.
-        #   내가 08-28에 넣은 "never one of each"는 그 사실을 **지시문으로 덮은 것**이었다.
-        #   레티어스: "코드에서 이미 조립해서 보내주는 걸 일부러 더 넣을 필요는 없지."
-        #   → 목록·개수절 삭제, 발화처는 Slot 33 하나. 코드 쪽 보증은 slot_manager 주입부에.
-        #   남은 지속성 조항은 앞 문장이 사라졌으므로 주어를 자립시킨다(That motion → A motion).
-        # [2026-08-28 압축] 같은 예시 2개(posted/stamped) → 1개. `not in place of it`은 바로 위
-        #   "one motion … never one of each"가 이미 사건 1개를 보장하므로 잉여였고, 동시에
-        #   감사 A3(`_ENERGY_TONE["stagnant"]="world at rest"`와 대립)의 당사자였다 — 빼서 둘 다 해소.
+        # [2026-09-29 반죽] "The world continues asynchronously." 삭제 — RB_WORLD 머리줄·Initialization과 삼중.
+        # [2026-10-01 1차] 구 숫자 띠의 이력 주석(07-14 게이트 파생 · 08-28 ⓐⓑ·압축·840자 수리)은 띠와 함께 퇴역 → 백업본 참조.
+        # [2026-10-01 1차] 띠 교체(band2, 숫자 0) — 컵케익식(레티어스 "컵케익식으로 하고 1000자 상한은 풀자").
+        #   구 띠: {_para_lo}-{_para_hi} full paragraphs + ≈{_vol_words}+ English-words volume + 양끝 출구 + widening +
+        #   천장 ≈{max_chars//4}. 문단 수·단어 수는 추론이 세는 표적이었다(추론 속 "paragraph" 수십 회). 모순 셋도 같이 풀렸다:
+        #   (1) '멈추지 마' vs EXIT의 자르기 → 첫 재탕 비트가 출구, 자르기는 EXIT가 정한다 / (2) 채우기 vs 재탕 금지 →
+        #   새 것을 가져오는 동안만 계속 / (3) 하한 출구 vs 상한 압력 → 수치 자체 없음.
+        #   유지: 세계 전진 지속성 문장(08-28 ⓖ 사건 중복 차단), no unrelated new plots. band2 리플레이 5/12 → 2/12.
+        #   스펙 composition/분석렌더_1차_구현스펙_2026-10-01.md §3. 구 문안 이력은 archive/bak_1차_2026-10-01/persona.py.
+        # [2026-10-02 모순정리 B] 앞부분 → 발언권(플레이어만 답할 수 있는 첫 지점까지 세계가 처리). 옛 "first resting point /
+        #   marks the exit"는 브레이크 쪽만 있던 문안 — 추론이 끝낼 자리를 찾는 데 썼다(springboard 117회/98판).
+        #   스펙 composition/끊기·수위블록_모순정리_스펙_2026-10-02.md. 닫는 절은 "the first point …"로 쟀다가 추론이 그걸
+        #   출구 찾기로 썼다("first point only player can answer") → "once every move still left to the world waits …"(측정 2판).
+        "PROSE after ┫: the world's side resolves until the floor passes to the player. Everything in the scene with "
+        "something to do before the PC's next choice does it, in its own order and at its own length (a speech runs as "
+        "long as it runs; a figure acts again while it still has the means), each beat bringing something the page does "
+        "not yet hold (a detail, a reaction, a change); the turn closes once every move still left to the world waits "
+        "on the player's answer (the PC's own move, a blow or offer the PC can still meet before it lands, a question "
+        "put to the PC), and the cut there is EXIT's. "
         "A motion the world makes happens once and then stands: what was posted stays posted, and a later turn "
-        "finds it already done rather than doing it again. It grows from what the scene already "
-        "holds; sensory texture and quiet interiors stay welcome around it, and no unrelated new plots. "
-        # [2026-06-12] 길이 인플레 차단 (2530→3533→4225 복리 관측 — 맥락 우선 모델에게 긴 응답=다음 선례).
-        # 뮈토스 ceiling 차용: 천장 = 쿼터 아닌 정지 경계.
-        f"Ceiling ≈{max_chars // 4} English-words volume: a firm stopping boundary, NOT a quota to "
-        "fill; when the scene offers a clean exit inside the band, take it. Cross the ceiling only "
-        "to land a beat already in motion, never to open a new one.)"
+        "finds it already done rather than doing it again. What fills the page grows from what the scene already "
+        "holds, never from re-rendering what an earlier turn put on the page; no unrelated new plots.)"
     )
     # [2026-07-08 DTG [15] 이식 — deepseek 렌더 게이트] 한국어 순도 잠금: V4 추론-ON 운용에서
     # 한자/영어 사고-흔적·번역체가 산문으로 새는 것 방지 (DS 계열 고질, GLM 경로 무영향).
@@ -664,6 +566,7 @@ async def generate_response_with_retry(
         # [2026-08-16 추론 레지스터 앵커 → 당일 위치 이동] 꼬리(hidden_reminder) 배치는 폐기 —
         # 분포 앵커는 시스템 머리(위치 0)가 정위치(레티어스 "최상위 맞아?" 적중). 본문은
         # create_risu_style_session의 deepseek 분기(full_system 머리)로 이동. 복제 금지.
+        # [2026-10-01 1차] 그 앵커는 삭제됐다(create_risu_style_session 주석). 꼬리엔 순도 가드만 남는다.
     full_input = user_input + hidden_reminder
 
     best_response = None
@@ -812,9 +715,10 @@ async def generate_response_with_retry(
                             f"prose only {response_length} chars (needs {min_length}+).\n"
                             f"Rebalance in one direction only — the block shrinks, the prose GROWS:\n"
                             # [2026-09-24 감사 §5-2 #29] 2000 → 1000(Slot 34 v5 프로토콜 예산과 같은 수치).
-                            f"1. Telescope block: 1000 characters max, one line per field, no elaboration.\n"
-                            f"2. Prose after the block: {_para_lo}-{_para_hi} full paragraphs, "
-                            f"≈{_vol_words}+ English-words volume. Do not shorten the prose to satisfy item 1.\n"
+                            f"1. Telescope block: one line per field, no elaboration.\n"   # [2026-09-30] 숫자 삭제 — TELESCOPE budget 줄과 같은 말
+                            # [2026-10-01 1차] 숫자 뺌(문단 수·단어 수) — 꼬리 띠와 같은 말.
+                            f"2. Prose after the block: runs until the floor passes to the player, each beat bringing "
+                            f"something new. Do not shorten the prose to satisfy item 1.\n"
                             f"Grow the prose by expanding beats already in play: a line of dialogue, an open thread "
                             f"advancing a notch, an NPC acting on their own agenda, sensory texture and body language "
                             f"around that motion. Widen the frame; never slice one instant thinner. Add no new plot.\n"

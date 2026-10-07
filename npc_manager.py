@@ -406,15 +406,8 @@ def _seed_word_hit(text_lower: str, word: str) -> bool:
     return w in text_lower
 
 
-def relation_seed_for(desc: str, pc_names: Any) -> Optional[Tuple[int, int]]:
-    """[2026-09-24 감사 §5-2 #12 — 레티어스 판정] NPC 시트에서 **그 PC 를 가리키는 문장**만 보고 관계 시드 → (bond, tension).
-
-    PC 를 가리킨다 = `{{user}}` 또는 PC 가면 이름(괄호 앞/안, 공백 토큰 2자↑)이 들어 있는 문장. 제3자 서술
-    ("전쟁에서 가족을 잃었다")은 안 본다. 한 문장에 적대·우호 키워드가 같이 있으면 **적대 우선**
-    ("{{user}}의 가족을 죽인 원수") — 그 밖엔 |bond| 가 큰 쪽. 없으면 None(= 시드 없이 0 에서 시작)."""
-    text = str(desc or "")
-    if not text.strip():
-        return None
+def _pc_name_forms(pc_names: Any) -> set:
+    """PC 를 가리키는 표기 집합 — `{{user}}` + 가면 이름(괄호 앞/안, 공백 토큰 2자↑)."""
     names = {"{{user}}"}
     for n in (pc_names if isinstance(pc_names, (list, tuple, set)) else [pc_names]):
         n = str(n or "").strip()
@@ -426,11 +419,165 @@ def relation_seed_for(desc: str, pc_names: Any) -> Optional[Tuple[int, int]]:
         for _f in [_b, _m.group(1).strip() if _m else ""] + _b.split():
             if len(_f) >= 2:
                 names.add(_f)
-    best_pos, best_neg = (0, 0), (0, 0)
-    for sent in re.split(r"(?<=[.!?。])\s+|\n+", text):
-        sl = sent.lower()
-        if not any(_seed_word_hit(sl, nm) for nm in names):
+    return names
+
+
+def _name_forms_plain(names: Any) -> set:
+    """다른 인물 이름 표기 — 이름 + 괄호 앞/안(2자↑). 공백 토큰은 쪼개지 않는다(2차 줄 거르기가 과하게 좁아지지 않게)."""
+    out = set()
+    for n in (names if isinstance(names, (list, tuple, set)) else [names]):
+        n = str(n or "").strip()
+        if not n:
             continue
+        out.add(n)
+        _b = re.split(r"[(\[（]", n)[0].strip()
+        _m = re.search(r"[(\[（]([^)\]）]+)[)\]）]", n)
+        for _f in (_b, _m.group(1).strip() if _m else ""):
+            if len(_f) >= 2:
+                out.add(_f)
+    return out
+
+
+def mentions_pc(text: str, pc_names: Any) -> bool:
+    """[2026-09-27] 텍스트가 `{{user}}`·PC 가면 이름을 담는가(pc_sheet_lines 1차와 같은 판정)."""
+    tl = str(text or "").lower()
+    return any(_seed_word_hit(tl, nm) for nm in _pc_name_forms(pc_names))
+
+
+# [2026-09-27 E] 시트 구조 — 헤더·라벨만 있는 줄·관계 절. 관계 **말**(아빠·원수…) 표가 아니라 **구조** 표지 몇 개.
+_SHEET_HDR_RE = re.compile(r"^\s*(#{1,6})\s*(.+?)\s*#*\s*$")
+_SHEET_LABEL_ONLY_RE = re.compile(r"^\s*[-*•·]?\s*([^:：]{1,40}?)\s*[:：]\s*$")
+_SHEET_REL_HEAD_RE = re.compile(r"relationship|relation|관계", re.IGNORECASE)
+_SHEET_REL_LABEL_RE = re.compile(r"^\s*[-*•·]?\s*(?:relationships?|relations?|인간\s*관계|관계)\s*[:：]\s*(.+)$",
+                                 re.IGNORECASE)
+_SHEET_SENT_SPLIT_RE = re.compile(r"(?<=[.!?。])\s+")
+
+
+def pc_sheet_lines(desc: str, pc_names: Any, max_lines: int = 0, max_chars: int = 0,
+                   other_names: Any = None, fallback: bool = True) -> List[str]:
+    """[2026-09-26 관계 시작값 S1 · 09-27 E] NPC 시트에서 **그 PC 를 가리키는 줄**(원문, 등장 순).
+
+    1차(이름 있음) — `{{user}}`·가면 이름이 든 문장. 이름이 헤더·라벨만 있는 줄(`### 아린`·`아린:`)에 있으면
+      그 아래 줄을 다음 헤더·라벨 전까지 `아린: <줄>` 로 붙인다(본문이 없으면 헤더 글만).
+    2차(이름 없음) — fallback=True 이고 1차가 비었을 때만: 관계 절(헤더에 relationship/relation/관계, 하위 헤더 포함)과
+      `관계:` 라벨 줄에서 other_names(다른 등록 인물·다른 PC) 이름이 **없는** 줄. 대명사("그녀의 아빠다") 자리.
+      이 줄이 PC 이야기인지는 읽는 모델 몫 — 부르는 쪽은 mentions_pc 로 1차/2차를 가른다.
+    relation_seed_for(키워드 시드)는 fallback=False — 이름 없는 줄로 시드를 박지 않는다(09-24 제3자 오시드 판정).
+    max_lines>0 이면 앞에서 그만큼, max_chars>0 이면 줄마다 그 길이로 자른다(…)."""
+    text = str(desc or "")
+    if not text.strip():
+        return []
+    names = _pc_name_forms(pc_names)
+    out: List[str] = []
+
+    def _hit(s: str) -> bool:
+        sl = s.lower()
+        return any(_seed_word_hit(sl, nm) for nm in names)
+
+    def _add(s: str) -> bool:
+        """추가하고, 상한에 닿았으면 True."""
+        s = s.strip()
+        if not s:
+            return False
+        if max_chars and len(s) > max_chars:
+            s = s[:max_chars].rstrip() + "…"
+        if s not in out:
+            out.append(s)
+        return bool(max_lines and len(out) >= max_lines)
+
+    def _head_of(s: str):
+        m = _SHEET_HDR_RE.match(s)
+        if m:
+            return m.group(2).strip()
+        m = _SHEET_LABEL_ONLY_RE.match(s)
+        if m:
+            return m.group(1).strip()
+        return None
+
+    lines = text.split("\n")
+    i, full = 0, False
+    while i < len(lines) and not full:
+        s = lines[i].strip()
+        if not s:
+            i += 1
+            continue
+        head = _head_of(s)
+        if head is not None:
+            if not _hit(head):
+                i += 1
+                continue
+            j, body = i + 1, []
+            while j < len(lines):
+                t = lines[j].strip()
+                if not t:
+                    if body:
+                        break
+                    j += 1
+                    continue
+                if _head_of(t) is not None:
+                    break
+                body.append(t.lstrip("-*•· ").strip())
+                j += 1
+            if body:
+                for b in body:
+                    if _add(f"{head}: {b}"):
+                        full = True
+                        break
+            else:
+                full = _add(head)
+            i = j
+            continue
+        for sent in _SHEET_SENT_SPLIT_RE.split(s):
+            sc = sent.strip().lstrip("-*•· ").strip()
+            if sc and _hit(sc) and _add(sc):
+                full = True
+                break
+        i += 1
+    if out or not fallback:
+        return out
+
+    others = _name_forms_plain(other_names or [])
+    rel_level = None          # 관계 절이 시작된 헤더 깊이(None = 관계 절 밖)
+    for raw in lines:
+        s = raw.strip()
+        if not s:
+            continue
+        m = _SHEET_HDR_RE.match(s)
+        if m:
+            lvl = len(m.group(1))
+            if rel_level is not None and lvl > rel_level:
+                continue      # 관계 절 안의 하위 헤더(`#### 가족`)
+            rel_level = lvl if _SHEET_REL_HEAD_RE.search(m.group(2)) else None
+            continue
+        ml = _SHEET_REL_LABEL_RE.match(s)
+        if ml:
+            cand = ml.group(1).strip()
+        elif rel_level is not None:
+            if _SHEET_LABEL_ONLY_RE.match(s):
+                continue
+            cand = s.lstrip("-*•· ").strip()
+        else:
+            continue
+        if not cand:
+            continue
+        cl = cand.lower()
+        if others and any(_seed_word_hit(cl, nm) for nm in others):
+            continue
+        if _add(cand):
+            break
+    return out
+
+
+def relation_seed_for(desc: str, pc_names: Any) -> Optional[Tuple[int, int]]:
+    """[2026-09-24 감사 §5-2 #12 — 레티어스 판정] NPC 시트에서 **그 PC 를 가리키는 문장**만 보고 관계 시드 → (bond, tension).
+
+    PC 를 가리킨다 = `{{user}}` 또는 PC 가면 이름(괄호 앞/안, 공백 토큰 2자↑)이 들어 있는 문장. 제3자 서술
+    ("전쟁에서 가족을 잃었다")은 안 본다. 한 문장에 적대·우호 키워드가 같이 있으면 **적대 우선**
+    ("{{user}}의 가족을 죽인 원수") — 그 밖엔 |bond| 가 큰 쪽. 없으면 None(= 시드 없이 0 에서 시작).
+    [2026-09-26] 키워드 표는 **동결** — Theoria 시작값(starts_as)이 안 왔을 때의 폴백 전용. 더 늘리지 않는다."""
+    best_pos, best_neg = (0, 0), (0, 0)
+    for sent in pc_sheet_lines(desc, pc_names, fallback=False):   # [09-27 E] 이름 있는 줄만
+        sl = sent.lower()
         for kw, (d, t) in RELATION_SEED_KEYWORDS.items():
             if not _seed_word_hit(sl, kw):
                 continue
@@ -1090,11 +1237,12 @@ def onstage_roster(channel_id: str, exclude: Any = (), cap: int = 8,
         names = get_onstage_npc_names(channel_id) or []
     except Exception:
         return []
-    _ex = {str(x).strip() for x in (exclude or ()) if str(x or "").strip()}
+    # [2026-10-07 PC 이름 단일화] exclude = PC 명부(dict) 또는 가면 모음 — 정확일치 대신 `!가면` 이름 규칙.
+    _ex = exclude if isinstance(exclude, dict) else {str(x).strip() for x in (exclude or ()) if str(x or "").strip()}
     out: List[Dict[str, str]] = []
     for nm in names:
         k = str(nm or "").strip()
-        if not k or k in _ex or len(out) >= max(1, int(cap)):
+        if not k or (_ex and domain_manager.is_pc_name(k, _ex)) or len(out) >= max(1, int(cap)):
             continue
         out.append({"key": k, "line": recognition_line(channel_id, k, max_chars=max_chars)})
     return out
@@ -1143,8 +1291,10 @@ def decide_entity(npcs: Dict[str, Any], key: str, entry: Dict[str, Any],
                   *, pc_input: str = "", prose: str = "") -> Dict[str, Any]:
     """(판정) → {"action": "refers|register|skip", "key": 최종키, "need_tag": bool,
                  "alias": (라벨, "stable")|None, "scene_label": 라벨|None, "why": str}"""
-    _pcm = {str(x) for x in (pc_masks or ())}
-    _on = [str(x) for x in (onstage or ()) if str(x or "").strip() and str(x) not in _pcm]
+    # [2026-10-07 PC 이름 단일화] 문자열 집합 정확일치 → `!가면` 이름 규칙(pc_masks = 명부 dict 또는 가면 모음).
+    _pcm = pc_masks if isinstance(pc_masks, dict) else {str(x) for x in (pc_masks or ())}
+    _on = [str(x) for x in (onstage or ()) if str(x or "").strip()
+           and not domain_manager.is_pc_name(str(x), _pcm)]
     e = entry if isinstance(entry, dict) else {}
     kind = str(e.get("name_kind") or "").strip().lower()
     alias_kind = str(e.get("alias_kind") or "").strip().lower()
@@ -1155,7 +1305,7 @@ def decide_entity(npcs: Dict[str, Any], key: str, entry: Dict[str, Any],
     if ref and _on:
         pool = {n: (npcs.get(n) if isinstance(npcs, dict) else {}) or {} for n in _on}
         hit = domain_manager._find_npc_key(pool, ref)
-        if hit and hit not in _pcm:
+        if hit and not domain_manager.is_pc_name(hit, _pcm):
             return {"action": "refers", "key": hit, "need_tag": False,
                     "alias": (label, "stable") if alias_kind == "stable" and _norm_label(label) != _norm_label(hit) else None,
                     "scene_label": label if alias_kind != "stable" else None, "why": "refers_to"}
@@ -1207,7 +1357,7 @@ def decide_entity(npcs: Dict[str, Any], key: str, entry: Dict[str, Any],
     # ③④ 신규
     if kind == "label":
         named_as = str(e.get("named_as") or "").strip()
-        if named_as in _pcm:
+        if named_as and domain_manager.is_pc_name(named_as, _pcm):
             named_as = ""        # PC 가면을 이름으로 댄 건 혼동 — 이름 획득으로 치지 않는다
         named = bool(named_as)
         # 새 라벨이 이 턴에 이름을 댔다 → 그 사람은 처음부터 **그 이름**이다. 표식을 달아 등록한 뒤

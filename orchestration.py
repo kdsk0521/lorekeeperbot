@@ -49,7 +49,7 @@ _BARE_SPEECH_TAG_TAIL = 12       # 따옴표로 여는 줄의 잔여 서술이 �
 _QUOTED_SPAN_PAT = re.compile(r'"([^"]*)"')
 # [2026-09-18 식별 허브 S7] 인라인 태그 헬퍼는 response_processor 로 이사 —
 #   `_classify_opening`(반복 검출)도 같은 판정이 필요하다. 이름은 유지(기존 스모크 무변경).
-from response_processor import _INLINE_TAG_WRAP, _unwrap_inline_tag  # noqa: F401
+from response_processor import _INLINE_TAG_WRAP, _unwrap_inline_tag, pc_name_variants  # noqa: F401
 
 
 def _is_bare_speech_line(line: str) -> bool:
@@ -92,6 +92,7 @@ def _check_dialogue_format(response: str, pc_names: list = None, user_input: str
 
     # PC 이름 패턴
     _pc_pats = []
+    pc_names = pc_name_variants(pc_names)   # [2026-09-29] 괄호 병기 마스크 풀기(`아담(Adam)` → 아담·Adam도 PC줄)
     if pc_names:
         for pc in pc_names:
             if pc and pc != "Unknown":
@@ -183,14 +184,15 @@ def _check_dialogue_format(response: str, pc_names: list = None, user_input: str
     #   독립 대사줄만 `이름: "대사"`(멀티플레이 화자 가독), 서술 안 인용·FID는 그대로 자유.
     if violations:
         examples = violations[:2]
+        # [2026-09-29 배치1 C1] 과거형·개수 없이 — 'N건'이 이번 턴 할당량으로 읽혀 추론 자석 1위(41표본·인용 219)였다.
         parts.append(
-            f"[FORMAT] 화자 없는 독립 대사줄 {len(violations)}건. 예: {'; '.join(examples)}. "
-            f"bare speech lines open 이름: \"대사\"; quotes inside narration stay free."
+            f"[FORMAT] Last reply ran a bare speech line without its speaker's name (e.g. {'; '.join(examples)}). "
+            f"Bare speech lines open 이름: \"대사\"; quotes inside narration stay free."
         )
     elif _named_lines == 0 and _total_quotes >= 3:
         # [2026-08-13 기본형 승격] 전량 서술 삽입형 = 기본형 우회. bare 위반과 동시 점등 방지(elif).
         parts.append(
-            f"[FORMAT] 대사 {_total_quotes}건 전부 서술 삽입형(이름: 줄 0) — "
+            f"[FORMAT] Last reply wove every spoken line into narration (no 이름: line); "
             f"spoken exchange defaults to its own line opening 이름: \"대사\"; weaving stays the deliberate exception."
         )
     if impersonations:
@@ -423,7 +425,7 @@ class OrchestrationService:
         #   다인: 행동 PC = ctx.user_id의 mask. 마스크 없으면 쓰지 않는다(설계 §7-12).
         _psy_rel = dai.get("psyche_states")
         if isinstance(_psy_rel, dict) and _psy_rel:
-            _pc_masks_att = domain_manager.get_pc_masks(channel_id)
+            _pc_masks_att = domain_manager.pc_registry(channel_id)   # [2026-10-07 PC 이름 단일화] 가면 이름 규칙 명부
             # [2026-08-11 사망 파이프라인] 자동 재등록 게이트 ① — 죽은 인물 이름이 분석에 다시 떠도
             #   관계가 시체 위에 적립되지 않게 입구에서 거른다(down은 거르지 않음).
             _dead_att = {n for n in _psy_rel
@@ -431,7 +433,8 @@ class OrchestrationService:
                              npc_manager.get_npc(channel_id, n) or {}) == "dead"}
             if _dead_att:
                 logger.info(f"[NPC Status] dead 관계 갱신 차단(환각 등장 신호): {', '.join(sorted(_dead_att))}")
-            _skip_rel = set(_pc_masks_att) | _dead_att
+            _skip_rel = {n for n in _psy_rel if isinstance(n, str)
+                         and domain_manager.is_pc_name(n, _pc_masks_att)} | _dead_att
             # [2026-09-24 감사 §5-2 #8 — 레티어스 판정] 명부에 없는 이름은 여기서 **등록도 관계 쓰기도 안 한다**.
             #   구: 즉석 스텁 등록(`source: session`) — 렌더 전이라 식별 허브(decide_entity: 고유명/역할명·refers_to·
             #   몹 태그)보다 먼저 키를 선점했다 → "경비병"이 표식 없는 정본 키로 박혀 여러 경비병이 한 키로 합쳐지거나
@@ -461,17 +464,11 @@ class OrchestrationService:
             # [2026-07-19 PC 혼입 가드] 지식 '보유자' 키에 PC가 오면 스킵 — PC 지식은 플레이어
             # 소관, 영속 시 PC 이름의 지식 엔트리가 자라남 (07-13 npc_attitudes 가드·
             # PersistAudit PC 명부 수리와 같은 병 계열: LLM 산출 이름의 PC/NPC 미구분).
-            _pc_masks_k = set()
-            try:
-                for _p in domain_manager.get_domain(channel_id).get("participants", {}).values():
-                    if isinstance(_p, dict) and _p.get("mask"):
-                        _pc_masks_k.add(_p["mask"])
-            except Exception:
-                pass
+            _pc_masks_k = domain_manager.pc_registry(channel_id)   # [2026-10-07 PC 이름 단일화]
             for npc_name, k_data in new_knowledge.items():
                 if not isinstance(k_data, dict):
                     continue
-                if npc_name in _pc_masks_k:
+                if domain_manager.is_pc_name(npc_name, _pc_masks_k):
                     logger.debug(f"[NPC Knowledge] PC 혼입 스킵: {npc_name}")
                     continue
                 # [V10 Secret Ledger 2026-07-14] 원장 동기화 + 압력 상향.
@@ -499,7 +496,9 @@ class OrchestrationService:
                         if any(c and c in _truth.lower() for c in _covered):
                             continue
                         _ups.append({"truth_ref": _truth[:60], "surface": _surf})
-                if k_data.get("knows"):
+                # [2026-09-30 wave8_2nd G] 오해만 있고 knows가 빈 NPC도 저장(빈 목록은 게이트를 안 연다 — 스키마 채우기용
+                #   빈 엔트리가 secrets_held를 덮어쓰지 않게).
+                if k_data.get("knows") or k_data.get("false_beliefs"):
                     # [2026-09-14 S5a] 출처 원장 조인 키 — 이번 턴 turn_index + 유저 메시지 id.
                     # (Model 행엔 message_id가 없어 유저 메시지 id가 유일한 앵커.)
                     _src_fs = None
@@ -515,7 +514,7 @@ class OrchestrationService:
             logger.info(f"[NPC Knowledge] Persisted for {len(new_knowledge)} NPCs")
 
             # Knowledge Propagation: 같은 장면 NPC 간 지식 전파 ([07-19] PC 혼입 가드 동반)
-            scene_npcs = [n for n in new_knowledge.keys() if n not in _pc_masks_k]
+            scene_npcs = [n for n in new_knowledge.keys() if not domain_manager.is_pc_name(n, _pc_masks_k)]
             if len(scene_npcs) >= 2:
                 prop_count = domain_manager.propagate_npc_knowledge(channel_id, scene_npcs)
                 if prop_count:
@@ -700,6 +699,25 @@ class OrchestrationService:
         if reason:
             msg += f" ({reason})"
         return msg
+
+    @staticmethod
+    def _pc_names_for_extract(channel_id: str, user_id: Any) -> List[str]:
+        """[2026-10-07 PC 이름 단일화 S2] 배경 추출 두 콜에 실을 PC 이름 — `!가면` 등록 가면, 행동 PC 먼저.
+        활성 참가자만(une_facade all_pcs 와 같은 기준). 가면이 없거나 "PC"·"Unknown"이면 뺀다."""
+        out: List[str] = []
+        try:
+            parts = domain_manager.get_domain(channel_id).get("participants", {}) or {}
+            order = [str(user_id)] + [u for u in parts if str(u) != str(user_id)]
+            for uid in order:
+                p = parts.get(uid) if uid in parts else parts.get(str(uid))
+                if not isinstance(p, dict) or p.get("status") != "active":   # une_facade all_pcs 와 같은 기준
+                    continue
+                m = str(p.get("mask") or "").strip()
+                if m and m not in ("PC", "Unknown") and m not in out:
+                    out.append(m)
+        except Exception:
+            pass
+        return out
 
     async def _apply_outputs(self, channel_id: str, ctx, outputs: Dict[str, Any],
                              message=None) -> None:
@@ -1002,6 +1020,8 @@ class OrchestrationService:
                         include_notebook=_want_notebook,
                         append_sections=_ap_feed,
                         handout=_handout_txt,
+                        # [2026-10-07 S2] 행동 PC 가면 — scope pc 변수의 주인
+                        pc_name=(self._pc_names_for_extract(channel_id, ctx.user_id)[:1] or [""])[0],
                     )
                     await self._apply_outputs(channel_id, ctx, outputs, message)
                 except Exception as e:
@@ -1185,7 +1205,7 @@ class OrchestrationService:
         _npcs_now = npc_manager.get_npcs(channel_id) or {}
         try:
             _onstage_now = [n for n in (npc_manager.get_onstage_npc_names(channel_id) or [])
-                            if n not in _pc_masks]
+                            if not domain_manager.is_pc_name(n, _pc_masks)]
         except Exception:
             _onstage_now = []
         try:
@@ -1208,7 +1228,7 @@ class OrchestrationService:
                 except Exception:
                     _ext = None
                 _ext_key = str((_ext or {}).get("key") or "").strip()
-                if _ext_key and _ext_key in _onstage_now and _ext_key not in _pc_masks:
+                if _ext_key and _ext_key in _onstage_now and not domain_manager.is_pc_name(_ext_key, _pc_masks):
                     _dec = {"action": "refers", "key": _ext_key, "need_tag": False, "alias": None,
                             "scene_label": _npc_name, "why": "extras"}
             if _dec is None:
@@ -1270,7 +1290,7 @@ class OrchestrationService:
                 _new_nm = str(_named).strip()
                 try:
                     _src_np = npc_manager.get_npc(channel_id, _npc_name)
-                    if (_new_nm != _npc_name and _new_nm not in _pc_masks
+                    if (_new_nm != _npc_name and not domain_manager.is_pc_name(_new_nm, _pc_masks)
                             and _src_np
                             and npc_manager.npc_source(_src_np) != "lore"):
                         if npc_manager.get_npc(channel_id, _new_nm):
@@ -1293,14 +1313,14 @@ class OrchestrationService:
             #   (첫 등장에서 쓰러진 인물은 레코드가 아직 없어 관문이 버린다).
             _inc = _ch.get("incapacitated")
             if (isinstance(_inc, dict) and _inc.get("value")
-                    and _npc_name not in _pc_masks):
+                    and not domain_manager.is_pc_name(_npc_name, _pc_masks)):
                 _inc_ev = str(_inc.get("evidence") or "").strip()
                 if _inc_ev:
                     _pending_down.append((_npc_name, _inc_ev))
                 else:
                     logger.info(f"[NPC Status] {_npc_name}: incapacitated 근거 없음 — 무효")
             _desc = _ch.get("descriptor")
-            if not _desc or not str(_desc).strip() or _npc_name in _pc_masks:
+            if not _desc or not str(_desc).strip() or domain_manager.is_pc_name(_npc_name, _pc_masks):
                 continue
             _desc = str(_desc).strip()
             _new_indiv = bool(_ch.get("new_individual"))
@@ -1599,14 +1619,14 @@ class OrchestrationService:
             # Actually, getting fresh data is safer for background tasks running later.
             
             # For simplicity, we use what we have or simple lookups
-            lore_npcs = list(npc_manager.get_lore_npc_names(channel_id))
-            scene_npcs = list(npc_manager.get_scene_npc_names(channel_id))
+            # [2026-10-07 PC 이름 단일화] 명부에 PC(옛 오염 "아담" 포함)가 섞이면 B1이 NPC로 다시 쓴다 — 가면 이름 규칙으로 뺀다.
+            _pc_reg_b1 = domain_manager.pc_registry(channel_id)
+            lore_npcs = [n for n in npc_manager.get_lore_npc_names(channel_id) if not domain_manager.is_pc_name(n, _pc_reg_b1)]
+            scene_npcs = [n for n in npc_manager.get_scene_npc_names(channel_id) if not domain_manager.is_pc_name(n, _pc_reg_b1)]
             # [2026-09-18 식별 허브 S3] 무대 명부 + 식별 한 줄. PC 가면은 뺀다(인물 목록이지 PC 목록이 아니다).
             #   ⚠ 이 시점 0단은 **이번 턴 R4 위치 쓰기 전** — 막 들어온 인물은 안 잡힌다(의도).
             try:
-                _pc_masks_on = {str(p.get("mask")) for p in
-                                (domain_manager.get_domain(channel_id).get("participants") or {}).values()
-                                if isinstance(p, dict) and p.get("mask")}
+                _pc_masks_on = _pc_reg_b1   # [2026-10-07] 가면 이름 규칙 명부(받는 쪽이 is_pc_name)
                 onstage_lines = npc_manager.onstage_roster_lines(channel_id, exclude=_pc_masks_on)
             except Exception as _e_on:
                 logger.debug(f"[Identity] 무대 명부 급식 건너뜀: {_e_on}")
@@ -1675,6 +1695,7 @@ class OrchestrationService:
                 arc_promote_candidate=_arc_promote_cand,
                 onstage_lines=onstage_lines,
                 thread_ledger_line=_thread_line,
+                pc_names=self._pc_names_for_extract(channel_id, ctx.user_id),   # [2026-10-07 S2] `!가면` 등록 이름
             )
             
             # [V10 검증 lite] 추출 self-check 로그 (detection-only — 아직 게이트 X)
@@ -1805,7 +1826,10 @@ class OrchestrationService:
                     mem_updates["world_changes"] = merged_changes[-15:]
                 if wsu.get("npc_schedule_hints"):
                     existing_schedules = session_memory.get("npc_summaries", {})
-                    existing_schedules.update(wsu["npc_schedule_hints"])
+                    # [2026-10-07 PC 이름 단일화] NPC 일정에 PC("아담")가 들어가면 Theoria 4c "NPC Activity"로 되돌아왔다.
+                    _pcr_sch = domain_manager.pc_registry(channel_id)
+                    existing_schedules.update({k: v for k, v in (wsu["npc_schedule_hints"] or {}).items()
+                                               if not domain_manager.is_pc_name(k, _pcr_sch)})
                     mem_updates["npc_summaries"] = existing_schedules
                 if wsu.get("current_arc"):
                     mem_updates["current_arc"] = wsu["current_arc"]
@@ -1840,14 +1864,8 @@ class OrchestrationService:
                     + list((_dai_d.get("psyche_states") or {}).keys())
                     + (list((wsu or {}).get("npc_schedule_hints", {}).keys()) if wsu else [])
                 ))
-                _pc_masks = set()
-                try:
-                    for _p in domain_manager.get_domain(channel_id).get("participants", {}).values():
-                        if _p.get("mask"):
-                            _pc_masks.add(_p["mask"])
-                except Exception:
-                    pass
-                involved_npcs = [n for n in _scene_names if n not in _pc_masks]
+                _pc_masks = domain_manager.pc_registry(channel_id)   # [2026-10-07 PC 이름 단일화] 가면 이름 규칙 명부
+                involved_npcs = [n for n in _scene_names if not domain_manager.is_pc_name(n, _pc_masks)]
                 # [2026-09-02 P0 선행 수리] 스펙 §1.5 / §6 P0 — 출석 마킹 입력에서
                 #   `npc_schedule_hints`를 뺀다.
                 # 병: 그 필드는 cognition 지시문이 **"Only mentioned NPCs"**라고 정의한 재료다
@@ -1866,7 +1884,7 @@ class OrchestrationService:
                     list((_dai_d.get("npc_attitudes") or {}).keys())
                     + list((_dai_d.get("psyche_states") or {}).keys())
                 ))
-                present_npcs = [n for n in _present_names if n not in _pc_masks]
+                present_npcs = [n for n in _present_names if not domain_manager.is_pc_name(n, _pc_masks)]
                 qf = ctx.dai.get("quality_flags", {}) if ctx.dai else {}
                 user_brief = str(ctx.action_text or "")[:200]
                 ai_brief = str(response or "")[:300]
@@ -1921,17 +1939,11 @@ class OrchestrationService:
                 # extract_all_updates)의 산출이라 그 초크포인트를 안 지난다. 무가드로 두면
                 # PC의 위치·건강·기분이 NPC 엔티티 로그에 영구 저장되고 Slot 7로 되돌아온다.
                 if isinstance(est_data, dict) and est_data:
-                    _pc_masks_est = set()
-                    try:
-                        for _p in domain_manager.get_domain(channel_id).get("participants", {}).values():
-                            if isinstance(_p, dict) and _p.get("mask"):
-                                _pc_masks_est.add(_p["mask"])
-                    except Exception:
-                        pass
+                    _pc_masks_est = domain_manager.pc_registry(channel_id)   # [2026-10-07 PC 이름 단일화]
                     if _pc_masks_est:
-                        _est_hit = [n for n in est_data if n in _pc_masks_est]
+                        _est_hit = [n for n in est_data if domain_manager.is_pc_name(n, _pc_masks_est)]
                         if _est_hit:
-                            est_data = {k: v for k, v in est_data.items() if k not in _pc_masks_est}
+                            est_data = {k: v for k, v in est_data.items() if k not in _est_hit}
                             logger.debug(f"[EntityState] PC 혼입 제외: {', '.join(_est_hit)}")
                 if est_data:
                     narrative_tracker.update_entity_states(nt_state, turn_idx, est_data)
@@ -2084,22 +2096,16 @@ class OrchestrationService:
                 import world_tree as _wt_obs
                 _cur_loc = domain_manager.get_current_location(channel_id)
                 if _cur_loc and str(_cur_loc).strip().lower() not in ("", "unknown"):
-                    _pc_masks_obs = set()
-                    try:
-                        for _p in domain_manager.get_domain(channel_id).get("participants", {}).values():
-                            if isinstance(_p, dict) and _p.get("mask"):
-                                _pc_masks_obs.add(_p["mask"])
-                    except Exception:
-                        pass
+                    _pc_masks_obs = domain_manager.pc_registry(channel_id)   # [2026-10-07 PC 이름 단일화]
                     _reg_obs = domain_manager.get_npcs(channel_id) or {}
 
                     def _obs_key(_raw):
                         """관찰된 이름 → 등록 키. 미등록·PC 가면은 빈 문자열(=건너뜀)."""
                         _r = str(_raw or "").strip()
-                        if not _r or _r in _pc_masks_obs:
+                        if not _r or domain_manager.is_pc_name(_r, _pc_masks_obs):
                             return ""
                         _k = domain_manager._find_npc_key(_reg_obs, _r)
-                        return _k if (_k and _k not in _pc_masks_obs) else ""
+                        return _k if (_k and not domain_manager.is_pc_name(_k, _pc_masks_obs)) else ""
 
                     # [2026-09-03 R6] 카운터 옆에 **이름 집합**(_observed_now, 위에서 초기화)도 채운다.
                     #   아래 스케줄 틱이 "이번 턴 관찰이 손댄 사람"을 제외 집합에 넣어야 하는데,

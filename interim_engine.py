@@ -246,7 +246,7 @@ def reconstruct_interim(channel_id: str) -> Optional[str]:
         #    직전 턴 등장 인물(무대 위)·PC·미등록 제외. 무대 위 인물의 막간은 산문 몫.
         registered = domain_manager.get_npcs(channel_id) or {}
         participants = domain_manager.get_domain(channel_id).get("participants", {})
-        pc_masks = {p.get("mask", "") for p in participants.values()}
+        pc_masks = domain_manager.pc_registry(channel_id)   # [2026-10-07 PC 이름 단일화] 가면 이름 규칙 명부
         session_mem = domain_manager.get_domain(channel_id).get("ai_session_memory", {}) or {}
         npc_summaries = session_mem.get("npc_summaries", {}) or {}
 
@@ -265,7 +265,7 @@ def reconstruct_interim(channel_id: str) -> Optional[str]:
         candidates: List[str] = []
         for n in recent_names + list(npc_summaries.keys()):
             key = domain_manager._find_npc_key(registered, n)
-            if key and key not in candidates and key not in pc_masks and key not in on_scene_keys:
+            if key and key not in candidates and not domain_manager.is_pc_name(key, pc_masks) and key not in on_scene_keys:
                 if not _npm.is_npc_active(registered.get(key) or {}):
                     continue
                 candidates.append(key)

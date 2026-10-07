@@ -27,6 +27,45 @@ _MARKDOWN_PATTERNS = [
 # OOC 및 주사위 패턴 미리 컴파일
 # 매칭 순서: (OOC: 내용) 또는 ((내용)) — TRPG 이중 괄호 관례
 _OOC_PATTERN = re.compile(r'\((?:OOC|ooc)[:\s]+(.+?)\)|\(\((.+?)\)\)', re.IGNORECASE | re.DOTALL)
+# [2026-09-26 O11] 위 정규식은 **첫 닫는 괄호**에서 끊겼다 — `(OOC: 아빠(강철수) 호감도 올려)` → `아빠(강철수`.
+#   추출은 짝 맞춤 스캐너(extract_ooc) 하나로. 위 상수는 옛 참조 호환용으로만 남긴다(추출에 쓰지 않음).
+_OOC_OPEN = re.compile(r'\(\s*OOC(?:\s*[:：]\s*|\s+)|\(\(', re.IGNORECASE)
+_OOC_INNER_PREFIX = re.compile(r'^\s*OOC\s*[:：]\s*', re.IGNORECASE)
+
+
+def extract_ooc(text: str):
+    """짝 맞춤 OOC 추출 → (OOC 본문 | None, 나머지 텍스트).
+
+    `(OOC: …)`·`(ooc …)`·`((…))` 에서 시작해 괄호 깊이를 세어 **짝이 맞는** 닫는 괄호까지 읽는다(안쪽 괄호 이름 보존).
+    블록이 여럿이면 본문을 ` / ` 로 잇고 나머지 텍스트에서 전부 뺀다. 짝이 안 맞으면 끝까지 읽는다."""
+    s = text or ""
+    bodies, keep, i = [], [], 0
+    while True:
+        m = _OOC_OPEN.search(s, i)
+        if not m:
+            keep.append(s[i:])
+            break
+        keep.append(s[i:m.start()])
+        double = m.group(0).startswith("((")
+        depth = 2 if double else 1
+        k = m.end()
+        while k < len(s) and depth > 0:
+            if s[k] == "(":
+                depth += 1
+            elif s[k] == ")":
+                depth -= 1
+            k += 1
+        if depth == 0:
+            body = s[m.end():k - (2 if double else 1)]
+        else:
+            body = s[m.end():]
+        body = _OOC_INNER_PREFIX.sub("", body).strip()
+        if body:
+            bodies.append(body)
+        i = k
+    if not bodies:
+        return None, s.strip()
+    return " / ".join(bodies), re.sub(r"[ \t]{2,}", " ", "".join(keep)).strip()
 
 
 
@@ -97,12 +136,9 @@ def parse_input(content: str) -> Optional[Dict[str, Any]]:
 
     # 2. OOC 감지 - 메시지 내 (OOC: 내용) 패턴 추출
     # 메시지 어디에든 (OOC: ...) 가 있으면 추출
-    ooc_match = _OOC_PATTERN.search(clean_content)
+    ooc_content, remaining_text = extract_ooc(clean_content)   # [2026-09-26 O11] 짝 맞춤
 
-    if ooc_match:
-        ooc_content = (ooc_match.group(1) or ooc_match.group(2)).strip()
-        # OOC 부분을 제거한 나머지 텍스트
-        remaining_text = _OOC_PATTERN.sub('', clean_content).strip()
+    if ooc_content:
         
         if remaining_text:
             # OOC + 행동/대사가 함께 있음 → 둘 다 처리

@@ -2,19 +2,19 @@
 Lorekeeper UNE - Vigor/Composure Module (v5.0 — 얇은 리더)
 
 v5.0 (2026-09-06 P8b — **기계화**): 레티어스 결정 "룰의 주인은 자연어, 숫자만 코드의 것".
-      08-18 에 기력에서 지운 코드 공식을 **평형에서도 전량 삭제**했다. 삭제 판정 기준 한 줄:
+      08-18 에 활력에서 지운 코드 공식을 **평형에서도 전량 삭제**했다. 삭제 판정 기준 한 줄:
       *장면을 분류해서 숫자를 정하는 코드는 전부 rule 의 몫*. 그래서 사라진 것 —
         baseline drain(장르 14태그 × 씬타입, layer-cap) · cross-axis cascade ·
         자연회복(갭 비례 트리클) · 휴식 회복(rest_eval) · status severity drain ·
         AI mental_impact 소비(방향 전환 감쇠·씬별 캡) · 관성(1.1배) · 낙폭 안전캡 ·
         2단계 Clamping · 챕터 리프레시 · 트라우마 dwell 잔재.
-      기력·평형은 이제 **둘 다 custom_vars 의 시스템 선언**이고, 값을 미는 문은 둘뿐이다:
+      활력·평형은 이제 **둘 다 custom_vars 의 시스템 선언**이고, 값을 미는 문은 둘뿐이다:
         ① LLM 관측 델타(전담 추출 콜 `extract_outputs.deltas`, 비대칭 캡 7/5)
         ② 코드 소유 쓰기(judgment 감정 · doom defense reward · judgment Effort 선불) —
            셋 다 **사건이 코드에서 확정된 뒤의 대가**지 장면 분류가 아니다.
       이 모듈에 남은 일은 하나 — **읽어서 bus 에 싣는 것**. 26곳/13파일의 소비자가
       `bus.vigor/composure` 를 읽으므로 이름과 모양(value/stage/delta_applied/log)은 그대로다.
-      값의 정본 = custom_vars(world_state.custom_var_values["기력"|"평형"]).
+      값의 정본 = custom_vars(world_state.custom_var_values["활력"|"평형"]).
 """
 
 import logging
@@ -25,7 +25,7 @@ logger = logging.getLogger("VigorComposure")
 if TYPE_CHECKING:
     from orchestration_context import GameContext
 
-_AXES = (("vigor", "기력"), ("composure", "평형"))
+_AXES = (("vigor", "활력"), ("composure", "평형"))
 
 
 def _get_stage(val: int) -> int:

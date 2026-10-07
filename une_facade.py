@@ -17,12 +17,12 @@ logger = logging.getLogger("UNE")
 
 
 def _cv_vigor(channel_id: str, user_id: str, mem: Dict[str, Any]) -> int:
-    """[2026-08-18 Phase 2.5] 기력 = 레지스트리 값. 폴백 계단은 custom_vars 한 곳에만 있다."""
+    """[2026-08-18 Phase 2.5] 활력 = 레지스트리 값. 폴백 계단은 custom_vars 한 곳에만 있다."""
     try:
         import custom_vars as _cv
         return _cv.vigor_value(channel_id, user_id, mem)
     except Exception as e:
-        logger.debug(f"[CustomVar] 기력 조회 skip: {e}")
+        logger.debug(f"[CustomVar] 활력 조회 skip: {e}")
         src = (mem or {}).get("vigor") or (mem or {}).get("mental") or {}
         return int(src.get("value", 100) or 100)
 
@@ -45,6 +45,21 @@ def _to_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+# [2026-10-01 1차] 판정층 라벨 — 함수 로컬에서 모듈로 올렸다. slot_manager._build_telescope_prefill의
+#   [Outcome] 시드가 같은 사전을 쓴다(한 프롬프트 안에서 같은 사실엔 같은 말). 값 무변경.
+RESULT_LABEL_EN = {
+    "critical_success": "critical success", "success": "success",
+    "partial": "partial success", "failure": "failure", "critical_failure": "critical failure",
+}
+# [2026-10-06 어휘 V1 · P-a] 위치 낱말 = Turn_Brief(iceberg `_POS_TIERS`)와 같은 5단 사다리 하나.
+#   옛 POSITION_LABEL_EN(controlled/risky/dire, 3단)은 같은 값 dai.position.value를 다른 사다리·다른 문턱
+#   ("dire" 0.2 대 0.25)으로 불렀다 — 한 렌더에 같은 사실이 두 말로 갔다. 내부 3단 키(_position_tier)는
+#   MC 행렬 폴백·World situation 표기만 쓴다. 판정 줄·[Outcome] 시드·Mira 굴림 줄은 이 함수 하나.
+def position_label(value) -> str:
+    import iceberg as _ib
+    return f"{_ib.position_word(_to_float(value, 0.5))} position"
 
 
 def _position_tier(value: float) -> str:
@@ -99,43 +114,41 @@ def _collect_aspect_stance(aspects: Any) -> Tuple[List[str], List[str]]:
 
 # ── Directing Notation Tables (♪ 음악 | ▶ 카메라 | ◎ 사진 — 3축 연출 표기) ──
 _POSITION_NOTATION = {
-    "controlled": "situation | ♪ mp, andante, legato | ▶ wide, parallel, pan | ◎ real-time",
-    "risky":      "situation | ♪ f, allegro, marcato | ▶ two-shot, facing, cut | ◎ slow-motion",
-    "desperate":  "situation | ♪ ff, presto, staccato | ▶ low-angle, back-to-back, jump-cut | ◎ freeze",
+    "controlled": "situation | ♪ mp, andante, legato | ▶ wide, parallel, pan | ◎ midground",
+    "risky":      "situation | ♪ f, allegro, marcato | ▶ two-shot, facing, cut | ◎ foreground",
+    "desperate":  "situation | ♪ ff, presto, staccato | ▶ low-angle, back-to-back, jump-cut | ◎ spotlight",
 }
 _ENERGY_NOTATION = {
-    "idle":       "scene | ♪ mp, andante, legato | ▶ pan, pillow, long-take | ◎ long-exposure",
-    "steady":     "scene | ♪ mf, andante, legato | ▶ eye-level, parallel, match-cut | ◎ real-time",
-    "rising":     "scene | ♪ f, allegro, marcato, crescendo | ▶ two-shot, facing, crosscut | ◎ interval",
-    "falling":    "scene | ♪ p, adagio, legato, diminuendo | ▶ long-take, back-to-back, fade | ◎ long-exposure",
-    "peak":       "scene | ♪ ff, presto, sforzando | ▶ close-up, cut, jump-cut | ◎ slow-motion",
-    "stagnant":   "scene | ♪ pp, largo, legato | ▶ long-take, pillow, height-gap | ◎ long-exposure",
-    "detonation": "scene | ♪ sfz, presto, sforzando | ▶ wide, montage, cut | ◎ freeze",
-    "aftershock": "scene | ♪ p, adagio, staccato | ▶ long-take, back-to-back, fade | ◎ long-exposure",
+    "idle":       "scene | ♪ mp, andante, legato | ▶ pan, pillow, long-take | ◎ background",
+    "steady":     "scene | ♪ mf, andante, legato | ▶ eye-level, parallel, match-cut | ◎ midground",
+    "rising":     "scene | ♪ f, allegro, marcato, crescendo | ▶ two-shot, facing, crosscut | ◎ glimpses",
+    "falling":    "scene | ♪ p, adagio, legato, diminuendo | ▶ long-take, back-to-back, fade | ◎ background",
+    "peak":       "scene | ♪ ff, presto, sforzando | ▶ close-up, cut, jump-cut | ◎ foreground",
+    "stagnant":   "scene | ♪ pp, largo, legato | ▶ long-take, pillow, height-gap | ◎ background",
+    "detonation": "scene | ♪ sfz, presto, sforzando | ▶ wide, montage, cut | ◎ spotlight",
+    "aftershock": "scene | ♪ p, adagio, staccato | ▶ long-take, back-to-back, fade | ◎ background",
 }
 _VIGOR_NOTATION = {
-    "high":       "body | ♪ f, allegro, legato | ▶ wide, parallel | ◎ real-time",
-    "strained":   "body | ♪ p, adagio, marcato | ▶ close-up:muscle, height-gap | ◎ slow-motion",
-    "collapsing": "body | ♪ pp, largo, staccato | ▶ close-up:breath, back-to-back | ◎ freeze",
+    "high":       "body | ♪ f, allegro, legato | ▶ wide, parallel | ◎ midground",
+    "strained":   "body | ♪ p, adagio, marcato | ▶ close-up:muscle, height-gap | ◎ foreground",
+    "collapsing": "body | ♪ pp, largo, staccato | ▶ close-up:breath, back-to-back | ◎ spotlight",
 }
 _COMPOSURE_NOTATION = {
-    "high":       "psyche | ♪ mf, andante, legato | ▶ two-shot, parallel, match-cut | ◎ real-time",
-    "strained":   "psyche | ♪ p, adagio, staccato | ▶ close-up:gaze, height-gap | ◎ slow-motion",
-    "collapsing": "psyche | ♪ pp, largo, sforzando | ▶ high-angle, back-to-back | ◎ freeze",
+    "high":       "psyche | ♪ mf, andante, legato | ▶ two-shot, parallel, match-cut | ◎ midground",
+    "strained":   "psyche | ♪ p, adagio, staccato | ▶ close-up:gaze, height-gap | ◎ foreground",
+    "collapsing": "psyche | ♪ pp, largo, sforzando | ▶ high-angle, back-to-back | ◎ spotlight",
 }
 _MIXED_NOTATION = {
-    "desperate": "body+psyche | ♪ pp, largo, staccato | ▶ high-angle, back-to-back | ◎ freeze",
-    "reckless":  "action | ♪ f, presto, sforzando | ▶ wide, jump-cut | ◎ slow-motion",
-    "fragile":   "consciousness | ♪ p, adagio, legato | ▶ close-up:eyes, pillow | ◎ long-exposure",
+    "desperate": "body+psyche | ♪ pp, largo, staccato | ▶ high-angle, back-to-back | ◎ spotlight",
+    "reckless":  "action | ♪ f, presto, sforzando | ▶ wide, jump-cut | ◎ foreground",
+    "fragile":   "consciousness | ♪ p, adagio, legato | ▶ close-up:eyes, pillow | ◎ background",
 }
 # _DOOM_NOTATION 제거 (2026-07-06 감사): 형제(_COMPOSURE/_MIXED)와 달리 소비자 0 —
 # 둠→챕터볼륨 리브랜드로 world-layer doom 연출 분기가 사라진 잔재. doom 무드는
 # doom_module lens×phase atmosphere가 담당.
-_SCENE_PHOTO_OVERRIDE = {
-    "summary":  "◎ bulb",
-    "combat":   "◎ slow-motion",
-    "intimate": "◎ real-time",
-}
+# [2026-10-02 시간 단일 주인 T2] _SCENE_PHOTO_OVERRIDE("time override: ◎ …") 삭제 — 장면 시간의 주인은 [TIME] 한 줄
+#   (분석 time_flow + SceneType). 같은 원천의 중복이었고 친밀 장면에선 [TIME]과 반대 말을 했다.
+#   스펙 composition/시간단일주인·연출표기어휘_스펙_2026-10-02.md
 def _build_world_layer(bus) -> str:
     """World Layer: 연출 표기 + 장면 초점 + 액션만.
     데이터(position reason, effect, NPC attitudes, psyche, narrative chain,
@@ -159,20 +172,24 @@ def _build_world_layer(bus) -> str:
     if energy_notation:
         parts.append(energy_notation)
 
-    # Scene → ◎ 시간 밀도 보정 (SceneType이 에너지 테이블 기본값을 override)
-    scene_photo = _SCENE_PHOTO_OVERRIDE.get(scene_type, "")
-    if scene_photo:
-        parts.append(f"time override: {scene_photo}")
 
     # Action Reading (고유 — iceberg에 없음)
-    needs_judgment = bool(dai.get("needs_judgment", False))
     action_meta = dai.get("action_meta", {}) if isinstance(dai.get("action_meta"), dict) else {}
     action_name = str(action_meta.get("action", "")).strip()
-    if action_name:
+    # [2026-10-01 2단계] 'attempt — 난이도' 꼬리표는 attempt 입력에만 — decree 입력에 붙으면 RB_PC DECREE
+    #   ("never … downgraded to an attempt")와 부딪쳤다(예: "신장을 들어내…" decree → "attempt — easy").
+    if action_name and str(dai.get("input_mode") or "decree").strip().lower() == "attempt":
         difficulty = str(action_meta.get("difficulty", "normal"))
-        parts.append(f"'{action_name}' attempt — {difficulty}")
-        if not needs_judgment:
-            parts.append(f"no roll; resolved by the situation ({pos_tier}) and the world's logic.")
+        # [2026-10-06 이중주입 H3] 판정 턴엔 Events 판정 줄이 행동을 인용한다("{PC} attempted '…'") —
+        #   여기는 난이도만 싣는다. 판정 없는 attempt 턴은 인용째 그대로(Events에 인용이 없다).
+        _jd = getattr(bus, "judgment", None)
+        if isinstance(_jd, dict) and _jd.get("active"):
+            parts.append(f"attempt — {difficulty}")
+        else:
+            parts.append(f"'{action_name}' attempt — {difficulty}")
+        # [2026-10-01 1차 후속] "no roll; resolved by the situation (…) and the world's logic." 줄 삭제 — 굴림 여부의 집 =
+        #   텔레스코프 [Outcome] 시드(slot_manager). 이 줄은 Flash 원 needs_judgment를 읽어 게이트가 막은 턴엔 침묵했다.
+        #   ⚠남은 것: 'attempt — 난이도' 꼬리표가 decree 입력에도 붙는다(RB_PC DECREE와 부딪침) — 2단계에서.
 
     if not parts:
         return ""
@@ -183,11 +200,13 @@ def _build_events_layer(context, bus) -> str:
     parts: List[str] = []
 
     # World Event → fact only (metadata stripped)
+    # [2026-09-29 배치2 2a-1 · B안] 이변 한 주인 = 이 "world event:" 사실 줄. 같은 이변이 셋으로 갔다(6/22):
+    #   이 줄 · 같은 턴 등록된 condition의 "current situation:" · story_director 범용 비트("the shockwave…").
+    #   발화 턴엔 condition 줄을 빼고(다음 턴부터 서 있는 상황으로 나간다), 비트는 story_director가 싣지 않는다.
     anomaly = bus.anomaly if isinstance(bus.anomaly, dict) else {}
-    if anomaly.get("triggered"):
-        line = anomaly.get("line", "")
-        if line:
-            parts.append(f"world event: {line}")
+    _fired_line = str(anomaly.get("line", "") or "").strip() if anomaly.get("triggered") else ""
+    if _fired_line:
+        parts.append(f"world event: {_fired_line}")
 
     # Active Conditions → tag stripped
     _st_state = {}
@@ -202,6 +221,8 @@ def _build_events_layer(context, bus) -> str:
         cond_loc = (cond.get("location") or "").strip()
         if not cond_loc or cond_loc == _pc_loc:
             _desc = cond.get("description", "")
+            if _fired_line and str(_desc or "").strip() == _fired_line:
+                continue                      # 이번 턴 발화한 그 이변 — world event 줄이 싣는다
             if _desc:
                 parts.append(
                     f"current situation: {_desc} — "
@@ -301,9 +322,7 @@ def _build_events_layer(context, bus) -> str:
                 parts.append(line)
 
     # Flashback → tag stripped
-    flashback = bus.dai.get("flashback_result") if isinstance(bus.dai, dict) else None
-    if not flashback and isinstance(bus.dai, dict):
-        flashback = bus.dai.get("flashback_eval")
+    flashback = bus.dai.get("flashback_eval") if isinstance(bus.dai, dict) else None   # [2026-10-07] 옛 flashback_result 폴백 삭제(생산자 0)
     if isinstance(flashback, dict):
         declaration = str(flashback.get("declaration", "")).strip()
         if not declaration:
@@ -352,13 +371,14 @@ CONSEQUENCE_DIRECTIVES = {
     "critical_success": (
         "the PC achieves more than they intended. "
         "A new possibility opens, or the PC takes decisive control of the situation. "
-        "with NPCs present, the success shifts the relationship for the better."
+        # [2026-09-29 배치2 2a-5] 관계 변화 지시 → 목격 반응(C8). 관계는 관계 상태(Relation)가 쥔다.
+        "with NPCs present, their reaction to witnessing it surfaces."
     ),
     "partial": (
         "the PC's intent is achieved, but one unwanted change follows with it. "
         "What was lost, exposed, or complicated takes concrete shape. "
         "a partial success carries a cost; the cost-free version doesn't exist. "
-        "with NPCs present, the cost leaves a subtle mark on the relationship."
+        "with NPCs present, their reaction to witnessing it surfaces."
     ),
     "failure": (
         "the PC's intent goes unachieved. "
@@ -370,7 +390,7 @@ CONSEQUENCE_DIRECTIVES = {
         "an irreversible change occurs in this scene. "
         "The opposite of the PC's intent comes about, or an unforeseen reality reveals itself. "
         "The world after this moment differs from the world before. "
-        "with NPCs present, the catastrophe shakes the relationship to its foundation."
+        "with NPCs present, their reaction to witnessing it surfaces."
     ),
 }
 
@@ -394,24 +414,28 @@ def _build_judgment_layer(bus, mask: str) -> str:
     favorable, against = _collect_aspect_stance(dai.get("aspects", []))
 
     # Natural language — no tags, no framework labels
-    _result_kr = {
-        "critical_success": "critical success", "success": "success",
-        "partial": "partial success", "failure": "failure", "critical_failure": "critical failure",
-    }
-    _pos_kr = {"controlled": "controlled position", "risky": "risky position", "desperate": "dire position"}
+    _result_kr = RESULT_LABEL_EN   # [2026-10-01 1차] 모듈 상수로 올림(텔레스코프 [Outcome] 시드와 같은 말) — 동작 무변경
     reason_part = f" {reason}" if reason else ""
+    # [2026-10-01 2단계] ①첫 줄 동사는 attempt 입력에만 "attempted" — decree·probe는 행위가 착지한다(RB_PC DECREE).
+    #   ②서사 콜(Mira)이 굴림 결과를 알고 쓴 roll_outcome 이 있으면 MC 행렬 문안·CONSEQUENCE_DIRECTIVES 를 싣지 않는다 —
+    #   대가를 각자 묻던 일반 목소리(행렬·결과 지시·[Outcome] clause)가 장면 구체 한 줄([Outcome] 시드)로 모인다.
+    #   roll_outcome 이 없으면(서사 콜 실패) 종전 그대로(폴백). 스펙 composition/분석렌더_2단계_판정먼저_스펙_2026-10-01.md §4.
+    _is_attempt = str(dai.get("input_mode") or "decree").strip().lower() == "attempt"
+    _ro = dai.get("roll_outcome")
+    _has_ro = isinstance(_ro, str) and bool(_ro.strip())
     lines = [
-        f"{mask} attempted '{action}'.{reason_part}",
-        f"{_result_kr.get(result, result)} — {_pos_kr.get(pos_tier, pos_tier)}.",
-        move,
+        f"{mask} attempted '{action}'.{reason_part}" if _is_attempt else f"{mask}: '{action}'.{reason_part}",
+        f"{_result_kr.get(result, result)} — {position_label(pos_value)}.",
     ]
+    if not _has_ro:
+        lines.append(move)
     if favorable:
         lines.append("in favor: " + ", ".join(favorable))
     if against:
         lines.append("against: " + ", ".join(against))
 
     # 범용 서사 원칙 (장르 불문) — tag stripped
-    cons_dir = CONSEQUENCE_DIRECTIVES.get(result, "")
+    cons_dir = "" if _has_ro else CONSEQUENCE_DIRECTIVES.get(result, "")
     if cons_dir:
         lines.append(cons_dir)
 
@@ -504,6 +528,10 @@ def _build_atmosphere_layer(context, bus) -> str:
         parts.append("those nearby witness the PC's physical limit.")
 
     # Doom = Chapter Volume Gauge (Phase × Lens) — 둠 리브랜드 산문 주입
+    # [2026-10-06 어휘 V2] 머리 이름 "Tension" → "Chapter", "register" → "genre".
+    #   Tension은 한 입력에 넷(Story Direction 긴장 축·Energy·이 게이지·스토리라인 열린 질문)이었고,
+    #   모델이 이 게이지를 장면 긴장 수치로 읽었다("tension is low, 30%") — 정적 MEASURE가 tension으로
+    #   리듬을 정한다. register는 정적 쪽에서 인물 말씨다. genre는 충돌 사다리 6 "Active genre conventions"와 같은 말.
     # phase × lens atmosphere block을 산문 주입의 진짜 매체로 사용.
     # 페이즈 letter(起承轉結間)는 식별자, lens(noir/comedy/romance/drama)는 톤.
     doom_val = int(_to_float((bus.doom or {}).get("value", 0), 0))
@@ -517,20 +545,20 @@ def _build_atmosphere_layer(context, bus) -> str:
         # C-Lens 미활성 → default 블록만
         block = _cfg.get_lens_atmosphere("default", phase)
         if block:
-            parts.append(f"[Tension {doom_val}% — phase {phase}]\n{block}")
+            parts.append(f"[Chapter {doom_val}% — phase {phase}]\n{block}")
     elif len(lens_tags) == 1:
         # 단일 lens
         block = _cfg.get_lens_atmosphere(lens_tags[0], phase)
         if block:
-            parts.append(f"[Tension {doom_val}% — phase {phase}, {lens_tags[0]}]\n{block}")
+            parts.append(f"[Chapter {doom_val}% — phase {phase}, {lens_tags[0]}]\n{block}")
     else:
         # 다중 lens (hybrid) — 양쪽 block + neither-erases 디렉티브
         blocks = [(lens, _cfg.get_lens_atmosphere(lens, phase)) for lens in lens_tags]
         blocks = [(l, b) for l, b in blocks if b]
         if blocks:
-            header = f"[Tension {doom_val}% — phase {phase}, dual register: {' × '.join(l for l, _ in blocks)}]"
+            header = f"[Chapter {doom_val}% — phase {phase}, dual genre: {' × '.join(l for l, _ in blocks)}]"
             joined = "\n× crosscut with:\n".join(b for _, b in blocks)
-            parts.append(f"{header}\n{joined}\n— neither register erases the other; both qualities in the same beat")
+            parts.append(f"{header}\n{joined}\n— neither genre erases the other; both qualities in the same beat")
 
     # 챕터 종결 라벨 (climax 발동 직후, 間 페이즈)
     if isinstance(bus.doom, dict) and bus.doom.get("intermission_active"):
@@ -663,11 +691,7 @@ def _build_atmosphere_layer(context, bus) -> str:
     if isinstance(clocks, list):
         active_clocks = [c for c in clocks if isinstance(c, dict) and not c.get("resolved")]
         if active_clocks:
-            parts.append(
-                "Clock events are rendered strictly within the PC's POV. "
-                "No 'meanwhile', 'around that time', 'elsewhere' — no POV shift. "
-                "Only what the PC directly witnesses or senses."
-            )
+            pass  # [2026-09-29 반죽] Clock POV 문장 → RB_WORLD Time("Clock events render strictly within the PC's POV")
 
     if not parts:
         return ""
@@ -841,7 +865,7 @@ def _build_recall_evidence(channel_id: str, user_input: str, history_text: str,
     # 후보: 이름 + aliases → 대표 이름(키)로 접는다.
     hits = []  # (pos, canon, matched)
     for canon, data in npcs.items():
-        if not isinstance(canon, str) or canon in pc_masks:
+        if not isinstance(canon, str) or domain_manager.is_pc_name(canon, pc_masks):   # [2026-10-07] 가면 이름 규칙
             continue
         try:
             if _nm.get_npc_status(data) == "dead":
@@ -850,7 +874,7 @@ def _build_recall_evidence(channel_id: str, user_input: str, history_text: str,
             pass
         names = [canon]
         for a in ((data or {}).get("aliases") or []):
-            if isinstance(a, str) and a and a not in pc_masks:
+            if isinstance(a, str) and a and not domain_manager.is_pc_name(a, pc_masks):
                 names.append(a)
         best = -1
         matched = canon
@@ -971,7 +995,7 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
                 "mask": pdata.get("mask", "Unknown"),
                 "sheet": domain_manager.get_unified_player_info(channel_id, uid, shape="anchor").get("sheet", ""),
                 "passives": pmem.get("passives", []),
-                # [Phase 2.5] 기력은 레지스트리 우선(PC별 슬롯), 없으면 옛 자리 폴백.
+                # [Phase 2.5] 활력은 레지스트리 우선(PC별 슬롯), 없으면 옛 자리 폴백.
                 "vigor_value": _cv_vigor(channel_id, uid, pmem),
                 "composure_value": _cv_composure(channel_id, uid, pmem),  # [2026-09-24 감사] 동결된 옛 자리 읽기 교정
             }
@@ -990,6 +1014,12 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
             "npc_soma_states", {}) or {}
     except Exception:
         anchors["stored_npc_soma"] = {}
+    # [2026-10-07 a묶음 A4] 지난 턴 관계 상태(phase·attachment) — 4b Relation(prev) 재료.
+    try:
+        anchors["stored_npc_relation"] = (domain_manager.get_world_state(channel_id) or {}).get(
+            "npc_relation_states", {}) or {}
+    except Exception:
+        anchors["stored_npc_relation"] = {}
     # [2026-08-11 사망 파이프라인] 생존축이 anchors로 안 흘러 theoria가 볼 수가 없었다.
     #   가장 싼 배선 = **비활성 이름만** 여기서 동봉(전체 status 맵은 대부분 active라 낭비).
     #   빈 dict가 정상값(전원 생존) — 소비처는 `.get(name)`으로 조용히 통과한다.
@@ -1033,6 +1063,25 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
     except Exception as _e_tiers:
         logger.debug(f"[presence-check] tiers anchor skip: {_e_tiers}")
         _tiers = {}
+
+    # [2026-09-26 관계 시작값 S3] 관계 기록이 아직 없는 NPC 중 시트에 이 PC 를 가리키는 문장이 있는 사람 → 4b 시작 줄.
+    #   순서 = 장면 > 근처 > 이번 입력 이름 > 최근 히스토리 이름. 조건·상한은 domain_manager.relation_start_candidates 한 곳.
+    try:
+        if _acting_mask:
+            _ord_ru = list(anchors.get("scene_cast") or []) + list(anchors.get("nearby_cast") or [])
+            _npcs_ru = domain_manager.get_npcs(channel_id) or {}
+            for _txt_ru in (user_input or "", history_text or ""):
+                for _canon_ru, _d_ru in _npcs_ru.items():
+                    if not isinstance(_canon_ru, str) or _canon_ru in _ord_ru:
+                        continue
+                    _nms_ru = [_canon_ru] + [a for a in ((_d_ru or {}).get("aliases") or []) if isinstance(a, str) and a]
+                    if any(_recall_name_in_input(_n, _txt_ru) >= 0 for _n in _nms_ru):
+                        _ord_ru.append(_canon_ru)
+            _ru = domain_manager.relation_start_candidates(channel_id, _acting_mask, _ord_ru)
+            if _ru:
+                anchors["relation_unrecorded"] = _ru
+    except Exception as _e_ru:
+        logger.debug(f"[Relation] start candidates skip: {_e_ru}")
 
     # [2026-07-02 Offscreen Motion — 뮈토스 이식] 부재 등록 NPC 후보 → Theoria offscreen_trace 재료.
     # 장면 밖 NPC의 "세계가 턴 사이에 움직인 흔적" 공급용. 후보 6명 캡, 실패 무해.
@@ -1260,7 +1309,7 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
         mem["composure"] = {"value": old_val, "last_delta": 0}
         del mem["mental"]
 
-    # [2026-08-18 Phase 2.5] 기력의 정본은 **레지스트리**(custom_var_values["기력"][user_id]).
+    # [2026-08-18 Phase 2.5] 활력의 정본은 **레지스트리**(custom_var_values["활력"][user_id]).
     #   bus.vigor 는 이번 턴 읽기 사본이다 — 하류(판정 폴백·notation·cascade·스냅샷·로그)가
     #   전부 bus 를 읽으므로 여기 한 곳만 갈아끼우면 배선이 통째로 옮겨간다.
     #   레지스트리가 답을 못 주면(기능 off) 옛 자리로 폴백 — 이월 승계와 같은 계단.
@@ -1268,14 +1317,14 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
     _vigor_val = vigor_data.get("value", 100)
     try:
         import custom_vars as _cv_bus
-        _reg_v = _cv_bus.get_system_value(channel_id, "기력", user_id)
+        _reg_v = _cv_bus.get_system_value(channel_id, "활력", user_id)
         if _reg_v is not None:
             _vigor_val = _reg_v
     except Exception as _e_cvb:
-        logger.debug(f"[CustomVar] 기력 레지스트리 로드 skip: {_e_cvb}")
+        logger.debug(f"[CustomVar] 활력 레지스트리 로드 skip: {_e_cvb}")
     bus.vigor["value"] = _vigor_val
     bus.vigor["last_delta"] = vigor_data.get("last_delta", 0)
-    # [2026-09-06 P8b] 평형도 레지스트리 소유 — 기력과 완전 대칭. bus.composure 는 읽기 사본.
+    # [2026-09-06 P8b] 평형도 레지스트리 소유 — 활력과 완전 대칭. bus.composure 는 읽기 사본.
     composure_data = mem.get("composure", {"value": 100, "last_delta": 0})
     _composure_val = composure_data.get("value", 100)
     try:
@@ -1289,7 +1338,7 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
     bus.composure["last_delta"] = composure_data.get("last_delta", 0)
     # stage3_turns(붕괴 dwell) 로드 제거 — 트라우마 각성 폐지 (2026-07-06)
 
-    # 기력/평형 채널 토글 (off면 prime/process가 스킵 → 수치 동결)
+    # 활력/평형 채널 토글 (off면 prime/process가 스킵 → 수치 동결)
     _vc_on = domain_manager.is_vigor_composure_active(channel_id)
     bus.vigor["module_active"] = _vc_on
     bus.composure["module_active"] = _vc_on
@@ -1342,7 +1391,7 @@ def sync_from_game_context(channel_id: str, user_id: str, ctx: Any) -> None:
         # Remove legacy "mental" key if present
         mem.pop("mental", None)
 
-        # [2026-09-06 P8b] **두 축 다 여기서 영속하지 않는다.** 기력에 이어 평형의 저장처도
+        # [2026-09-06 P8b] **두 축 다 여기서 영속하지 않는다.** 활력에 이어 평형의 저장처도
         #   레지스트리로 옮겨갔고, 쓰기는 그쪽 관문(apply_deltas / apply_system_delta)이 전담한다 —
         #   두 자리에 같은 수를 적으면 어느 쪽이 정본인지 아무도 모르게 된다.
         #   ai_memory["vigor"]·["composure"] 는 손대지 않고 그대로 둔다: 이월 승계의 소스다.

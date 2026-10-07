@@ -1747,10 +1747,9 @@ def render_page(channel_id: str, page_id: str, sections: Optional[list] = None, 
 # =========================================================
 
 # 독자 공통 머리 한 줄(상수). S1 Slot 9 계약과 겹치지 않게 한 문장, 블록 맨 위에 1회.
-WIKI_COMPILE_HEAD = (
-    "아래는 플레이 중 확립된 사실이다(로어 아님). "
-    "현재 장면·입력이 우선하며, 여기 없는 일이 없었던 일은 아니다."
-)
+# [2026-09-29 반죽] 읽는 법 → RB_TABLE(기록: 없는 일은 모름, 긍정도 부정도 아님 / 사다리 1 이번 턴 > 5 캐논).
+#   머리는 기록 표지 한 줄만(영어, 규칙 없음).
+WIKI_COMPILE_HEAD = "Established in play (record, not lore):"
 
 
 def _compile_empty() -> dict:

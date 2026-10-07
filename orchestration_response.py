@@ -67,6 +67,8 @@ _TELESCOPE_GATE_NAMES = (
     "C",
     # V5 (2026-07-22) Author's Landing Note — 신규 필드명 (기존과 겹치는 Field/Scene/Gravity/Unshown/Scope는 위에 존재)
     "Ground", "Voice", "Pull", "Spent", "Echo", "Punctum",
+    # [2026-10-01 1차] 코드 시드 두 줄(분석렌더_1차 §1) — 모델이 프리필을 산문 쪽에 다시 옮겨 적으면 Layer 2가 걷는다.
+    "PC", "Outcome",
     # V2 legacy
     "Who", "When", "Where", "When/Where", "What", "Why", "How",
     # V1 legacy

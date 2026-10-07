@@ -85,20 +85,20 @@ get_npc_time_progression = npc_manager.get_npc_time_progression
 
 def build_time_directive(ticks: int, scene_type: str = "normal") -> str:
     """Pro에 전달할 시간 범위 디렉티브. 서사 범위를 제한한다."""
-    if scene_type in ("combat", "intimate"):
-        return (
-            "[TIME] Scene frozen. Describe ONE moment/action only. "
-            "Do NOT advance time or skip ahead."
-        )
+    if scene_type == "combat":
+        # [2026-09-29 반죽] 명령 꼬리 → RB_WORLD Time("the page stays inside that span"). 값(범위 서술)만.
+        # [2026-10-02 시간 단일 주인 T1] 수량어("one moment or action") 삭제 — 딥식 추론이 "One beat"로 옮겨 적었다.
+        return "[TIME] Clock holds: the exchange plays out with nothing skipped."
+    if scene_type == "intimate":
+        # [2026-10-02 모순정리 S4] 친밀은 정지가 아니라 진행(MATURE "each response advances the act")과 짝.
+        #   스펙 composition/끊기·수위블록_모순정리_스펙_2026-10-02.md
+        return "[TIME] The act's own pace: it moves on from where it stands."
     minutes = ticks * 2
     if minutes <= 3:
-        return (
-            f"[TIME] ~{minutes:.0f}min. Describe only what happens in this brief moment. "
-            "Do NOT compress multiple events or skip time."
-        )
+        return f"[TIME] ~{minutes:.0f}min."   # [2026-10-02 T1] 수량어 삭제
     if minutes <= 10:
-        return f"[TIME] ~{minutes:.0f}min. One focused interaction or action."
-    return f"[TIME] ~{minutes:.0f}min. Describe the passage of time naturally."
+        return f"[TIME] ~{minutes:.0f}min."   # [2026-10-02 T1] 수량어 삭제
+    return f"[TIME] ~{minutes:.0f}min: time passes within the scene."
 
 
 def _tf_num(v, default=0, lo=None, hi=None, cast=int):
@@ -217,7 +217,6 @@ async def process_time_flow(channel_id: str, time_flow: Dict, scene_type: str = 
             )
             return msg
 
-    duration = time_flow.get("duration", "instant")
     ticks = time_flow.get("ticks", 0)
     explicit_hours = time_flow.get("explicit_hours")
 
@@ -226,7 +225,6 @@ async def process_time_flow(channel_id: str, time_flow: Dict, scene_type: str = 
     # 2026-05-23: explicit_hours > 0 이면 자동으로 explicit 취급 (Theoria가 상대 명시 잡았다는 신호)
     explicit = (
         time_flow.get("explicit", False)
-        or duration == "explicit"
         or (explicit_hours is not None and explicit_hours > 0)
     )
 

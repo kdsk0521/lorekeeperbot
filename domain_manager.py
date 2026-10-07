@@ -1698,6 +1698,68 @@ def get_pc_masks(channel_id: str) -> set:
     return out
 
 
+# =========================================================
+# [2026-10-07 PC 이름 단일화] "이 이름이 PC냐"의 단일 판정.
+#   병: 가드 약 30자리가 가면 이름("아담(Adam)")과 **글자 그대로** 같을 때만 막았다. 분석·배경 콜은 산문에
+#   적힌 대로 "아담"·"Adam"이라 쓰므로 전부 통과했다 — PC가 세션 NPC로 등록되고(작업 폴더 43/158),
+#   NPC↔NPC 유령 엣지가 생겼다. 규칙은 `!가면`·위키가 이미 쓰는 `_find_npc_key`(정규화 → 전체/괄호 앞/괄호 안
+#   대칭 → 별칭)이고, 명부 **부분집합**(PC 몇 명)에 대고 부르므로 allow_token=False(09-24 감사 규칙).
+#   스펙 analysis_line/PC이름단일화·배경추출PC줄_수리스펙_2026-10-07.md S1.
+# =========================================================
+def pc_registry(channel_id: str) -> Dict[str, Dict[str, Any]]:
+    """`!가면` 등록 명부 {mask: {"aliases": PC 위키 페이지 별칭(옛 가면)}}.
+    가면 원천은 get_pc_masks(participants). 별칭은 participants uid → wiki_store PC 페이지. 못 읽으면 가면만."""
+    reg: Dict[str, Dict[str, Any]] = {}
+    try:
+        masks = get_pc_masks(channel_id)
+    except Exception:
+        masks = set()
+    for m in masks or ():
+        m = str(m or "").strip()
+        if m:                       # 등록된 가면은 그대로(테스트·옛 세션의 "PC" 가면 포함) — 기존 get_pc_masks 와 같은 집합
+            reg[m] = {"aliases": []}
+    if not reg or not channel_id:
+        return reg
+    try:
+        import wiki_store
+        for uid, p in (get_domain(channel_id).get("participants") or {}).items():
+            m = str((p or {}).get("mask") or "").strip() if isinstance(p, dict) else ""
+            if m not in reg:
+                continue
+            pid = wiki_store.pc_page_id(channel_id, uid)
+            pg = wiki_store.get_page(channel_id, pid) if pid else None
+            reg[m]["aliases"] = [a for a in ((pg or {}).get("aliases") or [])
+                                 if isinstance(a, str) and a.strip()]
+    except Exception:
+        pass
+    return reg
+
+
+def _as_pc_registry(pcs: Any) -> Dict[str, Dict[str, Any]]:
+    if isinstance(pcs, dict):
+        return pcs
+    try:
+        return {str(m).strip(): {} for m in (pcs or ()) if str(m or "").strip()}
+    except Exception:
+        return {}
+
+
+def pc_canon(name: Any, pcs: Any) -> Optional[str]:
+    """이 이름이 가리키는 PC의 등록 가면. 아니면 None. pcs = pc_registry 결과(dict) 또는 가면 모음."""
+    reg = _as_pc_registry(pcs)
+    if not reg or not isinstance(name, str) or not name.strip():
+        return None
+    try:
+        return _find_npc_key(reg, name.strip(), allow_token=False)
+    except Exception:
+        return name.strip() if name.strip() in reg else None
+
+
+def is_pc_name(name: Any, pcs: Any) -> bool:
+    """`!가면` 이름 규칙으로 본 PC 여부 — "아담"·"Adam"·옛 가면도 "아담(Adam)"이다."""
+    return bool(pc_canon(name, pcs))
+
+
 def get_relation_edges(channel_id: str, source: Optional[str] = None,
                        target: Optional[str] = None) -> List[Dict[str, Any]]:
     """엣지 원본 조회(얇은 위임)."""
@@ -1712,8 +1774,10 @@ def get_relation_edges(channel_id: str, source: Optional[str] = None,
 def upsert_relation_edge(channel_id: str, source: str, target: str, *,
                          bond: Optional[int] = None, tension: Optional[int] = None,
                          stance: Optional[str] = None, kind: Optional[str] = None,
-                         turn: Optional[int] = None, origin: str = "theoria") -> Optional[Dict[str, Any]]:
+                         turn: Optional[int] = None, origin: str = "theoria",
+                         set_base: bool = False) -> Optional[Dict[str, Any]]:
     """엣지 쓰기 앞단 — 방향 가드 + 이름 해상도 + 시트 seed, 그다음 sqlite_store.upsert_edge(클램프).
+    [2026-09-26 S7] set_base=True(OOC baseline) → 이번 값이 기준선(감쇠 목표)도 된다. origin=seed 는 자동.
 
     방향 가드(구 orch:357 PC 혼입 가드의 이사):
       - source가 PC 마스크면 거부(PC→X 방향은 두지 않는다, 설계 §7-6).
@@ -1726,14 +1790,19 @@ def upsert_relation_edge(channel_id: str, source: str, target: str, *,
     source, target = source.strip(), target.strip()
     if not source or not target or source == target:
         return None
-    masks = get_pc_masks(channel_id)
-    if source in masks:
+    # [2026-10-07 PC 이름 단일화] 정확일치 → `!가면` 이름 규칙. NPC→PC 는 target 을 정본 가면으로 맞춘다
+    #   ("아담"·"아담(Adam)" 두 엣지로 갈리지 않게). 전엔 NPC↔NPC target "아담"이 통과해 유령 노드가 생겼다.
+    _pcr = pc_registry(channel_id)
+    if is_pc_name(source, _pcr):
         logging.info("[Relation] 거부: source가 PC(%s) — PC→X 엣지 없음", source)
         return None
-    if kind is None and target not in masks:
-        logging.info("[Relation] 거부: NPC→PC 쓰기인데 target(%s)이 PC 마스크 아님", target)
-        return None
-    if kind is not None and target in masks:
+    if kind is None:
+        _canon_t = pc_canon(target, _pcr)
+        if not _canon_t:
+            logging.info("[Relation] 거부: NPC→PC 쓰기인데 target(%s)이 PC 마스크 아님", target)
+            return None
+        target = _canon_t
+    if kind is not None and is_pc_name(target, _pcr):
         logging.info("[Relation] 거부: NPC↔NPC 쓰기인데 target(%s)이 PC", target)
         return None
     try:
@@ -1754,7 +1823,7 @@ def upsert_relation_edge(channel_id: str, source: str, target: str, *,
                                          turn=t, origin="seed")
         _prev = sqlite_store.get_edge(channel_id, source, target) if kind is None else None
         r = sqlite_store.upsert_edge(channel_id, source, target, bond=bond, tension=tension,
-                                     stance=stance, kind=kind, turn=t, origin=origin)
+                                     stance=stance, kind=kind, turn=t, origin=origin, set_base=set_base)
         # attitude_log(narrative_queries 실전이 급식 원천)은 파생 attitude 구간이 바뀔 때만 적립.
         #   구 M5 게이트가 유일 적립자였다 — 게이트 삭제로 로그가 굶지 않게 같은 뜻을 여기서 잇는다.
         if r and kind is None:
@@ -1788,13 +1857,126 @@ def _npc_pc_seed(channel_id: str, source: str, target: str) -> Tuple[int, int]:
     return _ib, _it
 
 
+def _other_char_names(npcs: Dict[str, Any], key: str, pc_mask: str, masks=None) -> List[str]:
+    """[2026-09-27 E] pc_sheet_lines 2차(이름 없는 줄) 거르기용 — 이 NPC 말고 다른 등록 인물 이름·별칭 + 다른 PC 가면."""
+    out: List[str] = []
+    for k, d in (npcs or {}).items():
+        if k == key or not isinstance(k, str):
+            continue
+        out.append(k)
+        out.extend([a for a in ((d or {}).get("aliases") or []) if isinstance(a, str) and a.strip()])
+    out.extend([m for m in (masks or []) if m and m != pc_mask])
+    return out
+
+
+def _start_lines_for(npcs: Dict[str, Any], key: str, pc_mask: str, masks=None) -> List[str]:
+    """[2026-09-26 관계 시작값 S1] 등록 NPC(죽지 않음) 시트 중 이 PC 를 가리키는 줄(원문, 상한 적용). 없으면 [].
+    [09-27 E] 이름 없는 관계 줄(2차)도 — 다른 인물 이름이 든 줄은 거른다."""
+    try:
+        import npc_manager as _nm_sl
+        data = (npcs or {}).get(key) or {}
+        if not data or _nm_sl.get_npc_status(data) == "dead":
+            return []
+        return _nm_sl.pc_sheet_lines(
+            data.get("description") or "", [pc_mask],
+            max_lines=int(getattr(config, "RELATION_START_MAX_LINES", 2) or 0),
+            max_chars=int(getattr(config, "RELATION_START_LINE_CHARS", 160) or 0),
+            other_names=_other_char_names(npcs, key, pc_mask, masks))
+    except Exception as _e_sl:
+        logging.debug(f"[Relation] start lines skip {key}: {_e_sl}")
+        return []
+
+
+def npc_pc_lines(channel_id: str, npc_name: str, pc_mask: str) -> List[str]:
+    """NPC 이름(별칭 해상도) → 시트 중 이 PC 를 가리키는 문장. OOC 편집 명부(O5)도 쓴다."""
+    npcs = get_npcs(channel_id) or {}
+    key = _find_npc_key(npcs, str(npc_name or "").strip()) if npc_name else None
+    return _start_lines_for(npcs, key, pc_mask, get_pc_masks(channel_id)) if key else []
+
+
+def relation_start_candidates(channel_id: str, pc_mask: str, ordered_names: List[str]) -> Dict[str, List[str]]:
+    """[2026-09-26 관계 시작값 S3] Theoria 4b "no record yet" 줄을 받을 NPC → {NPC 키: [PC 를 가리키는 시트 문장]}.
+
+    조건(전부): 등록·생존 / 행동 PC 로의 관계 기록 없음 / 시트에 PC 를 가리키는 문장 있음 /
+    ordered_names(장면 > 근처 > 입력 이름 > 히스토리 이름 — 부르는 쪽이 순서를 정한다)에 있음.
+    상한 RELATION_START_MAX_NPCS. 쓰기 0."""
+    out: Dict[str, List[str]] = {}
+    if not channel_id or not pc_mask:
+        return out
+    cap = int(getattr(config, "RELATION_START_MAX_NPCS", 4) or 0)
+    if cap <= 0:
+        return out
+    masks = get_pc_masks(channel_id)
+    if pc_mask not in masks:
+        return out
+    _pcr_sc = pc_registry(channel_id)   # [2026-10-07 PC 이름 단일화]
+    npcs = get_npcs(channel_id) or {}
+    import sqlite_store
+    for nm in ordered_names or []:
+        if len(out) >= cap:
+            break
+        nm = str(nm or "").strip()
+        key = _find_npc_key(npcs, nm) if nm else None
+        if not key or key in out or is_pc_name(key, _pcr_sc):   # [2026-10-07] 가면 이름 규칙
+            continue
+        if sqlite_store.get_edge(channel_id, key, pc_mask) is not None:
+            continue
+        lines = _start_lines_for(npcs, key, pc_mask, masks)
+        if lines:
+            out[key] = lines
+    return out
+
+
+def apply_theoria_start(channel_id: str, npc_name: str, pc_mask: str,
+                        starts_as: Optional[str], friction_starts: Optional[str],
+                        turn: int) -> Optional[Tuple[int, int]]:
+    """[2026-09-26 관계 시작값 S4·S5] Theoria 시작 말(starts_as / friction_starts) → 시드 엣지(origin=seed = 기준선도 같이).
+
+    받는 조건 = 코드 술어(4b 에 보여준 명단을 싣지 않고 같은 조건으로 다시 판정): 등록·생존 NPC ·
+    이 PC 로의 관계 기록 없음 · 시트에 이 PC 를 가리키는 문장 있음. 아니면 None(버림, debug).
+    한쪽 말만 오면 나머지 반쪽은 키워드 시드(폴백)·없으면 0. Returns: 심은 (bond, tension)."""
+    if not channel_id or not pc_mask or not isinstance(npc_name, str) or not npc_name.strip():
+        return None
+    masks = get_pc_masks(channel_id)
+    if is_pc_name(npc_name.strip(), pc_registry(channel_id)) or pc_mask not in masks:   # [2026-10-07] 가면 이름 규칙
+        return None
+    npcs = get_npcs(channel_id) or {}
+    key = _find_npc_key(npcs, npc_name.strip())
+    if not key:
+        logging.debug(f"[Relation] start 버림 — 명부 밖: {npc_name}")
+        return None
+    import sqlite_store
+    if sqlite_store.get_edge(channel_id, key, pc_mask) is not None:
+        logging.debug(f"[Relation] start 버림 — 이미 관계 기록 있음: {key}")
+        return None
+    if not _start_lines_for(npcs, key, pc_mask, masks):
+        logging.debug(f"[Relation] start 버림 — 시트에 PC 문장 없음: {key}")
+        return None
+    _bmap = getattr(config, "REL_START_BOND", {}) or {}
+    _tmap = getattr(config, "REL_START_TENSION", {}) or {}
+    b = _bmap.get(starts_as) if starts_as else None
+    t = _tmap.get(friction_starts) if friction_starts else None
+    if b is None and t is None:
+        return None
+    if b is None or t is None:
+        _kb, _kt = _npc_pc_seed(channel_id, key, pc_mask)
+        b = _kb if b is None else b
+        t = _kt if t is None else t
+    r = upsert_relation_edge(channel_id, key, pc_mask, bond=int(b), tension=int(t), turn=turn, origin="seed")
+    if not r:
+        return None
+    logging.info("[Relation] start: %s %s/%s (sheet) → bond %s tension %s",
+                 key, starts_as or "-", friction_starts or "-", r["bond"], r["tension"])
+    return int(r["bond"]), int(r["tension"])
+
+
 def _theoria_edge_view(channel_id: str, npc_name: str, pc_mask: str, turn: int):
     """미리보기 공통부 — (저장 엣지 또는 시드 가상 엣지, turn). NPC→PC 방향이 아니면 None. 쓰기 0.
     이름 해상도·시드는 저장 경로(upsert_relation_edge)와 같은 함수(_resolve_npc_name / _npc_pc_seed)."""
     if not channel_id or not isinstance(npc_name, str) or not npc_name.strip() or not pc_mask:
         return None
     masks = get_pc_masks(channel_id)
-    if npc_name.strip() in masks or pc_mask not in masks:
+    if is_pc_name(npc_name.strip(), pc_registry(channel_id)) or pc_mask not in masks:   # [2026-10-07] 가면 이름 규칙
         return None
     import sqlite_store
     source = _resolve_npc_name(get_domain(channel_id), npc_name.strip())
@@ -1873,6 +2055,22 @@ def align_theoria_relations(channel_id: str, psyche_states: Dict[str, Any],
         rel = st.get("relation")
         if not isinstance(rel, dict):
             continue
+        # [2026-09-26 관계 시작값 S5] 시작 말(4b "no record yet" 인 NPC 만 받음) → 시드 먼저 심고, 이동 말은 그 위 한 걸음.
+        _sa = str(rel.get("starts_as") or "").strip().lower()
+        _fs = str(rel.get("friction_starts") or "").strip().lower()
+        _sa = _sa if _sa in (getattr(config, "REL_START_BOND", {}) or {}) else ""
+        _fs = _fs if _fs in (getattr(config, "REL_START_TENSION", {}) or {}) else ""
+        if _sa or _fs:
+            try:
+                _st0 = apply_theoria_start(channel_id, name, pc_mask, _sa or None, _fs or None, turn)
+            except Exception as _e_st:
+                logging.debug(f"[Relation] start skip {name}: {_e_st}")
+                _st0 = None
+            if _st0 is not None:
+                rel["bond"], rel["tension"] = _st0
+                if "value" in rel:
+                    rel["value"] = _st0[0]
+                changed.append(f"{name} start {_sa or '-'}/{_fs or '-'}→bond {_st0[0]}")
         # [2026-09-25 관계 정성] 모델은 이동 말(bond_shift/tension_shift)을 낸다 → 여기서 숫자로(저장될 값과 같은 식).
         #   숫자(bond/tension)가 같이 와도 말이 이긴다. 말이 없을 때만 아래 옛 숫자 경로(폴백).
         _bs = str(rel.get("bond_shift") or "").strip().lower()
@@ -1961,48 +2159,154 @@ def write_theoria_relations(channel_id: str, psyche_states: Dict[str, Any],
     return n
 
 
+def _ooc_edit_npc_name(e: Dict[str, Any]) -> str:
+    """[2026-09-26 O7] 이름 칸 관용 — key → npc → name → target → value.npc/name."""
+    for k in ("key", "npc", "name", "target"):
+        v = e.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    v = e.get("value")
+    if isinstance(v, dict):
+        for k in ("npc", "name", "key"):
+            if isinstance(v.get(k), str) and v.get(k).strip():
+                return v.get(k).strip()
+    return ""
+
+
+def _truthy(v) -> bool:
+    if isinstance(v, bool):
+        return v
+    return str(v or "").strip().lower() in ("true", "1", "yes", "y")
+
+
+def _pc_lines_public(channel_id: str, key: str, pc_mask: str, npcs: Optional[Dict[str, Any]] = None) -> List[str]:
+    """[2026-09-26 D] 플레이어에게 닿는 표면용 PC 문장 — 페이지 lore 절에서 Secrets(은닉 가족) 절을 빼고
+    [Secret]/[Hidden] 마커를 벗긴 뒤 추출(렌더러 NPC 컨텍스트와 같은 규율). 상한은 시작값 줄과 같다."""
+    try:
+        import npc_manager as _nm_pl
+        import wiki_store as _ws_pl
+        secs = {k: v for k, v in _nm_pl.npc_lore_sections(channel_id, key).items()
+                if _nm_pl._section_family(k) != "hidden"}
+        txt = _nm_pl.strip_hidden_markers(_ws_pl.assemble_lore_text(secs))
+        return _nm_pl.pc_sheet_lines(
+            txt, [pc_mask],
+            max_lines=int(getattr(config, "RELATION_START_MAX_LINES", 2) or 0),
+            max_chars=int(getattr(config, "RELATION_START_LINE_CHARS", 160) or 0),
+            other_names=_other_char_names(npcs if npcs is not None else (get_npcs(channel_id) or {}),
+                                          key, pc_mask, get_pc_masks(channel_id)))
+    except Exception as _e_pl:
+        logging.debug(f"[OOC] public pc lines skip {key}: {_e_pl}")
+        return []
+
+
+def ooc_roster(channel_id: str, pc_mask: Optional[str], cap: int = 30) -> List[Dict[str, Any]]:
+    """[2026-09-26 O5] OOC 편집 모델용 명부 — 이름·별칭·역할 + 시트 중 이 PC 를 가리키는 문장(최대 2, ` / `).
+    죽은 NPC 제외, PC 문장 있는 NPC 먼저, 상한 cap.
+    [D] 문장은 **Secrets 절·은닉 마커 제외**(_pc_lines_public) — 편집 모델의 확인문이 플레이어에게 그대로 나가기 때문.
+    PC 쪽에서 쓴 관계(PC 시트 Relationships 절)는 편집 콜 current_state.sheet 로 따로 간다."""
+    out: List[Dict[str, Any]] = []
+    try:
+        import npc_manager as _nm_ro
+        npcs = get_npcs(channel_id) or {}
+        masks = pc_registry(channel_id)   # [2026-10-07 PC 이름 단일화] 정확일치 → 가면 이름 규칙
+        for name, data in npcs.items():
+            if not isinstance(name, str) or not isinstance(data, dict) or is_pc_name(name, masks):
+                continue
+            if _nm_ro.get_npc_status(data) == "dead":
+                continue
+            row: Dict[str, Any] = {"name": name}
+            _al = [a for a in (data.get("aliases") or []) if isinstance(a, str) and a.strip()][:4]
+            if _al:
+                row["aliases"] = _al
+            if data.get("role"):
+                row["role"] = str(data.get("role"))[:40]
+            if pc_mask:
+                _ln = _pc_lines_public(channel_id, name, pc_mask, npcs)
+                if _ln:
+                    row["sheet_on_pc"] = " / ".join(_l.replace("{{user}}", pc_mask) for _l in _ln)
+            out.append(row)
+    except Exception as _e_ro:
+        logging.debug(f"[OOC] roster skip: {_e_ro}")
+    out.sort(key=lambda r: 0 if r.get("sheet_on_pc") else 1)
+    return out[:max(0, int(cap))]
+
+
 def apply_ooc_relation_edits(channel_id: str, uid: str, edits: List[Dict[str, Any]]) -> List[str]:
     """OOC 관계 편집 → 엣지 직접 set(캡 면제, source="ooc"). 행동 PC 마스크가 target.
-    edit = {"field": "relation", "action": "set|remove", "key": NPC, "stance"?, "bond"?, "tension"?}
-    Returns: 되비침 줄."""
+    edit = {"field": "relation", "action": "set|remove", "key": NPC, "stands"?/"bond"?, "friction"?/"tension"?,
+            "stance"?, "baseline"?}
+    [2026-09-26 O6~O8] ① 이름 관문: set 은 명부 해상도(find_equivalent_npc_key)에 걸린 이름만 — 명부 밖이면 저장 0 + ⚠️ 줄
+      (옛: "아빠"가 그대로 저장돼 없는 인물의 관계가 생겼다). remove 는 **저장된 관계 이름과 정확히 같으면** 등록 여부 무관(유령 청소).
+    ② 이름 칸 관용(key|npc|name|target|value.npc). ③ 값 = 숫자(유저가 숫자를 말했을 때) 또는 말(stands/friction →
+      config.REL_START_BOND/TENSION) — 둘 다 오면 숫자(유저 권위). ④ baseline=true → 기준선(감쇠 목표)도 같이.
+    Returns: 되비침 줄(실패는 ⚠️ 로 시작)."""
     lines: List[str] = []
     p = get_participant_data(channel_id, uid) or {}
     mask = p.get("mask")
     if not mask:
-        return lines
+        return ["⚠️ 관계: `!가면`이 없어 적용하지 못했어"] if edits else lines
+    npcs = get_npcs(channel_id) or {}
+    masks = get_pc_masks(channel_id)
+    _bmap = getattr(config, "REL_START_BOND", {}) or {}
+    _tmap = getattr(config, "REL_START_TENSION", {}) or {}
+    import sqlite_store
+
+    def _int(v):
+        try:
+            return None if v is None or isinstance(v, bool) or str(v).strip() == "" else int(float(v))
+        except (TypeError, ValueError):
+            return None
+
     for e in edits or []:
         if not isinstance(e, dict):
             continue
-        npc = str(e.get("key") or "").strip()
-        if not npc:
+        raw = _ooc_edit_npc_name(e)
+        if not raw:
+            lines.append("⚠️ 관계: 인물 이름이 없어")
             continue
         action = str(e.get("action") or "set").lower()
+        key = find_equivalent_npc_key(npcs, raw)
         if action == "remove":
-            try:
-                import sqlite_store
-                _k = _resolve_npc_name(get_domain(channel_id), npc)
-                if sqlite_store.get_edge(channel_id, _k, mask) is not None:
-                    conn = sqlite_store._get_conn(channel_id)
-                    conn.execute("DELETE FROM relations WHERE channel_id=? AND source=? AND target=?",
-                                 (channel_id, _k, mask))
-                    conn.commit()
-                    lines.append(f"관계 삭제: {_k}")
-            except Exception as _e:
-                logging.debug(f"[OOC] 관계 삭제 skip: {_e}")
+            _done = False
+            for _nm in [n for n in dict.fromkeys([key, raw]) if n]:
+                try:
+                    if sqlite_store.get_edge(channel_id, _nm, mask) is not None:
+                        conn = sqlite_store._get_conn(channel_id)
+                        conn.execute("DELETE FROM relations WHERE channel_id=? AND source=? AND target=?",
+                                     (channel_id, _nm, mask))
+                        conn.commit()
+                        lines.append(f"관계 삭제: {_nm}")
+                        _done = True
+                        break
+                except Exception as _e:
+                    logging.debug(f"[OOC] 관계 삭제 skip: {_e}")
+            if not _done:
+                lines.append(f"⚠️ 관계: '{raw}' — 지울 관계 기록이 없어")
             continue
-
-        def _int(v):
-            try:
-                return None if v is None or isinstance(v, bool) else int(float(v))
-            except (TypeError, ValueError):
-                return None
-        stance = e.get("stance", e.get("value"))
-        stance = str(stance).strip() if isinstance(stance, (str, int, float)) and str(stance).strip() else None
-        r = upsert_relation_edge(channel_id, npc, mask, bond=_int(e.get("bond")),
-                                 tension=_int(e.get("tension")), stance=stance, origin="ooc")
+        if not key or is_pc_name(key, masks):   # [2026-10-07] 가면 이름 규칙
+            lines.append(f"⚠️ 관계: '{raw}' — 명부에 없는 이름이야(등록 이름으로 다시)")
+            continue
+        bond = _int(e.get("bond"))
+        tension = _int(e.get("tension"))
+        if bond is None:
+            bond = _bmap.get(str(e.get("stands") or e.get("attitude") or "").strip().lower())
+        if tension is None:
+            tension = _tmap.get(str(e.get("friction") or "").strip().lower())
+        stance = e.get("stance", e.get("value") if isinstance(e.get("value"), str) else None)
+        stance = str(stance).strip() if isinstance(stance, str) and stance.strip() else None
+        baseline = _truthy(e.get("baseline"))
+        if bond is None and tension is None and stance is None and not baseline:
+            lines.append(f"⚠️ 관계: {key} — 바꿀 값이 없어")
+            continue
+        r = upsert_relation_edge(channel_id, key, mask, bond=bond, tension=tension, stance=stance,
+                                 origin="ooc", set_base=baseline)
         if r:
-            lines.append(f"관계: {r['source']} → bond {r['bond']} / tension {r['tension']}"
+            lines.append(f"관계: {r['source']} → bond {r['bond']} ({attitude_from_bond(r['bond'])})"
+                         f" / tension {r['tension']} ({tension_band(r['tension'])})"
+                         + (" · 기준선" if baseline else "")
                          + (f" — {r['stance']}" if r.get("stance") else ""))
+        else:
+            lines.append(f"⚠️ 관계: {key} — 저장 실패")
     return lines
 
 
@@ -2496,7 +2800,7 @@ _NPC_SIDE_DOMAINS = ("npc_knowledge", "npc_imprints")
 #   그래서 08-02에 신설된 `npc_soma_states`가 두 자리 모두에서 빠졌다
 #   (오프스테이지 잔존이 붙은 뒤로는 지워지지도 않는 영구 고아).
 #   목록을 만들어 둔다 — 다음에 world_state 하위 NPC 저장소가 늘면 여기만 고친다.
-_NPC_SIDE_WORLD_KEYS = ("npc_emotion_states", "npc_soma_states")
+_NPC_SIDE_WORLD_KEYS = ("npc_emotion_states", "npc_soma_states", "npc_relation_states")   # [2026-10-07] 관계 지난 턴 상태
 
 
 def migrate_npc_side_data(channel_id: str, old_name: str, new_name: str) -> list:
@@ -3074,6 +3378,8 @@ def apply_ooc_sheet_edits(channel_id: str, uid: str, edits: List[Dict[str, Any]]
             act = str(e.get("action") or "set")
             if wiki_store.edit_lore_section(channel_id, pid, sec, str(e.get("value") or ""), action=act):
                 out.append(f"📄 {sec} {act}")
+            else:
+                out.append(f"⚠️ 시트 {sec} {act} — 적용하지 못했어")   # [2026-09-26 O10] 실패도 되비친다
     except Exception as _e:
         logging.error(f"[OOC] 시트 절 편집 실패: {_e}")
     return out
@@ -3086,7 +3392,7 @@ def get_unified_player_info(channel_id: str, user_id: str, *, shape: str = "rend
     - 상태 이상
     - 특질 (이름 + 설명)
     - 관계 (단계명 + 태도)
-    - 기력/평정
+    - 활력/평형
     - 알고 있는 정보
     - 노트북
     """
@@ -3138,7 +3444,7 @@ def get_unified_player_info(channel_id: str, user_id: str, *, shape: str = "rend
     rel_text = ", ".join(rel_parts) if rel_parts else "None"
 
     # 5. Vigor/Composure Status
-    # [2026-08-18 Phase 2.5] 기력 = 레지스트리 값(custom_var_values["기력"][uid]). 표시 무변경.
+    # [2026-08-18 Phase 2.5] 활력 = 레지스트리 값(custom_var_values["활력"][uid]). 표시 무변경.
     vigor = mem.get("vigor", mem.get("mental", {}))
     try:
         import custom_vars as _cv_pb
@@ -3154,7 +3460,9 @@ def get_unified_player_info(channel_id: str, user_id: str, *, shape: str = "rend
         composure_val = _cv_pb2.composure_value(channel_id, user_id, mem)
     except Exception:
         composure_val = composure.get("value", 100)
-    vc_text = f"기력 {vigor_val}/100 | 평정 {composure_val}/100"
+    # [2026-10-06 어휘 V5] 표시 이름 = 활력/평형(vigor_composure_rebrand_log 결정). 옛 활력/평정이 남아
+    #   Real_Time_Status(game_world "활력 N | 평형 N")와 같은 값을 두 이름으로 보냈다 — 08-28 Doom N과 같은 결함.
+    vc_text = f"활력 {vigor_val}/100 | 평형 {composure_val}/100"
 
     # 6. Known Info (PC가 알고 있는 정보)
     known_info = mem.get("known_info", [])
@@ -3178,7 +3486,9 @@ def get_unified_player_info(channel_id: str, user_id: str, *, shape: str = "rend
         lines.append(f"- Known Info: {ki_text}")
     lines.append(f"- Sheet:\n{desc_text}")
     lines.append(f"\n### 📓 Player Notebook (Inventory & Memos)\n{notebook}")
-    lines.append(f"\n⚠️ CRITICAL: YOU ARE THE GM. {name} IS THE PLAYER.\nDO NOT speak for {name}. DO NOT describe {name}'s actions.\nOnly describe the world's reaction to {name}.")
+    # [2026-09-29 배치1 C7] 봉인 = 대사(레티어스). 옛 'DO NOT describe actions / only world's reaction' 제거.
+    # [2026-09-29 반죽 후속] 대사 절까지 삭제 — PC 봉인의 집 = RB_PC(Slot 3), 뒤를 PC 사칭 검출기
+    #   (response_processor, 하우스 형식·괄호 병기 마스크 수리)가 받친다. 레티어스 "대사 막기 잘 되면 지워도 된다".
     return "\n".join(lines)
 
 # =========================================================
@@ -3413,13 +3723,13 @@ def toggle_module(channel_id: str, module_name: str, active: bool) -> None:
                     disabled_modules=sorted(disabled))
 
 def is_vigor_composure_active(channel_id: str) -> bool:
-    """기력/평형(활력/평형) 모듈 활성 여부.
+    """활력/평형 모듈 활성 여부.
     명시적으로 끄지 않은 한 항상 ON (기본 True → 레거시 채널 무손실)."""
     d = get_domain(channel_id)
     return bool(d.get("settings", {}).get("vigor_composure_enabled", True))
 
 def set_vigor_composure_active(channel_id: str, active: bool) -> None:
-    """기력/평형 모듈을 채널 단위로 켜고 끈다.
+    """활력/평형 모듈을 채널 단위로 켜고 끈다.
     off면 파이프라인 prime/process 스킵 + 프롬프트 주입 스킵 (수치 동결)."""
     update_settings(channel_id, vigor_composure_enabled=bool(active))
 
@@ -3935,7 +4245,7 @@ def reset_session_state(channel_id: str) -> None:
         logging.debug(f"[Wiki] forget_channel_recall skipped: {_e}")
 
     # 5. Reset Participant Runtime State (vigor/composure/notebook — 로어 프로필은 유지)
-    # [2026-08-18 Phase 2.5] 기력의 정본은 레지스트리로 옮겨갔다.
+    # [2026-08-18 Phase 2.5] 활력의 정본은 레지스트리로 옮겨갔다.
     #   (옛 자리는 계속 100으로 되돌린다: 레지스트리 off 채널의 폴백값이라 같이 리셋돼야 한다.)
     # [2026-09-06 P7 삭제] 여기 있던 레지스트리 값 비우기 한 줄은 **no-op** 였다 —
     #   2단(위)에서 world_state 를 DEFAULT 사본으로 통째 갈아엎은 뒤라 값 층 자체가 이미 없다.

@@ -310,9 +310,19 @@ def _ensure_schema(channel_id: str = "") -> bool:
                     kind        TEXT,
                     last_turn   INTEGER,
                     history     TEXT NOT NULL DEFAULT '[]',
+                    base_bond   INTEGER NOT NULL DEFAULT 0,
+                    base_tension INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (channel_id, source, target)
                 )
             """)
+            # [2026-09-26 관계 시작값 S7] 기준선(시작값) 칸 — 감쇠 목표. 옛 DB 는 ALTER(있으면 실패→무시).
+            #   채움 없음: 옛 history 의 seed 항목엔 09-24 이전 제3자 서술 오시드(+55)가 섞여 있을 수 있다 →
+            #   옛 엣지는 기준선 0(= 종전 동작). 새 시드·OOC baseline 부터 기준선이 선다.
+            for _bcol in ("base_bond", "base_tension"):
+                try:
+                    conn.execute(f"ALTER TABLE relations ADD COLUMN {_bcol} INTEGER NOT NULL DEFAULT 0")
+                except Exception:
+                    pass
             conn.execute("CREATE INDEX IF NOT EXISTS idx_rel_edges_target ON relations(channel_id, target)")
             conn.execute("DROP TABLE IF EXISTS npc_relations")
             # [V10 Sprint 2-A] NPC 지식 테이블 (v10_sprint2_npc_spec.md §A-3)
@@ -833,7 +843,8 @@ def count_sessions() -> int:
 # 전 함수 예외 안전: 실패 시 None/[]/0, 절대 raise 안 함.
 #   upsert_edge  — 쓰기 관문 하나. 클램프(턴당 캡은 origin="theoria"만) + 하드 범위 + history.
 #   get_edges    — 읽기 하나. source/target 필터.
-#   decay_edges  — 감쇠 하나. last_turn 시계, bond→0 수렴, tension 하한 0.
+#   decay_edges  — 감쇠 하나. last_turn 시계, bond→기준선 수렴, tension→기준선(내려갈 때만).
+#   기준선(base_bond/base_tension) = 시작값 — origin=seed 쓰기와 set_base=True(OOC baseline)만 쓴다(09-26 S7).
 # `origin` = 누가 썼나(theoria/batch/ooc/seed/npc_sheet_initial/rename…) — 엣지의 `source` 칸
 #   (관계 주체)과 이름이 겹쳐 인자명을 달리했다. history 항목엔 `source` 키로 적는다(설계 §2).
 # =========================================================
@@ -843,7 +854,8 @@ EDGE_CAPPED_ORIGINS = ("theoria",)          # 턴당 이동폭 캡 대상 — LL
 EDGE_BOND_STEP_CAP = 5                       # |Δbond| ≤ 5 / 턴
 EDGE_TENSION_UP_CAP = 10                     # Δtension ≤ +10 / 턴
 EDGE_TENSION_DOWN_CAP = 5                    # Δtension ≥ −5 / 턴
-_EDGE_COLS = "source, target, bond, tension, stance, kind, last_turn, history"
+EDGE_BASE_ORIGINS = ("seed",)               # 이 origin 의 쓰기는 기준선도 같이 쓴다(시작값 = 기준선)
+_EDGE_COLS = "source, target, bond, tension, stance, kind, last_turn, history, base_bond, base_tension"
 
 
 def _edge_row(row) -> Dict[str, Any]:
@@ -855,7 +867,9 @@ def _edge_row(row) -> Dict[str, Any]:
         hist = []
     return {"source": row[0], "target": row[1], "bond": int(row[2] or 0),
             "tension": int(row[3] or 0), "stance": row[4] or "", "kind": row[5],
-            "last_turn": row[6], "history": hist}
+            "last_turn": row[6], "history": hist,
+            "base_bond": int((row[8] if len(row) > 8 else 0) or 0),
+            "base_tension": int((row[9] if len(row) > 9 else 0) or 0)}
 
 
 def _clamp_int(v, lo, hi):
@@ -944,8 +958,12 @@ def edge_step_values(existing: Optional[Dict[str, Any]], turn: int,
 def upsert_edge(channel_id: str, source: str, target: str, *,
                 bond: Optional[int] = None, tension: Optional[int] = None,
                 stance: Optional[str] = None, kind: Optional[str] = None,
-                turn: Optional[int] = None, origin: str = "theoria") -> Optional[Dict[str, Any]]:
+                turn: Optional[int] = None, origin: str = "theoria",
+                set_base: bool = False) -> Optional[Dict[str, Any]]:
     """엣지 1행 upsert — 관계 쓰기의 유일한 관문. 쓰인 최종 엣지 dict 반환(실패 None).
+
+    - [2026-09-26 S7] set_base=True 또는 origin ∈ EDGE_BASE_ORIGINS(seed) → 이번에 쓴 값이 기준선도 된다.
+      그 밖엔 기준선 유지(새 엣지면 0). Theoria·배치는 기준선을 절대 안 건드린다.
 
     - None 인자는 "이 칸은 안 건드림"(기존 값 유지, 새 엣지면 0/''/NULL).
     - 하드 클램프(전 origin): bond −100~+100, tension 0~100.
@@ -968,7 +986,12 @@ def upsert_edge(channel_id: str, source: str, target: str, *,
             "kind": (existing or {}).get("kind") if kind is None else kind,
             "last_turn": t,
             "history": list((existing or {}).get("history") or []),
+            "base_bond": (existing or {}).get("base_bond", 0),
+            "base_tension": (existing or {}).get("base_tension", 0),
         }
+        _set_base = bool(set_base) or origin in EDGE_BASE_ORIGINS
+        if _set_base:
+            payload["base_bond"], payload["base_tension"] = new_b, new_t
         clean = state_guards.validate_edge_write(source, target, payload)
         if clean is None:
             return None
@@ -985,19 +1008,26 @@ def upsert_edge(channel_id: str, source: str, target: str, *,
         if conn is None:
             return None
         conn.execute(
-            "INSERT INTO relations (channel_id, source, target, bond, tension, stance, kind, last_turn, history) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "INSERT INTO relations (channel_id, source, target, bond, tension, stance, kind, last_turn, history, "
+            "base_bond, base_tension) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(channel_id, source, target) DO UPDATE SET bond=excluded.bond, "
             "tension=excluded.tension, stance=excluded.stance, kind=excluded.kind, "
-            "last_turn=excluded.last_turn, history=excluded.history",
+            "last_turn=excluded.last_turn, history=excluded.history, "
+            "base_bond=excluded.base_bond, base_tension=excluded.base_tension",
             (channel_id, clean["source"], clean["target"], clean["bond"], clean["tension"],
              clean["stance"], clean["kind"], clean["last_turn"],
-             json.dumps(clean["history"], ensure_ascii=False)),
+             json.dumps(clean["history"], ensure_ascii=False),
+             clean["base_bond"], clean["base_tension"]),
         )
         conn.commit()
         if existing is None or existing["bond"] != clean["bond"] or existing["tension"] != clean["tension"]:
             logger.info("[Relation] %s->%s bond %s→%s tension %s→%s origin=%s",
                         source, target, cur_b, clean["bond"], cur_t, clean["tension"], origin)
+        if _set_base and (existing is None or existing.get("base_bond", 0) != clean["base_bond"]
+                          or existing.get("base_tension", 0) != clean["base_tension"]):
+            logger.info("[Relation] %s->%s baseline bond %s / tension %s origin=%s",
+                        source, target, clean["base_bond"], clean["base_tension"], origin)
         return clean
     except Exception as e:
         logger.warning(f"[SQLiteStore] upsert_edge 실패 (무시): {channel_id}/{source}->{target}: {e}")
@@ -1008,7 +1038,9 @@ def decay_edges(channel_id: str, turn: int) -> int:
     """감쇠 하나 — last_turn(마지막 관측) 기준.
 
     grace(config.RELATION_DECAY_GRACE) 턴을 넘겨 안 관측된 엣지는
-    bond가 0으로 턴당 RELATION_DECAY_DEPTH(1)씩, tension이 RELATION_DECAY_TENSION(2)씩 내려간다(하한 0).
+    bond가 **기준선**(base_bond, 기본 0)으로 턴당 RELATION_DECAY_DEPTH(1)씩(위·아래 양쪽에서),
+    tension이 RELATION_DECAY_TENSION(2)씩 **기준선까지 내려간다**(기준선 아래면 그대로 — 부재가 갈등을 되살리진 않는다).
+    [2026-09-26 S7] 기준선 = 시작값. 옛 엣지(기준선 0)는 종전과 같다.
     ★멱등: 기준점은 마지막 관측값(history[-1])이고 이동폭은 경과 턴에서 계산한다 — 같은 턴에
       두 번 불려도 두 번 깎이지 않는다. 감쇠는 history에 안 적는다(관측이 아니다), last_turn도 안 민다.
     끄기: RELATION_DECAY_GRACE = 0. Returns: 값이 바뀐 엣지 수."""
@@ -1032,8 +1064,10 @@ def decay_edges(channel_id: str, turn: int) -> int:
             hist = e.get("history") or []
             anchor = hist[-1] if hist and isinstance(hist[-1], dict) else {"bond": e["bond"], "tension": e["tension"]}
             ab, at = int(anchor.get("bond", 0) or 0), int(anchor.get("tension", 0) or 0)
-            nb = (1 if ab > 0 else -1) * max(0, abs(ab) - b_step * steps)
-            nt = max(0, at - t_step * steps)
+            bb, bt = int(e.get("base_bond", 0) or 0), int(e.get("base_tension", 0) or 0)
+            _mv = b_step * steps
+            nb = max(bb, ab - _mv) if ab > bb else (min(bb, ab + _mv) if ab < bb else ab)
+            nt = max(bt, at - t_step * steps) if at > bt else at
             if nb == e["bond"] and nt == e["tension"]:
                 continue
             conn.execute("UPDATE relations SET bond=?, tension=? WHERE channel_id=? AND source=? AND target=?",
@@ -1066,10 +1100,11 @@ def rename_edge_entity(channel_id: str, old: str, new: str) -> int:
             if ns == nt:
                 continue
             conn.execute(
-                "INSERT OR IGNORE INTO relations (channel_id, source, target, bond, tension, stance, kind, last_turn, history) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT OR IGNORE INTO relations (channel_id, source, target, bond, tension, stance, kind, last_turn, history, "
+                "base_bond, base_tension) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (channel_id, ns, nt, e["bond"], e["tension"], e["stance"], e["kind"], e["last_turn"],
-                 json.dumps(e["history"], ensure_ascii=False)))
+                 json.dumps(e["history"], ensure_ascii=False),
+                 e.get("base_bond", 0), e.get("base_tension", 0)))
             moved += 1
         conn.commit()
     except Exception as ex:

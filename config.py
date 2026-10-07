@@ -49,13 +49,18 @@ RENDERER_BACKEND = os.getenv("RENDERER_BACKEND", "openai").lower()
 OPENAI_API_KEY = os.getenv("OPENAI_RENDERER_API_KEY", "")  # ollama.com/settings/keys 키 env로
 OPENAI_BASE_URL = os.getenv("OPENAI_RENDERER_BASE_URL", "https://ollama.com/v1")
 OPENAI_MODEL_ID = os.getenv("OPENAI_RENDERER_MODEL", "")
-# OpenAI-compatible generation parameters (top_k 미지원 → frequency/presence_penalty로 보정)
-OPENAI_TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", "0.8"))  # 추론 ON 시 0.7~0.8 권장(추론이 탐색 담당 → 출력은 일관성)
-OPENAI_TOP_P = float(os.getenv("OPENAI_TOP_P", "0.80"))
-OPENAI_FREQUENCY_PENALTY = float(os.getenv("OPENAI_FREQUENCY_PENALTY", "0.3"))
+# OpenAI-compatible generation parameters — 렌더 전용(persona.py 렌더 어댑터만 읽는다).
+# [2026-10-02] 추론 켬 기준값 = DeepSeek 공식 영역: 온도 1.0 / top_p 0.95 / 페널티 0.
+#   DeepSeek API thinking_mode 문서: 추론 모드는 temperature·presence_penalty·frequency_penalty를 받지 않고,
+#   top_p는 0.95–1.0만 받는다(아래 값은 0.95로 처리). 옛 값 0.8 / 0.8 / 0.3 / 0.1은 그 영역 밖이었다.
+#   리플레이 측정: 옛 값 폭주 5/20 → 공식 영역 0/28. 근거 analysis_line/딥식V4_추론루프_자료조사_2026-10-01.md §5,
+#   스펙 composition/렌더샘플링_공식영역_스펙_2026-10-02.md. top_k는 Ollama /v1 미지원이라 싣지 않는다.
+OPENAI_TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", "1.0"))
+OPENAI_TOP_P = float(os.getenv("OPENAI_TOP_P", "0.95"))
+OPENAI_FREQUENCY_PENALTY = float(os.getenv("OPENAI_FREQUENCY_PENALTY", "0"))
 OPENAI_TOP_K = int(os.getenv("OPENAI_TOP_K", "40"))
 OPENAI_REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "high")  # none / low / medium / high — Ollama /v1 reasoning_effort로 전송(thinking 모델만 발동)
-OPENAI_PRESENCE_PENALTY = float(os.getenv("OPENAI_PRESENCE_PENALTY", "0.1"))
+OPENAI_PRESENCE_PENALTY = float(os.getenv("OPENAI_PRESENCE_PENALTY", "0"))
 
 # =========================================================
 # Analysis Backend (좌뇌/Flash) — Gemini vs OpenAI 호환(wellspring DeepSeek)
@@ -180,7 +185,10 @@ ANALYSIS_LIGHT_VAR = contextvars.ContextVar("analysis_light_call", default=False
 # .env 는 키 + 모델 ID 만. "어느 role 이 어느 tier" 는 여기 코드 기본값(off/light/deep).
 # 모델을 GLM(high/max only) · deepseek(none/high/max) · 기타로 교체해도 policy 가 흡수한다.
 # (위의 OPENAI_REASONING_EFFORT / ANALYSIS_OPENAI_REASONING_EFFORT* 는 레거시 — 이제 미사용.)
-RENDERER_REASONING_TIER = os.getenv("RENDERER_REASONING_TIER", "off")               # 코드 기본 off. [2026-07-05 GLM 스왑] .env가 light로 상향 — 추론+TELESCOPE 병행(제미니 시절 원 구조 복원). 캡은 persona 배선
+# [2026-10-02] 렌더 기본 = deep(→ reasoning_effort "high", DeepSeek 기본값). 리플레이 품질 비교에서 high가 정합·물리 사슬을
+#   더 따졌다(추론 ~3할 길어짐, 폭주 0/5) — 레티어스 "하이로". 근거 composition/렌더샘플링_공식영역_스펙_2026-10-02.md §4.
+#   ⚠ .env에 RENDERER_REASONING_TIER 줄(현재 light)이 있으면 이 기본값을 덮는다 — 그 줄을 지워야 high가 된다.
+RENDERER_REASONING_TIER = os.getenv("RENDERER_REASONING_TIER", "deep")              # [10-02 이전] 코드 기본 off. [2026-07-05 GLM 스왑] .env가 light로 상향 — 추론+TELESCOPE 병행(제미니 시절 원 구조 복원). 캡은 persona 배선
 # 렌더 전용 추론 캡(문자). 분석 light(1200)와 분리 — 1턴 실측 ~1900자에서 결과 좋았고(V1 갭 닫힘)
 # GLM RP 강점=thinking 결합이라 렌더만 소폭 상향(레티어스 2026-07-05). 0=tier 기본값(1200) 사용.
 # [2026-08-01] 2000 → 3500. KOREAN PROSE 3단 변환(영→일→한) 배포에 따른 실행 공간 확보:
@@ -194,7 +202,7 @@ RENDERER_REASONING_TIER = os.getenv("RENDERER_REASONING_TIER", "off")           
 #   ARC_EXPECTED_VOLUME_LENGTH 주석) → 1500~2000 추가 ≈ 3800~5200. 5000 = 그 상단(레티어스: 초안 작성은
 #   "생각 금지"와 다른 것 — 캡이 초안 자리를 먹으면 안 된다). V4-Pro 폭주 구간(7.6k~)과는 여전히 거리.
 #   max_tokens(NARRATIVE_MAX_OUTPUT_TOKENS 16384)가 추론을 포함해도 추론 ~5k자 + 출력 ~3k자로 여유.
-RENDERER_REASONING_CAP_CHARS = int(os.getenv("RENDERER_REASONING_CAP_CHARS", "5000"))
+RENDERER_REASONING_CAP_CHARS = int(os.getenv("RENDERER_REASONING_CAP_CHARS", "5000"))  # [2026-10-01 1차] 읽는 곳 0 — 렌더 추론 앵커·꼬리 캡 삭제(분석렌더_1차_구현스펙 §5)
 ANALYSIS_REASONING_TIER = os.getenv("ANALYSIS_REASONING_TIER", "light")             # 보조 per-turn 분석 = LIGHT (추론 ON)
 ANALYSIS_REASONING_TIER_HEAVY = os.getenv("ANALYSIS_REASONING_TIER_HEAVY", "deep")  # 1회성 무거운 추출 = DEEP
 
@@ -617,6 +625,14 @@ REL_TENSION_SHIFT = {"spikes": 10, "rises": 5, "holds": 0, "eases": -5}
 #   NPC↔NPC(배치 npc_relations): 새 관계 세기 → |bond|, 기존 관계 이동 → ±|bond|.
 REL_PAIR_STRENGTH = {"faint": 25, "clear": 50, "strong": 75}
 REL_PAIR_SHIFT = {"deepens": 10, "weakens": -10}
+# [2026-09-26 관계 시작값] 시작점 말 → 숫자. 어휘 = 4b `Stands:` 구간 이름(attitude_from_bond) · 마찰 구간(tension_band).
+#   양 끝 ±70: 구간 가운데(±80)가 아니라 오를 여지를 남긴 자리(70도 devoted 구간 안). OOC 말 입력(stands/friction)도 이 표.
+#   스펙 파티쳇수정/state_v10/relation_start_ooc_spec_v0.1_2026-09-26.md §1 S2
+REL_START_BOND = {"devoted": 70, "friendly": 40, "neutral": 0, "unfriendly": -40, "hostile": -70}
+REL_START_TENSION = {"low": 10, "strained": 35, "high": 65, "breaking": 85}
+RELATION_START_MAX_NPCS = 4       # Theoria 4b "no record yet" 줄을 받는 NPC 상한(장면>근처>입력>히스토리 순)
+RELATION_START_LINE_CHARS = 160   # PC를 가리키는 시트 문장 1개 길이 상한
+RELATION_START_MAX_LINES = 2      # NPC당 문장 수
 DEFAULT_LORE = "기본 세계관: 어두운 도시, 수수께끼의 사건들..."
 
 
@@ -760,13 +776,13 @@ ACTIVE_CONDITION_CAP = 3
 CONDITION_MOD_SCALE = {"Low": 2, "Mid": 4, "High": 7, "Extreme": 12}
 CONDITION_MOD_CAP = 15
 
-# 기력 Stages (0-100) — PC의 총체적 컨디션 (체력/집중/평판/정신)
+# 활력 Stages (0-100) — PC의 몸 축(체력·지구력). [2026-10-07] 옛 이름 기력·옛 정의 "총체적 컨디션"
 # Key: Stage ID (0-3)
 MENTAL_STAGES = {
-    0: {"name": "충만", "emoji": "😌", "range": (70, 101), "desc": "신체와 의지가 충실한 상태"},
+    0: {"name": "충만", "emoji": "😌", "range": (70, 101), "desc": "몸이 충실한 상태"},
     1: {"name": "둔화", "emoji": "😰", "range": (40, 70),  "desc": "출력이 느려지고 체력이 흔들립니다"},
     2: {"name": "고갈", "emoji": "😱", "range": (15, 40),  "desc": "한계에 가깝습니다. 판단과 행동이 둔해집니다"},
-    3: {"name": "붕괴", "emoji": "🫥", "range": (0, 15),   "desc": "신체와 의지가 한계를 넘겼습니다."}
+    3: {"name": "붕괴", "emoji": "🫥", "range": (0, 15),   "desc": "몸이 한계를 넘겼습니다."}
 }
 
 # DOOM_STAGES 제거 — LENS_DOOM_PHASE_RANGES + LENS_DOOM_ATMOSPHERE로 대체 (line 698~)
@@ -1105,6 +1121,7 @@ NPC_STATUS_IRREVERSIBLE = ("dead",)   # 이 값으로/에서 나가는 전이는
 #   시계 = 엣지 last_turn(마지막 관측). grace 턴 넘게 안 관측되면 bond는 0으로 수렴, tension은 하한 0.
 #   **삭제가 아니라 흐려짐**(엣지는 남는다). 끄기: RELATION_DECAY_GRACE = 0.
 #   (구: npc_attitudes depth/tension 감쇠 + entity_relations intensity fade 둘 따로, 시계도 달랐다.)
+# [2026-09-26 S7] 감쇠 목표 = 엣지 기준선(base_bond/base_tension — 시작값). 기준선 0이면 옛 동작(0 수렴) 그대로.
 RELATION_DECAY_GRACE = 10      # 이 턴 수만큼 무관측이면 그때부터 감쇠 (0 = 기능 끔)
 RELATION_DECAY_DEPTH = 1       # 감쇠 턴당 |bond| 하락폭 (0 쪽으로)
 RELATION_DECAY_TENSION = 2     # tension은 더 빨리 식는다 (갈등은 관계보다 휘발성)
@@ -1250,10 +1267,12 @@ PIPELINE_DEGRADATION = {
 # =========================================================
 SEVEN_DICE = {
     # 가시 3개: 능동적 창작 마찰 (AGELAST 원본의 구문 제약 계열 — Slot 19로 라우팅)
-    "agon":    {"name": "Agon/적",     "visible": True,  "effect": "이번 응답에서 NPC 대사 최소 한 줄은 의문문으로. 명제문 비중 축소."},
-    "alea":    {"name": "Alea/운",     "visible": True,  "effect": "장면에 예정되지 않았던 사물·소리·기척 하나를 불쑥 등장시킨다."},
-    "mimicry": {"name": "Mimicry/역할", "visible": True,  "effect": "감각 왜곡 하나를 삽입한다 — 시점 전환·시간 감각·색 편향·공감각 중 자유 선택."},
-    # 은닉 4개: 수동적/부재의 힘
+    # [2026-09-29 배치2 2a-4] 가시 3면 효과문 → 영어 값(턴 존의 다른 값과 같은 언어). 뜻은 그대로.
+    #   Agon은 slot_manager `_any_speaking_npc` 게이트를 지난 턴에만 실린다.
+    "agon":    {"name": "Agon/적",     "visible": True,  "effect": "At least one NPC line this turn is a question; flat statements thin out."},
+    "alea":    {"name": "Alea/운",     "visible": True,  "effect": "One object, sound, or presence the scene had not planned enters."},
+    "mimicry": {"name": "Mimicry/역할", "visible": True,  "effect": "One sensory distortion enters: a POV shift, a slip in time sense, a colour bias, or synaesthesia."},
+    # 은닉 4개: 수동적/부재의 힘 — [2026-09-29 배치2 2a-3] 프롬프트에 싣지 않는다(굴림·기록 전용).
     "silence": {"name": "Silence/침묵", "visible": False, "effect": "말해야 할 NPC가 침묵. 행동해야 할 순간에 부재. 빈자리가 이야기."},
     "broken":  {"name": "Broken/오류",  "visible": False, "effect": "시스템 규칙의 예상치 못한 상호작용이 서사가 된다."},
     "ghost":   {"name": "Ghost/유령",   "visible": False, "effect": "하지 않은 행동의 결과가 분위기로 스며든다. 대안 현실의 잔향."},
@@ -1313,7 +1332,7 @@ STATUS_EFFECTS = {
     "혼란": {"type": "debuff", "severity": 1},
     
     # Buffs
-    "활력": {"type": "buff", "severity": 0},
+    "고양": {"type": "buff", "severity": 0},   # [2026-10-07 B6] 옛 "활력" — 게이지 이름과 겹쳐 개명
     "방어태세": {"type": "buff", "severity": 0},
     "집중": {"type": "buff", "severity": 0},
     "은신": {"type": "buff", "severity": 0},
@@ -1325,6 +1344,10 @@ STATUS_EFFECTS = {
 
 # Status Effects v3 (Structured)
 DURATION_TYPES = {"persistent", "turns", "scene", "until_rest", "until_recovery"}
+
+# [2026-10-07 활력평형 B6] 저장돼 있던 옛 버프 → 새 이름. game_character._normalize_effect_dict 가 읽을 때 바꾼다.
+STATUS_TAG_RENAMES = {"vigor": "inspired"}
+STATUS_NAME_RENAMES = {"활력": "고양"}
 
 # Default severity modifiers (used when an effect doesn't define modifiers)
 SEVERITY_EFFECTS = {
@@ -1354,7 +1377,7 @@ STATUS_TAGS = {
     "confusion": {"name": "혼란", "type": "debuff", "severity": 1, "modifiers": {"judgment": -5}},
 
     # Buffs
-    "vigor": {"name": "활력", "type": "buff", "severity": 0, "modifiers": {"judgment": 5}},
+    "inspired": {"name": "고양", "type": "buff", "severity": 0, "modifiers": {"judgment": 5}},   # [2026-10-07 B6] 옛 tag vigor·이름 활력
     "defensive_stance": {"name": "방어태세", "type": "buff", "severity": 0, "modifiers": {"judgment_combat": 5}},
     "focus": {"name": "집중", "type": "buff", "severity": 0, "modifiers": {"judgment": 5}},
     "stealth": {"name": "은신", "type": "buff", "severity": 0, "modifiers": {"judgment": 5}},
@@ -1381,7 +1404,8 @@ LEGACY_TAG_MAP = {
     "탈진": "exhaustion",
     "기절": "stunned",
     "혼란": "confusion",
-    "활력": "vigor",
+    "고양": "inspired",
+    "활력": "inspired",   # [2026-10-07 B6] 옛 버프 이름 입력 호환(게이지 활력과는 다른 것 — 상태효과 표 안에서만)
     "방어태세": "defensive_stance",
     "집중": "focus",
     "은신": "stealth",
@@ -1453,66 +1477,71 @@ LENS_DOOM_CURVE = {
 }
 
 # Atmosphere block (산문 주입의 진짜 매체). suture_tone 패턴 — multi-line directive.
+# [2026-10-06 어휘 V3] 서술 결을 말하는 줄의 라벨 "Voice" → "Narration"(정적 규칙에서 Voice = 인물 목소리,
+#   narration = 서술자의 글). 느와르 起·承·轉의 "present-tense"/"present" 삭제 — 추론 43%가 시제를 저울질했고
+#   과거형 히스토리 위에서 현재형으로 뒤집힌 판이 나왔다(산문 4.4%, 그중 87%가 이 줄 인용).
+#   인물 말을 그리는 줄(romance 結 "Voice softening — first direct utterance…")은 Voice 유지.
+#   스펙 composition/어휘엇갈림·이중주입_수리스펙_2026-10-06.md §2.1.
 # 4원리 적용: state-only (no imperatives), no negation, typological palette, no author names.
 # 다중 lens 활성 시 양쪽 block 모두 노출 + "neither erases" hybrid 디렉티브 (une_facade 처리).
 LENS_DOOM_ATMOSPHERE = {
     "noir": {
         "起": ("Surface routine over latent currents. Information moving below speech.\n"
-              "Voice: present-tense, hardboiled. Direct, kinetic, terse.\n"
+              "Narration: hardboiled. Direct, kinetic, terse.\n"
               "Procedural moments carrying weight beyond their surface."),
         "承": ("A name dropped with weight. Eye contact extending past comfort.\n"
               "Information surfacing as currency. Watching becomes mutual.\n"
-              "Voice: present-tense, kinetic. Black humor under pressure."),
+              "Narration: kinetic. Black humor under pressure."),
         "轉": ("Surveillance closing in. Paths narrowing. Pressure amplifying through quiet.\n"
-              "Voice: hardboiled, present, kinetic. Black humor as armor.\n"
+              "Narration: hardboiled, kinetic. Black humor as armor.\n"
               "Procedural moments carrying menace. Information as weapon."),
         "結": ("Cold reveal in stark light. Information landing as betrayal as recognition.\n"
               "Clipped dialogue. Cuts that hit.\n"
               "Truth surfacing through evidence and pressure."),
         "間": ("Aftermath absorbing into routine. Tension receding.\n"
-              "Voice still present but lower. Scars settling.\n"
+              "Narration lower now, still hardboiled. Scars settling.\n"
               "New stories already moving beneath surfaces."),
     },
     "comedy": {
         "起": ("Easy rhythms, predictable beats. Small obstacles played for warmth.\n"
-              "Voice: theatrical, attentive to incongruity. Light tone holding.\n"
+              "Narration: theatrical, attentive to incongruity. Light tone holding.\n"
               "Body humor and verbal wit in equal measure."),
         "承": ("Small fictions multiplying. Schedules colliding under their own logic.\n"
-              "Voice still light but quicker. Wit sharpening through pressure.\n"
+              "Narration still light but quicker. Wit sharpening through pressure.\n"
               "Audience seeing more than the players. Sympathy and ridicule intertwined."),
         "轉": ("Cover stories spawning new layers. Each fix introducing two new tangles.\n"
-              "Voice accelerating. Body humor amplifying — slips, doubles, mistimings.\n"
+              "Narration accelerating. Body humor amplifying — slips, doubles, mistimings.\n"
               "Absurdity peaking. Characters caught in their own webs."),
         "結": ("Peak chaos. Masks slipping in overlapping confrontations.\n"
-              "Voice fastest, theatrical and self-aware. Body humor at maximum.\n"
+              "Narration fastest, theatrical and self-aware. Body humor at maximum.\n"
               "Recognition through absurdity itself. Laughter as resolution mechanism."),
         "間": ("Aftermath played soft. Embarrassment lingering with warmth.\n"
-              "Voice settling, lighter again. Insight emerging through the absurd.\n"
+              "Narration settling, lighter again. Insight emerging through the absurd.\n"
               "What was uncovered moving into shared memory, easier now."),
     },
     "romance": {
         "起": ("Easy peace, days holding their shape. Glances starting to register.\n"
-              "Voice: free indirect, attentive to interiority. Restraint as default.\n"
+              "Narration: free indirect, attentive to interiority. Restraint as default.\n"
               "Internal weather setting in. Body cues registering before mind admits."),
         "承": ("Attraction sharpening. Banter carrying weight under wit.\n"
               "Withholding louder than utterance. Restraint shaping every choice.\n"
               "Internal weather thickening. Shared air growing dense."),
         "轉": ("The misunderstanding crystallizing. Distance opening through what was unsaid.\n"
-              "Voice still restrained, more so. Internal storm beneath the calm exterior.\n"
+              "Narration still restrained, more so. Internal storm beneath the calm exterior.\n"
               "Time stretching across the held silence. Long dwell before any movement."),
         "結": ("The decisive vulnerability. Restraint giving way through gesture.\n"
               "Voice softening — first direct utterance carrying weight built across the dwell.\n"
               "Body and word arriving together. Recognition through declared feeling."),
         "間": ("A new equilibrium. Internal weather settled but altered.\n"
-              "Voice quieter, intimate now. Shared atmosphere thickening into permanence.\n"
+              "Narration quieter, intimate now. Shared atmosphere thickening into permanence.\n"
               "What was declared moving into shared body of routine."),
     },
     "drama": {
         "起": ("Quiet inhabited atmosphere. Routine has its own gravity.\n"
-              "Voice: restrained, attentive. Observation-led.\n"
+              "Narration: restrained, attentive. Observation-led.\n"
               "Body knowing before mind notices. Small details bearing the weight."),
         "承": ("Subtle dissonance under a restrained surface. Atmosphere a slow barometer.\n"
-              "Voice carrying restraint. Observation-led.\n"
+              "Narration carrying restraint. Observation-led.\n"
               "Silence speaking louder than utterance."),
         "轉": ("Quiet recognition through muted gesture. Meaning slipping sideways.\n"
               "Time stretching around the moment of seeing. The dwell holds.\n"
@@ -1521,7 +1550,7 @@ LENS_DOOM_ATMOSPHERE = {
               "Body bearing what stays outside speech. Restraint holding.\n"
               "Quiet resolution; the thing becoming known."),
         "間": ("The residue of recognition. Familiar surfaces engaged differently after seeing.\n"
-              "Voice quieter still. Body remembering, anchored in itself.\n"
+              "Narration quieter still. Body remembering, anchored in itself.\n"
               "What was learned moving into bone."),
     },
     "default": {
@@ -1681,7 +1710,7 @@ def get_lens_atmosphere(lens: str, phase: str) -> str:
 # =========================================================
 # Vigor / Composure 2-Axis System (v3.0)
 # =========================================================
-# Vigor = 기력 (신체 + 의지): 전투, 부상, 수면 부족, 과로, 공포
+# Vigor = 활력 (몸 축): 전투, 부상, 수면 부족, 과로 — [2026-10-07] 의지·공포는 평형 축
 # Composure = 평정 (정신 + 사회): 정신 충격, 배신, 수치, 고립, 정보 과부하
 
 # VIGOR_STAGES alias 제거 (2026-07-06 감사): 소비자 0. 단계 판정은 vigor_composure._get_stage.
@@ -1722,7 +1751,7 @@ GENRE_DISRUPTION_AXIS = {
         "defense_theory": "Nunchi+Chaemyeon",
         "trigger_bonus": -5,
         "secondary_ratio": 0.3,
-        "desc": "감정적 혼란과 사회적 압박이 평정을 흔든다",
+        "desc": "감정적 혼란과 사회적 압박이 평형을 흔든다",
     },
     "comedy": {
         "primary_axis": "composure",
@@ -1730,7 +1759,7 @@ GENRE_DISRUPTION_AXIS = {
         "defense_theory": "Chaemyeon+Goffman",
         "trigger_bonus": 5,
         "secondary_ratio": 0.2,
-        "desc": "체면 위기와 상황 폭주가 평정을 시험한다",
+        "desc": "체면 위기와 상황 폭주가 평형을 시험한다",
     },
     "noir": {
         "primary_axis": "composure",
@@ -1738,7 +1767,7 @@ GENRE_DISRUPTION_AXIS = {
         "defense_theory": "ToM+CoK+Statement",
         "trigger_bonus": 0,
         "secondary_ratio": 0.3,
-        "desc": "심리적 압박과 진실의 무게가 평정을 갉아먹는다",
+        "desc": "심리적 압박과 진실의 무게가 평형을 갉아먹는다",
     },
     "action": {
         "primary_axis": "vigor",
@@ -1746,7 +1775,7 @@ GENRE_DISRUPTION_AXIS = {
         "defense_theory": "Prospect+BATNA",
         "trigger_bonus": 5,
         "secondary_ratio": 0.3,
-        "desc": "물리적 위협과 전장의 혼란이 기력을 소모시킨다",
+        "desc": "물리적 위협과 전장의 혼란이 활력을 소모시킨다",
     },
     "slice_of_life": {
         "primary_axis": "composure",
@@ -1754,7 +1783,7 @@ GENRE_DISRUPTION_AXIS = {
         "defense_theory": "Lazarus+Reactance",
         "trigger_bonus": -10,
         "secondary_ratio": 0.2,
-        "desc": "일상의 변화와 자율성 위협이 평정을 흔든다",
+        "desc": "일상의 변화와 자율성 위협이 평형을 흔든다",
     },
 }
 
@@ -2078,9 +2107,9 @@ DLC_MODULE_DESCRIPTIONS = {
         "desc": "둠 수치에 비례해 예측 불가능한 사건 발생. 로어에 등록된 징후 우선."
     },
     "mental": {
-        "name": "기력",
+        "name": "활력",
         "emoji": "💪",
-        "desc": "PC의 총체적 컨디션 (체력/집중/평판/정신). 판정 보정·이변 방어에 영향."
+        "desc": "PC의 몸 축 — 체력·지구력. 마음 축은 평형. 판정 보정·이변 방어에 영향."
     }
 }
 

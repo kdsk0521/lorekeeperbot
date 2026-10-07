@@ -466,7 +466,7 @@ def _get_status_target_participant(channel_id: str, user_id: str = "") -> Dict[s
 
 
 def _get_status_target_uid(channel_id: str, user_id: str = "") -> str:
-    """위 함수와 **같은 고르기**의 user_id 판. per-PC 레지스트리 값(기력) 조회에 필요하다."""
+    """위 함수와 **같은 고르기**의 user_id 판. per-PC 레지스트리 값(활력) 조회에 필요하다."""
     participants = domain_manager.get_domain(channel_id).get("participants", {})
     if not isinstance(participants, dict):
         return ""
@@ -529,14 +529,14 @@ def build_real_time_display(
     legacy_mental = mem.get("mental", {}) if isinstance(mem, dict) else {}
     vigor_src = mem.get("vigor", legacy_mental) if isinstance(mem, dict) else {}
     composure_src = mem.get("composure", legacy_mental) if isinstance(mem, dict) else {}
-    # [2026-08-18 Phase 2.5] 기력 = 레지스트리 값. 이 줄의 모양은 그대로다(표시 무변경).
+    # [2026-08-18 Phase 2.5] 활력 = 레지스트리 값. 이 줄의 모양은 그대로다(표시 무변경).
     try:
         import custom_vars as _cv_v
         vigor_val = int(_cv_v.vigor_value(channel_id, _get_status_target_uid(channel_id, user_id), mem))
     except Exception as _e_cvv:
-        logger.debug(f"[CustomVar] 기력 표시 폴백: {_e_cvv}")
+        logger.debug(f"[CustomVar] 활력 표시 폴백: {_e_cvv}")
         vigor_val = int(vigor_src.get("value") if vigor_src.get("value") is not None else 100)  # [2026-09-24 감사] 0 보존
-    # [2026-09-06 P8b] 평형도 레지스트리 소유 — 기력과 같은 문을 쓴다(표기 무변경).
+    # [2026-09-06 P8b] 평형도 레지스트리 소유 — 활력과 같은 문을 쓴다(표기 무변경).
     try:
         composure_val = int(_cv_v.composure_value(channel_id, _get_status_target_uid(channel_id, user_id), mem))
     except Exception:

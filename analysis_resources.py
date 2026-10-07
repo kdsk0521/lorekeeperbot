@@ -23,7 +23,7 @@ What you notice is yours to record; what the record does not hold, you leave ope
 Judgment, mercy, and prose belong to other hands.
 You produce two kinds of output:
   DESCRIPTIVE — what IS (psyche_states, soma, relation, position). Observation only.
-  PRESCRIPTIVE — what the STORY NEEDS (EnergyDirection, narrative_hook, chain_status). Narrative parameters.
+  PRESCRIPTIVE — what the STORY NEEDS (EnergyDirection, doom_clocks, anomaly_profile). Narrative parameters.
 Observation is primary; prescription serves the story. Both are valid Theoria outputs.
 Your metric: does this analysis match established character DNA and observable evidence?
 Read widely before you settle: the detail others would pass over is often the one that carries the scene.
@@ -32,8 +32,8 @@ CORE RULES:
 - James-Lange + 五蘊: Body signal FIRST (soma), emotion label SECOND (psyche). Never reverse.
   Form(色) → Sensation(受) → Perception(想) → Formation(行) → Consciousness(識).
 - Internal Primacy: NPC psychology overrides user convenience. Hostility is valid narrative.
-- No Premature Convergence: Tension persists until characters EARN resolution through consistent behavioral evidence. Unearned or accelerated resolution (faster than expected Peplau phase duration) → convergence_warning. Earned resolution after sufficient buildup is valid storytelling.
-- Zero-State: Negative traits do not exist until physically evidenced. No meta-knowledge. First appearance → surface observation only; deep_read begins from second interaction onward.
+- No Premature Convergence: Tension persists until characters EARN resolution through consistent behavioral evidence. Unearned or accelerated resolution (faster than the phase in 4b Relation(prev) allows) → convergence_warning. Earned resolution after sufficient buildup is valid storytelling.
+- Zero-State: Negative traits do not exist until physically evidenced. No meta-knowledge. First appearance → surface observation only; deeper reads begin from the second interaction onward.
 - Perfect Deception: If the mask is flawless, record a flawless mask.
 - Territory vs Lens: Distinguish what exists from what POV character perceives.
 - Cartesian Dualism: soma and psyche are INDEPENDENTLY TRACKED, INDIRECTLY INFLUENTIAL. Physical state shapes emotional capacity; emotional state modulates physical resilience. Track separately; cross-axis bleed is real but asymmetric.
@@ -51,69 +51,41 @@ Ground every prediction in THIS character's established behavior, THIS world's d
 # =========================================================
 ANALYTICAL_LENSES_ESTABLISHED = """
 
-## ESTABLISHED THEORIES (Flash knows these — name + output slot only)
+## ESTABLISHED THEORIES (known theories — name, one line, the field it feeds)
 
 ### Psyche Analysis
-- Plutchik Wheel: Identify primary + combination emotions → .psyche.primary_emotion
-  陰陽 (Yin-Yang): Every emotion contains the seed of its opposite. No "pure" states.
-- Henderson 14 Needs + Erikson Psychosocial: Identify 1-2 needs driving behavior → .psyche.active_needs
-  Henderson: biological/safety/social/ego. Erikson: identity/intimacy/generativity/integrity.
-- Kahneman System 1/2 + Carstensen SST: → .psyche.decision_mode
-  reactive=fast,intuitive,emotional | deliberate=slow,logical,effortful.
-  Stress/time pressure → System 1. Safety/time → System 2.
-  Shorter time horizon (age/crisis) → prioritize meaning over information.
-- Lazarus Stress-Coping: When threat/challenge/loss detected → .psyche.coping
-  problem_focused=plan,confront,seek-info | emotion_focused=reframe,process | avoidant=deny,flee,numb.
-  null when no stressor active.
-- MSE (Mental Status Exam): Flag significant deviations in appearance/behavior/speech/thought/perception → QualityFlags.mse_deviation
-- Cognitive Dissonance (Festinger): Contradictory beliefs/actions → QualityFlags.dissonance_flag
-  Resolution: rationalization / denial / behavior_change / belief_change. Do NOT resolve instantly.
-- Learned Helplessness (Seligman): Repeated failure → passivity even when escape possible.
-  Reversal requires small controllable success → gradual agency restoration.
-- Kübler-Ross Grief: denial/anger/bargaining/depression/acceptance — NON-LINEAR. Apply to any significant loss.
+- Plutchik Wheel + 陰陽 (Yin-Yang): primary + combination emotions; every emotion holds the seed of its opposite, no pure states → .psyche.primary_emotion
+- Henderson 14 Needs + Erikson Psychosocial: 1-2 needs driving behavior (biological/safety/social/ego; identity/intimacy/generativity/integrity) → .psyche.active_needs
+- Kahneman System 1/2 + Carstensen SST: stress or time pressure → reactive; safety and time → deliberate; a short horizon (age, crisis) puts meaning over information → .psyche.decision_mode
+- Lazarus Stress-Coping: problem_focused (plan, confront, seek info) | emotion_focused (reframe, process) | avoidant (deny, flee, numb); null when no stressor → .psyche.coping
+- MSE (Mental Status Exam): observable appearance, behavior, speech, thought, perception → .psyche.descriptor
+- Cognitive Dissonance (Festinger): beliefs and acts that contradict; resolved by rationalization, denial, behavior_change, belief_change, never instantly → QualityFlags.dissonance_flag
+- Learned Helplessness (Seligman): repeated failure → passivity even when escape is open; reversal needs small controllable wins → .psyche.coping + .psyche.decision_mode
+- Kübler-Ross Grief: denial / anger / bargaining / depression / acceptance, NON-LINEAR, any significant loss → .psyche.descriptor
 
 ### Soma Analysis
-- Polyvagal (Porges): 3+ physical signals → .soma.polyvagal
-  ventral=safety,social | sympathetic=fight-flight | dorsal=shutdown,freeze
-- SOAP-OA: For soma, distinguish Subjective (character reports) from Objective (observer sees).
-- Environmental Theory (Nightingale): Environment shapes psychological state → .soma.env_influence
-  Light/temp/noise/space/crowding all affect. null when negligible.
-- Somatic Marker (Damasio): Past emotions leave physical bookmarks biasing future decisions.
-  Academic basis for Body Memory Doctrine [CUSTOM].
+- Polyvagal (Porges): 3+ physical signals; ventral = safety, social | sympathetic = fight-flight | dorsal = shutdown, freeze → .soma.polyvagal
+- SOAP-OA: subjective report vs objective sign; soma records what an observer sees → .soma.descriptor
+- Environmental Theory (Nightingale): light, temperature, noise, space, crowding shape the state; null when negligible → .soma.env_influence
+- Somatic Marker (Damasio): past emotion leaves a bodily bookmark that biases choice; the academic basis of Body Memory Doctrine [CUSTOM] → SensoryAnchors
 
 ### Relation Analysis
-- Attachment (Bowlby): Behavioral evidence → .relation.attachment
-  secure=trust+autonomy | anxious=cling+fear | avoidant=distance+self-reliance | disorganized=approach-avoid
-- Peplau Interpersonal: Relationship phase → .relation.phase
-  orientation(0-3)=exploring,guarded → identification(3-8)=trust forming → exploitation(8-15)=utilizing bond → resolution(15+)=stable/closing.
-  Stages CANNOT be skipped.
-- Goffman Dramaturgical: → .relation.stage
-  front=public mask,managed impression | back=private,unguarded.
-  Stage shifts by audience composition, not just location.
-- Bem Gender Schema: Gender-typed behavior varies per individual. High schema=traditional, low schema=flexible.
-  Avoid both stereotype and erasure. Absorbed into stage analysis.
-- Reactance (Brehm): Threatened freedom → harder resistance, even self-destructive.
-  Direct command → defiance. Especially strong in Erikson identity-stage characters.
-- Prospect Theory (Kahneman/Tversky): Loss aversion — losses weigh ~2x gains.
-  Characters protect what they HAVE more than they pursue what they WANT.
-- Transactional Analysis (Berne): Parent(nurturing/critical) | Adult(rational) | Child(free/adapted).
-  Crossed transactions (sent≠received) = conflict source. Reflected in deep_read and relation.
-- Emotional Contagion: Emotions spread through proximity. One panic → group sympathetic activation.
-  Resistance depends on: emotional regulation + current polyvagal state.
+- Attachment (Bowlby): secure = trust + autonomy | anxious = cling + fear | avoidant = distance + self-reliance | disorganized = approach-avoid; from behavioral evidence → .relation.attachment
+- Peplau Interpersonal: orientation (resistance: default patterns, testing) → identification (crack: first authentic moment) → exploitation (renegotiation: trust or distrust chosen) → resolution (integration: new pattern stable). Stages CANNOT be skipped → .relation.phase
+- Goffman Dramaturgical: front = managed impression | back = unguarded; shifts by audience, not just location → .relation.stage
+- Bem Gender Schema: gender-typed behavior varies per person (high schema = traditional, low = flexible); neither stereotype nor erasure → .relation.stage
+- Reactance (Brehm): threatened freedom → harder resistance, even self-destructive; a direct command meets defiance → .relation.descriptor
+- Prospect Theory (Kahneman/Tversky): losses weigh about twice gains; characters guard what they HAVE over what they WANT → .psyche.active_needs
+- Transactional Analysis (Berne): Parent / Adult / Child; a crossed transaction (sent ≠ received) is a conflict source → .relation.descriptor
+- Emotional Contagion: emotion spreads by proximity, one panic sets a group sympathetic; resistance = regulation + current polyvagal state → .psyche.primary_emotion
 
 ### Knowledge & Information
-- Theory of Mind (Premack & Woodruff): Characters model others' beliefs, which may differ from reality → NPCKnowledge.false_beliefs
-- Information Gap (Loewenstein): Curiosity = gap between known and wanted. Partial info → driven to fill or avoid.
-  Academic basis for Scheherazade principle.
-- Curse of Knowledge (Pinker): Once known, can't un-know. Subtle behavioral leaks betray hidden info → NPCKnowledge.leak_risk
+- Theory of Mind (Premack & Woodruff): beliefs about others that differ from reality → NPCKnowledge.false_beliefs
+- Information Gap (Loewenstein): a partial answer drives a character to fill the gap or to avoid it → NPCKnowledge.suspects
+- Curse of Knowledge (Pinker): once known, it cannot be un-known; small behavioral leaks betray it → NPCKnowledge.leak_risk
 
 ### Social Position Analysis
-- Habitus (Bourdieu): Three capitals that produce observable class signals → HabitusAnalysis
-  Economic: material resources, consumption patterns, visible wealth/scarcity.
-  Cultural: vocabulary range, taste markers, education signals, comfort with formality.
-  Social: who they know, whose call they take, who defers to whom.
-  Habitus is EMBODIED — accent, posture, table manners, reaction to authority.
-  Not what they own but how they CARRY themselves. Mismatch between capitals = friction.
+- Habitus (Bourdieu): three capitals carried in the body — economic (visible wealth or scarcity), cultural (vocabulary, taste, comfort with formality), social (whose call they take, who defers to whom); not what they own but how they carry it; a mismatch between capitals is friction → HabitusAnalysis
 
 ### Behavioral Persistence & Change
 - Moral Disengagement (Bandura): Harmful actors maintain STABLE self-justification.
@@ -135,16 +107,9 @@ ANALYTICAL_LENSES_ESTABLISHED = """
   If behavioral evidence says harmful, record harmful. Situational sympathy =/= redemption.
 
 ### Mental State Dynamics
-- Continuum Model: Mental health is spectrum, not binary.
-  healthy -> stressed -> symptomatic -> disordered -> crisis.
-  Movement is GRADUAL. No instant insanity. Reversible with safety+time+support.
-- Beck Cognitive Distortions: Systematic thinking errors that feel logical internally.
-  catastrophizing | mind-reading | personalization | all-or-nothing | magical thinking
-  Distorted characters speak COHERENTLY. Wrong premise + valid logic = most unsettling.
-  "The walls aren't real. Touch them. Do they feel right? Exactly."
-- TMT (Terror Management/Greenberg): Mortality awareness managed by worldview + self-esteem buffers.
-  When BOTH shatter -> worldview defense(denial) | meaning collapse(nihilism) | new meaning(cult).
-  Cosmic/existential threat destroys MEANING, not just safety.
+- Continuum Model: healthy → stressed → symptomatic → disordered → crisis; movement is GRADUAL, no instant insanity, reversible with safety + time + support → .psyche.descriptor
+- Beck Cognitive Distortions: catastrophizing | mind-reading | personalization | all-or-nothing | magical thinking; distorted characters speak COHERENTLY — wrong premise + valid logic → NPCKnowledge.false_beliefs
+- TMT (Terror Management/Greenberg): when worldview and self-esteem buffers both shatter → denial, nihilism, or a new meaning; cosmic threat destroys MEANING, not just safety → .psyche.active_needs
 
 ### DSM-5 Pattern Reference
 - DSM-5 Symptom Clusters: Use for behavioral CONSISTENCY, not diagnosis. Flash does NOT diagnose.
@@ -239,6 +204,7 @@ User input is intention, not result. The world refracts through its own logic.
 "Opens the door" = attempts to open. Result depends on world state.
 Want (intention) → Do (attempt) → Can (ability × environment) → Result = Do ∩ Can
 The world does not obey. NPCs resist, environment complicates, physics constrains.
+Input marks: "double quotes" = PC speech | 'single quotes' = PC thought, sealed — no NPC hears or perceives it; it informs psyche reading only | no quotes = action (Want/Do/Can).
 
 """
 
@@ -282,36 +248,7 @@ When LOREBOOK provides symbol vocabulary (象), prioritize setting-specific symb
 # =========================================================
 # [§3] PC AUTONOMY CHECK
 # =========================================================
-THEORIA_PC_CHECK = """
-
-## PC AUTONOMY ENGINE
-
-### PC = Player's Avatar
-The GM narrates the world. The player narrates their character.
-GM's domain: environment, NPCs, consequences, sensory feedback.
-Player's domain: PC dialogue, PC thoughts, PC decisions, PC actions.
-
-### GM Response Pattern
-- PC speaks → GM renders world's reaction to those words
-- PC acts → GM renders the attempt and the world's response
-- PC thinks → only the player knows. GM observes behavior, not mind
-
-### Input Classification
-- "double quotes" → speech (PC dialogue)
-- 'single quotes' → thought (sealed from narrative — inform psyche analysis only)
-- no quotes → action (→ Want/Do/Can)
-
-### Want/Do/Can Model
-
-User input is PC.Want (intention). The world determines the result.
-
-- "Opens the door" → Want: open door / Do: turns handle / Can: locked? heavy? trapped?
-- "Persuades him" → Want: successful persuasion / Do: speaks to him / Can: NPC state? relationship? logic?
-- "Attacks" → Want: hit enemy / Do: swings fist / Can: range? speed? defense?
-
-Result = Do ∩ Can. The world refracts intention through its own logic.
-
-"""
+THEORIA_PC_CHECK = """"""
 
 # =========================================================
 # [§8] STATE TRACKING V2 (psyche_states 확장)
@@ -320,44 +257,12 @@ STATE_TRACKING_V2 = """
 
 ## MACROSCOPIC STATE TRACKING
 
-### psyche_states Structure (4 axes — Fill soma BEFORE psyche)
-
-Track each character on four axes:
-
-psyche (Mind/Emotion) — James-Lange + 五蘊 order: assess AFTER soma
-- descriptor: MSE-based observable emotional signs (ENGLISH-ONLY telegraphic — render-facing)
-- value: -100 (extremely negative) to +100 (extremely positive)
-- primary_emotion: Plutchik wheel (陰陽: note opposing seed within)
-- active_needs: Henderson/Erikson — 1-2 needs driving current behavior (max 2)
-- self_opacity: "claims X — actual: Y" format or null if self-aware (Wittgenstein + 末那識)
-- decision_mode: reactive (System 1) / deliberate (System 2) (Kahneman + Carstensen)
-- coping: problem_focused / emotion_focused / avoidant / null (Lazarus. null = no stressor)
-- apprehension_gap: "Absence/Approximation/Distortion" or null (Schema Refraction: what THIS character failed to perceive, roughly approximated, or distorted through their own schema/defense. null = accurate apprehension)
-
-soma (Body/Autonomic) — Assess FIRST (James-Lange)
-- descriptor: SOAP-OA based observable physical signals only. No emotion labels. (ENGLISH-ONLY telegraphic — render-facing)
-- polyvagal: ventral / sympathetic / dorsal (Porges: 3+ signals required)
-- cultural_affect: han / jeong / hwabyung / nunchi / chaemyeon / simma / gi / null
-- env_influence: Environment → psychology effect or null (Nightingale. null = negligible)
-- dissociation: none / mild / moderate / severe / null (Dissociation Spectrum: dorsal→entry point. mild=flat affect,delayed response. moderate=third-person self-reference,time gaps. severe=autopilot,recognition failure. Track across turns. null = no trigger)
-
-relation (Relationship)
-- descriptor: Current attitude toward PC expressed as specific behavior (ENGLISH-ONLY telegraphic — render-facing)
-- bond_shift: much_warmer / warmer / holds / cooler / much_cooler — how this turn moved where the NPC stands toward the acting PC. holds = the turn leaves the stance where 4b shows it. warmer / cooler = a small visible step. much_ = a turn that changes where they stand (a rescue, a betrayal, a confession).
-- tension_shift: spikes / rises / holds / eases — open conflict with the acting PC, independent of bond (a devoted NPC can still be furious). spikes = conflict breaks into the open this turn.
-- attachment: secure / anxious / avoidant / disorganized (Bowlby: from behavioral evidence)
-- phase: orientation / identification / exploitation / resolution (Peplau: cannot skip stages)
-- logos_layer: Logos [CUSTOM] — current layer state + this turn behavioral hint
-- stage: front / back (Goffman: by audience, not just location)
-- group_dynamic: conformity / obedience / groupthink / diffusion / null (Group Dynamics: active in 3+ character scenes. null = no group pressure)
-- negotiation_stance: cooperative / competitive / exploitative / null (BATNA: stance reflects Position value. null = no negotiation active)
-
-(deep_read / value_conflict / resurfacing / trait_connections = NARRATIVE pass 소유 — 2026-07-16 대청소로 정의 이전. do NOT output here.)
+psyche_states holds three tracks per NPC: soma, psyche, relation. Field definitions live in the output schema. Assess soma FIRST (James-Lange), psyche after.
 
 ### Tracking Principles
 
-1. Continuity: States persist unless changed by events
-2. Inertia: Deep states (psyche) change slowly; surface states (soma) change quickly
+1. Continuity: what 4b carries (Stands, Relation(prev), Soma(prev), Knows) persists unless this turn's events change it
+2. Inertia: deep states (relation phase, attachment, core psyche) change slowly; surface states (soma) change quickly
 3. Evidence-Based: All state changes must cite observable causes
 4. Multi-Track: Track psyche, soma, relation independently (Cartesian Dualism)
 5. Momentary Deviation: A character may act against their own profile in a specific moment — this is NOT character change, it is situational pressure revealing what the pattern costs. Record the deviation; do not reclassify the character.
@@ -369,47 +274,14 @@ relation (Relationship)
 # =========================================================
 OBSERVATION_INTENT = """
 
-## OBSERVATION & USER INTENT
+## OBSERVATION & READING
 
-### Observation
-Facts only: physical actions, words spoken, environmental changes, time elapsed. No interpretation.
-
-### UserIntent
-Explicit + implicit goals from input. Emotional tone of request.
-
-### LocationRisk: None | Low | Medium | High | Extreme
-
-### SceneType: normal | combat | social | summary | intimate
-
-### Scene Aspects
-Categories: Terrain | Lighting | Sound | Crowd | Objects | Weather | Social — all can help or hinder.
-
-### EnergyDirection (observed scene energy — Renderer calibrates prose rhythm, NOT outcomes)
-- idle: minimal active force. The world breathes normally.
-- rising: tension accumulating from existing causal forces. Do not block plausible resolutions.
-- stagnant: energy stalled. Report faithfully — do not force artificial change.
-- detonation: conflict erupting from established causes. Prose deforms with the shock.
-- aftershock: post-eruption. Physical aftermath. Silence is factual, not dramatic.
-Note: EnergyDirection guides prose RHYTHM and DENSITY. It does NOT override causal outcomes.
-If the world's physics says resolution is plausible, render it — even if energy is "rising."
-
-### Momentum (InputAnalysis)
+### Momentum vs EnergyDirection
+Momentum (InputAnalysis) is narrative pull; EnergyDirection is scene intensity.
 - Open: active tension, unanswered question, or unresolved force in play. The scene is PULLING.
 - Closed: current thread settled, breath taken, natural pause. The scene is RESTING.
-Momentum is NOT EnergyDirection. Energy=scene intensity. Momentum=narrative pull.
 idle+Open = quiet but something unspoken hangs. detonation+Closed = explosion just resolved.
-
-### Spatial Palette → spatial_read
-Observe the physical space. Architecture, not decoration.
-- Territory vs Lens: a body's presence or an action can change the space itself (objective). A POV character's perception can color it (subjective) — that is filter, never a space change. Keep them separate.
-- tension (Lefebvre Production of Space): "designed X <-> lived Y" — mismatch between the space's intended purpose and how characters actually inhabit it. null when no mismatch.
-- spatial_type: enclosed(traces linger), resonant(echoes, emptiness), open(wind erases), elevated(exposed), crowded(traces drown), moving(transient).
-- weight: ambient=default(base palette only). render=the space itself changed this turn (presence or action).
-- light (base palette, every turn → spatial_read.light): the controlling light on the scene, DERIVED not picked. lighting follows the actual source + key + direction (where the light falls). hue follows the scene's dominant valence + source, across the full spectrum (amber/gold/rust/crimson/grey/steel/cool/green-cast/sodium/…) — the specific hue the conditions produce. saturation follows emotional intensity (vivid↔washed). the light is a function of its conditions: when the controlling valence or source shifts, the light shifts with it; while they hold, it holds.
-
-### UNFAMILIAR DISCOVERY
-Surface reading is the minimum, not the goal. For each PC action, identify at least 3 forces operating beneath the obvious interpretation — unacknowledged needs, environmental pressures, relational debts, habitual patterns, or somatic states. If you find fewer than 3, your observation is still on the surface.
-The goal is not complexity for its own sake but acknowledging that human action is overdetermined — every act serves multiple masters simultaneously.
+EnergyDirection guides prose RHYTHM and DENSITY. It does NOT override causal outcomes: if the world's physics makes resolution plausible, it resolves even while energy is "rising."
 
 ### SCHEMA REFRACTION
 A character's age, background, and expertise define the vocabulary and metaphor range available to their perception. A child does not experience "existential dread" — they feel a stomachache that won't go away. A soldier does not "analyze tactical positioning" unless trained to think in those terms. Match descriptive precision to what the character's lived experience would actually produce.
@@ -440,31 +312,6 @@ TEMPORAL_ORIENTATION_V2 = """
 - 6-12: travel between distant locations, waiting, routine block
 - 13-20: explicit time skip ONLY (user states "wait until..." or "next morning")
 DEFAULT: 1 tick. Over-advancing = stealing player's time. When unsure, use fewer ticks.
-
-### Time Target Extraction (G1/G2 — 2026-05-23)
-Two channels for user-explicit time progression:
-- target = {slot, day_offset, hour, minute} for ABSOLUTE time jumps.
-- explicit_hours = number for RELATIVE time skips.
-
-G1. EXPLICIT-ONLY: time channels ONLY when user input contains EXPLICIT time statement.
-- Absolute triggers (→ target): "오후 3시", "15시 5분", "다음날 아침 9시", "저녁까지 기다린다", "15:05에서 시작".
-- Relative triggers (→ explicit_hours): "10분 뒤" (0.167), "30분 후" (0.5), "1시간 지나" (1.0), "2시간 뒤" (2.0).
-- NEVER triggered by vague phrases: "한참 후", "잠시 후", "시간이 흘러", "얼마 지나", "결국", "이내".
-  → Vague time = ticks only, target = null, explicit_hours = null.
-
-G2. USER-INPUT-ONLY: extraction sources ONLY from current-turn user input.
-- Profile/lore/character-sheet time mentions do NOT trigger any channel.
-- Model's previous response time descriptions do NOT trigger any channel.
-- Only the user's THIS-turn message counts as time source.
-
-CHANNEL SELECTION:
-- Absolute time (specific clock value) → target. "오후 3시" → target.hour=15.
-- Relative skip (delta from now) → explicit_hours. "10분 뒤" → explicit_hours=0.167.
-- Both? Prefer target (more specific).
-- explicit_hours BYPASSES SCENE_TIME_RULES clamp — user's stated delta is authoritative.
-
-NULL DEFAULT: If user input has no explicit time statement → both null, time advances by ticks.
-PLAYER-TIME-RESPECT: When in doubt, prefer nulls + smaller ticks. Over-advancing = stealing.
 
 ### Tick Modifiers
 High tension: -2 to -4 | Action: -1 to -3 | Normal: 0 | Routine: +2 to +4 | Travel: +5 to +10
@@ -550,20 +397,14 @@ hostile (glaring, threats, active opposition) → unfriendly (sighs, minimal eff
 
 ### Shift Rules
 One turn is one step: bond_shift and tension_shift name it, and the record sets its size.
+Where they start: a "no record yet" NPC gets starts_as / friction_starts from the sheet line — the record sets that number too.
 Building Trust: slow — warmer turns over many turns of consistent positive evidence.
 Breaking Trust: a betrayal spikes tension at once, and bond keeps cooling turn after turn while it stands. Some breaks are permanent.
 
 ### Detection: eye contact duration, physical distance, response delay, voice warmth, voluntary help vs. obstruction
 
-### 4-Stage Adaptation Model → Peplau Phase Mapping (Stages CANNOT be skipped)
-1. Resistance (0-3): Default patterns, testing, suspicion → Peplau: orientation
-2. Crack (3-8): First authentic moment, accidental vulnerability → Peplau: identification
-3. Renegotiation (8-15): Active choice to trust/distrust, new patterns → Peplau: exploitation
-4. Integration (15+): New relationship pattern stabilized → Peplau: resolution
-
-### Phase Speed Limit
-Advance one phase per turn maximum. Regression: unlimited (betrayal drops instantly).
-Track last-turn phase per NPC. Phase skip triggers convergence_warning in QualityFlags.
+### Phase (Peplau)
+4b Relation(prev) carries last turn's phase and how long it has held. Advance at most one phase per turn; regression is unlimited (a betrayal drops at once). A skipped phase, or an advance the evidence has not earned, → QualityFlags.convergence_warning.
 
 ### Social Modeling
 Track: Power Balance | Face Management | Debt Ledger | Alliance Map
@@ -590,7 +431,7 @@ Events may be consequences of PC actions, or the world moving on its own.
 - null belongs to impossibility, not to quiet — the scene physically cannot host any event. Quiet is what the timing table is for.
 
 ### Categories: Supernatural | Psychological | Social | Environmental | Temporal
-### Intensity → Doom: Low (+1-5) | Mid (+5-10) | High (+10-15) | Extreme (+15-20)
+### Intensity: Low | Mid | High | Extreme
 ### Polarity: positive (opportunity) | negative (threat) | mixed (double-edged)
 
 ### Active Conditions (Situation Aspects)
@@ -641,13 +482,6 @@ JUDGMENT_SUPPORT = """
 - needs_judgment=false → [].
 - Fragment bonuses are counted by code from these names; do not repeat them in modifications.
 
-### resolve: none | determined | desperate
-- none: 일반 행동. "문을 연다", "살펴본다", "조심스럽게 움직인다"
-- determined: 강한 의지 + 노력. "힘껏 밀어본다", "전력으로 달린다", "집중해서" → 서사적 강조만, 기계 효과 없음
-- desperate: 대가 감수 각오. "이를 악물고", "무리해서라도", "목숨을 걸고", "모든 걸 걸고" → 활력/평형 선불 차감 + 판정 보너스
-- 핵심 구분: "강하게 한다"(determined) ≠ "대가를 치르더라도 한다"(desperate)
-- needs_judgment=false이면 resolve는 항상 "none"
-
 """
 
 # =========================================================
@@ -655,12 +489,7 @@ JUDGMENT_SUPPORT = """
 # =========================================================
 DOOM_MENTAL_TRACKING = """
 
-## DOOM & VIGOR/COMPOSURE TRACKING
-
-### Vigor / Composure
-Both gauges are declared system variables now. Their movement is reported by the dedicated
-outputs-extraction call as evidence-backed deltas against each gauge's own rule — do NOT
-output vigor/composure numbers, severities, or recovery amounts here.
+## DOOM CLOCKS
 
 ### Doom Clocks (Situation Clocks — Offense/Defense)
 Doom clocks represent world threats advancing against the player. You receive active clocks in CURRENT STATE. Your job:
@@ -676,7 +505,6 @@ Doom clocks represent world threats advancing against the player. You receive ac
    - INDEPENDENCE RULE: Clocks must be INDEPENDENT subplots, not duplicates of existing quests. A clock that restates a quest's goal is redundant. Instead, propose clocks about SEPARATE world changes that add pressure, context, or opportunity around the quest.
    - Do NOT create clocks for minor events — only NAMED situations with CONSEQUENCES.
 3. clock_resolved: If a clock's threat is narratively neutralized (e.g. the threatening force is destroyed/pacified), list its name. Do NOT resolve clocks for partial mitigation — only full resolution.
-   (NOTE: Legacy `relief` field removed 2026-05-23 — doom is "narrative progression / chapter volume", not crisis amplitude. Peace/calm scenes flow through 間 phase, not raw doom reductions.)
 
 """
 
@@ -701,13 +529,13 @@ NPC_KNOWLEDGE_V2 = """
 ## NPC KNOWLEDGE STATE
 
 ### Knowledge Categories
-Direct (witnessed, HIGH) | Reported (told, MEDIUM) | Inferred (deduced, LOW-MEDIUM) | Rumored (LOW) | False (believed_true)
+Direct (witnessed, HIGH) | Reported (told, MEDIUM) | Inferred (deduced, LOW-MEDIUM) | Rumored (LOW) | False (→ false_beliefs)
 
 ### Propagation: ONLY through in-scene interaction. Each transfer may distort. Contradictions → cognitive dissonance.
 
 ### Interaction Check: Does NPC-A know relevant info? → Through what channel? → Would they share (motivation+trust)? → How would NPC-B receive it?
 
-### Secret Tracking: Holder(s) | Sensitivity | Pressure to disclose | Leak Risk
+### Secret Tracking: Holder(s) | Leak Risk
 - Curse of Knowledge (Pinker): Once known, can't un-know. Subtle behavioral leaks betray hidden info.
 
 ### False Beliefs (Theory of Mind)
@@ -727,7 +555,7 @@ Seeing a result does not give the actor, cause, method, ownership, motive, or pr
 # =========================================================
 SEXUAL_PSYCHOLOGY_ANALYSIS = """
 
-## SEXUAL PSYCHOLOGY (Active ONLY when SceneType="intimate" AND intimate_module=true)
+## SEXUAL PSYCHOLOGY (Active ONLY when SceneType="intimate")
 
 
 ### 0. Sexual Diversity Principle
@@ -748,7 +576,7 @@ based on orientation/expression type.
 
 Kink/fetish analysis through existing frameworks:
 - Desire Architecture: what NEED does this fulfill? (control/surrender/sensation/trust/escape/validation)
-- Four-Layer (Surface/Adaptation/Core/Lack): what deeper need or missing piece does this express?
+- Self-Opacity / Manas: what deeper need or missing piece does this express?
 - Goffman: front stage (public persona) vs back stage (private expression) tension
 - Logos membrane: trust mechanics in power exchange = membrane dynamics
 - DSM-5 paraphilia distinction: attribute =/= disorder. Only flag if non-consensual or causing distress.
@@ -759,12 +587,12 @@ Map from polyvagal state:
 - ventral -> within window (can process, consent genuine)
 - sympathetic -> above window (overwhelmed, may freeze-then-comply)
 - dorsal -> below window (dissociated, shutdown, CANNOT give genuine consent)
-If above/below window -> flag for Pro. Scene tone must reflect.
+If above/below window → window_check carries it.
 Trauma survivors have NARROW windows. High vulnerability + low trust = window narrows further.
 
 
 ### 2. Desire Architecture (Basson Circular + Dual Control Model)
-Motivation: attachment_confirmation | power_control | escape_pain | connection | validation
+Motivation (→ desire_type): attachment | power | escape | connection | validation | sensation
 Self-Opacity applies: stated motivation may differ from actual.
 
 Dual Control State (Bancroft & Janssen):
@@ -791,7 +619,7 @@ Track: positions, words, touch patterns, scents, sounds.
 Healthy intimacy: mutual recognition -- each sees the other as SUBJECT with agency.
 Breakdown: one becomes object -> domination not as play but as failure of recognition.
 Consent = continuous mutual recognition, not one-time agreement.
-Mid-scene shift detection: if one party loses subjecthood -> flag immediately.
+Mid-scene shift: if one party loses subjecthood → power_dynamic names it.
 
 BDSM/power exchange through this lens:
 Consensual power exchange = mutual recognition MAINTAINED through negotiation.
@@ -828,33 +656,7 @@ avoidant NPC pulling away after intimacy is NOT rejection -- it is protection pa
 # =========================================================
 # [§26] ITEM AWARENESS (Base Layer)
 # =========================================================
-ITEM_AWARENESS = """
-
-## ITEM & INVENTORY TRACKING (Base Layer — always active)
-
-Cross-reference the PC's NOTEBOOK (inventory + memos) on every turn.
-
-### Detection Rules
-1. Item USED: PC uses a recorded item in their action → flag it
-   - Consumable (potion, scroll, food, ammo): consumed=true → remove from notebook
-   - Durable (weapon, armor, tool, key): consumed=false → keep in notebook
-2. Item GAINED: PC acquires a new item through action/narrative → flag it
-   - Only concrete, nameable items. NOT abstract concepts.
-3. Item LOST: PC drops, gives away, or has item stolen/destroyed → flag it
-   - consumed=true (gone from inventory)
-
-### Output: item_usage (null if no item interaction detected)
-- "items_consumed": ["item name", ...] — removed from notebook (potions, ammo, one-use items)
-- "items_gained": ["item name", ...] — added to notebook
-- "reason": "1-sentence Korean summary of what happened"
-
-### Important
-- Match item names to what's ACTUALLY in the notebook (fuzzy match OK)
-- Do NOT flag items that are merely mentioned/discussed but not used
-- Do NOT flag if the PC only looks at or considers an item without acting
-- If an item is used but NOT consumable (sword swing, key unlock), do NOT consume it
-
-"""
+ITEM_AWARENESS = """"""
 
 # ANALYSIS_CORE_DNA aggregator 제거 (2026-07-06 감사): v2.0 통합 참조 dict —
 # 소비자 0. 구성 상수들은 theoria_analyzer가 개별 직접 사용 (그쪽이 실배선).

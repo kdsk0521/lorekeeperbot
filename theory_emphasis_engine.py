@@ -742,17 +742,45 @@ def _narr_target(t: str) -> bool:
     return any(f in t for f in NARRATIVE_OWNED_FIELDS)
 
 
+# [2026-10-07 a묶음 A2·A6] 추출 스키마에서 **뺀** 칸 — 추출판 매핑에서 떼고, 남는 칸이 없으면 줄째 뺀다.
+#   서사 콜(narrative_targets_only)과는 무관(서사 소유 칸이 아니다).
+EXTRACTION_REMOVED_FIELDS = ("mse_deviation", "label_internalization")
+
+
+def _drop_for_extraction(t: str) -> bool:
+    return _narr_target(t) or any(f in t for f in EXTRACTION_REMOVED_FIELDS)
+
+
 def retarget_for_extraction(text: str) -> str:
     """추출 콜용 — 매핑 줄에서 서사 소유 칸을 뗀다. 남는 칸이 없으면 그 줄을 뺀다(그 밖의 줄은 그대로)."""
     out = []
     for ln in str(text or "").splitlines():
         sp = _split_mapping(ln)
-        if not sp or not any(_narr_target(t) for t in sp[1]):
+        if not sp or not any(_drop_for_extraction(t) for t in sp[1]):
             out.append(ln)
             continue
-        keep = [t for t in sp[1] if not _narr_target(t)]
+        keep = [t for t in sp[1] if not _drop_for_extraction(t)]
         if keep:
             out.append(f"{sp[0].rstrip()} → {' + '.join(keep)}")
+    return "\n".join(out)
+
+
+# [2026-10-07 a묶음 A6] 장르 가중 블록의 추출판 거르기 — Theoria 시스템에 정의가 없거나(렌더·서사 쪽 개념)
+#   서사 콜 소유인 이론 줄. 머리말로 판정한다(줄 앞 "* " 뒤).
+EMPHASIS_EXTRACTION_DROP = ("Four-Layer", "Value Conflict:", "Ma/silence", "Mono no Aware", "Wabi-Sabi", "Comedy:")
+
+
+def retarget_emphasis_for_extraction(text: str) -> str:
+    out = []
+    for ln in str(text or "").splitlines():
+        body = ln.strip()
+        if body.startswith("* "):
+            head = body[2:]
+            if head.startswith("Value Conflict + "):
+                ln = ln.replace("Value Conflict + ", "", 1)
+            elif head.startswith(EMPHASIS_EXTRACTION_DROP):
+                continue
+        out.append(ln)
     return "\n".join(out)
 
 
@@ -798,7 +826,7 @@ def build_analysis_directive(
     active_genres: List[str],
     core_theories: str,           # PART A~E 압축 이론 블록 (항상 로딩)
     rule_tables: str,             # PART F 규칙표 (항상 로딩)
-    content_mandate: str = "",    # text_resources.CONTENT_AUTHORIZATION_MANDATE
+    content_mandate: str = "",    # text_resources.ANALYSIS_FRAME ([2026-10-06] 원본 mandate → 분석 틀)
 ) -> str:
     """
     최종 system_instruction 조립.
@@ -820,7 +848,8 @@ def build_analysis_directive(
     sections.append(core_theories)
 
     # [3] Theory Emphasis — 장르 조합에 따른 가중치
-    emphasis = build_theory_emphasis(active_genres)
+    #   [2026-10-07 a묶음 A6] 추출판: Theoria에 정의 없는 이론·서사 소유 이론 줄을 뗀다.
+    emphasis = retarget_emphasis_for_extraction(build_theory_emphasis(active_genres))
     if emphasis:
         sections.append(emphasis)
 
@@ -862,7 +891,7 @@ NON_SLOT_THEORIES = [
     "Reactance - is freedom being threatened? Expect resistance. → psyche.active_needs + deep_read",
     "Learned Helplessness - repeated failure present? Track passivity. → psyche.decision_mode(reactive) + psyche.coping(avoidant)",
     "Prospect Theory - is loss aversion driving behavior? → deep_read + Position/Effect.reason",
-    "Emotional Contagion - multiple NPCs present? Check emotion spread. → relation.bond + psyche.primary_emotion",
+    "Emotional Contagion - multiple NPCs present? Check emotion spread. → relation.bond_shift + psyche.primary_emotion",   # [2026-10-07] relation.bond → bond_shift(Theoria 칸)
     "Curse of Knowledge - known secrets leaking through behavior? → NPCKnowledge.leak_risk + deception_cues",
     "Bem Gender Schema - gender-typed behavior appropriate for THIS character? → relation.stage + deep_read",
     "Carstensen SST - time horizon affecting decision mode? → psyche.decision_mode + TemporalOrientation",

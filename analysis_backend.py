@@ -274,7 +274,7 @@ def _dsh_anchor(resolved_model: str, tier: str) -> str:
     return (
         'Private reasoning register: open your thinking with "We need" and count the steps. '
         "We need: 1) what this task asks; 2) the fields owed; 3) the evidence lines; "
-        f"4) the answer itself. Land near {cap} characters of thought and answer. "
+        f"4) the answer itself. Keep the thought under {cap} characters. "   # [2026-10-06 분석 틀] F7 꼬리(reasoning_policy "under")와 같은 말·범위는 생각만(레티어스 "언더 — 스키마 채우기가 주목적")
         "The answer format stays exactly as specified below."
     )
 

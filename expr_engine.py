@@ -62,7 +62,18 @@ DIRECTIVE_TEXT_MAX = 300
 # 코드 소유 **읽기 전용** 이름 — 대입하면 등록 거부(§3.4 "코드 소유 필드에 대입은 등록 거부").
 # [2026-09-09 P11] `날씨` — world_state["weather"](game_world 가 굴린다). 읽기 전용이고
 #   문자열이라 `날씨 == "맑음"` 비교로만 쓴다(문자열 Constant 는 비교 우변에만 선다).
-CODE_READONLY = ("기력", "평형", "시각", "일", "시간대", "턴", "날씨", "날")
+CODE_READONLY = ("활력", "평형", "시각", "일", "시간대", "턴", "날씨", "날")
+
+
+def _canon(name: Any) -> str:
+    """[2026-10-07 활력평형 B1] 시스템 변수 별칭(기력·vigor·평정·composure)을 정본명으로. 아니면 그대로.
+    유저 출력룰에 이미 저장된 `기력 < 20`·`기력[리나] -= 10` 이 식 텍스트 수정 없이 그대로 돈다."""
+    s = str(name or "").strip()
+    try:
+        import custom_vars as _cvx
+        return _cvx.system_name(s) or s
+    except Exception:
+        return s
 # 재고 = P0 노트북 [소지품](유저 스코프). custom_vars stock 이관은 P8.
 STOCK_NAME = "재고"
 # [2026-09-16 3차 §10.2] 조각 = 행위자 PC 의 시트 조각(ai_memory.passives) 이름 컬렉션. **읽기 전용** —
@@ -130,7 +141,7 @@ class Compiled:
     names  — 참조 이름 집합(Name 과 Subscript 밑동). 미선언·순환 검사가 이걸 본다.
     writes — 대입 대상 집합. 쓰기 적법성 검사가 이걸 본다.
     bare   — 그중 **첨자 없이** 대입된 이름. [2026-09-06 P8c] 쓰기 적법성이 이름만으로는
-             안 갈리는 자리가 생겼다: `기력[리나] -= 10`(인물 값 — 허용)과 `기력 = 0`(PC 총량
+             안 갈리는 자리가 생겼다: `활력[리나] -= 10`(인물 값 — 허용)과 `활력 = 0`(PC 총량
              대입 — 코드 소유라 거부)은 writes 에 같은 이름을 남긴다. 첨자 유무를 여기서 들고
              있어야 등록 시점에 그 둘이 갈린다.
     """
@@ -758,7 +769,7 @@ class Resolver:
 
     # --- 읽기 ---
     def read(self, name: str) -> Any:
-        nm = str(name).strip()
+        nm = _canon(name)
         decl = self.decl()
         spec = decl.get(nm)
         if isinstance(spec, dict):
@@ -789,7 +800,7 @@ class Resolver:
 
     def _code_read(self, nm: str) -> Any:
         w = self.world()
-        if nm == "기력":
+        if nm == "활력":
             return int(self.cv.vigor_value(self.channel_id, self.actor()) or 0)
         if nm == "평형":
             v = self.cv.get_system_value(self.channel_id, "평형", self.actor())
@@ -838,7 +849,7 @@ class Resolver:
             return isinstance(spec, dict) and str(spec.get("scope")) == "npc"
 
     def read_sub(self, base: str, key: str, field: str = "") -> Any:
-        nm = str(base).strip()
+        nm = _canon(base)
         k = str(key).strip()
         f = str(field or "").strip()
         if nm == FRAGMENT_NAME:
@@ -986,10 +997,10 @@ class Resolver:
 
     # --- 쓰기 ---
     def write(self, base: str, key: str, mode: str, value: Any, field: str = "") -> None:
-        nm = str(base).strip()
+        nm = _canon(base)
         k = str(key).strip()
         f = str(field or "").strip()
-        # [2026-09-06 P8c] 맨이름 쓰기는 그대로 막는다(`기력 = 0` = PC 총량 대입 — 코드 소유).
+        # [2026-09-06 P8c] 맨이름 쓰기는 그대로 막는다(`활력 = 0` = PC 총량 대입 — 코드 소유).
         #   막지 않는 건 **인물 첨자**뿐이다: 인물 값은 코드가 계산하는 값이 아니라 npc 스코프
         #   변수와 같은 관측 값이고, 그 문법(`호감도[리나] -= 5`)이 이미 유저의 것이다.
         if nm in CODE_READONLY and not (k and self._npc_keyed(self.decl().get(nm))):
@@ -1061,17 +1072,17 @@ class Resolver:
 
     # --- 등록 검사용(값 없이 이름만 본다) ---
     def name_exists(self, nm: str, extra: Optional[Set[str]] = None) -> bool:
-        nm = str(nm).strip()
+        nm = _canon(nm)
         if nm in (extra or set()):
             return True
         return nm in self.decl() or nm == STOCK_NAME or nm == FRAGMENT_NAME or nm in CODE_READONLY
 
     def writable(self, nm: str, keyed: bool = False) -> Tuple[bool, str]:
         """등록 시점의 쓰기 적법성. keyed=True 면 그 이름은 **첨자로만** 쓰였다(P8c)."""
-        nm = str(nm).strip()
+        nm = _canon(nm)
         if nm in CODE_READONLY:
             if keyed and self._npc_keyed(self.decl().get(nm)):
-                return True, ""     # `기력[리나]` — 인물 값은 코드 소유가 아니다
+                return True, ""     # `활력[리나]` — 인물 값은 코드 소유가 아니다
             return False, f"코드 소유 필드에는 쓸 수 없습니다: {nm}"
         if nm == FRAGMENT_NAME:
             return False, f"읽기 전용 컬렉션에는 쓸 수 없습니다: {nm}"

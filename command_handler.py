@@ -339,6 +339,16 @@ async def cmd_lore(ctx: CommandContext) -> None:
             pc_info = unified_res.get("pc_info")
             genre_res = unified_res.get("genres", {})
             lore_summary_data = unified_res.get("lore_summary", {})
+            # [2026-09-29 배치2 2a-9 C12] 로어가 식별한 인물 이름을 기록한다(등록 아님 — 자동 등록은 꺼져 있다).
+            #   voice_seed 게이트 1c가 이 목록으로 로어 정의 인물에게 새 시드를 굴리지 않는다. 로어를 나눠 올리면 합친다.
+            try:
+                if isinstance(lore_summary_data, dict):
+                    _prev_names = (domain_manager.get_lore_summary_data(channel_id) or {}).get("npc_names") or []
+                    _new_names = [str(n.get("name")).strip() for n in (extracted_npcs or [])
+                                  if isinstance(n, dict) and str(n.get("name") or "").strip()]
+                    lore_summary_data["npc_names"] = list(dict.fromkeys([*_prev_names, *_new_names]))
+            except Exception as _e_ln:
+                logger.debug(f"[LoreAnalyzer] npc_names 기록 skip: {_e_ln}")
             
             # 1. Update NPCs — Flash 메타데이터 + 로어 원문 프로필 병합
             if extracted_npcs:
@@ -2053,7 +2063,7 @@ def classify_ooc_type(ooc_content: str, channel_id: str = "") -> str:
     """OOC 내용 분류
 
     [2026-09-10 P13] `channel_id` 를 받으면 **그 채널의 선언 이름**도 편집 신호로 센다
-    (값·기록 섹션·서술 섹션·형식·전이 이름 + 레코드 항목 이름 + 시스템 변수 기력·평형).
+    (값·기록 섹션·서술 섹션·형식·전이 이름 + 레코드 항목 이름 + 시스템 변수 활력·평형).
     하드코딩 키워드 목록은 한 글자도 안 바뀐다 — 채널을 안 주면 종전 분류 그대로다.
 
     ★이름 검사가 서사 키워드보다 **먼저** 선다: "금을 50으로 해줘"의 `해줘`는 서사 요청
@@ -2091,181 +2101,253 @@ def classify_ooc_type(ooc_content: str, channel_id: str = "") -> str:
     return "general"
 
 
+def _ooc_route_names(channel_id: str) -> list:
+    """[2026-09-26 O1] 분류 콜에 주는 이름 — 명부 이름·별칭 + 시트 절 이름 + 선언 이름(짧게)."""
+    names = []
+    try:
+        for _n, _d in (domain_manager.get_npcs(channel_id) or {}).items():
+            names.append(_n)
+            names.extend([a for a in ((_d or {}).get("aliases") or []) if isinstance(a, str)][:2])
+    except Exception:
+        pass
+    names.extend(list(getattr(config, "WIKI_LORE_SECTIONS", {}).get("character", ())))
+    try:
+        import custom_vars as _cv_rn
+        names.extend(_cv_rn.declared_mention_names(channel_id) or [])
+    except Exception:
+        pass
+    return list(dict.fromkeys([str(n) for n in names if n]))
+
+
+async def route_ooc_split(channel_id: str, ooc_content: str, client_genai, model_id: str) -> tuple:
+    """[2026-09-26 O1] 행동+OOC 전용 — 짧은 분류 콜 → (수정 조각, 장면 지시 조각).
+    콜이 실패하면 옛 키워드 분류: edit 면 통째 수정, 아니면 통째 지시(종전 동작)."""
+    split = None
+    try:
+        split = await memory_system.route_ooc_request(client_genai, model_id, ooc_content,
+                                                      _ooc_route_names(channel_id))
+    except Exception as _e_rt:
+        logging.warning(f"[OOC] route 실패 → 키워드 폴백: {_e_rt}")
+    if not isinstance(split, dict):
+        _t = classify_ooc_type(ooc_content, channel_id)
+        logging.info(f"[OOC] route(폴백 키워드): {_t}")
+        return (ooc_content, "") if _t == "edit" else ("", ooc_content)
+    _e, _d = split.get("edit", ""), split.get("directive", "")
+    logging.info(f"[OOC] route: edit={_e[:80]!r} directive={_d[:80]!r}")
+    return _e, _d
+
+
+async def run_ooc_edit(
+    message: discord.Message,
+    channel_id: str,
+    ooc_content: str,
+    client_genai,
+    model_id: str,
+    edit_part: str = "",
+) -> bool:
+    """[2026-09-26 O2] OOC 편집 한 벌 — 단독 OOC·행동+OOC·루카 모드 공용. 적용된 것이 하나라도 있으면 True.
+    edit_part = 판정(루카 ⟦수정⟧ 줄·분류 콜 edit)이 떼어 준 수정 조각(편집 콜에 원문과 같이 간다)."""
+    uid = str(message.author.id)
+    # 데이터 로드
+    ai_mem = domain_manager.get_ai_memory(channel_id, uid)
+    p_data = domain_manager.get_participant_data(channel_id, uid)
+
+    if not p_data:
+        await message.channel.send("⚠️ 먼저 세션에 참가해주세요 (`!가면`).")
+        return False
+
+    await message.channel.send("🔄 **루카가 데이터를 수정하고 있어...**")
+
+    # [V5.3] Notebook Integration (per-user)
+    notebook_txt = game_system.get_notebook_text(channel_id, uid)
+
+    # [2026-09-10 P13] 선언 블록 급식 — 콜 0(저장분 읽기뿐). 선언이 없으면 "" 라
+    #   프롬프트도 종전 그대로다.
+    declared_txt = ""
+    try:
+        import custom_vars as _cv_ooc
+        declared_txt = _cv_ooc.build_declared_block(channel_id)
+    except Exception as _e_db:
+        logging.debug(f"[OOC] 선언 블록 skip: {_e_db}")
+
+    # [2026-09-15 관계 통합] 관계 현재값 = NPC→이 PC 엣지(ai_memory.relationships 삭제).
+    # [2026-09-26 O8] 숫자 옆에 말(stands/friction)도 — 편집 모델이 말로 답할 수 있게.
+    _rel_state = {}
+    _mask_ooc = (p_data or {}).get("mask")
+    try:
+        if _mask_ooc:
+            for _nn, _aa in domain_manager.get_npc_attitudes(channel_id, pc=_mask_ooc).items():
+                _b_o, _t_o = int(_aa.get("bond", 0) or 0), int(_aa.get("tension", 0) or 0)
+                _rel_state[_nn] = {"bond": _b_o, "tension": _t_o,
+                                   "stands": domain_manager.attitude_from_bond(_b_o),
+                                   "friction": domain_manager.tension_band(_t_o),
+                                   "stance": _aa.get("stance", "")}
+    except Exception as _e_rs:
+        logging.debug(f"[OOC] 관계 상태 skip: {_e_rs}")
+
+    # [2026-09-26 O5] 명부 — "아빠" 같은 호칭을 등록 이름으로 잇는 재료.
+    _roster = []
+    try:
+        _roster = domain_manager.ooc_roster(channel_id, _mask_ooc)
+    except Exception as _e_ro:
+        logging.debug(f"[OOC] 명부 skip: {_e_ro}")
+
+    # [2026-09-16 시트 2차] 시트 현재값 = PC 페이지 lore 절(없으면 빈 dict — 편집 시 !가면 안내).
+    _sheet_state = {}
+    try:
+        import wiki_store as _ws_ooc
+        _pid_ooc = domain_manager.get_pc_page_id(channel_id, uid)
+        if _pid_ooc:
+            _sheet_state = _ws_ooc.get_lore_sections(channel_id, _pid_ooc)
+    except Exception as _e_ss:
+        logging.debug(f"[OOC] 시트 상태 skip: {_e_ss}")
+    _sheet_fields = set(getattr(config, "WIKI_LORE_SECTIONS", {}).get("character", ()))
+
+    # AI 처리
+    result = await memory_system.process_ooc_memory_edit(
+        client_genai, model_id, ooc_content, ai_mem, p_data, notebook_text=notebook_txt,
+        declared_block=declared_txt, relations_state=_rel_state, sheet_sections=_sheet_state,
+        roster=_roster, edit_part=edit_part,
+    )
+
+    if not (result and result.get("edits")):
+        await message.channel.send("⚠️ 루카가 수정 사항을 인식하지 못했어.")
+        return False
+
+    # 1. Separate Notebook Edits vs Memory Edits
+    mem_edits = []
+    decl_edits = []
+    rel_edits = []
+    sheet_edits = []
+    applied = 0   # [2026-09-26 O10] 실제로 적용된 것 수 — 0 이면 모델 확인문 대신 "적용된 것 없음"
+
+    for edit in result["edits"]:
+        if not isinstance(edit, dict):
+            continue
+        field = edit.get("field")
+        action = edit.get("action")
+        value = edit.get("value")
+
+        # [2026-09-10 P13] 선언 값 편집 — 관문 하나로 모아 뒀다가 한 번에 적용한다.
+        if field == "declared":
+            decl_edits.append(edit)
+            continue
+        # [2026-09-15 관계 통합] 관계 편집 → 엣지 직접 set(캡 면제, source="ooc").
+        # [2026-09-26] 단수형 relationship 도 관계 칸으로(옛: 기억 편집으로 떨어져 조용히 무시).
+        if field in ("relation", "relations", "relationship", "relationships"):
+            rel_edits.append(edit)
+            continue
+        # [2026-09-16 시트 2차] 시트 절 편집 → PC 페이지 lore 절(grow_sheet는 lore 절을 안 건드린다).
+        if field in _sheet_fields:
+            sheet_edits.append(edit)
+            continue
+
+        # Notebook Handling
+        if field in ["notebook", "notes", "note"]:
+            # [notebook v2 2026-09-06] replace/set(전문 덮어쓰기) 폐지 —
+            # WHY: OOC 한 줄이 [소지품]·[일지]·다른 메모까지 통째로 날리던 유일한 통로였다.
+            # 남은 건 줄 단위 add/remove뿐(유저색 '-' 줄).
+            if action == "append":
+                game_system.add_memo(channel_id, value, uid)
+                applied += 1
+            elif action == "remove":
+                game_system.remove_memo(channel_id, value, uid)
+                applied += 1
+            continue # handled
+
+        mem_edits.append(edit)
+
+    # 2. Apply Memory Edits
+    if mem_edits:
+        # [2026-09-24 감사] LLM 대기(위 await) **전에** 읽은 ai_mem/p_data 로 참가자 레코드를 통째 교체하면
+        #   그 사이 배경 작업이 쓴 값(조각·일지·status)과 **이 루프 위에서 방금 한 노트북 편집**이
+        #   되돌아갔다. 적용 직전에 다시 읽는다(여기서 저장까지 await 0 — 경합 창 없음).
+        _fresh_p = domain_manager.get_participant_data(channel_id, uid) or p_data
+        _fresh_mem = (_fresh_p or {}).get("ai_memory") or domain_manager.get_ai_memory(channel_id, uid) or ai_mem
+        ai_mem = _fresh_mem
+        new_mem, new_p_data = memory_system.apply_memory_edits(
+            _fresh_mem, mem_edits, _fresh_p
+        )
+        if isinstance(new_p_data, dict):
+            new_p_data["ai_memory"] = new_mem
+        # [2026-09-10 P13 버그] 순서가 **거꾸로였다.** save_participant_data 는 참가자
+        #   레코드를 통째로 갈아 끼우므로(merge 아님), 뒤에 서면 방금 쓴 ai_memory 를
+        #   호출 전 스냅샷으로 되돌린다 — 외모·성격·관계·패시브 OOC 편집이 전부 조용히
+        #   증발하던 자리다. 참가자 저장이 먼저, 기억 병합이 나중(그쪽이 다시 읽는다).
+        domain_manager.save_participant_data(channel_id, uid, new_p_data)
+        domain_manager.update_ai_memory(channel_id, uid, new_mem)
+        applied += len(mem_edits)
+        # [2026-09-16 3차] origin=play 조각 삭제 = 발췌의 역연산 — desc 가 Observed 절 끝으로 돌아간다.
+        try:
+            domain_manager.return_removed_play_fragments(channel_id, uid, ai_mem, new_mem)
+        except Exception as _e_fr:
+            logging.warning(f"[OOC] 조각 되돌림 실패: {_e_fr}")
+
+    # 2b. Apply Relation Edits — 엣지(NPC→이 PC). 되비침은 결과 메시지에 합류.
+    rel_lines = []
+    if rel_edits:
+        try:
+            rel_lines = domain_manager.apply_ooc_relation_edits(channel_id, uid, rel_edits)
+        except Exception as _e_rl:
+            logging.error(f"[OOC] 관계 편집 실패: {_e_rl}")
+            rel_lines = ["⚠️ 관계: 편집 중 오류"]
+
+    # 2c. Apply Sheet Section Edits
+    if sheet_edits:
+        rel_lines = rel_lines + domain_manager.apply_ooc_sheet_edits(channel_id, uid, sheet_edits)
+
+    # 3. Apply Declared Edits (P13) — 되비침 줄만 돌려받는다. 콜 0.
+    decl_lines = []
+    if decl_edits:
+        try:
+            import custom_vars as _cv_ap
+            decl_lines = _cv_ap.apply_ooc_edits(channel_id, uid, decl_edits)
+        except Exception as _e_ap:
+            logging.error(f"[OOC] 선언 편집 실패: {_e_ap}")
+            decl_lines = ["✗ 선언 편집 중 오류"]
+
+    _fail_mark = ("⚠", "✗")
+    applied += sum(1 for _ln in (rel_lines + decl_lines) if not str(_ln).lstrip().startswith(_fail_mark))
+
+    # 결과 알림
+    interp = result.get('interpretation', '')
+    if applied:
+        confirm = result.get('confirmation_message', '수정 완료')
+        msg = f"📝 **OOC 처리 완료**\n"
+        if interp: msg += f"> *{interp}*\n"
+        msg += f"└ {confirm}"
+    else:
+        # [2026-09-26 O10] 모델이 미리 쓴 확인문은 적용 여부와 무관했다 → 적용 0 이면 사유만.
+        msg = "⚠️ **OOC: 적용된 것 없음**\n"
+        if interp: msg += f"> *{interp}*\n"
+    # 새 메시지 0 — 선언 편집 되비침은 **이 결과 메시지에 합류**한다.
+    for _ln in (rel_lines + decl_lines)[:12]:
+        msg += f"\n  {_ln}"
+    logging.info(f"[OOC] edit applied={applied} rel/sheet={len(rel_lines)} decl={len(decl_lines)}")
+
+    await message.channel.send(msg)
+    return applied > 0
+
+
 async def handle_ooc_command(
-    message: discord.Message, 
-    channel_id: str, 
-    ooc_content: str, 
-    client_genai, 
+    message: discord.Message,
+    channel_id: str,
+    ooc_content: str,
+    client_genai,
     model_id: str
 ) -> Optional[str]:
-    """OOC 요청 처리"""
-    if not ooc_content: return None
-    
-    uid = str(message.author.id)
-    
-    # OOC 타입 분류
+    """[2026-09-26] **폴백 전용** — 루카 표지 판정(main._handle_ooc_via_luka)이 실패했을 때의 옛 키워드 분류.
+    edit → 편집 한 벌 / narrative_request → 지시 문자열 반환 / general → None(루카는 이미 실패 메시지를 냈다)."""
+    if not ooc_content:
+        return None
     ooc_type = classify_ooc_type(ooc_content, channel_id)
-    
     if ooc_type == "edit":
-        # 데이터 로드
-        ai_mem = domain_manager.get_ai_memory(channel_id, uid)
-        p_data = domain_manager.get_participant_data(channel_id, uid)
-        
-        if not p_data:
-            await message.channel.send("⚠️ 먼저 세션에 참가해주세요 (`!가면`).")
-            return None
-            
-        await message.channel.send("🔄 **루카가 데이터를 수정하고 있어...**")
-        
-        # [V5.3] Notebook Integration (per-user)
-        notebook_txt = game_system.get_notebook_text(channel_id, uid)
-        
-        # [2026-09-10 P13] 선언 블록 급식 — 콜 0(저장분 읽기뿐). 선언이 없으면 "" 라
-        #   프롬프트도 종전 그대로다.
-        declared_txt = ""
-        try:
-            import custom_vars as _cv_ooc
-            declared_txt = _cv_ooc.build_declared_block(channel_id)
-        except Exception as _e_db:
-            logging.debug(f"[OOC] 선언 블록 skip: {_e_db}")
-
-        # [2026-09-15 관계 통합] 관계 현재값 = NPC→이 PC 엣지(ai_memory.relationships 삭제).
-        _rel_state = {}
-        try:
-            _mask_ooc = (p_data or {}).get("mask")
-            if _mask_ooc:
-                for _nn, _aa in domain_manager.get_npc_attitudes(channel_id, pc=_mask_ooc).items():
-                    _rel_state[_nn] = {"bond": _aa.get("bond", 0), "tension": _aa.get("tension", 0),
-                                       "stance": _aa.get("stance", "")}
-        except Exception as _e_rs:
-            logging.debug(f"[OOC] 관계 상태 skip: {_e_rs}")
-
-        # [2026-09-16 시트 2차] 시트 현재값 = PC 페이지 lore 절(없으면 빈 dict — 편집 시 !가면 안내).
-        _sheet_state = {}
-        try:
-            import wiki_store as _ws_ooc
-            _pid_ooc = domain_manager.get_pc_page_id(channel_id, uid)
-            if _pid_ooc:
-                _sheet_state = _ws_ooc.get_lore_sections(channel_id, _pid_ooc)
-        except Exception as _e_ss:
-            logging.debug(f"[OOC] 시트 상태 skip: {_e_ss}")
-        _sheet_fields = set(getattr(config, "WIKI_LORE_SECTIONS", {}).get("character", ()))
-
-        # AI 처리
-        result = await memory_system.process_ooc_memory_edit(
-            client_genai, model_id, ooc_content, ai_mem, p_data, notebook_text=notebook_txt,
-            declared_block=declared_txt, relations_state=_rel_state, sheet_sections=_sheet_state
-        )
-        
-        if result and result.get("edits"):
-            # 1. Separate Notebook Edits vs Memory Edits
-            mem_edits = []
-            decl_edits = []
-            rel_edits = []
-            sheet_edits = []
-
-            for edit in result["edits"]:
-                field = edit.get("field")
-                action = edit.get("action")
-                value = edit.get("value")
-
-                # [2026-09-10 P13] 선언 값 편집 — 관문 하나로 모아 뒀다가 한 번에 적용한다.
-                if field == "declared":
-                    decl_edits.append(edit)
-                    continue
-                # [2026-09-15 관계 통합] 관계 편집 → 엣지 직접 set(캡 면제, source="ooc").
-                if field in ("relation", "relations", "relationships"):
-                    rel_edits.append(edit)
-                    continue
-                # [2026-09-16 시트 2차] 시트 절 편집 → PC 페이지 lore 절(grow_sheet는 lore 절을 안 건드린다).
-                if field in _sheet_fields:
-                    sheet_edits.append(edit)
-                    continue
-                
-                # Notebook Handling
-                if field in ["notebook", "notes", "note"]:
-                    # [notebook v2 2026-09-06] replace/set(전문 덮어쓰기) 폐지 —
-                    # WHY: OOC 한 줄이 [소지품]·[일지]·다른 메모까지 통째로 날리던 유일한 통로였다.
-                    # 남은 건 줄 단위 add/remove뿐(유저색 '-' 줄).
-                    if action == "append":
-                        game_system.add_memo(channel_id, value, uid)
-                    elif action == "remove":
-                        game_system.remove_memo(channel_id, value, uid)
-                    continue # handled
-                    
-                mem_edits.append(edit)
-            
-            # 2. Apply Memory Edits
-            if mem_edits:
-                # [2026-09-24 감사] LLM 대기(위 await) **전에** 읽은 ai_mem/p_data 로 참가자 레코드를 통째 교체하면
-                #   그 사이 배경 작업이 쓴 값(조각·일지·status)과 **이 루프 위에서 방금 한 노트북 편집**이
-                #   되돌아갔다. 적용 직전에 다시 읽는다(여기서 저장까지 await 0 — 경합 창 없음).
-                _fresh_p = domain_manager.get_participant_data(channel_id, uid) or p_data
-                _fresh_mem = (_fresh_p or {}).get("ai_memory") or domain_manager.get_ai_memory(channel_id, uid) or ai_mem
-                ai_mem = _fresh_mem
-                new_mem, new_p_data = memory_system.apply_memory_edits(
-                    _fresh_mem, mem_edits, _fresh_p
-                )
-                if isinstance(new_p_data, dict):
-                    new_p_data["ai_memory"] = new_mem
-                # [2026-09-10 P13 버그] 순서가 **거꾸로였다.** save_participant_data 는 참가자
-                #   레코드를 통째로 갈아 끼우므로(merge 아님), 뒤에 서면 방금 쓴 ai_memory 를
-                #   호출 전 스냅샷으로 되돌린다 — 외모·성격·관계·패시브 OOC 편집이 전부 조용히
-                #   증발하던 자리다. 참가자 저장이 먼저, 기억 병합이 나중(그쪽이 다시 읽는다).
-                domain_manager.save_participant_data(channel_id, uid, new_p_data)
-                domain_manager.update_ai_memory(channel_id, uid, new_mem)
-                # [2026-09-16 3차] origin=play 조각 삭제 = 발췌의 역연산 — desc 가 Observed 절 끝으로 돌아간다.
-                try:
-                    domain_manager.return_removed_play_fragments(channel_id, uid, ai_mem, new_mem)
-                except Exception as _e_fr:
-                    logging.warning(f"[OOC] 조각 되돌림 실패: {_e_fr}")
-            
-            # 2b. Apply Relation Edits — 엣지(NPC→이 PC). 되비침은 결과 메시지에 합류.
-            rel_lines = []
-            if rel_edits:
-                try:
-                    rel_lines = domain_manager.apply_ooc_relation_edits(channel_id, uid, rel_edits)
-                except Exception as _e_rl:
-                    logging.error(f"[OOC] 관계 편집 실패: {_e_rl}")
-
-            # 2c. Apply Sheet Section Edits
-            if sheet_edits:
-                rel_lines = rel_lines + domain_manager.apply_ooc_sheet_edits(channel_id, uid, sheet_edits)
-
-            # 3. Apply Declared Edits (P13) — 되비침 줄만 돌려받는다. 콜 0.
-            decl_lines = []
-            if decl_edits:
-                try:
-                    import custom_vars as _cv_ap
-                    decl_lines = _cv_ap.apply_ooc_edits(channel_id, uid, decl_edits)
-                except Exception as _e_ap:
-                    logging.error(f"[OOC] 선언 편집 실패: {_e_ap}")
-
-            # 결과 알림
-            confirm = result.get('confirmation_message', '수정 완료')
-            interp = result.get('interpretation', '')
-            
-            msg = f"📝 **OOC 처리 완료**\n"
-            if interp: msg += f"> *{interp}*\n"
-            msg += f"└ {confirm}"
-            # 새 메시지 0 — 선언 편집 되비침은 **이 결과 메시지에 합류**한다.
-            for _ln in (rel_lines + decl_lines)[:12]:
-                msg += f"\n  {_ln}"
-            
-            await message.channel.send(msg)
-            return None # RP 생성 중단 (필요시 반환값으로 조절)
-            
-        else:
-            await message.channel.send("⚠️ 루카가 수정 사항을 인식하지 못했어.")
-            return None
-    
+        await run_ooc_edit(message, channel_id, ooc_content, client_genai, model_id)
+        return None
     elif ooc_type == "narrative_request":
         # 서사 지시는 프롬프트에 주입하기 위해 반환
         return f"[OOC Directive: {ooc_content}]"
-
-    else:
-        # general: 질문/확인 등 → 서사 생성 불필요, 루카가 답변
-        return None
+    return None
 
 
 @registry.register("ooc", category="Analysis", aliases=["OOC", "메타", "루카"], description="루카 (OOC 도우미) 모드 토글")
@@ -2335,7 +2417,7 @@ async def cmd_mental(ctx: CommandContext) -> None:
         #   설정 직후에도 어긋나지 않게. 정본은 여전히 레지스트리다.
         _v_now = _cv_m.vigor_value(ctx.channel_id, uid, mem) if _cv_m else vigor.get("value", 100)
         if _cv_m and v_target != _v_now:
-            _cv_m.apply_system_delta(ctx.channel_id, "기력", v_target - _v_now,
+            _cv_m.apply_system_delta(ctx.channel_id, "활력", v_target - _v_now,
                                      "manual set", actor=uid, exempt_cap=True,
                                      source="command.활력")
         mem.setdefault("vigor", {})["value"] = v_target

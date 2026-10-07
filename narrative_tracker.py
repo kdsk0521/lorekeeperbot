@@ -88,9 +88,6 @@ def _infer_importance(quality_flags: Optional[dict], entities: List[str]) -> int
     # 정체 경고 = 서사 정체 → 낮은 중요도
     if quality_flags.get("stagnation_warning"):
         score -= 1
-    # MSE 이탈 = 심리 이상 감지 → 중요
-    if quality_flags.get("mse_deviation"):
-        score += 1
     # 불일치 = NPC 모순 → 중요
     if quality_flags.get("dissonance_flag"):
         score += 1
@@ -666,7 +663,9 @@ def format_storylines_for_prompt(state: dict, current_turn: int = 0) -> str:
                 if k == "lock":
                     return f"[Lock] {lbl}"
                 return lbl
-            line += f" | Tension: {'; '.join(_fmt_tension(t) for t in top)}"
+            # [2026-10-06 어휘 V2] "Tension:" → "Open:" — 한 렌더에 tension이 넷(장면 긴장 축·Energy·챕터 게이지·여기)이었다.
+            #   여기 담기는 건 줄기의 열린 질문·약속([Payoff]·[Lock]) — 정적 "Open threads are pressure"와 같은 말.
+            line += f" | Open: {'; '.join(_fmt_tension(t) for t in top)}"
         parts.append(line)
 
     return "\n".join(parts)
@@ -705,7 +704,9 @@ def format_entity_state_for_prompt(state: dict, npc_name: str) -> str:
     critical = log.get("critical_moments", [])[-2:]
     if critical:
         for c in critical:
-            parts.append(f"  Critical(T{c.get('turn', '?')}): {(c.get('description') or '')[:80]}")
+            # [2026-10-06 어휘 O6] "Critical" → "Notable" — 판정 등급 "Critical success/failure"와 한 렌더에 겹쳤다.
+            #   이 기록의 조건 = 건강 변화·위치 이동·changes.notable(위 감지부) — 원천 필드 이름과 같은 말.
+            parts.append(f"  Notable(T{c.get('turn', '?')}): {(c.get('description') or '')[:80]}")
 
     return "\n".join(parts)
 

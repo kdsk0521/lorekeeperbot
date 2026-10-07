@@ -26,7 +26,7 @@ _MENTAL_FLOOR = (-10, "붕괴")
 
 
 def _mental_band(value) -> tuple:
-    """주자원 값 → (판정 가중, 라벨). 기력이 어디에 저장돼 있든 이 표는 같다."""
+    """주자원 값 → (판정 가중, 라벨). 활력이 어디에 저장돼 있든 이 표는 같다."""
     try:
         v = int(value)
     except (TypeError, ValueError):
@@ -38,18 +38,18 @@ def _mental_band(value) -> tuple:
 
 
 def _primary_value(context, bus, primary_axis: str) -> int:
-    """판정이 보는 주자원 값. **기력만 레지스트리 우선**, 없으면 bus(구 경로) 폴백.
+    """판정이 보는 주자원 값. **활력만 레지스트리 우선**, 없으면 bus(구 경로) 폴백.
 
     ★값의 위치만 바뀐다 — 구간표(_mental_band)는 이 함수 밖에 있고 손대지 않았다.
     """
     if primary_axis == "vigor":
         try:
             import custom_vars as _cv_j
-            v = _cv_j.get_system_value(_jud_channel(context), "기력", _jud_actor(context))
+            v = _cv_j.get_system_value(_jud_channel(context), "활력", _jud_actor(context))
             if v is not None:
                 return int(v)
         except Exception as e:
-            logger.debug("[Judgment] 기력 레지스트리 조회 skip: %s", e)
+            logger.debug("[Judgment] 활력 레지스트리 조회 skip: %s", e)
     return int(getattr(bus, primary_axis, {}).get("value", 100))
 
 
@@ -257,7 +257,7 @@ class JudgmentEngine:
         import config as _cfg
         mechanic = context.request.genres.get("mechanic", {})
         primary_axis = mechanic.get("primary_resource") or "vigor"
-        # [2026-08-18 Phase 2.5] 기력은 레지스트리 변수다 — **값의 위치만 바뀌었다.**
+        # [2026-08-18 Phase 2.5] 활력은 레지스트리 변수다 — **값의 위치만 바뀌었다.**
         #   구간표(70/40/15 → +20/+10/0/−10)는 손대지 않는다: 같은 값이면 같은 가중이어야
         #   이관이 판정을 조용히 흔들지 않았다고 말할 수 있다(래칫).
         #   레지스트리에 없으면(기능 off·미이관 채널) bus 값으로 폴백 — 구 경로 그대로.
@@ -345,13 +345,13 @@ class JudgmentEngine:
                 mechanic = context.request.genres.get("mechanic", {})
                 axis_choice = mechanic.get("primary_resource") or "vigor"
             axis_bus = bus.vigor if axis_choice == "vigor" else bus.composure
-            # [2026-08-18 Phase 2.5] 기력 선불은 **코드 특권**이다 — 레지스트리 값에 직접 차감
+            # [2026-08-18 Phase 2.5] 활력 선불은 **코드 특권**이다 — 레지스트리 값에 직접 차감
             #   (apply 경유, evidence="effort", 비대칭 캡 면제). 캡은 모델의 과장에 거는 재갈이지
             #   규칙이 정한 선불을 깎을 근거가 아니다. bus 는 같은 턴 하류(로그·스냅샷·notation)가
             #   읽으므로 같이 맞춘다 — 저장의 주인은 레지스트리, bus 는 이번 턴 사본.
             # [2026-09-24 감사] 평형 축도 레지스트리 문으로 — 전엔 bus 사본만 깎고 턴 끝 _load 가
             #   레지스트리 값으로 되덮어 **보너스만 받고 비용 0**이었다(P8b 되저장 삭제로 발현).
-            _eff_name = "기력" if axis_choice == "vigor" else "평형"
+            _eff_name = "활력" if axis_choice == "vigor" else "평형"
             _eff_cur = (_primary_value(context, bus, "vigor") if axis_choice == "vigor"
                         else axis_bus.get("value", 0))
             if axis_choice != "vigor":
@@ -525,12 +525,9 @@ class JudgmentEngine:
             f"결과: **{res_kr} ({res_en})**"
         ]
         
-        # Narrative Hook (Only for Partial or Failure)
-        hook = bus.judgment.get("narrative_hook")
-        if hook and result in ["partial", "failure", "critical_failure"]:
-            output.append(f"\n⚠️ **잠재적 위기 (Narrative Hook)**: {hook}")
-            if result == "critical_failure":
-                bus.judgment["party_wide_hook"] = True
+        # [2026-10-01 2단계] Narrative Hook 줄 이사 — 판정이 서사 콜 **앞**에서 돌아 훅이 아직 없다.
+        #   waterfall 이 서사 콜 뒤 결과 3종(partial·failure·critical_failure)에서 사후에 붙인다(📋 결과 영향 줄 앞).
+        #   party_wide_hook 플래그는 읽는 곳 0이라 같이 지웠다.
 
         # 7. Apply Consequences (doom, primary axis, clocks, momentum)
         _apply_consequences(context, result)
@@ -604,7 +601,7 @@ def _apply_consequences(context, result: str) -> None:
         primary_axis = mechanic.get("primary_resource") or "vigor"
         # [2026-09-16 3차] 옛 `p_bus["delta"]` 쓰기는 P8b 이후 읽는 곳이 없었다(표시만 되고 적용 0).
         #   레지스트리 코드 소유 쓰기로 실제 적용하고, 표시는 **도장에 찍힌 실제 이동폭**을 쓴다.
-        _reg = {"vigor": "기력", "composure": "평형"}.get(primary_axis, "기력")
+        _reg = {"vigor": "활력", "composure": "평형"}.get(primary_axis, "활력")
         _rec = None
         try:
             import custom_vars as _cv_pd

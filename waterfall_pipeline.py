@@ -74,6 +74,53 @@ def _pc_masks(context) -> set:
     return masks
 
 
+def _pc_registry(context) -> dict:
+    """[2026-10-07 Mira PC 방향 P4 → PC 이름 단일화] `!가면` 등록 명부 — {mask: {"aliases": PC 위키 페이지 별칭(옛 가면)}}.
+
+    원천은 domain_manager.pc_registry(채널 participants + PC 페이지 별칭) 하나. 이번 턴 all_pcs 가면이 거기 없으면
+    더한다(채널 미상·테스트 앵커). 실패 무해 — 못 읽으면 all_pcs 가면만.
+    스펙 analysis_line/PC이름단일화·배경추출PC줄_수리스펙_2026-10-07.md S1."""
+    anchors = getattr(context, "narrative_anchors", None) or {}
+    ch = str(anchors.get("channel_id", "") or "")
+    reg: dict = {}
+    if ch:
+        try:
+            import domain_manager
+            reg = dict(domain_manager.pc_registry(ch) or {})
+        except Exception:
+            reg = {}
+    try:
+        pcs = anchors.get("all_pcs", {}) or {}
+        items = pcs.items() if isinstance(pcs, dict) else []
+    except Exception:
+        items = []
+    for uid, p in items:
+        m = str((p or {}).get("mask") or "").strip() if isinstance(p, dict) else ""
+        if m and m not in ("PC", "Unknown") and m not in reg:
+            al: list = []
+            try:
+                import wiki_store
+                pid = wiki_store.pc_page_id(ch, uid) if ch else None
+                pg = wiki_store.get_page(ch, pid) if pid else None
+                al = [a for a in ((pg or {}).get("aliases") or []) if isinstance(a, str) and a.strip()]
+            except Exception:
+                al = []
+            reg[m] = {"aliases": al}
+    return reg
+
+
+def _is_pc_key(name, registry: dict) -> bool:
+    """키가 PC인가 — 판정은 domain_manager.is_pc_name 하나(`!가면` 이름 규칙, allow_token=False).
+    "Adamant"·"Adam Kim"·"아담 박사"는 안 붙는다. 전엔 `n in masks` 정확일치라 "Adam"·"아담"이 통과했다."""
+    if not registry or not isinstance(name, str) or not name.strip():
+        return False
+    try:
+        import domain_manager
+        return domain_manager.is_pc_name(name, registry)
+    except Exception:
+        return name in registry
+
+
 def _turn_now(context) -> int:
     """[2026-09-22] 시드 TTL·born_turn 시계. 아래 판정 게이트 current_turn 과 같은 읽기 순서
     (세션 메모리 turn_count → world_state turn_index)."""
@@ -234,6 +281,40 @@ def _merge_soma_states(prev: dict, psyche_states: dict, current_turn: int) -> tu
 
 
 
+_PEPLAU_PHASES = ("orientation", "identification", "exploitation", "resolution")
+_ATTACH_KINDS = ("secure", "anxious", "avoidant", "disorganized")
+
+
+def _merge_relation_states(prev: dict, psyche_states: dict, current_turn: int) -> dict:
+    """[2026-10-07 a묶음 A4] 이번 턴 relation 판독(phase·attachment)을 지난 턴 스냅샷에 NPC별로 병합.
+
+    `_merge_soma_states`와 같은 규율 — I/O 0, 못 본 NPC는 그대로(오프스테이지 잔존), phase가 **바뀐 턴에만**
+    since_turn 도장(같은 값 재도장 = 지속 시계 리셋). enum 밖 값은 버린다. PC 제외본을 넘길 것.
+    """
+    _prev = prev if isinstance(prev, dict) else {}
+    snap = {k: dict(v) for k, v in _prev.items() if isinstance(v, dict)}
+    for name, blk in (psyche_states or {}).items():
+        rel = blk.get("relation") if isinstance(blk, dict) else None
+        if not isinstance(rel, dict):
+            continue
+        ph = str(rel.get("phase") or "").strip().lower()
+        at = str(rel.get("attachment") or "").strip().lower()
+        ph = ph if ph in _PEPLAU_PHASES else ""
+        at = at if at in _ATTACH_KINDS else ""
+        if not ph and not at:
+            continue
+        old = _prev.get(name) if isinstance(_prev.get(name), dict) else {}
+        new = dict(old)
+        if ph:
+            if ph != old.get("phase") or old.get("since_turn") is None:
+                new["since_turn"] = int(current_turn)
+            new["phase"] = ph
+        if at:
+            new["attachment"] = at
+        snap[name] = new
+    return snap
+
+
 def _relation_view(psyche_states, stored: dict = None) -> dict:
     """[2026-09-15 관계 통합] psyche_states[NPC].relation → {NPC: {attitude, reason, bond, trajectory}} 파생.
     bond 없으면 옛 value 폴백. trajectory = 저장 엣지 대비 이번 판독의 부호(domain_manager.trajectory_from_delta).
@@ -342,8 +423,101 @@ class WaterfallPipeline:
             logger.warning("[Seed] gate/roll skipped: %s", _e_seed)
             _seed_rolls = {}
 
+        # ===== [2026-10-01 2단계] 판정 먼저 — 추출 → 게이트 → prime → 판정 → 서사 콜 =====
+        #   서사 콜(Mira)이 굴림 결과를 알고 앞날 필드(손·훅·스레드·cannot)와 roll_outcome 을 쓰게 한다.
+        #   의존 실독(스펙 §1): 판정은 추출 몫만 읽는다(서사 콜 값은 디스코드 훅 줄 하나 — 사후 처리로 뺐다).
+        #   판정 엔진엔 LLM 콜이 없어 지연은 그대로다. 감정 엔진은 deep_read(서사 몫)를 읽으므로 서사 콜 뒤에 남는다.
+        # (사전 전개) 판정이 읽는 추출 몫 8키를 bus.dai 에 먼저 싣는다 — 형 정규화 + PC 정제는 아래 본 전개와 같은 규칙.
+        #   본 전개(서사 합류 뒤)가 같은 값으로 다시 덮어쓴다(무해). 판정이 bus.dai 에 쓰는 키(effort_failed·turn_index)는
+        #   본 전개가 건드리지 않는다.
+        _pc_reg = _pc_registry(context)   # [2026-10-07 P4] `!가면` 등록 명부 — 사전 전개·단일 정제가 같이 쓴다
         try:
-            narrative = await self.theoria.analyze_narrative(context, extract=analysis)
+            for _pk, _src, _ty, _dflt in (("scene_type", "SceneType", str, "normal"),
+                                          ("current_location", "CurrentLocation", str, ""),
+                                          ("psyche_states", "psyche_states", dict, None),
+                                          ("relevant_npcs", "RelevantNPCs", list, None),
+                                          ("aspects", "Aspects", list, None),
+                                          ("action_meta", "action_meta", dict, None),
+                                          ("position", "Position", dict, None),
+                                          ("effect", "Effect", dict, None)):
+                _pv = analysis.get(_src)
+                if not isinstance(_pv, _ty):
+                    _pv = _ty() if _dflt is None else _dflt
+                bus.dai[_pk] = _pv
+            # [2026-10-07 P4] 정확일치 → `!가면` 이름 규칙(_is_pc_key). 명부는 아래 단일 정제와 같은 것을 쓴다.
+            if _pc_reg:
+                bus.dai["psyche_states"] = {k: v for k, v in bus.dai["psyche_states"].items() if not _is_pc_key(k, _pc_reg)}
+                bus.dai["relevant_npcs"] = [n for n in bus.dai["relevant_npcs"] if not _is_pc_key(n, _pc_reg)]
+        except Exception as _e_pre:
+            logger.warning(f"[Judgment-first] pre-map skipped: {_e_pre}")
+
+        # N1: Judgment Gate — Flash의 needs_judgment를 코드 게이트로 검증
+        # [2026-10-01 2단계] 자리 이동: 전개 뒤 → 서사 콜 앞(판정 먼저). 읽는 것은 전부 추출 몫(needs_judgment·action_meta·
+        #   asset_evaluation)이라 그대로 옮겼다. narrative_hook 대입만 서사 콜 뒤(훅 사후 처리)로 뺐다.
+        raw_needs = analysis.get("needs_judgment", False)
+        resolve = (analysis.get("action_meta") or {}).get("resolve", "none")
+        # [2026-09-16 3차] Rule2 쿨다운 복원 — bus 는 매턴 신조라 채널 world_state 가 정본.
+        last_j_turn = bus.judgment.get("last_judgment_turn")
+        if last_j_turn is None:
+            last_j_turn = load_last_judgment_turn((context.narrative_anchors or {}).get("channel_id", ""),
+                                                  (context.narrative_anchors or {}).get("acting_user_id", ""))
+        current_turn = (context.narrative_anchors or {}).get(
+            "session_memory", {}
+        ).get("turn_count", 0) or domain_manager.get_world_state(
+            (context.narrative_anchors or {}).get("channel_id", "")
+        ).get("turn_index", 0)
+
+        # [2026-06-11 소비자 감사 #1] turn_index 배선 — bus.dai["turn_index"]를 아무도 안 실어
+        # 항상 0이었음 → doom 시계 fade 7개 읽기 + une_facade 퀘스트 stale archive가 0 기반 동작
+        # (staleness 트리거 사망). 게이트 계산용 current_turn을 그대로 적재.
+        # 주의: 부활 첫 턴에 묵은 퀘스트 일괄 archive는 정상 동작.
+        bus.dai["turn_index"] = current_turn
+
+        final_needs, gate_reason = gate_judgment(
+            user_input=context.request.user_input,
+            flash_needs_judgment=raw_needs,
+            last_judgment_turn=last_j_turn,
+            current_turn=current_turn,
+            resolve=resolve,
+        )
+
+        bus.judgment["active"] = final_needs
+        bus.judgment["gate_reason"] = gate_reason
+        bus.judgment["gate_requested"] = bool(raw_needs)
+        if final_needs:
+            bus.judgment["last_judgment_turn"] = current_turn
+            save_last_judgment_turn((context.narrative_anchors or {}).get("channel_id", ""), current_turn,
+                                    (context.narrative_anchors or {}).get("acting_user_id", ""))
+            bus.judgment["meta"] = analysis.get("action_meta") or {}  # [07-27] 명시 null 방어
+            eval_data = analysis.get("asset_evaluation") or {}  # [07-19] 명시 null 방어
+            bus.judgment["eval"] = eval_data
+            bus.judgment["modifications"] = eval_data.get("modifications") or []
+
+        # 2. Mental Pre-pass: annotate current stage for downstream modules. [2026-10-01 2단계: 서사 콜 앞으로]
+        try:
+            self.vigor_composure = VigorComposureModule()
+            context = await self.vigor_composure.prime(context)
+        except Exception as e:
+            _degrade_stage(bus, "vigor_composure", e)
+
+        # 3. Judgment (gated by Flash needs_judgment + judgment_gate)
+        if bus.judgment["active"]:
+            try:
+                self.judgment = JudgmentEngine(self.theoria.client, self.theoria.model_id)
+                context = await self.judgment.process(context)
+            except Exception as e:
+                bus.judgment["active"] = False
+                _degrade_stage(bus, "judgment_engine", e)
+
+        # 서사 콜에 넘길 굴림 사실 — 게이트 뒤 active 가 정본(Flash 원 요청이 아니라). 라벨·위치 단계는 theoria 가 판정층과
+        #   같은 사전으로 만든다.
+        _roll = {"active": bool(bus.judgment.get("active")),
+                 "result": str(bus.judgment.get("result") or "") if bus.judgment.get("active") else "",
+                 "position_value": (bus.dai.get("position") or {}).get("value", 0.5)
+                 if isinstance(bus.dai.get("position"), dict) else 0.5}
+
+        try:
+            narrative = await self.theoria.analyze_narrative(context, extract=analysis, roll=_roll)
         except Exception as e:
             _degrade_stage(bus, "narrative_analysis", e)
             narrative = {}
@@ -356,7 +530,8 @@ class WaterfallPipeline:
             _merge_keys = ("narrative_chain", "suggested_beats", "narrative_hook",
                            "open_invitations",  # [H9 2026-07-18] 플레이어향 전방 affordance
                            "offscreen_trace", "scene_register", "trait_connections",
-                           "newcomer_seeds")  # [2026-09-22 voice_seed §2 D 1] 여기 빠지면 증발한다
+                           "newcomer_seeds",  # [2026-09-22 voice_seed §2 D 1] 여기 빠지면 증발한다
+                           "roll_outcome")    # [2026-10-01 2단계] 굴림 결과의 장면 구체화(Mira) — 굴림 없는 턴은 null
             for _nk in _merge_keys:
                 _nv = narrative.get(_nk)
                 if _nv is not None:
@@ -442,16 +617,19 @@ class WaterfallPipeline:
         bus.dai["input_mode"] = analysis.get("input_mode", "decree")
         bus.dai["memory_triggers"] = analysis.get("memory_triggers", [])
         bus.dai["narrative_hook"] = analysis.get("narrative_hook", "")
+        # [2026-10-01 2단계] roll_outcome — 굴림이 돈 턴에만 의미가 있다(문자열 아니거나 "null"이면 None).
+        _ro = analysis.get("roll_outcome")
+        bus.dai["roll_outcome"] = (_ro.strip() if isinstance(_ro, str) and _ro.strip()
+                                   and _ro.strip().lower() != "null" and bus.judgment.get("active") else None)
         # [2026-09-24 감사] H9 open_invitations 전개 누락 복구 — 위 _merge_keys 로 analysis 에는 합류했으나
         #   bus.dai 매핑이 없어 아래 정규화가 [] 로 채웠다 → Slot 16 translate_open_invitations 영구 빈손(07-18~).
         bus.dai["open_invitations"] = analysis.get("open_invitations") or []
-        bus.dai["time_flow"] = analysis.get("TimeFlow", analysis.get("time_flow", {}))
+        bus.dai["time_flow"] = analysis.get("time_flow", {})
         bus.dai["doom_clocks"] = analysis.get("doom_clocks", {})
         # doom_relief 제거 (2026-05-23) — legacy 위기진폭 잔재
         # [2026-09-06 P8b] mental_impact 매핑 삭제 — Theoria 스키마에서 필드가 사라졌다.
         #   옛 모델이 그 키를 계속 보내도 매핑이 없으니 bus 에 실리지 않는다(무시 = 정규화).
         bus.dai["anomaly_profile"] = analysis.get("anomaly_profile", {})
-        bus.dai["pc_autonomy_check"] = analysis.get("PCAutonomyCheck", {})
         bus.dai["temporal_orientation"] = analysis.get("TemporalOrientation", {})
         # [2026-09-15 관계 통합] NPCAttitudes 질문 삭제 — 이 버스 키는 이제 **이번 턴 relation 층의 파생 뷰**
         #   (attitude=bond 구간, reason=descriptor). 저장 아님(저장은 orchestration의 write_theoria_relations → 엣지).
@@ -514,7 +692,7 @@ class WaterfallPipeline:
                 bus.dai[_lk] = []
         for _dk in ("input_analysis", "quality_flags", "position", "effect", "psyche_states",
                     "narrative_chain", "time_flow", "doom_clocks",
-                    "anomaly_profile", "pc_autonomy_check", "temporal_orientation",
+                    "anomaly_profile", "temporal_orientation",
                     "npc_attitudes", "npc_knowledge", "habitus_analysis", "action_meta",
                     "asset_evaluation", "trait_connections", "spatial_read"):
             if not isinstance(bus.dai.get(_dk), dict):
@@ -531,23 +709,26 @@ class WaterfallPipeline:
         # 처방: **DAI가 만들어지는 이 초크포인트에서 한 번만** 걷어내고 하류는 믿게 한다.
         # (PC=카메라 원칙. 개별 가드는 이중 안전으로 남겨도 무해하다.)
         try:
-            _pc_masks_dai = _pc_masks(context)   # [2026-09-22] 시드 게이트와 같은 원천(단일 함수)
-            if _pc_masks_dai:
+            # [2026-09-22] 시드 게이트와 같은 원천(all_pcs). [2026-10-07 P4] 판정은 `!가면` 이름 규칙(_is_pc_key) —
+            #   정확일치였을 땐 "Adam"·"아담"으로 적힌 키가 그대로 통과해 렌더 small tells·저장까지 갔다.
+            if _pc_reg:
                 _purged = []
                 # [2026-09-22 voice_seed §2 D 3] newcomer_seeds 편입 — 게이트 2가 이미 걸렀지만
                 #   서사 콜이 키를 PC 이름으로 바꿔 돌려줄 수 있어 이중으로 본다.
-                for _nk in ("psyche_states", "npc_attitudes", "npc_knowledge", "newcomer_seeds"):
+                # [2026-10-07 P4] trait_connections 편입 — 서사 콜이 PC 키로 낸 render_hint 가 Slot 16 small tells 로
+                #   그대로 갔다(PC 몸짓 지시, 녹화 9/83블록).
+                for _nk in ("psyche_states", "npc_attitudes", "npc_knowledge", "newcomer_seeds", "trait_connections"):
                     _blk = bus.dai.get(_nk)
                     if isinstance(_blk, dict):
-                        _hit = [n for n in _blk if n in _pc_masks_dai]
+                        _hit = [n for n in _blk if _is_pc_key(n, _pc_reg)]
                         if _hit:
-                            bus.dai[_nk] = {k: v for k, v in _blk.items() if k not in _pc_masks_dai}
+                            bus.dai[_nk] = {k: v for k, v in _blk.items() if k not in _hit}
                             _purged.append(f"{_nk}({','.join(_hit)})")
                 _rn = bus.dai.get("relevant_npcs")
                 if isinstance(_rn, list):
-                    _hit = [n for n in _rn if n in _pc_masks_dai]
+                    _hit = [n for n in _rn if _is_pc_key(n, _pc_reg)]
                     if _hit:
-                        bus.dai["relevant_npcs"] = [n for n in _rn if n not in _pc_masks_dai]
+                        bus.dai["relevant_npcs"] = [n for n in _rn if n not in _hit]
                         _purged.append(f"relevant_npcs({','.join(_hit)})")
                 if _purged:
                     logger.warning("[DAI] PC 혼입 제외: %s", " / ".join(_purged))
@@ -567,46 +748,19 @@ class WaterfallPipeline:
         # 기존 이 자리 코드는 Flash 콜 후 저장 + 독자 0 + npc_roster가 str이라 isinstance(dict)
         # 가드에 막혀 사실상 한 번도 실행 안 됨 (이중 사망 확인).
 
-        # N1: Judgment Gate — Flash의 needs_judgment를 코드 게이트로 검증
-        raw_needs = analysis.get("needs_judgment", False)
-        resolve = (analysis.get("action_meta") or {}).get("resolve", "none")
-        # [2026-09-16 3차] Rule2 쿨다운 복원 — bus 는 매턴 신조라 채널 world_state 가 정본.
-        last_j_turn = bus.judgment.get("last_judgment_turn")
-        if last_j_turn is None:
-            last_j_turn = load_last_judgment_turn((context.narrative_anchors or {}).get("channel_id", ""),
-                                                  (context.narrative_anchors or {}).get("acting_user_id", ""))
-        current_turn = (context.narrative_anchors or {}).get(
-            "session_memory", {}
-        ).get("turn_count", 0) or domain_manager.get_world_state(
-            (context.narrative_anchors or {}).get("channel_id", "")
-        ).get("turn_index", 0)
-
-        # [2026-06-11 소비자 감사 #1] turn_index 배선 — bus.dai["turn_index"]를 아무도 안 실어
-        # 항상 0이었음 → doom 시계 fade 7개 읽기 + une_facade 퀘스트 stale archive가 0 기반 동작
-        # (staleness 트리거 사망). 게이트 계산용 current_turn을 그대로 적재.
-        # 주의: 부활 첫 턴에 묵은 퀘스트 일괄 archive는 정상 동작.
-        bus.dai["turn_index"] = current_turn
-
-        final_needs, gate_reason = gate_judgment(
-            user_input=context.request.user_input,
-            flash_needs_judgment=raw_needs,
-            last_judgment_turn=last_j_turn,
-            current_turn=current_turn,
-            resolve=resolve,
-        )
-
-        bus.judgment["active"] = final_needs
-        bus.judgment["gate_reason"] = gate_reason
-        bus.judgment["gate_requested"] = bool(raw_needs)
-        if final_needs:
-            bus.judgment["last_judgment_turn"] = current_turn
-            save_last_judgment_turn((context.narrative_anchors or {}).get("channel_id", ""), current_turn,
-                                    (context.narrative_anchors or {}).get("acting_user_id", ""))
-            bus.judgment["meta"] = analysis.get("action_meta") or {}  # [07-27] 명시 null 방어
-            eval_data = analysis.get("asset_evaluation") or {}  # [07-19] 명시 null 방어
-            bus.judgment["eval"] = eval_data
-            bus.judgment["modifications"] = eval_data.get("modifications") or []
-            bus.judgment["narrative_hook"] = analysis.get("narrative_hook", "")
+        # [2026-10-01 2단계] 판정 훅 사후 처리 — 판정은 서사 콜 **앞**에서 돌았다(게이트·prime·판정 블록 이사).
+        #   훅은 서사 콜 몫이라 여기서 싣고, 디스코드 판정 메시지의 "잠재적 위기" 줄은 결과 3종에서만 사후에 붙인다
+        #   (구: judgment_engine 안에서 붙임 + party_wide_hook 플래그 — 읽는 곳 0이라 같이 지웠다).
+        #   이제 훅은 굴림 결과를 알고 쓴 것이다. 스펙 composition/분석렌더_2단계_판정먼저_스펙_2026-10-01.md §2.
+        if bus.judgment.get("active"):
+            _hook = str(analysis.get("narrative_hook") or "").strip()
+            bus.judgment["narrative_hook"] = _hook
+            if (_hook and bus.judgment.get("result") in ("partial", "failure", "critical_failure")
+                    and bus.judgment.get("output")):
+                _hl = f"\n\n⚠️ **잠재적 위기 (Narrative Hook)**: {_hook}"
+                _jo = str(bus.judgment["output"])
+                _ji = _jo.find("\n\n📋")
+                bus.judgment["output"] = (_jo[:_ji] + _hl + _jo[_ji:]) if _ji != -1 else (_jo + _hl)
 
         # [V10] DAI 스냅샷 롤링 보존 — bus.dai 완성 직후, 코드만(콜 0)·실패 무해.
         # 용도: ①관측 — 필드 비대/모델 JSON 버릇을 실데이터로 ②Sprint 4 동적 NPC 원재료
@@ -704,14 +858,11 @@ class WaterfallPipeline:
             # 감정엔진과 하류 3기관(스토리디렉터 focus/NPC자율 집단게이트/iceberg Slot 14·16)은
             # 전부 NPC 전용. PC가 흘러들면: 디렉터가 PC를 연출 대상으로(focus=도만 관측됨),
             # 집단 게이트 인원 수 부풀림, PC 내면 힌트가 Pro에 주입(사칭 압력). PC=카메라 원칙.
-            _pc_masks_em = {
-                p.get("mask") for p in (context.narrative_anchors or {}).get("all_pcs", {}).values()
-                if isinstance(p, dict) and p.get("mask")
-            }
+            _pc_masks_em = _pc_reg   # [2026-10-07 PC 이름 단일화] 정확일치 → 같은 명부·같은 판정(_is_pc_key)
             if psyche_states and _pc_masks_em:
-                _removed = [n for n in psyche_states if n in _pc_masks_em]
+                _removed = [n for n in psyche_states if _is_pc_key(n, _pc_masks_em)]
                 if _removed:
-                    psyche_states = {k: v for k, v in psyche_states.items() if k not in _pc_masks_em}
+                    psyche_states = {k: v for k, v in psyche_states.items() if k not in _removed}
                     logger.debug(f"[EmotionEngine] PC 제외: {', '.join(_removed)}")
             if psyche_states:
                 prev_emotions = {}
@@ -759,6 +910,14 @@ class WaterfallPipeline:
                         if _soma_snap != _soma_prev:
                             world["npc_soma_states"] = _soma_snap
                             domain_manager.update_world_state(channel_id, world)
+                        # [2026-10-07 a묶음 A4] 관계 지난 턴 상태 — soma와 같은 자리·같은 규율.
+                        _rel_prev = world.get("npc_relation_states")
+                        if not isinstance(_rel_prev, dict):
+                            _rel_prev = {}
+                        _rel_snap = _merge_relation_states(_rel_prev, _psy, current_turn)
+                        if _rel_snap != _rel_prev:
+                            world["npc_relation_states"] = _rel_snap
+                            domain_manager.update_world_state(channel_id, world)
                         if _soma_moves:
                             try:  # [V10 적립] soma_log — 몸 상태가 *언제* 뒤집혔나. 실패 무해.
                                 import sqlite_store
@@ -794,21 +953,7 @@ class WaterfallPipeline:
         except Exception as e:
             _degrade_stage(bus, "emotion_engine", e)
 
-        # 2. Mental Pre-pass: annotate current stage for downstream modules.
-        try:
-            self.vigor_composure = VigorComposureModule()
-            context = await self.vigor_composure.prime(context)
-        except Exception as e:
-            _degrade_stage(bus, "vigor_composure", e)
-
-        # 3. Judgment (gated by Flash needs_judgment + judgment_gate)
-        if bus.judgment["active"]:
-            try:
-                self.judgment = JudgmentEngine(self.theoria.client, self.theoria.model_id)
-                context = await self.judgment.process(context)
-            except Exception as e:
-                bus.judgment["active"] = False
-                _degrade_stage(bus, "judgment_engine", e)
+        # [2026-10-01 2단계] Mental Pre-pass(prime)·Judgment 는 서사 콜 앞으로 옮겼다(판정 먼저). 위 사전 전개 블록 참고.
 
         # 4. Storyteller: inject state + set potential
         bus.anomaly["potential"] = True

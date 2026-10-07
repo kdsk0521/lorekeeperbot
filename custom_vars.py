@@ -28,16 +28,16 @@ v1 범위(스펙 §7 Phase 2 — 2026-08-18. **형식이 풍부해진다**):
   100% 도달 항목의 이동(연구중 → 완성품)은 **자동화하지 않는다** — rule 자연어와 산문의 몫.
   코드가 여기서 상태 전이를 발명하기 시작하면 이 설계가 피하려던 그 스크립트가 된다.
 
-v2.5 범위(스펙 §5 — 2026-08-18. **기력이 들어온다**):
+v2.5 범위(스펙 §5 — 2026-08-18. **활력이 들어온다**):
   **시스템 선언**(SYSTEM_VARS) — 코드가 심는 내장 변수. 유저 삭제 불가·모양 잠금,
     rule 과 델타캡·표시형식만 `!출력룰` 로 개정(= 이관의 요점: 캡과 rule 이 조정 가능한 값이 됐다).
-  += **per_actor 값**(키=user_id) — 다인 플레이의 PC별 기력 보존. NPC 스코프와 같은 저장 모양.
+  += **per_actor 값**(키=user_id) — 다인 플레이의 PC별 활력 보존. NPC 스코프와 같은 저장 모양.
   += **이월 승계**(lazy) — 레지스트리가 비었으면 옛 자리(ai_memory.vigor)를 읽고, 첫 델타가
     그 값을 기준선으로 삼는다. **마이그레이션 스크립트 없음 · 읽기는 쓰지 않음.**
   += **mentions 면제**(always_feed) — 상시 자원은 낱말이 없어도 관측한다.
   += **코드 소유 쓰기**(apply_system_delta) — 판정 Effort 선불. evidence 는 코드가 붙이고
     **비대칭 캡은 면제**(캡은 모델의 과장에 거는 재갈이지 규칙이 정한 선불을 깎을 근거가 아니다).
-  ★기력의 코드 공식(다운타임 회복·baseline drain·cascade·자연회복·챕터 리프레시·서사 impact)은
+  ★활력의 코드 공식(다운타임 회복·baseline drain·cascade·자연회복·챕터 리프레시·서사 impact)은
     vigor_composure_module 쪽에서 **전량 삭제**됐다. 평형은 잔류 — 그 모듈은 이제 평형 전담이다.
 
 값의 주인 분리:
@@ -128,7 +128,7 @@ MAX_ITEM_FIELDS = 6         # 한 항목이 드는 필드 수. 넘으면 그건 
 ITEM_DEFAULT_FIELD = "n"    # 필드 선언이 없을 때 옛 수량이 서는 자리
 
 # 코드 기관이 여전히 소유한 이름 — 레지스트리가 같은 이름을 만들면 패널에 두 번 그려진다.
-# [2026-09-06 P8b] **비었다.** 평형이 기력을 따라 시스템 선언으로 넘어오면서 이 목록의 마지막
+# [2026-09-06 P8b] **비었다.** 평형이 활력을 따라 시스템 선언으로 넘어오면서 이 목록의 마지막
 #   항목이 사라졌다. 예약은 "코드가 값을 계산하니 레지스트리는 손대지 마라"는 팻말이었는데,
 #   이제 두 축 다 계산하는 코드가 없다 — 이름은 SYSTEM_VARS 가 소유하고, 유저가 같은 이름을
 #   적으면 거부가 아니라 **개정으로 흡수**된다(_validate_system_override). 목록 자체는 남긴다:
@@ -140,45 +140,48 @@ KEY_DECL = "custom_vars"
 KEY_VALS = "custom_var_values"
 
 # =========================================================
-# 시스템 선언 [2026-08-18 Phase 2.5 — 기력 이관]
+# 시스템 선언 [2026-08-18 Phase 2.5 — 활력 이관]
 # =========================================================
 # ★코드가 심는 내장 선언이다. 유저 선언과 **같은 레지스트리·같은 집행기**를 쓰되 세 가지가 다르다:
 #   1) 항상 존재한다 — 저장된 선언이 없어도 get_declarations 가 기본형을 얹는다(가상 선언).
 #      저장되는 건 유저가 고친 칸(SYSTEM_EDITABLE)뿐이라, 여기 기본값을 고치면 기존 채널에도 퍼진다.
 #   2) **삭제 불가 · 모양 잠금** — 타입/범위/스코프/초기값은 코드 소유. 유저가 `!출력룰` 로 만질 수
 #      있는 건 rule 과 델타캡·표시형식뿐이다(= 이관의 요점: 캡과 rule 이 **조정 가능한 값**이 됐다).
-#   3) **mentions 면제**(always_feed) — 능력을 쓴 장면에 "기력"이라는 낱말이 없어도 소모는 일어난다.
+#   3) **mentions 면제**(always_feed) — 능력을 쓴 장면에 "활력"이라는 낱말이 없어도 소모는 일어난다.
 #      어휘 게이트는 유저 변수의 프롬프트 비대를 막는 장치지, 상시 자원의 관측을 끊는 장치가 아니다.
 #
-# 기력 = **정신 축의 뭉뚱그림**(집중력·정신력·MP류의 우산). 07-06 이전의 코드 공식
+# [2026-10-07 활력평형 B5] 활력 = **몸 축**(HP·체력·지구력), 평형 = **마음 축**(MP·정신력·집중력) — P8b 레티어스 결정.
+#   (Phase 2.5 땐 첫째 축이 유일한 게이지라 "정신 축의 뭉뚱그림"으로 적혀 있었고, P8b에서 평형이 생길 때 rule 이 안 따라왔다.)
+# 옛 문장: 기력 = 정신 축의 뭉뚱그림(집중력·정신력·MP류의 우산). 07-06 이전의 코드 공식
 #   (baseline drain / cascade / status severity / 자연회복 / 휴식·다운타임 회복 / 챕터 리프레시)은
 #   Phase 2.5 에서 전량 삭제됐고, 그 자리를 **rule 자연어 + 추출 콜의 관측 델타**가 대신한다.
 #   코드가 지키는 건 이제 셋뿐 — 범위 클램프 / 비대칭 델타캡 / 판정 구간표.
 SYSTEM_VARS: Dict[str, Dict[str, Any]] = {
-    "기력": {
-        "name": "기력",
+    "활력": {
+        "name": "활력",
         "type": "gauge",
         "scope": "pc",
         "range": [0, 100],
         "init": 100,                      # domain_manager 신규 참가자 초기값과 같은 수
-        "rule": ("Drains hard on abilities, magic, and deep focus; wears down a little under "
-                 "strain and pressure. Refills with rest, sleep, and calm."),
+        # [2026-10-07 B5] 몸 축 rule. 능력·마법·깊은 집중 소모는 평형으로 옮겼다(두 rule 낱말 겹침 0).
+        "rule": ("Physical reserve: stamina, strength, bodily endurance. Drains with exertion, "
+                 "injury, pain, hunger, sleeplessness; refills with rest, food, sleep, treatment."),
         # 비대칭 캡(레티어스 지정): 한 턴 최대 하강 7 · 상승 5. 삭제된 공식들이 하던 "속도 규율"을
         # 캡 하나가 대신한다 — 그리고 이제 이 두 수는 !출력룰 로 조정 가능한 값이다.
         "max_loss": 7,
         "max_gain": 5,
         "system": True,
-        "per_actor": True,                # 값 = {user_id: int}. 다인 플레이의 PC별 기력 보존.
+        "per_actor": True,                # 값 = {user_id: int}. 다인 플레이의 PC별 활력 보존.
         "always_feed": True,              # mentions 면제
         "legacy_keys": ("vigor", "mental"),   # 이월 승계 소스(participants[uid].ai_memory)
-        "toggle": "vigor_composure",          # !기력모듈 off = 동결(구 semantics 보존)
+        "toggle": "vigor_composure",          # !활력모듈 off = 동결(구 semantics 보존)
         # [2026-09-06 P8c] **켰다.** 값 dict 가 user_id 키와 인물 키를 **함께** 받는다
         #   (user_id 는 숫자 문자열, 인물은 이름 — 한 dict 안에서 충돌 0). 이관이 아니라
         #   키를 하나 더 받는 것이라, 급식·적용·첨자·표시가 전부 npc 스코프 변수와 같은
         #   경로를 탄다(새 rule 0 · 새 캡 0 · 새 문안 0). PC 값만 bus 에 실린다.
         "npc_enabled": True,
     },
-    # [2026-09-06 P8b] **평형 = 시스템 선언 둘째.** 기력과 완전 대칭이다 — 08-18 에 기력에서
+    # [2026-09-06 P8b] **평형 = 시스템 선언 둘째.** 활력과 완전 대칭이다 — 08-18 에 활력에서
     #   지운 코드 공식(baseline drain / cross-axis cascade / 자연회복 / 휴식 회복 / status
     #   drain / 챕터 리프레시)이 평형에도 전량 삭제됐고, 그 자리를 이 rule 한 문장 + 전담
     #   추출 콜의 관측 델타가 대신한다. 코드가 지키는 건 범위 클램프·비대칭 캡·판정 구간표뿐.
@@ -191,27 +194,44 @@ SYSTEM_VARS: Dict[str, Dict[str, Any]] = {
         # 중합 게이지 정의 한 문장 — MP·정신력·집중력의 우산. 장르별 공식이 애초에 말이 안 됐던
         #   이유가 여기 있다: 하나의 축이 여러 자원을 뭉뚱그리므로 "이 장르는 얼마 깎인다"가
         #   성립하지 않는다. 무엇이 깎고 무엇이 채우는지는 rule 이 말하고, 얼마인지는 캡이 문다.
-        "rule": ("Mental footing: composure, focus, willpower. Cracks under fear, shock, "
-                 "humiliation, prolonged strain; steadies with safety, rest, resolve, "
-                 "small victories."),
+        "rule": ("Mental reserve: composure, focus, willpower — what abilities, magic, and deep "
+                 "concentration spend. Cracks under fear, shock, humiliation, prolonged strain; "
+                 "steadies with safety, rest, resolve, small victories."),
         "max_loss": 7,
         "max_gain": 5,
         "system": True,
         "per_actor": True,
         "always_feed": True,
         "legacy_keys": ("composure",),        # 이월 승계 소스(participants[uid].ai_memory)
-        "toggle": "vigor_composure",          # 기력과 같은 채널 토글 = 두 축 동시 동결
-        "npc_enabled": True,                  # [2026-09-06 P8c] 기력과 대칭 — 무대 위 인물도 값을 갖는다
+        "toggle": "vigor_composure",          # 활력과 같은 채널 토글 = 두 축 동시 동결
+        "npc_enabled": True,                  # [2026-09-06 P8c] 활력과 대칭 — 무대 위 인물도 값을 갖는다
     },
 }
 
 # 유저가 `!출력룰` 로 고칠 수 있는 칸. 나머지는 코드 소유(모양 잠금).
 SYSTEM_EDITABLE = ("rule", "max_gain", "max_loss", "format")
 
-# 같은 것을 가리키는 다른 표기 — 유저가 `vigor`/`활력`로 적어도 기력 개정으로 흡수한다
+# 같은 것을 가리키는 다른 표기 — 유저가 `vigor`/`활력`로 적어도 활력 개정으로 흡수한다
 # (새 변수로 만들어지면 패널에 두 번 그려진다 — 예약 이름 규율과 같은 이유).
-SYSTEM_ALIASES = {"vigor": "기력", "활력": "기력", "기력": "기력",
+SYSTEM_ALIASES = {"vigor": "활력", "활력": "활력", "기력": "활력",
                   "composure": "평형", "평정": "평형", "평형": "평형"}
+
+# [2026-10-07 활력평형 B1] 저장 이월 — 옛 정본 키 → 새 정본 키(값 `custom_var_values`·선언층 덮어쓰기).
+#   08-18·09-06 규율 그대로: **읽기는 저장을 바꾸지 않는다**(정규화된 사본을 돌려줄 뿐), 첫 `_save` 가 옮긴다.
+LEGACY_SYSTEM_KEYS = {"기력": "활력"}
+
+
+def _migrate_legacy_keys(d: Dict[str, Any], rename_spec: bool = False) -> Dict[str, Any]:
+    """옛 키가 있으면 새 키로 옮긴 **사본**을 돌려준다(없으면 원본 그대로). 새 키가 이미 있으면 옛 키는 버린다."""
+    if not isinstance(d, dict) or not any(k in d for k in LEGACY_SYSTEM_KEYS):
+        return d
+    out = dict(d)
+    for _old, _new in LEGACY_SYSTEM_KEYS.items():
+        if _old in out:
+            _v = out.pop(_old)
+            if _new not in out:
+                out[_new] = ({**_v, "name": _new} if (rename_spec and isinstance(_v, dict)) else _v)
+    return out
 
 
 def system_name(name: Any) -> str:
@@ -227,7 +247,7 @@ def system_name(name: Any) -> str:
 RULES_TEXT = (
     "**변수 선언 규칙**\n"
     "`!출력룰 추가 변수 이름 | 범위 | 시작값 | 스코프 | 규칙`\n"
-    "- 이름: 1~%d자, `|` 없이. 기력/평형은 코드가 이미 씁니다.\n"
+    "- 이름: 1~%d자, `|` 없이. 활력/평형은 코드가 이미 씁니다.\n"
     "- 범위: `0-100` 형식. 왼쪽 < 오른쪽.\n"
     "- 시작값: 범위 안의 정수.\n"
     "- 스코프: `global`(세계) / `PC` / `NPC`(인물별 값 — 로어·수동 등록 인물만).\n"
@@ -253,8 +273,8 @@ RULES_TEXT = (
     "  끝이 없는 값(카운터)에는 남은 것도 없어 빈칸이 됩니다. 레코드 목록은 `[화분/양파/기한.남은]`.\n"
     "**날** — `날`은 코드가 세는 **누적 날짜**입니다(`일`은 달 안 날짜라 달을 넘으면 되감깁니다).\n"
     "  기한은 `기한 = 날 + 3` 처럼 **끝을 한 번** 적어 두면 상태창이 `남은 3일` 로 그립니다.\n"
-    "\n**시스템 변수** — `기력`·`평형`은 코드가 심어 둔 변수라 지울 수 없습니다. 대신 **규칙과 캡은 고칠 수 있습니다**:\n"
-    "`!출력룰 수정 변수 기력 | 상승 5 하강 7 | 능력을 쓰면 크게 깎이고 쉬면 찬다`\n"
+    "\n**시스템 변수** — `활력`·`평형`은 코드가 심어 둔 변수라 지울 수 없습니다. 대신 **규칙과 캡은 고칠 수 있습니다**:\n"
+    "`!출력룰 수정 변수 활력 | 상승 5 하강 7 | 능력을 쓰면 크게 깎이고 쉬면 찬다`\n"
     "(범위·타입·스코프는 코드 소유라 바뀌지 않습니다.)"
 ) % (NAME_MAX, RULE_MAX, MAX_VARS, MAX_STAGES, STAGE_NAME_MAX, TEXT_MAX, MAX_LIST_ITEMS)
 
@@ -280,7 +300,7 @@ def get_declarations(channel_id: str) -> Dict[str, Dict[str, Any]]:
     """
     if not is_enabled():
         return {}
-    decl = _read_decl(channel_id)
+    decl = _migrate_legacy_keys(_read_decl(channel_id), rename_spec=True)   # [2026-10-07 B1] 옛 "기력" 덮어쓰기 → "활력"
     out: Dict[str, Dict[str, Any]] = dict(decl) if isinstance(decl, dict) else {}
     for nm, base in SYSTEM_VARS.items():
         stored = out.get(nm) if isinstance(out.get(nm), dict) else {}
@@ -313,7 +333,7 @@ def _read_decl(channel_id: str) -> Optional[Dict[str, Any]]:
 
 
 def _system_active(channel_id: str, spec: Dict[str, Any]) -> bool:
-    """시스템 변수의 채널 토글. `!기력모듈 off` = 수치 동결(구 vigor_composure semantics 보존)."""
+    """시스템 변수의 채널 토글. `!활력모듈 off` = 수치 동결(구 vigor_composure semantics 보존)."""
     if str((spec or {}).get("toggle", "")) != "vigor_composure":
         return True
     try:
@@ -331,7 +351,8 @@ def get_values(channel_id: str) -> Dict[str, Dict[str, Any]]:
     except Exception as e:
         logger.debug("[CustomVar] value read skipped: %s", e)
         return {}
-    return vals if isinstance(vals, dict) else {}
+    # [2026-10-07 B1] 옛 "기력" 값(PC 키·인물 키 한 dict) → "활력". 사본만 — 저장은 첫 _save 가.
+    return _migrate_legacy_keys(vals) if isinstance(vals, dict) else {}
 
 
 def _current_turn(channel_id: str) -> int:
@@ -627,7 +648,7 @@ def feed_npc_names(channel_id: str) -> List[str]:
 
     npc 스코프 변수는 명부 전체(allowed_npc_names)를 급식하고 표시에서만 무대를 본다.
     시스템 변수는 매턴 실리므로(always_feed) 급식 단계에서 이미 무대를 판정한다 —
-    무대 밖 인물의 기력을 매턴 신고 대상으로 올리면 그 인물이 있는 것처럼 읽힌다.
+    무대 밖 인물의 활력을 매턴 신고 대상으로 올리면 그 인물이 있는 것처럼 읽힌다.
     """
     allowed = set(allowed_npc_names(channel_id))
     if not allowed:
@@ -666,7 +687,7 @@ def resolve_npc(channel_id: str, name: Any) -> str:
 # [Phase 2.5] per-actor 값 — 참가자별 슬롯 + 이월 승계
 # =========================================================
 # ★NPC 스코프의 인물별 dict 와 **같은 저장 모양**(값={키: 값}, 도장={키: 도장})이다.
-#   키만 인물명 대신 user_id 다. 다인 플레이에서 PC 마다 기력이 따로 있어야 하기 때문이고,
+#   키만 인물명 대신 user_id 다. 다인 플레이에서 PC 마다 활력이 따로 있어야 하기 때문이고,
 #   그래서 표시(패널 PC별 줄)가 이관 전후로 같다.
 
 def _default_actor(channel_id: str) -> str:
@@ -752,17 +773,17 @@ def get_system_value(channel_id: str, name: Any, actor: str = "") -> Optional[in
 
 
 def vigor_value(channel_id: str, actor: str = "", mem: Optional[Dict[str, Any]] = None) -> int:
-    """기력 현재값 한 줄 조회 — **표시 소비자 공용 문**(패널·헤더·산문·슬롯·명령어·분석).
+    """활력 현재값 한 줄 조회 — **표시 소비자 공용 문**(패널·헤더·산문·슬롯·명령어·분석).
 
     ★소비자가 저마다 폴백을 적으면 이관 후에도 자리마다 다른 값이 보인다. 폴백은 여기 한 곳:
       레지스트리 → 이월 승계(ai_memory) → 넘겨받은 mem → 100.
     """
     try:
-        v = get_system_value(channel_id, "기력", actor)
+        v = get_system_value(channel_id, "활력", actor)
         if v is not None:
             return int(v)
     except Exception as e:
-        logger.debug("[CustomVar] 기력 조회 실패: %s", e)
+        logger.debug("[CustomVar] 활력 조회 실패: %s", e)
     src = (mem or {}).get("vigor") or (mem or {}).get("mental") or {}
     try:
         return int(src.get("value", 100))
@@ -1158,7 +1179,7 @@ def validate_declaration(
 
     # [Phase 2.5] 시스템 이름은 **거부가 아니라 개정으로 흡수**된다 — 모양(타입·범위·스코프·
     #   초기값)은 코드 소유라 무시하고, rule·캡·표시형식만 받는다. 유저가 `!출력룰 추가 변수
-    #   기력 …` 이라고 써도 새 변수가 생기지 않고 기존 기력이 고쳐진다(중복 표시 방지).
+    #   활력 …` 이라고 써도 새 변수가 생기지 않고 기존 활력이 고쳐진다(중복 표시 방지).
     _sys = system_name(name)
     if _sys:
         return _validate_system_override(_sys, spec, fmt=str(spec.get("format", "") or "").strip())
@@ -1726,7 +1747,7 @@ def select_mentioned(channel_id: str, *texts: str) -> List[Dict[str, Any]]:
         #   실으면 그 자리는 폐기될 델타를 부르는 초대장이다(추출 스키마 비대 감시, 스펙 §3.5).
         if is_derived(spec):
             continue
-        # [Phase 2.5] **mentions 면제**(always_feed). 능력을 쓴 장면에 "기력"이라는 낱말이
+        # [Phase 2.5] **mentions 면제**(always_feed). 능력을 쓴 장면에 "활력"이라는 낱말이
         #   없어도 소모는 일어난다 — 어휘 게이트는 유저 변수의 프롬프트 비대를 막는 장치지
         #   상시 자원의 관측을 끊는 장치가 아니다. 동결된(토글 off) 시스템 변수는 급식 안 한다.
         if spec.get("always_feed"):
@@ -2161,7 +2182,7 @@ def apply_code_write(channel_id: str, name: Any, *, delta: Any = None, value: An
 
     keyed = ""
     per: Dict[str, Any] = {}
-    # [2026-09-06 P8c] per_actor 시스템 변수에 인물 첨자가 오면(`기력[리나] -= 10`) 그 인물 키를
+    # [2026-09-06 P8c] per_actor 시스템 변수에 인물 첨자가 오면(`활력[리나] -= 10`) 그 인물 키를
     #   쓴다 — expr 쪽 문법이 npc 스코프 변수와 같아진다. 첨자가 없으면 종전대로 acting user.
     if spec.get("per_actor") and spec.get("npc_enabled") and str(npc or "").strip():
         keyed = resolve_npc(channel_id, npc)
@@ -2935,7 +2956,7 @@ async def convert_natural_declaration(
         text=body[:600],
     )
     cfg = types.GenerateContentConfig(
-        system_instruction=getattr(_tr, "CONTENT_AUTHORIZATION_MANDATE", ""),
+        system_instruction=getattr(_tr, "ANALYSIS_FRAME", ""),   # [2026-10-06 분석 틀] 
         temperature=0.2,            # 스키마 채우기 — 창작이 아니다
         max_output_tokens=512,
         response_mime_type="application/json",
@@ -3248,7 +3269,7 @@ def directive_feed_rows(channel_id: str, user_id: str = "") -> List[str]:
     """
     try:
         import expr_engine as _ee
-        # [2026-09-24 감사] ctx 없이 불러 행위자가 비었다 — per_actor 조건(기력 < 30)은
+        # [2026-09-24 감사] ctx 없이 불러 행위자가 비었다 — per_actor 조건(활력 < 30)은
         #   첫 참가자로, `재고`·`조각` 조건은 ExprError→거짓으로 **영구** 접혔다.
         #   행위자를 실어 보낸다(못 받으면 per_actor 와 같은 _default_actor 규약).
         _uid = str(user_id or "").strip() or _default_actor(channel_id)
@@ -3326,7 +3347,7 @@ def build_prose_feed(channel_id: str, onstage: Optional[List[str]] = None,
     #   그래서 소비(=소멸)를 조기 반환 **앞**에서 한다: 안 그러면 선언 없는 채널에서
     #   큐가 영원히 안 비고, 다음 턴 편지가 옛 편지 뒤에 쌓인다.
     handouts = _take_handouts(channel_id)
-    # [2026-09-13 P16] 지시도 선언과 무관하다 — `when` 이 읽기 전용 이름(기력·날씨)만 볼 수도
+    # [2026-09-13 P16] 지시도 선언과 무관하다 — `when` 이 읽기 전용 이름(활력·날씨)만 볼 수도
     #   있으니 선언 0 인 채널에도 지시는 선다. 그래서 조기 반환 **앞**에서 만든다.
     # [2026-09-24 감사] 행위자 전달 — 호출부(game_world.build_real_time_display)가 user_id 를
     #   넘겨야 다인 채널에서 맞는 PC 로 판정된다(안 넘기면 _default_actor).
@@ -3660,8 +3681,8 @@ def resolve_placeholder(channel_id: str, token: str,
             if suf in _PROGRESS_SUFFIXES:
                 _sp_b = decl.get(bkey) or {}
                 _raw_b = (vals.get(bkey) or {}).get("value", _sp_b.get("init"))
-                # [2026-09-24 감사] per_actor(기력·평형)의 저장값은 {user_id: int} dict 라
-                #   첫 쓰기 이후 _progress_text 의 int() 가 실패해 `[기력.퍼센트]` 가 "—" 였다.
+                # [2026-09-24 감사] per_actor(활력·평형)의 저장값은 {user_id: int} dict 라
+                #   첫 쓰기 이후 _progress_text 의 int() 가 실패해 `[활력.퍼센트]` 가 "—" 였다.
                 #   _declared_text 와 같은 문(get_system_value, 행위자 없으면 _default_actor)으로 읽는다.
                 if _sp_b.get("per_actor"):
                     _raw_b = get_system_value(channel_id, bkey)

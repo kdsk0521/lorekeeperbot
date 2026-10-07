@@ -98,6 +98,38 @@ def mob_base(name: str) -> str:
     return _TAG_TAIL_RE.sub("", name).strip()
 
 
+_PAREN_NAME_RE = re.compile(r"^\s*([^()（）]+?)\s*[(（]\s*([^()（）]+?)\s*[)）]\s*$")
+
+
+def _name_forms(name: Any) -> set:
+    """이름 대조형 — "이브(Eve)" → {이브(eve), 이브, eve}. 괄호에서 나온 형은 2자 이상만(오탐 방지)."""
+    if not isinstance(name, str) or not name.strip():
+        return set()
+    out = {_norm(name)}
+    m = _PAREN_NAME_RE.match(name)
+    if m:
+        for part in (m.group(1), m.group(2)):
+            k = _norm(part)
+            if len(k) >= 2:
+                out.add(k)
+    out.discard("")
+    return out
+
+
+def _lore_name_forms(channel_id: str) -> set:
+    """[2026-09-29 배치2 2a-9 C12] 로어 분석이 식별한 인물 이름(lore_summary_data.npc_names)의 대조형.
+    로어 NPC 자동 등록이 꺼져 있어(LORE_NPC_AUTO_REGISTER=0, 09-02 판정) 로어가 정의한 인물이 게이트 1
+    (등록 인물)을 못 막았다 — fx에서 이브에게 사교적 성격 시드가 굴려졌다. 이름 목록은 등록이 아니라 기록이다."""
+    try:
+        names = (domain_manager.get_lore_summary_data(channel_id) or {}).get("npc_names") or []
+    except Exception:
+        return set()
+    out = set()
+    for n in names:
+        out |= _name_forms(str(n))
+    return out
+
+
 def _candidates(*names: Any) -> List[str]:
     """대조 후보 정규형 목록 — 원 이름 + 몹 태그 꼬리를 뗀 base(§G 후보 키 셋)."""
     out: List[str] = []
@@ -225,7 +257,7 @@ def gate_and_roll(channel_id: str, relevant_npcs: Any, all_pcs: Any = None,
       1. `_find_npc_key` 미해상만 통과 — 별칭·표기 변형까지 푸는 제1 방어선.
          해상되면 기존 인물이므로 굴리지 않는다(굴리면 인물이 갈라진다).
       2. PC 마스크 제외. `all_pcs` 는 호출자가 이미 가진 set 을 그대로 받는다
-         (waterfall `_pc_masks_dai` 와 **같은 원천** — 여기서 따로 만들지 않는다).
+         (waterfall `_pc_masks` 와 **같은 원천**(all_pcs) — 여기서 따로 만들지 않는다. 단일 정제는 10-07부터 `_is_pc_key`로 변형 이름까지 본다).
       3. 몹 태그 이름(`is_mob_tag`) 제외 — 태그가 추출에 그대로 나왔다는 건 등록 인물이다.
       5. 상한 VOICE_SEED_MAX_PER_TURN(3). 초과분은 굴리지 않고 로그 한 줄.
       6. 이미 `pending_seeds` 에 있는 이름(지난 턴 굴렸는데 아직 미등록)은 **재굴림하지 않고**
@@ -254,9 +286,18 @@ def gate_and_roll(channel_id: str, relevant_npcs: Any, all_pcs: Any = None,
         k = _norm(m)
         if k:
             pc_keys.add(k)
+    # [2026-10-07 PC 이름 단일화] 정규형 정확일치만으론 "아담(Adam)" 가면에 "아담"·"Adam"이 안 걸렸다 —
+    #   굴림 대상(신규 인물)으로 PC가 들어가던 자리. 규칙은 domain_manager.is_pc_name 하나.
+    def _is_pc(nm) -> bool:
+        try:
+            import domain_manager as _dm_vs
+            return _dm_vs.is_pc_name(str(nm or ""), all_pcs if isinstance(all_pcs, dict) else list(all_pcs or []))
+        except Exception:
+            return False
 
     pending = _buffer_load(channel_id)
     pending_keys = {_norm(k) for k in pending}
+    lore_forms = _lore_name_forms(channel_id)
 
     # [2026-09-24 감사] 게이트 1b 재료 — 표식 인물(`경비병 #2A`)의 역할명 base. `_find_npc_key` 는 표식 키를
     #   토큰 매칭에서 빼므로 bare "경비병" 이 미해상으로 통과해, **기존 몹에 무작위 성격 카드**가 렌더러로 갔다
@@ -292,7 +333,10 @@ def gate_and_roll(channel_id: str, relevant_npcs: Any, all_pcs: Any = None,
             if isinstance(prev, dict):
                 stage_rolls.append(prev)                   # 무대에 이미 선 굴림
             continue
-        if _norm(name) in pc_keys:                         # 게이트 2 — PC 마스크
+        if lore_forms and (_name_forms(name) & lore_forms):   # 게이트 1c — 로어가 정의한 인물(C12)
+            logger.info("[Seed] skip lore-defined character: %s", name)
+            continue
+        if _norm(name) in pc_keys or _is_pc(name):        # 게이트 2 — PC 마스크([2026-10-07] 가면 이름 규칙: "아담"·"Adam"도)
             continue
         if npc_manager.is_mob_tag(name):                   # 게이트 3 — 몹 태그명
             continue

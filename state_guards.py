@@ -41,7 +41,9 @@ def _safe_int(value: Any, default: int = 0) -> int:
 
 # [2026-09-15 관계 통합 1차] relations 엣지 방벽 — 테이블 **전 칸** 화이트리스트.
 #   전례: 옛 npc_relations 방벽이 `last_change`를 몰라 조용히 떨궜다. 칸을 늘리면 여기도 같이.
-EDGE_FIELDS = ("source", "target", "bond", "tension", "stance", "kind", "last_turn", "history")
+# [2026-09-26 S7] base_bond/base_tension = 기준선(시작값) — 감쇠 목표.
+EDGE_FIELDS = ("source", "target", "bond", "tension", "stance", "kind", "last_turn", "history",
+               "base_bond", "base_tension")
 EDGE_KINDS = ("alliance", "rivalry", "fear", "respect", "distrust",
               "affection", "debt", "mentor", "grudge", "neutral")
 _EDGE_HISTORY_KEYS = ("turn", "bond", "tension", "source")
@@ -82,6 +84,8 @@ def validate_edge_write(source: Any, target: Any, payload: Any) -> Optional[Dict
         "kind": kind,
         "last_turn": lt,
         "history": hist[-20:],
+        "base_bond": max(-100, min(100, _safe_int(payload.get("base_bond"), 0))),
+        "base_tension": max(0, min(100, _safe_int(payload.get("base_tension"), 0))),
     }
 
 

@@ -326,7 +326,7 @@ class NPCAutonomousEngine:
                     break
         lines = [
             "[NPC Autonomous Behavior]",
-            "(surfaced through action or speech, a line of dialogue often the most direct channel; the trigger types and psychology terms stay out of the prose.)",
+            # [2026-09-29 반죽] 읽기 머리 → RB_TABLE(브리핑 분석어는 행동·말로)
         ]
         for t in selected:
             lines.append(f"- {t.npc_name}: {t.directive}")

@@ -261,31 +261,48 @@ class StoryDirector:
             _last_planned = int(_st_state.get("last_planned_turn", 0) or 0)
             _cap = int(_st_state.get("beats_cap", 6) or 6)
 
+            # SD-Bb3: Theoria author-hint beats (휴리스틱 비트 보강용)
+            _llm_hints = dai.get("suggested_beats", []) or []
+            if not isinstance(_llm_hints, list):
+                _llm_hints = []
+            # [2026-10-06 F3 관찰 비트 만료] Theoria 제안 비트는 **낸 턴의 관찰**이다. 큐에 남아 다음 턴에
+            #   꺼내지면 그 사이 입력과 어긋난다(vI_1005: 큐 머리 "the glove she never removed stays on" 대
+            #   입력 "장갑을 벗기고" — 같은 턴 Theoria는 "the glove comes off …"를 냈는데 버려졌다).
+            #   지난 턴 관찰 비트는 빼고 이번 턴 제안을 엮는다. 휴리스틱 비트 회전은 그대로.
+            #   옛 상태(llm_beats 키 없음)는 이번 제안이 있으면 한 번 다시 짠다.
+            _fresh_llm = [nb for nb in (StoryDirector._normalize_llm_beat(h) for h in _llm_hints) if nb]
+            _legacy_queue = "llm_beats" not in _st_state
+            _beats = StoryDirector._expire_llm_beats(
+                _beats, _st_state.get("llm_beats", []) or [], _fresh_llm, _cap)
+
             _need_replan = (
                 (not _beats)
                 or (_cur_turn - _last_planned >= 2)
                 or anomaly_triggered
+                or (_legacy_queue and bool(_fresh_llm))
             )
 
             if _need_replan:
-                # SD-Bb3: Theoria author-hint beats (휴리스틱 비트 보강용)
-                _llm_hints = dai.get("suggested_beats", []) or []
-                if not isinstance(_llm_hints, list):
-                    _llm_hints = []
                 _beats = StoryDirector._generate_beats(
                     _plot_hints_reserved, energy, is_idle,
                     anomaly_triggered, emotion_summary,
                     suggested_beats=_llm_hints, cap=_cap, pacing=pacing,
-                    doom_value=doom_value
+                    doom_value=doom_value,
+                    anomaly_line=str(bus.anomaly.get("line", "") or "") if anomaly_triggered else ""
                 )
                 _last_planned = _cur_turn
                 beats_replanned = True
 
             # head 소비
-            if _beats:
+            # [2026-09-29 배치2 2a-1 · B안] 이변이 발화한 턴엔 비트를 싣지 않는다(큐 머리는 다음 턴으로 보존).
+            #   그 턴의 세계 움직임은 이변 하나다 — une_facade "world event:" 줄이 사실로 싣는다. 비트까지 얹으면
+            #   전진이 둘이 되고(C16), 이변 line을 비트로 싣으면(A안) 착지 숙고가 세 배로 뛰었다(replay 09-29:
+            #   red-eye 언급 30–49 vs 원본 10–21 vs B안 3–24).
+            if _beats and not anomaly_triggered:
                 active_beat = _beats.pop(0)
 
             # 상태 영속화
+            _st_state["llm_beats"] = _fresh_llm          # [2026-10-06 F3] 다음 턴에 만료시킬 이번 턴 관찰 비트
             if _chan_beat:
                 _st_state["next_beats"] = _beats
                 _st_state["last_planned_turn"] = _last_planned
@@ -299,6 +316,7 @@ class StoryDirector:
                         _fresh_st = dict(_st_state)
                     _fresh_st["next_beats"] = _beats
                     _fresh_st["last_planned_turn"] = _last_planned
+                    _fresh_st["llm_beats"] = _fresh_llm
                     _dm_beat.update_storyteller_state(_chan_beat, _fresh_st)
                     _st_state = _fresh_st
                 except Exception as _e_persist:
@@ -851,6 +869,24 @@ class StoryDirector:
         return s
 
     @staticmethod
+    def _expire_llm_beats(
+        queue: List[str],
+        stale_llm: List[str],
+        fresh_llm: List[str],
+        cap: int,
+    ) -> List[str]:
+        """[2026-10-06 F3] 지난 턴 Theoria 관찰 비트를 큐에서 빼고 이번 턴 제안을 엮는다.
+        - stale_llm: 지난 턴에 큐에 넣은 관찰 비트(정규화 문자열). 큐에서 같은 문자열을 뺀다.
+        - fresh_llm: 이번 턴 제안(정규화 끝난 것). 있으면 `_merge_llm_beats`로 휴리스틱 사이에 엮는다.
+        - 휴리스틱 비트의 순서는 건드리지 않는다.
+        """
+        stale = {str(b).strip() for b in (stale_llm or []) if b}
+        kept = [b for b in (queue or []) if str(b).strip() not in stale]
+        if fresh_llm:
+            kept = StoryDirector._merge_llm_beats(kept, list(fresh_llm), cap)
+        return kept[:cap]
+
+    @staticmethod
     def _merge_llm_beats(
         heuristic_beats: List[str],
         llm_beats: List[str],
@@ -900,7 +936,8 @@ class StoryDirector:
         suggested_beats: Optional[List[str]] = None,
         cap: int = 6,
         pacing: str = "hold",
-        doom_value: int = 0
+        doom_value: int = 0,
+        anomaly_line: str = ""
     ) -> List[str]:
         """
         Convert scored threads → natural-language beat directives (English state-form).
@@ -990,9 +1027,9 @@ class StoryDirector:
         beats = StoryDirector._merge_llm_beats(beats, llm_beats, _weave_cap)
 
         # Anomaly가 막 터졌으면 최우선 비트 prepend
-        if anomaly_triggered:
-            beats.insert(0, "Next beat: the shockwave of the anomaly that just struck etches itself into the air of the scene.")
-            beats = beats[:cap]
+        # [2026-09-29 배치2 2a-1 · B안] 이변 prepend 삭제 — 범용 문장("the shockwave of the anomaly…")은 이변을
+        #   세 번째로 싣는 중복이었다. 발화 턴엔 process()가 비트를 싣지 않고, 이변은 "world event:" 사실 줄 하나.
+        #   (anomaly_line 인자는 호출 호환용으로 남긴다 — 쓰지 않는다.)
 
         # Idle 에너지 + 비트 없음 → ambient 진행 비트 보강
         # [2026-08-28] 문안을 모듈 레벨 `ambient_beat()`로 노출 — slot_manager가 주입 보증에
