@@ -786,25 +786,7 @@ def npc_to_pc_info(channel_id: str, name: str) -> Optional[tuple]:
     return key, pc_box_from_info(info, _sheet)
 
 
-def merge_character_sheet_into_pc(pc_info: dict, sheet: dict) -> dict:
-    """analyze_character_sheet 결과를 대기 상자에 병합 — 조각(passives/inventory)·이름·species만.
-    서술은 원문(`sheet_text`)이 정본이라 병합하지 않는다(2026-09-16 시트 2차)."""
-    if not sheet:
-        return pc_info
-    for k in ("name", "species"):
-        if sheet.get(k) and not pc_info.get(k):
-            pc_info[k] = sheet[k]
-    if sheet.get("inventory"):
-        pc_info["inventory"] = sheet["inventory"]
-    if sheet.get("passives"):
-        # [2026-09-16 3차] 조각 새 모양(origin=sheet)으로 접어 담는다.
-        from game_character import normalize_fragment
-        _raw = sheet["passives"] if isinstance(sheet["passives"], list) else []
-        _fr = [f for f in (normalize_fragment(x, "sheet") for x in _raw) if f]
-        if _fr:
-            pc_info["passives"] = _fr
-    return pc_info
-
+# [2026-10-12 C33] merge_character_sheet_into_pc 삭제 — 로어 PC 상자 보강(maybe_enrich_pc_sheet) 전용이었다.
 
 
 def find_similar_npc(channel_id: str, new_name: str, threshold: float = 0.85) -> Optional[str]:

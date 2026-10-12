@@ -385,7 +385,6 @@ async def cmd_lore(ctx: CommandContext) -> None:
                 return
 
             extracted_npcs = unified_res.get("npcs", [])
-            pc_info = unified_res.get("pc_info")
             genre_res = unified_res.get("genres", {})
             lore_summary_data = unified_res.get("lore_summary", {})
             # [2026-09-29 배치2 2a-9 C12] 로어가 식별한 인물 이름을 기록한다(등록 아님 — 자동 등록은 꺼져 있다).
@@ -410,28 +409,8 @@ async def cmd_lore(ctx: CommandContext) -> None:
                         npc["description"] = full_sections[npc_name]
                 npc_manager.add_lore_npcs(channel_id, extracted_npcs)
                 
-            # 2. Update PC Info
-            pc_msg = ""
-            if pc_info and pc_info.get("name"):
-                 # [2026-09-16 시트 2차] 대기 상자 — 원문은 로어의 그 인물 절(콜 0), 못 찾으면 추출 필드를 원문 대용으로.
-                 _pc_sec = npc_manager.extract_npc_sections_from_lore(full_content, [pc_info["name"]])
-                 pc_info = npc_manager.pc_box_from_info(pc_info, _pc_sec.get(pc_info["name"], ""))
-                 domain_manager.set_default_pc_info(channel_id, pc_info)
-                 pc_msg = f"\n주인공 식별: {pc_info.get('name')} (가면 설정 시 자동 적용)"
-                 # 로어가 식별한 PC가 배경/설명만 있고 기계 필드가 비면 시트 자동 보강
-                 pc_msg += await maybe_enrich_pc_sheet(ctx.genai_client, channel_id)
-                 
-                 # Auto-apply to existing participants with matching name
-                 updated_uids = domain_manager.sync_matching_participants(channel_id, pc_info)
-                 
-                 if updated_uids:
-                     # Get names for display
-                     updated_names = []
-                     for uid in updated_uids:
-                         p = domain_manager.get_participant_data(channel_id, uid)
-                         if p: updated_names.append(p.get("mask", "Player"))
-                     pc_msg += f"\n✅ 캐릭터 업데이트: {', '.join(updated_names)} (특질 및 설정 적용)"
-            
+            # [2026-10-12 C33] 2. PC 정보 — 삭제. 로어는 PC를 뽑지 않는다(PC 시트 입구 = `!설명` 하나).
+
             # 3. Update Genre (3-Layer) + mechanic_profile
             # [Guard] Flash가 레이어 간 태그를 교차 배치하는 경우 코드 레벨에서 보정
             _STAGE_TAGS = {"high_fantasy", "wuxia", "cyberpunk", "post_apocalypse", "space_opera", "modern"}
@@ -558,7 +537,7 @@ async def cmd_lore(ctx: CommandContext) -> None:
             lore_extra = ""
             if rules_count or factions_count:
                 lore_extra = f"\n\n📜 **세계 규칙** {rules_count}개 | **세력** {factions_count}개 추출"
-            await msg.edit(content=f"✅ **로어 분석 완료**\n\n👥 **NPC: {len(extracted_npcs)}명 식별**\n{npc_list_str}{pc_msg}\n\n🌍 **장르/톤**\n{genre_summary}\n\n🌪️ **이변 징후** ({len(anomaly_seeds)}개)\n{anomaly_str}{lore_extra}")
+            await msg.edit(content=f"✅ **로어 분석 완료**\n\n👥 **NPC: {len(extracted_npcs)}명 식별**\n{npc_list_str}\n\n🌍 **장르/톤**\n{genre_summary}\n\n🌪️ **이변 징후** ({len(anomaly_seeds)}개)\n{anomaly_str}{lore_extra}")
 
         except Exception as e:
             import traceback
@@ -616,6 +595,10 @@ async def cmd_info(ctx: CommandContext) -> None:
                 return
         else:
             # 2. Update logic
+            # [2026-10-12 C33] 페이지(`!가면`)가 없으면 콜 전에 거절 — 대기 상자는 없다.
+            if not domain_manager.get_pc_page_id(ctx.channel_id, uid):
+                await ctx.send("❌ 먼저 `!가면 [이름]`으로 캐릭터를 세운 뒤 `!설명`을 넣어 주세요.")
+                return
             status_msg = await ctx.send("📝 **캐릭터 설정 분석 중...**")
             
             # [2026-09-16 시트 2차 §8] 원문 = 페이지 lore 절(정본). heavy 콜은 조각(passives/inventory)·
@@ -626,12 +609,11 @@ async def cmd_info(ctx: CommandContext) -> None:
             box = npc_manager.pc_box_from_info(analysis, full_arg)
             if not analysis:
                 box["sheet_fallback"] = True   # AI 실패 폴백: 원문 그대로 Notes 절
-            domain_manager.set_default_pc_info(ctx.channel_id, box)
-            if domain_manager.apply_pc_info_to_user(ctx.channel_id, uid):
+            if domain_manager.apply_pc_info_to_user(ctx.channel_id, uid, box):
                 _tail = "" if analysis else " (AI 분석 실패 — 원문만 저장)"
                 await status_msg.edit(content=f"✅ **캐릭터 시트 등록 완료**{_tail}\n특성: {len(box.get('passives', []))}개 추출\n원문은 캐릭터 페이지에 절 단위로 저장되었습니다.")
             else:
-                await status_msg.edit(content="📦 **시트 대기 중** — `!가면 [이름]`으로 캐릭터를 세우면 적용됩니다.")
+                await status_msg.edit(content="⚠️ **시트 저장 실패** — 다시 시도해 주세요.")
             return
 
     # 1. Profile — [2026-09-16 시트 2차] 서술은 PC 페이지 lore 절(+Observed)에서.
@@ -724,44 +706,13 @@ async def cmd_mask(ctx: CommandContext) -> None:
     import wiki_store as _ws_mask
     _ws_mask.ensure_pc_page(ctx.channel_id, ctx.user_id, target)
 
-    # Link PC info — 대기 상자 흡수(정규화 정확일치 또는 aliases, 부분일치 없음)
-    pc = domain_manager.get_default_pc_info(ctx.channel_id)
-    mapped_msg = ""
+    # [2026-10-12 C33] 대기 상자 흡수 삭제 — PC 시트 입구는 `!설명` 하나. 옛 로어 상자가 남아 있으면 치운다.
+    domain_manager.clear_default_pc_info(ctx.channel_id)
 
-    if pc and domain_manager.pc_mask_matches(target, pc.get("name", ""), pc.get("aliases")):
-         if domain_manager.apply_pc_info_to_user(ctx.channel_id, ctx.user_id):
-             mapped_msg = " (PC 정보 동기화됨)"
-             
-    await ctx.send(f"🎭 **{target}**(으)로 변신했습니다.{mapped_msg}")
+    await ctx.send(f"🎭 **{target}**(으)로 변신했습니다.")
 
 
-async def maybe_enrich_pc_sheet(client, channel_id: str, force: bool = False) -> str:
-    """현재 default PC가 설명/배경은 있으나 기계 필드(passives/inventory)가 비면
-    analyze_character_sheet 1회로 시트를 보강한다. fill-empty(기존 값 보존).
-    `!pc` 승격 enrich와 동일 기계를 '로어북만 있는 PC'에도 적용하는 경로.
-    반환=상태 메시지(빈 문자열이면 미실행/보강할 것 없음)."""
-    if not client:
-        return ""
-    pc = domain_manager.get_default_pc_info(channel_id)
-    if not pc:
-        return ""
-    # 이미 기계 필드가 차 있으면 스킵 (force면 재분석 허용)
-    if not force and (pc.get("passives") or pc.get("inventory")):
-        return ""
-    source_text = str(pc.get("sheet_text", "") or "").strip()
-    if len(source_text) < 300:
-        return ""
-    try:
-        sheet = await cognition.analyze_character_sheet(client, config.role_model("heavy"), source_text)
-        pc = npc_manager.merge_character_sheet_into_pc(pc, sheet)
-        domain_manager.set_default_pc_info(channel_id, pc)
-        domain_manager.sync_matching_participants(channel_id, pc)
-        n_pas, n_inv = len(pc.get("passives", [])), len(pc.get("inventory", []))
-        if n_pas or n_inv or sheet:
-            return f"\n🧩 PC 시트 자동보강: 패시브 {n_pas}개 / 소지품 {n_inv}개"
-    except Exception as _e:
-        logger.warning(f"[PC Enrich] 자동보강 실패(기본 정보로 진행): {_e}")
-    return ""
+# [2026-10-12 C33] maybe_enrich_pc_sheet 삭제 — 로어 PC 상자 보강 전용이었다.
 
 
 @registry.register("journal", category="Player", aliases=["일지"], description="캐릭터 일지 전체 조회 (노트북엔 최근 몇 줄만 표시)")
@@ -2844,6 +2795,10 @@ async def _handle_custom_var_subcommand(ctx: CommandContext, sub: str, payload: 
             )
             return
         src = "자연어"
+
+    # [2026-10-12 C34] 수정인데 칸이 플래그뿐이면(`호감 | 추적 항상`) 기존 선언 위에 그 칸만 덮는다.
+    if sub in ('수정', 'edit', 'modify', 'update', 'u'):
+        spec = custom_vars.merge_flag_edit(spec, existing)
 
     clean, verr = custom_vars.validate_declaration(spec, existing)
     if clean is None:

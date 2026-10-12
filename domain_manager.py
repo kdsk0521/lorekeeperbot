@@ -3288,18 +3288,11 @@ def save_participant_data(channel_id: str, user_id: str, data: Dict[str, Any]) -
     save_domain(channel_id, d)
 
 # PC Info & Masks
-def set_default_pc_info(channel_id: str, pc_info: Dict[str, Any]) -> None:
-    d = get_domain(channel_id)
-    d["default_pc_info"] = pc_info
-    save_domain(channel_id, d)
-
-def get_default_pc_info(channel_id: str) -> Optional[Dict[str, Any]]:
-    return get_domain(channel_id).get("default_pc_info")
-
+# [2026-10-12 C33] 대기 상자(`default_pc_info`) 폐지 — set/get 삭제. 옛 채널 JSON에 남은 상자만 `!가면`이 치운다.
 def clear_default_pc_info(channel_id: str) -> None:
     d = get_domain(channel_id)
-    d.pop("default_pc_info", None)
-    save_domain(channel_id, d)
+    if d.pop("default_pc_info", None) is not None:
+        save_domain(channel_id, d)
 
 def get_user_mask(channel_id: str, uid: str) -> str:
     p = get_participant_data(channel_id, uid)
@@ -3311,23 +3304,10 @@ def set_user_mask(channel_id: str, uid: str, mask: str) -> None:
         d["participants"][str(uid)]["mask"] = mask
         save_domain(channel_id, d)
 
-# [2026-09-16 시트 2차 §8] `default_pc_info` = **대기 상자**. 모양:
-#   {"name", "aliases"?, "species"?, "sheet_text"(시트 원문), "passives"?, "inventory"?}
-#   마스크가 맞는 참가자(PC 페이지 보유)가 나타나면 원문은 페이지 lore 절로, passives/inventory는
-#   지금 자리(ai_memory·노트북 [소지품]) 그대로 이월하고 상자를 **비운다**.
-def pc_mask_matches(mask: Any, name: Any, aliases: Any = None) -> bool:
-    """마스크 매칭 하나 — `_norm_quote` 정규화 후 정확일치 또는 aliases. 부분일치 없음."""
-    try:
-        from fermentation import _norm_quote as _nq
-    except Exception:
-        _nq = lambda x: re.sub(r"\s+", " ", str(x or "")).strip()
-    m = _nq(str(mask or "")).lower()
-    if not m:
-        return False
-    cands = [name] + (list(aliases) if isinstance(aliases, list) else [])
-    return any(isinstance(c, str) and c.strip() and _nq(c).lower() == m for c in cands)
-
-
+# [2026-10-12 C33] PC 시트 = `!설명`이 넘긴 상자 하나(`npc_manager.pc_box_from_info` 모양:
+#   {"name", "species"?, "sheet_text"(시트 원문), "passives"?, "inventory"?, "sheet_fallback"?}).
+#   원문은 페이지 lore 절로, passives/inventory는 지금 자리(ai_memory·노트북 [소지품]) 그대로 이월.
+#   `pc_mask_matches`·`sync_matching_participants`(로어 상자 흡수) 삭제.
 def get_pc_page_id(channel_id: str, uid: Any) -> Optional[str]:
     try:
         import wiki_store
@@ -3336,10 +3316,8 @@ def get_pc_page_id(channel_id: str, uid: Any) -> Optional[str]:
         return None
 
 
-def apply_pc_info_to_user(channel_id: str, user_id: str) -> bool:
-    """대기 상자 → 이 참가자에 흡수. 페이지(`!가면`) 없으면 흡수 안 함(False, 상자 유지).
-    매칭 판정은 호출자가 한다(`sync_matching_participants`·`!가면`은 `pc_mask_matches`, `!설명`은 본인)."""
-    pc_info = get_default_pc_info(channel_id)
+def apply_pc_info_to_user(channel_id: str, user_id: str, pc_info: Dict[str, Any]) -> bool:
+    """`!설명` 상자 → 이 참가자의 PC 페이지. 페이지(`!가면`) 없으면 False."""
     if not pc_info: return False
 
     p = get_participant_data(channel_id, user_id)
@@ -3389,23 +3367,7 @@ def apply_pc_info_to_user(channel_id: str, user_id: str) -> bool:
     except Exception as _e_nb:
         logging.debug(f"[PC Sync] 노트북 인벤 반영 skipped: {_e_nb}")
 
-    clear_default_pc_info(channel_id)   # 흡수 후 상자는 비운다(동기화 대상 소멸)
     return True
-
-def sync_matching_participants(channel_id: str, pc_info: Dict[str, Any]) -> List[str]:
-    """대기 상자의 이름(또는 aliases)과 마스크가 맞는 **PC 페이지 보유** 참가자 하나에 흡수.
-    흡수는 상자를 비우므로 첫 매치 하나만 받는다."""
-    if not pc_info or not pc_info.get("name"): return []
-    d = get_domain(channel_id)
-    for uid, p_data in d.get("participants", {}).items():
-        if not isinstance(p_data, dict) or not get_pc_page_id(channel_id, uid):
-            continue
-        if pc_mask_matches(p_data.get("mask", ""), pc_info.get("name"), pc_info.get("aliases")):
-            if apply_pc_info_to_user(channel_id, uid):
-                return [uid]
-            return []
-    logging.info("[PC Sync] 대기 상자 name=%r — 마스크 맞는 PC 페이지 없음, 대기 유지.", pc_info.get("name"))
-    return []
 
 def get_ai_memory(channel_id: str, uid: str) -> Dict[str, Any]:
     p = get_participant_data(channel_id, uid)

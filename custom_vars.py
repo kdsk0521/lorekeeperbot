@@ -112,6 +112,11 @@ _FEED_ALIASES = {
     "숨김": "never", "never": "never", "안함": "never", "없음": "never",
 }
 _FEED_PREFIX_RE = re.compile(r"^(표시|급식|feed)\s*[:=]?\s*", re.I)
+# [2026-10-12 C34] 추출 급식 게이트 — `추적 항상` / `추적 언급`. 머리말이 붙고 칸 전체가 토큰일 때만.
+#   항상 = always_feed(이름 게이트 면제). 산문 급식은 `표시` 칸이 따로 없으면 feed_mode 가 always 로 따라간다.
+_TRACK_ALIASES = {"항상": True, "상시": True, "always": True,
+                  "언급": False, "mentioned": False, "등장": False}
+_TRACK_PREFIX_RE = re.compile(r"^(추적|추출|track)\s*[:=]?\s*", re.I)
 
 VAR_TYPES = ("gauge", "counter", "enum", "list", "text")
 VAR_SCOPES = ("global", "pc", "npc")
@@ -262,12 +267,17 @@ RULES_TEXT = (
     "\n**문자열(text)** — 수가 아니라 **한 줄 글자**인 것 (별명·현 위치·한 줄 소문)\n"
     "`별명 | 문자열 | 시작 루나 | global | 사람들이 달리 부르기 시작하면 바뀐다`\n"
     "- 범위도 단계도 캡도 없습니다. %d자까지, 넘으면 잘립니다. 빈 값은 `—` 로 보입니다.\n"
+    "- 인물별(NPC) 문자열은 아직 안 됩니다(global 또는 PC).\n"
     "\n**목록형(list)** — 항목마다 수치가 붙는 것\n"
     "`재료 | 목록 현재/목표 | global | 채집하면 늘고 조합하면 준다`\n"
     "`연구중 | 목록 진행%% | global | 작업하면 오른다`\n"
     "- 항목은 %d개까지. 항목 신설·삭제도 근거가 있어야 합니다.\n"
     "\n**표시 형식** — `표시: {v} 골드` 를 칸에 넣으면 패널·헤더가 그대로 씁니다.\n"
     "**비대칭 캡** — `상승 5 하강 20` 을 칸에 넣으면 한 턴에 그만큼까지만 움직입니다.\n"
+    "**추적 항상** — `추적 항상` 칸을 넣으면 이름이 글에 안 나와도 매 턴 추적합니다(렌더에도 실림, 빼려면 `표시 숨김`).\n"
+    "  `표시 항상`(파일이면 \"늘 보이게\")이면 추적도 저절로 항상입니다.\n"
+    "  이미 있는 변수는 `!출력룰 수정 변수 호감 | 추적 항상` 처럼 그 칸만 적어 켭니다(다른 칸은 그대로).\n"
+    "**단조** — 카운터·게이지에 `단조` 를 적으면 모델이 내림을 신고해도 버립니다(OOC 정정은 됩니다).\n"
     "**헤더** — `!출력룰 추가 헤더 잔고 [빚] / 평판 [평판]` 로 상단 줄에 값을 꽂습니다.\n"
     "**남은·퍼센트** — `[평판.남은]`(끝까지 얼마)·`[평판.퍼센트]`(얼마나 왔나)를 표시 줄에 쓸 수 있습니다.\n"
     "  끝이 없는 값(카운터)에는 남은 것도 없어 빈칸이 됩니다. 레코드 목록은 `[화분/양파/기한.남은]`.\n"
@@ -538,6 +548,12 @@ def parse_pipe_declaration(text: str) -> Tuple[Optional[Dict[str, Any]], str]:
                 if _l:
                     spec["max_loss"] = int(_l.group(1))
                 cap_done = True
+                continue
+        # [2026-10-12 C34] 추출 게이트 — `추적 항상`/`추적 언급`. 머리말 필수(맨 `항상`은 표시 칸이다).
+        if _TRACK_PREFIX_RE.match(part.strip()):
+            _tb = _TRACK_PREFIX_RE.sub("", part.strip()).strip().lower()
+            if _tb in _TRACK_ALIASES:
+                spec["always_feed"] = _TRACK_ALIASES[_tb]
                 continue
         # [2026-09-06 P3] 급식 게이트 — `표시 항상` / `항상` 낱말 하나. 칸 전체가 토큰일 때만.
         if not feed_done:
@@ -984,13 +1000,17 @@ def format_value(spec: Dict[str, Any], raw: Any) -> str:
             base = f"{int(raw)}/{hi}" if lo == 0 else f"{int(raw)} ({lo}-{hi})"
     else:
         base = str(raw)
+    # [2026-10-12 C34] 단계 있는 수치형은 단계 이름을 붙인다(`77 (-2000-2000) · 기대`).
+    #   value_stage 는 단계 선언이 없으면 "" — 활력·평형 등 단계 없는 값은 바이트 그대로.
+    _stage = value_stage(spec, raw) if vtype in ("gauge", "counter") and isinstance(raw, (int, float)) else ""
     if not fmt:
-        return base
+        return f"{base} · {_stage}" if _stage else base
     try:
         lo, hi = (spec.get("range") or [0, 0])[:2]
     except (TypeError, ValueError, IndexError):
         lo, hi = 0, 0
-    return (fmt.replace("{v}", base).replace("{max}", str(hi)).replace("{min}", str(lo)))[:200]
+    _out = fmt.replace("{v}", base).replace("{max}", str(hi)).replace("{min}", str(lo))
+    return (f"{_out} · {_stage}" if _stage else _out)[:200]
 
 
 def item_fields(spec: Any) -> Dict[str, List[int]]:
@@ -1307,6 +1327,64 @@ def validate_declaration(
     existing: Optional[Dict[str, Any]] = None,
     replacing: str = "",
 ) -> Tuple[Optional[Dict[str, Any]], str]:
+    """[2026-10-12 C34] 관문 본체(_validate_declaration_core) + 유저 갈래 공통 꼬리.
+
+    본체는 타입 갈래마다 새 dict 를 만들어 모르는 키를 떨군다. 갈래 다섯에 같은 줄을 흩지 않고
+    여기 한 자리에서 붙인다: `always_feed`(추적 항상) · 수치형 `monotonic`(단조).
+    시스템 변수(개정 흡수) 결과는 손대지 않는다 — 그쪽 always_feed 는 코드 소유다.
+    """
+    clean, err = _validate_declaration_core(spec, existing, replacing)
+    if clean is None or not isinstance(spec, dict) or clean.get("system"):
+        return clean, err
+    if spec.get("always_feed") is True:
+        clean["always_feed"] = True
+    # [2026-10-12 C34b] **늘 보이는 값은 늘 추적한다.** `표시 항상`(파일이면 "늘 보이게" → 라우터 feed.prose
+    #   always)이면 추적도 항상 — 파일 하나로 끝나게(라우터는 always_feed 칸을 모른다). 추적만 하고
+    #   렌더에선 빼려면 `추적 항상` + `표시 숨김`.
+    if (clean.get("feed") or {}).get("prose") == "always":
+        clean["always_feed"] = True
+    if clean.get("type") in ("gauge", "counter") and spec.get("monotonic") is True:
+        clean["monotonic"] = True
+    return clean, err
+
+
+_FLAG_EDIT_KEYS = ("always_feed", "monotonic", "feed", "max_gain", "max_loss", "format")
+
+
+def merge_flag_edit(spec: Any, existing: Optional[Dict[str, Any]]) -> Any:
+    """[2026-10-12 C34] `!출력룰 수정 변수 호감 | 추적 항상` — 칸이 **플래그뿐**(추적·단조·표시·캡·표시형식)이면
+    새 선언이 아니라 기존 유저 선언 위에 그 칸만 덮는다. 유저 변수 수정은 원래 통째 교체라,
+    파이프로 못 쓰는 칸(라우터가 넣은 단계 문턱 `stage_at` 등)이 플래그 하나 켜다가 날아갔다.
+    플래그 말고 다른 칸(범위·단계·시작·rule·타입·스코프)이 하나라도 있으면 종전대로 통째 교체다.
+    """
+    if not isinstance(spec, dict) or not isinstance(existing, dict):
+        return spec
+    key = _resolve_name(str(spec.get("name") or "").strip(), existing)
+    old = existing.get(key) if key else None
+    if not isinstance(old, dict) or old.get("system"):
+        return spec
+    if (spec.get("rule") or spec.get("range") or spec.get("stages") or "init" in spec
+            or spec.get("item_mode") or spec.get("type", "gauge") != "gauge"
+            or spec.get("scope", "global") != "global"):
+        return spec
+    if not any(k in spec for k in _FLAG_EDIT_KEYS):
+        return spec
+    merged = dict(old)
+    for k in _FLAG_EDIT_KEYS:
+        if k in spec:
+            merged[k] = spec[k]
+    if merged.get("always_feed") is False:
+        merged.pop("always_feed", None)
+    if merged.get("monotonic") is False:
+        merged.pop("monotonic", None)
+    return merged
+
+
+def _validate_declaration_core(
+    spec: Any,
+    existing: Optional[Dict[str, Any]] = None,
+    replacing: str = "",
+) -> Tuple[Optional[Dict[str, Any]], str]:
     """스키마 검증 + 정규화. Returns: (정규화 spec, "") 또는 (None, 에러문+규칙요지).
 
     ★거부는 전부 여기 한 곳. 파이프 파서와 자연어 변환 콜이 같은 관문을 지난다.
@@ -1393,6 +1471,9 @@ def validate_declaration(
     if vtype == "text":
         if spec.get("range") or spec.get("stages"):
             return _fail("문자열 값에는 범위나 단계가 없습니다 (`text` 는 한 줄 글자입니다).")
+        # [2026-10-12 C34] 인물별 문자열은 저장·읽기가 채널 하나로 뭉친다 — 목록형과 같이 거부한다.
+        if scope == "npc":
+            return _fail("문자열 값은 아직 인물별 스코프를 지원하지 않습니다 (global 또는 PC).")
         t_init = spec.get("init", "")
         if isinstance(t_init, (int, float)):
             t_init = str(t_init)
@@ -1832,6 +1913,10 @@ def format_list(channel_id: str) -> str:
             shape = f"{lo}-{hi}"
             if spec.get("max_gain") or spec.get("max_loss"):
                 shape += f", 캡 +{spec.get('max_gain', '∞')}/-{spec.get('max_loss', '∞')}"
+            if spec.get("monotonic"):
+                shape += " (단조)"
+        if spec.get("always_feed"):
+            shape += " (추적 항상)"     # [2026-10-12 C34]
         if isinstance(cur, dict):
             cur_text = ", ".join(
                 f"{k} {_item_text(spec, k, v) if vtype == 'list' else format_value(spec, v)}"
@@ -2805,6 +2890,11 @@ def _apply_numeric(channel_id: str, name: str, spec: Dict[str, Any],
     except (TypeError, ValueError, IndexError):
         return None
     capped = delta if exempt_cap else _cap_delta(spec, delta)
+    # [2026-10-12 C34] 단조 수치형 — 추출 콜(모델 신고)의 내림만 버린다. OOC·식·코드 쓰기는 그대로.
+    if (capped < 0 and spec.get("monotonic") and not exempt_cap
+            and source == "cognition.custom_var_deltas"):
+        logger.info("[CustomVar] %s 단조 위반 %+d → 폐기 (역행 불가) ev=%s", name, delta, str(evidence)[:60])
+        return None
 
     entry = vals.get(name) if isinstance(vals.get(name), dict) else {}
 
@@ -2892,6 +2982,9 @@ def _apply_numeric(channel_id: str, name: str, spec: Dict[str, Any],
     return {"name": name, "from": old, "to": new, "delta": new - old, "evidence": evidence}
 
 
+_TEXT_NPC_WARNED: set = set()   # [2026-10-12 C34] (channel_id, name) — 옛 text+npc 선언 경고 1회
+
+
 def _apply_text(channel_id: str, name: str, spec: Dict[str, Any],
                 vals: Dict[str, Any], item: Dict[str, Any],
                 evidence: str, t: int) -> Optional[Dict[str, Any]]:
@@ -2903,6 +2996,10 @@ def _apply_text(channel_id: str, name: str, spec: Dict[str, Any],
     raw = item.get("value", item.get("text", item.get("to")))
     if raw is None:
         return None
+    # [2026-10-12 C34] 새 등록은 거부된다. 그 전에 등록된 인물별 문자열은 값이 채널 하나로 뭉친다 — 한 번 알린다.
+    if str(spec.get("scope")) == "npc" and (channel_id, name) not in _TEXT_NPC_WARNED:
+        _TEXT_NPC_WARNED.add((channel_id, name))
+        logger.warning("[CustomVar] %s: 인물별 문자열(옛 선언) — 값이 인물별로 갈리지 않는다. 다시 선언하라.", name)
     new = str(raw).strip()[:TEXT_MAX]
     if not new:
         return None

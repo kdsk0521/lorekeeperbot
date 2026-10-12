@@ -1203,6 +1203,7 @@ async def analyze_lore_unified(
             "List of NPCs (Name, Gender, Race, Detailed Description "
             "(Personality/Appearance integrated - Korean))\n"
             "   - MUST EXTRACT ALL NPCs found in the document.\n"
+            "   - List NPCs only; leave the player character (the protagonist) out.\n"
             "   - role: Character's job or social role (e.g., \"Resident\", \"Store Owner\", \"Neighbor\").\n"
             "   - location: Primary location or residence (e.g., \"Room 2\", \"Dungeon 25\", \"Error 404\")."
         )
@@ -1214,17 +1215,20 @@ async def analyze_lore_unified(
         _npc_schema_desc = (
             "**Names only.** List every character who appears as an NPC, as bare names.\n"
             "   - MUST list ALL NPCs found in the document. Do not summarize the list.\n"
+            "   - List NPCs only; leave the player character (the protagonist) out.\n"
             "   - Emit the name exactly as the document writes it (the name is used as an anchor "
             "to locate that character's section in the original text).\n"
             "   - No other fields for NPCs: no gender, race, role, location, or description."
         )
         _npc_schema_json = '[ { "name": "..." } ]'
 
+    # [2026-10-12 C33] pc_info 칸 삭제 — PC 시트 입구는 `!설명` 하나. NPC 칸은 PC를 빼라고 적는다
+    #   (칸이 없어진 PC가 npcs로 흘러 extract_npc_sections_from_lore에 다시 잘리지 않게).
     system_prompt = f"""You are an experienced TRPG Campaign Designer and 'Lore Analysis Engine (LoreAnalyzer)'.
 Analyze the provided lorebook precisely to extract all metadata required for game operations.
 
 ## Analysis Principles (Absolute Principles)
-1. Holistic Consistency: Clearly distinguish between NPCs and the PC (Player Character/Protagonist).
+1. NPCs only: the player character (the protagonist) is not extracted.
 2. Genre Alignment: Match lore themes with existing system genre keywords.
 3. Wingbeat Seeds (나비 날개짓): find small, genre-neutral incidents or latent perturbations already present in the lore. A minor event, object, unresolved tension, small comfort, or recurring quirk whose consequences could ripple outward through play. Not catastrophes; small first-causes only. Scale is emergent, so never pre-commit how big it becomes. Grounding (primary): each wingbeat traces to a concrete detail actually in the lore text (a named object, a mentioned event, an unresolved thread you can point to). Source the seed from the lore's own material, never from a genre label. Genre (soft tint): let the genres you identified — narrative_tone above all — color how a wingbeat reads (ominous, warm, comic, mundane). A seed is not a clue by default: in a comedy world a wingbeat reads as a running joke about to land, in a romance as a warmth about to be noticed; unexplained does not mean suspicious. Genre does not decide which wingbeats exist. If a lore-grounded wingbeat does not match the tagged genre, trust the concrete lore over the label; the genre tag may be imperfect. Genre is a lean, not a lock.
 4. Optimization: Write descriptions concisely and powerfully. (Follow the optimization guide in text_resources)
@@ -1240,9 +1244,7 @@ IMPORTANT: All string descriptions and guides must be in KOREAN.
    - atmosphere_guide: Short atmosphere guide for the narrator (Korean)
    ⚠️ CROSS-ASSIGNMENT PROHIBITION: cyberpunk/modern/space_opera CANNOT appear in style_tech. urban_fantasy/cosmic_horror CANNOT appear in world_setting. comedy/romance CANNOT appear in style_tech.
 2. npcs: {_npc_schema_desc}
-3. pc_info: Identification of the Protagonist. null if no clear protagonist.
-   - Fields: name, role, species, appearance, description (integrated personality/traits - Korean), sexual_characteristics, background, secret_info, passives(name, desc - Korean, value{{roll_<type> int -20~+20, cost negative int; type: {'/'.join(config.ACTION_TYPES)}; relevant keys only}}), inventory(name, qty, tags, modifiers{{roll_<type>}})
-4. lore_summary:
+3. lore_summary:
    - theme: Core theme of the world (1-2 sentences in Korean)
    - anomaly_seeds: small 'wingbeat' seeds, genre-neutral minor incidents latent in this world. 0 to N items; mint only what the lore genuinely supports, do not pad to a quota, and 0 is a valid answer for a quiet slice-of-life world. Each seed:
      - name: Korean name of a small noticed thing, not a dramatic loaded title. Register follows the tagged narrative_tone — mystery is one register, not the default. good: '반쯤 열린 편지' (noir), '늘 두 잔을 시키는 손님' (romance), '매주 한 글자씩 늘어나는 간판 오타' (comedy), '사흘째 같은 넥타이' (drama). avoid: '그림자 침식', '운명의 대격변', '삼각관계 점화'
@@ -1265,7 +1267,7 @@ IMPORTANT: All string descriptions and guides must be in KOREAN.
    - factions: Major groups/organizations with name, description, stance/goal (Korean)
    - key_events: Major historical events that characters would know about (List of Korean strings, max 5)
    - mind_transfer: true only if this world lets one person's mind, soul or personality drive another person's body, or lets someone take hold of another's mind (possession, hypnosis, mind control, soul or personality transfer). Otherwise false.
-5. world_constraints: World rules extracted from lore (Korean)
+4. world_constraints: World rules extracted from lore (Korean)
    - systems: Magic/technology/power systems described in the lore (2-4 sentences, be specific about limitations and costs)
    - social: Social hierarchy, taboos, cultural norms (2-4 sentences)
    - taboos: List of things explicitly forbidden or dangerous in this world (Korean strings)
@@ -1279,18 +1281,6 @@ IMPORTANT: All string descriptions and guides must be in KOREAN.
     "atmosphere_guide": "..."
   }},
   "npcs": {_npc_schema_json},
-  "pc_info": {{
-    "name": "...",
-    "role": "...",
-    "species": "...",
-    "appearance": "...",
-    "description": "성격 및 전반적인 특징 설명",
-    "sexual_characteristics": "...",
-    "background": "...",
-    "secret_info": "...",
-    "passives": [ {{ "name": "...", "desc": "...", "value": {{"roll_<type>": 0, "cost": 0}} }} ],
-    "inventory": [{{ "name": "...", "qty": 1, "tags": ["..."], "modifiers": {{"roll_<type>": 0}} }}]
-  }},
   "lore_summary": {{
     "theme": "...",
     "anomaly_seeds": [{{"name": "작은 사건 이름", "axis": "mental|relation|complication|information|position|schedule", "tags": ["소재1", "소재2"], "defense_hint": "번질 수 있는 방향 또는 풀릴 방향 (한국어)"}}],
