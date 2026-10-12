@@ -323,6 +323,7 @@ async def process_ooc_memory_edit(
     sheet_sections: Optional[Dict[str, str]] = None,
     roster: Optional[List[Dict[str, Any]]] = None,
     edit_part: str = "",
+    world_state: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     사용자의 OOC 요청을 해석하여 캐릭터 메모리 수정 명령을 생성합니다.
@@ -338,6 +339,11 @@ async def process_ooc_memory_edit(
         # [2026-09-26 O5] 명부 — 별명·호칭("아빠")을 등록 이름으로 잇는 재료(시트에서 PC 를 가리키는 문장 1개).
         "roster": roster or [],
     }
+    # [2026-10-10 OOC 확장] 지금 장소·시간·날씨, 장소 이름들, 본문에 나온 인물이 아는 것(ooc_edits.world_state_for_edit).
+    if isinstance(world_state, dict):
+        for _wk in ("world", "places", "npc_knows", "threads", "quests"):   # [2026-10-10 O-E] +스레드·퀘스트
+            if world_state.get(_wk):
+                current_state[_wk] = world_state[_wk]
     
     system_prompt = (
         "You are a Game Master Assistant handling OOC (Out-Of-Character) requests.\n"
@@ -357,7 +363,7 @@ async def process_ooc_memory_edit(
         "  ],\n"
         "  \"confirmation_message\": \"Response to user (Korean)\"\n"
         "}\n"
-        "Valid fields: relation, passives, status_effects, notebook, or a character-sheet section name "
+        "Valid fields: relation, npc, place, time, fact, thread, quest, passives, status_effects, notebook, or a character-sheet section name "
         "(Identity, Core Traits, Aside, Direction, Relationships, Secrets, Background, Notes — the keys of "
         "Current State.sheet) with action set|append|remove and value = that section's text.\n"
         "passives = sheet fragments: action add|set|remove. add/set value = {\"name\", \"desc\" (Korean, conditions in words), "
@@ -367,10 +373,45 @@ async def process_ooc_memory_edit(
         "(map nicknames and kinship words like '아빠' through the roster's sheet_on_pc lines; never invent a name). "
         "stands = devoted/friendly/neutral/unfriendly/hostile and friction = low/strained/high/breaking — use these words "
         "unless the user gave numbers, then bond -100~+100 / tension 0~100. baseline = true when the user says this is how "
-        "they have always stood (the starting relation), not a change now. stance (English telegraphic, observable behavior "
-        "only). Include only the parts the user asked to change.\n"
+        "they have always stood (the starting relation), not a change now. stance (English telegraphic: what they want "
+        # [2026-10-11 청소 C11-D] stance = PC에게서 원하는 것(10-08 Theoria stance 정의와 같은 말). 옛 문안은 "관찰 가능한 행동만".
+        "from the PC). Include only the parts the user asked to change.\n"
         "Relationships (a sheet section) is the player's own written text about the PC's ties; how an NPC stands toward "
         "the PC is field=relation, never that section.\n"
+        # [2026-10-10 OOC 확장] 인물끼리 관계·인물·자리·시간 — 적용은 ooc_edits(명령어와 같은 함수). 스펙 state_v10/OOC확장_스펙_2026-10-10.md
+        "relation with toward = how one NPC stands toward ANOTHER NPC: {\"field\":\"relation\",\"action\":\"set|remove\","
+        "\"key\":\"A\",\"toward\":\"B\",\"kind\":\"alliance|rivalry|fear|respect|distrust|affection|debt|mentor|grudge|neutral\","
+        "\"strength\":\"faint|clear|strong\",\"stance\":\"...\"}. Without toward, relation is toward this PC.\n"
+        "npc = a fact about an NPC on the roster, one op per edit, key = the roster name:\n"
+        "- merge {\"key\":\"the duplicate entry\",\"into\":\"the person it really is\"} when two roster entries are the same person\n"
+        "- alias {\"key\",\"value\":\"another name for them\"} · rename {\"key\",\"value\":\"their new name\"}\n"
+        "- status {\"key\",\"value\":\"active|down|dead\"} (alive again = active)\n"
+        "- sheet {\"key\",\"section\":<a section name above>,\"action\":\"set|append|remove\",\"value\"} for that NPC's sheet, "
+        "what they hide included (Secrets)\n"
+        "- knows {\"key\",\"action\":\"add|remove\",\"value\"} what the NPC knows; remove = a line from Current State.npc_knows\n"
+        "A bare section name is the PC's own sheet; an NPC's sheet goes through field=npc op=sheet.\n"
+        "place = where people are now: {\"field\":\"place\",\"op\":\"pc\",\"value\":\"place\"} the PC; "
+        "{\"op\":\"npc_in\",\"key\",\"value\":\"place or here\"} an NPC is there; {\"op\":\"npc_out\",\"key\"} an NPC is not in this scene. "
+        "Use a name from Current State.places when one fits.\n"
+        "time = the clock as it stands now: {\"field\":\"time\",\"slot\"?,\"hour\"?,\"minute\"?,\"year\"?,\"month\"?,\"day\"?,\"weather\"?} "
+        "for a correction of the current time or weather; moving the story forward in time belongs to the scene, not here.\n"
+        # [2026-10-10 기록 정정] 지난 일 — 정오표(corrections). 상태 칸과 함께 낼 수 있다.
+        "fact = a correction of something that already happened in the story record: "
+        "{\"field\":\"fact\",\"about\":[\"roster names or key nouns\"],\"value\":\"what is true (Korean, one sentence)\","
+        "\"wrong\":\"the recorded version being corrected\"}; withdraw one with {\"field\":\"fact\",\"action\":\"remove\",\"value\"}. "
+        "The current state goes to its own field (npc status, place, time, relation, thread, quest); when the player corrects both "
+        "what happened and how things stand now, emit both.\n"
+        # [2026-10-10 이야기 실 O-E] 스레드 장부(약속·사안)·퀘스트 보드. 스펙 state_v10/이야기실_지도·스펙_2026-10-10.md
+        "thread = a promise or open matter standing between people (Current State.threads, named by id): "
+        "{\"field\":\"thread\",\"op\":\"open|close|pause|resume|reschedule|progress|void\",\"id\":\"T3\"}. "
+        "open a new one with {\"title\":\"짧은 한국어 라벨\",\"kind\":\"promise|matter\",\"parties\":[names],\"due\":{...}|null}; "
+        "close with \"outcome\": done (kept, finished) | dropped (called off) | broken (breached); "
+        "reschedule with \"due\": {\"day_offset\":1,\"slot\":\"저녁\",\"hour\":null,\"minute\":null} or "
+        "{\"year\",\"month\",\"day_in_month\"}; progress with \"remaining\" (what is still owed, Korean); "
+        "void = it never existed (a wrong entry); a \"title\" next to an id renames it.\n"
+        "quest = the quest board, goals the PC pursues (Current State.quests; not threads): "
+        "{\"field\":\"quest\",\"op\":\"add|complete|remove|progress\",\"value\":\"the quest name as listed\",\"rank\"?,\"delta\"?}; "
+        "complete = it is finished, remove = it is not a quest at all.\n"
     )
 
     # [2026-09-10 P13] 선언 칸 한 줄. 옛 7필드 문안은 위에서 한 글자도 안 바뀌었다 —
@@ -383,6 +424,7 @@ async def process_ooc_memory_edit(
             '{"field":"declared","name":"금","op":"set|delta|add|remove|rename|append",'
             '"value":50,"item":"양파","to":"당근","record":"수분"}\n'
             "- op set/delta: a number (gauge/counter) or a stage name (enum).\n"
+            "- A value kept per person (several names under 현재) takes \"npc\": the roster name for an NPC's own value.\n"
             "- Lists hold records: use item=<record name>, record=<field name> for a field,\n"
             "  add/remove to create or destroy the record itself.\n"
             "- **rename vs remove+add**: if the user is CORRECTING a name for the same thing\n"
@@ -428,9 +470,13 @@ async def route_ooc_request(client, model_id: str, ooc_text: str,
     _names = ", ".join([str(n) for n in (names or []) if n][:40]) or "(none)"
     prompt = (
         "Split one OOC note a TRPG player attached to their in-character turn.\n"
-        "edit = the part asking to change stored data: how an NPC stands toward the PC, the PC sheet, sheet fragments, "
-        "status effects, notebook/items/gold, or a declared value. A statement of how a relation or fact stands "
-        "(\"X has always cared for me\") is an edit. Keep the player's words.\n"
+        "edit = the part asking to change stored data: how an NPC stands toward the PC or toward another NPC, "
+        "who an NPC is (the same person as another entry, another name, alive or dead, their sheet, what they know), "
+        "where the PC or an NPC is right now, the current time or weather, the PC sheet, sheet fragments, "
+        "status effects, notebook/items/gold, a declared value, a promise, an open matter or a quest that is open, "
+        "done, called off or never existed, or a correction of what already happened in the story "
+        "record. A statement of how a relation or fact stands "
+        "(\"X has always cared for me\", \"it is night now\", \"X never died, he passed out\") is an edit. Keep the player's words.\n"
         "directive = the part asking this scene or the narration to do something (skip, move, describe, assume).\n"
         "Anything else (questions, chat) belongs to neither.\n"
         f"Known names: {_names}\n"

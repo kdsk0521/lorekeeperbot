@@ -1306,7 +1306,8 @@ async def generate_posts(
     cfg = types.GenerateContentConfig(
         system_instruction=text_resources.ANALYSIS_FRAME,   # [2026-10-06 분석 틀] 원본 mandate → 분석 틀
         temperature=0.9,
-        max_output_tokens=2048,
+        # [2026-10-11 C27b] 2048 → 8192. 추론 켠 분석 콜은 추론이 출력 예산에 같이 든다 — 상한 통일(레티어스 "나머지도 다 올리자").
+        max_output_tokens=8192,
         response_mime_type="application/json",
         safety_settings=config.SAFETY_SETTINGS,
     )

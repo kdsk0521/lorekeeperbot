@@ -170,7 +170,7 @@ def translate_scene_holds(
         return _clean(a.get("text") or a.get("name")) if isinstance(a, dict) else _clean(a)
     _asp = [_asp_text(a) for a in (aspects or []) if _asp_text(a)]
     if _asp:
-        out.append("The scene holds: " + ", ".join(_asp[:5]) + ".")
+        out.append("In the scene: " + ", ".join(_asp[:5]) + ".")   # [2026-10-10 끝 긍정문] "The scene holds:" → "In the scene:"
 
     _anchors = []
     for s in (sensory or []):
@@ -494,11 +494,16 @@ def translate_psyche_states(
     energy: str = "idle",
     npc_depths: Optional[Dict[str, float]] = None,
     foreground: Optional[List[str]] = None,
+    vc_values: Optional[Dict[str, Tuple[Optional[int], Optional[int]]]] = None,
 ) -> str:
     """6축 심리 데이터 → 관찰 가능한 행동 힌트로 변환.
 
+    [2026-10-12 C23] vc_values = {Theoria 이름: (활력|None, 평형|None)} — slot_manager가
+    custom_vars.npc_vc_values로 모아 넘긴다(이 모듈은 저장소를 읽지 않는다). 값이 strained·collapsing
+    구간이면 soma 표기 아래 한 줄씩. fg 인물만(bg는 지금처럼 첫 표기 하나). 숫자는 급식 줄 몫.
+
     [2026-07-22 카드1] foreground가 주어지면 **fg=압력 풀 / bg=한 줄**로 강약을 만든다.
-    - fg: 노테이션 + descriptor 전축 + 압력(drives/cannot) + resurfacing
+    - fg: 노테이션 + descriptor 전축 + 압력(drives/can — 10-09 cannot→can) + resurfacing
     - bg: 노테이션 최소 + soma descriptor + 압력 drives 1줄  ("한 줄로 산다", 소멸 아님)
     deep_read 방출은 DEEPREAD_EMIT=False면 중지(상류 전용 — emotion_engine이 소비 (npc_autonomous는 컨텍스트에 담기만 하고 어느 트리거도 안 읽음, 07-28 실측)).
     npc_depths는 롤백 경로(구 동작) 전용.
@@ -579,18 +584,31 @@ def translate_psyche_states(
         lines.append(f"- {name}:" if _is_fg or not _fg_mode else f"- {name} (receded):")
         for n in (notations if (_is_fg or not _fg_mode) else notations[:1]):
             lines.append(f"  {n}")
+        # [2026-10-12 C23] 활력·평형 단계 표기 — 저장된 몸(게이지)이 매 턴 판단(soma) 밑에 까는 바닥.
+        #   fg만: bg 인물은 첫 표기 하나라는 규율을 그대로 둔다(그래서 notations 목록에 섞지 않는다 —
+        #   soma가 없는 인물이면 이 줄이 '첫 표기'가 되어 bg로 새기 때문). cross-NPC 대비에도 안 넣는다.
+        if vc_values and (_is_fg or not _fg_mode):
+            _vc = vc_values.get(name)
+            if isinstance(_vc, (tuple, list)) and len(_vc) == 2:
+                for n in npc_vc_notation_lines(_vc[0], _vc[1]):
+                    lines.append(f"  {n}")
         if prose:
             lines.append(f"  {'. '.join(prose)}")
 
-        # [카드1] 압력 — 감정이 "무엇을 하게 만드는가". fg=drives+cannot / bg=drives 1줄.
+        # [카드1] 압력. fg=drives+can / bg=drives 1줄.
+        # [2026-10-09 압력 want·can] drives = 바라는 것('wants to …'), can = 지금 할 수 있는 것. 옛 `↛ {cannot}`은 뺐다.
         _pr = state.get("pressure")
         if isinstance(_pr, dict):
             _d = _pr.get("drives")
-            _c = _pr.get("cannot")
+            _c = _pr.get("can")
             if isinstance(_d, str) and _d.strip():
                 lines.append(f"  → {_d.strip()}")
             if _is_fg and isinstance(_c, str) and _c.strip():
-                lines.append(f"  ↛ {_c.strip()}")
+                lines.append(f"  can: {_c.strip()}")
+        # [2026-10-09 반응주인] 이번 턴 답(서사 콜 response) — fg만. 무엇은 Mira, 어떻게는 렌더(RB_TABLE 읽기 줄). 대사 방향 블록엔 안 싣는다(이중 주입).
+        _rsp = state.get("response")
+        if _is_fg and isinstance(_rsp, str) and _rsp.strip():
+            lines.append(f"  answers: {_rsp.strip()}")
 
         # deep_read: 상류 전용(DEEPREAD_EMIT=False). True면 구 경로(depth 필터+B3 제약) 유지.
         if getattr(config, "DEEPREAD_EMIT", False) and deep and isinstance(deep, str):
@@ -696,8 +714,9 @@ _ENERGY_TONE = {
 }
 
 
+# [2026-10-11 청소 C3] idle "End" 값 걷음 — 턴 끝 모양은 RB_PC·RB_WORLD 끝 문안(10-10 끝 긍정문)이 쥔다.
+#   idle 값의 "quiet"가 정지 꼬리 쪽을 거들었다. 값이 없으면 End 줄이 나가지 않는다.
 _ENERGY_END = {
-    "idle":       "a quiet forward tilt",
     "rising":     "render tension weight",
     "aftershock": "residue, no verdict",
 }
@@ -746,7 +765,7 @@ def translate_energy_direction(energy: str, scene_light: Optional[dict] = None) 
 
 _PACING_KR = {
     "push":    "pacing: ♪ accelerando · ▶ push-in",
-    "hold":    "pacing: ♪ a tempo · ▶ held frame, still breathing",
+    "hold":    "pacing: ♪ a tempo · ▶ long take, still breathing",  # [2026-10-10 끝 긍정문] held frame → long take
     "breathe": "pacing: ♪ ritardando · ▶ slow-pull",
     "pivot":   "pacing: ▶ cut-to · ♪ key-change",
 }
@@ -754,7 +773,7 @@ _PACING_KR = {
 _TENSION_KR = {
     "critical":  "tension: ♪ ff · ▶ tight close-up",
     "rising":    "tension: ♪ crescendo · ▶ slow push-in",
-    "plateau":   "tension: ♪ sostenuto · ▶ held frame, breathing",  # [2026-07-16 tone_gravity] uneasy 제거 — 일상 최빈 축(plateau)에 상시 불안 주입이던 무드 바닥
+    "plateau":   "tension: ♪ sostenuto · ▶ long take, breathing",  # [2026-07-16 tone_gravity] uneasy 제거 — 일상 최빈 축(plateau)에 상시 불안 주입이던 무드 바닥
     "falling":   "tension: ♪ diminuendo · ▶ pull-back",
 }
 
@@ -783,6 +802,11 @@ def translate_register(register) -> str:
     """scene_register → Korean rendering hint for Pro."""
     if not register or not isinstance(register, str):
         return ""
+    # [2026-10-11 청소 C16-1] Mira가 enum 대신 문장("law: the clinic's …")을 쓴 판이 있다(녹화 430판 중 10판).
+    #   맨 앞 enum 낱말만 집는다. 미러 게이트보다 먼저 해야 "mirror: …"도 게이트를 탄다.
+    _m_reg = re.match(r"\s*(mirror|law|remainder)\b", register.strip().lower())
+    if _m_reg:
+        register = _m_reg.group(1)
     _REGISTER_KR = {
         "mirror": "[Mirror] the character sees themselves in the other without recognizing it; the trait and the misreading surface in concrete detail.",
         "law": "[Law] hierarchy / expectation / protocol bends under the input; the order, the crack, and the one feigning ignorance all surface.",
@@ -1088,7 +1112,8 @@ def translate_environment_aging(elapsed_min: int) -> str:
 
 _FLAG_DIRECTIVES = {
     "convergence_warning": "relationship shifting fast; the pace needs a cause behind it.",
-    "echo_warning": "NPC tracking PC's emotion; the reaction wants its own reason.",
+    # [2026-10-11 청소 C12] echo_warning·redemption_warning 걷음 — 422판 켜짐 0·0. 응답은 10-10부터 Mira 몫이고
+    #   Mira 응답 칸이 까닭 없는 누그러짐을 막는다("compliance comes with a cost … unless history has already paid").
     # [G2 2026-08-02] 구 문안 "scene energy flat 3 turns; an external stimulus enters naturally."
     #   결함 둘. ①**이중 투입** — anomaly_module L118이 이미 이 플래그로 defer→act 승격,
     #   즉 코드가 외부 이벤트를 넣는 중인데 산문에도 하나 더 지어내라고 시킨다.
@@ -1102,7 +1127,6 @@ _FLAG_DIRECTIVES = {
                           "only the least that still constrains now, and let the turn move "
                           "from that constraint.",
     "dissonance_flag": "NPC's words and actions diverge; the gap stays unresolved, surfacing as small mismatch in gesture, expression, breath.",
-    "redemption_warning": "NPC softening without cause; the prior pattern holds.",
     # [2026-08-28 묘사반복 수리] 구 문안 "the micro-shift, or a fresh sense channel, carries it now."
     #   ★처방이 병을 이사시켰다 — 감각 반복을 막으려고 **캐리어를 미세 변화로 지정**하니 감각 반복 대신
     #   **동작 반복**이 났다(실측: 한 턴 53문장에 `[부위]가 조금 [방향]했다` 9회). 발화 조건
@@ -1605,6 +1629,66 @@ def translate_emotion_intensity(
 
 
 # =========================================================
+# 8b. 활력·평형 단계 표기 (PC Slot 30 · NPC Slot 14)
+# =========================================================
+# [2026-10-12 C23] 표의 주인은 여기 하나다(옛 자리 une_facade 132~146행). PC 표기
+#   (une_facade._build_atmosphere_layer → Slot 30)와 NPC 인물 블록(translate_psyche_states → Slot 14)이
+#   같은 표를 읽는다. une_facade는 이 이름 그대로 다시 내보낸다.
+#   strained·collapsing 머리 낱말 = RW 2.0 Body 예비량 모델에서 가져온 꼴 하나 — 버티느라 관리하는
+#   수고가 보이다가(compensating/holding) 무너진다(giving). 평형은 compensating 대신 holding:
+#   마음 쪽 compensation은 방어기제(보상 심리)로 읽힐 수 있다. 문장이 아니라 낱말인 이유 = 산문에
+#   옮겨 적히지 않게(표기로 짠 이유와 같다). high·조합 줄은 그대로.
+_VIGOR_NOTATION = {
+    "high":       "body | ♪ f, allegro, legato | ▶ wide, parallel | ◎ midground",
+    "strained":   "body:compensating | ♪ p, adagio, marcato | ▶ close-up:muscle, height-gap | ◎ foreground",
+    "collapsing": "body:giving | ♪ pp, largo, staccato | ▶ close-up:breath, back-to-back | ◎ spotlight",
+}
+_COMPOSURE_NOTATION = {
+    "high":       "psyche | ♪ mf, andante, legato | ▶ two-shot, parallel, match-cut | ◎ midground",
+    "strained":   "psyche:holding | ♪ p, adagio, staccato | ▶ close-up:gaze, height-gap | ◎ foreground",
+    "collapsing": "psyche:giving | ♪ pp, largo, sforzando | ▶ high-angle, back-to-back | ◎ spotlight",
+}
+_MIXED_NOTATION = {
+    "desperate": "body+psyche | ♪ pp, largo, staccato | ▶ high-angle, back-to-back | ◎ spotlight",
+    "reckless":  "action | ♪ f, presto, sforzando | ▶ wide, jump-cut | ◎ foreground",
+    "fragile":   "consciousness | ♪ p, adagio, legato | ▶ close-up:eyes, pillow | ◎ background",
+}
+
+
+def vc_stage_key(value: Any) -> str:
+    """값 → 단계 표 키. 문턱은 vigor_composure_module._get_stage와 같다(70·40·15).
+    40~69는 ""(침묵 구간). 숫자가 아니면 ""."""
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        return ""
+    if v >= 70:
+        return "high"
+    if v >= 40:
+        return ""
+    if v >= 15:
+        return "strained"
+    return "collapsing"
+
+
+def npc_vc_notation_lines(vigor: Any = None, composure: Any = None) -> List[str]:
+    """[2026-10-12 C23] NPC 인물 블록용 활력·평형 표기 — strained·collapsing만, 활력→평형 순.
+
+    NPC에 싣지 않는 것: high(키 있는 인물마다 매 턴 한 줄 = 소음, 무탈은 soma가 말한다),
+    조합 줄(fragile 머리가 해리 표기와 같은 `consciousness` 층, 두 축이 이미 따로 실린다),
+    주변 반응 줄(PC 상태를 세계가 보는 줄 — NPC는 원래 바깥에서 보이는 쪽).
+    """
+    out: List[str] = []
+    for val, table in ((vigor, _VIGOR_NOTATION), (composure, _COMPOSURE_NOTATION)):
+        if val is None:
+            continue
+        k = vc_stage_key(val)
+        if k in ("strained", "collapsing"):
+            out.append(table[k])
+    return out
+
+
+# =========================================================
 # 9. vigor/composure contrast (Slot 29)
 # =========================================================
 
@@ -1892,11 +1976,15 @@ def translate_npc_knowledge(npc_knowledge: Optional[dict]) -> str:
 # 15. Dialogue Directives (Slot 17) — 대사 방향 지시
 # =========================================================
 
+# [2026-10-09 묶음B] 행위형 값 7개(changing the subject, cutting in first …)를 기질 꼴로 바꿨다. 이번 턴 누가 무엇으로
+#   답하나는 Mira response가 쥔다. "changing the subject"는 응답과 맞는 게 14건 중 5건, 말하지 않는 응답에 붙은 게 7건이었다.
+#   avoidant는 시트 폴백(_COPING_STYLE_HINTS)과 같은 문장 — 동적 값이 있으면 폴백은 안 실리므로 겹치지 않는다.
+#   결 값(directly, off the cuff, calculating …)은 말의 결이라 그대로. 측정·스펙: analysis_line/묶음B_렌더래퍼_측정·스펙_2026-10-09 §2.
 _STRATEGY_HINTS = {
     # coping (Lazarus)
     "problem_focused": "directly",
     "emotion_focused": "circling through emotion",
-    "avoidant": "changing the subject",
+    "avoidant": "under pressure the subject gets changed, not refused",
     # stage (Goffman)
     "front": "keeping up appearances",
     "back": "without pretense",
@@ -1905,13 +1993,13 @@ _STRATEGY_HINTS = {
     "deliberate": "calculating",
     # negotiation_stance (NEGOTIATION 모듈)
     "cooperative": "cooperatively",
-    "competitive": "cutting in first",
-    "exploitative": "pressing the weak spot in what's said",
+    "competitive": "reaches for the first word when it is contested",
+    "exploitative": "listens for the weak spot in what's said",
     # group_dynamic (GROUP_DYNAMICS 모듈)
-    "conformity": "speaking only after the room agrees",
-    "obedience": "answering short, as told",
-    "groupthink": "echoing others' conclusions as their own",
-    "diffusion": "blurring the subject, pointing at someone else",
+    "conformity": "tends to speak once the room has leaned",
+    "obedience": "under orders, answers run short",
+    "groupthink": "takes up the room's conclusions as its own",
+    "diffusion": "under blame, the subject blurs toward someone else",
 }
 
 # relation.phase → 관계 단계별 대화 전략 힌트
@@ -1961,8 +2049,11 @@ _COPING_STYLE_HINTS = {
     "intellectual":    "under pressure it turns into explaining; reasons offered where feeling was asked for",
 }
 
+# [2026-10-11 C1 logos] transient 추가(정의 낱말 셋 모두). 근거 analysis_line/C1_logos머리말_측정·스펙_2026-10-11 §3-2.
+# [2026-10-10 칸이관] 앞 관사도 같이 뗀다 — logos_layer를 Mira가 문장꼴로 쓰면서("the membrane his evenings have opened")
+#   용어만 빠지고 "the his evenings …"처럼 관사가 남았다(헤이젤 라이브 T3~T5 dialogue direction).
 _FRAMEWORK_TERMS_RE = re.compile(
-    r'\b(membrane|monolithic|interleaving|fracture|collapse|logos|layer|'
+    r'(?:\b(?:the|a|an)\s+)?\b(membrane|monolithic|transient|interleaving|fracture|collapse|logos|layer|'
     r'peplau|goffman|bowlby|lazarus|kahneman|erikson|henderson|'
     r'front stage|back stage|orientation phase|identification phase|'
     r'exploitation phase|resolution phase|'
@@ -1975,6 +2066,10 @@ def _strip_framework_terms(text: str) -> str:
     """logos_layer 등에서 프레임워크 용어 제거."""
     result = _FRAMEWORK_TERMS_RE.sub('', text)
     result = re.sub(r'\s+', ' ', result).strip()
+    # [2026-10-11 C1 logos] 용어를 뗀 자리의 문장부호 앞 공백("performance , thin")을 붙이고, 박자 화살표는 ;로 싣는다
+    #   (렌더 입력에서 →는 Psyche_States의 원함 줄 표지라 겹치지 않게).
+    result = re.sub(r'\s+([,;:.])', r'\1', result)
+    result = re.sub(r'\s*→\s*', '; ', result)
     result = re.sub(r'^[\s—\-:]+|[\s—\-:]+$', '', result)
     return result
 
@@ -2003,7 +2098,9 @@ def compose_dialogue_directives(
     """psyche_states + NPCKnowledge + 이전 gaze → NPC별 대사 방향 지시.
 
     [2026-07-22 카드1] foreground 전달 시 bg는 skip(구 depth>=0.8 skip 대체).
-    침묵 커밋: pressure.cannot이 발화를 막고 있으면 그 침묵이 *무슨 대답인지*를 공급한다
+    [2026-10-09] 아래 침묵 커밋 사례는 can 줄("can: …")로 바뀌었다 — 손에 든 수단을 공급한다.
+    [2026-10-09 묶음B] 그 can 줄도 뺐다 — Psyche_States fg `can:`과 같은 줄의 이중 주입이었다(71/71).
+    (옛) 침묵 커밋: pressure.cannot이 발화를 막고 있으면 그 침묵이 *무슨 대답인지*를 공급한다
     (PROSE_CRAFT "a silent reply still commits"가 처음으로 공급을 갖는 자리 —
     종전엔 렌더러가 매 턴 발명해야 했고 V4는 관찰 보고서로 대체했다).
 
@@ -2052,33 +2149,15 @@ def compose_dialogue_directives(
         if not isinstance(psyche, dict):
             psyche = {}
 
-        # [2026-07-22 카드1] 침묵 커밋 — cannot이 발화를 막고 있으면 그 침묵이 *무슨 대답인지* 공급한다.
-        # 렌더러가 매 턴 발명하던 자리(→ 관찰 보고서·미완발화 클리셰로 대체되던 자리).
-        # ★logos_layer 게이트보다 **앞**에 둔다: 침묵하는 인물일수록 분석이 빈약할 수 있는데,
-        #   그때 커밋까지 함께 사라지면 처방이 정확히 필요한 자리에서 무력해진다.
-        _silence_part = ""
-        _pr = state.get("pressure")
-        if isinstance(_pr, dict):
-            _cannot = _pr.get("cannot")
-            if isinstance(_cannot, str) and _cannot.strip():
-                # [2026-08-28 이중 투입 수리] 구 문안은 Slot 25 DIALOGUE의 **예시목록과 판정문을
-                #   그대로 복제**했다 — 저쪽이 상시로 `the "line" may be a syllable, a nod that
-                #   answers, a written note, or a silence held exactly where a word was due.
-                #   A silent reply still commits: one specific answer the player can act on`을 갖고 있다.
-                #   ★코드가 소유하는 건 **인스턴스**(누가·무엇에 막혔나 = cannot)와 그 턴의 교대.
-                #   ⚠1차엔 commit 속성("something to act on")까지 걷었다가 되돌렸다 —
-                #     `smoke_card1_pressure`가 그걸 **공급 계약**으로 잡고 있었고(07-22 카드1),
-                #     Slot 25는 멀다. **압축 재앵커는 정당, 전문 복제가 결함**이다.
-                #     그래서 제거 대상은 **예시목록**(a nod, a stilled hand, a note, breath) 하나뿐.
-                _silence_part = (
-                    f"held back: {_cannot.strip()}"   # [2026-09-29 반죽] 침묵의 답·교대 절 → RB_SPEECH("A silent reply still commits")
-                )
+        # [2026-10-09 묶음B] 대사 방향의 can 줄(옛 침묵 커밋 자리)을 뺐다 — Psyche_States fg `can:`과 글자까지 같은
+        #   줄이 두 번 실렸다(렌더 37턴 71/71, 이중 주입). can은 Psyche_States 한 곳에서 '손에 든 수단'으로 간다.
+        #   계보: 07-22 카드1 침묵 커밋(cannot → 그 침묵이 무슨 대답인지) → 08-28 C-3 예시목록 제거 →
+        #   10-09 압력 want·can("held back:" → "can:") → 10-09 묶음B 삭제. "A silent reply still commits"는 RB_SPEECH 일반 규칙.
+        #   측정·스펙: analysis_line/묶음B_렌더래퍼_측정·스펙_2026-10-09 §5.
 
-        # logos_layer 없으면 skip (분석 안 된 NPC) — 단 침묵 커밋이 있으면 그것만이라도 내보낸다.
+        # logos_layer 없으면 skip (분석 안 된 NPC).
         logos = relation.get("logos_layer", "")
         if not logos or not isinstance(logos, str):
-            if _silence_part:
-                lines.append(f"- {name}: {_silence_part}")
             continue
 
         # Gaze 기반 심도 결정 (exact match — substring 위양성 방지)
@@ -2201,11 +2280,10 @@ def compose_dialogue_directives(
             if vq:
                 directive_parts.append(f"voice: {vq}")
 
-        if _silence_part:
-            directive_parts.append(_silence_part)
-
         if directive_parts:
-            lines.append(f"- {name}: {'. '.join(directive_parts)}")
+            # [2026-10-11 C1 logos] 조각 끝 마침표를 떼고 잇는다(logos 칸 끝 '.' + '. ' → '..' 막기).
+            _dp = [_p.rstrip(' .') for _p in directive_parts if _p.rstrip(' .')]
+            lines.append(f"- {name}: {'. '.join(_dp)}")
 
     if not lines:
         return ""
@@ -2380,6 +2458,8 @@ def translate_foreshadowing(items: Optional[list] = None) -> str:
 def translate_open_invitations(items: Optional[list] = None) -> str:
     """플레이어향 전방 affordance → 문장.
 
+    [2026-10-10 끝 긍정문] RB_PC의 '손 뒤 지면 = 내민 쪽의 몸·기다림·방' 허가 절은 걷혔다(A1·A2가 그 수를 마지막 줄로 정함).
+    자답 가드 두 절(받았는지는 보고하지 않음·대신 답하지 않음)은 RB_PC에 그대로다.
     [2026-08-28] 꼬리 2절 추가. 구 문안은 답을 **쓰지 말라**고만 해서
     "무응답 서술 = 답을 쓴 게 아님"이라는 우회로가 열려 있었다(실측: NPC가 되묻고
     같은 턴에 "대답이 없네"로 자답). 앞 절=허가(손 내민 뒤 남은 지면의 주인 지정),
@@ -2413,23 +2493,7 @@ def translate_dice_constraint(dice: Optional[Dict[str, Any]] = None) -> str:
             + (f" ({_nm})" if _nm else "") + ". Apply it once, then let it go.")
 
 
-def translate_next_beat(next_beat: str = "") -> str:
-    """디렉터 비트 → 이번 턴 착지 계약 문장."""
-    nb = str(next_beat or "").strip()
-    if not nb:
-        return ""
-    # [2026-08-28 충돌 감사 C2] Slot 4 `"Open threads are pressure, not agenda: … never dictate the
-    #   next event"`와 정면 충돌이었다 — nb의 출처가 narrative_chain/arc, 곧 **열린 실 자신**인데
-    #   "This turn lands"는 dictate다. 게다가 story_director `_generate_beats`에 `if not beats:`
-    #   폴백이 있어 이 문안은 **사실상 상시**. 수리 = 착지의 힘은 두되 Slot 4의 조건
-    #   ("only when present characters, objects, or pressure pull it forward")을 흡수한다.
-    # [2026-09-29 반죽] 착지 방식 절 → RB_WORLD "Threads and advance". 값만.
-    # [2026-09-29 배치2 2a-1] 큐 비트의 "Next beat:" 접두가 값 안으로 샜다("This turn lands: Next beat: …..").
-    #   접두를 벗기고 끝 마침표를 하나로 한다.
-    nb = re.sub(r"^\s*next beat\s*:\s*", "", nb, flags=re.I).rstrip(". ").strip()
-    if not nb:
-        return ""
-    return f"This turn lands: {nb}."
+# [2026-10-09 SD개편] translate_next_beat("This turn lands: …") 은퇴 — Slot 33 착지 줄과 함께.
 
 
 def translate_arc_foreground(arc: Optional[Dict[str, Any]] = None) -> str:

@@ -41,7 +41,7 @@ _RENDER_FACING_KEYS = frozenset({
     # 확실히 영어 서술이어야 하는 필드만. line/reason/Aspects 같은 **범용 키는 제외** —
     # 퀘스트 내용·시계 라벨·사물명처럼 한글이 정당한 자리에서 오탐이 난다(레티어스 지적 07-27).
     "Observation", "UserIntent", "descriptor", "env_influence", "value_conflict", "deep_read",
-    "attitude", "deflection", "primary_link", "render_hint", "suggested_beats", "offscreen_trace",
+    "attitude", "deflection", "primary_link", "render_hint", "offscreen_trace",
     "narrative_hook", "knows", "secrets_held", "false_beliefs",
     "roll_outcome",   # [2026-10-01 2단계] 렌더 [Outcome] 시드로 직행하는 영어 한 줄
 })
@@ -192,7 +192,9 @@ class TheoriaAnalyzer:
                 if isinstance(result, list) and len(result) == 1 and isinstance(result[0], dict):
                     logger.info("[Theoria] unwrapped JSON array top-level (Gemini quirk)")
                     result = result[0]
-                return self._validate_dai(result)
+                _dai = self._validate_dai(result)
+                self._blank_watch_extract(_dai, anchors)
+                return _dai
 
             except json.JSONDecodeError as je:
                 last_error = str(je)
@@ -201,6 +203,7 @@ class TheoriaAnalyzer:
                 snippet = cleaned[max(0, pos - 60):pos + 60] if cleaned else ""
                 if attempt == 0:
                     logger.warning("[Theoria] JSON failed, retrying: %s | context: ...%s...", je, snippet)
+                    logger.info("[빈칸] Theoria JSON 1차 실패 — 재시도")
                 else:
                     logger.error("[Theoria] JSON failed (attempt 2): %s | context: ...%s...", je, snippet)
             except Exception as e:
@@ -208,6 +211,7 @@ class TheoriaAnalyzer:
                 return {"error": str(e)}
 
         logger.error(f"Theoria analysis failed after retry: {last_error}")
+        logger.info("[빈칸] Theoria 분석 전체 빔 (%s)", last_error or "JSON parse failed")
         return {"error": last_error or "JSON parse failed"}
 
     def _validate_dai(self, dai: dict) -> dict:
@@ -226,6 +230,28 @@ class TheoriaAnalyzer:
         except Exception:
             pass
         return dai
+
+    def _blank_watch_extract(self, dai: dict, anchors: dict) -> None:
+        """[2026-10-07 분석 안쪽 E2] 빈칸 감시 — 조건이 선 턴에 칸이 비면 `[빈칸]` 한 줄. 로그만(동작 0).
+        근거: 분석빈칸_null진단_2026-10-06 §5-2(진짜 빠짐을 라이브에서 센다)."""
+        try:
+            if not isinstance(dai, dict):
+                return
+            if str(dai.get("SceneType") or "").strip().lower() == "intimate" and not dai.get("IntimacyAnalysis"):
+                logger.info("[빈칸] Theoria IntimacyAnalysis null (SceneType=intimate)")
+            if dai.get("needs_judgment") is True:
+                _am = dai.get("action_meta") or {}
+                if isinstance(_am, dict) and not _am.get("active_passives"):
+                    _anc = anchors if isinstance(anchors, dict) else {}
+                    _pas = _anc.get("passives")
+                    if not _pas:
+                        _ap = (_anc.get("all_pcs") or {}).get(str(_anc.get("acting_user_id") or "")) or {}
+                        _pas = _ap.get("passives") if isinstance(_ap, dict) else None
+                    _n = len(_pas) if isinstance(_pas, (list, dict)) else 0
+                    if _n:
+                        logger.info("[빈칸] Theoria active_passives [] (needs_judgment, PC passives %d)", _n)
+        except Exception:
+            pass
 
     def _build_system_instruction(self, active_genres=None, scene_context=None) -> str:
         """Theoria v2.0 시스템 프롬프트 조립 — build_analysis_directive() 사용"""
@@ -262,7 +288,8 @@ class TheoriaAnalyzer:
 
         # 조건부 규칙표
         if scene_context.get("scene_type") == "intimate":
-            rule_tables += "\n\n" + analysis_resources.SEXUAL_PSYCHOLOGY_ANALYSIS
+            # [2026-10-10 칸이관] 추출판 = 머리 + 0 다양성 + 1 창(window_check). 나머지 절은 서사 콜(Mira) 몫.
+            rule_tables += "\n\n" + analysis_resources.SEXUAL_PSYCHOLOGY_EXTRACT
         # [2026-08-11 로드아웃 삭제] pending_flashback 게이트 + FLASHBACK_REST_DETECTION 규칙표 제거.
         # 이 규칙표의 유일한 게이트가 !회상 명령의 대기 앵커였다 = 명령 비활성 이후 한 번도 주입된 적 없음
         # (휴식 절반도 같이 사문이었고, 그 스키마 §Rest/Downtime 은 2026-09-06 P8b 에서 삭제됐다).
@@ -306,10 +333,43 @@ class TheoriaAnalyzer:
         if null_hints:
             null_guide = "\n\n<module_absent_guidance>\nThese fields' full theory modules are not loaded for current genre. Default to null/false unless clear evidence:\n" + "\n".join(null_hints) + "\n</module_absent_guidance>"
 
-        return directive + "\n\n" + spotlight + "\n\n" + self._get_output_schema() + null_guide + "\n</THEORIA>"
+        # [2026-10-12 C32 몸·인격] 장전된 채널만 `vessel` 칸(+지금 표) — 장전 안 된 채널은 0자(종전 바이트 그대로).
+        _vessel_blk = ""
+        try:
+            import vessel as _vs_t
+            _vessel_blk = _vs_t.theoria_block(str((scene_context or {}).get("channel_id", "") or ""))
+        except Exception as _e_vs:
+            logger.debug(f"[Vessel] theoria block skip: {_e_vs}")
+            _vessel_blk = ""
+        _schema = self._get_output_schema()
+        if _vessel_blk:
+            # 스키마 태그 **안**(최종 언어 점검 앞)에 — 밖에 두면 "ALL these fields"에서 빠져 조용히 누락될 수 있다.
+            _cut = _schema.rfind("\n<language_final>")
+            if _cut < 0:
+                _cut = _schema.rfind("</output_schema>")
+            _schema = (_schema[:_cut] + "\n" + _vessel_blk.rstrip("\n") + _schema[_cut:]) if _cut >= 0 else (_schema + _vessel_blk)
+        return directive + "\n\n" + spotlight + "\n\n" + _schema + null_guide + "\n</THEORIA>"
 
+    # [2026-10-08 시점선] 렌더 전 분석의 시점 = 입력이 떨어지는 자리. Observation·soma·relation·logos는 시작점과 끄는 힘까지,
+    #   NPC가 입력을 받는 답(바닥)은 산문 몫. CHARACTER ANALYSIS 머리 Time point 줄, IA power_dynamic은 동의 판정 대신 이끄는 쪽·가장자리.
+    #   스펙 analysis_line/시점선_분석시작점·렌더바닥_스펙_2026-10-07.md (측정 §2-1: 라이브 zS T4 마라 대사 3/3 대 0/4).
+    # [2026-10-08 관계 stance] relation.descriptor = PC를 향한 심리적 자세, 축 하나 "what they want from them"(can/want/do 중 want).
+    #   옛 "stance … as concrete behavior / what the body is doing"은 자세를 몸의 자세로 읽게 해 soma를 한 번 더 썼고,
+    #   그 몸 스냅샷·부정형이 엣지 stance로 저장돼 4b·렌더 관계 줄·🤝로 돌았다. 예시 목록·몸 단서는 받아쓰기/역효과(측정).
+    #   스펙 analysis_line/4b고리·속마음연결_스펙_2026-10-08.md §1 (녹화 8턴×2: 자세 16/16→0/16, 부정형 2.38→0.88).
     def _get_output_schema(self) -> str:
         """출력 스키마 정의 (v2.0 — 16 new fields, mental→psyche rename)"""
+        # [2026-10-09 반응주인] T1·Observation: 답은 서사 콜(굴림 뒤)에서 읽는다. psyche.descriptor = 마음이 붙든 것(MSE·signs 뺌 —
+        #   MSE는 면담 기록이라 입력이 검사자가 돼 반응을 적었다: psy 146개 시선 86%·부정 79%·말 60%). T1 "Readings name what a body does" → 자리·쥔 것.
+        #   근거 analysis_line/반응주인_Mira응답칸_스펙_2026-10-09
+        # [2026-10-09 묶음A A1·A2·A4] psyche.descriptor "MSE affect signs as the input finds them", soma.descriptor
+        #   "where it is, what it holds"(옛 "each a thing the body does"), power_dynamic에서 "how each answers the other" 뺌.
+        #   답(이번 턴 NPC 반응) → 착지 순간(시작점). 근거 analysis_line/묶음A_do칸착지_측정_2026-10-09
+        # [2026-10-09 묶음CDE] 4d 스키마 이름 = SCENE CONTINUITY(E3). D1(attempt 굴림 전 결과)은 문안으로 안 움직였다 —
+        #   attempt 정의·T1 괄호(1차), Observation·soma·knows 정의 절(2차) 모두 강제 실패 판에서 추출이 성공을 그대로 썼다(4/4).
+        #   문안은 되돌렸다. 해는 원장 저장 하나라 코드 게이트로 간다(판정 대기). 근거 analysis_line/묶음CDE_측정·스펙_2026-10-09
+        # [2026-10-11 청소 C12] QualityFlags에서 echo_warning·redemption_warning 뺌(422판 켜짐 0·0, 응답 판정은 Mira 몫).
+        #   dissonance_flag·sheet_deducible은 판독의 결이라 둔다. 근거 composition/청소묶음_지도·스펙_2026-10-11
         return """
 <output_schema>
 Return valid JSON with ALL these fields.
@@ -318,7 +378,7 @@ LANGUAGE RULE: every render-facing direction/analysis field → ENGLISH telegrap
 
 ## INPUT & CONTEXT
 - "InputAnalysis": {"Enhanced": str, "LogicTrace": ["≤3 short links: why this can or cannot happen here"], "Plausibility": "High/Low/Impossible", "Momentum": "Open/Closed"}
-- "Observation": str (ENGLISH-ONLY telegraphic - neutral account of what actually happened. no interpretation, facts only.)
+- "Observation": str (ENGLISH-ONLY telegraphic - neutral account of the input as it lands and the world facts it touches. no interpretation, facts only. NPC answers are read after the roll.)
 - "UserIntent": str (ENGLISH-ONLY telegraphic - what the user immediately wants: explicit + implicit goals, emotional tone of the request)
 - "input_mode": "decree" | "attempt" | "probe"
   - decree: the PC's own act = established fact, world absorbs; outcomes on others and world premises riding the line stay the world's ("자리에 앉는다", "밥을 먹는다")
@@ -341,39 +401,37 @@ LANGUAGE RULE: every render-facing direction/analysis field → ENGLISH telegrap
 
 ## CHARACTER ANALYSIS (psyche_states)
 Fill soma BEFORE psyche (James-Lange + 五蘊 order). soma and psyche are INDEPENDENT (Cartesian Dualism).
+Time point = where the input lands: each NPC's body as the input finds it, and what pulls at it. Readings name where a body is and what it holds; an act it does not do is not a reading. The answer to the input is read on the scout pass, after the roll. Where the input moves a body, read the body from there; the input outranks the previous frame.
 **NPCs ONLY — never include the PC.** PC interiority belongs to the player.
 NPCs perceive the PC through what the input SHOWS (words, actions), not through a PC psyche profile.
 - SCENE CAST lists who is physically in this scene. Fill psyche_states for those names; a character only mentioned, remembered, or discussed is not in the scene and gets no entry.
 - When SCENE CAST is absent, judge presence from the input as before.
+- WHO THEY ARE is who each person is, not what this turn did: a habit or want it names is a lean. Descriptors record where this turn's evidence put the body; the sheet says what that evidence means for this person, never stands in for it.
 
 - "psyche_states": {
     "CharName": {
         "psyche": {
-            "descriptor": "ENGLISH-ONLY telegraphic cue - MSE observable affect signs. direction/vector, NOT finished prose",
+            "descriptor": "ENGLISH-ONLY telegraphic cue - where the mind is as the input lands: what it attends to, what it turns over. direction/vector, NOT finished prose",
             "value": -100~+100 (extremely negative ~ extremely positive),
             "primary_emotion": "plutchik enum (陰陽: note opposing seed within)",
-            "active_needs": ["henderson/erikson enum - needs currently dominating behavior, max 2"],
-            "self_opacity": "str or null (Self-Opacity: 'claims X — actual: Y' format. null = self-aware)",
+            "active_needs": ["one or two bare need words (Henderson/Erikson, e.g. safety, intimacy, esteem, rest): what dominates behavior now. The word only: no theory name, no 'X vs Y' pair"],
             "decision_mode": "reactive/deliberate (Kahneman + Carstensen)",
             "coping": "problem_focused/emotion_focused/avoidant/null (Lazarus. null = no stressor)",
             "apprehension_gap": "str or null (Absence/Approximation/Distortion: what THIS character failed to perceive, roughly approximated, or distorted through their own schema/defense. null = accurate apprehension)"
         },
         "soma": {
-            "descriptor": "ENGLISH-ONLY telegraphic cue - SOAP-OA observable body signals only, no emotion labels. direction/vector, NOT finished prose",
+            "descriptor": "ENGLISH-ONLY telegraphic cue - SOAP-OA body signals as the input finds the body: where it is, what it holds; no emotion labels. direction/vector, NOT finished prose",
             "polyvagal": "ventral/sympathetic/dorsal (Porges: 3+ signals required)",
             "cultural_affect": "han/jeong/hwabyung/nunchi/chaemyeon/simma/gi/null",
             "env_influence": "str or null (ENGLISH-ONLY telegraphic. Nightingale: environment→psyche influence. null = negligible)",
             "dissociation": "none/mild/moderate/severe/null (Dissociation Spectrum: dorsal→entry point. mild=flat affect,delayed response. moderate=third-person self-reference,time gaps. severe=autopilot,recognition failure. Track across turns. null = no trigger)"
         },
         "relation": {
-            "descriptor": "ENGLISH-ONLY telegraphic cue - current stance toward the acting PC as concrete behavior. direction/vector, NOT finished prose. Observable behavior only; no state/trait/emotion naming",
+            "descriptor": "ENGLISH-ONLY telegraphic cue - psychological stance toward the acting PC: what they want from them. direction/vector, NOT finished prose. No trait/emotion naming",
             "bond_shift": "much_warmer/warmer/holds/cooler/much_cooler (toward the acting PC. 4b Stands = where they stand now; name how this turn moved it — holds when it did not. warmer/cooler = a small visible step; much_ = a turn that changes where they stand: a rescue, a betrayal, a confession)",
             "tension_shift": "spikes/rises/holds/eases (open conflict with the acting PC, independent of bond — a devoted NPC can still be furious; 4b friction = where it stands now; spikes = conflict breaks into the open this turn)",
-            "starts_as": "devoted/friendly/neutral/unfriendly/hostile — ONLY when 4b reads 'no record yet': where the sheet line puts them toward the acting PC before this scene. This turn's shift comes on top. Omit otherwise, and omit when unnamed lines are not about the acting PC",
-            "friction_starts": "low/strained/high/breaking — same condition: standing friction the sheet line implies. Omit otherwise",
             "attachment": "secure/anxious/avoidant/disorganized (Bowlby: from behavioral evidence)",
             "phase": "orientation/identification/exploitation/resolution (Peplau: cannot skip stages; 4b Relation(prev) = last turn's phase, at most one step per turn, regression unlimited)",
-            "logos_layer": "str (Logos [CUSTOM]: current layer state + THIS TURN behavioral hint)",
             "stage": "front/back (Goffman: by audience, not just location)",
             "group_dynamic": "conformity/obedience/groupthink/diffusion/null (Group Dynamics: active in 3+ character scenes. null = no group pressure)",
             "negotiation_stance": "cooperative/competitive/exploitative/null (BATNA strength reflects Position value. null = no negotiation active)"
@@ -410,7 +468,7 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
     "clock_new": {"name": "Korean", "segments": 4|6|8, "tick_mode": "action|time|hybrid", "threat": "Korean — 이 시계가 완성되면 무슨 일이 벌어지는가", "defense_action": "Korean — 이 시계를 막으려면 무엇을 해야 하는가 (구체적 행동 힌트)", "source": "narrative|consequence", "linked_entity": "str or null — 관련 NPC/세력 이름", "tags": ["Korean"], "doom_on_complete": "null(threat 기본: doom 상승) | 0(timer: 중립 마감) | negative int(opportunity: 완성 시 doom 감소, e.g. -10)"} | null,
     "clock_resolved": ["시계 이름 — 서사적으로 위협이 해소된 경우만"]
   }
-- "anomaly_profile": {"trigger": str, "category": "supernatural/psychological/social/environmental/temporal", "intensity": "Low/Mid/High/Extreme", "polarity": "positive/negative/mixed", "perception_type": "veridical/illusory/hallucinatory/delusional/null (Anomalous Experience Framework. In supernatural settings, 'hallucinatory' may be CORRECT. null = no anomaly)", "line": "ENGLISH-ONLY telegraphic - 1-line event direction", "reason": "ENGLISH-ONLY telegraphic", "location": "이벤트 발생 장소 (CurrentLocation과 다를 때만. 빈 문자열이면 현재 위치)"} | null (2026-07-15: propose each turn — downstream code gates timing/acceptance and holds most back. null = the scene physically cannot host any event, NOT "seems quiet")
+- "anomaly_profile": {"trigger": str, "category": "supernatural/psychological/social/environmental/temporal", "intensity": "Low/Mid/High/Extreme", "polarity": "positive/negative/mixed", "perception_type": "veridical/illusory/hallucinatory/delusional/null (Anomalous Experience Framework. In supernatural settings, 'hallucinatory' may be CORRECT. null = no anomaly)", "line": "ENGLISH-ONLY telegraphic - 1-line event direction", "reason": "ENGLISH-ONLY telegraphic", "continues": "E#/C# id from Pending events or Active Conditions when this proposal carries that thread one step further | null", "location": "이벤트 발생 장소 (CurrentLocation과 다를 때만. 빈 문자열이면 현재 위치)"} | null (2026-07-15: propose each turn — downstream code gates timing/acceptance and holds most back. null = the scene physically cannot host any event, NOT "seems quiet")
 - "condition_resolved": ["조건 태그 — 서사적으로 해당 조건이 더 이상 세계에 유효하지 않을 때. Active Conditions 참고"]
 - "condition_updates": [{"tag": "조건 태그", "intensity": "새 강도 (Low/Mid/High/Extreme)", "description": "갱신된 상황 묘사 (Korean)"}]
 
@@ -438,22 +496,20 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
         "leak_risk": "none/low/medium/high (Curse of Knowledge: 아는 것을 숨기기 어려움)",
         "false_beliefs": ["ENGLISH-ONLY telegraphic - believed contrary to fact (Theory of Mind). A 4b \"Believes (wrongly)\" entry carries forward while it holds; drop it once this scene corrects it."],
         "suspects": ["ENGLISH-ONLY telegraphic - SUSPECTED but unconfirmed: overheard, half-seen, inferred. Distinct from knows(confirmed). Seeing a result does not give the actor, cause, method, ownership, motive, or private thought behind it — those land here"],
-        "deception_cues": "str or null (Statement Analysis/SCAN: pronoun_shift/tense_shift/time_gap/over_detail/emotion_misplace. null = no deception detected)",
+        "deception_cues": "str or null (Statement Analysis/SCAN: pronoun_shift/tense_shift/time_gap/over_detail/emotion_misplace, read in what this NPC has already said or shown before this input. null = no deception detected)",
         "secret_updates": [{"truth_ref": "short substring of the secrets_held entry this updates", "surface": "ENGLISH-ONLY - what it LOOKS like from outside (cover story, visible tell)", "reveal_gate": "condition that would crack it open, or ''", "knowers": ["who now knows the truth"], "suspecters": ["who now suspects"], "status": "kept/leaking/revealed"}]
     }
   }
   (secret_updates: OPTIONAL, only when a secret's outward surface, gate, or who-knows changed THIS turn. Omit otherwise.)
-  (secrets_held for sheet-less NPCs: a PLAYED gap between what they present and what their behavior conceals counts — record it. Only from played evidence; never invent an unplayed secret.)
+  (secrets_held: what play has shown being hidden — a played gap between what someone presents and what their behavior conceals. A secret or hidden fact written in their sheet enters only once this scene's play touches it; until then it stays the sheet's. Never invent an unplayed secret.)
 
 
 ## SAFETY & QUALITY
 - "TemporalOrientation": {"focus": "past/present/future", "intensity": 0.0-1.0}
 - "QualityFlags": {
     "convergence_warning": "boolean - unearned comfort / premature resolution",
-    "echo_warning": "boolean - NPC mirroring PC",
     "stagnation_warning": "boolean - 3+ turns flat. Test: does this turn repeat a prior scene's purpose, the same location-function pair, the same investigation step, the same waiting state, the same dialogue aim, or the same emotional beat, without new evidence? YES → true",
     "dissonance_flag": "boolean - NPC contradictory beliefs/actions (Festinger)",
-    "redemption_warning": "boolean - NPC showing unearned positive behavioral change (Bandura/Maruna)",
     "symptom_cluster": "PTSD/anxiety/depression/null (DSM-5: track co-occurring symptoms as consistent SET. Cherry-picking = inconsistent character. null = no clinical pattern)",
     "sheet_deducible": "boolean - current NPC response is directly deducible from profile tags alone. Test: could ANY character with the same tags produce this response? YES → true"
   }
@@ -478,11 +534,11 @@ Observe the physical space — architecture, not decoration. Territory vs Lens: 
     "threshold": null | "mild" | "sharp"
   }
 
-## SCENE CONTINUITY (requires ### 4d. PREVIOUS FRAME — null if no previous frame)
+## SCENE CONTINUITY (requires ### 4d. SCENE CONTINUITY — null when it is absent)
 - "continuity_check": null OR {
     "flags": [{"type": "spatial_break|sensory_break|object_break|tone_break|npc_break",
                "risk": "ENGLISH-ONLY telegraphic — what discontinuity risk exists",
-               "correction": "ENGLISH-ONLY telegraphic — how to naturally bridge the gap"}],
+               "correction": "ENGLISH-ONLY telegraphic — how to naturally bridge the gap: the previous frame's fact to carry forward (for npc_break: where that person was, what they held, what they had said)"}],
     "anchor_consumed": boolean
   }
 
@@ -491,13 +547,8 @@ Observe the physical space — architecture, not decoration. Territory vs Lens: 
 
 ### IntimacyAnalysis (SceneType="intimate")
 - "IntimacyAnalysis": null OR {
-    "window_check": {"char_name": "within/above/below (Siegel, from polyvagal state)"},
-    "dual_control": {"char_name": {"SES": "str - excitation factors", "SIS": "str - inhibition factors"}},
-    "desire_type": {"char_name": "attachment/power/escape/connection/validation/sensation (Basson)"},
-    "power_dynamic": "ENGLISH-ONLY telegraphic (Benjamin Intersubjectivity - mutual recognition status)",
-    "body_memory": "ENGLISH-ONLY telegraphic (van der Kolk - involuntary echoes of past experience)",
-    "post_encounter_prediction": {"char_name": "possible post-behavior IF attachment activates — null if no change expected"}
-  }
+    "window_check": {"char_name": "within/above/below (Siegel, from polyvagal state)"}
+  }  (NPCs only. Desire, dual control, who leads, body memory and after-behavior are read on the scout pass.)
 
 ### Flashback Evaluation (유저 입력에 소급 선언("사실 미리 ~했다", "이미 ~해뒀다")이 있으면 생성하라)
 - "flashback_eval": null OR {
@@ -590,7 +641,9 @@ Any render-facing field whose value would contain Hangul → write that field's 
         40: "growing familiarity — selective openness, testing boundaries",
     }
 
-    def _build_npc_context(self, anchors: dict) -> str:
+    def _build_npc_context(self, anchors: dict, starts_hint: bool = True) -> str:
+        # [2026-10-10 칸이관] starts_hint: 'no record yet' 줄 끝 지시(starts_as / friction_starts)는 그 칸의 주인(Mira)에게만.
+        #   추출 콜(Theoria)은 시트 줄만 본다(False).
         """NPC 태도 + 지식 + depth/psyche 힌트를 프롬프트에 포함"""
         parts = []
         attitudes = anchors.get("stored_npc_attitudes", {})
@@ -618,6 +671,17 @@ Any render-facing field whose value would contain Hangul → write that field's 
                                + list(soma_prev.keys()) + list(rel_prev.keys()) + list(unrecorded.keys()))
         if _npc_state_names:
             parts.append("### 4b. NPC STATE (Previous Turn)")
+        # [2026-10-12 C23b] 저장된 NPC 활력·평형(게이지) — soma가 매 턴 새로 판단하면서 이 값을 몰랐다.
+        #   렌더는 soma를 따르므로(C23 렌더 8콜 영), 몸을 판단하는 자리에 값을 돌려준다. 이름 맞추기·허용 인물·
+        #   토글은 custom_vars.npc_vc_values 한 문(세션 NPC는 값이 없어 줄도 없다). Mira도 같은 함수라 같이 본다.
+        _reserve = {}
+        if _npc_state_names:
+            try:
+                import custom_vars as _cv_rs
+                _reserve = _cv_rs.npc_vc_values(str(anchors.get("channel_id", "") or ""), sorted(_npc_state_names))
+            except Exception as _e_rs:
+                logger.debug("[Theoria] 4b Reserve skip: %s", _e_rs)
+                _reserve = {}
         for npc_name in _npc_state_names:
             npc_lines = [f"{npc_name}:"]
             att = attitudes.get(npc_name, {})
@@ -653,15 +717,15 @@ Any render-facing field whose value would contain Hangul → write that field's 
                 except Exception:
                     _named_ru = True
                 if _named_ru:
-                    npc_lines.append(f"  Stands: no record yet — sheet on {_pc_ru}: {_q_ru} "
-                                     f"→ name where they start (relation.starts_as / friction_starts)")
+                    npc_lines.append(f"  Stands: no record yet — sheet on {_pc_ru}: {_q_ru}"
+                                     + (" → name where they start (starts_as / friction_starts)" if starts_hint else ""))
                 else:
-                    npc_lines.append(f"  Stands: no record yet — unnamed sheet lines, maybe about {_pc_ru}: {_q_ru} "
-                                     f"→ if they are about {_pc_ru}, name where they start "
-                                     f"(relation.starts_as / friction_starts); if not, omit both")
+                    npc_lines.append(f"  Stands: no record yet — unnamed sheet lines, maybe about {_pc_ru}: {_q_ru}"
+                                     + (f" → if they are about {_pc_ru}, name where they start "
+                                        f"(starts_as / friction_starts); if not, omit both" if starts_hint else ""))
             kn = knowledge.get(npc_name, {})
             if kn and kn.get("knows"):
-                knows_str = "; ".join(kn["knows"][:5])
+                knows_str = "; ".join(kn["knows"][-5:])   # [2026-10-09 묶음CDE E4] 최신 다섯 — 원장은 오래된 것→새것(update_npc_knowledge [-20:]). 옛 [:5]는 가장 오래된 다섯
                 npc_lines.append(f"  Knows: [{knows_str}]")
                 if kn.get("secrets_held"):
                     npc_lines.append(f"  Secrets: [{'; '.join(kn['secrets_held'][:3])}]")
@@ -715,6 +779,16 @@ Any render-facing field whose value would contain Hangul → write that field's 
                     except (TypeError, ValueError):
                         _hold = ""
                     npc_lines.append("  Soma(prev): " + ", ".join(_bits) + _hold)
+            # [2026-10-12 C23b] Reserve — 두 축 중 하나라도 70 아래일 때만(무탈한 인물마다 100/100 줄은 소음).
+            #   값만 돌려준다(4b의 결). 읽는 법은 시스템 STATE_TRACKING_V2 1번(Continuity) 한 절이 맡는다.
+            #   40~69는 숫자만 — 절이 해석을 주지 않는 구간이라 '조금 닳음'으로 읽힌다(하루 회복 중의 이음).
+            #   죽음·쓰러짐(_inactive)은 soma와 같이 침묵.
+            _rv = _reserve.get(npc_name)
+            if _rv and not _inactive.get(npc_name):
+                _rbits_rs = [f"{_lab} {_val}/100" for _lab, _val in (("body", _rv[0]), ("composure", _rv[1]))
+                             if _val is not None]
+                if _rbits_rs and any(_val is not None and _val < 70 for _val in _rv):
+                    npc_lines.append("  Reserve: " + ", ".join(_rbits_rs))
             parts.append("\n".join(npc_lines))
 
         # [V10 Sprint 4] 막간 장부 — 분석이 막간 사실을 알아야 NPC 심리 추론이 정합
@@ -820,9 +894,28 @@ Any render-facing field whose value would contain Hangul → write that field's 
                 npc_schedules = {k: v for k, v in npc_schedules.items() if not _dm_sch.is_pc_name(k, _pcr_sch)}
         except Exception:
             pass
-        if npc_schedules:
-            sched_items = [f"{k}: {v}" for k, v in list(npc_schedules.items())[:6]]
-            parts.append(f"- NPC Activity: {'; '.join(sched_items)}")
+        # [2026-10-11 C26 P4] 저장(npc_summaries)은 "마지막으로 본 활동"이라 합치기만 한다(막간 엔진·시간 경과 힌트가 읽음).
+        #   4c에는 **무대 인물 줄만** 싣는다. 전엔 넣은 순서 앞 6이라 가장 먼저 등록된 여섯만 보였고, 떠난 인물의 옛 활동도 실렸다.
+        #   무대 = scene_cast 앵커(위치 0단). 앵커가 없으면 get_onstage_npc_names(위치 미해상이면 그 안의 레거시 폴백).
+        if npc_schedules and isinstance(npc_schedules, dict):
+            _stage4c = anchors.get("scene_cast")
+            if _stage4c is None:
+                try:
+                    import npc_manager as _npm_4c
+                    _ch4c = anchors.get("channel_id", "")
+                    _stage4c = _npm_4c.get_onstage_npc_names(_ch4c) if _ch4c else []
+                except Exception:
+                    _stage4c = []
+            sched_items = []
+            for _n4c in list(_stage4c or []):
+                _k4c = domain_manager._find_npc_key(npc_schedules, str(_n4c), allow_token=False)
+                _line4c = f"{_k4c}: {npc_schedules.get(_k4c)}" if _k4c and npc_schedules.get(_k4c) else ""
+                if _line4c and _line4c not in sched_items:
+                    sched_items.append(_line4c)
+                if len(sched_items) >= 6:
+                    break
+            if sched_items:
+                parts.append(f"- NPC Activity: {'; '.join(sched_items)}")
 
         world_changes = mem.get("world_changes", [])
         if world_changes:
@@ -831,11 +924,11 @@ Any render-facing field whose value would contain Hangul → write that field's 
         needs = mem.get("basic_needs_flags", {})
         active_needs = [k for k, v in needs.items() if v]
         if active_needs:
-            parts.append(f"- PC Physical State: {', '.join(active_needs)}")
+            parts.append(f"- PC Physical State (shown last turn): {', '.join(active_needs)}")   # [2026-10-11 C26] 이번 턴 판독
 
         residual = mem.get("residual_effects", "")
         if residual and isinstance(residual, str):
-            parts.append(f"- Residual Effects (from last success): {residual}")
+            parts.append(f"- Residual Effects (last turn): {residual}")   # [2026-10-11 C26] 이번 턴 판독(옛 "from last success")
 
         if not parts:
             return ""
@@ -861,38 +954,49 @@ Any render-facing field whose value would contain Hangul → write that field's 
         parts = ["### 4d. SCENE CONTINUITY"]
 
         # ── Latest frame: 풀 디테일 ──
+        # [2026-10-09 묶음CDE E3] 이 프레임은 지난 턴이다(저장은 렌더 뒤). 옛 이름 "CURRENT FRAME"·스키마 "PREVIOUS FRAME"·
+        #   아래 "PREVIOUS FRAMES"가 셋으로 엇갈렸다. 스냅샷(분석, 렌더 전)과 fingerprint(산문이 남긴 것, 렌더 뒤)의 머리도 가른다.
+        #   스펙: analysis_line/묶음CDE_측정·스펙_2026-10-09 §5.
         latest = frames[-1]
-        parts.append("#### CURRENT FRAME")
+        parts.append("#### LAST TURN")
         snap = latest.get("dai_snapshot", {})
         fp = latest.get("render_fingerprint", {})
 
+        _sl = []
         if snap:
             if snap.get("location"):
-                parts.append(f"- Location: {snap['location']}")
+                _sl.append(f"- Location: {snap['location']}")
             if snap.get("energy"):
-                parts.append(f"- Energy: {snap['energy']}")
+                _sl.append(f"- Energy: {snap['energy']}")
             if snap.get("observation"):
-                parts.append(f"- Observation: {snap['observation']}")
+                _sl.append(f"- Observation: {snap['observation']}")
             if snap.get("chain_status"):
-                parts.append(f"- Chain: {snap['chain_status']}")
+                _sl.append(f"- Chain: {snap['chain_status']}")
+        _fl = []
         if fp:
             if fp.get("gaze"):
-                parts.append(f"- Gaze: {fp['gaze']}")
+                _fl.append(f"- Gaze: {fp['gaze']}")
             if fp.get("lighting"):
-                parts.append(f"- Lighting: {fp['lighting']}")
+                _fl.append(f"- Lighting: {fp['lighting']}")
             if fp.get("palette"):
-                parts.append(f"- Palette: {fp['palette']}")
+                _fl.append(f"- Palette: {fp['palette']}")
             if fp.get("rhythm"):
-                parts.append(f"- Rhythm: {fp['rhythm']}")
+                _fl.append(f"- Rhythm: {fp['rhythm']}")
             if fp.get("temporal_density"):
-                parts.append(f"- TemporalDensity: {fp['temporal_density']}")
+                _fl.append(f"- TemporalDensity: {fp['temporal_density']}")
             unresolved = fp.get("unresolved", [])
             if unresolved:
-                parts.append(f"- Unresolved: {'; '.join(str(u) for u in unresolved[:3])}")
+                _fl.append(f"- Unresolved: {'; '.join(str(u) for u in unresolved[:3])}")
+        if _sl:
+            parts.append("read before last turn's prose:")
+            parts.extend(_sl)
+        if _fl:
+            parts.append("as last turn's prose left it:")
+            parts.extend(_fl)
 
         # ── Older frames: 압축 원라이너 ──
         if len(frames) > 1:
-            parts.append("#### PREVIOUS FRAMES")
+            parts.append("#### EARLIER TURNS")
             for i, frame in enumerate(reversed(frames[:-1])):
                 offset = i + 1
                 s = frame.get("dai_snapshot", {})
@@ -941,7 +1045,10 @@ Any render-facing field whose value would contain Hangul → write that field's 
                     desc = loc.get("desc", "")
                     danger = loc.get("danger", "")
                     danger_tag = f" [{danger}]" if danger else ""
-                    loc_lines.append(f"  - {name}{danger_tag}: {desc}")
+                    # [2026-10-12 C30] 로어 분석이 부모를 뽑는다 — 어디 안에 있는지 한 마디(장소 트리와 같은 사실).
+                    _parent = str(loc.get("parent") or "").strip()
+                    in_tag = f" (in {_parent})" if _parent and _parent != name else ""
+                    loc_lines.append(f"  - {name}{danger_tag}{in_tag}: {desc}")
                 else:
                     loc_lines.append(f"  - {loc}")
             parts.append("- Locations:\n" + "\n".join(loc_lines))
@@ -1010,8 +1117,8 @@ Any render-facing field whose value would contain Hangul → write that field's 
         """활성 둠 시계 현황을 Flash 프롬프트용 텍스트로 변환."""
         active = [c for c in clocks if isinstance(c, dict) and not c.get("resolved")]
         if not active:
-            return "- Doom Clocks: None"
-        lines = ["- Doom Clocks:"]
+            return "- Situation Clocks: None"
+        lines = ["- Situation Clocks:"]
         for c in active:
             filled = int(c.get("filled", c.get("progress", 0)) or 0)
             segments = int(c.get("segments", 4) or 4)
@@ -1034,19 +1141,37 @@ Any render-facing field whose value would contain Hangul → write that field's 
         conditions = st_state.get("active_conditions", [])
         if not conditions:
             return "- Active Conditions: None"
+        # [2026-10-10 큐 이어짐] 조건마다 [C#](active_conditions 순서) — anomaly_profile.continues가 이 번호로 잇는다.
+        #   condition_updates·condition_resolved는 지금처럼 tag로 쓴다.
         grouped: dict = {}
-        for c in conditions:
+        for i, c in enumerate(conditions, 1):
             loc = c.get("location", "") or "Global"
-            grouped.setdefault(loc, []).append(c)
+            grouped.setdefault(loc, []).append((i, c))
         lines = ["- Active Conditions:"]
         for loc, conds in grouped.items():
             lines.append(f"  [{loc}]")
-            for c in conds:
+            for i, c in conds:
                 tag = c.get("tag", "?")
                 intensity = c.get("intensity", "Mid")
                 polarity = c.get("polarity", "mixed")
                 desc = c.get("description", "")
-                lines.append(f"    - {tag} ({intensity}/{polarity}): {desc}")
+                lines.append(f"    - [C{i}] {tag} ({intensity}/{polarity}): {desc}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _build_pending_context(channel_id: str) -> str:
+        """[2026-10-10 큐 이어짐] 대기 사건(큐, 시계 완성 제외)을 [E#]로 — 같은 씨앗을 새로 내지 않고 잇게."""
+        try:
+            import domain_manager
+            from anomaly_module import pending_events
+            pend = pending_events(domain_manager.get_storyteller_state(channel_id))
+        except Exception:
+            return "- Pending events: None"
+        if not pend:
+            return "- Pending events: None"
+        lines = ["- Pending events (queued, not yet fired):"]
+        for i, e in enumerate(pend[:5], 1):
+            lines.append(f"  [E{i}] {str(e.get('line') or e.get('tag') or '').strip()}")
         return "\n".join(lines)
 
     @staticmethod
@@ -1103,24 +1228,64 @@ Any render-facing field whose value would contain Hangul → write that field's 
     # =========================================================
     # [A안 2026-07-02] 서사 방향 전용 병렬 콜 (분석 2분할)
     # 추출 콜(analyze_input, T=0.1)과 asyncio.gather 병렬 — waterfall이 결과를 DAI에 합류.
-    # 소유 필드: narrative_chain / suggested_beats / narrative_hook / offscreen_trace / scene_register
+    # 소유 필드: narrative_chain / narrative_hook / offscreen_trace / scene_register  ([2026-10-09 SD개편] suggested_beats 은퇴)
     # (memory_triggers·anomaly_profile = 규칙표 결합이 강해 추출 잔류, 2차 이사 후보)
     # =========================================================
 
+    # [2026-10-08 시점선] Mira = 시작점과 끄는 힘을 읽는다, 바닥은 산문. 초대 = 실제로 내민 것(가만한 몸은 손이 아니다), drives 예시 = 방향 동사.
+    # [2026-10-09 압력 want·can] pressure = drives(want 꼴 'wants to …') + can(지금 할 수 있는 것). 옛 cannot은
+    #   19개 중 13개가 이번 턴 반응을 부정형으로 정해(대답·말·돌아섬·숨) 산문 정지 목록이 됐다. drives "a verb it
+    #   performs"는 이번 턴 do(답)였다. 07-22 카드1·10-08 시점선 T5c/T5d의 부분 뒤집기. 예시는 받아쓰기라 안 둔다.
+    #   측정·스펙: analysis_line/압력_want·can_측정·스펙_2026-10-08 (친밀 부정문 4.0→2.1/턴, 말한 턴 2/6→8/12).
+    # [2026-10-09 반응주인] 반응(이번 턴 NPC가 입력에 어떻게 답하나)의 주인 = 서사 콜 `psyche_narrative.<NPC>.response`(굴림 뒤).
+    #   칸 문안으로 반응을 막으면 옆 칸으로 옮겨 갔다(drives·cannot·soma·psy — 보존). 집을 하나 준다. 거절·정지·침묵도 행위로.
+    #   정체성 줄 "where each body comes to rest is the prose's"(10-08 시점선)를 뒤집었다. 렌더는 `answers:` 줄로 받는다(무엇=Mira, 어떻게=렌더).
+    #   스펙·측정: analysis_line/반응주인_Mira응답칸_스펙_2026-10-09
+    # [2026-10-09 소유정리] 응답 칸: 정지·침묵 나열("holding still, keeping silent")은 예시처럼 읽혀 정지 응답을 불렀다(프리즘 fg 9건 중 4건)
+    #   → 거절만 행위로 명시 + 둘 중 하나 금지. M1: 본 것만·순응엔 그 사람 몫의 대가·probe는 응하되 따르지 않음 —
+    #   이 규칙들이 렌더(RB_PEOPLE·RB_PC)에만 있어 답의 주인이 모른 채 답을 썼다. 렌더 쪽은 빈칸 폴백으로 남는다(짝 P4).
+    #   근거: analysis_line/렌더규칙_소유지도_2026-10-09 §5 + 프리즘교차측정_소유정리_2026-10-09 §4
+    # [2026-10-09 응답범위] 응답 칸 채움 범위를 pressure(두세 명)와 갈라 '이번 턴이 그 답에 걸린 한두 명'으로 좁혔다.
+    #   단체 장면에서 Mira가 4명 모두에게 응답을 쓰고 배경 인물을 정지로 채워 산문이 조용해졌다(대사 3.75/턴).
+    #   null 문구("this turn does not reach this body")는 그대로 둔다 — 바꾼 판에선 2인 장면 둘째 인물이 '안 낀다' 응답으로 빠졌다.
+    #   측정: analysis_line/응답범위_단체장면_측정_2026-10-09 §8 (저녁 식탁 응답 4→3·대사 3.75→7.75, 거실 응답 그대로)
+    # [2026-10-09 묶음B] 이번 턴 답 = response. 래퍼로 가는 칸은 '어떻게' 재료만 쓴다.
+    #   render_hint(small tells) = 이 장면에서 몸이 드러나는 채널·버릇(응답 재기록 15/46·엇갈림 4/46이었다).
+    #   can = 손에 든 수단(자리·쥔 것·닿는 것·몸이 허락하는 것). 응답과 같은 행위 약 40/60·고르는 꼴 13/73이었다.
+    #   Theoria 스키마의 NPCKnowledge.deception_cues·continuity_check correction도 같은 날 '이미 한 말·지난 프레임 사실'로 좁혔다(굴림 전 콜).
+    #   두 칸의 '이번 턴 답은 굴림 뒤' 꼬리는 뺐다 — 라이브에서 continuity 값 5건 중 3건이 그 절을 베껴 렌더로 갔다
+    #   ("their answers come after the roll"). 소유는 T1 줄이 이미 말한다. 값으로 가는 칸엔 긍정 정의만 둔다.
+    #   측정·스펙: analysis_line/묶음B_렌더래퍼_측정·스펙_2026-10-09
+    # [2026-10-09 묶음CDE] 이번 턴 NPC 답 = response. 비트 = 세계의 다음 수·입력이 부르지 않은 NPC 자기 수(답과 엇갈린 비트 4/26).
+    #   손(open_invitations) = 장면에 이미 놓인 것(NPC 상태 18/22·정지를 틈으로). roll_outcome "who answers and how" → "who answers"
+    #   (말의 결은 렌더).
+    #   측정·스펙: analysis_line/묶음CDE_측정·스펙_2026-10-09
+    # [2026-10-09 비트 주인] NPC가 이끄는 비트는 psyche_narrative 키 이름으로 연다. 이번 턴 응답이 있는 NPC의 비트는
+    #   waterfall `_screen_beats`가 착지 후보에서 뺀다(그 몸의 이번 턴 수는 response). 첫 문안([키]/[world] 꼬리표)은
+    #   Mira가 괄호 없이 키 이름으로 열어 버려(라이브 3판) 그 꼴에 맞췄다. 코드는 괄호 꼬리표도 받는다.
+    #   문안만으로는 착지 6턴 중 2턴이 NPC 답이었다. 근거: analysis_line/묶음CDE_구현보고_2026-10-09 §3-3
+    # [2026-10-09 SD개편] 위 비트 주인은 suggested_beats와 함께 은퇴. 평소 턴의 세계 한 걸음 = narrative_hook(응답 뒤로
+    #   자리를 옮김: 답을 보고 그 바깥을 쓴다 — 입력이 안 부른 몸과 세계, 머무는 턴엔 null). 언제 던지나는 Storyteller.
+    #   근거: analysis_line/스토리디렉팅_개편_스펙_2026-10-09
+    # [2026-10-10 끝 긍정문] 응답 "delay" → "counter-move"(보류·대기 낱말이 정지 끝을 두 배로 — 낱말표 §2). 손 = NPC·세계가 플레이어 쪽에 놓은 것, 누가 놓았나와 함께(자세·대기·
+    #   'at rest'·'keep visibly open'·금지 셋 걷음 — 10-01 'PC·입력 행위 제외'는 'an NPC or the world … after the input lands'로 긍정 범위). 훅 "null when the turn holds" → "…the answers carry the turn".
+    #   근거: analysis_line/산문끝_낱말표_2026-10-10 · 산문끝_긍정문정리_지도_2026-10-10
     _NARRATIVE_IDENTITY = """You are Mira, the analytical mind at this table, now on your scout pass: you range ahead of the turn and report what the world is already moving toward. Your own observation pass ran first; these are your readings from this turn, and you are free to read deeper into them.
-What you look for: durable plot pressure, the world's own motion, the interpretive depth of NPC psyche. Mechanics, judgment, and prose belong to other hands.
+What you look for: durable plot pressure, the world's own motion, the interpretive depth of NPC psyche. Mechanics, judgment, and prose belong to other hands. You read where the turn starts, what pulls at each body, and how each answers the input; how that answer lands on the page is the prose's.
 The player character named in the request belongs to the player: that character's mind, next move, and choices are settled at the table, not read here. Every field reads the world and the NPCs around them.
 Finding the smallest earned movement is the work, and finding it is what you are good at. Look widely; a reading that catches what others would pass over is worth having.
 Open threads are pressure available to you, never an agenda you owe.
 Where two directions both fit, take the one the scene already leans toward; the lean is in the material, not in your preference.
-Hooks come from unresolved world state; where the world genuinely rests, saying so is also a finding (empty beats, null hook, null trace).
+Hooks come from unresolved world state; where the world genuinely rests, saying so is also a finding (null hook, null trace).
 Psyche interpretation stays CONSISTENT with the extract's this-turn readings (values, polyvagal, emotions) — you deepen them, never contradict them.
-Every proposal stands on the supplied material (history, NPC state, extract, measurements): the scout finds paths that exist and does not lay new ones. No major events, no completed schemes, no invented antecedents."""
+Every proposal stands on the supplied material (history, NPC state, sheets, extract, measurements): the scout finds paths that exist and does not lay new ones. No major events, no completed schemes, no invented antecedents."""
 
+    # [2026-10-11 C1 logos] logos_layer 칸: 겹 이름으로 여는 틀(모든 인물이 같은 머리) → 이번 턴 PC에게 어떻게 말하나, 세 박자
+    #   (누르는 것 → 둘 사이에 지나간 일이 연 정도 → 말로 나오는 꼴). 근거 analysis_line/C1_logos머리말_측정·스펙_2026-10-11 §6(lg4).
     _NARRATIVE_SCHEMA = """<output_schema>
 Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean only when quoting world content).
 
-- "roll_outcome": str | null (ENGLISH-ONLY telegraphic, one line. Only when a ROLL RESULT block is present; null otherwise. That tier made concrete in this scene: which part of the bid lands, what it costs and who bears it, who answers and how. Built from what the scene already holds (a wound, a lost object, a broken leverage, a witness). Every field below starts from this line.)
+- "roll_outcome": str | null (ENGLISH-ONLY telegraphic, one line. Only when a ROLL RESULT block is present; null otherwise. That tier made concrete in this scene: which part of the bid lands, what it costs and who bears it, who answers. Built from what the scene already holds (a wound, a lost object, a broken leverage, a witness). Every field below starts from this line.)
 - "narrative_chain": {
     "topic_lock": str or null (the matter the talk is held on, named as the matter itself: 'the unpaid price', not who raised it. null = nothing held),
     "chain_status": "OPEN/CLOSED/DORMANT (Scheherazade: CLOSED + no threads = violation → inject hook)",
@@ -1128,9 +1293,7 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
     "open_threads": ["thread type: description", ...]  (first entry = the thread this turn presses on; each written as a standing pressure stated as fact after this turn (a debt owed, a price unnamed, a secret held), not as a question or a decision someone must make),
     "silence_type": "companionable/reflective/hesitant/heavy/tense/null (間/Ma: classify when dialogue pauses. companionable = shared ease, nothing needs saying — the usual pause of a calm scene; heavy/tense need actually loaded content)"
   }
-- "suggested_beats": [str, ...]  (0~3 ENGLISH-ONLY telegraphic directives. Format: "next beat: ..." — the world's or an NPC's next move, a hint for the Story Director. Non-redundant axes (external trigger / internal pressure / relational shift / environmental beat). [] when scene rests in quiet resolution. DO NOT write dialogue or prose — beat direction only. When a RECENT BEATS list is present, do not repeat those axes — approach from an angle that list does not cover.)
-- "narrative_hook": str | null (ENGLISH-ONLY telegraphic - Observe the next event that naturally arises from currently unresolved world state. Describe only consequences produced by the world's existing forces. Return null when the world is at peace.)
-- "open_invitations": [str, ...]  (0~2 ENGLISH-ONLY telegraphic. [H9 CUSTOM] A hand the world/NPC leaves extended toward the PLAYER at turn end: a question left unanswered, an object held out, a door standing open, someone visibly waiting on a reply. Must already exist in scene/chain — no invented props. Unlike suggested_beats (director-facing), these are affordances the prose may keep visibly open for the player to take or refuse. Never the PC's own act or the input's act; only what the world or an NPC holds out after the input lands. [] when the scene extends no hand — [] is common.)
+- "open_invitations": [str, ...]  (0~2 ENGLISH-ONLY telegraphic. [H9 CUSTOM] Something an NPC or the world has put toward the PLAYER to take or refuse, named with who put it there: an object an NPC set out, a door the wind pushed open, a price an NPC named, a question an NPC asked. An NPC's hand this turn arrives through response; this lists what the scene already carries toward the player after the input lands, built from props in the scene or chain. Unlike narrative_hook (the world's own move), these are affordances for the player to take or refuse. [] when the scene extends no hand — [] is common.)
 - "offscreen_trace": {"name": str, "movement": str, "visible_sign": str} or null  (Offscreen Motion [CUSTOM]: ONE absent cast member from the ABSENT CAST list only. Plausible modest motion inferred from last known state; visible_sign = the trace that reaches the CURRENT scene: rumor, delay, changed readiness, missing presence, preparation, a message. ENGLISH-ONLY telegraphic. NEVER: major events, reveals, deaths, betrayals, arrivals, completed schemes, private motives stated as fact. null when nothing plausible touches this scene — null is the common case.)
 - "scene_register": "mirror" | "law" | "remainder" | null
   - mirror: character sees own trait in another without recognizing it. Name trait AND misrecognition.
@@ -1140,21 +1303,34 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
 - "psyche_narrative": {
     "CharName": {
         "deep_read": "str (ENGLISH-ONLY telegraphic. Four-Layer [CUSTOM]: Surface→Adaptation→Core→Lack, 1 fragment each. Lack is never stated by character.)",
+        "self_opacity": "str or null (Self-Opacity [CUSTOM]: 'claims X — actual: Y', read through their sheet. null = their self-understanding holds this turn)",
         "value_conflict": "str or null (ENGLISH-ONLY telegraphic. 'X vs Y' tension axis ONLY, no resolution narration. null = no conflict. null is the common case — a live tension needs a this-scene trigger, not a standing trait re-read each turn)",
         "resurfacing": "str or null (past trauma, contradictory desire, or 'resolved' emotion re-emerging through current interaction. What resurfaces and what triggered it. null = no resurgence)",
+        "logos_layer": "str (Logos [CUSTOM], ENGLISH telegraphic: how this person talks to the acting PC this turn, in three beats: what presses at it now → how far what has passed between them has opened them toward this person → how that comes out in their words, in their sheet's voice)",
+        "starts_as": "devoted/friendly/neutral/unfriendly/hostile — ONLY when 4b reads 'no record yet' for this NPC: where their sheet puts them toward the acting PC before this scene; this turn's shift comes on top and the record sets the number. Omit otherwise, and omit when the sheet's lines are not about the acting PC",
+        "friction_starts": "low/strained/high/breaking — same condition: the standing friction their sheet implies. Omit otherwise",
         "pressure": {
-            "drives": "str (ENGLISH telegraphic VERB PHRASE, no subject, no causal connective, <=10 words. What this body is moved to DO now: 'stands with back to the door', 'reaches for the cup, stops short'. Not what the feeling IS.)",
-            "cannot": "str or null (ENGLISH telegraphic VERB PHRASE. What it cannot do while this holds: 'cannot speak first', 'answers a half-beat late'. null = nothing held back.)"
-        }
+            "drives": "str (ENGLISH telegraphic, 'wants to …', no subject, <=10 words: what this body wants to do now.)",
+            "can": "str or null (ENGLISH telegraphic, <=10 words: the means at this body's hand now: where it stands, what it holds or can reach, what the body allows. What it does with them is response's.)"
+        },
+        "response": "str or null (ENGLISH telegraphic VERB PHRASE, no subject, <=15 words: how this body answers the input this turn, after the roll. The input's acts have already happened; answer from where they leave the body. A refusal is an answer too: write it as an act aimed at someone, with what it is for. One answer, not a choice between two. It carries only what this person has witnessed; compliance comes with a cost, condition, or counter-move of their own unless history has already paid for it; a probe is met, not obeyed. Where the input or the roll already settles it, follow that. A pull on their extract line is what presses on them; their sheet (WHO THEY ARE) is how this person moves on it. null = this turn does not reach this body.)"
     }
   }  (NPCs from the THIS-TURN EXTRACT only, keyed exactly as written there — deepen its readings, never contradict them. Omit NPCs with nothing worth deepening.
-   pressure is the exception to that omission rule: fill it for the two or three of those NPCs this turn actually turns on. It is read off the scene, not off a sheet — an NPC with no profile still has a body doing something and something it is not doing. Thin background figures with no bearing on this turn stay omitted.)
+   pressure is the exception to that omission rule: fill it for the two or three of those NPCs this turn actually turns on. logos_layer goes to every NPC on the extract lines who speaks or is spoken to this turn: it carries their dialogue direction. response goes only to the one or two whose answer this turn turns on; the rest of the room stays null and the prose carries it. It is read off the scene: an NPC with no profile still has a body that wants something and something at hand. Thin background figures with no bearing on this turn stay omitted.)
+- "intimacy": null OR {  (ONLY when the extract says scene=intimate; null otherwise. NPCs only, keyed as on the extract lines. SEXUAL PSYCHOLOGY lens, read through each person's sheet.)
+    "desire_type": {"CharName": "attachment/power/escape/connection/validation/sensation (Basson)"},
+    "dual_control": {"CharName": {"SES": "ENGLISH telegraphic - what excites", "SIS": "ENGLISH telegraphic - what brakes"}},
+    "power_dynamic": "ENGLISH telegraphic (Benjamin Intersubjectivity: who leads, toward which edge)",
+    "body_memory": "ENGLISH telegraphic or null (van der Kolk: involuntary echo of past experience)",
+    "post_encounter_prediction": {"CharName": "possible after-behavior for this person if attachment activates — null if no change expected"}
+  }
+- "narrative_hook": str | null (ENGLISH-ONLY telegraphic, one line, read after the answers above: the move the world or a body the input did not reach makes this turn — weather, a door, an arrival, a standing pressure tipping, someone acting on their own. Not an answer to the input; that is response. Built from forces already in the world. When a RECENT PULLS list is present, approach from an angle it does not cover. When THIS TURN'S WORLD has something firing, that is the world's move this turn; the hook goes to what it did not reach, or stays null. null when the answers carry the turn.)
 - "trait_connections": {
     "NpcName": {
         "trait_pair": "trait_A × trait_B (the two profile traits being connected this turn)",
         "primary_link": "ENGLISH-ONLY telegraphic - most obvious first link (highest probability, most cliché)",
         "deflection": "ENGLISH-ONLY telegraphic - refraction/complication/reversal. alternative reading that avoids primary",
-        "render_hint": "ENGLISH-ONLY telegraphic - 1-fragment render hint for this scene"
+        "render_hint": "ENGLISH-ONLY telegraphic - 1 fragment: the channel this body shows itself through in this scene, as a standing habit (a hand, a held object, a sound, a way of standing; 'when X, Y' where it turns on something). The answer itself is response's."
     }
   } | null (NPCs from the THIS-TURN EXTRACT, keyed as written there; null when no NPC traits are being actively expressed this turn)
 - "newcomer_seeds": { "<name>": { "seam": str, "aside": str } }  (NEWCOMERS block only, one entry per listed name, {} otherwise.
@@ -1162,16 +1338,38 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
    aside = 2-3 lines of stage direction fusing both traits + vocabulary well + pressure + speech rule into one body's movement and habit of speech. ENGLISH telegraphic. No quoted lines, no rules, no third trait, no softening of the rolled traits. Fill only the blanks the tables delegate (a regular's topic, a home dialect of THIS world, a kind of document unread, a loved thing); invent nothing the PC says.)
 </output_schema>"""
 
-    def _build_narrative_system(self) -> str:
-        return "\n\n".join([
-            "<NARRATIVE_DIRECTOR role='thread steward · beat direction · offscreen continuity'>",
+    def _build_narrative_system(self, scene_type: str = "") -> str:
+        # [2026-10-10 칸이관] 친밀 장면이면 친밀 렌즈 서사판(욕망 구조·몸 기억·힘과 인정·만남 뒤 애착)을 싣는다 — intimacy 칸의 정의.
+        _sp = (getattr(analysis_resources, "SEXUAL_PSYCHOLOGY_NARRATIVE", "")
+               if str(scene_type or "").strip().lower() == "intimate" else "")
+        return "\n\n".join(x for x in [
+            "<NARRATIVE_DIRECTOR role='thread steward · world pull · offscreen continuity'>",
             self._NARRATIVE_IDENTITY,
             analysis_resources.THEORIA_CHAIN,
             # [2026-07-16 소유권 대청소] 추출 PART D에서 이사 온 서사 소유 렌즈 압축본
             getattr(analysis_resources, "NARRATIVE_CUSTOM_LENSES", ""),
+            _sp,
             self._NARRATIVE_SCHEMA,
             "</NARRATIVE_DIRECTOR>",
-        ])
+        ] if x)
+
+    @staticmethod
+    def _world_this_turn_block(bus) -> str:
+        """[2026-10-10 던지는판 A2] 이번 턴 Storyteller 결정(서사 콜 앞) → Mira 블록. 터짐·전조가 없으면 ""."""
+        an = getattr(bus, "anomaly", None) if bus is not None else None
+        if not isinstance(an, dict):
+            return ""
+        lines = []
+        _fired = str(an.get("line") or "").strip() if an.get("triggered") else ""
+        if _fired:
+            lines.append(f"- fires: {_fired}")
+        _om = an.get("omen")
+        _om_line = str(_om.get("line") or "").strip() if isinstance(_om, dict) else ""
+        if _om_line:
+            lines.append(f"- a sign this turn: {_om_line}")
+        if not lines:
+            return ""
+        return "### THIS TURN'S WORLD (the Storyteller has already decided this)\n" + "\n".join(lines)
 
     @staticmethod
     def _digest_extract(extract) -> str:
@@ -1191,6 +1389,7 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
         if _head:
             lines.append(f"- {_head}")
         _ps = extract.get("psyche_states")
+        _pulls = extract.get("_autonomy_pulls")
         if isinstance(_ps, dict):
             for _name, _blk in list(_ps.items())[:6]:
                 if not isinstance(_blk, dict):
@@ -1206,8 +1405,7 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
                 if _s.get("polyvagal"):
                     _bits.append(str(_s.get("polyvagal")))
                 # [2026-09-25 관계 정성] 서사 콜에도 숫자 대신 이번 턴 이동 말(추출 콜이 낸 그대로). 옛 숫자 출력이면 구간 이름.
-                if _r.get("starts_as"):
-                    _bits.append(f"starts {_r.get('starts_as')}")   # [2026-09-26 S5] 첫 기록 NPC 의 시작점
+                # [2026-10-10 칸이관] starts_as(첫 기록 시작점)는 이제 Mira 칸 — 추출 줄에 싣지 않는다.
                 _bs_d, _ts_d = _r.get("bond_shift"), _r.get("tension_shift")
                 if _bs_d or _ts_d:
                     _bits.append("rel " + ", ".join(x for x in (str(_bs_d) if _bs_d else "",
@@ -1220,14 +1418,86 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
                             _bits.append(f"rel {_dm_dg.attitude_from_bond(_rb)}")
                         except Exception:
                             pass
-                if _p.get("self_opacity"):
-                    _bits.append("self-opaque")
-                if _bits:
-                    lines.append(f"- {_name}: " + ", ".join(_bits))
+                # [2026-10-10 칸이관] self_opacity는 이제 Mira 칸 — 추출 줄의 "self-opaque" 표지는 뺐다.
+                # [2026-10-10 던지는판 B2] NPC 자율 트리거 → 그 몸이 끌리는 것(pull). 지시가 아니라 읽기 — 이번 턴 사는지는
+                #   Mira가 response(입력이 닿은 몸)나 hook(입력이 안 닿은 몸이 스스로)으로 정한다. 렌더 지시는 은퇴.
+                _pl = (_pulls.get(_name) or []) if isinstance(_pulls, dict) else []
+                if _bits or _pl:
+                    lines.append(f"- {_name}: " + ", ".join(_bits) + (("; " if _bits else "") + "pulls: " + ", ".join(_pl) if _pl else ""))
         if not lines:
             return ""
         return ("### THIS-TURN EXTRACT (mechanical pass, this turn — deepen these readings, never contradict)\n"
                 + "\n".join(lines))
+
+    # [2026-10-10 Mira 시트] 이번 턴 추출 줄 인물의 시트 전문 → Mira 입력. 전엔 Mira가 시트를 한 줄도 못 봤다(추출 콜도 못 봄,
+    #   렌더만 통째로) — 답의 주인(10-09 반응주인)이 재료 없이 response를 써서, 받는 꼴·말하는 꼴이 모델 기본값으로 갔다
+    #   (헤이젤 받는 꼴은 시트와 우연히 겹침, 클라라 "answers coolly … as she speaks"). 원천 = 렌더 프로필 정본
+    #   get_npc_renderer_profiles(비밀 절·숨김 표지 제거, {{char}}/{{user}} 치환) — 렌더와 같은 글. 레티어스 "시트는 전문".
+    #   측정(변형 mira_sheet_live, 5턴): Mira 콜 5.5~9.1초(기존 10.4~13.4), 응답이 시트 방식(술잔·말 삼킴·끝나고 붙어 있음,
+    #   클라라 증기음)으로. 근거: analysis_line/성격·끌어당김_Mira시트_스펙_2026-10-10, Mira시트_구현보고_2026-10-10.
+    _SHEET_HEAD = "### WHO THEY ARE (sheets of the characters on the extract lines: how each of them moves, speaks and answers)"
+
+    # [2026-10-10 시트 둘] Theoria도 장면 인물 시트 전문을 본다(레티어스 "어쨌거나 둘 다 읽게"). 첫 측정(Theoria시트_측정)에서
+    #   시트의 버릇이 이번 턴 상태로 굳고(헤이젤 "Words held in"), 시트 비밀이 원장에 오르고, needs 이름표가 흔들렸다 —
+    #   머리의 선 긋기·CHARACTER ANALYSIS 한 줄·secrets_held 문안·active_needs 맨 낱말로 같이 고쳤다.
+    _SHEET_HEAD_EXTRACT = ("### WHO THEY ARE (sheets of the scene cast: who each person is, not what this turn did — a habit or want "
+                           "written here is a lean, never this turn's outcome; every reading stands on this turn's evidence, and the "
+                           "sheet says what that evidence means for this person)")
+
+    @staticmethod
+    def _cast_sheet_names(anchors: dict, user_input: str = "") -> tuple:
+        """Theoria 시트 대상 = SCENE CAST 앞 6. 비면(위치 기록이 늦은 턴) 입력에 이름이 나온 등록 NPC(키·괄호 안 이름·별칭).
+        반환 (이름 목록, 출처 'scene_cast'|'input_names'|'')."""
+        anchors = anchors or {}
+        cast = [n for n in list(anchors.get("scene_cast") or [])[:6] if isinstance(n, str) and n.strip()]
+        if cast:
+            return cast, "scene_cast"
+        ch = str(anchors.get("channel_id", "") or "")
+        text = str(user_input or "")
+        if not ch or not text.strip():
+            return [], ""
+        try:
+            import npc_manager as _nm_cs
+            npcs = _nm_cs.get_npcs(ch) or {}
+        except Exception:
+            return [], ""
+        out = []
+        for key, data in npcs.items():
+            if not isinstance(key, str) or not key.strip():
+                continue
+            forms = {key.strip(), key.split("(")[0].strip()}
+            if "(" in key and key.rstrip().endswith(")"):
+                forms.add(key[key.index("(") + 1:key.rstrip().rindex(")")].strip())
+            for _a in ((data.get("aliases") or []) if isinstance(data, dict) else []):
+                if isinstance(_a, str) and _a.strip():
+                    forms.add(_a.strip())
+            if any(len(f) >= 2 and f in text for f in forms):
+                out.append(key)
+            if len(out) >= 6:
+                break
+        return out, ("input_names" if out else "")
+
+    @staticmethod
+    def _sheet_names(extract) -> list:
+        """THIS-TURN EXTRACT 인물 줄과 같은 이름(psyche_states 앞 6, PC는 waterfall 초크포인트가 이미 뺐다)."""
+        ps = extract.get("psyche_states") if isinstance(extract, dict) else None
+        if not isinstance(ps, dict):
+            return []
+        return [n for n in list(ps.keys())[:6] if isinstance(n, str) and n.strip()]
+
+    @classmethod
+    def _sheet_block(cls, channel_id: str, names: list, user_mask: str = "", head: str = "") -> str:
+        """시트 전문 블록. 등록 NPC만(PC·미등록은 프로필 정본이 건너뛴다), 없으면 ""."""
+        if not channel_id or not names:
+            return ""
+        try:
+            import npc_manager as _nm_sh
+            txt = _nm_sh.get_npc_renderer_profiles(channel_id, list(names), user_mask=user_mask) or ""
+        except Exception as e:
+            logger.debug("[Theoria] sheet block skipped: %s", e)
+            return ""
+        txt = txt.strip()
+        return f"{head or cls._SHEET_HEAD}\n{txt}" if txt else ""
 
     def _build_narrative_prompt(self, context: GameContext, extract=None, roll=None) -> str:
         req = context.request
@@ -1281,6 +1551,11 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
         parts = ["## NARRATIVE DIRECTION REQUEST", f'{_in_head}\n"{req.user_input}"']
         if _roll_block:
             parts.append(_roll_block)
+        # [2026-10-10 던지는판 A2] Storyteller가 서사 콜 앞으로 와서, 이번 턴 터지는 사건·전조를 Mira가 안다.
+        #   응답·hook을 그 사건에 맞춰 쓴다(hook 정의의 짝 절). 렌더 쪽 "world event:"·omen 줄과 이변 턴 hook 빼기는 그대로.
+        _wb = self._world_this_turn_block(getattr(context, "shared_bus", None))
+        if _wb:
+            parts.append(_wb)
 
         # [2026-10-07 Mira PC 방향 P1] 누가 PC인지 — `!가면` 등록 이름 그대로(all_pcs mask). 규칙은 IDENTITY 가 말한다.
         #   전엔 입력 어디에도 PC 이름이 없어서(위키 페이지·기록 화자로만 등장) Mira가 PC를 읽을 인물로 다뤘다
@@ -1299,10 +1574,19 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
         _digest = self._digest_extract(extract)
         if _digest:
             parts.append(_digest)
+        # [2026-10-10 Mira 시트] 인물 줄 바로 뒤에 그 인물들의 시트 전문(위 _sheet_block 주석).
+        _sh_mask = context.get_acting_mask() if hasattr(context, "get_acting_mask") else ""
+        _sheets = self._sheet_block(channel_id, self._sheet_names(extract),
+                                    "" if _sh_mask in ("", "PC", "Unknown") else _sh_mask)
+        if _sheets:
+            parts.append(_sheets)
 
         hist = req.history_text or ""
         if hist:
             parts.append("### 2. RECENT HISTORY (tail)\n" + hist[-4000:])
+        # [2026-10-10 기록 정정] 원문·회상에 걸린 정정(R5) — une_facade 가 만든 같은 블록.
+        if anchors.get("corrections_block"):
+            parts.append(anchors["corrections_block"])
 
         npc_ctx = self._build_npc_context(anchors)
         if npc_ctx:
@@ -1341,11 +1625,11 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
             if _nc_block:
                 parts.append(_nc_block)
 
-        # RECENT BEATS — suggested_beats 반복 회피 대조 목록 (Phase 0)
+        # RECENT PULLS — 지난 턴 hook(세계 한 걸음) 반복 회피 대조 목록 (Phase 0 → [2026-10-09 SD개편] 비트 → hook)
         beats_avoid = anchors.get("recent_beats_avoid", [])
         if beats_avoid:
             parts.append(
-                "### RECENT BEATS (proposed in prior turns — do NOT repeat these axes)\n"
+                "### RECENT PULLS (world moves written in prior turns)\n"
                 + "\n".join(f"- {b}" for b in beats_avoid)
             )
 
@@ -1395,12 +1679,18 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
         try:
             _pf = domain_manager.get_latest_frame(channel_id) if channel_id else {}
             _snap = _pf.get("dai_snapshot", {}) if isinstance(_pf, dict) else {}
-            if _snap.get("chain_status") or _snap.get("open_threads"):
-                parts.append(
-                    "### PREVIOUS CHAIN\n"
-                    f"- status: {_snap.get('chain_status', '')} | open: "
-                    + ", ".join(str(t) for t in (_snap.get("open_threads") or [])[:5])
-                )
+            # [2026-10-09 묶음CDE E2] 스냅샷 스레드는 지난 턴 렌더 전 계획이다 — 산문이 실제로 열어 둔 것(fingerprint
+            #   unresolved, 렌더 뒤)을 곁에 싣는다. 콜 0. 스펙: analysis_line/묶음CDE_측정·스펙_2026-10-09 §5.
+            _fpu = _pf.get("render_fingerprint", {}) if isinstance(_pf, dict) else {}
+            _un = [str(u) for u in ((_fpu or {}).get("unresolved") or []) if u][:3] if isinstance(_fpu, dict) else []
+            if _snap.get("chain_status") or _snap.get("open_threads") or _un:
+                _pc = "### PREVIOUS CHAIN"
+                if _snap.get("chain_status") or _snap.get("open_threads"):
+                    _pc += ("\n" f"- status: {_snap.get('chain_status', '')} | open: "
+                            + ", ".join(str(t) for t in (_snap.get("open_threads") or [])[:5]))
+                if _un:
+                    _pc += "\n- left open by last turn's prose: " + "; ".join(_un)
+                parts.append(_pc)
         except Exception:
             pass
 
@@ -1453,13 +1743,17 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
             return {}
 
         prompt = self._build_narrative_prompt(context, extract=extract, roll=roll)
+        _scene_t = str((extract.get("SceneType") or extract.get("scene_type") or "") if isinstance(extract, dict) else "")
         gen_config = types.GenerateContentConfig(
             # [2026-10-06 분석 틀] 틀은 시스템 머리에 한 번 — 역할(thread steward)은 그 뒤 자기 시스템이 말한다.
-            system_instruction=f"{text_resources.ANALYSIS_FRAME}\n\n{self._build_narrative_system()}",
+            system_instruction=f"{text_resources.ANALYSIS_FRAME}\n\n{self._build_narrative_system(_scene_t)}",
             response_mime_type="application/json",
             # [2026-07-02] 4096→8192: v2에서 psyche_narrative+trait_connections 합류로 출력 증가
             # + Ollama /v1이 thinking을 max_tokens에 포함할 가능성 대비. JSON 잘림=콜 전체 무효(비대칭 실패)라 여유 필수.
-            max_output_tokens=8192,
+            # [2026-10-10 칸이관] 8192→12288: 네 칸(logos_layer·self_opacity·starts_as·intimacy)이 넘어와 출력이 인물 넷 장면에서
+            #   +1.5~2k자. 저녁 표본 MV_pD2 T3에서 추론 27.9k자 + 출력이 상한에 걸려 JSON이 잘렸다(복구는 됐지만 hook·응답 일부 유실).
+            #   추출 콜(16384)보다는 낮게. 근거: analysis_line/저녁표본_시트둘_2026-10-10.
+            max_output_tokens=12288,
             temperature=config.ANALYSIS_TEMPERATURE_NARRATIVE,
             top_p=config.ANALYSIS_TOP_P,
             safety_settings=config.SAFETY_SETTINGS,
@@ -1497,15 +1791,24 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
                             logger.error(
                                 "[Narrative] JSON failed (attempt %d): %s | context: ...%s...",
                                 attempt + 1, je2, cleaned[_at:_at + 160].replace("\n", " "))
+                            logger.info("[빈칸] Mira JSON 실패 (시도 %d)", attempt + 1)
                             raise je
                         if not isinstance(result, (dict, list)):
                             raise je
                 if isinstance(result, list) and len(result) == 1 and isinstance(result[0], dict):
                     result = result[0]
+                # [2026-10-07 E2] 빈칸 감시 — EXTRACT에 인물이 있는데 psyche_narrative가 비면 한 줄(로그만).
+                try:
+                    _ps = (extract or {}).get("psyche_states") if isinstance(extract, dict) else None
+                    if isinstance(_ps, dict) and _ps and isinstance(result, dict) and not result.get("psyche_narrative"):
+                        logger.info("[빈칸] Mira psyche_narrative 빔 (EXTRACT %d명)", len(_ps))
+                except Exception:
+                    pass
                 return result if isinstance(result, dict) else {}
             except Exception as e:
                 logger.warning(f"[Narrative] attempt {attempt + 1} failed: {e}")
         logger.error("[Narrative] analysis failed after retry — narrative fields fall back to extract-only")
+        logger.info("[빈칸] Mira 서사 칸 전체 빔")
         return {}
 
     def _build_prompt(self, context: GameContext) -> str:
@@ -1520,7 +1823,7 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
 
         pc_section = self._build_pc_section(anchors)
         mental_line = self._build_mental_line(anchors, bus)
-        npc_context = self._build_npc_context(anchors)
+        npc_context = self._build_npc_context(anchors, starts_hint=False)
         npc_roster = anchors.get("npc_roster", "")
         # [2026-06-11 소비자 감사 #6 부활] P6 원설계 배달 — NPC 능력 범위 힌트 (하드블록 아님).
         # 기존엔 Flash 콜 *후* bus.dai에 저장돼 한 번도 미배달이었음.
@@ -1528,6 +1831,14 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
         if _cap_hints:
             npc_roster = f"{npc_roster}\n\n#### Capability bounds (reference, not hard limits)\n{_cap_hints}"
         scene_cast_block = self._build_scene_cast(anchors)
+        # [2026-10-10 시트 둘] SCENE CAST 바로 뒤에 그 인물들의 시트 전문(렌더·Mira와 같은 정본). 위 _SHEET_HEAD_EXTRACT 주석.
+        _cs_names, _cs_src = self._cast_sheet_names(anchors, getattr(req, "user_input", ""))
+        _cs_mask = context.get_acting_mask() if hasattr(context, "get_acting_mask") else ""
+        sheet_block = self._sheet_block(str(anchors.get("channel_id", "") or ""), _cs_names,
+                                        "" if _cs_mask in ("", "PC", "Unknown") else _cs_mask,
+                                        head=self._SHEET_HEAD_EXTRACT)
+        if _cs_names:
+            logger.info("[Theoria] sheets → %s (%s) %d chars", _cs_names, _cs_src, len(sheet_block))
         session_memory_context = self._build_session_memory_context(anchors)
         continuity_context = self._build_continuity_context(anchors)
         channel_id = anchors.get("channel_id", "")
@@ -1539,9 +1850,10 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
 
 ### 2. CURRENT STATE
 - Genre: {req.genres}
-- Doom (World Tension): {bus.doom.get('value', 0)}
+- Chapter volume (story activity): {bus.doom.get('value', 0)}
 {self._build_clock_context(bus.doom.get('clocks', []))}
 {self._build_condition_context(channel_id)}
+{self._build_pending_context(channel_id)}
 {self._build_arc_context(channel_id)}
 {mental_line}
 
@@ -1559,13 +1871,15 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
 
 {scene_cast_block}
 
+{sheet_block}
+
 {session_memory_context}
 
 {continuity_context}
 
 ### 5. RECENT HISTORY
 {req.history_text or '[No history]'}
-
+{(chr(10) + anchors.get("corrections_block", "") + chr(10)) if anchors.get("corrections_block") else ""}
 {self._build_chunk_index(req.lore_chunks, ranked_chunks=req.lore_chunks_ranked)}
 ---
 Perform FULL Theoria analysis and return JSON with ALL required fields.

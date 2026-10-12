@@ -220,6 +220,10 @@ ANALYSIS_MAX_OUTPUT_TOKENS_HEAVY = int(os.getenv("ANALYSIS_MAX_OUTPUT_TOKENS_HEA
 #   8192엔 반도 못 넣는다 → 전용 상한. 항목 100개 JSON ≈12k + 추론 몫 → 32k. 아낄 이유 0(1회성).
 #   제공자가 모델 상한을 넘는 값을 거부하면 내린다(env).
 ROUTER_MAX_OUTPUT_TOKENS = int(os.getenv("ROUTER_MAX_OUTPUT_TOKENS", "32768"))
+# [2026-10-09 레티어스] 로어 통합 분석(`cognition.analyze_lore_unified`)도 1회성 콜이라 라우터와 같은 논리로 전용 상한.
+#   프리즘 로어북(54K, NPC 24명)이 8192에서 JSON 9.5K자 근처로 잘려 "분석 결과 비어있음 — 로어 텍스트만 저장"이 됐다
+#   (heavy tier 추론이 같은 예산을 먹는다). 32k로는 끝까지 나왔다. 제공자가 거부하면 env로 내린다.
+LORE_ANALYSIS_MAX_OUTPUT_TOKENS = int(os.getenv("LORE_ANALYSIS_MAX_OUTPUT_TOKENS", "32768"))
 # [2026-08-11 노선 갱신(레티어스)] **추론은 이제 어지간하면 켠다 — 축은 on/off가 아니라 "얼마나"(tier).**
 # .env의 EXTRACT=light는 잔재가 아니라 이 노선의 의도적 재론이다. 아래 07-05 기록은 당시 실측
 # 근거로 보존(코드 기본값 off도 유지 — env가 노선을 싣는다. V4-Pro 추론 폭주 이력은 캡 소프트 유지 사유):
@@ -497,6 +501,13 @@ ANALYSIS_TEMPERATURE = float(os.getenv("ANALYSIS_TEMPERATURE", "0.1"))
 ANALYSIS_TEMPERATURE_NARRATIVE = float(os.getenv("ANALYSIS_TEMPERATURE_NARRATIVE", "0.7"))
 ANALYSIS_TOP_K = 20
 ANALYSIS_TOP_P = 0.8
+# [2026-10-11 C21] 추론을 켠 분석 콜은 위 호출부 온도·top_p 대신 공식 영역(렌더와 같은 값)으로 돈다 — analysis_backend 한 자리.
+#   위 값과 호출부 온도는 추론 off 콜(tier off)과 gemini 백엔드에서만 산다.
+#   측정(86콜 재생): 옛 값 43판 중 실패 3(JSON 1·잘림 1·빈칸 1) → 공식 0, 근거 인용 그대로, Theoria 추론 +2.2k자(턴 +수 초).
+#   레티어스 "그냥 다 공식 영역 쓰는 게 안정적이겠다". 근거 analysis_line/C21_분석샘플링_측정·스펙_2026-10-11. 끄려면 env 0.
+ANALYSIS_OFFICIAL_SAMPLING = os.getenv("ANALYSIS_OFFICIAL_SAMPLING", "1").strip().lower() not in ("0", "false", "off", "no")
+ANALYSIS_OFFICIAL_TEMPERATURE = float(os.getenv("ANALYSIS_OFFICIAL_TEMPERATURE", "1.0"))
+ANALYSIS_OFFICIAL_TOP_P = float(os.getenv("ANALYSIS_OFFICIAL_TOP_P", "0.95"))
 
 # [C안 2026-07-02] 백그라운드 유지보수 (전부 async — 턴 지연 0. 0 = 비활성)
 PERSIST_AUDIT_INTERVAL = int(os.getenv("PERSIST_AUDIT_INTERVAL", "20"))       # N턴마다 영속층 감사 (log-only, 검출≠쓰기)
@@ -625,6 +636,14 @@ REL_TENSION_SHIFT = {"spikes": 10, "rises": 5, "holds": 0, "eases": -5}
 #   NPC↔NPC(배치 npc_relations): 새 관계 세기 → |bond|, 기존 관계 이동 → ±|bond|.
 REL_PAIR_STRENGTH = {"faint": 25, "clear": 50, "strong": 75}
 REL_PAIR_SHIFT = {"deepens": 10, "weakens": -10}
+# [2026-10-11 C28 게이지 말] 배경 추출(B-Outputs)이 게이지 변화를 **말**(shift)로 낸다 — 숫자는 코드가 환산(관계 이동 말과 같은 결).
+#   폭: 캡이 있는 방향은 캡 × 비율(heavy = 캡이라 캡이 결정자 노릇을 안 한다), 없는 방향은 범위 폭 × 비율. 최소 1.
+#   rule 글에 숫자로 적힌 양(전체 양 delta · 얹는 양 extra)은 그 수 그대로 받고 캡 면제(범위 클램프만).
+#   카운터·목록 수량은 숫자 그대로(글에 적힌 수를 센다). 스펙 output_artifact/C28_게이지델타말로_지도·스펙_2026-10-11.md
+GAUGE_SHIFT_TIER = {"down_slight": (-1, 0), "down": (-1, 1), "down_heavy": (-1, 2),
+                    "up_slight": (1, 0), "up": (1, 1), "up_heavy": (1, 2)}
+GAUGE_SHIFT_CAP_RATIO = (0.25, 0.6, 1.0)      # slight · 기본 · heavy — 캡 대비
+GAUGE_SHIFT_RANGE_RATIO = (0.03, 0.07, 0.15)  # 캡이 없을 때 범위 폭 대비
 # [2026-09-26 관계 시작값] 시작점 말 → 숫자. 어휘 = 4b `Stands:` 구간 이름(attitude_from_bond) · 마찰 구간(tension_band).
 #   양 끝 ±70: 구간 가운데(±80)가 아니라 오를 여지를 남긴 자리(70도 devoted 구간 안). OOC 말 입력(stands/friction)도 이 표.
 #   스펙 파티쳇수정/state_v10/relation_start_ooc_spec_v0.1_2026-09-26.md §1 S2

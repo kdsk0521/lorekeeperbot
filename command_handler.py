@@ -35,6 +35,53 @@ from command_registry import CommandRegistry, CommandContext
 # Registry Instance
 registry = CommandRegistry()
 
+# [2026-10-12 C30] 로어 분위기 절 — `## 분위기 …` / `## Tone …` 헤더 하나. 그 절 본문이 Slot 33 장르 지시문의
+#   "The table's own note for this run" 한 줄 자리(custom_tone)에 **원문 그대로** 간다(분석이 지어 쓴 atmosphere_guide 대신).
+#   매 턴 Slot 33에 실리므로 청크(Slot 8 선택 후보)에서는 뺀다. 절이 없으면 지금처럼 분석 값.
+#   레티어스 "코드 고정문 + 로어에 적힌 걸로", "청크에서 빼자". 스펙 memory_lore/C30_분위기절·장소트리_스펙_2026-10-12.
+_TONE_HEADER_RE = re.compile(r'^(?:분위기|tone)(?:\s|$|[—–\-:(（])', re.I)
+
+
+def _is_tone_label(label: str) -> bool:
+    """청크 라벨(헤더에서 `#`·끝 콜론을 뗀 글)이 분위기 절 머리인가."""
+    return bool(_TONE_HEADER_RE.match(str(label or "").strip()))
+
+
+def _lore_tone_section(lore_text: str) -> str:
+    """로어에서 첫 분위기 절(`#`/`##` 헤더, 들여쓰기 1칸 이하)의 본문을 원문 그대로. 없으면 ""."""
+    if not lore_text:
+        return ""
+    _major = re.compile(r'^#{1,2}\s+')
+    _sep = re.compile(r'^[\s]*[=\-\*~]{3,}[\s]*$')
+    body, inside = [], False
+    for line in str(lore_text).split('\n'):
+        stripped = line.strip()
+        indent = len(line) - len(line.lstrip())
+        if indent <= 1 and stripped and _major.match(stripped):
+            if inside:
+                break
+            if _is_tone_label(stripped.lstrip('#').strip()):
+                inside = True
+            continue
+        if inside and not _sep.match(line):
+            body.append(line)
+    return '\n'.join(body).strip()
+
+
+def _apply_lore_tone(channel_id: str) -> bool:
+    """쌓인 로어 전문에 분위기 절이 있으면 custom_tone = 그 본문. 있으면 True(분석 값 위에 덮는다)."""
+    try:
+        body = _lore_tone_section(domain_manager.get_lore(channel_id) or "")
+    except Exception as _e:
+        logger.debug(f"[LoreTone] skip: {_e}")
+        return False
+    if body:
+        domain_manager.set_custom_tone(channel_id, body)
+        logger.info(f"[LoreTone] 로어 분위기 절 → custom_tone ({len(body)}자)")
+        return True
+    return False
+
+
 def _split_lore_chunks(lore_text: str, min_len: int = 50) -> list:
     """로어 텍스트를 섹션 단위로 청크 분할 (V3).
 
@@ -84,7 +131,8 @@ def _split_lore_chunks(lore_text: str, min_len: int = 50) -> list:
         if indent <= 1 and stripped and _MAJOR.match(stripped):
             # 이전 버퍼 플러시
             content = '\n'.join(buf).strip()
-            if content and len(content) >= min_len:
+            # [2026-10-12 C30] 분위기 절은 Slot 33이 매 턴 싣는다 — 청크 후보에서 뺀다.
+            if content and len(content) >= min_len and not _is_tone_label(cur_label):
                 sections.append({"label": cur_label or _label(content), "content": content})
             buf = [line]
             cur_label = _label(stripped)
@@ -95,7 +143,7 @@ def _split_lore_chunks(lore_text: str, min_len: int = 50) -> list:
 
     # 마지막 버퍼
     content = '\n'.join(buf).strip()
-    if content and len(content) >= min_len:
+    if content and len(content) >= min_len and not _is_tone_label(cur_label):   # [C30]
         sections.append({"label": cur_label or _label(content), "content": content})
 
     # --- Step 2b: 폴백 — 섹션 1개 + 대형이면 문단 분할 ---
@@ -329,6 +377,7 @@ async def cmd_lore(ctx: CommandContext) -> None:
                     domain_manager.set_lore(channel_id, full_content)
                 else:
                     domain_manager.append_lore(channel_id, full_content)
+                _apply_lore_tone(channel_id)   # [2026-10-12 C30] 분석이 비어도 분위기 절은 들어간다
                 lore_chunks = _split_lore_chunks(domain_manager.get_lore(channel_id) or full_content)  # [2026-09-24 감사] 누적 전문
                 if lore_chunks:
                     domain_manager.set_lore_chunks(channel_id, lore_chunks)
@@ -485,6 +534,8 @@ async def cmd_lore(ctx: CommandContext) -> None:
                 domain_manager.set_lore(channel_id, full_content)
             else:
                 domain_manager.append_lore(channel_id, full_content)
+            # [2026-10-12 C30] 위 3번이 분석의 atmosphere_guide로 custom_tone을 채웠다 — 로어에 분위기 절이 있으면 그 원문이 덮는다.
+            _apply_lore_tone(channel_id)
 
             # 6. Chunk splitting (V5 — 선택적 주입용)
             # [2026-09-24 감사] 청크는 **누적된 로어 전문**으로 — 텍스트 추가(append) 경로에서 이번 조각만 잘라
@@ -517,11 +568,13 @@ async def cmd_lore(ctx: CommandContext) -> None:
                 domain_manager.set_lore(channel_id, full_content)
             else:
                 domain_manager.append_lore(channel_id, full_content)
+            _apply_lore_tone(channel_id)   # [C30]
     else:
         if file_text:
             domain_manager.set_lore(channel_id, full_content)
         else:
             domain_manager.append_lore(channel_id, full_content)
+        _apply_lore_tone(channel_id)   # [C30]
         domain_manager.set_event_lore_summary(channel_id, full_content[:1000])
         await msg.edit(content="📜 저장 완료 (AI 미사용 - 단순 요약)")
 
@@ -585,7 +638,8 @@ async def cmd_info(ctx: CommandContext) -> None:
     mask_name = p_data.get("mask", "Unknown")
     mem = p_data.get("ai_memory", {})
     msg = [f"🎭 **{mask_name}**"]
-    _sheet_view = domain_manager.get_pc_sheet_text(ctx.channel_id, uid)
+    # [2026-10-12 C29] 프롬프트는 시트 전문을 싣지만 이 화면은 확인용 — 옛 모양(절당 600) 그대로.
+    _sheet_view = domain_manager.get_pc_sheet_text(ctx.channel_id, uid, full=False)
     if _sheet_view:
         msg.append(_sheet_view)
     elif not domain_manager.get_pc_page_id(ctx.channel_id, uid):
@@ -1635,54 +1689,14 @@ async def cmd_retry(ctx: CommandContext) -> None:
     await orchestration.retry_last(ctx.message, ctx.channel_id, edited_input=edited_input)
 
 
-@registry.register("scene", category="System", aliases=["장면", "수위", "mature"], description="장면 수위/유형 변경")
+@registry.register("scene", category="System", aliases=["장면", "수위", "mature"], description="장면 수위 안내 (늘 전체)")
 async def cmd_scene(ctx: CommandContext) -> None:
-    """!장면 [일반/고어/성인/전체]"""
-    arg = ctx.raw_args.strip()
-    
-    if not arg:
-        d = domain_manager.get_domain(ctx.channel_id)
-        curr = d['settings'].get('scene_type', 'normal')
-        scene_info = {
-            'normal': ('🌿 일반', '모든 성인 콘텐츠 비활성화'),
-            'gore': ('🩸 고어', '폭력/잔혹 묘사 활성화'),
-            'nsfw': ('💋 NSFW', '성인 묘사 활성화'),
-            'gore_nsfw': ('⚠️ 전체', '고어 + NSFW + 하이브리드 모두 활성화')
-        }
-        info = scene_info.get(curr, ('❓ 알 수 없음', ''))
-        await ctx.send(
-            f"🎬 **현재 장면 수위: {info[0]}**\n"
-            f"> {info[1]}\n\n"
-            f"**사용법:** `!장면 [일반/고어/성인/전체]`\n"
-            f"- `일반` (normal): 성인 콘텐츠 없음\n"
-            f"- `고어` (gore): 폭력/잔혹 묘사만\n"
-            f"- `성인` (nsfw): 성인 묘사만\n"
-            f"- `전체` (all): 고어+성인+하이브리드"
-        )
-        return
-    
-    scene_map = {
-        '일반': 'normal', 'normal': 'normal', '노말': 'normal', '안전': 'normal',
-        '고어': 'gore', 'gore': 'gore', '폭력': 'gore', '잔혹': 'gore',
-        'nsfw': 'nsfw', '성인': 'nsfw', '야한': 'nsfw', '19': 'nsfw',
-        '전체': 'gore_nsfw', 'all': 'gore_nsfw', 'gore_nsfw': 'gore_nsfw', 
-        '올': 'gore_nsfw', '하이브리드': 'gore_nsfw', 'hybrid': 'gore_nsfw'
-    }
-    scene_type = scene_map.get(arg.lower())
-    
-    if not scene_type:
-         await ctx.send("⚠️ 지원하지 않는 장면 유형입니다.\n`일반`, `고어`, `성인`, `전체` 중 선택하세요.")
-         return
-    
-    scene_info = {
-        'normal': ('🌿 일반', '모든 성인 콘텐츠가 비활성화되었습니다.'),
-        'gore': ('🩸 고어', '폭력/잔혹 묘사가 활성화되었습니다.\n해부학적 정밀도, 슬래셔 페이싱, 환경 통합이 적용됩니다.'),
-        'nsfw': ('💋 NSFW', '성인 묘사가 활성화되었습니다.\n오감 몰입, 감정 아키텍처, 호흡 메트로놈이 적용됩니다.'),
-        'gore_nsfw': ('⚠️ 전체(하이브리드)', '고어 + NSFW + 하이브리드 모드가 모두 활성화되었습니다.\n료나/구로/스너프 등 극단적 콘텐츠가 허용됩니다.')
-    }
-    info = scene_info.get(scene_type)
-    domain_manager.update_settings(ctx.channel_id, scene_type=scene_type)
-    await ctx.send(f"🎬 **장면 수위 변경: {info[0]}**\n> {info[1]}")
+    """!장면 — 안내만.
+
+    [2026-10-11 청소 C6] 렌더 수위는 10-02부터 늘 전체(slot_manager._content_level_for = gore_nsfw)라
+    채널 설정(settings.scene_type)을 바꿔도 렌더에 닿지 않았다. 설정은 쓰지 않고 안내 한 줄만 보낸다.
+    명령 이름·별칭은 남긴다(손에 익은 입력이 "없는 명령"으로 튀지 않게)."""
+    await ctx.send("🎬 장면 수위는 늘 **전체**(고어 + 성인 + 하이브리드)로 켜져 있습니다. 따로 바꿀 설정은 없습니다.")
 
 
 @registry.register("lock", category="System", aliases=["잠금"], description="세션 진행/일시정지 (인자 없음=토글, `on/off`=명시)")
@@ -1972,6 +1986,15 @@ async def _generate_session_chronicle(ctx: CommandContext) -> None:
     feedback = await ctx.message.channel.send("📜 **연대기를 작성하고 있습니다...**")
 
     chronicle_input = _build_chronicle_input(deep_memory, fermented, history)
+    # [2026-10-10 기록 정정] 연대기 재료에 걸린 정정(R9).
+    if chronicle_input:
+        try:
+            import corrections as _corr_cc
+            _cb_cc = _corr_cc.block_for(channel_id, chronicle_input)
+            if _cb_cc:
+                chronicle_input += "\n\n---\n\n" + _cb_cc
+        except Exception:
+            pass
     if not chronicle_input:
         try:
             await feedback.edit(content="⚠️ 요약할 데이터가 부족합니다.")
@@ -1991,7 +2014,8 @@ async def _generate_session_chronicle(ctx: CommandContext) -> None:
             config=types.GenerateContentConfig(
                 system_instruction=text_resources.CHRONICLE_SYSTEM_PROMPT,
                 temperature=0.5,
-                max_output_tokens=4096,
+                # [2026-10-11 C27b] 4096 → 8192. 추론 켠 분석 콜은 추론이 출력 예산에 같이 든다 — 상한 통일(레티어스 "나머지도 다 올리자").
+                max_output_tokens=8192,
                 safety_settings=config.SAFETY_SETTINGS,
             )
         )
@@ -2075,7 +2099,10 @@ def classify_ooc_type(ooc_content: str, channel_id: str = "") -> str:
     edit_keywords = [
         "추가", "삭제", "수정", "설정", "인벤토리", "골드", "돈", "아이템", 
         "획득", "잃음", "관계", "호감도", "패시브", "특성", "제거", "변경",
-        "합쳐", "정리", "통합"
+        "합쳐", "정리", "통합",
+        "별칭", "개명", "같은 사람", "동일인물",   # [2026-10-10 OOC 확장] 인물 정정(시간·위치는 "시간 넘겨줘"가 새서 뺐다)
+        "정정",   # [2026-10-10 기록 정정]
+        "퀘스트",   # [2026-10-10 이야기 실 O-E] "약속"은 장면 요청("약속 장소로 가자")에 흔해서 뺐다
     ]
     if any(kw in content_lower for kw in edit_keywords):
         return "edit"
@@ -2203,11 +2230,19 @@ async def run_ooc_edit(
         logging.debug(f"[OOC] 시트 상태 skip: {_e_ss}")
     _sheet_fields = set(getattr(config, "WIKI_LORE_SECTIONS", {}).get("character", ()))
 
+    # [2026-10-10 OOC 확장] 지금 장소·시간·날씨, 장소 이름들, 본문에 나온 인물이 아는 것 — 콜 0(저장분 읽기).
+    _world_ed = {}
+    try:
+        import ooc_edits as _oe_st
+        _world_ed = _oe_st.world_state_for_edit(channel_id, ooc_content)
+    except Exception as _e_we:
+        logging.debug(f"[OOC] world 상태 skip: {_e_we}")
+
     # AI 처리
     result = await memory_system.process_ooc_memory_edit(
         client_genai, model_id, ooc_content, ai_mem, p_data, notebook_text=notebook_txt,
         declared_block=declared_txt, relations_state=_rel_state, sheet_sections=_sheet_state,
-        roster=_roster, edit_part=edit_part,
+        roster=_roster, edit_part=edit_part, world_state=_world_ed,
     )
 
     if not (result and result.get("edits")):
@@ -2219,6 +2254,9 @@ async def run_ooc_edit(
     decl_edits = []
     rel_edits = []
     sheet_edits = []
+    npc_edits, place_edits, time_edits = [], [], []   # [2026-10-10 OOC 확장]
+    fact_edits = []   # [2026-10-10 기록 정정]
+    thread_edits, quest_edits = [], []   # [2026-10-10 이야기 실 O-E]
     applied = 0   # [2026-09-26 O10] 실제로 적용된 것 수 — 0 이면 모델 확인문 대신 "적용된 것 없음"
 
     for edit in result["edits"]:
@@ -2237,8 +2275,38 @@ async def run_ooc_edit(
         if field in ("relation", "relations", "relationship", "relationships"):
             rel_edits.append(edit)
             continue
+        # [2026-10-10 OOC 확장] 인물·자리·시간 → ooc_edits(명령어와 같은 함수).
+        if field in ("npc", "npcs", "character"):
+            npc_edits.append(edit)
+            continue
+        if field in ("place", "location"):
+            place_edits.append(edit)
+            continue
+        if field in ("time", "clock", "weather"):
+            time_edits.append(edit)
+            continue
+        if field in ("fact", "facts", "record", "correction"):   # [2026-10-10 기록 정정] 지난 일
+            fact_edits.append(edit)
+            continue
+        if field in ("thread", "threads", "promise", "promises"):   # [2026-10-10 이야기 실 O-E] 스레드 장부
+            thread_edits.append(edit)
+            continue
+        if field in ("quest", "quests"):   # [2026-10-10 이야기 실 O-E] 퀘스트 보드
+            quest_edits.append(edit)
+            continue
         # [2026-09-16 시트 2차] 시트 절 편집 → PC 페이지 lore 절(grow_sheet는 lore 절을 안 건드린다).
         if field in _sheet_fields:
+            # [2026-10-10 OOC 확장] 절 이름에 명부 NPC 이름이 달려 오면 그 NPC 시트다 — PC 시트에 떨어지지 않게 돌린다.
+            _snk = domain_manager._ooc_edit_npc_name(edit)
+            try:
+                _snk_key = (domain_manager._find_npc_key(domain_manager.get_npcs(channel_id) or {}, _snk)
+                            if _snk and not domain_manager.is_pc_name(_snk, domain_manager.pc_registry(channel_id)) else None)
+            except Exception:
+                _snk_key = None
+            if _snk_key:
+                npc_edits.append({"field": "npc", "op": "sheet", "key": _snk_key, "section": field,
+                                  "action": edit.get("action") or "set", "value": edit.get("value")})
+                continue
             sheet_edits.append(edit)
             continue
 
@@ -2285,16 +2353,54 @@ async def run_ooc_edit(
 
     # 2b. Apply Relation Edits — 엣지(NPC→이 PC). 되비침은 결과 메시지에 합류.
     rel_lines = []
-    if rel_edits:
+    # [2026-10-10 OOC 확장] 인물 정정이 관계보다 먼저(같은 사람 합치기 뒤에 관계가 본체로 간다). 자리·시간은 뒤에.
+    if npc_edits:
         try:
-            rel_lines = domain_manager.apply_ooc_relation_edits(channel_id, uid, rel_edits)
+            import ooc_edits as _oe_np
+            rel_lines += _oe_np.apply_npc_edits(channel_id, uid, npc_edits)
+        except Exception as _e_np:
+            logging.error(f"[OOC] 인물 편집 실패: {_e_np}")
+            rel_lines.append("⚠️ 인물: 편집 중 오류")
+    if rel_edits:
+        # [2026-10-10 O-E 수리] `=` 였다 — 인물 줄(npc_edits)이 앞에 쌓였으면 지워져 되비침·적용 수에서 빠졌다.
+        try:
+            rel_lines += domain_manager.apply_ooc_relation_edits(channel_id, uid, rel_edits)
         except Exception as _e_rl:
             logging.error(f"[OOC] 관계 편집 실패: {_e_rl}")
-            rel_lines = ["⚠️ 관계: 편집 중 오류"]
+            rel_lines.append("⚠️ 관계: 편집 중 오류")
 
     # 2c. Apply Sheet Section Edits
     if sheet_edits:
         rel_lines = rel_lines + domain_manager.apply_ooc_sheet_edits(channel_id, uid, sheet_edits)
+
+    # 2c'. [2026-10-10 기록 정정] 지난 일 — 정오표 + 위키 Observed 정정(인물 정정 뒤라 합친 본체 이름으로 간다)
+    if fact_edits:
+        try:
+            import ooc_edits as _oe_fc
+            rel_lines += _oe_fc.apply_fact_edits(channel_id, fact_edits)
+        except Exception as _e_fc:
+            logging.error(f"[OOC] 정정 편집 실패: {_e_fc}")
+            rel_lines.append("⚠️ 정정: 편집 중 오류")
+
+    # 2c''. [2026-10-10 이야기 실 O-E] 스레드 장부·퀘스트 보드
+    if thread_edits or quest_edits:
+        try:
+            import ooc_edits as _oe_tq
+            rel_lines += _oe_tq.apply_thread_edits(channel_id, thread_edits) if thread_edits else []
+            rel_lines += _oe_tq.apply_quest_edits(channel_id, quest_edits) if quest_edits else []
+        except Exception as _e_tq:
+            logging.error(f"[OOC] 이야기 실 편집 실패: {_e_tq}")
+            rel_lines.append("⚠️ 이야기 실: 편집 중 오류")
+
+    # 2d. [2026-10-10 OOC 확장] 자리·시간
+    if place_edits or time_edits:
+        try:
+            import ooc_edits as _oe_pt
+            rel_lines += _oe_pt.apply_place_edits(channel_id, place_edits) if place_edits else []
+            rel_lines += _oe_pt.apply_time_edits(channel_id, time_edits) if time_edits else []
+        except Exception as _e_pt:
+            logging.error(f"[OOC] 자리·시간 편집 실패: {_e_pt}")
+            rel_lines.append("⚠️ 자리·시간: 편집 중 오류")
 
     # 3. Apply Declared Edits (P13) — 되비침 줄만 돌려받는다. 콜 0.
     decl_lines = []
@@ -2938,6 +3044,18 @@ async def cmd_output_rule(ctx: CommandContext) -> None:
                 _rest = file_text[len(args[0]):].strip() if args else file_text
                 file_text = _rest or file_text
                 _src_name = "한 줄 서술"
+            # [2026-10-12 C32 몸·인격] 장전 줄 `깃들기: 켜기|끄기` — 리스 모듈 붙이듯 명시로 켜고 끈다(로어 분석 판정보다 이긴다).
+            #   코드가 떼어 읽고 라우터엔 안 보낸다. 그 줄뿐이면 라우터 콜 0.
+            try:
+                import vessel as _vs_arm
+                file_text, _arm = _vs_arm.take_arm_line(file_text)
+                if _arm is not None:
+                    _vs_arm.set_arm(ctx.channel_id, _arm)
+                    await ctx.send("🫥 깃들기(빙의·최면·몸 옮기기) 추적: " + ("켬" if _arm else "끔"))
+                    if not (file_text or "").strip():
+                        return
+            except Exception as _e_arm:
+                logging.getLogger("OutputRule").debug(f"[Vessel] 장전 줄 skip: {_e_arm}")
             await ctx.send("📋 준비물을 읽는 중… (등록 시 1회성 분석)")
             _result = await _or.route_text(ctx.genai_client, ctx.channel_id,
                                            file_text, _src_name)
@@ -3119,115 +3237,37 @@ async def cmd_time(ctx: CommandContext) -> None:
             )
             return
         target = args[1]
-        time_slots = game_system.get_time_slots(ctx.channel_id)
-
-        # V8.5: N년 M월 D일 [HH:MM] 풀 캘린더 형식 파싱 (HH:MM 생략 시 기존 시각 유지)
-        # 예: !시간 설정 1년 3월 12일 15:05 / !시간 설정 2024년 1월 1일
+        # [2026-10-11 청소 `!시간` 두 벌] 쓰기는 ooc_edits.set_clock 한 곳(범위 검사·시각→시간대·저장·되비침).
+        #   여기서는 형식만 읽는다. 옛 길은 world 를 직접 고쳐 써서 OOC 시간 편집과 같은 일을 두 곳이 따로 했다.
+        #   달라진 것 하나: 날짜만 바꿀 때 시간대를 다시 맞추지 않는다(시각이 그대로라 시간대도 그대로).
         import re as _re
+        import ooc_edits as _oe_tm
+        _kw = None
+        _note = ""
+        # V8.5: N년 M월 D일 [HH:MM] 풀 캘린더 (HH:MM 생략 시 기존 시각 유지)
         if len(args) >= 4:
             rest = " ".join(args[1:])
-            # HH:MM 포함
-            cal_match = _re.match(r'^\s*(\d+)년\s+(\d+)월\s+(\d+)일\s+(\d{1,2}):(\d{2})\s*$', rest)
-            # HH:MM 미포함 (날짜만)
-            cal_match_date_only = _re.match(r'^\s*(\d+)년\s+(\d+)월\s+(\d+)일\s*$', rest) if not cal_match else None
-            if cal_match or cal_match_date_only:
-                try:
-                    if cal_match:
-                        yy = int(cal_match.group(1))
-                        mo = int(cal_match.group(2))
-                        dd = int(cal_match.group(3))
-                        hh = int(cal_match.group(4))
-                        mm = int(cal_match.group(5))
-                        hh_provided = True
-                    else:
-                        yy = int(cal_match_date_only.group(1))
-                        mo = int(cal_match_date_only.group(2))
-                        dd = int(cal_match_date_only.group(3))
-                        # 기존 시각 유지
-                        import game_world as _gw_keep
-                        _gw_keep._init_clock(world)
-                        hh = world.get("hour", 12)
-                        mm = world.get("minute", 0)
-                        hh_provided = False
-                    if not (1 <= yy and 1 <= mo <= config.CALENDAR_MONTHS_PER_YEAR
-                            and 1 <= dd <= config.CALENDAR_DAYS_PER_MONTH
-                            and 0 <= hh <= 23 and 0 <= mm <= 59):
-                        await ctx.send(
-                            f"⚠️ 유효 범위: 년≥1, 월=1~{config.CALENDAR_MONTHS_PER_YEAR}, "
-                            f"일=1~{config.CALENDAR_DAYS_PER_MONTH}, HH=0~23, MM=0~59"
-                        )
-                        return
-                    # slot 자동 추론
-                    inferred_slot = None
-                    for slot, (start, end) in config.TIME_SLOT_HOURS.items():
-                        if start <= end:
-                            if start <= hh <= end:
-                                inferred_slot = slot; break
-                        else:
-                            if hh >= start or hh <= end:
-                                inferred_slot = slot; break
-                    if inferred_slot is None:
-                        inferred_slot = world.get("time_slot", "오후")
-                    world["year"] = yy
-                    world["month"] = mo
-                    world["day"] = dd
-                    world["hour"] = hh
-                    world["minute"] = mm
-                    world["time_slot"] = inferred_slot
-                    domain_manager.update_world_state(ctx.channel_id, world)
-                    import game_world as _gw_set
-                    if hh_provided:
-                        await ctx.send(f"⏰ 시간 설정: **{_gw_set.format_calendar(world)} {hh:02d}:{mm:02d}** ({inferred_slot})")
-                    else:
-                        await ctx.send(
-                            f"⏰ 시간 설정: **{_gw_set.format_calendar(world)} {hh:02d}:{mm:02d}** ({inferred_slot})"
-                            f" — 시각은 기존 유지"
-                        )
-                except ValueError:
-                    await ctx.send(f"⚠️ 형식 오류 (예: `!시간 설정 1년 3월 12일 15:05` 또는 `!시간 설정 1년 3월 12일`)")
-                return
-
-        # HH:MM 형식 파싱 (시:분만 — 진행 중 세션 마이그레이션용, 2026-05-23)
-        hhmm_match = _re.match(r'^(\d{1,2}):(\d{2})$', target)
-        if hhmm_match:
-            try:
-                hh = int(hhmm_match.group(1))
-                mm = int(hhmm_match.group(2))
-                if not (0 <= hh <= 23 and 0 <= mm <= 59):
-                    await ctx.send(f"⚠️ 유효 범위: HH=0~23, MM=0~59 (입력: {hh}:{mm:02d})")
-                    return
-                # slot 자동 추론 (config.TIME_SLOT_HOURS 기준)
-                inferred_slot = None
-                for slot, (start, end) in config.TIME_SLOT_HOURS.items():
-                    if start <= end:
-                        if start <= hh <= end:
-                            inferred_slot = slot
-                            break
-                    else:  # wrap (심야 23~3)
-                        if hh >= start or hh <= end:
-                            inferred_slot = slot
-                            break
-                if inferred_slot is None:
-                    inferred_slot = world.get("time_slot", "오후")
-                world["hour"] = hh
-                world["minute"] = mm
-                world["time_slot"] = inferred_slot
-                # V8.5: year/month 초기화 (마이그레이션) 후 저장
-                import game_world as _gw_set
-                _gw_set._init_clock(world)
-                domain_manager.update_world_state(ctx.channel_id, world)
-                await ctx.send(f"⏰ 시간 설정: **{_gw_set.format_calendar(world)} {hh:02d}:{mm:02d}** ({inferred_slot})")
-            except ValueError:
-                await ctx.send(f"⚠️ 형식 오류: HH:MM (예: `!시간 설정 15:05`)")
-            return
-
-        # 기존: 슬롯 이름 입력 (slot만 변경, hour/minute 보존)
-        if target in time_slots:
-            world["time_slot"] = target
-            domain_manager.update_world_state(ctx.channel_id, world)
-            await ctx.send(f"⏰ 시간 설정: **{target}** (HH:MM 변경 안 됨 — 분 단위는 `!시간 설정 HH:MM`)")
+            cal_match = _re.match(r'^\s*(\d+)년\s+(\d+)월\s+(\d+)일(?:\s+(\d{1,2}):(\d{2}))?\s*$', rest)
+            if cal_match:
+                _kw = {"year": cal_match.group(1), "month": cal_match.group(2), "day": cal_match.group(3)}
+                if cal_match.group(4) is not None:
+                    _kw.update(hour=cal_match.group(4), minute=cal_match.group(5))
+                else:
+                    _note = " — 시각은 기존 유지"
+        if _kw is None:
+            # HH:MM (시:분만 — 진행 중 세션 마이그레이션용, 2026-05-23)
+            hhmm_match = _re.match(r'^(\d{1,2}):(\d{2})$', target)
+            if hhmm_match:
+                _kw = {"hour": hhmm_match.group(1), "minute": hhmm_match.group(2)}
+            else:
+                # 시간대 이름 (시간대만 바꾸고 시·분은 그대로)
+                _kw = {"slot": target}
+                _note = " — HH:MM 변경 안 됨(분 단위는 `!시간 설정 HH:MM`)"
+        _r = _oe_tm.set_clock(ctx.channel_id, **_kw)
+        if _r.startswith("⚠"):
+            await ctx.send(_r + (" / 또는 HH:MM 형식" if "slot" in _kw else ""))
         else:
-            await ctx.send(f"⚠️ 유효한 시간대: {', '.join(time_slots)} / 또는 HH:MM 형식")
+            await ctx.send(f"⏰ {_r}{_note}")
         return
 
 

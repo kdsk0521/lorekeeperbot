@@ -289,8 +289,33 @@ def _emotion_score(name: str, dai: Dict[str, Any], channel_id: str) -> Tuple[flo
     return (0.0, False)
 
 
+def _mind_eligible(blk: Any) -> bool:
+    """[2026-10-08 속마음 can·want] 선별 자격 — 08-17 재료 다섯(deep_read/resurfacing/value_conflict/
+    drives/cannot) 중 하나라도 있는가. 재료 **내용**이 바뀌어도(want 추가·drives 뺌) 누가 💭 대상이
+    되는지는 그대로 둔다 — want(relation.descriptor)는 거의 모든 인물에게 있어 자격으로 쓰면 문이 넓어진다.
+    [2026-10-09 압력 want·can] cannot 자리는 can이 이었다(같은 Mira pressure 칸)."""
+    if not isinstance(blk, dict):
+        return False
+
+    def _has(val: Any) -> bool:
+        return isinstance(val, str) and bool(val.strip()) and val.strip().lower() != "null"
+
+    rel = blk.get("relation") if isinstance(blk.get("relation"), dict) else {}
+    pressure = blk.get("pressure") if isinstance(blk.get("pressure"), dict) else {}
+    return any(_has(v) for v in (blk.get("deep_read"), blk.get("resurfacing"), rel.get("value_conflict"),
+                                 pressure.get("drives"), pressure.get("can")))
+
+
 def _mind_material(blk: Any) -> Dict[str, str]:
-    """psyche_states[name] → 속마음 재료만. 하나도 없으면 {} (= 쓸 게 없는 인물)."""
+    """psyche_states[name] → 속마음 재료만. 하나도 없으면 {} (= 쓸 게 없는 인물).
+
+    [2026-10-08 속마음 can·want] 속마음은 페이지에 안 보이는 것 — 바라는 것(want)과 못 하는 것(can) —
+    위주로 받는다. do(Mira pressure.drives, 지금 하는 동사)는 산문과 앵커 `after it` 사실 줄이 맡으므로
+    뺐다. want = relation.descriptor(10-08부터 "psychological stance toward the acting PC: what they
+    want from them"). 측정: analysis_line/속마음_can·want_측정·스펙_2026-10-08.md §3(M3 b안).
+    [2026-10-09 압력 want·can] pressure.drives가 want 꼴('wants to …', 몸이 스스로 하고 싶은 것)이 되어
+    다시 넣는다(M3 b의 drives 빼기 뒤집기). cannot → can(지금 할 수 있는 것). 재료 = want 둘 + can.
+    측정(넣어도 덜어도 출력 같음): analysis_line/압력_want·can_측정·스펙_2026-10-08 §9."""
     if not isinstance(blk, dict):
         return {}
     out: Dict[str, str] = {}
@@ -304,10 +329,12 @@ def _mind_material(blk: Any) -> Dict[str, str]:
     rel = blk.get("relation")
     if isinstance(rel, dict):
         _put("value_conflict", rel.get("value_conflict"))
+        _put("want", rel.get("descriptor"))
     pressure = blk.get("pressure")
     if isinstance(pressure, dict):
+        # [2026-10-09 압력 want·can] drives가 want 꼴('wants to …')이 되어 다시 넣는다. cannot → can.
         _put("drives", pressure.get("drives"))
-        _put("cannot", pressure.get("cannot"))
+        _put("can", pressure.get("can"))
     return out
 
 
@@ -323,7 +350,7 @@ def _state_material(name: str, soma_map: Dict[str, Any], att_map: Dict[str, Any]
                 1턴짜리는 노이즈고, 두 소비자가 다른 임계를 쓰면 같은 몸이 두 값이 된다.
       toward_pc npc_attitudes[name] = attitude/depth/tension. 수치는 **주지만 지시하지 않는다**
                 (라벨만 나열 — 계산·연출은 이 재료의 일이 아니다).
-    라벨 톤은 기존 material 키(deep_read/resurfacing/value_conflict/drives/cannot)와 같은
+    라벨 톤은 기존 material 키(deep_read/resurfacing/value_conflict/want/drives/can)와 같은
     영어 텔레그래픽. 프롬프트 계약은 무변경 — 재료가 는 것뿐이다.
     """
     out: Dict[str, str] = {}
@@ -499,6 +526,9 @@ def select_mind_targets(channel_id: str,
     _drop_floor: List[str] = []
     scored: List[Tuple[float, str, Dict[str, Any]]] = []
     for name in sorted(str(n) for n in psyche if n and isinstance(n, str)):
+        # [2026-10-08] 자격은 _mind_eligible(08-17 재료 다섯), 내용은 _mind_material(want 추가·drives 뺌).
+        if not _mind_eligible(psyche.get(name)):
+            continue
         material = _mind_material(psyche.get(name))
         if not material:
             continue
@@ -595,6 +625,9 @@ def _build_scene_anchor(channel_id: str, dai: Optional[Dict[str, Any]]) -> str:
       읽을 이유가 없다(비관측 계약, 배선 스펙 §2 D 4). 유저 입력 원문
       (InputAnalysis.Original)·감각 앵커(SensoryAnchors)도 뺀다: 전자는 대사 원문 계열이고,
       후자는 어휘 팔레트라 주면 순회한다(08-13 팔레트 교훈).
+
+    [2026-10-08] 끝에 `after it` 사실 줄(`_after_it_lines`)이 붙는다 — 렌더 뒤 B1 이 남긴 이번 턴
+      인물 기록(한 일·mood). 산문 원문은 여전히 안 받지만 산문 요약은 받는다(08-17 부분 뒤집기).
     """
     if not isinstance(dai, dict):
         dai = {}
@@ -655,7 +688,73 @@ def _build_scene_anchor(channel_id: str, dai: Optional[Dict[str, Any]]) -> str:
     if _obs:
         lines.append(f"this turn: {_obs[:_cap]}")
 
+    # after it — [2026-10-08 속마음 사실 줄] 렌더 **뒤** 배치 추출(B1)이 남긴 이번 턴 인물 기록.
+    lines.extend(_after_it_lines(channel_id, dai, _stage))
+
     return "\n".join(lines)
+
+
+def _after_it_lines(channel_id: str, dai: Dict[str, Any], stage: List[str]) -> List[str]:
+    """[2026-10-08 속마음 사실 줄] `after it: {이름} — {notable} ({mood})` 줄들. 없으면 [].
+
+    병: 시점선(10-08) 뒤 Observation은 입력이 떨어지는 자리까지만 말한다 — 인물이 산문에서 어떻게
+      받았는지(대답했나, 시선을 돌렸나)를 속마음 콜이 몰라 "대답이 목까지 올라왔다 멈춘다"처럼 산문과
+      정면으로 어긋났다(측정: 뚜렷한 어긋남 3 → 0).
+    원천: B1 entity_state(narrative_tracker `entity_state_log`) — notable(critical_moments)·mood
+      (recent_states). 배경 큐가 채널별 FIFO 라 TurnMind 가 돌 때 같은 턴 B1 은 이미 저장돼 있다.
+    턴: B1 이 도장 찍은 방식(orchestration `_bg_turn_now`)과 같이 푼다 — dai["turn_index"] 정수,
+      없으면 live world_state. 큐가 밀려 다음 턴 증가 뒤에 돌아도 같은 턴 기록을 고른다.
+    ★08-17 "산문 재료 원천 제거"의 부분 뒤집기(레티어스 10-08: 속마음에 산문 재료 들어가도 된다).
+      B1 요약은 산문 원문이 아니다. 따옴표는 걷지 않는다 — 걷으면 "대답했다"는 사실이 같이 사라진다.
+    대상: 무대 명단(stage — 이 앵커의 `stage:` 줄과 같은 명단원) 중 이번 턴 기록이 있는 인물, 최대 3.
+    스펙: analysis_line/속마음_can·want_측정·스펙_2026-10-08.md §4 M2.
+    """
+    if not stage:
+        return []
+    _t = (dai or {}).get("turn_index") if isinstance(dai, dict) else None
+    if not (isinstance(_t, int) and not isinstance(_t, bool)):
+        _t = _current_turn(channel_id)
+    try:
+        _logs = (domain_manager.get_narrative_tracker_state(channel_id) or {}).get("entity_state_log") or {}
+    except Exception as e:
+        logger.debug(f"[TurnMind] entity_state_log read skipped: {e}")
+        return []
+    if not isinstance(_logs, dict) or not _logs:
+        return []
+    _ncap = int(getattr(config, "TURN_MIND_AFTER_CHARS", 120))
+    _max = int(getattr(config, "TURN_MIND_AFTER_MAX", 3))
+    out: List[str] = []
+    for n in stage:
+        if len(out) >= _max:
+            break
+        try:
+            _k = n if n in _logs else domain_manager._find_npc_key(_logs, n)
+        except Exception:
+            _k = None
+        _lg = _logs.get(_k) if _k else None
+        if not isinstance(_lg, dict):
+            continue
+        _nb = next((str(c.get("description") or "") for c in reversed(_lg.get("critical_moments") or [])
+                    if isinstance(c, dict) and c.get("turn") == _t), "")
+        _md = next((str(r.get("mood") or "") for r in reversed(_lg.get("recent_states") or [])
+                    if isinstance(r, dict) and r.get("turn") == _t), "")
+        # [2026-10-10 M1″] 한 말은 B1 said 칸(recent_states)에서 — notable 은 이제 한 일만 받는다.
+        _sd = next((str(r.get("said") or "") for r in reversed(_lg.get("recent_states") or [])
+                    if isinstance(r, dict) and r.get("turn") == _t and r.get("said")), "")
+        _nb = " ".join(_nb.split())[:_ncap]
+        _md = " ".join(_md.split())
+        _sd = " ".join(_sd.split())[:_ncap]
+        if not _nb and not _md and not _sd:
+            continue
+        _bits = []
+        if _nb:
+            _bits.append(_nb + (f" ({_md})" if _md else ""))
+        elif _md:
+            _bits.append(f"({_md})")
+        if _sd:
+            _bits.append(f"said {_sd}")
+        out.append(f"after it: {n} — " + " · ".join(_bits))   # said 없으면 종전 꼴 그대로
+    return out
 
 
 # =========================================================
@@ -897,7 +996,9 @@ async def generate_mind_call(
     cfg = types.GenerateContentConfig(
         system_instruction=text_resources.ANALYSIS_FRAME,   # [2026-10-06 분석 틀] 원본 mandate → 분석 틀
         temperature=0.7,          # 내면 목소리 — 패널(0.5)보다 풀되 산문(0.8)보다 조인다
-        max_output_tokens=1024,
+        # [2026-10-11 C27] 1024 → 8192. 추론이 출력 예산을 먹어 녹화 86판 중 실패 3·빈칸 3(재생에서도 length로 빈 판).
+        #   배경 콜이라 상한을 넉넉히. 근거 analysis_line/C21_분석샘플링_측정·스펙_2026-10-11 §4
+        max_output_tokens=8192,
         response_mime_type="application/json",
         safety_settings=config.SAFETY_SETTINGS,
     )
@@ -934,7 +1035,7 @@ def generate_mind(channel_id: str, dai: Optional[Dict[str, Any]],
 
     소스 = 서사 콜 `psyche_narrative`. waterfall_pipeline 이 per-NPC 로 병합해
     `dai["psyche_states"][name]` 에 deep_read / resurfacing / relation.value_conflict /
-    pressure{drives,cannot} 형태로 얹어 둔 것을 그대로 읽는다 — **새 콜 0**.
+    pressure{drives,can} 형태로 얹어 둔 것을 그대로 읽는다 — **새 콜 0**. [2026-10-09] 라벨 하고 싶은 것·할 수 있는 것.
 
     [2026-08-17] v1의 **결정론 폴백**이 이 함수의 새 역할이다(콜 실패·TURN_MIND_CALL=0).
     `names` 를 주면 그 명단으로 좁힌다(게이트 결과 재사용) — 미전달 시 구 동작 그대로.
@@ -964,11 +1065,11 @@ def generate_mind(channel_id: str, dai: Optional[Dict[str, Any]],
         pressure = blk.get("pressure")
         if isinstance(pressure, dict):
             drives = pressure.get("drives")
-            cannot = pressure.get("cannot")
+            can = pressure.get("can")
             if isinstance(drives, str) and drives.strip():
-                lines.append({"label": "몸이 하는 것", "text": drives.strip()[:_FIELD_CAP]})
-            if isinstance(cannot, str) and cannot.strip():
-                lines.append({"label": "못 하는 것", "text": cannot.strip()[:_FIELD_CAP]})
+                lines.append({"label": "하고 싶은 것", "text": drives.strip()[:_FIELD_CAP]})
+            if isinstance(can, str) and can.strip():
+                lines.append({"label": "할 수 있는 것", "text": can.strip()[:_FIELD_CAP]})
         if not lines:
             continue
         entries.append({"name": str(name)[:200], "lines": lines})

@@ -904,7 +904,10 @@ class EmotionEngine:
 
         # Tier 8: deep_read Core 약신호 (Korean keyword simple match)
         # [2026-07-13 L1] shame 키워드 선행 — wonder보다 구체적·희소 신호라 우선 매치
-        if deep_read and any(k in deep_read for k in ("수치", "부끄", "창피", "굴욕")):
+        # [2026-10-11 청소 C16-2] deep_read 는 서사 콜(Mira)이 ENGLISH-ONLY 로 쓴다 — shame·wonder 에도 영어 키워드
+        #   (play 와 같은 꼴, 소문자 비교). awe 는 aware·unaware 에 걸리므로 낱말 경계로만 본다.
+        _dr_low = str(deep_read).lower() if deep_read else ""
+        if deep_read and any(k in _dr_low for k in ("수치", "부끄", "창피", "굴욕", "shame", "humiliat", "embarrass")):
             return ("shame", 0.3)
         # [2026-07-16 tone_gravity L4] play 도출 경로 신설 — 팔레트 정의만 있고 도달 경로 0이던
         # 죽은 라벨(dead_scan B형, tone_gravity_audit A4). 영어 키워드는 서사 콜 deep_read가
@@ -912,7 +915,8 @@ class EmotionEngine:
         if deep_read and any(k in deep_read.lower() for k in (
                 "장난", "놀이", "웃음", "playful", "teasing", "banter", "mischie", "joking")):
             return ("play", 0.3)
-        if deep_read and ("경탄" in deep_read or "호기심" in deep_read):
+        if deep_read and (any(k in _dr_low for k in ("경탄", "호기심", "wonder", "marvel"))
+                          or re.search(r"\bawe(d|struck)?\b", _dr_low)):
             return ("wonder", 0.3)
 
         # Tier 9: 전부 미스 → Tier 3 폴백 (pair=None in assign_base_modifier)

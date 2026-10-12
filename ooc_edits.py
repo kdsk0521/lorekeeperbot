@@ -1,0 +1,566 @@
+# -*- coding: utf-8 -*-
+"""[2026-10-10 OOC 확장] OOC 편집 콜의 인물·자리·시간 칸을 적용한다. (+ 기록 정정 fact, 이야기 실 thread·quest)
+
+명령어(`!npc 병합·별칭·상태·시트`, `!시간 설정`)가 쓰는 함수를 그대로 부른다 — 새 콜 0, 새 관문 0.
+OOC 는 플레이어가 직접 한 말이라 명령어와 같은 권위다. 다만 편집 콜(LLM)이 말을 칸으로 옮기므로
+되돌릴 수 없는 일(병합)에는 가드를 둔다.
+되비침: 줄 목록. 실패 줄은 ⚠ 로 시작한다(run_ooc_edit 이 적용 수에서 뺀다).
+근거: 파티쳇수정/state_v10/OOC확장_스펙_2026-10-10.md
+"""
+import logging
+import re
+from typing import Any, Dict, List, Optional, Tuple
+
+import config
+import domain_manager
+
+logger = logging.getLogger(__name__)
+
+NPC_OPS = ("merge", "alias", "rename", "status", "sheet", "knows")
+# 편집 콜이 지어내기 쉬운 op → 그 일을 하는 곳
+_NPC_OP_HINT = {
+    "delete": "삭제는 `!npc 삭제 [이름]`으로", "remove": "삭제는 `!npc 삭제 [이름]`으로",
+    "kill": "죽음은 op status, value dead 로", "move": "자리는 field place 로",
+    "relation": "관계는 field relation 으로",
+}
+_HERE = ("here", "여기", "이곳", "current", "")
+
+
+def _norm(s: Any) -> str:
+    return " ".join(str(s or "").split()).lower()
+
+
+def _turn(channel_id: str) -> int:
+    try:
+        return int((domain_manager.get_world_state(channel_id) or {}).get("turn_index", 0) or 0)
+    except Exception:
+        return 0
+
+
+def _op_of(e: Dict[str, Any], ops: tuple) -> str:
+    """op 칸. 편집 콜은 op 를 `action` 칸에 적기도 한다(재기: merge·rename·status 를 action 으로) —
+    action 이 op 목록에 있는 말이면 op 로 읽는다. sheet·knows 의 action(set·add…)은 op 목록에 없어서 섞이지 않는다."""
+    op = str(e.get("op") or "").strip().lower()
+    if not op:
+        act = str(e.get("action") or "").strip().lower()
+        if act in ops:
+            op = act
+    return op
+
+
+def _resolve(npcs: Dict[str, Any], raw: Any) -> Optional[str]:
+    raw = str(raw or "").strip()
+    if not raw:
+        return None
+    try:
+        return domain_manager.find_equivalent_npc_key(npcs, raw)
+    except Exception:
+        return domain_manager._find_npc_key(npcs, raw)
+
+
+# =========================================================
+# 인물 (npc)
+# =========================================================
+def merge_pair(channel_id: str, dup_raw: str, canon_raw: str, pc_masks: Any = None) -> str:
+    """같은 사람 합치기. 한쪽만 시트·로어 인물이면 그쪽을 본체로 돌린다. 둘 다면 거부(`!npc 병합` 안내)."""
+    import npc_manager as npm
+    npcs = npm.get_npcs(channel_id) or {}
+    pcm = pc_masks if pc_masks is not None else domain_manager.pc_registry(channel_id)
+    d, c = _resolve(npcs, dup_raw), _resolve(npcs, canon_raw)
+    if not d or not c:
+        return f"⚠ 인물: '{dup_raw if not d else canon_raw}' — 명부에 없는 이름이야"
+    if d == c:
+        return f"⚠ 인물: {d} — 이미 같은 사람으로 묶여 있어"
+    if domain_manager.is_pc_name(d, pcm) or domain_manager.is_pc_name(c, pcm):
+        return "⚠ 인물: PC는 NPC와 합칠 수 없어"
+    a_d = npm.is_authored(npcs.get(d) or {}, channel_id, d)
+    a_c = npm.is_authored(npcs.get(c) or {}, channel_id, c)
+    if a_d and a_c:
+        return f"⚠ 인물: {d}·{c} 둘 다 시트 인물이라 여기선 안 합쳐 — `!npc 병합 {d} {c}`"
+    flip = ""
+    if a_d and not a_c:
+        d, c = c, d
+        flip = " (시트 인물 쪽을 본체로 뒀어)"
+    ok, msg = npm.merge_identity(channel_id, d, c, via="ooc", turn=_turn(channel_id))
+    if not ok:
+        return f"⚠ 인물: 합치기 실패 — {msg}"
+    return f"인물: {d} → {c} 같은 사람으로 합침{flip}"
+
+
+def _sheet_edit(channel_id: str, key: str, section: str, action: str, body: str) -> str:
+    """NPC 페이지 lore 절 한 칸 — `!npc 시트 [이름] [절] set|append|remove` 와 같은 길(편집 = manual 승격)."""
+    import wiki_store
+    sections = tuple(getattr(config, "WIKI_LORE_SECTIONS", {}).get("character", ()))
+    section = str(section or "").strip()
+    if section not in sections:
+        return f"⚠ 시트: {key} — 절 이름 '{section}'이 없어({', '.join(sections)})"
+    action = str(action or "set").strip().lower()
+    if action not in ("set", "append", "remove"):
+        return f"⚠ 시트: {key} — '{action}'은 못 해(set·append·remove)"
+    if action != "remove" and not str(body or "").strip():
+        return f"⚠ 시트: {key} {section} — 쓸 내용이 없어"
+    pid = wiki_store.page_id_for("character", key)
+    t = _turn(channel_id)
+    if not wiki_store.get_page(channel_id, pid):
+        wiki_store.ensure_page(channel_id, "character", key, source="manual", turn=t)
+    if not wiki_store.edit_lore_section(channel_id, pid, section, str(body or ""), action=action, turn=t):
+        return f"⚠ 시트: {key} {section} — 쓰지 못했어"
+    wiki_store.ensure_page(channel_id, "character", key, source="manual", turn=t)
+    return f"시트: {key} {section} {action} (작가 시트로 승격)"
+
+
+def _knows_edit(channel_id: str, key: str, action: str, value: Any) -> str:
+    """NPC 가 아는 것 — add 는 기존 병합 관문(update_npc_knowledge), remove 는 그 줄만 뺀다.
+    remove 대조: 정규화 일치 → 없으면 한쪽이 다른 쪽을 품는 줄이 **딱 하나**일 때만. 둘 이상이면 거부."""
+    text = str(value or "").strip()
+    if not text:
+        return f"⚠ 지식: {key} — 내용이 없어"
+    action = str(action or "add").strip().lower()
+    if action in ("add", "set", "append"):
+        domain_manager.update_npc_knowledge(channel_id, key, {"knows": [text]})
+        return f"지식: {key} 이제 앎 — {text[:60]}"
+    if action != "remove":
+        return f"⚠ 지식: {key} — '{action}'은 못 해(add·remove)"
+    d = domain_manager.get_domain(channel_id)
+    # [2026-10-12 C32] 지식은 마음 키에 산다 — 보이는 이름(몸)을 한 번 돌린다. 빈 몸이면 지울 것이 없다.
+    _mkey = domain_manager._mind(channel_id, key)
+    if not _mkey:
+        return f"⚠ 지식: {key} — 지금 그 몸엔 마음이 없어"
+    kn = (d.get("npc_knowledge") or {}).get(_mkey)
+    items = list((kn or {}).get("knows") or [])
+    q = _norm(text)
+    hit = [i for i, it in enumerate(items) if _norm(it) == q]
+    if not hit:
+        hit = [i for i, it in enumerate(items) if q and (q in _norm(it) or _norm(it) in q)]
+    if not hit:
+        return f"⚠ 지식: {key} — '{text[:40]}'에 맞는 기록이 없어"
+    if len(hit) > 1:
+        return f"⚠ 지식: {key} — '{text[:40]}'에 맞는 줄이 {len(hit)}개라 못 골라"
+    gone = items.pop(hit[0])
+    kn["knows"] = items
+    d["npc_knowledge"][_mkey] = kn
+    domain_manager.save_domain(channel_id, d)
+    try:
+        domain_manager._mirror_knowledge(channel_id, _mkey, kn)
+    except Exception as _e_mk:
+        logger.debug(f"[OOC] 지식 미러 skip: {_e_mk}")
+    return f"지식: {key} 모름으로 — {str(gone)[:60]}"
+
+
+def apply_npc_edits(channel_id: str, uid: str, edits: List[Dict[str, Any]]) -> List[str]:
+    """field="npc" 편집 → 되비침 줄. op = merge·alias·rename·status·sheet·knows."""
+    import npc_manager as npm
+    out: List[str] = []
+    pcm = domain_manager.pc_registry(channel_id)
+    for e in edits or []:
+        if not isinstance(e, dict):
+            continue
+        op = _op_of(e, NPC_OPS)
+        raw = domain_manager._ooc_edit_npc_name(e)
+        if op not in NPC_OPS:
+            out.append(f"⚠ 인물: '{op or '?'}'은 여기서 못 해" + (f" — {_NPC_OP_HINT[op]}" if op in _NPC_OP_HINT else ""))
+            continue
+        if not raw:
+            out.append(f"⚠ 인물({op}): 이름이 없어")
+            continue
+        if op == "merge":
+            into = str(e.get("into") or e.get("canon") or "").strip()
+            if not into and isinstance(e.get("value"), str):
+                into = e["value"].strip()
+            out.append(merge_pair(channel_id, raw, into, pcm) if into else f"⚠ 인물: {raw} — 누구와 같은 사람인지가 없어")
+            continue
+        npcs = npm.get_npcs(channel_id) or {}
+        key = _resolve(npcs, raw)
+        if not key or domain_manager.is_pc_name(key, pcm):
+            out.append(f"⚠ 인물: '{raw}' — 명부에 없는 이름이야")
+            continue
+        val = e.get("value")
+        if op == "alias":
+            alias = str(val or "").strip()
+            if not alias:
+                out.append(f"⚠ 별칭: {key} — 별칭이 없어")
+                continue
+            ok, who = domain_manager.add_npc_alias(channel_id, key, alias)
+            if ok:
+                out.append(f"별칭: {key} = {alias}")
+            elif who and who != key:
+                out.append(f"⚠ 별칭: '{alias}'은 이미 {who}의 이름이야 — 같은 사람이면 합치기로")
+            else:
+                out.append(f"⚠ 별칭: {key} — '{alias}'을 붙이지 못했어")
+        elif op == "rename":
+            new = str(val or "").strip()
+            if not new:
+                out.append(f"⚠ 이름: {key} — 새 이름이 없어")
+                continue
+            if domain_manager.is_pc_name(new, pcm):
+                out.append(f"⚠ 이름: '{new}'은 PC 이름이야")
+                continue
+            if _resolve(npcs, new):
+                # 새 이름이 이미 명부에 있다 = 같은 사람이라는 말 → 합치기(같은 가드)
+                out.append(merge_pair(channel_id, key, new, pcm))
+                continue
+            res = str(npm.handle_identity_reveal(channel_id, key, new, reason="ooc") or "")
+            out.append(f"⚠ 이름: {key} — {res.lstrip('⚠️ ')}" if res.startswith("⚠") else f"이름: {key} → {new}")
+        elif op == "status":
+            st = str(val or "").strip().lower()
+            if st not in getattr(config, "NPC_STATUS_VALUES", ("active",)):
+                out.append(f"⚠ 생사: {key} — '{st}'은 없는 상태야(active·down·dead)")
+                continue
+            before = npm.get_npc_status(npcs.get(key) or {})
+            res = npm.set_npc_status_gated(channel_id, key, st, source="manual", evidence="ooc")
+            if res == "accepted":
+                out.append(f"생사: {key} {before} → {st}")
+            elif res == "unchanged":
+                out.append(f"생사: {key} 이미 {st}")
+            else:
+                out.append(f"⚠ 생사: {key} — 바꾸지 못했어({res})")
+        elif op == "sheet":
+            out.append(_sheet_edit(channel_id, key, e.get("section") or "", e.get("action") or "set",
+                                   val if isinstance(val, str) else ""))
+        elif op == "knows":
+            out.append(_knows_edit(channel_id, key, e.get("action") or "add", val))
+    return out
+
+
+# =========================================================
+# 자리 (place)
+# =========================================================
+def _patch_last_frame_location(channel_id: str, loc: str) -> None:
+    """Theoria 는 지난 턴 장소를 SCENE CONTINUITY 프레임(dai_snapshot.location)에서 읽는다.
+    world_state 만 고치면 다음 턴 분석이 옛 장소를 다시 써서 고친 값이 한 턴 만에 덮인다 — 프레임도 같이 고친다."""
+    try:
+        sc = domain_manager.get_scene_continuity(channel_id)
+        frames = sc.get("frames") or []
+        if frames and isinstance(frames[-1], dict):
+            snap = dict(frames[-1].get("dai_snapshot") or {})
+            snap["location"] = loc
+            frames[-1]["dai_snapshot"] = snap
+            sc["frames"] = frames
+            domain_manager.update_session_ai_memory(channel_id, {"scene_continuity": sc})
+    except Exception as _e_fr:
+        logger.debug(f"[OOC] 프레임 장소 고침 skip: {_e_fr}")
+
+
+def apply_place_edits(channel_id: str, edits: List[Dict[str, Any]]) -> List[str]:
+    """field="place" → op pc(지금 PC 장소) / npc_in(인물을 장소에) / npc_out(인물을 이 장면에서 뺌)."""
+    import npc_manager as npm
+    import world_tree
+    out: List[str] = []
+    pcm = domain_manager.pc_registry(channel_id)
+    for e in edits or []:
+        if not isinstance(e, dict):
+            continue
+        op = _op_of(e, ("pc", "npc_in", "npc_out"))
+        if op == "pc":
+            loc = str(e.get("value") or e.get("location") or "").strip()
+            if not loc:
+                out.append("⚠ 위치: 장소 이름이 없어")
+                continue
+            nid = world_tree.resolve_node_id(channel_id, loc, allow_token=False)
+            if nid:
+                loc = (world_tree.get_all_nodes(channel_id).get(nid) or {}).get("name", loc)
+            else:
+                world_tree.add_node(channel_id, loc, node_type="area",
+                                    parent_id=world_tree.infer_parent_by_prefix(channel_id, loc),
+                                    properties={"tags": ["ooc"]})
+            domain_manager.set_current_location(channel_id, loc)
+            _patch_last_frame_location(channel_id, loc)
+            out.append(f"위치: 지금 {loc}")
+            continue
+        if op not in ("npc_in", "npc_out"):
+            out.append(f"⚠ 위치: '{op or '?'}'은 못 해(pc·npc_in·npc_out)")
+            continue
+        raw = domain_manager._ooc_edit_npc_name(e)
+        key = _resolve(npm.get_npcs(channel_id) or {}, raw)
+        if not key or domain_manager.is_pc_name(key, pcm):
+            out.append(f"⚠ 위치: '{raw}' — 명부에 없는 이름이야")
+            continue
+        if op == "npc_out":
+            world_tree.remove_npc_presence(channel_id, key)
+            out.append(f"위치: {key} 이 장면에서 뺌")
+            continue
+        loc = str(e.get("value") or e.get("location") or "").strip()
+        if loc.lower() in _HERE:
+            loc = domain_manager.get_current_location(channel_id)
+        r = world_tree.set_npc_location(channel_id, key, loc)
+        if r == "location_not_found":
+            out.append(f"⚠ 위치: '{loc}'이라는 장소가 아직 없어")
+        else:
+            out.append(f"위치: {key} → {loc}")
+    return out
+
+
+# =========================================================
+# 시간 (time)
+# =========================================================
+def _slot_of(hour: int, fallback: str) -> str:
+    for slot, (start, end) in getattr(config, "TIME_SLOT_HOURS", {}).items():
+        if (start <= end and start <= hour <= end) or (start > end and (hour >= start or hour <= end)):
+            return slot
+    return fallback
+
+
+def set_clock(channel_id: str, *, slot: Any = None, hour: Any = None, minute: Any = None,
+              year: Any = None, month: Any = None, day: Any = None, weather: Any = None) -> str:
+    """시간대·시각·날짜·날씨를 한 번에. 범위는 `!시간 설정`과 같다. 되비침 한 줄(실패는 ⚠)."""
+    import game_world
+
+    def _i(v):
+        try:
+            return None if v is None or str(v).strip() == "" else int(float(v))
+        except (TypeError, ValueError):
+            return "bad"
+
+    h, mi, yy, mo, dd = _i(hour), _i(minute), _i(year), _i(month), _i(day)
+    if "bad" in (h, mi, yy, mo, dd):
+        return "⚠ 시간: 숫자가 아닌 값이 있어"
+    world = domain_manager.get_world_state(channel_id)
+    game_world._init_clock(world)
+    if h is not None and not (0 <= h <= 23):
+        return "⚠ 시간: 시는 0~23"
+    if mi is not None and not (0 <= mi <= 59):
+        return "⚠ 시간: 분은 0~59"
+    if mo is not None and not (1 <= mo <= config.CALENDAR_MONTHS_PER_YEAR):
+        return f"⚠ 시간: 월은 1~{config.CALENDAR_MONTHS_PER_YEAR}"
+    if dd is not None and not (1 <= dd <= config.CALENDAR_DAYS_PER_MONTH):
+        return f"⚠ 시간: 일은 1~{config.CALENDAR_DAYS_PER_MONTH}"
+    if yy is not None and yy < 1:
+        return "⚠ 시간: 년은 1 이상"
+    slot = str(slot or "").strip()
+    if slot and slot not in game_world.get_time_slots(channel_id):
+        return f"⚠ 시간: 시간대는 {', '.join(game_world.get_time_slots(channel_id))} 중 하나"
+    wx = str(weather or "").strip()
+    if not any(x is not None for x in (h, mi, yy, mo, dd)) and not slot and not wx:
+        return "⚠ 시간: 바꿀 값이 없어"
+    for k, v in (("year", yy), ("month", mo), ("day", dd), ("hour", h), ("minute", mi)):
+        if v is not None:
+            world[k] = v
+    if h is not None:
+        world["time_slot"] = _slot_of(h, world.get("time_slot", "오후"))
+    elif slot:
+        world["time_slot"] = slot
+    if wx:
+        world["weather"] = wx[:40]
+    domain_manager.update_world_state(channel_id, world)
+    return (f"시간: {game_world.format_calendar(world)} {int(world.get('hour', 12)):02d}:{int(world.get('minute', 0)):02d}"
+            f" ({world.get('time_slot', '')})" + (f" · 날씨 {world['weather']}" if wx else ""))
+
+
+def apply_time_edits(channel_id: str, edits: List[Dict[str, Any]]) -> List[str]:
+    out: List[str] = []
+    for e in edits or []:
+        if isinstance(e, dict):
+            out.append(set_clock(channel_id, slot=e.get("slot"), hour=e.get("hour"), minute=e.get("minute"),
+                                 year=e.get("year"), month=e.get("month"), day=e.get("day"),
+                                 weather=e.get("weather")))
+    return out
+
+
+# =========================================================
+# 지난 일 정정 (fact) — [2026-10-10 기록 정정]
+# =========================================================
+def apply_fact_edits(channel_id: str, edits: List[Dict[str, Any]]) -> List[str]:
+    """field="fact" → 정오표 한 줄(corrections) + 걸린 위키 페이지 Observed 정정(틀린 줄은 History 로 강등).
+    거두기 = action remove(행은 남고 비활성). 원문·발효·딥은 손대지 않는다 — 읽는 자리가 정정을 옆에 붙인다."""
+    import corrections
+    import wiki_store
+    out: List[str] = []
+    for e in edits or []:
+        if not isinstance(e, dict):
+            continue
+        act = str(e.get("action") or e.get("op") or "add").strip().lower()
+        text = str(e.get("value") or e.get("text") or "").strip()
+        if act in ("remove", "retract", "delete"):
+            n, why = corrections.retract(channel_id, text)
+            if n:
+                out.append(f"정정 거둠: {why[:60]} (위키에 넣은 정정 줄은 그대로)")
+            else:
+                out.append({"nomatch": f"⚠ 정정: '{text[:40]}'에 맞는 정정이 없어",
+                            "ambiguous": f"⚠ 정정: '{text[:40]}'에 맞는 정정이 여럿이라 못 골라",
+                            "empty": "⚠ 정정: 거둘 내용이 없어"}.get(why, "⚠ 정정: 거두지 못했어"))
+            continue
+        about = e.get("about")
+        if isinstance(about, str):
+            about = [about]
+        if not isinstance(about, list) or not about:
+            raw = domain_manager._ooc_edit_npc_name(e)
+            about = [raw] if raw else []
+        if not text:
+            out.append("⚠ 정정: 맞는 사실이 없어")
+            continue
+        row = corrections.add(channel_id, about, text, str(e.get("wrong") or ""))
+        if not row:
+            out.append("⚠ 정정: 무엇에 대한 정정인지(이름·낱말)가 없어")
+            continue
+        wiki_bits = []
+        for nm in row["about"]:
+            try:
+                pid = wiki_store.resolve_page(channel_id, nm)
+            except Exception:
+                pid = None
+            if not pid:
+                continue
+            r = wiki_store.correct_observed(channel_id, pid, row.get("wrong") or "", row["text"], turn=row.get("turn"))
+            if r.get("ok"):
+                wiki_bits.append(f"{nm} 위키" + (" (옛 줄 History로)" if r.get("demoted") else ""))
+                if r.get("status") == "ambiguous":
+                    wiki_bits[-1] += " ⚠옛 줄이 여럿이라 그대로 둠"
+        out.append(f"정정: T{row.get('turn')} {', '.join(row['about'])} — {row['text'][:60]}"
+                   + (f" · {' · '.join(wiki_bits)}" if wiki_bits else ""))
+    return out
+
+
+# =========================================================
+# 이야기 실 — 스레드 장부(약속·사안)·퀘스트 보드 — [2026-10-10 이야기 실 O-E]
+#   스펙: 파티쳇수정/state_v10/이야기실_지도·스펙_2026-10-10.md
+# =========================================================
+THREAD_OPS = ("open", "close", "pause", "resume", "reschedule", "progress", "void")
+# 편집 콜이 고르기 쉬운 다른 말 → op (outcome 이 따라붙는 것은 짝으로)
+_THREAD_ALIAS = {"add": ("open", None), "new": ("open", None), "create": ("open", None),
+                 "delete": ("void", None), "remove": ("void", None), "never": ("void", None),
+                 "complete": ("close", "done"), "done": ("close", "done"), "finish": ("close", "done"),
+                 "kept": ("close", "done"), "cancel": ("close", "dropped"), "drop": ("close", "dropped"),
+                 "break": ("close", "broken"), "broken": ("close", "broken"),
+                 "reopen": ("resume", None), "due": ("reschedule", None)}
+QUEST_OPS = ("add", "complete", "remove", "progress")
+_QUEST_ALIAS = {"open": "add", "new": "add", "create": "add", "done": "complete", "finish": "complete",
+                "close": "complete", "delete": "remove", "dismiss": "remove", "drop": "remove",
+                "advance": "progress"}
+
+
+def apply_thread_edits(channel_id: str, edits: List[Dict[str, Any]]) -> List[str]:
+    """field="thread" → thread_ledger.apply_ooc_events(인용 관문 없는 OOC 관문). op 를 action 칸에 적어도 읽는다."""
+    import thread_ledger
+    evs: List[Dict[str, Any]] = []
+    out: List[str] = []
+    for e in edits or []:
+        if not isinstance(e, dict):
+            continue
+        op = _op_of(e, THREAD_OPS + tuple(_THREAD_ALIAS))
+        ev = dict(e)
+        if op in _THREAD_ALIAS:
+            op, oc = _THREAD_ALIAS[op]
+            if oc and not ev.get("outcome"):
+                ev["outcome"] = oc
+        if op not in THREAD_OPS:
+            out.append(f"⚠ 이야기 실: 모르는 일 '{op or '?'}'")
+            continue
+        ev["op"] = op
+        if not ev.get("id") and ev.get("key") and not ev.get("title"):
+            ev["title"] = ev.get("key")
+        evs.append(ev)
+    if evs:
+        out += thread_ledger.apply_ooc_events(channel_id, _turn(channel_id), evs)
+    return out
+
+
+def apply_quest_edits(channel_id: str, edits: List[Dict[str, Any]]) -> List[str]:
+    """field="quest" → 퀘스트 보드. add(dismissed 풀기)·complete(장 볼륨 보상 포함 — 자동 완료와 같은 함수)·
+    remove(+dismissed: 자동 등록이 다시 못 올림)·progress(못 찾으면 ⚠ — 배경 경로처럼 자동 등록 안 함).
+    이름 찾기는 _find_quest(고유 일치만)."""
+    import game_character as gc
+    out: List[str] = []
+
+    def _say(r: Any) -> str:
+        r = str(r or "").strip()
+        if not r:
+            return "⚠ 퀘스트: 결과 없음"
+        if r.startswith(("⚠", "ℹ")):
+            return "⚠ 퀘스트: " + r.lstrip("⚠️ℹ️ ").replace("**", "")
+        return r
+    for e in edits or []:
+        if not isinstance(e, dict):
+            continue
+        op = _op_of(e, QUEST_OPS + tuple(_QUEST_ALIAS))
+        op = _QUEST_ALIAS.get(op, op)
+        name = str(e.get("value") or e.get("name") or e.get("content") or e.get("title") or e.get("key") or "").strip()
+        if op not in QUEST_OPS:
+            out.append(f"⚠ 퀘스트: 모르는 일 '{op or '?'}' — add·complete·remove·progress")
+            continue
+        if not name:
+            out.append("⚠ 퀘스트: 이름이 없어")
+            continue
+        if op == "add":
+            out.append(_say(gc.add_quest(channel_id, name, e.get("rank"), ooc=True)))
+        elif op == "complete":
+            out.append(_say(gc.complete_quest(channel_id, name)))
+        elif op == "remove":
+            tgt = gc._find_quest(gc.get_active_quests_raw(channel_id), name)
+            real = (tgt.get("content") if isinstance(tgt, dict) else tgt) if tgt else ""
+            r = gc.remove_quest(channel_id, name)
+            line = _say(r)
+            if real and not line.startswith("⚠"):
+                gc.dismiss_quest(channel_id, real)
+                line += " (다시 자동 등록 안 함)"
+            out.append(line)
+        else:
+            try:
+                delta = int(e.get("delta") if e.get("delta") is not None else 1)
+            except (TypeError, ValueError):
+                delta = 1
+            delta = max(-5, min(5, delta)) or 1
+            out.append(_say(gc.advance_quest_progress(channel_id, name, delta)))
+    return out
+
+
+# =========================================================
+# 편집 콜 현재 상태(콜 0)
+# =========================================================
+def world_state_for_edit(channel_id: str, ooc_text: str = "", knows_cap: int = 3) -> Dict[str, Any]:
+    """편집 콜 current_state 에 더할 것 — 지금 장소·시간·날씨, 장소 이름들, 본문에 나온 인물이 아는 것."""
+    import game_world
+    import npc_manager as npm
+    out: Dict[str, Any] = {}
+    try:
+        w = domain_manager.get_world_state(channel_id) or {}
+        game_world._init_clock(w)
+        out["world"] = {"location": domain_manager.get_current_location(channel_id),
+                        "time": f"{w.get('time_slot', '')} {int(w.get('hour', 12)):02d}:{int(w.get('minute', 0)):02d}",
+                        "date": game_world.format_calendar(w), "weather": w.get("weather", "")}
+    except Exception as _e_w:
+        logger.debug(f"[OOC] world 상태 skip: {_e_w}")
+    try:
+        import world_tree
+        out["places"] = [str(n.get("name")) for n in (world_tree.get_all_nodes(channel_id) or {}).values()
+                         if isinstance(n, dict) and n.get("name")][:30]
+    except Exception as _e_p:
+        logger.debug(f"[OOC] places skip: {_e_p}")
+    try:
+        txt = str(ooc_text or "")
+        kn_all = domain_manager.get_domain(channel_id).get("npc_knowledge") or {}
+        picked: Dict[str, List[str]] = {}
+        for name, data in (npm.get_npcs(channel_id) or {}).items():
+            if len(picked) >= knows_cap:
+                break
+            forms = [name, re.split(r'[(\[（]', name)[0].strip()] + [a for a in ((data or {}).get("aliases") or [])
+                                                                    if isinstance(a, str)]
+            if any(f and len(f) >= 2 and f in txt for f in forms):
+                ks = list(((kn_all.get(domain_manager._mind(channel_id, name)) or {}).get("knows") or []))[-20:]
+                if ks:
+                    picked[name] = ks
+        if picked:
+            out["npc_knows"] = picked
+    except Exception as _e_k:
+        logger.debug(f"[OOC] npc_knows skip: {_e_k}")
+    # [2026-10-10 이야기 실 O-E] 스레드(id 포함 — 루카 컨텍스트엔 제목만 있어 id 찾기는 편집 콜 몫)·퀘스트. 비면 안 싣는다.
+    try:
+        import thread_ledger
+        _th = thread_ledger.ooc_state(channel_id)
+        if _th:
+            out["threads"] = _th
+    except Exception as _e_th:
+        logger.debug(f"[OOC] threads skip: {_e_th}")
+    try:
+        import game_character
+        _qs = []
+        for q in game_character.get_active_quests_raw(channel_id) or []:
+            if isinstance(q, dict):
+                _qs.append({"content": q.get("content", ""), "rank": q.get("rank", "normal"),
+                            "progress": f"{q.get('progress', 0)}/{q.get('max_progress', 0)}"})
+            elif q:
+                _qs.append({"content": str(q)})
+        if _qs:
+            out["quests"] = _qs[:15]
+    except Exception as _e_q:
+        logger.debug(f"[OOC] quests skip: {_e_q}")
+    return out

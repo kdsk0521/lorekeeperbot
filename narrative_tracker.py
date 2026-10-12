@@ -120,7 +120,7 @@ def update_entity_states(
         # 변화 없으면 스킵
         has_change = any(
             changes.get(k) is not None
-            for k in ("location", "mood", "health", "notable")
+            for k in ("location", "mood", "health", "notable", "said")
         )
         if not has_change:
             continue
@@ -141,6 +141,9 @@ def update_entity_states(
             entry["mood"] = changes["mood"]
         if changes.get("health"):
             entry["health"] = changes["health"]
+        # [2026-10-10 M1″] 한 말 — 속마음 사실 줄(turn_mail `_after_it_lines`)만 읽는다. Slot 7·DEEP 은 안 읽는다.
+        if isinstance(changes.get("said"), str) and changes["said"].strip():
+            entry["said"] = changes["said"].strip()[:200]
 
         npc_log["recent_states"].append(entry)
         if len(npc_log["recent_states"]) > MAX_ENTITY_STATES:
@@ -393,7 +396,10 @@ async def _flash_summarize_storylines(state, storylines, recent_log, client, mod
 
     gen_config = types.GenerateContentConfig(
         temperature=0.2,
-        max_output_tokens=600,
+        # [2026-10-11 C27] 600 → 8192. 추론 켠 콜은 이 엔드포인트에서 추론이 출력 예산에 같이 들어간다 —
+        #   녹화 107판 중 파싱 실패 30·빈칸 6(추론 1.3k자 뒤 한국어 JSON이 중간에 끊김). 배경 콜이라 상한을 넉넉히.
+        #   근거 analysis_line/C21_분석샘플링_측정·스펙_2026-10-11 §4
+        max_output_tokens=8192,
         response_mime_type="application/json",
         safety_settings=_cfg.SAFETY_SETTINGS,
     )
@@ -671,6 +677,21 @@ def format_storylines_for_prompt(state: dict, current_turn: int = 0) -> str:
     return "\n".join(parts)
 
 
+_QUOTE_PAIRS = (('"', '"'), ("“", "”"), ("'", "'"), ("‘", "’"), ("「", "」"), ("『", "』"))
+
+
+def strip_quoted(s: str) -> str:
+    """[2026-10-10 M1″] 따옴표 안 대사를 '…'로 — Slot 7 Notable·발효 DEEP 으로 내보낼 때의 안전망.
+    notable 은 이제 한 일만 받지만(말은 said 칸) 모델이 대사를 섞어 오면 프로필 칸이 지난 대사를 되먹인다.
+    저장은 원문 그대로, 걷는 건 내보낼 때만."""
+    import re as _re
+    if not isinstance(s, str) or not s:
+        return s or ""
+    for a, b in _QUOTE_PAIRS:
+        s = _re.sub(_re.escape(a) + r"[^" + _re.escape(a + b) + r"\n]{1,200}" + _re.escape(b), a + "…" + b, s)
+    return s
+
+
 def format_entity_state_for_prompt(state: dict, npc_name: str) -> str:
     """NPC 상태 이력을 프롬프트용 텍스트로 변환. Slot 7 NPC 프로필에 추가."""
     _logs = state.get("entity_state_log", {}) or {}
@@ -706,7 +727,7 @@ def format_entity_state_for_prompt(state: dict, npc_name: str) -> str:
         for c in critical:
             # [2026-10-06 어휘 O6] "Critical" → "Notable" — 판정 등급 "Critical success/failure"와 한 렌더에 겹쳤다.
             #   이 기록의 조건 = 건강 변화·위치 이동·changes.notable(위 감지부) — 원천 필드 이름과 같은 말.
-            parts.append(f"  Notable(T{c.get('turn', '?')}): {(c.get('description') or '')[:80]}")
+            parts.append(f"  Notable(T{c.get('turn', '?')}): {strip_quoted(c.get('description') or '')[:80]}")
 
     return "\n".join(parts)
 
@@ -938,8 +959,10 @@ def check_promote_threshold(
 
     # 같은 카테고리 누적 카운트
     recent_count = sum(1 for c in (recent_categories or []) if c == cat)
+    # [2026-10-10 큐 이어짐] 같은 실의 걸음은 큐 항목 하나에 steps로 합쳐진다 — 항목 수 대신 걸음 수로 센다
+    #   (합치기 전 중복 항목들이 주던 증거와 같다).
     queue_count = sum(
-        1 for e in (event_queue or [])
+        max(1, int(e.get("steps", 1) or 1)) for e in (event_queue or [])
         if isinstance(e, dict) and e.get("category") == cat
     )
     total = recent_count + queue_count + 1  # +1 for candidate

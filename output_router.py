@@ -70,13 +70,14 @@ ROUTER_SYSTEM_INSTRUCTION = (
     "You return one JSON object and nothing else."
 )
 
+# [2026-10-11 청소 C11-C] "The four kinds"(다섯을 나열) → five, 출력 꼴 kind enum에 directive(KINDS 와 같게).
 ROUTER_PROMPT = """\
 You are a ROUTER for a TRPG bot's output registry.
 The player wrote preparation notes (a text file) describing what their game should track and show.
 Your job is to CUT that text into closed items and say WHERE each one belongs.
 Do not interpret, summarize, improve, or invent. Sorting is the whole job.
 
-## The four kinds — pick exactly one per item
+## The five kinds — pick exactly one per item
 
 - value      A number the CODE owns and updates. gauge (bounded meter) / counter (tally) /
              enum (named stages) / list (named items each holding a count).
@@ -94,7 +95,7 @@ Do not interpret, summarize, improve, or invent. Sorting is the whole job.
 ## Output — one JSON object, nothing else
 
 {"items": [ {
-  "kind": "value|narrative|format|transition",
+  "kind": "value|narrative|format|transition|directive",
   "name": "짧은 한국어 이름 (필수 — 이름이 없으면 그 항목은 버려진다)",
   "surface": "header|panel|mail|notebook",
   "scope": "global|pc|npc|user",

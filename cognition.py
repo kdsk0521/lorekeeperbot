@@ -518,7 +518,7 @@ async def _extract_batch(
             "as KnownName(otherform) e.g. 레나(Rena) so it resolves to one entity."
             "\nOutput: `{\"changes\": {NpcName: {\"location\": str or null, \"mood\": str or null, "
             "\"health\": str or null, \"incapacitated\": {\"value\": bool, \"evidence\": str} or null, "
-            "\"notable\": str or null, \"descriptor\": str or null, "
+            "\"notable\": str or null, \"said\": str or null, \"descriptor\": str or null, "
             "\"new_individual\": bool, \"named_as\": str or null, "
             "\"name_kind\": \"name\"|\"label\", \"refers_to\": str or null, "
             "\"alias_kind\": \"stable\"|\"scene\" or null}}, \"pc_observed\": str or null}`"
@@ -538,7 +538,11 @@ async def _extract_batch(
             "— those belong in `health`. Quote, do not paraphrase; evidence must be a fragment that "
             "is actually in the rendered text. No fragment means no entry. null in every other case, "
             "which is nearly every turn."
-            "\n- notable: One-line notable state change (Korean). null if nothing remarkable."
+            # [2026-10-10 말 칸 나누기 M1″] notable = 한 일(Slot 7·발효 DEEP 으로 간다), said = 한 말(속마음 사실 줄만).
+            #   한 칸에 말이 따옴표째 실리면 렌더가 지난 대사를 Slot 7 에서 다시 받아 되풀이했다(M1 측정 1/8).
+            #   측정: notable 따옴표 0/12, said 포착 7/12. 스펙 analysis_line/말칸나누기_측정·구현보고_2026-10-10.md
+            "\n- notable: One line (Korean): what this NPC did this turn; their words go in said. null if nothing remarkable."
+            "\n- said: One line (Korean): what this NPC said aloud this turn, in quotes. null if they said nothing."
             "\n- descriptor: Korean 1-2 sentences of NEW identity detail about this NPC revealed THIS turn "
             "— role, appearance, manner, a defining trait or skill. Emit whenever something new about WHO "
             "THEY ARE surfaces (their first appearance OR a later turn that reveals more), so an emergent "
@@ -703,14 +707,16 @@ async def _extract_batch(
 #   소비부가 한 줄에 붙어 있다(값→큐→연산→노트북→status). 배치의 관측 섹션과 한 콜에
 #   묶여 있으면 배치가 죽는 순간 출력물도 통째로 증발했다(한 try). 콜 수는 ±0 —
 #   전담 +1, B-1(_extract_physical) -1.
-OUTPUTS_MAX_OUTPUT_TOKENS = 4096
+# [2026-10-11 C27b] 4096 → 8192 — 녹화에서 추론 14k자 판이 상한 턱밑이었다. 상한 통일.
+OUTPUTS_MAX_OUTPUT_TOKENS = 8192
 
 # [2026-09-09 P12] 8번째 키 `entries` — 이름 붙은 append 섹션에 쌓을 한 줄들.
 #   콜 ±0: 스키마에 키 하나가 늘 뿐이고 블록은 append 섹션이 **있을 때만** 붙는다.
 _OUTPUTS_KEYS = ("deltas", "memo_add", "memo_remove",
                  "status_add", "status_remove", "cues", "operations", "entries")
 # 옛 이름 → 새 이름. 섹션 넷이 한 스키마로 합쳐지면서 모델이 옛 키로 흘리는 경우를 접는다.
-_OUTPUTS_ALIASES = {"custom_var_deltas": "deltas", "transition_cues": "cues"}
+_OUTPUTS_ALIASES = {"custom_var_deltas": "deltas", "transition_cues": "cues",
+                    "custom_vars": "deltas"}   # [2026-10-11 C28] 섹션 이름으로 감싼 판(재생 1/18) 관용
 _OUTPUTS_ROW_KEYS = ("deltas", "cues", "operations", "entries")
 
 
@@ -802,12 +808,14 @@ async def extract_outputs(
         #   ★한 섹션·한 배열을 유지한다 — 소비부(apply_deltas)가 타입으로 분기하므로
         #     프롬프트에 배열을 늘리면 합류점만 늘고 얻는 게 없다.
         _cv_lines = []
-        _has_enum = _has_list = _has_npc = False
+        _has_enum = _has_list = _has_npc = _has_text = _has_gauge = False
         for _v in custom_vars_feed:
             if not isinstance(_v, dict):
                 continue
             _t = str(_v.get("type", "gauge"))
             _scope = str(_v.get("scope", "global"))
+            if _t == "gauge":
+                _has_gauge = True       # [2026-10-11 C28] 게이지 = 말(shift)
             _head = f"- {_v.get('name')} ({_t}, {_scope})"
             if _t == "enum":
                 _has_enum = True
@@ -822,6 +830,12 @@ async def extract_outputs(
                 _items = _v.get("items") or []
                 _head += (f" {_v.get('item_mode', 'stock')} entries {_ir[0]}~{_ir[1]}"
                           f" | now: {', '.join(str(i) for i in _items) if _items else '(empty)'}")
+            # [2026-10-11 청소 C11-B2] text 는 수치 꼴(`0~0`)로 실렸고 신고 모양도 delta 하나뿐이라
+            #   `_apply_text`(value·text·to 를 읽음)에 닿는 신고가 없었다 → 지금 글과 길이 상한을 싣는다.
+            elif _t == "text":
+                _has_text = True
+                _mc = _v.get("max_chars")
+                _head += (f" up to {_mc} chars" if _mc else "") + f" | now: \"{_v.get('current', '')}\""
             else:
                 _rng = _v.get("range") or [0, 0]
                 _head += f" {_rng[0]}~{_rng[1]}"
@@ -842,9 +856,23 @@ async def extract_outputs(
             "\nThese are the session's variables, built in or declared by the player. Each carries its own rule "
             "for when it moves; that rule is the only authority on this variable.",
             "\n- name: copy the declared name exactly. A variable not on the list below does not exist.",
-            "\n- delta: the CHANGE this exchange caused, signed (-12, +3). You do not hold the current "
-            "total and are not asked for it — the code holds it and adds your delta. A number that reads "
-            "like a total is the wrong answer.",
+            # [2026-10-11 C28] 게이지가 실린 판: delta 줄 범위를 좁히고 shift 줄을 붙인다(재생 측정 문안 그대로).
+            #   LLM은 숫자 델타를 모른다(09-16 메모) — 말로 받고 폭은 코드. rule 글에 적힌 수만 숫자로.
+            #   근거 output_artifact/C28_게이지델타말로_지도·스펙_2026-10-11.md
+            ("\n- delta (counters and list entries; a gauge only when its rule names the amount): the CHANGE "
+             "this exchange caused, signed (-12, +3). You do not hold the current "
+             "total and are not asked for it — the code holds it and adds your delta. A number that reads "
+             "like a total is the wrong answer."
+             "\n- shift (variables listed as `gauge`): these move in words, and the code turns the word into a "
+             "number. Their rows go in `deltas` too, as `{\"name\", \"shift\", \"evidence\"}` with shift one of "
+             "down_slight, down, down_heavy, "
+             "up_slight, up, up_heavy: how far this exchange moved it, with down and up as the ordinary step. "
+             "When the variable's rule names the amount for what happened, send that number as `delta` instead "
+             "of `shift`. When the rule names an amount added on top (\"2 more\"), send `shift` with `extra`: "
+             "that number, signed.") if _has_gauge else
+            ("\n- delta: the CHANGE this exchange caused, signed (-12, +3). You do not hold the current "
+             "total and are not asked for it — the code holds it and adds your delta. A number that reads "
+             "like a total is the wrong answer."),
             "\n- evidence: the fragment of this turn's text that shows the move. Quote, do not paraphrase. "
             "No fragment means no entry.",
         ]
@@ -874,6 +902,12 @@ async def extract_outputs(
                 "entry's number moved. Use the entry name already listed under `now:` when it exists; a "
                 "new name creates a new entry, so spell an existing one exactly. An entry reaching its "
                 "target does not move anywhere on its own — that is the story's business, not yours."
+            )
+        if _has_text:
+            _cv_block.append(
+                "\n- value (variables listed as `text`): `{\"name\", \"value\": str, \"evidence\"}`. "
+                "These hold words, not numbers, so send `value`, not `delta`: the variable's whole new text "
+                "as this exchange left it, within its char limit."
             )
         if _has_npc:
             _cv_block.append(
@@ -1222,10 +1256,15 @@ IMPORTANT: All string descriptions and guides must be in KOREAN.
      - tags: 2 to 3 free-form material tags (Korean), concrete nouns the renderer can reach for
      - defense_hint: one Korean line naming where this could grow or how it could ease, whichever fits. A direction, not a scripted outcome. (Legacy field name; read it as a neutral ripple or resolution direction, not 'defense against a threat'.)
      - Example (mundane lore: a shabby tea house where the neighborhood elders gather every morning): {{"name": "사흘째 비어 있는 구석 자리", "axis": "schedule", "tags": ["단골", "빈자리"], "defense_hint": "누가 그 자리 주인의 안부를 물으면 이야기가 열린다"}}
-   - locations: List of key locations with name, description, danger level (Korean)
+   - locations: List of key locations with name, description, danger level (Korean), and where each sits:
+     - type: region (a city, district, forest, wide zone), area (a building, street, market, site), or room (a room, floor, small enclosed space)
+     - parent: the name of the location that contains this one, written exactly as it appears in this list; "" for a top-level location
+     - connections: names (exactly as in this list) of locations one can walk straight to from here, besides parent and children; [] if none stated
+     - List containers before what they contain (a district before the clinic inside it).
    - rules: Key world rules — magic systems, physical laws, economy, combat rules (List of Korean strings, max 10. Each rule should be a concise actionable statement)
    - factions: Major groups/organizations with name, description, stance/goal (Korean)
    - key_events: Major historical events that characters would know about (List of Korean strings, max 5)
+   - mind_transfer: true only if this world lets one person's mind, soul or personality drive another person's body, or lets someone take hold of another's mind (possession, hypnosis, mind control, soul or personality transfer). Otherwise false.
 5. world_constraints: World rules extracted from lore (Korean)
    - systems: Magic/technology/power systems described in the lore (2-4 sentences, be specific about limitations and costs)
    - social: Social hierarchy, taboos, cultural norms (2-4 sentences)
@@ -1255,10 +1294,11 @@ IMPORTANT: All string descriptions and guides must be in KOREAN.
   "lore_summary": {{
     "theme": "...",
     "anomaly_seeds": [{{"name": "작은 사건 이름", "axis": "mental|relation|complication|information|position|schedule", "tags": ["소재1", "소재2"], "defense_hint": "번질 수 있는 방향 또는 풀릴 방향 (한국어)"}}],
-    "locations": [{{"name": "장소명", "desc": "설명", "danger": "low/mid/high"}}],
+    "locations": [{{"name": "장소명", "desc": "설명", "danger": "low/mid/high", "type": "region|area|room", "parent": "품은 장소명 또는 \"\"", "connections": ["이웃 장소명"]}}],
     "rules": ["규칙1: 구체적 설명", "규칙2: 구체적 설명"],
     "factions": [{{"name": "세력명", "desc": "설명", "stance": "목표/입장"}}],
-    "key_events": ["핵심 사건 1", "핵심 사건 2"]
+    "key_events": ["핵심 사건 1", "핵심 사건 2"],
+    "mind_transfer": false
   }},
   "world_constraints": {{
     "systems": "마법/기술 체계 상세 설명 (제약과 비용 포함)",
@@ -1277,7 +1317,8 @@ IMPORTANT: All string descriptions and guides must be in KOREAN.
             # [2026-09-02] 상한을 **다시 명시한다.** 구 주석("제한 해제 — 모델 기본값 사용")은
             #   Gemini 기준의 의도였고, OpenAI 호환 라우트에서는 미지정 = max_tokens 미전송 =
             #   **제공자 기본값**(4k대)이라 대형 로어북이 오히려 잘렸다. 값은 config에서 조정.
-            max_output_tokens=getattr(config, "ANALYSIS_MAX_OUTPUT_TOKENS_HEAVY", 8192),
+            # [2026-10-09] 로어 분석 전용 상한(config.LORE_ANALYSIS_MAX_OUTPUT_TOKENS) — 프리즘 54K 로어북이 heavy 8192에서 잘렸다.
+            max_output_tokens=getattr(config, "LORE_ANALYSIS_MAX_OUTPUT_TOKENS", 32768),
         )
         contents = [
             types.Content(
@@ -1546,7 +1587,8 @@ async def extract_voice_card(
             safety_settings=config.SAFETY_SETTINGS,
             # 추론(heavy) 켜진 콜 — thinking 토큰이 별도로 소비되므로 답(content) 몫까지
             # 넉넉히. 250으로 조이면 thinking이 다 먹고 content가 비어 "candidates 없음"이 뜸.
-            max_output_tokens=2048,
+            # [2026-10-11 C27b] 2048 → 8192. 추론 켠 분석 콜은 추론이 출력 예산에 같이 든다 — 상한 통일(레티어스 "나머지도 다 올리자").
+            max_output_tokens=8192,
         )
         contents = [
             types.Content(role="user", parts=[types.Part(text=system_prompt)]),
@@ -1637,7 +1679,8 @@ async def extract_schedule(
             safety_settings=config.SAFETY_SETTINGS,
             # [2026-09-03] 상한을 **명시**한다. 로어 분석에서 겪은 병: 추론이 출력 예산을 먹어
             #   content가 비고 "candidates 없음"이 뜬다. light 티어(추론 최소) + 명시 상한이 처방.
-            max_output_tokens=1024,
+            # [2026-10-11 C27b] 1024 → 8192. 추론 켠 분석 콜은 추론이 출력 예산에 같이 든다 — 상한 통일(레티어스 "나머지도 다 올리자").
+            max_output_tokens=8192,
         )
         contents = [
             types.Content(role="user", parts=[types.Part(text=system_prompt)]),

@@ -3,6 +3,7 @@ Lorekeeper - Universal Narrative Engine (UNE) Facade
 The main entry point for the UNE engine.
 """
 
+import json
 import logging
 import random
 from typing import Dict, Any, List, Tuple
@@ -128,21 +129,11 @@ _ENERGY_NOTATION = {
     "detonation": "scene | ♪ sfz, presto, sforzando | ▶ wide, montage, cut | ◎ spotlight",
     "aftershock": "scene | ♪ p, adagio, staccato | ▶ long-take, back-to-back, fade | ◎ background",
 }
-_VIGOR_NOTATION = {
-    "high":       "body | ♪ f, allegro, legato | ▶ wide, parallel | ◎ midground",
-    "strained":   "body | ♪ p, adagio, marcato | ▶ close-up:muscle, height-gap | ◎ foreground",
-    "collapsing": "body | ♪ pp, largo, staccato | ▶ close-up:breath, back-to-back | ◎ spotlight",
-}
-_COMPOSURE_NOTATION = {
-    "high":       "psyche | ♪ mf, andante, legato | ▶ two-shot, parallel, match-cut | ◎ midground",
-    "strained":   "psyche | ♪ p, adagio, staccato | ▶ close-up:gaze, height-gap | ◎ foreground",
-    "collapsing": "psyche | ♪ pp, largo, sforzando | ▶ high-angle, back-to-back | ◎ spotlight",
-}
-_MIXED_NOTATION = {
-    "desperate": "body+psyche | ♪ pp, largo, staccato | ▶ high-angle, back-to-back | ◎ spotlight",
-    "reckless":  "action | ♪ f, presto, sforzando | ▶ wide, jump-cut | ◎ foreground",
-    "fragile":   "consciousness | ♪ p, adagio, legato | ▶ close-up:eyes, pillow | ◎ background",
-}
+# [2026-10-12 C23] 활력·평형 단계 표 셋은 iceberg로 옮겼다 — PC(여기, Slot 30)와 NPC 인물 블록
+#   (iceberg.translate_psyche_states, Slot 14)이 같은 표를 읽는다. strained·collapsing 머리에 상태 낱말
+#   (body:compensating/giving, psyche:holding/giving)이 붙었다. 이름은 그대로 다시 내보낸다 —
+#   아래 _build_atmosphere_layer 분기와 tests/test_notation_ab가 이 이름을 읽는다.
+from iceberg import _VIGOR_NOTATION, _COMPOSURE_NOTATION, _MIXED_NOTATION  # noqa: E402
 # _DOOM_NOTATION 제거 (2026-07-06 감사): 형제(_COMPOSURE/_MIXED)와 달리 소비자 0 —
 # 둠→챕터볼륨 리브랜드로 world-layer doom 연출 분기가 사라진 잔재. doom 무드는
 # doom_module lens×phase atmosphere가 담당.
@@ -224,19 +215,23 @@ def _build_events_layer(context, bus) -> str:
             if _fired_line and str(_desc or "").strip() == _fired_line:
                 continue                      # 이번 턴 발화한 그 이변 — world event 줄이 싣는다
             if _desc:
-                parts.append(
-                    f"current situation: {_desc} — "
-                    "it shapes the environment, NPC behavior, and the available actions."
-                )
+                # [2026-10-09 SD개편 J1] 꼬리 처방("it shapes the environment, NPC behavior, and the available
+                #   actions")을 뺐다 — 서 있는 상황이 풀릴 때까지 매 턴(26%) 실리며 렌더가 매 턴 다시 그리게 했다.
+                #   이어짐(비·정전)은 상태 한 줄로 지킨다.
+                parts.append(f"current situation: {_desc}")
 
     # Omen → tag stripped
     _omen = anomaly.get("omen")
     if isinstance(_omen, dict) and _omen.get("tag"):
         _omen_line = _omen.get("line", "")
         if _omen_line:
+            # [2026-10-09 전조 문구] 전조와 발화가 같은 문장(큐 line)이라 전조 턴과 발화 턴에 같은 그림이 두 번 그려졌다
+            #   (수처시티 붉은 점 T4·T5). 전조는 다른 결로 앞서 보이고, 사건 제 그림은 발화 턴 몫. 1차 문안("arrives as a sign
+            #   ahead of it")은 렌더가 전조를 계획에서 통째로 뺐다(2/2) → '이번 턴 장면에 싣는다'를 머리에.
             parts.append(
                 f"omen: {_omen_line} — "
-                "hinted only through sensory detail; the event itself stays unfired."
+                "this turn carries a sign of it in the scene: another sense, a smaller trace, a side effect; "
+                "its own image waits for the turn it fires."
             )
 
     # Condition resolved → text only
@@ -1225,6 +1220,22 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
     except Exception as _e_recall:
         logger.debug(f"[Evidence] T1 recall skip: {_e_recall}")
 
+    # [2026-10-10 기록 정정] Theoria·Mira 가 읽는 옛 기록(최근 원문·회상 원행·세션 메모리)에 걸린 정정 한 블록(R4·R5).
+    #   걸린 게 없으면 키를 안 넣는다(프롬프트 바이트 그대로).
+    try:
+        import corrections as _corr_an
+        _sm_an = anchors.get("session_memory") or {}
+        _corr_txt = "\n".join([
+            history_text or "", user_input or "",
+            json.dumps(anchors.get("recall_evidence") or {}, ensure_ascii=False),
+            json.dumps({k: _sm_an.get(k) for k in ("npc_summaries", "world_changes", "residual_effects")},
+                       ensure_ascii=False)])
+        _corr_blk_an = _corr_an.block_for(channel_id, _corr_txt, english_head=True)
+        if _corr_blk_an:
+            anchors["corrections_block"] = _corr_blk_an
+    except Exception as _e_corr_an:
+        logger.debug(f"[정정] anchors skip: {_e_corr_an}")
+
     # [2026-07-15 수리] theoria가 읽는데 아무도 안 쓰던 앵커 2종 (dead_scan B: anchors READ-ONLY).
     # 07-04 entity_state / 07-15 arc 와 같은 병 — .get(k, default)라 조용히 default를 먹었다.
     #
@@ -1524,107 +1535,8 @@ class UniversalNarrativeEngine:
             "system_message": result["system_msg"]
         }
 
-    def _evaluate_npc_autonomy(self, bus, context) -> str:
-        """Evaluate NPC autonomous behavior triggers and store results in bus.
-
-        Merges Helena metrics (depth/tension) from domain storage into DAI attitudes,
-        runs NPCAutonomousEngine trigger evaluation, and returns the directive string.
-        """
-        if not (bus.dai and bus.dai.get("psyche_states")):
-            return ""
-
-        from npc_autonomous import NPCAutonomousEngine
-
-        # Helena metrics(depth/tension) merge: domain 영속 데이터 → DAI attitudes
-        _dai_att = bus.dai.get("npc_attitudes") or {}  # [07-27] 명시 null 방어
-        _stored_att = (context.narrative_anchors or {}).get("stored_npc_attitudes", {})
-        _merged_att = {}
-        for _n, _a in _dai_att.items():
-            _m = dict(_a) if isinstance(_a, dict) else {}
-            # DAI 이름 → 저장 키 해상도 (e.g. "이하윤" → "Lee Ha-yoon(이하윤)")
-            # [2026-09-24 감사] 공용 해상도(_find_npc_key: 정규화→base/inner→aliases→충돌가드 토큰)로 —
-            #   부분문자열 첫 일치("Rin" ⊂ "Karin")가 다른 NPC 의 저장 depth/tension 을 끌어와
-            #   info_gap/secret_pressure 등 자율 트리거가 오발했다.
-            _resolved = _n if _n in _stored_att else None
-            if _resolved is None:
-                try:
-                    _resolved = domain_manager._find_npc_key(_stored_att, _n) or _n
-                except Exception:
-                    _resolved = _n
-            _s = _stored_att.get(_resolved, {})
-            if isinstance(_s, dict):
-                _m.setdefault("depth", _s.get("depth", 0))
-                _m.setdefault("tension", _s.get("tension", 0))
-            _merged_att[_n] = _m
-
-        # N6: Gather static traits for desistance gate enrichment
-        import npc_manager as _npc_mgr
-        _cd_channel = (context.narrative_anchors or {}).get("channel_id", "")
-        _static_traits_map = {}
-        if _cd_channel:
-            for _npc_name in bus.dai.get("psyche_states", {}):
-                _st = _npc_mgr.get_npc_static_traits(_cd_channel, _npc_name)
-                if _st:
-                    _static_traits_map[_npc_name] = _st
-
-        triggers = NPCAutonomousEngine.evaluate_triggers(
-            psyche_states=bus.dai.get("psyche_states", {}),
-            npc_knowledge=bus.dai.get("npc_knowledge", {}),
-            npc_attitudes=_merged_att,
-            scene_type=bus.dai.get("scene_type", "normal"),
-            static_traits_map=_static_traits_map,
-        )
-
-        # M2: Filter out triggers for NPCs on decision cooldown
-        # [2026-06-10 Fix] + 미등록 이름(PC 등) 트리거 제외 — DAI psyche에 PC가 섞여 들어와
-        # PC 이름으로 자율 지시문/쿨다운이 생성되던 경로 차단 (Contract-First: 미등록 NPC엔 트리거 X).
-        # 부수효과: 매 턴 찍히던 [DecisionCooldown] not found 경고 소거. 신규 NPC는 이번 턴
-        # 후처리에서 자동 등록되므로 다음 턴부터 정상 평가됨 (1턴 지연은 의도적 보수).
-        if _cd_channel and triggers:
-            _filtered = []
-            for t in triggers:
-                if _npc_mgr.get_npc(_cd_channel, t.npc_name) is None:
-                    logger.debug(f"[NPC Autonomy] '{t.npc_name}' 미등록(PC 추정) — trigger '{t.trigger_id}' 제외")
-                    continue
-                # [2026-07-28] 쿨다운은 **중대 결정(priority>=4)에만** 적용한다.
-                # 구 코드는 우선순위를 안 보고 그 NPC의 **모든 트리거**를 막아서,
-                # 한 번 중대 결정이 나면 이후 2~3턴간 emotional_contagion(1)·agenda_manifest(2)
-                # 같은 사소한 반응까지 전부 차단 = "결정 페이싱"이 아니라 "자율성 정지"였다.
-                # (쿨다운을 거는 쪽도 priority>=4 기준이므로 대칭이 맞다 — 아래 set_decision_cooldown.)
-                cd = _npc_mgr.check_decision_cooldown(_cd_channel, t.npc_name)
-                if cd > 0 and t.priority >= 4:
-                    logger.debug(f"[NPC Autonomy] {t.npc_name} trigger '{t.trigger_id}' suppressed — cooldown {cd} turns remaining")
-                else:
-                    _filtered.append(t)
-            triggers = _filtered
-
-        # [V10 적립] autonomy_log — 자율 트리거 발동 기록(npc/trigger/priority/directive).
-        # 대사·관계 압력의 출처. dai_logs는 이 시점 이전에 써져서 안 잡힘 → 전용 적립. 실패 무해.
-        if _cd_channel and triggers:
-            try:
-                import sqlite_store as _sq_auto
-                _auto_turn = int(_to_float((bus.dai or {}).get("turn_index", 0), 0))
-                _sq_auto.append_autonomy_log(_cd_channel, _auto_turn, [
-                    {"npc_name": t.npc_name, "trigger_id": t.trigger_id,
-                     "priority": t.priority, "directive": t.directive}
-                    for t in triggers
-                ])
-            except Exception as _e_autolog:
-                logger.debug(f"[AutonomyLog] skip: {_e_autolog}")
-
-        auto_directive = NPCAutonomousEngine.build_autonomous_directive(triggers)
-        # iceberg per-NPC depth 계산용 구조 데이터 저장
-        if triggers:
-            bus.dai["autonomous_triggers"] = [
-                {"npc_name": t.npc_name, "trigger_id": t.trigger_id, "priority": t.priority}
-                for t in triggers
-            ]
-            # M2: 고우선순위 트리거(중대 결정) 발동 시 쿨다운 설정
-            if _cd_channel:
-                for t in triggers:
-                    if t.priority >= 4:
-                        _npc_mgr.set_decision_cooldown(_cd_channel, t.npc_name, turns=3)
-        return auto_directive or ""
+    # [2026-10-10 던지는판 B1] _evaluate_npc_autonomy 은퇴 → npc_autonomous.evaluate_for_turn(waterfall, 서사 콜 앞).
+    #   렌더 지시층("[NPC Autonomous Behavior]")을 더 만들지 않는다 — 결과는 Mira 추출 다이제스트의 pull로 간다.
 
     def _extract_pc_result_v3(self, context, mask: str) -> Dict[str, Any]:
         """Build directive-layer v3: World -> Events -> Judgment -> Atmosphere."""
@@ -1653,10 +1565,7 @@ class UniversalNarrativeEngine:
         if aspects_layer:
             layers.append(aspects_layer)
 
-        # Preserve autonomous NPC behavior directive after core v3 layers.
-        auto_directive = self._evaluate_npc_autonomy(bus, context)
-        if auto_directive:
-            layers.append(auto_directive)
+        # [2026-10-10 던지는판 B3] NPC 자율 렌더 지시층 은퇴 — '무엇'의 주인은 Mira(응답·hook). 자율은 Mira 재료(pull)로 간다.
 
         return {
             "directive": "\n\n".join(part for part in layers if part).strip(),

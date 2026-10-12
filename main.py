@@ -612,6 +612,14 @@ async def generate_ooc_response(
     # [2026-09-14 W3a] 위키 play 절 — [기록 발췌] 뒤 · [최근 히스토리] 앞.
     system_prompt += _luka_wiki_block(channel_id, message.content)
     system_prompt += f"\n[최근 히스토리]\n{history_text}\n\n[로어 요약]\n{lore_text[:2000]}"
+    # [2026-10-10 기록 정정] 루카가 읽은 옛 기록(서사 진행·회상·위키·원문)에 걸린 정정(R8). 표지 계약보다 앞(계약이 맨 끝).
+    try:
+        import corrections as _corr_lk
+        _cb_lk = _corr_lk.block_for(channel_id, system_prompt + "\n" + (message.content or ""))
+        if _cb_lk:
+            system_prompt += "\n\n" + _cb_lk
+    except Exception:
+        pass
     # [2026-09-26 O1] 판정은 이미 도는 루카 콜이 겸한다 — 표지 계약은 맨 끝(최근접).
     if route in ("ooc", "mode"):
         system_prompt += "\n\n" + text_resources.LUKA_ROUTE_CONTRACT
@@ -635,7 +643,8 @@ async def generate_ooc_response(
             config=types.GenerateContentConfig(
                 system_instruction=f"{text_resources.ANALYSIS_FRAME}\n\n{system_prompt}",
                 temperature=0.7,
-                max_output_tokens=2000,
+                # [2026-10-11 C27b] 2000 → 8192. 추론 켠 분석 콜은 추론이 출력 예산에 같이 든다 — 상한 통일(레티어스 "나머지도 다 올리자").
+                max_output_tokens=8192,
                 safety_settings=config.SAFETY_SETTINGS,
             )
         )

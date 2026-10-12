@@ -895,30 +895,82 @@ def import_locations_from_lore(
         ...
     ]
 
+    [2026-10-12 C30] 로어 분석이 부모·종류·이웃을 뽑기 시작했다(전엔 이름·설명·위험뿐 → 전부 루트).
+      ① **순서 무관** — 부모가 아직 없는 장소는 미뤘다가 다시 돈다(진전이 없을 때까지). 전엔 자식이 먼저
+         나오면 add_node가 `invalid_parent`로 그 장소를 **버렸다**.
+      ② 끝까지 부모를 못 찾으면 루트로 만들고 로그만 남긴다(버리지 않는다).
+      ③ 이미 있는 노드(`exists`)가 **루트**이고 로어가 부모를 주면 부모를 붙인다 — 평평하게 들어간 옛 판 승격.
+         다른 부모가 이미 있는 노드(플레이 중 붙은 것)는 건드리지 않는다. 순환은 update_node가 거부한다.
+      부모 해상은 정확·별칭만(allow_token=False — resolve_node_id 독스트링의 "구조 변경 경로" 규율).
+      스펙 memory_lore/C30_분위기절·장소트리_스펙_2026-10-12 §3.
+
     Returns: number of nodes created.
     """
-    count = 0
-    for loc in locations:
-        if not isinstance(loc, dict):
-            continue
-        name = (loc.get("name") or "").strip()
-        if not name:
-            continue
-
-        node_type = loc.get("type", "area")
-        parent = loc.get("parent", "")
-        description = loc.get("description", "")
-        properties = {}
+    def _props(loc: Dict[str, Any]) -> Dict[str, Any]:
+        properties: Dict[str, Any] = {}
         if loc.get("risk"):
             properties["risk"] = loc["risk"]
         if loc.get("atmosphere"):
             properties["atmosphere"] = loc["atmosphere"]
         if loc.get("tags"):
             properties["tags"] = loc["tags"] if isinstance(loc["tags"], list) else [loc["tags"]]
+        return properties
 
-        result = add_node(channel_id, name, node_type, parent, properties, description)
+    items = []
+    for loc in locations or []:
+        if not isinstance(loc, dict):
+            continue
+        name = (loc.get("name") or "").strip()
+        if not name:
+            continue
+        parent = str(loc.get("parent") or "").strip()
+        if parent and _make_node_id(parent) == _make_node_id(name):
+            parent = ""                      # 자기 자신을 부모로 — 루트로 읽는다
+        items.append((name, loc, parent))
+
+    count = 0
+    pending = items
+    while pending:
+        progressed = False
+        waiting = []
+        for name, loc, parent in pending:
+            pid = ""
+            if parent:
+                pid = resolve_node_id(channel_id, parent, allow_token=False) or ""
+                if not pid:
+                    waiting.append((name, loc, parent))      # 부모가 아직 없다 — 다음 바퀴
+                    continue
+            result = add_node(channel_id, name, loc.get("type", "area"), pid, _props(loc),
+                              loc.get("description", ""))
+            if result == "created":
+                count += 1
+                progressed = True
+            elif result == "exists":
+                progressed = True
+                if pid:
+                    nid = resolve_node_id(channel_id, name, allow_token=False)
+                    node = (get_all_nodes(channel_id) or {}).get(nid) if nid else None
+                    if isinstance(node, dict) and not node.get("parent_id") and nid != pid:
+                        ur = update_node(channel_id, str(node.get("name") or name), parent_id=pid)
+                        logger.info("[WorldTree] lore reparent '%s' → '%s' (%s)", name, parent, ur)
+            elif result == "capped":
+                progressed = True
+                logger.warning("[WorldTree] lore location '%s' skipped — node cap %d", name, MAX_NODES)
+            else:
+                waiting.append((name, loc, parent))
+        if not progressed:
+            break
+        pending = waiting
+    else:
+        pending = []
+
+    for name, loc, parent in pending:
+        result = add_node(channel_id, name, loc.get("type", "area"), "", _props(loc),
+                          loc.get("description", ""))
         if result == "created":
             count += 1
+        logger.warning("[WorldTree] lore parent '%s' not found for '%s' — placed at root (%s)",
+                       parent, name, result)
 
     # Process connections if provided
     for loc in locations:

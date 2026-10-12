@@ -1383,6 +1383,180 @@ def decide_entity(npcs: Dict[str, Any], key: str, entry: Dict[str, Any],
             "scene_label": None, "why": "name"}
 
 
+
+# =========================================================
+# [2026-10-10 별칭 A6] RP상 정정 병합 — 장면이 "이 사람이 저 사람"이라 말하면 합친다.
+#   신호 둘(로스터 패스가 루프 안에서 모은다):
+#     R1 named_as  — 이미 있는 라벨 인물에게 B1이 이름을 댔는데 그 이름이 명부의 다른 인물.
+#     R2 refers_to — 무대 인물을 가리키는 라벨이 다른 인물의 자기 키 꼴(별칭으로만 걸린 묘사는 신호 아님).
+#   R1은 그 턴에 바로 — 이름이 밝혀지는 건 한 번뿐이다(named_as = 이번 턴 얻은 이름, 다음 턴 B1은 그냥 본체 키로 적는다).
+#   R2는 두 턴 확인 — 같은 믿음이면 그 라벨이 무대에 있는 한 매 턴 다시 온다.
+#   근거: 파티쳇수정/npc/별칭A6_RP정정병합_스펙_2026-10-10.md
+# =========================================================
+MERGE_PENDING_KEY = "npc_merge_pending"     # world_state 칸 {쌍: {dup, canon, turn, via}}
+_MERGE_NOW = ("named_as",)                  # 한 턴에 합치는 신호
+_PAIR_SEP = " → "
+
+
+def is_own_label(label: Any, key: Any) -> bool:
+    """라벨이 그 인물의 **자기 키 꼴**인가 — 키 그대로·괄호 앞·표식 뗀 것. 별칭으로만 걸린 묘사는 아니다."""
+    lb = _norm_label(domain_manager._normalize_npc_name(str(label or "")))
+    k = domain_manager._normalize_npc_name(str(key or ""))
+    if not lb or not k:
+        return False
+    forms = {_norm_label(k), _norm_label(re.split(r'[(\[（]', k)[0])}
+    m = domain_manager._TAG_TAIL_RE.search(k)
+    if m:
+        forms.add(_norm_label(k[:m.start()]))
+    return lb in forms
+
+
+def merge_identity(channel_id: str, dup_key: str, canon_key: str, *, via: str = "", turn: int = 0) -> Tuple[bool, str]:
+    """dup → canon 병합. 본체·별칭·관계·지식·부수·자리는 `merge_npc`가 옮긴다.
+    여기선 dup 에게 자리가 있었으면 canon 을 그 자리로 옮긴다 — 정정이 일어난 장면에 그 사람이 있다.
+    canon 의 identity_history 에 흔적을 남긴다(되돌리기 명령은 없다)."""
+    _loc = None
+    try:
+        import world_tree as _wt_mi
+        _loc = _wt_mi.get_npc_location(channel_id, dup_key)
+    except Exception:
+        _wt_mi = None
+    ok, msg = domain_manager.merge_npc(channel_id, dup_key, canon_key)
+    if not ok:
+        return False, msg
+    if _loc and _wt_mi is not None:
+        try:
+            if _wt_mi.get_npc_location(channel_id, canon_key) != _loc:
+                _wt_mi.set_npc_location(channel_id, canon_key, _loc)
+        except Exception as _e_loc:
+            logger.debug(f"[Identity] 정정 병합 자리 옮김 건너뜀: {_e_loc}")
+    try:
+        _cur = get_npc(channel_id, canon_key)
+        if isinstance(_cur, dict):
+            _new = dict(_cur)
+            _hist = [h for h in (_new.get("identity_history") or []) if isinstance(h, dict)]
+            _hist.append({"merged_from": dup_key, "turn": int(turn or 0), "via": via,
+                          "at": time.strftime('%Y-%m-%d %H:%M')})
+            _new["identity_history"] = _hist
+            update_npc(channel_id, canon_key, _new)
+    except Exception as _e_h:
+        logger.debug(f"[Identity] 정정 병합 이력 건너뜀: {_e_h}")
+    return True, msg
+
+
+def settle_identity_merges(channel_id: str, signals: list, resolved: list, turn_idx: int,
+                           pc_masks: Any = ()) -> Dict[str, list]:
+    """로스터 패스 루프 뒤 한 번. signals=[(dup, canon, via, 항목번호)], resolved=[(항목번호, 이번 턴 최종 키)].
+    가드: 둘 다 명부에 있고 다르다 / PC 아님 / dup 은 봇이 만든 인물(시트·로어는 흡수 안 함) /
+          한 dup 이 한 턴에 두 사람을 가리키면 보류 / 신호 항목 말고 다른 항목이 이번 턴 canon 으로 풀렸으면
+          두 사람(합치지 않고 대기도 지움).
+    대기 쌍: 두 키가 같은 턴 다른 항목으로 따로 나오면 지움. 한쪽이 명부에서 사라지면 지움.
+    돌려줌: {"merged": [(dup, canon, via)], "pending": [쌍], "held": [쌍 (이유)], "dropped": [쌍 (이유)]}"""
+    out = {"merged": [], "pending": [], "held": [], "dropped": []}
+    _pcm = pc_masks if isinstance(pc_masks, dict) else {str(x) for x in (pc_masks or ())}
+    turn = int(turn_idx or 0)
+    npcs = get_npcs(channel_id) or {}
+
+    def _key(n):
+        n = str(n or "").strip()
+        return domain_manager._find_npc_key(npcs, n) if n else None
+
+    by_key: Dict[str, set] = {}
+    for _i, _k in (resolved or []):
+        by_key.setdefault(_key(_k) or str(_k), set()).add(_i)
+
+    try:
+        _ws = domain_manager.get_world_state(channel_id) or {}
+    except Exception:
+        _ws = {}
+    pend = {p: v for p, v in dict(_ws.get(MERGE_PENDING_KEY) or {}).items() if isinstance(v, dict)}
+    changed = False
+
+    sigs = []
+    for _s in (signals or []):
+        try:
+            _dup, _canon, _via, _idx = _s
+        except Exception:
+            continue
+        sigs.append((_key(_dup), _key(_canon), str(_via or ""), _idx, str(_dup), str(_canon)))
+    targets: Dict[str, set] = {}
+    for _dk, _ck, *_r in sigs:
+        if _dk and _ck:
+            targets.setdefault(_dk, set()).add(_ck)
+
+    gone = set()
+    for _dk, _ck, _via, _idx, _dup, _canon in sigs:
+        pair = f"{_dk or _dup}{_PAIR_SEP}{_ck or _canon}"
+        if not _dk or not _ck or _dk == _ck:
+            out["held"].append(f"{pair} (명부에 없음·같은 키)")
+            continue
+        if _dk in gone or _ck in gone:
+            continue
+        if domain_manager.is_pc_name(_dk, _pcm) or domain_manager.is_pc_name(_ck, _pcm):
+            out["held"].append(f"{pair} (PC)")
+            continue
+        if npc_source(npcs.get(_dk) or {}, channel_id, _dk) in FROZEN_SOURCES:
+            out["held"].append(f"{pair} (시트·로어 인물은 흡수 안 함)")
+            continue
+        if len(targets.get(_dk, ())) > 1:
+            out["held"].append(f"{pair} (한 턴에 두 사람을 가리킴)")
+            continue
+        if by_key.get(_ck, set()) - {_idx}:
+            if pend.pop(pair, None) is not None:
+                changed = True
+            out["dropped"].append(f"{pair} (같은 턴 따로 등장)")
+            continue
+        prev = pend.get(pair)
+        _ripe = isinstance(prev, dict) and int(prev.get("turn", turn) or 0) < turn
+        if _via in _MERGE_NOW or _ripe:
+            ok, msg = merge_identity(channel_id, _dk, _ck, via=_via, turn=turn)
+            if ok:
+                out["merged"].append((_dk, _ck, _via))
+                gone.add(_dk)
+                for _p in [p for p, v in pend.items() if _dk in (v.get("dup"), v.get("canon"))]:
+                    pend.pop(_p, None)
+                changed = True
+                npcs = get_npcs(channel_id) or {}
+                logger.info(f"[Identity] 정정 병합: {_dk} → {_ck} ({_via})")
+            else:
+                out["held"].append(f"{pair} ({msg})")
+        elif prev is None:
+            pend[pair] = {"dup": _dk, "canon": _ck, "turn": turn, "via": _via}
+            changed = True
+            out["pending"].append(pair)
+            logger.info(f"[Identity] 정정 병합 대기(1/2): {pair} ({_via})")
+        # 같은 턴 두 번째 신호 — 대기 그대로
+
+    # 대기 쌍 청소 — 한쪽이 사라졌거나, 이번 턴 두 키가 다른 항목으로 따로 나왔다
+    for _p, _v in list(pend.items()):
+        _d0, _c0 = _v.get("dup"), _v.get("canon")
+        if not _d0 or not _c0 or _d0 not in npcs or _c0 not in npcs:
+            pend.pop(_p, None)
+            changed = True
+            out["dropped"].append(f"{_p} (한쪽이 명부에 없음)")
+            continue
+        _ia, _ib = by_key.get(_d0, set()), by_key.get(_c0, set())
+        if any(x != y for x in _ia for y in _ib):
+            pend.pop(_p, None)
+            changed = True
+            out["dropped"].append(f"{_p} (같은 턴 따로 등장)")
+
+    for _h in out["held"] + out["dropped"]:
+        logger.info(f"[Identity] 정정 병합 안 함: {_h}")
+    if changed:
+        # 병합(merge_npc)이 도메인을 따로 저장했으므로 world_state 는 새로 읽고 이 칸만 쓴다
+        try:
+            _ws2 = domain_manager.get_world_state(channel_id) or {}
+            if pend:
+                _ws2[MERGE_PENDING_KEY] = pend
+            else:
+                _ws2.pop(MERGE_PENDING_KEY, None)
+            domain_manager.update_world_state(channel_id, _ws2)
+        except Exception as _e_ws:
+            logger.warning(f"[Identity] 정정 병합 대기 저장 실패: {_e_ws}")
+    return out
+
+
 def get_scene_npc_names(channel_id: str) -> List[str]:
     """⚠ 이름과 달리 **'장면 인물'이 아니다** — 로어가 아닌 **전체** 등록 NPC 목록이다.
     (등장 여부와 무관. 이름이 오해를 불러 실제로 2곳에서 오용됐다 — 2026-07-28 수리.)
@@ -2203,10 +2377,24 @@ def get_npc_renderer_profiles(channel_id: str, names: list, scene_type: str = "n
     리터럴로 프롬에 새지 않게. 미지정 시 {{user}}는 보존(정보 손실 방지), {{char}}는 항상 치환."""
     npcs = get_npcs(channel_id)
     parts = []
+    try:
+        import vessel as _vs
+        _vrows = _vs.rows(channel_id)
+    except Exception:
+        _vs, _vrows = None, {}
     for name in names:
         key = domain_manager._find_npc_key(npcs, name) or name
         raw = npcs.get(key)
         if not raw:
+            continue
+        # [2026-10-12 C32 몸·인격] 다른 마음이 모는 몸(합성)·아무도 안 모는 몸(빈 몸)은 따로 짓는다.
+        #   표가 비면 이 갈래는 안 탄다(종전 바이트 그대로).
+        _vrow = _vrows.get(key) if _vrows else None
+        if isinstance(_vrow, dict) and "driver" in _vrow:
+            _vtxt = _vessel_profile(channel_id, key, str(_vrow.get("driver") or ""),
+                                    str(_vrow.get("note") or ""), user_mask)
+            if _vtxt:
+                parts.append(_vtxt)
             continue
         data = get_npc_context_for_renderer(channel_id, key)
         if not data:
@@ -2274,8 +2462,74 @@ def get_npc_renderer_profiles(channel_id: str, names: list, scene_type: str = "n
             profile_text = profile_text.replace("{{char}}", name).replace("{{Char}}", name)
             if user_mask:
                 profile_text = profile_text.replace("{{user}}", user_mask).replace("{{User}}", user_mask)
+        # [2026-10-12 C32] 몸 주인은 그대로인데 덧씌운 것(최면 등) — 프로필 밑에 한 줄씩.
+        if _vrow and _vs is not None:
+            _ovl = _vs.overlay_lines(channel_id, key)
+            if _ovl:
+                profile_text += "\n" + "\n".join(_ovl)
         parts.append(profile_text)
     return "\n\n".join(parts)
+
+
+def _vessel_profile(channel_id: str, body: str, mind: str, note: str = "", user_mask: str = "") -> str:
+    """[2026-10-12 C32 몸·인격] 다른 마음이 모는 몸 / 빈 몸의 렌더 프로필.
+
+    몸(외형·옷·몸 제한)은 몸 시트 Identity 절과 몸 메타에서, 나머지(성격·목소리·기억·관계·기술)는 모는 마음의
+    시트 통째에서. 절을 코드로 쪼개지 않는다 — 몸 쪽은 Identity 절 하나, 마음 쪽은 시트 통째(09-28 한 덩어리와 무충돌).
+    남들은 여전히 이 몸을 몸 이름으로 본다(모델 쪽 이름은 몸 이름 그대로)."""
+    try:
+        import vessel as _vs
+        bdata = get_npc_context_for_renderer(channel_id, body) or {}
+        meta = []
+        if bdata.get("role"):
+            meta.append(f"역할: {bdata['role']}")
+        _cur_loc = get_npc_current_location(channel_id, body, bdata)
+        if _cur_loc:
+            meta.append(f"위치: {_cur_loc}")
+        if bdata.get("appearance"):
+            meta.append(f"외형: {bdata['appearance']}")
+        lines = [f"### {body}"]
+        if meta:
+            lines.append(f"**[{' | '.join(meta)}]**")
+        _bsecs = npc_lore_sections(channel_id, body) or {}
+        _bid = strip_hidden_markers(str(_bsecs.get("Identity") or "")).strip()
+        if not mind:
+            lines.append(f"[No one drives this body: {body}'s own mind is not in it; it moves only as a vacant body does."
+                         + (f" — {note}" if note else "") + "]")
+            if _bid:
+                lines.append(f"#### {body} — Identity (body)\n{_bid}")
+        else:
+            lines.append(f"[Body: {body} — physical facts, attire and bodily limits come from {body}'s Identity below. "
+                         f"Driving this body: {mind} — personality, voice, memories, relationships and skills come from "
+                         f"{mind}'s sheet below. Others still see and call this body {body}."
+                         + (f" — {note}" if note else "") + "]")
+            if _bid:
+                lines.append(f"#### {body} — Identity (body)\n{_bid}")
+            mdata = get_npc_context_for_renderer(channel_id, mind) or {}
+            mmeta = []
+            if mdata.get("personality"):
+                mmeta.append(f"성격: {mdata['personality']}")
+            if mdata.get("tone") or mdata.get("speech"):
+                mmeta.append(f"말투: {mdata.get('tone') or mdata.get('speech')}")
+            mdesc = _select_lore_sections(npc_lore_sections(channel_id, mind), demote_background=True)
+            block = f"#### {mind} — sheet (mind)"
+            if mmeta:
+                block += f"\n**[{' | '.join(mmeta)}]**"
+            if mdesc:
+                block += f"\n{mdesc}"
+            if "{{" in block:
+                block = block.replace("{{char}}", mind).replace("{{Char}}", mind)
+            lines.append(block)
+        lines.extend(_vs.overlay_lines(channel_id, body))
+        txt = "\n".join(lines)
+        if "{{" in txt:
+            txt = txt.replace("{{char}}", body).replace("{{Char}}", body)
+            if user_mask:
+                txt = txt.replace("{{user}}", user_mask).replace("{{User}}", user_mask)
+        return txt
+    except Exception as e:
+        logger.warning(f"[Vessel] 합성 프로필 실패 {body}←{mind}: {e}")
+        return ""
 
 
 def get_npc_names_only(channel_id: str, exclude: list, include_provisional: bool = False) -> str:

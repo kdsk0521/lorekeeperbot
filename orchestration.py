@@ -1216,7 +1216,9 @@ class OrchestrationService:
         _pc_input = str(getattr(ctx, "action_text", "") or "")
         _receipt = {"onstage": list(_onstage_now), "labels": [], "registered": [],
                     "alias_promoted": [], "tag_issued": [], "scene_index": 0}
-        for _npc_name, _ch in (_changes.items() if isinstance(_changes, dict) else []):
+        # [2026-10-10 별칭 A6] RP상 정정 — 신호는 루프 안에서 모으고, 판정·병합은 루프 뒤 한 번.
+        _merge_sig, _turn_resolved = [], []   # [(dup, canon, via, 항목번호)], [(항목번호, 최종 키)]
+        for _ent_i, (_npc_name, _ch) in enumerate(_changes.items() if isinstance(_changes, dict) else []):
             if not isinstance(_ch, dict):
                 continue
             # --- 판정: 이 호칭이 누구인가 / 인물이 될 자격이 있는가 ---
@@ -1254,6 +1256,15 @@ class OrchestrationService:
             if _dec["action"] == "refers":
                 logger.info(f"[Identity] 묘사 → 무대 인물: {_npc_name} → {_dec['key']}")
                 if _dec.get("alias"):
+                    # [2026-10-10 별칭 A6 R2] 라벨이 다른 인물의 자기 키 꼴 = 장면이 "그 사람이 이 사람"이라 했다.
+                    #   별칭 승격은 아래에서 충돌로 막히고, 병합 신호만 모은다(두 턴 확인은 루프 뒤).
+                    try:
+                        _own_al = domain_manager._find_npc_key(_npcs_now, _dec["alias"][0])
+                        if (_own_al and _own_al != _dec["key"]
+                                and npc_manager.is_own_label(_dec["alias"][0], _own_al)):
+                            _merge_sig.append((_own_al, _dec["key"], "refers_to", _ent_i))
+                    except Exception as _e_r2:
+                        logger.debug(f"[Identity] 정정 신호(R2) 건너뜀: {_e_r2}")
                     self._promote_alias(channel_id, _dec["key"], _dec["alias"][0], _npcs_now, _receipt)
                 # ⚠ 장소 표지는 **지우지 않는다** — 이 호칭이 그 사람을 가리켰다는 사실이 다음 턴
                 #   같은 장소에서 판정 없이 붙는 재료다(표지를 지우면 매 턴 다시 판정).
@@ -1294,7 +1305,10 @@ class OrchestrationService:
                             and _src_np
                             and npc_manager.npc_source(_src_np) != "lore"):
                         if npc_manager.get_npc(channel_id, _new_nm):
-                            logger.info(f"[NPC Naming] skip: '{_new_nm}' 기존 엔티티 (!npc 병합 후보)")
+                            # [2026-10-10 별칭 A6 R1] 이 인물에게 이미 있는 이름이 붙었다 = RP상 정정. 개명 대신 병합 신호 —
+                            #   합치는 건 루프 뒤(같은 턴 따로 등장했는지는 항목 전부를 봐야 안다).
+                            _merge_sig.append((_npc_name, _new_nm, "named_as", _ent_i))
+                            logger.info(f"[NPC Naming] '{_npc_name}' = 기존 '{_new_nm}' — 정정 병합 신호")
                         else:
                             npc_manager.handle_identity_reveal(
                                 channel_id, _npc_name, _new_nm,
@@ -1303,6 +1317,7 @@ class OrchestrationService:
                             _npc_name = _new_nm  # 이후 관찰은 새 이름으로
                 except Exception as _e_nm:
                     logger.debug(f"[NPC Naming] skip: {_e_nm}")
+            _turn_resolved.append((_ent_i, _npc_name))   # [A6] 이번 턴 이 항목의 최종 키(같은 턴 따로 등장 판정)
             # [2026-08-11 사망 파이프라인] dead면 이 엔트리 전체를 버린다(스텁 생성·관찰·몹 태그 전부).
             if npc_manager.get_npc_status(
                     npc_manager.get_npc(channel_id, _npc_name) or {}) == "dead":
@@ -1366,6 +1381,38 @@ class OrchestrationService:
                     sorted(_seen.items(), key=lambda kv: (-kv[1], kv[0]))[:8])
                 npc_manager.update_npc(channel_id, _npc_name, _merged)
             _grow.append((_npc_name, _desc))
+        # [2026-10-10 별칭 A6] RP상 정정 병합 — 루프 뒤 한 번(같은 턴 따로 등장은 항목 전부를 봐야 안다).
+        #   합쳐진 이름은 이번 턴 관찰·쓰러짐 목록에서도 본체로 바꾼다 — 안 바꾸면 사라진 키에 다시 써서 또 갈라진다.
+        if _merge_sig or _turn_resolved:
+            try:
+                _mr = npc_manager.settle_identity_merges(
+                    channel_id, _merge_sig, _turn_resolved, int(turn_idx or 0), _pc_masks)
+            except Exception as _e_mg:
+                _mr = {}
+                logger.warning(f"[Identity] 정정 병합 판정 실패: {_e_mg}")
+            _remap = {_d: _c for _d, _c, _v in (_mr.get("merged") or [])}
+            if _remap:
+                def _final(_n):
+                    _seen_f = set()
+                    while _n in _remap and _n not in _seen_f:
+                        _seen_f.add(_n)
+                        _n = _remap[_n]
+                    return _n
+                _g2 = {}
+                for _gn, _gd in _grow:
+                    _gn = _final(_gn)
+                    if _gn in _g2:
+                        if _gd and _gd not in _g2[_gn]:
+                            _g2[_gn] = f"{_g2[_gn]} / {_gd}"
+                    else:
+                        _g2[_gn] = _gd
+                _grow = list(_g2.items())
+                _pending_down = [(_final(_dn), _dev) for _dn, _dev in _pending_down]
+            for _rk, _mk in (("merged", "merged"), ("pending", "merge_pending"),
+                             ("held", "merge_held"), ("dropped", "merge_dropped")):
+                if _mr.get(_rk):
+                    _receipt[_mk] = [f"{_x[0]} → {_x[1]} ({_x[2]})" if isinstance(_x, tuple) else _x
+                                     for _x in _mr[_rk]]
         # [2026-09-18 식별 허브 S6] 턴 영수증 — 화면이 조용한 만큼 뒤에서 보이는 창 하나.
         try:
             import sqlite_store as _sq_id
@@ -1833,10 +1880,14 @@ class OrchestrationService:
                     mem_updates["npc_summaries"] = existing_schedules
                 if wsu.get("current_arc"):
                     mem_updates["current_arc"] = wsu["current_arc"]
-                if wsu.get("basic_needs_flags") and isinstance(wsu["basic_needs_flags"], dict):
-                    mem_updates["basic_needs_flags"] = wsu["basic_needs_flags"]
-                if wsu.get("residual_effects") and isinstance(wsu["residual_effects"], str):
-                    mem_updates["residual_effects"] = wsu["residual_effects"]
+                # [2026-10-11 C26 P4] 몸 상태·성공의 부작용은 **이번 턴 판독**이다 — 키가 오면 매 턴 쓴다(빈 값·null = 지움).
+                #   전엔 값이 참일 때만 덮어서 빈 값 턴(녹화: 부작용 빈 문자열 78%, 몸 {} 55%)에 옛 값이 4c에 계속 실렸다.
+                #   추출 콜은 지금 플래그를 못 보므로 서 있는 상태를 쥘 수 없다 — 오래 가는 손상의 추적은 활력·평형 몫(레티어스).
+                #   근거 memory_lore/C26_P4낡은값_스펙_2026-10-11
+                if "basic_needs_flags" in wsu and (wsu["basic_needs_flags"] is None or isinstance(wsu["basic_needs_flags"], dict)):
+                    mem_updates["basic_needs_flags"] = wsu["basic_needs_flags"] or {}
+                if "residual_effects" in wsu and (wsu["residual_effects"] is None or isinstance(wsu["residual_effects"], str)):
+                    mem_updates["residual_effects"] = (wsu["residual_effects"] or "").strip()
                 # [2026-08-16 상태창 코드 조립] 시간 전진 — 구 status line 파싱의 후계.
                 #   session memory가 아니라 world_state로 가므로 mem_updates 밖에서 처리한다.
                 if wsu.get("scene_minutes_elapsed"):

@@ -260,6 +260,52 @@ def clean_json_text(text: str) -> str:
 
 def repair_json(text: str) -> str:
     """Flash 모델의 불완전/비표준 JSON을 수리합니다."""
+    # 중첩 정의 — 스모크(smoke_json_repair·smoke_ferment_json_guard)가 repair_json 노드만 떼어 exec하므로 자족이어야 한다.
+    def _fix_bracket_mismatch(text: str) -> str:
+        """[2026-10-07 분석 안쪽 E1] 괄호 짝 수리 — 따옴표 밖 `{`/`[`를 스택으로 따라가며 어긋난 닫기를 고친다.
+        실측(vI_1005 Theoria): `"Effect": {"value": 0.5, "reason": "…"],` — 객체를 `]`로 닫아 repair_json 전 단계로도
+        안 풀리고 재시도까지 깨지면 DAI 전체가 빈다. 규칙: 맨 위와 짝 → 그대로 / 그 아래와 짝 → 빠진 닫기 하나 보충 /
+        둘 다 아님 → 종류 틀림, 맨 위 짝으로 교체 / 스택 빔 → 남는 닫기 버림. 정상 JSON에는 no-op."""
+        pairs = {"}": "{", "]": "["}
+        closer = {"{": "}", "[": "]"}
+        out = []
+        stack = []
+        in_str = False
+        esc = False
+        for ch in text:
+            if in_str:
+                out.append(ch)
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+                out.append(ch)
+                continue
+            if ch in "{[":
+                stack.append(ch)
+                out.append(ch)
+                continue
+            if ch in "}]":
+                if not stack:
+                    continue
+                if stack[-1] == pairs[ch]:
+                    stack.pop()
+                    out.append(ch)
+                    continue
+                if len(stack) >= 2 and stack[-2] == pairs[ch]:
+                    out.append(closer[stack.pop()])
+                    stack.pop()
+                    out.append(ch)
+                    continue
+                out.append(closer[stack.pop()])
+                continue
+            out.append(ch)
+        return "".join(out)
     import re
     # 1) 제어문자 제거
     text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
@@ -301,6 +347,9 @@ def repair_json(text: str) -> str:
     quote_count = text.count('"') - text.count('\\"')
     if quote_count % 2 == 1:
         text = text.rstrip() + '"'
+    # 7.5) [2026-10-07 E1] 괄호 짝 수리 — 닫는 괄호 종류가 틀리거나 하나 빠진 꼴(객체를 `]`로 닫음 등).
+    #   아래 7)의 개수 셈은 짝이 어긋난 채로는 끝에 괄호만 붙여 계속 깨진다 — 짝부터 맞춘다.
+    text = _fix_bracket_mismatch(text)
     # 7) 잘린 응답 닫기: 열린 {/[ 부족분 보충
     text = text.rstrip().rstrip(',')
     open_b = text.count('{') - text.count('}')

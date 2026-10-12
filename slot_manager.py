@@ -1003,16 +1003,9 @@ def _prepend_quest_directive(obj_ctx: str) -> str:
 
 def _content_level_for(ctx) -> str:
     """[2026-10-02] 수위 블록 상시 켬(레티어스 "동시 사용, 기본이 항상 켜짐") → 항상 gore_nsfw.
-    채널 `!장면` 설정은 렌더 수위에 더 이상 쓰이지 않는다(아래 옛 경로는 참조용으로 남김).
-    [2026-09-24 감사] Slot 22 수위 = 채널 `!장면` 설정. 값이 수위 enum 이 아니면 normal."""
+    [2026-10-11 청소 C6] return 뒤 닿지 않던 옛 경로(채널 `!장면` 설정 → get_mature_mode)를 걷었다. `!장면`은 안내만 한다.
+    (이력: 09-24 감사 때는 Slot 22 수위 = 채널 `!장면` 설정이었다.)"""
     return "gore_nsfw"
-    try:
-        import domain_manager
-        _ch = getattr(ctx, 'channel_id', '') or (getattr(ctx, 'narrative_anchors', None) or {}).get('channel_id', '')
-        _lv = domain_manager.get_mature_mode(_ch) if _ch else "normal"
-        return _lv if _lv in getattr(domain_manager, "VALID_MATURE_MODES", {"normal", "gore", "nsfw", "gore_nsfw"}) else "normal"
-    except Exception:
-        return "normal"
 
 
 def _build_chapter_with_storylines(chapter_ctx: str, channel_id: str) -> str:
@@ -1284,6 +1277,7 @@ def build_34_step_prompt(ctx) -> str:
         logger.info(f"[NPC Smart Load] Full: {relevant_npcs}, Others: name-only")
 
         # Sprint 3: NPC 상태 이력 추가 (NarrativeTracker)
+        _corr_state_text = ""   # [2026-10-10 기록 정정] 상태 이력(옛 궤적)도 정정 대조 본문에 넣는다(R12)
         try:
             import narrative_tracker as _nt
             import domain_manager as _dm
@@ -1295,6 +1289,7 @@ def build_34_step_prompt(ctx) -> str:
                     state_parts.append(f"[{npc_name} State History]\n{state_text}")
             if state_parts:
                 npc_roles += "\n\n" + "\n".join(state_parts)
+                _corr_state_text = "\n".join(state_parts)
         except Exception as e:
             logger.debug("[Slot 7] NarrativeTracker entity state injection failed: %s", e)
 
@@ -1452,6 +1447,17 @@ def build_34_step_prompt(ctx) -> str:
             _chronicle_unresolved = _chronicles[-1].get("unresolved", "")
     if _chronicle_unresolved:
         fermented_history = f"[chronicle hook] {_chronicle_unresolved}\n\n{fermented_history}"
+
+    # [2026-10-10 기록 정정] 렌더가 읽는 옛 기록(Slot 9 딥·발효, 최근 원문, Slot 7 상태 이력)에 걸린 정정을 Slot 9 끝에 한 번(R1·R2·R12).
+    #   걸린 정정이 없으면 "" — Slot 9 바이트 그대로. 위키 T3 는 Observed 자체에 정정 줄이 들어가 있다.
+    try:
+        import corrections as _corr_s9
+        _corr_blk = _corr_s9.block_for(channel_id, "\n".join(
+            [fermented_history or "", str(getattr(ctx, "hist_text", "") or ""), _corr_state_text]))
+        if _corr_blk:
+            fermented_history = (f"{fermented_history}\n\n{_corr_blk}" if fermented_history else _corr_blk)
+    except Exception as _e_corr:
+        logger.debug(f"[Slot 9] 정정 블록 skip: {_e_corr}")
 
     # --- [Slot 13] Turn Brief (2026-07-22 Phase 3-b: 필드 나열 → 문장 브리핑) ---
     # 종전 원문 직행 1위(Original/Enhanced/Plausibility/Momentum/LogicTrace 필드명 + 화살표 추론 체인).
@@ -1938,10 +1944,19 @@ def build_34_step_prompt(ctx) -> str:
             extended_intelligence = _dialogue_dir
 
     # --- [Slot 14] Psyche States (iceberg 번역) ---
+    # [2026-10-12 C23] NPC 활력·평형 단계 표기 재료 — 저장된 값을 Theoria 이름에 맞춰 넘긴다(iceberg는 읽지 않는다).
+    _vc_values = {}
+    if channel_id and isinstance(psyche_data, dict) and psyche_data:
+        try:
+            import custom_vars as _cv_vc
+            _vc_values = _cv_vc.npc_vc_values(channel_id, list(psyche_data.keys()))
+        except Exception as _e_vc:
+            logger.debug(f"[Slot 14] NPC 활력·평형 표기 skip: {_e_vc}")
     psyche_states = iceberg.translate_psyche_states(
         psyche_data, scene_type, energy_dir_raw,
         npc_depths=npc_depths,
         foreground=_foreground,
+        vc_values=_vc_values or None,
     )
 
     # [2026-10-06 이중주입 H1] NPC attitude direction — Psyche_States에 그대로 실린 서술은 빼고 맨 앞에 둔다.
@@ -2208,6 +2223,7 @@ def build_34_step_prompt(ctx) -> str:
         # [2026-09-24 감사] 수위 = `!장면` 설정(settings.scene_type, get_mature_mode) — 전엔 Theoria SceneType
         #   (normal/combat/social/summary/intimate)을 넣어 VISCERAL/MATURE/HYBRID 가 한 번도 주입 안 됐고,
         #   combat·social·intimate 턴마다 "Mature content is authorized" 선언만 들어갔다(`!장면` 무효).
+        #   [2026-10-11 청소 C6] 10-02부터 늘 gore_nsfw — `!장면`은 안내만 한다.
         content_level=_content_level_for(ctx),
         last_response=last_response,
         narrative_chain=narrative_chain,
@@ -2275,35 +2291,9 @@ def build_34_step_prompt(ctx) -> str:
     # [2026-09-29 배치2 2a-8] 에너지 첫 줄 복사 삭제 — 첫 줄이 머리줄("### Energy Pacing")이라 매 턴
     #   빈 머리줄만 실렸다(22/22). Light 줄은 Slot 16 Energy Pacing에 이미 있다.
 
-    # Next Beat (SD-Ba4, 2026-04-22) — StoryDirector beat queue의 활성 비트 주입
-    # 5W1H 바로 앞, 최근접 주의(Recency) 위치에 배치.
-    try:
-        _nb = (dai.get("story_direction", {}) or {}).get("next_beat") if isinstance(dai, dict) else None
-        # [2026-08-28 세계 전진 소유권 이전] persona 꼬리에서 "The world keeps moving: …" 목록 4종을
-        #   **삭제**했다(이중 투입 — 코드가 여기서 사건을 하나 지정하는데 산문에게 또 만들라고 시켰다).
-        #   그러므로 이 자리가 **유일 공급원**이고, 비면 그 턴엔 세계 전진 지시가 통째로 사라진다.
-        #   ★"선언=집행"([[project-plugin-simcore]]): 지시문에서 뺐으면 코드가 보증해야 한다.
-        #   폴백 문안은 story_director.ambient_beat() 단일 진실원천(비트 큐 폴백과 같은 것).
-        _nb_text = iceberg.translate_next_beat(_nb if isinstance(_nb, str) else "")
-        # [2026-09-29 배치2 2a-1 · B안] 이변 발화 턴은 비트 없음이 정답 — 세계 움직임은 world event 하나.
-        #   ambient 보증을 여기서 채우면 전진이 둘이 된다(C16).
-        try:
-            _anom_fired = bool(((getattr(getattr(ctx, "bus", None), "anomaly", None) or {}).get("triggered")))
-        except Exception:
-            _anom_fired = False
-        if not _nb_text and not _anom_fired:
-            try:
-                import story_director as _sd_amb
-                _nb_text = iceberg.translate_next_beat(
-                    _sd_amb.ambient_beat(dai.get("energy_direction", "") if isinstance(dai, dict) else ""))
-                logger.info("[NextBeat→Slot33] empty → ambient_beat 보증 주입")
-            except Exception as _e_amb:
-                logger.warning(f"[NextBeat→Slot33] ambient 보증 실패: {_e_amb}")
-        if _nb_text:
-            slot33_parts.append(_nb_text)
-            logger.info(f"[NextBeat→Slot33] Injected (contract): {str(_nb)[:60]}")
-    except Exception as _e_beat:
-        logger.warning(f"[NextBeat→Slot33] Injection failed: {_e_beat}")
+    # [2026-10-09 SD개편] Next Beat(SD-Ba4) "This turn lands" 주입 + ambient_beat 보증(08-28) 은퇴. 세계가 던지는 건
+    #   Storyteller 발화 턴의 "world event:" 사실 줄(Slot 30) 하나, 평소 턴의 세계 한 걸음은 Mira hook(Slot 16, 약한 꼴).
+    #   턴 닫기는 RB_WORLD·RB_PC 규칙과 response가 쥔다. 근거: analysis_line/스토리디렉팅_개편_스펙_2026-10-09.
 
     # 5W1H Recency Echo — always present at maximum recency position
     # [2026-07-02] TURN MOTION 병합(신규 블록 대신 in-place): 턴 종결=정적 대기("여전히 거기 있었다"류) 방지.

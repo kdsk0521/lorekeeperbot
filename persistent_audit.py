@@ -181,7 +181,8 @@ async def run_persistent_audit(client, model_id: str, channel_id: str) -> Option
         gen_config = types.GenerateContentConfig(
             system_instruction=_AUDIT_SYSTEM,
             response_mime_type="application/json",
-            max_output_tokens=4096,  # 상태가 더러울수록 보고서가 길어짐 — log-only라 여유가 정보량
+            # [2026-10-11 C27b] 4096 → 8192. 추론 켠 분석 콜은 추론이 출력 예산에 같이 든다 — 상한 통일(레티어스 "나머지도 다 올리자").
+            max_output_tokens=8192,  # 상태가 더러울수록 보고서가 길어짐 — log-only라 여유가 정보량
             temperature=0.2,
             safety_settings=config.SAFETY_SETTINGS,
         )

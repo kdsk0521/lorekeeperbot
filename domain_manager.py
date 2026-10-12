@@ -1118,7 +1118,7 @@ def get_deep_memory(channel_id: str) -> tuple:
     return (d.get("deep_memory", "") or "", d.get("deep_memory_data", {}) or {})
 
 
-def _find_npc_key(npcs: dict, name: str, *, allow_token: bool = True) -> Optional[str]:
+def _find_npc_key(npcs: dict, name: str, *, allow_token: bool = True, _honorific: bool = True) -> Optional[str]:
     """NPC 키 검색: 정규화 → 대칭 base/inner 매칭 → aliases → 충돌가드 토큰(축약형).
 
     [2026-06-12] aliases 정식 지원 (한↔영 교차 중복 차단).
@@ -1161,7 +1161,37 @@ def _find_npc_key(npcs: dict, name: str, *, allow_token: bool = True) -> Optiona
         hits = [k for k in npcs if ql in _short_tokens(k)]
         if len(hits) == 1:
             return hits[0]
+    # 5) [2026-10-11 별칭 A5a] 호칭 떼기 — 위 단계가 다 빗나가면 이름 뒤 호칭을 떼고 한 번 더 찾는다.
+    #    "헤이젤 언니"→헤이젤(Hazel), "길동씨"→길동→홍길동, "비비짱"→비비(Bibi). 짧게 떼는 것부터("홍선생님"→"홍선생" 키가 있으면 그쪽).
+    #    떼고 남은 게 두 글자 미만이면 버린다("김군"→"김"이 김철수에 붙지 않게). 성+직함(A5b)은 B1에 맡긴다.
+    #    근거 npc/별칭A1_구현보고_2026-10-10 §3-4, npc/별칭A5a_구현보고_2026-10-11.
+    if _honorific:
+        for _c in _honorific_stripped(name):
+            _k = _find_npc_key(npcs, _c, allow_token=allow_token, _honorific=False)
+            if _k:
+                return _k
     return None
+
+
+_HONORIFIC_SUFFIXES = ("씨", "님", "형", "양", "군", "짱", "언니", "오빠", "누나", "선생", "아저씨", "선생님")
+# 형·양·군은 이름 끝 글자로도 흔하다(이준형, 김민형). 띄어 쓴 호칭("철수 형")일 때만 뗀다.
+_HONORIFIC_SPACED_ONLY = ("형", "양", "군")
+
+
+def _honorific_stripped(name: str) -> list:
+    """[2026-10-11 별칭 A5a] 이름 끝 호칭을 뗀 후보들(짧게 떼는 것부터). 남은 이름이 두 글자 미만이면 뺀다."""
+    s = str(name or "").strip()
+    out = []
+    for suf in sorted(_HONORIFIC_SUFFIXES, key=len):
+        if not s.endswith(suf):
+            continue
+        head = s[:-len(suf)]
+        if suf in _HONORIFIC_SPACED_ONLY and not head.endswith((" ", "\t")):
+            continue
+        c = head.rstrip()
+        if len(c) >= 2 and c not in out:
+            out.append(c)
+    return out
 
 def _resolve_npc_name(d: dict, name: str) -> str:
     """AI 출력 이름 → 저장된 NPC 키로 해상도. 일치 없으면 원본 반환."""
@@ -1537,6 +1567,18 @@ def merge_npc(channel_id: str, dup_name: str, canon_name: str) -> tuple:
     if _migrated:
         logging.info(f"[NPC 병합] 부수 이관 {dup_key}→{canon_key}: {', '.join(_migrated)}")
     d = get_domain(channel_id)   # 헬퍼가 저장했으므로 최신 상태 재로드
+    # [2026-10-10 별칭 A6] world_tree 자리 — 옛 병합은 자리를 안 옮겨 흡수된 이름이 방 인원에 유령으로 남았다
+    #   (무대 = 위치의 함수라 추출 콜이 그 유령을 다음 턴에 다시 봤다. `!npc 병합`도 같았다).
+    #   중복의 자리는 지우고, 본체에 자리가 없으면 그 자리를 이어받는다.
+    try:
+        import world_tree as _wt_m
+        _dup_loc = _wt_m.get_npc_location(channel_id, dup_key)
+        if _dup_loc:
+            _wt_m.remove_npc_presence(channel_id, dup_key)
+            if not _wt_m.get_npc_location(channel_id, canon_key):
+                _wt_m.set_npc_location(channel_id, canon_key, _dup_loc)
+    except Exception as _e_wt:
+        logging.debug(f"[NPC 병합] 자리 이관 skip: {_e_wt}")
 
     # 5) SQLite 미러: 중복 행 삭제 + 본체 재미러
     try:
@@ -1760,12 +1802,34 @@ def is_pc_name(name: Any, pcs: Any) -> bool:
     return bool(pc_canon(name, pcs))
 
 
+def _mind(channel_id: str, name: Any) -> Any:
+    """[2026-10-12 C32 몸·인격] 보이는 이름(몸) → 마음 쪽 저장소 키. 표가 비면 그대로, "" = 빈 몸.
+    ★입구에서 **한 번만** — 돌린 키를 다른 입구 함수에 다시 넣지 않는다(몸 바꾸기가 제자리로 뒤집힌다)."""
+    try:
+        import vessel
+        return vessel.driver_of(channel_id, name)
+    except Exception:
+        return name
+
+
 def get_relation_edges(channel_id: str, source: Optional[str] = None,
                        target: Optional[str] = None) -> List[Dict[str, Any]]:
-    """엣지 원본 조회(얇은 위임)."""
+    """엣지 원본 조회(얇은 위임).
+    [2026-10-12 C32] source 는 마음으로 돌려 찾고, 돌아온 행의 source 는 보이는 이름으로 되돌린다
+    (잠든 마음의 행은 빠진다). target(남이 보는 얼굴)은 돌리지 않는다. 표가 비면 종전 그대로."""
     try:
         import sqlite_store
-        return sqlite_store.get_edges(channel_id, source=source, target=target)
+        if source is not None:
+            source = _mind(channel_id, source)
+            if not source:
+                return []
+        rows = sqlite_store.get_edges(channel_id, source=source, target=target)
+        try:
+            import vessel
+            rows = vessel.view_edges(channel_id, rows)
+        except Exception:
+            pass
+        return rows
     except Exception as _e:
         logging.debug(f"[Relation] get_edges skip: {_e}")
         return []
@@ -1809,6 +1873,11 @@ def upsert_relation_edge(channel_id: str, source: str, target: str, *,
         import sqlite_store
         d = get_domain(channel_id)
         source = _resolve_npc_name(d, source)
+        # [2026-10-12 C32] 그 마음이 남을 보는 쪽(source)만 마음으로 돈다. 빈 몸은 태도가 없다.
+        _vis_source = source
+        source = _mind(channel_id, source)
+        if not source:
+            return None
         if kind is not None:
             target = _resolve_npc_name(d, target)
         t = _relation_turn(channel_id) if turn is None else int(turn)
@@ -1836,6 +1905,8 @@ def upsert_relation_edge(channel_id: str, source: str, target: str, *,
                                                      r.get("stance", "") or "")
                 except Exception:
                     pass
+        if r and _vis_source != source:
+            r = dict(r, source=_vis_source)      # 부른 쪽에는 보이는 이름으로
         return r
     except Exception as _e:
         logging.warning(f"[Relation] upsert 실패(무시): {source}->{target}: {_e}")
@@ -1919,9 +1990,12 @@ def relation_start_candidates(channel_id: str, pc_mask: str, ordered_names: List
         key = _find_npc_key(npcs, nm) if nm else None
         if not key or key in out or is_pc_name(key, _pcr_sc):   # [2026-10-07] 가면 이름 규칙
             continue
-        if sqlite_store.get_edge(channel_id, key, pc_mask) is not None:
+        _mk = _mind(channel_id, key)            # [2026-10-12 C32] 기록·시트 문장은 모는 마음의 것
+        if not _mk:
             continue
-        lines = _start_lines_for(npcs, key, pc_mask, masks)
+        if sqlite_store.get_edge(channel_id, _mk, pc_mask) is not None:
+            continue
+        lines = _start_lines_for(npcs, _mk, pc_mask, masks)
         if lines:
             out[key] = lines
     return out
@@ -1946,10 +2020,13 @@ def apply_theoria_start(channel_id: str, npc_name: str, pc_mask: str,
         logging.debug(f"[Relation] start 버림 — 명부 밖: {npc_name}")
         return None
     import sqlite_store
-    if sqlite_store.get_edge(channel_id, key, pc_mask) is not None:
+    _mk = _mind(channel_id, key)                # [2026-10-12 C32] 확인·시드는 마음, 쓰기는 보이는 이름(입구가 돌린다)
+    if not _mk:
+        return None
+    if sqlite_store.get_edge(channel_id, _mk, pc_mask) is not None:
         logging.debug(f"[Relation] start 버림 — 이미 관계 기록 있음: {key}")
         return None
-    if not _start_lines_for(npcs, key, pc_mask, masks):
+    if not _start_lines_for(npcs, _mk, pc_mask, masks):
         logging.debug(f"[Relation] start 버림 — 시트에 PC 문장 없음: {key}")
         return None
     _bmap = getattr(config, "REL_START_BOND", {}) or {}
@@ -1959,7 +2036,7 @@ def apply_theoria_start(channel_id: str, npc_name: str, pc_mask: str,
     if b is None and t is None:
         return None
     if b is None or t is None:
-        _kb, _kt = _npc_pc_seed(channel_id, key, pc_mask)
+        _kb, _kt = _npc_pc_seed(channel_id, _mk, pc_mask)
         b = _kb if b is None else b
         t = _kt if t is None else t
     r = upsert_relation_edge(channel_id, key, pc_mask, bond=int(b), tension=int(t), turn=turn, origin="seed")
@@ -1981,6 +2058,9 @@ def _theoria_edge_view(channel_id: str, npc_name: str, pc_mask: str, turn: int):
     import sqlite_store
     source = _resolve_npc_name(get_domain(channel_id), npc_name.strip())
     if not source or source == pc_mask:
+        return None
+    source = _mind(channel_id, source)          # [2026-10-12 C32]
+    if not source:
         return None
     t = int(turn or 0)
     existing = sqlite_store.get_edge(channel_id, source, pc_mask)
@@ -2212,9 +2292,18 @@ def ooc_roster(channel_id: str, pc_mask: Optional[str], cap: int = 30) -> List[D
         for name, data in npcs.items():
             if not isinstance(name, str) or not isinstance(data, dict) or is_pc_name(name, masks):
                 continue
-            if _nm_ro.get_npc_status(data) == "dead":
-                continue
+            # [2026-10-10 OOC 확장] 죽은 인물도 싣는다(되살리기·정정 재료) — 끝으로 민다. 상태·자리를 행에.
+            _st_ro = _nm_ro.get_npc_status(data)
             row: Dict[str, Any] = {"name": name}
+            if _st_ro and _st_ro != "active":
+                row["status"] = _st_ro
+            try:
+                import world_tree as _wt_ro
+                _loc_ro = _wt_ro.get_npc_location(channel_id, name)
+                if _loc_ro:
+                    row["location"] = _loc_ro
+            except Exception:
+                pass
             _al = [a for a in (data.get("aliases") or []) if isinstance(a, str) and a.strip()][:4]
             if _al:
                 row["aliases"] = _al
@@ -2227,8 +2316,47 @@ def ooc_roster(channel_id: str, pc_mask: Optional[str], cap: int = 30) -> List[D
             out.append(row)
     except Exception as _e_ro:
         logging.debug(f"[OOC] roster skip: {_e_ro}")
-    out.sort(key=lambda r: 0 if r.get("sheet_on_pc") else 1)
+    out.sort(key=lambda r: (1 if r.get("status") == "dead" else 0, 0 if r.get("sheet_on_pc") else 1))
     return out[:max(0, int(cap))]
+
+
+def _ooc_npc_pair_edit(channel_id: str, npcs: Dict[str, Any], raw_a: str, raw_b: str, e: Dict[str, Any]) -> str:
+    """[2026-10-10 OOC 확장] 인물끼리 관계 A→B — set(kind·strength·stance) / remove. 엣지 = NPC↔NPC(kind 있음).
+    세기 = config.REL_PAIR_STRENGTH(faint·clear·strong), 부호 = kind 의 결(entity_relations._valence_sign)."""
+    a = find_equivalent_npc_key(npcs, raw_a)
+    b = find_equivalent_npc_key(npcs, raw_b)
+    if not a or not b:
+        return f"⚠️ 관계: '{raw_a if not a else raw_b}' — 명부에 없는 이름이야"
+    if a == b:
+        return f"⚠️ 관계: {a} — 자기 자신과의 관계는 없어"
+    action = str(e.get("action") or "set").lower()
+    import sqlite_store
+    if action == "remove":
+        try:
+            _ma = _mind(channel_id, a) or a     # [2026-10-12 C32] 지우는 것도 그 마음의 행
+            if sqlite_store.get_edge(channel_id, _ma, b) is not None:
+                conn = sqlite_store._get_conn(channel_id)
+                conn.execute("DELETE FROM relations WHERE channel_id=? AND source=? AND target=?", (channel_id, _ma, b))
+                conn.commit()
+                return f"관계 삭제: {a} → {b}"
+        except Exception as _e_pr:
+            logging.debug(f"[OOC] 인물끼리 관계 삭제 skip: {_e_pr}")
+        return f"⚠️ 관계: {a} → {b} — 지울 관계 기록이 없어"
+    import entity_relations as _er_oo
+    kind = str(e.get("kind") or "").strip().lower()
+    if kind not in _er_oo.RELATION_TYPES:
+        _cur = [x for x in (get_relation_edges(channel_id, source=a, target=b) or []) if x.get("kind")]
+        kind = _cur[0]["kind"] if _cur else "neutral"
+    strength = str(e.get("strength") or "clear").strip().lower()
+    _mag = (getattr(config, "REL_PAIR_STRENGTH", {}) or {})
+    strength = strength if strength in _mag else "clear"
+    stance = e.get("stance")
+    stance = stance.strip() if isinstance(stance, str) and stance.strip() else None
+    r = upsert_relation_edge(channel_id, a, b, bond=_er_oo._valence_sign(kind) * int(_mag.get(strength, 50)),
+                             stance=stance, kind=kind, origin="ooc")
+    if not r:
+        return f"⚠️ 관계: {a} → {b} — 저장 실패"
+    return f"관계: {a} → {b} {kind} ({strength})" + (f" — {stance}" if stance else "")
 
 
 def apply_ooc_relation_edits(channel_id: str, uid: str, edits: List[Dict[str, Any]]) -> List[str]:
@@ -2264,11 +2392,19 @@ def apply_ooc_relation_edits(channel_id: str, uid: str, edits: List[Dict[str, An
         if not raw:
             lines.append("⚠️ 관계: 인물 이름이 없어")
             continue
+        # [2026-10-10 OOC 확장] toward = 인물끼리 관계(A→B). PC 를 향하거나 없으면 아래 종전 길(NPC→이 PC).
+        _tw = str(e.get("toward") or "").strip()
+        if _tw and not is_pc_name(_tw, masks):
+            lines.append(_ooc_npc_pair_edit(channel_id, npcs, raw, _tw, e))
+            continue
         action = str(e.get("action") or "set").lower()
         key = find_equivalent_npc_key(npcs, raw)
         if action == "remove":
             _done = False
-            for _nm in [n for n in dict.fromkeys([key, raw]) if n]:
+            # [2026-10-12 C32] 몸이 다른 마음으로 돌면 그 마음의 행만 본다(잠든 원래 마음 행은 안 지운다).
+            _mk_rm = _mind(channel_id, key) if key else key
+            _cands = [_mk_rm] if (key and _mk_rm != key) else [key, raw]
+            for _nm in [n for n in dict.fromkeys(_cands) if n]:
                 try:
                     if sqlite_store.get_edge(channel_id, _nm, mask) is not None:
                         conn = sqlite_store._get_conn(channel_id)
@@ -2464,6 +2600,10 @@ def update_npc_knowledge(channel_id: str, npc_name: str, knowledge_data: Dict[st
     if "npc_knowledge" not in d:
         d["npc_knowledge"] = {}
     npc_name = _resolve_npc_name(d, npc_name)
+    # [2026-10-12 C32] 지식은 마음이 갖는다 — JSON 병합 **전에** 한 번 돌린다(미러·출처 원장은 돌린 키 그대로).
+    npc_name = _mind(channel_id, npc_name)
+    if not npc_name:
+        return
 
     existing = d["npc_knowledge"].get(npc_name, {})
     # Merge: 기존 knows에 새 항목 추가 (중복 제거)
@@ -2561,6 +2701,10 @@ def sync_secret_ledger(
       — 호출자가 leak_risk 상향 + 당턴 surface 주입에 사용
     실패는 전부 삼킴 (봇 무영향)."""
     result = {"computed_risk": "none", "max_pressure": 0, "surfaces": {}}
+    # [2026-10-12 C32] 비밀은 마음이 쥔다 — 원장 owners 에 마음 키가 남는다. 빈 몸은 비밀이 없다.
+    npc_name = _mind(channel_id, npc_name)
+    if not npc_name:
+        return result
     try:
         import sqlite_store
         from npc_autonomous import leak_pressure_score, leak_risk_label
@@ -2663,7 +2807,18 @@ def get_secret_ledger(channel_id: str, include_closed: bool = False) -> List[Dic
 
 
 def get_npc_knowledge(channel_id: str) -> Dict[str, Dict]:
-    """저장된 전체 NPC 지식 상태 조회
+    """저장된 전체 NPC 지식 상태 조회 — 키 = 보이는 이름.
+    [2026-10-12 C32] 저장 키(마음)를 보이는 이름으로 되돌린다. 잠든 마음은 빠진다. 표가 비면 종전 그대로."""
+    raw = _npc_knowledge_raw(channel_id)
+    try:
+        import vessel
+        return vessel.view_keyed(channel_id, raw)
+    except Exception:
+        return raw
+
+
+def _npc_knowledge_raw(channel_id: str) -> Dict[str, Dict]:
+    """저장된 전체 NPC 지식 상태(키 = 저장 키 = 마음). 쓰기 경로(전파)용.
 
     [V10] 플래그 ON 시 read-through: SQLite 우선, 없으면 JSON 폴백 + lazy migration."""
     if getattr(config, "V10_KNOWLEDGE_READ_FROM_SQLITE", False):
@@ -2685,6 +2840,9 @@ def get_npc_knowledge_for(channel_id: str, npc_name: str) -> Optional[Dict]:
     """특정 NPC의 지식 상태 조회 (단건 포인트 질의)"""
     d = get_domain(channel_id)
     npc_name = _resolve_npc_name(d, npc_name)
+    npc_name = _mind(channel_id, npc_name)      # [2026-10-12 C32]
+    if not npc_name:
+        return None
     if getattr(config, "V10_KNOWLEDGE_READ_FROM_SQLITE", False):
         try:
             import sqlite_store
@@ -2700,9 +2858,16 @@ def propagate_npc_knowledge(channel_id: str, scene_npcs: list) -> int:
     Returns: 전파된 사실 수."""
     if len(scene_npcs) < 2:
         return 0
-    all_knowledge = get_npc_knowledge(channel_id)
+    # [2026-10-12 C32] 저장 키(마음)로 읽고 쓴다 — 보기(get_npc_knowledge)를 JSON 에 되쓰면 잠든 마음이 지워진다.
+    #   장면 이름(보이는 이름) → 마음 짝. 빈 몸은 전파에서 빠진다. 태도는 보이는 이름으로 본다(보기가 이미 돌렸다).
+    all_knowledge = _npc_knowledge_raw(channel_id)
     attitudes = get_npc_attitudes(channel_id)
     propagated = 0
+    _pairs = []
+    for _v in scene_npcs:
+        _m = _mind(channel_id, _v)
+        if _m:
+            _pairs.append((_v, _m))
 
     # [v1.1 게이트②] cannot_know 전파 필터 — 원장 비밀의 truth와 내용어가 겹치는
     # 사실은 해당 비밀의 cannot_know NPC에게 전파 금지. 자기 비밀 정확일치 제외만으로는
@@ -2727,7 +2892,7 @@ def propagate_npc_knowledge(channel_id: str, scene_npcs: list) -> int:
                 return True
         return False
 
-    for npc_a in scene_npcs:
+    for vis_a, npc_a in _pairs:
         kn_a = all_knowledge.get(npc_a, {})
         if not kn_a.get("would_share"):
             continue
@@ -2736,11 +2901,11 @@ def propagate_npc_knowledge(channel_id: str, scene_npcs: list) -> int:
         if not shareable:
             continue
 
-        for npc_b in scene_npcs:
+        for vis_b, npc_b in _pairs:
             if npc_b == npc_a:
                 continue
             # hostile NPC에게는 공유 안 함
-            att_b = attitudes.get(npc_b, {}).get("attitude", "neutral")
+            att_b = attitudes.get(vis_b, {}).get("attitude", "neutral")
             if att_b in ("hostile", "unfriendly"):
                 continue
             if _guard_rows:
@@ -2759,7 +2924,7 @@ def propagate_npc_knowledge(channel_id: str, scene_npcs: list) -> int:
                 new_facts = [f for f in _shareable_b
                              if _via_re.sub("", str(f)) not in existing_b and _via_re.sub("", str(f)) not in existing_sus][:3]
                 if new_facts:
-                    tagged = [f"{_via_re.sub('', str(f))} (via {npc_a})" for f in new_facts]
+                    tagged = [f"{_via_re.sub('', str(f))} (via {vis_a})" for f in new_facts]
                     kn_b_updated = dict(kn_b)
                     kn_b_updated["suspects"] = (_sus_list + tagged)[-20:]
                     all_knowledge[npc_b] = kn_b_updated
@@ -2767,7 +2932,7 @@ def propagate_npc_knowledge(channel_id: str, scene_npcs: list) -> int:
             else:
                 new_facts = [f for f in _shareable_b if _via_re.sub("", str(f)) not in existing_b][:3]
                 if new_facts:
-                    tagged = [f"{_via_re.sub('', str(f))} (via {npc_a})" for f in new_facts]
+                    tagged = [f"{_via_re.sub('', str(f))} (via {vis_a})" for f in new_facts]
                     merged = list(kn_b.get("knows", []) or []) + tagged
                     kn_b_updated = dict(kn_b)
                     kn_b_updated["knows"] = merged[-20:]
@@ -3347,9 +3512,16 @@ def add_to_ai_memory_list(channel_id: str, uid: str, key: str, item: Union[str, 
 # [2026-07-18 고아 삭제] update_psych_profile — 구세대(Phase 2) Maslow 심리 프로필 — 현행 DAI psyche/deep_read/emotion_engine이 대체 (dead_scan 참조0 확인, git 이력 복원 가능)
 
 # UI Helpers
-def get_pc_sheet_text(channel_id: str, user_id: str, sections: Optional[list] = None) -> str:
-    """PC 페이지 lore 절(+Observed) 발췌 렌더. 발췌 규칙은 `render_page` 기존 규칙(절당 600) 그대로.
-    페이지 없으면 ""."""
+def get_pc_sheet_text(channel_id: str, user_id: str, sections: Optional[list] = None,
+                      *, full: bool = True) -> str:
+    """PC 페이지 lore 절(+Observed) 렌더. 페이지 없으면 "".
+
+    [2026-10-12 C29] 작가가 쓴 lore 절은 **자르지 않는다**(full=True 기본). 전엔 `render_page` 기본값(절당 600)을
+      그대로 받아 렌더 PC 블록·Theoria PC 칸·다인 PC 칸이 모두 절마다 앞 600자만 봤다 — 09-16 시트 2차 때 위키
+      발췌기를 빌려 쓰며 따라온 수였고, PC용으로 정한 수가 아니었다(수처 아담 19,903자 중 2,711자만 실림).
+      NPC(Slot 7)는 이미 lore 절 전문이다. 레티어스 "600자 좀 짧다, 그냥 다 넣게 하자".
+      Observed(플레이 기록)는 지금처럼 600 — NPC 관찰도 전문이 아니라 위키 compile 예산으로 간다.
+      full=False = 옛 모양(절당 600) — `!정보` 확인 화면용."""
     pid = get_pc_page_id(channel_id, user_id)
     if not pid:
         return ""
@@ -3357,9 +3529,18 @@ def get_pc_sheet_text(channel_id: str, user_id: str, sections: Optional[list] = 
         import wiki_store
         if sections is None:
             sections = list(getattr(config, "WIKI_LORE_SECTIONS", {}).get("character", ())) + ["Observed"]
-        txt = wiki_store.render_page(channel_id, pid, sections)
-        # 첫 줄 `## 이름`은 호출자 헤더와 겹친다 — 절만 돌려준다.
-        return txt.split("\n", 1)[1].strip() if "\n" in txt else ""
+        _lore_secs = [s for s in sections if s != "Observed"]
+        _play_secs = [s for s in sections if s == "Observed"]
+        parts = []
+        for _secs, _cut in ((_lore_secs, 0 if full else 600), (_play_secs, 600)):
+            if not _secs:
+                continue
+            txt = wiki_store.render_page(channel_id, pid, _secs, excerpt_chars=_cut)
+            # 첫 줄 `## 이름`은 호출자 헤더와 겹친다 — 절만 돌려준다.
+            body = txt.split("\n", 1)[1].strip() if "\n" in txt else ""
+            if body:
+                parts.append(body)
+        return "\n\n".join(parts)
     except Exception as _e:
         logging.debug(f"[PC Sheet] render skipped: {_e}")
         return ""
@@ -4070,19 +4251,9 @@ def get_storyteller_state(channel_id: str) -> dict:
         "last_event_turn": 0, "recent_categories": [],
         "recent_tags": [], "event_queue": [], "total_events_fired": 0,
         "recent_dice": [],
-        # SD-Ba1 (2026-04-22): next_beats 큐 — LIBRA StoryAuthor nextBeats 최소 이식.
-        #   beats: 자연어 비트 문자열 리스트 (최대 cap)
-        #   last_planned_turn: 마지막 재계획 턴 (turn_index 기준)
-        #   cap: 큐 최대 크기
-        "next_beats": [], "last_planned_turn": 0, "beats_cap": 6,
+        # [2026-10-09 SD개편] SD-Ba1 next_beats·last_planned_turn·beats_cap·llm_beats 기본값을 걷었다 — 비트 큐 은퇴.
+        #   옛 세션에 남은 키는 읽는 곳이 없어 무해하다(다음 저장 때 그대로 실려 간다).
     })
-    # 기존 세션 하위호환: 필드가 없으면 기본값 주입
-    if "next_beats" not in st:
-        st["next_beats"] = []
-    if "last_planned_turn" not in st:
-        st["last_planned_turn"] = 0
-    if "beats_cap" not in st:
-        st["beats_cap"] = 6
     return st
 
 def update_storyteller_state(channel_id: str, state: dict) -> None:

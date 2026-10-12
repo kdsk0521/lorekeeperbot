@@ -264,7 +264,7 @@ def _dsh_anchor(resolved_model: str, tier: str) -> str:
     순수 함수(I/O 0): 모델·tier 만 보고 문자열을 만든다. deepseek 아니면 "" (GLM·기타 무접촉),
     tier 의 추론 캡이 0(=off/none)이면 "" — 추론 안 하는 콜에 추론 지시를 넣지 않는다.
     마지막 1절(format stays as specified below)은 json_object 모드 콜 방어 — 앵커가 시스템
-    머리에 서면서 "4) the answer itself" 가 서술형 서두를 유도하지 않도록 못을 박는다.
+    머리에 서면서 4번이 서술형 서두를 유도하지 않도록 못을 박는다.
     """
     if "deepseek" not in (resolved_model or "").lower():
         return ""
@@ -274,7 +274,10 @@ def _dsh_anchor(resolved_model: str, tier: str) -> str:
     return (
         'Private reasoning register: open your thinking with "We need" and count the steps. '
         "We need: 1) what this task asks; 2) the fields owed; 3) the evidence lines; "
-        f"4) the answer itself. Keep the thought under {cap} characters. "   # [2026-10-06 분석 틀] F7 꼬리(reasoning_policy "under")와 같은 말·범위는 생각만(레티어스 "언더 — 스키마 채우기가 주목적")
+        # [2026-10-07 분석 안쪽 d1] 4번 "the answer itself" → 결정만. 답(칸 문장)을 생각 안에서 먼저 쓰라는 말이었다 —
+        #   렌더 앵커가 10-01에 같은 이유로 지워졌다. 실측(Mira 리플레이): 추론 중앙 11.3k → 8.6k, 칸 채움·깊이 그대로,
+        #   Theoria·B1 무변화(분석안쪽_추론앵커·정서게이트_측정_2026-10-07). 길이의 큰 몫은 일 자체(Mira 칸 수)다.
+        f"4) the decisions, a few words each; field text is written once, in the answer. Keep the thought under {cap} characters. "   # [2026-10-06 분석 틀] F7 꼬리(reasoning_policy "under")와 같은 말·범위는 생각만(레티어스 "언더 — 스키마 채우기가 주목적")
         "The answer format stays exactly as specified below."
     )
 
@@ -356,6 +359,15 @@ class _Models:
         _extra = dict(kwargs.get("extra_body") or {})
         _extra.update(reasoning_policy.build_reasoning_params(resolved, _tier))
         kwargs["extra_body"] = _extra
+        # [2026-10-11 C21] 추론이 켜진 콜(effort ≠ none)은 호출부 온도·top_p 대신 공식 영역(T 1.0 · top_p 0.95, 렌더와 같은 값).
+        #   옛 값(T 0.05~0.7, top_p 0.8)은 추론 모드 영역 밖이었다 — 재생에서 실패 3/43 → 0/43. 추론 off 콜은 호출부 값 그대로.
+        #   근거 analysis_line/C21_분석샘플링_측정·스펙_2026-10-11. env ANALYSIS_OFFICIAL_SAMPLING=0 이면 옛 동작.
+        _sampling = "callsite"
+        if getattr(_appconfig, "ANALYSIS_OFFICIAL_SAMPLING", True) and \
+                str(_extra.get("reasoning_effort", "none")).strip().lower() not in ("", "none"):
+            kwargs["temperature"] = float(getattr(_appconfig, "ANALYSIS_OFFICIAL_TEMPERATURE", 1.0))
+            kwargs["top_p"] = float(getattr(_appconfig, "ANALYSIS_OFFICIAL_TOP_P", 0.95))
+            _sampling = "official"
         # [2026-08-16 DSH 앵커 — 분석 관문] 콜사이트마다 심지 않는다(자매 소급 병). 해석된 실모델이
         # deepseek 일 때만, 시스템 메시지 **머리(위치 0)**에 접합 — 위치도 기전이다(꼬리 배치 실패 이력).
         # 렌더 경로(persona)는 이미 배포됨 = 무접촉. GLM·기타 모델은 _dsh_anchor 가 "" 반환.
@@ -375,8 +387,8 @@ class _Models:
             text = _msg.content if _msg else ""
             # [2026-08-17 light 라우트] route= 는 사다리 어느 단이 이겼는지(heavy/narrative/extract/
             # reader/light/name:*). 신규 줄을 파지 않고 기존 한 줄만 넓힌다.
-            logger.info("[reasoning-trace] analysis model=%s route=%s tier=%s anchor=%s reasoning_chars=%d",
-                        resolved, _route, _tier, "on" if _anchor else "off",
+            logger.info("[reasoning-trace] analysis model=%s route=%s tier=%s anchor=%s sampling=%s reasoning_chars=%d",
+                        resolved, _route, _tier, "on" if _anchor else "off", _sampling,
                         reasoning_policy.reasoning_trace_len(_msg))
             return _RespShim(text, getattr(resp.choices[0], "finish_reason", None)
                              if getattr(resp, "choices", None) else None)

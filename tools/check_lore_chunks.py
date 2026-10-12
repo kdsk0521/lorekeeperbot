@@ -20,6 +20,13 @@ from pathlib import Path
 # 청크 분할 로직 (command_handler.py L38-218에서 복제)
 # =========================================================
 
+# [2026-10-12 C30] 봇과 같이 — 분위기 절(`## 분위기 …`/`## Tone …`)은 Slot 33이 매 턴 싣으므로 청크에서 뺀다.
+_TONE_HEADER_RE = re.compile(r'^(?:분위기|tone)(?:\s|$|[—–\-:(（])', re.I)
+
+
+def _is_tone_label(label: str) -> bool:
+    return bool(_TONE_HEADER_RE.match(str(label or "").strip()))
+
 def _split_lore_chunks(lore_text: str, min_len: int = 50,
                         max_chunk: int = 4000, min_chunk: int = 800) -> list:
     """로어 텍스트를 섹션 단위로 청크 분할 (V3 — 영어 로어북 기준).
@@ -58,7 +65,7 @@ def _split_lore_chunks(lore_text: str, min_len: int = 50,
         indent = len(line) - len(line.lstrip())
         if indent <= 1 and stripped and _MAJOR.match(stripped):
             content = '\n'.join(buf).strip()
-            if content and len(content) >= min_len:
+            if content and len(content) >= min_len and not _is_tone_label(cur_label):   # [C30]
                 sections.append({"label": cur_label or _label(content), "content": content})
             buf = [line]
             cur_label = _label(stripped)
@@ -68,7 +75,7 @@ def _split_lore_chunks(lore_text: str, min_len: int = 50,
             buf.append(line)
 
     content = '\n'.join(buf).strip()
-    if content and len(content) >= min_len:
+    if content and len(content) >= min_len and not _is_tone_label(cur_label):   # [C30]
         sections.append({"label": cur_label or _label(content), "content": content})
 
     # Step 2b: 폴백 (섹션 1개 + 대형이면 문단 분할)

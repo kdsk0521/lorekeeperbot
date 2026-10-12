@@ -39,29 +39,28 @@ def _format_pacing_curve(snaps: List[Dict[str, Any]]) -> str:
     d1 = snaps[-1].get("doom_value")
     phase = snaps[-1].get("doom_phase") or "?"
     idle_n = sum(1 for s in snaps if s.get("sd_idle"))
-    beat_n = sum(1 for s in snaps if s.get("sd_beat"))
+    # [2026-10-09 SD개편] 착지 비트 은퇴 → "beats present" 대신 세계가 던진 턴 수(이변 발화).
+    ev_n = sum(1 for s in snaps if s.get("anomaly_triggered"))
     pacings = [s.get("sd_pacing") for s in snaps if s.get("sd_pacing")]
     mode = max(set(pacings), key=pacings.count) if pacings else "?"
     return (
         f"last {n} turns: doom {d0}->{d1} (phase {phase}), "
-        f"idle {idle_n}/{n}, dominant pacing {mode}, beats present {beat_n}/{n}"
+        f"idle {idle_n}/{n}, dominant pacing {mode}, world events {ev_n}/{n}"
     )
 
 
 def _format_recent_beats(dai_rows: List[Tuple[int, Dict[str, Any]]], cap: int = 8) -> List[str]:
-    """dai_logs 행(오래된→최신) → 최근 제안 비트 unique 목록 (최신 우선, cap개)."""
+    """dai_logs 행(오래된→최신) → 최근 세계 한 걸음(narrative_hook) unique 목록 (최신 우선, cap개).
+    [2026-10-09 SD개편] 옛 재료(suggested_beats·story_direction.next_beat)는 은퇴 — 이름은 호환 위해 그대로."""
     seen = set()
     out: List[str] = []
     for _turn, dai in reversed(dai_rows):  # 최신부터
         if not isinstance(dai, dict):
             continue
         cands: List[str] = []
-        sb = dai.get("suggested_beats")
-        if isinstance(sb, list):
-            cands.extend(str(b).strip() for b in sb if isinstance(b, str) and b.strip())
-        nb = (dai.get("story_direction") or {}).get("next_beat") if isinstance(dai.get("story_direction"), dict) else None
-        if isinstance(nb, str) and nb.strip():
-            cands.append(nb.strip())
+        hk = dai.get("narrative_hook")
+        if isinstance(hk, str) and hk.strip() and hk.strip().lower() != "null":
+            cands.append(hk.strip())
         for c in cands:
             key = c.lower()
             if key in seen:
@@ -76,8 +75,8 @@ def _format_recent_beats(dai_rows: List[Tuple[int, Dict[str, Any]]], cap: int = 
 def _beat_at_turn(dai: Dict[str, Any]) -> str:
     """한 턴의 DAI → 그 턴이 무엇에 관한 장면이었나 1구. 없으면 "".
 
-    우선순위: 그 턴에 실제로 열린 스레드 > 제안 비트 > 장면 레지스터.
-    (suggested_beats는 '제안'이라 실현 보장이 없지만, spike가 난 턴의 제안은
+    우선순위: 그 턴에 실제로 열린 스레드 > 세계 한 걸음(narrative_hook) > 장면 레지스터.
+    ([2026-10-09 SD개편] 옛 2순위 suggested_beats 은퇴 → hook. hook도 '당김'이라 실현 보장은 없지만
      그 턴의 압력 축과 사실상 같다 — 폴백으로 유효.)
     """
     if not isinstance(dai, dict):
@@ -89,11 +88,9 @@ def _beat_at_turn(dai: Dict[str, Any]) -> str:
             s = str(th[0]).strip()
             if s:
                 return s
-    sb = dai.get("suggested_beats")
-    if isinstance(sb, list):
-        for b in sb:
-            if isinstance(b, str) and b.strip():
-                return b.strip()
+    hk = dai.get("narrative_hook")
+    if isinstance(hk, str) and hk.strip() and hk.strip().lower() != "null":
+        return hk.strip()
     sr = dai.get("scene_register")
     if isinstance(sr, str) and sr.strip():
         return sr.strip()
@@ -500,8 +497,14 @@ def reader_signal_block(channel_id: str, cap_chars: int = 300) -> str:
                 for _it in _mlist:
                     _n = str(_it.get("note", "") or "").strip() if isinstance(_it, dict) else ""
                     if _n:
+                        # [2026-10-11 청소 C16-3] 상한에서 낱말 중간을 자르던 것 → 상한 안 마지막 공백에서 자르고 "…".
+                        #   공백이 상한 절반보다 앞에만 있으면 예전처럼 상한에서 자른다.
+                        if len(_n) > _rm_cap:
+                            _cut = _n[:_rm_cap]
+                            _sp = _cut.rfind(" ")
+                            _n = (_cut[:_sp] if _sp >= _rm_cap // 2 else _cut).rstrip(" ,;:—-") + "…"
                         lines.append(
-                            f"READER MOMENTUM (the push a blind reader felt): {_n[:_rm_cap]} "
+                            f"READER MOMENTUM (the push a blind reader felt): {_n} "
                             "— direction material, not prose to copy."
                         )
                         break

@@ -548,7 +548,8 @@ def test_dai_schema(scenario_name):
 
     # quality_flags
     qf = dai.get("quality_flags", {})
-    check("quality_flags.redemption_warning 존재", "redemption_warning" in qf)
+    # [2026-10-11 청소 C12] redemption_warning 칸을 걷어 남은 칸(dissonance_flag)으로 본다.
+    check("quality_flags.dissonance_flag 존재", "dissonance_flag" in qf)
 
     # npc_knowledge false_beliefs
     nk = dai.get("npc_knowledge", {})

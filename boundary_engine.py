@@ -325,7 +325,8 @@ async def generate_day_digest(client, model_id: str, channel_id: str,
     cfg = types.GenerateContentConfig(
         system_instruction=text_resources.ANALYSIS_FRAME,   # [2026-10-06 분석 틀] 원본 mandate → 분석 틀
         temperature=0.5,
-        max_output_tokens=1024,
+        # [2026-10-11 C27b] 1024 → 8192. 추론 켠 분석 콜은 추론이 출력 예산에 같이 든다 — 상한 통일(레티어스 "나머지도 다 올리자").
+        max_output_tokens=8192,
         response_mime_type="application/json",
         safety_settings=config.SAFETY_SETTINGS,
     )
@@ -476,7 +477,21 @@ def _sub_expr_day(channel_id: str, info: Dict[str, Any]) -> None:
         logger.warning("[Boundary] expr day 실패: %s", e)
 
 
-SUBSCRIBERS.extend([_sub_expr_day, _sub_journal, _sub_panel_day])
+def _sub_npc_rest(channel_id: str, info: Dict[str, Any]) -> None:
+    """구독자 0b. [2026-10-12 C23] 무대 밖 NPC 회복 — **동기 · 콜 0**.
+
+    NPC 활력·평형을 올리는 문은 추출 델타뿐인데 추출은 무대 위만 본다. 무대 밖에서 지난 하루를
+    코드가 맡는다(custom_vars.npc_rest_tick: init과의 차이를 하루에 절반씩, days_jumped만큼).
+    expr day 정산 바로 뒤 — 하루 연산이 먼저 서고, 일지·패널 콜은 회복까지 끝난 오늘 값을 본다.
+    """
+    try:
+        import custom_vars as _cv
+        _cv.npc_rest_tick(channel_id, (info or {}).get("days_jumped", 1))
+    except Exception as e:
+        logger.warning("[Boundary] NPC 회복 실패: %s", e)
+
+
+SUBSCRIBERS.extend([_sub_expr_day, _sub_npc_rest, _sub_journal, _sub_panel_day])
 
 
 # =========================================================

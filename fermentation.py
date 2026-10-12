@@ -907,10 +907,21 @@ def _build_wiki_notes(channel_id: str, names: List[str]) -> List[Dict[str, Any]]
         #   W5 OFF면 종전대로 character만 본다(노트 바이트 동일 — `kind` 키도 안 붙는다).
         _w5 = bool(getattr(_cfg, "WIKI_PLACES", False))
         _kinds = ("character", "location", "faction") if _w5 else ("character",)
+        try:
+            import vessel as _vs_n
+        except Exception:
+            _vs_n = None
         for name in list(names)[:max_pages]:
             pid, knd = "", ""
             for _k in _kinds:
-                _p = wiki_store.resolve_page(channel_id, name, kind=_k)
+                # [2026-10-12 C32 몸·인격] 인물 페이지는 그 몸을 모는 마음의 것 — 들어가 있는 동안 겪은 일은
+                #   마음 페이지에 쌓인다(노트의 page 는 모델이 아는 보이는 이름 그대로). 빈 몸은 인물 패치를 안 받는다.
+                _rn = name
+                if _k == "character" and _vs_n is not None:
+                    _rn = _vs_n.driver_of(channel_id, name)
+                    if not _rn:
+                        continue
+                _p = wiki_store.resolve_page(channel_id, _rn, kind=_k)
                 if _p:
                     pid, knd = _p, _k
                     break
@@ -1032,10 +1043,21 @@ async def compress_fresh_to_fermented(
     except Exception:
         arc_hint = ""
 
+    # [2026-10-10 기록 정정] 이 청크·위키 노트에 걸린 정정(R6) — 요약과 페이지 패치가 정정을 따르게(1차 방어).
+    corr_hint = ""
+    try:
+        import corrections as _corr_f
+        _cb_f = _corr_f.block_for(channel_id, history_text + "\n" + json.dumps(wiki_notes or [], ensure_ascii=False),
+                                  english_head=True)
+        if _cb_f:
+            corr_hint = "\n" + _cb_f + "\n"
+    except Exception:
+        corr_hint = ""
+
     user_prompt = f"""# Session Logs (Indexed)
 {history_text}
 {narrative_hint}
-{arc_hint}
+{arc_hint}{corr_hint}
 # Directive
 Analyze this TRPG session segment. Extract events, preserve significant dialogues verbatim,
 analyze psychological impact, and identify memory triggers.
@@ -1563,7 +1585,8 @@ async def compress_fermented_to_deep(
     fermented_list: List[Dict[str, Any]],
     current_deep: str = "",
     archived_context: str = "",
-    current_deep_data: Dict[str, Any] = None
+    current_deep_data: Dict[str, Any] = None,
+    corrections_block: str = "",
 ) -> Optional[Dict[str, Any]]:
     """
     FERMENTED 메모리들을 DEEP 메모리로 초압축합니다.
@@ -1706,6 +1729,9 @@ Important:
     if _evid_on and verbatim_pool:
         user_prompt += ("- For crystallized_dialogues, copy a line from Verbatim Evidence "
                         "exactly when one fits; do not rewrite it.\n")
+    # [2026-10-10 기록 정정] 합칠 요약에 걸린 정정(R7) — 딥 기억이 옛 사실을 굳히지 않게.
+    if corrections_block:
+        user_prompt += "\n" + corrections_block + "\n"
     
     try:
         import text_resources as _tr
@@ -2223,6 +2249,8 @@ async def auto_ferment(
                     )
 
             # 엔티티 critical moments를 DEEP에 보존
+            # [2026-10-10 M1″] 대사 인용은 장기 기억에 쌓지 않는다(따옴표 안 → '…', 저장 원문은 그대로).
+            import narrative_tracker as _nt_sq
             entity_log = nt_state.get("entity_state_log", {})
             critical_parts = []
             for npc_name, npc_data in entity_log.items():
@@ -2230,7 +2258,7 @@ async def auto_ferment(
                 if moments:
                     for m in moments[-3:]:
                         critical_parts.append(
-                            f"- {npc_name} T{m.get('turn', '?')}: {(m.get('description') or '')[:80]}"
+                            f"- {npc_name} T{m.get('turn', '?')}: {_nt_sq.strip_quoted(m.get('description') or '')[:80]}"
                         )
             if critical_parts:
                 archived_context_str += "\n### Entity Critical Moments\n" + "\n".join(critical_parts[:10])
@@ -2243,10 +2271,18 @@ async def auto_ferment(
             logger.debug("[Fermentation] NarrativeTracker archive context: %s", e)
 
         # V3 DEEP 압축
+        _corr_deep = ""
+        try:
+            import corrections as _corr_d
+            _corr_deep = _corr_d.block_for(ch_id, json.dumps(fermented, ensure_ascii=False) + "\n" + str(current_deep or ""),
+                                           english_head=True)
+        except Exception:
+            _corr_deep = ""
         deep_result = await compress_fermented_to_deep(
             client, model_id,
             fermented, current_deep, archived_context_str,
-            current_deep_data=current_deep_data
+            current_deep_data=current_deep_data,
+            corrections_block=_corr_deep,   # [2026-10-10 기록 정정]
         )
 
         # M-4 fix: 압축 결과 유효성 가드. 빈/과단축(압축 실패 fallback의 truncated stub 등)이면
@@ -2529,6 +2565,14 @@ async def _auto_generate_chronicle(client, model_id: str, session_data: dict, ch
         return
 
     chronicle_input = "\n\n---\n\n".join(parts)
+    # [2026-10-10 기록 정정] 연대기 재료에 걸린 정정(R9) — 요약이 옛 사실을 다시 굳히지 않게.
+    try:
+        import corrections as _corr_ch
+        _cb_ch = _corr_ch.block_for(channel_id, chronicle_input) if channel_id else ""
+        if _cb_ch:
+            chronicle_input += "\n\n---\n\n" + _cb_ch
+    except Exception:
+        pass
 
     response = await client.aio.models.generate_content(
         model=model_id,
@@ -2536,7 +2580,8 @@ async def _auto_generate_chronicle(client, model_id: str, session_data: dict, ch
         config=types.GenerateContentConfig(
             system_instruction=getattr(text_resources, 'CHRONICLE_SYSTEM_PROMPT', ''),
             temperature=0.5,
-            max_output_tokens=2048,
+            # [2026-10-11 C27b] 2048 → 8192. 추론 켠 분석 콜은 추론이 출력 예산에 같이 든다 — 상한 통일(레티어스 "나머지도 다 올리자").
+            max_output_tokens=8192,
             safety_settings=_cfg.SAFETY_SETTINGS,
         )
     )

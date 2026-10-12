@@ -57,6 +57,43 @@ def _save_board(channel_id: str, board: Dict[str, Any]) -> None:
     domain_manager.update_quest_board(channel_id, board)
 
 
+def _quest_norm(s: str) -> str:
+    """퀘스트 이름 정규화 — _find_quest 와 dismissed 대조가 같은 규칙을 쓴다."""
+    s = str(s or "").replace('\u2018', "'").replace('\u2019', "'").replace('\u201C', '"').replace('\u201D', '"')
+    return re.sub(r'[의을를이가은는에서로부터과와및\s\'\""&,·\-_~:()]', '', s).lower()
+
+
+# [2026-10-10 이야기 실 O-E] 플레이어가 OOC 로 지운 퀘스트 이름 — 자동 등록(배경 추출 quest_add·progress 못 찾음
+#   자동 등록·리더 핸드아웃)이 같은 이름을 다시 올리지 못하게 한다. OOC add 만 건너뛰고 지운다.
+#   doom 실패·정체 archive 의 제거는 여기 안 남긴다(플레이어 뜻이 아니다). 스펙 state_v10/이야기실_지도·스펙_2026-10-10.md
+DISMISSED_MAX = 20
+
+
+def _dismiss_hit(board: Dict[str, Any], content: str) -> Optional[str]:
+    """dismissed 에 걸리면 그 이름. 같음, 또는 짧은 쪽이 4자 이상일 때 한쪽이 다른 쪽을 품음."""
+    n = _quest_norm(content)
+    if not n:
+        return None
+    for d in board.get("dismissed") or []:
+        dn = _quest_norm(d)
+        if not dn:
+            continue
+        if dn == n or (min(len(dn), len(n)) >= 4 and (dn in n or n in dn)):
+            return d
+    return None
+
+
+def dismiss_quest(channel_id: str, content: str) -> None:
+    """OOC 로 지운 이름을 남긴다(상한 DISMISSED_MAX, 오래된 것부터 밀림)."""
+    if not content:
+        return
+    board = _get_board(channel_id)
+    lst = [d for d in (board.get("dismissed") or []) if _quest_norm(d) != _quest_norm(content)]
+    lst.append(str(content).strip())
+    board["dismissed"] = lst[-DISMISSED_MAX:]
+    _save_board(channel_id, board)
+
+
 def _find_quest(active: List, content: str) -> Optional[Dict]:
     """active 리스트에서 content가 포함된 퀘스트 dict를 찾습니다. 퍼지 매칭 지원."""
     if not content or not active:
@@ -64,9 +101,7 @@ def _find_quest(active: List, content: str) -> Optional[Dict]:
     # Q-1/Q-2 fix: raw 부분일치 first-match + 글자집합 0.6 fuzzy 폐기(오매칭 근원).
     def _qc(q):
         return q["content"] if isinstance(q, dict) else q
-    def _normalize(s: str) -> str:
-        s = s.replace('\u2018', "'").replace('\u2019', "'").replace('\u201C', '"').replace('\u201D', '"')
-        return re.sub(r'[의을를이가은는에서로부터과와및\s\'\""&,·\-_~:()]', '', s).lower()
+    _normalize = _quest_norm   # [2026-10-10 O-E] 모듈 함수로 뺐다(dismissed 대조와 한 규칙)
     norm_content = _normalize(content)
     if not norm_content:
         return None
@@ -95,7 +130,8 @@ def get_quest_progress_bar(progress: int, max_progress: int) -> str:
 
 
 # Quest Operations (Progress Track)
-def add_quest(channel_id: str, content: str, rank: str = None) -> str:
+def add_quest(channel_id: str, content: str, rank: str = None, ooc: bool = False) -> str:
+    """ooc=True = 플레이어 OOC 등록 — dismissed 검사를 건너뛰고 그 이름을 dismissed 에서 지운다."""
     if not content:
         return None
     rank = rank or config.QUEST_DEFAULT_RANK
@@ -107,6 +143,12 @@ def add_quest(channel_id: str, content: str, rank: str = None) -> str:
 
     if _find_quest(active, content):
         return f"⚠️ 이미 등록된 퀘스트입니다."
+    _dh = _dismiss_hit(board, content)
+    if _dh and not ooc:
+        logger.debug(f"[Quest] dismissed 막음: '{content}' (지운 이름 '{_dh}')")
+        return f"⚠️ 플레이어가 지운 퀘스트라 다시 올리지 않습니다: {content}"
+    if _dh and ooc:
+        board["dismissed"] = [d for d in (board.get("dismissed") or []) if d != _dh]
 
     settings = config.QUEST_RANK_SETTINGS[rank]
     # last_progress_turn 초기화: 생성 즉시 0이면 첫 턴부터 stale 카운트가 시작되어

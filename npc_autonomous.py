@@ -3,6 +3,7 @@ Lorekeeper UNE - NPC Autonomous Behavior Trigger Engine (Phase 7)
 Evaluates NPC psychological state from Flash data to generate autonomous behavior directives.
 """
 
+import re
 from typing import Dict, Any, List, Optional
 
 import config as _cfg
@@ -122,11 +123,12 @@ DESISTANCE_CONDITIONS = {
 
 
 class TriggerResult:
-    def __init__(self, trigger_id: str, npc_name: str, directive: str, priority: int = 0):
+    def __init__(self, trigger_id: str, npc_name: str, directive: str, priority: int = 0, detail: str = ""):
         self.trigger_id = trigger_id
         self.npc_name = npc_name
-        self.directive = directive
+        self.directive = directive   # autonomy_log 기록용(렌더 지시는 2026-10-10 은퇴)
         self.priority = priority  # higher = more urgent
+        self.detail = detail      # [2026-10-10 던지는판 B2] pull 문장 재료(욕구·믿음·비밀 조각·상대 이름)
 
     def __repr__(self):
         return f"TriggerResult({self.trigger_id}, {self.npc_name}, pri={self.priority})"
@@ -334,18 +336,167 @@ class NPCAutonomousEngine:
 
 
 # =========================================================
+# [2026-10-10 던지는판 B1·B2] 서사 콜(Mira) 앞 평가 + pull(상태 꼴 재료)
+# =========================================================
+# 옛 자리: une_facade._evaluate_npc_autonomy(waterfall 뒤) → Slot 30 "[NPC Autonomous Behavior]" 렌더 지시.
+#   Mira 응답(response)과 다른 길로 '무엇'을 정해 부딪쳤다(클라라 응답 "answers nothing" + 자율 "a clue may slip out",
+#   5판 모두). 레티어스 자세: 이번 턴 무엇이 오나는 Mira 몫. → 평가는 서사 콜 앞에서, 결과는 Mira 추출 다이제스트의
+#   인물 줄 끝 "pulls: …"(지시가 아니라 그 몸이 끌리는 것). 렌더 지시는 은퇴. 집단 트리거 셋도 상태 꼴로(J4 (가)).
+#   스펙 analysis_line/던지는판·NPC자율_스펙_2026-10-10 §2 B.
+_PULL_MAX_PER_NPC = 2
+
+
+def pull_for(t: "TriggerResult") -> str:
+    tid, d = t.trigger_id, (getattr(t, "detail", "") or "").strip()
+    if tid == "henderson_need_critical":
+        return f"needs {d} unmet" if d else "needs unmet"
+    if tid == "attachment_activation":
+        return "anxious for closeness"
+    if tid == "reactance":
+        return "pushing against what's expected"
+    if tid == "information_gap_fill":
+        return f"a belief meeting what it sees: '{d}'" if d else "a belief meeting what it sees"
+    if tid == "secret_pressure":
+        return f"secret at its limit: '{d}'" if d else "secret near the surface"
+    if tid == "emotional_contagion":
+        return f"catching {d}'s distress" if d else "catching another's distress"
+    if tid == "moral_disengagement_stable":
+        return "settled in the harm, rationalizing"
+    if tid == "desistance_check":
+        return "turning from the hostility"
+    if tid == "agenda_manifest":
+        return f"own aim: {d}" if d else "own aim in play"
+    if tid == "ethical_arrest":
+        return "another's suffering in view"
+    if tid == "groupthink_pressure":
+        return "the room's lean pulls on them (group)"
+    if tid == "conformity_drift":
+        return "the room's lean pulls on them (majority)"
+    if tid == "obedience_cascade":
+        return "the room's lean pulls on them (authority)"
+    if tid == "cost_of_inaction":
+        return "staying still costs more than moving"
+    return ""
+
+
+def build_pulls(triggers: List["TriggerResult"], per_npc: int = _PULL_MAX_PER_NPC) -> Dict[str, List[str]]:
+    """인물당 우선도 높은 pull 둘까지(트리거는 우선도 내림차순으로 온다). 같은 문장은 한 번."""
+    out: Dict[str, List[str]] = {}
+    for t in triggers or []:
+        p = pull_for(t)
+        if not p:
+            continue
+        lst = out.setdefault(t.npc_name, [])
+        if p not in lst and len(lst) < per_npc:
+            lst.append(p)
+    return out
+
+
+def evaluate_for_turn(bus, context) -> Dict[str, List[str]]:
+    """서사 콜 앞 자율 평가. bus.dai['autonomous_triggers']·쿨다운·autonomy_log를 남기고 pull 사전을 돌려준다.
+    읽는 것: psyche_states·npc_knowledge·npc_attitudes(waterfall 판정 앞 사전 전개), 저장 태도(anchors), static traits."""
+    import logging as _lg
+    _log = _lg.getLogger("NPCAutonomy")
+    if not (bus.dai and bus.dai.get("psyche_states")):
+        return {}
+    import domain_manager
+    import npc_manager as _npc_mgr
+    anchors = getattr(context, "narrative_anchors", None) or {}
+    # 저장 태도(depth/tension) 병합 — 옛 une_facade 그대로
+    _dai_att = bus.dai.get("npc_attitudes") or {}
+    _stored_att = anchors.get("stored_npc_attitudes", {}) or {}
+    _merged_att = {}
+    for _n, _a in _dai_att.items():
+        _m = dict(_a) if isinstance(_a, dict) else {}
+        _resolved = _n if _n in _stored_att else None
+        if _resolved is None:
+            try:
+                _resolved = domain_manager._find_npc_key(_stored_att, _n) or _n
+            except Exception:
+                _resolved = _n
+        _s = _stored_att.get(_resolved, {})
+        if isinstance(_s, dict):
+            _m.setdefault("depth", _s.get("depth", 0))
+            _m.setdefault("tension", _s.get("tension", 0))
+        _merged_att[_n] = _m
+    _ch = anchors.get("channel_id", "")
+    _static = {}
+    if _ch:
+        for _nm in bus.dai.get("psyche_states", {}):
+            try:
+                _st = _npc_mgr.get_npc_static_traits(_ch, _nm)
+            except Exception:
+                _st = None
+            if _st:
+                _static[_nm] = _st
+    triggers = NPCAutonomousEngine.evaluate_triggers(
+        psyche_states=bus.dai.get("psyche_states", {}),
+        npc_knowledge=bus.dai.get("npc_knowledge", {}),
+        npc_attitudes=_merged_att,
+        scene_type=bus.dai.get("scene_type", "normal"),
+        static_traits_map=_static,
+    )
+    # 미등록 이름(PC 등) 제외 + 중대 결정(priority>=4)만 쿨다운 — 옛 une_facade 그대로
+    if _ch and triggers:
+        _kept = []
+        for t in triggers:
+            if _npc_mgr.get_npc(_ch, t.npc_name) is None:
+                _log.debug(f"[NPC Autonomy] '{t.npc_name}' 미등록(PC 추정) — trigger '{t.trigger_id}' 제외")
+                continue
+            cd = _npc_mgr.check_decision_cooldown(_ch, t.npc_name)
+            if cd > 0 and t.priority >= 4:
+                _log.debug(f"[NPC Autonomy] {t.npc_name} '{t.trigger_id}' suppressed — cooldown {cd}")
+            else:
+                _kept.append(t)
+        triggers = _kept
+    if _ch and triggers:
+        try:
+            import sqlite_store as _sq
+            try:
+                _turn = int(float(bus.dai.get("turn_index", 0) or 0))
+            except (TypeError, ValueError):
+                _turn = 0
+            _sq.append_autonomy_log(_ch, _turn, [
+                {"npc_name": t.npc_name, "trigger_id": t.trigger_id,
+                 "priority": t.priority, "directive": t.directive} for t in triggers])
+        except Exception as _e:
+            _log.debug(f"[AutonomyLog] skip: {_e}")
+    if triggers:
+        bus.dai["autonomous_triggers"] = [
+            {"npc_name": t.npc_name, "trigger_id": t.trigger_id, "priority": t.priority} for t in triggers]
+        if _ch:
+            for t in triggers:
+                if t.priority >= 4:
+                    _npc_mgr.set_decision_cooldown(_ch, t.npc_name, turns=3)
+    pulls = build_pulls(triggers)
+    if pulls:
+        _log.info("[NPC Autonomy] pulls → Mira: %s",
+                  "; ".join(f"{n}: {', '.join(v)}" for n, v in pulls.items())[:300])
+    return pulls
+
+
+# =========================================================
 # Individual Trigger Checks
 # =========================================================
 
+def _need_word(n: str) -> str:
+    """[2026-10-10 시트 둘] needs 이름표 정리 — Theoria가 시트를 볼 때 "intimacy vs isolation (Erikson)" 꼴이 나와 pull 줄에
+    그대로 실렸다. 괄호(이론 이름)를 떼고 'X vs Y'는 앞 낱말만. 스키마도 맨 낱말을 요구한다(이건 안전망)."""
+    w = re.sub(r"\s*\([^)]*\)", "", str(n or "")).strip()
+    w = re.split(r"\s+vs\.?\s+", w, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+    return w.strip(" -—:;,.").lower()
+
+
 def _check_henderson_need_critical(ctx: Dict) -> TriggerResult | None:
     """Henderson 14 Needs: 핵심 욕구가 active_needs에 2개 이상이면 자발적 행동."""
-    needs = [n for n in _as_list(ctx["psyche"].get("active_needs")) if isinstance(n, str) and n.strip()]
+    needs = [_need_word(n) for n in _as_list(ctx["psyche"].get("active_needs")) if isinstance(n, str) and n.strip()]
+    needs = [n for n in needs if n]
     if len(needs) >= 2:
         need_str = "/".join(needs[:2])
         return TriggerResult(
             "henderson_need_critical", ctx["name"],
             f"{ctx['name']}'s needs ({need_str}) go unmet — this turn they move on their own",
-            priority=7,
+            priority=7, detail=need_str,
         )
     return None
 
@@ -391,13 +542,13 @@ def _check_info_gap(ctx: Dict) -> TriggerResult | None:
         return TriggerResult(
             "information_gap_fill", ctx["name"],
             f"{ctx['name']}'s belief wavers — '{belief}' collides with reality; defending, doubting, or dismissing it",
-            priority=5,
+            priority=5, detail=belief,
         )
 
     return TriggerResult(
         "information_gap_fill", ctx["name"],
         f"{ctx['name']} senses something off — checking or pressing about '{belief}'",
-        priority=4,
+        priority=4, detail=belief,
     )
 
 
@@ -418,7 +569,7 @@ def _check_secret_pressure(ctx: Dict) -> TriggerResult | None:
         return TriggerResult(
             "secret_pressure", ctx["name"],
             f"{ctx['name']} at the pressure limit — a fragment of '{fragment}' slips out through action or a misspoken word",
-            priority=6,
+            priority=6, detail=fragment,
         )
 
     return TriggerResult(
@@ -461,13 +612,13 @@ def _check_emotional_contagion(ctx: Dict, all_psyche: Dict) -> TriggerResult | N
                     return TriggerResult(
                         "emotional_contagion", ctx["name"],
                         f"{ctx['name']} senses {other_name}'s distress — already-taut nerves sharpen further",
-                        priority=1,
+                        priority=1, detail=other_name,
                     )
                 # ventral (또는 기타): 기본 어조
                 return TriggerResult(
                     "emotional_contagion", ctx["name"],
                     f"{ctx['name']} senses {other_name}'s distress — the calm begins to waver",
-                    priority=2,
+                    priority=2, detail=other_name,
                 )
     return None
 
@@ -653,7 +804,7 @@ def _check_agenda_manifest(ctx: Dict) -> Optional[TriggerResult]:
         return TriggerResult(
             "agenda_manifest", ctx["name"],
             f"{ctx['name']}'s personal aim shows — the want for {need_kr} bleeds into their words and actions",
-            priority=2,
+            priority=2, detail=need_kr,
         )
     return None
 

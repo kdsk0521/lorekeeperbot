@@ -249,7 +249,8 @@ async def _get_or_build_blurb(client, channel_id: str) -> str:
         gen_config = types.GenerateContentConfig(
             system_instruction=f"{text_resources.ANALYSIS_FRAME}\n\n{_BLURB_SYSTEM}",   # [2026-10-06 분석 틀] 
             response_mime_type="application/json",
-            max_output_tokens=1024,
+            # [2026-10-11 C27b] 1024 → 8192. 추론 켠 분석 콜은 추론이 출력 예산에 같이 든다 — 상한 통일(레티어스 "나머지도 다 올리자").
+            max_output_tokens=8192,
             temperature=0.4,
             safety_settings=config.SAFETY_SETTINGS,
         )
@@ -634,7 +635,8 @@ async def run_reader(client, channel_id: str, turn: int,
     gen_config = types.GenerateContentConfig(
         system_instruction=f"{text_resources.ANALYSIS_FRAME}\n\n{_READER_SYSTEM}",   # [2026-10-06 분석 틀] 
         response_mime_type="application/json",
-        max_output_tokens=4096,
+        # [2026-10-11 C27b] 4096 → 8192. 추론 켠 분석 콜은 추론이 출력 예산에 같이 든다 — 상한 통일(레티어스 "나머지도 다 올리자").
+        max_output_tokens=8192,
         # 해석 다양화가 목적이라 온도를 해석층에 준다(0.7). 사실층(quote)은 _validate_digest의
         # 접지 검사(원문 substring)가 코드로 잡음 — 온도↑에도 발명은 통과 못 함.
         temperature=0.7,
@@ -800,7 +802,8 @@ async def run_seed_replenish(client, channel_id: str) -> bool:
         gen_config = types.GenerateContentConfig(
             system_instruction=f"{text_resources.ANALYSIS_FRAME}\n\n{_SEED_SYSTEM}",   # [2026-10-06 분석 틀] 
             response_mime_type="application/json",
-            max_output_tokens=2048,
+            # [2026-10-11 C27b] 2048 → 8192. 추론 켠 분석 콜은 추론이 출력 예산에 같이 든다 — 상한 통일(레티어스 "나머지도 다 올리자").
+            max_output_tokens=8192,
             temperature=0.4,
             safety_settings=config.SAFETY_SETTINGS,
         )

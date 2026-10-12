@@ -867,8 +867,13 @@ class Resolver:
             who = self.cv.resolve_npc(self.channel_id, k)
             if not who:
                 raise ExprError(f"이름 없음: {nm}[{k}] (허용 인물이 아닙니다)")
+            # [2026-10-12 C32] 평형[리나] = 리나 몸을 모는 마음의 값(빈 몸이면 값 없음 → init).
+            try:
+                who = self.cv._vc_mind_key(self.channel_id, nm, who)
+            except Exception:
+                pass
             stored = (self.cv.get_values(self.channel_id).get(nm) or {}).get("value")
-            cur = stored.get(who) if isinstance(stored, dict) else None
+            cur = stored.get(who) if (who and isinstance(stored, dict)) else None
             if cur is None:
                 cur = spec.get("init", 0)
             try:

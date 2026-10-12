@@ -4,6 +4,7 @@ Orchestrates the sequence of narrative analysis and mechanical updates.
 """
 
 import logging
+import re  # [2026-10-09 E-0] _normalize_soma_enums
 from typing import Dict, Any
 from orchestration_context import GameContext, SharedBus
 from theoria_analyzer import TheoriaAnalyzer
@@ -119,6 +120,54 @@ def _is_pc_key(name, registry: dict) -> bool:
         return domain_manager.is_pc_name(name, registry)
     except Exception:
         return name in registry
+
+
+def _match_psyche_key(name: str, ps) -> "str | None":
+    """Mira가 적은 인물 이름 → 같은 턴 psyche_states 키. psyche_narrative 병합이 쓰던 대조 그대로
+    (정확 → 괄호 앞 같음 → 부분 문자열, 처음 맞는 키). [2026-10-10 별칭 A1] trait_connections도 같이 쓰려고 밖으로 뺐다."""
+    if not isinstance(ps, dict) or not ps:
+        return None
+    if name in ps:
+        return name
+    _b = name.split("(")[0].strip().lower()
+    for _k in ps:
+        _kb = _k.split("(")[0].strip().lower()
+        if _kb == _b or _b in _k.lower() or _kb in name.lower():
+            return _k
+    return None
+
+
+def _align_trait_connections(tc, ps, pc_reg) -> tuple:
+    """[2026-10-10 별칭 A1] trait_connections 키를 psyche 키로 맞춘다.
+    Mira가 "Bibi"로 적으면 small tells엔 Bibi, 응답 칸엔 비비(Bibi)로 실려 렌더가 두 사람으로 읽을 수 있었다(B_L2 T3).
+    - 맞는 키가 있으면 그 키로 옮긴다. 없으면 이름 그대로 둔다.
+    - 같은 사람이 정본 키로도 와 있으면 정본 키 줄을 남긴다(순서 무관).
+    - 이 시점 analysis의 psyche_states엔 PC 키가 남아 있을 수 있다(사전 전개 정제는 bus.dai 쪽만 걷는다).
+      그래서 PC 이름은 옮기지도 않고 옮겨 받지도 않는다. PC 줄은 뒤의 단일 정제가 걷는다.
+    돌려주는 것: (새 dict, 옮긴 목록). 바뀐 게 없으면 받은 dict 그대로.
+    근거: 파티쳇수정/npc/별칭_지도·스펙_2026-10-10.md §4 A1"""
+    if not isinstance(tc, dict) or not tc or not isinstance(ps, dict) or not ps:
+        return tc, []
+    out, exact_keys, moved, changed = {}, set(), [], False
+    for name, val in tc.items():
+        tgt, exact = name, name in ps
+        if not exact and not _is_pc_key(str(name), pc_reg):
+            m = _match_psyche_key(str(name), ps)
+            if m and not _is_pc_key(m, pc_reg):
+                tgt = m
+        if tgt != name:
+            changed = True
+        if tgt in out:
+            if exact and tgt not in exact_keys:
+                out[tgt] = val          # 정본 키 줄이 먼저 옮겨 앉은 별칭 줄을 이긴다
+                exact_keys.add(tgt)
+            continue
+        out[tgt] = val
+        if exact:
+            exact_keys.add(tgt)
+        if tgt != name:
+            moved.append(f"{name}→{tgt}")
+    return (out, moved) if changed else (tc, [])
 
 
 def _turn_now(context) -> int:
@@ -281,6 +330,52 @@ def _merge_soma_states(prev: dict, psyche_states: dict, current_turn: int) -> tu
 
 
 
+_SOMA_ENUMS = {
+    "polyvagal": ("ventral", "sympathetic", "dorsal"),
+    "dissociation": ("none", "mild", "moderate", "severe"),
+}
+_SOMA_ENUM_RE = {k: re.compile(r"\b(" + "|".join(v) + r")\b") for k, v in _SOMA_ENUMS.items()}
+
+
+# [2026-10-09 SD개편] 비트 주인(_screen_beats·_name_forms_beat·_BEAT_OWNER_RE) 은퇴 — suggested_beats와 함께.
+
+
+def _normalize_soma_enums(psyche_states) -> list:
+    """[2026-10-09 E-0] Theoria soma enum(polyvagal·dissociation)을 소비 전에 enum 값으로 맞춘다. 제자리 수정.
+
+    모델이 4b `Soma(prev): … (held Nt)` 주석이나 판단 근거를 값에 섞는다("ventral (held 3t) — sympathetic flicker …").
+    그대로 두면 ① emotion_engine `POLYVAGAL_BIAS.get()`이 {}를 돌려 편향이 소리 없이 빠지고 ② `==` 분기가 빗나가며
+    ③ soma 스냅샷이 깨진 문자열을 저장해 다음 턴 4b로 되먹인다(같은 꼴이 턴마다 이어진다).
+    규칙: 값 안에서 맨 앞에 나오는 enum 낱말을 쓴다. 하나도 없으면 키를 뺀다(모델이 안 쓴 것과 같다 — 스냅샷은 지난 값 유지).
+    문자열 아닌 값(None 등)은 건드리지 않는다. 반환: [(인물, 키, 옛 값, 새 값|None)] — 로그용.
+    근거: analysis_line/묶음A_do칸착지_측정_2026-10-09 §5.7·§6.2 (10-07 이후 Theoria 167개 중 9개 enum 밖).
+    """
+    fixed = []
+    if not isinstance(psyche_states, dict):
+        return fixed
+    for name, blk in psyche_states.items():
+        soma = blk.get("soma") if isinstance(blk, dict) else None
+        if not isinstance(soma, dict):
+            continue
+        for key, vals in _SOMA_ENUMS.items():
+            v = soma.get(key)
+            if not isinstance(v, str):
+                continue
+            low = v.strip().lower()
+            if low in vals:
+                if low != v:
+                    soma[key] = low
+                continue
+            m = _SOMA_ENUM_RE[key].search(low)
+            new = m.group(1) if m else None
+            if new:
+                soma[key] = new
+            else:
+                soma.pop(key, None)
+            fixed.append((name, key, v, new))
+    return fixed
+
+
 _PEPLAU_PHASES = ("orientation", "identification", "exploitation", "resolution")
 _ATTACH_KINDS = ("secure", "anxious", "avoidant", "disorganized")
 
@@ -405,6 +500,12 @@ class WaterfallPipeline:
         if set(analysis.keys()) == {"error"}:
             _degrade_stage(bus, "theoria_analysis", RuntimeError(str(analysis.get("error"))[:200]))
             analysis = {}
+        # [2026-10-09 E-0] soma enum 정규화 — 감정 엔진·soma 스냅샷·4b 되먹임 전부 이 값을 본다(소비 전 한 자리).
+        try:
+            for _sn, _sk, _old, _new in _normalize_soma_enums(analysis.get("psyche_states")):
+                logger.info("[Soma] %s.%s 정규화: %r → %s", _sn, _sk, str(_old)[:80], _new or "(뺌)")
+        except Exception as _e_se:
+            logger.warning("[Soma] enum 정규화 건너뜀: %s", _e_se)
 
         # [2026-09-22 voice_seed §2 A] 미등록 신규 인물 게이트 + 굴림 — 서사 콜 **앞**.
         #   새 콜 0(전부 코드). 굴림은 서사 콜 입력(§2 C NEWCOMERS 블록)의 재료가 된다.
@@ -444,10 +545,22 @@ class WaterfallPipeline:
                 if not isinstance(_pv, _ty):
                     _pv = _ty() if _dflt is None else _dflt
                 bus.dai[_pk] = _pv
+            # [2026-10-10 던지는판 A1·B1] Storyteller(energy·quality_flags)와 NPC 자율(지식·태도)이 서사 콜 앞으로 와서 같이 싣는다.
+            #   본 전개가 같은 값으로 다시 쓴다(무해). npc_attitudes는 여기선 정렬(align_theoria_relations, DB 쓰기) 없이
+            #   읽기만 — 자율이 보는 depth·tension은 원래 저장값이다. 정렬과 재계산은 본 전개 자리 그대로.
+            bus.dai["energy_direction"] = analysis.get("EnergyDirection", "idle") or "idle"
+            _qf_pre = analysis.get("QualityFlags")
+            bus.dai["quality_flags"] = _qf_pre if isinstance(_qf_pre, dict) else {}
+            _nk_pre = analysis.get("NPCKnowledge")
+            bus.dai["npc_knowledge"] = _nk_pre if isinstance(_nk_pre, dict) else {}
+            bus.dai["npc_attitudes"] = _relation_view(
+                bus.dai["psyche_states"], (context.narrative_anchors or {}).get("stored_npc_attitudes"))
             # [2026-10-07 P4] 정확일치 → `!가면` 이름 규칙(_is_pc_key). 명부는 아래 단일 정제와 같은 것을 쓴다.
             if _pc_reg:
                 bus.dai["psyche_states"] = {k: v for k, v in bus.dai["psyche_states"].items() if not _is_pc_key(k, _pc_reg)}
                 bus.dai["relevant_npcs"] = [n for n in bus.dai["relevant_npcs"] if not _is_pc_key(n, _pc_reg)]
+                for _pk2 in ("npc_knowledge", "npc_attitudes"):
+                    bus.dai[_pk2] = {k: v for k, v in bus.dai[_pk2].items() if not _is_pc_key(k, _pc_reg)}
         except Exception as _e_pre:
             logger.warning(f"[Judgment-first] pre-map skipped: {_e_pre}")
 
@@ -509,6 +622,93 @@ class WaterfallPipeline:
                 bus.judgment["active"] = False
                 _degrade_stage(bus, "judgment_engine", e)
 
+        # ===== [2026-10-10 던지는판 A1] 이변 제안 전개 + Storyteller — 서사 콜(Mira) 앞 =====
+        #   Storyteller가 읽는 것은 전부 추출 몫(제안·조건·energy·quality_flags·장면·위치)과 판정 활성·間 상태다. Mira가 이번 턴
+        #   터지는 사건·전조를 알고 응답·hook을 쓰게 앞으로 옮겼다. bus.anomaly 블록은 **옮김**(뒤 본 전개에서 지움).
+        #   스펙 analysis_line/던지는판·NPC자율_스펙_2026-10-10 §2 A.
+        # Anomaly Profile 연동
+        anomaly_profile = analysis.get("anomaly_profile") or {}
+        if isinstance(anomaly_profile, dict):
+            tag = anomaly_profile.get("trigger") or ""
+            category = anomaly_profile.get("category") or ""
+            intensity = anomaly_profile.get("intensity") or ""
+            polarity = anomaly_profile.get("polarity") or ""
+            line = anomaly_profile.get("line") or ""
+            reason = anomaly_profile.get("reason") or ""
+
+            if tag:
+                bus.anomaly["tag"] = tag
+            if category:
+                bus.anomaly["category"] = category
+            if intensity:
+                bus.anomaly["intensity"] = intensity
+            if polarity:
+                bus.anomaly["polarity"] = polarity
+            if line:
+                bus.anomaly["line"] = line
+            if reason:
+                bus.anomaly["reason"] = reason
+            # [2026-10-10 큐 이어짐] 이 제안이 잇는 실의 id(E# 대기 사건 / C# 서 있는 조건). 길잡이는 anomaly_module 입구.
+            _cont = str(anomaly_profile.get("continues") or "").strip().upper()
+            if re.fullmatch(r"[EC]\d{1,2}", _cont):
+                bus.anomaly["continues"] = _cont
+
+        # Condition resolved (from Flash analysis)
+        cond_resolved = analysis.get("condition_resolved")
+        if isinstance(cond_resolved, list) and cond_resolved:
+            bus.anomaly["condition_resolved"] = cond_resolved
+
+        # Condition updates — severity transition (from Flash analysis)
+        cond_updates = analysis.get("condition_updates")
+        if isinstance(cond_updates, list) and cond_updates:
+            bus.anomaly["condition_updates"] = cond_updates
+
+        # Event location override (from Flash anomaly_profile)
+        if isinstance(anomaly_profile, dict):
+            event_location = (anomaly_profile.get("location") or "").strip()
+            if event_location:
+                bus.anomaly["location"] = event_location
+
+        # Normalize defaults for downstream use
+        if bus.anomaly.get("tag") and not bus.anomaly.get("category"):
+            bus.anomaly["category"] = bus.anomaly.get("tag")
+        if not bus.anomaly.get("intensity"):
+            bus.anomaly["intensity"] = "Mid"
+        if not bus.anomaly.get("polarity"):
+            bus.anomaly["polarity"] = "mixed"
+        # Default line for a Flash/Theoria-proposed anomaly that has a tag but no line.
+        # (Seed-based fallback 제거 2026-07-09 이후로 이 경로는 진짜 Flash anomaly에만 적용된다.)
+        if bus.anomaly.get("tag") and not bus.anomaly.get("line"):
+            bus.anomaly["line"] = f"{bus.anomaly['tag']}의 기운이 감돈다."
+
+        # 4. Storyteller: inject state + set potential
+        bus.anomaly["potential"] = True
+        _st_ch = (context.narrative_anchors or {}).get("channel_id", "")
+        if _st_ch:
+            st_state = domain_manager.get_storyteller_state(_st_ch)
+            bus.anomaly["_storyteller_state"] = st_state
+            bus.anomaly["_current_turn"] = domain_manager.get_world_state(_st_ch).get("turn_index", 0)
+            bus.anomaly["_channel_id"] = _st_ch
+
+        # 5. Storyteller Decision
+        if bus.anomaly.get("potential"):
+            try:
+                self.anomaly = AnomalyModule(self.theoria.client, self.theoria.model_id)
+                context = await self.anomaly.process(context)
+            except Exception as e:
+                bus.anomaly["triggered"] = False
+                _degrade_stage(bus, "anomaly_module", e)
+
+        # ===== [2026-10-10 던지는판 B1] NPC 자율 평가 — Mira 앞. 렌더 지시([NPC Autonomous Behavior]) 은퇴, Mira 재료(pull)로 =====
+        #   bus.dai['autonomous_triggers'](fg 선별·수면 깊이)·쿨다운·autonomy_log는 그대로. pull은 서사 콜 추출 다이제스트 인물 줄로.
+        try:
+            import npc_autonomous as _na
+            _pulls = _na.evaluate_for_turn(bus, context)
+            if _pulls:
+                analysis["_autonomy_pulls"] = _pulls
+        except Exception as e:
+            _degrade_stage(bus, "npc_autonomy", e)
+
         # 서사 콜에 넘길 굴림 사실 — 게이트 뒤 active 가 정본(Flash 원 요청이 아니라). 라벨·위치 단계는 theoria 가 판정층과
         #   같은 사전으로 만든다.
         _roll = {"active": bool(bus.judgment.get("active")),
@@ -527,7 +727,7 @@ class WaterfallPipeline:
         # [A안] 서사 콜 결과 합류 — 서사 필드는 narrative 콜이 소유 (추출 스키마에서 제거됨).
         # 서사 콜 실패 시 키 부재 → 아래 전개가 기존 디폴트({}/[]/None) 적용 = 현행 강하와 동일 동작.
         if narrative:
-            _merge_keys = ("narrative_chain", "suggested_beats", "narrative_hook",
+            _merge_keys = ("narrative_chain", "narrative_hook",   # [2026-10-09 SD개편] suggested_beats 은퇴
                            "open_invitations",  # [H9 2026-07-18] 플레이어향 전방 affordance
                            "offscreen_trace", "scene_register", "trait_connections",
                            "newcomer_seeds",  # [2026-09-22 voice_seed §2 D 1] 여기 빠지면 증발한다
@@ -543,14 +743,7 @@ class WaterfallPipeline:
             _ps = analysis.get("psyche_states")
             if isinstance(_pn, dict) and isinstance(_ps, dict) and _ps:
                 def _match_npc(name: str):
-                    if name in _ps:
-                        return name
-                    _b = name.split("(")[0].strip().lower()
-                    for _k in _ps:
-                        _kb = _k.split("(")[0].strip().lower()
-                        if _kb == _b or _b in _k.lower() or _kb in name.lower():
-                            return _k
-                    return None
+                    return _match_psyche_key(name, _ps)   # [2026-10-10 별칭 A1] 대조는 모듈 함수로 — 규칙 그대로
                 for _pn_name, _pn_blk in _pn.items():
                     if not isinstance(_pn_blk, dict):
                         continue
@@ -565,20 +758,61 @@ class WaterfallPipeline:
                         _rel = _ps[_tgt].setdefault("relation", {})
                         if isinstance(_rel, dict):
                             _rel["value_conflict"] = _pn_blk["value_conflict"]
-                    # [2026-07-22 카드1] pressure(drives/cannot) 병합 — 렌더러가 받는 "감정이 무엇을
-                    # 하게 만드는가". LLM이 명시 null로 줄 수도 있으므로 setdefault 금지·isinstance 정규화.
+                    # [2026-07-22 카드1] pressure 병합 — LLM이 명시 null로 줄 수도 있으므로 setdefault 금지·isinstance 정규화.
+                    # [2026-10-09 압력 want·can] 칸 = drives(want 꼴) + can. 옛 cannot은 스키마에서 빠졌다.
                     _pr = _pn_blk.get("pressure")
                     if isinstance(_pr, dict):
                         _drives = _pr.get("drives")
-                        _cannot = _pr.get("cannot")
+                        _can = _pr.get("can")
                         _clean = {}
                         if isinstance(_drives, str) and _drives.strip() and _drives.strip().lower() != "null":
                             _clean["drives"] = _drives.strip()
-                        if isinstance(_cannot, str) and _cannot.strip() and _cannot.strip().lower() != "null":
-                            _clean["cannot"] = _cannot.strip()
+                        if isinstance(_can, str) and _can.strip() and _can.strip().lower() != "null":
+                            _clean["can"] = _can.strip()
                         if _clean:
                             _ps[_tgt]["pressure"] = _clean
+                    # [2026-10-09 반응주인] response = 이번 턴 이 몸이 입력에 답하는 것(굴림 뒤, 서사 콜이 주인). 저장 안 함(pressure와 같다).
+                    _resp = _pn_blk.get("response")
+                    if isinstance(_resp, str) and _resp.strip() and _resp.strip().lower() != "null":
+                        _ps[_tgt]["response"] = _resp.strip()
+                    # [2026-10-10 칸이관] Theoria에서 넘어온 네 칸 — 시트를 보는 Mira가 쓰고, 먹는 쪽이 읽던 자리 그대로 앉힌다.
+                    #   self_opacity → psyche(감정 surprise 약가산·렌더 거울), logos_layer → relation(Slot 17 dialogue direction 핵심),
+                    #   starts_as·friction_starts → relation(관계 시드 — 아래 align_theoria_relations가 Mira 뒤에 읽는다).
+                    #   근거: analysis_line/Theoria→Mira_넘길칸_지도_2026-10-10
+                    def _txt(v):
+                        return v.strip() if isinstance(v, str) and v.strip() and v.strip().lower() != "null" else ""
+                    _so = _txt(_pn_blk.get("self_opacity"))
+                    if _so:
+                        _psy = _ps[_tgt].setdefault("psyche", {})
+                        if isinstance(_psy, dict):
+                            _psy["self_opacity"] = _so
+                    _rel2 = _ps[_tgt].setdefault("relation", {})
+                    if isinstance(_rel2, dict):
+                        for _rk in ("logos_layer", "starts_as", "friction_starts"):
+                            _rv = _txt(_pn_blk.get(_rk))
+                            if _rv:
+                                _rel2[_rk] = _rv.lower() if _rk != "logos_layer" else _rv
 
+            # [2026-10-10 별칭 A1] trait_connections 키도 psyche 키로 — 위 psyche_narrative와 같은 대조. small tells 줄이 정본 키로 나간다.
+            _tc_al, _tc_moved = _align_trait_connections(analysis.get("trait_connections"), _ps, _pc_reg)
+            if _tc_moved:
+                analysis["trait_connections"] = _tc_al
+                logger.info(f"[Narrative] trait_connections 키 맞춤: {', '.join(_tc_moved)}")
+            elif _tc_al is not analysis.get("trait_connections"):
+                analysis["trait_connections"] = _tc_al
+
+            # [2026-10-10 칸이관] 친밀 분석의 인물 칸(desire_type·dual_control·power_dynamic·body_memory·post_encounter_prediction)은
+            #   Mira 몫 — Theoria IA(window_check)에 얹는다. 아래 bus.dai["intimacy_analysis"] 전개·PC 정제가 그대로 받는다.
+            _mi = narrative.get("intimacy")
+            if isinstance(_mi, dict) and _mi:
+                _tia = analysis.get("IntimacyAnalysis")
+                _tia = dict(_tia) if isinstance(_tia, dict) else {}
+                for _ik in ("desire_type", "dual_control", "power_dynamic", "body_memory", "post_encounter_prediction"):
+                    if _mi.get(_ik) is not None:
+                        _tia[_ik] = _mi[_ik]
+                analysis["IntimacyAnalysis"] = _tia
+            elif str(analysis.get("SceneType") or "").strip().lower() == "intimate":
+                logger.info("[빈칸] Mira intimacy null (SceneType=intimate)")
             logger.info("[Narrative] merged: "
                         + ", ".join(k for k in _merge_keys if narrative.get(k) is not None)
                         + (f" + psyche_narrative({len(_pn)})" if isinstance(_pn, dict) and _pn else ""))
@@ -604,12 +838,7 @@ class WaterfallPipeline:
         bus.dai["aspects"] = analysis.get("Aspects", [])
         bus.dai["psyche_states"] = analysis.get("psyche_states", {})
         bus.dai["narrative_chain"] = analysis.get("narrative_chain", {})
-        # SD-Bb2 (2026-04-22): Theoria author-hint beats (휴리스틱 비트 보강용, 필수 아님)
-        _sb_raw = analysis.get("suggested_beats", [])
-        if isinstance(_sb_raw, list):
-            bus.dai["suggested_beats"] = [str(b).strip() for b in _sb_raw if isinstance(b, str) and b.strip()]
-        else:
-            bus.dai["suggested_beats"] = []
+        # [2026-10-09 SD개편] SD-Bb2 suggested_beats 전개·비트 주인 걸러내기 은퇴(소비처였던 SD 비트 큐가 은퇴).
         # [2026-07-02 Offscreen Motion — 뮈토스 이식] 부재 캐스트 흔적 (dict or null, null이 상례)
         _ot_raw = analysis.get("offscreen_trace")
         bus.dai["offscreen_trace"] = _ot_raw if isinstance(_ot_raw, dict) else None
@@ -639,6 +868,20 @@ class WaterfallPipeline:
         #   옛 숫자 출력이면 시드·턴당 캡·범위로 클램프. ★자리 = 이 파생 뷰(_relation_view) **앞** — 첫 수리(감정 단계 앞)는
         #   이 뷰가 날숫자를 읽는 걸 놓쳤다(npc_attitudes → iceberg·자율 트리거·월드보드·presence). 감정·iceberg·저장도 같은 값.
         #   행동 PC = anchors.acting_user_id 의 mask(쓰기 경로 ctx.user_id 마스크와 같은 사람), 턴 = 같은 turn_index.
+        # [2026-10-12 C32 몸·인격] Theoria `vessel` 사건 → 표(world_state). 장전 안 된 채널은 스키마에 칸이 없어 늘 None.
+        #   ★자리 = 관계 정렬 **앞** — 이번 턴에 마음이 바뀌었으면 이번 턴 관계·지식 쓰기부터 새 마음으로 간다.
+        #   같은 턴 렌더(Slot 7 합성)도 이 뒤에 지어진다. 관문(PC 몸 거부·명부 밖 마음 버림)은 vessel.apply_events.
+        _vs_ev = analysis.get("vessel")
+        bus.dai["vessel"] = _vs_ev if isinstance(_vs_ev, list) and _vs_ev else None
+        if bus.dai["vessel"]:
+            try:
+                import vessel as _vs_w
+                _ch_vs = (context.narrative_anchors or {}).get("channel_id", "")
+                if _ch_vs:
+                    _vs_w.apply_events(_ch_vs, bus.dai["vessel"],
+                                       turn=int(domain_manager.get_world_state(_ch_vs).get("turn_index", 0) or 0))
+            except Exception as _e_vs:
+                logger.debug(f"[Vessel] apply skip: {_e_vs}")
         try:
             _anch_al = context.narrative_anchors or {}
             _ch_al = _anch_al.get("channel_id", "")
@@ -687,7 +930,7 @@ class WaterfallPipeline:
         # (의미상 null 허용 필드는 제외: anomaly는 {}=falsy로 동치, offscreen_trace/scene_register/
         #  intimacy_analysis/flashback_eval/item_usage/continuity_check는 null 계약 유지)
         for _lk in ("aspects", "memory_triggers", "sensory_anchors", "relevant_context",
-                    "relevant_npcs", "relevant_chunks", "suggested_beats", "open_invitations"):
+                    "relevant_npcs", "relevant_chunks", "open_invitations"):
             if not isinstance(bus.dai.get(_lk), list):
                 bus.dai[_lk] = []
         for _dk in ("input_analysis", "quality_flags", "position", "effect", "psyche_states",
@@ -724,6 +967,16 @@ class WaterfallPipeline:
                         if _hit:
                             bus.dai[_nk] = {k: v for k, v in _blk.items() if k not in _hit}
                             _purged.append(f"{_nk}({','.join(_hit)})")
+                # [2026-10-10 칸이관] 친밀 분석의 인물별 칸도 — PC 욕망·브레이크가 Slot 17로 가면 PC 봉인 위반.
+                _ia_pc = bus.dai.get("intimacy_analysis")
+                if isinstance(_ia_pc, dict):
+                    for _ik in ("window_check", "dual_control", "desire_type", "post_encounter_prediction"):
+                        _sub = _ia_pc.get(_ik)
+                        if isinstance(_sub, dict):
+                            _hit = [n for n in _sub if _is_pc_key(n, _pc_reg)]
+                            if _hit:
+                                _ia_pc[_ik] = {k: v for k, v in _sub.items() if k not in _hit}
+                                _purged.append(f"intimacy_analysis.{_ik}({','.join(_hit)})")
                 _rn = bus.dai.get("relevant_npcs")
                 if isinstance(_rn, list):
                     _hit = [n for n in _rn if _is_pc_key(n, _pc_reg)]
@@ -767,6 +1020,7 @@ class WaterfallPipeline:
         # (턴별 심리·사회 이력 질의). 읽기: sqlite_store.read_dai_logs(channel_id, n).
         # [2026-09-24 감사] 적재 자리를 StoryDirector **뒤**로 옮겼다(아래 5.5 직후) — 여기서 찍으면
         #   story_direction.next_beat 가 아직 없어 서사 콜 RECENT BEATS(반복 회피 목록)에 디렉터 비트가 영영 안 들어갔다.
+        #   ([2026-10-09 SD개편] next_beat 은퇴 — RECENT PULLS는 narrative_hook에서 모은다. 자리는 그대로 둔다.)
         
         # Doom Clocks v3 연동 (clock_updates, clock_new, clock_resolved)
         # relief 제거 (2026-05-23) — legacy 위기진폭 잔재. 둠은 서사 진행도라 평화 장면 자동 감소는 의미 충돌.
@@ -781,45 +1035,8 @@ class WaterfallPipeline:
         #   씬타입별 캡, 방향 전환 감쇠까지 전부 "장면을 분류해 숫자를 정하는 코드"라 함께 사라졌다.
         #   평형의 이동은 이제 전담 추출 콜의 deltas 한 경로뿐이다(기력과 완전 대칭).
 
-        # Anomaly Profile 연동
-        anomaly_profile = analysis.get("anomaly_profile") or {}
-        if isinstance(anomaly_profile, dict):
-            tag = anomaly_profile.get("trigger") or ""
-            category = anomaly_profile.get("category") or ""
-            intensity = anomaly_profile.get("intensity") or ""
-            polarity = anomaly_profile.get("polarity") or ""
-            line = anomaly_profile.get("line") or ""
-            reason = anomaly_profile.get("reason") or ""
-
-            if tag:
-                bus.anomaly["tag"] = tag
-            if category:
-                bus.anomaly["category"] = category
-            if intensity:
-                bus.anomaly["intensity"] = intensity
-            if polarity:
-                bus.anomaly["polarity"] = polarity
-            if line:
-                bus.anomaly["line"] = line
-            if reason:
-                bus.anomaly["reason"] = reason
-
-        # Condition resolved (from Flash analysis)
-        cond_resolved = analysis.get("condition_resolved")
-        if isinstance(cond_resolved, list) and cond_resolved:
-            bus.anomaly["condition_resolved"] = cond_resolved
-
-        # Condition updates — severity transition (from Flash analysis)
-        cond_updates = analysis.get("condition_updates")
-        if isinstance(cond_updates, list) and cond_updates:
-            bus.anomaly["condition_updates"] = cond_updates
-
-        # Event location override (from Flash anomaly_profile)
-        if isinstance(anomaly_profile, dict):
-            event_location = (anomaly_profile.get("location") or "").strip()
-            if event_location:
-                bus.anomaly["location"] = event_location
-
+        # [2026-10-10 던지는판 A1] anomaly_profile·condition_*·location 전개와 기본값 보정은 서사 콜 앞으로 **옮겼다**(아래 재전개 0).
+        #   Storyteller가 큐 발화로 tag·line을 고쳐 쓰고 길잡이가 이은 제안을 비우므로, 여기서 다시 덮으면 터진 사건이 원 제안으로 돌아간다.
         # M3 제거 (2026-07-02): "chain CLOSED → anomaly 강제" 컷.
         # ① 키 드리프트('status' → 'chain_status')로 장기간 사망 상태였고 부재가 관측된 적 없음.
         # ② 현 자세와 충돌 — quiet resolution 허용(Scheherazade 완화) + 페이싱은 doom 起承轉結/storyteller 결정이 담당.
@@ -831,18 +1048,6 @@ class WaterfallPipeline:
         # wingbeat 시드 재설계(작은·장르중립·로어접지)와 정면 충돌. 능동성 공급은 story_director/reader_gm/doom이
         # 담당하고, 날개짓의 성장은 reader_gm replenish(축 기반, 게이트됨)가 맡는다.
         # 부활 시: 무작위 강제가 아니라 stall 감지 게이트 + 중립 line + 적합 시드 선택으로 재작성할 것.
-
-        # Normalize defaults for downstream use
-        if bus.anomaly.get("tag") and not bus.anomaly.get("category"):
-            bus.anomaly["category"] = bus.anomaly.get("tag")
-        if not bus.anomaly.get("intensity"):
-            bus.anomaly["intensity"] = "Mid"
-        if not bus.anomaly.get("polarity"):
-            bus.anomaly["polarity"] = "mixed"
-        # Default line for a Flash/Theoria-proposed anomaly that has a tag but no line.
-        # (Seed-based fallback 제거 2026-07-09 이후로 이 경로는 진짜 Flash anomaly에만 적용된다.)
-        if bus.anomaly.get("tag") and not bus.anomaly.get("line"):
-            bus.anomaly["line"] = f"{bus.anomaly['tag']}의 기운이 감돈다."
 
         # 1.5 Emotion Engine: psyche_states → normalized emotion tracking
         channel_id = (context.narrative_anchors or {}).get("channel_id", "")
@@ -955,24 +1160,7 @@ class WaterfallPipeline:
 
         # [2026-10-01 2단계] Mental Pre-pass(prime)·Judgment 는 서사 콜 앞으로 옮겼다(판정 먼저). 위 사전 전개 블록 참고.
 
-        # 4. Storyteller: inject state + set potential
-        bus.anomaly["potential"] = True
-        channel_id = (context.narrative_anchors or {}).get("channel_id", "")
-        if channel_id:
-            st_state = domain_manager.get_storyteller_state(channel_id)
-            bus.anomaly["_storyteller_state"] = st_state
-            bus.anomaly["_current_turn"] = domain_manager.get_world_state(channel_id).get("turn_index", 0)
-            bus.anomaly["_channel_id"] = channel_id
-
-        # 5. Storyteller Decision
-        if bus.anomaly.get("potential"):
-            try:
-                self.anomaly = AnomalyModule(self.theoria.client, self.theoria.model_id)
-                context = await self.anomaly.process(context)
-            except Exception as e:
-                bus.anomaly["triggered"] = False
-                _degrade_stage(bus, "anomaly_module", e)
-
+        # [2026-10-10 던지는판 A1] 4·5 Storyteller(주입·결정)는 서사 콜 앞으로 옮겼다. SD는 감정 엔진(서사 콜 뒤)을 읽어 여기 남는다.
         # 5.5 Story Director: pacing, plot hints, idle handling, transition mood
         try:
             context = StoryDirector.process(context)
@@ -1023,7 +1211,6 @@ class WaterfallPipeline:
                     "sd_pacing": _sd.get("pacing", ""),
                     "sd_tension": _sd.get("tension_axis", ""),
                     "sd_focus": (_sd.get("focus") or {}).get("spotlight", ""),
-                    "sd_beat": bool(_sd.get("next_beat")),
                     "sd_idle": bool(_sd.get("is_idle_input")),
                     "judgment": judgment_snapshot(bus.judgment),
                     "anomaly_triggered": bool(bus.anomaly.get("triggered")),
@@ -1076,7 +1263,7 @@ class WaterfallPipeline:
         c_sign = f"+{c_delta}" if c_delta > 0 else str(c_delta)
         parts.append(f"  Vigor: {v_val} ({v_sign}) | Composure: {c_val} ({c_sign})")
 
-        # Story Director (SD-A4 새 스키마 — plot_hints/transition.mood 제거, focus.spotlight/next_beat 사용)
+        # Story Director (SD-A4 새 스키마 — plot_hints/transition.mood 제거, focus.spotlight 사용. [2026-10-09] next_beat 은퇴)
         sd = bus.dai.get("story_direction") or {}  # [07-27] 명시 null 방어 (요약 로그는 try 밖)
         if sd.get("active"):
             sd_pacing = sd.get("pacing", "?")
@@ -1084,10 +1271,9 @@ class WaterfallPipeline:
             sd_idle = sd.get("is_idle_input", False)
             sd_focus = (sd.get("focus") or {}).get("spotlight", "none")
             sd_cut = (sd.get("transition") or {}).get("cut", "?")
-            sd_beat = "Y" if sd.get("next_beat") else "N"
             parts.append(
                 f"  StoryDir: pacing={sd_pacing} tension={sd_tension} idle={sd_idle} "
-                f"focus={sd_focus} cut={sd_cut} beat={sd_beat}"
+                f"focus={sd_focus} cut={sd_cut}"
             )
             # Seven Dice
             sd_dice = sd.get("dice", {})

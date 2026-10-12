@@ -645,7 +645,8 @@ async def generate_panel(
     cfg = types.GenerateContentConfig(
         system_instruction=text_resources.ANALYSIS_FRAME,   # [2026-10-06 분석 틀] 원본 mandate → 분석 틀
         temperature=0.5,          # 값 채우기 — 산문 콜(0.8/0.9)보다 조인다
-        max_output_tokens=1024,
+        # [2026-10-11 C27b] 1024 → 8192. 추론 켠 분석 콜은 추론이 출력 예산에 같이 든다 — 상한 통일(레티어스 "나머지도 다 올리자").
+        max_output_tokens=8192,
         response_mime_type="application/json",
         safety_settings=config.SAFETY_SETTINGS,
     )
@@ -1032,6 +1033,20 @@ def _change_direction(lc: Optional[Dict[str, Any]]) -> str:
     return ""
 
 
+def _vessel_tagged(channel_id: str, names: List[str]) -> List[str]:
+    """[2026-10-12 C32 몸·인격 D4] 화면 이름 표지 — `리나(Lina) [안: 세리아(Seria) · 최면]` / `[빈 몸]`.
+    괄호는 이름 표기 `한글(영문)`이 쓰므로 대괄호 + 한국어 말머리. 표가 비면 받은 목록 그대로(화면 전용, 렌더 무관)."""
+    try:
+        import vessel as _vs
+        _rows = _vs.rows(channel_id)
+        if not _rows:
+            return list(names)
+        return [str(n) + _vs.tag(channel_id, str(n), _rows) for n in names]
+    except Exception as e:
+        logger.debug(f"[TurnEmbed] vessel tag skip: {e}")
+        return list(names)
+
+
 def _relation_allowed_names(channel_id: str) -> set:
     """[2026-08-19 ② 몹·무출처 누출 수리] A축 **표시** 대상 = source∈{lore,manual} ∧ 몹 태그 아님.
 
@@ -1103,9 +1118,11 @@ def _relation_fields(channel_id: str, limit: Optional[int] = MAX_RELATION_ROWS
         # [2026-09-13 P9c] limit=None 이면 전량 — 💠 "쌓인 것" 창의 ⑤ 관계 장이다.
         #   매턴 임베드는 종전 상한 그대로(기본값) — 화면 하나에 관계표가 되면 안 된다.
         #   두 축을 **같은 정렬·같은 라벨**로 낸다(다른 함수를 세우면 라벨이 갈라진다).
+        _vt = _vessel_tagged(channel_id, [r[2] for r in rows])
+        _vt_map = {r[2]: t for r, t in zip(rows, _vt)}
         for _turn, _d, name, label, direction in (rows if limit is None else rows[:int(limit)]):
             text = " ".join(p for p in (label, direction) if p)
-            out.append((str(name)[:250], text[:1000]))
+            out.append((str(_vt_map.get(name, name))[:250], text[:1000]))
     except Exception as e:
         logger.debug(f"[StatusPanel] relation fields skipped: {e}")
     return out
@@ -1135,6 +1152,19 @@ def _npc_vc_fields(channel_id: str) -> List[Tuple[str, str]]:
             per = (vals.get(name) or {}).get("value")
             if not isinstance(per, dict):
                 continue
+            # [2026-10-12 C32] 평형은 무대 위 몸마다 그 몸을 모는 마음의 값. 표가 비면 아래 종전 줄.
+            if str(name) in getattr(_cv, "_MIND_VC", ()):
+                try:
+                    import vessel as _vs_p
+                    _has_rows = bool(_vs_p.rows(channel_id))
+                except Exception:
+                    _has_rows = False
+                if _has_rows:
+                    for who in sorted(onstage):
+                        _mk = _cv._vc_mind_key(channel_id, name, who)
+                        if _mk and _mk in per:
+                            rows.setdefault(str(who), []).append(f"{name} {_cv.format_value(spec, per[_mk])}")
+                    continue
             for who, v in per.items():
                 if str(who) not in onstage:
                     continue
@@ -1748,7 +1778,7 @@ def build_turn_embed_data(channel_id: str) -> Optional[Dict[str, Any]]:
         if tl:
             footer_parts.append(tl)
         if present:
-            footer_parts.append(f"{TURN_PRESENT_LABEL} " + ", ".join(present))
+            footer_parts.append(f"{TURN_PRESENT_LABEL} " + ", ".join(_vessel_tagged(channel_id, present)))
         turn = saved.get("updated_turn")
         if isinstance(turn, int) and turn > 0:
             footer_parts.append(f"갱신 t{turn}")

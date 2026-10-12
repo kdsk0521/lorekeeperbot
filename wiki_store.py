@@ -921,6 +921,77 @@ def _merge_observed(old_body: str, content: str, retract: Any) -> tuple:
     return body, len(new_s), len(keep), rhit, rmiss
 
 
+# =========================================================
+# [2026-10-10 기록 정정] Observed 정정 — 지우지 않고 History 로 강등 + 정정 줄
+# =========================================================
+CORRECTION_PREFIX = "정정("
+
+
+def _page_names(channel_id: str, page_id: str) -> list:
+    pg = get_page(channel_id, page_id) or {}
+    return [str(x) for x in ([pg.get("name")] + list(pg.get("aliases") or [])) if x]
+
+
+def _guard_corrections(channel_id: str, page_id: str, old_body: str, new_body: str) -> tuple:
+    """F1 Observed 병합 뒤 가드. 돌려줌: (본문, 버린 문장 수, 되살린 정정 줄 수).
+    ① 이 페이지에 걸린 활성 정정의 wrong 과 맞는 새 문장은 버린다(정정 줄 자신은 예외).
+    ② 옛 본문의 `정정(` 줄이 새 본문에 없으면 앞에 되살린다(F1 retract·환언으로 빠지는 것 방지)."""
+    try:
+        import corrections as _corr
+        wrongs = [_norm_q(w) for w in _corr.wrongs_for_names(channel_id, _page_names(channel_id, page_id))]
+    except Exception:
+        wrongs = []
+    wrongs = [w for w in wrongs if w]
+    new_s = _split_sents(new_body)
+    keep, rej = [], 0
+    for x in new_s:
+        nx = _norm_q(x)
+        if (wrongs and not x.strip().startswith(CORRECTION_PREFIX)
+                and any(nx and (w in nx or nx in w) for w in wrongs)):
+            rej += 1
+            continue
+        keep.append(x)
+    have = {_norm_q(x) for x in keep}
+    back = [x for x in _split_sents(old_body)
+            if x.strip().startswith(CORRECTION_PREFIX) and _norm_q(x) not in have]
+    if not rej and not back:
+        return new_body, 0, 0
+    return " ".join(back + keep), rej, len(back)
+
+
+def correct_observed(channel_id: str, page_id: str, wrong: str, text: str, *,
+                     turn: Optional[int] = None) -> dict:
+    """OOC 정정 → Observed. wrong 과 맞는 문장이 **하나**면 History 로 강등(`(정정됨 T{n}) …`), 정정 줄을 앞에 넣는다.
+    맞는 문장이 0이면 정정 줄만, 둘 이상이면 강등 없이 정정 줄만(status=ambiguous). 지우는 것 0.
+    쓰기는 turn=None — `!다시` 되감기(revert_sections_after)가 정정을 턴 쓰기로 보고 되돌리지 않게."""
+    old, _h = get_play_body(channel_id, page_id, "Observed")
+    tag = f"T{turn}" if turn is not None else "T?"
+    line = f"{CORRECTION_PREFIX}{tag}): {str(text or '').strip()}"
+    sents = _split_sents(old)
+    rk = _norm_q(wrong or "")
+    hit = [i for i, x in enumerate(sents) if rk and _norm_q(x) and (rk in _norm_q(x) or _norm_q(x) in rk)
+           and not x.strip().startswith(CORRECTION_PREFIX)]
+    status = "none" if not hit else ("ambiguous" if len(hit) > 1 else "demoted")
+    demoted = [sents[hit[0]]] if status == "demoted" else []
+    rest = [x for i, x in enumerate(sents) if not (status == "demoted" and i == hit[0])]
+    if _norm_q(line) in {_norm_q(x) for x in rest}:
+        return {"ok": True, "status": "dup", "demoted": 0}
+    body = " ".join([line] + rest)
+    res = write_play_section(channel_id, page_id, "Observed", body, src_turns=None, turn=None,
+                             reason="OOC정정", op="upsert")
+    if not res.get("ok"):
+        return {"ok": False, "status": str(res.get("reason") or "write"), "demoted": 0}
+    if demoted:
+        conn = _conn(channel_id)
+        if conn is not None:
+            try:
+                _append_history_lines(conn, channel_id, page_id, [f"(정정됨 {tag}) {demoted[0]}"], [], None)
+                conn.commit()
+            except Exception as _e_h:
+                logger.warning(f"[Wiki] 정정 강등 실패 (무시): {page_id}: {_e_h}")
+    return {"ok": True, "status": status, "demoted": len(demoted)}
+
+
 def apply_patches(channel_id: str, patches: Any, notes: Any,
                   chunk_entries: Any, turn: Optional[int] = None) -> dict:
     """F1 `page_patches` 적용. 게이트 순서대로 첫 실패 사유로 계수한다(설계 §4).
@@ -1059,6 +1130,12 @@ def apply_patches(channel_id: str, patches: Any, notes: Any,
                 counts["retract_miss"] += _d
                 logger.info(f"[Wiki] patch page={page_id} section={section} "
                             f"merge add={_a} keep={_b} retract={_c} retract_miss={_d}")
+                # [2026-10-10 기록 정정] 정정된 옛 문장이 다시 들어오는 것·정정 줄이 빠지는 것 둘 다 막는다(결정론 2차 방어).
+                body, _rc, _kc = _guard_corrections(channel_id, page_id, _old, body)
+                counts["rej_corrected"] = counts.get("rej_corrected", 0) + _rc
+                counts["retract_corrected"] = counts.get("retract_corrected", 0) + _kc
+                if _rc or _kc:
+                    logger.info(f"[Wiki] patch page={page_id} 정정 가드 rej_corrected={_rc} retract_corrected={_kc}")
         res = write_play_section(channel_id, page_id, section, body,
                                  src_turns=src_turns, turn=turn, reason="F1",
                                  expected_hash=expected, op=op)
@@ -1811,11 +1888,21 @@ def compile_for(channel_id: str, reader: str, names: Any, *,
         # ① 이름 -> 페이지 (순서 보존, 중복 제거, 상한)
         targets = []
         seen = set()
+        try:
+            import vessel as _vs_c
+        except Exception:
+            _vs_c = None
         for nm in (names or []):
             if not isinstance(nm, str) or not nm.strip():
                 continue
             if len(targets) >= max_pages:
                 break
+            # [2026-10-12 C32 몸·인격] 인물 play 절(기억)은 그 몸을 모는 마음의 페이지에서. 빈 몸은 기억이 없다.
+            #   장소·세력 이름은 표에 없으니 그대로 지난다. 표가 비면 종전 그대로.
+            if _vs_c is not None:
+                nm = _vs_c.driver_of(channel_id, nm)
+                if not nm:
+                    continue
             pid = _resolve_any_kind(channel_id, nm)
             if not pid or pid in seen:
                 continue

@@ -7,6 +7,10 @@ NOT a prompt generator — outputs structured hints consumed by the response bui
 Sits at Stage 4.5 (after Anomaly, before Doom).
 
 Design: AnomalyModule 패턴 — 점수 테이블 + 코드 결정, LLM 호출 없음.
+
+[2026-10-09 SD개편] 착지 비트 큐(SD-Ba/Bb, LIBRA buildHeuristicPlan 이식) 은퇴. 타이밍(언제 세계가 던지나)의 주인은
+Storyteller(anomaly_module) 하나, 평소 턴의 "무엇이 오나"는 Mira(response·hook). 여기는 페이싱·긴장·전환·focus·
+dice·무입력만 낸다. 근거: 파티쳇수정/analysis_line/스토리디렉팅_개편_스펙_2026-10-09.md
 """
 
 import logging
@@ -25,17 +29,6 @@ PACING_TABLE: Dict[str, Dict[str, str]] = {
     "social":      {"idle": "push",  "stagnant": "pivot", "rising": "hold",    "detonation": "breathe", "aftershock": "pivot"},
     "exploration": {"idle": "push",  "stagnant": "push",  "rising": "hold",    "detonation": "breathe", "aftershock": "hold"},
     "rest":        {"idle": "hold",  "stagnant": "hold",  "rising": "breathe", "detonation": "breathe", "aftershock": "hold"},
-}
-
-# Thread priority by chain status
-# chain_status enum = OPEN/CLOSED/DORMANT (Theoria 현행). 옛 극아크 RISING/CLIMAX/FALLING은
-# doom→챕터볼륨 起承轉結으로 이사 → 여기선 스레드 개폐만 가중.
-# ※ 값은 _generate_beats 인라인 임계(L757~: else<0.35=steps / >=0.55=draws up)에 캘리브레이션됨.
-#   OPEN=0.3(차분 steps forward, 정체 시 +0.3=0.6→draws up), DORMANT=0.2. 임계 바꾸면 여기도 동반 조정.
-CHAIN_PRIORITY: Dict[str, float] = {
-    "OPEN": 0.3,
-    "DORMANT": 0.2,
-    "CLOSED": 0.0,
 }
 
 # Idle input detection keywords (short/empty/reactive-only inputs)
@@ -98,27 +91,7 @@ def _emotion_composite_score(emo: Dict[str, Any]) -> float:
 
 
 
-# =========================================================
-# [2026-08-28] ambient 진행 비트 — 세계 전진의 **단일 공급원**
-# =========================================================
-# 왜 밖으로 나왔나: 구조는 **이중 투입**이었다 — 코드가 next_beat로 사건을 하나 지정하는데
-#   persona 꼬리(최대 recency)가 산문에게 "세계가 움직인다" 목록 4종을 또 내밀었다
-#   ([[project-plugin-gradia]] 동병). 처방은 지시문에 "하나만"이라 쓰는 게 아니라
-#   **공급원을 하나로 만드는 것** → 꼬리 목록 삭제 + 여기가 유일 발화처.
-#   그래서 이 문안은 story_director 내부용이 아니라 **계약**이 됐다. 바꿀 땐 소비자 둘을 같이 본다
-#   (`_generate_beats` 폴백 / `slot_manager` next_beat 주입 보증).
-_AMBIENT_BEAT = {
-    "idle":       "Next beat: the surroundings (time / weather / NPC routine) move one breath forward, giving the scene air.",
-    "stagnant":   "Next beat: the surroundings (time / weather / NPC routine) move one breath forward, giving the scene air.",
-    "detonation": "Next beat: the aftershock of the recent upheaval lingers in the texture of the scene.",
-    "aftershock": "Next beat: the aftershock of the recent upheaval lingers in the texture of the scene.",
-}
-_AMBIENT_BEAT_DEFAULT = "Next beat: the fine axis of tension in the present scene tightens one degree."
-
-
-def ambient_beat(energy: str = "") -> str:
-    """energy → 최소 진행 비트 1개. 비트 큐가 비었을 때와 주입이 빈손일 때 같은 것을 쓴다."""
-    return _AMBIENT_BEAT.get(str(energy or "").lower().strip(), _AMBIENT_BEAT_DEFAULT)
+# [2026-10-09 SD개편] ambient 진행 비트(08-28 세계 전진 단일 공급원)는 Slot 33 착지 줄과 함께 은퇴했다.
 
 
 class StoryDirector:
@@ -137,7 +110,6 @@ class StoryDirector:
         energy = dai.get("energy_direction", "idle")
         scene_type = dai.get("scene_type", "normal")
         narrative_chain = dai.get("narrative_chain", {})
-        memory_triggers = dai.get("memory_triggers", [])
         user_input = context.request.user_input.strip()
         try:
             doom_value = int(bus.doom.get("value", 0))
@@ -148,33 +120,6 @@ class StoryDirector:
         anomaly_decision = bus.anomaly.get("decision", "skip")
         active_conditions = bus.anomaly.get("_storyteller_state", {}).get("active_conditions", [])
         quality_flags = dai.get("quality_flags", {})
-
-        # [2026-07-15 A6] Arc → 디렉터. spec v2 L574: "phases 누적 history: Pro에 안 줌.
-        # 디렉터의 _generate_beats 입력으로만." — 스펙이 유일 소비자로 지목했는데 Phase
-        # 목록(1~7)에 이 배선이 없어 증발했고, story_director는 arc를 몰랐다(언급 0회).
-        # 결과: phases 누적(ARC_PHASES_CAP=10 링버퍼)의 실소비자가 `!아크` 표시뿐이었음.
-        # ⚠ arc는 storyteller_state가 아니라 narrative_tracker_state 소속 — bus에 없어서
-        #   여기서 직접 읽는다. spec §1.1이 두 저장소를 혼동해 focus 포인터를 엉뚱한 곳에
-        #   뒀고, 그래서 get_focus_arc는 항상 None이었다 → 2026-07-15 폐기(narrative_tracker).
-        # 노출 게이트는 slot_manager _render_arc_foreground와 동일 임계 — 산문에 안 뜨는
-        # arc가 비트만 밀면 근거 없는 압력이 된다.
-        _active_arcs = []
-        try:
-            _ch_arc = (context.narrative_anchors or {}).get("channel_id", "")
-            if _ch_arc:
-                import domain_manager as _dm_arc
-                import config as _cfg_arc
-                _nt_arc = _dm_arc.get_narrative_tracker_state(_ch_arc)
-                _thr_arc = getattr(_cfg_arc, "ARC_PROXIMITY_EXPOSURE_THRESHOLD", 0.3)
-                _active_arcs = [
-                    s for s in (_nt_arc.get("storylines", []) or [])
-                    if isinstance(s, dict)
-                    and s.get("is_arc") and s.get("status") == "active"
-                    and float(s.get("proximity", 0.0) or 0.0) >= _thr_arc
-                ]
-        except Exception as _e_arc:
-            logger.debug("[StoryDirector] arc read skip: %s", _e_arc)
-            _active_arcs = []
 
         # 1. Pacing decision
         pacing = StoryDirector._decide_pacing(scene_type, energy)
@@ -205,13 +150,6 @@ class StoryDirector:
                 # [2026-08-11 리더 소비자] C4 — momentum 후보 조회용. ""면 기존 사다리 그대로.
                 channel_id=(context.narrative_anchors or {}).get("channel_id", ""),
             )
-
-        # 3. Plot thread tracking & advancement hints
-        #    [SD-A4] 생산자 유지(축 B 재활용 후보) — 현재는 bus 미송출.
-        _plot_hints_reserved = StoryDirector._analyze_plot_threads(
-            narrative_chain, memory_triggers, active_conditions,
-            quality_flags, energy, active_arcs=_active_arcs
-        )
 
         # 4. Scene transition guidance
         transition_full = StoryDirector._compute_transition(
@@ -248,83 +186,9 @@ class StoryDirector:
         except Exception as e:
             logger.warning("[StoryDirector] Dice roll failed, skipping: %s", e)
 
-        # 8. Beat Queue (SD-Ba3, 2026-04-22) — LIBRA StoryAuthor nextBeats 최소 이식
-        #    트리거: (turn - last_planned_turn >= 2) OR (queue empty) OR anomaly_triggered
-        #    idle 입력은 강제 재계획 아님 — 비트는 원래 이런 때 쓰려고 쌓는 것.
-        active_beat = None
-        beats_replanned = False
-        try:
-            _chan_beat = (context.narrative_anchors or {}).get("channel_id", "")
-            _cur_turn = int(bus.anomaly.get("_current_turn", 0) or 0)
-            _st_state = bus.anomaly.get("_storyteller_state", {}) or {}
-            _beats = list(_st_state.get("next_beats", []) or [])
-            _last_planned = int(_st_state.get("last_planned_turn", 0) or 0)
-            _cap = int(_st_state.get("beats_cap", 6) or 6)
-
-            # SD-Bb3: Theoria author-hint beats (휴리스틱 비트 보강용)
-            _llm_hints = dai.get("suggested_beats", []) or []
-            if not isinstance(_llm_hints, list):
-                _llm_hints = []
-            # [2026-10-06 F3 관찰 비트 만료] Theoria 제안 비트는 **낸 턴의 관찰**이다. 큐에 남아 다음 턴에
-            #   꺼내지면 그 사이 입력과 어긋난다(vI_1005: 큐 머리 "the glove she never removed stays on" 대
-            #   입력 "장갑을 벗기고" — 같은 턴 Theoria는 "the glove comes off …"를 냈는데 버려졌다).
-            #   지난 턴 관찰 비트는 빼고 이번 턴 제안을 엮는다. 휴리스틱 비트 회전은 그대로.
-            #   옛 상태(llm_beats 키 없음)는 이번 제안이 있으면 한 번 다시 짠다.
-            _fresh_llm = [nb for nb in (StoryDirector._normalize_llm_beat(h) for h in _llm_hints) if nb]
-            _legacy_queue = "llm_beats" not in _st_state
-            _beats = StoryDirector._expire_llm_beats(
-                _beats, _st_state.get("llm_beats", []) or [], _fresh_llm, _cap)
-
-            _need_replan = (
-                (not _beats)
-                or (_cur_turn - _last_planned >= 2)
-                or anomaly_triggered
-                or (_legacy_queue and bool(_fresh_llm))
-            )
-
-            if _need_replan:
-                _beats = StoryDirector._generate_beats(
-                    _plot_hints_reserved, energy, is_idle,
-                    anomaly_triggered, emotion_summary,
-                    suggested_beats=_llm_hints, cap=_cap, pacing=pacing,
-                    doom_value=doom_value,
-                    anomaly_line=str(bus.anomaly.get("line", "") or "") if anomaly_triggered else ""
-                )
-                _last_planned = _cur_turn
-                beats_replanned = True
-
-            # head 소비
-            # [2026-09-29 배치2 2a-1 · B안] 이변이 발화한 턴엔 비트를 싣지 않는다(큐 머리는 다음 턴으로 보존).
-            #   그 턴의 세계 움직임은 이변 하나다 — une_facade "world event:" 줄이 사실로 싣는다. 비트까지 얹으면
-            #   전진이 둘이 되고(C16), 이변 line을 비트로 싣으면(A안) 착지 숙고가 세 배로 뛰었다(replay 09-29:
-            #   red-eye 언급 30–49 vs 원본 10–21 vs B안 3–24).
-            if _beats and not anomaly_triggered:
-                active_beat = _beats.pop(0)
-
-            # 상태 영속화
-            _st_state["llm_beats"] = _fresh_llm          # [2026-10-06 F3] 다음 턴에 만료시킬 이번 턴 관찰 비트
-            if _chan_beat:
-                _st_state["next_beats"] = _beats
-                _st_state["last_planned_turn"] = _last_planned
-                try:
-                    import domain_manager as _dm_beat
-                    # [2026-09-24 감사] 자기 키 두 개만 **최신 상태 위에** 얹는다. _st_state 는 waterfall 이 턴 앞에서 뜬
-                    #   사본이라 통째 저장하면 그 사이 쓰인 값 — 7단계 DiceEngine 의 recent_dice(→ 3연속 차단 영구 무발동),
-                    #   Doom climax 의 event_queue 삽입 — 을 옛 값으로 되덮었다.
-                    _fresh_st = _dm_beat.get_storyteller_state(_chan_beat)
-                    if not isinstance(_fresh_st, dict):
-                        _fresh_st = dict(_st_state)
-                    _fresh_st["next_beats"] = _beats
-                    _fresh_st["last_planned_turn"] = _last_planned
-                    _fresh_st["llm_beats"] = _fresh_llm
-                    _dm_beat.update_storyteller_state(_chan_beat, _fresh_st)
-                    _st_state = _fresh_st
-                except Exception as _e_persist:
-                    logger.warning("[StoryDirector] Beat queue persist failed: %s", _e_persist)
-                # bus 쪽 복제본도 최신화 (같은 턴 내 다른 단계가 읽을 수 있음)
-                bus.anomaly["_storyteller_state"] = _st_state
-        except Exception as e:
-            logger.warning("[StoryDirector] Beat queue failed, skipping: %s", e)
+        # [2026-10-09 SD개편] 8. Beat Queue(SD-Ba3, 04-22) 은퇴 — 스레드 라벨 틀 비트·Mira 비트를 매 턴 Slot 33
+        #   "This turn lands"로 꽂던 두 번째 타이밍 채널이었다(이변 안 터진 턴 170/170). 3. Plot thread 분석·아크 읽기도
+        #   이 큐 전용이라 함께 걷었다. 정체·수렴은 Storyteller 승격(stagnation/convergence_promotion)이 쥔다.
 
         # Assemble direction output — 소비자가 실제 읽는 키만 bus에 송출 (SD-A4 감사 결과)
         # 유령 필드 제거: plot_hints, transition.mood/scene_type, focus.elements,
@@ -360,10 +224,6 @@ class StoryDirector:
         if dice_result:
             direction["dice"] = dice_result
 
-        # SD-Ba3: 현재 턴용 활성 비트 (Slot 33에서 소비)
-        if active_beat:
-            direction["next_beat"] = active_beat
-
         # [latent relations] conflict/alliance 그래프 → "생길 수 있는 사건" 잠재 힌트.
         # anti-railroad: 강제 아닌 가능성. 씬에 있는 NPC(relevant_npcs) + 현저(함수가 intensity 게이트)만, 최대 3.
         try:
@@ -389,11 +249,8 @@ class StoryDirector:
 
         # Log — 감사 후 bus가 아닌 reserved local 기준으로 로깅
         logger.info(
-            "[StoryDirector] pacing=%s tension=%s idle=%s hints=%d focus=%s beat=%s replan=%s",
-            pacing, tension_axis, is_idle,
-            len(_plot_hints_reserved), _focus_out.get("spotlight", "none"),
-            "Y" if active_beat else "N",
-            "Y" if beats_replanned else "N",
+            "[StoryDirector] pacing=%s tension=%s idle=%s focus=%s",
+            pacing, tension_axis, is_idle, _focus_out.get("spotlight", "none"),
         )
 
         return context
@@ -531,121 +388,6 @@ class StoryDirector:
         direction["source"] = "ambient"
         direction["hint"] = "world_progression"
         return direction
-
-    # ----- Plot Thread Analysis -----
-
-    @staticmethod
-    def _analyze_plot_threads(
-        narrative_chain: dict,
-        memory_triggers: List[Any],
-        active_conditions: List[dict],
-        quality_flags: dict,
-        energy: str,
-        active_arcs: Optional[List[Dict[str, Any]]] = None
-    ) -> List[Dict[str, Any]]:
-        """Score and rank unresolved plot threads for advancement hints.
-
-        [2026-07-15 A6] active_arcs 추가 — arc = 세 번째 thread source.
-        기존 두 source(narrative_chain / active_condition)와 같은 모양이라
-        새 배관 없이 얹힌다. Optional 기본 None = 미전달 시 기존 경로 동일.
-        """
-        threads: List[Dict[str, Any]] = []
-
-        # Thread from narrative chain
-        chain_status = narrative_chain.get("chain_status", "OPEN")
-        chain_priority = CHAIN_PRIORITY.get(chain_status, 0.3)
-        if chain_status not in ("CLOSED",) and chain_priority > 0:
-            thread = {
-                "source": "narrative_chain",
-                # [2026-09-24 감사] 서사 콜 스키마엔 current_thread 가 없다(topic_lock) — 가짜 이름 'main_plot'이
-                #   Slot 33 "This turn lands: Next beat: 'main_plot' …"로 최대 recency 자리에 박혔다.
-                "label": (narrative_chain.get("topic_lock") or narrative_chain.get("current_thread")
-                          or "the current thread"),
-                "priority": chain_priority,
-                "type": "continuation",
-                "chain_status": chain_status,
-            }
-            # Stagnation boost
-            if quality_flags.get("stagnation_warning"):
-                thread["priority"] = min(1.0, thread["priority"] + 0.3)
-                thread["urgency"] = "stagnation"
-            # Convergence boost
-            if quality_flags.get("convergence_warning"):
-                thread["priority"] = min(1.0, thread["priority"] + 0.2)
-                thread["urgency"] = "convergence"
-            threads.append(thread)
-
-        # Threads from active conditions
-        for cond in active_conditions:
-            intensity_score = {"Low": 0.2, "Mid": 0.4, "High": 0.7, "Extreme": 1.0}.get(
-                cond.get("intensity", "Mid"), 0.4
-            )
-            threads.append({
-                "source": "active_condition",
-                "label": cond.get("tag", "unknown"),
-                "priority": intensity_score,
-                "type": "condition_thread",
-                "polarity": cond.get("polarity", "mixed"),
-                "intensity": cond.get("intensity", "Mid"),
-            })
-
-        # Threads from memory triggers
-        for trigger in memory_triggers[:3]:  # Cap to avoid noise
-            if isinstance(trigger, dict):
-                threads.append({
-                    "source": "memory",
-                    # [2026-09-24 감사] 스키마 키는 "trigger"(Theoria memory_triggers) — 'memory' 폴백 방지.
-                    "label": (trigger.get("trigger") or trigger.get("tag") or trigger.get("key")
-                              or trigger.get("echo") or "an old memory"),
-                    "priority": 0.3,
-                    "type": "memory_callback",
-                })
-            elif isinstance(trigger, str) and trigger:
-                threads.append({
-                    "source": "memory",
-                    "label": trigger,
-                    "priority": 0.3,
-                    "type": "memory_callback",
-                })
-
-        # Threads from active arcs [2026-07-15 A6 — spec v2 L574]
-        # 여기가 phases 누적 history의 자리다. next_waypoint는 쓰지 않는다:
-        # slot_manager._render_arc_foreground가 이미 "an approaching shadow"로 Pro에
-        # 주고 있어, 비트로 또 밀면 같은 웨이포인트가 두 채널로 이중 주입된다.
-        # (계획서 A6은 next_waypoint 시드였으나 spec v2가 phases 누적으로 바꿈 — 후자 채택.)
-        for arc in (active_arcs or []):
-            if not isinstance(arc, dict):
-                continue
-            label = arc.get("declared_goal") or arc.get("origin_category") or ""
-            if not label:
-                continue
-            phases = [p for p in (arc.get("phases") or []) if isinstance(p, str)]
-            try:
-                prio = float(arc.get("proximity", 0.0) or 0.0)
-            except (TypeError, ValueError):
-                prio = 0.0
-            th = {
-                "source": "arc",
-                "label": label,
-                "priority": min(1.0, max(0.0, prio)),
-                "type": "arc_thread",
-                "phase": phases[-1] if phases else "",
-                "arc_id": arc.get("id"),
-            }
-            # phases 누적의 유일한 판독거리 — 같은 국면 라벨이 3연속이면 arc가 제자리를
-            # 돈다. narrative_chain의 stagnation_warning과 동형 처리(+0.3).
-            if len(phases) >= 3 and len(set(phases[-3:])) == 1:
-                th["urgency"] = "stagnation"
-                th["priority"] = min(1.0, th["priority"] + 0.3)
-            threads.append(th)
-
-        # Sort by priority descending.
-        # [2026-07-15] label tiebreak 추가 — 동점 시 dict 삽입순 의존이었음.
-        # Pass D-2 교훈(결정론): 같은 입력 → 같은 출력. arc source 합류로 동점 확률↑.
-        threads.sort(key=lambda t: (-t["priority"], str(t.get("label", ""))))
-
-        # Return top threads (cap at 3 to avoid information overload)
-        return threads[:3]
 
     # ----- Scene Transition -----
 
@@ -816,226 +558,3 @@ class StoryDirector:
 
     # ----- W9: Seven Dice -----
     # Moved to dice_engine.py (DiceEngine.roll). See step 7 in process().
-
-    # ----- SD-Ba2 (2026-04-22): Beat Generator -----
-    # LIBRA StoryAuthor nextBeats 최소 이식.
-    # _analyze_plot_threads 결과(dict 리스트) + 장면 맥락을 자연어 지시문 리스트로 변환.
-    # 영어 state-form Directive 스타일 (Slot 33 recency zone에 주입됨).
-    # LLM 호출 없음 — 휴리스틱만으로 템플릿 렌더.
-    # =========================================================
-
-    # 극적 강도 동사 — doom(챕터볼륨 활성도, 起承轉結)에서 읽음.
-    # 옛 _CHAIN_VERB(은퇴 chain 극아크 enum) 재설계: 드라마가 doom으로 이사 → 동사도 doom_value가 결정.
-    # chain_status(OPEN/DORMANT)는 전진/휴면만 결정. 정확한 起承轉結 boundary는 lens별(doom_module)이나 beat 힌트엔 이 휴리스틱으로 충분.
-    _DOOM_BEAT_VERB: Dict[str, str] = {
-        "climax": "pushes into the decisive turn",
-        "rising": "draws the tension up another notch",
-        "intro":  "steps forward one careful pace",
-    }
-
-    # 강도별 수식어 매핑
-    _INTENSITY_ADJ: Dict[str, str] = {
-        "Low":     "faint",
-        "Mid":     "vivid",
-        "High":    "thick",
-        "Extreme": "overwhelming",
-    }
-
-    @staticmethod
-    def _normalize_llm_beat(raw: str) -> Optional[str]:
-        """
-        Theoria suggested_beats 1건을 정규화.
-        - 공백 정리
-        - 길이 가드 (>= 6 chars, <= 200 chars)
-        - 프리픽스 강제: "Next beat:"가 없으면 붙여줌
-        - 빈 값/금지 토큰 있으면 None
-        """
-        if not isinstance(raw, str):
-            return None
-        s = raw.strip().strip('"\'').strip()
-        if not s:
-            return None
-        if len(s) < 6 or len(s) > 200:
-            return None
-        # 렌더링 오염 방지: 기본 대사/내레이션 톤은 컷
-        if '"' in s or '\n' in s:
-            return None
-        # Flash 제안 beat는 한국어 "다음 비트:" 프리픽스로 올 수 있음 → 둘 다 벗기고 영어로 통일(이중 프리픽스 방지)
-        # [2026-09-24 감사] 스키마 예시가 소문자 "next beat: ..." — 대소문자 무시로 벗긴다("Next beat: next beat:" 방지).
-        for _pfx in ("next beat:", "다음 비트:"):
-            if s.lower().startswith(_pfx):
-                s = s[len(_pfx):].strip()
-        s = f"Next beat: {s}"
-        return s
-
-    @staticmethod
-    def _expire_llm_beats(
-        queue: List[str],
-        stale_llm: List[str],
-        fresh_llm: List[str],
-        cap: int,
-    ) -> List[str]:
-        """[2026-10-06 F3] 지난 턴 Theoria 관찰 비트를 큐에서 빼고 이번 턴 제안을 엮는다.
-        - stale_llm: 지난 턴에 큐에 넣은 관찰 비트(정규화 문자열). 큐에서 같은 문자열을 뺀다.
-        - fresh_llm: 이번 턴 제안(정규화 끝난 것). 있으면 `_merge_llm_beats`로 휴리스틱 사이에 엮는다.
-        - 휴리스틱 비트의 순서는 건드리지 않는다.
-        """
-        stale = {str(b).strip() for b in (stale_llm or []) if b}
-        kept = [b for b in (queue or []) if str(b).strip() not in stale]
-        if fresh_llm:
-            kept = StoryDirector._merge_llm_beats(kept, list(fresh_llm), cap)
-        return kept[:cap]
-
-    @staticmethod
-    def _merge_llm_beats(
-        heuristic_beats: List[str],
-        llm_beats: List[str],
-        cap: int,
-    ) -> List[str]:
-        """
-        휴리스틱 비트와 LLM 힌트 비트를 **weave** (교차 배치).
-        - 휴리스틱이 head(결정론적 우선순위). LLM은 그 사이에 섞여 향미 보강.
-        - 완전 동일 문자열 중복 제거.
-        - LLM 비트가 없으면 휴리스틱 그대로 반환.
-        """
-        if not llm_beats:
-            return heuristic_beats[:cap]
-
-        woven: List[str] = []
-        seen: set = set()
-
-        def _push(b: str) -> None:
-            if not b:
-                return
-            key = b.strip()
-            if key in seen:
-                return
-            seen.add(key)
-            woven.append(b)
-
-        max_pairs = max(len(heuristic_beats), len(llm_beats))
-        for i in range(max_pairs):
-            if i < len(heuristic_beats):
-                _push(heuristic_beats[i])
-                if len(woven) >= cap:
-                    break
-            if i < len(llm_beats):
-                _push(llm_beats[i])
-                if len(woven) >= cap:
-                    break
-
-        return woven[:cap]
-
-    @staticmethod
-    def _generate_beats(
-        threads: List[Dict[str, Any]],
-        energy: str,
-        is_idle: bool,
-        anomaly_triggered: bool,
-        emotion_summary: dict,
-        suggested_beats: Optional[List[str]] = None,
-        cap: int = 6,
-        pacing: str = "hold",
-        doom_value: int = 0,
-        anomaly_line: str = ""
-    ) -> List[str]:
-        """
-        Convert scored threads → natural-language beat directives (English state-form).
-        LIBRA buildHeuristicPlan 상당. 순서 = priority 내림차순 (threads가 이미 정렬됨).
-
-        SD-Bb3 (2026-04-22): suggested_beats 보강.
-        - Theoria Flash가 observation 기반으로 제안한 한국어 Directive 비트 0~3개
-        - 휴리스틱 비트와 weave 되어 향미 보강 (override 아님)
-        - 존재하지 않거나 [] 이면 기존 휴리스틱 경로와 동일
-        """
-        beats: List[str] = []
-
-        for t in threads:
-            src = t.get("source", "")
-            label = t.get("label", "")
-            if not label:
-                continue
-
-            if src == "narrative_chain":
-                # chain_status(개폐) → 전진(OPEN)/휴면(DORMANT). 극적 강도 → doom_value(챕터볼륨 起承轉結, 드라마 출처).
-                urgency = t.get("urgency")
-                cs = t.get("chain_status", "OPEN")
-                if urgency == "stagnation":
-                    beats.append(f"Next beat: the main plot '{label}' has stalled — one fresh external stimulus enters and moves it forward.")
-                elif urgency == "convergence":
-                    beats.append(f"Next beat: several threads converge on '{label}' — they cross in a single scene.")
-                elif cs == "DORMANT":
-                    beats.append(f"Next beat: a quiet reminder of '{label}' surfaces, not yet pressed.")
-                else:
-                    # OPEN — advance; 극적 동사는 doom(챕터볼륨 활성도)에서 읽음
-                    _dk = "climax" if doom_value >= 75 else ("rising" if doom_value >= 45 else "intro")
-                    beats.append(f"Next beat: '{label}' {StoryDirector._DOOM_BEAT_VERB[_dk]}.")
-
-            elif src == "arc":
-                # [2026-07-15 A6] 긴 호흡. 레일은 있어도 되지만 이름이 보이면 안 된다
-                # (anti-railroad = 탄 걸 모르게. 시스템 메시지 금지지 레일 금지가 아님).
-                # declared_goal은 slot_manager가 typological 톤으로만 노출 중 — 여기서도
-                # 라벨을 산문에 박으라고 하지 않는다.
-                if t.get("urgency") == "stagnation":
-                    beats.append(
-                        f"Next beat: the long arc '{label}' has circled the same grain three times over — "
-                        "this scene shifts its footing, unannounced."
-                    )
-                else:
-                    _ph = t.get("phase", "")
-                    _grain = f" within its current grain ({_ph})" if _ph else ""
-                    beats.append(
-                        f"Next beat: '{label}' advances one step{_grain} — carried by environment, "
-                        "NPC behavior, or consequence, never named as a goal."
-                    )
-
-            elif src == "active_condition":
-                # 강도는 조건의 실제 intensity → _INTENSITY_ADJ 직결 (priority 역산 프록시 제거, dict 부활).
-                adj = StoryDirector._INTENSITY_ADJ.get(t.get("intensity", "Mid"), "vivid")
-                polarity = t.get("polarity", "mixed")
-                pol_hint = {"positive": ", leaned on,", "negative": ", bearing down,", "mixed": ", a double edge,"}.get(polarity, "")
-                # O축: pacing이 push/pivot이면 dwell이 아니라 전진(슬롯16 pacing과 충돌 방지).
-                if pacing in ("push", "pivot"):
-                    beats.append(f"Next beat: the state '{label}'{pol_hint} advances in one motion.")
-                else:
-                    beats.append(f"Next beat: the state '{label}'{pol_hint} spreads through one moment as a {adj} sensation.")
-
-            elif src == "memory":
-                beats.append(f"Next beat: the past memory of '{label}' seeps into a gap in the present scene.")
-
-            if len(beats) >= cap:
-                break
-
-        # 감정 스파이크 NPC가 있으면 하단에 보조 비트 추가 (중복 방지: 이미 threads에 NPC 관련 없으면)
-        spike_npcs = [
-            n for n, e in emotion_summary.items()
-            if isinstance(e, dict) and (e.get("spike") or float(e.get("intensity", 0) or 0) > 0.7)
-        ]
-        if spike_npcs and len(beats) < cap:
-            top_name = sorted(spike_npcs)[0]  # 결정적 tiebreak
-            beats.append(f"Next beat: the emotional surge of '{top_name}' colors the texture of the scene.")
-
-        # SD-Bb3: LLM 힌트 비트 정규화 + weave (휴리스틱 비트와 교차 배치)
-        llm_beats: List[str] = []
-        if suggested_beats:
-            for raw in suggested_beats:
-                nb = StoryDirector._normalize_llm_beat(raw)
-                if nb:
-                    llm_beats.append(nb)
-        # cap-1 여유는 anomaly prepend를 위해 (anomaly 헤드 1칸 예약)
-        _weave_cap = cap - 1 if anomaly_triggered else cap
-        beats = StoryDirector._merge_llm_beats(beats, llm_beats, _weave_cap)
-
-        # Anomaly가 막 터졌으면 최우선 비트 prepend
-        # [2026-09-29 배치2 2a-1 · B안] 이변 prepend 삭제 — 범용 문장("the shockwave of the anomaly…")은 이변을
-        #   세 번째로 싣는 중복이었다. 발화 턴엔 process()가 비트를 싣지 않고, 이변은 "world event:" 사실 줄 하나.
-        #   (anomaly_line 인자는 호출 호환용으로 남긴다 — 쓰지 않는다.)
-
-        # Idle 에너지 + 비트 없음 → ambient 진행 비트 보강
-        # [2026-08-28] 문안을 모듈 레벨 `ambient_beat()`로 노출 — slot_manager가 주입 보증에
-        #   같은 것을 쓴다(단일 진실원천). 꼬리에서 세계 전진 목록을 뺐으므로 그 자리를
-        #   코드가 반드시 채워야 한다("선언=집행"). 여기서만 알던 문안을 밖에서도 쓴다.
-        if not beats:
-            beats.append(ambient_beat(energy))
-
-        return beats[:cap]

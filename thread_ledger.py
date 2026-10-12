@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 OPS = ("open", "progress", "close", "pause", "resume", "reschedule")
 KINDS = ("promise", "matter")
 OUTCOMES = ("done", "dropped", "broken")
+# [2026-10-10 이야기 실 O-E] fold 만 아는 op — 배경 추출은 낼 수 없다(OPS 밖). 플레이어 OOC "없던 일"(void).
+#   행은 남기고 상태만 void. 읽는 자리는 모두 상태 이름(open·paused·closed)으로 걸러서 손대지 않아도 빠진다.
+FOLD_ONLY_OPS = ("void",)
 # op → 허용되는 현재 상태 (open 은 신규 발급이라 표 밖)
 _ALLOWED = {
     "progress": ("open",),
@@ -68,7 +71,7 @@ def _parties(v: Any) -> List[str]:
 
 def _apply_row(states: Dict[str, Dict[str, Any]], r: Dict[str, Any]) -> None:
     tid, op = r.get("thread_id"), r.get("op")
-    if not tid or op not in OPS:
+    if not tid or (op not in OPS and op not in FOLD_ONLY_OPS):
         return
     parties = r.get("parties")
     if isinstance(parties, str):
@@ -110,6 +113,9 @@ def _apply_row(states: Dict[str, Dict[str, Any]], r: Dict[str, Any]) -> None:
         st["outcome"] = ""
     elif op == "reschedule":
         st["due_start"], st["due_end"], st["due_prec"] = r.get("due_start"), r.get("due_end"), r.get("due_prec") or ""
+    elif op == "void":
+        st["status"] = "void"
+        st["outcome"] = ""
     if q:
         st["quotes"] = (st.get("quotes") or []) + [q]
         st["quotes"] = st["quotes"][-4:]
@@ -326,7 +332,8 @@ def apply_events(channel_id: str, turn: int, events: Any, source_text: str,
                     rc["rej_shape"] += 1
                     continue
                 nt = _norm(title)
-                if any(s.get("status") in ("open", "paused") and _norm(s.get("title")) == nt
+                # [2026-10-10 O-E] void(플레이어가 없던 일로 한 것)도 dup — 산문이 그 얘기를 또 꺼내도 되살리지 않는다.
+                if any(s.get("status") in ("open", "paused", "void") and _norm(s.get("title")) == nt
                        for s in states.values()):
                     rc["dup"] += 1
                     continue
@@ -372,6 +379,192 @@ def apply_events(channel_id: str, turn: int, events: Any, source_text: str,
                     turn, rc["open"], rc["progress"], rc["close"], rc["pause"], rc["resume"], rc["reschedule"],
                     rc["rej_shape"], rc["rej_quote"], rc["rej_id"], rc["rej_state"], rc["dup"])
     return rc
+
+
+# =========================================================
+# OOC 관문 — 플레이어가 OOC 로 여닫는다 (2026-10-10 이야기 실 O-E)
+#   스펙: 파티쳇수정/state_v10/이야기실_지도·스펙_2026-10-10.md
+#   배경 경로(apply_events)와 _apply_row·resolve_due·next_thread_id 를 같이 쓴다. 다른 점은 셋:
+#   ① 인용 관문 없음(quote="" — 리더 증인 대조에 플레이어 말이 섞이지 않게) ② void op ③ void·closed 에서 resume.
+# =========================================================
+
+_OOC_ALLOWED = dict(_ALLOWED, resume=("paused", "closed", "void"), void=("open", "paused", "closed"))
+_DUE_KEYS = ("day_offset", "slot", "hour", "minute", "year", "month", "day_in_month")
+
+
+def _due_given(due: Any) -> bool:
+    """기한 칸이 실제로 무언가를 말하나. resolve_due 는 빈 dict 도 '오늘'로 풀기 때문에 OOC 는 여기서 거른다."""
+    return isinstance(due, dict) and any(due.get(k) not in (None, "") for k in _DUE_KEYS)
+_STATUS_KO = {"open": "열림", "paused": "멈춤", "closed": "닫힘", "void": "없던 일"}
+
+
+def find_thread(states: Dict[str, Dict[str, Any]], ref: Any) -> Tuple[Optional[str], str]:
+    """id 또는 제목 → (thread_id, why). why: '' | 'none' | 'ambiguous'.
+    제목: 정규화 같음 → 하나면 그것(여럿이면 열림·멈춤이 하나일 때 그것) → 아니면 한쪽이 품는 게 딱 하나일 때만."""
+    if isinstance(ref, (str, int)) and str(ref).strip().upper() in states:
+        return str(ref).strip().upper(), ""
+    t = _norm(ref) if isinstance(ref, str) else ""
+    if not t:
+        return None, "none"
+
+    def _pick(ids: List[str]) -> Tuple[Optional[str], str]:
+        if len(ids) == 1:
+            return ids[0], ""
+        live = [x for x in ids if states[x].get("status") in ("open", "paused")]
+        if len(live) == 1:
+            return live[0], ""
+        return None, "ambiguous"
+
+    exact = [tid for tid, st in states.items() if _norm(st.get("title")) == t]
+    if exact:
+        return _pick(exact)
+    subs = [tid for tid, st in states.items()
+            if _norm(st.get("title")) and (t in _norm(st.get("title")) or _norm(st.get("title")) in t)]
+    if subs:
+        return _pick(subs)
+    return None, "none"
+
+
+def _ooc_line(op: str, st: Dict[str, Any], now: Optional[int], renamed: str = "") -> str:
+    tid, title = st.get("id", "?"), st.get("title", "")
+    if op == "open":
+        bits = [_KIND_KO.get(st.get("kind"), "사안")]
+        ph = remaining_phrase(st, now)
+        if ph:
+            bits.append(ph)
+        pt = _party_text(st, "·")
+        line = f"🧵 {tid} 열림 — {title}({' · '.join(bits)})" + (f" [{pt}]" if pt else "")
+    elif op == "close":
+        line = f"🧵 {tid} 닫힘({_OUTCOME_KO.get(st.get('outcome'), '완료')}) — {title}"
+    elif op == "reschedule":
+        line = f"🧵 {tid} 기한 → {remaining_phrase(st, now) or '정해진 때 없음'} — {title}"
+    elif op == "progress":
+        line = f"🧵 {tid} 남은 몫: {st.get('remaining') or '-'} — {title}"
+    elif op == "void":
+        line = f"🧵 {tid} 없던 일로 — {title}"
+    elif op == "resume":
+        line = f"🧵 {tid} 다시 열림 — {title}"
+    else:
+        line = f"🧵 {tid} {_STATUS_KO.get(st.get('status'), op)} — {title}"
+    return line + (f" (이름 고침: {renamed})" if renamed else "")
+
+
+def apply_ooc_events(channel_id: str, turn: int, events: Any,
+                     world: Optional[Dict[str, Any]] = None) -> List[str]:
+    """OOC 편집 `thread` → thread_log 행. 되비침 줄 목록(실패는 ⚠ 로 시작).
+    대상: id, 없으면 제목(title·value)으로 찾는다. id 와 title 이 같이 오면 title 은 새 이름이다."""
+    out: List[str] = []
+    if not channel_id or not isinstance(events, list) or not events:
+        return out
+    if not _cfg("THREAD_LEDGER", True):
+        return ["⚠ 스레드 장부가 꺼져 있어(THREAD_LEDGER)"]
+    w = _world_of(channel_id, world)
+    now = now_abs(w)
+    states = load_states(channel_id)
+    title_max = int(_cfg("THREAD_TITLE_MAX", 40))
+    rows: List[Dict[str, Any]] = []
+    for ev in events[:_EVENTS_MAX]:
+        if not isinstance(ev, dict):
+            continue
+        op = str(ev.get("op") or "").strip().lower()
+        if op not in OPS and op not in FOLD_ONLY_OPS:
+            out.append(f"⚠ 이야기 실: 모르는 일 '{op}' — open·close·pause·resume·reschedule·progress·void")
+            continue
+        title = _clip(ev.get("title"), title_max) or _clip(ev.get("value"), title_max)
+        raw_id = ev.get("id")
+        tid = str(raw_id).strip().upper() if isinstance(raw_id, (str, int)) and str(raw_id).strip() else None
+        row = {"turn": int(turn or 0), "quote": "", "title": "", "parties": "[]",
+               "kind": "", "outcome": "", "remaining": "", "due_start": None, "due_end": None, "due_prec": ""}
+        if op == "open" and not (tid and tid in states):
+            if not title:
+                out.append("⚠ 이야기 실: 새로 열 제목이 없어")
+                continue
+            nt = _norm(title)
+            same = [x for x, st in states.items() if _norm(st.get("title")) == nt]
+            live = [x for x in same if states[x].get("status") in ("open", "paused")]
+            if live:
+                out.append(f"⚠ 🧵 {live[0]} 이미 {_STATUS_KO.get(states[live[0]]['status'])} — {states[live[0]].get('title', '')}")
+                continue
+            revive = [x for x in same if states[x].get("status") == "void"]
+            if revive:
+                tid, op, title = revive[-1], "resume", ""   # 같은 제목이 없던 일이면 그 id 를 되살린다(닫힌 같은 제목은 새 약속일 수 있어 새로 연다)
+            else:
+                tid = next_thread_id(states)
+                row.update({"thread_id": tid, "op": "open", "title": title,
+                            "kind": ev.get("kind") if ev.get("kind") in KINDS else "matter",
+                            "parties": json.dumps(_parties(ev.get("parties")), ensure_ascii=False)})
+                _d = resolve_due(ev.get("due"), w) if _due_given(ev.get("due")) else None
+                if _d:
+                    row["due_start"], row["due_end"], row["due_prec"] = _d
+                rows.append(row)
+                _apply_row(states, row)
+                out.append(_ooc_line("open", states[tid], now))
+                continue
+        elif op == "open":
+            op = "resume"   # 있는 id 로 open = 다시 열기
+        renamed = ""
+        if tid and tid in states:
+            if title and _norm(title) != _norm(states[tid].get("title")):
+                renamed = title
+        else:
+            tid, why = find_thread(states, title)
+            if not tid:
+                out.append(f"⚠ 이야기 실: '{title or raw_id or '?'}'를 " + ("하나로 못 골랐어(여럿이 걸림)" if why == "ambiguous" else "장부에서 못 찾았어"))
+                continue
+        st = states[tid]
+        if st.get("status") not in _OOC_ALLOWED.get(op, ()):
+            out.append(f"⚠ 🧵 {tid}는 지금 {_STATUS_KO.get(st.get('status'), st.get('status'))}이라 그 일은 안 돼 — {st.get('title', '')}")
+            continue
+        row.update({"thread_id": tid, "op": op, "title": renamed,
+                    "parties": json.dumps(_parties(ev.get("parties")), ensure_ascii=False)})
+        if op == "close":
+            row["outcome"] = ev.get("outcome") if ev.get("outcome") in OUTCOMES else "done"
+        elif op == "progress":
+            row["remaining"] = _clip(ev.get("remaining"), _REMAINING_MAX)
+        elif op == "reschedule":
+            if "due" in ev and ev.get("due") is None:
+                pass   # 기한 없앰("때는 안 정했어") — 행의 due 칸이 비어 fold 가 지운다
+            else:
+                _d = resolve_due(ev.get("due"), w) if _due_given(ev.get("due")) else None
+                if not _d:
+                    out.append(f"⚠ 🧵 {tid} 새 기한을 못 풀었어 — {st.get('title', '')}")
+                    continue
+                row["due_start"], row["due_end"], row["due_prec"] = _d
+        rows.append(row)
+        _apply_row(states, row)
+        out.append(_ooc_line(op, states[tid], now, renamed))
+    if rows:
+        try:
+            import sqlite_store
+            sqlite_store.append_thread_events(channel_id, rows)
+        except Exception as e:
+            logger.warning(f"[Thread] OOC write fail: {e}")
+            return [f"⚠ 이야기 실 저장 실패: {e}"]
+        logger.info("[Thread] OOC turn=%s rows=%d ops=%s", turn, len(rows), [r["op"] for r in rows])
+    return out
+
+
+def ooc_state(channel_id: str, world: Optional[Dict[str, Any]] = None,
+              live_cap: int = 15, closed_cap: int = 5) -> List[Dict[str, Any]]:
+    """편집 콜 현재 상태 `threads` — 열림·멈춤(최근 활동순 live_cap) + 최근 닫힘 closed_cap. 비면 []."""
+    if not channel_id or not _cfg("THREAD_LEDGER", True):
+        return []
+    states = load_states(channel_id)
+    if not states:
+        return []
+    now = now_abs(_world_of(channel_id, world))
+    live = sorted((s for s in states.values() if s.get("status") in ("open", "paused")),
+                  key=lambda s: -(s.get("last_turn") or 0))[:live_cap]
+    done = sorted((s for s in states.values() if s.get("status") == "closed"),
+                  key=lambda s: -(s.get("last_turn") or 0))[:closed_cap]
+    out = []
+    for st in live + done:
+        it = {"id": st.get("id"), "kind": st.get("kind"), "title": st.get("title", ""),
+              "parties": st.get("parties") or [], "status": st.get("status"),
+              "due": remaining_phrase(st, now), "remaining": st.get("remaining") or "",
+              "outcome": st.get("outcome") or ""}
+        out.append({k: v for k, v in it.items() if v not in ("", [], None)})
+    return out
 
 
 # =========================================================

@@ -367,7 +367,7 @@ def create_risu_style_session(
                 "\n\n<Initialization>\n"
                 "[SYSTEM] Narrative Protocol Online.\n"
                 "Observing Macroscopic States.\n"
-                "The world is asynchronous—it does not wait.\n"
+                "The world is asynchronous and moves on its own time.\n"
                 "Recording in Korean.\n"
                 "</Initialization>"
             )
@@ -403,7 +403,7 @@ def create_risu_style_session(
 <Initialization>
 [SYSTEM] Narrative Protocol Online.
 Observing Macroscopic States.
-The world is asynchronous—it does not wait.
+The world is asynchronous and moves on its own time.
 Recording in Korean.
 </Initialization>
 """
@@ -540,12 +540,19 @@ async def generate_response_with_retry(
         #   marks the exit"는 브레이크 쪽만 있던 문안 — 추론이 끝낼 자리를 찾는 데 썼다(springboard 117회/98판).
         #   스펙 composition/끊기·수위블록_모순정리_스펙_2026-10-02.md. 닫는 절은 "the first point …"로 쟀다가 추론이 그걸
         #   출구 찾기로 썼다("first point only player can answer") → "once every move still left to the world waits …"(측정 2판).
+        # [2026-10-10 끝 긍정문] A1은 그대로("final image"를 "final line"으로 바꾼 팔: 추론 낱말만 옮기고 끝 분포 같음 — 손뒤꼬리 E3-3).
+        #   Initialization(OpenAI·Gemini 두 경로) "대기" 문구 → "moves on its own time".
+        # [2026-10-10 닫기 문안 E1] "waits on the player's answer"가 닫는 자리를 '기다림'으로 정의해, 렌더가 기다리는 모습을
+        #   마지막 그림으로 그렸다("여전히 …있었다", "질문은 방 안에 남았다" — 정지 끝 46%). → "장면의 누군가가 플레이어 쪽으로
+        #   한 마지막 수 = 마지막 그림". 1차("world's last move")는 전조·상황 줄을 마지막 수로 읽어 분위기 꼬리가 붙었다.
+        #   측정 analysis_line/산문끝_닫기문안_스펙·측정_2026-10-10 (정지 끝 기존 6/10 → 2차 1/5).
         "PROSE after ┫: the world's side resolves until the floor passes to the player. Everything in the scene with "
         "something to do before the PC's next choice does it, in its own order and at its own length (a speech runs as "
         "long as it runs; a figure acts again while it still has the means), each beat bringing something the page does "
-        "not yet hold (a detail, a reaction, a change); the turn closes once every move still left to the world waits "
-        "on the player's answer (the PC's own move, a blow or offer the PC can still meet before it lands, a question "
-        "put to the PC), and the cut there is EXIT's. "
+        "not yet hold (a detail, a reaction, a change); the turn closes on the last move someone in the scene makes "
+        "toward the player, the one the player answers next (a question put to the PC, a blow or offer the PC can "
+        "still meet before it lands, or simply the PC's own next move): that move is the final image, and the cut "
+        "there is EXIT's. "
         "A motion the world makes happens once and then stands: what was posted stays posted, and a later turn "
         "finds it already done rather than doing it again. What fills the page grows from what the scene already "
         "holds, never from re-rendering what an earlier turn put on the page; no unrelated new plots.)"

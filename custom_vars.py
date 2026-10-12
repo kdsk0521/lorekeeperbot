@@ -667,6 +667,154 @@ def _npc_keys(channel_id: str, per: Dict[str, Any]) -> List[str]:
     return [k for k in per if str(k) in allowed]
 
 
+# =========================================================
+# [2026-10-12 C23] NPC 활력·평형 — 표기 재료 · 무대 밖 회복
+# =========================================================
+# 같은 값인데 향하는 쪽이 다르다: PC 활력·평형 = 세계에 넘기는 PC의 상태(플레이어는 자기 몸을 안다),
+# NPC 값 = 그 인물의 진짜 상태(읽는 쪽은 플레이어). 진짜 상태가 되려면 둘이 필요했다 —
+# 렌더가 그 몸을 받는 길(npc_vc_values → Slot 14 표기)과, 무대 밖 시간을 맡는 문(npc_rest_tick).
+_VC_NAMES = ("활력", "평형")
+
+# [2026-10-12 C32 몸·인격 D3] 평형은 **마음 쪽** 인물 값 — 그 몸을 모는 마음의 키로 읽고 쓴다. 활력은 몸이라 그대로.
+#   표(vessel)가 비면 받은 키 그대로(종전 동작). 돌림은 입구에서 한 번(돌린 키를 다시 넣지 않는다).
+_MIND_VC = ("평형",)
+
+
+def _vc_mind_key(channel_id: str, var_name: Any, key: Any) -> Any:
+    """인물 키(보이는 이름) → 이 값이 사는 키. 평형만 마음으로 돈다. "" = 빈 몸(값 없음)."""
+    if not key or str(var_name or "") not in _MIND_VC:
+        return key
+    try:
+        import vessel
+        return vessel.driver_of(channel_id, key)
+    except Exception:
+        return key
+
+
+def _int_or_none(v: Any) -> Optional[int]:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def npc_vc_values(channel_id: str, names: Any) -> Dict[str, Tuple[Optional[int], Optional[int]]]:
+    """Theoria가 적은 인물 이름들 → {그 이름: (활력|None, 평형|None)}. 값 키가 둘 다 없는 인물은 빠진다.
+
+    ★이름 맞추기: 녹화 Theoria psyche 키 737개 중 65%가 괄호 없는 꼴("헤이젤")이고, 값 키는 등록
+      정본("헤이젤(Hazel)")이다. resolve_npc(정확·대소문자)로는 못 맞춘다 → domain_manager._find_npc_key
+      (allow_token=False — 축약형 토큰 매칭은 오병합 위험이라 끈다)로 등록 키를 찾고, 그 키가 허용 인물
+      (allowed_npc_names, 출처 lore·manual)일 때만 읽는다. 세션 NPC는 값이 없으니 자연히 빠진다.
+    채널 토글(`!활력모듈 off` = 동결)이면 빈 dict — PC 표기와 같은 침묵. 쓰기 0.
+    """
+    out: Dict[str, Tuple[Optional[int], Optional[int]]] = {}
+    if not channel_id or not is_enabled():
+        return out
+    try:
+        if not domain_manager.is_vigor_composure_active(channel_id):
+            return out
+    except Exception:
+        return out
+    vals = get_values(channel_id)
+    pers = []
+    for nm in _VC_NAMES:
+        v = (vals.get(nm) or {}).get("value")
+        pers.append(v if isinstance(v, dict) else {})
+    if not any(pers):
+        return out
+    allowed = set(allowed_npc_names(channel_id))
+    if not allowed:
+        return out
+    try:
+        import npc_manager as _npm
+        npcs = _npm.get_npcs(channel_id) or {}
+    except Exception as e:
+        logger.debug("[CustomVar] npc_vc_values 명부 조회 실패: %s", e)
+        return out
+    for raw in (names or []):
+        nm = str(raw or "").strip()
+        if not nm or nm in out:
+            continue
+        try:
+            key = domain_manager._find_npc_key(npcs, nm, allow_token=False)
+        except Exception:
+            key = None
+        if not key or str(key) not in allowed:
+            continue
+        _ck = _vc_mind_key(channel_id, "평형", key)      # [2026-10-12 C32] 평형은 모는 마음의 값
+        v = _int_or_none(pers[0].get(key))
+        c = _int_or_none(pers[1].get(_ck)) if _ck else None
+        if v is None and c is None:
+            continue
+        out[nm] = (v, c)
+    return out
+
+
+NPC_REST_MAX_DAYS = 30      # 30일이면 어떤 차이도 0이 된다 — 큰 점프에서 헛도는 것만 막는 상한
+
+
+def npc_rest_tick(channel_id: str, days: Any = 1) -> List[Dict[str, Any]]:
+    """하루 경계마다 NPC 키의 활력·평형을 init 쪽으로 — 차이를 하루에 절반(내림)씩, 1 이하가 되면 0.
+    `days`(boundary_engine의 days_jumped)만큼 거듭한다. 35 → 68 → 84 → 92 → 96, 12 → 56 → 78 → 89.
+
+    왜 코드가 하나: NPC 값을 올리는 문은 추출 델타뿐인데 추출은 무대 위 장면만 본다 — 무대 밖에서
+      쉰 시간은 아무도 못 본다. 다친 채 퇴장한 인물이 사흘 뒤에도 35로 돌아오면, 이제 Slot 14 표기가
+      그걸 "사흘째 버티는 몸"으로 그린다. P8b가 지운 자연회복을 **무대 밖 NPC에 한해** 되살리는
+      자리다 — 장면을 분류해서 정하는 숫자가 아니라 시간만 본다.
+    대상: 허용 인물 키만. PC 키(user_id)는 손대지 않는다(PC는 늘 무대 위라 쉬는 장면을 추출이 본다).
+    쓰기: 코드 소유(_apply_numeric, 캡 면제·범위 클램프), 도장 source="day". init 위로는 안 간다.
+    토글이 꺼진 채널(동결)은 돌지 않는다.
+    """
+    out: List[Dict[str, Any]] = []
+    if not channel_id or not is_enabled():
+        return out
+    try:
+        n = int(days)
+    except (TypeError, ValueError):
+        n = 1
+    if n <= 0:
+        return out
+    n = min(n, NPC_REST_MAX_DAYS)
+    decl = get_declarations(channel_id)
+    vals = dict(get_values(channel_id))
+    allowed = set(allowed_npc_names(channel_id))
+    if not allowed:
+        return out
+    t = _current_turn(channel_id)
+    ev = f"하루 경계 회복 ×{n}일"
+    for nm in _VC_NAMES:
+        spec = decl.get(nm)
+        if not isinstance(spec, dict) or not spec.get("npc_enabled"):
+            continue
+        if not _system_active(channel_id, spec):
+            continue
+        per = (vals.get(nm) or {}).get("value")
+        if not isinstance(per, dict):
+            continue
+        init = _int_or_none(spec.get("init"))
+        if init is None:
+            continue
+        for key in [k for k in per if str(k) in allowed]:
+            old = _int_or_none(per.get(key))
+            if old is None or old >= init:
+                continue
+            gap = init - old
+            for _ in range(n):
+                gap //= 2
+                if gap <= 1:
+                    gap = 0
+                    break
+            rec = _apply_numeric(channel_id, nm, spec, vals,
+                                 {"delta": (init - gap) - old, "npc": key}, ev, t,
+                                 exempt_cap=True, source="day")
+            if rec:
+                out.append(rec)
+    if out:
+        _save(channel_id, decl, vals)
+        logger.info("[CustomVar] 하루 경계 NPC 회복 %d건 (×%d일)", len(out), n)
+    return out
+
+
 def resolve_npc(channel_id: str, name: Any) -> str:
     """모델이 적은 인물명 → 허용 인물의 정본 이름. 미허용·미상이면 "" (= 그 항목은 폐기)."""
     key = str(name or "").strip()
@@ -1830,7 +1978,10 @@ def apply_deltas(channel_id: str, deltas: Any, turn: Optional[int] = None,
     if not is_enabled() or not deltas:
         return []
     if isinstance(deltas, dict):        # 모델이 {name: delta} 로 흘리는 경우 관용 접기
-        deltas = [{"name": k, "delta": v} for k, v in deltas.items()]
+        # [2026-10-11 C28] 값이 게이지 이동 말이면 shift 로 접는다.
+        deltas = [({"name": k, "shift": v} if isinstance(v, str) and v.strip().lower()
+                   in getattr(config, "GAUGE_SHIFT_TIER", {}) else {"name": k, "delta": v})
+                  for k, v in deltas.items()]
     if not isinstance(deltas, list):
         return []
 
@@ -1887,6 +2038,15 @@ def apply_deltas(channel_id: str, deltas: Any, turn: Optional[int] = None,
                 rec = _apply_enum(channel_id, name, spec, vals, item, evidence, t)
             elif vtype == "list":
                 rec = _apply_list(name, spec, vals, item, evidence, t)
+            elif vtype == "gauge":
+                # [2026-10-11 C28] 게이지 = 말(shift) → 폭, rule 글에 적힌 수(delta·extra)는 그 수 그대로(캡 면제).
+                _gd, _gex, _ghow = _resolve_gauge_item(spec, item)
+                if _gd is None:
+                    rec = None
+                else:
+                    logger.debug("[CustomVar] %s 게이지 신고 → %+d (%s)", name, _gd, _ghow)
+                    rec = _apply_numeric(channel_id, name, spec, vals, dict(item, delta=_gd), evidence, t,
+                                         actor=actor, exempt_cap=_gex)
             else:
                 rec = _apply_numeric(channel_id, name, spec, vals, item, evidence, t, actor=actor)
         except Exception as e:            # 한 항목의 기형이 나머지를 죽이지 않는다
@@ -2186,6 +2346,7 @@ def apply_code_write(channel_id: str, name: Any, *, delta: Any = None, value: An
     #   쓴다 — expr 쪽 문법이 npc 스코프 변수와 같아진다. 첨자가 없으면 종전대로 acting user.
     if spec.get("per_actor") and spec.get("npc_enabled") and str(npc or "").strip():
         keyed = resolve_npc(channel_id, npc)
+        keyed = _vc_mind_key(channel_id, nm, keyed)      # [2026-10-12 C32] 평형[리나] = 리나 몸을 모는 마음
         if not keyed:
             return None
         per = dict(entry.get("value") or {}) if isinstance(entry.get("value"), dict) else {}
@@ -2542,6 +2703,73 @@ def _cap_delta(spec: Dict[str, Any], delta: int) -> int:
     return delta
 
 
+def _rule_numbers(spec: Dict[str, Any]) -> set:
+    """[2026-10-11 C28] rule 글에 숫자로 적힌 양(절댓값). 0과 범위 끝 수는 뺀다(rule 안에 '0~100'을 적은 경우).
+    한국어 수사('둘', '두 배')·배수는 받지 않는다 — 숫자로 적힌 수만."""
+    try:
+        lo, hi = int((spec.get("range") or [0, 0])[0]), int((spec.get("range") or [0, 0])[1])
+    except (TypeError, ValueError, IndexError):
+        lo, hi = 0, 0
+    nums = {abs(int(n)) for n in re.findall(r"[+-]?\d+", str(spec.get("rule", "") or ""))}
+    return {n for n in nums if n and n not in (abs(lo), abs(hi))}
+
+
+def shift_to_delta(spec: Dict[str, Any], word: Any) -> int:
+    """[2026-10-11 C28] 게이지 이동 말 → 정수. 캡이 있는 방향은 캡 × 비율(heavy = 캡), 없으면 범위 폭 × 비율, 최소 1.
+    모르는 말이면 0."""
+    t = getattr(config, "GAUGE_SHIFT_TIER", {}).get(str(word or "").strip().lower())
+    if not t:
+        return 0
+    sign, tier = t
+    try:
+        cap = int(spec.get("max_gain" if sign > 0 else "max_loss") or 0)
+    except (TypeError, ValueError):
+        cap = 0
+    if cap > 0:
+        n = int(round(cap * config.GAUGE_SHIFT_CAP_RATIO[tier]))
+    else:
+        try:
+            lo, hi = int((spec.get("range") or [0, 0])[0]), int((spec.get("range") or [0, 0])[1])
+        except (TypeError, ValueError, IndexError):
+            lo, hi = 0, 0
+        n = int(round(abs(hi - lo) * config.GAUGE_SHIFT_RANGE_RATIO[tier]))
+    return sign * max(1, n)
+
+
+def _resolve_gauge_item(spec: Dict[str, Any], item: Dict[str, Any]) -> Tuple[Optional[int], bool, str]:
+    """[2026-10-11 C28] 게이지 신고 → (정수 델타, 캡 면제, 어떻게). None = 버림.
+
+    순서: ① `delta`가 rule 글에 적힌 수면 그 수(rule이 정한 전체 양 — 캡 면제).
+          ② `shift` 말 → 폭. `extra`가 rule 글에 적힌 수면 얹는다(캡 면제). 방향을 넘지 않는다(덜 오름 ≠ 내림).
+             rule에 없는 extra 는 버린다(모델이 지은 수는 들어오지 못한다 — 이 가드가 캡 면제의 근거).
+          ③ 옛 출력 폴백: 정수 `delta`(지금처럼 캡·클램프).
+    """
+    rn = _rule_numbers(spec)
+    if item.get("delta") is not None:
+        d = _read_delta(item)
+        if d and abs(d) in rn:
+            return d, True, "rule"
+    word = str(item.get("shift") or "").strip().lower()
+    if word in getattr(config, "GAUGE_SHIFT_TIER", {}):
+        base = shift_to_delta(spec, word)
+        if item.get("extra") is not None:
+            try:
+                ex = int(round(float(item.get("extra"))))
+            except (TypeError, ValueError):
+                ex = 0
+            if ex and abs(ex) in rn:
+                tot = base + ex
+                if (base > 0 > tot) or (base < 0 < tot):
+                    tot = 0
+                return tot, True, f"shift {word} + rule {ex:+d}"
+            logger.info("[CustomVar] extra %r — rule 글에 없는 수라 버림(말 폭만)", item.get("extra"))
+        return base, False, f"shift {word}"
+    d = _read_delta(item)
+    if d:
+        return d, False, "delta(폴백)"
+    return None, False, ""
+
+
 def _read_delta(item: Dict[str, Any]) -> Optional[int]:
     try:
         return int(round(float(item.get("delta", 0) or 0)))
@@ -2588,6 +2816,7 @@ def _apply_numeric(channel_id: str, name: str, spec: Dict[str, Any],
         npc_key = ""
         if spec.get("npc_enabled") and str(item.get("npc") or "").strip():
             npc_key = resolve_npc(channel_id, item.get("npc"))
+            npc_key = _vc_mind_key(channel_id, name, npc_key)   # [2026-10-12 C32] 평형은 마음 키로
             if not npc_key:
                 logger.info("[CustomVar] %s 인물 미허용/미상 → 폐기 (npc=%r)", name, item.get("npc"))
                 return None
@@ -2958,7 +3187,8 @@ async def convert_natural_declaration(
     cfg = types.GenerateContentConfig(
         system_instruction=getattr(_tr, "ANALYSIS_FRAME", ""),   # [2026-10-06 분석 틀] 
         temperature=0.2,            # 스키마 채우기 — 창작이 아니다
-        max_output_tokens=512,
+        # [2026-10-11 C27b] 512 → 8192. 추론 켠 분석 콜은 추론이 출력 예산에 같이 든다 — 상한 통일(레티어스 "나머지도 다 올리자").
+        max_output_tokens=8192,
         response_mime_type="application/json",
         safety_settings=config.SAFETY_SETTINGS,
     )
@@ -3122,6 +3352,19 @@ def _feed_row(channel_id: str, name: str, spec: Dict[str, Any], vals: Dict[str, 
         per = raw if isinstance(raw, dict) else {}
         shown = [(k, v) for k, v in per.items()
                  if str(k).strip() in onstage_set][:PROSE_NPC_MAX]
+        # [2026-10-12 C32] 평형은 무대 위 몸(보이는 이름)마다 그 몸을 모는 마음의 값. 표가 비면 위 줄 그대로.
+        if str(name) in _MIND_VC:
+            try:
+                import vessel as _vs_f
+                if _vs_f.rows(channel_id):
+                    shown = []
+                    for _who in sorted(onstage_set):
+                        _mk = _vc_mind_key(channel_id, name, _who)
+                        if _mk and _mk in per:
+                            shown.append((_who, per[_mk]))
+                    shown = shown[:PROSE_NPC_MAX]
+            except Exception:
+                pass
         if not shown:
             return ""
         return f"{name} " + ", ".join(f"{k} {format_value(spec, v)}" for k, v in shown)

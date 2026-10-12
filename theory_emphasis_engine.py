@@ -417,7 +417,6 @@ GENRE_THEORY_WEIGHTS: Dict[str, Dict[str, list]] = {
             "Information Gap (vast distances = information asymmetry = intrigue)",
         ],
         'suppress': [
-            "Korean Cultural Affects (unless Korean-cultural species/faction exists)",
             "Environmental Theory (habitat controlled in ships/stations — less psychological impact)",
         ],
         'reframe': [
@@ -432,7 +431,7 @@ GENRE_THEORY_WEIGHTS: Dict[str, Dict[str, list]] = {
             "Goffman (modern life = constant impression management — work/home/social media)",
             "Habitus (class/education/network signals everywhere)",
             "Lazarus Coping (modern stress = career, relationships, identity)",
-            "Korean Cultural Affects (if setting is Korean — full activation)",
+            "Korean Cultural Affects (face and room-reading run through modern life — read by affect shape, not nationality)",
         ],
         'suppress': [],
         'reframe': [],
@@ -727,7 +726,9 @@ def build_theory_emphasis(active_genres: List[str]) -> str:
 #   이 필드들은 **서사 콜**(theoria_analyzer.analyze_narrative)이 만든다. 추출 콜 스키마는 "do NOT output them here"
 #   인데 장르 모듈·스포트라이트의 OUTPUT MAPPING(`X → deep_read + …`)은 추출 콜에만 실려, 추출 모델은 못 쓰는 칸을
 #   가리키고 생산자(서사 콜)는 그 렌즈를 못 받았다. → 추출판은 서사 칸을 떼고, 서사 콜엔 서사 칸 매핑만 싣는다.
-NARRATIVE_OWNED_FIELDS = ("deep_read", "value_conflict", "narrative_chain", "resurfacing", "trait_connections")
+# [2026-10-10 칸이관] logos_layer·self_opacity도 서사 콜(시트를 보는 Mira) 소유 — 추출판 매핑에서 떼고 서사 렌즈로 간다.
+NARRATIVE_OWNED_FIELDS = ("deep_read", "value_conflict", "narrative_chain", "resurfacing", "trait_connections",
+                          "logos_layer", "self_opacity")
 
 
 def _split_mapping(line: str):
@@ -767,7 +768,9 @@ def retarget_for_extraction(text: str) -> str:
 
 # [2026-10-07 a묶음 A6] 장르 가중 블록의 추출판 거르기 — Theoria 시스템에 정의가 없거나(렌더·서사 쪽 개념)
 #   서사 콜 소유인 이론 줄. 머리말로 판정한다(줄 앞 "* " 뒤).
-EMPHASIS_EXTRACTION_DROP = ("Four-Layer", "Value Conflict:", "Ma/silence", "Mono no Aware", "Wabi-Sabi", "Comedy:")
+# [2026-10-10 칸이관] Logos Dynamics·Self-Opacity 정의가 서사 콜로 이사 — 추출판 가중에서도 뺀다.
+EMPHASIS_EXTRACTION_DROP = ("Four-Layer", "Value Conflict:", "Ma/silence", "Mono no Aware", "Wabi-Sabi", "Comedy:",
+                            "Logos Dynamics", "Self-Opacity")
 
 
 def retarget_emphasis_for_extraction(text: str) -> str:
@@ -792,7 +795,8 @@ def narrative_targets_only(text: str) -> List[str]:
         if not sp:
             continue
         # 서사 스키마엔 relation 객체가 없다 — value_conflict 는 psyche_narrative[NPC] 칸이다.
-        keep = [t.replace("relation.value_conflict", "value_conflict") for t in sp[1] if _narr_target(t)]
+        keep = [t.replace("relation.value_conflict", "value_conflict").replace("relation.logos_layer", "logos_layer")
+                 .replace("psyche.self_opacity", "self_opacity") for t in sp[1] if _narr_target(t)]
         if keep:
             out.append(f"{sp[0].rstrip()} → {' + '.join(keep)}")
     return out
@@ -876,10 +880,10 @@ import random
 NON_SLOT_THEORIES = [
     # -- 행동 패턴 / 변화 저항 --
     "Moral Disengagement - is any NPC self-justifying harmful behavior? → deep_read + QualityFlags.dissonance_flag",
-    "Dark Triad - established harmful traits present? Do NOT soften. → deep_read.Core(Lack) + QualityFlags.redemption_warning",
-    "Desistance/Maruna - any NPC showing unearned change? Check 4 conditions. → QualityFlags.redemption_warning + deep_read",
+    "Dark Triad - established harmful traits present? Do NOT soften. → deep_read.Core(Lack)",
+    "Desistance/Maruna - any NPC showing unearned change? Check 4 conditions. → deep_read",
     "Recidivism Baseline - default is pattern continuation, not change. → QualityFlags.convergence_warning",
-    "Attribution Error - am I sympathizing away established patterns? → QualityFlags.redemption_warning",
+    "Attribution Error - am I sympathizing away established patterns?",   # [2026-10-11 청소 C12] 가리키던 칸(QualityFlags 까닭 없는 누그러짐)을 걷어 물음만 남김
     # -- 동양 심리 / 정서 --
     "Yin-Yang - does primary_emotion contain its opposite seed? → psyche.primary_emotion(陰陽 note)",
     "Five Skandhas - did I analyze soma BEFORE psyche? → [process: soma→psyche field order]",
@@ -897,7 +901,7 @@ NON_SLOT_THEORIES = [
     "Carstensen SST - time horizon affecting decision mode? → psyche.decision_mode + TemporalOrientation",
     "Transactional Analysis - Parent/Adult/Child transaction type? → deep_read + relation.value_conflict",
     # -- 인지 / 동기 --
-    "Stanislavski - am I writing THIS person or an archetype? → [process: QualityFlags.echo_warning check]",
+    "Stanislavski - am I writing THIS person or an archetype?",   # [2026-10-11 청소 C12] 가리키던 칸(QualityFlags 따라 하기)을 걷어 물음만 남김
     "Dependent Origination - what prior causes led to this moment? → narrative_chain.open_threads",
     "Bergson Duration - past filtering present perception? → memory_triggers + TemporalOrientation",
     "Somatic Marker - body bookmarks biasing current decision? → SensoryAnchors + soma.descriptor",

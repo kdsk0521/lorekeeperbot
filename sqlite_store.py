@@ -721,6 +721,23 @@ def _ensure_schema(channel_id: str = "") -> bool:
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_threadlog_channel ON thread_log(channel_id, id)")
+            # [2026-10-10 기록 정정] 정오표 — 플레이어가 OOC 로 바로잡은 지난 일. **덧붙이기만**(거두면 active=0, 행은 남는다).
+            #   원문·발효·딥은 고치지 않고, 옛 기록을 꺼내는 자리가 이 행을 옆에 붙인다(corrections.py).
+            #   설계: 파티쳇수정/memory_lore/기록정정_지도·스펙_2026-10-10.md
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS corrections (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_id  TEXT NOT NULL,
+                    turn        INTEGER,
+                    about       TEXT NOT NULL DEFAULT '[]',
+                    text        TEXT NOT NULL,
+                    wrong       TEXT NOT NULL DEFAULT '',
+                    source      TEXT NOT NULL DEFAULT 'ooc',
+                    active      INTEGER NOT NULL DEFAULT 1,
+                    created_at  REAL NOT NULL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_corrections_channel ON corrections(channel_id, active, id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_threadlog_thread ON thread_log(channel_id, thread_id, id)")
             # [2026-09-16 시트 2차] PC = 위키 인물 페이지. owner_uid(참가자↔페이지 1:1 표식, ''=NPC 등)
             #   + built_len(grow_sheet 정리 마커 — 직전 정리 직후 Observed 길이). 기존 DB는 ALTER(있으면 무시).
@@ -1564,6 +1581,7 @@ def delete_channel_rows(channel_id: str) -> bool:
                       "secret_ledger", "turn_mail", "retry_snapshot", "reader_log", "autonomy_log",
                       "fact_sources",
                       "thread_log",  # [2026-09-25 스레드 장부]
+                      "corrections",  # [2026-10-10 기록 정정]
                       # [2026-09-14 W1] 위키 페이지 3테이블 — 레거시 모드에서만 목록 삭제
                       #   (채널 모드는 파일 삭제라 자동). 클리어(§6 W4)와는 별개.
                       "pages", "sections", "section_history"):
@@ -2311,6 +2329,7 @@ def clear_session_scoped(channel_id: str) -> bool:
         "turn_mail",  # [2026-08-16 도착물 라우트] 도착물은 그 턴 전용 — 세션 파생
         "notebook_log",  # [notebook v2 2026-09-06] 노트북 행 장부도 세션 파생
         "fact_sources",  # [2026-09-14 S5a] 지식 사실 출처 원장 — knows와 같은 수명
+        "corrections",  # [2026-10-10 기록 정정] 정오표는 그 세션의 기록에 붙는다 — 세션 파생
     )
     try:
         for t in tables:
@@ -3094,3 +3113,69 @@ def lookup_fact_sources(channel_id: str, npc_name: Optional[str] = None,
     except Exception as e:
         logger.warning(f"[SQLiteStore] lookup_fact_sources 실패: {channel_id}: {e}")
         return None
+
+
+# =========================================================
+# [2026-10-10 기록 정정] 정오표 행 — 쓰기·읽기·거두기
+# =========================================================
+def add_correction(channel_id: str, row: Dict[str, Any]) -> Optional[int]:
+    """정정 1행. row = {turn, about(list), text, wrong, source}. 실패 None."""
+    if not channel_id or not isinstance(row, dict) or not str(row.get("text") or "").strip():
+        return None
+    if not _ensure_schema(channel_id):
+        return None
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return None
+    try:
+        cur = conn.execute(
+            "INSERT INTO corrections (channel_id, turn, about, text, wrong, source, active, created_at) "
+            "VALUES (?,?,?,?,?,?,1,?)",
+            (channel_id, row.get("turn"), json.dumps(list(row.get("about") or []), ensure_ascii=False),
+             str(row.get("text") or "").strip(), str(row.get("wrong") or "").strip(),
+             str(row.get("source") or "ooc"), time.time()))
+        conn.commit()
+        return int(cur.lastrowid)
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] add_correction 실패 (무시): {channel_id}: {e}")
+        return None
+
+
+def read_corrections(channel_id: str, active_only: bool = True) -> List[Dict[str, Any]]:
+    """정정 행 목록(오래된 → 최신)."""
+    if not channel_id or not _ensure_schema(channel_id):
+        return []
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return []
+    try:
+        q = ("SELECT id, turn, about, text, wrong, source, active, created_at FROM corrections "
+             "WHERE channel_id=?" + (" AND active=1" if active_only else "") + " ORDER BY id")
+        out = []
+        for r in conn.execute(q, (channel_id,)).fetchall():
+            try:
+                about = json.loads(r[2] or "[]")
+            except Exception:
+                about = []
+            out.append({"id": r[0], "turn": r[1], "about": about if isinstance(about, list) else [],
+                        "text": r[3], "wrong": r[4], "source": r[5], "active": bool(r[6]), "created_at": r[7]})
+        return out
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_corrections 실패 (무시): {channel_id}: {e}")
+        return []
+
+
+def set_correction_active(channel_id: str, cid: int, active: bool) -> bool:
+    if not channel_id or not _ensure_schema(channel_id):
+        return False
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return False
+    try:
+        conn.execute("UPDATE corrections SET active=? WHERE channel_id=? AND id=?",
+                     (1 if active else 0, channel_id, int(cid)))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] set_correction_active 실패 (무시): {channel_id}: {e}")
+        return False
