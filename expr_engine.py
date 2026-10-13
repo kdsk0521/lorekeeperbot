@@ -416,6 +416,39 @@ FUNCS: Tuple[str, ...] = (
 EFFECT_FUNCS: Tuple[str, ...] = ("each", "add", "remove", "expire")
 
 
+class StageText(str):
+    """[2026-10-12 C35b] 단계형 값 — 글자로는 그대로(`==`·표시·저장), **순서 비교만** 단계 순번으로.
+
+    옛 꼴: 단계형은 식에서 글자라 `잔여 >= "쌓임"`·`잔여 >= 2` 둘 다 `_as_num` 에서 죽었다
+    (등록은 통과하니 조건 지시가 소리 없이 영영 꺼져 있었다 — C35 실측 위치크래프트).
+    """
+    stages: Tuple[str, ...] = ()
+
+    def __new__(cls, value: Any, stages: Any = ()) -> "StageText":
+        obj = super().__new__(cls, "" if value is None else str(value))
+        obj.stages = tuple(str(x) for x in (stages or ()))
+        return obj
+
+
+def _stage_order(a: Any, b: Any) -> Optional[Tuple[float, float]]:
+    """순서 비교 한 쌍을 수로. 한쪽이 단계형이면 상대는 **같은 목록의 단계 이름**이거나
+    **0부터 센 순번**(0 = 첫 단계). 순번 해석은 실측 한 표본(쌓임→2, 무거움→3)에 기댄다 —
+    라우터 프롬은 이름으로 쓰게 가르친다. 둘 다 단계형이 아니면 None(종전 수 비교)."""
+    st = a if isinstance(a, StageText) else (b if isinstance(b, StageText) else None)
+    if st is None or not st.stages:
+        return None
+    stages = list(st.stages)
+
+    def _idx(v: Any, where: str) -> float:
+        if isinstance(v, str):
+            if str(v) in stages:
+                return float(stages.index(str(v)))
+            raise ExprError(f"단계 목록에 없는 이름: {where} = {str(v)!r} (목록: {' > '.join(stages)})")
+        return _as_num(v, where)
+
+    return _idx(a, "좌항"), _idx(b, "우항")
+
+
 def _as_num(v: Any, where: str) -> float:
     if isinstance(v, bool):
         return 1.0 if v else 0.0
@@ -530,7 +563,8 @@ class _Evaluator:
             elif isinstance(op, ast.NotEq):
                 res = not _eq(left, right)
             else:
-                a, b = _as_num(left, "좌항"), _as_num(right, "우항")
+                _pair = _stage_order(left, right)      # [C35b] 단계형은 순번으로
+                a, b = _pair if _pair else (_as_num(left, "좌항"), _as_num(right, "우항"))
                 if isinstance(op, ast.Lt):
                     res = a < b
                 elif isinstance(op, ast.LtE):
@@ -780,6 +814,9 @@ class Resolver:
             vtype = str(spec.get("type", "gauge"))
             if str(spec.get("scope")) == "npc" or vtype == "list":
                 return raw if isinstance(raw, dict) else {}
+            if vtype == "enum":                    # [C35b] 순서 비교를 받는 글자
+                return StageText(raw if raw is not None else (spec.get("init") or ""),
+                                 spec.get("stages") or ())
             if vtype in ("enum", "text"):
                 return str(raw if raw is not None else (spec.get("init") or "") or "")
             try:
@@ -889,7 +926,7 @@ class Resolver:
             if cur is None:
                 cur = spec.get("init", 0)
             if str(spec.get("type")) == "enum":
-                return str(cur or "")
+                return StageText(cur or "", spec.get("stages") or ())   # [C35b]
             try:
                 return int(cur)
             except (TypeError, ValueError):

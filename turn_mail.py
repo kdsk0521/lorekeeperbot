@@ -1269,7 +1269,7 @@ class TurnView(discord.ui.View):
                 self.remove_item(item)
 
     @discord.ui.button(
-        label="쌓인 것", emoji="💠", style=discord.ButtonStyle.secondary,
+        label="보관함", emoji="💠", style=discord.ButtonStyle.secondary,   # [2026-10-13] 쌓인 것 → 보관함(레티어스)
         custom_id=status_panel.PANEL_BUTTON_ID,
     )
     async def show_archive(self, interaction: discord.Interaction, button: discord.ui.Button):

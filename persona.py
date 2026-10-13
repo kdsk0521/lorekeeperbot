@@ -605,7 +605,9 @@ async def generate_response_with_retry(
                         for rating in candidate.safety_ratings:
                             logging.warning(f"  {rating.category}: {rating.probability}")
                     continue
-                elif 'MAX_TOKENS' in finish_reason_str:
+                # [2026-10-13 C36] openai 경로(렌더)는 종료 사유를 날것('length')으로 넘긴다 — Gemini 이름만 보던
+                #   탓에 렌더에서 잘림 플래그가 한 번도 서지 않았다. 둘 다 잘림이다.
+                elif 'MAX_TOKENS' in finish_reason_str or finish_reason_str.strip().lower() == 'length':
                     logging.warning(f"[시도 {attempt+1}] 토큰 한계 도달 — 잘린 응답 보충 시도")
                     _truncated = True
                 elif finish_reason_str.upper() not in ['STOP', 'END_TURN', '1']:  # openai 소문자 'stop' 가짜경고 fix
@@ -692,8 +694,15 @@ async def generate_response_with_retry(
                 _narrative_only = re.sub(r"┣[\s\S]*?┫\s*", "", clean_text)
                 response_length = len(_narrative_only)
 
+                # [2026-10-13 C36] 재시도는 **고장**에만 — 서사 0자, 또는 잘림(MAX_TOKENS·length)+500 미만.
+                #   다 쓰고 멈춘(STOP) 응답은 짧아도 받는다(레티어스 "진짜 0자 아니면 재시도 안 하게").
+                #   10-01 의 500 = "빈·잘린 응답만 거르는 바닥"이었는데 STOP 484자까지 고장으로 잡아 렌더를 통째로
+                #   다시 돌렸고, 재시도 노트가 그 16자를 몸짓·감각으로 불렸다(프리즈마 10-12 실측).
                 if response_length >= min_length:
                     logging.info(f"[Length] OK: {response_length}자 (raw={len(clean_text)}자)")
+                    return clean_text
+                if response_length > 0 and not _truncated:
+                    logging.info(f"[Length] short-accepted: {response_length}자 (STOP, raw={len(clean_text)}자)")
                     return clean_text
                 else:
                     logging.warning(
@@ -726,9 +735,8 @@ async def generate_response_with_retry(
                             # [2026-10-01 1차] 숫자 뺌(문단 수·단어 수) — 꼬리 띠와 같은 말.
                             f"2. Prose after the block: runs until the floor passes to the player, each beat bringing "
                             f"something new. Do not shorten the prose to satisfy item 1.\n"
-                            f"Grow the prose by expanding beats already in play: a line of dialogue, an open thread "
-                            f"advancing a notch, an NPC acting on their own agenda, sensory texture and body language "
-                            f"around that motion. Widen the frame; never slice one instant thinner. Add no new plot.\n"
+                            # [2026-10-13 C36] "Grow the prose … sensory texture and body language … Add no new plot." 삭제 —
+                            #   모델이 제일 싼 길(몸짓·감각)로 불렸다. 재시도는 이제 빈·잘린 응답에만 뜨니 할 말은 1·2번뿐.
                             f"{hidden_reminder}"
                         )
             else:

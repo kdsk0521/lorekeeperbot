@@ -1850,7 +1850,7 @@ def build_panel_embed(channel_id: str) -> Optional[discord.Embed]:
 #   이 창이 그 길이다(읽기 전용, 편집은 종전대로 OOC).
 # 콜 0 — 전부 행·저장본 읽기다. 새 버튼 0 — 옛 💠 의 custom_id 를 그대로 쓴다.
 ARCHIVE_MAIL_MAX = 10            # ④ 도착물 **목록** 길이(본문이 아니라 목록이다)
-ARCHIVE_EMPTY_MSG = "아직 쌓인 게 없어요."
+ARCHIVE_EMPTY_MSG = "아직 보관된 게 없어요."
 ARCHIVE_NO_MASK_MSG = "아직 이 세션의 참가자가 아니에요 — `!가면 [이름]` 으로 먼저 가면을 쓰세요."
 ARCHIVE_MAIL_EMOJI = {"mail": "💌", "board": "📰", "mind": "💭"}
 
@@ -2029,7 +2029,7 @@ def build_archive_pages_data(channel_id: str, user_id: str = "") -> List[Dict[st
         if page and (page.get("body") or page.get("rows")):
             pages.append(page)
     if not pages:
-        return [{"key": "empty", "title": "💠 쌓인 것", "body": ARCHIVE_EMPTY_MSG, "rows": []}]
+        return [{"key": "empty", "title": "💠 보관함", "body": ARCHIVE_EMPTY_MSG, "rows": []}]
     return pages
 
 
@@ -2137,7 +2137,7 @@ class ArchiveView(discord.ui.View):
         super().__init__(timeout=None)
 
     @discord.ui.button(
-        label="쌓인 것",
+        label="보관함",          # [2026-10-13] 쌓인 것 → 보관함(레티어스). 옛 메시지 버튼 라벨은 보낸 그대로 남는다
         emoji="💠",
         style=discord.ButtonStyle.secondary,
         custom_id=PANEL_BUTTON_ID,

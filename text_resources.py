@@ -866,7 +866,10 @@ own full budget and is never shortened to satisfy it.
 #   스펙 composition/분석렌더_1차_구현스펙_2026-10-01.md §1.
 TELESCOPE_SEED_PC_QUOTED = (
     "[PC] the player's words, verbatim: {quotes} These are the only lines in {pc}'s mouth this turn. "
-    "A speech act the input names without its words (persuades, bargains, threatens) lands as the listener's answer."
+    "A speech act the input names without its words (persuades, bargains, threatens) lands as the listener's answer. "
+    # [2026-10-13 C36] 입력 "능청스레"가 본문에서 "능청스러운 말투였고" 딱지가 됐다(프리즈마 10-12, AdjStack).
+    "A manner word in the input (능청스레, 퉁명스레) shapes the line itself, in its wording, pace or what the hands do, "
+    "never a label on the voice."
 )
 TELESCOPE_SEED_PC_NONE = (
     "[PC] the player's words, verbatim: none. No line goes in {pc}'s mouth this turn. "

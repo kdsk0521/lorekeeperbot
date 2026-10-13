@@ -277,7 +277,7 @@ RULES_TEXT = (
     "**추적 항상** — `추적 항상` 칸을 넣으면 이름이 글에 안 나와도 매 턴 추적합니다(렌더에도 실림, 빼려면 `표시 숨김`).\n"
     "  `표시 항상`(파일이면 \"늘 보이게\")이면 추적도 저절로 항상입니다.\n"
     "  이미 있는 변수는 `!출력룰 수정 변수 호감 | 추적 항상` 처럼 그 칸만 적어 켭니다(다른 칸은 그대로).\n"
-    "**단조** — 카운터·게이지에 `단조` 를 적으면 모델이 내림을 신고해도 버립니다(OOC 정정은 됩니다).\n"
+    "**방향** — `단조`(=`오름만`)면 모델의 내림 신고를, `내림만`이면 오름 신고를 버립니다(게이지·카운터·단계형, OOC 정정은 됩니다).\n"
     "**헤더** — `!출력룰 추가 헤더 잔고 [빚] / 평판 [평판]` 로 상단 줄에 값을 꽂습니다.\n"
     "**남은·퍼센트** — `[평판.남은]`(끝까지 얼마)·`[평판.퍼센트]`(얼마나 왔나)를 표시 줄에 쓸 수 있습니다.\n"
     "  끝이 없는 값(카운터)에는 남은 것도 없어 빈칸이 됩니다. 레코드 목록은 `[화분/양파/기한.남은]`.\n"
@@ -448,8 +448,21 @@ _LOSS_RE = re.compile(r"(?:하강|감소|내림|max[_ ]?loss|loss)\s*[:=]?\s*(\d
 _SIGNED_CAP_RE = re.compile(r"^\s*\+\s*(\d+)\s*/?\s*[-−]\s*(\d+)\s*$")
 # 표시 형식 칸: `표시: {v} 골드`
 _FORMAT_PREFIX_RE = re.compile(r"^(?:표시|형식|format|display)\s*[:=]\s*", re.I)
-_MONOTONIC_WORDS = ("단조", "역행불가", "역행 불가", "monotonic", "irreversible", "일방")
+_MONOTONIC_WORDS = ("단조", "역행불가", "역행 불가", "monotonic", "irreversible", "일방",
+                    "오름만", "up only", "up-only")          # [2026-10-12 C35] = 방향 up
+_DOWN_ONLY_WORDS = ("내림만", "down only", "down-only", "줄기만")   # [2026-10-12 C35] 방향 down
 _BIDIRECTIONAL_WORDS = ("양방향", "가역", "오르내림", "bidirectional", "reversible")
+DIRECTIONS = ("both", "up", "down")
+
+
+def value_direction(spec: Any) -> str:
+    """[2026-10-12 C35] 값이 움직이는 방향 — both / up / down. 옛 `monotonic: true` 는 up."""
+    if not isinstance(spec, dict):
+        return "both"
+    d = str(spec.get("direction") or "").strip().lower()
+    if d in ("up", "down"):
+        return d
+    return "up" if spec.get("monotonic") else "both"
 
 
 def _parse_stage_cell(part: str) -> Optional[List[str]]:
@@ -565,9 +578,15 @@ def parse_pipe_declaration(text: str) -> Tuple[Optional[Dict[str, Any]], str]:
         # [v1] 단조/양방향 — 칸 전체가 토큰일 때만.
         if bare in _MONOTONIC_WORDS:
             spec["monotonic"] = True
+            spec["direction"] = "up"
+            continue
+        if bare in _DOWN_ONLY_WORDS:            # [2026-10-12 C35]
+            spec["monotonic"] = False
+            spec["direction"] = "down"
             continue
         if bare in _BIDIRECTIONAL_WORDS:
             spec["monotonic"] = False
+            spec["direction"] = "both"
             continue
         m = _RANGE_RE.search(part)
         if not rng_done and m:
@@ -1345,10 +1364,26 @@ def validate_declaration(
         clean["always_feed"] = True
     if clean.get("type") in ("gauge", "counter") and spec.get("monotonic") is True:
         clean["monotonic"] = True
+    # [2026-10-12 C35] 방향 칸 — gauge·counter·enum. up 은 옛 monotonic 과 같이 적는다(옛 소비처 그대로).
+    if clean.get("type") in ("gauge", "counter", "enum"):
+        _d = str(spec.get("direction") or "").strip().lower()
+        _enum = clean.get("type") == "enum"     # enum 은 본체가 monotonic 칸을 늘 싣는다 — 꼴 유지
+        if _d == "up":
+            clean["direction"] = "up"
+            clean["monotonic"] = True
+        elif _d in ("down", "both"):
+            if _d == "down":
+                clean["direction"] = "down"
+            else:
+                clean.pop("direction", None)
+            if _enum:
+                clean["monotonic"] = False
+            else:
+                clean.pop("monotonic", None)
     return clean, err
 
 
-_FLAG_EDIT_KEYS = ("always_feed", "monotonic", "feed", "max_gain", "max_loss", "format")
+_FLAG_EDIT_KEYS = ("always_feed", "monotonic", "direction", "feed", "max_gain", "max_loss", "format")
 
 
 def merge_flag_edit(spec: Any, existing: Optional[Dict[str, Any]]) -> Any:
@@ -1377,6 +1412,10 @@ def merge_flag_edit(spec: Any, existing: Optional[Dict[str, Any]]) -> Any:
         merged.pop("always_feed", None)
     if merged.get("monotonic") is False:
         merged.pop("monotonic", None)
+    if merged.get("direction") in ("both", "down"):
+        merged.pop("monotonic", None)
+    if merged.get("direction") == "both":
+        merged.pop("direction", None)
     return merged
 
 
@@ -1903,8 +1942,10 @@ def format_list(channel_id: str) -> str:
         vtype = spec.get("type", "gauge")
         if vtype == "enum":
             shape = " > ".join(spec.get("stages") or [])
-            if spec.get("monotonic"):
+            if value_direction(spec) == "up":
                 shape += " (단조)"
+            elif value_direction(spec) == "down":
+                shape += " (내림만)"
         elif vtype == "list":
             lo, hi = (spec.get("item_range") or [0, 0])[:2]
             shape = f"{spec.get('item_mode', 'stock')} {lo}-{hi}, 항목 {len(cur or {})}/{list_max(spec)}"
@@ -1913,8 +1954,10 @@ def format_list(channel_id: str) -> str:
             shape = f"{lo}-{hi}"
             if spec.get("max_gain") or spec.get("max_loss"):
                 shape += f", 캡 +{spec.get('max_gain', '∞')}/-{spec.get('max_loss', '∞')}"
-            if spec.get("monotonic"):
+            if value_direction(spec) == "up":
                 shape += " (단조)"
+            elif value_direction(spec) == "down":
+                shape += " (내림만)"
         if spec.get("always_feed"):
             shape += " (추적 항상)"     # [2026-10-12 C34]
         if isinstance(cur, dict):
@@ -2891,10 +2934,11 @@ def _apply_numeric(channel_id: str, name: str, spec: Dict[str, Any],
         return None
     capped = delta if exempt_cap else _cap_delta(spec, delta)
     # [2026-10-12 C34] 단조 수치형 — 추출 콜(모델 신고)의 내림만 버린다. OOC·식·코드 쓰기는 그대로.
-    if (capped < 0 and spec.get("monotonic") and not exempt_cap
-            and source == "cognition.custom_var_deltas"):
-        logger.info("[CustomVar] %s 단조 위반 %+d → 폐기 (역행 불가) ev=%s", name, delta, str(evidence)[:60])
-        return None
+    if not exempt_cap and source == "cognition.custom_var_deltas":
+        _dir = value_direction(spec)          # [2026-10-12 C35] up=내림 폐기 / down=오름 폐기
+        if (_dir == "up" and capped < 0) or (_dir == "down" and capped > 0):
+            logger.info("[CustomVar] %s 방향(%s) 위반 %+d → 폐기 ev=%s", name, _dir, delta, str(evidence)[:60])
+            return None
 
     entry = vals.get(name) if isinstance(vals.get(name), dict) else {}
 
@@ -3057,8 +3101,12 @@ def _apply_enum(channel_id: str, name: str, spec: Dict[str, Any],
     old_i, new_i = stages.index(cur), stages.index(target)
     if new_i == old_i:
         return None
-    if new_i < old_i and spec.get("monotonic"):
+    if new_i < old_i and value_direction(spec) == "up":
         logger.info("[CustomVar] %s 단조 위반 %s→%s 거부 (역행 불가) ev=%s",
+                    name, cur, target, evidence[:60])
+        return None
+    if new_i > old_i and value_direction(spec) == "down":     # [2026-10-12 C35]
+        logger.info("[CustomVar] %s 방향(down) 위반 %s→%s 거부 ev=%s",
                     name, cur, target, evidence[:60])
         return None
     step = new_i - old_i

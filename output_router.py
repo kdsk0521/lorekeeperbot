@@ -105,6 +105,7 @@ Do not interpret, summarize, improve, or invent. Sorting is the whole job.
 
   "value":      {"type":"gauge|counter|enum|list|text", "range":[0,100], "start":0,
                  "stages":["단계1","단계2"], "item_mode":"progress|stock", "max":30,
+                 "direction":"both|up|down", "max_gain":null, "max_loss":null, "track":null,
                  "stage_first":100, "stage_step":50,
                  "fields":{"수분":[0,5],"성장":[0,12]}, "init":{"수분":2,"성장":0},
                  "stage_of":"성장", "stage_at":[0,3,6,9,12],
@@ -155,10 +156,31 @@ Do not interpret, summarize, improve, or invent. Sorting is the whole job.
 7. `value.rule` is required and must say what MOVES the number. Without it the extraction
    call cannot move that value.
 8. `feed.prose`: "always" when the notes say this must always be visible / on the status line;
-   otherwise "mentioned".
+   "never" when the writer must not see it (Rule 8e); otherwise "mentioned".
 8b. `value.max` (type `list` only) — the number of ITEMS that list may hold, when the notes say
    so ("최대 30개", "칸은 12개", "슬롯 6개"). A whole number 1-99. Omit it when the notes are
    silent; the code has a default. This is the item COUNT, not `range` (what one item counts to).
+8c. `value.max_gain` / `value.max_loss` (gauge and counter only) — the most ONE exchange may move
+   the value up / down, when the notes limit it: "at most 100 at a time", "moves at most 5 up and
+   20 down per turn", "한 번에 100까지만", "천천히 오르고 빨리 식는다(오를 땐 5, 내릴 땐 20)".
+   Whole numbers, 1 or more. One limit for both ways goes in both. Leave both null when the notes
+   are silent.
+8d. `value.direction` — fill it for EVERY gauge, counter and enum, the way you fill `type`.
+   "up" when it never goes back down: "never goes down", "does not run backward", "only grows",
+   "내려가지 않는다", "역행하지 않는다". "down" when it only ever runs down: "only runs down",
+   "never refills", "줄기만 한다", "다시 차지 않는다" (uses left, life left). Otherwise "both".
+   list and text take no direction.
+8e. `value.track:"always"` — the value must be followed every turn even when nobody names it,
+   but the WRITER must not see it: "tracked every turn but never shown in the writing",
+   "a hidden gauge", "글에는 안 드러나게 늘 따라간다". Emit it with `feed.prose:"never"`.
+   A value the notes want always VISIBLE needs only `feed.prose:"always"` — no `track`.
+8f. `scope` — "npc" when the notes keep the value SEPARATELY FOR EACH CHARACTER: "one per
+   character", "for each NPC", "인물마다 따로", "캐릭터별" (호감, 신뢰, 친밀도). That is ONE
+   gauge/counter/enum with `scope:"npc"` — never a `list` whose items are character names.
+   "pc" = the player character's own; "global" = one for the world. A `list` holds named
+   THINGS (goods, materials, pots, recipes), not people.
+8g. `value.range` — fill it for EVERY gauge and counter, a derived one (`derive`) too. When the
+   notes give none: gauge [0,100], counter [0,99999].
 9. `cadence`: "day" when the notes tie it to a day boundary or a daily summary; else "turn".
    A `transition` with "day" is evaluated ONCE at the day boundary, not every turn. Its
    `when` may be empty — "every day, X happens" is a day transition with `do` only (Rule 15).
@@ -203,6 +225,9 @@ Do not interpret, summarize, improve, or invent. Sorting is the whole job.
 14. `a if c else b` is allowed anywhere an expression is (`derive`, `when`, `do`): 
     `"견습" if 명성 <= 150 else "장인"`. Nest it at most 4 deep — deeper is a `stages` table,
     not an expression. Write it in this form; `? :` is not accepted.
+14b. A stage value (enum) compares by STAGE NAME, never by number: `잔여 == "쌓임"` for that one
+    stage, `잔여 >= "쌓임"` for that stage or any later one (later = further along the `stages`
+    list). "From Building on" / "쌓임부터" is `>= "쌓임"`.
 15. A `transition` with NO `when` runs its `do` EVERY cadence — every turn, or every day when
     `cadence` is "day". That is the shape for "매턴 …", "매일 …", "하루가 끝나면 정산" —
     an ongoing CALCULATION (`금 = 금 + 매출`), not an event. It never notifies, never records,
@@ -228,7 +253,14 @@ Do not interpret, summarize, improve, or invent. Sorting is the whole job.
     `[경험치.남은]` / `[경험치.퍼센트]` are the bar.
 20. `sum(목록)` adds up the quantities in a list; `count(목록)` counts the items that have any.
     `add(목록,"항목")` puts an item in with quantity 1, so `has`/`count` see it at once.
-11. Korean names. JSON only. No prose, no code fence, no commentary.
+11. KOREAN WORDS. `name`, `value.stages`, a text value's `start` and every `rule` are Korean even
+   when the notes are English. When the notes give both forms ("Unknown 무명", "Known (안면)"),
+   take the Korean one; when they give only English, use a plain Korean word ("Trusted" → 신뢰).
+   Expressions and templates point at the Korean names you chose. Copied text stays as written:
+   `format.text`, the labels and separators of `format.template`, and `directive.text`.
+   Never create a value named like a system placeholder (시간·날짜·시간대·위치·인물·턴·날씨): the
+   bot already keeps those. A "Location" / "위치" field is the status line's `[위치]`, not a value.
+   JSON only. No prose, no code fence, no commentary.
 """
 
 
@@ -458,6 +490,14 @@ def _norm_value(sub: Dict[str, Any], raw: Dict[str, Any]) -> Dict[str, Any]:
     # [2026-09-13 P17] 경험치바 — "레벨당 필요 경험치" 수식은 여기서 **경계 목록**이 된다.
     #   리셋 전이(경험치=0, 레벨+1)는 만들지 않는다: 누적이 정본이고 바는 `.남은`/`.퍼센트` 다.
     rng = _range(_pick(sub, "range", "범위"))
+    # [2026-10-12 C35b] 범위 없는 게이지·카운터는 관문이 통째 거부했다(C35 실측 경과일 = 날 + 1).
+    #   기본 폭을 준다 — 게이지 0-100, 카운터 0-99999 — 시작값이 밖이면 그만큼 넓힌다.
+    if rng is None and vtype in ("gauge", "counter"):
+        _st0 = _int(_pick(sub, "start", "init", "시작값"))
+        _lo0, _hi0 = (0, 100) if vtype == "gauge" else (0, 99999)
+        if _st0 is not None:
+            _lo0, _hi0 = min(_lo0, _st0), max(_hi0, _st0)
+        rng = [_lo0, _hi0]
     _at_raw = _pick(sub, "stage_at", "단계문턱")
     _at_nums = ([_int(x) for x in _at_raw] if isinstance(_at_raw, (list, tuple)) else [])
     _at_nums = [x for x in _at_nums if x is not None]
@@ -483,6 +523,12 @@ def _norm_value(sub: Dict[str, Any], raw: Dict[str, Any]) -> Dict[str, Any]:
         start = _int(_pick(sub, "start", "init", "시작값"))
         if start is not None:
             v["start"] = start
+        elif vtype == "enum" and stages:
+            # [2026-10-12 C35 덤] 단계형 시작은 **단계 이름**이다 — 수로만 읽던 탓에 버려져
+            #   늘 첫 단계에서 시작했다. 목록에 있는 이름일 때만 싣는다(관문이 한 번 더 본다).
+            _ss = _s(_pick(sub, "start", "init", "시작값"), NAME_MAX)
+            if _ss in stages:
+                v["start"] = _ss
     if stages:
         v["stages"] = stages
     if _at_nums and vtype in ("gauge", "counter"):
@@ -525,6 +571,24 @@ def _norm_value(sub: Dict[str, Any], raw: Dict[str, Any]) -> Dict[str, Any]:
                 nums = [_int(x) for x in at]
                 if nums and all(x is not None for x in nums):
                     v["stage_at"] = nums
+    # [2026-10-12 C35] 파이프 줄이 정하는 칸을 파일도 정한다 — 캡 · 방향 · 숨겨서 늘 추적.
+    #   칸이 없거나 못 읽으면 **뺀다**(옛 출력은 바이트 그대로). 0·음수·문자 캡을 넘기면
+    #   관문(_cap_ok)이 선언 전체를 거부하므로 여기서 먼저 떨군다.
+    if vtype in ("gauge", "counter"):
+        import custom_vars as _cv
+        _top = int(getattr(_cv, "DELTA_CAP_MAX", 10 ** 6))
+        for _k, _alias in (("max_gain", "상승캡"), ("max_loss", "하강캡")):
+            _n = _int(_pick(sub, _k, _alias))
+            if _n is not None and 1 <= _n <= _top:
+                v[_k] = _n
+    if vtype in ("gauge", "counter", "enum"):
+        _dir = _s(_pick(sub, "direction", "방향")).lower()
+        if _dir not in ("both", "up", "down") and sub.get("monotonic") is True:
+            _dir = "up"
+        if _dir in ("up", "down"):
+            v["direction"] = _dir
+    if _s(_pick(sub, "track", "추적")).lower() == "always":
+        v["track"] = "always"
     fmt = _s(_pick(sub, "format", "표시"), 60)
     if fmt:
         v["format"] = fmt
@@ -860,6 +924,12 @@ def _register_value(channel_id: str, item: Dict[str, Any],
                     source: str) -> Tuple[bool, str]:
     import custom_vars as cv
     v = item.get("value") or {}
+    # [2026-10-12 C35b] 봇이 이미 아는 이름(시간·날짜·위치…)으로 값을 만들면 자리표시자가 선언 변수를
+    #   먼저 읽어 상태 줄의 `[위치]` 가 봇 위치 대신 그 값을 그렸다(C35 실측). 파일 길만 막는다 —
+    #   파이프로 일부러 만드는 것은 유저 뜻이다.
+    if item.get("name") in tuple(getattr(cv, "SYSTEM_PLACEHOLDERS", ()) or ()):
+        return False, (f"{item['name']} · 봇이 이미 아는 이름이라 값으로 만들지 않음 — "
+                       f"상태 줄엔 [{item['name']}]로 쓰면 된다")
     spec: Dict[str, Any] = {
         "name": item["name"],
         "type": v.get("type") or "gauge",
@@ -874,9 +944,16 @@ def _register_value(channel_id: str, item: Dict[str, Any],
                      ("max", v.get("max")),
                      ("fields", v.get("fields")), ("stage_of", v.get("stage_of")),
                      ("stage_at", v.get("stage_at")),
+                     ("max_gain", v.get("max_gain")), ("max_loss", v.get("max_loss")),
+                     ("direction", v.get("direction")),
                      ("format", v.get("format")), ("feed", item.get("feed"))):
         if val not in (None, "", []):
             spec[key] = val
+    # [2026-10-12 C35] 숨겨서 늘 추적 — 늘 보이는 값(feed always)이 아니면 렌더에서는 뺀다.
+    if v.get("track") == "always":
+        spec["always_feed"] = True
+        if (item.get("feed") or {}).get("prose") != "always":
+            spec["feed"] = {"prose": "never"}
     clean, err = cv.validate_declaration(spec, cv.get_declarations(channel_id))
     if clean is None:
         return False, (err or "선언을 읽지 못했습니다.").splitlines()[0]
@@ -994,6 +1071,43 @@ def _line(item: Dict[str, Any]) -> str:
         return f"{item.get('name','')} · {_KIND_LABEL.get(item.get('kind'), '')}"
 
 
+def _stage_number_note(channel_id: str, when: Any) -> str:
+    """[2026-10-12 C35b] 조건이 단계형 값을 **수**와 순서 비교하면 읽는 법을 되비침에 적는다.
+    식 엔진은 0부터 센 순번으로 읽는다(0 = 첫 단계) — 조용히 맞히는 대신 보이게 한다."""
+    src = _s(when)
+    if not src:
+        return ""
+    try:
+        import ast
+        import custom_vars as cv
+        decl = cv.get_declarations(channel_id) or {}
+        tree = ast.parse(src, mode="eval")
+    except Exception:
+        return ""
+    notes: List[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Compare):
+            continue
+        sides = [node.left] + list(node.comparators)
+        for i, op in enumerate(node.ops):
+            if isinstance(op, (ast.Eq, ast.NotEq)):
+                continue
+            for a, b in ((sides[i], sides[i + 1]), (sides[i + 1], sides[i])):
+                nm = a.id if isinstance(a, ast.Name) else (
+                    a.value.id if isinstance(a, ast.Subscript) and isinstance(a.value, ast.Name) else "")
+                spec = decl.get(nm) if nm else None
+                if (isinstance(spec, dict) and spec.get("type") == "enum"
+                        and isinstance(b, ast.Constant) and isinstance(b.value, (int, float))
+                        and not isinstance(b.value, bool)):
+                    stages = list(spec.get("stages") or [])
+                    k = int(b.value)
+                    label = stages[k] if 0 <= k < len(stages) else "목록 밖"
+                    notes.append(f"{nm} {k} = {label}")
+    if not notes:
+        return ""
+    return "  ⚠ 단계를 수로 비교 — 0부터 센 순번으로 읽음(" + ", ".join(dict.fromkeys(notes)) + ")"
+
+
 def apply_items(channel_id: str, items: Any, source: str = "") -> List[Dict[str, Any]]:
     """항목 → 관문. 반환은 되비침 재료 `[{item, name, status, msg}]`.
 
@@ -1073,6 +1187,8 @@ def apply_items(channel_id: str, items: Any, source: str = "") -> List[Dict[str,
         # [2026-09-24 감사] 서술·전이는 turn/day 만 등록된다(week·month 등은 turn 으로 접힘). 되비침이 "주"로
         #   보이면 유저는 매주 정산으로 믿는데 실제는 매턴 — 등록된 값으로 보여 주고 접혔다고 적는다.
         _cad_note = ""
+        if okk and kind in ("directive", "transition"):
+            _cad_note += _stage_number_note(channel_id, (item.get(kind) or {}).get("when"))
         if okk and kind in ("narrative", "transition") and item.get("cadence") not in (None, "turn", "day"):
             _cad_note = f"  ⚠ 때 '{item.get('cadence')}' 미지원 → 매턴"
             item = dict(item, cadence="turn")
