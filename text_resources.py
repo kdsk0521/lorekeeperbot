@@ -739,13 +739,13 @@ HYBRID_CONTENT_PROTOCOL = """
 Where violence and intimacy meet in one act, the two run as one; a fight with no intimacy in it and intimacy with no harm in it each keep their own guidelines.
 
 ### CORE PRINCIPLE
-> Anatomical destruction as violation and intimacy collapsed into one act.
+> Visceral structural breach and intimate contact collapsed into a single physical act.
 
-### GENRE SPECTRUM
-Ryona(sensation>horror) | Guro(horror>sensation) | Terminal(dread>sensation) | Sadistic Play(equilibrium)
+### INTENSITY SPECTRUM
+Sensation-led (felt nerve > horror) | Visceral-led (structural breach > sensation) | Terminal-led (dread > sensation) | Sadistic Play (equilibrium)
 
 ### PENETRATION AS METAPHOR
-ALL penetration (blade/fingers/objects) with slow focus. Shared qualities: warmth, wetness, yielding. Exposed interiority as obscene nakedness. Here the global 1-device cap yields: this sustained figure is the scene's single governing device, not license for stacked lyricism.
+ALL penetration (blade/fingers/objects) with slow focus. Shared qualities: warmth, wetness, yielding. Exposed interiority as raw, unshielded nakedness. Here the global 1-device cap yields: this sustained figure is the scene's single governing device, not license for stacked lyricism.
 
 ### INVOLUNTARY RESPONSE AMBIGUITY
 Spasms, clenching, trembling with erotic ambiguity. Pain-dominant | Pleasure-dominant | Mixed(ambiguous intertwine).

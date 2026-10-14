@@ -687,6 +687,9 @@ if __name__ == "__main__":
     else:
         _ai_key_ok = bool(GEMINI_API_KEY)
         _ai_key_name = "GEMINI_API_KEY"
+    if config.RENDERER_BACKEND == "gemini" and not GEMINI_API_KEY:
+        _ai_key_ok = False
+        _ai_key_name = f"{_ai_key_name} + GEMINI_API_KEY" if _ai_key_name != "GEMINI_API_KEY" else "GEMINI_API_KEY"
     # [2026-08-18 모델 env 단일 레버] config 에 모델 기본값이 없다 → 빠지면 조용히 굴러가는 대신
     # **빠진 이름을 전부 나열**하고 기동 거부. 검사는 여기서만 호출한다(config import 는 무해 유지).
     _missing_models = config.validate_model_env()

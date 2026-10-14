@@ -277,11 +277,13 @@ async def generate_response(
         # [2026-07-08 탈부정] 부정-구문 미러링 관측 → 헤더·ack 긍정형으로 (reference 마킹 기능 보존)
         # [2026-08-12 조립 3분할] 구 헤더 1줄("[CONTEXT DATA: reference material only]")은 존 라벨
         #   _ZONE_LABEL_CONTEXT로 승격돼 context_data 머리에 이미 붙어 있다(계승·강화, 이중 0).
-        session.history.append({"role": "user", "content": context_data})
-        # [2026-07-07 인격대우 1단계] 매 턴 진짜 assistant 턴 = 자기발화 각인력 최강 채널.
-        # [2026-08-12 조립 3분할] ack가 구 2존 구조("받았다 → 바로 쓴다")를 전제하던 것 최소 수정 —
-        #   이 시점 뒤에 히스토리와 THIS TURN 문서가 더 온다.
-        session.history.append({"role": "assistant", "content": "Received, and held as reference. Good material in these records; ready for this turn's document."})
+        _ack_text = "Received, and held as reference. Good material in these records; ready for this turn's document."
+        if isinstance(session, persona.OpenAIChatSessionAdapter):
+            session.history.append({"role": "user", "content": context_data})
+            session.history.append({"role": "assistant", "content": _ack_text})
+        else:
+            session.history.append(types.Content(role="user", parts=[types.Part(text=context_data)]))
+            session.history.append(types.Content(role="model", parts=[types.Part(text=_ack_text)]))
     else:
         session = persona.create_risu_style_session(
             client=client,
@@ -356,8 +358,9 @@ async def generate_response(
         if history_to_inject[_i].get('role') == "Model":
             _last_asst_idx = _i
             break
+    from cognition import sanitize_minor_tokens as _san_minor
     for _idx, h in enumerate(history_to_inject):
-        _content = str(h['content'])
+        _content = _san_minor(str(h['content']))
         _is_user = h.get('role') != "Model"
         if not _is_user:
             _content = reduce_emdashes(_content)

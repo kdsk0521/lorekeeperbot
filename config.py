@@ -519,6 +519,8 @@ NARRATIVE_TEMPERATURE = 1.15  # 1.4 → 1.15 (감정 과장 어휘 fan-out 축�
 NARRATIVE_TOP_K = 60          # 70 → 60 (wild 후보 trim)
 NARRATIVE_TOP_P = 0.80
 NARRATIVE_MAX_OUTPUT_TOKENS = 16384  # 12288→16384 [2026-07-05 GLM 스왑]: 렌더 추론 ON — Ollama /v1이 thinking을 max_tokens에 포함할 가능성 대비(산문 잘림=비대칭 실패, 서사 콜 8192 인상과 동일 논리)
+# [2026-10-14] 제미니 렌더러 추론 레벨 ("low" | "medium" | "high", ""=미지정)
+GEMINI_RENDERER_THINKING_LEVEL = os.getenv("GEMINI_RENDERER_THINKING_LEVEL", "medium").strip().lower()
 # 서사 출력 길이: 인원당 동적 조절 (텔레스코프 제거 후 기준)
 NARRATIVE_CHARS_BASE = 2200      # 기본 (1인 이하) [2026-06-11: 1500→2200, 산문 목표 2000자대 (1인 max 3000/floor 1800)]
 NARRATIVE_CHARS_PER_PLAYER = 800 # 참여 인원당 추가

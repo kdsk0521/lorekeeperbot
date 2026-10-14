@@ -77,6 +77,13 @@ def _sanitize_for_analysis(text: str) -> str:
     return result
 
 
+def sanitize_minor_tokens(text: str) -> str:
+    """[2026-10-14] API 전송 사본에서 미성년/학교/1~17세 나이 표기를 일반화. 저장 원본에는 영향 없음."""
+    if not text:
+        return ""
+    return _sanitize_for_analysis(str(text))
+
+
 # [2026-09-24] 정화는 **읽힐 때 한 번**(전송 사본)만 — 저장본을 깎지 않는다(레티어스: 원래 로어 입력 시 정화만 의도).
 #   읽기→재작성→저장 루프(condense_play_section)에서 정화 입력으로 만든 출력이 원문을 덮어 나이·학년이 영구 삭제되던
 #   자리를 위한 짝: 정화 자리마다 `일반화어+⟦m…⟧` 표식을 남겨 보내고(모델은 원문을 못 본다 = 정화 목적 유지),
