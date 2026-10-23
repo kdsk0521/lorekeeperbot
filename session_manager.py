@@ -213,7 +213,7 @@ class SessionManager:
         try:
             import custom_vars as _cv_rd
             _n_var = len([1 for _v in _cv_rd.get_declarations(channel_id).values()
-                          if isinstance(_v, dict) and not _v.get("system")])
+                          if isinstance(_v, dict) and not _cv_rd.is_reserved(_v)])
         except Exception:
             pass
         try:

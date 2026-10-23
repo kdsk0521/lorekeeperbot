@@ -24,6 +24,17 @@ VERSION = "8.0"
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
+# [2026-10-22 C54] Activity(디스코드 안 화면) — 포털 OAuth2 값 + Funnel 주소. ID·SECRET 중 하나라도 비면 화면은 꺼진다.
+#   모델 env 부팅 게이트(validate_model_env)엔 넣지 않는다 — 선택 기능이라 없으면 꺼질 뿐 기동은 막지 않는다.
+DISCORD_CLIENT_ID = (os.getenv('DISCORD_CLIENT_ID') or '').strip()
+DISCORD_CLIENT_SECRET = (os.getenv('DISCORD_CLIENT_SECRET') or '').strip()
+ACTIVITY_HOST = (os.getenv('ACTIVITY_HOST') or '').strip()
+try:
+    ACTIVITY_PORT = int(os.getenv('ACTIVITY_PORT') or 8080)
+except ValueError:
+    ACTIVITY_PORT = 8080
+ACTIVITY_ENABLED = bool(DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET)
+
 # [2026-08-14 조사] gemini-3.7-flash = Stable(08-13 출시), 일반 API 키로 사용 가능(Vertex 전용 아님).
 #   입력 1,048,576 / 출력 65,536, thinking low·medium·high("minimal"은 에러 반환).
 #   제미니 복귀 시 후보값: PRO=FLASH="gemini-3.7-flash".
@@ -734,46 +745,29 @@ CLOCK_RESOLVE_REWARD = {4: 2, 6: 3, 8: 5}  # 시계 해결 시 segments별 보�
 # momentum: 다음 턴 판정 보너스/페널티 (±10 cap)
 # clock_effect: 활성 시계 변경 (+전진/-후퇴), clock_all: 모든 시계 대상
 # (2026-06-25: doom_delta 키 제거 — 판정→doom 폐기. 둠=이야기 활성도라 판정 성패와 무관. primary/momentum/clock만.)
+# [2026-10-15 C40 C4] 시계만 남김 — primary_delta(활력·평형)·momentum(기세) 삭제. 레티어스: "활력평형 깎는 건 뺄 듯,
+#   이제 주사위를 보고 들어가니까. 시계 진행만 체크." 활력·평형은 출력물 콜이 장면을 읽고 움직인다.
 JUDGMENT_CONSEQUENCES = {
     "critical_success": {
-        "primary_delta": 5,
-        "momentum": 10,
         "clock_effect": -1,
     },
     "success": {
-        "primary_delta": 0,
-        "momentum": 0,
         "clock_effect": 0,
     },
     "partial": {
-        "primary_delta": -2,
-        "momentum": 0,
         "clock_effect": 0,
     },
     "failure": {
-        "primary_delta": -3,
-        "momentum": -5,
         "clock_effect": 1,
     },
     "critical_failure": {
-        "primary_delta": -5,
-        "momentum": -10,
         "clock_effect": 1,
         "clock_all": True,
     },
 }
 
-# Judgment v3 (incremental)
-ASPECT_VALUE = 5
-MOD_SOURCE_CAPS = {
-    "mental": 20,
-    "doom": 20,
-    "theory": 20,
-    "passive": 20,
-    "aspect": 20,
-    "dai": 20,
-    "status": 20,
-}
+# [2026-10-15 C42] Judgment v3 의 ASPECT_VALUE·MOD_SOURCE_CAPS 퇴역 — 4dF 는 항마다 ±1 이고,
+#   수정치 폭은 주사위 개수가 잡는다(judgment_engine.mod_bounds: 하한 −(N−1) · 상한 min(3, N)).
 
 # Memory Optimization
 FRESH_THRESHOLD = 24  # [Cost-Diet] 24개 초과 시 발효 (렌더 12 + 여유 12)
@@ -793,9 +787,8 @@ EVENT_QUEUE_EXPIRY_TURNS = 8
 # Active Condition (Storyteller v4.1 — Fate Aspect + Location)
 ACTIVE_CONDITION_CAP = 3
 
-# Judgment condition modifier (polarity × intensity → ±mod)
-CONDITION_MOD_SCALE = {"Low": 2, "Mid": 4, "High": 7, "Extreme": 12}
-CONDITION_MOD_CAP = 15
+# [2026-10-15 C42] CONDITION_MOD_SCALE·CONDITION_MOD_CAP 퇴역 — 세계상황은 판정 수정치가 아니라
+#   PC 위치에 걸려 있으면 주사위 +1개(혼전도)로 들어간다. 극성은 묻지 않는다(mixed 포함).
 
 # 활력 Stages (0-100) — PC의 몸 축(체력·지구력). [2026-10-07] 옛 이름 기력·옛 정의 "총체적 컨디션"
 # Key: Stage ID (0-3)
@@ -862,10 +855,8 @@ ASPECTS_DIRECTIVES = {
 # DEBUFF_TURNS/DEBUFF_MODIFIER 제거. 바닥 탈출 = 갭 비례 자연회복+휴식+間 리프레시.
 
 
-# [Phase 3 DEPRECATED] Effort (각오) — Phase 2 Flash modulator(extreme)가 자동 흡수 예정.
-# 단순 dead 보존 (미래 재활성화 가능). 코드 호출처: judgment_engine effort_mod (effort_used가 None이면 자동 skip).
-EFFORT_BONUS = 10    # 판정 +10
-EFFORT_COST = 8      # 활력/평형 선불 (흡수 보험 포함, 추가 비용 없음)
+# [2026-10-15 C42] Effort(각오) 퇴역 — EFFORT_BONUS·EFFORT_COST 삭제. 레티어스: "각오는 안 쓸 건데.
+#   판정하기도 어렵고 정규식으로 파싱하자니 좀 그렇고." resolve 칸·활력 선불·Absorb 가 같이 갔다.
 
 # [2026-08-11 로드아웃 삭제] 회상 비용(FLASHBACK_COST_TIERS/PASSIVE_DISCOUNT/MIN_MENTAL)과
 # 로드아웃 슬롯(LOADOUT_SLOTS/SLOT_COST/TYPES) 상수 제거 — !회상 명령 폐기로 소비자 0.
@@ -1287,7 +1278,7 @@ PIPELINE_DEGRADATION = {
 # W9: Seven Dice — Narrative Entropy Management
 # =========================================================
 SEVEN_DICE = {
-    # 가시 3개: 능동적 창작 마찰 (AGELAST 원본의 구문 제약 계열 — Slot 19로 라우팅)
+    # 가시 3개: 능동적 창작 마찰 (AGELAST 원본의 구문 제약 계열 — 자료 존 끝(Slot 31 뒤)으로 라우팅, C43 전엔 Slot 19)
     # [2026-09-29 배치2 2a-4] 가시 3면 효과문 → 영어 값(턴 존의 다른 값과 같은 언어). 뜻은 그대로.
     #   Agon은 slot_manager `_any_speaking_npc` 게이트를 지난 턴에만 실린다.
     "agon":    {"name": "Agon/적",     "visible": True,  "effect": "At least one NPC line this turn is a question; flat statements thin out."},
@@ -1926,6 +1917,9 @@ WIKI_COMPILE_PROFILES = {   # 독자 -> (허용 절 순서, 페이지당 절 발
     "T3": (("Observed", "Relationships+", "Members+", "Occupants", "Layout"), 600, 2400),
     "T1": (("Observed", "Relationships+", "Members+", "Occupants", "Layout", "History"), 400, 2000),
     "C1": (("Observed", "Relationships+", "Knowledge", "Members+", "History"), 300, 1200),
+    # [2026-10-17 C47] 속마음 — 그 인물 페이지 하나만(벡터 시드 없음: WIKI_LANE_FLOOR 에 T6 없음). 총 상한은
+    #   네 절 × 600 + 머리보다 넉넉히(넘으면 페이지 통째 탈락이라).
+    "T6": (("Observed", "Relationships+", "Knowledge", "History"), 600, 3000),
 }
 WIKI_COMPILE_MAX_PAGES = 6
 WIKI_COMPILE_HISTORY_LINKS = 3
@@ -1978,6 +1972,19 @@ ECHO_SCRUB = True
 SLOT31_TAIL_INJECT = False
 
 # =========================================================
+# [2026-10-23 탈옥 통합] 인가 한 층 — 문답(C1) · 세션 목적 강화문(C5 warrant)
+#   스펙: 지시문/탈옥통합/탈옥통합_구현스펙_2026-10-23.md
+# =========================================================
+# C1 문답 — 규칙 존 꼬리의 ask + pinned [Luka] 첫 턴의 answer. **Gemini 경로 전용**
+#   (규칙 존=user 턴, [Luka]=model 턴이라야 문답이 성립한다. openai 경로는 system 턴이라 no-op).
+#   False = ask·answer 모두 구 문안으로(1줄 롤백).
+RENDER_COMMISSION_HANDSHAKE = os.getenv("RENDER_COMMISSION_HANDSHAKE", "1").strip().lower() in ("1", "true", "on", "yes")
+
+# C5 강화문(warrant) — Syuriel 원본의 "탈옥 강화문". **기본 0** (레티어스 10-23: 굳이 넣을 필요 없다).
+#   True = FRAME과 PARTNER 사이에 2,793자 삽입(원본 "강화문 ON" 상태, 3,556자).
+RENDER_SESSION_PURPOSE_WARRANT = os.getenv("RENDER_SESSION_PURPOSE_WARRANT", "0").strip().lower() in ("1", "true", "on", "yes")
+
+# =========================================================
 # [2026-07-22 카드1] 감정 압력 공급 · 포어그라운드 선별
 # 스펙: 파티쳇수정/narrative/phase3_card1_emotion_pressure_spec_v0.4.md
 # 원칙: 렌더러가 받는 감정을 "정체(what it is)"에서 "압력(what it does)"으로.
@@ -2006,100 +2013,57 @@ ICEBERG_MIRROR_ENABLED = True
 # =========================================================
 # 시트 조각("패시브") — 2026-09-16 3차 (설계 relation_unify §10.2)
 # =========================================================
-# 조각 = {name, desc, value:{roll_<type>: ±n, cost: -n}, origin: sheet|play}. 닫힌 키 둘.
-# type enum 은 **한 곳** — theoria action_meta.type 과 조각 value 키가 같은 상수를 읽는다.
-# 이름 키워드표 폴백(용감/민첩…)은 삭제: value 없으면 판정 기여 0.
+# 조각 = {name, desc, value:{edge: ±1}, origin: sheet|play}.
+# [2026-10-15 C42] **이름 판단.** Theoria 가 집은 조각이 이번 행동에 걸리는지는 집는 것으로 이미 판단됐으니
+#   행동 종류 키(roll_<type>)는 판정이 안 본다. 값은 강점(+1)/약점(−1) 부호 하나.
+#   옛 값(roll_<type>: ±n · cost: −n)은 읽을 때 roll 합의 부호로 접는다(0·{} = 강점). cost(각오 할인)는 각오 퇴역과 함께 소비 0.
+#   FRAGMENT_ROLL_CAP·FRAGMENT_COST_MAX 퇴역.
+# type enum 은 **한 곳** — theoria action_meta.type 이 읽는다(좋은 상태의 행동 종류 매칭에도 쓴다).
 ACTION_TYPES = ("combat", "social", "exploration", "stealth", "survival", "crafting", "general")
-FRAGMENT_VALUE_KEYS = tuple(f"roll_{_t}" for _t in ACTION_TYPES) + ("cost",)
+FRAGMENT_VALUE_KEYS = ("edge",)
 FRAGMENT_ORIGINS = ("sheet", "play")
-FRAGMENT_ROLL_CAP = 20          # 판정 passive 항 캡(±) — 조각 하나의 roll 도 이 안으로 접는다
-FRAGMENT_COST_MAX = 8           # cost 하나의 절댓값 상한(= EFFORT_COST — 선불보다 큰 할인은 뜻이 없다)
 
 
 def normalize_fragment_value(raw) -> dict:
-    """조각 value 정규화 — 닫힌 키(roll_<type>·cost)만, 정수만, 0 은 버린다. cost 는 항상 음수(-n)."""
-    out = {}
+    """조각 value 정규화 → {"edge": 1} 또는 {"edge": -1}. 옛 roll_<type> 은 합의 부호로 접고, 근거가 없으면 강점."""
     if not isinstance(raw, dict):
-        return out
-    for k, v in raw.items():
-        k = str(k).strip()
-        if k not in FRAGMENT_VALUE_KEYS or isinstance(v, bool):
-            continue
+        return {"edge": 1}
+    e = raw.get("edge")
+    if e is not None and not isinstance(e, bool):
         try:
-            n = int(v)
+            n = int(e)
+            if n:
+                return {"edge": 1 if n > 0 else -1}
         except (TypeError, ValueError):
-            continue
-        if k == "cost":
-            n = -min(FRAGMENT_COST_MAX, abs(n))
-        else:
-            n = max(-FRAGMENT_ROLL_CAP, min(FRAGMENT_ROLL_CAP, n))
-        if n:
-            out[k] = n
-    return out
+            pass
+    total = 0
+    for k, v in raw.items():
+        if str(k).startswith("roll_") and not isinstance(v, bool):
+            try:
+                total += int(v)
+            except (TypeError, ValueError):
+                continue
+    return {"edge": -1 if total < 0 else 1}
+
+
+def fragment_edge(passive) -> int:
+    """조각 하나의 판정 기여 부호(+1 강점 / −1 약점)."""
+    if not isinstance(passive, dict):
+        return 1
+    return int(normalize_fragment_value(passive.get("value")).get("edge", 1))
 
 
 def get_passive_modifiers(passive) -> dict:
-    """조각 → value dict({roll_<type>: n, cost: -n}). value 없으면 {} — 이름 폴백 없음(3차)."""
+    """조각 → value dict({"edge": ±1})."""
     if not isinstance(passive, dict):
-        return {}
+        return {"edge": 1}
     return normalize_fragment_value(passive.get("value"))
 
 
 # =========================================================
-# Item Theory Tag System (Phase 4-1b)
-# =========================================================
-# Legacy keyword → modifier fallback (for items without explicit modifiers)
-# New items will have Flash-generated "modifiers" dict; this table handles old-format items.
-# [2026-09-16 3차] 키 공간 = 조각과 같은 roll_<type>(ACTION_TYPES). anomaly_defense·drain·perception·
-#   craft 키는 읽는 곳이 없어 삭제(perception→exploration, craft→crafting 으로 옮겨 적었다).
-ITEM_KEYWORD_MODIFIERS = {
-    # Weapons
-    "단검": {"roll_combat": 5},
-    "검": {"roll_combat": 10},
-    "총": {"roll_combat": 15},
-    "방패": {"roll_combat": 5},
-    # Utility
-    "망원경": {"roll_exploration": 5},
-    "열쇠": {"roll_crafting": 5},
-    "로프": {"roll_combat": 3, "roll_crafting": 5},
-}
-
-
-def _roll_keys_only(mods) -> dict:
-    """인벤토리 modifiers 에서 roll_<type> 키만(정수). 옛 judgment_*·anomaly_* 키는 0 기여."""
-    out = {}
-    if not isinstance(mods, dict):
-        return out
-    for k, v in mods.items():
-        if str(k).startswith("roll_") and str(k)[5:] in ACTION_TYPES and not isinstance(v, bool):
-            try:
-                out[str(k)] = int(v)
-            except (TypeError, ValueError):
-                continue
-    return out
-
-
-def get_item_modifiers(item) -> dict:
-    """아이템에서 modifier dict를 추출. explicit modifiers 우선, 없으면 keyword fallback.
-    str과 dict 양쪽 아이템 형식 모두 지원."""
-    # str 아이템 (legacy): keyword fallback만 시도
-    if isinstance(item, str):
-        for keyword, kw_mods in ITEM_KEYWORD_MODIFIERS.items():
-            if keyword in item:
-                return kw_mods
-        return {}
-    if not isinstance(item, dict):
-        return {}
-    # 1. Explicit modifiers — roll_<type> 키만 읽는다(3차)
-    mods = item.get("modifiers")
-    if mods and isinstance(mods, dict):
-        return _roll_keys_only(mods)
-    # 2. Keyword fallback — match item name against known keywords
-    i_name = item.get("name", "")
-    for keyword, kw_mods in ITEM_KEYWORD_MODIFIERS.items():
-        if keyword in i_name:
-            return kw_mods
-    return {}
+# [2026-10-15 C42] Item Theory Tag System 퇴역 — ITEM_KEYWORD_MODIFIERS · _roll_keys_only · get_item_modifiers 삭제.
+#   소지품은 Theoria 가 이번 행동에 쓰는 것을 이름 그대로 집고(action_meta.active_items) 코드가 소지를 확인해
+#   하나당 +1 로 센다. 옛 키워드표는 부분 일치라 "검은 망토"가 전투 +10 을 받았다.
 
 
 # ⚠ 미배선 (2026-07-06 감사): 소비자 0 — 모듈 목록은 cmd_modules가 하드코딩
@@ -2155,6 +2119,9 @@ TURN_MIND_ENABLED = int(os.getenv("TURN_MIND_ENABLED", "1"))
 # [2026-08-17 속마음 v1] 전용 배경 콜. 0이면 콜을 안 돌고 구 경로(psyche_narrative 원문
 # 선별, 콜 0)만 남는다 — 롤백 한 줄. 콜 실패 시에도 같은 구 경로가 폴백으로 선다.
 TURN_MIND_CALL = int(os.getenv("TURN_MIND_CALL", "1"))
+# [2026-10-22 C59] 턴 임베드 압축 — Activity 가 떠 있으면 산문 아래는 PC 활력·평형·타격 + 시간·장소·인물만.
+#   0 이면 옛 전 장(세계·관계·장면·기록·섹션 장). Activity 가 안 떠 있으면 이 값과 무관하게 옛 전 장.
+TURN_EMBED_COMPACT = os.getenv("TURN_EMBED_COMPACT", "1").strip().lower() not in ("0", "false", "off", "no")
 # 대상 게이트: **무대에 선 인물**(get_onstage_npc_names ∪ gaze) ∩ **점수 임계**.
 #   점수 = 이번 턴 emotion intensity(0~1) + spike 가산 + foreground 가산.
 #   FG 가산 = 임계와 같은 값 → 전경 인물은 무조건 통과, 배경 인물은 제 감정으로만 통과.
@@ -2194,12 +2161,43 @@ TURN_MIND_ANCHOR_CHARS = int(os.getenv("TURN_MIND_ANCHOR_CHARS", "300"))
 #      게시물은 짧고(40~250자) 발췌가 길면 그 문장을 베끼므로 리더(3/500)보다 조인다.
 BOARD_LORE_TOP_K = int(os.getenv("BOARD_LORE_TOP_K", "2"))
 BOARD_LORE_CHUNK_CHARS = int(os.getenv("BOARD_LORE_CHUNK_CHARS", "400"))
+# [2026-10-17 C46] 도착물(산문 앞 핸드아웃) 재료 — 렌더 자료 존 + 로어(자르지 않음) + 원문 발췌.
+#   위 BOARD_LORE_* 두 손잡이는 옛 길(도착물 밖 게시 · 아래 플래그 off)용으로 그대로 둔다.
+HANDOUT_WORLD_REF = os.getenv("HANDOUT_WORLD_REF", "1").strip().lower() not in ("0", "false", "off", "no")
+HANDOUT_LORE_TOP_K = int(os.getenv("HANDOUT_LORE_TOP_K", "4"))
+HANDOUT_LORE_CHUNK_CHARS = int(os.getenv("HANDOUT_LORE_CHUNK_CHARS", "0"))   # 0 = 청크 전문(10-17 "로어는 자르지 말자")
+HANDOUT_REF_MAX_CHARS = int(os.getenv("HANDOUT_REF_MAX_CHARS", "60000"))     # 자료 존 블록에만(9→7→6 순). 로어는 상한 밖
+HANDOUT_RAW_EPISODES = int(os.getenv("HANDOUT_RAW_EPISODES", "3"))
+HANDOUT_RAW_MIN_SCORE = float(os.getenv("HANDOUT_RAW_MIN_SCORE", "0.3"))
+HANDOUT_RAW_ROWS = int(os.getenv("HANDOUT_RAW_ROWS", "24"))                  # 에피소드 하나에서 읽는 원문 행 상한
+HANDOUT_RAW_SNIPPET = int(os.getenv("HANDOUT_RAW_SNIPPET", "150"))           # 조각 = 걸린 자리 ±N자
+HANDOUT_RAW_CHARS = int(os.getenv("HANDOUT_RAW_CHARS", "3000"))
+# [2026-10-17 C49] 도착물 원문 남기기 · 위키 연동. 끄면 옛 동작(원문은 turn_mail·디스코드 메시지에만).
+HANDOUT_LOG_RAW = os.getenv("HANDOUT_LOG_RAW", "1").strip().lower() not in ("0", "false", "off", "no")      # R1 영구 로그 한 행
+HANDOUT_WIKI_LINK = os.getenv("HANDOUT_WIKI_LINK", "1").strip().lower() not in ("0", "false", "off", "no")  # R2 위키 History 한 줄
+HANDOUT_WIKI_MAX_PAGES = int(os.getenv("HANDOUT_WIKI_MAX_PAGES", "4"))   # 도착물 하나가 줄을 남기는 페이지 상한
+# [2026-10-18 C50 R4] 정정 되묻기 보류 — 이 턴 수가 지나도록 안 고르면 버린다(반영 0).
+CORRECTION_PENDING_TURNS = int(os.getenv("CORRECTION_PENDING_TURNS", "10"))
+# [2026-10-18 C51] 미성년 정화기(cognition.sanitize_minor_tokens) 범위. 레티어스 "시트 정리 콜이랑 랜더 요청은 안거치게 해보자".
+#   꺼짐 = 렌더 요청(자료 존·이번 턴 문서·프리필·히스토리 주입)·시트 정리 콜(condense_play_section)에 원문이 간다.
+#   켜면 옛 동작. 로어 통합 분석·시트 분석·보이스 카드·일과 추출은 이 손잡이와 무관하게 늘 정화한다.
+# [2026-10-22 C57+] 렌더 정화 기본 켬 — 레티어스 "컨피그를 키자". C57로 자료 존(NPC 시트·로어의 나이·학년)이 다시
+#   Gemini 로 간다. C51 뒤 렌더가 안 막힌 건 자료 존이 매 턴 잘려 그 글이 안 갔기 때문이었다. 끄려면 env =0.
+MINOR_SANITIZE_RENDER = os.getenv("MINOR_SANITIZE_RENDER", "1").strip().lower() in ("1", "true", "on", "yes")
+MINOR_SANITIZE_CONDENSE = os.getenv("MINOR_SANITIZE_CONDENSE", "0").strip().lower() in ("1", "true", "on", "yes")
+# [2026-10-17 C46 R3] 끝난 시계·퀘스트가 도착물 소재가 되는 창(턴). 밖이면 조용히 넘긴다.
+BOARD_CLOCK_RECENT_TURNS = int(os.getenv("BOARD_CLOCK_RECENT_TURNS", "10"))
 #   ── 속마음: 쿼리 = 구조 재료 조합(앵커의 Observation + 현재 위치 라벨). 산문이 없으니
 #      쿼리도 산문에서 오지 않는다(앵커 교체 원칙 유지). 발췌 = 인물이 아는 세계의 결
 #      (생각이 접지할 지형)이지 이번 턴 사건이 아니다. 한 호흡(160자) 출력이라 가장 조인다.
 #      쿼리 재료가 다 비면 검색 자체를 안 한다(빈 쿼리 = 임베딩 콜 0).
 TURN_MIND_LORE_TOP_K = int(os.getenv("TURN_MIND_LORE_TOP_K", "2"))
-TURN_MIND_LORE_CHUNK_CHARS = int(os.getenv("TURN_MIND_LORE_CHUNK_CHARS", "300"))
+TURN_MIND_LORE_CHUNK_CHARS = int(os.getenv("TURN_MIND_LORE_CHUNK_CHARS", "0"))   # [2026-10-17 C47 R3] 300 → 0(전문). "로어는 자르지 말자"
+# [2026-10-17 C47 R2] 속마음 재료 = 그 사람 몫(위키 페이지 play 절 · NPC 지식 · 원문 조각). 0 = 끔(종전 재료).
+TURN_MIND_OWN_RECORD = int(os.getenv("TURN_MIND_OWN_RECORD", "1"))
+TURN_MIND_RECORD_CHARS = int(os.getenv("TURN_MIND_RECORD_CHARS", "900"))     # 인물당 원문 조각 합계
+TURN_MIND_RECORD_SNIPPET = int(os.getenv("TURN_MIND_RECORD_SNIPPET", "120"))  # 조각 = 이름 자리 ±N자
+TURN_MIND_RECORD_ROWS = int(os.getenv("TURN_MIND_RECORD_ROWS", "6"))          # 이름 하나당 찾는 원문 행
 
 # =========================================================
 # [2026-08-17 발신자 긴밀화] 문자·쪽지(message 채널)의 **발신 NPC 선정 가중**

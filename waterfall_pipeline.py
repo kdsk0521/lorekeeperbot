@@ -183,35 +183,8 @@ def _turn_now(context) -> int:
         return 0
 
 
-def load_last_judgment_turn(channel_id: str, actor: str = "") -> int:
-    """[2026-09-16 3차] Rule2 쿨다운 정본 = 채널 world_state["last_judgment_turn"](bus 는 매턴 신조).
-
-    [2026-09-24 감사] **PC(uid)별**로 갈랐다 — 채널 공용 한 칸이면 `!진행` 배치에서 첫 PC 저장 뒤
-      둘째 PC가 같은 턴 diff 0 ≤ 1 로 차단되고, 솔로 다인 채널에서도 A 가 굴린 다음 턴 B 가 막혔다.
-      옛 int 값은 actor 무관 공용값으로 읽는다(이행 호환).
-    """
-    try:
-        if channel_id:
-            v = domain_manager.get_world_state(channel_id).get("last_judgment_turn", -10)
-            if isinstance(v, dict):
-                return int(v.get(str(actor or ""), -10))
-            return int(v)
-    except Exception:
-        pass
-    return -10
-
-
-def save_last_judgment_turn(channel_id: str, turn: int, actor: str = "") -> None:
-    try:
-        if channel_id:
-            ws = domain_manager.get_world_state(channel_id)
-            cur = ws.get("last_judgment_turn")
-            m = dict(cur) if isinstance(cur, dict) else {}
-            m[str(actor or "")] = int(turn)
-            ws["last_judgment_turn"] = m
-            domain_manager.update_world_state(channel_id, ws)
-    except Exception as e:
-        logger.debug(f"[Gate] last_judgment_turn 저장 skip: {e}")
+# [2026-10-15 C40] load/save_last_judgment_turn 삭제 — 게이트 Rule 2(쿨다운)가 사라져 읽는 곳 0.
+#   world_state 의 옛 "last_judgment_turn" 키는 무해하게 남고 !클리어 때 사라진다.
 
 
 def judgment_snapshot(j: dict):
@@ -221,11 +194,16 @@ def judgment_snapshot(j: dict):
     j = j if isinstance(j, dict) else {}
     if not j.get("active"):
         return {"gate": j.get("gate_reason", "")} if j.get("gate_requested") else None
+    # [2026-10-15 C42] 4dF — 합 = dice_sum + mod = total(불변식). mod_raw 는 폭에 잘리기 전 원합.
     return {
-        "roll": j.get("roll"), "final": j.get("final_roll"), "dc_base": j.get("dc_base"),
-        "dc_pos_mod": j.get("position_dc_mod"), "result": j.get("result"),
-        "terms": dict(j.get("terms") or {}), "active_passives": list(j.get("active_passives") or []),
-        "crit_reason": j.get("crit_reason", ""), "effort_cost": j.get("effort_cost", 0),
+        "n": j.get("n"), "edge": j.get("edge"), "faces": list(j.get("faces") or []),
+        "dropped": j.get("dropped"), "dice_sum": j.get("dice_sum"), "mod": j.get("mod"),
+        "mod_raw": j.get("mod_raw"), "total": j.get("total"), "result": j.get("result"),
+        "mod_terms": list(j.get("mod_terms") or []), "count_terms": list(j.get("count_terms") or []),
+        "edge_terms": list(j.get("edge_terms") or []),
+        "active_passives": list(j.get("active_passives") or []),
+        "active_items": list(j.get("active_items") or []), "assist": list(j.get("assist") or []),
+        "active_strikes": list(j.get("active_strikes") or []),
         "gate": j.get("gate_reason", ""),
     }
 
@@ -528,8 +506,8 @@ class WaterfallPipeline:
         #   서사 콜(Mira)이 굴림 결과를 알고 앞날 필드(손·훅·스레드·cannot)와 roll_outcome 을 쓰게 한다.
         #   의존 실독(스펙 §1): 판정은 추출 몫만 읽는다(서사 콜 값은 디스코드 훅 줄 하나 — 사후 처리로 뺐다).
         #   판정 엔진엔 LLM 콜이 없어 지연은 그대로다. 감정 엔진은 deep_read(서사 몫)를 읽으므로 서사 콜 뒤에 남는다.
-        # (사전 전개) 판정이 읽는 추출 몫 8키를 bus.dai 에 먼저 싣는다 — 형 정규화 + PC 정제는 아래 본 전개와 같은 규칙.
-        #   본 전개(서사 합류 뒤)가 같은 값으로 다시 덮어쓴다(무해). 판정이 bus.dai 에 쓰는 키(effort_failed·turn_index)는
+        # (사전 전개) 판정이 읽는 추출 몫 9키(C42 time_flow 추가)를 bus.dai 에 먼저 싣는다 — 형 정규화 + PC 정제는 아래 본 전개와 같은 규칙.
+        #   본 전개(서사 합류 뒤)가 같은 값으로 다시 덮어쓴다(무해). 판정이 bus.dai 에 쓰는 키(turn_index — C42 로 effort_failed 퇴역)는
         #   본 전개가 건드리지 않는다.
         _pc_reg = _pc_registry(context)   # [2026-10-07 P4] `!가면` 등록 명부 — 사전 전개·단일 정제가 같이 쓴다
         try:
@@ -540,7 +518,9 @@ class WaterfallPipeline:
                                           ("aspects", "Aspects", list, None),
                                           ("action_meta", "action_meta", dict, None),
                                           ("position", "Position", dict, None),
-                                          ("effect", "Effect", dict, None)):
+                                          ("effect", "Effect", dict, None),
+                                          # [2026-10-15 C42] 판정 개수의 "시간을 들임"(−1)이 판정 앞에서 읽는다.
+                                          ("time_flow", "time_flow", dict, None)):
                 _pv = analysis.get(_src)
                 if not isinstance(_pv, _ty):
                     _pv = _ty() if _dflt is None else _dflt
@@ -568,12 +548,7 @@ class WaterfallPipeline:
         # [2026-10-01 2단계] 자리 이동: 전개 뒤 → 서사 콜 앞(판정 먼저). 읽는 것은 전부 추출 몫(needs_judgment·action_meta·
         #   asset_evaluation)이라 그대로 옮겼다. narrative_hook 대입만 서사 콜 뒤(훅 사후 처리)로 뺐다.
         raw_needs = analysis.get("needs_judgment", False)
-        resolve = (analysis.get("action_meta") or {}).get("resolve", "none")
-        # [2026-09-16 3차] Rule2 쿨다운 복원 — bus 는 매턴 신조라 채널 world_state 가 정본.
-        last_j_turn = bus.judgment.get("last_judgment_turn")
-        if last_j_turn is None:
-            last_j_turn = load_last_judgment_turn((context.narrative_anchors or {}).get("channel_id", ""),
-                                                  (context.narrative_anchors or {}).get("acting_user_id", ""))
+        # [2026-10-15 C40] 쿨다운 장부 읽기 삭제(연속 판정 허용). current_turn 은 아래 turn_index 적재에 쓴다.
         current_turn = (context.narrative_anchors or {}).get(
             "session_memory", {}
         ).get("turn_count", 0) or domain_manager.get_world_state(
@@ -589,22 +564,16 @@ class WaterfallPipeline:
         final_needs, gate_reason = gate_judgment(
             user_input=context.request.user_input,
             flash_needs_judgment=raw_needs,
-            last_judgment_turn=last_j_turn,
-            current_turn=current_turn,
-            resolve=resolve,
         )
 
         bus.judgment["active"] = final_needs
         bus.judgment["gate_reason"] = gate_reason
         bus.judgment["gate_requested"] = bool(raw_needs)
         if final_needs:
-            bus.judgment["last_judgment_turn"] = current_turn
-            save_last_judgment_turn((context.narrative_anchors or {}).get("channel_id", ""), current_turn,
-                                    (context.narrative_anchors or {}).get("acting_user_id", ""))
             bus.judgment["meta"] = analysis.get("action_meta") or {}  # [07-27] 명시 null 방어
             eval_data = analysis.get("asset_evaluation") or {}  # [07-19] 명시 null 방어
             bus.judgment["eval"] = eval_data
-            bus.judgment["modifications"] = eval_data.get("modifications") or []
+            # [2026-10-15 C42] modifications(Theoria 자유 ±숫자) 퇴역 — 칸별로 나뉘어 코드가 센다.
 
         # 2. Mental Pre-pass: annotate current stage for downstream modules. [2026-10-01 2단계: 서사 콜 앞으로]
         try:
@@ -908,7 +877,7 @@ class WaterfallPipeline:
         bus.dai["flashback_eval"] = analysis.get("flashback_eval")
         # [2026-09-06 P8b] rest_eval 매핑 삭제 — "부재를 감지하지 않는다". 소비자(다운타임
         #   코드 효과·휴식 회복·산문 지시)는 같은 카드에서 전부 폐기됐다.
-        bus.dai["item_usage"] = analysis.get("item_usage")
+        # [2026-10-23 C61] item_usage 은퇴 — 소지품 변화는 출력물 추출 콜이 산문(결과)을 보고 잡는다.
         # [2026-09-13 P14] 도착물 방아쇠 ② — 불리언 하나. 부재/비불리언 = False(무동작).
         #   소비자는 world_board.pick_arrival_request 하나뿐이고, 종류·내용은 여기서 안 온다.
         bus.dai["arrival"] = bool(analysis.get("arrival") is True)
@@ -1008,12 +977,14 @@ class WaterfallPipeline:
         if bus.judgment.get("active"):
             _hook = str(analysis.get("narrative_hook") or "").strip()
             bus.judgment["narrative_hook"] = _hook
+            # [2026-10-15 C42] 훅은 판정 임베드의 칸으로 — 📋 결과 영향 칸 앞에 끼운다(한 줄 output 은 그대로).
+            _emb = bus.judgment.get("embed")
             if (_hook and bus.judgment.get("result") in ("partial", "failure", "critical_failure")
-                    and bus.judgment.get("output")):
-                _hl = f"\n\n⚠️ **잠재적 위기 (Narrative Hook)**: {_hook}"
-                _jo = str(bus.judgment["output"])
-                _ji = _jo.find("\n\n📋")
-                bus.judgment["output"] = (_jo[:_ji] + _hl + _jo[_ji:]) if _ji != -1 else (_jo + _hl)
+                    and isinstance(_emb, dict)):
+                _fl = list(_emb.get("fields") or [])
+                _ci = next((i for i, f in enumerate(_fl) if f and str(f[0]).startswith("📋")), len(_fl))
+                _fl.insert(_ci, ["⚠️ 잠재적 위기", _hook])
+                _emb["fields"] = _fl
 
         # [V10] DAI 스냅샷 롤링 보존 — bus.dai 완성 직후, 코드만(콜 0)·실패 무해.
         # 용도: ①관측 — 필드 비대/모델 JSON 버릇을 실데이터로 ②Sprint 4 동적 NPC 원재료
@@ -1229,10 +1200,9 @@ class WaterfallPipeline:
         if bus.judgment.get("active"):
             j = bus.judgment
             result = j.get("result", "N/A")
-            roll = j.get("final_roll", "?")
-            dc = j.get("dc", "?")
             gate = j.get("gate_reason", "")
-            parts.append(f"  Judgment: {result} (roll={roll} vs DC={dc}) [{gate}]")
+            parts.append(f"  Judgment: {result} (4dF n={j.get('n', '?')} {j.get('edge', '?')}, "
+                         f"D={j.get('dice_sum', '?')} M={j.get('mod', '?')} T={j.get('total', '?')}) [{gate}]")
         else:
             parts.append(f"  Judgment: skipped (no action requiring roll)")
 

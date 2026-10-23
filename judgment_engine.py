@@ -1,10 +1,16 @@
 """
 Lorekeeper UNE - Judgment Engine (Call 2)
 Handles dice rolls and narrative outcomes based on Call 1 analysis.
+
+[2026-10-15 C42] 4dF 퍼지 다이스. 스펙 파티쳇수정/composition/C42_4dF판정_스펙_2026-10-15.md.
+  축 셋 — 개수 N(혼전도) · 유불리(형세) · 수정치 M(무엇을 들고 왔나). d100·DC·항 10개는 퇴역.
+  등급 이름 다섯은 그대로라 산문 계약(시드·결과 지시·Mira roll_outcome)과 시계 결과는 무변경.
 """
 
 import logging
 import random
+from typing import Any, Dict, List, Optional, Tuple
+
 from orchestration_context import GameContext
 
 logger = logging.getLogger("Judgment")
@@ -20,75 +26,359 @@ def _jud_actor(context) -> str:
     return str((getattr(context, "narrative_anchors", None) or {}).get("acting_user_id", "") or "")
 
 
-# 주자원 구간표 — **이관 전후 불변**. 값이 같으면 가중도 같아야 한다(래칫).
-_MENTAL_BANDS = ((70, 20, "충만"), (40, 10, "동요"), (15, 0, "고갈"))
-_MENTAL_FLOOR = (-10, "붕괴")
+# [2026-10-15 C40 C4 보완] 판정 감정(결과 → 평형 ±) 삭제. 판정이 움직이는 수치는 시계뿐이다.
+# [2026-10-15 C42] 활력 구간표(_MENTAL_BANDS)·각오 선불·상대 psyche 보정·면모 숫자·세계상황 숫자·
+#   Theoria modifications 합산·DC·Effect 등급 이동 퇴역. 활력·평형은 스트레스(체력) 칸이라 수정치에
+#   안 들어가고, 몸 쪽 −는 타격칸(game_character.strike_view)에서만 나온다.
 
 
-def _mental_band(value) -> tuple:
-    """주자원 값 → (판정 가중, 라벨). 활력이 어디에 저장돼 있든 이 표는 같다."""
-    try:
-        v = int(value)
-    except (TypeError, ValueError):
-        v = 100
-    for floor, mod, label in _MENTAL_BANDS:
-        if v >= floor:
-            return mod, label
-    return _MENTAL_FLOOR
+# =========================================================
+# 4dF 기본 부품 — 순수 함수(콜 0·쓰기 0). 스모크가 하나씩 검사한다.
+# =========================================================
+FACES = (-1, 0, 1)
+# 굴림의 자리 하나. 스모크는 이걸 갈아 끼워 결과를 고정한다.
+_FACE_RNG = random.Random()
 
+# 개수 기본 = 판정 앞 Theoria EnergyDirection(혼전도). 모르는 값은 4.
+ENERGY_BASE = {"idle": 2, "stagnant": 3, "aftershock": 3, "rising": 4, "detonation": 6}
+DICE_MIN, DICE_MAX, DICE_DEFAULT = 2, 6, 4
+# 평형 "흔들림" 문턱 — 고갈 구간(15~39)부터.
+LOW_GAUGE = 40
+# 시간을 들이는 행동(개수 −1): 30분 이상. 1틱 = 2분.
+TIME_HOURS_MIN = 0.5
+TIME_TICKS_MIN = 15
 
-def _primary_value(context, bus, primary_axis: str) -> int:
-    """판정이 보는 주자원 값. **활력만 레지스트리 우선**, 없으면 bus(구 경로) 폴백.
+DIFFICULTY_MOD = {"trivial": 1, "easy": 1, "normal": 0, "hard": -1, "extreme": -2}
+DIFFICULTY_KR = {"trivial": "쉬움", "easy": "쉬움", "normal": "보통", "hard": "어려움", "extreme": "극한"}
+SKILL_MOD = {"practiced": 1, "average": 0, "unpracticed": -1}
+SKILL_KR = {"practiced": "숙련", "average": "보통", "unpracticed": "서툼"}
+# 렌더 위치 사다리(iceberg._POS_TIERS)와 같은 경계 — 산문의 adverse position 과 판정의 불리가 같은 선.
+POS_ADVERSE_MAX = 0.4
+POS_EVEN_MAX = 0.6
+POS_WORD_KR = {"dire": "절박", "adverse": "불리", "even": "대등", "favorable": "유리", "dominant": "압도"}
 
-    ★값의 위치만 바뀐다 — 구간표(_mental_band)는 이 함수 밖에 있고 손대지 않았다.
-    """
-    if primary_axis == "vigor":
-        try:
-            import custom_vars as _cv_j
-            v = _cv_j.get_system_value(_jud_channel(context), "활력", _jud_actor(context))
-            if v is not None:
-                return int(v)
-        except Exception as e:
-            logger.debug("[Judgment] 활력 레지스트리 조회 skip: %s", e)
-    return int(getattr(bus, primary_axis, {}).get("value", 100))
-
-
-# [2026-09-06 P8b] **판정 감정 = 코드 소유 쓰기.** 옛 자리는 vigor_composure._process_axis
-#   1b 였다 — 거기 있던 이유가 없다(감정의 원인은 판정 결과이고, 그 결과를 확정하는 건 이 엔진
-#   이다). 장면을 분류해 숫자를 정하는 코드가 아니라 **사건이 코드에서 확정된 뒤의 대가**라
-#   삭제 대상이 아니고, Effort 선불과 같은 문(apply_system_delta, 캡 면제)을 쓴다.
-#   축은 언제나 평형이다: 판정의 정서적 여파는 정의상 평형(집중·의지)의 몫이고, 주축이
-#   무엇이냐로 감정이 신체로 옮겨가던 옛 라우팅은 중합 게이지 정의와 어긋났다.
-_JUDGMENT_EMOTION = {
-    "critical_success": 3,
-    "success": 1,
-    "partial": 0,
-    "failure": -2,
-    "critical_failure": -4,
+RESULT_KR = {
+    "critical_success": "✨대성공",
+    "success": "✅성공",
+    "partial": "🟠부분 성공",
+    "failure": "❌실패",
+    "critical_failure": "⚠️대실패",
 }
+RESULT_COLOR = {
+    "critical_success": 0xF1C40F,
+    "success": 0x2ECC71,
+    "partial": 0xE67E22,
+    "failure": 0xE74C3C,
+    "critical_failure": 0x992D22,
+}
+EDGE_KR = {1: "유리", 0: "평탄", -1: "불리"}
+GLYPH = {1: "[+]", 0: "[ ]", -1: "[−]"}
 
 
-def apply_judgment_emotion(context, bus, result: str) -> int:
-    """판정 결과 → 평형 델타(코드 소유 쓰기). 움직인 만큼 반환, 없으면 0."""
-    delta = _JUDGMENT_EMOTION.get(str(result or ""), 0)
-    if not delta:
-        return 0
+def mod_bounds(n: int) -> Tuple[int, int]:
+    """수정치 폭 — 하한 −min(3, N−1) · 상한 min(3, N). 2개 −1~+2 · 3개 −2~+3 · 4개 이상 ±3.
+    바닥: 주사위가 전부 +면 성공은 늘 가능하다. 위쪽은 열어 둔다(레티어스 "판정은 유저 친화적이어도
+    괜찮다") — 2개 +2 · 3개 +3 은 실패 0."""
+    n = int(n)
+    return -min(3, n - 1), min(3, n)
+
+
+def tier_of(d: int, m: int) -> str:
+    """등급. 극단은 총합 ±3 **그리고** 주사위만으로 ±2 이상일 때만 — 수정치만으로는 안 생긴다."""
+    t = int(d) + int(m)
+    if t >= 3 and d >= 2:
+        return "critical_success"
+    if t >= 1:
+        return "success"
+    if t == 0:
+        return "partial"
+    if t <= -3 and d <= -2:
+        return "critical_failure"
+    return "failure"
+
+
+def roll_fudge(n: int, edge: int, rng: Optional[random.Random] = None) -> Tuple[List[int], Optional[int]]:
+    """퍼지 주사위 N개. 유리 = N+1개 굴려 제일 낮은 하나 버림, 불리 = 제일 높은 하나 버림.
+    Returns: (굴린 면 전부 — 굴린 순서, 버린 자리 index 또는 None)."""
+    rng = rng or _FACE_RNG
+    k = int(n) + (1 if edge else 0)
+    faces = [rng.choice(FACES) for _ in range(k)]
+    dropped = None
+    if edge > 0:
+        lo = min(faces)
+        dropped = max(i for i, f in enumerate(faces) if f == lo)
+    elif edge < 0:
+        hi = max(faces)
+        dropped = max(i for i, f in enumerate(faces) if f == hi)
+    return faces, dropped
+
+
+def kept_sum(faces: List[int], dropped: Optional[int]) -> int:
+    return sum(f for i, f in enumerate(faces) if i != dropped)
+
+
+def dice_line(faces: List[int], dropped: Optional[int]) -> str:
+    """굴린 순서대로, 버린 하나는 맨 끝에 취소선."""
+    kept = [GLYPH.get(f, "[?]") for i, f in enumerate(faces) if i != dropped]
+    s = "".join(kept)
+    if dropped is not None:
+        s += f" ~~{GLYPH.get(faces[dropped], '[?]')}~~"
+    return s
+
+
+def signed(v: int) -> str:
+    v = int(v)
+    if v > 0:
+        return f"+{v}"
+    if v < 0:
+        return f"−{abs(v)}"
+    return "±0"
+
+
+# =========================================================
+# 축 셋 — 재료를 읽어 숫자와 내역(라벨, 값)을 낸다
+# =========================================================
+def _names(raw: Any) -> List[str]:
+    out = []
+    for x in (raw if isinstance(raw, list) else []):
+        s = str(x or "").strip()
+        if s and s not in out:
+            out.append(s)
+    return out
+
+
+def _system_value(context, name: str, actor: str) -> Optional[int]:
+    """활력·평형 레지스트리 값. 기능이 꺼졌거나 없으면 None(= 문턱 판정에서 '안 걸림')."""
     try:
-        import custom_vars as _cv_em
-        rec = _cv_em.apply_system_delta(
-            _jud_channel(context), "평형", delta, f"judgment {result}",
-            actor=_jud_actor(context), exempt_cap=True, source="judgment.emotion",
-        )
+        import custom_vars as _cv
+        v = _cv.get_system_value(_jud_channel(context), name, actor)
+        return int(v) if v is not None else None
     except Exception as e:
-        logger.debug("[Judgment] 평형 감정 델타 skip: %s", e)
-        return 0
-    if not rec:
-        return 0
-    moved = int(rec.get("delta", 0) or 0)
-    if isinstance(bus.composure, dict):
-        bus.composure["value"] = int(rec.get("to", bus.composure.get("value", 100)))
-        bus.composure["judgment_emotion"] = moved
-    return moved
+        logger.debug("[Judgment] %s 레지스트리 조회 skip: %s", name, e)
+        return None
+
+
+def _stage_names(context, bus) -> List[str]:
+    """무대 명부 — anchors scene_cast, 비면 Theoria psyche_states 키(둘 다 PC 키는 이미 걸러져 있다)."""
+    cast = _names((context.narrative_anchors or {}).get("scene_cast"))
+    if cast:
+        return cast
+    ps = bus.dai.get("psyche_states") if isinstance(bus.dai, dict) else None
+    return [str(k).strip() for k in (ps or {}).keys() if str(k).strip()] if isinstance(ps, dict) else []
+
+
+def _location_conditions(context, bus) -> List[str]:
+    """PC 위치에 걸린 세계상황(극성 무관, mixed 포함). 옛 condition_mod 의 위치 필터 그대로."""
+    ch = _jud_channel(context)
+    if not ch:
+        return []
+    try:
+        import domain_manager as _dm
+        st = _dm.get_storyteller_state(ch) or {}
+    except Exception as e:
+        logger.debug("[Judgment] 세계상황 조회 skip: %s", e)
+        return []
+    here = (bus.dai.get("current_location", "") if isinstance(bus.dai, dict) else "").strip()
+    out = []
+    for c in st.get("active_conditions", []) or []:
+        if not isinstance(c, dict):
+            continue
+        loc = str(c.get("location") or "").strip()
+        if loc and loc != here:
+            continue
+        out.append(str(c.get("tag") or c.get("description") or "세계상황").strip()[:24])
+    return out
+
+
+def _takes_time(tf: Any) -> bool:
+    if not isinstance(tf, dict):
+        return False
+    try:
+        if float(tf.get("explicit_hours") or 0) >= TIME_HOURS_MIN:
+            return True
+    except (TypeError, ValueError):
+        pass
+    if isinstance(tf.get("target"), dict) and tf.get("target"):
+        return True
+    try:
+        return int(tf.get("ticks") or 0) >= TIME_TICKS_MIN
+    except (TypeError, ValueError):
+        return False
+
+
+def dice_count(context, bus, assist: Optional[List[str]] = None) -> Tuple[int, List[Tuple[str, int]]]:
+    """개수 N = EnergyDirection 기본 + 조정(PC 평형·상대 평형·세계상황 +1, 시간 들임 −1), 2~6."""
+    dai = bus.dai if isinstance(bus.dai, dict) else {}
+    energy = str(dai.get("energy_direction") or "").strip().lower()
+    base = ENERGY_BASE.get(energy, DICE_DEFAULT)
+    parts: List[Tuple[str, int]] = [(f"장면 {energy or '—'}", base)]
+    n = base
+    c = _system_value(context, "평형", _jud_actor(context))
+    if c is not None and c < LOW_GAUGE:
+        n += 1
+        parts.append(("평형 흔들림", 1))
+    helpers = set(assist or [])
+    stage = set(_stage_names(context, bus))
+    opp = next((x for x in _names(dai.get("relevant_npcs")) if x in stage and x not in helpers), "")
+    if opp:
+        oc = _system_value(context, "평형", opp)
+        if oc is not None and oc < LOW_GAUGE:
+            n += 1
+            parts.append((f"{opp} 흔들림", 1))
+    conds = _location_conditions(context, bus)
+    if conds:
+        n += 1
+        parts.append((f"세계상황 {conds[0]}", 1))
+    if _takes_time(dai.get("time_flow")):
+        n -= 1
+        parts.append(("시간을 들임", -1))
+    return max(DICE_MIN, min(DICE_MAX, n)), parts
+
+
+def _aspect_counts(aspects: Any) -> Tuple[int, int]:
+    f = a = 0
+    for asp in (aspects if isinstance(aspects, list) else []):
+        if not isinstance(asp, dict):
+            continue
+        st = str(asp.get("for_or_against", asp.get("stance", ""))).strip().lower()
+        if st in ("for", "support", "positive", "pro"):
+            f += 1
+        elif st in ("against", "oppose", "negative", "con"):
+            a += 1
+    return f, a
+
+
+def edge_of(bus) -> Tuple[int, List[Tuple[str, int]]]:
+    """유불리 = Position(렌더 사다리 경계) + Aspects(유리 수 − 불리 수의 부호). 합의 부호 한 칸."""
+    dai = bus.dai if isinstance(bus.dai, dict) else {}
+    pos_raw = dai.get("position")
+    try:
+        pos = float(pos_raw.get("value", 0.5)) if isinstance(pos_raw, dict) else 0.5
+    except (TypeError, ValueError):
+        pos = 0.5
+    p = -1 if pos <= POS_ADVERSE_MAX else (1 if pos > POS_EVEN_MAX else 0)
+    f, a = _aspect_counts(dai.get("aspects"))
+    asp = (f > a) - (f < a)
+    parts: List[Tuple[str, int]] = []
+    if p:
+        try:
+            import iceberg as _ib
+            word = POS_WORD_KR.get(_ib.position_word(pos), "")
+        except Exception:
+            word = ""
+        parts.append((f"자리 {word or EDGE_KR[p]}", p))
+    if asp:
+        parts.append((f"주변 {f}:{a}", asp))
+    s = p + asp
+    return (s > 0) - (s < 0), parts
+
+
+def _fragment_terms(passives, active_names) -> List[Tuple[str, int]]:
+    """조각 = 이름 판단. Theoria 가 집은 이름이 PC 조각 목록에 있으면 강점 +1 / 약점 −1.
+    행동 종류 키는 안 본다(이 행동에 걸리는지는 집는 것으로 이미 판단됐다 — 타격칸과 같은 장치)."""
+    import config as _cfg_f
+    want = set(_names(active_names))
+    if not want:
+        return []
+    out = []
+    for p in (passives if isinstance(passives, list) else []):
+        if not isinstance(p, dict):
+            continue
+        nm = str(p.get("name") or "").strip()
+        if nm in want and nm not in [x[0] for x in out]:
+            out.append((nm, _cfg_f.fragment_edge(p)))
+    return out
+
+
+def _item_names(anchors: Dict[str, Any]) -> List[str]:
+    try:
+        from game_character import get_inventory_items as _inv
+        items = _inv(anchors)
+    except Exception:
+        items = anchors.get("inventory") or []
+    out = []
+    for it in (items if isinstance(items, list) else []):
+        nm = it.get("name") if isinstance(it, dict) else it
+        nm = str(nm or "").strip()
+        if nm:
+            out.append(nm)
+    return out
+
+
+def _buff_terms(anchors: Dict[str, Any], action_type: str) -> List[Tuple[str, int]]:
+    """좋은 상태 하나당 +1 — 옛 status_mod 의 행동 종류 매칭 그대로, buff 만."""
+    try:
+        from game_character import normalize_status_effects
+        effects = normalize_status_effects(anchors.get("status_effects", []))
+    except Exception:
+        return []
+    out = []
+    for eff in effects:
+        if not isinstance(eff, dict) or str(eff.get("type")) != "buff":
+            continue
+        mods = eff.get("modifiers") if isinstance(eff.get("modifiers"), dict) else {}
+        v = mods.get(f"judgment_{action_type}") if action_type else None
+        if v is None:
+            v = mods.get("judgment")
+        try:
+            v = int(v or 0)
+        except (TypeError, ValueError):
+            v = 0
+        if v > 0:
+            out.append((str(eff.get("name") or eff.get("tag") or "좋은 상태"), 1))
+    return out
+
+
+def modifier_terms(context, bus, n: int) -> Tuple[int, int, List[Tuple[str, int]], Dict[str, List[str]]]:
+    """수정치 M. Returns: (M, 원합, 내역, 확인을 통과한 이름 {active_passives, active_items, assist, active_strikes})."""
+    meta = bus.judgment.get("meta") or {}
+    meta = meta if isinstance(meta, dict) else {}
+    ev = bus.judgment.get("eval") or {}
+    ev = ev if isinstance(ev, dict) else {}
+    anchors = context.narrative_anchors or {}
+    atype = str(meta.get("type") or meta.get("action_type") or "").strip().lower()
+    terms: List[Tuple[str, int]] = []
+    used: Dict[str, List[str]] = {"active_passives": [], "active_items": [], "assist": [], "active_strikes": []}
+
+    diff = str(meta.get("difficulty") or "normal").strip().lower()
+    dm = DIFFICULTY_MOD.get(diff, 0)
+    if dm:
+        terms.append((f"{DIFFICULTY_KR.get(diff, diff)}", dm))
+    sk = str(meta.get("skill") or "average").strip().lower()
+    sm = SKILL_MOD.get(sk, 0)
+    if sm:
+        terms.append((f"실력 {SKILL_KR.get(sk, sk)}", sm))
+    for nm, v in _fragment_terms(anchors.get("passives", []), meta.get("active_passives")):
+        terms.append((f"조각 「{nm}」", v))
+        used["active_passives"].append(nm)
+    have = set(_item_names(anchors))
+    for nm in _names(meta.get("active_items")):
+        if nm in have:
+            terms.append((nm, 1))
+            used["active_items"].append(nm)
+    memo = ev.get("memo_relevant")
+    if (isinstance(memo, dict) and str(memo.get("content") or "").strip()) or (isinstance(memo, list) and memo):
+        _mc = str(memo.get("content") if isinstance(memo, dict) else memo[0])[:16]
+        terms.append((f"단서 「{_mc}」", 1))
+    stage = set(_stage_names(context, bus))
+    helpers = [x for x in _names(meta.get("assist")) if x in stage]
+    if helpers:
+        terms.append((f"조력 {'·'.join(helpers[:3])}", 1))
+        used["assist"] = helpers
+    track = set(_names(anchors.get("strikes")))
+    for nm in _names(meta.get("active_strikes")):
+        if nm in track:
+            terms.append((f"타격 「{nm}」", -1))
+            used["active_strikes"].append(nm)
+    terms.extend(_buff_terms(anchors, atype))
+
+    raw = sum(v for _, v in terms)
+    lo, hi = mod_bounds(n)
+    return max(lo, min(hi, raw)), raw, terms, used
+
+
+def _parts_text(parts: List[Tuple[str, int]], with_sign: bool = True) -> str:
+    return " · ".join(f"{lab} {signed(v)}" if with_sign else lab for lab, v in parts)
 
 
 class JudgmentEngine:
@@ -96,484 +386,75 @@ class JudgmentEngine:
         self.client = client
         self.model_id = model_id
 
-    @staticmethod
-    def _calculate_theory_mod(context: GameContext) -> int:
-        """Flash psyche → ±20 보정. NPC의 심리 상태가 행동 결과에 미치는 영향."""
-        bus = context.shared_bus
-        scene_type = bus.dai.get("scene_type", "normal")
-        psyche_states = bus.dai.get("psyche_states", {})
-
-        if not psyche_states:
-            return 0
-
-        # Find target NPC (relevant NPCs first, then any available)
-        target_npc = None
-        for npc_name in bus.dai.get("relevant_npcs", []):
-            if npc_name in psyche_states:
-                target_npc = psyche_states[npc_name]
-                break
-        # J-5 fix: relevant NPC가 없으면 theory mod 0. 기존엔 psyche_states의 첫 dict를
-        # 임의 채택해 무관 NPC의 psyche를 ±20 보정으로 적용하던 wrong-target.
-        if not target_npc:
-            return 0
-
-        soma = target_npc.get("soma", {})
-        psyche = target_npc.get("psyche", {})
-        relation = target_npc.get("relation", {})
-        # [Schema 안전망] Flash가 dict 대신 str로 채우면 .get() 크래시 (npc_autonomous와 동일 패턴, 2026-06-20)
-        if not isinstance(soma, dict):
-            soma = {}
-        if not isinstance(psyche, dict):
-            psyche = {}
-        if not isinstance(relation, dict):
-            relation = {}
-
-        polyvagal = soma.get("polyvagal", "ventral")
-        decision_mode = psyche.get("decision_mode", "deliberate")
-        cultural_affect = soma.get("cultural_affect")
-        attachment = relation.get("attachment", "secure")
-
-        is_combat = scene_type == "combat"
-        is_social = scene_type in ("social", "normal", "intimate")
-
-        mod = 0
-
-        # 1. Polyvagal × action_type
-        if polyvagal == "dorsal":
-            mod += (-15 if is_combat else -10)  # 셧다운: 전투/사회 모두 불리
-        elif polyvagal == "sympathetic":
-            mod += (5 if is_combat else -5)     # 투쟁도주: 전투+, 사회-
-        elif polyvagal == "ventral":
-            mod += (5 if is_social else 0)      # 안전: 사회+
-
-        # 2. Decision mode × action_type
-        if decision_mode == "reactive":
-            mod += 5 if is_combat else -5
-        elif decision_mode == "deliberate":
-            mod += 5 if is_social else -5
-
-        # 3. Cultural affect
-        if cultural_affect == "han":
-            mod += (-3 if is_social else 0)   # 한: 사회적 위축
-        elif cultural_affect == "jeong" and is_social:
-            mod += 5                          # 정: 사회적 유대
-        elif cultural_affect == "hwabyung":
-            mod += (-8 if is_social else -3)  # 화병: 폭발 위험
-        elif cultural_affect == "nunchi" and is_social:
-            mod += 3                          # 눈치: 상황 파악 이점
-        elif cultural_affect == "chaemyeon" and is_social:
-            mod += 5                          # 체면 유지
-        elif cultural_affect == "gi" and is_combat:
-            mod += 5                          # 기 충전
-
-        # 4. Attachment × interpersonal
-        if is_social:
-            attachment_mod = {"secure": 5, "anxious": 3, "avoidant": -5, "disorganized": -3}
-            mod += attachment_mod.get(attachment, 0)
-
-        return max(-20, min(20, mod))
-
-    @staticmethod
-    def _calculate_aspect_mod(context: GameContext) -> int:
-        """Aspects(for/against) 기반 보정. 구조화 데이터 없으면 0."""
-        import config as _cfg
-        aspects = context.shared_bus.dai.get("aspects", [])
-        if not isinstance(aspects, list):
-            return 0
-
-        for_count = 0
-        against_count = 0
-        for aspect in aspects:
-            if not isinstance(aspect, dict):
-                continue
-            stance = str(aspect.get("for_or_against", aspect.get("stance", ""))).strip().lower()
-            if stance in ("for", "support", "positive", "pro"):
-                for_count += 1
-            elif stance in ("against", "oppose", "negative", "con"):
-                against_count += 1
-
-        raw = (for_count - against_count) * int(getattr(_cfg, "ASPECT_VALUE", 5))
-        cap = int(getattr(_cfg, "MOD_SOURCE_CAPS", {}).get("aspect", 20))
-        return max(-cap, min(cap, raw))
-
-    @staticmethod
-    def _calculate_status_mod(context: GameContext) -> int:
-        """Status effect modifiers based on action_meta.type."""
-        import config as _cfg
-        from game_character import normalize_status_effects
-
-        status_effects = (context.narrative_anchors or {}).get("status_effects", [])
-        effects = normalize_status_effects(status_effects)
-
-        action_meta = context.shared_bus.dai.get("action_meta") or {}  # [07-27] 명시 null 방어
-        action_type = str(action_meta.get("type") or action_meta.get("action_type") or "").strip().lower()
-
-        total = 0
-        for eff in effects:
-            if not isinstance(eff, dict):
-                continue
-            mods = eff.get("modifiers")
-            if not isinstance(mods, dict):
-                continue
-            if action_type:
-                type_key = f"judgment_{action_type}"
-                if type_key in mods:
-                    total += mods[type_key]
-                elif "judgment" in mods:
-                    total += mods["judgment"]
-            else:
-                if "judgment" in mods:
-                    total += mods["judgment"]
-
-        cap = int(getattr(_cfg, "MOD_SOURCE_CAPS", {}).get("status", 20))
-        return max(-cap, min(cap, total))
-
     async def process(self, context: GameContext) -> GameContext:
         bus = context.shared_bus
         if not bus.judgment.get("active"):
             return context
 
-        # 1. Gather Params
-        meta = bus.judgment.get("meta", {})
-        eval_data = bus.judgment.get("eval", {})
-        action = meta.get("action", "행동")
-        difficulty = meta.get("difficulty", "normal")
-        
-        # DC Table
-        dc_table = {"trivial": 0, "easy": 20, "normal": 40, "hard": 60, "extreme": 80}
-        dc = dc_table.get(difficulty.lower(), 40)
-        dc_base = dc
+        meta = bus.judgment.get("meta", {}) or {}
+        meta = meta if isinstance(meta, dict) else {}
+        eval_data = bus.judgment.get("eval", {}) or {}
+        eval_data = eval_data if isinstance(eval_data, dict) else {}
+        action = str(meta.get("action") or "행동")
 
-        # 1b. Position → DC Modifier (DAI position = PC의 통제력)
-        position_data = bus.dai.get("position", {})
-        pos_value = float(position_data.get("value", 0.5)) if isinstance(position_data, dict) else 0.5
-        # Position 0.5 = neutral (no modifier). Each 0.1 away = ±5 DC
-        # 0.0 (desperate) → DC+25, 0.5 (neutral) → DC+0, 1.0 (dominant) → DC-25
-        position_dc_mod = int((0.5 - pos_value) * 50)
-        dc = max(0, dc + position_dc_mod)
+        # 1. 축 셋. 조력으로 집힌 이름은 개수의 '상대' 고르기에서 빠진다(무대 위 이름만 남는 건 양쪽 같다).
+        n, n_parts = dice_count(context, bus, _names(meta.get("assist")))
+        m, m_raw, m_terms, used = modifier_terms(context, bus, n)
+        edge, e_parts = edge_of(bus)
 
-        # 2. Dynamic Modifiers
-        # 2.1 Vigor/Composure Modifiers — 장르 primary axis 기반
-        import config as _cfg
-        mechanic = context.request.genres.get("mechanic", {})
-        primary_axis = mechanic.get("primary_resource") or "vigor"
-        # [2026-08-18 Phase 2.5] 활력은 레지스트리 변수다 — **값의 위치만 바뀌었다.**
-        #   구간표(70/40/15 → +20/+10/0/−10)는 손대지 않는다: 같은 값이면 같은 가중이어야
-        #   이관이 판정을 조용히 흔들지 않았다고 말할 수 있다(래칫).
-        #   레지스트리에 없으면(기능 off·미이관 채널) bus 값으로 폴백 — 구 경로 그대로.
-        primary_val = _primary_value(context, bus, primary_axis)
-        mental_mod, mental_label = _mental_band(primary_val)
+        # 2. 굴림
+        faces, dropped = roll_fudge(n, edge)
+        d = kept_sum(faces, dropped)
+        result = tier_of(d, m)
 
+        # 3. 저장
+        reason = str(eval_data.get("reason", "") or "").strip()
+        bus.judgment.update({
+            "n": n, "edge": EDGE_KR[edge], "faces": faces, "dropped": dropped,
+            "dice_sum": d, "mod": m, "mod_raw": m_raw, "total": d + m, "result": result,
+            "reason": reason,
+            "mod_terms": [[lab, v] for lab, v in m_terms],
+            "count_terms": [[lab, v] for lab, v in n_parts],
+            "edge_terms": [[lab, v] for lab, v in e_parts],
+        })
+        bus.judgment.update(used)
 
-        # 2.2 Memo Bonus (Flash가 관련 메모/단서 발견 시 +0~10)
-        memo_relevant = eval_data.get("memo_relevant")
-        memo_mod = 0
-        memo_label = ""
-        if isinstance(memo_relevant, dict):
-            memo_mod = max(0, min(10, int(memo_relevant.get("bonus", 0) or 0)))
-            memo_label = str(memo_relevant.get("content", ""))[:20]
-        elif isinstance(memo_relevant, list) and memo_relevant:
-            # 레거시 호환: 문자열 리스트면 개당 +3 (최대 +10)
-            memo_mod = min(10, len(memo_relevant) * 3)
-            memo_label = str(memo_relevant[0])[:20]
-
-        # 2.4b Theory Modifier (Flash psyche → ±20)
-        theory_mod = self._calculate_theory_mod(context)
-
-        # 2.5 Passive(조각) Modifiers — [2026-09-16 3차 §10.3] GM 판단 → 코드 숫자.
-        #   action_type 문자열 기계 매칭 폐지. Theoria 가 찍은 `active_passives` 안의 조각만
-        #   value.roll_<action_type> 합산(±FRAGMENT_ROLL_CAP) + cost 합산(effort 선불 할인).
-        #   active_passives 가 없으면 조각 기여 0.
-        import config as _cfg2
-        from game_character import get_inventory_items as _get_inv
-        action_meta = bus.judgment.get("meta", {}) or {}
-        action_type = str(action_meta.get("type") or action_meta.get("action_type") or "").strip().lower()
-        passive_mod, passive_discount, _used_passives = _fragment_terms(
-            (context.narrative_anchors or {}).get("passives", []),
-            action_meta.get("active_passives"), action_type)
-        bus.judgment["active_passives"] = _used_passives
-
-        # 2.5b Inventory Modifiers — roll_<action_type> 만(조각과 같은 키 공간)
-        inv_items = _get_inv(context.narrative_anchors)
-        inv_mod = 0
-        for item in inv_items:
-            mods = _cfg2.get_item_modifiers(item)
-            if mods and action_type:
-                inv_mod += int(mods.get(f"roll_{action_type}", 0) or 0)
-        inv_mod = max(-10, min(15, inv_mod))
-
-        # 2.6 Status Modifiers (status_effects)
-        status_mod = self._calculate_status_mod(context)
-
-        # 2.7 Momentum (이전 턴 판정 결과의 여운)
-        momentum_mod = int(bus.judgment.get("momentum_carry", 0) or 0)
-        momentum_mod = max(-10, min(10, momentum_mod))
-        bus.judgment["momentum_carry"] = 0  # 1회성 소비
-        bus.judgment["momentum_consumed"] = True  # [2026-09-24 감사] sync 가 "판정이 실제로 carry 를 먹었나"를 안다
-
-        # 2.8 Condition Modifier (Active Conditions at PC's location)
-        condition_mod = 0
-        _j_ch = (context.narrative_anchors or {}).get("channel_id", "")
-        if _j_ch:
-            import domain_manager as _dm_j
-            _j_st = _dm_j.get_storyteller_state(_j_ch)
-            _j_pc_loc = (bus.dai.get("current_location", "") if isinstance(bus.dai, dict) else "").strip()
-            for _jc in _j_st.get("active_conditions", []):
-                _jc_loc = (_jc.get("location") or "").strip()
-                if _jc_loc and _jc_loc != _j_pc_loc:
-                    continue  # Distant — skip
-                pol = _jc.get("polarity", "mixed")
-                if pol == "mixed":
-                    continue
-                base = _cfg.CONDITION_MOD_SCALE.get(_jc.get("intensity", "Mid"), 4)
-                if pol == "negative":
-                    condition_mod -= base
-                elif pol == "positive":
-                    condition_mod += base
-            condition_mod = max(-_cfg.CONDITION_MOD_CAP, min(_cfg.CONDITION_MOD_CAP, condition_mod))
-
-        # 2.9 Effort Modifier (각오 선불 — Cypher Effort)
-        effort_mod = 0
-        effort_cost = 0
-        action_meta = bus.dai.get("action_meta", {}) if isinstance(bus.dai, dict) else {}
-        resolve = action_meta.get("resolve", "none")
-        if resolve == "desperate" and bus.judgment.get("active"):
-            # [2026-09-16 3차] 조각 cost 합 = 선불 할인(하한 0).
-            effort_cost = max(0, int(_cfg.EFFORT_COST) - int(passive_discount))
-            axis_choice = action_meta.get("resource_axis", "vigor")
-            if axis_choice == "both":
-                mechanic = context.request.genres.get("mechanic", {})
-                axis_choice = mechanic.get("primary_resource") or "vigor"
-            axis_bus = bus.vigor if axis_choice == "vigor" else bus.composure
-            # [2026-08-18 Phase 2.5] 활력 선불은 **코드 특권**이다 — 레지스트리 값에 직접 차감
-            #   (apply 경유, evidence="effort", 비대칭 캡 면제). 캡은 모델의 과장에 거는 재갈이지
-            #   규칙이 정한 선불을 깎을 근거가 아니다. bus 는 같은 턴 하류(로그·스냅샷·notation)가
-            #   읽으므로 같이 맞춘다 — 저장의 주인은 레지스트리, bus 는 이번 턴 사본.
-            # [2026-09-24 감사] 평형 축도 레지스트리 문으로 — 전엔 bus 사본만 깎고 턴 끝 _load 가
-            #   레지스트리 값으로 되덮어 **보너스만 받고 비용 0**이었다(P8b 되저장 삭제로 발현).
-            _eff_name = "활력" if axis_choice == "vigor" else "평형"
-            _eff_cur = (_primary_value(context, bus, "vigor") if axis_choice == "vigor"
-                        else axis_bus.get("value", 0))
-            if axis_choice != "vigor":
-                try:
-                    import custom_vars as _cv_e1
-                    _v_c = _cv_e1.get_system_value(_jud_channel(context), "평형", _jud_actor(context))
-                    if _v_c is not None:
-                        _eff_cur = int(_v_c)
-                except Exception as _e_cve1:
-                    logger.debug("[Judgment] 평형 레지스트리 조회 skip: %s", _e_cve1)
-            if _eff_cur >= effort_cost:
-                _applied = None
-                try:
-                    import custom_vars as _cv_e2
-                    _applied = _cv_e2.apply_system_delta(
-                        _jud_channel(context), _eff_name, -effort_cost, "effort",
-                        actor=_jud_actor(context), exempt_cap=True, source="judgment.effort",
-                    )
-                except Exception as _e_cve2:
-                    logger.debug("[Judgment] Effort 레지스트리 차감 skip: %s", _e_cve2)
-                axis_bus["value"] = int(_applied["to"]) if _applied else max(0, _eff_cur - effort_cost)
-                effort_mod = _cfg.EFFORT_BONUS
-                bus.judgment["effort_used"] = {
-                    "axis": axis_choice, "cost": effort_cost, "bonus": effort_mod,
-                    "action": action_meta.get("action", ""),
-                }
-            else:
-                bus.dai["effort_failed"] = True
-                effort_cost = 0
-
-        # 2.10 Context Modifiers (Flash 분석 보정 — 특질/상황)
-        _flash_mods = bus.judgment.get("modifications", [])
-        context_mod = 0
-        for _fm in _flash_mods:
-            if isinstance(_fm, dict):
-                try:
-                    context_mod += int(_fm.get("value", 0) or 0)
-                except (ValueError, TypeError):
-                    pass
-        context_mod = max(-40, min(40, context_mod))
-
-        # 3. Roll Dice
-        roll = random.randint(1, 100)
-        aspect_mod = self._calculate_aspect_mod(context)
-        final_roll = roll + mental_mod + theory_mod + memo_mod + passive_mod + inv_mod + status_mod + aspect_mod + momentum_mod + condition_mod + effort_mod + context_mod
-        
-        # 4. Determine Result
-        result = "failure"
-        crit_reason = ""
-        # Success/Failure/Critical logic
-        if roll >= 96: 
-            result = "critical_success"
-            crit_reason = "natural_high"
-        elif roll <= 5:
-            # Safeguard: DC <= 20 (Trivial, Easy) only crit fail on 1
-            if dc <= 20 and roll > 1:
-                result = "failure"
-                crit_reason = "natural_low_softened"
-            else:
-                result = "critical_failure"
-                crit_reason = "natural_low"
-        elif final_roll >= dc + 20:
-            result = "critical_success"
-            crit_reason = "margin"
-        elif final_roll >= dc: 
-            result = "success"
-        elif final_roll >= dc - 20:
-            result = "partial"
-
-        # 4b. Effect → Result Tier Shift (DAI effect = 결과 임팩트)
-        effect_data = bus.dai.get("effect", {})
-        eff_value = float(effect_data.get("value", 0.5)) if isinstance(effect_data, dict) else 0.5
-        # High effect (>=0.7) can upgrade partial→success or success→critical_success
-        # Low effect (<=0.3) can downgrade success→partial or partial→failure
-        if result not in ("critical_success", "critical_failure"):
-            if eff_value >= 0.7 and result in ("partial", "success"):
-                _tier_order = ["failure", "partial", "success", "critical_success"]
-                _idx = _tier_order.index(result)
-                if _idx < len(_tier_order) - 1:
-                    result = _tier_order[_idx + 1]
-                    bus.judgment["effect_shift"] = "upgrade"
-            elif eff_value <= 0.3 and result in ("partial", "success"):
-                _tier_order = ["failure", "partial", "success", "critical_success"]
-                _idx = _tier_order.index(result)
-                if _idx > 0:
-                    result = _tier_order[_idx - 1]
-                    bus.judgment["effect_shift"] = "downgrade"
-
-        # 5. Store Result
-        bus.judgment["position_value"] = pos_value
-        bus.judgment["effect_value"] = eff_value
-        bus.judgment["position_dc_mod"] = position_dc_mod
-        bus.judgment["roll"] = roll
-        bus.judgment["final_roll"] = final_roll
-        bus.judgment["dc"] = dc
-        bus.judgment["result"] = result
-        bus.judgment["reason"] = eval_data.get("reason", "")
-        # [2026-09-16 3차 §10.3 가시성] 항별 값(0 포함) — 합 = final_roll − roll. 저장은 turn_snapshot.judgment.
-        bus.judgment["dc_base"] = dc_base
-        bus.judgment["crit_reason"] = crit_reason
-        bus.judgment["effort_cost"] = int(effort_cost if effort_mod else 0)
-        bus.judgment["terms"] = {
-            "mental": mental_mod, "theory": theory_mod, "memo": memo_mod, "passive": passive_mod,
-            "inventory": inv_mod, "status": status_mod, "aspect": aspect_mod, "momentum": momentum_mod,
-            "condition": condition_mod, "effort": effort_mod, "context": context_mod,
-        }
-        # 판정 감정 — 결과가 확정된 그 자리에서 평형에 실린다(코드 소유 쓰기).
-        apply_judgment_emotion(context, bus, result)
-        
-        # 6. Format Output (Multi-line)
-        res_map = {
-            "critical_success": ("✨대성공", "Critical Success"),
-            "success": ("✅성공", "Success"),
-            "partial": ("🟠부분 성공", "Partial Success"),
-            "failure": ("❌실패", "Failure"),
-            "critical_failure": ("⚠️대실패", "Critical Failure")
-        }
-        res_kr, res_en = res_map.get(result, (result, result))
-        
-        diff_name = difficulty.upper()
-        
-        # Breakdown of modifications: Label(+Val)
-        modifications = bus.judgment.get("modifications", [])
-        # Append System Mods for visibility
-        if mental_mod != 0:
-            modifications.append({"label": f"활력({mental_label})", "value": mental_mod})
-        if memo_mod > 0:
-            modifications.append({"label": f"메모({memo_label})", "value": memo_mod})
-        if theory_mod != 0:
-            modifications.append({"label": "심리상태", "value": theory_mod})
-        if passive_mod != 0:
-            modifications.append({"label": "특질", "value": passive_mod})
-        if inv_mod != 0:
-            modifications.append({"label": "장비", "value": inv_mod})
-        if status_mod != 0:
-            modifications.append({"label": "상태", "value": status_mod})
-        if aspect_mod != 0:
-            modifications.append({"label": "면모", "value": aspect_mod})
-        if momentum_mod != 0:
-            modifications.append({"label": "기세", "value": momentum_mod})
-        if condition_mod != 0:
-            modifications.append({"label": "세계상황", "value": condition_mod})
-        if effort_mod != 0:
-            modifications.append({"label": "각오", "value": effort_mod})
-        if position_dc_mod != 0:
-            pos_label = "유리" if position_dc_mod < 0 else "불리"
-            modifications.append({"label": f"포지션({pos_label})", "value": -position_dc_mod})  # Inverted: lower DC = better
-        if bus.judgment.get("effect_shift"):
-            shift_label = "효과↑" if bus.judgment["effect_shift"] == "upgrade" else "효과↓"
-            modifications.append({"label": shift_label, "value": 0})
-
-        mod_parts = []
-        for m in modifications:
-            label = m.get("label", "Unknown")
-            val = m.get("value", 0)
-            sign = "+" if val >= 0 else ""
-            mod_parts.append(f"{label}({sign}{val})")
-        
-        mod_details = ", ".join(mod_parts)
-        if mod_details:
-            mod_details = f", {mod_details}"
-        
-        mask = context.get_acting_mask()
-        bus.judgment["mask"] = mask
-
-        output = [
-            f"🎲 **[{mask}의 판정: {action}]**",
-            f"난이도: **{diff_name}** (DC {dc})",
-            f"이유: *{bus.judgment['reason']}*",
-            f"주사위: **{roll}** {mod_details} = **{final_roll}**",
-            f"결과: **{res_kr} ({res_en})**"
-        ]
-        
-        # [2026-10-01 2단계] Narrative Hook 줄 이사 — 판정이 서사 콜 **앞**에서 돌아 훅이 아직 없다.
-        #   waterfall 이 서사 콜 뒤 결과 3종(partial·failure·critical_failure)에서 사후에 붙인다(📋 결과 영향 줄 앞).
-        #   party_wide_hook 플래그는 읽는 곳 0이라 같이 지웠다.
-
-        # 7. Apply Consequences (doom, primary axis, clocks, momentum)
+        # 4. 시계 (C40: 판정이 움직이는 수치는 시계뿐)
         _apply_consequences(context, result)
 
-        # Consequence log → Discord output
-        consequence_log = bus.judgment.get("consequence_log", "")
-        if consequence_log:
-            output.append(f"\n📋 **결과 영향**: {consequence_log}")
+        # 5. 표시 — 한 줄 + 임베드 데이터(discord 객체는 보내는 쪽이 만든다)
+        mask = context.get_acting_mask()
+        bus.judgment["mask"] = mask
+        bus.judgment["output"] = (
+            f"🎲 **{mask}** · {action} · {dice_line(faces, dropped)} {signed(m)} → **{RESULT_KR.get(result, result)}**"
+        )
+        _m_val = _parts_text(m_terms) or "없음"
+        if m_raw != m:
+            _m_val += f" (합 {signed(m_raw)} → {signed(m)})"
+        fields = [
+            ["형세", EDGE_KR[edge] + (f" — {_parts_text(e_parts, with_sign=False)}" if e_parts else "")],
+            ["주사위", f"{n}개 — {n_parts[0][0]} {n_parts[0][1]}"
+                      + (" · " + _parts_text(n_parts[1:]) if len(n_parts) > 1 else "")],
+            ["수정치", f"{signed(m)} — {_m_val}"],
+        ]
+        _log = str(bus.judgment.get("consequence_log") or "").strip()
+        if _log:
+            fields.append(["📋 결과 영향", _log])
+        bus.judgment["embed"] = {
+            "color": RESULT_COLOR.get(result, 0x95A5A6),
+            "description": f"*{reason}*" if reason else "",
+            "fields": fields,
+        }
 
-        bus.judgment["output"] = "\n".join(output)
-
-        logger.info("[Judgment] %s → %s | roll=%d %s = %d vs DC=%d (%s)",
-                     action, res_kr, roll, mod_details.strip(", "), final_roll, dc, difficulty)
-
+        logger.info("[Judgment] %s → %s | 4dF n=%d %s faces=%s drop=%s D=%+d M=%+d(raw %+d) T=%+d",
+                    action, result, n, EDGE_KR[edge], faces, dropped, d, m, m_raw, d + m)
         return context
-
-
-def _fragment_terms(passives, active_names, action_type: str) -> tuple:
-    """[2026-09-16 3차] 조각 판정 항. Returns: (roll 합(±캡), cost 할인 합(≥0), 실제 쓴 이름 목록).
-
-    `active_names`(Theoria active_passives)에 **없는** 조각은 0 기여. 이름 대조는 공백 정리 후 일치."""
-    import config as _cfg_f
-    names = [str(n).strip() for n in (active_names if isinstance(active_names, list) else []) if str(n).strip()]
-    if not names:
-        return 0, 0, []
-    want = set(names)
-    atype = str(action_type or "").strip().lower()
-    roll = 0
-    discount = 0
-    used = []
-    for p in (passives if isinstance(passives, list) else []):
-        if not isinstance(p, dict) or str(p.get("name") or "").strip() not in want:
-            continue
-        v = _cfg_f.get_passive_modifiers(p)
-        if atype in _cfg_f.ACTION_TYPES:
-            roll += int(v.get(f"roll_{atype}", 0) or 0)
-        discount += -int(v.get("cost", 0) or 0)
-        used.append(str(p.get("name")).strip())
-    cap = int(_cfg_f.FRAGMENT_ROLL_CAP)
-    return max(-cap, min(cap, roll)), max(0, discount), used
 
 
 # ── Consequence Helpers ──────────────────────────────────────
 
 def _apply_consequences(context, result: str) -> None:
-    """판정 결과 → 기계적 세계 변경. BitD/PbtA/Cypher 영감."""
+    """판정 결과 → 시계. [C40] 수치는 시계뿐 · [C42] 각오(Absorb) 갈래 삭제."""
     import config as _cfg
     bus = context.shared_bus
     cons = getattr(_cfg, "JUDGMENT_CONSEQUENCES", {}).get(result, {})
@@ -581,40 +462,10 @@ def _apply_consequences(context, result: str) -> None:
         return
 
     consequence_log = []
-
-    # 0. Absorb: effort 선언 + 실패 → clock consequence 자동 경감
-    # (2026-06-25: judgment→doom 폐기 — doom은 이야기 활성도라 판정 성패와 무관. clock_effect만 유지.)
     clock_effect = cons.get("clock_effect", 0)
-    effort_used = bus.judgment.get("effort_used")
-    if effort_used and result in ("failure", "critical_failure"):
-        clock_cancelled = clock_effect > 0
-        if clock_cancelled:
-            clock_effect = 0
-        bus.judgment["absorb_applied"] = {
-            "clock_cancelled": clock_cancelled,
-        }
 
-    # B. Primary Axis Direct Impact
-    primary_delta = cons.get("primary_delta", 0)
-    if primary_delta != 0:
-        mechanic = context.request.genres.get("mechanic", {})
-        primary_axis = mechanic.get("primary_resource") or "vigor"
-        # [2026-09-16 3차] 옛 `p_bus["delta"]` 쓰기는 P8b 이후 읽는 곳이 없었다(표시만 되고 적용 0).
-        #   레지스트리 코드 소유 쓰기로 실제 적용하고, 표시는 **도장에 찍힌 실제 이동폭**을 쓴다.
-        _reg = {"vigor": "활력", "composure": "평형"}.get(primary_axis, "활력")
-        _rec = None
-        try:
-            import custom_vars as _cv_pd
-            _rec = _cv_pd.apply_system_delta(
-                _jud_channel(context), _reg, primary_delta, "judgment consequence",
-                actor=_jud_actor(context), exempt_cap=True, source="judgment.consequence",
-            )
-        except Exception as _e_pd:
-            logger.debug("[Judgment] primary_delta 레지스트리 skip: %s", _e_pd)
-        bus.judgment["primary_applied"] = _rec
-        if _rec:
-            _d = int(_rec.get("delta", 0) or 0)
-            consequence_log.append(f"{'회복' if _d > 0 else '소모'} {'+' if _d > 0 else ''}{_d}")
+    # B. Primary Axis — [2026-10-15 C40 C4] 삭제. 활력·평형은 출력물 콜(extract_outputs)이 대가가 그려진 장면을
+    #   읽고 움직인다(판정 먼저 → Mira·렌더가 굴림을 보고 장면을 쓴다). 여기서 또 깎으면 이중 차감이었다.
 
     # C. Clock Effect (DLC 안전: clocks 없으면 스킵)
     if clock_effect != 0:
@@ -623,13 +474,6 @@ def _apply_consequences(context, result: str) -> None:
             clock_all = cons.get("clock_all", False)
             affected = _apply_clock_consequence(clocks, clock_effect, clock_all)
             consequence_log.extend(affected)
-
-    # D. Momentum (다음 턴 보너스/페널티)
-    momentum = cons.get("momentum", 0)
-    if momentum != 0:
-        bus.judgment["momentum_next"] = momentum
-        sign = "+" if momentum > 0 else ""
-        consequence_log.append(f"기세 {sign}{momentum}")
 
     if consequence_log:
         bus.judgment["consequence_log"] = " | ".join(consequence_log)

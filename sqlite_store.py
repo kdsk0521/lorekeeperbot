@@ -738,11 +738,46 @@ def _ensure_schema(channel_id: str = "") -> bool:
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_corrections_channel ON corrections(channel_id, active, id)")
+            # [2026-10-23 C60 M2c] Activity 편집 일지 — 화면에서 고친 한 건 = 한 행. `!다시` 가 스냅샷을 되돌린
+            #   **직후** after_turn > 되돌린 턴 인 행을 순서대로 다시 얹는다(activity_edit.replay_after).
+            #   ★로그 워터마크 트림 목록(!다시)에 **넣지 않는다** — 되감기에 살아남는 게 이 표의 일이다.
+            #   !클리어(clear_session_scoped)·!리셋(delete_channel_rows)에서 지운다.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS activity_edits (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_id  TEXT NOT NULL,
+                    after_turn  INTEGER NOT NULL DEFAULT 0,
+                    uid         TEXT NOT NULL DEFAULT '',
+                    kind        TEXT NOT NULL DEFAULT 'edit',
+                    edit        TEXT NOT NULL DEFAULT '{}',
+                    undo        TEXT NOT NULL DEFAULT '',
+                    receipt     TEXT NOT NULL DEFAULT '',
+                    undone      INTEGER NOT NULL DEFAULT 0,
+                    created_at  REAL NOT NULL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_actedits_channel ON activity_edits(channel_id, id)")
+            # [2026-10-23 C69 A3] Activity 본 자리 — 사람 · 앱마다 "마지막으로 본 도착물 행 id" 하나(배지 = 그보다 큰 행 수).
+            #   turn_mail id 는 AUTOINCREMENT 라 늘 커진다 → `!다시` 워터마크 트림 목록에 **넣지 않는다**(되감겨도 어긋나지 않음).
+            #   !클리어(clear_session_scoped)·!리셋(delete_channel_rows)에서 지운다.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS activity_seen (
+                    channel_id  TEXT NOT NULL,
+                    user_id     TEXT NOT NULL,
+                    app         TEXT NOT NULL,
+                    last_id     INTEGER NOT NULL DEFAULT 0,
+                    updated_at  REAL NOT NULL,
+                    PRIMARY KEY (channel_id, user_id, app)
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_turnmail_kind ON turn_mail(channel_id, kind, id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_threadlog_thread ON thread_log(channel_id, thread_id, id)")
             # [2026-09-16 시트 2차] PC = 위키 인물 페이지. owner_uid(참가자↔페이지 1:1 표식, ''=NPC 등)
             #   + built_len(grow_sheet 정리 마커 — 직전 정리 직후 Observed 길이). 기존 DB는 ALTER(있으면 무시).
             for _alt in ("ALTER TABLE pages ADD COLUMN owner_uid TEXT NOT NULL DEFAULT ''",
-                         "ALTER TABLE pages ADD COLUMN built_len INTEGER NOT NULL DEFAULT 0"):
+                         "ALTER TABLE pages ADD COLUMN built_len INTEGER NOT NULL DEFAULT 0",
+                         # [2026-10-18 C50 R1] 정정 행 ↔ 위키 줄 끈 {page_id: {line, demoted}, "_also_wrong": [..]}
+                         "ALTER TABLE corrections ADD COLUMN links TEXT NOT NULL DEFAULT '{}'"):
                 try:
                     conn.execute(_alt)
                 except Exception:
@@ -1582,6 +1617,8 @@ def delete_channel_rows(channel_id: str) -> bool:
                       "fact_sources",
                       "thread_log",  # [2026-09-25 스레드 장부]
                       "corrections",  # [2026-10-10 기록 정정]
+                      "activity_edits",  # [2026-10-23 C60 M2c]
+                      "activity_seen",  # [2026-10-23 C69 A3] 본 자리
                       # [2026-09-14 W1] 위키 페이지 3테이블 — 레거시 모드에서만 목록 삭제
                       #   (채널 모드는 파일 삭제라 자동). 클리어(§6 W4)와는 별개.
                       "pages", "sections", "section_history"):
@@ -1658,6 +1695,38 @@ def read_history_tail(channel_id: str, n: int = 50) -> Optional[list]:
     except Exception as e:
         logger.warning(f"[SQLiteStore] read_history_tail 실패: {channel_id}: {e}")
         return None
+
+
+def read_history_span(channel_id: str, from_msg_id, to_msg_id, limit: int = 40) -> list:
+    """[2026-10-17 C46 W4] 두 message_id 사이(양끝 포함)의 원문 행, 오래된→최신. 끝을 못 찾으면 [].
+
+    발효 엔트리의 `from_msg_id`~`to_msg_id`(에피소드 구간)를 영구 로그 원문으로 되돌리는 길이다.
+    읽는 쪽은 도착물 원문 발췌(world_board._build_raw_excerpts) 하나.
+    """
+    if not channel_id or from_msg_id is None or to_msg_id is None or not _ensure_schema(channel_id):
+        return []
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return []
+    try:
+        a = conn.execute(
+            "SELECT id FROM history_log WHERE channel_id=? AND message_id=? ORDER BY id ASC LIMIT 1",
+            (channel_id, str(from_msg_id))).fetchone()
+        b = conn.execute(
+            "SELECT id FROM history_log WHERE channel_id=? AND message_id=? ORDER BY id DESC LIMIT 1",
+            (channel_id, str(to_msg_id))).fetchone()
+        if not a or not b:
+            return []
+        lo, hi = min(a[0], b[0]), max(a[0], b[0])
+        cur = conn.execute(
+            "SELECT role, content, message_id, game_time FROM history_log "
+            "WHERE channel_id=? AND id BETWEEN ? AND ? ORDER BY id ASC LIMIT ?",
+            (channel_id, lo, hi, int(limit)),
+        )
+        return [_row_to_history(r) for r in cur.fetchall()]
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_history_span 실패: {channel_id}: {e}")
+        return []
 
 
 def search_history_log(channel_id: str, query: str, limit: int = 20) -> list:
@@ -2102,6 +2171,48 @@ def append_notebook_log(channel_id: str, user_id: str, section: str, content: st
         return False
 
 
+def _notebook_sections_arg(sections: Any) -> List[str]:
+    return [str(s).strip() for s in (sections or []) if str(s or "").strip()]
+
+
+def count_notebook_log_sections(channel_id: str, sections: Any) -> int:
+    """[2026-10-15 C38] 그 섹션 이름들의 기록 행 수(읽기 전용). 실패·없음 0."""
+    names = _notebook_sections_arg(sections)
+    if not channel_id or not names or not _ensure_schema(channel_id):
+        return 0
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return 0
+    try:
+        ph = ",".join("?" * len(names))
+        r = conn.execute(f"SELECT COUNT(*) FROM notebook_log WHERE channel_id=? AND section IN ({ph})",
+                         (channel_id, *names)).fetchone()
+        return int(r[0] if r else 0)
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] count_notebook_log_sections 실패 (무시): {channel_id}: {e}")
+        return 0
+
+
+def delete_notebook_log_sections(channel_id: str, sections: Any) -> int:
+    """[2026-10-15 C38] 그 섹션 이름들의 기록 행 삭제 → 지운 행 수. append 섹션을 지울 때
+    행이 남으면 💠 기록 창이 주인 없는 행을 계속 읽는다. 다른 섹션·노트북 일지 행은 무접촉."""
+    names = _notebook_sections_arg(sections)
+    if not channel_id or not names or not _ensure_schema(channel_id):
+        return 0
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return 0
+    try:
+        ph = ",".join("?" * len(names))
+        cur = conn.execute(f"DELETE FROM notebook_log WHERE channel_id=? AND section IN ({ph})",
+                           (channel_id, *names))
+        conn.commit()
+        return int(cur.rowcount or 0)
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] delete_notebook_log_sections 실패 (무시): {channel_id}: {e}")
+        return 0
+
+
 def read_notebook_tail(channel_id: str, section: str = "", n: int = 20) -> list:
     """최근 N행 (오래된→최신). section 빈 문자열이면 전 섹션."""
     if not channel_id or n <= 0 or not _ensure_schema(channel_id):
@@ -2330,6 +2441,11 @@ def clear_session_scoped(channel_id: str) -> bool:
         "notebook_log",  # [notebook v2 2026-09-06] 노트북 행 장부도 세션 파생
         "fact_sources",  # [2026-09-14 S5a] 지식 사실 출처 원장 — knows와 같은 수명
         "corrections",  # [2026-10-10 기록 정정] 정오표는 그 세션의 기록에 붙는다 — 세션 파생
+        # [2026-10-14 C37 R1] 스레드 장부 — 리셋·!다시 목록엔 있었는데 여기만 빠져
+        #   옛 약속·사안이 새 세션 Slot 29 <Standing_Threads>·Theoria 4c·루카로 갔다.
+        "thread_log",
+        "activity_edits",  # [2026-10-23 C60 M2c] 화면 편집 일지 — 그 세션의 편집이다
+        "activity_seen",  # [2026-10-23 C69 A3] 본 자리 — 도착물 행이 같이 지워지니 같이 지운다
     )
     try:
         for t in tables:
@@ -2923,14 +3039,14 @@ def read_turn_mail(channel_id: str, message_id: int, kind: Optional[str] = None)
         return []
 
 
-def read_channel_mail(channel_id: str, limit: int = 10) -> list:
-    """독자(채널 전체): 최근 도착물 N건, **최신 위**. [{"message_id","turn","kind","payload"}].
+def read_channel_mail(channel_id: str, limit: int = 10, kinds: Optional[Tuple[str, ...]] = None) -> list:
+    """독자(채널 전체): 최근 도착물 N건, **최신 위**. [{"id","message_id","turn","kind","payload"}].
 
     [2026-09-13 P9c] `read_turn_mail` 은 (channel_id, message_id) 로만 본다 — 그게
     턴 고정 계약이라 **옛 버튼에 새 내용이 새지 않게** 하는 자리다. 💠 "쌓인 것" 창의
     도착물 **목록**은 그 반대 축(어느 메시지든, 채널에 최근 무엇이 왔나)이라 조회가
     따로 필요했다. 인덱스는 이미 있다(idx_turnmail_channel = channel_id, id).
-    ⚠ 목록용이다 — 본문을 다시 그리는 자리가 아니다(그건 여전히 message_id 버튼).
+    [2026-10-23 C69 A3] `kinds` 를 주면 그 종류만(Activity 편지·소식·속마음 앱), 행 `id` 도 싣는다(본 자리 · "새" 표시).
     """
     if not channel_id or limit <= 0 or not _ensure_schema(channel_id):
         return []
@@ -2938,24 +3054,109 @@ def read_channel_mail(channel_id: str, limit: int = 10) -> list:
     if conn is None:
         return []
     try:
-        cur = conn.execute(
-            "SELECT message_id, turn, kind, payload FROM turn_mail "
-            "WHERE channel_id=? ORDER BY id DESC LIMIT ?",
-            (channel_id, int(limit)),
-        )
+        if kinds:
+            _ks = [str(k) for k in kinds]
+            cur = conn.execute(
+                "SELECT id, message_id, turn, kind, payload FROM turn_mail "
+                f"WHERE channel_id=? AND kind IN ({','.join('?' * len(_ks))}) ORDER BY id DESC LIMIT ?",
+                (channel_id, *_ks, int(limit)),
+            )
+        else:
+            cur = conn.execute(
+                "SELECT id, message_id, turn, kind, payload FROM turn_mail "
+                "WHERE channel_id=? ORDER BY id DESC LIMIT ?",
+                (channel_id, int(limit)),
+            )
         out = []
         for r in cur.fetchall():
             try:
-                payload = json.loads(r[3])
+                payload = json.loads(r[4])
             except Exception:
                 payload = {}
             if not isinstance(payload, dict):
                 payload = {}
-            out.append({"message_id": r[0], "turn": r[1], "kind": r[2], "payload": payload})
+            out.append({"id": r[0], "message_id": r[1], "turn": r[2], "kind": r[3], "payload": payload})
         return out
     except Exception as e:
         logger.warning(f"[SQLiteStore] read_channel_mail 실패: {channel_id}: {e}")
         return []
+
+
+def count_turn_mail(channel_id: str, kind: str, after_id: int = 0) -> int:
+    """[2026-10-23 C69 A3] 그 종류 행 중 id > after_id 인 수(배지). 실패 0."""
+    if not channel_id or not kind or not _ensure_schema(channel_id):
+        return 0
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return 0
+    try:
+        r = conn.execute("SELECT COUNT(*) FROM turn_mail WHERE channel_id=? AND kind=? AND id>?",
+                         (channel_id, str(kind), int(after_id or 0))).fetchone()
+        return int(r[0] or 0) if r else 0
+    except Exception as e:
+        logger.debug(f"[SQLiteStore] count_turn_mail 실패: {channel_id}: {e}")
+        return 0
+
+
+def read_turn_mail_by_turn(channel_id: str, turn: int) -> list:
+    """[2026-10-23 C69 A3] 그 턴 번호로 적립된 행 전부(오래된→최신) — Activity 홈 "이번 턴". [{"id","kind","payload"}]."""
+    if not channel_id or not _ensure_schema(channel_id):
+        return []
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return []
+    try:
+        cur = conn.execute("SELECT id, kind, payload FROM turn_mail WHERE channel_id=? AND turn=? ORDER BY id",
+                           (channel_id, int(turn or 0)))
+        out = []
+        for r in cur.fetchall():
+            try:
+                payload = json.loads(r[2])
+            except Exception:
+                payload = {}
+            out.append({"id": r[0], "kind": r[1], "payload": payload if isinstance(payload, dict) else {}})
+        return out
+    except Exception as e:
+        logger.debug(f"[SQLiteStore] read_turn_mail_by_turn 실패: {channel_id}: {e}")
+        return []
+
+
+def get_activity_seen(channel_id: str, user_id: str, app: str) -> int:
+    """[2026-10-23 C69 A3] 그 사람 · 그 앱의 본 자리(마지막으로 본 turn_mail id). 없으면 0."""
+    if not channel_id or not user_id or not app or not _ensure_schema(channel_id):
+        return 0
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return 0
+    try:
+        r = conn.execute("SELECT last_id FROM activity_seen WHERE channel_id=? AND user_id=? AND app=?",
+                         (channel_id, str(user_id), str(app))).fetchone()
+        return int(r[0] or 0) if r else 0
+    except Exception as e:
+        logger.debug(f"[SQLiteStore] get_activity_seen 실패: {channel_id}: {e}")
+        return 0
+
+
+def set_activity_seen(channel_id: str, user_id: str, app: str, last_id: int) -> bool:
+    """[2026-10-23 C69 A3] 본 자리를 올린다 — **내려가지 않는다**(더 큰 값만 쓴다)."""
+    if not channel_id or not user_id or not app or not _ensure_schema(channel_id):
+        return False
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return False
+    try:
+        # UPSERT(ON CONFLICT … DO UPDATE)는 SQLite 3.24+ 라 서버 판을 안 묻는 꼴로 — 옛 값과 MAX 를 한 문장에서.
+        conn.execute(
+            "INSERT OR REPLACE INTO activity_seen (channel_id, user_id, app, last_id, updated_at) "
+            "VALUES (?, ?, ?, MAX(?, COALESCE((SELECT last_id FROM activity_seen "
+            "WHERE channel_id=? AND user_id=? AND app=?), 0)), ?)",
+            (channel_id, str(user_id), str(app), int(last_id or 0),
+             channel_id, str(user_id), str(app), time.time()))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] set_activity_seen 실패: {channel_id}: {e}")
+        return False
 
 
 def read_arc_window(channel_id: str, start_turn: int, end_turn: int) -> Dict[str, list]:
@@ -3129,11 +3330,12 @@ def add_correction(channel_id: str, row: Dict[str, Any]) -> Optional[int]:
         return None
     try:
         cur = conn.execute(
-            "INSERT INTO corrections (channel_id, turn, about, text, wrong, source, active, created_at) "
-            "VALUES (?,?,?,?,?,?,1,?)",
+            "INSERT INTO corrections (channel_id, turn, about, text, wrong, source, active, created_at, links) "
+            "VALUES (?,?,?,?,?,?,1,?,?)",
             (channel_id, row.get("turn"), json.dumps(list(row.get("about") or []), ensure_ascii=False),
              str(row.get("text") or "").strip(), str(row.get("wrong") or "").strip(),
-             str(row.get("source") or "ooc"), time.time()))
+             str(row.get("source") or "ooc"), time.time(),
+             json.dumps(row.get("links") if isinstance(row.get("links"), dict) else {}, ensure_ascii=False)))
         conn.commit()
         return int(cur.lastrowid)
     except Exception as e:
@@ -3149,7 +3351,7 @@ def read_corrections(channel_id: str, active_only: bool = True) -> List[Dict[str
     if conn is None:
         return []
     try:
-        q = ("SELECT id, turn, about, text, wrong, source, active, created_at FROM corrections "
+        q = ("SELECT id, turn, about, text, wrong, source, active, created_at, links FROM corrections "
              "WHERE channel_id=?" + (" AND active=1" if active_only else "") + " ORDER BY id")
         out = []
         for r in conn.execute(q, (channel_id,)).fetchall():
@@ -3157,12 +3359,34 @@ def read_corrections(channel_id: str, active_only: bool = True) -> List[Dict[str
                 about = json.loads(r[2] or "[]")
             except Exception:
                 about = []
+            try:
+                links = json.loads(r[8] or "{}")
+            except Exception:
+                links = {}
             out.append({"id": r[0], "turn": r[1], "about": about if isinstance(about, list) else [],
-                        "text": r[3], "wrong": r[4], "source": r[5], "active": bool(r[6]), "created_at": r[7]})
+                        "text": r[3], "wrong": r[4], "source": r[5], "active": bool(r[6]), "created_at": r[7],
+                        "links": links if isinstance(links, dict) else {}})
         return out
     except Exception as e:
         logger.warning(f"[SQLiteStore] read_corrections 실패 (무시): {channel_id}: {e}")
         return []
+
+
+def set_correction_links(channel_id: str, cid: int, links: Dict[str, Any]) -> bool:
+    """[2026-10-18 C50 R1] 정정 행의 위키 끈을 적는다(교체)."""
+    if not channel_id or not _ensure_schema(channel_id):
+        return False
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return False
+    try:
+        conn.execute("UPDATE corrections SET links=? WHERE channel_id=? AND id=?",
+                     (json.dumps(links if isinstance(links, dict) else {}, ensure_ascii=False), channel_id, int(cid)))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] set_correction_links 실패 (무시): {channel_id}: {e}")
+        return False
 
 
 def set_correction_active(channel_id: str, cid: int, active: bool) -> bool:
@@ -3178,4 +3402,96 @@ def set_correction_active(channel_id: str, cid: int, active: bool) -> bool:
         return True
     except Exception as e:
         logger.warning(f"[SQLiteStore] set_correction_active 실패 (무시): {channel_id}: {e}")
+        return False
+
+
+# =========================================================
+# [2026-10-23 C60 M2c] Activity 편집 일지
+# =========================================================
+
+def _actedit_row(r) -> Dict[str, Any]:
+    def _j(s, d):
+        try:
+            v = json.loads(s) if s else d
+            return v if isinstance(v, type(d)) or v is None else d
+        except Exception:
+            return d
+    return {"id": int(r[0]), "after_turn": int(r[1] or 0), "uid": r[2] or "", "kind": r[3] or "edit",
+            "edit": _j(r[4], {}) or {}, "undo": _j(r[5], {}) or None, "receipt": r[6] or "",
+            "undone": bool(r[7]), "created_at": r[8]}
+
+
+_ACTEDIT_COLS = "id, after_turn, uid, kind, edit, undo, receipt, undone, created_at"
+
+
+def append_activity_edit(channel_id: str, after_turn: int, uid: str, edit: Dict[str, Any],
+                         undo: Optional[Dict[str, Any]], receipt: str = "", kind: str = "edit") -> Optional[int]:
+    """편집 한 건 적립 → 행 id. 실패 None(편집 자체는 이미 됐다 — 일지만 못 남긴 것)."""
+    if not channel_id or not isinstance(edit, dict) or not _ensure_schema(channel_id):
+        return None
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return None
+    try:
+        cur = conn.execute(
+            "INSERT INTO activity_edits (channel_id, after_turn, uid, kind, edit, undo, receipt, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (channel_id, int(after_turn or 0), str(uid or ""), str(kind or "edit"),
+             json.dumps(edit, ensure_ascii=False), json.dumps(undo, ensure_ascii=False) if undo else "",
+             str(receipt or "")[:300], time.time()))
+        conn.commit()
+        return int(cur.lastrowid)
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] append_activity_edit 실패 (무시): {channel_id}: {e}")
+        return None
+
+
+def read_activity_edits(channel_id: str, after_turn_gt: Optional[int] = None) -> List[Dict[str, Any]]:
+    """일지 (오래된→최신). after_turn_gt 주면 after_turn > 그 값인 행만(!다시 재적용)."""
+    if not channel_id or not _ensure_schema(channel_id):
+        return []
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return []
+    try:
+        if after_turn_gt is None:
+            rows = conn.execute(f"SELECT {_ACTEDIT_COLS} FROM activity_edits WHERE channel_id=? ORDER BY id",
+                                (channel_id,)).fetchall()
+        else:
+            rows = conn.execute(f"SELECT {_ACTEDIT_COLS} FROM activity_edits WHERE channel_id=? AND after_turn>? "
+                                "ORDER BY id", (channel_id, int(after_turn_gt))).fetchall()
+        return [_actedit_row(r) for r in rows]
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_activity_edits 실패: {channel_id}: {e}")
+        return []
+
+
+def last_activity_edit(channel_id: str) -> Optional[Dict[str, Any]]:
+    """채널 일지의 맨 마지막 행(종류 무관). ↶ 판정 — 방금 고친 것 하나만 되돌린다."""
+    if not channel_id or not _ensure_schema(channel_id):
+        return None
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return None
+    try:
+        r = conn.execute(f"SELECT {_ACTEDIT_COLS} FROM activity_edits WHERE channel_id=? ORDER BY id DESC LIMIT 1",
+                         (channel_id,)).fetchone()
+        return _actedit_row(r) if r else None
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] last_activity_edit 실패: {channel_id}: {e}")
+        return None
+
+
+def mark_activity_edit_undone(channel_id: str, row_id: int) -> bool:
+    if not channel_id or not _ensure_schema(channel_id):
+        return False
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return False
+    try:
+        conn.execute("UPDATE activity_edits SET undone=1 WHERE channel_id=? AND id=?", (channel_id, int(row_id)))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] mark_activity_edit_undone 실패: {channel_id}: {e}")
         return False

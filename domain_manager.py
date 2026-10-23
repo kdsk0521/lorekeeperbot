@@ -287,7 +287,8 @@ def notebook_parse(data) -> Dict[str, Any]:
 NOTEBOOK_SHARED_JOURNAL_TAIL = 3
 
 
-def notebook_render(nb, shared=None, shared_journal_tail: int = NOTEBOOK_SHARED_JOURNAL_TAIL) -> str:
+def notebook_render(nb, shared=None, shared_journal_tail: int = NOTEBOOK_SHARED_JOURNAL_TAIL,
+                    items: Any = None) -> str:
     """dict → 옛 텍스트 모양. 읽기 소비자(컨텍스트·ctx.notebook_txt·!캐릭터·B-1 입력)는
     전부 이 결과를 받는다 — 호출부는 안 바뀐다.
     shared: 채널 스코프 섹션(d['notebook_shared']).
@@ -295,18 +296,27 @@ def notebook_render(nb, shared=None, shared_journal_tail: int = NOTEBOOK_SHARED_
     shared_journal_tail: 공유 일지의 **노출 꼬리**(기본 3줄, 0=전량).
       보관 축과 노출 축을 가른다 — 데이터엔 NOTEBOOK_JOURNAL_MAX 줄이 남고
       notebook_log 엔 전량이 남지만, 컨텍스트로 나가는 건 최근 며칠뿐이다.
-      일지가 길어지면 그날 장면이 아니라 요약이 프롬프트를 채우기 시작한다."""
+      일지가 길어지면 그날 장면이 아니라 요약이 프롬프트를 채우기 시작한다.
+
+    items: [2026-10-23 C61] [소지품] 칸의 재료. None = 노트북 dict 의 옛 칸(옛 호출·스모크 호환),
+      dict {이름: 수량} = 그것(정본 = custom_vars 기본 선언 `소지품` — get_notebook 이 넘긴다),
+      False = 칸을 안 그린다."""
     nb = notebook_parse(nb)
     sec = nb["sections"]
     blocks = []
     journal = sec["일지"]["lines"]
     if journal:
         blocks.append(NOTEBOOK_JOURNAL_HEADER + "\n" + "\n".join(f"- {l}" for l in journal))
-    soji = [NOTEBOOK_SOJIPIN_HEADER]
-    for name, meta in sec["소지품"]["items"].items():
-        q = int(meta.get("qty", 1))
-        soji.append(f"- {name}" + (f" ×{q}" if q > 1 else ""))
-    blocks.append("\n".join(soji))
+    if items is not False:
+        soji = [NOTEBOOK_SOJIPIN_HEADER]
+        _src = sec["소지품"]["items"] if items is None else (items if isinstance(items, dict) else {})
+        for name, meta in _src.items():
+            try:
+                q = int(meta.get("qty", 1)) if isinstance(meta, dict) else int(meta)
+            except (TypeError, ValueError):
+                q = 1
+            soji.append(f"- {name}" + (f" ×{q}" if q > 1 else ""))
+        blocks.append("\n".join(soji))
     memo = [NOTEBOOK_MEMO_HEADER]
     memo += [f"- {l}" for l in sec["메모"]["user"]]
     memo += [f"> {l}" for l in sec["메모"]["llm"]]
@@ -321,9 +331,10 @@ def notebook_render(nb, shared=None, shared_journal_tail: int = NOTEBOOK_SHARED_
             tail = 0
         if tail > 0:
             ssec["일지"]["lines"] = ssec["일지"]["lines"][-tail:]
-        if ssec["소지품"]["items"] or ssec["메모"]["user"] or ssec["메모"]["llm"] or ssec["일지"]["lines"]:
+        # [2026-10-23 C61] 공유 노트북엔 소지품이 없다(쓰는 곳 0 → 정본이 기본 선언 목록으로 감).
+        if ssec["메모"]["user"] or ssec["메모"]["llm"] or ssec["일지"]["lines"]:
             # 재귀 호출엔 shared 를 안 넘기므로 꼬리 인자도 의미가 없다(이미 잘라 두었다).
-            out += "\n\n" + notebook_render(shared_nb)
+            out += "\n\n" + notebook_render(shared_nb, items=False)
     return out
 
 
@@ -354,9 +365,25 @@ def update_notebook_data(channel_id: str, nb: Dict[str, Any], user_id: str = "")
     save_domain(channel_id, d)
 
 
-def get_notebook(channel_id: str, user_id: str = "") -> str:
-    """PC별 노트북 **렌더 텍스트**(표시/프롬프트용). 정본은 get_notebook_data()."""
-    return notebook_render(get_notebook_data(channel_id, user_id), get_notebook_shared(channel_id))
+def _sojipin_render_items(channel_id: str) -> Any:
+    """[2026-10-23 C61] [소지품] 칸 재료 = 기본 선언 목록. 변수 기능이 꺼졌으면 None(옛 노트북 칸)."""
+    try:
+        import custom_vars as _cv_nb
+        if not _cv_nb.is_enabled():
+            return None
+        return _cv_nb.sojipin_items(channel_id)
+    except Exception as e:
+        logging.debug(f"[Notebook] 소지품 읽기 skip: {e}")
+        return None
+
+
+def get_notebook(channel_id: str, user_id: str = "", with_items: bool = True) -> str:
+    """PC별 노트북 **렌더 텍스트**(표시/프롬프트용). 정본은 get_notebook_data().
+    [2026-10-23 C61] [소지품] 칸은 기본 선언 목록에서 읽어 그대로 그린다 — 렌더 Slot 6·OOC 분류기·
+    `!캐릭터`·B-1 입력 모양 무변경. with_items=False 면 칸을 안 그린다."""
+    items = _sojipin_render_items(channel_id) if with_items else False
+    return notebook_render(get_notebook_data(channel_id, user_id), get_notebook_shared(channel_id),
+                           items=items)
 
 
 def update_notebook(channel_id: str, text, user_id: str = "") -> None:
@@ -634,6 +661,7 @@ def reset_domain(channel_id: str) -> None:
         fermentation.forget_channel_recall(channel_id)
     except Exception as _e:
         logging.debug(f"[Wiki] forget_channel_recall skipped: {_e}")
+    _forget_channel_process_memory(channel_id)   # [2026-10-14 C37 R6·R8]
 
     # 폴더 통째 삭제 (없으면 무시)
     d = get_channel_dir(channel_id)
@@ -1225,6 +1253,42 @@ def find_equivalent_npc_key(npcs: dict, name: str) -> Optional[str]:
                 return key
     return None
 
+# [2026-10-14 C37] NPC 보존 키 — update_npc 지역 튜플을 모듈로 올렸다(`!클리어`와 한 목록을 쓴다).
+#   update_npc: 넘긴 dict에 없으면 기존 값을 이월(재등록·부분 갱신 보호). 아래 원 주석 그대로.
+#   reset_session_state: `NPC_CLEAR_KEEP_KEYS`(= 이 목록 − _NPC_PLAY_PRESERVED)만 남기고 나머지는 버린다.
+#   ★새 키를 넣을 때: 시트·명령(입력)이 만드는 값이면 여기만, 플레이가 쓰는 값이면 아래 튜플에도 넣는다.
+#   목록 밖 키(appear_count·drives·soma·decision_cooldown·identity_history …)는 원래 플레이 부기라 클리어에 진다.
+# 기존 데이터에서 보존할 필드 (재등록 시 유실 방지)
+_NPC_PRESERVE_KEYS = (
+    "source", "aliases",
+    # 다른 경로가 만들어낸 자산 (등록 시트에는 원래 없는 것들)
+    "tone", "speech", "static_traits", "appearances",
+    # [2026-09-03 R6] schedule. tone과 **같은 사유**로 보존한다: 시트에는 원래 없고
+    #   `!npc 일정`(1회성 추출 콜)이 만들어 넣는 자산이라, 목록 밖이면 시트
+    #   재업로드(`!npc 추가`) 한 번에 조용히 증발한다. 스펙 §6 R6 ②.
+    "schedule",
+    "role", "personality", "appearance", "location", "summary",
+    "gender", "race", "constraints", "lore_seen",
+    # 정체성/성장 층
+    "high_concept", "trouble", "aspects", "background",
+    # [2026-08-11 사망 파이프라인] 생존축 — **비가역성이 여기 걸려 있다.**
+    #   status가 보존 목록 밖이면 `!npc추가` 재등록이나 시트 재작성 한 번에 dead가
+    #   조용히 증발한다(= 죽음이 취소되는데 로그가 안 남는 반사실형 실패).
+    #   명시 status를 담은 새 데이터는 여전히 이긴다(위 정책 그대로) — 자동
+    #   재생성 경로는 그 앞단에서 이름 단위로 차단한다(orchestration).
+    "status", "status_changed_turn", "status_evidence",
+    # [2026-10-14 C37 C2] 플레이가 붙인 별칭의 출처 표시 — 부분 dict 재등록에도 따라가야 클리어가 뗀다.
+    "_play_aliases",
+)
+# 보존은 하되 `!클리어`엔 지는 키 — 플레이가 쓴다(`!시작` 전에 있을 수 없는 값). 스펙 C37 §1 A2.
+#   status 3종 = 사망·쓰러짐 / high_concept·trouble·aspects = grow_sheet 정리 콜(orchestration) /
+#   appearances·lore_seen = 등장 부기 / _play_aliases = 별칭 출처 표시(목록 자체는 aliases 에서 빼고 버린다).
+_NPC_PLAY_PRESERVED = ("status", "status_changed_turn", "status_evidence",
+                       "high_concept", "trouble", "aspects", "appearances", "lore_seen",
+                       "_play_aliases")
+NPC_CLEAR_KEEP_KEYS = tuple(k for k in _NPC_PRESERVE_KEYS if k not in _NPC_PLAY_PRESERVED)
+
+
 def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
     """NPC 등록/갱신.
 
@@ -1275,25 +1339,7 @@ def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
     #   (반대 방향엔 가드가 있었다 — add_lore_npcs는 source=="manual"을 건너뛴다. 이쪽만 무방비.)
     # 정책: **새 데이터에 그 키가 있으면 새 값이 이긴다**(덮어쓰기 의도 존중).
     #   새 데이터에 없을 때만 기존 값을 이월한다. 지우고 싶으면 `!npc 삭제` 후 재등록 — 레티어스 결정.
-    _PRESERVE_KEYS = (
-        "source", "aliases",
-        # 다른 경로가 만들어낸 자산 (등록 시트에는 원래 없는 것들)
-        "tone", "speech", "static_traits", "appearances",
-        # [2026-09-03 R6] schedule. tone과 **같은 사유**로 보존한다: 시트에는 원래 없고
-        #   `!npc 일정`(1회성 추출 콜)이 만들어 넣는 자산이라, 목록 밖이면 시트
-        #   재업로드(`!npc 추가`) 한 번에 조용히 증발한다. 스펙 §6 R6 ②.
-        "schedule",
-        "role", "personality", "appearance", "location", "summary",
-        "gender", "race", "constraints", "lore_seen",
-        # 정체성/성장 층
-        "high_concept", "trouble", "aspects", "background",
-        # [2026-08-11 사망 파이프라인] 생존축 — **비가역성이 여기 걸려 있다.**
-        #   status가 보존 목록 밖이면 `!npc추가` 재등록이나 시트 재작성 한 번에 dead가
-        #   조용히 증발한다(= 죽음이 취소되는데 로그가 안 남는 반사실형 실패).
-        #   명시 status를 담은 새 데이터는 여전히 이긴다(위 정책 그대로) — 자동
-        #   재생성 경로는 그 앞단에서 이름 단위로 차단한다(orchestration).
-        "status", "status_changed_turn", "status_evidence",
-    )
+    _PRESERVE_KEYS = _NPC_PRESERVE_KEYS   # [2026-10-14 C37] 목록은 모듈 상수(클리어와 공유)
     if existing_key:
         existing = npcs[existing_key]
         if isinstance(existing, dict):
@@ -1428,7 +1474,22 @@ def add_npc_alias(channel_id: str, name: str, alias: str) -> tuple:
     if not isinstance(aliases, list):
         aliases = data["aliases"] = []
     norm_new = _normalize_npc_name(alias).lower()
+    # [2026-10-14 C37 C2] 명령·OOC 로 직접 붙인 별칭은 입력이다 — 플레이 표시(_play_aliases)가 있었으면 뗀다
+    #   (이미 승격돼 있던 별칭을 사람이 확인한 것 = `!클리어`를 넘는다).
+    _pa = data.get("_play_aliases")
+    _unmarked = False
+    if isinstance(_pa, list):
+        _pa2 = [a for a in _pa if not (isinstance(a, str) and _normalize_npc_name(a).lower() == norm_new)]
+        if len(_pa2) != len(_pa):
+            _unmarked = True
+            if _pa2:
+                data["_play_aliases"] = _pa2
+            else:
+                data.pop("_play_aliases", None)
     if any(isinstance(a, str) and _normalize_npc_name(a).lower() == norm_new for a in aliases):
+        if _unmarked:
+            save_domain(channel_id, d)
+            _mirror_npc(channel_id, key, data)
         return True, key  # 이미 있음 = 성공
     aliases.append(alias)
     save_domain(channel_id, d)
@@ -2359,7 +2420,8 @@ def _ooc_npc_pair_edit(channel_id: str, npcs: Dict[str, Any], raw_a: str, raw_b:
     return f"관계: {a} → {b} {kind} ({strength})" + (f" — {stance}" if stance else "")
 
 
-def apply_ooc_relation_edits(channel_id: str, uid: str, edits: List[Dict[str, Any]]) -> List[str]:
+def apply_ooc_relation_edits(channel_id: str, uid: str, edits: List[Dict[str, Any]],
+                             origin: str = "ooc") -> List[str]:
     """OOC 관계 편집 → 엣지 직접 set(캡 면제, source="ooc"). 행동 PC 마스크가 target.
     edit = {"field": "relation", "action": "set|remove", "key": NPC, "stands"?/"bond"?, "friction"?/"tension"?,
             "stance"?, "baseline"?}
@@ -2367,6 +2429,7 @@ def apply_ooc_relation_edits(channel_id: str, uid: str, edits: List[Dict[str, An
       (옛: "아빠"가 그대로 저장돼 없는 인물의 관계가 생겼다). remove 는 **저장된 관계 이름과 정확히 같으면** 등록 여부 무관(유령 청소).
     ② 이름 칸 관용(key|npc|name|target|value.npc). ③ 값 = 숫자(유저가 숫자를 말했을 때) 또는 말(stands/friction →
       config.REL_START_BOND/TENSION) — 둘 다 오면 숫자(유저 권위). ④ baseline=true → 기준선(감쇠 목표)도 같이.
+    [2026-10-23 C60 M2c] origin — Activity 편집은 "activity"(같은 문, 도장만 다르다. 둘 다 턴당 캡 밖).
     Returns: 되비침 줄(실패는 ⚠️ 로 시작)."""
     lines: List[str] = []
     p = get_participant_data(channel_id, uid) or {}
@@ -2435,7 +2498,7 @@ def apply_ooc_relation_edits(channel_id: str, uid: str, edits: List[Dict[str, An
             lines.append(f"⚠️ 관계: {key} — 바꿀 값이 없어")
             continue
         r = upsert_relation_edge(channel_id, key, mask, bond=bond, tension=tension, stance=stance,
-                                 origin="ooc", set_base=baseline)
+                                 origin=(origin or "ooc"), set_base=baseline)
         if r:
             lines.append(f"관계: {r['source']} → bond {r['bond']} ({attitude_from_bond(r['bond'])})"
                          f" / tension {r['tension']} ({tension_band(r['tension'])})"
@@ -3346,9 +3409,16 @@ def apply_pc_info_to_user(channel_id: str, user_id: str, pc_info: Dict[str, Any]
         from game_character import merge_fragments
         mem["passives"], _ = merge_fragments(mem.get("passives", []), new_passives, "sheet")
 
+    # [2026-10-14 C37 R4] 시트 소지품 원본 — 노트북 [소지품]은 플레이가 바꾸고 `!클리어`가 비우므로,
+    #   클리어가 시작 장비를 다시 채울 근거를 따로 둔다(이번 시트로 교체). AI 실패 폴백 상자
+    #   (sheet_fallback — 조각·소지품이 안 뽑힌 상자)면 이전 값을 지키려고 손대지 않는다.
+    if not pc_info.get("sheet_fallback"):
+        mem["sheet_inventory"] = _pc_inventory_names(pc_info.get("inventory"))
+
     save_participant_data(channel_id, user_id, p)
 
-    # inventory → 노트북 [소지품] (add_item_to_sojipin 정식 경로, dedup 내장). 위치 무변경.
+    # inventory → 소지품. [2026-10-23 C61] **없을 때만** 1개(seed) — 옛 add 는 이미 있으면 수량을 더해
+    #   `!설명` 을 다시 돌릴 때마다 시작 장비가 ×2·×3 으로 쌓였다("dedup 내장" 주석과 코드가 달랐다).
     try:
         import game_character as _gc
         _inv = pc_info.get("inventory")
@@ -3361,9 +3431,12 @@ def apply_pc_info_to_user(channel_id: str, user_id: str, pc_info: Dict[str, Any]
                     _names.append(_it.strip())
         elif isinstance(_inv, dict):
             _names = [str(_k).strip() for _k in _inv.keys() if str(_k).strip()]
+        _counts: Dict[str, int] = {}
         for _nm in _names:
             if _nm:
-                _gc.add_item_to_sojipin(channel_id, _nm, user_id)
+                _counts[_nm] = _counts.get(_nm, 0) + 1     # 한 시트 안 같은 이름 두 줄 = 2개
+        for _nm, _q in _counts.items():
+            _gc.seed_item_in_sojipin(channel_id, _nm, _q)
     except Exception as _e_nb:
         logging.debug(f"[PC Sync] 노트북 인벤 반영 skipped: {_e_nb}")
 
@@ -3556,10 +3629,11 @@ def get_unified_player_info(channel_id: str, user_id: str, *, shape: str = "rend
     # 1. Sheet — PC 페이지 lore 절 + Observed(렌더 발췌 규칙은 render_page 그대로)
     desc_text = get_pc_sheet_text(channel_id, user_id) or "No description available."
 
-    # 2. Status Effects
-    status_effects = p.get("status_effects", [])
-    from game_character import format_status_effects
-    status_text = format_status_effects(status_effects) or "Healthy (Normal)"
+    # 2. Status Effects — [2026-10-15 C42] 좋은 상태 + 타격칸(마이너스 상태 전용 4칸)
+    from game_character import format_status_effects, buff_effects, strike_names, format_strikes
+    _buffs = format_status_effects(buff_effects(p))
+    _sk = format_strikes(p) if strike_names(p) else ""
+    status_text = " | ".join(x for x in (_sk, _buffs) if x) or "Healthy (Normal)"
 
     # 3. Passives (Traits) — 이름 + 설명
     passives = mem.get("passives", [])
@@ -3653,7 +3727,71 @@ OUTPUT_DECL_VERSION = 1
 _DECL_DICT_KEYS = ("panel_sections", "derives", "transitions",
                    "custom_vars", "output_rules",
                    # [2026-09-13 P16] 조건부 지시. 화이트리스트 밖이면 저장이 조용히 증발한다.
-                   "directives")
+                   "directives",
+                   # [2026-10-23 C72 M6] 꺼진 선언 모듈(치워 둔 레코드 {source: {칸: {이름: rec}}}) ·
+                   #   고정 번호({source: {"no": n}}). 둘 다 비면 저장에 안 쓴다(켜진 모듈만 있는 채널은 모양 그대로).
+                   "parked", "bundles")
+_DECL_SPARSE_KEYS = ("parked", "bundles")   # [C72] 비면 저장에서 빼는 칸
+
+
+def _decl_seq(v: Any) -> int:
+    try:
+        return max(0, int(v or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+# [2026-10-23 C72 §5] `!다시` = 산문 다시 쓰기 — 턴이 안 만드는 설정은 되감기에서 살린다(레티어스 "다시가 … 산문
+#   재출력만 의도한거라 … 다른건 남아야하니까"). retry_last 가 스냅샷 복원 **직전** redo_carry 로 떠 두고, **직후**
+#   apply_redo_carry 로 덮는다. 셋 = 선언 층 통째 · 모듈 켬끔 두 축 · 게시판 설정 둘. 턴이 이 셋을 쓰는 일은 없다
+#   (쓰는 함수 = 저작 관문 · 토글 · 설정 명령뿐) — 그래서 떠 둔 값이 곧 "되감기 전 마지막 설정"이다.
+#   그 밖 턴 밖 명령(!룰 · 로어 · NPC 등록 · 참가자)은 전체수정 대기열 Q9.
+_CARRY_SETTINGS = ("active_modules", "disabled_modules")
+_CARRY_BOARD = ("channels", "display_mode")
+
+
+def redo_carry(channel_id: str) -> Dict[str, Any]:
+    import copy as _copy
+    d = get_domain(channel_id)
+    st = d.get("settings") or {}
+    wb = (d.get("world_state") or {}).get("world_board") or {}
+    return _copy.deepcopy({
+        "output_decl": d.get("output_decl"),
+        "settings": {k: st[k] for k in _CARRY_SETTINGS if k in st},
+        "world_board": {k: wb[k] for k in _CARRY_BOARD if isinstance(wb, dict) and k in wb},
+    })
+
+
+def apply_redo_carry(channel_id: str, carry: Optional[Dict[str, Any]]) -> None:
+    """복원된 도메인 위에 떠 둔 셋을 덮는다. 떠 둘 때 없던 칸은 복원본에서도 지운다(되감기 전 모양 그대로)."""
+    if not isinstance(carry, dict):
+        return
+    d = get_domain(channel_id)
+    decl = carry.get("output_decl")
+    if isinstance(decl, dict):
+        d["output_decl"] = decl
+    else:
+        d.pop("output_decl", None)
+    st = d.get("settings")
+    if not isinstance(st, dict):
+        st = d["settings"] = {}
+    for k in _CARRY_SETTINGS:
+        if k in (carry.get("settings") or {}):
+            st[k] = carry["settings"][k]
+        else:
+            st.pop(k, None)
+    ws = d.get("world_state")
+    if isinstance(ws, dict):
+        wb = ws.get("world_board")
+        if not isinstance(wb, dict):
+            wb = {}
+        for k in _CARRY_BOARD:
+            if k in (carry.get("world_board") or {}):
+                wb[k] = carry["world_board"][k]
+            else:
+                wb.pop(k, None)
+        ws["world_board"] = wb
+    save_domain(channel_id, d)
 
 
 def output_decl_default() -> Dict[str, Any]:
@@ -3677,6 +3815,7 @@ def get_output_decl(channel_id: str) -> Dict[str, Any]:
             out[_k] = {}
     if not isinstance(out.get("v"), int):
         out["v"] = OUTPUT_DECL_VERSION
+    out["bundle_seq"] = _decl_seq(out.get("bundle_seq"))   # [C72] 지금까지 준 가장 큰 모듈 번호
     return out
 
 
@@ -3688,6 +3827,10 @@ def update_output_decl(channel_id: str, decl: Dict[str, Any]) -> None:
     out = {"v": decl.get("v") if isinstance(decl.get("v"), int) else OUTPUT_DECL_VERSION}
     for _k in _DECL_DICT_KEYS:
         out[_k] = decl.get(_k) if isinstance(decl.get(_k), dict) else {}
+        if _k in _DECL_SPARSE_KEYS and not out[_k]:
+            out.pop(_k)
+    if _decl_seq(decl.get("bundle_seq")):
+        out["bundle_seq"] = _decl_seq(decl.get("bundle_seq"))
     d["output_decl"] = out
     save_domain(channel_id, d)
 
@@ -3959,6 +4102,52 @@ def append_history(channel_id: str, role: str, content: str, message_id: Optiona
     except Exception as _e:
         logging.debug(f"[V10] history append mirror skipped: {_e}")
 
+def history_time_meta(channel_id: str):
+    """[2026-10-17 C49] 지금 작중 시각 + 턴 → (game_time | None, turn). `append_history` 의 메타와 같은 꼴."""
+    try:
+        world = get_world_state(channel_id)
+        try:
+            from game_world import _init_clock
+            _init_clock(world)
+        except Exception:
+            pass
+        gt = {
+            "year": world.get("year", 1),
+            "month": world.get("month", 1),
+            "day": world.get("day", 1),
+            "hour": world.get("hour", 12),
+            "minute": world.get("minute", 0),
+            "slot": world.get("time_slot", "오후"),
+        }
+        return gt, int(world.get("turn_index", 0) or 0)
+    except Exception as _e:
+        logging.debug(f"[History] time meta skip: {_e}")
+        return None, 0
+
+
+def append_history_log(channel_id: str, role: str, content: str, message_id: Optional[int] = None) -> bool:
+    """[2026-10-17 C49 R1] 영구 로그(history_log)에만 1행 — 작업 창(JSON 히스토리)은 안 건드린다.
+    도착물 원문처럼 렌더 히스토리·발효엔 없고 원문 독자(이름 LIKE·구간)에게만 있어야 하는 행의 길."""
+    entry: Dict[str, Any] = {"role": role, "content": content}
+    if message_id is not None:
+        entry["message_id"] = message_id
+    gt, ti = history_time_meta(channel_id)
+    if gt:
+        entry["game_time"] = gt
+    if ti > 0:
+        entry["turn"] = ti
+    try:
+        import sqlite_store
+        import state_guards
+        clean = state_guards.validate_history_write(entry)
+        if clean is None:
+            return False
+        return bool(sqlite_store.append_history(channel_id, clean))
+    except Exception as _e:
+        logging.debug(f"[History] log-only append skipped: {_e}")
+        return False
+
+
 def get_history(channel_id: str) -> List[Dict[str, str]]:
     return get_domain(channel_id).get("history", [])
 
@@ -4015,7 +4204,9 @@ def get_party_status_context(channel_id: str) -> str:
         except Exception:
             look = "Unknown"
         look = look[:50]
-        cond = format_status_effects(p.get("status_effects", [])) or "Normal"
+        # [2026-10-15 C42] 좋은 상태 + 타격칸
+        from game_character import buff_effects as _bf, strike_names as _skn, format_strikes as _fsk
+        cond = " | ".join(x for x in ((_fsk(p) if _skn(p) else ""), format_status_effects(_bf(p))) if x) or "Normal"
         active.append(f"[{mask}] Look:{look}, Cond:{cond}")
         
     return "### PARTY\n" + "\n".join(active) if active else "All players inactive."
@@ -4253,9 +4444,72 @@ def build_telescope_context(channel_id: str, n: int = 3) -> str:
     return ""
 
 
+def _forget_channel_process_memory(channel_id: str) -> None:
+    """[2026-10-14 C37 R6·R8] 프로세스 메모리 채널 흔적 — DB·폴더 삭제가 못 건드린다. `!클리어`·`!리셋` 공용.
+    · `orchestration._RETRY_SNAPSHOTS` — `!다시` 인메모리 스냅샷. 클리어 뒤 첫 턴 전 `!다시`가 이걸
+      `save_domain`으로 복원해 옛 세션이 되살아났다. orchestration 이 아직 안 올라왔으면(스모크·도구) 스냅샷도 없다
+      → import 하지 않고 sys.modules 로만 본다(순환·무거운 import 회피).
+    · `boundary_engine._DIGEST_CACHE` — day 키 하루 산출 캐시."""
+    import sys as _sys_c37
+    try:
+        _orch = _sys_c37.modules.get("orchestration")
+        _snaps = getattr(_orch, "_RETRY_SNAPSHOTS", None) if _orch else None
+        if isinstance(_snaps, dict):
+            _snaps.pop(channel_id, None)
+    except Exception as _e:
+        logging.debug(f"[Clear] retry snapshot forget skipped: {_e}")
+    try:
+        import boundary_engine
+        boundary_engine.forget_channel(channel_id)
+    except Exception as _e:
+        logging.debug(f"[Clear] boundary cache forget skipped: {_e}")
+
+
+def _clear_npc_view(data: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
+    """[2026-10-14 C37 R2·C2] 클리어 생존 NPC dict — 허용 목록(`NPC_CLEAR_KEEP_KEYS`)만 남기고,
+    aliases 에서 `_play_aliases`(플레이가 붙인 별칭)를 뺀다. Returns (새 dict, 뺀 별칭 목록)."""
+    keep = {k: data[k] for k in NPC_CLEAR_KEEP_KEYS if k in data}
+    play = {_normalize_npc_name(a).lower() for a in (data.get("_play_aliases") or []) if isinstance(a, str)}
+    removed: List[str] = []
+    if play and isinstance(keep.get("aliases"), list):
+        _al = []
+        for a in keep["aliases"]:
+            if isinstance(a, str) and _normalize_npc_name(a).lower() in play:
+                removed.append(a)
+            else:
+                _al.append(a)
+        if _al:
+            keep["aliases"] = _al
+        else:
+            keep.pop("aliases", None)
+    # 표시 목록 자체도 페이지 별칭에서 뺄 재료다(dict aliases 에 이미 없던 것 포함 — 게이트가 페이지에 합쳐 뒀을 수 있다).
+    for a in (data.get("_play_aliases") or []):
+        if isinstance(a, str) and a not in removed:
+            removed.append(a)
+    return keep, removed
+
+
+def _pc_inventory_names(inv: Any) -> List[str]:
+    """`!설명` 상자 inventory → 이름 목록(입력 모양 셋: dict 리스트·문자열 리스트·{이름: …} dict)."""
+    names: List[str] = []
+    if isinstance(inv, list):
+        for _it in inv:
+            if isinstance(_it, dict) and _it.get("name"):
+                names.append(str(_it["name"]).strip())
+            elif isinstance(_it, str) and _it.strip():
+                names.append(_it.strip())
+    elif isinstance(inv, dict):
+        names = [str(_k).strip() for _k in inv.keys() if str(_k).strip()]
+    return [n for n in names if n]
+
+
 def reset_session_state(channel_id: str) -> None:
     """
-    세션을 '준비 완료' 상태로 초기화합니다.
+    세션을 '준비 완료' 상태로 초기화합니다(`!클리어`).
+    [2026-10-14 C37] 기준 = **`!시작` 이전 상태**(레티어스). 남는 것 = 준비 단계 입력(로어·룰·참가자·
+      PC/NPC 시트·출력 선언·설정)과 그 결정론적 파생물. 플레이가 만든 것은 전부 간다.
+      판정 질문: "이 값이 `!시작` 전에 있을 수 있었나?" OOC 로 고친 시트 원문(lore 절)은 입력 편집이라 남는다.
+      스펙 state_v10/C37_클리어정리_지도·스펙_2026-10-14.md.
     - 로어, 룰, 참가자 명단 유지
     - 히스토리, 발효 기억, 심층 기억 삭제
     - 월드 상태 초기화 (1일차, 오후)
@@ -4275,6 +4529,17 @@ def reset_session_state(channel_id: str) -> None:
                 "_last_chronicle_ferment_count", "_last_memory_gc_ferment_count"):
         d.pop(_fk, None)
     d["ai_session_memory"] = _get_default_session()["ai_session_memory"]
+    # [2026-10-14 C37 R7] 루트 키 플레이 부기 — 전엔 클리어를 넘었다.
+    #   telescope_logs: 직전 착지 노트(오프닝 노트가 비면 옛 노트가 첫 턴 마지막 Model 메시지에 붙었다).
+    #   npc_milestone_tracking: 첫 엣지에서 옛 단계 대비 헛 '[NPC Connection Shift]' 힌트.
+    #   내보내기 커서: 옛 길이를 넘을 때까지 증분 내보내기가 "새 내역 없음".
+    d["telescope_logs"] = []
+    d.pop("npc_milestone_tracking", None)
+    d["last_export_idx"] = 0
+    d["last_chronicle_idx"] = 0
+    d["last_chronicle_export_ts"] = 0.0
+    # [2026-10-14 C37 R6] `!다시` 창 — 클리어 뒤 첫 턴 전 `!다시`가 옛 컨텍스트로 옛 스냅샷을 복원했다.
+    d["last_execution_context"] = None
     # [V10 Sprint 3] 영구 로그도 삭제 — 리셋=완전 새 이야기 (사용자 결정 2026-06-10).
     # [V10 P4] fermented/deep 테이블은 함수 끝 save_domain의 이음매가 위 빈 값으로 비운다.
     try:
@@ -4320,10 +4585,12 @@ def reset_session_state(channel_id: str) -> None:
     # 2. Reset World State
     # [2026-09-24 감사] `!룰 추가`의 하우스 룰은 world_state(rules_text·location_rules)에 산다 — 통째 교체로
     #   매 `!클리어`마다 사라졌는데 완료 안내는 "유지됨: …룰"이었다. 두 키는 이월한다.
+    # [2026-10-14 C37 R5] world_constraints 도 — `!lore` 분석이 쓰는 세계 규칙(체계·사회·금기)인데 같은 병으로
+    #   클리어마다 사라졌다(소비: game_world.get_world_context '세계 규칙' 줄·world_board).
     _old_ws = d.get("world_state") or {}
     import copy as _copy_rs
     d["world_state"] = _copy_rs.deepcopy(config.DEFAULT_WORLD_STATE)  # 얕은 .copy()는 중첩 list(doom_clocks 등)를 기본값과 공유
-    for _rk in ("rules_text", "location_rules"):
+    for _rk in ("rules_text", "location_rules", "world_constraints"):
         if _old_ws.get(_rk):
             d["world_state"][_rk] = _old_ws[_rk]
     d["settings"]["session_locked"] = False # Unlock for re-start
@@ -4336,28 +4603,66 @@ def reset_session_state(channel_id: str) -> None:
     
     # 4. Reset Session NPCs (Keep 'lore' + 'manual' NPCs)
     # AI가 생성한 세션 NPC만 제거, 유저가 직접 등록한 NPC는 보존
-    if "npcs" in d:
+    # [2026-10-14 C37 R2] 남는 인물도 **허용 목록**(`NPC_CLEAR_KEEP_KEYS`)만 남긴다 — 전엔 JSON 에서
+    #   appearances 하나만 뺐고, 그마저 읽기 정본(SQLite npcs 행, V10_NPCS_READ_FROM_SQLITE)엔 닿지 않았다
+    #   (save_domain 은 sessions 블롭만 쓴다). 사망·충동·soma·등장 부기·grow_sheet 면모가 2회차로 넘어갔다.
+    #   순회 원천 = SQLite 행(+행 없는 JSON 이름). 걸러낸 dict 는 `_mirror_npc`로 다시 써 data·status 컬럼을 맞춘다.
+    # [C37 C2] aliases 에서 `_play_aliases`(플레이 승격·정정 병합이 붙인 별칭)를 빼고, 페이지 별칭에서도 뺀다.
+    kept_names: List[str] = []
+    _alias_drop: Dict[str, List[str]] = {}
+    _rows_r = None
+    try:
+        import sqlite_store as _ss_r
+        if getattr(config, "V10_NPCS_READ_FROM_SQLITE", False):
+            _rows_r = _ss_r.read_npcs(channel_id)
+    except Exception:
+        _ss_r, _rows_r = None, None
+    _src_npcs: Dict[str, Any] = dict(d.get("npcs") or {})
+    if isinstance(_rows_r, dict):
+        _src_npcs.update(_rows_r)   # 행이 정본 — 같은 이름이면 행이 이긴다
+    if _src_npcs or "npcs" in d:
         kept_npcs = {}
         try:
             import wiki_store as _ws_r
             _lm_r = _ws_r.character_lore_map(channel_id, with_source=True)   # [§H] 시드 도장 동반
         except Exception:
             _lm_r = None
-        for name, data in d["npcs"].items():
+        for name, data in _src_npcs.items():
             if (derive_npc_source(data, channel_id, name, lore_map=_lm_r) if _lm_r is not None
                     else derive_npc_source(data)) in ("lore", "manual"):
                 # [2026-07-05 혼입 수리] 시트 원본은 유지하되 플레이 파생 필드는 세션 소속 → 제거.
                 #   (관찰은 2026-09-16부터 페이지 play 절 — wiki_store.clear_play가 비운다)
                 if isinstance(data, dict):
-                    data.pop("appearances", None)
+                    data, _rm = _clear_npc_view(data)
+                    if _rm:
+                        _alias_drop[name] = _rm
                 kept_npcs[name] = data
         d["npcs"] = kept_npcs
-        # [V10 Sprint 2-B] npcs 테이블 미러 (clear_session_npcs와 동일 보존 정책)
+        kept_names = list(kept_npcs.keys())
+        # [V10 Sprint 2-B] npcs 테이블 미러 — [C37] 행 삭제는 위 판정과 **같은 이름 집합**을 따른다
+        #   (source 컬럼은 마지막 쓰기 도장이라 파생 판정과 어긋날 수 있다). 행을 못 읽었으면 종전 방식.
         try:
             import sqlite_store
-            sqlite_store.delete_npcs_except_sources(channel_id, ("lore", "manual"))
+            if isinstance(_rows_r, dict):
+                for _nm in _rows_r:
+                    if _nm not in kept_npcs:
+                        sqlite_store.delete_npc_row(channel_id, _nm)
+            else:
+                sqlite_store.delete_npcs_except_sources(channel_id, ("lore", "manual"))
         except Exception as _e:
             logging.debug(f"[V10] reset npc mirror skipped: {_e}")
+        for _nm, _nd in kept_npcs.items():
+            if isinstance(_nd, dict):
+                _mirror_npc(channel_id, _nm, _nd)
+        if _alias_drop:
+            try:
+                import wiki_store as _ws_al
+                for _nm, _rm in _alias_drop.items():
+                    _ws_al.remove_page_aliases(channel_id, _ws_al.page_id_for("character", _nm), _rm)
+                logging.info(f"[Clear] 플레이 별칭 제거: "
+                             + ", ".join(f"{k}({len(v)})" for k, v in _alias_drop.items()))
+            except Exception as _e_al:
+                logging.debug(f"[Clear] page alias strip skipped: {_e_al}")
 
     # [2026-09-14 W4] 내부 위키 수명 — 페이지는 npcs와 **같은 정책**이다.
     #   play 절·리비전 전량 + source ∉ {lore, manual} 페이지 삭제. lore 절·lore 페이지는 생존.
@@ -4376,6 +4681,7 @@ def reset_session_state(channel_id: str) -> None:
         fermentation.forget_channel_recall(channel_id)
     except Exception as _e:
         logging.debug(f"[Wiki] forget_channel_recall skipped: {_e}")
+    _forget_channel_process_memory(channel_id)   # [2026-10-14 C37 R6·R8]
 
     # 5. Reset Participant Runtime State (vigor/composure/notebook — 로어 프로필은 유지)
     # [2026-08-18 Phase 2.5] 활력의 정본은 레지스트리로 옮겨갔다.
@@ -4384,16 +4690,60 @@ def reset_session_state(channel_id: str) -> None:
     #   2단(위)에서 world_state 를 DEFAULT 사본으로 통째 갈아엎은 뒤라 값 층 자체가 이미 없다.
     #   남겨두면 "값 층이 여기서 관리된다"는 거짓 신호가 되고, 선언/값 층 분리(P7) 뒤엔
     #   값 초기화의 정본이 custom_vars._initial_value 폴백이라는 사실을 가린다.
+    # [2026-10-14 C37 R4] PC 플레이 잔재:
+    #   조각 — origin=play 를 버린다(play 절 Observed 는 clear_play 가 비우는데 거기서 뽑은 조각만 남았다).
+    #     origin 없는 옛 조각은 normalize_fragment 기본값과 같이 sheet 로 읽는다.
+    #   journal_log(`!일지`)·archived_info/foreshadowing(첫 발효 입력)·_status_names_prev(첫 턴 헛 expired) 삭제.
+    #   노트북 — 비운다(메모·일지).
+    #   [2026-10-23 C61 R4] 소지품 = 기본 선언 목록(world_state 값 층). 2단에서 world_state 를 통째 갈았으니
+    #     루프 뒤에서 `sheet_inventory`(`!설명` 시트 소지품) 이름마다 1개로 **명시**한다 — 빈 {} 라도 키가 있어야
+    #     옛 노트북 이월(custom_vars._legacy_sojipin)이 다시 안 돈다. 거울 ai_memory.inventory 는 폐지(옛 키만 치운다).
+    _seed_names: List[str] = []
     for uid, pdata in d.get("participants", {}).items():
         mem = pdata.get("ai_memory", {})
         mem["vigor"] = {"value": 100, "last_delta": 0}
         mem["composure"] = {"value": 100, "last_delta": 0}
         mem.pop("mental", None)  # 레거시 제거
-        mem["judgment_momentum"] = 0
+        mem.pop("judgment_momentum", None)  # [2026-10-15 C40 C4] 기세 삭제 — 옛 값만 치운다
+        _ps = mem.get("passives")
+        if isinstance(_ps, list):
+            mem["passives"] = [f for f in _ps
+                               if isinstance(f, dict) and str(f.get("origin") or "sheet") == "sheet"]
+        for _pk in ("journal_log", "archived_info", "archived_foreshadowing", "_status_names_prev"):
+            mem.pop(_pk, None)
         pdata["notebook"] = notebook_default()
+        _seed_names.extend(_pc_inventory_names(mem.get("sheet_inventory")))
+        mem.pop("inventory", None)
+        pdata["ai_memory"] = mem
         pdata["status_effects"] = []
+        pdata["strikes"] = []   # [2026-10-15 C42] 타격칸도 같이 비운다
+    try:
+        import custom_vars as _cv_clr
+        _ws_clr = d.get("world_state") if isinstance(d.get("world_state"), dict) else {}
+        _vals_clr = _ws_clr.get(_cv_clr.KEY_VALS) if isinstance(_ws_clr.get(_cv_clr.KEY_VALS), dict) else {}
+        _vals_clr[_cv_clr.SOJIPIN] = _cv_clr.sojipin_seed_entry(_seed_names)
+        _ws_clr[_cv_clr.KEY_VALS] = _vals_clr
+        d["world_state"] = _ws_clr
+    except Exception as _e_sj:
+        logging.debug(f"[Clear] 소지품 시드 skipped: {_e_sj}")
 
     save_domain(channel_id, d)
+
+    # [2026-10-14 C37 R3·R2] 장소 트리 — **save 뒤**에 돈다. world_tree 는 get_domain/save_domain 을 스스로
+    #   돌기 때문에 위 저장 전에 돌면 순서에 따라 d 저장이 트리 변경을 덮을 수 있다.
+    #   플레이 장소(auto_detected)·출석·호칭 표지·환경 효과를 걷고, 남는 인물을 시트 거처에 다시 앉힌다.
+    try:
+        import world_tree as _wt_r
+        _wt_r.strip_play(channel_id)
+    except Exception as _e_wt:
+        logging.debug(f"[Clear] world_tree strip skipped: {_e_wt}")
+    if kept_names:
+        try:
+            import npc_manager as _nm_r
+            for _nm in kept_names:
+                _nm_r.seat_sheet_residence(channel_id, _nm)
+        except Exception as _e_seat:
+            logging.debug(f"[Clear] sheet residence reseat skipped: {_e_seat}")
 
 # =========================================================
 # 5b. CHRONICLE STORAGE

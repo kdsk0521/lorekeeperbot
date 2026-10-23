@@ -719,8 +719,10 @@ OUTPUTS_MAX_OUTPUT_TOKENS = 8192
 
 # [2026-09-09 P12] 8번째 키 `entries` — 이름 붙은 append 섹션에 쌓을 한 줄들.
 #   콜 ±0: 스키마에 키 하나가 늘 뿐이고 블록은 append 섹션이 **있을 때만** 붙는다.
+# [2026-10-15 C42] 타격칸 키 둘(strike_add·strike_clear) — 마이너스 상태 전용 4칸, 활력·평형 토글과 같이 켠다.
 _OUTPUTS_KEYS = ("deltas", "memo_add", "memo_remove",
-                 "status_add", "status_remove", "cues", "operations", "entries")
+                 "status_add", "status_remove", "cues", "operations", "entries",
+                 "strike_add", "strike_clear")
 # 옛 이름 → 새 이름. 섹션 넷이 한 스키마로 합쳐지면서 모델이 옛 키로 흘리는 경우를 접는다.
 _OUTPUTS_ALIASES = {"custom_var_deltas": "deltas", "transition_cues": "cues",
                     "custom_vars": "deltas"}   # [2026-10-11 C28] 섹션 이름으로 감싼 판(재생 1/18) 관용
@@ -770,6 +772,8 @@ async def extract_outputs(
     append_sections: Optional[List[Dict[str, Any]]] = None,
     handout: str = "",
     pc_name: str = "",
+    include_strikes: bool = False,
+    current_strikes: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """이번 턴 출력물 전량을 **한 콜·한 스키마**로 받는다.
 
@@ -781,7 +785,7 @@ async def extract_outputs(
     #   선언돼 있으면 콜은 돈다. 산문에 그 낱말이 없으면 항목 0이 나오는 것이 정상이고,
     #   그건 결핍이 아니라 답이다(부재 감지 0).
     feeds = bool(custom_vars_feed or cues_feed or operations_feed or append_sections)
-    if not feeds and not include_notebook:
+    if not feeds and not include_notebook and not include_strikes:
         return _normalize_outputs(None)
 
     # [2026-10-07 S3] 머리는 **실린 섹션의 키만** 부른다. 전엔 늘 8키를 불러 custom_vars 하나만 실린 판에서
@@ -791,6 +795,8 @@ async def extract_outputs(
         _keys_on.append("`deltas`")
     if include_notebook:
         _keys_on += ["`memo_add`", "`memo_remove`", "`status_add`", "`status_remove`"]
+    if include_strikes:
+        _keys_on += ["`strike_add`", "`strike_clear`"]
     if cues_feed:
         _keys_on.append("`cues`")
     if operations_feed:
@@ -1014,10 +1020,24 @@ async def extract_outputs(
         "3. UPDATE-IN-PLACE: if an existing '>' memo's fact changed, memo_remove the stale line and memo_add the revised one.\n"
         "4. HYGIENE: never re-add a line already present. If nothing changed this turn, return empty lists.\n\n"
         "### [STATUS]\n"
-        "- status_add / status_remove: the PLAYER CHARACTER's OWN physical or mental conditions gained or cleared this turn.\n"
+        "- status_add / status_remove: the PLAYER CHARACTER's OWN helpful conditions gained or lost this turn "
+        "(focused, hidden, blessed, steeled). Lasting harm belongs to strike_add instead.\n"
         "- NPC wounds/states are NOT player status — however vividly described, skip them. Unsure whose condition it is → skip.\n\n"
         "### [FORMAT]\n"
         "- Each memo_add / memo_remove entry is ONE short line of plain text. No headers, no bullets, no notebook dump."
+        )
+
+    # [2026-10-15 C42] 타격칸 — 페이트 consequence. 채우기·비우기의 주인이 이 콜 하나다(산문 뒤).
+    #   칸 등급이 비우는 문턱(1·2 장면이 넘어가거나 손을 보면 · 3 제대로 쉬어야 · 4 회복 장면).
+    if include_strikes:
+        sys_parts.append(
+        "## [STRIKES — THE PLAYER CHARACTER'S LASTING HARM, 4 SLOTS]\n"
+        "- strike_add [short Korean names]: harm this turn's prose leaves on the PLAYER CHARACTER that outlasts "
+        "the moment, body or mind: a broken wrist, a gash along the ribs, a panic that holds. Name it the way the "
+        "prose shows it. A passing sting, a lost breath, plain tiredness stays with the reserves (vigor, composure).\n"
+        "- strike_clear [names verbatim from Strikes]: a strike the prose shows healing. Its slot sets how much "
+        "recovery that takes: slots 1-2 a scene's turn or tending, slot 3 real rest, slot 4 a recovery the story shows.\n"
+        "- NPC harm belongs to the NPC; skip it. A strike already listed stays as it is; add only what is new."
         )
 
     ctx_parts = []
@@ -1026,6 +1046,10 @@ async def extract_outputs(
         ctx_parts.append(f"Player character: {str(pc_name).strip()}")
     if include_notebook:
         ctx_parts.append(f"Notebook Content:\n{notebook}\nStatus:{current_status}")
+    if include_strikes:
+        _sk = list(current_strikes or [])[:4]
+        _sk += [""] * (4 - len(_sk))
+        ctx_parts.append("Strikes: " + " | ".join(f"{i + 1} {x or '—'}" for i, x in enumerate(_sk)))
     # [2026-09-13 P16] 이번 턴 **도착물 원문**. 급식(Slot 29)이 산문 앞에서 읽은 그 편지다 —
     #   추출이 이걸 못 보면 "의뢰가 오면 `의뢰` 목록에 추가"가 영영 안 돈다(편지가 '의뢰'라는
     #   낱말을 쓰든 말든 산문은 그 일을 다루기 때문). 콜 순증 0 — 같은 콜의 입력 한 덩이다.
@@ -1044,7 +1068,8 @@ async def extract_outputs(
     #   그대로 써지던 자리(NPC 상처 문장·dict 문자열). 반환 계약(8키·리스트)은 그대로.
     _section_of = {"deltas": bool(custom_vars_feed), "memo_add": include_notebook, "memo_remove": include_notebook,
                    "status_add": include_notebook, "status_remove": include_notebook, "cues": bool(cues_feed),
-                   "operations": bool(operations_feed), "entries": bool(append_sections)}
+                   "operations": bool(operations_feed), "entries": bool(append_sections),
+                   "strike_add": include_strikes, "strike_clear": include_strikes}
     for _k, _on in _section_of.items():
         if not _on and _out.get(_k):
             logger.info(f"[B-Outputs] 섹션 없는 키 버림: {_k}({len(_out[_k])})")
@@ -1379,19 +1404,22 @@ Extract the mechanical pieces of one character from the provided sheet text.
 
 ## Extraction Rules:
 1. Name/Species: Identify the basic identity (as written).
-2. Passives (sheet fragments): permanent skills, traits, abilities the sheet states.
+2. Passives (sheet fragments): every capability or flaw the sheet gives that an action could lean on —
+   body (an extra limb, a tentacle hand, a keen nose), training and trade, long habits,
+   standing that opens doors, and flaws that get in the way. One fragment per thing; split compound traits.
    - name: Korean, as written. desc: Korean; any condition stays in desc as words.
-   - value: closed keys only — ROLL_KEYS (int -20~+20, roll bonus/penalty for that action type) and cost (negative int -1~-8, discount on desperate effort). Relevant keys only; {} when the sheet gives no mechanical edge.
-3. Inventory: items and equipment. modifiers: ROLL_KEYS only, relevant keys only.
+   - value: {"edge": 1} for a help, {"edge": -1} for a hindrance.
+3. Inventory: items and equipment (name, qty, tags).
 4. Language: names/descriptions in KOREAN. Do not summarize appearance, personality or history — the sheet text itself is kept.
 
 ## Output JSON Schema:
 {
   "name": "str",
   "species": "str",
-  "passives": [ {"name": "str", "desc": "str", "value": {"roll_<type>": 0, "cost": 0}} ],
-  "inventory": [ {"name": "str", "qty": 1, "tags": ["str"], "modifiers": {"roll_<type>": 0}} ]
-}""".replace("ROLL_KEYS", "roll_<type> with type in " + "/".join(config.ACTION_TYPES))
+  "passives": [ {"name": "str", "desc": "str", "value": {"edge": 1}} ],
+  "inventory": [ {"name": "str", "qty": 1, "tags": ["str"]} ]
+}"""
+    # [2026-10-15 C42] 조각 = 이름 판단(값은 강점/약점 부호 하나) + 넓게 뽑기. 소지품 modifiers·cost 퇴역(소비 0).
 
     try:
         gen_config = types.GenerateContentConfig(
@@ -1464,7 +1492,7 @@ async def condense_play_section(
     fragments_rule = ("""
 - fragments: permanent capability that play has settled (repeated or decisive), absent from AUTHOR SHEET and EXISTING FRAGMENTS. [] when none; most condenses yield [].
   - name: Korean.
-  - value: closed keys only — roll_<type> (int -20~+20) and cost (negative int -1~-8); type in """ + "/".join(config.ACTION_TYPES) + """. Relevant keys only; {} when no mechanical edge.
+  - value: {"edge": 1} for a help, {"edge": -1} for a hindrance.
   - quote: one sentence copied character-for-character from YOUR observed output that settles it, conditions included. That sentence becomes the fragment text and leaves observed. No quote match = candidate discarded.""" if want_fragments else "")
     # [2026-09-22 voice_seed §J] 시드 시트만 — 굴림이 준 뼈대 위에 플레이가 seam·방백을 앉힌다.
     #   기전 두 줄은 canon(굴림 주소 그 자체)이라 절대 건드리지 않는다. 문장은 배선 스펙 §J 그대로.
@@ -1482,6 +1510,10 @@ async def condense_play_section(
 - Rewrite OBSERVED into a condensed Korean body: keep every distinct fact that play revealed
   (concrete behavior, stated facts, changes); merge duplicates; drop what the author sheet already says.
 - Telegraphic observable behavior, not finished prose. Newest facts first.
+- A fact that changed over time (how they address someone, a relationship, where they live or stay, alive or not)
+  stays as ONE sentence, current state first and the former in parentheses: "지금은 이름으로 부른다(예전엔 선배)."
+  OBSERVED lists newer facts first: when two sentences cannot both be true now, the earlier one is current.
+  Old and new never stand as two separate facts.
 - No length padding — shorter is better when nothing is lost.{aspects_rule}{seed_rule}{fragments_rule}
 
 ## Output JSON
@@ -1506,7 +1538,11 @@ async def condense_play_section(
             safety_settings=config.SAFETY_SETTINGS,
         )
         # [2026-09-24] 정화는 전송 사본에만 — 출력(= 저장될 Observed·면모·seam·조각 quote)은 표식을 원문으로 되돌린다.
-        _masked, _mask_map = _mask_for_analysis(prompt)
+        # [2026-10-18 C51] 시트 정리 콜은 정화를 거치지 않는다(손잡이 MINOR_SANITIZE_CONDENSE, 기본 꺼짐) — 표식도 없다.
+        if getattr(config, "MINOR_SANITIZE_CONDENSE", False):
+            _masked, _mask_map = _mask_for_analysis(prompt)
+        else:
+            _masked, _mask_map = prompt, []
         if _mask_map:
             _masked = _masked.replace(
                 "## Rules\n",

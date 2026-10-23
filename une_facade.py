@@ -373,19 +373,25 @@ CONSEQUENCE_DIRECTIVES = {
         "the PC's intent is achieved, but one unwanted change follows with it. "
         "What was lost, exposed, or complicated takes concrete shape. "
         "a partial success carries a cost; the cost-free version doesn't exist. "
-        "with NPCs present, their reaction to witnessing it surfaces."
+        "with NPCs present, their reaction to witnessing it surfaces. "
+        # [2026-10-15 C40 B4] 억까 4단계 결
+        "The PC's reach falls a little shy of what was hoped."
     ),
     "failure": (
         "the PC's intent goes unachieved. "
         "The situation is now different from before the attempt — more than 'it didn't work.' "
         "What has changed shows in the scene. "
-        "with NPCs present, their reaction to witnessing it surfaces."
+        "with NPCs present, their reaction to witnessing it surfaces. "
+        # [2026-10-15 C40 C3] 실패 대가 5단계
+        "The PC carries the cost out of the scene and stands somewhere tighter than before."
     ),
     "critical_failure": (
         "an irreversible change occurs in this scene. "
         "The opposite of the PC's intent comes about, or an unforeseen reality reveals itself. "
         "The world after this moment differs from the world before. "
-        "with NPCs present, their reaction to witnessing it surfaces."
+        "with NPCs present, their reaction to witnessing it surfaces. "
+        # [2026-10-15 C40 C3] 실패 대가 5단계
+        "What it costs the PC stays: a wound, exhaustion, or a loss that outlasts the scene."
     ),
 }
 
@@ -434,18 +440,7 @@ def _build_judgment_layer(bus, mask: str) -> str:
     if cons_dir:
         lines.append(cons_dir)
 
-    # Effort / Absorb (각오 / 흡수) — from dead code migration
-    effort_used = judgment.get("effort_used")
-    if effort_used:
-        eu_action = effort_used.get("action", "")
-        if judgment.get("absorb_applied"):
-            lines.append(f"the PC gave everything to {eu_action} and still failed; resolve spared them the worst.")
-        elif result in ("failure", "critical_failure"):
-            lines.append(f"the PC staked all on {eu_action} and failed; the price paid spared the worst.")
-        else:
-            lines.append(f"the PC paid the price for {eu_action}, and it was worth it.")
-    elif isinstance(bus.dai, dict) and bus.dai.get("effort_failed"):
-        lines.append("the PC steeled themselves, but the body wouldn't follow.")
+    # [2026-10-15 C42] Effort / Absorb(각오 / 흡수) 줄 삭제 — 각오 퇴역.
 
     return "\n".join(lines)
 
@@ -976,7 +971,10 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
         "sheet": _pc_anchor.get("sheet", ""),
         "passives": mem.get("passives", []),
         "status_effects": p_data.get("status_effects", []) if p_data else [],
-        "inventory": game_character.migrate_notebook_to_inventory(mem.get("inventory", [])).get("items", []),
+        # [2026-10-15 C42] 타격칸 이름(빈 칸 제외) — Theoria PC 블록 `- Strikes:`·판정 active_strikes 확인이 읽는다.
+        "strikes": game_character.strike_names(p_data or {}),
+        # [2026-10-23 C61] 소지품 정본 = 기본 선언 목록 — [{name, qty}]. Theoria `- Inventory:`·판정 `_item_names`.
+        "inventory": game_character.sojipin_anchor(channel_id),
         "memos": mem.get("memos", [])
     }
 
@@ -990,6 +988,7 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
                 "mask": pdata.get("mask", "Unknown"),
                 "sheet": domain_manager.get_unified_player_info(channel_id, uid, shape="anchor").get("sheet", ""),
                 "passives": pmem.get("passives", []),
+                "strikes": game_character.strike_names(pdata),   # [2026-10-15 C42]
                 # [Phase 2.5] 활력은 레지스트리 우선(PC별 슬롯), 없으면 옛 자리 폴백.
                 "vigor_value": _cv_vigor(channel_id, uid, pmem),
                 "composure_value": _cv_composure(channel_id, uid, pmem),  # [2026-09-24 감사] 동결된 옛 자리 읽기 교정
@@ -1354,9 +1353,6 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
     bus.vigor["module_active"] = _vc_on
     bus.composure["module_active"] = _vc_on
 
-    # Momentum 로드 (이전 턴 판정 결과의 여운)
-    bus.judgment["momentum_carry"] = mem.get("judgment_momentum", 0)
-
     context = GameContext(
         request=RequestData(
             user_input=user_input,
@@ -1431,14 +1427,8 @@ def sync_from_game_context(channel_id: str, user_id: str, ctx: Any) -> None:
         except Exception as _e_st:
             logger.warning("[StatusTransition] diff skipped: %s", _e_st)
 
-        # Momentum 저장 (다음 턴 carry)
-        # [2026-09-24 감사] 판정이 carry 를 **실제로 소비한 턴**에만 교체/삭제한다. 전엔 판정 없는 턴마다
-        #   pop → 3차에서 복원된 쿨다운(T+1 판정 차단)과 겹쳐 기세가 표시만 되고 적용 0이었다.
-        momentum_next = bus.judgment.get("momentum_next", 0)
-        if momentum_next != 0:
-            mem["judgment_momentum"] = momentum_next
-        elif bus.judgment.get("momentum_consumed"):
-            mem.pop("judgment_momentum", None)
+        # [2026-10-15 C40 C4] 기세(judgment_momentum) 운반 삭제 — 판정 수치는 시계만. 옛 값은 치운다.
+        mem.pop("judgment_momentum", None)
 
         domain_manager.save_participant_data(channel_id, user_id, p_data)
 
@@ -1464,7 +1454,8 @@ class UniversalNarrativeEngine:
         return {
             "game_context": updated_context,
             "directive": result["directive"],
-            "system_message": result["system_msg"]
+            "system_message": result["system_msg"],
+            "judgment_embeds": result.get("judgment_embeds", []),   # [2026-10-15 C42]
         }
 
     async def run_batch(self, channel_id: str, pending_actions: Dict[str, Dict]) -> Dict[str, Any]:
@@ -1570,6 +1561,10 @@ class UniversalNarrativeEngine:
         return {
             "directive": "\n\n".join(part for part in layers if part).strip(),
             "system_msg": _build_system_message(bus),
+            # [2026-10-15 C42] 판정 임베드 데이터(한 줄은 system_msg 에, 이유·형세·주사위·수정치·결과 영향은 여기).
+            "judgment_embeds": ([bus.judgment["embed"]]
+                                if isinstance(bus.judgment, dict) and bus.judgment.get("active")
+                                and isinstance(bus.judgment.get("embed"), dict) else []),
             "has_anomaly": bool(bus.anomaly and bus.anomaly.get("triggered")),
             "anomaly_header": "",
             # [2026-08-11 비일상적응도 삭제] adaptation_line 키 제거 — 항상 "" + 소비자 0
@@ -1581,6 +1576,7 @@ class UniversalNarrativeEngine:
         all_directives: List[str] = []
         system_chunks: List[str] = []
         seen_sys = set()
+        embeds: List[Dict[str, Any]] = []   # [2026-10-15 C42] PC별 판정 임베드(한 메시지 최대 10)
 
         for result in results:
             directive = (result.get("directive") or "").strip()
@@ -1591,10 +1587,12 @@ class UniversalNarrativeEngine:
             if sys_msg and sys_msg not in seen_sys:
                 seen_sys.add(sys_msg)
                 system_chunks.append(sys_msg)
+            embeds.extend(e for e in (result.get("judgment_embeds") or []) if isinstance(e, dict))
 
         return {
             "game_context": last_context,
             "directive": "\n\n".join(all_directives).strip(),
             "system_message": "\n\n".join(system_chunks).strip(),
+            "judgment_embeds": embeds[:10],
         }
 

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- 서버가 __DISCORD_CLIENT_ID__ 를 .env 값(숫자)으로, __ASSET_VER__ 를 app.js+style.css 내용 해시로 바꿔 보낸다. 인라인 스크립트는 쓰지 않는다. -->
+  <meta name="discord-client-id" content="__DISCORD_CLIENT_ID__">
+  <title>로어키퍼</title>
+  <link rel="stylesheet" href="/style.css?v=__ASSET_VER__">
+</head>
+<body class="at-home">
+  <!-- [C67 A1] 홈 + 앱 두 층. 버튼 자리만 여기 있고 아이콘·글자·켜고 끄기는 app.js 가 한다(규칙 문서 §4). -->
+  <header id="bar">
+    <button type="button" id="nav-back" class="nav-btn" aria-label="뒤로" title="뒤로">←</button>
+    <h1 id="title" class="bar-title">로어키퍼</h1>
+    <button type="button" id="nav-edit" class="nav-btn" aria-label="편집" title="편집">✎</button>
+    <button type="button" id="refresh" class="nav-btn" title="새로고침" aria-label="새로고침">↻</button>
+  </header>
+  <main id="view"><p class="muted">연결 중…</p></main>
+  <nav id="appbar" aria-label="앱 동작">
+    <button type="button" id="ab-back" aria-label="뒤로">뒤로</button>
+    <button type="button" id="ab-home" aria-label="홈">홈</button>
+    <button type="button" id="ab-edit" aria-label="편집">편집</button>
+  </nav>
+  <script src="/sdk.js?v=2.5.0"></script>
+  <script src="/app.js?v=__ASSET_VER__"></script>
+</body>
+</html>

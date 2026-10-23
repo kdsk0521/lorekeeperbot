@@ -19,14 +19,18 @@ Boundary Engine — 시간 경계 틱  [2026-09-06 출력물 스펙 §0.6 / §0.
 매턴 LLM 콜 순증 0. 경계 턴에만, 그것도 **배경 큐**로 콜 1개(light).
 렌더는 이 모듈을 기다리지 않는다.
 
+[2026-10-23 C62 M3] 하루 일을 **누가 하나**는 이제 모듈 틀이 쥔다 — 옛 SUBSCRIBERS 목록 대신
+module_frame 의 ON_DAY 정거장(builtin_modules: 10 하루 연산 · 20 NPC 회복 · 30 일지 · 40 패널 day 칸).
+이 파일에 남는 것 = 날짜 키·마커·감지(on_turn) + 하루 콜 주인(_day_digest 캐시·잠금) + 일지 쓰기 + 패널 day 병합.
+새 하루 일은 여기 말고 모듈 선언에 `stations={ON_DAY: …}` 한 줄.
+
 discord 무의존(순수 도메인). status_panel 은 지연 import 로만 만진다.
 """
 
 import asyncio
-import inspect
 import json
 import logging
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import config
 import domain_manager
@@ -130,27 +134,20 @@ def check_boundary(channel_id: str) -> Optional[Dict[str, Any]]:
 
 
 # =========================================================
-# 구독자 레지스트리
-# =========================================================
-# 경계 1회당 순서대로 1회씩. 하나가 죽어도 나머지는 돈다(각각 try, warning 1줄).
-# 시그니처는 (channel_id, info) -> None. 코루틴이면 await 한다.
-# P3(expr cadence=day) · P8 이 여기 붙는다.
-SUBSCRIBERS: List[Callable[[str, Dict[str, Any]], Any]] = []
-
-
-def register_subscriber(fn: Callable[[str, Dict[str, Any]], Any]) -> None:
-    if callable(fn) and fn not in SUBSCRIBERS:
-        SUBSCRIBERS.append(fn)
-
-
-# =========================================================
 # 하루 1회 배경 콜 (light) — 일지 + day 섹션 묶음
 # =========================================================
-# 콜은 **하나**다. 구독자 A(일지)와 B(패널 day 섹션)가 같은 산출을 나눠 쓴다.
-# 두 번째 구독자는 캐시를 맞으므로 실제 API 왕복은 경계당 1회다.
+# 콜은 **하나**다. 일지(ON_DAY 30)와 패널 day 섹션(ON_DAY 40)이 같은 산출을 나눠 쓴다.
+# 두 번째는 캐시를 맞으므로 실제 API 왕복은 경계당 1회다.
 _DIGEST_CACHE: Dict[str, Any] = {}      # channel_id -> (now_day, result)
 _DIGEST_LOCKS: Dict[str, asyncio.Lock] = {}
 _CLIENT: Any = None                     # on_turn 이 채운다(오케스트레이터의 genai client)
+
+
+def forget_channel(channel_id: str) -> bool:
+    """[2026-10-14 C37 R8] `!클리어`·`!리셋` — 채널의 하루 산출 캐시를 비운다.
+    키가 day 라서, 안 비우면 새 세션의 같은 날짜 경계가 옛 세션 일지 산출을 그대로 받는다.
+    락은 두지 않는다(돌고 있는 콜이 쥐고 있을 수 있다 — 캐시만 간다)."""
+    return _DIGEST_CACHE.pop(str(channel_id or ""), None) is not None
 
 
 def _prose_row_cap() -> int:
@@ -173,7 +170,8 @@ def collect_day_prose(channel_id: str, prev_day: str) -> List[str]:
         return []
     out: List[str] = []
     for entry in reversed(rows):            # 최근 → 과거
-        if not isinstance(entry, dict) or entry.get("role") != "model":
+        # [2026-10-17 C49 R5] 라이브 산문 행 역할은 "Model" — 소문자만 보던 탓에 일지 콜이 산문 0행으로 돌았다.
+        if not isinstance(entry, dict) or str(entry.get("role") or "").lower() != "model":
             continue
         gt = entry.get("game_time")
         if isinstance(gt, str):
@@ -375,7 +373,7 @@ async def _day_digest(channel_id: str, info: Dict[str, Any]) -> Optional[Dict[st
 
 
 # =========================================================
-# 구독자 A — 일지 필자
+# 일지 필자 — 일지 모듈(ON_DAY 30)이 부른다
 # =========================================================
 
 def apply_journal_lines(channel_id: str, prev_day: str, lines: List[str]) -> int:
@@ -414,8 +412,8 @@ def apply_journal_lines(channel_id: str, prev_day: str, lines: List[str]) -> int
     return len(stamped)
 
 
-async def _sub_journal(channel_id: str, info: Dict[str, Any]) -> None:
-    """구독자 A. 콜은 배경 큐에 — 렌더는 이걸 기다리지 않는다."""
+async def queue_journal(channel_id: str, info: Dict[str, Any]) -> None:
+    """일지 — 옛 구독자 A(`_sub_journal`). 콜은 배경 큐에 — 렌더는 이걸 기다리지 않는다."""
     async def _task():
         res = await _day_digest(channel_id, info)
         if not res:
@@ -432,11 +430,11 @@ async def _sub_journal(channel_id: str, info: Dict[str, Any]) -> None:
 
 
 # =========================================================
-# 구독자 B — 패널 day 섹션
+# 패널 day 섹션 — 상태패널 모듈(ON_DAY 40)이 부른다
 # =========================================================
 
-async def _sub_panel_day(channel_id: str, info: Dict[str, Any]) -> None:
-    """구독자 B. 같은 콜의 sections 산출을 status_panel 저장값에 병합한다."""
+async def queue_panel_day(channel_id: str, info: Dict[str, Any]) -> None:
+    """패널 day 칸 — 옛 구독자 B(`_sub_panel_day`). 같은 콜의 sections 산출을 status_panel 저장값에 병합한다."""
     async def _task():
         try:
             import status_panel as _sp
@@ -462,36 +460,8 @@ async def _sub_panel_day(channel_id: str, info: Dict[str, Any]) -> None:
                                   priority=TaskPriority.NORMAL)
 
 
-def _sub_expr_day(channel_id: str, info: Dict[str, Any]) -> None:
-    """구독자 0. [2026-09-09 P11] `cadence=day` 전이 정산 — **동기 · 콜 0**.
-
-    맨 앞에 서는 이유: 일지·패널 day 섹션은 "어제 무슨 일이 있었나"를 읽는 배경 콜이고,
-    하루 연산(나이+1·수분-1…)은 그 어제의 **값**이다. 값이 먼저 서야 읽는 쪽이 오늘을 본다.
-    배경 큐에 넣지 않는다 — 코드뿐이라 렌더 지연이 0 이고, 큐에 넣으면 도리어 일지 콜과
-    순서가 갈린다.
-    """
-    try:
-        import expr_engine as _ee
-        _ee.run_day(channel_id, None, info)
-    except Exception as e:
-        logger.warning("[Boundary] expr day 실패: %s", e)
-
-
-def _sub_npc_rest(channel_id: str, info: Dict[str, Any]) -> None:
-    """구독자 0b. [2026-10-12 C23] 무대 밖 NPC 회복 — **동기 · 콜 0**.
-
-    NPC 활력·평형을 올리는 문은 추출 델타뿐인데 추출은 무대 위만 본다. 무대 밖에서 지난 하루를
-    코드가 맡는다(custom_vars.npc_rest_tick: init과의 차이를 하루에 절반씩, days_jumped만큼).
-    expr day 정산 바로 뒤 — 하루 연산이 먼저 서고, 일지·패널 콜은 회복까지 끝난 오늘 값을 본다.
-    """
-    try:
-        import custom_vars as _cv
-        _cv.npc_rest_tick(channel_id, (info or {}).get("days_jumped", 1))
-    except Exception as e:
-        logger.warning("[Boundary] NPC 회복 실패: %s", e)
-
-
-SUBSCRIBERS.extend([_sub_expr_day, _sub_npc_rest, _sub_journal, _sub_panel_day])
+# [2026-10-23 C62 M3] 옛 구독자 0(`_sub_expr_day`)·0b(`_sub_npc_rest`)는 몸 그대로 builtin_modules 로 갔다
+#   (주인 = 출력룰 ON_DAY 10 · 활력 ON_DAY 20). 옛 SUBSCRIBERS 목록·register_subscriber 는 없다.
 
 
 # =========================================================
@@ -499,11 +469,12 @@ SUBSCRIBERS.extend([_sub_expr_day, _sub_npc_rest, _sub_journal, _sub_panel_day])
 # =========================================================
 
 async def on_turn(orch: Any = None, ctx: Any = None, channel_id: str = "") -> Optional[Dict[str, Any]]:
-    """경계 턴이면 구독자를 돌리고 마커를 갱신한다. 아니면 완전 무동작(로그도 없다).
+    """경계 턴이면 ON_DAY 정거장을 돌리고 마커를 갱신한다. 아니면 완전 무동작(로그도 없다).
 
-    동기 부분은 코드뿐이고(마커 비교 · 구독자 호출), 콜은 전부 배경 큐로 간다 — 렌더 지연 0.
-    마커는 구독자 **뒤**에 찍는다. 구독자가 죽어도 마커는 넘어간다:
+    동기 부분은 코드뿐이고(마커 비교 · 정거장 호출), 콜은 전부 배경 큐로 간다 — 렌더 지연 0.
+    마커는 정거장 **뒤**에 찍는다. 하루 일 하나가 죽어도 마커는 넘어간다:
     정산은 하루 한 번이고, 실패한 날은 그냥 없다(재시도 없음).
+    [C62 M3] 하루 일 목록·순서는 모듈 틀(module_frame ON_DAY)이 쥔다. 한 모듈이 죽어도 나머지는 돈다(run_station).
     """
     global _CLIENT
     if not channel_id:
@@ -513,13 +484,7 @@ async def on_turn(orch: Any = None, ctx: Any = None, channel_id: str = "") -> Op
         return None
     if orch is not None and getattr(orch, "client", None) is not None:
         _CLIENT = orch.client
-    for fn in list(SUBSCRIBERS):
-        try:
-            res = fn(channel_id, info)
-            if inspect.isawaitable(res):
-                await res
-        except Exception as e:
-            logger.warning("[Boundary] subscriber %s failed: %s",
-                           getattr(fn, "__name__", fn), e)
+    import module_frame as _mf
+    await _mf.run_station(_mf.ON_DAY, orch, _mf.DayTick(channel_id=channel_id, info=info))
     mark_boundary(channel_id, info["now_day"])
     return info

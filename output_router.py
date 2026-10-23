@@ -207,6 +207,10 @@ Do not interpret, summarize, improve, or invent. Sorting is the whole job.
    only on items where every named field is at least that much. `add(목록,"항목")` /
    `remove(목록,"항목")` create and destroy an item. There are no loops — if a rule needs one
    ("whichever pot has been dry for two days"), make it `narrative`.
+9d. What the player character CARRIES is the built-in list `소지품` — it already exists. Never
+   declare a new value for the PC's own bag, inventory, belongings or equipment; read and write
+   `소지품["철"]` instead (`재고["철"]` is the same list). Declare a new list only for things NOT in
+   the PC's hands: a shop's stock, a storehouse, a workshop's materials kept there.
 10. Items you are unsure about still get emitted — with the kind that loses the least.
     Order of preference when torn: value > transition > narrative > format.
 12. `directive` — "X이면 …하게 해 / …로 써라 / …를 묘사해": a CONDITION plus an instruction
@@ -708,10 +712,8 @@ def known_names(channel_id: str) -> Dict[str, List[str]]:
     except Exception as e:
         logger.debug("[Router] 변수 목록 skip: %s", e)
     try:
-        import domain_manager as dm
-        nb = dm.get_notebook_data(channel_id) or {}
-        items = ((nb.get("sections") or {}).get("소지품") or {}).get("items") or {}
-        out["items"] = sorted(items)
+        import custom_vars as cv
+        out["items"] = list(cv.sojipin_items(channel_id))   # [2026-10-23 C61] 정본 = 기본 선언 목록
     except Exception as e:
         logger.debug("[Router] 소지품 목록 skip: %s", e)
     try:
@@ -735,7 +737,8 @@ def build_router_prompt(channel_id: str, chunk: str,
     kn = known_names(channel_id)
     lines = ["## DECLARED NAMES (expressions may use only these, plus names you create now)"]
     lines.append("values: " + (", ".join(kn["values"]) or "(none)"))
-    lines.append("재고 items: " + (", ".join(kn["items"]) or "(none)"))
+    lines.append("소지품 items (the built-in list 소지품 = what the PC carries; 재고 is the same list): "
+                 + (", ".join(kn["items"]) or "(none)"))
     lines.append("panel sections: " + (", ".join(kn["sections"]) or "(none)"))
     lines.append("transitions: " + (", ".join(kn["transitions"]) or "(none)"))
     lines.append("directives: " + (", ".join(kn.get("directives") or []) or "(none)"))
@@ -851,7 +854,7 @@ def _find_all(channel_id: str, name: str) -> List[Tuple[str, Any]]:
     try:
         import custom_vars as cv
         rec = cv.get_declarations(channel_id).get(name)
-        if isinstance(rec, dict) and not rec.get("system"):
+        if isinstance(rec, dict) and not cv.is_reserved(rec):
             hits.append(("value", rec))
     except Exception as e:
         logger.debug("[Router] 변수 조회 skip: %s", e)
@@ -879,6 +882,12 @@ def _find_all(channel_id: str, name: str) -> List[Tuple[str, Any]]:
             hits.append(("directive", rec))
     except Exception as e:
         logger.debug("[Router] 전이 조회 skip: %s", e)
+    # [2026-10-23 C72] 꺼진 모듈(치워 둔 레코드)도 이름을 계속 쥔다(C65-3) — 충돌 검사가 같은 눈으로 본다.
+    for _src, _kinds in _parked(channel_id).items():
+        for _key, _recs in (_kinds or {}).items():
+            rec = (_recs or {}).get(name) if isinstance(_recs, dict) else None
+            if isinstance(rec, dict) and _key != "derives":
+                hits.append(("parked", dict(rec, source=_s(rec.get("source")) or _src)))
     return hits
 
 
@@ -1115,6 +1124,12 @@ def apply_items(channel_id: str, items: Any, source: str = "") -> List[Dict[str,
     적용 순서는 여기서도 강제한다 — 호출자가 정렬을 잊어도 전이가 값보다 먼저 서지 않는다.
     """
     rows = sorted_items(items)
+    # [2026-10-23 C72] 꺼진 모듈 파일은 다시 올릴 수 없다 — 켜진 채 갱신하는 길(이름 기준 diff)만 둔다.
+    #   (같은 source 라 이름 충돌 검사가 통과해 버려서, 막지 않으면 켜진 사본과 치워 둔 사본 둘이 생긴다.)
+    if is_bundle_source(source) and is_parked(channel_id, source):
+        return [{"item": it, "name": it.get("name") or "", "status": "fail",
+                 "msg": f"{it.get('name') or '?'} · {bundle_label(source)} 모듈이 꺼져 있음 — 켜고 올려 주세요"}
+                for it in rows]
     # [2026-09-07 P10] 배치 전체를 먼저 훑는다 — 형식 template 의 자리표시자가 "이 응답에서
     #   막 만들어진 이름"을 가리켜도 통과해야 하기 때문(값이 먼저 서는 KIND_ORDER 만으로는
     #   같은 배치 뒤쪽 이름을 못 본다).
@@ -1195,6 +1210,12 @@ def apply_items(channel_id: str, items: Any, source: str = "") -> List[Dict[str,
         out.append({"item": item, "name": name,
                     "status": "ok" if okk else "fail",
                     "msg": (_line(item) + _cad_note) if okk else (msg or f"{name} · 등록 실패")})
+    # [2026-10-23 C72] 파일 묶음이 처음 서면 고정 번호를 준다(다시 올리면 제 번호 그대로).
+    if is_bundle_source(source) and any(r.get("status") in ("ok", "demoted") for r in out):
+        try:
+            _assign_numbers(channel_id, [source])
+        except Exception as e:
+            logger.debug("[Router] 모듈 번호 skip: %s", e)
     return out
 
 
@@ -1211,7 +1232,7 @@ def names_by_source(channel_id: str) -> Dict[str, List[str]]:
     try:
         import custom_vars as cv
         for nm, rec in (cv.get_declarations(channel_id) or {}).items():
-            if isinstance(rec, dict) and not rec.get("system"):
+            if isinstance(rec, dict) and not cv.is_reserved(rec):
                 _add(rec.get("source"), nm)
     except Exception as e:
         logger.debug("[Router] 변수 묶음 skip: %s", e)
@@ -1303,14 +1324,462 @@ def remove_name(channel_id: str, name: str) -> List[str]:
             gone.append("지시")
     except Exception as e:
         logger.debug("[Router] 전이 삭제 skip: %s", e)
+    # [2026-10-23 C72] 꺼진 모듈 안의 같은 이름도 지운다(지우기가 parked 까지 — C72 §2.3).
+    try:
+        if _drop_parked_name(channel_id, nm):
+            gone.append("꺼진 모듈")
+    except Exception as e:
+        logger.debug("[Router] 꺼진 모듈 삭제 skip: %s", e)
     return gone
 
 
 def remove_source(channel_id: str, source: str) -> List[str]:
-    """그 source 로 들어온 항목 전량. 파일 하나를 통째로 무르는 길이다."""
+    """그 source 로 들어온 항목 전량. 파일 하나를 통째로 무르는 길이다.
+    [2026-10-23 C72] 꺼진 모듈이면 치워 둔 레코드째 지운다. 번호 줄(`bundles`)은 남긴다 — 다시 올리면 제 번호."""
     names = names_by_source(channel_id).get(_s(source), [])
     gone = [nm for nm in names if remove_name(channel_id, nm)]
-    return sorted(gone)
+    try:
+        gone += _drop_parked_source(channel_id, source)
+    except Exception as e:
+        logger.debug("[Router] 꺼진 모듈 통째 삭제 skip: %s", e)
+    return sorted(set(gone))
+
+
+# =========================================================
+# 6a. [2026-10-23 C72 M6] 선언 모듈 — 파일 하나 = 모듈 하나 · 고정 번호 · 끄기 = 치워 두기
+# =========================================================
+# 스펙 파티쳇수정/output_artifact/C72_모듈틀_M6+A5_모듈앱·켜고끄기·설정칸_스펙_2026-10-23.md §2.
+#   묶음 = source 가 **파일 이름**인 레코드 전부. "" (손으로 쓴 것)·"한 줄 서술"은 묶음 밖 — 늘 켬 · 번호 없음(C65-4).
+#   끄기 = 그 source 레코드를 선언 층 여섯 칸에서 빼서 `parked[source]` 로 옮긴다. 읽는 자리는 한 곳도 안 고친다 —
+#     꺼진 선언은 저장소에 없으니 급식·추출·패널·expr·Slot 33 이 "등록 안 한 것"과 같은 길로 못 본다.
+#   ★`custom_vars.unregister` 는 값까지 지운다 — 치워 두기는 그 함수를 안 쓰고 선언 dict 만 옮긴다(값 · 기록은 남는다).
+BUNDLE_FREE = ("", "한 줄 서술")
+# (선언 층 칸, 사람 말). 파생식은 변수에 딸려 같이 간다(제 이름표가 없다).
+PARK_KINDS = (("custom_vars", "값"), ("derives", ""), ("panel_sections", "서술"),
+              ("output_rules", "형식"), ("transitions", "전이"), ("directives", "지시"))
+KIND_LABELS = ("값", "서술", "형식", "전이", "지시")
+
+
+def is_bundle_source(source: Any) -> bool:
+    s = _s(source)
+    return bool(s) and s not in BUNDLE_FREE
+
+
+def bundle_label(source: Any) -> str:
+    """`화원.txt` → `화원`. 확장자가 없으면 그대로."""
+    s = _s(source)
+    head, dot, ext = s.rpartition(".")
+    return head if dot and head and ext and len(ext) <= 5 and " " not in ext else s
+
+
+def _parked(channel_id: str) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    try:
+        import domain_manager as dm
+        p = (dm.get_output_decl(channel_id) or {}).get("parked")
+    except Exception as e:
+        logger.debug("[Router] parked 읽기 skip: %s", e)
+        return {}
+    return {str(k): v for k, v in p.items() if isinstance(v, dict)} if isinstance(p, dict) else {}
+
+
+def is_parked(channel_id: str, source: Any) -> bool:
+    return _s(source) in _parked(channel_id)
+
+
+def _assign_numbers(channel_id: str, sources: List[Any]) -> Dict[str, int]:
+    """번호 없는 묶음에 다음 번호를 준다(입력 순서대로). 이미 있는 번호는 안 바꾼다. {source: no} 전부를 돌려준다."""
+    import domain_manager as dm
+    layer = dm.get_output_decl(channel_id)
+    nums = dict(layer.get("bundles") or {})
+    seq = int(layer.get("bundle_seq") or 0)
+    changed = False
+    for src in sources:
+        s = _s(src)
+        if not is_bundle_source(s) or isinstance(nums.get(s), dict) and nums[s].get("no"):
+            continue
+        seq += 1
+        nums[s] = {"no": seq}
+        changed = True
+    if changed:
+        layer["bundles"] = nums
+        layer["bundle_seq"] = seq
+        dm.update_output_decl(channel_id, layer)
+    return {k: int((v or {}).get("no") or 0) for k, v in nums.items() if isinstance(v, dict)}
+
+
+def _active_by_source(channel_id: str) -> Dict[str, Dict[str, List[str]]]:
+    """{source: {사람 말: [이름]}} — 켜진(저장소에 있는) 레코드. 읽기 길은 names_by_source 와 같다(게터 = 옛 자리 폴백 포함)."""
+    out: Dict[str, Dict[str, List[str]]] = {}
+
+    def _add(src: Any, label: str, name: str) -> None:
+        out.setdefault(_s(src), {}).setdefault(label, []).append(name)
+
+    try:
+        import custom_vars as cv
+        for nm, rec in (cv.get_declarations(channel_id) or {}).items():
+            if isinstance(rec, dict) and not cv.is_reserved(rec):
+                _add(rec.get("source"), "값", nm)
+    except Exception as e:
+        logger.debug("[Router] 모듈 값 skip: %s", e)
+    try:
+        import status_panel as sp
+        for nm, rec in (sp.list_panel_sections(channel_id) or {}).items():
+            _add((rec or {}).get("source"), "서술", nm)
+    except Exception as e:
+        logger.debug("[Router] 모듈 서술 skip: %s", e)
+    try:
+        import domain_manager as dm
+        for nm, rec in dm.get_output_rules(channel_id).items():
+            _add(rec.get("source") if isinstance(rec, dict) else "", "형식", nm)
+    except Exception as e:
+        logger.debug("[Router] 모듈 형식 skip: %s", e)
+    try:
+        import expr_engine as ee
+        for nm, rec in (ee.list_transitions(channel_id) or {}).items():
+            _add((rec or {}).get("source"), "전이", nm)
+        for nm, rec in (ee.list_directives(channel_id) or {}).items():
+            _add((rec or {}).get("source"), "지시", nm)
+    except Exception as e:
+        logger.debug("[Router] 모듈 전이 skip: %s", e)
+    return out
+
+
+def bundles(channel_id: str) -> List[Dict[str, Any]]:
+    """선언 모듈 목록(번호순) — [{source, label, no, on, counts{말: n}, names{말: [이름]}}].
+    레코드가 있는 묶음만 선다(켜짐 · 꺼짐). 번호 없는 묶음(옛 채널)은 이름순으로 한 번 매긴다 — 읽기가 쓰는 유일한 자리."""
+    active = {k: v for k, v in _active_by_source(channel_id).items() if is_bundle_source(k)}
+    parked = _parked(channel_id)
+    srcs = sorted(set(active) | {s for s in parked if is_bundle_source(s)})
+    if not srcs:
+        return []
+    try:
+        nums = _assign_numbers(channel_id, srcs)
+    except Exception as e:
+        logger.debug("[Router] 모듈 번호 매기기 skip: %s", e)
+        nums = {}
+    out: List[Dict[str, Any]] = []
+    for s in srcs:
+        on = s not in parked
+        if on:
+            names = {lb: sorted(set(v)) for lb, v in active.get(s, {}).items()}
+        else:
+            names = {}
+            for key, label in PARK_KINDS:
+                recs = (parked.get(s) or {}).get(key)
+                if label and isinstance(recs, dict) and recs:
+                    names[label] = sorted(recs)
+        out.append({"source": s, "label": bundle_label(s), "no": int(nums.get(s) or 0), "on": on,
+                    "counts": {lb: len(names[lb]) for lb in KIND_LABELS if names.get(lb)},
+                    "names": {lb: names[lb] for lb in KIND_LABELS if names.get(lb)}})
+    out.sort(key=lambda b: (b["no"] or 10 ** 9, b["label"]))
+    return out
+
+
+def free_count(channel_id: str) -> int:
+    """묶음 밖(손으로 쓴 것 · 한 줄 서술) 레코드 수 — 모듈 앱 "그 밖 n개"."""
+    active = _active_by_source(channel_id)
+    return sum(len(v) for s in BUNDLE_FREE for v in (active.get(s) or {}).values())
+
+
+def counts_line(b: Dict[str, Any]) -> str:
+    return " · ".join(f"{lb} {n}" for lb, n in (b.get("counts") or {}).items()) or "비어 있음"
+
+
+def _migrate_legacy(channel_id: str) -> None:
+    """옛 자리(world_state)에만 있는 선언(변수 · 형식)을 선언 층으로 한 번 옮긴다 — 치워 두기가 층만 보고 움직여도 안 새게.
+    옮기는 일은 각 저장소의 쓰기 관문이 한다(옛 자리를 비우는 것까지 그 관문 몫)."""
+    import domain_manager as dm
+    layer = dm.get_output_decl(channel_id)
+    try:
+        import custom_vars as cv
+        if not layer.get(cv.KEY_DECL):
+            raw = cv._read_decl(channel_id)
+            if isinstance(raw, dict) and raw:
+                cv._save(channel_id, raw, cv.get_values(channel_id))
+    except Exception as e:
+        logger.debug("[Router] 변수 이월 skip: %s", e)
+    try:
+        if not layer.get("output_rules"):
+            rules = dm.get_output_rules(channel_id)
+            if rules:
+                dm.set_output_rules(channel_id, rules)
+    except Exception as e:
+        logger.debug("[Router] 형식 이월 skip: %s", e)
+
+
+def park_source(channel_id: str, source: Any) -> Tuple[bool, str]:
+    """끄기 = 치워 두기. (ok, 한 줄). 이미 꺼져 있으면 ok · "이미 꺼짐"."""
+    s = _s(source)
+    if not is_bundle_source(s):
+        return False, "파일로 올린 모듈만 끄고 켤 수 있어요"
+    if s in _parked(channel_id):
+        return True, f"{bundle_label(s)} 이미 꺼져 있음"
+    _migrate_legacy(channel_id)
+    import domain_manager as dm
+    import custom_vars as cv
+    layer = dm.get_output_decl(channel_id)
+    take: Dict[str, Dict[str, Any]] = {}
+    var_names: set = set()
+    for key, _label in PARK_KINDS:
+        if key == "derives":
+            continue
+        store = dict(layer.get(key) or {})
+        moved = {}
+        for nm in list(store):
+            rec = store[nm]
+            if not isinstance(rec, dict) or _s(rec.get("source")) != s:
+                continue
+            if key == "custom_vars" and cv.reserved_name(nm):
+                continue
+            moved[nm] = store.pop(nm)
+        if moved:
+            layer[key] = store
+            take[key] = moved
+            if key == "custom_vars":
+                var_names |= set(moved)
+    if var_names:
+        dstore = dict(layer.get("derives") or {})
+        dmoved = {nm: dstore.pop(nm) for nm in list(dstore) if nm in var_names}
+        if dmoved:
+            layer["derives"] = dstore
+            take["derives"] = dmoved
+    if not take:
+        return False, f"{bundle_label(s)} 안에 올린 것이 없어요"
+    parked = dict(layer.get("parked") or {})
+    parked[s] = take
+    layer["parked"] = parked
+    dm.update_output_decl(channel_id, layer)
+    n = sum(len(v) for k, v in take.items() if k != "derives")
+    logger.info("[Module] %s 끔 — 치워 둔 선언 %d", s, n)
+    return True, f"{bundle_label(s)} 끔"
+
+
+def unpark_source(channel_id: str, source: Any) -> Tuple[bool, str]:
+    """켜기 = 되돌리기. 그사이 같은 이름이 저장소에 생겼으면(묶음 밖 손 등록 같은 것) 그 줄만 못 돌리고 알린다."""
+    s = _s(source)
+    import domain_manager as dm
+    layer = dm.get_output_decl(channel_id)
+    parked = dict(layer.get("parked") or {})
+    take = parked.pop(s, None)
+    if not isinstance(take, dict):
+        return (True, f"{bundle_label(s)} 이미 켜져 있음") if is_bundle_source(s) else (False, "모르는 모듈")
+    skipped: List[str] = []
+    for key, recs in take.items():
+        if not isinstance(recs, dict):
+            continue
+        store = dict(layer.get(key) or {})
+        for nm, rec in recs.items():
+            if nm in store and key != "derives":
+                skipped.append(nm)
+                continue
+            store[nm] = rec
+        layer[key] = store
+    layer["parked"] = parked
+    dm.update_output_decl(channel_id, layer)
+    logger.info("[Module] %s 켬 — 겹쳐 못 돌린 이름 %s", s, skipped or "0")
+    line = f"{bundle_label(s)} 켬"
+    if skipped:
+        line += " · 이름이 겹쳐 못 돌린 것: " + ", ".join(sorted(skipped))
+    return True, line
+
+
+def set_bundle(channel_id: str, source: Any, on: bool) -> Tuple[bool, str]:
+    return unpark_source(channel_id, source) if on else park_source(channel_id, source)
+
+
+def _drop_parked_name(channel_id: str, name: str) -> bool:
+    import domain_manager as dm
+    layer = dm.get_output_decl(channel_id)
+    parked = dict(layer.get("parked") or {})
+    hit = False
+    for s in list(parked):
+        kinds = dict(parked.get(s) or {})
+        for key in list(kinds):
+            recs = dict(kinds.get(key) or {})
+            if name in recs:
+                recs.pop(name)
+                hit = True
+                if recs:
+                    kinds[key] = recs
+                else:
+                    kinds.pop(key)
+        if kinds:
+            parked[s] = kinds
+        else:
+            parked.pop(s)
+    if hit:
+        layer["parked"] = parked
+        dm.update_output_decl(channel_id, layer)
+    return hit
+
+
+def _drop_parked_source(channel_id: str, source: Any) -> List[str]:
+    import domain_manager as dm
+    s = _s(source)
+    layer = dm.get_output_decl(channel_id)
+    parked = dict(layer.get("parked") or {})
+    take = parked.pop(s, None)
+    if not isinstance(take, dict):
+        return []
+    layer["parked"] = parked
+    dm.update_output_decl(channel_id, layer)
+    return sorted({nm for k, recs in take.items() if k != "derives" and isinstance(recs, dict) for nm in recs})
+
+
+def parked_section_names(channel_id: str) -> List[str]:
+    """꺼진 모듈의 패널 섹션 이름 — 매턴 패널 저장(전량 교체)이 그 몫 저장값을 지우지 않게(status_panel 이 읽는다)."""
+    out: List[str] = []
+    for kinds in _parked(channel_id).values():
+        recs = (kinds or {}).get("panel_sections")
+        if isinstance(recs, dict):
+            out += list(recs)
+    return out
+
+
+# =========================================================
+# 6b. 통째 초기화 — `!출력룰 초기화` (2026-10-15 C38 나)
+# =========================================================
+# 출력물 = 선언 층(output_decl 전량: 형식·패널 섹션·변수 선언·파생·전이·조건부 지시) + 그 값.
+# 남는 것: 활력·평형 값(게임 상태 — PC·NPC) · 노트북 · 도착물 이력(turn_mail·last_handouts) ·
+#   boundary_tick(시간 장부). 시스템 변수 **개정**(규칙·캡 수정)은 선언 층 custom_vars 안에 살아서
+#   같이 빠진다 = 코드 기본형(레티어스 10-15 "초기화가 그런 거니 괜찮아").
+# 값 층에서 빼는 키 — 선언이 사라지면 주인이 없는 것들. 이름은 각 모듈 상수에서 읽는다.
+def _reset_value_keys() -> List[str]:
+    keys = ["status_panel"]
+    try:
+        import expr_engine as ee
+        keys += [ee.TRANSITION_STATE_KEY, ee.PENDING_CUE_HITS_KEY, ee.PENDING_OP_HITS_KEY,
+                 ee.PENDING_EVENTS_KEY, ee.PENDING_MAILS_KEY]
+    except Exception as e:
+        logger.debug("[Router] 값 층 키(expr) skip: %s", e)
+        keys += ["transition_state", "pending_cue_hits", "pending_operation_hits",
+                 "pending_events", "pending_mails"]
+    try:
+        import custom_vars as cv
+        keys.append(cv.HANDOUT_KEY)
+    except Exception:
+        keys.append("pending_handout")
+    return list(dict.fromkeys(keys))
+
+
+def reset_preview(channel_id: str) -> Dict[str, int]:
+    """지울 것의 개수(콜 0, 쓰기 0). `!출력룰 초기화`(확인 전)가 보여 준다."""
+    out = {"formats": 0, "sections": 0, "vars": 0, "sys_revised": 0, "derives": 0,
+           "transitions": 0, "directives": 0, "panel_values": 0, "rows": 0, "parked": 0}
+    # [2026-10-23 C72] 꺼진 모듈 안의 선언도 초기화가 지운다 — 미리보기에 같이 센다(파생 제외).
+    try:
+        out["parked"] = sum(len(recs) for kinds in _parked(channel_id).values()
+                            for k, recs in (kinds or {}).items() if k != "derives" and isinstance(recs, dict))
+    except Exception as e:
+        logger.debug("[Router] 초기화 미리보기(꺼진 모듈) skip: %s", e)
+    try:
+        import domain_manager as dm
+        out["formats"] = len(dm.get_output_rules(channel_id) or {})
+        _stored = (dm.get_output_decl(channel_id) or {}).get("custom_vars") or {}
+    except Exception as e:
+        logger.debug("[Router] 초기화 미리보기(형식) skip: %s", e)
+        _stored = {}
+    try:
+        import custom_vars as cv
+        decl = cv.get_declarations(channel_id) or {}
+        out["vars"] = sum(1 for _n, r in decl.items() if isinstance(r, dict) and not cv.is_reserved(r))
+        out["sys_revised"] = sum(1 for n in (_stored or {}) if cv.reserved_name(n))
+    except Exception as e:
+        logger.debug("[Router] 초기화 미리보기(변수) skip: %s", e)
+    try:
+        import expr_engine as ee
+        out["derives"] = len(ee.list_derives(channel_id) or {})
+        out["transitions"] = len(ee.list_transitions(channel_id) or {})
+        out["directives"] = len(ee.list_directives(channel_id) or {})
+    except Exception as e:
+        logger.debug("[Router] 초기화 미리보기(식) skip: %s", e)
+    try:
+        import status_panel as sp
+        import sqlite_store as ss
+        out["sections"] = len(sp.list_panel_sections(channel_id) or {})
+        out["panel_values"] = len((sp.get_saved_panel(channel_id) or {}).get("fields") or {})
+        out["rows"] = ss.count_notebook_log_sections(channel_id, sp.append_section_names(channel_id))
+    except Exception as e:
+        logger.debug("[Router] 초기화 미리보기(패널) skip: %s", e)
+    return out
+
+
+def reset_all(channel_id: str) -> Dict[str, Any]:
+    """출력물 통째 초기화. Returns 미리보기 개수(지운 것) + {"ok": bool}. 예외를 밖으로 던지지 않는다.
+
+    순서: append 섹션 이름을 **먼저** 모아 기록 행 삭제(선언을 비우면 이름을 잃는다) →
+    선언 층 기본값 → 값 층(시스템 변수 값만 남김 + 주인 잃는 키 제거, 옛 자리 선언 키도) 한 번 저장."""
+    res: Dict[str, Any] = dict(reset_preview(channel_id))
+    res["ok"] = False
+    # [2026-10-23 C72] 꺼진 모듈은 먼저 되돌려 놓는다 — 그래야 아래(append 기록 행 · 값 층)가 그 몫까지 같은 길로 지운다.
+    #   번호(`bundles`)도 선언 층 기본값과 함께 사라진다(초기화 = 처음부터, 번호도 1부터).
+    try:
+        for _src in list(_parked(channel_id)):
+            unpark_source(channel_id, _src)
+    except Exception as e:
+        logger.debug("[Router] 초기화 전 꺼진 모듈 되돌리기 skip: %s", e)
+    try:
+        import status_panel as sp
+        import sqlite_store as ss
+        res["rows"] = ss.delete_notebook_log_sections(channel_id, sp.append_section_names(channel_id))
+    except Exception as e:
+        logger.warning("[Router] 초기화 기록 행 삭제 실패: %s", e)
+    try:
+        import domain_manager as dm
+        import custom_vars as cv
+        # 형식은 헬퍼로 — 옛 자리(world_state)까지 비운다(남으면 읽기 폴백이 초기화를 되살린다).
+        dm.set_output_rules(channel_id, {})
+        dm.update_output_decl(channel_id, dm.output_decl_default())
+        ws = dm.get_world_state(channel_id) or {}
+        ws.pop(cv.KEY_DECL, None)   # 변수 선언의 옛 자리(같은 이유)
+        vals = ws.get(cv.KEY_VALS)
+        if isinstance(vals, dict):
+            ws[cv.KEY_VALS] = {k: v for k, v in vals.items() if cv.reserved_name(k)}   # [C61] 소지품 값도 남는다
+        for k in _reset_value_keys():
+            ws.pop(k, None)
+        dm.update_world_state(channel_id, ws)
+        res["ok"] = True
+        logger.info("[Router] 출력룰 전체 초기화 %s: %s", channel_id,
+                    {k: v for k, v in res.items() if v})
+    except Exception as e:
+        logger.warning("[Router] 출력룰 전체 초기화 실패: %s", e)
+    return res
+
+
+_RESET_LABELS = (("formats", "형식"), ("sections", "패널 섹션"), ("vars", "변수"),
+                 ("derives", "파생"), ("transitions", "전이"), ("directives", "조건부 지시"),
+                 ("panel_values", "패널 저장값"), ("rows", "기록 행"), ("parked", "꺼진 모듈 항목"))
+_RESET_KEEP_LINE = "남는 것: 활력·평형·소지품 값 · 노트북 · 도착물 이력"
+
+
+def _reset_counts_line(c: Dict[str, Any]) -> str:
+    return " · ".join(f"{lb} {int(c.get(k) or 0)}" for k, lb in _RESET_LABELS if int(c.get(k) or 0))
+
+
+def format_reset_preview(c: Dict[str, Any]) -> str:
+    """확인 전 안내문. 지울 게 없으면 한 줄."""
+    line = _reset_counts_line(c)
+    if not line and not int(c.get("sys_revised") or 0):
+        return "🗑️ 지울 출력물이 없습니다."
+    out = ["⚠️ **[출력룰 전체 초기화]**",
+           "이 채널의 출력물 선언과 그 값을 모두 지웁니다."]
+    if line:
+        out.append(f"• {line}")
+    if int(c.get("sys_revised") or 0):
+        out.append("• 활력·평형의 규칙·캡 수정 → 기본형으로")
+    out += [_RESET_KEEP_LINE, "", "진행하려면: `!출력룰 초기화 확인`"]
+    return "\n".join(out)
+
+
+def format_reset_result(r: Dict[str, Any]) -> str:
+    if not r.get("ok"):
+        return "✗ 출력룰 초기화에 실패했습니다 — 로그를 보세요."
+    line = _reset_counts_line(r)
+    out = ["🗑️ **출력룰 전체 초기화 완료**" + (f" — {line}" if line else "")]
+    if int(r.get("sys_revised") or 0):
+        out.append("활력·평형 규칙·캡은 기본형으로 돌아갔습니다.")
+    out.append(_RESET_KEEP_LINE)
+    return "\n".join(out)
 
 
 # =========================================================

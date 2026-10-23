@@ -375,6 +375,53 @@ def _gt_abs_minutes(gt: Optional[Dict[str, Any]]) -> Optional[int]:
         return None
 
 
+def _fmt_gt_span(a: Optional[Dict[str, Any]], b: Optional[Dict[str, Any]]) -> str:
+    """[2026-10-16 C45 R4] 작중 시각 범위 → '1년 3월 5일 14:00 ~ 6일 09:30'. 같은 날이면 '…14:00~18:20'.
+    같은 해·달은 뒤쪽에서 생략한다. 한쪽만 있으면 그 시각 하나. 둘 다 없으면 ''."""
+    def _ok(g):
+        return isinstance(g, dict) and _gt_abs_minutes(g) is not None
+
+    def _i(g, k, d):
+        try:
+            return int(g.get(k, d))
+        except (TypeError, ValueError):
+            return d
+    if not _ok(a) and not _ok(b):
+        return ""
+    a = a if _ok(a) else b
+    b = b if _ok(b) else a
+    ya, ma, da, ha, mia = _i(a, "year", 1), _i(a, "month", 1), _i(a, "day", 1), _i(a, "hour", 12), _i(a, "minute", 0)
+    yb, mb, db, hb, mib = _i(b, "year", 1), _i(b, "month", 1), _i(b, "day", 1), _i(b, "hour", 12), _i(b, "minute", 0)
+    head = f"{ya}년 {ma}월 {da}일 {ha:02d}:{mia:02d}"
+    if (ya, ma, da, ha, mia) == (yb, mb, db, hb, mib):
+        return head
+    if (ya, ma, da) == (yb, mb, db):
+        return f"{head}~{hb:02d}:{mib:02d}"
+    if (ya, ma) == (yb, mb):
+        tail = f"{db}일 {hb:02d}:{mib:02d}"
+    elif ya == yb:
+        tail = f"{mb}월 {db}일 {hb:02d}:{mib:02d}"
+    else:
+        tail = f"{yb}년 {mb}월 {db}일 {hb:02d}:{mib:02d}"
+    return f"{head} ~ {tail}"
+
+
+def _episode_stamp(entry: Any) -> str:
+    """[2026-10-16 C45 R4] Slot 9 에피소드 머리 — 작중 시각 범위 + 턴 범위(있는 것만). 둘 다 없으면 ''.
+    레티어스 "작중 시간도 괜찮고 턴도 괜찮고. 둘다 붙여도 좋고"."""
+    if not isinstance(entry, dict):
+        return ""
+    parts = []
+    span = _fmt_gt_span(entry.get("game_time_start"), entry.get("game_time_end"))
+    if span:
+        parts.append(f"작중 {span}")
+    ts, te = entry.get("turn_start"), entry.get("turn_end")
+    if isinstance(ts, int) and ts > 0:
+        te = te if (isinstance(te, int) and te >= ts) else ts
+        parts.append(f"T{ts}" if te == ts else f"T{ts}~T{te}")
+    return f"[{' · '.join(parts)}]" if parts else ""
+
+
 def _extract_game_time_bounds(
     history: List[Dict[str, Any]],
 ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
@@ -701,7 +748,8 @@ def gc_low_importance_fresh(
                 model_msg = history[i + 1]
                 model_hint = (model_msg.get("content", "") or "")[:40]
                 # [LIBRA #2 a] 흔적 마커에 상대 시기 추가 — "약 3일 전"
-                tmark = f"T{estimated_turn}@{rel_str}" if rel_str else f"T{estimated_turn}"
+                # ⛔[2026-10-16 C45 R4] 현실 상대 시기(@N일 전)는 뺀다 — 작중 시간과 섞였다. rel_str 은 GC 판정에만 쓴다.
+                tmark = f"T{estimated_turn}"
                 new_history.append({
                     "role": "user",
                     "content": f"[...{tmark}: {content_hint}...]",
@@ -847,6 +895,14 @@ FERMENT_PROMPT_LINEAGE_ADDENDUM = (
     "  Observed는 가산적이다. 새로 확립된 사실만 쓰고, 안 쓴 문장은 프로그램이 보존한다.\n"
     "  지워야 할 기존 문장은 page_patches[*].retract: [\"원문 그대로\"]에 넣어라(확인된 모순일 때만).\n"
     "  page_patches[*].from_block: 이 패치의 근거가 된 compressed_blocks 인덱스(선택).\n"
+)
+
+# [2026-10-16 C45 R1] 바뀐 지속 사실 = 지금(예전) 한 문장. LINEAGE 부록 뒤에 **결합만**(원문 상수 무수정).
+#   가산 병합은 모델이 retract 로 짚지 않은 옛 문장을 보존한다 → "선배라고 부른다"와 "이름으로 부른다"가 지금/예전 구분 없이
+#   같이 남아 호칭이 되돌아갔다(장기기억 글 1번). 한 문장에 지금·예전을 묶고 옛 문장은 retract.
+FERMENT_PROMPT_NOWBEFORE_ADDENDUM = (
+    "  바뀐 지속 사실(호칭·관계·소속·거처·생사처럼 같은 것이 시간에 따라 달라진 것)은 지금과 예전을 한 문장에 쓴다:\n"
+    "  \"지금은 이름(세라)으로 부른다(예전엔 선배).\" 예전 문장은 retract에 넣고, 새 문장 괄호에 예전 값을 남긴다.\n"
 )
 
 FERMENT_PROMPT_WIKI_KIND_ADDENDUM = (
@@ -999,7 +1055,7 @@ async def compress_fresh_to_fermented(
             #   원문이 둘 다 남았다(중복). 가산 모드에선 그 한 구절만 뺀다(원문 상수는 무수정 — 결합 때 치환).
             if getattr(_cfg, "WIKI_OBSERVED_ADDITIVE", False):
                 _wiki_add = _wiki_add.replace(" 기존 본문을 받아 다시 쓴다(4,000자 이내).", "")
-            _wiki_add = _wiki_add + FERMENT_PROMPT_LINEAGE_ADDENDUM
+            _wiki_add = _wiki_add + FERMENT_PROMPT_LINEAGE_ADDENDUM + FERMENT_PROMPT_NOWBEFORE_ADDENDUM   # [2026-10-16 C45 R1]
         system_instruction = (
             system_instruction + _wiki_add
             + "\n# Wiki Notes (play sections of pages involved; hash = current version)\n"
@@ -1587,6 +1643,7 @@ async def compress_fermented_to_deep(
     archived_context: str = "",
     current_deep_data: Dict[str, Any] = None,
     corrections_block: str = "",
+    closed_block: str = "",
 ) -> Optional[Dict[str, Any]]:
     """
     FERMENTED 메모리들을 DEEP 메모리로 초압축합니다.
@@ -1732,6 +1789,10 @@ Important:
     # [2026-10-10 기록 정정] 합칠 요약에 걸린 정정(R7) — 딥 기억이 옛 사실을 굳히지 않게.
     if corrections_block:
         user_prompt += "\n" + corrections_block + "\n"
+    # [2026-10-16 C45 R3] 장부의 끝난 약속·사안 — "Remove triggers that have been resolved"가 근거를 갖게(옛: 장부가 안 와
+    #   지킨 약속이 [ACTIVE MEMORY TRIGGERS - Unresolved] 로 남았다). 매 턴 코드로 떡밥을 거르지는 않는다(자유문 대조는 틀린다).
+    if closed_block:
+        user_prompt += "\n" + closed_block + "\n"
     
     try:
         import text_resources as _tr
@@ -2148,6 +2209,12 @@ async def auto_ferment(
                 "from_msg_id": _from_msg_id,
                 "to_msg_id": _to_msg_id,
             }
+            # [2026-10-16 C45 R4] 턴 범위 도장 — Slot 9 머리 `[… · T12~T18]`. 턴 도장 없는 legacy 청크면 키를 안 만든다.
+            _tr_turns = [int(m.get("turn")) for m in (_to_summarize or [])
+                         if isinstance(m, dict) and isinstance(m.get("turn"), int) and int(m.get("turn")) > 0]
+            if _tr_turns:
+                fermented_entry["turn_start"] = min(_tr_turns)
+                fermented_entry["turn_end"] = max(_tr_turns)
             if _chunk_entities:
                 # [2026-08-11 엔티티 회상 채널] 빈 리스트도 키 생략 — 읽기 쪽 no-op 경로 단일화
                 fermented_entry["entities"] = _chunk_entities
@@ -2278,11 +2345,18 @@ async def auto_ferment(
                                            english_head=True)
         except Exception:
             _corr_deep = ""
+        _closed_deep = ""
+        try:
+            import thread_ledger as _tl_deep
+            _closed_deep = _tl_deep.closed_block_for_deep(ch_id)
+        except Exception:
+            _closed_deep = ""
         deep_result = await compress_fermented_to_deep(
             client, model_id,
             fermented, current_deep, archived_context_str,
             current_deep_data=current_deep_data,
             corrections_block=_corr_deep,   # [2026-10-10 기록 정정]
+            closed_block=_closed_deep,   # [2026-10-16 C45 R3]
         )
 
         # M-4 fix: 압축 결과 유효성 가드. 빈/과단축(압축 실패 fallback의 truncated stub 등)이면
@@ -2767,6 +2841,43 @@ async def refresh_wiki_vector_cache(
         logger.debug("[Wiki] vec refresh skip: %s", e)
 
 
+def entry_vector_text(entry) -> str:
+    """[2026-10-17 C46 W4] 발효 엔트리 → 임베딩 텍스트(요약 + 감정 호 + PC 패턴).
+
+    `precompute_vector_scores`(Slot 9 회상)와 도착물 원문 발췌(world_board._build_raw_excerpts)가 **같은 글**을
+    임베딩해야 md5 캐시를 같이 탄다 — 그래서 조립식은 여기 한 곳이다(바뀌면 둘이 같이 바뀐다).
+    """
+    if not isinstance(entry, dict):
+        return ""
+    summary = entry.get("summary", "") or ""
+    arc = entry.get("arc_observations", {})
+    if isinstance(arc, dict):
+        summary += " " + (arc.get("emotional_arc", "") or "")
+        summary += " " + (arc.get("pc_pattern", "") or "")
+    return summary.strip() or "(empty)"
+
+
+async def rank_entries_for_query(client, entries: list, query: str, top_k: int, min_score: float = 0.3) -> list:
+    """[2026-10-17 C46 W4] 발효 엔트리 중 쿼리에 가까운 것 [(entry, score)] 상위 top_k.
+
+    엔트리 글은 `entry_vector_text`(Slot 9 회상과 같은 글 → md5 캐시 공유, 새 임베딩은 쿼리 1개).
+    엔진을 잡는 건 여기(발효 엔트리 임베딩의 주인)다 — 소비자(world_board 도착물 원문 발췌)는 이것만 부른다.
+    거르기(msg 구간 유무 등)는 호출부 몫. 실패·빈 입력 = [].
+    """
+    if not client or not query or not entries or int(top_k or 0) <= 0:
+        return []
+    chunks = [{"content": entry_vector_text(e), "_idx": i} for i, e in enumerate(entries) if isinstance(e, dict)]
+    if not chunks:
+        return []
+    try:
+        engine = _get_vector_engine(client)
+        ranked = await engine.search(str(query)[:2000], chunks, top_k=int(top_k), min_score=float(min_score))
+    except Exception as e:
+        logger.debug("[VectorSearch] rank_entries_for_query skip: %s", e)
+        return []
+    return [(entries[c["_idx"]], sc) for c, sc in (ranked or []) if isinstance(c, dict) and "_idx" in c]
+
+
 async def precompute_vector_scores(
     client,
     entries: list,
@@ -2782,17 +2893,8 @@ async def precompute_vector_scores(
         engine = _get_vector_engine(client)
 
         # 각 entry summary를 chunk로 변환
-        chunks = []
-        for entry in entries:
-            if not isinstance(entry, dict):
-                chunks.append("")
-                continue
-            summary = entry.get("summary", "") or ""
-            arc = entry.get("arc_observations", {})
-            if isinstance(arc, dict):
-                summary += " " + (arc.get("emotional_arc", "") or "")
-                summary += " " + (arc.get("pc_pattern", "") or "")
-            chunks.append(summary.strip() or "(empty)")
+        # [2026-10-17 C46] 조립식은 `entry_vector_text` 한 곳 — 도착물 원문 발췌가 같은 글로 같은 md5 캐시를 탄다.
+        chunks = [entry_vector_text(entry) if isinstance(entry, dict) else "" for entry in entries]
 
         # 인덱스 추적을 위해 래핑 (중복 summary 대응)
         indexed_chunks = [{"content": c, "_idx": i} for i, c in enumerate(chunks)]
@@ -3327,10 +3429,13 @@ def forget_channel_recall(channel_id: str) -> int:
     안 비우면 옛 세션 이름이 다음 턴 `[Recall] trace`에 섞여 영수증이 거짓말을 한다.
     [2026-09-14 W3b] `_wiki_similarity_cache`(절 벡터 점수)·`_WIKI_LANE_RETURN`(레인 반환)도
     같은 이유로 여기서 간다 — 지운 채널의 옛 점수가 다음 세션 시드를 오염시키면 안 된다.
-    Returns 비운 키 개수(0~5). 예외 전부 삼킴(무해)."""
+    Returns 비운 키 개수(0~7). 예외 전부 삼킴(무해)."""
     n = 0
+    # [2026-10-14 C37 R8] S3 `_vector_similarity_cache`(발효 엔트리 점수)·`_LAST_STABLE_HITS`(계측)도 —
+    #   W3b가 위키 쪽만 넣고 S3 쪽 같은 모양 캐시를 빠뜨렸다. 엔트리 인덱스 키라 새 세션에 옛 점수가 붙는다.
     for _d in (_PENDING_WIKI_PAGES, _PREV_DELIVERED, _LAST_RECALL,
-               _wiki_similarity_cache, _WIKI_LANE_RETURN):
+               _wiki_similarity_cache, _WIKI_LANE_RETURN,
+               _vector_similarity_cache, _LAST_STABLE_HITS):
         try:
             if _d.pop(channel_id, None) is not None:
                 n += 1
@@ -3581,15 +3686,12 @@ def build_fermented_context(
                     continue
                 _selected_token_sets.append(_toks)
 
-            # [LIBRA #2 c 2026-04-28] from/to msg_id 으로 상대 시기 prefix 추가 (흔적)
-            # 기존 entry는 from_msg_id가 없어 표현 추가 안 됨 (legacy 호환)
-            _from_id = entry.get("from_msg_id")
-            _to_id = entry.get("to_msg_id")
-            _rel = _format_msg_range(_from_id, _to_id)
-            if _rel:
-                entry_text = f"[{timestamp} / {_rel}] {summary}"
-            else:
-                entry_text = f"[{timestamp}] {summary}"
+            # [LIBRA #2 c 2026-04-28] from/to msg_id 상대 시기 prefix → ⛔[2026-10-16 C45 R4] 프롬프트에서 뺐다.
+            #   머리는 **작중 시각 범위 + 턴 범위**(있는 것만). 옛 머리 = 발효를 돌린 현실 시각 + 디스코드 메시지 기준
+            #   "3일 전~1일 전" — 작중 시간과 섞여 "어제 일을 일주일 전"으로 읽혔다(장기기억 글 4번). 끝의 [시기]
+            #   `[작중 N일 전]`(지금부터 얼마 전)은 그대로. 저장 키(timestamp·from/to_msg_id)는 무접촉(GC·로그가 쓴다).
+            _stamp = _episode_stamp(entry)
+            entry_text = f"{_stamp} {summary}" if _stamp else summary
             if _ungr_mark and any(
                     b.get("grounded") is False
                     for b in (entry.get("compressed_blocks") or [])

@@ -1682,77 +1682,96 @@ async def cmd_lock(ctx: CommandContext) -> None:
 
 @registry.register("modules", category="System", aliases=["모듈", "mods"], description="DLC 모듈 상태 확인")
 async def cmd_modules(ctx: CommandContext) -> None:
-    """!모듈 - 모듈 상태 확인. 핵심 4모듈은 항상 활성."""
+    """!모듈 - 모듈 상태 확인. 핵심 모듈은 항상 활성.
+
+    [2026-10-22 C58 M0] 목록·별칭·토글은 모듈 틀 등록부(module_frame / builtin_modules)가 쥔다.
+      옛 손글 표(core_mods·extra_mods·_mod_aliases)와 출력 줄이 같다 — 등록 순서가 목록 순서.
+      맨 아래 '설정으로 도는 것'(상태패널·지속 감사·Reader-GM)은 보이기만 한다(끄고 켜기는 !출력룰·config).
+    """
+    import module_frame as _mf
     arg = ctx.raw_args.strip().lower()
-    active = domain_manager.get_active_modules(ctx.channel_id)
-    core_mods = [("judgment", "판정"), ("doom", "둠"), ("anomaly", "이변")]
-    # [2026-08-17] 둘 다 **기본 ON**(domain_manager.DEFAULT_ON_MODULES) — 명시적 off만 끈다.
-    extra_mods = [("board", "게시판"), ("mind", "속마음")]
-    # 개별 토글 별칭. 💭는 전용 명령을 만들지 않는다(조작면 최소주의) — !모듈의 서브커맨드가 제자리.
-    # [2026-09-05] `!활력모듈` 흡수 — vigor는 toggle_module이 아니라 전용 세터를 쓴다.
-    extra_mods = extra_mods + [("vigor", "활력")]
-    _mod_aliases = {
-        "board": "board", "게시판": "board",
-        "mind": "mind", "속마음": "mind", "💭": "mind",
-        "vigor": "vigor", "활력": "vigor", "평형": "vigor", "mental": "vigor",
-    }
+    core_mods = _mf.on_shelf("core")
+    toggle_mods = _mf.on_shelf("toggle")
+    config_mods = _mf.on_shelf("config")
     _parts = arg.split()
 
-    # 개별 토글: !모듈 속마음 off / !모듈 게시판 on
-    if len(_parts) >= 2 and _parts[0] in _mod_aliases:
-        _code = _mod_aliases[_parts[0]]
-        _label = dict(extra_mods).get(_code, _code)
-        if _parts[1] in ('on', '켜기', 'true'):
-            if _code == "vigor":
-                domain_manager.set_vigor_composure_active(ctx.channel_id, True)
-            else:
-                domain_manager.toggle_module(ctx.channel_id, _code, True)
-            await ctx.send(f"✅ **{_label}** 모듈 활성화")
-            return
-        if _parts[1] in ('off', '끄기', 'false'):
-            if _code == "vigor":
-                domain_manager.set_vigor_composure_active(ctx.channel_id, False)
-                await ctx.send("❌ **활력** 모듈 비활성화\n"
-                               "이 채널의 활력/평형 처리·수치 변동·프롬프트 주입이 모두 중단됩니다. "
-                               "(수치는 현재값으로 동결)")
+    # 개별 토글: !모듈 속마음 off / !모듈 게시판 on  (별칭 = 각 모듈의 aliases + id)
+    # [2026-10-23 C72] + 올린 모듈(`!출력룰` 파일): `!모듈 2 off` · `!모듈 #2 off` · `!모듈 화원 off` · 앞글자(하나로만 맞을 때).
+    #   고르기 = module_frame.resolve_module(코드 별칭이 먼저), 쓰기 = set_module_on(Activity mod.toggle 과 같은 함수).
+    _ON_WORDS, _OFF_WORDS = ('on', '켜기', 'true'), ('off', '끄기', 'false')
+    _raw_parts = ctx.raw_args.strip().split()
+    if len(_raw_parts) >= 2 and _raw_parts[-1].lower() in _ON_WORDS + _OFF_WORDS:
+        _on = _raw_parts[-1].lower() in _ON_WORDS
+        _kind, _target, _cands = _mf.resolve_module(ctx.channel_id, " ".join(_raw_parts[:-1]))
+        if _kind == "code" and _target.shelf == "toggle" and _target.toggle is not None and _target.toggle.set is not None:
+            _m = _target
+            _m.toggle.set(ctx.channel_id, _on)
+            if _on:
+                await ctx.send(f"✅ **{_m.name}** 모듈 활성화")
                 return
-            domain_manager.toggle_module(ctx.channel_id, _code, False)
-            await ctx.send(f"❌ **{_label}** 모듈 비활성화")
+            if _m.off_notice:
+                await ctx.send(f"❌ **{_m.name}** 모듈 비활성화\n{_m.off_notice}")
+                return
+            await ctx.send(f"❌ **{_m.name}** 모듈 비활성화")
             return
+        if _kind == "bundle":
+            _ok, _line = _mf.set_module_on(ctx.channel_id, "bundle", _target, _on)
+            await ctx.send(("✅ " if _on else "❌ ") + _line if _ok else f"⚠️ {_line}")
+            return
+        if _cands:
+            await ctx.send("⚠️ 여럿에 맞아요 — " + " · ".join(_cands) + "\n번호나 이름 전체로 다시 쳐 주세요.")
+            return
+
+    _core_names = "/".join(m.name for m in core_mods)
 
     # 부가 모듈 일괄 토글
     if arg in ['on', '켜기', 'true', 'all']:
-        for code, _ in extra_mods:
-            if code == "vigor":
-                domain_manager.set_vigor_composure_active(ctx.channel_id, True)
-            else:
-                domain_manager.toggle_module(ctx.channel_id, code, True)
-        _names = " ✅ · ".join(name for _, name in extra_mods)
-        await ctx.send(f"✅ **부가 모듈이 활성화되었습니다.**\n• {_names} ✅\n\n(판정/둠/이변은 항상 활성)")
+        for m in toggle_mods:
+            m.toggle.set(ctx.channel_id, True)
+        _names = " ✅ · ".join(m.name for m in toggle_mods)
+        await ctx.send(f"✅ **부가 모듈이 활성화되었습니다.**\n• {_names} ✅\n\n({_core_names}은 항상 활성)")
         return
     if arg in ['off', '끄기', 'false', 'none']:
-        for code, _ in extra_mods:
-            if code == "vigor":
-                domain_manager.set_vigor_composure_active(ctx.channel_id, False)
-            else:
-                domain_manager.toggle_module(ctx.channel_id, code, False)
-        _names = " ❌ · ".join(name for _, name in extra_mods)
-        await ctx.send(f"❌ **부가 모듈이 비활성화되었습니다.**\n• {_names} ❌\n\n(판정/둠/이변은 항상 활성)")
+        for m in toggle_mods:
+            m.toggle.set(ctx.channel_id, False)
+        _names = " ❌ · ".join(m.name for m in toggle_mods)
+        await ctx.send(f"❌ **부가 모듈이 비활성화되었습니다.**\n• {_names} ❌\n\n({_core_names}은 항상 활성)")
         return
 
     # 상태 확인
     msg = ["🔌 **모듈 상태**", "", "**핵심 모듈** (항상 활성)"]
-    for code, name in core_mods:
-        msg.append(f"• {name} ({code}): ✅ ON")
+    for m in core_mods:
+        msg.append(f"• {m.name} ({m.id}): ✅ ON")
     msg.append("")
     msg.append("**토글 가능 모듈** (기본 ON)")
-    for code, name in extra_mods:
-        if code == "vigor":
-            status = "✅ ON" if domain_manager.is_vigor_composure_active(ctx.channel_id) else "❌ OFF"
-        else:
-            status = "✅ ON" if code in active else "❌ OFF"
-        msg.append(f"• {name} ({code}): {status}")
+    for m in toggle_mods:
+        status = "✅ ON" if m.toggle.get(ctx.channel_id) else "❌ OFF"
+        msg.append(f"• {m.name} ({m.id}): {status}")
+    # [2026-10-23 C72] 올린 모듈 — `!출력룰`로 올린 파일 하나 = 모듈 하나(고정 번호). 손으로 쓴 것 · 한 줄 서술은 묶음 밖.
+    try:
+        import output_router as _or_m
+        _bl = _or_m.bundles(ctx.channel_id)
+    except Exception as _e_bl:
+        logger.debug(f"[Modules] bundles skip: {_e_bl}")
+        _bl = []
+    if _bl:
+        msg.append("")
+        msg.append("**올린 모듈** (이 채널 · `!출력룰`로 올린 파일)")
+        for _b in _bl:
+            msg.append(f"• #{_b['no']} {_b['label']}: {'✅ ON' if _b['on'] else '❌ OFF'} — {_or_m.counts_line(_b)}")
+    if config_mods:
+        msg.append("")
+        msg.append("**설정으로 도는 것** (보기만 — `!출력룰`·설정이 쥔다)")
+        for m in config_mods:
+            try:
+                _line = m.status(ctx.channel_id) if m.status else ""
+            except Exception as _e_st:
+                logger.debug(f"[Modules] status {m.id} skip: {_e_st}")
+                _line = "?"
+            msg.append(f"• {m.name}: {_line}")
     msg.append("\n💡 `!모듈 활력 on/off` · `!게시판 on/off` · `!모듈 속마음 on/off` — 토글 모듈 제어")
+    if _bl:
+        msg.append("💡 `!모듈 <번호|이름> on/off` — 올린 모듈 켜고 끄기(`!모듈 on/off` 일괄은 올린 모듈을 안 건드림)")
 
     await ctx.send("\n".join(msg))
 
@@ -2115,6 +2134,92 @@ async def route_ooc_split(channel_id: str, ooc_content: str, client_genai, model
     return _e, _d
 
 
+def _ooc_clean_line(r: Any) -> str:
+    return str(r or "").replace("**", "").strip()
+
+
+def _ooc_memo_edit(channel_id: str, uid: str, edit: Dict[str, Any]) -> str:
+    """[2026-10-16 C44 O2·O3] field=notebook — [메모] 줄 append/remove/edit → 되비침 한 줄(실패는 ⚠)."""
+    act = str(edit.get("action") or "").strip().lower()
+    value = edit.get("value")
+    if act in ("append", "add"):
+        r = game_system.add_memo(channel_id, str(value or ""), uid)
+    elif act in ("remove", "delete"):
+        r = game_system.remove_memo(channel_id, str(value or ""), uid)
+    elif act in ("edit", "fix", "rename"):
+        _v = value if isinstance(value, dict) else {}
+        old = str(edit.get("old") or edit.get("from") or _v.get("old") or "").strip()
+        new = str(edit.get("new") or edit.get("to") or _v.get("new") or "").strip()
+        if not old:
+            return "⚠ 메모: 바꿀 낱말(old)이 없어"
+        r = game_system.edit_memo(channel_id, old, new, uid)
+    else:
+        return f"⚠ 메모: '{act or '?'}'은 못 해(append·remove·edit)"
+    r = _ooc_clean_line(r)
+    if not r:
+        return "⚠ 메모: 내용이 없어"
+    return ("⚠ 메모: " + r.lstrip("⚠️ ").strip()) if r.startswith("⚠") else ("메모: " + r.split(":", 1)[-1].strip())
+
+
+def _ooc_item_edit(channel_id: str, uid: str, edit: Dict[str, Any]) -> str:
+    """[2026-10-16 C44 O2] field=item — [소지품] add/remove(수량) → 되비침 한 줄(실패는 ⚠)."""
+    act = str(edit.get("action") or "").strip().lower()
+    value = edit.get("value")
+    _v = value if isinstance(value, dict) else {}
+    name = str(_v.get("name") or (value if isinstance(value, str) else "") or edit.get("key") or "").strip()
+    qty = edit.get("qty", edit.get("quantity", _v.get("qty")))
+    if not name:
+        return "⚠ 소지품: 이름이 없어"
+    if act in ("add", "append", "set", "obtain", "gain"):
+        try:
+            n = max(1, int(qty)) if qty not in (None, "") else 1
+        except (TypeError, ValueError):
+            n = 1
+        r = _ooc_clean_line(game_character.add_item_to_sojipin(channel_id, name, uid, n, source="ooc"))
+        if not r or r.startswith("⚠"):
+            return f"⚠ 소지품: {r.lstrip('⚠ ').strip() or name}"   # [C61] 꺼짐·상한(99)
+        return f"소지품: +{name}" + (f" ×{n}" if n > 1 else "") + (f" ({r})" if r.startswith("이미") else "")
+    if act in ("remove", "delete", "lose", "use", "drop"):
+        r = _ooc_clean_line(game_character.remove_item_from_sojipin(channel_id, name, uid,
+                                                                     qty if qty not in (None, "") else None,
+                                                                     source="ooc"))
+        return f"⚠ 소지품: {r}" if (not r or "못 찾음" in r) else f"소지품: −{r.split(':', 1)[-1].strip()}"
+    return f"⚠ 소지품: '{act or '?'}'은 못 해(add·remove)"
+
+
+class CorrectionAskView(discord.ui.View):
+    """[2026-10-18 C50 R4] 정정 되묻기 버튼 — persistent(custom_id 고정, main.on_ready 가 전 버튼 인스턴스를 등록).
+    보류는 세션 메모리에 질문 메시지 id 로(`ooc_edits.store_pending`). 디스패치는 custom_id 매칭이라
+    보낼 때는 후보 수만큼의 pick 버튼에 그 정정 문장을 글로 단다."""
+
+    def __init__(self, labels: Optional[list] = None):
+        super().__init__(timeout=None)
+        n = 3 if labels is None else min(3, len(labels))
+        for i in range(n):
+            lab = (labels[i] if labels else f"{i + 1}번 정정을 이걸로 바꿈")[:80]
+            b = discord.ui.Button(label=lab, style=discord.ButtonStyle.primary, custom_id=f"corr:pick:{i}")
+            b.callback = self._cb(f"pick:{i}")
+            self.add_item(b)
+        for cid, lab, sty in (("corr:new", "다른 일 — 따로 둠", discord.ButtonStyle.secondary),
+                              ("corr:drop", "취소", discord.ButtonStyle.danger)):
+            b = discord.ui.Button(label=lab, style=sty, custom_id=cid)
+            b.callback = self._cb(cid.split(":", 1)[1])
+            self.add_item(b)
+
+    @staticmethod
+    def _cb(choice: str):
+        async def _run(interaction: discord.Interaction):
+            import ooc_edits as _oe_btn
+            ch_id = str(interaction.channel_id)
+            ok, line = _oe_btn.resolve_pending(ch_id, interaction.message.id, choice, interaction.user.id)
+            if not ok and line.startswith("이 정정은 낸 사람"):
+                await interaction.response.send_message(line, ephemeral=True)
+                return
+            content = (interaction.message.content or "") + f"\n→ {line}"
+            await interaction.response.edit_message(content=content[:1990], view=None)
+        return _run
+
+
 async def run_ooc_edit(
     message: discord.Message,
     channel_id: str,
@@ -2209,6 +2314,8 @@ async def run_ooc_edit(
     fact_edits = []   # [2026-10-10 기록 정정]
     thread_edits, quest_edits = [], []   # [2026-10-10 이야기 실 O-E]
     applied = 0   # [2026-09-26 O10] 실제로 적용된 것 수 — 0 이면 모델 확인문 대신 "적용된 것 없음"
+    # [2026-10-16 C44 O3] 메모·소지품·기억(조각·상태·타격) 편집도 결과 줄을 낸다 — 적용 수는 맨 끝에서 ⚠ 아닌 줄로만 센다.
+    pre_lines: list = []
 
     for edit in result["edits"]:
         if not isinstance(edit, dict):
@@ -2266,13 +2373,14 @@ async def run_ooc_edit(
             # [notebook v2 2026-09-06] replace/set(전문 덮어쓰기) 폐지 —
             # WHY: OOC 한 줄이 [소지품]·[일지]·다른 메모까지 통째로 날리던 유일한 통로였다.
             # 남은 건 줄 단위 add/remove뿐(유저색 '-' 줄).
-            if action == "append":
-                game_system.add_memo(channel_id, value, uid)
-                applied += 1
-            elif action == "remove":
-                game_system.remove_memo(channel_id, value, uid)
-                applied += 1
+            # [2026-10-16 C44 O2·O3] + edit(줄 안 낱말 바꾸기 — "사라를 세라로" 같은 말이 메모에 닿게). 결과 줄을 낸다
+            #   (옛: "이미 있음"·"못 찾음"을 버리고 +1 → 아무것도 안 바뀌어도 "처리 완료"). 소지품은 field=item.
+            pre_lines.append(_ooc_memo_edit(channel_id, uid, edit))
             continue # handled
+        # [2026-10-16 C44 O2] 소지품 = [소지품] 칸(수량). 옛: 아이템이 notebook append 로 [메모]에 쌓여 판정·상태창이 못 봤다.
+        if field in ("item", "items", "inventory"):
+            pre_lines.append(_ooc_item_edit(channel_id, uid, edit))
+            continue
 
         mem_edits.append(edit)
 
@@ -2284,9 +2392,11 @@ async def run_ooc_edit(
         _fresh_p = domain_manager.get_participant_data(channel_id, uid) or p_data
         _fresh_mem = (_fresh_p or {}).get("ai_memory") or domain_manager.get_ai_memory(channel_id, uid) or ai_mem
         ai_mem = _fresh_mem
+        _mem_lines: list = []
         new_mem, new_p_data = memory_system.apply_memory_edits(
-            _fresh_mem, mem_edits, _fresh_p
+            _fresh_mem, mem_edits, _fresh_p, report=_mem_lines
         )
+        pre_lines += _mem_lines
         if isinstance(new_p_data, dict):
             new_p_data["ai_memory"] = new_mem
         # [2026-09-10 P13 버그] 순서가 **거꾸로였다.** save_participant_data 는 참가자
@@ -2295,7 +2405,7 @@ async def run_ooc_edit(
         #   증발하던 자리다. 참가자 저장이 먼저, 기억 병합이 나중(그쪽이 다시 읽는다).
         domain_manager.save_participant_data(channel_id, uid, new_p_data)
         domain_manager.update_ai_memory(channel_id, uid, new_mem)
-        applied += len(mem_edits)
+        # [2026-10-16 C44 O3] 옛 `applied += len(mem_edits)` 삭제 — 적용 수는 결과 줄(⚠ 아닌 것)로 맨 끝에서 센다.
         # [2026-09-16 3차] origin=play 조각 삭제 = 발췌의 역연산 — desc 가 Observed 절 끝으로 돌아간다.
         try:
             domain_manager.return_removed_play_fragments(channel_id, uid, ai_mem, new_mem)
@@ -2303,7 +2413,7 @@ async def run_ooc_edit(
             logging.warning(f"[OOC] 조각 되돌림 실패: {_e_fr}")
 
     # 2b. Apply Relation Edits — 엣지(NPC→이 PC). 되비침은 결과 메시지에 합류.
-    rel_lines = []
+    rel_lines = list(pre_lines)   # [2026-10-16 C44 O3] 메모·소지품·기억 결과 줄이 앞에
     # [2026-10-10 OOC 확장] 인물 정정이 관계보다 먼저(같은 사람 합치기 뒤에 관계가 본체로 간다). 자리·시간은 뒤에.
     if npc_edits:
         try:
@@ -2325,10 +2435,11 @@ async def run_ooc_edit(
         rel_lines = rel_lines + domain_manager.apply_ooc_sheet_edits(channel_id, uid, sheet_edits)
 
     # 2c'. [2026-10-10 기록 정정] 지난 일 — 정오표 + 위키 Observed 정정(인물 정정 뒤라 합친 본체 이름으로 간다)
+    _pend_corr: list = []   # [2026-10-18 C50 R4] 다른 턴 정정과 겹쳐 보류된 것 → 버튼 질문
     if fact_edits:
         try:
             import ooc_edits as _oe_fc
-            rel_lines += _oe_fc.apply_fact_edits(channel_id, fact_edits)
+            rel_lines += _oe_fc.apply_fact_edits(channel_id, fact_edits, pending_out=_pend_corr)
         except Exception as _e_fc:
             logging.error(f"[OOC] 정정 편집 실패: {_e_fc}")
             rel_lines.append("⚠️ 정정: 편집 중 오류")
@@ -2383,6 +2494,15 @@ async def run_ooc_edit(
     logging.info(f"[OOC] edit applied={applied} rel/sheet={len(rel_lines)} decl={len(decl_lines)}")
 
     await message.channel.send(msg)
+    # [2026-10-18 C50 R4] 정정 보류 — 하나씩 묻는다(≤3). 버튼은 persistent, 보류는 세션 메모리에 질문 메시지 id 로.
+    for _it in _pend_corr[:3]:
+        try:
+            import ooc_edits as _oe_pd
+            _q, _labels = _oe_pd.pending_question(channel_id, _it)
+            _qm = await message.channel.send(_q, view=CorrectionAskView(labels=_labels))
+            _oe_pd.store_pending(channel_id, getattr(_qm, "id", None), _it, uid)
+        except Exception as _e_pd:
+            logging.warning(f"[OOC] 정정 보류 질문 실패: {_e_pd}")
     return applied > 0
 
 
@@ -2755,6 +2875,14 @@ async def _handle_custom_var_subcommand(ctx: CommandContext, sub: str, payload: 
                 f"`!출력룰 수정 변수 {_sys} | 상승 5 하강 7 | (새 규칙)`"
             )
             return
+        # [2026-10-23 C61] 기본 목록(소지품)도 못 지운다 — PC가 들고 다니는 물건이 사는 자리다.
+        _bi = custom_vars.builtin_name(name)
+        if _bi:
+            await ctx.send(
+                f"🔒 `{_bi}`은(는) 코드가 심어 둔 기본 목록이라 지울 수 없습니다.\n"
+                f"규칙·항목 상한·표시형식은 `!출력룰` 로 고칠 수 있습니다."
+            )
+            return
         if custom_vars.unregister(ctx.channel_id, name):
             await ctx.send(f"🗑️ **변수 삭제:** [{name}]")
         else:
@@ -2957,8 +3085,13 @@ async def cmd_output_rule(ctx: CommandContext) -> None:
         #   묶어 보여준다. 안 묶으면 유저는 자기가 올린 파일과 등록물을 대조할 길이 없다.
         try:
             import output_router as _or_hint
+            # [2026-10-23 C72] 파일 = 모듈 — 고정 번호 · 꺼짐 표시. 꺼진 모듈 이름은 치워 둔 칸에서 읽는다.
+            for _b in _or_hint.bundles(ctx.channel_id):
+                _nm_all = [n for lb in _or_hint.KIND_LABELS for n in (_b.get("names") or {}).get(lb, [])]
+                _off = "" if _b["on"] else " · 꺼짐"
+                msg.append(f"📎 **#{_b['no']} {_b['source']}** ({len(_nm_all)}{_off}): " + ", ".join(_nm_all))
             for _src, _names in sorted((_or_hint.names_by_source(ctx.channel_id)).items()):
-                if not _src:
+                if not _src or _or_hint.is_bundle_source(_src):
                     continue
                 msg.append(f"📎 **{_src}** ({len(_names)}): " + ", ".join(_names))
         except Exception:
@@ -3011,6 +3144,11 @@ async def cmd_output_rule(ctx: CommandContext) -> None:
                         return
             except Exception as _e_arm:
                 logging.getLogger("OutputRule").debug(f"[Vessel] 장전 줄 skip: {_e_arm}")
+            # [2026-10-23 C72] 꺼진 모듈 파일은 다시 올리지 않는다 — 콜 전에 막는다(켜고 올리게).
+            if _or.is_bundle_source(_src_name) and _or.is_parked(ctx.channel_id, _src_name):
+                await ctx.send(f"⚠️ **{_or.bundle_label(_src_name)}** 모듈이 꺼져 있어요. "
+                               f"`!모듈 {_or.bundle_label(_src_name)} on`으로 켜고 올려 주세요.")
+                return
             await ctx.send("📋 준비물을 읽는 중… (등록 시 1회성 분석)")
             _result = await _or.route_text(ctx.genai_client, ctx.channel_id,
                                            file_text, _src_name)
@@ -3109,22 +3247,30 @@ async def cmd_output_rule(ctx: CommandContext) -> None:
         if key in rules:
             del rules[key]
             domain_manager.set_output_rules(ctx.channel_id, rules)
+            # [2026-10-15 C38 가] 옛 자리의 패널 키(read-through `기본`)를 지운 경우 — 기본 섹션이
+            #   사라졌으면 그 저장값도 같이(선언 층 섹션 삭제와 같은 규칙).
+            if _is_panel:
+                try:
+                    if _sp_del.DEFAULT_PANEL_SECTION not in _sp_del.list_panel_sections(ctx.channel_id):
+                        _sp_del.prune_saved_fields(ctx.channel_id, [_sp_del.DEFAULT_PANEL_SECTION])
+                except Exception:
+                    pass
             await ctx.send(f"🗑️ **출력규칙 삭제:** [{key}]")
         else:
             await ctx.send(f"⚠️ 출력규칙 '{key}'(을)를 찾을 수 없습니다.")
         return
 
     # 4. Reset
+    # [2026-10-15 C38 나] 출력물 **통째** 초기화(형식·패널 섹션·변수·파생·전이·조건부 지시 + 그 값·
+    #   패널 저장값·기록 행). 확인 단계는 `!클리어`와 같은 문법 — 확인 없이는 개수만 보여 준다.
+    #   옛 판은 형식·섹션 정의만 지워 저장값이 1장째에 `섹션/칸`으로 남았다(스펙 C38 §0).
     if sub in ['reset', '초기화', 'clear']:
-        domain_manager.set_output_rules(ctx.channel_id, {})
-        # [2026-09-06 P1] 패널 정의가 output_rules 를 떠났으니 여기서 같이 비운다 —
-        # 안 그러면 "모든 출력규칙 초기화"가 패널만 남기는 반쪽 명령이 된다.
-        try:
-            import status_panel as _sp_clr
-            _sp_clr.clear_panel_sections(ctx.channel_id)
-        except Exception:
-            pass
-        await ctx.send("🗑️ **모든 출력규칙 초기화 완료**")
+        import output_router as _or_rs
+        _conf = len(args) >= 2 and args[1].strip().lower() in ('확인', 'confirm', 'y', 'yes')
+        if not _conf:
+            await ctx.send(_or_rs.format_reset_preview(_or_rs.reset_preview(ctx.channel_id)))
+            return
+        await ctx.send(_or_rs.format_reset_result(_or_rs.reset_all(ctx.channel_id)))
         return
 
     await ctx.send("⚠️ 사용법: `!출력룰 [목록/추가/삭제/초기화]` — 파일 첨부로 일괄 등록 가능")

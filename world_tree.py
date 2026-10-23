@@ -470,6 +470,61 @@ def remove_extra(channel_id: str, node_id: str, label: str) -> bool:
     return True
 
 
+def strip_play(channel_id: str) -> Dict[str, int]:
+    """[2026-10-14 C37 R3] `!클리어` — 플레이가 만든 것만 걷는다. 저장 1회.
+
+    ① `properties.tags`에 `auto_detected`가 선 노드 삭제(플레이 경로 추론이 만든 장소 — orchestration).
+    ② 남는 노드의 부모가 지워졌으면 루트로(parent_id="" + root_ids). `remove_node(recursive=False)`는
+       자식을 고아로 남기고 루트로 올리지도 않아서 여기선 쓰지 않는다.
+    ③ children·connections·root_ids 에서 지워진 id 제거.
+    ④ 남는 노드의 npcs_present·extras·environmental_effects 비움(출석·호칭 표지·환경 효과 = 플레이).
+    로어 노드·`sheet_residence` 노드의 description·properties·connections·aliases 는 그대로.
+    재구축(lore_summary_data.locations 재임포트)은 기각 — 마지막 `!lore` 분석만 들고 있어 나눠 넣은
+    로어의 장소를 잃는다(스펙 C37 §2 R3).
+    Returns {"removed", "promoted", "cleared"}."""
+    out = {"removed": 0, "promoted": 0, "cleared": 0}
+    tree = _get_tree(channel_id)
+    nodes = tree.get("nodes") if isinstance(tree, dict) else None
+    if not isinstance(nodes, dict) or not nodes:
+        return out
+
+    def _is_play(n: Dict[str, Any]) -> bool:
+        tags = ((n.get("properties") or {}) if isinstance(n.get("properties"), dict) else {}).get("tags")
+        return isinstance(tags, list) and "auto_detected" in [str(t) for t in tags]
+
+    gone = {nid for nid, n in nodes.items() if not isinstance(n, dict) or _is_play(n)}
+    for nid in gone:
+        nodes.pop(nid, None)
+    roots = [r for r in (tree.get("root_ids") or []) if r in nodes]
+    for nid, n in nodes.items():
+        pid = n.get("parent_id") or ""
+        if pid and pid not in nodes:
+            n["parent_id"] = ""
+            out["promoted"] += 1
+        if not n.get("parent_id") and nid not in roots:
+            roots.append(nid)
+        n["children"] = [c for c in (n.get("children") or []) if c in nodes]
+        conns = n.get("connections")
+        if isinstance(conns, list):
+            n["connections"] = [c for c in conns
+                                if not (isinstance(c, dict) and c.get("target_id") in gone)]
+        _had = False
+        for k in ("npcs_present", "extras", "environmental_effects"):
+            if n.get(k):
+                _had = True
+            if k in n or k == "npcs_present":
+                n[k] = []
+        if _had:
+            out["cleared"] += 1
+    out["removed"] = len(gone)
+    tree["nodes"] = nodes
+    tree["root_ids"] = roots
+    _save_tree(channel_id, tree)
+    logger.info("[WorldTree] clear strip removed=%d promoted=%d cleared=%d",
+                out["removed"], out["promoted"], out["cleared"])
+    return out
+
+
 def get_all_nodes(channel_id: str) -> Dict[str, Dict[str, Any]]:
     """모든 노드 반환."""
     tree = _get_tree(channel_id)

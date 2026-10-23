@@ -330,10 +330,14 @@ async def process_ooc_memory_edit(
     (Notebook 지원 추가)
     """
     # [2026-09-16 시트 2차] 서술 편집 = PC 페이지 lore 절 편집(field = 절 이름). ai_memory 서술 키 없음.
+    # [2026-10-16 C44 O1] 상태는 둘 — 좋은 상태(status_effects)·타격칸(strikes, C42). 옛: 타격칸이 안 보여
+    #   "출혈 지워줘"가 status_effects 로 나가 아무것도 안 지웠다.
+    from game_character import buff_effects as _bf_ooc, strike_names as _sk_ooc
     current_state = {
         "sheet": sheet_sections or {},
         "passives": ai_mem.get("passives", []),
-        "status_effects": p_data.get("status_effects", []),
+        "status_effects": [e.get("name") for e in _bf_ooc(p_data or {}) if isinstance(e, dict)],
+        "strikes": _sk_ooc(p_data or {}),
         # [2026-09-15 관계 통합] ai_memory.relationships 삭제 — 관계는 NPC→이 PC 엣지(bond/tension/stance).
         "relations": relations_state or {},
         # [2026-09-26 O5] 명부 — 별명·호칭("아빠")을 등록 이름으로 잇는 재료(시트에서 PC 를 가리키는 문장 1개).
@@ -341,34 +345,46 @@ async def process_ooc_memory_edit(
     }
     # [2026-10-10 OOC 확장] 지금 장소·시간·날씨, 장소 이름들, 본문에 나온 인물이 아는 것(ooc_edits.world_state_for_edit).
     if isinstance(world_state, dict):
-        for _wk in ("world", "places", "npc_knows", "threads", "quests"):   # [2026-10-10 O-E] +스레드·퀘스트
+        for _wk in ("world", "places", "npc_knows", "threads", "quests", "corrections"):   # [2026-10-10 O-E] +스레드·퀘스트 · [C50] +정정
             if world_state.get(_wk):
                 current_state[_wk] = world_state[_wk]
     
     system_prompt = (
         "You are a Game Master Assistant handling OOC (Out-Of-Character) requests.\n"
         "Interpret the user's request and generate specific edits to the character data or Notebook.\n"
-        "Supports adding/removing items (via Notebook), changing relationships, passives, descriptions, etc.\n\n"
-        "### Notebook Rules\n"
-        "Items, Inventory, and Gold are tracked in the Notebook.\n"
-        "To change items/gold, use field='notebook' with action='append' (to add log) or 'replace' (rarely used).\n\n"
+        "Supports items, memo lines, relationships, passives, conditions, descriptions, etc.\n\n"
+        # [2026-10-16 C44 O2] 소지품 = [소지품] 칸(field=item), 메모 = [메모] 줄(append/remove/edit). 옛 문안은 아이템을
+        #   notebook append 로 보내 [메모]에 영어 줄로 쌓였고(판정·상태창이 못 봄), 폐지된 replace 를 권했다.
+        "### Items, memo, gold\n"
+        "Items the PC carries are the notebook's [소지품] list: field='item', action add|remove, value = the item name in Korean "
+        "(when removing, the name as written in [소지품]), qty = a number when the user says how many "
+        "(remove without qty takes the whole item).\n"
+        "Memo lines are the notebook's [메모]: field='notebook', action append (value = one Korean line) | remove "
+        "(value = words from the line) | edit (old = the words to replace, new = what replaces them). "
+        "A misspoken name inside memo lines is fixed with edit.\n"
+        "Gold or money is the declared value when the Declared State block has one (field='declared'); "
+        "otherwise it is an item with qty.\n\n"
         
         "Output Format (JSON):\n"
         "{\n"
         "  \"interpretation\": \"What the user wants (Korean)\",\n"
         "  \"edits\": [\n"
-        "    {\"field\": \"notebook\", \"action\": \"append\", \"value\": \"- Obtained Holy Sword\"},\n"
+        "    {\"field\": \"item\", \"action\": \"add\", \"value\": \"성검\", \"qty\": 1},\n"
         "    {\"field\": \"relation\", \"action\": \"set\", \"key\": \"RosterName\", \"stands\": \"friendly\", \"friction\": \"low\", \"baseline\": false},\n"
-        "    {\"field\": \"status_effects\", \"action\": \"remove\", \"value\": \"Poison\"}\n"
+        "    {\"field\": \"strikes\", \"action\": \"remove\", \"value\": \"출혈\"}\n"
         "  ],\n"
         "  \"confirmation_message\": \"Response to user (Korean)\"\n"
         "}\n"
-        "Valid fields: relation, npc, place, time, fact, thread, quest, passives, status_effects, notebook, or a character-sheet section name "
+        "Valid fields: relation, npc, place, time, fact, thread, quest, passives, status_effects, strikes, item, notebook, or a character-sheet section name "
         "(Identity, Core Traits, Aside, Direction, Relationships, Secrets, Background, Notes — the keys of "
         "Current State.sheet) with action set|append|remove and value = that section's text.\n"
         "passives = sheet fragments: action add|set|remove. add/set value = {\"name\", \"desc\" (Korean, conditions in words), "
-        "\"value\": {roll_<type>: int -20~+20, cost: negative int}} with type in " + "/".join(__import__("config").ACTION_TYPES) +
-        "; relevant keys only. remove value = name.\n"
+        "\"value\": {\"edge\": 1} for a help or {\"edge\": -1} for a hindrance}. "   # [2026-10-15 C42] 조각 = 이름 판단, 부호 하나
+        "remove value = name.\n"
+        # [2026-10-16 C44 O1] 타격칸(C42) — 나쁜 상태 네 칸. status_effects 는 좋은 상태만.
+        "strikes = the PC's four strike slots for bad conditions (wounds, bleeding, poison, fear, panic…), listed in "
+        "Current State.strikes: action add|remove, value = the condition name in Korean. "
+        "status_effects = good conditions only (blessing, focus…): action add|remove, value = the name.\n"
         "relation = how an NPC stands toward this PC: action set|remove, key = the NPC's name exactly as in Current State.roster "
         "(map nicknames and kinship words like '아빠' through the roster's sheet_on_pc lines; never invent a name). "
         "stands = devoted/friendly/neutral/unfriendly/hostile and friction = low/strained/high/breaking — use these words "
@@ -398,7 +414,13 @@ async def process_ooc_memory_edit(
         # [2026-10-10 기록 정정] 지난 일 — 정오표(corrections). 상태 칸과 함께 낼 수 있다.
         "fact = a correction of something that already happened in the story record: "
         "{\"field\":\"fact\",\"about\":[\"roster names or key nouns\"],\"value\":\"what is true (Korean, one sentence)\","
-        "\"wrong\":\"the recorded version being corrected\"}; withdraw one with {\"field\":\"fact\",\"action\":\"remove\",\"value\"}. "
+        "\"wrong\":\"the recorded version being corrected\"}. "
+        # [2026-10-18 C50 R5] 서 있는 정정 목록(Current State.corrections)을 보고 번호로 바꾸고 거둔다 — 레티어스 "ooc는 고치라고 하는거라".
+        "The player's correction is the instruction. Current State.corrections lists the corrections already standing (id, turn, about, text): "
+        "when the player restates or changes one of them, add \"replaces\":id (also when the names differ); "
+        "when it is another matter about the same person, add \"new\":true; "
+        "withdraw one with {\"field\":\"fact\",\"action\":\"remove\",\"id\":N} "
+        "(with no list shown, {\"field\":\"fact\",\"action\":\"remove\",\"value\"} and its words). "
         "The current state goes to its own field (npc status, place, time, relation, thread, quest); when the player corrects both "
         "what happened and how things stand now, emit both.\n"
         # [2026-10-10 이야기 실 O-E] 스레드 장부(약속·사안)·퀘스트 보드. 스펙 state_v10/이야기실_지도·스펙_2026-10-10.md
@@ -473,7 +495,7 @@ async def route_ooc_request(client, model_id: str, ooc_text: str,
         "edit = the part asking to change stored data: how an NPC stands toward the PC or toward another NPC, "
         "who an NPC is (the same person as another entry, another name, alive or dead, their sheet, what they know), "
         "where the PC or an NPC is right now, the current time or weather, the PC sheet, sheet fragments, "
-        "status effects, notebook/items/gold, a declared value, a promise, an open matter or a quest that is open, "
+        "status effects or strike slots (wounds, conditions), notebook/items/gold, a declared value, a promise, an open matter or a quest that is open, "
         "done, called off or never existed, or a correction of what already happened in the story "
         "record. A statement of how a relation or fact stands "
         "(\"X has always cared for me\", \"it is night now\", \"X never died, he passed out\") is an edit. Keep the player's words.\n"
@@ -501,28 +523,70 @@ async def route_ooc_request(client, model_id: str, ooc_text: str,
 
 
 def apply_memory_edits(
-    ai_mem: Dict[str, Any], 
-    edits: List[Dict[str, Any]], 
-    p_data: Dict[str, Any]
+    ai_mem: Dict[str, Any],
+    edits: List[Dict[str, Any]],
+    p_data: Dict[str, Any],
+    report: Optional[List[str]] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
     실제로 메모리 수정 사항을 적용합니다.
-    ai_mem과 p_data(inventory, economy 등)를 모두 수정하여 반환합니다.
+    ai_mem과 p_data(status_effects·strikes 등)를 모두 수정하여 반환합니다.
+
+    [2026-10-16 C44 O3] report(list)를 주면 편집마다 되비침 한 줄을 붙인다 — 실패·변화 없음은 ⚠ 로 시작.
+      호출부(run_ooc_edit)는 ⚠ 아닌 줄만 적용 수로 센다(옛: len(edits)를 그대로 세어, 아무것도 안 바뀐 편집에도
+      모델이 미리 쓴 "수정 완료"가 나갔다). 모르는 칸도 ⚠ 줄(옛: 조용히 무시 + 적용 1).
+    [2026-10-16 C44 O1] 상태는 C42 이후 둘 — 나쁜 상태 = 타격칸(p_data["strikes"] 4칸), 좋은 상태 = status_effects.
+      field="strikes" = 타격칸 add/remove. field="status_effects" add 는 알려진 디버프면 타격칸으로, 아니면 좋은 상태(buff)로
+      (출력물 콜 orchestration._apply_status_changes 와 같은 규칙 — 옛 OOC 는 모르는 이름을 debuff 로 받아 아무 효과 없이
+      남았다가 다음 타격칸 변화 때 걷혔다). remove 는 타격칸에 그 이름이 있으면 거기서 뺀다.
     """
     import copy
+    from game_character import (normalize_status_effects, normalize_fragment, is_known_debuff,
+                                apply_strike_changes, strike_names)
     new_mem = copy.deepcopy(ai_mem)
     new_p_data = copy.deepcopy(p_data)
-        
-    for edit in edits:
+    rep = report if isinstance(report, list) else []
+
+    def _name_of(v, k=None) -> str:
+        if isinstance(v, dict):
+            v = v.get("name") or v.get("tag") or k
+        return str(v if v is not None else (k or "")).strip()
+
+    def _strike_add(nm: str) -> str:
+        nonlocal new_p_data
+        if nm in strike_names(new_p_data):
+            return f"⚠ 타격: {nm}은 이미 칸에 있어"
+        new_p_data, _ch, _over = apply_strike_changes(new_p_data, add=[nm])
+        return f"⚠ 타격: 칸이 꽉 찼어({nm} 못 넣음)" if _over else f"타격: +{nm}"
+
+    def _strike_clear(nm: str) -> str:
+        nonlocal new_p_data
+        new_p_data, _ch, _over = apply_strike_changes(new_p_data, clear=[nm])
+        return f"타격: −{nm}"
+
+    for edit in edits or []:
+        if not isinstance(edit, dict):
+            continue
         field = edit.get("field")
-        action = edit.get("action")
+        action = str(edit.get("action") or "").strip().lower()
         value = edit.get("value")
         key = edit.get("key")
-        
+
         # [2026-09-16 시트 2차] 시트 절 편집(field=절 이름)은 호출부가 페이지 편집으로 분리한다 — 여기 안 온다.
         # [2026-09-15 관계 통합] field="relation"은 호출부(command_handler)가 엣지 편집으로 분리한다 — 여기 안 온다.
+        if field in ("strikes", "strike"):
+            nm = _name_of(value, key)
+            if not nm:
+                rep.append("⚠ 타격: 이름이 없어")
+            elif action in ("add", "set", "append"):
+                rep.append(_strike_add(nm))
+            elif action in ("remove", "clear", "delete"):
+                rep.append(_strike_clear(nm) if nm in strike_names(new_p_data) else f"⚠ 타격: {nm}은 칸에 없어")
+            else:
+                rep.append(f"⚠ 타격: '{action or '?'}'은 못 해(add·remove)")
+            continue
+
         if field == "status_effects":
-            from game_character import normalize_status_effects
             target = normalize_status_effects(new_p_data.get("status_effects", []))
 
             def _find_idx(name_or_tag: str):
@@ -531,51 +595,88 @@ def apply_memory_edits(
                         return i
                 return None
 
+            nm = _name_of(value, key)
             if action == "add":
-                new_effects = normalize_status_effects([value]) if value is not None else []
-                if new_effects:
-                    new_eff = new_effects[0]
-                    idx = _find_idx(new_eff.get("tag") or new_eff.get("name", ""))
-                    if idx is None:
-                        target.append(new_eff)
-                    else:
-                        target[idx] = new_eff
+                if not nm:
+                    rep.append("⚠ 상태: 이름이 없어")
+                    continue
+                if is_known_debuff(nm):
+                    _r = _strike_add(nm)
+                    rep.append(_r + (" (나쁜 상태라 타격칸으로)" if not _r.startswith("⚠") else ""))
+                    continue
+                _known = (nm in getattr(config, "STATUS_EFFECTS", {}) or nm in getattr(config, "LEGACY_TAG_MAP", {})
+                          or nm in getattr(config, "STATUS_TAGS", {}))
+                _src = (value if isinstance(value, dict) else nm) if _known else \
+                    {"name": nm, "tag": nm, "type": "buff", "severity": 0, "modifiers": {"judgment": 5}}
+                new_effects = normalize_status_effects([_src])
+                if not new_effects:
+                    rep.append(f"⚠ 상태: {nm} — 넣지 못했어")
+                    continue
+                new_eff = new_effects[0]
+                idx = _find_idx(new_eff.get("tag") or new_eff.get("name", ""))
+                if idx is None:
+                    target.append(new_eff)
+                else:
+                    target[idx] = new_eff
+                new_p_data["status_effects"] = target
+                rep.append(f"상태: +{new_eff.get('name') or nm}")
             elif action == "remove":
-                idx = _find_idx(str(value))
-                if idx is None and str(value) in getattr(config, "LEGACY_TAG_MAP", {}):
-                    idx = _find_idx(config.LEGACY_TAG_MAP[str(value)])
-                if idx is not None:
-                    target.pop(idx)
+                if nm and nm in strike_names(new_p_data):
+                    rep.append(_strike_clear(nm))
+                    continue
+                idx = _find_idx(nm)
+                if idx is None and nm in getattr(config, "LEGACY_TAG_MAP", {}):
+                    idx = _find_idx(config.LEGACY_TAG_MAP[nm])
+                if idx is None:
+                    rep.append(f"⚠ 상태: {nm or '?'}은 없어")
+                    continue
+                target.pop(idx)
+                new_p_data["status_effects"] = target
+                rep.append(f"상태: −{nm}")
             elif action in ["set", "update"] and key:
                 idx = _find_idx(str(key))
                 new_effects = normalize_status_effects([value]) if value is not None else []
-                if idx is not None and new_effects:
+                if not new_effects:
+                    rep.append(f"⚠ 상태: {key} — 바꿀 값이 없어")
+                    continue
+                if idx is not None:
                     target[idx] = new_effects[0]
-                elif new_effects:
+                else:
                     target.append(new_effects[0])
-
-            new_p_data["status_effects"] = target
+                new_p_data["status_effects"] = target
+                rep.append(f"상태: {key} 고침")
+            else:
+                rep.append(f"⚠ 상태: '{action or '?'}'은 못 해(add·remove)")
 
         elif field == "passives":
             # [2026-09-16 3차] 조각 편집 — add/set 은 새 모양으로 접어 이름 기준 교체, remove 는 이름.
             #   OOC 로 넣은 조각은 작가 편집이라 기본 origin=sheet(정리 콜이 못 덮는다).
-            from game_character import normalize_fragment
             target = [f for f in (normalize_fragment(x, "sheet") for x in (new_mem.get("passives") or [])) if f]
             if action in ("add", "set", "update", "replace"):
                 _raw = value if isinstance(value, dict) else ({"name": value} if isinstance(value, str) else None)
                 if isinstance(_raw, dict) and key and not _raw.get("name"):
                     _raw = dict(_raw, name=key)
                 frag = normalize_fragment(_raw, "sheet") if _raw is not None else None
-                if frag:
-                    _old = key if (action != "add" and key) else frag["name"]
-                    idx = next((i for i, x in enumerate(target) if x["name"] in (_old, frag["name"])), None)
-                    if idx is None:
-                        target.append(frag)
-                    else:
-                        target[idx] = frag
+                if not frag:
+                    rep.append("⚠ 조각: 이름이 없어")
+                    continue
+                _old = key if (action != "add" and key) else frag["name"]
+                idx = next((i for i, x in enumerate(target) if x["name"] in (_old, frag["name"])), None)
+                if idx is None:
+                    target.append(frag)
+                    rep.append(f"조각: +{frag['name']}")
+                else:
+                    target[idx] = frag
+                    rep.append(f"조각: {frag['name']} 고침")
             elif action == "remove":
                 _nm = value.get("name") if isinstance(value, dict) else (value if value is not None else key)
-                target = [x for x in target if x["name"] != str(_nm or "").strip()]
+                _nm = str(_nm or "").strip()
+                _before = len(target)
+                target = [x for x in target if x["name"] != _nm]
+                rep.append(f"조각: −{_nm}" if len(target) < _before else f"⚠ 조각: '{_nm or '?'}'은 없어")
+            else:
+                rep.append(f"⚠ 조각: '{action or '?'}'은 못 해(add·set·remove)")
+                continue
             new_mem["passives"] = target
 
         elif field in ["known_info", "foreshadowing"]:
@@ -583,7 +684,8 @@ def apply_memory_edits(
             if field not in new_mem:
                 new_mem[field] = []
                 target = new_mem[field]
-            
+            _snap = copy.deepcopy(target)
+
             if action == "add":
                 # [V6.1 Fix] Deduplication for dict-based passives
                 if isinstance(value, dict) and "name" in value:
@@ -599,7 +701,7 @@ def apply_memory_edits(
                     if not exists: target.append(value)
                 elif value not in target:
                     target.append(value)
-                    
+
             elif action == "remove":
                 if value in target:
                     target.remove(value)
@@ -608,15 +710,19 @@ def apply_memory_edits(
                     for i, item in enumerate(target):
                         if isinstance(item, dict) and item.get("name") == value:
                             target.pop(i); break
-                            
+
             elif action in ["set", "update"] and key:
                 # [V6.1 Fix] Update specific item by name/original value
                 for i, item in enumerate(target):
                     if (isinstance(item, dict) and item.get("name") == key) or (str(item) == key):
                         target[i] = value
                         break
-                        
+
             new_mem[field] = target
+            rep.append(f"{field}: {action}" if target != _snap else f"⚠ {field}: 바뀐 게 없어")
+
+        else:
+            rep.append(f"⚠ '{field or '?'}'은 여기서 못 고쳐")
 
     # [2026-08-11 비일상적응도 삭제] abnormal_exposure 편집 분기 + 레거시 normalization
     # 리다이렉트 분기 제거. OOC로만 값이 들어가고 플레이 중 갱신하는 코드는 없던 필드라

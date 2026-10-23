@@ -284,6 +284,9 @@ async def generate_response(
         else:
             session.history.append(types.Content(role="user", parts=[types.Part(text=context_data)]))
             session.history.append(types.Content(role="model", parts=[types.Part(text=_ack_text)]))
+        # [2026-10-22 C57] 자료 존·ack 까지가 고정 머리 — 자르기는 이 뒤(대화 기록)만. 전엔 Gemini 세션이 앞 2개
+        #   (규칙 존·루카)만 지켜, 총합 10만 자를 넘으면 훈련 대화 다음으로 자료 존이 통째 버려졌다.
+        session.pinned = len(session.history)
     else:
         session = persona.create_risu_style_session(
             client=client,
@@ -359,8 +362,9 @@ async def generate_response(
             _last_asst_idx = _i
             break
     from cognition import sanitize_minor_tokens as _san_minor
+    _san_on = bool(getattr(config, "MINOR_SANITIZE_RENDER", False))   # [2026-10-18 C51] 렌더 요청 — 기본 꺼짐
     for _idx, h in enumerate(history_to_inject):
-        _content = _san_minor(str(h['content']))
+        _content = _san_minor(str(h['content'])) if _san_on else str(h['content'])
         _is_user = h.get('role') != "Model"
         if not _is_user:
             _content = reduce_emdashes(_content)

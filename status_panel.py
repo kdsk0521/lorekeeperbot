@@ -386,7 +386,8 @@ def register_panel_section(channel_id: str, name: str, rule: str,
 
 
 def remove_panel_section(channel_id: str, name: str) -> Tuple[bool, str]:
-    """섹션 삭제. 없는 이름이면 (False, 사유)."""
+    """섹션 삭제. 없는 이름이면 (False, 사유).
+    [2026-10-15 C38 가] 지운 섹션의 패널 저장값·기록 행도 같이 지운다(`prune_saved_fields`)."""
     nm = str(name or "").strip()
     try:
         decl = domain_manager.get_output_decl(channel_id) or {}
@@ -394,9 +395,11 @@ def remove_panel_section(channel_id: str, name: str) -> Tuple[bool, str]:
         if nm not in ps:
             # 선언 층에 없지만 read-through 로 보이는 경우(옛 출력룰) — 삭제할 집이 저쪽이다.
             return False, "그 이름의 패널 섹션이 없습니다."
+        _was_append = isinstance(ps[nm], dict) and _clean_mode(ps[nm].get("mode")) == "append"
         del ps[nm]
         decl["panel_sections"] = ps
         domain_manager.update_output_decl(channel_id, decl)
+        prune_saved_fields(channel_id, [nm], append_removed=([nm] if _was_append else []))
         return True, "삭제"
     except Exception as e:
         logger.warning(f"[StatusPanel] section remove failed: {e}")
@@ -404,13 +407,76 @@ def remove_panel_section(channel_id: str, name: str) -> Tuple[bool, str]:
 
 
 def clear_panel_sections(channel_id: str) -> None:
-    """섹션 전부 비움 — `!출력룰 초기화` 가 예전부터 가지던 의미의 보존용."""
+    """섹션 전부 비움 — `!출력룰 초기화` 가 예전부터 가지던 의미의 보존용.
+    [2026-10-15 C38 가] 저장값(`world_state["status_panel"]`)과 append 기록 행도 같이 간다."""
     try:
+        _app = append_section_names(channel_id)
         decl = domain_manager.get_output_decl(channel_id) or {}
         decl["panel_sections"] = {}
         domain_manager.update_output_decl(channel_id, decl)
+        prune_saved_fields(channel_id, [], all_gone=True, append_removed=_app)
     except Exception as e:
         logger.debug(f"[StatusPanel] section clear skipped: {e}")
+
+
+def prune_saved_fields(channel_id: str, removed: List[str], *, all_gone: bool = False,
+                       append_removed: Any = ()) -> Dict[str, int]:
+    """[2026-10-15 C38 가] 지운 섹션의 패널 저장값·기록 행을 지운다. Returns {"fields", "rows"}.
+
+    병: 저장값(`world_state["status_panel"]["fields"]`, `섹션명/칸` 키 · 기본 섹션은 접두 없음)은
+      섹션 정의가 사라져도 살았다. `_split_scene_fields`가 그 접두를 더는 섹션으로 알아보지 못해
+      1장째 장면 칸에 `섹션명/칸` 그대로 떨어지고, 정의가 비면 패널 콜이 안 돌아 갱신도 삭제도
+      안 됐다(`!클리어`까지 계속 뜸).
+    규칙(추측 0):
+      · all_gone(섹션 전부) → 저장 패널 통째(comments 포함).
+      · 지운 이름 X(기본 아님) → 머리가 정확히 X 인 `X/…` 칸만.
+      · 지운 게 `기본` → 남은 섹션의 칸이 아닌 것 전부(접두 없는 칸 + `HP/MP`처럼 머리가
+        남은 섹션 이름이 아닌 칸 — 기본 칸 이름에 `/`가 들어갈 수 있다).
+    append_removed = 지운 append 섹션 이름 → 그 `notebook_log` 행 삭제(기록 창의 정본)."""
+    out = {"fields": 0, "rows": 0}
+    names = [str(n).strip() for n in (removed or []) if str(n or "").strip()]
+    try:
+        world = domain_manager.get_world_state(channel_id) or {}
+        panel = world.get("status_panel")
+        if isinstance(panel, dict):
+            fields = dict(panel.get("fields") or {})
+            if all_gone:
+                out["fields"] = len(fields)
+                world.pop("status_panel", None)
+                domain_manager.update_world_state(channel_id, world)
+            elif names and fields:
+                remaining = set(list_panel_sections(channel_id).keys())
+                drop_default = DEFAULT_PANEL_SECTION in names and DEFAULT_PANEL_SECTION not in remaining
+                gone = set(n for n in names if n != DEFAULT_PANEL_SECTION)
+
+                def _head(k: str) -> str:
+                    return k.split(_SECTION_SEP, 1)[0].strip() if _SECTION_SEP in k else ""
+
+                keep = {}
+                for k, v in fields.items():
+                    h = _head(str(k))
+                    if h and h in gone:
+                        continue
+                    if drop_default and not (h and h in remaining):
+                        continue
+                    keep[k] = v
+                out["fields"] = len(fields) - len(keep)
+                if out["fields"]:
+                    panel["fields"] = keep
+                    world["status_panel"] = panel
+                    domain_manager.update_world_state(channel_id, world)
+    except Exception as e:
+        logger.warning(f"[StatusPanel] saved field prune failed: {e}")
+    _app = [str(n).strip() for n in (append_removed or []) if str(n or "").strip()]
+    if _app:
+        try:
+            import sqlite_store as _ss_pr
+            out["rows"] = _ss_pr.delete_notebook_log_sections(channel_id, _app)
+        except Exception as e:
+            logger.debug(f"[StatusPanel] append rows prune skipped: {e}")
+    if out["fields"] or out["rows"]:
+        logger.info(f"[StatusPanel] prune removed={names or '(all)'} fields={out['fields']} rows={out['rows']}")
+    return out
 
 
 def _section_block(name: str, sec: Dict[str, Any]) -> str:
@@ -727,10 +793,18 @@ def apply_panel_result(channel_id: str, result: Optional[Dict[str, Any]]) -> boo
             if _dropped:
                 logger.debug(f"[AppendLog] 패널 필드 폐기(행이 정본): {_dropped}")
         day_names = day_section_names(channel_id)
-        if day_names:
+        # [2026-10-23 C72] 꺼진 모듈의 섹션 저장값도 남긴다 — 매턴 콜은 그 섹션을 못 봐서(치워 둠) 안 내고,
+        #   전량 교체면 그 몫이 지워진다. 켜면 이어서 돌게(C72 §2.3 "값 · 기록은 남는다").
+        try:
+            import output_router as _or_pk
+            keep_names = list(day_names) + _or_pk.parked_section_names(channel_id)
+        except Exception as _e_pk:
+            logger.debug(f"[StatusPanel] parked section names skipped: {_e_pk}")
+            keep_names = list(day_names)
+        if keep_names:
             prev_fields = (world.get("status_panel") or {}).get("fields") or {}
             for k, v in prev_fields.items():
-                if k not in fields and _owned_by_day(str(k), day_names):
+                if k not in fields and _owned_by_day(str(k), keep_names):
                     fields[str(k)] = v
         world["status_panel"] = {
             "fields": fields,
@@ -914,6 +988,14 @@ def _code_owned_fields(channel_id: str) -> List[Tuple[str, str]]:
                 parts.append(f"활력 {_gauge_bar(v)} {int(v)}/100".replace("  ", " "))
             if isinstance(c, (int, float)):
                 parts.append(f"평형 {_gauge_bar(c)} {int(c)}/100".replace("  ", " "))
+            # [2026-10-15 C42] 타격칸 4칸 — 활력·평형(스트레스) 바로 아래.
+            try:
+                import game_character as _gc_sk
+                _track = _gc_sk.strike_view(p)
+                parts.append("타격 " + "".join("■" if x else "□" for x in _track)
+                             + (" " + " · ".join(x for x in _track if x) if any(_track) else ""))
+            except Exception as _e_sk:
+                logger.debug(f"[StatusPanel] strike row skipped: {_e_sk}")
             if not parts:
                 continue
             # 두 게이지는 **줄을 나눈다** — 바가 옆으로 붙으면 어느 바가 어느 값인지 안 읽힌다.
@@ -946,6 +1028,9 @@ def _custom_var_fields(channel_id: str) -> List[Tuple[str, str]]:
     out: List[Tuple[str, str]] = []
     for name, text in rows:
         spec = decl.get(name) if isinstance(decl, dict) else None
+        # [2026-10-23 C61] 기본 목록(소지품)은 턴 임베드·패널에서 뺀다 — 노트북 시절처럼 💠 노트북 칸에서 본다.
+        if isinstance(spec, dict) and spec.get("builtin"):
+            continue
         out.append((name, _decorate_value(text, spec if isinstance(spec, dict) else None)))
     return out
 
@@ -1330,13 +1415,14 @@ def _fit_embed_budget(embeds: List["discord.Embed"], channel_id: str) -> List["d
     return out
 
 
-def _section_embeds(channel_id: str) -> List["discord.Embed"]:
-    """섹션 장(2장째~)만 — `섹션명/` 접두 필드를 order 순으로 한 섹션 한 장.
+def build_section_pages_data(channel_id: str) -> List[Tuple[str, List[Tuple[str, str]]]]:
+    """섹션 장(2장째~)의 **데이터** — discord 비의존. [(섹션 이름, [(필드, 값)])], order 순, 빈 섹션 생략.
 
-    [2026-09-13 P9b] 패널 경로와 턴 경로가 **같은 섹션 장**을 쓰도록 여기로 뽑았다
-    (1장째만 서로 다르다 — 패널은 `build_panel_embed_data`, 턴은 `build_turn_embed_data`).
+    [2026-10-22 C54] `_section_embeds`(임베드)와 Activity 화면(`activity_server.view_status`)이
+      **같은 데이터**를 쓰도록 뽑았다 — P9 의 데이터/임베드 분리(`build_turn_embed_data`)를 섹션 장에도.
+      예산 절단은 여기서 하지 않는다(임베드 쪽 `build_panel_section_embed`·`_fit_embed_budget` 몫 — 화면엔 예산이 없다).
     """
-    embeds: List["discord.Embed"] = []
+    out: List[Tuple[str, List[Tuple[str, str]]]] = []
     saved = get_saved_panel(channel_id)
     raw_fields = saved.get("fields") if isinstance(saved.get("fields"), dict) else {}
     _base, grouped = _split_scene_fields(channel_id, raw_fields)
@@ -1349,6 +1435,19 @@ def _section_embeds(channel_id: str) -> List["discord.Embed"]:
             else grouped.pop(nm, None)
         if not rows:
             continue
+        out.append((nm, list(rows)))
+    return out
+
+
+def _section_embeds(channel_id: str) -> List["discord.Embed"]:
+    """섹션 장(2장째~)만 — `섹션명/` 접두 필드를 order 순으로 한 섹션 한 장.
+
+    [2026-09-13 P9b] 패널 경로와 턴 경로가 **같은 섹션 장**을 쓰도록 여기로 뽑았다
+    (1장째만 서로 다르다 — 패널은 `build_panel_embed_data`, 턴은 `build_turn_embed_data`).
+    [2026-10-22 C54] 데이터는 `build_section_pages_data` 한 곳 — 여기는 임베드로 감싸기만 한다.
+    """
+    embeds: List["discord.Embed"] = []
+    for nm, rows in build_section_pages_data(channel_id):
         e = build_panel_section_embed(nm, rows)
         if e is not None:
             embeds.append(e)
@@ -1420,6 +1519,26 @@ def build_panel_embed_data(channel_id: str) -> Optional[Dict[str, Any]]:
         "comments": comments,
         "footer": " · ".join(footer_parts),
     }
+
+
+def build_judgment_embeds(datas: Any) -> List["discord.Embed"]:
+    """[2026-10-15 C42] 판정 임베드 데이터(judgment_engine 이 만든 dict) → Embed. 엔진은 discord 를 모른다.
+    칸: description(이유) · 형세 · 주사위 · 수정치 · ⚠️ 잠재적 위기 · 📋 결과 영향. 한 메시지 최대 10."""
+    out: List["discord.Embed"] = []
+    for d in (datas if isinstance(datas, list) else [])[:10]:
+        if not isinstance(d, dict):
+            continue
+        desc = str(d.get("description") or "").strip()[:4000]
+        try:
+            color = int(d.get("color") or 0x95A5A6)
+        except (TypeError, ValueError):
+            color = 0x95A5A6
+        e = discord.Embed(description=desc or None, color=color)
+        for f in (d.get("fields") or []):
+            if isinstance(f, (list, tuple)) and len(f) >= 2 and str(f[1] or "").strip():
+                e.add_field(name=str(f[0])[:256], value=str(f[1])[:1024], inline=False)
+        out.append(e)
+    return out
 
 
 def _embed_from_data(data: Dict[str, Any]) -> "discord.Embed":
@@ -1833,6 +1952,227 @@ def build_turn_embeds(channel_id: str, data: Any = _UNSET) -> List["discord.Embe
     return _fit_embed_budget(embeds, channel_id)
 
 
+# =========================================================
+# [2026-10-22 C59] 압축 턴 임베드 — Activity 가 떠 있으면 산문 아래는 최소만
+# =========================================================
+# 레티어스 "이제 액티브에 뜨니까 그 산문아래 바로뜨는 상태창은 좀 압축해도 되겠다. 최소한만 나오게 pc활력이나 그런거"
+#   · 남기는 것 = PC 활력·평형·타격칸(_code_owned_fields) + 꼬리(시간·장소 · 무대 인물).
+#   · 헤더 템플릿·둠 시계·세계/관계/장면/기록 칸·패널 댓글·섹션 장은 💠 상태창(Activity)에서만 —
+#     레티어스 "헤더템플릿은 굳이? 어짜피 출력룰을 저정도로 넣으면 항시 볼텐디".
+#   · Activity 가 안 떠 있거나 TURN_EMBED_COMPACT=0 이면 옛 전 장(build_turn_embeds) 그대로 — 정보가 갈 곳을 잃지 않는다.
+#   · Activity 화면(activity_server.view_status)은 옛 전체 함수(build_turn_embed_data)를 그대로 읽는다.
+#   · 보내는 자리 셋 + 재그림 비교는 turn_view_data / turn_view_embeds 한 쌍만 쓴다(모드 판정 한 곳).
+
+
+# [2026-10-23 C68 A2a] 알림 줄 — 이 산문 메시지에 적립된 도착물(turn_mail 행)을 압축 임베드 footer 둘째 줄로.
+#   레티어스 "산문 맨아래 기본 상태창 이후에 새 매시지!나 새도착물 도착은거 한줄 정도 나오면 되어서".
+#   footer 는 글자뿐이라 누르는 자리가 아니다 — 본문은 💌💭📰(A2a 동안) · Activity 앱(A2b+A3 뒤)이 연다.
+#   ⚠ 여기서는 turn_mail 을 안 부른다(모듈 머리 화살표는 turn_mail → status_panel 한 방향). 행은 sqlite_store 에서 직접 읽고,
+#     kind 글자는 turn_mail.KIND_MAIL·KIND_BOARD·KIND_MIND 와 같아야 한다(스모크 c68 [6]이 대조).
+#   압축 모드에서만 서고, 메시지 id 를 아는 자리(재그림)에서만 채워진다 — 보낼 때는 메시지가 아직 없다.
+NOTICE_KINDS: Tuple[Tuple[str, str, str], ...] = (
+    ("mail", "💌", "새 편지"),
+    ("board", "📰", "소식"),
+    ("mind", "💭", "속마음"),
+)
+NOTICE_MAX_CHARS = 200
+
+
+def _notice_count(kind: str, payload: Any) -> int:
+    """행 하나가 담은 건수. (메시지, kind)는 교체라 행은 kind 마다 하나 — 여러 건은 행 **안**에 합쳐져 있다."""
+    p = payload if isinstance(payload, dict) else {}
+    if kind == "mind":
+        _ent = p.get("entries") if isinstance(p.get("entries"), list) else []
+        _notes = p.get("notes") if isinstance(p.get("notes"), list) else []
+        return max(1, len(_ent) + len(_notes))
+    try:
+        return max(1, int(p.get("count") or 1))   # expr_engine.flush_mails 가 묶음 건수를 남긴다. 없는 옛 행 = 1
+    except (TypeError, ValueError):
+        return 1
+
+
+def notice_counts(rows: Any) -> List[Tuple[str, int]]:
+    """[2026-10-23 C69 A3] 셈법 한 자리 — 행 목록 → [(kind, 건수)] (NOTICE_KINDS 순서, 0 은 뺀다).
+    디스코드 알림 줄(notice_line)과 Activity 홈 "이번 턴"(this_turn_items)이 같이 쓴다."""
+    counts: Dict[str, int] = {}
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        k = str(row.get("kind") or "")
+        counts[k] = counts.get(k, 0) + _notice_count(k, row.get("payload"))
+    return [(kind, counts[kind]) for kind, _e, _l in NOTICE_KINDS if counts.get(kind, 0) > 0]
+
+
+def notice_shown_count(kind: str, n: int) -> int:
+    """보이는 수 — 편지는 수를 안 단다(0), 나머지는 둘 이상일 때만."""
+    return 0 if kind == "mail" or n < 2 else int(n)
+
+
+def notice_line(channel_id: str, message_id: int) -> str:
+    """'💌 새 편지 · 📰 소식 2 · 💭 속마음' — 그 메시지에 붙은 도착물. 없으면 ''. 편지는 수를 안 단다."""
+    if not channel_id or not message_id:
+        return ""
+    try:
+        import sqlite_store
+        rows = sqlite_store.read_turn_mail(str(channel_id), int(message_id))
+    except Exception as e:
+        logger.debug(f"[TurnEmbed] notice read skipped: {e}")
+        return ""
+    _face = {k: (e, l) for k, e, l in NOTICE_KINDS}
+    parts: List[str] = []
+    for kind, n in notice_counts(rows):
+        emoji, label = _face[kind]
+        shown = notice_shown_count(kind, n)
+        parts.append(f"{emoji} {label}" + (f" {shown}" if shown else ""))
+    return " · ".join(parts)[:NOTICE_MAX_CHARS]
+
+
+# [2026-10-23 C69 A3] Activity 홈 "이번 턴" — 지금 세계 turn_index 로 적립된 행. 배경 속마음이 다음 턴 입력보다
+#   늦게 끝나면 다음 턴 번호로 찍힌다(그때는 한 턴 늦게 선다 — 드물고 무해).
+THIS_TURN_APP_LABEL = {"mail": "편지", "board": "소식", "mind": "속마음"}
+
+
+def this_turn_items(channel_id: str) -> List[Dict[str, Any]]:
+    """[{app, label, count}] — count 는 보이는 수(0 = 수 없음). 실패·없음 []."""
+    if not channel_id:
+        return []
+    try:
+        import sqlite_store
+        turn = int((domain_manager.get_world_state(channel_id) or {}).get("turn_index", 0) or 0)
+        if turn <= 0:
+            return []
+        rows = sqlite_store.read_turn_mail_by_turn(str(channel_id), turn)
+    except Exception as e:
+        logger.debug(f"[Activity] this turn skipped: {e}")
+        return []
+    return [{"app": k, "label": THIS_TURN_APP_LABEL.get(k, k), "count": notice_shown_count(k, n)}
+            for k, n in notice_counts(rows)]
+
+
+# [2026-10-23 C69 A2b] 마지막 산문 메시지 표지 — 재그림보다 **늦게** 붙은 도착물(큐 재시도)도 알림 줄에 들게.
+#   `turn_mail.attach_button` 이 "표지된 마지막 메시지이고 재그림이 이미 돈 뒤"일 때만 임베드까지 한 번 더 고친다.
+#   옛 메시지는 절대 안 고친다(압축 데이터는 채널의 **지금** 값이라 옛 턴 상태창에 새 값이 그려진다).
+#   메모리뿐 — 재시작이면 비어 있어 늦은 고침이 안 설 뿐이다(무해).
+_VIEW_STATE: Dict[str, Dict[str, Any]] = {}
+
+
+def note_view_message(channel_id: str, message_id: Any) -> None:
+    """재그림을 적재할 때 — 이 메시지가 이 채널의 마지막 산문 메시지다(아직 재그림 전)."""
+    try:
+        if channel_id and message_id:
+            _VIEW_STATE[str(channel_id)] = {"msg": int(message_id), "refreshed": False}
+    except (TypeError, ValueError):
+        pass
+
+
+def mark_refreshed(channel_id: str, message_id: Any) -> None:
+    """재그림이 돈 뒤 — 같은 메시지일 때만."""
+    st = _VIEW_STATE.get(str(channel_id))
+    try:
+        if st and st.get("msg") == int(message_id):
+            st["refreshed"] = True
+    except (TypeError, ValueError):
+        pass
+
+
+def late_refresh_wanted(channel_id: str, message_id: Any) -> bool:
+    """늦게 붙은 도착물이 임베드까지 고칠 자리인가 = 압축 모드 · 표지된 마지막 메시지 · 재그림이 이미 돈 뒤."""
+    st = _VIEW_STATE.get(str(channel_id))
+    try:
+        return bool(st and st.get("refreshed") and st.get("msg") == int(message_id) and turn_compact_mode())
+    except (TypeError, ValueError):
+        return False
+
+
+def build_turn_compact_data(channel_id: str, message_id: int = 0) -> Optional[Dict[str, Any]]:
+    """압축 턴 임베드 데이터 — discord 비의존. 실을 게 없으면 None(= 임베드 없이 산문만).
+
+    [2026-10-23 C68 A2a] message_id 를 주면 그 메시지의 알림 줄을 `notice` 칸으로 싣는다(있을 때만 — 없으면
+    옛 모양 그대로라 Activity 홈·옛 비교가 무변화). 행·꼬리가 비어도 알림이 있으면 그 한 줄짜리 장이 선다.
+    """
+    try:
+        rows = list(_code_owned_fields(channel_id))
+        footer_parts: List[str] = []
+        tl = _time_location_line(channel_id)
+        if tl:
+            footer_parts.append(tl)
+        present = _present_names(channel_id)
+        if present:
+            footer_parts.append(f"{TURN_PRESENT_LABEL} " + ", ".join(_vessel_tagged(channel_id, present)))
+        notice = notice_line(channel_id, message_id) if message_id else ""
+        if not rows and not footer_parts and not notice:
+            return None
+        data = {"compact": True, "title": "💠 상태", "rows": rows,
+                "footer": " · ".join(footer_parts)[:2048]}
+        if notice:
+            data["notice"] = notice
+        return data
+    except Exception as e:
+        logger.debug(f"[TurnEmbed] compact build skipped: {e}")
+        return None
+
+
+def _compact_embed(data: Dict[str, Any]) -> "discord.Embed":
+    """압축 데이터 → 한 장. 섹션 머리 없이 PC 행만, 꼬리는 footer. 문자 예산은 _embed_from_data 와 같은 방식.
+
+    [2026-10-23 C68 A2a] 알림 줄은 footer **둘째 줄**이다 — 임베드에서 footer 가 맨 끝이라 "상태창 다음 한 줄"을
+    임베드 안에 두는 자리는 여기뿐이다(바로 밑이 💠 버튼).
+    """
+    embed = discord.Embed(title=data["title"], color=0x5865F2)
+    footer = "\n".join(x for x in (str(data.get("footer") or ""), str(data.get("notice") or "")) if x)[:2048]
+    left = EMBED_TOTAL_CHAR_LIMIT - len(embed.title or "") - len(footer)
+    for name, value in data.get("rows") or []:
+        nm = str(name)[:EMBED_NAME_LIMIT] or _ZWSP
+        room = left - len(nm)
+        if room < 4:
+            break
+        text = str(value)[:min(EMBED_VALUE_LIMIT, room)] or _ZWSP
+        embed.add_field(name=nm, value=text, inline=_inline_ok(text))
+        left -= len(nm) + len(text)
+    if footer:
+        embed.set_footer(text=footer)
+    return embed
+
+
+def turn_compact_mode() -> bool:
+    """압축 모드 = TURN_EMBED_COMPACT(기본 켬) 그리고 Activity 서버가 떠 있음."""
+    if not getattr(config, "TURN_EMBED_COMPACT", True):
+        return False
+    try:
+        import activity_server as _act
+        return bool(_act.running())
+    except Exception:
+        return False
+
+
+def turn_view_data(channel_id: str, message_id: int = 0) -> Optional[Dict[str, Any]]:
+    """보내는 자리·재그림 비교가 쓰는 데이터. 압축 모드면 압축, 아니면 옛 전체.
+
+    [2026-10-23 C68 A2a] message_id = 재그림 대상 메시지 — 압축 모드면 알림 줄까지 싣는다. 전체 모드는 무시
+    (알림 줄은 압축 모드에만 있다 — 전체 모드는 💌💭📰 버튼이 그대로다). 보내는 자리는 메시지가 아직 없어 0.
+    """
+    if turn_compact_mode():
+        if message_id:
+            return build_turn_compact_data(channel_id, message_id=message_id)
+        return build_turn_compact_data(channel_id)
+    return build_turn_embed_data(channel_id)
+
+
+def turn_view_embeds(channel_id: str, data: Any = _UNSET) -> List["discord.Embed"]:
+    """보내는 자리·재그림이 붙이는 임베드. 압축 모드면 한 장(또는 0장), 아니면 옛 전 장(build_turn_embeds)."""
+    if not turn_compact_mode():
+        return build_turn_embeds(channel_id, data=data)
+    if data is _UNSET:
+        data = build_turn_compact_data(channel_id)
+    if not data:
+        return []
+    try:
+        return [_compact_embed(data)]
+    except Exception as e:
+        logger.warning(f"[TurnEmbed] compact embed failed: {e}")
+        return []
+
+
 def build_panel_embed(channel_id: str) -> Optional[discord.Embed]:
     """1장째만 — 복수 도입 전 소비자·검정을 위한 shim."""
     embeds = build_panel_embeds(channel_id)
@@ -1882,13 +2222,24 @@ def _archive_notebook_page(channel_id: str, user_id: str) -> Optional[Dict[str, 
         ssec = (shared or {}).get("sections") or {}
 
         def _has(d):
-            return bool((d.get("소지품") or {}).get("items")
-                        or (d.get("메모") or {}).get("user")
+            return bool((d.get("메모") or {}).get("user")
                         or (d.get("메모") or {}).get("llm")
                         or (d.get("일지") or {}).get("lines"))
-        if not (_has(sec) or _has(ssec)):
+        # [2026-10-23 C61] 소지품 정본 = 기본 선언 목록 — "비었나"도 거기서 보고, 최근 변화 한 줄(↕)을 붙인다
+        #   (산문 앞 `📦 소비 / 📥 획득` 시스템 줄이 사라진 자리).
+        _items_now: Dict[str, Any] = {}
+        _tail = ""
+        try:
+            import custom_vars as _cv_ar
+            _items_now = _cv_ar.sojipin_items(channel_id)
+            _tail = _cv_ar.sojipin_change_tail(channel_id)
+        except Exception:
+            _items_now, _tail = {}, ""
+        if not (_items_now or _has(sec) or _has(ssec)):
             return None
         text = domain_manager.get_notebook(channel_id, str(user_id or ""))
+        if _tail:
+            text = f"{text}\n{_tail}"
     except Exception as e:
         logger.debug(f"[Archive] notebook page skipped: {e}")
         return None
@@ -2011,7 +2362,7 @@ def _archive_relation_page(channel_id: str) -> Optional[Dict[str, Any]]:
     return {"key": "relation", "title": "💠 관계", "body": "", "rows": rows}
 
 
-def build_archive_pages_data(channel_id: str, user_id: str = "") -> List[Dict[str, Any]]:
+def build_archive_pages_data(channel_id: str, user_id: str = "", include_mail: bool = True) -> List[Dict[str, Any]]:
     """💠 창의 장 목록 — **discord 비의존 순수 함수**(스모크가 여기까지 본다).
 
     장 하나 = {"key", "title", "body"(본문 문자열), "rows"[(이름, 값)]}.
@@ -2019,12 +2370,14 @@ def build_archive_pages_data(channel_id: str, user_id: str = "") -> List[Dict[st
     **빈 장은 생략**한다(머리만 남은 장은 정보가 아니라 노이즈 — `_fit_sections` 와 같은 규율).
     전부 비면 안내 한 줄짜리 장 하나를 낸다 — 빈 화면은 "고장"으로 읽힌다.
     콜 0: 노트북·일지·기록·도착물·관계 전부 이미 저장된 행/도메인을 읽을 뿐이다.
+    [2026-10-23 C69 A3] include_mail=False = ④ 도착물 목록을 뺀다 — Activity 보관함 앱(편지·소식 앱이 그 자리).
+      💠 ephemeral 보관함(Activity 꺼짐)은 기본값 True 그대로다.
     """
     pages: List[Dict[str, Any]] = []
     for page in (_archive_notebook_page(channel_id, str(user_id or "")),
                  _archive_record_page(channel_id),
                  _archive_journal_page(channel_id),
-                 _archive_mail_page(channel_id),
+                 _archive_mail_page(channel_id) if include_mail else None,
                  _archive_relation_page(channel_id)):
         if page and (page.get("body") or page.get("rows")):
             pages.append(page)
@@ -2100,7 +2453,18 @@ async def respond_archive(interaction: "discord.Interaction") -> None:
     같은 custom_id 를 두 자리가 잡는다(새 메시지 = `turn_mail.TurnView`,
     옛 메시지 = `ArchiveView`). 둘 다 이 함수로 위임한다 — 분기를 두면 화면이 갈라진다.
     노트북은 **클릭한 사람** 기준이라 `interaction.user.id` 가 키다(acting user 가 아니다).
+
+    [2026-10-22 C54] Activity 서버가 떠 있으면 **화면(Activity)을 연다** — 상태창 전반이 화면으로 이사(레티어스).
+      열기가 거절되면(포털 미설정·포럼 채널·옛 클라이언트 등) 아래 종전 ephemeral 창으로 내려간다 —
+      💠 가 아무것도 안 하는 일은 없다. 서버가 꺼져 있으면(`.env` 값 없음·기동 실패) 처음부터 종전 창.
     """
+    try:
+        import activity_server as _act
+        if _act.running():
+            await interaction.response.launch_activity()
+            return
+    except Exception as e:
+        logger.info(f"[Activity] launch 거절 → 보관함 창으로: {e}")
     try:
         channel_id = str(getattr(interaction, "channel_id", "") or "")
         user_id = str(getattr(getattr(interaction, "user", None), "id", "") or "")
@@ -2109,10 +2473,13 @@ async def respond_archive(interaction: "discord.Interaction") -> None:
         logger.warning(f"[Archive] respond failed: {e}")
         embeds = []
     try:
+        # [2026-10-22 C54] launch 가 응답을 소비한 뒤 실패했으면 followup 으로(드묾 — 보통은 응답 전에 거절된다).
+        _send = (interaction.followup.send if interaction.response.is_done()
+                 else interaction.response.send_message)
         if not embeds:
-            await interaction.response.send_message(ARCHIVE_EMPTY_MSG, ephemeral=True)
+            await _send(ARCHIVE_EMPTY_MSG, ephemeral=True)
             return
-        await interaction.response.send_message(embeds=embeds, ephemeral=True)
+        await _send(embeds=embeds, ephemeral=True)
     except Exception as e:
         logger.debug(f"[Archive] send skipped: {e}")
 

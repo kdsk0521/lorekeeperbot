@@ -477,25 +477,39 @@ JUDGMENT_SUPPORT = """
 ### needs_judgment:
 - YES when outcome uncertain + stakes significant + capability challenged.
 - YES (occasionally) for easy actions if the situation is entertaining or has minor stakes — the GM finds it fun to roll.
-- NO only when purely automatic with zero possible failure.
+- Words that press on someone (persuading, deceiving, threatening, bargaining) are actions: YES when the other side can refuse.
+- NO when purely automatic with zero possible failure, and for talk or thought that presses on no one (asking, small talk, musing to oneself).
 
-### Difficulty: easy | normal | hard | extreme
-- easy: "간단하지만 재미있어 보이니 굴리죠" — mostly auto-success, but roll 1 = comedic disaster
-- normal/hard: where most real judgments live
+### difficulty: easy | normal | hard | extreme  (the task itself, before who attempts it)
+- easy: mostly lands; rolled for the fun of it.
+- normal/hard: where most real judgments live.
 - extreme: "이걸 진짜? 다이스 잘 뜨면 성공시켜줄게"
 
-### Assets (max +60): Skill +5~20 | Equipment +5~15 | Situational +5~15 | Assistance +5~10
-- Equipment: Cross-reference PC's INVENTORY & MEMOS. Only items currently possessed count.
-  - Exact match: weapon for combat, tool for craft, key for lock → +10~15
-  - Partial match: improvised use, tangentially useful → +5~10
-  - No relevant item: Equipment bonus = 0 (do NOT invent items PC doesn't have)
-### Penalties (max -40): Injury -5~15 | Environmental -5~15 | Opposition -5~10 | Psychological -5~10
+### skill: practiced | average | unpracticed
+- The acting PC's own competence at THIS action as the sheet and record show it: training, trade, long habit.
+- Fragments named in active_passives are counted on their own; skill reads the rest of the sheet.
+
+### active_items: [name]
+- Items from the acting PC's INVENTORY that THIS action puts to use (a blade swung, a tool applied, a key turned). Names verbatim from the list.
+- An item merely carried stays out. No list entry fits → [].
+
+### assist: [name]
+- SCENE CAST characters already working alongside the PC before this input (shoulder already at the door, a lookout already posted). Names verbatim. [] when the PC acts alone.
+- Help the PC asks for in this input is the other's to answer; it stays out until it has happened.
+
+### active_strikes: [name]
+- The acting PC's Strikes (lasting harm, body or mind) that bear on THIS action: a broken wrist on a sword swing, a panic on a calm lie. Names verbatim from the list.
+- A strike that leaves this action untouched stays out. No list entry fits → [].
 
 ### active_passives: [name]
-- Acting PC's Passives whose desc (conditions included) holds for THIS action in THIS scene. Names verbatim from the list.
+- Acting PC's Passives whose desc (conditions included) holds for THIS action in THIS scene: edges that help and flaws that get in the way. Names verbatim from the list.
 - Condition in desc unmet → excluded. No list entry fits → [].
-- needs_judgment=false → [].
-- Fragment bonuses are counted by code from these names; do not repeat them in modifications.
+
+### memo_relevant
+- One memo or clue the PC already holds that bears on THIS action; null when none.
+
+- needs_judgment=false → skill average, every list [], memo_relevant null.
+- Code counts difficulty, skill, fragments, items, assist, strikes, and memo from these fields; the reason line explains the call in words.
 
 """
 

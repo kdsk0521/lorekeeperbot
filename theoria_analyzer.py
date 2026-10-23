@@ -446,11 +446,10 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
 
 ## JUDGMENT SUPPORT
 - "needs_judgment": boolean
-- "action_meta": {"action": "Korean — describe the CURRENT user input ONLY. Do NOT repeat or rephrase previous turn's action.", "type": "__ACTION_TYPES__", "active_passives": ["verbatim name from the acting PC's Passives whose desc applies to THIS action; [] when none"], "resource_axis": "vigor/composure/both", "difficulty": "easy/normal/hard/extreme", "resolve": "none/determined/desperate — none: 일반 행동('문을 연다', '살펴본다', '조심스럽게 움직인다'), determined: 강한 의지+노력('힘껏 밀어본다', '전력으로 달린다', '집중해서' — 서사 강조만, 기계 효과 없음), desperate: 대가 감수 각오('이를 악물고', '무리해서라도', '목숨을 걸고' — 활력/평형 선불→판정 보너스). 핵심 구분: '강하게 한다'(determined)≠'대가를 치르더라도 한다'(desperate). needs_judgment=false이면 항상 none"}
+- "action_meta": {"action": "Korean — describe the CURRENT user input ONLY. Do NOT repeat or rephrase previous turn's action.", "type": "__ACTION_TYPES__", "difficulty": "easy/normal/hard/extreme", "skill": "practiced/average/unpracticed", "active_passives": ["verbatim name from the acting PC's Passives whose desc applies to THIS action; [] when none"], "active_items": ["verbatim name from the acting PC's Inventory that THIS action puts to use; [] when none"], "assist": ["verbatim name of an on-stage character already working alongside the PC before this input; [] when the PC acts alone"], "active_strikes": ["verbatim name from the acting PC's Strikes that bears on THIS action; [] when none"]}
 - "asset_evaluation": {
     "reason": "Korean",
-    "modifications": [{"label": "Korean", "value": int}],
-    "memo_relevant": {"content": "relevant memo/clue excerpt (Korean)", "bonus": 5, "reason": "why this helps (Korean)"} | null
+    "memo_relevant": {"content": "relevant memo/clue excerpt (Korean)", "reason": "why this helps (Korean)"} | null
   }
 
 
@@ -559,18 +558,6 @@ Observe the physical space — architecture, not decoration. Territory vs Lens: 
     "reason": "ENGLISH-ONLY telegraphic"
   }
 
-### Item Tracking — 이 필드가 노트북 [소지품] 자동 반영의 유일한 소스다(놓치면 인벤 미갱신). 아이템이 실제로 손에 들어오거나 나갔으면 반드시 채운다.
-- "item_usage": null OR {
-    "items_gained": ["플레이어가 이번 턴 실제로 집음/받음/구매/획득한 아이템만 — 보기·살펴보기·언급만은 소유 아님(제외)"],
-    "items_consumed": ["사용/소모/파괴/분실/도난되어 없어진 아이템"],
-    "reason": "Korean"
-  }
-  Cross-reference the PC's Inventory / Memos (section 3); match names to what is actually there (fuzzy OK).
-  - Consumable used up (potion, scroll, food, ammo) → items_consumed. A durable used (weapon, armor, tool, key — a sword swing, a key turned) stays: not consumed.
-  - Gained: only concrete, nameable items the PC actually took, received, or bought — not abstract concepts.
-  - Lost: dropped, given away, stolen, destroyed → items_consumed.
-  - Looking at, mentioning, or considering an item is not use.
-  실제로 손에 들어오거나 나간 게 없으면 null. 예: "검을 집어 가방에 넣는다"→items_gained:["검"] / "벽의 검을 보고 지나간다"→null / "물약을 마신다"→items_consumed:["물약"]
 ### Arrival signal — 이 장면이 도착물(편지·공고·기사·전언)을 부르는가. **불리언 하나**.
 - "arrival": boolean (true ONLY when the scene itself calls for something to ARRIVE — a letter
   handed over, a notice going up, word reaching the PC. This is not detection of an arrival that
@@ -580,7 +567,7 @@ Observe the physical space — architecture, not decoration. Territory vs Lens: 
 <language_final>
 BEFORE OUTPUT — RE-CHECK EVERY FIELD'S LANGUAGE. Exactly two zones, mutually exclusive, no field is bilingual:
 - ENGLISH ONLY (render-facing — feeds the renderer; Korean here gets transcribed verbatim into prose = BUG): Observation, UserIntent, descriptor, env_influence, knows, secrets_held, false_beliefs, Aspects, AND the reason fields of clock_updates / flashback_eval.
-- KOREAN (user-displayed only): CurrentLocation, location_path, TimeContext, action_meta.action, asset_evaluation reason+labels (판정 표시), clock_new name/threat/defense_action/tags (시계 UI), condition_updates description (상태 표시), item_usage reason.
+- KOREAN (user-displayed only): CurrentLocation, location_path, TimeContext, action_meta.action, asset_evaluation reason+labels (판정 표시), clock_new name/threat/defense_action/tags (시계 UI), condition_updates description (상태 표시).
 Any render-facing field whose value would contain Hangul → write that field's value in English instead. This is a per-field language swap ONLY — never a reason to halt, shorten, or null the output; always return the complete JSON with every field. When unsure → English.
 </language_final>
 </output_schema>
@@ -606,6 +593,8 @@ Any render-facing field whose value would contain Hangul → write that field's 
                 lines.append(f"\n[{mask}]{marker}")
                 lines.append(f"- Sheet:\n{pc.get('sheet') or 'N/A'}")
                 lines.append(f"- Passives: {json.dumps(pc.get('passives', []), ensure_ascii=False, default=str)}")
+                # [2026-10-15 C42] 타격칸(마이너스 상태 전용 4칸) — active_strikes 는 이 목록에서 이름 그대로 집는다.
+                lines.append(f"- Strikes: {json.dumps(pc.get('strikes', []), ensure_ascii=False, default=str)}")
                 lines.append(f"- Vigor: {pc.get('vigor_value', 100)} | Composure: {pc.get('composure_value', 100)}")
             return "\n".join(lines)
 
@@ -617,6 +606,7 @@ Any render-facing field whose value would contain Hangul → write that field's 
         # 단따옴표 dict로 응답(JSON 파싱 붕괴 실관측). json.dumps로 직렬화(§7.11 미러 원리).
         _j = lambda v: json.dumps(v, ensure_ascii=False, default=str)
         lines.append(f"- Passives: {_j(anchors.get('passives', []))}")
+        lines.append(f"- Strikes: {_j(anchors.get('strikes', []))}")   # [2026-10-15 C42] 타격칸
         lines.append(f"- Inventory: {_j(anchors.get('inventory', []))}")
         lines.append(f"- Memos: {_j(anchors.get('memos', []))}")
         return "\n".join(lines)
@@ -1282,10 +1272,13 @@ Every proposal stands on the supplied material (history, NPC state, sheets, extr
 
     # [2026-10-11 C1 logos] logos_layer 칸: 겹 이름으로 여는 틀(모든 인물이 같은 머리) → 이번 턴 PC에게 어떻게 말하나, 세 박자
     #   (누르는 것 → 둘 사이에 지나간 일이 연 정도 → 말로 나오는 꼴). 근거 analysis_line/C1_logos머리말_측정·스펙_2026-10-11 §6(lg4).
+    # [2026-10-15 C40] 응답 칸: 받는 사람마다의 읽기(B — 오독 가능)·능숙한 사람은 틈을 누른다(대칭, 시트 그대로).
+    #   roll_outcome 칸: 부분=모자라고 대가는 진짜, 실패·대실패=대가가 PC에게 남고 더 좁은 자리에서 끝(억까 5단계 실패 대가).
+    #   판정 수치는 시계만(C4) — 활력·평형은 출력물 콜이 이 장면을 읽고 움직인다. 스펙 composition/C40_인풋해석·억까_스펙_2026-10-15.md
     _NARRATIVE_SCHEMA = """<output_schema>
 Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean only when quoting world content).
 
-- "roll_outcome": str | null (ENGLISH-ONLY telegraphic, one line. Only when a ROLL RESULT block is present; null otherwise. That tier made concrete in this scene: which part of the bid lands, what it costs and who bears it, who answers. Built from what the scene already holds (a wound, a lost object, a broken leverage, a witness). Every field below starts from this line.)
+- "roll_outcome": str | null (ENGLISH-ONLY telegraphic, one line. Only when a ROLL RESULT block is present; null otherwise. That tier made concrete in this scene: which part of the bid lands, what it costs and who bears it, who answers. Built from what the scene already holds (a wound, a lost object, a broken leverage, a witness). Partial: the bid lands short, and the cost is real. Failure and critical failure: the cost lands on the PC and stays (a wound, exhaustion, a loss, a worse position), and the PC ends the turn in a tighter spot than before. Every field below starts from this line.)
 - "narrative_chain": {
     "topic_lock": str or null (the matter the talk is held on, named as the matter itself: 'the unpaid price', not who raised it. null = nothing held),
     "chain_status": "OPEN/CLOSED/DORMANT (Scheherazade: CLOSED + no threads = violation → inject hook)",
@@ -1313,7 +1306,7 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
             "drives": "str (ENGLISH telegraphic, 'wants to …', no subject, <=10 words: what this body wants to do now.)",
             "can": "str or null (ENGLISH telegraphic, <=10 words: the means at this body's hand now: where it stands, what it holds or can reach, what the body allows. What it does with them is response's.)"
         },
-        "response": "str or null (ENGLISH telegraphic VERB PHRASE, no subject, <=15 words: how this body answers the input this turn, after the roll. The input's acts have already happened; answer from where they leave the body. A refusal is an answer too: write it as an act aimed at someone, with what it is for. One answer, not a choice between two. It carries only what this person has witnessed; compliance comes with a cost, condition, or counter-move of their own unless history has already paid for it; a probe is met, not obeyed. Where the input or the roll already settles it, follow that. A pull on their extract line is what presses on them; their sheet (WHO THEY ARE) is how this person moves on it. null = this turn does not reach this body.)"
+        "response": "str or null (ENGLISH telegraphic VERB PHRASE, no subject, <=15 words: how this body answers the input this turn, after the roll. The input's acts have already happened; answer from where they leave the body. A refusal is an answer too: write it as an act aimed at someone, with what it is for. One answer, not a choice between two. It carries only what this person has witnessed; compliance comes with a cost, condition, or counter-move of their own unless history has already paid for it; a probe is met, not obeyed. It answers the input as this person read it, through their own wants and fears; that reading can miss. A capable person presses an opening the PC gives, staying exactly as their sheet writes them. Where the input or the roll already settles it, follow that. A pull on their extract line is what presses on them; their sheet (WHO THEY ARE) is how this person moves on it. null = this turn does not reach this body.)"
     }
   }  (NPCs from the THIS-TURN EXTRACT only, keyed exactly as written there — deepen its readings, never contradict them. Omit NPCs with nothing worth deepening.
    pressure is the exception to that omission rule: fill it for the two or three of those NPCs this turn actually turns on. logos_layer goes to every NPC on the extract lines who speaks or is spoken to this turn: it carries their dialogue direction. response goes only to the one or two whose answer this turn turns on; the rest of the room stays null and the prose carries it. It is read off the scene: an NPC with no profile still has a body that wants something and something at hand. Thin background figures with no bearing on this turn stay omitted.)

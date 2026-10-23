@@ -2421,22 +2421,7 @@ def translate_climate(last_climate: Optional[Dict[str, Any]] = None) -> str:
 
 
 # [2026-10-07 a묶음 A2] translate_pc_autonomy 삭제 — PCAutonomyCheck 칸 폐기(154판 켜짐 0, 렌더 뒤 detect_pc_impersonation과 중복).
-def translate_item_usage(item_eval: Optional[Dict[str, Any]] = None) -> str:
-    """아이템 소비/획득 → 문장."""
-    ie = item_eval if isinstance(item_eval, dict) else {}
-    parts = []
-    consumed = ie.get("items_consumed")
-    gained = ie.get("items_gained")
-    if isinstance(consumed, list) and consumed:
-        parts.append("consumed: " + ", ".join(str(i) for i in consumed))
-    if isinstance(gained, list) and gained:
-        parts.append("gained: " + ", ".join(str(i) for i in gained))
-    if not parts:
-        return ""
-    out = "Changed hands this turn: " + "; ".join(parts)
-    if ie.get("reason"):
-        out += f" ({ie['reason']})"
-    return out
+# [삭제 2026-10-23 C61] translate_item_usage — item_usage 은퇴. 소비자(slot_manager Slot 29) 같이 삭제.
 
 
 def translate_degraded_stages(degraded: Optional[list] = None) -> str:

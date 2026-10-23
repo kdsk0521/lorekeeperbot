@@ -689,6 +689,16 @@ def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
             logger.info(f"[NPC] Static traits extracted for '{name}': {static_traits}")
     domain_manager.update_npc(channel_id, name, data)
 
+    # [2026-09-02 R4] 시트 거처 폴백 배치 — [2026-10-14 C37] 본문은 `seat_sheet_residence`로 옮겼다
+    #   (`!클리어`가 출석을 비운 뒤 남는 로어 인물을 같은 규칙으로 다시 앉힌다).
+    seat_sheet_residence(channel_id, name)
+
+
+def seat_sheet_residence(channel_id: str, name: str) -> str:
+    """[2026-10-14 C37] update_npc 안의 시트 거처 블록을 함수로 뺐다 — 규칙은 그대로(미배치일 때만,
+    노드 없으면 `sheet_residence` 노드를 만든다). `!클리어`가 world_tree 출석을 비운 뒤 남는 로어/수제
+    인물을 다시 앉힐 때 같은 함수를 쓴다. Returns set_npc_location 결과("placed" 등) | ""."""
+    _pr = ""
     # [2026-09-02 R4] 시트 거처 폴백 배치 — 스펙 §2.6 표 3행("시트 거처 폴백 배치").
     # 병: 출석이 `get_npcs_at_location`이 되는 순간, 어느 노드에도 없는 인물은
     #   **영원히 등장 못 하는 사람**이 된다(현행 Flash 기반엔 없던 구멍). `!npc추가`로
@@ -728,6 +738,7 @@ def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
                                      _key, _sheet_loc, _pr)
     except Exception as _e_sheet:
         logger.debug(f"[presence-check] sheet residence skip: {_e_sheet}")
+    return _pr
 
 
 def delete_npc(channel_id: str, name: str) -> tuple:
@@ -1393,6 +1404,22 @@ def is_own_label(label: Any, key: Any) -> bool:
     return lb in forms
 
 
+def mark_play_aliases(existing: Any, add: Any) -> List[str]:
+    """[2026-10-14 C37 C2] NPC dict `_play_aliases` 갱신 — 플레이가 붙인 별칭의 출처 표시.
+    정규화(_normalize_npc_name 소문자) 중복 제거, 순서 유지. `!클리어`가 이 목록만큼 aliases·페이지 별칭에서 뺀다.
+    쓰는 곳 둘: 별칭 승격(orchestration `_promote_alias`)·정정 병합(`merge_identity`)."""
+    out: List[str] = []
+    seen = set()
+    for a in list(existing or []) + list(add or []):
+        if not isinstance(a, str) or not a.strip():
+            continue
+        n = domain_manager._normalize_npc_name(a).lower()
+        if n and n not in seen:
+            seen.add(n)
+            out.append(a.strip())
+    return out
+
+
 def merge_identity(channel_id: str, dup_key: str, canon_key: str, *, via: str = "", turn: int = 0) -> Tuple[bool, str]:
     """dup → canon 병합. 본체·별칭·관계·지식·부수·자리는 `merge_npc`가 옮긴다.
     여기선 dup 에게 자리가 있었으면 canon 을 그 자리로 옮긴다 — 정정이 일어난 장면에 그 사람이 있다.
@@ -1403,6 +1430,15 @@ def merge_identity(channel_id: str, dup_key: str, canon_key: str, *, via: str = 
         _loc = _wt_mi.get_npc_location(channel_id, dup_key)
     except Exception:
         _wt_mi = None
+    # [2026-10-14 C37 C2] 플레이 병합이 붙인 별칭 = 병합 전후 aliases 차 + dup 이 들고 있던 _play_aliases.
+    #   `!클리어`가 `_play_aliases`만큼 aliases 에서 뺀다(명령 `!npc 병합`·`!npc 별칭`·OOC 편집은 입력이라 표시 0).
+    _before = get_npc(channel_id, canon_key)
+    _before = _before if isinstance(_before, dict) else {}
+    _dup_d = get_npc(channel_id, dup_key)
+    _al_before = {domain_manager._normalize_npc_name(a).lower()
+                  for a in (_before.get("aliases") or []) if isinstance(a, str)}
+    _dup_play = [a for a in ((_dup_d or {}).get("_play_aliases") or []) if isinstance(a, str)] \
+        if isinstance(_dup_d, dict) else []
     ok, msg = domain_manager.merge_npc(channel_id, dup_key, canon_key)
     if not ok:
         return False, msg
@@ -1420,6 +1456,9 @@ def merge_identity(channel_id: str, dup_key: str, canon_key: str, *, via: str = 
             _hist.append({"merged_from": dup_key, "turn": int(turn or 0), "via": via,
                           "at": time.strftime('%Y-%m-%d %H:%M')})
             _new["identity_history"] = _hist
+            _added = [a for a in (_new.get("aliases") or []) if isinstance(a, str)
+                      and domain_manager._normalize_npc_name(a).lower() not in _al_before]
+            _new["_play_aliases"] = mark_play_aliases(_new.get("_play_aliases"), _added + _dup_play)
             update_npc(channel_id, canon_key, _new)
     except Exception as _e_h:
         logger.debug(f"[Identity] 정정 병합 이력 건너뜀: {_e_h}")
@@ -2897,6 +2936,83 @@ def handle_identity_reveal(channel_id: str, old_name: str, new_name: str, reason
         logger.debug("[개명] 부수 이관 skip: %s", _e_er)
 
     return f"🎭 **정체 드러남:** {old_name} ➔ {new_name}"
+
+def swap_npc_name(channel_id: str, key: str, new_name: str, reason: str = "ooc") -> Tuple[bool, str]:
+    """[2026-10-16 C44] 같은 인물의 다른 이름(옛 이름·별칭)을 본 이름으로 — OOC 개명 되돌리기·별칭 올리기.
+
+    병: 개명은 옛 이름을 새 키의 별칭으로 남긴다(handle_identity_reveal). 그래서 옛 이름으로 다시 바꾸면 새 이름이
+      이 인물 자신으로 풀려 "같은 사람 → 합치기(자기 자신)"로 막혔다(레티어스: 지우고 다시 넣음 — 관계·지식·관찰 유실).
+      개명 가드를 그냥 걷으면 update_npc 가 별칭으로 기존 키를 찾아 덮어쓰고, 이어지는 delete_npc 가 그 인물을 지운다.
+    순서: ① 되돌리기인지(identity_history 마지막 old_name == new) ② new 를 별칭·플레이 별칭·페이지 별칭에서 뗀다
+      ③ handle_identity_reveal(key → new) — 데이터·페이지·엣지·지식·각인·자리 이사는 종전 그대로(거꾸로 한 번 더)
+      ④ 되돌리기면 잘못 붙은 이름(key)을 별칭에서 떼고 개명 기록 두 줄을 걷는다(레티어스 "잘못붙인건 지우고").
+    Returns (ok, 되비침 한 줄 — 실패는 ⚠)."""
+    import copy as _copy
+    new_name = str(new_name or "").strip()
+    npcs = get_npcs(channel_id) or {}
+    if not new_name or key not in npcs:
+        return False, f"⚠ 이름: {key} — 바꿀 수 없어"
+    _nn = domain_manager._normalize_npc_name
+
+    def _same(a, b) -> bool:
+        return _nn(str(a or "")).lower() == _nn(str(b or "")).lower()
+
+    def _drop(lst, name) -> list:
+        return [a for a in (lst or []) if not (isinstance(a, str) and _same(a, name))]
+
+    if _same(key, new_name):
+        return False, f"⚠ 이름: {key} — 이미 그 이름이야"
+    data = _copy.deepcopy(npcs[key]) if isinstance(npcs[key], dict) else {}
+    hist = [h for h in (data.get("identity_history") or []) if isinstance(h, dict)]
+    is_undo = bool(hist) and _same(hist[-1].get("old_name"), new_name)
+    data["aliases"] = _drop(data.get("aliases"), new_name)
+    if isinstance(data.get("_play_aliases"), list):
+        data["_play_aliases"] = _drop(data["_play_aliases"], new_name)
+        if not data["_play_aliases"]:
+            data.pop("_play_aliases", None)
+    # 뗀 뒤에도 new 가 이 인물로 풀리면(괄호 표기만 다른 이름 등) 이름이 사실상 같다 — 손대지 않는다.
+    _probe = dict(npcs)
+    _probe[key] = data
+    if domain_manager.find_equivalent_npc_key(_probe, new_name):
+        return False, f"⚠ 이름: '{new_name}'은 {key}와 사실상 같은 이름이야 — 바꿀 게 없어"
+    update_npc(channel_id, key, data)
+    try:
+        import wiki_store
+        wiki_store.remove_page_aliases(channel_id, wiki_store.page_id_for("character", key), [new_name])
+    except Exception as _e_pa:
+        logger.debug(f"[NPC] 이름 바꾸기 페이지 별칭 skip: {_e_pa}")
+
+    res = str(handle_identity_reveal(channel_id, key, new_name, reason=reason) or "")
+    if res.startswith("⚠") or new_name not in (get_npcs(channel_id) or {}):
+        try:   # 개명이 안 됐으면 뗀 별칭을 되돌린다(이름 하나 잃지 않게)
+            domain_manager.add_npc_alias(channel_id, key, new_name)
+        except Exception:
+            pass
+        return False, f"⚠ 이름: {key} — {res.lstrip('⚠️ ') or '바꾸지 못했어'}"
+
+    if is_undo:
+        cur = _copy.deepcopy((get_npcs(channel_id) or {}).get(new_name) or {})
+        cur["aliases"] = _drop(cur.get("aliases"), key)
+        if isinstance(cur.get("_play_aliases"), list):
+            cur["_play_aliases"] = _drop(cur["_play_aliases"], key)
+            if not cur["_play_aliases"]:
+                cur.pop("_play_aliases", None)
+        h2 = [h for h in (cur.get("identity_history") or []) if isinstance(h, dict)]
+        if h2 and _same(h2[-1].get("old_name"), key):
+            h2.pop()
+        if h2 and _same(h2[-1].get("old_name"), new_name):
+            h2.pop()
+        cur["identity_history"] = h2
+        update_npc(channel_id, new_name, cur)
+        try:
+            import wiki_store
+            wiki_store.remove_page_aliases(channel_id, wiki_store.page_id_for("character", new_name), [key])
+        except Exception as _e_pb:
+            logger.debug(f"[NPC] 되돌리기 페이지 별칭 skip: {_e_pb}")
+        logger.info(f"[NPC] 개명 되돌림 {key} → {new_name}")
+        return True, f"이름: {key} → {new_name} (되돌림)"
+    logger.info(f"[NPC] 별칭 올림 {key} → {new_name}")
+    return True, f"이름: {key} → {new_name} (별칭이던 이름을 본 이름으로)"
 
 # =========================================================
 # NPC ATTITUDE SYSTEM

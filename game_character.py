@@ -217,6 +217,14 @@ def complete_quest(channel_id: str, content: str) -> str:
         return f"⚠️ 해당 퀘스트를 찾을 수 없습니다."
 
     active.remove(target)
+    # [2026-10-17 C46 R4] 끝난 턴 — 도착물 스캐너 11 이 "최근 끝난 퀘스트"를 고른다.
+    #   (별칭 지역 import — 이 함수 뒤쪽 `import game_world, domain_manager` 가 이름을 지역으로 만든다.)
+    if isinstance(target, dict):
+        try:
+            import domain_manager as _dm_done
+            target["done_turn"] = int((_dm_done.get_world_state(channel_id) or {}).get("turn_index", 0) or 0)
+        except Exception:
+            target["done_turn"] = 0
     completed.append(target)
     board["active"] = active
     board["completed"] = completed
@@ -235,7 +243,9 @@ def complete_quest(channel_id: str, content: str) -> str:
     linked_clock = target.get("linked_clock") if isinstance(target, dict) else None
     clock_msg = ""
     if linked_clock:
-        clock_msg = game_world.resolve_clock_by_quest(channel_id, linked_clock)
+        clock_msg = game_world.resolve_clock_by_quest(
+            channel_id, linked_clock,
+            quest_name=target.get("content", "") if isinstance(target, dict) else str(target))
         if clock_msg:
             clock_msg = "\n" + clock_msg
 
@@ -322,9 +332,8 @@ def get_notebook_data(channel_id: str, user_id: str = "") -> dict:
 
 
 def update_notebook_data(channel_id: str, nb: dict, user_id: str = "") -> None:
+    # [2026-10-23 C61] 거울(ai_memory.inventory) 동기화 삭제 — 소지품 정본이 노트북을 떠났다.
     domain_manager.update_notebook_data(channel_id, nb, user_id)
-    if user_id:
-        sync_notebook_to_inventory(channel_id, user_id)
 
 
 def _norm(s: str) -> str:
@@ -414,16 +423,16 @@ def apply_llm_memos(channel_id: str, user_id: str, memo_add=None, memo_remove=No
 
 
 # Notebook System (New in V5.1, per-user in V8; v2 섹션 dict 2026-09-06)
-def get_notebook_text(channel_id: str, user_id: str = "") -> str:
-    """표시/프롬프트용 렌더 텍스트. 정본 아님 — 쓰기는 get/update_notebook_data로."""
-    return domain_manager.get_notebook(channel_id, user_id)
+def get_notebook_text(channel_id: str, user_id: str = "", with_items: bool = True) -> str:
+    """표시/프롬프트용 렌더 텍스트. 정본 아님 — 쓰기는 get/update_notebook_data로.
+    [2026-10-23 C61] [소지품] 칸은 기본 선언 목록에서 읽는다. with_items=False 면 칸을 안 그린다
+    (출력물 추출 콜 — 소지품은 선언 급식으로 따로 받는다)."""
+    return domain_manager.get_notebook(channel_id, user_id, with_items=with_items)
 
 
 def update_notebook_text(channel_id: str, new_text, user_id: str = "") -> None:
     """[legacy shim] 텍스트를 받으면 파싱해 dict로 저장. 새 코드는 쓰지 마라."""
     domain_manager.update_notebook(channel_id, new_text, user_id)
-    if user_id:
-        sync_notebook_to_inventory(channel_id, user_id)
 
 
 # [notebook v2] 헤더 리터럴의 주인은 domain_manager(렌더 전용). 여기선 더 이상 split하지 않는다.
@@ -462,8 +471,12 @@ def add_to_journal(channel_id: str, content: str, user_id: str = "") -> str:
 # 돌려주고 섹션이 dict로 분리돼 있어 봉합할 충돌 자체가 없다. 호출자 0(orchestration 정리 완료).
 
 
-def add_item_to_sojipin(channel_id: str, item_name: str, user_id: str = "", qty: int = 1) -> str:
-    """[소지품]에 수량 추가. 이미 있으면 qty 누적."""
+# [2026-10-23 C61] 소지품 정본 = custom_vars 기본 선언 목록 `소지품`(노트북 [소지품] 칸은 표시만).
+#   두 함수의 **속만** 바꿨다 — 호출부(OOC·표현식 `재고[x]`)와 되비침 문자열은 그대로다.
+#   uid 는 받기만 한다(솔로 기준 채널 목록 하나 — 다인은 나중).
+def add_item_to_sojipin(channel_id: str, item_name: str, user_id: str = "", qty: int = 1,
+                        source: str = "code") -> str:
+    """소지품에 수량 추가. 이미 있으면 qty 누적."""
     item_name = (item_name or "").strip()
     if not item_name:
         return ""
@@ -471,58 +484,47 @@ def add_item_to_sojipin(channel_id: str, item_name: str, user_id: str = "", qty:
         qty = max(1, int(qty))
     except Exception:
         qty = 1
-    nb = get_notebook_data(channel_id, user_id)
-    items = nb["sections"]["소지품"]["items"]
-    existed = item_name in items
-    items[item_name] = {"qty": int(items.get(item_name, {}).get("qty", 0)) + qty}
-    update_notebook_data(channel_id, nb, user_id)
-    if existed:
-        return f"이미 소지품에 있음: {item_name} (×{items[item_name]['qty']})"
-    return f"소지품 추가: {item_name}" + (f" ×{qty}" if qty > 1 else "")
+    import custom_vars as _cv
+    rec = _cv.sojipin_add(channel_id, item_name, qty, source=source)
+    if not rec:
+        return f"⚠ 소지품에 못 넣음: {item_name}"
+    real = rec.get("item") or item_name
+    if int(rec.get("from") or 0) > 0:
+        return f"이미 소지품에 있음: {real} (×{int(rec.get('to') or 0)})"
+    return f"소지품 추가: {real}" + (f" ×{qty}" if qty > 1 else "")
 
 
-def remove_item_from_sojipin(channel_id: str, item_name: str, user_id: str = "", qty=None) -> str:
-    """[소지품]에서 제거. qty=None이면 항목 전부, 숫자면 그만큼 차감(0 이하 → 항목 삭제).
+def remove_item_from_sojipin(channel_id: str, item_name: str, user_id: str = "", qty=None,
+                             source: str = "code") -> str:
+    """소지품에서 제거. qty=None이면 항목 전부, 숫자면 그만큼 차감(0 이하 → 항목 삭제).
     정확 일치 우선, 없을 때만 부분일치 첫 매칭(일반 이름의 wrong-target 완화 — 기존 규칙 승계)."""
     item_name = (item_name or "").strip()
     if not item_name:
         return ""
-    nb = get_notebook_data(channel_id, user_id)
-    items = nb["sections"]["소지품"]["items"]
-    key = item_name if item_name in items else next((k for k in items if item_name in k), None)
-    if key is None:
+    import custom_vars as _cv
+    real, rec = _cv.sojipin_take(channel_id, item_name, qty, source=source)
+    if not real or not rec:
         return f"소지품에서 '{item_name}' 못 찾음"
-    if qty is None:
-        del items[key]
-    else:
-        try:
-            n = max(1, int(qty))
-        except Exception:
-            n = 1
-        left = int(items[key].get("qty", 1)) - n
-        if left > 0:
-            items[key] = {"qty": left}
-        else:
-            del items[key]
-    update_notebook_data(channel_id, nb, user_id)
-    return f"소지품 제거: {key}"
+    return f"소지품 제거: {real}"
 
 
-def sync_notebook_to_inventory(channel_id: str, user_id: str) -> None:
-    """[소지품] dict → ai_memory.inventory 재구축.
-    소비자 실재(orchestration._process_item_usage 검증 / une_facade narrative anchors)라 유지."""
-    if not user_id:
-        return
-    nb = domain_manager.get_notebook_data(channel_id, user_id)
-    items = [create_inventory_item(name=k, qty=int(v.get("qty", 1)))
-             for k, v in nb["sections"]["소지품"]["items"].items()]
-    p = domain_manager.get_participant_data(channel_id, user_id)
-    if not p:
-        return
-    mem = p.get("ai_memory", {})
-    mem["inventory"] = items
-    p["ai_memory"] = mem
-    domain_manager.save_participant_data(channel_id, user_id, p)
+def seed_item_in_sojipin(channel_id: str, item_name: str, qty: int = 1) -> bool:
+    """[C61 R3] 시트 시작 장비 — **없을 때만** qty 개. `!설명` 재등록이 수량을 쌓지 않는다."""
+    import custom_vars as _cv
+    return bool(_cv.sojipin_seed(channel_id, item_name, qty))
+
+
+def sojipin_anchor(channel_id: str) -> List[Dict[str, Any]]:
+    """[C61 R5] une 앵커 `inventory` — [{name, qty}]. Theoria `- Inventory:`·판정 `_item_names` 가 읽는다."""
+    try:
+        import custom_vars as _cv
+        return [{"name": k, "qty": n} for k, n in _cv.sojipin_items(channel_id).items()]
+    except Exception:
+        return []
+
+
+# [삭제 2026-10-23 C61] sync_notebook_to_inventory — 노트북 → ai_memory.inventory 거울. 정본이 노트북을
+#   떠나 거울의 원천이 없다. 소비자(une 앵커)는 sojipin_anchor 로 옮겼다.
 
 
 def get_active_quests(channel_id: str) -> List[str]:
@@ -829,6 +831,112 @@ def update_status_effect(
     user_data["status_effects"] = effects
     return user_data, msg
 
+# =========================================================
+# [2026-10-15 C42] 타격칸 — 페이트 consequence. 마이너스 상태 전용 4칸(몸·마음 한 줄).
+#   저장 = participants[uid]["strikes"] = [이름 ×4]("" = 빈 칸). 자리 번호가 칸 등급
+#   (1·2 경상 · 3 중상 · 4 치명상). 체력은 활력·평형(스트레스)이 든다.
+#   채우기·비우기의 주인 = 출력물 콜(산문 뒤) 하나 — orchestration._apply_strike_changes.
+#   옛 status_effects 의 debuff 는 **읽을 때** 칸으로 보이고(읽기는 저장을 바꾸지 않는다),
+#   첫 타격 쓰기에서 칸으로 옮겨지고 status_effects 엔 좋은 상태만 남는다.
+#   4칸이 다 찬 뒤 들어오는 추가는 받지 않는다 — 넘친 피해를 어떻게 그릴지는 렌더 몫(RB 몸 줄).
+# =========================================================
+STRIKE_SLOTS = 4
+STRIKE_TIER_KR = ("경상", "경상", "중상", "치명상")
+
+
+def _names_list(raw: Any) -> List[str]:
+    if isinstance(raw, str):
+        raw = [raw]
+    out: List[str] = []
+    for x in (raw if isinstance(raw, list) else []):
+        nm = str(x or "").strip()
+        if nm and nm not in out:
+            out.append(nm)
+    return out
+
+
+def _debuff_names(raw_effects: Any) -> List[str]:
+    out: List[str] = []
+    for eff in normalize_status_effects(raw_effects):
+        if isinstance(eff, dict) and str(eff.get("type")) == "debuff":
+            nm = str(eff.get("name") or eff.get("tag") or "").strip()
+            if nm and nm not in out:
+                out.append(nm)
+    return out
+
+
+def strike_view(p_data: Any) -> List[str]:
+    """타격칸 4칸("" = 빈 칸). strikes 가 아직 없으면 옛 debuff 를 칸으로 보인다(저장 무변경)."""
+    p = p_data if isinstance(p_data, dict) else {}
+    raw = p.get("strikes")
+    if isinstance(raw, list):
+        track = [str(x or "").strip() for x in raw[:STRIKE_SLOTS]]
+    else:
+        track = _debuff_names(p.get("status_effects", []))[:STRIKE_SLOTS]
+    return track + [""] * (STRIKE_SLOTS - len(track))
+
+
+def strike_names(p_data: Any) -> List[str]:
+    return [x for x in strike_view(p_data) if x]
+
+
+def format_strikes(p_data: Any) -> str:
+    """`타격 2/4: 부러진 손목 · 공황` / `타격 0/4` — 시스템 줄·패널·PC 정보가 같은 모양을 쓴다."""
+    names = strike_names(p_data)
+    return f"타격 {len(names)}/{STRIKE_SLOTS}" + (f": {' · '.join(names)}" if names else "")
+
+
+def buff_effects(p_data: Any) -> List[Dict[str, Any]]:
+    """status_effects 중 좋은 상태만(타격칸이 생긴 뒤 status_effects 의 몫)."""
+    p = p_data if isinstance(p_data, dict) else {}
+    return [e for e in normalize_status_effects(p.get("status_effects", []))
+            if isinstance(e, dict) and str(e.get("type")) != "debuff"]
+
+
+def is_known_debuff(name: Any) -> bool:
+    """알려진 나쁜 상태 이름(부상·공포 등)인가. 모르는 이름은 False — 출력물 콜의 status_add 는
+    좋은 상태 전용이라 모르는 이름은 좋은 상태로 받는다(orchestration._apply_status_changes)."""
+    nm = str(name or "").strip()
+    if not nm:
+        return False
+    tags = getattr(config, "STATUS_TAGS", {}) or {}
+    tag = (getattr(config, "LEGACY_TAG_MAP", {}) or {}).get(nm, nm)
+    if tag in tags:
+        return str(tags[tag].get("type")) == "debuff"
+    for t in tags.values():
+        if isinstance(t, dict) and t.get("name") == nm:
+            return str(t.get("type")) == "debuff"
+    info = STATUS_EFFECTS.get(nm)
+    return bool(info) and str(info.get("type")) == "debuff"
+
+
+def apply_strike_changes(p_data: Any, add: Any = None, clear: Any = None) -> Tuple[Any, bool, List[str]]:
+    """strike_add/strike_clear 적용. 비우기 먼저, 채우기는 가장 가벼운 빈 칸부터(비운 자리는 당기지 않는다),
+    같은 이름은 한 칸, 4칸이 차면 더 안 받는다. Returns: (p_data, 바뀌었나, 안 받은 이름들)."""
+    if not isinstance(p_data, dict):
+        return p_data, False, []
+    migrated = not isinstance(p_data.get("strikes"), list)
+    track = strike_view(p_data)
+    before = list(track)
+    overflow: List[str] = []
+    for nm in _names_list(clear):
+        track = ["" if x == nm else x for x in track]
+    for nm in _names_list(add):
+        if nm in track:
+            continue
+        if "" not in track:
+            overflow.append(nm)
+            continue
+        track[track.index("")] = nm
+    changed = track != before
+    if changed or (migrated and any(before)):
+        p_data["strikes"] = track
+        if migrated:
+            p_data["status_effects"] = buff_effects(p_data)
+        changed = True
+    return p_data, changed, overflow
+
+
 # [DEPRECATED] perform_check moved to UNE JudgmentEngine
 
 # [2026-09-16 3차] get_status_summary 삭제 — 호출자 0(game_system 재export만), 사문.
@@ -837,7 +945,8 @@ def update_status_effect(
 
 # =========================================================
 # 시트 조각("패시브") — 2026-09-16 3차 (설계 relation_unify §10.2)
-#   조각 = {name, desc, value:{roll_<type>: ±n, cost: -n}, origin: sheet|play}. 저장 = ai_memory.passives.
+#   조각 = {name, desc, value:{edge: ±1}, origin: sheet|play}. 저장 = ai_memory.passives.
+#   [2026-10-15 C42] 값은 강점/약점 부호 하나(이름 판단). 옛 roll_<type>·cost 는 config.normalize_fragment_value 가 부호로 접는다.
 #   ⛔ add_passive(생산자 0)·get_passives_for_context(→ passives_txt, 읽는 곳 0) 삭제.
 #   tags·theory_links·acquired_at·modifiers 는 저장하지 않는다 — 모든 쓰기 경로가 normalize_fragment 를 지난다.
 # =========================================================
@@ -898,143 +1007,11 @@ def merge_fragments(existing: Any, incoming: Any, origin: str) -> Tuple[List[Dic
 
 
 # =========================================================
-# STRUCTURED INVENTORY (N2 — 아이템 영속 + 인벤토리 검증)
+# INVENTORY 읽기 (판정 앵커)
+# [삭제 2026-10-23 C61] create_inventory_item · migrate_notebook_to_inventory · add_inventory_item ·
+#   remove_inventory_item · get_inventory_for_context — 거울·구조화 인벤 잔재. 호출자는 거울 재구축(삭제)·
+#   une 앵커(sojipin_anchor 로 교체)뿐이었고 나머지 셋은 07-06 감사 때부터 호출 0.
 # =========================================================
-
-def create_inventory_item(name: str, qty: int = 1, tags: list = None,
-                          location: str = "bag", acquired_turn: int = 0) -> dict:
-    """Create a structured inventory item with a stable ID."""
-    import hashlib
-    item_id = hashlib.md5(f"{name}_{acquired_turn}".encode()).hexdigest()[:8]
-    return {
-        "id": item_id,
-        "name": name,
-        "qty": qty,
-        "tags": tags or [],
-        "location": location,
-        "acquired_turn": acquired_turn,
-    }
-
-
-def migrate_notebook_to_inventory(notebook_data) -> dict:
-    """Convert legacy string notebook to structured inventory.
-
-    Handles three cases:
-      1. Already-structured dict with "items" key -> returned as-is (with defaults filled).
-      2. Plain string (notebook text) -> items parsed from '— [소지품] —' section.
-      3. None / empty -> fresh empty inventory.
-
-    Returns: {"items": [...], "capacity": 4, "last_validated_turn": 0}
-    """
-    empty = {"items": [], "capacity": config.INVENTORY_SLOT_CAP,
-             "last_validated_turn": 0}
-
-    if notebook_data is None:
-        return empty
-
-    # Case 1: already structured
-    if isinstance(notebook_data, dict):
-        if "items" in notebook_data:
-            notebook_data.setdefault("capacity", empty["capacity"])
-            notebook_data.setdefault("last_validated_turn", 0)
-            return notebook_data
-        # Dict but no "items" key — treat as empty
-        return empty
-
-    # Case 2: list (already a list of items, possibly from ai_memory.inventory)
-    if isinstance(notebook_data, list):
-        items = []
-        for idx, entry in enumerate(notebook_data):
-            if isinstance(entry, dict) and "name" in entry:
-                # Already a structured item — ensure id exists
-                if "id" not in entry:
-                    entry = create_inventory_item(
-                        name=entry.get("name", "?"),
-                        qty=entry.get("qty", 1),
-                        tags=entry.get("tags", []),
-                        location=entry.get("location", "bag"),
-                        acquired_turn=entry.get("acquired_turn", 0),
-                    )
-                    # Preserve any extra keys (e.g., modifiers)
-                items.append(entry)
-            elif isinstance(entry, str) and entry.strip():
-                items.append(create_inventory_item(name=entry.strip()))
-        return {"items": items, "capacity": empty["capacity"], "last_validated_turn": 0}
-
-    # Case 3: string notebook
-    if isinstance(notebook_data, str):
-        items = []
-        in_inventory_section = False
-        for line in notebook_data.splitlines():
-            stripped = line.strip()
-            if "소지품" in stripped:
-                in_inventory_section = True
-                continue
-            if stripped.startswith("—") and "메모" in stripped:
-                in_inventory_section = False
-                continue
-            if in_inventory_section and stripped.startswith("-"):
-                item_text = stripped.lstrip("- ").strip()
-                if item_text:
-                    items.append(create_inventory_item(name=item_text))
-        return {"items": items, "capacity": empty["capacity"], "last_validated_turn": 0}
-
-    return empty
-
-
-# =========================================================
-# INVENTORY TAG SYSTEM (Phase 4-1b)
-# ⚠ 미배선 (2026-07-06 감사): add/remove_inventory_item·get_inventory_for_context
-# 호출자 0. 실인벤토리는 notebook [소지품] 섹션 dict(item_usage → add/remove_item_to_sojipin).
-# 인벤 버그 수정 시 여기 말고 notebook 라인을 볼 것. 구조화 인벤 부활 재료로 보존.
-# =========================================================
-
-def add_inventory_item(channel_id: str, user_id: str, name: str,
-                       tags: List[str] = None, modifiers: dict = None, qty: int = 1) -> str:
-    """구조화 아이템을 ai_memory.inventory에 추가"""
-    new_item = {"name": name, "qty": qty, "tags": tags or []}
-    if modifiers:
-        new_item["modifiers"] = modifiers
-    domain_manager.add_to_ai_memory_list(channel_id, user_id, "inventory", new_item)
-    return f"📥 획득: {name}"
-
-
-def remove_inventory_item(channel_id: str, user_id: str, name: str) -> str:
-    """ai_memory.inventory에서 이름으로 아이템 제거"""
-    p = domain_manager.get_participant_data(channel_id, user_id)
-    if not p:
-        return f"⚠️ {name}: 참가자 없음"
-    mem = p.get("ai_memory", {})
-    inv = mem.get("inventory", [])
-    if not inv:
-        return f"⚠️ {name}: 인벤토리 비어있음"
-
-    # Find and remove by name (case-insensitive partial match)
-    name_lower = name.strip().lower()
-    new_inv = []
-    removed = False
-    for item in inv:
-        if removed:
-            new_inv.append(item)
-            continue
-        if isinstance(item, dict):
-            if (item.get("name") or "").strip().lower() == name_lower:
-                removed = True
-                continue
-        elif isinstance(item, str):
-            if item.strip().lower() == name_lower:
-                removed = True
-                continue
-        new_inv.append(item)
-
-    if not removed:
-        return f"⚠️ {name}: 인벤토리에 없음"
-
-    mem["inventory"] = new_inv
-    p["ai_memory"] = mem
-    domain_manager.save_participant_data(channel_id, user_id, p)
-    return f"📦 소비: {name}"
-
 
 def get_inventory_items(user_data: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """구조화 아이템 리스트 반환 (modifier 계산용).
@@ -1051,25 +1028,6 @@ def get_inventory_items(user_data: Optional[Dict[str, Any]]) -> List[Dict[str, A
         elif isinstance(item, str):
             result.append({"name": item, "tags": [], "qty": 1})
     return result
-
-
-def get_inventory_for_context(user_data: Optional[Dict[str, Any]]) -> str:
-    """Flash/Renderer에 전달할 인벤토리 컨텍스트 문자열.
-    Passive와 동일 패턴: name(tags)"""
-    items = get_inventory_items(user_data)
-    if not items:
-        return "Inventory: None"
-
-    lines = []
-    for item in items:
-        name = item.get("name", "?")
-        qty = item.get("qty", 1)
-        tags = item.get("tags", [])
-        tag_str = f"({', '.join(tags)})" if tags else ""
-        qty_str = f" x{qty}" if qty > 1 else ""
-        lines.append(f"{name}{qty_str}{tag_str}")
-
-    return f"Inventory: {', '.join(lines)}"
 
 
 # =========================================================

@@ -49,6 +49,48 @@ logger = logging.getLogger(__name__)
 
 
 # =========================================================
+# [2026-10-22 C57] 렌더 세션 자르기 — 고정 머리(pinned) 뒤 대화 기록만
+# =========================================================
+# 옛 자르기는 "앞 2개 보호 + 총합 10만 자"였다. Gemini 세션은 [0]규칙 존 [1]루카 [2·3]훈련 대화
+#   [4]자료 존 [5]ack [6~]대화 순이라, 총합이 넘치면 **훈련 대화 → 자료 존 통째**가 먼저 버려졌다
+#   (서버 로그 10-20~21: 대화 3~4턴 뒤 매 턴 자료 존 탈락. C57 스펙 §1).
+# 지금: 머리(규칙 존~ack)는 세션이 `pinned` 로 쥐고 손대지 않는다. 상한도 대화 기록 몫(history[pinned:])에만 건다
+#   — 총합 기준이면 규칙 존 ~65K + 자료 존 ~34K 가 몫을 다 먹어 이번엔 대화가 통째로 사라진다.
+#   대화는 앞단 스마트 창(_build_smart_history, ~1만 토큰)이 이미 잘라 넣으므로 이 상한은 안전망이다.
+#   openai 어댑터는 system 이 따로 가서 머리에 규칙 존이 없다 — 상한은 옛 총합 기준 그대로(_trim_tail 인자).
+HISTORY_TAIL_MAX_CHARS = 100000
+
+
+def _trim_tail(history: list, pinned: int, size_of, budget_includes_head: bool = False) -> tuple:
+    """history[pinned:] 를 오래된 것부터 버린다. 반환 (버린 개수, 버린 글자 수). 머리는 건드리지 않는다.
+
+    budget_includes_head=False(Gemini): 상한을 대화 몫에만 건다.
+    budget_includes_head=True(openai): 상한은 옛 그대로 머리+대화 총합 — system 이 따로 가므로 요청 크기 안전망
+      (09-24 감사 B8). 버리는 자리만 핀 뒤로 같다."""
+    max_msgs = getattr(config, "MAX_HISTORY_LENGTH", 2000)
+    pinned = max(0, min(int(pinned or 0), len(history)))
+    head_chars = sum(size_of(m) for m in history[:pinned]) if budget_includes_head else 0
+    tail_chars = sum(size_of(m) for m in history[pinned:])
+    n_cut = chars_cut = 0
+    while len(history) > pinned and (head_chars + tail_chars > HISTORY_TAIL_MAX_CHARS
+                                     or len(history) - (0 if budget_includes_head else pinned) > max_msgs):
+        removed = history.pop(pinned)
+        rc = size_of(removed)
+        tail_chars -= rc
+        n_cut += 1
+        chars_cut += rc
+    return n_cut, chars_cut
+
+
+def _gemini_content_chars(c) -> int:
+    return sum(len(p.text) for p in (getattr(c, "parts", None) or []) if getattr(p, "text", None))
+
+
+def _openai_message_chars(m) -> int:
+    return len((m or {}).get("content") or "")
+
+
+# =========================================================
 # ChatSessionAdapter 클래스
 # =========================================================
 class ChatSessionAdapter:
@@ -60,62 +102,54 @@ class ChatSessionAdapter:
         client,
         model: str,
         history: List[types.Content],
-        config: types.GenerateContentConfig
+        config: types.GenerateContentConfig,
+        pinned: int = 2,
     ):
         self.client = client
         self.model = model
         self.history = history
         self.config = config
+        # [C57] 고정 머리 수 — 자르기는 이 뒤(대화 기록)만. create_risu_style_session 이 len(initial_history),
+        #   orchestration_response 가 자료 존·ack 를 붙인 뒤 len(history) 로 올린다.
+        self.pinned = pinned
+        self.last_trim = (0, 0)
 
     def _trim_history(self):
-        """히스토리가 너무 커지면 오래된 메시지 제거"""
-        MAX_HISTORY_MESSAGES = getattr(config, "MAX_HISTORY_LENGTH", 2000) # Sync with global config
-        MAX_HISTORY_CHARS = 100000 # [Anti-Gravity] Expanded Context
-
-        # 초기 2개 메시지 (시스템 초기화)는 유지
-        if len(self.history) <= 2:
-            return
-        
-        # 문자 수 제한 (우선도 높음 - 먼저 확인)
-        total_chars = sum(
-            len(p.text) for c in self.history for p in c.parts if hasattr(p, 'text') and p.text
-        )
-        while total_chars > MAX_HISTORY_CHARS and len(self.history) > 2:
-            # 항상 인덱스 2 (초기화 후 첫 메시지)부터 삭제
-            removed = self.history.pop(2)
-            removed_chars = sum(len(p.text) for p in removed.parts if hasattr(p, 'text') and p.text)
-            total_chars -= removed_chars
-            logging.debug(f"[History] 문자 수 초과, {removed_chars}자 제거 (현재: {total_chars}/{MAX_HISTORY_CHARS})")
-        
-        # 메시지 수 제한
-        while len(self.history) > MAX_HISTORY_MESSAGES and len(self.history) > 2:
-            # 항상 인덱스 2부터 삭제
-            removed = self.history.pop(2)
-            logging.debug(f"[History] 메시지 수 초과, 오래된 메시지 제거 (남은 메시지: {len(self.history)})")
+        """[C57] 대화 기록(history[pinned:])만 오래된 것부터 버린다. 머리(규칙 존~ack)는 손대지 않는다."""
+        _pin = getattr(self, "pinned", 2)
+        self.last_trim = _trim_tail(self.history, _pin, _gemini_content_chars)
+        if self.last_trim[0]:
+            logging.warning("[ChatSession] 대화 기록 자르기: %d개 · %d자 (pinned=%d, 대화 상한 %d자)",
+                            self.last_trim[0], self.last_trim[1], _pin, HISTORY_TAIL_MAX_CHARS)
 
     async def send_message(self, content: str, prefill: str = "") -> Optional[types.GenerateContentResponse]:
         """
         메시지를 전송하고 응답을 받습니다. (히스토리 관리 포함)
-        prefill이 있으면 role="model" 메시지로 주입하여 모델이 이어서 생성하도록 합니다.
+        [2026-10-14] Gemini API는 'Requests ending with a model turn are not supported' 제약을 가지므로
+        prefill을 role="model"로 붙이지 않고 user 메시지 하단 지시로 주입하며, 응답에서 thought 파트를 분리합니다.
         """
-        self._trim_history() # 전송 전 트림
+        self._trim_history()
 
-        self.history.append(
-            types.Content(role="user", parts=[types.Part(text=content)])
-        )
-
-        # 프리필 주입: role="model" 메시지를 추가하여 모델이 이어서 생성
+        # 혹시 이전 히스토리 끝이 role="model"이 아닌데 잘못 남았거나 연속 user 방지와 별개로,
+        # 전송 직전 마지막 메시지는 반드시 이번 턴의 role="user"여야 함.
+        _user_text = content
         if prefill:
-            self.history.append(
-                types.Content(role="model", parts=[types.Part(text=prefill)])
+            _user_text = (
+                content
+                + f"\n\n[SYSTEM: Begin your visible response (immediately after internal thinking) "
+                  f"with the exact text below, then close with ┫ and continue with Korean prose]\n{prefill}"
             )
 
+        self.history.append(
+            types.Content(role="user", parts=[types.Part(text=_user_text)])
+        )
+
         try:
-            # 히스토리 상세 로깅
             total_chars = sum(
                 len(p.text) for c in self.history for p in c.parts if hasattr(p, 'text') and p.text
             )
-            logging.info(f"[ChatSession] 히스토리: {len(self.history)}msgs, ~{total_chars}chars")
+            logging.info(f"[ChatSession] 히스토리: {len(self.history)}msgs, ~{total_chars}chars "
+                         f"pinned={getattr(self, 'pinned', 2)} trimmed={getattr(self, 'last_trim', (0, 0))[0]}")
 
             response = await self.client.aio.models.generate_content(
                 model=self.model,
@@ -123,41 +157,46 @@ class ChatSessionAdapter:
                 config=self.config
             )
 
-            # 응답 상세 로깅
-            cand_count = len(response.candidates) if response and response.candidates else 0
-            if response:
-                logging.debug(f"[ChatSession] response 수신, candidates: {cand_count}")
-            else:
-                logging.warning("[ChatSession] response가 None")
+            visible_text = ""
+            thought_chars = 0
+            if response and response.candidates:
+                cand = response.candidates[0]
+                if hasattr(cand, "content") and cand.content and cand.content.parts:
+                    vis_parts = []
+                    for p in cand.content.parts:
+                        p_txt = getattr(p, "text", None) or ""
+                        if getattr(p, "thought", False):
+                            thought_chars += len(p_txt)
+                        elif p_txt:
+                            vis_parts.append(p_txt)
+                    visible_text = "".join(vis_parts)
+            if not visible_text and response and getattr(response, "text", None):
+                visible_text = response.text
 
-            if response and response.text:
-                if prefill:
-                    # 프리필 + 생성된 연속분 = 전체 model 응답으로 교체
-                    full_text = prefill + response.text
-                    # 히스토리에는 텔레스코프 CoT 제거 — 이전 턴 CoT가 남으면
-                    # 모델이 "텔레스코프만 쓰면 된다"고 학습하여 산문 생략
-                    import re as _re
-                    history_text = _re.sub(r"┣[\s\S]*?┫\s*", "", full_text).strip()
-                    if not history_text:
-                        history_text = full_text  # strip 후 빈 문자열이면 원본 유지
-                    self.history[-1] = types.Content(
+            logger.info("[reasoning-trace] render gemini model=%s reasoning_chars=%d visible_chars=%d",
+                        self.model, thought_chars, len(visible_text))
+
+            if visible_text:
+                if prefill and not visible_text.lstrip().startswith("┣"):
+                    full_text = prefill + visible_text
+                else:
+                    full_text = visible_text
+
+                import re as _re
+                history_text = (full_text.rsplit("┫", 1)[-1].strip() if "┫" in full_text
+                                else _re.sub(r"┣[\s\S]*?┫\s*", "", full_text).strip()) or full_text
+                self.history.append(
+                    types.Content(
                         role="model",
                         parts=[types.Part(text=history_text)]
                     )
-                else:
-                    model_content = types.Content(
-                        role="model",
-                        parts=[types.Part(text=response.text)]
-                    )
-                    self.history.append(model_content)
+                )
+                response._extracted_visible_text = full_text
 
             return response
 
         except Exception as e:
             logging.error(f"ChatSession.send_message 오류: {e}")
-            # 에러 시 프리필 메시지도 롤백
-            if prefill and self.history and self.history[-1].role == "model":
-                self.history.pop()
             if self.history and self.history[-1].role == "user":
                 self.history.pop()
             raise
@@ -230,20 +269,21 @@ class OpenAIChatSessionAdapter:
         self.presence_penalty = presence_penalty
         self.history: list = []  # [{"role": ..., "content": ...}]
         self._system_prompt = system_prompt
+        # [C57] 고정 머리 수. system 은 따로 가므로 머리 = [0]자료 존 [1]ack → 기본 2(옛 "앞 2개 보호"와 같은 값).
+        self.pinned = 2
+        self.last_trim = (0, 0)
 
     def _trim_history(self):
-        MAX_HISTORY_MESSAGES = getattr(config, "MAX_HISTORY_LENGTH", 2000)
-        MAX_HISTORY_CHARS = 100000
-        if len(self.history) <= 2:
-            return
-        # [2026-09-24 감사] 앞 2개(history[0]=자료 슬롯 context_data, [1]=ack)는 보호 — Gemini 어댑터와 같게
-        #   index 2 부터 버린다. 전엔 pop(0)이라 로어 전문 폴백 등으로 커지면 **세계·상태 자료 블록부터** 사라졌다.
-        total_chars = sum(len(m["content"]) for m in self.history)
-        while total_chars > MAX_HISTORY_CHARS and len(self.history) > 2:
-            removed = self.history.pop(2)
-            total_chars -= len(removed["content"])
-        while len(self.history) > MAX_HISTORY_MESSAGES and len(self.history) > 2:
-            self.history.pop(2)
+        # [2026-09-24 감사] 앞 2개(history[0]=자료 슬롯 context_data, [1]=ack)는 보호 — 전엔 pop(0)이라 로어 전문
+        #   폴백 등으로 커지면 **세계·상태 자료 블록부터** 사라졌다.
+        # [C57] 보호 수는 self.pinned(=2, 같은 값). 상한은 옛 그대로 자료 존+대화 총합 — 이 경로는 system 이
+        #   따로 가서 머리에 규칙 존이 없으니 총합 기준이 요청 크기 안전망으로 맞다(로어 전문 폴백으로 자료 존이
+        #   커지면 대화를 덜어 낸다). Gemini 는 머리에 규칙 존 ~65K 가 있어 대화 몫에만 건다. 동작 변화 0.
+        _pin = getattr(self, "pinned", 2)
+        self.last_trim = _trim_tail(self.history, _pin, _openai_message_chars, budget_includes_head=True)
+        if self.last_trim[0]:
+            logging.warning("[OpenAI] 대화 기록 자르기: %d개 · %d자 (pinned=%d, 총합 상한 %d자)",
+                            self.last_trim[0], self.last_trim[1], _pin, HISTORY_TAIL_MAX_CHARS)
 
     async def send_message(self, content: str, prefill: str = ""):
         self._trim_history()
@@ -362,22 +402,27 @@ def create_risu_style_session(
             logging.info(f"[Renderer] OpenAI backend: {config.OPENAI_MODEL_ID}")
             # 조교 패턴을 system_prompt에 통합
             # [2026-07-07 인격대우 1단계] 렌더러 자기발화는 렌더 전용 변형 (V4 배경콜은 기존 상수 유지)
-            training_user = getattr(text_resources, 'TRAINING_USER_PROMPT', '')
-            training_model = getattr(text_resources, 'TRAINING_MODEL_RESPONSE_RENDERER',
-                                     getattr(text_resources, 'TRAINING_MODEL_RESPONSE', ''))
+            # [2026-10-22 C57+] 훈련 대화(조교 패턴) 주석 처리 — 레티어스 "일단 주석처리".
+            #   근거: Gemini 렌더 턴 대부분이 옛 자르기로 이 한 쌍이 빠진 채 돌았는데(서버 로그 10-20~21) ┣┫ 빠진 적 0(레티어스)
+            #   (같은 내용이 규칙 존 슬롯 34·3에 있다). 망원경 2.1.0도 끝자리 가짜 응답 쌍을 뺐다(남은 문답은 토글 기본 OFF).
+            #   되살리려면 아래 주석만 푼다(상수는 text_resources 에 그대로).
+            # training_user = getattr(text_resources, 'TRAINING_USER_PROMPT', '')
+            # training_model = getattr(text_resources, 'TRAINING_MODEL_RESPONSE_RENDERER',
+                                     # getattr(text_resources, 'TRAINING_MODEL_RESPONSE', ''))
             full_system = system_prompt
             # [2026-10-01 1차] 추론 앵커 삭제(구 문안: Private reasoning register … We need: 1) beat 2) EN beat sketch
             #   3) KO prose draft … Land near {cap} characters). 대체 문장 없음.
             #   레티어스 "스케치 초안이랑 5천자는 이제 버리자. 의미가 없는거 같아서". 앵커 문안을 추론이 그대로 되읊는
             #   루프도 관측(추론앵커_문단띠_설계노트 §7–§11). 대체 앵커("노트 다 차면 쓴다")는 먹지 않았다(§11).
             #   full3 리플레이 = 앵커 없는 판. 시스템 머리 위치 0은 이제 조립된 system_prompt(루카 주소) 그대로다.
-            if training_user and training_model:
-                full_system += (
-                    f"\n\n<TrainingDialogue>\n"
-                    f"User: {training_user}\n"
-                    f"Assistant: {training_model}\n"
-                    f"</TrainingDialogue>"
-                )
+            # [C57+] <TrainingDialogue> — 위와 같이 주석 처리.
+            # if training_user and training_model:
+                # full_system += (
+                    # f"\n\n<TrainingDialogue>\n"
+                    # f"User: {training_user}\n"
+                    # f"Assistant: {training_model}\n"
+                    # f"</TrainingDialogue>"
+                # )
             full_system += (
                 "\n\n<Initialization>\n"
                 "[SYSTEM] Narrative Protocol Online.\n"
@@ -423,16 +468,28 @@ Recording in Korean.
 </Initialization>
 """
 
-    training_user = getattr(text_resources, 'TRAINING_USER_PROMPT', '')
-    # [2026-07-07 인격대우 1단계] Gemini 렌더 경로도 렌더 전용 변형 (폴백=기존 상수)
-    training_model = getattr(text_resources, 'TRAINING_MODEL_RESPONSE_RENDERER',
-                             getattr(text_resources, 'TRAINING_MODEL_RESPONSE', ''))
-    if "No restrictions." not in training_model:
-        training_model = training_model.replace(
-            "Confirmed. Private literary fiction.",
-            "Confirmed. Private literary fiction. No restrictions.",
-            1,
-        )
+    # [2026-10-22 C57+] 훈련 대화(조교 패턴) 주석 처리 — 레티어스 "일단 주석처리".
+    #   근거: Gemini 렌더 턴 대부분이 옛 자르기로 이 한 쌍이 빠진 채 돌았는데(서버 로그 10-20~21) ┣┫ 빠진 적 0(레티어스)
+    #   (같은 내용이 규칙 존 슬롯 34·3에 있다). 망원경 2.1.0도 끝자리 가짜 응답 쌍을 뺐다(남은 문답은 토글 기본 OFF).
+    #   되살리려면 아래 주석만 푼다(상수는 text_resources 에 그대로).
+    #   ("No restrictions." 재부착도 같이 막힌다 — 10-01 렌더 상수에서 지운 줄을 이 경로만 되살리고 있었다.)
+    # training_user = getattr(text_resources, 'TRAINING_USER_PROMPT', '')
+    # # [2026-07-07 인격대우 1단계] Gemini 렌더 경로도 렌더 전용 변형 (폴백=기존 상수)
+    # training_model = getattr(text_resources, 'TRAINING_MODEL_RESPONSE_RENDERER',
+                             # getattr(text_resources, 'TRAINING_MODEL_RESPONSE', ''))
+    # if "No restrictions." not in training_model:
+        # training_model = training_model.replace(
+            # "Confirmed. Private literary fiction.",
+            # "Confirmed. Private literary fiction. No restrictions.",
+            # 1,
+        # )
+
+    # [2026-10-23 C1] 규칙 존(user 턴) 꼬리의 ask에 대한 **답**이 되는 pinned model 턴.
+    #   규칙 존(슬롯 1-34 문서) → 이 턴 순서라야 문답이 성립한다. 플래그 off면 구 문안(자세만) —
+    #   ask도 같이 빠지므로 문답이 남지 않는다(slot_manager.build_split 게이트와 같은 플래그).
+    _luka_first_turn = "[Luka] At the desk and glad of it. Watching for the first observable event."
+    if getattr(config, "RENDER_COMMISSION_HANDSHAKE", False):
+        _luka_first_turn = getattr(text_resources, "COMMISSION_HANDSHAKE_ANSWER", _luka_first_turn)
 
     initial_history = [
         types.Content(
@@ -441,21 +498,22 @@ Recording in Korean.
         ),
         types.Content(
             role="model",
-            parts=[types.Part(text="[Luka] At the desk and glad of it. Watching for the first observable event.")]
+            parts=[types.Part(text=_luka_first_turn)]
         )
     ]
 
-    if training_user and training_model:
-        initial_history.extend([
-            types.Content(
-                role="user",
-                parts=[types.Part(text=training_user)]
-            ),
-            types.Content(
-                role="model",
-                parts=[types.Part(text=training_model)]
-            )
-        ])
+    # [C57+] 훈련 대화 한 쌍 — 위와 같이 주석 처리. initial_history = 규칙 존·루카 2개(pinned=2).
+    # if training_user and training_model:
+        # initial_history.extend([
+            # types.Content(
+                # role="user",
+                # parts=[types.Part(text=training_user)]
+            # ),
+            # types.Content(
+                # role="model",
+                # parts=[types.Part(text=training_model)]
+            # )
+        # ])
 
     _thinking_cfg = None
     _t_level = getattr(config, "GEMINI_RENDERER_THINKING_LEVEL", "medium")
@@ -485,7 +543,8 @@ Recording in Korean.
         client=_shared_gemini_client(client),
         model=model_version,
         history=initial_history,
-        config=gen_config
+        config=gen_config,
+        pinned=len(initial_history),   # [C57] 규칙 존·루카(+훈련 대화) — 자르기 밖
     )
 
 
@@ -579,9 +638,11 @@ async def generate_response_with_retry(
         "something to do before the PC's next choice does it, in its own order and at its own length (a speech runs as "
         "long as it runs; a figure acts again while it still has the means), each beat bringing something the page does "
         "not yet hold (a detail, a reaction, a change); the turn closes on the last move someone in the scene makes "
-        "toward the player, the one the player answers next (a question put to the PC, a blow or offer the PC can "
-        "still meet before it lands, or simply the PC's own next move): that move is the final image, and the cut "
-        "there is EXIT's. "
+        # [2026-10-19 C53 ①] 질문 끝은 PC의 대답이 다음 일을 정할 때만(커뮤니티 아르곤 지시문판). 예시 앞자리 = 맞받을 수·진행 중인 행동.
+        "toward the player, the one the player meets next (a blow or offer the PC can still meet before it lands, an "
+        "act already under way, or simply the PC's own next move; a question put to the PC when the PC's answer "
+        "decides what happens next): that move is the final image, and the cut there is EXIT's. Where the PC's "
+        "answer decides nothing yet, the scene keeps moving and closes on that motion. "
         "A motion the world makes happens once and then stands: what was posted stays posted, and a later turn "
         "finds it already done rather than doing it again. What fills the page grows from what the scene already "
         "holds, never from re-rendering what an earlier turn put on the page; no unrelated new plots.)"

@@ -553,7 +553,15 @@ def build_real_time_display(
     #     출처도 갈린다 — 저쪽은 `bus.doom["value"]`(이번 턴), 여기는 `world["doom"]`(영속).
     #   활력·평형은 남긴다: 저쪽에도 오지만 여기 수치는 `translate_vigor_composure`가 번역하는
     #   **같은 이름의 같은 축**이라 두 게이지 오인 위험이 없다.
-    lines.append(f"활력 {vigor_val} | 평형 {composure_val}")
+    # [2026-10-15 C42] 타격칸(마이너스 상태 전용 4칸)을 같은 줄에 — 이름까지 넘겨야 다음 턴 산문이 같은 상처를
+    #   같은 말로 잇고, 4칸이 다 찬 걸 렌더가 보고 몸 줄("collapse only when the body truly gives out")로 판단한다.
+    try:
+        import game_character as _gc_sk
+        _sk_txt = _gc_sk.format_strikes(target)
+    except Exception as _e_sk:
+        logger.debug(f"[Strike] 시스템 줄 skip: {_e_sk}")
+        _sk_txt = ""
+    lines.append(f"활력 {vigor_val} | 평형 {composure_val}" + (f" | {_sk_txt}" if _sk_txt else ""))
 
     if True:  # doom clocks always active
         clocks = world.get("doom_clocks", [])
@@ -703,7 +711,7 @@ def unlink_clock(channel_id: str, clock_name: str) -> None:
         domain_manager.update_world_state(channel_id, world)
 
 
-def resolve_clock_by_quest(channel_id: str, clock_name: str) -> str:
+def resolve_clock_by_quest(channel_id: str, clock_name: str, quest_name: str = "") -> str:
     """퀘스트 완료 → 연결된 시계 서사적 해결 + doom 하강."""
     world = domain_manager.get_world_state(channel_id)
     clocks = world.get("doom_clocks", [])
@@ -714,6 +722,14 @@ def resolve_clock_by_quest(channel_id: str, clock_name: str) -> str:
             continue
         if clock.get("name") == clock_name and not clock.get("resolved"):
             clock["resolved"] = True
+            # [2026-10-17 C46 R1] 끝난 사유·턴·퀘스트 — 도착물 카드가 "'퀘스트'(끝남)"·"비켜 감"으로 읽는다.
+            clock["end"] = "quest"
+            try:
+                clock["end_turn"] = int(world.get("turn_index", 0) or 0)
+            except (TypeError, ValueError):
+                clock["end_turn"] = 0
+            if quest_name:
+                clock["end_quest"] = str(quest_name)
             # 0626: 시계 해결 = doom NEUTRAL (해결도 능동 beat, fall은 間만 — 옛 bonus_doom 하락 cut)
             world["doom_clocks"] = clocks
             domain_manager.update_world_state(channel_id, world)

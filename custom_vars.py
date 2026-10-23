@@ -248,6 +248,214 @@ def system_name(name: Any) -> str:
         return key
     return SYSTEM_ALIASES.get(key.lower(), "") or SYSTEM_ALIASES.get(key, "")
 
+
+# =========================================================
+# [2026-10-23 C61] 기본 선언 — 소지품
+# =========================================================
+# 시스템 선언(SYSTEM_VARS)과 다른 층이다. `system` 표지는 스무 자리 넘게 "게이지·PC별 값"을 가정한다
+#   (표시 건너뜀·산문 급식 배제·apply_system_delta 전용 길). 소지품은 **보통 목록이 가는 길**(표시·급식·
+#   추출·OOC·표현식)을 그대로 타야 해서 `builtin` 표지를 따로 둔다. 보통 선언과 다른 건 넷뿐이다:
+#   1) 늘 있다(가상 선언 — get_declarations 가 얹는다)   2) 못 지운다·모양 잠금(BUILTIN_EDITABLE 만 개정)
+#   3) 유저 몫(MAX_VARS)에서 안 센다                      4) `!출력룰 초기화` 에서 값이 남는다
+# 레티어스 10-23 "노트북 소유 범위를 완전 줄이는 식으로" · "추출이 하자. 일단 솔로 위주".
+#   → 정본이 노트북 [소지품] 에서 여기로 왔다. 변화는 출력물 추출 콜 하나가 잡는다(Theoria item_usage 은퇴).
+#   솔로 기준 채널 목록 하나(per_actor 아님) — 다인은 나중.
+#   노트북 텍스트(domain_manager.get_notebook)는 [소지품] 칸을 **여기서 읽어** 그대로 그린다 — 렌더 Slot 6·
+#   OOC 분류기·`!캐릭터`·B-1 입력 모양은 무변경. 그래서 산문 급식(feed.prose)은 never 다(두 번 안 싣는다).
+SOJIPIN = "소지품"
+BUILTIN_SOJIPIN_RULE = (
+    "Items the PC carries. add: the prose shows the PC actually taking, receiving, buying or picking up "
+    "a concrete, nameable item. delta -: a consumable used up (potion, food, ammo), or an item dropped, "
+    "given away, sold, stolen or destroyed. A durable item used (weapon, tool, key) stays. Seeing, wanting "
+    "or failing to take an item is not a change. Reuse the names already in the list."
+)
+BUILTIN_VARS: Dict[str, Dict[str, Any]] = {
+    SOJIPIN: {
+        "name": SOJIPIN,
+        "type": "list",
+        "item_mode": "stock",
+        "item_range": [0, 9999],
+        "scope": "pc",
+        "max": 99,                        # LIST_MAX_HARD. 옛 노트북은 상한이 없었다
+        "rule": BUILTIN_SOJIPIN_RULE,
+        "builtin": True,
+        "always_feed": True,              # 새로 줍는 물건은 이름이 아직 목록에 없다 — mentions 게이트로는 못 잡는다
+        "feed": {"prose": "never"},       # 렌더는 노트북 [소지품] 칸으로 이미 본다
+        "drop_zero": True,                # 0개가 되면 항목이 사라진다(옛 노트북과 같다)
+    },
+}
+# 유저가 `!출력룰` 로 고칠 수 있는 칸. 나머지(타입·모드·스코프·급식·drop_zero)는 코드 소유.
+BUILTIN_EDITABLE = ("rule", "max", "format")
+# 같은 것을 가리키는 다른 표기 — `인벤토리` 를 선언하면 새 목록이 아니라 소지품의 개정이 된다(겹침 방지).
+BUILTIN_ALIASES = {"소지품": SOJIPIN, "인벤토리": SOJIPIN, "inventory": SOJIPIN}
+
+
+def builtin_name(name: Any) -> str:
+    """이름 → 기본 선언 정본명. 아니면 ""."""
+    key = str(name or "").strip()
+    if not key:
+        return ""
+    if key in BUILTIN_VARS:
+        return key
+    return BUILTIN_ALIASES.get(key.lower(), "") or BUILTIN_ALIASES.get(key, "")
+
+
+def reserved_name(name: Any) -> str:
+    """코드가 심은 이름(시스템 + 기본) → 정본명. 아니면 ""."""
+    return system_name(name) or builtin_name(name)
+
+
+def is_reserved(spec: Any) -> bool:
+    """코드가 심은 선언인가 — 유저 몫 세기·삭제·통째 초기화가 이 한 줄로 가른다."""
+    return isinstance(spec, dict) and bool(spec.get("system") or spec.get("builtin"))
+
+
+def _legacy_sojipin(channel_id: str) -> Dict[str, Any]:
+    """[C61 R8] 옛 정본(노트북 [소지품]) → 목록 값 **사본**. 채널 노트북 + 참가자 노트북 합(솔로 = 한 사람).
+    08-18 규율 — 읽기는 저장을 바꾸지 않는다. 첫 _save 가 옮긴다(값 키가 생기면 이월 끝)."""
+    try:
+        d = domain_manager.get_domain(channel_id) or {}
+    except Exception:
+        return {}
+    srcs = [d.get("notebook")]
+    for _p in (d.get("participants") or {}).values():
+        if isinstance(_p, dict):
+            srcs.append(_p.get("notebook"))
+    items: Dict[str, Any] = {}
+    for nb in srcs:
+        if nb is None:
+            continue
+        try:
+            sec = domain_manager.notebook_parse(nb)["sections"]["소지품"]["items"]
+        except Exception:
+            continue
+        for k, v in sec.items():
+            nm = str(k).strip()[:ITEM_NAME_MAX]
+            if not nm:
+                continue
+            try:
+                q = int(v.get("qty", 1)) if isinstance(v, dict) else int(v)
+            except (TypeError, ValueError):
+                q = 1
+            if q <= 0:
+                continue
+            if nm not in items and len(items) >= LIST_MAX_HARD:
+                continue
+            items[nm] = {"n": int(items.get(nm, {}).get("n", 0)) + q, "goal": 0}
+    return items
+
+
+def sojipin_items(channel_id: str) -> Dict[str, int]:
+    """[C61] 소지품 {이름: 수량}(저장 순서, 0 초과만). 기능이 꺼졌으면 {}. 읽기는 쓰지 않는다."""
+    if not is_enabled():
+        return {}
+    raw = (get_values(channel_id).get(SOJIPIN) or {}).get("value")
+    out: Dict[str, int] = {}
+    for k, rec in (raw.items() if isinstance(raw, dict) else []):
+        try:
+            n = int(rec.get("n", 0) if isinstance(rec, dict) else rec)
+        except (TypeError, ValueError):
+            n = 0
+        if str(k).strip() and n > 0:
+            out[str(k)] = n
+    return out
+
+
+def _sojipin_key(items: Dict[str, Any], name: Any, partial: bool = False) -> str:
+    """이름 찾기 — 정확 → 대소문자 무시 → (partial) 부분 일치 첫 매칭(옛 노트북 remove 규칙)."""
+    key = str(name or "").strip()
+    if not key:
+        return ""
+    if key in items:
+        return key
+    low = key.lower()
+    for k in items:
+        if str(k).strip().lower() == low:
+            return k
+    if partial:
+        for k in items:
+            if key in str(k):
+                return k
+    return ""
+
+
+# [C60 M2c] 목록 항목 이름 찾기의 공개 이름 — Activity 편집이 같은 규칙(정확 → 대소문자)을 쓴다.
+match_item_key = _sojipin_key
+
+
+def sojipin_add(channel_id: str, name: Any, qty: Any = 1, *, source: str = "code",
+                evidence: str = "") -> Optional[Dict[str, Any]]:
+    """[C61 R3] 소지품 +qty(없으면 qty 개로 신설). 움직였으면 rec(from·to), 아니면 None(꺼짐·상한)."""
+    try:
+        n = max(1, int(qty))
+    except (TypeError, ValueError):
+        n = 1
+    nm = str(name or "").strip()
+    if not nm:
+        return None
+    return apply_code_write(channel_id, SOJIPIN, item=nm, delta=n, source=source, evidence=evidence)
+
+
+def sojipin_take(channel_id: str, name: Any, qty: Any = None, *, source: str = "code",
+                 evidence: str = "") -> Tuple[str, Optional[Dict[str, Any]]]:
+    """[C61 R3] 소지품 차감. qty None = 통째로 지움, 숫자 = 그만큼(0 이하 → 항목 삭제, drop_zero).
+    Returns (찾은 이름 | "", rec)."""
+    real = _sojipin_key(sojipin_items(channel_id), name, partial=True)
+    if not real:
+        return "", None
+    if qty is None:
+        return real, apply_code_item(channel_id, SOJIPIN, real, "remove",
+                                     evidence=evidence, source=source)
+    try:
+        n = max(1, int(qty))
+    except (TypeError, ValueError):
+        n = 1
+    return real, apply_code_write(channel_id, SOJIPIN, item=real, delta=-n,
+                                  source=source, evidence=evidence)
+
+
+def sojipin_seed(channel_id: str, name: Any, qty: Any = 1, *,
+                 source: str = "sheet") -> Optional[Dict[str, Any]]:
+    """[C61 R3] **없을 때만** qty 개 신설(시트 시작 장비). 있으면 None — `!설명` 재등록이 수량을 쌓지 않는다.
+    qty = 한 시트 안에서 같은 이름이 나온 횟수(`부싯돌` 두 줄 = 2개)."""
+    nm = str(name or "").strip()
+    if not nm or _sojipin_key(sojipin_items(channel_id), nm):
+        return None
+    try:
+        n = max(1, int(qty))
+    except (TypeError, ValueError):
+        n = 1
+    return apply_code_write(channel_id, SOJIPIN, item=nm, delta=n, source=source,
+                            evidence="sheet inventory")
+
+
+def sojipin_seed_entry(names: Any) -> Dict[str, Any]:
+    """[C61 R4] `!클리어` 가 world_state 에 직접 박는 값 엔트리 — 이름이 나온 횟수만큼(옛 노트북 시드와 같다).
+    빈 목록이어도 키는 남는다(키가 있어야 옛 노트북 이월이 다시 안 돈다)."""
+    items: Dict[str, Any] = {}
+    for nm in (names or []):
+        k = str(nm or "").strip()[:ITEM_NAME_MAX]
+        if not k:
+            continue
+        if k in items:
+            items[k]["n"] = int(items[k]["n"]) + 1
+        elif len(items) < LIST_MAX_HARD:
+            items[k] = {"n": 1, "goal": 0}
+    return {"value": items, "last_change": None}
+
+
+def sojipin_change_tail(channel_id: str) -> str:
+    """[C61] 최근 변화 한 줄(표시 전용) — `↕ 포션 (remove t12)`. 도장이 없으면 ""."""
+    try:
+        lc = (get_values(channel_id).get(SOJIPIN) or {}).get("last_change")
+    except Exception:
+        return ""
+    if not isinstance(lc, dict) or not lc.get("item"):
+        return ""
+    d = lc.get("delta")
+    dd = f" {int(d):+d}" if isinstance(d, (int, float)) and d else ""
+    return f"↕ {lc.get('item')} ({lc.get('op', '')}{dd} t{lc.get('turn', 0)})"
+
 # 검증 규칙 요지 — 에러 메시지에 **그대로 동봉**한다(simcore "어긋나면 코드가 정답"의 축소판).
 RULES_TEXT = (
     "**변수 선언 규칙**\n"
@@ -285,7 +493,9 @@ RULES_TEXT = (
     "  기한은 `기한 = 날 + 3` 처럼 **끝을 한 번** 적어 두면 상태창이 `남은 3일` 로 그립니다.\n"
     "\n**시스템 변수** — `활력`·`평형`은 코드가 심어 둔 변수라 지울 수 없습니다. 대신 **규칙과 캡은 고칠 수 있습니다**:\n"
     "`!출력룰 수정 변수 활력 | 상승 5 하강 7 | 능력을 쓰면 크게 깎이고 쉬면 찬다`\n"
-    "(범위·타입·스코프는 코드 소유라 바뀌지 않습니다.)"
+    "(범위·타입·스코프는 코드 소유라 바뀌지 않습니다.)\n"
+    "\n**소지품** — PC가 들고 다니는 물건은 코드가 심어 둔 기본 목록 `소지품` 하나에 삽니다. "
+    "지울 수 없고 규칙·항목 상한·표시형식만 고칩니다. `인벤토리`로 선언해도 소지품이 고쳐집니다."
 ) % (NAME_MAX, RULE_MAX, MAX_VARS, MAX_STAGES, STAGE_NAME_MAX, TEXT_MAX, MAX_LIST_ITEMS)
 
 
@@ -316,6 +526,15 @@ def get_declarations(channel_id: str) -> Dict[str, Dict[str, Any]]:
         stored = out.get(nm) if isinstance(out.get(nm), dict) else {}
         merged = dict(base)
         for k in SYSTEM_EDITABLE:
+            v = stored.get(k)
+            if v not in (None, ""):
+                merged[k] = v
+        out[nm] = merged
+    # [2026-10-23 C61] 기본 선언(소지품)도 같은 방식 — 기본형 위에 고친 칸만.
+    for nm, base in BUILTIN_VARS.items():
+        stored = out.get(nm) if isinstance(out.get(nm), dict) else {}
+        merged = dict(base)
+        for k in BUILTIN_EDITABLE:
             v = stored.get(k)
             if v not in (None, ""):
                 merged[k] = v
@@ -362,7 +581,14 @@ def get_values(channel_id: str) -> Dict[str, Dict[str, Any]]:
         logger.debug("[CustomVar] value read skipped: %s", e)
         return {}
     # [2026-10-07 B1] 옛 "기력" 값(PC 키·인물 키 한 dict) → "활력". 사본만 — 저장은 첫 _save 가.
-    return _migrate_legacy_keys(vals) if isinstance(vals, dict) else {}
+    out = _migrate_legacy_keys(vals) if isinstance(vals, dict) else {}
+    # [2026-10-23 C61 R8] 소지품 값 키가 아직 없으면 옛 노트북 [소지품] 사본을 얹는다(저장은 첫 쓰기가).
+    if SOJIPIN not in out:
+        _leg = _legacy_sojipin(channel_id)
+        if _leg:
+            out = dict(out)
+            out[SOJIPIN] = {"value": _leg, "last_change": None}
+    return out
 
 
 def _current_turn(channel_id: str) -> int:
@@ -400,6 +626,14 @@ def _reduce_system(decl: Dict[str, Any]) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     for k, v in (decl or {}).items():
         if not isinstance(v, dict):
+            continue
+        # [2026-10-23 C61] 기본 선언도 같은 규율 — 고친 칸만 남긴다(기본형을 고치면 기존 채널에 퍼진다).
+        if v.get("builtin") or k in BUILTIN_VARS:
+            base_b = BUILTIN_VARS.get(k, {})
+            ov_b = {kk: v[kk] for kk in BUILTIN_EDITABLE
+                    if v.get(kk) not in (None, "") and v.get(kk) != base_b.get(kk)}
+            if ov_b:
+                out[k] = {"name": k, "builtin": True, **ov_b}
             continue
         if not v.get("system"):
             out[k] = v
@@ -1353,7 +1587,7 @@ def validate_declaration(
     시스템 변수(개정 흡수) 결과는 손대지 않는다 — 그쪽 always_feed 는 코드 소유다.
     """
     clean, err = _validate_declaration_core(spec, existing, replacing)
-    if clean is None or not isinstance(spec, dict) or clean.get("system"):
+    if clean is None or not isinstance(spec, dict) or is_reserved(clean):
         return clean, err
     if spec.get("always_feed") is True:
         clean["always_feed"] = True
@@ -1396,7 +1630,7 @@ def merge_flag_edit(spec: Any, existing: Optional[Dict[str, Any]]) -> Any:
         return spec
     key = _resolve_name(str(spec.get("name") or "").strip(), existing)
     old = existing.get(key) if key else None
-    if not isinstance(old, dict) or old.get("system"):
+    if not isinstance(old, dict) or is_reserved(old):
         return spec
     if (spec.get("rule") or spec.get("range") or spec.get("stages") or "init" in spec
             or spec.get("item_mode") or spec.get("type", "gauge") != "gauge"
@@ -1448,6 +1682,10 @@ def _validate_declaration_core(
     _sys = system_name(name)
     if _sys:
         return _validate_system_override(_sys, spec, fmt=str(spec.get("format", "") or "").strip())
+    # [2026-10-23 C61] 기본 이름(소지품·인벤토리·inventory)도 개정으로 흡수 — 새 목록이 안 생긴다(겹침 방지).
+    _bi = builtin_name(name)
+    if _bi:
+        return _validate_builtin_override(_bi, spec, fmt=str(spec.get("format", "") or "").strip())
 
     if name.lower() in [r.lower() for r in RESERVED_NAMES]:
         return _fail(f"`{name}` 은(는) 코드가 이미 쓰는 이름입니다 (패널에 두 번 그려집니다).")
@@ -1499,7 +1737,7 @@ def _validate_declaration_core(
     # ★시스템 선언은 세지 않는다 — 코드가 심은 것이 유저 몫을 잡아먹으면 캡이 캡이 아니다.
     existing = existing if isinstance(existing, dict) else {}
     _user_count = sum(1 for _k, _v in existing.items()
-                      if not (isinstance(_v, dict) and _v.get("system")))
+                      if not is_reserved(_v))
     is_new = name not in existing and name != (replacing or "")
     if is_new and _user_count >= MAX_VARS:
         return _fail(f"변수는 채널당 {MAX_VARS}개까지입니다 (현재 {_user_count}개). 먼저 지워 주세요.")
@@ -1792,6 +2030,38 @@ def _validate_system_override(name: str, spec: Any,
     return out, ""
 
 
+def _validate_builtin_override(name: str, spec: Any,
+                               fmt: str = "") -> Tuple[Optional[Dict[str, Any]], str]:
+    """[2026-10-23 C61] 기본 선언 개정. **기본형 위에 BUILTIN_EDITABLE(rule·max·format)만 덮는다.**
+    타입·모드·스코프를 적어 보내도 조용히 무시한다(_validate_system_override 와 같은 이유)."""
+    base = dict(BUILTIN_VARS[name])
+    spec = spec if isinstance(spec, dict) else {}
+    out = dict(base)
+
+    rule = str(spec.get("rule", "") or "").strip()
+    if rule and len(rule) >= 2:
+        out["rule"] = rule[:RULE_MAX]
+
+    if fmt:
+        if "{v}" not in fmt:
+            return None, f"표시 형식에 값 자리 `{{v}}` 가 없습니다: `{fmt}`\n\n{RULES_TEXT}"
+        if len(fmt) > FORMAT_MAX:
+            return None, f"표시 형식이 깁니다 ({len(fmt)}자 > {FORMAT_MAX}자).\n\n{RULES_TEXT}"
+        out["format"] = fmt
+
+    raw_max = spec.get("max")
+    if raw_max not in (None, ""):
+        try:
+            n = int(raw_max)
+        except (TypeError, ValueError):
+            return None, f"항목 상한은 정수여야 합니다: `{raw_max}`\n\n{RULES_TEXT}"
+        if not 1 <= n <= LIST_MAX_HARD:
+            return None, f"항목 상한이 범위를 벗어났습니다: `{n}` (1~{LIST_MAX_HARD}).\n\n{RULES_TEXT}"
+        out["max"] = n
+
+    return out, ""
+
+
 # =========================================================
 # 등록 / 해제
 # =========================================================
@@ -1883,8 +2153,8 @@ def unregister(channel_id: str, name: str) -> bool:
     if not is_enabled():
         return False
     name = str(name or "").strip()
-    if system_name(name):
-        logger.info("[CustomVar] 시스템 변수 삭제 거부: %s", name)
+    if reserved_name(name):
+        logger.info("[CustomVar] 코드가 심은 변수 삭제 거부: %s", name)
         return False
     decl = dict(get_declarations(channel_id))
     vals = dict(get_values(channel_id))
@@ -1909,6 +2179,9 @@ def _resolve_name(name: str, decl: Dict[str, Any]) -> str:
     for k in decl:
         if str(k).strip().lower() == low:
             return k
+    _bi = builtin_name(key)          # [2026-10-23 C61] 모델이 "인벤토리" 로 신고해도 소지품에 닿는다
+    if _bi and _bi in decl:
+        return _bi
     return ""
 
 
@@ -1918,7 +2191,7 @@ def format_list(channel_id: str) -> str:
     if not decl:
         return "📊 선언된 변수가 없습니다.\n\n" + RULES_TEXT
     vals = get_values(channel_id)
-    _user_n = sum(1 for _v in decl.values() if isinstance(_v, dict) and not _v.get("system"))
+    _user_n = sum(1 for _v in decl.values() if isinstance(_v, dict) and not is_reserved(_v))
     lines = [f"📊 **선언 변수** ({_user_n}/{MAX_VARS})"]
     for name, spec in decl.items():
         if not isinstance(spec, dict):
@@ -1968,7 +2241,8 @@ def format_list(channel_id: str) -> str:
             ) or "—"
         else:
             cur_text = format_value(spec, cur)
-        lines.append(f"- **{name}** `{cur_text}` ({shape}, {vtype}, {scope}) — {spec.get('rule', '')}")
+        _lock = "🔒 " if spec.get("builtin") else ""   # [C61] 기본 목록 — 못 지움
+        lines.append(f"- {_lock}**{name}** `{cur_text}` ({shape}, {vtype}, {scope}) — {spec.get('rule', '')}")
     return "\n".join(lines)
 
 
@@ -2130,6 +2404,8 @@ def apply_deltas(channel_id: str, deltas: Any, turn: Optional[int] = None,
     except Exception as _e_op:
         logger.debug("[CustomVar] 연산 쓰기 대상 조회 skip: %s", _e_op)
 
+    # [2026-10-23 C60 M2 · S1] 사람 편집 메아리 계측 — 적용 **전** 도장을 붙잡아 둔다(아래 [EditEcho]).
+    _prev_lc = {k: (v.get("last_change") if isinstance(v, dict) else None) for k, v in vals.items()}
     applied: List[Dict[str, Any]] = []
     for item in deltas:
         if not isinstance(item, dict):
@@ -2183,6 +2459,28 @@ def apply_deltas(channel_id: str, deltas: Any, turn: Optional[int] = None,
         if rec:
             applied.append(rec)
 
+    # [2026-10-23 C60 M2 · S1] 직전 턴 이후 사람(OOC·Activity)이 고친 변수를 추출이 또 움직였으면 **로그 한 줄만**.
+    #   적용은 그대로다(막지 않는다). 레티어스 10-23 "로그로 일단 두고 보자" — 두 번 세기는 확정이 아니라 가능성이고,
+    #   찍힌다면 뿌리는 렌더(값 차이를 메우려 사건을 지어냄)다. 고칠 자리도 렌더다.
+    for _rec in applied:
+        try:
+            _lc = _prev_lc.get(_rec.get("name"))
+            if isinstance(_lc, dict) and "source" in _lc:
+                _stamps = [_lc]
+            elif isinstance(_lc, dict):
+                _stamps = [s for s in _lc.values() if isinstance(s, dict)]
+            else:
+                _stamps = []
+            _hum = [s for s in _stamps if str(s.get("source") or "") in HUMAN_EDIT_SOURCES
+                    and int(s.get("turn") or -10) >= t - 1]
+            if _hum:
+                _what = " ".join(str(x) for x in (_rec.get("item"), _rec.get("op"), _rec.get("key")) if x)
+                _mv = (f"{_rec.get('from')}→{_rec.get('to')}" if "from" in _rec
+                       else str(_rec.get("to") or ""))
+                logger.info("[EditEcho] %s %s %s — 직전 사람 편집 t%s(%s) ev=%s", _rec.get("name"), _what, _mv,
+                            _hum[-1].get("turn"), _hum[-1].get("source"), str(_rec.get("evidence") or "")[:60])
+        except Exception as _e_echo:
+            logger.debug("[EditEcho] skip: %s", _e_echo)
     if applied:
         _save(channel_id, get_declarations(channel_id), vals)
     return applied
@@ -2404,6 +2702,17 @@ def apply_code_write(channel_id: str, name: Any, *, delta: Any = None, value: An
         new_n = max(lo, min(hi, new_n))
         if real and new_n == old_n:
             return None
+        # [2026-10-23 C61 R2] drop_zero — 0 이하가 되면 항목이 사라진다(소지품). 없는 항목에 0 이하는 신설 안 함.
+        if spec.get("drop_zero") and new_n <= 0:
+            if not real:
+                return None
+            items.pop(real, None)
+            vals[nm] = {"value": items,
+                        "last_change": _stamp(t, ev, source, item=real, op="remove", prev=old_n)}
+            _save(channel_id, decl, vals)
+            logger.info("[CustomVar] %s 항목 %s %s→0 → 제거 src=%s ev=%s", nm, real, old_n, source, ev[:60])
+            return {"name": nm, "item": real, "op": "remove", "from": old_n, "to": 0,
+                    "delta": -old_n, "evidence": ev}
         # [2026-09-09 P11] 레코드의 다른 필드를 지우지 않는다 — 옛 두 칸만 갈아 끼운다.
         _base = dict(rec) if isinstance(rec, dict) else {}
         _base.update({"n": new_n, "goal": goal})
@@ -2546,6 +2855,8 @@ def apply_code_write(channel_id: str, name: Any, *, delta: Any = None, value: An
 # =========================================================
 
 OOC_SOURCE = "ooc"
+# [2026-10-23 C60 M2] 사람이 손으로 고친 쓰기의 도장 — [EditEcho] 계측이 이 둘을 사람 편집으로 본다.
+HUMAN_EDIT_SOURCES = ("ooc", "activity")
 
 _OOC_OPS = {
     "set": "set", "설정": "set", "수정": "set", "변경": "set", "update": "set",
@@ -2672,7 +2983,7 @@ def build_declared_block(channel_id: str) -> str:
         spec = decl.get(nm) or {}
         vtype = str(spec.get("type", "gauge"))
         cur = (vals.get(nm) or {}).get("value")
-        tag = " (시스템)" if spec.get("system") else ""
+        tag = " (시스템)" if spec.get("system") else (" (기본)" if spec.get("builtin") else "")
         if vtype == "text":
             shape = f"문자열 {TEXT_MAX}자까지"
             now = str(cur if cur is not None else spec.get("init", "")) or "—"
@@ -2729,88 +3040,92 @@ def apply_ooc_edits(channel_id: str, user_id: str, edits: Any) -> List[str]:
     관문 순서: 이름(선언에 있나) → 종류(값·기록만 통과) → op → 쓰기.
     쓰기는 전부 코드 소유 문(`apply_code_write` / `apply_code_item`)을 지난다 —
     캡·evidence 는 그 문이 애초에 안 걸고, range 클램프는 그 문이 여전히 문다.
+    [2026-10-23 C60 M2c] 한 건의 몸은 `apply_declared_edit` 로 갔다 — Activity 편집이 **같은 함수**를 부른다(한 함수 두 입구).
     """
     out: List[str] = []
     if not edits or not is_enabled():
         return out
     idx = declared_index(channel_id)
-    lower = {k.lower(): k for k in idx}
     decl = get_declarations(channel_id)
-    uid = str(user_id or "")
     for ed in (edits if isinstance(edits, (list, tuple)) else []):
         if not isinstance(ed, dict):
             continue
         if str(ed.get("field") or "").strip() != "declared":
             continue
-        raw = str(ed.get("name") or ed.get("key") or "").strip()
-        nm = raw if raw in idx else lower.get(raw.lower(), "")
-        if not nm:
-            out.append(f"✗ 모르는 이름: {raw or '(비어 있음)'}")
-            continue
-        kind = idx.get(nm, "")
-        op = _OOC_OPS.get(str(ed.get("op") or ed.get("action") or "").strip().lower(), "")
-        value = ed.get("value")
-        item = str(ed.get("item") or "").strip()
-        to = str(ed.get("to") or ed.get("new_name") or "").strip()
-        record = str(ed.get("record") or ed.get("item_field") or "").strip()
-        npc = str(ed.get("npc") or "").strip()
-
-        if kind in _OOC_FILE_ONLY:
-            out.append(f"✗ {nm} — 이 종류({_OOC_FILE_ONLY[kind]})는 파일로 (`!출력룰 추가`)")
-            continue
-        if kind == "append":
-            if op != "append":
-                out.append(f"✗ {nm} — 기록은 쌓기만 한다. 고쳐 쓰려면 파일로")
-                continue
-            text = str(value if value is not None else ed.get("text") or "").strip()
-            n = 0
-            if text:
-                try:
-                    import status_panel as _sp_oe
-                    n = _sp_oe.apply_append_entries(
-                        channel_id, [{"name": nm, "text": text, "evidence": OOC_SOURCE}], uid)
-                except Exception as e:
-                    logger.debug("[OOC] append 적립 skip: %s", e)
-            out.append(f"✓ {nm} + {text[:30]}" if n else f"✗ {nm} — 적립하지 못했다")
-            continue
-
-        spec = decl.get(nm) if isinstance(decl.get(nm), dict) else {}
-        vtype = str(spec.get("type", "gauge"))
-        kw = {"evidence": "", "source": OOC_SOURCE, "actor": uid, "npc": npc}
-        if vtype == "list":
-            if op in ("add", "remove", "rename"):
-                if not item:
-                    out.append(f"✗ {nm} — 항목 이름이 없다")
-                    continue
-                rec = apply_code_item(channel_id, nm, item, op, to=to,
-                                      evidence="", source=OOC_SOURCE)
-                out.append(_ooc_line(nm, rec))
-                continue
-            if op in ("set", "delta"):
-                if not item:
-                    out.append(f"✗ {nm} — 항목 이름이 없다")
-                    continue
-                kw["item"] = item
-                if record:
-                    kw["field"] = record
-                if op == "set":
-                    rec = apply_code_write(channel_id, nm, value=value, **kw)
-                else:
-                    rec = apply_code_write(channel_id, nm,
-                                           delta=ed.get("delta", value), **kw)
-                out.append(_ooc_line(nm, rec))
-                continue
-            out.append(f"✗ {nm} — 목록에 쓸 수 없는 지시({op or '?'})")
-            continue
-
-        if op == "set":
-            out.append(_ooc_line(nm, apply_code_write(channel_id, nm, value=value, **kw)))
-        elif op == "delta":
-            out.append(_ooc_line(nm, apply_code_write(
-                channel_id, nm, delta=ed.get("delta", value), **kw)))
-        else:
-            out.append(f"✗ {nm} — 값에는 쓸 수 없는 지시({op or '?'})")
+        line, _rec = apply_declared_edit(channel_id, user_id, ed, source=OOC_SOURCE, _idx=idx, _decl=decl)
+        out.append(line)
     return out
+
+
+def apply_declared_edit(channel_id: str, user_id: str, ed: Dict[str, Any], *, source: str = OOC_SOURCE,
+                        _idx: Optional[Dict[str, str]] = None,
+                        _decl: Optional[Dict[str, Any]] = None) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """[2026-10-23 C60 M2c] 선언 값 편집 **한 건** → (되비침 줄, rec | None). OOC 편집(`apply_ooc_edits`)과
+    Activity 편집(activity_edit)이 같이 지나는 문이다. 도장 출처만 `source` 로 다르다(ooc / activity).
+    rec 은 쓰기 문이 돌려준 그대로(from·to·item·op…) — Activity 의 영수증·↶ 가 이걸 읽는다."""
+    if not isinstance(ed, dict) or not is_enabled():
+        return "✗ 편집을 읽지 못했다", None
+    idx = _idx if _idx is not None else declared_index(channel_id)
+    decl = _decl if _decl is not None else get_declarations(channel_id)
+    lower = {k.lower(): k for k in idx}
+    uid = str(user_id or "")
+    raw = str(ed.get("name") or ed.get("key") or "").strip()
+    nm = raw if raw in idx else lower.get(raw.lower(), "")
+    if not nm:
+        return f"✗ 모르는 이름: {raw or '(비어 있음)'}", None
+    kind = idx.get(nm, "")
+    op = _OOC_OPS.get(str(ed.get("op") or ed.get("action") or "").strip().lower(), "")
+    value = ed.get("value")
+    item = str(ed.get("item") or "").strip()
+    to = str(ed.get("to") or ed.get("new_name") or "").strip()
+    record = str(ed.get("record") or ed.get("item_field") or "").strip()
+    npc = str(ed.get("npc") or "").strip()
+
+    if kind in _OOC_FILE_ONLY:
+        return f"✗ {nm} — 이 종류({_OOC_FILE_ONLY[kind]})는 파일로 (`!출력룰 추가`)", None
+    if kind == "append":
+        if op != "append":
+            return f"✗ {nm} — 기록은 쌓기만 한다. 고쳐 쓰려면 파일로", None
+        text = str(value if value is not None else ed.get("text") or "").strip()
+        n = 0
+        if text:
+            try:
+                import status_panel as _sp_oe
+                n = _sp_oe.apply_append_entries(
+                    channel_id, [{"name": nm, "text": text, "evidence": source}], uid)
+            except Exception as e:
+                logger.debug("[OOC] append 적립 skip: %s", e)
+        return (f"✓ {nm} + {text[:30]}" if n else f"✗ {nm} — 적립하지 못했다"), None
+
+    spec = decl.get(nm) if isinstance(decl.get(nm), dict) else {}
+    vtype = str(spec.get("type", "gauge"))
+    kw = {"evidence": "", "source": source, "actor": uid, "npc": npc}
+    if vtype == "list":
+        if op in ("add", "remove", "rename"):
+            if not item:
+                return f"✗ {nm} — 항목 이름이 없다", None
+            rec = apply_code_item(channel_id, nm, item, op, to=to, evidence="", source=source)
+            return _ooc_line(nm, rec), rec
+        if op in ("set", "delta"):
+            if not item:
+                return f"✗ {nm} — 항목 이름이 없다", None
+            kw["item"] = item
+            if record:
+                kw["field"] = record
+            if op == "set":
+                rec = apply_code_write(channel_id, nm, value=value, **kw)
+            else:
+                rec = apply_code_write(channel_id, nm, delta=ed.get("delta", value), **kw)
+            return _ooc_line(nm, rec), rec
+        return f"✗ {nm} — 목록에 쓸 수 없는 지시({op or '?'})", None
+
+    if op == "set":
+        rec = apply_code_write(channel_id, nm, value=value, **kw)
+        return _ooc_line(nm, rec), rec
+    if op == "delta":
+        rec = apply_code_write(channel_id, nm, delta=ed.get("delta", value), **kw)
+        return _ooc_line(nm, rec), rec
+    return f"✗ {nm} — 값에는 쓸 수 없는 지시({op or '?'})", None
 
 
 def _cap_delta(spec: Dict[str, Any], delta: int) -> int:
@@ -3166,6 +3481,10 @@ def _apply_list(name: str, spec: Dict[str, Any], vals: Dict[str, Any],
 
     entry = vals.get(name) if isinstance(vals.get(name), dict) else {}
     items = dict(entry.get("value") or {}) if isinstance(entry.get("value"), dict) else {}
+    # [2026-10-23 C61 R2] stock 목록의 "수량 없이 add" = 1 — apply_code_item(P17)과 같은 이유
+    #   (0 으로 서면 count/has 가 방금 만든 항목을 못 본다). progress·레코드 목록은 종전대로 lo.
+    _stock_one = (not spec.get("fields") and str(spec.get("item_mode", "stock")) != "progress")
+    _seed_default = max(lo, min(hi, 1)) if _stock_one else lo
     # 항목 이름 관용 해석(조사·대소문자) — 없는 항목에 delta 를 쏘면 신설이 아니라 폐기다.
     key = item_name if item_name in items else next(
         (k for k in items if str(k).strip().lower() == item_name.lower()), "")
@@ -3173,6 +3492,9 @@ def _apply_list(name: str, spec: Dict[str, Any], vals: Dict[str, Any],
         op = "delta" if key else "add"
 
     delta = _read_delta(item)
+    # [2026-10-23 C61] drop_zero 목록(소지품)은 없는 항목에 + 델타 = 신설이다 — "포션 +1"은 줍기다.
+    if op == "delta" and not key and spec.get("drop_zero") and (delta or 0) > 0:
+        op = "add"
 
     if op == "remove":
         if not key:
@@ -3186,11 +3508,17 @@ def _apply_list(name: str, spec: Dict[str, Any], vals: Dict[str, Any],
         if len(items) >= list_max(spec):
             logger.info("[CustomVar] %s 항목 상한 %d 도달 → 신설 거부 (%s)", name, list_max(spec), item_name)
             return None
+        _raw_start = item.get("value")
+        if _raw_start in (None, ""):
+            _raw_start = delta if (delta and delta > 0) else _seed_default
         try:
-            start = int(round(float(item.get("value", delta if delta and delta > 0 else lo) or lo)))
+            start = int(round(float(_raw_start)))
         except (TypeError, ValueError):
-            start = lo
+            start = _seed_default
         start = max(lo, min(hi, start))
+        if spec.get("drop_zero") and start <= 0:
+            logger.debug("[CustomVar] %s 0개 신설 거부 (%s)", name, item_name)
+            return None
         goal = 0
         if str(spec.get("item_mode", "stock")) == "stock":
             try:
@@ -3216,9 +3544,19 @@ def _apply_list(name: str, spec: Dict[str, Any], vals: Dict[str, Any],
         old = int(old)
     except (TypeError, ValueError):
         old = lo
+    if not delta and op == "add" and _stock_one:
+        delta = 1                               # [C61 R2] 이미 있는 항목에 수량 없는 add = 하나 더
     if not delta:
         return None
     new = max(lo, min(hi, old + _cap_delta(spec, delta)))
+    # [2026-10-23 C61 R2] drop_zero — 0 이하가 되면 항목이 사라진다(소지품). 도장은 remove.
+    if spec.get("drop_zero") and new <= 0:
+        items.pop(key, None)
+        vals[name] = {"value": items,
+                      "last_change": _stamp(t, evidence, item=key, op="remove", prev=old)}
+        logger.info("[CustomVar] %s 항목 %s %s→0 → 제거 ev=%s", name, key, old, evidence[:60])
+        return {"name": name, "item": key, "op": "remove", "from": old, "to": 0,
+                "delta": -old, "evidence": evidence}
     # 목표(goal)는 신고에 실려 오면 갱신한다 — 수치가 아니라 **계획**이라 델타 대상이 아니다.
     goal = rec.get("goal", 0) if isinstance(rec, dict) else 0
     if item.get("goal") is not None:
@@ -3577,6 +3915,12 @@ APPEND_FEED_LABEL = "<기록>"
 #   `<사건>`(방금 일어난 일)도 `<기록>`(장부)도 아니고, 이번 턴 산문이 **읽은 채로 시작**할
 #   물건이다. `<사건>` 과 같은 1턴 재료라 소비가 곧 소멸이다(상태로 안 읽히게).
 HANDOUT_FEED_LABEL = "<핸드아웃>"
+# [2026-10-23 C70] 핸드아웃의 **진위 처분** 한 줄 — 라벨 바로 다음 줄. 머리(PROSE_FEED_HEADER)는 "A figure here is
+#   a fact of the world"라서, 처분이 없으면 편지 속 주장·SNS 소문까지 세계 사실로 읽힌다. 도착은 사실, 내용은 작성자의
+#   말(그 사람의 착오·치우침째). 생산 쪽(world_board AUTHORSHIP "새 사건을 열지 않는다")과 짝이다.
+HANDOUT_FEED_NOTE = ("Paper that reached the scene this turn: its arrival is a fact; what it says is "
+                     "its author's word, carrying that author's errors and slant.")
+_HANDOUT_HEAD = HANDOUT_FEED_LABEL + "\n" + HANDOUT_FEED_NOTE
 # [2026-09-13 P16] 조건부 지시 머리표. 값 줄·`<사건>`·`<기록>`·`<핸드아웃>` 과 **갈라 놓는다** —
 #   섞이면 모델이 지시를 "방금 일어난 일"로 읽고 그 문장을 산문에 재발로 베껴 쓴다.
 DIRECTIVE_FEED_LABEL = "<지시>"
@@ -3630,6 +3974,59 @@ def _take_handouts(channel_id: str) -> List[str]:
     except Exception as e:
         logger.debug("[CustomVar] 핸드아웃 소비 저장 실패: %s", e)
     return out
+
+
+def set_last_handouts(channel_id: str, text: Any) -> bool:
+    """[2026-10-17 C46 W6] 이번 턴 핸드아웃을 `last_handouts` 칸에 **교체**로 쓴다(배경 추출이 읽는 칸).
+
+    도착물 콜이 조립 **뒤**(orchestration 5.5)로 옮겨 큐 → 급식 소비(`_take_handouts`)를 안 거치므로 여기서 직접 쓴다.
+    빈 본문이면 빈 칸으로 교체한다(옛 편지가 다음 추출에 다시 실리지 않게 — `_take_handouts` 와 같은 규율).
+    """
+    body = str(text or "").strip()
+    try:
+        ws = domain_manager.get_world_state(channel_id) or {}
+        ws[HANDOUT_LAST_KEY] = [body[:HANDOUT_MAX_CHARS]] if body else []
+        domain_manager.update_world_state(channel_id, ws)
+        return True
+    except Exception as e:
+        logger.debug("[CustomVar] 핸드아웃 last 저장 실패: %s", e)
+        return False
+
+
+def insert_handout(prompt: Any, text: Any) -> Any:
+    """[2026-10-17 C46 W6] 조립이 끝난 프롬프트의 이번 턴 문서에 `<핸드아웃>` 블록을 끼운다.
+
+    자리는 예전 급식 자리와 같다 — Slot 29 `<Real_Time_Status>` 끝(닫는 태그 바로 앞). 그 안에 급식 머리
+    (PROSE_FEED_HEADER)가 없으면 머리째 넣는다(예전 `build_prose_feed` 가 만들던 모양 그대로).
+    3분할 tuple(system, context, now)이면 now 만, 문자열이면 통째. 본문이 없으면 받은 것을 그대로 돌려준다.
+    """
+    body = str(text or "").strip()[:HANDOUT_MAX_CHARS]
+    if not body:
+        return prompt
+
+    def _ins(now: Any) -> str:
+        now = str(now or "")
+        tag = "</Real_Time_Status>"
+        i = now.find(tag)
+        if i >= 0:
+            j = now.rfind("<Real_Time_Status>", 0, i)
+            seg = now[(j if j >= 0 else 0):i]
+            head = "" if PROSE_FEED_HEADER in seg else PROSE_FEED_HEADER + "\n"
+            pre = now[:i]
+            if pre and not pre.endswith("\n"):
+                pre += "\n"
+            return pre + head + _HANDOUT_HEAD + "\n" + body + "\n" + now[i:]
+        block = PROSE_FEED_HEADER + "\n" + _HANDOUT_HEAD + "\n" + body
+        k = now.find("\n\n")
+        if k >= 0:
+            return now[:k + 2] + block + "\n\n" + now[k + 2:]
+        return block + ("\n\n" + now if now else "")
+
+    if isinstance(prompt, tuple) and len(prompt) == 3:
+        return (prompt[0], prompt[1], _ins(prompt[2]))
+    if isinstance(prompt, str):
+        return _ins(prompt)
+    return prompt
 
 
 def last_handouts(channel_id: str) -> str:
@@ -3746,7 +4143,7 @@ def build_prose_feed(channel_id: str, onstage: Optional[List[str]] = None,
         if append_rows:
             _tail.append(APPEND_FEED_LABEL + " " + " | ".join(append_rows))
         _tail += [DIRECTIVE_FEED_LABEL + " " + d for d in directive_rows]
-        _tail += [HANDOUT_FEED_LABEL + "\n" + h for h in handouts]
+        _tail += [_HANDOUT_HEAD + "\n" + h for h in handouts]
         return "\n".join([PROSE_FEED_HEADER] + _tail) if _tail else ""
     vals = get_values(channel_id)
     now = _current_turn(channel_id)
@@ -3840,7 +4237,7 @@ def build_prose_feed(channel_id: str, onstage: Optional[List[str]] = None,
     for d in directive_rows:
         lines.append(DIRECTIVE_FEED_LABEL + " " + d)
     for h in handouts:
-        lines.append(HANDOUT_FEED_LABEL + "\n" + h)
+        lines.append(_HANDOUT_HEAD + "\n" + h)
     return "\n".join(lines)
 
 

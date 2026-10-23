@@ -5,7 +5,7 @@ Narrative entropy engine, extracted from story_director.py for single-responsibi
 
 Origin: 거울공방 AGELAST preset. Caillois play classifications → 7 faces.
 
-가시 3면 (Agon/Alea/Mimicry) = 능동적 창작 마찰 (Slot 19 렌더링 제약).
+가시 3면 (Agon/Alea/Mimicry) = 능동적 창작 마찰 (렌더링 제약, 자료 존 끝 = Slot 31 뒤. C43 전엔 Slot 19).
 은닉 4면 (Silence/Broken/Ghost/Yours) = 수동적/부재의 힘 (Slot 16 분위기/메타).
 
 Responsibilities:

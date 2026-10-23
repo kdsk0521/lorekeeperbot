@@ -1,0 +1,201 @@
+/* 로어키퍼 Activity — 규칙 문서 conventions/activity_ui.md §2~§5 가 정본. 값 추가는 문서 먼저. 외부 폰트 0. */
+:root {
+  --bg: #313338; --panel: #2b2d31; --raised: #383a40; --line: #3f4147;
+  --text: #dbdee1; --muted: #949ba4;
+  --accent: #5865f2; --accent-soft: rgba(88, 101, 242, .18);
+  --ok: #23a55a; --warn: #f0b232; --danger: #f23f43;
+  --badge: #da373c;   /* [C69] 앱 타일 배지 — 디스코드 알림 빨강(--danger 와 따로) */
+  /* 안전 영역 — 디스코드 주입값 우선, 없으면 기기 값 */
+  --sait: var(--discord-safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --saib: var(--discord-safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  --sail: var(--discord-safe-area-inset-left, env(safe-area-inset-left, 0px));
+  --sair: var(--discord-safe-area-inset-right, env(safe-area-inset-right, 0px));
+  --appbar-h: 64px;   /* [C67] 폰 앱 화면 아래 바(뒤로 · 홈 · 편집) — 칸마다 48 이상 */
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text);
+  font: 400 14px/1.55 "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif; }
+.icon { flex: none; display: block; }
+b { font-weight: 600; }
+
+/* ---------- 머리줄 (C67 A1 — 규칙 §4: PC = 뒤로 · 이름 · 편집 · 새로고침, 폰 = 이름 · 새로고침) ---------- */
+header { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 8px;
+  padding: calc(8px + var(--sait)) calc(12px + var(--sair)) 8px calc(12px + var(--sail));
+  background: var(--panel); border-bottom: 1px solid var(--line); }
+.bar-title { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; margin: 0;
+  font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nav-btn { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 40px; height: 40px;
+  background: transparent; color: var(--muted); border: 0; border-radius: 6px; cursor: pointer; padding: 0; font: inherit; }
+.nav-btn:hover { color: var(--text); background: var(--raised); }
+.nav-btn.on { color: var(--text); background: var(--accent-soft); }
+.nav-btn:disabled { opacity: .4; cursor: default; background: transparent; }
+body.at-home #nav-back, body.at-home #nav-edit { display: none; }
+
+/* ---------- 아래 바 (폰 앱 화면만 — bottom app bar: 뒤로 · 홈 · 편집) ---------- */
+#appbar { display: none; }
+
+/* ---------- 홈 (C67 A1 — 지금 카드 · 상태창 요약 · 앱 서랍) ---------- */
+.home { display: grid; grid-template-columns: 360px minmax(0, 1fr); gap: 16px; align-items: start; }
+.home.solo { grid-template-columns: 1fr; }
+.home-side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.home-side .card { margin: 0; }
+.card.summary { display: flex; flex-direction: column; gap: 4px; width: 100%; min-height: 48px; text-align: left;
+  color: var(--text); font: inherit; cursor: pointer; }
+.card.summary:hover { background: var(--raised); }
+.card.summary .card-title { margin: 0 0 4px; }
+.card-title .grow { flex: 1; min-width: 0; }
+.sum-line { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.drawer { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 16px 8px; align-content: start; padding-top: 4px; }
+.tile { display: flex; flex-direction: column; align-items: center; gap: 6px; min-height: 88px; padding: 4px 0;
+  background: transparent; color: var(--text); border: 0; border-radius: 8px; font: inherit; cursor: pointer; }
+.tile-icon { position: relative; width: 64px; height: 64px; border-radius: 16px; background: var(--panel); border: 1px solid var(--line);
+  display: flex; align-items: center; justify-content: center; }
+/* [C69 A3] 배지 — 아이콘 오른쪽 위 원(규칙 §4) */
+.badge { position: absolute; top: -6px; right: -6px; min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box;
+  border-radius: 999px; background: var(--badge); color: #fff; font-size: 12px; font-weight: 600; line-height: 18px; text-align: center; }
+.tile-icon .icon { width: 26px; height: 26px; }
+.tile:hover .tile-icon { background: var(--raised); }
+.tile-label { font-size: 13px; text-align: center; }
+.drawer-div { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.drawer-div .rule { flex: 1; height: 1px; background: var(--line); }
+
+/* ---------- 본문 ---------- */
+main { padding: 16px 16px calc(16px + var(--saib)); max-width: 980px; margin: 0 auto; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; margin: 0 0 12px; }
+.card-title { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 16px; font-weight: 600; }
+.card-title .icon { color: var(--muted); }
+.card h3 { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0 4px;
+  font-size: 13px; font-weight: 600; color: var(--muted); }
+.page-title { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+.meta { display: flex; align-items: center; gap: 8px; color: var(--muted); margin: 0 0 12px; font-size: 13px; }
+.state { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+.state.error { color: var(--danger); }
+.comment { margin: 4px 0; color: var(--muted); }
+.chip { font-size: 12px; font-weight: 400; color: var(--muted); background: var(--raised);
+  border-radius: 999px; padding: 0 8px; }
+pre.body { margin: 0; white-space: pre-wrap; word-break: break-word; font: inherit; }
+/* [C72 A5] 부품 상자(규칙 §5d) — 줄(switch · select) · 접기 · 글. 새 토큰 0 */
+.p-row { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 4px 0; border-top: 1px solid var(--line); cursor: pointer; }
+.card-title + .p-row { border-top: 0; }
+.p-label { flex: 1; min-width: 0; }
+.switch { position: relative; flex: none; width: 40px; height: 24px; padding: 0; border: 0; border-radius: 999px;
+  background: var(--raised); cursor: pointer; transition: background .15s; }
+.switch .knob { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 999px; background: var(--muted);
+  transition: transform .15s, background .15s; }
+.switch.on { background: var(--accent); }
+.switch.on .knob { transform: translateX(16px); background: #fff; }
+.switch:disabled, .p-select:disabled { opacity: .5; cursor: default; }
+.switch:focus-visible, .p-select:focus-visible, .fold > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.p-select { flex: none; height: 40px; max-width: 60%; padding: 0 8px; background: var(--raised); color: var(--text);
+  border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+.p-text { margin: 4px 0; white-space: pre-wrap; word-break: break-word; }
+.p-text.muted { color: var(--muted); font-size: 13px; }
+.fold { border-top: 1px solid var(--line); }
+.fold > summary { display: flex; align-items: center; gap: 8px; min-height: 48px; cursor: pointer; list-style: none;
+  color: var(--muted); font-size: 13px; font-weight: 600; }
+.fold > summary::-webkit-details-marker { display: none; }
+.fold > summary .icon { transition: transform .15s; }
+.fold[open] > summary .icon { transform: rotate(180deg); }
+.fold-body { padding: 0 0 8px; }
+.fold-body .p-row:first-child { border-top: 0; }
+/* [C69 A3] 피드(편지 · 소식 · 속마음, 규칙 §5c) · 홈 이번 턴 줄(§4) */
+.chip.new { color: var(--text); background: var(--accent-soft); }
+.feed-meta { margin: -4px 0 8px; }
+.mind-entry { margin: 8px 0 0; }
+.mind-entry + .mind-entry { border-top: 1px solid var(--line); padding-top: 8px; }
+.mind-name { margin: 0 0 4px; font-weight: 600; }
+.mind-line { margin: 2px 0; white-space: pre-wrap; word-break: break-word; }
+.this-turn { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0 0; padding-top: 8px;
+  border-top: 1px solid var(--line); min-height: 48px; box-sizing: border-box; }
+.tt-label { font-size: 12px; color: var(--muted); }
+.tt-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 12px; border-radius: 999px;
+  background: var(--raised); color: var(--text); border: 1px solid var(--line); font: inherit; font-size: 13px; cursor: pointer; }
+.tt-chip:hover { background: var(--accent-soft); }
+.tt-chip .icon { color: var(--muted); }
+pre.code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: var(--muted); }
+
+/* 이름–값 행: PC 2열 */
+.rows { margin: 0; }
+.row { display: grid; grid-template-columns: minmax(80px, 30%) 1fr; gap: 12px; padding: 8px 0;
+  border-top: 1px solid var(--line); }
+.row:first-child { border-top: 0; padding-top: 0; }
+.row dt { color: var(--muted); font-size: 13px; }
+.row dd { margin: 0; min-width: 0; }
+.v-line { white-space: pre-wrap; word-break: break-word; }
+
+/* 게이지 — 규칙 §5 (≥40% accent · 15~40% warn · <15% danger) */
+.gauge { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; margin: 2px 0; max-width: 520px; }
+.g-label { min-width: 32px; }
+.g-track { height: 6px; background: var(--raised); border-radius: 999px; overflow: hidden; }
+.g-fill { display: block; height: 100%; border-radius: 999px; background: var(--accent); }
+.g-fill.low { background: var(--warn); }
+.g-fill.bad { background: var(--danger); }
+.g-num { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+
+/* 인물: PC = 왼쪽 목록 + 오른쪽 본문 */
+.people { display: grid; grid-template-columns: 220px 1fr; gap: 16px; align-items: start; }
+.plist { display: flex; flex-direction: column; gap: 4px; position: sticky; top: 72px;
+  max-height: calc(100vh - 96px); overflow-y: auto; }
+.plist button { display: flex; align-items: center; gap: 8px; text-align: left; background: transparent; color: var(--text);
+  border: 0; border-radius: 6px; padding: 8px 12px; font: inherit; cursor: pointer; }
+.plist button .icon { color: var(--muted); }
+.plist button:hover { background: var(--raised); }
+.plist button.on { background: var(--accent-soft); }
+.plist button.mine .icon { color: var(--warn); }
+
+/* ---------- 고치기 (C60 M2c) — 연필 → 그 자리 입력칸 → Enter. 규칙 §5b ---------- */
+.ibtn { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 28px; height: 28px;
+  background: transparent; color: var(--muted); border: 0; border-radius: 6px; cursor: pointer; padding: 0; }
+.ibtn:hover { color: var(--text); background: var(--raised); }
+.vrow { display: flex; align-items: center; gap: 8px; min-width: 0; margin: -3px 0; }   /* 28px 버튼이 있어도 글자 줄은 이름 줄과 맞춘다 */
+.vtext { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; }
+.eform { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.eform.add { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.eform input, .eform select { background: var(--raised); color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+  padding: 4px 8px; font: inherit; min-width: 0; height: 32px; }
+.eform input:focus, .eform select:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: transparent; }
+.eform input[type=number] { width: 88px; font-variant-numeric: tabular-nums; }
+.eform input.w-s { width: 64px; }
+.eform input.grow { flex: 1; min-width: 120px; }
+.unit { color: var(--muted); font-size: 13px; }
+.receipt { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; padding: 8px 12px;
+  background: var(--accent-soft); border: 1px solid var(--line); border-radius: 8px; }
+.receipt > .icon { color: var(--ok); }   /* 체크만 — ↶ 버튼 아이콘은 보통 색 */
+
+/* ---------- 폰(<640): 탭 = 아래 내비 바(아이콘 위 · 글자 아래), 위는 디스코드가 덮는다 ---------- */
+@media (max-width: 639px) {
+  header { background: var(--bg); border-bottom: 0;
+    padding-left: calc(8px + var(--sail)); padding-right: calc(8px + var(--sair)); }
+  #nav-back, #nav-edit { display: none; }          /* 폰은 아래 바가 쥔다 */
+  .bar-title { font-size: 18px; }
+  #refresh { width: 36px; height: 36px; }
+  body.in-app #appbar { display: grid; position: fixed; left: 0; right: 0; bottom: 0; z-index: 3;
+    grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; height: calc(var(--appbar-h) + var(--saib));
+    background: var(--panel); border-top: 1px solid var(--line);
+    padding: 4px calc(4px + var(--sair)) calc(4px + var(--saib)) calc(4px + var(--sail)); box-sizing: border-box; }
+  #appbar button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    min-height: 56px; background: transparent; color: var(--text); border: 0; border-radius: 8px; font: inherit; cursor: pointer; }
+  #appbar .ab-icon { display: flex; align-items: center; justify-content: center; width: 52px; height: 28px; border-radius: 999px; }
+  #appbar .ab-label { font-size: 11px; }
+  #appbar button.on .ab-icon { background: var(--accent-soft); }
+  #appbar button.on .ab-label { font-weight: 600; }
+  #appbar button:disabled { color: var(--muted); opacity: .4; cursor: default; }
+  .home { grid-template-columns: 1fr; }
+  .drawer { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .tile { min-height: 84px; gap: 4px; }
+  .tile-icon { width: 56px; height: 56px; }
+  .tile-icon .icon { width: 24px; height: 24px; }
+  .tile-label { font-size: 12px; }
+  main { padding: 8px 12px calc(24px + var(--saib)); }
+  body.in-app main { padding-bottom: calc(var(--appbar-h) + 24px + var(--saib)); }
+  .row { grid-template-columns: 1fr; gap: 2px; }
+  .row dt { font-size: 12px; }
+  .people { grid-template-columns: 1fr; }
+  .plist { position: static; flex-direction: row; overflow-x: auto; max-height: none; padding-bottom: 4px; }
+  .plist button { white-space: nowrap; background: var(--panel); border: 1px solid var(--line); border-radius: 999px; }
+  .eform input, .eform select { font-size: 16px; height: 36px; }   /* 16px 미만이면 iOS 가 입력칸으로 확대해 들어간다 */
+  .p-select { font-size: 16px; }                                    /* [C72] 같은 이유 */
+  .ibtn { width: 36px; height: 36px; }                             /* 엄지 */
+}
+/* 폰: 디스코드가 위에 채널 이름·나가기 버튼을 얹는다(10-22 실관측). 안전 영역 값이 그보다 작으면 72px 확보 */
+.is-mobile header { padding-top: max(calc(8px + var(--sait)), 72px); }

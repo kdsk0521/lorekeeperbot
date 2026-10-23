@@ -195,6 +195,12 @@ class DoomModule:
         # 間 페이즈 진입 여부 — climax_triggered가 직전 턴에 set됐고 doom 자연 감쇠 중
         in_intermission = bool(bus.doom.get("intermission_active"))
 
+        # [2026-10-17 C46 R5] 이번 턴에 끝난 시계 목록은 §0 **앞**에서 연다. 전엔 §4 에서 새로 만들어 §0 발화
+        #   (위협·타이머)가 빠졌다 — 렌더 사실 줄 "X has become real"(une_facade)과 aspects 의 clock_fired 가
+        #   기회 시계에만 섰고, 위협이 터진 턴을 렌더가 몰랐다(처음 말하는 자리가 나중의 도착물이었다).
+        completed_this_turn = []
+        _end_turn = bus.dai.get("turn_index", 0)
+
         # ── 0. Storyteller가 fire 신호 보낸 pending 시계 처리 ──
         fired_names = set(bus.doom.get("_fire_completions", []))
         for clock in clocks:
@@ -202,6 +208,8 @@ class DoomModule:
                 continue
             if clock.get("name") in fired_names:
                 clock["resolved"] = True
+                _mark_end(clock, "fired", _end_turn)
+                completed_this_turn.append(clock)
                 clock.pop("pending_completion", None)
                 clock.pop("pending_turn", None)
                 complete_doom = _get_clock_doom(clock)
@@ -211,6 +219,7 @@ class DoomModule:
                 if complete_doom > 0:
                     linked_quest = clock.get("linked_quest")
                     if linked_quest:
+                        clock["failed_quest"] = linked_quest   # [C46] 도착물 카드 "'퀘스트'(틀어짐)"
                         _fail_linked_quest(context, linked_quest, clock.get("name", "?"))
 
         # ── 1. Flash 시계 소비 ──────────────────────────────
@@ -277,6 +286,7 @@ class DoomModule:
                 for clock in clocks:
                     if clock.get("name") == resolved_name and not clock.get("resolved"):
                         clock["resolved"] = True
+                        _mark_end(clock, "averted", _end_turn)
                         seg = int(clock.get("segments", 6) or 6)
                         # 0626: 시계 해결 = doom NEUTRAL (fall은 間만, 해결도 능동 beat). resolve_reward(vigor/composure 회복)는 유지.
                         resolve_reward = config.CLOCK_RESOLVE_REWARD.get(seg, 3)
@@ -386,6 +396,7 @@ class DoomModule:
             if stale_turns >= stale_threshold:
                 clock["resolved"] = True
                 clock["fade_reason"] = f"stale_{stale_turns}turns"
+                _mark_end(clock, "faded", _stale_current)
                 clock_events.append(
                     f"FADE: {clock.get('name', '?')} (stale {stale_turns}t, no doom)"
                 )
@@ -439,6 +450,7 @@ class DoomModule:
             if drift_turns >= config.CLOCK_DRIFT_TURNS:
                 clock["resolved"] = True
                 clock["fade_reason"] = f"drift_{drift_turns}turns"
+                _mark_end(clock, "faded", _drift_current)
                 clock_events.append(
                     f"DRIFT: {clock.get('name', '?')} (out of context {drift_turns}t)"
                 )
@@ -466,6 +478,7 @@ class DoomModule:
                net_change <= config.CLOCK_OSCILLATION_NET_THRESHOLD:
                 clock["resolved"] = True
                 clock["fade_reason"] = f"oscillation_dir{dir_changes}_net{net_change}"
+                _mark_end(clock, "faded", _stale_current)
                 clock_events.append(
                     f"OSCILLATE: {clock.get('name', '?')} (dir-changes {dir_changes}, net {net_change})"
                 )
@@ -487,12 +500,13 @@ class DoomModule:
             peak = max(hist)
             clock["resolved"] = True
             clock["fade_reason"] = f"discharge_peak{peak}"
+            _mark_end(clock, "faded", _stale_current)
             clock_events.append(
                 f"DISCHARGE: {clock.get('name', '?')} (peak {peak} → 0)"
             )
 
         # ── 4. 완성 체크 → 극성별 분기 ──────────────────────
-        completed_this_turn = []
+        # [2026-10-17 C46 R5] completed_this_turn 은 §0 앞에서 열었다(§0 발화분이 이미 들어 있다).
         current_turn = bus.dai.get("turn_index", 0)
         for clock in clocks:
             if clock.get("resolved") or clock.get("pending_completion"):
@@ -512,6 +526,7 @@ class DoomModule:
                 else:
                     # 기회/타이머 시계: 즉시 완성 (보상은 바로)
                     clock["resolved"] = True
+                    _mark_end(clock, "achieved", current_turn)
                     delta += complete_doom
                     completed_this_turn.append(clock)
                     sign = f"+{complete_doom}" if complete_doom > 0 else str(complete_doom)
@@ -665,12 +680,27 @@ def _fail_linked_quest(context: "GameContext", quest_name: str, clock_name: str)
             return
         result = game_character.remove_quest(channel_id, quest_name)
         context.shared_bus.doom.setdefault("quest_failed", []).append(
-            {"quest": quest_name, "reason": f"clock '{clock_name}' completed"}
+            {"quest": quest_name, "reason": f"{clock_name} came to pass"}   # [C46 R6] 렌더 사실 줄 — 기계 낱말(clock) 없이
         )
         logger.info("[Doom] Quest failed: %s (clock '%s' completed) → %s",
                      quest_name, clock_name, result)
     except Exception as e:
         logger.warning("[Doom] Failed to remove linked quest: %s", e)
+
+
+def _mark_end(clock: dict, kind: str, turn) -> None:
+    """[2026-10-17 C46 R1] 시계가 끝난 **사유**와 **턴**. `resolved = True` 를 세우는 자리마다 같이 적는다.
+
+    사유: fired(스토리텔러 발화) · achieved(기회 완성) · averted(서사 해결) · quest(퀘스트 완료,
+          game_world.resolve_clock_by_quest) · faded(정체·이탈·등락·방전 — 조용히 잊힘) · climax(클라이맥스 강제 완성).
+    읽는 쪽은 도착물 스캐너(world_board Scanner 4) 하나다 — 잊힘·클라이맥스는 소재가 아니고 끝난 지 오래된 것도
+    아니다. 전엔 `resolved` 하나라 아홉 가지 끝이 전부 "시계 완성" 도착물이 됐다. 옛 시계(키 없음)는 소재에서 빠진다.
+    """
+    clock["end"] = kind
+    try:
+        clock["end_turn"] = int(turn or 0)
+    except (TypeError, ValueError):
+        clock["end_turn"] = 0
 
 
 def _get_clock_doom(clock: dict) -> int:
@@ -725,6 +755,7 @@ def _trigger_climax(context, bus, clocks: list, clock_events: list) -> None:
         clock["filled"] = clock.get("segments", 4)
         clock["resolved"] = True
         clock["fade_reason"] = "climax_close"
+        _mark_end(clock, "climax", bus.dai.get("turn_index", 0))
         clock_events.append(f"CLIMAX: {clock.get('name', '?')} forced complete")
     bus.doom["climax_triggered"] = True
 

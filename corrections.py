@@ -17,9 +17,10 @@ import sqlite_store
 logger = logging.getLogger("Corrections")
 
 CAP = 6
-HEAD_KO = "### 정정 (플레이어가 바로잡음 — 위 기록보다 우선)"
+# [2026-10-18 C50 R7] 최신이 위 — 같은 일에 정정이 둘이면 위의 것(이번 수리 전에 쌓인 라이브 행 때문).
+HEAD_KO = "### 정정 (플레이어가 바로잡음 — 위 기록보다 우선. 최신이 위, 같은 일에 둘이면 위의 것)"
 HEAD_EN = ("### Player corrections — these override the log. Stay consistent with them; "
-           "do not restate a corrected version as fact.")
+           "do not restate a corrected version as fact. Newest first; where two cover the same matter, the upper one holds.")
 _PAREN = re.compile(r'[(\[（]')
 
 
@@ -75,8 +76,58 @@ def add(channel_id: str, about: Iterable[Any], text: str, wrong: str = "", *,
     return row
 
 
+def same_claim(wrong: str, row: Dict[str, Any]) -> bool:
+    """[2026-10-18 C50 R4] 새 정정의 wrong 이 옛 정정의 문장이나 wrong 과 맞나(정규화 포함 판정 — 위키 강등과 같은 규칙)."""
+    w = _norm(wrong)
+    if not w:
+        return False
+    for x in (row.get("text"), row.get("wrong")):
+        nx = _norm(x)
+        if nx and (w in nx or nx in w):
+            return True
+    return False
+
+
+def undo(channel_id: str, cid: int, *, restore: bool = True) -> Dict[str, Any]:
+    """[2026-10-18 C50 R2·R3] 정정 하나를 되돌린다 — 행 off + links 의 페이지마다 위키 줄 빼기(+ restore 면 내린 문장 복귀).
+    links 가 없는 옛 행은 꼴(`정정(T{turn}): 문장`, `(정정됨 T{turn}) …wrong…`)로 찾는다. 돌려줌: {ok, row, pages, restored}."""
+    try:
+        cid = int(cid)
+    except (TypeError, ValueError):
+        return {"ok": False, "reason": "id"}
+    row = next((r for r in sqlite_store.read_corrections(channel_id, active_only=False) if r.get("id") == cid), None)
+    if not row:
+        return {"ok": False, "reason": "nomatch"}
+    if not row.get("active"):
+        return {"ok": False, "reason": "inactive", "row": row}
+    sqlite_store.set_correction_active(channel_id, cid, False)
+    pages = restored = 0
+    try:
+        import wiki_store
+        tag = f"T{row['turn']}" if row.get("turn") is not None else "T?"
+        links = row.get("links") or {}
+        targets = [(pid, lk.get("line") or "", lk.get("demoted") or "", "")
+                   for pid, lk in links.items() if not str(pid).startswith("_") and isinstance(lk, dict)]
+        if not targets:
+            for nm in row.get("about") or []:
+                pid = wiki_store.resolve_page(channel_id, nm)
+                if pid:
+                    targets.append((pid, f"{wiki_store.CORRECTION_PREFIX}{tag}): {row.get('text') or ''}", "",
+                                    row.get("wrong") or ""))
+        for pid, line, dem, wr in targets:
+            r = wiki_store.undo_correction_lines(channel_id, pid, line, dem, tag, wrong=wr, restore=restore)
+            if r.get("line") or r.get("restored"):
+                pages += 1
+            restored += int(r.get("restored") or 0)
+    except Exception as e:
+        logger.warning(f"[정정] 위키 되돌림 실패(행은 껐다): {e}")
+    logger.info(f"[정정] -{cid} 되돌림 pages={pages} restored={restored} restore={restore}")
+    return {"ok": True, "row": row, "pages": pages, "restored": restored}
+
+
 def retract(channel_id: str, text: str) -> Tuple[int, str]:
-    """활성 정정 중 text 와 맞는 것을 거둔다(active=0, 행은 남는다). 하나일 때만. 돌려줌: (거둔 수, 사유)."""
+    """활성 정정 중 text 와 맞는 것을 거둔다. 하나일 때만. 돌려줌: (거둔 수, 사유).
+    [2026-10-18 C50 R2] 거두기 = 완전 되돌림(`undo`) — 위키 정정 줄을 빼고 내렸던 문장을 되돌린다."""
     q = _norm(text)
     if not q:
         return 0, "empty"
@@ -88,7 +139,7 @@ def retract(channel_id: str, text: str) -> Tuple[int, str]:
         return 0, "nomatch"
     if len(hit) > 1:
         return 0, "ambiguous"
-    sqlite_store.set_correction_active(channel_id, hit[0]["id"], False)
+    undo(channel_id, hit[0]["id"], restore=True)
     logger.info(f"[정정] -{hit[0]['id']} 거둠")
     return 1, str(hit[0].get("text") or "")
 
@@ -162,7 +213,13 @@ def wrongs_for_names(channel_id: str, names: Iterable[Any]) -> List[str]:
     keys = {_norm(n) for n in (names or []) if str(n or "").strip()}
     out = []
     for r in rows:
+        if not any(_norm(a) in keys for a in (r.get("about") or [])):
+            continue
         w = str(r.get("wrong") or "").strip()
-        if w and any(_norm(a) in keys for a in (r.get("about") or [])):
+        if w:
             out.append(w)
+        # [2026-10-18 C50 R3] 갈아치운 옛 정정 문장도 틀린 문장이다 — 그 뒤 산문을 본 F1이 다시 써넣지 않게.
+        for aw in ((r.get("links") or {}).get("_also_wrong") or []):
+            if str(aw or "").strip():
+                out.append(str(aw).strip())
     return out

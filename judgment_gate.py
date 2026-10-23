@@ -31,12 +31,15 @@ NON_ACTION_PATTERNS = [
 NON_ACTION_RE = re.compile('|'.join(NON_ACTION_PATTERNS))
 
 
-def gate_judgment(user_input: str, flash_needs_judgment: bool,
-                  last_judgment_turn: int, current_turn: int,
-                  resolve: str = "none") -> tuple:
+def gate_judgment(user_input: str, flash_needs_judgment: bool) -> tuple:
     """
     Flash의 needs_judgment를 검증/오버라이드.
     Returns: (final_needs_judgment: bool, reason: str)
+
+    [2026-10-15 C40] Rule 2(직전 턴 판정 쿨다운·desperate 예외) 삭제 — 연속 판정 허용(레티어스: "실패했다가
+      성공하는 맛도 있고"). 쿨다운 턴은 굴림 없이 넘어가 사실상 기본 성공이 되던 구멍이었다(억까 4단계).
+      장부(waterfall load/save_last_judgment_turn)도 읽는 곳이 0이 되어 같이 걷었다.
+      스펙 composition/C40_인풋해석·억까_스펙_2026-10-15.md §3 B3.
     """
     has_action = bool(ACTION_RE.search(user_input))
     # 대사 부분 제거 후 NON_ACTION 판정 (혼합 입력 오탐 방지: "대사" 행동 / 행동 "대사")
@@ -47,13 +50,6 @@ def gate_judgment(user_input: str, flash_needs_judgment: bool,
     if flash_needs_judgment and is_non_action:
         logger.info("Gate override: non-action input blocked (input=%s)", user_input[:50])
         return False, "gate_override: non-action input (dialogue/thought only)"
-
-    # Rule 2: 쿨다운 — 직전 턴 판정 시 연속 차단
-    # 예외: resolve=desperate (각오한 행동은 쿨다운 무시)
-    if flash_needs_judgment and (current_turn - last_judgment_turn <= 1):
-        if resolve != "desperate":
-            logger.info("Gate override: cooldown (last=%d, current=%d)", last_judgment_turn, current_turn)
-            return False, "gate_override: judgment cooldown (consecutive roll blocked)"
 
     # Rule 3: Flash false + 행동 동사 → 로그만 (오버라이드 안 함)
     if not flash_needs_judgment and has_action:

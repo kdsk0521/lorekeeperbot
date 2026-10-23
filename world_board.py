@@ -10,8 +10,9 @@ Discord 스레드에 세계관 내 게시물을 자동 생성.
 
 import json
 import logging
+import re
 import discord
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 
 import config
 import domain_manager
@@ -296,10 +297,15 @@ def _update_handle_registry(channel_id: str, posts_data: Dict[str, Any]) -> None
 
 
 def _get_recent_post_summaries(channel_id: str, limit: int = 5) -> List[str]:
-    """최근 게시물 요약 목록 (중복 방지용)."""
+    """최근 게시물 요약 목록 (중복 방지용).
+
+    [2026-10-17 C46 R8] 기계 말 줄(`MECH_WORD_RE`)은 **읽는 자리에서** 뺀다 — 프롬프트가 "같은 목소리의 나중
+      순간"으로 이어 쓰라 하므로, 옛 "시계가 완성되어…" 글이 남아 있으면 그 말투가 다음 글로 물려진다. 저장은 그대로.
+    """
     world = domain_manager.get_world_state(channel_id)
     board_state = world.get("world_board", {})
-    return board_state.get("recent_summaries", [])[-limit:]
+    rows = [r for r in (board_state.get("recent_summaries", []) or []) if not MECH_WORD_RE.search(str(r))]
+    return rows[-limit:]
 
 
 def _save_post_summaries(channel_id: str, posts_data: Dict[str, Any]) -> None:
@@ -336,6 +342,70 @@ def _turn_recent(turn: Any, current_turn: Any) -> bool:
         return int(turn) >= int(current_turn) - 1
     except (TypeError, ValueError):
         return False
+
+
+# =========================================================
+# [2026-10-17 C46] 끝난 일 → 사건 카드
+# =========================================================
+# 병(C46 지도 §2): Scanner 4 는 `resolved` 하나만 보고 아홉 가지 끝을 전부 "상황 종결: X (시계 완성)" 0.95 로
+#   냈다 — 조용히 잊힌 시계(정체·이탈·등락·방전)와 막아낸 시계까지 "완성"으로, 끝난 지 얼마나 됐는지도 안 보고
+#   (게시 기록 20개에서 밀리면 재등장), 브리핑에 "시계 완성"·"(3/6)"을 그대로 실었다 → 도착물 본문이
+#   "시계가 완성되어…"로 샜다(AUTHORSHIP "브리핑이 안 준 숫자는 발명"이라 브리핑이 준 숫자는 써도 되는 숫자였다).
+# 처방: 끝난 사유(`end`, doom_module._mark_end)로 고르고 최근 것만, 브리핑은 **사건 카드**(머리·일·상태·얽힌 것).
+#   카드는 결론 문장이 아니라 사실이다 — 어떻게 글에 닿을지는 글쓴이 몫(10-17 판정: "펼칠면은 빼자").
+CLOCK_CARD_STATE = {"fired": "일어남", "achieved": "이뤄짐", "averted": "비켜 감", "quest": "비켜 감", "half": "짙어짐"}
+CLOCK_CARD_WEIGHT = {"fired": 0.95, "achieved": 0.85, "averted": 0.7, "quest": 0.7, "half": 0.75}
+QUEST_CARD_WEIGHT = 0.7
+CARD_TASK_LINE = ("The event above is a card of facts, not a line to repeat; how it reaches this post is the author's.\n"
+                  "The card's labels stay off the page.")
+# 기계 말 감시 패턴 — 좁게 잡는다: 그냥 "시계"(시계탑·회중시계)는 세계 낱말일 수 있다.
+#   읽는 쪽 둘: `_get_recent_post_summaries`(옛 글 거르기) · orchestration `[Handout] mech-word`(새 글 감시 로그).
+MECH_WORD_RE = re.compile(r"시계[^.\n]{0,6}(?:완성|완료|찼|종결)|상황 (?:종결|심화)")
+
+
+def _turn_within(turn: Any, current_turn: Any, window: int) -> bool:
+    """[C46 R3] 도장 턴이 지금 턴에서 window 안인가. 도장 없음·문자열 = 거짓(옛 기록은 소재가 아니다).
+    `!다시` 로 턴이 한 칸 물러선 경우(도장 = 지금+1)는 안으로 친다."""
+    if turn is None:
+        return False
+    try:
+        return -1 <= int(current_turn) - int(turn) <= int(window)
+    except (TypeError, ValueError):
+        return False
+
+
+def _clock_card(clock: Dict[str, Any], end: str) -> tuple:
+    """[C46 R2] (카드 본문, 검색 쿼리). 카드 = 머리 · 일(threat) · 상태 · 얽힌 것.
+    숫자·"시계"·결론 문장("~이 벌어졌다")은 없다. 조사가 필요 없는 꼴이라 이름 받침에 따라 틀리지 않는다."""
+    name = str(clock.get("name") or "").strip()
+    threat = str(clock.get("threat") or "").strip()
+    lines = [f"사건 카드 · {name}"]
+    if threat:
+        lines.append(f"일: {threat}")
+    lines.append(f"상태: {CLOCK_CARD_STATE.get(end, '')}")
+    tied: List[str] = []
+    _le = str(clock.get("linked_entity") or "").strip()
+    if _le:
+        tied.append(_le)
+    for _t in (clock.get("tags") or []):
+        _t = str(_t or "").strip()
+        if _t and _t not in tied:
+            tied.append(_t)
+    quest = ""
+    tied_q: List[str] = []
+    if end == "fired" and clock.get("failed_quest"):
+        quest = str(clock["failed_quest"])
+        tied_q = [f"'{quest}'(틀어짐)"]
+    elif end == "quest" and (clock.get("end_quest") or clock.get("linked_quest")):
+        quest = str(clock.get("end_quest") or clock.get("linked_quest"))
+        tied_q = [f"'{quest}'(끝남)"]
+    elif clock.get("linked_quest"):
+        quest = str(clock["linked_quest"])
+        tied_q = [f"'{quest}'"]
+    if tied or tied_q:
+        lines.append("얽힌 것: " + ", ".join(tied + tied_q))
+    query = " ".join(b for b in [name, threat] + tied + [quest] if b)
+    return "\n".join(lines), query
 
 
 def _collect_board_events(channel_id: str, dai: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -416,43 +486,67 @@ def _collect_board_events(channel_id: str, dai: Dict[str, Any]) -> List[Dict[str
                 "npc": None,
                 "target_npc": None,
                 "channel": "bulletin",
-                "detail_kr": line or f"이변 발생: {tag}",
+                # [2026-10-17 C46] 줄이 없을 때의 폴백 "이변 발생: tag" 는 결론 말이라 카드로(줄이 있으면 그 줄 그대로).
+                "detail_kr": line or f"사건 카드 · {tag}\n상태: 일어남",
+                "query": " ".join(b for b in (str(tag), str(line or "")) if b),
+                "card": not line,
                 "tag": f"anomaly:{tag}",
             })
     except Exception:
         pass
 
-    # --- Scanner 4: Doom Clock Milestone ---
+    # --- Scanner 4: Situation Clock → 사건 카드 ---
+    # [2026-10-17 C46 R1~R3] 끝난 사유로 고르고(잊힘·클라이맥스는 소재 아님) 최근 것만(BOARD_CLOCK_RECENT_TURNS),
+    #   브리핑은 사건 카드. 절반 줄은 **끝나지 않은** 시계에만(전엔 끝난 시계에도 "상황 심화 (6/6)"가 났다).
+    #   태그·게시 기록 키(clock_complete:/clock_half:)는 그대로다.
     try:
         board_state = world.get("world_board", {})
         posted_milestones = set(board_state.get("posted_clock_milestones", []))
         clocks = world.get("doom_clocks", [])
+        _recent = int(getattr(config, "BOARD_CLOCK_RECENT_TURNS", 10))
         for clock in clocks:
             if not isinstance(clock, dict):
                 continue
-            name = clock.get("name", "")
+            name = str(clock.get("name", "") or "").strip()
             segments = int(clock.get("segments", 4) or 4)
             filled = int(clock.get("filled", 0) or 0)
-            if segments <= 0:
+            if not name or segments <= 0:
                 continue
-            if clock.get("resolved") and f"{name}:complete" not in posted_milestones:
+            if clock.get("resolved"):
+                if f"{name}:complete" in posted_milestones:
+                    continue
+                _end = str(clock.get("end") or "")
+                if _end not in CLOCK_CARD_WEIGHT or _end == "half":
+                    logger.debug("[WorldBoard] clock skip (end=%s) %s", _end or "-", name)
+                    continue
+                if not _turn_within(clock.get("end_turn"), current_turn, _recent):
+                    logger.debug("[WorldBoard] clock skip (old) %s", name)
+                    continue
+                _card, _q = _clock_card(clock, _end)
                 events.append({
                     "type": "clock_milestone",
-                    "weight": 0.95,
+                    "weight": CLOCK_CARD_WEIGHT[_end],
                     "npc": None,
                     "target_npc": None,
                     "channel": "bulletin",
-                    "detail_kr": f"상황 종결: {name} (시계 완성)",
+                    "detail_kr": _card,
+                    "query": _q,
+                    "names": [n for n in [str(clock.get("linked_entity") or "").strip()] if n],
+                    "card": True,
                     "tag": f"clock_complete:{name}",
                 })
             elif filled >= segments / 2 and f"{name}:half" not in posted_milestones:
+                _card, _q = _clock_card(clock, "half")
                 events.append({
                     "type": "clock_milestone",
-                    "weight": 0.75,
+                    "weight": CLOCK_CARD_WEIGHT["half"],
                     "npc": None,
                     "target_npc": None,
                     "channel": "bulletin",
-                    "detail_kr": f"상황 심화: {name} ({filled}/{segments})",
+                    "detail_kr": _card,
+                    "query": _q,
+                    "names": [n for n in [str(clock.get("linked_entity") or "").strip()] if n],
+                    "card": True,
                     "tag": f"clock_half:{name}",
                 })
     except Exception:
@@ -555,7 +649,10 @@ def _collect_board_events(channel_id: str, dai: Dict[str, Any]) -> List[Dict[str
                 "npc": None,
                 "target_npc": None,
                 "channel": "bulletin",
-                "detail_kr": f"사건 해소: {_latest['title']}",
+                # [2026-10-17 C46] "사건 해소" 결론 말 대신 카드.
+                "detail_kr": f"사건 카드 · {_latest['title']}\n상태: 끝남",
+                "query": str(_latest["title"]),
+                "card": True,
                 "tag": f"resolved:{_latest['title'][:20]}",
                 "thread": _latest["id"],
             })
@@ -563,7 +660,7 @@ def _collect_board_events(channel_id: str, dai: Dict[str, Any]) -> List[Dict[str
         pass
 
     # --- Scanner 9: Visible Dice → 제거됨 (SD-A4, 2026-04-22)
-    # 가시 다이스는 slot_manager에서 Slot 19(쓰기 지시문)에 직접 강제 제약으로 주입됨.
+    # 가시 다이스는 slot_manager에서 자료 존 끝(Slot 31 뒤, C43 전엔 Slot 19)에 직접 강제 제약으로 주입됨.
     # bulletin 경로로 중복 송출하면 같은 제약이 두 슬롯에 쌓여 혼선이 생김.
 
     # --- Scanner 10: Memory Trigger (filler) ---
@@ -587,6 +684,41 @@ def _collect_board_events(channel_id: str, dai: Dict[str, Any]) -> List[Dict[str
                         "detail_kr": chosen_trigger,
                         "tag": f"memory:{chosen_trigger[:20]}",
                     })
+    except Exception:
+        pass
+
+    # --- Scanner 11: Quest Done → 사건 카드 ---
+    # [2026-10-17 C46 R4] 퀘스트 완료 그 자체도 소재 — 최근(`done_turn`) 하나. 연결 시계가 있으면 그 시계 카드
+    #   (quest)가 같은 일을 말하므로 건너뛴다(한 일 두 번 금지). 실패는 시계 fired 카드가 같이 말한다.
+    try:
+        _qb = (domain_manager.get_domain(channel_id) or {}).get("quest_board") or {}
+        _posted_q = set((world.get("world_board", {}) or {}).get("posted_quests", []) or [])
+        _recent_q = int(getattr(config, "BOARD_CLOCK_RECENT_TURNS", 10))
+        _cands = []
+        for _qi, _qd in enumerate(_qb.get("completed") or []):
+            if not isinstance(_qd, dict):
+                continue
+            _qn = str(_qd.get("content") or "").strip()
+            if not _qn or _qn in _posted_q or _qd.get("linked_clock"):
+                continue
+            if not _turn_within(_qd.get("done_turn"), current_turn, _recent_q):
+                continue
+            _cands.append((int(_qd.get("done_turn") or 0), _qi, _qn))
+        if _cands:
+            _cands.sort(key=lambda x: (-x[0], -x[1]))   # 최근 턴 → 같은 턴이면 나중에 끝난 것
+            _qn = _cands[0][2]
+            events.append({
+                "type": "quest_done",
+                "weight": QUEST_CARD_WEIGHT,
+                "npc": None,
+                "target_npc": None,
+                "channel": "bulletin",
+                "detail_kr": f"사건 카드 · '{_qn}'\n상태: 끝남",
+                "query": _qn,
+                "card": True,
+                "tag": f"quest_done:{_qn[:20]}",
+                "quest": _qn,
+            })
     except Exception:
         pass
 
@@ -816,6 +948,10 @@ def _route_event_channel(
 # ⛔기각: stats(views/likes/replies) 숫자 발명 — 수치를 LLM에 위임하지 않는다는 우리 규율 위반.
 #   댓글 스레드도 기각(표시면·답글 루프 = 파이프라인 신설). 태그는 스키마 신설 없이
 #   본문 안에서만, 그것도 그 세계에 그런 매체가 있을 때만.
+# [2026-10-23 C70] 닫기만 막던 줄을 양쪽으로: 글은 새 사건(습격·죽음·도착·판결)을 열지 않고, 작성자 자기 삶의 말
+#   (바람·부탁·제안·두려움·계획)만 보탠다 — 렌더가 핸드아웃을 읽고 배경 추출이 last_handouts 를 먹으니 지어낸
+#   추신이 곧 세계 사실이 되던 자리. 이름은 자료가 준 대로(세력·관청·구역 신설 0). bulletin·sns 계약엔 전파
+#   속도, sns엔 핸들 독립, message엔 "말 대신 쓰는 이유". 외부 대조 = CCS 머크넷·라이트보드(C70 스펙 부록).
 _BOARD_AUTHORSHIP = """## AUTHORSHIP
 The writer is a person inside this world, filing this alone. The brief above is the analysis
 layer, not what the author knows — an author writes from what was seen, heard, or told, and a
@@ -823,8 +959,17 @@ post that holds the whole event is the narrator wearing someone's name.
 Where the profile and the knowledge list are silent, the author was not there. An invented
 witness is a different failure than an incomplete one.
 Dialogue spoken in the scene belongs to the scene: quoted or paraphrased, the post is a relay.
-A post that closes the situation, answers what is still open, or tells the reader how to feel
-about it is narration in a post's clothing. The situation is still open when this is filed.
+The situation is still open when this is filed. What the brief carries lands at full weight;
+past it, the author speaks from their own life: what they want, ask, offer, fear or plan is
+theirs to write. What happened in the world reaches the post only as the brief and the material
+above give it, so a raid, a death, an arrival or a verdict the world has not set stays out of
+the author's mouth. Settling what is open, or telling the reader how to feel, is narration in a
+post's clothing. Plans and orders in the record are things said; how they turn out is still
+ahead of everyone.
+Names the material above gives are used as given, doing what they are given to do, in the
+vocabulary it speaks. A resident may mention in passing what any street holds (a stall, a
+handle, where a rumor came from); a district, faction, office or house enters the world only
+through that material.
 No tallies — views, likes, replies, readers, dice, mechanics. A number the brief did not
 supply was invented.
 Write the post itself in Korean."""
@@ -834,15 +979,23 @@ _MEDIA_CONTRACT = {
     "bulletin": """Public notice, posted where strangers read it. The title carries the fact; the body
 carries what is asked of whoever reads it. Signed by an office, a rank, or a duty before a
 person — private feeling reaches the page only as what the notice declines to say.
-Register stays fixed and impersonal even when the writer is not. 120-250자.""",
+Register stays fixed and impersonal even when the writer is not.
+What happened out of public sight minutes ago reaches a notice as a sighting, a call for
+witnesses, or not yet. 120-250자.""",
     "sns": """Personal feed, unedited, filed the moment the thought arrived. One thought, no structure,
 no briefing for followers who already live here. The event may surface only sideways — a mood,
 an aside, something adjacent; naming it whole turns the post into a press release.
 If this world's medium marks posts with tags or sigils, they sit inside the body — none
-invented for a world that has none. 40-140자.""",
+invented for a world that has none.
+Talk moves at this world's speed: what happened behind a closed door reaches a feed only through
+someone who was inside, and what happened out of sight minutes ago arrives as a sighting, a
+rumor, or not yet. A handle invented here was chosen long before today, from its owner's own
+life. 40-140자.""",
     "message": """Private, to one named recipient who shares the writer's history. What the two already
 know stays unexplained; an unglossed reference belongs here, and a sentence supplying
 background is addressed to an audience this does not have.
+A writer within speaking distance writes only where speech will not do: it must not be
+overheard, must be kept, or cannot be said to a face. The note takes its shape from that reason.
 Opening and signature follow this world's form for the named format. 100-220자.""",
 }
 
@@ -1024,21 +1177,172 @@ def handout_text(result: Optional[Dict[str, Any]]) -> str:
         return ""
     p = result.get("payload") or {}
     ch = str(result.get("channel_kind") or p.get("channel_kind") or "")
+    body = str(p.get("body") or "").strip()
+    if not body:
+        return ""
+    return f"{_handout_head(ch, p)}\n{body[:1200]}"
+
+
+def _handout_head(ch: str, p: Dict[str, Any]) -> str:
+    """도착물 머리 줄 `📰 제목 · 형식 — 작성자 → 수신자`. 핸드아웃 블록과 원문 행(C49 R1)이 같은 꼴을 쓴다."""
     head = "💌" if ch == "message" else "📰"
     title = str(p.get("title") or "").strip()
     author = str(p.get("author") or "").strip()
     recipient = str(p.get("recipient") or "").strip()
     fmt = str(p.get("format_name") or "").strip()
-    body = str(p.get("body") or "").strip()
-    if not body:
-        return ""
     bits = [b for b in (title, fmt) if b]
     line = f"{head} " + (" · ".join(bits) if bits else "도착물")
     if author and recipient:
         line += f" — {author} → {recipient}"
     elif author:
         line += f" — {author}"
-    return f"{line}\n{body[:1200]}"
+    return line
+
+
+# =========================================================
+# [2026-10-17 C49] 도착물 원문 남기기 · 위키 연동
+#   레티어스 "원문남기기 쪽으로 가서 해당 관련 위키에 언제 도착물이 왔었다 같은거 연동".
+#   R1 원문 = 영구 로그(history_log) 한 행(역할 `도착물`). 작업 창(JSON 히스토리)엔 안 넣는다 —
+#      렌더 히스토리·발효는 그대로, 이름으로 영구 로그를 뒤지는 독자 넷(C46 발췌·💭 record·회상 T1·루카 회상)이
+#      지난 도착물을 찾게 된다.
+#   R2 위키 = 관련 페이지 History 한 줄(C45 도장). 📰는 낸 쪽·실린 이름, 💌는 주고받은 두 사람만 —
+#      개인 편지 본문에만 나온 제3자 페이지엔 안 쓴다(그 사람이 모르는 편지가 💭·시트로 새지 않게).
+#   부르는 자리 = orchestration step 8, 입력 행 다음·산문 행 앞(실제 순서). 산문이 실패한 턴은 안 남는다.
+# =========================================================
+HANDOUT_ROLE = "도착물"
+_WIKI_LINK_KINDS = ("character", "location", "faction", "item")
+
+
+def _obj_josa(word: str) -> str:
+    """을/를 — 마지막 글자 받침으로. 한글 음절이 아니면 '를'."""
+    w = str(word or "").rstrip()
+    if not w:
+        return "를"
+    c = ord(w[-1])
+    if 0xAC00 <= c <= 0xD7A3 and (c - 0xAC00) % 28:
+        return "을"
+    return "를"
+
+
+def handout_record(result: Optional[Dict[str, Any]], message_id: Any = None) -> Optional[Dict[str, Any]]:
+    """표시가 끝난 도착물 → 기록 묶음(머리·본문 전문·공개 여부·이름 칸·message_id). 본문 없으면 None."""
+    if not isinstance(result, dict):
+        return None
+    p = result.get("payload") or {}
+    body = str(p.get("body") or "").strip()
+    if not body:
+        return None
+    ch = str(result.get("channel_kind") or p.get("channel_kind") or "")
+    label = str(p.get("title") or "").strip() or str(p.get("format_name") or "").strip() or "도착물"
+    return {
+        "head": _handout_head(ch, p),
+        "body": body,
+        "public": ch != "message",
+        "icon": "💌" if ch == "message" else "📰",
+        "label": label,
+        "title": str(p.get("title") or "").strip(),
+        "author": str(p.get("author") or "").strip(),
+        "recipient": str(p.get("recipient") or "").strip(),
+        "message_id": message_id,
+    }
+
+
+def _handout_wiki_targets(channel_id: str, record: Dict[str, Any]) -> List[Tuple[str, str]]:
+    """관련 페이지 → [(page_id, 관계)]. 관계 = sent / recv / named. 순서 작성자 → 수신자 → 본문 첫 등장, 상한.
+
+    매칭 = 페이지 이름·별칭(2자 이상)의 정규화 부분 일치. 두 페이지가 같은 키를 가지면 그 키는 버린다
+    (`wiki_store.resolve_page` 모호 규칙과 같은 판정). 삭제 표식 페이지는 뺀다.
+    """
+    import wiki_store as _ws
+    pages = [pg for pg in _ws.list_pages(channel_id)
+             if pg.get("kind") in _WIKI_LINK_KINDS and str(pg.get("status") or "") != "deleted"]
+    if not pages:
+        return []
+    owners: Dict[str, set] = {}
+    for pg in _ws.list_pages(channel_id):
+        if str(pg.get("status") or "") == "deleted":
+            continue
+        for k in [pg.get("name")] + list(pg.get("aliases") or []):
+            n = _ws._norm_name(str(k or ""))
+            if n:
+                owners.setdefault(n, set()).add(pg["page_id"])
+    author = _ws._norm_name(record.get("author") or "")
+    recipient = _ws._norm_name(record.get("recipient") or "")
+    text = _ws._norm_name(f"{record.get('title') or ''}\n{record.get('body') or ''}")
+    sent, recv, named = [], [], []
+    for pg in pages:
+        keys = []
+        for k in [pg.get("name")] + list(pg.get("aliases") or []):
+            n = _ws._norm_name(str(k or ""))
+            if len(n) >= 2 and len(owners.get(n, ())) == 1 and n not in keys:
+                keys.append(n)
+        if not keys:
+            continue
+        if author and any(k in author for k in keys):
+            sent.append(pg["page_id"])
+        elif recipient and any(k in recipient for k in keys):
+            recv.append(pg["page_id"])
+        elif record.get("public"):
+            pos = [text.find(k) for k in keys if text.find(k) >= 0]
+            if pos:
+                named.append((min(pos), pg["page_id"]))
+    named.sort(key=lambda x: x[0])
+    out = [(pid, "sent") for pid in sent] + [(pid, "recv") for pid in recv] + [(pid, "named") for _p, pid in named]
+    cap = int(getattr(config, "HANDOUT_WIKI_MAX_PAGES", 4) or 0)
+    return out[:cap] if cap > 0 else []
+
+
+def _handout_wiki_line(record: Dict[str, Any], rel: str, stamp: str) -> str:
+    icon, label = record.get("icon") or "📰", record.get("label") or "도착물"
+    obj = f"「{label}」{_obj_josa(label)}"
+    if rel == "sent":
+        if record.get("public"):
+            body = f"{icon} {obj} 냈다"
+        elif record.get("recipient"):
+            body = f"{icon} {obj} {record['recipient']}에게 보냈다"
+        else:
+            body = f"{icon} {obj} 보냈다"
+    elif rel == "recv":
+        body = f"{icon} {obj} {record['author']}에게서 받았다" if record.get("author") else f"{icon} {obj} 받았다"
+    else:
+        body = f"{icon} 「{label}」에 이름이 실렸다"
+    return f"{stamp} {body}" if stamp else body
+
+
+def record_handout(channel_id: str, record: Optional[Dict[str, Any]], turn: Optional[int] = None) -> Dict[str, int]:
+    """[C49 R1·R2] 원문 한 행(영구 로그) + 관련 위키 History 한 줄. 실패는 무해(그 칸만 0)."""
+    out = {"log": 0, "wiki": 0}
+    if not channel_id or not isinstance(record, dict) or not str(record.get("body") or "").strip():
+        return out
+    gt, t_now = None, 0
+    try:
+        gt, t_now = domain_manager.history_time_meta(channel_id)
+    except Exception as e:
+        logger.debug(f"[HandoutRecord] time meta skip: {e}")
+    if turn is None:
+        turn = t_now
+    if getattr(config, "HANDOUT_LOG_RAW", True):
+        try:
+            if domain_manager.append_history_log(
+                    channel_id, HANDOUT_ROLE, f"{record.get('head') or ''}\n{record['body']}".strip(),
+                    message_id=record.get("message_id")):
+                out["log"] = 1
+        except Exception as e:
+            logger.debug(f"[HandoutRecord] log skip: {e}")
+    if getattr(config, "HANDOUT_WIKI_LINK", True):
+        try:
+            import wiki_store as _ws
+            _t = int(turn) if isinstance(turn, int) and turn > 0 else None
+            stamp = _ws._event_stamp(channel_id, [{"game_time": gt, "turn": _t}] if gt or _t else [], _t)
+            for pid, rel in _handout_wiki_targets(channel_id, record):
+                res = _ws.append_play_item(channel_id, pid, "History", _handout_wiki_line(record, rel, stamp),
+                                           src_turn=_t, turn=_t, reason="handout")
+                if isinstance(res, dict) and res.get("ok") and not res.get("dup"):
+                    out["wiki"] += 1
+        except Exception as e:
+            logger.debug(f"[HandoutRecord] wiki skip: {e}")
+    logger.info("[HandoutRecord] log=%d wiki=%d public=%s", out["log"], out["wiki"], record.get("public"))
+    return out
 
 
 _MEDIA_SCHEMA = {
@@ -1094,6 +1398,259 @@ async def _build_lore_reference(client, channel_id: str, query: str) -> str:
     except Exception as e:
         logger.debug(f"[BoardLore] skip: {e}")
         return ""
+
+
+# =========================================================
+# [2026-10-17 C46 W2~W5] 도착물 재료 — 렌더와 같은 세계
+# =========================================================
+# 병(C46 지도 §5): 도착물 콜은 로어 발췌 2 × 400자 말고는 렌더 자료 존(!룰·위키·기억·PC)을 하나도 못 받았다.
+# 처방: 조립이 남긴 슬롯(slot_manager 4.35, `ctx.handout_ref`) + 렌더가 고른 로어(비밀만 걷음) + 사건 검색 로어
+#   (자르지 않음) + 원문 발췌(영구 로그 history_log — 임베딩으로 에피소드, 코드로 조각). ref 가 없으면(도착물 밖 경로)
+#   이 블록들은 없고 옛 재료 그대로다.
+_WORLD_RECORD_HEAD = """## WORLD RECORD (the table's record — the author holds only their share of it)
+What the world holds and what has happened, kept so the post agrees with it. The author knows
+what their profile, their knowledge list and their own place in these events give them; the
+rest stands here so nothing in the post contradicts the world.
+The player character's sheet is the table's file, not the town's: a public post knows them by
+what has been seen of them, a letter by what its writer has lived beside."""
+# [C70] 위 마지막 문장 = 렌더 text_resources "Who knows what"의 "Player-profile data ≠ public knowledge" 자매 문안.
+
+_RECORD_EXCERPTS_HEAD = """## RECORD EXCERPTS (원문 — what was said and done then; the present may differ)
+Lines from the table's session log, oldest first, kept for agreement and not the author's eyes.
+They fix names, places and what happened; the post speaks in its author's words."""
+
+_REF_SLOT_ORDER = (6, 7, 9, 11, 23, 31)
+_REF_TRIM_ORDER = (9, 7, 6)          # 상한을 넘으면 이 순서로 뒤를 깎는다(로어는 상한 밖)
+_RAW_ROLE = {"user": "PC 행동", "model": "서술", "Model": "서술"}   # [C49 R3] 라이브 산문 행 역할은 "Model"
+_KR_JOSA_TAIL = "이가은는을를의에도로와과"
+
+
+def _trim_tail(v: str, keep: int) -> str:
+    """줄 단위로 뒤를 깎는다. 닫는 태그 줄(`</…>`)은 남긴다. 머리 한 줄만 남으면 통째로 뺀다."""
+    if len(v) <= keep:
+        return v
+    lines = v.split("\n")
+    close = lines.pop() if lines and lines[-1].startswith("</") else ""
+    while lines and len("\n".join(lines + ([close] if close else []))) > keep:
+        lines.pop()
+    if len(lines) <= 1:
+        return ""
+    return "\n".join(lines + ([close] if close else []))
+
+
+def _world_record_block(ref: Optional[Dict[str, Any]]) -> str:
+    """[C46 W2] 조립이 남긴 자료 존 슬롯(PC·NPC/위키·기억·챕터·!룰·직전 꼬리) 한 블록. 없으면 ""."""
+    slots = dict((ref or {}).get("slots") or {})
+    parts = {i: str(slots.get(i) or "").strip() for i in _REF_SLOT_ORDER}
+
+    def _total() -> int:
+        live = [v for v in parts.values() if v]
+        return sum(len(v) for v in live) + 2 * max(0, len(live) - 1)
+
+    cap = int(getattr(config, "HANDOUT_REF_MAX_CHARS", 60000) or 0)
+    if cap > 0:
+        for i in _REF_TRIM_ORDER:
+            over = _total() - cap
+            if over <= 0:
+                break
+            if parts[i]:
+                parts[i] = _trim_tail(parts[i], max(0, len(parts[i]) - over))
+    body = "\n\n".join(parts[i] for i in _REF_SLOT_ORDER if parts[i])
+    return f"{_WORLD_RECORD_HEAD}\n{body}" if body else ""
+
+
+def _event_names(channel_id: str, event: Dict[str, Any]) -> List[str]:
+    """[C46 W4] 원문을 이름으로 찾을 때 쓰는 이름 — 글쓴 NPC(대표 이름·별칭) + 카드의 이름들(연결 실체).
+    PC 이름은 안 넣는다(거의 모든 행에 걸려 최근 행만 끌어온다)."""
+    out: List[str] = []
+
+    def _add(n: Any) -> None:
+        n = str(n or "").strip()
+        if len(n) >= 2 and n not in out:
+            out.append(n)
+
+    npc = event.get("npc")
+    if npc:
+        _add(npc)
+        try:
+            _all = domain_manager.get_npcs(channel_id) or {}
+            _key = domain_manager._find_npc_key(_all, npc) or npc
+            _add(_key)
+            for _a in ((_all.get(_key) or {}).get("aliases") or [])[:4]:
+                _add(_a)
+        except Exception:
+            pass
+    for n in (event.get("names") or []):
+        _add(n)
+    return out[:6]
+
+
+def _event_query(event: Dict[str, Any], names: List[str], pc_names: List[str]) -> str:
+    """[C46 W3·W4] 검색 쿼리 — 카드면 이름·일·얽힌 것(라벨 뺌), 아니면 브리핑 원문. + 글쓴이(+편지면 PC)."""
+    base = str(event.get("query") or "").strip() if event.get("card") else ""
+    if not base:
+        base = str(event.get("detail_kr") or "").strip()
+    bits = [base] + list(names) + list(pc_names or [])
+    return " ".join(b for b in bits if b)[:2000]
+
+
+async def _handout_lore_block(client, channel_id: str, query: str, ref: Optional[Dict[str, Any]]) -> str:
+    """[C46 W3] 렌더가 고른 청크(비밀만 걷음) + 사건 검색 청크. **자르지 않는다**(10-17 "로어는 자르지 말자")."""
+    import vector_search as _vs
+    picked: List[Any] = []
+    try:
+        _rc = [c for c in ((ref or {}).get("lore_chunks") or []) if c]
+        if _rc:
+            picked = list(_vs.scrub_secret_chunks(channel_id, _rc, tag="HandoutLore"))
+    except Exception as e:
+        logger.debug(f"[HandoutLore] render chunks skip: {e}")
+        picked = []
+    found: List[Any] = []
+    try:
+        _k = int(getattr(config, "HANDOUT_LORE_TOP_K", 4))
+        if client and query and _k > 0:
+            ranked = await _vs.get_scrubbed_scene_chunks(
+                client, channel_id, str(query)[:2000], top_k=_k,
+                max_chars=int(getattr(config, "HANDOUT_LORE_CHUNK_CHARS", 0) or 0), tag="HandoutLore")
+            found = [c for c, _s in (ranked or [])]
+    except Exception as e:
+        logger.debug(f"[HandoutLore] search skip: {e}")
+    seen = set()
+    rows = []
+    for c in picked + found:
+        _key = _vs.chunk_text(c).strip()
+        if not _key or _key in seen:
+            continue
+        seen.add(_key)
+        rows.append((c, 0.0))
+    body = _vs.format_chunk_lines(rows)
+    return f"{_BOARD_LORE_CONTRACT}\n{body}" if body else ""
+
+
+def _raw_terms(query: str, names: List[str]) -> List[str]:
+    """조각을 자를 낱말 — 이름 먼저, 그다음 쿼리 낱말(끝 조사 하나 뗀 꼴도)."""
+    terms: List[str] = []
+    for n in names:
+        n = str(n or "").strip()
+        if len(n) >= 2 and n not in terms:
+            terms.append(n)
+    for w in re.findall(r"[가-힣A-Za-z0-9]{2,}", str(query or "")):
+        for t in (w, w[:-1] if len(w) >= 3 and w[-1] in _KR_JOSA_TAIL else ""):
+            if len(t) >= 2 and t not in terms:
+                terms.append(t)
+    return terms
+
+
+def _raw_snippet(text: Any, terms: List[str], half: int, head_ok: bool) -> str:
+    """걸린 자리 ±half 조각. 안 걸리면 head_ok 일 때만 앞 2·half 자."""
+    t = str(text or "").strip()
+    pos, hit = -1, ""
+    for term in terms:
+        i = t.find(term)
+        if i >= 0 and (pos < 0 or i < pos):
+            pos, hit = i, term
+    if pos < 0:
+        if not head_ok:
+            return ""
+        s2 = t[:2 * half]
+        return _one_line(s2 + ("…" if len(t) > len(s2) else ""))
+    a = max(0, pos - half)
+    b = min(len(t), pos + len(hit) + half)
+    return _one_line(("…" if a > 0 else "") + t[a:b] + ("…" if b < len(t) else ""))
+
+
+def _one_line(s: str) -> str:
+    """[2026-10-17 C49] 조각은 `- 라벨: …` 한 줄이다 — 산문 문단·도착물 머리 줄의 줄바꿈을 공백으로 접는다."""
+    return " ".join(str(s or "").split())
+
+
+def _fmt_raw_gt(gt: Any) -> str:
+    """game_time → '(작중 1년 3월 5일 14:00) '. une_facade._recall_fmt_game_time 과 같은 꼴(그쪽 import 를 피해 여기 둔다)."""
+    if not isinstance(gt, dict):
+        return ""
+    try:
+        return (f"(작중 {gt.get('year', 1)}년 {gt.get('month', 1)}월 {gt.get('day', 1)}일 "
+                f"{int(gt.get('hour', 0)):02d}:{int(gt.get('minute', 0)):02d}) ")
+    except (TypeError, ValueError):
+        return ""
+
+
+async def _build_raw_excerpts(client, channel_id: str, query: str, names: List[str]) -> str:
+    """[C46 W4] 원문 발췌 — 히스토리(작업 창)가 아니라 영구 로그(history_log)에서.
+
+    ① 에피소드(임베딩): 발효 엔트리 요약을 쿼리와 맞춰(md5 캐시 — `fermentation.entry_vector_text`) 상위 N개,
+       그 `from_msg_id`~`to_msg_id` 구간 원문 행.  ② 이름(코드): `search_history_log`(LIKE).
+    ③ 조각(코드): 걸린 자리 ±HANDOUT_RAW_SNIPPET. 비밀 원장에 닿는 조각은 버린다(로어 스크럽과 같은 판정기).
+       원장을 못 읽으면(None) 블록 통째 생략. 오래된 것 → 최신, 합계 HANDOUT_RAW_CHARS 까지 줄 단위.
+    """
+    import vector_search as _vs
+    import sqlite_store as _ss
+    refs = _vs.secret_refs(channel_id, tag="HandoutRaw")
+    if refs is None:
+        return ""
+    half = int(getattr(config, "HANDOUT_RAW_SNIPPET", 150) or 150)
+    cap = int(getattr(config, "HANDOUT_RAW_CHARS", 3000) or 0)
+    if cap <= 0:
+        return ""
+    picked: List[Any] = []
+    n_ep = 0
+    try:
+        _n = int(getattr(config, "HANDOUT_RAW_EPISODES", 3) or 0)
+        if client and query and _n > 0:
+            import fermentation as _fm
+            entries = [e for e in (domain_manager.get_fermented_history(channel_id) or [])
+                       if isinstance(e, dict) and e.get("from_msg_id") and e.get("to_msg_id")]
+            ranked = await _fm.rank_entries_for_query(
+                client, entries, query, _n, float(getattr(config, "HANDOUT_RAW_MIN_SCORE", 0.3)))
+            _rows_cap = int(getattr(config, "HANDOUT_RAW_ROWS", 24) or 24)
+            for e, _s in (ranked or []):
+                span = _ss.read_history_span(channel_id, e.get("from_msg_id"), e.get("to_msg_id"),
+                                             limit=_rows_cap) or []
+                picked += [(r, True) for r in span]
+                n_ep += 1
+    except Exception as ex:
+        logger.debug(f"[HandoutRaw] episodes skip: {ex}")
+    try:
+        for nm in names:
+            for r in (_ss.search_history_log(channel_id, nm, limit=4) or []):
+                picked.append((r, False))
+    except Exception as ex:
+        logger.debug(f"[HandoutRaw] names skip: {ex}")
+    seen = set()
+    rows: List[Any] = []
+    for r, ep in picked:
+        _key = str(r.get("message_id") or "") or str(r.get("content") or "")[:200]
+        if _key in seen:
+            continue
+        seen.add(_key)
+        rows.append((r, ep))
+
+    def _ord(item):
+        _mid = str(item[0].get("message_id") or "")
+        return (0, int(_mid)) if _mid.isdigit() else (1, 0)
+
+    rows.sort(key=_ord)
+    terms = _raw_terms(query, names)
+    lines: List[str] = []
+    used = 0
+    dropped = 0
+    for r, ep in rows:
+        snip = _raw_snippet(r.get("content"), terms, half, head_ok=ep)
+        if not snip.strip():
+            continue
+        _it = {"note": snip, "quote": snip}
+        if any(_vs.secret_touched(_it, _tr, _sf) for _tr, _sf in refs):
+            dropped += 1
+            continue
+        _role = _RAW_ROLE.get(str(r.get("role") or ""), str(r.get("role") or ""))
+        line = f"- {_fmt_raw_gt(r.get('game_time'))}{_role}: {snip}"
+        if used + len(line) + 1 > cap:
+            break
+        lines.append(line)
+        used += len(line) + 1
+    logger.info("[HandoutRaw] episodes=%d rows=%d lines=%d secret_dropped=%d chars=%d",
+                n_ep, len(rows), len(lines), dropped, used)
+    return (f"{_RECORD_EXCERPTS_HEAD}\n" + "\n".join(lines)) if lines else ""
 
 
 async def _build_board_prompt(
@@ -1233,8 +1790,9 @@ async def _build_board_prompt(
         context_lines.append(f"- Current Scene: {observation}")
     if recent_summaries:
         context_lines.append(
-            f"- Already posted (same world, earlier — the next post is a later moment in the "
-            f"same voice, not a restart; repeating one of these subjects files a copy): "
+            f"- Already posted (same world, earlier; the next post is a later moment in the "
+            f"same voice, not a restart: a subject already posted returns only carrying what "
+            f"has changed since): "
             f"{' / '.join(recent_summaries)}")
     if handle_registry:
         reg_parts = [f"{name}: {info}" for name, info in handle_registry.items()]
@@ -1408,6 +1966,7 @@ async def _build_event_prompt(
     event: Dict[str, Any],
     channel_type: str,
     frame: str = "",
+    ref: Optional[Dict[str, Any]] = None,
 ) -> str:
     """이벤트 맞춤 프롬프트. 기존 대비 ~50% 축소.
 
@@ -1521,7 +2080,21 @@ async def _build_event_prompt(
     # [2026-08-17] 이 사건이 만지는 세계 발췌. 쿼리 = 이벤트 브리핑 원문(detail_kr).
     #   자리는 **이벤트 앞** — 자료(공적 세계 지식)가 먼저 서고 이번 사건이 뒤에 온다
     #   (openai 3분할 조립의 자료→THIS TURN 순서와 같은 이치). 없으면 통째로 빠진다.
-    lore_block = await _build_lore_reference(client, channel_id, event.get("detail_kr", ""))
+    # [2026-10-17 C46 W2~W5] 도착물(산문 앞) 길은 렌더와 같은 세계를 본다 — 자료 존 슬롯 + 렌더가 고른 로어(비밀 걷음)
+    #   + 사건 검색 로어(자르지 않음) + 원문 발췌. ref 가 없거나(도착물 밖 경로) 플래그가 꺼지면 옛 재료(발췌 2×400).
+    record_block = raw_block = ""
+    if isinstance(ref, dict) and bool(getattr(config, "HANDOUT_WORLD_REF", True)):
+        _names = _event_names(channel_id, event)
+        _pcs = list(ref.get("pc_names") or []) if channel_type == "message" else []
+        _q = _event_query(event, _names, _pcs)
+        record_block = _world_record_block(ref)
+        lore_block = await _handout_lore_block(client, channel_id, _q, ref)
+        raw_block = await _build_raw_excerpts(client, channel_id, _q, _names)
+        logger.info("[Handout] ref=%d자 lore=%d자 raw=%d자", len(record_block), len(lore_block), len(raw_block))
+    else:
+        lore_block = await _build_lore_reference(client, channel_id, event.get("detail_kr", ""))
+    _data_blocks = "".join(f"\n{b}\n" for b in (record_block, lore_block, raw_block) if b)
+    _card_task = ("\n" + CARD_TASK_LINE) if event.get("card") else ""
 
     prompt = f"""You are a world content generator for a fictional TTRPG session.
 All characters and events are entirely fictional. Rating: NC-21+.
@@ -1529,7 +2102,7 @@ NPC posts reflect their FULL personality — crude language, dark humor, flirtat
 
 ## CONTEXT
 Genre: {stage} | Location: {location} | Time: Y{year}/M{month}/D{day} {hour:02d}:{minute:02d} ({time_slot}) | Mood: {atmosphere}
-{f'{chr(10)}{lore_block}{chr(10)}' if lore_block else ''}
+{_data_blocks}
 ## THIS TURN'S EVENT (brief — analysis layer, not the author's knowledge)
 {event.get("detail_kr", "")}
 
@@ -1539,8 +2112,9 @@ Genre: {stage} | Location: {location} | Time: Y{year}/M{month}/D{day} {hour:02d}
 
 ## ALREADY POSTED (same world, earlier)
 {recent_str}
-These exist. The next post is a later moment in the same voice, not a restart — repeating one
-of their subjects files a copy. A thread this author opened earlier may be continued.
+These exist. The next post is a later moment in the same voice, not a restart: a subject already
+posted returns only carrying what has changed since, and a thread this author opened earlier may
+be continued.
 
 ## MEDIUM — {channel_type}
 {media_contract}
@@ -1548,7 +2122,7 @@ of their subjects files a copy. A thread this author opened earlier may be conti
 {_BOARD_AUTHORSHIP}
 
 ## TASK
-One post, written because of the event above and for no other reason.
+One post, written because of the event above and for no other reason.{_card_task}
 
 ## OUTPUT (JSON)
 ```json
@@ -1748,6 +2322,14 @@ def _update_board_state(channel_id: str, best_event: Dict[str, Any], final_chann
             done.append(str(best_event["thread"]))
         board_state["posted_resolved_threads"] = done[-20:]
 
+    # [2026-10-17 C46 R4] 퀘스트 카드 게시 기록 — Scanner 11 이 같은 퀘스트를 다시 내지 않게.
+    if best_event.get("type") == "quest_done" and best_event.get("quest"):
+        _pq = board_state.get("posted_quests", [])
+        _pq = list(_pq) if isinstance(_pq, list) else []
+        if best_event["quest"] not in _pq:
+            _pq.append(str(best_event["quest"]))
+        board_state["posted_quests"] = _pq[-20:]
+
     # world_change 인덱스 추적
     if best_event.get("type") == "world_change":
         session_mem = domain_manager.get_session_ai_memory(channel_id)
@@ -1770,6 +2352,7 @@ async def trigger_board_update(
     dai: Optional[Dict[str, Any]] = None,
     prose_message: Optional[discord.Message] = None,
     deliver: Optional[Dict[str, Any]] = None,
+    ref: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """[2026-09-24 감사] 얇은 래퍼 — 본체는 `_trigger_board_update`(docstring 그쪽).
 
@@ -1780,7 +2363,7 @@ async def trigger_board_update(
         result = await _trigger_board_update(
             channel, client, model_id, channel_id, trigger=trigger,
             extra_context=extra_context, dai=dai, prose_message=prose_message,
-            deliver=deliver)
+            deliver=deliver, ref=ref)
     except BaseException:
         if trigger == "declared":
             restore_arrival_request(channel_id, deliver)
@@ -1800,6 +2383,7 @@ async def _trigger_board_update(
     dai: Optional[Dict[str, Any]] = None,
     prose_message: Optional[discord.Message] = None,
     deliver: Optional[Dict[str, Any]] = None,
+    ref: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """이벤트 드리븐 게시판 트리거 (v2). 이벤트 없으면 0 API 콜.
 
@@ -1882,8 +2466,10 @@ async def _trigger_board_update(
     #   프롬프트 빌더(_build_event_prompt)는 임베딩만 쓰고(_map_model 무관) 라우팅 대상이 아니다.
     #   contextvar 라 generate_posts → api_call_with_retry → 백엔드까지 await 를 타고 살아간다.
     _frame = mail_frame(channel_id, str(req.get("format_name") or "")) if declared else ""
-    prompt = await _build_event_prompt(client, channel_id, best_event, final_channel,
-                                       frame=_frame)
+    _ep_kw: Dict[str, Any] = {"frame": _frame}
+    if declared and isinstance(ref, dict):
+        _ep_kw["ref"] = ref          # [2026-10-17 C46] 재료(자료 존·원문)는 도착물 길에만 — 다른 길은 부르는 꼴 그대로
+    prompt = await _build_event_prompt(client, channel_id, best_event, final_channel, **_ep_kw)
     active_channels = {final_channel: True}
     with config.light_call():
         posts = await generate_posts(
@@ -1978,3 +2564,167 @@ async def _trigger_board_update(
         f"[WorldBoard] Posted {posted_count} event={best_event.get('tag', '?')} "
         f"ch={final_channel} trigger={trigger} display={display_mode}"
     )
+
+
+# =====================================================================
+# [2026-10-23 C64 M5] 도착물 핸드아웃 — 게시판 모듈의 pre_render_call 정거장
+#   옛 orchestration 5.5(`_deliver_handout` 메서드 + 둘레 줄)를 글자 그대로 옮겼다. 바뀐 건 이름뿐:
+#   self → rt(OrchestrationService) · 지역 full_prompt → b.prompt · 삭제 목록 → b.message_ids.
+#   로그는 옛 로거("Orchestration") 그대로 — `[Handout] …` 줄의 글자·로거가 같다.
+# =====================================================================
+_olog = logging.getLogger("Orchestration")
+
+
+async def handout_station(rt, b) -> None:
+    """옛 5.5 둘레 줄 — 핸드아웃 콜·표시 → `!다시` 삭제 목록 → 이번 턴 문서에 끼우기. 초기화(ctx.handout_*)는 호출부."""
+    ctx, message, channel_id = b.ctx, b.message, b.channel_id
+    try:
+        await _deliver_handout(rt, ctx, message, channel_id)
+    except Exception as _e_hand:
+        _olog.debug(f"[Handout] skipped: {_e_hand}")
+    # [2026-09-24 감사] 핸드아웃 메시지도 `!다시` 삭제 목록에 — 빠져 있어 옛 봉투/공고가 채널에 남고
+    #   (turn_mail 행은 지워져 💌 누르면 "만료") 재실행이 도착물을 한 번 더 보냈다.
+    if getattr(ctx, "handout_message_id", None):
+        b.message_ids.append(ctx.handout_message_id)
+    if getattr(ctx, "handout_text", ""):
+        try:
+            import custom_vars as _cv_ho
+            b.prompt = _cv_ho.insert_handout(b.prompt, ctx.handout_text)
+        except Exception as _e_ins:
+            _olog.debug(f"[Handout] insert skipped: {_e_ins}")
+
+
+async def deliver_pending_handout(ctx, prose_message, channel_id: str) -> bool:
+    """[2026-10-23 C69 A2b] 압축 모드에서 보류한 도착물을 **산문 메시지**에 적립하고 C49 원문 묶음(handout_record)을 만든다.
+
+    자리 = orchestration 7(산문 전송) 바로 뒤 · 8(기록) 앞 — 8 이 `ctx.handout_record` 로 원문 행 · 위키 줄을 적는다.
+    보류가 없으면 아무것도 안 한다. 적립이 실패해도 한 줄 알림으로 되돌리지 않는다 — 산문은 이미 그 편지를 읽고
+    나갔다(되돌리면 같은 편지를 두 번 알린다). 렌더가 실패해 산문 메시지가 없으면 부르는 쪽이 `discard_pending_handout`.
+    """
+    pend = getattr(ctx, "handout_pending", None)
+    ctx.handout_pending = None
+    if not isinstance(pend, dict) or prose_message is None:
+        return False
+    import turn_mail as _tm
+    ok = False
+    try:
+        ok = await _tm.deliver(prose_message, channel_id, str(pend.get("kind") or _tm.KIND_MAIL),
+                               pend.get("payload") or {}, pend.get("turn"))
+    except Exception as e:
+        _olog.warning(f"[Handout] 산문 메시지 적립 실패(본문은 렌더가 이미 읽음): {e}")
+    try:
+        ctx.handout_record = handout_record(pend.get("result"), getattr(prose_message, "id", None))
+    except Exception as e:
+        _olog.debug(f"[Handout] record skipped: {e}")
+    _olog.info("[Handout] 산문 메시지에 적립 ok=%s msg=%s", ok, getattr(prose_message, "id", None))
+    return bool(ok)
+
+
+def discard_pending_handout(ctx) -> None:
+    """[2026-10-23 C69 A2b] 렌더 실패 — 보류한 도착물을 버린다(`!다시`가 턴 시작 스냅샷으로 되감아 다시 온다)."""
+    if getattr(ctx, "handout_pending", None):
+        _olog.info("[Handout] 렌더 실패 — 보류 도착물 버림(!다시면 다시 온다)")
+    ctx.handout_pending = None
+
+
+# =========================================================
+# [옛 orchestration] STEP 5.5: ARRIVAL HANDOUT (2026-09-13 P14 · 2026-10-17 C46 조립 뒤로 — 전 STEP 4.75)
+# =========================================================
+async def _deliver_handout(rt, ctx, message, channel_id: str) -> bool:
+    """도착물이 있으면 산문 **앞**에서 쓰고·보이고·적립한다. 없으면 콜 0.
+
+    방아쇠 둘(선언 전이 `deliver` / 분석 신호 `arrival`)의 판정은 코드 한 곳
+    (`world_board.pick_arrival_request`)에 있고, 여기는 그 결과를 **표시**로 옮길 뿐이다.
+      (a) 렌더 프롬프트 `<핸드아웃>` 블록 — 산문이 편지를 읽은 채로 시작한다.
+      (b) 산문 **앞** 별도 메시지 — 📰 공개는 임베드 본문, 💌 개인은 봉투 한 줄 +
+          💌 버튼(클릭하면 종전 `_respond` 가 ephemeral 로 본문을 연다).
+          디스코드 임베드는 텍스트 **밑**에만 그려지므로 산문 뒤에 붙이면 종이가 늦는다.
+      (c) `turn_mail` 행 — 그 메시지 id 로 적립되므로 💠 "쌓인 것" 도착물 목록에 자동으로 선다.
+    실패는 전부 무해하다: 핸드아웃 없이 산문이 나가고, 다음 턴 재시도는 없다
+    (전이는 이미 발화했다 — 재시도는 같은 편지를 두 번 보내는 길이다).
+    """
+    import world_board as _wb
+    # [2026-09-24 감사] 채널 검사를 **집기 전**으로 — 전엔 선언 행을 먼저 소비한 뒤 스레드 채널이면
+    #   return 해서 스레드 세션의 선언 도착물이 알림째 증발했다(안 집으면 9.52 flush 가 한 줄 알림으로 보낸다).
+    if not isinstance(message.channel, discord.TextChannel):
+        _olog.debug("[Handout] 텍스트 채널이 아니라 스킵")
+        return False
+    req = _wb.pick_arrival_request(channel_id, ctx.dai)
+    if not req:
+        return False
+    # [2026-10-17 C46 W2] 조립이 남긴 재료 + PC 이름(편지 받는 쪽 — 원문 발췌 쿼리에만 쓴다).
+    _ref = getattr(ctx, "handout_ref", None)
+    if isinstance(_ref, dict):
+        _ref = dict(_ref)
+        _ref["pc_names"] = rt._pc_names_for_extract(channel_id, ctx.user_id)
+    result = await _wb.trigger_board_update(
+        message.channel, rt.client, config.role_model("light"), channel_id,
+        trigger="declared", dai=dict(ctx.dai) if ctx.dai else {}, deliver=req, ref=_ref,
+    )
+    if not result:
+        _olog.info("[Handout] 도착물 콜 무산 — 핸드아웃 없이 진행 (source=%s)",
+                    req.get("source"))
+        return False
+
+    import custom_vars as _cv
+    import turn_mail as _tm
+    payload = result.get("payload") or {}
+    # [2026-10-17 C46 W6] 조립 **뒤**라 큐(급식 소비)가 아니라 호출부(5.5)가 이번 턴 문서에 끼운다.
+    #   배경 추출이 읽는 `last_handouts` 칸은 여기서 직접 채운다.
+    _ho_text = _wb.handout_text(result)
+    ctx.handout_text = _ho_text
+    _cv.set_last_handouts(channel_id, _ho_text)
+    _ev_tag = (result.get("event") or {}).get("tag")
+    # [2026-10-17 C46 R8] 기계 말 감시 — 막지 않고 센다(라이브에서 "시계가 완성되어…"가 새는지).
+    try:
+        _mw = _wb.MECH_WORD_RE.search(str(payload.get("body") or ""))
+        if _mw:
+            _olog.info("[Handout] mech-word=%s event=%s", _mw.group(0), _ev_tag)
+    except Exception:
+        pass
+
+    envelope = _tm.envelope_line(payload)
+    turn = 0
+    try:
+        turn = int((domain_manager.get_world_state(channel_id) or {}).get("turn_index", 0) or 0)
+    except (TypeError, ValueError):
+        turn = 0
+    # [2026-10-23 C69 A2b] 압축 모드(Activity 떠 있음) — 산문 앞 따로 메시지(✉ 봉투 · 📰 공고)를 **안 보낸다**.
+    #   적립할 거리만 ctx 에 두고, orchestration 7(산문 전송) 바로 뒤가 산문 메시지에 deliver + handout_record 를 만든다
+    #   (`deliver_pending_handout`). 핸드아웃 글(렌더 입력)은 위에서 이미 끼웠다 — 렌더는 지금처럼 편지를 읽고 쓴다.
+    #   본문은 Activity 편지 · 소식 앱, 디스코드엔 압축 상태 알림 줄(C68)이 "💌 새 편지"로 센다.
+    try:
+        import status_panel as _sp_ho
+        _compact = _sp_ho.turn_compact_mode()
+    except Exception:
+        _compact = False
+    if _compact:
+        ctx.handout_message_id = None
+        ctx.handout_pending = {"kind": str(result.get("kind") or _tm.KIND_MAIL), "payload": payload,
+                               "turn": turn, "result": result}
+        _olog.info("[Handout] 압축 모드 — 따로 메시지 없이 산문 메시지에 적립 대기 ch=%s source=%s event=%s turn=%s",
+                   result.get("channel_kind"), req.get("source"), _ev_tag, turn)
+        return True
+    try:
+        if envelope:
+            sent = await message.channel.send(envelope)
+        else:
+            sent = await message.channel.send(
+                embed=_tm.handout_embed(payload, turn))
+        ctx.handout_message_id = getattr(sent, "id", None)   # [2026-09-24 감사] !다시 삭제 목록용
+        await _tm.deliver(sent, channel_id, str(result.get("kind") or _tm.KIND_MAIL),
+                          payload, turn)
+        # [2026-10-17 C49 R1·R2] 원문 행·위키 줄은 step 8(입력 다음·산문 앞)이 쓴다 — 여기선 묶음만 남긴다.
+        ctx.handout_record = _wb.handout_record(result, ctx.handout_message_id)
+    except Exception as e:
+        _olog.warning(f"[Handout] 표시 실패(핸드아웃 블록은 유지): {e}")
+        # [2026-09-24 감사] 표시가 무산되면 선언 행을 한 줄 알림으로 되돌린다(이미 되돌렸으면 no-op).
+        try:
+            _wb.restore_arrival_request(channel_id, req)
+        except Exception:
+            pass
+        return False
+    _olog.info("[Handout] %s ch=%s source=%s event=%s turn=%s",   # [C46 R7] 골린 이벤트 tag
+                "💌 봉투" if envelope else "📰 임베드",
+                result.get("channel_kind"), req.get("source"), _ev_tag, turn)
+    return True

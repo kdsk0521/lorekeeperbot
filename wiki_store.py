@@ -91,6 +91,44 @@ def _is_item_section(section: str) -> bool:
     return section in tuple(getattr(config, "WIKI_ITEM_SECTIONS", ()) or ())
 
 
+# [2026-10-16 C45 R4] 사건 줄(History·Relationships+)의 작중 날짜+턴 도장. Knowledge·Members+·Entries 는 사건이 아니라 안 붙인다.
+#   장기기억 글 4번 — "사건마다 날짜(날짜 없는 판이면 턴)". 레티어스 "둘다 붙여도 좋고".
+import re as _re_c45
+_STAMPED_SECTIONS = ("History", "Relationships+")
+_STAMP_RE = _re_c45.compile(r"^\[(?:작중 [^\]]*|T\d+(?:~T\d+)?)\]\s*")
+
+
+def _unstamp(line: Any) -> str:
+    """줄 머리 도장(`[작중 3월 5일 · T18]`·`[T18]`)을 뗀 본문 — 중복 판정용."""
+    return _STAMP_RE.sub("", str(line or "").strip(), count=1).strip()
+
+
+def _event_stamp(channel_id: str, chunk_entries: Any, turn: Optional[int] = None) -> str:
+    """청크 끝 작중 날짜 + 턴 → `[작중 3월 5일 · T18]`. 해는 지금과 다를 때만. 있는 것만, 둘 다 없으면 ''."""
+    ents = [e for e in (chunk_entries or []) if isinstance(e, dict)]
+    gts = [e.get("game_time") for e in ents if isinstance(e.get("game_time"), dict)]
+    turns = [int(e.get("turn")) for e in ents if isinstance(e.get("turn"), int) and int(e.get("turn")) > 0]
+    parts: List[str] = []
+    if gts:
+        g = gts[-1]
+        try:
+            y, mo, d = int(g.get("year", 1)), int(g.get("month", 1)), int(g.get("day", 1))
+            cur_y = None
+            try:
+                import domain_manager as _dm_st
+                _w = _dm_st.get_world_state(channel_id) or {}
+                cur_y = int(_w["year"]) if _w.get("year") is not None else None
+            except Exception:
+                cur_y = None
+            parts.append(f"작중 {y}년 {mo}월 {d}일" if (cur_y is not None and cur_y != y) else f"작중 {mo}월 {d}일")
+        except (TypeError, ValueError):
+            pass
+    t = max(turns) if turns else (int(turn) if isinstance(turn, int) and turn > 0 else None)
+    if t:
+        parts.append(f"T{t}")
+    return f"[{' · '.join(parts)}]" if parts else ""
+
+
 # =========================================================
 # 1. 페이지
 # =========================================================
@@ -132,6 +170,35 @@ def ensure_page(channel_id: str, kind: str, name: str, *,
 
 
 _ALIAS_MAX = 32
+
+
+def remove_page_aliases(channel_id: str, page_id: str, names) -> int:
+    """[2026-10-14 C37 C2] 페이지 aliases 에서 이름들을 뺀다(_norm_name 비교). `ensure_page`는 합치기만
+    해서 뺄 길이 없었다. `!클리어`가 플레이에서 승격된 별칭(NPC dict `_play_aliases`)을 걷을 때 쓴다.
+    Returns 뺀 개수(실패·없음 0)."""
+    drop = {_norm_name(n) for n in (names or []) if isinstance(n, str) and n.strip()}
+    drop.discard("")
+    if not drop or not page_id:
+        return 0
+    conn = _conn(channel_id)
+    if conn is None:
+        return 0
+    try:
+        r = conn.execute("SELECT aliases FROM pages WHERE channel_id=? AND page_id=?",
+                         (channel_id, page_id)).fetchone()
+        if not r:
+            return 0
+        old = _json_list(r[0])
+        new = [a for a in old if not (isinstance(a, str) and _norm_name(a) in drop)]
+        if len(new) == len(old):
+            return 0
+        conn.execute("UPDATE pages SET aliases=? WHERE channel_id=? AND page_id=?",
+                     (json.dumps(new, ensure_ascii=False), channel_id, page_id))
+        conn.commit()
+        return len(old) - len(new)
+    except Exception as e:
+        logger.warning(f"[Wiki] remove_page_aliases 실패 (무시): {channel_id}/{page_id}: {e}")
+        return 0
 
 
 def _merge_aliases(old: list, new: list, exclude: str = "") -> list:
@@ -942,21 +1009,48 @@ def _guard_corrections(channel_id: str, page_id: str, old_body: str, new_body: s
     except Exception:
         wrongs = []
     wrongs = [w for w in wrongs if w]
+    live = _live_correction_texts(channel_id)   # [C50 R6] None = 원장을 못 읽음 → 옛 동작(정정 줄 전부 지킴)
     new_s = _split_sents(new_body)
-    keep, rej = [], 0
+    keep, rej, stale = [], 0, 0
     for x in new_s:
+        if x.strip().startswith(CORRECTION_PREFIX):
+            # [2026-10-18 C50 R6] 거둔·바뀐 정정의 줄은 지키지 않는다 — F1 노트가 옛 본문을 보고 다시 써넣을 수 있다.
+            if live is not None and not _is_live_correction(x, live):
+                stale += 1
+                continue
+            keep.append(x)
+            continue
         nx = _norm_q(x)
-        if (wrongs and not x.strip().startswith(CORRECTION_PREFIX)
-                and any(nx and (w in nx or nx in w) for w in wrongs)):
+        if wrongs and any(nx and (w in nx or nx in w) for w in wrongs):
             rej += 1
             continue
         keep.append(x)
     have = {_norm_q(x) for x in keep}
     back = [x for x in _split_sents(old_body)
-            if x.strip().startswith(CORRECTION_PREFIX) and _norm_q(x) not in have]
-    if not rej and not back:
+            if x.strip().startswith(CORRECTION_PREFIX) and _norm_q(x) not in have
+            and (live is None or _is_live_correction(x, live))]
+    if stale:
+        logger.info(f"[Wiki] 정정 가드 page={page_id} stale_correction_dropped={stale}")
+    if not rej and not back and not stale:
         return new_body, 0, 0
     return " ".join(back + keep), rej, len(back)
+
+
+def _live_correction_texts(channel_id: str):
+    """[2026-10-18 C50 R6] 활성 정정 문장(정규화). 원장을 못 읽으면 None."""
+    try:
+        import sqlite_store as _ss_c
+        return [_norm_q(r.get("text") or "") for r in _ss_c.read_corrections(channel_id, active_only=True)]
+    except Exception:
+        return None
+
+
+def _is_live_correction(sent: str, live: list) -> bool:
+    """`정정(Tn): 문장` 이 활성 정정의 줄인가 — 문장 정규화 포함 판정(한쪽이 다른 쪽을 품음)."""
+    s = str(sent or "").strip()
+    body = s.split("):", 1)[1] if "):" in s else s
+    nb = _norm_q(body).rstrip(".")
+    return any(t and nb and (t.rstrip(".") in nb or nb in t) for t in live)
 
 
 def correct_observed(channel_id: str, page_id: str, wrong: str, text: str, *,
@@ -966,7 +1060,12 @@ def correct_observed(channel_id: str, page_id: str, wrong: str, text: str, *,
     쓰기는 turn=None — `!다시` 되감기(revert_sections_after)가 정정을 턴 쓰기로 보고 되돌리지 않게."""
     old, _h = get_play_body(channel_id, page_id, "Observed")
     tag = f"T{turn}" if turn is not None else "T?"
-    line = f"{CORRECTION_PREFIX}{tag}): {str(text or '').strip()}"
+    _txt = str(text or '').strip()
+    # [2026-10-18 C50] 정정 줄도 문장으로 끝낸다 — 마침표가 없으면 문장 분할이 다음 문장까지 한 덩이로 묶었다
+    #   (`정정(T12): A 리나는 약초를 판다.`). 가드·되돌림이 줄 하나만 집어야 한다.
+    if _txt and _txt[-1] not in ".!?。…":
+        _txt += "."
+    line = f"{CORRECTION_PREFIX}{tag}): {_txt}"
     sents = _split_sents(old)
     rk = _norm_q(wrong or "")
     hit = [i for i, x in enumerate(sents) if rk and _norm_q(x) and (rk in _norm_q(x) or _norm_q(x) in rk)
@@ -975,7 +1074,7 @@ def correct_observed(channel_id: str, page_id: str, wrong: str, text: str, *,
     demoted = [sents[hit[0]]] if status == "demoted" else []
     rest = [x for i, x in enumerate(sents) if not (status == "demoted" and i == hit[0])]
     if _norm_q(line) in {_norm_q(x) for x in rest}:
-        return {"ok": True, "status": "dup", "demoted": 0}
+        return {"ok": True, "status": "dup", "demoted": 0, "line": line, "demoted_text": ""}
     body = " ".join([line] + rest)
     res = write_play_section(channel_id, page_id, "Observed", body, src_turns=None, turn=None,
                              reason="OOC정정", op="upsert")
@@ -989,7 +1088,58 @@ def correct_observed(channel_id: str, page_id: str, wrong: str, text: str, *,
                 conn.commit()
             except Exception as _e_h:
                 logger.warning(f"[Wiki] 정정 강등 실패 (무시): {page_id}: {_e_h}")
-    return {"ok": True, "status": status, "demoted": len(demoted)}
+    return {"ok": True, "status": status, "demoted": len(demoted), "line": line,
+            "demoted_text": demoted[0] if demoted else ""}
+
+
+def undo_correction_lines(channel_id: str, page_id: str, line: str, demoted: str = "", tag: str = "", *,
+                          wrong: str = "", restore: bool = True) -> dict:
+    """[2026-10-18 C50 R2·R3] 정정 하나가 이 페이지에 한 일을 되돌린다. 쓰기는 turn=None(`!다시` 무접촉).
+
+    ① Observed 에서 정정 줄을 뺀다(마침표 있는 꼴·없는 꼴 둘 다 — 10-18 전 줄은 마침표가 없다).
+    ② restore 면 History 의 `(정정됨 {tag}) …` 줄을 빼고 그 문장을 Observed 에 되돌린다.
+       내린 문장을 모르면(옛 행) wrong 을 품은 `(정정됨 {tag})` 줄을 찾는다. 이미 Observed 에 있으면 안 붙인다.
+    """
+    out = {"line": 0, "restored": 0}
+    old, _h = get_play_body(channel_id, page_id, "Observed")
+    old = old or ""
+    body = old
+    ln = str(line or "").strip()
+    if ln:
+        _base = ln.rstrip(".")
+        for v in sorted({ln, _base, _base + "."}, key=len, reverse=True):
+            if v and v in body:
+                body = body.replace(v, "", 1)
+                out["line"] = 1
+                break
+    body = " ".join(body.split())
+    dm = str(demoted or "").strip()
+    if restore and (dm or str(wrong or "").strip()):
+        hist, _hh = get_play_body(channel_id, page_id, "History")
+        head = f"(정정됨 {tag}) " if tag else "(정정됨 "
+        keep, hit = [], ""
+        for x in (hist or "").split("\n"):
+            xs = x.strip()
+            if not xs:
+                continue
+            if not hit and xs.startswith(head):
+                rest = xs[len(head):].strip() if tag else xs.split(") ", 1)[-1].strip()
+                key = _norm_q(dm) if dm else _norm_q(wrong)
+                if key and (key in _norm_q(rest) or _norm_q(rest) in key):
+                    hit = rest
+                    continue
+            keep.append(xs)
+        if hit:
+            write_play_section(channel_id, page_id, "History", "\n".join(keep), src_turns=None, turn=None,
+                               reason="OOC정정거둠", op="upsert")
+            dm = dm or hit
+        if dm and _norm_q(dm) not in _norm_q(body):
+            body = (body + " " + dm).strip()
+            out["restored"] = 1
+    if body != old:
+        write_play_section(channel_id, page_id, "Observed", body, src_turns=None, turn=None,
+                           reason="OOC정정거둠", op="upsert")
+    return out
 
 
 def apply_patches(channel_id: str, patches: Any, notes: Any,
@@ -1102,13 +1252,15 @@ def apply_patches(channel_id: str, patches: Any, notes: Any,
         if want == "append":
             cur = [x for x in get_sections(channel_id, page_id) if x["section"] == section]
             old = (cur[0]["body"] if cur else "") or ""
-            have = {ln.strip() for ln in old.splitlines() if ln.strip()}
+            # [2026-10-16 C45 R4] 사건 줄엔 청크 끝 작중 날짜+턴 도장. 중복은 도장 뗀 본문으로 본다(같은 사실 날짜만 달리 두 번 X).
+            _stamp = _event_stamp(channel_id, chunk_entries, turn) if section in _STAMPED_SECTIONS else ""
+            have = {_unstamp(ln) for ln in old.splitlines() if ln.strip()}
             add = []
             for ln in content.splitlines():
-                t = ln.strip()
+                t = _unstamp(ln)
                 if t and t not in have:
                     have.add(t)
-                    add.append(t)
+                    add.append(f"{_stamp} {t}" if _stamp else t)
             if not add:
                 counts["ok"] += 1
                 logger.info(f"[Wiki] patch page={page_id} section={section} op={op} accepted")

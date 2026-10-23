@@ -405,6 +405,203 @@ def _secret_refs(channel_id: str) -> Optional[List[Tuple[str, str]]]:
     return _vs.secret_refs(channel_id, tag="TurnMind")
 
 
+def _read_ledger_rows(channel_id: str) -> Optional[List[Dict[str, Any]]]:
+    """[2026-10-17 C47 R1] 비밀 원장 행 — 선별 한 번에 **한 번만** 읽는다(루프 안 조회 0). 실패 = None."""
+    try:
+        return list(domain_manager.get_secret_ledger(channel_id) or [])
+    except Exception as e:
+        logger.debug(f"[TurnMind] secret ledger unavailable — own record omitted: {e}")
+        return None
+
+
+def _secret_refs_for(channel_id: str, name: str) -> Optional[List[Tuple[str, str]]]:
+    """[2026-10-17 C47 R1] 이 인물이 **모르는** 비밀만 (truth, surface). 읽기 실패 = None(≠ 빈 목록)."""
+    return _secret_refs_from_rows(_read_ledger_rows(channel_id), name)
+
+
+def _secret_refs_from_rows(rows: Optional[List[Dict[str, Any]]], name: str) -> Optional[List[Tuple[str, str]]]:
+    """[2026-10-17 C47 R1] 원장 행 → 이 인물이 **모르는** 비밀만 (truth, surface). rows None = None.
+
+    자기 비밀 — 원장 owners·knowers 에 이 인물이 있는 행 — 은 걸러내지 않는다(10-17 판정 "자기 비밀은
+    알아도 문제없고"). 💭는 그 사람 머릿속이라 그 사람이 아는 비밀은 그 사람의 것이다. 남이 쥔 비밀만
+    걷는다(속을 통해 남의 비밀이 도착하면 reveal_gate 를 우회한다 — `_secret_refs` 와 같은 이유).
+    """
+    if rows is None:
+        return None
+    out: List[Tuple[str, str]] = []
+    for r in rows:
+        if not isinstance(r, dict) or not r.get("truth"):
+            continue
+        who: List[str] = []
+        for _k in ("owners", "knowers"):
+            _v = r.get(_k)
+            if isinstance(_v, str):
+                try:
+                    _v = json.loads(_v)
+                except Exception:
+                    _v = [_v]
+            if isinstance(_v, list):
+                who += [str(x) for x in _v if x]
+        if any(_name_matches(name, w) for w in who):
+            continue
+        out.append((str(r.get("truth") or ""), str(r.get("surface") or "")))
+    return out
+
+
+def _touches(text: Any, refs: Optional[List[Tuple[str, str]]]) -> bool:
+    """[C47] 이 글이 refs(이 인물이 모르는 비밀) 중 하나에 닿는가 — 로어 스크럽과 같은 판정기·임계."""
+    if not refs:
+        return False
+    import vector_search as _vs
+    _it = {"note": str(text or ""), "quote": str(text or "")}
+    return any(_vs.secret_touched(_it, _tr, _sf) for _tr, _sf in refs)
+
+
+_PAGE_KEYS = {"Observed": "page_observed", "Relationships+": "page_relationships",
+              "Knowledge": "page_knowledge", "History": "page_history"}
+_KNOW_KEYS = (("knows", "knows"), ("suspects", "suspects"), ("false_beliefs", "believes_wrongly"))
+
+
+def _drop_touching_sentences(line: str, refs: Optional[List[Tuple[str, str]]]) -> str:
+    """한 줄을 문장으로 나눠 비밀에 닿는 문장만 뺀다(줄 통째 손실 < 문장 하나 손실)."""
+    import re as _re
+    parts = [p for p in _re.split(r"(?<=[.!?…])\s+", str(line or "").strip()) if p.strip()]
+    kept = [p for p in parts if not _touches(p, refs)]
+    return " ".join(kept).strip()
+
+
+def _own_record_lines(channel_id: str, name: str, refs: Optional[List[Tuple[str, str]]]) -> str:
+    """[2026-10-17 C47 R2] 그 이름이 걸린 원문 조각 — 영구 로그(history_log)에서 코드 매칭(LIKE).
+
+    이번 턴 원문 두 줄(입력·산문)은 뺀다 — 이번 턴은 앵커 `after it` 이 맡는다(08-17 "산문 원천 제거" 유지).
+    고르기는 최신부터(상한 안), 보이기는 오래된 순. 조각 규칙은 도착물 원문 발췌(C46 W4)와 같은 함수다.
+    """
+    cap = int(getattr(config, "TURN_MIND_RECORD_CHARS", 900) or 0)
+    if cap <= 0:
+        return ""
+    import sqlite_store as _ss
+    import world_board as _wb
+    names = [name]
+    try:
+        _npcs = domain_manager.get_npcs(channel_id) or {}
+        _k = domain_manager._find_npc_key(_npcs, name) or name
+        for _n in [_k] + list(((_npcs.get(_k) or {}).get("aliases") or [])[:4]):
+            _n = str(_n or "").strip()
+            if len(_n) >= 2 and _n not in names:
+                names.append(_n)
+    except Exception:
+        pass
+    # [2026-10-17 C49 R3] 이번 턴 = 마지막 산문 행 + 그 앞에 붙은 산문 아닌 행들(입력·도착물·관찰).
+    #   끝에서 거슬러 첫 산문 행까지와, 그 앞으로 다음 산문 행 직전까지를 뺀다. 옛 "끝 2행"은 도착물 행이
+    #   끼면(입력 → 도착물 → 산문) 이번 턴 입력을 못 뺐다.
+    skip = set()
+    try:
+        _seen_prose = False
+        for r in reversed(_ss.read_history_tail(channel_id, 8) or []):
+            _is_prose = str(r.get("role") or "").lower() == "model"
+            if _seen_prose and _is_prose:
+                break
+            skip.add(str(r.get("message_id") or "") or str(r.get("content") or "")[:200])
+            _seen_prose = _seen_prose or _is_prose
+    except Exception:
+        pass
+    lim = int(getattr(config, "TURN_MIND_RECORD_ROWS", 6) or 6)
+    rows: List[Dict[str, Any]] = []
+    seen = set()
+    for _n in names:
+        for r in (_ss.search_history_log(channel_id, _n, limit=lim + 2) or []):
+            _key = str(r.get("message_id") or "") or str(r.get("content") or "")[:200]
+            if _key in seen or _key in skip:
+                continue
+            seen.add(_key)
+            rows.append(r)
+
+    def _ord(r):
+        _mid = str(r.get("message_id") or "")
+        return int(_mid) if _mid.isdigit() else -1
+
+    rows.sort(key=_ord, reverse=True)          # 최신부터 고른다
+    half = int(getattr(config, "TURN_MIND_RECORD_SNIPPET", 120) or 120)
+    picked: List[Tuple[int, str]] = []
+    used = 0
+    for r in rows:
+        # [2026-10-17 C49 R3] 💌 원문 행은 머리 줄(작성자 → 수신자)에 이 인물이 있을 때만 — 남의 편지는 모른다.
+        if str(r.get("role") or "") == _wb.HANDOUT_ROLE and str(r.get("content") or "").startswith("💌"):
+            _head = str(r.get("content") or "").split("\n", 1)[0]
+            if not any(_n in _head for _n in names):
+                continue
+        snip = _wb._raw_snippet(r.get("content"), names, half, head_ok=False)
+        if not snip.strip() or _touches(snip, refs):
+            continue
+        _role = _wb._RAW_ROLE.get(str(r.get("role") or ""), str(r.get("role") or ""))
+        line = f"- {_wb._fmt_raw_gt(r.get('game_time'))}{_role}: {snip}"
+        if used + len(line) + 1 > cap:
+            continue
+        picked.append((_ord(r), line))
+        used += len(line) + 1
+    picked.sort(key=lambda x: x[0])            # 보이기는 오래된 순
+    return "\n".join(l for _o, l in picked)
+
+
+def _own_record_material(channel_id: str, name: str,
+                         refs: Optional[List[Tuple[str, str]]]) -> Dict[str, str]:
+    """[2026-10-17 C47 R2] 그 사람 몫 — 위키 페이지 play 절 · NPC 지식 · 원문 조각. 없으면 {}.
+
+    refs = 이 인물이 **모르는** 비밀(`_secret_refs_for`). None(원장 못 읽음)이면 통째 생략(안전측).
+    위키는 그 인물 페이지 하나만(독자 T6, 벡터 시드 없음) — 다른 인물 페이지가 섞이지 않는다.
+    절 머리(`### Observed`)는 CHARACTERS 블록의 인물 머리(`### 이름`)와 겹치므로 키 한 줄로 편다.
+    """
+    if refs is None:
+        return {}
+    out: Dict[str, str] = {}
+    try:
+        import wiki_store as _wsx
+        _wc = _wsx.compile_for(channel_id, "T6", [name]) or {}
+        _sec = None
+        _buf: Dict[str, List[str]] = {}
+        for _ln in str(_wc.get("text") or "").split("\n"):
+            _s = _ln.strip()
+            if not _s or (_s.startswith("[") and "플레이에서 확립된 것" in _s):
+                continue
+            if _s.startswith("### "):
+                _sec = _s[4:].strip()
+                continue
+            if _sec in _PAGE_KEYS:
+                _s = _drop_touching_sentences(_s, refs)
+                if _s:
+                    _buf.setdefault(_sec, []).append(_s)
+        for _sec, _key in _PAGE_KEYS.items():
+            if _buf.get(_sec):
+                out[_key] = " / ".join(_buf[_sec])
+    except Exception as e:
+        logger.debug(f"[TurnMind] own page skipped: {e}")
+    try:
+        _key = name
+        try:
+            _key = domain_manager._find_npc_key(domain_manager.get_npcs(channel_id) or {}, name) or name
+        except Exception:
+            pass
+        kn = domain_manager.get_npc_knowledge_for(channel_id, _key)
+        if isinstance(kn, dict):
+            for _src, _dst in _KNOW_KEYS:
+                items = [str(x).strip() for x in (kn.get(_src) or []) if str(x).strip()]
+                items = [x for x in items if not _touches(x, refs)]
+                if items:
+                    out[_dst] = "; ".join(items[-5:])[:_FIELD_CAP]
+            _own = [str(x).strip() for x in (kn.get("secrets_held") or []) if str(x).strip()]
+            if _own:
+                out["keeps"] = "; ".join(_own[-5:])[:_FIELD_CAP]   # 자기 비밀 — 걷지 않는다(10-17 판정)
+    except Exception as e:
+        logger.debug(f"[TurnMind] own knowledge skipped: {e}")
+    try:
+        _rec = _own_record_lines(channel_id, name, refs)
+        if _rec:
+            out["record"] = _rec
+    except Exception as e:
+        logger.debug(f"[TurnMind] own record skipped: {e}")
+    return out
+
+
 def _sheet_material(name: str, rec: Optional[Dict[str, Any]],
                     refs: Optional[List[Tuple[str, str]]], channel_id: Optional[str] = None) -> Dict[str, str]:
     """[2026-08-17 시트 접지] 시트 요지 한 줄(`voice`). 재료 없음·스크럽 불가 = {}.
@@ -520,7 +717,9 @@ def select_mind_targets(channel_id: str,
     except Exception as e:
         logger.debug(f"[TurnMind] attitude read skipped: {e}")
     # [2026-08-17 시트 접지] 원장도 인물 수와 무관하게 **한 번만** 읽는다(_sheet_material 급식).
-    _refs = _secret_refs(channel_id)
+    # [2026-10-17 C47 R1] 원장은 **한 번만** 읽고(루프 안 조회 0), 인물마다 그 인물 기준으로 거른다
+    #   (`_secret_refs_from_rows` — 자기 비밀은 남긴다).
+    _ledger = _read_ledger_rows(channel_id)
 
     _drop_src: List[str] = []
     _drop_floor: List[str] = []
@@ -559,9 +758,14 @@ def select_mind_targets(channel_id: str,
         # 시트 요지도 **게이트 뒤**(같은 이유 — 시트만 두껍고 속이 빈 인물이 칸을 먹으면 안 된다).
         # 자리는 재료의 **맨 앞**: 시트는 상시(이 사람은 원래 이렇다)고 psyche·상태는 이번 턴이라,
         # 출력 최근접에는 지금 움직이는 것이 서야 한다(앵커→지형→인물과 같은 순서 규율).
-        _sheet = _sheet_material(name, _rec, _refs, channel_id)
-        if _sheet:
-            material = {**_sheet, **material}
+        _refs_n = _secret_refs_from_rows(_ledger, name)
+        _sheet = _sheet_material(name, _rec, _refs_n, channel_id)
+        # [2026-10-17 C47 R2] 그 사람 몫(위키 페이지·지식·원문) — 시트 다음, 이번 턴(psyche·몸) 앞.
+        #   시트처럼 게이트 **뒤**에 붙는다(기록만 두껍고 속이 빈 인물이 칸을 먹지 않게).
+        _own = (_own_record_material(channel_id, name, _refs_n)
+                if int(getattr(config, "TURN_MIND_OWN_RECORD", 1) or 0) else {})
+        if _sheet or _own:
+            material = {**_sheet, **_own, **material}
         scored.append((score, name, {
             "name": name,
             "score": round(score, 3),
@@ -810,7 +1014,8 @@ async def _build_lore_grain(client, channel_id: str, dai: Optional[Dict[str, Any
         _top_k = int(getattr(config, "TURN_MIND_LORE_TOP_K", 2))
         if _top_k <= 0:
             return ""  # 손잡이 하나로 완전 비활성
-        _cap = int(getattr(config, "TURN_MIND_LORE_CHUNK_CHARS", 300))
+        # [2026-10-17 C47 R3] 기본 0 = 청크 전문("로어는 자르지 말자"). 인용 금지 한 줄(계약)은 그대로.
+        _cap = int(getattr(config, "TURN_MIND_LORE_CHUNK_CHARS", 0) or 0)
         import vector_search as _vs
         ranked = await _vs.get_scrubbed_scene_chunks(
             client, channel_id, _q[:2000],
@@ -849,6 +1054,10 @@ def _build_mind_prompt(targets: List[Dict[str, Any]], anchor: str, lore: str = "
     구 헤더는 "not a style to imitate" 한 줄이었는데, 그건 **분석문**(영어 텔레그래픽)을 두고 한
     말이다. 시트 조각은 성격이지 문체 지시가 아니고, 오히려 그 사람처럼 들리라고 넣은 재료다 —
     두 문장이 충돌하지 않게 구분만 준다: **그 사람이어서 그렇게 들릴 것, 문장을 빌려오지 말 것**.
+
+    [2026-10-23 C70] FORM 의 "Fragments are how thought arrives"(늘 위기 리듬)를 **바꿨다** — 결은 몸과 그 순간이
+    정한다(흔들릴 때만 끊김, 평온은 이어짐, 평범은 평범) · 한 콜 안 사람마다 리듬. CONCURRENCY 에 "다음 일에 대한
+    바람·두려움은 그대로 남는다" 한 절. 외부 대조 = 라이트보드 미니톡(C70 스펙 부록).
     """
     cap = int(getattr(config, "TURN_MIND_CHARS", 160))
     blocks = []
@@ -869,20 +1078,23 @@ You do not write prose. You do not continue the scene.
 ## CONCURRENCY
 Inner thought runs alongside the scene just narrated — the same seconds, not the moment after.
 None of it is observed: no one hears it, no one answers it, and nothing that happened changes because of it.
-A thought that settles the scene, picks the next beat, or explains events to a reader has left the head it belongs to.
+A hope or a fear about what comes next stays a hope or a fear; a thought that settles the scene, picks the next beat, or explains events to a reader has left the head it belongs to.
 
 ## SOURCE OF TRUTH
-The character analysis below is what is known. The scene anchor is timing and place, not material:
+The character material below is what is known — their analysis and their own record. The scene anchor is timing and place, not material:
 it says where the scene stands, never what to write. Nothing in it is a line to render or expand.
 A character's read of another mind is a guess assembled from what was seen or heard — certainty about
-someone else's motive is the mark of a narrator, not a person. Where the analysis is silent, the character
+someone else's motive is the mark of a narrator, not a person. Where the material is silent, the character
 does not know either; an invented history is a different failure than an unfinished thought.
 
 ## FORM
-First person, present, unspoken, addressed to no one. Fragments are how thought arrives.
+First person, present, unspoken, addressed to no one.
 A third-person state summary ("~하는 상태", "~을 느끼고 있다") is an observation about the character, not the character.
 One breath each: a single short passage under {cap} Korean characters, not a paragraph of explanation.
-A complete argument is prose wearing a mind's clothes — the body interrupts before the case is closed.
+The body and the moment set the grain. Panic, rage, grief, drink or exhaustion break a thought and send it looping;
+calm lets it run whole; an ordinary moment thinks ordinary things, at the weight the material gives it.
+A thought may wander, correct itself or circle back, and it stops before it becomes a case argued to someone.
+Minds in one pass keep their own cadence: length, what breaks off, what repeats and how a sentence ends belong to each person.
 
 ## LIMITS
 Spoken dialogue belongs to the scene; should a line surface anywhere in the material below,
@@ -895,7 +1107,7 @@ Write the thought itself in Korean.
 ## SCENE ANCHOR (timing only — structure, not prose: where the scene stands, not what happens next)
 {anchor or '(no anchor)'}
 {lore_block}
-## CHARACTERS (analysis layer — English telegraphic, not a style to imitate; a `voice` line is the person's own sheet — who they are and how they carry a sentence, never a passage to reuse)
+## CHARACTERS (analysis layer — English telegraphic, not a style to imitate; a `voice` line is the person's own sheet — who they are and how they carry a sentence, never a passage to reuse; `page_*`, `knows`/`suspects`/`believes_wrongly`/`keeps` and `record` lines are this person's own past and knowledge — ground a thought may stand on, never a passage to recite)
 {chr(10).join(blocks)}
 
 ## OUTPUT (JSON only)
@@ -1238,70 +1450,41 @@ _EXPIRED_MSG = "📭 도착물이 만료되었거나 없습니다."
 
 
 class TurnView(discord.ui.View):
-    """산문 메시지 꼬리 버튼 묶음 — 💠 쌓인 것 · 💌 도착물 · 💭 속마음 · 📰 소식.
+    """산문 메시지 꼬리 버튼 묶음 — 💠 보관함/상태창 · 💌 도착물 · 💭 속마음 · 📰 소식.
 
-    [2026-09-13 P9c] 💠 가 돌아왔다. P9b 가 뺐던 이유(버튼이 여는 화면이 이미 그 메시지에
-      있다)는 **여는 화면이 바뀌면서** 사라졌다 — 지금 💠 가 여는 건 매턴 임베드의 재탕이
-      아니라 **쌓인 것**(노트북·기록 전체·일지·도착물 목록·관계 전체)이다. 매턴 임베드 =
-      "지금 어떤가"(자동), 💠 = "그동안 무엇이 쌓였나"(눌러서). 축이 다르므로 메아리가 아니다.
-      💠 는 **게이트가 없다** — 매턴 항상 붙는다(눌렀을 때 빈 채널이면 그 창이 한 줄로 답한다).
-      옛 메시지의 💠 도 custom_id 가 같아 같은 창을 연다.
+    [2026-10-23 C60 M2a] **버튼은 등록부에서 만든다**(module_frame.buttons, 아래 `_register_buttons`).
+      옛 "버튼 하나 = 다섯 자리 동시 수정"(①custom_id 상수 ②KIND 상수 ③생성자 drop 축 ④build_view 게이트
+      ⑤build_embeds 분기)이 Button 선언 한 장으로 접혔다 — custom_id·kind 는 위 상수 그대로, 게이트·응답·
+      라벨·순서가 선언 한 장에 같이 산다. 새 버튼 = `_register_buttons` 에 한 줄.
+      모양(라벨·이모지·secondary·custom_id·순서)은 옛 데코레이터판과 글자 그대로다 — 스모크가 to_components 로 대조한다.
 
-    한 메시지에 View 는 하나뿐이라 **합성이 강제**된다. 상황별 부분집합은 생성자에서
-    필요 없는 버튼을 떼어 만든다. persistent 등록(main.on_ready)은 전 버튼을 가진
-    인스턴스 하나로 충분하다 — 디스패치는 custom_id 매칭이지 View 동일성이 아니다.
-    ⚠ 버튼을 새로 세울 때는 ①custom_id 상수 ②KIND 상수 ③생성자 drop 축 ④build_view 게이트
-      ⑤build_embeds 분기 다섯 자리를 **함께** 세운다(자매 자리 소급 누락 방지).
-      💠 는 ③④ 를 쓰지 않는다(무조건) — 셋과 달리 message_id 에 매이지 않기 때문이다.
+    [2026-09-13 P9c] 💠 는 **게이트가 없다** — 매턴 항상 붙는다. 옛 메시지의 💠 도 custom_id 가 같아 같은 창을 연다.
+    한 메시지에 View 는 하나뿐이라 **합성이 강제**된다. persistent 등록(main.on_ready)은 전 버튼을 가진
+    인스턴스 하나(`TurnView()`)로 충분하다 — 디스패치는 custom_id 매칭이지 View 동일성이 아니다.
     """
 
-    def __init__(self, *, mail: bool = True, mind: bool = True, board: bool = True):
+    def __init__(self, *, mail: bool = True, mind: bool = True, board: bool = True,
+                 include: Optional[Any] = None):
         super().__init__(timeout=None)
-        drop = set()
-        if not mail:
-            drop.add(MAIL_BUTTON_ID)
-        if not mind:
-            drop.add(MIND_BUTTON_ID)
-        if not board:
-            drop.add(BOARD_BUTTON_ID)
-        for item in list(self.children):
-            if getattr(item, "custom_id", None) in drop:
-                self.remove_item(item)
-
-    @discord.ui.button(
-        label="보관함", emoji="💠", style=discord.ButtonStyle.secondary,   # [2026-10-13] 쌓인 것 → 보관함(레티어스)
-        custom_id=status_panel.PANEL_BUTTON_ID,
-    )
-    async def show_archive(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """응답 본체는 `status_panel.respond_archive` **한 곳**이다.
-
-        ⚠ 같은 custom_id 를 `status_panel.ArchiveView` 도 잡는다(옛 메시지용 등록).
-          discord.py 의 persistent 디스패치는 (component_type, custom_id) 사전이라
-          나중 등록이 앞 등록을 덮어쓴다 — 어느 쪽이 이기든 **같은 함수**가 응답하도록
-          두 자리 모두 여기로 위임한다. 분기를 두면 두 화면이 조용히 갈라진다.
-        """
-        await status_panel.respond_archive(interaction)
-
-    @discord.ui.button(
-        label="도착물", emoji="💌", style=discord.ButtonStyle.secondary,
-        custom_id=MAIL_BUTTON_ID,
-    )
-    async def show_mail(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._respond(interaction, KIND_MAIL)
-
-    @discord.ui.button(
-        label="속마음", emoji="💭", style=discord.ButtonStyle.secondary,
-        custom_id=MIND_BUTTON_ID,
-    )
-    async def show_mind(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._respond(interaction, KIND_MIND)
-
-    @discord.ui.button(
-        label="소식", emoji="📰", style=discord.ButtonStyle.secondary,
-        custom_id=BOARD_BUTTON_ID,
-    )
-    async def show_board(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._respond(interaction, KIND_BOARD)
+        import module_frame as _mf
+        # 옛 생성자 깃발(mail·mind·board)은 호환으로 남긴다 — build_view 는 include(게이트 통과 목록)를 쓴다.
+        _flags = {MAIL_BUTTON_ID: mail, MIND_BUTTON_ID: mind, BOARD_BUTTON_ID: board}
+        keep = set(include) if include is not None else None
+        for b in _mf.buttons():
+            if not _flags.get(b.custom_id, True):
+                continue
+            if keep is not None and b.custom_id not in keep:
+                continue
+            label = b.label
+            if b.label_fn is not None:
+                try:
+                    label = b.label_fn() or b.label
+                except Exception:
+                    label = b.label
+            item = discord.ui.Button(label=label, emoji=b.emoji, style=discord.ButtonStyle.secondary,
+                                     custom_id=b.custom_id)
+            item.callback = _button_callback(b)
+            self.add_item(item)
 
     @staticmethod
     async def _respond(interaction: discord.Interaction, kind: str) -> None:
@@ -1319,23 +1502,85 @@ class TurnView(discord.ui.View):
         await interaction.response.send_message(embeds=embeds, ephemeral=True)
 
 
-def build_view(channel_id: str, message_id: int = 0) -> Optional[discord.ui.View]:
-    """이 메시지에 붙일 View. **합성 규칙의 단 하나의 자리.**
+def _button_callback(b):
+    async def _cb(interaction: discord.Interaction):
+        await b.respond(interaction)
+    return _cb
 
-    - 💠 = **항상**(게이트 0). 매턴 전송 시점에도 붙는다.
+
+def build_view(channel_id: str, message_id: int = 0) -> Optional[discord.ui.View]:
+    """이 메시지에 붙일 View. **합성 규칙의 단 하나의 자리** — 버튼마다 선언된 gate 를 돈다.
+
+    - 💠 = **항상**(게이트 늘 참). 매턴 전송 시점(message_id=0)에도 붙는다.
     - 💌/💭/📰 = message_id 로 실제 적립된 도착물이 있을 때만 (사후 부착 경로에서 쓰인다)
 
-    [2026-09-13 P9c] 전송 시점(message_id=0)에도 이제 None 이 아니다 — 💠 하나가 붙는다.
-      **덮어쓰기 안전**이 이 한 자리에 달려 있다: 도착물이 생기면 `attach_button` 이
-      `message.edit(view=...)` 로 View 를 통째로 갈아끼우는데, 그 새 View 도 이 함수가
-      만들므로 💠 가 같이 다시 그려진다. 여기서 💠 를 조건부로 만들면 그 edit 한 번에
-      💠 가 조용히 사라진다.
+    **덮어쓰기 안전**이 이 한 자리에 달려 있다: 도착물이 생기면 `attach_button` 이 View 를 통째로 갈아끼우는데,
+    그 새 View 도 이 함수가 만들므로 💠 가 같이 다시 그려진다.
     """
-    kinds = kinds_for_message(channel_id, message_id) if message_id else []
-    mail = KIND_MAIL in kinds
-    mind = KIND_MIND in kinds
-    board = KIND_BOARD in kinds
-    return TurnView(mail=mail, mind=mind, board=board)
+    import module_frame as _mf
+    kinds = tuple(kinds_for_message(channel_id, message_id)) if message_id else ()
+    include = []
+    for b in _mf.buttons():
+        try:
+            if b.gate(channel_id, message_id, kinds):
+                include.append(b.custom_id)
+        except Exception as e:
+            logger.debug(f"[TurnMail] gate {b.custom_id} skipped: {e}")
+    return TurnView(include=include)
+
+
+# ---------------------------------------------------------------------------
+# [2026-10-23 C60 M2a] 버튼 선언 — 주인 모듈: 💠 screen · 💌📰 board · 💭 mind
+# ---------------------------------------------------------------------------
+
+def _archive_label() -> str:
+    """[2026-10-22 C54] 화면(Activity)이 떠 있으면 💠 가 화면을 연다 — 라벨만 바꾼다(custom_id·자리 그대로)."""
+    try:
+        import activity_server as _act
+        return "상태창" if _act.running() else "보관함"
+    except Exception:
+        return "보관함"
+
+
+async def _respond_archive(interaction: discord.Interaction) -> None:
+    """응답 본체는 `status_panel.respond_archive` **한 곳**(옛 메시지용 ArchiveView 도 같은 함수로 위임)."""
+    await status_panel.respond_archive(interaction)
+
+
+def _gate_always(channel_id: str, message_id: int, kinds) -> bool:
+    return True
+
+
+def _gate_kind(kind: str):
+    """💌 💭 📰 — 그 메시지에 그 종류 행이 있을 때. [2026-10-23 C69 A2b] 압축 모드(Activity 떠 있음)면 안 붙는다 —
+    본문은 Activity 편지 · 소식 · 속마음 앱이 연다. custom_id 는 그대로라 옛 메시지에 이미 붙은 버튼은 계속 산다
+    (persistent view · 응답 함수 무변경). Activity 가 꺼진 채널은 지금 그대로다."""
+    def _g(channel_id: str, message_id: int, kinds) -> bool:
+        if kind not in (kinds or ()):
+            return False
+        try:
+            return not status_panel.turn_compact_mode()
+        except Exception:
+            return True
+    return _g
+
+
+def _responder(kind: str):
+    async def _r(interaction: discord.Interaction) -> None:
+        await TurnView._respond(interaction, kind)
+    return _r
+
+
+def _register_buttons() -> None:
+    import module_frame as _mf
+    _mf.add_button("screen", _mf.Button(status_panel.PANEL_BUTTON_ID, "💠", "보관함", 10,
+                                        _gate_always, _respond_archive, label_fn=_archive_label))
+    _mf.add_button("board", _mf.Button(MAIL_BUTTON_ID, "💌", "도착물", 20, _gate_kind(KIND_MAIL), _responder(KIND_MAIL)))
+    _mf.add_button("mind", _mf.Button(MIND_BUTTON_ID, "💭", "속마음", 30, _gate_kind(KIND_MIND), _responder(KIND_MIND)))
+    _mf.add_button("board", _mf.Button(BOARD_BUTTON_ID, "📰", "소식", 40, _gate_kind(KIND_BOARD), _responder(KIND_BOARD)))
+
+
+_register_buttons()
 
 
 def recent_mail(channel_id: str, limit: int = 10) -> List[Dict[str, Any]]:
@@ -1367,6 +1612,13 @@ async def attach_button(message: Optional[discord.Message], channel_id: str) -> 
         view = build_view(channel_id, message.id)
         if view is None:
             return False
+        # [2026-10-23 C69 A2b] 재그림보다 **늦게** 붙은 도착물(큐 재시도) — 그 채널의 마지막 산문 메시지이고 재그림이
+        #   이미 돈 뒤일 때만 임베드도 같은 비교로 한 번 더(알림 줄). 옛 메시지 · 재그림 전은 View 만(재그림이 고친다).
+        if status_panel.late_refresh_wanted(channel_id, message.id):
+            _data = status_panel.turn_view_data(channel_id, message_id=message.id)
+            await message.edit(view=view, embeds=status_panel.turn_view_embeds(channel_id, data=_data))
+            logger.info("[TurnMail] late attach — 임베드도 다시 그림 msg=%s", message.id)
+            return True
         await message.edit(view=view)
         return True
     except Exception as e:

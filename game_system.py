@@ -43,7 +43,7 @@ get_notebook_text = game_character.get_notebook_text
 update_notebook_text = game_character.update_notebook_text
 add_item_to_sojipin = game_character.add_item_to_sojipin
 remove_item_from_sojipin = game_character.remove_item_from_sojipin
-sync_notebook_to_inventory = game_character.sync_notebook_to_inventory
+# [삭제 2026-10-23 C61] sync_notebook_to_inventory — 거울 폐지
 # [notebook v2 2026-09-06] 섹션 dict 정본 접근자 + LLM색 메모 적용기
 get_notebook_data = game_character.get_notebook_data
 update_notebook_data = game_character.update_notebook_data

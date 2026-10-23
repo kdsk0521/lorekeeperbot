@@ -123,9 +123,10 @@ class SharedBus:
         "npc_attitudes": {},
         "relevant_context": []
     })
+    # [2026-10-15 C42] 4dF — roll·dc·modifications 퇴역. 굴림 키(n·edge·faces·dropped·dice_sum·mod·total)는
+    #   판정이 돈 턴에만 judgment_engine 이 싣는다.
     judgment: Dict[str, Any] = field(default_factory=lambda: {
-        "active": False, "success": False, "roll": 0, "dc": 0, 
-        "modifications": [], "narrative_hook": ""
+        "active": False, "success": False, "narrative_hook": ""
     })
     doom: Dict[str, Any] = field(default_factory=lambda: {
         "active": False,
@@ -150,8 +151,7 @@ class SharedBus:
     })
     composure: Dict[str, Any] = field(default_factory=lambda: {
         "active": False, "value": 0, "stage": 0, "last_delta": 0,
-        "delta_applied": 0,
-        "judgment_emotion": 0, "log": ""
+        "delta_applied": 0, "log": ""
     })
     # Phase 8: Emotion Engine (LIBRA-inspired)
     emotion: Dict[str, Any] = field(default_factory=lambda: {
@@ -240,6 +240,8 @@ class ResponseContext:
     # [2026-09-06 P3] 판정 성패 한 낱말(success/failure/…). 4.7 expr 의 `check=judgment` 가
     #   보는 유일한 창 — bus 는 process_une_logic 로컬이라 여기까지 안 온다.
     judgment_result: str = ""
+    # [2026-10-15 C42] 판정 임베드 데이터(une 결과 → 4. 시스템 메시지 전송이 Embed 로 바꿔 붙인다).
+    judgment_embeds: list = field(default_factory=list)
 
     # 발효된 요약 (V3 Hybrid)
     fermented_summary_text: str = ""

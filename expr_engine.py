@@ -74,7 +74,9 @@ def _canon(name: Any) -> str:
         return _cvx.system_name(s) or s
     except Exception:
         return s
-# 재고 = P0 노트북 [소지품](유저 스코프). custom_vars stock 이관은 P8.
+# 재고 = 소지품의 옛 이름. [2026-10-23 C61] 정본이 노트북 [소지품] → custom_vars 기본 선언 목록 `소지품` 으로
+#   옮겨 왔다. 저장된 식(`재고[철] -= 2`)이 그대로 돌게 이름은 남긴다 — 읽기·쓰기 둘 다 같은 목록에 닿는다.
+#   `소지품[철]` 은 선언 목록이라 보통 목록 길로 바로 돈다.
 STOCK_NAME = "재고"
 # [2026-09-16 3차 §10.2] 조각 = 행위자 PC 의 시트 조각(ai_memory.passives) 이름 컬렉션. **읽기 전용** —
 #   `has(조각, "이름")` 만 뜻이 있다. 대입·첨자 쓰기·등록 시 쓰기 대상은 전부 거부.
@@ -784,8 +786,7 @@ class Resolver:
         if not uid:
             raise ExprError("이름 없음: 재고 (행위자 미상 — 유저 스코프)")
         try:
-            nb = domain_manager.get_notebook_data(self.channel_id, uid) or {}
-            return dict(((nb.get("sections") or {}).get("소지품") or {}).get("items") or {})
+            return dict(self.cv.sojipin_items(self.channel_id))   # [C61] {이름: 수량}
         except Exception as e:
             raise ExprError(f"재고를 읽지 못했습니다: {e}")
 
@@ -1090,7 +1091,7 @@ class Resolver:
             self.cv.apply_code_write(self.channel_id, nm, value=value, **kw)
 
     def _write_stock(self, item: str, mode: str, value: Any) -> None:
-        """재고 = P0 노트북 [소지품](유저 스코프). custom_vars stock 이관은 P8."""
+        """재고 = 소지품(기본 선언 목록, C61). 쓰기는 game_character 두 함수 — 도장 source=expr."""
         uid = self.actor()
         if not uid:
             raise ExprError("이름 없음: 재고 (행위자 미상 — 유저 스코프)")
@@ -1107,9 +1108,9 @@ class Resolver:
             return
         import game_character as _gc
         if n > 0:
-            _gc.add_item_to_sojipin(self.channel_id, item, uid, n)
+            _gc.add_item_to_sojipin(self.channel_id, item, uid, n, source="expr")
         else:
-            _gc.remove_item_from_sojipin(self.channel_id, item, uid, -n)
+            _gc.remove_item_from_sojipin(self.channel_id, item, uid, -n, source="expr")
         logger.info("[Expr] 재고 %s %+d (uid=%s) ev=%s", item, n, uid, self.evidence())
 
     # --- 등록 검사용(값 없이 이름만 본다) ---
@@ -1773,6 +1774,13 @@ def operation_write_targets(channel_id: str, names: Optional[Any] = None) -> Set
                 out |= compile_expr(src, "exec").writes
             except ExprError as e:
                 logger.debug("[Expr] 연산 %s.%s 쓰기 대상 스킵: %s", nm, key, e)
+    # [2026-10-23 C61] `재고[x]` 를 쓰는 연산 = 소지품을 쓰는 연산 — 추출이 같은 사건을 또 세지 않게.
+    if STOCK_NAME in out:
+        try:
+            import custom_vars as _cv_ow
+            out.add(_cv_ow.SOJIPIN)
+        except Exception:
+            out.add("소지품")
     return out
 
 
@@ -2556,6 +2564,9 @@ async def flush_mails(prose_message: Any, channel_id: str) -> int:
             #   (한 통으로 묶이므로 봉투는 하나뿐이다). 없으면 종전 그대로 빈 칸.
             "format_name": next((str(i.get("format_name") or "") for i in items
                                  if str(i.get("format_name") or "").strip()), ""),
+            # [2026-10-23 C68 A2a] 묶음 건수 — 압축 임베드 알림 줄("📰 소식 2")이 센다(status_panel.notice_line).
+            #   💌💭📰 응답(_mail_embed)은 이 칸을 안 읽는다 — 표시 무변화.
+            "count": len(items),
         }
         try:
             if await turn_mail.deliver(prose_message, channel_id, kind, payload, turn):

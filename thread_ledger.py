@@ -583,8 +583,25 @@ def _render_order(states: List[Dict[str, Any]]):
     return sorted(states, key=key)
 
 
-RENDER_HEADER = ("[GROUND_TRUTH] What stands open between people in this world, from the record. "
+RENDER_HEADER = ("[GROUND_TRUTH] What stands open between people in this world, and what recently closed, from the record. "
                  "A passed hour settles nothing by itself; the page decides how it went.")
+
+
+def recent_closed(states: Dict[str, Dict[str, Any]], world: Optional[Dict[str, Any]] = None,
+                  channel_id: str = "") -> List[Dict[str, Any]]:
+    """[2026-10-16 C45 R3] 최근 끝난 것(closed — void 는 없던 일이라 제외) — 지금 턴에서 THREAD_CLOSED_SHOW_TURNS 안,
+    최근순 THREAD_CLOSED_SHOW_MAX 개. 장기기억 글 3번: 끝난 일은 지우지 말고 끝남 표시. 옛: 끝남은 루카만 봤다."""
+    w = _world_of(channel_id, world)
+    try:
+        now_t = int((w or {}).get("turn_index", 0) or 0)
+    except (TypeError, ValueError):
+        now_t = 0
+    win = int(_cfg("THREAD_CLOSED_SHOW_TURNS", 30))
+    mx = int(_cfg("THREAD_CLOSED_SHOW_MAX", 3))
+    out = [st for st in (states or {}).values() if st.get("status") == "closed"
+           and (now_t <= 0 or now_t - int(st.get("last_turn") or 0) <= win)]
+    out.sort(key=lambda st: -(st.get("last_turn") or 0))
+    return out[:mx]
 
 
 def build_render_block(channel_id: str, world: Optional[Dict[str, Any]] = None,
@@ -603,7 +620,8 @@ def build_render_block(channel_id: str, world: Optional[Dict[str, Any]] = None,
             continue
         items.append(st)
     items = _render_order(items)[: int(_cfg("THREAD_RENDER_MAX", 6))]
-    if not items:
+    _closed = recent_closed(states, world, channel_id)   # [2026-10-16 C45 R3] 끝남 표시
+    if not items and not _closed:
         return ""
     lines = ["<Standing_Threads>", RENDER_HEADER]
     for st in items:
@@ -614,6 +632,11 @@ def build_render_block(channel_id: str, world: Optional[Dict[str, Any]] = None,
         if ph:
             line += f" — {ph}"
         lines.append(line)
+    for st in _closed:
+        label = _KIND_KO.get(st.get("kind"), "사안")
+        pt = _party_text(st, " ↔ ")
+        lines.append(f"- {label}" + (f" · {pt}" if pt else "") + f": {st.get('title', '')}"
+                     + f" — 끝남({_OUTCOME_KO.get(st.get('outcome'), '완료')})")
     lines.append("</Standing_Threads>")
     return "\n".join(lines)
 
@@ -626,7 +649,8 @@ def analysis_line(channel_id: str, world: Optional[Dict[str, Any]] = None, limit
     now = now_abs(_world_of(channel_id, world))
     items = [s for s in states.values() if s.get("status") in ("open", "paused")]
     items = _render_order(items)[:limit]
-    if not items:
+    _closed = recent_closed(states, world, channel_id)   # [2026-10-16 C45 R3]
+    if not items and not _closed:
         return ""
     parts = []
     for st in items:
@@ -642,7 +666,12 @@ def analysis_line(channel_id: str, world: Optional[Dict[str, Any]] = None, limit
         if st.get("remaining"):
             bits.append(f"left: {st['remaining']}")
         parts.append(f"{st.get('title', '')}({', '.join(bits)})")
-    return "- Standing threads: " + "; ".join(parts)
+    _out = []
+    if parts:
+        _out.append("- Standing threads: " + "; ".join(parts))
+    if _closed:
+        _out.append("- Recently closed: " + "; ".join(f"{s.get('title', '')}({s.get('outcome') or 'done'})" for s in _closed))
+    return "\n".join(_out)
 
 
 def extraction_ledger_line(channel_id: str, world: Optional[Dict[str, Any]] = None) -> str:
@@ -682,6 +711,20 @@ def luka_lines(channel_id: str, world: Optional[Dict[str, Any]] = None) -> Tuple
                   key=lambda s: -(s.get("last_turn") or 0))[:3]
     resolved = ", ".join(f"{s.get('title', '')}({_OUTCOME_KO.get(s.get('outcome'), '완료')})" for s in done)
     return active, resolved
+
+
+def closed_block_for_deep(channel_id: str, limit: int = 20) -> str:
+    """[2026-10-16 C45 R3] 딥 압축 입력 — 장부의 끝난 약속·사안(void 제외) 최근순. 없으면 ''.
+    딥 압축의 "Remove triggers that have been resolved"가 근거를 갖게 한다(떡밥 자유문을 코드로 대조하지는 않는다)."""
+    if not channel_id or not _cfg("THREAD_LEDGER", True):
+        return ""
+    states = load_states(channel_id)
+    done = sorted((s for s in states.values() if s.get("status") == "closed"),
+                  key=lambda s: -(s.get("last_turn") or 0))[:limit]
+    if not done:
+        return ""
+    return ("Closed in the ledger (settled; drop any active_memory_trigger these settle): "
+            + "; ".join(f"{s.get('title', '')} — {s.get('outcome') or 'done'}" for s in done))
 
 
 # =========================================================

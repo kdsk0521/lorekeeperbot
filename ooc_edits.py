@@ -195,9 +195,16 @@ def apply_npc_edits(channel_id: str, uid: str, edits: List[Dict[str, Any]]) -> L
             if domain_manager.is_pc_name(new, pcm):
                 out.append(f"⚠ 이름: '{new}'은 PC 이름이야")
                 continue
-            if _resolve(npcs, new):
-                # 새 이름이 이미 명부에 있다 = 같은 사람이라는 말 → 합치기(같은 가드)
-                out.append(merge_pair(channel_id, key, new, pcm))
+            _tgt = _resolve(npcs, new)
+            if _tgt and _tgt == key:
+                # [2026-10-16 C44] 새 이름이 이 인물 자신(옛 이름·별칭)으로 풀린다 = 합치기가 아니라 이름 바꾸기.
+                #   옛: merge_pair(key, key) → "이미 같은 사람으로 묶여 있어"로 막혀 잘못된 개명을 되돌릴 길이 없었다.
+                out.append(npm.swap_npc_name(channel_id, key, new, reason="ooc")[1])
+                continue
+            if _tgt:
+                # [2026-10-16 C44 R4] 다른 인물 이름으로 개명 = 되묻기(레티어스). 옛: 바로 합치기 — OOC 오독이면 두 사람이
+                #   합쳐지고 가르는 길이 없다. 합치기는 merge op(같은 사람이라는 말)로만 일어난다.
+                out.append(f"⚠ 이름: '{new}'는 명부에 이미 있는 다른 인물이야 — 같은 사람이면 \"{key}랑 {_tgt} 합쳐줘\"로 말해줘")
                 continue
             res = str(npm.handle_identity_reveal(channel_id, key, new, reason="ooc") or "")
             out.append(f"⚠ 이름: {key} — {res.lstrip('⚠️ ')}" if res.startswith("⚠") else f"이름: {key} → {new}")
@@ -359,11 +366,170 @@ def apply_time_edits(channel_id: str, edits: List[Dict[str, Any]]) -> List[str]:
 # =========================================================
 # 지난 일 정정 (fact) — [2026-10-10 기록 정정]
 # =========================================================
-def apply_fact_edits(channel_id: str, edits: List[Dict[str, Any]]) -> List[str]:
-    """field="fact" → 정오표 한 줄(corrections) + 걸린 위키 페이지 Observed 정정(틀린 줄은 History 로 강등).
-    거두기 = action remove(행은 남고 비활성). 원문·발효·딥은 손대지 않는다 — 읽는 자리가 정정을 옆에 붙인다."""
+# =========================================================
+# [2026-10-18 C50] 정정 연결 · 덮어쓰기 · 되묻기 — 스펙 composition/C50_정정연결·되묻기_지도·스펙_2026-10-18.md
+#   레티어스 "ooc는 고치라고 하는거라" — 최신이 이긴다. 묻는 건 대상만 같고 턴이 다르며 같은 일인지 안 설 때뿐.
+# =========================================================
+PENDING_KEY = "_pending_corrections"
+
+
+def _write_correction(channel_id: str, about: List[str], text: str, wrong: str, *,
+                      also_wrong: Optional[List[str]] = None) -> Tuple[Optional[Dict[str, Any]], List[str]]:
+    """정정 한 줄을 넣고 위키를 고친 뒤 끈(links)을 적는다. 돌려줌: (행 | None, 위키 되비침 조각)."""
     import corrections
+    import sqlite_store
     import wiki_store
+    row = corrections.add(channel_id, about, text, wrong)
+    if not row:
+        return None, []
+    links: Dict[str, Any] = {}
+    wiki_bits: List[str] = []
+    for nm in row["about"]:
+        try:
+            pid = wiki_store.resolve_page(channel_id, nm)
+        except Exception:
+            pid = None
+        if not pid:
+            continue
+        r = wiki_store.correct_observed(channel_id, pid, row.get("wrong") or "", row["text"], turn=row.get("turn"))
+        if r.get("ok"):
+            links[pid] = {"line": r.get("line") or "", "demoted": r.get("demoted_text") or ""}
+            wiki_bits.append(f"{nm} 위키" + (" (옛 줄 History로)" if r.get("demoted") else ""))
+            if r.get("status") == "ambiguous":
+                wiki_bits[-1] += " ⚠옛 줄이 여럿이라 그대로 둠"
+    aw = [str(x).strip() for x in (also_wrong or []) if str(x or "").strip()]
+    if aw:
+        links["_also_wrong"] = aw[:6]
+    if links:
+        sqlite_store.set_correction_links(channel_id, row["id"], links)
+        row["links"] = links
+    return row, wiki_bits
+
+
+def _supersede(channel_id: str, old: Dict[str, Any], about: List[str], text: str, wrong: str) -> str:
+    """[C50 R3] 옛 정정 → 새 정정. 옛 것은 줄만 빼고(내린 원문은 History 그대로), wrong 은 이어받고, 옛 문장은 also_wrong."""
+    import corrections
+    corrections.undo(channel_id, old["id"], restore=False)
+    also = [old.get("text") or ""] + list(((old.get("links") or {}).get("_also_wrong") or []))
+    row, bits = _write_correction(channel_id, about, text, wrong or str(old.get("wrong") or ""), also_wrong=also)
+    if not row:
+        return f"⚠ 정정: '{str(old.get('text'))[:40]}'는 거뒀는데 새 정정을 못 넣었어"
+    return (f"정정 바꿈: T{old.get('turn')} '{str(old.get('text'))[:40]}' → T{row.get('turn')} '{row['text'][:40]}'"
+            + (f" · {' · '.join(bits)}" if bits else ""))
+
+
+def _decide(channel_id: str, e: Dict[str, Any], about: List[str], text: str, wrong: str):
+    """[C50 R4] → (kind, target_row, cands). kind = dup / replace / new / ask."""
+    import corrections
+    import sqlite_store
+    active = sqlite_store.read_corrections(channel_id, active_only=True)
+    ab = {_norm(a) for a in about}
+    ov = [r for r in active if ab & {_norm(a) for a in (r.get("about") or [])}]
+    if any(_norm(r.get("text")) == _norm(text) for r in ov):
+        return "dup", None, []
+    rid = e.get("replaces")
+    if rid not in (None, "", 0, "0"):
+        try:
+            rid = int(rid)
+        except (TypeError, ValueError):
+            rid = None
+        tgt = next((r for r in active if r.get("id") == rid), None)
+        if tgt:
+            return "replace", tgt, []
+    if e.get("new") in (True, "true", "True", 1, "1"):
+        return "new", None, []
+    if not ov:
+        return "new", None, []
+    same = [r for r in ov if wrong and corrections.same_claim(wrong, r)]
+    if same:
+        return "replace", same[-1], []
+    now = _turn(channel_id)
+    st = [r for r in ov if r.get("turn") == now]
+    if st:
+        return "replace", st[-1], []
+    return "ask", None, [r["id"] for r in reversed(ov)][:3]
+
+
+def pending_question(channel_id: str, item: Dict[str, Any]) -> Tuple[str, List[str]]:
+    """보류 하나 → (질문 메시지, 후보 버튼 글들)."""
+    import sqlite_store
+    byid = {r["id"]: r for r in sqlite_store.read_corrections(channel_id, active_only=True)}
+    ed = item.get("edit") or {}
+    lines = [f"❓ **정정 확인** — '{str(ed.get('value') or '')[:80]}'",
+             "같은 대상에 다른 턴에 고친 정정이 있어. 그걸 바꾸는 거야, 다른 일이야? (고르기 전엔 반영 안 해)"]
+    labels = []
+    for cid in item.get("cands") or []:
+        r = byid.get(cid)
+        if not r:
+            continue
+        lines.append(f"· T{r.get('turn')}: {str(r.get('text'))[:80]}")
+        labels.append(f"T{r.get('turn')} '{str(r.get('text'))[:30]}' → 이걸로 바꿈"[:80])
+    return "\n".join(lines), labels
+
+
+def store_pending(channel_id: str, msg_id: Any, item: Dict[str, Any], uid: Any) -> None:
+    """[C50 R4] 보류를 세션 메모리에 질문 메시지 id 로. 같은 대상의 옛 보류·만료된 보류는 버린다."""
+    if msg_id is None or not isinstance(item, dict):
+        return
+    mem = domain_manager.get_session_ai_memory(channel_id) or {}
+    pend = dict(mem.get(PENDING_KEY) or {})
+    now = _turn(channel_id)
+    keep = int(getattr(config, "CORRECTION_PENDING_TURNS", 10) or 10)
+    ab = {_norm(a) for a in (item.get("about") or [])}
+    for k, v in list(pend.items()):
+        if (not isinstance(v, dict) or now - int(v.get("turn") or 0) > keep
+                or ab & {_norm(a) for a in (v.get("about") or [])}):
+            pend.pop(k, None)
+    pend[str(msg_id)] = {**item, "uid": str(uid or "")}
+    domain_manager.update_session_ai_memory(channel_id, {PENDING_KEY: pend})
+
+
+def resolve_pending(channel_id: str, msg_id: Any, choice: str, uid: Any) -> Tuple[bool, str]:
+    """[C50 R4] 버튼 → 적용. choice = pick:N / new / drop. 돌려줌: (적용했나, 되비침)."""
+    import sqlite_store
+    mem = domain_manager.get_session_ai_memory(channel_id) or {}
+    pend = dict(mem.get(PENDING_KEY) or {})
+    it = pend.get(str(msg_id))
+    if not isinstance(it, dict):
+        return False, "이미 정리됐거나 만료된 정정이야"
+    if str(it.get("uid") or "") and str(uid) != str(it.get("uid")):
+        return False, "이 정정은 낸 사람이 골라야 해"
+    pend.pop(str(msg_id), None)
+    domain_manager.update_session_ai_memory(channel_id, {PENDING_KEY: pend})
+    keep = int(getattr(config, "CORRECTION_PENDING_TURNS", 10) or 10)
+    if _turn(channel_id) - int(it.get("turn") or 0) > keep:
+        return False, "오래돼서 버렸어 — 다시 말해줘"
+    ed = it.get("edit") or {}
+    about, text, wrong = list(ed.get("about") or []), str(ed.get("value") or ""), str(ed.get("wrong") or "")
+    if choice == "drop":
+        return True, "취소 — 반영 안 했어"
+    if str(choice).startswith("pick:"):
+        try:
+            i = int(str(choice).split(":", 1)[1])
+        except (TypeError, ValueError):
+            i = -1
+        cands = list(it.get("cands") or [])
+        if 0 <= i < len(cands):
+            tgt = next((r for r in sqlite_store.read_corrections(channel_id, active_only=True)
+                        if r.get("id") == cands[i]), None)
+            if tgt:
+                return True, _supersede(channel_id, tgt, about, text, wrong)
+        # 후보가 이미 꺼졌으면 따로 넣는다
+    row, bits = _write_correction(channel_id, about, text, wrong)
+    if not row:
+        return False, "⚠ 정정: 넣지 못했어"
+    return True, (f"정정: T{row.get('turn')} {', '.join(row['about'])} — {row['text'][:60]}"
+                  + (f" · {' · '.join(bits)}" if bits else ""))
+
+
+def apply_fact_edits(channel_id: str, edits: List[Dict[str, Any]],
+                     pending_out: Optional[List[Dict[str, Any]]] = None) -> List[str]:
+    """field="fact" → 정오표 한 줄(corrections) + 걸린 위키 페이지 Observed 정정(틀린 줄은 History 로 강등).
+    원문·발효·딥은 손대지 않는다 — 읽는 자리가 정정을 옆에 붙인다.
+    [2026-10-18 C50] 거두기 = 완전 되돌림(번호 `id` 또는 옛 꼴 문장). 같은 대상이면 판정(`_decide`) —
+    같은 문장 무시 / `replaces` · 같은 주장 · 같은 턴 → 갈아치움 / `new` → 따로 / 다른 턴만 겹침 → 보류(pending_out).
+    pending_out 이 없으면(옛 호출부) 보류 대신 따로 넣는다 — 지우는 쪽보다 안전하다."""
+    import corrections
     out: List[str] = []
     for e in edits or []:
         if not isinstance(e, dict):
@@ -371,9 +537,19 @@ def apply_fact_edits(channel_id: str, edits: List[Dict[str, Any]]) -> List[str]:
         act = str(e.get("action") or e.get("op") or "add").strip().lower()
         text = str(e.get("value") or e.get("text") or "").strip()
         if act in ("remove", "retract", "delete"):
+            _cid = e.get("id")
+            if _cid not in (None, ""):
+                res = corrections.undo(channel_id, _cid, restore=True)
+                if res.get("ok"):
+                    _r = res["row"]
+                    out.append(f"정정 거둠: T{_r.get('turn')} {', '.join(_r.get('about') or [])} — {str(_r.get('text'))[:60]}"
+                               + (f" (위키 {res['pages']}쪽 되돌림)" if res.get("pages") else ""))
+                else:
+                    out.append(f"⚠ 정정: {_cid}번 정정이 없거나 이미 거둔 거야")
+                continue
             n, why = corrections.retract(channel_id, text)
             if n:
-                out.append(f"정정 거둠: {why[:60]} (위키에 넣은 정정 줄은 그대로)")
+                out.append(f"정정 거둠: {why[:60]} (위키까지 되돌림)")
             else:
                 out.append({"nomatch": f"⚠ 정정: '{text[:40]}'에 맞는 정정이 없어",
                             "ambiguous": f"⚠ 정정: '{text[:40]}'에 맞는 정정이 여럿이라 못 골라",
@@ -388,23 +564,27 @@ def apply_fact_edits(channel_id: str, edits: List[Dict[str, Any]]) -> List[str]:
         if not text:
             out.append("⚠ 정정: 맞는 사실이 없어")
             continue
-        row = corrections.add(channel_id, about, text, str(e.get("wrong") or ""))
+        ab = corrections._canon_about(channel_id, about)
+        if not ab:
+            out.append("⚠ 정정: 무엇에 대한 정정인지(이름·낱말)가 없어")
+            continue
+        wrong = str(e.get("wrong") or "").strip()
+        kind, tgt, cands = _decide(channel_id, e, ab, text, wrong)
+        if kind == "dup":
+            out.append(f"⚠ 정정: 이미 같은 정정이 있어 — {text[:60]}")
+            continue
+        if kind == "replace" and tgt:
+            out.append(_supersede(channel_id, tgt, ab, text, wrong))
+            continue
+        if kind == "ask" and pending_out is not None:
+            pending_out.append({"edit": {"about": ab, "value": text, "wrong": wrong},
+                                "about": ab, "cands": cands, "turn": _turn(channel_id)})
+            out.append(f"⚠ 정정 보류: '{text[:40]}' — 같은 대상에 다른 턴 정정이 있어. 아래에서 골라줘(고르기 전엔 반영 안 해)")
+            continue
+        row, wiki_bits = _write_correction(channel_id, ab, text, wrong)
         if not row:
             out.append("⚠ 정정: 무엇에 대한 정정인지(이름·낱말)가 없어")
             continue
-        wiki_bits = []
-        for nm in row["about"]:
-            try:
-                pid = wiki_store.resolve_page(channel_id, nm)
-            except Exception:
-                pid = None
-            if not pid:
-                continue
-            r = wiki_store.correct_observed(channel_id, pid, row.get("wrong") or "", row["text"], turn=row.get("turn"))
-            if r.get("ok"):
-                wiki_bits.append(f"{nm} 위키" + (" (옛 줄 History로)" if r.get("demoted") else ""))
-                if r.get("status") == "ambiguous":
-                    wiki_bits[-1] += " ⚠옛 줄이 여럿이라 그대로 둠"
         out.append(f"정정: T{row.get('turn')} {', '.join(row['about'])} — {row['text'][:60]}"
                    + (f" · {' · '.join(wiki_bits)}" if wiki_bits else ""))
     return out
@@ -563,4 +743,20 @@ def world_state_for_edit(channel_id: str, ooc_text: str = "", knows_cap: int = 3
             out["quests"] = _qs[:15]
     except Exception as _e_q:
         logger.debug(f"[OOC] quests skip: {_e_q}")
+    # [2026-10-18 C50 R5] 활성 정정(번호·턴·대상·문장) — 편집 콜이 번호로 거두고 번호로 바꾼다.
+    #   본문에 대상 이름·별칭이 나온 것(최신순 ≤8), 없으면 최근 5. 비면 안 싣는다.
+    try:
+        import corrections as _corr_ws
+        import sqlite_store as _ss_ws
+        _act = _ss_ws.read_corrections(channel_id, active_only=True)
+        if _act:
+            _txt = str(ooc_text or "")
+            _npcs = npm.get_npcs(channel_id) or {}
+            _hit = [r for r in reversed(_act)
+                    if any(f in _txt for w in (r.get("about") or []) for f in _corr_ws._forms(channel_id, str(w), _npcs))]
+            _pick = _hit[:8] if _hit else list(reversed(_act))[:5]
+            out["corrections"] = [{"id": r["id"], "turn": r.get("turn"), "about": r.get("about") or [],
+                                   "text": r.get("text")} for r in _pick]
+    except Exception as _e_cr:
+        logger.debug(f"[OOC] corrections skip: {_e_cr}")
     return out
