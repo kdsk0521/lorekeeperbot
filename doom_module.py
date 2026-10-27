@@ -196,13 +196,65 @@ class DoomModule:
         in_intermission = bool(bus.doom.get("intermission_active"))
 
         # [2026-10-17 C46 R5] 이번 턴에 끝난 시계 목록은 §0 **앞**에서 연다. 전엔 §4 에서 새로 만들어 §0 발화
-        #   (위협·타이머)가 빠졌다 — 렌더 사실 줄 "X has become real"(une_facade)과 aspects 의 clock_fired 가
+        #   (위협·타이머)가 빠졌다 — 렌더 사실 줄 "X has become real"(지금은 in_motion "This turn" — C74 판4)과 aspects 의 clock_fired 가
         #   기회 시계에만 섰고, 위협이 터진 턴을 렌더가 몰랐다(처음 말하는 자리가 나중의 도착물이었다).
         completed_this_turn = []
         _end_turn = bus.dai.get("turn_index", 0)
 
+        # ── 0-앞. 서사적 해결(옛 1b) — [2026-10-24 C74 W1-1b] 발동(§0)보다 먼저 ──
+        #   같은 턴에 Theoria 가 "해결"을 말하고 큐가 "발동"을 고르면 옛 순서(§0 → §1b)에선 발동이 이겼다 —
+        #   장면에서 막아낸 위협이 렌더엔 "X has become real" 로 갔다. 해결을 먼저 세우면 §0 은 resolved 를 건너뛴다.
+        #   (이변 모듈은 doom 보다 앞이라 그 턴 이변 defer 는 한 번 남는다 — 드문 일, 받아들임. 스펙 C74 W1-1b.)
+        flash_resolved = bus.doom.pop("flash_clock_resolved", [])
+        # [판1 검토 #3] 이 턴 여기서 막은 시계 — §1a(새 시계)의 상한 · 같은 이름 검사는 옛 순서(만들기 → 해결)대로
+        #   이것들을 아직 서 있는 것으로 센다(발동으로 끝난 시계가 칸을 비우는 건 옛 그대로).
+        _averted_now = set()
+        if isinstance(flash_resolved, list):
+            for resolved_name in flash_resolved:
+                if not isinstance(resolved_name, str):
+                    continue
+                for clock in clocks:
+                    if clock.get("name") == resolved_name and not clock.get("resolved"):
+                        clock["resolved"] = True
+                        _averted_now.add(id(clock))
+                        _mark_end(clock, "averted", _end_turn)
+                        seg = int(clock.get("segments", 6) or 6)
+                        # 0626: 시계 해결 = doom NEUTRAL (fall은 間만, 해결도 능동 beat). resolve_reward(vigor/composure 회복)는 유지.
+                        resolve_reward = config.CLOCK_RESOLVE_REWARD.get(seg, 3)
+                        bus.doom["resolve_reward"] = bus.doom.get("resolve_reward", 0) + resolve_reward
+                        clock_events.append(f"RESOLVED: {resolved_name} (neutral doom, +{resolve_reward} recovery)")
+                        # [2026-10-24 C74 판3 W2-2] 위협을 막아냄 → 걸린 목표 +1. 타이머 · 기회의 "해결"은 목표에 없음.
+                        if clock.get("linked_goal"):
+                            if _get_clock_doom(clock) > 0:
+                                _advance_linked_goal(context, clock, _end_turn, 1,
+                                                     f"{resolved_name} was turned aside", "code:averted")
+                            else:
+                                clock["linked_goal"] = None
+                        break
+
         # ── 0. Storyteller가 fire 신호 보낸 pending 시계 처리 ──
         fired_names = set(bus.doom.get("_fire_completions", []))
+        # [2026-10-24 C74 판2 검토 #6] 끝남은 이긴다(발동 쪽) — 이 턴 판은 턴 앞에 읽은 사본이라, 그 사이 배경이
+        #   (목표 done → resolve_clocks_by_goal) 끝낸 시계를 다시 발동할 수 있다. 발동 후보가 있을 때만 세계를 한 번
+        #   새로 읽어, 같은 시계(이름 + 만든 턴)가 거기서 끝났으면 끝 칸을 판으로 옮긴다(→ 아래에서 resolved 라 건너뜀).
+        if fired_names:
+            try:
+                import domain_manager as _dm_fw
+                _cid_fw = (context.narrative_anchors or {}).get("channel_id", "")
+                _ended_fw = {(c.get("name"), c.get("turn_created")): c
+                             for c in ((_dm_fw.get_world_state(_cid_fw) or {}).get("doom_clocks") or [])
+                             if isinstance(c, dict) and c.get("resolved")} if _cid_fw else {}
+                for clock in clocks:
+                    _w_fw = _ended_fw.get((clock.get("name"), clock.get("turn_created")))
+                    if _w_fw and not clock.get("resolved") and clock.get("name") in fired_names:
+                        for _k in ("resolved", "end", "end_turn", "end_quest"):
+                            if _k in _w_fw:
+                                clock[_k] = _w_fw[_k]
+                        clock.pop("pending_completion", None)
+                        clock.pop("pending_turn", None)
+                        clock_events.append(f"ENDED-ELSEWHERE: {clock.get('name')} ({_w_fw.get('end', '?')})")
+            except Exception as _e_fw:
+                logger.debug(f"[Doom] fire guard skip: {_e_fw}")
         for clock in clocks:
             if not clock.get("pending_completion") or clock.get("resolved"):
                 continue
@@ -216,11 +268,11 @@ class DoomModule:
                 delta += complete_doom
                 sign = f"+{complete_doom}" if complete_doom > 0 else str(complete_doom)
                 clock_events.append(f"COMPLETE: {clock['name']} ({sign} doom)")
-                if complete_doom > 0:
-                    linked_quest = clock.get("linked_quest")
-                    if linked_quest:
-                        clock["failed_quest"] = linked_quest   # [C46] 도착물 카드 "'퀘스트'(틀어짐)"
-                        _fail_linked_quest(context, linked_quest, clock.get("name", "?"))
+                if complete_doom > 0 and clock.get("linked_goal"):
+                    # [2026-10-24 C74 판2] 발동 = 걸린 목표 깎임(옛: 퀘스트 제거). 도착물 카드 "'목표'(차질)".
+                    _setback_linked_goal(context, clock, _end_turn)
+                elif clock.get("linked_goal"):
+                    clock["linked_goal"] = None   # [C74 판3 W2-2] 타이머 마감 — 목표에 없음(기한은 장부 기한이 맡는다)
 
         # ── 1. Flash 시계 소비 ──────────────────────────────
         flash_new = bus.doom.pop("flash_clock_new", None)
@@ -231,12 +283,11 @@ class DoomModule:
             if isinstance(_pending_ck, dict) and _pending_ck.get("name"):
                 flash_new = _pending_ck
         flash_updates = bus.doom.pop("flash_clock_updates", [])
-        flash_resolved = bus.doom.pop("flash_clock_resolved", [])
 
         # 1a. 새 시계 생성 (씬타입 억제: create)
         if isinstance(flash_new, dict) and flash_new.get("name") and clock_rules.get("create", True):
             new_name = flash_new["name"]
-            active_count = sum(1 for c in clocks if not c.get("resolved"))
+            active_count = sum(1 for c in clocks if not c.get("resolved") or id(c) in _averted_now)
             if active_count >= config.DOOM_CLOCK_CAP:
                 clock_events.append(f"⚠️ Cap({config.DOOM_CLOCK_CAP}) — '{new_name}' blocked")
             else:
@@ -250,7 +301,8 @@ class DoomModule:
                     "linked_entity": flash_new.get("linked_entity"),
                     "defense_action": flash_new.get("defense_action", ""),
                     "doom_on_complete": flash_new.get("doom_on_complete"),
-                    "linked_quest": None,
+                    "linked_quest": None,   # [C74 판2] 카드 글(걸린 목표 제목) — 연결 자체는 linked_goal(장부 id)
+                    "linked_goal": None,
                     "tags": flash_new.get("tags", []),
                     "turn_created": bus.dai.get("turn_index", 0),
                     "last_progress_turn": bus.dai.get("turn_index", 0),
@@ -269,30 +321,32 @@ class DoomModule:
                         new_clock["filled"] = pre_fill
                         clock_events.append(f"⚡ Fast-track: {new_name} {pre_fill}/{new_clock['segments']}")
                 # 중복 방지 (같은 이름 미해결 시계)
-                existing_names = {c.get("name") for c in clocks if not c.get("resolved")}
+                existing_names = {c.get("name") for c in clocks if not c.get("resolved") or id(c) in _averted_now}
                 if new_clock["name"] not in existing_names:
+                    # [2026-10-24 C75 G2] 시계가 떨어지는 자리 — linked_entity 장소 → 사람 거처 → 그 사람이 든 우물 중심 →
+                    #   이 턴 PC 노드(레티어스 10-24 밤). 우물 강착은 배경 tick 의 시계 맞춤이 이 칸을 읽는다(여기선 안 씀).
+                    try:
+                        import well_store as _ws_bn
+                        new_clock["born_node"] = _ws_bn.clock_place(
+                            (context.narrative_anchors or {}).get("channel_id", ""), new_clock,
+                            pc_location=bus.dai.get("current_location"))
+                    except Exception as _e_bn:
+                        logger.debug(f"[Doom] born_node skip: {_e_bn}")
                     clocks.append(new_clock)
                     clock_events.append(
                         f"NEW: {new_clock['name']} ({new_clock['segments']}seg, {new_clock['tick_mode']})"
                     )
-                    # 퀘스트 자동 연결 시도
-                    _auto_link_quest_clock(context, new_clock)
+                    # [2026-10-24 C74 판3 W2-2] 연결: Theoria `for_goal` 이 있으면 그것만(열린 목표면 잇고 아니면 안 잇는다),
+                    #   비었을 때만 이름 부분 일치(스펙 W2-2 "2는 1이 null 일 때만").
+                    _fg = _for_goal_id(flash_new.get("for_goal"))
+                    if _fg:
+                        _link_clock_for_goal(context, new_clock, _fg)
+                    else:
+                        _auto_link_quest_clock(context, new_clock)
+                    if new_clock.get("linked_goal"):
+                        new_clock["linked_turn"] = bus.dai.get("turn_index", 0)
 
-        # 1b. 서사적 해결
-        if isinstance(flash_resolved, list):
-            for resolved_name in flash_resolved:
-                if not isinstance(resolved_name, str):
-                    continue
-                for clock in clocks:
-                    if clock.get("name") == resolved_name and not clock.get("resolved"):
-                        clock["resolved"] = True
-                        _mark_end(clock, "averted", _end_turn)
-                        seg = int(clock.get("segments", 6) or 6)
-                        # 0626: 시계 해결 = doom NEUTRAL (fall은 間만, 해결도 능동 beat). resolve_reward(vigor/composure 회복)는 유지.
-                        resolve_reward = config.CLOCK_RESOLVE_REWARD.get(seg, 3)
-                        bus.doom["resolve_reward"] = bus.doom.get("resolve_reward", 0) + resolve_reward
-                        clock_events.append(f"RESOLVED: {resolved_name} (neutral doom, +{resolve_reward} recovery)")
-                        break
+        # 1b. 서사적 해결 → [2026-10-24 C74 W1-1b] §0 앞으로 옮겼다(위 「0-앞」).
 
         # ── 2. Flash clock_updates (action/hybrid delta, 씬타입 억제: flash_tick) ──
         mitigation_count = 0
@@ -531,6 +585,10 @@ class DoomModule:
                     completed_this_turn.append(clock)
                     sign = f"+{complete_doom}" if complete_doom > 0 else str(complete_doom)
                     clock_events.append(f"COMPLETE: {clock.get('name', '?')} ({sign} doom)")
+                    if clock.get("linked_goal"):
+                        # [2026-10-24 C74 판3 W2-2] 기회 달성 → 걸린 목표 +k(깎임과 같은 표)
+                        _advance_linked_goal(context, clock, current_turn, setback_steps(clock.get("segments")),
+                                             f"{clock.get('name', '?')} came within reach", "code:achieved")
                     if complete_doom < 0:
                         seg = int(clock.get("segments", 6) or 6)
                         resolve_reward = config.CLOCK_RESOLVE_REWARD.get(seg, 3)
@@ -646,53 +704,159 @@ class DoomModule:
 # ── Helper Functions ─────────────────────────────────────────
 
 def _auto_link_quest_clock(context: "GameContext", clock: dict) -> None:
-    """시계 생성 시 기존 퀘스트와 이름 퍼지 매칭하여 양방향 연결."""
+    """시계 생성 시 열린 목표와 이름 매칭하여 연결. [2026-10-24 C74 판2] 출처 = 장부 목표(옛 퀘스트 보드).
+    연결은 시계 쪽 한 칸(linked_goal = 장부 id)만 — 목표 쪽엔 안 적는다(목표 상태는 쓸 때 장부에서 읽는다).
+    linked_quest 는 도착물 카드가 읽는 글(목표 제목)로 남긴다."""
     try:
-        import game_character
+        import thread_ledger
         channel_id = (context.narrative_anchors or {}).get("channel_id", "")
         if not channel_id:
             return
-        board = game_character._get_board(channel_id)
-        active_quests = board.get("active", [])
         clock_name = (clock.get("name") or "").strip().lower()
-        for quest in active_quests:
-            if not isinstance(quest, dict):
-                continue
-            quest_name = (quest.get("content") or "").strip().lower()
-            # 퍼지 매칭: 시계 이름이 퀘스트에 포함 (단방향 — 퀘스트가 상위 개념)
-            if clock_name in quest_name:
-                clock["linked_quest"] = quest.get("content", "")
-                quest["linked_clock"] = clock.get("name", "")
-                game_character._save_board(channel_id, board)
-                logger.info("[Doom] Auto-linked clock '%s' ↔ quest '%s'",
-                            clock.get("name"), quest.get("content"))
+        if not clock_name:
+            return
+        for g in thread_ledger.open_goals(thread_ledger.load_states(channel_id)):
+            goal_name = (g.get("title") or "").strip().lower()
+            # 퍼지 매칭: 시계 이름이 목표에 포함 (단방향 — 목표가 상위 개념)
+            if clock_name in goal_name:
+                clock["linked_goal"] = g.get("id")
+                clock["linked_quest"] = g.get("title", "")
+                clock.setdefault("linked_turn", clock.get("turn_created", 0))   # [C74 판3] 연결한 턴(느리게 풀기 기준)
+                logger.info("[Doom] Auto-linked clock '%s' ↔ goal %s '%s'",
+                            clock.get("name"), g.get("id"), g.get("title"))
                 return
     except Exception as e:
-        logger.warning("[Doom] Auto-link quest-clock failed: %s", e)
+        logger.warning("[Doom] Auto-link goal-clock failed: %s", e)
 
 
-def _fail_linked_quest(context: "GameContext", quest_name: str, clock_name: str) -> None:
-    """시계 완성 → 연결 퀘스트 자동 실패."""
+def _for_goal_id(v) -> str:
+    """[C74 판3 검토 #8] Theoria `for_goal` → 'T3'. 'T3' · 't3 ' · 'T3 도둑 잡기' · 3 · '3' 을 받는다. null · 빈 칸 · 꼴 밖 = ''."""
+    import re as _re_fg
+    if isinstance(v, bool) or v is None:
+        return ""
+    if isinstance(v, int):
+        return f"T{v}" if v > 0 else ""
+    m = _re_fg.match(r"\s*[Tt]?\s*(\d+)\b", str(v))
+    return f"T{int(m.group(1))}" if m and int(m.group(1)) > 0 else ""
+
+
+def _goal_link_live(channel_id: str, clock: dict, gid: str, g: "dict | None", rows: "list | None" = None) -> bool:
+    """[C74 판3 검토 #4] 스펙 W2-2 "목표 멈춤 · 지움 → 시계 연결만 푼다". 연결은 쓸 때 판정한다(느리게 풀기) —
+    목표가 지금 열려 있어도 연결한 턴 뒤에 멈춤 · 잠 · 닫힘 · 없던 일 행이 있으면 그 연결은 끝난 것이다
+    (다시 열린 목표를 옛 시계가 몰래 밀거나 깎지 않게). 세계 저장을 안 건드려 판 사본과 다툴 일이 없다."""
+    if not g or g.get("kind") != "goal" or g.get("status") != "open":
+        return False
     try:
-        import game_character
+        import sqlite_store
+        since = int(clock.get("linked_turn", clock.get("turn_created", 0)) or 0)
+        for r in (rows if rows is not None else sqlite_store.read_thread_log(channel_id)):   # [C74 판4 검토 L2] 읽는 쪽이 한 번 읽어 넘김
+            if str(r.get("thread_id")) == gid and r.get("op") in ("pause", "void", "sleep", "close") \
+                    and int(r.get("turn") or 0) >= since:
+                return False
+    except Exception:
+        pass
+    return True
+
+
+def _link_clock_for_goal(context: "GameContext", clock: dict, for_goal) -> bool:
+    """[2026-10-24 C74 판3 W2-2] Theoria `clock_new.for_goal` → 열린 목표면 연결(linked_goal = 장부 id, linked_quest = 제목).
+    없음 · 꼴이 틀림 · 열린 목표가 아님이면 False — 이름 부분 일치로 넘어가지 않는다(for_goal 을 적었으면 그것만, 검토 #8)."""
+    try:
+        gid = _for_goal_id(for_goal)
+        if not gid:
+            return False
+        import thread_ledger
         channel_id = (context.narrative_anchors or {}).get("channel_id", "")
         if not channel_id:
-            return
-        result = game_character.remove_quest(channel_id, quest_name)
-        context.shared_bus.doom.setdefault("quest_failed", []).append(
-            {"quest": quest_name, "reason": f"{clock_name} came to pass"}   # [C46 R6] 렌더 사실 줄 — 기계 낱말(clock) 없이
-        )
-        logger.info("[Doom] Quest failed: %s (clock '%s' completed) → %s",
-                     quest_name, clock_name, result)
+            return False
+        g = thread_ledger.load_states(channel_id).get(gid)
+        if not g or g.get("kind") != "goal" or g.get("status") != "open":
+            logger.info("[Doom] for_goal skip: clock '%s' → %s (%s)", clock.get("name"), gid,
+                        (g or {}).get("status", "none"))
+            return False
+        clock["linked_goal"] = gid
+        clock["linked_quest"] = g.get("title", "")
+        logger.info("[Doom] Linked clock '%s' → goal %s '%s' (for_goal)", clock.get("name"), gid, g.get("title"))
+        return True
     except Exception as e:
-        logger.warning("[Doom] Failed to remove linked quest: %s", e)
+        logger.warning("[Doom] for_goal link failed: %s", e)
+        return False
+
+
+def _advance_linked_goal(context: "GameContext", clock: dict, turn, k: int, reason: str, origin: str) -> None:
+    """[2026-10-24 C74 판3 W2-2] 위협 막아냄(+1) · 기회 달성(+k) → 걸린 목표 진행도 +k(origin 행). 목표가 열려 있지
+    않으면 올리지 않는다. 렌더 사실 줄 = goal_advance(une_facade). max 에 닿으면 장부가 목표를 끝낸다(code:auto — 판2 끝 훅).
+    영수증은 bus.doom["goal_receipts"] → goal 모듈 알림(완료 · 깸만 — 진행 칸 자체는 사실 줄이 말한다). 연결은 여기서 끝."""
+    try:
+        import thread_ledger
+        channel_id = (context.narrative_anchors or {}).get("channel_id", "")
+        gid = clock.get("linked_goal")
+        clock["linked_goal"] = None
+        if not channel_id or not gid or int(k or 0) <= 0:
+            return
+        g = thread_ledger.load_states(channel_id).get(gid)
+        if not _goal_link_live(channel_id, clock, gid, g):
+            logger.info("[Doom] advance skip: clock '%s' → %s (%s · link off)", clock.get("name"), gid,
+                        (g or {}).get("status", "none"))
+            return
+        _rc = []
+        n = thread_ledger.code_events(channel_id, int(turn or 0), [{"op": "progress", "id": gid, "step": int(k)}],
+                                      origin=origin, receipts=_rc)
+        if not n:
+            return
+        bus = context.shared_bus
+        clock["advanced_goal"] = gid   # [C74 판3 검토 #5] 도착물 스캐너 11 — 이 시계가 그 목표를 끝냈으면 목표 카드를 따로 안 낸다
+        bus.doom.setdefault("goal_receipts", []).extend(_rc)
+        bus.doom.setdefault("goal_advance", []).append({"goal": g.get("title", ""), "reason": reason})
+        logger.info("[Doom] Goal advance: %s 「%s」 +%d (clock '%s', %s) rows=%d", gid, g.get("title"), k,
+                    clock.get("name"), origin, n)
+    except Exception as e:
+        logger.warning("[Doom] goal advance failed: %s", e)
+
+
+def setback_steps(segments) -> int:
+    """[C74 판2] 시계 발동이 목표를 깎는 칸 — 4칸 1 · 6칸 1 · 8칸 이상 2."""
+    try:
+        seg = int(segments or 6)
+    except (TypeError, ValueError):
+        seg = 6
+    return 2 if seg >= 8 else 1
+
+
+def _setback_linked_goal(context: "GameContext", clock: dict, turn) -> None:
+    """[2026-10-24 C74 판2] 시계 완성(위협 발동) → 걸린 목표 진행도 −k(code:setback 행). 목표가 열려 있지 않으면
+    (멈춤 · 잠 · 끝 · 없던 일) 깎지 않는다. 렌더 사실 줄 = goal_setback(une_facade). 연결은 여기서 끝(linked_goal 비움)."""
+    try:
+        import thread_ledger
+        channel_id = (context.narrative_anchors or {}).get("channel_id", "")
+        gid = clock.get("linked_goal")
+        clock["linked_goal"] = None
+        if not channel_id or not gid:
+            return
+        g = thread_ledger.load_states(channel_id).get(gid)
+        if not _goal_link_live(channel_id, clock, gid, g):   # [C74 판3 검토 #4] 멈춤 · 잠 · 지움 뒤의 옛 연결은 끝
+            logger.info("[Doom] setback skip: clock '%s' → %s (%s · link off)", clock.get("name"), gid,
+                        (g or {}).get("status", "none"))
+            return
+        k = setback_steps(clock.get("segments"))
+        n = thread_ledger.code_events(channel_id, int(turn or 0), [{"op": "progress", "id": gid, "step": -k}],
+                                      origin="code:setback")
+        if not n:
+            return   # 장부에 안 섰으면(쓰기 실패 · 전이 표 밖) 사실 줄도 카드 글도 없다
+        clock["setback_quest"] = g.get("title", "")   # 도착물 카드 "'목표'(차질)"
+        context.shared_bus.doom.setdefault("goal_setback", []).append(
+            {"goal": g.get("title", ""), "reason": f"{clock.get('name', '?')} came to pass"}   # [C46 R6] 기계 낱말 없이
+        )
+        logger.info("[Doom] Goal setback: %s 「%s」 −%d (clock '%s') rows=%d", gid, g.get("title"), k, clock.get("name"), n)
+    except Exception as e:
+        logger.warning("[Doom] goal setback failed: %s", e)
 
 
 def _mark_end(clock: dict, kind: str, turn) -> None:
     """[2026-10-17 C46 R1] 시계가 끝난 **사유**와 **턴**. `resolved = True` 를 세우는 자리마다 같이 적는다.
 
     사유: fired(스토리텔러 발화) · achieved(기회 완성) · averted(서사 해결) · quest(퀘스트 완료,
-          game_world.resolve_clock_by_quest) · faded(정체·이탈·등락·방전 — 조용히 잊힘) · climax(클라이맥스 강제 완성).
+          game_world.resolve_clocks_by_goal — C74 판2) · faded(정체·이탈·등락·방전 — 조용히 잊힘) · climax(클라이맥스 강제 완성).
     읽는 쪽은 도착물 스캐너(world_board Scanner 4) 하나다 — 잊힘·클라이맥스는 소재가 아니고 끝난 지 오래된 것도
     아니다. 전엔 `resolved` 하나라 아홉 가지 끝이 전부 "시계 완성" 도착물이 됐다. 옛 시계(키 없음)는 소재에서 빠진다.
     """
@@ -707,7 +871,14 @@ def _get_clock_doom(clock: dict) -> int:
     """시계의 doom_on_complete 값을 반환 (극성 반영)."""
     custom_doom = clock.get("doom_on_complete")
     if custom_doom is not None:
-        return int(custom_doom)
+        # [C74 판3 검토 #10] Theoria 가 글("null" · "-10 (opportunity)")을 넣어도 doom 단계가 통째로 죽지 않게
+        try:
+            return int(custom_doom)
+        except (TypeError, ValueError):
+            import re as _re_dc
+            _m = _re_dc.match(r"\s*(-?\d+)", str(custom_doom))
+            if _m:
+                return int(_m.group(1))
     segments = int(clock.get("segments", 6) or 6)
     return config.CLOCK_COMPLETE_DOOM.get(segments, 15)
 

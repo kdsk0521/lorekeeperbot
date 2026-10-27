@@ -25,7 +25,9 @@ Prompt Order (SillyTavern Preset Style):
 
 import asyncio
 import logging
+import os
 import re
+import time
 from typing import Optional, List
 from google import genai
 from google.genai import types
@@ -134,11 +136,19 @@ class ChatSessionAdapter:
         # 전송 직전 마지막 메시지는 반드시 이번 턴의 role="user"여야 함.
         _user_text = content
         if prefill:
+            # [2026-10-26 C12] 안내문 2줄을 프리필에서 이쪽(지시문)으로 옮겼다 — 프리필에 두면 모델이 그 줄을
+            #   복사하다 멈춘다(라이브 10-26 13:47: 150자 STOP). 지시는 읽고 따르는 것, 베끼는 재료가 아니다.
             _user_text = (
                 content
-                + f"\n\n[SYSTEM: Begin your visible response (immediately after internal thinking) "
-                  f"with the exact text below, then close with ┫ and continue with Korean prose]\n{prefill}"
+                + f"\n\n[SYSTEM: Begin your visible response (immediately after internal thinking) with the "
+                  f"exact text below. The block opens once: continue from the seed, never restate it. "
+                  f"Think in English: every field stays English until the block closes (Korean only to quote "
+                  f"a prose-to-avoid line, or a proper noun), then close it with ┫ and continue with Korean "
+                  f"prose]\n{prefill}"
             )
+        # [2026-10-26 C6] 준수 선언은 여기(프리필 뒤)에 두지 않는다 — 라이브 로그 실측(10-26 12:44):
+        #   시드 뒤에 이 문장이 오면 모델이 시드 머리를 51자 에코하고 STOP, ┫ 미닫힘 3회 → 서사 0자.
+        #   → 배선은 generate_response_with_retry(hidden_reminder 꼬리)로 되돌렸다. 시드는 계속 맨 끝.
 
         self.history.append(
             types.Content(role="user", parts=[types.Part(text=_user_text)])
@@ -192,6 +202,12 @@ class ChatSessionAdapter:
                     )
                 )
                 response._extracted_visible_text = full_text
+            else:
+                # [2026-10-26 C11] 실패(빈 응답·PROHIBITED_CONTENT)면 방금 넣은 user 메시지를 되돌린다.
+                #   안 되돌리면 재시도마다 같은 턴 문서가 히스토리에 한 벌씩 쌓인다 — 라이브 로그 10-26 12:55:
+                #   5msgs 89,374 → 6msgs 99,787 → 7msgs 110,200 (시도마다 +10,413자).
+                if self.history and self.history[-1].role == "user":
+                    self.history.pop()
 
             return response
 
@@ -294,16 +310,24 @@ class OpenAIChatSessionAdapter:
         # Prefill: Fireworks는 assistant prefix를 이어쓰기로 인식 못할 수 있음
         # → user 메시지에 지시로 포함
         if prefill:
+            # [2026-10-26 C12] Gemini 경로와 같은 이유로 안내문을 지시문 쪽에 둔다(프리필에서 제거).
             messages[-1] = {
                 "role": "user",
-                "content": messages[-1]["content"] + f"\n\n[SYSTEM: Begin your response with exactly this text, then continue with prose after ┫]\n{prefill}"
+                "content": messages[-1]["content"] + (
+                    "\n\n[SYSTEM: Begin your response with exactly this text. The block opens once: continue "
+                    "from the seed, never restate it, and keep the block English until it closes. Close with ┫, "
+                    "then continue with prose]\n" + prefill)
             }
+        # [2026-10-26 C6] 준수 선언 — 이 경로도 프리필 **앞**(hidden_reminder 꼬리)에 둔다.
+        #   프리필 뒤에 두면 시드가 마지막이 아니게 되고, 라이브 로그(10-26 12:44)에서 모델이 시드 51자만
+        #   에코하고 STOP → ┫ 미닫힘 3회 → 서사 0자였다. 배선 = generate_response_with_retry.
 
         # [2026-10-01 1차] 렌더 추론 캡 꼬리 삭제 — 마지막 user 뒤에 붙던 system 메시지("land the reasoning/thinking block
         #   near ~5000 characters …")가 사라진다. 5000은 추론이 글자 수를 세는 연료였고(레티어스 "스케치 초안이랑 5천자는
         #   이제 버리자"), full3 리플레이는 이 줄 없이 쟀다(폭주 5/15 → 2/15). 메시지 목록 끝 = user(프리필 지시 포함).
         #   분석 콜 캡(analysis_backend, bridge=False)은 그대로. reasoning_policy의 bridge 가지는 소비자 0.
         #   구 이력: 07-05 GLM 스왑 캡 주입 → 07-08 DTG 재조준 → 09-24 bridge 문구 → 09-29 재단언 삭제.
+        _t0 = time.perf_counter()   # [2026-10-24 C74 W0-3] 렌더 콜 시간 → [reasoning-trace] render … ms=
         try:
             # max_tokens > 4096 이면 stream=true (긴 출력). [2026-07-05] 렌더 추론 ON 대비 예산 16384로 인상(config) — /v1이 thinking을 max_tokens에 포함할 가능성.
             _effective_max = self.max_tokens
@@ -343,16 +367,16 @@ class OpenAIChatSessionAdapter:
                 _think_tag = ("<think>" in text) or ("</think>" in text)
                 # </think> 태그 누출 정리
                 text = re.sub(r'</think>', '', text).strip()
-                logger.info("[reasoning-trace] render model=%s stream reasoning_chars=%d think_tag=%s",
-                            self.model, _reason_chars, _think_tag)
+                logger.info("[reasoning-trace] render model=%s stream reasoning_chars=%d think_tag=%s ms=%d",
+                            self.model, _reason_chars, _think_tag, int((time.perf_counter() - _t0) * 1000))
             else:
                 choice = response.choices[0] if response.choices else None
                 text = choice.message.content if choice and choice.message and choice.message.content else ""
                 finish = getattr(choice, "finish_reason", "stop") or "stop" if choice else "stop"
                 _msg = choice.message if choice else None
-                logger.info("[reasoning-trace] render model=%s nonstream reasoning_chars=%d think_tag=%s",
+                logger.info("[reasoning-trace] render model=%s nonstream reasoning_chars=%d think_tag=%s ms=%d",
                             self.model, reasoning_policy.reasoning_trace_len(_msg),
-                            ("<think>" in (text or "")))
+                            ("<think>" in (text or "")), int((time.perf_counter() - _t0) * 1000))
 
             if text:
                 # [2026-07-27 중복 수리] openai 경로는 프리필을 **user 지시**로 주입한다(L225 근처:
@@ -370,6 +394,9 @@ class OpenAIChatSessionAdapter:
                 return _OpenAIResponseShim(text, finish)
             else:
                 logging.warning("[OpenAI] Empty response")
+                # [2026-10-26 C11] 빈 응답이면 방금 넣은 user 메시지를 되돌린다(재시도 누적 방지 — Gemini 경로와 같은 수리).
+                if self.history and self.history[-1].get("role") == "user":
+                    self.history.pop()
                 return _OpenAIResponseShim("", "stop")
 
         except Exception as e:
@@ -664,6 +691,12 @@ async def generate_response_with_retry(
         # 분포 앵커는 시스템 머리(위치 0)가 정위치(레티어스 "최상위 맞아?" 적중). 본문은
         # create_risu_style_session의 deepseek 분기(full_system 머리)로 이동. 복제 금지.
         # [2026-10-01 1차] 그 앵커는 삭제됐다(create_risu_style_session 주석). 꼬리엔 순도 가드만 남는다.
+    # [2026-10-26 C6] 준수 선언 — 프롬프트 항목의 **마지막**. 이 뒤에 오는 것은 프리필 기계 지시와
+    #   ┣ 시드뿐이다(리수의 assistantPrefill 자리 = 프롬프트 항목이 아니다). 83자 1회.
+    #   ⚠ 프리필 뒤에 붙이면 안 된다 — 라이브 로그 10-26 12:44: 시드 51자 에코 후 STOP, ┫ 미닫힘 3회, 서사 0자.
+    _compliance = getattr(text_resources, "REQUEST_COMPLIANCE_LINE", "").strip()
+    if _compliance:
+        hidden_reminder = hidden_reminder + "\n\n" + _compliance
     full_input = user_input + hidden_reminder
 
     best_response = None
@@ -671,6 +704,11 @@ async def generate_response_with_retry(
 
     for attempt in range(config.MAX_RETRY_COUNT):
         try:
+            try:   # [2026-10-24 C74 W0-1] 렌더 시도 수 → [Turn] 의 render_try (그 턴 태스크에서만 센다)
+                import turn_timing as _tt_r
+                _tt_r.count("render_try")
+            except Exception:
+                pass
             response = await chat_session.send_message(full_input, prefill=prefill)
             
             if response is None or not response.candidates:

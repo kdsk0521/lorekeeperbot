@@ -29,7 +29,12 @@ TIMING_TABLE: Dict[str, Dict[int, str]] = {
 _INTENSITY_RANK = {"Low": 0, "Mid": 1, "High": 2, "Extreme": 3}
 
 
-_NO_EXPIRE_TYPES = ("clock_completion", "thread_due")
+_NO_EXPIRE_TYPES = ("clock_completion", "thread_due", "collision")   # [C75 G3] 충돌파도 만료 없음 · 전조 아님
+# [2026-10-24 C74 W1-6] 큐 거르기 규칙 — 쓰는 곳마다 목적이 다르다(한 곳에 적어 둔다):
+#   pending_events(Theoria [E#] · 길잡이) ...... clock_completion 뺌 — 시계 완성은 doom 차례, 고를 사건이 아니다
+#   _omen_top(전조) ............................ clock_completion · thread_due 뺌 — 시계 줄 · 장부 줄이 이미 앞서 알린다
+#   굶주림 셈(_decide_timing) ................... clock_completion 뺌 — 시계는 자기 셈(non_intimate_turns)이 따로 있다
+#   만료(EVENT_QUEUE_EXPIRY_TURNS) .............. _NO_EXPIRE_TYPES 뺌 — 기계적 약속은 만료 안 함
 
 
 def pending_events(st_state: dict) -> list:
@@ -74,8 +79,10 @@ class AnomalyModule:
 
     # ----- Timing Decision -----
 
-    def _decide_timing(self, bus, st_state: dict, current_turn: int) -> str:
-        """Determine act/defer/skip based on timing table + overrides + DAI."""
+    def _decide_timing(self, bus, st_state: dict, current_turn: int, for_clock: bool = False) -> str:
+        """Determine act/defer/skip based on timing table + overrides + DAI.
+
+        for_clock=True: 시계 완성 판정용 — 굶주림 머리를 시계 완성 항목들 중에서 잡는다(C74 W1-6)."""
         dai = bus.dai
 
         # Override 0: 間 페이즈 (후일담) — anomaly 강제 defer (정적/회상 톤만 통과)
@@ -96,7 +103,12 @@ class AnomalyModule:
             return "defer"
 
         # Starvation: queued event waiting 3+ turns → force act
-        queue = st_state.get("event_queue", [])
+        # [2026-10-24 C74 W1-6] 머리 = 시계 완성이 아닌 첫 항목. 옛 queue[0] 은 시계 완성 항목의 나이로 **이변** 굶주림을
+        #   터뜨렸다(시계는 아래 clock_queue 의 non_intimate_turns 셈이 따로 맡는다).
+        #   시계 판정(for_clock)은 거꾸로 시계 완성 항목들의 머리 — 옛 셈에서 시계가 머리일 때 3턴 굶주림으로
+        #   발사되던 박자를 그대로 둔다(다른 이변이 더 늙었다고 시계가 끌려 터지지는 않는다).
+        queue = [e for e in (st_state.get("event_queue") or [])
+                 if isinstance(e, dict) and ((e.get("type") == "clock_completion") == bool(for_clock))]
         if queue:
             oldest_queued_turn = queue[0].get("queued_turn", 0)
             if current_turn - oldest_queued_turn >= _cfg.STORYTELLER_STARVATION_TURNS:
@@ -169,7 +181,13 @@ class AnomalyModule:
         candidates: List[dict] = []
 
         # Queued events
+        # [2026-10-24 C74 판1 검토 #1] 시계 완성 항목은 고를 사건이 아니다 — doom 차례(위 clock_queue 처리)다.
+        #   옛 셈은 이변 판정과 시계 판정이 같은 굶주림 머리를 써서, 이변이 act 면 시계가 먼저 터지고 이변은 defer 였다
+        #   (여기까지 시계 항목이 온 적이 없다). W1-6 으로 두 판정의 머리가 갈리자 시계 항목이 보통 이변으로 뽑혀
+        #   큐에서 빠지고 시계는 대기로 남아 영영 안 터졌다. 번호(_queue_index)는 전체 큐 기준 그대로 — 꺼낼 때 맞는다.
         for i, event in enumerate(st_state.get("event_queue", [])):
+            if isinstance(event, dict) and event.get("type") == "clock_completion":
+                continue
             candidates.append({**event, "_source": "queue", "_queue_index": i})
 
         # Current Flash proposal
@@ -183,6 +201,7 @@ class AnomalyModule:
                 "line": bus.anomaly.get("line", ""),
                 "reason": bus.anomaly.get("reason", ""),
                 "replaces": bus.anomaly.get("replaces", ""),   # [2026-10-10 큐 이어짐] 확전이 갈아 끼울 조건 tag
+                "location": bus.anomaly.get("location", ""),   # [2026-10-24 C75 G2] 빛 자리(관측 라우터)
                 "_source": "flash",
             })
 
@@ -282,6 +301,7 @@ class AnomalyModule:
                 parties = ", ".join([str(p) for p in (st.get("parties") or [])][:3])
                 queue.append({
                     "type": "thread_due", "thread_id": tid, "tag": f"thread_due:{tid}",
+                    "title": title,   # [2026-10-24 C74 W1-5] 시스템 줄 "[기한] 제목" 용 — 태그(기계 이름) 대신
                     "category": "social", "intensity": "Mid", "polarity": "mixed",
                     "line": f"{title}: its time has come" + (f" ({parties})" if parties else ""),
                     "reason": "thread ledger due window reached", "queued_turn": current_turn,
@@ -293,6 +313,39 @@ class AnomalyModule:
         if added:
             logger.info("[Storyteller] thread due → queue +%d", added)
         return added
+
+    @staticmethod
+    def _sync_clock_completion(st_state: dict, channel_id: str, clocks=None) -> int:
+        """[2026-10-24 C74 W1-1] 시계 완성 항목 동기화 — `_sync_thread_due` 의 짝.
+
+        큐의 clock_completion 은 발동(아래 clock_queue 처리)으로만 빠졌다. 그 사이 시계가 퀘스트 완료 ·
+        Theoria 해결 · 소멸 · 클라이맥스로 끝나도 항목이 남아, 머리에 서면 발동 판정 → doom §0 은 resolved 라
+        건너뛰는데 이변만 defer(clock_mutual_exclusion) 됐다 — 아무 일도 없는 턴에 이변 자리만 뺏겼다.
+        시계가 없거나 · 끝났거나(resolved) · 대기(pending_completion)가 아니면 뺀다. 끝나는 자리 아홉 곳을
+        일일이 고치지 않고 큐 주인 한 곳에서. 뺀 수를 돌려준다. 스펙 C74 §2-① · W1-1.
+
+        clocks = 이 턴 버스의 시계(bus.doom["clocks"] — 턴 끝 sync_from_game_context 가 저장할 바로 그 사본).
+        [판1 검토 #2] 살아 있는 world_state 로 판정하면 안 된다: 앞 턴 배경이 이 턴 Theoria 도중 퀘스트 완료로 시계를
+        끝내도, 턴 끝 저장은 버스의 옛 사본(대기 · 미해결)으로 덮는다 — 큐 항목만 빠지고 시계는 대기로 남아 영영 안 터졌다.
+        없거나 비었을 때만 도메인을 읽는다 — 버스 기본값이 빈 목록이라, convert_to_game_context 를 안 거친 버스(스모크 ·
+        도구)가 진짜 시계를 다 지우지 않게. 진짜로 시계가 0이면 도메인도 0이라 결과가 같다."""
+        if not channel_id:
+            return 0
+        queue = st_state.get("event_queue") or []
+        if not any(isinstance(e, dict) and e.get("type") == "clock_completion" for e in queue):
+            return 0
+        if not isinstance(clocks, list) or not clocks:
+            import domain_manager as _dm
+            clocks = (_dm.get_world_state(channel_id) or {}).get("doom_clocks") or []
+        live = {str(c.get("name") or "") for c in clocks
+                if isinstance(c, dict) and c.get("pending_completion") and not c.get("resolved")}
+        kept = [e for e in queue if not (isinstance(e, dict) and e.get("type") == "clock_completion"
+                                         and str(e.get("clock_name") or "") not in live)]
+        dropped = len(queue) - len(kept)
+        if dropped:
+            st_state["event_queue"] = kept
+            logger.info("[Storyteller] clock completion sync → queue −%d (clock already ended)", dropped)
+        return dropped
 
     # ----- Thread Router (큐 이어짐) -----
 
@@ -315,6 +368,11 @@ class AnomalyModule:
             if not 0 <= idx < len(pend):
                 return ""
             item = pend[idx]
+            # [2026-10-25 C77 E-2 · Q32①] 충돌파는 이어짐으로 안 합친다 — 합치면 두 흐름이 부딪힌 그 줄(line)이 모델 문장으로
+            #   덮였다. 제안은 비우지 않고 그대로 둔다(보통 제안처럼 판정을 탄다). 기한 줄은 제목 칸이 따로 있어 그대로 합친다.
+            if item.get("type") == "collision":
+                logger.info("[Storyteller] THREAD %s → collision item, not merged", cid)
+                return ""
             if new_line:
                 item["line"] = new_line
             item["steps"] = int(item.get("steps", 1) or 1) + 1
@@ -349,6 +407,33 @@ class AnomalyModule:
     def _clear_proposal(bus) -> None:
         for k in ("tag", "line", "reason", "category", "location", "replaces"):
             bus.anomaly.pop(k, None)
+
+    @staticmethod
+    def _sync_wells(bus, st_state: dict, channel_id: str, current_turn: int) -> int:
+        """[2026-10-25 C75 G3] 우물 앞단 한 번 → 충돌파 대기열 항목(type collision — 만료 없음 · 관측 라우터 안 탐 ·
+        전조 아님 · 박자표를 탄다). 넣은 수를 돌려준다."""
+        if not channel_id:
+            return 0
+        import well_store as _wsf
+        ev = _wsf.front(channel_id, pc_location=bus.dai.get("current_location"), turn=current_turn)
+        # [2026-10-25 C77 A-9 · Q32③] 죽은 쓰기 `bus.anomaly["well_front"]` 삭제 — 읽는 곳 0(전수 grep, activity 포함).
+        queue = st_state.get("event_queue", [])
+        have = {e.get("tag") for e in queue if isinstance(e, dict)}
+        n = 0
+        for c in ev.get("collisions") or []:
+            a, b = sorted((int(c["a"]), int(c["b"])))
+            tag = f"collision:{a}-{b}"
+            if tag in have:
+                continue
+            queue.append({"type": "collision", "tag": tag, "category": "environmental", "intensity": "High",
+                          "polarity": "mixed", "line": c.get("line", ""), "reason": "two great wells met",
+                          "title": c.get("title", ""), "queued_turn": current_turn})
+            have.add(tag)
+            n += 1
+        if n:
+            st_state["event_queue"] = queue
+            logger.info("[Storyteller] collision queued x%d", n)
+        return n
 
     # ----- Main Process -----
 
@@ -395,6 +480,21 @@ class AnomalyModule:
             self._sync_thread_due(st_state, channel_id, current_turn)
         except Exception as _e_td:
             logger.warning("[Storyteller] thread due sync failed: %s", _e_td)
+        # [2026-10-24 C74 W1-1] 이미 끝난 시계의 완성 항목을 뺀다(같은 자리 — 길잡이 뒤. E# 번호는 pending_events 가
+        #   clock_completion 을 빼고 매기므로 이 정리가 번호를 밀지 않는다).
+        try:
+            self._sync_clock_completion(st_state, channel_id, clocks=bus.doom.get("clocks"))
+        except Exception as _e_cs:
+            logger.warning("[Storyteller] clock completion sync failed: %s", _e_cs)
+        # [2026-10-25 C75 G3] 우물 앞단 — 시계 맞춤 · 결전 들어섬/떠남 · 충돌파. 충돌 항목은 이 턴 사본(st_state)에 넣는다
+        #   (모듈 끝에 저장 — 배경이 따로 쓰면 이 저장이 덮는다).
+        # [G3 검토 #6] 배치 모드 두 번째 PC(_skip_storyteller)는 앞단을 안 돈다 — 그 PC 자리로 첫 PC 의 결전을 끝내거나
+        #   'keep' 으로 저장 없이 돌아가며 충돌 항목을 흘리지 않게.
+        if not bus.anomaly.get("_skip_storyteller"):
+            try:
+                self._sync_wells(bus, st_state, channel_id, current_turn)
+            except Exception as _e_wf:
+                logger.warning("[Storyteller] well front failed: %s", _e_wf)
 
         # --- event_queue 만료 정리 ---
         # queued_turn으로부터 EVENT_QUEUE_EXPIRY_TURNS 이상 묵힌 일반 이벤트는 폐기.
@@ -481,7 +581,7 @@ class AnomalyModule:
                     cq["non_intimate_turns"] = cq.get("non_intimate_turns", 0) + 1
 
             # 타이밍 판단 (기존 _decide_timing 재사용)
-            clock_decision = self._decide_timing(bus, st_state, current_turn)
+            clock_decision = self._decide_timing(bus, st_state, current_turn, for_clock=True)
             # intimate 중에는 starvation도 무시 — non_intimate_turns 기준으로만
             top_clock = clock_queue[0]
             if scene_type == "intimate":
@@ -525,8 +625,12 @@ class AnomalyModule:
             # Select best event
             selected = self._select_event(bus, st_state)
             if selected:
-                # === Arc 라우터 (Phase 2, spec v2 §4.0/§4.2) ===
-                # 후보를 단일 분기로: absorb / promote_candidate / emit
+                # === 관측 라우터 — [2026-10-24 C75 G2] 이변 = 우물이 내는 빛(질량 아님) ===
+                #   빛 자리(이변 location → 노드, 비면 PC 노드)에서 가장 세게 당기는 우물 = 출처(당김 ≥ 0.25).
+                #   밝기 = 출처 질량 ÷ (빛 자리 ↔ PC 홉 + 1)² — 빛 난 자리(레티어스 10-24 밤: "이변은 모델의 행동 능동성을
+                #   올리자는 것" — PC 앞에 낸 이변은 늘 터지고 우물은 결만 붙인다). ≥ 1 무대 위 · 0.25~1 전언 · < 0.25 산문 0.
+                #   **삼키는 건 이름 얻은 우물뿐** — 먼지는 안에서만 산다(보이는 곳이 없어 전언을 실어 갈 자리가 없다) → 터지고 결만.
+                #   출처가 없으면 옛 발사 그대로. 약속 기한은 안 탄다. 옛 카테고리 흡수 · 격상 후보 · 초신성(a)은 은퇴.
                 _normalized_cand = {
                     "category": selected.get("category", ""),
                     "tag": selected.get("tag", ""),
@@ -536,42 +640,30 @@ class AnomalyModule:
                     "summary": selected.get("line", ""),
                 }
                 _route = "emit"  # 기본
-                _target_arc = None
-                _is_due = selected.get("type") == "thread_due"   # [2026-10-10 던지는판 C1] 약속 기한은 아크로 흡수하지 않는다
-                # [2026-09-24 감사] 아크는 storyteller 상태가 아니라 narrative_tracker 상태(storylines)에 산다.
-                #   전엔 st_state(storylines 키 없음)를 넘겨 흡수 분기 영구 None · 승격 임계의 "같은 카테고리
-                #   활성 아크 없음" 검사가 공허(승격이 살아나면 같은 카테고리 아크 중복 승격 위험)였다.
-                _nt_state_r = None
-                try:
-                    if channel_id:
-                        import domain_manager as _dm_arc
-                        _nt_state_r = _dm_arc.get_narrative_tracker_state(channel_id)
-                except Exception as _e_ntl:
-                    logger.debug("[Storyteller] nt_state load skip: %s", _e_ntl)
-                _arc_state = _nt_state_r if isinstance(_nt_state_r, dict) else {}
-                try:
-                    import narrative_tracker as _nt
-                    _target_arc = None if _is_due else _nt.find_absorbing_arc(_arc_state, _normalized_cand["category"])
-                    if _target_arc:
-                        _route = "absorb"
-                    elif not _is_due and _nt.check_promote_threshold(
-                        _arc_state, _normalized_cand,
-                        st_state.get("recent_categories", []),
-                        st_state.get("event_queue", []),
-                        reader_axes=bus.anomaly.get("_reader_axes"),  # [Reader-GM R4b] 독자 1표 (현행 FEED=1 라이브 적재 — [2026-08-11 리더 §7] 구 "FEED=0이면 미적재" 정정)
-                    ):
-                        _route = "promote_candidate"
-                except Exception as _e_route:
-                    logger.warning("[Storyteller] Router error: %s", _e_route)
-
-                if _route == "absorb":
-                    # === (d) arc 흡수 — 일반 발사 흐름 skip ===
-                    _was_armed = bool(_target_arc.get("armed"))
+                _obs = None
+                # [2026-10-10 던지는판 C1] 약속 기한은 우물 빛이 아니다 · [C75 G3] 충돌파도(중력파는 안 막힌다)
+                _is_due = selected.get("type") in ("thread_due", "collision")
+                if not _is_due and channel_id:
                     try:
-                        _absorbed = _nt.absorb_to_arc(_target_arc, _normalized_cand, current_turn)
-                    except Exception as _e_abs:
-                        logger.warning("[Storyteller] absorb_to_arc failed: %s", _e_abs)
-                        _absorbed = False
+                        import well_store as _wsr
+                        # 시계 맞춤은 입구의 우물 앞단(_sync_wells)이 이미 했다.
+                        _obs = _wsr.observe(channel_id, selected.get("location") or "",
+                                            f"{selected.get('line', '')} {selected.get('reason', '')}",
+                                            pc_location=bus.dai.get("current_location"))
+                        if _obs.get("well") is not None and _obs.get("tier") in ("glow", "dark") \
+                                and _obs["well"].get("status") == "named":
+                            _route = "backstage"
+                    except Exception as _e_route:
+                        logger.warning("[Storyteller] Well router error: %s", _e_route)
+                        _obs = None
+
+                if _route == "backstage":
+                    # === 막후 — 안 터진다(전언 · 소문 / 산문 0). 그 우물 막후 칸에 흔적 ===
+                    _w_obs = _obs["well"]
+                    try:
+                        _wsr.record_light(channel_id, _w_obs["id"], "bg", _normalized_cand, current_turn)
+                    except Exception as _e_rl:
+                        logger.warning("[Storyteller] well trace failed: %s", _e_rl)
 
                     # diversity 갱신 (시드 들어왔다는 사실 추적)
                     _cats = st_state.get("recent_categories", [])
@@ -586,40 +678,18 @@ class AnomalyModule:
                             _queue.pop(_idx)
 
                     bus.anomaly["triggered"] = False
-                    bus.anomaly["arc_absorbed"] = {
-                        "arc_id": _target_arc.get("id"),
-                        "accepted": bool(_absorbed),
-                    }
+                    if _obs.get("tier") == "glow":
+                        # 전언이 닿는 갈래만 외부 사건 신호(aspects 가 읽는 모양 그대로). 산문 0(dark)은 신호도 0.
+                        bus.anomaly["arc_absorbed"] = {"arc_id": _w_obs.get("id"), "accepted": True}
+                    bus.anomaly["well"] = {"id": _w_obs.get("id"), "label": _w_obs.get("label", ""),
+                                           "tier": _obs.get("tier"), "b": round(float(_obs.get("b", 0.0)), 3)}
                     logger.info(
-                        "[Storyteller] ABSORB → arc#%s cat=%s accepted=%s",
-                        _target_arc.get("id"), _normalized_cand["category"], _absorbed,
+                        "[Storyteller] BACKSTAGE → well#%s tier=%s b=%.2f pull=%.2f [%s]",
+                        _w_obs.get("id"), _obs.get("tier"), float(_obs.get("b", 0.0)), float(_obs.get("pull", 0.0)),
+                        _normalized_cand["tag"],
                     )
-                    # Supernova 트리거(a): 이미 armed였던 arc에 같은 카테고리 시드 흡수 성공
-                    # (spec §4.5 — 2026-07-06 배선). 이번 흡수로 armed된 경우는 다음 trigger 대기.
-                    if _absorbed and _was_armed:
-                        try:
-                            _nt.supernova_branch(_target_arc, current_turn)
-                        except Exception as _e_sn:
-                            logger.warning("[Storyteller] supernova branch failed: %s", _e_sn)
-                    # [2026-09-24 감사] 흡수는 in-place 변형이라 tracker 상태를 저장해야 남는다.
-                    #   ⚠ 배경 추출(직전 턴)이 같은 상태를 들고 있으면 나중 저장이 이긴다 — best-effort.
-                    if _absorbed and isinstance(_nt_state_r, dict) and channel_id:
-                        try:
-                            _dm_arc.update_narrative_tracker_state(channel_id, _nt_state_r)
-                        except Exception as _e_nts:
-                            logger.warning("[Storyteller] absorb save failed: %s", _e_nts)
                     # 일반 발사 흐름 skip — active_condition / escalated 등록 X
                 else:
-                    # === (e) promote_candidate 또는 (f) 일반 발사 ===
-                    if _route == "promote_candidate":
-                        bus.anomaly["arc_promote_candidate"] = dict(_normalized_cand)
-                        logger.info(
-                            "[Storyteller] PROMOTE_CANDIDATE cat=%s tag=%s",
-                            _normalized_cand["category"], _normalized_cand["tag"],
-                        )
-                        # 1차 안전: PMU confirm 단계 도입 전엔 일반 발사도 함께 진행
-                        # PMU가 다음 턴에 confirm하면 arc 등록 별도
-
                     # === 기존 일반 발사 흐름 ===
                     # "계속되면 이변이 아니다" — 이미 standing인 조건의 재발사는 [이변]으로
                     # 재공지하지 않는다(triggered=False → 배너/anomaly-shock 비트 억제). 조건은
@@ -642,6 +712,32 @@ class AnomalyModule:
                     bus.anomaly["line"] = selected.get("line", "")
                     bus.anomaly["reason"] = selected.get("reason", "")
                     bus.anomaly["source"] = selected.get("_source", "flash")
+                    # [2026-10-24 C75 G2] 터지는 빛 — 출처 우물 결을 붙이고, 실제로 터졌을 때만 그 우물에 흔적. 무대 위(stage)면
+                    #   전조 칸(떡밥), 먼지가 출처인 먼 빛이면 막후 칸. 이미 서 있는 조건의 재발사(triggered False)는 새 빛이 아니다.
+                    bus.anomaly.pop("well", None)
+                    if _obs and _obs.get("well") is not None:
+                        _w_obs = _obs["well"]
+                        _tier = _obs.get("tier")
+                        bus.anomaly["well"] = {"id": _w_obs.get("id"), "label": _w_obs.get("label", ""),
+                                               "tier": _tier, "b": round(float(_obs.get("b", 0.0)), 3)}
+                        if bus.anomaly["triggered"]:
+                            try:
+                                _wsr.record_light(channel_id, _w_obs["id"], "fg" if _tier == "stage" else "bg",
+                                                  _normalized_cand, current_turn)
+                            except Exception as _e_rl:
+                                logger.warning("[Storyteller] well trace failed: %s", _e_rl)
+                    # [2026-10-24 C74 W1-5] 약속 기한 발사 — 사람이 읽는 시스템 줄은 태그(thread_due:T3) 대신 장부 제목.
+                    #   제목 칸이 없는 옛 항목은 줄 머리("<제목>: its time has come")에서 떼어 낸다.
+                    if selected.get("type") == "thread_due":
+                        _dt = str(selected.get("title") or "").strip()
+                        if not _dt:
+                            _dt = str(selected.get("line") or "").split(": its time has come")[0].strip()
+                        bus.anomaly["due_title"] = _dt
+                    elif selected.get("type") == "collision":
+                        # [G3 검토 #3] 충돌파도 기계 태그 대신 두 흐름 이름
+                        bus.anomaly["due_title"] = str(selected.get("title") or "").strip()
+                    else:
+                        bus.anomaly.pop("due_title", None)
 
                     # Update storyteller state
                     st_state["last_event_turn"] = current_turn
@@ -674,7 +770,10 @@ class AnomalyModule:
                         logger.info("[Storyteller] condition escalated in place: %s → %s",
                                     _replaces, bus.anomaly["intensity"])
                     elif not _already_active and not _is_due and len(active_conds) < _cfg.ACTIVE_CONDITION_CAP:   # 기한 약속은 조건으로 안 선다(장부가 쥔다)
-                        cond_location = bus.anomaly.get("location") or ""
+                        # [2026-10-24 C75 G2] 고른 이변의 자리 — 대기열에서 왔으면 그 항목의 location(옛 꼴은 이번 턴
+                        #   Flash 제안의 location 을 대기열 이변에 붙였다).
+                        cond_location = (selected.get("location") or "") if selected.get("_source") == "queue" \
+                            else (bus.anomaly.get("location") or "")
                         if not cond_location:
                             cond_location = bus.dai.get("current_location", "") if hasattr(bus, "dai") else ""
                         active_conds.append({
@@ -692,7 +791,8 @@ class AnomalyModule:
                     # une_facade.py:1262가 이 플래그를 읽어 directive Aspects에
                     # "Loss of Control"을 추가한다. 배선 전에는 플래그가 영원히
                     # 설정되지 않아 Aspects가 죽어있었음 (컨슈머 고아 해소).
-                    if bus.anomaly["intensity"] in ("High", "Extreme"):
+                    # [G3 검토 #3] 충돌파는 먼 데서 온 떨림 — PC 장면의 '통제를 넘었다'(Loss of Control)로 번지지 않게.
+                    if bus.anomaly["intensity"] in ("High", "Extreme") and selected.get("type") != "collision":
                         bus.anomaly["escalated"] = True
 
                     logger.info("[Storyteller] ACT [%s] cat=%s int=%s pol=%s src=%s reason=%s escalated=%s",
@@ -722,6 +822,7 @@ class AnomalyModule:
                         "reason": bus.anomaly.get("reason", ""),
                         "queued_turn": current_turn,
                         **({"replaces": bus.anomaly["replaces"]} if bus.anomaly.get("replaces") else {}),   # [2026-10-10 큐 이어짐]
+                        **({"location": bus.anomaly["location"]} if bus.anomaly.get("location") else {}),   # [C75 G2] 빛 자리
                     })
                     st_state["event_queue"] = queue
             logger.info("[Storyteller] defer [%s] queue_size=%d reason=%s",

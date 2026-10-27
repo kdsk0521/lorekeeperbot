@@ -302,8 +302,13 @@ async def generate_ooc_response(
         _tl_act, _tl_res = "", ""
     if _tl_act:
         mem_parts.append(f"진행 중인 서사: {_tl_act}")
-    if ai_mem.get("current_arc"):
-        mem_parts.append(f"현재 아크: {ai_mem['current_arc']}")
+    try:   # [2026-10-25 C74 판4 · G4] 한 줄 아크 = 코드가 우물에서(옛 세션 기억 current_arc 안 읽음)
+        import well_store as _ws_lk
+        _arc_lk = _ws_lk.arc_line(channel_id)
+    except Exception:
+        _arc_lk = ""
+    if _arc_lk:
+        mem_parts.append(f"현재 아크: {_arc_lk}")
     if _tl_res:
         mem_parts.append(f"해결된 서사: {_tl_res}")
     mem_text = "\n".join(mem_parts) if mem_parts else ""

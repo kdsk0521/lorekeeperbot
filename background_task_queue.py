@@ -38,6 +38,16 @@ class BackgroundTask:
     retry_count: int = 0
 
 
+def _bg_timing(task: "BackgroundTask", start_time: float, run: float, ok: bool) -> None:
+    """[2026-10-24 C74 W0-2] 배경 태스크 시간 → turn_timing([BG] 줄 · 정리 끝 셈). 계측이 죽어도 큐는 그대로."""
+    try:
+        import turn_timing
+        turn_timing.bg_done(task.channel_id, task.task_name, max(0.0, start_time - task.created_at), run,
+                            retry=task.retry_count, ok=ok)
+    except Exception:
+        pass
+
+
 class ChannelTaskQueue:
     """
     채널별 작업 큐 관리자.
@@ -62,10 +72,12 @@ class ChannelTaskQueue:
         channel_id: str,
         task_name: str,
         coroutine_factory: Callable[[], Awaitable[Any]],
-        priority: TaskPriority = TaskPriority.NORMAL
+        priority: TaskPriority = TaskPriority.NORMAL,
+        retry_count: int = 0
     ) -> None:
         """
         백그라운드 작업을 큐에 추가합니다.
+        [2026-10-24 C74 W4-2·3] retry_count = 이미 쓴 재시도 수(짝 태스크 안에서 죽어 혼자 다시 서는 쪽은 1 — 시도 수가 옛과 같다).
 
         Args:
             channel_id: 채널 ID
@@ -81,7 +93,8 @@ class ChannelTaskQueue:
             channel_id=channel_id,
             task_name=task_name,
             coroutine=coroutine_factory,
-            priority=priority
+            priority=priority,
+            retry_count=max(0, int(retry_count or 0))
         )
 
         await self._queues[channel_id].put(task)
@@ -113,9 +126,12 @@ class ChannelTaskQueue:
 
                 # 작업 실행 (채널 잠금 내에서)
                 async with self._locks[channel_id]:
-                    await self._execute_task(task)
-
-                queue.task_done()
+                    try:
+                        await self._execute_task(task)
+                    finally:
+                        # [2026-10-25 C77 검토] 일 안에서 CancelledError(BaseException)가 새도 셈은 맞춘다 —
+                        #   빠지면 queue.join() 이 영영 안 끝나 `!다시` 스냅샷 대기(C-2)가 매 턴 상한까지 서고 거절된다.
+                        queue.task_done()
                 self._last_activity[channel_id] = time.time()
 
             except Exception as e:
@@ -126,17 +142,20 @@ class ChannelTaskQueue:
         """
         단일 작업을 실행합니다 (재시도 로직 포함).
         """
+        start_time = time.time()
         try:
             logger.debug(f"[{task.channel_id}] Executing: {task.task_name}")
-            start_time = time.time()
 
             # 코루틴 팩토리를 호출하여 실제 코루틴 생성 및 실행
             await task.coroutine()
 
             elapsed = time.time() - start_time
             logger.debug(f"[{task.channel_id}] Completed: {task.task_name} ({elapsed:.2f}s)")
+            # [2026-10-24 C74 W0-2] INFO [BG] 한 줄 — 큐 대기(적재 → 시작) · 실행. 옛 DEBUG 줄은 서버 INFO 로그에 안 보였다.
+            _bg_timing(task, start_time, elapsed, ok=True)
 
         except Exception as e:
+            _bg_timing(task, start_time, time.time() - start_time, ok=False)
             task.retry_count += 1
 
             if task.retry_count <= task.max_retries:
@@ -250,7 +269,8 @@ async def enqueue_background_task(
     channel_id: str,
     task_name: str,
     coroutine_factory: Callable[[], Awaitable[Any]],
-    priority: TaskPriority = TaskPriority.NORMAL
+    priority: TaskPriority = TaskPriority.NORMAL,
+    retry_count: int = 0
 ) -> None:
     """
     백그라운드 작업을 채널 큐에 추가하는 편의 함수입니다.
@@ -266,7 +286,7 @@ async def enqueue_background_task(
         )
     """
     queue = get_task_queue()
-    await queue.enqueue(channel_id, task_name, coroutine_factory, priority)
+    await queue.enqueue(channel_id, task_name, coroutine_factory, priority, retry_count=retry_count)
 
 
 async def wait_for_channel_tasks(channel_id: str, timeout: float = 30.0) -> bool:

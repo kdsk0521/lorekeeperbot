@@ -58,8 +58,10 @@ class CommandRegistry:
         self._aliases: Dict[str, str] = {}
         self._descriptions: Dict[str, str] = {}
         self._categories: Dict[str, str] = {} # cmd_name -> category
+        self._usages: Dict[str, tuple] = {}    # [2026-10-25 C78] cmd_name -> 하위 명령 줄(`!도움 {명령}` 상세)
 
-    def register(self, name: str, category: str = "General", aliases: Optional[List[str]] = None, description: str = ""):
+    def register(self, name: str, category: str = "General", aliases: Optional[List[str]] = None, description: str = "",
+                 usage: Optional[List[str]] = None):
         """
         Decorator to register a command handler.
         
@@ -77,6 +79,7 @@ class CommandRegistry:
             self._commands[cmd_name] = func
             self._descriptions[cmd_name] = description
             self._categories[cmd_name] = category
+            self._usages[cmd_name] = tuple(usage or ())
             
             if aliases:
                 for alias in aliases:
@@ -116,6 +119,26 @@ class CommandRegistry:
             await ctx.send(f"❌ 명령어 실행 중 오류가 발생했습니다: {e}")
             return True # Error handled, but command was found
 
+    def resolve(self, word: str) -> Optional[str]:
+        """[2026-10-25 C78] 이름 · 별칭 → 정규 이름. 없으면 None(`!도움 {명령}` · 없는 명령 안내)."""
+        w = str(word or "").strip().lower().lstrip("!")
+        if not w:
+            return None
+        if w in self._commands:
+            return w
+        name = self._aliases.get(w)
+        return name if name in self._commands else None
+
+    def aliases_of(self, name: str) -> List[str]:
+        return [k for k, v in self._aliases.items() if v == name]
+
+    def usage_of(self, name: str) -> tuple:
+        return self._usages.get(name, ())
+
+    def all_words(self) -> List[str]:
+        """정규 이름 + 별칭 전부(가까운 이름 찾기용)."""
+        return sorted(set(self._commands) | {k for k, v in self._aliases.items() if v in self._commands})
+
     def get_commands_by_category(self) -> Dict[str, List[Dict[str, Any]]]:
         """Returns all commands grouped by category for Help generation."""
         grouped = {}
@@ -132,6 +155,7 @@ class CommandRegistry:
             grouped[cat].append({
                 "name": name,
                 "aliases": my_aliases,
-                "description": desc
+                "description": desc,
+                "usage": self._usages.get(name, ()),
             })
         return grouped

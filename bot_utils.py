@@ -265,14 +265,18 @@ def repair_json(text: str) -> str:
         """[2026-10-07 분석 안쪽 E1] 괄호 짝 수리 — 따옴표 밖 `{`/`[`를 스택으로 따라가며 어긋난 닫기를 고친다.
         실측(vI_1005 Theoria): `"Effect": {"value": 0.5, "reason": "…"],` — 객체를 `]`로 닫아 repair_json 전 단계로도
         안 풀리고 재시도까지 깨지면 DAI 전체가 빈다. 규칙: 맨 위와 짝 → 그대로 / 그 아래와 짝 → 빠진 닫기 하나 보충 /
-        둘 다 아님 → 종류 틀림, 맨 위 짝으로 교체 / 스택 빔 → 남는 닫기 버림. 정상 JSON에는 no-op."""
+        둘 다 아님 → 종류 틀림, 맨 위 짝으로 교체 / 스택 빔 → 남는 닫기 버림. 정상 JSON에는 no-op.
+        [2026-10-25 C77 A-7 · Q20] + 뿌리 일찍 닫힘: 스택 깊이 1 에서 짝 맞는 닫기인데 다음 글자(공백 뺌)가 `,` 면 그 닫기를
+          건너뛴다. 실측(Theoria 서사 콜, 판1 프리즈마 5 · 13턴): 닫는 괄호를 하나 더 찍어 `"newcomer_seeds"` 가 뿌리 밖으로
+          샜다 → 옛 규칙은 **맞는 끝 `}`** 를 "남는 닫기"로 버리고 일찍 닫힌 것을 남겨 그대로 `Extra data` 였다(서사 콜 통째 재시도).
+          기기 runs 실제 출력 2,485개: 그 둘만 풀림 · 정상 JSON 바이트 변화 0 · 지금 풀리던 13개 결과 같음."""
         pairs = {"}": "{", "]": "["}
         closer = {"{": "}", "[": "]"}
         out = []
         stack = []
         in_str = False
         esc = False
-        for ch in text:
+        for _i, ch in enumerate(text):
             if in_str:
                 out.append(ch)
                 if esc:
@@ -292,6 +296,8 @@ def repair_json(text: str) -> str:
                 continue
             if ch in "}]":
                 if not stack:
+                    continue
+                if len(stack) == 1 and stack[-1] == pairs[ch] and text[_i + 1:].lstrip().startswith(","):
                     continue
                 if stack[-1] == pairs[ch]:
                     stack.pop()

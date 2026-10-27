@@ -28,10 +28,10 @@ def _is_tone_label(label: str) -> bool:
     return bool(_TONE_HEADER_RE.match(str(label or "").strip()))
 
 def _split_lore_chunks(lore_text: str, min_len: int = 50,
-                        max_chunk: int = 4000, min_chunk: int = 800) -> list:
+                        max_chunk: int = 8000, min_chunk: int = 800) -> list:
     """로어 텍스트를 섹션 단위로 청크 분할 (V3 — 영어 로어북 기준).
 
-    봇 default와 동일 (max_chunk=4000, min_chunk=800). GUI에서 슬라이더로
+    봇 default와 동일 (max_chunk=8000, min_chunk=800 — 2026-10-27 4000 → 8000). GUI에서 슬라이더로
     실험할 수 있도록 파라미터화. 봇 코드는 default 값으로 호출하므로 동작 동일.
     """
     if not lore_text or not lore_text.strip():
@@ -234,9 +234,9 @@ def format_report(chunks: list, preview_chars: int = 0) -> str:
     if mn < 200:
         small = sum(1 for s in sizes if s < 200)
         warnings.append(f"⚠ 200자 미만 청크 {small}개 — 병합 룰이 안 잡은 케이스")
-    if mx >= 4000:
-        large = sum(1 for s in sizes if s >= 4000)
-        warnings.append(f"⚠ 4000자 이상 청크 {large}개 — 마이너 헤더로 더 못 쪼갠 케이스")
+    if mx >= 8000:
+        large = sum(1 for s in sizes if s >= 8000)
+        warnings.append(f"⚠ 8000자 이상 청크 {large}개 — 마이너 헤더로 더 못 쪼갠 케이스")
     if warnings:
         lines.append("─" * 70)
         for w in warnings:
@@ -252,8 +252,8 @@ def main():
                     help="각 청크의 처음 N자 미리보기 (기본: 0=비표시)")
     ap.add_argument("--min-len", type=int, default=50,
                     help="최소 청크 길이 (기본: 50)")
-    ap.add_argument("--max-chunk", type=int, default=4000,
-                    help="최대 청크 크기, 초과 시 분할 (기본: 4000)")
+    ap.add_argument("--max-chunk", type=int, default=8000,
+                    help="최대 청크 크기, 초과 시 분할 (기본: 8000)")
     ap.add_argument("--min-chunk", type=int, default=800,
                     help="최소 청크 크기, 미만 시 인접 병합 (기본: 800, 영어 로어북 기준)")
     ap.add_argument("--no-content", action="store_true",

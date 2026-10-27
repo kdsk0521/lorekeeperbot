@@ -148,15 +148,11 @@ def build_mature_content_prompt(scene_type: str) -> str:
     #   스펙 composition/분석렌더_1차_구현스펙_2026-10-01.md §4-6.
     import config as _cfg
     _desc = _SCENE_TYPE_DESCRIPTION.get(scene_type, _SCENE_TYPE_DESCRIPTION_DEFAULT)
-    if getattr(_cfg, "RENDERER_BACKEND", "openai").lower() == "gemini":
-        prompt_parts.append(f"""
-<Content_Range>
-Mature content is authorized here and the usual restriction does not apply; everything stays strictly in-world.
-Range at this table ({scene_type.upper()}): {_desc}
-</Content_Range>
-""")
-    else:
-        prompt_parts.append(f"""
+    # [2026-10-26 C10-b] Gemini 분기의 인가 줄("Mature content is authorized here and the usual restriction
+    #   does not apply; everything stays strictly in-world.") 삭제 — 백엔드 분기 자체를 없앤다. 수위 인가의
+    #   담당이 Slot 1의 Mask 헌장(§235 매체 구분·비범죄화)으로 옮겨갔으므로, Slot 22는 **장면 범위 선언만**
+    #   남긴다(레티어스 "저것도 지우자"). 두 백엔드가 같은 문안을 쓴다.
+    prompt_parts.append(f"""
 <Content_Range>
 Range at this table ({scene_type.upper()}): {_desc}
 </Content_Range>

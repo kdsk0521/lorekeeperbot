@@ -2343,6 +2343,8 @@ async def run_turn(channel_id: str, ctx: Any = None) -> Dict[str, Any]:
     # 0. 배경 큐 drain (§0.7 e) — N턴 배경(apply_deltas·시간 전진)이 N+1턴 4.7 보다 늦게
     #    도는 게 가능하다. 값 시차 1턴은 재료로는 무해하지만 **동시 쓰기**는 lost update 다.
     #    타임아웃이면 경고 1줄 + 진행 — 렌더를 잡지 않는 것이 우선이다.
+    import time as _time_dr
+    _dr0 = _time_dr.perf_counter()
     try:
         drained = await wait_for_channel_tasks(
             channel_id, getattr(config, "EXPR_DRAIN_TIMEOUT", 3.0))
@@ -2350,6 +2352,11 @@ async def run_turn(channel_id: str, ctx: Any = None) -> Dict[str, Any]:
             logger.warning("[Expr] 배경 큐 drain 타임아웃 — 시차 수용하고 진행 (%s)", channel_id)
     except Exception as e:
         logger.debug("[Expr] drain skipped: %s", e)
+    try:   # [2026-10-24 C74 W0-1] drain 기다린 시간 → [Turn] 의 drain
+        import turn_timing as _tt_dr
+        _tt_dr.sub(channel_id, "drain", _time_dr.perf_counter() - _dr0)
+    except Exception:
+        pass
 
     res = Resolver(channel_id, ctx)
     turn = res.turn_index()

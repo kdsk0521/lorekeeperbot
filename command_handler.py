@@ -100,7 +100,7 @@ def _split_lore_chunks(lore_text: str, min_len: int = 50) -> list:
     if not lore_text or not lore_text.strip():
         return []
 
-    _MAX_CHUNK = 4000
+    _MAX_CHUNK = 8000   # [2026-10-27] 4000 → 8000(레티어스 "로어 청킹 한도 8000자까지"). 도구 check_lore_chunks · lore_chunk_gui · lore_check · 작성킷 01 같이
     _MIN_CHUNK = 800  # V3 (2026-05-04): 영어 로어북 sweet spot. 200은 한국어 기준이라 영어에선 과잉 분할
 
     # 구분선: ===, ---, ***, ~~~ (3자 이상, 내용 없는 줄)
@@ -286,7 +286,12 @@ def _chunk_by_paragraph(text: str, min_len: int, max_chunk: int, parent_label: s
 # ⛔[2026-09-05 삭제] handle_participant_command — registry.dispatch로 바로 넘기기만 하던
 #   스텁. 유일한 참조가 tests/health_check.py의 hasattr 검사였고 그것도 같이 지웠다.
 
-@registry.register("lore", category="World", aliases=["로어", "lore"], description="세계관 정보 조회 및 수정")
+@registry.register("lore", category="World", aliases=["로어", "lore"],
+                   description="로어 넣기 · 보기 — 파일 = 갈아 끼우기, 글 = 덧붙이기",
+                   usage=("`!로어` — 지금 로어 · NPC 목록",
+                          "`!로어` + 파일 — 갈아 끼우기(새 파일에 없는 옛 로어 장소는 지움 · 이름만 바뀐 곳은 별칭)",
+                          "`!로어 {글}` — 덧붙이기(쌓인 로어 전체를 다시 분석)",
+                          "`!로어 초기화 확인` — ⚠️ 로어만이 아니라 채널 데이터 전부"))
 async def cmd_lore(ctx: CommandContext) -> None:
     """!로어 [내용/파일] or !로어 초기화"""
     arg = ctx.raw_args.strip()
@@ -363,157 +368,51 @@ async def cmd_lore(ctx: CommandContext) -> None:
         return
         
     # 4. Update (Append & Analyze)
+    # [2026-10-24 C76 §3] 한 신호 — **파일 = 갈아 끼우기 · 글 = 덧붙이기.** 원문 저장은 옛 그대로(set_lore / append_lore).
+    #   분석 입력: 파일이면 새 원문, 글이면 **쌓인 원문 전체**(옛: 이번 조각만 → 앞 조각의 테마 · 시드 · 규칙 · 세력 ·
+    #   사건 · 장소 목록이 Theoria 에서 사라졌다). 결과는 늘 "지금 로어 전부의 분석" 하나 — 칸마다 합치는 규칙이 없다.
+    #   쓰기 · 지우기는 `_apply_lore_analysis` 한 곳, **분석이 성공한 뒤에만**.
     domain_manager.save_lore_original(channel_id, full_content)
     msg = await ctx.message.channel.send("📜 **로어 저장됨**. AI 분석 중...")
-    
+    _swap = bool(file_text)
+    _prev_lore = domain_manager.get_lore(channel_id) or ""
+    if _swap or not _prev_lore.strip() or _prev_lore.strip() == config.DEFAULT_LORE.strip():
+        analysis_text = full_content
+    else:
+        analysis_text = f"{_prev_lore}\n\n{full_content}"
+
+    _stored = [False]
+
+    def _store_text():
+        # [C76 검토 #2] 한 번만 — 완료 메시지(2000자 제한)가 실패해 except 로 떨어지면 덧붙이기가 두 번 붙었다.
+        if _stored[0]:
+            return
+        _stored[0] = True
+        if file_text:
+            domain_manager.set_lore(channel_id, full_content)
+        else:
+            domain_manager.append_lore(channel_id, full_content)
+
     if ctx.genai_client:
         try:
             # [LoreAnalyzer V1] Unified Analysis — Flash 사용 (메타데이터 추출, Pro 안전 필터 회피)
-            unified_res = await cognition.analyze_lore_unified(ctx.genai_client, config.role_model("heavy"), full_content)
+            unified_res = await cognition.analyze_lore_unified(ctx.genai_client, config.role_model("heavy"), analysis_text)
 
             if not unified_res or not any(unified_res.get(k) for k in ("npcs", "genres", "lore_summary")):
-                logger.warning("[LoreAnalyzer] 분석 결과 비어있음 — 로어 텍스트만 저장")
-                if file_text:
-                    domain_manager.set_lore(channel_id, full_content)
-                else:
-                    domain_manager.append_lore(channel_id, full_content)
+                logger.warning("[LoreAnalyzer] 분석 결과 비어있음 — 로어 텍스트만 저장 (옛 분석 유지)")
+                _store_text()
                 _apply_lore_tone(channel_id)   # [2026-10-12 C30] 분석이 비어도 분위기 절은 들어간다
                 lore_chunks = _split_lore_chunks(domain_manager.get_lore(channel_id) or full_content)  # [2026-09-24 감사] 누적 전문
                 if lore_chunks:
                     domain_manager.set_lore_chunks(channel_id, lore_chunks)
-                await msg.edit(content="⚠️ **로어 분석 실패** — 텍스트는 저장되었으나 NPC/장르/이변 추출에 실패했습니다. 로어를 다시 업로드하거나 분량을 나누어 시도해 주세요.")
+                await msg.edit(content="⚠️ **로어 분석 실패** — 텍스트는 저장되었으나 NPC/장르/이변 추출에 실패했습니다. "
+                                       "장소 · 이름 목록 · 시드는 **옛 분석 그대로**입니다. 로어를 다시 업로드하거나 분량을 나누어 시도해 주세요.")
                 return
 
-            extracted_npcs = unified_res.get("npcs", [])
-            genre_res = unified_res.get("genres", {})
-            lore_summary_data = unified_res.get("lore_summary", {})
-            # [2026-09-29 배치2 2a-9 C12] 로어가 식별한 인물 이름을 기록한다(등록 아님 — 자동 등록은 꺼져 있다).
-            #   voice_seed 게이트 1c가 이 목록으로 로어 정의 인물에게 새 시드를 굴리지 않는다. 로어를 나눠 올리면 합친다.
-            try:
-                if isinstance(lore_summary_data, dict):
-                    _prev_names = (domain_manager.get_lore_summary_data(channel_id) or {}).get("npc_names") or []
-                    _new_names = [str(n.get("name")).strip() for n in (extracted_npcs or [])
-                                  if isinstance(n, dict) and str(n.get("name") or "").strip()]
-                    lore_summary_data["npc_names"] = list(dict.fromkeys([*_prev_names, *_new_names]))
-            except Exception as _e_ln:
-                logger.debug(f"[LoreAnalyzer] npc_names 기록 skip: {_e_ln}")
-            
-            # 1. Update NPCs — Flash 메타데이터 + 로어 원문 프로필 병합
-            if extracted_npcs:
-                # 로어 원문에서 NPC 섹션 파싱 (Flash 요약 대신 원문 보존)
-                npc_names = [n.get("name", "") for n in extracted_npcs if n.get("name")]
-                full_sections = npc_manager.extract_npc_sections_from_lore(full_content, npc_names)
-                for npc in extracted_npcs:
-                    npc_name = npc.get("name", "")
-                    if npc_name and npc_name in full_sections:
-                        npc["description"] = full_sections[npc_name]
-                npc_manager.add_lore_npcs(channel_id, extracted_npcs)
-                
-            # [2026-10-12 C33] 2. PC 정보 — 삭제. 로어는 PC를 뽑지 않는다(PC 시트 입구 = `!설명` 하나).
+            rep = _apply_lore_analysis(channel_id, unified_res, analysis_text, swap=_swap)
 
-            # 3. Update Genre (3-Layer) + mechanic_profile
-            # [Guard] Flash가 레이어 간 태그를 교차 배치하는 경우 코드 레벨에서 보정
-            _STAGE_TAGS = {"high_fantasy", "wuxia", "cyberpunk", "post_apocalypse", "space_opera", "modern"}
-            _FLAVOR_TAGS = {"urban_fantasy", "steampunk", "cosmic_horror", "game_system"}
-            _TONE_TAGS = {"noir", "comedy", "romance", "drama"}
-
-            raw_ws = genre_res.get("world_setting", []) or []
-            raw_st = genre_res.get("style_tech", []) or []
-            raw_nt = genre_res.get("narrative_tone", []) or []
-            all_tags = [t for t in (raw_ws + raw_st + raw_nt) if isinstance(t, str)]
-
-            world_setting = [t for t in all_tags if t in _STAGE_TAGS][:2]
-            style_tech = [t for t in all_tags if t in _FLAVOR_TAGS][:2]
-            narrative_tone = [t for t in all_tags if t in _TONE_TAGS][:2]
-            # 알 수 없는 태그 → 원래 레이어에 유지
-            for t in all_tags:
-                if t not in _STAGE_TAGS and t not in _FLAVOR_TAGS and t not in _TONE_TAGS:
-                    if t in raw_ws: world_setting.append(t)
-                    elif t in raw_st: style_tech.append(t)
-                    elif t in raw_nt: narrative_tone.append(t)
-
-            if set(world_setting) != set(raw_ws) or set(style_tech) != set(raw_st) or set(narrative_tone) != set(raw_nt):
-                logger.warning(f"[Genre Fix] 교차 배치 보정: {raw_ws}/{raw_st}/{raw_nt} → {world_setting}/{style_tech}/{narrative_tone}")
-
-            from config import build_mechanic_profile
-            mechanic_profile = build_mechanic_profile(narrative_tone, style_tech)
-            genre_data = {
-                "layers": {
-                    "world_setting": world_setting,
-                    "style_tech": style_tech,
-                    "narrative_tone": narrative_tone,
-                },
-                "atmosphere_guide": genre_res.get("atmosphere_guide", ""),
-                "mechanic_profile": mechanic_profile,
-            }
-            domain_manager.set_active_genres(channel_id, genre_data)
-            domain_manager.set_custom_tone(channel_id, genre_res.get("atmosphere_guide"))
-            
-            # 4. Update Lore Summary (Enriched V2)
-            locations = lore_summary_data.get('locations', [])
-            loc_str = ', '.join(l.get('name', str(l)) if isinstance(l, dict) else str(l) for l in locations) if isinstance(locations, list) else str(locations)
-            rules = lore_summary_data.get('rules', [])
-            rules_str = '\n'.join(f"  - {r}" for r in rules) if rules else ""
-            raw_seeds = lore_summary_data.get('anomaly_seeds', [])
-            seed_names = [s.get('name', str(s)) if isinstance(s, dict) else str(s) for s in raw_seeds] if isinstance(raw_seeds, list) else []
-            summary_text = f"테마: {lore_summary_data.get('theme', '')}\n이변 징후: {', '.join(seed_names)}\n공간: {loc_str}"
-            if rules_str:
-                summary_text += f"\n규칙:\n{rules_str}"
-            domain_manager.set_event_lore_summary(channel_id, summary_text)
-
-            # 4.5 World Tree: 로어 위치 데이터로 공간 그래프 구축
-            if locations and isinstance(locations, list):
-                try:
-                    import world_tree
-                    # lore_summary 스키마(desc/danger) → world_tree 스키마(description/risk) 변환
-                    _wt_locs = []
-                    for loc in locations:
-                        if isinstance(loc, dict) and loc.get("name"):
-                            _wt_locs.append({
-                                "name": loc["name"],
-                                "type": loc.get("type", "area"),
-                                "parent": loc.get("parent", ""),
-                                "description": loc.get("desc", loc.get("description", "")),
-                                "risk": loc.get("danger", loc.get("risk", "Low")),
-                                "atmosphere": loc.get("atmosphere", ""),
-                                "tags": loc.get("tags", []),
-                                "connections": loc.get("connections", []),
-                            })
-                    if _wt_locs:
-                        _wt_count = world_tree.import_locations_from_lore(channel_id, _wt_locs)
-                        if _wt_count:
-                            logger.info(f"[WorldTree] Imported {_wt_count} locations from lore")
-                except Exception as e:
-                    logger.warning(f"[WorldTree] Lore import failed: {e}")
-
-            # 5. Update World Constraints (로어 세계 규칙)
-            world_constraints = unified_res.get("world_constraints", {})
-            if world_constraints and isinstance(world_constraints, dict):
-                w = domain_manager.get_world_state(channel_id)
-                w["world_constraints"] = world_constraints
-                domain_manager.update_world_state(channel_id, w)
-
-            # JSON format storage for V4 Deep Analysis
-            d_data = domain_manager.get_domain(channel_id)
-            d_data["lore_summary_data"] = lore_summary_data
-            domain_manager.save_domain(channel_id, d_data)
-
-            # 4.6 [2026-09-14 W5] 로어 세력 → faction 페이지(조직도의 뿌리). 새 콜 0.
-            #   자리: lore_summary_data가 저장된 **직후**(지시서는 `set_lore_summary_data` 직후라
-            #   적었지만 이 명령은 그 함수를 안 쓴다 — d_data 직접 저장이 이 파일의 등록 관문이다).
-            try:
-                if getattr(config, "WIKI_PLACES", False):
-                    import wiki_store as _ws_w5
-                    for _f in (lore_summary_data.get("factions") or []):
-                        _ws_w5.sync_faction_page(channel_id, _f)
-            except Exception as _e_w5:
-                logger.debug(f"[Wiki] faction pages skipped: {_e_w5}")
-
-            if file_text:
-                domain_manager.set_lore(channel_id, full_content)
-            else:
-                domain_manager.append_lore(channel_id, full_content)
-            # [2026-10-12 C30] 위 3번이 분석의 atmosphere_guide로 custom_tone을 채웠다 — 로어에 분위기 절이 있으면 그 원문이 덮는다.
+            _store_text()
+            # [2026-10-12 C30] 분석의 atmosphere_guide로 custom_tone을 채웠다 — 로어에 분위기 절이 있으면 그 원문이 덮는다.
             _apply_lore_tone(channel_id)
 
             # 6. Chunk splitting (V5 — 선택적 주입용)
@@ -523,171 +422,395 @@ async def cmd_lore(ctx: CommandContext) -> None:
             if lore_chunks:
                 domain_manager.set_lore_chunks(channel_id, lore_chunks)
 
-            # Formatted Output (Match User's Legacy Format)
-            genre_summary = f"{genre_res.get('world_setting', [])} / {genre_res.get('style_tech', [])} / {genre_res.get('narrative_tone', [])}"
-            
-            # [MODIFIED] Show ALL NPC Names in confirmation
-            npc_names = [f"`{n['name']}`" for n in extracted_npcs if n.get('name')]
-            npc_list_str = ", ".join(npc_names)
-            
-            anomaly_seeds = lore_summary_data.get('anomaly_seeds', [])
-            anomaly_str = ", ".join(f"`{s}`" for s in anomaly_seeds) if anomaly_seeds else "없음"
-            rules_count = len(lore_summary_data.get('rules', []))
-            factions_count = len(lore_summary_data.get('factions', []))
-            lore_extra = ""
-            if rules_count or factions_count:
-                lore_extra = f"\n\n📜 **세계 규칙** {rules_count}개 | **세력** {factions_count}개 추출"
-            await msg.edit(content=f"✅ **로어 분석 완료**\n\n👥 **NPC: {len(extracted_npcs)}명 식별**\n{npc_list_str}\n\n🌍 **장르/톤**\n{genre_summary}\n\n🌪️ **이변 징후** ({len(anomaly_seeds)}개)\n{anomaly_str}{lore_extra}")
+            try:
+                await msg.edit(content=_lore_done_message(unified_res, rep, swap=_swap))
+            except Exception as _e_msg:
+                logger.warning(f"[LoreAnalyzer] 완료 메시지 실패(분석은 적용됨): {_e_msg}")
 
         except Exception as e:
             import traceback
             logger.error(f"Unified Lore Analysis Failed: {e}\n{traceback.format_exc()}")
             await msg.edit(content=f"⚠️ 분석 오류: {e}")
-            if file_text:
-                domain_manager.set_lore(channel_id, full_content)
-            else:
-                domain_manager.append_lore(channel_id, full_content)
+            _store_text()
             _apply_lore_tone(channel_id)   # [C30]
     else:
-        if file_text:
-            domain_manager.set_lore(channel_id, full_content)
-        else:
-            domain_manager.append_lore(channel_id, full_content)
+        _store_text()
         _apply_lore_tone(channel_id)   # [C30]
-        domain_manager.set_event_lore_summary(channel_id, full_content[:1000])
+        # [2026-10-24 C76 §5] 옛 요약 파일 쓰기(set_event_lore_summary) 지움 — 읽는 곳 0.
         await msg.edit(content="📜 저장 완료 (AI 미사용 - 단순 요약)")
 
 
-@registry.register("info", category="Player", aliases=["내정보", "me", "desc", "설명", "정보"], description="캐릭터 정보 확인 / `!설명 [내용/파일]`으로 PC 설정 입력")
+def _lore_loc_names(lsd: Any) -> list:
+    """`lore_summary_data.locations` → 장소 이름 목록(dict 의 name 또는 글)."""
+    locs = (lsd or {}).get("locations") if isinstance(lsd, dict) else None
+    out = []
+    for l in (locs or []) if isinstance(locs, list) else []:
+        n = (l.get("name") if isinstance(l, dict) else l)
+        n = str(n or "").strip()
+        if n:
+            out.append(n)
+    return out
+
+
+def _apply_lore_analysis(channel_id: str, unified_res: Dict[str, Any], analysis_text: str, *, swap: bool) -> Dict[str, Any]:
+    """[2026-10-24 C76 §3] 로어 분석이 **성공한 뒤** 쓰기 · 지우기 한 곳(분석이 비거나 실패하면 부르지 않는다 — 옛 것 유지).
+
+    swap=True(파일 = 갈아 끼우기): 이름 목록 · 거처 · 시드(독자 시드 포함) · 요약 칸 새로, 옛 로어 장소 중 새 목록에
+      없는 것을 지움(`world_tree.strip_lore`) · 같은 이름 장소는 설명 · 위험을 새 로어로 · 옛 lore 장소 · 세력 페이지
+      `status='deleted'` · 자리 잃은 등록 NPC 다시 앉힘 · PC 자리가 지워졌으면 알림.
+    swap=False(글 = 덧붙이기 — analysis_text 는 쌓인 원문 전체): 요약 칸 새로 + 독자 시드 · 뒤표지 이어받음, 장소는 추가만.
+    Returns 메시지용 {"removed_places", "pc_place_gone", "homes", "seated", "deleted_pages"}."""
+    rep: Dict[str, Any] = {"removed_places": [], "recreated": [], "pc_place_gone": "", "homes": 0, "seated": [],
+                           "deleted_pages": 0, "renamed": []}
+    prev_lsd = domain_manager.get_lore_summary_data(channel_id) or {}
+    if not isinstance(prev_lsd, dict):
+        prev_lsd = {}
+    extracted_npcs = [n for n in (unified_res.get("npcs") or []) if isinstance(n, dict)]
+    genre_res = unified_res.get("genres", {}) or {}
+    lore_summary_data = unified_res.get("lore_summary", {}) or {}
+    # 사본에 쓴다 — 분석 결과 dict 를 그 자리에서 고치면 완료 메시지가 이어받은 독자 시드까지 센다(검토 덤).
+    lore_summary_data = dict(lore_summary_data) if isinstance(lore_summary_data, dict) else {}
+
+    # 이름 · 거처 — [2026-09-29 배치2 2a-9 C12] 이름은 voice_seed 게이트 1c 가 읽는다(등록 아님).
+    #   [C76] 합치지 않는다 — 분석 입력이 늘 지금 로어 전부라 그 목록이 정본이다(갈아 끼우면 옛 이름은 사라진다).
+    #   [검토 #10] 단 출력에 npcs 칸 자체가 없으면(정상 종료인데 칸만 빠짐) 옛 목록을 둔다 — 비우면 게이트 1c 가 풀린다.
+    if "npcs" in unified_res:
+        _names = [str(n.get("name")).strip() for n in extracted_npcs if str(n.get("name") or "").strip()]
+        lore_summary_data["npc_names"] = list(dict.fromkeys(_names))
+        _homes: Dict[str, str] = {}
+        for n in extracted_npcs:
+            _nm = str(n.get("name") or "").strip()
+            _hm = str(n.get("home") or n.get("location") or "").strip()
+            if _nm and _hm:
+                _homes[_nm] = _hm
+        lore_summary_data["npc_homes"] = _homes
+    else:
+        logger.warning("[LoreAnalyzer] 출력에 npcs 칸 없음 — 옛 이름 목록 · 거처 유지")
+        lore_summary_data["npc_names"] = list(prev_lsd.get("npc_names") or [])
+        lore_summary_data["npc_homes"] = dict(prev_lsd.get("npc_homes") or {})
+    rep["homes"] = len(lore_summary_data["npc_homes"])
+
+    # 독자 시드 · 뒤표지 — 덧붙이기면 이어받는다(근거가 같은 세계). 갈아 끼우면 버린다(옛 세계의 것).
+    if not swap:
+        _cur = [s for s in (lore_summary_data.get("anomaly_seeds") or []) if s]
+        _have = {str(s.get("name") if isinstance(s, dict) else s) for s in _cur}
+        for s in (prev_lsd.get("anomaly_seeds") or []):
+            if isinstance(s, dict) and s.get("source") == "reader" and str(s.get("name")) not in _have:
+                _cur.append(s)
+        lore_summary_data["anomaly_seeds"] = _cur
+        for _k in ("reader_blurb", "reader_blurb_hash"):
+            if prev_lsd.get(_k) and _k not in lore_summary_data:
+                lore_summary_data[_k] = prev_lsd[_k]
+
+    # [2026-10-27 C84] 활성 규칙(모습 · 등장 · 불러오기) — 로어발 규칙만 새로(시트발은 남김). NPC 등록 **앞**:
+    #   잠글 이름이 이미 따로 등록돼 있으면 판 전엔 잠그고(보관 시트로) 판 중엔 알린다. 로어 NPC 등록은 잠긴 이름을 뺀다.
+    #   출력에 칸 자체가 없으면(정상 종료인데 칸만 빠짐) 옛 로어 규칙을 둔다 — npcs 칸과 같은 규율([C76 검토 #10]).
+    _acts = lore_summary_data.pop("activations", None)
+    rep["forms"] = {}
+    try:
+        import npc_forms as _nf_lore
+        if isinstance(_acts, list):
+            rep["forms"] = _nf_lore.apply_lore(channel_id, _acts, analysis_text)
+        elif _nf_lore.has_table(channel_id):
+            logger.warning("[LoreAnalyzer] 출력에 activations 칸 없음 — 옛 로어 활성 규칙 유지")
+        extracted_npcs = [n for n in extracted_npcs
+                          if not _nf_lore.is_reserved(channel_id, str(n.get("name") or ""))]
+    except Exception as _e_act:
+        logger.warning(f"[Form] 로어 활성 규칙 skip: {_e_act}")
+
+    # 1. NPC — 로어 NPC 자동 등록이 켜졌을 때만 원문 절을 자른다(꺼져 있으면 그 결과를 아무도 안 받았다).
+    if extracted_npcs and getattr(config, "LORE_NPC_AUTO_REGISTER", False):
+        npc_names = [n.get("name", "") for n in extracted_npcs if n.get("name")]
+        full_sections = npc_manager.extract_npc_sections_from_lore(analysis_text, npc_names)
+        for npc in extracted_npcs:
+            npc_name = npc.get("name", "")
+            if npc_name and npc_name in full_sections:
+                npc["description"] = full_sections[npc_name]
+        npc_manager.add_lore_npcs(channel_id, extracted_npcs)
+
+    # [2026-10-12 C33] 2. PC 정보 — 삭제. 로어는 PC를 뽑지 않는다(PC 시트 입구 = `!설명` 하나).
+
+    # 3. Update Genre (3-Layer) + mechanic_profile
+    # [Guard] Flash가 레이어 간 태그를 교차 배치하는 경우 코드 레벨에서 보정
+    _STAGE_TAGS = {"high_fantasy", "wuxia", "cyberpunk", "post_apocalypse", "space_opera", "modern"}
+    _FLAVOR_TAGS = {"urban_fantasy", "steampunk", "cosmic_horror", "game_system"}
+    _TONE_TAGS = {"noir", "comedy", "romance", "drama"}
+
+    raw_ws = genre_res.get("world_setting", []) or []
+    raw_st = genre_res.get("style_tech", []) or []
+    raw_nt = genre_res.get("narrative_tone", []) or []
+    all_tags = [t for t in (raw_ws + raw_st + raw_nt) if isinstance(t, str)]
+
+    world_setting = [t for t in all_tags if t in _STAGE_TAGS][:2]
+    style_tech = [t for t in all_tags if t in _FLAVOR_TAGS][:2]
+    narrative_tone = [t for t in all_tags if t in _TONE_TAGS][:2]
+    # 알 수 없는 태그 → 원래 레이어에 유지
+    for t in all_tags:
+        if t not in _STAGE_TAGS and t not in _FLAVOR_TAGS and t not in _TONE_TAGS:
+            if t in raw_ws: world_setting.append(t)
+            elif t in raw_st: style_tech.append(t)
+            elif t in raw_nt: narrative_tone.append(t)
+
+    if set(world_setting) != set(raw_ws) or set(style_tech) != set(raw_st) or set(narrative_tone) != set(raw_nt):
+        logger.warning(f"[Genre Fix] 교차 배치 보정: {raw_ws}/{raw_st}/{raw_nt} → {world_setting}/{style_tech}/{narrative_tone}")
+
+    from config import build_mechanic_profile
+    mechanic_profile = build_mechanic_profile(narrative_tone, style_tech)
+    genre_data = {
+        "layers": {
+            "world_setting": world_setting,
+            "style_tech": style_tech,
+            "narrative_tone": narrative_tone,
+        },
+        "atmosphere_guide": genre_res.get("atmosphere_guide", ""),
+        "mechanic_profile": mechanic_profile,
+    }
+    domain_manager.set_active_genres(channel_id, genre_data)
+    domain_manager.set_custom_tone(channel_id, genre_res.get("atmosphere_guide"))
+
+    # 4. World Tree — [C76 §3-1] 갈아 끼우면 옛 로어 장소부터 걷고(새 목록에 없는 것) 새 것을 들인다.
+    #   (먼저 걷어야 새 장소가 곧 지워질 옛 부모 밑에 붙지 않고, 노드 상한(MAX_NODES)도 안 먹는다.)
+    locations = lore_summary_data.get('locations', [])
+    new_loc_names = _lore_loc_names(lore_summary_data)
+    try:
+        import world_tree
+        if swap:
+            _st = world_tree.strip_lore(channel_id, new_loc_names, _lore_loc_names(prev_lsd))
+            rep["removed_places"] = list(_st.get("removed") or [])
+        if locations and isinstance(locations, list):
+            # lore_summary 스키마(desc/danger) → world_tree 스키마(description/risk) 변환
+            _wt_locs = []
+            for loc in locations:
+                if isinstance(loc, dict) and loc.get("name"):
+                    _wt_locs.append({
+                        "name": loc["name"],
+                        "type": loc.get("type", "area"),
+                        "parent": loc.get("parent", ""),
+                        "description": loc.get("desc", loc.get("description", "")),
+                        "risk": loc.get("danger", loc.get("risk", "Low")),
+                        "atmosphere": loc.get("atmosphere", ""),
+                        "tags": loc.get("tags", []),
+                        "connections": loc.get("connections", []),
+                    })
+            if _wt_locs:
+                _wt_count = world_tree.import_locations_from_lore(channel_id, _wt_locs, refresh=swap)
+                if _wt_count:
+                    logger.info(f"[WorldTree] Imported {_wt_count} locations from lore")
+        # [2026-10-25 C77 E-3 · Q33] 이름만 바뀐 옛 장소 → 새 노드 별칭(PC 자리 · 우물 중심 · 시계 born_node 가 그대로 풀린다).
+        if swap and rep["removed_places"]:
+            rep["renamed"] = world_tree.adopt_removed_names(channel_id, rep["removed_places"], new_loc_names,
+                                                            _lore_loc_names(prev_lsd))
+            _renamed = {o for o, _n in rep["renamed"]}
+            rep["removed_places"] = [n for n in rep["removed_places"] if n not in _renamed]
+    except Exception as e:
+        logger.warning(f"[WorldTree] Lore import failed: {e}")
+
+    # 5. [C76 §5] world_constraints 은퇴 — 분석이 안 뽑고, 여기서 안 쓴다(늘 실을 세계 규칙은 `!룰`).
+
+    # JSON format storage for V4 Deep Analysis — 트리가 스스로 get/save_domain 을 돌았으니 그 뒤에 새로 읽는다.
+    d_data = domain_manager.get_domain(channel_id)
+    d_data["lore_summary_data"] = lore_summary_data
+    domain_manager.save_domain(channel_id, d_data)
+
+    # 4.6 [2026-09-14 W5] 로어 세력 → faction 페이지(조직도의 뿌리). 새 콜 0.
+    try:
+        if getattr(config, "WIKI_PLACES", False):
+            import wiki_store as _ws_w5
+            for _f in (lore_summary_data.get("factions") or []):
+                _ws_w5.sync_faction_page(channel_id, _f)
+            # [C76 §3] 갈아 끼우면 옛 lore 장소 · 세력 페이지는 내린다(위키 삭제 0 원칙 — status 만).
+            if swap:
+                # [검토 #1] 이름 비교는 위키 page id 로(NFKC · 공백 접기 · 소문자) — 날 글자로 비교하면 대소문자만 바뀐
+                #   같은 세력을 방금 갱신해 놓고 곧바로 내렸다.
+                _new_f = {_ws_w5.page_id_for("faction", str(f.get("name") if isinstance(f, dict) else f).strip())
+                          for f in (lore_summary_data.get("factions") or [])}
+                for _f in (prev_lsd.get("factions") or []):
+                    _fn = str(_f.get("name") if isinstance(_f, dict) else _f).strip()
+                    if _fn and _ws_w5.page_id_for("faction", _fn) not in _new_f \
+                            and _ws_w5.mark_page_deleted(channel_id, "faction", _fn):
+                        rep["deleted_pages"] += 1
+                # [2026-10-25 C77 E-1] 지운 장소 페이지 내리기는 아래 "다시 선 곳" 가르기 **뒤**로 옮겼다 — 여기서 내리면
+                #   시트 거처로 곧바로 다시 선 장소의 페이지까지 deleted 가 됐다.
+    except Exception as _e_w5:
+        logger.debug(f"[Wiki] faction pages skipped: {_e_w5}")
+
+    # [C76 §4-3 ⓑ] 등록 NPC 다시 앉히기 — 자리 잃은 사람 + 로어를 NPC 등록보다 뒤에 넣은 판. 미배치일 때만(R4 규칙 그대로).
+    try:
+        import world_tree as _wt_seat
+        for _nm, _nd in (domain_manager.get_npcs(channel_id) or {}).items():
+            if not isinstance(_nd, dict) or not npc_manager.is_npc_active(_nd):
+                continue
+            if _wt_seat.get_npc_location(channel_id, _nm):
+                continue
+            if npc_manager.seat_sheet_residence(channel_id, _nm, lore_home=True) == "placed":
+                rep["seated"].append(_nm)
+    except Exception as _e_seat:
+        logger.debug(f"[Lore] reseat skipped: {_e_seat}")
+    # [검토 #3] 지운 옛 장소가 시트 거처로 다시 섰으면(R4 — 그 NPC 시트가 그 장소를 거처로 적었다) 따로 알린다.
+    #   시트가 이긴다는 규칙 그대로 둔다. 다음 갈아 끼우기도 그 노드(`sheet_residence`)는 안 지운다.
+    if rep["removed_places"]:
+        try:
+            import world_tree as _wt_rc
+            rep["recreated"] = [n for n in rep["removed_places"] if _wt_rc.resolve_node_id(channel_id, n, allow_token=False)]
+            rep["removed_places"] = [n for n in rep["removed_places"] if n not in rep["recreated"]]
+        except Exception:
+            pass
+    # [2026-10-25 C77 E-1 · Q28] 정말 지운 장소(다시 선 곳 뺌)만 위키에서 내린다 — 개별 페이지는 status, room 은 모음 줄에서 뺀다.
+    #   이름만 바뀐 곳(E-3)의 옛 이름 페이지 · 모음 칸도 같이 내린다 — 그 장소는 새 이름 페이지로 산다.
+    _unpage = list(rep["removed_places"]) + [o for o, _n in (rep.get("renamed") or [])]
+    if swap and _unpage and getattr(config, "WIKI_PLACES", False):
+        try:
+            import wiki_store as _ws_rm
+            _new_l = {_ws_rm.page_id_for("location", n) for n in new_loc_names}
+            _gone = [n for n in _unpage if _ws_rm.page_id_for("location", n) not in _new_l]
+            for _pn in _gone:
+                if _ws_rm.mark_page_deleted(channel_id, "location", _pn):
+                    rep["deleted_pages"] += 1
+            _ws_rm.remove_aggregate_names(channel_id, "location", _gone)
+        except Exception as _e_rm:
+            logger.debug(f"[Wiki] removed place pages skipped: {_e_rm}")
+
+    # PC 자리 — 갈아 끼우며 지워진 장소였으면 알린다(글은 그대로 둔다 — 다음 장면이 새로 잡는다).
+    if swap and rep["removed_places"]:
+        try:
+            import world_tree as _wt_pc
+            _cur = str(domain_manager.get_current_location(channel_id) or "").strip()
+            if _cur and _cur not in ("Unknown",) and not _wt_pc.resolve_node_id(channel_id, _cur):
+                rep["pc_place_gone"] = _cur
+        except Exception:
+            pass
+    # [2026-10-25 C75 G3] 시드 = 첫 질량 — 새 장소가 나무에 선 뒤 닻을 푼 시드마다 우물(갈아 끼우기면 옛 시드 우물은 끝).
+    try:
+        import well_store as _ws_seed
+        _ws_seed.reconcile_seeds(channel_id, lore_summary_data)   # [C77 A-9] 돌려받은 수를 담던 `rep["seed_wells"]` 는 읽는 곳 0
+    except Exception as _e_ws:
+        logger.debug(f"[Lore] seed wells skipped: {_e_ws}")
+    domain_manager.block_redo(channel_id, "!로어")   # [C77 C-4] 분석 결과(장소 · NPC · 장르 · 시드 우물 행)는 턴과 섞인 칸
+    return rep
+
+
+def _lore_done_message(unified_res: Dict[str, Any], rep: Dict[str, Any], *, swap: bool) -> str:
+    """[C76] `!로어` 완료 메시지 — 시드는 이름으로(옛: dict 를 그대로 찍었다) · 거처 · 갈아 끼우기 결과."""
+    extracted_npcs = [n for n in (unified_res.get("npcs") or []) if isinstance(n, dict)]
+    genre_res = unified_res.get("genres", {}) or {}
+    lsd = unified_res.get("lore_summary", {}) or {}
+    genre_summary = f"{genre_res.get('world_setting', [])} / {genre_res.get('style_tech', [])} / {genre_res.get('narrative_tone', [])}"
+    npc_names = [f"`{n['name']}`" for n in extracted_npcs if n.get('name')]
+    npc_list_str = ", ".join(npc_names)
+    seeds = lsd.get('anomaly_seeds', []) if isinstance(lsd, dict) else []
+    seed_names = [str(s.get('name', '') if isinstance(s, dict) else s).strip() for s in (seeds or [])]
+    seed_names = [s for s in seed_names if s]
+    anomaly_str = ", ".join(f"`{s}`" for s in seed_names) if seed_names else "없음"
+    rules_count = len(lsd.get('rules', []) or []) if isinstance(lsd, dict) else 0
+    factions_count = len(lsd.get('factions', []) or []) if isinstance(lsd, dict) else 0
+    lore_extra = ""
+    if rules_count or factions_count:
+        lore_extra = f"\n\n📜 **세계 규칙** {rules_count}개 | **세력** {factions_count}개 추출"
+    homes = int(rep.get("homes") or 0)
+    msg = (f"✅ **로어 분석 완료**{' (갈아 끼움)' if swap else ''}\n\n👥 **NPC: {len(extracted_npcs)}명 식별**"
+           f"{f' (거처 {homes}명)' if homes else ''}\n{npc_list_str}\n\n🌍 **장르/톤**\n{genre_summary}"
+           f"\n\n🌪️ **이변 징후** ({len(seed_names)}개)\n{anomaly_str}{lore_extra}")
+    _rm = rep.get("removed_places") or []
+    if _rm:
+        msg += f"\n\n🔄 옛 로어 장소 {len(_rm)}곳 지움: " + ", ".join(f"`{x}`" for x in _rm[:12]) + (" …" if len(_rm) > 12 else "")
+    _rn = rep.get("renamed") or []
+    if _rn:
+        msg += f"\n🔁 이름만 바뀐 곳 {len(_rn)}: " + ", ".join(f"`{o}` → `{n}`" for o, n in _rn[:8]) + (" …" if len(_rn) > 8 else "")
+    _rc = rep.get("recreated") or []
+    if _rc:
+        msg += f"\n↩️ 시트 거처라 다시 선 곳 {len(_rc)}: " + ", ".join(f"`{x}`" for x in _rc[:8]) + (" …" if len(_rc) > 8 else "")
+    if rep.get("pc_place_gone"):
+        msg += f"\n📍 PC 자리 `{rep['pc_place_gone']}` — 옛 로어 장소라 다음 장면에서 새로 잡힘"
+    _st = rep.get("seated") or []
+    if _st:
+        msg += f"\n🪑 거처에 앉힘 {len(_st)}명: " + ", ".join(f"`{x}`" for x in _st[:12]) + (" …" if len(_st) > 12 else "")
+    _fm = rep.get("forms") or {}
+    if _fm.get("rules") or _fm.get("locked") or _fm.get("conflict"):   # [2026-10-27 C84]
+        msg += f"\n🎭 활성 규칙 {int(_fm.get('rules') or 0)}개 (`!npc 모습`)"
+        if _fm.get("locked"):
+            msg += " · 잠금: " + ", ".join(f"`{x}`" for x in _fm["locked"][:8])
+        if _fm.get("conflict"):
+            msg += ("\n⚠️ 판이 진행 중이라 안 잠근 이름: " + ", ".join(f"`{x}`" for x in _fm["conflict"][:8])
+                    + " — `!npc 삭제` 뒤 그 시트를 다시 올리면 잠겨요")
+    # [검토 #2] 디스코드 2000자 — 넘치면 NPC 이름 줄을 줄인다(전원 이름은 `!로어` 보기에서).
+    if len(msg) > 1900 and npc_list_str:
+        _keep = []
+        for _n in npc_names:
+            if len(", ".join(_keep + [_n])) > 400:
+                break
+            _keep.append(_n)
+        msg = msg.replace(npc_list_str, ", ".join(_keep) + f" 외 {len(npc_names) - len(_keep)}명", 1)
+    return msg[:1990]
+
+
+_INFO_USAGE = ("📝 사용법: `!설명` + PC 파일 · `!설명 [내용]` — 먼저 `!가면 [이름]`.\n"
+               "보기는 Activity — 인물 앱 내 페이지 · 상태창 · 보관함 · 진행 중.")
+
+
+@registry.register("info", category="Player", aliases=["desc", "설명"], description="PC 설정 넣기(글 · 파일)",
+                   usage=("`!설명` + PC 파일 · `!설명 {글}` — PC 설정 넣기(다시 하면 새 글로 바뀜). 먼저 `!가면 {이름}`",
+                          "보기는 Activity — 인물 앱 내 페이지(시트) · 상태창(활력 · 평형 · 상태 · 특성) · 보관함 · 진행 중"))
 async def cmd_info(ctx: CommandContext) -> None:
+    """!설명 [내용/파일] — PC 설정 넣기.
+
+    [2026-10-25 C78 B2] 보기(`!내정보` · `!정보`)는 걷었다 — 시트 · 관계 · 활력/평형 · 목표 · 노트북은 Activity 가 다 보이고,
+      남던 상태 · 특성 두 줄은 상태창 PC 칸으로 옮겼다(`status_panel._pc_extra_lines`). 이름(`info`)은 남긴다 — 부르는 스모크 · 막기 표.
+    [C78 검토] 쓰는 건 `!설명`(desc) 으로 부를 때뿐 — `!info [글]` 이 시트를 덮지 않게(C77 까지 `!info` 는 보기였다).
     """
-    V2 Layout: Profile -> Relations -> Passives -> Mental -> Quests -> Notebook
-    """
+    if str(ctx.trigger or "").lower() not in ("desc", "설명"):
+        await ctx.send(_INFO_USAGE)
+        return
     uid = ctx.user_id
     p_data = domain_manager.get_participant_data(ctx.channel_id, uid)
-    
     if not p_data:
         await ctx.send("❌ 등록 필요 (`!가면 [이름]`)")
         return
 
-    # [NEW] Description Update Support (if alias is desc/설명)
-    if ctx.trigger in ['desc', '설명']:
-        # 1. Extract Full Argument (Text + Attachment)
-        file_text = ""
-        if ctx.message.attachments:
-            for att in ctx.message.attachments:
-                text, error = await read_attachment_text(att)
-                if error:
-                    await ctx.send(error)
-                    return
-                if text:
-                    file_text = text
-                    break
-        
-        full_arg = (ctx.raw_args + "\n" + file_text).strip()
-        
-        if not full_arg:
-            if not ctx.message.attachments:
-                # Fallback to View mode if no args provided at all
-                pass 
-            else:
-                await ctx.send("⚠️ 파일 내용을 읽을 수 없습니다.")
+    # 1. Extract Full Argument (Text + Attachment)
+    file_text = ""
+    if ctx.message.attachments:
+        for att in ctx.message.attachments:
+            text, error = await read_attachment_text(att)
+            if error:
+                await ctx.send(error)
                 return
-        else:
-            # 2. Update logic
-            # [2026-10-12 C33] 페이지(`!가면`)가 없으면 콜 전에 거절 — 대기 상자는 없다.
-            if not domain_manager.get_pc_page_id(ctx.channel_id, uid):
-                await ctx.send("❌ 먼저 `!가면 [이름]`으로 캐릭터를 세운 뒤 `!설명`을 넣어 주세요.")
-                return
-            status_msg = await ctx.send("📝 **캐릭터 설정 분석 중...**")
-            
-            # [2026-09-16 시트 2차 §8] 원문 = 페이지 lore 절(정본). heavy 콜은 조각(passives/inventory)·
-            #   이름·species 추출용으로만. AI 실패 폴백 = 원문 그대로(파서가 절을 못 잡으면 Notes).
-            analysis = {}
-            if ctx.genai_client:
-                analysis = await cognition.analyze_character_sheet(ctx.genai_client, config.role_model("heavy"), full_arg) or {}
-            box = npc_manager.pc_box_from_info(analysis, full_arg)
-            if not analysis:
-                box["sheet_fallback"] = True   # AI 실패 폴백: 원문 그대로 Notes 절
-            if domain_manager.apply_pc_info_to_user(ctx.channel_id, uid, box):
-                _tail = "" if analysis else " (AI 분석 실패 — 원문만 저장)"
-                await status_msg.edit(content=f"✅ **캐릭터 시트 등록 완료**{_tail}\n특성: {len(box.get('passives', []))}개 추출\n원문은 캐릭터 페이지에 절 단위로 저장되었습니다.")
-            else:
-                await status_msg.edit(content="⚠️ **시트 저장 실패** — 다시 시도해 주세요.")
-            return
-
-    # 1. Profile — [2026-09-16 시트 2차] 서술은 PC 페이지 lore 절(+Observed)에서.
-    mask_name = p_data.get("mask", "Unknown")
-    mem = p_data.get("ai_memory", {})
-    msg = [f"🎭 **{mask_name}**"]
-    # [2026-10-12 C29] 프롬프트는 시트 전문을 싣지만 이 화면은 확인용 — 옛 모양(절당 600) 그대로.
-    _sheet_view = domain_manager.get_pc_sheet_text(ctx.channel_id, uid, full=False)
-    if _sheet_view:
-        msg.append(_sheet_view)
-    elif not domain_manager.get_pc_page_id(ctx.channel_id, uid):
-        msg.append("_(캐릭터 페이지 없음 — `!가면 [이름]`)_")
-    status_text = game_character.format_status_effects(p_data.get("status_effects", [])) or "정상"
-    msg.append(f"**상태:** {status_text}")
+            if text:
+                file_text = text
+                break
     
-    # 2. Relations — [2026-09-15 관계 통합] 존재하지 않던 mem["relations"] 읽기(항상 빈 칸) 수리:
-    #   이 PC를 target으로 하는 NPC→PC 엣지(파생 attitude + stance).
-    try:
-        _rels = domain_manager.get_npc_attitudes(ctx.channel_id, pc=mask_name) if mask_name != "Unknown" else {}
-    except Exception:
-        _rels = {}
-    if _rels:
-        rel_txt = []
-        for r_name, r in sorted(_rels.items(), key=lambda kv: -abs(int(kv[1].get("bond", 0) or 0))):
-            _st = str(r.get("stance", "") or "").strip()
-            rel_txt.append(f"- **{r_name}**: {r.get('attitude', 'neutral')}" + (f" — {_st}" if _st else ""))
-        msg.append("\n**🤝 관계:**")
-        msg.extend(rel_txt[:12])
-
-    # 3. Passives (Traits + Titles)
-    passives = mem.get("passives", [])
-    if passives:
-        p_list = []
-        for p in passives:
-            if isinstance(p, dict):
-                # [2026-09-16 3차] tags 삭제 — 조각은 이름만 표시(모양 {name, desc, value, origin}).
-                p_list.append(f"🔹 **{p.get('name', '?')}**")
-            else:
-                p_list.append(f"🔹 **{p}**")
-        if p_list:
-            msg.append("\n**✨ 특성:**")
-            msg.append(" / ".join(p_list))
-
-    # 4. Vigor/Composure — [Phase 2.5] 기력은 레지스트리 값(표시 무변경)
-    vigor_data = mem.get("vigor", mem.get("mental", {}))
-    composure_data = mem.get("composure", {})
-    try:
-        import custom_vars as _cv_info
-        v_val = _cv_info.vigor_value(ctx.channel_id, ctx.user_id, mem)
-        c_val = _cv_info.composure_value(ctx.channel_id, ctx.user_id, mem)
-    except Exception:
-        v_val = vigor_data.get("value", 100)
-        c_val = composure_data.get("value", 100)
-    v_info = game_character.get_mental_info(v_val)
-    c_info = game_character.get_composure_info(c_val)
-    msg.append(f"\n**💪 활력:** {v_info['emoji']} **{v_info['name']}** ({v_val}/100)")
-    msg.append(f"**😌 평형:** {c_info['emoji']} **{c_info['name']}** ({c_val}/100)")
-
-    # [2026-08-11 비일상적응도 삭제] 5. Adaptation 게이지 제거 — 쓰기 경로가 없어 항상 빈 표시였음
-    # 5. Quests (Active)
-    quests = game_system.get_active_quests(ctx.channel_id)
-    if quests:
-        msg.append("\n**🛡️ 진행 중인 퀘스트:**")
-        msg.extend([f"- {q}" for q in quests])
-
-    # 6. Notebook (Unified Inventory/Memo, per-user)
-    notebook = game_system.get_notebook_text(ctx.channel_id, ctx.user_id)
-    if notebook:
-        msg.append(f"\n**📔 노트북:**\n{notebook}")
-
-    await send_long_message(ctx.message.channel, "\n".join(msg))
+    full_arg = (ctx.raw_args + "\n" + file_text).strip()
+    
+    if not full_arg:
+        if ctx.message.attachments:
+            await ctx.send("⚠️ 파일 내용을 읽을 수 없습니다.")
+            return
+        await ctx.send(_INFO_USAGE)
+        return
+    # 2. Update logic
+    # [2026-10-12 C33] 페이지(`!가면`)가 없으면 콜 전에 거절 — 대기 상자는 없다.
+    if not domain_manager.get_pc_page_id(ctx.channel_id, uid):
+        await ctx.send("❌ 먼저 `!가면 [이름]`으로 캐릭터를 세운 뒤 `!설명`을 넣어 주세요.")
+        return
+    status_msg = await ctx.send("📝 **캐릭터 설정 분석 중...**")
+    
+    # [2026-09-16 시트 2차 §8] 원문 = 페이지 lore 절(정본). heavy 콜은 조각(passives/inventory)·
+    #   이름·species 추출용으로만. AI 실패 폴백 = 원문 그대로(파서가 절을 못 잡으면 Notes).
+    analysis = {}
+    if ctx.genai_client:
+        analysis = await cognition.analyze_character_sheet(ctx.genai_client, config.role_model("heavy"), full_arg) or {}
+    box = npc_manager.pc_box_from_info(analysis, full_arg)
+    if not analysis:
+        box["sheet_fallback"] = True   # AI 실패 폴백: 원문 그대로 Notes 절
+    if domain_manager.apply_pc_info_to_user(ctx.channel_id, uid, box):
+        _tail = "" if analysis else " (AI 분석 실패 — 원문만 저장)"
+        await status_msg.edit(content=f"✅ **캐릭터 시트 등록 완료**{_tail}\n특성: {len(box.get('passives', []))}개 추출\n원문은 캐릭터 페이지에 절 단위로 저장되었습니다.")
+    else:
+        await status_msg.edit(content="⚠️ **시트 저장 실패** — 다시 시도해 주세요.")
+    return
 
 
-@registry.register("mask", category="Player", aliases=["가면", "persona"], description="캐릭터 변경/등록")
+@registry.register("mask", category="Player", aliases=["가면", "persona"], description="PC 이름 정하기 · 바꾸기",
+                   usage=("`!가면` — 지금 가면", "`!가면 {이름}` — PC 이름 정하기 · 바꾸기(캐릭터 페이지가 선다)"))
 async def cmd_mask(ctx: CommandContext) -> None:
     """!가면 [이름] - 캐릭터 설정 및 PC 정보 연결"""
     if not ctx.args:
@@ -715,15 +838,9 @@ async def cmd_mask(ctx: CommandContext) -> None:
 # [2026-10-12 C33] maybe_enrich_pc_sheet 삭제 — 로어 PC 상자 보강 전용이었다.
 
 
-@registry.register("journal", category="Player", aliases=["일지"], description="캐릭터 일지 전체 조회 (노트북엔 최근 몇 줄만 표시)")
-async def cmd_journal(ctx: CommandContext) -> None:
-    """!일지 — 밀려나서 노트북엔 안 보이는 것까지 포함한 전체 일지 이력 조회."""
-    log = domain_manager.get_journal_log(ctx.channel_id, ctx.user_id)
-    if not log:
-        await ctx.send("📓 아직 기록된 일지가 없습니다. (플레이가 흐르면 자동으로 쌓입니다)")
-        return
-    lines = [f"{i+1}. {e}" for i, e in enumerate(log)]
-    await send_long_message(ctx.message.channel, f"📓 **캐릭터 일지 (전체 {len(log)}건)**\n" + "\n".join(lines))
+# [2026-10-25 C78 B1] `!일지`(PC 여정 요약 이력 = ai_memory.journal_log) 걷음 — 대신 세울 장은 없다: 쓰는 길
+#   (`game_character.add_to_journal`)을 부르는 곳이 0 이라(2026-09 시트 2차 무렵부터) 늘 비어 있었다(대기열 Q40).
+#   채널의 날 일지는 보관함 ③ 일지 장.
 
 
 def _parse_foreign_single_profile(raw_lines: list) -> Optional[tuple]:
@@ -871,6 +988,24 @@ def _register_npc(channel_id: str, name: str, desc: str,
     return target
 
 
+def _register_or_form(channel_id: str, name: str, desc: str,
+                      id_fields: dict = None, existing_map: dict = None) -> str:
+    """[2026-10-27 C84] 등록 네 길(엔벨로프 · 단일 시트 · h2 · Name:) 앞 가로채기 — 시트 머리 `모습:` · `등장: 예` ·
+    `불러오기: 예` 와 잠긴 모습 이름을 `npc_forms` 가 먼저 본다. 가로채지 않으면 종전 `_register_npc` 그대로.
+    반환 = 등록 메시지에 실릴 이름(가로챘으면 그 사정 한 줄)."""
+    try:
+        import npc_forms
+        _res = npc_forms.take_sheet(
+            channel_id, name, desc,
+            lambda _n, _d: _register_npc(channel_id, _n, _d, _extract_id_fields(str(_d or "").splitlines())))
+    except Exception as _e_fm:
+        logger.warning(f"[Form] 시트 가로채기 실패 — 평소 등록: {name}: {_e_fm}")
+        _res = None
+    if _res is not None:
+        return _res
+    return _register_npc(channel_id, name, desc, id_fields, existing_map)
+
+
 # =========================================================
 # [2026-09-02] 엔벨로프 — 인물 경계 **선언**
 # =========================================================
@@ -986,8 +1121,8 @@ def _merge_npc_attachment_texts(texts: list) -> tuple:
 #   (그 순간부터 FROZEN 취급: 증류가 절을 덮지 않고, 몹 태그 대상에서도 빠진다).
 #   새 최상위 명령어를 만들지 않는다 — `!npc` 서브커맨드(조작면 최소주의, `상태`와 같은 관례).
 _NPC_SHEET_ACTIONS = ("set", "append", "remove")
-_NPC_SHEET_USAGE = ("⚠️ 사용법: `!npc 시트 [이름]` (보기) · "
-                    "`!npc 시트 [이름] [절이름] set|append|remove [본문…]` (편집)")
+_NPC_SHEET_USAGE = ("⚠️ 사용법: `!npc 시트 [이름] [절이름] set|append|remove [본문…]` (편집) — "
+                    "보기는 Activity 인물 앱")
 
 
 def _npc_sheet_split(rest: str) -> tuple:
@@ -1013,28 +1148,10 @@ def _npc_sheet_split(rest: str) -> tuple:
     return str(rest or "").strip(), "", "", ""
 
 
-def _chunk_message(text: str, limit: int = 1900) -> list:
-    """디스코드 2000자 벽 — 줄 경계로 나눈다(한 줄이 통째로 길면 그 줄만 잘라 보낸다)."""
-    out, cur = [], ""
-    for line in str(text or "").splitlines():
-        while len(line) > limit:
-            if cur:
-                out.append(cur)
-                cur = ""
-            out.append(line[:limit])
-            line = line[limit:]
-        if len(cur) + len(line) + 1 > limit:
-            out.append(cur)
-            cur = line
-        else:
-            cur = (cur + "\n" + line) if cur else line
-    if cur:
-        out.append(cur)
-    return out or [""]
-
 
 async def _npc_sheet_subcommand(ctx, rest: str) -> None:
-    """`!npc 시트 …` — 인물 페이지 lore 절 보기 / 한 칸 편집(set·append·remove)."""
+    """`!npc 시트 …` — 인물 페이지 lore 절 한 칸 편집(set·append·remove).
+    [2026-10-25 C78 A4] 보기는 Activity 인물 앱(같은 `get_lore_sections` 절, 시트 순서) — 여기는 가리키기만."""
     import wiki_store
     channel_id = ctx.channel_id
     name, section, action, body = _npc_sheet_split(rest)
@@ -1048,17 +1165,13 @@ async def _npc_sheet_subcommand(ctx, rest: str) -> None:
         return
     pid = wiki_store.page_id_for("character", key)
 
-    if not action:                                   # ── 보기
-        secs = wiki_store.get_lore_sections(channel_id, pid)
-        if not secs:
+    if not action:                                   # ── 보기 → 인물 앱
+        if not wiki_store.get_lore_sections(channel_id, pid):   # [C78 검토] 페이지 · 절이 없으면 인물 앱에도 없다
             await ctx.send(f"📄 **{key}** — 시트 절이 아직 없습니다. "
                            f"`!npc 시트 {key} Core Traits set [본문]` 으로 쓸 수 있습니다.")
             return
-        _src = wiki_store.page_source(channel_id, pid)
-        head = f"📄 **{key}** 시트" + (" _(시드 — 편집하면 작가 시트로 승격)_"
-                                     if _src == wiki_store.SEED_SOURCE else "")
-        for chunk in _chunk_message(head + "\n\n" + wiki_store.assemble_lore_text(secs)):
-            await ctx.send(chunk)
+        await ctx.send(f"📄 **{key}** 시트는 Activity **인물** 앱에서 봐요. "
+                       f"고치기: `!npc 시트 {key} [절이름] set|append|remove [본문…]`")
         return
 
     if action != "remove" and not str(body or "").strip():   # ── 편집
@@ -1077,7 +1190,16 @@ async def _npc_sheet_subcommand(ctx, rest: str) -> None:
                    f"_(이제 작가 시트로 취급 — 자동 증류가 이 절을 덮지 않습니다.)_")
 
 
-@registry.register("npc", category="World", aliases=["엔피씨", "addnpc", "npc정보", "npc추가"], description="NPC 관리 (조회/추가/삭제/별칭/병합/초기화)")
+@registry.register("npc", category="World", aliases=["엔피씨", "addnpc", "npc정보", "npc추가"],
+                   description="NPC 등록 · 시트 · 별칭 · 병합",
+                   usage=("`!npc` — 등록된 NPC 목록(`!npc all` 임시까지) · `!npc {이름}` — 한 사람(말투 · 일정 · 역할)",
+                          "`!npc추가` + 시트 파일(여럿 가능) · `!npc추가 이름: 설명`",
+                          "`!npc 시트 {이름} {절} set|append|remove {본문}` — 절 하나 고치기(보기는 Activity 인물 앱)",
+                          "`!npc 별칭 {이름} {별칭}` · `!npc 병합 {중복} {본체}`",
+                          "`!npc 상태 {이름} active|down|dead`",
+                          "`!npc 모습 [{이름}]` — 모습 · 등장 · 불러오기 규칙 보기 · `!npc 모습 {이름} {모습}` — 손으로 바꾸기",
+                          "`!npc 일정 [{이름}]` · `!npc 보이스카드 [{이름}]` — 시트에서 일정 · 말투 뽑기(콜)",
+                          "`!npc 삭제 {이름}` · `!npc 초기화` — 세션 NPC 만(로어 · 직접 등록은 남음)"))
 async def cmd_npc(ctx: CommandContext) -> None:
     """!npc [이름] 조회 | !npc추가 [이름]: [설명] (또는 파일 첨부) | !npc 삭제 [이름]
     | !npc 별칭 [이름] [별칭] | !npc 병합 [중복] [본체] | !npc 보이스카드 [이름]
@@ -1120,12 +1242,28 @@ async def cmd_npc(ctx: CommandContext) -> None:
             return
         if parts[0].lower() in ('remove', 'delete', 'del', '삭제', '제거'):
             if len(parts) < 2 or not parts[1].strip():
-                await ctx.send("⚠️ 사용법: `!npc remove [이름]`")
+                await ctx.send("⚠️ 사용법: `!npc 삭제 [이름]`")
                 return
             target_name = parts[1].strip()
+            # [2026-10-27 C84] 잠긴 모습 · 등장 전 사람은 명부에 없다 — 보관분을 먼저 본다.
+            try:
+                import npc_forms as _nf_del
+                _fm_msg = _nf_del.forget(channel_id, target_name)
+            except Exception as _e_fd:
+                _fm_msg = None
+                logger.debug(f"[Form] forget skip: {_e_fd}")
+            if _fm_msg:
+                await ctx.send(_fm_msg)
+                return
             success, matched_key = domain_manager.delete_npc(channel_id, target_name)
             if success:
                 display = matched_key or target_name
+                try:   # 그 사람의 모습 표도 같이(개명 길의 delete_npc 는 domain 쪽이라 여기만 지운다)
+                    import npc_forms as _nf_dp
+                    if _nf_dp.forget_person(channel_id, display):
+                        display += " (모습 · 규칙 표도)"
+                except Exception as _e_fp:
+                    logger.debug(f"[Form] forget_person skip: {_e_fp}")
                 await ctx.send(f"🗑️ NPC **{display}** 삭제 완료.")
             else:
                 # 유사 이름 후보 제시
@@ -1170,6 +1308,19 @@ async def cmd_npc(ctx: CommandContext) -> None:
                 await ctx.send(f"ℹ️ NPC **{key}** 는 이미 `{_tstatus}` 입니다.")
             else:
                 await ctx.send(f"⚠️ 상태 변경 실패 (`{_res}`).")
+            return
+
+        # Subcommand: 모습 / form — [2026-10-27 C84] 모습 · 등장 · 불러오기 규칙 보기 · 손으로 바꾸기(D5)
+        if parts[0].lower() in ('모습', 'form', 'forms'):
+            import npc_forms
+            _rest = parts[1].strip() if len(parts) > 1 else ""
+            _mres = npc_forms.manual(channel_id, _rest) if len(_rest.split()) >= 2 else None
+            if _mres is not None:
+                if not _mres.startswith("⚠"):
+                    domain_manager.block_redo(channel_id, "!npc 모습")   # 이름 · 페이지 · 엣지를 옮긴다 = 턴과 섞인 칸
+                await ctx.send(_mres)
+                return
+            await ctx.send(npc_forms.view(channel_id, _rest))
             return
 
         # Subcommand: 시트 / sheet — 인물 페이지 lore 절 보기·편집 (voice_seed §H 입구)
@@ -1315,6 +1466,13 @@ async def cmd_npc(ctx: CommandContext) -> None:
             if perr:
                 await ctx.send(f"⚠️ {perr}\n사용법: `!npc 별칭 [NPC이름] [별칭]` 또는 `!npc 별칭 이름없는 유령 -> Nameless`")
                 return
+            try:
+                import npc_forms as _nf_alc
+                if _nf_alc.is_reserved(channel_id, alias_arg):
+                    await ctx.send(f"⚠️ '{alias_arg}'는 잠긴 모습 · 등장 전 이름이라 별칭으로 못 붙여요(`!npc 모습`).")
+                    return
+            except Exception:
+                pass
             ok, key = domain_manager.add_npc_alias(channel_id, npc_arg, alias_arg)
             if ok:
                 aliases = (domain_manager.get_npcs(channel_id).get(key) or {}).get("aliases", [])
@@ -1358,7 +1516,7 @@ async def cmd_npc(ctx: CommandContext) -> None:
         _env_blocks, _env_warns = _parse_envelope_sheets(raw_lines)
         if _env_blocks:
             _env_names = [
-                _register_npc(channel_id, _n, _b, _extract_id_fields(_b.splitlines()))
+                _register_or_form(channel_id, _n, _b, _extract_id_fields(_b.splitlines()))
                 for _n, _b in _env_blocks
             ]
             _env_tail = _envelope_warning_tail(_env_warns)
@@ -1377,7 +1535,7 @@ async def cmd_npc(ctx: CommandContext) -> None:
         _foreign = _parse_foreign_single_profile(raw_lines)
         if _foreign:
             _f_name, _f_desc, _f_idf = _foreign
-            _f_target = _register_npc(channel_id, _f_name, _f_desc, _f_idf)
+            _f_target = _register_or_form(channel_id, _f_name, _f_desc, _f_idf)
             _f_summary = _summary_from_id_fields(_f_idf)
             await ctx.send(f"👥 **NPC 등록 (단일 시트):** {_f_target}"
                            + (f"\n_{_f_summary}_" if _f_summary else "")
@@ -1428,7 +1586,7 @@ async def cmd_npc(ctx: CommandContext) -> None:
                     desc_lines.pop()
                 desc = "\n".join(desc_lines)
                 # [2026-07-28] 자체 라벨 루프 → 공용 헬퍼(occupation 포함, 구조화 키까지 전달)
-                target_name = _register_npc(
+                target_name = _register_or_form(
                     channel_id, name, desc, _extract_id_fields(desc_lines))
                 processed_count += 1
                 last_name = target_name
@@ -1460,7 +1618,7 @@ async def cmd_npc(ctx: CommandContext) -> None:
             for name, desc_lines in blocks:
                 desc = "\n".join(desc_lines)
                 # [2026-07-28] 이 모드도 라벨 인식 대상에 편입(구 코드는 마크다운·외부단일만 인식)
-                last_name = _register_npc(
+                last_name = _register_or_form(
                     channel_id, name, desc, _extract_id_fields(desc_lines))
                 processed_count += 1
         else:
@@ -1583,7 +1741,8 @@ async def cmd_npc(ctx: CommandContext) -> None:
 # Handle Participant Command Removed (Logic absorbed into cmd_info and deprecated commands removed)
 
 
-@registry.register("reset", category="Admin", aliases=["리셋", "초기화"], description="세션 데이터 전체 초기화")
+@registry.register("reset", category="Admin", aliases=["리셋", "초기화"], description="채널 데이터 전부 지우기(확인)",
+                   usage=("`!리셋` — 채널 데이터 전부 · 채널 재생성(이모지로 확인)",))
 async def cmd_reset(ctx: CommandContext) -> None:
     """!리셋 - 이모지 확인 후 전체 초기화 (채널 재생성)"""
     # 이모지 확인은 session_manager에서 처리
@@ -1594,19 +1753,22 @@ async def cmd_reset(ctx: CommandContext) -> None:
 #   execute_clear 는 soft reset(진행 상황 삭제) + 채팅 purge 다. 명령 목록만 읽고
 #   `!클리어`를 누른 유저가 세션을 날리는 사고가 이 한 줄에서 났다.
 @registry.register("clear", category="Admin", aliases=["클리어", "청소"],
-                   description="세션 초기화 (로어·룰·참가자·NPC 시트·출력 선언 유지, 진행 상황 삭제)")
+                   description="진행만 지우기(로어 · 룰 · 참가자 · NPC 시트 · 출력 선언은 남음)",
+                   usage=("`!클리어` — 진행 상황 삭제 · 채팅 비우기. 로어 · 룰 · 참가자 · NPC 시트 · 출력 선언은 남는다",))
 async def cmd_clear(ctx: CommandContext) -> None:
     """!클리어"""
     await session_manager.manager.execute_clear(ctx.message)
 
 
-@registry.register("ready", category="Admin", aliases=["준비"], description="준비 상태 점검")
+@registry.register("ready", category="Admin", aliases=["준비"], description="준비 점검",
+                   usage=("`!준비` — 로어 · 가면 · 룰 · 출력 선언 점검",))
 async def cmd_ready(ctx: CommandContext) -> None:
     """!준비"""
     await session_manager.manager.check_preparation(ctx.message)
 
 
-@registry.register("start", category="Admin", aliases=["시작"], description="세션 시작 [첫 상황]")
+@registry.register("start", category="Admin", aliases=["시작"], description="세션 시작 [첫 상황]",
+                   usage=("`!시작` — 오프닝을 봇이 · `!시작 {첫 상황}` — 그 상황으로",))
 async def cmd_start(ctx: CommandContext) -> None:
     """
     !시작 [첫 상황]
@@ -1626,7 +1788,10 @@ async def cmd_start(ctx: CommandContext) -> None:
     return None
 
 
-@registry.register("retry", category="System", aliases=["다시", "reroll", "재판정"], description="재생성 / 인풋 수정 후 재생성")
+@registry.register("retry", category="System", aliases=["다시", "reroll"], description="마지막 산문 다시 쓰기 [고친 입력]",
+                   usage=("`!다시` — 같은 입력으로 다시 · `!다시 {고친 입력}` — 입력을 바꿔 다시",
+                          "안 되는 때: 마지막 턴이 `!턴` · 관찰 턴 / 그 뒤 턴 칸을 쓰는 명령(`!npc` 쓰기 · `!로어` · `!설명` · "
+                          "`!가면` · `!시간` · `!출력룰` 변수 · OOC 편집) / 앞 턴 배경 정리가 덜 끝난 채 시작한 턴"))
 async def cmd_retry(ctx: CommandContext) -> None:
     """!다시 [수정 입력] — 빈칸이면 같은 입력으로 리롤, 내용 있으면 입력 교체 후 재생성"""
     from orchestration import get_orchestration_runtime
@@ -1640,17 +1805,11 @@ async def cmd_retry(ctx: CommandContext) -> None:
     await orchestration.retry_last(ctx.message, ctx.channel_id, edited_input=edited_input)
 
 
-@registry.register("scene", category="System", aliases=["장면", "수위", "mature"], description="장면 수위 안내 (늘 전체)")
-async def cmd_scene(ctx: CommandContext) -> None:
-    """!장면 — 안내만.
-
-    [2026-10-11 청소 C6] 렌더 수위는 10-02부터 늘 전체(slot_manager._content_level_for = gore_nsfw)라
-    채널 설정(settings.scene_type)을 바꿔도 렌더에 닿지 않았다. 설정은 쓰지 않고 안내 한 줄만 보낸다.
-    명령 이름·별칭은 남긴다(손에 익은 입력이 "없는 명령"으로 튀지 않게)."""
-    await ctx.send("🎬 장면 수위는 늘 **전체**(고어 + 성인 + 하이브리드)로 켜져 있습니다. 따로 바꿀 설정은 없습니다.")
+# [2026-10-25 C78 D2] `!장면`(수위 안내 한 줄 — 10-11 뒤 설정 0) 걷음. 친 사람은 없는 명령 안내를 받는다.
 
 
-@registry.register("lock", category="System", aliases=["잠금"], description="세션 진행/일시정지 (인자 없음=토글, `on/off`=명시)")
+@registry.register("lock", category="System", aliases=["잠금"], description="세션 진행 / 일시정지",
+                   usage=("`!잠금` — 토글 · `!잠금 on` — 진행(채팅을 턴으로) · `!잠금 off` — 일시정지(채팅 무시)",))
 async def cmd_lock(ctx: CommandContext) -> None:
     """!잠금 — 토글 / !잠금 on|off|해제 — 명시.
 
@@ -1680,7 +1839,12 @@ async def cmd_lock(ctx: CommandContext) -> None:
 # UNE Module Control Commands
 # =========================================================
 
-@registry.register("modules", category="System", aliases=["모듈", "mods"], description="DLC 모듈 상태 확인")
+@registry.register("modules", category="System", aliases=["모듈", "mods"],
+                   description="모듈 켜고 끄기 · 코드 앱 올리기(보기는 모듈 앱)",
+                   usage=("`!모듈 {번호|이름} on/off` — 하나(예: `!모듈 속마음 off` · `!모듈 게시판 on` · `!모듈 2 off`)",
+                          "`!모듈 on/off` — 토글 모듈 일괄(올린 것은 안 건드림)",
+                          "`!모듈 올리기` + .lkapp — 코드 앱 올리기 · `!모듈 지우기 {번호|이름} 확인`",
+                          "상태 · 설정 · 들어 있는 것은 Activity 모듈 앱"))
 async def cmd_modules(ctx: CommandContext) -> None:
     """!모듈 - 모듈 상태 확인. 핵심 모듈은 항상 활성.
 
@@ -1692,14 +1856,56 @@ async def cmd_modules(ctx: CommandContext) -> None:
     arg = ctx.raw_args.strip().lower()
     core_mods = _mf.on_shelf("core")
     toggle_mods = _mf.on_shelf("toggle")
-    config_mods = _mf.on_shelf("config")
     _parts = arg.split()
+
+    # [2026-10-23 C73 M7a] 코드 앱 올리기 · 지우기 — `!모듈 올리기` + 첨부 .lkapp / `!모듈 지우기 <이름|#n> [확인]`.
+    if _parts and _parts[0] in ("올리기", "upload", "install"):
+        import app_host as _ah_up
+        if not ctx.message.attachments:
+            await ctx.send("⚠️ `.lkapp` 파일을 첨부해 주세요 — `!모듈 올리기` + 파일 하나.")
+            return
+        _att = ctx.message.attachments[0]
+        if int(getattr(_att, "size", 0) or 0) > _ah_up.MAX_PACKAGE_BYTES:
+            await ctx.send("⚠️ 묶음이 너무 커요(5MB까지).")
+            return
+        try:
+            _data = await _att.read()
+        except Exception as _e_rd:
+            logger.warning(f"[App] 첨부 읽기 실패: {_e_rd}")
+            await ctx.send("⚠️ 첨부를 못 읽었어요.")
+            return
+        _ok_up, _lines_up = await _ah_up.install(ctx.channel_id, _data)   # 검사는 작업 프로세스(이벤트 루프 안 붙잡음)
+        await ctx.send("\n".join(_lines_up))
+        return
+    if _parts and _parts[0] in ("지우기", "remove", "uninstall"):
+        import app_host as _ah_rm
+        _raw_rm = ctx.raw_args.strip().split()[1:]
+        _confirm = bool(_raw_rm) and _raw_rm[-1] in ("확인", "confirm")
+        if _confirm:
+            _raw_rm = _raw_rm[:-1]
+        _kind_rm, _target_rm, _cands_rm = _mf.resolve_module(ctx.channel_id, " ".join(_raw_rm))
+        if _kind_rm != "app":
+            if _cands_rm:
+                await ctx.send("⚠️ 여럿에 맞아요 — " + " · ".join(_cands_rm))
+            else:
+                await ctx.send("⚠️ 그런 코드 앱이 없어요. `!모듈` 목록의 번호나 이름으로 쳐 주세요.")
+            return
+        _app_rm = _ah_rm.get_app(ctx.channel_id, _target_rm) or {}
+        _label_rm = _ah_rm.label_of(_app_rm) if _app_rm else str(_target_rm)
+        if not _confirm:
+            await ctx.send(f"⚠️ **{_label_rm}** 을(를) 지우면 묶음과 그 앱 장부가 사라져요(번호는 남아요).\n"
+                           f"진행하려면: `!모듈 지우기 {' '.join(_raw_rm)} 확인`")
+            return
+        _ok_rm, _line_rm = _ah_rm.remove(ctx.channel_id, _target_rm)
+        await ctx.send(("🗑️ " if _ok_rm else "⚠️ ") + _line_rm)
+        return
 
     # 개별 토글: !모듈 속마음 off / !모듈 게시판 on  (별칭 = 각 모듈의 aliases + id)
     # [2026-10-23 C72] + 올린 모듈(`!출력룰` 파일): `!모듈 2 off` · `!모듈 #2 off` · `!모듈 화원 off` · 앞글자(하나로만 맞을 때).
     #   고르기 = module_frame.resolve_module(코드 별칭이 먼저), 쓰기 = set_module_on(Activity mod.toggle 과 같은 함수).
     _ON_WORDS, _OFF_WORDS = ('on', '켜기', 'true'), ('off', '끄기', 'false')
     _raw_parts = ctx.raw_args.strip().split()
+    _core_note = ""
     if len(_raw_parts) >= 2 and _raw_parts[-1].lower() in _ON_WORDS + _OFF_WORDS:
         _on = _raw_parts[-1].lower() in _ON_WORDS
         _kind, _target, _cands = _mf.resolve_module(ctx.channel_id, " ".join(_raw_parts[:-1]))
@@ -1714,13 +1920,29 @@ async def cmd_modules(ctx: CommandContext) -> None:
                 return
             await ctx.send(f"❌ **{_m.name}** 모듈 비활성화")
             return
-        if _kind == "bundle":
-            _ok, _line = _mf.set_module_on(ctx.channel_id, "bundle", _target, _on)
+        if _kind in ("bundle", "app"):   # [C73] 코드 앱도 같은 길
+            _ok, _line = _mf.set_module_on(ctx.channel_id, _kind, _target, _on)
             await ctx.send(("✅ " if _on else "❌ ") + _line if _ok else f"⚠️ {_line}")
             return
         if _cands:
             await ctx.send("⚠️ 여럿에 맞아요 — " + " · ".join(_cands) + "\n번호나 이름 전체로 다시 쳐 주세요.")
             return
+        # [C78 A3] 옛 상태 화면이 "핵심 모듈 (항상 활성)"으로 말해 주던 몫 — 핵심 모듈을 끄려 하면 한 줄.
+        _w_core = " ".join(_raw_parts[:-1]).strip().lower()
+        _core_hit = _target if (_kind == "code" and getattr(_target, "shelf", "") == "core") else next(
+            (m for m in core_mods if _w_core in {str(m.id).lower(), str(m.name).lower(), *[str(a).lower() for a in (m.aliases or ())]}),
+            None)
+        if _core_hit is not None:
+            _core_note = f"ℹ️ **{_core_hit.name}** 은(는) 핵심 모듈이라 늘 켜져 있어요."
+        else:
+            # [C78 검토] 옛 상태 화면이 대신 받던 꼴 — 이제는 말없이 안내만 나와 "꺼졌나?" 로 읽혔다.
+            _cfg_hit = _target if (_kind == "code" and getattr(_target, "shelf", "") == "config") else next(
+                (m for m in _mf.on_shelf("config")
+                 if _w_core in {str(m.id).lower(), str(m.name).lower(), *[str(a).lower() for a in (m.aliases or ())]}),
+                None)
+            _core_note = (f"ℹ️ **{_cfg_hit.name}** 은(는) 설정으로 도는 것이라 `!모듈` 로 켜고 끄지 않아요."
+                          if _cfg_hit is not None else
+                          f"⚠️ 그런 모듈이 없어요: `{' '.join(_raw_parts[:-1])}`")
 
     _core_names = "/".join(m.name for m in core_mods)
 
@@ -1738,146 +1960,26 @@ async def cmd_modules(ctx: CommandContext) -> None:
         await ctx.send(f"❌ **부가 모듈이 비활성화되었습니다.**\n• {_names} ❌\n\n({_core_names}은 항상 활성)")
         return
 
-    # 상태 확인
-    msg = ["🔌 **모듈 상태**", "", "**핵심 모듈** (항상 활성)"]
-    for m in core_mods:
-        msg.append(f"• {m.name} ({m.id}): ✅ ON")
-    msg.append("")
-    msg.append("**토글 가능 모듈** (기본 ON)")
-    for m in toggle_mods:
-        status = "✅ ON" if m.toggle.get(ctx.channel_id) else "❌ OFF"
-        msg.append(f"• {m.name} ({m.id}): {status}")
-    # [2026-10-23 C72] 올린 모듈 — `!출력룰`로 올린 파일 하나 = 모듈 하나(고정 번호). 손으로 쓴 것 · 한 줄 서술은 묶음 밖.
+    # [2026-10-25 C78 A3] 상태 화면은 Activity 모듈 앱(같은 목록 + 설정 · 들어 있는 것 · 코드 앱) — 여기는 하위 명령 안내만.
+    msg = ([_core_note] if _core_note else []) + ["🔌 **모듈** — 상태 · 설정 · 들어 있는 것은 Activity **모듈** 앱에서 봐요.",
+           "• `!모듈 {번호|이름} on/off` — 하나 켜고 끄기 (예: `!모듈 속마음 off` · `!모듈 게시판 on` · `!모듈 2 off`)",
+           "• `!모듈 on/off` — 토글 모듈 일괄 (올린 것은 안 건드림)",
+           "• `!모듈 올리기` + .lkapp — 코드 앱 올리기 · `!모듈 지우기 {번호|이름} 확인`"]
     try:
-        import output_router as _or_m
-        _bl = _or_m.bundles(ctx.channel_id)
-    except Exception as _e_bl:
-        logger.debug(f"[Modules] bundles skip: {_e_bl}")
-        _bl = []
-    if _bl:
-        msg.append("")
-        msg.append("**올린 모듈** (이 채널 · `!출력룰`로 올린 파일)")
-        for _b in _bl:
-            msg.append(f"• #{_b['no']} {_b['label']}: {'✅ ON' if _b['on'] else '❌ OFF'} — {_or_m.counts_line(_b)}")
-    if config_mods:
-        msg.append("")
-        msg.append("**설정으로 도는 것** (보기만 — `!출력룰`·설정이 쥔다)")
-        for m in config_mods:
-            try:
-                _line = m.status(ctx.channel_id) if m.status else ""
-            except Exception as _e_st:
-                logger.debug(f"[Modules] status {m.id} skip: {_e_st}")
-                _line = "?"
-            msg.append(f"• {m.name}: {_line}")
-    msg.append("\n💡 `!모듈 활력 on/off` · `!게시판 on/off` · `!모듈 속마음 on/off` — 토글 모듈 제어")
-    if _bl:
-        msg.append("💡 `!모듈 <번호|이름> on/off` — 올린 모듈 켜고 끄기(`!모듈 on/off` 일괄은 올린 모듈을 안 건드림)")
-
+        import app_host as _ah_ls
+        if _ah_ls.list_apps(ctx.channel_id) and not _ah_ls.available():
+            msg.append("⚠️ 서버에 lupa 가 없어 코드 앱이 안 돌아요(`pip install lupa`).")
+    except Exception as _e_al:
+        logger.debug(f"[Modules] apps skip: {_e_al}")
     await ctx.send("\n".join(msg))
 
-@registry.register("board", category="System", aliases=["게시판", "boardmod"], description="세계 게시판 모듈 관리")
-async def cmd_toggle_board(ctx: CommandContext) -> None:
-    """!게시판 [on/off/상태] | !게시판 공지/sns/메시지 [on/off] | !게시판 빈도 N"""
-    import world_board
-    arg = ctx.raw_args.strip().lower()
-    parts = arg.split()
 
-    # 채널 이름 매핑
-    ch_aliases = {
-        "공지": "bulletin", "bulletin": "bulletin", "게시": "bulletin",
-        "sns": "sns", "소셜": "sns", "피드": "sns",
-        "메시지": "message", "message": "message", "쪽지": "message", "편지": "message",
-    }
-
-    # ⚰[2026-09-13 P14] `빈도` 하위 동사 삭제. WHY: 그 손잡이가 돌리던 것(턴 간격 게이트)이
-    #   없어졌다 — 도착물은 이제 선언 전이 `deliver` 와 분석 신호 `arrival` 이 부를 때만 온다.
-    #   저장만 되고 아무것도 안 움직이는 숫자를 명령 UI가 계속 보여 주면, 유저는 그걸
-    #   레버로 읽고 안 듣는 세계를 탓한다. 명령 표면 순감(나머지 `!게시판` 동사는 유지).
-
-    # [2026-08-16 도착물 라우트] 착지 모드: !게시판 표시 메시지 버튼|스레드|끄기
-    #   새 명령어를 만들지 않는다 — 게시판의 착지 방식이므로 !게시판의 서브커맨드가 제자리.
-    if len(parts) >= 1 and parts[0] in ("표시", "display", "착지"):
-        mode_aliases = {
-            "스레드": "thread", "thread": "thread",
-            "버튼": "button", "button": "button",
-            "끄기": "off", "off": "off", "없음": "off",
-        }
-        # [2026-08-17 v1.1 §3] 공지·SNS도 기본 button → 라벨을 💌 고정에서 "버튼"으로 중립화
-        #   (실제 이모지는 채널종이 정한다: 메시지=💌 / 공지·SNS=📰).
-        mode_display = {"thread": "🧵 스레드(공개)", "button": "🔘 버튼(누른 사람만)", "off": "❌ 끄기"}
-        if len(parts) >= 3 and parts[1] in ch_aliases and parts[2] in mode_aliases:
-            ch = ch_aliases[parts[1]]
-            mode = mode_aliases[parts[2]]
-            world_board.set_display_mode(ctx.channel_id, ch, mode)
-            ch_display = {"bulletin": "📋 공지", "sns": "📱 SNS", "message": "💌 메시지"}[ch]
-            await ctx.send(f"{ch_display} **착지**: {mode_display[mode]}")
-            return
-        modes = world_board.get_all_display_modes(ctx.channel_id)
-        await ctx.send(
-            "🧭 **게시판 착지 방식**\n"
-            f"  📋 공지: {mode_display.get(modes['bulletin'], modes['bulletin'])}\n"
-            f"  📱 SNS: {mode_display.get(modes['sns'], modes['sns'])}\n"
-            f"  💌 메시지: {mode_display.get(modes['message'], modes['message'])}\n\n"
-            "사용법: `!게시판 표시 메시지 버튼` (스레드 / 버튼 / 끄기)\n"
-            "  · 버튼 = 그 턴 산문에 버튼이 붙고(메시지 💌 / 공지·SNS 📰), 누른 사람만 봅니다.\n"
-            "  · 스레드 = 공개 스레드에 게시(채널 전원이 봅니다). **명시해야만** 스레드가 생깁니다.\n"
-            "  · 끄기 = 생성 자체를 안 합니다(저장도 없음)."
-        )
-        return
-
-    # 개별 채널 토글: !게시판 sns on/off
-    if len(parts) >= 1 and parts[0] in ch_aliases:
-        ch_name = ch_aliases[parts[0]]
-        ch_display = {"bulletin": "📋 공지", "sns": "📱 SNS", "message": "💌 메시지"}[ch_name]
-        if len(parts) >= 2 and parts[1] in ("on", "켜기", "true"):
-            world_board.set_board_channel(ctx.channel_id, ch_name, True)
-            await ctx.send(f"✅ **{ch_display}** 채널 활성화")
-            return
-        elif len(parts) >= 2 and parts[1] in ("off", "끄기", "false"):
-            world_board.set_board_channel(ctx.channel_id, ch_name, False)
-            await ctx.send(f"❌ **{ch_display}** 채널 비활성화")
-            return
-        else:
-            # 상태 표시
-            channels = world_board.get_board_channels(ctx.channel_id)
-            status = "✅ ON" if channels.get(ch_name) else "❌ OFF"
-            await ctx.send(f"{ch_display} 상태: {status}\n사용법: `!게시판 {parts[0]} on/off`")
-            return
-
-    # 전체 on/off
-    if arg in ("on", "켜기", "true"):
-        domain_manager.toggle_module(ctx.channel_id, "board", True)
-        await ctx.send("✅ **게시판 모듈** 활성화")
-        return
-    if arg in ("off", "끄기", "false"):
-        domain_manager.toggle_module(ctx.channel_id, "board", False)
-        await ctx.send("❌ **게시판 모듈** 비활성화")
-        return
-
-    # 상태 표시 (기본)
-    modules = domain_manager.get_active_modules(ctx.channel_id)
-    board_on = "board" in modules
-    channels = world_board.get_board_channels(ctx.channel_id)
-    # [2026-08-16 도착물 라우트] 착지 방식도 같이 — 어디에 어떻게 내려앉는지가 안 보이면
-    #   "왜 스레드에 안 올라오지"가 미스터리가 된다.
-    modes = world_board.get_all_display_modes(ctx.channel_id)
-    _m = {"thread": "🧵", "button": "🔘", "off": "❌"}
-    lines = [
-        f"📋 **게시판 모듈**: {'✅ ON' if board_on else '❌ OFF'}",
-        f"  📋 공지: {'✅' if channels['bulletin'] else '❌'} {_m.get(modes['bulletin'], '')}  |  📱 SNS: {'✅' if channels['sns'] else '❌'} {_m.get(modes['sns'], '')}  |  💌 메시지: {'✅' if channels['message'] else '❌'} {_m.get(modes['message'], '')}",
-        "",
-        "도착물은 **선언이 부를 때** 옵니다 — 전이의 `deliver` 칸(규칙이 정한 때)이나",
-        "장면 자체가 부를 때. 턴 수로 재는 자동 게시는 없습니다.",
-        "",
-        "사용법:",
-        "  `!게시판 on/off` — 전체 모듈",
-        "  `!게시판 공지/sns/메시지 on/off` — 개별 채널",
-        "  `!게시판 표시 메시지 버튼` — 착지 방식(🧵스레드/💌버튼/❌끄기)",
-    ]
-    await ctx.send("\n".join(lines))
+# [2026-10-25 C78 A2 · D3] `!게시판` 걷음 — 모듈 앱 게시판 카드(사용 · 공지/SNS/메시지 스위치) + `!모듈 게시판 on/off`.
+#   `!게시판 표시`(스레드 · 버튼 · 끄기)는 C77 A-4 뒤 끄기 말고 효과가 없었다(Q36) — 옛 `끄기` 저장값은 채널 꺼짐으로 읽는다(world_board).
 
 
-@registry.register("bot", category="System", aliases=["봇"], description="봇 활성화 제어")
+@registry.register("bot", category="System", aliases=["봇"], description="봇 켜고 끄기",
+                   usage=("`!봇` — 지금 상태 · `!봇 on/off` — 꺼지면 `!봇` 만 받는다",))
 async def cmd_bot(ctx: CommandContext) -> None:
     """!봇 [on/off]"""
     arg = ctx.raw_args.strip().lower()
@@ -1885,7 +1987,7 @@ async def cmd_bot(ctx: CommandContext) -> None:
     if not arg:
         curr = domain_manager.get_bot_active(ctx.channel_id)
         status = "✅ ON" if curr else "❌ OFF"
-        await ctx.send(f"🤖 봇 상태: **{status}**\n사용법: `!bot [on/off]`")
+        await ctx.send(f"🤖 봇 상태: **{status}**\n사용법: `!봇 on/off`")
         return
         
     if arg in ['on', '켜기', 'true']:
@@ -1934,9 +2036,98 @@ def _build_chronicle_input(deep_memory: str, fermented: list, history: list) -> 
     return "\n\n---\n\n".join(parts) if parts else ""
 
 
+def _build_chronicle_tail_input(tail: list) -> str:
+    """[2026-10-26 C80] `!연대기` 꼬리 — 장에 아직 안 묶인 엔트리만(작중 시각 · 턴 머리 + 요약)."""
+    import fermentation
+    lines = []
+    for e in tail or []:
+        if not isinstance(e, dict) or not str(e.get("summary") or "").strip():
+            continue
+        stamp = fermentation._episode_stamp(e)
+        lines.append(f"{stamp} {e['summary'].strip()}" if stamp else e["summary"].strip())
+    return ("## 최근 에피소드 (아직 장으로 묶이지 않은 구간)\n" + "\n".join(lines)) if lines else ""
+
+
+async def _show_chronicle_chapters(ctx: CommandContext) -> None:
+    """[2026-10-26 C80 D9] `!연대기` v2 — 쌓인 장을 시간순으로 보여 주고(콜 0), 장에 안 묶인 꼬리 엔트리만 즉석 요약(콜 1).
+    저장은 안 한다(장은 발효가 쓴다). 통째로 보여 주는 장은 최근 CHRONICLE_SHOW_MAX 개, 나머지는 내보내기."""
+    import fermentation
+    channel_id = ctx.channel_id
+    d_data = domain_manager.get_domain(channel_id)
+    _nar, _ddata = domain_manager.get_deep_memory(channel_id)
+    chapters = [c for c in fermentation.get_chapters(_ddata) if not c.get("legacy")]
+    legacy = [c for c in (d_data.get("chronicles") or []) if isinstance(c, dict) and c.get("content")]
+    tail = fermentation.unchaptered_entries(domain_manager.get_fermented_history(channel_id), _ddata)
+
+    if not chapters and not legacy and not tail:
+        await ctx.send("⚠️ 아직 연대기로 묶인 장도, 정리할 에피소드도 없습니다.")
+        return
+
+    show_max = max(1, int(getattr(config, "CHRONICLE_SHOW_MAX", 3) or 3))
+    blocks = []
+    if not chapters and legacy:
+        _lg = legacy[-1]
+        blocks.append(f"**이전 연대기** (옛 방식, {len(legacy)}개 중 마지막)\n{str(_lg.get('content') or '').strip()}")
+    hidden = max(0, len(chapters) - show_max)
+    for ch in chapters[-show_max:]:
+        blocks.append(f"**{fermentation.chapter_title(ch)}**\n{str(ch.get('text') or '').strip()}")
+    if hidden or (chapters and legacy):
+        _more = []
+        if hidden:
+            _more.append(f"앞 장 {hidden}개")
+        if chapters and legacy:
+            _more.append(f"이전 연대기 {len(legacy)}개")
+        blocks.append(f"-# {' · '.join(_more)}는 `!연대기 내보내기` 파일에 있습니다.")
+    if blocks:
+        await send_long_message(ctx.message.channel, "📜 **[세션 연대기]**\n\n" + "\n\n".join(blocks))
+
+    tail_input = _build_chronicle_tail_input(tail)
+    if not tail_input:
+        return
+    try:
+        import corrections as _corr_ct
+        _cb_ct = _corr_ct.block_for(channel_id, tail_input)
+        if _cb_ct:
+            tail_input += "\n\n---\n\n" + _cb_ct
+    except Exception:
+        pass
+    feedback = await ctx.message.channel.send("📜 **최근 구간을 정리하고 있습니다...**")
+    import text_resources
+    from google.genai import types
+    try:
+        response = await ctx.genai_client.aio.models.generate_content(
+            model=config.role_model("main"),
+            contents=[types.Content(role="user", parts=[types.Part(text=tail_input)])],
+            config=types.GenerateContentConfig(
+                system_instruction=text_resources.CHRONICLE_SYSTEM_PROMPT,
+                temperature=0.5,
+                max_output_tokens=8192,
+                safety_settings=config.SAFETY_SETTINGS,
+            )
+        )
+        text = (response.text or "").strip() if response else ""
+        try:
+            await feedback.delete()
+        except Exception:
+            pass
+        if text:
+            await send_long_message(ctx.message.channel, f"📜 **[최근 구간 — 아직 장이 아님]**\n\n{text}")
+        else:
+            await ctx.send("⚠️ 최근 구간 정리에 실패했습니다.")
+    except Exception as e:
+        logger.error(f"[Chronicle] tail summary failed: {e}", exc_info=True)
+        try:
+            await feedback.edit(content=f"⚠️ 최근 구간 정리 오류: {str(e)[:100]}")
+        except Exception:
+            pass
+
+
 async def _generate_session_chronicle(ctx: CommandContext) -> None:
     """세션 연대기 생성. [2026-08-18] 역할=main — 발효·연대기 라인과 **같은 모델**로 통일
     (종전 "flash"였다: 같은 연대기가 자동 발효(main)와 !연대기(flash) 두 모델로 갈렸다)."""
+    if getattr(config, "MEMORY_LAYERS_V2", False):
+        await _show_chronicle_chapters(ctx)   # [C80] 장 보기 + 꼬리 즉석(저장 0)
+        return
     channel_id = ctx.channel_id
     d_data = domain_manager.get_domain(channel_id)
 
@@ -2030,7 +2221,8 @@ async def _generate_session_chronicle(ctx: CommandContext) -> None:
             pass
 
 
-@registry.register("lores", category="Analysis", aliases=["연대기", "chronicle"], description="세션 연대기 (AI 요약 / 내보내기)")
+@registry.register("lores", category="Analysis", aliases=["연대기", "chronicle"], description="세션 요약 · 내보내기",
+                   usage=("`!연대기` — 지난 장 + 최근 구간 요약(콜) · `!연대기 내보내기 [증분]` — 연대기 파일",))
 async def cmd_lores(ctx: CommandContext) -> None:
     """!연대기 — AI 세션 요약 생성 / !연대기 내보내기 — 기존 텍스트 파일"""
     arg = ctx.raw_args.strip().lower()
@@ -2349,7 +2541,7 @@ async def run_ooc_edit(
         if field in ("thread", "threads", "promise", "promises"):   # [2026-10-10 이야기 실 O-E] 스레드 장부
             thread_edits.append(edit)
             continue
-        if field in ("quest", "quests"):   # [2026-10-10 이야기 실 O-E] 퀘스트 보드
+        if field in ("quest", "quests", "goal", "goals"):   # [C74 판2] 목표 = 장부 goal — 옛 칸 이름도 받아 thread 로 넘긴다
             quest_edits.append(edit)
             continue
         # [2026-09-16 시트 2차] 시트 절 편집 → PC 페이지 lore 절(grow_sheet는 lore 절을 안 건드린다).
@@ -2503,6 +2695,8 @@ async def run_ooc_edit(
             _oe_pd.store_pending(channel_id, getattr(_qm, "id", None), _it, uid)
         except Exception as _e_pd:
             logging.warning(f"[OOC] 정정 보류 질문 실패: {_e_pd}")
+    if applied > 0:
+        domain_manager.block_redo(channel_id, "OOC 편집")   # [C77 C-4] ai_memory 는 되감기고 관계 · 위키는 남아 갈라졌다
     return applied > 0
 
 
@@ -2527,7 +2721,8 @@ async def handle_ooc_command(
     return None
 
 
-@registry.register("ooc", category="Analysis", aliases=["OOC", "메타", "루카"], description="루카 (OOC 도우미) 모드 토글")
+@registry.register("ooc", category="Analysis", aliases=["OOC", "메타", "루카"], description="루카(OOC 도우미) 켜고 끄기",
+                   usage=("`!ooc` — 루카 모드 토글(켜면 모든 메시지가 OOC 대화)",))
 async def cmd_ooc(ctx: CommandContext) -> None:
     """!ooc - 루카 (OOC 도우미) 모드 ON/OFF 토글"""
     current = domain_manager.get_ooc_mode(ctx.channel_id)
@@ -2538,95 +2733,12 @@ async def cmd_ooc(ctx: CommandContext) -> None:
     else:
         await ctx.send("🎭 **루카 모드 OFF** — 서사 모드로 복귀합니다.")
 
-@registry.register(
-    "활력",
-    category="Player",
-    aliases=["기력", "평형", "평정", "멘탈", "mental", "vigor"],
-    description="활력/평형 조회 및 설정"
-)
-async def cmd_mental(ctx: CommandContext) -> None:
-    """!활력 [활력값] [평형값] - 활력/평형 수치 설정 (0-100)"""
-    uid = ctx.user_id
-    p_data = domain_manager.get_participant_data(ctx.channel_id, uid)
-
-    if not p_data:
-        await ctx.send("❌ 등록 필요 (`!가면`)")
-        return
-
-    mem = p_data.get("ai_memory", {})
-    # Migration: old "mental" → vigor
-    if "mental" in mem and "vigor" not in mem:
-        old_val = mem["mental"].get("value", 100)
-        mem["vigor"] = {"value": old_val, "last_delta": 0}
-        mem["composure"] = {"value": old_val, "last_delta": 0}
-        del mem["mental"]
-
-    vigor = mem.get("vigor", {"value": 100, "last_delta": 0})
-    composure = mem.get("composure", {"value": 100, "last_delta": 0})
-    # [2026-08-18 Phase 2.5] 기력의 정본은 레지스트리. 조회도 설정도 그쪽을 본다.
-    try:
-        import custom_vars as _cv_m
-    except Exception:
-        _cv_m = None
-
-    # [View Mode]
-    if not ctx.args:
-        v_val = _cv_m.vigor_value(ctx.channel_id, uid, mem) if _cv_m else vigor.get("value", 100)
-        c_val = _cv_m.composure_value(ctx.channel_id, uid, mem) if _cv_m else composure.get("value", 100)
-        v_info = game_character.get_mental_info(v_val)
-        c_info = game_character.get_composure_info(c_val)
-        await ctx.send(
-            f"💪 **활력:** {v_info['emoji']} **{v_info['name']}** ({v_val}/100)\n"
-            f"> {v_info.get('desc', '')}\n"
-            f"😌 **평형:** {c_info['emoji']} **{c_info['name']}** ({c_val}/100)\n"
-            f"> {c_info.get('desc', '')}"
-        )
-        return
-
-    # [Set Mode] — !활력 80 or !활력 80 70
-    try:
-        v_target = max(0, min(100, int(ctx.args[0])))
-        _c_now = _cv_m.composure_value(ctx.channel_id, uid, mem) if _cv_m else composure.get("value", 100)
-        c_target = max(0, min(100, int(ctx.args[1]))) if len(ctx.args) > 1 else _c_now
-
-        # 기력 = 레지스트리 쓰기(코드 소유, 캡 면제 — 운영자 수동 설정은 관측 델타가 아니다).
-        #   옛 자리(ai_memory["vigor"])도 같이 맞춰 둔다: 레지스트리가 꺼진 채널의 폴백값이
-        #   설정 직후에도 어긋나지 않게. 정본은 여전히 레지스트리다.
-        _v_now = _cv_m.vigor_value(ctx.channel_id, uid, mem) if _cv_m else vigor.get("value", 100)
-        if _cv_m and v_target != _v_now:
-            _cv_m.apply_system_delta(ctx.channel_id, "활력", v_target - _v_now,
-                                     "manual set", actor=uid, exempt_cap=True,
-                                     source="command.활력")
-        mem.setdefault("vigor", {})["value"] = v_target
-        mem["vigor"]["last_delta"] = 0
-        # [2026-09-06 P8b] 평형도 레지스트리 쓰기(코드 소유, 캡 면제 — 운영자 수동 설정은
-        #   관측 델타가 아니다). 옛 자리도 같이 맞춰 둔다: 기능이 꺼진 채널의 폴백값이 어긋나지 않게.
-        if _cv_m and c_target != _c_now:
-            _cv_m.apply_system_delta(ctx.channel_id, "평형", c_target - _c_now,
-                                     "manual set", actor=uid, exempt_cap=True,
-                                     source="command.활력")
-        mem.setdefault("composure", {})["value"] = c_target
-        mem["composure"]["last_delta"] = 0
-
-        p_data["ai_memory"] = mem
-        domain_manager.save_participant_data(ctx.channel_id, uid, p_data)
-
-        v_info = game_character.get_mental_info(v_target)
-        c_info = game_character.get_composure_info(c_target)
-        await ctx.send(
-            f"💪 **활력 설정:** {v_target}/100 ({v_info['emoji']} {v_info['name']})\n"
-            f"😌 **평형 설정:** {c_target}/100 ({c_info['emoji']} {c_info['name']})"
-        )
-
-    except ValueError:
-        await ctx.send("⚠️ 올바른 숫자를 입력하세요. (예: `!활력 80` 또는 `!활력 80 70`)")
+# [2026-10-25 C78 A1] `!활력` 걷음 — 상태창 PC 장(활력 · 평형) · 고치기 PC 묶음. 켜고 끄기 `!모듈 활력 on/off`,
+#   규칙 · 캡 `!출력룰 수정 변수 활력 | …`.
 
 
-# [2026-08-11 로드아웃 삭제] !회상/로드아웃/장비설정 명령 폐기 — 비활성 등록 주석 + cmd_flashback 본체 제거.
-# 유저 입력 소급 선언의 자동 감지(Theoria flashback_eval → Slot 30 회상 연출)는 명령과 무관하게 유지.
-
-
-@registry.register("genre", category="World", aliases=["장르", "렌즈", "lens"], description="장르/렌즈 조회 및 수동 설정")
+@registry.register("genre", category="World", aliases=["장르", "렌즈", "lens"], description="장르 · 렌즈 보기 · 손으로 정하기",
+                   usage=("`!장르` — 지금 장르 · 렌즈", "`!장르 {렌즈…}` — 손으로 정하기(예: `!장르 noir drama`) · `!장르 초기화`"))
 async def cmd_genre(ctx: CommandContext) -> None:
     """!장르 — 조회 / !장르 noir drama — 렌즈 설정 / !장르 초기화 — 리셋"""
     channel_id = ctx.channel_id
@@ -2733,7 +2845,12 @@ async def cmd_genre(ctx: CommandContext) -> None:
     )
 
 
-@registry.register("rule", category="World", aliases=["룰", "규칙", "rules", "worldrules", "세계규칙"], description="세계 규칙 관리")
+@registry.register("rule", category="World", aliases=["룰", "규칙", "rules", "worldrules", "세계규칙"],
+                   description="산문에 늘 실리는 규칙 · 이 판의 결 — `!룰 추가` + 파일",
+                   usage=("`!룰` · `!룰 목록` — 지금 룰",
+                          "`!룰 추가` + 파일 — 파일 글 통째(다시 올리면 바뀜)",
+                          "`!룰 추가 {설명}` · `!룰 추가 {키워드}: {설명}` — 한 줄 규칙",
+                          "`!룰 삭제 {키워드|_n}` · `!룰 초기화`"))
 async def cmd_rule(ctx: CommandContext) -> None:
     """!룰 [추가/삭제/목록/초기화] [키워드] [내용]  — 파일 첨부 시 일괄 등록"""
     args = ctx.args
@@ -2858,6 +2975,11 @@ async def _handle_custom_var_subcommand(ctx: CommandContext, sub: str, payload: 
         await ctx.send("⚠️ 변수 기능이 꺼져 있습니다 (`CUSTOM_VARS_ENABLED=0`).")
         return
 
+    # [2026-10-25 C77 A-5] 전체 규칙 — 실패 안내는 걸린 칸만 싣고 이 길을 가리킨다.
+    if sub in ('help', '도움', '도움말', '규칙', '?'):
+        await send_long_message(ctx.message.channel, custom_vars.RULES_TEXT)
+        return
+
     # 목록
     if sub in ('list', '목록', '조회', 'l') or not payload:
         await send_long_message(ctx.message.channel, custom_vars.format_list(ctx.channel_id))
@@ -2884,6 +3006,7 @@ async def _handle_custom_var_subcommand(ctx: CommandContext, sub: str, payload: 
             )
             return
         if custom_vars.unregister(ctx.channel_id, name):
+            domain_manager.block_redo(ctx.channel_id, "!출력룰 삭제 변수")   # [C77 C-4] 값은 world_state — 턴과 섞인 칸
             await ctx.send(f"🗑️ **변수 삭제:** [{name}]")
         else:
             await ctx.send(f"⚠️ 변수 '{name}'(을)를 찾을 수 없습니다.")
@@ -2902,7 +3025,7 @@ async def _handle_custom_var_subcommand(ctx: CommandContext, sub: str, payload: 
     if '|' in payload:
         spec, perr = custom_vars.parse_pipe_declaration(payload)
         if spec is None:
-            await send_long_message(ctx.message.channel, f"⚠️ {perr}\n\n{custom_vars.RULES_TEXT}")
+            await send_long_message(ctx.message.channel, f"⚠️ {perr}\n\n{custom_vars.rules_hint(perr)}")
             return
     else:
         # 자연어 경로 — 저작 시 **1회성** 콜(매턴 순증 0).
@@ -2956,6 +3079,7 @@ async def _handle_custom_var_subcommand(ctx: CommandContext, sub: str, payload: 
     _cur = (custom_vars.get_values(ctx.channel_id).get(clean["name"]) or {}).get("value", clean.get("init"))
     _cur_text = custom_vars.format_value(clean, _cur) if not isinstance(_cur, dict) else (
         "—" if not _cur else ", ".join(f"{k}" for k in list(_cur)[:4]))
+    domain_manager.block_redo(ctx.channel_id, f"!출력룰 {verb} 변수")   # [C77 C-4] 시작값은 world_state — 턴과 섞인 칸
     await ctx.send(
         f"📊 **변수 {verb}:** [{clean['name']}] — 현재 `{_cur_text}` ({_shape}, "
         f"{_t}, {clean['scope']})\n"
@@ -2973,7 +3097,13 @@ def _sp_mark_is_panel(key) -> bool:
         return False
 
 
-@registry.register("outputrule", category="World", aliases=["출력룰", "출력규칙", "outputrules", "출력"], description="출력 형식 규칙 관리 (Recency 슬롯)")
+@registry.register("outputrule", category="World", aliases=["출력룰", "출력규칙", "outputrules", "출력"],
+                   description="세는 값 · 상태창 · 문턱 묘사 · 도착물",
+                   usage=("`!출력룰 목록` — 올린 파일마다 #번호 · `!출력룰 목록 변수` — 값마다 범위 · 캡 · 스코프",
+                          "`!출력룰 추가` + 파일 — 모듈 하나(같은 파일 이름으로 다시 올리면 갱신)",
+                          "`!출력룰 추가 변수 {이름} | {범위} | …` — 값 하나(파이프) · `!출력룰 수정 변수 {이름} | {칸}` — 칸 하나",
+                          "`!출력룰 삭제 {이름|파일 이름}` · `!출력룰 초기화`",
+                          "`!출력룰 도움 변수` — 변수 선언 규칙 전문"))
 async def cmd_output_rule(ctx: CommandContext) -> None:
     """!출력룰 [추가/삭제/목록/초기화] [키워드] [내용]  — 파일 첨부 시 일괄 등록
     출력 형식 지시(상태창, 포맷 등)를 Recency 영역에 주입합니다.
@@ -3282,28 +3412,21 @@ async def cmd_output_rule(ctx: CommandContext) -> None:
 #   ① 선언 전이 `deliver` ② 분석 신호 `arrival`(orchestration 4.75 핸드아웃).
 
 
-@registry.register("time", category="World", aliases=["시간"], description="시간 조회 및 설정")
+_TIME_USAGE = ("⏰ 사용법: `!시간 진행` · `!시간 N`(12까지) · `!시간 설정 [시간대|HH:MM|N년 M월 D일 [HH:MM]]`\n"
+               "보기는 Activity 상태창(세계 장).")
+
+
+@registry.register("time", category="World", aliases=["시간"], description="시간 넘기기 · 정하기(보기는 상태창)",
+                   usage=("`!시간 진행` · `!시간 {N}` — 시간대 하나 · N개(12까지) 넘기기",
+                          "`!시간 설정 {시간대}` · `!시간 설정 HH:MM` · `!시간 설정 N년 M월 D일 [HH:MM]`",
+                          "보기는 Activity 상태창(세계 장)"))
 async def cmd_time(ctx: CommandContext) -> None:
     """!시간 [설정 시간대 / 진행 / N]"""
     args = ctx.args
-    world = domain_manager.get_world_state(ctx.channel_id)
 
     if not args:
-        # View
-        time_emoji = {"새벽": "🌅", "오전": "☀️", "오후": "🌤️", "황혼": "🌆", "저녁": "🌙", "심야": "🌑"}
-        emoji = time_emoji.get(world.get("time_slot", "오후"), "⏰")
-        # hour/minute/year/month 초기화 보장 (V8.5 캘린더 확장)
-        import game_world as _gw_view
-        _gw_view._init_clock(world)
-        msg = (
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"📅 **{_gw_view.format_calendar(world)}** {world.get('hour', 12):02d}:{world.get('minute', 0):02d}\n"
-            f"{emoji} 시간: **{world.get('time_slot', '오후')}**\n"
-            f"🌤️ 날씨: {world.get('weather', '맑음')}\n"
-            f"⚠️ 위기: {world.get('doom', 0)}/100\n"
-            f"━━━━━━━━━━━━━━━━━━━━"
-        )
-        await ctx.send(msg)
+        # [2026-10-25 C78 A5] 보기는 Activity 상태창(세계 장 — 날짜 · 시각 · 시간대 · 날씨). 옛 "위기" 줄(D4)도 같이 갔다.
+        await ctx.send(_TIME_USAGE)
         return
 
     first = args[0].lower()
@@ -3370,9 +3493,13 @@ async def cmd_time(ctx: CommandContext) -> None:
         else:
             await ctx.send(f"⏰ {_r}{_note}")
         return
+    await ctx.send(_TIME_USAGE)
 
 
-@registry.register("turn", category="World", aliases=["턴", "진행", "건너뛰기", "next"], description="턴 진행 (수동모드: 축적 행동 일괄 처리) / `!턴 자동|수동|보조`로 응답 모드 설정")
+@registry.register("turn", category="World", aliases=["턴", "진행", "건너뛰기", "next"],
+                   description="모은 행동 처리 · 관찰 턴 · 응답 모드",
+                   usage=("`!턴` — 모은 행동 처리(수동 모드) · 모은 게 없으면 관찰 턴",
+                          "`!턴 자동|수동|보조` — 응답 모드 · `!턴 모드` — 지금 모드"))
 async def cmd_turn(ctx: CommandContext) -> None:
     """!진행 — 축적된 행동 처리 또는 관찰 턴.
 
@@ -3416,7 +3543,8 @@ async def cmd_turn(ctx: CommandContext) -> None:
     return
 
 
-@registry.register("export", category="System", aliases=["추출", "로그"], description="대화 내역 추출")
+@registry.register("export", category="System", aliases=["추출", "로그"], description="대화 내역 파일",
+                   usage=("`!추출` — 대화 내역 파일 · `!추출 증분` — 지난번 뒤로만",))
 async def cmd_export(ctx: CommandContext) -> None:
     """!추출 [inc/증분]"""
     # Check Incremental
@@ -3433,30 +3561,107 @@ async def cmd_export(ctx: CommandContext) -> None:
         await send_long_message(ctx.message.channel, msg)
 
 
-@registry.register("help", category="System", aliases=["도움말", "도움", "명령어", "h"], description="명령어 목록")
-async def cmd_help(ctx: CommandContext) -> None:
-    """!도움말"""
-    # Dynamic Help from Registry (Using existing method)
-    grouped_cmds = registry.get_commands_by_category()
-    
-    msg = ["📜 **Lorekeeper Bot 명령어**"]
-    
-    # Sort Categories
-    for cat in sorted(grouped_cmds.keys()):
-        cmds = grouped_cmds[cat]
-        if not cmds: continue
-        
-        msg.append(f"\n**[{cat}]**")
-        for info in cmds:
-            name = info['name']
-            desc = info['description']
-            # Show Korean aliases for discoverability
-            kr_aliases = [a for a in info.get('aliases', []) if any('\uac00' <= c <= '\ud7a3' for c in a)]
-            alias_str = f" ({', '.join('!' + a for a in kr_aliases)})" if kr_aliases else ""
-            msg.append(f"`!{name}`{alias_str}: {desc}")
-        
-    await send_long_message(ctx.message.channel, "\n".join(msg))
+# [2026-10-25 C78 D1] 목록 = 한국어 대표 이름 · 판 차리는 순서. 표에 없는 명령은 "기타"로 저절로 선다(스모크가 비었는지 본다).
+HELP_GROUPS = (
+    ("세계 만들기", ("lore", "rule", "npc", "outputrule", "genre")),
+    ("내 캐릭터", ("mask", "info")),
+    ("진행", ("start", "turn", "retry", "time", "lock", "ooc")),
+    ("모듈", ("modules",)),
+    ("기록", ("lores", "export")),
+    ("관리", ("ready", "clear", "reset", "bot")),
+)
+HELP_NAME = {"lore": "로어", "rule": "룰", "npc": "npc", "outputrule": "출력룰", "genre": "장르",
+             "mask": "가면", "info": "설명", "start": "시작", "turn": "턴", "retry": "다시", "time": "시간",
+             "lock": "잠금", "ooc": "ooc", "modules": "모듈", "lores": "연대기", "export": "추출",
+             "ready": "준비", "clear": "클리어", "reset": "리셋", "bot": "봇", "help": "도움"}
+HELP_HEAD = "📜 **로어키퍼 명령어** — `!도움 {명령}` 이면 하위 명령 · 예"
 
+
+def help_name(name: str) -> str:
+    return HELP_NAME.get(name, name)
+
+
+def help_list_text() -> str:
+    """`!도움` 목록 한 장 — discord 비의존(스모크가 본다)."""
+    descs = registry._descriptions
+    placed = {n for _g, ns in HELP_GROUPS for n in ns} | {"help"}
+    lines = [HELP_HEAD]
+    for title, names in HELP_GROUPS:
+        rows = [f"`!{help_name(n)}` {descs.get(n, '')}" for n in names if n in registry._commands]
+        if rows:
+            lines.append(f"\n**{title}**")
+            lines.extend(rows)
+    rest = sorted(n for n in registry._commands if n not in placed)
+    if rest:
+        lines.append("\n**기타**")
+        lines.extend(f"`!{help_name(n)}` {descs.get(n, '')}" for n in rest)
+    return "\n".join(lines)
+
+
+def help_detail_text(name: str) -> str:
+    """`!도움 {명령}` 상세 — 설명 · 별칭 · 하위 명령 줄."""
+    disp = help_name(name)
+    al = [a for a in registry.aliases_of(name) if a != disp and a != name]
+    head = f"`!{disp}` — {registry._descriptions.get(name, '')}"
+    if al:
+        head += "\n별칭: " + " · ".join(f"`!{a}`" for a in al)
+    lines = [head]
+    lines.extend(f"• {u}" for u in registry.usage_of(name))
+    return "\n".join(lines)
+
+
+@registry.register("help", category="System", aliases=["도움말", "도움", "명령어", "h"], description="명령어 목록 · `!도움 {명령}`",
+                   usage=("`!도움` — 목록 · `!도움 {명령}` — 그 명령의 하위 명령 · 예",))
+async def cmd_help(ctx: CommandContext) -> None:
+    """!도움 [명령] — 목록 / 그 명령의 하위 명령 · 예."""
+    word = (ctx.raw_args or "").strip().split()
+    if word:
+        name = registry.resolve(word[0])
+        if name:
+            await send_long_message(ctx.message.channel, help_detail_text(name))
+            return
+        await ctx.send(f"❔ 없는 명령이에요: `!{word[0].lstrip('!')}`" + _near_hint(word[0]))
+        return
+    await send_long_message(ctx.message.channel, help_list_text())
+
+
+# [C78 검토] 걷은 명령 → 어디서 보나. difflib 은 엉뚱한 이름을 고른다(`!일지` → ?) — 걷은 이름은 이 표가 먼저.
+_RETIRED_WHERE = {
+    "활력": "상태창 PC 칸 · 켜고 끄기 `!모듈 활력 on/off`",
+    "게시판": "Activity 모듈 앱 게시판 카드 · `!모듈 게시판 on/off`",
+    "일지": "날 일지는 Activity 보관함 일지 장",
+    "내정보": "Activity 인물 앱 내 페이지 · 상태창 — 설정 넣기는 `!설명`",
+    "장면": "수위는 늘 전체예요(따로 정하는 명령 없음)",
+    "재판정": "`!다시`",
+}
+for _k, _ws in (("활력", ("기력", "평형", "평정", "멘탈", "mental", "vigor")), ("게시판", ("board", "boardmod")),
+                ("일지", ("journal",)), ("내정보", ("정보", "me")), ("장면", ("수위", "mature", "scene"))):
+    for _w in _ws:
+        _RETIRED_WHERE[_w] = _RETIRED_WHERE[_k]
+
+
+def _near_hint(word: str) -> str:
+    """가까운 이름 하나(대표 이름 · 별칭 전부에서) → " — `!출력룰`?" · 없으면 "". 끝에 (`!도움`).
+    걷은 명령이면 " — 걷었어요 → {어디서}" (C78 검토)."""
+    import difflib
+    w = str(word or "").strip().lower().lstrip("!")
+    if w in _RETIRED_WHERE:
+        return f" — 걷었어요 → {_RETIRED_WHERE[w]} (`!도움`)"
+    near = difflib.get_close_matches(w, registry.all_words(), n=1, cutoff=0.5)
+    if near:
+        return f" — `!{help_name(registry.resolve(near[0]) or near[0])}`? (`!도움`)"
+    return " (`!도움`)"
+
+
+_CMD_WORD_RE = re.compile(r"^[A-Za-z가-힣]")
+
+
+async def _unknown_command_hint(ctx: CommandContext) -> None:
+    """[2026-10-25 C78 D5] 없는 명령 → 한 줄. `!` 바로 뒤가 한글 · 영문일 때만(`!?` · `!!` 은 조용히)."""
+    trig = str(ctx.trigger or "")
+    if not int(getattr(config, "UNKNOWN_COMMAND_HINT", 1) or 0) or not _CMD_WORD_RE.match(trig):
+        return
+    await ctx.send(f"❔ 없는 명령이에요: `!{trig}`" + _near_hint(trig))
 
 async def dispatch_command(
     cmd: Optional[str], 
@@ -3486,5 +3691,76 @@ async def dispatch_command(
     )
     
     # 1. New Registry Dispatch
-    return await registry.dispatch(ctx)
+    try:
+        if registry.resolve(ctx.trigger) is None:
+            await _unknown_command_hint(ctx)   # [C78 D5]
+            return None
+        return await registry.dispatch(ctx)
+    finally:
+        _redo_guard_after(ctx)
+
+
+# [2026-10-25 C77 C-4 가+ · Q9] 턴과 섞인 칸을 쓰는 명령 → 직전 턴 `!다시` 막기. 넘겨 얹을 수 있는 칸(`!룰` · `!장르` · 설정 ·
+#   모듈 · 게시판 · 선언 층)은 `domain_manager._CARRY_*` 가 살리고, 여기는 못 살리는 칸만. 보기(인자 없음 · 이름만)는 안 막는다.
+def _npc_writes(ctx: CommandContext) -> str:
+    raw = (ctx.raw_args or "").strip()
+    trig = str(ctx.trigger or "").lower()
+    if getattr(ctx.message, "attachments", None) or trig in ("addnpc", "npc추가"):
+        return "!npc 등록"
+    if not raw:
+        return ""
+    parts = raw.split(None, 1)
+    head, rest = parts[0].lower(), (parts[1] if len(parts) > 1 else "")
+    if head in ("초기화", "reset", "remove", "delete", "del", "삭제", "제거", "alias", "별칭", "merge", "병합"):
+        return f"!npc {parts[0]}"
+    if head in ("상태", "status"):
+        return f"!npc {parts[0]}" if len(rest.split()) >= 2 else ""
+    if head in ("일정", "스케줄", "schedule", "sched", "voicecard", "vc", "보이스카드", "보이스"):
+        return f"!npc {parts[0]}"          # [C77 검토] 인자 0~1개로도 NPC 칸(schedule · tone)을 쓴다 — 늘 막는다
+    if head in ("시트", "sheet"):
+        return "!npc 시트" if any(op in rest.lower().split() for op in ("set", "append", "remove")) else ""
+    return "!npc 등록" if (":" in raw or "\n" in raw) else ""
+
+
+def _lore_writes(ctx: CommandContext) -> str:
+    # [C77 검토] 보기(인자 0) · `추출`(내보내기) · 확인 없는 `초기화`(안내만)는 안 쓴다 — cmd_lore 갈래와 같은 판정.
+    if getattr(ctx.message, "attachments", None):
+        return "!로어"
+    a = (ctx.raw_args or "").split()
+    if not a:
+        return ""
+    if len(a) <= 2 and a[0].lower() in ("추출", "export"):
+        return ""
+    if len(a) <= 2 and a[0] == "초기화" and (len(a) < 2 or a[1].lower() not in ("확인", "confirm", "y", "yes")):
+        return ""
+    return "!로어"
+
+
+def _info_writes(ctx: CommandContext) -> str:
+    # [C78 B2] 보기(`!내정보` · `!정보`)를 걷어 이 명령은 `!설명` 하나 — 글 · 파일이 있으면 쓴다.
+    #   [C78 검토] `!info` 로 부르면 안 쓴다(cmd_info 와 같은 판정).
+    if str(ctx.trigger or "").lower() not in ("desc", "설명"):
+        return ""
+    return "!설명" if (getattr(ctx.message, "attachments", None) or (ctx.raw_args or "").strip()) else ""
+
+
+_REDO_WRITES = {
+    "npc": _npc_writes,
+    "lore": _lore_writes,
+    "info": _info_writes,
+    "mask": lambda c: "!가면" if c.args else "",
+    "time": lambda c: "!시간" if c.args else "",
+}
+
+
+def _redo_guard_after(ctx: CommandContext) -> None:
+    try:
+        trig = str(ctx.trigger or "").lower()
+        name = registry._aliases.get(trig, trig)
+        fn = _REDO_WRITES.get(name)
+        why = fn(ctx) if fn else ""
+        if why:
+            domain_manager.block_redo(ctx.channel_id, why)
+    except Exception as e:
+        logger.debug(f"[!다시] redo guard skipped: {e}")
 

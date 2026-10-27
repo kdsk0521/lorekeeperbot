@@ -15,6 +15,7 @@ from typing import Dict, Any, Optional, List, Union, Tuple
 
 import config
 from cache_manager import cache
+import turn_timing as _tt   # [2026-10-24 C74 W0] get/save_domain 셈(그 턴 태스크 안의 것만) — 의존 0 모듈
 
 # =========================================================
 # 1. FILE I/O & CACHING (Formerly domain_io.py)
@@ -136,7 +137,8 @@ def _get_default_session() -> Dict[str, Any]:
         "participants": {},
         "npcs": {},
         "history": [],
-        "quest_board": {"active": [], "completed": [], "memos": [], "archive": [], "lore": []},
+        # [2026-10-24 C74 판2] 퀘스트 칸(active · completed · archive) 삭제 — 목표는 thread_log(goal). lore = 옛 연대기.
+        "quest_board": {"memos": [], "lore": []},
         # [2026-09-24 감사] deepcopy — 얕은 사본은 중첩 list/dict(doom_clocks·storyteller 등)를 config 기본값과 공유해
         #   새 채널에서의 첫 변형이 **기본값 자체**를 오염시킬 수 있었다.
         "world_state": __import__("copy").deepcopy(config.DEFAULT_WORLD_STATE),
@@ -433,6 +435,14 @@ def set_mature_mode(channel_id: str, mode: str) -> bool:
     return True
 
 def get_domain(channel_id: str) -> Dict[str, Any]:
+    _t0 = time.perf_counter()
+    try:
+        return _get_domain(channel_id)
+    finally:
+        _tt.dm("get", channel_id, time.perf_counter() - _t0)
+
+
+def _get_domain(channel_id: str) -> Dict[str, Any]:
     # 캐시에서 먼저 조회
     cached = cache.get_session(channel_id)
     if cached is not None:
@@ -472,6 +482,14 @@ def get_last_execution_context(channel_id: str) -> Optional[Dict[str, Any]]:
     return get_domain(channel_id).get("last_execution_context")
 
 def save_domain(channel_id: str, data: Dict[str, Any]) -> bool:
+    _t0 = time.perf_counter()
+    try:
+        return _save_domain(channel_id, data)
+    finally:
+        _tt.dm("save", channel_id, time.perf_counter() - _t0)
+
+
+def _save_domain(channel_id: str, data: Dict[str, Any]) -> bool:
     """세션 데이터 저장 (파일 + 캐시 동기화)
 
     [V10 Sprint 0] JSON 저장 성공 후 SQLite에도 미러(dual-write).
@@ -700,6 +718,18 @@ def set_last_chronicle_export_ts(channel_id: str, ts: float) -> None:
     d["last_chronicle_export_ts"] = float(ts)
     save_domain(channel_id, d)
 
+# [2026-10-26 C80] 연대기 장은 롤링 없이 쌓인다 — 증분 내보내기는 장 id 워터마크.
+def get_last_chronicle_export_chapter(channel_id: str) -> int:
+    try:
+        return int(get_domain(channel_id).get("last_chronicle_export_chapter", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+def set_last_chronicle_export_chapter(channel_id: str, chapter_id: int) -> None:
+    d = get_domain(channel_id)
+    d["last_chronicle_export_chapter"] = int(chapter_id)
+    save_domain(channel_id, d)
+
 # =========================================================
 # 3. LORE & CONTENT MANAGEMENT (Formerly domain_content.py)
 # =========================================================
@@ -745,17 +775,8 @@ def get_lore_original(channel_id: str) -> Optional[str]:
         return t
     return None
 
-def get_event_lore_summary_file_path(channel_id: str) -> str:
-    # [2026-09-14 W0] 채널 폴더 lore/summary.txt
-    return _channel_lore_path(channel_id, "summary.txt")
-
-def get_event_lore_summary(channel_id: str) -> str:
-    path = get_event_lore_summary_file_path(channel_id)
-    return load_text(path, "")
-
-def set_event_lore_summary(channel_id: str, text: str) -> None:
-    path = get_event_lore_summary_file_path(channel_id)
-    save_text(path, text)
+# [2026-10-24 C76 §5] 요약 파일(`lore/summary.txt` — get/set_event_lore_summary) 지움: 쓰기만 있고 읽는 곳 0.
+#   옛 채널 폴더의 summary.txt 는 남아도 아무도 안 읽는다.
 
 # [V4 Deep Analysis]
 def get_lore_summary_data(channel_id: str) -> Dict[str, Any]:
@@ -1327,10 +1348,25 @@ def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
     # 새 이름이 괄호식일 때만 업그레이드 — 괄호식 = 사용자의 명시 등록 의도.
     def _has_paren(k: str) -> bool:
         return bool(re.search(r'[(\[（]', k))
+    # [2026-10-27 C84] 별칭으로 찾은 이름(옛 이름 · 다른 모습)은 키 승격 대상이 아니다 — 개명 뒤 옛 괄호식 이름으로 쓰면
+    #   (`set_decision_cooldown("에린(Erin)")` 등) 새 키가 옛 이름으로 되돌아갔다. 승격은 같은 이름의 괄호 표기일 때만.
+    _via_alias = False
+    if existing_key and _normalize_npc_name(existing_key) != norm_name:
+        _ex_al = (npcs.get(existing_key) or {}).get("aliases") if isinstance(npcs.get(existing_key), dict) else None
+        _via_alias = any(isinstance(a, str) and _normalize_npc_name(a).lower() == norm_name.lower()
+                         for a in (_ex_al or []))
     if existing_key:
-        final_key = norm_name if _has_paren(norm_name) else _normalize_npc_name(existing_key)
+        final_key = norm_name if (_has_paren(norm_name) and not _via_alias) else _normalize_npc_name(existing_key)
     else:
         final_key = norm_name
+        # [2026-10-27 C84] 잠긴 모습 · 등장 전 이름으로 새 키를 세우지 않는다(바꾸기 · 등장은 npc_forms.allowing).
+        try:
+            import npc_forms as _nf_up
+            if _nf_up.blocks_new_key(channel_id, name):
+                logging.info(f"[Form] 잠긴 이름 — 새 NPC 안 세움(domain): {name}")
+                return
+        except Exception as _e_nf:
+            logging.debug(f"[Form] reserved check skip: {_e_nf}")
 
     # 기존 데이터에서 보존할 필드 (재등록 시 유실 방지)
     # [2026-07-28 확대] 구 목록은 ("source", "aliases")뿐이라 **재등록 = 사실상 전체 교체**였다.
@@ -1457,6 +1493,14 @@ def add_npc_alias(channel_id: str, name: str, alias: str) -> tuple:
     alias = (alias or "").strip()
     if not alias:
         return False, None
+    # [2026-10-27 C84] 잠긴 모습 이름을 별칭으로 붙이면 그 모습이 영영 못 선다(개명이 "이미 있는 이름"으로 막힘).
+    try:
+        import npc_forms as _nf_al
+        if _nf_al.blocks_new_key(channel_id, alias):
+            logging.warning(f"[NPC] 별칭 거부: '{alias}'는 잠긴 모습 이름")
+            return False, None
+    except Exception:
+        pass
     d = get_domain(channel_id)
     npcs = d.get("npcs", {})
     key = _find_npc_key(npcs, name)
@@ -3745,9 +3789,15 @@ def _decl_seq(v: Any) -> int:
 #   재출력만 의도한거라 … 다른건 남아야하니까"). retry_last 가 스냅샷 복원 **직전** redo_carry 로 떠 두고, **직후**
 #   apply_redo_carry 로 덮는다. 셋 = 선언 층 통째 · 모듈 켬끔 두 축 · 게시판 설정 둘. 턴이 이 셋을 쓰는 일은 없다
 #   (쓰는 함수 = 저작 관문 · 토글 · 설정 명령뿐) — 그래서 떠 둔 값이 곧 "되감기 전 마지막 설정"이다.
-#   그 밖 턴 밖 명령(!룰 · 로어 · NPC 등록 · 참가자)은 전체수정 대기열 Q9.
+#   그 밖 턴 밖 명령은 [C77 C-4] — 턴이 안 쓰는 칸은 아래 _CARRY_TOP · _CARRY_WORLD 로 넘겨 얹고, 섞인 칸은 block_redo.
 _CARRY_SETTINGS = ("active_modules", "disabled_modules")
 _CARRY_BOARD = ("channels", "display_mode")
+# [2026-10-25 C77 C-4 가 · Q9] + 턴이 안 쓰는 칸 — `!룰`(world_state rules_text · location_rules) · settings 통째(`!잠금` ·
+#   `!턴 모드` · 모듈 켬끔) · `!장르`(active_genres · custom_tone) · 로어 조각(lore_chunks) · `!봇`(bot_active) · `!OOC`(ooc_mode).
+#   턴과 섞인 칸(participants · npcs · world_tree · lore_summary_data · 변수 값 · 시계)은 넘겨 얹지 않고, 그 칸을 쓰는 명령 뒤엔
+#   `block_redo` 로 `!다시` 를 막는다(조용히 지우는 것보다 낫다 — 갈래 가+).
+_CARRY_TOP = ("settings", "active_genres", "custom_tone", "lore_chunks", "bot_active", "ooc_mode")
+_CARRY_WORLD = ("rules_text", "location_rules")
 
 
 def redo_carry(channel_id: str) -> Dict[str, Any]:
@@ -3755,10 +3805,13 @@ def redo_carry(channel_id: str) -> Dict[str, Any]:
     d = get_domain(channel_id)
     st = d.get("settings") or {}
     wb = (d.get("world_state") or {}).get("world_board") or {}
+    ws = d.get("world_state") or {}
     return _copy.deepcopy({
         "output_decl": d.get("output_decl"),
         "settings": {k: st[k] for k in _CARRY_SETTINGS if k in st},
         "world_board": {k: wb[k] for k in _CARRY_BOARD if isinstance(wb, dict) and k in wb},
+        "top": {k: d[k] for k in _CARRY_TOP if k in d},
+        "world": {k: ws[k] for k in _CARRY_WORLD if isinstance(ws, dict) and k in ws},
     })
 
 
@@ -3791,7 +3844,59 @@ def apply_redo_carry(channel_id: str, carry: Optional[Dict[str, Any]]) -> None:
             else:
                 wb.pop(k, None)
         ws["world_board"] = wb
+        if "world" in carry:                 # [C77] 옛 꼴(world 칸 없는 떠 둔 값)이면 손대지 않는다
+            for k in _CARRY_WORLD:
+                if k in (carry.get("world") or {}):
+                    ws[k] = carry["world"][k]
+                else:
+                    ws.pop(k, None)
+    if "top" in carry:
+        for k in _CARRY_TOP:
+            if k in (carry.get("top") or {}):
+                d[k] = carry["top"][k]
+            else:
+                d.pop(k, None)
     save_domain(channel_id, d)
+
+
+_REDO_BLOCKS: Dict[str, Dict[str, Any]] = {}
+
+
+def redo_block_reason(channel_id: str, last_ctx: Any) -> str:
+    """[C77 C-4] 직전 턴 `!다시` 를 막은 이유 — 도메인 칸이 먼저, 없으면 메모리 표시(같은 원 메시지일 때만). 안 막혔으면 ""."""
+    if isinstance(last_ctx, dict) and last_ctx.get("redo_blocked"):
+        return str(last_ctx["redo_blocked"])
+    b = _REDO_BLOCKS.get(channel_id)
+    if b and isinstance(last_ctx, dict) and last_ctx.get("has_response") \
+            and b.get("mid") is not None and b.get("mid") == last_ctx.get("original_message_id"):
+        return str(b.get("why") or "명령")
+    return ""
+
+
+def block_redo(channel_id: str, reason: str) -> bool:
+    """[2026-10-25 C77 C-4 가+ · Q9] 직전 턴의 `!다시` 를 막는다 — 턴과 섞인 칸을 명령이 바꾼 뒤.
+
+    `!다시` 는 그 턴 시작 스냅샷으로 도메인을 통째 되돌리고 그 뒤 행을 트림한다. 그 사이 명령(`!로어` · `!npc` 쓰기 · `!설명` ·
+    `!가면` · `!활력` · `!시간` · `!출력룰 변수` · OOC 편집)이 쓴 칸은 넘겨 얹을 수 없는(턴도 쓰는) 칸이라 같이 사라졌다.
+    막는 표시는 `last_execution_context["redo_blocked"]` 한 칸 — 다음 턴이 새 컨텍스트를 쓰면 저절로 풀린다. 막았으면 True.
+    같은 표시를 프로세스 메모리(`_REDO_BLOCKS`, 그 턴 원 메시지 id 로 묶음)에도 둔다 — 앞 턴 배경 작업이 옛 도메인 사본을 통째로
+    저장하면(lost update) 도메인 칸이 지워질 수 있어서다. 읽기는 `redo_block_reason` 하나."""
+    try:
+        d = get_domain(channel_id)
+        lec = d.get("last_execution_context")
+        if not isinstance(lec, dict) or not lec.get("has_response"):
+            return False
+        why = str(reason or "명령")[:40]
+        _REDO_BLOCKS[channel_id] = {"mid": lec.get("original_message_id"), "why": why}
+        if lec.get("redo_blocked"):
+            return False
+        lec["redo_blocked"] = why
+        save_domain(channel_id, d)
+        logging.getLogger("DomainManager").info(f"[!다시] blocked for {channel_id}: {lec['redo_blocked']}")
+        return True
+    except Exception as e:
+        logging.getLogger("DomainManager").debug(f"[!다시] block skipped: {e}")   # 이 모듈엔 logger 가 없다(3682 주석)
+        return False
 
 
 def output_decl_default() -> Dict[str, Any]:
@@ -4463,6 +4568,13 @@ def _forget_channel_process_memory(channel_id: str) -> None:
         boundary_engine.forget_channel(channel_id)
     except Exception as _e:
         logging.debug(f"[Clear] boundary cache forget skipped: {_e}")
+    # [2026-10-24 C74 판1 검토 #6] 줄거리 꼬리 볼 것 표(shared_extract) — import 하지 않고 sys.modules 로만(순환 회피).
+    try:
+        _sx = _sys_c37.modules.get("shared_extract")
+        if _sx is not None and hasattr(_sx, "forget_tail"):
+            _sx.forget_tail(channel_id)
+    except Exception as _e:
+        logging.debug(f"[Clear] narrative tail forget skipped: {_e}")
 
 
 def _clear_npc_view(data: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
@@ -4515,6 +4627,14 @@ def reset_session_state(channel_id: str) -> None:
     - 월드 상태 초기화 (1일차, 오후)
     - 세션 NPC 및 퀘스트 초기화
     """
+    # [2026-10-27 C84] 모습 표 — 첫 모습으로 되돌리고 등장한 사람은 다시 잠근다. **도메인을 읽기 전**에 돈다:
+    #   되돌리기(개명 기계)가 도메인을 여러 번 저장하는데, 아래 d 사본이 그걸 덮으면 안 되고, NPC 칸 거르기가
+    #   identity_history 를 지우기 전이어야 개명 되돌리기가 깨끗하다(별칭 · 기록 걷기).
+    try:
+        import npc_forms
+        npc_forms.on_clear(channel_id)
+    except Exception as _e_nf:
+        logging.warning(f"[Form] clear revert skipped: {_e_nf}")
     d = get_domain(channel_id)
 
     # 1. Reset History
@@ -4538,6 +4658,7 @@ def reset_session_state(channel_id: str) -> None:
     d["last_export_idx"] = 0
     d["last_chronicle_idx"] = 0
     d["last_chronicle_export_ts"] = 0.0
+    d.pop("last_chronicle_export_chapter", None)   # [2026-10-26 C80] 장 내보내기 워터마크
     # [2026-10-14 C37 R6] `!다시` 창 — 클리어 뒤 첫 턴 전 `!다시`가 옛 컨텍스트로 옛 스냅샷을 복원했다.
     d["last_execution_context"] = None
     # [V10 Sprint 3] 영구 로그도 삭제 — 리셋=완전 새 이야기 (사용자 결정 2026-06-10).
@@ -4587,16 +4708,18 @@ def reset_session_state(channel_id: str) -> None:
     #   매 `!클리어`마다 사라졌는데 완료 안내는 "유지됨: …룰"이었다. 두 키는 이월한다.
     # [2026-10-14 C37 R5] world_constraints 도 — `!lore` 분석이 쓰는 세계 규칙(체계·사회·금기)인데 같은 병으로
     #   클리어마다 사라졌다(소비: game_world.get_world_context '세계 규칙' 줄·world_board).
+    # [2026-10-24 C76 §5] world_constraints 은퇴 — 읽는 곳 0 이라 이월도 뺀다(옛 저장값은 클리어에 진다).
     _old_ws = d.get("world_state") or {}
     import copy as _copy_rs
     d["world_state"] = _copy_rs.deepcopy(config.DEFAULT_WORLD_STATE)  # 얕은 .copy()는 중첩 list(doom_clocks 등)를 기본값과 공유
-    for _rk in ("rules_text", "location_rules", "world_constraints"):
+    for _rk in ("rules_text", "location_rules"):
         if _old_ws.get(_rk):
             d["world_state"][_rk] = _old_ws[_rk]
     d["settings"]["session_locked"] = False # Unlock for re-start
     
     # 3. Reset Quests & Notebook (Keep Lore Items if any? No, reset all dynamic)
-    d["quest_board"] = {"active": [], "completed": [], "memos": [], "archive": [], "lore": []}
+    #   [C74 판2] 목표는 thread_log — 클리어의 세션 파생 표 지우기가 같이 맡는다.
+    d["quest_board"] = {"memos": [], "lore": []}
     d["notebook"] = notebook_default()
     d["notebook_shared"] = notebook_default()
     d["ooc_mode"] = False
@@ -4741,7 +4864,7 @@ def reset_session_state(channel_id: str) -> None:
         try:
             import npc_manager as _nm_r
             for _nm in kept_names:
-                _nm_r.seat_sheet_residence(channel_id, _nm)
+                _nm_r.seat_sheet_residence(channel_id, _nm, lore_home=True)   # [C76] 처음 앉히기 = 로어 거처도
         except Exception as _e_seat:
             logging.debug(f"[Clear] sheet residence reseat skipped: {_e_seat}")
 

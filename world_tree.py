@@ -525,6 +525,195 @@ def strip_play(channel_id: str) -> Dict[str, int]:
     return out
 
 
+# =========================================================
+# [2026-10-24 C76] 로어 장소 표 · 갈아 끼우기 · 거처
+# =========================================================
+LORE_TAG = "lore"
+# 플레이 장소 · 시트 거처 · OOC 로 세운 곳 · 일정이 세운 곳 — 로어 갈아 끼우기가 안 지운다(검토 #14: ooc · schedule)
+_KEEP_TAGS = ("auto_detected", "sheet_residence", "ooc", "schedule")
+
+
+def _tags_of(n: Any) -> List[str]:
+    props = (n.get("properties") or {}) if isinstance(n, dict) and isinstance(n.get("properties"), dict) else {}
+    t = props.get("tags")
+    return [str(x) for x in t] if isinstance(t, list) else []
+
+
+def _claim_lore_node(channel_id: str, name: str, loc: Optional[Dict[str, Any]] = None) -> bool:
+    """이미 있는 노드를 로어 장소로 표시(`lore` 표 달고 `auto_detected` · `sheet_residence` 뗌 — 로어가 그 장소를 정의했다).
+    loc 이 오면 설명 · 위험도 갈아 씀. 저장 1회 + 위키 장소 동기화(검토 #6 — 직접 저장이라 훅을 안 거쳤다).
+    [검토 #3] 자동 등록이 켜진 판은 로어 NPC 거처가 트리 가져오기보다 먼저 `sheet_residence` 노드를 세운다 —
+    그 표를 안 떼면 [sheet_residence, lore] 가 되어 갈아 끼우기로 영영 못 지운다."""
+    nid = resolve_node_id(channel_id, name, allow_token=False)
+    if not nid:
+        return False
+    tree = _get_tree(channel_id)
+    node = (tree.get("nodes") or {}).get(nid)
+    if not isinstance(node, dict):
+        return False
+    props = node.get("properties") if isinstance(node.get("properties"), dict) else {}
+    tags = [t for t in _tags_of(node) if t not in ("auto_detected", "sheet_residence")]
+    if LORE_TAG not in tags:
+        tags.append(LORE_TAG)
+    props["tags"] = tags
+    if loc:
+        _desc = loc.get("description", loc.get("desc"))
+        if _desc is not None:
+            node["description"] = str(_desc)
+        _risk = loc.get("risk", loc.get("danger"))
+        if _risk:
+            props["risk"] = _risk
+    node["properties"] = props
+    _save_tree(channel_id, tree)
+    _wiki_place_hook(channel_id, nid, promote_parent=False)
+    return True
+
+
+_NAME_TOKEN_SPLIT = re.compile(r"[\s·・/,|]+")
+
+
+def _name_tokens(name: Any) -> set:
+    """이름 토큰 — 공백 · 중점 · 슬래시 · 쉼표로 가르고 `_make_node_id` 로 맞춘다(대소문자 · 공백 무시)."""
+    return {_make_node_id(t) for t in _NAME_TOKEN_SPLIT.split(str(name or "")) if t.strip()}
+
+
+def adopt_removed_names(channel_id: str, removed: Any, new_names: Any, old_names: Any = ()) -> List[Tuple[str, str]]:
+    """[2026-10-25 C77 E-3 · Q33] `!로어` 갈아 끼우기가 장소 **이름을 바꾸면**(거실·주방 → 1층 거실·주방) 옛 이름을 새 노드 별칭으로.
+
+    병: 옛 노드가 지워져 PC 자리(이름 문자열) · 우물 center(노드 id) · 시계 born_node 가 고아가 됐다 — 결전 중 우물은 다음
+      앞단에 끝나고(`resolved`), 배경 tick 은 `center_gone`, 자동 감지는 옛 이름으로 중복 노드를 세웠다.
+    규칙: 지운 이름의 토큰이 **다** 들어가는 새 이름이 **정확히 하나**일 때만 그 노드 aliases 에 옛 이름을 단다(후보 둘 이상이면
+      안 단다 — 오병합 방지). 노드 id 는 이름에서 나오고(`_make_node_id`) 별칭 매칭(`resolve_node_id` ②)이 같은 식으로 대조하므로,
+      옛 이름 별칭 하나로 옛 이름 · 옛 id 둘 다 새 노드로 풀린다. 돌려주는 값 = [(옛 이름, 새 이름)].
+    [C77 검토] 후보는 **이번에 새로 선 이름**만(`old_names` = 지난 로어 장소 목록에 있던 이름은 빼기) — 정말 지운 `창고` 가
+      옛 로어에도 있던 `무기 창고` 에 붙던 오병합을 막는다."""
+    removed = [str(n).strip() for n in (removed or []) if str(n or "").strip()]
+    news = [str(n).strip() for n in (new_names or []) if str(n or "").strip()]
+    if not removed or not news:
+        return []
+    olds = {str(n).strip() for n in (old_names or []) if str(n or "").strip()} | set(removed)
+    tree = _get_tree(channel_id)
+    nodes = tree.get("nodes", {}) or {}
+    out: List[Tuple[str, str]] = []
+    for old in removed:
+        if old in news:
+            continue
+        ot = _name_tokens(old)
+        if not ot:
+            continue
+        cands = [n for n in news if n != old and n not in olds and ot <= _name_tokens(n)]
+        if len(cands) != 1:
+            continue
+        nid = _make_node_id(cands[0])
+        node = nodes.get(nid)
+        if node is None:
+            nid = next((k for k, v in nodes.items() if _make_node_id(str(v.get("name", k))) == nid), "")
+            node = nodes.get(nid) if nid else None
+        if not isinstance(node, dict):
+            continue
+        al = node.setdefault("aliases", [])
+        if old not in al:
+            al.append(old)
+        out.append((old, cands[0]))
+    if out:
+        _save_tree(channel_id, tree)
+        logger.info(f"[WorldTree] lore rename → aliases: {out}")
+    return out
+
+
+def strip_lore(channel_id: str, keep_names: Any, old_names: Any = ()) -> Dict[str, Any]:
+    """[2026-10-24 C76 §3-1] `!로어` 파일 갈아 끼우기 — 옛 로어 장소 중 새 목록(keep_names)에 없는 것을 지운다. 저장 1회.
+
+    옛 로어 장소 = `lore` 표 노드 ∪ old_names(지난 분석의 장소 목록 — 표가 생기기 전 판)가 가리키는 노드.
+    플레이(`auto_detected`) · 시트 거처(`sheet_residence`) 노드는 안 지운다. 이름은 정확 · 별칭으로만 맞춘다.
+    지운 노드의 자식은 뿌리로, children · connections · root_ids 에서 뺀다(`strip_play` 와 같은 꼴 —
+    `remove_node(recursive=False)` 는 자식을 고아로 두고 뿌리로 안 올린다). 지운 노드의 `npcs_present` 는
+    같이 사라진다 — 부른 쪽이 `seat_sheet_residence` 로 다시 앉힌다.
+    Returns {"removed": [이름], "promoted": n, "unseated": [사람]}."""
+    out: Dict[str, Any] = {"removed": [], "promoted": 0, "unseated": []}
+    tree = _get_tree(channel_id)
+    nodes = tree.get("nodes") if isinstance(tree, dict) else None
+    if not isinstance(nodes, dict) or not nodes:
+        return out
+    keep = {resolve_node_id(channel_id, str(n), allow_token=False) for n in (keep_names or []) if str(n or "").strip()}
+    keep.discard(None)
+    cand = {nid for nid, n in nodes.items() if LORE_TAG in _tags_of(n)}
+    for nm in (old_names or []):
+        nid = resolve_node_id(channel_id, str(nm), allow_token=False) if str(nm or "").strip() else None
+        if nid:
+            cand.add(nid)
+    gone = {nid for nid in cand
+            if nid in nodes and nid not in keep and not (set(_tags_of(nodes[nid])) & set(_KEEP_TAGS))}
+    if not gone:
+        return out
+    for nid in gone:
+        n = nodes.pop(nid, None) or {}
+        out["removed"].append(str(n.get("name") or nid))
+        out["unseated"].extend(str(x) for x in (n.get("npcs_present") or []) if x)
+    roots = [r for r in (tree.get("root_ids") or []) if r in nodes]
+    for nid, n in nodes.items():
+        pid = n.get("parent_id") or ""
+        if pid and pid not in nodes:
+            n["parent_id"] = ""
+            out["promoted"] += 1
+        if not n.get("parent_id") and nid not in roots:
+            roots.append(nid)
+        n["children"] = [c for c in (n.get("children") or []) if c in nodes]
+        conns = n.get("connections")
+        if isinstance(conns, list):
+            n["connections"] = [c for c in conns
+                                if not (isinstance(c, dict) and c.get("target_id") in gone)]
+    tree["nodes"] = nodes
+    tree["root_ids"] = roots
+    _save_tree(channel_id, tree)
+    logger.info("[WorldTree] lore swap removed=%d %s promoted=%d unseated=%s",
+                len(out["removed"]), out["removed"][:8], out["promoted"], out["unseated"][:8])
+    return out
+
+
+def lore_home_name(channel_id: str, name: str) -> str:
+    """[2026-10-24 C76 §4-2] 로어 분석이 적은 이 사람의 거처(장소 이름). 이름 맞춤은 `_find_npc_key`(한글(영문) 짝 · 별칭). 없으면 ""."""
+    if not name:
+        return ""
+    try:
+        homes = (domain_manager.get_lore_summary_data(channel_id) or {}).get("npc_homes") or {}
+        if not isinstance(homes, dict) or not homes:
+            return ""
+        # [C76 검토 #4] homes 는 거처가 적힌 사람만 담은 부분집합 — 축약 토큰(단일 후보)을 허용하면 다른 사람 집에
+        #   앉힌다(_find_npc_key 독스트링: 부분집합엔 allow_token=False).
+        k = name if name in homes else domain_manager._find_npc_key(homes, name, allow_token=False)
+        return str(homes.get(k) or "").strip() if k else ""
+    except Exception as e:
+        logger.debug("[WorldTree] lore home skip: %s", e)
+        return ""
+
+
+def home_node(channel_id: str, name: str) -> Optional[str]:
+    """[2026-10-24 C76 §4-2] 이 사람이 사는 노드 — ① 나무에 놓인 자리(`npcs_present`) ② NPC 칸 `location`(시트 거처)
+    ③ 로어 거처(`npc_homes`). 장소 이름은 정확 · 별칭으로만 푼다. 못 풀면 None. 쓰는 곳: C75 G2 시계 자리."""
+    if not name:
+        return None
+    try:
+        npcs = domain_manager.get_npcs(channel_id) or {}
+        key = domain_manager._find_npc_key(npcs, name) or name
+    except Exception:
+        npcs, key = {}, name
+    nodes = (_get_tree(channel_id).get("nodes") or {})
+    for nid, n in nodes.items():
+        present = (n.get("npcs_present") or []) if isinstance(n, dict) else []
+        if key in present or name in present:
+            return nid
+    _loc = str(((npcs.get(key) or {}) if isinstance(npcs.get(key), dict) else {}).get("location") or "").strip()
+    if _loc:
+        nid = resolve_node_id(channel_id, _loc, allow_token=False)
+        if nid:
+            return nid
+    _home = lore_home_name(channel_id, key) or (lore_home_name(channel_id, name) if name != key else "")
+    if _home:
+        return resolve_node_id(channel_id, _home, allow_token=False)
+    return None
+
+
 def get_all_nodes(channel_id: str) -> Dict[str, Dict[str, Any]]:
     """모든 노드 반환."""
     tree = _get_tree(channel_id)
@@ -743,6 +932,52 @@ def get_npc_location(channel_id: str, npc_name: str) -> Optional[str]:
 # Query: Path & Hierarchy
 # =========================================================
 
+def hop_distances_in(nodes: Dict[str, Any], from_id: str, via_world: bool = False) -> Dict[str, int]:
+    """[2026-10-24 C75 G1] 노드 → 홉 수(부모 · 자식 · 연결 간선 BFS). 순수 함수 — 트리 dict 를 받는다.
+    `npc_manager.get_presence_tiers` 의 BFS 를 그대로 꺼낸 것(R4). via_world=True 면 뿌리 노드들을 가상의
+    '세계' 하나 밑에 둔 것처럼 잇는다 — 갈래가 다른 지역끼리도 거리가 유한해진다(뿌리 ↔ 뿌리 = 2홉).
+    출석(get_presence_tiers)은 False(옛 출력 그대로), 중력 우물은 True."""
+    if not from_id or from_id not in (nodes or {}):
+        return {}
+    _roots = [k for k, n in nodes.items()
+              if isinstance(n, dict) and not ((n.get("parent_id") or "") in nodes)] if via_world else []
+    _W = "\x00world"
+    dist = {from_id: 0}
+    queue = [from_id]
+    while queue:
+        cur = queue.pop(0)
+        if cur == _W:
+            adj = list(_roots)
+        else:
+            cn = nodes.get(cur) or {}
+            adj = []
+            pid = cn.get("parent_id", "") or ""
+            if pid:
+                adj.append(pid)
+            adj.extend([c for c in (cn.get("children", []) or []) if c])
+            for conn in (cn.get("connections", []) or []):
+                tid = (conn or {}).get("target_id", "") or ""
+                if tid:
+                    adj.append(tid)
+            if via_world and cur in _roots:
+                adj.append(_W)
+        for nb in adj:
+            if (nb == _W or nb in nodes) and nb not in dist:
+                dist[nb] = dist[cur] + 1
+                queue.append(nb)
+    dist.pop(_W, None)
+    return dist
+
+
+def hop_distances(channel_id: str, from_node_id: str, via_world: bool = False) -> Dict[str, int]:
+    """[2026-10-24 C75 G1] 채널 트리에서 `hop_distances_in`. 실패 · 빈 트리 = {}."""
+    try:
+        return hop_distances_in(_get_tree(channel_id).get("nodes", {}) or {}, from_node_id, via_world)
+    except Exception as e:
+        logger.debug(f"[WorldTree] hop_distances skip: {e}")
+        return {}
+
+
 def get_ancestors(channel_id: str, name: str) -> List[str]:
     """노드의 조상 경로 (자신 포함, 루트부터 순서)."""
     tree = _get_tree(channel_id)
@@ -938,7 +1173,8 @@ def build_location_context_text(channel_id: str, location_name: str = "") -> str
 
 def import_locations_from_lore(
     channel_id: str,
-    locations: List[Dict[str, Any]]
+    locations: List[Dict[str, Any]],
+    refresh: bool = False,
 ) -> int:
     """
     로어 분석 결과로 위치 트리 일괄 구축.
@@ -958,6 +1194,9 @@ def import_locations_from_lore(
          다른 부모가 이미 있는 노드(플레이 중 붙은 것)는 건드리지 않는다. 순환은 update_node가 거부한다.
       부모 해상은 정확·별칭만(allow_token=False — resolve_node_id 독스트링의 "구조 변경 경로" 규율).
       스펙 memory_lore/C30_분위기절·장소트리_스펙_2026-10-12 §3.
+    [2026-10-24 C76 §3-1] 로어가 세운 노드엔 `lore` 표 — 갈아 끼울 때 옛 로어 장소를 이 표로 잡는다.
+      이미 있는 같은 이름 노드도 표를 단다(로어가 그 장소를 정의했다 — 플레이 표 `auto_detected` 는 뗀다,
+      안 떼면 `!클리어` 가 로어 장소를 걷는다). `refresh=True`(파일 갈아 끼우기)면 그 노드의 설명 · 위험도 새 로어로.
 
     Returns: number of nodes created.
     """
@@ -967,8 +1206,11 @@ def import_locations_from_lore(
             properties["risk"] = loc["risk"]
         if loc.get("atmosphere"):
             properties["atmosphere"] = loc["atmosphere"]
-        if loc.get("tags"):
-            properties["tags"] = loc["tags"] if isinstance(loc["tags"], list) else [loc["tags"]]
+        _tags = loc.get("tags")
+        _tags = [str(t) for t in (_tags if isinstance(_tags, list) else ([_tags] if _tags else []))]
+        if LORE_TAG not in _tags:
+            _tags.append(LORE_TAG)
+        properties["tags"] = _tags
         return properties
 
     items = []
@@ -995,13 +1237,19 @@ def import_locations_from_lore(
                 if not pid:
                     waiting.append((name, loc, parent))      # 부모가 아직 없다 — 다음 바퀴
                     continue
-            result = add_node(channel_id, name, loc.get("type", "area"), pid, _props(loc),
-                              loc.get("description", ""))
+            # [C76 검토 #13] 별칭으로 이미 있는 장소(merge_nodes 가 흡수한 이름 등)는 새로 안 세운다 — add_node 는
+            #   정확 id 만 봐서 같은 장소를 둘로 만들었다(갈아 끼울 때 strip_lore 의 keep 은 별칭까지 본다).
+            if resolve_node_id(channel_id, name, allow_token=False):
+                result = "exists"
+            else:
+                result = add_node(channel_id, name, loc.get("type", "area"), pid, _props(loc),
+                                  loc.get("description", ""))
             if result == "created":
                 count += 1
                 progressed = True
             elif result == "exists":
                 progressed = True
+                _claim_lore_node(channel_id, name, loc if refresh else None)
                 if pid:
                     nid = resolve_node_id(channel_id, name, allow_token=False)
                     node = (get_all_nodes(channel_id) or {}).get(nid) if nid else None
@@ -1020,10 +1268,16 @@ def import_locations_from_lore(
         pending = []
 
     for name, loc, parent in pending:
-        result = add_node(channel_id, name, loc.get("type", "area"), "", _props(loc),
-                          loc.get("description", ""))
+        if resolve_node_id(channel_id, name, allow_token=False):
+            result = "exists"
+        else:
+            result = add_node(channel_id, name, loc.get("type", "area"), "", _props(loc),
+                              loc.get("description", ""))
         if result == "created":
             count += 1
+        elif result == "exists":
+            # [C76 검토 #5] 부모를 못 찾은 장소도 이미 있으면 로어 표를 단다(안 달면 플레이 노드로 남아 `!클리어` 가 걷는다).
+            _claim_lore_node(channel_id, name, loc if refresh else None)
         logger.warning("[WorldTree] lore parent '%s' not found for '%s' — placed at root (%s)",
                        parent, name, result)
 

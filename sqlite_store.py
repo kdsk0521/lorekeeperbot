@@ -770,6 +770,103 @@ def _ensure_schema(channel_id: str = "") -> bool:
                     PRIMARY KEY (channel_id, user_id, app)
                 )
             """)
+            # [2026-10-23 C73 M7a] 코드 앱 — 채널에 올린 `.lkapp` 한 줄(켬 · 설정 · 최근 오류). 묶음 원본은 채널 폴더 apps/.
+            #   **워터마크 밖**(켬끔 · 설정은 `!다시`에 산다) · !클리어 밖(선언 층처럼 남는다) · !리셋엔 지운다.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS apps (
+                    channel_id  TEXT NOT NULL,
+                    app_id      TEXT NOT NULL,
+                    name        TEXT NOT NULL DEFAULT '',
+                    version     TEXT NOT NULL DEFAULT '',
+                    manifest    TEXT NOT NULL DEFAULT '{}',
+                    on_flag     INTEGER NOT NULL DEFAULT 1,
+                    settings    TEXT NOT NULL DEFAULT '{}',
+                    errors      INTEGER NOT NULL DEFAULT 0,
+                    last_error  TEXT NOT NULL DEFAULT '',
+                    uploaded_at REAL NOT NULL,
+                    PRIMARY KEY (channel_id, app_id)
+                )
+            """)
+            # [2026-10-23 C73 M7a] 코드 앱 장부 — 키 하나 쓰기 = 행 하나(행이 정본, 지금 값 = 키마다 마지막 행).
+            #   value NULL = 지움. source = turn(턴 훅이 씀) | click(버튼). `!다시` 워터마크 트림 목록에 넣는다 —
+            #   턴이 쓴 값이 되감기고, 버튼 몫은 편집 일지(app.kv)가 다시 얹는다(C73 §5). !클리어 · !리셋에 지운다.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS app_kv_log (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_id  TEXT NOT NULL,
+                    app_id      TEXT NOT NULL,
+                    key         TEXT NOT NULL,
+                    value       TEXT,
+                    turn        INTEGER NOT NULL DEFAULT 0,
+                    source      TEXT NOT NULL DEFAULT 'turn',
+                    created_at  REAL NOT NULL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_appkv_key ON app_kv_log(channel_id, app_id, key, id)")
+            # [2026-10-24 C73 M7b] 코드 앱 신고 장부 — 산문 뒤 신고 콜(AppTags)이 낸 한 건 = 행 하나. lk.tags 가 읽는다.
+            #   `!다시` 워터마크 트림 목록에 넣는다(그 턴 신고가 되감긴다) · !클리어 · !리셋에 지운다.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS app_tags (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_id  TEXT NOT NULL,
+                    app_id      TEXT NOT NULL,
+                    turn        INTEGER NOT NULL DEFAULT 0,
+                    message_id  TEXT NOT NULL DEFAULT '',
+                    tag         TEXT NOT NULL,
+                    fields      TEXT NOT NULL DEFAULT '{}',
+                    evidence    TEXT NOT NULL DEFAULT '',
+                    created_at  REAL NOT NULL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_apptags_turn ON app_tags(channel_id, app_id, turn, id)")
+            # [2026-10-24 C75 G1] 중력 우물 장부 — 행이 정본(well_store.fold). op: birth(중심 · 출처 · 줄거리) ·
+            #   capture(ids) · center(늦게 잡은 중심, 한 번) · end. `!다시` 워터마크 트림 · !클리어 · !리셋 목록에 넣는다.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS well_log (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_id   TEXT NOT NULL,
+                    turn         INTEGER NOT NULL DEFAULT 0,
+                    well_id      INTEGER NOT NULL,
+                    op           TEXT NOT NULL,
+                    center       TEXT NOT NULL DEFAULT '',
+                    ids          TEXT NOT NULL DEFAULT '[]',
+                    storyline_id INTEGER,
+                    origin       TEXT NOT NULL DEFAULT '',
+                    label        TEXT NOT NULL DEFAULT '',
+                    payload      TEXT NOT NULL DEFAULT '{}',
+                    created_at   REAL NOT NULL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_welllog_channel ON well_log(channel_id, id)")
+            # [2026-10-27 C82] 성장발효 도장 — 페이지가 어느 턴까지 원문을 삭혔나(행 추가형 · AUTOINCREMENT → `!다시`
+            #   워터마크 트림이 그 턴 성장을 되감는다. 절 쓰기는 section_history 되감기가 따로 맡는다).
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS growth_log (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_id  TEXT NOT NULL,
+                    page_id     TEXT NOT NULL,
+                    upto_turn   INTEGER NOT NULL,
+                    turn        INTEGER NOT NULL DEFAULT 0,
+                    created_at  REAL NOT NULL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_growthlog_page ON growth_log(channel_id, page_id, id)")
+            # [2026-10-26 C80] 턴 색인 — 턴마다 1행(PK upsert: `!다시` 재실행이 같은 턴 행을 덮는다 = turn_snapshot 과 같은
+            #   자가치유라 워터마크 목록엔 안 넣는다). 이름(인물 entities · 장소/세력 extra, 원문 라벨 그대로) · 중요도 ·
+            #   그 턴 원문 구간(msg_from~msg_to = history_log.message_id). DEEP 색인(memory_index)이 이걸 읽는다.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS turn_index (
+                    channel_id  TEXT NOT NULL,
+                    turn        INTEGER NOT NULL,
+                    entities    TEXT NOT NULL DEFAULT '[]',
+                    extra       TEXT NOT NULL DEFAULT '[]',
+                    importance  INTEGER NOT NULL DEFAULT 0,
+                    msg_from    TEXT,
+                    msg_to      TEXT,
+                    created_at  REAL NOT NULL,
+                    PRIMARY KEY (channel_id, turn)
+                )
+            """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_turnmail_kind ON turn_mail(channel_id, kind, id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_threadlog_thread ON thread_log(channel_id, thread_id, id)")
             # [2026-09-16 시트 2차] PC = 위키 인물 페이지. owner_uid(참가자↔페이지 1:1 표식, ''=NPC 등)
@@ -777,7 +874,13 @@ def _ensure_schema(channel_id: str = "") -> bool:
             for _alt in ("ALTER TABLE pages ADD COLUMN owner_uid TEXT NOT NULL DEFAULT ''",
                          "ALTER TABLE pages ADD COLUMN built_len INTEGER NOT NULL DEFAULT 0",
                          # [2026-10-18 C50 R1] 정정 행 ↔ 위키 줄 끈 {page_id: {line, demoted}, "_also_wrong": [..]}
-                         "ALTER TABLE corrections ADD COLUMN links TEXT NOT NULL DEFAULT '{}'"):
+                         "ALTER TABLE corrections ADD COLUMN links TEXT NOT NULL DEFAULT '{}'",
+                         # [2026-10-24 C74 판2] 목표(goal) — rank(open 행) · step(progress 행, 부호 있는 정수) ·
+                         #   after_id(선: 이 줄이 기다리는 줄 id — open · sleep 행) · origin(''=추출 · ooc · code:…)
+                         "ALTER TABLE thread_log ADD COLUMN rank TEXT NOT NULL DEFAULT ''",
+                         "ALTER TABLE thread_log ADD COLUMN step INTEGER NOT NULL DEFAULT 0",
+                         "ALTER TABLE thread_log ADD COLUMN after_id TEXT NOT NULL DEFAULT ''",
+                         "ALTER TABLE thread_log ADD COLUMN origin TEXT NOT NULL DEFAULT ''"):
                 try:
                     conn.execute(_alt)
                 except Exception:
@@ -1619,6 +1722,11 @@ def delete_channel_rows(channel_id: str) -> bool:
                       "corrections",  # [2026-10-10 기록 정정]
                       "activity_edits",  # [2026-10-23 C60 M2c]
                       "activity_seen",  # [2026-10-23 C69 A3] 본 자리
+                      "apps", "app_kv_log",  # [2026-10-23 C73 M7a] 코드 앱 · 장부
+                      "app_tags",  # [2026-10-24 C73 M7b] 코드 앱 신고 장부
+                      "well_log",  # [2026-10-24 C75 G1] 중력 우물 장부
+                      "turn_index",  # [2026-10-26 C80] 턴 색인
+                      "growth_log",  # [2026-10-27 C82] 성장발효 도장
                       # [2026-09-14 W1] 위키 페이지 3테이블 — 레거시 모드에서만 목록 삭제
                       #   (채널 모드는 파일 삭제라 자동). 클리어(§6 W4)와는 별개.
                       "pages", "sections", "section_history"):
@@ -1695,6 +1803,120 @@ def read_history_tail(channel_id: str, n: int = 50) -> Optional[list]:
     except Exception as e:
         logger.warning(f"[SQLiteStore] read_history_tail 실패: {channel_id}: {e}")
         return None
+
+
+# =========================================================
+# [2026-10-26 C80] 턴 색인 — DEEP 이 색인이 된다(memory_index 가 읽는다)
+# =========================================================
+
+def upsert_turn_index(channel_id: str, turn: int, entities=None, extra=None, importance: int = 0,
+                      msg_from=None, msg_to=None) -> bool:
+    """턴 1행 upsert. 같은 턴이면 덮는다(`!다시` 자가치유). msg 끝이 None 이면 기존 값을 지킨다. 실패 무해."""
+    try:
+        t = int(turn)
+    except Exception:
+        return False
+    if not channel_id or t <= 0 or not _ensure_schema(channel_id):
+        return False
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return False
+
+    def _names(xs):
+        return [str(x).strip() for x in (xs or []) if str(x or "").strip()]
+
+    try:
+        conn.execute(
+            "INSERT INTO turn_index (channel_id, turn, entities, extra, importance, msg_from, msg_to, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(channel_id, turn) DO UPDATE SET "
+            "entities=excluded.entities, extra=excluded.extra, importance=excluded.importance, "
+            "msg_from=COALESCE(excluded.msg_from, turn_index.msg_from), "
+            "msg_to=COALESCE(excluded.msg_to, turn_index.msg_to), created_at=excluded.created_at",
+            (
+                channel_id, t,
+                json.dumps(_names(entities), ensure_ascii=False),
+                json.dumps(_names(extra), ensure_ascii=False),
+                int(importance or 0),
+                None if msg_from is None else str(msg_from),
+                None if msg_to is None else str(msg_to),
+                time.time(),
+            ),
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] upsert_turn_index 실패 (무시): {channel_id}: {e}")
+        return False
+
+
+def append_growth_log(channel_id: str, page_id: str, upto_turn: int, turn: int = 0) -> bool:
+    """[2026-10-27 C82] 성장발효 도장 1행 — 이 페이지는 upto_turn 까지의 원문을 삭혔다. 실패 무해."""
+    if not channel_id or not page_id or not _ensure_schema(channel_id):
+        return False
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return False
+    try:
+        conn.execute("INSERT INTO growth_log (channel_id, page_id, upto_turn, turn, created_at) VALUES (?,?,?,?,?)",
+                     (channel_id, str(page_id), int(upto_turn), int(turn or 0), time.time()))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] append_growth_log 실패 (무시): {channel_id}: {e}")
+        return False
+
+
+def read_growth_marks(channel_id: str) -> Dict[str, int]:
+    """[2026-10-27 C82] 페이지별 성장 도장 {page_id: 삭힌 마지막 턴}. 없으면 그 페이지 키가 없다. 실패 시 {}."""
+    if not channel_id or not _ensure_schema(channel_id):
+        return {}
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return {}
+    try:
+        return {str(p): int(t or 0) for p, t in conn.execute(
+            "SELECT page_id, MAX(upto_turn) FROM growth_log WHERE channel_id=? GROUP BY page_id", (channel_id,)).fetchall()}
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_growth_marks 실패: {channel_id}: {e}")
+        return {}
+
+
+def _turn_index_row(r) -> Dict[str, Any]:
+    def _j(s):
+        try:
+            v = json.loads(s or "[]")
+            return v if isinstance(v, list) else []
+        except Exception:
+            return []
+    return {"turn": int(r[0]), "entities": _j(r[1]), "extra": _j(r[2]), "importance": int(r[3] or 0),
+            "msg_from": r[4], "msg_to": r[5]}
+
+
+def read_turn_index(channel_id: str, turn: Optional[int] = None, needles=None) -> list:
+    """턴 색인 행들(턴 오름차순). turn 을 주면 그 턴 1행만([] 또는 [행]).
+    needles(이름 목록)를 주면 entities · extra 글자에 그중 하나라도 든 행만(LIKE 예비 거르기 — 정확 대조는 호출부).
+    실패 시 []."""
+    if not channel_id or not _ensure_schema(channel_id):
+        return []
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return []
+    try:
+        sql = ("SELECT turn, entities, extra, importance, msg_from, msg_to FROM turn_index WHERE channel_id=?")
+        args: list = [channel_id]
+        if turn is not None:
+            sql += " AND turn=?"
+            args.append(int(turn))
+        ns = [str(n).strip() for n in (needles or []) if str(n or "").strip()]
+        if ns:
+            sql += " AND (" + " OR ".join(["entities LIKE ? OR extra LIKE ?"] * len(ns)) + ")"
+            for n in ns:
+                args.extend([f"%{n}%", f"%{n}%"])
+        sql += " ORDER BY turn ASC"
+        return [_turn_index_row(r) for r in conn.execute(sql, args).fetchall()]
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_turn_index 실패: {channel_id}: {e}")
+        return []
 
 
 def read_history_span(channel_id: str, from_msg_id, to_msg_id, limit: int = 40) -> list:
@@ -1782,7 +2004,11 @@ def clear_history_log(channel_id: str) -> bool:
 
 
 def sync_fermented(channel_id: str, entries: list) -> bool:
-    """fermented_history 전체 교체 미러 (발효의 리스트 교체 의미론 그대로). 단일 트랜잭션."""
+    """fermented_history 전체 교체 미러 (발효의 리스트 교체 의미론 그대로). 단일 트랜잭션.
+
+    [2026-10-26 C80] 끝 상태는 옛 DELETE 전부 → INSERT 전부와 같다. 다만 **바뀐 seq 만** 쓴다 — 엔트리가 안 지워지면서
+    (MEMORY_LAYERS_V2) 수백 개가 되면, 턴마다 도는 저장(턴 진입 read-through 가 세 키를 도메인에 다시 얹는다)이
+    전부를 다시 쓰던 비용이 커졌다. 무변경이면 쓰기 0(updated_at 그대로)."""
     if not channel_id or not isinstance(entries, list) or not _ensure_schema(channel_id):
         return False
     conn = _get_conn(channel_id)
@@ -1790,11 +2016,17 @@ def sync_fermented(channel_id: str, entries: list) -> bool:
         return False
     try:
         now = time.time()
-        conn.execute("DELETE FROM fermented_history WHERE channel_id=?", (channel_id,))
-        if entries:
+        new = [json.dumps(e, ensure_ascii=False) for e in entries]
+        cur = {int(s): b for s, b in conn.execute(
+            "SELECT seq, entry FROM fermented_history WHERE channel_id=?", (channel_id,)).fetchall()}
+        if len(cur) == len(new) and all(cur.get(i) == b for i, b in enumerate(new)):
+            return True
+        conn.execute("DELETE FROM fermented_history WHERE channel_id=? AND seq>=?", (channel_id, len(new)))
+        changed = [(channel_id, i, b, now) for i, b in enumerate(new) if cur.get(i) != b]
+        if changed:
             conn.executemany(
-                "INSERT INTO fermented_history (channel_id, seq, entry, updated_at) VALUES (?, ?, ?, ?)",
-                [(channel_id, i, json.dumps(e, ensure_ascii=False), now) for i, e in enumerate(entries)],
+                "INSERT OR REPLACE INTO fermented_history (channel_id, seq, entry, updated_at) VALUES (?, ?, ?, ?)",
+                changed,
             )
         conn.commit()
         return True
@@ -1943,10 +2175,33 @@ def read_retry_marks(channel_id: str) -> Dict[str, int]:
         if row and row[0]:
             m = json.loads(row[0])
             if isinstance(m, dict):
-                return {str(k): int(v) for k, v in m.items()}
+                # [2026-10-25 C77 C-3] `__` 칸(비밀 원장 사본 등)은 워터마크가 아니다 — 수만 읽는다.
+                return {str(k): int(v) for k, v in m.items() if not str(k).startswith("__")}
     except Exception as e:
         logger.warning(f"[SQLiteStore] read_retry_marks 실패: {channel_id}: {e}")
     return {}
+
+
+RETRY_SECRETS_KEY = "__secret_ledger__"
+
+
+def read_retry_secrets(channel_id: str) -> Optional[list]:
+    """[2026-10-25 C77 C-3 · Q16] 영속 스냅샷에 동봉된 비밀 원장 사본(marks 칸 `__secret_ledger__`). 없으면 None(옛 스냅샷 = 손 안 댐)."""
+    if not channel_id or not _ensure_schema(channel_id):
+        return None
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return None
+    try:
+        cur = conn.execute("SELECT marks FROM retry_snapshot WHERE channel_id=?", (channel_id,))
+        row = cur.fetchone()
+        if row and row[0]:
+            m = json.loads(row[0])
+            if isinstance(m, dict) and isinstance(m.get(RETRY_SECRETS_KEY), list):
+                return m[RETRY_SECRETS_KEY]
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_retry_secrets 실패: {channel_id}: {e}")
+    return None
 
 
 # =========================================================
@@ -1972,6 +2227,14 @@ _RETRY_LOG_TABLES = (
     "notebook_log",
     # [2026-09-25 스레드 장부] 이벤트 행이 정본 — 트림이 곧 상태 되감기.
     "thread_log",
+    # [2026-10-23 C73 M7a] 코드 앱 장부 — 턴 훅이 쓴 값이 되감긴다(버튼 몫은 편집 일지가 다시 얹음).
+    "app_kv_log",
+    # [2026-10-24 C73 M7b] 코드 앱 신고 — 그 턴 산문 뒤에 적힌 신고가 되감긴다(재실행 산문이 다시 신고한다).
+    "app_tags",
+    # [2026-10-24 C75 G1] 중력 우물 — 행이 정본, 트림이 곧 되감기.
+    "well_log",
+    # [2026-10-27 C82] 성장발효 도장 — 폐기된 턴의 성장이 되감기면(절은 section_history 가) 도장도 같이 물린다.
+    "growth_log",
 )
 
 
@@ -2022,7 +2285,9 @@ def trim_logs_to_watermarks(channel_id: str, marks: Dict[str, int]) -> int:
 
 
 _THREAD_COLS = ("turn", "thread_id", "op", "kind", "title", "parties", "outcome", "remaining",
-                "due_start", "due_end", "due_prec", "quote")
+                "due_start", "due_end", "due_prec", "quote",
+                # [2026-10-24 C74 판2] 목표 · 선 · 출처
+                "rank", "step", "after_id", "origin")
 
 
 def append_thread_events(channel_id: str, rows: List[Dict[str, Any]]) -> int:
@@ -2038,14 +2303,20 @@ def append_thread_events(channel_id: str, rows: List[Dict[str, Any]]) -> int:
         for r in rows:
             if not isinstance(r, dict) or not r.get("thread_id") or not r.get("op"):
                 continue
+            try:
+                _step = int(r.get("step") or 0)
+            except (TypeError, ValueError):
+                _step = 0
             conn.execute(
                 "INSERT INTO thread_log (channel_id, turn, thread_id, op, kind, title, parties, outcome, "
-                "remaining, due_start, due_end, due_prec, quote, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "remaining, due_start, due_end, due_prec, quote, rank, step, after_id, origin, created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (channel_id, int(r.get("turn") or 0), str(r["thread_id"]), str(r["op"]),
                  str(r.get("kind") or ""), str(r.get("title") or ""), str(r.get("parties") or "[]"),
                  str(r.get("outcome") or ""), str(r.get("remaining") or ""),
                  r.get("due_start"), r.get("due_end"), str(r.get("due_prec") or ""),
-                 str(r.get("quote") or ""), now),
+                 str(r.get("quote") or ""), str(r.get("rank") or ""), _step,
+                 str(r.get("after_id") or ""), str(r.get("origin") or ""), now),
             )
             n += 1
         conn.commit()
@@ -2053,6 +2324,68 @@ def append_thread_events(channel_id: str, rows: List[Dict[str, Any]]) -> int:
     except Exception as e:
         logger.warning(f"[SQLiteStore] append_thread_events 실패 (무시): {channel_id}: {e}")
         return 0
+
+
+_WELL_COLS = ("turn", "well_id", "op", "center", "ids", "storyline_id", "origin", "label", "payload")
+
+
+def append_well_events(channel_id: str, rows: List[Dict[str, Any]]) -> int:
+    """[2026-10-24 C75 G1] 중력 우물 행 적립 → 쓴 행 수. ids · payload 는 JSON 글로. 롤링 없음."""
+    if not channel_id or not rows or not _ensure_schema(channel_id):
+        return 0
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return 0
+    try:
+        n = 0
+        now = time.time()
+        for r in rows:
+            if not isinstance(r, dict) or r.get("well_id") is None or not r.get("op"):
+                continue
+            _sl = r.get("storyline_id")
+            conn.execute(
+                "INSERT INTO well_log (channel_id, turn, well_id, op, center, ids, storyline_id, origin, label, payload, "
+                "created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (channel_id, int(r.get("turn") or 0), int(r["well_id"]), str(r["op"]), str(r.get("center") or ""),
+                 json.dumps(r.get("ids") or [], ensure_ascii=False), int(_sl) if _sl is not None else None,
+                 str(r.get("origin") or ""), str(r.get("label") or ""),
+                 json.dumps(r.get("payload") or {}, ensure_ascii=False), now),
+            )
+            n += 1
+        conn.commit()
+        return n
+    except Exception as e:
+        try:
+            conn.rollback()   # [C74 판3 검토 #10] 반쯤 쓴 묶음(생김만 있고 먹음이 없는 우물)이 다음 commit 에 실리지 않게
+        except Exception:
+            pass
+        logger.warning(f"[SQLiteStore] append_well_events 실패 (무시): {channel_id}: {e}")
+        return 0
+
+
+def read_well_log(channel_id: str) -> List[Dict[str, Any]]:
+    """[2026-10-24 C75 G1] 채널 well_log 전 행(id 오름차순, ids · payload 는 풀어서) — fold 입력. 실패 시 []."""
+    if not channel_id or not _ensure_schema(channel_id):
+        return []
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return []
+    try:
+        cur = conn.execute("SELECT id, " + ", ".join(_WELL_COLS) +
+                           " FROM well_log WHERE channel_id=? ORDER BY id", (channel_id,))
+        out = []
+        for row in cur.fetchall():
+            d = dict(zip(("id",) + _WELL_COLS, row))
+            for k, dv in (("ids", []), ("payload", {})):
+                try:
+                    d[k] = json.loads(d.get(k) or "null") or dv
+                except Exception:
+                    d[k] = dv
+            out.append(d)
+        return out
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_well_log 실패 (무시): {channel_id}: {e}")
+        return []
 
 
 def read_thread_log(channel_id: str) -> List[Dict[str, Any]]:
@@ -2399,13 +2732,65 @@ def upsert_secret(channel_id: str, entry: Dict[str, Any]) -> bool:
         return False
 
 
-def read_secrets(channel_id: str, include_closed: bool = False) -> list:
-    """채널 비밀 전체. 기본은 kept/leaking만 (revealed/retired 제외)."""
-    if not channel_id or not _ensure_schema(channel_id):
-        return []
+def restore_secrets(channel_id: str, rows: Any) -> bool:
+    """[2026-10-25 C77 C-3 · Q16] `!다시` 전용 — 비밀 원장을 턴 시작 모양으로 통째 되돌린다(채널 행 지우고 다시 넣기).
+
+    원장은 (channel, secret_id) 덮어쓰기 표라 워터마크 트림이 안 맞는다. 폐기된 턴 몫이 남던 길: `turn_count` +1 이 남고
+    재실행이 또 더함 · 폐기된 산문이 깐 비밀이 revealed 로 굳음(게이트 ③) · 그 턴에 처음 선 행. 게이트 ③(revealed → kept 후퇴
+    금지)는 **여기서만** 우회한다 — 폐기된 산문은 일어난 적이 없다. 부르는 곳은 `orchestration.retry_last` 하나(스모크가 잰다)."""
+    if not channel_id or not isinstance(rows, list) or not _ensure_schema(channel_id):
+        return False
     conn = _get_conn(channel_id)
     if conn is None:
-        return []
+        return False
+    try:
+        conn.execute("DELETE FROM secret_ledger WHERE channel_id=?", (channel_id,))
+        for e in rows:
+            if not isinstance(e, dict) or not e.get("secret_id") or not e.get("truth"):
+                continue
+            conn.execute(
+                f"INSERT INTO secret_ledger (channel_id, secret_id, {_SECRET_COLS}) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    channel_id, str(e["secret_id"]),
+                    str(e.get("truth", "")), str(e.get("surface", "")),
+                    json.dumps(e.get("owners", []), ensure_ascii=False),
+                    json.dumps(e.get("knowers", []), ensure_ascii=False),
+                    json.dumps(e.get("suspecters", []), ensure_ascii=False),
+                    json.dumps(e.get("cannot_know", []), ensure_ascii=False),
+                    int(e.get("leak_pressure", 0) or 0),
+                    str(e.get("reveal_gate", "")), str(e.get("risk_if_revealed", "")),
+                    str(e.get("status", "kept") or "kept"),
+                    str(e.get("canon_level", "established") or "established"),
+                    int(e.get("turn_count", 0) or 0),
+                    e.get("updated_at", "") or "",
+                    int(e.get("reader_exposure", 0) or 0),
+                    int(e.get("reader_exposure_turn", 0) or 0),
+                ),
+            )
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] restore_secrets 실패 (무시): {channel_id}: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+
+
+def read_secrets(channel_id: str, include_closed: bool = False, strict: bool = False):
+    """채널 비밀 전체. 기본은 kept/leaking만 (revealed/retired 제외).
+
+    [2026-10-25 C77 검토] strict=True 면 읽기 실패(스키마 · 연결 · 예외)를 None 으로 낸다 —
+      `!다시` 스냅샷 전용. "비밀 0개" 와 "못 읽음" 을 가르지 않으면 `restore_secrets([])` 가 원장을 비운다.
+    """
+    _fail = None if strict else []
+    if not channel_id or not _ensure_schema(channel_id):
+        return _fail
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return _fail
     try:
         q = f"SELECT secret_id, {_SECRET_COLS} FROM secret_ledger WHERE channel_id=?"
         if not include_closed:
@@ -2414,7 +2799,7 @@ def read_secrets(channel_id: str, include_closed: bool = False) -> list:
         return [_row_to_secret(r) for r in cur.fetchall()]
     except Exception as e:
         logger.warning(f"[SQLiteStore] read_secrets 실패 (무시): {channel_id}: {e}")
-        return []
+        return _fail
 
 
 def clear_session_scoped(channel_id: str) -> bool:
@@ -2446,6 +2831,11 @@ def clear_session_scoped(channel_id: str) -> bool:
         "thread_log",
         "activity_edits",  # [2026-10-23 C60 M2c] 화면 편집 일지 — 그 세션의 편집이다
         "activity_seen",  # [2026-10-23 C69 A3] 본 자리 — 도착물 행이 같이 지워지니 같이 지운다
+        "app_kv_log",  # [2026-10-23 C73 M7a] 코드 앱 장부 — 세션 파생(앱 · 켬끔 · 설정은 apps 에 남는다)
+        "app_tags",  # [2026-10-24 C73 M7b] 코드 앱 신고 — 세션 파생
+        "well_log",  # [2026-10-24 C75 G1] 중력 우물 — 세션 파생
+        "turn_index",  # [2026-10-26 C80] 턴 색인 — 세션 파생(원문 구간이 가리키는 history_log 와 같은 수명)
+        "growth_log",  # [2026-10-27 C82] 성장발효 도장 — 세션 파생
     )
     try:
         for t in tables:
@@ -3495,3 +3885,239 @@ def mark_activity_edit_undone(channel_id: str, row_id: int) -> bool:
     except Exception as e:
         logger.warning(f"[SQLiteStore] mark_activity_edit_undone 실패: {channel_id}: {e}")
         return False
+
+
+# =========================================================
+# [2026-10-23 C73 M7a] 코드 앱 — 앱 표(apps) · 장부(app_kv_log). 스펙 C73 §2.2 · §5.
+# =========================================================
+
+_APP_COLS = "app_id, name, version, manifest, on_flag, settings, errors, last_error, uploaded_at"
+
+
+def _jl(s: Any, default: Any) -> Any:
+    try:
+        v = json.loads(s) if s else default
+        return v if isinstance(v, type(default)) else default
+    except Exception:
+        return default
+
+
+def _app_row(r) -> Dict[str, Any]:
+    return {"app_id": r[0], "name": r[1] or "", "version": r[2] or "", "manifest": _jl(r[3], {}),
+            "on": bool(r[4]), "settings": _jl(r[5], {}), "errors": int(r[6] or 0),
+            "last_error": r[7] or "", "uploaded_at": r[8]}
+
+
+def upsert_app(channel_id: str, app_id: str, name: str, version: str, manifest: Dict[str, Any]) -> bool:
+    """올리기 — 새 줄이면 켬 · 빈 설정, 있던 줄이면 이름 · 판 · manifest 만 바꾼다(켬끔 · 설정 · 장부 그대로)."""
+    if not channel_id or not app_id or not _ensure_schema(channel_id):
+        return False
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return False
+    try:
+        # UPSERT(ON CONFLICT … DO UPDATE)는 SQLite 3.24+ — 서버 판을 묻지 않게 있나 보고 갈라 쓴다(C69 activity_seen 과 같은 결).
+        vals = (str(name or app_id)[:80], str(version or "")[:40], json.dumps(manifest or {}, ensure_ascii=False),
+                time.time())
+        had = conn.execute("SELECT 1 FROM apps WHERE channel_id=? AND app_id=?", (channel_id, str(app_id))).fetchone()
+        if had:
+            conn.execute("UPDATE apps SET name=?, version=?, manifest=?, uploaded_at=?, errors=0, last_error='' "
+                         "WHERE channel_id=? AND app_id=?", (*vals, channel_id, str(app_id)))
+        else:
+            conn.execute("INSERT INTO apps (channel_id, app_id, name, version, manifest, uploaded_at) "
+                         "VALUES (?,?,?,?,?,?)", (channel_id, str(app_id), *vals))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] upsert_app 실패: {channel_id}: {e}")
+        return False
+
+
+def get_apps(channel_id: str) -> List[Dict[str, Any]]:
+    """채널 앱 전부(올린 순)."""
+    if not channel_id or not _ensure_schema(channel_id):
+        return []
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return []
+    try:
+        rows = conn.execute(f"SELECT {_APP_COLS} FROM apps WHERE channel_id=? ORDER BY uploaded_at, app_id",
+                            (channel_id,)).fetchall()
+        return [_app_row(r) for r in rows]
+    except Exception as e:
+        logger.debug(f"[SQLiteStore] get_apps 실패: {channel_id}: {e}")
+        return []
+
+
+def set_app_fields(channel_id: str, app_id: str, **fields: Any) -> bool:
+    """on(bool) · settings(dict) · errors(int) · last_error(str) 만 고친다."""
+    cols = {"on": "on_flag", "settings": "settings", "errors": "errors", "last_error": "last_error"}
+    sets, vals = [], []
+    for k, v in fields.items():
+        if k not in cols:
+            continue
+        if k == "on":
+            v = 1 if v else 0
+        elif k == "settings":
+            v = json.dumps(v or {}, ensure_ascii=False)
+        elif k == "errors":
+            v = int(v or 0)
+        else:
+            v = str(v or "")[:300]
+        sets.append(f"{cols[k]}=?")
+        vals.append(v)
+    if not sets or not channel_id or not _ensure_schema(channel_id):
+        return False
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return False
+    try:
+        conn.execute(f"UPDATE apps SET {', '.join(sets)} WHERE channel_id=? AND app_id=?",
+                     (*vals, channel_id, str(app_id)))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] set_app_fields 실패: {channel_id}: {e}")
+        return False
+
+
+def delete_app(channel_id: str, app_id: str) -> bool:
+    """앱 줄 + 그 앱 장부 전부."""
+    if not channel_id or not _ensure_schema(channel_id):
+        return False
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return False
+    try:
+        conn.execute("DELETE FROM apps WHERE channel_id=? AND app_id=?", (channel_id, str(app_id)))
+        conn.execute("DELETE FROM app_kv_log WHERE channel_id=? AND app_id=?", (channel_id, str(app_id)))
+        conn.execute("DELETE FROM app_tags WHERE channel_id=? AND app_id=?", (channel_id, str(app_id)))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] delete_app 실패: {channel_id}: {e}")
+        return False
+
+
+def app_kv_current(channel_id: str, app_id: str) -> Dict[str, Any]:
+    """지금 장부 — 키마다 마지막 행(값 NULL = 지운 키는 뺀다)."""
+    if not channel_id or not _ensure_schema(channel_id):
+        return {}
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return {}
+    try:
+        rows = conn.execute(
+            "SELECT key, value FROM app_kv_log WHERE id IN (SELECT MAX(id) FROM app_kv_log "
+            "WHERE channel_id=? AND app_id=? GROUP BY key)", (channel_id, str(app_id))).fetchall()
+        out: Dict[str, Any] = {}
+        for k, v in rows:
+            if v is None:
+                continue
+            try:
+                out[k] = json.loads(v)
+            except Exception:
+                out[k] = v
+        return out
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] app_kv_current 실패: {channel_id}: {e}")
+        return {}
+
+
+def append_app_kv(channel_id: str, app_id: str, writes: Dict[str, Any], turn: int, source: str) -> int:
+    """쓰기 모음 한 번 → 적은 행 수. 값 None = 지움 행. 한 커밋(반쯤 쓴 장부 없음)."""
+    if not channel_id or not writes or not _ensure_schema(channel_id):
+        return 0
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return 0
+    try:
+        now = time.time()
+        conn.executemany(
+            "INSERT INTO app_kv_log (channel_id, app_id, key, value, turn, source, created_at) VALUES (?,?,?,?,?,?,?)",
+            [(channel_id, str(app_id), str(k), None if v is None else json.dumps(v, ensure_ascii=False),
+              int(turn or 0), str(source or "turn"), now) for k, v in writes.items()])
+        conn.commit()
+        return len(writes)
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] append_app_kv 실패: {channel_id}: {e}")
+        return 0
+
+
+def compact_app_kv(channel_id: str) -> int:
+    """턴 시작(스냅숏 워터마크 **앞**)에 접기 — 키마다 마지막 행만 남긴다. 지운 키(마지막이 NULL)는 통째로 뺀다.
+    워터마크보다 앞에서만 돌므로 `!다시` 트림이 지울 행(워터마크 뒤)이 아직 없다 → 되감기 값이 안 깨진다."""
+    if not channel_id or not _ensure_schema(channel_id):
+        return 0
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return 0
+    try:
+        cur = conn.execute(
+            "DELETE FROM app_kv_log WHERE channel_id=? AND id NOT IN (SELECT MAX(id) FROM app_kv_log "
+            "WHERE channel_id=? GROUP BY app_id, key)", (channel_id, channel_id))
+        n = max(0, int(cur.rowcount or 0))
+        cur = conn.execute("DELETE FROM app_kv_log WHERE channel_id=? AND value IS NULL", (channel_id,))
+        n += max(0, int(cur.rowcount or 0))
+        conn.commit()
+        return n
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] compact_app_kv 실패: {channel_id}: {e}")
+        return 0
+
+
+def append_app_tags(channel_id: str, app_id: str, turn: int, message_id: str,
+                    rows: List[Dict[str, Any]]) -> int:
+    """[2026-10-24 C73 M7b] 신고 한 번(한 앱 한 턴) → 적은 행 수. rows = [{tag, fields, evidence}] — 거른 뒤의 것. 한 커밋."""
+    if not channel_id or not rows or not _ensure_schema(channel_id):
+        return 0
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return 0
+    try:
+        now = time.time()
+        conn.executemany(
+            "INSERT INTO app_tags (channel_id, app_id, turn, message_id, tag, fields, evidence, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            [(channel_id, str(app_id), int(turn or 0), str(message_id or ""), str(r.get("tag") or ""),
+              json.dumps(r.get("fields") or {}, ensure_ascii=False), str(r.get("evidence") or ""), now)
+             for r in rows])
+        conn.commit()
+        return len(rows)
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] append_app_tags 실패: {channel_id}: {e}")
+        return 0
+
+
+def app_tags_recent(channel_id: str, app_id: str, since_turn: int, limit: int = 500) -> List[Dict[str, Any]]:
+    """턴 > since_turn 인 신고(오래된 → 최신, 최근 limit 건). [{turn, tag, fields, evidence}]."""
+    if not channel_id or not _ensure_schema(channel_id):
+        return []
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return []
+    try:
+        rows = conn.execute(
+            "SELECT turn, tag, fields, evidence FROM app_tags WHERE channel_id=? AND app_id=? AND turn>? "
+            "ORDER BY id DESC LIMIT ?", (channel_id, str(app_id), int(since_turn), int(limit))).fetchall()
+        return [{"turn": int(r[0] or 0), "tag": r[1] or "", "fields": _jl(r[2], {}), "evidence": r[3] or ""}
+                for r in reversed(rows)]
+    except Exception as e:
+        logger.debug(f"[SQLiteStore] app_tags_recent 실패: {channel_id}: {e}")
+        return []
+
+
+def prune_app_tags(channel_id: str, before_turn: int) -> int:
+    """턴 시작(스냅숏 워터마크 **앞**)에 오래된 신고를 덜어낸다 — 턴 < before_turn. lk.tags 는 최근 50턴까지만 본다."""
+    if not channel_id or not _ensure_schema(channel_id):
+        return 0
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return 0
+    try:
+        cur = conn.execute("DELETE FROM app_tags WHERE channel_id=? AND turn<?", (channel_id, int(before_turn)))
+        conn.commit()
+        return max(0, int(cur.rowcount or 0))
+    except Exception as e:
+        logger.debug(f"[SQLiteStore] prune_app_tags 실패: {channel_id}: {e}")
+        return 0

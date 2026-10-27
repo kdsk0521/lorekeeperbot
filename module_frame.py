@@ -16,8 +16,12 @@
 ⚠ [C64 M5] 입력 갈래(OOC 등)는 ON_INPUT(run_chain — 먹으면 멈춤), 렌더 앞 보조 콜은 PRE_RENDER_CALL(프롬프트에 끼우기),
   persistent view(버튼 판)는 add_view 한 줄 — main.on_ready 손글 목록 금지.
 ⚠ 장르 이론 '모듈'(theory_emphasis_engine.get_active_modules(active_genres))과는 다른 물건이다.
+⚠ [C74 W4-2·3] BACKGROUND 함수는 큐에 바로 넣는 대신 BgJob(콜 · 적용)을 돌려줄 수 있다. 짝 표(pair_background)에 오른
+  둘은 틀이 한 큐 태스크로 묶어 두 콜을 같이 띄우고(gather) 적용은 order 순서대로 한다. 짝이 없거나 빠지면 혼자 적재.
 """
+import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
@@ -139,6 +143,7 @@ class Module:
     screens: Tuple["Screen", ...] = ()               # [C60 M2b] Activity 탭(add_screen 이 붙인다)
     views: Tuple["View", ...] = ()                   # [C64 M5] persistent view(add_view 가 붙인다)
     settings: Tuple["Setting", ...] = ()             # [C72 A5] 설정 칸(Activity 모듈 앱 폼 · mod.set)
+    bg_pair: str = ""                                # [C74 W4-2·3] BACKGROUND 짝 — order 로 바로 뒤 모듈 id(그 콜과 같이 띄운다)
 
     def __post_init__(self):
         if self.tier not in TIERS:
@@ -166,6 +171,18 @@ def channel_toggle(code: str) -> Toggle:
 
 
 @dataclass
+class BgJob:
+    """[2026-10-24 C74 W4-2·3] BACKGROUND 정거장 함수가 돌려주는 배경 일감 — 큐 적재는 틀이 한다.
+    call  = 입력 읽기 + 콜(쓰기 없음) → 결과. 실패 정책은 옛 태스크 몸 그대로 안에 둔다(옛 몸이 삼키던 예외는 여기서도 삼킨다).
+    apply = 결과 적용(정거장 · 저장). call 결과를 받는다.
+    짝으로 묶이면 두 call 이 같이 돌고, apply 는 앞 모듈 → 뒤 모듈 순서로 차례로 돈다(옛 큐 순서 그대로)."""
+    name: str
+    call: Callable[[], Awaitable[Any]]
+    apply: Callable[[Any], Awaitable[None]]
+    priority: Any = None
+
+
+@dataclass
 class AfterProse:
     """BACKGROUND 정거장에 넘기는 묶음 — 옛 9.55~9.8 블록이 읽던 지역 변수 넷 + [C63 M4] 입력 메시지(배경 추출이 채널에 알린다)."""
     channel_id: str
@@ -173,6 +190,7 @@ class AfterProse:
     response: str
     sent_msgs: list
     message: Any = None
+    panel_before: Any = None   # [2026-10-24 C74 W4-1] 재그림(panel_refresh 모듈)의 비교 기준 = 보낼 때 그린 임베드 데이터
 
 
 @dataclass
@@ -187,7 +205,8 @@ class OutputsTurn:
 @dataclass
 class BatchTurn:
     """[2026-10-23 C63 M4] AFTER_BATCH 정거장 묶음 — 공용 세계 추출 콜의 산출(updates) + 옛 블록들이 같이 읽던 값.
-    turn_now = 이 추출이 속한 턴(렌더 시점 ctx.dai 기준, 옛 `_bg_turn_now`) · session_memory = 콜 앞에서 한 번 읽은 세션 메모리."""
+    turn_now = 이 추출이 속한 턴(렌더 시점 ctx.dai 기준, 옛 `_bg_turn_now`) · session_memory = 콜 앞에서 한 번 읽은 세션 메모리.
+    notes = [C74 판2] 앞 구독자가 뒤 구독자에게 넘기는 쪽지(goal_receipts: world 50 → goal 55 알림)."""
     channel_id: str
     ctx: Any
     response: str
@@ -195,6 +214,7 @@ class BatchTurn:
     updates: Dict[str, Any]
     turn_now: Callable[..., int]
     session_memory: Dict[str, Any]
+    notes: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -236,6 +256,8 @@ def register(m: Module) -> Module:
     if m.id in REGISTRY:
         raise ValueError(f"[Frame] 이미 등록된 모듈: {m.id}")
     REGISTRY[m.id] = m
+    if m.bg_pair:                                    # [C74 W4-2·3] 짝도 선언 한 장 안에서
+        pair_background(m.id, m.bg_pair)
     return m
 
 
@@ -265,9 +287,10 @@ def by_alias(word: str) -> Optional[Module]:
 
 def resolve_module(channel_id: str, word: Any) -> Tuple[str, Any, List[str]]:
     """[2026-10-23 C72] `!모듈 <말>` · Activity `mod.toggle` 의 고르기.
-    순서: ① 코드 모듈 id · 별칭 정확히 ② `2` · `#2` = 선언 모듈 번호 ③ 선언 모듈 이름표 · 파일 이름 정확히
-          ④ 앞글자 — 토글 코드 모듈(id · 이름 · 별칭) + 선언 모듈 이름표 전체에서 **하나로만** 맞을 때.
-    → ("code", Module, []) | ("bundle", source, []) | ("", None, 후보 라벨들)."""
+    순서: ① 코드 모듈 id · 별칭 정확히 ② `2` · `#2` = 올린 것 번호(선언 모듈 · [C73] 코드 앱 — 번호 줄 하나)
+          ③ 선언 모듈 이름표 · 파일 이름 · [C73] 코드 앱 이름 · id 정확히
+          ④ 앞글자 — 토글 코드 모듈(id · 이름 · 별칭) + 선언 모듈 이름표 + 코드 앱 이름 전체에서 **하나로만** 맞을 때.
+    → ("code", Module, []) | ("bundle", source, []) | ("app", app_id, []) | ("", None, 후보 라벨들)."""
     w = str(word or "").strip()
     if not w:
         return "", None, []
@@ -280,20 +303,34 @@ def resolve_module(channel_id: str, word: Any) -> Tuple[str, Any, List[str]]:
     except Exception as e:
         logger.debug(f"[Frame] bundle list skipped: {e}")
         bl = []
+    try:
+        import app_host as _ah
+        al = _ah.list_apps(channel_id)
+    except Exception as e:
+        logger.debug(f"[Frame] app list skipped: {e}")
+        al = []
     num = w[1:] if w.startswith("#") else w
     if num.isdigit():
         hit = [b for b in bl if b.get("no") == int(num)]
-        return ("bundle", hit[0]["source"], []) if hit else ("", None, [])
+        if hit:
+            return "bundle", hit[0]["source"], []
+        ahit = [a for a in al if a.get("no") == int(num)]
+        return ("app", ahit[0]["id"], []) if ahit else ("", None, [])
     exact = [b for b in bl if w in (b.get("label"), b.get("source"))]
-    if len(exact) == 1:
-        return "bundle", exact[0]["source"], []
+    aexact = [a for a in al if w in (a.get("name"), a.get("id"))]
+    if len(exact) + len(aexact) == 1:
+        return ("bundle", exact[0]["source"], []) if exact else ("app", aexact[0]["id"], [])
     lw = w.lower()
     code_pre = [x for x in REGISTRY.values() if x.shelf == "toggle" and x.toggle is not None
                 and any(str(a).lower().startswith(lw) for a in (x.id, x.name, *x.aliases))]
     bun_pre = [b for b in bl if str(b.get("label") or "").lower().startswith(lw)]
-    if len(code_pre) + len(bun_pre) == 1:
-        return ("code", code_pre[0], []) if code_pre else ("bundle", bun_pre[0]["source"], [])
-    return "", None, [x.name for x in code_pre] + [f"#{b['no']} {b['label']}" for b in bun_pre]
+    app_pre = [a for a in al if str(a.get("name") or "").lower().startswith(lw)]
+    if len(code_pre) + len(bun_pre) + len(app_pre) == 1:
+        if code_pre:
+            return "code", code_pre[0], []
+        return ("bundle", bun_pre[0]["source"], []) if bun_pre else ("app", app_pre[0]["id"], [])
+    return "", None, ([x.name for x in code_pre] + [f"#{b['no']} {b['label']}" for b in bun_pre]
+                      + [f"#{a['no']} {a['name']}" for a in app_pre])
 
 
 def set_module_on(channel_id: str, kind: str, target: Any, on: bool) -> Tuple[bool, str]:
@@ -308,6 +345,9 @@ def set_module_on(channel_id: str, kind: str, target: Any, on: bool) -> Tuple[bo
     if kind == "bundle":
         import output_router as _or
         return _or.set_bundle(channel_id, target, bool(on))
+    if kind == "app":   # [2026-10-23 C73] 코드 앱 — 앱 표 켬끔(워터마크 밖이라 `!다시`에 산다)
+        import app_host as _ah
+        return _ah.set_on(channel_id, str(target), bool(on))
     return False, "모르는 모듈이에요"
 
 
@@ -401,17 +441,152 @@ def screen(tab: str) -> Optional[Screen]:
     return None
 
 
+# ── 배경 짝 (C74 W4-2·3) ──────────────────────────────────────────
+#   앞 모듈 id → 뒤 모듈 id. 둘 다 BgJob 을 내면 한 큐 태스크(이름 "앞∥뒤")로 묶는다.
+#   조건(짝을 올리는 쪽이 확인할 것): 뒤 콜이 앞 적용 결과를 안 읽고, 앞 콜도 뒤 적용 결과를 안 읽는다 · 둘이 order 로 붙어 있다.
+_BG_PAIRS: Dict[str, str] = {}
+
+
+def pair_background(first_id: str, second_id: str) -> None:
+    _BG_PAIRS[str(first_id)] = str(second_id)
+
+
+def bg_partner(module_id: str) -> Optional[str]:
+    return _BG_PAIRS.get(str(module_id))
+
+
+async def _run_solo(job: BgJob) -> None:
+    await job.apply(await job.call())
+
+
+async def _run_pair(channel_id: str, a: BgJob, b: BgJob) -> None:
+    """두 콜을 같이 띄우고 적용은 a → b 차례. 한쪽이 예외를 내면 다른 쪽은 그대로 서고, 낸 쪽만 혼자 다시 적재한다
+    (옛 큐 재시도 = 꼬리에 다시 섬과 같은 결 — 시도 수도 옛과 같게 재시도 한 번을 쓴 채로 선다).
+    [판2 검토 #1] a 적용은 a 콜이 끝나는 대로 — b 콜을 안 기다린다(출력물 값 · 타격칸 저장이 옛 시각 그대로).
+      두 콜을 **둘 다 태스크로 먼저 띄운 뒤** 기다린다: b 의 첫 걸음(입력 읽기 — await 앞)이 a 적용보다 먼저 돈다
+      (a 콜이 한 번도 안 쉬고 끝나도 — 준비 줄이 FIFO 라 b 첫 걸음이 a 완료 알림보다 앞에 서 있다)."""
+    async def _timed(j: BgJob):
+        t = time.perf_counter()
+        try:
+            return await j.call(), time.perf_counter() - t, None
+        except Exception as e:
+            return None, time.perf_counter() - t, e
+
+    fa = asyncio.ensure_future(_timed(a))
+    fb = asyncio.ensure_future(_timed(b))
+    spent = 0.0
+    dts: List[float] = []
+    again: List[BgJob] = []
+    for j, fut in ((a, fa), (b, fb)):
+        r, dt, e = await fut
+        dts.append(dt)
+        if e is not None:
+            logger.warning(f"[Pair] {j.name} 콜 실패 — 혼자 다시 적재: {e}")
+            again.append(j)
+            _member_fail(channel_id, j, dt)
+            continue
+        t1 = time.perf_counter()
+        try:
+            await j.apply(r)
+        except Exception as e2:
+            logger.warning(f"[Pair] {j.name} 적용 실패 — 혼자 다시 적재: {e2}")
+            again.append(j)
+            _member_fail(channel_id, j, dt)
+        spent += time.perf_counter() - t1
+    logger.info(f"[Pair] ch={channel_id} {a.name} {dts[0]:.1f}s ∥ {b.name} {dts[1]:.1f}s · apply {spent:.1f}s")
+    for j in again:
+        await enqueue_jobs(channel_id, [j], retry_count=1)
+
+
+def _member_fail(channel_id: str, j: BgJob, dt: float) -> None:
+    """[판2 검토 #2] 짝 안에서 죽은 쪽도 계측에 실패로 선다(짝 태스크 자체는 ok 로 끝나므로)."""
+    try:
+        import turn_timing
+        turn_timing.bg_done(channel_id, j.name, 0.0, dt, ok=False)
+    except Exception:
+        pass
+
+
+async def enqueue_jobs(channel_id: str, jobs: List[BgJob], retry_count: int = 0) -> None:
+    """BgJob 하나 = 그 이름 그대로 혼자 적재(옛 태스크와 같은 이름 · 우선순위). 둘 = 짝 태스크 하나("앞∥뒤").
+    셋 이상이면 앞 둘을 짝으로, 나머지는 혼자 차례로(지금 부르는 곳은 둘까지). retry_count = 이미 쓴 재시도(짝에서 죽은 쪽)."""
+    import background_task_queue as _btq
+    jobs = [j for j in jobs if isinstance(j, BgJob)]
+    if not jobs:
+        return
+    if len(jobs) == 1:
+        j = jobs[0]
+        _kw = {"retry_count": retry_count} if retry_count else {}   # 0 이면 안 넘긴다(옛 시그니처 스텁 호환)
+        await _btq.enqueue_background_task(channel_id, j.name, lambda: _run_solo(j),
+                                           priority=j.priority or _btq.TaskPriority.NORMAL, **_kw)
+        return
+    a, b = jobs[0], jobs[1]
+    await _btq.enqueue_background_task(channel_id, f"{a.name}∥{b.name}", lambda: _run_pair(channel_id, a, b),
+                                       priority=a.priority or _btq.TaskPriority.NORMAL)
+    for j in jobs[2:]:
+        await enqueue_jobs(channel_id, [j])
+
+
+def check_pairs(station: str = BACKGROUND) -> List[str]:
+    """[판2 검토 #4] 짝은 order 로 바로 이웃이어야 묶인다 — 사이에 다른 모듈이 끼면 조용히 혼자 둘이 된다.
+    어긋난 짝 이름 목록(빈 목록 = 다 맞음). builtin_modules 등록 끝에서 한 번 부르고 어긋나면 WARNING."""
+    ids = [m.id for m in modules_at(station)]
+    bad = []
+    for first, second in _BG_PAIRS.items():
+        if first in ids and (ids.index(first) + 1 >= len(ids) or ids[ids.index(first) + 1] != second):
+            bad.append(f"{first}∥{second}")
+    return bad
+
+
 async def run_station(station: str, rt: Any, turn: Any) -> None:
     """정거장 하나를 돈다. 모듈 함수가 예외를 내도 다음 모듈은 돈다.
-    [C62 M3] 토글이 꺼진 채널이면 그 모듈은 건너뛴다(채널 = 묶음의 channel_id — AfterProse·DayTick 둘 다 있다)."""
+    [C62 M3] 토글이 꺼진 채널이면 그 모듈은 건너뛴다(채널 = 묶음의 channel_id — AfterProse·DayTick 둘 다 있다).
+    [C74 W4-2·3] 함수가 BgJob 을 돌려주면 틀이 적재한다. 짝 앞 모듈의 일감은 바로 다음(짝 뒤) 모듈까지 들고 있다가
+      둘이면 짝 태스크로, 뒤가 꺼졌거나 · 일감이 없거나 · 죽었으면 혼자 적재한다 — 큐에 서는 자리는 옛 순서 그대로."""
     channel_id = str(getattr(turn, "channel_id", "") or "")
+    held: Optional[Tuple[str, BgJob]] = None
+
+    async def _flush() -> None:
+        nonlocal held
+        if held is not None:
+            j = held[1]
+            held = None
+            try:
+                await enqueue_jobs(channel_id, [j])
+            except Exception as e:
+                logger.warning(f"[Frame] {j.name} 적재 실패: {e}")
+
     for m in modules_at(station):
+        if held is not None and m.id != bg_partner(held[0]):
+            await _flush()
         if not is_on(m, channel_id):
             continue
+        _t0 = time.perf_counter()
+        r = None
         try:
-            await m.stations[station](rt, turn)
+            r = await m.stations[station](rt, turn)
         except Exception as e:  # 바깥 그물 — 모듈 안 try/except 가 1차
-            logger.debug(f"[Frame] {m.id}@{station} skip: {e}")
+            # [2026-10-24 C74 W0-5] DEBUG → WARNING. 소리 없이 죽는 모듈이 서버 로그에 보이게(동작은 그대로 — 다음 모듈로).
+            logger.warning(f"[Frame] {m.id}@{station} skip: {e}")
+        if isinstance(r, BgJob):
+            try:
+                if held is not None:                  # m = 짝 뒤 → 둘을 한 태스크로
+                    pair = [held[1], r]
+                    held = None
+                    await enqueue_jobs(channel_id, pair)
+                elif bg_partner(m.id):                # m = 짝 앞 → 뒤 모듈까지 들고 간다
+                    held = (m.id, r)
+                else:
+                    await enqueue_jobs(channel_id, [r])
+            except Exception as e:
+                logger.warning(f"[Frame] {m.id}@{station} 적재 실패: {e}")
+        elif held is not None:                        # 짝 뒤가 일감을 안 냄 → 앞만 혼자
+            await _flush()
+        # [2026-10-24 C74 W0-5] 모듈 하나가 200ms 를 넘으면 INFO(넘지 않으면 안 찍는다 — 배경 정거장은 적재만이라 보통 ms).
+        _dt = time.perf_counter() - _t0
+        if _dt >= 0.2:
+            logger.info(f"[Frame] {m.id}@{station} {_dt * 1000:.0f}ms")
+    await _flush()
 
 
 _RAISE_TIERS = ("engine", "core", "toggle")   # [C64 M5] run_chain 에서 예외를 위로 올리는 tier(그 밖 = 이식 모듈)

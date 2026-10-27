@@ -665,6 +665,16 @@ def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
     _prev = domain_manager.get_npc(channel_id, name) or {}
     if not isinstance(_prev, dict):
         _prev = {}
+    # [2026-10-27 C84] 잠긴 모습 · 등장 전 이름으로 **새 키**를 세우지 않는다(예약 이름) — 모습 바꾸기 · 등장은
+    #   npc_forms.allowing 으로 지나간다. 세션 NPC 스텁 · 시드 · 몹 태그 · 개명 어느 길이든 여기를 지난다.
+    if not _prev:
+        try:
+            import npc_forms
+            if npc_forms.blocks_new_key(channel_id, name):
+                logger.info(f"[Form] 잠긴 이름 — 새 NPC 안 세움: {name}")
+                return
+        except Exception as _e_rs:
+            logger.debug(f"[Form] reserved check skip: {_e_rs}")
     # desc/description 텍스트에서 구조화 필드 자동 추출 (새 데이터·기존값 둘 다 없을 때만)
     desc_text = data.get("description") or data.get("desc", "")
     if desc_text and len(desc_text) > 200:
@@ -691,13 +701,17 @@ def update_npc(channel_id: str, name: str, data: Dict[str, Any]) -> None:
 
     # [2026-09-02 R4] 시트 거처 폴백 배치 — [2026-10-14 C37] 본문은 `seat_sheet_residence`로 옮겼다
     #   (`!클리어`가 출석을 비운 뒤 남는 로어 인물을 같은 규칙으로 다시 앉힌다).
-    seat_sheet_residence(channel_id, name)
+    # [C76 검토 #12] 로어 거처는 **처음 앉히기**에만 — 새로 등록할 때(_prev 없음). 매 턴 쓰면 OOC `npc_out` 으로
+    #   장면에서 뺀 사람이 다음 갱신 때 제 방(그 방이 지금 장면일 수도)으로 되돌아온다. 시트 거처(R4)는 옛 그대로.
+    seat_sheet_residence(channel_id, name, lore_home=not _prev)
 
 
-def seat_sheet_residence(channel_id: str, name: str) -> str:
+def seat_sheet_residence(channel_id: str, name: str, lore_home: bool = False) -> str:
     """[2026-10-14 C37] update_npc 안의 시트 거처 블록을 함수로 뺐다 — 규칙은 그대로(미배치일 때만,
     노드 없으면 `sheet_residence` 노드를 만든다). `!클리어`가 world_tree 출석을 비운 뒤 남는 로어/수제
-    인물을 다시 앉힐 때 같은 함수를 쓴다. Returns set_npc_location 결과("placed" 등) | ""."""
+    인물을 다시 앉힐 때 같은 함수를 쓴다. Returns set_npc_location 결과("placed" 등) | "".
+    [2026-10-24 C76 §4-3 ⓑ] `lore_home=True` 면 시트 거처가 빌 때 로어 거처(`npc_homes`)로 — 처음 앉히기 자리만
+    (새 등록 · 로어 분석 끝 · `!클리어` 다시 앉히기). 노드는 안 만든다."""
     _pr = ""
     # [2026-09-02 R4] 시트 거처 폴백 배치 — 스펙 §2.6 표 3행("시트 거처 폴백 배치").
     # 병: 출석이 `get_npcs_at_location`이 되는 순간, 어느 노드에도 없는 인물은
@@ -715,6 +729,16 @@ def seat_sheet_residence(channel_id: str, name: str) -> str:
         _all = get_npcs(channel_id) or {}
         _key = domain_manager._find_npc_key(_all, name) or name
         _sheet_loc = str((_all.get(_key) or {}).get("location", "") or "").strip()
+        if not _sheet_loc and lore_home:
+            # [2026-10-24 C76 §4-3 ⓑ] 시트 거처가 비면 로어 거처(로어 분석 `npc_homes`, 레티어스 — "프리즈마가 아예
+            #   NPC 시트를 분리해서 넣는 방식이니까"). 같은 규칙: 미배치일 때만. 로어 장소라 노드를 새로 안 만든다.
+            import world_tree as _wt_lh
+            if not _wt_lh.get_npc_location(channel_id, _key):
+                _home = _wt_lh.lore_home_name(channel_id, _key)
+                if _home and _wt_lh.resolve_node_id(channel_id, _home, allow_token=False):
+                    _pr = _wt_lh.set_npc_location(channel_id, _key, _home)
+                    if _pr == "placed":
+                        logger.info("[presence-check] lore home placed: %s @ %s", _key, _home)
         if _sheet_loc:
             import world_tree as _wt_res
             if not _wt_res.get_npc_location(channel_id, _key):
@@ -728,6 +752,17 @@ def seat_sheet_residence(channel_id: str, name: str) -> str:
                     if not _ok:
                         logger.debug("[presence-check] sheet residence node '%s' not created: %s",
                                      _sheet_loc, _ar)
+                    else:
+                        # [2026-10-25 C77 A-9 · Q13] 로어 장소가 있는 판에서 거처가 어느 로어 장소와도 안 맞으면 새 노드가 선다
+                        #   (Room 2 / 2호실 같은 이름 차이 → 고아 노드). 관측용으로 INFO 로 올린다 — 고칠지는 판정 거리.
+                        try:
+                            _lore_n = sum(1 for _n in ((_wt_res._get_tree(channel_id).get("nodes") or {}).values())
+                                          if _wt_res.LORE_TAG in _wt_res._tags_of(_n))
+                        except Exception:
+                            _lore_n = 0
+                        if _lore_n:
+                            logger.info("[presence-check] sheet residence '%s' (%s) matched no lore place (%d) — new node",
+                                        _sheet_loc, _key, _lore_n)
                 if _ok:
                     _pr = _wt_res.set_npc_location(channel_id, _key, _sheet_loc)
                     if _pr == "placed":
@@ -972,6 +1007,9 @@ def add_lore_npcs(channel_id: str, npc_list: List[Dict[str, Any]]) -> int:
         for key in ["role", "personality", "appearance", "location", "gender", "race", "schedule"]:
             if key in npc:
                 data[key] = npc[key]
+        # [2026-10-24 C76 §4-1] 분석 칸 이름이 location → home 으로 바뀌었다(거처 = 같은 출력의 장소 이름).
+        if npc.get("home") and not data.get("location"):
+            data["location"] = npc["home"]
 
         update_npc(channel_id, name, data)
         count += 1
@@ -1757,24 +1795,8 @@ def get_presence_tiers(channel_id: str) -> Dict[str, Any]:
     #   서면서도 비교가 터지지 않는다.
     hops: Dict[str, int] = {}
     try:
-        _dist = {node_id: 0}
-        _queue = [node_id]
-        while _queue:
-            _cur = _queue.pop(0)
-            _cn = nodes.get(_cur) or {}
-            _adj: List[str] = []
-            _pid = _cn.get("parent_id", "") or ""
-            if _pid:
-                _adj.append(_pid)
-            _adj.extend([c for c in (_cn.get("children", []) or []) if c])
-            for _conn in (_cn.get("connections", []) or []):
-                _tid = (_conn or {}).get("target_id", "") or ""
-                if _tid:
-                    _adj.append(_tid)
-            for _nb in _adj:
-                if _nb in nodes and _nb not in _dist:
-                    _dist[_nb] = _dist[_cur] + 1
-                    _queue.append(_nb)
+        # [2026-10-24 C75 G1] BFS 는 world_tree.hop_distances_in 으로 꺼냈다(같은 셈 — 중력 우물이 같이 쓴다).
+        _dist = world_tree.hop_distances_in(nodes, node_id)
         for _nid, _nd in nodes.items():
             if not isinstance(_nd, dict):
                 continue
@@ -2812,6 +2834,15 @@ def handle_identity_reveal(channel_id: str, old_name: str, new_name: str, reason
     자동으로 따라간다. 별도 도메인(태도/지식/각인/관계 엣지)은 아래에서 손으로 옮긴다.
     """
     if old_name == new_name: return "⚠️ 이름이 동일합니다."
+    # [2026-10-27 C84] 잠긴 모습 이름으로의 개명은 **아무것도 쓰기 전에** 막는다 — 아래는 페이지 이사 → 새 키 → 옛 키 삭제 순이라
+    #   새 키에서 막히면 옛 인물만 지워진다. 모습 바꾸기 자신은 npc_forms.allowing 으로 지나간다.
+    try:
+        import npc_forms
+        if npc_forms.blocks_new_key(channel_id, new_name):
+            logger.info(f"[Form] 잠긴 이름 — 개명 안 함: {old_name} → {new_name}")
+            return f"⚠️ '{new_name}'은(는) 아직 잠긴 모습 이름입니다."
+    except Exception as _e_rv:
+        logger.debug(f"[Form] reserved check skip: {_e_rv}")
     
     # [Anti-Gravity] Mob Tag Handling
     # If the user tries to rename "Patient" to "John", but we only have "Patient #1A",
@@ -3313,11 +3344,14 @@ async def build_distill_grounding(channel_id: str,
         # [2026-09-17] get_rules()는 휴면 경로(RULES_DIR 파일 + DEFAULT_RULES 폴백) —
         #   `!룰` 파일을 넣어도 기본 룰 보일러플레이트가 대신 실렸다. reader_gm(07-14)과 같은
         #   원천 교정: 살아있는 규칙 채널 world_state["rules_text"]에서 읽는다.
-        _rules = str((domain_manager.get_world_state(channel_id) or {}).get("rules_text") or "").strip()
+        # [2026-10-24 C76] 전문 — 자르지 않는다(레티어스 "접지는 룰 전문 다 들어가게"). 조각은 Slot 23 과 한 벌
+        #   (`slot_manager.active_rules_parts` — 파일 원문 · 한 줄 규칙 · 앱 규칙). `rules_chars` 인자는 호환용으로만 남는다.
+        import slot_manager as _sm_dg
+        _rules = "\n".join(_sm_dg.active_rules_parts(channel_id)).strip()
         if _rules:
             parts.append(
                 "[규칙 참고 — 이 세계의 상시 규칙. 관찰 해석의 접지로만 쓰고 문장을 통복사하지 말 것]\n"
-                + _rules[:rules_chars]
+                + _rules
             )
     except Exception:
         pass

@@ -35,11 +35,12 @@ _POLL = 0.2
 
 ACTIONS = ("decl.set", "decl.item", "rel.set", "rel.remove", "clock.set", "place.set",
            "mod.toggle", "mod.set",            # [2026-10-23 C72 A5] 모듈 앱 — 켜고 끄기 · 설정 칸
+           "app.click",                        # [2026-10-23 C73 M7a] 코드 앱 누르기(↶ 없음)
            "undo")
 # [C72 §5] 이 액션들은 `!다시` 재적용(replay_after)이 건너뛴다 — 넘겨 얹기(domain_manager.redo_carry)가 지금 값을 이미 들고 온다.
 #   다시 얹으면 오히려 틀린다(Activity 로 끔 → `!모듈` 로 켬 → `!다시` 면 일지의 옛 "끔"이 덮어쓴다).
 CARRIED_ACTIONS = ("mod.toggle", "mod.set")
-VIEWS = ("edit", "modules")   # 응답 data 로 돌려줄 쪽 — 편집 화면(옛) · 모듈 앱(C72)
+VIEWS = ("edit", "modules")   # 응답 data 로 돌려줄 쪽 — 편집 화면(옛) · 모듈 앱(C72) · [C73] `app:<id>` = 그 코드 앱 화면
 _FAIL_HEADS = ("⚠", "✗")
 
 MSG_BUSY = "턴이 도는 중이에요. 끝나면 다시 눌러 주세요."
@@ -47,6 +48,7 @@ MSG_DRAINING = "지난 턴 정리가 아직 도는 중이에요. 잠시 뒤 다�
 MSG_STALE = "그 사이 턴이 지나서 새로 받았어요."
 MSG_FORBIDDEN = "이 채널 참가자만 고칠 수 있어요."
 MSG_NO_UNDO = "되돌릴 수 있는 건 방금 고친 것 하나뿐이에요."
+MSG_SETTLING = "지난 턴 신고를 정리하는 중이에요. 잠시 뒤 다시 눌러 주세요."
 
 
 # =========================================================
@@ -466,9 +468,23 @@ def _exec_mod_toggle(channel_id: str, uid: str, a: Dict[str, Any]) -> Dict[str, 
     ok, line = mf.set_module_on(channel_id, kind, target, on)
     if not ok:
         return _res(False, "⚠ " + line)
-    name = target.name if kind == "code" else _bundle_title(channel_id, target)
+    if kind == "code":
+        name = target.name
+    elif kind == "app":   # [C73] 코드 앱 — 앱 표 켬끔
+        name = _app_title(channel_id, target)
+    else:
+        name = _bundle_title(channel_id, target)
     return _res(True, "✓ " + line, f"{name} {'켬' if on else '끔'}",
                 {"action": "mod.toggle", "module": word, "on": not on})
+
+
+def _app_title(channel_id: str, app_id: Any) -> str:
+    try:
+        import app_host
+        a = app_host.get_app(channel_id, str(app_id))
+        return app_host.label_of(a) if a else str(app_id)
+    except Exception:
+        return str(app_id or "")
 
 
 def _opt_label(st: Any, v: Any) -> str:
@@ -485,6 +501,12 @@ def _exec_mod_set(channel_id: str, uid: str, a: Dict[str, Any]) -> Dict[str, Any
     word = str(a.get("module") or "").strip()
     key = str(a.get("key") or "").strip()
     kind, target, _cands = mf.resolve_module(channel_id, word)
+    if kind == "app":   # [C73] 코드 앱 설정 칸(manifest settings — 값은 앱 표, `!다시`에 산다)
+        import app_host
+        ok, line, old = app_host.set_setting(channel_id, str(target), key, a.get("value"))
+        if not ok:
+            return _res(False, "⚠ 설정: " + line)
+        return _res(True, "✓ " + line, line, {"action": "mod.set", "module": word, "key": key, "value": old})
     if kind != "code":
         return _res(False, f"⚠ 설정: 설정 칸이 있는 모듈이 아니야 ({word})")
     st = mf.setting_of(target, key)
@@ -507,9 +529,20 @@ def _exec_mod_set(channel_id: str, uid: str, a: Dict[str, Any]) -> Dict[str, Any
     return _res(True, "✓ " + rc, rc, {"action": "mod.set", "module": word, "key": key, "value": old})
 
 
+def _exec_app_kv(channel_id: str, uid: str, a: Dict[str, Any]) -> Dict[str, Any]:
+    """[2026-10-23 C73 M7a] `!다시` 재적용 몫 — 코드 앱 누르기가 쓴 값을 **그대로** 다시 적는다(Lua 는 안 돈다 — 굴림이
+    바뀌면 안 된다). 화면 입구(ACTIONS)엔 없다 — 일지에만 서는 액션이다."""
+    import app_host
+    # [10-24 M7b 검토] 보고는 그 누르기 몫만 · 제 열쇠로(연속 `!다시`에도 한 번) — app_host.apply_journal
+    ok = app_host.apply_journal(channel_id, str(a.get("app") or ""), a.get("writes") or {}, _turn(channel_id),
+                                reports=a.get("reports") or [], token=str(a.get("token") or ""))
+    return _res(ok, "✓ 앱 장부 다시 얹음" if ok else "⚠ 앱 장부: 다시 얹을 게 없어")
+
+
 _EXEC = {"decl.set": _exec_decl_set, "decl.item": _exec_decl_item, "rel.set": _exec_rel_set,
          "rel.remove": _exec_rel_remove, "clock.set": _exec_clock_set, "place.set": _exec_place_set,
-         "mod.toggle": _exec_mod_toggle, "mod.set": _exec_mod_set}
+         "mod.toggle": _exec_mod_toggle, "mod.set": _exec_mod_set,
+         "app.kv": _exec_app_kv}   # [C73] 일지 전용(ACTIONS 밖)
 
 
 def execute(channel_id: str, uid: str, edit: Dict[str, Any]) -> Dict[str, Any]:
@@ -600,6 +633,14 @@ def _view_data(channel_id: str, uid: str, want: str) -> Dict[str, Any]:
     return build_edit_view(channel_id, uid)
 
 
+async def _view_data_async(channel_id: str, uid: str, want: str) -> Dict[str, Any]:
+    """[C73] 코드 앱 화면(`app:<id>`)은 Lua 를 부르니 비동기 — 그 밖은 _view_data 그대로."""
+    if want.startswith("app:"):
+        import app_host
+        return await app_host.view(channel_id, uid, want[len("app:"):])
+    return _view_data(channel_id, uid, want)
+
+
 async def act(channel_id: str, uid: str, payload: Any) -> Tuple[int, Dict[str, Any]]:
     """(HTTP 상태, 응답 본문). 성공·실패 모두 본문에 새 화면 데이터(data)를 싣는다(낙관 갱신 0).
     [C72] payload.view = "modules" 면 data 가 모듈 앱 쪽이다(모듈 앱이 보낸 쓰기)."""
@@ -611,7 +652,7 @@ async def act(channel_id: str, uid: str, payload: Any) -> Tuple[int, Dict[str, A
         return 400, {"error": "unknown action"}
     args = payload.get("args") if isinstance(payload.get("args"), dict) else {}
     want = str(payload.get("view") or "edit")
-    if want not in VIEWS:
+    if want not in VIEWS and not (want.startswith("app:") and len(want) > 4):
         want = "edit"
     if not _is_participant(channel_id, uid):
         return 403, {"error": "forbidden", "message": MSG_FORBIDDEN}
@@ -625,9 +666,25 @@ async def act(channel_id: str, uid: str, payload: Any) -> Tuple[int, Dict[str, A
             return 409, {"error": "draining", "message": MSG_DRAINING}
         now = _turn(channel_id)
         if _num_or_none(payload.get("rev")) != now:
-            return 409, {"error": "stale", "message": MSG_STALE, "data": _view_data(channel_id, uid, want)}
+            return 409, {"error": "stale", "message": MSG_STALE, "data": await _view_data_async(channel_id, uid, want)}
         if action == "undo":
             status, body = _undo(channel_id, uid, args, now)
+        elif action == "app.click":
+            # [2026-10-23 C73 M7a] 코드 앱 누르기 — on_click(Lua) → 쓰기 커밋. 일지엔 **쓴 값 그대로**(app.kv)를 적는다:
+            #   `!다시` 재적용이 Lua 를 다시 돌리지 않고 같은 값을 얹게(굴림이 바뀌면 안 된다). ↶ 없음(kind="app").
+            import app_host
+            # [2026-10-24 C73 M7b] 그 앱의 신고 정산이 도는 중이면 409 — on_tags 쓰기와 버튼 쓰기가 같은 장부에서 엇갈리지 않게.
+            if app_host.settling(channel_id, str(args.get("app") or "")):
+                return 409, {"error": "settling", "message": MSG_SETTLING,
+                             "data": await _view_data_async(channel_id, uid, want)}
+            res = await app_host.click(channel_id, uid, str(args.get("app") or ""), str(args.get("id") or ""),
+                                       args.get("data") if isinstance(args.get("data"), dict) else {})
+            if res.get("ok") and res.get("journal"):
+                import sqlite_store
+                sqlite_store.append_activity_edit(channel_id, now, uid, res["journal"], None,
+                                                  res.get("receipt") or "", kind="app")
+            status, body = 200, {"ok": res["ok"], "line": res["line"], "receipt": res.get("receipt") or "",
+                                 "undo_id": None}
         else:
             edit = dict(args, action=action)
             res = execute(channel_id, uid, edit)
@@ -640,7 +697,7 @@ async def act(channel_id: str, uid: str, payload: Any) -> Tuple[int, Dict[str, A
                             {k: v for k, v in args.items()}, res.get("line"))
             status, body = 200, {"ok": res["ok"], "line": res["line"], "receipt": res.get("receipt") or "",
                                  "undo_id": rid if (rid and res.get("undo")) else None}
-        body["data"] = _view_data(channel_id, uid, want)
+        body["data"] = await _view_data_async(channel_id, uid, want)
         return status, body
     finally:
         lock.release()

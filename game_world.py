@@ -353,6 +353,14 @@ def increment_turn_index(channel_id: str, delta: int = 1) -> int:
     step = max(0, int(delta))
     world["turn_index"] = current + step
     domain_manager.update_world_state(channel_id, world)
+    # [2026-10-24 C74 판2 W1-8] 진전 없음 멈춤(목표) — 턴 번호를 올린 직후 한 번. 옛 자리(렌더 앞 매 턴 archive)는 지웠다.
+    #   !다시 스냅샷은 이 앞에 찍히므로 이 pause 행은 되감기에 같이 걷힌다.
+    if step > 0:
+        try:
+            import thread_ledger
+            thread_ledger.pause_stale_goals(channel_id, world["turn_index"])
+        except Exception as _e_st:
+            logger.debug(f"[Thread] stale pause skip: {_e_st}")
     return world["turn_index"]
 
 # =========================================================
@@ -563,23 +571,8 @@ def build_real_time_display(
         _sk_txt = ""
     lines.append(f"활력 {vigor_val} | 평형 {composure_val}" + (f" | {_sk_txt}" if _sk_txt else ""))
 
-    if True:  # doom clocks always active
-        clocks = world.get("doom_clocks", [])
-        if isinstance(clocks, list):
-            clock_parts: List[str] = []
-            for clock in clocks:
-                if not isinstance(clock, dict):
-                    continue
-                if clock.get("resolved"):
-                    continue
-                name = str(clock.get("name", "Clock")).strip()
-                segments = int(clock.get("segments", 4) or 4)
-                filled = int(clock.get("filled", clock.get("progress", 0)) or 0)
-                tick_mode = str(clock.get("tick_mode", "")).lower()
-                tick_mark = " ⏱" if tick_mode in ("time", "hybrid") else ""
-                clock_parts.append(f"[{name} {filled}/{segments}{tick_mark}]")
-            if clock_parts:
-                lines.append(" ".join(clock_parts))
+    # [2026-10-25 C74 판4] 시계 줄 `[이름 f/s]` 은 Slot 15 `<In_Motion>`(in_motion.py)으로 갔다 — 그 시계가 걸린 목표 ·
+    #   우물 밑에 선다. 여기(Slot 29)엔 안 싣는다.
 
     # [2026-08-18 대형식화] 선언 변수 현재값 → 산문 재료. 스펙 §3-5 "값을 재료로만 급식".
     #   같은 자리(Slot 29 <Real_Time_Status>)·같은 문법(코드 소유 수치를 한 줄로) —
@@ -638,19 +631,8 @@ def get_world_context(channel_id: str) -> str:
         if ltc["prev_time_slot"] != current_slot:
             lines.append(f"- **시간 전환**: {ltc['prev_time_slot']} → {current_slot} (전환 직후, 분위기 변화를 자연스럽게 묘사)")
 
-    # 세계 제약 (로어에서 추출된 시스템/사회 규칙)
-    wc = world.get("world_constraints", {})
-    if wc:
-        wc_parts = []
-        if wc.get("systems"):
-            wc_parts.append(f"체계: {wc['systems']}")
-        if wc.get("social"):
-            wc_parts.append(f"사회: {wc['social']}")
-        taboos = wc.get("taboos", [])
-        if taboos:
-            wc_parts.append(f"금기: {', '.join(taboos)}")
-        if wc_parts:
-            lines.append(f"- **세계 규칙**: {' | '.join(wc_parts)}")
+    # [2026-10-24 C76 §5] 옛 "세계 규칙" 줄(`world_constraints` — 로어 분석이 산문용으로 다시 쓴 체계 · 사회 · 금기) 은퇴.
+    #   산문에 늘 실을 월드북은 `!룰`(Slot 23), `!로어` 분석은 코드 재료(레티어스 10-24).
 
     lines.append("*지침: 이 위치, 시간, 위기 수치, 파티 상태를 반영하여 서술 톤을 조절하십시오.*")
     return "\n".join(lines)
@@ -693,48 +675,34 @@ def get_doom_forecast(channel_id: str) -> str:
     return msg
 
 
-def unlink_clock(channel_id: str, clock_name: str) -> None:
-    """[Q-3] 퀘스트 제거 시 연결 시계의 linked_quest 포인터만 청소(orphan 방지).
-    시계 자체는 독립 위협으로 유지 — 퀘스트 포기가 위협 소멸을 뜻하진 않음.
-    이렇게 해야 나중에 시계 완성 시 `_fail_linked_quest`가 이미 사라진 퀘스트를 가리키지 않는다."""
+def resolve_clocks_by_goal(channel_id: str, goal_id: str, goal_title: str = "", turn: int = 0) -> List[str]:
+    """[2026-10-24 C74 판2] 목표 close done → 그 목표에 걸린 시계(`linked_goal`)를 서사적 해결로 끝낸다(옛
+    resolve_clock_by_quest — 이름 대신 장부 id). doom NEUTRAL(0626). end="quest" · end_turn(이 일이 속한 턴) ·
+    end_quest(목표 제목 — 도착물 카드 "'목표'(끝남)"). 되비침 줄 목록.
+    다음 턴 통째 저장에 덮이지 않는 것은 une_facade.sync_from_game_context 의 "끝남은 이긴다"(§2-⑭)가 맡는다."""
+    if not channel_id or not goal_id:
+        return []
     world = domain_manager.get_world_state(channel_id)
     clocks = world.get("doom_clocks", [])
     if not isinstance(clocks, list):
-        return
-    changed = False
+        return []
+    out: List[str] = []
     for clock in clocks:
-        if isinstance(clock, dict) and clock.get("name") == clock_name and clock.get("linked_quest"):
-            clock["linked_quest"] = None
-            changed = True
-    if changed:
+        if not isinstance(clock, dict) or clock.get("resolved") or clock.get("linked_goal") != goal_id:
+            continue
+        clock["resolved"] = True
+        clock["end"] = "quest"
+        try:
+            clock["end_turn"] = int(turn or world.get("turn_index", 0) or 0)
+        except (TypeError, ValueError):
+            clock["end_turn"] = 0
+        if goal_title:
+            clock["end_quest"] = str(goal_title)
+        out.append(f"✅ **시계 해결: {clock.get('name', '?')}**")
+    if out:
         world["doom_clocks"] = clocks
         domain_manager.update_world_state(channel_id, world)
-
-
-def resolve_clock_by_quest(channel_id: str, clock_name: str, quest_name: str = "") -> str:
-    """퀘스트 완료 → 연결된 시계 서사적 해결 + doom 하강."""
-    world = domain_manager.get_world_state(channel_id)
-    clocks = world.get("doom_clocks", [])
-    if not isinstance(clocks, list):
-        return ""
-    for clock in clocks:
-        if not isinstance(clock, dict):
-            continue
-        if clock.get("name") == clock_name and not clock.get("resolved"):
-            clock["resolved"] = True
-            # [2026-10-17 C46 R1] 끝난 사유·턴·퀘스트 — 도착물 카드가 "'퀘스트'(끝남)"·"비켜 감"으로 읽는다.
-            clock["end"] = "quest"
-            try:
-                clock["end_turn"] = int(world.get("turn_index", 0) or 0)
-            except (TypeError, ValueError):
-                clock["end_turn"] = 0
-            if quest_name:
-                clock["end_quest"] = str(quest_name)
-            # 0626: 시계 해결 = doom NEUTRAL (해결도 능동 beat, fall은 間만 — 옛 bonus_doom 하락 cut)
-            world["doom_clocks"] = clocks
-            domain_manager.update_world_state(channel_id, world)
-            return f"✅ **시계 해결: {clock_name}**"
-    return ""
+    return out
 
 
 # =========================================================

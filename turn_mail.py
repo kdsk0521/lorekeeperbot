@@ -40,6 +40,7 @@ message_id 가 턴 고정 키다. 다음 턴 도착물이 옛 버튼에 새지 �
 
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 import discord
@@ -584,7 +585,10 @@ def _own_record_material(channel_id: str, name: str,
         kn = domain_manager.get_npc_knowledge_for(channel_id, _key)
         if isinstance(kn, dict):
             for _src, _dst in _KNOW_KEYS:
-                items = [str(x).strip() for x in (kn.get(_src) or []) if str(x).strip()]
+                _vals = kn.get(_src)
+                if _src == "false_beliefs" and getattr(config, "MEMORY_CURRENT", False):
+                    _vals = kn.get("misbeliefs") or _vals   # [2026-10-27 C85] 저장 키는 misbeliefs(update_npc_knowledge)
+                items = [str(x).strip() for x in (_vals or []) if str(x).strip()]
                 items = [x for x in items if not _touches(x, refs)]
                 if items:
                     out[_dst] = "; ".join(items[-5:])[:_FIELD_CAP]
@@ -1121,11 +1125,122 @@ Write the thought itself in Korean.
 A character with nothing pressing is left out. An empty list is a valid answer."""
 
 
-def _normalize_mind_result(data: Any, targets: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """콜 산출 → 표시 payload. 건질 게 없으면 None.
+_SENT_END_CHARS = ".!?…\n\u3002"
+_SENT_TAIL_CLOSERS = "\"'”’」』)]"
+
+
+def _cut_at_sentence(text: str, cap: int) -> str:
+    """[2026-10-25 C77 A-1 · Q1] 상한 안에서 **문장 끝**으로 자른다(옛 `text[:cap]` 은 문장 중간에서 끊었다).
+
+    상한 안 마지막 종결부호(`. ! ? … ⏎ 。`, 바로 뒤 닫는 따옴표 · 괄호까지) 뒤에서 자른다. 그게 앞쪽 40% 안에만 있으면
+    (너무 짧아짐) 마지막 공백에서 자르고 "…" 을 붙인다. 공백도 없으면 상한 −1 자 + "…"."""
+    text = str(text or "").strip()
+    if cap <= 0 or len(text) <= cap:
+        return text
+    head = text[:cap]
+    end = max(head.rfind(c) for c in _SENT_END_CHARS)
+    if end >= int(cap * 0.4):
+        j = end + 1
+        while j < len(head) and head[j] in _SENT_TAIL_CLOSERS:
+            j += 1
+        return head[:j].rstrip()
+    sp = head.rfind(" ")
+    if sp >= int(cap * 0.4):
+        return head[:sp].rstrip() + "…"
+    return head[:cap - 1].rstrip() + "…"
+
+
+def _mind_fp(s: str) -> str:
+    """[2026-10-25 C77 A-3 · Q5] 대조용 지문 — NFKC · 소문자 · 글자와 숫자만(공백 · 구두점 · 따옴표 걷음)."""
+    import unicodedata
+    s = unicodedata.normalize("NFKC", str(s or "")).lower()
+    return "".join(ch for ch in s if ch.isalnum())
+
+
+_MIND_FP_MIN = 6        # 이보다 짧은 조각("네", "응")은 대조에 안 쓴다 — 우연 일치가 많다
+
+
+def _said_pieces(anchor: str) -> List[str]:
+    """앵커 `after it:` 줄의 `said …` 칸 → 대조 조각(따옴표 안 구간이 있으면 그것들, 없으면 칸 통째)."""
+    out: List[str] = []
+    for ln in str(anchor or "").split("\n"):
+        if not ln.startswith("after it:"):
+            continue
+        m = re.search(r"(?:— |· )said (.+)$", ln)
+        if not m:
+            continue
+        said = m.group(1)
+        inner = [q for q in re.findall(r'"([^"]+)"|“([^”]+)”|「([^」]+)」', said) for q in q if q]
+        for piece in (inner or [said]):
+            if len(_mind_fp(piece)) >= _MIND_FP_MIN:
+                out.append(piece)
+    return out
+
+
+def _mind_echoes(text: str, said: List[str], before: str = "") -> str:
+    """💭 한 항목이 장면 대사를 품었거나(지문 포함) 직전 💭 와 같은 말이면 사유, 아니면 ""."""
+    fp = _mind_fp(text)
+    if not fp:
+        return ""
+    for piece in said or []:
+        pf = _mind_fp(piece)
+        if len(pf) >= _MIND_FP_MIN and (pf in fp or (len(fp) >= _MIND_FP_MIN and fp in pf)):
+            return "said"
+    bf = _mind_fp(before)
+    if bf and (bf == fp or (min(len(bf), len(fp)) >= 12 and (bf in fp or fp in bf))):
+        return "before"
+    return ""
+
+
+def _prev_minds(channel_id: str, names: List[str], turn_now: Optional[int]) -> Dict[str, str]:
+    """[2026-10-25 C77 A-2 · Q4] 대상별 가장 최근 💭 한 줄(되풀이 관문 재료 — 모델엔 안 간다). 없으면 그 이름은 빠진다.
+
+    원천 = turn_mail `mind` 행, 최신 위. **콜이 쓴 행(`source=="call"`)만** — 폴백(select) 행은 영어 분석문이라
+    되먹이면 그 문장이 그대로 샌다. `entries` 없는 행(평면 알림)은 건너뛴다. `TURN_MIND_BEFORE_TURNS` 턴 안의 것만
+    (오래된 속마음은 그 사이 일을 모른다). 이번 턴 이상 행은 안 본다. `!다시` 는 turn_mail 을 트림한 뒤 재실행하므로
+    폐기된 턴의 💭 는 여기 안 온다."""
+    out: Dict[str, str] = {}
+    win = int(getattr(config, "TURN_MIND_BEFORE_TURNS", 5) or 0)
+    if not names or win <= 0:
+        return out
+    try:
+        import sqlite_store as _ss
+        rows = _ss.read_channel_mail(channel_id, 12, kinds=("mind",)) or []
+    except Exception as e:
+        logger.debug(f"[TurnMind] thought_before read skipped: {e}")
+        return out
+    for r in rows:
+        p = r.get("payload") if isinstance(r.get("payload"), dict) else {}
+        if p.get("source") != "call" or not isinstance(p.get("entries"), list):
+            continue
+        _t = r.get("turn")
+        if isinstance(turn_now, int) and isinstance(_t, int) and (_t >= turn_now or turn_now - _t > win):
+            continue
+        for e in p["entries"]:
+            if not isinstance(e, dict):
+                continue
+            nm = str(e.get("name") or "")
+            txt = " ".join(str(l.get("text") or "") for l in (e.get("lines") or []) if isinstance(l, dict)).strip()
+            if not nm or not txt:
+                continue
+            m = next((n for n in names if n not in out and _name_matches(n, nm)), None)
+            if m:
+                out[m] = txt
+        if len(out) >= len(names):
+            break
+    return out
+
+
+def _normalize_mind_result(data: Any, targets: List[Dict[str, Any]],
+                           said: Optional[List[str]] = None,
+                           before: Optional[Dict[str, str]] = None) -> Optional[Dict[str, Any]]:
+    """콜 산출 → 표시 payload. 건질 게 없으면 None — 단 A-3 관문이 **전부** 버렸으면
+    `{"entries": [], "dropped": n}`(호출부는 이걸 보고 폴백 없이 그 턴 💭 를 안 낸다; C77 검토).
 
     ★부재자 방어는 프롬프트가 아니라 **여기**가 최종 판정한다 — 목록에 없는 이름은 버린다
       (지시문은 요청이고, 게이트는 코드가 쥔다).
+    [2026-10-25 C77] 자르기는 문장 끝에서(A-1) · 장면 대사를 품은 항목과 직전 💭 를 되풀이한 항목은 버린다(A-3 —
+      `said` = 앵커 `after it:` 줄의 한 말 조각, `before` = `thought_before`). 산문 원문은 여전히 안 본다.
     """
     allowed = [t["name"] for t in targets]
     if not allowed:
@@ -1149,6 +1264,7 @@ def _normalize_mind_result(data: Any, targets: List[Dict[str, Any]]) -> Optional
     cap = max(20, int(getattr(config, "TURN_MIND_CHARS", 160)))
     entries: List[Dict[str, Any]] = []
     used = set()
+    dropped = 0
     for item in raw:
         if not isinstance(item, dict):
             continue
@@ -1162,14 +1278,19 @@ def _normalize_mind_result(data: Any, targets: List[Dict[str, Any]]) -> Optional
         match = next((a for a in allowed if _name_matches(a, name)), None)
         if match is None or match in used:
             continue          # 목록 밖 이름 = 부재자·환각 → 드롭
+        _why = _mind_echoes(text, said or [], (before or {}).get(match, ""))
+        if _why:
+            logger.info(f"[TurnMind] dropped {match}: echoes {_why}")
+            dropped += 1
+            continue
         used.add(match)
         entries.append({"name": match[:200],
-                        "lines": [{"label": "", "text": text[:cap]}]})
+                        "lines": [{"label": "", "text": _cut_at_sentence(text, cap)}]})
         if len(entries) >= MAX_MIND_ENTRIES:
             break
 
     if not entries:
-        return None
+        return {"title": "💭 속마음", "entries": [], "source": "call", "dropped": dropped} if dropped else None
     return {"title": "💭 속마음", "entries": entries, "source": "call"}
 
 
@@ -1181,6 +1302,7 @@ async def generate_mind_call(
     targets: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[Dict[str, Any]]:
     """전용 배경 콜 1개 → 💭 payload. 실패하면 None(호출부가 폴백으로 내려간다).
+    관문이 전부 버리면 `entries` 빈 · `dropped` 표지 payload(폴백 아님 — `_normalize_mind_result`).
 
     콜 골격은 status_panel.generate_panel 을 그대로 따른다 — 같은 백엔드 경유
     (memory_system.api_call_with_retry), 인가 프리필 2턴, JSON 강제,
@@ -1199,9 +1321,17 @@ async def generate_mind_call(
     from google.genai import types
     import text_resources
 
+    # [2026-10-25 C77 A-2 · Q4] 대상별 직전 💭 — **코드 관문만 쓴다**(같은 말 되풀이는 버림, `_normalize_mind_result`).
+    #   모델에 `thought_before` 로 보여 주는 안은 실측에서 되레 그 생각을 이어 썼다: 재료 끝 2/2 · 재료 맨 앞 + "다 쓴 생각" 절
+    #   2/2 가 직전 💭 의 계획("둘을 더 붙인다")을 다시 꺼냄, 안 보여 줄 때 0/2(C77 보고 §실측). 예시를 주면 예시를 쓴다.
+    _t_now = (dai or {}).get("turn_index") if isinstance(dai, dict) else None
+    if not (isinstance(_t_now, int) and not isinstance(_t_now, bool)):
+        _t_now = _current_turn(channel_id)
+    _before = _prev_minds(channel_id, [t["name"] for t in targets], _t_now)
+    _anchor = _build_scene_anchor(channel_id, dai)
     prompt = _build_mind_prompt(
         targets,
-        _build_scene_anchor(channel_id, dai),
+        _anchor,
         await _build_lore_grain(client, channel_id, dai),
     )
 
@@ -1231,7 +1361,7 @@ async def generate_mind_call(
             data = json.loads(cleaned)
         except json.JSONDecodeError:
             data = json.loads(bot_utils.repair_json(cleaned))
-        return _normalize_mind_result(data, targets)
+        return _normalize_mind_result(data, targets, said=_said_pieces(_anchor), before=_before)
     except Exception as e:
         logger.warning(f"[TurnMind] generation failed: {e}")
         return None

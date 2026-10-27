@@ -53,7 +53,8 @@ MODEL_ID_PRO = os.getenv("GEMINI_MODEL_PRO", "")
 MODEL_ID_FLASH = os.getenv("GEMINI_MODEL_FLASH", "")
 MODEL_ID = os.getenv("GEMINI_MODEL_ID", MODEL_ID_PRO)
 
-# Renderer Backend: "gemini" or "openai" (OpenAI-compatible; 현 운영=Ollama Cloud)
+# Renderer Backend: "gemini" or "openai" (OpenAI-compatible — Ollama Cloud 등).
+#   [2026-10-26] 운영 값은 .env 가 쥔다 — 이 기본값 · 주석으로 운영 백엔드를 읽지 말 것(옛 주석 "현 운영=Ollama" 가 낡아 있었다).
 RENDERER_BACKEND = os.getenv("RENDERER_BACKEND", "openai").lower()
 
 # OpenAI-compatible renderer — Ollama Cloud (https://ollama.com/v1, 모델명 :cloud 접미사)
@@ -610,6 +611,62 @@ FERMENT_MAX_EMPTY_STREAK = int(os.getenv("FERMENT_MAX_EMPTY_STREAK", "6"))
                                     # [2026-09-24 감사 §3] FRESH 빈 응답·API 예외 연속 허용 횟수(파싱 실패와 별도).
                                     # 짧은 장애는 재시도로 넘기고, 닿으면 LLM 없이 코드 발췌 stub 으로 진행.
 
+# [2026-10-26 C80] 기억층 v2 — DEEP 은 색인(코드 · LLM 0), 연대기는 원경 장(엔트리 N개 → 한 장, 롤링 없음).
+#   ON: 엔트리를 안 지운다 · DEEP 압축 콜 0 · 자동 연대기(3회마다 · 10롤링) 대신 장 · 메모리 GC 호출 0 ·
+#       turn_index(턴 → 이름 · 원문 구간) 적립 · T1 재등장 근거가 색인으로 원문을 찾는다.
+#   OFF: 옛 DEEP · 연대기 갈래 그대로(바이트 동일). 관측 뒤 옛 갈래 삭제. 근거 = 파티쳇수정 C80 지도·스펙.
+MEMORY_LAYERS_V2 = os.getenv("MEMORY_LAYERS_V2", "1").strip().lower() not in ("0", "false", "off", "no")
+CHRONICLE_SPAN = int(os.getenv("CHRONICLE_SPAN", "8"))      # 장 하나 = 장에 안 묶인 엔트리 중 가장 오래된 N개(≈6N턴)
+CHRONICLE_CHAPTER_CHARS = int(os.getenv("CHRONICLE_CHAPTER_CHARS", "2400"))  # 장 본문 저장 상한(문단 경계 절단)
+CHRONICLE_SHOW_MAX = int(os.getenv("CHRONICLE_SHOW_MAX", "3"))  # `!연대기` 가 통째로 보여 줄 최근 장 수(나머지는 내보내기)
+CHRONICLE_SLOT_CHARS = int(os.getenv("CHRONICLE_SLOT_CHARS", "700"))  # Slot 9 장 한 덩이(서사 요약 절) 상한 — 한 장이 예산을 통째로 막지 않게
+CHRONICLE_MAX_FAIL = int(os.getenv("CHRONICLE_MAX_FAIL", "3"))  # 같은 범위 장 콜 연속 실패 문턱 — 닿으면 엔트리 요약 이어 붙인 stub 장
+EMBED_BATCH_MAX = int(os.getenv("EMBED_BATCH_MAX", "100"))  # 임베딩 한 콜 상한 — 엔트리가 안 지워져 콜드 캐시 한 번에 수백 개가 갈 수 있다
+ROOT_TRIGGER_WINDOW = int(os.getenv("ROOT_TRIGGER_WINDOW", "8"))  # 루트 떡밥 = 최근 N 엔트리 memory_triggers 합집합(2단계 장부 전 임시)
+# [2026-10-26 C81] 떡밥 집 하나로 — 미해결 떡밥(열림 · 닫힘)은 장부(thread_log)만 안다. 켜면: Slot 9 머리에서 F1 떡밥(루트
+#   active_memory_triggers)을 빼고 머리 이름을 회상(Theoria 회상 메아리)으로 바로잡는다 · 루트 창 안 셈 · 게시판 Scanner 10 이
+#   장부 열린 약속 · 사안을 읽는다 · F1 떡밥 ↔ 장부 대조 관측 줄(log-only). 끄면 C80 상태 그대로. 근거 = C81 지도·스펙.
+HOOKS_LEDGER_HOME = os.getenv("HOOKS_LEDGER_HOME", "1").strip().lower() not in ("0", "false", "off", "no")
+# [2026-10-27 C82] 성장발효 — 인물 · 장소 · 세력 페이지 play 절을 쓰는 손을 하나로. 페이지가 성장 도장 뒤 등장 턴을 문턱만큼
+#   모으면 그 턴들의 원문(C80 턴 색인 → history_log)으로 한 콜(옛 heavy 정리 자리를 넓힌 것) → play 절 전부(Observed 다시 쓰기 ·
+#   항목 절 덧붙이기) · 정정 가드 · 사유 growth. 켜면 F1 은 page_patches 를 내려놓고(노트 · 부록 0) 잎 승격은 턴 색인으로 센다.
+#   MEMORY_LAYERS_V2 가 켜져 있어야 돈다(턴 색인이 원문 다리). 끄면 C81 그대로. 근거 = C82 지도·스펙.
+GROWTH_FERMENT = os.getenv("GROWTH_FERMENT", "1").strip().lower() not in ("0", "false", "off", "no")
+GROWTH_TURNS = int(os.getenv("GROWTH_TURNS", "6"))              # 인물 페이지 문턱 — 성장 도장 뒤 등장 턴 수
+GROWTH_TURNS_PLACE = int(os.getenv("GROWTH_TURNS_PLACE", "10"))  # 장소 · 세력 페이지 문턱
+GROWTH_MAX_PAGES = int(os.getenv("GROWTH_MAX_PAGES", "2"))       # 한 턴(기억 차선 꼬리)에 키우는 페이지 상한 — 오래 밀린 것부터
+GROWTH_INPUT_CHARS = int(os.getenv("GROWTH_INPUT_CHARS", "12000"))  # 성장 콜 원문 입력 상한(턴마다 나눠 쓴다, 이름 든 문단 먼저)
+WIKI_PROMOTE_MIN_TURNS = int(os.getenv("WIKI_PROMOTE_MIN_TURNS", "3"))  # 켜면 잎(모음 줄) 승격 = 턴 색인 extra 등장 턴 수
+# [2026-10-27 C83] F1 V5 — 리팩토링 4단계 정리(떡밥 · 관계 칸 빼고, 결과 상태 · 귀속 · 앎의 경계 · 화자 확인 규칙 더함).
+#   HOOKS_LEDGER_HOME 이 켜져 있을 때만(V5 는 memory_triggers 를 안 낸다). 끄면 V4 바이트 동일. 근거 = C83 지도·스펙·보고.
+FERMENT_PROMPT_V5 = os.getenv("FERMENT_PROMPT_V5", "1").strip().lower() not in ("0", "false", "off", "no")
+GROWTH_MAX_FAIL = int(os.getenv("GROWTH_MAX_FAIL", "3"))        # 같은 범위 성장 연속 실패(콜 실패 · hash 충돌) 문턱 — 닿으면 도장만 넘김
+GROWTH_MAX_TURNS = int(os.getenv("GROWTH_MAX_TURNS", "12"))      # 한 번 성장에 삭힐 턴 상한(오래된 쪽부터, 나머지는 다음 성장)
+GROWTH_ITEMS_SHOWN = int(os.getenv("GROWTH_ITEMS_SHOWN", "40"))  # 성장 프롬프트에 보이는 항목 절 줄 수(절마다 최근 N, 중복 판정은 전체)
+# [2026-10-27 C85] 현재값 · 앎의 경계(리팩토링 5단계). 켜면: 항목 절 발췌 = 상대별 최신 먼저(Relationships+ · Members+),
+#   Theoria 4b 장면 인물에 페이지 Knowledge 최근 N줄, OOC 앎 편집 = 두 집(npc_knowledge + 페이지 Knowledge),
+#   성장 · Theoria 앎 문안 한 구절, T6 오해 칸 키(misbeliefs). 끄면 C83 바이트 동일. 근거 = C85 지도·스펙.
+MEMORY_CURRENT = os.getenv("MEMORY_CURRENT", "1").strip().lower() not in ("0", "false", "off", "no")
+KNOW_PAGE_LINES_T1 = int(os.getenv("KNOW_PAGE_LINES_T1", "5"))   # Theoria 4b 인물당 페이지 Knowledge 줄 수(최근부터)
+KNOW_PAGE_NPCS_T1 = int(os.getenv("KNOW_PAGE_NPCS_T1", "6"))     # 그 줄을 붙일 장면 인물 상한(장면 순서)
+KNOW_PAGE_LINE_CHARS = int(os.getenv("KNOW_PAGE_LINE_CHARS", "200"))  # 그 줄 하나 글자 상한(넘으면 …)
+# [2026-10-27 C85 D2] 같은 장면 NPC 앎 전파(would_share → 다른 인물 suspects `(via A)`). 레티어스 "그럼 끄자" — 기본 끔.
+#   1 = 옛 전파 그대로. 원문에 말한 장면이 없어도 "말해 줬다"를 지어내서 끈다(확인된 말 · 엿들음은 Theoria 가 매 턴 가른다).
+KNOWLEDGE_PROPAGATE = os.getenv("KNOWLEDGE_PROPAGATE", "0").strip().lower() not in ("0", "false", "off", "no")
+# [2026-10-27 C86] 발효 트리거 v2(리팩토링 6단계). 켜면: 렌더 원문 창 = 안 삭힌 원문 전부(공백 0), 발효 = 안 삭힌 원문이
+#   UNFERMENTED_MAX 개 또는 UNFERMENTED_MAX_CHARS 자를 넘을 때, 자르는 자리 = 턴 경계(되도록 장소 · 작중 시간 장면 경계),
+#   최근 UNFERMENTED_MIN 개는 늘 원문으로 남긴다. 중요도 유예 · 죽은 GC 안 씀. 끄면 C85 그대로. 근거 = C86 지도·스펙.
+FERMENT_TRIGGER_V2 = os.getenv("FERMENT_TRIGGER_V2", "1").strip().lower() not in ("0", "false", "off", "no")
+UNFERMENTED_MIN = int(os.getenv("UNFERMENTED_MIN", "12"))            # 발효 뒤 남기는 최소 원문(메시지) = 렌더가 늘 보는 최근 몫
+UNFERMENTED_MAX = int(os.getenv("UNFERMENTED_MAX", "24"))            # 넘으면 발효(레티어스 D1 가)
+UNFERMENTED_MAX_CHARS = int(os.getenv("UNFERMENTED_MAX_CHARS", "40000"))  # 글자로도 — 넘으면 개수와 상관없이 발효
+FERMENT_CHUNK_MIN = int(os.getenv("FERMENT_CHUNK_MIN", "6"))         # 한 번에 삭히는 최소 메시지(개수로 걸렸을 때)
+FERMENT_CHUNK_MAX = int(os.getenv("FERMENT_CHUNK_MAX", "0"))         # 한 번에 삭히는 최대 메시지. 0 = 없음(레티어스: 양을 자르지 말고 F1 출력 상한을 푼다)
+FERMENT_MAX_OUTPUT_TOKENS = int(os.getenv("FERMENT_MAX_OUTPUT_TOKENS", "32768"))  # F1 출력 상한(켜면 이것 · 끄면 옛 8192). 사실상 없음 —
+#   칸을 비우면 "무제한"이 아니라 제공자 기본값(4k대)이 걸려 오히려 잘린다(ANALYSIS_MAX_OUTPUT_TOKENS_HEAVY 주석 09-02). 로어 분석 · 라우터와 같은 값.
+SCENE_GAP_MINUTES = int(os.getenv("SCENE_GAP_MINUTES", "180"))       # 작중 시간이 이만큼 건너뛰면 장면 경계
+RENDER_WINDOW_MAX_CHARS = int(os.getenv("RENDER_WINDOW_MAX_CHARS", "60000"))  # 렌더 원문 창 안전 상한 — 최근 UNFERMENTED_MIN 개는 이 상한과 상관없이 싣는다(옛 창도 늘 12)
+
 # UI/Display
 NPC_PREVIEW_LIMIT = 5               # Max NPCs shown in preview
 
@@ -634,7 +691,7 @@ DEFAULT_WEATHER_TYPES = ["맑음", "흐림", "비", "안개", "돌풍"]
 #   끄면: 배치 스키마 threads 줄·Slot 29 블록·Theoria 4c·루카 줄 전부 무동작(옛 active_threads 로 폴백 없음).
 THREAD_LEDGER = os.getenv("THREAD_LEDGER", "1") not in ("0", "false", "False")
 THREAD_EXTRACT_MAX = 15          # 배치 입력 장부 줄 수(열림·멈춤, 최근 활동순)
-THREAD_RENDER_MAX = 6            # Slot 29 줄 수
+THREAD_RENDER_MAX = 6            # 약속 · 사안 줄 수(Slot 15 진행 중 블록 · C74 판4 — 옛 Slot 29)
 THREAD_TITLE_MAX = 40            # 라벨 길이(렌더엔 라벨만 — 인용 0)
 THREAD_SOON_MIN = 60             # '곧' 문턱(분)
 THREAD_MINUTE_GRACE = 60         # 시각 지정 기한의 창 폭(분)
@@ -904,7 +961,8 @@ APPEND_LOG_KEEP_MAX = 10
 APPEND_LOG_TEXT_MAX = 120
 APPEND_LOG_FEED = True
 # 4.7 진입 시 채널 배경 큐 drain 대기(초). 스펙 §0.7(e) — 타임아웃이면 로그 1줄 + 진행.
-#   렌더를 잡지 않는 것이 우선이라 짧다. `!다시` 가 쓰는 10.0 과 다른 수인 이유가 그것이다.
+#   렌더를 잡지 않는 것이 우선이라 짧다. `!다시` 가 쓰는 45.0(orchestration.retry_last)과 다른 수인 이유가 그것이다.
+#   [2026-10-24 C74 W1-9] 옛 주석은 "10.0" — 코드는 45.0 이다.
 EXPR_DRAIN_TIMEOUT = 3.0
 # ⚠ 미배선 (2026-07-06 감사): 소비자 0 — 실제 아이템 영속은 notebook [소지품] 라인
 # (cognition item_usage → add/remove_item_to_sojipin)이 담당. 참고 테이블로 보존.
@@ -1050,41 +1108,47 @@ EMPTY_QUEST_MEMO_MSG = "No active quests or memos."
 # Quest staleness archive: 마지막 진행으로부터 N턴 이상 멈춘 active 퀘스트는 archive로 조용히 이동.
 # une_facade의 8턴 directive softening은 유지 — 8~11턴 사이에는 약화된 채 살아있고, 12턴에 archive.
 # Doom delta 0, 실패/완료 처리 아님. 단순히 active 슬롯에서 빠지는 것.
+# [2026-10-24 C74 판2] 이제 장부 목표: N턴 동안 진행도(step)가 안 움직이면 pause 행(code:stale — 실패 아님, 진전 = 자동
+#   resume). 자리는 game_world.increment_turn_index(thread_ledger.pause_stale_goals). 이름은 옛 그대로.
 QUEST_STALE_ARCHIVE_TURNS = 12
+# [2026-10-25 C74 판4] 진행 중 블록(in_motion) — 아크 덩이 상한 · 진전 없는 목표 꼬리표 턴(옛 une_facade 8턴 약화 줄).
+IN_MOTION_ARCS_MAX = 5
+IN_MOTION_STALE_TURNS = 8
 
 # =========================================================
-# ARC SYSTEM (호흡 3단 위계의 큰 호흡 — 좌표 모델)
+# ARC SYSTEM (호흡 3단 위계의 큰 호흡 — 중력 우물)
 # =========================================================
-# 시계 = 0D 압력 누적 / 퀘스트 = 1D 단계 진행 / Arc = 5D 좌표 자율 표류
-# Storyline 확장 (is_arc=True) — 별도 자료구조 X, carrier 재활용
-# 자세히: 파티쳇수정/narrative/arc_spec_v2.md
-# Phase 1 (스키마만, tick_arcs는 Phase 3)
+# 시계 = 천 위의 점(질량의 주인) / 목표 = 빛 / Arc = 시계가 쌓인 우물(중심 고정, 무게 = id 수, 거리 = 홉)
+# [2026-10-24 C75 G2] 아크는 줄거리(is_arc)에서 중력 우물(well_store · sqlite well_log)로 이사했다. 옛 좌표 5축 ·
+#   감쇠 · 잠듦 · 격상 · 초신성 상수(ARC_EXPECTED_VOLUME_LENGTH · ARC_DORMANT_BASE_TURNS · ARC_TRAJECTORY_CAP ·
+#   ARC_PROMOTE_CATEGORY_MIN · ARC_SUPERNOVA_*)는 읽는 곳과 함께 은퇴. 남은 것 = 노출 문턱 · 고리 · 표시 상한.
+#   스펙: 파티쳇수정/output_artifact/C75_G2_옮기기·강착·관측_지도·스펙_2026-10-24.md
 
-# 호흡 길이 (운영 측정 산출)
-ARC_EXPECTED_VOLUME_LENGTH = 150        # 1턴 ≈ 2000자 × 챕터 50턴 × 3 (최소치)
-                                         # PC 무관심 시 자연 소멸 기준 (decay rate 분모)
-ARC_DORMANT_BASE_TURNS = 30             # last_advanced_turn 무진행 임계 (compute_dormant_threshold fallback)
-
-# 노출 / 거부 임계
-ARC_PROXIMITY_EXPOSURE_THRESHOLD = 0.3  # 산문 노출 최소 proximity (전경/배경 분기 임계도 동일)
-ARC_PHASES_CAP = 10                     # phases 누적 history 상한 (ring buffer)
-ARC_TRAJECTORY_CAP = 20                 # trajectory ring buffer
-ARC_FORESHADOWING_CAP = 20              # sensory_foreshadowing 안전망 (거부 게이트가 1차 통제)
-ARC_OFFSCREEN_ACTIONS_CAP = 20          # offscreen_actions 안전망
+# 노출 / 고리
+ARC_PROXIMITY_EXPOSURE_THRESHOLD = 0.3  # 산문 노출 최소 근접(1/(d+1) — 2홉 안). 전경/배경 분기 임계도 동일
+ARC_PHASES_CAP = 10                     # 지나온 장면 이름표 고리
+ARC_FORESHADOWING_CAP = 20              # 전조 칸 고리
+ARC_OFFSCREEN_ACTIONS_CAP = 20          # 막후 칸 고리
 ARC_FORESHADOWING_DISPLAY_CAP = 5       # 산문 노출 최대 (토큰 budget)
 ARC_OFFSCREEN_DISPLAY_CAP = 5           # 산문 노출 최대
-
-# Promote 트리거
-ARC_PROMOTE_CATEGORY_MIN = 3            # 같은 카테고리 누적 임계 + High/Extreme 1+ 필수
-
-# Supernova (weight armed/분기)
-ARC_SUPERNOVA_ARMED_THRESHOLD = 0.95    # weight armed 진입
-ARC_SUPERNOVA_FORCED_THRESHOLD = 0.7    # 분기 score → forced_climax
-ARC_SUPERNOVA_VANISH_THRESHOLD = 0.3    # 분기 score → vanish
 
 # Multi-arc 합성 (산문 노출)
 ARC_FOREGROUND_CAP = 1                  # 동시 노출 전경
 ARC_BACKGROUND_CAP = 2                  # 동시 노출 배경
+# [2026-10-24 C75] 중력 우물 잠정값 — 스펙 C75 §18 · G2 §12. G1 의 WELL_SHADOW(그림자 켬끔)는 G2 에서 은퇴.
+WELL_MASS_LIMIT = 16                    # N — 무게 = 질량 ÷ N (옛 박자: 0.3 → 0.95 를 전경 흡수 +0.04 로 16번)
+WELL_P_CAP = 1.0                        # 잡힘 · 무대 위 — 먼지가 제자리 다음 시계를 잡는 값
+WELL_P_BEND = 0.25                      # 휨 · 배경 — 빛 출처 · 보이는 우물 문턱
+WELL_NAME_MASS = 4                      # 이름 얻기 후보 질량(닿는 거리 1칸)
+WELL_HAWKING_K = 4                      # 호킹 수명 τ = k · M³ 턴(먼지 4 · 둘 32 · 이름 우물 256)
+WELL_RECONCILE_WINDOW = 3               # 시계 맞춤이 끝난 시계를 보는 턴 창(그보다 옛 끝으로 우물을 거꾸로 짓지 않음)
+WELL_LIGHT_FROM = "emission"            # 이변 밝기: 빛 난 자리 → PC(레티어스 10-24 밤). "center" = 본 스펙 옛 식(출처 중심 → PC)
+# [2026-10-25 C75 G3] 결전 · 멀리서 무너짐 · 충돌파 · 목표 휨 — 스펙 C75_G3_시드·결전·무너짐·충돌파_지도·스펙_2026-10-25 §8
+WELL_GOAL_BEND = 2.0                    # 끝난 목표가 그 우물 쪽으로 휜 것으로 치는 속도 M ÷ (r+1) 문턱(성장 셈)
+WELL_COLLIDE_MASS = 9                   # 충돌파 — 둘 다 이 질량 이상(닿는 거리 2칸)
+WELL_COLLIDE_REGROW = 4                 # 같은 쌍이 다시 부딪히려면 둘 다 이만큼 더 먹어야
+WELL_CLIMAX_MAX = 12                    # [G3 검토 #4] 결전 최대 길이(턴) — 넘기면 결판(배치가 장면 넘어감을 못 냈어도). 0 = 끝없음
+WELL_REMNANT = 4                        # 멀리서 무너진 우물이 남기는 id 수(이름은 남는 최소)
 
 # Quest Progress Track (DC-linked 5 Ranks)
 QUEST_RANK_SETTINGS = {
@@ -1244,7 +1308,7 @@ DEFAULT_WORLD_STATE = {
     "risk_level": "None",
     "current_location": "Unknown",
     "location_rules": {},
-    "world_constraints": {},
+    # [2026-10-24 C76 §5] "world_constraints" 은퇴(로어 분석이 산문용으로 다시 쓴 세계 규칙 — 읽는 곳 0).
     "last_temporal_context": {},
     "doom_clocks": [],
     "turn_index": 0,
@@ -2198,6 +2262,12 @@ TURN_MIND_OWN_RECORD = int(os.getenv("TURN_MIND_OWN_RECORD", "1"))
 TURN_MIND_RECORD_CHARS = int(os.getenv("TURN_MIND_RECORD_CHARS", "900"))     # 인물당 원문 조각 합계
 TURN_MIND_RECORD_SNIPPET = int(os.getenv("TURN_MIND_RECORD_SNIPPET", "120"))  # 조각 = 이름 자리 ±N자
 TURN_MIND_RECORD_ROWS = int(os.getenv("TURN_MIND_RECORD_ROWS", "6"))          # 이름 하나당 찾는 원문 행
+# [2026-10-25 C77 A-2 · Q4] 직전 💭 (`thought_before`)를 이 턴 수 안의 것만 싣는다. 0 = 안 실음.
+TURN_MIND_BEFORE_TURNS = int(os.getenv("TURN_MIND_BEFORE_TURNS", "5"))
+# [2026-10-25 C77 C-2] 턴 시작 `!다시` 스냅샷 앞에서 앞 턴 배경 작업을 기다리는 상한(초). 넘기면 그 턴 `!다시` 는 거절. 0 = 안 기다림.
+RETRY_SNAPSHOT_BG_WAIT = float(os.getenv("RETRY_SNAPSHOT_BG_WAIT", "15"))
+# [2026-10-25 C78 D5] 없는 `!명령` 에 한 줄 안내(가까운 이름). 0 = 옛 꼴(조용히 무시) — 같은 채널에 `!` 쓰는 다른 봇이 있으면 끈다.
+UNKNOWN_COMMAND_HINT = int(os.getenv("UNKNOWN_COMMAND_HINT", "1"))
 
 # =========================================================
 # [2026-08-17 발신자 긴밀화] 문자·쪽지(message 채널)의 **발신 NPC 선정 가중**
@@ -2244,25 +2314,23 @@ VOICE_SEED_STAGE_REROLL = int(os.getenv("VOICE_SEED_STAGE_REROLL", "5"))
 # =========================================================
 # Safety Settings
 # =========================================================
+# [2026-10-26] 전부 OFF(필터 자체를 끔) + JAILBREAK 추가. 옛 값은 BLOCK_NONE(안 막음).
+#   JAILBREAK = "안전 필터를 우회하도록 설계된 프롬프트" — **입력** 쪽 필터다. Slot 1(CONTENT_AUTHORIZATION_MANDATE)이
+#   그 꼴 그대로라, 안 정한 카테고리의 기본값(2.5 이상 꺼짐)이 바뀌면 렌더 콜이 입력에서 막힌다 — 그래서 명시한다.
+#   SDK 에 그 이름이 없으면(옛 google-genai) 넣지 않는다 — 모르는 이름을 받는 꼴이 SDK 판마다 달라서(2.33 은 경고 뒤 그대로,
+#   옛 판은 검증 오류일 수 있다 — 그러면 config import 째 죽는다) 거르는 쪽이 안전하다. 안 넣어도 기본값은 꺼짐.
+#   아동 안전 등 핵심 유해는 조정 불가(API 쪽 고정). 제미니 콜(RENDERER_BACKEND=gemini 면 매 턴 렌더)에만 실리고,
+#   openai 호환 백엔드(분석 등)는 이 목록을 버린다(analysis_backend).
+_SAFETY_CATEGORIES = (
+    "HARM_CATEGORY_HARASSMENT",
+    "HARM_CATEGORY_HATE_SPEECH",
+    "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+    "HARM_CATEGORY_DANGEROUS_CONTENT",
+    "HARM_CATEGORY_CIVIC_INTEGRITY",
+    "HARM_CATEGORY_JAILBREAK",
+)
 SAFETY_SETTINGS = [
-    types.SafetySetting(
-        category="HARM_CATEGORY_HARASSMENT",
-        threshold="BLOCK_NONE",
-    ),
-    types.SafetySetting(
-        category="HARM_CATEGORY_HATE_SPEECH",
-        threshold="BLOCK_NONE",
-    ),
-    types.SafetySetting(
-        category="HARM_CATEGORY_SEXUALLY_EXPLICIT",
-        threshold="BLOCK_NONE",
-    ),
-    types.SafetySetting(
-        category="HARM_CATEGORY_DANGEROUS_CONTENT",
-        threshold="BLOCK_NONE",
-    ),
-    types.SafetySetting(
-        category="HARM_CATEGORY_CIVIC_INTEGRITY",
-        threshold="BLOCK_NONE",
-    ),
+    types.SafetySetting(category=_c, threshold="OFF")
+    for _c in _SAFETY_CATEGORIES
+    if _c in getattr(types.HarmCategory, "__members__", {})
 ]

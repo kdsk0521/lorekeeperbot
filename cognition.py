@@ -150,7 +150,7 @@ async def extract_all_updates(
     lore_npc_names: Optional[List[str]] = None,
     scene_npc_names: Optional[List[str]] = None,
     current_passives: Optional[List[str]] = None,
-    current_quests: Optional[List[str]] = None,
+    # [2026-10-24 C74 판2] current_quests 삭제 — 목표는 장부 줄(thread_ledger_line) 안에 선다.
     current_memos: Optional[List[str]] = None,
     fermented_context: str = "",
     player_context: str = "",
@@ -158,8 +158,8 @@ async def extract_all_updates(
     current_session_memory: Optional[Dict[str, Any]] = None,
     previous_continuity: Optional[Dict[str, Any]] = None,
     # === Arc System (Phase 4b) ===
-    arc_context: str = "",                                      # active arcs 컨텍스트 (orchestration이 전달)
-    arc_promote_candidate: Optional[Dict[str, Any]] = None,     # bus.anomaly.arc_promote_candidate
+    arc_context: str = "",                                      # 이름 얻은 우물 줄(shared_extract 가 well_store 에서)
+    arc_promote_candidate: Optional[Dict[str, Any]] = None,     # [C75 G2] 이름 후보 우물(well_store.naming_candidate)
     # [2026-09-18 식별 허브 S3] 이번 턴 무대(0단) 인물 + 식별 한 줄. 산문이 인물을 묘사로 부른 턴에
     #   entity_state 가 "그게 누구냐"를 되짚을 유일한 재료(종전 입력은 이름 목록뿐이었다).
     onstage_lines: Optional[List[str]] = None,
@@ -175,7 +175,7 @@ async def extract_all_updates(
 
     # Default: Run ALL if no hints provided
     if extraction_hints is None:
-        extraction_hints = {"physical": True, "social": True, "narrative": True, "quest": True, "entity_state": True, "arc": True}
+        extraction_hints = {"physical": True, "social": True, "narrative": True, "entity_state": True, "arc": True}
 
     tasks = []
     task_keys = []
@@ -184,7 +184,8 @@ async def extract_all_updates(
     #   돌지 않았다 — orchestration 이 `bg_hints`에서 physical 을 걷어내고 넘기기 때문이다.
     #   메모/status 계약(V5)은 `extract_outputs` 로 이사했고, 부르는 자리도 한 곳뿐이다.
     # Non-physical: batch into 1 Flash call (saves ~60% input tokens)
-    batch_sections = [s for s in ["social", "narrative", "quest", "world_state", "entity_state", "render_fingerprint", "arc"] if extraction_hints.get(s, False)]
+    # [2026-10-24 C74 판2] "quest" 섹션 삭제 — 목표는 world_state `threads`(goal)로 매 턴 온다.
+    batch_sections = [s for s in ["social", "narrative", "world_state", "entity_state", "render_fingerprint", "arc"] if extraction_hints.get(s, False)]
     # [2026-10-07 S4] arc 게이트 — 활성 arc(arc_context)도 승격 후보도 없으면 섹션을 싣지 않는다. 녹화 123판 내내
     #   실렸고 갱신 0이었다(약 1.7k/턴). 07-15 상시 켬(키 부재로 죽어 있던 것 살림)은 쓸 거리가 있는 턴에 그대로 산다.
     if "arc" in batch_sections and not (str(arc_context or "").strip() or arc_promote_candidate):
@@ -201,7 +202,6 @@ async def extract_all_updates(
             thread_ledger_line=thread_ledger_line,
             passives=current_passives, fermented=fermented_context,
             player_context=player_context,
-            quests=current_quests,
             current_session_memory=current_session_memory,
             previous_continuity=previous_continuity,
             arc_context=arc_context,
@@ -214,7 +214,7 @@ async def extract_all_updates(
     if not tasks:
         return {
             "PlayerMemoryUpdate": None,
-            "QuestUpdate": None, "WorldStateUpdate": None
+            "WorldStateUpdate": None
         }
 
     # 배치 하나뿐이지만 gather 골격은 남긴다 — 실패를 예외가 아니라 키별 빈 dict 로 접는 자리다.
@@ -230,14 +230,22 @@ async def extract_all_updates(
             result_map[key] = res
 
     # Unpack batch result into individual sections
+    # [2026-10-25 C77 판 D · Q25] 섹션 모양 가드 — 모델이 `"narrative": null` · 문자열 · 리스트를 내면 아래 `.get` 이
+    #   AttributeError 로 터져 배치 적용(AFTER_BATCH — 목표 알림 · 우물 tick)이 통째로 빠졌다. dict 아니면 빈 섹션.
     batch: Dict[str, Any] = result_map.get("batch", {})
-    soc: Dict[str, Any] = batch.get("social", {})
-    nar: Dict[str, Any] = batch.get("narrative", {})
-    qst: Dict[str, Any] = batch.get("quest", {})
-    wst: Dict[str, Any] = batch.get("world_state", {})
-    est: Dict[str, Any] = batch.get("entity_state", {})
-    rfp: Dict[str, Any] = batch.get("render_fingerprint", {})
-    arc_res: Dict[str, Any] = batch.get("arc", {}) if isinstance(batch.get("arc"), dict) else {}
+    if not isinstance(batch, dict):
+        batch = {}
+
+    def _sec(k: str) -> Dict[str, Any]:
+        v = batch.get(k)
+        return v if isinstance(v, dict) else {}
+
+    soc: Dict[str, Any] = _sec("social")
+    nar: Dict[str, Any] = _sec("narrative")
+    wst: Dict[str, Any] = _sec("world_state")
+    est: Dict[str, Any] = _sec("entity_state")
+    rfp: Dict[str, Any] = _sec("render_fingerprint")
+    arc_res: Dict[str, Any] = _sec("arc")
 
     # ⛔[2026-09-15 관계 통합] relationships 문자열→정수 매핑 삭제 — 질문(relationships{Name: Status})
     #   자체가 없어졌다. NPC→PC 관계는 Theoria relation 층 bond/tension 하나.
@@ -258,11 +266,6 @@ async def extract_all_updates(
         # [2026-09-24 감사 §5-2 #27] 배치 self-check `_uncertain` 연결 — 프롬프트가 요구하고 orchestration 이
         #   로그로 읽는데(`updates.get("_uncertain")`) 이 화이트리스트에 없어 매 턴 생성 토큰만 쓰고 버려졌다.
         "_uncertain": (batch.get("_uncertain") or None) if isinstance(batch, dict) else None,
-
-        "QuestUpdate": {
-            "quest_add": qst.get("quest_add"), "quest_complete": qst.get("quest_complete"),
-            "quest_progress": qst.get("quest_progress")
-        } if qst else None,
 
         "NPCImprintUpdate": soc.get("npc_imprints") if soc else None,
 
@@ -308,19 +311,35 @@ BATCH_MAX_OUTPUT_TOKENS = 8192
 
 
 # [2026-09-25 스레드 장부] world_state 섹션의 threads 규약. 판정문(명령 아님) · 명세체.
+# [2026-10-24 C74 판2 합치기] 퀘스트 보드 → kind goal(rank · step) + 선(after). 문안 = 판2 스펙 §2-2(레티어스 확인).
 THREADS_SCHEMA = (
     "\nthreads: changes to the standing ledger this turn; [] when none."
     "\n  item: {\"id\": \"T3\"|null, \"op\": \"open|progress|close|pause|resume|reschedule\","
-    " \"kind\": \"promise|matter\", \"title\": \"짧은 한국어 라벨\", \"parties\": [\"이름\"],"
+    " \"kind\": \"goal|promise|matter\", \"title\": \"짧은 한국어 라벨\", \"parties\": [\"이름\"],"
+    " \"rank\": \"easy|normal|hard|extreme|epic\", \"step\": \"small|big\","
     " \"outcome\": \"done|dropped|broken\", \"remaining\": \"남은 몫 (한국어)\","
     " \"due\": {\"day_offset\": 0, \"slot\": \"저녁\", \"hour\": null, \"minute\": null,"
     " \"year\": null, \"month\": null, \"day_in_month\": null} | null,"
+    " \"after\": \"T4\"|null,"
     " \"quote\": \"exact words from this turn\"}"
     "\n- The Ledger in context is the record. A listed thread is named by its id; id null with op open is a new thread."
-    "\n- promise: someone owes someone — a meeting, a debt, a vow, a deal. matter: a situation that stays open"
-    " past this scene. A goal on the quest board is not a thread."
+    "\n- goal: what the player character has set out to achieve — a job taken on, a search begun, something to obtain,"
+    " stop or reach. promise: someone owes someone — a meeting, a debt, a vow, a deal. matter: a situation that stays open"
+    " past this scene."
+    "\n- A goal is opened when the player character takes it up, not when someone only asks."
+    # [2026-10-24 C74 판2 실측 뒤] 거래 = 두 줄 — 없으면 일 · 값이 한 줄로 뭉쳤다(프리즈마 · 수처 0/2 → 이 줄 2/2). 레티어스 확인.
+    "\n- A deal is two threads: the job is a goal once the player character takes it on, even when the job is for"
+    " someone else; what is paid or owed for it is a promise with after = the job. Open both in this same list."
+    "\n- after: a thread the page ties to another one landing first (\"bring me the thief and I pay ten coins\" — the payment"
+    " waits on the job). Open both; the waiting one takes after = the id it waits on, or the title of a thread opened earlier"
+    " in this same list. It sleeps until that one closes done, then wakes; how it ends is still the page's — kept, dropped"
+    " or broken. One thread waits on one other; one thread may be waited on by many. A sleeping thread takes no due — its"
+    " time is set once it wakes."
+    "\n- goal open carries rank: how far it stands from done (easy … epic). goal progress carries step: small for a clear"
+    " advance this turn, big for a major milestone. promise and matter progress carry remaining instead."
     "\n- A mention, a memory or a recap is not an event. Recall is not resume; a kept promise retold is history."
     "\n- close stands on the page showing the end. A passed hour is not a broken promise — broken is a breach the page shows."
+    " A goal reached is close done; a goal the player character gives up is close dropped."
     "\n- progress with part left: remaining names what is still owed."
     "\n- due comes only from words that set a time (내일 정오, 사흘 안에). No such words → null. Same shape as time_flow target."
     "\n- quote: the exact words of this turn that carry the change. No quote, no event."
@@ -337,8 +356,6 @@ async def _extract_batch(
     comps=None, lore_npcs=None, scene_npcs=None, onstage_lines=None,
     # Narrative context
     passives=None, fermented: str = "", player_context: str = "",
-    # Quest context
-    quests=None,
     # World State context
     current_session_memory=None,
     # Scene Continuity context
@@ -349,8 +366,8 @@ async def _extract_batch(
     thread_ledger_line: str = "",
     pc_names: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """Batch extraction: 관측 섹션(social/narrative/quest/world_state/entity_state/
-    render_fingerprint/arc)만 1콜. 출력물 섹션 3종은 2026-09-06 P8a 에서 `extract_outputs` 로 이사."""
+    """Batch extraction: 관측 섹션(social/narrative/world_state/entity_state/
+    render_fingerprint/arc)만 1콜. [C74 판2] quest 섹션 삭제(목표 = world_state threads). 출력물 섹션 3종은 2026-09-06 P8a 에서 `extract_outputs` 로 이사."""
     sys_parts = [
         "## [BATCH EXTRACTION]",
         "Analyze the exchange and extract updates for ALL requested sections.",
@@ -450,21 +467,8 @@ async def _extract_batch(
         )
         ctx_parts.append(f"[Narrative] PlayerCtx:{player_context}, Fermented:{fermented[:2000]}")
 
-    if "quest" in sections:
-        sys_parts.append(
-            "\n### quest"
-            "\nOutput: `{\"quest_add\": [{\"content\": str, \"rank\": \"easy/normal/hard/extreme/epic\"}], "
-            "\"quest_complete\": [str], \"quest_progress\": {\"QuestName\": delta_int}}`"
-            "\nADD only NEW quests with estimated rank. COMPLETE only if explicitly resolved."
-            "\nPROGRESS: key MUST be exact name from active quests list. Never paraphrase or invent names."
-            "\n+1 normal progress, +2 major milestone. New quest idea → use quest_add, NOT progress."
-            "\nIf no update: `{\"quest_add\": [], \"quest_complete\": [], \"quest_progress\": {}}`."
-        )
-        ctx_parts.append(f"[Quest] Quests:{quests}")
-
     if "world_state" in sections:
-        mem = current_session_memory or {}
-        existing_arc = mem.get("current_arc", "")
+        # [2026-10-25 C74 판4 · G4] current_arc 칸 은퇴 — 한 줄 아크는 코드가 우물에서 짓는다(well_store.arc_line).
         # [2026-09-25 스레드 장부] active_threads/resolved_threads(통째 재작성 문자열 리스트) → `threads` 전이.
         #   LLM 은 전이만, 상태·기한·남은 시간은 코드(thread_ledger). 스펙 state_v10/thread_ledger_spec_v0.1_2026-09-25.md
         _tl_on = bool(getattr(config, "THREAD_LEDGER", True))
@@ -472,7 +476,7 @@ async def _extract_batch(
             "\n### world_state"
             + ("\nOutput: `{\"threads\": [], \"world_changes\": [],"
                if _tl_on else "\nOutput: `{\"world_changes\": [],")
-            + " \"npc_schedule_hints\": {}, \"basic_needs_flags\": {}, \"current_arc\": \"\","
+            + " \"npc_schedule_hints\": {}, \"basic_needs_flags\": {},"
             " \"residual_effects\": \"\", \"scene_minutes_elapsed\": 0}`"
             # [2026-08-16 상태창 코드 조립] 구 구조는 렌더러가 상태줄에 시각을 적고 코드가 그걸
             #   정규식으로 되읽어 시계를 밀었다. 상태창이 코드 소유가 되면서 모델 몫으로 남는 건
@@ -493,17 +497,13 @@ async def _extract_batch(
             #   PC 부상으로 실렸다(Theoria 입력 159개 중 62개 injured).
             "\nbasic_needs_flags: the player character's own body — {hungry/thirsty/tired/injured/cold/hot: bool}. "
             "True only when the text shows it on them; another character's wound or chill is not theirs."
-            "\ncurrent_arc: One-line summary of current arc. Korean."
             "\nresidual_effects: Side-effects or unintended consequences of SUCCESSFUL actions this turn. "
             "Korean. Empty string if none. Only genuine ripple effects, not failures."
             "\nWork from what the exchange shows; evidence in the text is the basis."
         )
-        arc_line = f"Current Arc: {existing_arc}" if existing_arc else "Current Arc: (none)"
-        ws_ctx = f"[WorldState] {arc_line}"
+        ws_ctx = "[WorldState]"
         if _tl_on:
-            ws_ctx += ", " + (thread_ledger_line or "Ledger: (empty)")
-            if quests:
-                ws_ctx += "\nQuest board (not threads): " + ", ".join(str(q) for q in list(quests)[:10])
+            ws_ctx += " " + (thread_ledger_line or "Ledger: (empty)")
         ctx_parts.append(ws_ctx)
 
     if "entity_state" in sections:
@@ -665,17 +665,18 @@ async def _extract_batch(
             "\n  - 중요 사건에선 hidden truth"
             "\n  - 새로 드러난 것이 없으면 null"
             "\n"
-            "\nsensory_foreshadowing_add: PC 가까이서 깐 단서 (proximity ≥ 0.3 가정)."
-            "\noffscreen_actions_add: PC 멀리서 진행된 사건 (proximity < 0.3 가정, 전언/소문 톤)."
+            "\nsensory_foreshadowing_add: PC 곁(무대 위)에서 깐 단서."
+            "\noffscreen_actions_add: PC 가 없는 곳에서 진행된 일 (전언/소문 톤)."
             "\n  - polarity: positive/negative/mixed"
             "\n  - intensity: Low/Mid/High/Extreme"
-            "\n  - 같은 polarity+intensity 시드 중복 X (거부 게이트가 자연 차단)"
+            "\n  - 이미 적힌 단서와 겹치면 넣지 않는다"
             "\n  - summary 짧은 한국어 ≤ 60자"
             "\n"
-            "\narc_decisions:"
-            "\n  - confirms: bus.anomaly.arc_promote_candidate가 있을 때만. schema: "
-            "[{\"candidate_category\": str, \"declared_goal\": str, \"initial_phase_label\": str, \"origin_summary\": str}]"
-            "\n  - rejects: candidate 거부 시. schema: [{\"candidate_category\": str, \"reason\": str}]"
+            "\narc_decisions: [Name Candidate] 는 시계가 한자리에 쌓여 무게가 생긴 곳(where · 얽힌 시계 · 사람)."
+            "\n  - confirms: 그 무게를 한 흐름으로 부를 수 있으면. schema: "
+            "[{\"well_id\": int, \"declared_goal\": str, \"initial_phase_label\": str, \"next_waypoint\": str}]"
+            "\n    declared_goal = 이 흐름이 향하는 것(짧은 한국어), initial_phase_label = 지금 장면 이름표"
+            "\n  - rejects: 아직 한 흐름으로 부를 수 없으면. schema: [{\"well_id\": int, \"reason\": str}]"
             "\n  - candidate 없으면 둘 다 빈 list"
             "\n"
             "\narc_updates는 1~2개까지. "
@@ -686,15 +687,11 @@ async def _extract_batch(
         _arc_cand_str = "None"
         if arc_promote_candidate:
             try:
-                _arc_cand_str = (
-                    f"category={arc_promote_candidate.get('category', '?')}, "
-                    f"intensity={arc_promote_candidate.get('intensity', '?')}, "
-                    f"polarity={arc_promote_candidate.get('polarity', '?')}, "
-                    f"line={(arc_promote_candidate.get('line') or '')[:80]}"
-                )
+                import well_store as _ws_cand
+                _arc_cand_str = _ws_cand.candidate_line(arc_promote_candidate)
             except Exception:
                 _arc_cand_str = str(arc_promote_candidate)[:200]
-        ctx_parts.append(f"[Arc Context]\n{_arc_ctx_str}\n[Promote Candidate] {_arc_cand_str}")
+        ctx_parts.append(f"[Arc Context]\n{_arc_ctx_str}\n[Name Candidate] {_arc_cand_str}")
 
 
 
@@ -1237,23 +1234,30 @@ async def analyze_lore_unified(
             "   - MUST EXTRACT ALL NPCs found in the document.\n"
             "   - List NPCs only; leave the player character (the protagonist) out.\n"
             "   - role: Character's job or social role (e.g., \"Resident\", \"Store Owner\", \"Neighbor\").\n"
-            "   - location: Primary location or residence (e.g., \"Room 2\", \"Dungeon 25\", \"Error 404\")."
+            "   - home: where this person lives or is usually found, written exactly as one of the names in "
+            "lore_summary.locations; \"\" when the lore does not place them."
         )
         # ⚠ 이 값은 f-string **소스가 아니라 런타임 데이터**다 — 중괄호를 이스케이프하면
         #   `{{` 가 그대로 모델에게 간다. 홑괄호로 쓴다.
         _npc_schema_json = ('[ { "name": "...", "gender": "...", "race": "...", '
-                            '"role": "...", "location": "...", "description": "..." } ]')
+                            '"role": "...", "home": "...", "description": "..." } ]')
     else:
+        # [2026-10-24 C76 §4] 이름 + 거처. 거처는 같은 출력의 locations 이름 그대로(코드가 노드로 푼다 —
+        #   C75 G2 시계 자리 · 등록 인물 앉히기). 09-02 에 묘사와 같이 뺐던 칸 중 거처만 살린다(장소 이름 하나라 싸다).
         _npc_schema_desc = (
-            "**Names only.** List every character who appears as an NPC, as bare names.\n"
+            "Names and homes. List every character who appears as an NPC.\n"
             "   - MUST list ALL NPCs found in the document. Do not summarize the list.\n"
             "   - List NPCs only; leave the player character (the protagonist) out.\n"
-            "   - Emit the name exactly as the document writes it (the name is used as an anchor "
+            "   - name: exactly as the document writes it (the name is used as an anchor "
             "to locate that character's section in the original text).\n"
-            "   - No other fields for NPCs: no gender, race, role, location, or description."
+            "   - home: where this person lives or is usually found, written exactly as one of the names in "
+            "lore_summary.locations; \"\" when the lore does not place them.\n"
+            "   - No other fields for NPCs: no gender, race, role, or description."
         )
-        _npc_schema_json = '[ { "name": "..." } ]'
+        _npc_schema_json = '[ { "name": "...", "home": "..." } ]'
 
+    # [2026-10-24 C76] 순서 genres → lore_summary → npcs: 장소 목록을 먼저 쓰고 거처를 그 이름으로 적게.
+    #   world_constraints 칸 은퇴 — 산문용으로 다시 쓴 세계 규칙이었다(늘 실을 월드북은 `!룰`, 분석은 코드 재료).
     # [2026-10-12 C33] pc_info 칸 삭제 — PC 시트 입구는 `!설명` 하나. NPC 칸은 PC를 빼라고 적는다
     #   (칸이 없어진 PC가 npcs로 흘러 extract_npc_sections_from_lore에 다시 잘리지 않게).
     system_prompt = f"""You are an experienced TRPG Campaign Designer and 'Lore Analysis Engine (LoreAnalyzer)'.
@@ -1275,8 +1279,7 @@ IMPORTANT: All string descriptions and guides must be in KOREAN.
    - narrative_tone (C-Layer: EMOTIONAL tone): The story's mood/feel. Choose 1-2 ONLY from: noir, comedy, romance, drama
    - atmosphere_guide: Short atmosphere guide for the narrator (Korean)
    ⚠️ CROSS-ASSIGNMENT PROHIBITION: cyberpunk/modern/space_opera CANNOT appear in style_tech. urban_fantasy/cosmic_horror CANNOT appear in world_setting. comedy/romance CANNOT appear in style_tech.
-2. npcs: {_npc_schema_desc}
-3. lore_summary:
+2. lore_summary:
    - theme: Core theme of the world (1-2 sentences in Korean)
    - anomaly_seeds: small 'wingbeat' seeds, genre-neutral minor incidents latent in this world. 0 to N items; mint only what the lore genuinely supports, do not pad to a quota, and 0 is a valid answer for a quiet slice-of-life world. Each seed:
      - name: Korean name of a small noticed thing, not a dramatic loaded title. Register follows the tagged narrative_tone — mystery is one register, not the default. good: '반쯤 열린 편지' (noir), '늘 두 잔을 시키는 손님' (romance), '매주 한 글자씩 늘어나는 간판 오타' (comedy), '사흘째 같은 넥타이' (drama). avoid: '그림자 침식', '운명의 대격변', '삼각관계 점화'
@@ -1289,7 +1292,8 @@ IMPORTANT: All string descriptions and guides must be in KOREAN.
        schedule: timing (a delay, an early close, a missed appointment)
      - tags: 2 to 3 free-form material tags (Korean), concrete nouns the renderer can reach for
      - defense_hint: one Korean line naming where this could grow or how it could ease, whichever fits. A direction, not a scripted outcome. (Legacy field name; read it as a neutral ripple or resolution direction, not 'defense against a threat'.)
-     - Example (mundane lore: a shabby tea house where the neighborhood elders gather every morning): {{"name": "사흘째 비어 있는 구석 자리", "axis": "schedule", "tags": ["단골", "빈자리"], "defense_hint": "누가 그 자리 주인의 안부를 물으면 이야기가 열린다"}}
+     - anchor: where this seed sits in the world — one name copied exactly from this output's locations list, or the name of the person it clings to (from npcs). "" if it floats free of any one place or person.
+     - Example (mundane lore: a shabby tea house where the neighborhood elders gather every morning): {{"name": "사흘째 비어 있는 구석 자리", "axis": "schedule", "tags": ["단골", "빈자리"], "defense_hint": "누가 그 자리 주인의 안부를 물으면 이야기가 열린다", "anchor": "찻집"}}
    - locations: List of key locations with name, description, danger level (Korean), and where each sits:
      - type: region (a city, district, forest, wide zone), area (a building, street, market, site), or room (a room, floor, small enclosed space)
      - parent: the name of the location that contains this one, written exactly as it appears in this list; "" for a top-level location
@@ -1299,10 +1303,15 @@ IMPORTANT: All string descriptions and guides must be in KOREAN.
    - factions: Major groups/organizations with name, description, stance/goal (Korean)
    - key_events: Major historical events that characters would know about (List of Korean strings, max 5)
    - mind_transfer: true only if this world lets one person's mind, soul or personality drive another person's body, or lets someone take hold of another's mind (possession, hypnosis, mind control, soul or personality transfer). Otherwise false.
-4. world_constraints: World rules extracted from lore (Korean)
-   - systems: Magic/technology/power systems described in the lore (2-4 sentences, be specific about limitations and costs)
-   - social: Social hierarchy, taboos, cultural norms (2-4 sentences)
-   - taboos: List of things explicitly forbidden or dangerous in this world (Korean strings)
+   - activations: people whose presence or form the lore ties to a condition. [] if none — most worlds have none. Only conditions the lore states; never invent one.
+     - person: the name exactly as the document writes it
+     - effect: form (the same person turns into another named form of themselves; only one form exists at a time) | appear (the person is not in the world until the condition holds, then steps in) | load (the person exists; the condition is when their full sheet must be at hand)
+     - form: the other name (form only; "" otherwise)
+     - items: what the player must carry; with: who must be present (names as written); at: places (names exactly as in this output's locations); words: words in the scene that call this person up. [] when the lore does not say.
+     - when: Korean — only the part items/with/at/words cannot express; "" if they cover it
+     - back_when: Korean — form only: how it turns back; "" if the lore says it does not
+     - shape: {{"person": "...", "effect": "form|appear|load", "form": "...", "items": [], "with": [], "at": [], "words": [], "when": "...", "back_when": "..."}}
+3. npcs: {_npc_schema_desc}
 
 ## Output Format (JSON Only)
 {{
@@ -1312,21 +1321,17 @@ IMPORTANT: All string descriptions and guides must be in KOREAN.
     "narrative_tone": ["..."],
     "atmosphere_guide": "..."
   }},
-  "npcs": {_npc_schema_json},
   "lore_summary": {{
     "theme": "...",
-    "anomaly_seeds": [{{"name": "작은 사건 이름", "axis": "mental|relation|complication|information|position|schedule", "tags": ["소재1", "소재2"], "defense_hint": "번질 수 있는 방향 또는 풀릴 방향 (한국어)"}}],
+    "anomaly_seeds": [{{"name": "작은 사건 이름", "axis": "mental|relation|complication|information|position|schedule", "tags": ["소재1", "소재2"], "defense_hint": "번질 수 있는 방향 또는 풀릴 방향 (한국어)", "anchor": "locations 의 장소명 또는 인물 이름 또는 \"\""}}],
     "locations": [{{"name": "장소명", "desc": "설명", "danger": "low/mid/high", "type": "region|area|room", "parent": "품은 장소명 또는 \"\"", "connections": ["이웃 장소명"]}}],
     "rules": ["규칙1: 구체적 설명", "규칙2: 구체적 설명"],
     "factions": [{{"name": "세력명", "desc": "설명", "stance": "목표/입장"}}],
     "key_events": ["핵심 사건 1", "핵심 사건 2"],
-    "mind_transfer": false
+    "mind_transfer": false,
+    "activations": []
   }},
-  "world_constraints": {{
-    "systems": "마법/기술 체계 상세 설명 (제약과 비용 포함)",
-    "social": "사회 구조/금기 설명",
-    "taboos": ["금기1", "금기2"]
-  }}
+  "npcs": {_npc_schema_json}
 }}"""
 
     try:
@@ -1460,6 +1465,31 @@ Extract the mechanical pieces of one character from the provided sheet text.
     return {}
 
 
+def _condense_rule_parts(want_aspects: bool, want_fragments: bool, fragments_text: str, seeded: bool) -> tuple:
+    """[2026-10-27 C82] 시트 정리 · 성장발효 공용 규칙 조각(글자 그대로 옮김) → (aspects_rule, fragments_rule, seed_rule, schema, fragments_block)."""
+    aspects_rule = ("""
+- high_concept: 1 Korean phrase — who they are and what they do, as someone meeting them would pick them out (role + one visible or signature feature). Keep stable; replace only on strong contradiction.
+- trouble: 1 Korean phrase — the core hunger or deficit that drives them; null until it surfaces.
+- aspects: 3-6 Korean phrases, each NAME + BEHAVIOR (never a bare adjective). Omit what the text has not shown.""" if want_aspects else "")
+    # [2026-09-16 3차 §10.2] PC 정리 콜에 조각 후보를 얹는다(콜 순증 0). quote 는 코드가 observed 본문과
+    #   `_norm_quote` 대조 — 있으면 그 문장을 observed 에서 빼내 조각 desc 로, 없으면 채택 0.
+    fragments_rule = ("""
+- fragments: permanent capability that play has settled (repeated or decisive), absent from AUTHOR SHEET and EXISTING FRAGMENTS. [] when none; most condenses yield [].
+  - name: Korean.
+  - value: {"edge": 1} for a help, {"edge": -1} for a hindrance.
+  - quote: one sentence copied character-for-character from YOUR observed output that settles it, conditions included. That sentence becomes the fragment text and leaves observed. No quote match = candidate discarded.""" if want_fragments else "")
+    # [2026-09-22 voice_seed §J] 시드 시트만 — 굴림이 준 뼈대 위에 플레이가 seam·방백을 앉힌다.
+    #   기전 두 줄은 canon(굴림 주소 그 자체)이라 절대 건드리지 않는다. 문장은 배선 스펙 §J 그대로.
+    seed_rule = ("""
+- trait_seam: the AUTHOR SHEET's Core Traits third line rewritten from observed play — the real boundary condition between trait 1 and trait 2, taken only from turns where a player's own line reached this character. Traits themselves are canon: never restate, soften or replace them. null when play showed no boundary.
+- aside: the Aside section rewritten from observed diction, taken only from turns where a player's own line reached this character. Diction only: no quoted lines, no gestures or movement. null when nothing new.""" if (want_aspects and seeded) else "")
+    schema = ('{"observed": "정리된 관찰 본문"' + (', "high_concept": "...", "trouble": "...", "aspects": ["..."]' if want_aspects else "")
+              + (', "trait_seam": "...", "aside": "..."' if seed_rule else "")
+              + (', "fragments": [{"name": "str", "value": {}, "quote": "str"}]' if want_fragments else "") + "}")
+    fragments_block = (f"[EXISTING FRAGMENTS — names]\n{fragments_text or '(none)'}\n" if want_fragments else "")
+    return aspects_rule, fragments_rule, seed_rule, schema, fragments_block
+
+
 async def condense_play_section(
     client: genai.Client,
     name: str,
@@ -1483,26 +1513,8 @@ async def condense_play_section(
     **시드에 한한 자기 수정**이고, 기전 두 줄은 시드 안에서도 canon 이라 손대지 않는다."""
     if not str(play_text or "").strip():
         return {}
-    aspects_rule = ("""
-- high_concept: 1 Korean phrase — who they are and what they do, as someone meeting them would pick them out (role + one visible or signature feature). Keep stable; replace only on strong contradiction.
-- trouble: 1 Korean phrase — the core hunger or deficit that drives them; null until it surfaces.
-- aspects: 3-6 Korean phrases, each NAME + BEHAVIOR (never a bare adjective). Omit what the text has not shown.""" if want_aspects else "")
-    # [2026-09-16 3차 §10.2] PC 정리 콜에 조각 후보를 얹는다(콜 순증 0). quote 는 코드가 observed 본문과
-    #   `_norm_quote` 대조 — 있으면 그 문장을 observed 에서 빼내 조각 desc 로, 없으면 채택 0.
-    fragments_rule = ("""
-- fragments: permanent capability that play has settled (repeated or decisive), absent from AUTHOR SHEET and EXISTING FRAGMENTS. [] when none; most condenses yield [].
-  - name: Korean.
-  - value: {"edge": 1} for a help, {"edge": -1} for a hindrance.
-  - quote: one sentence copied character-for-character from YOUR observed output that settles it, conditions included. That sentence becomes the fragment text and leaves observed. No quote match = candidate discarded.""" if want_fragments else "")
-    # [2026-09-22 voice_seed §J] 시드 시트만 — 굴림이 준 뼈대 위에 플레이가 seam·방백을 앉힌다.
-    #   기전 두 줄은 canon(굴림 주소 그 자체)이라 절대 건드리지 않는다. 문장은 배선 스펙 §J 그대로.
-    seed_rule = ("""
-- trait_seam: the AUTHOR SHEET's Core Traits third line rewritten from observed play — the real boundary condition between trait 1 and trait 2, taken only from turns where a player's own line reached this character. Traits themselves are canon: never restate, soften or replace them. null when play showed no boundary.
-- aside: the Aside section rewritten from observed diction, taken only from turns where a player's own line reached this character. Diction only: no quoted lines, no gestures or movement. null when nothing new.""" if (want_aspects and seeded) else "")
-    schema = ('{"observed": "정리된 관찰 본문"' + (', "high_concept": "...", "trouble": "...", "aspects": ["..."]' if want_aspects else "")
-              + (', "trait_seam": "...", "aside": "..."' if seed_rule else "")
-              + (', "fragments": [{"name": "str", "value": {}, "quote": "str"}]' if want_fragments else "") + "}")
-    fragments_block = (f"[EXISTING FRAGMENTS — names]\n{fragments_text or '(none)'}\n" if want_fragments else "")
+    aspects_rule, fragments_rule, seed_rule, schema, fragments_block = _condense_rule_parts(
+        want_aspects, want_fragments, fragments_text, seeded)
     prompt = f"""You maintain the play-observation section of one character's page in a TRPG.
 
 ## Rules
@@ -1560,6 +1572,143 @@ async def condense_play_section(
             return _unmask_output(out, _mask_map) if isinstance(out, dict) else {}
     except Exception as e:
         logger.error(f"[Condense] failed: {e}")
+    return {}
+
+
+_GROWTH_SUBJECT = {"character": "one character", "location": "one place", "faction": "one faction"}
+_GROWTH_ITEM_RULES = {
+    ("character", "Relationships+"): "- items.Relationships+: a change these turns made in how {name} stands with a named someone."
+                                     " One line each, \"이름: 무엇이 어떻게 달라졌나\" in Korean, with the turn it happened in.",
+    ("character", "Knowledge"): "- items.Knowledge: something {name} came to know in these turns — seen, told, or worked out on the page."
+                                " Being there when it was said is not knowing it; the page has to show {name} took it in. One fact per line, Korean.",
+    ("character", "History"): "- items.History: what happened to or through {name} in these turns that later play may lean on."
+                              " One event per line, Korean, past tense, with the turn it happened in.",
+    ("location", "History"): "- items.History: what happened here in these turns that changes this place or how people treat it."
+                             " One event per line, Korean, past tense, with the turn it happened in.",
+    ("faction", "Members+"): "- items.Members+: a named person these turns show belonging to {name}. One per line, \"이름: 자리\" in Korean.",
+    ("faction", "History"): "- items.History: what {name} did or suffered in these turns. One event per line, Korean, past tense,"
+                            " with the turn it happened in.",
+}
+_GROWTH_TURNED = ("Relationships+", "History")   # 줄에 턴을 받는 절(코드가 그 턴 작중 날짜 도장을 단다)
+# [2026-10-27 C85] Knowledge 규칙 두 구절 — 서술로만 드러난 것은 앎이 아니다 · 틀린 걸로 밝혀진 앎은 지금 아는 것을 새 줄로.
+#   손잡이 MEMORY_CURRENT 끔 = 위 옛 규칙 그대로.
+_GROWTH_ITEM_RULES_C85 = {
+    ("character", "Knowledge"): "- items.Knowledge: something {name} came to know in these turns — seen, told, or worked out on the page."
+                                " Being there when it was said is not knowing it; the page has to show {name} took it in."
+                                " Narration only the players read is not {name}'s knowledge."
+                                " When these turns show something {name} believed was wrong, write what they know now"
+                                " (\"…인 줄 알았으나 …임을 알게 됐다\"). One fact per line, Korean.",
+}
+
+
+def _growth_item_rule(kind: str, sec: str) -> str:
+    if getattr(config, "MEMORY_CURRENT", False):
+        _r = _GROWTH_ITEM_RULES_C85.get((kind, sec))
+        if _r:
+            return _r
+    return _GROWTH_ITEM_RULES[(kind, sec)]
+
+
+async def grow_play_sections(
+    client: genai.Client,
+    name: str,
+    kind: str,
+    lore_text: str,
+    play_text: str,
+    raw_text: str,
+    existing_items: Optional[Dict[str, str]] = None,
+    item_sections: tuple = (),
+    grounding: str = "",
+    corrections_block: str = "",
+    want_aspects: bool = False,
+    want_fragments: bool = False,
+    fragments_text: str = "",
+    seeded: bool = False,
+) -> Dict[str, Any]:
+    """[2026-10-27 C82] 성장발효 — 페이지 하나의 play 절을 원문 턴으로 키우는 heavy 1콜(옛 `condense_play_section` 자리를 넓힘).
+
+    입력 = lore 절(읽기 전용) + 지금 Observed + 지금 항목 절 + 성장 도장 뒤 원문 턴(오래된 → 최신, `T<n>` 머리) + 로어 접지
+    + 정정. 출력 = {"observed": 다시 쓴 본문, "items": {절: [줄 | {"turn", "line"}]}} + (NPC) 면모 · (시드) seam/aside ·
+    (PC) 조각 — 이 셋은 옛 정리 콜과 같은 규칙 조각(`_condense_rule_parts`)을 쓴다. 실패 = {}."""
+    if not str(raw_text or "").strip() and not str(play_text or "").strip():
+        return {}
+    aspects_rule, fragments_rule, seed_rule, schema, fragments_block = _condense_rule_parts(
+        want_aspects, want_fragments, fragments_text, seeded)
+    secs = [s for s in item_sections if (kind, s) in _GROWTH_ITEM_RULES]
+    if secs:
+        shapes = ", ".join(f'"{s}": [' + ('{"turn": 12, "line": "..."}' if s in _GROWTH_TURNED else '"..."') + "]"
+                           for s in secs)
+        schema = schema[:-1] + ', "items": {' + shapes + "}}"
+    item_rules = "\n".join(_growth_item_rule(kind, s).format(name=name) for s in secs)   # [C85]
+    existing = "\n".join(f"### {s}\n{(existing_items or {}).get(s) or '(none)'}" for s in secs)
+    subject = _GROWTH_SUBJECT.get(kind, "one entry")
+    prompt = f"""You grow the play sections of {subject}'s page in a TRPG, from the play that happened since the page last grew.
+
+## Rules
+- The AUTHOR SHEET below is read-only canon. Never restate it, never contradict it{", except the two fields below" if seed_rule else ""}.
+- [PLAY SINCE LAST GROWTH] holds the raw turns {name} appeared in since the last growth, oldest first, each headed "T<n>".
+  Lines headed "GM:" are the narration of that turn; the other lines are what the players typed.
+- Rewrite OBSERVED into a condensed Korean body: the facts it already holds plus what these turns settled about {name}
+  that will still hold later. Passing reactions, plans, questions and attempts that changed nothing stay out.
+  Merge duplicates; drop what the author sheet already says.
+- Telegraphic observable behavior, not finished prose. Newest facts first.
+- A fact that changed over time (how they address someone, a relationship, where they live or stay, alive or not)
+  stays as ONE sentence, current state first and the former in parentheses: "지금은 이름으로 부른다(예전엔 선배)."
+  When two sentences cannot both be true now, the one from the later turn is current.
+  Old and new never stand as two separate facts.
+- items: new lines only. Never repeat a line already under [EXISTING ITEMS]. [] when these turns add nothing.
+{item_rules}
+- A quotation inside any line copies the raw turn word for word.
+- [CORRECTIONS], when present, override both the turns and the page.
+- No length padding — shorter is better when nothing is lost.{aspects_rule}{seed_rule}{fragments_rule}
+
+## Output JSON
+{schema}
+
+[SUBJECT] {name}
+
+[AUTHOR SHEET — read-only]
+{lore_text or "(none)"}
+
+{fragments_block}
+{grounding or ""}
+
+[EXISTING ITEMS]
+{existing or "(none)"}
+
+[OBSERVED — rewrite this]
+{play_text or "(empty)"}
+
+[PLAY SINCE LAST GROWTH]
+{raw_text}
+{("" if not corrections_block else chr(10) + "[CORRECTIONS]" + chr(10) + corrections_block)}
+"""
+    try:
+        gen_config = types.GenerateContentConfig(
+            system_instruction=text_resources.ANALYSIS_FRAME,
+            response_mime_type="application/json",
+            temperature=config.ANALYSIS_TEMPERATURE_HEAVY,
+            safety_settings=config.SAFETY_SETTINGS,
+        )
+        if getattr(config, "MINOR_SANITIZE_CONDENSE", False):
+            _masked, _mask_map = _mask_for_analysis(prompt)
+        else:
+            _masked, _mask_map = prompt, []
+        if _mask_map:
+            _masked = _masked.replace(
+                "## Rules\n",
+                "## Rules\n- ⟦m…⟧ tags are placeholders: copy each one unchanged, attached where it stands.\n", 1)
+        contents = [types.Content(role="user", parts=[types.Part(text=_masked)])]
+        with config.heavy_analysis():
+            result = await api_call_with_retry(
+                client, config.role_model("heavy"), contents, gen_config,
+                operation_name="Page Growth"
+            )
+        if result:
+            out = safe_parse_json(result)
+            return _unmask_output(out, _mask_map) if isinstance(out, dict) else {}
+    except Exception as e:
+        logger.error(f"[Growth] failed: {e}")
     return {}
 
 

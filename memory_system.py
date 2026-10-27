@@ -96,7 +96,18 @@ GENRE_KEYWORD_MAP = {
 # Common Utilities
 # =========================================================
 
-from google.api_core import exceptions as google_exceptions
+# [2026-10-26] google-api-core 는 옛 SDK(google-generativeai) 시절 짐이다 — google-genai 는 제 에러(google.genai.errors)를 던져서
+#   아래 ResourceExhausted · ServiceUnavailable 갈래는 지금도 안 걸린다(429 · 503 은 맨 아래 `except Exception` 재시도로 간다).
+#   새 venv 에 그 꾸러미가 없으면 봇이 import 에서 죽으니, 없을 때는 안 걸리는 빈 칸으로 둔다 — 동작은 그대로(대기열 Q41).
+try:
+    from google.api_core import exceptions as google_exceptions
+except ImportError:
+    class _NoApiCoreError(Exception):
+        pass
+
+    class google_exceptions:  # noqa: N801 — 옛 이름 그대로 둔다
+        ResourceExhausted = _NoApiCoreError
+        ServiceUnavailable = _NoApiCoreError
 
 async def api_call_with_retry(
     client: genai.Client,
@@ -345,7 +356,7 @@ async def process_ooc_memory_edit(
     }
     # [2026-10-10 OOC 확장] 지금 장소·시간·날씨, 장소 이름들, 본문에 나온 인물이 아는 것(ooc_edits.world_state_for_edit).
     if isinstance(world_state, dict):
-        for _wk in ("world", "places", "npc_knows", "threads", "quests", "corrections"):   # [2026-10-10 O-E] +스레드·퀘스트 · [C50] +정정
+        for _wk in ("world", "places", "npc_knows", "threads", "corrections"):   # [2026-10-10 O-E] +스레드 · [C50] +정정 · [C74 판2] 퀘스트 → 스레드(goal)
             if world_state.get(_wk):
                 current_state[_wk] = world_state[_wk]
     
@@ -375,7 +386,7 @@ async def process_ooc_memory_edit(
         "  ],\n"
         "  \"confirmation_message\": \"Response to user (Korean)\"\n"
         "}\n"
-        "Valid fields: relation, npc, place, time, fact, thread, quest, passives, status_effects, strikes, item, notebook, or a character-sheet section name "
+        "Valid fields: relation, npc, place, time, fact, thread, passives, status_effects, strikes, item, notebook, or a character-sheet section name "
         "(Identity, Core Traits, Aside, Direction, Relationships, Secrets, Background, Notes — the keys of "
         "Current State.sheet) with action set|append|remove and value = that section's text.\n"
         "passives = sheet fragments: action add|set|remove. add/set value = {\"name\", \"desc\" (Korean, conditions in words), "
@@ -421,19 +432,22 @@ async def process_ooc_memory_edit(
         "when it is another matter about the same person, add \"new\":true; "
         "withdraw one with {\"field\":\"fact\",\"action\":\"remove\",\"id\":N} "
         "(with no list shown, {\"field\":\"fact\",\"action\":\"remove\",\"value\"} and its words). "
-        "The current state goes to its own field (npc status, place, time, relation, thread, quest); when the player corrects both "
+        "The current state goes to its own field (npc status, place, time, relation, thread); when the player corrects both "
         "what happened and how things stand now, emit both.\n"
-        # [2026-10-10 이야기 실 O-E] 스레드 장부(약속·사안)·퀘스트 보드. 스펙 state_v10/이야기실_지도·스펙_2026-10-10.md
-        "thread = a promise or open matter standing between people (Current State.threads, named by id): "
-        "{\"field\":\"thread\",\"op\":\"open|close|pause|resume|reschedule|progress|void\",\"id\":\"T3\"}. "
-        "open a new one with {\"title\":\"짧은 한국어 라벨\",\"kind\":\"promise|matter\",\"parties\":[names],\"due\":{...}|null}; "
-        "close with \"outcome\": done (kept, finished) | dropped (called off) | broken (breached); "
+        # [2026-10-10 이야기 실 O-E] 스레드 장부(약속·사안). 스펙 state_v10/이야기실_지도·스펙_2026-10-10.md
+        # [2026-10-24 C74 판2] 퀘스트 보드 → 장부 goal 한 칸(옛 quest 칸 삭제). 문안 = 판2 스펙 §3.
+        "thread = a goal, promise or open matter on the ledger (Current State.threads, named by id): "
+        "{\"field\":\"thread\",\"op\":\"open|close|pause|resume|reschedule|progress|void|sleep|wake\",\"id\":\"T3\"}. "
+        "open a new one with {\"title\":\"짧은 한국어 라벨\",\"kind\":\"goal|promise|matter\",\"parties\":[names],\"due\":{...}|null}; "
+        "a goal also takes \"rank\": easy|normal|hard|extreme|epic. "
+        "close with \"outcome\": done (kept, finished, reached) | dropped (called off, given up) | broken (breached); "
         "reschedule with \"due\": {\"day_offset\":1,\"slot\":\"저녁\",\"hour\":null,\"minute\":null} or "
-        "{\"year\",\"month\",\"day_in_month\"}; progress with \"remaining\" (what is still owed, Korean); "
+        "{\"year\",\"month\",\"day_in_month\"}; progress: a goal takes \"step\" (the player's number, + or −), "
+        "a promise or matter takes \"remaining\" (what is still owed, Korean); "
+        # [C74 판2 검토 #2 · #3] 선 고치기는 op 둘(sleep · wake)로 — 다른 op 에 붙은 after 칸은 코드가 보지 않는다.
+        "sleep with \"after\": \"T4\" ties a thread to wait on T4 landing (it sleeps until T4 closes done), "
+        "wake cuts the line and wakes it; a new thread may take \"after\" when opened; "
         "void = it never existed (a wrong entry); a \"title\" next to an id renames it.\n"
-        "quest = the quest board, goals the PC pursues (Current State.quests; not threads): "
-        "{\"field\":\"quest\",\"op\":\"add|complete|remove|progress\",\"value\":\"the quest name as listed\",\"rank\"?,\"delta\"?}; "
-        "complete = it is finished, remove = it is not a quest at all.\n"
     )
 
     # [2026-09-10 P13] 선언 칸 한 줄. 옛 7필드 문안은 위에서 한 글자도 안 바뀌었다 —
@@ -495,7 +509,7 @@ async def route_ooc_request(client, model_id: str, ooc_text: str,
         "edit = the part asking to change stored data: how an NPC stands toward the PC or toward another NPC, "
         "who an NPC is (the same person as another entry, another name, alive or dead, their sheet, what they know), "
         "where the PC or an NPC is right now, the current time or weather, the PC sheet, sheet fragments, "
-        "status effects or strike slots (wounds, conditions), notebook/items/gold, a declared value, a promise, an open matter or a quest that is open, "
+        "status effects or strike slots (wounds, conditions), notebook/items/gold, a declared value, a goal, a promise or an open matter that is open, "
         "done, called off or never existed, or a correction of what already happened in the story "
         "record. A statement of how a relation or fact stands "
         "(\"X has always cared for me\", \"it is night now\", \"X never died, he passed out\") is an edit. Keep the player's words.\n"

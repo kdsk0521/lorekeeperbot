@@ -45,7 +45,14 @@ STATIC_FILES: Dict[str, Tuple[str, str]] = {
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/style.css": ("style.css", "text/css; charset=utf-8"),
     "/sdk.js": ("sdk.js", "text/javascript; charset=utf-8"),
+    # [2026-10-23 C73 M7a] 코드 앱 HTML 화면 틀 — app.js 가 sandbox="allow-scripts" iframe 으로만 띄운다(규칙 §5e).
+    "/frame.html": ("frame.html", "text/html; charset=utf-8"),
+    "/frame.js": ("frame.js", "text/javascript; charset=utf-8"),
 }
+# [2026-10-24 C73 보안 검토] 코드 앱 HTML 틀(frame.html)에만 거는 CSP — 앱 HTML 의 CSS(@import · url() · @font-face)가
+#   바깥 주소로 요청을 내는 길(보는 사람 IP · 시각이 새는 비컨)을 닫는다. 스크립트는 우리 frame.js 하나, 소리 · 그림 · 글꼴은 data: 만.
+FRAME_CSP = ("default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src data:; media-src data:; "
+             "font-src data:; connect-src 'none'; frame-src 'none'; child-src 'none'; form-action 'none'; base-uri 'none'")
 CLIENT_ID_PLACEHOLDER = "__DISCORD_CLIENT_ID__"
 # [2026-10-22 C55] 정적 파일 주소 꼬리 `?v=` — 디스코드 앱·프록시가 app.js/style.css 를 붙들고 있어
 #   서버 파일을 바꿔도 예전 화면이 뜨던 일(10-22 실관측) 방지. 값 = app.js+style.css 내용 해시라 파일이 바뀌면 주소도 바뀐다.
@@ -201,13 +208,15 @@ async def handle_static(request: web.Request) -> web.Response:
             data = f.read()
     except OSError:
         raise web.HTTPNotFound()
-    if fname == "index.html":
+    if fname in ("index.html", "frame.html"):   # [C73] frame.html 도 ?v= 꼬리를 채운다
         # client_id 는 공개값이지만 숫자만 들어가게 거른다(HTML 에 섞이는 유일한 바깥 값).
         cid = re.sub(r"\D", "", str(getattr(config, "DISCORD_CLIENT_ID", "") or ""))
         data = data.replace(CLIENT_ID_PLACEHOLDER.encode("ascii"), cid.encode("ascii"))
         data = data.replace(ASSET_VER_PLACEHOLDER.encode("ascii"), asset_version().encode("ascii"))
     headers = dict(_SEC_HEADERS)
     headers["Content-Type"] = ctype
+    if fname == "frame.html":
+        headers["Content-Security-Policy"] = FRAME_CSP   # [C73 보안 검토] §5e — 바깥 요청 0
     if fname == "sdk.js":
         headers["Cache-Control"] = "public, max-age=86400"   # 묶음 파일은 바뀔 일이 드물다
     return web.Response(body=data, headers=headers)
@@ -217,7 +226,7 @@ def asset_version() -> str:
     """app.js + style.css 내용 해시 앞 12자리. 못 읽으면 "0"(그래도 화면은 뜬다)."""
     h = hashlib.sha256()
     try:
-        for fn in ("app.js", "style.css"):
+        for fn in ("app.js", "style.css", "frame.js"):   # [C73] frame.js 가 바뀌어도 꼬리가 바뀐다
             with open(os.path.join(STATIC_DIR, fn), "rb") as f:
                 h.update(f.read())
         return h.hexdigest()[:12]
@@ -394,6 +403,14 @@ def view_person(channel_id: str, uid: str, page_id: str) -> Optional[Dict[str, A
             "mine": (wiki_store.pc_page_id(channel_id, uid) or "") == page_id}
 
 
+def view_motion(channel_id: str, uid: str) -> Dict[str, Any]:
+    """[2026-10-25 C74 판4 W3] 진행 중 앱 — 아크 · 휘는 목표 · 시계 · 약속/사안 · 서 있는 상황 · 끝난 것(부품 쪽, 보기만).
+    재료는 렌더 Slot 15 와 같은 `in_motion.collect`(이번 턴 줄만 뺀다 — 홈 "이번 턴" 줄이 따로 있다). 고치기는 OOC."""
+    import activity_edit as _ae
+    import in_motion
+    return {"parts": in_motion.activity_parts(in_motion.collect(channel_id)), "rev": _ae._turn(channel_id), "view": "motion"}
+
+
 def view_modules(channel_id: str, uid: str) -> Dict[str, Any]:
     """[2026-10-23 C72 A5] 모듈 앱 — 부품 쪽 {parts, rev, view}. 옛 "선언" 앱(view_decl)을 대신한다.
     카드 순서: 토글 코드 모듈(등록 순, 설정 칸은 접기 안) → 올린 모듈(번호순, 들어 있는 것은 접기 안) → 늘 도는 것.
@@ -441,6 +458,7 @@ def view_modules(channel_id: str, uid: str) -> Dict[str, Any]:
     if not bl:
         parts.append({"t": "card", "title": "올린 모듈", "icon": "scroll",
                       "parts": [{"t": "empty", "text": "올린 모듈이 없어요."}]})
+    parts += _app_cards(channel_id)   # [2026-10-23 C73 M7a] 코드 앱 — 올린 모듈 다음, 늘 도는 것 앞
     always: List[Dict[str, Any]] = []
     core = [m.name for m in _mf.on_shelf("core")]
     if core:
@@ -465,6 +483,52 @@ def view_modules(channel_id: str, uid: str) -> Dict[str, Any]:
     return {"parts": parts, "rev": _ae._turn(channel_id), "view": "modules"}
 
 
+def _app_cards(channel_id: str) -> List[Dict[str, Any]]:
+    """[2026-10-23 C73 M7a] 모듈 앱의 코드 앱 카드 — 번호순. 스위치(mod.toggle `#n`) · 설정 접기(mod.set) · 들어 있는 것 · 최근 오류.
+    코드 앱이 하나도 없으면 카드 0(빈 카드를 세우지 않는다 — 대부분의 채널은 코드 앱을 안 쓴다)."""
+    try:
+        import app_host
+        al = app_host.list_apps(channel_id)
+    except Exception as e:
+        logger.debug(f"[Activity] apps skipped: {e}")
+        return []
+    out: List[Dict[str, Any]] = []
+    for a in al:
+        word = f"#{a['no']}" if a.get("no") else a["id"]
+        inner: List[Dict[str, Any]] = [{"t": "switch", "label": "사용", "on": bool(a["on"]),
+                                         "act": {"action": "mod.toggle", "args": {"module": word}}}]
+        _miss = app_host.last_miss(channel_id, a["id"]) if a["on"] else ""
+        if _miss:   # [2026-10-24 C73 M7b] 지난 턴 신고 콜이 실패 · 시간 초과 — 그 턴 신고 없이 갔다
+            inner.append({"t": "text", "text": f"지난 턴 신고 못 받음 · {_miss}", "muted": True})
+        fold: List[Dict[str, Any]] = []
+        for st in (a.get("manifest") or {}).get("settings") or []:
+            act = {"action": "mod.set", "args": {"module": word, "key": st["key"]}}
+            v = (a.get("settings") or {}).get(st["key"])
+            if st["kind"] == "switch":
+                fold.append({"t": "switch", "label": st["label"], "on": bool(v), "act": act})
+            else:
+                fold.append({"t": "select", "label": st["label"], "value": str(v),
+                             "options": [[str(o[0]), str(o[1])] for o in st.get("options") or []], "act": act})
+        if fold:
+            inner.append({"t": "fold", "title": "설정", "parts": fold})
+        rws = [["훅", " · ".join(a.get("hooks") or []) or "없음"],
+               ["화면", {"parts": "부품", "html": "HTML", "none": "없음"}.get(a.get("screen"), "?")]]
+        _tags = app_host.tag_spec(a)
+        if _tags:
+            rws.append(["신고", f"{len(_tags)}종 · " + " · ".join(t["name"] for t in _tags[:8])
+                        + (" …" if len(_tags) > 8 else "")])
+        if a.get("version"):
+            rws.append(["판", a["version"]])
+        if not a.get("pkg"):
+            rws.append(["묶음", "파일을 못 읽어요 — 다시 올려 주세요"])
+        if a.get("errors"):
+            rws.append(["최근 오류", f"{a['errors']}회 · {a.get('last_error') or ''}"])
+        inner.append({"t": "fold", "title": "들어 있는 것", "parts": [{"t": "rows", "rows": rws}]})
+        out.append({"t": "card", "title": app_host.label_of(a), "icon": a.get("icon") or "layers",
+                    "chip": "" if a["on"] else "꺼짐", "parts": inner})
+    return out
+
+
 def view_edit(channel_id: str, uid: str) -> Dict[str, Any]:
     """[2026-10-23 C60 M2c] 고치기 탭 — 고칠 수 있는 값과 rev(지금 턴). 쓰기는 /api/act."""
     import activity_edit
@@ -480,6 +544,8 @@ def _register_screens() -> None:
     import module_frame as _mf
     _mf.add_screen("screen", _mf.Screen("status", "상태창", "activity", 10, view_status, renderer="status",
                                         edit=("pc", "values", "list:declared", "world")))
+    # [2026-10-25 C74 판4 W3] 진행 중 — 주인 = goal 모듈(core, 늘 켬). 보기만(edit 없음 — 고치기는 OOC, 판정 9).
+    _mf.add_screen("goal", _mf.Screen("motion", "진행 중", "orbit", 12, view_motion, renderer="parts"))
     _mf.add_screen("screen", _mf.Screen("archive", "보관함", "archive", 20, view_archive, renderer="archive",
                                         edit=("list:builtin",)))
     _mf.add_screen("wiki", _mf.Screen("people", "인물", "users", 30, view_people, renderer="people",
@@ -512,7 +578,13 @@ def screens_on(channel_id: str) -> list:
     토글 없는 모듈(상태창 · 위키 · 출력룰)은 늘 켬(module_frame.is_on)."""
     import module_frame as _mf
     owner = {s.tab: m for m in _mf.REGISTRY.values() for s in m.screens}
-    return [s for s in _mf.screens() if owner.get(s.tab) is None or _mf.is_on(owner[s.tab], channel_id)]
+    out = [s for s in _mf.screens() if owner.get(s.tab) is None or _mf.is_on(owner[s.tab], channel_id)]
+    try:   # [2026-10-23 C73 M7a] 켜진 코드 앱 — 채널마다 다른 확장 타일(kind extension · tab app:<id>)
+        import app_host
+        out += app_host.screens_for(channel_id)
+    except Exception as e:
+        logger.debug(f"[Activity] app screens skipped: {e}")
+    return out
 
 
 async def handle_tabs(request: web.Request) -> web.Response:
@@ -636,7 +708,18 @@ async def handle_act(request: web.Request) -> web.Response:
 
 async def handle_view(request: web.Request) -> web.Response:
     uid, channel_id = _auth(request)
-    fn = _view_fn(request.match_info.get("tab", ""))
+    tab = request.match_info.get("tab", "")
+    if tab.startswith("app:"):   # [2026-10-23 C73 M7a] 코드 앱 화면 — Lua 를 부르니 비동기(app_host.view)
+        import app_host
+        app_id = app_host.app_id_of_tab(tab)
+        if not app_id or app_host.get_app(channel_id, app_id) is None:
+            raise web.HTTPNotFound()
+        try:
+            return _json(await app_host.view(channel_id, uid, app_id))
+        except Exception as e:
+            logger.warning(f"[Activity] app view {tab} 실패: {e}")
+            return _json({"error": "internal"}, 500)
+    fn = _view_fn(tab)
     if fn is None:
         raise web.HTTPNotFound()
     try:

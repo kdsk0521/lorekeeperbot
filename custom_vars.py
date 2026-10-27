@@ -22,7 +22,7 @@ v1 범위(스펙 §7 Phase 2 — 2026-08-18. **형식이 풍부해진다**):
   전 타입 += **format**(`{v} 골드` 값-표시 분리. 표시 계층에만 적용 — 저장은 여전히 수치)
   스코프 += **npc**(source∈{lore,manual} 인물만 — npc_manager.FROZEN_SOURCES 재사용.
                    값 저장은 변수당 {인물: 값})
-  표시   += **헤더 자리표시자**(`[마나]` 치환 — status_panel._header_template_row) [09-07 P9 이사]
+  표시   += **헤더 자리표시자**(`[마나]` 치환 — status_panel._template_rows) [09-07 P9 이사]
   ★새 매턴 콜 0(전부 기존 추출 콜 섹션 확장), env 레버 0(킬스위치는 여전히 하나).
 
   100% 도달 항목의 이동(연구중 → 완성품)은 **자동화하지 않는다** — rule 자연어와 산문의 몫.
@@ -486,7 +486,7 @@ RULES_TEXT = (
     "  `표시 항상`(파일이면 \"늘 보이게\")이면 추적도 저절로 항상입니다.\n"
     "  이미 있는 변수는 `!출력룰 수정 변수 호감 | 추적 항상` 처럼 그 칸만 적어 켭니다(다른 칸은 그대로).\n"
     "**방향** — `단조`(=`오름만`)면 모델의 내림 신고를, `내림만`이면 오름 신고를 버립니다(게이지·카운터·단계형, OOC 정정은 됩니다).\n"
-    "**헤더** — `!출력룰 추가 헤더 잔고 [빚] / 평판 [평판]` 로 상단 줄에 값을 꽂습니다.\n"
+    "**헤더** — `!출력룰 추가 헤더 잔고 [빚] / 평판 [평판]` 로 턴 상태창 세계 칸 맨 앞 줄에 값을 꽂습니다.\n"
     "**남은·퍼센트** — `[평판.남은]`(끝까지 얼마)·`[평판.퍼센트]`(얼마나 왔나)를 표시 줄에 쓸 수 있습니다.\n"
     "  끝이 없는 값(카운터)에는 남은 것도 없어 빈칸이 됩니다. 레코드 목록은 `[화분/양파/기한.남은]`.\n"
     "**날** — `날`은 코드가 세는 **누적 날짜**입니다(`일`은 달 안 날짜라 달을 넘으면 되감깁니다).\n"
@@ -497,6 +497,51 @@ RULES_TEXT = (
     "\n**소지품** — PC가 들고 다니는 물건은 코드가 심어 둔 기본 목록 `소지품` 하나에 삽니다. "
     "지울 수 없고 규칙·항목 상한·표시형식만 고칩니다. `인벤토리`로 선언해도 소지품이 고쳐집니다."
 ) % (NAME_MAX, RULE_MAX, MAX_VARS, MAX_STAGES, STAGE_NAME_MAX, TEXT_MAX, MAX_LIST_ITEMS)
+
+# [2026-10-25 C77 A-5 · Q14] 검증 실패 안내 = 기본 규칙 + **걸린 칸 설명만**. 옛꼴은 규칙 요지 전문(약 1,800자)을
+#   실패마다 통째로 붙여 디스코드 메시지가 쪼개졌다. 전문은 사용법 · 자연어 변환 실패 · `!출력룰 도움 변수` 에 그대로.
+_RULE_HINT_KEYS = (
+    (("표시 형식", "{v}"), "**표시 형식**"),
+    (("캡",), "**비대칭 캡**"),
+    (("추적",), "**추적 항상**"),
+    (("단조", "오름만", "내림만", "방향"), "**방향**"),
+    (("헤더",), "**헤더**"),
+    (("남은", "퍼센트"), "**남은·퍼센트**"),
+    (("단계",), "**단계형(enum)**"),
+    (("문자열", "text"), "**문자열(text)**"),
+    (("목록", "항목", "list"), "**목록형(list)**"),
+    (("시스템", "활력", "평형"), "**시스템 변수**"),
+    (("소지품", "인벤토리"), "**소지품**"),
+)
+RULES_HINT_FOOTER = "(전체 규칙: `!출력룰 도움 변수`)"
+
+
+def rules_hint(msg: str = "") -> str:
+    """에러 메시지 `msg` 에 맞는 규칙 조각 — 첫 블록(선언 기본 규칙) + 걸린 칸의 항목 줄(바로 밑 들여쓴 줄 · 예시 줄 포함)."""
+    blocks = RULES_TEXT.split("\n\n")
+    out = [blocks[0]]
+    lines = RULES_TEXT.split("\n")
+    seen = set()
+    _m = str(msg or "").replace("단계 목록", "단계")     # [C77 검토] enum 말("단계 목록")이 목록형 절까지 끌고 오지 않게
+    for keys, label in _RULE_HINT_KEYS:
+        if label in seen or not any(k in _m for k in keys):
+            continue
+        seen.add(label)
+        for i, ln in enumerate(lines):
+            if ln.startswith(label):
+                part = [ln]
+                for nxt in lines[i + 1:]:
+                    if not nxt.strip() or nxt.startswith("**"):
+                        break
+                    part.append(nxt)
+                out.append("\n".join(part))
+                break
+    out.append(RULES_HINT_FOOTER)
+    return "\n\n".join(out)
+
+
+def _with_rules(msg: str) -> str:
+    return f"{msg}\n\n{rules_hint(msg)}"
 
 
 def is_enabled() -> bool:
@@ -1663,7 +1708,7 @@ def _validate_declaration_core(
     ★거부는 전부 여기 한 곳. 파이프 파서와 자연어 변환 콜이 같은 관문을 지난다.
     """
     def _fail(msg: str) -> Tuple[None, str]:
-        return None, f"{msg}\n\n{RULES_TEXT}"
+        return None, _with_rules(msg)
 
     if not isinstance(spec, dict):
         return _fail("변수 선언을 읽지 못했습니다.")
@@ -2010,9 +2055,9 @@ def _validate_system_override(name: str, spec: Any,
 
     if fmt:
         if "{v}" not in fmt:
-            return None, f"표시 형식에 값 자리 `{{v}}` 가 없습니다: `{fmt}`\n\n{RULES_TEXT}"
+            return None, _with_rules(f"표시 형식에 값 자리 `{{v}}` 가 없습니다: `{fmt}`")
         if len(fmt) > FORMAT_MAX:
-            return None, f"표시 형식이 깁니다 ({len(fmt)}자 > {FORMAT_MAX}자).\n\n{RULES_TEXT}"
+            return None, _with_rules(f"표시 형식이 깁니다 ({len(fmt)}자 > {FORMAT_MAX}자).")
         out["format"] = fmt
 
     for key, label in (("max_gain", "상승"), ("max_loss", "하강")):
@@ -2022,9 +2067,9 @@ def _validate_system_override(name: str, spec: Any,
         try:
             n = int(v)
         except (TypeError, ValueError):
-            return None, f"{label} 캡은 정수여야 합니다: `{v}`\n\n{RULES_TEXT}"
+            return None, _with_rules(f"{label} 캡은 정수여야 합니다: `{v}`")
         if n <= 0 or n > DELTA_CAP_MAX:
-            return None, f"{label} 캡이 범위를 벗어났습니다: `{n}` (1 이상).\n\n{RULES_TEXT}"
+            return None, _with_rules(f"{label} 캡이 범위를 벗어났습니다: `{n}` (1 이상).")
         out[key] = n
 
     return out, ""
@@ -2044,9 +2089,9 @@ def _validate_builtin_override(name: str, spec: Any,
 
     if fmt:
         if "{v}" not in fmt:
-            return None, f"표시 형식에 값 자리 `{{v}}` 가 없습니다: `{fmt}`\n\n{RULES_TEXT}"
+            return None, _with_rules(f"표시 형식에 값 자리 `{{v}}` 가 없습니다: `{fmt}`")
         if len(fmt) > FORMAT_MAX:
-            return None, f"표시 형식이 깁니다 ({len(fmt)}자 > {FORMAT_MAX}자).\n\n{RULES_TEXT}"
+            return None, _with_rules(f"표시 형식이 깁니다 ({len(fmt)}자 > {FORMAT_MAX}자).")
         out["format"] = fmt
 
     raw_max = spec.get("max")
@@ -2054,9 +2099,9 @@ def _validate_builtin_override(name: str, spec: Any,
         try:
             n = int(raw_max)
         except (TypeError, ValueError):
-            return None, f"항목 상한은 정수여야 합니다: `{raw_max}`\n\n{RULES_TEXT}"
+            return None, _with_rules(f"항목 상한은 정수여야 합니다: `{raw_max}`")
         if not 1 <= n <= LIST_MAX_HARD:
-            return None, f"항목 상한이 범위를 벗어났습니다: `{n}` (1~{LIST_MAX_HARD}).\n\n{RULES_TEXT}"
+            return None, _with_rules(f"항목 상한이 범위를 벗어났습니다: `{n}` (1~{LIST_MAX_HARD}).")
         out["max"] = n
 
     return out, ""

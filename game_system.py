@@ -48,14 +48,9 @@ remove_item_from_sojipin = game_character.remove_item_from_sojipin
 get_notebook_data = game_character.get_notebook_data
 update_notebook_data = game_character.update_notebook_data
 apply_llm_memos = game_character.apply_llm_memos
-add_quest = game_character.add_quest
-complete_quest = game_character.complete_quest
-remove_quest = game_character.remove_quest
-advance_quest_progress = game_character.advance_quest_progress
-get_quest_progress_bar = game_character.get_quest_progress_bar
+# [2026-10-24 C74 판2] add/complete/remove/advance_quest · get_quest_progress_bar 삭제 — 목표 쓰기는 thread_ledger.
 get_active_quests_text = game_character.get_active_quests_text
 get_status_message = game_character.get_status_message
-get_objective_context = game_character.get_objective_context
 update_status_effect = game_character.update_status_effect
 
 # Memo

@@ -219,10 +219,9 @@ class ResponseContext:
     lore_txt: str = ""
     rule_txt: str = ""
     world_ctx: str = ""
-    obj_ctx: str = ""
     hist_text: str = ""
     notebook_txt: str = ""
-    quest_txt: str = "" 
+    # [2026-10-24 C74 W1-9] quest_txt 지움 — 쓰기만 하고 읽는 곳 0(죽은 쓰기).
     # [Anti-Gravity] Sliced History List
     smart_history: List[Dict] = field(default_factory=list)
 
@@ -291,7 +290,7 @@ async def gather_context(ctx: ResponseContext) -> ResponseContext:
     # une_facade offscreen_candidates(서사 콜 ABSENT CAST)로 재배선.
     # 상세: 파티쳇수정/memory_lore/lore_rules_path_audit_2026-07-14.md §3
     ctx.world_ctx = game_system.get_world_context(channel_id)
-    ctx.obj_ctx = game_system.get_objective_context(channel_id, ctx.user_id)
+    # [2026-10-25 C74 판4] ctx.obj_ctx(Slot 11 목표 블록) 은퇴 — 목표는 Slot 15 `<In_Motion>` 이 장부에서 바로 읽는다.
     ctx.notebook_txt = game_system.get_notebook_text(channel_id, ctx.user_id)
 
     # [V10 Sprint 4] 막간 장부 — 게으른 재구성 (턴 진입 1회, 코드만, 콜 0).
@@ -306,22 +305,12 @@ async def gather_context(ctx: ResponseContext) -> ResponseContext:
     except Exception as _e_interim:
         logger.debug(f"[Interim] skip: {_e_interim}")
 
-    # [2026-09-25 스레드 장부] Slot 29 <Standing_Threads> — 턴 진입 1회, 코드만(콜 0). 0개면 "".
-    ctx.thread_ledger_block = ""
-    try:
-        import thread_ledger
-        ctx.thread_ledger_block = thread_ledger.build_render_block(channel_id) or ""
-    except Exception as _e_tl:
-        logger.debug(f"[Thread] render skip: {_e_tl}")
+    # [2026-10-25 C74 판4] Slot 29 <Standing_Threads>(ctx.thread_ledger_block) 은퇴 — 약속 · 사안은 Slot 15 `<In_Motion>`.
 
     # [2026-09-16 3차] passives_txt 삭제 — 읽는 곳 0(조각은 Slot 6·theoria 앵커로 간다).
 
     # 히스토리 (스마트 컨텍스트 윈도우)
     ctx.hist_text = _build_smart_history(ctx)
-
-    # 활성 퀘스트
-    active_quests = game_character.get_active_quests(channel_id)
-    ctx.quest_txt = " | ".join(active_quests) if active_quests else "None"
 
     # (NPC 시간 힌트·world_ctx의 rule_txt 병합 제거 — 위 경로 감사 주석 참조)
 
@@ -371,6 +360,23 @@ def _build_smart_history(ctx: ResponseContext) -> str:
     """스마트 컨텍스트 윈도우로 히스토리를 구성합니다."""
     import fermentation
     all_hist = ctx.domain_data.get('history', [])
+    # [2026-10-27 C86] 창 = 안 삭힌 원문 전부(도메인 history 엔 안 삭힌 것만 남는다) — 창과 발효를 맞물려 공백 0.
+    #   안전 상한(글자)만 오래된 것부터 뺀다(F1 실패가 이어져 history 가 불어날 때). 끄면 옛 12 창.
+    try:
+        import config as _cfg_c86
+        if getattr(_cfg_c86, "FERMENT_TRIGGER_V2", False):
+            _cap = int(getattr(_cfg_c86, "RENDER_WINDOW_MAX_CHARS", 60000) or 0)
+            _hist = [h for h in all_hist if isinstance(h, dict)]
+            _floor = max(2, int(getattr(_cfg_c86, "UNFERMENTED_MIN", 12)))   # 최근 몫은 상한과 상관없이(옛 창도 늘 12)
+            if _cap > 0:
+                _tot = sum(len(str(h.get("content") or "")) for h in _hist)
+                while len(_hist) > _floor and _tot > _cap:
+                    _h0 = _hist.pop(0)
+                    _tot -= len(str(_h0.get("content") or ""))
+            ctx.smart_history = _hist
+            return "\n".join([f"{h.get('role', '')}: {h.get('content', '')}" for h in _hist])
+    except Exception as _e_c86:
+        logger.debug(f"[Context] C86 window skip: {_e_c86}")
     target_tokens = 10000  # [Cost-Diet] 6턴(12메시지) 수준. 장기 맥락은 fermented_history가 커버.
     default_lines = 12  # 6턴 = 12메시지. 분석용(RECENT_HISTORY_FOR_ANALYSIS=30)과 독립.
     slice_idx = -default_lines

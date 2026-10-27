@@ -157,7 +157,7 @@ async def _auto_backup_loop():
 @client_discord.event
 async def on_ready():
     logging.info(f'Logged in as {client_discord.user}')
-    await client_discord.change_presence(activity=discord.Game(name="!help | TRPG"))
+    await client_discord.change_presence(activity=discord.Game(name="!도움 | TRPG"))
     client_discord.loop.create_task(_auto_backup_loop())
 
     # [2026-10-23 C64 M5] persistent view 셋(TurnView · ArchiveView · 정정 되묻기)은 등록부에서 — 순서·로그 줄은 옛 그대로.

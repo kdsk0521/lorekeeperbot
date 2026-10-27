@@ -30,6 +30,9 @@ import cognition
 import persona
 import fermentation
 import npc_manager
+
+# [2026-10-27 C82] 성장발효 연속 실패 셈 {(채널, 페이지, 삭힐 마지막 턴): 횟수} — 프로세스 메모리(재시작이면 처음부터).
+_GROWTH_FAILS: Dict[Tuple[str, str, int], int] = {}
 import input_handler
 # [2026-09-07 P9] 매턴 하단 상태 임베드 — 세 send 경로가 모두 쓴다(구 헤더 접합의 자리).
 import status_panel
@@ -332,6 +335,11 @@ class OrchestrationService:
             if _loc_clean:
                 current_location = _loc_clean
         if current_location:
+            # [2026-10-25 C77 E-4 · Q34] 덮기 전에 직전 PC 자리를 읽어 둔다 — 새로 선 자동 감지 장소를 그 옆에 잇는 재료.
+            try:
+                _prev_loc = str(domain_manager.get_current_location(channel_id) or "").strip()
+            except Exception:
+                _prev_loc = ""
             domain_manager.set_current_location(channel_id, current_location)
             # Tier 2: 새 위치 자동 등록 (world_tree에 없으면 추가)
             # [2026-09-02 R1 계층 생성] 스펙 §2.5 ⓑ / §4.
@@ -364,6 +372,7 @@ class OrchestrationService:
                 if _ltype not in ("region", "area", "room"):
                     _ltype = ""
                 _lprops = {"risk": location_risk or "Low", "tags": ["auto_detected"]}
+                _created_cur = False
                 if _lpath:
                     _prev_name = ""
                     for _i, _pname in enumerate(_lpath):
@@ -384,6 +393,8 @@ class OrchestrationService:
                                 # 아무도 모른다 — 관측 한 줄(수리 아님).
                                 logger.info("[presence-check] path node '%s' not created: %s (path=%s)",
                                             _pname, _ar, _lpath)
+                            elif _is_last:
+                                _created_cur = True
                             _nid = world_tree.resolve_node_id(channel_id, _pname, allow_token=False)
                         elif _prev_name:
                             _nd = world_tree.get_all_nodes(channel_id).get(_nid) or {}
@@ -402,15 +413,29 @@ class OrchestrationService:
                     _exist = world_tree.get_node(channel_id, current_location)
                     _pname_fb = world_tree.infer_parent_by_prefix(channel_id, current_location)
                     if not _exist:
-                        world_tree.add_node(
+                        _created_cur = world_tree.add_node(
                             channel_id, current_location,
                             node_type=(_ltype or "area"), parent_id=_pname_fb,
                             properties=_lprops,
-                        )
+                        ) == "created"
                     elif _pname_fb and not _exist.get("parent_id"):
                         world_tree.update_node(
                             channel_id, _exist.get("name", current_location), parent_id=_pname_fb,
                         )
+                # [2026-10-25 C77 E-4 · Q34] 방금 선 자동 감지 장소가 **뿌리**(부모 못 찾음)이고 region 이 아니면 직전 PC 자리와
+                #   1홉 간선으로 잇는다(레티어스 10-25 "간선"). 병: 진료소 문밖 골목이 뿌리에 붙어 진료소에서 6홉 → 방금 나온 우물이
+                #   렌더 문턱 밖으로 숨었다. 나무 모양 · 위키 부모 승격은 안 건드린다(간선만 — 우물 거리 `hop_distances_in` 은 간선을 센다).
+                if _created_cur and _prev_loc and _ltype != "region":
+                    _nodes_e4 = world_tree.get_all_nodes(channel_id) or {}
+                    _cid = world_tree.resolve_node_id(channel_id, current_location, allow_token=False)
+                    _pid = world_tree.resolve_node_id(channel_id, _prev_loc, allow_token=False)
+                    if _cid and _pid and _cid != _pid and not (_nodes_e4.get(_cid) or {}).get("parent_id"):
+                        _cr = world_tree.add_connection(
+                            channel_id, (_nodes_e4.get(_pid) or {}).get("name", _prev_loc),
+                            (_nodes_e4.get(_cid) or {}).get("name", current_location),
+                            description="자동 감지 — 바로 옆에서 걸어 나옴")
+                        logger.info("[presence-check] auto place '%s' linked to previous '%s': %s",
+                                    current_location, _prev_loc, _cr)
             except Exception:
                 pass
             # [2026-09-02 R4] ★여기 있던 presence 쓰기를 **제거**했다. 스펙 §1.3 / §6 R4.
@@ -523,7 +548,8 @@ class OrchestrationService:
 
             # Knowledge Propagation: 같은 장면 NPC 간 지식 전파 ([07-19] PC 혼입 가드 동반)
             scene_npcs = [n for n in new_knowledge.keys() if not domain_manager.is_pc_name(n, _pc_masks_k)]
-            if len(scene_npcs) >= 2:
+            # [2026-10-27 C85 D2] 전파는 손잡이 KNOWLEDGE_PROPAGATE(기본 끔) — 원문에 없는 "말해 줬다"를 지어내서.
+            if len(scene_npcs) >= 2 and getattr(config, "KNOWLEDGE_PROPAGATE", True):
                 prop_count = domain_manager.propagate_npc_knowledge(channel_id, scene_npcs)
                 if prop_count:
                     logger.info(f"[Knowledge Propagation] {prop_count} facts shared among {scene_npcs}")
@@ -829,9 +855,13 @@ class OrchestrationService:
                 after = status_panel.turn_view_data(channel_id, message_id=getattr(target, "id", 0) or 0)
             except Exception as e:
                 logger.debug(f"[Panel] refresh build skipped: {e}")
+                import turn_timing as _tt_s
+                _tt_s.settled(channel_id, getattr(target, "id", None))
                 return
+            import turn_timing as _tt_s   # [2026-10-24 C74 W0-4] 산문 → 상태창 · 출력물 정리 끝 = 이 재그림이 끝난 때
             if after == before_data:
                 status_panel.mark_refreshed(channel_id, getattr(target, "id", 0))   # [C69 A2b]
+                _tt_s.settled(channel_id, getattr(target, "id", None), edited=False)
                 return                      # 이번 턴 배경이 값을 안 건드렸다 = edit 0
             try:
                 await target.edit(embeds=status_panel.turn_view_embeds(channel_id, data=after))
@@ -840,6 +870,7 @@ class OrchestrationService:
                 logger.info("[Panel] edit fail: %s", e)
             # [C69 A2b] 재그림이 돌았다 — 이 뒤에 붙는 도착물은 attach_button 이 임베드까지 고친다.
             status_panel.mark_refreshed(channel_id, getattr(target, "id", 0))
+            _tt_s.settled(channel_id, getattr(target, "id", None), edited=True)
 
         try:
             await enqueue_background_task(
@@ -1047,6 +1078,14 @@ class OrchestrationService:
             _new_indiv = bool(_ch.get("new_individual"))
             _existing = npc_manager.get_npc(channel_id, _npc_name)
             if not _existing:
+                # [2026-10-27 C84] 잠긴 모습 · 등장 전 이름은 세션 NPC 로 세우지 않는다(조건 전에 산문에 나와도 기록은 비운다).
+                try:
+                    import npc_forms as _nf_rp
+                    if _nf_rp.blocks_new_key(channel_id, _npc_name):
+                        logger.info(f"[Form] 잠긴 이름 — 세션 NPC 안 세움: {_npc_name}")
+                        continue
+                except Exception:
+                    pass
                 # 원문(description) 없이 태어난다 = 세션 NPC(파생 source). 첫 관찰은 grow_sheet가 Observed로.
                 npc_manager.update_npc(channel_id, _npc_name, {
                     "status": "active",
@@ -1140,6 +1179,13 @@ class OrchestrationService:
         if not _lb:
             return False
         try:
+            import npc_forms as _nf_pa   # [2026-10-27 C84] 잠긴 모습 이름을 남의 별칭으로 올리면 그 모습이 영영 못 선다
+            if _nf_pa.is_reserved(channel_id, _lb):
+                logger.info(f"[Form] 잠긴 이름 — 별칭 승격 안 함: '{_lb}' → {key}")
+                return False
+        except Exception:
+            pass
+        try:
             _owner = domain_manager._find_npc_key(npcs_now, _lb)
             if _owner and _owner != key:
                 logger.info(f"[Identity] 별칭 승격 보류(충돌): '{_lb}' → 이미 {_owner}")
@@ -1205,13 +1251,15 @@ class OrchestrationService:
             lines.append("")
         return "\n".join(lines[:2] + [str(line or "").strip()] + lines[3:])
 
-    async def grow_sheet(self, channel_id, entity, observation=None, *, turn=None) -> bool:
+    async def grow_sheet(self, channel_id, entity, observation=None, *, turn=None, condense: bool = True) -> bool:
         """[2026-09-16 시트 2차 §9] 성장 관문 하나 — PC·NPC 공통.
 
         entity = ("pc", uid) | ("npc", name). 관찰은 인물 페이지 play 절 `Observed`에
         `append_play_item`(중복 = `_norm_quote` 대조). 직전 정리 뒤 250자 이상 자랐으면 heavy 정리 1콜
         (lore 절 전문 + Observed + 로어 접지) → `write_play_section`(CAS, reason="grow")로 **Observed만** 덮는다.
         lore 절 무접촉, 동결 판정 없음, 저장 캡 없음(길이는 정리가 관리). 마커 = 페이지 built_len.
+        [2026-10-24 C74 W4-1b] condense=False = 덧붙이기만(동기) — heavy 정리는 기억 차선 꼬리
+        (shared_extract.bg_narrative_tail)가 같은 함수를 관찰 없이 다시 불러 한다. 임계 판정은 그때 상태로.
         Returns: 정리 콜을 돌려 반영했으면 True.
         """
         import wiki_store
@@ -1265,6 +1313,8 @@ class OrchestrationService:
                                              src_turn=turn, turn=turn, reason="observe")
             if not _r.get("ok"):
                 logger.info(f"[Sheet Grow] 관찰 착지 거부: {name} ({_r.get('reason')})")
+        if not condense:
+            return False
         body, h = wiki_store.get_play_body(channel_id, pid, "Observed")
         built = wiki_store.get_built_len(channel_id, pid)
         _thr = 250   # §7-14 공통 임계(NPC 값 계승)
@@ -1301,51 +1351,172 @@ class OrchestrationService:
             if not res.get("ok"):
                 logger.info(f"[Sheet Grow] 정리 반영 거부: {name} ({res.get('reason')})")
                 return False
-            wiki_store.set_built_len(channel_id, pid, len(new_body))
-            if _adopt:
-                _mem = domain_manager.get_ai_memory(channel_id, key) or {}
-                _merged, _st = game_character.merge_fragments(_mem.get("passives", []), _adopt, "play")
-                domain_manager.update_ai_memory(channel_id, key, {"passives": _merged})
-                game_character.FRAGMENT_STATS["adopted"] += _st["added"]
-                game_character.FRAGMENT_STATS["replaced"] += _st["replaced"]
-                logger.info(f"[Fragment] {name}: +{_st['added']} ~{_st['replaced']}")
-            if kind == "npc":
-                _cur = npc_manager.get_npc(channel_id, name) or {}
-                _m = dict(_cur)
-                if out.get("high_concept"):
-                    _m["high_concept"] = out["high_concept"]
-                if out.get("trouble"):
-                    _m["trouble"] = out["trouble"]
-                _asp = out.get("aspects")
-                if isinstance(_asp, list) and _asp:
-                    _m["aspects"] = [str(a).strip() for a in _asp if a and str(a).strip()][:6]
-                if _m != _cur:
-                    npc_manager.update_npc(channel_id, name, _m)
-                # [2026-09-22 voice_seed §J] 시드 시트 자기 수정 — 절 둘만, 한 칸씩.
-                #   Core Traits 는 **셋째 줄만** 갈린다(1·2행 = 기전 두 줄 = canon, 바이트 보존).
-                #   Aside 는 통째 교체. dict 키 순증 0 — 저장은 페이지 lore 절이다.
-                if seeded:
-                    _seam_new = str(out.get("trait_seam") or "").strip()
-                    _aside_new = str(out.get("aside") or "").strip()
-                    if _seam_new:
-                        wiki_store.edit_lore_section(
-                            channel_id, pid, "Core Traits",
-                            OrchestrationService._replace_line3(lore_secs.get("Core Traits") or "",
-                                                                _seam_new),
-                            turn=turn)
-                    if _aside_new:
-                        wiki_store.edit_lore_section(channel_id, pid, "Aside", _aside_new, turn=turn)
-                    if _seam_new or _aside_new:
-                        logger.info(f"[Seed] 증류 반영: {name} "
-                                    f"(seam={'○' if _seam_new else '－'} aside={'○' if _aside_new else '－'})")
+            OrchestrationService._condense_post(channel_id, kind, key, name, pid, out, new_body, seeded, lore_secs, turn, _adopt)
             logger.info(f"[Sheet Grow] {kind} {name}: Observed 정리 {len(body)}→{len(new_body)}자")
             return True
         except Exception as _e_g:
             logger.warning(f"[Sheet Grow] 정리 실패: {name}: {_e_g}")
             return False
 
+    async def grow_page(self, channel_id, due) -> bool:
+        """[2026-10-27 C82] 성장발효 — 페이지 하나(인물 · 장소 · 세력)를 성장 도장 뒤 원문 턴으로 키운다.
+
+        due = memory_index.pages_due 한 줄. 콜 = cognition.grow_play_sections(옛 heavy 정리 자리를 넓힌 것) →
+        wiki_store.apply_growth(인용 게이트 · 정정 가드 · hash · 사유 growth) → 인물이면 옛 정리 뒤 몫(_condense_post).
+        성공 = 성장 도장(growth_log, 삭힌 마지막 턴). 실패 · hash 충돌은 도장을 안 넘겨 다음 꼬리에 다시 —
+        같은 범위가 GROWTH_MAX_FAIL 번 연속 실패하면 도장만 넘긴다(돈 드는 콜이 같은 실패를 끝없이 되풀이하지 않게)."""
+        import wiki_store
+        import memory_index
+        import sqlite_store
+        pid = str(due.get("page_id") or "")
+        kind = str(due.get("kind") or "")
+        name = str(due.get("name") or "")
+        turns = due.get("turns") or []
+        if not pid or not turns or not getattr(self, "client", None):
+            return False
+        upto = max(int(t.get("turn") or 0) for t in turns)
+        # 실패 셈은 범위의 **시작**(지금 도장)에 묶는다 — 끝(upto)은 그 페이지가 또 나올 때마다 밀려 셈이 영영 안 찬다.
+        fkey = (str(channel_id), pid, int(due.get("mark") or 0))
+        # 쓰기 턴 = 지금 턴(`!다시` 되감기가 쓰기 턴으로 본다 — 도장 행은 워터마크로 지워지니 둘이 같은 턴에 묶여야 한다).
+        #   upto 는 도장 · 날짜 도장에만 쓴다.
+        try:
+            now_t = int((domain_manager.get_world_state(channel_id) or {}).get("turn_index", 0) or 0) or upto
+        except Exception:
+            now_t = upto
+        page = wiki_store.get_page(channel_id, pid) or {}
+        aliases = [a for a in (page.get("aliases") or []) if a]
+        ekind, key, seeded, seen_labels = kind, None, False, {}
+        if kind == "character":
+            if due.get("is_pc"):
+                ekind, key = "pc", due.get("owner_uid")
+            else:
+                ekind, key = "npc", name
+                _npc = npc_manager.get_npc(channel_id, name) or {}
+                aliases = list(dict.fromkeys(aliases + [a for a in (_npc.get("aliases") or []) if isinstance(a, str) and a]))
+                seen_labels = _npc.get("lore_seen") or {}
+                try:
+                    seeded = (wiki_store.page_source(channel_id, pid) == wiki_store.SEED_SOURCE)
+                except Exception:
+                    seeded = False
+        raw, srcs = memory_index.growth_raw_text(channel_id, turns, [name] + aliases,
+                                                 int(getattr(config, "GROWTH_INPUT_CHARS", 12000) or 12000))
+        if not raw.strip():
+            # 원문 다리가 없다(색인 구간 빔 · 행 트림) — 같은 턴을 다시 세지 않게 도장만 넘긴다(콜 0).
+            sqlite_store.append_growth_log(channel_id, pid, upto, now_t)
+            return False
+        body, h = wiki_store.get_play_body(channel_id, pid, "Observed")
+        item_secs = tuple(s for s in wiki_store._play_enum(kind) if wiki_store._is_item_section(s))
+        existing_full = {s: wiki_store.get_play_body(channel_id, pid, s)[0] for s in item_secs}
+        # 프롬프트엔 절마다 최근 GROWTH_ITEMS_SHOWN 줄만(History 는 끝없이 자란다) — 중복 판정은 코드가 전체로 한다.
+        _shown = max(1, int(getattr(config, "GROWTH_ITEMS_SHOWN", 40) or 40))
+        existing = {}
+        for _s, _b in existing_full.items():
+            _ls = [ln for ln in str(_b or "").splitlines() if ln.strip()]
+            existing[_s] = ("\n".join((["(앞 %d줄 생략)" % (len(_ls) - _shown)] if len(_ls) > _shown else []) + _ls[-_shown:])
+                            if _ls else "")
+        lore_secs = wiki_store.get_lore_sections(channel_id, pid)
+        lore_text = "\n\n".join(f"### {k}\n{v}" for k, v in lore_secs.items())
+        try:
+            grounding = await npc_manager.build_distill_grounding(
+                channel_id, name, aliases=aliases, observations=body, seen_labels=seen_labels, client=self.client)
+        except Exception:
+            grounding = ""
+        try:
+            import corrections as _corr_g
+            corr = _corr_g.block_for(channel_id, raw + "\n" + body)
+        except Exception:
+            corr = ""
+        frag_names = ""
+        if ekind == "pc":
+            _frs_now = (domain_manager.get_ai_memory(channel_id, key) or {}).get("passives") or []
+            frag_names = ", ".join(str(f.get("name")) for f in _frs_now if isinstance(f, dict) and f.get("name"))
+        out = await cognition.grow_play_sections(
+            self.client, name, kind, lore_text, body, raw, existing_items=existing, item_sections=item_secs,
+            grounding=grounding, corrections_block=corr, want_aspects=(ekind == "npc"), want_fragments=(ekind == "pc"),
+            fragments_text=frag_names, seeded=seeded)
+        new_body = str((out or {}).get("observed") or "").strip()
+        _adopt = []
+        if out and ekind == "pc" and new_body:
+            new_body, _adopt = OrchestrationService._take_fragments(channel_id, key, new_body, out.get("fragments"))
+        turn_meta = {}
+        for tr in turns:
+            _gts = [r.get("game_time") for r in (memory_index.raw_for_turn(channel_id, tr.get("turn"), row=tr) or [])
+                    if isinstance(r, dict) and isinstance(r.get("game_time"), dict)]
+            if _gts:
+                turn_meta[int(tr.get("turn") or 0)] = {"game_time": _gts[-1]}
+        # 인용 대조 원문 = 이번 턴들 + 지금 절 본문(예전 성장이 원문에서 옮긴 인용이 이번 창에 없다고 벗겨지지 않게)
+        _qsrc = list(srcs) + [body] + [b for b in existing_full.values() if b]
+        rc = (wiki_store.apply_growth(channel_id, pid, new_body, out.get("items"), _qsrc, now_t,
+                                      pre_observed=(body, h), turn_meta=turn_meta) if out else {})
+        if not out or rc.get("rej_hash"):
+            n = _GROWTH_FAILS.get(fkey, 0) + 1
+            _GROWTH_FAILS[fkey] = n
+            if n < int(getattr(config, "GROWTH_MAX_FAIL", 3) or 3):
+                logger.info(f"[Growth] {kind} {name}: {'콜 실패' if not out else 'hash 충돌'} {n} — 도장 그대로, 다음 꼬리에 다시")
+                return False
+            logger.warning(f"[Growth] {kind} {name}: {n}번 연속 실패 — T{upto} 까지 도장만 넘김")
+            _GROWTH_FAILS.pop(fkey, None)
+            sqlite_store.append_growth_log(channel_id, pid, upto, now_t)
+            return False
+        _GROWTH_FAILS.pop(fkey, None)
+        # 절은 이미 썼다 — 도장을 먼저 찍고(실패해도 같은 턴을 다시 읽어 줄을 겹쳐 쓰지 않게), 뒤 몫은 따로 감싼다.
+        if not sqlite_store.append_growth_log(channel_id, pid, upto, now_t):
+            logger.warning(f"[Growth] {kind} {name}: 도장 쓰기 실패 — 다음 성장이 같은 턴을 다시 읽을 수 있다")
+        if new_body and rc.get("observed") and ekind in ("pc", "npc"):
+            try:
+                OrchestrationService._condense_post(channel_id, ekind, key, name, pid, out, new_body, seeded,
+                                                    lore_secs, now_t, _adopt)
+            except Exception as _e_post:
+                logger.warning(f"[Growth] {kind} {name}: 정리 뒤 몫 skipped: {_e_post}")
+        logger.info(f"[Growth] {kind} {name}: 턴 {len(turns)}개(~T{upto}) → Observed {len(body)}→{len(new_body)}자 "
+                    f"· 항목 +{rc.get('items', 0)}")
+        return True
+
+    @staticmethod
+    def _condense_post(channel_id, kind, key, name, pid, out, new_body, seeded, lore_secs, turn, _adopt) -> None:
+        """[2026-10-27 C82] grow_sheet 정리 반영 뒤 몫(글자 그대로 옮김) — built_len · PC 조각 채택 · NPC 면모 · 시드 seam/aside.
+        grow_sheet(옛 250자 정리)와 grow_page(성장발효)가 같이 부른다."""
+        import wiki_store
+        wiki_store.set_built_len(channel_id, pid, len(new_body))
+        if _adopt:
+            _mem = domain_manager.get_ai_memory(channel_id, key) or {}
+            _merged, _st = game_character.merge_fragments(_mem.get("passives", []), _adopt, "play")
+            domain_manager.update_ai_memory(channel_id, key, {"passives": _merged})
+            game_character.FRAGMENT_STATS["adopted"] += _st["added"]
+            game_character.FRAGMENT_STATS["replaced"] += _st["replaced"]
+            logger.info(f"[Fragment] {name}: +{_st['added']} ~{_st['replaced']}")
+        if kind == "npc":
+            _cur = npc_manager.get_npc(channel_id, name) or {}
+            _m = dict(_cur)
+            if out.get("high_concept"):
+                _m["high_concept"] = out["high_concept"]
+            if out.get("trouble"):
+                _m["trouble"] = out["trouble"]
+            _asp = out.get("aspects")
+            if isinstance(_asp, list) and _asp:
+                _m["aspects"] = [str(a).strip() for a in _asp if a and str(a).strip()][:6]
+            if _m != _cur:
+                npc_manager.update_npc(channel_id, name, _m)
+            # [2026-09-22 voice_seed §J] 시드 시트 자기 수정 — 절 둘만, 한 칸씩.
+            #   Core Traits 는 **셋째 줄만** 갈린다(1·2행 = 기전 두 줄 = canon, 바이트 보존).
+            #   Aside 는 통째 교체. dict 키 순증 0 — 저장은 페이지 lore 절이다.
+            if seeded:
+                _seam_new = str(out.get("trait_seam") or "").strip()
+                _aside_new = str(out.get("aside") or "").strip()
+                if _seam_new:
+                    wiki_store.edit_lore_section(
+                        channel_id, pid, "Core Traits",
+                        OrchestrationService._replace_line3(lore_secs.get("Core Traits") or "",
+                                                            _seam_new),
+                        turn=turn)
+                if _aside_new:
+                    wiki_store.edit_lore_section(channel_id, pid, "Aside", _aside_new, turn=turn)
+                if _seam_new or _aside_new:
+                    logger.info(f"[Seed] 증류 반영: {name} "
+                                f"(seam={'○' if _seam_new else '－'} aside={'○' if _aside_new else '－'})")
+
     # ⚰ [2026-10-23 C63 M4] `_execute_background_extraction` → shared_extract(`_run_world_batch` 앞부분 + after_batch
-    #   구독자 다섯: quest·npc·world·narrative·presence). 몸은 글자 그대로, 블록마다 try(격리). 여기 남은 도우미
+    #   구독자 다섯: npc·world·goal(C74 판2 — 옛 quest)·narrative·presence). 몸은 글자 그대로, 블록마다 try(격리). 여기 남은 도우미
     #   (`grow_sheet`·`_npc_roster_pass`·`_advance_scene_time`·`_pc_names_for_extract`)는 구독자가 `rt.` 로 부른다.
 
 
@@ -1371,6 +1542,37 @@ class OrchestrationService:
                 IC 이중 잔존 + OOC 메타가 IC 기록에 영구 노출. 2026-07-02)
         """
         try:
+            # [2026-10-24 C74 W0] 턴 시계 — 단계 경계마다 mark, 끝에서 [Turn] 한 줄(동작 변화 0).
+            import turn_timing as _tt
+            _tt.begin(channel_id, "turn")
+            # [2026-10-24 C73 M7b] 앞 턴 코드 앱 신고 정산이 도는 중이면 끝날 때까지 잡는다(⏳, 상한 60초).
+            #   스냅숏 · 장부 접기 **앞** — 정산이 적는 행(앞 턴 소속)이 이 턴 워터마크 아래로 들어가야 이 턴 `!다시`가 안 지운다.
+            try:
+                import app_host as _ah_hold
+                await _ah_hold.hold_for_settlement(channel_id, message)
+            except Exception as _e_hold:
+                logger.debug(f"[AppTags] hold skip: {_e_hold}")
+            _tt.mark(channel_id, "settle")
+            # [2026-10-25 C77 C-2 · 갈래 가] 앞 턴 배경 작업이 아직 돌면 턴 컨텍스트 · 스냅샷 **앞**에서 기다린다(상한 RETRY_SNAPSHOT_BG_WAIT).
+            #   [검토] 자리는 `get_domain` · gather_context 앞 — 스냅샷만이 아니라 이 턴이 읽는 컨텍스트도 앞 턴 배경 결과를 본다.
+            #   병: 스냅샷 · 워터마크 앞에 배경 대기가 없어(배경 drain 은 Theoria 뒤 3초), 앞 턴 배경 결과가 스냅샷에 빠지고 그 행이
+            #   워터마크 위에 쌓였다 → 이 턴을 `!다시` 하면 **살아 있는 앞 턴**의 배경 결과가 복원 · 트림으로 사라졌다.
+            #   상한을 넘겨도 끝나지 않으면 이 턴 컨텍스트에 `snapshot_overlap` 을 남겨 `!다시` 가 거절한다(조용히 지우지 않는다).
+            _snap_overlap = False
+            try:
+                from background_task_queue import get_task_queue as _gtq_snap
+                _cap_w = float(getattr(config, "RETRY_SNAPSHOT_BG_WAIT", 15.0) or 0.0)
+                if _cap_w > 0:
+                    _t_w = time.perf_counter()
+                    _drained = await _gtq_snap().wait_for_channel(channel_id, timeout=_cap_w)
+                    _dt_w = time.perf_counter() - _t_w
+                    _snap_overlap = not _drained
+                    if _dt_w >= 0.05 or _snap_overlap:
+                        logger.info(f"[!다시] snapshot waited {_dt_w:.1f}s for previous-turn background "
+                                    f"(drained={_drained})")
+            except Exception as _e_bw:
+                logger.debug(f"[!다시] snapshot background wait skip: {_e_bw}")
+            _tt.mark(channel_id, "bgwait")      # 배경 대기 몫이 gather 로 안 섞이게
             user_id = str(message.author.id)
             user_input = user_input_override if user_input_override is not None else message.content
             
@@ -1401,6 +1603,7 @@ class OrchestrationService:
 
             # 1. Context Gathering
             ctx = await self.gather_context(ctx)
+            _tt.mark(channel_id, "gather")
 
             # 1.1 N3: Optional vector search for lore chunk ranking
             # [2026-08-17] 인라인 절차 → `vector_search.get_scene_relevant_chunks` 공용 진입점.
@@ -1420,6 +1623,7 @@ class OrchestrationService:
                     logger.debug(f"[VectorSearch] Ranked {len(_ranked)} chunks from {len(_lore_chunks)}")
             except Exception as _vs_err:
                 logger.debug(f"[VectorSearch] unavailable: {_vs_err}")
+            _tt.mark(channel_id, "chunks")
 
             # 1.5. NPC decision cooldown tick (매 턴 시작 시 1씩 감소)
             npc_manager.tick_all_cooldowns(channel_id)
@@ -1432,6 +1636,12 @@ class OrchestrationService:
             # [2026-08-12 !다시 유령 정리] SQLite 로그 워터마크 동봉 — 도메인(JSON)만 되돌아가고
             # append 로그(reader_log·dai_logs·emotion_log·…)는 무접촉이라 폐기 턴 행이 유령으로
             # 남았다. 여기서 max(id)를 찍어 두고 retry_last가 복원 직후 초과분을 트림한다.
+            # [2026-10-23 C73 M7a] 코드 앱 장부 접기 — 워터마크를 찍기 **앞**(키마다 마지막 행만). 앱이 없으면 no-op.
+            try:
+                import app_host as _ah_cp
+                _ah_cp.compact(channel_id)
+            except Exception as _e_cp:
+                logger.debug(f"[App] compact skip: {_e_cp}")
             try:
                 import sqlite_store as _ss_wm
                 _log_marks = _ss_wm.snapshot_log_watermarks(channel_id)
@@ -1460,10 +1670,18 @@ class OrchestrationService:
                 _snap_domain["fermented_history"] = domain_manager.get_fermented_history(channel_id)
                 _snap_dn, _snap_dd = domain_manager.get_deep_memory(channel_id)
                 _snap_domain["deep_memory"], _snap_domain["deep_memory_data"] = _snap_dn, _snap_dd
+            # [2026-10-25 C77 C-3 · Q16] 비밀 원장 사본 — 덮어쓰기 표라 워터마크로 못 되감는다(`restore_secrets` 가 통째로).
+            _snap_secrets = None
+            try:
+                import sqlite_store as _ss_sec
+                _snap_secrets = _ss_sec.read_secrets(channel_id, include_closed=True, strict=True)   # 실패 = None → 복원 건너뜀
+            except Exception as _e_sec:
+                logger.debug(f"[!다시] secret ledger snapshot skip: {_e_sec}")
             self._retry_snapshots[channel_id] = {
                 "_ts": time.time(),
                 "_data": _snap_domain,
                 "_marks": _log_marks,
+                "_secrets": _snap_secrets,
             }
             # 메모리 누수 방지: 최대 20개 채널 스냅샷만 유지
             if len(self._retry_snapshots) > 20:
@@ -1474,9 +1692,22 @@ class OrchestrationService:
                 import sqlite_store
                 _snap_data = self._retry_snapshots[channel_id]["_data"]
                 _snap_turn = (_snap_data.get("world_state", {}) or {}).get("turn_index", 0)
-                sqlite_store.save_retry_snapshot(channel_id, _snap_turn, _snap_data, marks=_log_marks)
+                _marks_disk = dict(_log_marks or {})
+                if isinstance(_snap_secrets, list):
+                    _marks_disk[sqlite_store.RETRY_SECRETS_KEY] = _snap_secrets   # [C77 C-3] 워터마크 칸 옆에(복원 도메인엔 안 섞임)
+                sqlite_store.save_retry_snapshot(channel_id, _snap_turn, _snap_data, marks=_marks_disk)
             except Exception as _e_rs:
                 logger.debug(f"[!다시] snapshot persist skipped: {_e_rs}")
+
+            # [2026-10-23 C73 M7a] 코드 앱 턴 앞 — 스냅숏 **뒤**(여기서 쓴 행은 이 턴 소속 → `!다시` 트림이 되감고,
+            #   재실행이 다시 부른다) · Theoria 앞. on_input → 쌓인 보고 꺼냄 → feed() → ctx.app_feed_block(Slot 29).
+            #   ON_INPUT 정거장(main 입구, C64)은 스냅숏 앞이라 여기를 쓴다. 앱이 없으면 no-op.
+            try:
+                import app_host as _ah_ts
+                await _ah_ts.turn_start(channel_id, ctx)
+            except Exception as _e_ts:
+                ctx.app_feed_block = ""
+                logger.debug(f"[App] turn_start skip: {_e_ts}")
 
             # async output (typing indicator)
             async with message.channel.typing():
@@ -1486,11 +1717,17 @@ class OrchestrationService:
                     "user_id": user_id,
                     "original_message_id": message.id,
                     "message_ids": [],
-                    "has_response": False
+                    "has_response": False,
+                    "snapshot_overlap": _snap_overlap,   # [C77 C-2] 앞 턴 배경과 겹친 채 찍힌 스냅샷 → `!다시` 거절
                 }
 
                 # 4. UNE Integrated Logic (Batching Process)
+                _tt.mark(channel_id, "pre")
                 ctx, une_logs, une_directive = await self.process_une_logic(ctx, message)
+                _tt.mark(channel_id, "une")
+                # [2026-10-27 C84 D4] 모습이 바뀐 턴(개명 · 페이지 · 엣지 이사는 `!다시` 가 되감지 못한다) → `!다시` 거절 칸.
+                if isinstance(getattr(ctx, "dai", None), dict) and ctx.dai.get("form_switch"):
+                    current_retry_ctx["form_switch"] = list(ctx.dai["form_switch"])
                 
                 # Log messages (User Facing)
                 if une_logs:
@@ -1521,6 +1758,7 @@ class OrchestrationService:
                 except Exception as _e_bnd:
                     logger.debug(f"[Boundary] tick skipped: {_e_bnd}")
 
+                _tt.mark(channel_id, "world")
                 # 4.7. [2026-09-06 P3 expr 단계] 파생값·조건 전이의 정산 자리.
                 #   **boundary 뒤 · build_prompt 앞**이 계약이다(스펙 §0.6):
                 #     - Judgment 결과(4)·[소지품] 적용(4)·날짜 전진(4.5)이 다 끝난 뒤여야
@@ -1534,9 +1772,11 @@ class OrchestrationService:
                 except Exception as _e_expr:
                     logger.debug(f"[Expr] turn skipped: {_e_expr}")
 
+                _tt.mark(channel_id, "expr")
                 # 5. Prompt Building
                 # UNE directive is already injected into ctx.judgment_context
                 full_prompt, builder = self.build_prompt(ctx)
+                _tt.mark(channel_id, "prompt")
 
                 # 5.5. [2026-10-17 C46 W1] 도착물 핸드아웃 — 조립 **뒤** · 렌더 앞(전 자리 4.75 = 조립 앞).
                 #   조립이 남긴 자료 존 슬롯(`ctx.handout_ref`: PC·NPC/위키·기억·챕터·!룰·직전 꼬리 + 렌더가 고른 로어)을
@@ -1556,9 +1796,11 @@ class OrchestrationService:
                 await _mf_pr.run_station(_mf_pr.PRE_RENDER_CALL, self, _pr)
                 full_prompt = _pr.prompt
                 current_retry_ctx["message_ids"].extend(_pr.message_ids)
+                _tt.mark(channel_id, "handout")
 
                 # 6. Response Generation (V4: returns Tuple[response, extraction_data])
                 response, extraction_data = await self.generate_response(ctx, full_prompt)
+                _tt.mark(channel_id, "render")
 
                 # [2026-08-12 출력파생 §8] 렌더 실패 안내는 유저에게만 — 산문 파이프라인에서 배제.
                 #   구 동작: 안내 문자열이 `if response:`를 통과해 히스토리 적립·검출기·배경 추출
@@ -1608,6 +1850,9 @@ class OrchestrationService:
                     if sent_msgs:
                         current_retry_ctx["message_ids"].extend([m.id for m in sent_msgs])
                         current_retry_ctx["has_response"] = True
+                    _tt.mark(channel_id, "send")
+                    _tt.sent(channel_id, getattr(sent_msgs[-1], "id", None) if sent_msgs else None,
+                             (ctx.dai or {}).get("turn_index") if isinstance(getattr(ctx, "dai", None), dict) else None)
 
                     # 7.5 [2026-10-23 C69 A2b] 압축 모드에서 보류한 도착물 → 산문 메시지(임베드가 붙은 마지막 조각)에 적립 +
                     #   C49 원문 묶음(handout_record). 8 이 그 묶음으로 원문 행 · 위키 줄을 적는다. 보류가 없으면 no-op.
@@ -1879,17 +2124,21 @@ class OrchestrationService:
                     # 9.55~9.8 → 모듈 틀(2026-10-22 C58 M1 · 2026-10-23 C63 M4). 배경 추출 셋·상태패널·속마음·지속 감사·Reader-GM(+間 시드)이
                     #   builtin_modules 의 BACKGROUND 정거장에 선다. 순서 = order(2·4·6 · 10·20·30·40) = 옛 9 → 9.55→9.56→9.6→9.7→9.8.
                     #   본문은 글자 그대로 옮겼다(게이트·붙잡는 값·큐 이름·LOW·로그). 새 배경 태스크는 여기 말고
-                    #   builtin_modules 에 선언한다. ⚠ 이 줄은 9.9(재그림)보다 위여야 한다 — 재그림이 마지막 적재.
+                    #   builtin_modules 에 선언한다. [C74 W4-1] 재그림도 이 정거장 안(order 25)이다 — 아래 주석.
                     import module_frame as _mf
+                    # 9.53. [2026-10-23 C73 M7a] AFTER_PROSE 정거장(처음 부르는 자리) — 산문 message id 확정 · 히스토리 적재 뒤.
+                    #   지금 선 것 = 코드 앱 호스트(on_output). 동기 · 짧게(앱마다 Lua 한 호출). 배경 적재(9.55)보다 앞.
+                    await _mf.run_station(
+                        _mf.AFTER_PROSE, self,
+                        _mf.AfterProse(channel_id=channel_id, ctx=ctx, response=response, sent_msgs=sent_msgs, message=message))
+                    # [2026-10-24 C74 W4-1] 9.9 재그림이 이 정거장 **안**으로 들어갔다(builtin_modules panel_refresh, order 25):
+                    #   값 차선(출력물 2 · 세계 4 · 상태패널 10 · 속마음 20) → 재그림 25 → 기억 차선(줄거리 꼬리 27 · 발효 28 ·
+                    #   감사 30 · 독자 40). 옛 자리(정거장 뒤 맨 끝)는 임베드가 읽지도 않는 발효 · 감사 · 독자 콜까지 기다렸다.
+                    #   새 배경 태스크가 임베드에 보일 값을 쓰면 order 를 25 앞에, 아니면 뒤에 둔다.
                     await _mf.run_station(
                         _mf.BACKGROUND, self,
-                        _mf.AfterProse(channel_id=channel_id, ctx=ctx, response=response, sent_msgs=sent_msgs, message=message))
-
-                    # 9.9. [2026-09-13 P15] 임베드 재그림 — **이 턴의 마지막 적재**여야 한다.
-                    #   큐가 FIFO 라 여기서 서야 앞선 배경 쓰기가 전부 끝난 뒤에 돈다.
-                    #   새 배경 태스크를 이 아래에 추가하지 마라 — 추가하면 그 쓰기는
-                    #   재그림보다 늦게 돌고, 그 값은 다음 턴까지 화면에 없다.
-                    await self._schedule_panel_refresh(channel_id, sent_msgs, _panel_before)
+                        _mf.AfterProse(channel_id=channel_id, ctx=ctx, response=response, sent_msgs=sent_msgs, message=message,
+                                       panel_before=_panel_before))
                 else:
                     logger.warning(f"[!다시] No response generated for channel {channel_id}")
                     if getattr(ctx, "handout_pending", None):   # [C69 A2b] 렌더 실패 — 보류 도착물 버림
@@ -1905,6 +2154,8 @@ class OrchestrationService:
                 if current_retry_ctx.get("has_response"):
                     domain_manager.save_last_execution_context(channel_id, current_retry_ctx)
                     logger.debug(f"[!다시] Persistent context saved for channel {channel_id}")
+                _tt.mark(channel_id, "post")
+                _tt.finish(channel_id, (ctx.dai or {}).get("turn_index") if isinstance(getattr(ctx, "dai", None), dict) else None)
 
                 # 스냅샷은 !다시용으로 유지 (다음 턴 시작 시 덮어씀)
                 # 메모리 누수는 _retry_snapshots 20개 cap으로 방지 (line 1109)
@@ -1933,8 +2184,30 @@ class OrchestrationService:
         """
         last_ctx = domain_manager.get_last_execution_context(channel_id)
 
+        # [2026-10-25 C77 C-1] 묶음 · 관찰 턴은 되감지 않는다(그 턴은 스냅샷을 안 찍는다).
+        if isinstance(last_ctx, dict) and last_ctx.get("kind") in ("batch", "observation"):
+            await message.channel.send("⚠️ 묶음 턴(`!턴`) · 관찰 턴은 `!다시`로 되감지 않아요 — 되감으면 그 앞 솔로 턴까지 같이 돌아가요.")
+            return False
         if not last_ctx or not last_ctx.get("has_response"):
             await message.channel.send("⚠️ 재시도할 이전 응답이 없거나 이미 처리 중입니다.")
+            return False
+        # [2026-10-25 C77 C-4 가+ · Q9] 직전 턴 뒤 명령이 턴과 섞인 칸을 바꿨으면 되감지 않는다(되감으면 그 변경이 같이 사라진다).
+        _blk = domain_manager.redo_block_reason(channel_id, last_ctx)
+        if _blk:
+            await message.channel.send(
+                f"⚠️ 직전 턴 뒤에 `{_blk}`(으)로 바뀐 게 있어서 이 턴은 `!다시`로 되감지 않아요 — "
+                "되감으면 그 변경도 같이 사라져요. 다음 턴부터는 다시 돼요.")
+            return False
+        # [2026-10-25 C77 C-2] 앞 턴 배경 작업이 끝나기 전에 찍힌 스냅샷 — 되감으면 앞 턴 배경 결과까지 지운다.
+        if last_ctx.get("snapshot_overlap"):
+            await message.channel.send(
+                "⚠️ 이 턴은 앞 턴 배경 정리가 끝나기 전에 시작돼서 `!다시`로 되감지 않아요 — 되감으면 앞 턴 정리분까지 지워져요.")
+            return False
+        # [2026-10-27 C84 D4] 모습이 바뀐(또는 잠긴 사람이 등장한) 턴 — 이름 · 페이지 · 관계 엣지는 되감기 밖이라 어긋난다.
+        if last_ctx.get("form_switch"):
+            await message.channel.send(
+                "⚠️ 모습이 바뀐 턴은 `!다시`로 되감지 않아요 (" + ", ".join(map(str, last_ctx["form_switch"]))[:80]
+                + ") — 되감으면 이름 · 시트 · 관계가 어긋나요.")
             return False
 
         # 1. 백그라운드 작업 플러시 + 실행 중 태스크 완료 대기
@@ -1950,6 +2223,18 @@ class OrchestrationService:
         if not await queue.wait_for_channel(channel_id, timeout=45.0):
             await message.channel.send("⏳ 이전 턴 배경 작업이 아직 도는 중입니다. 잠시 뒤 `!다시`를 다시 입력해 주세요.")
             return False
+        # [2026-10-24 C74 판1 검토 #6] 비운 줄거리 꼬리(NarrativeTail)의 볼 것 표도 버린다 — 되감을 턴 소속이다.
+        try:
+            import shared_extract as _sx_rt
+            _sx_rt.forget_tail(channel_id)
+        except Exception as _e_ft:
+            logger.debug(f"[!다시] tail forget skip: {_e_ft}")
+        # [2026-10-24 C73 M7b] 되감을 턴의 코드 앱 신고 정산을 버린다(재실행 산문이 다시 신고한다) — 복원 · 트림 **앞**.
+        try:
+            import app_host as _ah_drop
+            await _ah_drop.drop_settlement(channel_id)
+        except Exception as _e_drop:
+            logger.debug(f"[AppTags] drop skip: {_e_drop}")
 
         # 2. 이전 메시지 삭제 (UNE 로그 + AI 응답)
         msg_ids = last_ctx.get("message_ids", [])
@@ -2017,6 +2302,16 @@ class OrchestrationService:
                         _ss_rs.upsert_knowledge_bulk(channel_id, _clean_k)
             except Exception as _e_rs:
                 logger.warning(f"[!다시] SQLite NPC/지식 재동기화 실패(무시): {_e_rs}")
+            # [2026-10-25 C77 C-3 · Q16] 비밀 원장 → 턴 시작 모양(공개 처리 · turn_count · 그 턴에 선 행까지). 옛 스냅샷(사본 없음)은 손 안 댐.
+            try:
+                import sqlite_store as _ss_sr
+                _sec_rows = (snapshot_entry or {}).get("_secrets") if snapshot_entry and snapshot_entry.get("_data") is snapshot \
+                    else _ss_sr.read_retry_secrets(channel_id)
+                if isinstance(_sec_rows, list):
+                    if _ss_sr.restore_secrets(channel_id, _sec_rows):
+                        logger.info(f"[!다시] secret ledger restored ({len(_sec_rows)} rows)")
+            except Exception as _e_sr:
+                logger.warning(f"[!다시] 비밀 원장 되감기 실패(무시): {_e_sr}")
             # [2026-08-12 !다시 유령 정리] 복원 **직후**, 재실행 **전**에 트림 — 순서가 계약이다.
             # (재실행분은 트림 뒤에 쌓이므로 절대 지워지지 않는다.)
             if log_marks:
@@ -2092,6 +2387,17 @@ class OrchestrationService:
     ) -> None:
         """다인 동시 행동 처리 → 통합 AI 서사 생성"""
         try:
+            import turn_timing as _tt   # [2026-10-24 C74 W0] 턴 시계(execute 와 같은 줄, 단계는 굵게)
+            _tt.begin(channel_id, "batch")
+            # [2026-10-25 C77 C-1] 묶음 턴은 `!다시` 스냅샷을 안 찍는다 — 직전 솔로 턴 컨텍스트가 남아 있으면 그 뒤 `!다시` 가
+            #   솔로 턴 시작으로 되감아 이 묶음 턴(과 그 사이 일)을 지웠다. 컨텍스트를 "되감지 않는 턴"으로 갈아 둔다.
+            domain_manager.save_last_execution_context(channel_id, {"kind": "batch", "has_response": False, "message_ids": []})
+            try:   # [2026-10-24 C73 M7b] 앞 턴 코드 앱 신고 정산 대기(execute 와 같은 문)
+                import app_host as _ah_hold
+                await _ah_hold.hold_for_settlement(channel_id, message)
+            except Exception as _e_hold:
+                logger.debug(f"[AppTags] hold skip: {_e_hold}")
+            _tt.mark(channel_id, "settle")
             async with message.channel.typing():
                 # 1. UNE 배치 실행
                 result = await self.une.run_batch(channel_id, pending_actions)
@@ -2135,8 +2441,11 @@ class OrchestrationService:
                 ctx.judgment_context = directive
 
                 # 6. 프롬프트 빌드 + AI 응답 생성
+                _tt.mark(channel_id, "une")
                 full_prompt, _ = self.build_prompt(ctx)
+                _tt.mark(channel_id, "prompt")
                 response, _ = await self.generate_response(ctx, full_prompt)
+                _tt.mark(channel_id, "render")
 
                 if feedback_msg:
                     try: await feedback_msg.delete()
@@ -2163,8 +2472,15 @@ class OrchestrationService:
 
                     # Background Extraction (첫 PC 기준)
                     import shared_extract as _sx_p   # [C63 M4] 옛 self.schedule_background_extraction — 추출 셋만(옛 그대로)
-                    await _sx_p.schedule_extraction(self, ctx, response, message)
-                    await self._schedule_panel_refresh(channel_id, sent_msgs, _panel_before)
+                    _tt.mark(channel_id, "send")
+                    _tt.sent(channel_id, getattr(sent_msgs[-1], "id", None) if sent_msgs else None,
+                             (ctx.dai or {}).get("turn_index") if isinstance(getattr(ctx, "dai", None), dict) else None)
+                    # [2026-10-24 C74 W4-1] 재그림은 값 차선(출력물 · 세계 추출) 뒤 · 기억 차선(줄거리 꼬리 · 발효) 앞 —
+                    #   schedule_extraction 이 그 순서로 한 번에 적재한다(옛: 추출 셋 → 재그림, 발효가 재그림 앞).
+                    await _sx_p.schedule_extraction(self, ctx, response, message,
+                                                    sent_msgs=sent_msgs, panel_before=_panel_before)
+                _tt.mark(channel_id, "post")
+                _tt.finish(channel_id, (ctx.dai or {}).get("turn_index") if isinstance(getattr(ctx, "dai", None), dict) else None)
 
         except Exception as e:
             if feedback_msg:
@@ -2183,6 +2499,16 @@ class OrchestrationService:
     ) -> None:
         """관찰 모드 → 세계 묘사 AI 서사 생성"""
         try:
+            import turn_timing as _tt   # [2026-10-24 C74 W0] 턴 시계(execute 와 같은 줄, 단계는 굵게)
+            _tt.begin(channel_id, "obs")
+            # [2026-10-25 C77 C-1] 관찰 턴도 같다(위 묶음 턴 주석).
+            domain_manager.save_last_execution_context(channel_id, {"kind": "observation", "has_response": False, "message_ids": []})
+            try:   # [2026-10-24 C73 M7b] 앞 턴 코드 앱 신고 정산 대기(execute 와 같은 문)
+                import app_host as _ah_hold
+                await _ah_hold.hold_for_settlement(channel_id, message)
+            except Exception as _e_hold:
+                logger.debug(f"[AppTags] hold skip: {_e_hold}")
+            _tt.mark(channel_id, "settle")
             async with message.channel.typing():
                 # 1. UNE 관찰 실행
                 result = await self.une.run_observation(channel_id)
@@ -2227,8 +2553,11 @@ class OrchestrationService:
                 ctx.judgment_context = directive
 
                 # 3. AI 응답 생성
+                _tt.mark(channel_id, "une")
                 full_prompt, _ = self.build_prompt(ctx)
+                _tt.mark(channel_id, "prompt")
                 response, _ = await self.generate_response(ctx, full_prompt)
+                _tt.mark(channel_id, "render")
 
                 if feedback_msg:
                     try: await feedback_msg.delete()
@@ -2255,8 +2584,15 @@ class OrchestrationService:
                                                   message_id=_first_msg_id(sent_msgs))
 
                     import shared_extract as _sx_p   # [C63 M4] 옛 self.schedule_background_extraction — 추출 셋만(옛 그대로)
-                    await _sx_p.schedule_extraction(self, ctx, response, message)
-                    await self._schedule_panel_refresh(channel_id, sent_msgs, _panel_before)
+                    _tt.mark(channel_id, "send")
+                    _tt.sent(channel_id, getattr(sent_msgs[-1], "id", None) if sent_msgs else None,
+                             (ctx.dai or {}).get("turn_index") if isinstance(getattr(ctx, "dai", None), dict) else None)
+                    # [2026-10-24 C74 W4-1] 재그림은 값 차선(출력물 · 세계 추출) 뒤 · 기억 차선(줄거리 꼬리 · 발효) 앞 —
+                    #   schedule_extraction 이 그 순서로 한 번에 적재한다(옛: 추출 셋 → 재그림, 발효가 재그림 앞).
+                    await _sx_p.schedule_extraction(self, ctx, response, message,
+                                                    sent_msgs=sent_msgs, panel_before=_panel_before)
+                _tt.mark(channel_id, "post")
+                _tt.finish(channel_id, (ctx.dai or {}).get("turn_index") if isinstance(getattr(ctx, "dai", None), dict) else None)
 
         except Exception as e:
             if feedback_msg:

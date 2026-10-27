@@ -10,11 +10,13 @@
   background 정거장(builtin_modules 선언)
     outputs  2  bg_outputs  게이트 + B-Outputs 콜 → after_outputs 정거장
     world    4  bg_world    힌트 + B-Batch 콜   → after_batch 정거장
-    ferment  6  bg_ferment  발효
+    ferment  6  bg_ferment  발효   → [C74 W4-1] 28(재그림 25 뒤 — 기억 차선)
+    narrative 27 bg_narrative_tail  [C74 W4-1b] 줄거리 적용에서 뺀 느린 꼬리(시트 heavy 정리 · 줄거리 요약 flash)
   after_outputs — 옛 `_apply_outputs` 6단(순서가 계약: 값 델타 → 전이 큐 → 연산 → 노트북 메모 → status → append 기록)
     output_rules 10 out_values ①②③ · screen 30 out_notebook ④ · judgment 40 out_status ⑤⑤-b · status_panel 60 out_append ⑥
   after_batch — 옛 `_execute_background_extraction` 블록 경계 그대로(레티어스 10-23 "1번 오케이")
-    quest 10 #1 · npc 20 #2·#3·#4 · world 50 #5 · narrative 60 #6(B3·B4 포함 한 덩어리) · presence 70 #7·#8·#9
+    npc 20 #2·#3·#4 · world 50 #5 · goal 55(목표 알림 — [C74 판2] 옛 quest 10 #1) · narrative 60 #6(B3·B4 포함 한 덩어리) ·
+    presence 70 #7·#8·#9
 
 **격리**(레티어스 10-23 "격리는 필요할거 같고") — 옛 블록은 바깥 try 하나라 try 없는 블록(퀘스트·각인·세계 상태·지문)이
   터지면 뒤가 전부 멈췄다. 이제 블록마다 try 다. 정상 턴은 같고, 실패 턴엔 그 블록만 빠진다(error 줄은 옛 결 그대로).
@@ -34,6 +36,25 @@ from background_task_queue import TaskPriority
 
 # 옮긴 로그 줄은 옛 자리와 같은 로거로 남긴다(로그 모양·필터 그대로).
 logger = logging.getLogger("Orchestration")
+
+# [2026-10-24 C74 W4-1b] 꼬리 태스크가 볼 것 — 줄거리 적용(after_narrative)이 적고 꼬리(run_narrative_tail)가 비운다.
+#   _TAIL_PENDING = 채널 → {(kind, key): turn} 이번 턴 관찰을 덧붙인 인물(정리 임계는 꼬리가 그때 상태로 본다)
+#   _TAIL_SUMMARY = 채널 → turn  줄거리 적용이 돈 턴(요약 문턱은 꼬리가 그때 상태로 본다)
+#   메모리만이다(재시작이면 빈다 — 다음 덧붙이기 때 다시 적힌다. 정리 · 요약 문턱은 저장 상태라 놓치는 건 한 턴 늦어질 뿐).
+_TAIL_PENDING: Dict[str, Dict[Any, Any]] = {}
+_TAIL_SUMMARY: Dict[str, int] = {}
+
+
+def _note_tail(channel_id, kind: str, key, turn) -> None:
+    if key in (None, ""):
+        return
+    _TAIL_PENDING.setdefault(str(channel_id), {})[(kind, str(key))] = turn
+
+
+def forget_tail(channel_id) -> None:
+    """[C74 판1 검토 #6] 꼬리 볼 것 표 비우기 — `!다시`(큐 비운 뒤) · `!클리어` · `!리셋`(domain_manager._forget_channel_process_memory)."""
+    _TAIL_PENDING.pop(str(channel_id), None)
+    _TAIL_SUMMARY.pop(str(channel_id), None)
 
 
 def _fail(name: str, e: Exception) -> None:
@@ -66,9 +87,7 @@ def extraction_hints_for(ctx, response: str) -> Dict[str, Any]:
             '처음으로', '마침내', '성공', '실패', '죽', '살', '마법',
             '괴물', '이상한', '기이한'
         ]) or bool((ctx.dai or {}).get("abnormal_elements")),
-        "quest": any(kw in response for kw in [
-            '퀘스트', '임무', '목표', '의뢰', '부탁', '완료', '달성', '단서', '정보', '비밀'
-        ]),
+        # [2026-10-24 C74 판2] "quest" 낱말 힌트 삭제 — 목표는 world_state(매 턴) threads 로 온다.
         "world_state": True,  # Always run World State Updater (+1 Flash)
         "render_fingerprint": True,  # [Scene Continuity 2층] 항상 실행
         # [2026-07-13 수리] entity_state 키가 이 dict에 아예 없어서 cognition 게이트
@@ -93,8 +112,10 @@ def extraction_hints_for(ctx, response: str) -> Dict[str, Any]:
 # =====================================================================
 # background 정거장 — 공용 콜 셋
 # =====================================================================
-async def bg_outputs(rt, turn) -> None:
-    """[C63 M4] 옛 schedule_background_extraction Phase 1 — 출력물 전담 추출(B-Outputs) 게이트·적재. 큐 `OutputsExtraction` HIGH."""
+async def bg_outputs(rt, turn):
+    """[C63 M4] 옛 schedule_background_extraction Phase 1 — 출력물 전담 추출(B-Outputs) 게이트·적재. 큐 `OutputsExtraction` HIGH.
+    [2026-10-24 C74 W4-2] 큐에 바로 넣지 않고 BgJob(콜 · 적용)을 돌려준다 — 틀이 세계 추출(bg_world)과 짝 태스크로 묶는다.
+      콜 = 노트북 · 타격칸 재읽기 + extract_outputs, 적용 = after_outputs 정거장. 옛 몸의 try(에러 로그 한 줄 · 삼킴)는 두 쪽 다 그대로."""
     ctx, response, message = turn.ctx, turn.response, turn.message
     channel_id = ctx.channel_id
     extraction_hints = extraction_hints_for(ctx, response)
@@ -153,7 +174,7 @@ async def bg_outputs(rt, turn) -> None:
     except Exception:
         _want_strikes = False
     if _cv_feed or _cue_feed or _op_feed or _ap_feed or _want_notebook or _want_strikes:
-        async def outputs_extraction():
+        async def outputs_call():
             try:
                 # 라이브 노트북 재읽기(stale ctx.notebook_txt 대신). physical 힌트가 꺼져 있으면 입력에 싣지 않는다.
                 # [2026-10-23 C61] [소지품] 칸은 빼고 싣는다 — 소지품은 선언 급식(always_feed)으로 따로 받는다.
@@ -181,6 +202,13 @@ async def bg_outputs(rt, turn) -> None:
                     # [2026-10-07 S2] 행동 PC 가면 — scope pc 변수의 주인
                     pc_name=(rt._pc_names_for_extract(channel_id, ctx.user_id)[:1] or [""])[0],
                 )
+                return outputs
+            except Exception as e:
+                logger.error(f"Outputs extraction error: {e}")
+                return None
+
+        async def outputs_apply(outputs):
+            try:
                 # [C63 M4] 옛 `_apply_outputs` → after_outputs 정거장(구독자 넷 · 옛 6단 순서). 빈 산출이면 옛 첫 줄처럼 아무것도 안 한다.
                 if outputs:
                     import module_frame as _mf
@@ -189,16 +217,15 @@ async def bg_outputs(rt, turn) -> None:
             except Exception as e:
                 logger.error(f"Outputs extraction error: {e}")
 
-        await _btq.enqueue_background_task(
-            channel_id,
-            "OutputsExtraction",
-            outputs_extraction,
-            priority=TaskPriority.HIGH
-        )
+        import module_frame as _mf_j
+        return _mf_j.BgJob("OutputsExtraction", outputs_call, outputs_apply, TaskPriority.HIGH)
+    return None
 
 
-async def bg_world(rt, turn) -> None:
-    """[C63 M4] 옛 schedule_background_extraction Phase 2 — 세계 추출(B-Batch) 적재. 큐 `BackgroundExtraction` NORMAL."""
+async def bg_world(rt, turn):
+    """[C63 M4] 옛 schedule_background_extraction Phase 2 — 세계 추출(B-Batch) 적재. 큐 `BackgroundExtraction` NORMAL.
+    [2026-10-24 C74 W4-2] BgJob 을 돌려준다 — 콜 = `_world_batch_call`(입력 조립 + extract_all_updates), 적용 = `_world_batch_apply`
+      (after_batch 정거장). 출력물 추출과 짝: 이 콜 입력은 출력물 적용 결과를 안 읽는다(스펙 §4-6 · 판2 W4 지도)."""
     ctx, response, message = turn.ctx, turn.response, turn.message
     channel_id = ctx.channel_id
     extraction_hints = extraction_hints_for(ctx, response)
@@ -212,20 +239,16 @@ async def bg_world(rt, turn) -> None:
         captured_message = message
         captured_hints = bg_hints
 
-        async def background_extraction_task():
+        async def world_call():
             # [C63 M4] 옛 self._execute_background_extraction → _run_world_batch(같은 앞부분 + after_batch 정거장)
-            await _run_world_batch(
-                rt,
-                captured_ctx, captured_response,
-                captured_message, captured_hints
-            )
+            return await _world_batch_call(rt, captured_ctx, captured_response, captured_message, captured_hints)
 
-        await _btq.enqueue_background_task(
-            channel_id,
-            "BackgroundExtraction",
-            background_extraction_task,
-            priority=TaskPriority.NORMAL
-        )
+        async def world_apply(res):
+            await _world_batch_apply(rt, captured_ctx, captured_response, captured_message, res)
+
+        import module_frame as _mf_j
+        return _mf_j.BgJob("BackgroundExtraction", world_call, world_apply, TaskPriority.NORMAL)
+    return None
 
 
 async def bg_ferment(rt, turn) -> None:
@@ -259,13 +282,101 @@ async def bg_ferment(rt, turn) -> None:
     )
 
 
-async def schedule_extraction(rt, ctx, response: str, message) -> None:
+async def bg_narrative_tail(rt, turn) -> None:
+    """[2026-10-24 C74 W4-1b] 기억 차선 — 줄거리 적용(after_narrative)에서 뺀 느린 꼬리 둘을 재그림 **뒤**에.
+    큐 `NarrativeTail` LOW. 상태창(임베드)은 인물 페이지도 줄거리 요약도 안 읽는다 — 그 콜을 기다릴 까닭이 없다.
+    적재만 여기서 한다(그때 B-Batch 는 아직 큐에 있다). 몸은 FIFO 상 같은 턴 B-Batch 뒤에 돌아 덧붙인 글을 본다."""
+    channel_id = turn.ctx.channel_id
+
+    async def narrative_tail_task():
+        await run_narrative_tail(rt, channel_id)
+
+    await _btq.enqueue_background_task(channel_id, "NarrativeTail", narrative_tail_task, priority=TaskPriority.LOW)
+
+
+def growth_on() -> bool:
+    """[2026-10-27 C82] 성장발효 손잡이 — 턴 색인(MEMORY_LAYERS_V2)이 있어야 원문 다리가 선다."""
+    return bool(getattr(config, "GROWTH_FERMENT", False) and getattr(config, "MEMORY_LAYERS_V2", False))
+
+
+async def run_growth(rt, channel_id) -> int:
+    """[2026-10-27 C82] 잎 승격(턴 색인) → 문턱 넘은 페이지 성장(상한까지). 키운 페이지 수를 돌려준다. 하나가 죽어도 다음은 돈다."""
+    import memory_index
+    try:
+        import wiki_store
+        for _k, _nm in memory_index.leaves_to_promote(channel_id):
+            if wiki_store.promote(channel_id, _k, _nm, reason="turns",
+                                  turn=int((domain_manager.get_world_state(channel_id) or {}).get("turn_index", 0) or 0)):
+                logger.info(f"[Growth] 승격 {_k} {_nm}")
+    except Exception as e:
+        logger.warning(f"[Growth] 승격 skipped: {e}")
+    n = 0
+    cap = max(0, int(getattr(config, "GROWTH_MAX_PAGES", 2) or 0))
+    for due in memory_index.pages_due(channel_id)[:cap]:
+        try:
+            if await rt.grow_page(channel_id, due):
+                n += 1
+        except Exception as e:
+            logger.warning(f"[Growth] {due.get('name')} skipped: {e}")
+    return n
+
+
+async def run_narrative_tail(rt, channel_id) -> None:
+    """꼬리 본체 — ① 이번 턴 관찰을 덧붙인 인물의 시트 heavy 정리(grow_sheet 를 관찰 없이 다시 — 임계 판정은 지금 상태)
+    ② 줄거리 요약(문턱이면): 사본 위에서 콜 → 돌아오면 **다시 읽어** 요약 칸만 얹고 await 없이 저장(narrative_tracker.merge_summary_fields).
+    하나가 죽어도 다른 하나는 돈다."""
+    ch = str(channel_id)
+    pend = _TAIL_PENDING.pop(ch, None) or {}
+    if growth_on():
+        # [2026-10-27 C82] 성장발효 — 옛 250자 heavy 정리 대신, 등장 턴이 문턱을 넘은 페이지를 원문 턴으로 키운다.
+        #   잎 승격(턴 색인 extra)도 여기서 — 콜 0. 한 꼬리에 GROWTH_MAX_PAGES 페이지까지, 오래 밀린 것부터.
+        await run_growth(rt, channel_id)
+    else:
+        for (kind, key), t in list(pend.items()):
+            try:
+                await rt.grow_sheet(channel_id, (kind, key), None, turn=t)
+            except Exception as e:
+                logger.warning(f"[Sheet Grow] 꼬리 정리 skipped: {key} ({e})")
+    t_sum = _TAIL_SUMMARY.pop(ch, None)
+    if t_sum is None:
+        return
+    try:
+        import narrative_tracker
+        base = domain_manager.get_narrative_tracker_state(channel_id)
+        if not narrative_tracker.summary_due(base, t_sum):
+            return
+        work = copy.deepcopy(base)
+        await narrative_tracker.summarize_if_needed(
+            work, t_sum,
+            client=rt.client if hasattr(rt, 'client') else None,
+            model_id=config.role_model("flash"))
+        fresh = domain_manager.get_narrative_tracker_state(channel_id)
+        narrative_tracker.merge_summary_fields(fresh, work, base)
+        domain_manager.update_narrative_tracker_state(channel_id, fresh)
+    except Exception as e:
+        logger.warning("[NarrativeTracker] 꼬리 요약 failed: %s", e)
+
+
+async def schedule_extraction(rt, ctx, response: str, message, sent_msgs=None, panel_before=None) -> None:
     """[C63 M4] 배치·관찰 경로(orchestration execute_batch · execute_observation) — 배경 추출 셋만 적재.
     옛 `self.schedule_background_extraction(ctx, response, message)` 자리 그대로다: 두 경로는 옛날에도 추출 셋 + 재그림만 했다
-    (상태패널·속마음·감사·Reader 는 본 경로 execute 의 BACKGROUND 정거장에만 선다). 예외도 옛처럼 호출자에게 간다."""
+    (상태패널·속마음·감사·Reader 는 본 경로 execute 의 BACKGROUND 정거장에만 선다). 예외도 옛처럼 호출자에게 간다.
+    [2026-10-24 C74 W4-1] 순서 = 값 차선(출력물 · 세계) → 재그림(sent_msgs 가 있으면) → 기억 차선(줄거리 꼬리 · 발효).
+      옛 꼴은 발효가 재그림 앞이었다(호출자가 이 함수 뒤에 재그림을 따로 적재)."""
     import module_frame as _mf
     ap = _mf.AfterProse(channel_id=ctx.channel_id, ctx=ctx, response=response, sent_msgs=[], message=message)
-    for fn in (bg_outputs, bg_world, bg_ferment):
+    # [2026-10-24 C74 W4-2] 두 추출은 BgJob — 본 경로(run_station)와 같은 짝 태스크 하나로(하나만 서면 혼자).
+    #   [검토 #5] 세계 일감 만들기가 예외를 내면 옛처럼 출력물은 이미 서 있고 예외는 호출자에게 간다.
+    _jo = await bg_outputs(rt, ap)
+    try:
+        _jw = await bg_world(rt, ap)
+    except Exception:
+        await _mf.enqueue_jobs(ctx.channel_id, [_jo])
+        raise
+    await _mf.enqueue_jobs(ctx.channel_id, [_jo, _jw])
+    if sent_msgs:
+        await rt._schedule_panel_refresh(ctx.channel_id, sent_msgs, panel_before)
+    for fn in (bg_narrative_tail, bg_ferment):
         await fn(rt, ap)
 
 
@@ -273,11 +384,48 @@ async def schedule_extraction(rt, ctx, response: str, message) -> None:
 # 세계 추출 본체 — 옛 _execute_background_extraction 앞부분(입력 조립 · 콜 · 자기 점검 로그)
 # =====================================================================
 async def _run_world_batch(rt, ctx, response: str, message, hints: Dict[str, bool]) -> None:
-    """백그라운드 추출 실행 — [C63 M4] 콜까지는 옛 몸 그대로, 적용은 after_batch 정거장의 구독자들(블록마다 try)."""
-    import cognition
-    import game_system
-    import npc_manager
-    channel_id = ctx.channel_id
+    """백그라운드 추출 실행 — [C63 M4] 콜까지는 옛 몸 그대로, 적용은 after_batch 정거장의 구독자들(블록마다 try).
+    [2026-10-24 C74 W4-2] 몸을 콜(`_world_batch_call`)과 적용(`_world_batch_apply`)으로 갈랐다 — 이 함수는 둘을 차례로(옛 꼴)."""
+    await _world_batch_apply(rt, ctx, response, message,
+                             await _world_batch_call(rt, ctx, response, message, hints))
+
+
+def _turn_msg_range(history: list, turn_idx: int):
+    """그 턴 원문 구간(첫 · 끝 message_id). 끝 = 그 턴 도장을 단 마지막 GM 산문(Model) — 없으면 그 턴 마지막 메시지.
+    처음 = 그 앞 GM 산문 바로 다음 메시지 — 다인 대기 모드 입력은 아직 턴이 안 올라 앞 턴 도장으로 적히니,
+    도장이 아니라 'GM 산문과 GM 산문 사이'로 자른다(솔로는 입력 → 산문이라 도장과 같다). 못 찾으면 (None, None)."""
+    hs = [h for h in (history or []) if isinstance(h, dict)]
+    mine = [i for i, h in enumerate(hs) if h.get("turn") == turn_idx]
+    if not mine:
+        return None, None
+    gm = [i for i in mine if str(hs[i].get("role") or "") == "Model"]
+    if gm:
+        end = gm[-1]
+        prev = [i for i in range(gm[0]) if str(hs[i].get("role") or "") == "Model"]
+        start = prev[-1] + 1 if prev else mine[0]
+    else:
+        start, end = mine[0], mine[-1]
+    ids = [hs[i].get("message_id") for i in range(start, end + 1) if hs[i].get("message_id") is not None]
+    return (ids[0], ids[-1]) if ids else (None, None)
+
+
+def _index_turn(channel_id: str, nt_state: dict, turn_idx: int) -> None:
+    """[2026-10-26 C80] turn_index upsert. 원문 구간 = `_turn_msg_range`(입력 · 도착물 · 산문 순서로 history_log 에 적히니
+    그 사이가 그 턴 원문이다). 못 찾으면 None(기존 값 유지)."""
+    try:
+        _tl = (nt_state or {}).get("turn_log") or []
+        _row = _tl[-1] if _tl and isinstance(_tl[-1], dict) and _tl[-1].get("turn") == turn_idx else None
+        if _row is None:
+            return
+        _a, _b = _turn_msg_range(domain_manager.get_domain(channel_id).get("history") or [], turn_idx)
+        import sqlite_store as _ss_ti
+        _ss_ti.upsert_turn_index(channel_id, turn_idx, _row.get("entities"), _row.get("extra"),
+                                 _row.get("importance", 0), _a, _b)
+    except Exception as _e_ti:
+        logger.debug(f"[TurnIndex] skip: {_e_ti}")
+
+
+def _bg_turn_now_for(ctx, channel_id):
     # [2026-09-24 감사] 이 추출이 속한 턴 = 렌더 시점에 waterfall 이 찍은 ctx.dai["turn_index"].
     #   배경 큐가 밀려 다음 턴의 increment 뒤에 돌면 live world_state 는 N+1 이다 → turn_log·등장
     #   마크·엣지·위키 Observed src_turns 가 N+1 로 도장되고, N+1 을 !다시 하면 턴 N 관찰까지 되감겼다.
@@ -287,6 +435,16 @@ async def _run_world_batch(rt, ctx, response: str, message, hints: Dict[str, boo
             return _t
         _w = _ws_live if _ws_live is not None else (domain_manager.get_world_state(channel_id) or {})
         return int((_w or {}).get("turn_index", 0) or 0)
+    return _bg_turn_now
+
+
+async def _world_batch_call(rt, ctx, response: str, message, hints: Dict[str, bool]):
+    """[C74 W4-2] 세계 추출의 콜 쪽 — 입력 조립(읽기만) + extract_all_updates. 돌려주는 것 = (updates, session_memory) 또는
+    실패 None(옛 몸처럼 에러 로그 한 줄 · 삼킴). session_memory = 콜 앞에서 한 번 읽은 것(after_world 가 거기 덧붙인다)."""
+    import cognition
+    import game_system
+    import npc_manager
+    channel_id = ctx.channel_id
 
     try:
         # Reload critical data to ensure we work on latest state
@@ -311,7 +469,6 @@ async def _run_world_batch(rt, ctx, response: str, message, hints: Dict[str, boo
         except Exception as _e_on:
             logger.debug(f"[Identity] 무대 명부 급식 건너뜀: {_e_on}")
             onstage_lines = []
-        current_quests = game_system.get_active_quests(channel_id)
 
         session_memory = domain_manager.get_session_ai_memory(channel_id)
         prev_continuity = domain_manager.get_latest_frame(channel_id)
@@ -323,29 +480,26 @@ async def _run_world_batch(rt, ctx, response: str, message, hints: Dict[str, boo
         # [2026-09-06 P8a] 노트북/status 재읽기 삭제 — 배치는 더 이상 둘을 읽지 않는다
         #   (B-1 폐지). 같은 재읽기는 전담 태스크(outputs_extraction) 안에 있다.
 
-        # === Arc 컨텍스트 (Phase 4b) ===
+        # === Arc 컨텍스트 — [2026-10-24 C75 G2] 이름 얻은 우물 · 이름 후보는 우물에서 ===
+        #   옛 꼴: is_arc 줄거리 · 후보 = 이변 라우터가 그 턴 버스에 둔 값(배경에서 질량이 넘은 우물은 못 실렸다).
         _arc_context_str = ""
         _arc_promote_cand = None
         try:
+            import well_store as _ws_ctx
             _nt_state_pre = domain_manager.get_narrative_tracker_state(channel_id)
-            _active_arcs_pre = [
-                s for s in _nt_state_pre.get("storylines", [])
-                if isinstance(s, dict) and s.get("is_arc") and s.get("status") == "active"
-            ]
-            if _active_arcs_pre:
+            _arcs_pre = sorted(_ws_ctx.arcs(channel_id, _nt_state_pre),
+                               key=lambda a: (-float(a.get("proximity", 0) or 0), -int(a.get("mass", 0) or 0)))[:5]
+            if _arcs_pre:
                 _lines = []
-                for arc in _active_arcs_pre:
+                for arc in _arcs_pre:
                     _phases = arc.get("phases", [])
                     _cur_p = _phases[-1] if _phases else "(initial)"
                     _lines.append(
-                        f"Arc #{arc.get('id')}: cat={arc.get('origin_category', '?')}, "
-                        f"phase={_cur_p}, prox={arc.get('proximity', 0):.2f}, "
-                        f"weight={arc.get('weight', 0):.2f}"
+                        f"Arc #{arc.get('id')}: where={arc.get('where') or '?'}, "
+                        f"phase={_cur_p}, prox={arc.get('proximity', 0):.2f}, mass={arc.get('mass', 0)}"
                     )
                 _arc_context_str = "\n".join(_lines)
-            # bus.anomaly.arc_promote_candidate
-            if getattr(ctx, "bus", None) is not None and getattr(ctx.bus, "anomaly", None):
-                _arc_promote_cand = ctx.bus.anomaly.get("arc_promote_candidate")
+            _arc_promote_cand = _ws_ctx.naming_candidate(channel_id, _nt_state_pre)
         except Exception as _e_arc_pre:
             logger.debug(f"[Arc] PMU context build skipped: {_e_arc_pre}")
 
@@ -367,7 +521,6 @@ async def _run_world_batch(rt, ctx, response: str, message, hints: Dict[str, boo
             ctx.action_text, response,
             lore_npc_names=lore_npcs,
             scene_npc_names=scene_npcs,
-            current_quests=current_quests,
             extraction_hints=hints,
             current_session_memory=session_memory,
             previous_continuity=prev_continuity,
@@ -378,17 +531,44 @@ async def _run_world_batch(rt, ctx, response: str, message, hints: Dict[str, boo
             pc_names=rt._pc_names_for_extract(channel_id, ctx.user_id),   # [2026-10-07 S2] `!가면` 등록 이름
         )
 
+        # [2026-10-24 C75 G2] 이 턴 낸 이름 후보 — 적용 쪽(after_narrative)이 well_id 빠진 confirms 를 받을 때 쓴다.
+        if isinstance(updates, dict) and isinstance(_arc_promote_cand, dict):
+            updates["_well_offered"] = _arc_promote_cand.get("well_id")
+
         # [V10 검증 lite] 추출 self-check 로그 (detection-only — 아직 게이트 X)
         _unc = updates.get("_uncertain") if isinstance(updates, dict) else None
         if _unc:
             logger.info(f"[Extract self-check] uncertain sections this turn: {_unc}")
+        return updates, session_memory
 
+    except Exception as e:
+        logger.error(f"Background Extraction Failed: {e}\n{traceback.format_exc()}")
+        return None
+
+
+async def _world_batch_apply(rt, ctx, response: str, message, res) -> None:
+    """[C74 W4-2] 세계 추출의 적용 쪽 — after_batch 정거장.
+
+    [2026-10-25 C77 판 D · Q25 · Q30] 콜 쪽이 None(바깥 try 가 예외를 삼킴)이어도 정거장은 돈다 — 빈 갱신으로.
+      흔한 콜 실패(API 예외 · 빈 응답 · 파싱 실패)는 이미 `{}` 섹션으로 접혀 여기까지 왔다. None 길만 정거장을
+      통째로 건너뛰어 ✅ 목표 완료 · 🔥 깸 알림(영수증은 렌더 앞 `bus.doom` 에 있다) · 우물 tick · 인물 감쇠가
+      빠졌다. 빈 갱신이면 구독자는 `{}` 길과 똑같이 돈다 — 새 동작 0."""
+    channel_id = ctx.channel_id
+    if not res:
+        logger.warning(f"[Extract] world batch gave nothing (ch={channel_id}) — after_batch runs on empty updates")
+        try:
+            res = ({}, domain_manager.get_session_ai_memory(channel_id))
+        except Exception as e:
+            logger.error(f"[Extract] empty after_batch skipped — session memory unreadable: {e}")
+            return
+    updates, session_memory = res
+    try:
         # [C63 M4] 적용 = after_batch 정거장. 블록 경계 그대로 구독자가 순서대로 받는다(quest 10 · npc 20 · world 50 ·
         #   narrative 60 · presence 70). 한 구독자가 죽어도 나머지는 돈다(구독자 안 try + 틀 run_station).
         import module_frame as _mf
         await _mf.run_station(_mf.AFTER_BATCH, rt, _mf.BatchTurn(
             channel_id=channel_id, ctx=ctx, response=response, message=message,
-            updates=updates, turn_now=_bg_turn_now, session_memory=session_memory))
+            updates=updates, turn_now=_bg_turn_now_for(ctx, channel_id), session_memory=session_memory))
 
     except Exception as e:
         logger.error(f"Background Extraction Failed: {e}\n{traceback.format_exc()}")
@@ -480,50 +660,58 @@ async def out_append(rt, o) -> None:
 # =====================================================================
 # after_batch 구독자 — 옛 _execute_background_extraction 블록(경계 그대로 · 블록마다 try)
 # =====================================================================
-async def after_quest(rt, b) -> None:
-    """#1 퀘스트 — 주인 quest(after_batch 10). 채널 메시지를 보낸다(옛 그대로)."""
-    channel_id, message, updates = b.channel_id, b.message, b.updates
-    import game_character
-    import game_system
-    try:
-        # Apply Updates (⚠️ 에러는 로그만, 성공만 Discord 출력)
-        if updates.get("QuestUpdate"):
-            qu = updates["QuestUpdate"]
-            if qu.get("quest_add"):
-                for q in qu["quest_add"]:
-                    if isinstance(q, dict):
-                        result = game_system.add_quest(channel_id, q.get("content", ""), q.get("rank"))
-                    else:
-                        result = game_system.add_quest(channel_id, q)
-                    if result and not result.startswith("⚠️"):
-                        await message.channel.send(result)
-                    elif result:
-                        logger.debug(f"[Quest Auto] {result}")
-            if qu.get("quest_complete"):
-                for q in qu["quest_complete"]:
-                    result = game_system.complete_quest(channel_id, q)
-                    if result and not result.startswith("⚠️"):
-                        await message.channel.send(result)
-                    elif result:
-                        logger.debug(f"[Quest Auto] {result}")
-            if qu.get("quest_progress") and isinstance(qu["quest_progress"], dict):
-                for quest_name, delta in qu["quest_progress"].items():
-                    if delta and isinstance(delta, (int, float)) and delta != 0:
-                        result = game_character.advance_quest_progress(channel_id, quest_name, int(delta))
-                        if result and result.startswith("⚠️"):
-                            # 매칭 실패 → 새 퀘스트로 자동 등록 후 진행
-                            logger.info(f"[Quest Auto] Progress miss → auto-add: {quest_name}")
-                            add_r = game_system.add_quest(channel_id, quest_name, "normal")
-                            if add_r and not add_r.startswith("⚠️"):
-                                await message.channel.send(add_r)
-                            result = game_character.advance_quest_progress(channel_id, quest_name, int(delta))
-                        if result and not result.startswith("⚠️"):
-                            await message.channel.send(result)
+CLOCK_GOAL_ORIGINS = ("code:setback", "code:averted", "code:achieved")
 
-        # ⛔[2026-09-15 관계 통합] NPCDepthUpdate(npc_depth_hints → update_helena_metric) 삭제 —
-        #   NPC→PC 관계 질문은 Theoria relation 층 하나(update_world_state의 write_theoria_relations).
+
+def goal_notice_lines(receipts) -> list:
+    """[2026-10-24 C74 판2] 장부 영수증 → 채널 알림 줄(옛 퀘스트 알림의 꼴, 낱말만 "목표").
+    🔥 목표 등록(난이도 · 막대) · 📊 목표 진행(막대) · ✅ 목표 완료(+ 그 목표의 긴장도 · 시계 해결 줄 — 닫힘 영수증의
+    reward) · 🔥 목표 열림(자던 목표가 깸). 목표가 아닌 일 · 멈춤은 조용히(옛 그대로 — 약속 · 사안은 알림이 없었다).
+    시계 깎임(code:setback)은 렌더 사실 줄이 말한다."""
+    import config
+    out = []
+    for rc in receipts or []:
+        if not isinstance(rc, dict) or rc.get("kind") != "goal" or rc.get("origin") == "code:setback":
+            continue
+        # [C74 판3 W2-2] 시계가 올린 진행 칸(막아냄 · 기회 달성)도 사실 줄이 말한다 — 그 끝(완료 · 깸)만 알린다
+        if rc.get("op") == "progress" and rc.get("origin") in CLOCK_GOAL_ORIGINS:
+            continue
+        op, title = rc.get("op"), rc.get("title", "")
+        p, mx = int(rc.get("progress") or 0), int(rc.get("max") or 0)
+        bar = f"[{'■' * min(p, mx)}{'□' * max(0, mx - p)}]"
+        if op == "open":
+            disp = ((getattr(config, "QUEST_RANK_SETTINGS", {}) or {}).get(rc.get("rank")) or {}).get("display", rc.get("rank", ""))
+            line = f"🔥 **목표 등록:** {title}\n> 난이도: {disp} | {bar}"
+            if rc.get("after"):
+                line += " (다른 일이 먼저 끝나야 열린다)"
+            out.append(line)
+        elif op == "wake":
+            out.append(f"🔥 **목표 열림:** {title} (기다리던 일이 끝났다)\n> {bar} ({p}/{mx})")
+        elif op == "progress":
+            out.append(f"📊 **목표 진행:** {title}\n> {bar} ({p}/{mx})")
+        elif op == "close" and rc.get("outcome") == "done":
+            out.append("\n".join([f"✅ **목표 완료:** {title}"] + list(rc.get("reward") or [])))
+        elif op == "close":
+            out.append(f"🗂 **목표 닫힘({ {'dropped': '포기', 'broken': '어긋남'}.get(rc.get('outcome'), rc.get('outcome'))}):** {title}")
+    return out
+
+
+async def after_goal(rt, b) -> None:
+    """[2026-10-24 C74 판2] 목표 알림 — 주인 goal(after_batch 55, 옛 quest 10). 목표 행은 world 50 의 장부 적용
+    (`after_world` → thread_ledger.apply_events)이 이미 썼다 — 여기는 그 영수증(b.notes["goal_receipts"])을 채널에 보낸다."""
+    try:
+        _rc = list((getattr(b, "notes", None) or {}).get("goal_receipts") or [])
+        # [C74 판3 W2-2] 같은 턴 시계(doom, 렌더 앞)가 낸 목표 영수증 — 기회 달성으로 목표가 끝나면 ✅ 가 여기서 선다
+        try:
+            _bus = getattr(getattr(b, "ctx", None), "bus", None)
+            _rc = list(((getattr(_bus, "doom", None) or {}).get("goal_receipts") or [])) + _rc
+        except Exception:
+            pass
+        lines = goal_notice_lines(_rc)
+        for line in lines:
+            await b.message.channel.send(line)
     except Exception as e:
-        _fail("quest", e)
+        _fail("goal", e)
 
 
 async def after_npc(rt, b) -> None:
@@ -610,11 +798,29 @@ async def after_world(rt, b) -> None:
             # [2026-09-25 스레드 장부] 옛 active/resolved_threads 병합 삭제(빈 리스트면 갱신을 건너뛰어
             #   목록이 0으로 못 줄던 자리). 전이 → 관문 → thread_log. ★_advance_scene_time **앞** —
             #   기한 표현("내일 정오")은 이번 턴 장면 시각 기준이라 이번 턴 경과분을 밀기 전 시계로 푼다.
+            # [2026-10-24 C74 W0-6] 겹침 관측 — 같은 턴에 새 퀘스트와 새 약속 · 사안이 같이 열리면 INFO 한 줄(동작 0).
+            #   합치기(W2-1) 추출 문안 실측의 재료: 같은 일이 두 장부에 두 번 서는가.
+            # [2026-10-24 C74 판2] 옛 [Quest~Thread](퀘스트 · 약속 겹침 관측) → [Goal~Thread]: 같은 턴에 새 목표와
+            #   선 없는 새 약속 · 사안이 같이 열리면 INFO 한 줄(동작 0). 한 일이 둘로 서는지(선을 안 쓰는지) 보는 실측 재료.
+            try:
+                _to = [e for e in (wsu.get("threads") or []) if isinstance(e, dict) and e.get("op") == "open"]
+                _tg = [e for e in _to if e.get("kind") == "goal"]
+                _tu = [e for e in _to if e.get("kind") != "goal" and not e.get("after")]
+                if _tg and _tu:
+                    logger.info("[Goal~Thread] t=%s goals=%s untied=%s", _bg_turn_now(),
+                                [str(e.get("title") or "")[:40] for e in _tg][:4],
+                                [str(e.get("title") or "")[:40] for e in _tu][:4])
+            except Exception:
+                pass
             if isinstance(wsu.get("threads"), list) and wsu["threads"]:
                 try:
                     import thread_ledger as _tl_ap
+                    _rcpt = []
                     _tl_ap.apply_events(channel_id, _bg_turn_now(), wsu["threads"],
-                                        f"{ctx.action_text or ''}\n{response or ''}")
+                                        f"{ctx.action_text or ''}\n{response or ''}", receipts=_rcpt)
+                    # [C74 판2] 목표 영수증 → goal 모듈(after_batch 55)이 채널 알림으로 보낸다.
+                    if _rcpt and isinstance(getattr(b, "notes", None), dict):
+                        b.notes["goal_receipts"] = _rcpt
                 except Exception as _e_tla:
                     logger.warning(f"[Thread] apply skip: {_e_tla}")
             if wsu.get("world_changes"):
@@ -628,8 +834,7 @@ async def after_world(rt, b) -> None:
                 existing_schedules.update({k: v for k, v in (wsu["npc_schedule_hints"] or {}).items()
                                            if not domain_manager.is_pc_name(k, _pcr_sch)})
                 mem_updates["npc_summaries"] = existing_schedules
-            if wsu.get("current_arc"):
-                mem_updates["current_arc"] = wsu["current_arc"]
+            # [2026-10-25 C74 판4 · G4] current_arc 저장 은퇴 — 한 줄 아크는 읽는 곳(Theoria 4c · 루카)이 well_store.arc_line 으로.
             # [2026-10-11 C26 P4] 몸 상태·성공의 부작용은 **이번 턴 판독**이다 — 키가 오면 매 턴 쓴다(빈 값·null = 지움).
             #   전엔 값이 참일 때만 덮어서 빈 값 턴(녹화: 부작용 빈 문자열 78%, 몸 {} 55%)에 옛 값이 4c에 계속 실렸다.
             #   추출 콜은 지금 플래그를 못 보므로 서 있는 상태를 쥘 수 없다 — 오래 가는 손상의 추적은 활력·평형 몫(레티어스).
@@ -718,6 +923,10 @@ async def after_narrative(rt, b) -> None:
                 _w5_extra = None
             narrative_tracker.record_turn(nt_state, turn_idx, user_brief, ai_brief, involved_npcs, qf,
                                           extra_entities=_w5_extra)
+            # [2026-10-26 C80] 턴 색인 — 방금 찍은 turn_log 한 줄(이름 · 중요도)을 영구 행으로 + 그 턴 원문 구간.
+            #   turn_log 50 롤링은 그대로(기존 소비자 무변경). 실패 무해.
+            if getattr(config, "MEMORY_LAYERS_V2", False):
+                _index_turn(channel_id, nt_state, turn_idx)
 
             # [T-A] NPC 등장 카운트(구별 턴만) — 1회성/다회성 tier 계측. session만 내부 게이트.
             try:
@@ -764,20 +973,7 @@ async def after_narrative(rt, b) -> None:
                         logger.debug(f"[EntityState] PC 혼입 제외: {', '.join(_est_hit)}")
             if est_data:
                 narrative_tracker.update_entity_states(nt_state, turn_idx, est_data)
-
-                # [2026-09-16 시트 2차 §9] 로스터 전처리(개명·사망·무력화·즉석 생성·몹 태그·lore_seen) →
-                # 성장 관문 하나(grow_sheet): 관찰은 인물 페이지 Observed 절, 250자 자라면 heavy 정리 1콜.
-                try:
-                    for _gn, _gd in await rt._npc_roster_pass(channel_id, est_data, _pc_masks, ctx, turn_idx, prose=response):
-                        await rt.grow_sheet(channel_id, ("npc", _gn), _gd, turn=turn_idx)
-                except Exception as _e_sheet:
-                    logger.warning(f"[NPC Sheet] enrichment skipped: {_e_sheet}")
-
-            # [2026-09-16 시트 2차 §8·§9] PC도 같은 관문 — 행동 PC(uid)의 페이지(`!가면`)가 있을 때만.
-            try:
-                await rt.grow_sheet(channel_id, ("pc", ctx.user_id), updates.get("PCObserved"), turn=turn_idx)
-            except Exception as _e_pco:
-                logger.warning(f"[PC Build] pc_observed 처리 skipped: {_e_pco}")
+            # [2026-10-24 C74 W1-7] 시트 성장(명부 손질 · 관찰 덧붙이기)은 줄거리 저장 **뒤**로 옮겼다(아래).
 
             # 스토리라인 분류
             last_entry = nt_state["turn_log"][-1] if nt_state.get("turn_log") else None
@@ -816,59 +1012,63 @@ async def after_narrative(rt, b) -> None:
             # 자연 소멸 layer — 매 턴 호출, dormant 12 / expire 36 룰
             narrative_tracker.apply_tension_decay(nt_state, turn_idx)
 
-            # === Arc PMU 결과 처리 (Phase 4b, spec v2 §5.1) ===
-            # ArcUpdates / ArcDecisions를 storyline에 적용. tick_arcs 직전에 처리해서
-            # 갱신된 좌표가 같은 턴 tick_arcs에 반영되도록.
+            # === 우물 — [2026-10-24 C75 G2] 배치 갱신 · 이름 → 우물 행, 그다음 tick(옮기기 · 시계 맞춤 · 증발 · 캐시) ===
+            #   옛 꼴: ArcUpdates/ArcDecisions 를 줄거리에 쓰고 tick_arcs(좌표 5축 · 잠듦) + G1 그림자 tick.
             try:
+                import well_store as _ws_g2
                 _arc_updates_payload = updates.get("ArcUpdates")
                 if _arc_updates_payload and isinstance(_arc_updates_payload, list):
-                    _au_events = narrative_tracker.apply_arc_updates(
-                        nt_state, _arc_updates_payload, turn_idx
-                    )
+                    _au_events = _ws_g2.apply_updates(channel_id, _arc_updates_payload, turn_idx)
                     if _au_events.get("phase_transitions"):
                         logger.info("[Arc] phase_transitions: %s", _au_events["phase_transitions"])
                 _arc_decisions_payload = updates.get("ArcDecisions")
                 if _arc_decisions_payload and isinstance(_arc_decisions_payload, dict):
-                    _ad_events = narrative_tracker.apply_arc_decisions(
-                        nt_state, _arc_decisions_payload, turn_idx
-                    )
-                    if _ad_events.get("promoted"):
-                        logger.info("[Arc] Promoted from PMU confirm: %s", _ad_events["promoted"])
+                    _ad_events = _ws_g2.apply_decisions(
+                        channel_id, _arc_decisions_payload, turn_idx,
+                        offered_id=updates.get("_well_offered"))
+                    if _ad_events.get("named"):
+                        logger.info("[Arc] Named from batch confirm: %s", _ad_events["named"])
                     if _ad_events.get("rejected"):
-                        logger.info("[Arc] PMU rejected categories: %s", _ad_events["rejected"])
+                        logger.info("[Arc] Batch rejected wells: %s", _ad_events["rejected"])
             except Exception as _e_pmu_arc:
                 logger.warning("[Arc] PMU result apply failed: %s", _e_pmu_arc)
-
-            # === Arc 좌표 갱신 (Phase 5, spec v2 §4.3) ===
-            # active arcs의 5축 좌표 자연 갱신 + armed 토글 + dormant 판정
             try:
+                import well_store as _ws_g2
                 _arc_ctx = {
                     "current_location": (ctx.dai or {}).get("current_location", "") if ctx.dai else "",
-                    "relevant_npcs": (ctx.dai or {}).get("relevant_npcs", []) if ctx.dai else [],
                     "scene_type": (ctx.dai or {}).get("scene_type", "normal") if ctx.dai else "normal",
-                    "anomaly_category": (ctx.bus.anomaly or {}).get("category", "") if getattr(ctx, "bus", None) is not None else "",
                     "doom_phase": (ctx.bus.doom or {}).get("chapter_phase", "") if getattr(ctx, "bus", None) is not None else "",
-                    "quality_flags": (ctx.dai or {}).get("quality_flags", {}) if ctx.dai else {},
-                    "decisive": bool((ctx.dai or {}).get("decisive_action", False)) if ctx.dai else False,
                 }
-                _arc_events = narrative_tracker.tick_arcs(nt_state, _arc_ctx, turn_idx)
-                if _arc_events.get("dormant"):
-                    logger.info("[Arc] Tick: dormant=%s", _arc_events["dormant"])
-                if _arc_events.get("armed"):
-                    logger.info("[Arc] Tick: armed=%s", _arc_events["armed"])
+                _ws_g2.tick(channel_id, nt_state, turn_idx, _arc_ctx)
             except Exception as _e_arc:
-                logger.warning("[Arc] tick_arcs failed: %s", _e_arc)
+                logger.warning("[Well] tick failed: %s", _e_arc)
 
-            # 5턴 간격 스토리라인 요약 (Flash 소형 콜)
-            import config as _cfg
-            flash_model = _cfg.role_model("flash")
-            await narrative_tracker.summarize_if_needed(
-                nt_state, turn_idx,
-                client=rt.client if hasattr(rt, 'client') else None,
-                model_id=flash_model
-            )
-
+            # [2026-10-24 C74 W1-7] 줄거리 저장은 **await 앞**. 옛 꼴은 668 에서 읽은 사본을 쥔 채 await 셋(명부 손질 ·
+            #   시트 heavy 정리 · 요약 flash)을 지나 맨 끝에서 통째로 썼다 — 배경 줄은 다음 턴 앞단과 겹쳐 돌아, 그 사이
+            #   다음 턴 이변 모듈이 저장한 아크 흡수(anomaly 608)를 이 쓰기가 지웠다. 이제 읽기→쓰기 사이에 await 0.
             domain_manager.update_narrative_tracker_state(channel_id, nt_state)
+
+            # [2026-09-16 시트 2차 §9] 로스터 전처리(개명·사망·무력화·즉석 생성·몹 태그·lore_seen) →
+            # 성장 관문 하나(grow_sheet): 관찰은 인물 페이지 Observed 절, 250자 자라면 heavy 정리 1콜.
+            # [2026-10-24 C74 W4-1b] 여기선 덧붙이기만(condense=False). heavy 정리는 상태창과 상관없어 기억 차선
+            #   꼬리(bg_narrative_tail · 재그림 뒤)가 한다 — 상태창이 그 콜을 기다리지 않게. 명부 손질은 줄거리를 안 건드린다.
+            if est_data:
+                try:
+                    for _gn, _gd in await rt._npc_roster_pass(channel_id, est_data, _pc_masks, ctx, turn_idx, prose=response):
+                        await rt.grow_sheet(channel_id, ("npc", _gn), _gd, turn=turn_idx, condense=False)
+                        _note_tail(channel_id, "npc", _gn, turn_idx)
+                except Exception as _e_sheet:
+                    logger.warning(f"[NPC Sheet] enrichment skipped: {_e_sheet}")
+
+            # [2026-09-16 시트 2차 §8·§9] PC도 같은 관문 — 행동 PC(uid)의 페이지(`!가면`)가 있을 때만.
+            try:
+                await rt.grow_sheet(channel_id, ("pc", ctx.user_id), updates.get("PCObserved"), turn=turn_idx, condense=False)
+                _note_tail(channel_id, "pc", ctx.user_id, turn_idx)
+            except Exception as _e_pco:
+                logger.warning(f"[PC Build] pc_observed 처리 skipped: {_e_pco}")
+
+            # 5턴 간격 스토리라인 요약 (Flash 소형 콜) → [2026-10-24 C74 W4-1b] 기억 차선 꼬리로. 여기선 "이 턴 요약을 볼 것"만 적는다.
+            _TAIL_SUMMARY[str(channel_id)] = turn_idx
         except Exception as nt_err:
             logger.warning("[NarrativeTracker] Update failed: %s", nt_err)
     except Exception as e:
@@ -978,8 +1178,8 @@ async def after_presence(rt, b) -> None:
     try:
         _ws_tick = domain_manager.get_world_state(channel_id) or {}
         _slot_now = str(_ws_tick.get("time_slot", "") or "").strip()
-        # 마커는 **비교 전에** 떠 둔다. get_world_state는 도메인의 살아 있는 dict를
-        #   그대로 돌려주므로, 아래에서 마커를 찍은 뒤에 읽으면 새 값이 나온다.
+        # 마커는 **비교 전에** 떠 둔다. [2026-10-24 C74 W1-9 주석 정정] get_world_state 는 사본을 돌려준다
+        #   (옛 주석 "살아 있는 dict" 는 틀림). 아래에서 마커를 찍는 쪽도 이 사본이라 먼저 떠 두는 순서는 그대로 맞다.
         _prev_slot = str(_ws_tick.get("schedule_tick_slot", "") or "-")
         if _slot_now and _ws_tick.get("schedule_tick_slot") != _slot_now:
             _tiers_tick = npc_manager.get_presence_tiers(channel_id) or {}

@@ -299,6 +299,20 @@ def resolve_page(channel_id: str, name_or_alias: str, kind: Optional[str] = None
     return hits[0]
 
 
+def current_pid(channel_id: str, pid: Optional[str], name: str, kind: Optional[str] = "character") -> Optional[str]:
+    """[2026-10-24 C75 G1] 쥐고 있던 {pid, 이름} → 지금의 page_id. pid 가 살아 있으면 그대로, 없으면(개명은 새 pid 를
+    만들고 옛 이름을 별칭으로 남긴다 — rename_npc_page) 이름으로 다시 찾는다. 못 찾으면 None."""
+    try:
+        if pid:
+            pg = get_page(channel_id, pid)
+            if pg and str(pg.get("status") or "") != "deleted":
+                return pid
+        return resolve_page(channel_id, name, kind) if name else None
+    except Exception as e:
+        logger.debug(f"[Wiki] current_pid skip: {e}")
+        return None
+
+
 # =========================================================
 # 2. 섹션 읽기
 # =========================================================
@@ -1313,6 +1327,138 @@ def apply_patches(channel_id: str, patches: Any, notes: Any,
     return counts
 
 
+def _guard_corrections_lines(channel_id: str, page_id: str, old_body: str, new_body: str) -> tuple:
+    """[2026-10-27 C82] 줄을 지키는 정정 가드 — 성장 Observed 는 여러 줄(간결체)이라 `_guard_corrections` 를 줄마다 돌리고
+    (버림 · 거둔 정정 줄 빼기), 옛 본문의 살아 있는 `정정(` 줄이 빠졌으면 맨 앞 줄로 되살린다. 한 줄이면 옛 가드 그대로."""
+    lines = [ln for ln in str(new_body or "").splitlines() if ln.strip()]
+    if len(lines) <= 1:
+        return _guard_corrections(channel_id, page_id, old_body, new_body)
+    out, rej = [], 0
+    for ln in lines:
+        g, r, _k = _guard_corrections(channel_id, page_id, "", ln)
+        rej += r
+        if str(g or "").strip():
+            out.append(str(g).strip())
+    body = "\n".join(out)
+    live = _live_correction_texts(channel_id)
+    have = {_norm_q(x) for x in _split_sents(body)}
+    back = [x for x in _split_sents(old_body)
+            if x.strip().startswith(CORRECTION_PREFIX) and _norm_q(x) not in have
+            and (live is None or _is_live_correction(x, live))]
+    if back:
+        body = "\n".join([" ".join(back)] + out)
+    return body, rej, len(back)
+
+
+def apply_growth(channel_id: str, page_id: str, observed: Any, items: Any, sources: list,
+                 turn: Optional[int], pre_observed: Optional[tuple] = None,
+                 turn_meta: Optional[Dict[int, Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """[2026-10-27 C82] 성장발효 쓰기 관문 — 페이지 하나, 사유 `growth`. F1 `apply_patches` 게이트를 한 페이지에 맞춰 쓴다.
+
+    - Observed(텍스트 절): 인용 게이트(원문에 없는 따옴표는 부호만 벗김) → **정정 가드** → hash CAS 로 통째 쓰기.
+      (옛 heavy 정리 경로엔 정정 가드가 없었다 — 그 구멍을 여기서 메운다.)
+      pre_observed = 콜 앞에 읽은 (본문, hash). 콜 사이 매 턴 덧붙이기가 줄을 붙였으면(지금 본문 = 그 줄 + 콜 앞 본문, 또는
+      콜 앞 본문 + 그 줄) 그 줄을 같은 자리에 이어 지금 hash 로 쓴다 — 덧붙인 관찰을 잃지 않고, 다른 쓰기가 끼었으면 거부(rej_hash).
+    - 항목 절은 지금 본문을 읽어 덧붙인다(콜 앞 스냅샷 불필요).
+    - 항목 절(그 kind 의 play enum 안): 줄마다 인용 게이트 → 기존 줄과 도장 뗀 본문으로 중복 버림 → 덧붙이기.
+      History · Relationships+ 줄은 `{"turn": n, "line": …}` 의 n 턴 작중 날짜 + 턴 도장(코드). n 이 없으면 이번 턴 도장.
+    - play enum 밖 절 · lore 절은 버린다. 돌려주는 것 = 셈 dict."""
+    rc = {"observed": 0, "items": 0, "dup": 0, "rej_section": 0, "rej_hash": 0, "quote_stripped": 0,
+          "rej_corrected": 0, "retract_corrected": 0}
+    kind = _kind_of(channel_id, page_id)
+    enum = _play_enum(kind)
+    if not kind or not enum:
+        rc["rej_section"] += 1
+        return rc
+    # ① Observed
+    obs = str(observed or "").strip()
+    if obs and "Observed" in enum:
+        obs, n = _strip_unmatched_quotes(obs, sources)
+        rc["quote_stripped"] += n
+        old, h = get_play_body(channel_id, page_id, "Observed")
+        exp = h
+        if isinstance(pre_observed, tuple) and len(pre_observed) == 2:
+            p_body, p_hash = str(pre_observed[0] or ""), str(pre_observed[1] or "")
+            exp = p_hash
+            if h != p_hash and p_body and (old.startswith(p_body) or old.endswith(p_body)):
+                # 매 턴 덧붙이기(append_play_item)는 WIKI_OBSERVED_KEEP_ORDER=new_first 면 앞에, 아니면 뒤에 붙인다.
+                if old.endswith(p_body):
+                    _new = [ln for ln in old[:len(old) - len(p_body)].splitlines() if ln.strip()]
+                    if _new:
+                        obs = "\n".join(_new) + "\n" + obs.lstrip()
+                else:
+                    _new = [ln for ln in old[len(p_body):].splitlines() if ln.strip()]
+                    if _new:
+                        obs = obs.rstrip() + "\n" + "\n".join(_new)
+                if _new:
+                    rc["tail_kept"] = len(_new)
+                exp = h
+        obs, _rc, _kc = _guard_corrections_lines(channel_id, page_id, old, obs)
+        rc["rej_corrected"] += _rc
+        rc["retract_corrected"] += _kc
+        if obs.strip():
+            res = write_play_section(channel_id, page_id, "Observed", obs,
+                                     src_turns=[turn] if turn is not None else [], turn=turn,
+                                     reason="growth", expected_hash=exp)
+            if res.get("ok"):
+                rc["observed"] += 1
+            else:
+                # Observed 가 막히면 항목 절도 안 쓴다 — 도장이 그대로라 다음 성장이 같은 턴을 다시 읽는다(반쪽 쓰기 → 중복 0).
+                rc["rej_hash"] += 1
+                logger.info("[Wiki] growth page=%s Observed hash 충돌 — 항목 절도 보류" % page_id)
+                return rc
+    # ② 항목 절
+    for section, lines in ((items or {}).items() if isinstance(items, dict) else []):
+        section = str(section or "")
+        if section not in enum or not _is_item_section(section):
+            rc["rej_section"] += 1
+            continue
+        cur = [x for x in get_sections(channel_id, page_id) if x["section"] == section]
+        old = (cur[0]["body"] if cur else "") or ""
+        old_hash = (cur[0].get("hash") if cur else "") or ""
+        have = {_unstamp(ln) for ln in old.splitlines() if ln.strip()}
+        add = []
+        for it in (lines if isinstance(lines, list) else [lines]):
+            t_ref = None
+            if isinstance(it, dict):
+                t_ref = it.get("turn")
+                txt = str(it.get("line") or "")
+            else:
+                txt = str(it or "")
+            txt, n = _strip_unmatched_quotes(" ".join(txt.split()), sources)
+            rc["quote_stripped"] += n
+            body_ln = _unstamp(txt)
+            if not body_ln:
+                continue
+            if body_ln in have:
+                rc["dup"] += 1
+                continue
+            have.add(body_ln)
+            if section in _STAMPED_SECTIONS:
+                try:
+                    tn = int(t_ref) if t_ref is not None else None
+                except (TypeError, ValueError):
+                    tn = None
+                meta = (turn_meta or {}).get(tn) if tn is not None else None
+                ent = [{"game_time": (meta or {}).get("game_time"), "turn": tn}] if tn else []
+                stamp = _event_stamp(channel_id, ent, turn)
+                add.append(f"{stamp} {body_ln}" if stamp else body_ln)
+            else:
+                add.append(body_ln)
+        if not add:
+            continue
+        body = (old.rstrip() + "\n" + "\n".join(add)) if old.strip() else "\n".join(add)
+        res = write_play_section(channel_id, page_id, section, body,
+                                 src_turns=[turn] if turn is not None else [], turn=turn,
+                                 reason="growth", expected_hash=old_hash)
+        if res.get("ok"):
+            rc["items"] += len(add)
+        else:
+            rc["rej_hash"] += 1
+    logger.info("[Wiki] growth page=%s " % page_id + " ".join(f"{k}={v}" for k, v in rc.items()))
+    return rc
+
+
 def revert_sections_after(channel_id: str, from_turn: int) -> int:
     """`src_turns`에 `>= from_turn`이 있는 **play 절**을 직전 리비전으로 복원(없으면 절 삭제).
 
@@ -1688,6 +1834,39 @@ def aggregate_has(channel_id: str, kind: str, name: str) -> bool:
     return False
 
 
+def remove_aggregate_names(channel_id: str, kind: str, names: Any, *, turn: Optional[int] = None) -> int:
+    """[2026-10-25 C77 E-1 · Q28] 모음 `Entries` 에서 지운 이름을 뺀다 — `upsert_aggregate_line` 의 지우는 짝.
+
+    `!로어` 갈아 끼우기로 지운 room 장소는 개별 페이지가 아니라 모음 줄로 산다(region · area 페이지는 `mark_page_deleted`).
+    자식 칸에서 그 이름(`[[이름]]` 포함)을 빼고, 부모가 지운 이름인 줄 · 자식이 다 빠진 줄은 줄째 뺀다. 뺀 칸 수를 돌려준다."""
+    if not _places_on():
+        return 0
+    q = {_norm_name(str(n or "").strip()) for n in (names or []) if str(n or "").strip()}
+    if not q:
+        return 0
+    pid = page_id_for("concept", _agg_name(kind)) if _agg_name(kind) else ""
+    if not pid or get_page(channel_id, pid) is None:
+        return 0
+    lines, removed = [], 0
+    for ln in _agg_entries_lines(channel_id, pid):
+        if ":" not in ln:
+            lines.append(ln)
+            continue
+        head, tail = ln.split(":", 1)
+        parent = head.strip().lstrip("-").strip()
+        kids = [c.strip() for c in tail.split(",") if c.strip()]
+        keep = [c for c in kids if _norm_name(_agg_bare(c)) not in q]
+        if _norm_name(_agg_bare(parent)) in q:
+            removed += len(kids)
+            continue
+        removed += len(kids) - len(keep)
+        if keep:
+            lines.append(head + ": " + ", ".join(keep))
+    if removed:
+        _write_entries(channel_id, pid, lines, turn=turn, reason="C77-agg-remove")
+    return removed
+
+
 def location_page_eligible(node: Any) -> bool:
     """개별 페이지 자격 = 타입이 region/area이고 (로어 등록이거나 자식이 있는) 노드."""
     if not isinstance(node, dict):
@@ -1985,6 +2164,124 @@ def _compile_empty() -> dict:
     return {"text": "", "pages": [], "chars": 0, "omitted": 0, "sections": 0}
 
 
+# [2026-10-27 C85] 항목 절 현재값 — 상대가 여럿인 절(Relationships+ "이름: …" · Members+ "이름: 자리")은 최신 N줄만
+#   자르면 자주 바뀐 상대가 자리를 다 먹는다. 1차 = 상대마다 가장 최근 줄(최근에 바뀐 상대부터 · 열쇠 없는 줄은 그 줄이
+#   곧 상대), 2차 = 남는 자리에 나머지 줄 최신순. 보이는 순서는 종전처럼 오래된 → 최신. 저장은 안 건드린다(읽을 때 고르기만).
+_CURRENT_KEYED = ("Relationships+", "Members+")
+_ITEM_KEY_RE = _re_c45.compile(r"^([^:：\n]{1,24}?)\s*[:：]")
+
+
+def _item_key(line: Any) -> Optional[str]:
+    """줄 → 상대 열쇠(도장 떼고 · 괄호 별칭 떼고 · 공백 정규화 · 소문자). 열쇠가 없으면 None."""
+    m = _ITEM_KEY_RE.match(_unstamp(line))
+    if not m:
+        return None
+    k = _re_c45.split(r"[(\[（]", m.group(1))[0]
+    k = " ".join(k.split()).lower()
+    return k or None
+
+
+def _current_excerpt(lines: List[str], excerpt_chars: int) -> str:
+    """[C85] 상대별 최신 먼저. 첫 줄은 상한을 넘어도 담는다(종전 규칙). 열쇠가 하나뿐이면 종전 발췌와 같다.
+    열쇠 없는 줄(옛 F1 자유형)은 줄마다 제 열쇠 — 최신 줄이 열쇠가 없다고 밀려나지 않는다(검토 2)."""
+    last: Dict[Any, int] = {}
+    for i, ln in enumerate(lines):
+        k = _item_key(ln)
+        last[("k", k) if k else ("i", i)] = i
+    chosen: List[int] = []
+    used = 0
+    for i in sorted(set(last.values()), reverse=True):      # 1차: 상대별 최신, 최근에 바뀐 상대부터
+        ln = lines[i]
+        if excerpt_chars and chosen and (used + 1 + len(ln)) > excerpt_chars:
+            continue
+        chosen.append(i)
+        used += len(ln) + 1
+    taken = set(chosen)
+    for i in range(len(lines) - 1, -1, -1):                 # 2차: 남는 자리, 최신순
+        if i in taken:
+            continue
+        ln = lines[i]
+        if excerpt_chars and chosen and (used + 1 + len(ln)) > excerpt_chars:
+            break
+        chosen.append(i)
+        used += len(ln) + 1
+    return "\n".join(lines[i] for i in sorted(chosen))
+
+
+def character_page_for(channel_id: str, name: Any) -> Optional[str]:
+    """[C85] 인물 이름 → 그 마음의 character 페이지 id. 해상도는 compile_for 와 같다(vessel.driver_of → resolve_page).
+    빈 몸 · 페이지 없음 · 지운 페이지 = None."""
+    if not channel_id or not isinstance(name, str) or not name.strip():
+        return None
+    nm = name
+    try:
+        import vessel as _vs_cp
+        nm = _vs_cp.driver_of(channel_id, name)
+    except Exception:
+        nm = name
+    if not nm:
+        return None
+    pid = resolve_page(channel_id, nm, kind="character")
+    if not pid:
+        return None
+    page = get_page(channel_id, pid)
+    if page is None or str(page.get("status") or "") == "deleted":
+        return None
+    return pid
+
+
+def knowledge_lines(channel_id: str, page_id: str, n: int = 0) -> List[str]:
+    """[C85] 페이지 Knowledge 줄(오래된 → 최신). n>0 이면 최근 n줄."""
+    body, _h = get_play_body(channel_id, page_id, "Knowledge")
+    lines = [ln.strip() for ln in (body or "").split("\n") if ln.strip()]
+    return lines[-n:] if n and n > 0 else lines
+
+
+def learned_lines_for(channel_id: str, names: Any, scene_cast: Any, n_lines: int, n_npcs: int,
+                      skip: Any = (), line_chars: int = 0) -> Dict[str, List[str]]:
+    """[C85] Theoria 4b 장기 앎 — names 중 **장면 인물**(scene_cast 와 같은 페이지)의 Knowledge 최근 n_lines 줄.
+    {이름: [줄]}. 인물 상한은 장면 순서대로, 줄은 line_chars 자에서 자른다(0 = 안 자름).
+    장면을 모르면(scene_cast 비면) 빈 dict. 실패도 빈 dict."""
+    out: Dict[str, List[str]] = {}
+    try:
+        if not getattr(config, "WIKI_PAGES", False):
+            return out
+        if not channel_id or not names or not scene_cast or int(n_lines) <= 0 or int(n_npcs) <= 0:
+            return out
+        scene_order: Dict[str, int] = {}
+        for _i, _s in enumerate(scene_cast):
+            _p = character_page_for(channel_id, _s)
+            if _p and _p not in scene_order:
+                scene_order[_p] = _i
+        if not scene_order:
+            return out
+        _skip = {str(x) for x in (skip or ())}
+        cands = []
+        for nm in names:
+            if not isinstance(nm, str) or nm in _skip:
+                continue
+            pid = character_page_for(channel_id, nm)
+            if pid and pid in scene_order:
+                cands.append((scene_order[pid], nm, pid))
+        seen = set()
+        _lc = int(line_chars or 0)
+        for _o, nm, pid in sorted(cands, key=lambda x: (x[0], x[1])):
+            if len(out) >= int(n_npcs):
+                break
+            if pid in seen:
+                continue
+            lines = knowledge_lines(channel_id, pid, int(n_lines))
+            if _lc > 0:
+                lines = [(ln[:_lc].rstrip() + "…") if len(ln) > _lc else ln for ln in lines]
+            if lines:
+                out[nm] = lines
+                seen.add(pid)
+    except Exception as e:
+        logger.debug(f"[Wiki] learned_lines_for skip: {e}")
+        return {}
+    return out
+
+
 def _compile_section_excerpt(section: str, body: str, excerpt_chars: int,
                              history_links: int) -> str:
     """절 하나의 발췌. 텍스트 절 = 앞부분 절단, 항목 절 = **최신 줄부터** 담는다."""
@@ -1998,6 +2295,8 @@ def _compile_section_excerpt(section: str, body: str, excerpt_chars: int,
     lines = [ln for ln in body.split("\n") if ln.strip()]
     if not lines:
         return ""
+    if section in _CURRENT_KEYED and getattr(config, "MEMORY_CURRENT", False):
+        return _current_excerpt(lines, excerpt_chars)   # [2026-10-27 C85]
     cap_lines = history_links if section == "History" else len(lines)
     kept: List[str] = []
     used = 0
@@ -2400,11 +2699,12 @@ def mark_page_deleted(channel_id: str, kind: str, name: str) -> bool:
         return False
     try:
         pid = page_id_for(kind, name)
-        conn.execute("UPDATE pages SET status='deleted' WHERE channel_id=? AND page_id=?",
-                     (channel_id, pid))
+        cur = conn.execute("UPDATE pages SET status='deleted' WHERE channel_id=? AND page_id=?",
+                           (channel_id, pid))
         conn.commit()
         logger.info(f"[Wiki] page marked deleted page={pid}")
-        return True
+        # [2026-10-24 C76 검토 #7] 바뀐 행이 있을 때만 True(없는 페이지를 지운 셈으로 세지 않게).
+        return (cur.rowcount or 0) > 0
     except Exception as e:
         logger.warning(f"[Wiki] mark_page_deleted 실패 (무시): {e}")
         return False

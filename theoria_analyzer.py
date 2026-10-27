@@ -31,6 +31,12 @@ from google.genai import types
 
 logger = logging.getLogger("Theoria")
 
+# [2026-10-27 C85] knows 앎의 경계 한 구절 — 서술로만 드러난 것 · 그 사실의 주인공이라는 것만으로는 앎이 아니다.
+#   외부 요약 프롬 Facts 절 · F1 V5 · 성장발효 Knowledge 와 같은 결. 손잡이 MEMORY_CURRENT 끔 = 옛 스키마 바이트 그대로.
+_KNOWS_DESC_OLD = 'Direct witness or confirmed telling; what was only overheard or inferred belongs in suspects"]'
+_KNOWS_DESC_NEW = ('Direct witness or confirmed telling; what was only overheard or inferred belongs in suspects.'
+                   ' Not from narration only the players saw, and not just from being the one it is about"]')
+
 
 # [2026-07-27] render-facing 필드 언어 드리프트 계측 — **이상할 때만 1줄**(정상 시 로그 0).
 # 배경: 지시(스키마 "ENGLISH ONLY … Korean here gets transcribed verbatim into prose = BUG")는
@@ -118,6 +124,18 @@ class TheoriaAnalyzer:
         if not self.client:
             return {"error": "No client"}
 
+        # [2026-10-27 C84] 모습 · 등장 · 불러오기 — 코드 문 1(items · expr · words)을 넘은 규칙. 프롬프트 두 자리
+        #   (ROSTER `LOADED:` 줄 · 스키마 `form` 칸)가 같은 목록을 본다 — 그래서 _build_prompt 앞에서 한 번.
+        _anch_f = context.narrative_anchors if isinstance(getattr(context, "narrative_anchors", None), dict) else {}
+        try:
+            import npc_forms as _nf_t
+            _anch_f["_form_pending"] = _nf_t.code_gate(
+                str(_anch_f.get("channel_id", "") or ""), str(getattr(context.request, "user_input", "") or ""),
+                str(_anch_f.get("acting_user_id", "") or ""))
+        except Exception as _e_nf:
+            logger.debug(f"[Form] code gate skip: {_e_nf}")
+            _anch_f["_form_pending"] = []
+
         prompt = self._build_prompt(context)
 
         # Extract genre and scene context for conditional loading
@@ -133,6 +151,7 @@ class TheoriaAnalyzer:
             # 축(group_idx = turn_number % total_groups)이라 스포트라이트가 매 턴 같은 5개로
             # 고정돼 있었다. une_facade가 실 카운터(world_state.turn_index)를 넣어준다.
             "turn_count": int(anchors.get("turn_index", 0) or 0),
+            "form_pending": anchors.get("_form_pending") or [],   # [C84]
         }
         system_instruction = self._build_system_instruction(active_genres, scene_context)
         
@@ -341,7 +360,19 @@ class TheoriaAnalyzer:
         except Exception as _e_vs:
             logger.debug(f"[Vessel] theoria block skip: {_e_vs}")
             _vessel_blk = ""
+        # [2026-10-27 C84] 모습 · 등장 · 불러오기 — 코드 문 1을 넘었고 `when` 이 있는 규칙만 `form` 칸(없으면 0자, 종전 바이트).
+        _form_blk = ""
+        try:
+            import npc_forms as _nf_s
+            _form_blk = _nf_s.theoria_block((scene_context or {}).get("form_pending") or [])
+        except Exception as _e_fb:
+            logger.debug(f"[Form] theoria block skip: {_e_fb}")
+            _form_blk = ""
+        if _form_blk:
+            _vessel_blk = (_vessel_blk.rstrip("\n") + "\n" + _form_blk) if _vessel_blk else _form_blk
         _schema = self._get_output_schema()
+        if getattr(config, "MEMORY_CURRENT", False):
+            _schema = _schema.replace(_KNOWS_DESC_OLD, _KNOWS_DESC_NEW, 1)   # [2026-10-27 C85]
         if _vessel_blk:
             # 스키마 태그 **안**(최종 언어 점검 앞)에 — 밖에 두면 "ALL these fields"에서 빠져 조용히 누락될 수 있다.
             _cut = _schema.rfind("\n<language_final>")
@@ -464,7 +495,7 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
   - 예: "다음날 아침 9시" → {"target": {"slot": "오전", "day_offset": 1, "hour": 9}}, "10분 뒤" → {"explicit_hours": 0.167, "ticks": 5}, "3월 5일 오후 2시" → {"target": {"slot": "오후", "month": 3, "day_in_month": 5, "hour": 14}}.
 - "doom_clocks": {
     "clock_updates": [{"name": str, "delta": int(-1~+2), "reason": "ENGLISH-ONLY telegraphic"}],
-    "clock_new": {"name": "Korean", "segments": 4|6|8, "tick_mode": "action|time|hybrid", "threat": "Korean — 이 시계가 완성되면 무슨 일이 벌어지는가", "defense_action": "Korean — 이 시계를 막으려면 무엇을 해야 하는가 (구체적 행동 힌트)", "source": "narrative|consequence", "linked_entity": "str or null — 관련 NPC/세력 이름", "tags": ["Korean"], "doom_on_complete": "null(threat 기본: doom 상승) | 0(timer: 중립 마감) | negative int(opportunity: 완성 시 doom 감소, e.g. -10)"} | null,
+    "clock_new": {"name": "Korean", "segments": 4|6|8, "tick_mode": "action|time|hybrid", "threat": "Korean — 이 시계가 완성되면 무슨 일이 벌어지는가", "defense_action": "Korean — 이 시계를 막으려면 무엇을 해야 하는가 (구체적 행동 힌트)", "source": "narrative|consequence", "linked_entity": "str or null — 관련 NPC/세력 이름", "for_goal": "T# of the open goal (Goals line) this clock presses on or serves | null", "tags": ["Korean"], "doom_on_complete": "null(threat 기본: doom 상승) | 0(timer: 중립 마감) | negative int(opportunity: 완성 시 doom 감소, e.g. -10)"} | null,
     "clock_resolved": ["시계 이름 — 서사적으로 위협이 해소된 경우만"]
   }
 - "anomaly_profile": {"trigger": str, "category": "supernatural/psychological/social/environmental/temporal", "intensity": "Low/Mid/High/Extreme", "polarity": "positive/negative/mixed", "perception_type": "veridical/illusory/hallucinatory/delusional/null (Anomalous Experience Framework. In supernatural settings, 'hallucinatory' may be CORRECT. null = no anomaly)", "line": "ENGLISH-ONLY telegraphic - 1-line event direction", "reason": "ENGLISH-ONLY telegraphic", "continues": "E#/C# id from Pending events or Active Conditions when this proposal carries that thread one step further | null", "location": "이벤트 발생 장소 (CurrentLocation과 다를 때만. 빈 문자열이면 현재 위치)"} | null (2026-07-15: propose each turn — downstream code gates timing/acceptance and holds most back. null = the scene physically cannot host any event, NOT "seems quiet")
@@ -672,6 +703,20 @@ Any render-facing field whose value would contain Hangul → write that field's 
             except Exception as _e_rs:
                 logger.debug("[Theoria] 4b Reserve skip: %s", _e_rs)
                 _reserve = {}
+        # [2026-10-27 C85] 4b 장기 앎 재료 — 장면 인물(scene_cast)만, 상한 KNOW_PAGE_NPCS_T1. 손잡이 끔 = 빈 dict(종전 바이트).
+        _learned = {}
+        if _npc_state_names and getattr(config, "MEMORY_CURRENT", False):
+            try:
+                import wiki_store as _ws_c85
+                _learned = _ws_c85.learned_lines_for(
+                    str(anchors.get("channel_id", "") or ""), sorted(_npc_state_names),
+                    list(anchors.get("scene_cast") or []),
+                    int(getattr(config, "KNOW_PAGE_LINES_T1", 5)), int(getattr(config, "KNOW_PAGE_NPCS_T1", 6)),
+                    skip={_n for _n, _st in _inactive.items() if str(_st) == "dead"},
+                    line_chars=int(getattr(config, "KNOW_PAGE_LINE_CHARS", 200))) or {}
+            except Exception as _e_c85:
+                logger.debug("[Theoria] 4b Learned skip: %s", _e_c85)
+                _learned = {}
         for npc_name in _npc_state_names:
             npc_lines = [f"{npc_name}:"]
             att = attitudes.get(npc_name, {})
@@ -720,6 +765,10 @@ Any render-facing field whose value would contain Hangul → write that field's 
                 if kn.get("secrets_held"):
                     npc_lines.append(f"  Secrets: [{'; '.join(kn['secrets_held'][:3])}]")
                 npc_lines.append(f"  LeakRisk={kn.get('leak_risk', 'none')}")
+            # [2026-10-27 C85] 장기 앎 — 성장발효가 원문에서 삭힌 페이지 Knowledge 최근 N줄. knows 는 20개에서 오래된 것부터
+            #   떨어지고 여기엔 최근 5개만 보여서, 오래전에 확립된 앎이 이번 턴 NPCKnowledge(→ 렌더)까지 못 왔다.
+            if _learned.get(npc_name):
+                npc_lines.append(f"  Learned (record): [{'; '.join(_learned[npc_name])}]")
             # [2026-09-30 wave8_2nd G] 오해 되먹임 — domain_manager가 영속한 misbeliefs를 다음 턴 분석에 값만 돌려준다.
             #   전엔 저장만 되고 읽는 곳이 0이라 모델이 매 턴 오해를 새로 지어 덮어썼다. knows가 비어도 싣는다(게이트 밖).
             #   해소 계약 = 분석이 그 NPC의 false_beliefs를 비워 내면 비워진다(update_npc_knowledge 대체 규칙).
@@ -858,13 +907,17 @@ Any render-facing field whose value would contain Hangul → write that field's 
     def _build_session_memory_context(self, anchors: dict) -> str:
         """세션 메모리(arc, NPC schedules) + 스레드 장부 줄을 프롬프트에 포함"""
         mem = anchors.get("session_memory", {})
+        # [2026-10-25 C74 판4 · G4] 옛 `- Current Arc:`(배치 추출 한 줄 글)은 뺐다 — 한 줄 아크가 우물에서 나오면 같은 프롬프트
+        #   2단 "- Wells in sight:"(_build_arc_context)와 같은 것을 두 번 싣는다(검토 L6). 루카는 우물에서 짓는다(well_store.arc_line).
         if not mem:
-            return ""
+            # [C74 판3 검토 #8] 첫 턴(세션 메모리 빔)에도 장부 줄(목표 id 포함)은 싣는다 — 새 시계 for_goal 이 고를 수 있게
+            try:
+                import thread_ledger as _tl4c0
+                return _tl4c0.analysis_line(anchors.get("channel_id", "")) or ""
+            except Exception:
+                return ""
 
         parts = []
-        arc = mem.get("current_arc")
-        if arc:
-            parts.append(f"- Current Arc: {arc}")
 
         # [2026-09-25 스레드 장부] 옛 active_threads(통째 재작성 리스트) → 장부(상태·기한·남은 몫).
         try:
@@ -1021,6 +1074,26 @@ Any render-facing field whose value would contain Hangul → write that field's 
             return "\n" + "\n".join(lines)
         return ", ".join(str(s) for s in seeds)
 
+    @classmethod
+    def _format_seeds_in_sight(cls, channel_id: str, seeds: list) -> str:
+        """[2026-10-25 C75 G3] 보이는 씨앗 — 닻을 푼 시드는 그 우물이 PC 자리에서 보일 때만(밝기 ≥ 0.25), 먼 것은 개수만,
+        닻 없는 시드는 옛 그대로 늘. 증발한 시드는 빠진다(안티체호프). 우물 장부를 못 읽으면 옛 목록 그대로."""
+        if not seeds or not channel_id or not isinstance(seeds[0], dict):
+            return cls._format_anomaly_seeds(seeds)
+        try:
+            import well_store as _ws
+            sv = _ws.seed_view(channel_id, seeds)
+        except Exception:
+            return cls._format_anomaly_seeds(seeds)
+        shown = list(sv.get("visible") or []) + list(sv.get("free") or [])
+        far = len(sv.get("far") or [])
+        if not shown and not far:
+            return "None"
+        out = cls._format_anomaly_seeds(shown) if shown else ""
+        if far:
+            out = (out + "\n" if out else "\n") + f"- (+{far} more lie far from here)"
+        return out
+
     def _build_lore_structured(self, lore_summary: dict) -> str:
         """lore_summary의 구조화된 데이터를 Theoria 프롬프트로 변환"""
         parts = []
@@ -1167,36 +1240,34 @@ Any render-facing field whose value would contain Hangul → write that field's 
     @staticmethod
     def _build_arc_context(channel_id: str) -> str:
         """
-        Active arcs 현황을 Flash 프롬프트용 텍스트로 변환. spec v2 §5.
-
-        Active arc별: declared_goal / current_phase / next_waypoint / pacing 모드 / proximity / 최근 단서.
-        Flash가 다음 anomaly_seed 생성 시 정합 활용 — 같은 카테고리 시드는 흡수 가능, 새 카테고리는 신규.
+        [2026-10-24 C75 G2] 보이는 우물 — 이름 얻은 우물 중 PC 자리 밝기 M ÷ (d+1)² ≥ 0.25 인 것만(본 스펙 §7).
+        카테고리 대신 자리(where)와 무게(mass). 이 줄 근처의 이변은 그 우물의 빛이 된다 — 제안이 가까이서 빛나는
+        우물의 결을 타도록. 옛 꼴은 활성 아크 전부(`cat=`, 같은 카테고리면 흡수).
         """
         try:
-            import narrative_tracker as _nt
-            import domain_manager
-            nt_state = domain_manager.get_narrative_tracker_state(channel_id)
-            active_arcs = _nt.get_active_arcs(nt_state)
+            import well_store as _ws
+            wells = _ws.visible(channel_id)
         except Exception:
-            return "- Active Arcs: None"
+            return "- Wells in sight: None"
 
-        if not active_arcs:
-            return "- Active Arcs: None"
+        if not wells:
+            return "- Wells in sight: None"
 
-        lines = ["- Active Arcs:"]
-        for arc in active_arcs:
+        wells = sorted(wells, key=lambda w: (-float(w.get("proximity", 0) or 0), -int(w.get("mass", 0) or 0)))
+        lines = ["- Wells in sight (where the world's weight presses — events near them are their light):"]
+        for arc in wells[:4]:
             arc_id = arc.get("id", "?")
             decl = arc.get("declared_goal", "")
             phases = arc.get("phases", [])
             current_phase = phases[-1] if phases else "(initial)"
             next_wp = arc.get("next_waypoint", "")
-            origin_cat = arc.get("origin_category", "")
             prox = arc.get("proximity", 0.0)
             pacing = arc.get("pacing", 0.3)
             mode = "crucial" if pacing >= 0.6 else "mundane"
             armed = " [ARMED]" if arc.get("armed") else ""
+            climax = " [CLIMAX]" if arc.get("climax") else ""   # [C75 G3] 결전 — PC 가 익은 우물 중심(안)에 섰다
             lines.append(
-                f"  [Arc #{arc_id}] cat={origin_cat} prox={prox:.2f} mode={mode}{armed}"
+                f"  [Arc #{arc_id}] where={arc.get('where') or '?'} mass={arc.get('mass', 0)} prox={prox:.2f} mode={mode}{armed}{climax}"
             )
             if decl:
                 lines.append(f"    declared_goal: {decl}")
@@ -1204,11 +1275,10 @@ Any render-facing field whose value would contain Hangul → write that field's 
             if next_wp:
                 lines.append(f"    next_waypoint: {next_wp}")
 
-            # 최근 단서 (sensory_foreshadowing 5개)
+            # 최근 단서 (전조 칸 최근 3개 — 토큰 budget)
             sens = arc.get("sensory_foreshadowing") or []
             if sens:
-                recent_sens = sens[-3:]  # 최근 3개만 (토큰 budget)
-                summaries = [s.get("summary", "") for s in recent_sens if isinstance(s, dict)]
+                summaries = [s.get("summary", "") for s in sens[-3:] if isinstance(s, dict)]
                 summaries = [s for s in summaries if s]
                 if summaries:
                     lines.append(f"    recent_seeds: {' / '.join(summaries)}")
@@ -1217,7 +1287,8 @@ Any render-facing field whose value would contain Hangul → write that field's 
 
     # =========================================================
     # [A안 2026-07-02] 서사 방향 전용 병렬 콜 (분석 2분할)
-    # 추출 콜(analyze_input, T=0.1)과 asyncio.gather 병렬 — waterfall이 결과를 DAI에 합류.
+    # 추출 콜(analyze_input, T=0.1) **뒤에 차례로** 돈다(A안 v2 2026-07-02 직렬 — 서사 콜이 추출 결과를 받는다).
+    #   [2026-10-24 C74 W1-9] 옛 주석은 "asyncio.gather 병렬" — 지금 waterfall 은 직렬이다. 결과는 DAI에 합류.
     # 소유 필드: narrative_chain / narrative_hook / offscreen_trace / scene_register  ([2026-10-09 SD개편] suggested_beats 은퇴)
     # (memory_triggers·anomaly_profile = 규칙표 결합이 강해 추출 잔류, 2차 이사 후보)
     # =========================================================
@@ -1425,7 +1496,9 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
     # [2026-10-10 Mira 시트] 이번 턴 추출 줄 인물의 시트 전문 → Mira 입력. 전엔 Mira가 시트를 한 줄도 못 봤다(추출 콜도 못 봄,
     #   렌더만 통째로) — 답의 주인(10-09 반응주인)이 재료 없이 response를 써서, 받는 꼴·말하는 꼴이 모델 기본값으로 갔다
     #   (헤이젤 받는 꼴은 시트와 우연히 겹침, 클라라 "answers coolly … as she speaks"). 원천 = 렌더 프로필 정본
-    #   get_npc_renderer_profiles(비밀 절·숨김 표지 제거, {{char}}/{{user}} 치환) — 렌더와 같은 글. 레티어스 "시트는 전문".
+    #   get_npc_renderer_profiles({{char}}/{{user}} 치환) — 렌더와 같은 글. 레티어스 "시트는 전문".
+    #   [2026-10-25 C77 A-9 · Q15] 비밀 절은 **빼지 않고 `[withheld]` 로 감싼다**(npc_manager `_frame_section`) — 옛 주석
+    #   "비밀 절 제거"는 낡았다. 이 콜(Mira) · 추출 콜 · 렌더 셋 다 감싼 글을 받는다. 분석 쪽에서 뺄지는 판정 거리(C77 §8).
     #   측정(변형 mira_sheet_live, 5턴): Mira 콜 5.5~9.1초(기존 10.4~13.4), 응답이 시트 방식(술잔·말 삼킴·끝나고 붙어 있음,
     #   클라라 증기음)으로. 근거: analysis_line/성격·끌어당김_Mira시트_스펙_2026-10-10, Mira시트_구현보고_2026-10-10.
     _SHEET_HEAD = "### WHO THEY ARE (sheets of the characters on the extract lines: how each of them moves, speaks and answers)"
@@ -1821,6 +1894,14 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
         # [2026-06-11 소비자 감사 #6 부활] P6 원설계 배달 — NPC 능력 범위 힌트 (하드블록 아님).
         # 기존엔 Flash 콜 *후* bus.dai에 저장돼 한 번도 미배달이었음.
         _cap_hints = anchors.get("capability_hints", "")
+        # [2026-10-27 C84] 불러오기 규칙이 코드 문 1을 `when` 없이 넘었으면 ROSTER 에 `LOADED:` 줄(이번 턴 인물로 본다).
+        try:
+            import npc_forms as _nf_r
+            _loaded = _nf_r.roster_lines(anchors.get("_form_pending") or [])
+        except Exception:
+            _loaded = ""
+        if _loaded:
+            npc_roster = f"{npc_roster}\n{_loaded}" if npc_roster else _loaded
         if _cap_hints:
             npc_roster = f"{npc_roster}\n\n#### Capability bounds (reference, not hard limits)\n{_cap_hints}"
         scene_cast_block = self._build_scene_cast(anchors)
@@ -1835,6 +1916,14 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
         session_memory_context = self._build_session_memory_context(anchors)
         continuity_context = self._build_continuity_context(anchors)
         channel_id = anchors.get("channel_id", "")
+        # [2026-10-24 C76 §5-1] `!룰` 상시 구역 — Slot 23 이 산문에 주는 블록 그대로(레티어스 "산문 전달하는
+        #   것처럼"). 판정을 걸지 · 덩이 · 이변 · 시계를 고르는 이 콜이 늘 실리는 월드북을 모르고 골랐다(대기열 Q27).
+        try:
+            import slot_manager as _sm_ar
+            _active_rules = _sm_ar.build_active_rules_block(channel_id)
+        except Exception as _e_ar:
+            logger.debug(f"[Theoria] active rules skip: {_e_ar}")
+            _active_rules = ""
 
         return f"""## ANALYSIS REQUEST
 
@@ -1854,8 +1943,9 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
 
 ### 4. WORLD CONTEXT
 - Core Theme: {req.lore_summary.get('theme', 'General TRPG')}
-- Anomaly Seeds: {self._format_anomaly_seeds(req.lore_summary.get('anomaly_seeds', []))}
+- Anomaly Seeds: {self._format_seeds_in_sight(channel_id, req.lore_summary.get('anomaly_seeds', []))}
 {self._build_lore_structured(req.lore_summary)}
+{(chr(10) + _active_rules) if _active_rules else ''}
 
 {npc_context}
 

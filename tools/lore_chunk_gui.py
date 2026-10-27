@@ -82,11 +82,11 @@ class ChunkGUI:
         params = ttk.LabelFrame(right, text="파라미터")
         params.pack(fill=tk.X, padx=4, pady=(0, 4))
 
-        self.max_chunk = tk.IntVar(value=4000)
+        self.max_chunk = tk.IntVar(value=8000)
         self.min_chunk = tk.IntVar(value=800)  # V3 영어 로어북 기준
         self.min_len = tk.IntVar(value=50)
 
-        self._add_slider(params, "MAX_CHUNK", self.max_chunk, 1000, 10000, 500)
+        self._add_slider(params, "MAX_CHUNK", self.max_chunk, 1000, 16000, 500)
         self._add_slider(params, "MIN_CHUNK", self.min_chunk, 50, 1000, 50)
         self._add_slider(params, "min_len", self.min_len, 10, 500, 10)
 
@@ -144,7 +144,7 @@ class ChunkGUI:
         scale.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
 
     def _reset_params(self):
-        self.max_chunk.set(4000)
+        self.max_chunk.set(8000)
         self.min_chunk.set(800)  # V3 영어 로어북 기준
         self.min_len.set(50)
         # 슬라이더 옆 숫자 라벨도 갱신해야 해서 강제 update

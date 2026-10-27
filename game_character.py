@@ -26,302 +26,22 @@ from config import (
 
 # =========================================================
 # QUEST & MEMO SYSTEM
+# [2026-10-24 C74 판2 합치기] 퀘스트 보드 → 스레드 장부 목표(goal). 퀘스트 함수(add · advance · complete · remove ·
+#   archive_stale · dismiss · _find_quest)는 지웠다 — 목표 쓰기는 thread_ledger(추출 · OOC · 코드) 하나.
+#   보드에 남는 것 = lore(옛 연대기) · memos(옛 칸, 비어 있음). 옛 저장의 active/completed/archive/dismissed 는
+#   읽는 곳이 없다(이사 없음 — 판정 15번).
 # =========================================================
 
 def _get_board(channel_id: str) -> Dict[str, Any]:
     d = domain_manager.get_domain(channel_id)
     if "quest_board" not in d or not isinstance(d["quest_board"], dict):
-        d["quest_board"] = {"active": [], "completed": [], "memos": [], "archive": [], "lore": []}
-
-    # Migration: normalize old string quests to dict format
-    board = d["quest_board"]
-    active = board.get("active", [])
-    migrated = False
-    for i, q in enumerate(active):
-        if isinstance(q, str):
-            active[i] = {
-                "content": q,
-                "rank": config.QUEST_DEFAULT_RANK,
-                "progress": 0,
-                "max_progress": config.QUEST_RANK_SETTINGS[config.QUEST_DEFAULT_RANK]["max_progress"]
-            }
-            migrated = True
-    if migrated:
-        board["active"] = active
-        domain_manager.update_quest_board(channel_id, board)
-
-    return board
+        d["quest_board"] = {"memos": [], "lore": []}
+    return d["quest_board"]
 
 
 def _save_board(channel_id: str, board: Dict[str, Any]) -> None:
     domain_manager.update_quest_board(channel_id, board)
 
-
-def _quest_norm(s: str) -> str:
-    """퀘스트 이름 정규화 — _find_quest 와 dismissed 대조가 같은 규칙을 쓴다."""
-    s = str(s or "").replace('\u2018', "'").replace('\u2019', "'").replace('\u201C', '"').replace('\u201D', '"')
-    return re.sub(r'[의을를이가은는에서로부터과와및\s\'\""&,·\-_~:()]', '', s).lower()
-
-
-# [2026-10-10 이야기 실 O-E] 플레이어가 OOC 로 지운 퀘스트 이름 — 자동 등록(배경 추출 quest_add·progress 못 찾음
-#   자동 등록·리더 핸드아웃)이 같은 이름을 다시 올리지 못하게 한다. OOC add 만 건너뛰고 지운다.
-#   doom 실패·정체 archive 의 제거는 여기 안 남긴다(플레이어 뜻이 아니다). 스펙 state_v10/이야기실_지도·스펙_2026-10-10.md
-DISMISSED_MAX = 20
-
-
-def _dismiss_hit(board: Dict[str, Any], content: str) -> Optional[str]:
-    """dismissed 에 걸리면 그 이름. 같음, 또는 짧은 쪽이 4자 이상일 때 한쪽이 다른 쪽을 품음."""
-    n = _quest_norm(content)
-    if not n:
-        return None
-    for d in board.get("dismissed") or []:
-        dn = _quest_norm(d)
-        if not dn:
-            continue
-        if dn == n or (min(len(dn), len(n)) >= 4 and (dn in n or n in dn)):
-            return d
-    return None
-
-
-def dismiss_quest(channel_id: str, content: str) -> None:
-    """OOC 로 지운 이름을 남긴다(상한 DISMISSED_MAX, 오래된 것부터 밀림)."""
-    if not content:
-        return
-    board = _get_board(channel_id)
-    lst = [d for d in (board.get("dismissed") or []) if _quest_norm(d) != _quest_norm(content)]
-    lst.append(str(content).strip())
-    board["dismissed"] = lst[-DISMISSED_MAX:]
-    _save_board(channel_id, board)
-
-
-def _find_quest(active: List, content: str) -> Optional[Dict]:
-    """active 리스트에서 content가 포함된 퀘스트 dict를 찾습니다. 퍼지 매칭 지원."""
-    if not content or not active:
-        return None
-    # Q-1/Q-2 fix: raw 부분일치 first-match + 글자집합 0.6 fuzzy 폐기(오매칭 근원).
-    def _qc(q):
-        return q["content"] if isinstance(q, dict) else q
-    _normalize = _quest_norm   # [2026-10-10 O-E] 모듈 함수로 뺐다(dismissed 대조와 한 규칙)
-    norm_content = _normalize(content)
-    if not norm_content:
-        return None
-    # 1. 정규화 정확 일치 (유일할 때만)
-    exacts = [q for q in active if _normalize(_qc(q)) == norm_content]
-    if len(exacts) == 1:
-        return exacts[0]
-    if len(exacts) > 1:
-        logger.debug(f"[Quest] _find_quest AMBIGUOUS(exact): '{content}' -> {len(exacts)}")
-        return None
-    # 2. 정규화 부분 포함(양방향) — 유일할 때만. 모호하면 None(엉뚱한 퀘스트 파괴 차단).
-    subs = [q for q in active if norm_content in _normalize(_qc(q)) or _normalize(_qc(q)) in norm_content]
-    if len(subs) == 1:
-        return subs[0]
-    if len(subs) > 1:
-        logger.debug(f"[Quest] _find_quest AMBIGUOUS(sub): '{content}' -> {len(subs)}; be specific")
-        return None
-    logger.debug(f"[Quest] _find_quest MISS: '{content}' not in {[_qc(q) for q in active]}")
-    return None
-
-
-def get_quest_progress_bar(progress: int, max_progress: int) -> str:
-    filled = min(progress, max_progress)
-    empty = max_progress - filled
-    return f"[{'■' * filled}{'□' * empty}]"
-
-
-# Quest Operations (Progress Track)
-def add_quest(channel_id: str, content: str, rank: str = None, ooc: bool = False) -> str:
-    """ooc=True = 플레이어 OOC 등록 — dismissed 검사를 건너뛰고 그 이름을 dismissed 에서 지운다."""
-    if not content:
-        return None
-    rank = rank or config.QUEST_DEFAULT_RANK
-    if rank not in config.QUEST_RANK_SETTINGS:
-        rank = config.QUEST_DEFAULT_RANK
-
-    board = _get_board(channel_id)
-    active = board.get("active", [])
-
-    if _find_quest(active, content):
-        return f"⚠️ 이미 등록된 퀘스트입니다."
-    _dh = _dismiss_hit(board, content)
-    if _dh and not ooc:
-        logger.debug(f"[Quest] dismissed 막음: '{content}' (지운 이름 '{_dh}')")
-        return f"⚠️ 플레이어가 지운 퀘스트라 다시 올리지 않습니다: {content}"
-    if _dh and ooc:
-        board["dismissed"] = [d for d in (board.get("dismissed") or []) if d != _dh]
-
-    settings = config.QUEST_RANK_SETTINGS[rank]
-    # last_progress_turn 초기화: 생성 즉시 0이면 첫 턴부터 stale 카운트가 시작되어
-    # 신생 퀘스트가 12턴 후 자동 archive되는 버그(turn_index가 12 이상일 때).
-    # 생성 턴을 기준점으로 잡아야 staleness 임계가 의미 있음.
-    try:
-        _curr_turn = domain_manager.get_world_state(channel_id).get("turn_index", 0)
-    except Exception:
-        _curr_turn = 0
-    quest_obj = {
-        "content": content,
-        "rank": rank,
-        "progress": 0,
-        "max_progress": settings["max_progress"],
-        "linked_clock": None,
-        "last_progress_turn": _curr_turn,
-    }
-    active.append(quest_obj)
-    board["active"] = active
-    _save_board(channel_id, board)
-
-    bar = get_quest_progress_bar(0, settings["max_progress"])
-    return f"🔥 **퀘스트 등록:** {content}\n> 난이도: {settings['display']} | {bar}"
-
-
-def advance_quest_progress(channel_id: str, content: str, delta: int = 1) -> str:
-    """퀘스트 진행도 증가. max 도달 시 자동 완료."""
-    board = _get_board(channel_id)
-    active = board.get("active", [])
-    target = _find_quest(active, content)
-
-    if not target:
-        return f"⚠️ 퀘스트 '{content}'를 찾을 수 없습니다."
-
-    old_progress = target["progress"]
-    target["progress"] = max(0, min(target["max_progress"], old_progress + delta))
-    new_progress = target["progress"]
-    # Q-5: 경계 클램프로 실제 변화 없으면(이미 max/0) 성공 메시지 대신 명시 (오해 방지)
-    if new_progress == old_progress and new_progress < target["max_progress"]:
-        return f"ℹ️ 퀘스트 '{target['content']}' 진행 변화 없음 (현재 {new_progress}/{target['max_progress']})"
-    # Track last progress turn for stale quest detection
-    try:
-        import domain_manager
-        ws = domain_manager.get_world_state(channel_id)
-        target["last_progress_turn"] = ws.get("turn_index", 0)
-    except Exception:
-        pass
-    bar = get_quest_progress_bar(new_progress, target["max_progress"])
-
-    if new_progress >= target["max_progress"]:
-        _save_board(channel_id, board)
-        complete_msg = complete_quest(channel_id, target["content"])
-        return f"📊 **퀘스트 진행:** {target['content']}\n> {bar} ({new_progress}/{target['max_progress']})\n{complete_msg}"
-
-    _save_board(channel_id, board)
-    return f"📊 **퀘스트 진행:** {target['content']}\n> {bar} ({new_progress}/{target['max_progress']})"
-
-
-def complete_quest(channel_id: str, content: str) -> str:
-    board = _get_board(channel_id)
-    active = board.get("active", [])
-    completed = board.get("completed", [])
-    target = _find_quest(active, content)
-
-    if not target:
-        return f"⚠️ 해당 퀘스트를 찾을 수 없습니다."
-
-    active.remove(target)
-    # [2026-10-17 C46 R4] 끝난 턴 — 도착물 스캐너 11 이 "최근 끝난 퀘스트"를 고른다.
-    #   (별칭 지역 import — 이 함수 뒤쪽 `import game_world, domain_manager` 가 이름을 지역으로 만든다.)
-    if isinstance(target, dict):
-        try:
-            import domain_manager as _dm_done
-            target["done_turn"] = int((_dm_done.get_world_state(channel_id) or {}).get("turn_index", 0) or 0)
-        except Exception:
-            target["done_turn"] = 0
-    completed.append(target)
-    board["active"] = active
-    board["completed"] = completed
-    _save_board(channel_id, board)
-
-    rank = target.get("rank", config.QUEST_DEFAULT_RANK) if isinstance(target, dict) else config.QUEST_DEFAULT_RANK
-    doom_gain = config.QUEST_RANK_SETTINGS.get(rank, {}).get("doom_reward", 3)  # 0626: 상승. pending 적립 → doom_module이 수식(phase×lens)+carry 통과 정산 (flat change_doom 폐기)
-
-    import game_world, domain_manager
-    _w = domain_manager.get_world_state(channel_id)
-    _w["pending_doom_gain"] = _w.get("pending_doom_gain", 0) + doom_gain
-    domain_manager.update_world_state(channel_id, _w)
-    doom_msg = f"📈 긴장도 +{doom_gain} (다음 정산 시 페이즈 변조 적용)"
-
-    # 연결된 시계 해결
-    linked_clock = target.get("linked_clock") if isinstance(target, dict) else None
-    clock_msg = ""
-    if linked_clock:
-        clock_msg = game_world.resolve_clock_by_quest(
-            channel_id, linked_clock,
-            quest_name=target.get("content", "") if isinstance(target, dict) else str(target))
-        if clock_msg:
-            clock_msg = "\n" + clock_msg
-
-    q_name = target["content"] if isinstance(target, dict) else target
-    return f"✅ **퀘스트 완료:** {q_name}\n{doom_msg}{clock_msg}"
-
-
-def remove_quest(channel_id: str, content: str) -> str:
-    if not content:
-        return None
-    board = _get_board(channel_id)
-    active = board.get("active", [])
-    target = _find_quest(active, content)
-
-    if target:
-        active.remove(target)
-        board["active"] = active
-        _save_board(channel_id, board)
-        # Q-3: 연결 시계의 dangling linked_quest 청소 (시계는 독립 위협으로 유지)
-        linked_clock = target.get("linked_clock") if isinstance(target, dict) else None
-        if linked_clock:
-            try:
-                import game_world
-                game_world.unlink_clock(channel_id, linked_clock)
-            except Exception as _e_unlink:
-                logger.debug(f"[Quest] unlink_clock 실패: {_e_unlink}")
-        q_name = target["content"] if isinstance(target, dict) else target
-        return f"🗑️ **퀘스트 제거:** {q_name}"
-    return f"⚠️ 해당 퀘스트를 찾을 수 없습니다."
-
-
-def archive_stale_quests(channel_id: str, current_turn: int, threshold: int = None) -> List[str]:
-    """N턴 이상 진전 없는 active 퀘스트를 archive로 조용히 이동.
-
-    - 완료/실패 처리 아님. doom delta 0.
-    - 사용자에게 떠들지 않음 (반환값으로만 호출자에게 알림).
-    - une_facade의 8턴 directive softening은 유지 — 8~11턴 사이에는 약화된 채 살아있고,
-      threshold 도달 시 archive.
-
-    Returns: archived된 퀘스트 이름 리스트.
-    """
-    if threshold is None:
-        threshold = config.QUEST_STALE_ARCHIVE_TURNS
-
-    board = _get_board(channel_id)
-    active = board.get("active", [])
-    archive = board.get("archive", [])
-    archived_names: List[str] = []
-    keep: List[Any] = []
-
-    for q in active:
-        if not isinstance(q, dict):
-            keep.append(q)
-            continue
-        # progress가 max에 도달했거나 거의 도달한 활동적 퀘스트는 살림
-        # (아주 큰 퀘스트가 dribble 진행 중인 경우)
-        last_prog = int(q.get("last_progress_turn", 0) or 0)
-        stale_turns = current_turn - last_prog
-        if stale_turns >= threshold:
-            q["archived_reason"] = f"stale_{stale_turns}turns"
-            q["archived_turn"] = current_turn
-            archive.append(q)
-            archived_names.append(q.get("content", "?"))
-        else:
-            keep.append(q)
-
-    if archived_names:
-        board["active"] = keep
-        board["archive"] = archive
-        _save_board(channel_id, board)
-        logger.info(
-            "[Quest] Archived %d stale quest(s): %s",
-            len(archived_names), ", ".join(archived_names),
-        )
-
-    return archived_names
 
 # Memo Operations — notebook v2 (섹션 dict 정본, 2026-09-06)
 #  · 유저 줄('-')은 **코드만** 만들고 지운다. LLM은 읽기만 한다.
@@ -528,56 +248,23 @@ def sojipin_anchor(channel_id: str) -> List[Dict[str, Any]]:
 
 
 def get_active_quests(channel_id: str) -> List[str]:
-    """content 문자열 리스트 반환 (cognition 추출 호환)."""
-    raw = _get_board(channel_id).get("active", [])
-    return [q["content"] if isinstance(q, dict) else q for q in raw]
-
-
-def get_active_quests_raw(channel_id: str) -> List[Dict]:
-    """dict 리스트 원본 반환."""
-    return _get_board(channel_id).get("active", [])
+    """[C74 판2] 열린 목표 줄(사람에게 보이는 말 — `!정보`). 출처 = 장부."""
+    import thread_ledger
+    return thread_ledger.goal_lines_ko(channel_id)
 
 
 def get_active_quests_text(channel_id: str) -> str:
-    active = get_active_quests_raw(channel_id)
-    if not active:
-        return "📭 현재 진행 중인 퀘스트가 없습니다."
-    lines = []
-    for i, q in enumerate(active):
-        if isinstance(q, dict):
-            bar = get_quest_progress_bar(q["progress"], q["max_progress"])
-            rank_display = config.QUEST_RANK_SETTINGS.get(q.get("rank", "normal"), {}).get("display", "보통")
-            lines.append(f"{i+1}. {q['content']} [{rank_display}] {bar} {q['progress']}/{q['max_progress']}")
-        else:
-            lines.append(f"{i+1}. {q}")
-    return "🔥 **진행 중인 퀘스트:**\n" + "\n".join(lines)
+    lines = get_active_quests(channel_id)
+    if not lines:
+        return "📭 현재 진행 중인 목표가 없습니다."
+    return "🔥 **진행 중인 목표:**\n" + "\n".join(f"{i+1}. {l}" for i, l in enumerate(lines))
 
 def get_status_message(channel_id: str, user_id: str = "") -> str:
     quests = get_active_quests_text(channel_id)
     notebook = get_notebook_text(channel_id, user_id)
     return f"{quests}\n\n{notebook}"
 
-def get_objective_context(channel_id: str, user_id: str = "") -> str:
-    """AI를 위한 가독성 중심의 세계 상태 정보 (퀘스트).
-
-    [2026-10-06 이중주입 H2] 노트북 절 삭제 — 같은 소지품·메모가 PC 블록
-    (domain_manager.get_unified_player_info "📓 Player Notebook")에 이미 매 턴 실린다.
-    부르는 곳은 orchestration_context(ctx.obj_ctx → slot_manager Slot 11) 하나, 렌더 전용.
-    user_id 인자는 호출부 호환으로 남긴다.
-    """
-    active = get_active_quests_raw(channel_id)
-
-    txt = "### [진행 목표 (QUESTS)]\n"
-    if active:
-        for q in active:
-            if isinstance(q, dict):
-                txt += f"- {q['content']} (Rank:{q.get('rank','normal')}, Progress:{q['progress']}/{q['max_progress']})\n"
-            else:
-                txt += f"- {q}\n"
-    else:
-        txt += "None\n"
-
-    return txt.strip()
+# ⚰ [2026-10-25 C74 판4] get_objective_context 은퇴 — Slot 11 목표 블록이 Slot 15 `<In_Motion>`(in_motion.py)으로 갔다.
 
 # =========================================================
 # CHARACTER STATUS & INVENTORY
@@ -1305,8 +992,37 @@ def export_chronicle_book(channel_id: str, incremental: bool = False) -> Tuple[s
         if ts > max_chron_ts:
             max_chron_ts = ts
 
+    # [2026-10-26 C80] ③ 연대기 장(deep_memory 행 data["chapters"]) — 롤링 없이 쌓이므로 증분은 장 id 워터마크
+    #   (id 는 만든 순서로 1씩 큰다. created_turn 은 배경 큐가 밀리면 두 장이 같은 턴을 가질 수 있다).
+    #   전체 내보내기에는 0장(옛 deep 서사, 얼린 것)도 맨 앞에 싣는다. 루트 chronicles(②)는 레거시 장으로 위에서 그대로.
+    _v2_layers = bool(getattr(config, "MEMORY_LAYERS_V2", False))
+    n_chap = 0
+    chapters = []
+    max_chap_id = 0
+    id_watermark = 0
+    if _v2_layers:
+        import fermentation
+        _deep_nar, _deep_data = domain_manager.get_deep_memory(channel_id)
+        chapters = [c for c in fermentation.get_chapters(_deep_data) if not c.get("legacy")]
+        if incremental:
+            id_watermark = domain_manager.get_last_chronicle_export_chapter(channel_id)
+        elif isinstance(_deep_nar, str) and _deep_nar.strip():
+            items.append({"title": "0장 · 이전 기록", "content": _deep_nar.strip(), "timestamp": 0, "unresolved": ""})
+        for ch in chapters:
+            cid = int(ch.get("id") or 0)
+            if incremental and cid <= id_watermark:
+                continue
+            items.append({
+                "title": fermentation.chapter_title(ch),
+                "content": str(ch.get("text") or ""),
+                "timestamp": float(ch.get("created_at") or 0),
+                "unresolved": "",
+            })
+            n_chap += 1
+            max_chap_id = max(max_chap_id, cid)
+
     if not items:
-        if incremental and (lore_entries or chronicle_entries):
+        if incremental and (lore_entries or chronicle_entries or chapters):
             return "", "✅ 새로운 연대기 기록이 없습니다."
         return "", "⚠️ 기록된 연대기가 없습니다."
 
@@ -1315,7 +1031,8 @@ def export_chronicle_book(channel_id: str, incremental: bool = False) -> Tuple[s
     lines = []
     lines.append(f"# Chronicle Export ({mode_text}) - {channel_id}")
     lines.append(f"Date: {time.strftime('%Y-%m-%d %H:%M')}")
-    lines.append(f"Items: {len(items)} (기록보드 {n_board} / 연대기 {n_chron})\n")
+    lines.append(f"Items: {len(items)} (기록보드 {n_board} / 연대기 {n_chron}"
+                 + (f" / 장 {n_chap}" if _v2_layers else "") + ")\n")
 
     for entry in items:
         date_str = time.strftime('%Y-%m-%d', time.localtime(entry.get('timestamp', 0)))
@@ -1329,5 +1046,7 @@ def export_chronicle_book(channel_id: str, incremental: bool = False) -> Tuple[s
         domain_manager.set_last_chronicle_idx(channel_id, len(lore_entries))
         if max_chron_ts > ts_watermark:
             domain_manager.set_last_chronicle_export_ts(channel_id, max_chron_ts)
+        if max_chap_id > id_watermark:
+            domain_manager.set_last_chronicle_export_chapter(channel_id, max_chap_id)
 
     return "\n".join(lines), f"✅ **연대기 추출 완료** ({mode_text}, {len(items)} items)"

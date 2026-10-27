@@ -25,10 +25,19 @@ async def _drain_background(channel_id: str, timeout: float = 30.0) -> bool:
         from background_task_queue import get_task_queue
         q = get_task_queue()
         await q.flush_channel(channel_id)
-        return bool(await q.wait_for_channel(channel_id, timeout=timeout))
+        ok = bool(await q.wait_for_channel(channel_id, timeout=timeout))
     except Exception as e:
         logger.debug(f"[Session] background drain skip: {e}")
-        return True
+        ok = True
+    if ok:
+        # [2026-10-24 C73 M7b] 코드 앱 신고 정산(배경 큐 밖 제 차선)도 버린다 — 리셋 · 클리어 뒤에 옛 턴 신고가 적히지 않게.
+        #   배경 큐가 비었을 때만(못 비우면 리셋 · 클리어가 멈추고 판이 이어지니, 그 턴 신고는 살려 둔다 — 10-24 검토).
+        try:
+            import app_host as _ah
+            await _ah.forget_settlement(channel_id)
+        except Exception as e:
+            logger.debug(f"[Session] app settlement drop skip: {e}")
+    return ok
 # game_system might be needed if logic requires it, but for now mostly domain IO
 
 # [2026-09-02] 5.0 → 30.0. 구 값은 **물리적으로 누르기 어려웠다** — 봇이 경고 메시지를 보내고
@@ -168,7 +177,7 @@ class SessionManager:
         if lore and lore.strip() and lore != "No Lore Saved" and lore != config.DEFAULT_LORE:
              msg += "✅ 세계관(Lore) 로드됨\n"
         else:
-             msg += "❌ 세계관 미설정 (`!lore [내용/파일]` 필요)\n"
+             msg += "❌ 세계관 미설정 (`!로어` + 파일 필요)\n"
              ready = False
 
         # ② 참가자별 가면

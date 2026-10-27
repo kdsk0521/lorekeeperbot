@@ -21,6 +21,7 @@
 "use strict";
 (function () {
   var CLIENT_ID = (document.querySelector('meta[name="discord-client-id"]') || {}).content || "";
+  var ASSET_VER = (document.querySelector('meta[name="asset-ver"]') || {}).content || "0";   // [C73] frame.html 꼬리
   var view = document.getElementById("view");
   var sdk = null;
   var session = null;
@@ -28,7 +29,7 @@
   var currentPerson = null;
 
   // ---------- 아이콘 (Lucide 1.61.0 노드, 쓰는 것만 — 규칙 문서 §3 표와 같은 목록) ----------
-  var ICONS = {"activity":[["path",{"d":"M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"}]],"archive":[["rect",{"width":"20","height":"5","x":"2","y":"3","rx":"1"}],["path",{"d":"M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"}],["path",{"d":"M10 12h4"}]],"users":[["path",{"d":"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"}],["path",{"d":"M16 3.128a4 4 0 0 1 0 7.744"}],["path",{"d":"M22 21v-2a4 4 0 0 0-3-3.87"}],["circle",{"cx":"9","cy":"7","r":"4"}]],"scroll":[["path",{"d":"M15 12h-5"}],["path",{"d":"M15 8h-5"}],["path",{"d":"M19 17V5a2 2 0 0 0-2-2H4"}],["path",{"d":"M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"}]],"refresh":[["path",{"d":"M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"}],["path",{"d":"M21 3v5h-5"}],["path",{"d":"M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"}],["path",{"d":"M8 16H3v5"}]],"user":[["path",{"d":"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"}],["circle",{"cx":"12","cy":"7","r":"4"}]],"globe":[["circle",{"cx":"12","cy":"12","r":"10"}],["path",{"d":"M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"}],["path",{"d":"M2 12h20"}]],"handshake":[["path",{"d":"m11 17 2 2a1 1 0 1 0 3-3"}],["path",{"d":"m14 14 2.5 2.5a1 1 0 1 0 3-3l-3.88-3.88a3 3 0 0 0-4.24 0l-.88.88a1 1 0 1 1-3-3l2.81-2.81a5.79 5.79 0 0 1 7.06-.87l.47.28a2 2 0 0 0 1.42.25L21 4"}],["path",{"d":"m21 3 1 11h-2"}],["path",{"d":"M3 3 2 14l6.5 6.5a1 1 0 1 0 3-3"}],["path",{"d":"M3 4h8"}]],"clapperboard":[["path",{"d":"m12.296 3.464 3.02 3.956"}],["path",{"d":"M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3z"}],["path",{"d":"M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"}],["path",{"d":"m6.18 5.276 3.1 3.899"}]],"history":[["path",{"d":"M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"}],["path",{"d":"M3 3v5h5"}],["path",{"d":"M12 7v5l4 2"}]],"layers":[["path",{"d":"M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"}],["path",{"d":"M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"}],["path",{"d":"M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17"}]],"star":[["path",{"d":"M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"}]],"help":[["circle",{"cx":"12","cy":"12","r":"10"}],["path",{"d":"M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"}],["path",{"d":"M12 17h.01"}]],"map":[["path",{"d":"M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"}],["circle",{"cx":"12","cy":"10","r":"3"}]],"flag":[["path",{"d":"M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 7.333 2q2 0 3.067-.8A1 1 0 0 1 20 4v10a1 1 0 0 1-.4.8A6 6 0 0 1 16 16c-3 0-5-2-8-2a6 6 0 0 0-4 1.528"}]],"notebook":[["path",{"d":"M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"}],["path",{"d":"M2 6h4"}],["path",{"d":"M2 10h4"}],["path",{"d":"M2 14h4"}],["path",{"d":"M2 18h4"}],["path",{"d":"M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"}]],"mail":[["path",{"d":"m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7"}],["rect",{"x":"2","y":"4","width":"20","height":"16","rx":"2"}]],"book":[["path",{"d":"M12 5v16"}],["path",{"d":"M20.001 19A2 2 0 0022 17V5a2 2 0 00-1.999-2L16 3.002A5 5 0 0012 5a5 5 0 00-4-2H4a2 2 0 00-2 2v12a2 2 0 001.999 2H8a5 5 0 014 2 5 5 0 014-2z"}]],"alert":[["path",{"d":"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"}],["path",{"d":"M12 9v4"}],["path",{"d":"M12 17h.01"}]],"clock":[["circle",{"cx":"12","cy":"12","r":"10"}],["path",{"d":"M12 6v6l4 2"}]],"pencil":[["path",{"d":"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"}],["path",{"d":"m15 5 4 4"}]],"undo":[["path",{"d":"M9 14 4 9l5-5"}],["path",{"d":"M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"}]],"plus":[["path",{"d":"M5 12h14"}],["path",{"d":"M12 5v14"}]],"x":[["path",{"d":"M18 6 6 18"}],["path",{"d":"m6 6 12 12"}]],"check":[["path",{"d":"M20 6 9 17l-5-5"}]],"house":[["path",{"d":"M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"}],["path",{"d":"M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"}]],"arrow-left":[["path",{"d":"m12 19-7-7 7-7"}],["path",{"d":"M19 12H5"}]],"chevron-right":[["path",{"d":"m9 18 6-6-6-6"}]],"newspaper":[["path",{"d":"M15 18h-5"}],["path",{"d":"M18 14h-8"}],["path",{"d":"M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-4 0v-9a2 2 0 0 1 2-2h2"}],["rect",{"width":"8","height":"4","x":"10","y":"6","rx":"1"}]],"brain":[["path",{"d":"M12 18V5"}],["path",{"d":"M15 13a4.17 4.17 0 01-3-4 4.17 4.17 0 01-3 4"}],["path",{"d":"M17.707 6.294A3 3 0 1012 5a3 3 0 10-5.707 1.294"}],["path",{"d":"M17.996 5.125a4 4 0 012.526 5.77"}],["path",{"d":"M18 18a4 4 0 002-7.465"}],["path",{"d":"M19.967 17.482a4 4 0 11-7.967.517 4 4 0 11-7.967-.517"}],["path",{"d":"M6 18a4 4 0 01-2-7.465"}],["path",{"d":"M6.004 5.125a4 4 0 00-2.526 5.77"}]],"blocks":[["path",{"d":"M10 22V7a1 1 0 0 0-1-1H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5a1 1 0 0 0-1-1H2"}],["rect",{"x":"14","y":"2","width":"8","height":"8","rx":"1"}]],"chevron-down":[["path",{"d":"m6 9 6 6 6-6"}]]};
+  var ICONS = {"activity":[["path",{"d":"M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"}]],"archive":[["rect",{"width":"20","height":"5","x":"2","y":"3","rx":"1"}],["path",{"d":"M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"}],["path",{"d":"M10 12h4"}]],"users":[["path",{"d":"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"}],["path",{"d":"M16 3.128a4 4 0 0 1 0 7.744"}],["path",{"d":"M22 21v-2a4 4 0 0 0-3-3.87"}],["circle",{"cx":"9","cy":"7","r":"4"}]],"scroll":[["path",{"d":"M15 12h-5"}],["path",{"d":"M15 8h-5"}],["path",{"d":"M19 17V5a2 2 0 0 0-2-2H4"}],["path",{"d":"M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"}]],"refresh":[["path",{"d":"M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"}],["path",{"d":"M21 3v5h-5"}],["path",{"d":"M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"}],["path",{"d":"M8 16H3v5"}]],"user":[["path",{"d":"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"}],["circle",{"cx":"12","cy":"7","r":"4"}]],"globe":[["circle",{"cx":"12","cy":"12","r":"10"}],["path",{"d":"M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"}],["path",{"d":"M2 12h20"}]],"handshake":[["path",{"d":"m11 17 2 2a1 1 0 1 0 3-3"}],["path",{"d":"m14 14 2.5 2.5a1 1 0 1 0 3-3l-3.88-3.88a3 3 0 0 0-4.24 0l-.88.88a1 1 0 1 1-3-3l2.81-2.81a5.79 5.79 0 0 1 7.06-.87l.47.28a2 2 0 0 0 1.42.25L21 4"}],["path",{"d":"m21 3 1 11h-2"}],["path",{"d":"M3 3 2 14l6.5 6.5a1 1 0 1 0 3-3"}],["path",{"d":"M3 4h8"}]],"clapperboard":[["path",{"d":"m12.296 3.464 3.02 3.956"}],["path",{"d":"M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3z"}],["path",{"d":"M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"}],["path",{"d":"m6.18 5.276 3.1 3.899"}]],"history":[["path",{"d":"M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"}],["path",{"d":"M3 3v5h5"}],["path",{"d":"M12 7v5l4 2"}]],"layers":[["path",{"d":"M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"}],["path",{"d":"M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"}],["path",{"d":"M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17"}]],"star":[["path",{"d":"M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"}]],"help":[["circle",{"cx":"12","cy":"12","r":"10"}],["path",{"d":"M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"}],["path",{"d":"M12 17h.01"}]],"map":[["path",{"d":"M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"}],["circle",{"cx":"12","cy":"10","r":"3"}]],"flag":[["path",{"d":"M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 7.333 2q2 0 3.067-.8A1 1 0 0 1 20 4v10a1 1 0 0 1-.4.8A6 6 0 0 1 16 16c-3 0-5-2-8-2a6 6 0 0 0-4 1.528"}]],"notebook":[["path",{"d":"M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"}],["path",{"d":"M2 6h4"}],["path",{"d":"M2 10h4"}],["path",{"d":"M2 14h4"}],["path",{"d":"M2 18h4"}],["path",{"d":"M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"}]],"mail":[["path",{"d":"m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7"}],["rect",{"x":"2","y":"4","width":"20","height":"16","rx":"2"}]],"book":[["path",{"d":"M12 5v16"}],["path",{"d":"M20.001 19A2 2 0 0022 17V5a2 2 0 00-1.999-2L16 3.002A5 5 0 0012 5a5 5 0 00-4-2H4a2 2 0 00-2 2v12a2 2 0 001.999 2H8a5 5 0 014 2 5 5 0 014-2z"}]],"alert":[["path",{"d":"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"}],["path",{"d":"M12 9v4"}],["path",{"d":"M12 17h.01"}]],"clock":[["circle",{"cx":"12","cy":"12","r":"10"}],["path",{"d":"M12 6v6l4 2"}]],"pencil":[["path",{"d":"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"}],["path",{"d":"m15 5 4 4"}]],"undo":[["path",{"d":"M9 14 4 9l5-5"}],["path",{"d":"M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"}]],"plus":[["path",{"d":"M5 12h14"}],["path",{"d":"M12 5v14"}]],"x":[["path",{"d":"M18 6 6 18"}],["path",{"d":"m6 6 12 12"}]],"check":[["path",{"d":"M20 6 9 17l-5-5"}]],"house":[["path",{"d":"M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"}],["path",{"d":"M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"}]],"arrow-left":[["path",{"d":"m12 19-7-7 7-7"}],["path",{"d":"M19 12H5"}]],"chevron-right":[["path",{"d":"m9 18 6-6-6-6"}]],"newspaper":[["path",{"d":"M15 18h-5"}],["path",{"d":"M18 14h-8"}],["path",{"d":"M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-4 0v-9a2 2 0 0 1 2-2h2"}],["rect",{"width":"8","height":"4","x":"10","y":"6","rx":"1"}]],"brain":[["path",{"d":"M12 18V5"}],["path",{"d":"M15 13a4.17 4.17 0 01-3-4 4.17 4.17 0 01-3 4"}],["path",{"d":"M17.707 6.294A3 3 0 1012 5a3 3 0 10-5.707 1.294"}],["path",{"d":"M17.996 5.125a4 4 0 012.526 5.77"}],["path",{"d":"M18 18a4 4 0 002-7.465"}],["path",{"d":"M19.967 17.482a4 4 0 11-7.967.517 4 4 0 11-7.967-.517"}],["path",{"d":"M6 18a4 4 0 01-2-7.465"}],["path",{"d":"M6.004 5.125a4 4 0 00-2.526 5.77"}]],"blocks":[["path",{"d":"M10 22V7a1 1 0 0 0-1-1H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5a1 1 0 0 0-1-1H2"}],["rect",{"x":"14","y":"2","width":"8","height":"8","rx":"1"}]],"chevron-down":[["path",{"d":"m6 9 6 6 6-6"}]],"orbit":[["path",{"d":"M20.341 6.484A10 10 0 0 1 10.266 21.85"}],["path",{"d":"M3.659 17.516A10 10 0 0 1 13.74 2.152"}],["circle",{"cx":"12","cy":"12","r":"3"}],["circle",{"cx":"19","cy":"5","r":"2"}],["circle",{"cx":"5","cy":"19","r":"2"}]],"target":[["circle",{"cx":"12","cy":"12","r":"10"}],["circle",{"cx":"12","cy":"12","r":"6"}],["circle",{"cx":"12","cy":"12","r":"2"}]]};
   var SVG_NS = "http://www.w3.org/2000/svg";
   function icon(name, size) {
     var s = document.createElementNS(SVG_NS, "svg");
@@ -300,13 +301,25 @@
   //   서버가 화면을 부품 목록으로 보낸다. 모르는 t 는 건너뛰고, 카드 안 카드는 평평하게 편다.
   //   누르기 = POST /api/act {action, args, rev, view} — 응답의 data(새 쪽)로만 다시 그린다(낙관 갱신 0).
   //   영수증 한 줄 + ↶ · 실패 한 줄은 편집 화면과 같은 자리 · 같은 규칙(§5b).
-  var partsRev = null, partsView = null, partsTab = null, partsBusy = false;
+  var partsRev = null, partsView = null, partsTab = null, partsBusy = false, partsApp = null;
   var partsReceipt = null, partsNotice = null, partsFlash = null;
   function withArgs(p, extra) {
     var a = {}, src = (p.act && p.act.args) || {};
     Object.keys(src).forEach(function (k) { a[k] = src[k]; });
     Object.keys(extra).forEach(function (k) { a[k] = extra[k]; });
     return a;
+  }
+  // [C73] 누르기 한 곳 — 코드 앱 쪽(partsApp)이면 부품의 act 는 {id, data} 라 app.click 으로 감싸 보낸다(규칙 §5d).
+  function fire(ctrl, p, extra) {
+    if (!p.act) return;
+    if (partsApp) {
+      var data = {}, src = p.act.data || {};
+      Object.keys(src).forEach(function (k) { data[k] = src[k]; });
+      Object.keys(extra).forEach(function (k) { data[k] = extra[k]; });
+      partsAct(ctrl, "app.click", { app: partsApp, id: String(p.act.id || ""), data: data });
+      return;
+    }
+    partsAct(ctrl, p.act.action, withArgs(p, extra));
   }
   function partSwitch(p) {
     var row = el("div", "p-row");
@@ -317,7 +330,7 @@
     b.setAttribute("aria-checked", p.on ? "true" : "false");
     b.setAttribute("aria-label", p.label || "");
     b.appendChild(el("span", "knob"));
-    b.addEventListener("click", function () { partsAct(b, p.act && p.act.action, withArgs(p, { on: !p.on })); });
+    b.addEventListener("click", function () { fire(b, p, { on: !p.on }); });
     lab.addEventListener("click", function () { b.click(); });     // 줄 전체가 누르는 칸
     row.appendChild(lab);
     row.appendChild(b);
@@ -335,7 +348,7 @@
       if (String(o[0]) === String(p.value)) op.selected = true;
       s.appendChild(op);
     });
-    s.addEventListener("change", function () { partsAct(s, p.act && p.act.action, withArgs(p, { value: s.value })); });
+    s.addEventListener("change", function () { fire(s, p, { value: s.value }); });
     row.appendChild(s);
     return row;
   }
@@ -351,13 +364,52 @@
     d.appendChild(box);
     return d;
   }
+  // [C73] 버튼 — confirm 이 있으면 같은 자리에 확인 줄(브라우저 confirm 안 씀). 규칙 §5d.
+  function partButton(p) {
+    var wrap = el("div", "p-btnrow");
+    var cls = "p-button" + (p.style === "danger" ? " danger" : (p.style === "primary" ? " primary" : ""));
+    var b = el("button", cls, p.label || "");
+    b.type = "button";
+    b.addEventListener("click", function () {
+      if (!p.confirm) { fire(b, p, {}); return; }
+      clear(wrap);
+      var q = el("div", "p-confirm");
+      q.appendChild(el("span", "p-label", p.confirm));
+      var ok = el("button", "p-button primary", "확인");
+      ok.type = "button";
+      var no = el("button", "p-button", "취소");
+      no.type = "button";
+      ok.addEventListener("click", function () { fire(ok, p, {}); });
+      no.addEventListener("click", function () { clear(wrap); wrap.appendChild(b); });
+      q.appendChild(ok);
+      q.appendChild(no);
+      wrap.appendChild(q);
+    });
+    wrap.appendChild(b);
+    return wrap;
+  }
+  // [C73] 칩 줄 — 앱 안 하위 화면 고르기(규칙 §4 · §5d). 고른 칩 = aria-pressed.
+  function partChips(p) {
+    var row = el("div", "p-chips");
+    (p.items || []).forEach(function (it) {
+      var on = String(it[0]) === String(p.value);
+      var c = el("button", "p-chip" + (on ? " on" : ""), String(it[1]));
+      c.type = "button";
+      c.setAttribute("aria-pressed", on ? "true" : "false");
+      c.addEventListener("click", function () { fire(c, p, { value: String(it[0]) }); });
+      row.appendChild(c);
+    });
+    return row;
+  }
   var PART = {
     "text": function (p) { return el("p", "p-text" + (p.muted ? " muted" : ""), p.text || ""); },
     "rows": function (p) { var w = el("div", "p-rows"); rows(w, p.rows || []); return w; },
     "empty": function (p) { return el("p", "state", p.text || ""); },
     "switch": partSwitch,
     "select": partSelect,
-    "fold": partFold
+    "fold": partFold,
+    "button": partButton,
+    "chips": partChips
   };
   function partCard(p) {
     var c = el("section", "card");
@@ -381,26 +433,35 @@
       if (fn) container.appendChild(fn(p));                                    // 모르는 t 는 건너뛴다
     });
   }
-  function renderParts(d) {
-    clear(view);
-    partsRev = d ? d.rev : null;
-    partsView = d ? d.view : null;
-    if (partsReceipt && partsReceipt.rev !== partsRev) partsReceipt = null;
+  function drawLines(box) {        // 실패 한 줄 · 한 번 보이는 줄 · 영수증(+↶) — 편집 화면과 같은 자리(§5b)
     if (partsNotice) {
       var p = el("p", "state error");
       p.appendChild(icon("alert", 16));
       p.appendChild(el("span", null, partsNotice));
-      view.appendChild(p);
+      box.appendChild(p);
     }
-    if (partsFlash) { view.appendChild(el("p", "state", partsFlash)); partsFlash = null; }
+    if (partsFlash) { box.appendChild(el("p", "state", partsFlash)); partsFlash = null; }
     if (partsReceipt) {
       var rc = el("div", "receipt");
       rc.appendChild(icon("check", 16));
       rc.appendChild(el("span", "vtext", partsReceipt.text));
       var rid = partsReceipt.undoId;
       if (rid) rc.appendChild(iconBtn("undo", "되돌리기", function () { partsAct(null, "undo", { id: rid }); }));
-      view.appendChild(rc);
+      box.appendChild(rc);
     }
+  }
+  function pageMeta(d) {          // [C73] 코드 앱 쪽은 {app, screen, rev} — view 는 app:<id>
+    partsRev = d ? d.rev : null;
+    partsApp = d && d.app ? String(d.app) : null;
+    partsView = d ? (d.view || (partsApp ? "app:" + partsApp : null)) : null;
+    if (partsReceipt && partsReceipt.rev !== partsRev) partsReceipt = null;
+  }
+  function renderParts(d) {
+    if (d && d.screen === "html") { renderFrame(d, false); return; }
+    clear(view);
+    frame = null;
+    pageMeta(d);
+    drawLines(view);
     drawParts(view, (d && d.parts) || [], false);
     if (!view.firstChild) message("아직 표시할 게 없어요.");
   }
@@ -409,6 +470,54 @@
     var d = await api("/api/view/" + encodeURIComponent(tab));
     renderParts(d || {});
   }
+
+  // ---------- 코드 앱 HTML 화면 (C73 — 규칙 §5e, §7 의 유일한 예외) ----------
+  //   iframe = 우리 frame.html(sandbox="allow-scripts" 하나만 — same-origin 없음 → 세션 · 이 문서에 손이 안 닿는다).
+  //   HTML 글은 postMessage 로만 넘긴다(문서에 HTML 문자열을 꽂지 않는다). 받는 메시지는 그 iframe 창에서 온 것 · 모양이 맞는 것만.
+  var frame = null;     // {iframe, app, html, ready, play}
+  function renderFrame(d, play) {
+    pageMeta(d);
+    if (frame && frame.app === partsApp && frame.iframe.isConnected && frame.lines && frame.lines.isConnected) {
+      clear(frame.lines);
+      drawLines(frame.lines);
+      frame.html = String(d.html || "");
+      frame.play = !!play;
+      pushFrame();
+      return;
+    }
+    clear(view);
+    var lines = el("div", "frame-lines");
+    drawLines(lines);
+    view.appendChild(lines);
+    var f = document.createElement("iframe");
+    f.className = "app-frame";
+    f.setAttribute("sandbox", "allow-scripts");
+    f.setAttribute("referrerpolicy", "no-referrer");
+    f.setAttribute("title", String(d.name || "앱 화면"));
+    f.src = "/frame.html?v=" + encodeURIComponent(ASSET_VER);
+    frame = { iframe: f, app: partsApp, html: String(d.html || ""), ready: false, play: !!play, lines: lines };
+    view.appendChild(f);
+  }
+  function pushFrame() {
+    if (!frame || !frame.ready || !frame.iframe.contentWindow) return;
+    frame.iframe.contentWindow.postMessage({ type: "lk-html", html: frame.html, play: frame.play }, "*");
+    frame.play = false;
+  }
+  window.addEventListener("message", function (e) {
+    if (!frame || !frame.iframe.contentWindow || e.source !== frame.iframe.contentWindow) return;
+    var m = e.data;
+    if (!m || typeof m !== "object") return;
+    if (m.type === "lk-ready") { frame.ready = true; pushFrame(); return; }
+    if (m.type === "lk-size") {
+      var h = Math.max(80, Math.min(4000, Number(m.h) || 0));
+      frame.iframe.style.height = h + "px";
+      return;
+    }
+    if (m.type === "lk-act" && typeof m.id === "string" && m.id) {
+      var data = (m.data && typeof m.data === "object" && !Array.isArray(m.data)) ? m.data : {};
+      partsAct(null, "app.click", { app: frame.app, id: m.id.slice(0, 64), data: data });
+    }
+  });
   async function partsAct(ctrl, action, args) {
     if (partsBusy || !action) return;
     partsBusy = true;
@@ -426,12 +535,15 @@
         partsNotice = b.message || ("바꾸기 실패 (" + res.status + ")");
         if (b.error === "stale") partsReceipt = null;
       }
-      if (b.data && b.data.parts) renderParts(b.data); else await showParts(partsTab);
+      if (b.data && b.data.screen === "html") renderFrame(b.data, res.status === 200 && !!b.ok);
+      else if (b.data && b.data.parts) renderParts(b.data);
+      else await showParts(partsTab);
     } catch (e) {
       partsNotice = String((e && e.message) || e);
       try { await showParts(partsTab); } catch (e2) { message(partsNotice, true); }
     } finally {
       partsBusy = false;
+      if (frame && frame.ready && frame.iframe.contentWindow) frame.iframe.contentWindow.postMessage({ type: "lk-done" }, "*");
     }
   }
 
@@ -780,7 +892,7 @@
                 edit: ["relations"] },
               { tab: "modules", label: "모듈", icon: "blocks", renderer: "parts", drawer: true, kind: "builtin", edit: [] }];
   var RENDER = { status: showStatus, archive: showArchive, people: showPeople, edit: showEdit,
-                 feed: showFeed, parts: showParts };
+                 feed: showFeed, parts: showParts, frame: showParts };   // [C73] frame = 코드 앱 HTML(같은 입구 — 쪽 모양이 가른다)
   var route = null;      // null = 홈
   var stack = [];        // 뒤로 = 이 스택만
   var editMode = false;
@@ -794,7 +906,7 @@
   function appOf(tab) { return apps.filter(function (a) { return a.tab === tab; })[0] || null; }
   function canEdit(a) { return !!(a && a.edit && a.edit.length); }
   function resetEditState() { receipt = null; notice = null; flash = null;
-                              partsReceipt = null; partsNotice = null; partsFlash = null; }
+                              partsReceipt = null; partsNotice = null; partsFlash = null; frame = null; partsApp = null; }
 
   // 머리줄 · 아래 바 — 버튼은 index.html 에 있고 아이콘·글자는 여기서 그린다.
   var bodyEl = document.body;

@@ -109,6 +109,102 @@ def _sheet_edit(channel_id: str, key: str, section: str, action: str, body: str)
     return f"시트: {key} {section} {action} (작가 시트로 승격)"
 
 
+def _match_lines(items: List[Any], text: str, strict: bool = False) -> List[int]:
+    """[C85] remove 대조 — 정규화 일치 → 없으면 한쪽이 다른 쪽을 품는 줄(옛 `_knows_edit` 와 같은 규칙).
+    strict(페이지 줄 = 한국어 문장): 품는 쪽 대조는 지울 말이 그 줄의 반 이상일 때만 — "열쇠" 두 글자가
+    "…북문 열쇠가 둘이라는 걸 안다" 를 통째로 지우지 않게."""
+    q = _norm(text)
+    hit = [i for i, it in enumerate(items) if _norm(it) == q]
+    if not hit:
+        hit = [i for i, it in enumerate(items)
+               if q and (_norm(it) in q or (q in _norm(it) and (not strict or len(q) * 2 >= len(_norm(it)))))]
+    return hit
+
+
+def _page_knows(channel_id: str, name: str, n: int = 20) -> List[str]:
+    """[C85] 그 인물 페이지 Knowledge 최근 n줄. 페이지 없음 = []."""
+    try:
+        import wiki_store
+        pid = wiki_store.character_page_for(channel_id, name)
+        return wiki_store.knowledge_lines(channel_id, pid, n) if pid else []
+    except Exception as _e:
+        logger.debug(f"[OOC] page knows skip: {_e}")
+        return []
+
+
+def _page_knows_add(channel_id: str, key: str, text: str) -> bool:
+    """[C85] 페이지 Knowledge 에 한 줄(사유 ooc · 쓰기 턴 = 지금 턴 — `!다시` 가 기록 쪽 스냅숏과 같이 되감는다).
+    페이지 없으면 False."""
+    try:
+        import wiki_store
+        pid = wiki_store.character_page_for(channel_id, key)
+        if not pid:
+            return False
+        r = wiki_store.append_play_item(channel_id, pid, "Knowledge", text, turn=_turn(channel_id), reason="ooc")
+        return bool((r or {}).get("ok"))
+    except Exception as _e:
+        logger.debug(f"[OOC] page knows add skip: {_e}")
+        return False
+
+
+def _knows_remove_both(channel_id: str, key: str, text: str) -> str:
+    """[C85] "모름으로" — npc_knowledge knows 와 페이지 Knowledge 둘 다에서 뺀다. 집마다 대조 줄이 둘 이상이면 그 집은 거부."""
+    _mkey = domain_manager._mind(channel_id, key)
+    if not _mkey:
+        return f"⚠ 지식: {key} — 지금 그 몸엔 마음이 없어"
+    gone_from: List[str] = []
+    many: List[str] = []
+    gone_txt = ""
+    d = domain_manager.get_domain(channel_id)
+    kn = (d.get("npc_knowledge") or {}).get(_mkey)
+    items = list((kn or {}).get("knows") or [])
+    hit = _match_lines(items, text)
+    if len(hit) == 1:
+        gone_txt = str(items.pop(hit[0]))
+        kn["knows"] = items
+        d["npc_knowledge"][_mkey] = kn
+        domain_manager.save_domain(channel_id, d)
+        try:
+            domain_manager._mirror_knowledge(channel_id, _mkey, kn)
+        except Exception as _e_mk:
+            logger.debug(f"[OOC] 지식 미러 skip: {_e_mk}")
+        gone_from.append("기록")
+    elif len(hit) > 1:
+        many.append(("기록", len(hit)))
+    page_miss = False
+    try:
+        import wiki_store
+        pid = wiki_store.character_page_for(channel_id, key)
+        if pid:
+            body, h = wiki_store.get_play_body(channel_id, pid, "Knowledge")
+            lines = [ln.strip() for ln in (body or "").split("\n") if ln.strip()]
+            phit = _match_lines(lines, text, strict=True)
+            if len(phit) == 1:
+                _g = lines.pop(phit[0])
+                r = wiki_store.write_play_section(channel_id, pid, "Knowledge", "\n".join(lines), src_turns=None,
+                                                  turn=_turn(channel_id), reason="ooc", expected_hash=h, op="upsert")
+                if (r or {}).get("ok"):
+                    gone_from.append("페이지")
+                    gone_txt = gone_txt or _g
+            elif len(phit) > 1:
+                many.append(("페이지", len(phit)))
+            elif lines:
+                page_miss = True
+    except Exception as _e_pg:
+        logger.debug(f"[OOC] page knows remove skip: {_e_pg}")
+    _many_s = "·".join(f"{w} {n}개" for w, n in many)
+    warn = f" ⚠ 맞는 줄이 여럿이라 못 골라({_many_s})" if many else ""
+    if page_miss and gone_from:
+        warn += " · 페이지 줄은 못 찾음"
+    if gone_from:
+        return f"지식: {key} 모름으로 — {gone_txt[:60]} ({'·'.join(gone_from)})" + warn
+    if many:
+        if len(many) == 1:   # 옛 문구 꼴("줄이 2개라 못 골라") 그대로
+            return f"⚠ 지식: {key} — '{text[:40]}'에 맞는 줄이 {many[0][1]}개라 못 골라({many[0][0]})"
+        return f"⚠ 지식: {key} — '{text[:40]}'에 맞는 줄이 여럿이라 못 골라({_many_s})"
+    return f"⚠ 지식: {key} — '{text[:40]}'에 맞는 기록이 없어"
+
+
 def _knows_edit(channel_id: str, key: str, action: str, value: Any) -> str:
     """NPC 가 아는 것 — add 는 기존 병합 관문(update_npc_knowledge), remove 는 그 줄만 뺀다.
     remove 대조: 정규화 일치 → 없으면 한쪽이 다른 쪽을 품는 줄이 **딱 하나**일 때만. 둘 이상이면 거부."""
@@ -118,9 +214,14 @@ def _knows_edit(channel_id: str, key: str, action: str, value: Any) -> str:
     action = str(action or "add").strip().lower()
     if action in ("add", "set", "append"):
         domain_manager.update_npc_knowledge(channel_id, key, {"knows": [text]})
+        if getattr(config, "MEMORY_CURRENT", False):
+            # [2026-10-27 C85] 페이지 Knowledge 에도(장기 앎 집). knows 는 20개 상한에 밀린다.
+            return f"지식: {key} 이제 앎 — {text[:60]}" + (" (페이지에도)" if _page_knows_add(channel_id, key, text) else "")
         return f"지식: {key} 이제 앎 — {text[:60]}"
     if action != "remove":
         return f"⚠ 지식: {key} — '{action}'은 못 해(add·remove)"
+    if getattr(config, "MEMORY_CURRENT", False):
+        return _knows_remove_both(channel_id, key, text)   # [2026-10-27 C85] 두 집 다
     d = domain_manager.get_domain(channel_id)
     # [2026-10-12 C32] 지식은 마음 키에 산다 — 보이는 이름(몸)을 한 번 돌린다. 빈 몸이면 지울 것이 없다.
     _mkey = domain_manager._mind(channel_id, key)
@@ -594,7 +695,8 @@ def apply_fact_edits(channel_id: str, edits: List[Dict[str, Any]],
 # 이야기 실 — 스레드 장부(약속·사안)·퀘스트 보드 — [2026-10-10 이야기 실 O-E]
 #   스펙: 파티쳇수정/state_v10/이야기실_지도·스펙_2026-10-10.md
 # =========================================================
-THREAD_OPS = ("open", "close", "pause", "resume", "reschedule", "progress", "void")
+# [C74 판2] + sleep(선 잇기 — "after": 대상) · wake(선 끊고 깨우기)
+THREAD_OPS = ("open", "close", "pause", "resume", "reschedule", "progress", "void", "sleep", "wake")
 # 편집 콜이 고르기 쉬운 다른 말 → op (outcome 이 따라붙는 것은 짝으로)
 _THREAD_ALIAS = {"add": ("open", None), "new": ("open", None), "create": ("open", None),
                  "delete": ("void", None), "remove": ("void", None), "never": ("void", None),
@@ -602,10 +704,17 @@ _THREAD_ALIAS = {"add": ("open", None), "new": ("open", None), "create": ("open"
                  "kept": ("close", "done"), "cancel": ("close", "dropped"), "drop": ("close", "dropped"),
                  "break": ("close", "broken"), "broken": ("close", "broken"),
                  "reopen": ("resume", None), "due": ("reschedule", None)}
-QUEST_OPS = ("add", "complete", "remove", "progress")
-_QUEST_ALIAS = {"open": "add", "new": "add", "create": "add", "done": "complete", "finish": "complete",
-                "close": "complete", "delete": "remove", "dismiss": "remove", "drop": "remove",
-                "advance": "progress"}
+# [2026-10-24 C74 판2] 옛 quest 칸 → thread 칸 kind goal 로 옮겨 적는다(분류기 문안은 thread 하나만 말하지만, 옛 꼴이
+#   와도 받는다). add → open · complete → close done · remove → void(없던 일 — 산문이 다시 꺼내도 안 연다) · progress → progress.
+_QUEST_TO_THREAD = {"add": ("open", None), "open": ("open", None), "new": ("open", None), "create": ("open", None),
+                    "complete": ("close", "done"), "done": ("close", "done"), "finish": ("close", "done"),
+                    "close": ("close", None), "remove": ("void", None), "delete": ("void", None),
+                    "dismiss": ("void", None), "void": ("void", None), "drop": ("close", "dropped"),
+                    "cancel": ("close", "dropped"), "fail": ("close", "dropped"),
+                    "progress": ("progress", None), "advance": ("progress", None),
+                    "pause": ("pause", None), "resume": ("resume", None), "reopen": ("resume", None),
+                    "reschedule": ("reschedule", None), "due": ("reschedule", None),
+                    "sleep": ("sleep", None), "wake": ("wake", None)}
 
 
 def apply_thread_edits(channel_id: str, edits: List[Dict[str, Any]]) -> List[str]:
@@ -635,52 +744,36 @@ def apply_thread_edits(channel_id: str, edits: List[Dict[str, Any]]) -> List[str
 
 
 def apply_quest_edits(channel_id: str, edits: List[Dict[str, Any]]) -> List[str]:
-    """field="quest" → 퀘스트 보드. add(dismissed 풀기)·complete(장 볼륨 보상 포함 — 자동 완료와 같은 함수)·
-    remove(+dismissed: 자동 등록이 다시 못 올림)·progress(못 찾으면 ⚠ — 배경 경로처럼 자동 등록 안 함).
-    이름 찾기는 _find_quest(고유 일치만)."""
-    import game_character as gc
+    """[2026-10-24 C74 판2] field="quest"·"goal"(옛 꼴 · 다른 이름) → thread 칸 kind goal 로 옮겨 apply_thread_edits 에 넘긴다.
+    이름 = value · name · content · title · key — id 가 있으면 이름 칸은 새 이름(title)으로만 본다(value 는 안 씀: 진전
+    메모가 이름을 덮지 않게 — 검토 #1). outcome 은 그대로 넘긴다(close 기본 done). 옛 delta 는 step 으로."""
+    evs: List[Dict[str, Any]] = []
     out: List[str] = []
-
-    def _say(r: Any) -> str:
-        r = str(r or "").strip()
-        if not r:
-            return "⚠ 퀘스트: 결과 없음"
-        if r.startswith(("⚠", "ℹ")):
-            return "⚠ 퀘스트: " + r.lstrip("⚠️ℹ️ ").replace("**", "")
-        return r
     for e in edits or []:
         if not isinstance(e, dict):
             continue
-        op = _op_of(e, QUEST_OPS + tuple(_QUEST_ALIAS))
-        op = _QUEST_ALIAS.get(op, op)
-        name = str(e.get("value") or e.get("name") or e.get("content") or e.get("title") or e.get("key") or "").strip()
-        if op not in QUEST_OPS:
-            out.append(f"⚠ 퀘스트: 모르는 일 '{op or '?'}' — add·complete·remove·progress")
+        op = _op_of(e, tuple(_QUEST_TO_THREAD))
+        if op not in _QUEST_TO_THREAD:
+            out.append(f"⚠ 목표: 모르는 일 '{op or '?'}' — add·complete·remove·progress")
             continue
-        if not name:
-            out.append("⚠ 퀘스트: 이름이 없어")
-            continue
-        if op == "add":
-            out.append(_say(gc.add_quest(channel_id, name, e.get("rank"), ooc=True)))
-        elif op == "complete":
-            out.append(_say(gc.complete_quest(channel_id, name)))
-        elif op == "remove":
-            tgt = gc._find_quest(gc.get_active_quests_raw(channel_id), name)
-            real = (tgt.get("content") if isinstance(tgt, dict) else tgt) if tgt else ""
-            r = gc.remove_quest(channel_id, name)
-            line = _say(r)
-            if real and not line.startswith("⚠"):
-                gc.dismiss_quest(channel_id, real)
-                line += " (다시 자동 등록 안 함)"
-            out.append(line)
+        top, oc = _QUEST_TO_THREAD[op]
+        if e.get("id"):
+            name = str(e.get("title") or "").strip()   # id 옆 title = 새 이름(thread 칸과 같은 규칙)
         else:
-            try:
-                delta = int(e.get("delta") if e.get("delta") is not None else 1)
-            except (TypeError, ValueError):
-                delta = 1
-            delta = max(-5, min(5, delta)) or 1
-            out.append(_say(gc.advance_quest_progress(channel_id, name, delta)))
-    return out
+            name = str(e.get("value") or e.get("name") or e.get("content") or e.get("title") or e.get("key") or "").strip()
+        if not name and not e.get("id"):
+            out.append("⚠ 목표: 이름이 없어")
+            continue
+        ev = {"op": top, "kind": "goal"}
+        if name:
+            ev["title"] = name
+        for k in ("id", "rank", "step", "delta", "after", "due", "parties", "outcome", "remaining"):
+            if k in e:
+                ev[k] = e[k]
+        if oc and not ev.get("outcome"):
+            ev["outcome"] = oc
+        evs.append(ev)
+    return out + (apply_thread_edits(channel_id, evs) if evs else [])
 
 
 # =========================================================
@@ -716,13 +809,17 @@ def world_state_for_edit(channel_id: str, ooc_text: str = "", knows_cap: int = 3
                                                                     if isinstance(a, str)]
             if any(f and len(f) >= 2 and f in txt for f in forms):
                 ks = list(((kn_all.get(domain_manager._mind(channel_id, name)) or {}).get("knows") or []))[-20:]
+                if getattr(config, "MEMORY_CURRENT", False):
+                    # [2026-10-27 C85] 페이지 Knowledge 도 — 편집 콜이 지울 줄을 그대로 옮겨 적게.
+                    ks = ks + [x for x in _page_knows(channel_id, name) if x not in ks]
                 if ks:
                     picked[name] = ks
         if picked:
             out["npc_knows"] = picked
     except Exception as _e_k:
         logger.debug(f"[OOC] npc_knows skip: {_e_k}")
-    # [2026-10-10 이야기 실 O-E] 스레드(id 포함 — 루카 컨텍스트엔 제목만 있어 id 찾기는 편집 콜 몫)·퀘스트. 비면 안 싣는다.
+    # [2026-10-10 이야기 실 O-E] 스레드(id 포함 — 루카 컨텍스트엔 제목만 있어 id 찾기는 편집 콜 몫). 비면 안 싣는다.
+    #   [C74 판2] 목표도 여기(kind goal · rank · progress) — 옛 quests 칸은 지웠다.
     try:
         import thread_ledger
         _th = thread_ledger.ooc_state(channel_id)
@@ -730,19 +827,6 @@ def world_state_for_edit(channel_id: str, ooc_text: str = "", knows_cap: int = 3
             out["threads"] = _th
     except Exception as _e_th:
         logger.debug(f"[OOC] threads skip: {_e_th}")
-    try:
-        import game_character
-        _qs = []
-        for q in game_character.get_active_quests_raw(channel_id) or []:
-            if isinstance(q, dict):
-                _qs.append({"content": q.get("content", ""), "rank": q.get("rank", "normal"),
-                            "progress": f"{q.get('progress', 0)}/{q.get('max_progress', 0)}"})
-            elif q:
-                _qs.append({"content": str(q)})
-        if _qs:
-            out["quests"] = _qs[:15]
-    except Exception as _e_q:
-        logger.debug(f"[OOC] quests skip: {_e_q}")
     # [2026-10-18 C50 R5] 활성 정정(번호·턴·대상·문장) — 편집 콜이 번호로 거두고 번호로 바꾼다.
     #   본문에 대상 이름·별칭이 나온 것(최신순 ≤8), 없으면 최근 5. 비면 안 싣는다.
     try:

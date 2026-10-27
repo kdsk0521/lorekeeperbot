@@ -242,43 +242,15 @@ def _build_events_layer(context, bus) -> str:
     # Clock Progress / Doom Shift → REMOVED (system_msg only)
     doom = bus.doom if isinstance(bus.doom, dict) else {}
 
-    # Completed clocks → fact
-    completed_clocks = doom.get("completed_this_turn", [])
-    if isinstance(completed_clocks, list):
-        for clock in completed_clocks:
-            if isinstance(clock, dict):
-                threat = clock.get("threat", "")
-                cname = clock.get("name", "?")
-                parts.append(
-                    f"{cname} has become real — {threat}. "
-                    "the changed world surfaces; the POV stays with the PC."
-                )
+    # [2026-10-25 C74 판4] 시계 끝남("X has become real") · 목표 깎임 · 진전 · 임박 시계 · 진전 없는 목표 약화 줄 → Slot 15
+    #   `<In_Motion>` 의 "This turn" 줄 · 시계 / 목표 줄 꼬리표(in_motion.turn_items · render_block). 같은 일이 세 자리(11 · 29 · 30)로
+    #   나뉘어 가던 것을 한 블록으로(C74 W2-4, 레티어스 판정 7). 클라이맥스 줄은 판 전체 사건이라 여기 남는다.
 
     # Climax → fact
     if doom.get("climax_triggered"):
         parts.append("critical point — everything has converged at once. the final choice.")
 
     # Defense → REMOVED (mechanical log)
-
-    # Quest Failed → fact
-    for fail in doom.get("quest_failed", []):
-        if isinstance(fail, dict):
-            parts.append(f"{fail.get('quest', '?')} has failed — {fail.get('reason', '')}")
-
-    # Imminent clocks → no numbers
-    clocks = doom.get("clocks", [])
-    if isinstance(clocks, list) and clocks:
-        imminent: List[str] = []
-        for clock in clocks:
-            if not isinstance(clock, dict) or clock.get("resolved"):
-                continue
-            segments = int(_to_float(clock.get("segments", 4), 4))
-            filled = int(_to_float(clock.get("filled", clock.get("progress", 0)), 0))
-            remaining = max(0, segments - filled)
-            if remaining <= 1:
-                imminent.append(str(clock.get("name", "?")))
-        if imminent:
-            parts.append(" | ".join(f"{n} is about to become real" for n in imminent[:3]))
 
     # Status effects → tag stripped
     status_seen = set()
@@ -324,35 +296,6 @@ def _build_events_layer(context, bus) -> str:
             declaration = str(flashback.get("reason", "")).strip()
         if declaration:
             parts.append(f"retroactive declaration: {declaration}")
-
-    # Quest Echo → tag stripped
-    # 매 턴 stale 퀘스트(QUEST_STALE_ARCHIVE_TURNS 이상) archive 이동 후,
-    # 남은 active 퀘스트 중 8턴+ stale은 directive softening (강제 진전 금지).
-    # 즉 8~(threshold-1)턴 사이가 "약화된 채 살아있는" 구간.
-    channel_id = (context.narrative_anchors or {}).get("channel_id", "")
-    if channel_id:
-        try:
-            import game_character
-            turn_index = int(_to_float((bus.dai or {}).get("turn_index", 0), 0))
-            # Archive 먼저: threshold 넘은 퀘스트를 active에서 빼냄
-            try:
-                game_character.archive_stale_quests(channel_id, turn_index)
-            except Exception:
-                pass
-            # 남은 active 퀘스트에서 8턴+ stale은 약화 directive
-            active_quests = game_character.get_active_quests_raw(channel_id)
-            for q in active_quests:
-                if not isinstance(q, dict):
-                    continue
-                last_progress_turn = q.get("last_progress_turn", 0)
-                stale_turns = turn_index - last_progress_turn
-                if stale_turns >= 8:
-                    parts.append(
-                        f"{q.get('content', '?')} — "
-                        "surfaces only when the user moves in this direction; the thread advances at their lead."
-                    )
-        except Exception:
-            pass
 
     # [2026-09-06 P8b] 다운타임 산문 힌트 삭제 — 생산자(rest_eval)가 사라졌다. 신설 감지 0.
 
@@ -708,12 +651,13 @@ def _build_aspects_layer(context, bus) -> str:
     except Exception:
         primary_axis = "vigor"
 
-    # storyteller_state (arc proximity / armed 평가용)
+    # arc proximity / armed 평가용 — [2026-10-24 C75 G2] 아크 = 이름 얻은 우물(줄거리 상태가 아니라 well_store)
     channel_id = (context.narrative_anchors or {}).get("channel_id", "") if context.narrative_anchors else ""
     state = {}
     if channel_id:
         try:
-            state = _dm.get_narrative_tracker_state(channel_id)
+            import well_store as _ws_asp
+            state = {"arcs": _ws_asp.arcs(channel_id, pc_location=(getattr(bus, "dai", None) or {}).get("current_location"))}
         except Exception:
             state = {}
 
@@ -754,7 +698,14 @@ def _build_system_message(bus) -> str:
     anomaly = bus.anomaly if isinstance(bus.anomaly, dict) else {}
     if anomaly.get("triggered"):
         tag = anomaly.get("tag", "anomaly")
-        chunks.append(f"[이변] {tag}")
+        # [2026-10-24 C74 W1-5] 약속 기한은 "[이변] thread_due:T3"(기계 이름)가 채널에 샜다 → "[기한] 제목".
+        if str(tag).startswith("thread_due:"):
+            chunks.append(f"[기한] {anomaly.get('due_title') or str(tag).split(':', 1)[1]}")
+        elif str(tag).startswith("collision:"):
+            # [2026-10-25 C75 G3 검토 #3] 충돌파 — "[이변] collision:3-7"(기계 이름) 대신 두 흐름 이름
+            chunks.append(f"[이변] {anomaly.get('due_title') or '두 큰 흐름이 맞부딪쳤다'}")
+        # [2026-10-25 C77 A-6 · Q18] 그 밖 이변 태그(`[이변] <Theoria 제안>`)는 채널에 안 낸다 — 레티어스(10-24) "애초에 산문
+        #   재료라 나한테 안 보여도 된다". 산문은 디렉티브로 그대로 받는다. 기한 · 충돌 두 줄은 사람 몫이라 남긴다.
 
     doom = bus.doom if isinstance(bus.doom, dict) else {}
     # relief_log 제거 (2026-05-23) — legacy 위기진폭 잔재
@@ -822,6 +773,84 @@ def _recall_fmt_game_time(gt) -> str:
         return ""
 
 
+def _recall_msg_order(r) -> int:
+    """원문 줄 시간 키 — 디스코드 message_id(눈송이)는 시간순으로 커진다. 숫자가 아니면 0."""
+    try:
+        return int(str((r or {}).get("message_id") or "0"))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _recall_rows_v2(channel_id: str, canon: str, matched: str, names: list, rows_per: int,
+                    search_limit: int, history_text: str) -> list:
+    """[2026-10-26 C80] T1 재등장 근거 — DEEP 색인 길 + 옛 LIKE, 최신순(옛 search_history_log 와 같은 순서).
+
+    채우는 순서: ① 색인 턴(중요도 높은 → 최신) 원문 중 이름이 글자로 든 줄 ② 옛 LIKE(이름이 든 최신 줄)
+    ③ 그래도 모자라면 색인 턴의 산문(이름 없이 엔티티로만 찍힌 턴 — 옛 LIKE 가 못 찾던 몫). ③은 지금 창에 이미 있는
+    줄이면 뺀다. 이름이 든 줄이 늘 먼저다 — 이름 없는 산문이 이름 든 옛 줄을 밀어내지 않게."""
+    named, loose, seen = [], [], set()
+
+    def _add(lst, r):
+        k = (r.get("message_id"), str(r.get("content") or "")[:80])
+        if k in seen:
+            return
+        seen.add(k)
+        lst.append(r)
+
+    try:
+        import memory_index
+        turns = memory_index.turns_for(channel_id, canon, aliases=names, limit=search_limit)
+    except Exception as _e_ix:
+        logger.debug(f"[Evidence] T1 index skip {canon}: {_e_ix}")
+        turns = []
+    for tr in turns:
+        if len(named) >= rows_per:
+            break
+        raw = memory_index.raw_for_turn(channel_id, tr.get("turn"), row=tr)
+        if not raw:
+            continue
+        hit = [r for r in raw if isinstance(r, dict)
+               and any(n and n in str(r.get("content") or "") for n in names)]
+        if hit:
+            _add(named, hit[0])
+            continue
+        prose = [r for r in raw if isinstance(r, dict) and str(r.get("role") or "") == "Model"]
+        _p = prose[-1] if prose else None
+        if _p and str(_p.get("content") or "")[:60] not in (history_text or ""):
+            _add(loose, _p)
+    if not named and not loose:
+        # 색인이 아무것도 못 냈다(옛 채널 · 색인 전 턴) — 옛 LIKE 그대로(순서 · 모양 옛것과 같다)
+        try:
+            return _ss_search(channel_id, matched, search_limit) or []
+        except Exception as _e_q:
+            logger.debug(f"[Evidence] T1 search skip {canon}: {_e_q}")
+            return []
+    if len(named) < rows_per:
+        try:
+            for r in (_ss_search(channel_id, matched, search_limit) or []):
+                if isinstance(r, dict):
+                    _add(named, r)
+        except Exception as _e_q:
+            logger.debug(f"[Evidence] T1 search skip {canon}: {_e_q}")
+    rows = (sorted(named, key=_recall_msg_order, reverse=True)[:rows_per]
+            + sorted(loose, key=_recall_msg_order, reverse=True))[:rows_per]
+    return sorted(rows, key=_recall_msg_order, reverse=True)
+
+
+def _ss_search(channel_id: str, query: str, limit: int) -> list:
+    import sqlite_store as _ss
+    return _ss.search_history_log(channel_id, query, limit=limit)
+
+
+def _recall_clip_around(content: str, names: list, line_chars: int) -> str:
+    """[2026-10-26 C80] 줄 상한 안에 이름이 안 보이면 이름 앞뒤 창으로 자른다(색인 길은 산문 통째가 올 수 있다)."""
+    pos = min([content.find(n) for n in names if n and n in content] or [-1])
+    if pos < 0 or pos + 20 <= line_chars:
+        return content[:line_chars]
+    start = max(0, pos - line_chars // 3)
+    return "…" + content[start:start + line_chars - 1]
+
+
 def _build_recall_evidence(channel_id: str, user_input: str, history_text: str,
                            anchors: dict) -> dict:
     """재등장 인물별 로그 원문 행. 실패·해당 없음이면 빈 dict(키를 안 넣는다)."""
@@ -854,6 +883,7 @@ def _build_recall_evidence(channel_id: str, user_input: str, history_text: str,
 
     # 후보: 이름 + aliases → 대표 이름(키)로 접는다.
     hits = []  # (pos, canon, matched)
+    _names_of = {}  # [C80] canon → 이름 + 별칭(색인 조회 · 줄 창)
     for canon, data in npcs.items():
         if not isinstance(canon, str) or domain_manager.is_pc_name(canon, pc_masks):   # [2026-10-07] 가면 이름 규칙
             continue
@@ -866,6 +896,7 @@ def _build_recall_evidence(channel_id: str, user_input: str, history_text: str,
         for a in ((data or {}).get("aliases") or []):
             if isinstance(a, str) and a and not domain_manager.is_pc_name(a, pc_masks):
                 names.append(a)
+        _names_of[canon] = names
         best = -1
         matched = canon
         for nm in names:
@@ -888,14 +919,19 @@ def _build_recall_evidence(channel_id: str, user_input: str, history_text: str,
         return {}
 
     import sqlite_store as _ss
+    _v2 = bool(getattr(_cfg, "MEMORY_LAYERS_V2", False))
     out = {}
     rows_total = 0
     for _pos, canon, matched in hits:
-        try:
-            rows = _ss.search_history_log(channel_id, matched, limit=search_limit) or []
-        except Exception as _e_q:
-            logger.debug(f"[Evidence] T1 search skip {canon}: {_e_q}")
-            continue
+        if _v2:
+            rows = _recall_rows_v2(channel_id, canon, matched, _names_of.get(canon) or [canon], rows_per,
+                                   search_limit, history_text)
+        else:
+            try:
+                rows = _ss.search_history_log(channel_id, matched, limit=search_limit) or []
+            except Exception as _e_q:
+                logger.debug(f"[Evidence] T1 search skip {canon}: {_e_q}")
+                continue
         rows = rows[:rows_per]          # search_history_log는 최신순
         if not rows:
             continue                     # 행 0이면 그 인물 생략
@@ -903,7 +939,8 @@ def _build_recall_evidence(channel_id: str, user_input: str, history_text: str,
         for r in reversed(rows):         # 렌더는 오래된→최신
             if not isinstance(r, dict):
                 continue
-            content = str(r.get("content") or "")[:line_chars]
+            content = (_recall_clip_around(str(r.get("content") or ""), _names_of.get(canon) or [canon], line_chars)
+                       if _v2 else str(r.get("content") or "")[:line_chars])
             if not content:
                 continue
             lines.append(f"{_recall_fmt_game_time(r.get('game_time'))}{r.get('role')}: {content}")
@@ -1387,6 +1424,22 @@ def sync_from_game_context(channel_id: str, user_id: str, ctx: Any) -> None:
         world["doom_climax_triggered"] = bool(bus.doom.get("climax_triggered", False))
         world["doom_climax_armed"] = bool(bus.doom.get("climax_armed", False))
         if isinstance(bus.doom.get("clocks"), list):
+            # [2026-10-24 C74 판2 §2-⑭] 끝남은 이긴다 — 배경(목표 done → resolve_clocks_by_goal)이 그 사이 세계에
+            #   적은 시계 끝을 이 턴 통째 저장이 덮지 않게. 같은 시계(이름 + 만든 턴)가 세계 쪽에서 끝났고 이 턴 판엔
+            #   아직 서 있으면, 끝 칸을 판으로 옮긴 뒤 쓴다(판의 같은 dict 를 고치므로 이 턴 뒤 읽는 자리도 본다).
+            _ended = {(c.get("name"), c.get("turn_created")): c for c in (world.get("doom_clocks") or [])
+                      if isinstance(c, dict) and c.get("resolved")}
+            if _ended:
+                for _c in bus.doom.get("clocks") or []:
+                    if not isinstance(_c, dict) or _c.get("resolved"):
+                        continue
+                    _w = _ended.get((_c.get("name"), _c.get("turn_created")))
+                    if _w:
+                        for _k in ("resolved", "end", "end_turn", "end_quest"):
+                            if _k in _w:
+                                _c[_k] = _w[_k]
+                        _c.pop("pending_completion", None)
+                        _c.pop("pending_turn", None)
             world["doom_clocks"] = bus.doom.get("clocks", [])
         domain_manager.update_world_state(channel_id, world)
 
@@ -1463,6 +1516,8 @@ class UniversalNarrativeEngine:
         all_results = []
         anomaly_data = None
         last_context = None
+        _goal_rc_all = []   # [C74 판3 검토 #3] PC 마다 doom 이 낸 목표 영수증 — 하류(after_goal)는 마지막 판만 본다
+        _motion_all: List[str] = []   # [C74 판4] PC 마다 이번 턴 doom 줄(Slot 15 "This turn") — 프롬프트는 마지막 판 버스를 읽는다
         turn_index = game_world.increment_turn_index(channel_id)
 
         for uid, info in pending_actions.items():
@@ -1484,13 +1539,22 @@ class UniversalNarrativeEngine:
                     "intensity": updated.shared_bus.anomaly.get("intensity"),
                     "polarity": updated.shared_bus.anomaly.get("polarity"),
                     "category": updated.shared_bus.anomaly.get("category"),
+                    "due_title": updated.shared_bus.anomaly.get("due_title"),   # [C74 판1 검토 #5] 둘째 PC 부터도 "[기한] 제목"
                     "potential": True,
                 }
 
             sync_from_game_context(channel_id, uid, updated)
             all_results.append(self._extract_pc_result_v3(updated, info["mask"]))
+            _goal_rc_all.extend(updated.shared_bus.doom.get("goal_receipts") or [])
+            for _mt in (updated.shared_bus.doom.get("motion_turn") or []):   # [C74 판4] PC 마다 이번 턴 줄
+                if _mt not in _motion_all:
+                    _motion_all.append(_mt)
             last_context = updated
 
+        if last_context is not None and _goal_rc_all:
+            last_context.shared_bus.doom["goal_receipts"] = _goal_rc_all
+        if last_context is not None and isinstance(last_context.shared_bus.doom, dict):
+            last_context.shared_bus.doom["motion_turn"] = _motion_all
         return self._combine_batch_results_v3(all_results, last_context)
 
     async def run_observation(self, channel_id: str) -> Dict[str, Any]:
@@ -1541,6 +1605,13 @@ class UniversalNarrativeEngine:
         events = _build_events_layer(context, bus)
         if events:
             layers.append(events)
+        # [2026-10-25 C74 판4] 이번 턴 doom 줄 → Slot 15 "This turn"(묶음 `!턴` 은 run_batch 가 PC 마다 모은다)
+        try:
+            import in_motion as _im
+            if isinstance(bus.doom, dict):
+                bus.doom["motion_turn"] = _im.turn_items(bus)
+        except Exception:
+            pass
 
         effective_mask = mask or context.get_acting_mask()
         judgment = _build_judgment_layer(bus, effective_mask)

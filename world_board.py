@@ -80,16 +80,28 @@ def _genre_labels(channel_id: str) -> tuple:
 # Channel Toggle Helpers
 # =========================================================
 
+def _legacy_display_off(board_state: Dict[str, Any], ch_name: str) -> bool:
+    """[2026-10-25 C78 D3] 옛 `!게시판 표시 {채널} 끄기` 저장값(`display_mode[채널] == "off"`). 표시 칸은 걷혔고,
+    그 채널을 꺼 둔 뜻만 남는다 — 읽을 때 채널 꺼짐으로 이어받는다(꺼 둔 채널이 저절로 켜지지 않게)."""
+    modes = (board_state or {}).get("display_mode") if isinstance(board_state, dict) else None
+    return isinstance(modes, dict) and modes.get(ch_name) == "off"
+
+
 def get_board_channels(channel_id: str) -> Dict[str, bool]:
-    """각 채널별 활성 상태 조회. 기본값: bulletin=True, sns=True, message=True."""
+    """각 채널별 활성 상태 조회. 기본값: bulletin=True, sns=True, message=True.
+    [C78 D3] 옛 표시 `off` 는 꺼짐으로 읽는다."""
     world = domain_manager.get_world_state(channel_id)
     board_state = world.get("world_board", {})
     channels = board_state.get("channels", {})
-    return {
+    out = {
         "bulletin": channels.get("bulletin", True),
         "sns":      channels.get("sns", True),
         "message":  channels.get("message", True),
     }
+    for k in out:
+        if _legacy_display_off(board_state, k):
+            out[k] = False
+    return out
 
 
 def set_board_channel(channel_id: str, ch_name: str, enabled: bool) -> None:
@@ -99,128 +111,21 @@ def set_board_channel(channel_id: str, ch_name: str, enabled: bool) -> None:
     channels = board_state.get("channels", {})
     channels[ch_name] = enabled
     board_state["channels"] = channels
+    if enabled and _legacy_display_off(board_state, ch_name):
+        board_state["display_mode"].pop(ch_name, None)   # [C78 D3] 다시 켜면 옛 표시 끄기도 같이 걷는다
     world["world_board"] = board_state
     domain_manager.update_world_state(channel_id, world)
 
 
 # =========================================================
-# [2026-08-16 도착물 라우트] 착지 모드 (thread / button / off)
+# [2026-10-25 C78 D3] 착지 모드(thread / button / off) 걷음 — 대기열 Q36
 # =========================================================
-# v1 착지는 **공개 스레드**뿐이었다 — 편지·쪽지가 채널 전원에게 보인다. 채널종별로
-# 착지를 고른다: thread=종전 스레드 게시 / button=그 턴 산문 메시지의 버튼(ephemeral)
-# / off=드롭(로그만).
-#
-# [2026-08-17 v1.1 §3] **기본을 셋 다 button 으로.** v1은 message 만 button 이고
-#   bulletin/sns 는 "원래 공개 게시물"이라 thread 를 유지했는데, 08-17 모듈 기본 ON 전환이
-#   그 자리를 되살려 "표시 기본이 버튼인데 왜 스레드가 생기나"가 됐다. 실측 결과 살아 있던
-#   별도 경로 같은 건 없었다 — 스레드 생성부는 `_ensure_thread` 하나뿐이고, 그걸 부르는
-#   것도 이 아래 착지 루프 하나뿐이다. 즉 원인은 배선이 아니라 **이 기본값 두 칸**이었다.
-#   공지·SNS도 채널을 스레드로 어지럽히지 않고 📰 버튼(kind=board)으로 내려앉는다.
-#   스레드를 원하는 채널은 `!게시판 표시 공지 스레드`로 **명시**해야 구 경로를 탄다.
-DISPLAY_MODES = ("thread", "button", "off")
-DEFAULT_DISPLAY_MODE = {"bulletin": "button", "sns": "button", "message": "button"}
-
+# 도착물은 산문 앞 선언 길 하나(C77 A-4)라 스레드 · 버튼이 같았고, 끄기는 채널 켬끔과 겹쳤다.
+#   표시 칸 · `!게시판 표시` · Activity 표시 칸을 걷고, 옛 `off` 저장값은 `_legacy_display_off` 가 채널 꺼짐으로 읽는다.
 # 채널종 → turn_mail kind. 사적 도착물(message)은 💌, 공개 게시물(공지·SNS)은 📰로 나뉜다
 # — 한 버튼에 섞으면 "나한테 온 것"을 여는 질문에 세상 소식이 끼어든다.
 BOARD_MAIL_KIND = {"bulletin": "board", "sns": "board", "message": "mail"}
 
-
-def get_display_mode(channel_id: str, ch_name: str) -> str:
-    """채널종의 착지 모드. 미설정이면 DEFAULT_DISPLAY_MODE, 알 수 없는 값이면 thread."""
-    world = domain_manager.get_world_state(channel_id)
-    board_state = world.get("world_board", {})
-    modes = board_state.get("display_mode", {})
-    mode = modes.get(ch_name) if isinstance(modes, dict) else None
-    if mode not in DISPLAY_MODES:
-        mode = DEFAULT_DISPLAY_MODE.get(ch_name, "thread")
-    return mode
-
-
-def set_display_mode(channel_id: str, ch_name: str, mode: str) -> bool:
-    """착지 모드 설정. 모르는 모드는 거부(False) — 조용한 오설정 방지."""
-    if mode not in DISPLAY_MODES:
-        return False
-    world = domain_manager.get_world_state(channel_id)
-    board_state = world.get("world_board", {})
-    modes = board_state.get("display_mode", {})
-    if not isinstance(modes, dict):
-        modes = {}
-    modes[ch_name] = mode
-    board_state["display_mode"] = modes
-    world["world_board"] = board_state
-    domain_manager.update_world_state(channel_id, world)
-    return True
-
-
-def get_all_display_modes(channel_id: str) -> Dict[str, str]:
-    """3채널 착지 모드 한 번에 (명령 UI 표시용)."""
-    return {ch: get_display_mode(channel_id, ch) for ch in BOARD_CHANNELS}
-
-
-# =========================================================
-# Thread Management
-# =========================================================
-
-async def _ensure_thread(
-    channel: discord.TextChannel,
-    channel_id: str,
-    thread_key: str,
-    default_name: str,
-) -> Optional[discord.Thread]:
-    """스레드를 가져오거나 생성. thread_id를 world_state에 저장."""
-    world = domain_manager.get_world_state(channel_id)
-    board_state = world.get("world_board", {})
-    thread_id = board_state.get(thread_key)
-
-    # 기존 스레드 찾기
-    if thread_id:
-        thread = channel.guild.get_thread(thread_id)
-        if thread:
-            if thread.archived:
-                try:
-                    await thread.edit(archived=False)
-                except Exception:
-                    pass
-            return thread
-
-    # 새 스레드 생성
-    try:
-        thread = await channel.create_thread(
-            name=default_name,
-            type=discord.ChannelType.public_thread,
-            auto_archive_duration=1440,
-        )
-        board_state[thread_key] = thread.id
-        world["world_board"] = board_state
-        domain_manager.update_world_state(channel_id, world)
-        logger.info(f"[WorldBoard] Created thread '{default_name}' id={thread.id}")
-        return thread
-    except Exception as e:
-        logger.error(f"[WorldBoard] Thread creation failed: {e}")
-        return None
-
-
-async def cleanup_threads(channel: discord.TextChannel, channel_id: str) -> None:
-    """!클리어 시 스레드 아카이브."""
-    world = domain_manager.get_world_state(channel_id)
-    board_state = world.get("world_board", {})
-    for ch_name, (thread_key, _, _) in BOARD_CHANNELS.items():
-        tid = board_state.get(thread_key)
-        if tid:
-            thread = channel.guild.get_thread(tid)
-            if thread:
-                try:
-                    await thread.edit(archived=True)
-                except Exception:
-                    pass
-        board_state.pop(thread_key, None)
-    world["world_board"] = board_state
-    domain_manager.update_world_state(channel_id, world)
-
-
-# =========================================================
-# Flash Post Generation
-# =========================================================
 
 def _get_absent_npcs(channel_id: str) -> List[str]:
     """장면에 부재 중인 NPC 목록. gaze/psyche_states 기반."""
@@ -257,7 +162,8 @@ def _get_absent_npcs(channel_id: str) -> List[str]:
             if matched:
                 present.add(matched)
 
-    absent = list(all_names - present)
+    # [2026-10-25 C77 A-4] 정렬 — set 순서는 실행마다 달라 같은 판에서 명단 · 라우팅 재료가 흔들렸다(결정론).
+    absent = sorted(all_names - present)
     return absent[:10]
 
 
@@ -393,9 +299,10 @@ def _clock_card(clock: Dict[str, Any], end: str) -> tuple:
             tied.append(_t)
     quest = ""
     tied_q: List[str] = []
-    if end == "fired" and clock.get("failed_quest"):
-        quest = str(clock["failed_quest"])
-        tied_q = [f"'{quest}'(틀어짐)"]
+    if end == "fired" and (clock.get("setback_quest") or clock.get("failed_quest")):
+        # [2026-10-24 C74 판2] 발동 = 걸린 목표 깎임(setback_quest). failed_quest = 판2 전 저장(옛 퀘스트 제거).
+        quest = str(clock.get("setback_quest") or clock["failed_quest"])
+        tied_q = [f"'{quest}'(차질)"]   # [C74 판3 W2-2] 옛 글은 틀어짐 — 실패가 아니라 깎임
     elif end == "quest" and (clock.get("end_quest") or clock.get("linked_quest")):
         quest = str(clock.get("end_quest") or clock.get("linked_quest"))
         tied_q = [f"'{quest}'(끝남)"]
@@ -664,9 +571,37 @@ def _collect_board_events(channel_id: str, dai: Dict[str, Any]) -> List[Dict[str
     # bulletin 경로로 중복 송출하면 같은 제약이 두 슬롯에 쌓여 혼선이 생김.
 
     # --- Scanner 10: Memory Trigger (filler) ---
+    # [2026-10-26 C81] 떡밥 집 = 장부 — 열린 약속 · 사안 중 무대 밖 당사자가 있는 줄 → 그 당사자의 SNS(최근 건드린 순 하나).
+    #   옛 길(F1 떡밥 마지막 하나 · 무대 밖 아무나)은 이미 닫힌 일로도 글을 썼다. 끄면 옛 길.
+    _hooks_home = bool(getattr(config, "HOOKS_LEDGER_HOME", False))
+    if _hooks_home:
+        try:
+            import thread_ledger as _tl_b10
+            _absent_h = _get_absent_npcs(channel_id)
+            if _absent_h:
+                _hc = _tl_b10.hook_candidates(_tl_b10.load_states(channel_id), _absent_h, _tl_b10.now_abs(world))
+                if _hc:
+                    _hst = _hc[0]["thread"]
+                    _hdetail = str(_hst.get("title") or "").strip()
+                    if str(_hst.get("remaining") or "").strip():
+                        _hdetail += f" — 남은 것: {str(_hst.get('remaining')).strip()}"
+                    if _hdetail:
+                        events.append({
+                            "type": "memory_trigger",
+                            "weight": 0.3,
+                            "npc": _hc[0]["party"],
+                            "target_npc": None,
+                            "channel": "sns",
+                            "detail_kr": _hdetail,
+                            "tag": f"thread_hook:{_hst.get('id')}",
+                            "thread_hook": _hst.get("id"),
+                        })
+        except Exception:
+            pass
     try:
         # [2026-07-02] 발효는 domain 루트에 저장 — ai_session_memory 읽기는 영구 빈손(Scanner 10 사망)이었음
-        triggers = domain_manager.get_domain(channel_id).get("active_memory_triggers", [])
+        triggers = ([] if _hooks_home else
+                    domain_manager.get_domain(channel_id).get("active_memory_triggers", []))
         if isinstance(triggers, list) and triggers:
             # 부재 NPC 중 하나를 랜덤 선정
             absent = _get_absent_npcs(channel_id)
@@ -690,20 +625,29 @@ def _collect_board_events(channel_id: str, dai: Dict[str, Any]) -> List[Dict[str
     # --- Scanner 11: Quest Done → 사건 카드 ---
     # [2026-10-17 C46 R4] 퀘스트 완료 그 자체도 소재 — 최근(`done_turn`) 하나. 연결 시계가 있으면 그 시계 카드
     #   (quest)가 같은 일을 말하므로 건너뛴다(한 일 두 번 금지). 실패는 시계 fired 카드가 같이 말한다.
+    # [2026-10-24 C74 판2] 출처 = 장부의 끝난 목표(close done, 끝난 턴 = last_turn). 연결 = 시계 쪽 linked_goal.
     try:
-        _qb = (domain_manager.get_domain(channel_id) or {}).get("quest_board") or {}
+        import thread_ledger as _tl_b11
         _posted_q = set((world.get("world_board", {}) or {}).get("posted_quests", []) or [])
         _recent_q = int(getattr(config, "BOARD_CLOCK_RECENT_TURNS", 10))
+        # [검토 #10] 시계 카드가 같은 일을 말하는 것 = 그 목표로 끝난 시계(end quest)뿐 — 다른 끝은 다른 일이다.
+        _tied_g = {str(c.get("linked_goal")) for c in (world.get("doom_clocks") or [])
+                   if isinstance(c, dict) and c.get("linked_goal") and c.get("end") == "quest"}
+        # [C74 판3 검토 #5] 기회 달성 · 막아냄으로 목표를 민 시계가 그 턴 그 목표를 끝냈으면, 시계 카드가 같은 일을 말한다
+        _adv_g = {str(c.get("advanced_goal")): int(c.get("end_turn") or -1) for c in (world.get("doom_clocks") or [])
+                  if isinstance(c, dict) and c.get("advanced_goal") and c.get("end") in ("achieved", "averted")}
         _cands = []
-        for _qi, _qd in enumerate(_qb.get("completed") or []):
-            if not isinstance(_qd, dict):
+        for _qd in _tl_b11.load_states(channel_id).values():
+            if _qd.get("kind") != "goal" or _qd.get("status") != "closed" or _qd.get("outcome") != "done":
                 continue
-            _qn = str(_qd.get("content") or "").strip()
-            if not _qn or _qn in _posted_q or _qd.get("linked_clock"):
+            _qn = str(_qd.get("title") or "").strip()
+            if not _qn or _qn in _posted_q or _qd.get("id") in _tied_g:
                 continue
-            if not _turn_within(_qd.get("done_turn"), current_turn, _recent_q):
+            if _adv_g.get(str(_qd.get("id"))) == int(_qd.get("last_turn") or -2):
                 continue
-            _cands.append((int(_qd.get("done_turn") or 0), _qi, _qn))
+            if not _turn_within(_qd.get("last_turn"), current_turn, _recent_q):
+                continue
+            _cands.append((int(_qd.get("last_turn") or 0), _tl_b11._thread_num(_qd.get("id")), _qn))
         if _cands:
             _cands.sort(key=lambda x: (-x[0], -x[1]))   # 최근 턴 → 같은 턴이면 나중에 끝난 것
             _qn = _cands[0][2]
@@ -1653,213 +1597,24 @@ async def _build_raw_excerpts(client, channel_id: str, query: str, names: List[s
     return (f"{_RECORD_EXCERPTS_HEAD}\n" + "\n".join(lines)) if lines else ""
 
 
-async def _build_board_prompt(
-    client,
-    channel_id: str,
-    active_channels: Dict[str, bool],
-    trigger: str = "time",
-    extra_context: str = "",
-    max_posts: int = 1,
-    absent_npcs: Optional[List[str]] = None,
-) -> str:
-    """활성 채널에 맞는 게시물 생성 프롬프트."""
-    world = domain_manager.get_world_state(channel_id)
-    # V8.5: 캘린더 마이그레이션
-    try:
-        import game_world as _gw
-        _gw._init_clock(world)
-    except Exception:
-        pass
-    location = world.get("current_location", "Unknown")
-    year = world.get("year", 1)
-    month = world.get("month", 1)
-    day = world.get("day", 1)
-    time_slot = world.get("time_slot", "오후")
-    hour = world.get("hour", 12)
-    minute = world.get("minute", 0)
-    weather = world.get("weather", "맑음")
-    doom = world.get("doom", 0)
-
-    # 장르 정보
-    stage, atmosphere = _genre_labels(channel_id)
-
-    # 세계 규칙
-    wc = world.get("world_constraints", {})
-    constraints_text = ""
-    if wc:
-        parts = []
-        if wc.get("systems"):
-            parts.append(f"체계: {wc['systems']}")
-        if wc.get("social"):
-            parts.append(f"사회: {wc['social']}")
-        if parts:
-            constraints_text = " | ".join(parts)
-
-    # 추가 규칙 (!룰 추가)
-    active_rules_parts = []
-    _rules_text = world.get("rules_text", "")
-    if _rules_text:
-        active_rules_parts.append(_rules_text)
-    _loc_rules = world.get("location_rules", {})
-    if _loc_rules:
-        for k, v in _loc_rules.items():
-            desc = v.get("desc", "") if isinstance(v, dict) else str(v)
-            active_rules_parts.append(f"- {k}: {desc}")
-    active_rules_text = "\n".join(active_rules_parts)
-
-    # NPC 프로필: 부재 NPC 우선, 없으면 전체
-    _npc_keys = absent_npcs if absent_npcs else list((domain_manager.get_npcs(channel_id) or {}).keys())[:10]
-    all_npcs = domain_manager.get_npcs(channel_id) or {}
-    npc_profiles = []
-    for _nk in _npc_keys:
-        _nd = all_npcs.get(_nk) or all_npcs.get(domain_manager._find_npc_key(all_npcs, _nk) or "", {})
-        desc = _nd.get("description") or _nd.get("desc", "")
-        meta = []
-        if _nd.get("role"): meta.append(f"역할: {_nd['role']}")
-        if _nd.get("personality"): meta.append(f"성격: {_nd['personality']}")
-        if _nd.get("tone") or _nd.get("speech"): meta.append(f"말투: {_nd.get('tone') or _nd.get('speech')}")
-        if _nd.get("location"): meta.append(f"위치: {_nd['location']}")
-        profile = f"### {_nk}\n"
-        if meta: profile += " | ".join(meta) + "\n"
-        if desc: profile += desc
-        npc_profiles.append(profile)
-    npc_names = _npc_keys  # 기존 호환
-    npc_section = "\n\n".join(npc_profiles) if npc_profiles else "None"
-
-    # 서사 앵커링: 최신 DAI observation
-    frame = domain_manager.get_latest_frame(channel_id)
-    dai_snap = frame.get("dai_snapshot", {})
-    observation = dai_snap.get("observation", "")
-
-    # [2026-08-17] 세계 발췌 — 이벤트 빌더와 **같은 함수·같은 계약**(드리프트 0).
-    #   구 블록은 "마지막 Theoria가 고른 청크 재사용(콜 0)"이었으나 청크를 `chunk["text"]`로
-    #   읽었다 — 정본 키는 `content`(command_handler 청커)라 **항상 빈 문자열**이었고,
-    #   결과적으로 이 프롬프트에 로어가 실린 적이 없다(죽은 읽기). 살아 있는 경로로 교체.
-    #   쿼리는 이 빌더가 아는 "지금 장면" = observation. 없으면 블록 생략.
-    lore_section = await _build_lore_reference(client, channel_id, observation)
-
-    # 스토리텔러 최근 이벤트
-    storyteller = world.get("storyteller", {})
-    recent_tags = storyteller.get("recent_tags", [])
-
-    # 중복 방지: 최근 게시물 요약
-    recent_summaries = _get_recent_post_summaries(channel_id)
-
-    # 핸들 레지스트리: NPC별 기존 계정 정보
-    handle_registry = _get_handle_registry(channel_id)
-
-    # 기존 게시물 수
-    board_state = world.get("world_board", {})
-    post_count = board_state.get("total_posts", 0)
-
-    # 활성 채널별 태스크 구성
-    task_parts = []
-    task_num = 1
-    output_fields = []
-
-    post_label = f"1-{max_posts} posts" if max_posts > 1 else "1 post"
-
-    # 매체 계약은 활성 채널종의 것만 실린다 — 세 종을 한 번에 켜면 셋이 나란히 서지만,
-    # 꺼진 종의 문법은 프롬프트에 존재하지 않는다(이벤트 경로는 항상 1종).
-    if active_channels.get("bulletin"):
-        task_parts.append(f"""{task_num}. **bulletin** — {post_label}, each by a DIFFERENT office, role, or person in the world.
-{_MEDIA_CONTRACT['bulletin']}""")
-        output_fields.append("  " + _MEDIA_SCHEMA["bulletin"])
-        task_num += 1
-
-    if active_channels.get("sns"):
-        task_parts.append(f"""{task_num}. **sns** — {post_label}, each by a DIFFERENT NPC or anonymous account.
-{_MEDIA_CONTRACT['sns']}""")
-        output_fields.append("  " + _MEDIA_SCHEMA["sns"])
-        task_num += 1
-
-    if active_channels.get("message"):
-        task_parts.append(f"""{task_num}. **message** — {post_label}, each FROM a DIFFERENT sender TO one named recipient.
-{_MEDIA_CONTRACT['message']}""")
-        output_fields.append("  " + _MEDIA_SCHEMA["message"])
-        _fmt_hint = mail_format_hint(channel_id)
-        if _fmt_hint:
-            task_parts.append(_fmt_hint)     # [2026-09-07 P10] 선언된 도착물 형식 이름 1줄
-
-    task_text = "\n\n".join(task_parts)
-    output_text = ",\n".join(output_fields)
-
-    # 서사 앵커링 + 중복 방지 + 핸들 레지스트리 섹션 구성
-    context_lines = []
-    if observation:
-        context_lines.append(f"- Current Scene: {observation}")
-    if recent_summaries:
-        context_lines.append(
-            f"- Already posted (same world, earlier; the next post is a later moment in the "
-            f"same voice, not a restart: a subject already posted returns only carrying what "
-            f"has changed since): "
-            f"{' / '.join(recent_summaries)}")
-    if handle_registry:
-        reg_parts = [f"{name}: {info}" for name, info in handle_registry.items()]
-        context_lines.append(f"- Known Accounts (reuse EXACT names): {' | '.join(reg_parts)}")
-    context_section = "\n".join(context_lines)
-
-    return f"""You are a world content generator for a fictional TTRPG (tabletop role-playing game) session.
-All characters, locations, and events are entirely fictional. Content serves narrative immersion for the game world.
-Rating: NC-21+. NPC posts reflect their FULL personality — crude language, dark humor, flirtation, hostility, violence — as documented in their profiles. Do not sanitize.
-
-## WORLD INFO
-- Genre/Setting: {stage}
-- Atmosphere: {atmosphere}
-- Location: {location}
-- Time: Year {year}, Month {month}, Day {day}, {hour:02d}:{minute:02d} ({time_slot})
-- Weather: {weather}
-- Doom Level: {doom}%
-- World Rules: {constraints_text or 'None'}
-{f'- Active Rules:{chr(10)}{active_rules_text}' if active_rules_text else ''}
-{f'{chr(10)}{lore_section}' if lore_section else ''}
-
-## AVAILABLE NPCs (off-screen)
-{npc_section}
-- Recent Events: {', '.join(recent_tags[-3:]) or 'None'}
-- Trigger: {trigger}
-{f'- Extra: {extra_context}' if extra_context else ''}
-- Posts so far: {post_count}
-{context_section}
-
-## TASK
-Generate content for the following channels in this world:
-
-{task_text}
-
-## RULES
-- Match the world's genre and atmosphere. Time-appropriate — a dawn post is not a night post.
-- ONLY use NPCs from the AVAILABLE NPCs section above. Match their personality and speech style.
-- Length and register are set by each channel's medium above, not shared across them.
-
-{_BOARD_AUTHORSHIP}
-
-## OUTPUT FORMAT (JSON)
-```json
-{{
-{output_text}
-}}
-```"""
+# ⚰[2026-10-25 C77 A-4 · Q2] `_build_board_prompt`(옛 정기 게시판 빌더) 삭제 — P14(09-13) 뒤로 부르는 곳이 0 이었다
+#   (`generate_posts` 는 늘 이벤트 프롬프트를 받았다). 그 빌더만 싣던 명단 · 로어 규칙 · `!룰` 은 산 길에서 이렇게 선다:
+#   작성자 명단 = `_build_event_prompt` POSTING NPC 빈 자리 · 규칙 = 자료 존(`_world_record_block`, Slot 23 포함).
 
 
 async def generate_posts(
     client,
     model_id: str,
     channel_id: str,
-    active_channels: Dict[str, bool],
-    trigger: str = "time",
-    extra_context: str = "",
-    max_posts: int = 1,
-    absent_npcs: Optional[List[str]] = None,
-    override_prompt: Optional[str] = None,
+    prompt: str,
 ) -> Optional[Dict[str, Any]]:
-    """Flash API로 게시물 생성. 3턴 프리필 + CONTENT_AUTHORIZATION."""
+    """도착물 콜 1개(light) — 이벤트 프롬프트(`_build_event_prompt`) → JSON.
+
+    [2026-10-25 C77 A-4] 인자를 프롬프트 하나로 줄였다. 옛 `active_channels` · `trigger` · `extra_context` ·
+      `max_posts` · `absent_npcs` 는 죽은 빌더에만 갔다(산 길은 늘 `override_prompt` 였다)."""
     from memory_system import api_call_with_retry
     from google.genai import types
     import text_resources
-
-    prompt = override_prompt or await _build_board_prompt(
-        client, channel_id, active_channels, trigger, extra_context, max_posts, absent_npcs)
 
     cfg = types.GenerateContentConfig(
         system_instruction=text_resources.ANALYSIS_FRAME,   # [2026-10-06 분석 틀] 원본 mandate → 분석 틀
@@ -1874,25 +1629,100 @@ async def generate_posts(
         types.Content(role="user", parts=[types.Part(text="Generate world board content. Output JSON only.\n\n" + prompt)]),
     ]
 
+    # [2026-10-25 C77 B · Q3] 전송 실패(None)와 파싱 실패(`{"_parse_error": 1}`)를 가른다 — 파싱 실패만 1회 재요청 대상이다
+    #   (전송 실패는 `api_call_with_retry` 가 이미 돌았다).
     try:
         result = await api_call_with_retry(
             client, model_id, contents, cfg,
             operation_name="WorldBoard",
         )
-        if not result:
-            return None
-
+    except Exception as e:
+        logger.error(f"[WorldBoard] Generation failed: {e}")
+        return None
+    if not result:
+        return None
+    try:
         cleaned = bot_utils.clean_json_text(result)
         try:
             data = json.loads(cleaned)
         except json.JSONDecodeError:
-            repaired = bot_utils.repair_json(cleaned)
-            data = json.loads(repaired)
-
-        return data
+            data = json.loads(bot_utils.repair_json(cleaned))
     except Exception as e:
-        logger.error(f"[WorldBoard] Generation failed: {e}")
-        return None
+        logger.warning(f"[WorldBoard] JSON parse failed: {e}")
+        return {"_parse_error": 1}
+    return data if isinstance(data, dict) else {"_parse_error": 1}
+
+
+# =========================================================
+# [2026-10-25 C77 B · Q3] 도착물 검사 — 콜 0. 걸리면 사유 한 줄을 붙여 1회 다시 부른다(실패한 턴에만 light 콜 +1).
+#   옛: 빈 산출 · 본문 없음 둘만 봤고 걸리면 한 줄 알림으로 떨어졌다. 틀 깨짐 · 대사 옮김은 안 봤고 기계 말은 세기만 했다.
+#   두 번째도 걸리면 — 굳은 실패(PARSE · NO_BODY · FORM_BROKEN)는 지금처럼 한 줄 알림, 무른 것(COPY · MECH_WORD)은 그 글을
+#   그대로 낸다(도착물이 통째로 사라지는 것보다 낫다 — 로그로 센다).
+# =========================================================
+HANDOUT_HARD = ("PARSE", "NO_BODY", "FORM_BROKEN")
+_HANDOUT_RETRY_WHY = {
+    "PARSE": "the reply was not valid JSON",
+    "NO_BODY": "it came back without a body",
+    "FORM_BROKEN": "it did not keep the declared form exactly — both slots filled and every printed part kept as printed",
+    "COPY": "it carried a spoken line from the record over word for word — the author says it in their own words",
+    "MECH_WORD": "it named a game mechanism (a clock filling, a condition closing) — the world only sees what happened",
+}
+_COPY_FP_MIN = 10
+
+
+def _fp(s: Any) -> str:
+    import unicodedata
+    return "".join(ch for ch in unicodedata.normalize("NFKC", str(s or "")).lower() if ch.isalnum())
+
+
+def _copies_record(body: str, prompt: str) -> bool:
+    """본문이 RECORD EXCERPTS 의 따옴표 대사(지문 10자 이상)를 그대로 품었나 — 공백 · 구두점 걷고 대조."""
+    i = str(prompt or "").find(_RECORD_EXCERPTS_HEAD.split("\n", 1)[0])
+    if i < 0:
+        return False
+    sec = prompt[i:]
+    j = sec.find("\n## ", 5)
+    if j > 0:
+        sec = sec[:j]
+    try:
+        import wiki_store as _wsq
+        spans = [inner for _a, _b, inner in _wsq._quote_spans(sec)]
+    except Exception:
+        spans = []
+    fb = _fp(body)
+    return any(len(_fp(q)) >= _COPY_FP_MIN and _fp(q) in fb for q in spans)
+
+
+def _handout_check(posts: Any, channel_kind: str, frame: str = "", prompt: str = "") -> Tuple[Optional[Dict[str, Any]], str]:
+    """→ (고른 글 또는 None, 사유 ""=통과). posts None = 전송 실패("NONE", 재요청 안 함)."""
+    if posts is None:
+        return None, "NONE"
+    if not isinstance(posts, dict) or posts.get("_parse_error"):
+        return None, "PARSE"
+    raw = posts.get(channel_kind)
+    items = raw if isinstance(raw, list) else [raw] if raw else []
+    post = next((p for p in items if isinstance(p, dict) and str(p.get("body") or "").strip()), None)
+    if not post:
+        return None, "NO_BODY"
+    body = str(post.get("body") or "")
+    if frame:
+        if MAIL_SLOT_BODY in body or MAIL_SLOT_SIGN in body:
+            return post, "FORM_BROKEN"
+        nb = " ".join(body.split())
+        for seg in re.split(re.escape(MAIL_SLOT_BODY) + "|" + re.escape(MAIL_SLOT_SIGN), str(frame)):
+            for piece in (p.strip() for p in seg.split("\n")):
+                if len(piece) >= 2 and " ".join(piece.split()) not in nb:
+                    return post, "FORM_BROKEN"
+    if MECH_WORD_RE.search(body):
+        return post, "MECH_WORD"
+    if _copies_record(body, prompt):
+        return post, "COPY"
+    return post, ""
+
+
+def _handout_retry_note(why: str) -> str:
+    return (f"\n\n## RETRY\nThe last draft was set aside: {_HANDOUT_RETRY_WHY.get(why, why)}. "
+            "Write it again from the same material.")
 
 
 # =========================================================
@@ -1958,6 +1788,20 @@ def _scrub_knows(channel_id: str, knows: List[str]) -> List[str]:
         logger.debug("[WorldBoard] knows scrub dropped %d/%d fragments",
                      len(knows) - len(kept), len(knows))
     return kept
+
+
+def _author_roster_line(channel_id: str) -> str:
+    """[2026-10-25 C77 A-4 · Q2] 작성자가 안 정해진 도착물 — 고를 명단을 코드가 싣는다(명단 주인은 코드).
+
+    옛: 이 자리는 "(적절한 NPC 또는 익명 작성자를 선택하라)" 한 줄뿐이라 모델이 보는 이름은 자료 존의 장면 인물이
+      거의 다였다 → 공개 글 작성자가 무대 위 사람으로 기울었다. 명단 = 장면 밖 활성 NPC(`_get_absent_npcs`, 정렬) ≤ 8."""
+    try:
+        names = _get_absent_npcs(channel_id)[:8]
+    except Exception as e:
+        logger.debug(f"[WorldBoard] author roster skipped: {e}")
+        names = []
+    head = "(세계 이벤트 — 적절한 NPC 또는 익명 작성자를 선택하라)"
+    return f"{head}\n장면 밖 인물(작성자 후보): {', '.join(names)}" if names else head
 
 
 async def _build_event_prompt(
@@ -2107,7 +1951,7 @@ Genre: {stage} | Location: {location} | Time: Y{year}/M{month}/D{day} {hour:02d}
 {event.get("detail_kr", "")}
 
 ## POSTING NPC
-{npc_section or "(세계 이벤트 — 적절한 NPC 또는 익명 작성자를 선택하라)"}
+{npc_section or _author_roster_line(channel_id)}
 {handle_str}
 
 ## ALREADY POSTED (same world, earlier)
@@ -2149,77 +1993,7 @@ form above with those two slots replaced — every other character stays exactly
 including labels, brackets, punctuation and line breaks. Nothing is added outside the form."""
 
 
-def _get_time_footer(channel_id: str) -> tuple:
-    """공통 시간 정보 반환. V8.5: year/month 포함 마이그레이션 보장."""
-    world = domain_manager.get_world_state(channel_id)
-    # V8.5: 캘린더 마이그레이션 (day=N → year/month/day_in_month 자동)
-    try:
-        import game_world
-        game_world._init_clock(world)
-    except Exception:
-        pass
-    year = world.get("year", 1)
-    month = world.get("month", 1)
-    day = world.get("day", 1)
-    hour = world.get("hour", 12)
-    minute = world.get("minute", 0)
-    time_slot = world.get("time_slot", "")
-    return year, month, day, hour, minute, time_slot
-
-
-async def _post_bulletin(
-    thread: discord.Thread,
-    post: Dict[str, Any],
-    channel_id: str,
-) -> None:
-    """게시판 스레드에 Embed 게시."""
-    year, month, day, hour, minute, time_slot = _get_time_footer(channel_id)
-    embed = discord.Embed(
-        title=post.get("title", ""),
-        description=post.get("body", ""),
-        color=0x2F3136,
-    )
-    embed.set_author(name=post.get("author", "익명"))
-    embed.set_footer(text=f"{year}년 {month}월 {day}일 {hour:02d}:{minute:02d} ({time_slot})")
-    await thread.send(embed=embed)
-
-
-async def _post_sns(
-    thread: discord.Thread,
-    post: Dict[str, Any],
-    channel_id: str,
-) -> None:
-    """SNS 스레드에 Embed 게시."""
-    year, month, day, hour, minute, _ = _get_time_footer(channel_id)
-    embed = discord.Embed(
-        description=post.get("body", ""),
-        color=0x5865F2,
-    )
-    embed.set_author(name=post.get("author", "익명"))
-    embed.set_footer(text=f"{year}년 {month}월 {day}일 · {hour:02d}:{minute:02d}")
-    await thread.send(embed=embed)
-
-
-async def _post_message(
-    thread: discord.Thread,
-    post: Dict[str, Any],
-    channel_id: str,
-) -> None:
-    """메시지 스레드에 Embed 게시."""
-    year, month, day, hour, minute, time_slot = _get_time_footer(channel_id)
-    sender = post.get("from", "익명")
-    receiver = post.get("to", "???")
-    embed = discord.Embed(
-        description=post.get("body", ""),
-        color=0xED4245,
-    )
-    embed.set_author(name=f"{sender} → {receiver}")
-    fmt_name = post.get("format_name", "")
-    footer_parts = [f"{year}년 {month}월 {day}일 {hour:02d}:{minute:02d}"]
-    if fmt_name:
-        footer_parts.append(fmt_name)
-    embed.set_footer(text=" · ".join(footer_parts))
-    await thread.send(embed=embed)
+# ⚰[2026-10-25 C77 A-4] `_post_bulletin` · `_post_sns` · `_post_message`(스레드 게시) · `_get_time_footer` 삭제 — 같은 까닭.
 
 
 # =========================================================
@@ -2401,6 +2175,10 @@ async def _trigger_board_update(
     """
     declared = (trigger == "declared")
     req = deliver if isinstance(deliver, dict) else {}
+    if not declared:
+        # [2026-10-25 C77 A-4] 도착물은 산문 앞 선언 길만 남았다 — 다른 trigger 는 콜 0 으로 돌려보낸다.
+        logger.info(f"[WorldBoard] trigger={trigger} — 선언 길만 남음, 콜 없이 반환")
+        return None
     # 모듈 활성 체크
     modules = domain_manager.get_active_modules(channel_id)
     if "board" not in modules:
@@ -2440,26 +2218,9 @@ async def _trigger_board_update(
         if not final_channel:
             return None
 
-    # [2026-08-16 도착물 라우트] 착지 모드 판정 — **Flash 콜 앞**에서 한다.
-    #   off = 드롭(콜 0). button 인데 붙일 산문 메시지가 없는 경로(!시간 진행 등)도 여기서
-    #   드롭한다 — 스레드로 폴백하면 "공개되면 안 되는 것"이 다시 공개되므로 폴백은 금지.
-    #
-    # [2026-08-17 v1.1 §3c] off 의미론 = **"콜 앞 드롭"으로 확정**(생성 후 숨김이 아니다).
-    #   "저장은 하되 표시 0"으로 바꾸면 아무도 볼 수 없는 게시물 하나당 Flash 콜 1개가
-    #   순증하고, 그 산출이 _save_post_summaries·_update_handle_registry 를 통해 다음 턴
-    #   프롬프트 재료로 흘러든다 — 즉 "표시만 끈" 게 아니라 **보이지 않는 세계가 계속 자란다**.
-    #   끄기는 끄기여야 한다. 이력이 필요하면 button 을 쓰면 되고, 그건 이미 저장된다.
-    # [2026-09-13 P14] declared 는 착지 판정 밖이다 — 산문 **앞** 제 메시지로 서므로
-    #   "붙일 산문 메시지"도 "공개 스레드"도 묻지 않는다. off 만은 존중한다(끄기는 끄기다).
-    display_mode = get_display_mode(channel_id, final_channel)
-    if display_mode == "off":
-        logger.info(f"[WorldBoard] dropped (display=off) ch={final_channel} "
-                    f"event={best_event.get('tag', '?')}")
-        return None
-    if not declared and display_mode == "button" and prose_message is None:
-        logger.info(f"[WorldBoard] dropped (display=button, no prose message) "
-                    f"ch={final_channel} trigger={trigger}")
-        return None
+    # [C78 D3] 착지 모드 판정(off = 그 채널만 콜 앞 드롭) 걷음 — 옛 `off` 는 `get_board_channels` 가 **스위치 꺼짐과 같게** 읽는다:
+    #   자동 이벤트는 `_route_event_channel` 이 다른 켜진 채널로 돌리고(C78 앞부터 스위치로 끈 채널과 같은 규칙),
+    #   선언 도착물은 위 `declared dropped (channel off)` 에서 콜 앞 드롭.
 
     # 이벤트 맞춤 프롬프트로 Flash 콜
     # [2026-08-17 light 라우트] 감싸는 건 **실제 LLM 콜**(generate_posts)뿐이다 —
@@ -2470,16 +2231,27 @@ async def _trigger_board_update(
     if declared and isinstance(ref, dict):
         _ep_kw["ref"] = ref          # [2026-10-17 C46] 재료(자료 존·원문)는 도착물 길에만 — 다른 길은 부르는 꼴 그대로
     prompt = await _build_event_prompt(client, channel_id, best_event, final_channel, **_ep_kw)
-    active_channels = {final_channel: True}
     with config.light_call():
-        posts = await generate_posts(
-            client, model_id, channel_id, active_channels,
-            trigger, extra_context, max_posts=1,
-            absent_npcs=absent_npcs,
-            override_prompt=prompt,
-        )
-    if not posts:
-        logger.info(f"[WorldBoard] Flash returned empty for event={best_event.get('tag', '?')}")
+        posts = await generate_posts(client, model_id, channel_id, prompt)
+    # [2026-10-25 C77 B · Q3] 검사 → 걸리면 1회 재요청(전송 실패는 재요청 안 함).
+    _post, _why = _handout_check(posts, final_channel, _frame, prompt)
+    if _why and _why != "NONE":
+        logger.info(f"[Handout] check={_why} event={best_event.get('tag', '?')} — retry once")
+        with config.light_call():
+            posts2 = await generate_posts(client, model_id, channel_id, prompt + _handout_retry_note(_why))
+        _post2, _why2 = _handout_check(posts2, final_channel, _frame, prompt)
+        if not _why2 or _why2 not in HANDOUT_HARD + ("NONE",):
+            posts, _post, _why = posts2, _post2, _why2
+            if _why:
+                logger.info(f"[Handout] retry still {_why} — 무른 실패라 그 글을 낸다")
+        elif _why in HANDOUT_HARD:
+            logger.info(f"[Handout] retry failed again ({_why2}) — 핸드아웃 없음")
+            _why = _why2 if _why2 != "NONE" else _why
+        else:
+            # [C77 검토] 첫 글이 무른 실패(COPY · MECH_WORD)면 재요청이 굳게 죽어도 첫 글을 낸다 — 무른 건 그 글을 낸다는 규칙과 같게.
+            logger.info(f"[Handout] retry failed ({_why2}) — 첫 글은 무른 실패({_why})라 그 글을 낸다")
+    if _why in HANDOUT_HARD + ("NONE",):
+        logger.info(f"[WorldBoard] declared: 산출 실패({_why}) event={best_event.get('tag', '?')} → 핸드아웃 없음")
         return None
 
     # [2026-09-13 P14] declared — 착지 대신 **반환**. 상태 적립(중복 방지 재료)은 종전과 같은
@@ -2487,10 +2259,6 @@ async def _trigger_board_update(
     if declared:
         _raw = posts.get(final_channel)
         _items = _raw if isinstance(_raw, list) else [_raw] if _raw else []
-        _post = next((p for p in _items if isinstance(p, dict) and p.get("body")), None)
-        if not _post:
-            logger.info("[WorldBoard] declared: 본문 없는 산출 → 핸드아웃 없음")
-            return None
         if str(req.get("format_name") or "") and not _post.get("format_name"):
             _post["format_name"] = str(req.get("format_name"))
         _update_board_state(channel_id, best_event, final_channel, posts, 1, current_turn)
@@ -2502,68 +2270,9 @@ async def _trigger_board_update(
             "event": best_event,
         }
 
-    # Discord에 착지 — [2026-08-16 도착물 라우트] thread(종전) / button(그 턴 메시지 💌).
-    posted_count = 0
-    raw = posts.get(final_channel)
-    items = raw if isinstance(raw, list) else [raw] if raw else []
-    thread = None
-    for post in items:
-        if not post or not isinstance(post, dict) or not post.get("body"):
-            continue
-
-        if display_mode == "button":
-            # 공개 스레드 대신 turn_mail 적립 + 산문 메시지에 버튼 사후 부착.
-            # 저장 키 = 그 턴 산문 메시지 id → 다음 턴 내용이 옛 버튼에 새지 않는다.
-            # [2026-08-17 v1.1 §3] kind 는 채널종이 정한다 — message=💌, 공지·SNS=📰.
-            try:
-                import turn_mail
-                _kind = BOARD_MAIL_KIND.get(final_channel, turn_mail.KIND_MAIL)
-                if await turn_mail.deliver(prose_message, channel_id, _kind,
-                                           _mail_payload(post, final_channel),
-                                           turn=current_turn):
-                    posted_count += 1
-            except Exception as e:
-                logger.warning(f"[WorldBoard] turn_mail deliver 실패: {e}")
-            continue
-
-        if thread is None:
-            thread_name_map = {
-                "bulletin": f"📋 {post.get('board_name', '게시판')}",
-                "sns": f"📱 {post.get('feed_name', 'SNS')}",
-                "message": f"💌 {post.get('format_name', '메시지')}",
-            }
-            thread_key_map = {
-                "bulletin": "bulletin_thread_id",
-                "sns": "sns_thread_id",
-                "message": "message_thread_id",
-            }
-            thread = await _ensure_thread(
-                channel, channel_id,
-                thread_key_map[final_channel],
-                thread_name_map.get(final_channel, "📋 게시판"),
-            )
-        if thread:
-            post_fn = {"bulletin": _post_bulletin, "sns": _post_sns, "message": _post_message}
-            await post_fn[final_channel](thread, post, channel_id)
-            posted_count += 1
-
-    # [2026-08-17 쪽지 서사 접지] 사적 도착물이 **표시층에서 끝나지 않게** — 보낸 사실+내용을
-    #   1턴 큐에 적재하고, 다음 턴 좌뇌 서사 콜이 소비한다(narrative_queries.world_mail_block).
-    #   자리가 여기인 이유: 착지 모드(button/thread) 둘 다를 지나는 **유일한 합류점**이라
-    #   한 번만 적재된다(모드별로 걸면 이중 적재나 한쪽 결손이 난다).
-    #   공지·SNS는 공적 매체라 제외 — "나한테 온 것"이 아니면 답장하지 않은 편지도 아니다.
-    if posted_count > 0:
-        _queue_world_mail(channel_id, final_channel, items, best_event, current_turn)
-
-    # 상태 업데이트
-    if posted_count > 0:
-        _update_board_state(channel_id, best_event, final_channel, posts,
-                            posted_count, current_turn)
-
-    logger.info(
-        f"[WorldBoard] Posted {posted_count} event={best_event.get('tag', '?')} "
-        f"ch={final_channel} trigger={trigger} display={display_mode}"
-    )
+    # ⚰[2026-10-25 C77 A-4] 선언 아닌 착지(스레드 · 💌 사후 부착 · 그 둘의 적립)는 삭제 — 부르는 곳은
+    #   `_deliver_handout`(trigger="declared") 하나뿐이고 선언 길은 위에서 반환한다. 다른 trigger 는 콜 앞에서 막는다.
+    return None
 
 
 # =====================================================================

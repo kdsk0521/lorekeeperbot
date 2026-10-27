@@ -1407,6 +1407,22 @@ def _assign_numbers(channel_id: str, sources: List[Any]) -> Dict[str, int]:
     return {k: int((v or {}).get("no") or 0) for k, v in nums.items() if isinstance(v, dict)}
 
 
+def module_number(channel_id: str, key: str) -> int:
+    """[2026-10-23 C73] 고정 번호 줄 하나 — 코드 앱(`app:<id>`)도 같은 줄 · 같은 카운터를 쓴다(`!모듈 3 off`)."""
+    return int(_assign_numbers(channel_id, [key]).get(_s(key)) or 0)
+
+
+def module_numbers(channel_id: str) -> Dict[str, int]:
+    """[C73] 번호 줄 전부 읽기(안 매긴다)."""
+    try:
+        import domain_manager as dm
+        nums = dm.get_output_decl(channel_id).get("bundles") or {}
+    except Exception as e:
+        logger.debug("[Router] 번호 읽기 skip: %s", e)
+        return {}
+    return {str(k): int((v or {}).get("no") or 0) for k, v in nums.items() if isinstance(v, dict)}
+
+
 def _active_by_source(channel_id: str) -> Dict[str, Dict[str, List[str]]]:
     """{source: {사람 말: [이름]}} — 켜진(저장소에 있는) 레코드. 읽기 길은 names_by_source 와 같다(게터 = 옛 자리 폴백 포함)."""
     out: Dict[str, Dict[str, List[str]]] = {}
@@ -1729,7 +1745,15 @@ def reset_all(channel_id: str) -> Dict[str, Any]:
         import custom_vars as cv
         # 형식은 헬퍼로 — 옛 자리(world_state)까지 비운다(남으면 읽기 폴백이 초기화를 되살린다).
         dm.set_output_rules(channel_id, {})
-        dm.update_output_decl(channel_id, dm.output_decl_default())
+        # [2026-10-23 C73] 코드 앱 번호 줄(`app:<id>`)은 남긴다 — 초기화는 `!출력룰` 몫만. 카운터는 남은 앱 번호의 최댓값.
+        _old = dm.get_output_decl(channel_id)
+        _keep = {k: v for k, v in (_old.get("bundles") or {}).items()
+                 if str(k).startswith("app:") and isinstance(v, dict) and v.get("no")}
+        _fresh = dm.output_decl_default()
+        if _keep:
+            _fresh["bundles"] = _keep
+            _fresh["bundle_seq"] = max(int(v["no"]) for v in _keep.values())
+        dm.update_output_decl(channel_id, _fresh)
         ws = dm.get_world_state(channel_id) or {}
         ws.pop(cv.KEY_DECL, None)   # 변수 선언의 옛 자리(같은 이유)
         vals = ws.get(cv.KEY_VALS)

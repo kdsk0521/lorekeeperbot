@@ -27,6 +27,7 @@ Analysis Backend — genai.Client 호환 facade (좌뇌/Flash 분석을 OpenAI �
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, List, Optional
 
 import config as _appconfig
@@ -381,15 +382,17 @@ class _Models:
         _cap = reasoning_policy.reasoning_cap_instruction(_tier)
         if _cap:
             messages.append({"role": "system", "content": _cap})
+        _t0 = time.perf_counter()
         try:
             resp = await self._client.chat.completions.create(**kwargs)
             _msg = resp.choices[0].message if getattr(resp, "choices", None) else None
             text = _msg.content if _msg else ""
             # [2026-08-17 light 라우트] route= 는 사다리 어느 단이 이겼는지(heavy/narrative/extract/
             # reader/light/name:*). 신규 줄을 파지 않고 기존 한 줄만 넓힌다.
-            logger.info("[reasoning-trace] analysis model=%s route=%s tier=%s anchor=%s sampling=%s reasoning_chars=%d",
+            # [2026-10-24 C74 W0-3] 끝에 ms= (콜 하나 걸린 시간). 새 줄 0.
+            logger.info("[reasoning-trace] analysis model=%s route=%s tier=%s anchor=%s sampling=%s reasoning_chars=%d ms=%d",
                         resolved, _route, _tier, "on" if _anchor else "off", _sampling,
-                        reasoning_policy.reasoning_trace_len(_msg))
+                        reasoning_policy.reasoning_trace_len(_msg), int((time.perf_counter() - _t0) * 1000))
             return _RespShim(text, getattr(resp.choices[0], "finish_reason", None)
                              if getattr(resp, "choices", None) else None)
         except Exception as e:
@@ -399,12 +402,15 @@ class _Models:
     async def embed_content(self, model=None, contents=None, **_ignore):
         texts = contents if isinstance(contents, list) else [contents]
         texts = [t if isinstance(t, str) else _flatten_text(t) for t in texts]
+        _t0 = time.perf_counter()
         try:
             resp = await self._embed_client.embeddings.create(
                 model=_appconfig.ANALYSIS_OPENAI_EMBED_MODEL,
                 input=texts,
             )
             vectors = [d.embedding for d in resp.data]
+            # [2026-10-24 C74 W0-3] 임베딩 콜 시간 — DEBUG(매 턴 0~3번이라 INFO 는 시끄럽다. [Turn] 의 gather · chunks 가 합을 본다).
+            logger.debug("[embed-trace] n=%d ms=%d", len(texts), int((time.perf_counter() - _t0) * 1000))
             return _EmbResShim(vectors)
         except Exception as e:
             logger.warning("[analysis-openai] embed_content failed: %s", e)

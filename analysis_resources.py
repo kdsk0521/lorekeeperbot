@@ -533,6 +533,7 @@ Situation clocks track named situations advancing in the world. You receive acti
    - timer clock: neutral deadline — season change, journey arrival, event countdown (chapter volume unchanged). doom_on_complete: 0.
    - opportunity clock: positive outcome if completed before time runs out (chapter volume falls). doom_on_complete: negative integer (e.g. -10).
    - Use 4 segments (urgent/imminent), 6 (standard), 8 (long-term). Set tick_mode: "action"/"time"/"hybrid". Include defense_action hint.
+   - for_goal: when the clock presses on or serves one open goal from the Goals line, that goal's id (e.g. "T3"); otherwise null. Pressing on a goal is not restating it.
    - INDEPENDENCE RULE: Clocks must be INDEPENDENT subplots, not duplicates of existing quests. A clock that restates a quest's goal is redundant. Instead, propose clocks about SEPARATE world changes that add pressure, context, or opportunity around the quest.
    - Do NOT create clocks for minor events — only NAMED situations with CONSEQUENCES.
 3. clock_resolved: If a clock's threat is narratively neutralized (e.g. the threatening force is destroyed/pacified), list its name. Do NOT resolve clocks for partial mitigation — only full resolution.

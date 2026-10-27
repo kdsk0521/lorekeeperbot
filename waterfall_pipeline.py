@@ -459,11 +459,16 @@ class WaterfallPipeline:
         # 병렬→직렬 전환(레티어스 "지연 감수"): 서사 콜이 이번 턴 추출 다이제스트를 입력으로 받아
         # 동턴 정합 확보 — 2차 이사(deep_read 등 심리 해석층)의 전제. W5 강하는 콜별 독립 유지.
         bus = context.shared_bus
+        import time as _time_tt
+        import turn_timing as _tt   # [2026-10-24 C74 W0-1] Theoria 두 콜 시간 → [Turn] 의 theoria_x · theoria_n
+        _tt_ch = (getattr(context, "narrative_anchors", None) or {}).get("channel_id", "")
+        _tt0 = _time_tt.perf_counter()
         try:
             analysis = await self.theoria.analyze_input(context)
         except Exception as e:
             _degrade_stage(bus, "theoria_analysis", e)
             analysis = {}
+        _tt.sub(_tt_ch, "theoria_x", _time_tt.perf_counter() - _tt0)
 
         # Safety: Gemini가 JSON 배열을 반환하면 첫 번째 요소를 사용
         if isinstance(analysis, list):
@@ -685,11 +690,13 @@ class WaterfallPipeline:
                  "position_value": (bus.dai.get("position") or {}).get("value", 0.5)
                  if isinstance(bus.dai.get("position"), dict) else 0.5}
 
+        _tt0 = _time_tt.perf_counter()
         try:
             narrative = await self.theoria.analyze_narrative(context, extract=analysis, roll=_roll)
         except Exception as e:
             _degrade_stage(bus, "narrative_analysis", e)
             narrative = {}
+        _tt.sub(_tt_ch, "theoria_n", _time_tt.perf_counter() - _tt0)
         if not isinstance(narrative, dict):
             narrative = {}
 
@@ -956,6 +963,20 @@ class WaterfallPipeline:
                     logger.warning("[DAI] PC 혼입 제외: %s", " / ".join(_purged))
         except Exception as _e_pcp:
             logger.debug(f"[DAI] PC purge skipped: {_e_pcp}")
+
+        # [2026-10-27 C84] 모습 · 등장 · 불러오기 발화 — PC 걷기 **바로 뒤**(같은 턴 감정 · 판정 · 디렉터 · 렌더가 바뀐 이름을 본다).
+        #   코드 문 2(items · expr · words · with · at) + Theoria `form` 칸(when 있는 규칙, 근거 필수). 표가 없으면 쓰기 0.
+        #   바뀐 턴은 bus.dai["form_switch"] → orchestration 이 `!다시` 거절 칸으로 옮긴다(D4).
+        try:
+            _anch_fm = context.narrative_anchors or {}
+            _ch_fm = _anch_fm.get("channel_id", "")
+            if _ch_fm:
+                import npc_forms as _nf_w
+                _nf_w.fire(_ch_fm, bus.dai, analysis.get("form"),
+                           input_text=str(getattr(context.request, "user_input", "") or ""),
+                           uid=str(_anch_fm.get("acting_user_id", "") or ""))
+        except Exception as _e_fm:
+            logger.warning(f"[Form] fire skipped: {_e_fm}")
 
         # [2026-09-22 voice_seed §2 F] 버퍼 적재 — **정제 뒤**다(PC 키가 버퍼에 눕지 않게).
         #   등록 관문(§G, PR 3)이 이걸 집어 lore 절로 앉힌다. 여기서도 예외는 삼킨다.

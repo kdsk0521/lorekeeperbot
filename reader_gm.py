@@ -13,7 +13,7 @@ blind는 연기가 아니라 지식의 저주 차단 장치: 내부 상태를 �
   - 총괄 원리: 자기재귀 루프이되 **수렴하지 않고 살짝씩 벗어난다** — 재조명은 반복이 아니라 다른 각도,
     예측 적중이 계속되면 그건 성공이 아니라 굴절 신호.
 
-소비 현황 (READER_GM_FEED=1): SD idle 거부권 / 이변 후보 가점 / 아크 승격 1표 / 間 시드·시계·퀘스트
+소비 현황 (READER_GM_FEED=1): SD idle 거부권 / 이변 후보 가점 / ~~아크 승격 1표~~(C75 G2 은퇴 — 아크 이름은 우물 질량으로) / 間 시드·시계·퀘스트
   + [2026-08-11] fog→서사 콜 재조명(C1) · established→비밀 누설 압력(C2) · 예측가능성 자기 채점(C3)
   · momentum→SD 방향 후보(C4) · register 수신 대조(C5, log-only).
 영속 쓰기: anomaly_seeds·reader_blurb(lore_summary_data) + secret_ledger.reader_exposure.
@@ -270,6 +270,11 @@ async def _get_or_build_blurb(client, channel_id: str) -> str:
         if not blurb:
             return ""
         blurb = _blurb_spoiler_scrub(blurb, channel_id)
+        # [2026-10-24 C76 검토 #9] 콜(await) **뒤에 새로 읽어** 두 칸만 얹는다 — 콜 전에 읽은 dict 를 통째로 쓰면
+        #   그사이 끝난 `!로어` 분석(이름 목록 · 거처 · 장소 · 시드)을 옛것으로 덮었다(채널 잠금 밖 LOW 백그라운드).
+        store = domain_manager.get_lore_summary_data(channel_id) or {}
+        if not isinstance(store, dict):
+            store = {}
         store["reader_blurb"] = blurb
         store["reader_blurb_hash"] = h
         domain_manager.set_lore_summary_data(channel_id, store)
@@ -746,14 +751,14 @@ async def run_reader(client, channel_id: str, turn: int,
 # =========================================================
 
 _SEED_SYSTEM = """You are a world-seed smith for an ongoing TRPG campaign, working at a chapter break.
-Input: (a) narrative axes a blind reader kept returning to across recent turns (note + the Korean line that carried it), (b) the existing anomaly seed list, (c) the campaign's tone tags.
+Input: (a) narrative axes a blind reader kept returning to across recent turns (note + the Korean line that carried it), (b) the existing anomaly seed list, (c) the campaign's tone tags, (d) the world's places and people.
 Task: grow the campaign's future material where the table's attention already lives.
-- "seeds": 1-2 NEW anomaly seeds from the axes. Do NOT duplicate or rephrase existing seeds. Seeds are small first-causes, not clues by default — their register follows the campaign tone (comedy: a joke about to land, romance: a warmth about to be noticed, noir: a loose thread); unexplained does not mean suspicious.
+- "seeds": 1-2 NEW anomaly seeds from the axes. Do NOT duplicate or rephrase existing seeds. Seeds are small first-causes, not clues by default — their register follows the campaign tone (comedy: a joke about to land, romance: a warmth about to be noticed, noir: a loose thread); unexplained does not mean suspicious. "anchor" = where the seed sits: one name copied exactly from PLACES, or the name of the person it clings to copied exactly from PEOPLE; "" if it floats free.
 - "clock": 0-1 threat/progress clock the strongest axis implies (something building offstage). null if none earns it.
 - "quest": 0-1 concrete objective a player could pursue, one Korean line. null if none earns it.
 Ground everything in the given axes. Output JSON only:
 {
-  "seeds": [{"name": "서사 이름 (한국어)", "axis": "mental|relation|complication|information|position|schedule", "tags": ["소재(한국어)"], "defense_hint": "번질 방향 또는 풀릴 방향 한 줄 (한국어)"}],
+  "seeds": [{"name": "서사 이름 (한국어)", "axis": "mental|relation|complication|information|position|schedule", "tags": ["소재(한국어)"], "defense_hint": "번질 방향 또는 풀릴 방향 한 줄 (한국어)", "anchor": "PLACES 의 장소명 또는 인물 이름 또는 \"\""}],
   "clock": {"name": "시계 이름 (한국어)", "segments": 4, "threat": "완성 시 무엇이 오나 (한국어)", "defense_action": "늦추는 방법 (한국어)"},
   "quest": "퀘스트 한 줄 (한국어)"
 }"""
@@ -793,8 +798,17 @@ async def run_seed_replenish(client, channel_id: str) -> bool:
         except Exception:
             _tone_list = []
         _tone_txt = ", ".join(str(g) for g in _tone_list) if _tone_list else "(none tagged)"
+        # [2026-10-25 C75 G3] 시드 닻 후보 — 로어 장소 이름(같은 이름을 그대로 적어야 우물이 천 위에 선다).
+        _places = [str(l.get("name")).strip() for l in (lore.get("locations") or [])
+                   if isinstance(l, dict) and str(l.get("name") or "").strip()][:20]
+        try:
+            _people = [str(k).strip() for k in (domain_manager.get_npcs(channel_id) or {}).keys() if str(k).strip()][:20]
+        except Exception:
+            _people = []
         prompt = (
             f"### CAMPAIGN TONE\n{_tone_txt}\n\n"
+            f"### PLACES\n" + (", ".join(_places) if _places else "(none listed)") + "\n\n"
+            f"### PEOPLE\n" + (", ".join(_people) if _people else "(none listed)") + "\n\n"
             f"### READER-PERSISTENT AXES\n{axes_txt}\n\n"
             f"### EXISTING SEEDS (do not duplicate)\n" + "\n".join(f"- {n}" for n in existing_names if n)
             + "\n\nMint the new seeds JSON now."
@@ -832,6 +846,11 @@ async def run_seed_replenish(client, channel_id: str) -> bool:
             s["source"] = "reader"  # provenance — persist_audit·GC 식별자
             accepted.append(s)
         if accepted:
+            # [2026-10-24 C76 검토 #9] 콜 뒤에 새로 읽는다 — 그사이 `!로어` 가 끝났으면 새 분석 위에 얹는다(통째 덮기 방지).
+            lore = domain_manager.get_lore_summary_data(channel_id) or {}
+            if not isinstance(lore, dict):
+                lore = {}
+            seeds = list(lore.get("anomaly_seeds", []) or [])
             # 캡: reader-유래 시드 FIFO
             cap = getattr(_cfg, "READER_SEED_CAP", 6)
             reader_seeds = [s for s in seeds if isinstance(s, dict) and s.get("source") == "reader"]
@@ -869,15 +888,18 @@ async def run_seed_replenish(client, channel_id: str) -> bool:
         except Exception as _e_ck:
             logger.debug(f"[ReaderSeed] clock stage skipped: {_e_ck}")
 
-        # ── 수신형 퀘스트 (0-1개/間): 기존 add_quest 경유(중복 방지 내장) — 기관의 규칙으로 등록.
+        # ── 수신형 퀘스트 (0-1개/間): [2026-10-24 C74 판2] 장부 목표로 코드 open(인용 없음 · origin code:seed) —
+        #    같은 제목이 서 있거나 없던 일이면 건너뛴다(옛 add_quest 의 중복 · dismissed 막음과 같은 결).
         try:
             q = raw.get("quest") if isinstance(raw, dict) else None
             if isinstance(q, str) and q.strip():
-                import game_system
-                _res = game_system.add_quest(channel_id, q.strip())
-                logger.info("[ReaderSeed] quest: %s (%s)", q.strip()[:50], _res or "added")
+                import thread_ledger
+                _t_seed = int((domain_manager.get_world_state(channel_id) or {}).get("turn_index", 0) or 0)
+                _n = thread_ledger.code_events(channel_id, _t_seed, [{"op": "open", "kind": "goal", "title": q.strip()}],
+                                               origin="code:seed")
+                logger.info("[ReaderSeed] goal: %s (%s)", q.strip()[:50], "added" if _n else "skip(dup)")
         except Exception as _e_q:
-            logger.debug(f"[ReaderSeed] quest skipped: {_e_q}")
+            logger.debug(f"[ReaderSeed] goal skipped: {_e_q}")
 
         return True
     except Exception as e:

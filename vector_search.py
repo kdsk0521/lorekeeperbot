@@ -84,15 +84,24 @@ class VectorSearchEngine:
                 to_embed.append(text)
                 to_embed_indices.append(i)
 
-        if to_embed:
+        # [2026-10-26 C80] 한 콜 상한(EMBED_BATCH_MAX)으로 쪼갠다 — 발효 엔트리가 안 지워지면서 콜드 캐시(재시작 · 트림)
+        #   한 번에 수백 개가 갈 수 있다. 상한 이하면 옛 한 콜 그대로. 한 조각이 실패해도 나머지 조각은 산다.
+        try:
+            import config as _cfg_vs
+            _bmax = max(1, int(getattr(_cfg_vs, "EMBED_BATCH_MAX", 100) or 100))
+        except Exception:
+            _bmax = 100
+        for _b0 in range(0, len(to_embed), _bmax):
+            _part = to_embed[_b0:_b0 + _bmax]
+            _part_idx = to_embed_indices[_b0:_b0 + _bmax]
             try:
                 # Gemini embedding API call
                 response = await self.client.aio.models.embed_content(
                     model=self.model,
-                    contents=to_embed,
+                    contents=_part,
                 )
                 embeddings = response.embeddings
-                for idx, emb in zip(to_embed_indices, embeddings):
+                for idx, emb in zip(_part_idx, embeddings):
                     vec = emb.values if hasattr(emb, 'values') else emb
                     h = self._hash_text(texts[idx])
                     self._cache[h] = vec
@@ -100,7 +109,7 @@ class VectorSearchEngine:
             except Exception as e:
                 logger.warning(f"Embedding API failed: {e}")
                 # Fill None slots with zero vectors
-                for idx in to_embed_indices:
+                for idx in _part_idx:
                     if results[idx] is None:
                         results[idx] = []
 

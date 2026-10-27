@@ -2521,7 +2521,16 @@ def translate_arc_foreground(arc: Optional[Dict[str, Any]] = None) -> str:
         if summaries:
             parts.append("this breath's threads:\n  - " + "\n  - ".join(summaries))
 
+    # [2026-10-25 C75 G3] 결전 — 익은 우물 중심(안)에 PC 가 섰다. 결만, 무엇이 오는지는 위 줄들이 이미 든다.
+    #   싸움 말을 뺐다(연애 · 코미디 · 일상에도 같은 줄 — 레티어스 10-25 "장르를 최대한 안 타게"). 실테스트로 고친다.
+    if a.get("climax"):
+        parts.append(CLIMAX_LINE)
+
     return "\n".join(parts)
+
+
+CLIMAX_LINE = ("this current has ripened and comes to a head here, in this scene — what it gathered is all present now; "
+               "let it play out at full weight.")
 
 
 def translate_arc_background(arc: Optional[Dict[str, Any]] = None) -> str:

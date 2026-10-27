@@ -23,8 +23,10 @@ import domain_manager
 import background_task_queue as _btq
 from background_task_queue import TaskPriority
 from module_frame import Module, Call, Toggle, register, BACKGROUND, ON_DAY, AFTER_OUTPUTS, AFTER_BATCH, channel_toggle
+from module_frame import BgJob
 from module_frame import ON_INPUT, PRE_RENDER_CALL, View, add_view   # [C64 M5]
 from module_frame import Setting   # [C72 A5]
+from module_frame import AFTER_PROSE   # [C73 M7a]
 import shared_extract as _sx   # [C63 M4] 공용 추출 몸 — 이 파일은 선언만
 
 # 옮긴 로그 줄은 옛 자리와 같은 로거로 남긴다(로그 모양·필터 그대로).
@@ -51,9 +53,10 @@ async def _pre_board(rt, b):
     await _wb_pr.handout_station(rt, b)
 
 
-# [2026-10-23 C72 A5] 게시판 설정 칸 여섯 — 저장은 지금 자리 그대로(world_state.world_board, `!게시판` 명령과 같은 함수).
+# [2026-10-23 C72 A5] 게시판 설정 칸 — 저장은 지금 자리 그대로(world_state.world_board).
+# [2026-10-25 C78 D3] "표시" 칸 셋을 뺐다 — 도착물이 산문 앞 선언 길 하나라 스레드 · 버튼이 같고 끄기는 채널 스위치와 겹쳤다(Q36).
+#   `!게시판` 명령도 걷혀(A2) 게시판 손잡이는 이 카드 + `!모듈 게시판 on/off` 둘이다.
 _BOARD_CH = (("bulletin", "공지"), ("sns", "SNS"), ("message", "메시지"))
-_BOARD_SHOW = (("button", "버튼"), ("thread", "스레드"), ("off", "끄기"))
 
 
 def _board_ch_get(ch_name):
@@ -70,24 +73,8 @@ def _board_ch_set(ch_name):
     return _s
 
 
-def _board_show_get(ch_name):
-    def _g(channel_id):
-        import world_board as _wb
-        return _wb.get_display_mode(channel_id, ch_name)
-    return _g
-
-
-def _board_show_set(ch_name):
-    def _s(channel_id, value):
-        import world_board as _wb
-        _wb.set_display_mode(channel_id, ch_name, str(value))
-    return _s
-
-
 _BOARD_SETTINGS = tuple(
-    [Setting(f"ch.{k}", lb, "switch", _board_ch_get(k), _board_ch_set(k)) for k, lb in _BOARD_CH]
-    + [Setting(f"show.{k}", f"{lb} 표시", "select", _board_show_get(k), _board_show_set(k), _BOARD_SHOW)
-       for k, lb in _BOARD_CH])
+    Setting(f"ch.{k}", lb, "switch", _board_ch_get(k), _board_ch_set(k)) for k, lb in _BOARD_CH)
 
 
 register(Module(
@@ -121,10 +108,12 @@ async def _bg_mind(rt, turn):
             _mind_dai = dict(ctx.dai) if ctx.dai else {}
             _mind_msg = sent_msgs[-1]
 
-            async def _run_turn_mind():
+            # [2026-10-24 C74 W4-3] BgJob — 콜(대상 고르기 · 콜 · 폴백) / 적용(전달). 틀이 상태패널과 짝 태스크로 묶는다.
+            #   이 콜은 패널 저장값을 안 읽고(대상 · 장면 앵커 · 로어 낟알), 패널 콜도 💭 행을 안 읽는다(정의 · 산문 · 직전 패널).
+            async def _mind_call():
                 _targets = _tm_mod.select_mind_targets(channel_id, _mind_dai)
                 if not _targets:
-                    return          # 대상 0명 = mail 미생성(버튼도 안 붙는다)
+                    return None     # 대상 0명 = mail 미생성(버튼도 안 붙는다)
                 _names = [t["name"] for t in _targets]
                 _payload = None
                 if int(getattr(config, "TURN_MIND_CALL", 1) or 0):
@@ -133,22 +122,29 @@ async def _bg_mind(rt, turn):
                         _payload = await _tm_mod.generate_mind_call(
                             rt.client, config.role_model("light"), channel_id,
                             _mind_dai, targets=_targets)
+                if isinstance(_payload, dict) and _payload.get("dropped") and not _payload.get("entries"):
+                    # [C77 검토] A-3 관문이 전부 버림 = 콜은 살았다. 폴백(영어 분석문)으로 메우지 않고 그 턴 💭 없음.
+                    logger.info("[TurnMind] 관문이 전부 버림(%d) — 이번 턴 💭 없음", _payload["dropped"])
+                    return None
                 if not _payload:
                     # 결정론 폴백 — 콜이 죽어도 💭는 그 턴 재료로 뜬다
                     _payload = _tm_mod.generate_mind(channel_id, _mind_dai, names=_names)
+                return _payload or None
+
+            async def _mind_apply(_payload):
                 if not _payload:
                     return
                 logger.info("[TurnMind] source=%s npcs=%d",
                             _payload.get("source", "?"), len(_payload.get("entries") or []))
+                _t_mind = _mind_dai.get("turn_index")       # [C77 검토] 큐가 밀려도 그 턴 도장(B1 · `_prev_minds` 와 같은 풀이)
                 await _tm_mod.deliver(
-                    _mind_msg, channel_id, _tm_mod.KIND_MIND, _payload)
+                    _mind_msg, channel_id, _tm_mod.KIND_MIND, _payload,
+                    turn=_t_mind if isinstance(_t_mind, int) and not isinstance(_t_mind, bool) else None)
 
-            await _btq.enqueue_background_task(
-                channel_id, "TurnMind", _run_turn_mind,
-                priority=TaskPriority.LOW,
-            )
+            return BgJob("TurnMind", _mind_call, _mind_apply, TaskPriority.LOW)
     except Exception as _e_tm:
         logger.debug(f"[TurnMail] mind enqueue skip: {_e_tm}")
+    return None
 
 
 register(Module(
@@ -204,13 +200,16 @@ async def _bg_status_panel(rt, turn):
         if _sp_mod.get_panel_definition(channel_id):
             _sp_prose = response
 
-            async def _run_status_panel():
+            # [2026-10-24 C74 W4-3] BgJob — 콜(generate_panel) / 적용(저장 + 로그). 틀이 속마음과 짝 태스크로 묶는다.
+            async def _panel_call():
                 # [2026-08-17 light 라우트] 단문 배경 콜 → 경량 모델.
                 # with 가 **코루틴 안**에 있어야 실행 시점 컨텍스트에 걸린다
-                # (큐 적재 바깥에서 감싸면 실행 전에 reset 된다).
+                # (큐 적재 바깥에서 감싸면 실행 전에 reset 된다). 짝으로 돌 때도 같다 — gather 가 콜마다 문맥을 따로 쥔다.
                 with config.light_call():
-                    _res = await _sp_mod.generate_panel(
+                    return await _sp_mod.generate_panel(
                         rt.client, config.role_model("light"), channel_id, _sp_prose)
+
+            async def _panel_apply(_res):
                 if not _res or not _sp_mod.apply_panel_result(channel_id, _res):
                     return
                 logger.info(
@@ -218,12 +217,10 @@ async def _bg_status_panel(rt, turn):
                     domain_manager.get_world_state(channel_id).get("turn_index", 0),
                     len(_res.get("fields") or {}), len(_res.get("comments") or []))
 
-            await _btq.enqueue_background_task(
-                channel_id, "StatusPanel", _run_status_panel,
-                priority=TaskPriority.LOW,
-            )
+            return BgJob("StatusPanel", _panel_call, _panel_apply, TaskPriority.LOW)
     except Exception as _e_sp:
         logger.debug(f"[StatusPanel] enqueue skip: {_e_sp}")
+    return None
 
 
 def _status_panel_line(ch):
@@ -243,6 +240,7 @@ async def _day_panel(rt, day):
 
 register(Module(
     id="status_panel", name="상태패널", tier="declared", shelf="config", order=10,
+    bg_pair="mind",   # [C74 W4-3] 속마음 콜과 같이 — 아래 짝 주석
     stations={BACKGROUND: _bg_status_panel, ON_DAY: _day_panel, AFTER_OUTPUTS: _sx.out_append},
     orders={ON_DAY: 40, AFTER_OUTPUTS: 60},
     calls=(Call("StatusPanel", "light", "패널 정의(!출력룰 panel/상태창)가 있을 때"),),
@@ -414,6 +412,7 @@ register(Module(
 # =====================================================================
 register(Module(
     id="outputs", name="출력물 추출", tier="core", order=2,
+    bg_pair="world",  # [C74 W4-2] 세계 추출 콜과 같이 — 아래 짝 주석
     stations={BACKGROUND: _sx.bg_outputs},
     calls=(Call("B-Outputs", "light", "선언 언급·cue·연산·append 장부·노트북 힌트·타격칸 중 하나라도"),),
 ))
@@ -424,17 +423,42 @@ register(Module(
 ))
 register(Module(
     id="ferment", name="발효", tier="core", order=6,
-    stations={BACKGROUND: _sx.bg_ferment},
+    # [2026-10-24 C74 W4-1] BACKGROUND 순서 6 → 28 — 재그림(25) 뒤 기억 차선. 임베드 · 상태패널 · 속마음은 발효 결과를 안 읽는다.
+    stations={BACKGROUND: _sx.bg_ferment}, orders={BACKGROUND: 28},
     calls=(Call("Fermentation", "main", "발효·연대기 임계를 넘을 때"),),
 ))
-register(Module(id="quest", name="퀘스트", tier="core", order=10, stations={AFTER_BATCH: _sx.after_quest}))
+# [2026-10-24 C74 판2] quest(퀘스트 적용 · after_batch 10) → goal(목표 알림 · 55). 목표 행은 world 50 의 장부 적용이 쓰고,
+#   여기는 그 영수증을 채널에 보낸다(그래서 world 뒤). 핵심(끌 수 없음)이라 켬끔 기록이 없어 id 도 바꾼다.
+register(Module(id="goal", name="목표", tier="core", order=55, stations={AFTER_BATCH: _sx.after_goal}))
 register(Module(id="npc", name="인물", tier="core", order=20, stations={AFTER_BATCH: _sx.after_npc}))
 register(Module(
-    id="narrative", name="줄거리·arc", tier="core", order=60, stations={AFTER_BATCH: _sx.after_narrative},
-    calls=(Call("Play Section Condense", "heavy", "인물 관찰이 250자 넘게 쌓일 때(B3)"),
-           Call("Storyline Summary", "flash", "요약 임계를 넘을 때(B4)")),
+    id="narrative", name="줄거리·arc", tier="core", order=60,
+    # [2026-10-24 C74 W4-1b] 두 콜(B3 · B4)은 BACKGROUND 27 꼬리 태스크(NarrativeTail)로 — 재그림 뒤 기억 차선.
+    stations={AFTER_BATCH: _sx.after_narrative, BACKGROUND: _sx.bg_narrative_tail}, orders={BACKGROUND: 27},
+    calls=(Call("Play Section Condense", "heavy", "인물 관찰이 250자 넘게 쌓일 때(B3) — 꼬리 태스크"),
+           Call("Storyline Summary", "flash", "요약 임계를 넘을 때(B4) — 꼬리 태스크")),
 ))
 register(Module(id="presence", name="출석·위치", tier="core", order=70, stations={AFTER_BATCH: _sx.after_presence}))
+
+
+# =====================================================================
+# 재그림 — [2026-10-24 C74 W4-1] 옛 orchestration 9.9(BACKGROUND 정거장 **뒤** 맨 끝 적재) → 정거장 안 order 25.
+#   값 차선(출력물 2 · 세계 4 · 상태패널 10 · 속마음 20) → **재그림 25** → 기억 차선(줄거리 꼬리 27 · 발효 28 · 감사 30 · 독자 40).
+#   임베드(turn_view_data)가 읽는 값의 주인은 전부 25 앞이다. 끌 수 없는 핵심(shelf "") — 동작은 옛 함수 그대로.
+# =====================================================================
+async def _bg_panel_refresh(rt, turn) -> None:
+    await rt._schedule_panel_refresh(turn.channel_id, turn.sent_msgs, getattr(turn, "panel_before", None))
+
+
+register(Module(id="panel_refresh", name="임베드 재그림", tier="core", order=25,
+                stations={BACKGROUND: _bg_panel_refresh}))
+
+# [2026-10-24 C74 W4-2·3] 배경 짝(앞 모듈의 `bg_pair`) — 두 콜을 한 큐 태스크에서 같이 띄우고 적용은 order 순(module_frame._run_pair).
+#   출력물 2 ∥ 세계 4: 세계 콜 입력은 출력물 적용(값 · 노트북 · 상태 · 타격칸 · 기록)을 안 읽는다. 출력물 콜도 세계 적용을 안 읽는다.
+#   상태패널 10 ∥ 속마음 20: 패널 콜 = 정의 · 산문 · 직전 패널, 속마음 콜 = 대상 · 장면 앵커 · 로어 낟알 — 서로의 저장을 안 읽는다.
+#   둘 다 세계 적용 뒤(무대 이름) — 앞 짝 태스크가 끝난 뒤 돈다(FIFO).
+#   ⚠ 새 산문 뒤 콜을 넣을 때: BACKGROUND 함수가 BgJob 을 돌려주면 틀이 적재한다(order < 25 = 임베드가 읽는 값, > 25 = 기억 차선).
+#     다른 콜과 같이 띄우려면 앞 모듈에 bg_pair="뒤 id" — 조건은 위 두 짝처럼 서로의 적용을 콜 입력에서 안 읽고 order 로 바로 이웃.
 
 
 # =====================================================================
@@ -479,3 +503,30 @@ add_view("screen", View("ArchiveView", _view_archive, 20,
                         "[StatusPanel] archive button registration failed: {e}"))
 add_view("ooc", View("CorrectionAskView", _view_correction, 30,
                      "[OOC] correction ask view registered", "[OOC] correction ask view registration failed: {e}"))
+
+
+# =====================================================================
+# 코드 앱 호스트 — [2026-10-23 C73 M7a] 채널에 올린 `.lkapp` 의 on_output 을 AFTER_PROSE 정거장에서 부른다
+#   (이 정거장을 처음 부르는 자리 = orchestration 9.53). 턴 앞(on_input · feed)은 스냅숏 **뒤**여야 해서 정거장 밖
+#   (orchestration 이 app_host.turn_start 를 직접 부른다 — ON_INPUT 정거장은 main 입구라 스냅숏 앞이다).
+#   늘 켬 · `!모듈` 목록엔 안 선다(shelf ""). 앱 하나하나의 켬끔은 앱 표(app_host.set_on)가 쥔다.
+#   [2026-10-24 C73 M7b] on_output 뒤에 신고 정산(AppTags 콜)을 제 차선에 띄운다 — 배경 큐 밖, 다음 턴이 ⏳로 기다린다.
+# =====================================================================
+async def _apps_after_prose(rt, turn):
+    import app_host
+    await app_host.after_prose_station(rt, turn)
+
+
+register(Module(id="apps", name="코드 앱", tier="core", stations={AFTER_PROSE: _apps_after_prose},
+                calls=(Call("AppTags", "light", "신고(tags)를 단 코드 앱이 켜져 있을 때 — 산문 뒤 제 차선, 다음 턴이 ⏳로 기다림"),)))
+
+
+# [2026-10-24 C74 W4-2·3 검토 #4] 배경 짝은 order 로 바로 이웃이어야 묶인다 — 사이에 새 모듈이 끼면 조용히 혼자 둘이 된다.
+#   등록이 다 끝난 여기서 한 번 본다(어긋나면 WARNING — 기동은 그대로, 짝만 혼자 둘로 돈다).
+try:
+    from module_frame import check_pairs as _check_pairs
+    _bad_pairs = _check_pairs()
+    if _bad_pairs:
+        logger.warning("[Frame] 배경 짝이 이웃이 아님(혼자 둘로 돈다): %s", _bad_pairs)
+except Exception as _e_cp:
+    logger.debug(f"[Frame] pair check skipped: {_e_cp}")

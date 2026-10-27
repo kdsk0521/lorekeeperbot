@@ -44,7 +44,7 @@ PANEL_BUTTON_ID = "lorekeeper:status_panel"
 _PANEL_KEYS = ("panel", "상태창")
 
 # [2026-08-18 대형식화 v1] 같은 저작 문의 다른 키 = **상단 헤더 형식**.
-#   `!출력룰 추가 헤더 잔고 [빚] / 평판 [평판]` → _header_template_row 가 `[변수]`를 치환한다.
+#   `!출력룰 추가 헤더 잔고 [빚] / 평판 [평판]` → _template_rows 가 `[변수]`를 치환한다(C77 — 옛 _header_template_row 삭제).
 #   패널 키와 나란히 두는 이유: 둘 다 "표시 저작"이고, 둘 다 **렌더에 주지 않는다**
 #   (주면 산문 모델이 상태줄을 그리기 시작한다 — 08-16 이관이 없앤 바로 그 왕복).
 _HEADER_KEYS = ("헤더", "header", "상단")
@@ -957,8 +957,39 @@ def _decorate_value(value: str, spec: Optional[Dict[str, Any]]) -> str:
     return out[:1000]
 
 
-def _code_owned_fields(channel_id: str) -> List[Tuple[str, str]]:
+PC_TRAITS_MAX = 160   # [C78 B2] 특성 줄 상한(글자) — 이름만 잇는다
+
+
+def _pc_extra_lines(p: Dict[str, Any]) -> List[str]:
+    """[2026-10-25 C78 B2] PC 의 좋은 상태 · 특성 이름 — `!내정보` 를 걷으며 남던 두 줄.
+    [C78 검토] 칸을 따로 세우지 않고 **그 PC 칸 값에 줄로 붙인다**(`_code_owned_fields(full=True)`) —
+    25칸 예산(_fit_sections)을 PC 수 × 2 만큼 먹어 세계 · 관계 · 기록 장이 밀리던 것. 콜 0 · 쓰기 0."""
+    out: List[str] = []
+    try:
+        import game_character as _gc_x
+        buffs = _gc_x.format_status_effects(_gc_x.buff_effects(p))
+        if buffs:
+            out.append(f"상태 {buffs}")
+    except Exception as e:
+        logger.debug(f"[StatusPanel] pc buffs skipped: {e}")
+    names: List[str] = []
+    for pas in ((p.get("ai_memory") or {}).get("passives") or []):
+        nm = str(pas.get("name") or "").strip() if isinstance(pas, dict) else str(pas or "").strip()
+        if nm and nm not in names:
+            names.append(nm)
+    if names:
+        line = " · ".join(names)
+        if len(line) > PC_TRAITS_MAX:
+            line = line[:PC_TRAITS_MAX - 1].rstrip(" ·") + "…"
+        out.append(f"특성 {line}")
+    return out
+
+
+def _code_owned_fields(channel_id: str, full: bool = False) -> List[Tuple[str, str]]:
     """코드가 소유한 값 = 활력/평형(PC). 콜에 안 맡긴다.
+
+    [2026-10-25 C78 검토] full=True(전 장 임베드 · Activity 상태창)면 같은 PC 칸에 좋은 상태 · 특성 줄을 붙이고,
+      활력이 꺼진 채널에서도 PC 칸을 세운다(타격칸이 찼을 때 · 상태 · 특성 — 있는 줄만). 압축 임베드는 full=False 그대로.
 
     [2026-09-06 P8b] **두 축 다 레지스트리**(custom_var_values["활력"|"평형"][uid]).
     값의 위치만 바뀌고 이 줄의 모양은 그대로다(custom_vars 의 vigor_value/composure_value 가
@@ -967,7 +998,8 @@ def _code_owned_fields(channel_id: str) -> List[Tuple[str, str]]:
     """
     out: List[Tuple[str, str]] = []
     try:
-        if not domain_manager.is_vigor_composure_active(channel_id):
+        vc_on = domain_manager.is_vigor_composure_active(channel_id)
+        if not vc_on and not full:
             return out
         try:
             import custom_vars as _cv_v
@@ -984,22 +1016,26 @@ def _code_owned_fields(channel_id: str) -> List[Tuple[str, str]]:
             c = (_cv_v.composure_value(channel_id, _uid, mem) if _cv_v
                  else (composure.get("value") if isinstance(composure, dict) else None))
             parts = []
-            if isinstance(v, (int, float)):
+            if vc_on and isinstance(v, (int, float)):
                 parts.append(f"활력 {_gauge_bar(v)} {int(v)}/100".replace("  ", " "))
-            if isinstance(c, (int, float)):
+            if vc_on and isinstance(c, (int, float)):
                 parts.append(f"평형 {_gauge_bar(c)} {int(c)}/100".replace("  ", " "))
             # [2026-10-15 C42] 타격칸 4칸 — 활력·평형(스트레스) 바로 아래.
+            #   [C78 검토] 활력이 꺼진 채널(full 만)은 칸이 찼을 때만 — 빈 □□□□ 는 싣지 않는다.
             try:
                 import game_character as _gc_sk
                 _track = _gc_sk.strike_view(p)
-                parts.append("타격 " + "".join("■" if x else "□" for x in _track)
-                             + (" " + " · ".join(x for x in _track if x) if any(_track) else ""))
+                if vc_on or any(_track):
+                    parts.append("타격 " + "".join("■" if x else "□" for x in _track)
+                                 + (" " + " · ".join(x for x in _track if x) if any(_track) else ""))
             except Exception as _e_sk:
                 logger.debug(f"[StatusPanel] strike row skipped: {_e_sk}")
+            if full:
+                parts.extend(_pc_extra_lines(p))
             if not parts:
                 continue
             # 두 게이지는 **줄을 나눈다** — 바가 옆으로 붙으면 어느 바가 어느 값인지 안 읽힌다.
-            out.append((str(p.get("mask") or "PC")[:200], "\n".join(parts)))
+            out.append((str(p.get("mask") or "PC")[:200], "\n".join(parts)[:EMBED_VALUE_LIMIT]))
     except Exception as e:
         logger.debug(f"[StatusPanel] vc fields skipped: {e}")
     return out
@@ -1636,32 +1672,7 @@ def _doom_clock_line(channel_id: str) -> str:
     return " ".join(parts)
 
 
-def _header_template_row(channel_id: str) -> Tuple[str, set]:
-    """유저 저작 헤더 템플릿 → (치환된 한 줄, 그 줄이 **써 버린** 선언 변수 이름 집합).
-
-    [2026-09-07 P9 중복 판정] 템플릿 줄과 `_custom_var_fields` 는 **같은 값의 두 표현**이다
-    (`잔고 [빚]` 의 [빚] = 세계 섹션의 빚 행). 그래서 줄 자체를 버리지도, 그대로 겹쳐
-    싣지도 않는다 — **템플릿이 쓴 변수만** 자동 행에서 빼고 유저가 쓴 줄을 세계 섹션
-    맨 앞에 둔다. 유저 저작(임의 문구·미선언 자리표시자)은 코드가 지우지 않는다는
-    08-18 규율은 그대로고, 같은 값이 두 번 실리는 일만 없어진다.
-    """
-    try:
-        tpl = get_header_template(channel_id)
-    except Exception as e:
-        logger.debug(f"[TurnEmbed] header template read skipped: {e}")
-        return "", set()
-    if not tpl:
-        return "", set()
-    try:
-        import custom_vars as _cv
-        rendered = str(_cv.render_placeholders(channel_id, tpl) or "").strip()
-    except Exception as e:
-        logger.debug(f"[TurnEmbed] placeholder render skipped: {e}")
-        return "", set()
-    if not rendered:
-        return "", set()
-    used = _template_used_names(channel_id, tpl)
-    return rendered[:EMBED_VALUE_LIMIT], used
+# ⚰[2026-10-25 C77 A-5] `_header_template_row` 삭제 — P10(09-07) `_template_rows` 가 일반화한 뒤 부르는 곳 0.
 
 
 def _template_used_names(channel_id: str, tpl: str) -> set:
@@ -1872,7 +1883,7 @@ def build_turn_embed_data(channel_id: str) -> Optional[Dict[str, Any]]:
 
         sections = _fit_sections(
             [
-                (SECTION_PC, list(_code_owned_fields(channel_id))),
+                (SECTION_PC, list(_code_owned_fields(channel_id, full=True))),   # [C78 B2] 상태 · 특성 줄은 같은 칸
                 (SECTION_WORLD, world_rows),
                 (SECTION_RELATION, _merge_npc_vc(channel_id, list(_relation_fields(channel_id)))),
                 (SECTION_SCENE, scene_rows),
