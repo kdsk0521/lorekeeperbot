@@ -1018,6 +1018,12 @@ class WaterfallPipeline:
         # relief 제거 (2026-05-23) — legacy 위기진폭 잔재. 둠은 서사 진행도라 평화 장면 자동 감소는 의미 충돌.
         doom_clocks_output = analysis.get("doom_clocks") or {}
         if isinstance(doom_clocks_output, dict):
+            # [2026-10-28 C89] 문 — 내다본 위험(seen=foreseen) · 계획만 한 막기(by=planned)는 버린다. doom_module.gate_flash_clocks
+            try:
+                from doom_module import gate_flash_clocks as _gate_fc
+                doom_clocks_output = _gate_fc(doom_clocks_output)
+            except Exception as _e_gfc:
+                logger.debug(f"[ClockGate] skip: {_e_gfc}")
             bus.doom["flash_clock_updates"] = doom_clocks_output.get("clock_updates") or []  # [07-19] 명시 null 방어
             bus.doom["flash_clock_new"] = doom_clocks_output.get("clock_new")
             bus.doom["flash_clock_resolved"] = doom_clocks_output.get("clock_resolved") or []
@@ -1206,6 +1212,8 @@ class WaterfallPipeline:
                     "sd_idle": bool(_sd.get("is_idle_input")),
                     "judgment": judgment_snapshot(bus.judgment),
                     "anomaly_triggered": bool(bus.anomaly.get("triggered")),
+                    # [C90 10-28] 볼륨 상승 내역(긴장 · 장면 · 자동분 · 사건분 · 배율) — tools/doom_pace_report.py
+                    "doom_gain": bus.doom.get("gain"),
                 }
                 sqlite_store.append_turn_snapshot(_ts_ch, current_turn, _snap)
         except Exception as _e_ts:

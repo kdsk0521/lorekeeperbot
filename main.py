@@ -62,8 +62,9 @@ MODEL_ID = config.role_model("main")
 MODEL_ID_FLASH = config.role_model("flash")
 
 # [2026-07-02] Gemini 키는 gemini 백엔드 경로가 활성일 때만 필요 (openai 전환 후 하드 의존 제거).
-if not GEMINI_API_KEY and (config.ANALYSIS_BACKEND != "openai" or config.RENDERER_BACKEND != "openai"):
-    logging.warning("GEMINI_API_KEY Missing! (gemini 백엔드 경로 활성 — 롤백/폴백 시 필요)")
+# [2026-10-27 C87] GEMINI_VERTEX 면 키 대신 GOOGLE_APPLICATION_CREDENTIALS(서비스 계정 JSON 파일)를 본다.
+if not config.gemini_auth()[0] and (config.ANALYSIS_BACKEND != "openai" or config.RENDERER_BACKEND != "openai"):
+    logging.warning(f"{config.gemini_auth()[1]} Missing! (gemini 백엔드 경로 활성 — 롤백/폴백 시 필요)")
 
 client_genai = None
 try:
@@ -72,8 +73,8 @@ try:
         from analysis_backend import build_analysis_client
         client_genai = build_analysis_client()
         logging.info("[Analysis] backend=openai → GenaiCompatClient (wellspring DeepSeek)")
-    elif GEMINI_API_KEY:
-        client_genai = genai.Client(api_key=GEMINI_API_KEY)
+    elif config.gemini_auth()[0]:
+        client_genai = genai.Client(**config.gemini_client_kwargs())   # [C87] Vertex 면 vertexai=True
 except Exception as e: logging.error(f"GenAI Init Failed: {e}")
 
 intents = discord.Intents.default()
@@ -305,11 +306,12 @@ if __name__ == "__main__":
         _ai_key_ok = bool(config.ANALYSIS_OPENAI_API_KEY)
         _ai_key_name = "ANALYSIS_OPENAI_API_KEY"
     else:
-        _ai_key_ok = bool(GEMINI_API_KEY)
-        _ai_key_name = "GEMINI_API_KEY"
-    if config.RENDERER_BACKEND == "gemini" and not GEMINI_API_KEY:
+        _ai_key_ok, _ai_key_name = config.gemini_auth()
+    # [2026-10-27 C87] 렌더가 제미니면 그 인증도 — Vertex 면 GOOGLE_APPLICATION_CREDENTIALS(파일), 아니면 GEMINI_API_KEY.
+    _g_ok, _g_name = config.gemini_auth()
+    if config.RENDERER_BACKEND == "gemini" and not _g_ok:
         _ai_key_ok = False
-        _ai_key_name = f"{_ai_key_name} + GEMINI_API_KEY" if _ai_key_name != "GEMINI_API_KEY" else "GEMINI_API_KEY"
+        _ai_key_name = f"{_ai_key_name} + {_g_name}" if _ai_key_name != _g_name else _g_name
     # [2026-08-18 모델 env 단일 레버] config 에 모델 기본값이 없다 → 빠지면 조용히 굴러가는 대신
     # **빠진 이름을 전부 나열**하고 기동 거부. 검사는 여기서만 호출한다(config import 는 무해 유지).
     _missing_models = config.validate_model_env()

@@ -2440,6 +2440,9 @@ def translate_foreshadowing(items: Optional[list] = None) -> str:
             "staying short of reveal or resolution until the player's action engages them.")
 
 
+_HAND_TAIL = re.compile(r"\s+(?:—|–|--?)\s+")   # [C91 E4] 손 칸 항목 꼬리 자르기
+
+
 def translate_open_invitations(items: Optional[list] = None) -> str:
     """플레이어향 전방 affordance → 문장.
 
@@ -2452,7 +2455,9 @@ def translate_open_invitations(items: Optional[list] = None) -> str:
     주범 수리는 slot_manager TURN MOTION 쪽 — 여기는 우회로 봉쇄.
     """
     # [2026-09-29 배치2 2a-8] 항목 끝 마침표를 벗긴다 — ".;"·".."가 났다.
-    inv = [str(v).strip()[:160].rstrip(". ") for v in (items or [])[:2] if v and str(v).strip()]
+    # [2026-10-28 C91 E4] 항목을 첫 대시(앞뒤 띄운 —·–·-)에서 자른다. Mira 가 그 뒤에 '받거나 말거나'·'아직 걸려 있다' 꼬리를
+    #   붙이고(합성 판 13턴 중 대시 꼬리 9 · 양자택일 8), 렌더 NPC 가 그 양자택일을 입으로 옮겼다. 놓인 행위와 물건만 넘긴다. 근거: C91 §11
+    inv = [_HAND_TAIL.split(str(v).strip(), 1)[0].strip()[:160].rstrip(". ,;") for v in (items or [])[:2] if v and str(v).strip()]
     inv = [v for v in inv if v]
     if not inv:
         return ""

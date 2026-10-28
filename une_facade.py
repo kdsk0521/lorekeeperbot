@@ -76,18 +76,18 @@ def _mc_move(position: str, result: str) -> str:
         ("desperate", "critical_failure"): "Catastrophic - something irreversible happens.",
         ("desperate", "failure"): "the threat becomes real - irreversible consequences.",
         ("desperate", "partial"): "Heavy price - gain what was sought but lose something.",
-        ("desperate", "success"): "Dramatic turnaround - shining in the direst moment.",
-        ("desperate", "critical_success"): "Miraculous reversal - transcendent moment.",
+        ("desperate", "success"): "Turnaround - the direst moment gives way.",
+        ("desperate", "critical_success"): "Full reversal - the worst position turns over.",
         ("risky", "critical_failure"): "Worst case unfolds - danger becomes reality.",
         ("risky", "failure"): "the danger escalates - a new one reveals itself.",
         ("risky", "partial"): "Success with cost - complications follow.",
         ("risky", "success"): "Danger cleared - competent execution.",
-        ("risky", "critical_success"): "Brilliant - impressive against the odds.",
+        ("risky", "critical_success"): "Beyond the odds - more lands than was risked.",
         ("controlled", "critical_failure"): "Unexpected reversal - safety shatters.",
         ("controlled", "failure"): "Minor cost - a small setback.",
         ("controlled", "partial"): "Minor friction - less smooth than expected.",
         ("controlled", "success"): "Clean - smooth and effortless.",
-        ("controlled", "critical_success"): "Overwhelming mastery - exceeds expectations.",
+        ("controlled", "critical_success"): "Beyond the aim - more than was sought.",
     }
     return matrix.get((position, result), "Outcome determined by world logic.")
 
@@ -472,7 +472,8 @@ def _build_atmosphere_layer(context, bus) -> str:
     lens_tags = bus.doom.get("lens_tags", []) if isinstance(bus.doom, dict) else []
     phase = bus.doom.get("chapter_phase", "") if isinstance(bus.doom, dict) else ""
     if not phase:
-        phase = _cfg.get_lens_phase(doom_val, lens_tags[0] if lens_tags else "default")
+        # [C90 10-28] doom_module 과 같은 경계(문턱에서 파생) — 옛: 첫 렌즈 표
+        phase = _cfg.chapter_phase(doom_val, lens_tags, bus.doom.get("flavor_tags", []) if isinstance(bus.doom, dict) else [])
 
     if not lens_tags:
         # C-Lens 미활성 → default 블록만
@@ -495,7 +496,7 @@ def _build_atmosphere_layer(context, bus) -> str:
 
     # 챕터 종결 라벨 (climax 발동 직후, 間 페이즈)
     if isinstance(bus.doom, dict) and bus.doom.get("intermission_active"):
-        parts.append("chapter close — epilogue / lingering phase. new clocks carry over to the next chapter.")
+        parts.append("chapter close — epilogue / lingering phase. the crisis's business gets done here: questions for whoever was taken, accounts and blame settled, rewards shared, wounds tended, the next step talked over. new clocks carry over to the next chapter.")
 
     # ◎ optics (conditional — derived from DAI fields)
     dai = bus.dai if isinstance(bus.dai, dict) else {}
@@ -1320,7 +1321,8 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
 
     # Bus initialization
     bus = SharedBus()
-    bus.doom["value"] = world.get("doom", 40)
+    import config as _cfg_dv
+    bus.doom["value"] = world.get("doom", _cfg_dv.DEFAULT_WORLD_STATE.get("doom", 0))   # [C90] 옛 40 → 기본값(0)
     bus.doom["carry"] = world.get("doom_carry", 0.0)  # 소수 이월 누적 (round 0증발 방지)
     # [2026-09-24 감사] 챕터 상태 3키 적재 — bus 는 매 턴 신조인데 이 셋은 영속되지 않아
     #   間 페이즈가 다음 턴에 안 이어졌다 → doom ≥ climax 임계면 매 턴 _trigger_climax 재발화
@@ -1430,16 +1432,28 @@ def sync_from_game_context(channel_id: str, user_id: str, ctx: Any) -> None:
             _ended = {(c.get("name"), c.get("turn_created")): c for c in (world.get("doom_clocks") or [])
                       if isinstance(c, dict) and c.get("resolved")}
             if _ended:
+                _end_keys = ("resolved", "end", "end_turn", "end_quest", "linked_goal", "advanced_goal")   # [C89 검토 #3]
                 for _c in bus.doom.get("clocks") or []:
-                    if not isinstance(_c, dict) or _c.get("resolved"):
+                    if not isinstance(_c, dict):
                         continue
                     _w = _ended.get((_c.get("name"), _c.get("turn_created")))
-                    if _w:
-                        for _k in ("resolved", "end", "end_turn", "end_quest"):
-                            if _k in _w:
-                                _c[_k] = _w[_k]
-                        _c.pop("pending_completion", None)
-                        _c.pop("pending_turn", None)
+                    if not _w:
+                        continue
+                    if _c.get("resolved"):
+                        # [2026-10-28 C89 검토 #3] 판 사본이 이 턴에 흐려짐 · 클라이맥스로 끝났어도, 세계 쪽이 그보다 먼저
+                        #   (배경 — 렌더 뒤 끝 · 목표 done) 끝냈으면 먼저 끝난 쪽이 이긴다(averted 가 faded 로 덮이던 자리).
+                        try:
+                            _first = int(_w.get("end_turn") or 0) < int(_c.get("end_turn") or 0) \
+                                and _c.get("end") in ("faded", "climax")
+                        except (TypeError, ValueError):
+                            _first = False
+                        if not _first:
+                            continue
+                    for _k in _end_keys:
+                        if _k in _w:
+                            _c[_k] = _w[_k]
+                    _c.pop("pending_completion", None)
+                    _c.pop("pending_turn", None)
             world["doom_clocks"] = bus.doom.get("clocks", [])
         domain_manager.update_world_state(channel_id, world)
 

@@ -515,6 +515,14 @@ async def _world_batch_call(rt, ctx, response: str, message, hints: Dict[str, bo
         except Exception as _e_tl:
             logger.debug(f"[Thread] ledger line skip: {_e_tl}")
             _thread_line = ""
+        # [2026-10-28 C89 ㄹ · ㅁ] 지금 선 시계 이름 줄 — 같은 일을 사안으로 또 세우지 않게 · clocks_ended 의 이름 원천.
+        try:
+            import game_world as _gw_cl
+            _clock_line = _gw_cl.extraction_clock_line(channel_id)
+            if _clock_line:
+                _thread_line = (_thread_line + "\n" + _clock_line) if _thread_line else ("Ledger: (empty)\n" + _clock_line)
+        except Exception as _e_cl:
+            logger.debug(f"[ClockEnd] clock line skip: {_e_cl}")
 
         updates = await cognition.extract_all_updates(
             rt.client, rt.model_id_flash,
@@ -823,6 +831,17 @@ async def after_world(rt, b) -> None:
                         b.notes["goal_receipts"] = _rcpt
                 except Exception as _e_tla:
                     logger.warning(f"[Thread] apply skip: {_e_tla}")
+            # [2026-10-28 C89 ㅁ] 산문이 위협이 끝났음을 보인 시계 → averted(스레드 뒤 — 목표 done 이 이미 끝낸 시계는 건너뜀).
+            if isinstance(wsu.get("clocks_ended"), list) and wsu["clocks_ended"]:
+                try:
+                    import game_world as _gw_ce
+                    _ce = _gw_ce.end_clocks_on_page(channel_id, wsu["clocks_ended"],
+                                                    f"{ctx.action_text or ''}\n{response or ''}", _bg_turn_now(),
+                                                    actor=str(getattr(ctx, "user_id", "") or ""))
+                    if _ce.get("receipts") and isinstance(getattr(b, "notes", None), dict):
+                        b.notes.setdefault("goal_receipts", []).extend(_ce["receipts"])
+                except Exception as _e_ce:
+                    logger.warning(f"[ClockEnd] apply skip: {_e_ce}")
             if wsu.get("world_changes"):
                 existing_changes = session_memory.get("world_changes", [])
                 merged_changes = existing_changes + wsu["world_changes"]

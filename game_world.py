@@ -384,19 +384,32 @@ def change_doom(channel_id: str, amount: int) -> str:
 
     emoji = "📈" if amount > 0 else "📉"
 
-    # 페이즈 전환 감지 (default boundary 기준 — OOC 메시지는 lens 정보 부족하니 default)
+    # 페이즈 전환 감지 — [C90 10-28] 채널 장르로 doom_module 과 같은 경계(옛: 늘 default 표)
     diff_msg = ""
-    old_phase = config.get_lens_phase(old_val, "default")
-    new_phase = config.get_lens_phase(new_val, "default")
+    old_phase = channel_phase(channel_id, old_val)
+    new_phase = channel_phase(channel_id, new_val)
     if old_phase != new_phase:
         diff_msg = f"\n📖 **페이즈 전환:** {old_phase} → {new_phase}"
 
     return f"{emoji} **활성도:** {old_val}% → **{new_val}%**{diff_msg}"
 
 
-def get_doom_info(value: int, lens: str = "default") -> Dict[str, Any]:
-    """페이즈 + atmosphere 정보 반환. legacy genre 인자는 lens로 동작."""
-    phase = config.get_lens_phase(value, lens or "default")
+def channel_phase(channel_id: str, value) -> str:
+    """[C90 10-28] 채널 장르(렌즈 · 플레이버) 기준 페이즈 — doom_module 과 같은 셈(config.chapter_phase)."""
+    try:
+        import doom_module
+        ag = domain_manager.get_active_genres(channel_id)
+        return config.chapter_phase(value, doom_module._extract_lens_tags(ag), doom_module._extract_flavor_tags(ag))
+    except Exception:
+        return config.chapter_phase(value)
+
+
+def get_doom_info(value: int, lens: str = "default", channel_id: str = "") -> Dict[str, Any]:
+    """페이즈 + atmosphere 정보 반환. legacy genre 인자는 lens로 동작. [C90] channel_id 를 주면 채널 장르로 경계."""
+    if channel_id:
+        phase = channel_phase(channel_id, value)
+    else:
+        phase = config.chapter_phase(value, [lens] if lens and lens != "default" else [])
     return {
         "phase": phase,
         "atmosphere": config.get_lens_atmosphere(lens or "default", phase),
@@ -404,8 +417,8 @@ def get_doom_info(value: int, lens: str = "default") -> Dict[str, Any]:
     }
 
 
-def _get_doom_description(doom: int) -> str:
-    info = get_doom_info(doom)
+def _get_doom_description(doom: int, channel_id: str = "") -> str:
+    info = get_doom_info(doom, channel_id=channel_id)
     return f"📖 {info['phase']}"
 
 def _get_clock_emoji(clock: dict) -> str:
@@ -619,7 +632,7 @@ def get_world_context(channel_id: str) -> str:
         f"- 위험도: {world.get('risk_level', 'None')}",
         f"- 시간: {format_calendar(world)} {world.get('hour', 12):02d}:{world.get('minute', 0):02d} ({world.get('time_slot', '오후')})",
         f"- 날씨: {world.get('weather', '맑음')}",
-        f"- 위기 수치: {world.get('doom', 0)}% ({_get_doom_description(world.get('doom', 0))})",
+        f"- 위기 수치: {world.get('doom', 0)}% ({_get_doom_description(world.get('doom', 0), channel_id)})",
         f"- 위협 시계: {_format_doom_clocks(world)}",
         f"- **파티 분위기**: {party_context}",
     ]
@@ -646,7 +659,7 @@ def _get_doom_bar(value: int, length: int = 10) -> str:
 def get_doom_forecast(channel_id: str) -> str:
     world = domain_manager.get_world_state(channel_id)
     current = world.get("doom", 0)
-    info = get_doom_info(current)
+    info = get_doom_info(current, channel_id=channel_id)
 
     bar = _get_doom_bar(current)
     msg = f"📖 **챕터 활성도**\n{bar} 페이즈 **{info['phase']}**\n"
@@ -673,6 +686,147 @@ def get_doom_forecast(channel_id: str) -> str:
     }
     msg += phase_msg.get(phase, "")
     return msg
+
+
+def _safe_int(v, d=0) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return d
+
+
+def extraction_clock_line(channel_id: str, world: Dict[str, Any] = None, limit: int = 8) -> str:
+    """[2026-10-28 C89 ㄹ · ㅁ] 배치 world_state 입력 줄 — 지금 선 시계 이름(+ 종류 · 칸 · 위협 한 줄). 없으면 ''.
+    두 몫: 같은 일을 사안으로 또 세우지 않게(ㄹ-4) · 산문이 위협이 끝났음을 보이면 clocks_ended 로 이름을 받는다(ㅁ).
+    시계 하나가 꼴이 깨져도(칸이 글) 그 시계만 기본값으로 — 줄째 사라지지 않게(검토 C89-2)."""
+    if not channel_id:
+        return ""
+    world = world if isinstance(world, dict) else (domain_manager.get_world_state(channel_id) or {})
+    parts = []
+    for c in world.get("doom_clocks") or []:
+        if not isinstance(c, dict) or c.get("resolved") or not str(c.get("name") or "").strip():
+            continue
+        try:
+            import doom_module as _dmod
+            dv = _dmod._get_clock_doom(c)
+        except Exception:
+            dv = 1
+        kind = "위협" if dv > 0 else ("타이머" if dv == 0 else "기회")
+        seg = _safe_int(c.get("segments", 4), 4) or 4
+        filled = _safe_int(c.get("filled", c.get("progress", 0)), 0)
+        threat = str(c.get("threat") or "").strip()[:80]
+        parts.append(f"{str(c.get('name')).strip()} ({kind} {filled}/{seg}" + (f" — {threat})" if threat else ")"))
+        if len(parts) >= limit:
+            break
+    return ("Clocks: " + " | ".join(parts)) if parts else ""
+
+
+def _find_live_clock(clocks: List[Dict[str, Any]], name: str, norm) -> "Dict[str, Any] | None":
+    """이름으로 산 시계 찾기 — 정규화 일치, 안 되면 모델이 시계 줄의 꼬리 "(위협 2/6 — …)"까지 베껴 온 꼴을 벗겨 다시."""
+    if not name:
+        return None
+    keys = [norm(name)]
+    if " (" in name:
+        keys.append(norm(name.split(" (", 1)[0]))
+    for k in keys:
+        for c in clocks:
+            if isinstance(c, dict) and not c.get("resolved") and norm(str(c.get("name") or "").strip()) == k:
+                return c
+    return None
+
+
+def end_clocks_on_page(channel_id: str, items: Any, source_text: str, turn: int = 0,
+                       actor: str = "") -> Dict[str, Any]:
+    """[2026-10-28 C89 ㅁ] 렌더 뒤 배치 `clocks_ended` → 그 시계를 averted 로 끝낸다(doom §0-앞 Theoria 해결과 같은 규칙).
+    인용 관문 = 스레드와 같은 정규화(thread_ledger._norm) — 이번 턴 입력 + 산문에 그 말이 있어야. 이름은 지금 선 시계와 맞춘다.
+    위협(doom>0)에 걸린 목표 +1(code:averted, 연결이 살아 있을 때만 · 이 턴에 그 목표 진행 행이 이미 있으면 건너뜀 — 한 사건
+    두 번 밀기 막음, 검토 C89-2) · 해소 보상(평형, 캡 면제 — doom 의 resolve_reward 와 같은 값). 타이머는 끝만.
+    ★저장 순서(검토 C89-1): 시계 끝(연결 풂 포함)을 **먼저 저장**하고 나서 목표를 민다 — 목표가 그걸로 다 차 닫히면 그 보상
+    (pending_doom_gain · 같은 목표의 다른 시계 해결)을 장부 쪽이 세계에 쓰는데, 그 뒤에 처음 읽은 사본을 저장하면 지워졌다.
+    항목마다 세계를 새로 읽는다. 다음 턴 통째 저장 · 발동은 '끝남은 이긴다'(une_facade · doom §0)가 지킨다.
+    돌려주는 것: {"ended": [이름], "receipts": [목표 영수증], "rejected": n}."""
+    out: Dict[str, Any] = {"ended": [], "receipts": [], "rejected": 0}
+    if not channel_id or not isinstance(items, list) or not items:
+        return out
+    if not getattr(config, "CLOCKS_ENDED_ON_PAGE", True):
+        return out
+    try:
+        import thread_ledger
+        import doom_module as _dmod
+        import sqlite_store
+    except Exception:
+        return out
+    src = thread_ledger._norm(source_text or "")
+    rewards = 0
+    for it in items[:8]:
+        if not isinstance(it, dict):
+            out["rejected"] += 1
+            continue
+        name = str(it.get("name") or "").strip()
+        q = thread_ledger._norm(it.get("quote") if isinstance(it.get("quote"), str) else "")
+        world = domain_manager.get_world_state(channel_id) or {}
+        clocks = world.get("doom_clocks") or []
+        if not isinstance(clocks, list):
+            break
+        clock = _find_live_clock(clocks, name, thread_ledger._norm)
+        if not clock or not q or q not in src:
+            out["rejected"] += 1
+            continue
+        try:
+            clock["resolved"] = True
+            clock.pop("pending_completion", None)
+            clock.pop("pending_turn", None)
+            _dmod._mark_end(clock, "averted", turn)
+            try:
+                doom_v = _dmod._get_clock_doom(clock)
+            except Exception:   # 칸이 글로 깨진 옛 시계 — 위협으로 본다(doom 기본 쪽)
+                doom_v = 1
+            gid = clock.get("linked_goal")
+            clock["linked_goal"] = None
+            key = (clock.get("name"), clock.get("turn_created"))
+            world["doom_clocks"] = clocks
+            domain_manager.update_world_state(channel_id, world)   # ← 먼저 저장(검토 C89-1)
+        except Exception as e:
+            logger.warning(f"[ClockEnd] end skip ({name}): {e}")
+            out["rejected"] += 1
+            continue
+        out["ended"].append(clock.get("name"))
+        if doom_v > 0:
+            rewards += int(config.CLOCK_RESOLVE_REWARD.get(_safe_int(clock.get("segments", 6), 6) or 6, 3))
+        if not (gid and doom_v > 0):
+            continue
+        try:
+            rows = sqlite_store.read_thread_log(channel_id)
+            g = thread_ledger.load_states(channel_id).get(gid)
+            if not _dmod._goal_link_live(channel_id, clock, gid, g, rows=rows):
+                continue
+            if any(str(r.get("thread_id")) == gid and r.get("op") == "progress" and _safe_int(r.get("turn")) == int(turn or 0)
+                   for r in rows):
+                logger.info("[ClockEnd] goal advance skip: %s already moved this turn (clock '%s')", gid, clock.get("name"))
+                continue
+            n = thread_ledger.code_events(channel_id, int(turn or 0), [{"op": "progress", "id": gid, "step": 1}],
+                                          origin="code:averted", receipts=out["receipts"])
+            if n:   # advanced_goal 은 다시 읽은 세계에 얹는다(목표 끝 보상이 쓴 것 위에)
+                w2 = domain_manager.get_world_state(channel_id) or {}
+                for c2 in w2.get("doom_clocks") or []:
+                    if isinstance(c2, dict) and (c2.get("name"), c2.get("turn_created")) == key:
+                        c2["advanced_goal"] = gid
+                        domain_manager.update_world_state(channel_id, w2)
+                        break
+        except Exception as e:
+            logger.debug(f"[ClockEnd] goal advance skip: {e}")
+    if out["ended"]:
+        if rewards > 0:
+            try:
+                import custom_vars as _cv
+                _cv.apply_system_delta(channel_id, "평형", rewards, "clock averted", actor=actor,
+                                       exempt_cap=True, source="doom.resolve_reward")
+            except Exception as e:
+                logger.debug(f"[ClockEnd] reward skip: {e}")
+        logger.info("[ClockEnd] t=%s ended=%s rejected=%s reward=%s", turn, out["ended"], out["rejected"], rewards)
+    elif out["rejected"]:
+        logger.info("[ClockEnd] t=%s rejected=%s (이름 · 인용 안 맞음)", turn, out["rejected"])
+    return out
 
 
 def resolve_clocks_by_goal(channel_id: str, goal_id: str, goal_title: str = "", turn: int = 0) -> List[str]:

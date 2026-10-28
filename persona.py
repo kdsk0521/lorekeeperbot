@@ -244,9 +244,14 @@ def _shared_gemini_client(fallback_client=None):
     if isinstance(fallback_client, genai.Client):
         return fallback_client
     if _GEMINI_CLIENT is None:
-        if not config.GEMINI_API_KEY:
-            raise RuntimeError("[Renderer] RENDERER_BACKEND=gemini 이나 GEMINI_API_KEY가 비어 있습니다.")
-        _GEMINI_CLIENT = genai.Client(api_key=config.GEMINI_API_KEY)
+        # [2026-10-27 C87] GEMINI_VERTEX 면 Vertex(ADC · 서비스 계정 JSON), 아니면 AI Studio 키 — 인자 · 검사는 config 한 곳.
+        _ok, _need = config.gemini_auth()
+        if not _ok:
+            raise RuntimeError(f"[Renderer] RENDERER_BACKEND=gemini 이나 {_need}가 비어 있습니다."
+                               + ("(경로의 파일이 없어도 이 말)" if getattr(config, "GEMINI_VERTEX", False) else ""))
+        _GEMINI_CLIENT = genai.Client(**config.gemini_client_kwargs())
+        if getattr(config, "GEMINI_VERTEX", False):
+            logger.info("[Renderer] gemini via Vertex AI (location=%s)", config.GOOGLE_CLOUD_LOCATION)
     return _GEMINI_CLIENT
 
 
@@ -661,15 +666,20 @@ async def generate_response_with_retry(
         #   마지막 그림으로 그렸다("여전히 …있었다", "질문은 방 안에 남았다" — 정지 끝 46%). → "장면의 누군가가 플레이어 쪽으로
         #   한 마지막 수 = 마지막 그림". 1차("world's last move")는 전조·상황 줄을 마지막 수로 읽어 분위기 꼬리가 붙었다.
         #   측정 analysis_line/산문끝_닫기문안_스펙·측정_2026-10-10 (정지 끝 기존 6/10 → 2차 1/5).
-        "PROSE after ┫: the world's side resolves until the floor passes to the player. Everything in the scene with "
-        "something to do before the PC's next choice does it, in its own order and at its own length (a speech runs as "
+        "PROSE after ┫: the world's side resolves up to the PC's next move. Everything in the scene with "
+        "something to do before the PC's next move does it, in its own order and at its own length (a speech runs as "
         "long as it runs; a figure acts again while it still has the means), each beat bringing something the page does "
-        "not yet hold (a detail, a reaction, a change); the turn closes on the last move someone in the scene makes "
+        "not yet hold (a detail, a reaction, a change); the turn closes on the last move someone in the scene makes, "
         # [2026-10-19 C53 ①] 질문 끝은 PC의 대답이 다음 일을 정할 때만(커뮤니티 아르곤 지시문판). 예시 앞자리 = 맞받을 수·진행 중인 행동.
-        "toward the player, the one the player meets next (a blow or offer the PC can still meet before it lands, an "
-        "act already under way, or simply the PC's own next move; a question put to the PC when the PC's answer "
-        "decides what happens next): that move is the final image, and the cut there is EXIT's. Where the PC's "
-        "answer decides nothing yet, the scene keeps moving and closes on that motion. "
+        # [2026-10-28 C91 E3] 고르라는 질문은 'PC 대답이 다음 일을 정함'을 늘 채웠다 → 질문 자리 = 묻는 사람 제 일. 'toward the player' 뺌
+        #   (사소한 장면에서 PC 쪽 수 = 말 걸기). 걸린 게 없으면 제 일 하는 몸으로 닫는다. 발언권(floor) → PC 의 다음 수(발언권 넘기기 = 지목 질문).
+        #   넘겨주기 한 줄(감정 팩터)은 끝 정의 **밖**에 둔다 — 끝을 '다음 수를 부르는 순간'으로 정의한 팔은 기다림 정지 5/12.
+        #   근거: output_artifact/C91_산문끝_메뉴질문_지도·스펙_2026-10-28 §10 · §12
+        "the one the player meets next (an act already under way, a blow or offer the PC can still meet before it "
+        "lands, or simply the PC's own next move; a question about the asker's own business, such as a price, a name, "
+        "or a yes they need): that move is the final image, and the cut there is EXIT's. Where the scene needs nothing "
+        "from the PC yet, its people go on with their own business, and the turn closes on that motion. "
+        "Running this side of the table is yours, and your judgment is trusted here. "
         "A motion the world makes happens once and then stands: what was posted stays posted, and a later turn "
         "finds it already done rather than doing it again. What fills the page grows from what the scene already "
         "holds, never from re-rendering what an earlier turn put on the page; no unrelated new plots.)"
@@ -856,7 +866,7 @@ async def generate_response_with_retry(
                             # [2026-09-24 감사 §5-2 #29] 2000 → 1000(Slot 34 v5 프로토콜 예산과 같은 수치).
                             f"1. Telescope block: one line per field, no elaboration.\n"   # [2026-09-30] 숫자 삭제 — TELESCOPE budget 줄과 같은 말
                             # [2026-10-01 1차] 숫자 뺌(문단 수·단어 수) — 꼬리 띠와 같은 말.
-                            f"2. Prose after the block: runs until the floor passes to the player, each beat bringing "
+                            f"2. Prose after the block: runs up to the PC's next move, each beat bringing "
                             f"something new. Do not shorten the prose to satisfy item 1.\n"
                             # [2026-10-13 C36] "Grow the prose … sensory texture and body language … Add no new plot." 삭제 —
                             #   모델이 제일 싼 길(몸짓·감각)로 불렸다. 재시도는 이제 빈·잘린 응답에만 뜨니 할 말은 1·2번뿐.

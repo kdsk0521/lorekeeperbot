@@ -24,6 +24,33 @@ VERSION = "8.0"
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
+# [2026-10-27 C87] 제미니를 Vertex AI 로 부르기. GCP 크레딧(신규 300달러)은 Vertex 에만 붙는다 — AI Studio 키(Gemini API)는
+#   결제가 따로라 크레딧이 안 깎이고 카드로 나간다. 청구 길은 키가 아니라 **부르는 주소**가 정한다
+#   (generativelanguage = AI Studio · aiplatform = Vertex). 켜면 genai.Client(vertexai=True), 인증 = ADC
+#   (GOOGLE_APPLICATION_CREDENTIALS = 서비스 계정 JSON 경로. .env 에 둬도 된다 — 위 load_dotenv 가 환경에 싣는다).
+#   프로젝트를 비우면 SDK 가 JSON 의 project_id 를 쓴다. 끄면 지금 그대로(GEMINI_API_KEY).
+GEMINI_VERTEX = (os.getenv("GEMINI_VERTEX") or "0").strip().lower() not in ("", "0", "false", "off", "no")
+GOOGLE_CLOUD_PROJECT = (os.getenv("GOOGLE_CLOUD_PROJECT") or "").strip()
+GOOGLE_CLOUD_LOCATION = (os.getenv("GOOGLE_CLOUD_LOCATION") or "").strip() or "global"
+
+
+def gemini_client_kwargs() -> dict:
+    """genai.Client(**…) 인자 — 켜면 Vertex(ADC), 끄면 AI Studio 키. 렌더 · 기동 게이트가 같이 쓴다."""
+    if GEMINI_VERTEX:
+        kw = {"vertexai": True, "location": GOOGLE_CLOUD_LOCATION}
+        if GOOGLE_CLOUD_PROJECT:
+            kw["project"] = GOOGLE_CLOUD_PROJECT
+        return kw
+    return {"api_key": GEMINI_API_KEY}
+
+
+def gemini_auth() -> tuple:
+    """(준비됐나, 필요한 이름). 켜면 GOOGLE_APPLICATION_CREDENTIALS 가 **있는 파일**이어야 한다."""
+    if GEMINI_VERTEX:
+        _p = (os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or "").strip()
+        return (bool(_p) and os.path.isfile(_p)), "GOOGLE_APPLICATION_CREDENTIALS"
+    return bool(GEMINI_API_KEY), "GEMINI_API_KEY"
+
 # [2026-10-22 C54] Activity(디스코드 안 화면) — 포털 OAuth2 값 + Funnel 주소. ID·SECRET 중 하나라도 비면 화면은 꺼진다.
 #   모델 env 부팅 게이트(validate_model_env)엔 넣지 않는다 — 선택 기능이라 없으면 꺼질 뿐 기동은 막지 않는다.
 DISCORD_CLIENT_ID = (os.getenv('DISCORD_CLIENT_ID') or '').strip()
@@ -762,17 +789,20 @@ NEMESIS_THRESHOLD = -10  # ⚠ 미배선 (2026-07-06 감사): 소비자 0 — �
 # raw doom delta는 doom_module.process() 내부 자동 변동에만 multiplier 적용.
 # game_world.change_doom (OOC `!둠`, quest 보상)은 직접 amount 반영 (사용자 의도 보존).
 
-DOOM_RAW_GAIN_BASE = 2.0  # turn당 raw doom gain base (energy tension_factor 변조). 3.0→2.0 (0626): base=floor 트리클로 낮춤, 완성(시계/퀘스트)이 주 상승원. 아크 4~6챕터/300+턴 타깃
+# [C90 10-28] 2.0 → 1.2 · rising 1.0 → 0.7 — 실측(서버 한 채널 25턴): 자동분 87% 가 rising, 轉 15턴째. 과녁 = 챕터 클라이맥스
+#   110~120턴(목표가 15~25턴마다 끝날 때). 자동분만이면 더 늦다 — 남은 몫은 목표 완료 보상(doom_reward)이 채운다(설계 의도).
+#   판독 · 가정 굴림 = tools/doom_pace_report.py. 스펙 파티쳇수정/output_artifact/C90_챕터볼륨속도·렌즈멈춤_지도·스펙_2026-10-28.md
+DOOM_RAW_GAIN_BASE = 1.2  # turn당 raw doom gain base (energy tension_factor 변조). 3.0→2.0 (0626): base=floor 트리클로 낮춤, 완성(시계/퀘스트)이 주 상승원. 아크 4~6챕터/300+턴 타깃
 # energy_direction → per-turn base doom gain 변조 (활성도 게이트, 2026-06-25 배선). calm 거의정지 / 긴장 상승.
 DOOM_TENSION_FACTOR = {
     "detonation": 1.5,
-    "rising":     1.0,
+    "rising":     0.7,    # [C90 10-28] 1.0 → 0.7
     "aftershock": 0.5,
     "idle":       0.04,   # 0.15→0.04 (2026-06-26): calm 둠 ~0.12/턴(3.0×0.04)으로 늦춤 — 소수누적 천천히. base/rising 유지라 tense는 300-타깃 보존, calm씬만 길어짐(300 넘어도 OK)
     "stagnant":   0.03,   # stagnant<idle 순서 유지 위해 비례 하향 (deadlock도 calm-low)
 }
 CHAPTER_INTERMISSION_DECAY = 3  # 間 페이즈 자연 감쇠 (-3/턴)
-CHAPTER_RESET_FLOOR = 10  # 새 챕터 시작 floor (climax 후 doom 10 도달 시 起 진입)
+CHAPTER_RESET_FLOOR = 0  # 새 챕터 시작 floor (climax 후 이 값에 닿으면 起 진입). [C90 10-28] 10 → 0 — 첫 챕터(시작 0)와 같은 길이
 INTIMATE_LENS_GROUP = {"romance", "comedy", "noir", "drama"}  # manual climax (spike 발화)
 
 # Scene type doom modifier
@@ -794,6 +824,11 @@ CLOCK_COMPLETE_DOOM = {4: 2, 6: 3, 8: 4}  # 완성(이벤트 발화)→상승. 1
 # Clock Defense Rewards (→ primary vigor/composure axis)
 CLOCK_MITIGATE_REWARD = 1           # 시계 1칸 감소당 활력/평형 +1
 CLOCK_RESOLVE_REWARD = {4: 2, 6: 3, 8: 5}  # 시계 해결 시 segments별 보상
+# [2026-10-28 C89] 시계 감지 문(손잡이 — 끄면 옛 동작). 스펙 파티쳇수정/output_artifact/C89_목표·시계감지_지도·스펙_2026-10-27.md
+CLOCK_SEEN_GATE = True             # ㄴ Theoria clock_new.seen=foreseen 버림 · clock_updates.by=planned 버림
+CLOCK_OPPORTUNITY_RETIRED = True   # ㄹ 새 시계의 doom_on_complete 음수(기회) → 0(타이머). PC가 쫓는 것은 목표
+CLOCK_HYBRID_RETIRED = True        # ㅂ 새 시계 tick_mode hybrid → action. 자동 진행은 time 을 고른 것만
+CLOCKS_ENDED_ON_PAGE = True        # ㅁ 렌더 뒤 배치 world_state.clocks_ended → 그 시계 averted(걸린 목표 +1 · 해소 보상)
 
 # (JUDGMENT_DOOM_DELTA / DOOM_DICE_MODIFIER_STEP 제거 2026-06-25 — 옛 파멸-모델 잔재(0소비). 판정→doom 폐기, JUDGMENT_CONSEQUENCES가 대체.)
 
@@ -1304,7 +1339,7 @@ DEFAULT_WORLD_STATE = {
     "time_slot": "오후",
     "weather": "맑음",
     "day": 1,
-    "doom": 30, # [Unsettled Start] User Request
+    "doom": 0,  # [C90 10-28] 30(옛 "Unsettled Start") → 0 — 첫 챕터도 起부터(레티어스). 새 채널 · !클리어 에만 닿는다
     "risk_level": "None",
     "current_location": "Unknown",
     "location_rules": {},
@@ -1774,6 +1809,42 @@ def get_lens_phase(doom_value: int, lens: str = "default") -> str:
         if low <= doom_value < high:
             return phase
     return "間"  # doom > 100 등 fallback
+
+
+def chapter_climax(lens_tags=None, flavor_tags=None) -> int:
+    """[C90 10-28] 이번 턴 클라이맥스 문턱 = 렌즈 climax 평균(없으면 default) + 플레이버 문턱 오프셋 합.
+    doom_module._compute_climax_threshold 와 페이즈 경계(chapter_phase)가 같은 값을 쓴다."""
+    lens_tags = [l for l in (lens_tags or []) if isinstance(l, str)]
+    if lens_tags:
+        ths = [LENS_DOOM_CURVE.get(l, LENS_DOOM_CURVE["default"]).get("climax", 80) for l in lens_tags]
+        base = sum(ths) / len(ths)
+    else:
+        base = LENS_DOOM_CURVE["default"]["climax"]
+    offset = 0
+    for f in flavor_tags or []:
+        offset += (FLAVOR_DOOM_MODIFIER.get(f) or {}).get("threshold_offset", 0)
+    return int(base + offset)
+
+
+def chapter_phase(doom_value, lens_tags=None, flavor_tags=None) -> str:
+    """[C90 10-28] 볼륨 → 페이즈. 경계를 문턱 c(chapter_climax)에서 만든다:
+    起 0~25 · 承 25~55 · 轉 55~(c−5) · 結 (c−5)~c · 間 c~.
+    렌즈 하나 · 플레이버 없음이면 옛 LENS_DOOM_PHASE_RANGES 와 같다(스모크 대조). 옛 길(get_lens_phase)은 첫 렌즈의
+    표를 써서, 렌즈 둘 · 플레이버 오프셋이면 間 경계 < 문턱 → 배율 0 에서 클라이맥스가 안 터지고 멈췄다."""
+    c = chapter_climax(lens_tags, flavor_tags)
+    try:
+        v = float(doom_value)
+    except (TypeError, ValueError):
+        v = 0.0
+    if v < 25:
+        return "起"
+    if v < 55:
+        return "承"
+    if v < c - 5:
+        return "轉"
+    if v < c:
+        return "結"
+    return "間"
 
 
 def get_lens_atmosphere(lens: str, phase: str) -> str:

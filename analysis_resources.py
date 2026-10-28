@@ -374,7 +374,7 @@ THEORIA_POSITION_EFFECT = """
 
 ### POSITION (0.0-1.0): Actor's control over situation
 0.0-0.2 dire | 0.2-0.4 adverse | 0.4-0.6 even | 0.6-0.8 favorable | 0.8-1.0 dominant
-Factors: physical position, information asymmetry, resources, psychological state, social standing
+Factors: physical position, information asymmetry, resources, psychological state, social standing, training (what the actor's sheet gives them; in a field it does not give, they stand where any layperson would)
 
 ### EFFECT (0.0-1.0): Potential consequences
 0.0-0.2 Trivial | 0.2-0.4 Minor | 0.4-0.6 Moderate | 0.6-0.8 Major | 0.8-1.0 Severe
@@ -407,12 +407,13 @@ NPC_ATTITUDE_ANALYSIS = """
 ## NPC ATTITUDE DETECTION & TRACKING
 
 ### Attitude Spectrum (where they stand — 4b Stands shows the current band; the record keeps the numbers)
-hostile (glaring, threats, active opposition) → unfriendly (sighs, minimal effort, passive resistance) → neutral (polite, transactional) → friendly (warm, active help) → devoted (protective, unconditional)
+hostile (glaring, threats, active opposition) → unfriendly (sighs, minimal effort, passive resistance) → neutral (polite, transactional) → friendly (warm, active help) → devoted (takes the PC's side at cost to themselves; how it shows is their own)
 
 ### Shift Rules
 One turn is one step: bond_shift and tension_shift name it, and the record sets its size.
 Building Trust: slow — warmer turns over many turns of consistent positive evidence.
 Breaking Trust: a betrayal spikes tension at once, and bond keeps cooling turn after turn while it stands. Some breaks are permanent.
+Standing is evidence too: the PC's rise, or help given to someone who disliked them, moves each person by what they want: toward respect, loyalty, envy, or nowhere.
 
 ### Detection: eye contact duration, physical distance, response delay, voice warmth, voluntary help vs. obstruction
 
@@ -526,15 +527,17 @@ DOOM_MENTAL_TRACKING = """
 Situation clocks track named situations advancing in the world. You receive active clocks in CURRENT STATE. Your job:
 1. clock_updates (Offense/Defense):
    - Escalation (+1~+2): Player action worsens a clock's threat, or player ignores an urgent clock while acting elsewhere.
-   - Mitigation (-1): Player action DIRECTLY addresses a clock's threat. Check the clock's 방어 hint — if the player's action aligns with it, output delta -1. General caution or avoidance is NOT mitigation; the action must specifically target the threat.
+   - Mitigation (-1): Player action DIRECTLY addresses a clock's threat. Check the clock's 방어 hint — if the player's action aligns with it, output delta -1. General caution, avoidance or a plan to act later is NOT mitigation; the action must specifically target the threat this turn.
+   - by: done = the player's action on the page this turn moved it; planned = only talked about or set for later. Write the update either way; only a done one is kept.
    - Do NOT update time-mode clocks (auto-ticked by code). Only update clocks whose threat is directly affected.
-2. clock_new: If the narrative creates a NEW situation with clear timeline and consequences, propose a clock.
+2. clock_new: When the page shows a NEW situation in motion — trouble on its way that lands unless met, or an obstacle the characters are up against now — propose a clock. A danger only foreseen ("if they spot us…"), a plan, a precaution or a schedule the players set themselves is the scene getting ready: no clock until the world moves.
    - threat clock (default): world danger that harms PC if completed (chapter volume rises). doom_on_complete: null.
-   - timer clock: neutral deadline — season change, journey arrival, event countdown (chapter volume unchanged). doom_on_complete: 0.
-   - opportunity clock: positive outcome if completed before time runs out (chapter volume falls). doom_on_complete: negative integer (e.g. -10).
-   - Use 4 segments (urgent/imminent), 6 (standard), 8 (long-term). Set tick_mode: "action"/"time"/"hybrid". Include defense_action hint.
+   - timer clock: neutral deadline the world set — season change, journey arrival, event countdown, a window the world opened that closes on its own (chapter volume unchanged). doom_on_complete: 0.
+   - What the player character sets out to do is a goal, not a clock — the clock is the world's side: trouble on its way, or a deadline the world set. The chase for a window is the goal.
+   - Use 4 segments (urgent/imminent), 6 (standard), 8 (long-term). Set tick_mode: "action" = fills only when the page escalates it; "time" = a real countdown the world keeps. Include defense_action hint.
+   - seen: moving = this turn's input or the last page shows it already under way; foreseen = someone only expects, fears or plans around it. Write the clock either way; only a moving one is kept.
    - for_goal: when the clock presses on or serves one open goal from the Goals line, that goal's id (e.g. "T3"); otherwise null. Pressing on a goal is not restating it.
-   - INDEPENDENCE RULE: Clocks must be INDEPENDENT subplots, not duplicates of existing quests. A clock that restates a quest's goal is redundant. Instead, propose clocks about SEPARATE world changes that add pressure, context, or opportunity around the quest.
+   - INDEPENDENCE RULE: Clocks must be INDEPENDENT subplots, not duplicates of open goals. A clock that restates a goal is redundant. Instead, propose clocks about SEPARATE world changes that add pressure or context around the goal.
    - Do NOT create clocks for minor events — only NAMED situations with CONSEQUENCES.
 3. clock_resolved: If a clock's threat is narratively neutralized (e.g. the threatening force is destroyed/pacified), list its name. Do NOT resolve clocks for partial mitigation — only full resolution.
 

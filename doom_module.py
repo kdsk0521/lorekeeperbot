@@ -29,12 +29,18 @@ def _get_doom_stage(doom_val: int) -> int:
 # Phase / Lens / Scene 결합 헬퍼
 # =========================================================
 
+def _add_tag(tags: List[str], v: str) -> None:
+    """[C90 10-28] 순서를 지키는 겹침 없는 추가 — 렌즈 · 플레이버 순서가 재시작마다 같게."""
+    if v not in tags:
+        tags.append(v)
+
+
 def _extract_lens_tags(active_genres) -> List[str]:
     """active_genres에서 C-Lens 태그(noir/comedy/romance/drama)만 추출.
     여러 형식 정규화: str / list / dict({stage,flavor,lens} 또는 {layers}).
     """
     KNOWN_LENS = {"noir", "comedy", "romance", "drama"}
-    tags = set()
+    tags: List[str] = []   # [C90 10-28] set → 입력 순서 그대로(겹침만 뺌). set 은 프로세스마다 순서가 달랐다
     if isinstance(active_genres, str):
         if active_genres in KNOWN_LENS:
             return [active_genres]
@@ -42,7 +48,7 @@ def _extract_lens_tags(active_genres) -> List[str]:
     if isinstance(active_genres, list):
         for g in active_genres:
             if isinstance(g, str) and g in KNOWN_LENS:
-                tags.add(g)
+                _add_tag(tags, g)
         return list(tags)
     if isinstance(active_genres, dict):
         # layers 형식
@@ -50,11 +56,11 @@ def _extract_lens_tags(active_genres) -> List[str]:
         if isinstance(layers, dict):
             for v in layers.get("narrative_tone", []):
                 if isinstance(v, str) and v in KNOWN_LENS:
-                    tags.add(v)
+                    _add_tag(tags, v)
         # stage/flavor/lens 형식
         for v in active_genres.get("lens", []):
             if isinstance(v, str) and v in KNOWN_LENS:
-                tags.add(v)
+                _add_tag(tags, v)
         if tags:
             return list(tags)
         # fallback: 모든 값 순회
@@ -62,16 +68,16 @@ def _extract_lens_tags(active_genres) -> List[str]:
             if isinstance(v, list):
                 for item in v:
                     if isinstance(item, str) and item in KNOWN_LENS:
-                        tags.add(item)
+                        _add_tag(tags, item)
             elif isinstance(v, str) and v in KNOWN_LENS:
-                tags.add(v)
+                _add_tag(tags, v)
     return list(tags)
 
 
 def _extract_flavor_tags(active_genres) -> List[str]:
     """active_genres에서 B-Flavor 태그(urban_fantasy/steampunk/cosmic_horror/game_system) 추출."""
     KNOWN_FLAVOR = set(config.FLAVOR_DOOM_MODIFIER.keys())
-    tags = set()
+    tags: List[str] = []   # [C90 10-28] set → 입력 순서 그대로(겹침만 뺌). set 은 프로세스마다 순서가 달랐다
     if isinstance(active_genres, str):
         if active_genres in KNOWN_FLAVOR:
             return [active_genres]
@@ -79,35 +85,34 @@ def _extract_flavor_tags(active_genres) -> List[str]:
     if isinstance(active_genres, list):
         for g in active_genres:
             if isinstance(g, str) and g in KNOWN_FLAVOR:
-                tags.add(g)
+                _add_tag(tags, g)
         return list(tags)
     if isinstance(active_genres, dict):
         layers = active_genres.get("layers", {})
         if isinstance(layers, dict):
             for v in layers.get("style_tech", []):
                 if isinstance(v, str) and v in KNOWN_FLAVOR:
-                    tags.add(v)
+                    _add_tag(tags, v)
         for v in active_genres.get("flavor", []):
             if isinstance(v, str) and v in KNOWN_FLAVOR:
-                tags.add(v)
+                _add_tag(tags, v)
         if tags:
             return list(tags)
         for v in active_genres.values():
             if isinstance(v, list):
                 for item in v:
                     if isinstance(item, str) and item in KNOWN_FLAVOR:
-                        tags.add(item)
+                        _add_tag(tags, item)
             elif isinstance(v, str) and v in KNOWN_FLAVOR:
-                tags.add(v)
+                _add_tag(tags, v)
     return list(tags)
 
 
-def _get_doom_phase(doom_val: int, lens_tags: List[str]) -> str:
-    """Doom value + 활성 lens → 페이즈 라벨(起/承/轉/結/間).
-    다중 lens면 첫 번째 lens의 boundary 기준 (단순화 — 곡선만 평균, 페이즈는 단일 기준).
-    """
-    primary = lens_tags[0] if lens_tags else "default"
-    return config.get_lens_phase(doom_val, primary)
+def _get_doom_phase(doom_val: int, lens_tags: List[str], flavor_tags: List[str] = None) -> str:
+    """Doom value + 활성 lens · flavor → 페이즈 라벨(起/承/轉/結/間).
+    [C90 10-28] 경계 = 이번 턴 클라이맥스 문턱에서 파생(`config.chapter_phase`). 옛: 첫 렌즈의 표 — 렌즈 둘 ·
+    플레이버 오프셋이면 間 경계 < 문턱이라 배율 0 에서 클라이맥스가 안 터지고 멈췄다."""
+    return config.chapter_phase(doom_val, lens_tags, flavor_tags)
 
 
 def _compute_phase_multiplier(phase: str, lens_tags: List[str]) -> float:
@@ -134,15 +139,8 @@ def _compute_flavor_modifier(flavor_tags: List[str]) -> Tuple[float, int]:
 
 
 def _compute_climax_threshold(lens_tags: List[str], flavor_tags: List[str]) -> int:
-    """렌즈 climax_threshold 가중평균 + flavor offset."""
-    if not lens_tags:
-        base = config.LENS_DOOM_CURVE["default"]["climax"]
-    else:
-        thresholds = [config.LENS_DOOM_CURVE.get(l, config.LENS_DOOM_CURVE["default"]).get("climax", 80)
-                      for l in lens_tags]
-        base = sum(thresholds) / len(thresholds)
-    _, offset = _compute_flavor_modifier(flavor_tags)
-    return int(base + offset)
+    """렌즈 climax_threshold 가중평균 + flavor offset. [C90] 셈은 config.chapter_climax 한 곳(페이즈 경계와 같은 값)."""
+    return config.chapter_climax(lens_tags, flavor_tags)
 
 
 def _compute_scene_modifier(scene_type: str) -> float:
@@ -161,6 +159,44 @@ def _apply_doom_multipliers(raw_delta: int, phase: str, lens_tags: List[str],
     flavor_mult, _ = _compute_flavor_modifier(flavor_tags)
     scene_mult = _compute_scene_modifier(scene_type)
     return float(raw_delta) * phase_mult * flavor_mult * scene_mult
+
+
+def gate_flash_clocks(out: dict) -> dict:
+    """[2026-10-28 C89 ㄴ · ㄹ · ㅂ] Theoria doom_clocks 출력의 문 — waterfall 받는 자리에서 한 번.
+    clock_new.seen == foreseen → 버림(말로 내다본 위험은 시계가 아니다). clock_updates.by == planned → 버림(계획은 행동이
+    아니다). 칸이 없으면(옛 출력 · 빠뜨림) 받는다. 새 시계 꼴(hybrid · 음수 doom)은 `normalize_new_clock` 이 1a 에서 —
+    Reader-GM 間 시드 길도 같이 거치게. 돌려주는 것: {"clock_updates", "clock_new", "clock_resolved"}."""
+    out = out if isinstance(out, dict) else {}
+    ups = out.get("clock_updates") or []
+    new = out.get("clock_new")
+    res = out.get("clock_resolved") or []
+    if getattr(config, "CLOCK_SEEN_GATE", True):
+        if isinstance(new, dict) and str(new.get("seen") or "").strip().lower() == "foreseen":
+            logger.info("[ClockGate] clock_new 버림(foreseen): %s", new.get("name"))
+            new = None
+        if isinstance(ups, list):
+            kept = []
+            for u in ups:
+                if isinstance(u, dict) and str(u.get("by") or "").strip().lower() == "planned":
+                    logger.info("[ClockGate] clock_update 버림(planned): %s %s", u.get("name"), u.get("delta"))
+                    continue
+                kept.append(u)
+            ups = kept
+    return {"clock_updates": ups if isinstance(ups, list) else [], "clock_new": new,
+            "clock_resolved": res if isinstance(res, list) else []}
+
+
+def normalize_new_clock(clock: dict) -> dict:
+    """[2026-10-28 C89 ㄹ · ㅂ] 새 시계 꼴 — hybrid → action(자동 진행은 time 을 고른 것만), doom_on_complete 음수(기회)
+    → 0(타이머). 옛 판에 이미 선 시계는 안 건드린다(1a 에서 새로 설 때만). 고친 칸은 로그."""
+    if getattr(config, "CLOCK_HYBRID_RETIRED", True) and str(clock.get("tick_mode") or "").lower() == "hybrid":
+        clock["tick_mode"] = "action"
+        logger.info("[ClockGate] tick_mode hybrid → action: %s", clock.get("name"))
+    if getattr(config, "CLOCK_OPPORTUNITY_RETIRED", True) and clock.get("doom_on_complete") is not None \
+            and _get_clock_doom(clock) < 0:
+        clock["doom_on_complete"] = 0
+        logger.info("[ClockGate] 기회(음수) → 타이머(0): %s", clock.get("name"))
+    return clock
 
 
 class DoomModule:
@@ -185,7 +221,7 @@ class DoomModule:
         active_genres = (context.narrative_anchors or {}).get("active_genres", [])
         lens_tags = _extract_lens_tags(active_genres)
         flavor_tags = _extract_flavor_tags(active_genres)
-        current_phase = _get_doom_phase(current_doom, lens_tags)
+        current_phase = _get_doom_phase(current_doom, lens_tags, flavor_tags)
         climax_threshold = _compute_climax_threshold(lens_tags, flavor_tags)
         bus.doom["chapter_phase"] = current_phase
         bus.doom["lens_tags"] = lens_tags
@@ -206,6 +242,11 @@ class DoomModule:
         #   장면에서 막아낸 위협이 렌더엔 "X has become real" 로 갔다. 해결을 먼저 세우면 §0 은 resolved 를 건너뛴다.
         #   (이변 모듈은 doom 보다 앞이라 그 턴 이변 defer 는 한 번 남는다 — 드문 일, 받아들임. 스펙 C74 W1-1b.)
         flash_resolved = bus.doom.pop("flash_clock_resolved", [])
+        # [2026-10-28 C89 검토 #3] 끝남은 이긴다(해결 쪽) — 배경(C89 ㅁ 렌더 뒤 끝 · 목표 done)이 그 사이 세계에서 끝낸 시계를
+        #   이 턴 판(턴 앞 사본)의 Theoria 해결이 또 끝내면 목표 +1 · 해소 보상이 두 번 들었다. 해결 후보가 있을 때만 세계를
+        #   한 번 읽어, 같은 시계(이름 + 만든 턴)가 거기서 끝났으면 끝 칸을 판으로 옮긴다(→ 아래에서 resolved 라 건너뜀).
+        if isinstance(flash_resolved, list) and flash_resolved:
+            _copy_world_ends(context, clocks, set(n for n in flash_resolved if isinstance(n, str)), clock_events)
         # [판1 검토 #3] 이 턴 여기서 막은 시계 — §1a(새 시계)의 상한 · 같은 이름 검사는 옛 순서(만들기 → 해결)대로
         #   이것들을 아직 서 있는 것으로 센다(발동으로 끝난 시계가 칸을 비우는 건 옛 그대로).
         _averted_now = set()
@@ -247,7 +288,7 @@ class DoomModule:
                 for clock in clocks:
                     _w_fw = _ended_fw.get((clock.get("name"), clock.get("turn_created")))
                     if _w_fw and not clock.get("resolved") and clock.get("name") in fired_names:
-                        for _k in ("resolved", "end", "end_turn", "end_quest"):
+                        for _k in END_KEYS:   # [C89 검토 #3] 연결 풂 · advanced_goal 도
                             if _k in _w_fw:
                                 clock[_k] = _w_fw[_k]
                         clock.pop("pending_completion", None)
@@ -310,6 +351,7 @@ class DoomModule:
                     "filled_history": [0],  # 등락 감지용 — 매 턴 filled 변화 시 append
                     "resolved": False,
                 }
+                normalize_new_clock(new_clock)   # [C89 ㄹ · ㅂ] hybrid → action · 음수(기회) → 0
                 # 間 페이즈: 새 시계는 자동 do_not_resolve_yet (다음 챕터 떡밥)
                 if in_intermission:
                     new_clock["do_not_resolve_yet"] = True
@@ -614,6 +656,16 @@ class DoomModule:
         # 누적된 raw delta(시계 완성/해결 + base gain)에 결합 multiplier.
         # 間 페이즈는 multiplier=0이라 자동으로 자연 감쇠로 넘어감 (별도 처리).
         raw_delta = delta + base_gain
+        # [C90 10-28] 이번 턴 상승 내역(관측 전용) — turn_snapshot 이 적고 tools/doom_pace_report.py 가 읽는다.
+        #   자동분 = auto_raw × mult, 사건분 = (raw − auto_raw) × mult. 그 턴의 값으로 적어 두니 config 를 바꿔도 지난 턴이 안 어긋난다.
+        try:
+            _gain_mult = (0.0 if in_intermission else
+                          _apply_doom_multipliers(1.0, current_phase, lens_tags, flavor_tags, scene_type))
+            bus.doom["gain"] = {"energy": str(energy_dir), "scene": str(scene_type), "phase": current_phase,
+                                "auto_raw": round(float(base_gain), 4), "raw": round(float(raw_delta), 4),
+                                "mult": round(float(_gain_mult), 4), "intermission": bool(in_intermission)}
+        except Exception:
+            pass
         if not in_intermission:
             # 소수 carry 누적: multiplier 적용 결과(float)를 이월 잔여와 합쳐 정수부만 적용하고
             # 소수부는 다음 턴으로 이월. round로 작은 escalation(+1×0.4=0.4 등)이 0이 되어
@@ -850,6 +902,35 @@ def _setback_linked_goal(context: "GameContext", clock: dict, turn) -> None:
         logger.info("[Doom] Goal setback: %s 「%s」 −%d (clock '%s') rows=%d", gid, g.get("title"), k, clock.get("name"), n)
     except Exception as e:
         logger.warning("[Doom] goal setback failed: %s", e)
+
+
+END_KEYS = ("resolved", "end", "end_turn", "end_quest", "linked_goal", "advanced_goal")
+
+
+def _copy_world_ends(context: "GameContext", clocks: list, names: set, clock_events: list) -> None:
+    """[2026-10-28 C89 검토 #3] 이 턴 판의 산 시계 중 names 에 든 것 — 세계 쪽에서 같은 시계(이름 + 만든 턴)가 이미 끝났으면
+    끝 칸(END_KEYS)을 판으로 옮긴다. 세계를 한 번 읽는다(후보가 있을 때만 부른다)."""
+    try:
+        import domain_manager as _dm_we
+        _cid = (context.narrative_anchors or {}).get("channel_id", "")
+        if not _cid:
+            return
+        _ended = {(c.get("name"), c.get("turn_created")): c
+                  for c in ((_dm_we.get_world_state(_cid) or {}).get("doom_clocks") or [])
+                  if isinstance(c, dict) and c.get("resolved")}
+        for clock in clocks:
+            if not isinstance(clock, dict) or clock.get("resolved") or clock.get("name") not in names:
+                continue
+            _w = _ended.get((clock.get("name"), clock.get("turn_created")))
+            if _w:
+                for _k in END_KEYS:
+                    if _k in _w:
+                        clock[_k] = _w[_k]
+                clock.pop("pending_completion", None)
+                clock.pop("pending_turn", None)
+                clock_events.append(f"ENDED-ELSEWHERE: {clock.get('name')} ({_w.get('end', '?')})")
+    except Exception as _e_we:
+        logger.debug(f"[Doom] world-end guard skip: {_e_we}")
 
 
 def _mark_end(clock: dict, kind: str, turn) -> None:

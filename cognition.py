@@ -325,7 +325,9 @@ THREADS_SCHEMA = (
     "\n- The Ledger in context is the record. A listed thread is named by its id; id null with op open is a new thread."
     "\n- goal: what the player character has set out to achieve — a job taken on, a search begun, something to obtain,"
     " stop or reach. promise: someone owes someone — a meeting, a debt, a vow, a deal. matter: a situation that stays open"
-    " past this scene."
+    " past this scene, not one a clock on the Clocks line already tracks."
+    # [2026-10-28 C89 ㄹ] 목표 = PC 쪽(맹세), 시계 = 세계 쪽 — 다가오는 위험을 목표로 세우던 자리.
+    "\n- A danger coming at them is the world's clock, not their goal — their goal is what they choose to do about it."
     "\n- A goal is opened when the player character takes it up, not when someone only asks."
     # [2026-10-24 C74 판2 실측 뒤] 거래 = 두 줄 — 없으면 일 · 값이 한 줄로 뭉쳤다(프리즈마 · 수처 0/2 → 이 줄 2/2). 레티어스 확인.
     "\n- A deal is two threads: the job is a goal once the player character takes it on, even when the job is for"
@@ -335,14 +337,29 @@ THREADS_SCHEMA = (
     " in this same list. It sleeps until that one closes done, then wakes; how it ends is still the page's — kept, dropped"
     " or broken. One thread waits on one other; one thread may be waited on by many. A sleeping thread takes no due — its"
     " time is set once it wakes."
-    "\n- goal open carries rank: how far it stands from done (easy … epic). goal progress carries step: small for a clear"
-    " advance this turn, big for a major milestone. promise and matter progress carry remaining instead."
-    "\n- A mention, a memory or a recap is not an event. Recall is not resume; a kept promise retold is history."
-    "\n- close stands on the page showing the end. A passed hour is not a broken promise — broken is a breach the page shows."
+    # [2026-10-28 C89 ㄱ] 진전 = 이정표(아이언스원 Reach a Milestone) — 준비 턴이 막대를 채워 목표가 저절로 닫히던 자리.
+    #   실측(Ollama, 합성 장면): 준비 턴 progress 6/6 → 0/6, 교전 턴 close done 유지. 스펙 C89 §3ㄱ.
+    "\n- goal open carries rank: how far it stands from done (easy … epic). goal progress carries step: small when the"
+    " goal's own outcome moved this turn (ground taken, the thing found, the person reached), big for a major milestone."
+    " Getting ready is not progress: gear handed out, a plan laid, tactics talked through, a danger foreseen leave the goal"
+    " where it stands. promise and matter progress carry remaining instead."
+    "\n- A mention, a memory, a recap, a plan or a what-if is not an event. Recall is not resume; a kept promise retold is"
+    " history."
+    # [C89 D4] 끝 = 산문이 보인 끝, 막대가 덜 찼어도(아이언스원 Fulfill Your Vow).
+    "\n- close stands on the page showing the end, however far the bar has come. A passed hour is not a broken promise —"
+    " broken is a breach the page shows."
     " A goal reached is close done; a goal the player character gives up is close dropped."
     "\n- progress with part left: remaining names what is still owed."
     "\n- due comes only from words that set a time (내일 정오, 사흘 안에). No such words → null. Same shape as time_flow target."
     "\n- quote: the exact words of this turn that carry the change. No quote, no event."
+)
+
+# [2026-10-28 C89 ㅁ] 위협 시계를 중간에 끝내기 — 렌더 뒤(산문을 본다). Theoria 는 렌더 앞이라 결과를 몰라 0/12 였다.
+#   입력 줄 = shared_extract 가 장부 줄 뒤에 붙이는 `Clocks:`(game_world.extraction_clock_line). 적용 = after_world.
+CLOCKS_ENDED_SCHEMA = (
+    "\nclocks_ended: names from the Clocks line whose danger the page shows is over this turn — the thing it threatened"
+    " can no longer happen (the force broken, the message never sent, the deadline met); [] when none. A plan, a"
+    " precaution or a lowered chance is not over. Item: {\"name\": str, \"quote\": \"exact words of this turn\"}"
 )
 
 
@@ -474,7 +491,7 @@ async def _extract_batch(
         _tl_on = bool(getattr(config, "THREAD_LEDGER", True))
         sys_parts.append(
             "\n### world_state"
-            + ("\nOutput: `{\"threads\": [], \"world_changes\": [],"
+            + ("\nOutput: `{\"threads\": [], \"clocks_ended\": [], \"world_changes\": [],"
                if _tl_on else "\nOutput: `{\"world_changes\": [],")
             + " \"npc_schedule_hints\": {}, \"basic_needs_flags\": {},"
             " \"residual_effects\": \"\", \"scene_minutes_elapsed\": 0}`"
@@ -490,13 +507,13 @@ async def _extract_batch(
             # [2026-09-25 A2] 회상·꿈·계획·소급 장면의 시간은 현재 시계를 밀지 않는다(코드 신호 없음 — 표현만, 클램프 무변경).
             " Only the present scene counts — time inside a recalled memory, a dream, a plan being "
             "described, or a retroactive flashback adds nothing."
-            + (THREADS_SCHEMA if _tl_on else "")
+            + (THREADS_SCHEMA + CLOCKS_ENDED_SCHEMA if _tl_on else "")
             + "\nworld_changes: NEW environmental changes only. Max 5. Korean."
             "\nnpc_schedule_hints: {NpcName: current_activity}. Only mentioned NPCs. Korean."
             # [2026-10-07 S2] 주인 명시 — 소비자는 Theoria 4c "PC Physical State" 하나다. 주인 없는 질문이라 NPC 상처가
             #   PC 부상으로 실렸다(Theoria 입력 159개 중 62개 injured).
             "\nbasic_needs_flags: the player character's own body — {hungry/thirsty/tired/injured/cold/hot: bool}. "
-            "True only when the text shows it on them; another character's wound or chill is not theirs."
+            "True only when the text shows it on them; another character's wound or chill is not theirs. injured = a wound that still hampers them this turn; a scrape or bruise already dealt with is not."
             "\nresidual_effects: Side-effects or unintended consequences of SUCCESSFUL actions this turn. "
             "Korean. Empty string if none. Only genuine ripple effects, not failures."
             "\nWork from what the exchange shows; evidence in the text is the basis."
