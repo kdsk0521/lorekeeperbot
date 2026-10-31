@@ -1350,6 +1350,70 @@ def _guard_corrections_lines(channel_id: str, page_id: str, old_body: str, new_b
     return body, rej, len(back)
 
 
+async def drop_semantic_dups(client, items: Any, existing: Optional[Dict[str, str]], threshold: float) -> tuple:
+    """[2026-10-29 C94 D3] 성장 항목 새 줄 ↔ 그 절 기존 줄(+ 같은 성장의 앞선 새 줄) **의미 중복**을 임베딩으로 거른다.
+    정확 대조(도장 뗀 본문)는 `apply_growth` 가 그대로 한다 — 이건 그 앞의 한 겹. 언어가 달라도(옛 한국어 줄 ↔ 새 영어 줄)
+    같은 사실이면 가깝다(voyage 다국어). 돌려주는 것 = (거른 items, 버린 줄 수). 엔진 없음 · 실패 · 빈 벡터 = 그 절은 그대로."""
+    if not isinstance(items, dict) or not items or client is None:
+        return items, 0
+    try:
+        thr = float(threshold or 0.0)
+    except (TypeError, ValueError):
+        thr = 0.0
+    if thr <= 0:
+        return items, 0
+    try:
+        import vector_search as _vs
+        eng = _vs.get_shared_engine(client)
+    except Exception:
+        return items, 0
+
+    def _txt(it) -> str:
+        raw = it.get("line") if isinstance(it, dict) else it
+        return _unstamp(" ".join(str(raw or "").split()))
+
+    out: Dict[str, Any] = {}
+    dropped = 0
+    for sec, lines in items.items():
+        lst = lines if isinstance(lines, list) else [lines]
+        old = [t for t in (_unstamp(ln) for ln in str((existing or {}).get(sec) or "").splitlines() if ln.strip()) if t][-40:]
+        new_txt = [_txt(it) for it in lst]
+        live = [t for t in new_txt if t]
+        if not live or (not old and len(live) < 2):
+            out[sec] = lines
+            continue
+        try:
+            vecs = await eng.embed_chunks(old + live)
+        except Exception:
+            out[sec] = lines
+            continue
+        if not vecs or len(vecs) != len(old) + len(live) or any(not v for v in vecs):
+            out[sec] = lines
+            continue
+        pool = list(vecs[:len(old)])
+        kept_txt: list = []
+        nv = iter(vecs[len(old):])
+        keep = []
+        for it, t in zip(lst, new_txt):
+            if not t:
+                keep.append(it)          # 빈 줄은 apply_growth 가 버린다
+                continue
+            v = next(nv)
+            best, bj = max(((_vs.cosine_similarity(v, o), j) for j, o in enumerate(pool)), default=(0.0, -1))
+            if best >= thr:
+                dropped += 1
+                _pt = (old + kept_txt)[bj] if 0 <= bj < len(old) + len(kept_txt) else ""
+                logger.info("[Wiki] growth semantic dup %s cos=%.3f new=%r ~ %r" % (sec, best, t[:80], _pt[:80]))
+                continue
+            keep.append(it)
+            pool.append(v)               # 같은 성장 안 새 줄끼리도 거른다
+            kept_txt.append(t)
+        out[sec] = keep
+    if dropped:
+        logger.info("[Wiki] growth semantic dups dropped=%d (cos>=%.2f)" % (dropped, thr))
+    return out, dropped
+
+
 def apply_growth(channel_id: str, page_id: str, observed: Any, items: Any, sources: list,
                  turn: Optional[int], pre_observed: Optional[tuple] = None,
                  turn_meta: Optional[Dict[int, Dict[str, Any]]] = None) -> Dict[str, Any]:

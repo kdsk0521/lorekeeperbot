@@ -147,7 +147,15 @@ class ChannelTaskQueue:
             logger.debug(f"[{task.channel_id}] Executing: {task.task_name}")
 
             # 코루틴 팩토리를 호출하여 실제 코루틴 생성 및 실행
-            await task.coroutine()
+            # [2026-10-29 C94 3차] 배경 큐 일 = 산문 뒤 — 분석 콜 라우트 시간 상한이 여기서만 산다(config.post_prose).
+            try:
+                import config as _cfg_pp
+                _pp = _cfg_pp.post_prose()
+            except Exception:
+                import contextlib as _ctx_pp
+                _pp = _ctx_pp.nullcontext()
+            with _pp:
+                await task.coroutine()
 
             elapsed = time.time() - start_time
             logger.debug(f"[{task.channel_id}] Completed: {task.task_name} ({elapsed:.2f}s)")

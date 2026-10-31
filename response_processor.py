@@ -345,9 +345,11 @@ def detect_pc_impersonation(response: str, pc_names: List[str],
         # 당신/너 + 주격조사 + 동사
         # [2026-09-24 감사] 왼쪽 경계 추가 — "건너는/빨아 너는"의 `너는`을 2인칭으로 읽고 NPC 문장을 하드 삭제했다.
         #   경계는 삭제 범위를 **좁히기만** 한다(삭제 목록 넓히기 금지 원칙과 같은 방향).
-        (rf'(?<![가-힣])(?:당신|너|그대|플레이어)[은는이가]\s+.{{1,40}}{VERB_ENDING}', 'impersonation_2nd'),
+        # [2026-10-31 C99] 한 문장 안에서만 잡는다(.{1,40} → [^.!?\n]) — 옛 꼴은 다음 문장까지 먹어 PC 와 무관한 문장도 같이 지웠다
+        #   ("당신은 의자에 앉았다. 커피 향이 났다"). 좁히기 쪽이라 삭제 목록 넓히기 금지 원칙과 같은 방향.
+        (rf'(?<![가-힣])(?:당신|너|그대|플레이어)[은는이가]\s+[^.!?\n]{{1,40}}{VERB_ENDING}', 'impersonation_2nd'),
         # 당신의 신체/감정 + 주격 동사 (NPC→PC 행동 허용)
-        (rf'(?<![가-힣])(?:당신|너|그대)(?:의|이)\s*(?:눈|손|몸|기억|생각|가슴|심장|호흡|얼굴|표정|시선|발|다리|팔|목소리|숨결)[이가]\s*.{{1,25}}{VERB_ENDING}', 'impersonation_2nd'),
+        (rf'(?<![가-힣])(?:당신|너|그대)(?:의|이)\s*(?:눈|손|몸|기억|생각|가슴|심장|호흡|얼굴|표정|시선|발|다리|팔|목소리|숨결)[이가]\s*[^.!?\n]{{1,25}}{VERB_ENDING}', 'impersonation_2nd'),
     ]
 
     for pattern, vtype in second_person_patterns:
@@ -367,6 +369,26 @@ def detect_pc_impersonation(response: str, pc_names: List[str],
         dq = sub.count('"') + sub.count('\u201C') + sub.count('\u201D')
         return dq % 2 == 1
 
+    # [2026-10-31 C99] 가벼운 동작 예외 — RB_PC '약'(걷기 · 앉기 · 집기 · 입력이 시작한 것 마저)과 짝. 2인칭 행동 문장의 과거형 술어가
+    #   **전부** 가벼운 동작(또는 반사)일 때만 허용. 하나라도 다른 술어(끄덕였 · 받아 들었 · 동의했 …)면 그대로 막는다. 허용 목록이라 넓히는 쪽이 안전.
+    #   드나드는 동사(들어섰 · 나섰 · 들어갔)는 '새 곳으로 감' = 결정이라 뺐다.
+    #   '일어났'은 잠에서 깸과 겹쳐 뺐다(smoke_pc_boundary I5 넓은 어미 래칫 예문이기도 하다).
+    LIGHT_STEP = re.compile(r'(?:앉았|일어섰|기댔|돌아섰|다가갔|다가섰|걸음을\s*옮겼|집어\s*들었|집었|주웠|'
+                            r'내려놓았|내려놨|올려놓았|올려놨|챙겼|들어\s*올렸|마셨|한\s*모금\s*마셨)')
+    _PAST_PRED = re.compile(rf'[가-힣]*[{_PAST_TENSE_SYLLABLES}](?=다|고|며|지만|는데|자|어서|[\s,]|$)')
+
+    def is_light_step(matched_text):
+        sent = re.split(r'[.!?\n]', matched_text, 1)[0]
+        body = re.sub(r'^\s*(?:당신|너|그대|플레이어)[은는이가]\s*', '', sent)
+        preds = list(_PAST_PRED.finditer(body))
+        if not preds:
+            return False
+        for m in preds:
+            window = body[max(0, m.start() - 6):m.end()]
+            if not (LIGHT_STEP.search(window) or REFLEXIVE_VERBS.search(window + '다')):
+                return False
+        return True
+
     # 4. 반사적 반응 예외 필터링 (PC 선택이 아닌 물리 반응은 허용)
     def is_reflexive(matched_text):
         return bool(REFLEXIVE_VERBS.search(matched_text))
@@ -379,6 +401,8 @@ def detect_pc_impersonation(response: str, pc_names: List[str],
             continue  # 따옴표 내 → 허용
         if v['type'] != 'thought' and is_reflexive(v['matched']):
             continue  # 반사적 반응 → 허용 (thought 타입은 예외 없이 차단)
+        if v['type'] == 'impersonation_2nd' and is_light_step(v['matched']):
+            continue  # 가벼운 동작 → 허용 (C99 — 술어가 전부 가벼운 동작일 때만)
         # 5. 출처 예외 — 유저가 공급한 행동의 직조는 위반이 아니다.
         #    thought는 면제 없음: PC 내면은 공급 여부와 무관하게 렌더 대상이 아니다.
         _src = _quoted_src if (v['type'] == 'dialogue' and _quoted_src) else user_input

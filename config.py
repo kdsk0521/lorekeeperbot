@@ -133,6 +133,19 @@ ANALYSIS_TEMPERATURE_HEAVY = float(os.getenv("ANALYSIS_TEMPERATURE_HEAVY", "0.05
 # 기본은 이미 떠 있는 PRO(예: deepseek-v4-pro) 재사용 — 새 모델 안 띄움.
 ANALYSIS_OPENAI_MODEL_HEAVY = os.getenv("ANALYSIS_OPENAI_MODEL_HEAVY", ANALYSIS_OPENAI_MODEL_PRO)
 ANALYSIS_HEAVY_EFFORT_VAR = contextvars.ContextVar("analysis_heavy_effort", default=False)
+# [2026-10-29 C94 D5] 분석 콜 시간 상한 — openai 호환 경로(analysis_backend)가 콜마다 timeout 을 단다. 0 = 상한 없음(옛 동작 = SDK 기본 600s).
+#   고르기: ① 컨텍스트 덮기 call_timeout(초) ② 라우트 기본값(매 턴 extract·narrative·light·flash / 배경 reader / 1회성 heavy · main · pro).
+#   [C94 3차] ② 라우트 기본값은 **산문 뒤(배경 큐 일 — post_prose 블록)에서만** 산다. 산문 앞 · 명령 콜은 0(상한 없음 = SDK 기본) —
+#   산문 앞은 얼마나 걸리든 기다린다(레티어스 10-29). 배경 큐(`background_task_queue._execute_task`)가 일마다 post_prose 를 켠다.
+#   [C94 실측 · 검토] main · pro 는 v4-pro 가 F1 발효 · 연대기처럼 heavy 꼴 일을 하는 자리라 600 몫(표본 2 — 240 은 느린 창에서 넘는다).
+#   상한 = 끝까지 기다리는 시간(asyncio.wait_for — httpx timeout 은 바이트 사이 간격이라 keep-alive 가 오면 안 걸린다). 넘기면 빈 응답(timed_out)
+#   → api_call_with_retry 는 **다시 안 부른다**(같은 입력은 또 넘는다 — 최악 = 상한 × 1). 근거 = C92 §1-1 · §1-2b, C94 §1-7 · 구현보고.
+ANALYSIS_TIMEOUTS = os.getenv("ANALYSIS_TIMEOUTS", "1").strip().lower() not in ("0", "false", "off", "no")
+ANALYSIS_TIMEOUT_TURN = float(os.getenv("ANALYSIS_TIMEOUT_TURN", "120"))    # 매 턴 콜(Theoria 추출 최대 43.8s · 세계 배치 최대 38.9s)
+ANALYSIS_TIMEOUT_BG = float(os.getenv("ANALYSIS_TIMEOUT_BG", "240"))        # 배경 reader(Reader 최대 97.9s)
+ANALYSIS_TIMEOUT_HEAVY = float(os.getenv("ANALYSIS_TIMEOUT_HEAVY", "600"))  # 1회성 heavy · main · pro(로어 분석 느린 창 325s) — SDK 기본과 같다
+ANALYSIS_CALL_TIMEOUT_VAR = contextvars.ContextVar("analysis_call_timeout", default=0.0)
+ANALYSIS_POST_PROSE_VAR = contextvars.ContextVar("analysis_post_prose", default=False)   # [C94 3차] 산문 뒤(배경 큐) 표시
 
 # ── 서사 콜 전용 모델 라우팅 (2026-07-05 GLM 스왑) ─────────────────────────────
 # 추출 콜=기계 읽기 → FLASH(deepseek-v4-flash: V4의 추론↔본문 갭이 무해한 자리).
@@ -242,7 +255,9 @@ RENDERER_REASONING_TIER = os.getenv("RENDERER_REASONING_TIER", "deep")          
 #   "생각 금지"와 다른 것 — 캡이 초안 자리를 먹으면 안 된다). V4-Pro 폭주 구간(7.6k~)과는 여전히 거리.
 #   max_tokens(NARRATIVE_MAX_OUTPUT_TOKENS 16384)가 추론을 포함해도 추론 ~5k자 + 출력 ~3k자로 여유.
 RENDERER_REASONING_CAP_CHARS = int(os.getenv("RENDERER_REASONING_CAP_CHARS", "5000"))  # [2026-10-01 1차] 읽는 곳 0 — 렌더 추론 앵커·꼬리 캡 삭제(분석렌더_1차_구현스펙 §5)
-ANALYSIS_REASONING_TIER = os.getenv("ANALYSIS_REASONING_TIER", "light")             # 보조 per-turn 분석 = LIGHT (추론 ON)
+# [2026-10-29] 분석 콜 전부 flash(v4.1-flash) 뒤 기본 deep(= effort high) — 레티어스 "딥식 플래쉬 추론 하이로". 옛 기본 light(= low).
+#   flash 는 high 에서도 추론이 짧다(C94 실측: light 중앙 1.9천 자). 낮추려면 .env ANALYSIS_REASONING_TIER=light.
+ANALYSIS_REASONING_TIER = os.getenv("ANALYSIS_REASONING_TIER", "deep")              # 보조 per-turn 분석 = DEEP (추론 ON · effort high)
 ANALYSIS_REASONING_TIER_HEAVY = os.getenv("ANALYSIS_REASONING_TIER_HEAVY", "deep")  # 1회성 무거운 추출 = DEEP
 
 # 1회성 heavy 분석(로어 통합 분석 등)의 출력 토큰 상한.
@@ -268,7 +283,8 @@ LORE_ANALYSIS_MAX_OUTPUT_TOKENS = int(os.getenv("LORE_ANALYSIS_MAX_OUTPUT_TOKENS
 # 근거로 보존(코드 기본값 off도 유지 — env가 노선을 싣는다. V4-Pro 추론 폭주 이력은 캡 소프트 유지 사유):
 #   구) per-turn 추출 콜만 OFF [2026-07-05 수처1 실측]: V4-Pro가 캡 지시(1200자)를 무시하고 매턴
 #   7.6~13.6k자 사고(6회 측정) = 턴 지연 주범. 추출=기계 읽기라 추론 가치 낮음.
-ANALYSIS_REASONING_TIER_EXTRACT = os.getenv("ANALYSIS_REASONING_TIER_EXTRACT", "off")
+# [2026-10-29] 기본 off → deep(= effort high). 위 off 근거는 V4-Pro 폭주 — 추출은 이제 flash 다. .env 줄이 있으면 그 값이 이긴다.
+ANALYSIS_REASONING_TIER_EXTRACT = os.getenv("ANALYSIS_REASONING_TIER_EXTRACT", "deep")
 # [2026-08-11 리더 §7] 독자 콜 전용 tier — **손잡이만**. ""(기본)=미설정 → 위 공용
 # ANALYSIS_REASONING_TIER("light") 폴스루 = 배포 시점 행동 변화 0.
 # 배경 매턴 콜이라 추출처럼 off로 뺄 후보이긴 하나, 독자는 "읽고 해석"이라 추론 가치가
@@ -456,6 +472,49 @@ def heavy_analysis():
 
 
 @contextlib.contextmanager
+def call_timeout(seconds: float):
+    """[2026-10-29 C94 D5] 이 블록 안 분석 콜의 시간 상한을 덮는다(라우트 기본값보다 먼저). heavy_analysis() 와 같은 contextvar 꼴."""
+    _token = ANALYSIS_CALL_TIMEOUT_VAR.set(float(seconds or 0.0))
+    try:
+        yield
+    finally:
+        ANALYSIS_CALL_TIMEOUT_VAR.reset(_token)
+
+
+@contextlib.contextmanager
+def post_prose():
+    """[2026-10-29 C94 3차] 이 블록 안 분석 콜 = 산문 뒤 일. 라우트 시간 상한은 여기서만 산다(산문 앞 = 상한 없음).
+    배경 큐가 일마다 켠다. contextvar 라 그 일이 띄운 태스크에도 이어진다."""
+    _token = ANALYSIS_POST_PROSE_VAR.set(True)
+    try:
+        yield
+    finally:
+        ANALYSIS_POST_PROSE_VAR.reset(_token)
+
+
+def analysis_timeout(route: str) -> float:
+    """[2026-10-29 C94 D5] 분석 콜 하나의 시간 상한(초). 0 = 상한 없음. route = analysis_backend 라벨("role:extract" · "heavy" …).
+    [3차] 덮기(call_timeout)는 어디서나 이긴다. 라우트 기본값은 산문 뒤(post_prose)에서만 — 밖은 0."""
+    if not ANALYSIS_TIMEOUTS:
+        return 0.0
+    try:
+        _ov = float(ANALYSIS_CALL_TIMEOUT_VAR.get() or 0.0)
+    except Exception:
+        _ov = 0.0
+    if _ov > 0:
+        return _ov
+    if not ANALYSIS_POST_PROSE_VAR.get():
+        return 0.0
+    r = str(route or "")
+    r = r.split(":", 1)[1] if r.startswith("role:") else r
+    if r in ("extract", "narrative", "light", "flash"):
+        return float(ANALYSIS_TIMEOUT_TURN or 0.0)
+    if r == "reader":
+        return float(ANALYSIS_TIMEOUT_BG or 0.0)
+    return float(ANALYSIS_TIMEOUT_HEAVY or 0.0)   # heavy · main · pro · 이름 라우트 · 모르는 것 = 1회성 몫(지금과 같은 600)
+
+
+@contextlib.contextmanager
 def narrative_analysis():
     """이 블록 안에서 도는 분석 콜만 서사 전용 모델(ANALYSIS_OPENAI_MODEL_NARRATIVE)로 라우팅.
 
@@ -559,7 +618,11 @@ NARRATIVE_TOP_K = 60          # 70 → 60 (wild 후보 trim)
 NARRATIVE_TOP_P = 0.80
 NARRATIVE_MAX_OUTPUT_TOKENS = 16384  # 12288→16384 [2026-07-05 GLM 스왑]: 렌더 추론 ON — Ollama /v1이 thinking을 max_tokens에 포함할 가능성 대비(산문 잘림=비대칭 실패, 서사 콜 8192 인상과 동일 논리)
 # [2026-10-14] 제미니 렌더러 추론 레벨 ("low" | "medium" | "high", ""=미지정)
-GEMINI_RENDERER_THINKING_LEVEL = os.getenv("GEMINI_RENDERER_THINKING_LEVEL", "medium").strip().lower()
+# [2026-10-29] 기본 medium → high(레티어스 "렌더도 하이로").
+GEMINI_RENDERER_THINKING_LEVEL = os.getenv("GEMINI_RENDERER_THINKING_LEVEL", "high").strip().lower()
+# [2026-10-29 C96 곁] 제미니 렌더 출력 상한 — 생각 토큰도 이 안에 센다. thinking high 에서 생각 15,538 + 산문 846 = 16,384 로
+#   잘린 실측(C96 §6-5). 오픈AI 렌더 길(NARRATIVE_MAX_OUTPUT_TOKENS, 위)과 따로 둔다. 모자라면 .env 로 더 올린다(레티어스 "필요하면 더 올리고").
+GEMINI_RENDERER_MAX_OUTPUT_TOKENS = int(os.getenv("GEMINI_RENDERER_MAX_OUTPUT_TOKENS", "32768"))
 # 서사 출력 길이: 인원당 동적 조절 (텔레스코프 제거 후 기준)
 NARRATIVE_CHARS_BASE = 2200      # 기본 (1인 이하) [2026-06-11: 1500→2200, 산문 목표 2000자대 (1인 max 3000/floor 1800)]
 NARRATIVE_CHARS_PER_PLAYER = 800 # 참여 인원당 추가
@@ -670,6 +733,25 @@ FERMENT_PROMPT_V5 = os.getenv("FERMENT_PROMPT_V5", "1").strip().lower() not in (
 GROWTH_MAX_FAIL = int(os.getenv("GROWTH_MAX_FAIL", "3"))        # 같은 범위 성장 연속 실패(콜 실패 · hash 충돌) 문턱 — 닿으면 도장만 넘김
 GROWTH_MAX_TURNS = int(os.getenv("GROWTH_MAX_TURNS", "12"))      # 한 번 성장에 삭힐 턴 상한(오래된 쪽부터, 나머지는 다음 성장)
 GROWTH_ITEMS_SHOWN = int(os.getenv("GROWTH_ITEMS_SHOWN", "40"))  # 성장 프롬프트에 보이는 항목 절 줄 수(절마다 최근 N, 중복 판정은 전체)
+# [2026-10-29 C94] 성장발효 V2 — 성장의 일을 "칸 고쳐 쓰기"로 좁힌다. 켜면: 영어 텔레그래픽 문안 · 마일스톤(minor = 굳은 결 한 칸,
+#   major = 인용 근거가 원문에 있을 때만 · 하이 컨셉까지) · Observed = 지금 상태 대기실(상한 = 읽는 쪽 발췌 상한에서 파생) ·
+#   프롬프트엔 항목 최근 N줄만(반복 대조는 코드) · 로어 접지 = 가장 관련 있는 청크 하나 통째 ·
+#   작가 시트 인물에도 굳은 결(aspects) 렌더 줄. 끄면 C82 바이트 동일(문안 · 모델 heavy · 시간 덮기 없음). 근거 = C92 · C93 지도, C94 스펙 · 구현보고.
+GROWTH_SLOTS = os.getenv("GROWTH_SLOTS", "1").strip().lower() not in ("0", "false", "off", "no")
+# [C94 §6 실측] flash = 콜 중앙 7.5s · 추론 1.9천 자(heavy = 40~75s · 2.2만~2.4만 자), 마일스톤 판단은 heavy 와 같았다 → 기본 flash.
+#   GROWTH_ROLE · GROWTH_TIMEOUT 은 GROWTH_SLOTS 켬에서만 산다(끄면 옛 heavy 그대로). 시간 덮기는 flash 일 때만(heavy = 라우트 600).
+GROWTH_ROLE = os.getenv("GROWTH_ROLE", "flash").strip().lower()      # flash(flash · tier light) | heavy(v4-pro · tier deep) — 모델과 tier 를 같이
+GROWTH_TIMEOUT = float(os.getenv("GROWTH_TIMEOUT", "120"))            # flash 성장 콜 시간 상한(실측 최대 12.4s — 느린 창 여유)
+GROWTH_TRAIT_SLOTS = int(os.getenv("GROWTH_TRAIT_SLOTS", "6"))        # 굳은 결 칸 수(저장 상한과 같다)
+GROWTH_MAJOR_CHANGES = int(os.getenv("GROWTH_MAJOR_CHANGES", "3"))    # major 한 번에 바꿀 수 있는 칸 수(minor = 1)
+# [C94 §6 보정] 기본 끔(0). voyage-4 에서 뒤집힌 사실 짝("trusts" ↔ "no longer trusts")이 0.89~0.95, 같은 사실 한국어 ↔ 영어 짝이
+#   0.68~0.83 — 코사인 문턱은 진짜 변화를 버리고 중복은 못 잡는다. 켜면 버린 짝을 로그에 남기고 절마다 최근 40줄과만 견준다.
+GROWTH_DUP_COS = float(os.getenv("GROWTH_DUP_COS", "0"))              # 항목 의미 중복 문턱(새 줄 ↔ 기존 줄 최대 코사인), 0 = 끔
+GROWTH_ITEMS_SHOWN_V2 = int(os.getenv("GROWTH_ITEMS_SHOWN_V2", "10"))  # V2 프롬프트에 보이는 항목 절 줄 수(맥락용 — 반복 대조는 코드)
+# [2026-10-29 C95] 앎의 경계 — 무대 밖 턴. 켜면 NPC 성장 원문 블록에서 그 인물이 출석하지 않은 턴(턴 색인 present 에 없음)은
+#   `T<n> (off stage)` 머리 + 이름 든 줄만, 이름 열쇠는 `한글(영문)` 을 괄호 앞 · 안으로 편다, V2 문안 한 줄. 끄면 C94 바이트 동일.
+#   출석 저장(turn_index.present = Theoria 출석 ∪ 위치 트리 0단, 모름 = NULL)은 손잡이와 상관없이 쓴다. 근거 = C95 지도·스펙.
+GROWTH_ONSTAGE = os.getenv("GROWTH_ONSTAGE", "1").strip().lower() not in ("0", "false", "off", "no")
 # [2026-10-27 C85] 현재값 · 앎의 경계(리팩토링 5단계). 켜면: 항목 절 발췌 = 상대별 최신 먼저(Relationships+ · Members+),
 #   Theoria 4b 장면 인물에 페이지 Knowledge 최근 N줄, OOC 앎 편집 = 두 집(npc_knowledge + 페이지 Knowledge),
 #   성장 · Theoria 앎 문안 한 구절, T6 오해 칸 키(misbeliefs). 끄면 C83 바이트 동일. 근거 = C85 지도·스펙.

@@ -559,7 +559,7 @@ Recording in Korean.
         temperature=config.NARRATIVE_TEMPERATURE,
         top_k=config.NARRATIVE_TOP_K,
         top_p=config.NARRATIVE_TOP_P,
-        max_output_tokens=config.NARRATIVE_MAX_OUTPUT_TOKENS,
+        max_output_tokens=getattr(config, "GEMINI_RENDERER_MAX_OUTPUT_TOKENS", config.NARRATIVE_MAX_OUTPUT_TOKENS),   # [C96 곁] 생각 포함 상한
         safety_settings=config.SAFETY_SETTINGS,
         thinking_config=_thinking_cfg,
         tools=[],
@@ -677,7 +677,12 @@ async def generate_response_with_retry(
         #   근거: output_artifact/C91_산문끝_메뉴질문_지도·스펙_2026-10-28 §10 · §12
         "the one the player meets next (an act already under way, a blow or offer the PC can still meet before it "
         "lands, or simply the PC's own next move; a question about the asker's own business, such as a price, a name, "
-        "or a yes they need): that move is the final image, and the cut there is EXIT's. Where the scene needs nothing "
+        # [2026-10-31 C97] 결정이 필요한 장면 — 마지막 줄 = 그 사람 자기 픽을 곧 할 일로(PC 가 멈출 수 있음), 넘기면 다음 턴에 진행 중.
+        #   C91 '제 일 질문' 허가가 업무 · 작전 장면에선 선택지 늘어놓기(메뉴)를 통과시켰다(합성 판 base 12/12 → 4/12).
+        #   측정 output_artifact/C97_결정장면_메뉴끝_측정·스펙_2026-10-31 §3 · §7. 짝: RB_WORLD Threads · Mira 응답 칸.
+        "or a yes they need; when someone needs the PC's call, the last line is their own pick, said as what they are "
+        "about to do, which the PC can still stop, and which a later turn finds under way if the PC lets it pass): "
+        "that move is the final image, and the cut there is EXIT's. Where the scene needs nothing "
         "from the PC yet, its people go on with their own business, and the turn closes on that motion. "
         "Running this side of the table is yours, and your judgment is trusted here. "
         "A motion the world makes happens once and then stands: what was posted stays posted, and a later turn "

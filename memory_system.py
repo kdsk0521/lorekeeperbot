@@ -147,6 +147,10 @@ async def api_call_with_retry(
             )
             
             # ===== [NEW] 상세 진단 =====
+            if getattr(response, "timed_out", False):
+                # [2026-10-29 C94] 시간 상한 초과 — 같은 입력은 또 넘는다. 다시 부르면 상한 × 3 동안 줄을 잡는다.
+                logging.warning(f"[{operation_name}] 시간 상한 초과 — 재시도 안 함 (시도 {attempt+1})")
+                return None
             if response is None:
                 logging.warning(f"[{operation_name}] response None (시도 {attempt+1})")
                 continue

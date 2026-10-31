@@ -2498,6 +2498,12 @@ def get_npc_renderer_profiles(channel_id: str, names: list, scene_type: str = "n
             if isinstance(_aspects, list) and _aspects:
                 _lines.append("**[면모]** " + " · ".join(str(a) for a in _aspects))
             profile_text = "\n".join(_lines)
+        elif (_src_r in ("lore", "manual") and isinstance(_aspects, list) and _aspects
+              and getattr(config, "GROWTH_SLOTS", False)):
+            # [2026-10-29 C94 N3] 작가 시트 인물 — 시트는 그대로 렌더하고(07-13 동결 이유 유지) **뒤에** 플레이가 굳힌 결 한 줄.
+            #   V2 에선 굳은 사실이 Observed 대기실에서 이 칸으로 옮겨 가므로, 이 줄이 없으면 작가 시트 인물의 성장이 렌더에서 빠진다.
+            #   하이 컨셉 · trouble 은 안 붙인다(작가 Identity 가 정체성 · trouble 은 09-22 이유 그대로). 이름은 페이트 용어 대신.
+            profile_text += "\n**[Settled traits]** " + " · ".join(str(a) for a in _aspects)
         # [2026-09-16 시트 2차] 관찰(구 play_observed) 렌더 두 갈래 삭제 — 관찰은 페이지 Observed 절이고,
         #   같은 Slot 7에 wiki compile_for(T3)가 play 절을 이미 얹는다(이중 투입 금지). 600자 절단도 같이 소멸.
         # [2026-07-13] 외부 시트 플레이스홀더 치환 ({{char}}=NPC 자신, {{user}}=현재 PC 가면)
@@ -3332,8 +3338,12 @@ async def build_distill_grounding(channel_id: str,
                                   max_chunks: int = 2,
                                   chunk_chars: int = 600,
                                   rules_chars: int = 1200,
-                                  client=None) -> str:
+                                  client=None,
+                                  query: str = "") -> str:
     """증류 입력에 얹을 접지 블록(로어 발췌 + 규칙부 발췌). 없으면 빈 문자열.
+
+    [2026-10-29 C94] `chunk_chars=0` = 청크 **전문**(자르지 않는다). `query` = 3단(임베딩) 쿼리 — 비면 옛 꼴(observations).
+    성장 V2 는 max_chunks=1 · chunk_chars=0 · query=이번 원문 앞으로 부른다(Observed 가 짧은 대기실이 되어 쿼리로 약하다).
 
     client 전달 시 3단이 임베딩 의미 유사도로 동작(공용 엔진 캐시 사용, 쿼리 1건).
     미전달이면 구 결정론 경로 그대로 — 호출부가 client를 못 주는 상황에서도 안전."""
@@ -3375,16 +3385,33 @@ async def build_distill_grounding(channel_id: str,
                 if not txt.strip():
                     return
                 picked_idx.add(i)
-                picked.append((f"({lbl}) " if lbl else "") + txt.strip()[:chunk_chars])
+                picked.append((f"({lbl}) " if lbl else "") + (txt.strip()[:chunk_chars] if chunk_chars else txt.strip()))
 
             # 1단: 이름·별칭 리터럴 (프로필/로어 NPC에서 유효 — 기존 동작 보존)
+            #   [C94 검토] query 가 오면(성장 V2) 이름 든 청크가 자리보다 많을 때 query 와 가까운 순으로 고른다 — 문서 앞 청크(개요)가
+            #   늘 이기지 않게. query 없음 · 임베딩 실패 = 옛 문서 순서.
+            _q1 = str(query or "").strip()
+            _hits1 = []
             for i, chunk in enumerate(chunks):
                 lbl = str(chunk.get("label", "") or "") if isinstance(chunk, dict) else ""
                 txt = str(chunk.get("content", "") or "") if isinstance(chunk, dict) else str(chunk or "")
-                if any(n in txt or n in lbl for n in names):
-                    _add(i, chunk)
-                if len(picked) >= max_chunks:
-                    break
+                if txt.strip() and any(n in txt or n in lbl for n in names):
+                    _hits1.append(i)
+                    if not _q1 and len(_hits1) >= max_chunks:
+                        break
+            if _q1 and client is not None and len(_hits1) > max_chunks:
+                try:
+                    import vector_search as _vs1
+                    _pool1 = [{"content": str(chunks[i].get("content", "") or "") if isinstance(chunks[i], dict)
+                               else str(chunks[i] or ""), "_idx": i} for i in _hits1]
+                    _res1 = await _vs1.get_shared_engine(client).search(_q1[:1500], _pool1, top_k=max_chunks, min_score=0.0)
+                    for _c1, _s1 in (_res1 or []):
+                        if isinstance(_c1, dict) and "_idx" in _c1:
+                            _add(_c1["_idx"], chunks[_c1["_idx"]])
+                except Exception as _e_r1:
+                    logger.debug("[DistillGrounding] name-hit rank skip (%s)", _e_r1)
+            for i in _hits1:
+                _add(i, chunks[i])
 
             # 2단: 동시출현 — 이 NPC가 등장한 턴들에 실제로 주입됐던 청크(빈도순)
             if len(picked) < max_chunks and seen_labels:
@@ -3399,7 +3426,8 @@ async def build_distill_grounding(channel_id: str,
 
             # 3단: 관찰 ↔ 청크 **의미 유사도**(임베딩). 구 bigram은 3-b로 강등.
             #   쿼리=관찰 텍스트. 청크 벡터는 공용 엔진 캐시에 남아 로어 랭킹과 공유된다.
-            if len(picked) < max_chunks and observations and client is not None:
+            _vq = str(query or "").strip() or observations
+            if len(picked) < max_chunks and _vq and client is not None:
                 try:
                     import vector_search as _vs_mod
                     _pool = []
@@ -3412,7 +3440,7 @@ async def build_distill_grounding(channel_id: str,
                     if _pool:
                         _eng = _vs_mod.get_shared_engine(client)
                         _res = await _eng.search(
-                            observations[:1500], _pool,
+                            _vq[:1500], _pool,
                             top_k=max(1, max_chunks - len(picked)),
                             min_score=getattr(config, "VECTOR_MIN_SCORE", 0.2),
                         )
@@ -3427,8 +3455,8 @@ async def build_distill_grounding(channel_id: str,
                     logger.debug("[DistillGrounding] vector unavailable (%s) — bigram fallback", _e_vs)
 
             # 3-b단(폴백): 관찰 ↔ 청크 내용 한글 bigram 겹침(세계관 용어 공유)
-            if len(picked) < max_chunks and observations:
-                obs_g = _ko_bigrams(observations)
+            if len(picked) < max_chunks and _vq:
+                obs_g = _ko_bigrams(_vq)
                 if obs_g:
                     scored = []
                     for i, chunk in enumerate(chunks):

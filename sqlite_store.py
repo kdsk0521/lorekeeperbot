@@ -880,7 +880,9 @@ def _ensure_schema(channel_id: str = "") -> bool:
                          "ALTER TABLE thread_log ADD COLUMN rank TEXT NOT NULL DEFAULT ''",
                          "ALTER TABLE thread_log ADD COLUMN step INTEGER NOT NULL DEFAULT 0",
                          "ALTER TABLE thread_log ADD COLUMN after_id TEXT NOT NULL DEFAULT ''",
-                         "ALTER TABLE thread_log ADD COLUMN origin TEXT NOT NULL DEFAULT ''"):
+                         "ALTER TABLE thread_log ADD COLUMN origin TEXT NOT NULL DEFAULT ''",
+                         # [2026-10-29 C95] 턴 색인 출석(JSON 이름 목록, NULL = 모름 — 부재와 다르다)
+                         "ALTER TABLE turn_index ADD COLUMN present TEXT"):
                 try:
                     conn.execute(_alt)
                 except Exception:
@@ -1810,8 +1812,9 @@ def read_history_tail(channel_id: str, n: int = 50) -> Optional[list]:
 # =========================================================
 
 def upsert_turn_index(channel_id: str, turn: int, entities=None, extra=None, importance: int = 0,
-                      msg_from=None, msg_to=None) -> bool:
-    """턴 1행 upsert. 같은 턴이면 덮는다(`!다시` 자가치유). msg 끝이 None 이면 기존 값을 지킨다. 실패 무해."""
+                      msg_from=None, msg_to=None, present=None) -> bool:
+    """턴 1행 upsert. 같은 턴이면 덮는다(`!다시` 자가치유). msg 끝이 None 이면 기존 값을 지킨다. 실패 무해.
+    [C95] present = 그 턴 출석 이름 목록(None = 모름 → NULL, [] = 아무도 없음). 같은 턴을 다시 쓰면 덮는다."""
     try:
         t = int(turn)
     except Exception:
@@ -1825,23 +1828,39 @@ def upsert_turn_index(channel_id: str, turn: int, entities=None, extra=None, imp
     def _names(xs):
         return [str(x).strip() for x in (xs or []) if str(x or "").strip()]
 
+    _row7 = (
+        channel_id, t,
+        json.dumps(_names(entities), ensure_ascii=False),
+        json.dumps(_names(extra), ensure_ascii=False),
+        int(importance or 0),
+        None if msg_from is None else str(msg_from),
+        None if msg_to is None else str(msg_to),
+        time.time(),
+    )
+    _pres = None if present is None else json.dumps(_names(present), ensure_ascii=False)
     try:
-        conn.execute(
+        try:
+            conn.execute(
+                "INSERT INTO turn_index (channel_id, turn, entities, extra, importance, msg_from, msg_to, created_at, present) "
+                "VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(channel_id, turn) DO UPDATE SET "
+                "entities=excluded.entities, extra=excluded.extra, importance=excluded.importance, "
+                "msg_from=COALESCE(excluded.msg_from, turn_index.msg_from), "
+                "msg_to=COALESCE(excluded.msg_to, turn_index.msg_to), created_at=excluded.created_at, "
+                "present=excluded.present",
+                _row7 + (_pres,),
+            )
+        except sqlite3.OperationalError as _e_col:
+            if "present" not in str(_e_col):
+                raise
+            # [C95] 칸이 아직 없는 DB(ALTER 실패) — 옛 꼴(출석 없이)
+            conn.execute(
             "INSERT INTO turn_index (channel_id, turn, entities, extra, importance, msg_from, msg_to, created_at) "
             "VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(channel_id, turn) DO UPDATE SET "
             "entities=excluded.entities, extra=excluded.extra, importance=excluded.importance, "
             "msg_from=COALESCE(excluded.msg_from, turn_index.msg_from), "
             "msg_to=COALESCE(excluded.msg_to, turn_index.msg_to), created_at=excluded.created_at",
-            (
-                channel_id, t,
-                json.dumps(_names(entities), ensure_ascii=False),
-                json.dumps(_names(extra), ensure_ascii=False),
-                int(importance or 0),
-                None if msg_from is None else str(msg_from),
-                None if msg_to is None else str(msg_to),
-                time.time(),
-            ),
-        )
+                _row7,
+            )
         conn.commit()
         return True
     except Exception as e:
@@ -1888,8 +1907,15 @@ def _turn_index_row(r) -> Dict[str, Any]:
             return v if isinstance(v, list) else []
         except Exception:
             return []
+    _p = None   # [C95] 출석 — None = 모름(옛 행 · 칸 없음), [] = 아무도 없음
+    if len(r) > 6 and r[6] is not None:
+        try:
+            _pv = json.loads(r[6])
+            _p = [str(x) for x in _pv] if isinstance(_pv, list) else None
+        except Exception:
+            _p = None
     return {"turn": int(r[0]), "entities": _j(r[1]), "extra": _j(r[2]), "importance": int(r[3] or 0),
-            "msg_from": r[4], "msg_to": r[5]}
+            "msg_from": r[4], "msg_to": r[5], "present": _p}
 
 
 def read_turn_index(channel_id: str, turn: Optional[int] = None, needles=None) -> list:
@@ -1902,7 +1928,7 @@ def read_turn_index(channel_id: str, turn: Optional[int] = None, needles=None) -
     if conn is None:
         return []
     try:
-        sql = ("SELECT turn, entities, extra, importance, msg_from, msg_to FROM turn_index WHERE channel_id=?")
+        sql = ("SELECT turn, entities, extra, importance, msg_from, msg_to, present FROM turn_index WHERE channel_id=?")
         args: list = [channel_id]
         if turn is not None:
             sql += " AND turn=?"
@@ -1913,7 +1939,13 @@ def read_turn_index(channel_id: str, turn: Optional[int] = None, needles=None) -
             for n in ns:
                 args.extend([f"%{n}%", f"%{n}%"])
         sql += " ORDER BY turn ASC"
-        return [_turn_index_row(r) for r in conn.execute(sql, args).fetchall()]
+        try:
+            return [_turn_index_row(r) for r in conn.execute(sql, args).fetchall()]
+        except sqlite3.OperationalError as _e_col:
+            if "present" not in str(_e_col):
+                raise
+            # [C95] 칸이 아직 없는 DB — 옛 꼴(출석 = None)
+            return [_turn_index_row(r) for r in conn.execute(sql.replace(", present FROM", " FROM", 1), args).fetchall()]
     except Exception as e:
         logger.warning(f"[SQLiteStore] read_turn_index 실패: {channel_id}: {e}")
         return []

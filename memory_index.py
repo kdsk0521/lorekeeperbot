@@ -14,6 +14,7 @@
 읽기 실패는 전부 빈 값(None · [])이다 — 소비자는 옛 길로 폴백한다.
 """
 import logging
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -304,19 +305,71 @@ def leaves_to_promote(channel_id: str) -> List[Tuple[str, str]]:
         return []
 
 
-def growth_raw_text(channel_id: str, turns: List[Dict[str, Any]], names: List[str], budget: int) -> Tuple[str, List[str]]:
+def split_name_keys(names) -> List[str]:
+    """[2026-10-29 C95] 이름 열쇠 펴기 — `리리스(Lilith)` → 통째 · 괄호 앞(`리리스`) · 괄호 안(`Lilith`). 펴서 생긴 열쇠는 두 글자 이상만."""
+    out: List[str] = []
+    for n in (names or []):
+        s = str(n or "").strip()
+        if not s:
+            continue
+        out.append(s)
+        if "(" in s:
+            m = re.search(r"\(([^()]+)\)", s)
+            for x in (s.split("(")[0].strip(), m.group(1).strip() if m else ""):
+                if len(x) >= 2:
+                    out.append(x)
+    return list(dict.fromkeys(out))
+
+
+def is_onstage(names, present) -> bool:
+    """[C95] 이 인물(이름 · 별칭)이 출석 목록에 있나 — 양쪽 다 열쇠로 펴서 대소문자 무시 대조."""
+    ks = {k.lower() for k in split_name_keys(names)}
+    return any(p.lower() in ks for p in split_name_keys(present or []))
+
+
+def growth_raw_text(channel_id: str, turns: List[Dict[str, Any]], names: List[str], budget: int,
+                    onstage_check: bool = False, expand_keys: bool = False) -> Tuple[str, List[str]]:
     """성장 콜 원문 블록 — 턴마다 `T<n>` 머리 + 원문 줄(오래된 → 최신). 예산은 턴마다 고르게 나눈다(한 턴도 안 버린다 —
     도장이 그 턴들을 지나간다). 턴 몫 안에서: 플레이어 입력 줄(산문이 아닌 줄)은 늘 싣고(줄마다 몫의 1/3 까지), 남은 몫에
     GM 산문(`GM:` — 원문 행 role Model)을 이름이 든 문단 먼저 싣는다. 전체가 예산을 넘지 않는다.
-    돌려주는 것 = (블록, 인용 대조용 원문 글 목록)."""
+    돌려주는 것 = (블록, 인용 대조용 원문 글 목록).
+
+    [2026-10-29 C95] expand_keys = 이름 열쇠를 `split_name_keys` 로 편다(`한글(영문)` 이름이 산문의 `리리스가` 를 잡게).
+    onstage_check = 턴 색인 `present` 가 목록인데 이 인물이 없으면(무대 밖) 머리 `T<n> (off stage)` + 이름 든 줄만(입력 줄 ·
+    산문 문단 둘 다), 인용 대조 원문도 그 줄만. present 가 None(모름 · 옛 행)이면 그대로. 둘 다 끄면 옛 바이트 그대로."""
     if not turns:
         return "", []
     per = max(120, int(budget) // max(1, len(turns)) - 8)
     keys = [k for k in (names or []) if str(k or "").strip()]
+    if expand_keys:
+        keys = split_name_keys(keys)
     blocks, srcs = [], []
     for tr in turns:
         rows = [r for r in (raw_for_turn(channel_id, tr.get("turn"), row=tr) or []) if isinstance(r, dict)]
         if not rows:
+            continue
+        _pres = tr.get("present")
+        if onstage_check and isinstance(_pres, list) and not is_onstage(keys, _pres):
+            # 무대 밖 — 그 인물에게 닿은 줄(이름이 든 줄)만. 안 보인 장면은 인용으로도 못 끌어온다.
+            _in = [r for r in rows if str(r.get("role") or "") != "Model"
+                   and any(k in str(r.get("content") or "") for k in keys)]
+            _ps = [p.strip() for r in rows if str(r.get("role") or "") == "Model"
+                   for p in str(r.get("content") or "").split("\n") if p.strip() and any(k in p for k in keys)]
+            srcs.extend([str(r.get("content") or "") for r in _in] + _ps)
+            cap_in = max(60, per // 3)
+            _ins = [f"{r.get('role') or '?'}: {' '.join(str(r.get('content') or '').split())}" for r in _in]
+            _ins = [x if len(x) <= cap_in else x[:cap_in - 1] + "…" for x in _ins]
+            _left = per - sum(len(x) + 1 for x in _ins)
+            _keep, _used = [], 0
+            for p in _ps:
+                if _left - _used <= 20:
+                    break
+                _room = _left - _used - 1
+                _t = p if len(p) <= _room else p[:max(0, _room - 1)] + "…"
+                _keep.append(_t)
+                _used += len(_t) + 1
+            _body = "\n".join(_ins + ([f"GM: {chr(10).join(_keep)}"] if _keep else []))
+            blocks.append(f"T{tr.get('turn')} (off stage)" + (f"\n{_body}" if _body else ""))
             continue
         srcs.extend(str(r.get("content") or "") for r in rows)
         ins = [f"{r.get('role') or '?'}: {' '.join(str(r.get('content') or '').split())}" for r in rows

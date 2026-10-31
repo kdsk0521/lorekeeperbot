@@ -257,6 +257,10 @@ class ResponseContext:
     #   proximity·ReaderSeed)가 `ctx.bus`/`ctx.shared_bus` 로 읽는데 필드도 대입도 없어 전부 기본값이었다.
     bus: Any = None
 
+    # [2026-10-31 C101] 이번 턴 장면 이동 전 PC 자리(update_world_state 가 덮기 전에 읽은 값). 비면 '모름' — 관찰 → 위치
+    #   쓰기(shared_extract.after_presence)의 '떠난 자리 사람 붙잡지 않기' 가드가 꺼진 채로 돈다(묶음 · 관찰 턴 = 옛 동작).
+    pc_loc_before: str = ""
+
 
 @dataclass
 class NVCFilterConfig:

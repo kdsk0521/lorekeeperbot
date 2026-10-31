@@ -26,6 +26,7 @@ Analysis Backend — genai.Client 호환 facade (좌뇌/Flash 분석을 OpenAI �
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any, List, Optional
@@ -65,12 +66,13 @@ class _RespShim:
     OpenAI 호환 응답의 finish_reason "length" = 토큰 한도 도달 → Gemini 표기로 번역해
     기존 갈래를 되살린다.
     """
-    __slots__ = ("text", "candidates", "prompt_feedback", "usage_metadata")
+    __slots__ = ("text", "candidates", "prompt_feedback", "usage_metadata", "timed_out")
 
     _FR_MAP = {"length": "MAX_TOKENS", "content_filter": "SAFETY", "stop": "STOP"}
 
-    def __init__(self, text: Optional[str], finish_reason: Optional[str] = None):
+    def __init__(self, text: Optional[str], finish_reason: Optional[str] = None, timed_out: bool = False):
         self.text = text or ""
+        self.timed_out = bool(timed_out)   # [C94] 시간 상한 초과 — api_call_with_retry 가 다시 안 부른다
         _fr = self._FR_MAP.get(str(finish_reason or "").lower()) if finish_reason else None
         # 잘림은 본문이 있어도 보고돼야 한다 — candidates를 비우면 그 사유가 사라진다.
         self.candidates = [_Cand(_fr)] if (text or _fr) else []
@@ -382,9 +384,21 @@ class _Models:
         _cap = reasoning_policy.reasoning_cap_instruction(_tier)
         if _cap:
             messages.append({"role": "system", "content": _cap})
+        # [2026-10-29 C94 D5] 콜 시간 상한 — 0 이면 안 단다(옛 동작 = SDK 기본). 넘기면 아래 예외 길(빈 응답 → 호출부 재시도).
+        _to = 0.0
+        try:
+            _to = float(_appconfig.analysis_timeout(_route)) if hasattr(_appconfig, "analysis_timeout") else 0.0
+        except Exception:
+            _to = 0.0
+        if _to > 0:
+            kwargs["timeout"] = _to
         _t0 = time.perf_counter()
         try:
-            resp = await self._client.chat.completions.create(**kwargs)
+            if _to > 0:
+                # [C94 검토] 끝까지 기다리는 시간 — httpx timeout(kwargs)은 바이트 사이 간격이라 keep-alive 가 오면 안 걸린다.
+                resp = await asyncio.wait_for(self._client.chat.completions.create(**kwargs), timeout=_to)
+            else:
+                resp = await self._client.chat.completions.create(**kwargs)
             _msg = resp.choices[0].message if getattr(resp, "choices", None) else None
             text = _msg.content if _msg else ""
             # [2026-08-17 light 라우트] route= 는 사다리 어느 단이 이겼는지(heavy/narrative/extract/
@@ -396,8 +410,12 @@ class _Models:
             return _RespShim(text, getattr(resp.choices[0], "finish_reason", None)
                              if getattr(resp, "choices", None) else None)
         except Exception as e:
+            _tmo = _to > 0 and (isinstance(e, asyncio.TimeoutError) or "timeout" in type(e).__name__.lower())
+            if _tmo:
+                logger.warning("[analysis-openai] timeout route=%s after=%.0fs (cap %.0fs)", _route,
+                               time.perf_counter() - _t0, _to)
             logger.error("[analysis-openai] generate_content failed (%s): %s", kwargs.get("model"), e)
-            return _RespShim("")
+            return _RespShim("", timed_out=_tmo)
 
     async def embed_content(self, model=None, contents=None, **_ignore):
         texts = contents if isinstance(contents, list) else [contents]

@@ -340,6 +340,7 @@ class OrchestrationService:
                 _prev_loc = str(domain_manager.get_current_location(channel_id) or "").strip()
             except Exception:
                 _prev_loc = ""
+            ctx.pc_loc_before = _prev_loc   # [2026-10-31 C101] 관찰 → 위치 가드 재료(shared_extract.after_presence)
             domain_manager.set_current_location(channel_id, current_location)
             # Tier 2: 새 위치 자동 등록 (world_tree에 없으면 추가)
             # [2026-09-02 R1 계층 생성] 스펙 §2.5 ⓑ / §4.
@@ -1398,8 +1399,11 @@ class OrchestrationService:
                     seeded = (wiki_store.page_source(channel_id, pid) == wiki_store.SEED_SOURCE)
                 except Exception:
                     seeded = False
+        # [C95] 무대 밖 턴 = 이름 든 줄만(NPC 만) · 이름 열쇠 펴기. 끄면 옛 호출 그대로.
         raw, srcs = memory_index.growth_raw_text(channel_id, turns, [name] + aliases,
-                                                 int(getattr(config, "GROWTH_INPUT_CHARS", 12000) or 12000))
+                                                 int(getattr(config, "GROWTH_INPUT_CHARS", 12000) or 12000),
+                                                 **({"onstage_check": ekind == "npc", "expand_keys": True}
+                                                    if getattr(config, "GROWTH_ONSTAGE", False) else {}))
         if not raw.strip():
             # 원문 다리가 없다(색인 구간 빔 · 행 트림) — 같은 턴을 다시 세지 않게 도장만 넘긴다(콜 0).
             sqlite_store.append_growth_log(channel_id, pid, upto, now_t)
@@ -1408,17 +1412,26 @@ class OrchestrationService:
         item_secs = tuple(s for s in wiki_store._play_enum(kind) if wiki_store._is_item_section(s))
         existing_full = {s: wiki_store.get_play_body(channel_id, pid, s)[0] for s in item_secs}
         # 프롬프트엔 절마다 최근 GROWTH_ITEMS_SHOWN 줄만(History 는 끝없이 자란다) — 중복 판정은 코드가 전체로 한다.
-        _shown = max(1, int(getattr(config, "GROWTH_ITEMS_SHOWN", 40) or 40))
+        # [2026-10-29 C94] V2(GROWTH_SLOTS) = 맥락용 최근 GROWTH_ITEMS_SHOWN_V2 줄 — 반복 대조는 코드(정확 + 임베딩 의미 중복).
+        _v2 = bool(getattr(config, "GROWTH_SLOTS", False))
+        _shown = max(1, int(getattr(config, "GROWTH_ITEMS_SHOWN_V2" if _v2 else "GROWTH_ITEMS_SHOWN", 40) or 40))
+        _omit = "(%d earlier lines omitted)" if _v2 else "(앞 %d줄 생략)"
         existing = {}
         for _s, _b in existing_full.items():
             _ls = [ln for ln in str(_b or "").splitlines() if ln.strip()]
-            existing[_s] = ("\n".join((["(앞 %d줄 생략)" % (len(_ls) - _shown)] if len(_ls) > _shown else []) + _ls[-_shown:])
+            existing[_s] = ("\n".join(([_omit % (len(_ls) - _shown)] if len(_ls) > _shown else []) + _ls[-_shown:])
                             if _ls else "")
         lore_secs = wiki_store.get_lore_sections(channel_id, pid)
         lore_text = "\n\n".join(f"### {k}\n{v}" for k, v in lore_secs.items())
         try:
-            grounding = await npc_manager.build_distill_grounding(
-                channel_id, name, aliases=aliases, observations=body, seen_labels=seen_labels, client=self.client)
+            if _v2:
+                # [C94 D6] 로어 = 가장 관련 있는 청크 하나 통째(`!룰` 전문은 그대로) · 3단 쿼리 = 이번 원문 앞(Observed 는 짧은 대기실).
+                grounding = await npc_manager.build_distill_grounding(
+                    channel_id, name, aliases=aliases, observations=body, seen_labels=seen_labels, client=self.client,
+                    max_chunks=1, chunk_chars=0, query=raw[:1500])
+            else:
+                grounding = await npc_manager.build_distill_grounding(
+                    channel_id, name, aliases=aliases, observations=body, seen_labels=seen_labels, client=self.client)
         except Exception:
             grounding = ""
         try:
@@ -1430,14 +1443,40 @@ class OrchestrationService:
         if ekind == "pc":
             _frs_now = (domain_manager.get_ai_memory(channel_id, key) or {}).get("passives") or []
             frag_names = ", ".join(str(f.get("name")) for f in _frs_now if isinstance(f, dict) and f.get("name"))
+        _npc_now = (npc_manager.get_npc(channel_id, name) or {}) if (_v2 and ekind == "npc") else {}
+        _t_call = time.perf_counter()
         out = await cognition.grow_play_sections(
             self.client, name, kind, lore_text, body, raw, existing_items=existing, item_sections=item_secs,
             grounding=grounding, corrections_block=corr, want_aspects=(ekind == "npc"), want_fragments=(ekind == "pc"),
-            fragments_text=frag_names, seeded=seeded)
+            fragments_text=frag_names, seeded=seeded,
+            **({"trait_slots": list(_npc_now.get("aspects") or []), "high_concept": str(_npc_now.get("high_concept") or ""),
+                "observed_cap": _growth_observed_cap()} if _v2 else {}))
+        _ms_call = int((time.perf_counter() - _t_call) * 1000)
+        _v2log = ""
+        if _v2 and out:
+            if ekind == "npc":
+                # [C94 검토] 콜 동안 굳은 결이 바뀌었으면(OOC 편집 등) 칸 번호가 어긋난다 — op 는 버리고 지금 것을 둔다.
+                _npc_live = npc_manager.get_npc(channel_id, name) or {}
+                if list(_npc_live.get("aspects") or []) != list(_npc_now.get("aspects") or []):
+                    out = dict(out)
+                    out.pop("trait_changes", None)
+                    _npc_now = _npc_live
+                    _v2log = "traits_moved(skip) · "
+            # 인용 대조 원문 = 원문 행 + 프롬프트에 보인 블록(머리 `GM:` · 잘린 줄 꼴 그대로 베낀 인용도 찾게)
+            out, _g = await OrchestrationService._growth_v2_gate(self.client, ekind, out, list(srcs) + [raw],
+                                                                 existing_full, _npc_now)
+            _v2log += _g
         new_body = str((out or {}).get("observed") or "").strip()
         _adopt = []
         if out and ekind == "pc" and new_body:
             new_body, _adopt = OrchestrationService._take_fragments(channel_id, key, new_body, out.get("fragments"))
+        if _v2 and ekind == "pc" and new_body:
+            # [C94 검토] PC = 조각을 뺀 뒤 자른다(조각 인용이 잘린 꼬리에 있으면 잃는다).
+            _cap_pc = _growth_observed_cap()
+            if _cap_pc > 0 and len(new_body) > _cap_pc:
+                _n0 = len(new_body)
+                new_body = _clip_sentences(new_body, _cap_pc)
+                _v2log += f" · obs_clip={_n0}→{len(new_body)}"
         turn_meta = {}
         for tr in turns:
             _gts = [r.get("game_time") for r in (memory_index.raw_for_turn(channel_id, tr.get("turn"), row=tr) or [])
@@ -1468,9 +1507,75 @@ class OrchestrationService:
                                                     lore_secs, now_t, _adopt)
             except Exception as _e_post:
                 logger.warning(f"[Growth] {kind} {name}: 정리 뒤 몫 skipped: {_e_post}")
+        elif _v2 and ekind == "npc" and out:
+            # [C94 검토] Observed 를 안 썼어도(빈 대기실 = V2 에선 정당한 답) 굳은 결 · 하이 컨셉 · trouble 은 저장한다.
+            try:
+                OrchestrationService._save_npc_slots(channel_id, name, out)
+            except Exception as _e_slots:
+                logger.warning(f"[Growth] {kind} {name}: 굳은 결 저장 skipped: {_e_slots}")
         logger.info(f"[Growth] {kind} {name}: 턴 {len(turns)}개(~T{upto}) → Observed {len(body)}→{len(new_body)}자 "
-                    f"· 항목 +{rc.get('items', 0)}")
+                    f"· 항목 +{rc.get('items', 0)}"
+                    + (f" · in={out.get('_in_chars', 0)} · ms={_ms_call} · {_v2log}" if _v2 else ""))
         return True
+
+    @staticmethod
+    async def _growth_v2_gate(client, ekind, out, srcs, existing_full, npc_now) -> tuple:
+        """[2026-10-29 C94 §1-3 · §1-4] V2 코드 관문 — 모델 말을 그대로 안 받는다. 돌려주는 것 = (고친 out, 로그 조각).
+        ① Observed 상한(읽는 쪽 발췌 상한에서 파생) — 넘치면 문장 경계에서 자름.
+        ② NPC 마일스톤: major 는 milestone_quote 가 이번 원문에 있을 때만(fermentation._norm_quote 대조, 6자 이상) — 아니면 minor 로 내림.
+           굳은 결 op 는 minor = 유효한 첫 하나 · major = GROWTH_MAJOR_CHANGES 까지. 하이 컨셉은 major 일 때만.
+        ③ 항목 의미 중복(임베딩) — 정확 대조는 apply_growth 가 그대로."""
+        import wiki_store
+        out = dict(out or {})
+        bits = []
+        cap = _growth_observed_cap()
+        ob = str(out.get("observed") or "").strip()
+        if cap > 0 and len(ob) > cap and ekind != "pc":   # PC 는 조각을 뺀 뒤 grow_page 가 자른다
+            out["observed"] = _clip_sentences(ob, cap)
+            bits.append(f"obs_clip={len(ob)}→{len(out['observed'])}")
+        if ekind == "npc":
+            ms = str(out.get("milestone") or "minor").strip().lower()
+            major = False
+            if ms == "major":
+                major = _quote_in_sources(out.get("milestone_quote"), srcs)
+                bits.append("milestone=major" if major else "milestone=minor(↓)")
+            else:
+                bits.append("milestone=minor")
+            _limit = max(1, int(getattr(config, "GROWTH_MAJOR_CHANGES", 3) or 3)) if major else 1
+            _slots = max(1, int(getattr(config, "GROWTH_TRAIT_SLOTS", 6) or 6))
+            cur = list((npc_now or {}).get("aspects") or [])
+            new_traits, n_ch = _apply_trait_changes(cur, out.get("trait_changes"), _limit, _slots)
+            out.pop("aspects", None)              # 통째 목록은 안 받는다 — op 로만
+            if new_traits:
+                out["aspects"] = new_traits       # _condense_post 가 저장(같으면 쓰기 0)
+            bits.append(f"traitsΔ={n_ch}")
+            if not major:
+                out.pop("high_concept", None)
+        try:
+            out["items"], n_sem = await wiki_store.drop_semantic_dups(
+                client, out.get("items"), existing_full, float(getattr(config, "GROWTH_DUP_COS", 0.0) or 0.0))
+        except Exception as _e_sem:
+            logger.debug(f"[Growth] semantic dup skip: {_e_sem}")
+            n_sem = 0
+        bits.append(f"dup_sem={n_sem}")
+        return out, " · ".join(bits)
+
+    @staticmethod
+    def _save_npc_slots(channel_id, name, out) -> None:
+        """NPC 하이 컨셉 · trouble · 굳은 결(aspects) 저장(같으면 쓰기 0). `_condense_post` 에서 뺀 몸(글자 그대로) — [C94] V2 는
+        Observed 를 안 쓴 성장에서도 부른다. 칸 상한 = 옛 6, V2 는 GROWTH_TRAIT_SLOTS 가 더 크면 그만큼."""
+        _cur = npc_manager.get_npc(channel_id, name) or {}
+        _m = dict(_cur)
+        if out.get("high_concept"):
+            _m["high_concept"] = out["high_concept"]
+        if out.get("trouble"):
+            _m["trouble"] = out["trouble"]
+        _asp = out.get("aspects")
+        if isinstance(_asp, list) and _asp:
+            _lim = max(6, int(getattr(config, "GROWTH_TRAIT_SLOTS", 6) or 6)) if getattr(config, "GROWTH_SLOTS", False) else 6
+            _m["aspects"] = [str(a).strip() for a in _asp if a and str(a).strip()][:_lim]
+        if _m != _cur:
+            npc_manager.update_npc(channel_id, name, _m)
 
     @staticmethod
     def _condense_post(channel_id, kind, key, name, pid, out, new_body, seeded, lore_secs, turn, _adopt) -> None:
@@ -1486,17 +1591,7 @@ class OrchestrationService:
             game_character.FRAGMENT_STATS["replaced"] += _st["replaced"]
             logger.info(f"[Fragment] {name}: +{_st['added']} ~{_st['replaced']}")
         if kind == "npc":
-            _cur = npc_manager.get_npc(channel_id, name) or {}
-            _m = dict(_cur)
-            if out.get("high_concept"):
-                _m["high_concept"] = out["high_concept"]
-            if out.get("trouble"):
-                _m["trouble"] = out["trouble"]
-            _asp = out.get("aspects")
-            if isinstance(_asp, list) and _asp:
-                _m["aspects"] = [str(a).strip() for a in _asp if a and str(a).strip()][:6]
-            if _m != _cur:
-                npc_manager.update_npc(channel_id, name, _m)
+            OrchestrationService._save_npc_slots(channel_id, name, out)
             # [2026-09-22 voice_seed §J] 시드 시트 자기 수정 — 절 둘만, 한 칸씩.
             #   Core Traits 는 **셋째 줄만** 갈린다(1·2행 = 기전 두 줄 = canon, 바이트 보존).
             #   Aside 는 통째 교체. dict 키 순증 0 — 저장은 페이지 lore 절이다.
@@ -2638,3 +2733,77 @@ def get_orchestration_runtime(client_genai, model_id: str, model_id_flash: str) 
         _orchestration_runtime = get_orchestration_service(client_genai, model_id, model_id_flash)
         _orchestration_params = params
     return _orchestration_runtime
+
+
+# [2026-10-29 C94] 성장 V2 도우미 — Observed 상한 파생 · 문장 경계 자르기 · 굳은 결 op 적용.
+def _growth_observed_cap() -> int:
+    """Observed 를 싣는 독자들(WIKI_COMPILE_PROFILES)의 발췌 상한 중 최댓값 — 그 뒤는 아무도 안 읽는다. 상수로 박지 않는다."""
+    try:
+        caps = [int(p[1]) for p in (getattr(config, "WIKI_COMPILE_PROFILES", {}) or {}).values()
+                if isinstance(p, (tuple, list)) and len(p) >= 2 and "Observed" in tuple(p[0] or ()) and int(p[1]) > 0]
+        return max(caps) if caps else 600
+    except Exception:
+        return 600
+
+
+def _clip_sentences(text: str, cap: int) -> str:
+    t = str(text or "").strip()
+    if cap <= 0 or len(t) <= cap:
+        return t
+    head = t[:cap]
+    # [C94 검토] 상한 바로 뒤 한 글자까지 봐야 상한에 딱 걸친 마지막 문장 끝(". ")을 안 놓친다
+    cut = max(t[:cap + 1].rfind(x) for x in (". ", ".\n", "\n", "\u3002", "! ", "? "))
+    cut = min(cut, cap - 1) if cut >= 0 else cut
+    if cut >= cap // 2:
+        return head[:cut + 1].rstrip()
+    return head.rstrip()
+
+
+_QUOTE_MARKS = {ord(c): None for c in "\"'\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f\u300a\u300b\u3008\u3009\u00ab\u00bb`"}
+_ROLE_HEAD = re.compile(r"^(?:T\d+\s+)?[^\s:\uff1a]{1,24}[:\uff1a]\s+")
+
+
+def _quote_key(s) -> str:
+    return fermentation._norm_quote(str(s or "").translate(_QUOTE_MARKS))
+
+
+def _quote_in_sources(quote, srcs) -> bool:
+    """[C94 검토] 마일스톤 인용 대조 — 프롬프트에 보인 꼴 그대로 베껴도 통과: 머리 `GM: ` · `이름: ` 를 떼고, 잘린 줄 `…` 로 나뉜
+    조각은 조각마다(4자 이상) 같은 원문 글에 있어야 한다. 따옴표 모양(곧은 · 굽은 · 낫표)은 안 본다. 합 6자 미만 = 거짓."""
+    q = _ROLE_HEAD.sub("", str(quote or "").strip())
+    parts = [p for p in (_quote_key(x) for x in re.split(r"\u2026|\.\.\.", q)) if p]
+    longs = [p for p in parts if len(p) >= 4]
+    if sum(len(p) for p in parts) < 6 or not longs:
+        return False
+    return any(all(p in k for p in longs) for k in (_quote_key(s) for s in (srcs or []) if str(s or "").strip()))
+
+
+def _apply_trait_changes(cur, changes, limit: int, max_slots: int) -> tuple:
+    """저장된 굳은 결(aspects) 위에 op 를 순서대로 — replace = 1~len 칸, add = 칸이 남을 때만. 빈 글 · 이미 있는 글 · 칸 밖 = 버리고
+    한도에 안 센다(유효한 op 만 센다). 돌려주는 것 = (새 목록, 적용한 수)."""
+    out = [" ".join(str(a).split()) for a in (cur or []) if str(a or "").strip()]
+    n0 = min(len(out), max_slots)   # [C94 검토] replace 는 프롬프트가 보여 준 칸(1~n0)만 — 이번에 add 한 칸 번호는 없던 번호
+    touched = set()                 # 같은 칸 두 번째 op 는 버린다(한도에 안 셈)
+    n = 0
+    for ch in (changes if isinstance(changes, list) else []):
+        if n >= limit:
+            break
+        if not isinstance(ch, dict):
+            continue
+        txt = " ".join(str(ch.get("text") or "").split())
+        if not txt or txt in out:
+            continue
+        op = str(ch.get("op") or "").strip().lower()
+        if op == "replace":
+            try:
+                i = int(ch.get("slot")) - 1
+            except (TypeError, ValueError):
+                continue
+            if 0 <= i < n0 and i not in touched:
+                out[i] = txt
+                touched.add(i)
+                n += 1
+        elif op == "add" and len(out) < max_slots:
+            out.append(txt)
+            n += 1
+    return out, n

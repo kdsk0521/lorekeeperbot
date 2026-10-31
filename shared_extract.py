@@ -409,7 +409,87 @@ def _turn_msg_range(history: list, turn_idx: int):
     return (ids[0], ids[-1]) if ids else (None, None)
 
 
-def _index_turn(channel_id: str, nt_state: dict, turn_idx: int) -> None:
+
+def left_behind_by_move(channel_id: str, npc_key: str, pc_before: str, pc_now: str) -> bool:
+    """[2026-10-31 C101] 이번 턴 PC 가 자리를 옮겼고, 이 사람이 PC 가 떠난 자리에 앉아 있으면 True.
+    '떠난 자리' = 턴 앞 PC 자리 안쪽(그 방의 사람) 또는 바깥(PC 가 부엌에 있었고 그 사람은 셰어하우스), 단 끝 자리가
+    그 사람 자리 안쪽이면 떠난 게 아니다(부엌 → 도겸의 방, 셰어하우스 사람 = 같은 집 안).
+    관찰 → 위치 쓰기에서 이 사람은 PC 의 새 자리로 옮기지 않는다 — 산문이 떠나며 본 사람을 gaze 에 넣어도 따라오지 않게.
+    정말 같이 왔으면 다음 턴 산문이 새 자리에서 보여 주고, 그때 gaze 가 옮긴다(출석 판정의 1턴 지연과 같은 꼴).
+    PC 자리 이름은 set_npc_location 과 같은 해상(축약 호명 포함). 모름(앞 자리 비었음 · 노드 못 풂 · 같은 노드 · 미배치)은
+    전부 False = 옛 동작. 근거 output_artifact/C100 §2."""
+    try:
+        import world_tree as _wt
+        b = str(pc_before or "").strip()
+        n = str(pc_now or "").strip()
+        if not b or not n or b.lower() == "unknown" or n.lower() == "unknown":
+            return False
+        s_id = _wt.resolve_node_id(channel_id, b)
+        e_id = _wt.resolve_node_id(channel_id, n)
+        if not s_id or not e_id or s_id == e_id:
+            return False
+        at = _wt.get_npc_location(channel_id, npc_key)
+        if not at:
+            return False
+        a_id = _wt.resolve_node_id(channel_id, at, allow_token=False)
+        if not a_id:
+            return False
+        nodes = _wt.get_all_nodes(channel_id) or {}
+
+        def _within(x, y):   # x 가 y 자신이거나 y 의 안쪽(자손)
+            seen = set()
+            cur = x
+            while cur and cur in nodes and cur not in seen:
+                if cur == y:
+                    return True
+                seen.add(cur)
+                cur = (nodes.get(cur) or {}).get("parent_id") or ""
+            return False
+
+        return (_within(a_id, s_id) or _within(s_id, a_id)) and not _within(e_id, a_id)
+    except Exception:
+        return False
+
+def name_on_page(page: str, names) -> bool:
+    """[2026-10-31 C101 F4] 이 사람 이름(받은 이름 · 등록 키 · 별칭, `리리스(Lilith)` 는 펴서)이 산문에 한 번이라도 적혔나.
+    조사 붙은 꼴(도겸이 · 도겸의)도 잡히게 부분 문자열 · 대소문자 무시. 명부 표식(`시장 상인 #2P`)은 산문에 안 나오니 떼고 본다.
+    이름이 하나도 없으면 True(옛 동작)."""
+    try:
+        import re as _re
+        raw = [str(n or "").strip() for n in (names or []) if str(n or "").strip()]
+        raw += [_re.sub(r"\s+#[0-9A-Za-z]{1,3}$", "", n) for n in raw]
+        try:
+            from memory_index import split_name_keys
+            keys = [k for k in split_name_keys(raw) if k]
+        except Exception:
+            keys = list(dict.fromkeys(k for k in raw if k))
+        if not keys:
+            return True
+        low = str(page or "").lower()
+        return any(k.lower() in low for k in keys)
+    except Exception:
+        return True   # 모르면 옛 동작(옮김)
+
+
+def _onstage_for_index(channel_id: str, present_npcs, have_dai: bool):
+    """[2026-10-29 C95] 턴 색인 출석 = Theoria 출석(psyche ∪ attitudes — 등장 카운트와 같은 재료) ∪ 위치 트리 0단.
+    재료가 둘 다 없으면(DAI 없음 · 위치 미해상) None — 모름과 부재는 다르다(R4 규율). 실패 무해."""
+    names, known = [], False
+    if have_dai:
+        known = True
+        names += [str(n).strip() for n in (present_npcs or []) if str(n or "").strip()]
+    try:
+        import npc_manager as _nm_os
+        _t = _nm_os.get_presence_tiers(channel_id) or {}
+        if not _t.get("unresolved"):
+            known = True
+            names += [str(n).strip() for n in (_t.get("scene") or []) if str(n or "").strip()]
+    except Exception as _e_os:
+        logger.debug(f"[TurnIndex] presence tiers skip: {_e_os}")
+    return list(dict.fromkeys(names)) if known else None
+
+
+def _index_turn(channel_id: str, nt_state: dict, turn_idx: int, present=None) -> None:
     """[2026-10-26 C80] turn_index upsert. 원문 구간 = `_turn_msg_range`(입력 · 도착물 · 산문 순서로 history_log 에 적히니
     그 사이가 그 턴 원문이다). 못 찾으면 None(기존 값 유지)."""
     try:
@@ -420,7 +500,7 @@ def _index_turn(channel_id: str, nt_state: dict, turn_idx: int) -> None:
         _a, _b = _turn_msg_range(domain_manager.get_domain(channel_id).get("history") or [], turn_idx)
         import sqlite_store as _ss_ti
         _ss_ti.upsert_turn_index(channel_id, turn_idx, _row.get("entities"), _row.get("extra"),
-                                 _row.get("importance", 0), _a, _b)
+                                 _row.get("importance", 0), _a, _b, present=present)
     except Exception as _e_ti:
         logger.debug(f"[TurnIndex] skip: {_e_ti}")
 
@@ -945,7 +1025,8 @@ async def after_narrative(rt, b) -> None:
             # [2026-10-26 C80] 턴 색인 — 방금 찍은 turn_log 한 줄(이름 · 중요도)을 영구 행으로 + 그 턴 원문 구간.
             #   turn_log 50 롤링은 그대로(기존 소비자 무변경). 실패 무해.
             if getattr(config, "MEMORY_LAYERS_V2", False):
-                _index_turn(channel_id, nt_state, turn_idx)
+                _index_turn(channel_id, nt_state, turn_idx,
+                            present=_onstage_for_index(channel_id, present_npcs, bool(ctx.dai)))   # [C95] 출석도 같이
 
             # [T-A] NPC 등장 카운트(구별 턴만) — 1회성/다회성 tier 계측. session만 내부 게이트.
             try:
@@ -1158,11 +1239,32 @@ async def after_presence(rt, b) -> None:
             #   아래 스케줄 틱이 "이번 턴 관찰이 손댄 사람"을 제외 집합에 넣어야 하는데,
             #   개수만으로는 누구였는지 알 수 없다(관찰 > 스케줄의 실물이 이 집합이다).
             _gaze_moved = 0
+            # [2026-10-31 C101] 이번 턴 PC 가 옮겼으면 떠난 자리 사람은 gaze 로 끌고 가지 않는다(left_behind_by_move).
+            #   병(C100 §2): gaze 정의에 자리가 없어 떠나며 본 사람까지 PC 끝 자리로 옮겼다 → 도겸이 집→빨래방→시장→분식집.
+            _pc_before = str(getattr(ctx, "pc_loc_before", "") or "")
+            _gaze_kept = []
+            _gaze_off_page = []
+            _page = str(getattr(b, "response", "") or "")
             for _g in str(_gaze_now or "").replace("\n", ",").split(","):
                 _gk = _obs_key(_g)
-                if _gk and _wt_obs.set_npc_location(channel_id, _gk, _cur_loc) == "placed":
+                if not _gk:
+                    continue
+                # [2026-10-31 C101 F4] 산문에 이름이 한 번도 안 적힌 사람은 옮기지 않는다(재측정에서 찾음 — SceneNPCs 는 무대 명부가
+                #   아니라 등록 명부 전체라, 머문 사람이 명부에 없으면 추출이 명부의 유일한 이름을 적었다: 집에 남은 도겸이 빨래방으로).
+                if _page and not name_on_page(_page, [_g, _gk] + list((_reg_obs.get(_gk) or {}).get("aliases") or [])):
+                    _gaze_off_page.append(_gk)
+                    continue
+                if left_behind_by_move(channel_id, _gk, _pc_before, _cur_loc):
+                    _gaze_kept.append(_gk)
+                    continue
+                if _wt_obs.set_npc_location(channel_id, _gk, _cur_loc) == "placed":
                     _gaze_moved += 1
                     _observed_now.add(_gk)
+            if _gaze_kept:
+                logger.info("[presence-check] gaze kept at %s (PC moved on): %s",
+                            _pc_before, ", ".join(_gaze_kept[:5]))
+            if _gaze_off_page:
+                logger.info("[presence-check] gaze not on page (kept): %s", ", ".join(_gaze_off_page[:5]))
             _psy_entered = 0
             for _pn in ((ctx.dai or {}).get("psyche_states") or {}):
                 _pk = _obs_key(_pn)

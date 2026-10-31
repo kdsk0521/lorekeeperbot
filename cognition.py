@@ -620,8 +620,9 @@ async def _extract_batch(
             # [2026-08-12 fingerprint 프레임 소급] gaze 형식 계약 — 소비자 셋(Slot 20 인물란·
             #   world_board 출석·iceberg 대사심도)이 전부 **이름 쉼표 나열**을 가정하고 exact match를 건다.
             #   서술 조각이 오면 매칭 0 → 전 NPC 배경 강등이라, 계약을 이름 목록으로 좁힌다.
-            "\n- gaze: comma-separated NPC NAMES the camera actually stayed with this turn — "
-            "onstage names copied exactly as listed in SceneNPCs (closest first). "
+            # [2026-10-31 C101] '턴이 끝나는 자리에서' — 옛 정의엔 자리가 없어 PC 가 떠나며 본 사람까지 들어가 새 자리로 끌려갔다(C100 §2).
+            "\n- gaze: comma-separated NPC NAMES the camera actually stayed with at the place where this turn ends — "
+            "onstage names copied exactly as listed in SceneNPCs (closest first); someone the PC walked away from this turn is not in it. "
             "Names only: no description, no phrases, no off-stage or unnamed figures. "
             "null when the turn held no NPC in focus."
             "\n- lighting: name the controlling light SOURCE + key + direction (e.g. 'low-key window side-light', 'overhead high-key flat', 'single-source backlit') — derive from where the light actually falls. (English telegraphic, 1 phrase)"
@@ -1626,6 +1627,127 @@ def _growth_item_rule(kind: str, sec: str) -> str:
     return _GROWTH_ITEM_RULES[(kind, sec)]
 
 
+# [2026-10-29 C94] 성장발효 V2 — 영어 텔레그래픽 · 칸 고쳐 쓰기(마일스톤) · Observed 대기실. 손잡이 GROWTH_SLOTS(끄면 위 옛 문안 그대로).
+#   항목 규칙은 옛 규칙과 뜻이 같고 출력 언어만 영어(Knowledge 는 C85 경계 구절을 늘 단다).
+_GROWTH_ITEM_RULES_V2 = {
+    ("character", "Relationships+"): "- items.Relationships+: a change these turns made in how {name} stands with a named someone."
+                                     " One line each, \"Name: what changed and how\", with the turn it happened in.",
+    ("character", "Knowledge"): "- items.Knowledge: something {name} came to know in these turns — seen, told, or worked out on the page."
+                                " Being there when it was said is not knowing it; the page has to show {name} took it in."
+                                " Narration only the players read is not {name}'s knowledge."
+                                " When these turns show something {name} believed was wrong, write what they know now"
+                                " (\"thought …; learned …\"). One fact per line.",
+    ("character", "History"): "- items.History: what happened to or through {name} in these turns that later play may lean on."
+                              " One event per line, past tense, with the turn it happened in.",
+    ("location", "History"): "- items.History: what happened here in these turns that changes this place or how people treat it."
+                             " One event per line, past tense, with the turn it happened in.",
+    ("faction", "Members+"): "- items.Members+: a named person these turns show belonging to {name}. One per line, \"Name: role\".",
+    ("faction", "History"): "- items.History: what {name} did or suffered in these turns. One event per line, past tense,"
+                            " with the turn it happened in.",
+}
+
+
+def _growth_prompt_v2(name: str, kind: str, lore_text: str, play_text: str, raw_text: str,
+                      existing_items: Optional[Dict[str, str]], item_sections: tuple, grounding: str,
+                      corrections_block: str, want_aspects: bool, want_fragments: bool, fragments_text: str,
+                      seeded: bool, trait_slots: Optional[list], high_concept: str, observed_cap: int) -> str:
+    """[2026-10-29 C94 §1-1] V2 문안(부록 A). 굳은 결(저장 칸 이름은 aspects 그대로) · 마일스톤 · 하이 컨셉 줄은 NPC(want_aspects)만.
+    PC 조각 · 시드 seam/aside 규칙은 옛 조각(`_condense_rule_parts`)을 그대로 쓴다."""
+    _ar, fragments_rule, seed_rule, _schema_old, fragments_block = _condense_rule_parts(
+        want_aspects, want_fragments, fragments_text, seeded)
+    secs = [s for s in item_sections if (kind, s) in _GROWTH_ITEM_RULES_V2]
+    item_rules = "\n".join(_GROWTH_ITEM_RULES_V2[(kind, s)].format(name=name) for s in secs)
+    existing = "\n".join(f"### {s}\n{(existing_items or {}).get(s) or '(none)'}" for s in secs)
+    subject = _GROWTH_SUBJECT.get(kind, "one entry")
+    cap = int(observed_cap or 0)
+    slots_n = max(1, int(getattr(config, "GROWTH_TRAIT_SLOTS", 6) or 6))
+    major_n = max(1, int(getattr(config, "GROWTH_MAJOR_CHANGES", 3) or 3))
+    cap_txt = f" At most {cap} characters." if cap > 0 else ""
+    shapes = ", ".join(f'"{s}": [' + ('{"turn": 12, "line": "..."}' if s in _GROWTH_TURNED else '"..."') + "]" for s in secs)
+    schema = '{'
+    if want_aspects:
+        schema += ('"milestone": "minor|major", "milestone_quote": "raw line or empty", '
+                   '"trait_changes": [{"op": "replace|add", "slot": 1, "text": "NAME — behavior"}], '
+                   '"high_concept": "major only, else null", "trouble": "... or null", ')
+    schema += '"observed": "current state, telegraphic English"'
+    if seed_rule:
+        schema += ', "trait_seam": "...", "aside": "..."'
+    if want_fragments:
+        schema += ', "fragments": [{"name": "str", "value": {}, "quote": "str"}]'
+    if secs:
+        schema += ', "items": {' + shapes + '}'
+    schema += '}'
+    holds = [f"- AUTHOR SHEET: read-only canon. Never restate it, never contradict it"
+             f"{', except the two fields below' if seed_rule else ''}."]
+    if want_aspects:
+        holds.append(f"- SETTLED TRAITS: up to {slots_n} numbered slots, each \"NAME — behavior\": what play has settled about"
+                     f" {name} that the sheet does not say. A growth changes slots; it never piles them up.")
+    holds.append(f"- OBSERVED: the holding pen — what is true of {name} right now that no"
+                 f"{' trait and no' if want_aspects else ''} item carries.{cap_txt}")
+    if secs:
+        holds.append(f"- ITEMS: dated lines of change — {', '.join(secs)}.")
+    holds.append(f"- PLAY SINCE LAST GROWTH: the raw turns {name} appeared in, oldest first, each headed \"T<n>\"."
+                 " Lines headed \"GM:\" are that turn's narration; the other lines are what the players typed.")
+    if want_aspects and getattr(config, "GROWTH_ONSTAGE", False):
+        # [C95] 무대 밖 턴 머리표 — 코드가 그 턴은 이름 든 줄만 보여 준다
+        holds.append(f"  A turn headed \"T<n> (off stage)\" is one {name} was not in: only the lines naming {name} are shown,"
+                     f" and what happened there is not {name}'s knowledge unless it reached {name} in words.")
+    rules = []
+    if want_aspects:
+        rules.append("- Decide the milestone first. Most growths are minor.\n"
+                     "  - minor: change at most one settled trait — replace one slot, or add one if a slot is free. High concept stays.\n"
+                     f"  - major: only when these turns changed who {name} is. Copy the one raw line that shows it into milestone_quote,"
+                     f" word for word. Up to {major_n} trait changes; high_concept may change.\n"
+                     "- A settled trait is a standing pattern that will recur across scenes, not one scene's event (events go to"
+                     " History). Prefer replace — sharpen the slot the pattern belongs to; add only when no slot covers it."
+                     " \"NAME — behavior\", at most 25 words.\n"
+                     "- trouble: one short phrase — the core hunger or deficit that drives them; null until it surfaces.")
+    rules.append(f"- OBSERVED: rewrite as the current state only. What these turns settled for good moves into"
+                 f"{' a trait or' if want_aspects else ''} an item and leaves OBSERVED. Drop what these turns made stale."
+                 " Passing reactions, plans and attempts that changed nothing stay out of everything.")
+    rules.append("- A fact that changed over time stays as one sentence, current state first, the former in parentheses:"
+                 " \"calls her by name now (used to say 'senpai')\". When two sentences cannot both be true now,"
+                 " the one from the later turn is current.")
+    if secs:
+        rules.append("- items: new lines from these turns only. [] when they add nothing.\n" + item_rules)
+    rules.append("- Telegraphic English everywhere. A quotation copies the raw turn word for word, in its own language.")
+    rules.append("- [CORRECTIONS], when present, override both the turns and the page.")
+    trait_block = ""
+    if want_aspects:
+        _sl = [str(a).strip() for a in (trait_slots or []) if str(a or "").strip()][:slots_n]
+        trait_block = ("[SETTLED TRAITS — slots]\n" + ("\n".join(f"{i}. {t}" for i, t in enumerate(_sl, 1)) or "(empty)")
+                       + f"\n\n[HIGH CONCEPT] {high_concept or '(none)'}\n\n")
+    return f"""You grow the play layer of {subject}'s page in a TRPG, from the turns played since it last grew.
+
+## What the page holds
+{chr(10).join(holds)}
+
+## Rules
+{chr(10).join(rules)}{fragments_rule}{seed_rule}
+
+## Output JSON
+{schema}
+
+[SUBJECT] {name}
+
+[AUTHOR SHEET — read-only]
+{lore_text or "(none)"}
+
+{fragments_block}
+{grounding or ""}
+
+{trait_block}[RECENT ITEMS — context only; the program drops repeats]
+{existing or "(none)"}
+
+[OBSERVED — rewrite this]
+{play_text or "(empty)"}
+
+[PLAY SINCE LAST GROWTH]
+{raw_text}
+{("" if not corrections_block else chr(10) + "[CORRECTIONS]" + chr(10) + corrections_block)}
+"""
+
+
 async def grow_play_sections(
     client: genai.Client,
     name: str,
@@ -1641,6 +1763,9 @@ async def grow_play_sections(
     want_fragments: bool = False,
     fragments_text: str = "",
     seeded: bool = False,
+    trait_slots: Optional[list] = None,
+    high_concept: str = "",
+    observed_cap: int = 0,
 ) -> Dict[str, Any]:
     """[2026-10-27 C82] 성장발효 — 페이지 하나의 play 절을 원문 턴으로 키우는 heavy 1콜(옛 `condense_play_section` 자리를 넓힘).
 
@@ -1700,6 +1825,11 @@ async def grow_play_sections(
 {raw_text}
 {("" if not corrections_block else chr(10) + "[CORRECTIONS]" + chr(10) + corrections_block)}
 """
+    if getattr(config, "GROWTH_SLOTS", False):
+        # [2026-10-29 C94] V2 문안이 옛 문안을 갈음한다(위 옛 문안은 끔 갈래 — 바이트 그대로 남김).
+        prompt = _growth_prompt_v2(name, kind, lore_text, play_text, raw_text, existing_items, item_sections,
+                                   grounding, corrections_block, want_aspects, want_fragments, fragments_text,
+                                   seeded, trait_slots, high_concept, observed_cap)
     try:
         gen_config = types.GenerateContentConfig(
             system_instruction=text_resources.ANALYSIS_FRAME,
@@ -1716,14 +1846,32 @@ async def grow_play_sections(
                 "## Rules\n",
                 "## Rules\n- ⟦m…⟧ tags are placeholders: copy each one unchanged, attached where it stands.\n", 1)
         contents = [types.Content(role="user", parts=[types.Part(text=_masked)])]
-        with config.heavy_analysis():
-            result = await api_call_with_retry(
-                client, config.role_model("heavy"), contents, gen_config,
-                operation_name="Page Growth"
-            )
+        # [2026-10-29 C94 §1-6 · §1-7] 모델 손잡이 하나가 모델과 tier 를 같이 바꾼다(역할만 바꾸면 flash + high, 블록만 빼면 v4-pro + low).
+        #   시간 상한은 GROWTH_TIMEOUT 덮기(ANALYSIS_TIMEOUTS 끔이면 analysis_timeout 이 0 — 덮기도 무효).
+        import contextlib as _ctx_g
+        # [C94 검토] 끄면(GROWTH_SLOTS) 옛 heavy 그대로 — 손잡이 · 덮기 둘 다 안 산다. 시간 덮기는 flash 일 때만(heavy = 라우트 600).
+        _flash_g = bool(getattr(config, "GROWTH_SLOTS", False)) and \
+            str(getattr(config, "GROWTH_ROLE", "heavy") or "heavy").strip().lower() == "flash"
+        _to_g = float(getattr(config, "GROWTH_TIMEOUT", 0) or 0) if _flash_g else 0.0
+        _tcm = config.call_timeout(_to_g) if (_to_g > 0 and hasattr(config, "call_timeout")) else _ctx_g.nullcontext()
+        if _flash_g:
+            with _tcm:
+                result = await api_call_with_retry(
+                    client, config.role_model("flash"), contents, gen_config,
+                    operation_name="Page Growth"
+                )
+        else:
+            with config.heavy_analysis(), _tcm:
+                result = await api_call_with_retry(
+                    client, config.role_model("heavy"), contents, gen_config,
+                    operation_name="Page Growth"
+                )
         if result:
             out = safe_parse_json(result)
-            return _unmask_output(out, _mask_map) if isinstance(out, dict) else {}
+            out = _unmask_output(out, _mask_map) if isinstance(out, dict) else {}
+            if out and getattr(config, "GROWTH_SLOTS", False):
+                out["_in_chars"] = len(_masked)   # [C94] 로그 칸 in= — 끔 갈래엔 안 단다
+            return out
     except Exception as e:
         logger.error(f"[Growth] failed: {e}")
     return {}
