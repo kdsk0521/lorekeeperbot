@@ -35,6 +35,7 @@ async def _drain_background(channel_id: str, timeout: float = 30.0) -> bool:
         try:
             import app_host as _ah
             await _ah.forget_settlement(channel_id)
+            await _ah.forget_asks(channel_id)   # [C116 판7] 도는 물음 · 늦은 답도 버린다
         except Exception as e:
             logger.debug(f"[Session] app settlement drop skip: {e}")
     return ok
@@ -244,7 +245,7 @@ class SessionManager:
             msg += (f"✅ 출력 선언 {_n_all}건: 변수 {_n_var} · 섹션 {_n_sec} · "
                     f"전이 {_n_tr} · 형식 {_n_fmt}\n")
         else:
-            msg += "⬜ 출력 선언 없음 (`!출력룰 추가` + 파일)\n"
+            msg += "⬜ 출력 선언 없음 (앱 `outputs.json` → `!모듈 올리기`)\n"
 
         # [2026-09-07 P9] 문구만 — 상태창은 이제 매턴 응답 하단 임베드다(상단 헤더 폐지).
         msg += "🪧 상태창은 매턴 응답 **바로 밑 임베드**로 전 장 자동 표시됩니다 (최대 10장).\n"

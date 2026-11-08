@@ -35,6 +35,88 @@ CORE_EMOTIONS = (
 # 감정 전이 감쇠율: 턴당 이전 감정이 얼마나 유지되는지
 EMOTION_DECAY = 0.7  # 70% 유지, 30% 감쇠
 
+# [2026-11-02 C108] 감정 읽기 v2 — 손잡이 config.EMOTION_READ_V2(끄면 옛 셈 그대로).
+#   병: Theoria 스키마가 primary_emotion 에 "anticipation (陰陽: seed of irritation)"처럼 메모를 붙여 쓰게 하는데
+#   옛 훅은 맨 낱말일 때만 +0.10 이라(재생 코퍼스 12/68) 읽기가 버려지고, 늘 깔리는 바닥(욕구 2개 → anticipation 0.2 ·
+#   ventral · self_opacity)과 지난 턴 70% 가 최강 축을 정했다(base anticipation 51/68 · 탐침 합당 2/12, Theoria 머리말은 10/12).
+#   근거 = 파티쳇수정/output_artifact/C108_감정다양화_지도·스펙_2026-11-02.md
+READ_V2_HEAD_W = 0.25      # 머리말 축 가산(옛 맨 낱말 +0.10) — raw 스냅샷 뒤에 얹는다(spike 기준값 밖)
+READ_V2_SEED_W = 0.10      # 陰陽 씨앗 축 가산 — undertone 재료
+READ_V2_NEED_W = 0.25      # 욕구 바닥 need_pressure × (옛 0.5) — active_needs 는 늘 1~2개라 정보 없는 바닥
+BLEND_KEEP_V2 = 0.40       # 블렌딩 이전 몫(옛 EMOTION_DECAY 0.7). 부재 감쇠(merge_tracked_states)는 EMOTION_DECAY 그대로.
+
+
+def _read_v2() -> bool:
+    try:
+        import config as _cfg_ev2
+        return bool(getattr(_cfg_ev2, "EMOTION_READ_V2", False))
+    except Exception:
+        return False
+
+
+# Plutchik 바퀴 낱말표 — 강도 단계(약 · 중 · 강) + 이웃 말 → 8축. 쌍(dyad)은 두 축.
+_PLUTCHIK_WORDS: Dict[str, str] = {}
+for _ax_pw, _ws_pw in (
+    ("joy", "serenity joy ecstasy happiness happy pleasure delight relief relieved contentment content "
+            "amusement amused glad gladness cheer cheerful warmth pride proud satisfaction satisfied elation"),
+    ("trust", "acceptance trust admiration affection fondness reassurance reassured confidence care "
+              "tenderness gratitude grateful"),
+    ("fear", "apprehension apprehensive fear terror worry worried anxiety anxious unease uneasy wariness wary "
+             "dread nervousness nervous alarm alarmed panic concern concerned fright scared distrust"),
+    ("surprise", "distraction surprise surprised amazement amazed shock shocked startle startled astonishment "
+                 "astonished bewilderment bewildered confusion confused disbelief"),
+    ("sadness", "pensiveness pensive sadness sad grief hurt disappointment disappointed sorrow melancholy "
+                "loneliness lonely regret letdown resignation resigned wistfulness wistful dejection gloom"),
+    ("disgust", "boredom bored disgust disgusted loathing revulsion distaste"),
+    ("anger", "annoyance annoyed anger angry rage irritation irritated frustration frustrated impatience "
+              "impatient resentment indignation exasperation hostility fury furious"),
+    ("anticipation", "interest anticipation vigilance curiosity curious expectation expectant eagerness eager "
+                     "readiness alertness alert watchfulness suspicion suspicious"),
+):
+    for _w_pw in _ws_pw.split():
+        _PLUTCHIK_WORDS[_w_pw] = _ax_pw
+_PLUTCHIK_DYADS: Dict[str, Tuple[str, str]] = {
+    "love": ("joy", "trust"), "submission": ("trust", "fear"), "awe": ("fear", "surprise"),
+    "disapproval": ("surprise", "sadness"), "remorse": ("sadness", "disgust"), "shame": ("sadness", "disgust"),
+    "contempt": ("disgust", "anger"), "aggressiveness": ("anger", "anticipation"),
+    "optimism": ("anticipation", "joy"), "hope": ("anticipation", "joy"), "hopeful": ("anticipation", "joy"),
+}
+_PRIMARY_HEAD_SPLIT = re.compile(r"[(:;,—–]|\s-\s")
+
+
+def _plutchik_axes(text: str, first_only: bool) -> List[str]:
+    out: List[str] = []
+    for w in re.findall(r"[a-z]+", text):
+        for ax in ([_PLUTCHIK_WORDS[w]] if w in _PLUTCHIK_WORDS else list(_PLUTCHIK_DYADS.get(w, ()))):
+            if ax not in out:
+                out.append(ax)
+        if first_only and out:
+            break
+    return out
+
+
+def read_primary(text: Any) -> Tuple[List[str], str]:
+    """[C108] Theoria primary_emotion → (머리 축들, 씨앗 축).
+
+    머리 = 첫 괄호 · 쌍점 · 쌍반점 · 쉼표 · 대시 앞 말(그 안의 낱말표 낱말 전부, 쌍은 두 축).
+    씨앗 = 그 뒤에서 처음 나오는 머리와 다른 축. 표에 없는 낱말뿐이면 ([], "").
+    예: "anticipation (陰陽: seed of irritation)" → (["anticipation"], "anger").
+    """
+    if not isinstance(text, str) or not text.strip():
+        return [], ""
+    low = text.lower()
+    head = _PRIMARY_HEAD_SPLIT.split(low, 1)[0]
+    heads = _plutchik_axes(head, first_only=False)
+    # 메모는 머리 감정을 되풀이한 뒤 씨앗을 대는 일이 잦다("anger (the anger carries … fear)") — 머리와 다른 첫 축.
+    rest = [a for a in _plutchik_axes(low[len(head):], first_only=False) if a not in heads]
+    return heads, (rest[0] if rest else "")
+
+
+def primary_axis(text: Any) -> str:
+    """[C108] 머리말 첫 축(없으면 "") — 집단사고 트리거 등 '이 인물의 주 감정이 X 인가' 판정 한 곳."""
+    heads, _ = read_primary(text)
+    return heads[0] if heads else ""
+
 # 급변 감지 임계값: raw 도메인에서 한 턴 사이 |Δ| 이 값 이상이면 spike.
 # 이론 상한은 1.0(0→1.0 완전 플립). 0.25는 강한 단일 축 반전에 반응하고
 # 점진 drift는 무시하는 경험치 — Pass B에서 warm→friction 델타 ≈ 0.36이
@@ -305,6 +387,7 @@ class EmotionEngine:
         results: Dict[str, EmotionState] = {}
         scene_ctx = scene_ctx or {}
         memory_triggers = memory_triggers or []
+        _v2 = _read_v2()   # [C108]
 
         for npc_name, npc_dai in psyche_states.items():
             if not isinstance(npc_dai, dict):
@@ -338,6 +421,12 @@ class EmotionEngine:
             # 당시 임계(0.5)가 수학적으로 도달 불가능했음(현 SPIKE_THRESHOLD=0.25도 raw 기준). raw는 입력 그 자체라
             # "실제 장면 입력이 얼마나 급변했나"를 직접 측정.
             raw_snapshot = dict(raw)
+
+            # [2026-11-02 C108 S1·S2] Theoria 머리말 · 씨앗 가산은 스냅샷 **뒤** — spike 는 입력 신호(감정가 · 몸 · 욕구)의
+            #   급변만 잰다. 앞에 두면 머리말이 바뀔 때마다 spike 가 섰다(재생 코퍼스 4 → 17).
+            if _v2:
+                for _ax_hb, _w_hb in EmotionEngine._head_bonus(psyche_layer).items():
+                    raw[_ax_hb] = min(1.0, raw.get(_ax_hb, 0.0) + _w_hb)
 
             # 3. 이전 턴과 블렌딩 (시간 감쇠)
             # [2026-07-28] 이름 해상도 — Theoria는 턴마다 표기를 흔든다("리리스" / "Lilith(리리스)").
@@ -606,10 +695,16 @@ class EmotionEngine:
         # "욕구 존재=불안" 번역이 전 NPC 상시 fear 플로어로 작동했음(겁-질림 끌림 주입기 #1).
         # 욕구는 drive지 위협이 아님 — 야망 있는 NPC의 ego-need가 fear로 읽히면 당당함이 죽는다.
         # fear는 위협 신호(value 음수 / polyvagal sympathetic / dissociation) 소관으로 환원.
+        # [2026-11-02 C108 S3] 감정 읽기 v2 면 ×0.25 — 욕구는 늘 1~2개라(재생 코퍼스 66/68 이 2개) 이 바닥이 매 턴 같은
+        #   anticipation 0.2 를 깔아 최강 축을 정했다. 머리말 가산(S1)이 장면 읽기를 실으므로 바닥은 낮춘다.
+        #   머리말을 못 읽는 턴(칸 없음 · 표 밖 낱말)은 옛 바닥 그대로 — 낮추면 self_opacity surprise 0.15 가 최강 축이 되는
+        #   07-13 끌림이 돌아온다.
+        _v2 = _read_v2()
+        _v2_read = _v2 and bool(read_primary(psyche.get("primary_emotion"))[0])
         needs = psyche.get("active_needs", [])
         if isinstance(needs, list) and needs:
             need_pressure = min(len(needs) / 5.0, 1.0)
-            raw["anticipation"] = max(raw["anticipation"], need_pressure * 0.5)
+            raw["anticipation"] = max(raw["anticipation"], need_pressure * (READ_V2_NEED_W if _v2_read else 0.5))
 
         # self_opacity: Theoria 스키마상 문자열("claims X — actual: Y") 또는 null.
         #   - 존재(비공백 문자열) → surprise 약가산
@@ -656,11 +751,24 @@ class EmotionEngine:
         # value-scalar 역추정만으론 anger처럼 구조적으로 약해지는 감정이
         # 절대 top이 될 수 없는 문제를 보정한다. 다른 경로 수학은 건드리지 않음.
         # Plutchik 8축 멤버인 경우에만 +0.10 가산 (Relational 라벨은 _derive_relational이 처리).
+        # [2026-11-02 C108] 감정 읽기 v2 면 이 자리 대신 process_turn 이 raw 스냅샷 뒤에 머리말 · 씨앗을 얹는다(_head_bonus).
         primary = psyche.get("primary_emotion")
-        if isinstance(primary, str) and primary in CORE_EMOTIONS:
+        if not _v2 and isinstance(primary, str) and primary in CORE_EMOTIONS:
             raw[primary] = min(1.0, raw[primary] + 0.10)
 
         return raw
+
+    @staticmethod
+    def _head_bonus(psyche: Dict[str, Any]) -> Dict[str, float]:
+        """[C108 S1] primary_emotion 머리 축(최대 둘, 쌍이면 두 축) +READ_V2_HEAD_W · 씨앗 축 +READ_V2_SEED_W."""
+        prim = psyche.get("primary_emotion") if isinstance(psyche, dict) else None
+        heads, seed = read_primary(prim)
+        out: Dict[str, float] = {}
+        for ax in heads[:2]:
+            out[ax] = READ_V2_HEAD_W
+        if seed:
+            out[seed] = out.get(seed, 0.0) + READ_V2_SEED_W
+        return out
 
     # ---------------------------------------------------------
     # Step 2: Polyvagal Bias
@@ -684,12 +792,15 @@ class EmotionEngine:
         previous: Dict[str, float],
     ) -> Dict[str, float]:
         """이전 턴 감정과 현재 감정을 시간 감쇠로 블렌딩."""
+        # [2026-11-02 C108 S4] 감정 읽기 v2 면 이전 몫 0.4 — 0.7 이면 이번 턴이 30% 라 첫 기분이 눌어붙었다
+        #   (탐침: PC 가 쓰러져도 명순 최강 축 anticipation). 부재 감쇠(merge_tracked_states)는 EMOTION_DECAY 그대로.
+        keep = BLEND_KEEP_V2 if _read_v2() else EMOTION_DECAY
         blended = {}
         for e in CORE_EMOTIONS:
             prev_val = previous.get(e, 0.0)
             curr_val = current.get(e, 0.0)
             # 이전 감정 감쇠 + 현재 감정 가중
-            blended[e] = prev_val * EMOTION_DECAY + curr_val * (1 - EMOTION_DECAY)
+            blended[e] = prev_val * keep + curr_val * (1 - keep)
         return blended
 
     # ---------------------------------------------------------
@@ -822,9 +933,12 @@ class EmotionEngine:
                 _rv = float(relation.get("bond", relation.get("value", 0)) or 0)
             except (TypeError, ValueError):
                 _rv = 0.0
+            # [2026-11-02 C108 S5] 감정 읽기 v2 면 침묵(Mira 판단 칸, 재생 코퍼스 36/68 이 tense/heavy)은 증인에서 뺀다 —
+            #   value_conflict 도 Mira 칸이라 둘이 같이 차서 따뜻한 장면 탐침 4/5 에 friction 이 섰다. 침묵 → friction 은
+            #   아래 Tier 7(0.4)에 그대로 남는다.
             if (relation.get("negotiation_stance") in ("competitive", "exploitative")
                     or soma.get("polyvagal") == "sympathetic"
-                    or scene_ctx.get("silence_type") in ("heavy", "tense")
+                    or (not _read_v2() and scene_ctx.get("silence_type") in ("heavy", "tense"))
                     or _rv < 0):
                 return ("friction", 1.0)
             # 단독 신호(성격 재독) → 미선점, 아래 티어가 장면 온도를 결정

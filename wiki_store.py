@@ -1590,6 +1590,147 @@ def revert_sections_after(channel_id: str, from_turn: int) -> int:
 
 
 # =========================================================
+# 4a′. `!다시` 위키 사본 — [2026-11-06 C117 A1]
+#   턴 시작에 페이지 행 · lore 절(통째) · play 절 자리(열쇠 · hash) · 승격 계수를 채널 DB 안 사본 표에 옮겨 적고,
+#   `!다시` 가 play 본문 되감기(revert_sections_after) **뒤** · 편집 일지 재적용 **앞**에 그 모양으로 돌린다.
+#   옛 병: 이름이 움직인 턴(정체 공개 · 별칭 승격 · 모습)은 명부는 되감기는데 페이지 · 시트는 새 이름에 남아
+#   옛 이름 NPC 의 시트가 비었다(C84 는 모습 턴을 아예 거절했다). 턴에 처음 선 페이지도 남았다.
+#   play 본문은 지금처럼 revert 몫(C50 정정 줄 turn=None 이 산다) — 사본은 play 본문을 안 담는다.
+#   턴 사이 lore 쓰기(명령 · Activity · 루카 시트 편집)는 편집 일지가 쓴 뒤 본문으로 다시 얹는다.
+# =========================================================
+_REDO_COPIES = (("pages", "wiki_redo_pages"), ("sections", "wiki_redo_sections"), ("wiki_tally", "wiki_redo_tally"))
+
+
+def _table_cols(conn, table: str) -> List[str]:
+    return [str(r[1]) for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+
+
+def _ensure_redo_copy(conn, live: str, copy: str) -> List[str]:
+    """사본 표 칸 = 살아 있는 표 칸(PRAGMA). 다르면(새 칸이 붙었다) 다시 만든다. 돌려줌 = 칸 목록([] = 살아 있는 표 없음)."""
+    lc = _table_cols(conn, live)
+    if not lc:
+        return []
+    if _table_cols(conn, copy) != lc:
+        conn.execute(f"DROP TABLE IF EXISTS {copy}")
+        conn.execute(f"CREATE TABLE {copy} AS SELECT * FROM {live} WHERE 0")
+        conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{copy}_ch ON {copy}(channel_id)")
+    return lc
+
+
+def snapshot_for_redo(channel_id: str, turn: int) -> bool:
+    """턴 시작 위키 사본(`!다시` 몫). 실패면 사본 표지(meta)를 지운다 — 반쯤 찍힌 사본으로 돌리지 않게. 찍었으면 True."""
+    conn = _conn(channel_id)
+    if conn is None:
+        return False
+    try:
+        for live, cp in _REDO_COPIES:
+            cols = _ensure_redo_copy(conn, live, cp)
+            if not cols:
+                raise RuntimeError(f"no table {live}")
+            conn.execute(f"DELETE FROM {cp} WHERE channel_id=?", (channel_id,))
+            cl = ", ".join(cols)
+            if live == "sections":   # play 본문은 안 담는다(revert 몫) — 자리 맞추기엔 열쇠 · hash 면 된다
+                sel = ", ".join(("CASE WHEN owner='play' THEN '' ELSE body END" if c == "body" else c) for c in cols)
+            else:
+                sel = cl
+            conn.execute(f"INSERT INTO {cp} ({cl}) SELECT {sel} FROM {live} WHERE channel_id=?", (channel_id,))
+        conn.execute("INSERT OR REPLACE INTO wiki_redo_meta (channel_id, turn, created_at) VALUES (?,?,strftime('%s','now'))",
+                     (channel_id, int(turn)))
+        conn.commit()
+        return True
+    except Exception as e:
+        try:
+            conn.rollback()
+            conn.execute("DELETE FROM wiki_redo_meta WHERE channel_id=?", (channel_id,))
+            conn.commit()
+        except Exception:
+            pass
+        logger.warning(f"[Wiki] redo 사본 실패 (무시 — 이 턴 `!다시` 는 페이지를 안 돌린다): {channel_id}: {e}")
+        return False
+
+
+def redo_copy_turn(channel_id: str) -> Optional[int]:
+    """찍힌 사본의 턴(없으면 None)."""
+    conn = _conn(channel_id)
+    if conn is None:
+        return None
+    try:
+        row = conn.execute("SELECT turn FROM wiki_redo_meta WHERE channel_id=?", (channel_id,)).fetchone()
+        return int(row[0]) if row and row[0] is not None else None
+    except Exception:
+        return None
+
+
+def restore_for_redo(channel_id: str, turn: int) -> Optional[Dict[str, int]]:
+    """턴 시작 사본으로 위키를 돌린다 — play 본문 되감기 **뒤**, 편집 일지 재적용 **앞**. 한 트랜잭션.
+    ① play 절 자리: 사본에 없는 (페이지, 절)이 사본의 빈 자리와 같은 절 · 같은 hash 면 그 자리로(리비전째)
+    ② 페이지 행: 사본에 없는 페이지(턴에 섰다)는 절 · 리비전째 지우고, 나머지는 사본 행으로
+    ③ lore 절: 사본으로 통째 ④ 승격 계수: 사본으로.
+    사본 턴이 다르거나 사본 칸이 지금 표와 다르면 손 안 댄다(None). 돌려줌 = 센 수."""
+    if redo_copy_turn(channel_id) != int(turn):
+        return None
+    conn = _conn(channel_id)
+    if conn is None:
+        return None
+    out = {"moved": 0, "pages_dropped": 0, "pages": 0, "lore": 0}
+    try:
+        cols = {}
+        for live, cp in _REDO_COPIES:
+            lc = _table_cols(conn, live)
+            if not lc or _table_cols(conn, cp) != lc:
+                logger.warning(f"[Wiki] redo 사본 칸이 {live} 와 다름 — 페이지 안 돌림")
+                return None
+            cols[live] = ", ".join(lc)
+        snap_play = {(str(p), str(s)): str(h or "") for p, s, h in conn.execute(
+            "SELECT page_id, section, hash FROM wiki_redo_sections WHERE channel_id=? AND owner='play'", (channel_id,))}
+        cur_play = {(str(p), str(s)): str(h or "") for p, s, h in conn.execute(
+            "SELECT page_id, section, hash FROM sections WHERE channel_id=? AND owner='play'", (channel_id,))}
+        free = {k: h for k, h in snap_play.items() if k not in cur_play}
+        for (pid, sec), h in sorted(cur_play.items()):
+            if (pid, sec) in snap_play:
+                continue
+            cand = sorted(k for k, hh in free.items() if k[1] == sec and hh == h and k[0] != pid)
+            if not cand:
+                continue
+            p0 = cand[0][0]
+            conn.execute("UPDATE sections SET page_id=? WHERE channel_id=? AND page_id=? AND section=?",
+                         (p0, channel_id, pid, sec))
+            conn.execute("UPDATE section_history SET page_id=? WHERE channel_id=? AND page_id=? AND section=?",
+                         (p0, channel_id, pid, sec))
+            free.pop(cand[0], None)
+            out["moved"] += 1
+        snap_pids = {str(r[0]) for r in conn.execute("SELECT page_id FROM wiki_redo_pages WHERE channel_id=?",
+                                                      (channel_id,))}
+        cur_pids = {str(r[0]) for r in conn.execute("SELECT page_id FROM pages WHERE channel_id=?", (channel_id,))}
+        for pid in sorted(cur_pids - snap_pids):
+            conn.execute("DELETE FROM sections WHERE channel_id=? AND page_id=?", (channel_id, pid))
+            conn.execute("DELETE FROM section_history WHERE channel_id=? AND page_id=?", (channel_id, pid))
+            out["pages_dropped"] += 1
+        conn.execute("DELETE FROM pages WHERE channel_id=?", (channel_id,))
+        conn.execute(f"INSERT INTO pages ({cols['pages']}) SELECT {cols['pages']} FROM wiki_redo_pages WHERE channel_id=?",
+                     (channel_id,))
+        out["pages"] = len(snap_pids)
+        conn.execute("DELETE FROM sections WHERE channel_id=? AND owner!='play'", (channel_id,))
+        cur = conn.execute(f"INSERT OR REPLACE INTO sections ({cols['sections']}) SELECT {cols['sections']} "
+                           f"FROM wiki_redo_sections WHERE channel_id=? AND owner!='play'", (channel_id,))
+        out["lore"] = int(cur.rowcount or 0)
+        conn.execute("DELETE FROM wiki_tally WHERE channel_id=?", (channel_id,))
+        conn.execute(f"INSERT INTO wiki_tally ({cols['wiki_tally']}) SELECT {cols['wiki_tally']} "
+                     f"FROM wiki_redo_tally WHERE channel_id=?", (channel_id,))
+        conn.commit()
+        logger.info(f"[Wiki] !다시 페이지 되감기 t{turn}: 자리 {out['moved']} · 턴 페이지 뺌 {out['pages_dropped']} · "
+                    f"페이지 {out['pages']} · lore 절 {out['lore']}")
+        return out
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        logger.warning(f"[Wiki] !다시 페이지 되감기 실패 (무시 — play 본문만 돌았다): {channel_id}: {e}")
+        return None
+
+
+# =========================================================
 # 4b. 수명 — !클리어 (2026-09-14 W4)
 # =========================================================
 

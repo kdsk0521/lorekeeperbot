@@ -85,6 +85,11 @@ client_discord = discord.Client(intents=intents)
 #   (client · model_id · model_id_flash). 루카 콜·OOC 분류·편집 콜이 옛 전역 대신 이걸 읽는다.
 import types as _types  # noqa: E402
 _INPUT_RT = _types.SimpleNamespace(client=client_genai, model_id=MODEL_ID, model_id_flash=MODEL_ID_FLASH)
+try:   # [2026-11-06 C116 판7] 코드 앱 lk.ask 가 쓰는 분석 콜 길(누르기는 턴 밖이라 rt 가 없다)
+    import app_host as _app_host
+    _app_host.set_client(client_genai)
+except Exception as _e:
+    logging.debug(f"[App] set_client skip: {_e}")
 
 # [2026-10-23 C60 M2c] 턴 잠금 표는 공용 자리(turn_locks)로 — Activity 편집이 같은 잠금을 쥔다.
 from turn_locks import channel_locks  # noqa: E402
@@ -229,7 +234,7 @@ async def _process_message(message: discord.Message) -> None:
             if _in.stop:
                 if _in.turn_override is not None:
                     await generate_ai_response(message, channel_id, user_input_override=_in.turn_override,
-                                               record_user_history=_in.record_user_history)
+                                               history_text=_in.history_text)
                 return
 
             # 4. CHAT LOGGING / RESPONSE
@@ -265,9 +270,9 @@ async def generate_ai_response(
     channel_id: str,
     system_trigger: Optional[str] = None,
     user_input_override: Optional[str] = None,
-    record_user_history: bool = True
+    history_text: Optional[str] = None
 ) -> None:
-    """AI 응답 생성 (OrchestrationService로 위임)"""
+    """AI 응답 생성 (OrchestrationService로 위임). history_text = [C116 0-1b] PC 기록 줄(None = 이번 턴 입력 그대로)."""
     orchestration = get_orchestration_runtime(client_genai, MODEL_ID, MODEL_ID_FLASH)
     if not orchestration:
         await message.channel.send("⚠️ No AI Configured")
@@ -282,7 +287,7 @@ async def generate_ai_response(
             system_trigger,
             feedback_msg=feedback_msg,
             user_input_override=user_input_override,
-            record_user_history=record_user_history
+            history_text=history_text
         )
     except Exception as e:
         logging.error(f"Orchestration Error: {e}", exc_info=True)

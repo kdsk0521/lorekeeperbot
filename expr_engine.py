@@ -745,6 +745,8 @@ class Resolver:
         self.label = str(label or "")
         self._cv = None
         self._decl: Optional[Dict[str, Any]] = None
+        self._vals: Optional[Dict[str, Any]] = None   # [C120] 값 층 사본 — 명단 셈이 사람마다 다시 안 읽게
+        self._turn: Optional[int] = None                # [C120] 같은 셈 안에서 턴 번호 한 번
 
     # --- 지연 로딩(순수 파서·평가기 층이 custom_vars 를 안 끌게) ---
     @property
@@ -772,6 +774,8 @@ class Resolver:
             return {}
 
     def turn_index(self) -> int:
+        if self._turn is not None:
+            return self._turn
         try:
             return int(self.world().get("turn_index", 0) or 0)
         except (TypeError, ValueError):
@@ -808,7 +812,7 @@ class Resolver:
         decl = self.decl()
         spec = decl.get(nm)
         if isinstance(spec, dict):
-            vals = self.cv.get_values(self.channel_id)
+            vals = self._vals if self._vals is not None else self.cv.get_values(self.channel_id)
             raw = (vals.get(nm) or {}).get("value", spec.get("init"))
             if spec.get("per_actor"):
                 return int(self.cv.get_system_value(self.channel_id, nm, self.actor()) or 0)
@@ -920,10 +924,24 @@ class Resolver:
                 return 0
         raw = self.read(nm)
         if str(spec.get("scope")) == "npc":
-            who = self.cv.resolve_npc(self.channel_id, k)
+            # [2026-11-07 C120] `[@]` = 이 사람 — 명단 식(holders)을 셀 때만 산다. 한 겹만: 명단 식이 읽는 값은
+            #   제 명단 식을 못 갖고, 자기 값을 못 읽는다(고리 · 사슬 없음).
+            if k == "@":
+                who = str(getattr(self.ctx, "npc", "") or "")
+                hold_of = str(getattr(self.ctx, "holder_of", "") or "")
+                if not who or not hold_of:
+                    raise ExprError(f"이름 없음: {nm}[@] (@ 는 명단 식에서만)")
+                if nm == hold_of or spec.get("holders"):
+                    raise ExprError(f"이름 없음: {nm}[@] (명단 식은 한 겹만)")
+                if (spec.get("only") or spec.get("max_npcs")) and not self.cv.resolve_npc(self.channel_id, who, spec):
+                    raise ExprError(f"이름 없음: {nm}[@] ({who} 은 이 값 명단 밖)")
+            else:
+                who = self.cv.resolve_npc(self.channel_id, k, spec)
             if not who:
-                raise ExprError(f"이름 없음: {nm}[{k}] (허용 인물이 아닙니다)")
+                raise ExprError(f"이름 없음: {nm}[{k}] (허용 인물 · 명단이 아닙니다)")
             cur = (raw or {}).get(who)
+            if cur is None:
+                cur = self.cv.npc_init(spec, who)
             if cur is None:
                 cur = spec.get("init", 0)
             if str(spec.get("type")) == "enum":
@@ -1478,7 +1496,7 @@ def register_directive(channel_id: str, spec: Any) -> Tuple[bool, str]:
     if when_src in (None, ""):
         # 조건 없는 지시는 애초에 **상시 규칙**이다(=출력룰 원문). 여기서 받으면
         # 매턴 무조건 실리는 줄이 선언 층에 숨는다 — 그 자리는 Slot 33 이다.
-        return False, f"{nm} · 조건이 없습니다(상시 규칙은 출력룰입니다)."
+        return False, f"{nm} · 조건이 없습니다(상시 규칙은 형식 항목입니다)."
 
     rows = list_directives(channel_id)
     try:
@@ -1814,7 +1832,24 @@ def _router_line(nm: str, kind: str, item: Dict[str, Any]) -> str:
             if v.get("stage_of"):
                 bits.append(f"단계={v['stage_of']}")
         if v.get("start") is not None:
-            bits.append(f"시작 {v['start']}")
+            _sb = v.get("start_by") if isinstance(v.get("start_by"), dict) else {}
+            bits.append(f"시작 {v['start']}" + (
+                "(" + " · ".join(f"{a} {b}" for a, b in list(_sb.items())[:4]) + ("…" if len(_sb) > 4 else "") + ")"
+                if _sb else ""))
+        if isinstance(v.get("start_items"), dict) and v["start_items"]:
+            bits.append(f"시작 항목 {len(v['start_items'])}")
+        if v.get("only"):
+            bits.append(f"명단 {len(v['only'])}명")
+        if v.get("holders"):
+            bits.append(f"명단식 {v['holders']}")
+        if v.get("max_npcs"):
+            bits.append(f"최대 {v['max_npcs']}명")
+        if v.get("track") == "never":
+            bits.append("추적 안 함")
+        if v.get("stage_notes"):
+            bits.append("단계 설명")
+        if v.get("group"):
+            bits.append("묶기")
         if v.get("derive"):
             bits.append(f"= {v['derive']}")
         scope = str(item.get("scope", "global"))

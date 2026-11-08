@@ -2359,21 +2359,43 @@ async def _deliver_handout(rt, ctx, message, channel_id: str) -> bool:
         _olog.debug("[Handout] 텍스트 채널이 아니라 스킵")
         return False
     req = _wb.pick_arrival_request(channel_id, ctx.dai)
+    _app_ho = None
     if not req:
-        return False
-    # [2026-10-17 C46 W2] 조립이 남긴 재료 + PC 이름(편지 받는 쪽 — 원문 발췌 쿼리에만 쓴다).
-    _ref = getattr(ctx, "handout_ref", None)
-    if isinstance(_ref, dict):
-        _ref = dict(_ref)
-        _ref["pc_names"] = rt._pc_names_for_extract(channel_id, ctx.user_id)
-    result = await _wb.trigger_board_update(
-        message.channel, rt.client, config.role_model("light"), channel_id,
-        trigger="declared", dai=dict(ctx.dai) if ctx.dai else {}, deliver=req, ref=_ref,
-    )
-    if not result:
-        _olog.info("[Handout] 도착물 콜 무산 — 핸드아웃 없이 진행 (source=%s)",
-                    req.get("source"))
-        return False
+        # [2026-11-06 C116 판8] 코드 앱 도착물(lk.handout — 글은 앱이 썼다) — 선언 도착물이 없는 턴에만, 하나.
+        #   콜 0. 꺼낸 뒤의 길(렌더 <핸드아웃> · 봉투/공고 · turn_mail · 원문 행 · 위키 줄)은 선언 도착물과 같다.
+        try:
+            import app_host as _ah
+            _app_ho = _ah.take_handout(channel_id)
+        except Exception as _e_app:
+            _olog.debug(f"[Handout] app handout skipped: {_e_app}")
+            _app_ho = None
+        if not _app_ho:
+            return False
+        req = {"source": f"app:{_app_ho.get('app')}"}
+        result = _ah.handout_result(channel_id, _app_ho, str(getattr(ctx, "user_mask", "") or ""))
+        if not result:
+            _ah.requeue_handout(channel_id, _app_ho)
+            return False
+        if str(result.get("channel_kind")) == "message":   # 사적 도착물 — 다음 턴 서사 콜 재료(답장하지 않은 편지)
+            try:
+                _wb._queue_world_mail(channel_id, "message", [result.get("post") or {}], result.get("event") or {},
+                                      int((domain_manager.get_world_state(channel_id) or {}).get("turn_index", 0) or 0))
+            except Exception:
+                pass
+    else:
+        # [2026-10-17 C46 W2] 조립이 남긴 재료 + PC 이름(편지 받는 쪽 — 원문 발췌 쿼리에만 쓴다).
+        _ref = getattr(ctx, "handout_ref", None)
+        if isinstance(_ref, dict):
+            _ref = dict(_ref)
+            _ref["pc_names"] = rt._pc_names_for_extract(channel_id, ctx.user_id)
+        result = await _wb.trigger_board_update(
+            message.channel, rt.client, config.role_model("light"), channel_id,
+            trigger="declared", dai=dict(ctx.dai) if ctx.dai else {}, deliver=req, ref=_ref,
+        )
+        if not result:
+            _olog.info("[Handout] 도착물 콜 무산 — 핸드아웃 없이 진행 (source=%s)",
+                        req.get("source"))
+            return False
 
     import custom_vars as _cv
     import turn_mail as _tm
@@ -2429,7 +2451,10 @@ async def _deliver_handout(rt, ctx, message, channel_id: str) -> bool:
         _olog.warning(f"[Handout] 표시 실패(핸드아웃 블록은 유지): {e}")
         # [2026-09-24 감사] 표시가 무산되면 선언 행을 한 줄 알림으로 되돌린다(이미 되돌렸으면 no-op).
         try:
-            _wb.restore_arrival_request(channel_id, req)
+            if _app_ho:
+                _ah.requeue_handout(channel_id, _app_ho)   # [C116 판8] 앱 도착물은 대기열 맨 앞으로
+            else:
+                _wb.restore_arrival_request(channel_id, req)
         except Exception:
             pass
         return False

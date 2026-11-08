@@ -203,8 +203,13 @@ def judgment_snapshot(j: dict):
         "edge_terms": list(j.get("edge_terms") or []),
         "active_passives": list(j.get("active_passives") or []),
         "active_items": list(j.get("active_items") or []), "assist": list(j.get("assist") or []),
+        "oppose": list(j.get("oppose") or []),   # [C118] 맞섬 −1 로 받힌 이름
         "active_strikes": list(j.get("active_strikes") or []),
+        "outer_terms": list(j.get("outer_terms") or []),   # [C116 0-3] [[앱 id, 라벨, 받은 값, 낸 값]]
         "gate": j.get("gate_reason", ""),
+        # [C116 판3] 행동 종류 · 행동 글 — 앱 lk.world().judgment 가 읽는다
+        "type": str(((j.get("meta") or {}) if isinstance(j.get("meta"), dict) else {}).get("type") or "")[:40],
+        "action": str(((j.get("meta") or {}) if isinstance(j.get("meta"), dict) else {}).get("action") or "")[:200],
     }
 
 

@@ -1115,6 +1115,32 @@ def convert_to_game_context(channel_id: str, user_id: str, user_input: str, lore
     except Exception as _e_ru:
         logger.debug(f"[Relation] start candidates skip: {_e_ru}")
 
+    # [2026-11-06 C119] 추출 콜 4b 출석 거르기 재료 — 무대 위 · 근처 · 이번 입력 · 직전 산문에 이름(키 · 별칭)이 나온 사람.
+    #   4b 에 무대 밖 사람이 실리면 RelevantNPCs 로 새어 렌더 Slot 7 시트 전문 · Slot 33 목소리까지 간다(C107 §6).
+    #   출석을 못 풀면(unresolved · 예외) 키를 안 넣는다 → 거르기 없음(옛 동작). 손잡이 끔 = 키 없음(바이트 그대로).
+    try:
+        import config as _cfg_4b
+        import memory_index as _mi_4b
+        if getattr(_cfg_4b, "THEORIA_4B_ONSTAGE", False) and _tiers and not _tiers.get("unresolved"):
+            _keep_4b = list(anchors.get("scene_cast") or []) + list(anchors.get("nearby_cast") or [])
+            _last_gm_4b = next((str(h.get("content") or "") for h in reversed(recent_history or [])
+                                if isinstance(h, dict) and str(h.get("role") or "").lower() in ("model", "assistant")), "")
+            _npcs_4b = domain_manager.get_npcs(channel_id) or {}
+            for _txt_4b in (user_input or "", _last_gm_4b):
+                if not _txt_4b:
+                    continue
+                for _canon_4b, _d_4b in _npcs_4b.items():
+                    if not isinstance(_canon_4b, str) or _canon_4b in _keep_4b:
+                        continue
+                    # `도겸(Dogyeom)` → 통째 · 도겸 · Dogyeom (C95 split_name_keys) — 산문 · 입력은 괄호 꼴로 안 쓴다.
+                    _nms_4b = _mi_4b.split_name_keys(
+                        [_canon_4b] + [a for a in ((_d_4b or {}).get("aliases") or []) if isinstance(a, str) and a])
+                    if any(_recall_name_in_input(_n, _txt_4b) >= 0 for _n in _nms_4b):
+                        _keep_4b.append(_canon_4b)
+            anchors["npc_state_keep"] = _keep_4b
+    except Exception as _e_4b:
+        logger.debug(f"[Theoria] 4b keep skip: {_e_4b}")
+
     # [2026-07-02 Offscreen Motion — 뮈토스 이식] 부재 등록 NPC 후보 → Theoria offscreen_trace 재료.
     # 장면 밖 NPC의 "세계가 턴 사이에 움직인 흔적" 공급용. 후보 6명 캡, 실패 무해.
     # [Phase 0] last_seen(emotion_log 기준)으로 부재 '기간' 동봉 — 오래 빈 인물일수록 흔적 가치↑.

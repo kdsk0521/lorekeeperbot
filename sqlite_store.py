@@ -699,6 +699,15 @@ def _ensure_schema(channel_id: str = "") -> bool:
                     PRIMARY KEY (channel_id, kind, name)
                 )
             """)
+            # [2026-11-06 C117 A1] `!다시` 위키 사본 표지 — 사본 표(wiki_redo_pages · _sections · _tally)는 wiki_store 가
+            #   살아 있는 표 칸을 따라 만든다. 리셋 · 클리어는 이 표지만 지운다(표지가 없으면 사본을 안 쓴다).
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS wiki_redo_meta (
+                    channel_id TEXT PRIMARY KEY,
+                    turn       INTEGER,
+                    created_at REAL
+                )
+            """)
             # [2026-09-25 스레드 장부] 약속·사안 수명주기 = **이벤트 행이 정본**(현재 상태는 thread_ledger.fold).
             #   롤링 삭제 없음(open 행이 잘리면 fold 가 깨진다). !다시 = _RETRY_LOG_TABLES 워터마크 트림이 곧 상태 복원.
             conn.execute("""
@@ -1070,6 +1079,26 @@ def get_edges(channel_id: str, source: Optional[str] = None,
     except Exception as e:
         logger.warning(f"[SQLiteStore] get_edges 실패: {channel_id}: {e}")
         return []
+
+
+def read_edges_all(channel_id: str, strict: bool = False) -> Optional[List[Dict[str, Any]]]:
+    """[2026-11-05 C116 0-1] 채널 엣지 전부 — `!다시` 턴 시작 사본 재료.
+
+    strict=True 면 읽기 실패(스키마 · 연결 · 예외)를 None 으로 낸다. "엣지 0개"([])와 "못 읽음"(None)을
+    가르지 않으면 restore_edges([]) 가 표를 비운다(C77 비밀 원장 strict 와 같은 교훈). get_edges 는 실패에 [] 라 못 쓴다."""
+    _fail = None if strict else []
+    if not channel_id or not _ensure_schema(channel_id):
+        return _fail
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return _fail
+    try:
+        cur = conn.execute(f"SELECT {_EDGE_COLS} FROM relations WHERE channel_id=? ORDER BY source, target",
+                           (channel_id,))
+        return [_edge_row(r) for r in cur.fetchall()]
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_edges_all 실패: {channel_id}: {e}")
+        return _fail
 
 
 def _edge_base(existing: Optional[Dict[str, Any]], turn: int, origin: str) -> Tuple[int, int]:
@@ -1731,7 +1760,8 @@ def delete_channel_rows(channel_id: str) -> bool:
                       "growth_log",  # [2026-10-27 C82] 성장발효 도장
                       # [2026-09-14 W1] 위키 페이지 3테이블 — 레거시 모드에서만 목록 삭제
                       #   (채널 모드는 파일 삭제라 자동). 클리어(§6 W4)와는 별개.
-                      "pages", "sections", "section_history"):
+                      "pages", "sections", "section_history",
+                      "wiki_redo_meta"):  # [2026-11-06 C117 A1] `!다시` 위키 사본 표지
             conn.execute(f"DELETE FROM {table} WHERE channel_id=?", (channel_id,))
         conn.commit()
         return True
@@ -2236,6 +2266,70 @@ def read_retry_secrets(channel_id: str) -> Optional[list]:
     return None
 
 
+RETRY_EDGES_KEY = "__relation_edges__"
+RETRY_WIKI_KEY = "__wiki_copy_turn__"   # [2026-11-06 C117 A1] 이 스냅숏과 같이 찍힌 위키 사본의 턴
+RETRY_EDITS_KEY = "__edit_mark__"       # [2026-11-06 C117 A3] 이 스냅숏을 찍을 때의 편집 일지 끝 id
+
+
+def read_retry_edit_mark(channel_id: str) -> Optional[int]:
+    """[C117 A3] 영속 스냅샷에 동봉된 일지 끝 id. 없으면 None(옛 스냅샷 = 그 턴 뒤 일지 전부 다시 얹음)."""
+    if not channel_id or not _ensure_schema(channel_id):
+        return None
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return None
+    try:
+        row = conn.execute("SELECT marks FROM retry_snapshot WHERE channel_id=?", (channel_id,)).fetchone()
+        if row and row[0]:
+            m = json.loads(row[0])
+            v = m.get(RETRY_EDITS_KEY) if isinstance(m, dict) else None
+            if isinstance(v, int) and not isinstance(v, bool):
+                return v
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_retry_edit_mark 실패: {channel_id}: {e}")
+    return None
+
+
+def read_retry_wiki(channel_id: str) -> Optional[int]:
+    """[C117 A1] 영속 스냅샷에 동봉된 위키 사본 턴(marks 칸). 없으면 None(옛 스냅샷 = 페이지 안 돌림)."""
+    if not channel_id or not _ensure_schema(channel_id):
+        return None
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return None
+    try:
+        row = conn.execute("SELECT marks FROM retry_snapshot WHERE channel_id=?", (channel_id,)).fetchone()
+        if row and row[0]:
+            m = json.loads(row[0])
+            v = m.get(RETRY_WIKI_KEY) if isinstance(m, dict) else None
+            if isinstance(v, int) and not isinstance(v, bool):
+                return v
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_retry_wiki 실패: {channel_id}: {e}")
+    return None
+
+
+
+def read_retry_edges(channel_id: str) -> Optional[list]:
+    """[2026-11-05 C116 0-1] 영속 스냅샷에 동봉된 관계 엣지 사본(marks 칸 `__relation_edges__`).
+    없으면 None(옛 스냅샷 = 손 안 댐). read_retry_marks 는 `__` 칸을 이미 거른다."""
+    if not channel_id or not _ensure_schema(channel_id):
+        return None
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return None
+    try:
+        cur = conn.execute("SELECT marks FROM retry_snapshot WHERE channel_id=?", (channel_id,))
+        row = cur.fetchone()
+        if row and row[0]:
+            m = json.loads(row[0])
+            if isinstance(m, dict) and isinstance(m.get(RETRY_EDGES_KEY), list):
+                return m[RETRY_EDGES_KEY]
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] read_retry_edges 실패: {channel_id}: {e}")
+    return None
+
+
 # =========================================================
 # [2026-08-12 !다시 유령 정리] 로그 워터마크 — 폐기 턴이 SQLite에 남긴 유령 행 회수
 # 병: retry_last는 JSON 도메인 스냅샷만 되돌리고 SQLite append 로그는 무접촉이라,
@@ -2246,6 +2340,7 @@ def read_retry_secrets(channel_id: str) -> Optional[list]:
 #         애초에 id 컬럼이 없어 워터마크가 성립 안 함.
 #   제외: sessions/npcs/relations/npc_knowledge/secret_ledger/fermented_history/
 #         deep_memory/retry_snapshot — 상태·설정 테이블(upsert형).
+#         (secret_ledger · relations 는 턴 시작 사본을 통째로 되돌린다 — restore_secrets(C77) · restore_edges(C116 0-1).)
 # =========================================================
 
 _RETRY_LOG_TABLES = (
@@ -2811,6 +2906,49 @@ def restore_secrets(channel_id: str, rows: Any) -> bool:
         return False
 
 
+def restore_edges(channel_id: str, rows: Any) -> bool:
+    """[2026-11-05 C116 0-1] `!다시` 전용 — 관계 엣지를 턴 시작 모양으로 통째 되돌린다(채널 행 지우고 다시 넣기, 한 트랜잭션).
+
+    엣지는 (channel, source, target) 덮어쓰기 표라 워터마크 트림이 안 맞고, 도메인 스냅샷(JSON)에도 없다. 폐기된 턴 몫이 남던 길:
+    배치 NPC↔NPC 이동(지금 bond + delta, origin batch — 캡 밖)이 `!다시`마다 한 번 더 붙음 · 재실행 Theoria 4b 가 버린 턴의
+    관계를 지난 턴 상태로 읽음(시작값 후보에서도 빠짐) · 그 턴에 처음 선 엣지가 남음.
+    방향 가드 · 이름 해상도 · 캡은 안 탄다 — 사본은 이미 그 관문을 지난 행이다. 실패면 rollback(지금 엣지 그대로).
+    부르는 곳은 `orchestration.retry_last` 하나(스모크가 잰다)."""
+    if not channel_id or not isinstance(rows, list) or not _ensure_schema(channel_id):
+        return False
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return False
+    try:
+        conn.execute("DELETE FROM relations WHERE channel_id=?", (channel_id,))
+        for e in rows:
+            if not isinstance(e, dict) or not e.get("source") or not e.get("target"):
+                continue
+            hist = e.get("history")
+            lt = e.get("last_turn")
+            conn.execute(
+                f"INSERT OR REPLACE INTO relations (channel_id, {_EDGE_COLS}) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    channel_id, str(e["source"]), str(e["target"]),
+                    int(e.get("bond", 0) or 0), int(e.get("tension", 0) or 0),
+                    str(e.get("stance", "") or ""), e.get("kind"),
+                    int(lt) if lt is not None else None,
+                    json.dumps(hist if isinstance(hist, list) else [], ensure_ascii=False),
+                    int(e.get("base_bond", 0) or 0), int(e.get("base_tension", 0) or 0),
+                ),
+            )
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] restore_edges 실패 (무시): {channel_id}: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+
+
 def read_secrets(channel_id: str, include_closed: bool = False, strict: bool = False):
     """채널 비밀 전체. 기본은 kept/leaking만 (revealed/retired 제외).
 
@@ -2868,6 +3006,7 @@ def clear_session_scoped(channel_id: str) -> bool:
         "well_log",  # [2026-10-24 C75 G1] 중력 우물 — 세션 파생
         "turn_index",  # [2026-10-26 C80] 턴 색인 — 세션 파생(원문 구간이 가리키는 history_log 와 같은 수명)
         "growth_log",  # [2026-10-27 C82] 성장발효 도장 — 세션 파생
+        "wiki_redo_meta",  # [2026-11-06 C117 A1] `!다시` 위키 사본 표지 — 클리어 뒤 옛 사본으로 안 돌리게
     )
     try:
         for t in tables:
@@ -3868,8 +4007,17 @@ def append_activity_edit(channel_id: str, after_turn: int, uid: str, edit: Dict[
         return None
 
 
-def read_activity_edits(channel_id: str, after_turn_gt: Optional[int] = None) -> List[Dict[str, Any]]:
-    """일지 (오래된→최신). after_turn_gt 주면 after_turn > 그 값인 행만(!다시 재적용)."""
+def read_activity_edits(channel_id: str, after_turn_gt: Optional[int] = None,
+                        after_id: Optional[int] = None) -> List[Dict[str, Any]]:
+    """일지 (오래된→최신). after_turn_gt 주면 after_turn > 그 값인 행만(!다시 재적용).
+    [C117 A3] after_id 주면 그 id 뒤 행만(스냅숏이 이미 담은 다시 얹기 몫은 빼고)."""
+    rows_all = _read_activity_edits(channel_id, after_turn_gt)
+    if after_id is None:
+        return rows_all
+    return [r for r in rows_all if int(r.get("id") or 0) > int(after_id)]
+
+
+def _read_activity_edits(channel_id: str, after_turn_gt: Optional[int] = None) -> List[Dict[str, Any]]:
     if not channel_id or not _ensure_schema(channel_id):
         return []
     conn = _get_conn(channel_id)
@@ -3886,6 +4034,21 @@ def read_activity_edits(channel_id: str, after_turn_gt: Optional[int] = None) ->
     except Exception as e:
         logger.warning(f"[SQLiteStore] read_activity_edits 실패: {channel_id}: {e}")
         return []
+
+
+def max_activity_edit_id(channel_id: str) -> Optional[int]:
+    """[2026-11-06 C117 A3] 채널 일지의 맨 끝 id(없으면 0, 읽기 실패 None) — `!다시` 스냅숏이 같이 찍는다."""
+    if not channel_id or not _ensure_schema(channel_id):
+        return None
+    conn = _get_conn(channel_id)
+    if conn is None:
+        return None
+    try:
+        r = conn.execute("SELECT COALESCE(MAX(id), 0) FROM activity_edits WHERE channel_id=?", (channel_id,)).fetchone()
+        return int(r[0] or 0)
+    except Exception as e:
+        logger.warning(f"[SQLiteStore] max_activity_edit_id 실패: {channel_id}: {e}")
+        return None
 
 
 def last_activity_edit(channel_id: str) -> Optional[Dict[str, Any]]:

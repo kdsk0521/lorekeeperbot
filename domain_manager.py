@@ -1167,7 +1167,8 @@ def get_deep_memory(channel_id: str) -> tuple:
     return (d.get("deep_memory", "") or "", d.get("deep_memory_data", {}) or {})
 
 
-def _find_npc_key(npcs: dict, name: str, *, allow_token: bool = True, _honorific: bool = True) -> Optional[str]:
+def _find_npc_key(npcs: dict, name: str, *, allow_token: bool = True, _honorific: bool = True,
+                  honorific_kin: bool = False) -> Optional[str]:
     """NPC 키 검색: 정규화 → 대칭 base/inner 매칭 → aliases → 충돌가드 토큰(축약형).
 
     [2026-06-12] aliases 정식 지원 (한↔영 교차 중복 차단).
@@ -1176,7 +1177,11 @@ def _find_npc_key(npcs: dict, name: str, *, allow_token: bool = True, _honorific
     쓰는 탓에 새 분열), 축약형/이름만 부른 경우("스텔라"→Stella Valentine, "서린"→윤서린)는
     아예 0매칭이었음 (deepseek이 풀네임/영문/이름을 턴마다 번갈아 호명 → NPC 폭증).
     이제: ① 질의·키 양쪽에서 base/inner 추출 후 full-form 교집합(토큰 아님 — 안전),
-         ② 축약형은 토큰 후보가 '정확히 1명'일 때만 매칭(오병합 방지)."""
+         ② 축약형은 토큰 후보가 '정확히 1명'일 때만 매칭(오병합 방지).
+
+    [2026-11-04 C115] honorific_kin — 관계어 호칭(형·누나·언니·오빠·선생·선생님·아저씨)도 뗄지.
+    기본 False: "도겸 누나"는 '도겸을 누나라 부름'과 '도겸의 누나' 둘 다로 읽혀서, 떼면 누나가 도겸에 붙는다.
+    True 는 '그 사람을 부른 말'이라는 근거가 있는 자리만 넘긴다(식별 허브 name_kind=name · 시드 게이트)."""
     norm = _normalize_npc_name(name)
     # 1) 정확한 정규화 매칭
     if norm in npcs:
@@ -1214,24 +1219,50 @@ def _find_npc_key(npcs: dict, name: str, *, allow_token: bool = True, _honorific
     #    "헤이젤 언니"→헤이젤(Hazel), "길동씨"→길동→홍길동, "비비짱"→비비(Bibi). 짧게 떼는 것부터("홍선생님"→"홍선생" 키가 있으면 그쪽).
     #    떼고 남은 게 두 글자 미만이면 버린다("김군"→"김"이 김철수에 붙지 않게). 성+직함(A5b)은 B1에 맡긴다.
     #    근거 npc/별칭A1_구현보고_2026-10-10 §3-4, npc/별칭A5a_구현보고_2026-10-11.
+    #    [2026-11-04 C115] 관계어(형·누나·언니·오빠·선생·아저씨)는 honorific_kin=True 일 때만 뗀다(위 docstring).
+    #    떼기 전에 — 이 호칭 그대로 표식 달고 등록된 사람(`도겸 누나 #2A`)이 있으면 떼지 않고 None.
+    #    그 꼴은 누군가의 역할명이지 남을 부른 말이 아니다. 표식 인물로 흡수하지도 않는다(역할명 단독 질의는
+    #    무대 안에서만 — 식별 허브 ②′. S1/F1 규율 그대로).
     if _honorific:
-        for _c in _honorific_stripped(name):
+        _cands = _honorific_stripped(name, kin=honorific_kin)
+        if _cands and _is_tagged_label(npcs, name):
+            return None
+        for _c in _cands:
             _k = _find_npc_key(npcs, _c, allow_token=allow_token, _honorific=False)
             if _k:
                 return _k
     return None
 
 
-_HONORIFIC_SUFFIXES = ("씨", "님", "형", "양", "군", "짱", "언니", "오빠", "누나", "선생", "아저씨", "선생님")
+# [2026-11-04 C115] 호칭을 둘로 — 순수 호칭은 늘 떼고, 관계어는 근거가 있을 때만(honorific_kin).
+_HONORIFIC_PLAIN = ("씨", "님", "양", "군", "짱")
+_HONORIFIC_KIN = ("형", "언니", "오빠", "누나", "선생", "아저씨", "선생님")
+_HONORIFIC_SUFFIXES = _HONORIFIC_PLAIN + _HONORIFIC_KIN
 # 형·양·군은 이름 끝 글자로도 흔하다(이준형, 김민형). 띄어 쓴 호칭("철수 형")일 때만 뗀다.
 _HONORIFIC_SPACED_ONLY = ("형", "양", "군")
 
 
-def _honorific_stripped(name: str) -> list:
-    """[2026-10-11 별칭 A5a] 이름 끝 호칭을 뗀 후보들(짧게 떼는 것부터). 남은 이름이 두 글자 미만이면 뺀다."""
+def _is_tagged_label(npcs: dict, name: str) -> bool:
+    """[2026-11-04 C115] 명부에 이 호칭 그대로(띄어쓰기 무시) 표식 달린 키가 있나 — `도겸 누나` ↔ `도겸 누나 #2A`."""
+    q = re.sub(r"\s+", "", _normalize_npc_name(str(name or ""))).lower()
+    if not q:
+        return False
+    for k in (npcs or {}):
+        if not isinstance(k, str):
+            continue
+        nk = _normalize_npc_name(k)
+        m = _TAG_TAIL_RE.search(nk)
+        if m and re.sub(r"\s+", "", nk[:m.start()]).lower() == q:
+            return True
+    return False
+
+
+def _honorific_stripped(name: str, kin: bool = True) -> list:
+    """[2026-10-11 별칭 A5a] 이름 끝 호칭을 뗀 후보들(짧게 떼는 것부터). 남은 이름이 두 글자 미만이면 뺀다.
+    [2026-11-04 C115] kin=False 면 관계어(_HONORIFIC_KIN)는 안 뗀다."""
     s = str(name or "").strip()
     out = []
-    for suf in sorted(_HONORIFIC_SUFFIXES, key=len):
+    for suf in sorted(_HONORIFIC_SUFFIXES if kin else _HONORIFIC_PLAIN, key=len):
         if not s.endswith(suf):
             continue
         head = s[:-len(suf)]
@@ -1539,6 +1570,42 @@ def add_npc_alias(channel_id: str, name: str, alias: str) -> tuple:
     save_domain(channel_id, d)
     _mirror_npc(channel_id, key, data)
     return True, key
+
+def remove_npc_alias(channel_id: str, name: str, alias: str) -> tuple:
+    """[2026-11-05 C116 c3] NPC 별칭 빼기 — add_npc_alias 의 짝. Returns (success: bool, matched_key: str or None).
+    dict `aliases` · 플레이 표시(`_play_aliases`) · 위키 페이지 별칭(`wiki_store.remove_page_aliases`)에서 같이 뺀다.
+    본 이름(키)은 별칭이 아니라 못 뺀다. 없는 별칭이면 (False, key)."""
+    alias = (alias or "").strip()
+    if not alias:
+        return False, None
+    d = get_domain(channel_id)
+    npcs = d.get("npcs", {})
+    key = _find_npc_key(npcs, name)
+    if not key or not isinstance(npcs.get(key), dict):
+        return False, None
+    data = npcs[key]
+    norm = _normalize_npc_name(alias).lower()
+    aliases = data.get("aliases") if isinstance(data.get("aliases"), list) else []
+    kept = [a for a in aliases if not (isinstance(a, str) and _normalize_npc_name(a).lower() == norm)]
+    if len(kept) == len(aliases):
+        return False, key
+    data["aliases"] = kept
+    _pa = data.get("_play_aliases")
+    if isinstance(_pa, list):
+        _pa2 = [a for a in _pa if not (isinstance(a, str) and _normalize_npc_name(a).lower() == norm)]
+        if _pa2:
+            data["_play_aliases"] = _pa2
+        else:
+            data.pop("_play_aliases", None)
+    save_domain(channel_id, d)
+    _mirror_npc(channel_id, key, data)
+    try:
+        import wiki_store as _ws_ra
+        _ws_ra.remove_page_aliases(channel_id, _ws_ra.page_id_for("character", key), [alias])
+    except Exception as _e_ra:
+        logging.debug(f"[NPC] 페이지 별칭 빼기 skip: {_e_ra}")
+    return True, key
+
 
 def split_npc_pair(npcs: dict, text: str, both_npc: bool = True) -> tuple:
     """명령 인자 텍스트를 (이름A, 이름B)로 분할. 이름 중간 띄어쓰기 지원.
@@ -3490,38 +3557,8 @@ def get_ai_memory(channel_id: str, uid: str) -> Dict[str, Any]:
     p = get_participant_data(channel_id, uid)
     return p.get("ai_memory", {}) if p else {}
 
-# [일지 전체 로그 2026-07-04] 표시(노트북 [일지] 최근 N줄)와 저장(전체 이력)을 분리.
-# 노트북엔 최근 N줄만 렌더되어 매 턴 프롬프트 부담↓, 전체는 ai_memory.journal_log에 영속.
-_JOURNAL_LOG_CAP = 500  # 안전 상한 (초과 시 오래된 것부터 드롭 — 사실상 무제한에 가까움)
-
-def get_journal_log(channel_id: str, uid: str) -> List[str]:
-    """PC 일지 전체 이력(리스트). 노트북 [일지] 섹션은 이 로그의 최근 N줄 렌더."""
-    mem = get_ai_memory(channel_id, uid)
-    log = mem.get("journal_log", [])
-    return [str(x) for x in log] if isinstance(log, list) else []
-
-def append_journal_log(channel_id: str, uid: str, entry: str) -> List[str]:
-    """일지 1건을 전체 로그에 append(직전 항목과 정규화 중복이면 스킵) 후 저장. 갱신된 로그 반환."""
-    entry = str(entry or "").strip()
-    if not entry or not uid:
-        return get_journal_log(channel_id, uid) if uid else []
-    _norm = lambda s: re.sub(r'\s+', ' ', str(s).strip())
-    p = get_participant_data(channel_id, uid)
-    if not p:
-        return []
-    mem = p.get("ai_memory", {})
-    if not isinstance(mem, dict):
-        mem = {}
-    log = mem.get("journal_log", [])
-    if not isinstance(log, list):
-        log = []
-    if not log or _norm(log[-1]) != _norm(entry):  # 연속 중복만 방지(재발은 허용)
-        log.append(entry)
-    log = log[-_JOURNAL_LOG_CAP:]
-    mem["journal_log"] = log
-    p["ai_memory"] = mem
-    save_participant_data(channel_id, uid, p)
-    return log
+# [2026-11-06 C119 Q40] get_journal_log · append_journal_log 삭제(쓰는 길 0). `!클리어` 의 journal_log 지우기는
+#   옛 채널 찌꺼기 청소라 남긴다(reset_session_state).
 
 def update_ai_memory(channel_id: str, uid: str, updates: Dict[str, Any]) -> None:
     p = get_participant_data(channel_id, uid)
@@ -3797,7 +3834,7 @@ _CARRY_BOARD = ("channels", "display_mode")
 #   턴과 섞인 칸(participants · npcs · world_tree · lore_summary_data · 변수 값 · 시계)은 넘겨 얹지 않고, 그 칸을 쓰는 명령 뒤엔
 #   `block_redo` 로 `!다시` 를 막는다(조용히 지우는 것보다 낫다 — 갈래 가+).
 _CARRY_TOP = ("settings", "active_genres", "custom_tone", "lore_chunks", "bot_active", "ooc_mode")
-_CARRY_WORLD = ("rules_text", "location_rules")
+_CARRY_WORLD = ("rules_text", "location_rules", "vessel_arm")   # [C116 1c] 깃들기 정하는 쪽 = 턴 밖 설정(모듈 앱)
 
 
 def redo_carry(channel_id: str) -> Dict[str, Any]:
@@ -4715,6 +4752,9 @@ def reset_session_state(channel_id: str) -> None:
     for _rk in ("rules_text", "location_rules"):
         if _old_ws.get(_rk):
             d["world_state"][_rk] = _old_ws[_rk]
+    # [2026-11-06 C116 판1 1c] 깃들기 정하는 쪽(모듈 앱 설정 — 모듈 켬끔처럼 준비 단계 입력). False 도 값이라 `in` 으로 본다.
+    if isinstance(_old_ws.get("vessel_arm"), bool):
+        d["world_state"]["vessel_arm"] = _old_ws["vessel_arm"]
     d["settings"]["session_locked"] = False # Unlock for re-start
     
     # 3. Reset Quests & Notebook (Keep Lore Items if any? No, reset all dynamic)
@@ -4851,6 +4891,15 @@ def reset_session_state(channel_id: str) -> None:
         logging.debug(f"[Clear] 소지품 시드 skipped: {_e_sj}")
 
     save_domain(channel_id, d)
+
+    # [2026-11-07 C120] 값 층을 선언에 맞춰 다시 심는다 — 목록 값의 시작 항목(start_items)이 `!시작` 전 상태라서.
+    #   world_state 를 통째 갈았으니 선언된 값은 다 '아직 없음'이다 — fold_values 가 시작값 · 시작 항목으로 채운다
+    #   (코드가 심은 이름 · 소지품은 손대지 않는다).
+    try:
+        import custom_vars as _cv_fold
+        _cv_fold.fold_values(channel_id)
+    except Exception as _e_fold:
+        logging.debug(f"[Clear] 값 다시 심기 skipped: {_e_fold}")
 
     # [2026-10-14 C37 R3·R2] 장소 트리 — **save 뒤**에 돈다. world_tree 는 get_domain/save_domain 을 스스로
     #   돌기 때문에 위 저장 전에 돌면 순서에 따라 d 저장이 트리 변경을 덮을 수 있다.

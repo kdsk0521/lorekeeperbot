@@ -1350,7 +1350,9 @@ def decide_entity(npcs: Dict[str, Any], key: str, entry: Dict[str, Any],
     #   (update_npc 의 괄호 업그레이드는 명령·로어 등록 경로 전용으로 남는다). 괄호 속 다른 표기는 별칭 후보로만
     #   돌려준다 → 로스터 패스가 `_promote_alias`(충돌 가드)로 올린다.
     if isinstance(npcs, dict):
-        _hit2 = domain_manager._find_npc_key(npcs, label)
+        # [2026-11-04 C115] 관계어 호칭 떼기는 name 판정일 때만 — label "도겸 누나"(도겸의 누나)가 도겸에 붙지 않게.
+        #   name 인데 "헤이젤 언니"면 헤이젤(A5a 그대로). 판정이 틀려도 갈라지는 쪽(병합으로 되돌림)으로만 틀린다.
+        _hit2 = domain_manager._find_npc_key(npcs, label, honorific_kin=(kind == "name"))
         if _hit2:
             _alias2 = None
             _pm = re.search(r'[(\[（]([^)\]）]+)[)\]）]', label)

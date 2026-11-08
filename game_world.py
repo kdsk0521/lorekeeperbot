@@ -24,6 +24,21 @@ def get_weather_types(channel_id: str) -> List[str]:
     return config.DEFAULT_WEATHER_TYPES
 
 
+def _day_change_weather(channel_id: str, world: dict) -> str:
+    """[2026-11-07 C121] 날이 바뀔 때의 날씨. 켜진 날씨 주인 앱(manifest `weather: true`)이 있으면 그 앱이
+    `lk.weather` 로 적어 둔 다음 날 첫 날씨(`weather_next` — 없으면 지금 그대로), 무작위 0.
+    주인 앱이 없으면 옛 그대로 다섯 중 무작위(난수 쓰임까지 같다)."""
+    owner = ""
+    try:
+        import app_host
+        owner = app_host.weather_owner(channel_id)
+    except Exception:
+        owner = ""
+    if owner:
+        return str(world.get("weather_next") or world.get("weather") or "맑음")
+    return random.choice(get_weather_types(channel_id))
+
+
 def _slot_for_hour(hour: int) -> str:
     """시각(0-23)에 해당하는 시간 슬롯 반환."""
     for slot, (start, end) in config.TIME_SLOT_HOURS.items():
@@ -132,7 +147,7 @@ def advance_minutes(channel_id: str, minutes: int) -> str:
 
     if new_day_offset > 0:
         world["day"] = world.get("day", 1) + new_day_offset
-        world["weather"] = random.choice(get_weather_types(channel_id))
+        world["weather"] = _day_change_weather(channel_id, world)   # [C121] 날씨 주인 앱이면 그 앱의 내일
         # V8.5: day→month→year wrap (캘린더 확장)
         _wrap_calendar(world)
 
@@ -222,7 +237,7 @@ def advance_to_slot(channel_id: str, target_slot: str, day_offset: int = 0,
 
     if day_offset > 0:
         world["day"] = old_day + day_offset
-        world["weather"] = random.choice(get_weather_types(channel_id))
+        world["weather"] = _day_change_weather(channel_id, world)   # [C121] 날씨 주인 앱이면 그 앱의 내일
         # V8.5: day→month→year wrap (캘린더 확장)
         _wrap_calendar(world)
     _add_scene_elapsed(world, _old_h, _old_m, day_offset)
@@ -291,7 +306,7 @@ def advance_time(channel_id: str) -> str:
         world["day"] = world.get("day", 1) + 1
         # V8.5: day → month → year wrap
         _wrap_calendar(world)
-        new_weather = random.choice(get_weather_types(channel_id))
+        new_weather = _day_change_weather(channel_id, world)   # [C121]
         world["weather"] = new_weather
 
         # 시각 동기화 — 새 슬롯 시작 시각으로 설정
@@ -735,15 +750,151 @@ def _find_live_clock(clocks: List[Dict[str, Any]], name: str, norm) -> "Dict[str
     return None
 
 
+def end_clock_averted(channel_id: str, name: str, turn: int = 0, *, origin: str = "page",
+                      kind: str = "averted") -> Dict[str, Any]:
+    """[2026-11-05 C116 0-2b] 산 시계 하나를 끝낸다 — `end_clocks_on_page`(C89, 인용 관문 뒤)와 OOC 편집(관문 없음)이
+    같이 지나는 몸. kind averted = 막아냄(위협이면 걸린 목표 +1 · 해소 보상 몫) · void = 없던 일(보상 0 · 목표 0).
+    둘 다 연결(linked_goal)은 푼다. ★저장 순서(검토 C89-1): 시계 끝을 **먼저 저장**하고 나서 목표를 민다.
+    보상은 여기서 쓰지 않고 돌려준다(`reward`) — 페이지 길은 모아서 한 번, OOC 길은 건마다 `pay_clock_reward`.
+    돌려줌: {ok, name, reason(nomatch · write), reward, receipts}."""
+    out: Dict[str, Any] = {"ok": False, "name": str(name or ""), "reason": "", "reward": 0, "receipts": []}
+    try:
+        import thread_ledger
+        import doom_module as _dmod
+        import sqlite_store
+    except Exception:
+        out["reason"] = "import"
+        return out
+    world = domain_manager.get_world_state(channel_id) or {}
+    clocks = world.get("doom_clocks") or []
+    if not isinstance(clocks, list):
+        out["reason"] = "nomatch"
+        return out
+    clock = _find_live_clock(clocks, str(name or "").strip(), thread_ledger._norm)
+    if not clock:
+        out["reason"] = "nomatch"
+        return out
+    void = kind == "void"
+    try:
+        clock["resolved"] = True
+        clock.pop("pending_completion", None)
+        clock.pop("pending_turn", None)
+        _dmod._mark_end(clock, "void" if void else "averted", turn)
+        try:
+            doom_v = _dmod._get_clock_doom(clock)
+        except Exception:   # 칸이 글로 깨진 옛 시계 — 위협으로 본다(doom 기본 쪽)
+            doom_v = 1
+        gid = clock.get("linked_goal")
+        clock["linked_goal"] = None
+        if origin != "page":
+            clock["last_write"] = {"origin": origin, "turn": int(turn or 0), "op": "void" if void else "end"}
+        key = (clock.get("name"), clock.get("turn_created"))
+        world["doom_clocks"] = clocks
+        domain_manager.update_world_state(channel_id, world)   # ← 먼저 저장(검토 C89-1)
+    except Exception as e:
+        logger.warning(f"[ClockEnd] end skip ({name}): {e}")
+        out["reason"] = "write"
+        return out
+    out["ok"] = True
+    out["name"] = clock.get("name")
+    if void:
+        return out
+    if doom_v > 0:
+        out["reward"] = int(config.CLOCK_RESOLVE_REWARD.get(_safe_int(clock.get("segments", 6), 6) or 6, 3))
+    if not (gid and doom_v > 0):
+        return out
+    try:
+        rows = sqlite_store.read_thread_log(channel_id)
+        g = thread_ledger.load_states(channel_id).get(gid)
+        if not _dmod._goal_link_live(channel_id, clock, gid, g, rows=rows):
+            return out
+        if any(str(r.get("thread_id")) == gid and r.get("op") == "progress" and _safe_int(r.get("turn")) == int(turn or 0)
+               for r in rows):
+            logger.info("[ClockEnd] goal advance skip: %s already moved this turn (clock '%s')", gid, clock.get("name"))
+            return out
+        n = thread_ledger.code_events(channel_id, int(turn or 0), [{"op": "progress", "id": gid, "step": 1}],
+                                      origin="code:averted", receipts=out["receipts"])
+        if n:   # advanced_goal 은 다시 읽은 세계에 얹는다(목표 끝 보상이 쓴 것 위에)
+            w2 = domain_manager.get_world_state(channel_id) or {}
+            for c2 in w2.get("doom_clocks") or []:
+                if isinstance(c2, dict) and (c2.get("name"), c2.get("turn_created")) == key:
+                    c2["advanced_goal"] = gid
+                    domain_manager.update_world_state(channel_id, w2)
+                    break
+    except Exception as e:
+        logger.debug(f"[ClockEnd] goal advance skip: {e}")
+    return out
+
+
+def pay_clock_reward(channel_id: str, rewards: int, actor: str = "") -> None:
+    """해소 보상(평형, 캡 면제 — doom 의 resolve_reward 와 같은 값)."""
+    if rewards <= 0:
+        return
+    try:
+        import custom_vars as _cv
+        _cv.apply_system_delta(channel_id, "평형", rewards, "clock averted", actor=actor,
+                               exempt_cap=True, source="doom.resolve_reward")
+    except Exception as e:
+        logger.debug(f"[ClockEnd] reward skip: {e}")
+
+
+def set_clock_filled(channel_id: str, name: str, filled: Any, turn: int = 0, *, origin: str = "ooc") -> Dict[str, Any]:
+    """[2026-11-05 C116 0-2b] 산 시계의 칸을 그 수로(0~segments 클램프). filled_history · last_progress_turn 은
+    doom 이 칸을 옮길 때와 같이 적는다. 다 채워도 여기서 끝내지 않는다 — 다음 턴 doom §4 가 완성 대기로 올린다.
+    돌려줌: {ok, name, filled, segments, reason(nomatch · bad · write)}."""
+    out: Dict[str, Any] = {"ok": False, "name": str(name or ""), "filled": None, "segments": None, "reason": ""}
+    try:
+        import thread_ledger
+    except Exception:
+        out["reason"] = "import"
+        return out
+    try:
+        want = int(float(filled))
+    except (TypeError, ValueError):
+        out["reason"] = "bad"
+        return out
+    world = domain_manager.get_world_state(channel_id) or {}
+    clocks = world.get("doom_clocks") or []
+    clock = _find_live_clock(clocks, str(name or "").strip(), thread_ledger._norm) if isinstance(clocks, list) else None
+    if not clock:
+        out["reason"] = "nomatch"
+        return out
+    seg = _safe_int(clock.get("segments", 6), 6) or 6
+    new = max(0, min(seg, want))
+    try:
+        old = int(clock.get("filled", clock.get("progress", 0)) or 0)
+    except (TypeError, ValueError):
+        old = 0
+    try:
+        clock["filled"] = new
+        if new != old:
+            clock["last_progress_turn"] = int(turn or 0)
+            hist = clock.setdefault("filled_history", [old])
+            if not isinstance(hist, list):
+                hist = clock["filled_history"] = [old]
+            hist.append(new)
+            win = int(getattr(config, "CLOCK_OSCILLATION_WINDOW", 6) or 6)
+            if len(hist) > win:
+                clock["filled_history"] = hist[-win:]
+        clock["last_write"] = {"origin": origin, "turn": int(turn or 0), "op": "set"}
+        world["doom_clocks"] = clocks
+        domain_manager.update_world_state(channel_id, world)
+    except Exception as e:
+        logger.warning(f"[ClockSet] skip ({name}): {e}")
+        out["reason"] = "write"
+        return out
+    out.update(ok=True, name=clock.get("name"), filled=new, segments=seg)
+    return out
+
+
 def end_clocks_on_page(channel_id: str, items: Any, source_text: str, turn: int = 0,
                        actor: str = "") -> Dict[str, Any]:
     """[2026-10-28 C89 ㅁ] 렌더 뒤 배치 `clocks_ended` → 그 시계를 averted 로 끝낸다(doom §0-앞 Theoria 해결과 같은 규칙).
     인용 관문 = 스레드와 같은 정규화(thread_ledger._norm) — 이번 턴 입력 + 산문에 그 말이 있어야. 이름은 지금 선 시계와 맞춘다.
     위협(doom>0)에 걸린 목표 +1(code:averted, 연결이 살아 있을 때만 · 이 턴에 그 목표 진행 행이 이미 있으면 건너뜀 — 한 사건
     두 번 밀기 막음, 검토 C89-2) · 해소 보상(평형, 캡 면제 — doom 의 resolve_reward 와 같은 값). 타이머는 끝만.
-    ★저장 순서(검토 C89-1): 시계 끝(연결 풂 포함)을 **먼저 저장**하고 나서 목표를 민다 — 목표가 그걸로 다 차 닫히면 그 보상
-    (pending_doom_gain · 같은 목표의 다른 시계 해결)을 장부 쪽이 세계에 쓰는데, 그 뒤에 처음 읽은 사본을 저장하면 지워졌다.
-    항목마다 세계를 새로 읽는다. 다음 턴 통째 저장 · 발동은 '끝남은 이긴다'(une_facade · doom §0)가 지킨다.
+    항목 몸 = `end_clock_averted`(C116 0-2b — OOC 편집과 같이 쓴다). 항목마다 세계를 새로 읽는다.
+    다음 턴 통째 저장 · 발동은 '끝남은 이긴다'(une_facade · doom §0)가 지킨다.
     돌려주는 것: {"ended": [이름], "receipts": [목표 영수증], "rejected": n}."""
     out: Dict[str, Any] = {"ended": [], "receipts": [], "rejected": 0}
     if not channel_id or not isinstance(items, list) or not items:
@@ -752,8 +903,6 @@ def end_clocks_on_page(channel_id: str, items: Any, source_text: str, turn: int 
         return out
     try:
         import thread_ledger
-        import doom_module as _dmod
-        import sqlite_store
     except Exception:
         return out
     src = thread_ledger._norm(source_text or "")
@@ -768,61 +917,18 @@ def end_clocks_on_page(channel_id: str, items: Any, source_text: str, turn: int 
         clocks = world.get("doom_clocks") or []
         if not isinstance(clocks, list):
             break
-        clock = _find_live_clock(clocks, name, thread_ledger._norm)
-        if not clock or not q or q not in src:
+        if not _find_live_clock(clocks, name, thread_ledger._norm) or not q or q not in src:
             out["rejected"] += 1
             continue
-        try:
-            clock["resolved"] = True
-            clock.pop("pending_completion", None)
-            clock.pop("pending_turn", None)
-            _dmod._mark_end(clock, "averted", turn)
-            try:
-                doom_v = _dmod._get_clock_doom(clock)
-            except Exception:   # 칸이 글로 깨진 옛 시계 — 위협으로 본다(doom 기본 쪽)
-                doom_v = 1
-            gid = clock.get("linked_goal")
-            clock["linked_goal"] = None
-            key = (clock.get("name"), clock.get("turn_created"))
-            world["doom_clocks"] = clocks
-            domain_manager.update_world_state(channel_id, world)   # ← 먼저 저장(검토 C89-1)
-        except Exception as e:
-            logger.warning(f"[ClockEnd] end skip ({name}): {e}")
+        r = end_clock_averted(channel_id, name, turn, origin="page")
+        if not r.get("ok"):
             out["rejected"] += 1
             continue
-        out["ended"].append(clock.get("name"))
-        if doom_v > 0:
-            rewards += int(config.CLOCK_RESOLVE_REWARD.get(_safe_int(clock.get("segments", 6), 6) or 6, 3))
-        if not (gid and doom_v > 0):
-            continue
-        try:
-            rows = sqlite_store.read_thread_log(channel_id)
-            g = thread_ledger.load_states(channel_id).get(gid)
-            if not _dmod._goal_link_live(channel_id, clock, gid, g, rows=rows):
-                continue
-            if any(str(r.get("thread_id")) == gid and r.get("op") == "progress" and _safe_int(r.get("turn")) == int(turn or 0)
-                   for r in rows):
-                logger.info("[ClockEnd] goal advance skip: %s already moved this turn (clock '%s')", gid, clock.get("name"))
-                continue
-            n = thread_ledger.code_events(channel_id, int(turn or 0), [{"op": "progress", "id": gid, "step": 1}],
-                                          origin="code:averted", receipts=out["receipts"])
-            if n:   # advanced_goal 은 다시 읽은 세계에 얹는다(목표 끝 보상이 쓴 것 위에)
-                w2 = domain_manager.get_world_state(channel_id) or {}
-                for c2 in w2.get("doom_clocks") or []:
-                    if isinstance(c2, dict) and (c2.get("name"), c2.get("turn_created")) == key:
-                        c2["advanced_goal"] = gid
-                        domain_manager.update_world_state(channel_id, w2)
-                        break
-        except Exception as e:
-            logger.debug(f"[ClockEnd] goal advance skip: {e}")
+        out["ended"].append(r.get("name"))
+        rewards += int(r.get("reward") or 0)
+        out["receipts"] += list(r.get("receipts") or [])
     if out["ended"]:
-        if rewards > 0:
-            try:
-                import custom_vars as _cv
-                _cv.apply_system_delta(channel_id, "평형", rewards, "clock averted", actor=actor,
-                                       exempt_cap=True, source="doom.resolve_reward")
-            except Exception as e:
-                logger.debug(f"[ClockEnd] reward skip: {e}")
+        pay_clock_reward(channel_id, rewards, actor)
         logger.info("[ClockEnd] t=%s ended=%s rejected=%s reward=%s", turn, out["ended"], out["rejected"], rewards)
     elif out["rejected"]:
         logger.info("[ClockEnd] t=%s rejected=%s (이름 · 인용 안 맞음)", turn, out["rejected"])

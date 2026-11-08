@@ -68,6 +68,19 @@ def extract_ooc(text: str):
     return " / ".join(bodies), re.sub(r"[ \t]{2,}", " ", "".join(keep)).strip()
 
 
+def ooc_turn_text(ic_text: str, ooc_text: str) -> Tuple[str, str]:
+    """[2026-11-05 C116 0-1b] 행동 + 인라인 OOC(장면 지시) → (이번 턴 입력, PC 기록 줄). 한 벌 — luka 행동+OOC 갈래 ·
+    `!다시 {입력}`(orchestration.retry_last)이 같이 쓴다. 기록 줄은 행동만(OOC 메타가 IC 기록에 영구로 남지 않게),
+    행동이 없으면 지시 줄 그대로(스킵 · 이동이 기록에 남아야 다음 턴이 장면이 왜 넘어갔는지 안다)."""
+    ic, ooc = (ic_text or "").strip(), (ooc_text or "").strip()
+    if ic and ooc:
+        return f"[플레이어 행동: {ic}] [OOC 지시: {ooc}]", ic
+    if ooc:
+        line = f"[OOC Directive: {ooc}]"
+        return line, line
+    return ic, ic
+
+
 
 def strip_discord_markdown(text: str) -> str:
     """메시지 앞뒤 및 내부의 디스코드 마크다운 기호를 제거합니다."""

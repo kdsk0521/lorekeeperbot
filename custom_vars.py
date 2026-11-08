@@ -92,6 +92,12 @@ DEFAULT_ITEM_GOAL = 0       # stock 형에서 목표를 안 준 항목 = 목표 
 FORMAT_MAX = 40             # `{v} 골드` 정도. 표시 문자열이 문단이 되면 패널이 무너진다.
 DELTA_CAP_MAX = SPAN_MAX    # 비대칭 캡 자체의 상한(정수 오염 방지)
 MAX_NPC_VALUES = 12         # NPC 스코프 변수 하나가 인물별 값을 몇 명까지 들 수 있나
+# [2026-11-07 C120] 값마다 명단 — `max_npcs` 의 하드 상한(출력물 급식이 명단 이름을 다 싣는 자리라 끝을 둔다).
+NPC_VALUES_HARD = 30        # [C120] 명단(only · holders · max_npcs)을 단 인물별 값이 한 번에 드는 사람 수 상한(명단 없는 값은 위 12)
+NPC_NAMES_MAX = 200         # [C120] start_by 표 이름 수 · 명단 값이 쥐고 있는 저장값 수(명단 밖으로 나간 사람 값도 둔다)
+STAGE_NOTE_MAX = 80        # [C120] 단계 설명 한 줄 — 렌더 급식에 숫자 대신 가는 방향 줄
+GROUP_MAX = 2              # [C120] 묶기 값(`group: true`) — 화면 칩 줄 수
+TRACK_NEVER = ("never", "안함", "안 함", "없음", "추적안함", "추적 안 함")
 
 # --- 산문(렌더) 급식 캡 — 패널은 장부고 산문은 재료다. 여기선 짧은 쪽이 정답. ---
 PROSE_FEED_MAX = 1200       # 블록 본문 전량 캡(문자). Slot 29 는 한 번 읽는 지면이지 장부가 아니다.
@@ -111,12 +117,6 @@ _FEED_ALIASES = {
     "언급": "mentioned", "mentioned": "mentioned", "등장": "mentioned",
     "숨김": "never", "never": "never", "안함": "never", "없음": "never",
 }
-_FEED_PREFIX_RE = re.compile(r"^(표시|급식|feed)\s*[:=]?\s*", re.I)
-# [2026-10-12 C34] 추출 급식 게이트 — `추적 항상` / `추적 언급`. 머리말이 붙고 칸 전체가 토큰일 때만.
-#   항상 = always_feed(이름 게이트 면제). 산문 급식은 `표시` 칸이 따로 없으면 feed_mode 가 always 로 따라간다.
-_TRACK_ALIASES = {"항상": True, "상시": True, "always": True,
-                  "언급": False, "mentioned": False, "등장": False}
-_TRACK_PREFIX_RE = re.compile(r"^(추적|추출|track)\s*[:=]?\s*", re.I)
 
 VAR_TYPES = ("gauge", "counter", "enum", "list", "text")
 VAR_SCOPES = ("global", "pc", "npc")
@@ -457,49 +457,49 @@ def sojipin_change_tail(channel_id: str) -> str:
     return f"↕ {lc.get('item')} ({lc.get('op', '')}{dd} t{lc.get('turn', 0)})"
 
 # 검증 규칙 요지 — 에러 메시지에 **그대로 동봉**한다(simcore "어긋나면 코드가 정답"의 축소판).
+# [2026-11-06 C116 판1 1c] 파이프 문법이 은퇴해 칸 이름을 앱 `outputs.json` 의 value 항목 칸으로 바꿨다(라벨 줄은 그대로 —
+#   rules_hint 가 라벨로 절을 찾는다). 전문은 작성 킷 `04_선언칸_쓰기.md`.
 RULES_TEXT = (
-    "**변수 선언 규칙**\n"
-    "`!출력룰 추가 변수 이름 | 범위 | 시작값 | 스코프 | 규칙`\n"
-    "- 이름: 1~%d자, `|` 없이. 활력/평형은 코드가 이미 씁니다.\n"
-    "- 범위: `0-100` 형식. 왼쪽 < 오른쪽.\n"
-    "- 시작값: 범위 안의 정수.\n"
-    "- 스코프: `global`(세계) / `PC` / `NPC`(인물별 값 — 로어·수동 등록 인물만).\n"
-    "- 규칙: 언제 오르고 내리는지 한국어 한 줄 (2자 이상, %d자 이내).\n"
-    "- 타입: 생략하면 게이지. `counter`(카운터)를 적으면 카운터.\n"
+    "**변수 선언 규칙** — 앱 `outputs.json` 의 `value` 항목\n"
+    "`{\"kind\": \"value\", \"name\": 이름, \"scope\": 스코프, \"value\": {\"type\": …, \"range\": [0, 100], \"start\": 0, \"rule\": 규칙}}`\n"
+    "- 이름 `name`: 1~%d자, `|` 없이. 활력/평형은 코드가 이미 씁니다.\n"
+    "- 범위 `range`: `[0, 100]` 꼴. 왼쪽 < 오른쪽.\n"
+    "- 시작값 `start`: 범위 안의 정수.\n"
+    "- 스코프 `scope`: `global`(세계) / `pc` / `npc`(인물별 값 — 로어·수동 등록 인물만).\n"
+    "- 규칙 `rule`: 언제 오르고 내리는지 한국어 한 줄 (2자 이상, %d자 이내).\n"
+    "- 타입 `type`: 생략하면 게이지(`gauge`). `counter`(카운터) · `enum` · `list` · `text`.\n"
     "- 채널당 %d개까지.\n"
-    "예) `마나 | 0-100 | 시작 80 | PC | 마법을 쓰면 줄고 휴식하면 찬다`\n"
+    "예) `\"value\": {\"type\": \"gauge\", \"range\": [0, 100], \"start\": 80, \"rule\": \"마법을 쓰면 줄고 휴식하면 찬다\"}`\n"
     "\n**단계형(enum)** — 수치가 아니라 이름 붙은 단계로 움직이는 것\n"
-    "`평판 | 단계: 무명>안면>단골>소문난 | 시작 무명 | 단조 | global | 손님이 좋게 말하면 오른다`\n"
-    "- 단계: `A>B>C` (2~%d개, 각 %d자 이내). 왼쪽이 낮고 오른쪽이 높습니다.\n"
-    "- `단조`를 적으면 역행하지 않습니다(기본은 양방향). 어느 쪽이든 **한 번에 한 단계**.\n"
+    "`\"value\": {\"type\": \"enum\", \"stages\": [\"무명\", \"안면\", \"단골\"], \"start\": \"무명\", \"direction\": \"up\", \"rule\": …}`\n"
+    "- 단계 `stages`: 2~%d개, 각 %d자 이내. 앞이 낮고 뒤가 높습니다.\n"
+    "- `\"direction\": \"up\"` 이면 역행하지 않습니다(기본은 양방향). 어느 쪽이든 **한 번에 한 단계**.\n"
     "\n**문자열(text)** — 수가 아니라 **한 줄 글자**인 것 (별명·현 위치·한 줄 소문)\n"
-    "`별명 | 문자열 | 시작 루나 | global | 사람들이 달리 부르기 시작하면 바뀐다`\n"
+    "`\"value\": {\"type\": \"text\", \"start\": \"루나\", \"rule\": \"사람들이 달리 부르기 시작하면 바뀐다\"}`\n"
     "- 범위도 단계도 캡도 없습니다. %d자까지, 넘으면 잘립니다. 빈 값은 `—` 로 보입니다.\n"
-    "- 인물별(NPC) 문자열은 아직 안 됩니다(global 또는 PC).\n"
+    "- 인물별(npc) 문자열은 아직 안 됩니다(global 또는 pc).\n"
     "\n**목록형(list)** — 항목마다 수치가 붙는 것\n"
-    "`재료 | 목록 현재/목표 | global | 채집하면 늘고 조합하면 준다`\n"
-    "`연구중 | 목록 진행%% | global | 작업하면 오른다`\n"
-    "- 항목은 %d개까지. 항목 신설·삭제도 근거가 있어야 합니다.\n"
-    "\n**표시 형식** — `표시: {v} 골드` 를 칸에 넣으면 패널·헤더가 그대로 씁니다.\n"
-    "**비대칭 캡** — `상승 5 하강 20` 을 칸에 넣으면 한 턴에 그만큼까지만 움직입니다.\n"
-    "**추적 항상** — `추적 항상` 칸을 넣으면 이름이 글에 안 나와도 매 턴 추적합니다(렌더에도 실림, 빼려면 `표시 숨김`).\n"
-    "  `표시 항상`(파일이면 \"늘 보이게\")이면 추적도 저절로 항상입니다.\n"
-    "  이미 있는 변수는 `!출력룰 수정 변수 호감 | 추적 항상` 처럼 그 칸만 적어 켭니다(다른 칸은 그대로).\n"
-    "**방향** — `단조`(=`오름만`)면 모델의 내림 신고를, `내림만`이면 오름 신고를 버립니다(게이지·카운터·단계형, OOC 정정은 됩니다).\n"
-    "**헤더** — `!출력룰 추가 헤더 잔고 [빚] / 평판 [평판]` 로 턴 상태창 세계 칸 맨 앞 줄에 값을 꽂습니다.\n"
+    "`\"value\": {\"type\": \"list\", \"item_mode\": \"stock\", …}`(현재/목표) · `\"item_mode\": \"progress\"`(진행%%)\n"
+    "- 항목은 %d개까지(`max` 로 1~99). 항목 신설·삭제도 근거가 있어야 합니다.\n"
+    "\n**표시 형식** — value 칸에 `\"format\": \"{v} 골드\"` 를 넣으면 패널·헤더가 그대로 씁니다.\n"
+    "**비대칭 캡** — `\"max_gain\": 5, \"max_loss\": 20` 이면 한 턴에 그만큼까지만 움직입니다.\n"
+    "**추적 항상** — `\"track\": \"always\"` 면 이름이 글에 안 나와도 매 턴 추적합니다(산문엔 안 실림 — 보이게 하려면 `\"feed\": {\"prose\": \"always\"}`).\n"
+    "  `feed.prose` 가 `always` 면 추적도 저절로 항상입니다.\n"
+    "**방향** — `\"direction\": \"up\"`(오름만)이면 모델의 내림 신고를, `\"down\"`(내림만)이면 오름 신고를 버립니다(게이지·카운터·단계형, OOC 정정은 됩니다).\n"
+    "**헤더** — 이름이 `헤더` 인 `format` 항목(`\"text\": \"잔고 [빚] / 평판 [평판]\"`)이 턴 상태창 세계 칸 맨 앞 줄에 값을 꽂습니다.\n"
     "**남은·퍼센트** — `[평판.남은]`(끝까지 얼마)·`[평판.퍼센트]`(얼마나 왔나)를 표시 줄에 쓸 수 있습니다.\n"
     "  끝이 없는 값(카운터)에는 남은 것도 없어 빈칸이 됩니다. 레코드 목록은 `[화분/양파/기한.남은]`.\n"
     "**날** — `날`은 코드가 세는 **누적 날짜**입니다(`일`은 달 안 날짜라 달을 넘으면 되감깁니다).\n"
     "  기한은 `기한 = 날 + 3` 처럼 **끝을 한 번** 적어 두면 상태창이 `남은 3일` 로 그립니다.\n"
-    "\n**시스템 변수** — `활력`·`평형`은 코드가 심어 둔 변수라 지울 수 없습니다. 대신 **규칙과 캡은 고칠 수 있습니다**:\n"
-    "`!출력룰 수정 변수 활력 | 상승 5 하강 7 | 능력을 쓰면 크게 깎이고 쉬면 찬다`\n"
+    "\n**시스템 변수** — `활력`·`평형`은 코드가 심어 둔 변수라 지울 수 없습니다. 대신 **규칙과 캡은 고칠 수 있습니다** — "
+    "Activity 모듈 앱 맨 위 기본 카드.\n"
     "(범위·타입·스코프는 코드 소유라 바뀌지 않습니다.)\n"
     "\n**소지품** — PC가 들고 다니는 물건은 코드가 심어 둔 기본 목록 `소지품` 하나에 삽니다. "
-    "지울 수 없고 규칙·항목 상한·표시형식만 고칩니다. `인벤토리`로 선언해도 소지품이 고쳐집니다."
+    "지울 수 없고 규칙·항목 상한·표시형식만 고칩니다(기본 카드). `인벤토리`로 선언해도 소지품이 고쳐집니다."
 ) % (NAME_MAX, RULE_MAX, MAX_VARS, MAX_STAGES, STAGE_NAME_MAX, TEXT_MAX, MAX_LIST_ITEMS)
 
 # [2026-10-25 C77 A-5 · Q14] 검증 실패 안내 = 기본 규칙 + **걸린 칸 설명만**. 옛꼴은 규칙 요지 전문(약 1,800자)을
-#   실패마다 통째로 붙여 디스코드 메시지가 쪼개졌다. 전문은 사용법 · 자연어 변환 실패 · `!출력룰 도움 변수` 에 그대로.
+#   실패마다 통째로 붙여 디스코드 메시지가 쪼개졌다. 전문은 작성 킷 04([C116 1c] — 옛 `!출력룰 도움 변수`).
 _RULE_HINT_KEYS = (
     (("표시 형식", "{v}"), "**표시 형식**"),
     (("캡",), "**비대칭 캡**"),
@@ -513,7 +513,7 @@ _RULE_HINT_KEYS = (
     (("시스템", "활력", "평형"), "**시스템 변수**"),
     (("소지품", "인벤토리"), "**소지품**"),
 )
-RULES_HINT_FOOTER = "(전체 규칙: `!출력룰 도움 변수`)"
+RULES_HINT_FOOTER = "(전체 규칙: 작성 킷 `04_선언칸_쓰기.md`)"
 
 
 def rules_hint(msg: str = "") -> str:
@@ -696,7 +696,6 @@ def _reduce_system(decl: Dict[str, Any]) -> Dict[str, Any]:
 # =========================================================
 
 _RANGE_RE = re.compile(r"(-?\d+)\s*(?:~|-|—|–|to)\s*(-?\d+)")
-_INT_RE = re.compile(r"-?\d+")
 
 _SCOPE_ALIASES = {
     "global": "global", "전역": "global", "세계": "global", "월드": "global", "world": "global",
@@ -721,16 +720,6 @@ _ITEM_MODE_ALIASES = {
 # 단계 목록 칸: `단계: 무명>안면>단골` / `무명 > 안면 > 단골` / `무명→안면→단골`
 _STAGE_PREFIX_RE = re.compile(r"^(?:단계|스테이지|stages?|phase)\s*[:=]?\s*", re.I)
 _STAGE_SPLIT_RE = re.compile(r"\s*(?:>|→|->|»)\s*")
-# 비대칭 캡 칸: `상승 5 하강 20` / `+5 -20` / `max_gain 5`
-_GAIN_RE = re.compile(r"(?:상승|증가|오름|max[_ ]?gain|gain)\s*[:=]?\s*(\d+)", re.I)
-_LOSS_RE = re.compile(r"(?:하강|감소|내림|max[_ ]?loss|loss)\s*[:=]?\s*(\d+)", re.I)
-_SIGNED_CAP_RE = re.compile(r"^\s*\+\s*(\d+)\s*/?\s*[-−]\s*(\d+)\s*$")
-# 표시 형식 칸: `표시: {v} 골드`
-_FORMAT_PREFIX_RE = re.compile(r"^(?:표시|형식|format|display)\s*[:=]\s*", re.I)
-_MONOTONIC_WORDS = ("단조", "역행불가", "역행 불가", "monotonic", "irreversible", "일방",
-                    "오름만", "up only", "up-only")          # [2026-10-12 C35] = 방향 up
-_DOWN_ONLY_WORDS = ("내림만", "down only", "down-only", "줄기만")   # [2026-10-12 C35] 방향 down
-_BIDIRECTIONAL_WORDS = ("양방향", "가역", "오르내림", "bidirectional", "reversible")
 DIRECTIONS = ("both", "up", "down")
 
 
@@ -759,140 +748,7 @@ def _parse_stage_cell(part: str) -> Optional[List[str]]:
     return tokens[:MAX_STAGES]
 
 
-def parse_pipe_declaration(text: str) -> Tuple[Optional[Dict[str, Any]], str]:
-    """`마나 | 0-100 | 시작 80 | PC | 마법 쓰면 줄고 휴식하면 찬다` → spec dict.
-
-    ★순서 의존이 아니라 **모양 인식**이다: 이름은 첫 칸, 나머지는 범위/시작/스코프/타입
-      패턴에 걸리는 칸을 집어가고 **남은 칸이 rule**. 유저가 칸 순서를 바꿔도 통과한다.
-    Returns: (spec, "") 또는 (None, 에러문).
-    """
-    raw = str(text or "").strip()
-    if not raw:
-        return None, "변수 선언이 비어 있습니다."
-    parts = [p.strip() for p in raw.split("|")]
-    parts = [p for p in parts if p]
-    if len(parts) < 2:
-        return None, "`|` 로 칸을 나눠 주세요 (이름 다음에 최소한 범위가 필요합니다)."
-
-    name = parts[0]
-    rest = parts[1:]
-
-    spec: Dict[str, Any] = {"name": name, "type": "gauge", "scope": "global"}
-    leftovers: List[str] = []
-    rng_done = init_done = scope_done = type_done = False
-    stage_done = fmt_done = cap_done = mode_done = feed_done = False
-
-    for part in rest:
-        low = part.lower().strip()
-        # 스코프/타입은 **칸 전체가 토큰일 때만** 인식한다(rule 문장 오식별 방지).
-        bare = re.sub(r"^(스코프|scope|범위|type|타입|대상)\s*[:=]?\s*", "", low).strip()
-        if not scope_done and bare in _SCOPE_ALIASES:
-            spec["scope"] = _SCOPE_ALIASES[bare]
-            scope_done = True
-            continue
-        # [v1] 목록형: `목록`, `목록 진행%`, `목록 현재/목표` — 타입과 항목 모드를 한 칸에서 읽는다.
-        _mode_body = re.sub(r"^(목록형?|리스트|list|항목)\s*[:=]?\s*", "", bare).strip()
-        _mode_hit = (
-            not type_done and bare != _mode_body
-            and (not _mode_body or _mode_body in _ITEM_MODE_ALIASES
-                 or ("/" in _mode_body and len(_mode_body) <= 10))
-        )
-        if _mode_hit:
-            spec["type"] = "list"
-            type_done = True
-            if _mode_body:
-                spec["item_mode"] = _ITEM_MODE_ALIASES.get(_mode_body, "stock")
-                mode_done = True
-            continue
-        if not mode_done and bare in _ITEM_MODE_ALIASES and spec.get("type") == "list":
-            spec["item_mode"] = _ITEM_MODE_ALIASES[bare]
-            mode_done = True
-            continue
-        if not type_done and bare in _TYPE_ALIASES:
-            spec["type"] = _TYPE_ALIASES[bare]
-            type_done = True
-            continue
-        # [v1] 표시 형식 — `표시: {v} 골드`. 값-표시 분리는 표시 계층에만 산다.
-        if not fmt_done and _FORMAT_PREFIX_RE.match(part.strip()):
-            spec["format"] = _FORMAT_PREFIX_RE.sub("", part.strip())
-            fmt_done = True
-            continue
-        # [v1] 단계 목록 — 범위 인식보다 **먼저** 본다(`0>1>2` 같은 단계도 단계다).
-        if not stage_done:
-            _stages = _parse_stage_cell(part)
-            if _stages:
-                spec["stages"] = _stages
-                spec["type"] = "enum"
-                stage_done = True
-                type_done = True
-                continue
-        # [v1] 비대칭 델타캡 — `상승 5 하강 20` / `+5/-20`
-        if not cap_done:
-            _sc = _SIGNED_CAP_RE.match(part)
-            if _sc:
-                spec["max_gain"], spec["max_loss"] = int(_sc.group(1)), int(_sc.group(2))
-                cap_done = True
-                continue
-            _g, _l = _GAIN_RE.search(part), _LOSS_RE.search(part)
-            if _g or _l:
-                if _g:
-                    spec["max_gain"] = int(_g.group(1))
-                if _l:
-                    spec["max_loss"] = int(_l.group(1))
-                cap_done = True
-                continue
-        # [2026-10-12 C34] 추출 게이트 — `추적 항상`/`추적 언급`. 머리말 필수(맨 `항상`은 표시 칸이다).
-        if _TRACK_PREFIX_RE.match(part.strip()):
-            _tb = _TRACK_PREFIX_RE.sub("", part.strip()).strip().lower()
-            if _tb in _TRACK_ALIASES:
-                spec["always_feed"] = _TRACK_ALIASES[_tb]
-                continue
-        # [2026-09-06 P3] 급식 게이트 — `표시 항상` / `항상` 낱말 하나. 칸 전체가 토큰일 때만.
-        if not feed_done:
-            _fb = _FEED_PREFIX_RE.sub("", part.strip()).strip().lower()
-            if (_fb in _FEED_ALIASES) and (_fb != bare or bare in _FEED_ALIASES):
-                spec["feed"] = {"prose": _FEED_ALIASES[_fb]}
-                feed_done = True
-                continue
-        # [v1] 단조/양방향 — 칸 전체가 토큰일 때만.
-        if bare in _MONOTONIC_WORDS:
-            spec["monotonic"] = True
-            spec["direction"] = "up"
-            continue
-        if bare in _DOWN_ONLY_WORDS:            # [2026-10-12 C35]
-            spec["monotonic"] = False
-            spec["direction"] = "down"
-            continue
-        if bare in _BIDIRECTIONAL_WORDS:
-            spec["monotonic"] = False
-            spec["direction"] = "both"
-            continue
-        m = _RANGE_RE.search(part)
-        if not rng_done and m:
-            spec["range"] = [int(m.group(1)), int(m.group(2))]
-            rng_done = True
-            continue
-        if not init_done and ("시작" in part or "init" in low or "start" in low):
-            mi = _INT_RE.search(part)
-            if mi:
-                spec["init"] = int(mi.group(0))
-                init_done = True
-                continue
-            # [v1] 단계형 시작값은 정수가 아니라 **단계 이름**이다.
-            _iv = re.sub(r"^(시작값?|init|start)\s*[:=]?\s*", "", part.strip(), flags=re.I).strip()
-            if _iv:
-                spec["init"] = _iv
-                init_done = True
-                continue
-        if not init_done and _INT_RE.fullmatch(part.strip()):
-            spec["init"] = int(part.strip())
-            init_done = True
-            continue
-        leftovers.append(part)
-
-    if leftovers:
-        spec["rule"] = " ".join(leftovers).strip()
-    return spec, ""
+# ⚰[2026-11-06 C116 판1 1c] parse_pipe_declaration(파이프 선언 문법) 삭제 — `!출력룰` 은퇴. 선언은 앱 outputs.json(킷 04).
 
 
 # =========================================================
@@ -1129,20 +985,216 @@ def npc_rest_tick(channel_id: str, days: Any = 1) -> List[Dict[str, Any]]:
     return out
 
 
-def resolve_npc(channel_id: str, name: Any) -> str:
-    """모델이 적은 인물명 → 허용 인물의 정본 이름. 미허용·미상이면 "" (= 그 항목은 폐기)."""
+def resolve_npc(channel_id: str, name: Any, var: Any = None) -> str:
+    """모델이 적은 인물명 → 허용 인물의 정본 이름. 미허용·미상이면 "" (= 그 항목은 폐기).
+
+    [2026-11-07 C120] `var`(값 이름)를 주면 **그 값의 명단**(only · holders · max_npcs)으로 한 번 더 거른다 —
+    쓰기 · 식 읽기가 다 이 문을 지난다. 명단 칸이 없는 값은 지금 그대로다.
+    """
     key = str(name or "").strip()
     if not key:
         return ""
     allowed = allowed_npc_names(channel_id)
+    hit = ""
     for nm in allowed:
         if nm == key:
-            return nm
-    low = key.lower()
-    for nm in allowed:
-        if nm.lower() == low:
-            return nm
-    return ""
+            hit = nm
+            break
+    if not hit:
+        low = key.lower()
+        for nm in allowed:
+            if nm.lower() == low:
+                hit = nm
+                break
+    if not hit or var is None:
+        return hit
+    spec = var if isinstance(var, dict) else (get_declarations(channel_id) or {}).get(str(var))
+    if not isinstance(spec, dict) or not roster_rules(spec):
+        return hit
+    vname = str(spec.get("name") or (var if isinstance(var, str) else ""))
+    return hit if hit in holder_names(channel_id, vname, spec) else ""
+
+
+# =========================================================
+# [2026-11-07 C120] 인물별 시작값 · 명단(only · max_npcs · holders) · 단계 설명
+# =========================================================
+def _name_keys(who: Any) -> List[str]:
+    try:
+        import memory_index as _mi
+        return [k for k in _mi.split_name_keys([str(who or "")]) if k]
+    except Exception:
+        s = str(who or "").strip()
+        return [s] if s else []
+
+
+def match_by_name(table: Any, who: Any) -> Tuple[bool, Any]:
+    """인물 키(`리나(Rina)`) ↔ 표 열쇠 — 키를 괄호 꼴로 펴서(통째 · 괄호 앞 · 괄호 안) 대소문자 무시 대조.
+    채널 조회 없는 순수 함수 — 아직 등록 안 된 이름도 표에 적어 둘 수 있다(등록되는 순간부터 맞는다)."""
+    if not isinstance(table, dict) or not table:
+        return False, None
+    low = {str(k).strip().casefold(): v for k, v in table.items() if str(k).strip()}
+    for k in _name_keys(who):
+        kf = str(k).strip().casefold()
+        if kf in low:
+            return True, low[kf]
+    return False, None
+
+
+def npc_init(spec: Any, who: Any) -> Any:
+    """인물별 값의 시작값 — `start_by` 에서 맞는 값, 없으면 `start`(저장 키 init)."""
+    if not isinstance(spec, dict):
+        return None
+    ok, v = match_by_name(spec.get("start_by"), who)
+    return v if ok else spec.get("init")
+
+
+def roster_rules(spec: Any) -> bool:
+    """이 값에 명단 칸(only · holders · max_npcs)이 있나. 없으면 명단 = 허용 인물 전부(옛 동작)."""
+    return isinstance(spec, dict) and bool(spec.get("only") or spec.get("holders") or spec.get("max_npcs"))
+
+
+def npc_cap(spec: Any) -> int:
+    """값 하나가 드는 인물 수 — `max_npcs`, 없으면 `only` 길이, 둘 다 없으면 12(옛). 하드 상한 30."""
+    if not isinstance(spec, dict):
+        return MAX_NPC_VALUES
+    try:
+        n = int(spec.get("max_npcs") or 0)
+    except (TypeError, ValueError):
+        n = 0
+    if n <= 0:
+        only = spec.get("only")
+        n = len(only) if isinstance(only, list) and only else MAX_NPC_VALUES
+    return max(1, min(NPC_VALUES_HARD, n))
+
+
+def prep_holders(src: Any) -> str:
+    """`종류[@]` → `종류["@"]` — 파이썬 문법이 `@`를 첨자로 못 받는다. 식 엔진은 키 "@" 를 '이 사람'으로 읽는다."""
+    return re.sub(r"\[\s*@\s*\]", '["@"]', str(src or ""))
+
+
+def _holder_ok(channel_id: str, name: str, spec: Dict[str, Any], who: str, res: Any = None) -> bool:
+    return bool(_holder_scan(channel_id, name, spec, [who]))
+
+
+def _holder_scan(channel_id: str, name: str, spec: Dict[str, Any], names: List[str]) -> List[str]:
+    """`holders` 식이 참인 사람만 — 식은 한 번 컴파일, 값 층은 한 번 읽는다(사람 60명 × 값 여럿).
+    식을 못 읽거나 그 사람 셈이 깨지면 거짓(명단 밖)."""
+    src = str(spec.get("holders") or "").strip()
+    if not src:
+        return list(names)
+    try:
+        import types as _types
+        import expr_engine as _ee
+        compiled = _ee.compile_expr(prep_holders(src), "eval")
+        res = _ee.Resolver(channel_id, None, label=f"명단:{name}")
+        res._vals = get_values(channel_id)
+        res._turn = res.turn_index()
+        actor = _default_actor(channel_id)
+    except Exception as e:
+        logger.debug("[CustomVar] %s 명단 식 못 읽음 → 모두 밖: %s", name, e)
+        return []
+    out = []
+    for who in names:
+        res.ctx = _types.SimpleNamespace(user_id=actor, npc=who, holder_of=str(name))
+        try:
+            if _ee.eval_expr(compiled, res):
+                out.append(who)
+        except Exception as e:
+            logger.debug("[CustomVar] %s 명단 식 %s → 거짓: %s", name, who, e)
+    return out
+
+
+def holder_names(channel_id: str, name: str, spec: Any = None) -> List[str]:
+    """값 하나의 명단 — 허용 인물 ∩ `only` ∩ `holders` 식, 그다음 상한(이미 값이 있는 사람 먼저).
+    명단 칸이 없는 값은 허용 인물 전부(상한은 옛 자리마다 그대로 문다)."""
+    if spec is None:
+        spec = (get_declarations(channel_id) or {}).get(str(name)) or {}
+    allowed = allowed_npc_names(channel_id)
+    if not roster_rules(spec):
+        return allowed
+    only = spec.get("only") if isinstance(spec.get("only"), list) else []
+    only_t = {str(o): 1 for o in only}
+    hs = [nm for nm in allowed if not only_t or match_by_name(only_t, nm)[0]]
+    hs = _holder_scan(channel_id, name, spec, hs)
+    cap = npc_cap(spec)
+    if len(hs) > cap:
+        per = (get_values(channel_id).get(str(name)) or {}).get("value")
+        per = per if isinstance(per, dict) else {}
+        hs = ([n for n in hs if n in per] + [n for n in hs if n not in per])[:cap]
+    return hs
+
+
+def roster_full(channel_id: str, name: str, spec: Any = None) -> Tuple[int, int]:
+    """(명단에 든 수, 상한) — `only` 없이 상한에 닿았는지 카드에 보이려고."""
+    if spec is None:
+        spec = (get_declarations(channel_id) or {}).get(str(name)) or {}
+    if not roster_rules(spec) or spec.get("only"):
+        return 0, 0
+    raw = _holder_scan(channel_id, name, spec, allowed_npc_names(channel_id))
+    return len(raw), npc_cap(spec)
+
+
+def stage_note(spec: Any, raw: Any) -> Optional[str]:
+    """[C120] 값이 선 구간의 설명 한 줄. `stage_notes` 가 없으면 None(옛 줄), 빈 구간이면 ""(안 실림)."""
+    if not isinstance(spec, dict):
+        return None
+    notes = spec.get("stage_notes")
+    stages = [str(x) for x in (spec.get("stages") or [])]
+    if not (isinstance(notes, list) and stages and len(notes) == len(stages)):
+        return None
+    if str(spec.get("type")) == "enum":
+        st = _match_stage(raw, stages) or ""
+    else:
+        st = value_stage(spec, raw)
+    if not st or st not in stages:
+        return ""
+    return str(notes[stages.index(st)] or "").strip()
+
+
+def group_values(channel_id: str) -> List[Dict[str, Any]]:
+    """[C120] 묶기 값(`group: true`) — 선언 순서 앞 둘. [{name, stages}]."""
+    out = []
+    for nm, spec in (get_declarations(channel_id) or {}).items():
+        if isinstance(spec, dict) and spec.get("group") and str(spec.get("scope")) == "npc":
+            out.append({"name": str(nm), "stages": [str(x) for x in (spec.get("stages") or [])]})
+        if len(out) >= GROUP_MAX:
+            break
+    return out
+
+
+def group_of(channel_id: str, who: str) -> Dict[str, str]:
+    """[C120] 한 사람의 묶기 단계 {값 이름: 단계} — 저장값 → start_by → start."""
+    return group_table(channel_id, [who]).get(str(who), {})
+
+
+def group_table(channel_id: str, names: Any) -> Dict[str, Dict[str, str]]:
+    """[C120 판2] 여럿의 묶기 단계 {이름: {값 이름: 단계}} — 선언 · 값 층은 한 번 읽는다(인물 60명).
+    그 값의 명단(holder_names) 밖 사람은 단계가 없다(칩에 안 든다). 저장값 → start_by → start."""
+    names = [str(n) for n in (names or []) if str(n or "").strip()]
+    out: Dict[str, Dict[str, str]] = {n: {} for n in names}
+    groups = group_values(channel_id)
+    if not groups or not names:
+        return out
+    decl = get_declarations(channel_id) or {}
+    vals = get_values(channel_id) or {}
+    for g in groups:
+        spec = decl.get(g["name"]) or {}
+        per = (vals.get(g["name"]) or {}).get("value")
+        per = per if isinstance(per, dict) else {}
+        hs = set(holder_names(channel_id, g["name"], spec))
+        for n in names:
+            if n not in hs:
+                continue
+            raw = per.get(n, npc_init(spec, n))
+            st = (_match_stage(raw, g["stages"]) if str(spec.get("type")) == "enum" else value_stage(spec, raw)) or ""
+            if st:
+                out[n][g["name"]] = st
+    return out
+
+
+def onstage_names(channel_id: str) -> List[str]:
+    """[C120 판2] 무대 위 인물(0단) — 화면 거르개 몫. 급식이 쓰는 `_onstage_names` 와 같은 원천."""
+    return _onstage_names(channel_id)
 
 
 # =========================================================
@@ -1659,43 +1711,142 @@ def validate_declaration(
                 clean["monotonic"] = False
             else:
                 clean.pop("monotonic", None)
+    warns = _c120_fields(clean, spec, existing)
+    if warns:
+        err = (err + " · " if err else "") + " · ".join(warns)
     return clean, err
 
 
-_FLAG_EDIT_KEYS = ("always_feed", "monotonic", "direction", "feed", "max_gain", "max_loss", "format")
+def _c120_fields(clean: Dict[str, Any], spec: Dict[str, Any], existing: Any) -> List[str]:
+    """[2026-11-07 C120] 칸 일곱 — 추적 안 함 · 인물별 시작값 · 목록 시작 항목 · 단계 설명 · 명단 셋 · 묶기.
+    틀린 칸은 **그 칸만** 버리고 되비침 한 줄을 돌려준다(선언 전체는 선다)."""
+    w: List[str] = []
+    vtype = str(clean.get("type") or "")
+    scope = str(clean.get("scope") or "")
+    name = str(clean.get("name") or "")
+    existing = existing if isinstance(existing, dict) else {}
+    # 추적 안 함 — 출력물 콜이 이 값을 안 받는다(Lua · 편집만 쓴다). 늘 보이게(feed always)가 추적을 끌고 오지 않는다.
+    if str(spec.get("track") or "").strip().lower() in TRACK_NEVER:
+        clean["track"] = "never"
+        clean.pop("always_feed", None)
+    stages = [str(x) for x in (clean.get("stages") or [])]
+    staged = vtype == "enum" or (vtype in ("gauge", "counter") and bool(stages))
+    # 인물별 시작값
+    sb = spec.get("start_by")
+    if sb not in (None, "", {}):
+        if scope != "npc" or vtype not in ("gauge", "counter", "enum") or not isinstance(sb, dict):
+            w.append("start_by 는 인물별(scope npc) 게이지 · 카운터 · 단계 값에만 — 뺌")
+        else:
+            out: Dict[str, Any] = {}
+            for k, v in sb.items():
+                kn = str(k or "").strip()[:40]
+                if not kn:
+                    continue
+                if len(out) >= NPC_NAMES_MAX:
+                    w.append(f"start_by 이름은 {NPC_NAMES_MAX}개까지 — 나머지 뺌")
+                    break
+                if vtype == "enum":
+                    st = _match_stage(v, stages)
+                    if not st:
+                        w.append(f"start_by {kn}: 없는 단계 `{v}` — 뺌")
+                        continue
+                    out[kn] = st
+                else:
+                    try:
+                        n = int(v)
+                    except (TypeError, ValueError):
+                        w.append(f"start_by {kn}: 수가 아님 `{v}` — 뺌")
+                        continue
+                    lo, hi = (clean.get("range") or [n, n])[:2]
+                    out[kn] = max(int(lo), min(int(hi), n))
+            if out:
+                clean["start_by"] = out
+    # 명단 — only · max_npcs · holders
+    if any(spec.get(k) not in (None, "", [], 0) for k in ("only", "max_npcs", "holders")) and scope != "npc":
+        w.append("only · max_npcs · holders 는 인물별(scope npc) 값에만 — 뺌")
+    elif scope == "npc":
+        only = spec.get("only")
+        if only not in (None, "", []):
+            if not isinstance(only, (list, tuple)):
+                w.append("only 는 이름 목록 — 뺌")
+            else:
+                ol = list(dict.fromkeys(str(x).strip()[:40] for x in only if str(x or "").strip()))
+                if len(ol) > NPC_VALUES_HARD:
+                    w.append(f"only 는 {NPC_VALUES_HARD}명까지 — 뒤는 뺌")
+                    ol = ol[:NPC_VALUES_HARD]
+                if ol:
+                    clean["only"] = ol
+        mx = spec.get("max_npcs")
+        if mx not in (None, "", 0):
+            try:
+                mxn = int(mx)
+            except (TypeError, ValueError):
+                mxn = 0
+            if 1 <= mxn <= NPC_VALUES_HARD:
+                clean["max_npcs"] = mxn
+            else:
+                w.append(f"max_npcs 는 1~{NPC_VALUES_HARD} — 뺌")
+        hsrc = str(spec.get("holders") or "").strip()
+        if hsrc:
+            try:
+                import expr_engine as _ee
+                comp = _ee.compile_expr(prep_holders(hsrc), "eval")
+                refs = set(getattr(comp, "names", set()) or set())
+                bad = ""
+                if name in refs:
+                    bad = "자기 값을 읽음"
+                for r in refs:
+                    rs = existing.get(r)
+                    if isinstance(rs, dict) and rs.get("holders"):
+                        bad = f"`{r}` 도 명단 식이 있음(한 겹만)"
+                if bad:
+                    w.append(f"holders: {bad} — 뺌")
+                else:
+                    clean["holders"] = hsrc[:400]
+            except Exception as e:
+                w.append(f"holders 식을 못 읽음({str(e)[:60]}) — 뺌")
+    # 묶기
+    if spec.get("group") in (True, 1, "true", "예", "on"):
+        if scope != "npc" or not staged:
+            w.append("group 은 단계 있는 인물별 값에만 — 뺌")
+        else:
+            clean["group"] = True
+            n_g = sum(1 for k, v in existing.items()
+                      if k != name and isinstance(v, dict) and v.get("group"))
+            if n_g >= GROUP_MAX:
+                w.append(f"group 칩 줄은 {GROUP_MAX}개까지 — 이 값은 칩이 안 섬")
+    # 단계 설명
+    sn = spec.get("stage_notes")
+    if sn not in (None, "", []):
+        if not staged or not isinstance(sn, (list, tuple)) or len(sn) != len(stages):
+            w.append("stage_notes 는 stages 와 같은 길이의 목록 — 뺌")
+        else:
+            clean["stage_notes"] = [str(x or "").strip()[:STAGE_NOTE_MAX] for x in sn]
+    # 목록 시작 항목
+    si = spec.get("start_items")
+    if si not in (None, "", {}):
+        if vtype != "list" or not isinstance(si, dict):
+            w.append("목록 start 는 목록 값에만 — 뺌")
+        else:
+            out_i: Dict[str, Any] = {}
+            for k, rec in si.items():
+                kn = str(k or "").strip()[:ITEM_NAME_MAX]
+                if not kn:
+                    continue
+                if len(out_i) >= list_max(clean):
+                    w.append(f"목록 start 는 {list_max(clean)}항목까지 — 나머지 뺌")
+                    break
+                fixed = _clean_record(clean, rec)
+                if fixed is None:
+                    w.append(f"목록 start {kn}: 못 읽음 — 뺌")
+                    continue
+                out_i[kn] = fixed
+            if out_i:
+                clean["start_items"] = out_i
+    return w
 
 
-def merge_flag_edit(spec: Any, existing: Optional[Dict[str, Any]]) -> Any:
-    """[2026-10-12 C34] `!출력룰 수정 변수 호감 | 추적 항상` — 칸이 **플래그뿐**(추적·단조·표시·캡·표시형식)이면
-    새 선언이 아니라 기존 유저 선언 위에 그 칸만 덮는다. 유저 변수 수정은 원래 통째 교체라,
-    파이프로 못 쓰는 칸(라우터가 넣은 단계 문턱 `stage_at` 등)이 플래그 하나 켜다가 날아갔다.
-    플래그 말고 다른 칸(범위·단계·시작·rule·타입·스코프)이 하나라도 있으면 종전대로 통째 교체다.
-    """
-    if not isinstance(spec, dict) or not isinstance(existing, dict):
-        return spec
-    key = _resolve_name(str(spec.get("name") or "").strip(), existing)
-    old = existing.get(key) if key else None
-    if not isinstance(old, dict) or is_reserved(old):
-        return spec
-    if (spec.get("rule") or spec.get("range") or spec.get("stages") or "init" in spec
-            or spec.get("item_mode") or spec.get("type", "gauge") != "gauge"
-            or spec.get("scope", "global") != "global"):
-        return spec
-    if not any(k in spec for k in _FLAG_EDIT_KEYS):
-        return spec
-    merged = dict(old)
-    for k in _FLAG_EDIT_KEYS:
-        if k in spec:
-            merged[k] = spec[k]
-    if merged.get("always_feed") is False:
-        merged.pop("always_feed", None)
-    if merged.get("monotonic") is False:
-        merged.pop("monotonic", None)
-    if merged.get("direction") in ("both", "down"):
-        merged.pop("monotonic", None)
-    if merged.get("direction") == "both":
-        merged.pop("direction", None)
-    return merged
+# ⚰[C116 1c] merge_flag_edit(`!출력룰 수정 변수 {이름} | 칸` 플래그만 고치기) 삭제.
 
 
 def _validate_declaration_core(
@@ -1745,6 +1896,13 @@ def _validate_declaration_core(
     #   리셋 없이 누적돼야 `.남은`/`.퍼센트` 가 바가 된다.
     _has_at = isinstance(spec.get("stage_at"), (list, tuple)) and len(spec.get("stage_at")) >= 2
     if spec.get("stages") and vtype in ("gauge", "counter") and not _has_at:
+        # [2026-11-07 C120 킷] 수 시작값을 단 게이지면 단계형으로 접힌 뒤 "시작 단계 `30` 없음" 으로 거부됐다 — 까닭을 말한다
+        _i = spec.get("init")
+        _sl = spec.get("stages")
+        _sl = _parse_stage_cell(_sl) if isinstance(_sl, str) else [str(x).strip() for x in (_sl or [])]
+        if isinstance(_i, (int, float)) and not isinstance(_i, bool) and _i and not _match_stage(_i, _sl):
+            return _fail("게이지 · 카운터에 단계 이름(stages)을 달려면 단계마다 시작하는 수(stage_at)를 같이 적어요 — "
+                         "stage_at 이 없으면 단계형(enum)으로 읽고, 수 시작값은 단계 이름이 아니라 거부됩니다")
         vtype = "enum"
 
     scope = str(spec.get("scope", "global") or "global").strip().lower()
@@ -1753,6 +1911,8 @@ def _validate_declaration_core(
         return _fail(f"모르는 스코프입니다: `{scope}` ({', '.join(VAR_SCOPES)} 중 하나여야 합니다).")
 
     rule = str(spec.get("rule", "") or "").strip()
+    if len(rule) < 2 and str(spec.get("track") or "").strip().lower() in TRACK_NEVER:
+        rule = name                      # [C120] 추적 안 함 — 출력물 콜이 안 읽으니 규칙이 없어도 선다
     if len(rule) < 2:
         return _fail(
             "규칙(언제 오르고 내리는지)이 없습니다 — 규칙이 없으면 추출 콜이 이 변수를 못 움직입니다."
@@ -2136,6 +2296,75 @@ def register(channel_id: str, spec: Dict[str, Any]) -> Tuple[bool, str]:
     return True, ("수정" if existed else "등록")
 
 
+def revise_reserved(channel_id: str, name: Any, field: str, value: Any) -> Tuple[bool, str, Any]:
+    """[2026-11-06 C116 판1 1b] 기본 카드 — 코드가 심은 값(활력 · 평형 · 소지품)의 고칠 수 있는 칸 하나. → (ok, 한 줄, 옛 값).
+    옛 `!출력룰 수정 변수 활력 | …` 와 같은 검증(_validate_system_override · _validate_builtin_override) · 같은 저장(register).
+    ★검증은 **기본형 위에** 받은 칸만 덮는다 — 한 칸만 보내면 다른 칸의 지난 개정이 풀리므로, 지금 개정된 칸을 다 실어 보낸다."""
+    nm = reserved_name(name)
+    if not nm or not is_enabled():
+        return False, "고칠 수 있는 기본 값이 아니에요", None
+    sysv = nm in SYSTEM_VARS
+    fields = SYSTEM_EDITABLE if sysv else BUILTIN_EDITABLE
+    field = str(field or "").strip()
+    if field not in fields:
+        return False, "그 칸은 못 고쳐요", None
+    cur = get_declarations(channel_id).get(nm) or {}
+    base = (SYSTEM_VARS if sysv else BUILTIN_VARS)[nm]
+    old = cur.get(field)
+    spec: Dict[str, Any] = {"name": nm}
+    for k in fields:
+        if k != "format" and cur.get(k) not in (None, "") and cur.get(k) != base.get(k):
+            spec[k] = cur.get(k)
+    fmt = str(cur.get("format") or "") if cur.get("format") != base.get("format") else ""
+    if field == "format":
+        fmt = str(value or "").strip()
+    elif value in (None, ""):
+        spec.pop(field, None)              # 비우면 기본형으로
+    else:
+        spec[field] = value
+    clean, err = (_validate_system_override(nm, spec, fmt) if sysv else _validate_builtin_override(nm, spec, fmt))
+    if clean is None:
+        return False, str(err or "못 고쳤어요").split("\n")[0][:160], old
+    ok, _verb = register(channel_id, clean)
+    if not ok:
+        return False, "못 고쳤어요", old
+    new = (get_declarations(channel_id).get(nm) or {}).get(field)
+    return True, f"{nm} · {field} 고침", old if old != new else None
+
+
+def fold_values(channel_id: str) -> Dict[str, int]:
+    """[2026-11-06 C116 판1 1a] `!다시` 뒤 값 맞추기 — 선언(넘겨 얹힘)에 값(스냅숏과 함께 되감김)을 맞춘다.
+    병: 턴 사이에 선 선언(앱 올리기 · 파일 · 파이프)은 넘겨 얹히는데 시작값 줄은 world_state 라 복원이 지웠다 —
+      `!다시` 뒤 값이 없었다. 범위를 바꾼 선언 아래 값도 옛 범위 값으로 돌아왔다.
+    고침: 선언마다 `_initial_value`(register 가 쓰는 그 함수 — 없으면 시작값, 있으면 새 범위로 접기) · 선언 없는
+      값은 버림. 코드가 심은 이름(시스템 · 기본)은 손대지 않는다. 몇 번 불러도 같다. Returns {seeded, folded, dropped}."""
+    out = {"seeded": 0, "folded": 0, "dropped": 0}
+    if not channel_id or not is_enabled():
+        return out
+    decl = get_declarations(channel_id) or {}
+    vals = dict(get_values(channel_id))
+    new = dict(vals)
+    for name, entry in decl.items():
+        if not isinstance(entry, dict) or is_reserved(entry) or reserved_name(name):
+            continue
+        prev = vals.get(name) if isinstance(vals.get(name), dict) else None
+        fixed = _initial_value(entry, prev)
+        if prev is None:
+            new[name] = fixed
+            out["seeded"] += 1
+        elif fixed.get("value") != prev.get("value"):
+            new[name] = dict(prev, value=fixed.get("value"))
+            out["folded"] += 1
+    for name in list(new):
+        if name not in decl and not reserved_name(name):
+            new.pop(name)
+            out["dropped"] += 1
+    if any(out.values()):
+        _save(channel_id, decl, new)
+        logger.info("[CustomVar] 값 맞추기 ch=%s %s", channel_id, out)
+    return out
+
+
 def _initial_value(entry: Dict[str, Any], prev: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """선언(개정 포함) 직후의 값 엔트리. **개정이 값을 날리지 않는다**가 계약이다.
 
@@ -2150,6 +2379,9 @@ def _initial_value(entry: Dict[str, Any], prev: Optional[Dict[str, Any]]) -> Dic
 
     if vtype == "list":
         items = old if isinstance(old, dict) else {}
+        # [2026-11-07 C120] 처음 선언(값이 아직 없음)이면 시작 항목. 다시 올리기 · 개정은 지금 목록을 지킨다.
+        if prev is None and isinstance(entry.get("start_items"), dict):
+            items = dict(entry["start_items"])
         lo, hi = (entry.get("item_range") or STOCK_RANGE)[:2]
         clean = {}
         for k, rec in list(items.items())[:list_max(entry)]:
@@ -2165,7 +2397,8 @@ def _initial_value(entry: Dict[str, Any], prev: Optional[Dict[str, Any]]) -> Dic
     if scope == "npc" or entry.get("per_actor"):
         per = old if isinstance(old, dict) else {}
         clean = {}
-        for nm, v in list(per.items())[:MAX_NPC_VALUES]:
+        _keep = NPC_NAMES_MAX if roster_rules(entry) else MAX_NPC_VALUES   # [C120] 명단 밖으로 나간 사람 값도 둔다
+        for nm, v in list(per.items())[:_keep]:
             fixed = _clamp_scalar(entry, v)
             if fixed is not None:
                 clean[str(nm)] = fixed
@@ -2230,65 +2463,7 @@ def _resolve_name(name: str, decl: Dict[str, Any]) -> str:
     return ""
 
 
-def format_list(channel_id: str) -> str:
-    """`!출력룰 목록 변수` 표시문."""
-    decl = get_declarations(channel_id)
-    if not decl:
-        return "📊 선언된 변수가 없습니다.\n\n" + RULES_TEXT
-    vals = get_values(channel_id)
-    _user_n = sum(1 for _v in decl.values() if isinstance(_v, dict) and not is_reserved(_v))
-    lines = [f"📊 **선언 변수** ({_user_n}/{MAX_VARS})"]
-    for name, spec in decl.items():
-        if not isinstance(spec, dict):
-            continue
-        cur = (vals.get(name) or {}).get("value")
-        scope = spec.get("scope", "global")
-        # 시스템 변수 — 🔒 로 "지울 수 없음"을 표시하고, PC별 현재값을 가면으로 읽는다.
-        if spec.get("system"):
-            lo, hi = (spec.get("range") or [0, 0])[:2]
-            _caps = f"캡 +{spec.get('max_gain', '∞')}/-{spec.get('max_loss', '∞')}"
-            if spec.get("per_actor"):
-                _per = cur if isinstance(cur, dict) else {}
-                _uids = list(_per.keys()) or ([_default_actor(channel_id)] if _default_actor(channel_id) else [])
-                _txt = ", ".join(
-                    f"{_actor_label(channel_id, u)} {format_value(spec, get_system_value(channel_id, name, u))}"
-                    for u in _uids[:MAX_NPC_VALUES]) or "—"
-            else:
-                _txt = format_value(spec, cur if cur is not None else spec.get("init"))
-            lines.append(f"- 🔒 **{name}** `{_txt}` ({lo}-{hi}, {_caps}, 시스템) — {spec.get('rule', '')}")
-            continue
-        vtype = spec.get("type", "gauge")
-        if vtype == "enum":
-            shape = " > ".join(spec.get("stages") or [])
-            if value_direction(spec) == "up":
-                shape += " (단조)"
-            elif value_direction(spec) == "down":
-                shape += " (내림만)"
-        elif vtype == "list":
-            lo, hi = (spec.get("item_range") or [0, 0])[:2]
-            shape = f"{spec.get('item_mode', 'stock')} {lo}-{hi}, 항목 {len(cur or {})}/{list_max(spec)}"
-        else:
-            lo, hi = (spec.get("range") or [0, 0])[:2]
-            shape = f"{lo}-{hi}"
-            if spec.get("max_gain") or spec.get("max_loss"):
-                shape += f", 캡 +{spec.get('max_gain', '∞')}/-{spec.get('max_loss', '∞')}"
-            if value_direction(spec) == "up":
-                shape += " (단조)"
-            elif value_direction(spec) == "down":
-                shape += " (내림만)"
-        if spec.get("always_feed"):
-            shape += " (추적 항상)"     # [2026-10-12 C34]
-        if isinstance(cur, dict):
-            cur_text = ", ".join(
-                f"{k} {_item_text(spec, k, v) if vtype == 'list' else format_value(spec, v)}"
-                if vtype != "list" else _item_text(spec, k, v)
-                for k, v in list(cur.items())[:4]
-            ) or "—"
-        else:
-            cur_text = format_value(spec, cur)
-        _lock = "🔒 " if spec.get("builtin") else ""   # [C61] 기본 목록 — 못 지움
-        lines.append(f"- {_lock}**{name}** `{cur_text}` ({shape}, {vtype}, {scope}) — {spec.get('rule', '')}")
-    return "\n".join(lines)
+# ⚰[C116 1c] format_list(`!출력룰 목록 변수`) 삭제 — 모듈 앱 앱 카드 선언 줄(activity_server._decl_rows).
 
 
 # =========================================================
@@ -2342,6 +2517,9 @@ def select_mentioned(channel_id: str, *texts: str) -> List[Dict[str, Any]]:
         #   실으면 그 자리는 폐기될 델타를 부르는 초대장이다(추출 스키마 비대 감시, 스펙 §3.5).
         if is_derived(spec):
             continue
+        # [2026-11-07 C120] 추적 안 함 — Lua · 편집만 쓰는 값. 출력물 콜이 받으면 두 번 움직인다.
+        if str(spec.get("track") or "") == "never":
+            continue
         # [Phase 2.5] **mentions 면제**(always_feed). 능력을 쓴 장면에 "활력"이라는 낱말이
         #   없어도 소모는 일어난다 — 어휘 게이트는 유저 변수의 프롬프트 비대를 막는 장치지
         #   상시 자원의 관측을 끊는 장치가 아니다. 동결된(토글 off) 시스템 변수는 급식 안 한다.
@@ -2379,7 +2557,17 @@ def select_mentioned(channel_id: str, *texts: str) -> List[Dict[str, Any]]:
                 _item_text(spec, k, v, channel_id) for k, v in list((cur or {}).items())[:list_max(spec)]
             ]
         # [v1] NPC 스코프는 **값을 가질 자격이 있는 인물**을 알아야 헛신고가 줄어든다.
-        if entry["scope"] == "npc":
+        if entry["scope"] == "npc" and (roster_rules(spec) or spec.get("start_by")):
+            # [2026-11-07 C120] 명단 · 인물별 시작값이 있는 값 — 그 값을 가질 사람만, 지금 값(없으면 시작값)과 함께.
+            _hs = holder_names(channel_id, nm, spec)[:npc_cap(spec)]
+            _per = cur if isinstance(cur, dict) else {}
+            entry["npcs"] = _hs
+            entry["current_by_npc"] = {
+                k: (format_value(spec, _per.get(k, npc_init(spec, k))) if vtype != "enum"
+                    else _per.get(k, npc_init(spec, k)))
+                for k in _hs
+            }
+        elif entry["scope"] == "npc":
             entry["npcs"] = allowed_npc_names(channel_id)[:MAX_NPC_VALUES]
             entry["current_by_npc"] = {
                 k: (format_value(spec, v) if vtype != "enum" else v)
@@ -2794,11 +2982,11 @@ def apply_code_write(channel_id: str, name: Any, *, delta: Any = None, value: An
                         nm, value, " > ".join(stages))
             return None
         if str(spec.get("scope")) == "npc":
-            who = resolve_npc(channel_id, npc)
+            who = resolve_npc(channel_id, npc, nm)
             if not who:
                 return None
             per = dict(entry.get("value") or {}) if isinstance(entry.get("value"), dict) else {}
-            cur = _match_stage(per.get(who), stages) or _match_stage(spec.get("init"), stages) or stages[0]
+            cur = _match_stage(per.get(who), stages) or _match_stage(npc_init(spec, who), stages) or stages[0]
             if cur == target:
                 return None
             per[who] = target
@@ -2846,15 +3034,16 @@ def apply_code_write(channel_id: str, name: Any, *, delta: Any = None, value: An
         per = dict(entry.get("value") or {}) if isinstance(entry.get("value"), dict) else {}
         old = _actor_base(channel_id, spec, entry, keyed)
     elif str(spec.get("scope")) == "npc":
-        keyed = resolve_npc(channel_id, npc)
+        keyed = resolve_npc(channel_id, npc, nm)
         if not keyed:
             return None
         per = dict(entry.get("value") or {}) if isinstance(entry.get("value"), dict) else {}
+        _i0 = npc_init(spec, keyed)
         try:
-            old = int(per.get(keyed, spec.get("init", lo)))
+            old = int(per.get(keyed, lo if _i0 is None else _i0))
         except (TypeError, ValueError):
             old = int(spec.get("init", lo) or lo)
-        if keyed not in per and len(per) >= MAX_NPC_VALUES:
+        if keyed not in per and not roster_rules(spec) and len(per) >= MAX_NPC_VALUES:
             logger.info("[CustomVar] %s 인물별 값 상한 %d 도달 → %s 폐기", nm, MAX_NPC_VALUES, keyed)
             return None
     else:
@@ -3046,7 +3235,9 @@ def build_declared_block(channel_id: str) -> str:
             shape = f"{vtype} {lo}~{hi}"
             now = format_value(spec, cur if cur is not None else spec.get("init"))
             if isinstance(cur, dict):
-                now = ", ".join(f"{k} {v}" for k, v in list(cur.items())[:MAX_NPC_VALUES]) or "—"
+                _hs_o = set(holder_names(channel_id, nm, spec)) if roster_rules(spec) else None
+                now = ", ".join(f"{k} {v}" for k, v in list(cur.items())[:NPC_VALUES_HARD]
+                                if _hs_o is None or k in _hs_o)[:400] or "—"
         lines.append(f"- 값 {nm}: {shape}{tag} | 현재 {now} | {spec.get('rule', '')}"[:400])
     appends = [n for n, k in idx.items() if k == "append"]
     if appends:
@@ -3127,7 +3318,7 @@ def apply_declared_edit(channel_id: str, user_id: str, ed: Dict[str, Any], *, so
     npc = str(ed.get("npc") or "").strip()
 
     if kind in _OOC_FILE_ONLY:
-        return f"✗ {nm} — 이 종류({_OOC_FILE_ONLY[kind]})는 파일로 (`!출력룰 추가`)", None
+        return f"✗ {nm} — 이 종류({_OOC_FILE_ONLY[kind]})는 앱 선언 칸으로 (`outputs.json` → `!모듈 올리기`)", None
     if kind == "append":
         if op != "append":
             return f"✗ {nm} — 기록은 쌓기만 한다. 고쳐 쓰려면 파일로", None
@@ -3347,19 +3538,20 @@ def _apply_numeric(channel_id: str, name: str, spec: Dict[str, Any],
 
     npc = ""
     if str(spec.get("scope")) == "npc":
-        npc = resolve_npc(channel_id, item.get("npc"))
+        npc = resolve_npc(channel_id, item.get("npc"), name)
         if not npc:
-            logger.info("[CustomVar] %s 인물 미허용/미상 → 폐기 (npc=%r)", name, item.get("npc"))
+            logger.info("[CustomVar] %s 인물 미허용/미상 · 명단 밖 → 폐기 (npc=%r)", name, item.get("npc"))
             return None
         per = dict(entry.get("value") or {}) if isinstance(entry.get("value"), dict) else {}
+        _i0 = npc_init(spec, npc)
         try:
-            old = int(per.get(npc, spec.get("init", lo)))
+            old = int(per.get(npc, lo if _i0 is None else _i0))
         except (TypeError, ValueError):
             old = int(spec.get("init", lo) or lo)
         new = max(lo, min(hi, old + capped))
         if new == old:
             return None
-        if npc not in per and len(per) >= MAX_NPC_VALUES:
+        if npc not in per and not roster_rules(spec) and len(per) >= MAX_NPC_VALUES:
             logger.info("[CustomVar] %s 인물별 값 상한 %d 도달 → %s 폐기", name, MAX_NPC_VALUES, npc)
             return None
         per[npc] = new
@@ -3446,13 +3638,13 @@ def _apply_enum(channel_id: str, name: str, spec: Dict[str, Any],
     npc = ""
     per: Dict[str, Any] = {}
     if str(spec.get("scope")) == "npc":
-        npc = resolve_npc(channel_id, item.get("npc"))
+        npc = resolve_npc(channel_id, item.get("npc"), name)
         if not npc:
-            logger.info("[CustomVar] %s 인물 미허용/미상 → 폐기 (npc=%r)", name, item.get("npc"))
+            logger.info("[CustomVar] %s 인물 미허용/미상 · 명단 밖 → 폐기 (npc=%r)", name, item.get("npc"))
             return None
         per = dict(entry.get("value") or {}) if isinstance(entry.get("value"), dict) else {}
-        cur = _match_stage(per.get(npc), stages) or stages[0]
-        if npc not in per and len(per) >= MAX_NPC_VALUES:
+        cur = _match_stage(per.get(npc), stages) or _match_stage(npc_init(spec, npc), stages) or stages[0]
+        if npc not in per and not roster_rules(spec) and len(per) >= MAX_NPC_VALUES:
             logger.info("[CustomVar] %s 인물별 값 상한 %d 도달 → %s 폐기", name, MAX_NPC_VALUES, npc)
             return None
     else:
@@ -3624,124 +3816,7 @@ def _apply_list(name: str, spec: Dict[str, Any], vals: Dict[str, Any],
             "delta": new - old, "evidence": evidence}
 
 
-# =========================================================
-# 저작 (b) — 자연어 1회성 변환 콜 (light)
-# =========================================================
-# ★**저작 시 1회**다. 매턴 콜 순증 0 — 스펙 §3-2 의 콜 규율.
-#   실패하면 파이프 문법이 폴백이고, 산출은 위 validate_declaration 을 **반드시** 지난다
-#   (콜은 초안을 쓸 뿐 관문이 아니다).
-
-_NL_PROMPT = """You convert one sentence of a player's intent into a variable declaration for a TTRPG bot.
-
-The player writes in Korean and describes a quantity their world needs to track
-(mana, corruption, debt, reputation, supplies …). Turn it into one JSON object.
-
-## SCHEMA
-{{
-  "name": str,      // display name, Korean allowed, <= {name_max} chars. Take the player's own word for it.
-  "type": "gauge" | "counter" | "enum" | "list",
-                    // gauge = a level that fills and drains. counter = a tally spent and gained.
-                    // enum  = named steps it moves between (무명 → 안면 → 단골). Not a number.
-                    // list  = many named entries, each carrying its own number.
-  "scope": "global" | "pc" | "npc",
-                    // pc = belongs to the player character. global = belongs to the world.
-                    // npc = one value per character (only for gauge/counter/enum).
-  "rule": str,      // ONE Korean line: when it goes up, when it goes down. This line is read by the
-                    // extractor every turn, so write the conditions, not a description of the concept.
-
-  // gauge / counter only:
-  "range": [low, high],          // integers, low < high. Pick what the sentence implies; 0-100 when it implies nothing.
-  "init": int,                   // starting value, inside the range
-  "max_gain": int,               // optional. Most a single exchange may add. Use it when the sentence says
-  "max_loss": int,               // optional. Most a single exchange may take. something rises slowly or falls fast.
-
-  // enum only:
-  "stages": [str, ...],          // 2..{stage_max} step names, lowest first, each <= {stage_name_max} chars
-  "init": str,                   // one of the stages
-  "monotonic": bool,             // true when the sentence says it never goes back down
-
-  // list only:
-  "item_mode": "progress" | "stock",   // progress = each entry is a 0-100 percentage.
-                                       // stock = each entry is a current amount against a target.
-
-  // any type, optional:
-  "format": str                  // display only, must contain {{v}} — e.g. "{{v}} 골드"
-}}
-
-Names already declared in this world (do not duplicate, do not rename them): {existing}
-
-Take the values the sentence actually states. Where the sentence is silent, choose the plainest
-default that fits the schema rather than inventing detail.
-
-## PLAYER'S SENTENCE
-{text}
-
-## OUTPUT
-JSON object only."""
-
-
-async def convert_natural_declaration(
-    client: Any,
-    model_id: str,
-    text: str,
-    existing_names: Optional[List[str]] = None,
-) -> Tuple[Optional[Dict[str, Any]], str]:
-    """자연어 한 문장 → 스키마 초안. Returns: (raw spec, "") 또는 (None, 사유).
-
-    ⚠ 여기서 돌려주는 건 **초안**이다. 호출부가 validate_declaration 을 통과시켜야 한다.
-    """
-    if not is_enabled():
-        return None, "변수 기능이 꺼져 있습니다."
-    body = str(text or "").strip()
-    if not body:
-        return None, "변환할 문장이 비어 있습니다."
-
-    import json as _json
-    try:
-        from google.genai import types  # type: ignore
-        from memory_system import api_call_with_retry
-        import bot_utils as _bu
-        import text_resources as _tr
-    except Exception as e:      # 스모크·오프라인 환경
-        return None, f"변환 콜 준비 실패: {e}"
-
-    prompt = _NL_PROMPT.format(
-        name_max=NAME_MAX,
-        stage_max=MAX_STAGES,
-        stage_name_max=STAGE_NAME_MAX,
-        existing=", ".join(existing_names or []) or "(none)",
-        text=body[:600],
-    )
-    cfg = types.GenerateContentConfig(
-        system_instruction=getattr(_tr, "ANALYSIS_FRAME", ""),   # [2026-10-06 분석 틀] 
-        temperature=0.2,            # 스키마 채우기 — 창작이 아니다
-        # [2026-10-11 C27b] 512 → 8192. 추론 켠 분석 콜은 추론이 출력 예산에 같이 든다 — 상한 통일(레티어스 "나머지도 다 올리자").
-        max_output_tokens=8192,
-        response_mime_type="application/json",
-        safety_settings=config.SAFETY_SETTINGS,
-    )
-    contents = [types.Content(role="user", parts=[types.Part(text=prompt)])]
-
-    try:
-        with config.light_call():
-            result = await api_call_with_retry(
-                client, model_id, contents, cfg, operation_name="CustomVarAuthor",
-            )
-        if not result:
-            return None, "변환 콜이 빈 응답을 돌려줬습니다."
-        cleaned = _bu.clean_json_text(result)
-        try:
-            data = _json.loads(cleaned)
-        except Exception:
-            data = _json.loads(_bu.repair_json(cleaned))
-        if isinstance(data, list) and data:
-            data = data[0]
-        if not isinstance(data, dict):
-            return None, "변환 결과가 스키마 모양이 아닙니다."
-        return data, ""
-    except Exception as e:
-        logger.warning("[CustomVar] 자연어 변환 실패: %s", e)
-        return None, f"변환 실패: {e}"
+# ⚰[C116 1c] 자연어 1회성 변환 콜(_NL_PROMPT · convert_natural_declaration — `!출력룰 추가 변수 {문장}`) 삭제.
 
 
 # =========================================================
@@ -3787,11 +3862,14 @@ def build_display_rows(channel_id: str) -> List[Tuple[str, str]]:
         # [v1] NPC 스코프 — **변수당 인물별 줄**. 값이 없는 인물은 줄도 없다.
         if str(spec.get("scope")) == "npc":
             per = val if isinstance(val, dict) else {}
+            if per and roster_rules(spec):          # [C120] 명단 밖으로 나간 사람 값은 두되 안 보인다
+                _hs_p = set(holder_names(channel_id, name, spec))
+                per = {k: v for k, v in per.items() if k in _hs_p}
             if not per:
                 continue
             stamps = lc if isinstance(lc, dict) else {}
             lines = []
-            for nm, v in list(per.items())[:MAX_NPC_VALUES]:
+            for nm, v in list(per.items())[:npc_cap(spec)]:
                 line = f"{nm} {format_value(spec, v)}"
                 st = stamps.get(nm) if isinstance(stamps.get(nm), dict) else None
                 if st:
@@ -3876,6 +3954,33 @@ def _feed_row(channel_id: str, name: str, spec: Dict[str, Any], vals: Dict[str, 
     vtype = str(spec.get("type", "gauge"))
     # [2026-09-06 P8c] npc 스코프와 npc_enabled 시스템 변수가 **같은 줄**을 쓴다. 무대 판정이
     #   곧 필터라 시스템 변수의 user_id 키는 여기서 자연히 빠진다(무대에 선 것은 인물뿐).
+    # [2026-11-07 C120] 인물별 값(시스템 값 말고) — 저장 dict 대신 **무대 위 명단 인물**을 돈다. 안 움직인 사람도
+    #   시작값(start_by → start)으로 실린다. `stage_notes` 가 있으면 숫자 · 단계 이름 대신 그 구간의 방향 줄만.
+    if str(spec.get("scope")) == "npc" and not spec.get("system") and not spec.get("per_actor"):
+        per = raw if isinstance(raw, dict) else {}
+        who_l = [n for n in holder_names(channel_id, name, spec) if str(n).strip() in onstage_set]
+        if roster_rules(spec):
+            who_l = who_l[:npc_cap(spec)]
+        # 값이 쓰인 사람 먼저(저장 순서 — 옛 줄과 같은 바이트), 그다음 안 움직인 사람
+        _in = set(who_l)
+        who_l = [k for k in per if k in _in] + [k for k in who_l if k not in per]
+        who_l = who_l[:PROSE_NPC_MAX]
+        if spec.get("stage_notes"):
+            parts = []
+            for k in who_l:
+                note = stage_note(spec, per.get(k, npc_init(spec, k)))
+                if note:
+                    parts.append(f"{k}: {note}")
+            return f"{name} — " + "; ".join(parts) if parts else ""
+        shown = []
+        for k in who_l:
+            v = per.get(k, npc_init(spec, k))
+            if v is None:
+                continue
+            shown.append((k, v))
+        if not shown:
+            return ""
+        return f"{name} " + ", ".join(f"{k} {format_value(spec, v)}" for k, v in shown)
     if npc_keyed(spec):
         per = raw if isinstance(raw, dict) else {}
         shown = [(k, v) for k, v in per.items()
@@ -3907,6 +4012,9 @@ def _feed_row(channel_id: str, name: str, spec: Dict[str, Any], vals: Dict[str, 
             return ""
     elif not isinstance(raw, (int, float)):
         return ""
+    if spec.get("stage_notes"):                       # [C120] 단계 설명 — 숫자 대신 방향 줄
+        note = stage_note(spec, raw)
+        return f"{name} — {note}" if note else ""
     return f"{name} {format_value(spec, raw)}"
 
 

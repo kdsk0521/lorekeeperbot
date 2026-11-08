@@ -3,6 +3,8 @@
  *   [2026-10-23 C67 A1] 탭 줄 → 홈 + 앱 두 층(서랍 · 뒤로·홈·편집). 고치기 탭 → 앱마다 편집 모드(edit 고르개).
  *   [2026-10-23 C69 A3] 편지 · 소식 · 속마음 앱(렌더러 feed) · 홈 이번 턴 줄 · 앱 타일 배지(안 본 행 수).
  *   [2026-10-23 C72 A5] 부품 상자(렌더러 parts — 서버가 화면을 부품 목록으로 보낸다) · 선언 앱 → 모듈 앱.
+ *   [2026-11-05 C116 c3] 부품 edit · add(고치는 칸 · 새 항목 칸) · 앱 선언 edit_view(편집 모드 = 부품 쪽 — 진행 중 medit ·
+ *     인물 페이지마다 pedit:<id>, 목록은 그대로) · 상태창 묶음 안 부품(pcstate — 누르기는 submitEdit 길).
  *   고치기 탭(편집): POST /api/act {action, args, rev} 한 길. 확인창 없음 · 낙관 갱신 0(응답의 data 로 다시 그린다)
  *   · 고친 뒤 영수증 한 줄 + ↶(방금 고친 것 하나 되돌리기). 판정·잠금·쓰기는 전부 서버 몫.
  *
@@ -29,7 +31,7 @@
   var currentPerson = null;
 
   // ---------- 아이콘 (Lucide 1.61.0 노드, 쓰는 것만 — 규칙 문서 §3 표와 같은 목록) ----------
-  var ICONS = {"activity":[["path",{"d":"M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"}]],"archive":[["rect",{"width":"20","height":"5","x":"2","y":"3","rx":"1"}],["path",{"d":"M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"}],["path",{"d":"M10 12h4"}]],"users":[["path",{"d":"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"}],["path",{"d":"M16 3.128a4 4 0 0 1 0 7.744"}],["path",{"d":"M22 21v-2a4 4 0 0 0-3-3.87"}],["circle",{"cx":"9","cy":"7","r":"4"}]],"scroll":[["path",{"d":"M15 12h-5"}],["path",{"d":"M15 8h-5"}],["path",{"d":"M19 17V5a2 2 0 0 0-2-2H4"}],["path",{"d":"M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"}]],"refresh":[["path",{"d":"M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"}],["path",{"d":"M21 3v5h-5"}],["path",{"d":"M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"}],["path",{"d":"M8 16H3v5"}]],"user":[["path",{"d":"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"}],["circle",{"cx":"12","cy":"7","r":"4"}]],"globe":[["circle",{"cx":"12","cy":"12","r":"10"}],["path",{"d":"M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"}],["path",{"d":"M2 12h20"}]],"handshake":[["path",{"d":"m11 17 2 2a1 1 0 1 0 3-3"}],["path",{"d":"m14 14 2.5 2.5a1 1 0 1 0 3-3l-3.88-3.88a3 3 0 0 0-4.24 0l-.88.88a1 1 0 1 1-3-3l2.81-2.81a5.79 5.79 0 0 1 7.06-.87l.47.28a2 2 0 0 0 1.42.25L21 4"}],["path",{"d":"m21 3 1 11h-2"}],["path",{"d":"M3 3 2 14l6.5 6.5a1 1 0 1 0 3-3"}],["path",{"d":"M3 4h8"}]],"clapperboard":[["path",{"d":"m12.296 3.464 3.02 3.956"}],["path",{"d":"M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3z"}],["path",{"d":"M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"}],["path",{"d":"m6.18 5.276 3.1 3.899"}]],"history":[["path",{"d":"M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"}],["path",{"d":"M3 3v5h5"}],["path",{"d":"M12 7v5l4 2"}]],"layers":[["path",{"d":"M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"}],["path",{"d":"M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"}],["path",{"d":"M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17"}]],"star":[["path",{"d":"M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"}]],"help":[["circle",{"cx":"12","cy":"12","r":"10"}],["path",{"d":"M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"}],["path",{"d":"M12 17h.01"}]],"map":[["path",{"d":"M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"}],["circle",{"cx":"12","cy":"10","r":"3"}]],"flag":[["path",{"d":"M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 7.333 2q2 0 3.067-.8A1 1 0 0 1 20 4v10a1 1 0 0 1-.4.8A6 6 0 0 1 16 16c-3 0-5-2-8-2a6 6 0 0 0-4 1.528"}]],"notebook":[["path",{"d":"M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"}],["path",{"d":"M2 6h4"}],["path",{"d":"M2 10h4"}],["path",{"d":"M2 14h4"}],["path",{"d":"M2 18h4"}],["path",{"d":"M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"}]],"mail":[["path",{"d":"m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7"}],["rect",{"x":"2","y":"4","width":"20","height":"16","rx":"2"}]],"book":[["path",{"d":"M12 5v16"}],["path",{"d":"M20.001 19A2 2 0 0022 17V5a2 2 0 00-1.999-2L16 3.002A5 5 0 0012 5a5 5 0 00-4-2H4a2 2 0 00-2 2v12a2 2 0 001.999 2H8a5 5 0 014 2 5 5 0 014-2z"}]],"alert":[["path",{"d":"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"}],["path",{"d":"M12 9v4"}],["path",{"d":"M12 17h.01"}]],"clock":[["circle",{"cx":"12","cy":"12","r":"10"}],["path",{"d":"M12 6v6l4 2"}]],"pencil":[["path",{"d":"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"}],["path",{"d":"m15 5 4 4"}]],"undo":[["path",{"d":"M9 14 4 9l5-5"}],["path",{"d":"M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"}]],"plus":[["path",{"d":"M5 12h14"}],["path",{"d":"M12 5v14"}]],"x":[["path",{"d":"M18 6 6 18"}],["path",{"d":"m6 6 12 12"}]],"check":[["path",{"d":"M20 6 9 17l-5-5"}]],"house":[["path",{"d":"M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"}],["path",{"d":"M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"}]],"arrow-left":[["path",{"d":"m12 19-7-7 7-7"}],["path",{"d":"M19 12H5"}]],"chevron-right":[["path",{"d":"m9 18 6-6-6-6"}]],"newspaper":[["path",{"d":"M15 18h-5"}],["path",{"d":"M18 14h-8"}],["path",{"d":"M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-4 0v-9a2 2 0 0 1 2-2h2"}],["rect",{"width":"8","height":"4","x":"10","y":"6","rx":"1"}]],"brain":[["path",{"d":"M12 18V5"}],["path",{"d":"M15 13a4.17 4.17 0 01-3-4 4.17 4.17 0 01-3 4"}],["path",{"d":"M17.707 6.294A3 3 0 1012 5a3 3 0 10-5.707 1.294"}],["path",{"d":"M17.996 5.125a4 4 0 012.526 5.77"}],["path",{"d":"M18 18a4 4 0 002-7.465"}],["path",{"d":"M19.967 17.482a4 4 0 11-7.967.517 4 4 0 11-7.967-.517"}],["path",{"d":"M6 18a4 4 0 01-2-7.465"}],["path",{"d":"M6.004 5.125a4 4 0 00-2.526 5.77"}]],"blocks":[["path",{"d":"M10 22V7a1 1 0 0 0-1-1H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5a1 1 0 0 0-1-1H2"}],["rect",{"x":"14","y":"2","width":"8","height":"8","rx":"1"}]],"chevron-down":[["path",{"d":"m6 9 6 6 6-6"}]],"orbit":[["path",{"d":"M20.341 6.484A10 10 0 0 1 10.266 21.85"}],["path",{"d":"M3.659 17.516A10 10 0 0 1 13.74 2.152"}],["circle",{"cx":"12","cy":"12","r":"3"}],["circle",{"cx":"19","cy":"5","r":"2"}],["circle",{"cx":"5","cy":"19","r":"2"}]],"target":[["circle",{"cx":"12","cy":"12","r":"10"}],["circle",{"cx":"12","cy":"12","r":"6"}],["circle",{"cx":"12","cy":"12","r":"2"}]]};
+  var ICONS = {"activity":[["path",{"d":"M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"}]],"archive":[["rect",{"width":"20","height":"5","x":"2","y":"3","rx":"1"}],["path",{"d":"M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"}],["path",{"d":"M10 12h4"}]],"users":[["path",{"d":"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"}],["path",{"d":"M16 3.128a4 4 0 0 1 0 7.744"}],["path",{"d":"M22 21v-2a4 4 0 0 0-3-3.87"}],["circle",{"cx":"9","cy":"7","r":"4"}]],"scroll":[["path",{"d":"M15 12h-5"}],["path",{"d":"M15 8h-5"}],["path",{"d":"M19 17V5a2 2 0 0 0-2-2H4"}],["path",{"d":"M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"}]],"refresh":[["path",{"d":"M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"}],["path",{"d":"M21 3v5h-5"}],["path",{"d":"M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"}],["path",{"d":"M8 16H3v5"}]],"user":[["path",{"d":"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"}],["circle",{"cx":"12","cy":"7","r":"4"}]],"globe":[["circle",{"cx":"12","cy":"12","r":"10"}],["path",{"d":"M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"}],["path",{"d":"M2 12h20"}]],"handshake":[["path",{"d":"m11 17 2 2a1 1 0 1 0 3-3"}],["path",{"d":"m14 14 2.5 2.5a1 1 0 1 0 3-3l-3.88-3.88a3 3 0 0 0-4.24 0l-.88.88a1 1 0 1 1-3-3l2.81-2.81a5.79 5.79 0 0 1 7.06-.87l.47.28a2 2 0 0 0 1.42.25L21 4"}],["path",{"d":"m21 3 1 11h-2"}],["path",{"d":"M3 3 2 14l6.5 6.5a1 1 0 1 0 3-3"}],["path",{"d":"M3 4h8"}]],"clapperboard":[["path",{"d":"m12.296 3.464 3.02 3.956"}],["path",{"d":"M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3z"}],["path",{"d":"M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"}],["path",{"d":"m6.18 5.276 3.1 3.899"}]],"history":[["path",{"d":"M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"}],["path",{"d":"M3 3v5h5"}],["path",{"d":"M12 7v5l4 2"}]],"layers":[["path",{"d":"M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"}],["path",{"d":"M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"}],["path",{"d":"M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17"}]],"star":[["path",{"d":"M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"}]],"help":[["circle",{"cx":"12","cy":"12","r":"10"}],["path",{"d":"M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"}],["path",{"d":"M12 17h.01"}]],"map":[["path",{"d":"M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"}],["circle",{"cx":"12","cy":"10","r":"3"}]],"flag":[["path",{"d":"M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 7.333 2q2 0 3.067-.8A1 1 0 0 1 20 4v10a1 1 0 0 1-.4.8A6 6 0 0 1 16 16c-3 0-5-2-8-2a6 6 0 0 0-4 1.528"}]],"notebook":[["path",{"d":"M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"}],["path",{"d":"M2 6h4"}],["path",{"d":"M2 10h4"}],["path",{"d":"M2 14h4"}],["path",{"d":"M2 18h4"}],["path",{"d":"M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"}]],"mail":[["path",{"d":"m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7"}],["rect",{"x":"2","y":"4","width":"20","height":"16","rx":"2"}]],"book":[["path",{"d":"M12 5v16"}],["path",{"d":"M20.001 19A2 2 0 0022 17V5a2 2 0 00-1.999-2L16 3.002A5 5 0 0012 5a5 5 0 00-4-2H4a2 2 0 00-2 2v12a2 2 0 001.999 2H8a5 5 0 014 2 5 5 0 014-2z"}]],"alert":[["path",{"d":"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"}],["path",{"d":"M12 9v4"}],["path",{"d":"M12 17h.01"}]],"clock":[["circle",{"cx":"12","cy":"12","r":"10"}],["path",{"d":"M12 6v6l4 2"}]],"pencil":[["path",{"d":"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"}],["path",{"d":"m15 5 4 4"}]],"undo":[["path",{"d":"M9 14 4 9l5-5"}],["path",{"d":"M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"}]],"plus":[["path",{"d":"M5 12h14"}],["path",{"d":"M12 5v14"}]],"x":[["path",{"d":"M18 6 6 18"}],["path",{"d":"m6 6 12 12"}]],"check":[["path",{"d":"M20 6 9 17l-5-5"}]],"house":[["path",{"d":"M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"}],["path",{"d":"M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"}]],"arrow-left":[["path",{"d":"m12 19-7-7 7-7"}],["path",{"d":"M19 12H5"}]],"chevron-right":[["path",{"d":"m9 18 6-6-6-6"}]],"newspaper":[["path",{"d":"M15 18h-5"}],["path",{"d":"M18 14h-8"}],["path",{"d":"M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-4 0v-9a2 2 0 0 1 2-2h2"}],["rect",{"width":"8","height":"4","x":"10","y":"6","rx":"1"}]],"brain":[["path",{"d":"M12 18V5"}],["path",{"d":"M15 13a4.17 4.17 0 01-3-4 4.17 4.17 0 01-3 4"}],["path",{"d":"M17.707 6.294A3 3 0 1012 5a3 3 0 10-5.707 1.294"}],["path",{"d":"M17.996 5.125a4 4 0 012.526 5.77"}],["path",{"d":"M18 18a4 4 0 002-7.465"}],["path",{"d":"M19.967 17.482a4 4 0 11-7.967.517 4 4 0 11-7.967-.517"}],["path",{"d":"M6 18a4 4 0 01-2-7.465"}],["path",{"d":"M6.004 5.125a4 4 0 00-2.526 5.77"}]],"blocks":[["path",{"d":"M10 22V7a1 1 0 0 0-1-1H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5a1 1 0 0 0-1-1H2"}],["rect",{"x":"14","y":"2","width":"8","height":"8","rx":"1"}]],"chevron-down":[["path",{"d":"m6 9 6 6 6-6"}]],"orbit":[["path",{"d":"M20.341 6.484A10 10 0 0 1 10.266 21.85"}],["path",{"d":"M3.659 17.516A10 10 0 0 1 13.74 2.152"}],["circle",{"cx":"12","cy":"12","r":"3"}],["circle",{"cx":"19","cy":"5","r":"2"}],["circle",{"cx":"5","cy":"19","r":"2"}]],"target":[["circle",{"cx":"12","cy":"12","r":"10"}],["circle",{"cx":"12","cy":"12","r":"6"}],["circle",{"cx":"12","cy":"12","r":"2"}]],"search":[["path",{"d":"m21 21-4.34-4.34"}],["circle",{"cx":"11","cy":"11","r":"8"}]]};
   var SVG_NS = "http://www.w3.org/2000/svg";
   function icon(name, size) {
     var s = document.createElementNS(SVG_NS, "svg");
@@ -102,7 +104,8 @@
   function gaugeEl(label, n, max, tail) {
     var ratio = max > 0 ? Math.max(0, Math.min(1, n / max)) : 0;
     var g = el("div", "gauge");
-    g.appendChild(el("span", "g-label", label.trim()));
+    if (label.trim()) g.appendChild(el("span", "g-label", label.trim()));
+    else g.classList.add("nolabel");                // [C120 판2] 인물별 값 카드 — 이름은 행 머리에
     var track = el("span", "g-track");
     var fill = el("span", "g-fill " + (ratio >= 0.4 ? "ok" : ratio >= 0.15 ? "low" : "bad"));
     fill.style.width = (ratio * 100).toFixed(1) + "%";
@@ -201,17 +204,21 @@
       f.appendChild(el("span", null, turn.footer));
       view.appendChild(f);
     }
+    var npcBox = d && d.npc_values && d.npc_values.length ? npcValuesEl(d) : null;   // [C120 판2] 세계 카드 바로 뒤
     ((turn && turn.sections) || []).forEach(function (s) {
-      if (!s[1] || !s[1].length) return;
-      var c = titledCard(s[0]);
-      rows(c, s[1]);
-      view.appendChild(c);
+      if (s[1] && s[1].length) {
+        var c = titledCard(s[0]);
+        rows(c, s[1]);
+        view.appendChild(c);
+      }
+      if (npcBox && splitTitle(s[0]).icon === "globe") { view.appendChild(npcBox); npcBox = null; }
     });
     if (turn && turn.comments && turn.comments.length) {
       var cc = el("section", "card");
       turn.comments.forEach(function (t) { cc.appendChild(el("p", "comment", t)); });
       view.appendChild(cc);
     }
+    if (npcBox) view.appendChild(npcBox);                // 세계 섹션이 없던 판
     ((d && d.sections) || []).forEach(function (s) {
       if (!s[1] || !s[1].length) return;
       var c = card(s[0], "layers");
@@ -237,38 +244,219 @@
     if (!view.firstChild) message("아직 보관된 게 없어요.");
   }
 
+  // ---------- 긴 명단 거르개 (C120 판2 — 규칙 §4 인물 탭) ----------
+  //   찾기 칸(이름 · 별칭 · 초성) + 칩 줄. 같은 줄 안은 하나만, 줄끼리는 다 맞아야. 화면 안에서 거른다(서버 콜 0).
+  //   F = {q, scope, g: {묶기 값 이름: 단계}}. 묶기 줄은 고른 칩을 다시 누르면 풀린다.
+  var CHO = ["ㄱ", "ㄲ", "ㄴ", "ㄷ", "ㄸ", "ㄹ", "ㅁ", "ㅂ", "ㅃ", "ㅅ", "ㅆ", "ㅇ", "ㅈ", "ㅉ", "ㅊ", "ㅋ", "ㅌ", "ㅍ", "ㅎ"];
+  function initials(s) {
+    var out = "";
+    Array.from(String(s || "")).forEach(function (ch) {
+      var c = ch.charCodeAt(0);
+      out += (c >= 0xAC00 && c <= 0xD7A3) ? CHO[Math.floor((c - 0xAC00) / 588)] : ch;
+    });
+    return out;
+  }
+  function squash(s) { return String(s || "").toLowerCase().replace(/\s+/g, ""); }
+  function nameHit(q, names) {
+    q = squash(q);
+    if (!q) return true;
+    var jamo = /[ㄱ-ㅎ]/.test(q), qi = jamo ? initials(q) : "";
+    return (names || []).some(function (n) {
+      var t = squash(n);
+      return t.indexOf(q) >= 0 || (jamo && initials(t).indexOf(qi) >= 0);
+    });
+  }
+  function newF(scope) { return { q: "", scope: scope, g: {} }; }
+  var peopleF = newF("all");       // 인물 앱
+  var valF = newF("onstage");      // 상태창 인물별 값 · 그 편집 모드(같은 거름)
+  function passF(F, rec, names) {
+    rec = rec || {};
+    if (F.scope === "onstage" && !rec.onstage) return false;
+    if (F.scope !== "all" && F.scope !== "onstage" && rec.kind !== F.scope) return false;
+    var g = rec.group || {};
+    for (var k in F.g) { if (Object.prototype.hasOwnProperty.call(F.g, k) && g[k] !== F.g[k]) return false; }
+    return nameHit(F.q, names);
+  }
+  function filterBar(F, cfg, onChange) {
+    var bar = el("div", "pfilter");
+    if (cfg.search) {
+      var s = el("label", "pf-search");
+      s.appendChild(icon("search", 16));
+      var i = document.createElement("input");
+      i.type = "search";
+      i.value = F.q;
+      i.placeholder = "찾기";
+      i.setAttribute("aria-label", "찾기");
+      var x = iconBtn("x", "지우기", function () { i.value = ""; F.q = ""; x.hidden = true; onChange(); i.focus(); });
+      x.hidden = !F.q;
+      i.addEventListener("input", function () { F.q = i.value; x.hidden = !i.value; onChange(); });
+      s.appendChild(i);
+      s.appendChild(x);
+      bar.appendChild(s);
+    }
+    function chipRow(label, opts, get, set, canClear) {
+      var row = el("div", "pf-row");
+      if (label) row.appendChild(el("span", "pf-label", label));
+      var chips = [];
+      function mark() {
+        chips.forEach(function (c) {
+          var on = get() === c.v;
+          c.b.classList.toggle("on", on);
+          c.b.setAttribute("aria-pressed", on ? "true" : "false");
+        });
+      }
+      opts.forEach(function (o) {
+        var b = el("button", "p-chip", o[1]);
+        b.type = "button";
+        b.addEventListener("click", function () {
+          set(canClear && get() === o[0] ? null : o[0]);
+          mark();
+          onChange();
+        });
+        chips.push({ b: b, v: o[0] });
+        row.appendChild(b);
+      });
+      mark();
+      bar.appendChild(row);
+    }
+    if (cfg.scopes && cfg.scopes.length > 1) {
+      chipRow(null, cfg.scopes, function () { return F.scope; }, function (v) { F.scope = v; }, false);
+    }
+    (cfg.groups || []).forEach(function (g) {
+      if (!g || !g.stages || !g.stages.length) return;
+      chipRow(g.name, g.stages.map(function (x) { return [x, x]; }),
+        function () { return Object.prototype.hasOwnProperty.call(F.g, g.name) ? F.g[g.name] : null; },
+        function (v) { if (v === null) delete F.g[g.name]; else F.g[g.name] = v; }, true);
+    });
+    return bar;
+  }
+  function emptyLine(F, base) {
+    var narrowed = F.q || Object.keys(F.g).length;
+    return el("p", "state", !narrowed && F.scope === "onstage" ? "무대 위에 아무도 없어요." : (base || "맞는 사람이 없어요."));
+  }
+  // 상태창 인물별 값 — 카드 위 칩(무대 위 · 전체 · 묶기 단계), 6명 넘으면 찾기 칸. 카드 = 값마다 사람 줄.
+  function npcValuesEl(d) {
+    var box = el("div", "npcvals");
+    var people = d.npc_people || {};
+    var area = el("div");
+    function draw() {
+      clear(area);
+      (d.npc_values || []).forEach(function (cd) {
+        var ppl = (cd.people || []).filter(function (x) { return passF(valF, people[x.who], [x.who]); });
+        if (!ppl.length) return;
+        var c = card(cd.name, "users");
+        rows(c, ppl.map(function (x) { return [x.who, x.value]; }));
+        area.appendChild(c);
+      });
+      if (!area.firstChild) area.appendChild(emptyLine(valF));
+    }
+    box.appendChild(filterBar(valF, { search: Object.keys(people).length > 6,
+                                      scopes: [["onstage", "무대 위"], ["all", "전체"]],
+                                      groups: d.group_defs || [] }, draw));
+    box.appendChild(area);
+    draw();
+    return box;
+  }
+
   // ---------- 탭: 인물 ----------
+  //   [C120 판2] 왼쪽(폰은 한 화면) = 찾기 + 칩 + 이름 줄(작은 묶기 단계 · 무대 위 점). 폰은 목록 ↔ 본문 두 화면,
+  //   아래 바 뒤로 = 목록(personBack). PC 는 둘이 나란히.
   var KIND_ICON = { location: "map", faction: "flag" };
+  var KIND_LABEL = { location: "장소", faction: "세력" };
+  var peoplePane = "list", peopleWrap = null, listScroll = 0;
+  function isPhone() { return !!(window.matchMedia && window.matchMedia("(max-width: 639px)").matches); }
+  function setPane(p) {
+    peoplePane = p;
+    if (!peopleWrap) return;
+    peopleWrap.classList.toggle("pane-detail", p === "detail");
+    peopleWrap.classList.toggle("pane-list", p !== "detail");
+  }
+  function personBack() {           // 폰에서 본문을 보던 중이면 목록으로 — 뒤로 한 단계
+    if (!peopleWrap || !peopleWrap.isConnected || !isPhone() || peoplePane !== "detail") return false;
+    setPane("list");
+    window.scrollTo(0, listScroll);
+    return true;
+  }
   async function showPeople() {
     var d = await api("/api/view/people");
     clear(view);
+    peopleWrap = null;
     var pages = (d && d.pages) || [];
     if (!pages.length) { message("아직 위키에 페이지가 없어요."); return; }
+    var groups = (d && d.group_defs) || [];
+    var kinds = {};
+    pages.forEach(function (p) { kinds[p.kind] = 1; });
+    var scopes = [["all", "전체"], ["onstage", "무대 위"]];
+    var other = ["location", "faction"].filter(function (k) { return kinds[k]; });
+    if (other.length) {
+      scopes.push(["character", "인물"]);
+      other.forEach(function (k) { scopes.push([k, KIND_LABEL[k]]); });
+    }
+    var waiting = editMode && d && d.waiting > 0 ? d.waiting : 0;   // [C116 c3] 등장 전 — 편집 모드에서만
     var wrap = el("div", "people");
+    peopleWrap = wrap;
+    var side = el("div", "pside");
     var list = el("nav", "plist");
+    list.setAttribute("aria-label", "목록");
     var detail = el("div", "pdetail");
-    pages.forEach(function (p) {
+    function rowBtn(p) {
       var b = el("button", p.mine ? "mine" : null);
       b.type = "button";
-      var ic = p.mine ? "star" : (KIND_ICON[p.kind] || "user");
-      b.appendChild(icon(ic, 14));
-      b.appendChild(el("span", null, p.name));
-      b.addEventListener("click", function () {
-        Array.prototype.forEach.call(list.children, function (x) { x.classList.remove("on"); });
-        b.classList.add("on");
-        currentPerson = p.page_id;
-        showPerson(detail, p.page_id).catch(function (e) {
-          clear(detail); detail.appendChild(el("p", "state error", String(e.message || e)));
-        });
+      b.setAttribute("data-id", p.page_id);
+      b.appendChild(icon(p.mine ? "star" : (KIND_ICON[p.kind] || "user"), 14));
+      b.appendChild(el("span", "pname", p.name));
+      var tags = groups.map(function (g) { return (p.group || {})[g.name]; }).filter(Boolean);
+      if (tags.length) b.appendChild(el("span", "ptag", tags.join(" · ")));
+      if (p.onstage) { var dot = el("span", "pdot"); dot.title = "무대 위"; b.appendChild(dot); }
+      b.setAttribute("aria-label", [p.name].concat(tags, p.onstage ? ["무대 위"] : []).join(", "));
+      b.addEventListener("click", function () { pick(p.page_id, true); });
+      return b;
+    }
+    function drawList() {
+      clear(list);
+      pages.forEach(function (p) {
+        if (passF(peopleF, p, [p.name].concat(p.aliases || []))) list.appendChild(rowBtn(p));
       });
-      list.appendChild(b);
-    });
-    wrap.appendChild(list);
+      if (!list.firstChild) list.appendChild(emptyLine(peopleF, "맞는 게 없어요."));
+      if (waiting) {
+        var wb = el("button", "waiting");
+        wb.type = "button";
+        wb.setAttribute("data-id", "@waiting");
+        wb.appendChild(icon("clock", 14));
+        wb.appendChild(el("span", "pname", "등장 전 (" + waiting + ")"));
+        wb.addEventListener("click", function () { pick("@waiting", true); });
+        list.appendChild(wb);
+      }
+      markOn();
+    }
+    function markOn() {
+      Array.prototype.forEach.call(list.querySelectorAll("button"), function (x) {
+        x.classList.toggle("on", x.getAttribute("data-id") === currentPerson);
+      });
+    }
+    function pick(pageId, byTap) {
+      currentPerson = pageId;
+      markOn();
+      if (isPhone()) {
+        if (byTap) listScroll = window.scrollY || 0;
+        setPane("detail");
+        window.scrollTo(0, 0);
+      }
+      var go = editMode ? showParts("pedit:" + pageId, detail) : showPerson(detail, pageId);   // [C116 c3]
+      go.catch(function (e) { clear(detail); detail.appendChild(el("p", "state error", String(e.message || e))); });
+    }
+    side.appendChild(filterBar(peopleF, { search: true, scopes: scopes, groups: groups }, drawList));
+    side.appendChild(list);
+    wrap.appendChild(side);
     wrap.appendChild(detail);
     view.appendChild(wrap);
-    var pick = pages.find(function (p) { return p.page_id === currentPerson; }) || pages[0];
-    var idx = pages.indexOf(pick);
-    if (list.children[idx]) list.children[idx].click();
+    var known = pages.some(function (p) { return p.page_id === currentPerson; }) || (currentPerson === "@waiting" && waiting);
+    if (!known) currentPerson = null;
+    drawList();
+    // 처음 그림: PC = 지금 사람(없으면 첫 페이지)이 본문에. 폰 = 목록 — 본문을 보던 중(편집 켬끔)이면 그 사람.
+    if (isPhone() && !(peoplePane === "detail" && currentPerson)) { setPane("list"); return; }
+    if (!isPhone()) setPane("list");
+    pick(currentPerson || pages[0].page_id, false);
   }
   async function showPerson(detail, pageId) {
     clear(detail);
@@ -302,6 +490,7 @@
   //   누르기 = POST /api/act {action, args, rev, view} — 응답의 data(새 쪽)로만 다시 그린다(낙관 갱신 0).
   //   영수증 한 줄 + ↶ · 실패 한 줄은 편집 화면과 같은 자리 · 같은 규칙(§5b).
   var partsRev = null, partsView = null, partsTab = null, partsBusy = false, partsApp = null;
+  var partsBox = null;   // [C116 c3] 부품 쪽을 그릴 자리 — null = 앱 화면 전체(view). 인물 편집은 본문 자리(detail)
   var partsReceipt = null, partsNotice = null, partsFlash = null;
   function withArgs(p, extra) {
     var a = {}, src = (p.act && p.act.args) || {};
@@ -312,6 +501,7 @@
   // [C73] 누르기 한 곳 — 코드 앱 쪽(partsApp)이면 부품의 act 는 {id, data} 라 app.click 으로 감싸 보낸다(규칙 §5d).
   function fire(ctrl, p, extra) {
     if (!p.act) return;
+    if (p._sink === "edit") { submitEdit(p.act.action, withArgs(p, extra)); return; }   // [C116 c3] 상태창 묶음 안 부품
     if (partsApp) {
       var data = {}, src = p.act.data || {};
       Object.keys(src).forEach(function (k) { data[k] = src[k]; });
@@ -401,6 +591,78 @@
     });
     return row;
   }
+  // [C116 c3] 고치는 칸 — 이름–값 행 + 연필(→ 그 자리 입력칸, 바뀐 칸만 보냄) + ✕(remove). 규칙 §5d · §5b.
+  function partInput(x, label) {
+    var kind = x.kind === "area" ? "area" : (x.kind === "number" || x.kind === "select" ? x.kind : "text");
+    return inputEl(kind, x.value, { min: x.min, max: x.max, options: x.options, maxlength: x.maxlength,
+                                    placeholder: x.placeholder, label: x.unit || label || "",
+                                    cls: kind === "area" ? "area" : (kind === "number" ? "w-s" : (kind === "text" ? "grow" : null)) });
+  }
+  function removeCtl(p, line) {
+    var b = iconBtn("x", "빼기", null);
+    var sub = { act: p.remove.act, _sink: p._sink };
+    b.addEventListener("click", function () {
+      if (!p.remove.confirm) { fire(b, sub, {}); return; }
+      clear(line);
+      line.appendChild(el("span", "vtext p-label", p.remove.confirm));
+      var ok = iconBtn("check", "확인", function () { fire(ok, sub, {}); });
+      line.appendChild(ok);
+      line.appendChild(iconBtn("x", "취소", function () { redraw(); }));
+    });
+    return b;
+  }
+  function partEdit(p) {
+    var dl = el("dl", "rows p-edit" + (p.label ? "" : " nolabel"));
+    var ins = (p.inputs || []).filter(function (x) { return x && x.key; });
+    var extra = [];
+    var row = el("div", "row");
+    row.appendChild(el("dt", null, p.label || ""));
+    var dd = el("dd");
+    var line = el("div", "vrow");
+    line.appendChild(el("span", "vtext", p.text || "—"));
+    if (ins.length) line.appendChild(iconBtn("pencil", (p.label || "값") + " 고치기", function () {
+      var parts = [], fields = [];
+      ins.forEach(function (x) {
+        if (x.unit) parts.push(unit(x.unit));
+        var i = partInput(x, p.label);
+        parts.push({ el: i, key: x.key });
+        fields.push(x);
+      });
+      editForm(dd, parts, function (v) {
+        var ch = {};
+        fields.forEach(function (x) { if (!same(v[x.key], x.value)) ch[x.key] = v[x.key]; });
+        if (!Object.keys(ch).length) return false;          // 다 같음 → 안 보내고 닫는다
+        fire(null, p, ch);
+      });
+    }));
+    if (p.remove && p.remove.act) line.appendChild(removeCtl(p, line));
+    dd.appendChild(line);
+    row.appendChild(dd);
+    dl.appendChild(row);
+    return dl;
+  }
+  // [C116 c3] 새 항목 칸 — 칸 값을 다 보낸다. 첫 칸이 비면 안 보낸다.
+  function partAdd(p) {
+    var f = el("form", "eform add");
+    var ins = [];
+    (p.inputs || []).forEach(function (x) {
+      if (!x || !x.key) return;
+      if (x.unit) f.appendChild(el("span", "unit", x.unit));
+      var i = partInput(x, "");
+      f.appendChild(i);
+      ins.push([x, i]);
+    });
+    if (!ins.length) return f;
+    f.appendChild(iconBtn("plus", "넣기", null, "submit"));
+    f.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      if (!String(ins[0][1].value || "").trim()) return;
+      var v = {};
+      ins.forEach(function (q) { v[q[0].key] = q[1].value; });
+      fire(null, p, v);
+    });
+    return f;
+  }
   var PART = {
     "text": function (p) { return el("p", "p-text" + (p.muted ? " muted" : ""), p.text || ""); },
     "rows": function (p) { var w = el("div", "p-rows"); rows(w, p.rows || []); return w; },
@@ -409,8 +671,26 @@
     "select": partSelect,
     "fold": partFold,
     "button": partButton,
-    "chips": partChips
+    "chips": partChips,
+    "edit": partEdit,
+    "add": partAdd,
+    "image": partImage
   };
+  // [C116 판8] 그림 팩 한 장 — data:image/… 만 그린다(그 밖 주소는 안 그린다 — 바깥 요청 0).
+  //   [C117 C4] 봇은 그림을 안 싣고 {asset, h} 로 보낸다 — 우리 서버(/api/asset)에서 따로 받아 캐시(h = 내용 hash)한 뒤 data: 로.
+  function partImage(p) {
+    var src = String(p.src || "");
+    var img = document.createElement("img");
+    img.className = "p-image";
+    img.alt = String(p.alt || "");
+    if (p.w) img.style.width = Math.max(16, Math.min(800, Number(p.w) || 0)) + "px";
+    if (src.indexOf("data:image/") === 0) { img.src = src; return img; }
+    if (!p.asset || !partsApp) return el("span", "p-none", "");
+    assetData(partsApp, String(p.asset), String(p.h || "")).then(function (u) {
+      if (u.indexOf("data:image/") === 0) img.src = u;
+    });
+    return img;
+  }
   function partCard(p) {
     var c = el("section", "card");
     var h = el("h2", "card-title");
@@ -458,17 +738,76 @@
   }
   function renderParts(d) {
     if (d && d.screen === "html") { renderFrame(d, false); return; }
-    clear(view);
+    var box = (partsBox && partsBox.isConnected) ? partsBox : view;
+    clear(box);
     frame = null;
     pageMeta(d);
-    drawLines(view);
-    drawParts(view, (d && d.parts) || [], false);
-    if (!view.firstChild) message("아직 표시할 게 없어요.");
+    schedulePending(d);
+    drawLines(box);
+    drawParts(box, (d && d.parts) || [], false);
+    if (!box.firstChild) { if (box === view) message("아직 표시할 게 없어요."); else box.appendChild(el("p", "state", "아직 표시할 게 없어요.")); }
   }
-  async function showParts(tab) {
+  async function showParts(tab, box) {
     partsTab = tab;
+    partsBox = box || null;
     var d = await api("/api/view/" + encodeURIComponent(tab));
     renderParts(d || {});
+  }
+  // 확인 줄 취소 등 — 지금 쪽을 다시 받는다(편집 묶음이면 showEdit, 부품 쪽이면 showParts).
+  function redraw() {
+    if (editMode && route !== null && !(appOf(route) || {}).edit_view) { showEdit(); return; }
+    showParts(partsTab, partsBox);
+  }
+
+  // ---------- [C117 C4] 그림 · 소리 팩 — 따로 받아 캐시 ----------
+  //   열쇠 = h(내용 hash) · 이름. 같은 그림은 Activity 를 연 동안 한 번만 나른다(브라우저 HTTP 캐시도 1년 · private).
+  var assetCache = {};
+  function fetchAsset(app, name, h) {
+    return fetch("/api/asset/" + encodeURIComponent(app) + "/" + encodeURIComponent(name) + "?h=" + encodeURIComponent(h),
+                 { headers: { Authorization: "Bearer " + session } });
+  }
+  function assetData(app, name, h) {
+    var key = app + "/" + name + "@" + h;
+    if (assetCache[key]) return assetCache[key];
+    assetCache[key] = (async function () {
+      try {
+        var r = await fetchAsset(app, name, h);
+        if (r.status === 401) { await connect(); r = await fetchAsset(app, name, h); }
+        if (!r.ok) { delete assetCache[key]; return ""; }
+        var b = await r.blob();
+        return await new Promise(function (res) {
+          var fr = new FileReader();
+          fr.onload = function () { res(String(fr.result || "")); };
+          fr.onerror = function () { res(""); };
+          fr.readAsDataURL(b);
+        });
+      } catch (e) { delete assetCache[key]; return ""; }
+    })();
+    return assetCache[key];
+  }
+  // HTML 안 `lk-asset:이름` → data:(서버가 준 {이름: h} 만 — 없는 이름은 그대로 두면 frame CSP 가 막는다)
+  async function fillHtml(html, assets, app) {
+    var names = Object.keys(assets || {});
+    if (!names.length || !app || html.indexOf("lk-asset:") < 0) return html;
+    var got = {};
+    await Promise.all(names.map(async function (n) { got[n] = await assetData(app, n, String(assets[n] || "")); }));
+    return html.replace(/lk-asset:([A-Za-z0-9_][A-Za-z0-9_.\-]{0,63})/g, function (m, n) { return got[n] || m; });
+  }
+
+  // ---------- [C117 C3] 물음(lk.ask)이 도는 동안 — 잠시 뒤 그 쪽을 다시 받는다 ----------
+  //   서버가 pending 을 끄면(답 적힘 · 실패) 멈춘다. 같은 쪽 · 안 누르는 중 · 편집 모드 아님 · 화면이 보일 때만.
+  var PENDING_POLL_MS = 4000;
+  var pendTimer = null;
+  function schedulePending(d) {
+    if (pendTimer) { clearTimeout(pendTimer); pendTimer = null; }
+    if (!d || !d.pending) return;
+    var tab = partsTab, box = partsBox;
+    pendTimer = setTimeout(function () {
+      pendTimer = null;
+      if (partsTab !== tab || editMode) return;
+      if (partsBusy || document.hidden) { schedulePending(d); return; }
+      showParts(tab, box).catch(function () {});
+    }, PENDING_POLL_MS);
   }
 
   // ---------- 코드 앱 HTML 화면 (C73 — 규칙 §5e, §7 의 유일한 예외) ----------
@@ -477,12 +816,22 @@
   var frame = null;     // {iframe, app, html, ready, play}
   function renderFrame(d, play) {
     pageMeta(d);
+    schedulePending(d);
+    var app = partsApp, raw = String(d.html || ""), seq = (renderFrame.seq = (renderFrame.seq || 0) + 1);
+    function fill(fr) {                       // [C117 C4] 그림 · 소리를 갈아 낀 뒤에 넘긴다(늦게 온 옛 화면은 버림)
+      fr.htmlReady = false;
+      fillHtml(raw, d.assets || {}, app).then(function (h) {
+        if (frame !== fr || renderFrame.seq !== seq) return;
+        fr.html = h;
+        fr.htmlReady = true;
+        pushFrame();
+      });
+    }
     if (frame && frame.app === partsApp && frame.iframe.isConnected && frame.lines && frame.lines.isConnected) {
       clear(frame.lines);
       drawLines(frame.lines);
-      frame.html = String(d.html || "");
       frame.play = !!play;
-      pushFrame();
+      fill(frame);
       return;
     }
     clear(view);
@@ -495,11 +844,12 @@
     f.setAttribute("referrerpolicy", "no-referrer");
     f.setAttribute("title", String(d.name || "앱 화면"));
     f.src = "/frame.html?v=" + encodeURIComponent(ASSET_VER);
-    frame = { iframe: f, app: partsApp, html: String(d.html || ""), ready: false, play: !!play, lines: lines };
+    frame = { iframe: f, app: partsApp, html: "", htmlReady: false, ready: false, play: !!play, lines: lines };
     view.appendChild(f);
+    fill(frame);
   }
   function pushFrame() {
-    if (!frame || !frame.ready || !frame.iframe.contentWindow) return;
+    if (!frame || !frame.ready || !frame.htmlReady || !frame.iframe.contentWindow) return;
     frame.iframe.contentWindow.postMessage({ type: "lk-html", html: frame.html, play: frame.play }, "*");
     frame.play = false;
   }
@@ -537,10 +887,10 @@
       }
       if (b.data && b.data.screen === "html") renderFrame(b.data, res.status === 200 && !!b.ok);
       else if (b.data && b.data.parts) renderParts(b.data);
-      else await showParts(partsTab);
+      else await showParts(partsTab, partsBox);
     } catch (e) {
       partsNotice = String((e && e.message) || e);
-      try { await showParts(partsTab); } catch (e2) { message(partsNotice, true); }
+      try { await showParts(partsTab, partsBox); } catch (e2) { message(partsNotice, true); }
     } finally {
       partsBusy = false;
       if (frame && frame.ready && frame.iframe.contentWindow) frame.iframe.contentWindow.postMessage({ type: "lk-done" }, "*");
@@ -631,11 +981,21 @@
       i = document.createElement("select");
       (opt.options || []).forEach(function (o) {
         var op = document.createElement("option");
-        op.value = String(o);
-        op.textContent = String(o);
-        if (String(o) === String(value)) op.selected = true;
+        var v = Array.isArray(o) ? o[0] : o, lb = Array.isArray(o) ? o[1] : o;   // [C116 c3] 부품은 [[값, 라벨]]
+        op.value = String(v);
+        op.textContent = String(lb);
+        if (String(v) === String(value)) op.selected = true;
         i.appendChild(op);
       });
+    } else if (kind === "area") {               // [C116 c3] 여러 줄 — Enter = 줄바꿈, Ctrl/Cmd+Enter = 적용(editForm)
+      i = document.createElement("textarea");
+      i.rows = 4;
+      if (opt.maxlength) i.maxLength = opt.maxlength;
+      if (value !== undefined && value !== null) i.value = String(value);
+      if (opt.placeholder) i.placeholder = opt.placeholder;
+      var grow = function () { i.style.height = "auto"; i.style.height = Math.min(i.scrollHeight + 2, 640) + "px"; };
+      i.addEventListener("input", grow);
+      setTimeout(grow, 0);
     } else {
       i = document.createElement("input");
       if (kind === "number") {
@@ -663,13 +1023,20 @@
     parts.forEach(function (x) { f.appendChild(x.el); });
     f.appendChild(iconBtn("check", "적용", null, "submit"));
     f.appendChild(iconBtn("x", "취소", restore));
+    if (parts.some(function (x) { return x.el && x.el.tagName === "TEXTAREA"; })) f.classList.add("has-area");
     f.addEventListener("submit", function (ev) {
       ev.preventDefault();
       var v = {};
       parts.forEach(function (x) { if (x.key) v[x.key] = x.el.value; });
-      onSubmit(v);
+      if (onSubmit(v) === false) restore();        // [C116 c3] 바뀐 게 없으면 닫기만
     });
-    f.addEventListener("keydown", function (ev) { if (ev.key === "Escape") { ev.preventDefault(); restore(); } });
+    f.addEventListener("keydown", function (ev) {
+      if (ev.key === "Escape") { ev.preventDefault(); restore(); return; }
+      if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey) && ev.target && ev.target.tagName === "TEXTAREA") {
+        ev.preventDefault();
+        if (f.requestSubmit) f.requestSubmit(); else f.dispatchEvent(new Event("submit", { cancelable: true }));
+      }
+    });
     dd.appendChild(f);
     var first = parts.filter(function (x) { return x.key; })[0];
     if (first) first.el.focus();
@@ -731,6 +1098,22 @@
       });
     });
     c.appendChild(dl);
+  }
+
+  function renderNpcScalars(c, g) {
+    var people = g.people || {};
+    var area = el("div");
+    function draw() {
+      clear(area);
+      var its = (g.items || []).filter(function (it) { return passF(valF, people[it.npc], [it.npc]); });
+      if (its.length) renderScalars(area, its);
+      else area.appendChild(emptyLine(valF));
+    }
+    c.appendChild(filterBar(valF, { search: Object.keys(people).length > 6,
+                                    scopes: [["onstage", "무대 위"], ["all", "전체"]],
+                                    groups: g.group_defs || [] }, draw));
+    c.appendChild(area);
+    draw();
   }
 
   function renderList(c, L) {
@@ -845,6 +1228,9 @@
     c.appendChild(dl);
   }
 
+  function markSink(list) {      // [C116 c3] 묶음 안 부품 — 누르기가 편집 화면 길(submitEdit)로 가게 표시
+    (list || []).forEach(function (p) { if (p && typeof p === "object") { p._sink = "edit"; if (p.parts) markSink(p.parts); } });
+  }
   function renderEdit(d) {
     clear(view);
     editRev = d ? d.rev : null;
@@ -866,10 +1252,12 @@
     var groups = ((d && d.groups) || []).filter(matchEdit);
     groups.forEach(function (g) {
       var c = card(g.title, g.icon || "layers");
-      if (g.items) renderScalars(c, g.items);
+      if (g.items && g.people) renderNpcScalars(c, g);      // [C120 판2] 인물별 값 — 상태창과 같은 거름
+      else if (g.items) renderScalars(c, g.items);
       else if (g.list) renderList(c, g.list);
       else if (g.relations) renderRelations(c, g);
       else if (g.clock) renderWorld(c, g);
+      else if (g.parts) { markSink(g.parts); drawParts(c, g.parts, true); }   // [C116 c3] pcstate
       view.appendChild(c);
     });
     if (!groups.length && !view.firstChild) message("고칠 값이 아직 없어요.");
@@ -889,7 +1277,7 @@
               { tab: "archive", label: "보관함", icon: "archive", renderer: "archive", drawer: true, kind: "builtin",
                 edit: ["list:builtin"] },
               { tab: "people", label: "인물", icon: "users", renderer: "people", drawer: true, kind: "builtin",
-                edit: ["relations"] },
+                edit: [], edit_view: "pedit" },
               { tab: "modules", label: "모듈", icon: "blocks", renderer: "parts", drawer: true, kind: "builtin", edit: [] }];
   var RENDER = { status: showStatus, archive: showArchive, people: showPeople, edit: showEdit,
                  feed: showFeed, parts: showParts, frame: showParts };   // [C73] frame = 코드 앱 HTML(같은 입구 — 쪽 모양이 가른다)
@@ -901,12 +1289,14 @@
     return { tab: String(t.tab), label: String(t.label || t.tab), icon: String(t.icon || "layers"),
              renderer: String(t.renderer || "cards"), drawer: t.drawer !== false,
              kind: t.kind === "extension" ? "extension" : "builtin",
-             edit: Array.isArray(t.edit) ? t.edit.map(String) : [] };
+             edit: Array.isArray(t.edit) ? t.edit.map(String) : [],
+             edit_view: t.edit_view ? String(t.edit_view) : "" };
   }
   function appOf(tab) { return apps.filter(function (a) { return a.tab === tab; })[0] || null; }
-  function canEdit(a) { return !!(a && a.edit && a.edit.length); }
+  function canEdit(a) { return !!(a && ((a.edit && a.edit.length) || a.edit_view)); }
   function resetEditState() { receipt = null; notice = null; flash = null;
-                              partsReceipt = null; partsNotice = null; partsFlash = null; frame = null; partsApp = null; }
+                              partsReceipt = null; partsNotice = null; partsFlash = null; frame = null; partsApp = null;
+                              partsBox = null; }
 
   // 머리줄 · 아래 바 — 버튼은 index.html 에 있고 아이콘·글자는 여기서 그린다.
   var bodyEl = document.body;
@@ -952,7 +1342,13 @@
   async function render() {
     try {
       if (route === null) { editFilter = null; await showHome(); }
-      else if (editMode) { editFilter = (appOf(route) || {}).edit || []; await showEdit(); }
+      else if (editMode) {
+        var ea = appOf(route) || {};
+        editFilter = ea.edit || [];
+        if (ea.edit_view === "pedit") await showPeople();            // [C116 c3] 목록 그대로 · 본문만 편집 쪽
+        else if (ea.edit_view) await showParts(ea.edit_view);         // [C116 c3] 진행 중 = medit
+        else await showEdit();
+      }
       else {
         editFilter = null;
         var a = appOf(route) || { renderer: route };
@@ -963,8 +1359,9 @@
       message(String((e && e.message) || e), true);
     }
   }
+  function resetFilters() { peopleF = newF("all"); valF = newF("onstage"); peoplePane = "list"; }   // [C120 판2]
   async function openApp(tab) {
-    if (route !== tab) stack.push(route);
+    if (route !== tab) { stack.push(route); resetFilters(); }
     route = tab;
     editMode = false;
     resetEditState();
@@ -976,6 +1373,7 @@
     stack = [];
     route = null;
     editMode = false;
+    resetFilters();
     resetEditState();
     drawChrome();
     window.scrollTo(0, 0);
@@ -983,6 +1381,7 @@
   }
   async function goBack() {
     if (route === null) return;
+    if (personBack()) return;                          // [C120 판2] 폰 인물 본문 → 목록이 한 단계다
     if (editMode) { await toggleEdit(); return; }       // 편집 모드가 한 단계다
     route = stack.length ? stack.pop() : null;
     editMode = false;

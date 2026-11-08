@@ -867,6 +867,14 @@ def _check_groupthink_pressure(ctx: Dict, all_psyche: Dict) -> TriggerResult | N
     if gt_count < 2:
         return None
     own_emotion = ctx["psyche"].get("primary_emotion", "")
+    # [2026-11-02 C108 S6] primary_emotion 은 "fear (seed of …)"처럼 메모가 붙어 와서 맨 낱말 비교가 늘 빗나갔다 —
+    #   감정 엔진과 같은 머리말 읽기. 손잡이(EMOTION_READ_V2) 끄면 옛 비교.
+    try:
+        import emotion_engine as _ee_gt
+        if _ee_gt._read_v2():
+            own_emotion = _ee_gt.primary_axis(own_emotion)
+    except Exception:
+        pass
     own_conflict = ctx["relation"].get("value_conflict")
     if own_emotion == "fear" or own_conflict:
         return TriggerResult(

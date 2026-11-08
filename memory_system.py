@@ -96,18 +96,56 @@ GENRE_KEYWORD_MAP = {
 # Common Utilities
 # =========================================================
 
-# [2026-10-26] google-api-core 는 옛 SDK(google-generativeai) 시절 짐이다 — google-genai 는 제 에러(google.genai.errors)를 던져서
-#   아래 ResourceExhausted · ServiceUnavailable 갈래는 지금도 안 걸린다(429 · 503 은 맨 아래 `except Exception` 재시도로 간다).
-#   새 venv 에 그 꾸러미가 없으면 봇이 import 에서 죽으니, 없을 때는 안 걸리는 빈 칸으로 둔다 — 동작은 그대로(대기열 Q41).
-try:
-    from google.api_core import exceptions as google_exceptions
-except ImportError:
-    class _NoApiCoreError(Exception):
-        pass
+# [2026-11-06 C119 Q41] 옛 `google.api_core` 갈래(ResourceExhausted · ServiceUnavailable)는 google-genai 가 제 에러를
+#   던져 안 걸렸고(대기열 Q41), 분석 콜은 openai 호환이라 더 안 걸렸다 — 지웠다. 대신 상태 코드를 읽는다:
+#   google-genai `APIError.code` · openai `APIStatusError.status_code` · analysis_backend `_RespShim.status`.
+RETRY_STATUS = (429, 500, 502, 503, 504)
 
-    class google_exceptions:  # noqa: N801 — 옛 이름 그대로 둔다
-        ResourceExhausted = _NoApiCoreError
-        ServiceUnavailable = _NoApiCoreError
+
+def status_of(err: Any) -> Optional[int]:
+    """예외 · 응답 흉내에서 HTTP 상태(없으면 None)."""
+    for k in ("status", "status_code", "code"):
+        v = getattr(err, k, None)
+        if isinstance(v, int) and 100 <= v < 600:
+            return v
+    return None
+
+
+def retry_after_of(err: Any) -> Optional[float]:
+    """서버가 준 기다릴 시간(초). openai = 응답 머리 retry-after(-ms) · google-genai = RetryInfo retryDelay "7s"."""
+    v = getattr(err, "retry_after", None)
+    if isinstance(v, (int, float)) and v > 0:
+        return float(v)
+    try:
+        h = getattr(getattr(err, "response", None), "headers", None)
+        if h is not None:
+            ms = h.get("retry-after-ms")
+            if ms:
+                return float(ms) / 1000.0
+            ra = h.get("retry-after")
+            if ra:
+                return float(ra)
+    except Exception:
+        pass
+    try:
+        raw = getattr(err, "details", None) or getattr(err, "response_json", None)
+        if raw:
+            m = re.search(r'"retryDelay"\s*:\s*"([0-9.]+)s"', json.dumps(raw, default=str))
+            if m:
+                return float(m.group(1))
+    except Exception:
+        pass
+    return None
+
+
+def retry_wait(status: Optional[int], attempt: int, retry_after: Optional[float] = None) -> Optional[float]:
+    """429 · 5xx → 기다릴 초(서버 값 또는 BASE × 2^attempt, MAX 에서 자름). 그 밖 → None(옛 갈래)."""
+    if status not in RETRY_STATUS:
+        return None
+    base = float(getattr(config, "RETRY_BACKOFF_BASE", 1.0))
+    cap = float(getattr(config, "RETRY_BACKOFF_MAX", 8.0))
+    w = float(retry_after) if (retry_after and retry_after > 0) else base * (2 ** max(0, int(attempt)))
+    return max(0.0, min(cap, w))
 
 async def api_call_with_retry(
     client: genai.Client,
@@ -151,6 +189,15 @@ async def api_call_with_retry(
                 # [2026-10-29 C94] 시간 상한 초과 — 같은 입력은 또 넘는다. 다시 부르면 상한 × 3 동안 줄을 잡는다.
                 logging.warning(f"[{operation_name}] 시간 상한 초과 — 재시도 안 함 (시도 {attempt+1})")
                 return None
+            # [C119 Q41] 백엔드가 상태를 실어 오면(analysis_backend 실패 흉내) 429 · 5xx 는 늘려 가며 기다린다.
+            _st = status_of(response)
+            _w = retry_wait(_st, attempt, retry_after_of(response)) if _st else None
+            if _w is not None:
+                logging.warning(f"[{operation_name}] 상태 {_st} (시도 {attempt+1}/{config.MAX_RETRY_COUNT})"
+                                + (f" — {_w:.1f}초 기다린 뒤 다시" if attempt < config.MAX_RETRY_COUNT - 1 else ""))
+                if attempt < config.MAX_RETRY_COUNT - 1:
+                    await asyncio.sleep(_w)
+                continue
             if response is None:
                 logging.warning(f"[{operation_name}] response None (시도 {attempt+1})")
                 continue
@@ -197,19 +244,17 @@ async def api_call_with_retry(
             
             logging.warning(f"[{operation_name}] 빈 응답 (시도 {attempt+1})")
             
-        except google_exceptions.ResourceExhausted as e:
-            logging.error(f"[{operation_name}] 쿼터 초과 (ResourceExhausted): {e}")
-            return None
-            
-        except google_exceptions.ServiceUnavailable as e:
-            logging.warning(f"[{operation_name}] 서비스 일시적 불가 (503): {e} - 재시도 중...")
-            await asyncio.sleep(config.RETRY_DELAY_SECONDS * (attempt + 1))
-            continue
-
         except Exception as e:
+            _st = status_of(e)
             logging.warning(
-                f"[{operation_name}] API 호출 실패 (시도 {attempt + 1}/{config.MAX_RETRY_COUNT}): {e}"
+                f"[{operation_name}] API 호출 실패 (시도 {attempt + 1}/{config.MAX_RETRY_COUNT})"
+                + (f" 상태 {_st}" if _st else "") + f": {e}"
             )
+            _w = retry_wait(_st, attempt, retry_after_of(e)) if _st else None   # [C119 Q41]
+            if _w is not None:
+                if attempt < config.MAX_RETRY_COUNT - 1:
+                    await asyncio.sleep(_w)
+                continue
         
         if attempt < config.MAX_RETRY_COUNT - 1:
             await asyncio.sleep(config.RETRY_DELAY_SECONDS)
@@ -360,7 +405,7 @@ async def process_ooc_memory_edit(
     }
     # [2026-10-10 OOC 확장] 지금 장소·시간·날씨, 장소 이름들, 본문에 나온 인물이 아는 것(ooc_edits.world_state_for_edit).
     if isinstance(world_state, dict):
-        for _wk in ("world", "places", "npc_knows", "threads", "corrections"):   # [2026-10-10 O-E] +스레드 · [C50] +정정 · [C74 판2] 퀘스트 → 스레드(goal)
+        for _wk in ("world", "places", "npc_knows", "threads", "corrections", "doom_clocks"):   # [2026-10-10 O-E] +스레드 · [C50] +정정 · [C74 판2] 퀘스트 → 스레드(goal)
             if world_state.get(_wk):
                 current_state[_wk] = world_state[_wk]
     
@@ -390,7 +435,7 @@ async def process_ooc_memory_edit(
         "  ],\n"
         "  \"confirmation_message\": \"Response to user (Korean)\"\n"
         "}\n"
-        "Valid fields: relation, npc, place, time, fact, thread, passives, status_effects, strikes, item, notebook, or a character-sheet section name "
+        "Valid fields: relation, npc, place, time, fact, thread, doom_clock, passives, status_effects, strikes, item, notebook, or a character-sheet section name "
         "(Identity, Core Traits, Aside, Direction, Relationships, Secrets, Background, Notes — the keys of "
         "Current State.sheet) with action set|append|remove and value = that section's text.\n"
         "passives = sheet fragments: action add|set|remove. add/set value = {\"name\", \"desc\" (Korean, conditions in words), "
@@ -441,9 +486,11 @@ async def process_ooc_memory_edit(
         # [2026-10-10 이야기 실 O-E] 스레드 장부(약속·사안). 스펙 state_v10/이야기실_지도·스펙_2026-10-10.md
         # [2026-10-24 C74 판2] 퀘스트 보드 → 장부 goal 한 칸(옛 quest 칸 삭제). 문안 = 판2 스펙 §3.
         "thread = a goal, promise or open matter on the ledger (Current State.threads, named by id): "
-        "{\"field\":\"thread\",\"op\":\"open|close|pause|resume|reschedule|progress|void|sleep|wake\",\"id\":\"T3\"}. "
+        "{\"field\":\"thread\",\"op\":\"open|close|pause|resume|reschedule|progress|void|sleep|wake|rank\",\"id\":\"T3\"}. "
         "open a new one with {\"title\":\"짧은 한국어 라벨\",\"kind\":\"goal|promise|matter\",\"parties\":[names],\"due\":{...}|null}; "
-        "a goal also takes \"rank\": easy|normal|hard|extreme|epic. "
+        "a goal also takes \"rank\": easy|normal|hard|extreme|epic; "
+        # [2026-11-06 C116] 서 있는 목표의 등급 고치기 — 진행도는 그대로(새 끝에 닿으면 한 칸 앞), 닫지는 않는다.
+        "op rank with \"rank\" re-ranks a goal already on the ledger (its progress stays; it does not close it). "
         "close with \"outcome\": done (kept, finished, reached) | dropped (called off, given up) | broken (breached); "
         "reschedule with \"due\": {\"day_offset\":1,\"slot\":\"저녁\",\"hour\":null,\"minute\":null} or "
         "{\"year\",\"month\",\"day_in_month\"}; progress: a goal takes \"step\" (the player's number, + or −), "
@@ -452,6 +499,10 @@ async def process_ooc_memory_edit(
         "sleep with \"after\": \"T4\" ties a thread to wait on T4 landing (it sleeps until T4 closes done), "
         "wake cuts the line and wakes it; a new thread may take \"after\" when opened; "
         "void = it never existed (a wrong entry); a \"title\" next to an id renames it.\n"
+        # [2026-11-05 C116 0-2b] 위협 시계 — time · clock(시각)과 다른 칸. 스펙 output_artifact/C116_판0-2b_OOC시계편집_스펙
+        "doom_clock = a pressure clock on the record (Current State.doom_clocks, named by name) — not the time of day: "
+        "{\"field\":\"doom_clock\",\"op\":\"set|end|void\",\"key\":\"<clock name>\"}. set takes \"filled\": the player's number "
+        "(0 to its segments); end = it was turned aside (stopped, prevented, avoided); void = it never existed (a wrong entry).\n"
     )
 
     # [2026-09-10 P13] 선언 칸 한 줄. 옛 7필드 문안은 위에서 한 글자도 안 바뀌었다 —
@@ -501,43 +552,8 @@ async def process_ooc_memory_edit(
     return {"interpretation": "Error", "edits": []}
 
 
-async def route_ooc_request(client, model_id: str, ooc_text: str,
-                            names: Optional[List[str]] = None) -> Optional[Dict[str, str]]:
-    """[2026-09-26 O1] 행동+OOC 전용 짧은 분류 콜 → {"edit": 수정 조각, "directive": 장면 지시 조각}. 실패 None.
-    (단독 OOC·루카 모드는 루카 콜이 표지로 판정을 겸한다 — 이 콜은 루카가 안 도는 자리 하나만.)"""
-    if not ooc_text or not str(ooc_text).strip():
-        return None
-    _names = ", ".join([str(n) for n in (names or []) if n][:40]) or "(none)"
-    prompt = (
-        "Split one OOC note a TRPG player attached to their in-character turn.\n"
-        "edit = the part asking to change stored data: how an NPC stands toward the PC or toward another NPC, "
-        "who an NPC is (the same person as another entry, another name, alive or dead, their sheet, what they know), "
-        "where the PC or an NPC is right now, the current time or weather, the PC sheet, sheet fragments, "
-        "status effects or strike slots (wounds, conditions), notebook/items/gold, a declared value, a goal, a promise or an open matter that is open, "
-        "done, called off or never existed, or a correction of what already happened in the story "
-        "record. A statement of how a relation or fact stands "
-        "(\"X has always cared for me\", \"it is night now\", \"X never died, he passed out\") is an edit. Keep the player's words.\n"
-        "directive = the part asking this scene or the narration to do something (skip, move, describe, assume).\n"
-        "Anything else (questions, chat) belongs to neither.\n"
-        f"Known names: {_names}\n"
-        f"OOC note: {str(ooc_text).strip()}\n"
-        'Return JSON only: {"edit": "", "directive": ""}'
-    )
-    try:
-        cfg = types.GenerateContentConfig(
-            system_instruction=text_resources.ANALYSIS_FRAME,   # [2026-10-06 분석 틀] 
-            response_mime_type="application/json",
-            temperature=0.1,
-        )
-        contents = [types.Content(role="user", parts=[types.Part(text=prompt)])]
-        result = await api_call_with_retry(client, model_id, contents, cfg, operation_name="OOC Route")
-        parsed = safe_parse_json(result) if result else None
-    except Exception as e:
-        logging.warning(f"[OOC Route] Failed: {e}")
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    return {"edit": str(parsed.get("edit") or "").strip(), "directive": str(parsed.get("directive") or "").strip()}
+# [2026-11-05 C116 0-1b] route_ooc_request(행동+OOC 분류 콜) 삭제 — 인라인 `(ooc: …)`는 장면 지시만(편집은 루카 모드 · Activity),
+#   가를 것이 없다. 옛 본문 = git(2026-09-26 O1).
 
 
 def apply_memory_edits(

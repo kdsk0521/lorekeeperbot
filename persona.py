@@ -675,12 +675,14 @@ async def generate_response_with_retry(
         #   (사소한 장면에서 PC 쪽 수 = 말 걸기). 걸린 게 없으면 제 일 하는 몸으로 닫는다. 발언권(floor) → PC 의 다음 수(발언권 넘기기 = 지목 질문).
         #   넘겨주기 한 줄(감정 팩터)은 끝 정의 **밖**에 둔다 — 끝을 '다음 수를 부르는 순간'으로 정의한 팔은 기다림 정지 5/12.
         #   근거: output_artifact/C91_산문끝_메뉴질문_지도·스펙_2026-10-28 §10 · §12
-        "the one the player meets next (an act already under way, a blow or offer the PC can still meet before it "
-        "lands, or simply the PC's own next move; a question about the asker's own business, such as a price, a name, "
+        # [2026-11-03 C111 D2'] 끝 목록에서 'a blow … before it lands'(칼을 공중에 멈추는 끝) 뺌 — EXIT 멈춤 은퇴의 짝. 일격은 그 응답 안에 닿는다.
+        "the one the player meets next (an act already under way, an offer the PC can still answer, "
+        "or simply the PC's own next move; a question about the asker's own business, such as a price, a name, "
         # [2026-10-31 C97] 결정이 필요한 장면 — 마지막 줄 = 그 사람 자기 픽을 곧 할 일로(PC 가 멈출 수 있음), 넘기면 다음 턴에 진행 중.
         #   C91 '제 일 질문' 허가가 업무 · 작전 장면에선 선택지 늘어놓기(메뉴)를 통과시켰다(합성 판 base 12/12 → 4/12).
         #   측정 output_artifact/C97_결정장면_메뉴끝_측정·스펙_2026-10-31 §3 · §7. 짝: RB_WORLD Threads · Mira 응답 칸.
-        "or a yes they need; when someone needs the PC's call, the last line is their own pick, said as what they are "
+        # [2026-11-03 C111] 낙엽 K1 — 'someone needs the PC's call' → '자기 다음 일이 PC 결정에 달린 사람'(wait 낱말 0 — C91 낱말표)(위기에서 유능한 사람이 PC 결정을 필요로 하는 꼴을 만들지 않게). 짝: RB_WORLD 질문 절.
+        "or a yes they need; when someone's own next step turns on the PC's call, the last line is their own pick, said as what they are "
         "about to do, which the PC can still stop, and which a later turn finds under way if the PC lets it pass): "
         "that move is the final image, and the cut there is EXIT's. Where the scene needs nothing "
         "from the PC yet, its people go on with their own business, and the turn closes on that motion. "
@@ -718,6 +720,7 @@ async def generate_response_with_retry(
     best_length = 0
 
     for attempt in range(config.MAX_RETRY_COUNT):
+        _wait_q41 = None   # [C119 Q41] 이번 시도가 429 · 5xx 면 다음 시도 앞 기다릴 초
         try:
             try:   # [2026-10-24 C74 W0-1] 렌더 시도 수 → [Turn] 의 render_try (그 턴 태스크에서만 센다)
                 import turn_timing as _tt_r
@@ -881,10 +884,18 @@ async def generate_response_with_retry(
                 logging.warning(f"빈 응답 (텍스트 복구 실패) (시도 {attempt + 1}/{config.MAX_RETRY_COUNT})")
                 
         except Exception as e:
-            logging.warning(f"응답 생성 실패 (시도 {attempt + 1}/{config.MAX_RETRY_COUNT}): {e}")
+            _st_q41 = None
+            try:
+                import memory_system as _ms_q41
+                _st_q41 = _ms_q41.status_of(e)
+                _wait_q41 = _ms_q41.retry_wait(_st_q41, attempt, _ms_q41.retry_after_of(e)) if _st_q41 else None
+            except Exception:
+                _wait_q41 = None
+            logging.warning(f"응답 생성 실패 (시도 {attempt + 1}/{config.MAX_RETRY_COUNT})"
+                            + (f" 상태 {_st_q41}" if _st_q41 else "") + f": {e}")
         
         if attempt < config.MAX_RETRY_COUNT - 1:
-            await asyncio.sleep(config.RETRY_DELAY_SECONDS)
+            await asyncio.sleep(_wait_q41 if _wait_q41 is not None else config.RETRY_DELAY_SECONDS)
     
     if best_response:
         logging.warning(f"[Retry] FALLBACK: 최선의 응답 반환 ({len(best_response)}자)")

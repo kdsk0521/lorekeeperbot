@@ -102,6 +102,8 @@ class Screen:
       kind   — builtin | extension (서랍의 기본 칸 / 확장 칸, C66 §8)
       edit   — 편집 모드에서 보일 고치기 묶음 고르개(activity_edit.build_edit_view 의 group key,
                목록은 list:builtin / list:declared). 비면 그 앱은 편집 버튼이 비활성.
+    [2026-11-05 C116 c3] edit_view — 편집 모드에서 묶음 대신 부품 쪽(activity_edit.build_*_edit). edit 이나 이것 중 하나라도
+      있으면 편집 버튼이 켜진다.
     """
     tab: str
     label: str
@@ -112,6 +114,7 @@ class Screen:
     drawer: bool = True
     kind: str = "builtin"
     edit: Tuple[str, ...] = ()
+    edit_view: str = ""      # [C116 c3] 편집 모드가 묶음 대신 그릴 부품 쪽 이름(medit · pedit — 인물은 페이지마다 pedit:<page_id>)
 
 
 @dataclass(frozen=True)
@@ -144,6 +147,7 @@ class Module:
     views: Tuple["View", ...] = ()                   # [C64 M5] persistent view(add_view 가 붙인다)
     settings: Tuple["Setting", ...] = ()             # [C72 A5] 설정 칸(Activity 모듈 앱 폼 · mod.set)
     bg_pair: str = ""                                # [C74 W4-2·3] BACKGROUND 짝 — order 로 바로 뒤 모듈 id(그 콜과 같이 띄운다)
+    bulk: bool = True                                # [C116 판1 1c] `!모듈 on/off` 일괄에 드나(깃들기처럼 세계 성질을 정하는 토글은 뺀다)
 
     def __post_init__(self):
         if self.tier not in TIERS:
@@ -228,13 +232,14 @@ class DayTick:
 @dataclass
 class InputTurn:
     """[2026-10-23 C64 M5] ON_INPUT 묶음 — main._process_message 의 입구(세션·참가자 검사 뒤 · 대기/자동 앞).
-    stop = 입력을 먹었다(뒤 모듈 · 평턴 경로 안 돎). turn_override = stop 과 같이: 이 글로 턴을 돈다(None = 턴 없음)."""
+    stop = 입력을 먹었다(뒤 모듈 · 평턴 경로 안 돎). turn_override = stop 과 같이: 이 글로 턴을 돈다(None = 턴 없음).
+    history_text = [C116 0-1b] PC 기록 줄(None = turn_override 그대로). 옛 record_user_history(턴 앞 선기록 + 기록 건너뛰기)를 갈음."""
     channel_id: str
     message: Any
     parsed: Optional[Dict[str, Any]]
     stop: bool = False
     turn_override: Optional[str] = None
-    record_user_history: bool = True
+    history_text: Optional[str] = None
 
 
 @dataclass
@@ -246,6 +251,7 @@ class PreRenderCall:
     message: Any
     prompt: str
     message_ids: list
+    kind: str = "turn"   # [2026-11-06 C117 B1] turn | batch(묶음 `!턴`) | observation — 게시판은 turn 만 받는다(옛 그대로)
 
 
 REGISTRY: Dict[str, Module] = {}

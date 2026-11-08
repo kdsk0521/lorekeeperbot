@@ -212,6 +212,36 @@ def _first_msg_id(sent_msgs) -> Optional[int]:
         return None
 
 
+_OLD_COMBINED_RE = re.compile(r"^\[플레이어 행동: (.*)\] \[OOC 지시: .*\]$", re.S)
+
+
+def _redo_ic_text(last_ctx: Dict[str, Any]) -> str:
+    """원 턴의 행동 몫. 고친 뒤 컨텍스트는 ic_text 칸, 옛 컨텍스트는 입력에서 되짚는다(결합 지시 → 행동 · 장면 지시 → "")."""
+    if "ic_text" in last_ctx:
+        return str(last_ctx.get("ic_text") or "")
+    act = str(last_ctx.get("action_text") or "")
+    m = _OLD_COMBINED_RE.match(act)
+    if m:
+        return m.group(1).strip()
+    return "" if act.startswith("[OOC Directive:") else act
+
+
+def redo_turn_input(last_ctx: Optional[Dict[str, Any]], edited_input: Optional[str]) -> Tuple[str, Optional[str]]:
+    """[2026-11-05 C116 0-1b] `!다시` 재실행 입력 → (이번 턴 입력, PC 기록 줄 | None = 입력 그대로).
+
+    - 그냥 `!다시`: 저장된 입력 · 기록 줄 그대로.
+    - `!다시 {입력}`: 인라인 OOC 를 가른다(장면 지시만 — `input_handler.ooc_turn_text` 한 벌).
+      행동 + OOC → 결합 지시 / 행동만 → 행동 / OOC만 → **원 턴 행동**에 새 지시(원 턴이 행동 없는 장면 지시 턴이면 지시 줄)."""
+    lc = last_ctx if isinstance(last_ctx, dict) else {}
+    raw = (edited_input or "").strip()
+    if not raw:
+        return str(lc.get("action_text") or ""), lc.get("history_text")
+    ooc, rest = input_handler.extract_ooc(raw)
+    if ooc and not rest:
+        return input_handler.ooc_turn_text(_redo_ic_text(lc), ooc)
+    return input_handler.ooc_turn_text(rest, ooc or "")
+
+
 def _prose_for_display(text: str, channel_id: str = "") -> str:
     """렌더 산문의 **표시용 사본** — 이 채널에 실제 발급된 몹 표식만 벗긴다. 저장본(`response`)은 그대로.
 
@@ -579,6 +609,22 @@ class OrchestrationService:
                 logger.info(f"[TimeDecree] 명시 선언 감지: +{_decree_min}분 (클램프 면제)")
         except Exception as _e_td:
             logger.debug(f"[TimeDecree] skip: {_e_td}")
+        # [2026-11-06 C116 판5] 코드 앱 시간 — on_input 이 낸 lk.time · lk.time_until(app_host.turn_start → ctx.app_time_min).
+        #   선언과 같은 꼴(클램프 면제)로 받는다. 유저 선언(위)이 있으면 그게 이긴다(플레이어의 말 = 확립된 사실).
+        #   산문 뒤 배경 시간(TimeSync)은 앱이 낸 분만큼 빼고 넘친 몫만 민다 — 같은 행동을 두 번 세지 않게(심코어 v1.19.1 밤 이중 넘김).
+        ctx.app_time_applied = 0
+        _app_min = int(getattr(ctx, "app_time_min", 0) or 0)
+        if _app_min:
+            if ctx.time_decree_min or (time_flow or {}).get("explicit_hours"):
+                logger.info(f"[AppTime] 유저 선언이 이김 — 앱 {getattr(ctx, 'app_time_src', '')} +{_app_min}분 버림")
+            else:
+                time_flow = dict(time_flow or {})
+                time_flow["explicit"] = True
+                time_flow["explicit_hours"] = _app_min / 60.0
+                ctx.time_decree_min = _app_min
+                ctx.app_time_applied = _app_min
+                logger.info(f"[AppTime] 앱 {getattr(ctx, 'app_time_src', '')} +{_app_min}분 (선언 꼴 · 클램프 면제)")
+                self._note_app_time(ctx, _app_min)   # [C117 B3] 렌더가 앱이 민 시간을 안다
         time_msg = await game_system.process_time_flow(channel_id, time_flow, curr_scene)
         if time_msg:
             # [2026-10-23 C68 A2a] 압축 모드(Activity 떠 있음)면 시간 흐름 줄을 따로 안 보낸다 —
@@ -590,6 +636,68 @@ class OrchestrationService:
         ctx.world_ctx = game_system.get_world_context(channel_id)
 
         return ctx, messages
+
+    async def _pre_render_station(self, ctx: ResponseContext, message, prompt: str, kind: str) -> str:
+        """[C117 B1] 묶음 · 관찰 턴의 PRE_RENDER_CALL(코드 앱 before_render — 게시판은 kind 를 보고 건너뜀)."""
+        try:
+            import module_frame as _mf_bpr
+            _bpr = _mf_bpr.PreRenderCall(channel_id=ctx.channel_id, ctx=ctx, message=message, prompt=prompt,
+                                         message_ids=[], kind=kind)
+            await _mf_bpr.run_station(_mf_bpr.PRE_RENDER_CALL, self, _bpr)
+            return _bpr.prompt
+        except Exception as _e_bpr:
+            logger.debug(f"[Frame] {kind} pre_render skip: {_e_bpr}")
+            return prompt
+
+    async def _after_prose_station(self, ctx: ResponseContext, response: str, sent_msgs, message) -> None:
+        """[C117 B1] 묶음 · 관찰 턴의 AFTER_PROSE(코드 앱 on_output · 패널 · 신고 정산 — 첫 PC 기준, 배경 추출과 같음)."""
+        try:
+            import module_frame as _mf_bap
+            await _mf_bap.run_station(_mf_bap.AFTER_PROSE, self, _mf_bap.AfterProse(
+                channel_id=ctx.channel_id, ctx=ctx, response=response, sent_msgs=sent_msgs, message=message))
+        except Exception as _e_bap:
+            logger.debug(f"[Frame] after_prose skip: {_e_bap}")
+
+    @staticmethod
+    def _note_app_time(ctx: ResponseContext, minutes: int) -> None:
+        """[2026-11-06 C117 B3] 앱 시간이 시계를 민 턴 — 앱 급식 블록(Slot 29) 앞에 한 줄."""
+        try:
+            import app_host as _ah_tn
+            _line = _ah_tn.time_note(str(getattr(ctx, "app_time_src", "") or "app"), int(minutes))
+            _fb = str(getattr(ctx, "app_feed_block", "") or "")
+            ctx.app_feed_block = _line + ("\n\n" + _fb if _fb else "")
+        except Exception as _e_tn:
+            logger.debug(f"[AppTime] note skip: {_e_tn}")
+
+    async def _app_turn_start_multi(self, channel_id: str, inputs: List[Tuple[str, str]], mask: str):
+        """[2026-11-06 C117 B1] 묶음 · 관찰 턴 앞 — 코드 앱 on_input(PC 마다) · 보고 · feed. Theoria(run_batch) 앞에 부른다.
+        돌려줌 = 받침(app_feed_block · app_time_min · app_time_src) — ctx 가 서면 `_app_turn_apply` 로 옮긴다."""
+        import types as _types
+        hold = _types.SimpleNamespace(user_mask=mask, action_text="", app_feed_block="", app_time_min=0, app_time_src="")
+        try:
+            import app_host as _ah_bt
+            await _ah_bt.turn_start(channel_id, hold, inputs=inputs)
+        except Exception as _e_bt:
+            hold.app_feed_block = ""
+            logger.debug(f"[App] batch turn_start skip: {_e_bt}")
+        return hold
+
+    def _app_turn_apply(self, ctx: ResponseContext, hold) -> None:
+        """[C117 B1] 받침 → ctx. 앱 시간은 렌더 앞에 바로 민다(묶음 · 관찰엔 시간 흐름 앞단이 없다) — 산문 뒤 시간 셈이 그만큼 뺀다."""
+        ctx.app_feed_block = str(getattr(hold, "app_feed_block", "") or "")
+        ctx.app_time_src = str(getattr(hold, "app_time_src", "") or "")
+        ctx.app_time_applied = 0
+        _m = int(getattr(hold, "app_time_min", 0) or 0)
+        if not _m:
+            return
+        try:
+            game_world.advance_minutes(ctx.channel_id, _m)
+            ctx.app_time_applied = _m
+            ctx.time_decree_min = max(int(getattr(ctx, "time_decree_min", 0) or 0), _m)
+            logger.info(f"[AppTime] 묶음 · 관찰 턴 — 앱 {ctx.app_time_src} +{_m}분")
+            self._note_app_time(ctx, _m)
+        except Exception as _e_at:
+            logger.debug(f"[AppTime] batch advance skip: {_e_at}")
 
     async def process_une_logic(
         self,
@@ -625,6 +733,22 @@ class OrchestrationService:
         except Exception:
             ctx.judgment_result = ""
 
+        # [2026-11-02 C106] 무대 밖 지난 그림 재료 — 이 턴 0단(렌더 앞 = 턴 앞 PC 자리) · Mira 흔적 · hook.
+        #   다음 턴들 Mira 입력 `LAST SEEN OFF STAGE`가 이 프레임들에서 읽는다(theoria_analyzer._last_seen_block).
+        try:
+            import npc_manager as _npm_snap
+            _t_snap = _npm_snap.get_presence_tiers(channel_id) or {}
+            _onstage_snap = [] if _t_snap.get("unresolved") else [str(n) for n in (_t_snap.get("scene") or [])][:12]
+        except Exception:
+            _onstage_snap = []
+        #   0단을 잰 자리 = 지금 저장된 PC 자리(턴 앞). 스냅숏 location 은 Theoria CurrentLocation(이 턴 PC 가 가는 곳)이라
+        #   떠나는 턴엔 다르다(재생 사슬: 셰어하우스에서 도겸과 있다 빨래방으로 간 턴이 'with the PC at 골목 빨래방'으로 적혔다).
+        try:
+            _onstage_at = str(domain_manager.get_current_location(channel_id) or "").strip()
+        except Exception:
+            _onstage_at = ""
+        _ot_snap = dai.get("offscreen_trace")
+
         # [Scene Continuity 1층] DAI 스냅샷 — 이미 분석된 것을 기록
         _dai_snap = {
             "location": str(dai.get("CurrentLocation", dai.get("current_location", ""))),
@@ -642,6 +766,10 @@ class OrchestrationService:
                 for n, s in (dai.get("psyche_states") or {}).items()
                 if isinstance(s, dict)
             },
+            "onstage": _onstage_snap,   # [2026-11-02 C106]
+            "onstage_at": _onstage_at,
+            "offscreen_trace": _ot_snap if isinstance(_ot_snap, dict) else None,
+            "narrative_hook": str(dai.get("narrative_hook") or "")[:300],
         }
         _ws = domain_manager.get_world_state(channel_id)
         _turn_num = _ws.get("turn_index", 0)
@@ -894,6 +1022,12 @@ class OrchestrationService:
             return
         if delta_min <= 0:
             return
+        _app_done = int(getattr(ctx, "app_time_applied", 0) or 0)   # [C116 판5] 앱이 이미 민 분 — 넘친 몫만
+        if _app_done:
+            if delta_min <= _app_done:
+                logger.info(f"[TimeSync] 앱 시간 {_app_done}분이 이번 턴 경과({delta_min}분)를 덮음 — 더 안 민다")
+                return
+            delta_min -= _app_done
         try:
             _world = domain_manager.get_world_state(channel_id)
             _scene = getattr(ctx, "scene_type", "") or _world.get("current_scene_type", "normal")
@@ -1625,16 +1759,16 @@ class OrchestrationService:
         system_trigger: Optional[str] = None,
         feedback_msg: Optional[discord.Message] = None,
         user_input_override: Optional[str] = None,
-        record_user_history: bool = True
+        history_text: Optional[str] = None
     ) -> None:
         """
         AI 응답 생성 파이프라인을 실행합니다.
 
         Args:
             feedback_msg: '서사 생성 중...' 안내 메시지 객체 (완료 후 삭제용)
-            record_user_history: False면 유저 입력 히스토리 기록 스킵 (chat_with_ooc —
-                main.py가 IC 원문을 message_id 포함 선기록한 턴. 결합 디렉티브를 또 적으면
-                IC 이중 잔존 + OOC 메타가 IC 기록에 영구 노출. 2026-07-02)
+            history_text: [2026-11-05 C116 0-1b] PC 기록 줄(None = 이번 턴 입력 `action_text` 그대로). 행동+OOC 턴은
+                행동만 적는다(결합 지시 · OOC 메타가 IC 기록에 영구로 남지 않게). 적는 자리는 응답 뒤 한 곳 — 옛
+                record_user_history=False(턴 앞 선기록 + 여기 건너뛰기)는 선기록 줄이 `!다시` 스냅숏 안에 들어가 겹쳤다.
         """
         try:
             # [2026-10-24 C74 W0] 턴 시계 — 단계 경계마다 mark, 끝에서 [Turn] 한 줄(동작 변화 0).
@@ -1772,11 +1906,37 @@ class OrchestrationService:
                 _snap_secrets = _ss_sec.read_secrets(channel_id, include_closed=True, strict=True)   # 실패 = None → 복원 건너뜀
             except Exception as _e_sec:
                 logger.debug(f"[!다시] secret ledger snapshot skip: {_e_sec}")
+            # [2026-11-05 C116 0-1] 관계 엣지 사본 — 덮어쓰기 표라 워터마크로 못 되감고 도메인 JSON 에도 없다(`restore_edges` 가 통째로).
+            _snap_edges = None
+            try:
+                import sqlite_store as _ss_edg
+                _snap_edges = _ss_edg.read_edges_all(channel_id, strict=True)   # 실패 = None → 복원 건너뜀
+            except Exception as _e_edg:
+                logger.debug(f"[!다시] relation edges snapshot skip: {_e_edg}")
+            # [2026-11-06 C117 A1] 위키 사본 — 페이지 행 · lore 절 · play 절 자리 · 승격 계수(채널 DB 안 사본 표). 실패 = None → 페이지 안 돌림.
+            _snap_wiki = None
+            try:
+                import wiki_store as _ws_snap
+                _wk_t = int((_snap_domain.get("world_state", {}) or {}).get("turn_index", 0) or 0)
+                if _ws_snap.snapshot_for_redo(channel_id, _wk_t):
+                    _snap_wiki = _wk_t
+            except Exception as _e_wk:
+                logger.debug(f"[!다시] wiki snapshot skip: {_e_wk}")
+            # [2026-11-06 C117 A3] 편집 일지 끝 id — `!다시` 가 이 뒤 행만 다시 얹는다(연속 `!다시` 두 번 얹기 0).
+            _snap_edit_mark = None
+            try:
+                import sqlite_store as _ss_em
+                _snap_edit_mark = _ss_em.max_activity_edit_id(channel_id)
+            except Exception as _e_em:
+                logger.debug(f"[!다시] edit mark skip: {_e_em}")
             self._retry_snapshots[channel_id] = {
                 "_ts": time.time(),
                 "_data": _snap_domain,
                 "_marks": _log_marks,
                 "_secrets": _snap_secrets,
+                "_edges": _snap_edges,
+                "_wiki": _snap_wiki,
+                "_edit_mark": _snap_edit_mark,
             }
             # 메모리 누수 방지: 최대 20개 채널 스냅샷만 유지
             if len(self._retry_snapshots) > 20:
@@ -1790,6 +1950,12 @@ class OrchestrationService:
                 _marks_disk = dict(_log_marks or {})
                 if isinstance(_snap_secrets, list):
                     _marks_disk[sqlite_store.RETRY_SECRETS_KEY] = _snap_secrets   # [C77 C-3] 워터마크 칸 옆에(복원 도메인엔 안 섞임)
+                if isinstance(_snap_edges, list):
+                    _marks_disk[sqlite_store.RETRY_EDGES_KEY] = _snap_edges       # [C116 0-1] 같은 자리
+                if isinstance(_snap_wiki, int):
+                    _marks_disk[sqlite_store.RETRY_WIKI_KEY] = _snap_wiki         # [C117 A1] 위키 사본 턴
+                if isinstance(_snap_edit_mark, int):
+                    _marks_disk[sqlite_store.RETRY_EDITS_KEY] = _snap_edit_mark   # [C117 A3] 일지 끝 id
                 sqlite_store.save_retry_snapshot(channel_id, _snap_turn, _snap_data, marks=_marks_disk)
             except Exception as _e_rs:
                 logger.debug(f"[!다시] snapshot persist skipped: {_e_rs}")
@@ -1807,8 +1973,17 @@ class OrchestrationService:
             # async output (typing indicator)
             async with message.channel.typing():
                 # [!다시] 마지막 컨텍스트 초기화 (재생성 전)
+                # [2026-11-05 C116 0-1b] history_text(기록 줄) · ic_text(행동 몫) — 그냥 `!다시`는 입력 · 기록 줄을 그대로 다시
+                #   쓰고(원문 날것을 다시 읽지 않는다), `!다시 (ooc: …)`(OOC만)는 ic_text 에 새 지시를 붙인다.
+                #   ic_text: 행동+OOC 턴 = 행동 / 행동 없는 장면 지시 턴 = "" / 그냥 턴 = 입력.
+                _ic_text = (history_text if history_text is not None
+                            else ("" if str(ctx.action_text or "").startswith("[OOC Directive:") else ctx.action_text))
                 current_retry_ctx = {
                     "action_text": ctx.action_text,
+                    "history_text": history_text,
+                    "ic_text": _ic_text,
+                    "raw_text": str(getattr(message, "content", "") or ""),   # 원 메시지 글 — 디스코드에서 고쳤는지 대조
+
                     "user_id": user_id,
                     "original_message_id": message.id,
                     "message_ids": [],
@@ -1962,8 +2137,10 @@ class OrchestrationService:
                     user_mask = ctx.user_mask or "User"
                     # [2026-10-17 C49 R4] 입력·산문 행에 message_id — 없으면 발효 에피소드 구간(from/to_msg_id)이
                     #   비어 원문 구간 발췌(C46 W4 `read_history_span`)가 라이브에서 안 걸렸다.
-                    if record_user_history:
-                        domain_manager.append_history(channel_id, user_mask, ctx.action_text,
+                    # [C116 0-1b] 기록 줄 = history_text(행동+OOC 턴은 행동만), 없으면 이번 턴 입력. PC 줄을 적는 자리는 여기 하나.
+                    _hist_line = ctx.action_text if history_text is None else history_text
+                    if _hist_line:
+                        domain_manager.append_history(channel_id, user_mask, _hist_line,
                                                       message_id=getattr(message, "id", None))
                     # [2026-10-17 C49 R1·R2] 도착물 원문 행 + 위키 줄 — 입력 다음·산문 앞(실제로 일어난 순서).
                     if getattr(ctx, "handout_record", None):
@@ -1974,7 +2151,7 @@ class OrchestrationService:
                             logger.debug(f"[HandoutRecord] skipped: {_e_rec}")
                     domain_manager.append_history(channel_id, "Model", response,
                                                   message_id=_first_msg_id(sent_msgs))
-                    logger.debug(f"[History] Saved: {'skip-user + ' if not record_user_history else user_mask + ' + '}Model response ({len(response)} chars)")
+                    logger.debug(f"[History] Saved: {user_mask + ' + ' if _hist_line else 'skip-user + '}Model response ({len(response)} chars)")
 
                     # [2026-09-13 S1 ④→①] 회상 영수증 — 직전 턴 Slot 9에 실린 엔티티·인용이
                     # 산문에 닿았는지 1회 대조하고 스냅샷을 소비한다. 로그뿐이라 실패해도 무해.
@@ -2298,12 +2475,23 @@ class OrchestrationService:
             await message.channel.send(
                 "⚠️ 이 턴은 앞 턴 배경 정리가 끝나기 전에 시작돼서 `!다시`로 되감지 않아요 — 되감으면 앞 턴 정리분까지 지워져요.")
             return False
-        # [2026-10-27 C84 D4] 모습이 바뀐(또는 잠긴 사람이 등장한) 턴 — 이름 · 페이지 · 관계 엣지는 되감기 밖이라 어긋난다.
+        # [2026-10-27 C84 D4 → 2026-11-06 C117 A1 걷음] 모습이 바뀐 턴도 되감는다 — 모습이 쓰는 칸(도메인 npc_forms · npcs ·
+        #   NPC 행 · 지식 · 관계 엣지 · 위키 페이지 · lore 절 · play 절 자리)이 다 턴 시작으로 돈다. 옛 거절은 이름 · 페이지가
+        #   되감기 밖이라서였다. 위키 사본이 없는 옛 스냅숏(배포 직후 첫 턴)만 옛 거절을 지킨다.
         if last_ctx.get("form_switch"):
-            await message.channel.send(
-                "⚠️ 모습이 바뀐 턴은 `!다시`로 되감지 않아요 (" + ", ".join(map(str, last_ctx["form_switch"]))[:80]
-                + ") — 되감으면 이름 · 시트 · 관계가 어긋나요.")
-            return False
+            _sn_e = (getattr(self, "_retry_snapshots", None) or {}).get(channel_id) or {}
+            _wk_ok = _sn_e.get("_wiki") is not None
+            if not _wk_ok and not _sn_e.get("_data"):
+                try:
+                    import sqlite_store as _ss_fw
+                    _wk_ok = _ss_fw.read_retry_wiki(channel_id) is not None
+                except Exception:
+                    _wk_ok = False
+            if not _wk_ok:
+                await message.channel.send(
+                    "⚠️ 모습이 바뀐 턴은 `!다시`로 되감지 않아요 (" + ", ".join(map(str, last_ctx["form_switch"]))[:80]
+                    + ") — 되감으면 이름 · 시트가 어긋나요.")
+                return False
 
         # 1. 백그라운드 작업 플러시 + 실행 중 태스크 완료 대기
         from background_task_queue import get_task_queue
@@ -2366,11 +2554,35 @@ class OrchestrationService:
             domain_manager.save_domain(channel_id, copy.deepcopy(snapshot))
             logger.info(f"[!다시] Domain snapshot restored for {channel_id}")
             if _carry is not None:
+                # [2026-11-06 C117 A2] 되감긴 패널 저장값 중 턴 사이에 지운 섹션 몫 — 넘겨 얹기 앞 · 뒤 섹션 목록을 대 본다.
+                _sec_before = None
+                try:
+                    _sec_before = status_panel.list_panel_sections(channel_id)
+                except Exception as _e_sb:
+                    logger.debug(f"[!다시] 섹션 목록 skip: {_e_sb}")
                 try:
                     domain_manager.apply_redo_carry(channel_id, _carry)
                     logger.info("[!다시] 설정 넘겨 얹음 — 선언 층 · 모듈 켬끔 · 게시판 설정")
                 except Exception as _e_cy2:
                     logger.warning(f"[!다시] 설정 넘겨 얹기 실패(무시): {_e_cy2}")
+                if _sec_before:
+                    try:
+                        _sec_now = status_panel.list_panel_sections(channel_id)
+                        _gone = [n for n in _sec_before if n not in _sec_now]
+                        if _gone:
+                            _pr_n = status_panel.prune_saved_fields(
+                                channel_id, _gone, all_gone=not _sec_now,
+                                append_removed=[n for n in _gone if (_sec_before.get(n) or {}).get("mode") == "append"])
+                            logger.info(f"[!다시] 지운 섹션 {_gone} 패널 저장값 정리 {_pr_n}")
+                    except Exception as _e_pr:
+                        logger.warning(f"[!다시] 지운 섹션 패널 정리 실패(무시): {_e_pr}")
+                # [2026-11-06 C116 판1 1a] 값 맞추기 — 넘겨 얹은 선언에 되감긴 값을 맞춘다(턴 사이에 선 선언의 시작값 ·
+                #   범위를 바꾼 선언의 값 접기 · 지운 이름의 값 버리기). 선언이 그대로면 쓰기 0.
+                try:
+                    import custom_vars as _cv_fold
+                    _cv_fold.fold_values(channel_id)
+                except Exception as _e_fold:
+                    logger.warning(f"[!다시] 값 맞추기 실패(무시): {_e_fold}")
             # [2026-09-24 감사] NPC·지식 정본은 SQLite(V10_*_READ_FROM_SQLITE)인데 복원은 JSON 스냅샷뿐이라
             #   폐기 턴에 생긴 NPC·knows 가 읽기 뷰에 살아남고(delete_npc 는 JSON 키로 찾아 못 지움),
             #   다음 bulk 미러가 되감기 자체를 무효로 만들었다. 스냅샷 기준으로 행을 맞춘다(없는 행 삭제 + upsert).
@@ -2407,6 +2619,17 @@ class OrchestrationService:
                         logger.info(f"[!다시] secret ledger restored ({len(_sec_rows)} rows)")
             except Exception as _e_sr:
                 logger.warning(f"[!다시] 비밀 원장 되감기 실패(무시): {_e_sr}")
+            # [2026-11-05 C116 0-1] 관계 엣지 → 턴 시작 모양. 트림 · 위키 절 · Activity 일지 재적용(rel.set) **앞** — 화면 편집이
+            #   되돌린 엣지 위에 다시 얹히고, 재실행 Theoria 는 턴 시작 엣지를 읽는다. 옛 스냅샷(사본 없음)은 손 안 댐.
+            try:
+                import sqlite_store as _ss_er
+                _edge_rows = (snapshot_entry or {}).get("_edges") if snapshot_entry and snapshot_entry.get("_data") is snapshot \
+                    else _ss_er.read_retry_edges(channel_id)
+                if isinstance(_edge_rows, list):
+                    if _ss_er.restore_edges(channel_id, _edge_rows):
+                        logger.info(f"[!다시] relation edges restored ({len(_edge_rows)} rows)")
+            except Exception as _e_er:
+                logger.warning(f"[!다시] 관계 엣지 되감기 실패(무시): {_e_er}")
             # [2026-08-12 !다시 유령 정리] 복원 **직후**, 재실행 **전**에 트림 — 순서가 계약이다.
             # (재실행분은 트림 뒤에 쌓이므로 절대 지워지지 않는다.)
             if log_marks:
@@ -2430,13 +2653,44 @@ class OrchestrationService:
                     logger.info(f"[Wiki] revert from_turn={_snap_turn + 1} sections={_wr_n}")
             except Exception as _e_wr:
                 logger.debug(f"[Wiki] revert skipped: {_e_wr}")
+            # [2026-11-06 C117 A1] 위키 페이지 되감기 — play 본문(위) **뒤**, 편집 일지 재적용(아래) **앞**.
+            #   페이지 행 · lore 절 · play 절 자리 · 승격 계수를 턴 시작 사본으로. 옛 스냅숏(사본 턴 없음)은 손 안 댐.
+            try:
+                import sqlite_store as _ss_wk
+                import wiki_store as _ws_wk
+                _wk_turn = (snapshot_entry or {}).get("_wiki") if snapshot_entry and snapshot_entry.get("_data") is snapshot \
+                    else _ss_wk.read_retry_wiki(channel_id)
+                _wk_snap_t = int((snapshot.get("world_state", {}) or {}).get("turn_index", 0) or 0)
+                if isinstance(_wk_turn, int) and _wk_turn == _wk_snap_t:
+                    _ws_wk.restore_for_redo(channel_id, _wk_snap_t)
+            except Exception as _e_wk2:
+                logger.warning(f"[!다시] 위키 페이지 되감기 실패(무시): {_e_wk2}")
             # [2026-10-23 C60 M2c §6.1] Activity 편집 일지 — 복원(+트림·절 되감기) **직후**, 재실행 **앞**.
             #   되돌린 지점 뒤에 화면에서 고친 값이 다시 얹혀 그 턴의 세계가 된다(레티어스 "되감기는 편집은 살리게").
             try:
                 import activity_edit as _ae_rp
-                _ae_rp.replay_after(channel_id, int((snapshot.get("world_state", {}) or {}).get("turn_index", 0) or 0))
+                import sqlite_store as _ss_rp
+                _em_rp = (snapshot_entry or {}).get("_edit_mark") if snapshot_entry and snapshot_entry.get("_data") is snapshot \
+                    else _ss_rp.read_retry_edit_mark(channel_id)
+                _ae_rp.replay_after(channel_id, int((snapshot.get("world_state", {}) or {}).get("turn_index", 0) or 0),
+                                    after_id=(_em_rp if isinstance(_em_rp, int) else None))
             except Exception as _e_rp:
                 logger.debug(f"[!다시] activity edit replay skipped: {_e_rp}")
+            # [2026-11-05 C116 0-1b] 고침 앞 행동+OOC 턴(컨텍스트에 ic_text 칸이 없다)은 IC 줄을 스냅숏 **앞**에 선기록했다 —
+            #   복원된 기록 꼬리에 원 메시지 id 줄로 남아 재실행 줄과 겹친다. 그 한 줄만 뺀다(작업 창 JSON. 영구 로그 history_log 의
+            #   같은 줄은 둔다 — 원문 독자에게 한 번 겹칠 뿐). 고친 뒤 턴은 응답 뒤에만 적으니 해당 없음.
+            if "ic_text" not in last_ctx:
+                try:
+                    _d_gh = domain_manager.get_domain(channel_id)
+                    _h_gh = _d_gh.get("history") or []
+                    _mid_gh = last_ctx.get("original_message_id")
+                    if (_h_gh and _mid_gh is not None and _h_gh[-1].get("role") != "Model"
+                            and _h_gh[-1].get("message_id") == _mid_gh):
+                        _h_gh.pop()
+                        domain_manager.save_domain(channel_id, _d_gh)
+                        logger.info("[!다시] 옛 선기록 IC 줄 한 줄 뺌(고침 앞 행동+OOC 턴)")
+                except Exception as _e_gh:
+                    logger.debug(f"[!다시] 옛 선기록 줄 정리 skip: {_e_gh}")
         else:
             # 스냅샷 없음 (봇 재시작 등) — 히스토리만 정리 (레거시 폴백)
             d = domain_manager.get_domain(channel_id)
@@ -2449,20 +2703,44 @@ class OrchestrationService:
             logger.warning(f"[!다시] No snapshot available, history-only rollback for {channel_id}")
 
         # 4. 재실행 텍스트 결정
-        action_text = edited_input or last_ctx.get("action_text")
-        label = "입력 수정 후 재생성" if edited_input else "서사를 다시 뽑는 중"
-        feedback = await message.channel.send(f"🔄 **{label}...**")
-
-        # 5. 재실행 (edited_input이 있으면 항상 system_trigger로 주입)
-        if edited_input:
-            await self.execute(message, channel_id, system_trigger=action_text, feedback_msg=feedback)
-        else:
-            orig_msg_id = last_ctx.get("original_message_id")
+        # [2026-11-05 C116 0-1b] 그냥 `!다시` = 저장된 입력 · 기록 줄 그대로(옛: 원 메시지 날것을 다시 읽어 행동+OOC 턴의 OOC 가
+        #   안 갈렸다). 고친 입력 = 가른다(인라인 OOC 는 장면 지시만) — PC 입력(user_input_override)으로 넘긴다
+        #   (옛 system_trigger 는 `[System Event] 입력`으로 실리고 그 줄이 PC 기록이 됐다).
+        #   원 메시지(작성자 = PC · 기록 줄 message_id)로 재실행한다. 못 받으면 `!다시` 메시지.
+        orig_msg = None
+        orig_msg_id = last_ctx.get("original_message_id")
+        if orig_msg_id:
             try:
                 orig_msg = await message.channel.fetch_message(orig_msg_id)
-                await self.execute(orig_msg, channel_id, feedback_msg=feedback)
             except Exception:
-                await self.execute(message, channel_id, system_trigger=action_text, feedback_msg=feedback)
+                orig_msg = None
+        # 디스코드에서 원 메시지를 고친 뒤 그냥 `!다시` — 옛 길은 원문을 다시 읽어 고친 글이 먹혔다. 그 쓰임은 살린다:
+        #   지금 글이 그 턴이 받은 원문(raw_text — 옛 컨텍스트는 action_text)과 다르면 고친 입력으로 가른다.
+        if not edited_input and orig_msg is not None:
+            _now = str(getattr(orig_msg, "content", "") or "").strip()
+            _raw = str(last_ctx.get("raw_text", last_ctx.get("action_text")) or "").strip()
+            if _now and _now != _raw:
+                edited_input = _now
+                logger.info("[!다시] 원 메시지가 고쳐짐 — 고친 글로 다시")
+        turn_text, hist_text = redo_turn_input(last_ctx, edited_input)
+        label = "입력 수정 후 재생성" if edited_input else "서사를 다시 뽑는 중"
+        # [2026-11-05 C116 0-1c c1] 편집 일지 중 못 얹은 것(대개 버린 턴에 처음 나온 대상을 고친 것) — 안내에 한 줄.
+        _rp_tail = ""
+        try:
+            import activity_edit as _ae_rf
+            _rp_fail = _ae_rf.replay_failures(channel_id)
+            if _rp_fail:
+                _rp_tail = (f"⚠️ 고친 것 {len(_rp_fail)}건은 다시 못 얹었어요 — 되감은 턴에 처음 생긴 대상이에요: "
+                            + ", ".join(_rp_fail[:3]) + (" 외" if len(_rp_fail) > 3 else ""))
+        except Exception as _e_rf:
+            logger.debug(f"[!다시] replay failure notice skip: {_e_rf}")
+        if _rp_tail:   # 안내 메시지(🔄)는 턴 끝에 지워지니 따로 남긴다
+            await message.channel.send(_rp_tail)
+        feedback = await message.channel.send(f"🔄 **{label}...**")
+
+        # 5. 재실행
+        await self.execute(orig_msg or message, channel_id, feedback_msg=feedback,
+                           user_input_override=(turn_text or None), history_text=hist_text)
 
         return True
 
@@ -2494,6 +2772,10 @@ class OrchestrationService:
                 logger.debug(f"[AppTags] hold skip: {_e_hold}")
             _tt.mark(channel_id, "settle")
             async with message.channel.typing():
+                # [2026-11-06 C117 B1] 코드 앱 턴 앞 — PC 마다 on_input(그 PC 행동) · 보고 · feed(첫 PC). Theoria 앞.
+                _app_ins = [(" / ".join(str(x) for x in (info.get("actions") or [])), str(info.get("mask") or ""))
+                            for _uid_a, info in pending_actions.items()]
+                _app_hold = await self._app_turn_start_multi(channel_id, _app_ins, _app_ins[0][1] if _app_ins else "")
                 # 1. UNE 배치 실행
                 result = await self.une.run_batch(channel_id, pending_actions)
                 directive = result["directive"]
@@ -2524,6 +2806,7 @@ class OrchestrationService:
                     domain_data=d_data,
                     player_data=p_data
                 )
+                self._app_turn_apply(ctx, _app_hold)   # [C117 B1]
 
                 # 5. Context 보강 + DAI 주입
                 ctx = await self.gather_context(ctx)
@@ -2539,6 +2822,7 @@ class OrchestrationService:
                 _tt.mark(channel_id, "une")
                 full_prompt, _ = self.build_prompt(ctx)
                 _tt.mark(channel_id, "prompt")
+                full_prompt = await self._pre_render_station(ctx, message, full_prompt, "batch")   # [C117 B1]
                 response, _ = await self.generate_response(ctx, full_prompt)
                 _tt.mark(channel_id, "render")
 
@@ -2564,6 +2848,7 @@ class OrchestrationService:
                     # 히스토리: PC 행동은 이미 waiting 모드에서 저장됨, Model 응답만 추가
                     domain_manager.append_history(channel_id, "Model", response,
                                                   message_id=_first_msg_id(sent_msgs))   # [C49 R4]
+                    await self._after_prose_station(ctx, response, sent_msgs, message)   # [C117 B1] 코드 앱 on_output · 정산
 
                     # Background Extraction (첫 PC 기준)
                     import shared_extract as _sx_p   # [C63 M4] 옛 self.schedule_background_extraction — 추출 셋만(옛 그대로)
@@ -2640,6 +2925,8 @@ class OrchestrationService:
                     domain_data=d_data,
                     player_data=p_data
                 )
+                # [2026-11-06 C117 B1] 코드 앱 — 관찰 턴은 행동 PC 가 없어 on_input 은 안 돈다. 보고 · feed 만(가면 = 관찰 PC).
+                self._app_turn_apply(ctx, await self._app_turn_start_multi(channel_id, [], ctx.user_mask))
 
                 ctx = await self.gather_context(ctx)
                 if updated_context:
@@ -2651,6 +2938,7 @@ class OrchestrationService:
                 _tt.mark(channel_id, "une")
                 full_prompt, _ = self.build_prompt(ctx)
                 _tt.mark(channel_id, "prompt")
+                full_prompt = await self._pre_render_station(ctx, message, full_prompt, "observation")   # [C117 B1]
                 response, _ = await self.generate_response(ctx, full_prompt)
                 _tt.mark(channel_id, "render")
 
@@ -2677,6 +2965,7 @@ class OrchestrationService:
                                                   message_id=getattr(message, "id", None))   # [C49 R4]
                     domain_manager.append_history(channel_id, "Model", response,
                                                   message_id=_first_msg_id(sent_msgs))
+                    await self._after_prose_station(ctx, response, sent_msgs, message)   # [C117 B1]
 
                     import shared_extract as _sx_p   # [C63 M4] 옛 self.schedule_background_extraction — 추출 셋만(옛 그대로)
                     _tt.mark(channel_id, "send")

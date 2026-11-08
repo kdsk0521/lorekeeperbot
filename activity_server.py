@@ -58,7 +58,7 @@ CLIENT_ID_PLACEHOLDER = "__DISCORD_CLIENT_ID__"
 #   서버 파일을 바꿔도 예전 화면이 뜨던 일(10-22 실관측) 방지. 값 = app.js+style.css 내용 해시라 파일이 바뀌면 주소도 바뀐다.
 ASSET_VER_PLACEHOLDER = "__ASSET_VER__"
 SESSION_TTL = 3600              # 초. 만료되면 화면이 조용히 다시 인증한다
-MAX_BODY = 16 * 1024            # 요청 본문 상한 — 세션(code·channel_id)·편집 한 건(action·args·rev) 모두 작다
+MAX_BODY = 64 * 1024            # 요청 본문 상한 — 세션(code·channel_id)·편집 한 건(action·args·rev). [C116 c3] 16→64KB: 시트 절 여러 줄 칸(≤8000자)
 DISCORD_API = "https://discord.com/api/v10"
 _SEC_HEADERS = {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
                 "Referrer-Policy": "no-referrer"}
@@ -264,10 +264,76 @@ async def handle_session(request: web.Request) -> web.Response:
 
 
 def view_status(channel_id: str, uid: str) -> Dict[str, Any]:
-    """상태 탭 = 턴 임베드 1장째 데이터 + 섹션 장 데이터(예산 절단 없음)."""
+    """상태 탭 = 턴 임베드 1장째 데이터 + 섹션 장 데이터(예산 절단 없음).
+    [2026-11-07 C120 판2] 인물별 값은 세계 섹션의 값마다 한 줄(여러 사람이 줄바꿈으로 붙은 글) 대신
+      `npc_values`(값마다 사람 줄 — 명단 안 전부, 안 움직인 사람은 시작값) + `npc_people`(무대 위 · 묶기 단계) +
+      `group_defs` 로 간다 — 화면이 무대 위 · 전체 · 묶기 칩 · 찾기로 거른다. 디스코드 임베드는 그대로."""
     import status_panel
-    return {"turn": status_panel.build_turn_embed_data(channel_id),
-            "sections": status_panel.build_section_pages_data(channel_id)}
+    out = {"turn": status_panel.build_turn_embed_data(channel_id),
+           "sections": status_panel.build_section_pages_data(channel_id)}
+    try:
+        cards, people, gdefs = npc_value_cards(channel_id)
+    except Exception as e:
+        logger.debug(f"[Activity] npc value cards skipped: {e}")
+        cards, people, gdefs = [], {}, []
+    if cards:
+        names = {c["name"] for c in cards}
+        world = getattr(status_panel, "SECTION_WORLD", "")
+
+        def _strip(secs):
+            res = []
+            for sec in secs or []:
+                title, rws = sec[0], sec[1]
+                if title == world:
+                    rws = [r for r in (rws or []) if str(r[0]) not in names]
+                res.append([title, rws])
+            return res
+        if isinstance(out.get("turn"), dict):
+            out["turn"] = dict(out["turn"], sections=_strip(out["turn"].get("sections")))
+        out["sections"] = _strip(out.get("sections"))
+        out.update(npc_values=cards, npc_people=people, group_defs=gdefs)
+    return out
+
+
+def npc_value_cards(channel_id: str):
+    """[C120 판2] 인물별 선언 값(시스템 · 목록 · 숨김 기본 제외) → ([{name, people: [{who, value, moved}]}],
+    {who: {onstage, group}}, group_defs). 사람 = 그 값의 명단(holder_names) 전부, 값 = 저장값 → start_by → start.
+    값 글은 상태창 줄과 같은 꼴(format_value + 바뀐 도장 · 막대/도트 장식)."""
+    import custom_vars as cv
+    import status_panel
+    if not cv.is_enabled():
+        return [], {}, []
+    decl = cv.get_declarations(channel_id) or {}
+    vals = cv.get_values(channel_id) or {}
+    cards, who_all = [], []
+    for nm, spec in decl.items():
+        if not isinstance(spec, dict) or spec.get("system") or spec.get("builtin") or spec.get("per_actor"):
+            continue
+        if str(spec.get("scope")) != "npc" or str(spec.get("type")) in ("list", "text"):
+            continue
+        entry = vals.get(nm) if isinstance(vals.get(nm), dict) else {}
+        per = entry.get("value") if isinstance(entry.get("value"), dict) else {}
+        stamps = entry.get("last_change") if isinstance(entry.get("last_change"), dict) else {}
+        ppl = []
+        for who in cv.holder_names(channel_id, nm, spec):
+            v = per.get(who, cv.npc_init(spec, who))
+            if v is None:
+                continue
+            txt = cv.format_value(spec, v)
+            st = stamps.get(who) if isinstance(stamps.get(who), dict) else None
+            if st and who in per:
+                txt += cv._stamp_tail(st)
+            ppl.append({"who": who, "value": status_panel._decorate_line(txt, spec), "moved": who in per})
+            if who not in who_all:
+                who_all.append(who)
+        if ppl:
+            cards.append({"name": str(nm), "people": ppl})
+    if not cards:
+        return [], {}, []
+    on_set = {str(n) for n in (cv.onstage_names(channel_id) or [])}
+    gtab = cv.group_table(channel_id, who_all)
+    people = {w: {"onstage": w in on_set, "group": gtab.get(w, {})} for w in who_all}
+    return cards, people, cv.group_values(channel_id)
 
 
 def view_archive(channel_id: str, uid: str) -> Dict[str, Any]:
@@ -383,10 +449,31 @@ def view_people(channel_id: str, uid: str) -> Dict[str, Any]:
         return (0 if p["page_id"] == mine else 1 if p.get("kind") == "character" else 2,
                 str(p.get("kind") or ""), str(p.get("name") or ""))
     out = []
+    # [2026-11-07 C120 판2] 긴 명단 — 인물 페이지마다 무대 위 · 묶기 단계(group: true 값) + 맨 위 group_defs.
+    #   인물 키 ↔ 페이지 = 페이지 이름 그대로(page_id_for). PC 페이지 · 장소 · 세력은 둘 다 없음.
+    on_set, gtab, gdefs = set(), {}, []
+    try:
+        import custom_vars as _cv_p
+        on_set = {str(n) for n in (_cv_p.onstage_names(channel_id) or [])}
+        gdefs = _cv_p.group_values(channel_id)
+        if gdefs:
+            gtab = _cv_p.group_table(channel_id, [p.get("name") for p in pages
+                                                   if p.get("kind") == "character" and p["page_id"] != mine])
+    except Exception as e:
+        logger.debug(f"[Activity] people filter data skipped: {e}")
     for p in sorted(pages, key=_rank):
+        npc = p.get("kind") == "character" and p["page_id"] != mine
         out.append({"page_id": p["page_id"], "kind": p.get("kind"), "name": p.get("name"),
-                    "aliases": p.get("aliases") or [], "mine": p["page_id"] == mine})
-    return {"pages": out}
+                    "aliases": p.get("aliases") or [], "mine": p["page_id"] == mine,
+                    "onstage": bool(npc and str(p.get("name") or "") in on_set),
+                    "group": gtab.get(str(p.get("name") or ""), {}) if npc else {}})
+    # [2026-11-05 C116 c3] 등장 전 사람 수(모습 표 — 위키에 없다). 화면은 편집 모드에서만 `등장 전 (n)` 줄을 단다.
+    try:
+        import activity_edit
+        waiting = len(activity_edit.waiting_people(channel_id))
+    except Exception:
+        waiting = 0
+    return {"pages": out, "waiting": waiting, "group_defs": gdefs}
 
 
 def view_person(channel_id: str, uid: str, page_id: str) -> Optional[Dict[str, Any]]:
@@ -405,7 +492,8 @@ def view_person(channel_id: str, uid: str, page_id: str) -> Optional[Dict[str, A
 
 def view_motion(channel_id: str, uid: str) -> Dict[str, Any]:
     """[2026-10-25 C74 판4 W3] 진행 중 앱 — 아크 · 휘는 목표 · 시계 · 약속/사안 · 서 있는 상황 · 끝난 것(부품 쪽, 보기만).
-    재료는 렌더 Slot 15 와 같은 `in_motion.collect`(이번 턴 줄만 뺀다 — 홈 "이번 턴" 줄이 따로 있다). 고치기는 OOC."""
+    재료는 렌더 Slot 15 와 같은 `in_motion.collect`(이번 턴 줄만 뺀다 — 홈 "이번 턴" 줄이 따로 있다).
+    [C116 c3] 고치기 = 편집 모드의 부품 쪽 medit(activity_edit.build_motion_edit)."""
     import activity_edit as _ae
     import in_motion
     return {"parts": in_motion.activity_parts(in_motion.collect(channel_id)), "rev": _ae._turn(channel_id), "view": "motion"}
@@ -419,8 +507,12 @@ def view_modules(channel_id: str, uid: str) -> Dict[str, Any]:
     import output_router as _or
     import activity_edit as _ae
     parts: List[Dict[str, Any]] = []
+    try:   # [2026-11-06 C116 판1 1b] 맨 위 "기본" 카드 — 활력 · 평형 · 소지품(켬끔 + 고칠 칸). 활력 토글 카드는 여기로 옮겼다.
+        parts.append(_ae.basic_card(channel_id))
+    except Exception as e:
+        logger.debug(f"[Activity] basic card skipped: {e}")
     for m in _mf.on_shelf("toggle"):
-        if m.toggle is None:
+        if m.toggle is None or m.id == "vigor":
             continue
         on = _mf.is_on(m, channel_id)
         inner: List[Dict[str, Any]] = [{"t": "switch", "label": "사용", "on": bool(on),
@@ -483,6 +575,89 @@ def view_modules(channel_id: str, uid: str) -> Dict[str, Any]:
     return {"parts": parts, "rev": _ae._turn(channel_id), "view": "modules"}
 
 
+_VAR_KIND_KR = {"gauge": "게이지", "counter": "카운터", "enum": "단계", "list": "목록", "text": "글"}
+_VAR_SCOPE_KR = {"pc": "PC마다", "npc": "인물마다", "user": "사람마다"}
+
+
+def _var_brief(spec: Any) -> str:
+    """값 하나 짧게 — 종류 · 범위(단계) · 캡 · 스코프(옛 `!출력룰 목록 변수` 한 줄의 몫)."""
+    if not isinstance(spec, dict):
+        return ""
+    bits = [_VAR_KIND_KR.get(str(spec.get("type") or ""), str(spec.get("type") or ""))]
+    rg = spec.get("range")
+    if isinstance(rg, (list, tuple)) and len(rg) >= 2:
+        bits.append(f"{rg[0]}~{rg[1]}")
+    st = spec.get("stages")
+    if isinstance(st, list) and st:
+        bits.append("/".join(str(x) for x in st[:4]) + ("…" if len(st) > 4 else ""))
+    if spec.get("max_gain") is not None or spec.get("max_loss") is not None:
+        bits.append(f"캡 +{spec.get('max_gain', '∞')}/−{spec.get('max_loss', '∞')}")
+    sc = _VAR_SCOPE_KR.get(str(spec.get("scope") or ""))
+    if sc:
+        bits.append(sc)
+    # [2026-11-07 C120] 인물별 시작값 · 명단 · 추적 안 함 · 단계 설명 · 묶기 · 시작 항목
+    if isinstance(spec.get("start_by"), dict) and spec["start_by"]:
+        bits.append(f"인물별 시작 {len(spec['start_by'])}명")
+    if isinstance(spec.get("only"), list) and spec["only"]:
+        bits.append(f"명단 {len(spec['only'])}명")
+    if spec.get("holders"):
+        bits.append("명단식")
+    if spec.get("max_npcs"):
+        bits.append(f"최대 {spec['max_npcs']}명")
+    if isinstance(spec.get("start_items"), dict) and spec["start_items"]:
+        bits.append(f"시작 항목 {len(spec['start_items'])}")
+    if spec.get("stage_notes"):
+        bits.append("단계 설명")
+    if spec.get("group"):
+        bits.append("묶기")
+    if str(spec.get("track") or "") == "never":
+        bits.append("추적 안 함")
+    return " · ".join(b for b in bits if b)
+
+
+def _decl_rows(channel_id: str, app_id: str) -> List[List[str]]:
+    """[2026-11-06 C116 판1 1a] 앱 카드 "들어 있는 것"의 선언 줄 — 종류별 이름(값은 짧은 꼴). 꺼졌으면 치워 둔 칸에서."""
+    try:
+        import output_router as _or
+        import app_host
+        src = app_host.NUM_PREFIX + app_id
+        names = _or.source_names(channel_id, src)
+        if not names:
+            return []
+        specs: Dict[str, Any] = {}
+        parked: Dict[str, Any] = {}
+        if names.get("값"):
+            parked = (_or._parked(channel_id).get(src) or {}).get("custom_vars") or {}
+            if parked:
+                specs = dict(parked)
+            else:
+                import custom_vars as _cv
+                specs = _cv.get_declarations(channel_id) or {}
+    except Exception as e:
+        logger.debug(f"[Activity] decl rows skipped: {e}")
+        return []
+    rows = [["선언", " · ".join(f"{lb} {len(v)}" for lb, v in names.items())]]
+    for lb, v in names.items():
+        if lb == "값":
+            rows.append([lb, ", ".join(f"{n}({_var_brief(specs.get(n))})" if _var_brief(specs.get(n)) else n for n in v)])
+        else:
+            rows.append([lb, ", ".join(v)])
+    # [2026-11-07 C120] `only` 없이 상한에 닿은 명단 — 상한 밖 사람은 값이 안 생긴다(카드에서 보이게)
+    if names.get("값") and not parked:
+        try:
+            import custom_vars as _cv_r
+            full = []
+            for n in names["값"]:
+                got, cap = _cv_r.roster_full(channel_id, n, specs.get(n))
+                if cap and got > cap:
+                    full.append(f"{n} {got}/{cap}")
+            if full:
+                rows.append(["명단 꽉 참", ", ".join(full) + " — 상한 밖은 값 없음"])
+        except Exception as e:
+            logger.debug(f"[Activity] roster full skipped: {e}")
+    return rows
+
+
 def _app_cards(channel_id: str) -> List[Dict[str, Any]]:
     """[2026-10-23 C73 M7a] 모듈 앱의 코드 앱 카드 — 번호순. 스위치(mod.toggle `#n`) · 설정 접기(mod.set) · 들어 있는 것 · 최근 오류.
     코드 앱이 하나도 없으면 카드 0(빈 카드를 세우지 않는다 — 대부분의 채널은 코드 앱을 안 쓴다)."""
@@ -517,6 +692,7 @@ def _app_cards(channel_id: str) -> List[Dict[str, Any]]:
         if _tags:
             rws.append(["신고", f"{len(_tags)}종 · " + " · ".join(t["name"] for t in _tags[:8])
                         + (" …" if len(_tags) > 8 else "")])
+        rws += _decl_rows(channel_id, a["id"])   # [C116 판1 1a] 선언 칸(outputs.json)
         if a.get("version"):
             rws.append(["판", a["version"]])
         if not a.get("pkg"):
@@ -543,13 +719,15 @@ def _register_screens() -> None:
     `/api/view/edit` 는 그대로이고, 각 앱의 편집 모드가 `edit` 고르개로 제 몫 묶음만 그린다(C67 §2.2)."""
     import module_frame as _mf
     _mf.add_screen("screen", _mf.Screen("status", "상태창", "activity", 10, view_status, renderer="status",
-                                        edit=("pc", "values", "list:declared", "world")))
-    # [2026-10-25 C74 판4 W3] 진행 중 — 주인 = goal 모듈(core, 늘 켬). 보기만(edit 없음 — 고치기는 OOC, 판정 9).
-    _mf.add_screen("goal", _mf.Screen("motion", "진행 중", "orbit", 12, view_motion, renderer="parts"))
+                                        edit=("pc", "values", "list:declared", "world", "pcstate")))
+    # [2026-10-25 C74 판4 W3] 진행 중 — 주인 = goal 모듈(core, 늘 켬).
+    # [2026-11-05 C116 c3] 편집 모드 = 부품 쪽 medit(목표 · 약속 · 사안 · 시계). 옛 "보기만 — 고치기는 OOC"는 끝.
+    _mf.add_screen("goal", _mf.Screen("motion", "진행 중", "orbit", 12, view_motion, renderer="parts", edit_view="medit"))
     _mf.add_screen("screen", _mf.Screen("archive", "보관함", "archive", 20, view_archive, renderer="archive",
                                         edit=("list:builtin",)))
+    # [2026-11-05 C116 c3] 편집 모드 = 페이지마다 부품 쪽 pedit:<page_id>(목록은 그대로). 옛 관계 묶음은 내 PC 페이지 편집으로.
     _mf.add_screen("wiki", _mf.Screen("people", "인물", "users", 30, view_people, renderer="people",
-                                      edit=("relations",)))
+                                      edit_view="pedit"))
     # [2026-10-23 C69 A3] 편지 · 소식 · 속마음 — 주인은 도착물(board) · 속마음(mind) 모듈. 모듈을 끈 채널이면 서랍에서 빠진다.
     _mf.add_screen("board", _mf.Screen("mail", "편지", "mail", 32, view_feed_for("mail"), renderer="feed"))
     _mf.add_screen("board", _mf.Screen("board", "소식", "newspaper", 34, view_feed_for("board"), renderer="feed"))
@@ -593,7 +771,8 @@ async def handle_tabs(request: web.Request) -> web.Response:
     [C69 A3] 주인 모듈이 꺼진 앱은 뺀다(screens_on)."""
     _uid, channel_id = _auth(request)
     return _json({"tabs": [{"tab": s.tab, "label": s.label, "icon": s.icon, "renderer": s.renderer,
-                            "drawer": bool(s.drawer), "kind": str(s.kind or "builtin"), "edit": list(s.edit or ())}
+                            "drawer": bool(s.drawer), "kind": str(s.kind or "builtin"), "edit": list(s.edit or ()),
+                            "edit_view": str(getattr(s, "edit_view", "") or "")}
                            for s in screens_on(channel_id)]})
 
 
@@ -719,6 +898,14 @@ async def handle_view(request: web.Request) -> web.Response:
         except Exception as e:
             logger.warning(f"[Activity] app view {tab} 실패: {e}")
             return _json({"error": "internal"}, 500)
+    if tab == "medit" or tab.startswith("pedit:"):   # [2026-11-05 C116 c3] 편집 쪽(부품) — 진행 중 · 인물 페이지마다
+        import activity_edit
+        try:
+            return _json(activity_edit.build_motion_edit(channel_id, uid) if tab == "medit"
+                         else activity_edit.build_person_edit(channel_id, uid, tab[len("pedit:"):]))
+        except Exception as e:
+            logger.warning(f"[Activity] edit view {tab} 실패: {e}")
+            return _json({"error": "internal"}, 500)
     fn = _view_fn(tab)
     if fn is None:
         raise web.HTTPNotFound()
@@ -727,6 +914,22 @@ async def handle_view(request: web.Request) -> web.Response:
     except Exception as e:
         logger.warning(f"[Activity] view {request.path} 실패: {e}")
         return _json({"error": "internal"}, 500)
+
+
+async def handle_asset(request: web.Request) -> web.Response:
+    """[2026-11-06 C117 C4] 코드 앱 그림 · 소리 팩 한 장 — 세션 채널의 켜진 앱 것만. 내용이 같으면 주소(?h=)도 같아
+    브라우저가 캐시한다(private · 1년 · immutable). 화면은 받은 것을 data: 로 만들어 그린다(frame CSP 무변)."""
+    _uid, channel_id = _auth(request)
+    import app_host
+    app_id = str(request.match_info.get("app", ""))[:64]
+    name = str(request.match_info.get("name", ""))[:80]
+    got = app_host.asset_bytes(channel_id, app_id, name) if app_host.ASSET_NAME_RE.match(name or "") else None
+    if got is None:
+        raise web.HTTPNotFound(headers=_SEC_HEADERS)
+    mime, body, h = got
+    return web.Response(body=body, content_type=mime, headers={
+        "Cache-Control": "private, max-age=31536000, immutable", "ETag": f'"{h}"',
+        "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer"})
 
 
 async def handle_person(request: web.Request) -> web.Response:
@@ -755,6 +958,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/tabs", handle_tabs)          # [C60 M2b]
     app.router.add_get("/api/home", handle_home)          # [C67 A1]
     app.router.add_post("/api/act", handle_act)           # [C60 M2c]
+    app.router.add_get("/api/asset/{app}/{name}", handle_asset)   # [C117 C4] 그림 · 소리 팩
     app.router.add_get("/api/view/people/{page_id}", handle_person)
     app.router.add_get("/api/view/{tab}", handle_view)
     return app

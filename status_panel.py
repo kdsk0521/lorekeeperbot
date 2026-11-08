@@ -1472,6 +1472,11 @@ def build_section_pages_data(channel_id: str) -> List[Tuple[str, List[Tuple[str,
         if not rows:
             continue
         out.append((nm, list(rows)))
+    try:   # [2026-11-06 C116 판8] 코드 앱 상태창 칸(panel 훅) — 선언 밖 Lua 칸, 앱마다 한 섹션
+        import app_host as _ah
+        out.extend(_ah.panel_sections(channel_id))
+    except Exception as e:
+        logger.debug(f"[Panel] app sections skipped: {e}")
     return out
 
 

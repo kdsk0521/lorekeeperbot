@@ -465,6 +465,83 @@ def apply_time_edits(channel_id: str, edits: List[Dict[str, Any]]) -> List[str]:
 
 
 # =========================================================
+# 위협 시계 (doom_clock) — [2026-11-05 C116 0-2b] 시각(time · clock)과 다른 칸
+#   스펙 파티쳇수정/output_artifact/C116_판0-2b_OOC시계편집_스펙_2026-11-05.md
+# =========================================================
+DOOM_CLOCK_OPS = ("set", "end", "void")
+_DOOM_CLOCK_ALIAS = {"fill": "set", "filled": "set", "progress": "set", "averted": "end", "avert": "end",
+                     "stop": "end", "resolve": "end", "remove": "void", "delete": "void", "never": "void"}
+
+
+def doom_clock_state(channel_id: str, cap: int = 8) -> List[Dict[str, Any]]:
+    """편집 콜 Current State.doom_clocks — 산 시계 {name, filled, segments, kind threat|timer, goal 제목|None}."""
+    import doom_module as _dmod
+    w = domain_manager.get_world_state(channel_id) or {}
+    clocks = [c for c in (w.get("doom_clocks") or []) if isinstance(c, dict) and not c.get("resolved") and c.get("name")]
+    titles: Dict[str, str] = {}
+    if any(c.get("linked_goal") for c in clocks):
+        try:
+            import thread_ledger
+            titles = {k: str((v or {}).get("title") or "") for k, v in (thread_ledger.load_states(channel_id) or {}).items()}
+        except Exception:
+            titles = {}
+    out: List[Dict[str, Any]] = []
+    for c in clocks[:cap]:
+        try:
+            dv = _dmod._get_clock_doom(c)
+        except Exception:
+            dv = 1
+        try:
+            filled = int(c.get("filled", c.get("progress", 0)) or 0)
+            seg = int(c.get("segments", 6) or 6)
+        except (TypeError, ValueError):
+            filled, seg = 0, 6
+        gid = c.get("linked_goal")
+        out.append({"name": str(c.get("name")), "filled": filled, "segments": seg,
+                    "kind": "threat" if dv > 0 else "timer", "goal": (titles.get(str(gid)) or None) if gid else None})
+    return out
+
+
+def apply_doom_clock_edits(channel_id: str, edits: List[Dict[str, Any]], actor: str = "") -> List[str]:
+    """field="doom_clock" → 되비침 줄. op set(칸 수) · end(막아냄) · void(없던 일). 몸은 game_world 둘."""
+    import game_world
+    out: List[str] = []
+    t = _turn(channel_id)
+    for e in edits or []:
+        if not isinstance(e, dict):
+            continue
+        raw_op = str(e.get("op") or e.get("action") or "").strip().lower()
+        op = _DOOM_CLOCK_ALIAS.get(raw_op, raw_op)
+        name = str(e.get("key") or e.get("name") or (e.get("value") if isinstance(e.get("value"), str) else "") or "").strip()
+        if op not in DOOM_CLOCK_OPS:
+            out.append(f"⚠ 시계: '{raw_op or '?'}'은 못 해(set · end · void)")
+            continue
+        if not name:
+            out.append("⚠ 시계: 이름이 없어")
+            continue
+        if op == "set":
+            fv = e.get("filled", e.get("value") if not isinstance(e.get("value"), str) else None)
+            r = game_world.set_clock_filled(channel_id, name, fv, t, origin="ooc")
+            if r.get("ok"):
+                out.append(f"✓ 시계 '{r['name']}' {r['filled']}/{r['segments']}")
+            elif r.get("reason") == "bad":
+                out.append(f"⚠ 시계: '{name}' — 칸 수가 없어")
+            else:
+                out.append(f"⚠ 시계: '{name}' 없음")
+            continue
+        r = game_world.end_clock_averted(channel_id, name, t, origin="ooc", kind="void" if op == "void" else "averted")
+        if not r.get("ok"):
+            out.append(f"⚠ 시계: '{name}' 없음")
+            continue
+        if op == "end":
+            game_world.pay_clock_reward(channel_id, int(r.get("reward") or 0), actor)
+            out.append(f"✓ 시계 '{r['name']}' 막아냄")
+        else:
+            out.append(f"✓ 시계 '{r['name']}' 지움")
+    return out
+
+
+# =========================================================
 # 지난 일 정정 (fact) — [2026-10-10 기록 정정]
 # =========================================================
 # =========================================================
@@ -696,14 +773,15 @@ def apply_fact_edits(channel_id: str, edits: List[Dict[str, Any]],
 #   스펙: 파티쳇수정/state_v10/이야기실_지도·스펙_2026-10-10.md
 # =========================================================
 # [C74 판2] + sleep(선 잇기 — "after": 대상) · wake(선 끊고 깨우기)
-THREAD_OPS = ("open", "close", "pause", "resume", "reschedule", "progress", "void", "sleep", "wake")
+THREAD_OPS = ("open", "close", "pause", "resume", "reschedule", "progress", "void", "sleep", "wake",
+              "rank")   # [2026-11-06 C116] 서 있는 목표의 등급 고치기
 # 편집 콜이 고르기 쉬운 다른 말 → op (outcome 이 따라붙는 것은 짝으로)
 _THREAD_ALIAS = {"add": ("open", None), "new": ("open", None), "create": ("open", None),
                  "delete": ("void", None), "remove": ("void", None), "never": ("void", None),
                  "complete": ("close", "done"), "done": ("close", "done"), "finish": ("close", "done"),
                  "kept": ("close", "done"), "cancel": ("close", "dropped"), "drop": ("close", "dropped"),
                  "break": ("close", "broken"), "broken": ("close", "broken"),
-                 "reopen": ("resume", None), "due": ("reschedule", None)}
+                 "reopen": ("resume", None), "due": ("reschedule", None), "rerank": ("rank", None)}
 # [2026-10-24 C74 판2] 옛 quest 칸 → thread 칸 kind goal 로 옮겨 적는다(분류기 문안은 thread 하나만 말하지만, 옛 꼴이
 #   와도 받는다). add → open · complete → close done · remove → void(없던 일 — 산문이 다시 꺼내도 안 연다) · progress → progress.
 _QUEST_TO_THREAD = {"add": ("open", None), "open": ("open", None), "new": ("open", None), "create": ("open", None),
@@ -827,6 +905,13 @@ def world_state_for_edit(channel_id: str, ooc_text: str = "", knows_cap: int = 3
             out["threads"] = _th
     except Exception as _e_th:
         logger.debug(f"[OOC] threads skip: {_e_th}")
+    # [2026-11-05 C116 0-2b] 위협 시계(산 것 ≤8) — "그 시계 없던 걸로" · "막은 걸로" · "3칸으로"를 받을 재료. 비면 안 싣는다.
+    try:
+        _dc = doom_clock_state(channel_id)
+        if _dc:
+            out["doom_clocks"] = _dc
+    except Exception as _e_dc:
+        logger.debug(f"[OOC] doom_clocks skip: {_e_dc}")
     # [2026-10-18 C50 R5] 활성 정정(번호·턴·대상·문장) — 편집 콜이 번호로 거두고 번호로 바꾼다.
     #   본문에 대상 이름·별칭이 나온 것(최신순 ≤8), 없으면 최근 5. 비면 안 싣는다.
     try:

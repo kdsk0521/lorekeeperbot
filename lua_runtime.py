@@ -22,6 +22,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import random
 import sys
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -51,6 +52,16 @@ HISTORY_MAX = 50
 MAX_REPORT_CHARS = 2000
 MAX_REPORTS = 10
 MAX_KEY_CHARS = 64
+MAX_VALUE_WRITES = 50               # [C116 판2] 한 호출의 선언 값 쓰기(lk.value_set · lk.value_add) 상한
+MAX_CORE_WRITES = 20                # [C116 판6] 한 호출의 관계 · 목표 쓰기 상한(따로 셈)
+HANDOUT_KINDS = ("message", "bulletin", "sns")   # [C116 판8] lk.handout — 도착물 꼴(편지 · 게시판 · SNS)
+MAX_HANDOUTS_PER_CALL = 3
+HANDOUT_BODY_MAX = 4000
+ASK_TASK_MAX = 4000                 # [C116 판7] lk.ask — 할 일 글 · 재료 글 · 답 길이
+ASK_MATERIAL_MAX = 8000
+ASK_CHARS_MAX = 2000
+ASK_CHARS_DEFAULT = 800
+REL_SHIFT_MAX = 20                  # [C116 판6] lk.relation_shift 한 번의 폭(bond · tension 각각 ±)
 
 _BLOCKED_GLOBALS = ("os", "io", "require", "dofile", "loadfile", "load", "package",
                     "collectgarbage", "python", "warn")
@@ -201,19 +212,87 @@ def _clean_source(source: str) -> str:
     return source
 
 
-def _load(source: str, api: Optional[Dict[str, Callable]], data: Optional[Dict[str, Any]],
-          steps: int, memory: int) -> Any:
+# [2026-11-06 C117 실측] Lua 글은 바이트다 — 한글을 `string.sub` 로 자르면 글자 가운데가 잘린 바이트가 남고, 그 글이 파이썬으로
+#   넘어오는 자리(lk.* 인자 · 훅이 돌려준 값)에서 lupa 의 UTF-8 풀기가 터져 호출이 통째로 실패했다(아틀리에 의뢰 제목 60바이트 자르기).
+#   넘어오는 자리 둘을 Lua 쪽에서 감싼다: 잘린 바이트 = U+FFFD 한 자. 깨진 글이 없으면 손 안 대고 그대로(표 복사 0).
+#   string.sub 자체는 그대로(바이트 셈 — string.find 위치와 짝).
+_FIX_LUA = r"""
+local lk, G = ...
+local _utf8len, _sub, _byte, _type, _pairs = utf8.len, string.sub, string.byte, type, pairs
+local _concat, _pack, _unpack = table.concat, table.pack, table.unpack
+local function _fixs(s)
+  if _utf8len(s) then return s end
+  local out, i, n = {}, 1, #s
+  while i <= n do
+    local ok, pos = _utf8len(s, i)
+    if ok then out[#out + 1] = _sub(s, i); break end
+    out[#out + 1] = _sub(s, i, pos - 1)
+    out[#out + 1] = "\239\191\189"
+    i = pos + 1
+    while i <= n do                       -- 잘린 글자의 나머지 이음 바이트(0x80~0xBF)는 같은 한 자로
+      local b = _byte(s, i)
+      if b < 128 or b >= 192 then break end
+      i = i + 1
+    end
+  end
+  return _concat(out)
+end
+local function _bad(v, d)
+  local t = _type(v)
+  if t == "string" then return not _utf8len(v) end
+  if t ~= "table" or d > 20 then return false end
+  for k, x in _pairs(v) do
+    if (_type(k) == "string" and not _utf8len(k)) or _bad(x, d + 1) then return true end
+  end
+  return false
+end
+local function _fix(v, d)
+  local t = _type(v)
+  if t == "string" then return _fixs(v) end
+  if t ~= "table" or d > 20 then return v end
+  local out = {}
+  for k, x in _pairs(v) do
+    out[(_type(k) == "string") and _fixs(k) or k] = _fix(x, d + 1)
+  end
+  return out
+end
+local function _clean(v) if _bad(v, 0) then return _fix(v, 0) end return v end
+local function _guard(f)
+  return function(...)
+    local a = _pack(...)
+    for i = 1, a.n do a[i] = _clean(a[i]) end
+    return f(_unpack(a, 1, a.n))
+  end
+end
+for name, f in _pairs(lk) do
+  if _type(f) == "userdata" then lk[name] = _guard(f) end
+end
+G.print = _guard(G.print)
+return function(f, ...) return _clean((f(...))) end
+"""
+
+
+def _load_full(source: str, api: Optional[Dict[str, Callable]], data: Optional[Dict[str, Any]],
+               steps: int, memory: int) -> Tuple[Any, Any]:
+    """(Lua 런타임, 훅 부르는 받침). 받침 = 훅이 돌려준 값의 깨진 UTF-8 을 고쳐서 넘긴다(C117)."""
     L = _new_runtime(steps, memory)
     lk = L.table_from({})
     for name, fn in (api or {}).items():
         lk[name] = _wrap(L, fn)
     for name, val in (data or {}).items():
         lk[name] = _to_lua(L, val)
-    L.globals().lk = lk
+    G = L.globals()
+    G.lk = lk
     log = (api or {}).get("log")
-    L.globals().print = _wrap(L, (lambda *a: log(" ".join(_print_str(x) for x in a))) if log else (lambda *a: None))
+    G.print = _wrap(L, (lambda *a: log(" ".join(_print_str(x) for x in a))) if log else (lambda *a: None))
+    tramp = L.execute(_FIX_LUA, lk, G)
     L.execute(_clean_source(source))
-    return L
+    return L, tramp
+
+
+def _load(source: str, api: Optional[Dict[str, Callable]], data: Optional[Dict[str, Any]],
+          steps: int, memory: int) -> Any:
+    return _load_full(source, api, data, steps, memory)[0]
 
 
 def _print_str(x: Any) -> str:
@@ -230,21 +309,69 @@ def _print_str(x: Any) -> str:
 # lk 장부 — 순수 메모리(작업 프로세스 안에서도, 도구에서도 같은 몸)
 # =====================================================================
 
+# [2026-11-06 C117 C2] lk.relation_shift 말 → 폭의 받침 — 봇은 호스트가 config.REL_BOND_SHIFT · REL_TENSION_SHIFT 를 싣는다
+#   (도구 · 인-프로세스 호출용. 스모크가 config 와 같은지 본다).
+REL_WORDS_FALLBACK = {"bond": {"much_warmer": 5, "warmer": 3, "holds": 0, "cooler": -3, "much_cooler": -5},
+                      "tension": {"spikes": 10, "rises": 5, "holds": 0, "eases": -5}}
+
+
+def keep_shape(new: Any, old: Any) -> Any:
+    """[2026-11-06 C117 C6] Lua 표는 목록 · 사전이 한 꼴이라 빈 표는 `{}` 로 온다 — 그 자리가 전에 목록이었으면 `[]` 로.
+    안쪽 칸도 같은 규칙(같은 키 · 같은 자리끼리). 처음 쓰는 자리 · 사전이었던 자리는 그대로."""
+    if isinstance(new, dict) and not new and isinstance(old, list):
+        return []
+    if isinstance(new, dict) and isinstance(old, dict):
+        return {k: (keep_shape(v, old[k]) if k in old else v) for k, v in new.items()}
+    if isinstance(new, list) and isinstance(old, list):
+        return [(keep_shape(v, old[i]) if i < len(old) else v) for i, v in enumerate(new)]
+    return new
+
+
+WEATHER_NAME_MAX = 20     # [C121] lk.weather 이름 한 칸
+
+_PAREN_RE = re.compile(r"^\s*(.+?)\s*[(（]\s*(.+?)\s*[)）]\s*$")
+
+
+def _paren_parts(name: Any) -> List[str]:
+    """`리나(Rina)` → [`리나`, `Rina`]. 괄호 꼴이 아니면 []. (memory_index.split_name_keys 와 같은 펴기 — 작업 프로세스는 봇 모듈을 안 끈다)"""
+    m = _PAREN_RE.match(str(name or ""))
+    return [m.group(1), m.group(2)] if m else []
+
+
 class Session:
     """한 호출의 lk — 장부 사본 · 쓰기 모음 · 보고 모음 · 로그. DB 를 모른다.
     app = {"id", "settings"}(호스트가 넣는다) · kv = 지금 장부 · world = lk.world() · hist = lk.history 재료
     · tags = lk.tags 재료([{turn, tag, fields, evidence}] 오래된 → 최신, [M7b])."""
 
     def __init__(self, app: Dict[str, Any], kv: Dict[str, Any], world: Dict[str, Any],
-                 history: List[Dict[str, Any]], tags: Optional[List[Dict[str, Any]]] = None):
+                 history: List[Dict[str, Any]], tags: Optional[List[Dict[str, Any]]] = None,
+                 values: Optional[Dict[str, Dict[str, Any]]] = None, apps: Optional[Dict[str, Dict[str, Any]]] = None,
+                 roster: Optional[Dict[str, List[str]]] = None, core: Optional[Dict[str, Any]] = None):
+        # [2026-11-06 C116 판2 다리] values = 선언 값 사본 {이름: {type, scope, mine, value, init, range}}(호스트가 넣는다 —
+        #   mine = 이 앱 선언 칸(출처 app:<id>)) · apps = 다른 앱 장부 사본 {앱id: {키: 값}}(읽기만).
         self.app = app or {}
         self.kv = dict(kv or {})
         self.writes: Dict[str, Any] = {}
+        self.kv_adds: Dict[str, Any] = {}   # [C117 A3] lk.add 가 더한 양(키 → 합) — 누르기 일지엔 이 양이 남는다
+        self.kv_abs: set = set()            # 이 호출에서 lk.set 으로 쓴 키(그 뒤 lk.add 는 더한 양으로 안 남긴다)
         self.reports: List[str] = []
         self.logs: List[str] = []
         self.world = world or {}
         self.hist = list(history or [])
         self.tag_rows = [t for t in (tags or []) if isinstance(t, dict)]
+        self.values: Dict[str, Dict[str, Any]] = {str(k): dict(v) for k, v in (values or {}).items() if isinstance(v, dict)}
+        self.apps: Dict[str, Dict[str, Any]] = {str(k): dict(v) for k, v in (apps or {}).items() if isinstance(v, dict)}
+        self.value_writes: List[Dict[str, Any]] = []
+        self.time_req: Optional[Dict[str, Any]] = None   # [C116 판5] lk.time · lk.time_until — 한 호출 하나(마지막이 이긴다)
+        self.weather_req: Optional[Dict[str, str]] = None   # [C121] lk.weather(now, next) — 한 호출 하나(마지막이 이긴다)
+        # [C116 판6] 코어 읽기 재료 {relations: [{s, t, bond, tension, stance, kind}], threads: [...], clocks: [...], npcs: {이름: {...}}}
+        self.core: Dict[str, Any] = dict(core or {})
+        self.rel_writes: List[Dict[str, Any]] = []
+        self.goal_writes: List[Dict[str, Any]] = []
+        self.ask_req: Optional[Dict[str, Any]] = None   # [C116 판7] lk.ask — 한 호출 하나(누르기에서만 산다)
+        self.handouts: List[Dict[str, Any]] = []        # [C116 판8] lk.handout — 다음 산문 앞 도착물(글은 앱이 쓴다)
+        # [C116 판3] lk.npc 재료 — 등록 인물 {이름: [별칭]}(호스트가 넣는다)
+        self.roster: Dict[str, List[str]] = {str(k): [str(a) for a in (v or []) if a] for k, v in (roster or {}).items()}
 
     @staticmethod
     def _key(k: Any) -> str:
@@ -252,6 +379,148 @@ class Session:
         if not k or len(k) > MAX_KEY_CHARS or k.startswith("_"):
             raise ValueError(f"lk: 쓸 수 없는 키 `{k[:20]}`(1~{MAX_KEY_CHARS}자, `_` 로 시작 금지)")
         return k
+
+    # ---------------------------------------------------------------- [C116 판2] 선언 값 다리
+    @staticmethod
+    def _at(at: Any) -> Dict[str, str]:
+        """at = 글자 하나 | 표 {npc, item, field, pc} → 칸 dict(빈 칸 뺌)."""
+        if at is None:
+            return {}
+        if isinstance(at, dict):
+            return {k: str(at[k])[:64] for k in ("npc", "item", "field", "pc") if at.get(k) not in (None, "")}
+        t = str(at)[:64]
+        return {"at": t} if t else {}
+
+    def _vrec(self, name: Any) -> Tuple[str, Dict[str, Any]]:
+        nm = str(name if name is not None else "")
+        rec = self.values.get(nm)
+        if rec is None:
+            raise ValueError(f"lk.value: 선언된 값이 아니에요 `{nm[:20]}`")
+        return nm, rec
+
+    @staticmethod
+    def _where(rec: Dict[str, Any], at: Dict[str, str]) -> Dict[str, str]:
+        """글자 하나(at)를 값 모양에 맞춰 칸 이름으로 — 목록이면 item, 인물별이면 npc, 그 밖이면 pc."""
+        if "at" not in at:
+            return at
+        t = at.pop("at")
+        if str(rec.get("type")) == "list":
+            at["item"] = t
+        elif str(rec.get("scope")) == "npc":
+            at["npc"] = t
+        else:
+            at["pc"] = t
+        return at
+
+    @staticmethod
+    def _clamp(rec: Dict[str, Any], v: Any) -> Any:
+        rg = rec.get("range")
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and isinstance(rg, (list, tuple)) and len(rg) == 2:
+            try:
+                return max(rg[0], min(rg[1], v))
+            except TypeError:
+                return v
+        return v
+
+    def _read(self, rec: Dict[str, Any], w: Dict[str, str]) -> Any:
+        cur = rec.get("value")
+        if str(rec.get("type")) == "list":
+            if not w.get("item"):
+                return cur
+            row = (cur or {}).get(w["item"]) if isinstance(cur, dict) else None
+            if w.get("field"):
+                return row.get(w["field"]) if isinstance(row, dict) else None
+            if isinstance(row, dict):
+                return row if rec.get("fields") else row.get("n")
+            return row
+        key = w.get("npc") or w.get("pc") or (str(self.world.get("pc") or "") if rec.get("per_actor") else "")
+        if key:
+            # [2026-11-07 C120] 명단 밖 = nil · 안 움직인 사람 = 인물별 시작값(init_by)
+            if w.get("npc") and not self._holder(rec, key):
+                return None
+            _ib = rec.get("init_by") if isinstance(rec.get("init_by"), dict) else {}
+            _i0 = _ib.get(key, rec.get("init"))
+            if isinstance(cur, dict):
+                return cur.get(key, _i0)
+            return _i0 if cur is None else cur
+        if str(rec.get("scope")) == "npc" and (rec.get("holders") is not None or rec.get("init_by")):
+            # [C120] 표 통째 = 명단 안 사람 전부(안 움직인 사람은 시작값). 명단 밖으로 나간 사람의 저장값은 안 보인다.
+            per = cur if isinstance(cur, dict) else {}
+            _ib = rec.get("init_by") if isinstance(rec.get("init_by"), dict) else {}
+            names = rec["holders"] if rec.get("holders") is not None else list(dict.fromkeys(list(per) + list(_ib)))
+            return {n: per.get(n, _ib.get(n, rec.get("init"))) for n in names}
+        return cur
+
+    @staticmethod
+    def _holder(rec: Dict[str, Any], key: Any) -> bool:
+        """[C120] 이 값의 명단 안인가 — 명단 칸이 없는 값(holders 없음)은 늘 안이다."""
+        hs = rec.get("holders")
+        if hs is None:
+            return True
+        k = str(key or "").strip().casefold()
+        return any(str(h).strip().casefold() == k for h in hs)
+
+    def _echo(self, rec: Dict[str, Any], w: Dict[str, str], op: str, x: Any) -> None:
+        """같은 훅 안 읽기 — 쓴 값을 사본에 비춘다(범위 클램프만. 단계 맞춤 · 항목 상한은 호스트 몫)."""
+        def nxt(old):
+            if op == "set":
+                return self._clamp(rec, x)
+            try:
+                return self._clamp(rec, (old if isinstance(old, (int, float)) and not isinstance(old, bool) else 0) + x)
+            except TypeError:
+                return old
+        cur = rec.get("value")
+        if str(rec.get("type")) == "list":
+            items = dict(cur) if isinstance(cur, dict) else {}
+            if not w.get("item"):
+                return
+            row = items.get(w["item"])
+            row = dict(row) if isinstance(row, dict) else {"n": row if isinstance(row, (int, float)) else 0}
+            k = w.get("field") or "n"
+            row[k] = nxt(row.get(k))
+            items[w["item"]] = row
+            rec["value"] = items
+            return
+        key = w.get("npc") or w.get("pc")
+        if key and (isinstance(cur, dict) or str(rec.get("scope")) == "npc"):
+            per = dict(cur) if isinstance(cur, dict) else {}
+            _ib = rec.get("init_by") if isinstance(rec.get("init_by"), dict) else {}
+            per[key] = nxt(per.get(key, _ib.get(key, rec.get("init"))))
+            rec["value"] = per
+            return
+        rec["value"] = nxt(cur if cur is not None else rec.get("init"))
+
+    def _value_write(self, op: str, name: Any, x: Any, at: Any) -> None:
+        nm, rec = self._vrec(name)
+        if not (rec.get("mine") or rec.get("core")):
+            raise ValueError(f"lk.value_{op}: 이 앱이 선언한 값 · 활력 · 평형 · 소지품만 써요 `{nm[:20]}`(읽기는 됨)")
+        if len(self.value_writes) >= MAX_VALUE_WRITES:
+            raise ValueError(f"lk.value_{op}: 한 번에 {MAX_VALUE_WRITES}건까지")
+        vtype = str(rec.get("type") or "gauge")
+        if op == "add":
+            if vtype in ("enum", "text"):
+                raise ValueError(f"lk.value_add: 단계형 · 문자열은 value_set 으로 `{nm[:20]}`")
+            if isinstance(x, bool) or not isinstance(x, (int, float)) or x != x or x in (float("inf"), float("-inf")):
+                raise ValueError("lk.value_add: 수만 더해요")
+        else:
+            try:
+                json.dumps(x, ensure_ascii=False, allow_nan=False)
+            except Exception:
+                raise ValueError("lk.value_set: 글 · 수(NaN · 무한대 제외)만 담아요")
+            if x is None or isinstance(x, (dict, list)):
+                raise ValueError("lk.value_set: 표 · nil 은 못 써요(글 · 수만)")
+        w = self._where(rec, self._at(at))
+        if rec.get("per_actor") and not (w.get("pc") or w.get("npc")):
+            w["pc"] = str(self.world.get("pc") or "")[:64]   # [C116 판6] 활력 · 평형 기본 = 이 훅의 PC
+        if vtype == "list" and not w.get("item"):
+            raise ValueError(f"lk.value_{op}: 목록 값은 항목을 줘요 `{nm[:20]}`")
+        if w.get("npc") and not self._holder(rec, w["npc"]):
+            # [2026-11-07 C120] 명단 밖 — 그 한 건만 버린다(훅 전체가 날아가지 않게)
+            if len(self.logs) < 50:
+                self.logs.append(f"lk.value_{op}: {str(w['npc'])[:20]} — `{nm[:20]}` 명단 밖이라 버림")
+            return
+        self.value_writes.append({"op": op, "name": nm, "x": x, **w})
+        self._echo(rec, w, op, x)
 
     def api(self) -> Dict[str, Any]:
         def get(k=None):
@@ -264,12 +533,34 @@ class Session:
                 json.dumps(v, ensure_ascii=False, allow_nan=False)   # [10-24 검토] NaN · 무한대는 화면 JSON 을 깨뜨린다
             except Exception:
                 raise ValueError("lk.set: 글 · 수(NaN · 무한대 제외) · 참거짓 · 표만 담아요")
+            v = keep_shape(v, self.kv.get(k))   # [C117 C6] 빈 표는 그 키가 전에 가졌던 꼴(목록이었으면 [])
             if v is None:
                 self.kv.pop(k, None)
             else:
                 self.kv[k] = v
             self.writes[k] = v
+            self.kv_abs.add(k)
+            self.kv_adds.pop(k, None)
             return None
+
+        def add(k=None, n=None):
+            # [2026-11-06 C117 A3] 장부 수 칸 더하기 — 커밋은 쓴 뒤 값(lk.set 과 같음), 누르기 일지엔 더한 양이 남아
+            #   `!다시` 에서 턴 훅 몫과 같이 산다(같은 키를 턴 훅 · 버튼이 같이 셀 때 — "한 키 한 주인"을 풀었다).
+            k = self._key(k)
+            if isinstance(n, bool) or not isinstance(n, (int, float)) or n != n or n in (float("inf"), float("-inf")):
+                raise ValueError("lk.add: 수만 더해요")
+            cur = self.kv.get(k)
+            cur = 0 if cur is None else cur
+            if isinstance(cur, bool) or not isinstance(cur, (int, float)):
+                raise ValueError(f"lk.add: 수 칸이 아니에요 `{k[:20]}`")
+            v = cur + n
+            if v != v or v in (float("inf"), float("-inf")):
+                raise ValueError("lk.add: 결과가 수가 아니에요")
+            self.kv[k] = v
+            self.writes[k] = v
+            if k not in self.kv_abs:
+                self.kv_adds[k] = self.kv_adds.get(k, 0) + n
+            return v
 
         def keys():
             return sorted(k for k in self.kv if not k.startswith("_"))
@@ -331,9 +622,225 @@ class Session:
                 self.logs.append(str(t if t is not None else "")[:300])
             return None
 
-        return {"get": get, "set": set_, "keys": keys, "setting": setting, "report": report, "world": world,
+        def value(name=None, at=None):
+            nm, rec = self._vrec(name)
+            return self._read(rec, self._where(rec, self._at(at)))
+
+        def value_set(name=None, v=None, at=None):
+            self._value_write("set", name, v, at)
+            return None
+
+        def value_add(name=None, d=None, at=None):
+            self._value_write("add", name, d, at)
+            return None
+
+        def npc(name=None):
+            # [C116 판3] 이름 풀기 — 신고 글 · 입력 속 이름 → 등록 인물 이름(없거나 둘 이상이면 nil)
+            q = str(name if name is not None else "").strip()
+            if not q:
+                return None
+            if q in self.roster:
+                return q
+            hit = [k for k, al in self.roster.items() if q in al]
+            if len(hit) == 1:
+                return hit[0]
+            ql = q.casefold()
+            hit = [k for k, al in self.roster.items() if ql == k.casefold() or ql in {a.casefold() for a in al}]
+            if len(hit) == 1:
+                return hit[0]
+            # [2026-11-07 C120] 괄호 꼴 펴기 — `리나(Rina)` 는 `리나` · `Rina` 로도 풀린다(start_by · only 이름 맞추기와 같은 꼴)
+            hit = [k for k in self.roster if ql in {x.casefold() for x in _paren_parts(k)}]
+            if len(hit) == 1:
+                return hit[0]
+            hit = [k for k, al in self.roster.items()
+                   if any(len(x) >= 2 and x.casefold() in ql for x in [k] + list(al) + _paren_parts(k))]
+            return hit[0] if len(hit) == 1 else None
+
+        def time_(n=None):
+            # [C116 판5] 이 행동이 걸리는 시간(분) — on_input 이면 이번 턴 시계(선언 꼴), on_click 이면 바로
+            try:
+                n = int(n)
+            except Exception:
+                raise ValueError("lk.time: 분(정수)으로")
+            if not 1 <= n <= 1440:
+                raise ValueError("lk.time: 1~1440분")
+            self.time_req = {"min": n}
+            return None
+
+        def weather(now=None, nxt=None):
+            # [2026-11-07 C121] 코어 날씨 — 지금 이름(world.weather) · 다음 날 첫 이름(world.weather_next). 빈 글 · nil = 안 바꿈.
+            #   날씨 주인 앱(manifest weather: true, 켜진 것 중 번호가 빠른 앱)만 적힌다 — 그 밖은 호스트가 버린다.
+            out = {}
+            for k_, v_ in (("now", now), ("next", nxt)):
+                if v_ is None:
+                    continue
+                if not isinstance(v_, str):
+                    raise ValueError("lk.weather: 글(날씨 이름)로 — 빈 글 · nil 은 안 바꿈")
+                v_ = " ".join(v_.split())[:WEATHER_NAME_MAX]
+                if v_:
+                    out[k_] = v_
+            self.weather_req = out or None
+            return None
+
+        def time_until(t=None):
+            t = str(t if t is not None else "").strip()
+            if not t:
+                raise ValueError("lk.time_until: 시간대 이름(새벽 · 오전 …) 또는 \"HH:MM\"")
+            self.time_req = {"until": t[:10]}
+            return None
+
+        # ------------------------------------------------ [C116 판6] 코어 읽기 · 관계 · 목표 쓰기
+        def _edge(s_, t_):
+            for e in self.core.get("relations") or []:
+                if e.get("s") == s_ and e.get("t") == t_:
+                    return e
+            return None
+
+        def relation(npc_=None, target=None):
+            s_ = str(npc_ if npc_ is not None else "")
+            t_ = str(target if target is not None else (self.world.get("pc") or ""))
+            e = _edge(s_, t_)
+            return None if e is None else {k: e.get(k) for k in ("bond", "tension", "stance", "kind")}
+
+        def relations(npc_=None):
+            s_ = None if npc_ is None else str(npc_)
+            return [dict(e) for e in (self.core.get("relations") or []) if s_ is None or e.get("s") == s_]
+
+        def threads(kind=None):
+            k_ = None if kind is None else str(kind)
+            return [dict(t) for t in (self.core.get("threads") or []) if k_ is None or t.get("kind") == k_]
+
+        def clocks():
+            return [dict(c) for c in (self.core.get("clocks") or [])]
+
+        def npc_info(name_=None):
+            r = (self.core.get("npcs") or {}).get(str(name_ if name_ is not None else ""))
+            return dict(r) if isinstance(r, dict) else None
+
+        def _core_slot():
+            if len(self.rel_writes) + len(self.goal_writes) >= MAX_CORE_WRITES:
+                raise ValueError(f"lk: 관계 · 목표 쓰기는 한 번에 {MAX_CORE_WRITES}건까지")
+
+        def _rel_word(x, axis):
+            # [C117 C2] 말(much_warmer … · spikes …) → 폭. 표는 호스트가 config 에서 싣는다(없으면 같은 값의 받침).
+            if isinstance(x, str):
+                tb = ((self.core.get("rel_words") or {}).get(axis)) or REL_WORDS_FALLBACK[axis]
+                w = x.strip().lower()
+                if w not in tb:
+                    raise ValueError(f"lk.relation_shift: {axis} 말은 {' · '.join(tb)}")
+                return int(tb[w])
+            return int(x or 0)
+
+        def relation_shift(npc_=None, bond=0, tension=0):
+            s_ = str(npc_ if npc_ is not None else "").strip()
+            if not s_:
+                raise ValueError("lk.relation_shift: 인물 이름을 줘요")
+            try:
+                b_, t_ = _rel_word(bond, "bond"), _rel_word(tension, "tension")
+            except ValueError:
+                raise
+            except Exception:
+                raise ValueError("lk.relation_shift: 정수 또는 말로")
+            if abs(b_) > REL_SHIFT_MAX or abs(t_) > REL_SHIFT_MAX:
+                raise ValueError(f"lk.relation_shift: 한 번에 ±{REL_SHIFT_MAX}까지")
+            if not b_ and not t_:
+                return None
+            _core_slot()
+            self.rel_writes.append({"npc": s_[:64], "bond": b_, "tension": t_})
+            e = _edge(s_, str(self.world.get("pc") or ""))   # 같은 호출 안 비침(범위 −100~100 · 0~100)
+            if e is not None:
+                e["bond"] = max(-100, min(100, int(e.get("bond") or 0) + b_))
+                e["tension"] = max(0, min(100, int(e.get("tension") or 0) + t_))
+            return None
+
+        def goal_step(tid=None, steps=1):
+            t_ = str(tid if tid is not None else "").strip()
+            try:
+                n_ = int(steps)
+            except Exception:
+                raise ValueError("lk.goal_step: 정수로")
+            if not t_ or not n_ or abs(n_) > 3:
+                raise ValueError("lk.goal_step: 목표 id(T3) · 걸음 ±1~3")
+            t_ = t_.upper()
+            if not any(t.get("id") == t_ and t.get("kind") == "goal" and t.get("status") == "open"
+                       for t in (self.core.get("threads") or [])):
+                raise ValueError(f"lk.goal_step: 열린 목표가 아니에요 `{t_[:12]}`")
+            _core_slot()
+            self.goal_writes.append({"id": t_[:12], "steps": n_})
+            for t in (self.core.get("threads") or []):   # [C117 B2] 같은 호출 안 비침(0 ~ max)
+                if t.get("id") == t_:
+                    try:
+                        t["progress"] = max(0, min(int(t.get("max") or 0) or 99, int(t.get("progress") or 0) + n_))
+                    except Exception:
+                        pass
+            return None
+
+        def place():
+            # [C117 C1] 장소 나무 — {name, type, path(뿌리 → 여기), tags, risk, near}. 못 풀면 {name}.
+            p = self.core.get("place")
+            if isinstance(p, dict) and p.get("name"):
+                return dict(p)
+            return {"name": str(self.world.get("place") or "")}
+
+        # ------------------------------------------------ [C116 판7] 모델에게 묻기 — 답은 on_answer 로
+        def ask(qid=None, spec=None):
+            q_ = str(qid if qid is not None else "").strip()
+            if not q_ or len(q_) > 64:
+                raise ValueError("lk.ask: 물음 id(1~64자)를 줘요")
+            if self.ask_req is not None:
+                raise ValueError("lk.ask: 한 호출에 하나")
+            sp = spec if isinstance(spec, dict) else ({"task": spec} if isinstance(spec, str) else {})
+            task = str(sp.get("task") or "").strip()
+            if not task:
+                raise ValueError("lk.ask: task(무엇을 쓸지)를 줘요")
+            if len(task) > ASK_TASK_MAX:
+                raise ValueError(f"lk.ask: task 는 {ASK_TASK_MAX}자까지")
+            mat = sp.get("material")
+            mat = "" if mat is None else (mat if isinstance(mat, str) else json.dumps(mat, ensure_ascii=False))
+            if len(mat) > ASK_MATERIAL_MAX:
+                raise ValueError(f"lk.ask: material 은 {ASK_MATERIAL_MAX}자까지")
+            try:
+                n_ = int(sp.get("max_chars") or ASK_CHARS_DEFAULT)
+            except Exception:
+                raise ValueError("lk.ask: max_chars 는 정수")
+            self.ask_req = {"id": q_, "task": task, "material": mat, "max_chars": max(1, min(ASK_CHARS_MAX, n_)),
+                            "json": bool(sp.get("json"))}
+            return None
+
+        # ------------------------------------------------ [C116 판8] 도착물 요청 — 글은 앱, 보이기 · 기록은 봇(world_board 길)
+        def handout(spec=None):
+            sp = spec if isinstance(spec, dict) else {}
+            kind = str(sp.get("kind") or "message").strip().lower()
+            if kind not in HANDOUT_KINDS:
+                raise ValueError("lk.handout: kind 는 message · bulletin · sns")
+            body = str(sp.get("body") or "").strip()
+            if not body:
+                raise ValueError("lk.handout: body(본문)를 줘요")
+            if len(body) > HANDOUT_BODY_MAX:
+                raise ValueError(f"lk.handout: body 는 {HANDOUT_BODY_MAX}자까지")
+            if len(self.handouts) >= MAX_HANDOUTS_PER_CALL:
+                raise ValueError(f"lk.handout: 한 호출 {MAX_HANDOUTS_PER_CALL}장까지")
+            h = {"kind": kind, "body": body}
+            for k, cap in (("author", 200), ("to", 200), ("title", 250), ("format", 200)):
+                v = sp.get(k)
+                if v is not None and str(v).strip():
+                    h[k] = str(v).strip()[:cap]
+            self.handouts.append(h)
+            return None
+
+        def app_get(app_id=None, k=None):
+            k = str(k if k is not None else "")
+            if not k or k.startswith("_"):
+                return None
+            return (self.apps.get(str(app_id if app_id is not None else "")) or {}).get(k)
+
+        return {"get": get, "set": set_, "add": add, "keys": keys, "setting": setting, "report": report, "world": world,
                 "history": history, "tags": tags, "rand": rand, "json_encode": json_encode, "json_decode": json_decode,
-                "log": log}
+                "log": log, "value": value, "value_set": value_set, "value_add": value_add, "app_get": app_get, "npc": npc,
+                "time": time_, "time_until": time_until, "weather": weather,
+                "relation": relation, "relations": relations, "threads": threads, "clocks": clocks, "npc_info": npc_info,
+                "relation_shift": relation_shift, "goal_step": goal_step, "ask": ask,
+                "handout": handout, "place": place}
 
 
 def stub_api() -> Dict[str, Any]:
@@ -377,11 +884,11 @@ def call(source: str, hook: str, args: Tuple[Any, ...] = (), api: Optional[Dict[
     if not AVAILABLE:
         raise LuaFail("lupa 없음 — 코드 앱 꺼짐")
     try:
-        L = _load(source, api, data, steps, memory)
+        L, tramp = _load_full(source, api, data, steps, memory)
         fn = L.globals()[hook]
         if _lua.lua_type(fn) != "function":
             return False, None
-        res = fn(*[_to_lua(L, a) for a in args])
+        res = tramp(fn, *[_to_lua(L, a) for a in args])
         if isinstance(res, tuple):
             res = res[0] if res else None
         return True, to_py(res)
@@ -418,12 +925,19 @@ def handle_request(req: Dict[str, Any]) -> Dict[str, Any]:
         except Exception as e:
             return {"ok": False, "error": _err_line(e)}
     sess = Session(req.get("app") or {}, req.get("kv") or {}, req.get("world") or {}, req.get("history") or [],
-                   req.get("tags") or [])
+                   req.get("tags") or [], values=req.get("values") or {}, apps=req.get("apps") or {},
+                   roster=req.get("roster") or {}, core=req.get("core") or {})
     try:
         ran, res = call(source, str(req.get("hook") or ""), tuple(req.get("args") or ()), sess.api(), None, steps, memory)
     except LuaFail as e:
         return {"ok": False, "error": str(e), "logs": sess.logs}
-    return {"ok": True, "ran": ran, "result": res, "writes": sess.writes, "reports": sess.reports, "logs": sess.logs}
+    return {"ok": True, "ran": ran, "result": res, "writes": sess.writes, "reports": sess.reports, "logs": sess.logs,
+            "value_writes": sess.value_writes, "time": sess.time_req, "weather": sess.weather_req,
+            "rel_writes": sess.rel_writes, "goal_writes": sess.goal_writes, "ask": sess.ask_req,
+            "handouts": sess.handouts, "kv_adds": sess.kv_adds,
+            # [C117 B2] 쓴 값 이름의 쓴 뒤 값(같은 정산의 다음 훅 — on_turn_end — 이 본다)
+            "values_after": {nm: (sess.values.get(nm) or {}).get("value")
+                             for nm in {str(w.get("name")) for w in sess.value_writes}}}
 
 
 def _worker_main() -> None:   # pragma: no cover - 작업 프로세스 몸(스모크가 프로세스로 돌려 본다)

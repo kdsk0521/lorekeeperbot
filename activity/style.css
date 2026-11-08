@@ -143,18 +143,36 @@ pre.code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; colo
 /* 게이지 — 규칙 §5 (≥40% accent · 15~40% warn · <15% danger) */
 .gauge { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; margin: 2px 0; max-width: 520px; }
 .g-label { min-width: 32px; }
+.gauge.nolabel { grid-template-columns: 1fr auto; }   /* [C120 판2] 인물별 값 카드 — 이름은 행 머리 */
 .g-track { height: 6px; background: var(--raised); border-radius: 999px; overflow: hidden; }
 .g-fill { display: block; height: 100%; border-radius: 999px; background: var(--accent); }
 .g-fill.low { background: var(--warn); }
 .g-fill.bad { background: var(--danger); }
 .g-num { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
 
-/* 인물: PC = 왼쪽 목록 + 오른쪽 본문 */
-.people { display: grid; grid-template-columns: 220px 1fr; gap: 16px; align-items: start; }
-.plist { display: flex; flex-direction: column; gap: 4px; position: sticky; top: 72px;
-  max-height: calc(100vh - 96px); overflow-y: auto; }
+/* [C120 판2] 긴 명단 거르개 — 찾기 칸 · 칩 줄(인물 앱 · 상태창 인물별 값 · 그 편집). 새 토큰 0 */
+.pfilter { display: flex; flex-direction: column; gap: 4px; margin: 0 0 8px; }
+.pf-search { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px; color: var(--muted);
+  background: var(--raised); border: 1px solid var(--line); border-radius: 6px; }
+.pf-search:focus-within { outline: 2px solid var(--accent); outline-offset: 0; border-color: transparent; }
+.pf-search input { flex: 1; min-width: 0; height: 100%; padding: 0; background: transparent; color: var(--text);
+  border: 0; font: inherit; outline: none; }
+.pf-search input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }   /* 지우기 = x 버튼(토큰 색) */
+.pf-search .ibtn[hidden] { display: none; }
+.pf-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 48px; }
+.pf-label { font-size: 12px; color: var(--muted); }
+.npcvals > .pfilter { margin-bottom: 12px; }
+
+/* 인물: PC = 왼쪽(찾기 · 칩 · 목록) + 오른쪽 본문 */
+.people { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 16px; align-items: start; }
+.pside { position: sticky; top: 72px; display: flex; flex-direction: column; min-width: 0; max-height: calc(100vh - 96px); }
+.plist { display: flex; flex-direction: column; gap: 4px; min-height: 0; overflow-y: auto; }
 .plist button { display: flex; align-items: center; gap: 8px; text-align: left; background: transparent; color: var(--text);
-  border: 0; border-radius: 6px; padding: 8px 12px; font: inherit; cursor: pointer; }
+  border: 0; border-radius: 6px; padding: 8px 12px; font: inherit; cursor: pointer; min-width: 0; }
+.plist .state { padding: 8px 12px; }
+.pname { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ptag { flex: none; font-size: 12px; color: var(--muted); }
+.pdot { flex: none; width: 8px; height: 8px; border-radius: 999px; background: var(--accent); }
 .plist button .icon { color: var(--muted); }
 .plist button:hover { background: var(--raised); }
 .plist button.on { background: var(--accent-soft); }
@@ -175,6 +193,17 @@ pre.code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; colo
 .eform input.w-s { width: 64px; }
 .eform input.grow { flex: 1; min-width: 120px; }
 .unit { color: var(--muted); font-size: 13px; }
+/* [C116 c3] 부품 edit · add — 이름–값 행은 .row 그대로, 묶음 사이 줄은 위 경계선으로. 여러 줄 칸(area)은 폭 꽉 */
+.p-edit + .p-edit .row, .p-text + .p-edit .row, .empty + .p-edit .row { border-top: 1px solid var(--line); padding-top: 8px; }
+.p-edit .row { padding: 8px 0; }
+.p-edit.nolabel .row { grid-template-columns: 1fr; gap: 0; }
+.p-edit.nolabel dt { display: none; }
+.eform textarea.area { flex: 1 1 100%; width: 100%; min-height: 96px; box-sizing: border-box; resize: vertical;
+  background: var(--raised); color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+  padding: 8px; font: inherit; line-height: 1.5; }
+.eform textarea.area:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: transparent; }
+.eform.has-area { justify-content: flex-end; }
+.plist button.waiting { color: var(--muted); border-top: 1px solid var(--line); border-radius: 0 0 6px 6px; margin-top: 4px; }
 .receipt { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; padding: 8px 12px;
   background: var(--accent-soft); border: 1px solid var(--line); border-radius: 8px; }
 .receipt > .icon { color: var(--ok); }   /* 체크만 — ↶ 버튼 아이콘은 보통 색 */
@@ -207,12 +236,21 @@ pre.code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; colo
   body.in-app main { padding-bottom: calc(var(--appbar-h) + 24px + var(--saib)); }
   .row { grid-template-columns: 1fr; gap: 2px; }
   .row dt { font-size: 12px; }
-  .people { grid-template-columns: 1fr; }
-  .plist { position: static; flex-direction: row; overflow-x: auto; max-height: none; padding-bottom: 4px; }
-  .plist button { white-space: nowrap; background: var(--panel); border: 1px solid var(--line); border-radius: 999px; }
+  .people { grid-template-columns: 1fr; }                          /* [C120 판2] 폰 = 목록 화면 ↔ 본문 화면 */
+  .people.pane-list .pdetail, .people.pane-detail .pside { display: none; }
+  .pside { position: static; max-height: none; }
+  .plist { gap: 0; overflow: visible; }
+  .plist button { min-height: 48px; border-radius: 0; border-bottom: 1px solid var(--line); padding: 8px 4px; }
+  .pf-search input { font-size: 16px; }                             /* iOS 확대 막기 — 입력칸과 같은 이유 */
   .eform input, .eform select { font-size: 16px; height: 36px; }   /* 16px 미만이면 iOS 가 입력칸으로 확대해 들어간다 */
+  .eform textarea.area { font-size: 16px; }                       /* [C116 c3] 같은 이유 */
+  .plist button.waiting { border-top: 0; border-radius: 0; margin-top: 0; }
   .p-select { font-size: 16px; }                                    /* [C72] 같은 이유 */
   .ibtn { width: 36px; height: 36px; }                             /* 엄지 */
 }
 /* 폰: 디스코드가 위에 채널 이름·나가기 버튼을 얹는다(10-22 실관측). 안전 영역 값이 그보다 작으면 72px 확보 */
 .is-mobile header { padding-top: max(calc(8px + var(--sait)), 72px); }
+
+/* [C116 판8] 부품 image — 그림 팩 한 장(폭은 쪽을 안 넘는다) */
+.p-image { display: block; max-width: 100%; height: auto; border-radius: 8px; margin: 4px 0; }
+.p-none { display: none; }

@@ -325,7 +325,9 @@ def gate_and_roll(channel_id: str, relevant_npcs: Any, all_pcs: Any = None,
 
         key = None
         try:
-            key = domain_manager._find_npc_key(npcs, name)
+            # [2026-11-04 C115] 관계어 호칭도 뗀다 — 여긴 '굴리지 않기' 판정이라 놓치면 기존 인물 위에
+            #   남의 성격 카드가 간다("헤이젤 언니"). 대신 "도겸 누나"(도겸의 누나)는 첫 턴 시드를 못 받는다.
+            key = domain_manager._find_npc_key(npcs, name, honorific_kin=True)
         except Exception:
             key = None
         if key:                                            # 게이트 1 — 기존 인물

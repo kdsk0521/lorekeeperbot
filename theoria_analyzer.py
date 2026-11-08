@@ -390,6 +390,8 @@ class TheoriaAnalyzer:
     #   스펙 analysis_line/4b고리·속마음연결_스펙_2026-10-08.md §1 (녹화 8턴×2: 자세 16/16→0/16, 부정형 2.38→0.88).
     def _get_output_schema(self) -> str:
         """출력 스키마 정의 (v2.0 — 16 new fields, mental→psyche rename)"""
+        # [2026-11-04 C114 (e)] false_beliefs: 본 것 · 들은 것 · 품은 것을 잘못 받은 것만, 앞날 두려움은 아님
+        #   (파이프라인이 시트에 없는 거짓 믿음을 만들어 4b로 되먹이던 자리 — B 오프닝 앞날 두려움 꼴 3/3 → 0/3). 근거 C114 §3-2
         # [2026-10-09 반응주인] T1·Observation: 답은 서사 콜(굴림 뒤)에서 읽는다. psyche.descriptor = 마음이 붙든 것(MSE·signs 뺌 —
         #   MSE는 면담 기록이라 입력이 검사자가 돼 반응을 적었다: psy 146개 시선 86%·부정 79%·말 60%). T1 "Readings name what a body does" → 자리·쥔 것.
         #   근거 analysis_line/반응주인_Mira응답칸_스펙_2026-10-09
@@ -477,7 +479,7 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
 
 ## JUDGMENT SUPPORT
 - "needs_judgment": boolean
-- "action_meta": {"action": "Korean — describe the CURRENT user input ONLY. Do NOT repeat or rephrase previous turn's action.", "type": "__ACTION_TYPES__", "difficulty": "easy/normal/hard/extreme", "skill": "practiced/average/unpracticed", "active_passives": ["verbatim name from the acting PC's Passives whose desc applies to THIS action; [] when none"], "active_items": ["verbatim name from the acting PC's Inventory that THIS action puts to use; [] when none"], "assist": ["verbatim name of an on-stage character already working alongside the PC before this input; [] when the PC acts alone"], "active_strikes": ["verbatim name from the acting PC's Strikes that bears on THIS action; [] when none"]}
+- "action_meta": {"action": "Korean — describe the CURRENT user input ONLY. Do NOT repeat or rephrase previous turn's action.", "type": "__ACTION_TYPES__", "difficulty": "easy/normal/hard/extreme", "skill": "practiced/average/unpracticed", "active_passives": ["verbatim name from the acting PC's Passives whose desc applies to THIS action; [] when none"], "active_items": ["verbatim name from the acting PC's Inventory that THIS action puts to use; [] when none"], "assist": ["verbatim name of an on-stage character already working alongside the PC before this input; [] when the PC acts alone"], "oppose": ["verbatim name of an on-stage character working against THIS action as it happens; [] when no one on stage stands against it"], "active_strikes": ["verbatim name from the acting PC's Strikes that bears on THIS action; [] when none"]}
 - "asset_evaluation": {
     "reason": "Korean",
     "memo_relevant": {"content": "relevant memo/clue excerpt (Korean)", "reason": "why this helps (Korean)"} | null
@@ -524,7 +526,7 @@ NPCs perceive the PC through what the input SHOWS (words, actions), not through 
         "secrets_held": ["ENGLISH-ONLY telegraphic - what is being hidden"],
         "would_share": boolean,
         "leak_risk": "none/low/medium/high (Curse of Knowledge: 아는 것을 숨기기 어려움)",
-        "false_beliefs": ["ENGLISH-ONLY telegraphic - believed contrary to fact (Theory of Mind). A 4b \"Believes (wrongly)\" entry carries forward while it holds; drop it once this scene corrects it."],
+        "false_beliefs": ["ENGLISH-ONLY telegraphic - believed contrary to fact (Theory of Mind), taken wrong from something this NPC saw, was told, or already holds; a fear of what may happen is not one. A 4b \"Believes (wrongly)\" entry carries forward while it holds; drop it once this scene corrects it."],
         "suspects": ["ENGLISH-ONLY telegraphic - SUSPECTED but unconfirmed: overheard, half-seen, inferred. Distinct from knows(confirmed). Seeing a result does not give the actor, cause, method, ownership, motive, or private thought behind it — those land here"],
         "deception_cues": "str or null (Statement Analysis/SCAN: pronoun_shift/tense_shift/time_gap/over_detail/emotion_misplace, read in what this NPC has already said or shown before this input. null = no deception detected)",
         "secret_updates": [{"truth_ref": "short substring of the secrets_held entry this updates", "surface": "ENGLISH-ONLY - what it LOOKS like from outside (cover story, visible tell)", "reveal_gate": "condition that would crack it open, or ''", "knowers": ["who now knows the truth"], "suspecters": ["who now suspects"], "status": "kept/leaking/revealed"}]
@@ -662,7 +664,7 @@ Any render-facing field whose value would contain Hangul → write that field's 
         40: "growing familiarity — selective openness, testing boundaries",
     }
 
-    def _build_npc_context(self, anchors: dict, starts_hint: bool = True) -> str:
+    def _build_npc_context(self, anchors: dict, starts_hint: bool = True, onstage_only: bool = False) -> str:
         # [2026-10-10 칸이관] starts_hint: 'no record yet' 줄 끝 지시(starts_as / friction_starts)는 그 칸의 주인(Mira)에게만.
         #   추출 콜(Theoria)은 시트 줄만 본다(False).
         """NPC 태도 + 지식 + depth/psyche 힌트를 프롬프트에 포함"""
@@ -690,6 +692,14 @@ Any render-facing field whose value would contain Hangul → write that field's 
 
         _npc_state_names = set(list(attitudes.keys()) + list(knowledge.keys())
                                + list(soma_prev.keys()) + list(rel_prev.keys()) + list(unrecorded.keys()))
+        # [2026-11-06 C119] 추출 콜만 — 기록 키 ∩ npc_state_keep(무대 위 · 근처 · 이번 입력 · 직전 산문 이름, une_facade).
+        #   키가 없으면(출석 못 풂 · 손잡이 끔) 거르지 않는다. 빠진 사람도 로스터(4a)엔 @자리로 남는다.
+        _keep_4b = anchors.get("npc_state_keep")
+        if onstage_only and isinstance(_keep_4b, list):
+            _off_4b = _npc_state_names - set(_keep_4b)
+            if _off_4b:
+                _npc_state_names = _npc_state_names - _off_4b
+                logger.info("[Theoria] 4b 무대 밖 %d명 뺌: %s", len(_off_4b), ", ".join(sorted(_off_4b))[:200])
         if _npc_state_names:
             parts.append("### 4b. NPC STATE (Previous Turn)")
         # [2026-10-12 C23b] 저장된 NPC 활력·평형(게이지) — soma가 매 턴 새로 판단하면서 이 값을 몰랐다.
@@ -1338,12 +1348,15 @@ Any render-facing field whose value would contain Hangul → write that field's 
     #   꼬리 자르기 안전망 = iceberg.translate_open_invitations. 근거: output_artifact/C91_산문끝_메뉴질문_지도·스펙_2026-10-28 §11
     # [2026-10-31 C97] 응답 칸: '안 하면 내가 한다'고 말해 둔 수는 PC 가 넘기면 그 턴에 한다(위협만 되풀이 0 — 끌기 판 3턴 × 3에서 다음 턴 실행 2/2).
     #   렌더 손 꼬리 · RB_WORLD '자기 픽을 곧 할 일로'와 짝. 근거 output_artifact/C97_결정장면_메뉴끝_측정·스펙_2026-10-31 §7
+    # [2026-11-04 C113 · C114] 정체성: 'smallest earned movement' → 기본값 셋(safest · agreeable · dramatic)을 같이 닫음(바드 젬 0.5 [132]).
+    #   lean 줄 끝: 되풀이만 된 무늬는 실어 온 것이 때가 되면 lean이 아니다. 측정 C114 §3(장면 B 마음 자체로 2–3/6 → 4/6 · 고백 0 · C103 13판 중립).
+    #   근거 output_artifact/C113_모순정리_K3축_지도·스펙_2026-11-03 · C114_바드문장법_적용_지도·스펙_2026-11-04
     _NARRATIVE_IDENTITY = """You are Mira, the analytical mind at this table, now on your scout pass: you range ahead of the turn and report what the world is already moving toward. Your own observation pass ran first; these are your readings from this turn, and you are free to read deeper into them.
 What you look for: durable plot pressure, the world's own motion, the interpretive depth of NPC psyche. Mechanics, judgment, and prose belong to other hands. You read where the turn starts, what pulls at each body, and how each answers the input; how that answer lands on the page is the prose's.
 The player character named in the request belongs to the player: that character's mind, next move, and choices are settled at the table, not read here. Every field reads the world and the NPCs around them.
-Finding the smallest earned movement is the work, and finding it is what you are good at. Look widely; a reading that catches what others would pass over is worth having.
+Finding the earned movement is the work, and finding it is what you are good at; it is not the safest, the most agreeable, or the most dramatic by default. Look widely; a reading that catches what others would pass over is worth having.
 Open threads are pressure available to you, never an agenda you owe.
-Where two directions both fit, take the one the scene already leans toward; the lean is in the material, not in your preference.
+Where two directions both fit, take the one the scene already leans toward; the lean is in the material, not in your preference. A pattern the page has only repeated is not the lean once something carried comes due.
 Hooks come from unresolved world state; where the world genuinely rests, saying so is also a finding (null hook, null trace).
 Psyche interpretation stays CONSISTENT with the extract's this-turn readings (values, polyvagal, emotions) — you deepen them, never contradict them.
 Every proposal stands on the supplied material (history, NPC state, sheets, extract, measurements): the scout finds paths that exist and does not lay new ones. No major events, no completed schemes, no invented antecedents."""
@@ -1353,19 +1366,34 @@ Every proposal stands on the supplied material (history, NPC state, sheets, extr
     # [2026-10-15 C40] 응답 칸: 받는 사람마다의 읽기(B — 오독 가능)·능숙한 사람은 틈을 누른다(대칭, 시트 그대로).
     #   roll_outcome 칸: 부분=모자라고 대가는 진짜, 실패·대실패=대가가 PC에게 남고 더 좁은 자리에서 끝(억까 5단계 실패 대가).
     #   판정 수치는 시계만(C4) — 활력·평형은 출력물 콜이 이 장면을 읽고 움직인다. 스펙 composition/C40_인풋해석·억까_스펙_2026-10-15.md
+    # [2026-11-01 C103] roll_outcome 머리 문장: 모든 등급에 '대가와 지는 사람'을 묻던 꼴 → 성공은 판 값만, 대가는 성공 아래부터.
+    #   옛 꼴에선 성공 턴 roll_outcome 에 조건을 얹었다(현행 강한 조건 2/10 → 0/10, 부분 · 실패 · 대성공 꼴 무변). 세계 파문을
+    #   '값 아님'으로 살리는 꼴은 그 낱말이 출력에 그대로 옮겨 적혀(5/10) 버림. 측정 output_artifact/C103_Mira심판마음가짐_측정_2026-11-01.md
+    # [2026-11-02 C106] 판단으로 null 을 고르던 칸 넷 → 머리에 입력에서 보이는 조건(C105 측정: 블록을 가리키는 조건만 먹힌다).
+    #   hook = THIS TURN'S WORLD 가 터지면 null · 아니면 기록이 걸어 둔 것이 때가 될 때만 / offscreen_trace = ABSENT CAST 목록 없으면 null ·
+    #   그 사람 쪽으로 손을 뻗었거나 likely-now 가 때가 될 때 / resurfacing = 기록 · 시트가 이름 붙인 과거 / chain_status 괄호 = 닫힘은 쉼
+    #   (THEORIA_CHAIN 과 맞춤 — 옛 괄호가 CLOSED 를 '위반 → 훅'으로 적어 CLOSED 0/39). self_opacity · value_conflict · silence ·
+    #   scene_register 는 그대로(판단 조건이라 문구로는 안 내려감 · register 는 law → remainder 로 옮겨 감). 측정(13케이스 × 3):
+    #   이변 턴 hook 12 → 2, 목록 없는 턴 흔적 17 → 4, resurfacing 23 → 8, 추론 길이 무변. hook · trace 끝 '지난 그림' 한 줄은
+    #   OFFSTAGE_SEEN_BLOCK 이 켜질 때만 _narrative_schema_text 가 붙인다. 근거 output_artifact/C105 · C106 지도 · 스펙.
+    # [2026-11-03 C111] 낙엽 K1 · K2 — 입력이 안 닿아도 눈앞에 제 일이 있는 몸은 null 아님 · 유능한 사람은 제 일을 PC에게 넘기거나 PC 수를 기다리지 않음 · PC의 잘못을 PC라서 넘기지 않음. 근거 presets_analysis/낙엽_v0.52_분해_층별지도_2026-11-02.md §2 A1·A2
+    # [2026-11-04 C113 · C114] response 칸: 머리 = 답 또는 때가 된 제 수(HEAD) · 읽기는 틀려도 본 것 · 들은 것 · 품은 것에서(e) ·
+    #   바람은 장면 동안 남고 가는 방식은 상대의 마지막 말과 행동에 따라 바뀜(f) · K3 쌓인 마음(가까운 쪽 = 비켜 가기, 먼 쪽 = 말끔한 고백 ·
+    #   정리된 설명을 같이 닫음, 몸 수의 크기 = 둘이 선 자리) · ORBIT(제 자리를 떠나 PC를 따라가는 건 제 수가 아님).
+    #   측정: 장면 B 조합 사슬 마음 자체로 6/6 · 고백 0 · 장면 A 반장 몸 막기 2/2 · 도겸 따라가기 0. 근거 C113 §4 · C114 §3 · §5
     _NARRATIVE_SCHEMA = """<output_schema>
 Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean only when quoting world content).
 
-- "roll_outcome": str | null (ENGLISH-ONLY telegraphic, one line. Only when a ROLL RESULT block is present; null otherwise. That tier made concrete in this scene: which part of the bid lands, what it costs and who bears it, who answers. Built from what the scene already holds (a wound, a lost object, a broken leverage, a witness). Partial: the bid lands short, and the cost is real. Failure and critical failure: the cost lands on the PC and stays (a wound, exhaustion, a loss, a worse position), and the PC ends the turn in a tighter spot than before. Every field below starts from this line.)
+- "roll_outcome": str | null (ENGLISH-ONLY telegraphic, one line. Only when a ROLL RESULT block is present; null otherwise. That tier made concrete in this scene: which part of the bid lands and who answers. A success lands as the bid asked, its only price the one the bid itself offered; below success, what it costs and who bears it. Built from what the scene already holds (a wound, a lost object, a broken leverage, a witness). Partial: the bid lands short, and the cost is real. Failure and critical failure: the cost lands on the PC and stays (a wound, exhaustion, a loss, a worse position), and the PC ends the turn in a tighter spot than before. Every field below starts from this line.)
 - "narrative_chain": {
     "topic_lock": str or null (the matter the talk is held on, named as the matter itself: 'the unpaid price', not who raised it. null = nothing held),
-    "chain_status": "OPEN/CLOSED/DORMANT (Scheherazade: CLOSED + no threads = violation → inject hook)",
+    "chain_status": "OPEN/CLOSED/DORMANT (CLOSED when the matter of this exchange settled this turn; a closed chain is a rest)",
     "conclusion_proximity": 0-100,
     "open_threads": ["thread type: description", ...]  (first entry = the thread this turn presses on; each written as a standing pressure stated as fact after this turn (a debt owed, a price unnamed, a secret held), not as a question or a decision someone must make),
     "silence_type": "companionable/reflective/hesitant/heavy/tense/null (間/Ma: classify when dialogue pauses. companionable = shared ease, nothing needs saying — the usual pause of a calm scene; heavy/tense need actually loaded content)"
   }
 - "open_invitations": [str, ...]  (0~2 ENGLISH-ONLY telegraphic. [H9 CUSTOM] Something an NPC or the world has put toward the PLAYER, named with who put it there: an object an NPC set out, a door the wind pushed open, a price an NPC named, a question an NPC asked. Each line is the act and the thing, and it ends there: what the player does with it is the player's, and stays off the line. An NPC's hand this turn arrives through response; this lists what the scene already carries toward the player after the input lands, built from props in the scene or chain. Unlike narrative_hook (the world's own move), these lie within the player's reach. [] when the scene extends no hand — [] is common.)
-- "offscreen_trace": {"name": str, "movement": str, "visible_sign": str} or null  (Offscreen Motion [CUSTOM]: ONE absent cast member from the ABSENT CAST list only. Plausible modest motion inferred from last known state; visible_sign = the trace that reaches the CURRENT scene: rumor, delay, changed readiness, missing presence, preparation, a message. ENGLISH-ONLY telegraphic. NEVER: major events, reveals, deaths, betrayals, arrivals, completed schemes, private motives stated as fact. null when nothing plausible touches this scene — null is the common case.)
+- "offscreen_trace": {"name": str, "movement": str, "visible_sign": str} or null  (Offscreen Motion [CUSTOM]: null unless one person on the ABSENT CAST list is already in play this turn: the player's input or the last turns went toward them (named them, asked after them, headed their way), or their likely-now falls due this turn. No ABSENT CAST list, null. That one person: plausible modest motion from last known state; visible_sign = what the current scene can perceive of it now: rumor, delay, changed readiness, missing presence, preparation, a message. ENGLISH-ONLY telegraphic. NEVER: major events, reveals, deaths, betrayals, arrivals, completed schemes, private motives stated as fact.)
 - "scene_register": "mirror" | "law" | "remainder" | null
   - mirror: character sees own trait in another without recognizing it. Name trait AND misrecognition.
   - law: protocol/hierarchy/expectation bends under input pressure. Name order, bend, who pretends not to notice.
@@ -1376,7 +1404,7 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
         "deep_read": "str (ENGLISH-ONLY telegraphic. Four-Layer [CUSTOM]: Surface→Adaptation→Core→Lack, 1 fragment each. Lack is never stated by character.)",
         "self_opacity": "str or null (Self-Opacity [CUSTOM]: 'claims X — actual: Y', read through their sheet. null = their self-understanding holds this turn)",
         "value_conflict": "str or null (ENGLISH-ONLY telegraphic. 'X vs Y' tension axis ONLY, no resolution narration. null = no conflict. null is the common case — a live tension needs a this-scene trigger, not a standing trait re-read each turn)",
-        "resurfacing": "str or null (past trauma, contradictory desire, or 'resolved' emotion re-emerging through current interaction. What resurfaces and what triggered it. null = no resurgence)",
+        "resurfacing": "str or null (null unless something new in this turn's input or scene touches a past the record or sheet names for this person. Then the past trauma, contradictory desire, or 'resolved' emotion that re-emerges, and what in this turn set it off)",
         "logos_layer": "str (Logos [CUSTOM], ENGLISH telegraphic: how this person talks to the acting PC this turn, in three beats: what presses at it now → how far what has passed between them has opened them toward this person → how that comes out in their words, in their sheet's voice)",
         "starts_as": "devoted/friendly/neutral/unfriendly/hostile — ONLY when 4b reads 'no record yet' for this NPC: where their sheet puts them toward the acting PC before this scene; this turn's shift comes on top and the record sets the number. Omit otherwise, and omit when the sheet's lines are not about the acting PC",
         "friction_starts": "low/strained/high/breaking — same condition: the standing friction their sheet implies. Omit otherwise",
@@ -1384,7 +1412,7 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
             "drives": "str (ENGLISH telegraphic, 'wants to …', no subject, <=10 words: what this body wants to do now.)",
             "can": "str or null (ENGLISH telegraphic, <=10 words: the means at this body's hand now: where it stands, what it holds or can reach, what the body allows. What it does with them is response's.)"
         },
-        "response": "str or null (ENGLISH telegraphic VERB PHRASE, no subject, <=15 words: how this body answers the input this turn, after the roll. The input's acts have already happened; answer from where they leave the body. A refusal is an answer too: write it as an act aimed at someone, with what it is for. One answer, not a choice between two. A move this person said they would make unless the PC spoke up comes due once the PC lets it pass: they make it. A question in it comes from a reason of their own, and the answer ends on the act itself, not on how long they will keep at it. It carries only what this person has witnessed; what they have seen the PC do before, they meet as known; compliance comes with a cost, condition, or counter-move of their own unless history has already paid for it; a probe is met, not obeyed. It answers the input as this person read it, through their own wants and fears; that reading can miss. A capable person presses an opening the PC gives, staying exactly as their sheet writes them. Where the input or the roll already settles it, follow that. A pull on their extract line is what presses on them; their sheet (WHO THEY ARE) is how this person moves on it. null = this turn does not reach this body.)"
+        "response": "str or null (ENGLISH telegraphic VERB PHRASE, no subject, <=15 words: how this body moves this turn, after the roll: their answer to the input, or their own move where they have one, and an answer does not stand in for a move that has come due. The input's acts have already happened; answer from where they leave the body. A refusal is an answer too: write it as an act aimed at someone, with what it is for. One answer, not a choice between two. A move this person said they would make unless the PC spoke up comes due once the PC lets it pass: they make it. A question in it comes from a reason of their own, and the answer ends on the act itself, not on how long they will keep at it. It carries only what this person has witnessed; what they have seen the PC do before, they meet as known; compliance comes with a cost, condition, or counter-move of their own unless history has already paid for it; a probe is met, not obeyed. It answers the input as this person read it, through their own wants and fears; that reading can miss, and it still follows from what this person has seen, been told, or already holds. Their want holds through the scene unless something on the page moves it; the way they go at it changes with what the other last said or did. A feeling this person carries toward the PC, from the page or their sheet, does not sit idle until the PC moves first, and being unspoken or kept as a secret does not keep it idle: at the first moment that fits, the answer acts on the feeling itself, their fears shaping how rather than whether, and when it is desire and the two are alone, the move is physical, its size set by where the two already stand. A move that steers clear of the feeling is not acting on it. Acting on it is not settling it: unless this person talks that way, the feeling does not arrive as a tidy confession or a worked-out account of itself. A no the PC says outright is a no, not argued with or pursued; a parting is not a no. Their own move does not trail the PC: leaving their own place to go after the PC is not a move unless their own business already goes that way, and a feeling is acted on in the scene they share, not by following the PC out of theirs. A capable person presses an opening the PC gives, staying exactly as their sheet writes them; they do not hand their own job to the PC or hold it until the PC moves, and a wrong the PC does is not let pass because the PC did it. Where the input or the roll already settles it, follow that. A pull on their extract line is what presses on them; their sheet (WHO THEY ARE) is how this person moves on it. null = this turn does not reach this body; a body whose own business is in front of them is not null for being passed over by the input.)"
     }
   }  (NPCs from the THIS-TURN EXTRACT only, keyed exactly as written there — deepen its readings, never contradict them. Omit NPCs with nothing worth deepening.
    pressure is the exception to that omission rule: fill it for the two or three of those NPCs this turn actually turns on. logos_layer goes to every NPC on the extract lines who speaks or is spoken to this turn: it carries their dialogue direction. response goes only to the one or two whose answer this turn turns on; the rest of the room stays null and the prose carries it. It is read off the scene: an NPC with no profile still has a body that wants something and something at hand. Thin background figures with no bearing on this turn stay omitted.)
@@ -1395,7 +1423,7 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
     "body_memory": "ENGLISH telegraphic or null (van der Kolk: involuntary echo of past experience)",
     "post_encounter_prediction": {"CharName": "possible after-behavior for this person if attachment activates — null if no change expected"}
   }
-- "narrative_hook": str | null (ENGLISH-ONLY telegraphic, one line, read after the answers above: the move the world or a body the input did not reach makes this turn — weather, a door, an arrival, a standing pressure tipping, someone acting on their own. Not an answer to the input; that is response. Built from forces already in the world. When a RECENT PULLS list is present, approach from an angle it does not cover. When THIS TURN'S WORLD has something firing, that is the world's move this turn; the hook goes to what it did not reach, or stays null. null when the answers carry the turn.)
+- "narrative_hook": str | null (ENGLISH-ONLY telegraphic, one line, read after the answers above. null when THIS TURN'S WORLD has something firing: that is the world's move this turn. Otherwise null unless something the material already set going falls due this turn: an ABSENT CAST likely-now, a move someone off this exchange said they would make, an open thread's deadline, the follow-through of a recent pull. Then that move, made by the world or a body the input did not reach. Not an answer to the input; that is response. When a RECENT PULLS list is present, approach from an angle it does not cover.)
 - "trait_connections": {
     "NpcName": {
         "trait_pair": "trait_A × trait_B (the two profile traits being connected this turn)",
@@ -1409,6 +1437,121 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
    aside = 2-3 lines of stage direction fusing both traits + vocabulary well + pressure + speech rule into one body's movement and habit of speech. ENGLISH telegraphic. No quoted lines, no rules, no third trait, no softening of the rolled traits. Fill only the blanks the tables delegate (a regular's topic, a home dialect of THIS world, a kind of document unread, a loved thing); invent nothing the PC says.)
 </output_schema>"""
 
+    # [2026-11-02 C106] 무대 밖 지난 그림(덧칠) — 레티어스 "굳은 패턴보단 굳은 장면" · "마를 시간을 주어야 하니 움직이기".
+    #   무대 밖 사람이 매 턴 같은 그림으로 다시 나오던 것(도겸 부엌 불 · 마루 대기, 1턴 전 그림 되풀이 17/27) →
+    #   1턴 전 그림은 마르는 중(이번 턴 hook · trace 에서 빼기), 그 전 그림은 밑그림(거기서 시간이 한 일을 보여 주고, 같은 그림은 null).
+    #   측정 1/27 · 무대 위 hook 이 장면 안 움직임으로 채움. 재료 = 장면 프레임(orchestration _dai_snap 의 onstage · offscreen_trace ·
+    #   narrative_hook) — 새 저장 0, `!다시`는 도메인 스냅숏이 되감는다. 근거 output_artifact/C106 지도 · 스펙 §4 · §5.
+    _OFFSTAGE_SEEN_HOOK = (" Someone on a LAST SEEN list shown 1 turn ago stays out of this line this turn. Someone shown earlier: a line about them"
+                           " starts from that picture and shows what the hours since have done to it; that same picture again is null.")
+    _OFFSTAGE_SEEN_TRACE = (" Someone on a LAST SEEN list shown 1 turn ago is not traced this turn. Someone shown earlier: the trace starts from that"
+                            " picture and shows what the hours since have done to it; that same picture again is null.")
+    _HOOK_END = "When a RECENT PULLS list is present, approach from an angle it does not cover.)"
+    _TRACE_END = "NEVER: major events, reveals, deaths, betrayals, arrivals, completed schemes, private motives stated as fact.)"
+
+    def _narrative_schema_text(self) -> str:
+        s = self._NARRATIVE_SCHEMA
+        if getattr(config, "OFFSTAGE_SEEN_BLOCK", False):
+            if s.count(self._HOOK_END) == 1:
+                s = s.replace(self._HOOK_END, self._HOOK_END[:-1] + self._OFFSTAGE_SEEN_HOOK + ")", 1)
+            if s.count(self._TRACE_END) == 1:
+                s = s.replace(self._TRACE_END, self._TRACE_END[:-1] + self._OFFSTAGE_SEEN_TRACE + ")", 1)
+        return s
+
+    def _last_seen_block(self, channel_id: str, turn_now: int) -> str:
+        """[2026-11-02 C106] `### LAST SEEN OFF STAGE` — 최근 OFFSTAGE_SEEN_TURNS 턴 프레임에서 무대 밖 사람의 마지막 그림.
+        한 사람 = 가장 최근 프레임 하나(그 안에선 흔적 > hook > 무대 위였음). 지금 0단(PC 와 같은 노드)인 사람 · PC 는 뺀다.
+        무대 위였음(onstage)은 출석을 풀 수 있을 때만 — 못 풀면 흔적 · hook 줄만. 실패 · 없음 = ""."""
+        if not channel_id or not getattr(config, "OFFSTAGE_SEEN_BLOCK", False) or int(turn_now or 0) <= 0:
+            return ""
+        try:
+            frames = (domain_manager.get_scene_continuity(channel_id) or {}).get("frames") or []
+        except Exception:
+            return ""
+        if not frames:
+            return ""
+        span = int(getattr(config, "OFFSTAGE_SEEN_TURNS", 3) or 3)
+        try:
+            reg = domain_manager.get_npcs(channel_id) or {}
+        except Exception:
+            reg = {}
+        try:
+            pcs = domain_manager.pc_registry(channel_id)
+        except Exception:
+            pcs = None
+
+        def _is_pc(n):
+            try:
+                return bool(domain_manager.is_pc_name(n, pcs))
+            except Exception:
+                return False
+
+        def _key(raw):
+            r = str(raw or "").strip()
+            if not r or _is_pc(r):
+                return ""
+            try:
+                k = domain_manager._find_npc_key(reg, r)
+            except Exception:
+                k = None
+            return k if (k and not _is_pc(k)) else ""
+
+        try:
+            from memory_index import split_name_keys as _snk
+        except Exception:
+            _snk = None
+        keys = {}
+        for nm, d in reg.items():
+            if _is_pc(nm):
+                continue
+            raw = [nm] + ([a for a in (d.get("aliases") or []) if isinstance(a, str)] if isinstance(d, dict) else [])
+            ks = _snk(raw) if _snk else raw
+            keys[nm] = [k for k in ks if k and len(k) >= 2]
+        try:
+            import npc_manager as _npm_ls
+            _tiers = _npm_ls.get_presence_tiers(channel_id) or {}
+            tiers_ok = not _tiers.get("unresolved")
+            now_on = set(_tiers.get("scene") or []) if tiers_ok else set()
+        except Exception:
+            tiers_ok, now_on = False, set()
+
+        seen = {}
+        for f in reversed(frames):
+            try:
+                ft = int((f or {}).get("turn") or 0)
+            except Exception:
+                ft = 0
+            age = int(turn_now) - ft
+            if ft <= 0 or age <= 0:
+                continue
+            if age > span:
+                break   # 프레임은 턴 순으로 쌓인다
+            snap = (f or {}).get("dai_snapshot") or {}
+            tr = snap.get("offscreen_trace")
+            if isinstance(tr, dict):
+                k = _key(tr.get("name"))
+                pic = "; ".join(x for x in (str(tr.get("movement") or "").strip(),
+                                            str(tr.get("visible_sign") or "").strip()) if x)
+                if k and pic:
+                    seen.setdefault(k, (age, pic))
+            hk = str(snap.get("narrative_hook") or "").strip()
+            if hk:
+                low = hk.lower()
+                for nm, ks in keys.items():
+                    if any(x.lower() in low for x in ks):
+                        seen.setdefault(nm, (age, hk))
+            if tiers_ok:
+                loc = str(snap.get("onstage_at") or snap.get("location") or "").strip()   # 0단을 잰 자리(턴 앞 PC 자리)
+                for n in (snap.get("onstage") or []):
+                    k = _key(n)
+                    if k:
+                        seen.setdefault(k, (age, f"with the PC at {loc}" if loc else "with the PC"))
+        lines = [f"- {nm} — {age} turn{'s' if age > 1 else ''} ago: {pic[:220]}"
+                 for nm, (age, pic) in sorted(seen.items(), key=lambda kv: (kv[1][0], kv[0])) if nm not in now_on]
+        if not lines:
+            return ""
+        return "### LAST SEEN OFF STAGE (what the page last showed of each)\n" + "\n".join(lines[:6])
+
     def _build_narrative_system(self, scene_type: str = "") -> str:
         # [2026-10-10 칸이관] 친밀 장면이면 친밀 렌즈 서사판(욕망 구조·몸 기억·힘과 인정·만남 뒤 애착)을 싣는다 — intimacy 칸의 정의.
         _sp = (getattr(analysis_resources, "SEXUAL_PSYCHOLOGY_NARRATIVE", "")
@@ -1420,7 +1563,7 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
             # [2026-07-16 소유권 대청소] 추출 PART D에서 이사 온 서사 소유 렌즈 압축본
             getattr(analysis_resources, "NARRATIVE_CUSTOM_LENSES", ""),
             _sp,
-            self._NARRATIVE_SCHEMA,
+            self._narrative_schema_text(),   # [2026-11-02 C106] 지난 그림 한 줄(손잡이)
             "</NARRATIVE_DIRECTOR>",
         ] if x)
 
@@ -1698,6 +1841,15 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
             if _nc_block:
                 parts.append(_nc_block)
 
+        # [2026-11-02 C106] 무대 밖 지난 그림 — RECENT PULLS 바로 앞(측정 자리). 손잡이 꺼지면 "".
+        try:
+            _ls_turn = int((domain_manager.get_world_state(channel_id) or {}).get("turn_index", 0) or 0) if channel_id else 0
+            _ls = self._last_seen_block(channel_id, _ls_turn)
+        except Exception:
+            _ls = ""
+        if _ls:
+            parts.append(_ls)
+
         # RECENT PULLS — 지난 턴 hook(세계 한 걸음) 반복 회피 대조 목록 (Phase 0 → [2026-10-09 SD개편] 비트 → hook)
         beats_avoid = anchors.get("recent_beats_avoid", [])
         if beats_avoid:
@@ -1884,6 +2036,34 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
         logger.info("[빈칸] Mira 서사 칸 전체 빔")
         return {}
 
+    @staticmethod
+    def _genre_line(genres) -> str:
+        """[2026-11-02 C109] 장르 줄 — 옛 `- Genre: {dict}` 는 파이썬 repr(작은따옴표 dict)이 그대로 실렸다. 같은 파일 PC 블록
+        07-15 주석(repr 을 모델이 따라 써서 JSON 이 깨졌다)과 같은 병이라 읽는 말로 푼다. mechanic 의 lens 되풀이 · 아이콘 ·
+        코드 조율 칸(doom_stages · flavor_bonus)은 뺀다 — 추출 문안 어디도 안 읽는다."""
+        if not isinstance(genres, dict):
+            return f"- Genre: {genres}" if genres else "- Genre: unspecified"
+
+        def _j(v) -> str:
+            if isinstance(v, (list, tuple)):
+                return ", ".join(str(x).strip() for x in v if str(x).strip())
+            return str(v or "").strip()
+
+        bits = [f"{lab} {_j(genres.get(key))}" for key, lab in (("stage", "stage"), ("lens", "lens"), ("flavor", "flavor"))
+                if _j(genres.get(key))]
+        lines = ["- Genre: " + (" · ".join(bits) if bits else "unspecified")]
+        atm = _j(genres.get("atmosphere"))
+        if atm:
+            lines.append(f"- Atmosphere: {atm}")
+        mech = genres.get("mechanic") if isinstance(genres.get("mechanic"), dict) else {}
+        mb = [f"{lab} {_j(mech.get(key))}" for key, lab in (("disruption_axes", "disruption axes"),
+                                                             ("defense_stats", "defense stats"),
+                                                             ("primary_resource", "primary resource"))
+              if _j(mech.get(key))]
+        if mb:
+            lines.append("- Mechanic: " + "; ".join(mb))
+        return "\n".join(lines)
+
     def _build_prompt(self, context: GameContext) -> str:
         """분석 프롬프트 생성"""
         req = context.request
@@ -1896,7 +2076,7 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
 
         pc_section = self._build_pc_section(anchors)
         mental_line = self._build_mental_line(anchors, bus)
-        npc_context = self._build_npc_context(anchors, starts_hint=False)
+        npc_context = self._build_npc_context(anchors, starts_hint=False, onstage_only=True)   # [C119] 4b 출석 거르기
         npc_roster = anchors.get("npc_roster", "")
         # [2026-06-11 소비자 감사 #6 부활] P6 원설계 배달 — NPC 능력 범위 힌트 (하드블록 아님).
         # 기존엔 Flash 콜 *후* bus.dai에 저장돼 한 번도 미배달이었음.
@@ -1938,7 +2118,7 @@ Return valid JSON with EXACTLY these fields. ENGLISH telegraphic ONLY (Korean on
 "{req.user_input}"
 
 ### 2. CURRENT STATE
-- Genre: {req.genres}
+{self._genre_line(req.genres)}
 - Chapter volume (story activity): {bus.doom.get('value', 0)}
 {self._build_clock_context(bus.doom.get('clocks', []))}
 {self._build_condition_context(channel_id)}

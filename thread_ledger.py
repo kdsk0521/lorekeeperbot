@@ -31,7 +31,8 @@ OUTCOMES = ("done", "dropped", "broken")
 # [2026-10-10 이야기 실 O-E] fold 만 아는 op — 배경 추출은 낼 수 없다(OPS 밖). 플레이어 OOC "없던 일"(void).
 #   행은 남기고 상태만 void. 읽는 자리는 모두 상태 이름(open·paused·closed)으로 걸러서 손대지 않아도 빠진다.
 # [C74 판2] wake(코드: 기다리던 줄이 done 으로 닫힘 → 깨움) · sleep(OOC: 선을 새로 잇기 — 기다리는 줄 id 를 after_id 에).
-FOLD_ONLY_OPS = ("void", "wake", "sleep")
+# [2026-11-06 C116] rank(OOC · Activity: 서 있는 목표의 등급 고치기 — 추출 · 코드는 못 낸다).
+FOLD_ONLY_OPS = ("void", "wake", "sleep", "rank")
 # op → 허용되는 현재 상태 (open 은 신규 발급이라 표 밖)
 #   [C74 판2] asleep(자는 줄)은 닫을 수만 있다(산문이 그 일을 끝냈으면 끝). 진전 · 멈춤 · 기한은 깬 뒤.
 _ALLOWED = {
@@ -88,11 +89,24 @@ def rank_of(v: Any) -> str:
     return v if v in table else str(_cfg("QUEST_DEFAULT_RANK", "normal"))
 
 
+def rank_key(v: Any) -> str:
+    """[C116] 등급 말(키 · 표시 이름 '어려움' 등) → 표의 키. 모르는 말이면 ""(rank_of 와 달리 기본값으로 안 메운다)."""
+    t = str(v or "").strip()
+    table = _cfg("QUEST_RANK_SETTINGS", {}) or {}
+    if t.lower() in table:
+        return t.lower()
+    return next((k for k, sp in table.items() if str((sp or {}).get("display") or "") == t), "")
+
+
 def goal_max(rank: Any) -> int:
     try:
         return int(((_cfg("QUEST_RANK_SETTINGS", {}) or {}).get(rank_of(rank)) or {}).get("max_progress", 6))
     except (TypeError, ValueError):
         return 6
+
+
+def _rank_ko(rank: Any) -> str:
+    return str(((_cfg("QUEST_RANK_SETTINGS", {}) or {}).get(rank_of(rank)) or {}).get("display") or rank_of(rank))
 
 
 def doom_reward(rank: Any) -> int:
@@ -216,6 +230,15 @@ def _apply_row(states: Dict[str, Dict[str, Any]], r: Dict[str, Any]) -> None:
         st["due_start"], st["due_end"], st["due_prec"] = None, None, ""
     elif op == "reschedule":
         st["due_start"], st["due_end"], st["due_prec"] = r.get("due_start"), r.get("due_end"), r.get("due_prec") or ""
+    elif op == "rank":
+        # [2026-11-06 C116] 등급 고치기 = 바로잡기. 끝(max)만 새로 잡고 진행도는 그대로 — 새 끝에 닿거나 넘으면
+        #   끝 한 칸 앞(max−1)으로 가둔다. 닫힘 · 보상 · 시계 해결 · 깨우기는 안 터진다(끝 훅은 progress 행에만).
+        if st.get("kind") == "goal":
+            rk = rank_of(r.get("rank"))
+            mx = goal_max(rk)
+            st["rank"], st["max"] = rk, mx
+            if int(st.get("progress") or 0) >= mx:
+                st["progress"] = max(0, mx - 1)
     elif op == "void":
         st["status"] = "void"
         st["outcome"] = ""
@@ -748,7 +771,8 @@ def pause_stale_goals(channel_id: str, turn: int, threshold: Optional[int] = Non
 #   ① 인용 관문 없음(quote="" — 리더 증인 대조에 플레이어 말이 섞이지 않게) ② void op ③ void·closed 에서 resume.
 # =========================================================
 
-_OOC_ALLOWED = dict(_ALLOWED, resume=("paused", "closed", "void"), void=("open", "paused", "closed", "asleep"))
+_OOC_ALLOWED = dict(_ALLOWED, resume=("paused", "closed", "void"), void=("open", "paused", "closed", "asleep"),
+                    rank=LIVE)   # [C116] 서 있는 목표만(열림 · 멈춤 · 잠)
 _DUE_KEYS = ("day_offset", "slot", "hour", "minute", "year", "month", "day_in_month")
 
 
@@ -815,6 +839,8 @@ def _ooc_line(op: str, st: Dict[str, Any], now: Optional[int], renamed: str = ""
             line = f"🧵 {tid} 남은 몫: {st.get('remaining') or '-'} — {title}"
     elif op == "void":
         line = f"🧵 {tid} 없던 일로 — {title}"
+    elif op == "rank":
+        line = f"🧵 {tid} 등급 → {_rank_ko(st.get('rank'))} · 진행 {int(st.get('progress') or 0)}/{int(st.get('max') or 0)} — {title}"
     elif op == "resume":
         line = f"🧵 {tid} 다시 열림 — {title}"
     elif op == "wake":
@@ -869,7 +895,7 @@ def apply_ooc_events(channel_id: str, turn: int, events: Any,
             continue
         op = str(ev.get("op") or "").strip().lower()
         if op not in OPS and op not in FOLD_ONLY_OPS:
-            out.append(f"⚠ 이야기 실: 모르는 일 '{op}' — open·close·pause·resume·reschedule·progress·void")
+            out.append(f"⚠ 이야기 실: 모르는 일 '{op}' — open·close·pause·resume·reschedule·progress·void·rank")
             continue
         title = _clip(ev.get("title"), title_max) or _clip(ev.get("value"), title_max)
         raw_id = ev.get("id")
@@ -964,6 +990,18 @@ def apply_ooc_events(channel_id: str, turn: int, events: Any,
                 r["after_id"] = a_tid
                 _emit(r, "sleep")
             continue
+        if op == "rank":   # [C116] 등급 고치기 — 목표만 · 아는 등급만 · 같으면 안 씀
+            if st.get("kind") != "goal":
+                out.append(f"⚠ 🧵 {tid}는 목표가 아니라 등급이 없어 — {st.get('title', '')}")
+                continue
+            rk = rank_key(ev.get("rank") if ev.get("rank") is not None else ev.get("value"))
+            if not rk:
+                out.append(f"⚠ 🧵 등급 '{ev.get('rank') or ev.get('value') or '?'}'을 몰라 — "
+                           + "·".join((_cfg("QUEST_RANK_SETTINGS", {}) or {}).keys()))
+                continue
+            if rk == st.get("rank"):
+                out.append(f"ℹ 🧵 {tid}는 이미 {_rank_ko(rk)} — {st.get('title', '')}")
+                continue
         if op == "progress" and st.get("kind") == "goal" and st.get("status") == "paused":
             _emit(tx.row(tid, "resume", origin="ooc"), "resume")   # 멈춘 목표에 진전 = 다시 열림
         if st.get("status") not in _OOC_ALLOWED.get(op, ()):
@@ -973,6 +1011,14 @@ def apply_ooc_events(channel_id: str, turn: int, events: Any,
                     "parties": json.dumps(_parties(ev.get("parties")), ensure_ascii=False)})
         if op == "close":
             row["outcome"] = ev.get("outcome") if ev.get("outcome") in OUTCOMES else "done"
+        elif op == "rank":
+            row["rank"] = rk
+            p0 = int(st.get("progress") or 0)
+            _emit(row, op, renamed)
+            p1 = int(states[tid].get("progress") or 0)
+            if p1 < p0:
+                out.append(f"ℹ 🧵 {tid} 진행 {p0} → {p1} — 새 끝에 닿아 한 칸 앞에 뒀어(끝내기는 따로)")
+            continue
         elif op == "progress":
             row["remaining"] = _clip(ev.get("remaining"), _REMAINING_MAX)
             if st.get("kind") == "goal":

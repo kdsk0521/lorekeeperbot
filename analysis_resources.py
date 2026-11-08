@@ -481,7 +481,7 @@ JUDGMENT_SUPPORT = """
 - Words that press on someone (persuading, deceiving, threatening, bargaining) are actions: YES when the other side can refuse.
 - NO when purely automatic with zero possible failure, and for talk or thought that presses on no one (asking, small talk, musing to oneself).
 
-### difficulty: easy | normal | hard | extreme  (the task itself, before who attempts it)
+### difficulty: easy | normal | hard | extreme  (the task itself, before who attempts it and who stands against it)
 - easy: mostly lands; rolled for the fun of it.
 - normal/hard: where most real judgments live.
 - extreme: "이걸 진짜? 다이스 잘 뜨면 성공시켜줄게"
@@ -498,6 +498,10 @@ JUDGMENT_SUPPORT = """
 - SCENE CAST characters already working alongside the PC before this input (shoulder already at the door, a lookout already posted). Names verbatim. [] when the PC acts alone.
 - Help the PC asks for in this input is the other's to answer; it stays out until it has happened.
 
+### oppose: [name]
+- SCENE CAST characters working against THIS action as it happens: watching for it, resisting it, contesting it. Names verbatim. [] when no one on stage stands against it.
+- Someone who only listens, looks on, or takes the PC's care stays out. Difficulty is the task itself; the one pushing back is counted here.
+
 ### active_strikes: [name]
 - The acting PC's Strikes (lasting harm, body or mind) that bear on THIS action: a broken wrist on a sword swing, a panic on a calm lie. Names verbatim from the list.
 - A strike that leaves this action untouched stays out. No list entry fits → [].
@@ -510,7 +514,7 @@ JUDGMENT_SUPPORT = """
 - One memo or clue the PC already holds that bears on THIS action; null when none.
 
 - needs_judgment=false → skill average, every list [], memo_relevant null.
-- Code counts difficulty, skill, fragments, items, assist, strikes, and memo from these fields; the reason line explains the call in words.
+- Code counts difficulty, skill, fragments, items, assist, oppose, strikes, and memo from these fields; the reason line explains the call in words.
 
 """
 

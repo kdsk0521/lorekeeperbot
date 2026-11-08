@@ -48,7 +48,10 @@ register(Module(id="anomaly", name="이변", tier="core", shelf="core"))
 # =====================================================================
 # [C62 M3] 토글 헬퍼(옛 _mod_on·_mod_set)는 module_frame.channel_toggle 로 올라갔다 — 이식 모듈도 같은 걸 쓴다.
 async def _pre_board(rt, b):
-    """[C64 M5] 도착물 핸드아웃 — 옛 orchestration 5.5. 몸은 world_board(늦게 import)."""
+    """[C64 M5] 도착물 핸드아웃 — 옛 orchestration 5.5. 몸은 world_board(늦게 import).
+    [C117 B1] 묶음 · 관찰 턴도 이 정거장을 돈다(코드 앱 before_render) — 도착물은 솔로 턴만(옛 그대로)."""
+    if str(getattr(b, "kind", "turn") or "turn") != "turn":
+        return
     import world_board as _wb_pr
     await _wb_pr.handout_station(rt, b)
 
@@ -183,8 +186,45 @@ register(Module(
 ))
 
 
+# ---------------------------------------------------------------------
+# 깃들기 — [2026-11-06 C116 판1 1c] 기본 지원 장난감. 옛 `!출력룰` 파일 첫 줄 `깃들기: 켜기|끄기` 자리.
+#   값 자리는 그대로(world_state `vessel_arm` — True/False = 손으로 정함, 없음 = 로어 분석 `mind_transfer`).
+#   스위치 = 손으로 켬/끔, 설정 '정하는 쪽' = 자동(로어 분석) · 늘 켬 · 늘 끔. 일괄 `!모듈 on/off` 에는 안 든다(세계 성질).
+#   몸(Theoria 칸 · 적용 · 렌더 줄)은 vessel.py 가 `armed()` 로 저절로 본다 — 정거장 0.
+# ---------------------------------------------------------------------
+def _vessel_mode_get(ch):
+    import vessel as _vs
+    flag = (domain_manager.get_world_state(ch) or {}).get(_vs.ARM_KEY)
+    return "on" if flag is True else "off" if flag is False else "auto"
+
+
+def _vessel_mode_set(ch, value):
+    import vessel as _vs
+    _vs.set_arm(ch, {"on": True, "off": False}.get(str(value)))
+
+
+def _vessel_armed(ch):
+    import vessel as _vs
+    return _vs.armed(ch)
+
+
+def _vessel_arm(ch, on):
+    import vessel as _vs
+    _vs.set_arm(ch, bool(on))
+
+
+register(Module(
+    id="vessel", name="깃들기", tier="toggle", shelf="toggle", bulk=False,
+    toggle=Toggle(_vessel_armed, _vessel_arm),
+    aliases=("깃들기", "빙의", "mind_transfer"),
+    settings=(Setting("mode", "정하는 쪽", "select", _vessel_mode_get, _vessel_mode_set,
+                      options=(("auto", "자동 — 로어 분석"), ("on", "늘 켬"), ("off", "늘 끔"))),),
+    off_notice="몸을 모는 사람 · 덧씌운 마음 추적이 멈춰요. 로어 분석에 맡기려면 Activity 모듈 앱 깃들기 '정하는 쪽'을 자동으로.",
+))
+
+
 # =====================================================================
-# 설정으로 도는 것 — !모듈 에 보이기만(끄고 켜기는 !출력룰·config)
+# 설정으로 도는 것 — !모듈 에 보이기만(끄고 켜기는 앱 선언 · config)
 # =====================================================================
 
 # ---------------------------------------------------------------------
@@ -192,7 +232,7 @@ register(Module(
 # ---------------------------------------------------------------------
 async def _bg_status_panel(rt, turn):
     # 9.55. [2026-08-16 상태패널 v0] 하단 상태 패널 — 배경 콜 1개 + 코드 저장.
-    #   패널 정의(!출력룰 panel/상태창) 미등록이면 콜 0. 산문은 **저장본과 같은
+    #   패널 정의(앱 선언 서술 칸 · 옛 !출력룰 panel/상태창) 미등록이면 콜 0. 산문은 **저장본과 같은
     #   순수 response**(표시용 헤더가 섞인 문자열이 아니다 — 헤더는 표시 계층 전용).
     channel_id, response = turn.channel_id, turn.response
     try:
@@ -243,7 +283,7 @@ register(Module(
     bg_pair="mind",   # [C74 W4-3] 속마음 콜과 같이 — 아래 짝 주석
     stations={BACKGROUND: _bg_status_panel, ON_DAY: _day_panel, AFTER_OUTPUTS: _sx.out_append},
     orders={ON_DAY: 40, AFTER_OUTPUTS: 60},
-    calls=(Call("StatusPanel", "light", "패널 정의(!출력룰 panel/상태창)가 있을 때"),),
+    calls=(Call("StatusPanel", "light", "상태창 서술 칸(앱 선언)이 있을 때"),),
     status=_status_panel_line,
 ))
 
@@ -381,7 +421,7 @@ async def _day_expr(rt, day):
         _blog.warning("[Boundary] expr day 실패: %s", e)
 
 
-register(Module(id="output_rules", name="출력룰", tier="declared",
+register(Module(id="output_rules", name="선언 값", tier="declared",
                 stations={ON_DAY: _day_expr, AFTER_OUTPUTS: _sx.out_values},
                 orders={ON_DAY: 10, AFTER_OUTPUTS: 10}))   # [C63 M4] 값 델타 + cue·연산 적재
 
@@ -517,7 +557,21 @@ async def _apps_after_prose(rt, turn):
     await app_host.after_prose_station(rt, turn)
 
 
-register(Module(id="apps", name="코드 앱", tier="core", stations={AFTER_PROSE: _apps_after_prose},
+async def _apps_on_day(rt, day):
+    # [2026-11-06 C116 판3] 날 경계 — 앱 on_day(하루 연산 10 · NPC 회복 20 뒤 · 일지 30 · 패널 40 앞: 일지 · 패널이 앱이 쓴 오늘 값을 본다)
+    import app_host
+    await app_host.day_station(day.channel_id, day.info)
+
+
+async def _apps_pre_render(rt, b):
+    # [2026-11-06 C116 판4] 판정 뒤 · 렌더 앞 — 앱 before_render 한 줄을 이번 턴 문서에(도착물과 같은 자리 · 같은 정거장, 게시판 뒤)
+    import app_host
+    b.prompt = await app_host.pre_render(b.channel_id, b.ctx, b.prompt)
+
+
+register(Module(id="apps", name="코드 앱", tier="core",
+                stations={AFTER_PROSE: _apps_after_prose, ON_DAY: _apps_on_day, PRE_RENDER_CALL: _apps_pre_render},
+                orders={ON_DAY: 25},
                 calls=(Call("AppTags", "light", "신고(tags)를 단 코드 앱이 켜져 있을 때 — 산문 뒤 제 차선, 다음 턴이 ⏳로 기다림"),)))
 
 

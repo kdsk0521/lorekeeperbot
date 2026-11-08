@@ -158,33 +158,9 @@ def update_notebook_text(channel_id: str, new_text, user_id: str = "") -> None:
 # [notebook v2] 헤더 리터럴의 주인은 domain_manager(렌더 전용). 여기선 더 이상 split하지 않는다.
 _SOJIPIN_HEADER = domain_manager.NOTEBOOK_SOJIPIN_HEADER
 _MEMO_HEADER = domain_manager.NOTEBOOK_MEMO_HEADER
-_JOURNAL_HEADER = domain_manager.NOTEBOOK_JOURNAL_HEADER
-_JOURNAL_DISPLAY_CAP = 10  # [일지] 섹션 표시 안전 상한(줄). 요약은 보통 몇 줄이라 거의 안 걸림.
-
-def _render_journal_section(channel_id: str, recent_lines: list, user_id: str = "") -> None:
-    """노트북 [일지] 섹션을 recent_lines로 **교체**(living-rewrite). [소지품]/[메모] 무접촉 —
-    v2에선 섹션이 별개 키라 파서 토글 사고가 원천적으로 없다."""
-    _clean = lambda e: _norm(str(e).lstrip('-'))
-    nb = get_notebook_data(channel_id, user_id)
-    nb["sections"]["일지"]["lines"] = [_clean(e) for e in recent_lines if _clean(e)]
-    update_notebook_data(channel_id, nb, user_id)
-
-
-def add_to_journal(channel_id: str, content: str, user_id: str = "") -> str:
-    """캐릭터 연속성 일지 갱신 [living-rewrite]. content = 캐릭터의 '현재 여정 요약'
-    (시트 notes가 매 재작성마다 재생성). 표시/저장 분리:
-      - 노트북 [일지] 섹션 → 이번 요약으로 **통째 교체**(옛 내용 수정/대체 = living document).
-      - 전체 이력(요약이 어떻게 진화했나) → append_journal_log(영속). !일지로 조회.
-    즉 노트북엔 항상 현재 요약만, 진화 이력은 로그에 보존."""
-    content = (content or "").strip()
-    if not content:
-        return ""
-    if user_id:
-        domain_manager.append_journal_log(channel_id, user_id, content)  # 진화 이력 보존
-    # [일지] 표시 = 최신 요약으로 교체(append 아님). 여러 줄이면 줄별 bullet, 안전 cap.
-    display = [l.strip() for l in content.splitlines() if l.strip()] or [content]
-    _render_journal_section(channel_id, display[:_JOURNAL_DISPLAY_CAP], user_id)
-    return f"📓 일지 갱신: {content[:40]}"
+# [2026-11-06 C119 Q40] PC 여정 일지(add_to_journal · _render_journal_section · ai_memory.journal_log) 삭제 —
+#   9월 시트 2차 무렵부터 부르는 곳이 0 이었다. 시트가 자라는 기록은 PC 페이지 play 절 Observed · 절 리비전이 쥔다.
+#   보관함 '일지' 장(공용 노트북 일지 행, 경계 틱이 씀)은 다른 물건이라 산다.
 
 # [삭제 2026-09-06] merge_notebook_preserve_inventory — WHY: 전문 반환 계약(notebook_update)을
 # 사후 봉합하려고 [소지품] 파트만 라이브에서 되살리던 함수. v2에선 B-1이 memo_add/remove만

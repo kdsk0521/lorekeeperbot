@@ -5,6 +5,12 @@ Handles dice rolls and narrative outcomes based on Call 1 analysis.
 [2026-10-15 C42] 4dF 퍼지 다이스. 스펙 파티쳇수정/composition/C42_4dF판정_스펙_2026-10-15.md.
   축 셋 — 개수 N(혼전도) · 유불리(형세) · 수정치 M(무엇을 들고 왔나). d100·DC·항 10개는 퇴역.
   등급 이름 다섯은 그대로라 산문 계약(시드·결과 지시·Mira roll_outcome)과 시계 결과는 무변경.
+[2026-11-06 C116 0-3] 바깥 항 문(outer_terms) — 코드 앱 judge 훅이 낸 항을 「앱 이름」 도장으로 내역 끝에 받는다.
+  한 항 ±MOD_CAP_UP · 합은 같은 mod_bounds. 항 이름은 임베드에만(Mira · 렌더는 등급만 본다).
+  스펙 파티쳇수정/output_artifact/C116_판0-3_판정바깥항_지도·스펙_2026-11-06.md.
+[2026-11-06 C118] 밸런스 — 개수 판 기본 6(차분 4 · 혼란 8, 2~8) · 수정치 폭 −min(6, N−1) ~ +6 ·
+  극단 = 주사위 몫(주사위만 ±3) · 세계 쪽 항 맞섬 −1(Theoria action_meta.oppose — 조력 +1 의 거울).
+  스펙 파티쳇수정/output_artifact/C118_판정밸런스_지도·스펙_2026-11-06.md.
 """
 
 import logging
@@ -39,9 +45,11 @@ FACES = (-1, 0, 1)
 # 굴림의 자리 하나. 스모크는 이걸 갈아 끼워 결과를 고정한다.
 _FACE_RNG = random.Random()
 
-# 개수 기본 = 판정 앞 Theoria EnergyDirection(혼전도). 모르는 값은 4.
-ENERGY_BASE = {"idle": 2, "stagnant": 3, "aftershock": 3, "rising": 4, "detonation": 6}
-DICE_MIN, DICE_MAX, DICE_DEFAULT = 2, 6, 4
+# 개수 기본 = 판정 앞 Theoria EnergyDirection(혼전도). 모르는 값은 6(기본 판).
+# [C118] 옛 판 idle 2 · stagnant 3 · aftershock 3 · rising 4 · detonation 6 (2~6, 모름 4) — 주사위가 늘면 같은 ±1 의
+#   무게가 조금 준다(표준편차 4개 1.63 · 6개 2.0 · 8개 2.31). 하한 2 는 가드로 남는다(차분 4 − 시간 1 = 3).
+ENERGY_BASE = {"idle": 4, "stagnant": 5, "aftershock": 5, "rising": 6, "detonation": 8}
+DICE_MIN, DICE_MAX, DICE_DEFAULT = 2, 8, 6
 # 평형 "흔들림" 문턱 — 고갈 구간(15~39)부터.
 LOW_GAUGE = 40
 # 시간을 들이는 행동(개수 −1): 30분 이상. 1틱 = 2분.
@@ -75,24 +83,67 @@ EDGE_KR = {1: "유리", 0: "평탄", -1: "불리"}
 GLYPH = {1: "[+]", 0: "[ ]", -1: "[−]"}
 
 
+MOD_CAP_UP = 6   # [2026-11-01 C102] 수정치 상한 — 주사위 개수와 무관(레티어스 "+6까진 풀어도"). 옛 min(3, N).
+
+
 def mod_bounds(n: int) -> Tuple[int, int]:
-    """수정치 폭 — 하한 −min(3, N−1) · 상한 min(3, N). 2개 −1~+2 · 3개 −2~+3 · 4개 이상 ±3.
+    """수정치 폭 — 하한 −min(6, N−1) · 상한 +6(C118 거의 대칭, 옛 하한 −min(3, N−1)). 4개 −3~+6 · 6개 −5~+6 · 8개 −6~+6.
     바닥: 주사위가 전부 +면 성공은 늘 가능하다. 위쪽은 열어 둔다(레티어스 "판정은 유저 친화적이어도
-    괜찮다") — 2개 +2 · 3개 +3 은 실패 0."""
+    괜찮다" · "+6까진 풀어도") — 수정치 ≥ N 이면 실패 0, ≥ N+1 이면 굴리기 전에 성공(대성공만 주사위 몫)."""
     n = int(n)
-    return -min(3, n - 1), min(3, n)
+    return -min(6, n - 1), MOD_CAP_UP
+
+
+def clamp_outer(v: Any) -> int:
+    """[2026-11-06 C116 0-3] 바깥 항 하나의 크기. 앱 몫 상한은 따로 두지 않는다(레티어스 11-06 "좀 풀어도 —
+    치트성 장비 넣고 싶은 게 사람 마음") — 한 항은 ±MOD_CAP_UP 안, 합은 mod_bounds 가 한 번 더 자른다."""
+    return max(-MOD_CAP_UP, min(MOD_CAP_UP, int(v)))
+
+
+def outer_label(name: str, label: str = "") -> str:
+    """바깥 항 표시 라벨 = 출처 도장 「이름」 + 앱이 낸 라벨."""
+    name = str(name or "").strip() or "앱"
+    label = str(label or "").strip()
+    return f"「{name}」 {label}" if label else f"「{name}」"
+
+
+async def outer_terms(context, bus) -> List[Tuple[str, int]]:
+    """[2026-11-06 C116 0-3] 판정 바깥 항 문 — 지금 출처는 코드 앱 judge 훅 하나(app_host.judge_terms).
+    j = 행동 종류 · 행동 글 · 난이도 · 실력(Theoria action_meta), who = 행동하는 PC 가면. 모델 콜 0.
+    저장 bus.judgment["outer_terms"] = [[앱 id, 라벨, 받은 값, 낸 값]]. 예외 → [] (판정은 계속)."""
+    rec: List[List[Any]] = []
+    terms: List[Tuple[str, int]] = []
+    try:
+        meta = bus.judgment.get("meta") or {}
+        meta = meta if isinstance(meta, dict) else {}
+        j = {"type": str(meta.get("type") or meta.get("action_type") or "").strip().lower(),
+             "action": str(meta.get("action") or "")[:200],
+             "difficulty": str(meta.get("difficulty") or "").strip().lower(),
+             "skill": str(meta.get("skill") or "").strip().lower()}
+        import app_host
+        rows = await app_host.judge_terms(_jud_channel(context), j, context.get_acting_mask())
+        for r in rows or []:
+            v = clamp_outer(r["value"])
+            terms.append((outer_label(r.get("name"), r.get("label")), v))
+            rec.append([r["app"], r.get("label") or "", v, int(r["value"])])
+    except Exception as e:
+        logger.warning("[Judgment] 바깥 항 건너뜀: %s", e)
+        rec, terms = [], []
+    bus.judgment["outer_terms"] = rec
+    return terms
 
 
 def tier_of(d: int, m: int) -> str:
-    """등급. 극단은 총합 ±3 **그리고** 주사위만으로 ±2 이상일 때만 — 수정치만으로는 안 생긴다."""
+    """등급. 극단은 총합 ±3 **그리고** 주사위만으로 ±3 이상일 때만(C118, 옛 주사위 ±2) — 수정치는 성공 · 실패를
+    정하고 극단은 혼란(N)이 정한다. 수정치가 기울어도 극단 확률은 그대로다(N 4 6.2% · 6개 10.7% · 8개 14.1%, 2개 0)."""
     t = int(d) + int(m)
-    if t >= 3 and d >= 2:
+    if t >= 3 and d >= 3:
         return "critical_success"
     if t >= 1:
         return "success"
     if t == 0:
         return "partial"
-    if t <= -3 and d <= -2:
+    if t <= -3 and d <= -3:
         return "critical_failure"
     return "failure"
 
@@ -206,8 +257,10 @@ def _takes_time(tf: Any) -> bool:
         return False
 
 
-def dice_count(context, bus, assist: Optional[List[str]] = None) -> Tuple[int, List[Tuple[str, int]]]:
-    """개수 N = EnergyDirection 기본 + 조정(PC 평형·상대 평형·세계상황 +1, 시간 들임 −1), 2~6."""
+def dice_count(context, bus, assist: Optional[List[str]] = None,
+               oppose: Optional[List[str]] = None) -> Tuple[int, List[Tuple[str, int]]]:
+    """개수 N = EnergyDirection 기본 + 조정(PC 평형·상대 평형·세계상황 +1, 시간 들임 −1), 2~8(C118).
+    상대 = 맞섬(oppose)으로 집힌 무대 위 첫 이름, 없으면 옛 셈(관련 NPC 중 조력 아닌 무대 위 첫 이름)."""
     dai = bus.dai if isinstance(bus.dai, dict) else {}
     energy = str(dai.get("energy_direction") or "").strip().lower()
     base = ENERGY_BASE.get(energy, DICE_DEFAULT)
@@ -219,7 +272,8 @@ def dice_count(context, bus, assist: Optional[List[str]] = None) -> Tuple[int, L
         parts.append(("평형 흔들림", 1))
     helpers = set(assist or [])
     stage = set(_stage_names(context, bus))
-    opp = next((x for x in _names(dai.get("relevant_npcs")) if x in stage and x not in helpers), "")
+    opp = next((x for x in _names(oppose) if x in stage and x not in helpers), "") \
+        or next((x for x in _names(dai.get("relevant_npcs")) if x in stage and x not in helpers), "")
     if opp:
         oc = _system_value(context, "평형", opp)
         if oc is not None and oc < LOW_GAUGE:
@@ -329,8 +383,9 @@ def _buff_terms(anchors: Dict[str, Any], action_type: str) -> List[Tuple[str, in
     return out
 
 
-def modifier_terms(context, bus, n: int) -> Tuple[int, int, List[Tuple[str, int]], Dict[str, List[str]]]:
-    """수정치 M. Returns: (M, 원합, 내역, 확인을 통과한 이름 {active_passives, active_items, assist, active_strikes})."""
+def modifier_terms(context, bus, n: int, outer=()) -> Tuple[int, int, List[Tuple[str, int]], Dict[str, List[str]]]:
+    """수정치 M. Returns: (M, 원합, 내역, 확인을 통과한 이름 {active_passives, active_items, assist, oppose, active_strikes}).
+    outer = 바깥 항 [(표시 라벨, v)] (C116 0-3 — outer_terms 가 만든다). 내역 끝에 붙고 같은 합 · 같은 폭."""
     meta = bus.judgment.get("meta") or {}
     meta = meta if isinstance(meta, dict) else {}
     ev = bus.judgment.get("eval") or {}
@@ -338,7 +393,8 @@ def modifier_terms(context, bus, n: int) -> Tuple[int, int, List[Tuple[str, int]
     anchors = context.narrative_anchors or {}
     atype = str(meta.get("type") or meta.get("action_type") or "").strip().lower()
     terms: List[Tuple[str, int]] = []
-    used: Dict[str, List[str]] = {"active_passives": [], "active_items": [], "assist": [], "active_strikes": []}
+    used: Dict[str, List[str]] = {"active_passives": [], "active_items": [], "assist": [], "oppose": [],
+                                  "active_strikes": []}
 
     diff = str(meta.get("difficulty") or "normal").strip().lower()
     dm = DIFFICULTY_MOD.get(diff, 0)
@@ -365,12 +421,18 @@ def modifier_terms(context, bus, n: int) -> Tuple[int, int, List[Tuple[str, int]
     if helpers:
         terms.append((f"조력 {'·'.join(helpers[:3])}", 1))
         used["assist"] = helpers
+    # [C118] 맞섬 — 조력의 거울. 무대 위 · 조력 아닌 이름만, 몇 명이든 −1.
+    foes = [x for x in _names(meta.get("oppose")) if x in stage and x not in helpers]
+    if foes:
+        terms.append((f"맞섬 {'·'.join(foes[:3])}", -1))
+        used["oppose"] = foes
     track = set(_names(anchors.get("strikes")))
     for nm in _names(meta.get("active_strikes")):
         if nm in track:
             terms.append((f"타격 「{nm}」", -1))
             used["active_strikes"].append(nm)
     terms.extend(_buff_terms(anchors, atype))
+    terms.extend((str(lab), int(v)) for lab, v in (outer or ()))
 
     raw = sum(v for _, v in terms)
     lo, hi = mod_bounds(n)
@@ -398,8 +460,10 @@ class JudgmentEngine:
         action = str(meta.get("action") or "행동")
 
         # 1. 축 셋. 조력으로 집힌 이름은 개수의 '상대' 고르기에서 빠진다(무대 위 이름만 남는 건 양쪽 같다).
-        n, n_parts = dice_count(context, bus, _names(meta.get("assist")))
-        m, m_raw, m_terms, used = modifier_terms(context, bus, n)
+        #    [C118] 맞섬으로 집힌 이름이 있으면 그 사람이 '상대'다.
+        n, n_parts = dice_count(context, bus, _names(meta.get("assist")), _names(meta.get("oppose")))
+        outer = await outer_terms(context, bus)   # [C116 0-3] 바깥 항(앱 judge) — 폭은 같은 mod_bounds
+        m, m_raw, m_terms, used = modifier_terms(context, bus, n, outer)
         edge, e_parts = edge_of(bus)
 
         # 2. 굴림

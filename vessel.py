@@ -19,13 +19,12 @@
 스펙: 파티쳇수정/npc/C32_몸·인격분리_스펙_2026-10-12.md
 """
 import logging
-import re
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 WS_KEY = "vessels"
-ARM_KEY = "vessel_arm"            # world_state: True/False = 출력물 파일 선언이 켜고 끔. 없으면 로어 분석 판정.
+ARM_KEY = "vessel_arm"            # world_state: True/False = 모듈 앱 깃들기 카드가 켜고 끔(C116 1c). 없으면 로어 분석 판정.
 LORE_FLAG_KEY = "mind_transfer"   # lore_summary_data 불리언(로어 분석이 뽑음)
 OPS = ("drive", "release", "overlay", "lift")
 MAX_OVERLAYS = 3
@@ -124,7 +123,7 @@ def view_edges(channel_id: str, edges: List[Dict[str, Any]]) -> List[Dict[str, A
 # 장전 — 이 채널이 이 일을 보는가
 # =========================================================
 def armed(channel_id: str) -> bool:
-    """출력물 파일 선언(켜기/끄기)이 이기고, 없으면 로어 분석 불리언."""
+    """모듈 앱 깃들기 카드(늘 켬 · 늘 끔)가 이기고, 자동이면 로어 분석 불리언."""
     if not channel_id:
         return False
     try:
@@ -138,23 +137,8 @@ def armed(channel_id: str) -> bool:
         return False
 
 
-_ARM_LINE_RE = re.compile(
-    r"^[ \t]*(?:깃들기|vessel)[ \t]*[:：]?[ \t]*(켜기|켬|on|끄기|끔|off)[ \t]*$",
-    re.IGNORECASE | re.MULTILINE)
-
-
-def take_arm_line(text: str):
-    """출력물 파일의 `깃들기: 켜기|끄기` 줄을 떼어 낸다. → (남은 글, True|False|None)."""
-    if not isinstance(text, str):
-        return text, None
-    m = None
-    for m in _ARM_LINE_RE.finditer(text):
-        pass
-    if m is None:
-        return text, None
-    val = m.group(1).lower() in ("켜기", "켬", "on")
-    rest = _ARM_LINE_RE.sub("", text).strip()
-    return rest, val
+# ⚰[2026-11-06 C116 판1 1c] `take_arm_line`(출력물 파일의 `깃들기: 켜기|끄기` 줄 떼기) 삭제 — `!출력룰` 은퇴.
+#   켜고 끄기는 Activity 모듈 앱 깃들기 카드(builtin_modules `vessel` — 스위치 + 정하는 쪽 자동 · 켬 · 끔).
 
 
 def set_arm(channel_id: str, value: Optional[bool]) -> None:

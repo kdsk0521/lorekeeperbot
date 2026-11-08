@@ -4,7 +4,8 @@
 스펙  파티쳇수정/output_artifact/C64_모듈틀_M5렌더앞_지도·스펙_2026-10-23.md
 
 - 정거장 `on_input(rt, b)` = 옛 `main._process_message` 3 단독 OOC · 3a 행동+OOC · 3.5 루카 모드 갈래.
-  갈래를 타면 `b.stop`(입력을 먹었다). 턴이 필요하면 `b.turn_override`(+ `b.record_user_history`) — 턴은 main 이 띄운다.
+  갈래를 타면 `b.stop`(입력을 먹었다). 턴이 필요하면 `b.turn_override`(+ `b.history_text`) — 턴은 main 이 띄운다.
+- [2026-11-05 C116 0-1b] 인라인 `(ooc: …)`(단독 · 행동+OOC)는 **장면 지시만** — 편집은 루카 모드(`!ooc`)와 Activity 몫.
   해당 없음 = 아무것도 안 하고 넘긴다(main 의 대기·자동 경로로).
 - 루카 몸(표지 파서 · 회상 발췌 · 위키 발췌 · `generate_ooc_response`)은 옛 main.py 343~696줄 글자 그대로.
 - 바뀐 건 이름뿐: `client_genai` → `rt.client` · `MODEL_ID` → `rt.model_id` · `MODEL_ID_FLASH` → `rt.model_id_flash` ·
@@ -61,16 +62,18 @@ def _luka_ooc_body(raw: str) -> str:
 _LUKA_ROUTE_RE = _re_luka.compile(r"^\s*[⟦\[【]\s*(수정|장면)\s*[⟧\]】]\s*[:：]?\s*(.*)$")
 
 
-def _luka_parse_route(text: str, allow_scene: bool = True) -> dict:
-    """루카 응답 → {"edit", "scene", "scene_seen", "body"}. 표지는 맨 앞 줄들에서만 읽는다(본문 속 인용은 무시).
-    값이 빈 표지는 "*"(= 원문 전체)."""
-    edit, scene, scene_seen, body, lead = "", "", False, [], True
+def _luka_parse_route(text: str, allow_scene: bool = True, allow_edit: bool = True) -> dict:
+    """루카 응답 → {"edit", "scene", "scene_seen", "edit_seen", "body"}. 표지는 맨 앞 줄들에서만 읽는다(본문 속 인용은 무시).
+    값이 빈 표지는 "*"(= 원문 전체). [C116 0-1b] allow_edit=False(인라인 OOC)면 ⟦수정⟧ 줄은 지우기만 한다(edit_seen)."""
+    edit, scene, scene_seen, edit_seen, body, lead = "", "", False, False, [], True
     for ln in (text or "").split("\n"):
         m = _LUKA_ROUTE_RE.match(ln) if lead else None
         if m:
             _v = m.group(2).strip() or "*"
             if m.group(1) == "수정":
-                edit = _v if not edit else f"{edit} / {_v}"
+                edit_seen = True
+                if allow_edit:
+                    edit = _v if not edit else f"{edit} / {_v}"
             else:
                 scene_seen = True
                 if allow_scene:
@@ -80,14 +83,15 @@ def _luka_parse_route(text: str, allow_scene: bool = True) -> dict:
             continue
         lead = False
         body.append(ln)
-    return {"edit": edit, "scene": scene, "scene_seen": scene_seen, "body": "\n".join(body).strip()}
+    return {"edit": edit, "scene": scene, "scene_seen": scene_seen, "edit_seen": edit_seen,
+            "body": "\n".join(body).strip()}
 
 
 async def _handle_ooc_via_luka(run_rt, b, message: discord.Message, channel_id: str, ooc_content: str,
                                luka_mode: bool = False) -> None:
     """[2026-09-26 O1·O2] 단독 OOC·루카 모드 — 루카 콜이 판정을 겸한다.
-    ⟦수정⟧ → 편집 한 벌(command_handler.run_ooc_edit) / ⟦장면⟧(단독만) → 턴 / 표지 없음 → 루카 답(이미 보냄).
-    루카 콜이 실패하면 옛 키워드 분류로 폴백(단독 OOC 만)."""
+    ⟦수정⟧(루카 모드만 — C116 0-1b) → 편집 한 벌(command_handler.run_ooc_edit) / ⟦장면⟧(단독만) → 턴 /
+    표지 없음 → 루카 답(이미 보냄). 루카 콜이 실패하면 옛 키워드 분류로 폴백(단독 OOC 만 · 지시만)."""
     rt = await generate_ooc_response(run_rt, message, channel_id, route=("mode" if luka_mode else "ooc"))
     if rt is None:
         if luka_mode or not ooc_content:
@@ -98,7 +102,7 @@ async def _handle_ooc_via_luka(run_rt, b, message: discord.Message, channel_id: 
         return
     if rt.get("kind") != "route":
         return
-    if rt.get("edit"):
+    if rt.get("edit") and luka_mode:   # [C116 0-1b] 인라인 OOC 는 편집하지 않는다(파서가 이미 비우지만 한 겹 더)
         await command_handler.run_ooc_edit(
             message, channel_id, ooc_content or (message.content or ""), run_rt.client, run_rt.model_id,
             edit_part=("" if rt["edit"] == "*" else rt["edit"]))
@@ -331,10 +335,12 @@ async def generate_ooc_response(
     except Exception:
         pass
     # [2026-09-26 O1] 판정은 이미 도는 루카 콜이 겸한다 — 표지 계약은 맨 끝(최근접).
-    if route in ("ooc", "mode"):
+    # [2026-11-05 C116 0-1b] 수정 창구는 루카 모드만. 인라인 OOC 는 장면 지시 계약 하나(바꿀 곳은 Activity 켜짐을 따른다).
+    if route == "mode":
         system_prompt += "\n\n" + text_resources.LUKA_ROUTE_CONTRACT
-        if route == "ooc":
-            system_prompt += "\n" + text_resources.LUKA_ROUTE_SCENE
+    elif route == "ooc":
+        system_prompt += "\n\n" + text_resources.LUKA_ROUTE_SCENE.replace(
+            "{where}", command_handler.ooc_edit_where())
 
     user_content = message.content.strip()
     if message.attachments:
@@ -361,7 +367,10 @@ async def generate_ooc_response(
         if response and response.text:
             _txt = response.text.strip()
             if route in ("ooc", "mode"):
-                _rt = _luka_parse_route(_txt, allow_scene=(route == "ooc"))
+                _rt = _luka_parse_route(_txt, allow_scene=(route == "ooc"), allow_edit=(route == "mode"))
+                if _rt["edit_seen"] and route == "ooc":
+                    # [C116 0-1b] 옛 버릇으로 ⟦수정⟧ 표지를 냈다 — 편집 없이 표지 줄만 지운다.
+                    logging.info("[OOC] luka-route: 인라인 OOC 의 ⟦수정⟧ 표지 무시(편집은 루카 모드 · Activity)")
                 if _rt["edit"] or _rt["scene"]:
                     logging.info("[OOC] luka-route: %s", "+".join(
                         [k for k, v in (("수정", _rt["edit"]), ("장면", _rt["scene"])) if v]))
@@ -371,6 +380,9 @@ async def generate_ooc_response(
                 if not _txt:
                     if _rt["scene_seen"]:
                         await message.channel.send("💬 루카 모드에선 장면을 돌리지 않아 — `!ooc`로 나온 뒤 말해 줘.")
+                        return {"kind": "answered"}
+                    if _rt["edit_seen"] and route == "ooc":
+                        await message.channel.send(command_handler.ooc_edit_notice())
                         return {"kind": "answered"}
                     _txt = response.text.strip()
             # [루카] 프리픽스 + Discord 인용 블록으로 IC/OOC 시각 구분
@@ -403,31 +415,14 @@ async def on_input(rt, b) -> None:
         return
 
     # 3a. CHAT + OOC (IC 행동 + 서사 지시)
+    # [2026-11-05 C116 0-1b] 인라인 OOC = 장면 지시만 — 분류 콜(옛 route_ooc_split) · 편집 0, OOC 통째가 지시.
+    #   IC 줄은 턴 앞에 선기록하지 않는다(옛: 스냅숏 **안**에 들어가 `!다시`마다 줄이 겹쳤다) — execute 가 응답 뒤
+    #   한 자리에서 `history_text`(= 행동)로 적는다(message_id 도 거기서 같은 원 메시지 id). 결합 지시는 이번 턴 입력으로만.
     if parsed and parsed['type'] == 'chat_with_ooc':
         b.stop = True   # [C64 M5] 이 갈래가 입력을 먹는다
         ic_text = parsed.get('chat_content', '')
         ooc_content = parsed.get('ooc_content', '')
-        mask = domain_manager.get_user_mask(channel_id, message.author.id)
-
-        # IC 행동을 히스토리에 기록
-        if ic_text:
-            # [LIBRA #2 C1] Discord message.id 보존 — 출처 회상용 단서
-            domain_manager.append_history(channel_id, mask, ic_text, message_id=message.id)
-
-        # [2026-09-26 O2] 턴 **전에** OOC 조각을 가른다(짧은 분류 콜 — 루카가 안 도는 자리).
-        #   수정은 먼저 적용 → 그 턴 Theoria 4b 가 바뀐 값을 본다. 장면 지시는 수정 부분을 뺀 나머지만
-        #   (수정 문구가 렌더러로 가면 "호감도 올려"를 서사로 풀어 버린다). 지시가 없으면 행동만으로 턴.
-        _edit_part, _dir_part = await command_handler.route_ooc_split(
-            channel_id, ooc_content, rt.client, rt.model_id_flash)
-        if _edit_part:
-            await command_handler.run_ooc_edit(message, channel_id, ooc_content, rt.client, rt.model_id,
-                                               edit_part=_edit_part)
-        combined_directive = (f"[플레이어 행동: {ic_text}] [OOC 지시: {_dir_part}]" if _dir_part else ic_text)
-        # [2026-07-02] IC 원문은 위에서 이미 기록(message_id 포함) — execute의 user 기록은
-        # 스킵해 이중 잔존 차단. 결합 디렉티브는 이번 턴 프롬프트로만 쓰고 히스토리엔 안 남김
-        # (OOC 메타가 IC 기록에 영구 노출되던 것도 함께 차단).
-        b.turn_override = combined_directive   # [C64 M5] 옛 generate_ai_response(…, user_input_override=combined_directive,
-        b.record_user_history = False          #   record_user_history=False) — 턴은 main 이 띄운다
+        b.turn_override, b.history_text = input_handler.ooc_turn_text(ic_text, ooc_content)
         return
 
     # 3.5. OOC MODE CHECK

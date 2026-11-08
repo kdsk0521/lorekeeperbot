@@ -66,13 +66,17 @@ class _RespShim:
     OpenAI 호환 응답의 finish_reason "length" = 토큰 한도 도달 → Gemini 표기로 번역해
     기존 갈래를 되살린다.
     """
-    __slots__ = ("text", "candidates", "prompt_feedback", "usage_metadata", "timed_out")
+    __slots__ = ("text", "candidates", "prompt_feedback", "usage_metadata", "timed_out", "status", "retry_after")
 
     _FR_MAP = {"length": "MAX_TOKENS", "content_filter": "SAFETY", "stop": "STOP"}
 
-    def __init__(self, text: Optional[str], finish_reason: Optional[str] = None, timed_out: bool = False):
+    def __init__(self, text: Optional[str], finish_reason: Optional[str] = None, timed_out: bool = False,
+                 status: Optional[int] = None, retry_after: Optional[float] = None):
         self.text = text or ""
         self.timed_out = bool(timed_out)   # [C94] 시간 상한 초과 — api_call_with_retry 가 다시 안 부른다
+        # [C119 Q41] 실패한 콜의 HTTP 상태 · 서버가 준 기다릴 시간 — api_call_with_retry 가 429 · 5xx 를 늘려 가며 기다린다
+        self.status = status if isinstance(status, int) else None
+        self.retry_after = retry_after
         _fr = self._FR_MAP.get(str(finish_reason or "").lower()) if finish_reason else None
         # 잘림은 본문이 있어도 보고돼야 한다 — candidates를 비우면 그 사유가 사라진다.
         self.candidates = [_Cand(_fr)] if (text or _fr) else []
@@ -415,7 +419,14 @@ class _Models:
                 logger.warning("[analysis-openai] timeout route=%s after=%.0fs (cap %.0fs)", _route,
                                time.perf_counter() - _t0, _to)
             logger.error("[analysis-openai] generate_content failed (%s): %s", kwargs.get("model"), e)
-            return _RespShim("", timed_out=_tmo)
+            # [C119 Q41] 상태 코드 · 기다릴 시간을 흉내에 싣는다(빈 응답 갈래로 지워지지 않게).
+            _st, _ra = None, None
+            try:
+                import memory_system as _ms_q41
+                _st, _ra = _ms_q41.status_of(e), _ms_q41.retry_after_of(e)
+            except Exception:
+                pass
+            return _RespShim("", timed_out=_tmo, status=_st, retry_after=_ra)
 
     async def embed_content(self, model=None, contents=None, **_ignore):
         texts = contents if isinstance(contents, list) else [contents]

@@ -268,13 +268,8 @@ ANALYSIS_REASONING_TIER_HEAVY = os.getenv("ANALYSIS_REASONING_TIER_HEAVY", "deep
 #   증상이 "분석 결과 비어있음"으로만 보였다(_RespShim finish_reason 수리로 되살림).
 #   여전히 잘리면 이 값을 올린다. 제공자가 모델 상한을 넘는 값을 거부하면 내린다.
 ANALYSIS_MAX_OUTPUT_TOKENS_HEAVY = int(os.getenv("ANALYSIS_MAX_OUTPUT_TOKENS_HEAVY", "8192"))
-# [2026-09-13 레티어스] 출력룰 라우터(`output_router._call_router`)는 1회성 콜인데 heavy 상한 8192를
-#   그대로 썼다 — 이유는 없었다(09-02 로어 분석 값을 나눠 쓴 것). heavy tier=deep 이라 추론이
-#   **같은 예산**을 먹고(09-02 실측 추론 13,562자), 심코어급 파일(값 68·항목 100+)은 JSON만 12k라
-#   8192엔 반도 못 넣는다 → 전용 상한. 항목 100개 JSON ≈12k + 추론 몫 → 32k. 아낄 이유 0(1회성).
-#   제공자가 모델 상한을 넘는 값을 거부하면 내린다(env).
-ROUTER_MAX_OUTPUT_TOKENS = int(os.getenv("ROUTER_MAX_OUTPUT_TOKENS", "32768"))
-# [2026-10-09 레티어스] 로어 통합 분석(`cognition.analyze_lore_unified`)도 1회성 콜이라 라우터와 같은 논리로 전용 상한.
+# ⚰[2026-11-06 C116 판1 1c] ROUTER_MAX_OUTPUT_TOKENS(출력룰 라우터 콜 전용 상한) 삭제 — 라우터 은퇴(선언은 앱 outputs.json, 콜 0).
+# [2026-10-09 레티어스] 로어 통합 분석(`cognition.analyze_lore_unified`)도 1회성 콜이라 (옛) 라우터와 같은 논리로 전용 상한.
 #   프리즘 로어북(54K, NPC 24명)이 8192에서 JSON 9.5K자 근처로 잘려 "분석 결과 비어있음 — 로어 텍스트만 저장"이 됐다
 #   (heavy tier 추론이 같은 예산을 먹는다). 32k로는 끝까지 나왔다. 제공자가 거부하면 env로 내린다.
 LORE_ANALYSIS_MAX_OUTPUT_TOKENS = int(os.getenv("LORE_ANALYSIS_MAX_OUTPUT_TOKENS", "32768"))
@@ -752,6 +747,20 @@ GROWTH_ITEMS_SHOWN_V2 = int(os.getenv("GROWTH_ITEMS_SHOWN_V2", "10"))  # V2 프�
 #   `T<n> (off stage)` 머리 + 이름 든 줄만, 이름 열쇠는 `한글(영문)` 을 괄호 앞 · 안으로 편다, V2 문안 한 줄. 끄면 C94 바이트 동일.
 #   출석 저장(turn_index.present = Theoria 출석 ∪ 위치 트리 0단, 모름 = NULL)은 손잡이와 상관없이 쓴다. 근거 = C95 지도·스펙.
 GROWTH_ONSTAGE = os.getenv("GROWTH_ONSTAGE", "1").strip().lower() not in ("0", "false", "off", "no")
+# [2026-11-02 C106] 무대 밖 지난 그림(덧칠). 켜면: Mira 입력 `### LAST SEEN OFF STAGE`(장면 프레임의 흔적 · hook 에 나온 등록 이름 ·
+#   무대 위였다가 지금 0단이 아닌 사람, OFFSTAGE_SEEN_TURNS 턴 안, 가까운 순 6줄) + hook · trace 칸 끝 한 줄(1턴 전 그림은 이번 턴 빼기 ·
+#   그 전 그림은 거기서 시간이 한 일 · 같은 그림은 null). 끄면 블록 · 두 줄 0. 프레임의 onstage · offscreen_trace · narrative_hook 칸은
+#   손잡이와 상관없이 적는다. 근거 = C106 지도 · 스펙 §4 · §5.
+OFFSTAGE_SEEN_BLOCK = os.getenv("OFFSTAGE_SEEN_BLOCK", "1").strip().lower() not in ("0", "false", "off", "no")
+# [2026-11-06 C119] 추출 콜 4b NPC STATE 출석 거르기 — 무대 위 · 근처 · 이번 입력 · 직전 산문에 이름 나온 사람만(une_facade
+#   anchors["npc_state_keep"] → theoria `_build_npc_context(onstage_only=True)`). 끄면 키가 없어 옛 바이트 그대로. Mira 4b 는 무접촉.
+THEORIA_4B_ONSTAGE = True
+OFFSTAGE_SEEN_TURNS = int(os.getenv("OFFSTAGE_SEEN_TURNS", "3") or 3)
+# [2026-11-02 C108] 감정 읽기 v2. 켜면: 감정 엔진이 Theoria primary_emotion 의 머리말(메모 앞 낱말, Plutchik 바퀴 낱말표)을
+#   +0.25 · 陰陽 씨앗 축을 +0.10 으로 읽고(spike 기준값엔 안 넣음), 욕구 바닥 ×0.5 → ×0.25, 블렌딩 이전 몫 0.7 → 0.4,
+#   Tier 1 friction 증인에서 Mira 침묵(tense/heavy)을 뺀다. 집단사고 트리거의 fear 판정도 같은 읽기. 끄면 옛 셈 그대로.
+#   근거 = 파티쳇수정/output_artifact/C108_감정다양화_지도·스펙_2026-11-02.md
+EMOTION_READ_V2 = os.getenv("EMOTION_READ_V2", "1").strip().lower() not in ("0", "false", "off", "no")
 # [2026-10-27 C85] 현재값 · 앎의 경계(리팩토링 5단계). 켜면: 항목 절 발췌 = 상대별 최신 먼저(Relationships+ · Members+),
 #   Theoria 4b 장면 인물에 페이지 Knowledge 최근 N줄, OOC 앎 편집 = 두 집(npc_knowledge + 페이지 Knowledge),
 #   성장 · Theoria 앎 문안 한 구절, T6 오해 칸 키(misbeliefs). 끄면 C83 바이트 동일. 근거 = C85 지도·스펙.
@@ -941,7 +950,7 @@ JUDGMENT_CONSEQUENCES = {
 }
 
 # [2026-10-15 C42] Judgment v3 의 ASPECT_VALUE·MOD_SOURCE_CAPS 퇴역 — 4dF 는 항마다 ±1 이고,
-#   수정치 폭은 주사위 개수가 잡는다(judgment_engine.mod_bounds: 하한 −(N−1) · 상한 min(3, N)).
+#   수정치 폭(judgment_engine.mod_bounds): 하한 −min(6, N−1) · 상한 +6(C118 11-06 · C102 11-01, 옛 하한 −min(3, N−1)).
 
 # Memory Optimization
 FRESH_THRESHOLD = 24  # [Cost-Diet] 24개 초과 시 발효 (렌더 12 + 여유 12)
@@ -1217,6 +1226,10 @@ CLOCK_OSCILLATION_DIRECTION_CHANGES_MIN = 3  # non-zero diff sign 변화 ≥ 이
 # Quest Manager Constants
 # =========================================================
 MAX_RETRY_COUNT = 3
+# [2026-11-06 C119 Q41] 429 · 500 · 502 · 503 · 504 는 늘려 가며 기다린다 — BASE × 2^시도(1 · 2초, 시도 3이면 기다림 둘).
+#   서버가 기다릴 시간(Retry-After · 제미니 retryDelay)을 주면 그 값, 다 MAX 에서 자른다. 그 밖 실패는 RETRY_DELAY_SECONDS 그대로.
+RETRY_BACKOFF_BASE = 1.0
+RETRY_BACKOFF_MAX = 8.0
 RETRY_DELAY_SECONDS = 1
 MAX_ARCHIVE_DISPLAY = 3
 MAX_HISTORY_FOR_CHRONICLE = 50
@@ -1277,6 +1290,12 @@ QUEST_RANK_SETTINGS = {
     "epic":    {"max_progress": 12, "doom_reward": 9,  "display": "전설"},
 }
 QUEST_DEFAULT_RANK = "normal"
+
+# [2026-11-06 C116 판7] 코드 앱 모델 물음(lk.ask) — 버튼으로만 · 앱마다 하나씩. 조정은 여기서(.env 아님 — 레티어스 11-06).
+APP_ASK_PER_TURN = 3            # 한 턴(turn_index) 사이 앱 하나가 물을 수 있는 수
+APP_ASK_CHANNEL_PER_TURN = 6    # 한 턴 사이 채널 전체
+APP_ASK_TIMEOUT = 240.0         # 콜 하나 상한(초) — 넘기면 답 nil + 오류(11-06 90 → 240)
+APP_ASK_LOCK_WAIT = 180.0       # 답을 적으려고 턴 잠금을 기다리는 상한(초) — 넘기면 답을 버린다
 
 # NPC Connection Stages (depth-based, 0-100)
 NPC_CONNECTION_STAGES = {
